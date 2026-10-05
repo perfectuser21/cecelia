@@ -65,8 +65,17 @@ export async function registerJourney(pool, body, id) {
       const columns = Object.keys(values);
       row = (await client.query(`INSERT INTO journeys (${columns.join(',')},notion_synced_at)
         VALUES (${columns.map((_, i) => `$${i + 1}`).join(',')},NULL) RETURNING *`, Object.values(values))).rows[0];
-      for (const [i, name] of (body.steps || []).entries()) {
-        await client.query('INSERT INTO activities(journey_id,name,step_number,notion_synced_at) VALUES($1,$2,$3,NULL)', [row.id, name, i + 1]);
+      const steps = body.steps || [];
+      if (steps.length) {
+        // 树是 价值流 → 能力 → 流程 → Activity：步骤不再直接记在能力下，经一个「主线」流程挂靠，顺序在流程引用里（迁移 527）
+        if (!parentId) fail(400, '步骤只能登记在能力下（需要 parent_journey_id），价值流不直接带步骤');
+        const workflow = (await client.query(`INSERT INTO workflows(capability_id,key,name,channel,version,status)
+          VALUES($1,$2,$3,'internal','1.0','active') RETURNING id`, [row.id, `gp_steps_${row.id.slice(0, 8)}`, `${row.name} · 主线`])).rows[0];
+        for (const [i, name] of steps.entries()) {
+          const activity = (await client.query('INSERT INTO activities(name,notion_synced_at) VALUES($1,NULL) RETURNING id', [name])).rows[0];
+          await client.query('INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no) VALUES($1,$2,$3,$4)',
+            [workflow.id, `step_${i + 1}`, activity.id, i + 1]);
+        }
       }
     } else {
       const columns = Object.keys(data);
