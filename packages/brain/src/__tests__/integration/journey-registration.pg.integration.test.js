@@ -19,7 +19,7 @@ beforeEach(async () => {
   expect((await admin.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `journey_registration_${randomUUID().replaceAll('-', '')}`;
   await admin.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['areas', 'journeys', 'workflows', 'journey_steps']) await admin.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
+  for (const table of ['areas', 'journeys', 'workflows', 'journey_steps', 'workflow_activity_refs']) await admin.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   pool = new pg.Pool({ ...DB_DEFAULTS, options: `-c search_path=${schema}` }); holder.pool = pool;
   await pool.query('ALTER TABLE journeys ADD FOREIGN KEY(parent_journey_id) REFERENCES journeys(id), ADD FOREIGN KEY(area_id) REFERENCES areas(id)');
   await pool.query('ALTER TABLE workflows ADD FOREIGN KEY(capability_id) REFERENCES journeys(id)');
@@ -47,7 +47,11 @@ it('真实HTTP登记父关系、代码、部门与兼容字段，步骤和主体
   expect(response.status, response.body.error).toBe(201);
   const row = (await pool.query('SELECT * FROM journeys WHERE id=$1', [response.body.id])).rows[0];
   expect(row).toMatchObject({ parent_journey_id: stream, capability_code: 'TEST_NEW', area_id: department, kind: 'capability', home: 'factory' });
-  expect((await pool.query('SELECT name FROM activities WHERE journey_id=$1 ORDER BY step_number', [row.id])).rows).toEqual([{ name: '预检' }, { name: '执行' }]);
+  // 步骤经「主线流程」挂在能力下：顺序在流程引用里，Activity 本身不再写 journey_id / step_number
+  expect((await pool.query(`SELECT a.name FROM activities a JOIN workflow_activity_refs r ON r.activity_id=a.id AND r.active
+    JOIN workflows w ON w.id=r.workflow_id WHERE w.capability_id=$1 ORDER BY r.sequence_no`, [row.id])).rows).toEqual([{ name: '预检' }, { name: '执行' }]);
+  expect((await pool.query('SELECT key FROM workflows WHERE capability_id=$1', [row.id])).rows).toEqual([{ key: `gp_steps_${row.id.slice(0, 8)}` }]);
+  expect((await pool.query('SELECT journey_id, step_number FROM activities WHERE name=$1', ['预检'])).rows).toEqual([{ journey_id: null, step_number: null }]);
   const changed = await patch(row.id, { name: '改名能力', area_id: null, capability_code: 'TEST_RENAMED' });
   expect(changed.status).toBe(200); expect(changed.body).toMatchObject({ id: row.id, name: '改名能力', area_id: null, capability_code: 'TEST_RENAMED' });
 });
@@ -81,9 +85,11 @@ it('拒绝自指、capability嵌套、带子项价值流降级以及带工作流
 });
 it('POST步骤失败回滚主体和此前步骤，兼容旧area名称登记', async () => {
   await pool.query("ALTER TABLE activities ADD CONSTRAINT reject_review_step CHECK(name <> '拒绝步骤')");
-  expect((await create({ name: '回滚主体', steps: ['已有步骤', '拒绝步骤'] })).status).toBe(400);
+  expect((await create({ name: '回滚主体', parent_journey_id: stream, steps: ['已有步骤', '拒绝步骤'] })).status).toBe(400);
+  expect((await create({ name: '价值流不挂步骤', steps: ['不该成立'] })).status).toBe(400); // 步骤只能经流程挂在能力下
   expect((await pool.query("SELECT count(*)::int n FROM journeys WHERE name='回滚主体'")).rows[0].n).toBe(0);
   expect((await pool.query('SELECT count(*)::int n FROM activities')).rows[0].n).toBe(0);
+  expect((await pool.query("SELECT count(*)::int n FROM workflows WHERE key LIKE 'gp_steps_%'")).rows[0].n).toBe(0);
   const legacy = await create({ name: '兼容名称', area: '部门' });
   expect(legacy.status).toBe(201); expect(legacy.body.area_id).toBe(department);
 });
