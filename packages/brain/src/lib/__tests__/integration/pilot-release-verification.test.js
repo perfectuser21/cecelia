@@ -59,7 +59,7 @@ it('正式main refresh补齐原未登记四Step并保旧UUID，旧版本仍缺�
  const {refreshImplementationSnapshot,exportImplementationSnapshot}=await import('../../implementation-ci-snapshot.js');
  const revision='c'.repeat(40),names=['open_benchmark_profile','list_recent_videos','resolve_video_links','persist_candidates'];
  const before=(await f.db.query('SELECT id FROM steps ORDER BY id')).rows.map(r=>r.id);
- const discovery=f.contracts.docs.benchmark_link_acquisition.activities.find(a=>a.key==='discovery');discovery.steps=[...discovery.steps,...names.map((key,i)=>({key,order:i+2}))];f.contracts.refresh();
+ const discovery=f.contracts.docs.benchmark_link_acquisition.activities.find(a=>a.key==='discovery');discovery.steps=[...discovery.steps,...names.map((key,i)=>({key,order:i+2,dod:{mode:'checkpoint',readback:{type:'metric',ref:'metrics.fixture_step'}}}))];f.contracts.refresh();
  for(const doc of Object.values(f.contracts.docs))for(const a of doc.activities)for(const b of a.implementation_bindings||[])b.revision=revision;
  await f.sync(revision);await f.map(revision);
  const query={scope:'phones',repo:f.releaseInput.components[0].repo,revision},old=await exportImplementationSnapshot(f.db,query);

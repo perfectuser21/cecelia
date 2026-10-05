@@ -62,8 +62,20 @@ async function loadActivityMap(client, capabilityKey) {
   return new Map(rows.map((r) => [r.activity_key, r.id]));
 }
 
+const EXTRA_COLUMNS = ['name', 'action', 'inputs', 'outputs', 'on_fail'];
+const jsonOrNull = (v) => (v == null ? null : JSON.stringify(v));
+
+/** 521 起 steps 带 name/action/inputs/outputs/on_fail；旧库/旧夹具没有这些列就只写读回等老字段。 */
+async function stepsHaveExtraColumns(client) {
+  const { rows } = await client.query(
+    `SELECT count(*)::int AS n FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'steps' AND column_name = ANY($1)`, [EXTRA_COLUMNS]);
+  return rows[0]?.n === EXTRA_COLUMNS.length;
+}
+
 export async function syncSteps(client, spec, { dryRun = false, manageTransaction = true } = {}) {
   const activities = await loadActivityMap(client, spec.capability);
+  const hasExtra = await stepsHaveExtraColumns(client);
   const missing = [...new Set(spec.steps.filter((s) => !activities.has(s.activity)).map((s) => s.activity))];
   if (missing.length > 0) {
     const keys = spec.steps.filter((s) => missing.includes(s.activity)).map((s) => s.key);
@@ -79,7 +91,9 @@ export async function syncSteps(client, spec, { dryRun = false, manageTransactio
   try {
     for (const step of spec.steps) {
       const activityId = activities.get(step.activity);
-      const sha = stepSha256({ key: step.key, activity: step.activity, mode: step.mode, readback: step.readback });
+      // 新列只在来源带了才进指纹：step-dod.json 旧来源的指纹不变，合同来源改了动作/进出才算更新
+      const extra = Object.fromEntries(EXTRA_COLUMNS.filter((c) => step[c] != null).map((c) => [c, step[c]]));
+      const sha = stepSha256({ key: step.key, activity: step.activity, mode: step.mode, readback: step.readback, ...extra });
       const existing = await client.query(
         `SELECT activity_id, step_order, source_sha256 FROM steps WHERE key = $1`,
         [step.key]
@@ -88,9 +102,10 @@ export async function syncSteps(client, spec, { dryRun = false, manageTransactio
         inserted += 1;
         if (!dryRun) {
           await client.query(
-            `INSERT INTO steps (activity_id, step_order, key, activity_key, mode, readback, source_sha256)
-             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
-            [activityId, step.order, step.key, step.activity, step.mode, JSON.stringify(step.readback), sha]
+            `INSERT INTO steps (activity_id, step_order, key, activity_key, mode, readback, source_sha256${hasExtra ? ', name, action, inputs, outputs, on_fail' : ''})
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7${hasExtra ? ', $8, $9, $10::jsonb, $11::jsonb, $12' : ''})`,
+            [activityId, step.order, step.key, step.activity, step.mode, JSON.stringify(step.readback), sha,
+              ...(hasExtra ? [step.name ?? null, step.action ?? null, jsonOrNull(step.inputs), jsonOrNull(step.outputs), step.on_fail ?? null] : [])]
           );
         }
         continue;
@@ -105,9 +120,12 @@ export async function syncSteps(client, spec, { dryRun = false, manageTransactio
         await client.query(
           `UPDATE steps
               SET activity_id = $2, step_order = $3, activity_key = $4, mode = $5,
-                  readback = $6::jsonb, source_sha256 = $7, active = true, updated_at = now()
+                  readback = $6::jsonb, source_sha256 = $7, active = true, updated_at = now()${hasExtra ? `,
+                  name = COALESCE($8, name), action = COALESCE($9, action), inputs = COALESCE($10::jsonb, inputs),
+                  outputs = COALESCE($11::jsonb, outputs), on_fail = COALESCE($12, on_fail)` : ''}
             WHERE key = $1`,
-          [step.key, activityId, step.order, step.activity, step.mode, JSON.stringify(step.readback), sha]
+          [step.key, activityId, step.order, step.activity, step.mode, JSON.stringify(step.readback), sha,
+            ...(hasExtra ? [step.name ?? null, step.action ?? null, jsonOrNull(step.inputs), jsonOrNull(step.outputs), step.on_fail ?? null] : [])]
         );
       }
     }
