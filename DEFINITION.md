@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.376.1
+**Brain 版本**: 1.376.3
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,24 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.376.3 — 树+仓库 v3.0 第 3 刀 b/c 段：Notion 的 Activity 页补 15 列和 8 格颜色，Step 页补三列，新增仓库物件库与用料库
+
+- 仓库物件库、用料库（c 段）：迁移 524 给 `warehouse_items` / `activity_uses` 补 Notion 记账列；新模块 `notion-warehouse-projection` 把仓库物件（8 个货架选项带色，「被用于」列出用到它的 Activity）和用料（Activity、物件各一个 relation）单向推到 Notion。库缺就在目录父页下建（带来源标记，认领同名同标记库，建后登记注册表，重跑不重复建）。Notion API 建不了按货架过滤的视图，库里的「货架」选项列按它分组/过滤即是 8 个货架视图。
+
+- 任务 f4f75a20：目录投影（Brain → Notion 六层目录库）给 Activity 页加机器列：承诺、输入、输出、前提、不变量、NFR、失败语义、读回、判定点、对抗、保质期（天）、用料，再加 8 个格子列（格·承诺 … 格·保质期），颜色取自 `activity_cells` 的 8 个标准格：🟢 绿、🔴 红、🟡 待判、⚪ 灰。缺格按灰，子项格（场景检查）不进卡片，不会串到别的 Activity。
+- Step 页补「动作」「失败处理」「模式」三列（`steps` 的 action / on_fail / mode）。
+- 列名与取值集中在 `projection/activity-card.js`，目录 schema 建列与目录源构造行共用，改一处两边一致；空值不编造。库里缺的列由目录投影器每轮 `ensureDirectorySchemas` 自动补，格子列带颜色选项。
+- 目录源 SQL 增载 `activity_cells` 与 `activity_uses`，真 PG 测试覆盖。人在 Notion 上改这些列会被下一轮覆盖：以后怎么改，改 Brain 真身（合同/技能沉淀），Notion 自动跟。
+
+## Brain 1.376.2 — 树+仓库 v3.0 第 3 刀 a 段：Notion 注册表键改标准表名，价值流/能力分库，闹钟总账改名
+
+- 任务 f4f75a20：迁移 523 把 `notion_projection_map.brain_table` 的 `journey_steps` / `journey_step_links` 换成标准名 `activities` / `activity_cells`（先清 521/522 预留的未映射占位）。旧名视图在第 2 刀 c 段会删，键不先改，`resolveDbId` 查不到 active 行，推送会静默停更。
+- 旧「价值流与能力（journeys）」混合库停推（只读保留，不删页）：价值流与 Capabilities 早已由 directory-projection 分别推到各自的库，不再两库混推。
+- 「Ops 运行图谱」登记名改「闹钟总账」；`pushOpsGraph` 每轮幂等检查 Notion 库标题，不同才 PATCH 改名。
+- 代码同步：`resolveDbId` / 推送表键 / 目录投影表映射 / `LEGACY_DB_CONSTANTS` 全部标准名；新增守卫 `notion-registry-standard-keys.test.js` 禁止再用旧名作注册表键（API 路径、别名表、cascade-list 的 source 标签除外）。
+- 同一迁移把 `projection_links` 里 `journey_steps` 的实体类型改成 `activities`（共 42 条）：目录投影与登记推送按表键查页面链接，不改的话已建页面会被判「未链接」并与旧链接冲突。
+- 迁移与新代码同一次发布；切换窗口内键名短暂不一致，最多一个推送周期不推这两库，下一轮自动补齐。
 
 ## Brain 1.376.1 — 树+仓库 v3.0 第 2 刀 b 段：生产代码 SQL 全部切到标准表名
 
