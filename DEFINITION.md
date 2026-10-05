@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.376.5
+**Brain 版本**: 1.376.6
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.376.6 — 树+仓库 v3.0 第 4 刀收尾：收敛对账时补齐 Activity 的 8 个验收格
+
+- 合同同步新建的 Activity 没有验收格，收敛对账翻 `readback` 格颜色的那条 UPDATE 会命中 0 行，颜色静默丢掉。`reconcileActivity` 现在翻色前先调用 `ensureEightCells` 把固定 8 格补齐（缺的补灰格，已有的不动，幂等）。
+- `ensureEightCells` 与 8 个标准格键抽到 `lib/activity-cells.js`，沉淀技能登记候选与收敛对账共用。
+- 刻意没做：合同同步插入 Activity 时同步补格。试过：补格后会进入实现影响快照（快照把全部格子当断言读取），改变既有口径、让试点发布验证的夹具全红，那条口径问题另议，不在这里捆绑。
 
 ## Brain 1.376.5 — 树+仓库 v3.0 第 4 刀（路 B）：技能按 Step 发 span、沉淀成候选 Activity、收敛对账
 
