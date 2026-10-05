@@ -7,7 +7,7 @@ import { DIRECTORY_LOCK, DIRECTORY_TARGET } from './directory-projector.js';
 const UUID = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const compact = value => String(value || '').replaceAll('-', '').toLowerCase();
 const LAYERS = ['areas','value_streams','capabilities','workflows','activities','steps'];
-const TABLES = { areas: 'areas', value_streams: 'notion_map_node_pages', capabilities: 'capabilities', workflows: 'workflows', activities: 'journey_steps', steps: 'steps' };
+const TABLES = { areas: 'areas', value_streams: 'notion_map_node_pages', capabilities: 'capabilities', workflows: 'workflows', activities: 'activities', steps: 'steps' };
 const LEGACY = { workflows: '3d9c40c2-ba63-8145-bfa8-f4c0c006e0af', steps: '3d9c40c2-ba63-8195-a41b-f529056a4aa8' };
 const MARKER = 'Brain directory capabilities (journeys.kind=capability)';
 function keys(value, allowed) {

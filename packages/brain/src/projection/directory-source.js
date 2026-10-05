@@ -1,6 +1,6 @@
 /** 六层目录只读源：共享引用为准；不改契约、归属、版本或人工列。 */
 import { isDeepStrictEqual } from 'node:util';
-export const DIRECTORY_TABLES = Object.freeze({ areas: 'areas', value_streams: 'journeys', capabilities: 'journeys', workflows: 'workflows', activities: 'journey_steps', steps: 'steps' });
+export const DIRECTORY_TABLES = Object.freeze({ areas: 'areas', value_streams: 'journeys', capabilities: 'journeys', workflows: 'workflows', activities: 'activities', steps: 'steps' });
 export const rich = value => ({ rich_text: value == null || value === '' ? [] : [{ text: { content: (typeof value === 'string' ? value : JSON.stringify(value)).slice(0, 1900) } }] });
 const ref = (layer, id) => ({ layer, id });
 const unique = items => [...new Map(items.map(x => [`${x.layer}:${x.id}`, x])).values()].sort((a, b) => a.id.localeCompare(b.id));
