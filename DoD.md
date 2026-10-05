@@ -1,4 +1,7 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] attachorphans v3.0 第 5 刀①：迁移 526 把没有生效流程引用的未退役 Activity 挂进所属能力的流程（能力下恰好一个流程就挂进去，没有或有多个则新建 gp_steps 主线流程再挂；顺序取 step_number、槽位 step_<n>、source_ref 留空表示定义归属；已有引用不动、退役不挂、重跑幂等），引用 source_path 标 migration:526，回滚只删这些引用与变空的主线流程。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-526-attach-orphan-activities.test.js --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] droplegacyviews v3.0 第 2 刀 c 段：blast-radius 改读 activity_uses（按 warehouse_items.legacy_feature_id 找用到该物件的 Activity），POST /journey_step_links 拒绝 cell_kind=base_ref 并指向新增的 POST /activity_uses（item_id 或 item_key，角色 uses/depends/produces，(activity_id,item_id) 幂等，物件/活动不存在 404）；迁移 525 先备份底座引用格子再补用料后删除、删 journey_steps/journey_step_links/enablers 三个旧名兼容视图与其注册表占位，回滚可还原；依赖旧名视图的 6 个集成测试（blast-radius、350 种子、373、journey-step-ledger、374、业务探针裁判等）与 4 个烟测改标准名。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/routes/__tests__/journeys.test.js src/__tests__/migration-525-drop-legacy-views.test.js --maxWorkers=1 --minWorkers=1"
 
