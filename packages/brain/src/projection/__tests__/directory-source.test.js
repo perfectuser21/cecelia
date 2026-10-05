@@ -34,6 +34,13 @@ describe('六层目录源映射', () => {
         {scope:'step',step_key:'read',field:'implementation',kind:'raw',status:'unresolved',raw:contract.implementation}]}};
     return {data,s,a,entry};
   }
+  it('Activity 行不信任旧同步留下的 notion_id（可能指向别的库/回收站里的页），页面身份只认目录链接与 Brain ID 查询', () => {
+    const data = sample();
+    data.activities[0].notion_id = fixtureEntityId(999);
+    const rows = api.buildDirectoryRows(data, config);
+    expect(rows.find(r => r.layer === 'activities').pageId).toBeNull();
+    expect(rows.find(r => r.layer === 'areas').pageId).toBe(fixtureEntityId(101)); // 部门页是人建的，旧 notion_id 就是它
+  });
   it('精确当前Step声明补Input/Output/实现且保持未核验，原expect与canonical check/dod都展示', () => {
     const {data,s,a,entry}=versionedStep(),row=api.buildDirectoryRows(data,config).find(r=>r.id===s.id);
     expect(row.properties.Input.rich_text[0].text.content).toBe('["Device.serial"]');
