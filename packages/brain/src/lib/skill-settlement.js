@@ -14,15 +14,30 @@ import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
 /** 8 个固定验收格（与迁移 521 的标准键一致）。 */
 export const CELL_KEYS = Object.freeze(['promise', 'nfr', 'judgment', 'invariants', 'failure', 'readback', 'adversarial', 'shelf_life']);
 
+const SENTENCE_END = new Set(['。', '.', '!', '！', '?', '？']);
+
+/** frontmatter 正文：必须以 --- 开头，到下一个单独成行的 --- 为止；全程字符串扫描，不用回溯正则（病态输入不会拖慢）。 */
+function frontmatterBody(text) {
+  if (!text.startsWith('---')) return null;
+  const open = text.indexOf('\n');
+  if (open < 0 || text.slice(3, open).trim() !== '') return null;
+  const close = text.indexOf('\n---', open);
+  return close < 0 ? null : text.slice(open + 1, close);
+}
+
 /** SKILL.md frontmatter → name / description；承诺草稿只取描述第一句。没有 frontmatter 全空，不编造。 */
 export function parseSkillMd(text = '') {
-  const m = String(text).match(/^---\s*\n([\s\S]*?)\n---/);
+  const body = frontmatterBody(String(text));
   const field = key => {
-    const line = m?.[1].split('\n').find(l => l.startsWith(`${key}:`));
+    const line = body?.split('\n').find(l => l.startsWith(`${key}:`));
     return line ? line.slice(key.length + 1).trim() || null : null;
   };
   const description = field('description');
-  const first = description ? description.match(/^[\s\S]*?[。.!！?？](?=\s|$|[^。.!！?？])/)?.[0] ?? description : null;
+  let first = description;
+  if (description) {
+    const at = [...description].findIndex(ch => SENTENCE_END.has(ch));
+    if (at >= 0) first = [...description].slice(0, at + 1).join('');
+  }
   return { name: field('name'), description, promise_draft: first };
 }
 
