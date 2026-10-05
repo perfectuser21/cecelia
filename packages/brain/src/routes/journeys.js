@@ -72,11 +72,12 @@ router.get('/journey_features/:id/blast-radius', async (req, res) => {
     if (!frows.length) return res.status(404).json({ error: 'feature not found' });
     const { rows } = await pool.query(
       `SELECT j.id AS journey_id, j.name AS journey_name, j.domain,
-              s.id AS step_id, s.name AS step_name, s.step_number, s.promise, l.cell_status
-       FROM activity_cells l
-       JOIN activities s ON s.id = l.step_id
+              s.id AS step_id, s.name AS step_name, s.step_number, s.promise, COALESCE(u.cell_status, 'gray') AS cell_status
+       FROM warehouse_items i
+       JOIN activity_uses u ON u.item_id = i.id
+       JOIN activities s ON s.id = u.activity_id
        JOIN journeys j ON j.id = s.journey_id
-       WHERE l.feature_id = $1 AND l.cell_kind = 'base_ref'
+       WHERE i.legacy_feature_id = $1
        ORDER BY j.name, s.step_number`, [req.params.id]);
     res.json({ feature: frows[0], blast_radius: rows, count: rows.length });
   } catch (err) {
@@ -390,6 +391,42 @@ router.get('/journey_step_links', async (req, res) => {
   }
 });
 
+// POST /api/brain/activity_uses —— 登记 Activity 用了哪件仓库物件（取代底座引用格子；(activity_id, item_id) 幂等）
+router.post('/activity_uses', internalAuthOrLoopback, async (req, res) => {
+  try {
+    const { activity_id, item_id, item_key, role = 'uses', assertion_ref = null, cell_status = null } = req.body || {};
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID.test(activity_id || '')) return res.status(400).json({ error: 'activity_id must be a uuid' });
+    if (!['uses', 'depends', 'produces'].includes(role)) return res.status(400).json({ error: 'role must be one of: uses,depends,produces' });
+    if (cell_status !== null && !['gray', 'red', 'pending', 'green'].includes(cell_status)) {
+      return res.status(400).json({ error: 'cell_status must be one of: gray,red,pending,green' });
+    }
+    if (!item_id && !item_key) return res.status(400).json({ error: 'item_id or item_key is required' });
+    if (item_id && !UUID.test(item_id)) return res.status(400).json({ error: 'item_id must be a uuid' });
+
+    let itemId = item_id;
+    if (!itemId) {
+      const { rows: found } = await pool.query('SELECT id FROM warehouse_items WHERE key = $1', [item_key]);
+      if (!found.length) return res.status(404).json({ error: 'warehouse item not found' });
+      itemId = found[0].id;
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO activity_uses (activity_id, item_id, role, assertion_ref, cell_status)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (activity_id, item_id) DO UPDATE SET
+         role = EXCLUDED.role,
+         assertion_ref = COALESCE(EXCLUDED.assertion_ref, activity_uses.assertion_ref),
+         cell_status = COALESCE(EXCLUDED.cell_status, activity_uses.cell_status)
+       RETURNING *`,
+      [activity_id, itemId, role, assertion_ref, cell_status]);
+    return res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23503') return res.status(404).json({ error: 'activity or item not found' });
+    console.error('[journeys] POST /activity_uses error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/brain/journey_step_links —— legacy 连接行 + 格子行双通道
 router.post('/journey_step_links', internalAuthOrLoopback, async (req, res) => {
   try {
@@ -402,8 +439,12 @@ router.post('/journey_step_links', internalAuthOrLoopback, async (req, res) => {
     }
 
     if (cell_kind) {
-      const VALID_CELL_KINDS = ['capability', 'element', 'scenario', 'base_ref'];
+      const VALID_CELL_KINDS = ['capability', 'element', 'scenario'];
       const VALID_CELL_STATUS = ['gray', 'red', 'pending', 'green'];
+      // 底座引用格子已退役（迁移 525）：Activity 用哪件仓库物件改走用料表
+      if (cell_kind === 'base_ref') {
+        return res.status(400).json({ error: 'base_ref cells are retired; register the dependency with POST /activity_uses instead' });
+      }
       if (!VALID_CELL_KINDS.includes(cell_kind)) {
         return res.status(400).json({ error: `cell_kind must be one of: ${VALID_CELL_KINDS.join(',')}` });
       }
@@ -411,11 +452,6 @@ router.post('/journey_step_links', internalAuthOrLoopback, async (req, res) => {
       if (cell_status && !VALID_CELL_STATUS.includes(cell_status)) {
         return res.status(400).json({ error: `cell_status must be one of: ${VALID_CELL_STATUS.join(',')}` });
       }
-      // base_ref 格子是 blast-radius 的锚，没有 feature_id 的底座引用查不到塌红范围
-      if (cell_kind === 'base_ref' && !feature_id) {
-        return res.status(400).json({ error: 'feature_id is required for base_ref cells' });
-      }
-
       // 一致性护栏：格子行的 step_id 必须真实存在，且其 journey_id 必须与传入的 journey_id 一致
       // （防止调用方传错 journey_id，格子挂到错误的 GP 下却无感知）
       const { rows: steprows } = await pool.query(

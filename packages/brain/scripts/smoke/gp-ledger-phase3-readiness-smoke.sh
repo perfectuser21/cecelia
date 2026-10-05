@@ -13,7 +13,7 @@ node packages/brain/src/gp-ledger-readiness.js
 STEP_ID="$(
   psql "${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}" \
     -Atq \
-    -c "SELECT id FROM journey_steps WHERE journey_id='ac2e35bc-849a-48cd-917f-79d15c5ac886' AND step_number=1"
+    -c "SELECT id FROM activities WHERE journey_id='ac2e35bc-849a-48cd-917f-79d15c5ac886' AND step_number=1"
 )"
 if [ -z "$STEP_ID" ]; then
   echo "FAIL: GP-B S1 journey step is missing"

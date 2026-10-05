@@ -1,19 +1,9 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
 let pool;
-const migration373 = readFileSync(
-  new URL('../../../migrations/373_gp_ledger_data_knife.sql', import.meta.url),
-  'utf8',
-);
 
 beforeAll(async () => {
   pool = (await import('../../db.js')).default;
-  // migration-350.integration.test.js intentionally replays the historical seed
-  // against this shared CI database. Restore the latest post-migration contract
-  // so this suite verifies 373, not whichever integration file ran immediately
-  // before it.
-  await pool.query(migration373);
 });
 
 describe('migration 373 Golden Path ledger data knife [PostgreSQL]', () => {
@@ -35,7 +25,7 @@ describe('migration 373 Golden Path ledger data knife [PostgreSQL]', () => {
     const { rows } = await pool.query(
       `SELECT d.source_ref, d.target_type, d.target_id, j.home
        FROM decisions d
-       JOIN journey_steps s ON s.id=d.target_id
+       JOIN activities s ON s.id=d.target_id
        JOIN journeys j ON j.id=s.journey_id
        WHERE d.source_ref LIKE 'gp-ledger-phase3:nfr:gp-b:%'
        ORDER BY d.source_ref`,
@@ -48,7 +38,7 @@ describe('migration 373 Golden Path ledger data knife [PostgreSQL]', () => {
   it('has no evidence-less positive cell and no unrecognized assertion prose', async () => {
     const positiveMissing = await pool.query(
       `SELECT COUNT(*)::int AS count
-       FROM journey_step_links
+       FROM activity_cells
        WHERE cell_kind IS NOT NULL
          AND cell_status IN ('green','pending')
          AND assertion_ref IS NULL
@@ -58,7 +48,7 @@ describe('migration 373 Golden Path ledger data knife [PostgreSQL]', () => {
 
     const unknown = await pool.query(
       `SELECT assertion_ref
-       FROM journey_step_links
+       FROM activity_cells
        WHERE assertion_ref IS NOT NULL
          AND assertion_ref NOT LIKE 'manual:%'
          AND assertion_ref NOT LIKE 'eval:%'
@@ -75,7 +65,7 @@ describe('migration 373 Golden Path ledger data knife [PostgreSQL]', () => {
   it('backfills positive base references from real feature anchors', async () => {
     const { rows } = await pool.query(
       `SELECT COUNT(*)::int AS count
-       FROM journey_step_links
+       FROM activity_cells
        WHERE cell_kind='base_ref'
          AND cell_status IN ('green','pending')
          AND assertion_ref IS NULL`,

@@ -43,7 +43,7 @@ async function ensureScratchAssertionAnchor() {
   const journeyId = journeyResult.rows[0]?.id;
   invariant(journeyId, 'scratch F0 authoritative Journey is absent');
   await pool.query(
-    `INSERT INTO journey_steps (id,journey_id,name,step_number,status)
+    `INSERT INTO activities (id,journey_id,name,step_number,status)
      VALUES ($1,$2,'route coding through Harness',1,'planned')
      ON CONFLICT (id) DO UPDATE
        SET journey_id=EXCLUDED.journey_id,name=EXCLUDED.name,
@@ -61,7 +61,7 @@ async function ensureScratchAssertionAnchor() {
     [fixtureIds.feature, journeyId, fixtureIds.step, assertionRef],
   );
   await pool.query(
-    `INSERT INTO journey_step_links
+    `INSERT INTO activity_cells
       (id,journey_id,step_id,feature_id,cell_kind,cell_key,
        assertion_ref,assertion_revision,notion_synced_at)
      VALUES ($1,$2,$3,$4,'capability','F0',$5,1,NOW())

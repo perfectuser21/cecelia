@@ -36,12 +36,12 @@ beforeAll(async () => {
   const journey = await client.query(`INSERT INTO journeys (name) VALUES ($1) RETURNING id`, [`pgtest journey ${KEY_OK}`]);
   ids.journeyId = journey.rows[0].id;
   const step = await client.query(
-    `INSERT INTO journey_steps (journey_id, name, step_number) VALUES ($1, 'preflight', 1) RETURNING id`,
+    `INSERT INTO activities (journey_id, name, step_number) VALUES ($1, 'preflight', 1) RETURNING id`,
     [ids.journeyId],
   );
   ids.stepId = step.rows[0].id;
   const link = async (key) => (await client.query(
-    `INSERT INTO journey_step_links (journey_id, step_id, step_order, cell_kind, cell_key, cell_status, assertion_ref)
+    `INSERT INTO activity_cells (journey_id, step_id, step_order, cell_kind, cell_key, cell_status, assertion_ref)
      VALUES ($1, $2, 1, 'scenario', $3, 'gray', $4) RETURNING id, assertion_revision`,
     [ids.journeyId, ids.stepId, `stage:${STAGE}:${key}`, `probe:${key}`],
   )).rows[0];
@@ -89,7 +89,7 @@ async function receiptsFor(runId) {
 }
 
 async function cellStatus(linkId) {
-  return (await client.query('SELECT cell_status FROM journey_step_links WHERE id = $1', [linkId])).rows[0].cell_status;
+  return (await client.query('SELECT cell_status FROM activity_cells WHERE id = $1', [linkId])).rows[0].cell_status;
 }
 
 describe('business-probe-judge [PostgreSQL] run.finished → 回执 → cell 翻色', () => {
@@ -228,7 +228,7 @@ describe('business-probe-judge [PostgreSQL] run.finished → 回执 → cell 翻
 
     beforeAll(async () => {
       multiLink = (await client.query(
-        `INSERT INTO journey_step_links (journey_id, step_id, step_order, cell_kind, cell_key, cell_status, assertion_ref)
+        `INSERT INTO activity_cells (journey_id, step_id, step_order, cell_kind, cell_key, cell_status, assertion_ref)
          VALUES ($1, $2, 2, 'scenario', $3, 'gray', $4) RETURNING id, assertion_revision`,
         [ids.journeyId, ids.stepId, `stage:${MULTI_STAGE}`, `probe:${K1}`],
       )).rows[0];
