@@ -13,6 +13,7 @@
  * 一次运行「绿」= 每个 Step 都是 verified/skipped/exempt，且没有出现合同里没声明的 Step span。
  */
 import { evaluateReadback } from './step-readback-eval.js';
+import { ensureEightCells } from './activity-cells.js';
 
 const GREEN_OK = new Set(['verified', 'skipped', 'exempt']);
 const ISSUE_CODE = { mismatch: 'step_readback_mismatch', unverified: 'step_unobserved', failed: 'step_failed', missing: 'step_missing' };
@@ -75,10 +76,10 @@ const CELL_FOR_VERDICT = { converged: 'green', diverged: 'red', converging: 'pen
 
 /**
  * 读库对账：取 Activity 的 active Steps 与它名下全部 Step 级 span，对账后把 readback 格翻色
- * （converged→绿，diverged→红，converging→待判，no_data 不动）。只写这一格，不碰别的。
+ * （converged→绿，diverged→红，converging→待判，no_data 不动）。格子不全时先补齐 8 个灰格，翻色只动这一格。
  */
 export async function reconcileActivity(db, activityId, { runsWanted = 5, requiredGreen = 5 } = {}) {
-  const act = (await db.query('SELECT id FROM activities WHERE id = $1', [activityId])).rows[0];
+  const act = (await db.query('SELECT id, journey_id FROM activities WHERE id = $1', [activityId])).rows[0];
   if (!act) throw Object.assign(new Error(`activity_not_found: ${activityId}`), { status: 404 });
   const steps = (await db.query(
     'SELECT id, key, readback FROM steps WHERE activity_id = $1 AND active IS NOT FALSE ORDER BY step_order', [activityId])).rows;
@@ -89,6 +90,8 @@ export async function reconcileActivity(db, activityId, { runsWanted = 5, requir
   const report = reconcileSteps({ steps, spans, runsWanted, requiredGreen });
   const cell = CELL_FOR_VERDICT[report.verdict];
   if (cell) {
+    // 合同同步新建的 Activity 没有验收格：先补齐固定 8 格再翻色，不然这条 UPDATE 命中 0 行，颜色静默丢了
+    await ensureEightCells(db, activityId, act.journey_id);
     await db.query(
       `UPDATE activity_cells SET cell_status = $2
         WHERE step_id = $1 AND cell_key = 'readback' AND parent_cell_key IS NULL AND cell_status IS DISTINCT FROM $2`, [activityId, cell]);
