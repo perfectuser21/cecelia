@@ -104,7 +104,9 @@ describe('migration 519 — 流程层登记：旧 ability → workflows，闹钟
   });
 
   it('22 条旧 ability 逐条转成流程：feature_id / key / 能力 id 同行出现，key 形状合法且全文件唯一', () => {
-    const keys = [...sql.matchAll(/^\s*\('([a-z][a-z0-9_.-]*)',/gm)].map((m) => m[1]);
+    const inserts = (sql.match(/INSERT INTO workflows[\s\S]*?;/g) || []).join('\n');
+    const keys = [...inserts.matchAll(/^\s*\('([^']*)',/gm)].map((m) => m[1]);
+    expect(keys.length).toBeGreaterThanOrEqual(CONVERTED.length + DEFAULT_OPS.length);
     expect(new Set(keys).size).toBe(keys.length);
     for (const k of keys) expect(k).toMatch(KEY_RE);
     for (const [featureId, key, capId] of CONVERTED) {
@@ -115,9 +117,11 @@ describe('migration 519 — 流程层登记：旧 ability → workflows，闹钟
   });
 
   it('为每个有闹钟但没流程的能力建默认定时作业流程；关键词获客复用既有 douyin_keyword_leadgen 不新建', () => {
-    for (const key of DEFAULT_OPS) expect(sql, key).toContain(`'${key}'`);
-    expect(sql).not.toMatch(/\('[a-z0-9_.-]+',[^\n]*'a1000000-0000-4000-8000-000000000001'/);
-    expect(sql).toContain(`'douyin_keyword_leadgen'`);
+    const inserts = (sql.match(/INSERT INTO workflows[\s\S]*?;/g) || []).join('\n');
+    for (const key of DEFAULT_OPS) expect(inserts, key).toContain(`'${key}'`);
+    expect(inserts).not.toContain('a1000000-0000-4000-8000-000000000001');
+    expect(inserts).not.toContain('douyin_keyword_leadgen');
+    expect(sql).toMatch(/\('douyin_keyword_leadgen',\s*'a1000000-0000-4000-8000-000000000001'\)/);
   });
 
   it('闹钟先归位能力（含 11 条挂在经营节奏价值流上的 OKR 闹钟 → G5），再按能力→流程回填 workflow_id，只填空值', () => {
