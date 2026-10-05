@@ -387,7 +387,7 @@ export async function resolveImpactRadius(input = {}, {
     const { rows } = await db.query(
       `SELECT link.id, link.assertion_ref, link.assertion_revision,
               journey.capability_code
-         FROM journey_step_links AS link
+         FROM activity_cells AS link
          JOIN journeys AS journey ON journey.id = link.journey_id
         WHERE journey.capability_code = ANY($1::text[])
           AND link.assertion_ref IS NOT NULL

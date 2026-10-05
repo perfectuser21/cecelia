@@ -122,7 +122,7 @@ async function projectRows(pool, token, notionReq) {
       properties, filter: { property: 'Key', rich_text: { equals: key } }, notionReq,
       verifyRecovered: page => textOf(page, 'Key') === key,
     });
-    await pool.query('UPDATE journey_steps SET notion_id=$2,notion_synced_at=NOW(),notion_digest=$3 WHERE id=$1', [row.id, pageId, propsDigest(properties)]);
+    await pool.query('UPDATE activities SET notion_id=$2,notion_synced_at=NOW(),notion_digest=$3 WHERE id=$1', [row.id, pageId, propsDigest(properties)]);
   }
   const runs = (await pool.query(`SELECT * FROM task_runs WHERE workflow_id=$1 ORDER BY started_at DESC LIMIT 100`, [w.id])).rows;
   for (const row of runs) {

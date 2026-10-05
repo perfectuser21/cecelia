@@ -1075,9 +1075,9 @@ export async function pullNotionTasksForTest(pool, token, opts = {}) {
 async function pushJourneyStepLinks(pool, token) {
   const { rows } = await pool.query(`
     SELECT l.*, j.name AS journey_name, s.name AS step_name
-    FROM journey_step_links l
+    FROM activity_cells l
     JOIN journeys j ON j.id = l.journey_id
-    LEFT JOIN journey_steps s ON s.id = l.step_id
+    LEFT JOIN activities s ON s.id = l.step_id
     WHERE l.notion_synced_at IS NULL OR l.updated_at > l.notion_synced_at
     ORDER BY l.updated_at
     LIMIT 50

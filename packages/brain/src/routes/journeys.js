@@ -73,8 +73,8 @@ router.get('/journey_features/:id/blast-radius', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT j.id AS journey_id, j.name AS journey_name, j.domain,
               s.id AS step_id, s.name AS step_name, s.step_number, s.promise, l.cell_status
-       FROM journey_step_links l
-       JOIN journey_steps s ON s.id = l.step_id
+       FROM activity_cells l
+       JOIN activities s ON s.id = l.step_id
        JOIN journeys j ON j.id = s.journey_id
        WHERE l.feature_id = $1 AND l.cell_kind = 'base_ref'
        ORDER BY j.name, s.step_number`, [req.params.id]);
@@ -327,7 +327,7 @@ router.get('/journey_steps', async (req, res) => {
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     params.push(limit);
     const { rows } = await pool.query(
-      `SELECT * FROM journey_steps ${where} ORDER BY journey_id, step_number LIMIT $${params.length}`,
+      `SELECT * FROM activities ${where} ORDER BY journey_id, step_number LIMIT $${params.length}`,
       params
     );
     res.json(rows);
@@ -345,12 +345,12 @@ router.post('/journey_steps', internalAuthOrLoopback, async (req, res) => {
       return res.status(400).json({ error: 'journey_id, name, step_number are required' });
     }
     const { rows } = await pool.query(
-      `INSERT INTO journey_steps (journey_id, name, step_number, description, status, promise, backbone_version, notion_synced_at)
+      `INSERT INTO activities (journey_id, name, step_number, description, status, promise, backbone_version, notion_synced_at)
        VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'1.0'),NULL)
        ON CONFLICT (journey_id, step_number) DO UPDATE SET
          name=EXCLUDED.name, description=EXCLUDED.description,
-         promise=COALESCE(EXCLUDED.promise, journey_steps.promise),
-         backbone_version=COALESCE($7, journey_steps.backbone_version),
+         promise=COALESCE(EXCLUDED.promise, activities.promise),
+         backbone_version=COALESCE($7, activities.backbone_version),
          updated_at=NOW()
        RETURNING *`,
       [journey_id, name, step_number, description || null, status || 'planned', promise || null, backbone_version || null]
@@ -380,7 +380,7 @@ router.get('/journey_step_links', async (req, res) => {
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     params.push(limit);
     const { rows } = await pool.query(
-      `SELECT * FROM journey_step_links ${where} ORDER BY journey_id, step_order LIMIT $${params.length}`,
+      `SELECT * FROM activity_cells ${where} ORDER BY journey_id, step_order LIMIT $${params.length}`,
       params
     );
     res.json(rows);
@@ -419,7 +419,7 @@ router.post('/journey_step_links', internalAuthOrLoopback, async (req, res) => {
       // 一致性护栏：格子行的 step_id 必须真实存在，且其 journey_id 必须与传入的 journey_id 一致
       // （防止调用方传错 journey_id，格子挂到错误的 GP 下却无感知）
       const { rows: steprows } = await pool.query(
-        `SELECT journey_id FROM journey_steps WHERE id=$1`, [step_id]
+        `SELECT journey_id FROM activities WHERE id=$1`, [step_id]
       );
       if (!steprows.length) return res.status(404).json({ error: 'step not found' });
       if (String(steprows[0].journey_id) !== String(journey_id)) {
@@ -427,7 +427,7 @@ router.post('/journey_step_links', internalAuthOrLoopback, async (req, res) => {
       }
 
       const { rows } = await pool.query(
-        `INSERT INTO journey_step_links
+        `INSERT INTO activity_cells
            (journey_id, step_id, cell_kind, cell_key, cell_status, feature_id, assertion_ref, na_reason, status, notion_synced_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'planned',NOW())
          ON CONFLICT (step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL DO UPDATE SET
@@ -444,7 +444,7 @@ router.post('/journey_step_links', internalAuthOrLoopback, async (req, res) => {
       return res.status(400).json({ error: 'step_order is required for non-cell links' });
     }
     const { rows } = await pool.query(
-      `INSERT INTO journey_step_links (journey_id, step_id, step_order, status, notion_synced_at)
+      `INSERT INTO activity_cells (journey_id, step_id, step_order, status, notion_synced_at)
        VALUES ($1,$2,$3,$4,NULL)
        ON CONFLICT (journey_id, step_id) WHERE cell_kind IS NULL DO UPDATE SET
          step_order=EXCLUDED.step_order, status=EXCLUDED.status
@@ -470,7 +470,7 @@ router.patch('/journey_step_links/:id', internalAuthOrLoopback, async (req, res)
 
     if (cell_status === 'green' && !assertion_ref) {
       const { rows: existing } = await pool.query(
-        'SELECT assertion_ref FROM journey_step_links WHERE id=$1',
+        'SELECT assertion_ref FROM activity_cells WHERE id=$1',
         [req.params.id]
       );
       if (!existing.length) return res.status(404).json({ error: 'not found' });
@@ -491,7 +491,7 @@ router.patch('/journey_step_links/:id', internalAuthOrLoopback, async (req, res)
     if (!sets.length) return res.status(400).json({ error: 'no fields to update' });
     vals.push(req.params.id);
     const { rows } = await pool.query(
-      `UPDATE journey_step_links SET ${sets.join(',')} WHERE id=$${idx} RETURNING *`,
+      `UPDATE activity_cells SET ${sets.join(',')} WHERE id=$${idx} RETURNING *`,
       vals
     );
     if (!rows.length) return res.status(404).json({ error: 'not found' });
@@ -516,7 +516,7 @@ router.get('/journeys/steps/:step_id/impact', async (req, res) => {
          jsl.cell_status,
          jsl.assertion_ref,
          jsl.na_reason
-       FROM journey_step_links jsl
+       FROM activity_cells jsl
        LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
        WHERE jsl.step_id = $1
        ORDER BY jsl.step_order, jsl.id`,
@@ -555,7 +555,7 @@ router.get('/journey_steps/:step_id/ledger', async (req, res) => {
          j.name AS journey_name,
          j.home,
          j.domain
-       FROM journey_steps js
+       FROM activities js
        JOIN journeys j ON j.id = js.journey_id
        WHERE js.id=$1`,
       [stepId]
@@ -580,7 +580,7 @@ router.get('/journey_steps/:step_id/ledger', async (req, res) => {
          jf.unit_test_path,
          jf.workflow_ref,
          jf.guard_ref
-       FROM journey_step_links jsl
+       FROM activity_cells jsl
        LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
        WHERE jsl.step_id = $1
          AND jsl.cell_kind IS NOT NULL
@@ -673,8 +673,8 @@ router.get('/features/:id/blast-radius', async (req, res) => {
          j.id            AS journey_id,
          j.name          AS journey_name,
          j.home
-       FROM journey_step_links jsl
-       JOIN journey_steps js ON js.id = jsl.step_id
+       FROM activity_cells jsl
+       JOIN activities js ON js.id = jsl.step_id
        JOIN journeys j       ON j.id  = js.journey_id
        WHERE jsl.feature_id = $1
        ORDER BY j.name, js.step_number`,
@@ -726,9 +726,9 @@ router.post('/cascade-list', internalAuthOrLoopback, async (req, res) => {
          js.step_number,
          j.id             AS journey_id,
          j.name           AS journey_name
-       FROM journey_step_links jsl
+       FROM activity_cells jsl
        LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
-       LEFT JOIN journey_steps    js ON js.id  = jsl.step_id
+       LEFT JOIN activities    js ON js.id  = jsl.step_id
        LEFT JOIN journeys          j ON j.id   = js.journey_id
        WHERE
          (jsl.assertion_ref = ANY($1::text[]))

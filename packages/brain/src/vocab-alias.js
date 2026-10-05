@@ -12,6 +12,9 @@ const ALIAS_MAP = new Map([
   ['/backbone-activities', '/journey_steps'],
   ['/features-registry', '/journey_features'],
   ['/acceptance-criteria', '/journey_step_links'],
+  // 迁移 522 起物理表叫 activity_cells / warehouse_items：标准名路径别名到既有端点（/activities/:id 已是 workflows.js 的独立路由，不占别名）
+  ['/activity-cells', '/journey_step_links'],
+  ['/warehouse-items', '/enablers'],
   ['/work-items', '/advancement_items'],
 ]);
 

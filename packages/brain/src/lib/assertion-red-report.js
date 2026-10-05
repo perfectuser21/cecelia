@@ -23,8 +23,8 @@ const FAIL_GROUPS_SQL = `
          BOOL_OR(r.scenario_evidence->>'severity' = 'error') AS has_error,
          MAX(r.created_at) AS last_at
   FROM journey_assertion_receipts r
-  JOIN journey_step_links l ON l.id = r.journey_step_link_id
-  JOIN journey_steps s ON s.id = l.step_id
+  JOIN activity_cells l ON l.id = r.journey_step_link_id
+  JOIN activities s ON s.id = l.step_id
   JOIN journeys j ON j.id = l.journey_id
   WHERE r.executor_kind = $1
     AND r.verdict = 'FAIL'

@@ -214,7 +214,7 @@ router.get('/lines', async (req, res) => {
     const stepsByJourney = new Map();
     if (journeyDbIds.length > 0) {
       const { rows: steps } = await pool.query(
-        `SELECT journey_id, status FROM journey_steps WHERE journey_id = ANY($1::uuid[])`,
+        `SELECT journey_id, status FROM activities WHERE journey_id = ANY($1::uuid[])`,
         [journeyDbIds]
       );
       for (const s of steps) {
@@ -295,7 +295,7 @@ router.get('/line/:id', async (req, res) => {
     // 2. steps（按 step_number 升序 = roadmap）
     const { rows: stepRows } = await pool.query(
       `SELECT step_number, name, status, description
-       FROM journey_steps WHERE journey_id = $1 ORDER BY step_number ASC`,
+       FROM activities WHERE journey_id = $1 ORDER BY step_number ASC`,
       [journey.id]
     );
     const steps = stepRows.map((s) => ({

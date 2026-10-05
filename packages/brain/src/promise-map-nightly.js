@@ -57,7 +57,7 @@ export async function buildNightlyAssertions(queryPool) {
   let a1Failed = [];
   for (const pr of anchoredPRs) {
     const { rows: [{ count }] } = await queryPool.query(
-      `SELECT COUNT(*) FROM journey_step_links WHERE step_id = $1 AND cell_status = 'green'`,
+      `SELECT COUNT(*) FROM activity_cells WHERE step_id = $1 AND cell_status = 'green'`,
       [pr.step_id],
     );
     if (parseInt(count, 10) === 0) {
@@ -103,12 +103,12 @@ export async function buildNightlyAssertions(queryPool) {
     SELECT jf.id, jf.name FROM journey_features jf
     WHERE jf."group" IN ('家③横切件池','家②共享前置')
       AND NOT EXISTS (
-        SELECT 1 FROM journey_step_links jsl WHERE jsl.feature_id = jf.id
+        SELECT 1 FROM activity_cells jsl WHERE jsl.feature_id = jf.id
       )
   `);
   // promise 缺失只查承诺地图域（home/domain 非空）——全库存量步骤走豁免（判定点④同源）
   const { rows: stepsNoPromise } = await queryPool.query(`
-    SELECT js.id, js.name FROM journey_steps js
+    SELECT js.id, js.name FROM activities js
     JOIN journeys j ON j.id = js.journey_id
     WHERE js.promise IS NULL
       AND (j.home IS NOT NULL OR j.domain IS NOT NULL)

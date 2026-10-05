@@ -100,7 +100,7 @@ router.post('/step-probes', internalAuthOrLoopback, async (req, res) => {
             target_type, target_id)
          VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, true, $9,
             COALESCE($10, CASE WHEN $4::uuid IS NOT NULL THEN 'activity' END),
-            COALESCE($11::uuid, (SELECT step_id FROM journey_step_links WHERE id = $4::uuid)))
+            COALESCE($11::uuid, (SELECT step_id FROM activity_cells WHERE id = $4::uuid)))
          ON CONFLICT (probe_key) DO UPDATE SET
            workflow = EXCLUDED.workflow,
            stage = EXCLUDED.stage,

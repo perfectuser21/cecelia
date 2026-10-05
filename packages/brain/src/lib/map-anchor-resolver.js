@@ -323,7 +323,7 @@ async function loadLedgerFeatures(client, scopeKey, capabilityKeys) {
   );
   const { rows: assertions } = await client.query(
     `SELECT l.id, l.feature_id, l.assertion_ref, l.assertion_revision, l.na_reason
-       FROM journey_step_links l
+       FROM activity_cells l
        JOIN journey_features f ON f.id = l.feature_id
        JOIN journeys j ON j.id = f.journey_id
       WHERE j.biz_area = $1

@@ -145,7 +145,7 @@ export async function pushStepProbes(pool, token, deps = {}) {
   const { rows } = await pool.query(
     `SELECT sp.*, jsl.cell_key, j.name AS journey_name
        FROM step_probes sp
-       LEFT JOIN journey_step_links jsl ON jsl.id = sp.journey_step_link_id
+       LEFT JOIN activity_cells jsl ON jsl.id = sp.journey_step_link_id
        LEFT JOIN journeys j ON j.id = jsl.journey_id
       WHERE sp.notion_synced_at IS NULL OR sp.updated_at > sp.notion_synced_at
       ORDER BY sp.updated_at
@@ -167,7 +167,7 @@ export async function pushProbeReceipts(pool, token, deps = {}) {
     `SELECT r.id, r.run_id, r.assertion_ref_snapshot, r.scenario_evidence, r.verdict, r.completed_at,
             r.notion_id, r.notion_digest, jsl.cell_key, j.name AS journey_name
        FROM journey_assertion_receipts r
-       LEFT JOIN journey_step_links jsl ON jsl.id = r.journey_step_link_id
+       LEFT JOIN activity_cells jsl ON jsl.id = r.journey_step_link_id
        LEFT JOIN journeys j ON j.id = jsl.journey_id
       WHERE r.executor_kind = 'business_probe_runner'
         AND r.notion_synced_at IS NULL

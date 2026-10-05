@@ -66,7 +66,7 @@ async function selectedVersions(db,q,capabilities) {
 async function readAssertions(db,usages,gaps) {
   const capabilities=[...new Set(usages.map(u=>u.capability_id))],activities=[...new Set(usages.map(u=>u.activity_id))];
   const rows=(await db.query(`SELECT id,journey_id,step_id,step_id_ref,assertion_ref,assertion_revision
-    FROM journey_step_links WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id`,[capabilities,activities])).rows;
+    FROM activity_cells WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id`,[capabilities,activities])).rows;
   const groups=new Map(),covered=new Set();
   const pair=(cap,activity,step)=>JSON.stringify([cap,activity,step||null]);
   for(const row of rows){

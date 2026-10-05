@@ -66,7 +66,7 @@ export async function registerJourney(pool, body, id) {
       row = (await client.query(`INSERT INTO journeys (${columns.join(',')},notion_synced_at)
         VALUES (${columns.map((_, i) => `$${i + 1}`).join(',')},NULL) RETURNING *`, Object.values(values))).rows[0];
       for (const [i, name] of (body.steps || []).entries()) {
-        await client.query('INSERT INTO journey_steps(journey_id,name,step_number,notion_synced_at) VALUES($1,$2,$3,NULL)', [row.id, name, i + 1]);
+        await client.query('INSERT INTO activities(journey_id,name,step_number,notion_synced_at) VALUES($1,$2,$3,NULL)', [row.id, name, i + 1]);
       }
     } else {
       const columns = Object.keys(data);

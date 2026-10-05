@@ -42,7 +42,7 @@ async function queryCellsFromJourneyStepLinks(changedFiles) {
   }
   const result = await pool.query(
     `SELECT DISTINCT jsl.assertion_ref, jsl.na_reason
-     FROM journey_step_links jsl
+     FROM activity_cells jsl
      LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
      WHERE
        (jsl.assertion_ref = ANY($1::text[]))

@@ -43,7 +43,7 @@ async function loadRelations(db) {
     FROM workflows w JOIN journeys c ON c.id=w.capability_id JOIN journeys p ON p.id=c.parent_journey_id AND p.parent_journey_id IS NULL
     LEFT JOIN workflow_definition_versions v ON v.id=w.current_definition_version_id AND v.workflow_id=w.id`)).rows;
   const usages = (await db.query(`SELECT w.capability_id,w.id workflow_id,r.activity_id,r.id reference_id
-    FROM workflow_activity_refs r JOIN workflows w ON w.id=r.workflow_id JOIN journey_steps a ON a.id=r.activity_id WHERE r.active`)).rows;
+    FROM workflow_activity_refs r JOIN workflows w ON w.id=r.workflow_id JOIN activities a ON a.id=r.activity_id WHERE r.active`)).rows;
   const bindings = (await db.query(`SELECT w.capability_id,w.id workflow_id,r.activity_id,r.id reference_id,b.value binding
     FROM workflows w JOIN workflow_definition_versions v ON v.id=w.current_definition_version_id AND v.workflow_id=w.id
     CROSS JOIN LATERAL jsonb_array_elements(v.payload->'activities') ref

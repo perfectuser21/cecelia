@@ -1,4 +1,7 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] sqlstandardnames v3.0 第 2 刀 b 段：生产代码（packages/brain/src 与 scripts/ci）里的 SQL 全部改写标准表名 activities / activity_cells / warehouse_items，不再往旧名视图读写（守卫测试抓 FROM/JOIN/INTO/UPDATE/TABLE/EXISTS/REFERENCES 与列限定写法，注释、对外 API 路径、Notion 注册表键、RENAME TO 重放除外）；新增 /activity-cells、/warehouse-items 路径别名；隔离 schema 夹具镜像生产形状（真表标准名 + 旧名视图，重放旧迁移期间临时叫回旧名）；匹配 SQL 的单元/集成/根测试随之改到标准名。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/sql-standard-table-names.test.js src/__tests__/vocab-alias.test.js src/__tests__/activity-contract-sync.test.js src/__tests__/notion-push-sync.test.js src/routes/__tests__/journeys.test.js --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] physicalrename v3.0 第 2 刀 a 段：迁移 522 把 journey_steps/journey_step_links/enablers 三张物理表换成标准名 activities/activity_cells/warehouse_items 并让旧名降为自动可更新视图（先删 521 的标准名视图再改名再建旧名视图），主键/唯一/CHECK 约束名随表，enforce_harness_gap_transition 与 journeys_child_after_delete 改指新名，投影注册表不动；回滚完全可逆；按旧表名查目录/约束/索引或用 LIKE 复制结构的 8 个集成测试与 dev-registry 随之改到标准名。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-522-physical-rename.test.js --maxWorkers=1 --minWorkers=1"
 

@@ -4,7 +4,7 @@ import { registrationError } from './registration.js';
 export async function loadCatalog(client) {
   const specifications = {
     workflows: `SELECT id,key,name,capability_id,version,status FROM workflows WHERE status<>'retired' ORDER BY key LIMIT 2001`,
-    activities: `SELECT id,name,activity_key,workflow_id,executor_kind,status,contract_sha256,contract FROM journey_steps WHERE activity_key IS NOT NULL AND status<>'deprecated' ORDER BY name LIMIT 2001`,
+    activities: `SELECT id,name,activity_key,workflow_id,executor_kind,status,contract_sha256,contract FROM activities WHERE activity_key IS NOT NULL AND status<>'deprecated' ORDER BY name LIMIT 2001`,
     skills: `SELECT id,name,description,location,status FROM skill_registry WHERE status IN ('active','planned') ORDER BY name LIMIT 2001`,
   };
   const catalog = { captured_at: new Date().toISOString() };

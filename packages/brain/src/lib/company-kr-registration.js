@@ -52,16 +52,16 @@ export async function registerCompanyKrWorkflow(pool,sourceOptions={}) {
     await client.query('UPDATE workflow_activity_refs SET active=false WHERE workflow_id=$1 AND active',[w.id]);
     for (const [i, activity] of s.activities.entries()) {
       const contract = activityContract(activity, i + 1,s), hash = stepSha256(contract);
-      const result = await client.query(`INSERT INTO journey_steps
+      const result = await client.query(`INSERT INTO activities
         (journey_id,name,description,step_number,status,capability_key,activity_key,backbone_version,workflow_id,executor_kind,contract,contract_sha256,contract_source)
         VALUES($1,$2,$3,$4,'active',$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
         ON CONFLICT(journey_id,activity_key) WHERE activity_key IS NOT NULL DO UPDATE SET
           name=EXCLUDED.name,description=EXCLUDED.description,step_number=EXCLUDED.step_number,
           backbone_version=EXCLUDED.backbone_version,contract=EXCLUDED.contract,
           contract_sha256=EXCLUDED.contract_sha256,contract_source=EXCLUDED.contract_source,
-          updated_at=CASE WHEN journey_steps.contract_sha256 IS DISTINCT FROM EXCLUDED.contract_sha256 THEN NOW() ELSE journey_steps.updated_at END
-        WHERE journey_steps.workflow_id=EXCLUDED.workflow_id AND journey_steps.executor_kind=EXCLUDED.executor_kind
-          AND journey_steps.capability_key=EXCLUDED.capability_key RETURNING id`,
+          updated_at=CASE WHEN activities.contract_sha256 IS DISTINCT FROM EXCLUDED.contract_sha256 THEN NOW() ELSE activities.updated_at END
+        WHERE activities.workflow_id=EXCLUDED.workflow_id AND activities.executor_kind=EXCLUDED.executor_kind
+          AND activities.capability_key=EXCLUDED.capability_key RETURNING id`,
       [s.capability_id, activity.name, activity.implementation, i + 1, s.capability, activity.key, s.version,
         w.id, activity.executor, canonicalJson(contract), hash, sourceUrl]);
       if (!result.rows.length) throw new Error(`活动归属冲突: ${activity.key}`);
@@ -71,7 +71,7 @@ export async function registerCompanyKrWorkflow(pool,sourceOptions={}) {
         ON CONFLICT(workflow_id,slot_key) DO UPDATE SET activity_id=EXCLUDED.activity_id,sequence_no=EXCLUDED.sequence_no,source_commit=EXCLUDED.source_commit,active=true`,
       [w.id,activity.key,result.rows[0].id,i+1,source.commit]);
     }
-    const foreign = (await client.query(`SELECT s.key FROM steps s JOIN journey_steps a ON a.id=s.activity_id
+    const foreign = (await client.query(`SELECT s.key FROM steps s JOIN activities a ON a.id=s.activity_id
       WHERE s.key=ANY($1::text[]) AND NOT EXISTS(SELECT 1 FROM workflow_activity_refs r WHERE r.activity_id=a.id AND r.workflow_id=$2 AND r.active)`, [s.steps.map(x => x.key), w.id])).rows;
     if (foreign.length) throw new Error('步骤已有其它工作流归属');
     const steps = await syncSteps(client, parseStepDod(JSON.stringify(s)), { manageTransaction: false });

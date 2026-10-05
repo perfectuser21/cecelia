@@ -114,7 +114,7 @@ async function getLatestReceipt(nodeKey, currentRevision) {
     `SELECT jar.verdict, jar.source_sha, jar.started_at, jar.completed_at,
             jar.assertion_ref_snapshot, jar.machine_id, jar.executor_kind
      FROM journey_assertion_receipts jar
-     JOIN journey_step_links jsl ON jsl.id = jar.journey_step_link_id
+     JOIN activity_cells jsl ON jsl.id = jar.journey_step_link_id
      JOIN journey_features jf ON jf.id = jsl.feature_id
      WHERE jf.name ILIKE $1
        OR jf.unit_test_path ILIKE $1

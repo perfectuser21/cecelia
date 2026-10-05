@@ -50,7 +50,7 @@ export async function validateReferences(client, definition, { requireActive = f
     if (requireActive && (skill.status !== 'active' || !text(skill.location) || skill.location === 'unverified')) throw registrationError('skill_not_ready', `Skill 未就绪: ${id}`);
   }
   for (const activity of definition.activities.filter(a => a.reuse_activity_id)) {
-    const row = (await client.query('SELECT id,status,contract_sha256 FROM journey_steps WHERE id=$1 FOR SHARE', [activity.reuse_activity_id])).rows[0];
+    const row = (await client.query('SELECT id,status,contract_sha256 FROM activities WHERE id=$1 FOR SHARE', [activity.reuse_activity_id])).rows[0];
     if (!row || row.status !== 'active') throw registrationError('activity_not_ready', `共享活动不可用: ${activity.reuse_activity_id}`);
     if (!activity.reuse_contract_sha256 || activity.reuse_contract_sha256 !== row.contract_sha256) throw registrationError('activity_revision_conflict', '共享活动定义已变化，需重新查找与验收');
   }
@@ -110,7 +110,7 @@ async function registrationReceipt(client, workflow, definition, options, shared
   const stored = (await client.query('SELECT id,key,version,status FROM workflows WHERE id=$1', [workflow.id])).rows[0];
   const actualIds = (shared
     ? (await client.query('SELECT activity_id AS id FROM workflow_activity_refs WHERE workflow_id=$1 AND active ORDER BY sequence_no', [workflow.id])).rows
-    : (await client.query("SELECT id FROM journey_steps WHERE workflow_id=$1 AND status='active' ORDER BY step_number", [workflow.id])).rows).map(row => row.id);
+    : (await client.query("SELECT id FROM activities WHERE workflow_id=$1 AND status='active' ORDER BY step_number", [workflow.id])).rows).map(row => row.id);
   if (canonicalDefinition(actualIds) !== canonicalDefinition(activityIds) || stored.version !== definition.version) {
     throw registrationError('registration_readback_failed', '登记回读的有序活动与定义不一致');
   }
@@ -134,7 +134,7 @@ export async function registerWorkflow(client, definition, options = {}) {
   if (options.operation === 'update' && (!workflow || workflow.id !== options.workflowId)) throw registrationError('workflow_ownership_conflict', '更新目标与稳定 key 不一致');
   const shared = await sharedReferencesAvailable(client);
   if (!shared && definition.activities.some(a => a.reuse_activity_id)) throw registrationError('shared_activity_references_not_ready', '共享活动引用底座尚未部署；保留草案，不复制共享真身');
-  const existing = workflow ? (await client.query('SELECT * FROM journey_steps WHERE workflow_id=$1 ORDER BY step_number FOR UPDATE', [workflow.id])).rows : [];
+  const existing = workflow ? (await client.query('SELECT * FROM activities WHERE workflow_id=$1 ORDER BY step_number FOR UPDATE', [workflow.id])).rows : [];
   const sameDefinition = workflow && (await hasRegistrationReceipt(client, workflow, digest)
     || existing.some(a => a.contract?.workflow_authoring?.definition_sha256 === digest));
   if (workflow && workflow.version === definition.version) {
@@ -162,7 +162,7 @@ export async function registerWorkflow(client, definition, options = {}) {
       [workflow.id,definition.name,definition.version])).rows[0];
   }
   if (shared) await client.query('UPDATE workflow_activity_refs SET active=false WHERE workflow_id=$1', [workflow.id]);
-  let nextNumber = Number((await client.query('SELECT COALESCE(MAX(step_number),0)+1 AS n FROM journey_steps WHERE journey_id=$1', [definition.capability_id])).rows[0].n);
+  let nextNumber = Number((await client.query('SELECT COALESCE(MAX(step_number),0)+1 AS n FROM activities WHERE journey_id=$1', [definition.capability_id])).rows[0].n);
   const activityIds = [], ownedKeys = [];
   for (const [index, activity] of definition.activities.entries()) {
     let activityId = activity.reuse_activity_id;
@@ -173,14 +173,14 @@ export async function registerWorkflow(client, definition, options = {}) {
       if (old?.status === 'active' && sameActivityContract(old.contract, contract)) {
         activityId = old.id;
       } else {
-        const result = await client.query(`INSERT INTO journey_steps(journey_id,name,description,step_number,status,
+        const result = await client.query(`INSERT INTO activities(journey_id,name,description,step_number,status,
         capability_key,activity_key,backbone_version,workflow_id,executor_kind,contract,contract_sha256,contract_source)
         VALUES($1,$2,$3,$4,'active',$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
         ON CONFLICT(journey_id,activity_key) WHERE activity_key IS NOT NULL DO UPDATE SET
           name=EXCLUDED.name,description=EXCLUDED.description,status='active',backbone_version=EXCLUDED.backbone_version,
           executor_kind=EXCLUDED.executor_kind,contract=EXCLUDED.contract,contract_sha256=EXCLUDED.contract_sha256,
           contract_source=EXCLUDED.contract_source,notion_synced_at=NULL,updated_at=NOW()
-        WHERE journey_steps.workflow_id=EXCLUDED.workflow_id RETURNING id`,
+        WHERE activities.workflow_id=EXCLUDED.workflow_id RETURNING id`,
       [definition.capability_id,activity.name,activity.implementation.ref,old?.step_number ?? nextNumber++,definition.key,key,
         definition.version,workflow.id,activity.executor_kind,JSON.stringify(contract),registrationDigest(contract),`${definition.source.ref}@${definition.source.revision}`]);
         if (!result.rows.length) throw registrationError('activity_ownership_conflict', '活动归属冲突');
@@ -194,7 +194,7 @@ export async function registerWorkflow(client, definition, options = {}) {
       source_commit=EXCLUDED.source_commit,active=true,updated_at=NOW()`,
     [workflow.id,activity.key,activityId,index+1,definition.source.ref,definition.source.revision]);
   }
-  await client.query(`UPDATE journey_steps SET status='deprecated',notion_synced_at=NULL,updated_at=NOW()
+  await client.query(`UPDATE activities SET status='deprecated',notion_synced_at=NULL,updated_at=NOW()
     WHERE workflow_id=$1 AND status<>'deprecated' AND NOT(activity_key=ANY($2::text[])) AND contract->'workflow_authoring'->>'workflow_key'=$3`,
   [workflow.id,ownedKeys,definition.key]);
   return registrationReceipt(client, workflow, definition, options, shared, activityIds, false);
