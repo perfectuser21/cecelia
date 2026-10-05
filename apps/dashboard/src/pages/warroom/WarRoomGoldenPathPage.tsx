@@ -197,7 +197,7 @@ export default function WarRoomGoldenPathPage() {
                 <ConversationsPanel journeyId={journeyId} gpId={gpId} />
               ) : (
                 <div className="flex flex-col items-center justify-center flex-1 gap-3 py-8">
-                  <div className="text-[12px] text-slate-600 text-center">该 Capability 未关联 Journey，无法加载对话</div>
+                  <div className="text-[12px] text-slate-600 text-center">该能力未关联价值流，无法加载对话</div>
                 </div>
               )}
             </div>
@@ -211,7 +211,7 @@ export default function WarRoomGoldenPathPage() {
             ) : (
               <div className="flex flex-col items-center justify-center h-full gap-3">
                 <BookOpen className="w-8 h-8 text-slate-600" />
-                <div className="text-sm text-slate-500">该 Capability 未关联 Journey，无法显示 DoD·NFR 账本</div>
+                <div className="text-sm text-slate-500">该能力未关联价值流，无法显示 DoD·NFR 账本</div>
               </div>
             )}
           </div>

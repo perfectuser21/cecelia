@@ -15,7 +15,7 @@ const ELEMENTS = [
   { key: 'ttl',         label: '保质期',   fullLabel: '保质期',     tooltip: '是否有 unit_test_path' },
   { key: 'death',       label: '死亡告警', fullLabel: '死亡告警',   tooltip: '是否配置了 guard_ref' },
   { key: 'failure',     label: '失败语义', fullLabel: '失败语义',   tooltip: '是否定义了失败语义' },
-  { key: 'e2e',         label: '效果确认', fullLabel: '效果确认',   tooltip: 'Journey E2E 路径是否设置' },
+  { key: 'e2e',         label: '效果确认', fullLabel: '效果确认',   tooltip: '价值流 E2E 路径是否设置' },
   { key: 'adversarial', label: '对抗面',   fullLabel: '输入对抗面', tooltip: '是否覆盖了输入对抗测试' },
   { key: 'freshness',   label: '账本保鲜', fullLabel: '账本保鲜',   tooltip: '账本最近更新距今天数' },
   { key: 'twoaxis',     label: '两轴衔接', fullLabel: '两轴衔接',   tooltip: '能力轴是否与 GTD/OKR 轴对齐' },
