@@ -1,4 +1,5 @@
 /** 六层目录的机器列合同。人填名称、Parent、负责人及旧关系不归此模块写入。 */
+import { activityCardSchema, stepCardSchema } from './activity-card.js';
 const LAYERS = ['areas', 'value_streams', 'capabilities', 'workflows', 'activities', 'steps'];
 const UUID = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const normalize = value => String(value ?? '').replaceAll('-', '').toLowerCase();
@@ -31,12 +32,12 @@ export function buildDirectorySchemas(dbs) {
     },
     activities: {
       ...common(), Name: { title: {} }, '所属Workflows': relation(dbs.workflows), Steps: relation(dbs.steps),
-      '使用位置': rich(), '执行主体': rich(),
+      '使用位置': rich(), '执行主体': rich(), ...activityCardSchema(),
     },
     steps: {
       ...common(), '步骤': { title: {} }, Key: rich(), '所属Activity': relation(dbs.activities), '所属Workflows': relation(dbs.workflows),
       Input: rich(), Output: rich(), '验收标准': rich(), '证据读取': rich(),
-      '实现来源': rich(), '执行主体': rich(), '登记状态': { select: {} },
+      '实现来源': rich(), '执行主体': rich(), '登记状态': { select: {} }, ...stepCardSchema(),
     },
   };
 }

@@ -1,5 +1,6 @@
 /** 六层目录只读源：共享引用为准；不改契约、归属、版本或人工列。 */
 import { isDeepStrictEqual } from 'node:util';
+import { buildActivityCardProps, buildStepCardProps } from './activity-card.js';
 export const DIRECTORY_TABLES = Object.freeze({ areas: 'areas', value_streams: 'journeys', capabilities: 'journeys', workflows: 'workflows', activities: 'activities', steps: 'steps' });
 export const rich = value => ({ rich_text: value == null || value === '' ? [] : [{ text: { content: (typeof value === 'string' ? value : JSON.stringify(value)).slice(0, 1900) } }] });
 const ref = (layer, id) => ({ layer, id });
@@ -101,7 +102,8 @@ export function buildDirectoryRows(data, config = {}) {
       .map(entry => `step_registration_unresolved:${entry.locator?.step_key || entry.contract?.key || 'unknown'}`);
     const row = make('activities', a, { Name: title(a.name), '执行主体': rich(a.executor_kind || 'unknown'),
       '责任主体': rich(a.contract?.owner ? JSON.stringify(a.contract.owner) : 'unknown'),
-      '使用位置': rich(usage.map(r => `${r.workflow_id} / ${r.slot_key} / ${r.sequence_no}`).join('\n')) }, {
+      '使用位置': rich(usage.map(r => `${r.workflow_id} / ${r.slot_key} / ${r.sequence_no}`).join('\n')),
+      ...buildActivityCardProps(a, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id)) }, {
       '所属Workflows': unique(usage.map(r => ref('workflows', r.workflow_id))),
       Steps: data.steps.filter(s => s.activity_id === a.id && s.active).sort((a, b) => a.step_order - b.step_order).map(s => ref('steps', s.id)),
     }, [...(!a.executor_kind ? ['executor_unknown'] : []), ...(!a.contract ? ['contract_missing'] : []), ...unresolved]);
@@ -118,7 +120,7 @@ export function buildDirectoryRows(data, config = {}) {
       Input: rich(contract.input ?? fieldList(declared?.reads)), Output: rich(contract.output ?? fieldList(declared?.writes)),
       '验收标准': rich(contract.acceptance ?? readback.asserts ?? readback.expect ?? declared?.check),
       '证据读取': rich(evidence), '实现来源': rich(implementation), '执行主体': rich(a?.executor_kind || 'unknown'),
-      '登记状态': select(s.active ? 'active' : 'retired') }, {
+      '登记状态': select(s.active ? 'active' : 'retired'), ...buildStepCardProps(s) }, {
       ...(s.activity_id ? { '所属Activity': [ref('activities', s.activity_id)] } : {}),
       '所属Workflows': unique(refs.filter(r => r.activity_id === s.activity_id).map(r => ref('workflows', r.workflow_id))),
     }, [...(!implementation ? ['implementation_unknown'] : []), ...(!a ? ['activity_unknown'] : []),
@@ -141,6 +143,10 @@ export async function loadDirectorySource(pool) {
       WHERE (to_jsonb(a)->>'capability_key' IS NOT NULL AND to_jsonb(a)->>'activity_key' IS NOT NULL)
       OR EXISTS(SELECT 1 FROM workflow_activity_refs r WHERE r.activity_id=a.id AND r.active)),'[]'::jsonb),
     'steps',COALESCE((SELECT jsonb_agg(to_jsonb(s)) FROM steps s),'[]'::jsonb),
+    'cells',COALESCE((SELECT jsonb_agg(jsonb_build_object('step_id',c.step_id,'cell_key',c.cell_key,'cell_status',c.cell_status,'parent_cell_key',c.parent_cell_key))
+      FROM activity_cells c WHERE c.step_id IS NOT NULL),'[]'::jsonb),
+    'uses',COALESCE((SELECT jsonb_agg(jsonb_build_object('activity_id',u.activity_id,'item_name',i.name,'role',u.role) ORDER BY i.name)
+      FROM activity_uses u JOIN warehouse_items i ON i.id=u.item_id),'[]'::jsonb),
     'refs',COALESCE((SELECT jsonb_agg(to_jsonb(r)) FROM workflow_activity_refs r),'[]'::jsonb),
     'map_nodes',COALESCE((SELECT jsonb_agg(jsonb_build_object('scope',l.scope,'node_key',l.node_key,
       'name',n.name,'notion_id',l.notion_id,'journey_id',n.attributes->>'journey_id','active',true))

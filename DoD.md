@@ -1,4 +1,7 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] notioncardcols v3.0 第 3 刀 b 段：目录投影把 Activity 页补成 15 列机器列（承诺/输入/输出/前提/不变量/NFR/失败语义/读回/判定点/对抗/保质期/用料）加 8 个带红绿灰黄色的格子列（来自 activity_cells 的 8 个标准格，缺格按灰、子项格不进卡片、不串别家），Step 页补动作/失败处理/模式三列；列名取值只在 activity-card.js 定义一次，目录 schema 与目录源共用；空值不编造；目录源 SQL 增载格子与用料并有真 PG 测试。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/projection/__tests__/activity-card.test.js src/projection/__tests__/directory-schema.test.js src/projection/__tests__/directory-source.test.js --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] notionregistrynames v3.0 第 3 刀 a 段：迁移 523 把 notion_projection_map 的键 journey_steps/journey_step_links 换成标准名 activities/activity_cells（先清未映射占位）、旧「价值流与能力」混合库停推（价值流与 Capabilities 早已各有独立库）、Ops 运行图谱登记名改闹钟总账；代码里 resolveDbId/推送表键/目录投影表映射/LEGACY_DB_CONSTANTS 同步标准名；pushOpsGraph 幂等把 Notion 库标题改为闹钟总账；守卫禁止代码再用旧名作注册表键。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/notion-registry-standard-keys.test.js src/__tests__/migration-523-notion-registry-names.test.js src/__tests__/ops-quota-notion.test.js --maxWorkers=1 --minWorkers=1"
 
