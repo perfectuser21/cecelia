@@ -24,7 +24,7 @@ function defaultRunner(args, prompt) {
   return new Promise((resolve, reject) => {
     execFile('claude', ['-p', ...args, '--model', COMMANDER_MODEL, prompt], {
       timeout: WAKE_TIMEOUT_MS,
-      env: { ...process.env, CLAUDE_CONFIG_DIR: process.env.SEQUENCER_COMMANDER_CONFIG_DIR || process.env.HOME + '/.claude' },
+      env: { ...process.env, CLAUDE_CONFIG_DIR: process.env.SEQUENCER_COMMANDER_CONFIG_DIR || process.env.HOME + '/.claude-account1' },
       maxBuffer: 4 * 1024 * 1024,
     }, (err, stdout) => (err ? reject(err) : resolve(String(stdout).trim())));
   });

@@ -13,7 +13,7 @@
 #     末尾参数传入；改到 entrypoint.sh 后同样把 "$@" 透传给 claude。
 #
 # 约定：
-#  - 宿主 CLAUDE_CONFIG_DIR（即 ~/.claude）以 :rw 挂载到
+#  - 宿主 CLAUDE_CONFIG_DIR（例如 ~/.claude-account1）以 :rw 挂载到
 #    /host-claude-config（凭据软链需要写回，见第 1 段）
 #  - 容器内 claude 使用 /home/cecelia/.claude（可写，副本）
 #  - docker-executor 注入 CLAUDE_CONFIG_DIR=/home/cecelia/.claude（覆盖宿主路径）
