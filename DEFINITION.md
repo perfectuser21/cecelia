@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.376.1
+**Brain 版本**: 1.376.5
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,41 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.376.5 — 树+仓库 v3.0 第 4 刀（路 B）：技能按 Step 发 span、沉淀成候选 Activity、收敛对账
+
+- 任务 3590ec8f：探索先行的那条路补上程序。技能每做完一步发一条 Step span（`scripts/emit-step-span.mjs`，证据约定 `step_key / name / action / reads / writes / observed`，走现成的 `POST /api/brain/spans`）。
+- 收敛对账（`lib/step-reconcile.js`，`POST /api/brain/step-reconcile/:activityId`）：把最近 N 次运行里每个 Step 的观测值按 `Steps.readback` 求值，逐次判已验证 / 对不上 / 未验证 / 失败 / 缺失 / 跳过 / 豁免，抓出合同没声明的 Step；连续 N 次整个 Activity 全绿 = 收敛（可以固化），并把 `readback` 格翻绿，对不上翻红，收敛中待判，没数据不动。拿不到观测值一律「未知」，不猜通过。
+- 读回求值（`lib/step-readback-eval.js`）：支持合同的 `== >= <= not_null_all`，另加 `!= > <`。
+- 沉淀技能（`lib/skill-settlement.js`，`POST /api/brain/skill-settlement/draft` 与 `/register`）：读 spans + SKILL.md 起草 Steps（名字/动作/进出取自 span；读回只在各次观测值一致且跑过两次以上才起草 `==`；失败处理只由重试/失败痕迹推出），登记为 `candidate` 状态的 Activity：承诺列保持空、固定 8 个灰格、一条待拍板（三问：承诺对不对 / 哪些失败要人 / 判定点误判后果，72 小时不答按默认走）。同一 能力.活动 重复登记不覆盖。
+- 未做（刻意）：新 Activity 经合同同步插入时补 8 灰格，等 Step 同步那个 PR 合并后再接，避免两个 PR 改同一个文件。
+
+## Brain 1.376.4 — 树+仓库 v3.0 第 4 刀（路 A）：契约 Step 的读回终于进 Brain，不写读回不许过
+
+- 任务 3590ec8f：生产里获客线 44 个 Step 的读回全是空对象，不是合同没写，而是同步映射错了——合同把读回写在 `dod.readback`、模式写在 `dod.mode`，同步却只认 `step.readback`；且生产同步根本没开 Step 同步（只有 CI 快照路径开着）。
+- 映射集中到 `lib/contract-steps.js`：读回取 `dod.readback`、模式取 `dod.mode`，名字、动作（实现引用，按脚本精度）、进出（`reads` / `writes`）一并落库；失败处理只认合同显式写的 `retry:N` 或 `abort`，没写就是空，不编造。
+- `syncSteps` 写新列（name / action / inputs / outputs / on_fail）：新列只在来源带了才进指纹，旧来源（`step-dod.json`）的指纹不变、也不会把已同步的新列清空；库里没有这些列的旧夹具自动退回只写老字段。
+- 生产同步（`backbone-contract-sync`，30 分钟一轮）默认同时落 Step；下一轮起获客线 Step 读回自动补齐，另一条标杆链接获客线的 Step 也会入库。
+- 硬闸「不写读回不许过」：同步 Step 前先验每个 Step 都有 `dod.readback`（`type: none` 必须写原因，与合同 schema 同口径），缺口一次列全、整轮拒绝、不写任何库，按同步滞后处理（超 2 小时告警）。
+- 测试夹具：共享合同夹具与活动合同同步测试里的 Step 补上 `dod`，与真实合同形状一致。
+
+## Brain 1.376.3 — 树+仓库 v3.0 第 3 刀 b/c 段：Notion 的 Activity 页补 15 列和 8 格颜色，Step 页补三列，新增仓库物件库与用料库
+
+- 仓库物件库、用料库（c 段）：迁移 524 给 `warehouse_items` / `activity_uses` 补 Notion 记账列；新模块 `notion-warehouse-projection` 把仓库物件（8 个货架选项带色，「被用于」列出用到它的 Activity）和用料（Activity、物件各一个 relation）单向推到 Notion。库缺就在目录父页下建（带来源标记，认领同名同标记库，建后登记注册表，重跑不重复建）。Notion API 建不了按货架过滤的视图，库里的「货架」选项列按它分组/过滤即是 8 个货架视图。
+
+- 任务 f4f75a20：目录投影（Brain → Notion 六层目录库）给 Activity 页加机器列：承诺、输入、输出、前提、不变量、NFR、失败语义、读回、判定点、对抗、保质期（天）、用料，再加 8 个格子列（格·承诺 … 格·保质期），颜色取自 `activity_cells` 的 8 个标准格：🟢 绿、🔴 红、🟡 待判、⚪ 灰。缺格按灰，子项格（场景检查）不进卡片，不会串到别的 Activity。
+- Step 页补「动作」「失败处理」「模式」三列（`steps` 的 action / on_fail / mode）。
+- 列名与取值集中在 `projection/activity-card.js`，目录 schema 建列与目录源构造行共用，改一处两边一致；空值不编造。库里缺的列由目录投影器每轮 `ensureDirectorySchemas` 自动补，格子列带颜色选项。
+- 目录源 SQL 增载 `activity_cells` 与 `activity_uses`，真 PG 测试覆盖。人在 Notion 上改这些列会被下一轮覆盖：以后怎么改，改 Brain 真身（合同/技能沉淀），Notion 自动跟。
+
+## Brain 1.376.2 — 树+仓库 v3.0 第 3 刀 a 段：Notion 注册表键改标准表名，价值流/能力分库，闹钟总账改名
+
+- 任务 f4f75a20：迁移 523 把 `notion_projection_map.brain_table` 的 `journey_steps` / `journey_step_links` 换成标准名 `activities` / `activity_cells`（先清 521/522 预留的未映射占位）。旧名视图在第 2 刀 c 段会删，键不先改，`resolveDbId` 查不到 active 行，推送会静默停更。
+- 旧「价值流与能力（journeys）」混合库停推（只读保留，不删页）：价值流与 Capabilities 早已由 directory-projection 分别推到各自的库，不再两库混推。
+- 「Ops 运行图谱」登记名改「闹钟总账」；`pushOpsGraph` 每轮幂等检查 Notion 库标题，不同才 PATCH 改名。
+- 代码同步：`resolveDbId` / 推送表键 / 目录投影表映射 / `LEGACY_DB_CONSTANTS` 全部标准名；新增守卫 `notion-registry-standard-keys.test.js` 禁止再用旧名作注册表键（API 路径、别名表、cascade-list 的 source 标签除外）。
+- 同一迁移把 `projection_links` 里 `journey_steps` 的实体类型改成 `activities`（共 42 条）：目录投影与登记推送按表键查页面链接，不改的话已建页面会被判「未链接」并与旧链接冲突。
+- 迁移与新代码同一次发布；切换窗口内键名短暂不一致，最多一个推送周期不推这两库，下一轮自动补齐。
 
 ## Brain 1.376.1 — 树+仓库 v3.0 第 2 刀 b 段：生产代码 SQL 全部切到标准表名
 
