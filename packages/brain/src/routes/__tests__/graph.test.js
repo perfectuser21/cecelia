@@ -38,7 +38,7 @@ function primeContext({ promiseRows = [], siblingRows = [] } = {}) {
       return { rows: [{ ...FRESHNESS_ROW, repo: _params?.[0] || 'cecelia', row_count: EDGE_ROWS.length }] };
     }
     if (s.includes('FROM journey_features')) return { rows: FEATURE_ROWS };
-    if (s.includes('journey_step_links l') && s.includes('journey_steps')) return { rows: promiseRows };
+    if (s.includes('activity_cells l') && s.includes('activities')) return { rows: promiseRows };
     if (s.includes('l2.step_id = l1.step_id')) return { rows: siblingRows };
     throw new Error('unexpected sql: ' + s.slice(0, 80));
   });

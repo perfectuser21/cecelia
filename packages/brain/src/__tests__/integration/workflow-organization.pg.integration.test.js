@@ -5,7 +5,7 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, afterEach, it, expect, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { likeSource } from '../fixtures/minimum-definition-schema.js';
+import { likeSource, useStandardNames, withLegacyNames } from '../fixtures/minimum-definition-schema.js';
 const holder = vi.hoisted(() => ({ db: null }));
 vi.mock('../../db.js', () => ({ default: { query: (...args) => holder.db.query(...args) } }));
 import routes from '../../routes/workflows.js';
@@ -17,11 +17,13 @@ beforeEach(async () => {
   schema = `workflow_org_${randomUUID().replaceAll('-', '')}`;
   await db.query(`CREATE SCHEMA ${schema}`);
   for (const table of ['areas', 'journeys', 'workflows', 'journey_steps', 'steps', 'spans', 'enablers', 'enabler_calls', 'schema_version']) {
-    await db.query(`CREATE TABLE ${schema}.${table} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
+    await db.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   }
   await db.query(`SET search_path TO ${schema}`);
-  await db.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
-  await db.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql', import.meta.url), 'utf8'));
+  await withLegacyNames(db, async () => {
+    await db.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
+    await db.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql', import.meta.url), 'utf8'));
+  });
   ids = Object.fromEntries(['company', 'media', 'support', 'stream', 'capA', 'capB', 'wfA', 'wfB', 'activity'].map(k => [k, randomUUID()]));
   await db.query(`INSERT INTO areas(id,name,parent_area_id) VALUES($1,'公司',NULL),($2,'新媒体',$1),($3,'客服',$1)`, [ids.company, ids.media, ids.support]);
   await db.query(`INSERT INTO journeys(id,name,parent_journey_id,area_id,capability_code) VALUES

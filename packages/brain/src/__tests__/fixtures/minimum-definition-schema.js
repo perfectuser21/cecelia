@@ -22,9 +22,27 @@ export async function minimumDefinitionSchema(db,{runs=true}={}){
  await db.query(migrationTable('436_ops_workflows.sql','ops_workflows'));
  await db.query(migrationSql('494_vs_model_workflows.sql'));
  if(runs){await db.query(migrationSql('059_task_runs.sql'));await db.query(migrationSql('495_vs_model_spans.sql'));}
+ await useStandardNames(db);
 }
 
-// 迁移 522 起 journey_steps / journey_step_links / enablers 在 public 里是旧名视图（真表 activities / activity_cells / warehouse_items）。
-// 夹具 `CREATE TABLE x (LIKE public.<t> INCLUDING ALL)` 复制结构必须从真表复制（视图拿不到主键/默认值）；复制出来的表在隔离 schema 里仍叫旧名，被测代码照旧名查。
-export const LIKE_SOURCE=Object.freeze({journey_steps:"activities",journey_step_links:"activity_cells",enablers:"warehouse_items"});
+// 迁移 522 起生产库里 activities / activity_cells / warehouse_items 是真表，旧名 journey_steps / journey_step_links / enablers 是视图。
+// 夹具镜像这一形状：旧迁移（282/348/482/492/494/…）按旧名建表与加列，所以重放期间要把真表临时叫回旧名（withLegacyNames），
+// 重放完再改回标准名并重建旧名视图（useStandardNames）；被测代码按标准名查，测试里的裸 SQL 仍可按旧名写。
+const LEGACY_PAIRS=[['journey_steps','activities'],['journey_step_links','activity_cells'],['enablers','warehouse_items']];
+const LIKE_SOURCE=Object.freeze(Object.fromEntries(LEGACY_PAIRS));
 export const likeSource=(table)=>LIKE_SOURCE[table]??table;
+async function relkind(db,name){return (await db.query("SELECT c.relkind FROM pg_class c WHERE c.relname=$1 AND c.relnamespace=current_schema()::regnamespace",[name])).rows[0]?.relkind;}
+export async function useStandardNames(db){
+ for(const [oldName,newName] of LEGACY_PAIRS){
+  if(await relkind(db,oldName)==='v')await db.query(`DROP VIEW ${oldName}`);
+  if(await relkind(db,oldName)==='r'&&!(await relkind(db,newName)))await db.query(`ALTER TABLE ${oldName} RENAME TO ${newName}`);
+  if(await relkind(db,newName)==='r'&&!(await relkind(db,oldName)))await db.query(`CREATE VIEW ${oldName} AS SELECT * FROM ${newName}`);
+ }
+}
+export async function withLegacyNames(db,fn){
+ for(const [oldName,newName] of LEGACY_PAIRS){
+  if(await relkind(db,oldName)==='v')await db.query(`DROP VIEW ${oldName}`);
+  if(await relkind(db,newName)==='r'&&!(await relkind(db,oldName)))await db.query(`ALTER TABLE ${newName} RENAME TO ${oldName}`);
+ }
+ try{return await fn();}finally{await useStandardNames(db);}
+}

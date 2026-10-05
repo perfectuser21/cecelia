@@ -5,7 +5,7 @@ import { beforeEach, afterEach, describe, it, expect } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { likeSource } from '../fixtures/minimum-definition-schema.js';
+import { likeSource, useStandardNames, withLegacyNames } from '../fixtures/minimum-definition-schema.js';
 import { registerWorkflow, registrationDigest } from '../../workflow-authoring/registration.js';
 import { createWorkflowAuthoringRouter } from '../../routes/workflow-authoring.js';
 import { listWorkflows, readActivityConsumers } from '../../lib/workflow-read-service.js';
@@ -17,9 +17,10 @@ beforeEach(async () => {
   schema = `workflow_authoring_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
   for (const table of ['journeys','workflows','journey_steps','skill_registry','tasks']) {
-    await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
+    await client.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   }
   await client.query(`SET search_path TO ${schema},public`);
+  await useStandardNames(client);
   const cap = randomUUID(), skill = randomUUID();
   await client.query(`INSERT INTO journeys(id,name,parent_journey_id,status) VALUES($1,'工作流管理',$2,'active')`, [cap, randomUUID()]);
   await client.query(`INSERT INTO skill_registry(id,name,location,status) VALUES($1,'workflow-authoring','/skills/workflow-authoring/SKILL.md','active')`, [skill]);
@@ -123,7 +124,7 @@ describe('管理流程最终登记：真实 PostgreSQL', () => {
 async function enableSharedReferences() {
   await client.query(`CREATE TABLE workflow_activity_refs (
     workflow_id uuid NOT NULL REFERENCES workflows(id), slot_key text NOT NULL,
-    activity_id uuid NOT NULL REFERENCES journey_steps(id), sequence_no integer NOT NULL CHECK(sequence_no>0),
+    activity_id uuid NOT NULL REFERENCES activities(id), sequence_no integer NOT NULL CHECK(sequence_no>0),
     source_ref text NOT NULL, source_commit text NOT NULL, active boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY(workflow_id,slot_key))`);
@@ -145,12 +146,14 @@ async function registrySnapshot() {
 describe('authoring 与真实共享关系和版本底座读模型贯通', () => {
   it('真实迁移后登记、共享复用和重排均保留真身ID及引用ID，读模型返回实际顺序', async () => {
     for (const table of ['spans', 'schema_version', 'steps', 'enablers', 'enabler_calls', 'areas']) {
-      await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
+      await client.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
     }
     // 真实迁移仅落隔离 schema，避免解析到 public 的版本表或触发器。
     await client.query(`SET search_path TO ${schema}`);
-    await client.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
-    await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql', import.meta.url), 'utf8'));
+    await withLegacyNames(client, async () => {
+      await client.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
+      await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql', import.meta.url), 'utf8'));
+    });
     const owner = await register();
     const ownerView = (await listWorkflows(client, { id: owner.workflow_id }))[0];
     expect(ownerView.activity_count).toBe(6);

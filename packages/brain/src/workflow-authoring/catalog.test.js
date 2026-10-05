@@ -11,7 +11,7 @@ describe('loadCatalog 完整性', () => {
     expect(Number.isFinite(Date.parse(result.captured_at))).toBe(true);
   });
   it.each(['workflows', 'activities', 'skills'])('%s 超过2000项拒绝整份目录，不能静默截断', async (kind) => {
-    const table = { workflows: 'workflows', activities: 'journey_steps', skills: 'skill_registry' }[kind];
+    const table = { workflows: 'workflows', activities: 'activities', skills: 'skill_registry' }[kind];
     const query = vi.fn(async sql => ({ rows: sql.includes(`FROM ${table} `) ? Array.from({ length: 2001 }, (_, i) => ({ id: String(i) })) : [] }));
     await expect(loadCatalog({ query })).rejects.toMatchObject({ code: 'catalog_too_large' });
   });

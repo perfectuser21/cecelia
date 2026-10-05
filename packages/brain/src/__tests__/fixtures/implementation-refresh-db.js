@@ -1,6 +1,6 @@
 import pg from 'pg';
 import {randomUUID} from 'node:crypto';
-import {migrationTable,migrationSlice} from './minimum-definition-schema.js';
+import {migrationTable,migrationSlice,withLegacyNames} from './minimum-definition-schema.js';
 import {submitMapManifest,activateMapManifest} from '../../lib/map-manifest-store.js';
 import {runProjection} from '../../map/projector.js';
 import { DB_DEFAULTS } from '../../db-config.js';
@@ -19,7 +19,7 @@ export async function implementationRefreshDatabase({manifestRevision='a'.repeat
   await pool.query(migrationTable('000_base_schema.sql','pending_actions'));
   await pool.query(migrationTable('334_golden_paths.sql','golden_paths'));
   await pool.query(migrationSlice('372_golden_path_contract_versions.sql','CREATE TABLE IF NOT EXISTS golden_path_contract_versions','INSERT INTO schema_version'));
-  await pool.query(migrationSlice('374_gp_assertion_receipts.sql','CREATE TABLE IF NOT EXISTS journey_assertion_receipts','INSERT INTO schema_version'));
+  await withLegacyNames(pool,()=>pool.query(migrationSlice('374_gp_assertion_receipts.sql','CREATE TABLE IF NOT EXISTS journey_assertion_receipts','INSERT INTO schema_version')));
   const decision=randomUUID();
   await pool.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','并发契约设置','active')",[decision]);
   const manifest=buildPilotManifest('phones',{revision:manifestRevision,decision});

@@ -25,8 +25,8 @@ describe('readAssertionRedState — 分组与分级', () => {
     const [sql, params] = pool.query.mock.calls[0];
     expect(sql).toMatch(/FROM journey_assertion_receipts/);
     expect(sql).toMatch(/verdict = 'FAIL'/);
-    expect(sql).toMatch(/journey_step_links/);
-    expect(sql).toMatch(/journey_steps/);
+    expect(sql).toMatch(/activity_cells/);
+    expect(sql).toMatch(/activities/);
     expect(sql).toMatch(/JOIN journeys/);
     expect(params).toEqual([PROBE_EXECUTOR_KIND, 24]);
     expect(PROBE_EXECUTOR_KIND).toBe('business_probe_runner');

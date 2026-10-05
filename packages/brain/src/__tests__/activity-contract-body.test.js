@@ -93,8 +93,8 @@ function fakePool(rows) {
   return {
     updates,
     async query(text, params) {
-      if (/FROM journey_steps/.test(text)) return { rows };
-      if (/UPDATE journey_steps SET notion_body_digest/.test(text)) updates.push(params);
+      if (/FROM activities/.test(text)) return { rows };
+      if (/UPDATE activities SET notion_body_digest/.test(text)) updates.push(params);
       return { rows: [] };
     },
   };

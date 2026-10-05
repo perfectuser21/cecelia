@@ -129,7 +129,7 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
         calls.push({ sql, params });
         if (/FROM tasks/.test(sql)) return { rows: journeyId ? [{ journey_id: journeyId }] : [] };
         if (/FROM step_probes/.test(sql)) return { rows: probes };
-        if (/UPDATE journey_step_links/.test(sql)) return { rows: [{ id: params[1] }] };
+        if (/UPDATE activity_cells/.test(sql)) return { rows: [{ id: params[1] }] };
         return { rows: [] };
       }),
     };
@@ -156,9 +156,9 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
     });
     expect(persist.mock.calls[1][1]).toMatchObject({ verdict: 'FAIL', evidence: { reason: 'value_mismatch' } });
     const probeQuery = calls.find((c) => /FROM step_probes/.test(c.sql));
-    expect(probeQuery.sql).toMatch(/JOIN journey_step_links/);
+    expect(probeQuery.sql).toMatch(/JOIN activity_cells/);
     expect(probeQuery.params).toEqual(['j-1', 'preflight']);
-    const updates = calls.filter((c) => /UPDATE journey_step_links/.test(c.sql));
+    const updates = calls.filter((c) => /UPDATE activity_cells/.test(c.sql));
     expect(updates.map((u) => u.params)).toEqual([['green', LINK_A], ['red', LINK_B]]);
     updates.forEach((u) => expect(u.sql).toMatch(/SET cell_status = \$1/));
   });
@@ -184,7 +184,7 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
     const out = await handleRunFinished({ runId: 'run-1', taskId: 't-1', status: 'in_progress', result: blocked }, { pool, persist });
     expect(out).toEqual({ skipped: 'stage_not_run' });
     expect(persist).not.toHaveBeenCalled();
-    expect(calls.filter((c) => /UPDATE journey_step_links/.test(c.sql))).toEqual([]);
+    expect(calls.filter((c) => /UPDATE activity_cells/.test(c.sql))).toEqual([]);
   });
 
   it('stage_status=failed（阶段跑了但失败）仍要判——失败态的读回正是要暴露问题的', async () => {
@@ -235,7 +235,7 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
       const probeQuery = calls.find((c) => /FROM step_probes/.test(c.sql));
       expect(probeQuery.sql).toMatch(/sp\.workflow = \$1/);
       expect(probeQuery.sql).toMatch(/sp\.active = true/);
-      expect(probeQuery.sql).toMatch(/JOIN journey_step_links/);
+      expect(probeQuery.sql).toMatch(/JOIN activity_cells/);
       expect(probeQuery.params).toEqual(['social-keyword-leadgen', 'delivery']);
     });
 
@@ -265,7 +265,7 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
       expect(backfill.sql).toMatch(/payload->'anchor'->>'journey_id' IS NULL/);
       expect(backfill.params).toEqual([JOURNEY, 't-mirror']);
       const idx = calls.indexOf(backfill);
-      expect(calls.slice(0, idx).some((c) => /UPDATE journey_step_links/.test(c.sql))).toBe(true);
+      expect(calls.slice(0, idx).some((c) => /UPDATE activity_cells/.test(c.sql))).toBe(true);
     });
 
     it('探针横跨多个 journey → 不回填锚（歧义），判定照常', async () => {
@@ -394,7 +394,7 @@ describe('handleRunFinished — step/enabler 级格子翻色 + 活动格向上�
     const pool = {
       query: vi.fn(async (sql, params) => {
         calls.push({ sql, params });
-        if (/UPDATE journey_step_links/.test(sql)) {
+        if (/UPDATE activity_cells/.test(sql)) {
           const row = rows.find((r) => r.id === params[1]);
           if (row) row.cell_status = params[0];
           return { rows: [{ id: params[1] }] };
@@ -407,7 +407,7 @@ describe('handleRunFinished — step/enabler 级格子翻色 + 活动格向上�
               && (stepIds.includes(r.step_id_ref) || enablerIds.includes(r.enabler_id))),
           };
         }
-        if (/SELECT cell_status FROM journey_step_links/.test(sql)) {
+        if (/SELECT cell_status FROM activity_cells/.test(sql)) {
           const [journeyId, stepId] = params;
           return {
             rows: rows.filter((r) => r.journey_id === journeyId && r.step_id === stepId
@@ -450,7 +450,7 @@ describe('handleRunFinished — step/enabler 级格子翻色 + 活动格向上�
     expect(out.cells).toEqual({ [STEP_LINK]: 'red', [LINK_A]: 'red' });
     expect(persist).toHaveBeenCalledTimes(1);
     expect(persist.mock.calls[0][1]).toMatchObject({ journeyStepLinkId: STEP_LINK, assertionRevision: 1, probeKey: 'coll_rescan_rate', verdict: 'FAIL' });
-    const updates = calls.filter((c) => /UPDATE journey_step_links/.test(c.sql)).map((c) => c.params);
+    const updates = calls.filter((c) => /UPDATE activity_cells/.test(c.sql)).map((c) => c.params);
     expect(updates).toEqual([['red', STEP_LINK], ['red', LINK_A]]);
     expect(rows.find((r) => r.id === STEP_LINK_2).cell_status).toBe('gray');
   });

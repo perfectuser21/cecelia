@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import {privateFixtureDatabase} from './private-fixture-db.js';
-import {minimumDefinitionSchema,migrationSql} from './minimum-definition-schema.js';
+import {minimumDefinitionSchema,migrationSql,withLegacyNames} from './minimum-definition-schema.js';
 export async function versionsDatabase() {
  const fixture=await privateFixtureDatabase('versions',db=>minimumDefinitionSchema(db));
- return {...fixture,async migrate(){for(const file of ['511_shared_activity_refs.sql','513_definition_versions.sql'])await fixture.client.query(migrationSql(file));}};
+ return {...fixture,async migrate(){await withLegacyNames(fixture.client,async()=>{for(const file of ['511_shared_activity_refs.sql','513_definition_versions.sql'])await fixture.client.query(migrationSql(file));});}};
 }
 export async function seedWorkflows(db,provided={}){
   const {valueStream=randomUUID(),keywordCapability=randomUUID(),benchmarkCapability=randomUUID(),keyword=randomUUID(),benchmark=randomUUID()}=provided;

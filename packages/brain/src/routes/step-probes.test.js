@@ -257,7 +257,7 @@ describe('POST /api/brain/step-probes 挂点（价值流建模⑤：target_type/
     const { req, res } = mockReqRes({ workflow: WORKFLOW, probes: [{ ...rawProbe(), journey_step_link_id: LINK }] });
     await lastHandler('post', '/step-probes')(req, res);
     const [sql, params] = mockPool.query.mock.calls[1];
-    expect(sql).toMatch(/SELECT step_id FROM journey_step_links WHERE id = \$4/);
+    expect(sql).toMatch(/SELECT step_id FROM activity_cells WHERE id = \$4/);
     expect(params[9]).toBeNull();
     expect(params[10]).toBeNull();
   });

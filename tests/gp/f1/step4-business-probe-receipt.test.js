@@ -39,7 +39,7 @@ function makePool(specs) {
         receipts.push({ sql, params });
         return { rows: [{ id: `rcpt-${receipts.length}`, verdict: params[9] }] };
       }
-      if (/UPDATE journey_step_links/.test(sql)) { cellUpdates.push(params); return { rows: [] }; }
+      if (/UPDATE activity_cells/.test(sql)) { cellUpdates.push(params); return { rows: [] }; }
       return { rows: [] };
     }),
   };

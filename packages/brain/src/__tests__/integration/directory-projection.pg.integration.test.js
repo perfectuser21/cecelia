@@ -21,7 +21,7 @@ beforeEach(async () => {
     CREATE TABLE workflows(id uuid,name text,key text,capability_id uuid);
     CREATE TABLE workflow_definition_versions(id uuid,workflow_id uuid,payload jsonb,source_repo text,source_path text,source_commit text,created_at timestamptz);
     CREATE TABLE activity_definition_versions(id uuid,activity_id uuid,payload jsonb,source_repo text,source_path text,source_commit text);
-    CREATE TABLE journey_steps(id uuid,name text,workflow_id uuid);
+    CREATE TABLE activities(id uuid,name text,workflow_id uuid);
     CREATE TABLE steps(id uuid,key text,activity_id uuid,active boolean,step_order int);
     CREATE TABLE workflow_activity_refs(workflow_id uuid,activity_id uuid,slot_key text,sequence_no int,active boolean);
     CREATE TABLE notion_map_node_pages(scope text,node_key text,notion_id text,archived_at timestamptz);
@@ -34,10 +34,10 @@ afterEach(async () => { if (client) { await client.query('ROLLBACK'); if (schema
 describe('六层目录真实PG边界', () => {
   it('真PG精确current Activity/Step登记读取声明；历史、错step、注册漂移拒映射，未登记仅父gap', async () => {
     const activity=fixtureEntityId(850),step=fixtureEntityId(851),version=fixtureEntityId(852),history=fixtureEntityId(853),workflow=fixtureEntityId(854);
-    await client.query('ALTER TABLE journey_steps ADD COLUMN current_definition_version_id uuid');
+    await client.query('ALTER TABLE activities ADD COLUMN current_definition_version_id uuid');
     await client.query('ALTER TABLE steps ADD COLUMN source_sha256 text, ADD COLUMN mode text, ADD COLUMN readback jsonb');
     const readback={type:'metric',expect:{op:'==',value:1}},sha='b'.repeat(64);
-    await client.query("INSERT INTO journey_steps VALUES($1,'共享',$2,$3)",[activity,workflow,version]);
+    await client.query("INSERT INTO activities VALUES($1,'共享',$2,$3)",[activity,workflow,version]);
     await client.query("INSERT INTO workflow_activity_refs VALUES($1,$2,'read',1,true)",[workflow,activity]);
     await client.query("INSERT INTO steps VALUES($1,'cap.stage.read',$2,true,1,$3,'checkpoint',$4)",[step,activity,sha,readback]);
     const declared={key:'read',reads:['Device.serial'],writes:['Device.ready'],check:'设备应已就绪',implementation:{status:'implemented',ref:'runner.sh read'},
@@ -152,7 +152,7 @@ describe('六层目录真实PG边界', () => {
   it('真SQL反序persist同一共享refs后页面不重PATCH，成功receipt hash保持', async () => {
     const w1=fixtureEntityId(701),w2=fixtureEntityId(702),activity=fixtureEntityId(703),page=fixtureEntityId(704),dbId=fixtureEntityId(705);
     await client.query("INSERT INTO workflows VALUES($1,'A','a',NULL),($2,'B','b',NULL)", [w1,w2]);
-    await client.query("INSERT INTO journey_steps VALUES($1,'共享',$2)", [activity,w1]);
+    await client.query("INSERT INTO activities VALUES($1,'共享',$2)", [activity,w1]);
     const persist = async ids => {
       await client.query('DELETE FROM workflow_activity_refs');
       for (const id of ids) await client.query("INSERT INTO workflow_activity_refs VALUES($1,$2,'same',1,true)", [id,activity]);
@@ -244,12 +244,12 @@ describe('六层目录真实PG边界', () => {
     const w1=randomUUID(),w2=randomUUID(),a=randomUUID(),s=randomUUID();
     await client.query(`INSERT INTO workflows VALUES($1,'A','a',NULL),($2,'B','b',NULL);
       `,[w1,w2]);
-    await client.query('INSERT INTO journey_steps VALUES($1,\'共享\',$2)',[a,w1]);
+    await client.query('INSERT INTO activities VALUES($1,\'共享\',$2)',[a,w1]);
     await client.query('INSERT INTO steps VALUES($1,\'one\',$2,true,1)',[s,a]);
     await client.query('INSERT INTO workflow_activity_refs VALUES($1,$3,\'first\',1,true),($2,$3,\'second\',2,true)',[w1,w2,a]);
     const rows=buildDirectoryRows(await loadDirectorySource(client));
     expect(rows.find(r=>r.id===s).relations['所属Workflows'].map(x=>x.id).sort()).toEqual([w1,w2].sort());
-    expect((await client.query('SELECT count(*)::int AS n FROM journey_steps')).rows[0].n).toBe(1);
+    expect((await client.query('SELECT count(*)::int AS n FROM activities')).rows[0].n).toBe(1);
   });
   it('读回失败不写真实成功receipt；第二次成功认领同页且不重建', async () => {
     const id=randomUUID(),page=randomUUID(),dbId=randomUUID(); let broken=true,created=0,props;

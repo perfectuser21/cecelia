@@ -169,15 +169,15 @@ describe('runNotionPushSync — new push functions', () => {
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
     const calls = mockQuery.mock.calls.map(c => c[0]);
-    const stepsQuery = calls.find(q => q && q.includes('FROM journey_steps'));
+    const stepsQuery = calls.find(q => q && q.includes('FROM activities'));
     expect(stepsQuery).toBeUndefined();
   });
 
-  it('calls pushJourneyStepLinks — queries journey_step_links WHERE notion_synced_at IS NULL', async () => {
+  it('calls pushJourneyStepLinks — queries activity_cells WHERE notion_synced_at IS NULL', async () => {
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
     const calls = mockQuery.mock.calls.map(c => c[0]);
-    const linksQuery = calls.find(q => q && q.includes('journey_step_links') && q.includes('notion_synced_at IS NULL'));
+    const linksQuery = calls.find(q => q && q.includes('activity_cells') && q.includes('notion_synced_at IS NULL'));
     expect(linksQuery).toBeTruthy();
   });
 
@@ -187,7 +187,7 @@ describe('runNotionPushSync — new push functions', () => {
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
     const calls = mockQuery.mock.calls.map(c => c[0]);
-    const linksQuery = calls.find(q => q && q.includes('journey_step_links') && q.includes('notion_synced_at IS NULL'));
+    const linksQuery = calls.find(q => q && q.includes('activity_cells') && q.includes('notion_synced_at IS NULL'));
     expect(linksQuery).toBeTruthy();
     expect(linksQuery).not.toContain('cell_kind IS NULL');
     expect(linksQuery).toMatch(/l\.updated_at > l\.notion_synced_at/);
@@ -210,7 +210,7 @@ describe('runNotionPushSync — new push functions', () => {
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
     const calls = mockQuery.mock.calls.map(c => c[0]);
-    const linksQuery = calls.find(q => q && q.includes('journey_step_links') && q.includes('notion_synced_at IS NULL'));
+    const linksQuery = calls.find(q => q && q.includes('activity_cells') && q.includes('notion_synced_at IS NULL'));
     expect(linksQuery).not.toMatch(/j\.notion_id IS NOT NULL/);
   });
 

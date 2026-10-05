@@ -5,7 +5,7 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { likeSource } from '../fixtures/minimum-definition-schema.js';
+import { likeSource, useStandardNames, withLegacyNames } from '../fixtures/minimum-definition-schema.js';
 import { syncActivityContracts } from '../../activity-contract-sync.js';
 import { contractsFixture, KEYS } from '../fixtures/shared-activity-contracts.js';
 vi.mock('../../alerting.js', () => ({ raise: vi.fn() }));
@@ -22,8 +22,9 @@ beforeEach(async () => {
   schema = `shared_activity_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
   for (const table of ['areas','enablers','enabler_calls','schema_version','journeys','workflows','journey_steps','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
-    await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
+    await client.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   await client.query(`SET search_path TO ${schema}`);
+  await useStandardNames(client);
   db = { query: client.query.bind(client), connect: async () => ({ query: client.query.bind(client), release() {} }) }; holder.db = db;
   const parent = randomUUID(), capKeyword = randomUUID(); capBenchmark = randomUUID();
   await client.query(`INSERT INTO journeys(id,name,parent_journey_id) VALUES($1,'价值流',NULL),($2,'关键词',$1),($3,'对标',$1)`, [parent,capKeyword,capBenchmark]);
@@ -40,8 +41,10 @@ afterEach(async () => {
 });
 async function migrate() {
   expect(existsSync(migration), '共享关系迁移必须存在').toBe(true);
-  await client.query(readFileSync(migration,'utf8'));
-  await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql',import.meta.url),'utf8'));
+  await withLegacyNames(client, async () => {
+    await client.query(readFileSync(migration,'utf8'));
+    await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql',import.meta.url),'utf8'));
+  });
 }
 async function snapshot() {
   return (await client.query(`SELECT jsonb_build_object('activities',(SELECT jsonb_agg(to_jsonb(a) ORDER BY id) FROM journey_steps a),
@@ -74,7 +77,7 @@ describe('共享活动真实数据库合同', () => {
     if(failure==='fetch') { const fetch=fixture.fetchFn; fixture.fetchFn=async url=>url.includes('benchmark_link')?{ok:false,status:502}:fetch(url); }
     if(failure==='digest') fixture.digest.capabilities.benchmark_link_acquisition.sha256='bad';
     if(failure==='ref') fixture.docs.benchmark_link_acquisition.activities[0].ref='keyword_acquisition.absent';
-    if(failure==='unique') await client.query(`CREATE UNIQUE INDEX force_activity_conflict ON journey_steps ((1)) WHERE capability_key='benchmark_link_acquisition' OR activity_key='preflight'`);
+    if(failure==='unique') await client.query(`CREATE UNIQUE INDEX force_activity_conflict ON activities ((1)) WHERE capability_key='benchmark_link_acquisition' OR activity_key='preflight'`);
     await expect(syncActivityContracts(db,fixture)).rejects.toThrow(); expect(await snapshot()).toEqual(before);
   });
   it('真实span工作流优先，多归属缺失保持未知，Activity与Step段不重复累计',async()=>{

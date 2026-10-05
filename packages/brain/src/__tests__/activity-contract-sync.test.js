@@ -115,17 +115,17 @@ function fakePool(stepRows = [], memory = {}) {
         return { rows: v ? [{ value_json: v }] : [] };
       }
       if (/INSERT INTO working_memory/.test(text)) { memory[params[0]] = JSON.parse(params[1]); return { rows: [] }; }
-      if (/FROM journey_steps/.test(text) && /capability_key IS NOT NULL/.test(text)) return { rows: rows.map((r) => ({ ...r })) };
-      if (/^\s*UPDATE journey_steps SET name/.test(text)) {
+      if (/FROM activities/.test(text) && /capability_key IS NOT NULL/.test(text)) return { rows: rows.map((r) => ({ ...r })) };
+      if (/^\s*UPDATE activities SET name/.test(text)) {
         const r = rows.find((x) => x.id === params[0]);
         Object.assign(r, { name: params[1], contract: JSON.parse(params[2]), contract_sha256: params[3], contract_source: params[4] });
         return { rows: [] };
       }
-      if (/^\s*UPDATE journey_steps SET status\s*=\s*'deprecated'/.test(text)) {
+      if (/^\s*UPDATE activities SET status\s*=\s*'deprecated'/.test(text)) {
         rows.find((x) => x.id === params[0]).status = 'deprecated';
         return { rows: [{id:params[0]}] };
       }
-      if (/^\s*INSERT INTO journey_steps/.test(text)) {
+      if (/^\s*INSERT INTO activities/.test(text)) {
         rows.push({ id: `new-${params[4]}`, journey_id: params[0], name: params[1], step_number: params[2], capability_key: params[3], activity_key: params[4], contract: JSON.parse(params[5]), contract_sha256: params[6], contract_source: params[7], status: 'planned' });
         return { rows: [{id:`new-${params[4]}`}] };
       }
@@ -168,7 +168,7 @@ describe('syncActivityContracts', () => {
     const pool = fakePool(rows);
     const out = await syncActivityContracts(pool, deps(gh));
     expect(gh.calls.some((u) => u.includes('.yaml'))).toBe(true);
-    expect(pool.queries.some((q) => /UPDATE journey_steps SET name/.test(q.text))).toBe(false);
+    expect(pool.queries.some((q) => /UPDATE activities SET name/.test(q.text))).toBe(false);
     expect(out.updated).toEqual([]);
   });
 
@@ -185,7 +185,7 @@ describe('syncActivityContracts', () => {
     const gh = fakeGithub({ digest: '{}', fail: true });
     const pool = fakePool(seeded());
     await expect(syncActivityContracts(pool, deps(gh))).rejects.toThrow(/502/);
-    expect(pool.queries.some((q) => /UPDATE journey_steps|INSERT INTO journey_steps/.test(q.text))).toBe(false);
+    expect(pool.queries.some((q) => /UPDATE activities|INSERT INTO activities/.test(q.text))).toBe(false);
   });
 });
 
