@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.371.4
+**Brain 版本**: 1.372.0
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.372.0 — 词表统一：Notion 镜子库标题同步 + Dashboard 面向人的文案改为标准词表
+
+- 迁移 518：`notion_projection_map` 5 条标题同步为 Notion 已改的新名（价值流与能力（journeys）/ Activity（活动）/ Activity 卡片格子 / 流程（workflows）/ 旧树 · Feature（只读，待退役））。按 `notion_db_id` 定位，只改 `title`，带回滚。框架标准 v2.0 术语表，决策 cebd1540。
+- Dashboard 面向人的文案 4 文件 7 处：Golden Path / GP / Journey → 能力 / 价值流（FeatureDashboard、LedgerPage、WarRoomGoldenPathPage、ReportDetailPage）。表名、列名、API 路径、TypeScript 标识符不动。
+- 回归：`migration-518-vocab-unify-titles.test.js`、`scripts/vocab-unify-labels.test.mjs`（守卫：JSX 文本与 label/tooltip 里不得再出现旧词；实测抓到一处漏改的表头）。任务 726ca1b7。
 
 ## Brain 1.371.4 — 仓库侧去多账号化：Claude 只保留单账号单目录 ~/.claude
 
