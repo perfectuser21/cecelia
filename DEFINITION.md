@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.371.3
+**Brain 版本**: 1.371.4
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,16 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.371.4 — 仓库侧去多账号化：Claude 只保留单账号单目录 ~/.claude
+
+- 主理人拍板只保留一个 Claude 账号（决策 7952bd84），本机 `.claude-account1/2/3` 目录已删除；仓库里仍把它们当默认值的地方一并改指 `~/.claude`，否则删除后会静默失效。
+- `ops-model-accounts-collector.js`：`claude-account1` 台账条目的 `credential_path` 改为 `~/.claude/.credentials.json`（条目 id 不变，保 DB/Notion 连续；`claude-account2` 条目保留以维持「恰好 8 条」口径，后续另议）。
+- `cecelia-bridge.cjs`：`accountId` 废弃，`claude -p` 一律走默认 `~/.claude`。`skill-eval-worker.js` / `memory-sync.js`：默认目录与候选目录改 `~/.claude`。
+- `docker-compose.yml` / `docker-compose.staging.yml`：删除 `.claude-account1~3` 挂载。
+- `scripts/claude-launch.sh`：删除账号切换（`.active-account-dir`）与 per-session projects 软链/sweep 子系统，保留 per-session worktree 与孤儿自愈；`scripts/dispatch-worker.mjs`：Claude 单账号即 controller 主线，不入 worker 池。
+- 未动（另立任务）：流水线路径内的残留——`commander-invoker.js` 默认 `SEQUENCER_COMMANDER_CONFIG_DIR` 回落 `.claude-account1`、`docker/cecelia-runner/entrypoint.sh` 注释示例（碰流水线路径须带 F1 步骤断言，`lint-gp-anchor-artifact`），与 `provider-account-home.js` 的 `.claude-accountN` 目录映射与 dispatcher 账号选择——影响其他执行机，需逐机核对后再改；`routes/harness.js` 读 `~/.claude-account1/skills`（该目录此前就不存在，静默返回 null）。
+- 回归：`packages/engine/tests/launcher/claude-launch.test.ts` 以单账号契约替换旧账号切换/软链/sweep 三组用例；`scripts/dispatch-worker.test.mjs`、`ops-model-accounts-collector.test.js` 同步更新（任务 702f6a1b）。
 
 ## Brain 1.371.3 — 部署链剩余两处 healthy 硬编码：sidecar /healthz 探针与 Auto Staging Deploy 等待脚本
 
