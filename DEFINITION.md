@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.376.4
+**Brain 版本**: 1.376.5
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,14 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.376.5 — 树+仓库 v3.0 第 4 刀（路 B）：技能按 Step 发 span、沉淀成候选 Activity、收敛对账
+
+- 任务 3590ec8f：探索先行的那条路补上程序。技能每做完一步发一条 Step span（`scripts/emit-step-span.mjs`，证据约定 `step_key / name / action / reads / writes / observed`，走现成的 `POST /api/brain/spans`）。
+- 收敛对账（`lib/step-reconcile.js`，`POST /api/brain/step-reconcile/:activityId`）：把最近 N 次运行里每个 Step 的观测值按 `Steps.readback` 求值，逐次判已验证 / 对不上 / 未验证 / 失败 / 缺失 / 跳过 / 豁免，抓出合同没声明的 Step；连续 N 次整个 Activity 全绿 = 收敛（可以固化），并把 `readback` 格翻绿，对不上翻红，收敛中待判，没数据不动。拿不到观测值一律「未知」，不猜通过。
+- 读回求值（`lib/step-readback-eval.js`）：支持合同的 `== >= <= not_null_all`，另加 `!= > <`。
+- 沉淀技能（`lib/skill-settlement.js`，`POST /api/brain/skill-settlement/draft` 与 `/register`）：读 spans + SKILL.md 起草 Steps（名字/动作/进出取自 span；读回只在各次观测值一致且跑过两次以上才起草 `==`；失败处理只由重试/失败痕迹推出），登记为 `candidate` 状态的 Activity：承诺列保持空、固定 8 个灰格、一条待拍板（三问：承诺对不对 / 哪些失败要人 / 判定点误判后果，72 小时不答按默认走）。同一 能力.活动 重复登记不覆盖。
+- 未做（刻意）：新 Activity 经合同同步插入时补 8 灰格，等 Step 同步那个 PR 合并后再接，避免两个 PR 改同一个文件。
 
 ## Brain 1.376.4 — 树+仓库 v3.0 第 4 刀（路 A）：契约 Step 的读回终于进 Brain，不写读回不许过
 
