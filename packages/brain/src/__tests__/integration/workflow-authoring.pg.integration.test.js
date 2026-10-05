@@ -8,7 +8,6 @@ import { DB_DEFAULTS } from '../../db-config.js';
 import { registerWorkflow, registrationDigest } from '../../workflow-authoring/registration.js';
 import { createWorkflowAuthoringRouter } from '../../routes/workflow-authoring.js';
 import { listWorkflows, readActivityConsumers } from '../../lib/workflow-read-service.js';
-import { likeSource } from '../fixtures/minimum-definition-schema.js';
 
 let client, schema, definition;
 beforeEach(async () => {
@@ -17,7 +16,7 @@ beforeEach(async () => {
   schema = `workflow_authoring_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
   for (const table of ['journeys','workflows','journey_steps','skill_registry','tasks']) {
-    await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
+    await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
   }
   await client.query(`SET search_path TO ${schema},public`);
   const cap = randomUUID(), skill = randomUUID();
@@ -145,7 +144,7 @@ async function registrySnapshot() {
 describe('authoring 与真实共享关系和版本底座读模型贯通', () => {
   it('真实迁移后登记、共享复用和重排均保留真身ID及引用ID，读模型返回实际顺序', async () => {
     for (const table of ['spans', 'schema_version', 'steps', 'enablers', 'enabler_calls', 'areas']) {
-      await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
+      await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
     }
     // 真实迁移仅落隔离 schema，避免解析到 public 的版本表或触发器。
     await client.query(`SET search_path TO ${schema}`);

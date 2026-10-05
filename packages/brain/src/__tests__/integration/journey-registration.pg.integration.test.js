@@ -5,7 +5,6 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, afterEach, it, expect, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { likeSource } from '../fixtures/minimum-definition-schema.js';
 const holder = vi.hoisted(() => ({ pool: null }));
 vi.mock('../../db.js', () => ({ default: {
   query: (...args) => holder.pool.query(...args), connect: (...args) => holder.pool.connect(...args),
@@ -19,7 +18,7 @@ beforeEach(async () => {
   expect((await admin.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `journey_registration_${randomUUID().replaceAll('-', '')}`;
   await admin.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['areas', 'journeys', 'workflows', 'journey_steps']) await admin.query(`CREATE TABLE ${schema}.${table} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
+  for (const table of ['areas', 'journeys', 'workflows', 'journey_steps']) await admin.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
   pool = new pg.Pool({ ...DB_DEFAULTS, options: `-c search_path=${schema}` }); holder.pool = pool;
   await pool.query('ALTER TABLE journeys ADD FOREIGN KEY(parent_journey_id) REFERENCES journeys(id), ADD FOREIGN KEY(area_id) REFERENCES areas(id)');
   await pool.query('ALTER TABLE workflows ADD FOREIGN KEY(capability_id) REFERENCES journeys(id)');

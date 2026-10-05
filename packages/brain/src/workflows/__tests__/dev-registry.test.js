@@ -28,10 +28,10 @@ describe('dev-registry migration — 7 张表存在', () => {
     expect(rows.length).toBeGreaterThan(0);
   });
 
-  it('journey_steps（迁移 520 起真表为 activities）有 UNIQUE(journey_id, step_number)', async () => {
+  it('journey_steps 有 UNIQUE(journey_id, step_number)', async () => {
     const { rows } = await pool.query(
       `SELECT indexname FROM pg_indexes
-       WHERE tablename IN ('journey_steps','activities') AND indexdef LIKE '%journey_id%step_number%'`,
+       WHERE tablename='journey_steps' AND indexdef LIKE '%journey_id%step_number%'`,
     );
     expect(rows.length).toBeGreaterThan(0);
   });

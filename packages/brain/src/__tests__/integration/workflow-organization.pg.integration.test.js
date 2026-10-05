@@ -5,7 +5,6 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, afterEach, it, expect, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { likeSource } from '../fixtures/minimum-definition-schema.js';
 const holder = vi.hoisted(() => ({ db: null }));
 vi.mock('../../db.js', () => ({ default: { query: (...args) => holder.db.query(...args) } }));
 import routes from '../../routes/workflows.js';
@@ -17,7 +16,7 @@ beforeEach(async () => {
   schema = `workflow_org_${randomUUID().replaceAll('-', '')}`;
   await db.query(`CREATE SCHEMA ${schema}`);
   for (const table of ['areas', 'journeys', 'workflows', 'journey_steps', 'steps', 'spans', 'enablers', 'enabler_calls', 'schema_version']) {
-    await db.query(`CREATE TABLE ${schema}.${table} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
+    await db.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
   }
   await db.query(`SET search_path TO ${schema}`);
   await db.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));

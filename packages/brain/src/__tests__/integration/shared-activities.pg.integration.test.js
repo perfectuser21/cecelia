@@ -7,7 +7,6 @@ import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { syncActivityContracts } from '../../activity-contract-sync.js';
 import { contractsFixture, KEYS } from '../fixtures/shared-activity-contracts.js';
-import { likeSource } from '../fixtures/minimum-definition-schema.js';
 vi.mock('../../alerting.js', () => ({ raise: vi.fn() }));
 const holder = vi.hoisted(() => ({ db: null }));
 vi.mock('../../db.js', () => ({ default: { query: (...args) => holder.db.query(...args), connect: (...args) => holder.db.connect(...args) } }));
@@ -22,7 +21,7 @@ beforeEach(async () => {
   schema = `shared_activity_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
   for (const table of ['areas','enablers','enabler_calls','schema_version','journeys','workflows','journey_steps','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
-    await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
+    await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
   await client.query(`SET search_path TO ${schema}`);
   db = { query: client.query.bind(client), connect: async () => ({ query: client.query.bind(client), release() {} }) }; holder.db = db;
   const parent = randomUUID(), capKeyword = randomUUID(); capBenchmark = randomUUID();
