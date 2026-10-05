@@ -270,7 +270,7 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
       [scopeKey, 'infrastructure', capabilityKey],
     );
     const step = await pool.query(
-      `INSERT INTO journey_steps (journey_id, name, step_number)
+      `INSERT INTO activities (journey_id, name, step_number)
        VALUES ($1, 'integration step', 1) RETURNING id`,
       [journey.rows[0].id],
     );
@@ -280,7 +280,7 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
       [journey.rows[0].id, step.rows[0].id, testPath],
     );
     const assertion = await pool.query(
-      `INSERT INTO journey_step_links
+      `INSERT INTO activity_cells
         (journey_id, step_id, feature_id, cell_kind, cell_key, assertion_ref, notion_synced_at)
        VALUES ($1, $2, $3, 'capability', $4, $5, NOW()) RETURNING id`,
       [journey.rows[0].id, step.rows[0].id, feature.rows[0].id, capabilityKey, testPath],

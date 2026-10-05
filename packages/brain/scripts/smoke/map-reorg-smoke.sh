@@ -49,10 +49,10 @@ OC=$(psql_val "SELECT COUNT(*) FROM journey_features
 [ "$OC" -eq 0 ] && pass "孤儿挂片=0(存量)" || fail "孤儿挂片=$OC(期望0，存量口径)"
 
 # 7. 横切件 >= 7
-# 迁移 520 起横切件搬进仓库：enablers（标准名 warehouse_items 视图）带 legacy_feature_id 指回旧树 kind=enabler 行，
+# 迁移 520 起横切件搬进仓库：warehouse_items（旧名 enablers）带 legacy_feature_id 指回旧树 kind=enabler 行，
 # 旧树行标 deprecated。两处任一满足即算在：旧树仍活跃的 enabler + 仓库里由 enabler 转来的物件。
 EC=$(psql_val "SELECT (SELECT COUNT(*) FROM journey_features WHERE kind='enabler' AND status!='deprecated')
-  + (SELECT COUNT(*) FROM enablers e JOIN journey_features f ON f.id = e.legacy_feature_id WHERE f.kind='enabler' AND e.active);")
+  + (SELECT COUNT(*) FROM warehouse_items e JOIN journey_features f ON f.id = e.legacy_feature_id WHERE f.kind='enabler' AND e.active);")
 [ "$EC" -ge 7 ] && pass "横切件>=$EC(>=7)" || fail "横切件=$EC(期望>=7)"
 
 echo "---"

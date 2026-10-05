@@ -291,13 +291,13 @@ describe('Impact Contract → Gap → 修复 → 恢复真实 PostgreSQL 闭环'
         [journeyId],
       );
       await client.query(
-        `INSERT INTO journey_steps (id, journey_id, name, step_number)
+        `INSERT INTO activities (id, journey_id, name, step_number)
          VALUES ($1, $2, 'assert impact', 1),
                 ($3, $2, 'assert impact secondary binding', 2)`,
         [stepId, journeyId, secondaryStepId],
       );
       await client.query(
-        `INSERT INTO journey_step_links
+        `INSERT INTO activity_cells
            (id, journey_id, step_id, step_order, status, assertion_ref, assertion_revision)
          VALUES ($1, $2, $3, 1, 'in_progress', $5, 1),
                 ($4, $2, $6, 2, 'in_progress', $5, 2)`,
@@ -466,7 +466,7 @@ describe('Impact Contract → Gap → 修复 → 恢复真实 PostgreSQL 闭环'
                 link.assertion_revision = receipt.assertion_revision AS current_revision,
                 attempt.status = 'completed' AS completed_attempt
            FROM journey_assertion_receipts AS receipt
-           JOIN journey_step_links AS link ON link.id = receipt.journey_step_link_id
+           JOIN activity_cells AS link ON link.id = receipt.journey_step_link_id
            JOIN harness_attempts AS attempt ON attempt.id = receipt.harness_attempt_id
            CROSS JOIN LATERAL (
              SELECT MAX(created_at) AS verification_started_at

@@ -102,7 +102,7 @@ try {
     [scopeKey, capabilityKey],
   )).rows[0].id;
   const stepId = (await client.query(
-    `INSERT INTO journey_steps (journey_id,name,step_number)
+    `INSERT INTO activities (journey_id,name,step_number)
      VALUES ($1,'smoke step',1) RETURNING id`,
     [journeyId],
   )).rows[0].id;
@@ -112,7 +112,7 @@ try {
     [journeyId, stepId, testPath],
   )).rows[0].id;
   assertionId = (await client.query(
-    `INSERT INTO journey_step_links
+    `INSERT INTO activity_cells
       (journey_id,step_id,feature_id,cell_kind,cell_key,cell_status,assertion_ref)
      VALUES ($1,$2,$3,'capability',$4,'green',$5) RETURNING id`,
     [journeyId, stepId, featureId, capabilityKey, testPath],
