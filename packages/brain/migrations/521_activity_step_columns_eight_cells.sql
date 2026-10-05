@@ -98,6 +98,38 @@ UPDATE journey_step_links l SET cell_key = m.new_key, updated_at = NOW()
  WHERE l.cell_level = 'activity' AND l.cell_kind = 'element' AND l.cell_key = m.old_key
    AND NOT EXISTS (SELECT 1 FROM journey_step_links x WHERE x.step_id = l.step_id AND x.cell_kind = l.cell_kind AND x.cell_key = m.new_key);
 
+-- 旧名行与标准键行并存（非生产环境旧种子重放造成）→ 旧名行是重复，删掉（没被回执/探针引用才删，删的 id 记备份）
+WITH dup AS (
+  DELETE FROM journey_step_links l
+   USING (VALUES
+     ('FR', 'promise'), ('NFR', 'nfr'), ('判定点', 'judgment'), ('不变量', 'invariants'),
+     ('失败语义', 'failure'), ('效果确认', 'readback'), ('对抗面', 'adversarial'), ('保质期', 'shelf_life')
+   ) AS m(old_key, new_key)
+   WHERE l.cell_level = 'activity' AND l.cell_kind = 'element' AND l.cell_key = m.old_key
+     AND EXISTS (SELECT 1 FROM journey_step_links x WHERE x.step_id = l.step_id AND x.cell_kind = l.cell_kind AND x.cell_key = m.new_key)
+     AND NOT EXISTS (SELECT 1 FROM journey_assertion_receipts r WHERE r.journey_step_link_id = l.id)
+     AND NOT EXISTS (SELECT 1 FROM step_probes p WHERE p.journey_step_link_id = l.id)
+   RETURNING l.*
+)
+INSERT INTO migration_521_backup (table_name, row_id, payload)
+SELECT 'journey_step_links.dedup_deleted', id::text, to_jsonb(dup) FROM dup
+ON CONFLICT DO NOTHING;
+
+-- 旧名归一触发器：以后谁再按旧名（FR/NFR/…）插或改 Activity 级格子，一律归到标准键；旧种子迁移重放因此仍幂等（撞 uq_jsl_cell → DO NOTHING）
+CREATE OR REPLACE FUNCTION cells_normalize_key() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.cell_level = 'activity' AND NEW.cell_kind = 'element' THEN
+    NEW.cell_key := CASE NEW.cell_key
+      WHEN 'FR' THEN 'promise' WHEN 'NFR' THEN 'nfr' WHEN '判定点' THEN 'judgment' WHEN '不变量' THEN 'invariants'
+      WHEN '失败语义' THEN 'failure' WHEN '效果确认' THEN 'readback' WHEN '对抗面' THEN 'adversarial' WHEN '保质期' THEN 'shelf_life'
+      ELSE NEW.cell_key END;
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trg_cells_normalize_key ON journey_step_links;
+CREATE TRIGGER trg_cells_normalize_key BEFORE INSERT OR UPDATE OF cell_key ON journey_step_links
+  FOR EACH ROW EXECUTE FUNCTION cells_normalize_key();
+
 -- 其余 Activity 级格子（stage:* / regression:* / 场景 / 能力点 / 旧合同格）→ readback 的子项；代码版本 → invariants 子项
 UPDATE journey_step_links SET parent_cell_key = 'readback', updated_at = NOW()
  WHERE cell_level = 'activity' AND cell_kind IN ('element', 'scenario', 'capability')

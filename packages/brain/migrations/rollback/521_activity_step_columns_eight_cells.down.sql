@@ -5,10 +5,17 @@ BEGIN;
 DROP VIEW IF EXISTS activities;
 DROP VIEW IF EXISTS activity_cells;
 
+DROP TRIGGER IF EXISTS trg_cells_normalize_key ON journey_step_links;
+DROP FUNCTION IF EXISTS cells_normalize_key();
 DELETE FROM journey_step_links WHERE id IN (SELECT row_id::uuid FROM migration_521_backup WHERE table_name = 'journey_step_links.inserted');
+INSERT INTO journey_step_links
+SELECT (jsonb_populate_record(NULL::journey_step_links, b.payload)).*
+  FROM migration_521_backup b WHERE b.table_name = 'journey_step_links.dedup_deleted'
+ON CONFLICT (id) DO NOTHING;
 UPDATE journey_step_links l SET cell_key = b.payload->>'cell_key', updated_at = NOW()
   FROM migration_521_backup b
- WHERE b.table_name = 'journey_step_links.renamed' AND l.id = b.row_id::uuid;
+ WHERE b.table_name = 'journey_step_links.renamed' AND l.id = b.row_id::uuid
+   AND NOT EXISTS (SELECT 1 FROM journey_step_links x WHERE x.step_id = l.step_id AND x.cell_kind = l.cell_kind AND x.cell_key = b.payload->>'cell_key');
 ALTER TABLE journey_step_links DROP COLUMN IF EXISTS parent_cell_key;
 
 DELETE FROM workflow_activity_refs WHERE source_ref = 'migration:521';

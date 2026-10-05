@@ -1,4 +1,7 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] activitycolumns v3.0 第 1 刀：迁移 521 给 Activity 加 10 列并从 contract JSON 拆填（只填空值）、Step 加 name/action/inputs/outputs/on_fail（on_fail 只许 retry:N|abort）、activity_items 改名 activity_uses、8 格固定（旧格子名映射到 8 个标准键、其余格子标 parent_cell_key 子项、每个未退役 Activity 补齐 8 个灰格并记备份）、有流程无关系行的 Activity 补 workflow_activity_refs、标准名视图重建带新列；回滚先删视图再去列、按备份还原格子名与删补行。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-521-activity-columns.test.js --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] treetables 表名对齐框架标准第一段：迁移 520 把 journeys 拆成 value_streams/capabilities 两张继承真表（父表空壳 + INSERT 分流触发器且子表已有同 id 按 DO NOTHING 跳过，SELECT/UPDATE/FOR UPDATE 照旧），workflows 外键改指 capabilities、其余 10 张引用表改触发器守卫并照原语义级联；activities/activity_cells/warehouse_items 标准名以自动可更新视图立起（物理表不改名，旧迁移重放与几十个按旧名查索引/约束/LIKE 的测试不受影响）；50 个挂价值流的 Activity 归位到能力（新建 2 能力 5 流程）；enablers 加 shelf 八货架 NOT NULL+CHECK，22 件物件全上架并带旧树溯源，activity_items/item_deps 连线建表并从 enabler_calls/底座格子合并；两个带 notion_id 的标准名视图登记进投影注册表；ability_groups 孤儿表条件化；备份表 + 回滚可逆。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-520-tree-tables-align.test.js --maxWorkers=1 --minWorkers=1"
 
