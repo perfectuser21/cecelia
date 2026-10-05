@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { beforeEach,afterEach,it,expect } from 'vitest';
 import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evidence-db.js';
+import { withLegacyNames } from '../../../__tests__/fixtures/minimum-definition-schema.js';
 import { createRelease,recordReleaseObservation } from '../../release-index.js';
 import { startRun } from '../../task-run.js';
 import { bindRunDefinition } from '../../run-definition-binding.js';
@@ -9,7 +10,7 @@ let f,input,task;
 beforeEach(async()=>{
   f=await releaseEvidenceDatabase();task=randomUUID();await f.db.query("INSERT INTO tasks(id,title,status) VALUES($1,'固定定义起跑','in_progress')",[task]);
   await f.db.query('DROP TABLE spans CASCADE');
-  for(const file of ['495_vs_model_spans.sql','514_span_occurrences.sql','516_span_definition_provenance.sql'])await f.db.query(readFileSync(new URL(`../../../../migrations/${file}`,import.meta.url),'utf8'));
+  for(const file of ['495_vs_model_spans.sql','514_span_occurrences.sql','516_span_definition_provenance.sql'])await withLegacyNames(f.db,()=>f.db.query(readFileSync(new URL(`../../../../migrations/${file}`,import.meta.url),'utf8')));
   const release=(await createRelease(f.db,f.releaseInput)).release;
   const observation=(await recordReleaseObservation(f.db,release.id,f.observationInput,{trustedCollector:'fixture-collector'})).observation;
   input=f.runInput(release,observation);delete input.source_kind;delete input.external_origin;
