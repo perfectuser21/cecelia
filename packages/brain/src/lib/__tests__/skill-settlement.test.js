@@ -3,7 +3,7 @@
  * 登记为「候选」。机器能定的列机器写；承诺、哪些失败要人、判定点误判后果留给主理人拍板，草稿里明标「待拍板」。
  */
 import { describe, it, expect } from 'vitest';
-import { draftFromSpans, parseSkillMd } from '../lib/skill-settlement.js';
+import { draftFromSpans, parseSkillMd } from '../skill-settlement.js';
 
 let t = 0;
 const sp = (run, key, over = {}) => {

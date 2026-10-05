@@ -4,7 +4,7 @@
  * 连续 N 次整个 Activity 全绿 = 收敛，可以固化（蒸馏成脚本）。
  */
 import { describe, it, expect } from 'vitest';
-import { reconcileSteps } from '../lib/step-reconcile.js';
+import { reconcileSteps } from '../step-reconcile.js';
 
 const steps = [
   { id: 's1', key: 'a.b.lock', readback: { type: 'metric', ref: 'metrics.lock', expect: { op: '==', value: 1 } } },

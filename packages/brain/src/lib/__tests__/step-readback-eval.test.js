@@ -3,7 +3,7 @@
  * 对一次真实运行里 Step span 报上来的 observed 求值。拿不到观测值/没有可比的期望一律「未知」，绝不猜 pass。
  */
 import { describe, it, expect } from 'vitest';
-import { evaluateReadback } from '../lib/step-readback-eval.js';
+import { evaluateReadback } from '../step-readback-eval.js';
 
 const rb = (expect, type = 'metric') => ({ type, ref: 'metrics.x', expect });
 
