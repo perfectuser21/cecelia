@@ -10,9 +10,9 @@
  * 经 POST /api/brain/spans 以 step_id 或 activity_id 上报；脚本 emit-step-span.sh 封装了这个约定。
  */
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
+import { CELL_KEYS, ensureEightCells } from './activity-cells.js';
 
-/** 8 个固定验收格（与迁移 521 的标准键一致）。 */
-export const CELL_KEYS = Object.freeze(['promise', 'nfr', 'judgment', 'invariants', 'failure', 'readback', 'adversarial', 'shelf_life']);
+export { CELL_KEYS, ensureEightCells };
 
 const SENTENCE_END = new Set(['。', '.', '!', '！', '?', '？']);
 
@@ -114,16 +114,6 @@ async function withTransaction(db, fn) {
     throw error;
   } finally {
     if (isPool) client.release();
-  }
-}
-
-/** 每个 Activity 固定 8 格：缺的补灰格，已有的不动（唯一键 step_id+cell_kind+cell_key，重跑幂等）。 */
-export async function ensureEightCells(db, activityId, journeyId) {
-  for (const key of CELL_KEYS) {
-    await db.query(
-      `INSERT INTO activity_cells (journey_id, step_id, cell_kind, cell_key)
-       VALUES ($1, $2, 'element', $3) ON CONFLICT (step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL DO NOTHING`,
-      [journeyId, activityId, key]);
   }
 }
 

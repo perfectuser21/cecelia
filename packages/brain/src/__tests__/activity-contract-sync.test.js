@@ -114,7 +114,7 @@ function fakePool(stepRows = [], memory = {}) {
   const queries = [];
   const rows = stepRows.map((r) => ({ ...r }));
   return {
-    rows, memory, queries, steps: [],
+    rows, memory, queries, steps: [], cells: [],
     async connect() { return {query:this.query.bind(this),release(){}}; },
     async query(text, params = []) {
       queries.push({ text, params });
@@ -126,6 +126,7 @@ function fakePool(stepRows = [], memory = {}) {
         const found = this.steps.filter((x) => x.key === params[0]);
         return { rows: found, rowCount: found.length };
       }
+      if (/^\s*INSERT INTO activity_cells/.test(text)) { this.cells.push({ journey_id: params[0], step_id: params[1], cell_key: params[2] }); return { rows: [], rowCount: 1 }; }
       if (/^\s*INSERT INTO steps/.test(text)) { this.steps.push(stepRow(text, params)); return { rows: [], rowCount: 1 }; }
       if (/^\s*UPDATE steps/.test(text)) { Object.assign(this.steps.find((x) => x.key === params[0]), stepRow(text, params)); return { rows: [], rowCount: 1 }; }
       if (/FROM workflows/.test(text)) return {rows: rows.length ? [{id:'w',key:'workflow',capability_id:'J',source_repo:CONTRACT_REPO,source_path:'product-map/contracts/keyword_acquisition.yaml',source_capability:'keyword_acquisition',source_workflow:'social-keyword-leadgen'}] : []};
