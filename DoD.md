@@ -1,4 +1,7 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] notionregistrycleanup v3.0 第 6 刀后清理：迁移 530 把 Notion 注册表里 4 行已停用的旧库登记（activities=AI Steps、activity_cells=Backbone-Step Map、okr_projects=Cecelia Projects、tasks=Cecelia Tasks）清掉——只删同一张表上已有非 archived 登记的行，registry_coverage 每表至少留一行，删前整行备份进 migration_530_notion_map_backup；旧树 Feature 镜像（journey_features）改 archived 停推并保留登记行；不碰 unmapped 占位行、journeys 唯一一行、journey_features 表本身；回滚按备份还原并恢复旧树镜像为 active push（本机验证升级→回滚→再升级，生产库干跑 71→67 行且回滚后恢复）；notion-projection-registry 测试里「旧 AI Steps 行」断言改为「不存在或必须 archived/none」。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-530-notion-registry-cleanup.test.js src/__tests__/migration-523-notion-registry-names.test.js src/__tests__/migration-480-archive-journey-mirrors.test.js src/__tests__/notion-push-sync.test.js --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] journeysview v3.0 第 6 刀 PR-B：迁移 529 把 journeys 空壳父表下线——先让 activity_flow_metrics 改读 capabilities、journey_ref_guard（10 张表的多态 journey_id 引用守卫）改按 value_streams / capabilities 判存在，再对两张子表 NO INHERIT、删父表与 INSERT 分流触发器及函数，同名建只读 UNION ALL 视图（INSERT/UPDATE/DELETE 一律被拒）；子表上的身份锁与级联删除触发器保留；父表自己有行就中止；回滚脚本还原 520 形状（本机验证升级→回滚→再升级，生产库干跑通过且回滚后版本回到 528）；直接写 journeys 的集成测试按角色改写子表。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-529-journeys-view.test.js src/__tests__/sql-no-journeys-parent.test.js --maxWorkers=1 --minWorkers=1"
 
