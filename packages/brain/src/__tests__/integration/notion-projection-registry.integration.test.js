@@ -31,11 +31,11 @@ describe('notion_projection_map 注册表', () => {
   // 旧 AI Steps 推送链（notion-push-sync.pushJourneySteps，2026-06-09 退役）不得复活；
   // 迁移 482（决策 0834e2fb / 92f6226b）起 journey_steps=backbone_activities 只允许一条推送血管：
   // 「Backbone Activities」契约只读镜子，走 activity-contract-sync，不走旧 notion-push-sync 链。
-  it('activities（原 journey_steps）：旧 AI Steps 行保持 archived/none；唯一推送血管是 Backbone Activities 契约镜子', async () => {
+  it('activities（原 journey_steps）：旧 AI Steps 不得复活（迁移 530 已清掉这行登记；若存在必须是 archived/none）；唯一推送血管是 Backbone Activities 契约镜子', async () => {
     const { rows } = await pool.query(
       `SELECT notion_db_id, status, direction, vessel FROM notion_projection_map WHERE brain_table='activities' ORDER BY notion_db_id`);
     const aiSteps = rows.find(r => r.notion_db_id === '369c40c2-ba63-812c-9f35-e7e43db25014');
-    expect(aiSteps).toMatchObject({ status: 'archived', direction: 'none' });
+    if (aiSteps) expect(aiSteps).toMatchObject({ status: 'archived', direction: 'none' });
     const pushing = rows.filter(r => ['push', 'both'].includes(r.direction) && r.status === 'active');
     expect(pushing).toHaveLength(1);
     expect(pushing[0]).toMatchObject({ notion_db_id: 'c213e387-b2ae-45a4-98c0-4a66fe3408be', vessel: 'activity-contract-sync.pushBackboneActivities' });
