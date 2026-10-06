@@ -15,6 +15,7 @@
  */
 import { callLLM } from './llm-caller.js';
 import { extractJsonObject } from './json-utils.js';
+import { TREE_NODES_SQL } from './lib/tree-nodes-sql.js';
 
 /** 每周触发窗口：UTC 周日 21:30-21:35 = 北京周一 05:30-05:35 */
 const WINDOW_UTC_DAY = 0;
@@ -121,7 +122,7 @@ export async function collectKrGaps(pool) {
 export async function collectExhaustedLines(pool) {
   const rows = await safeRows(
     pool.query(
-      `SELECT j.id, j.name FROM journeys j
+      `SELECT j.id, j.name FROM ${TREE_NODES_SQL} j
        WHERE j.status = 'active'
          AND NOT EXISTS (
            SELECT 1 FROM journey_features jf

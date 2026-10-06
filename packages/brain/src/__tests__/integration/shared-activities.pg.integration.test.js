@@ -21,14 +21,15 @@ beforeEach(async () => {
   expect((await client.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `shared_activity_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['areas','enablers','enabler_calls','schema_version','journeys','workflows','journey_steps','activity_uses','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
+  for (const table of ['areas','enablers','enabler_calls','schema_version','value_streams','capabilities','workflows','journey_steps','activity_uses','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
     await client.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   await client.query(`SET search_path TO ${schema}`);
+  await client.query('CREATE VIEW journeys AS SELECT * FROM value_streams UNION ALL SELECT * FROM capabilities'); // 旧迁移 511 重放要读 journeys
   await client.query('ALTER TABLE activities ADD COLUMN IF NOT EXISTS journey_id uuid, ADD COLUMN IF NOT EXISTS step_number integer'); // 迁移 528 前的列：511 回填引用要读 step_number（先加列，旧名视图才带得上）
   await useStandardNames(client);
   db = { query: client.query.bind(client), connect: async () => ({ query: client.query.bind(client), release() {} }) }; holder.db = db;
   const parent = randomUUID(), capKeyword = randomUUID(); capBenchmark = randomUUID();
-  await client.query(`INSERT INTO journeys(id,name,parent_journey_id) VALUES($1,'价值流',NULL),($2,'关键词',$1),($3,'对标',$1)`, [parent,capKeyword,capBenchmark]);
+  await client.query(`WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES($1,'价值流',NULL)) INSERT INTO capabilities(id,name,parent_journey_id) VALUES($2,'关键词',$1),($3,'对标',$1)`, [parent,capKeyword,capBenchmark]);
   keyword = randomUUID(); benchmark = randomUUID();
   await client.query(`INSERT INTO workflows(id,capability_id,key,name,channel) VALUES($1,$3,'douyin_keyword_leadgen','关键词','douyin'),($2,$4,'douyin_benchmark_leadgen','对标','douyin')`, [keyword,benchmark,capKeyword,capBenchmark]);
   legacy = [];
@@ -96,7 +97,7 @@ describe('共享活动真实数据库合同', () => {
   });
   it('KR登记补全共享关系，五活动八步骤及既有ID和运行事实保持',async()=>{
     await migrate();
-    await client.query(`INSERT INTO journeys(id,name,parent_journey_id,capability_code) VALUES($1,'管家 · G5 算力与基础设施调度',$2,'G5')`,[spec.capability_id,randomUUID()]);
+    await client.query(`INSERT INTO capabilities(id,name,parent_journey_id,capability_code) VALUES($1,'管家 · G5 算力与基础设施调度',$2,'G5')`,[spec.capability_id,randomUUID()]);
     await client.query(`INSERT INTO ops_agents(id,source,host_alias,name) VALUES(1,'openclaw','mmv',$1)`,[spec.agent]);
     await client.query(`INSERT INTO ops_workflows(id,source,wf_id,name) VALUES(1,'scheduler',$1,$1)`,[spec.runtime]);
     const first=await registerCompanyKrWorkflow(db);
@@ -115,7 +116,7 @@ describe('共享活动真实数据库合同', () => {
     expect(result.status).toBe(200); expect(result.body.consumers.map(c=>c.workflow_id).sort()).toEqual([keyword,benchmark].sort());
     const activity=(await client.query("SELECT id FROM journey_steps WHERE capability_key='benchmark_link_acquisition'")).rows[0].id;
     await client.query(`INSERT INTO spans(run_id,activity_id,workflow_id,started_at,executor_kind) VALUES('own',$1,$2,now(),'code')`,[activity,benchmark]);
-    const expected=(await client.query('SELECT parent_journey_id FROM journeys WHERE id=$1',[capBenchmark])).rows[0].parent_journey_id;
+    const expected=(await client.query('SELECT parent_journey_id FROM capabilities WHERE id=$1',[capBenchmark])).rows[0].parent_journey_id;
     expect((await client.query('SELECT value_stream_id FROM activity_flow_metrics WHERE activity_id=$1',[activity])).rows[0].value_stream_id).toBe(expected);
   });
 

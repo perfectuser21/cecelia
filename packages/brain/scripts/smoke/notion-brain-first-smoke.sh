@@ -28,11 +28,11 @@ fi
 JOURNEY_ID=$(echo "$RESP" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.id||'')" 2>/dev/null || true)
 [ -n "$JOURNEY_ID" ] || { echo "FAIL: 响应无 id 字段"; exit 1; }
 
-DB_COUNT=$(psql -X "$DB" -tAc "SELECT COUNT(*) FROM journeys WHERE id='$JOURNEY_ID' AND notion_synced_at IS NULL")
+DB_COUNT=$(psql -X "$DB" -tAc "SELECT COUNT(*) FROM value_streams WHERE id='$JOURNEY_ID' AND notion_synced_at IS NULL")
 [ "$DB_COUNT" = "1" ] || { echo "FAIL: journeys 行不存在或 notion_synced_at 不为 NULL"; exit 1; }
 
 # 清理
-psql -X "$DB" -tAc "DELETE FROM journeys WHERE id='$JOURNEY_ID'" >/dev/null
+psql -X "$DB" -tAc "DELETE FROM value_streams WHERE id='$JOURNEY_ID'" >/dev/null
 
 echo "[smoke] 测试 POST /api/brain/issues..."
 IRESP=$(curl -q -sf -X POST "$BRAIN/api/brain/issues" \

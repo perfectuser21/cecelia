@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockQuery = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: mockQuery, connect: async () => ({
   query: async (sql, values) => /^(BEGIN|COMMIT|ROLLBACK|LOCK TABLE)/.test(sql)
-    ? { rows: [] } : sql.includes('AS organization FROM journeys')
+    ? { rows: [] } : sql.includes('AS organization FROM (SELECT * FROM value_streams')
       ? { rows: [{ organization: { gaps: [] } }] } : mockQuery(sql, values),
   release() {},
 }) } }));

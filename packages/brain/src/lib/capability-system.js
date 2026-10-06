@@ -3,6 +3,7 @@ import {resolveEnablerSource} from './enabler-definition-sources.js';
 import { JOURNEY_ORGANIZATION_SQL } from './journey-organization.js';
 import { listWorkflows } from './workflow-read-service.js';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
+import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 export const pick = (row, keys) => Object.fromEntries(keys.filter(k => row?.[k] !== undefined).map(k => [k, row[k]]));
 export { listSystemReleases, listSystemRuns, readSystemReleaseEvidence, readSystemRunEvidence } from './capability-system-evidence.js';
 function bindingProjection(binding,steps){
@@ -24,7 +25,7 @@ function workflowProjection(w){
 export async function readCapabilitySystem(db) {
   const areas = (await db.query('SELECT id,name,parent_area_id FROM areas ORDER BY name,id')).rows;
   const journeys = (await db.query(`SELECT c.id,c.name,c.parent_journey_id,c.area_id,c.capability_code,
-    (${JOURNEY_ORGANIZATION_SQL}) organization FROM journeys c ORDER BY c.name,c.id`)).rows;
+    (${JOURNEY_ORGANIZATION_SQL}) organization FROM ${TREE_NODES_SQL} c ORDER BY c.name,c.id`)).rows;
   const workflows = (await listWorkflows(db)).map(workflowProjection);
   const byJourney = new Map(journeys.map(j => [j.id,j]));
   for (const j of journeys) j.role = !j.parent_journey_id

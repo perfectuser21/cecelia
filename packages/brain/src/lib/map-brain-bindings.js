@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 
 const UUID = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$';
 const REPO = '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$';
@@ -46,7 +47,7 @@ export async function validateMapBrainBindings(client, manifest, scopeKey = mani
       throw new MapBrainBindingError('INVALID', `绑定格式错误: ${node.key}`);
     }
   }
-  await client.query('LOCK TABLE journeys, workflows, areas IN SHARE ROW EXCLUSIVE MODE');
+  await client.query('LOCK TABLE value_streams, capabilities, workflows, areas IN SHARE ROW EXCLUSIVE MODE');
   // SHARE 也保护不存在的登记/header，防止校验后插入或替换事实造成假 verified。
   await client.query('LOCK TABLE map_scope_repositories, fact_snapshot_headers IN SHARE MODE');
   return inspectMapBrainBindings(client, manifest, scopeKey, true);
@@ -74,7 +75,7 @@ async function inspectMapBrainBindings(client, manifest, scopeKey, strict) {
       evidence[node.key] = { registration_status: 'unknown', hierarchy_status: 'unknown', source_status: 'unknown', mapping_status: 'unknown', validation_errors: errors };
       continue;
     }
-    const { rows: entities } = await client.query('SELECT id, parent_journey_id FROM journeys WHERE id=$1', [binding.entity_id]);
+    const { rows: entities } = await client.query(`SELECT id, parent_journey_id FROM ${TREE_NODES_SQL} n WHERE id=$1`, [binding.entity_id]);
     const entity = entities[0];
     if (!entity) reject('NOT_FOUND', `规范实体不存在: ${binding.entity_id}`);
     const validType = entity && (entity.parent_journey_id ? 'capability' : 'value_stream') === type;

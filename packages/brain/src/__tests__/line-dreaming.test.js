@@ -193,7 +193,7 @@ describe('maybeRunLineDreaming — 非窗口期不执行；窗口期遍历 activ
     let journeyCall = 0;
     const pool = {
       query: vi.fn(async (sql) => {
-        if (/FROM journeys WHERE status/.test(sql)) {
+        if (/FROM \(SELECT \* FROM value_streams UNION ALL SELECT \* FROM capabilities\) n WHERE status/.test(sql)) {
           return { rows: [{ id: 'j1', name: 'Line A' }, { id: 'j2', name: 'Line B' }] };
         }
         if (/type = 'line_ledger'.*journey_id = \$1/s.test(sql)) {

@@ -24,6 +24,7 @@
  */
 
 import { GP_SCOPE_TASK_TYPES } from './lib/task-type-registry.js';
+import { TREE_NODES_SQL } from './lib/tree-nodes-sql.js';
 
 const TRIGGER_UTC_HOUR = 23;
 const TRIGGER_UTC_MINUTE = 0;
@@ -128,7 +129,7 @@ export async function buildRankedLeaderboard(pool, topN) {
               j.name AS journey_name,
               EXTRACT(EPOCH FROM (NOW() - t.queued_at)) / 3600.0 AS queue_age_h
        FROM tasks t
-       LEFT JOIN journeys j ON j.id = (t.payload->>'journey_id')::uuid
+       LEFT JOIN ${TREE_NODES_SQL} j ON j.id = (t.payload->>'journey_id')::uuid
        WHERE t.status = 'queued'
          AND t.task_type = ANY($2::text[])
          AND t.claimed_by IS NULL
@@ -164,7 +165,7 @@ export async function computeLineWatermarks(pool) {
               COUNT(t.id)::int AS tasks_7d,
               ROUND((COUNT(t.id) / 7.0)::numeric, 2) AS burn_rate
        FROM tasks t
-       JOIN journeys j ON j.id = (t.payload->>'journey_id')::uuid
+       JOIN ${TREE_NODES_SQL} j ON j.id = (t.payload->>'journey_id')::uuid
        WHERE t.status = 'completed'
          AND t.completed_at >= NOW() - INTERVAL '7 days'
        GROUP BY j.name

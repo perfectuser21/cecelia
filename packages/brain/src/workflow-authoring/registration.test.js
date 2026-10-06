@@ -32,7 +32,7 @@ describe('工作流登记定义', () => {
 
 describe('引用就绪检查', () => {
   const db = (status = 'active', parent = ID) => ({ query: async sql => {
-    if (sql.includes('FROM journeys')) return { rows: [{ id: ID, parent_journey_id: parent, status: 'active' }] };
+    if (sql.includes('FROM capabilities')) return { rows: [{ id: ID, parent_journey_id: parent, status: 'active' }] };
     if (sql.includes('FROM skill_registry')) return { rows: [{ id: ID, name: 'weekly-analysis', status, location: '/skills/weekly-analysis/SKILL.md' }] };
     throw new Error(`意外查询: ${sql}`);
   } });

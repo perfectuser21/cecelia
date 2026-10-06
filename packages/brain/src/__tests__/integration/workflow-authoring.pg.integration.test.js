@@ -16,13 +16,13 @@ beforeEach(async () => {
   client = new pg.Client(DB_DEFAULTS); await client.connect();
   schema = `workflow_authoring_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['journeys','workflows','journey_steps','journey_step_links','workflow_activity_refs','skill_registry','tasks']) {
+  for (const table of ['value_streams','capabilities','workflows','journey_steps','journey_step_links','workflow_activity_refs','skill_registry','tasks']) {
     await client.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   }
   await client.query(`SET search_path TO ${schema},public`);
   await useStandardNames(client);
   const cap = randomUUID(), skill = randomUUID();
-  await client.query(`INSERT INTO journeys(id,name,parent_journey_id,status) VALUES($1,'工作流管理',$2,'active')`, [cap, randomUUID()]);
+  await client.query(`INSERT INTO capabilities(id,name,parent_journey_id,status) VALUES($1,'工作流管理',$2,'active')`, [cap, randomUUID()]);
   await client.query(`INSERT INTO skill_registry(id,name,location,status) VALUES($1,'workflow-authoring','/skills/workflow-authoring/SKILL.md','active')`, [skill]);
   definition = {
     key: 'workflow_authoring', name: '创建与更新工作流', capability_id: cap, channel: 'internal', form: 'openclaw_skill', version: '1.0.0',
@@ -157,6 +157,7 @@ describe('authoring 与真实共享关系和版本底座读模型贯通', () => 
     }
     // 真实迁移仅落隔离 schema，避免解析到 public 的版本表或触发器。
     await client.query(`SET search_path TO ${schema}`);
+    await client.query('CREATE OR REPLACE VIEW journeys AS SELECT * FROM value_streams UNION ALL SELECT * FROM capabilities'); // 旧迁移 511 重放要读 journeys
     await client.query('DROP TABLE IF EXISTS workflow_activity_refs'); // 让 511 迁移自己建这张表
     await client.query('ALTER TABLE activities ADD COLUMN IF NOT EXISTS journey_id uuid, ADD COLUMN IF NOT EXISTS step_number integer'); // 迁移 528 前的列：511 回填引用要读 step_number
     await withLegacyNames(client, async () => {
@@ -250,7 +251,7 @@ describe('共享引用真身与消费者合同保护：真实 PostgreSQL', () =>
   it('跨能力消费者登记持有共享锁，owner必须看到提交后的consumer再拒绝修改', async () => {
     const owner = await register(), consumer = await consumerDefinition(owner);
     consumer.capability_id = randomUUID();
-    await client.query(`INSERT INTO journeys(id,name,parent_journey_id,status) VALUES($1,'另一个能力',$2,'active')`, [consumer.capability_id, randomUUID()]);
+    await client.query(`INSERT INTO capabilities(id,name,parent_journey_id,status) VALUES($1,'另一个能力',$2,'active')`, [consumer.capability_id, randomUUID()]);
     const concurrent = new pg.Client(DB_DEFAULTS); await concurrent.connect();
     let pending;
     try {

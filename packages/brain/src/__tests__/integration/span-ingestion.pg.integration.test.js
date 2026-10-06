@@ -15,7 +15,7 @@ beforeEach(async () => {
   fixture=await privateFixtureDatabase('spaningestion',db=>minimumDefinitionSchema(db));
   pool=fixture.createPool(DB_DEFAULTS.max);holder.pool=pool;
   const journey = randomUUID(),capability=randomUUID(); activity = randomUUID(); workflow = randomUUID();
-  await pool.query("INSERT INTO journeys(id,name,parent_journey_id) VALUES($1,'Span验收',NULL),($2,'Span能力',$1)", [journey,capability]);
+  await pool.query("WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES($1,'Span验收',NULL)) INSERT INTO capabilities(id,name,parent_journey_id) VALUES($2,'Span能力',$1)", [journey,capability]);
   await pool.query("INSERT INTO workflows(id,capability_id,key,name,channel) VALUES($1,$2,'span-test','工作流','test')", [workflow, capability]);
   await pool.query("INSERT INTO journey_steps(id,journey_id,name,step_number) VALUES($1,$2,'活动',1)", [activity, journey]);
   app = express(); app.use(express.json()); app.use('/api/brain', router);

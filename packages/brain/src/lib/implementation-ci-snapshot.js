@@ -6,6 +6,7 @@ import { validateImplementationQuery } from './implementation-consumers.js';
 import { syncActivityContracts,CONTRACT_REPO } from '../activity-contract-sync.js';
 import { registerCompanyKrWorkflow } from './company-kr-registration.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
+import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 export const ciFailure=(code,message,status=422)=>Object.assign(Error(message||code),{code:`IMPLEMENTATION_CI_${code}`,status});
 export function isImplementationScratchDatabase(database,env=process.env){
   return database==='cecelia_scratch'||database==='cecelia_test'&&env.CI==='true'&&env.GITHUB_ACTIONS==='true';
@@ -65,8 +66,8 @@ export async function readImplementationSnapshotInTransaction(db,q){
   if(manifest&&!manifestMatchesImplementationSource(manifest.manifest,q.repo,q.revision))gap('manifest_source_mismatch',{revision:q.revision});
   if(!manifest)gap('scope_manifest_missing',{scope:q.scope,revision:q.revision});
   const capabilityIds=[...new Set(selected.map(w=>w.payload.capability_id))];
-  const journeys=(await db.query(`WITH RECURSIVE chain AS(SELECT * FROM journeys WHERE id=ANY($1::uuid[])
-    UNION SELECT j.* FROM journeys j JOIN chain c ON j.id=c.parent_journey_id) SELECT * FROM chain ORDER BY id`,[capabilityIds])).rows;
+  const journeys=(await db.query(`WITH RECURSIVE chain AS(SELECT * FROM ${TREE_NODES_SQL} n WHERE id=ANY($1::uuid[])
+    UNION SELECT j.* FROM ${TREE_NODES_SQL} j JOIN chain c ON j.id=c.parent_journey_id) SELECT * FROM chain ORDER BY id`,[capabilityIds])).rows;
   const mapped=new Set();
   for(const node of manifest?.manifest?.capabilities||[]){
     const b=node.brain_binding;

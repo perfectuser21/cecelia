@@ -57,7 +57,7 @@ export function isPageGoneError(err) {
  * @param {object} pool
  * @param {string} token
  * @param {object} o
- * @param {string}   o.table          真身表名（用于回写）
+ * @param {string|Function} o.table 真身表名（用于回写）；或 (row) => 表名
  * @param {string}   o.dbId           目标 Notion 库 id
  * @param {object[]} o.rows           已选出的行（需含 id / notion_id / notion_digest）
  * @param {Function} o.buildProps     (row) => properties
@@ -73,8 +73,10 @@ export async function pushRegisteredRows(pool, token, o) {
   const {
     table, dbId, rows, buildProps, buildChildren, notionReq,
     logSyncError = async () => {}, isStaleRelationError = () => false,
-    isWrongDatabaseError = () => false, onFatal = () => false, label = table,
+    isWrongDatabaseError = () => false, onFatal = () => false, label = typeof table === 'function' ? 'rows' : table,
   } = o;
+  // table 可以是函数：同一批行落在不同真身表时（价值流 / 能力）按行取回写表名
+  const tableFor = (row) => (typeof table === 'function' ? table(row) : table);
   const stat = { created: 0, patched: 0, skipped: 0, failed: 0, cleared: 0 };
   for (const r of rows) {
     let properties;
@@ -84,27 +86,27 @@ export async function pushRegisteredRows(pool, token, o) {
       if (r.notion_id && r.notion_digest === digest) {
         // 指纹同：不打 Notion；但要把 synced 抬到现在，否则 updated_at > notion_synced_at 的行
         // 会在每轮 LIMIT 里永久占位，把别的行饿死
-        await pool.query(`UPDATE ${table} SET notion_synced_at = NOW() WHERE id = $1`, [r.id]).catch(() => {});
+        await pool.query(`UPDATE ${tableFor(r)} SET notion_synced_at = NOW() WHERE id = $1`, [r.id]).catch(() => {});
         stat.skipped++; continue;
       }
       if (r.notion_id) {
         await notionReq(token, `/pages/${r.notion_id}`, 'PATCH', { properties });
         await pool.query(
-          `UPDATE ${table} SET notion_digest = $2, notion_synced_at = NOW() WHERE id = $1`, [r.id, digest]);
+          `UPDATE ${tableFor(r)} SET notion_digest = $2, notion_synced_at = NOW() WHERE id = $1`, [r.id, digest]);
         stat.patched++;
       } else {
         const children = buildChildren ? buildChildren(r) : undefined;
         const page = await notionReq(token, '/pages', 'POST',
           { parent: { database_id: dbId }, properties, ...(children?.length ? { children } : {}) });
         await pool.query(
-          `UPDATE ${table} SET notion_id = $2, notion_digest = $3, notion_synced_at = NOW() WHERE id = $1`,
+          `UPDATE ${tableFor(r)} SET notion_id = $2, notion_digest = $3, notion_synced_at = NOW() WHERE id = $1`,
           [r.id, page.id, digest]);
         stat.created++;
       }
     } catch (err) {
       if (onFatal(err)) { stat.failed++; return stat; }
       if ((isPageGoneError(err) && r.notion_id) || isWrongDatabaseError(err)) {
-        await pool.query(`UPDATE ${table} SET notion_id = NULL, notion_digest = NULL WHERE id = $1`, [r.id]).catch(() => {});
+        await pool.query(`UPDATE ${tableFor(r)} SET notion_id = NULL, notion_digest = NULL WHERE id = $1`, [r.id]).catch(() => {});
         stat.cleared++;
         continue;
       }
@@ -112,7 +114,7 @@ export async function pushRegisteredRows(pool, token, o) {
       console.warn(`[notion-push-sync] ${label} ${r.id} 推送失败: ${err.message}`);
       await logSyncError(pool, err.message);
       if (isStaleRelationError(err)) {
-        await pool.query(`UPDATE ${table} SET notion_synced_at = NOW() WHERE id = $1`, [r.id]).catch(() => {});
+        await pool.query(`UPDATE ${tableFor(r)} SET notion_synced_at = NOW() WHERE id = $1`, [r.id]).catch(() => {});
       }
     }
   }

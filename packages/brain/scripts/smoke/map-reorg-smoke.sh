@@ -20,23 +20,23 @@ fail() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
 psql_val() { psql "$DB_URL" -t -c "$1" | tr -d ' \n'; }
 
 # 1. schema 字段存在
-FIELDS=$(psql_val "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='journeys' AND column_name IN ('parent_journey_id','capability_code');")
+FIELDS=$(psql_val "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='value_streams' AND column_name IN ('parent_journey_id','capability_code');")
 [ "$FIELDS" -eq 2 ] && pass "journeys 新字段存在(2)" || fail "journeys 新字段缺失($FIELDS/2)"
 
 # 2. 价值流顶层行 = 2
-VS=$(psql_val "SELECT COUNT(*) FROM journeys WHERE parent_journey_id IS NULL AND status='active' AND biz_area='cecelia';")
+VS=$(psql_val "SELECT COUNT(*) FROM value_streams WHERE parent_journey_id IS NULL AND status='active' AND biz_area='cecelia';")
 [ "$VS" -eq 2 ] && pass "价值流顶层行=2" || fail "价值流顶层行=$VS(期望2)"
 
 # 3. 工厂线 Capability = 6
-FC=$(psql_val "SELECT COUNT(*) FROM journeys WHERE parent_journey_id=(SELECT id FROM journeys WHERE capability_code='VS_FACTORY') AND status='active';")
+FC=$(psql_val "SELECT COUNT(*) FROM capabilities WHERE parent_journey_id=(SELECT id FROM value_streams WHERE capability_code='VS_FACTORY') AND status='active';")
 [ "$FC" -eq 6 ] && pass "工厂线Capability=6" || fail "工厂线Capability=$FC(期望6)"
 
 # 4. 管家线 Capability = 5
-SC=$(psql_val "SELECT COUNT(*) FROM journeys WHERE parent_journey_id=(SELECT id FROM journeys WHERE capability_code='VS_STEWARD') AND status='active';")
+SC=$(psql_val "SELECT COUNT(*) FROM capabilities WHERE parent_journey_id=(SELECT id FROM value_streams WHERE capability_code='VS_STEWARD') AND status='active';")
 [ "$SC" -eq 5 ] && pass "管家线Capability=5" || fail "管家线Capability=$SC(期望5)"
 
 # 5. 关键锚不断裂
-AC=$(psql_val "SELECT COUNT(*) FROM journeys WHERE id IN ('e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29','8bb8252f-29b4-4c34-acb9-1accda7ddfcf');")
+AC=$(psql_val "SELECT COUNT(*) FROM (SELECT id FROM value_streams UNION ALL SELECT id FROM capabilities) n WHERE id IN ('e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29','8bb8252f-29b4-4c34-acb9-1accda7ddfcf');")
 [ "$AC" -eq 2 ] && pass "关键锚行存在=2" || fail "关键锚断裂($AC/2)"
 
 # 6. 孤儿归零（仅计 migration 399 应覆盖的存量；排除本轮其他 smoke 产生的测试脏数据）
@@ -45,7 +45,7 @@ AC=$(psql_val "SELECT COUNT(*) FROM journeys WHERE id IN ('e6f803f2-8c48-4cce-a7
 # 其他 smoke 脚本若产生 NULL journey_id 的新行，created_at 必然晚于 VS_FACTORY，被排除。
 OC=$(psql_val "SELECT COUNT(*) FROM journey_features
   WHERE journey_id IS NULL AND status != 'deprecated'
-    AND created_at < (SELECT created_at FROM journeys WHERE capability_code = 'VS_FACTORY' LIMIT 1);")
+    AND created_at < (SELECT created_at FROM value_streams WHERE capability_code = 'VS_FACTORY' LIMIT 1);")
 [ "$OC" -eq 0 ] && pass "孤儿挂片=0(存量)" || fail "孤儿挂片=$OC(期望0，存量口径)"
 
 # 7. 横切件 >= 7

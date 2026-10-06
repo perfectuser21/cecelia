@@ -1,3 +1,4 @@
+import { TREE_NODES_SQL } from './lib/tree-nodes-sql.js';
 /**
  * line-dreaming.js — L1 line 级夜间蒸馏 job（dreaming L1）
  *
@@ -45,7 +46,7 @@ export async function alreadyDreamedToday(pool, journeyId) {
  */
 export async function getActiveJourneys(pool) {
   const { rows } = await pool.query(
-    `SELECT id, name FROM journeys WHERE status = 'active' ORDER BY name`
+    `SELECT id, name FROM ${TREE_NODES_SQL} n WHERE status = 'active' ORDER BY name`
   );
   return rows.map((r) => ({ id: r.id, name: r.name }));
 }

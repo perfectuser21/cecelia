@@ -97,7 +97,7 @@ export const REMAINING_LEGACY_SITES = {
   // task_type（不是全量），且值与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP 都不同（如
   // harness_initiative 这里写 'harness(skill-relay)'，两处已有映射表都是别的值）——是运行舱只读
   // 展示端点自己的第三份独立"推不出=null"降级展示文案，不是"哪类"的分类标签，无匹配注册表字段
-  'routes/agent-ops.js': ['21:SKILL_BY_TASK_TYPE'],
+  'routes/agent-ops.js': ['22:SKILL_BY_TASK_TYPE'],
   // kind: map（long-lived）— Task 6 评估：:101 STEP_SYSTEM_PROMPTS 是
   // 6 个 content-* task_type 各自专属的完整 LLM system prompt 长文本（调 LLM 用），不是分类标签，
   // 无法也不应该折进注册表的 T() 字段
@@ -106,7 +106,7 @@ export const REMAINING_LEGACY_SITES = {
   // 剩 TASK_TYPE_TO_SKILL（:933，task_type→skill目录名，与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP
   // 语义相近但值不同——第3份独立维护，PR1 只搬家不合并）+ BASE_LABELS（:1021，task_type→短展示
   // 标签，第5份独立维护的 label 映射，无匹配注册表字段）
-  'routes/harness.js': ['934:TASK_TYPE_TO_SKILL', '1022:BASE_LABELS'],
+  'routes/harness.js': ['935:TASK_TYPE_TO_SKILL', '1023:BASE_LABELS'],
   // kind: map（long-lived）— Task 4 评估：:902 description 是 GET /api/brain/task-types
   // 的人类可读展示文案（仅5个类型有文案，不是"哪类"的分类标签），要对应注册表字段需给全部
   // ~80 个 task_type 逐个写产品文案，属独立的文档撰写工作，非 PR1 零行为变化范围

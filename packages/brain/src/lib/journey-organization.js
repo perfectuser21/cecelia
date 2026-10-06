@@ -1,8 +1,9 @@
+import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 /** 外层别名 c 必须是 journeys；可内嵌工作流单次查询，不按部门名称猜归属。 */
 export const JOURNEY_ORGANIZATION_SQL = `WITH RECURSIVE chosen AS (
   SELECT p.id AS parent_id,p.parent_journey_id AS grandparent_id,
     COALESCE(c.area_id,CASE WHEN p.parent_journey_id IS NULL THEN p.area_id END) AS effective_id
-  FROM (SELECT 1) seed LEFT JOIN journeys p ON p.id=c.parent_journey_id
+  FROM (SELECT 1) seed LEFT JOIN ${TREE_NODES_SQL} p ON p.id=c.parent_journey_id
 ), ancestry AS (
   SELECT a.id,a.name,a.parent_area_id,ARRAY[a.id] AS visited,false AS cycle,0 AS depth
   FROM areas a JOIN chosen ON a.id=chosen.effective_id
@@ -35,5 +36,5 @@ SELECT jsonb_build_object(
 ) FROM facts f`;
 
 export async function readJourneyOrganization(client, journeyId) {
-  return (await client.query(`SELECT (${JOURNEY_ORGANIZATION_SQL}) AS organization FROM journeys c WHERE c.id=$1`, [journeyId])).rows[0]?.organization;
+  return (await client.query(`SELECT (${JOURNEY_ORGANIZATION_SQL}) AS organization FROM ${TREE_NODES_SQL} c WHERE c.id=$1`, [journeyId])).rows[0]?.organization;
 }

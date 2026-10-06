@@ -40,7 +40,7 @@ async function state(scope) {
 beforeAll(async () => {
   fixture=await privateFixtureDatabase('mapbinding',async client=>{await minimumDefinitionSchema(client,{runs:false});await minimumMapSchema(client);});
   db=fixture.createPool(5);
-  await db.query("INSERT INTO journeys(id,name,parent_journey_id) VALUES($1,'流',NULL),($2,'能力',$1),($3,'另一流',NULL),($4,'另一能力',$3)", [vs,cap,otherVs,otherCap]);
+  await db.query("WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES($1,'流',NULL),($3,'另一流',NULL)) INSERT INTO capabilities(id,name,parent_journey_id) VALUES($2,'能力',$1),($4,'另一能力',$3)", [vs,cap,otherVs,otherCap]);
   await db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','绑定测试','active')", [decision]);
 });
 afterAll(async () => {await fixture?.close();});
@@ -59,16 +59,16 @@ describe.each(Object.keys(stores))('%s 绑定事务', name => {
     const scope = `${name}-drift`; await register(scope);
     const old = await store.submit(manifest(scope,false)); await store.activate(old.id,scope);
     const next = await store.submit(manifest(scope)); const before = await state(scope);
-    await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
+    await db.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
     try { await expect(store.activate(next.id,scope)).rejects.toMatchObject({ code: 'MAP_BRAIN_BINDING_PARENT_MISMATCH' }); expect(await state(scope)).toEqual(before); }
-    finally { await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
+    finally { await db.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
   });
   it('同scope幂等激活仍重验业务事实', async () => {
     const scope = `${name}-active-drift`; await register(scope);
     const draft = await store.submit(manifest(scope)); await store.activate(draft.id,scope);
-    await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
+    await db.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
     try { await expect(store.activate(draft.id,scope)).rejects.toMatchObject({ code: 'MAP_BRAIN_BINDING_PARENT_MISMATCH' }); }
-    finally { await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
+    finally { await db.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
   });
 });
 it('相同key跨scope独立，相同业务UUID跨scope保留；显式repo别名可核来源', async () => {
@@ -96,7 +96,7 @@ it('激活持锁阻止并发改父，双入口并发激活串行化', async () =
   const activation=stores.route.activate(first.id,scope,async args=>{entered(); await gate; return projector(args);});
   await ready;
   const writer=await db.connect(); await writer.query('BEGIN'); await writer.query("SET LOCAL lock_timeout='100ms'");
-  try { await expect(writer.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap])).rejects.toMatchObject({ code:'55P03' }); }
+  try { await expect(writer.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap])).rejects.toMatchObject({ code:'55P03' }); }
   finally { await writer.query('ROLLBACK'); writer.release(); resume(); }
   await activation;
   await Promise.all([stores.route.activate(first.id,scope),stores.lib.activate(second.id,scope)]);
@@ -107,9 +107,9 @@ it('只读核验复查父级漂移与来源，严格入口拒绝歧义repo', asy
   expect(typeof bindings.readMapBrainBindings).toBe('function');
   const scope='read-drift'; await register(scope); const m=manifest(scope);
   expect((await bindings.readMapBrainBindings(db,m)).F1.mapping_status).toBe('verified');
-  await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
+  await db.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
   try { expect((await bindings.readMapBrainBindings(db,m)).F1).toMatchObject({ hierarchy_status:'unknown',mapping_status:'unknown',validation_errors:['MAP_BRAIN_BINDING_PARENT_MISMATCH'] }); }
-  finally { await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
+  finally { await db.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
   await db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES($1,'ambiguous-alias','test-v1',$2)",[scope,JSON.stringify({source_repo:'owner/repo'})]);
   await expect(stores.route.submit(m)).rejects.toMatchObject({code:'MAP_BRAIN_BINDING_AMBIGUOUS_REPO'});
 });
@@ -135,11 +135,11 @@ it('HTTP提交与激活保留绑定领域错误422及原始code', async () => {
   const submitted=await request(app).post('/map/manifests').send(m);
   expect(submitted.status,submitted.body).toBe(422); expect(submitted.body.error.code).toBe('MAP_BRAIN_BINDING_NOT_FOUND');
   const draft=await stores.lib.submit(manifest(scope));
-  await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
+  await db.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
   try {
     const activated=await request(app).post(`/map/manifests/${draft.id}/activate`);
     expect(activated.status,activated.body).toBe(422); expect(activated.body.error.code).toBe('MAP_BRAIN_BINDING_PARENT_MISMATCH');
-  } finally { await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
+  } finally { await db.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
 });
 it('默认projector按显式登记repo读取revision，不能把scope充当repo', async () => {
   const scope='projection-alias'; await register(scope);
@@ -163,9 +163,9 @@ it('正式地图和节点GET复核漂移并重建权威绑定属性，不改持�
   await db.query("UPDATE fact_snapshot_headers SET source_revision=$1 WHERE repo=$2",['b'.repeat(40),scope]);
   expect(await read()).toMatchObject({source_status:'unknown',mapping_status:'unknown',source_evidence:null});
   await db.query('UPDATE fact_snapshot_headers SET source_revision=$1 WHERE repo=$2',[revision,scope]);
-  await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
+  await db.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
   try { expect(await read()).toMatchObject({hierarchy_status:'unknown',mapping_status:'unknown',validation_errors:['MAP_BRAIN_BINDING_PARENT_MISMATCH']}); }
-  finally { await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
+  finally { await db.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
   const persisted=(await db.query("SELECT n.attributes FROM map_projection_nodes n JOIN map_projection_runs r ON r.id=n.run_id WHERE r.scope_key=$1 AND n.node_key='F1'",[scope])).rows[0].attributes;
   expect(persisted).toEqual(before);
   await db.query("UPDATE map_projection_nodes SET attributes=attributes || $1::jsonb WHERE run_id=(SELECT id FROM map_projection_runs WHERE scope_key=$2 AND status='active') AND node_key='F1'",[JSON.stringify({canonical_entity_id:otherCap,canonical_entity_type:'value_stream',brain_binding:{entity_id:otherCap},mapping_status:'verified',validation_errors:['obsolete']}),scope]);

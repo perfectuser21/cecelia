@@ -12,6 +12,7 @@ import { classifyJourneyCellAssertion } from '../lib/journey-cell-assertion.js';
 import { assertionDigest } from '../lib/journey-assertion-receipt.js';
 import { canonicalAssertionCommandText } from '../lib/gp-assertion-command.js';
 import { PROBE_REF_PREFIX } from '../lib/step-probe-spec.js';
+import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
 
 const GIT_SHA = /^[0-9a-f]{40}$/i;
 const MAX_CHANGED_FILES = 1000;
@@ -310,7 +311,7 @@ export async function resolveImpactRadius(input = {}, {
       `SELECT jf.id, jf.name, jf.unit_test_path, jf.workflow_ref, jf.guard_ref,
               j.capability_code, j.name AS capability_name
          FROM journey_features AS jf
-         JOIN journeys AS j ON j.id = jf.journey_id
+         JOIN capabilities AS j ON j.id = jf.journey_id
         WHERE jf.status <> 'deprecated'
           AND j.capability_code IS NOT NULL
           AND j.parent_journey_id IS NOT NULL
@@ -388,7 +389,7 @@ export async function resolveImpactRadius(input = {}, {
       `SELECT link.id, link.assertion_ref, link.assertion_revision,
               journey.capability_code
          FROM activity_cells AS link
-         JOIN journeys AS journey ON journey.id = link.journey_id
+         JOIN ${TREE_NODES_SQL} AS journey ON journey.id = link.journey_id
         WHERE journey.capability_code = ANY($1::text[])
           AND link.assertion_ref IS NOT NULL
         ORDER BY journey.capability_code, link.id`,

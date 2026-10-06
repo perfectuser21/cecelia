@@ -14,7 +14,7 @@ beforeEach(async () => {
   expect((await client.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `kr_registration_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['journeys','workflows','ops_agents','journey_steps','steps','ops_workflows','tasks','task_runs','schema_version','spans','enablers','enabler_calls','areas','activity_uses']) {
+  for (const table of ['value_streams','capabilities','workflows','ops_agents','journey_steps','steps','ops_workflows','tasks','task_runs','schema_version','spans','enablers','enabler_calls','areas','activity_uses']) {
     await client.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   }
   await client.query(`SET search_path TO ${schema},public`);
@@ -24,7 +24,7 @@ beforeEach(async () => {
     await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql',import.meta.url),'utf8'));
   });
   db = { connect: async () => ({ query: client.query.bind(client), release() {} }) };
-  await client.query(`INSERT INTO journeys(id,name,parent_journey_id,capability_code) VALUES($1,'管家 · G5 算力与基础设施调度',$2,'G5')`, [spec.capability_id, randomUUID()]);
+  await client.query(`INSERT INTO capabilities(id,name,parent_journey_id,capability_code) VALUES($1,'管家 · G5 算力与基础设施调度',$2,'G5')`, [spec.capability_id, randomUUID()]);
   await client.query(`INSERT INTO ops_agents(id,source,host_alias,name) VALUES(1,'openclaw','mmv',$1)`, [spec.agent]);
   await client.query(`INSERT INTO ops_workflows(id,source,wf_id,name) VALUES(1,'scheduler',$1,$1)`, [spec.runtime]);
 });
@@ -57,7 +57,7 @@ describe('KR 注册事务', () => {
     expect((await client.query('SELECT count(*)::int AS n FROM workflows')).rows[0].n).toBe(0);
     expect((await client.query('SELECT count(*)::int AS n FROM journey_steps')).rows[0].n).toBe(0);
     expect((await client.query('SELECT count(*)::int AS n FROM steps')).rows[0].n).toBe(0);
-    expect((await client.query('SELECT name FROM journeys')).rows[0].name).toContain('算力');
+    expect((await client.query('SELECT name FROM capabilities')).rows[0].name).toContain('算力');
   });
   it('相同步骤key已有其它工作流时拒绝抢占', async () => {
     const first=await registerCompanyKrWorkflow(db);

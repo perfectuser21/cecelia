@@ -68,7 +68,7 @@ it.each(['waiting','verified'])('复用期间%s阶段main前移必须409，不�
 });
 it('等待期间规范父级变化仍拒绝，不以已提交定义冒完整映射',async()=>{
  fixture=await implementationRefreshDatabase();const jobs=concurrentRefresh(fixture);
- try{await fixture.atWindow;await fixture.db.query("UPDATE journeys SET parent_journey_id=NULL WHERE id='a1000000-0000-4000-8000-000000000001'");
+ try{await fixture.atWindow;await fixture.db.query("UPDATE capabilities SET parent_journey_id=NULL WHERE id='a1000000-0000-4000-8000-000000000001'");
   const loser=await Promise.race(jobs);expect(loser.status).toBe(409);expect(loser.body.error.code).toBe('IMPLEMENTATION_CI_PILOT_MAPPING_CHANGED');
  }finally{fixture.release();await Promise.allSettled(jobs);}
 });

@@ -1,6 +1,7 @@
 /** 仅既有两个试点的来源锚点接力；保留完整业务字段，经正式store CAS激活。 */
 import {readFileSync} from 'node:fs';
 import {submitMapManifest,activateMapManifest} from './map-manifest-store.js';
+import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 const pilots=JSON.parse(readFileSync(new URL('../../config/map-manifests/brain-pilot-bindings.json',import.meta.url),'utf8'));
 const conflict=()=>Object.assign(Error('试点规范映射或层级已变化，不能自动推进来源'),{code:'IMPLEMENTATION_CI_PILOT_MAPPING_CHANGED',status:409});
 export async function preparePilotManifestAdvance(db,q){
@@ -11,7 +12,7 @@ export async function preparePilotManifestAdvance(db,q){
   const row=(await db.query("SELECT * FROM map_manifest_versions WHERE scope_key=$1 AND status='active'",[q.scope])).rows[0];
   if(!row)throw conflict();
   const manifest=structuredClone(row.manifest),ids=[...spec.value_streams,...spec.capabilities].map(n=>n.entity_id);
-  const entities=(await db.query('SELECT id,parent_journey_id FROM journeys WHERE id=ANY($1::uuid[])',[ids])).rows;
+  const entities=(await db.query(`SELECT id,parent_journey_id FROM ${TREE_NODES_SQL} n WHERE id=ANY($1::uuid[])`,[ids])).rows;
   let changed=false;
   for(const [field,type] of [['value_streams','value_stream'],['capabilities','capability']]){
     if(manifest[field]?.length!==spec[field].length)throw conflict();

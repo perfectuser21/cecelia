@@ -16,10 +16,11 @@ beforeEach(async () => {
   expect((await db.query('SELECT current_database() name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `workflow_org_${randomUUID().replaceAll('-', '')}`;
   await db.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['areas', 'journeys', 'workflows', 'journey_steps', 'steps', 'spans', 'enablers', 'enabler_calls', 'schema_version', 'activity_uses']) {
+  for (const table of ['areas', 'value_streams', 'capabilities', 'workflows', 'journey_steps', 'steps', 'spans', 'enablers', 'enabler_calls', 'schema_version', 'activity_uses']) {
     await db.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   }
   await db.query(`SET search_path TO ${schema}`);
+  await db.query('CREATE VIEW journeys AS SELECT * FROM value_streams UNION ALL SELECT * FROM capabilities'); // 旧迁移 511 重放要读 journeys
   await withLegacyNames(db, async () => {
     await db.query('ALTER TABLE journey_steps ADD COLUMN IF NOT EXISTS journey_id uuid, ADD COLUMN IF NOT EXISTS step_number integer'); // 迁移 528 前的列：511 回填引用要读 step_number
     await db.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
@@ -27,8 +28,9 @@ beforeEach(async () => {
   });
   ids = Object.fromEntries(['company', 'media', 'support', 'stream', 'capA', 'capB', 'wfA', 'wfB', 'activity'].map(k => [k, randomUUID()]));
   await db.query(`INSERT INTO areas(id,name,parent_area_id) VALUES($1,'公司',NULL),($2,'新媒体',$1),($3,'客服',$1)`, [ids.company, ids.media, ids.support]);
-  await db.query(`INSERT INTO journeys(id,name,parent_journey_id,area_id,capability_code) VALUES
-    ($1,'获客',NULL,$2,NULL),($3,'关键词',$1,NULL,'test_kw'),($4,'对标',$1,$5,'test_bm')`,
+  await db.query(`WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id,area_id,capability_code) VALUES($1,'获客',NULL,$2,NULL))
+    INSERT INTO capabilities(id,name,parent_journey_id,area_id,capability_code) VALUES
+    ($3,'关键词',$1,NULL,'test_kw'),($4,'对标',$1,$5,'test_bm')`,
   [ids.stream, ids.media, ids.capA, ids.capB, ids.support]);
   await db.query(`INSERT INTO workflows(id,capability_id,key,name,channel,form) VALUES
     ($1,$3,'test_keyword','关键词','douyin','android_rpa'),($2,$4,'test_benchmark','对标','douyin','android_rpa')`, [ids.wfA, ids.wfB, ids.capA, ids.capB]);
@@ -61,7 +63,7 @@ it('真实HTTP工作流同时返回规范能力身份、部门继承及平台形
   expect((await request(app).get('/api/brain/activities/bad')).status).toBe(400);
 });
 it('缺失部门归属明确unknown，部门祖先环查询有界并报告缺口', async () => {
-  await db.query('UPDATE journeys SET area_id=NULL WHERE id=$1', [ids.stream]);
+  await db.query('UPDATE value_streams SET area_id=NULL WHERE id=$1', [ids.stream]);
   const unknown = await request(app).get(`/api/brain/workflows/${ids.wfA}`);
   expect(unknown.status, unknown.body.error).toBe(200);
   expect(unknown.body.workflow.organization).toMatchObject({ source: 'unknown', effective_area: null });

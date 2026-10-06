@@ -114,7 +114,7 @@ export async function buildNightlyAssertions(queryPool) {
   const { rows: stepsNoPromise } = await queryPool.query(`
     SELECT js.id, js.name FROM activities js
     JOIN activity_placement p ON p.activity_id = js.id
-    JOIN journeys j ON j.id = p.capability_id
+    JOIN capabilities j ON j.id = p.capability_id
     WHERE js.promise IS NULL
       AND (j.home IS NOT NULL OR j.domain IS NOT NULL)
     LIMIT 10

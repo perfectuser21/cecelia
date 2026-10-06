@@ -1,6 +1,6 @@
 /**
  * GET /api/brain/workflows 只读路由（价值流建模③，任务 ce41cd59，决策 3e867cad）。
- * pool 全 mock；断言 SQL 形状（join journeys 取 capability 名、activity 计数）、过滤参数、非法 uuid 400。
+ * pool 全 mock；断言 SQL 形状（join capabilities 取 capability 名、activity 计数）、过滤参数、非法 uuid 400。
  */
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
@@ -47,7 +47,7 @@ describe('GET /workflows', () => {
     expect(res._status).toBe(200);
     expect(res._data).toEqual({ workflows: [ROW], total: 1 });
     const [sql, params] = mockPool.query.mock.calls[0];
-    expect(sql).toMatch(/FROM workflows w\s+JOIN journeys c ON c\.id = w\.capability_id/);
+    expect(sql).toMatch(/FROM workflows w\s+JOIN capabilities c ON c\.id = w\.capability_id/);
     expect(sql).toMatch(/capability_name/);
     expect(sql).toMatch(/activity_count/);
     expect(sql).toMatch(/ORDER BY w\.key/);

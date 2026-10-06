@@ -123,9 +123,9 @@ describe.skipIf(!DB_READY)('闹钟总账 — pg 集成（真实 SQL，不 mock p
 
   it('盘点导入：补挂树只补空、快照行插入且幂等、/alarms 读得出来', async () => {
     const { rows: [vsRow] } = await client.query(
-      `INSERT INTO journeys (name, journey_type) VALUES ('ledger-it 价值流', 'autonomous') RETURNING id`);
+      `INSERT INTO value_streams (name, journey_type) VALUES ('ledger-it 价值流', 'autonomous') RETURNING id`);
     const { rows: [capRow] } = await client.query(
-      `INSERT INTO journeys (name, journey_type, parent_journey_id) VALUES ('ledger-it 价值流 · 清理', 'autonomous', $1) RETURNING id`, [vsRow.id]);
+      `INSERT INTO capabilities (name, journey_type, parent_journey_id) VALUES ('ledger-it 价值流 · 清理', 'autonomous', $1) RETURNING id`, [vsRow.id]);
     const items = [
       { name: 'ledger-it-timer', host: 'nas', mech: 'synology-task', freq: '每天', en: '禁用', node: '无（历史残留）', last: '2026-09-01 10:00', ok: '无记录', st: '失败', note: '备注' },
     ];

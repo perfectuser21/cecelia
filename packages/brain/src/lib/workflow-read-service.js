@@ -43,7 +43,7 @@ export async function listWorkflows(pool, {capabilityId,valueStreamId,status,id}
     (SELECT count(*)::int FROM workflow_activity_refs r WHERE r.workflow_id=w.id AND r.active) AS activity_count,
     (${activities}) AS activities
     FROM workflows w
-    JOIN journeys c ON c.id = w.capability_id
+    JOIN capabilities c ON c.id = w.capability_id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY w.key`,params)).rows;
 }
 export async function readWorkflowActivities(pool,workflowId) {

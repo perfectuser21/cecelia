@@ -8,7 +8,7 @@ export async function preparePilotSchema(db,graphOnly=false){
  }
  await minimumMapSchema(db);
  await db.query(migrationTable('000_base_schema.sql','pending_actions'));
- await db.query(migrationTable('334_golden_paths.sql','golden_paths'));
+ await withLegacyNames(db,()=>db.query(migrationTable('334_golden_paths.sql','golden_paths')));
  await db.query(migrationSlice('372_golden_path_contract_versions.sql','CREATE TABLE IF NOT EXISTS golden_path_contract_versions','INSERT INTO schema_version'));
  await withLegacyNames(db,()=>db.query(migrationSlice('374_gp_assertion_receipts.sql','CREATE TABLE IF NOT EXISTS journey_assertion_receipts','INSERT INTO schema_version')));
 }

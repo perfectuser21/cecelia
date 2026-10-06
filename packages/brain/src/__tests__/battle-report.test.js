@@ -84,7 +84,7 @@ describe('buildBattleReportData — 24h 窗口四段', () => {
     // ② 按线 run：JOIN journeys 排孤儿 + smoke-% 过滤 + 24h 窗口
     const runSql = sqls.find((s) => /initiative_runs/.test(s));
     expect(runSql).toBeTruthy();
-    expect(runSql).toMatch(/JOIN journeys/);
+    expect(runSql).toMatch(/JOIN \(SELECT \* FROM value_streams UNION ALL SELECT \* FROM capabilities\) j/);
     expect(runSql).toMatch(/smoke-%/);
     expect(runSql).toMatch(/24 hours/);
 

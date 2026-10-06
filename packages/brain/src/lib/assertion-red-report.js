@@ -1,3 +1,4 @@
+import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 /**
  * assertion-red-report.js — 业务断言红灯的读取与渲染（晨报一行 / 日报板块）。
  * 链 bf5088a3 棒4 消费（决策 702949b6）：棒3a 探针执行体（business_probe_runner）把
@@ -25,7 +26,7 @@ const FAIL_GROUPS_SQL = `
   FROM journey_assertion_receipts r
   JOIN activity_cells l ON l.id = r.journey_step_link_id
   JOIN activities s ON s.id = l.step_id
-  JOIN journeys j ON j.id = l.journey_id
+  JOIN ${TREE_NODES_SQL} j ON j.id = l.journey_id
   WHERE r.executor_kind = $1
     AND r.verdict = 'FAIL'
     AND r.created_at >= NOW() - ($2::int * INTERVAL '1 hour')

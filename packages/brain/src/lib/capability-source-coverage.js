@@ -1,5 +1,6 @@
 /** 既有来源台账的只读对账；mapped仅表示明确业务关联，不代表实现或执行通过。 */
 import { readMapBrainBindings } from './map-brain-bindings.js';
+import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 
 const SOURCES = [
   ['skills', 'Skill 登记', 'skill_registry 全量；本机路径和内容摘要不能代替固定仓库身份，不按名称配对。'],
@@ -38,9 +39,9 @@ function sourceIdentity(repo, path, commit, digest = null) {
 }
 
 async function loadRelations(db) {
-  const journeys = (await db.query('SELECT id,parent_journey_id FROM journeys')).rows;
+  const journeys = (await db.query(`SELECT id,parent_journey_id FROM ${TREE_NODES_SQL} n`)).rows;
   const workflows = (await db.query(`SELECT w.id,w.capability_id,v.source_repo,v.source_path,v.source_commit
-    FROM workflows w JOIN journeys c ON c.id=w.capability_id JOIN journeys p ON p.id=c.parent_journey_id AND p.parent_journey_id IS NULL
+    FROM workflows w JOIN capabilities c ON c.id=w.capability_id JOIN value_streams p ON p.id=c.parent_journey_id AND p.parent_journey_id IS NULL
     LEFT JOIN workflow_definition_versions v ON v.id=w.current_definition_version_id AND v.workflow_id=w.id`)).rows;
   const usages = (await db.query(`SELECT w.capability_id,w.id workflow_id,r.activity_id,r.id reference_id
     FROM workflow_activity_refs r JOIN workflows w ON w.id=r.workflow_id JOIN activities a ON a.id=r.activity_id WHERE r.active`)).rows;

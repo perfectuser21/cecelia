@@ -24,16 +24,16 @@ done
 echo "  ✓ 7 张表全部存在"
 
 echo "[smoke] 验证 journeys CHECK 约束（非法 journey_type 拒绝）..."
-RESULT=$(psql -X "$DB" -tAc "INSERT INTO journeys (name, journey_type) VALUES ('_smoke_test_', 'invalid_type') ON CONFLICT DO NOTHING" 2>&1 || true)
+RESULT=$(psql -X "$DB" -tAc "INSERT INTO value_streams (name, journey_type) VALUES ('_smoke_test_', 'invalid_type') ON CONFLICT DO NOTHING" 2>&1 || true)
 if echo "$RESULT" | grep -q "violates check constraint\|check_journey_type\|_type_check"; then
   echo "  ✓ journeys CHECK 约束正常"
 else
   # 没有错误意味着插入成功 — 检查一下，如果行确实被插入则 CHECK 约束不工作
-  BAD_COUNT=$(psql -X "$DB" -tAc "SELECT COUNT(*) FROM journeys WHERE name='_smoke_test_'" | tr -d ' \n')
+  BAD_COUNT=$(psql -X "$DB" -tAc "SELECT COUNT(*) FROM value_streams WHERE name='_smoke_test_'" | tr -d ' \n')
   if [ "$BAD_COUNT" = "0" ]; then
     echo "  ✓ journeys CHECK 约束正常（ON CONFLICT 拦截）"
   else
-    psql -X "$DB" -tAc "DELETE FROM journeys WHERE name='_smoke_test_'" >/dev/null 2>&1 || true
+    psql -X "$DB" -tAc "DELETE FROM value_streams WHERE name='_smoke_test_'" >/dev/null 2>&1 || true
     echo "WARN: journeys CHECK 约束可能未生效，但 ON CONFLICT 拦截了（无关）"
   fi
 fi

@@ -19,13 +19,14 @@ beforeEach(async () => {
   expect((await admin.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `journey_registration_${randomUUID().replaceAll('-', '')}`;
   await admin.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['areas', 'journeys', 'workflows', 'journey_steps', 'workflow_activity_refs']) await admin.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
+  for (const table of ['areas', 'value_streams', 'capabilities', 'workflows', 'journey_steps', 'workflow_activity_refs']) await admin.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   pool = new pg.Pool({ ...DB_DEFAULTS, options: `-c search_path=${schema}` }); holder.pool = pool;
-  await pool.query('ALTER TABLE journeys ADD FOREIGN KEY(parent_journey_id) REFERENCES journeys(id), ADD FOREIGN KEY(area_id) REFERENCES areas(id)');
-  await pool.query('ALTER TABLE workflows ADD FOREIGN KEY(capability_id) REFERENCES journeys(id)');
+  await pool.query('ALTER TABLE capabilities ADD FOREIGN KEY(parent_journey_id) REFERENCES value_streams(id), ADD FOREIGN KEY(area_id) REFERENCES areas(id)');
+  await pool.query('ALTER TABLE value_streams ADD FOREIGN KEY(area_id) REFERENCES areas(id)');
+  await pool.query('ALTER TABLE workflows ADD FOREIGN KEY(capability_id) REFERENCES capabilities(id)');
   department = randomUUID(); subarea = randomUUID(); stream = randomUUID(); capability = randomUUID();
   await pool.query("INSERT INTO areas(id,name,parent_area_id) VALUES($1,'部门',NULL),($2,'子部门',$1)", [department, subarea]);
-  await pool.query("INSERT INTO journeys(id,name,parent_journey_id,area_id,capability_code) VALUES($1,'价值流',NULL,$3,NULL),($2,'能力',$1,NULL,'TEST_EXISTING')", [stream, capability, subarea]);
+  await pool.query("WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id,area_id,capability_code) VALUES($1,'价值流',NULL,$3,NULL)) INSERT INTO capabilities(id,name,parent_journey_id,area_id,capability_code) VALUES($2,'能力',$1,NULL,'TEST_EXISTING')", [stream, capability, subarea]);
   app = express(); app.use(express.json()); app.use('/api/brain', router);
 });
 afterEach(async () => {
@@ -44,7 +45,7 @@ it('真实HTTP登记父关系、代码、部门与兼容字段，步骤和主体
   const response = await create({ parent_journey_id: stream, capability_code: 'TEST_NEW', area_id: department,
     home: 'factory', trigger: '开始', endpoint: '结果', steps: ['预检', '执行'] });
   expect(response.status, response.body.error).toBe(201);
-  const row = (await pool.query('SELECT * FROM journeys WHERE id=$1', [response.body.id])).rows[0];
+  const row = (await pool.query('SELECT * FROM (SELECT * FROM value_streams UNION ALL SELECT * FROM capabilities) n WHERE id=$1', [response.body.id])).rows[0];
   expect(row).toMatchObject({ parent_journey_id: stream, capability_code: 'TEST_NEW', area_id: department, kind: 'capability', home: 'factory' });
   // 步骤经「主线流程」挂在能力下：顺序在流程引用里，Activity 本身不再写 journey_id / step_number
   expect((await pool.query(`SELECT a.name FROM activities a JOIN workflow_activity_refs r ON r.activity_id=a.id AND r.active
@@ -70,7 +71,7 @@ it('非法UUID返回400、缺失目标返回404、重复代码409且不留部分
   expect((await create({ parent_journey_id: randomUUID() })).status).toBe(404);
   expect((await patch(randomUUID(), { name: 'x' })).status).toBe(404);
   expect((await create({ capability_code: 'TEST_EXISTING', parent_journey_id: stream })).status).toBe(409);
-  expect((await pool.query('SELECT count(*)::int AS n FROM journeys')).rows[0].n).toBe(2);
+  expect((await pool.query('SELECT count(*)::int AS n FROM (SELECT * FROM value_streams UNION ALL SELECT * FROM capabilities) n')).rows[0].n).toBe(2);
 });
 it('拒绝自指、capability嵌套、带子项价值流降级以及带工作流能力脱离父级', async () => {
   expect((await patch(capability, { parent_journey_id: capability })).status).toBe(400);
@@ -79,13 +80,13 @@ it('拒绝自指、capability嵌套、带子项价值流降级以及带工作流
   expect((await patch(stream, { parent_journey_id: other.body.id })).status).toBe(409);
   await pool.query("INSERT INTO workflows(capability_id,key,name,channel) VALUES($1,'test-workflow','工作流','api')", [capability]);
   expect((await patch(capability, { parent_journey_id: null })).status).toBe(409);
-  expect((await pool.query('SELECT parent_journey_id FROM journeys WHERE id=$1', [capability])).rows[0].parent_journey_id).toBe(stream);
+  expect((await pool.query('SELECT parent_journey_id FROM (SELECT * FROM value_streams UNION ALL SELECT * FROM capabilities) n WHERE id=$1', [capability])).rows[0].parent_journey_id).toBe(stream);
 });
 it('POST步骤失败回滚主体和此前步骤，兼容旧area名称登记', async () => {
   await pool.query("ALTER TABLE activities ADD CONSTRAINT reject_review_step CHECK(name <> '拒绝步骤')");
   expect((await create({ name: '回滚主体', parent_journey_id: stream, steps: ['已有步骤', '拒绝步骤'] })).status).toBe(400);
   expect((await create({ name: '价值流不挂步骤', steps: ['不该成立'] })).status).toBe(400); // 步骤只能经流程挂在能力下
-  expect((await pool.query("SELECT count(*)::int n FROM journeys WHERE name='回滚主体'")).rows[0].n).toBe(0);
+  expect((await pool.query("SELECT count(*)::int n FROM (SELECT * FROM value_streams UNION ALL SELECT * FROM capabilities) n WHERE name='回滚主体'")).rows[0].n).toBe(0);
   expect((await pool.query('SELECT count(*)::int n FROM activities')).rows[0].n).toBe(0);
   expect((await pool.query("SELECT count(*)::int n FROM workflows WHERE key LIKE 'gp_steps_%'")).rows[0].n).toBe(0);
   const legacy = await create({ name: '兼容名称', area: '部门' });
@@ -98,12 +99,18 @@ it.each([null, ''])('旧POST可选字段为空%j时仍使用原默认值', async
   expect(response.body).toMatchObject({ maturity: 'not_started', status: 'active', description: null,
     e2e_test_path: null, home: null, trigger: null, endpoint: null });
 });
-it('相反并发父关系仅允许一方成功，最终无环或capability嵌套', async () => {
+it('相反并发父关系一律拒绝：价值流不能被改成能力，最终无环、无 capability 嵌套', async () => {
   const a = (await create({ name: 'A' })).body.id, b = (await create({ name: 'B' })).body.id;
   const results = await Promise.all([patch(a, { parent_journey_id: b }), patch(b, { parent_journey_id: a })]);
-  expect(results.map(r => r.status).sort()).toEqual([200, 400]);
-  const rows = (await pool.query('SELECT id,parent_journey_id FROM journeys WHERE id=ANY($1::uuid[])', [[a, b]])).rows;
-  expect(rows.filter(r => r.parent_journey_id)).toHaveLength(1);
+  expect(results.map(r => r.status)).toEqual([400, 400]);
+  const rows = (await pool.query('SELECT id,parent_journey_id FROM (SELECT * FROM value_streams UNION ALL SELECT * FROM capabilities) n WHERE id=ANY($1::uuid[])', [[a, b]])).rows;
+  expect(rows.filter(r => r.parent_journey_id)).toHaveLength(0);
+});
+it('能力不能脱离父价值流变成价值流（身份互换被拒，行不动）', async () => {
+  const response = await patch(capability, { parent_journey_id: null });
+  expect(response.status).toBe(400);
+  const row = (await pool.query('SELECT parent_journey_id FROM capabilities WHERE id=$1', [capability])).rows[0];
+  expect(row.parent_journey_id).toBe(stream);
 });
 it('部门祖先成环不无限递归，读者显式报缺口、登记拒绝绑定', async () => {
   await pool.query('UPDATE areas SET parent_area_id=$1 WHERE id=$2', [subarea, department]);

@@ -45,7 +45,7 @@ describe('runNotionPushSync', () => {
 
     expect(mockNotionReq).not.toHaveBeenCalled();
     const sqls = mockQuery.mock.calls.map(c => String(c[0]));
-    expect(sqls.find(q => /FROM journeys j/.test(q))).toBeUndefined();
+    expect(sqls.find(q => /FROM \(SELECT \* FROM value_streams UNION ALL SELECT \* FROM capabilities\) j/.test(q))).toBeUndefined();
     expect(sqls.find(q => /FROM journey_features f/.test(q))).toBeUndefined();
     // 是按注册表查的（brain_table=journeys / journey_features 的 active 推送行），不是源码硬编码常量
     expect(mockQuery.mock.calls.some(c => /FROM notion_projection_map/.test(String(c[0])) && c[1]?.[0] === 'journeys')).toBe(true);
@@ -94,7 +94,7 @@ describe('runNotionPushSync', () => {
     expect(mockNotionReq.mock.calls[0][2]).toBe('POST');
     expect(mockNotionReq.mock.calls[0][3].parent.database_id).toBe('db-journeys-registered');
 
-    const updateCall = mockQuery.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE journeys'));
+    const updateCall = mockQuery.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE value_streams'));
     expect(updateCall).toBeTruthy();
     expect(updateCall[1]).toContain('notion-page-id-1');
   });
@@ -121,7 +121,7 @@ describe('runNotionPushSync', () => {
     await expect(runNotionPushSync({ query: mockQuery })).resolves.not.toThrow();
 
     const updateCall = mockQuery.mock.calls.find(
-      c => typeof c[0] === 'string' && c[0].includes('UPDATE journeys') && c[0].includes('notion_synced_at')
+      c => typeof c[0] === 'string' && c[0].includes('UPDATE value_streams') && c[0].includes('notion_synced_at')
     );
     expect(updateCall).toBeUndefined();
   });
@@ -140,7 +140,7 @@ describe('runNotionPushSync', () => {
     await expect(runNotionPushSync({ query: mockQuery })).resolves.not.toThrow();
 
     const updateCall = mockQuery.mock.calls.find(
-      c => typeof c[0] === 'string' && c[0].includes('UPDATE journeys') && c[0].includes('notion_synced_at')
+      c => typeof c[0] === 'string' && c[0].includes('UPDATE value_streams') && c[0].includes('notion_synced_at')
     );
     expect(updateCall).toBeTruthy();
     expect(updateCall[1]).toEqual(['j-stale']);

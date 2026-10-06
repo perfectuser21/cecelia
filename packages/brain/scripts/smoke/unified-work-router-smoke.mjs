@@ -37,7 +37,7 @@ async function ensureScratchAssertionAnchor() {
     link: '0f000000-0000-4000-8000-000000000004',
   };
   const journeyResult = await pool.query(
-    `SELECT id FROM journeys
+    `SELECT id FROM (SELECT id,biz_area,capability_code FROM value_streams UNION ALL SELECT id,biz_area,capability_code FROM capabilities) n
       WHERE biz_area='cecelia' AND capability_code='F0'`,
   );
   const journeyId = journeyResult.rows[0]?.id;
