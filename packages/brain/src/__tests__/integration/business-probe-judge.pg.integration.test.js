@@ -36,8 +36,7 @@ beforeAll(async () => {
   const journey = await client.query(`INSERT INTO journeys (name) VALUES ($1) RETURNING id`, [`pgtest journey ${KEY_OK}`]);
   ids.journeyId = journey.rows[0].id;
   const step = await client.query(
-    `INSERT INTO activities (journey_id, name, step_number) VALUES ($1, 'preflight', 1) RETURNING id`,
-    [ids.journeyId],
+    `INSERT INTO activities (name) VALUES ('preflight') RETURNING id`,
   );
   ids.stepId = step.rows[0].id;
   const link = async (key) => (await client.query(

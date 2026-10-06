@@ -21,9 +21,10 @@ beforeEach(async () => {
   expect((await client.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `shared_activity_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['areas','enablers','enabler_calls','schema_version','journeys','workflows','journey_steps','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
+  for (const table of ['areas','enablers','enabler_calls','schema_version','journeys','workflows','journey_steps','activity_uses','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
     await client.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   await client.query(`SET search_path TO ${schema}`);
+  await client.query('ALTER TABLE activities ADD COLUMN IF NOT EXISTS journey_id uuid, ADD COLUMN IF NOT EXISTS step_number integer'); // 迁移 528 前的列：511 回填引用要读 step_number（先加列，旧名视图才带得上）
   await useStandardNames(client);
   db = { query: client.query.bind(client), connect: async () => ({ query: client.query.bind(client), release() {} }) }; holder.db = db;
   const parent = randomUUID(), capKeyword = randomUUID(); capBenchmark = randomUUID();

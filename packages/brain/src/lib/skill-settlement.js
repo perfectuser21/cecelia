@@ -119,6 +119,18 @@ async function withTransaction(db, fn) {
 
 const DECISION_WINDOW_MS = 72 * 3600 * 1000;
 
+/** 位置只在流程引用里（迁移 528）：把候选 Activity 放进能力的主线流程，顺序接在最后一个后面；没有主线流程且恰好一个流程就用它，否则新建。 */
+async function placeInMainline(client, activityId, capabilityId) {
+  const flows = (await client.query('SELECT id, key FROM workflows WHERE capability_id = $1 ORDER BY created_at', [capabilityId])).rows;
+  const main = flows.find(f => f.key.startsWith('gp_steps_')) || (flows.length === 1 ? flows[0] : null);
+  const workflowId = main?.id || (await client.query(
+    `INSERT INTO workflows (capability_id, key, name, channel, version, status) VALUES ($1, $2, '主线', 'internal', '1.0', 'active') RETURNING id`,
+    [capabilityId, `gp_steps_${String(capabilityId).slice(0, 8)}`])).rows[0].id;
+  const next = (await client.query('SELECT COALESCE(max(sequence_no), 0) + 1 AS n FROM workflow_activity_refs WHERE workflow_id = $1', [workflowId])).rows[0].n;
+  await client.query('INSERT INTO workflow_activity_refs (workflow_id, slot_key, activity_id, sequence_no) VALUES ($1, $2, $3, $4)',
+    [workflowId, `step_${next}`, activityId, next]);
+}
+
 /**
  * 登记候选：Activity（status=candidate，承诺列保持空）+ Steps + 固定 8 灰格 + 一条待拍板（三问，72 小时不答按默认走）。
  * 同一 能力.活动 已存在则原样返回，不覆盖。
@@ -131,10 +143,11 @@ export async function registerCandidate(db, { draft, journeyId, skillName = null
 
     const note = `候选：沉淀自技能「${skillName ?? a.name}」，待主理人拍板。承诺草稿：${a.promise_draft ?? '（无）'}`;
     const id = (await client.query(
-      `INSERT INTO activities (journey_id, name, description, step_number, status, capability_key, activity_key, executor_kind, inputs, outputs, failure, backbone_version)
-       VALUES ($1, $2, $3, COALESCE((SELECT max(step_number) FROM activities WHERE journey_id = $1), 0) + 1, 'candidate', $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, '3.0')
+      `INSERT INTO activities (name, description, status, capability_key, activity_key, executor_kind, inputs, outputs, failure, backbone_version)
+       VALUES ($1, $2, 'candidate', $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, '3.0')
        RETURNING id`,
-      [journeyId, a.name, note, a.capability_key, a.key, a.executor_kind, JSON.stringify(a.inputs), JSON.stringify(a.outputs), JSON.stringify(a.failure)])).rows[0].id;
+      [a.name, note, a.capability_key, a.key, a.executor_kind, JSON.stringify(a.inputs), JSON.stringify(a.outputs), JSON.stringify(a.failure)])).rows[0].id;
+    await placeInMainline(client, id, journeyId);
 
     for (const s of draft.steps) {
       const key = `${a.capability_key}.${a.key}.${s.key}`;

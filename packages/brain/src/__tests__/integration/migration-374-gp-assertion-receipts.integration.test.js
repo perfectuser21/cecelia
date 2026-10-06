@@ -58,7 +58,7 @@ beforeAll(async () => {
   await client.query(migration);
   const journeyId = (await client.query("INSERT INTO journeys (name, description) VALUES ($1, 'assertion receipt migration fixture') RETURNING id", [fixture])).rows[0].id;
   const stepId = (await client.query(
-    "INSERT INTO journey_steps (journey_id, name, step_number) VALUES ($1, 'execute assertion', 1) RETURNING id", [journeyId],
+    "INSERT INTO journey_steps (name) VALUES ('execute assertion') RETURNING id",
   )).rows[0].id;
   const cell = (await client.query(
     `INSERT INTO journey_step_links (

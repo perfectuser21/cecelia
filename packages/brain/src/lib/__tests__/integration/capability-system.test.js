@@ -18,7 +18,7 @@ it('同一共享Activity两个引用位置只计一个真身，返回完整层�
   expect(r.workflows[0].activities.every(a=>a.usage.reference_id&&a.usage.activity_definition_version_id)).toBe(true);
 });
 it('未引用旧活动和无归属能力保持清单可见，不因Workflow内连接而消失',async()=>{
-  const id=randomUUID();await f.db.query("INSERT INTO journey_steps(id,journey_id,name,step_number) VALUES($1,$2,'尚未归位',99)",[id,f.capabilities[0]]);
+  const id=randomUUID();await f.db.query("INSERT INTO journey_steps(id,name) VALUES($1,'尚未归位')",[id]);
   await f.db.query('UPDATE journeys SET area_id=NULL');
   const r=await service.readCapabilitySystem(f.db);
   expect(r.counts.activities.total).toBe(10);expect(r.counts.activities.referenced).toBe(9);

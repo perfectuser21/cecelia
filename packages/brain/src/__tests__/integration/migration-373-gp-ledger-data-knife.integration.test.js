@@ -26,7 +26,8 @@ describe('migration 373 Golden Path ledger data knife [PostgreSQL]', () => {
       `SELECT d.source_ref, d.target_type, d.target_id, j.home
        FROM decisions d
        JOIN activities s ON s.id=d.target_id
-       JOIN journeys j ON j.id=s.journey_id
+       -- 种子里 GP 步骤直接挂在旧旅程上、没经流程：能力取它的格子记的旅程
+       JOIN journeys j ON j.id=(SELECT c.journey_id FROM activity_cells c WHERE c.step_id=s.id ORDER BY c.created_at LIMIT 1)
        WHERE d.source_ref LIKE 'gp-ledger-phase3:nfr:gp-b:%'
        ORDER BY d.source_ref`,
     );

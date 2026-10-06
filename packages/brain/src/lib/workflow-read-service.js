@@ -22,7 +22,7 @@ const activities = `SELECT COALESCE(jsonb_agg(item ORDER BY sequence_no),'[]'::j
         SELECT ec.enabler_id,ec.caller_type,ec.caller_id FROM enabler_calls ec
         WHERE (ec.caller_type='activity' AND ec.caller_id=a.id)
           OR (ec.caller_type='step' AND EXISTS(SELECT 1 FROM steps st WHERE st.id=ec.caller_id AND st.activity_id=a.id AND st.active))
-        UNION SELECT a.enabler_id,'activity',a.id WHERE a.enabler_id IS NOT NULL
+        UNION SELECT u.item_id,'activity',u.activity_id FROM activity_uses u WHERE u.activity_id=a.id
       ) calls JOIN warehouse_items e ON e.id=calls.enabler_id WHERE e.active),'[]'::jsonb),
     'gaps',COALESCE(a.contract->'known_gaps','[]'::jsonb) ||
       COALESCE((SELECT jsonb_agg(jsonb_build_object('step_key',s->>'key','gap','implementation_missing'))
