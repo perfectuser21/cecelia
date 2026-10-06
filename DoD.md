@@ -1,4 +1,7 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] notionworkflowruntime Notion「流程」库补运行情况列：每个流程自动带 Activity 数、定时任务数、启用任务数、近 7 天有跑、失败任务数、静默任务数、步骤级运行次数、最近运行（按分钟取整）、在用吗（在跑 / 有任务近7天没跑 / 只登记没运行 / 空壳）、怎么运行（逐条列出任务：启用●停用○、频率、最近状态、最近运行，一次性任务按上海时间翻成人话）、旧功能状态；另建人工列「你的标记」（有用/没用/过期/删，只建列、投影器永不写值）。数据来自闹钟总账与 spans，单条 SQL 取同一快照；生产库只读核对 61 个流程分组为 在跑30/近7天没跑1/只登记18/空壳12。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/projection --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] notionregistrycleanup v3.0 第 6 刀后清理：迁移 530 把 Notion 注册表里 4 行已停用的旧库登记（activities=AI Steps、activity_cells=Backbone-Step Map、okr_projects=Cecelia Projects、tasks=Cecelia Tasks）清掉——只删同一张表上已有非 archived 登记的行，registry_coverage 每表至少留一行，删前整行备份进 migration_530_notion_map_backup；旧树 Feature 镜像（journey_features）改 archived 停推并保留登记行；不碰 unmapped 占位行、journeys 唯一一行、journey_features 表本身；回滚按备份还原并恢复旧树镜像为 active push（本机验证升级→回滚→再升级，生产库干跑 71→67 行且回滚后恢复）；notion-projection-registry 测试里「旧 AI Steps 行」断言改为「不存在或必须 archived/none」。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-530-notion-registry-cleanup.test.js src/__tests__/migration-523-notion-registry-names.test.js src/__tests__/migration-480-archive-journey-mirrors.test.js src/__tests__/notion-push-sync.test.js --maxWorkers=1 --minWorkers=1"
 
