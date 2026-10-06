@@ -56,7 +56,7 @@ async function loadActivityMap(client, capabilityKey) {
     `SELECT DISTINCT ON (activity_key) activity_key, id
        FROM activities
       WHERE capability_key = $1 AND activity_key IS NOT NULL
-      ORDER BY activity_key, backbone_version DESC, step_number ASC`,
+      ORDER BY activity_key, backbone_version DESC, id`,
     [capabilityKey]
   );
   return new Map(rows.map((r) => [r.activity_key, r.id]));

@@ -79,7 +79,13 @@ const CELL_FOR_VERDICT = { converged: 'green', diverged: 'red', converging: 'pen
  * （converged→绿，diverged→红，converging→待判，no_data 不动）。格子不全时先补齐 8 个灰格，翻色只动这一格。
  */
 export async function reconcileActivity(db, activityId, { runsWanted = 5, requiredGreen = 5 } = {}) {
-  const act = (await db.query('SELECT id, journey_id FROM activities WHERE id = $1', [activityId])).rows[0];
+  // 能力不再记在 Activity 上（迁移 528）：取生效流程引用所在流程的能力（归属引用优先），没有引用才退回它已有格子记的能力
+  const act = (await db.query(
+    `SELECT a.id, COALESCE(
+        (SELECT w.capability_id FROM workflow_activity_refs r JOIN workflows w ON w.id = r.workflow_id
+          WHERE r.activity_id = a.id AND r.active ORDER BY (r.source_ref IS NULL) DESC, w.created_at LIMIT 1),
+        (SELECT c.journey_id FROM activity_cells c WHERE c.step_id = a.id ORDER BY c.id LIMIT 1)) AS journey_id
+       FROM activities a WHERE a.id = $1`, [activityId])).rows[0];
   if (!act) throw Object.assign(new Error(`activity_not_found: ${activityId}`), { status: 404 });
   const steps = (await db.query(
     'SELECT id, key, readback FROM steps WHERE activity_id = $1 AND active IS NOT FALSE ORDER BY step_order', [activityId])).rows;
@@ -91,7 +97,7 @@ export async function reconcileActivity(db, activityId, { runsWanted = 5, requir
   const cell = CELL_FOR_VERDICT[report.verdict];
   if (cell) {
     // 合同同步新建的 Activity 没有验收格：先补齐固定 8 格再翻色，不然这条 UPDATE 命中 0 行，颜色静默丢了
-    await ensureEightCells(db, activityId, act.journey_id);
+    if (act.journey_id) await ensureEightCells(db, activityId, act.journey_id);
     await db.query(
       `UPDATE activity_cells SET cell_status = $2
         WHERE step_id = $1 AND cell_key = 'readback' AND parent_cell_key IS NULL AND cell_status IS DISTINCT FROM $2`, [activityId, cell]);

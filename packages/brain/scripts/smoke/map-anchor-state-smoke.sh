@@ -102,9 +102,7 @@ try {
     [scopeKey, capabilityKey],
   )).rows[0].id;
   const stepId = (await client.query(
-    `INSERT INTO activities (journey_id,name,step_number)
-     VALUES ($1,'smoke step',1) RETURNING id`,
-    [journeyId],
+    `INSERT INTO activities (name) VALUES ('smoke step') RETURNING id`,
   )).rows[0].id;
   featureId = (await client.query(
     `INSERT INTO journey_features (journey_id,step_id,name,unit_test_path)

@@ -33,6 +33,8 @@ export async function createImplementationScratch(){
     await client.query(`CREATE SCHEMA ${schema}`);schemaCreated=true;
     for(const table of TABLES)await client.query(`CREATE TABLE ${schema}.${table}(LIKE public.${table} INCLUDING ALL)`);
     await client.query(`SET search_path TO ${schema}`);
+    // 511 回填引用要读迁移 528 已删的 journey_id / step_number（快照来源若是旧形状库，行里还带 enabler_id）：只补在这个隔离 schema 里（511 建的旧指标视图依赖它们，不删），不影响生产库。
+    await client.query('ALTER TABLE activities ADD COLUMN journey_id uuid,ADD COLUMN step_number integer,ADD COLUMN enabler_id uuid');
     // 511/513 是旧迁移，按旧名 journey_steps 建外键：重放期间把 activities 临时叫回旧名，之后改回（外键按对象 id 跟随）。
     await client.query('ALTER TABLE activities RENAME TO journey_steps');
     for(const file of ['511_shared_activity_refs.sql','513_definition_versions.sql'])await client.query(readFileSync(new URL(`../../packages/brain/migrations/${file}`,import.meta.url),'utf8'));
