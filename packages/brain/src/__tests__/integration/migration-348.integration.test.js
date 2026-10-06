@@ -36,14 +36,14 @@ describe('migration 347: journeys 新字段', () => {
 
   it('home CHECK 约束拒绝非法值', async () => {
     await expect(
-      pool.query(`UPDATE journeys SET home='invalid' WHERE 1=0`)
+      pool.query(`UPDATE value_streams SET home='invalid' WHERE 1=0`)
     ).resolves.toBeDefined(); // 空更新不报错
     // 测试约束存在（无需真正插入非法值，只验列存在+约束定义）
     const r = await pool.query(`
       SELECT pg_get_constraintdef(c.oid) AS def
       FROM pg_constraint c
       JOIN pg_class t ON t.oid = c.conrelid
-      WHERE t.relname = 'journeys' AND c.contype = 'c'
+      WHERE t.relname = 'value_streams' AND c.contype = 'c'
         AND pg_get_constraintdef(c.oid) LIKE '%home%'
     `);
     expect(r.rows.length).toBeGreaterThanOrEqual(1);

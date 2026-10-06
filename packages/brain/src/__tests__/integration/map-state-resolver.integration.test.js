@@ -98,7 +98,7 @@ beforeAll(async () => {
     [scopeKey, repo],
   );
   const journey = await client.query(
-    `INSERT INTO journeys (name, biz_area, capability_code)
+    `INSERT INTO value_streams (name, biz_area, capability_code)
      VALUES ($1, 'infrastructure', $2) RETURNING id`,
     [scopeKey, capabilityKey],
   );

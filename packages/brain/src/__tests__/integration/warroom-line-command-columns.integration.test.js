@@ -46,13 +46,13 @@ function getHandler(method, path) {
 async function cleanup() {
   await pool.query('DELETE FROM initiative_runs WHERE id = ANY($1)', [[RUN_DONE_ID, RUN_FAILED_ID]]);
   await pool.query('DELETE FROM journey_features WHERE id = ANY($1)', [[JF_ABILITY_ID, JF_FEATURE_ID]]);
-  await pool.query('DELETE FROM journeys WHERE id = $1', [JOURNEY_ID]);
+  await pool.query('DELETE FROM value_streams WHERE id = $1', [JOURNEY_ID]);
 }
 
 beforeAll(async () => {
   await cleanup();
   await pool.query(
-    `INSERT INTO journeys (id, name, status) VALUES ($1, '[test] warroom 列名回归线', 'active')`,
+    `INSERT INTO value_streams (id, name, status) VALUES ($1, '[test] warroom 列名回归线', 'active')`,
     [JOURNEY_ID]
   );
   await pool.query(
