@@ -14,6 +14,7 @@
  * 幂等：重跑只会刷新快照行的机器列，已补的挂树列不动。
  */
 import { INVENTORY_SOURCE } from './ops-alarm-ledger.js';
+import { TREE_NODES_SQL } from './lib/tree-nodes-sql.js';
 
 const BJ_OFFSET = '+08:00'; // 盘点时间全是北京时间
 const VALID_STATUS = new Set(['正常', '失败', '静默', '无记录']);
@@ -170,7 +171,7 @@ export function planInventoryImport(items, journeys, existingRows) {
 
 /** 执行导入（一个事务）。dryRun=true 只返回规划摘要。 */
 export async function importInventorySnapshot(pool, items, { dryRun = false, now = new Date() } = {}) {
-  const { rows: journeys } = await pool.query(`SELECT id, name, parent_journey_id, status FROM journeys`);
+  const { rows: journeys } = await pool.query(`SELECT id, name, parent_journey_id, status FROM ${TREE_NODES_SQL} n`);
   const { rows: existingRows } = await pool.query(
     `SELECT id, source, host_alias, label FROM ops_schedule_entries
       WHERE source IN ('brain','openclaw','crontab','gha')`);

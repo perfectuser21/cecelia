@@ -30,6 +30,7 @@ import { sameContractIdentity } from '../orchestrator/gates.js';
 import { persistOneSessionJudgeReceipt } from '../orchestrator/one-session-judge-receipt.js';
 import { executeOneSessionMerge } from '../orchestrator/one-session-merge.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
 
 const router = Router();
 const judgeRateLimit = rateLimit({
@@ -1511,7 +1512,7 @@ router.get('/stats', async (req, res) => {
                (ARRAY_AGG(ir.failure_reason ORDER BY ir.created_at DESC)
                   FILTER (WHERE ir.failure_reason IS NOT NULL))[1] AS last_failure
         FROM initiative_runs ir
-        JOIN journeys j ON j.id = ir.journey_id
+        JOIN ${TREE_NODES_SQL} j ON j.id = ir.journey_id
         LEFT JOIN tasks t ON t.id = ir.initiative_id
         WHERE ir.created_at >= NOW() - make_interval(days => $1)
           AND ir.journey_id IS NOT NULL                    -- 排除无 journey 孤儿 run

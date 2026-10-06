@@ -17,6 +17,7 @@
 import { sendFeishu } from './notifier.js';
 import { getUnconfirmedReceipts } from './receipt-collector.js';
 import { getMachineVitals } from './machine-vitals.js';
+import { TREE_NODES_SQL } from './lib/tree-nodes-sql.js';
 
 /** 每日触发小时（UTC）= 北京时间 06:00 */
 const BATTLE_REPORT_HOUR_UTC = 22;
@@ -83,7 +84,7 @@ export async function buildBattleReportData(pool, now = new Date()) {
             (ARRAY_AGG(ir.failure_reason ORDER BY ir.created_at DESC)
                FILTER (WHERE ir.failure_reason IS NOT NULL))[1] AS last_failure
      FROM initiative_runs ir
-     JOIN journeys j ON j.id = ir.journey_id
+     JOIN ${TREE_NODES_SQL} j ON j.id = ir.journey_id
      LEFT JOIN tasks t ON t.id = ir.initiative_id
      WHERE ir.created_at >= NOW() - interval '24 hours'
        AND ir.journey_id IS NOT NULL

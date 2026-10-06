@@ -1,5 +1,6 @@
 /** Journey/Capability 共用稳定身份；登记主体、层级和步骤必须同事务。 */
 import { readJourneyOrganization } from './journey-organization.js';
+import { TREE_NODES_SQL, treeNodeTable } from './tree-nodes-sql.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TYPES = ['user_facing', 'autonomous', 'dev_pipeline', 'agent_remote'];
 const HOMES = ['biz', 'pre', 'xcut', 'factory'];
@@ -32,10 +33,10 @@ async function resolveArea(client, body) {
 async function validateHierarchy(client, id, parentId) {
   if (parentId !== null) {
     if (id && parentId === id) fail(400, '禁止 journey 自指');
-    const parent = (await client.query('SELECT id,parent_journey_id FROM journeys WHERE id=$1', [parentId])).rows[0];
+    const parent = (await client.query(`SELECT id,parent_journey_id FROM ${TREE_NODES_SQL} n WHERE id=$1`, [parentId])).rows[0];
     if (!parent) fail(404, '父价值流不存在');
     if (parent.parent_journey_id !== null) fail(400, '父级必须是 value_stream，禁止 capability 嵌套或环');
-    if (id && (await client.query('SELECT 1 FROM journeys WHERE parent_journey_id=$1 LIMIT 1', [id])).rows.length) fail(409, '已有子能力，不能将价值流降级');
+    if (id && (await client.query('SELECT 1 FROM capabilities WHERE parent_journey_id=$1 LIMIT 1', [id])).rows.length) fail(409, '已有子能力，不能将价值流降级');
   } else if (id && (await client.query('SELECT 1 FROM workflows WHERE capability_id=$1 LIMIT 1', [id])).rows.length) {
     fail(409, '已有工作流的能力不能脱离父价值流');
   }
@@ -49,13 +50,15 @@ export async function registerJourney(pool, body, id) {
   try {
     await client.query('BEGIN');
     // 拓扑写入低频；表锁同时覆盖其它写者，避免只锁现有子行漏掉并发插入。
-    await client.query('LOCK TABLE journeys, workflows, areas IN SHARE ROW EXCLUSIVE MODE');
-    const existing = id === undefined ? null : (await client.query('SELECT * FROM journeys WHERE id=$1', [id])).rows[0];
+    await client.query('LOCK TABLE value_streams, capabilities, workflows, areas IN SHARE ROW EXCLUSIVE MODE');
+    const existing = id === undefined ? null : (await client.query(`SELECT * FROM ${TREE_NODES_SQL} n WHERE id=$1`, [id])).rows[0];
     if (id !== undefined && !existing) fail(404, 'journey 不存在');
     const areaId = await resolveArea(client, body);
     if (areaId !== undefined) data.area_id = areaId;
     const parentId = data.parent_journey_id === undefined ? (existing?.parent_journey_id ?? null) : data.parent_journey_id;
     await validateHierarchy(client, id, parentId);
+    // 价值流与能力是两张真表，身份由 parent_journey_id 是否为空决定；互换要搬表并牵动引用，只读/改不做（与迁移 520 的身份锁一致）
+    if (existing && (parentId === null) !== (existing.parent_journey_id === null)) fail(400, '价值流与能力不能互换：parent_journey_id 的有无决定身份，需要时请新建');
     let row;
     if (id === undefined) {
       const defaults = { description: null, maturity: 'not_started', status: 'active', e2e_test_path: null,
@@ -63,7 +66,7 @@ export async function registerJourney(pool, body, id) {
       const values = { ...defaults, ...data };
       for (const [field, fallback] of Object.entries(defaults)) values[field] = data[field] || fallback;
       const columns = Object.keys(values);
-      row = (await client.query(`INSERT INTO journeys (${columns.join(',')},notion_synced_at)
+      row = (await client.query(`INSERT INTO ${treeNodeTable(parentId)} (${columns.join(',')},notion_synced_at)
         VALUES (${columns.map((_, i) => `$${i + 1}`).join(',')},NULL) RETURNING *`, Object.values(values))).rows[0];
       const steps = body.steps || [];
       if (steps.length) {
@@ -79,7 +82,7 @@ export async function registerJourney(pool, body, id) {
       }
     } else {
       const columns = Object.keys(data);
-      row = (await client.query(`UPDATE journeys SET ${columns.map((column, i) => `${column}=$${i + 1}`).join(',')},updated_at=NOW(),notion_synced_at=NULL
+      row = (await client.query(`UPDATE ${treeNodeTable(existing.parent_journey_id)} SET ${columns.map((column, i) => `${column}=$${i + 1}`).join(',')},updated_at=NOW(),notion_synced_at=NULL
         WHERE id=$${columns.length + 1} RETURNING *`, [...Object.values(data), id])).rows[0];
     }
     const organization = await readJourneyOrganization(client, row.id);

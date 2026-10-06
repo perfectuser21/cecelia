@@ -35,7 +35,7 @@ it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真
   try{
     const {db}=fixture;
     await preparePilotSchema(db);
-    await db.query(`INSERT INTO journeys(id,name,parent_journey_id) VALUES('afa6abca-53c0-4815-8594-b7fb81ca547f','获客',NULL),
+    await db.query(`WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES('afa6abca-53c0-4815-8594-b7fb81ca547f','获客',NULL)) INSERT INTO capabilities(id,name,parent_journey_id) VALUES
       ('a1000000-0000-4000-8000-000000000001','关键词','afa6abca-53c0-4815-8594-b7fb81ca547f'),('a1000000-0000-4000-8000-000000000002','对标','afa6abca-53c0-4815-8594-b7fb81ca547f')`);
     mkdirSync(join(dir,'src'));writeFileSync(join(dir,'src/controller.js'),"import './shared.js';\n");writeFileSync(join(dir,'src/shared.js'),'export const shared=true;\n');
     const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
@@ -94,7 +94,7 @@ it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真
     await db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('cecelia-kr','cecelia-kr-source','legacy-ledger-v1',$1)",[{source_repo:'perfectuser21/cecelia'}]);
     git('remote','set-url','origin','git@github.com:perfectuser21/cecelia.git');
     expect(await pilotGraphTargets(db,{repo:'cecelia',root:dir})).toEqual([{repo:'cecelia-kr-source',root:dir,scope:'cecelia-kr'}]);
-    await db.query(`INSERT INTO journeys(id,name,parent_journey_id) VALUES('bbbbbbbb-f0f0-4000-8000-000000000002','管家',NULL),('dddddddd-f0f0-4000-8000-000000000004','战略','bbbbbbbb-f0f0-4000-8000-000000000002')`);
+    await db.query(`WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES('bbbbbbbb-f0f0-4000-8000-000000000002','管家',NULL)) INSERT INTO capabilities(id,name,parent_journey_id) VALUES('dddddddd-f0f0-4000-8000-000000000004','战略','bbbbbbbb-f0f0-4000-8000-000000000002')`);
     const kr=await submitMapManifest(db,buildPilotManifest('company-kr',{revision,decision}));await activateMapManifest(db,kr.manifest_version.id,{projector});
     expect((await db.query("SELECT fact_revisions FROM map_projection_runs WHERE scope_key='cecelia-kr' AND status='active'")).rows[0].fact_revisions).toEqual({});
     expect((await scanRepo({name:'cecelia-kr-source',root:dir},db)).sourceRevision).toBe(revision);
@@ -174,7 +174,7 @@ it.each(['coverage','pilot','graph'])('seedonly %s调用真实设置链，query�
    const triggers=(await f.db.query(`SELECT tgname FROM pg_trigger WHERE tgrelid='journey_assertion_receipts'::regclass AND NOT tgisinternal`)).rows;
    expect(triggers).toContainEqual({tgname:'trg_journey_assertion_receipts_append_only'});
    const decision=randomUUID();await f.db.query('INSERT INTO decisions(id) VALUES($1)',[decision]);
-   await f.db.query("INSERT INTO journeys(id,name,parent_journey_id) VALUES('afa6abca-53c0-4815-8594-b7fb81ca547f','获客',NULL),('a1000000-0000-4000-8000-000000000001','关键词','afa6abca-53c0-4815-8594-b7fb81ca547f'),('a1000000-0000-4000-8000-000000000002','对标','afa6abca-53c0-4815-8594-b7fb81ca547f')");
+   await f.db.query("WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES('afa6abca-53c0-4815-8594-b7fb81ca547f','获客',NULL)) INSERT INTO capabilities(id,name,parent_journey_id) VALUES('a1000000-0000-4000-8000-000000000001','关键词','afa6abca-53c0-4815-8594-b7fb81ca547f'),('a1000000-0000-4000-8000-000000000002','对标','afa6abca-53c0-4815-8594-b7fb81ca547f')");
    const manifest=buildPilotManifest('phones',{revision:'a'.repeat(40),decision});
    await f.db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('zenithjoy','zenithjoy-pilot-source','legacy-ledger-v1',$1)",[{source_repo:manifest.capabilities[0].brain_binding.source_repo}]);
    const draft=await submitMapManifest(f.db,manifest);

@@ -248,7 +248,7 @@ describe('[S4-N10] A3 promise 检查按域收口', () => {
       return { rows: [] };
     }));
     await buildNightlyAssertions(pool);
-    expect(a3bSql).toContain('JOIN journeys');
+    expect(a3bSql).toContain('JOIN capabilities');
     expect(a3bSql).toMatch(/home IS NOT NULL|domain IS NOT NULL/);
   });
 });

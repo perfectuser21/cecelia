@@ -20,6 +20,7 @@ import { readPageContent } from './lib/notion-page-content.js';
 import { qiumiSourceFromNotion } from './lib/qiumi-source.js';
 import { toStartIso, toEndIso, isFuture, scheduledNote } from './lib/qiumi-schedule.js';
 import { parseEnPage, parseZhPage, GTD_DB_ID, EN_NATIVE_MARK } from './notion-gtd-sync.js';
+import { TREE_NODES_SQL, treeNodeTable } from './lib/tree-nodes-sql.js';
 
 // journeys / journey_features 不再硬编码库常量：AI Journey / AI Feature 两库 2026-09-19 进回收站，
 // 迁移 480 把注册表两行归档（决策 24a37029：停推，不恢复不重建）。这两张表只认 notion_projection_map
@@ -149,7 +150,7 @@ async function pushJourneys(pool, token) {
   if (!dbId) return;
   const { rows } = await pool.query(`
     SELECT j.*, a.notion_id AS area_notion_id
-    FROM journeys j
+    FROM ${TREE_NODES_SQL} j
     LEFT JOIN areas a ON a.id = j.area_id
     WHERE j.notion_synced_at IS NULL OR j.updated_at > j.notion_synced_at
     ORDER BY j.notion_synced_at NULLS FIRST, j.updated_at
@@ -157,7 +158,7 @@ async function pushJourneys(pool, token) {
   `);
   if (rows.length === 0) return;
   await pushRegisteredRows(pool, token, {
-    table: 'journeys', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'journey',
+    table: (j) => treeNodeTable(j.parent_journey_id), dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'journey',
     buildProps: (j) => {
       const properties = {
         Name: { title: [{ text: { content: j.name } }] },
@@ -178,7 +179,7 @@ async function pushJourneyFeatures(pool, token) {
   const { rows } = await pool.query(`
     SELECT f.*, j.notion_id AS journey_notion_id, a.notion_id AS area_notion_id
     FROM journey_features f
-    LEFT JOIN journeys j ON j.id = f.journey_id
+    LEFT JOIN ${TREE_NODES_SQL} j ON j.id = f.journey_id
     LEFT JOIN areas a ON a.id = f.area_id
     WHERE (f.notion_synced_at IS NULL OR f.updated_at > f.notion_synced_at)
       AND (f.journey_id IS NULL OR j.notion_id IS NOT NULL)
@@ -1076,7 +1077,7 @@ async function pushJourneyStepLinks(pool, token) {
   const { rows } = await pool.query(`
     SELECT l.*, j.name AS journey_name, s.name AS step_name
     FROM activity_cells l
-    JOIN journeys j ON j.id = l.journey_id
+    JOIN ${TREE_NODES_SQL} j ON j.id = l.journey_id
     LEFT JOIN activities s ON s.id = l.step_id
     WHERE l.notion_synced_at IS NULL OR l.updated_at > l.notion_synced_at
     ORDER BY l.updated_at

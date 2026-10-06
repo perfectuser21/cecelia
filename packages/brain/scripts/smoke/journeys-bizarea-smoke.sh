@@ -37,21 +37,21 @@ fi
 
 echo "[smoke:journeys-bizarea] Case 2: biz_area 列 + CHECK 约束"
 COL=$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
-  -c "SELECT data_type FROM information_schema.columns WHERE table_name='journeys' AND column_name='biz_area';" 2>/dev/null || echo "")
+  -c "SELECT data_type FROM information_schema.columns WHERE table_name='value_streams' AND column_name='biz_area';" 2>/dev/null || echo "")
 if [ "$COL" != "text" ]; then
   echo "  WARN: biz_area 列未应用（'$COL'）— migration 389 未跑，CI fresh DB 会跑"; echo "[smoke:journeys-bizarea] DONE"; exit 0
 fi
 BAD=$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
-  -c "INSERT INTO journeys (name, status, biz_area) VALUES ('[smoke-bizarea] bad', 'active', 'not-a-bucket') RETURNING id;" 2>&1 || true)
+  -c "INSERT INTO value_streams (name, status, biz_area) VALUES ('[smoke-bizarea] bad', 'active', 'not-a-bucket') RETURNING id;" 2>&1 || true)
 echo "$BAD" | grep -q "violates check constraint" || { echo "  FAIL: 非法桶值未被 CHECK 拦截"; exit 1; }
 echo "  PASS: 列存在且 CHECK 生效"
 
 echo "[smoke:journeys-bizarea] Case 3: 行为断言（种数据→打端点）"
 INFRA_ID=$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
-  -c "INSERT INTO journeys (name, status, biz_area) VALUES ('[smoke-bizarea] 机群底座', 'active', 'infrastructure') RETURNING id;")
+  -c "INSERT INTO value_streams (name, status, biz_area) VALUES ('[smoke-bizarea] 机群底座', 'active', 'infrastructure') RETURNING id;")
 KEFU_ID=$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
-  -c "INSERT INTO journeys (name, status, biz_area) VALUES ('[smoke-bizarea] 某某客服线', 'active', 'zenithjoy') RETURNING id;")
-cleanup() { psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -c "DELETE FROM journeys WHERE name LIKE '[smoke-bizarea]%';" >/dev/null 2>&1 || true; }
+  -c "INSERT INTO value_streams (name, status, biz_area) VALUES ('[smoke-bizarea] 某某客服线', 'active', 'zenithjoy') RETURNING id;")
+cleanup() { psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -c "DELETE FROM value_streams WHERE name LIKE '[smoke-bizarea]%';" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 LINES=$(curl -q -sf "${API}/warroom/lines") || { echo "  FAIL: /warroom/lines 不可达"; exit 1; }
@@ -72,7 +72,7 @@ echo "[smoke:journeys-bizarea] Case 4: deprecated 线不出现在 /lines（自�
 # 不断言全局无 gp-agg 残渣：同场 CI 的 gp-aggregation smoke 会临时新建 active 残渣线，
 # 那是它的测试数据不是本刀的病。本刀保证的是 deprecated 状态被过滤。
 psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -c \
-  "INSERT INTO journeys (name, status, biz_area) VALUES ('[smoke-bizarea] 已退役线', 'deprecated', 'cecelia');" >/dev/null
+  "INSERT INTO value_streams (name, status, biz_area) VALUES ('[smoke-bizarea] 已退役线', 'deprecated', 'cecelia');" >/dev/null
 LINES2=$(curl -q -sf "${API}/warroom/lines") || { echo "  FAIL: /warroom/lines 不可达"; exit 1; }
 echo "$LINES2" | grep -q "smoke-bizarea] 已退役线" && { echo "  FAIL: deprecated 线仍出现在 /lines"; exit 1; }
 echo "  PASS: deprecated 线已被过滤"

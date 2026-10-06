@@ -15,6 +15,7 @@ import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync
 import { pushRegisteredRows, resolveDbId, isWrongDatabaseError } from './lib/notion-projection-engine.js';
 import { ensureOpsDbProps } from './ops-quota-notion.js';
 import { PROBE_DB_PROPS } from './ops-notion-schema.js';
+import { TREE_NODES_SQL } from './lib/tree-nodes-sql.js';
 
 const RT_MAX = 1900;
 const CRONTAB_MARK = '-crontab-';
@@ -146,7 +147,7 @@ export async function pushStepProbes(pool, token, deps = {}) {
     `SELECT sp.*, jsl.cell_key, j.name AS journey_name
        FROM step_probes sp
        LEFT JOIN activity_cells jsl ON jsl.id = sp.journey_step_link_id
-       LEFT JOIN journeys j ON j.id = jsl.journey_id
+       LEFT JOIN ${TREE_NODES_SQL} j ON j.id = jsl.journey_id
       WHERE sp.notion_synced_at IS NULL OR sp.updated_at > sp.notion_synced_at
       ORDER BY sp.updated_at
       LIMIT 50`);
@@ -168,7 +169,7 @@ export async function pushProbeReceipts(pool, token, deps = {}) {
             r.notion_id, r.notion_digest, jsl.cell_key, j.name AS journey_name
        FROM journey_assertion_receipts r
        LEFT JOIN activity_cells jsl ON jsl.id = r.journey_step_link_id
-       LEFT JOIN journeys j ON j.id = jsl.journey_id
+       LEFT JOIN ${TREE_NODES_SQL} j ON j.id = jsl.journey_id
       WHERE r.executor_kind = 'business_probe_runner'
         AND r.notion_synced_at IS NULL
       ORDER BY r.completed_at DESC

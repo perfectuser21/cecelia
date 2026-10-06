@@ -8,7 +8,7 @@ it('公司KR正式adapter固定同repo源码、完整codefile绑定与UUID，不
   fixture=await versionsDatabase();await fixture.migrate();const {db}=fixture,s=companyKrSpec,vs=randomUUID();
   await db.query(migrationTable('433_ops_projection.sql','ops_agents'));
   await db.query('INSERT INTO areas(id,name) VALUES($1,$2)',[s.area_id,'公司']);
-  await db.query('INSERT INTO journeys(id,name,parent_journey_id,capability_code) VALUES($1,$2,NULL,NULL),($3,$4,$1,$5)',[vs,'管家',s.capability_id,s.capability_name,s.capability_code]);
+  await db.query('WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id,capability_code) VALUES($1,$2,NULL,NULL)) INSERT INTO capabilities(id,name,parent_journey_id,capability_code) VALUES($3,$4,$1,$5)',[vs,'管家',s.capability_id,s.capability_name,s.capability_code]);
   await db.query("INSERT INTO ops_agents(source,host_alias,name) VALUES('openclaw','mmv',$1)",[s.agent]);
   await db.query("INSERT INTO ops_workflows(source,wf_id,name) VALUES('scheduler',$1,'公司KR')",[s.runtime]);
   const result=await registerCompanyKrWorkflow(db,{revision:'a'.repeat(40),spec:s,readSource:async()=>JSON.stringify(s),readBinding:async()=> 'export const code=true;\n',definitionsOnly:true});

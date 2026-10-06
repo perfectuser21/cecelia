@@ -17,7 +17,8 @@ beforeEach(async () => {
   await client.query(`CREATE TABLE projection_links(target text,entity_type text,entity_id uuid,external_id text,content_hash text,
     last_synced_at timestamptz,updated_at timestamptz DEFAULT now(),UNIQUE(target,entity_type,entity_id),UNIQUE(target,external_id));
     CREATE TABLE areas(id uuid,name text,notion_id text);
-    CREATE TABLE journeys(id uuid,name text,kind text,area_id uuid,parent_journey_id uuid);
+    CREATE TABLE value_streams(id uuid,name text,kind text,area_id uuid,parent_journey_id uuid);
+    CREATE TABLE capabilities(id uuid,name text,kind text,area_id uuid,parent_journey_id uuid);
     CREATE TABLE workflows(id uuid,name text,key text,capability_id uuid);
     CREATE TABLE workflow_definition_versions(id uuid,workflow_id uuid,payload jsonb,source_repo text,source_path text,source_commit text,created_at timestamptz);
     CREATE TABLE activity_definition_versions(id uuid,activity_id uuid,payload jsonb,source_repo text,source_path text,source_commit text);

@@ -12,6 +12,7 @@ import { MODEL_ACCOUNT_STATUS } from '../ops-model-accounts-collector.js';
 import { statusFromCollectorState } from '../ops-alarm-ledger.js';
 import { importInventorySnapshot } from '../ops-alarm-import.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
 
 // MODEL_ACCOUNT_STATUS 单源 import（INV-3 [枚举单份]）——只从 collector 引用，禁在此手抄字面量副本。
 export { MODEL_ACCOUNT_STATUS };
@@ -295,8 +296,8 @@ export async function buildAlarmsPayload(dbPool, now = new Date()) {
       `SELECT e.*, j.name AS journey_name, j.parent_journey_id AS journey_parent_id,
               vs.name AS value_stream_name, a.name AS department_name
          FROM ops_schedule_entries e
-         LEFT JOIN journeys j ON j.id = e.journey_id
-         LEFT JOIN journeys vs ON vs.id = COALESCE(j.parent_journey_id, j.id)
+         LEFT JOIN ${TREE_NODES_SQL} j ON j.id = e.journey_id
+         LEFT JOIN ${TREE_NODES_SQL} vs ON vs.id = COALESCE(j.parent_journey_id, j.id)
          LEFT JOIN areas a ON a.id = vs.area_id
         WHERE e.active = TRUE
         ORDER BY e.source, e.host_alias, e.label`)).rows;

@@ -5,6 +5,7 @@ import pool from '../db.js';
 import { buildCascadeReport } from '../cascade-list.js';
 import { classifyJourneyCellAssertion } from '../lib/journey-cell-assertion.js';
 import { journeyRegistrationRouter } from './journey-registration.js';
+import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
 
 const router = Router();
 router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
@@ -28,7 +29,7 @@ router.get('/journeys', async (req, res) => {
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     params.push(limit, offset);
     const { rows } = await pool.query(
-      `SELECT * FROM journeys ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      `SELECT * FROM ${TREE_NODES_SQL} n ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
     res.json(rows);
@@ -41,7 +42,7 @@ router.get('/journeys', async (req, res) => {
 // GET /api/brain/journeys/:id
 router.get('/journeys/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM journeys WHERE id=$1', [req.params.id]);
+    const { rows } = await pool.query(`SELECT * FROM ${TREE_NODES_SQL} n WHERE id=$1`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'not found' });
     res.json(rows[0]);
   } catch (err) {
@@ -77,7 +78,7 @@ router.get('/journey_features/:id/blast-radius', async (req, res) => {
        JOIN activity_uses u ON u.item_id = i.id
        JOIN activities s ON s.id = u.activity_id
        JOIN activity_placement p ON p.activity_id = s.id
-       JOIN journeys j ON j.id = p.capability_id
+       JOIN capabilities j ON j.id = p.capability_id
        WHERE i.legacy_feature_id = $1
        ORDER BY j.name, p.step_number`, [req.params.id]);
     res.json({ feature: frows[0], blast_radius: rows, count: rows.length });
@@ -147,7 +148,7 @@ router.post('/journey_features', internalAuthOrLoopback, async (req, res) => {
     let journeyUuid = null;
     if (journey_id) {
       const { rows: jr } = await pool.query(
-        'SELECT id FROM journeys WHERE id::text=$1 OR notion_id=$1 LIMIT 1', [journey_id]
+        `SELECT id FROM ${TREE_NODES_SQL} n WHERE id::text=$1 OR notion_id=$1 LIMIT 1`, [journey_id]
       );
       journeyUuid = jr.length ? jr[0].id : null;
     }
@@ -619,7 +620,7 @@ router.get('/journey_steps/:step_id/ledger', async (req, res) => {
        LEFT JOIN activity_placement p ON p.activity_id = js.id
        -- 还没挂进流程的老步骤：回退到它的格子记的能力，台账照常可读
        LEFT JOIN LATERAL (SELECT c.journey_id FROM activity_cells c WHERE c.step_id = js.id ORDER BY c.created_at LIMIT 1) first_cell ON true
-       JOIN journeys j ON j.id = COALESCE(p.capability_id, first_cell.journey_id)
+       JOIN ${TREE_NODES_SQL} j ON j.id = COALESCE(p.capability_id, first_cell.journey_id)
        WHERE js.id=$1`,
       [stepId]
     );
@@ -739,7 +740,7 @@ router.get('/features/:id/blast-radius', async (req, res) => {
        FROM activity_cells jsl
        JOIN activities js ON js.id = jsl.step_id
        JOIN activity_placement p ON p.activity_id = js.id
-       JOIN journeys j       ON j.id  = p.capability_id
+       JOIN capabilities j       ON j.id  = p.capability_id
        WHERE jsl.feature_id = $1
        ORDER BY j.name, p.step_number`,
       [req.params.id]
@@ -794,7 +795,7 @@ router.post('/cascade-list', internalAuthOrLoopback, async (req, res) => {
        LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
        LEFT JOIN activities    js ON js.id  = jsl.step_id
        LEFT JOIN activity_placement p ON p.activity_id = js.id
-       LEFT JOIN journeys          j ON j.id   = p.capability_id
+       LEFT JOIN capabilities          j ON j.id   = p.capability_id
        WHERE
          (jsl.assertion_ref = ANY($1::text[]))
          OR (jf.unit_test_path = ANY($1::text[]))
@@ -827,7 +828,7 @@ router.get('/ledger', async (req, res) => {
       ? await pool.query(
           `SELECT jf.*, j.name AS journey_name, j.e2e_test_path
              FROM journey_features jf
-             LEFT JOIN journeys j ON j.id = jf.journey_id
+             LEFT JOIN ${TREE_NODES_SQL} j ON j.id = jf.journey_id
             WHERE jf.journey_id = $1
             ORDER BY jf.created_at DESC
             LIMIT $2`,
@@ -836,7 +837,7 @@ router.get('/ledger', async (req, res) => {
       : await pool.query(
           `SELECT jf.*, j.name AS journey_name, j.e2e_test_path
              FROM journey_features jf
-             LEFT JOIN journeys j ON j.id = jf.journey_id
+             LEFT JOIN ${TREE_NODES_SQL} j ON j.id = jf.journey_id
             WHERE jf.name NOT LIKE 'gp-agg-smoke%'
             ORDER BY jf.created_at DESC
             LIMIT $1`,

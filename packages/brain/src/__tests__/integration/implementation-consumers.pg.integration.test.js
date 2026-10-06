@@ -76,8 +76,8 @@ it('陈旧来源图与缺回归如实报告，引用核验不等于业务验证'
   expect(r.body.gaps.map(g=>g.code)).toEqual(expect.arrayContaining(['graph_snapshot_stale','regression_missing']));
 });
 it('投影曾验证但业务父级已改，读取重新核规范身份而非信旧绿色',async()=>{
-  const other=randomUUID();await db.query("INSERT INTO journeys(id,name) VALUES($1,'另一个价值流')",[other]);
-  await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[other,capabilities[0]]);
+  const other=randomUUID();await db.query("INSERT INTO value_streams(id,name) VALUES($1,'另一个价值流')",[other]);
+  await db.query('UPDATE capabilities SET parent_journey_id=$1 WHERE id=$2',[other,capabilities[0]]);
   const r=await get();expect(r.body.mapping_status).toBe('unknown');expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'capability_authority_changed'}));
 });
 it('断言必须覆盖每个能力与Activity使用位置，不能借同能力另一Activity变绿',async()=>{

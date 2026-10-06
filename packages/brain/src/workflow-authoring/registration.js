@@ -40,7 +40,7 @@ export function validateDefinition(d) {
 
 export async function validateReferences(client, definition, { requireActive = false } = {}) {
   validateDefinition(definition);
-  const capability = (await client.query('SELECT id,parent_journey_id,status FROM journeys WHERE id=$1', [definition.capability_id])).rows[0];
+  const capability = (await client.query('SELECT id,parent_journey_id,status FROM capabilities WHERE id=$1', [definition.capability_id])).rows[0];
   if (!capability?.parent_journey_id || capability.status !== 'active') throw registrationError('capability_not_ready', '所属能力不存在、非活动状态或缺少父价值流');
   const ids = [...new Set([definition.runtime.skill_id, ...definition.activities.filter(a => a.implementation.kind === 'skill').map(a => a.implementation.skill_id)])];
   const skills = (await client.query('SELECT id,name,status,location FROM skill_registry WHERE id=ANY($1::uuid[])', [ids])).rows;

@@ -7,7 +7,7 @@
  * txGroup：同组规则按声明顺序在关联事务序列里执行，中断后必须重跑至完成
  */
 
-export const PROTECTED_TABLES = ['decisions', 'tasks', 'journeys', 'journey_features'];
+export const PROTECTED_TABLES = ['decisions', 'tasks', 'journeys', 'value_streams', 'capabilities', 'journey_features'];
 
 const GRAPH_STALE = (alias) => `NOT EXISTS (
   SELECT 1 FROM map_projection_runs r,

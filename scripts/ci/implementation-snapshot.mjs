@@ -18,7 +18,8 @@ import { digestMapManifest } from '../../packages/brain/src/lib/map-manifest-sch
 import { scanRepo } from '../scan/scan-graph.mjs';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
 
-const TABLES=['areas','schema_version','journeys','workflows','activities','steps','spans',
+// journeys 只给旧迁移 511 重放用（它按旧形状读 journeys）；读者读的是 value_streams / capabilities
+const TABLES=['areas','schema_version','journeys','value_streams','capabilities','workflows','activities','steps','spans',
   'map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','map_projection_edges',
   'graph_edges','graph_snapshot_versions','graph_edge_snapshots','fact_snapshot_headers','activity_cells'];
 export async function createImplementationScratch(){
@@ -58,7 +59,7 @@ export async function importImplementationSnapshot(db,input){
   await db.query('BEGIN');
   try{
     for(const row of s.canonical.areas)await insertRow(db,'areas',row);
-    for(const row of s.canonical.journeys)await insertRow(db,'journeys',row);
+    for(const row of s.canonical.journeys)await insertRow(db,row.parent_journey_id==null?'value_streams':'capabilities',row);
     for(const row of s.canonical.workflows)await insertRow(db,'workflows',{...row,current_definition_version_id:null});
     for(const row of s.canonical.activities)await insertRow(db,'activities',{...row,current_definition_version_id:null});
     for(const row of s.canonical.steps)await insertRow(db,'steps',row);

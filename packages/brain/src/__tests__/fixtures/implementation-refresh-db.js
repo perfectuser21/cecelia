@@ -17,7 +17,7 @@ export async function implementationRefreshDatabase({manifestRevision='a'.repeat
   const schema=(await f.db.query('SELECT current_schema() name')).rows[0].name;
   pool=new pg.Pool({...DB_DEFAULTS,max:4,options:`-c search_path=${schema}`});
   await pool.query(migrationTable('000_base_schema.sql','pending_actions'));
-  await pool.query(migrationTable('334_golden_paths.sql','golden_paths'));
+  await withLegacyNames(pool,()=>pool.query(migrationTable('334_golden_paths.sql','golden_paths')));
   await pool.query(migrationSlice('372_golden_path_contract_versions.sql','CREATE TABLE IF NOT EXISTS golden_path_contract_versions','INSERT INTO schema_version'));
   await withLegacyNames(pool,()=>pool.query(migrationSlice('374_gp_assertion_receipts.sql','CREATE TABLE IF NOT EXISTS journey_assertion_receipts','INSERT INTO schema_version')));
   const decision=randomUUID();

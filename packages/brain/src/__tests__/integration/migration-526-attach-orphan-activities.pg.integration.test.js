@@ -22,9 +22,9 @@ beforeEach(async () => {
 afterEach(async () => { await client.query('ROLLBACK'); await client.end(); });
 
 async function capability(name) {
-  const vs = (await client.query("INSERT INTO journeys (name, description) VALUES ($1, 'v') RETURNING id", [`${name}-价值流`])).rows[0].id;
+  const vs = (await client.query("INSERT INTO value_streams (name, description) VALUES ($1, 'v') RETURNING id", [`${name}-价值流`])).rows[0].id;
   const cap = randomUUID();
-  await client.query("INSERT INTO journeys (id, name, parent_journey_id, description) VALUES ($1, $2, $3, 'c')", [cap, name, vs]);
+  await client.query("INSERT INTO capabilities (id, name, parent_journey_id, description) VALUES ($1, $2, $3, 'c')", [cap, name, vs]);
   return cap;
 }
 async function workflow(cap, key) {

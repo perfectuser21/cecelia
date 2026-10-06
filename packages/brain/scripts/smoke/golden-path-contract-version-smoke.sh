@@ -42,7 +42,7 @@ DELETE FROM pending_actions
    NULLIF('$ACTION_V1', '')::uuid,
    NULLIF('$ACTION_V2', '')::uuid
  );
-DELETE FROM journeys WHERE id = NULLIF('$JOURNEY_ID', '')::uuid;
+DELETE FROM value_streams WHERE id = NULLIF('$JOURNEY_ID', '')::uuid;
 SQL
 }
 trap cleanup EXIT
@@ -70,7 +70,7 @@ expect_code() {
 }
 
 JOURNEY_ID=$(psql -X "$DB_URL" -v ON_ERROR_STOP=1 -tAc \
-  "INSERT INTO journeys (name, description)
+  "INSERT INTO value_streams (name, description)
    VALUES ('$RUN_KEY', 'versioned GP contract smoke')
    RETURNING id" | head -1)
 

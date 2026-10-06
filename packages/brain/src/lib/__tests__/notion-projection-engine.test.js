@@ -78,6 +78,19 @@ describe('pushRegisteredRows', () => {
     const upd = pool.query.mock.calls.find(c => /UPDATE journeys SET notion_synced_at\s*=\s*NOW\(\)/.test(c[0]));
     expect(upd).toBeTruthy();
   });
+
+  it('table 传函数：同一批行按行回写各自的真身表（价值流 / 能力）', async () => {
+    const pool = mkPool();
+    const notion = vi.fn(async () => ({ id: 'page-x' }));
+    await pushRegisteredRows(pool, 't', { table: r => (r.parent_journey_id ? 'capabilities' : 'value_streams'), dbId: 'db1',
+      rows: [{ id: 'vs1', name: 'a', notion_id: null, parent_journey_id: null },
+        { id: 'cap1', name: 'b', notion_id: null, parent_journey_id: 'vs1' }],
+      buildProps, notionReq: notion, logSyncError: async () => {} });
+    const sqls = pool.query.mock.calls.map(c => c[0]);
+    expect(sqls.some(s => /UPDATE value_streams SET notion_id/.test(s))).toBe(true);
+    expect(sqls.some(s => /UPDATE capabilities SET notion_id/.test(s))).toBe(true);
+    expect(sqls.some(s => /UPDATE undefined|UPDATE \[object/.test(s))).toBe(false);
+  });
 });
 
 describe('resolveDbId — 库 id 优先从注册表取', () => {

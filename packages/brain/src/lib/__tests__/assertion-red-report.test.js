@@ -27,7 +27,7 @@ describe('readAssertionRedState — 分组与分级', () => {
     expect(sql).toMatch(/verdict = 'FAIL'/);
     expect(sql).toMatch(/activity_cells/);
     expect(sql).toMatch(/activities/);
-    expect(sql).toMatch(/JOIN journeys/);
+    expect(sql).toMatch(/JOIN \(SELECT \* FROM value_streams UNION ALL SELECT \* FROM capabilities\) j/);
     expect(params).toEqual([PROBE_EXECUTOR_KIND, 24]);
     expect(PROBE_EXECUTOR_KIND).toBe('business_probe_runner');
   });

@@ -26,9 +26,23 @@ ALTER TABLE journey_steps DROP CONSTRAINT IF EXISTS journey_steps_journey_id_ste
  await db.query(migrationTable('436_ops_workflows.sql','ops_workflows'));
  await db.query(migrationSql('494_vs_model_workflows.sql'));
  if(runs){await db.query(migrationSql('059_task_runs.sql'));await db.query(migrationSql('495_vs_model_spans.sql'));}
+ await splitJourneys(db);
  // 迁移 520/521：Activity 用仓库哪几件（workflow-read-service 的共享组件读它）
  await db.query(`CREATE TABLE IF NOT EXISTS activity_uses(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),activity_id uuid NOT NULL REFERENCES journey_steps(id) ON DELETE CASCADE,item_id uuid NOT NULL REFERENCES enablers(id) ON DELETE CASCADE,role text NOT NULL DEFAULT 'uses',assertion_ref text,cell_status text,legacy_cell_id uuid,created_at timestamptz NOT NULL DEFAULT now(),UNIQUE(activity_id,item_id))`);
  await useStandardNames(db);
+}
+
+// 树+仓库 v3.0 第 6 刀的形状：价值流 / 能力是两张真表，journeys 只剩一个只读 UNION 视图（兼容外部消费者）。
+// 旧迁移（282/397/494/…）按单表 journeys 建表和外键，所以重放完才拆：旧表的行按角色分进两张新表，
+// 指向旧表的外键随 DROP … CASCADE 一起掉（生产里它们靠守卫触发器），工作流外键改指能力。
+async function splitJourneys(db){
+ if(await relkind(db,'journeys')!=='r')return;
+ await db.query(`CREATE TABLE value_streams (LIKE journeys INCLUDING ALL);
+CREATE TABLE capabilities (LIKE journeys INCLUDING ALL);
+INSERT INTO value_streams SELECT * FROM journeys WHERE parent_journey_id IS NULL;
+INSERT INTO capabilities SELECT * FROM journeys WHERE parent_journey_id IS NOT NULL;`);
+ await replaceJourneysTableWithView(db);
+ if(await relkind(db,'workflows'))await db.query('ALTER TABLE workflows DROP CONSTRAINT IF EXISTS workflows_capability_id_fkey;ALTER TABLE workflows ADD CONSTRAINT workflows_capability_id_fkey FOREIGN KEY (capability_id) REFERENCES capabilities(id)');
 }
 
 // 迁移 522 起生产库里 activities / activity_cells / warehouse_items 是真表，旧名 journey_steps / journey_step_links / enablers 是视图。
@@ -45,10 +59,36 @@ export async function useStandardNames(db){
   if(await relkind(db,newName)==='r'&&!(await relkind(db,oldName)))await db.query(`CREATE VIEW ${oldName} AS SELECT * FROM ${newName}`);
  }
 }
+// 旧迁移重放期间 journeys 要是真表（外键、旧形状读写都按它），重放完再拆回两张真表 + 只读视图。
+async function restoreJourneysTable(db){
+ if(await relkind(db,'journeys')!=='v')return false;
+ const views=await journeyDependentViews(db);
+ await db.query('DROP VIEW journeys CASCADE;CREATE TABLE journeys (LIKE value_streams INCLUDING ALL);ALTER TABLE journeys DROP CONSTRAINT IF EXISTS value_streams_is_root');
+ // 生产形状的子表里 kind 是生成列，复制行时要跳过
+ const cols=(await db.query("SELECT string_agg(quote_ident(column_name),',' ORDER BY ordinal_position) AS c FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='journeys' AND is_generated='NEVER'")).rows[0].c;
+ await db.query(`INSERT INTO journeys(${cols}) SELECT ${cols} FROM value_streams UNION ALL SELECT ${cols} FROM capabilities`);
+ await recreateViews(db,views);
+ return true;
+}
+// 删 journeys 表会连带删依赖它的视图（如 activity_flow_metrics）：先记下定义，换成只读视图后按原样重建。
+async function journeyDependentViews(db){
+ return (await db.query("SELECT DISTINCT c.relname, pg_get_viewdef(c.oid,true) AS def FROM pg_depend d JOIN pg_rewrite r ON r.oid=d.objid JOIN pg_class c ON c.oid=r.ev_class WHERE d.refobjid='journeys'::regclass AND c.relkind='v' AND c.relnamespace=current_schema()::regnamespace AND c.relname<>'journeys'")).rows;
+}
+const recreateViews=async(db,views)=>{for(const v of views)await db.query(`CREATE OR REPLACE VIEW ${v.relname} AS ${v.def.replace(/;\s*$/,'')}`);};
+async function replaceJourneysTableWithView(db){
+ const views=await journeyDependentViews(db);
+ await db.query('DROP TABLE journeys CASCADE;CREATE VIEW journeys AS SELECT * FROM value_streams UNION ALL SELECT * FROM capabilities');
+ await recreateViews(db,views);
+}
+const resplitJourneys=replaceJourneysTableWithView;
 export async function withLegacyNames(db,fn){
  for(const [oldName,newName] of LEGACY_PAIRS){
   if(await relkind(db,oldName)==='v')await db.query(`DROP VIEW ${oldName}`);
   if(await relkind(db,newName)==='r'&&!(await relkind(db,oldName)))await db.query(`ALTER TABLE ${newName} RENAME TO ${oldName}`);
  }
- try{return await fn();}finally{await useStandardNames(db);}
+ const restored=await restoreJourneysTable(db);
+ let failed=false;
+ try{return await fn();}catch(error){failed=true;throw error;}
+ // fn 抛错时事务可能已中止，清理会再抛一个无关的 25P02 把真正的错误盖住：此时只保原错误
+ finally{try{if(restored)await resplitJourneys(db);await useStandardNames(db);}catch(error){if(!failed)throw error;}}
 }

@@ -91,7 +91,7 @@ describe('盘点静态快照导入（规划）', () => {
     const calls = [];
     const client = { query: async (sql, p) => { calls.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), p }); return { rows: [] }; }, release: vi.fn() };
     const pool = {
-      query: async (sql) => (String(sql).includes('FROM journeys') ? { rows: journeys } : { rows: [{ id: 10, source: 'crontab', host_alias: 'mmv', label: 'janitor.sh @ */15 * * * *' }] }),
+      query: async (sql) => (String(sql).includes('FROM (SELECT * FROM value_streams') ? { rows: journeys } : { rows: [{ id: 10, source: 'crontab', host_alias: 'mmv', label: 'janitor.sh @ */15 * * * *' }] }),
       connect: async () => client,
     };
     const items = [
@@ -123,7 +123,7 @@ describe('盘点静态快照导入（规划）', () => {
       query: async (sql) => { seen.push(String(sql).trim()); if (String(sql).includes('INSERT')) throw new Error('boom'); return { rows: [] }; },
       release: vi.fn(),
     };
-    const pool = { query: async (sql) => ({ rows: String(sql).includes('FROM journeys') ? journeys : [] }), connect: async () => client };
+    const pool = { query: async (sql) => ({ rows: String(sql).includes('FROM (SELECT * FROM value_streams') ? journeys : [] }), connect: async () => client };
     const items = [{ name: 'x', host: 'nas', mech: 'systemd-timer', freq: '', en: '启用', node: '无', last: '', ok: '', st: '', note: '' }];
     await expect(importInventorySnapshot(pool, items, { dryRun: false })).rejects.toThrow('boom');
     expect(seen).toContain('ROLLBACK');

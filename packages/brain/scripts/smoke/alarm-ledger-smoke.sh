@@ -25,7 +25,8 @@ cleanup() {
   q "DELETE FROM ops_schedule_entries WHERE label LIKE '${TAG}%' OR host_alias LIKE '${TAG}%'" >/dev/null 2>&1 || true
   q "DELETE FROM recurring_tasks WHERE title LIKE '${TAG}%'" >/dev/null 2>&1 || true
   q "DELETE FROM ops_workflows WHERE wf_id LIKE '${TAG}%'" >/dev/null 2>&1 || true
-  q "DELETE FROM journeys WHERE name LIKE '${TAG}%'" >/dev/null 2>&1 || true
+  q "DELETE FROM capabilities WHERE name LIKE '${TAG}%'" >/dev/null 2>&1 || true
+  q "DELETE FROM value_streams WHERE name LIKE '${TAG}%'" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 cleanup
@@ -53,9 +54,9 @@ pass "CHECK 约束拦住非法 ledger_status / last_status / registered_via"
 # 3. 真代码落表：Brain job + recurring + 盘点导入 + /alarms 数据面（一个 node 进程，同一个真 PG）
 q "INSERT INTO recurring_tasks (title, task_type, cron_expression, is_active, last_run_at, last_run_status)
    VALUES ('${TAG}-rec', 'dev', '0 9 * * *', TRUE, NOW(), 'created')" >/dev/null
-q "INSERT INTO journeys (name, journey_type) VALUES ('${TAG}-vs', 'autonomous')" >/dev/null
-q "INSERT INTO journeys (name, journey_type, parent_journey_id)
-   SELECT '${TAG}-vs · cap', 'autonomous', id FROM journeys WHERE name='${TAG}-vs'" >/dev/null
+q "INSERT INTO value_streams (name, journey_type) VALUES ('${TAG}-vs', 'autonomous')" >/dev/null
+q "INSERT INTO capabilities (name, journey_type, parent_journey_id)
+   SELECT '${TAG}-vs · cap', 'autonomous', id FROM value_streams WHERE name='${TAG}-vs'" >/dev/null
 
 (cd "$BRAIN_DIR" && SMOKE_TAG="$TAG" DB_NAME="$DB_NAME" "$NODE" --input-type=module - <<'NODE'
 import pg from 'pg';
@@ -120,7 +121,7 @@ try {
   const s = snaps[0];
   if (s.enabled !== false || s.last_status !== '失败' || s.registered_via !== 'external-legacy' || s.tree_bucket_manual !== '无（历史残留）') die(`快照行字段不对: ${JSON.stringify(s)}`);
   const col = await row(`${tag}-collected.sh @ 5 * * * *`, 'crontab', 'mmv');
-  const cap = await one(`SELECT id FROM journeys WHERE name=$1`, [`${tag}-vs · cap`]);
+  const cap = await one(`SELECT id FROM capabilities WHERE name=$1`, [`${tag}-vs · cap`]);
   if (col.journey_id !== cap.id || col.ledger_status !== 'registered') die('采集来源行没被补挂树/升登记');
   ok('盘点导入：采集行只补挂树、未采集来源插快照、重跑幂等');
 

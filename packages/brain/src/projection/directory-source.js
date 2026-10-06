@@ -1,6 +1,9 @@
 /** 六层目录只读源：共享引用为准；不改契约、归属、版本或人工列。 */
 import { isDeepStrictEqual } from 'node:util';
 import { buildActivityCardProps, buildStepCardProps } from './activity-card.js';
+import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
+// 值是投影身份键（projection_links.entity_type 与 Notion「真身来源」文本），不是 SQL 表名；
+// value_streams / capabilities 仍记作 journeys，改了会让已有目录页被当新页重建。
 export const DIRECTORY_TABLES = Object.freeze({ areas: 'areas', value_streams: 'journeys', capabilities: 'journeys', workflows: 'workflows', activities: 'activities', steps: 'steps' });
 export const rich = value => ({ rich_text: value == null || value === '' ? [] : [{ text: { content: (typeof value === 'string' ? value : JSON.stringify(value)).slice(0, 1900) } }] });
 const ref = (layer, id) => ({ layer, id });
@@ -137,7 +140,7 @@ export function buildDirectoryRows(data, config = {}) {
 export async function loadDirectorySource(pool) {
   const { rows } = await pool.query(`SELECT jsonb_build_object(
     'areas',COALESCE((SELECT jsonb_agg(to_jsonb(a)) FROM areas a),'[]'::jsonb),
-    'journeys',COALESCE((SELECT jsonb_agg(to_jsonb(j)) FROM journeys j),'[]'::jsonb),
+    'journeys',COALESCE((SELECT jsonb_agg(to_jsonb(j)) FROM ${TREE_NODES_SQL} j),'[]'::jsonb),
     'workflows',COALESCE((SELECT jsonb_agg(to_jsonb(w) || jsonb_build_object('definition_version',to_jsonb(v))) FROM workflows w
       LEFT JOIN workflow_definition_versions v ON v.workflow_id=w.id AND v.id::text=to_jsonb(w)->>'current_definition_version_id'),'[]'::jsonb),
     'activities',COALESCE((SELECT jsonb_agg(to_jsonb(a) || jsonb_build_object('definition_version',to_jsonb(v))) FROM activities a

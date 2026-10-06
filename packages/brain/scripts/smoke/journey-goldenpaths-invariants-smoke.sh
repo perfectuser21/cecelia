@@ -36,7 +36,7 @@ req() {
 echo "[smoke] BRAIN=$BRAIN  DB_URL=${DB_URL%%\?*}"
 
 echo "[smoke] 夹具：journey → journey_feature(ability)（端点 2 target 过滤用）"
-JOURNEY_ID=$(uuid "INSERT INTO journeys (name) VALUES ('gp-agg-smoke-journey-' || gen_random_uuid()) RETURNING id")
+JOURNEY_ID=$(uuid "INSERT INTO value_streams (name) VALUES ('gp-agg-smoke-journey-' || gen_random_uuid()) RETURNING id")
 ABILITY_ID=$(uuid "INSERT INTO journey_features (name, journey_id, kind, status) VALUES ('gp-agg-smoke-ability', '$JOURNEY_ID', 'ability', 'done') RETURNING id")
 echo "  JOURNEY_ID=$JOURNEY_ID ABILITY_ID=$ABILITY_ID"
 

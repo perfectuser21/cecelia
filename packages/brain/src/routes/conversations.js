@@ -15,6 +15,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { invokeAgent } from '../lib/conversation-agent.js';
+import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
 
 const router = Router();
 
@@ -43,7 +44,7 @@ router.post('/', async (req, res) => {
 
     // 验证 journey 存在
     const journeyCheck = await pool.query(
-      'SELECT id FROM journeys WHERE id = $1',
+      `SELECT id FROM ${TREE_NODES_SQL} n WHERE id = $1`,
       [journey_id]
     );
     if (journeyCheck.rows.length === 0) {
