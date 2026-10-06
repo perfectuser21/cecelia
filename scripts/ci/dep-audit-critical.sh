@@ -29,6 +29,16 @@ ALLOWLIST=(
   #   移除条件：vitest 全仓升级到含修复的 major 后删除本行。TODO(deps): 与
   #            GHSA-5xrq-8626-4rwp 同一 vitest 大版本升级 track 一起处理。
   "GHSA-82fw-gwwq-j7x9"
+  # GHSA-5gmw-xhrv-c9v3 / GHSA-85c8-ppgw-ccpr — Tinypool worker options / run() options 原型污染 gadget → RCE。
+  #   不可利用：tinypool 只是 vitest 的传递 dev 依赖（packages/brain 的 vitest 1.x → tinypool 0.8，
+  #            engine / mcp-readonly 的 vitest 2.x/3.x → tinypool 1.1），利用前提是攻击者能控制传给 worker 的 options；
+  #            CI 与生产只跑仓内可信测试代码，不把任何不可信输入喂给 vitest 的 worker 池，生产镜像不装 dev 依赖。
+  #   不能修：修复版 tinypool ≥ 2.1.2 只随 vitest 4.x / @vitest/coverage-v8 5.0.x 提供（npm audit 的 fixAvailable 标 semver major），
+  #            与上面两条 vitest 公告同一道坎：全仓 vitest 1.x/2.x/3.x 混布，要跨 major 统一升级。
+  #   移除条件：vitest 全仓升级到 4.x 后删除这两行。TODO(deps): 与 GHSA-5xrq-8626-4rwp / GHSA-82fw-gwwq-j7x9
+  #            同一 vitest 大版本升级 track 一起处理（dependabot #5992 在推 packages/engine，须核对测试套件再合）。
+  "GHSA-5gmw-xhrv-c9v3"
+  "GHSA-85c8-ppgw-ccpr"
 )
 
 JSON=$(npm audit --audit-level=critical --json 2>/dev/null || true)
