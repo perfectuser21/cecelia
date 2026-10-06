@@ -27,7 +27,8 @@ pass "三面各有登记（镜子/入口/真身）"
 # 旧 AI Steps 推送链（2026-06-09 退役）不得复活；迁移 482（决策 0834e2fb / 92f6226b）起 journey_steps=backbone_activities
 # 唯一推送血管 = Backbone Activities 契约只读镜子，走 activity-contract-sync，不走旧 notion-push-sync 链
 ais="$(q "SELECT direction||'/'||status FROM notion_projection_map WHERE brain_table='activities' AND notion_db_id='369c40c2-ba63-812c-9f35-e7e43db25014'")"
-[[ "$ais" == "none/archived" ]] || fail "旧 AI Steps 登记应为 none/archived，得 $ais"
+# 迁移 530 已清掉这行旧登记（同表有现行登记）：不存在或仍是 none/archived 都算「没复活」
+[[ -z "$ais" || "$ais" == "none/archived" ]] || fail "旧 AI Steps 登记应不存在或为 none/archived，得 $ais"
 jsp="$(q "SELECT string_agg(notion_db_id||'@'||vessel, ',') FROM notion_projection_map WHERE brain_table='activities' AND direction IN ('push','both') AND status='active'")"
 [[ "$jsp" == "c213e387-b2ae-45a4-98c0-4a66fe3408be@activity-contract-sync.pushBackboneActivities" ]] || fail "activities（原 journey_steps）唯一推送血管应为 Backbone Activities 契约镜子，得 $jsp"
 grep -q "await pushJourneySteps" "$BRAIN_DIR/src/notion-push-sync.js" && fail "推送链仍含 pushJourneySteps（旧 AI Steps 链）" || true
