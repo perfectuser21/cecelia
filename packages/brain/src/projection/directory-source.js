@@ -10,6 +10,27 @@ const ref = (layer, id) => ({ layer, id });
 const unique = items => [...new Map(items.map(x => [`${x.layer}:${x.id}`, x])).values()].sort((a, b) => a.id.localeCompare(b.id));
 const title = value => ({ title: [{ text: { content: String(value).slice(0, 200) } }] });
 const select = name => ({ select: { name: String(name || 'unknown') } });
+const num = n => ({ number: Number(n) || 0 });
+const minuteDate = value => ({ date: value ? { start: new Date(Math.floor(new Date(value).getTime() / 60000) * 60000).toISOString() } : null }); // Notion 日期只到分钟，不取整读回对不上
+const shanghai = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+const shanghaiText = value => shanghai.format(new Date(value));
+/** 闹钟的频率描述：一次性任务在库里是 JSON，翻成人话（上海时间） */
+function scheduleText(desc) {
+  const s = String(desc ?? '').trim();
+  if (!s.startsWith('{')) return s || '频率未知';
+  try { const j = JSON.parse(s); if (j.kind === 'at' && j.at) return `一次性 ${shanghaiText(j.at)}`; } catch { /* 不是 JSON 就原样给 */ }
+  return s;
+}
+/** 一个流程现在算不算在用：有步骤级运行或近 7 天有任务跑过=在跑；有任务但没动静；只登记 Activity；空壳 */
+export function workflowUsageStatus(x) {
+  const { ran7 = 0, alarms = 0, spans = 0, acts = 0 } = x || {};
+  if (ran7 > 0 || spans > 0) return '在跑';
+  if (alarms > 0) return '有任务近7天没跑';
+  if (acts > 0) return '只登记没运行';
+  return '空壳';
+}
+const howItRuns = items => (Array.isArray(items) ? items : []).map(i =>
+  `${i.enabled ? '●' : '○'} ${i.label} · ${scheduleText(i.schedule)} · ${i.status || '无记录'}${i.last ? ` · 最近 ${shanghaiText(i.last).slice(5)}` : ''}`).join('\n');
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 function currentDefinition(row, kind) {
   const version = row?.definition_version, identity = `${kind}_id`;
@@ -37,6 +58,7 @@ const fieldList = value => Array.isArray(value) && value.every(item => typeof it
 export function buildDirectoryRows(data, config = {}) {
   const rows = [], journeys = new Map(data.journeys.map(j => [j.id, j]));
   const refs = data.refs.filter(r => r.active).sort((a, b) => a.sequence_no - b.sequence_no || a.slot_key.localeCompare(b.slot_key) || a.workflow_id.localeCompare(b.workflow_id));
+  const runtimeByWorkflow = new Map((data.workflow_runtime || []).map(r => [r.workflow_id, r]));
   const bindings = config.value_stream_bindings || [], seen = new Set(), nodes = new Set();
   for (const b of bindings) {
     const key = `${b.scope}:${b.node_key}`;
@@ -89,9 +111,14 @@ export function buildDirectoryRows(data, config = {}) {
       declared.every(item => typeof item === 'string' && /^[A-Z][A-Za-z]+$/.test(item));
     const trigger = w.trigger ?? w.contract?.trigger, input = w.input ?? w.contract?.inputs ?? (validInput ? declared : undefined);
     const output = w.output ?? w.contract?.outputs, policy = w.execution_policy ?? w.contract?.execution_policy;
+    const rt = runtimeByWorkflow.get(w.id) || {}, acts = unique(usage.map(r => ref('activities', r.activity_id))).length;
     const row = make('workflows', w, { Workflow: title(w.name), Key: rich(w.key), '版本': rich(w.version),
       '渠道': rich(w.channel), '形态': rich(w.form), Trigger: rich(trigger), Input: rich(input), Output: rich(output),
       '执行策略': rich(policy), '登记状态': select(w.status),
+      'Activity 数': num(acts), '定时任务数': num(rt.alarms), '启用任务数': num(rt.enabled), '近7天有跑': num(rt.ran7),
+      '失败任务数': num(rt.failed), '静默任务数': num(rt.silent), '步骤级运行次数': num(rt.spans),
+      '最近运行': minuteDate(rt.last_run), '在用吗': select(workflowUsageStatus({ ...rt, acts })),
+      '怎么运行': rich(howItRuns(rt.items)), '旧功能状态': rich(rt.legacy),
       '活动编排': rich(usage.map(r => `${r.sequence_no}. ${r.slot_key} → ${r.activity_id}`).join('\n')) }, {
       ...(w.capability_id ? { Capability: [ref('capabilities', w.capability_id)] } : {}),
       Activities: unique(usage.map(r => ref('activities', r.activity_id))),
@@ -153,6 +180,20 @@ export async function loadDirectorySource(pool) {
     'uses',COALESCE((SELECT jsonb_agg(jsonb_build_object('activity_id',u.activity_id,'item_name',i.name,'role',u.role) ORDER BY i.name)
       FROM activity_uses u JOIN warehouse_items i ON i.id=u.item_id),'[]'::jsonb),
     'refs',COALESCE((SELECT jsonb_agg(to_jsonb(r)) FROM workflow_activity_refs r),'[]'::jsonb),
+    'workflow_runtime',COALESCE((SELECT jsonb_agg(jsonb_build_object(
+      'workflow_id',w.id,
+      'alarms',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id),
+      'enabled',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id AND e.enabled),
+      'ran7',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id AND e.last_run_at > now() - interval '7 days'),
+      'failed',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id AND e.last_status='失败'),
+      'silent',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id AND e.last_status='静默'),
+      'last_run',(SELECT max(e.last_run_at) FROM ops_schedule_entries e WHERE e.workflow_id=w.id),
+      'spans',(SELECT count(*) FROM spans s WHERE s.workflow_id=w.id),
+      'legacy',(SELECT f.status FROM journey_features f WHERE f.id::text=to_jsonb(w)->>'legacy_feature_id'),
+      'items',COALESCE((SELECT jsonb_agg(jsonb_build_object('label',x.label,'schedule',x.schedule_desc,'enabled',x.enabled,
+        'status',x.last_status,'last',x.last_run_at,'source',x.source) ORDER BY x.enabled DESC, x.last_run_at DESC NULLS LAST)
+        FROM (SELECT e.label,e.schedule_desc,e.enabled,e.last_status,e.last_run_at,e.source FROM ops_schedule_entries e WHERE e.workflow_id=w.id
+          ORDER BY e.enabled DESC, e.last_run_at DESC NULLS LAST LIMIT 12) x),'[]'::jsonb))) FROM workflows w),'[]'::jsonb),
     'map_nodes',COALESCE((SELECT jsonb_agg(jsonb_build_object('scope',l.scope,'node_key',l.node_key,
       'name',n.name,'notion_id',l.notion_id,'journey_id',n.attributes->>'journey_id','active',true))
       FROM notion_map_node_pages l JOIN map_projection_runs r ON r.scope_key=l.scope AND r.status='active'

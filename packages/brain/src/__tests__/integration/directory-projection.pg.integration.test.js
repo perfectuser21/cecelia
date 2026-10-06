@@ -20,6 +20,9 @@ beforeEach(async () => {
     CREATE TABLE value_streams(id uuid,name text,kind text,area_id uuid,parent_journey_id uuid);
     CREATE TABLE capabilities(id uuid,name text,kind text,area_id uuid,parent_journey_id uuid);
     CREATE TABLE workflows(id uuid,name text,key text,capability_id uuid);
+    CREATE TABLE ops_schedule_entries(workflow_id uuid,label text,schedule_desc text,enabled boolean,last_status text,last_run_at timestamptz,source text);
+    CREATE TABLE spans(workflow_id uuid);
+    CREATE TABLE journey_features(id uuid,status text);
     CREATE TABLE workflow_definition_versions(id uuid,workflow_id uuid,payload jsonb,source_repo text,source_path text,source_commit text,created_at timestamptz);
     CREATE TABLE activity_definition_versions(id uuid,activity_id uuid,payload jsonb,source_repo text,source_path text,source_commit text);
     CREATE TABLE activities(id uuid,name text,workflow_id uuid);

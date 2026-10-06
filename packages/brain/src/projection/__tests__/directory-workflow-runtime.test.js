@@ -67,7 +67,8 @@ describe('流程库运行情况列', () => {
     const rows = buildDirectoryRows(sample(runtime), {});
     const how = text(rowOf(rows, id(4)).properties['怎么运行']);
     expect(how).toContain('● worker-pool-dispatch · 每 5 分钟 · 正常');
-    expect(how).toContain('○ one-shot · 一次性 2026-10-05 12:30 · 无记录');
+    expect(how).toContain('○ one-shot · 一次性 2026-10-05 20:30 · 无记录'); // 上海时区：UTC 12:30 = 20:30
+    expect(how).toContain('最近 10-06 17:15'); // 09:15Z = 17:15 上海
     expect(how).not.toContain('{"kind"');
     expect(text(rowOf(rows, id(5)).properties['怎么运行'])).toBe('');
   });

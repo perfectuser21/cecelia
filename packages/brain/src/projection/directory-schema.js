@@ -5,6 +5,13 @@ const UUID = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[
 const normalize = value => String(value ?? '').replaceAll('-', '').toLowerCase();
 const rich = () => ({ rich_text: {} });
 const relation = databaseId => ({ relation: { database_id: databaseId, single_property: {} } });
+const count = () => ({ number: { format: 'number' } });
+// 流程库的运行情况列（机器写）；「你的标记」是人工列：只建列，投影器永远不写它的值
+const workflowRuntimeSchema = () => ({
+  'Activity 数': count(), '定时任务数': count(), '启用任务数': count(), '近7天有跑': count(), '失败任务数': count(), '静默任务数': count(), '步骤级运行次数': count(),
+  '最近运行': { date: {} }, '在用吗': { select: {} }, '怎么运行': rich(), '旧功能状态': rich(),
+  '你的标记': { select: { options: ['有用', '没用', '过期', '删'].map(name => ({ name })) } },
+});
 const common = () => ({
   'Brain ID': rich(), '真身来源': rich(), '登记缺口': rich(), '责任主体': rich(),
   '同步状态': { select: {} }, '同步时间': { date: {} },
@@ -29,6 +36,7 @@ export function buildDirectorySchemas(dbs) {
       ...common(), Workflow: { title: {} }, '版本': rich(), Key: rich(), Capability: relation(dbs.capabilities), Activities: relation(dbs.activities),
       '渠道': rich(), '形态': rich(), Trigger: rich(), Input: rich(), Output: rich(),
       '执行策略': rich(), '活动编排': rich(), '登记状态': { select: {} },
+      ...workflowRuntimeSchema(),
     },
     activities: {
       ...common(), Name: { title: {} }, '所属Workflows': relation(dbs.workflows), Steps: relation(dbs.steps),
