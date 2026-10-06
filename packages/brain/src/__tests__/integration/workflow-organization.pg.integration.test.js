@@ -16,11 +16,12 @@ beforeEach(async () => {
   expect((await db.query('SELECT current_database() name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `workflow_org_${randomUUID().replaceAll('-', '')}`;
   await db.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['areas', 'journeys', 'workflows', 'journey_steps', 'steps', 'spans', 'enablers', 'enabler_calls', 'schema_version']) {
+  for (const table of ['areas', 'journeys', 'workflows', 'journey_steps', 'steps', 'spans', 'enablers', 'enabler_calls', 'schema_version', 'activity_uses']) {
     await db.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   }
   await db.query(`SET search_path TO ${schema}`);
   await withLegacyNames(db, async () => {
+    await db.query('ALTER TABLE journey_steps ADD COLUMN IF NOT EXISTS journey_id uuid, ADD COLUMN IF NOT EXISTS step_number integer'); // 迁移 528 前的列：511 回填引用要读 step_number
     await db.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
     await db.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql', import.meta.url), 'utf8'));
   });
@@ -31,7 +32,7 @@ beforeEach(async () => {
   [ids.stream, ids.media, ids.capA, ids.capB, ids.support]);
   await db.query(`INSERT INTO workflows(id,capability_id,key,name,channel,form) VALUES
     ($1,$3,'test_keyword','关键词','douyin','android_rpa'),($2,$4,'test_benchmark','对标','douyin','android_rpa')`, [ids.wfA, ids.wfB, ids.capA, ids.capB]);
-  await db.query(`INSERT INTO journey_steps(id,journey_id,name,step_number,workflow_id) VALUES($1,$2,'共享预检',1,$3)`, [ids.activity, ids.capA, ids.wfA]);
+  await db.query(`INSERT INTO journey_steps(id,name,workflow_id) VALUES($1,'共享预检',$2)`, [ids.activity, ids.wfA]);
   await db.query(`INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no) VALUES($1,'preflight',$3,1),($2,'preflight',$3,1)`, [ids.wfA, ids.wfB, ids.activity]);
   app = express(); app.use('/api/brain', routes);
 });

@@ -26,6 +26,8 @@ ALTER TABLE journey_steps DROP CONSTRAINT IF EXISTS journey_steps_journey_id_ste
  await db.query(migrationTable('436_ops_workflows.sql','ops_workflows'));
  await db.query(migrationSql('494_vs_model_workflows.sql'));
  if(runs){await db.query(migrationSql('059_task_runs.sql'));await db.query(migrationSql('495_vs_model_spans.sql'));}
+ // 迁移 520/521：Activity 用仓库哪几件（workflow-read-service 的共享组件读它）
+ await db.query(`CREATE TABLE IF NOT EXISTS activity_uses(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),activity_id uuid NOT NULL REFERENCES journey_steps(id) ON DELETE CASCADE,item_id uuid NOT NULL REFERENCES enablers(id) ON DELETE CASCADE,role text NOT NULL DEFAULT 'uses',assertion_ref text,cell_status text,legacy_cell_id uuid,created_at timestamptz NOT NULL DEFAULT now(),UNIQUE(activity_id,item_id))`);
  await useStandardNames(db);
 }
 

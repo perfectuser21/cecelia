@@ -23,7 +23,7 @@ async function capability(name) {
   return cap;
 }
 const workflow = async (cap, key) => (await client.query("INSERT INTO workflows (capability_id, key, name, channel) VALUES ($1, $2, $2, 'internal') RETURNING id", [cap, key])).rows[0].id;
-const activity = async (cap, n) => (await client.query("INSERT INTO activities (journey_id, name, step_number) VALUES ($1, $2, $3) RETURNING id", [cap, `步骤${n}`, n])).rows[0].id;
+const activity = async (cap, n) => (await client.query("INSERT INTO activities (name) VALUES ($1) RETURNING id", [`步骤${cap.slice(0, 8)}-${n}`])).rows[0].id;
 const ref = (wf, slot, act, seq, sourceRef = null, active = true) => client.query(
   'INSERT INTO workflow_activity_refs (workflow_id, slot_key, activity_id, sequence_no, source_ref, active) VALUES ($1,$2,$3,$4,$5,$6)', [wf, slot, act, seq, sourceRef, active]);
 const place = async act => (await client.query('SELECT * FROM activity_placement WHERE activity_id = $1', [act])).rows;

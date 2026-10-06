@@ -103,9 +103,7 @@ beforeAll(async () => {
     [scopeKey, capabilityKey],
   );
   const step = await client.query(
-    `INSERT INTO activities (journey_id, name, step_number)
-     VALUES ($1, 'state step', 1) RETURNING id`,
-    [journey.rows[0].id],
+    `INSERT INTO activities (name) VALUES ('state step') RETURNING id`,
   );
   const feature = await client.query(
     `INSERT INTO journey_features (journey_id, step_id, name, unit_test_path)

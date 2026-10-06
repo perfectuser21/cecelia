@@ -23,7 +23,6 @@ beforeEach(async () => {
   pool = new pg.Pool({ ...DB_DEFAULTS, options: `-c search_path=${schema}` }); holder.pool = pool;
   await pool.query('ALTER TABLE journeys ADD FOREIGN KEY(parent_journey_id) REFERENCES journeys(id), ADD FOREIGN KEY(area_id) REFERENCES areas(id)');
   await pool.query('ALTER TABLE workflows ADD FOREIGN KEY(capability_id) REFERENCES journeys(id)');
-  await pool.query('ALTER TABLE activities ADD FOREIGN KEY(journey_id) REFERENCES journeys(id)');
   department = randomUUID(); subarea = randomUUID(); stream = randomUUID(); capability = randomUUID();
   await pool.query("INSERT INTO areas(id,name,parent_area_id) VALUES($1,'部门',NULL),($2,'子部门',$1)", [department, subarea]);
   await pool.query("INSERT INTO journeys(id,name,parent_journey_id,area_id,capability_code) VALUES($1,'价值流',NULL,$3,NULL),($2,'能力',$1,NULL,'TEST_EXISTING')", [stream, capability, subarea]);
@@ -51,7 +50,6 @@ it('真实HTTP登记父关系、代码、部门与兼容字段，步骤和主体
   expect((await pool.query(`SELECT a.name FROM activities a JOIN workflow_activity_refs r ON r.activity_id=a.id AND r.active
     JOIN workflows w ON w.id=r.workflow_id WHERE w.capability_id=$1 ORDER BY r.sequence_no`, [row.id])).rows).toEqual([{ name: '预检' }, { name: '执行' }]);
   expect((await pool.query('SELECT key FROM workflows WHERE capability_id=$1', [row.id])).rows).toEqual([{ key: `gp_steps_${row.id.slice(0, 8)}` }]);
-  expect((await pool.query('SELECT journey_id, step_number FROM activities WHERE name=$1', ['预检'])).rows).toEqual([{ journey_id: null, step_number: null }]);
   const changed = await patch(row.id, { name: '改名能力', area_id: null, capability_code: 'TEST_RENAMED' });
   expect(changed.status).toBe(200); expect(changed.body).toMatchObject({ id: row.id, name: '改名能力', area_id: null, capability_code: 'TEST_RENAMED' });
 });

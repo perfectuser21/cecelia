@@ -17,6 +17,7 @@ beforeEach(async () => {
   if (!(DB_DEFAULTS.database === 'cecelia_scratch' || process.env.CI === 'true' && DB_DEFAULTS.database === 'cecelia_test')) throw new Error('仅允许scratch/CI隔离库');
   client = new pg.Client(DB_DEFAULTS); await client.connect();
   await client.query('BEGIN');
+  await client.query('ALTER TABLE activities ADD COLUMN IF NOT EXISTS journey_id uuid, ADD COLUMN IF NOT EXISTS step_number integer'); // 迁移 528 前的列：526 按它们挂靠，事务回滚即还原
 });
 afterEach(async () => { await client.query('ROLLBACK'); await client.end(); });
 

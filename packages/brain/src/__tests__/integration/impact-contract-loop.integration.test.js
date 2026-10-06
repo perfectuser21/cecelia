@@ -291,10 +291,10 @@ describe('Impact Contract → Gap → 修复 → 恢复真实 PostgreSQL 闭环'
         [journeyId],
       );
       await client.query(
-        `INSERT INTO activities (id, journey_id, name, step_number)
-         VALUES ($1, $2, 'assert impact', 1),
-                ($3, $2, 'assert impact secondary binding', 2)`,
-        [stepId, journeyId, secondaryStepId],
+        `INSERT INTO activities (id, name)
+         VALUES ($1, 'assert impact'),
+                ($2, 'assert impact secondary binding')`,
+        [stepId, secondaryStepId],
       );
       await client.query(
         `INSERT INTO activity_cells

@@ -44,7 +44,8 @@ describe('blast-radius 查询（348 seed 数据经 520 并入用料后）', () =
 
       // 挂在一个真实存在的 step 上（GP-B S1），用独有的 cell_key 避免撞 uq_jsl_cell
       const { rows: srows } = await client.query(
-        `SELECT id, journey_id FROM activities WHERE journey_id='ac2e35bc-849a-48cd-917f-79d15c5ac886' AND step_number=1`
+        `SELECT s.id, 'ac2e35bc-849a-48cd-917f-79d15c5ac886'::uuid AS journey_id FROM activities s
+           WHERE s.id=(SELECT target_id FROM decisions WHERE source_ref='gp-ledger-phase3:nfr:gp-b:s1')`
       );
       const step = srows[0];
 

@@ -22,10 +22,10 @@ describe('migration 350: 承诺地图两域 seed', () => {
 
   it('GP-B 四步承诺逐字与 V4 一致（抽 S1）', async () => {
     const { rows } = await pool.query(
-      `SELECT promise FROM activities WHERE journey_id=$1 AND step_number=1`, [GPB]);
+      `SELECT a.promise FROM activities a JOIN migration_528_activity_columns_backup b ON b.id=a.id WHERE b.journey_id=$1 AND b.step_number=1`, [GPB]);
     expect(rows[0].promise).toBe('客户发来的任何消息，系统数秒内看到，一条不漏、一条不重');
     const { rows: cnt } = await pool.query(
-      `SELECT COUNT(*)::int AS c FROM activities WHERE journey_id=$1 AND promise IS NOT NULL`, [GPB]);
+      `SELECT COUNT(*)::int AS c FROM activities a JOIN migration_528_activity_columns_backup b ON b.id=a.id WHERE b.journey_id=$1 AND a.promise IS NOT NULL`, [GPB]);
     expect(cnt[0].c).toBe(4);
   });
 
@@ -37,13 +37,14 @@ describe('migration 350: 承诺地图两域 seed', () => {
 
   // 350 种子里的底座引用原是 base_ref 格子；520 并入 activity_uses、525 删格子。口径不变，改读用料。
   const usesOf = async feature => (await pool.query(`
-      SELECT j.name AS jname, s.step_number
+      SELECT j.name AS jname, b.step_number
       FROM warehouse_items i
       JOIN activity_uses u ON u.item_id = i.id
       JOIN activities s ON s.id = u.activity_id
-      JOIN journeys j ON j.id = s.journey_id
+      JOIN migration_528_activity_columns_backup b ON b.id = s.id
+      JOIN journeys j ON j.id = b.journey_id
       WHERE i.legacy_feature_id = $1
-      ORDER BY j.name, s.step_number`, [feature])).rows;
+      ORDER BY j.name, b.step_number`, [feature])).rows;
 
   it('CRM 表底座 blast-radius = 4 步（B·S2/B·S4/D·S1/E·S3，全景图口径）', async () => {
     const rows = await usesOf(CRM);
@@ -58,8 +59,8 @@ describe('migration 350: 承诺地图两域 seed', () => {
 
   it('首次成功五步承诺齐 + 存量 S2 名称零丢失', async () => {
     const { rows } = await pool.query(
-      `SELECT step_number, name, promise FROM activities
-       WHERE journey_id='6e63f204-e9fd-4a3b-b338-6b3616bfcc61' ORDER BY step_number`);
+      `SELECT b.step_number, a.name, a.promise FROM activities a JOIN migration_528_activity_columns_backup b ON b.id=a.id
+       WHERE b.journey_id='6e63f204-e9fd-4a3b-b338-6b3616bfcc61' ORDER BY b.step_number`);
     expect(rows).toHaveLength(5);
     expect(rows.every(r => r.promise)).toBe(true);
   });
@@ -89,6 +90,8 @@ describe('migration 350: 承诺地图两域 seed', () => {
       await client.query('BEGIN');
       await client.query('ALTER TABLE activities RENAME TO journey_steps');
       // 350 的 ON CONFLICT (journey_id, step_number) 靠迁移 527 之前的唯一约束：在这个会回滚的事务里临时补上，验证的是历史种子自身的幂等
+      await client.query('ALTER TABLE journey_steps ADD COLUMN journey_id uuid, ADD COLUMN step_number integer');
+      await client.query('UPDATE journey_steps a SET journey_id=b.journey_id, step_number=b.step_number FROM migration_528_activity_columns_backup b WHERE b.id=a.id');
       await client.query('CREATE UNIQUE INDEX tmp_350_replay ON journey_steps (journey_id, step_number)');
       await client.query('ALTER TABLE activity_cells RENAME TO journey_step_links');
       const before = await count(client);

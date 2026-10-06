@@ -81,11 +81,9 @@ describe('管理流程最终登记：真实 PostgreSQL', () => {
     expect((await client.query('SELECT count(*)::int n FROM workflows')).rows[0].n).toBe(0);
     expect((await client.query('SELECT count(*)::int n FROM journey_steps')).rows[0].n).toBe(0);
   });
-  it('新登记的活动不再写 journey_id / step_number，位置全在流程引用里（顺序 = 定义顺序）', async () => {
+  it('新登记的活动位置全在流程引用里（顺序 = 定义顺序）', async () => {
     const owner = await register();
-    const rows = (await client.query('SELECT journey_id, step_number FROM journey_steps')).rows;
-    expect(rows).toHaveLength(6);
-    expect(rows.every(r => r.journey_id === null && r.step_number === null)).toBe(true);
+    expect((await client.query('SELECT count(*)::int n FROM journey_steps')).rows[0].n).toBe(6);
     const refs = (await client.query('SELECT activity_id, sequence_no FROM workflow_activity_refs WHERE workflow_id = $1 ORDER BY sequence_no', [owner.workflow_id])).rows;
     expect(refs.map(r => r.activity_id)).toEqual(owner.activity_ids);
     expect(refs.map(r => r.sequence_no)).toEqual([1, 2, 3, 4, 5, 6]);
@@ -140,7 +138,7 @@ async function enableSharedReferences() {
   await client.query('CREATE UNIQUE INDEX refs_active_sequence ON workflow_activity_refs(workflow_id,sequence_no) WHERE active');
 }
 async function consumerDefinition(owner) {
-  const rows = (await client.query('SELECT id,contract_sha256 FROM journey_steps WHERE workflow_id=$1 ORDER BY step_number', [owner.workflow_id])).rows;
+  const rows = (await client.query('SELECT a.id,a.contract_sha256 FROM journey_steps a JOIN workflow_activity_refs r ON r.activity_id=a.id AND r.workflow_id=$1 AND r.active ORDER BY r.sequence_no', [owner.workflow_id])).rows;
   return { ...structuredClone(definition), key: 'consumer', name: '共享活动消费者',
     activities: definition.activities.map((a, index) => ({ ...structuredClone(a),
       reuse_activity_id: rows[index].id, reuse_contract_sha256: rows[index].contract_sha256 })) };
@@ -154,12 +152,13 @@ async function registrySnapshot() {
 }
 describe('authoring 与真实共享关系和版本底座读模型贯通', () => {
   it('真实迁移后登记、共享复用和重排均保留真身ID及引用ID，读模型返回实际顺序', async () => {
-    for (const table of ['spans', 'schema_version', 'steps', 'enablers', 'enabler_calls', 'areas']) {
+    for (const table of ['spans', 'schema_version', 'steps', 'enablers', 'enabler_calls', 'areas', 'activity_uses']) {
       await client.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
     }
     // 真实迁移仅落隔离 schema，避免解析到 public 的版本表或触发器。
     await client.query(`SET search_path TO ${schema}`);
     await client.query('DROP TABLE IF EXISTS workflow_activity_refs'); // 让 511 迁移自己建这张表
+    await client.query('ALTER TABLE activities ADD COLUMN IF NOT EXISTS journey_id uuid, ADD COLUMN IF NOT EXISTS step_number integer'); // 迁移 528 前的列：511 回填引用要读 step_number
     await withLegacyNames(client, async () => {
       await client.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
       await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql', import.meta.url), 'utf8'));

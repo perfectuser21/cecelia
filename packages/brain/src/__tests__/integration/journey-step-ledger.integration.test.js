@@ -18,8 +18,7 @@ describe('product journey-step ledger [PostgreSQL]', () => {
     const step = await pool.query(
       `SELECT id
        FROM activities
-       WHERE journey_id='ac2e35bc-849a-48cd-917f-79d15c5ac886'
-         AND step_number=1`,
+       WHERE id=(SELECT target_id FROM decisions WHERE source_ref='gp-ledger-phase3:nfr:gp-b:s1')`,
     );
     expect(step.rows).toHaveLength(1);
 
