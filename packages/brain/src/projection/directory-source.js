@@ -31,6 +31,25 @@ export function workflowUsageStatus(x) {
 }
 const howItRuns = items => (Array.isArray(items) ? items : []).map(i =>
   `${i.enabled ? '●' : '○'} ${i.label} · ${scheduleText(i.schedule)} · ${i.status || '无记录'}${i.last ? ` · 最近 ${shanghaiText(i.last).slice(5)}` : ''}`).join('\n');
+const NA = '(未归属)', NONE = '(无)', NOFLOW = '(未挂流程)';
+const optionName = v => String(v ?? '').replaceAll(',', '，').trim().slice(0, 100); // Notion 选项名不能含英文逗号、最长 100
+/**
+ * 祖先链列：公司 / 部门 / 子部门（来自部门树）+ 价值流 / 能力 / 流程（按层级取到哪层写到哪层）。
+ * 追不到的标「(未归属)」，不留空（Notion 空选项没法分组）；「树位置」只写祖先，不含自己。
+ */
+function treeProps(chain, names, levels) {
+  const known = chain.length > 0;
+  const props = {
+    '分组·公司': select(optionName(chain[0]) || NA),
+    '分组·部门': select(optionName(chain[1]) || (known ? NONE : NA)),
+    '分组·子部门': select(optionName(chain.slice(2).join(' / ')) || (known ? NONE : NA)),
+  };
+  if (levels.includes('vs')) props['分组·价值流'] = select(optionName(names.vs) || NA);
+  if (levels.includes('cap')) props['分组·能力'] = select(optionName(names.cap) || NA);
+  if (levels.includes('wf')) props['分组·流程'] = select(optionName(names.wf) || NOFLOW);
+  props['树位置'] = rich([...(known ? chain : [NA]), ...levels.map(l => names[l]).filter(Boolean)].map(optionName).join(' › '));
+  return props;
+}
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 function currentDefinition(row, kind) {
   const version = row?.definition_version, identity = `${kind}_id`;
@@ -59,6 +78,24 @@ export function buildDirectoryRows(data, config = {}) {
   const rows = [], journeys = new Map(data.journeys.map(j => [j.id, j]));
   const refs = data.refs.filter(r => r.active).sort((a, b) => a.sequence_no - b.sequence_no || a.slot_key.localeCompare(b.slot_key) || a.workflow_id.localeCompare(b.workflow_id));
   const runtimeByWorkflow = new Map((data.workflow_runtime || []).map(r => [r.workflow_id, r]));
+  const areasById = new Map((data.areas || []).map(a => [a.id, a]));
+  function areaChain(areaId) { // 公司 → 部门 → 子部门；有环就停在重复处，不死循环
+    const out = [], visited = new Set(); let cur = areasById.get(areaId);
+    while (cur && !visited.has(cur.id)) { visited.add(cur.id); out.unshift(cur.name); cur = areasById.get(cur.parent_area_id); }
+    return out;
+  }
+  // 能力的部门：自己挂了部门用自己的（子部门），没有就继承价值流的
+  function capabilityContext(capId) {
+    const cap = journeys.get(capId), vs = cap && journeys.get(cap.parent_journey_id);
+    return { chain: areaChain(cap?.area_id ?? vs?.area_id), names: { vs: vs?.name, cap: cap?.name } };
+  }
+  // Activity 的归属流程：「归属引用」（source_ref 为空）所在流程优先，没有就取第一条引用
+  function activityContext(activityId) {
+    const usage = refs.filter(r => r.activity_id === activityId);
+    const wf = data.workflows.find(w => w.id === (usage.find(r => !r.source_ref) || usage[0])?.workflow_id);
+    const base = wf ? capabilityContext(wf.capability_id) : { chain: [], names: {} };
+    return { chain: base.chain, names: { ...base.names, wf: wf?.name } };
+  }
   const bindings = config.value_stream_bindings || [], seen = new Set(), nodes = new Set();
   for (const b of bindings) {
     const key = `${b.scope}:${b.node_key}`;
@@ -91,14 +128,14 @@ export function buildDirectoryRows(data, config = {}) {
     if (j.kind === 'value_stream') {
       const b = bindings.find(b => b.journey_id === j.id);
       const node = b && data.map_nodes.find(n => n.scope === b.scope && n.node_key === b.node_key && n.active);
-      const row = make('value_streams', { ...j, notion_id: node?.notion_id || null }, {}, {
+      const row = make('value_streams', { ...j, notion_id: node?.notion_id || null }, treeProps(areaChain(j.area_id), {}, []), {
         ...(j.area_id ? { '所属部门': [ref('areas', j.area_id)] } : {}),
         Capabilities: data.journeys.filter(c => c.parent_journey_id === j.id).map(c => ref('capabilities', c.id)),
       }, [...(!b ? ['value_stream_binding_missing'] : []), ...(!j.area_id ? ['area_unknown'] : [])]);
       row.pageId = node?.notion_id || null;
     } else if (j.kind === 'capability') {
       make('capabilities', { ...j, notion_id: null }, { Name: title(j.name), Key: rich(j.capability_code || j.id),
-        '说明': rich(j.description), '登记状态': select(j.status) }, {
+        '说明': rich(j.description), '登记状态': select(j.status), ...treeProps(capabilityContext(j.id).chain, capabilityContext(j.id).names, ['vs']) }, {
         ...(j.parent_journey_id ? { '所属价值流': [ref('value_streams', j.parent_journey_id)] } : {}),
         Workflows: data.workflows.filter(w => w.capability_id === j.id).map(w => ref('workflows', w.id)),
       }, j.parent_journey_id ? [] : ['value_stream_unknown']);
@@ -119,6 +156,7 @@ export function buildDirectoryRows(data, config = {}) {
       '失败任务数': num(rt.failed), '静默任务数': num(rt.silent), '步骤级运行次数': num(rt.spans),
       '最近运行': minuteDate(rt.last_run), '在用吗': select(workflowUsageStatus({ ...rt, acts })),
       '怎么运行': rich(howItRuns(rt.items)), '旧功能状态': rich(rt.legacy),
+      ...treeProps(capabilityContext(w.capability_id).chain, capabilityContext(w.capability_id).names, ['vs', 'cap']),
       '活动编排': rich(usage.map(r => `${r.sequence_no}. ${r.slot_key} → ${r.activity_id}`).join('\n')) }, {
       ...(w.capability_id ? { Capability: [ref('capabilities', w.capability_id)] } : {}),
       Activities: unique(usage.map(r => ref('activities', r.activity_id))),
@@ -135,7 +173,8 @@ export function buildDirectoryRows(data, config = {}) {
     const row = make('activities', a, { Name: title(a.name), '执行主体': rich(a.executor_kind || 'unknown'),
       '责任主体': rich(a.contract?.owner ? JSON.stringify(a.contract.owner) : 'unknown'),
       '使用位置': rich(usage.map(r => `${r.workflow_id} / ${r.slot_key} / ${r.sequence_no}`).join('\n')),
-      ...buildActivityCardProps(a, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id)) }, {
+      ...buildActivityCardProps(a, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id)),
+      ...treeProps(activityContext(a.id).chain, activityContext(a.id).names, ['vs', 'cap', 'wf']) }, {
       '所属Workflows': unique(usage.map(r => ref('workflows', r.workflow_id))),
       Steps: data.steps.filter(s => s.activity_id === a.id && s.active).sort((a, b) => a.step_order - b.step_order).map(s => ref('steps', s.id)),
     }, [...(!a.executor_kind ? ['executor_unknown'] : []), ...(!a.contract ? ['contract_missing'] : []), ...unresolved]);
@@ -152,7 +191,8 @@ export function buildDirectoryRows(data, config = {}) {
       Input: rich(contract.input ?? fieldList(declared?.reads)), Output: rich(contract.output ?? fieldList(declared?.writes)),
       '验收标准': rich(contract.acceptance ?? readback.asserts ?? readback.expect ?? declared?.check),
       '证据读取': rich(evidence), '实现来源': rich(implementation), '执行主体': rich(a?.executor_kind || 'unknown'),
-      '登记状态': select(s.active ? 'active' : 'retired'), ...buildStepCardProps(s) }, {
+      '登记状态': select(s.active ? 'active' : 'retired'), ...buildStepCardProps(s),
+      ...treeProps(activityContext(s.activity_id).chain, activityContext(s.activity_id).names, ['vs', 'cap', 'wf']) }, {
       ...(s.activity_id ? { '所属Activity': [ref('activities', s.activity_id)] } : {}),
       '所属Workflows': unique(refs.filter(r => r.activity_id === s.activity_id).map(r => ref('workflows', r.workflow_id))),
     }, [...(!implementation ? ['implementation_unknown'] : []), ...(!a ? ['activity_unknown'] : []),
