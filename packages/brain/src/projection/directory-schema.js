@@ -6,6 +6,13 @@ const normalize = value => String(value ?? '').replaceAll('-', '').toLowerCase()
 const rich = () => ({ rich_text: {} });
 const relation = databaseId => ({ relation: { database_id: databaseId, single_property: {} } });
 const count = () => ({ number: { format: 'number' } });
+const group = () => ({ select: {} });
+// 每一层都带上面所有层的名字：选项列用来分组，「树位置」一行看全路径（机器写；选项列不含英文逗号，追不到的标「(未归属)」）
+const treeSchema = levels => ({
+  '分组·公司': group(), '分组·部门': group(), '分组·子部门': group(),
+  ...(levels.includes('vs') ? { '分组·价值流': group() } : {}), ...(levels.includes('cap') ? { '分组·能力': group() } : {}),
+  ...(levels.includes('wf') ? { '分组·流程': group() } : {}), '树位置': rich(),
+});
 // 流程库的运行情况列（机器写）；「你的标记」是人工列：只建列，投影器永远不写它的值
 const workflowRuntimeSchema = () => ({
   'Activity 数': count(), '定时任务数': count(), '启用任务数': count(), '近7天有跑': count(), '失败任务数': count(), '静默任务数': count(), '步骤级运行次数': count(),
@@ -27,25 +34,25 @@ export function buildDirectorySchemas(dbs) {
   }
   return {
     areas: { ...common(), Name: { title: {} }, Key: rich(), '价值流': relation(dbs.value_streams) },
-    value_streams: { ...common(), Name: { title: {} }, '所属部门': relation(dbs.areas), Capabilities: relation(dbs.capabilities) },
+    value_streams: { ...common(), Name: { title: {} }, '所属部门': relation(dbs.areas), Capabilities: relation(dbs.capabilities), ...treeSchema([]) },
     capabilities: {
       ...common(), Name: { title: {} }, Key: rich(), '说明': rich(), '登记状态': { select: {} },
-      '所属价值流': relation(dbs.value_streams), Workflows: relation(dbs.workflows),
+      '所属价值流': relation(dbs.value_streams), Workflows: relation(dbs.workflows), ...treeSchema(['vs']),
     },
     workflows: {
       ...common(), Workflow: { title: {} }, '版本': rich(), Key: rich(), Capability: relation(dbs.capabilities), Activities: relation(dbs.activities),
       '渠道': rich(), '形态': rich(), Trigger: rich(), Input: rich(), Output: rich(),
       '执行策略': rich(), '活动编排': rich(), '登记状态': { select: {} },
-      ...workflowRuntimeSchema(),
+      ...workflowRuntimeSchema(), ...treeSchema(['vs', 'cap']),
     },
     activities: {
       ...common(), Name: { title: {} }, '所属Workflows': relation(dbs.workflows), Steps: relation(dbs.steps),
-      '使用位置': rich(), '执行主体': rich(), ...activityCardSchema(),
+      '使用位置': rich(), '执行主体': rich(), ...activityCardSchema(), ...treeSchema(['vs', 'cap', 'wf']),
     },
     steps: {
       ...common(), '步骤': { title: {} }, Key: rich(), '所属Activity': relation(dbs.activities), '所属Workflows': relation(dbs.workflows),
       Input: rich(), Output: rich(), '验收标准': rich(), '证据读取': rich(),
-      '实现来源': rich(), '执行主体': rich(), '登记状态': { select: {} }, ...stepCardSchema(),
+      '实现来源': rich(), '执行主体': rich(), '登记状态': { select: {} }, ...stepCardSchema(), ...treeSchema(['vs', 'cap', 'wf']),
     },
   };
 }

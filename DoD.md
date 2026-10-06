@@ -1,4 +1,7 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] notiontreeancestry Notion 目录每一层带完整祖先链：价值流库带 分组·公司/部门/子部门；能力库加 分组·价值流；流程库加 分组·能力；Activity 与 Step 库加 分组·流程（共用 Activity 取「归属引用」即 source_ref 为空的那条所在流程，没有就取第一条引用，没挂流程标「(未挂流程)」）；每层另有「树位置」一行文字写全祖先路径（不含自己）。能力的部门取自己的 area，没有就继承价值流的 area；追不到的一律「(未归属)」不留空；选项名把英文逗号换成全角、截 100 字；部门环路不死循环。生产只读核对：流程 61/能力 56/Activity 128/Step 56 全部能追到部门，价值流里 32 个无部门（均为无能力的空价值流）。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/projection --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] notionworkflowruntime Notion「流程」库补运行情况列：每个流程自动带 Activity 数、定时任务数、启用任务数、近 7 天有跑、失败任务数、静默任务数、步骤级运行次数、最近运行（按分钟取整）、在用吗（在跑 / 有任务近7天没跑 / 只登记没运行 / 空壳）、怎么运行（逐条列出任务：启用●停用○、频率、最近状态、最近运行，一次性任务按上海时间翻成人话）、旧功能状态；另建人工列「你的标记」（有用/没用/过期/删，只建列、投影器永不写值）。数据来自闹钟总账与 spans，单条 SQL 取同一快照；生产库只读核对 61 个流程分组为 在跑30/近7天没跑1/只登记18/空壳12。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/projection --maxWorkers=1 --minWorkers=1"
 
