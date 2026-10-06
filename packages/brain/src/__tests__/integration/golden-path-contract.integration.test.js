@@ -62,7 +62,7 @@ describe('Golden Path contract real PostgreSQL lifecycle', () => {
       const repo = `${marker}-repo`;
       const revision = 'a'.repeat(40);
       const journey = await client.query(
-        `INSERT INTO journeys (name, description)
+        `INSERT INTO value_streams (name, description)
          VALUES ($1, 'Golden Path contract integration fixture')
          RETURNING id`,
         [marker],

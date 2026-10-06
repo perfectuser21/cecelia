@@ -286,7 +286,7 @@ describe('Impact Contract → Gap → 修复 → 恢复真实 PostgreSQL 闭环'
         [sourceTaskId, repairTaskId],
       );
       await client.query(
-        `INSERT INTO journeys (id, name, journey_type)
+        `INSERT INTO value_streams (id, name, journey_type)
          VALUES ($1, 'impact contract integration', 'dev_pipeline')`,
         [journeyId],
       );

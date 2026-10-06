@@ -33,7 +33,7 @@ const ids = {};
 beforeAll(async () => {
   client = await pool.connect();
   await client.query('BEGIN');
-  const journey = await client.query(`INSERT INTO journeys (name) VALUES ($1) RETURNING id`, [`pgtest journey ${KEY_OK}`]);
+  const journey = await client.query(`INSERT INTO value_streams (name) VALUES ($1) RETURNING id`, [`pgtest journey ${KEY_OK}`]);
   ids.journeyId = journey.rows[0].id;
   const step = await client.query(
     `INSERT INTO activities (name) VALUES ('preflight') RETURNING id`,

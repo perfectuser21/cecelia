@@ -88,6 +88,12 @@ describe('migration 350: 承诺地图两域 seed', () => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // 迁移 529 起 journeys 是只读视图，而 350 种子要往它写：在这个会回滚的事务里临时还原成带现有行的表，验证的是历史种子自身的幂等
+      await client.query('DROP VIEW journeys');
+      await client.query('CREATE TABLE journeys (LIKE value_streams INCLUDING ALL)');
+      await client.query('ALTER TABLE journeys DROP CONSTRAINT IF EXISTS value_streams_is_root');
+      const cols = 'id, notion_id, name, description, journey_type, maturity, status, e2e_test_path, area_id, notion_synced_at, created_at, updated_at, home, "trigger", endpoint, "domain", biz_area, parent_journey_id, capability_code, notion_digest';
+      await client.query(`INSERT INTO journeys(${cols}) SELECT ${cols} FROM value_streams UNION ALL SELECT ${cols} FROM capabilities`);
       await client.query('ALTER TABLE activities RENAME TO journey_steps');
       // 350 的 ON CONFLICT (journey_id, step_number) 靠迁移 527 之前的唯一约束：在这个会回滚的事务里临时补上，验证的是历史种子自身的幂等
       await client.query('ALTER TABLE journey_steps ADD COLUMN journey_id uuid, ADD COLUMN step_number integer');

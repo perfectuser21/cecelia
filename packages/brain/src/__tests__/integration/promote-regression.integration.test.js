@@ -62,7 +62,7 @@ describe('promote-regression integration (T2): merged → golden_path 停写 →
 
     // ── DB 夹具：journey → journey_feature(ability, done) → harness_initiative task ──
     const j = await pool.query(
-      `INSERT INTO journeys (name, description)
+      `INSERT INTO value_streams (name, description)
        VALUES ('[t2-itest] promote-regression 集成测试 journey', '集成测试自动创建，afterAll 清理')
        RETURNING id`
     );
@@ -93,7 +93,7 @@ describe('promote-regression integration (T2): merged → golden_path 停写 →
   afterAll(async () => {
     if (taskId) await pool.query('DELETE FROM tasks WHERE id = $1', [taskId]);
     if (abilityId) await pool.query('DELETE FROM journey_features WHERE id = $1', [abilityId]);
-    if (journeyId) await pool.query('DELETE FROM journeys WHERE id = $1', [journeyId]);
+    if (journeyId) await pool.query('DELETE FROM value_streams WHERE id = $1', [journeyId]);
     if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
     await pool.end();
   });

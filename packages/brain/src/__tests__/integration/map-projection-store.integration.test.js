@@ -44,7 +44,7 @@ async function deleteFixtures() {
       WHERE f.journey_id=j.id AND j.name LIKE $1`,
     [`${scopePrefix}%`],
   );
-  await pool.query('DELETE FROM journeys WHERE name LIKE $1', [`${scopePrefix}%`]);
+  await pool.query('DELETE FROM value_streams WHERE name LIKE $1', [`${scopePrefix}%`]);
   await pool.query('DELETE FROM map_scope_repositories WHERE scope_key LIKE $1', [`${scopePrefix}%`]);
 }
 
@@ -265,7 +265,7 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
     }));
 
     const journey = await pool.query(
-      `INSERT INTO journeys (name, biz_area, capability_code)
+      `INSERT INTO value_streams (name, biz_area, capability_code)
        VALUES ($1, $2, $3) RETURNING id`,
       [scopeKey, 'infrastructure', capabilityKey],
     );

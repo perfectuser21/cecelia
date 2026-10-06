@@ -32,7 +32,7 @@ describe('migration 349: promise map 和解补齐（348 thin 版之上）', () =
   it('journeys_home_check 与 journey_features_softness_check 已建 CHECK 约束', async () => {
     const { rows } = await pool.query(`
       SELECT conname FROM pg_constraint c JOIN pg_class t ON c.conrelid=t.oid
-      WHERE t.relname IN ('journeys','journey_features') AND c.contype='c'`);
+      WHERE t.relname IN ('value_streams','journey_features') AND c.contype='c'`);
     const names = rows.map(r => r.conname);
     expect(names).toContain('journeys_home_check');
     expect(names).toContain('journey_features_softness_check');
