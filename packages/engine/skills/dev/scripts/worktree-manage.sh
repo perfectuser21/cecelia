@@ -147,7 +147,7 @@ generate_worktree_path() {
     # 如果路径已存在，追加序号
     while [[ -d "$final_path" ]]; do
         final_path="${base_path}-${counter}"
-        ((counter++))
+        counter=$((counter + 1))
     done
 
     echo "$final_path"
@@ -554,10 +554,11 @@ cmd_cleanup() {
                 safe_rm_rf "$wt_path" "$worktree_base"
             fi
             git branch -D "$wt_branch" 2>/dev/null || true
-            ((cleaned++))
+            # set -e 下算术命令式自增在计数为 0 时退出码为 1 会中断脚本，必须用赋值式自增
+            cleaned=$((cleaned + 1))
         else
             echo -e "  跳过: ${wt_branch}（未合并或无 PR）"
-            ((skipped++))
+            skipped=$((skipped + 1))
         fi
     done < <(git worktree list 2>/dev/null | tail -n +2)
 
