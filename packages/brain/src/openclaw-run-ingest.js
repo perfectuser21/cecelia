@@ -18,6 +18,7 @@ const DAY_MS = 86400_000;
 const BACKFILL_DAYS = 30;
 const ERROR_MAX = 2000;
 const SUMMARY_MAX = 4000;
+const LIMIT_MAX = 2000;
 const SQLITE_PATH = '~/.openclaw/state/openclaw.sqlite';
 
 /** task_runs.status → runs.outcome（判定点 b7be0e26），其余一律 unknown */
@@ -43,6 +44,8 @@ function assertInt(name, v) {
 export function buildIngestSql({ sinceMs, nowMs, limit = 2000 }) {
   const now = assertInt('nowMs', nowMs);
   const lim = assertInt('limit', limit);
+  // 越界（尤其 -1，sqlite 视为不限行）一律拒绝
+  if (lim < 1 || lim > LIMIT_MAX) throw new Error(`invalid_limit: ${lim}`);
   const since = sinceMs == null ? now - BACKFILL_DAYS * DAY_MS : assertInt('sinceMs', sinceMs);
   return [
     'SELECT t.task_id,t.source_id,t.agent_id,t.status,t.created_at,t.started_at,t.ended_at,',
@@ -82,9 +85,18 @@ function toMs(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function truncate(v, max) {
+/**
+ * 按 UTF-16 码元截断到 max；若末码元是高代理项（代理对被从中间切开）再去掉一位，
+ * 避免写入 jsonb 时被 Postgres 以孤立代理项拒收。长度上限仍按码元计，始终 <= max。
+ */
+export function truncateText(v, max) {
   if (v === null || v === undefined) return null;
-  return String(v).slice(0, max);
+  let out = String(v).slice(0, max);
+  if (out.length > 0) {
+    const last = out.charCodeAt(out.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) out = out.slice(0, -1);
+  }
+  return out;
 }
 
 /**
@@ -118,12 +130,12 @@ export function mapOpenclawRow(row) {
     started_at: new Date(startMs),
     ended_at: endedAt,
     outcome,
-    error: truncate(row.error, ERROR_MAX),
+    error: truncateText(row.error, ERROR_MAX),
     detail: {
       source: 'openclaw',
       job_id: jobId,
       task_id: row.task_id,
-      summary: truncate(row.terminal_summary, SUMMARY_MAX),
+      summary: truncateText(row.terminal_summary, SUMMARY_MAX),
       status: row.status ?? null,
     },
   };
