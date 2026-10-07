@@ -1,11 +1,20 @@
 #!/usr/bin/env node
-// 假 claude：按 FAKE_CLAUDE_MODE（ok | nofile | auth | fail | outside）模拟 `claude -p <prompt> ...`。
+// 假 claude：按 FAKE_CLAUDE_MODE（ok | nofile | auth | fail | outside | sleep）模拟 `claude -p <prompt> ...`。
+// FAKE_CLAUDE_PID_FILE 指向文件时，启动即把自己的 pid 写进去（测试据此确认进程已被清理）。
 import fs from 'node:fs';
 import path from 'node:path';
 
 const mode = process.env.FAKE_CLAUDE_MODE || 'ok';
 const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf('-p') + 1] || '';
+
+if (process.env.FAKE_CLAUDE_PID_FILE) fs.writeFileSync(process.env.FAKE_CLAUDE_PID_FILE, String(process.pid));
+
+// sleep：长睡且不写任何文件，模拟 claude 卡死（默认 SIGTERM 即可终止）
+if (mode === 'sleep') {
+  setInterval(() => {}, 1000);
+  await new Promise(() => {});
+}
 
 if (mode === 'auth') {
   process.stderr.write('Invalid API key · Please run /login\n');

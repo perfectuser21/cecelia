@@ -198,4 +198,31 @@ describe('spec 活动（子进程 + 假 claude）', () => {
       expect(r.result.reason_code).toBe('claude_failed');
     },
   );
+
+  it('claude 卡死超时 -> retryable claude_timeout，不留 02-spec.md，且假 claude 进程已被清理', async () => {
+    const pidFile = path.join(worktree, '.fake-claude.pid');
+    const started = Date.now();
+    const r = await run('sleep', {}, { CODING_WF_SPEC_TIMEOUT_MS: '500', FAKE_CLAUDE_PID_FILE: pidFile });
+    const elapsed = Date.now() - started;
+    expect(r.exitCode).toBe(2);
+    expect(r.result.status).toBe('failed');
+    expect(r.result.failure_class).toBe('retryable');
+    expect(r.result.reason_code).toBe('claude_timeout');
+    expect(r.stdout.trim().split('\n')).toHaveLength(1);
+    expect(elapsed).toBeLessThan(10000);
+    expect(fs.existsSync(specFile())).toBe(false);
+
+    const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+    expect(Number.isInteger(pid) && pid > 0).toBe(true);
+    expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+  });
+
+  it.each(['abc', '0', '-5', '1.5', ''])(
+    'CODING_WF_SPEC_TIMEOUT_MS=%j 非法 -> 回退默认超时，正常 claude 不受影响',
+    async (value) => {
+      const r = await run('ok', {}, { CODING_WF_SPEC_TIMEOUT_MS: value });
+      expect(r.exitCode).toBe(0);
+      expect(r.result.failure_class).toBeNull();
+    },
+  );
 });
