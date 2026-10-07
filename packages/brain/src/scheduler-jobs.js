@@ -52,6 +52,7 @@ import { runProjectionOutbox } from './projection/outbox.js';
 import { runNotionKrProjection } from './projection/key-results.js';
 import { runNotionTaskCommandIngest } from './projection/notion.js';
 import { runOpsCollector } from './ops-collector.js';
+import { runOpenclawRunIngest } from './openclaw-run-ingest.js';
 import { runSchedulerLiveness } from './ops-scheduler-liveness.js';
 import { runWorkflowRunLostDeadline } from './workflow-run-lost-deadline.js';
 import { runCommanderWatchdog, runWorkflowTrendBark } from './commander-watchdog.js';
@@ -144,6 +145,7 @@ export const JOBS = [
   { name: 'notion-company-key-results', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120000, handler: runCompanyKrWorkflow, description: '经营KR工作流：5min回灌人工正式值、投影独立AI建议；正式变更及每日定时去重派发受限OpenClaw分析，Brain统一收账' },
   { name: 'notion-kr-projection', cadence: { everySec: 300 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionKrProjection, description: 'Brain KR → 独立注册的只读镜子（5min 自 gate；经营 KR 库禁写；Current/Target/Progress 分列，02148cef）' },
   { name: 'ops-collector', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsCollector(pool), description: '运行舱采集器（5min自gate，宿主launchctl+HK OpenClaw+GHA cron→ops_*投影，per-source心跳，G1 S1 刀1，task 6fcb5356）' },
+  { name: 'openclaw-run-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpenclawRunIngest(pool), description: 'OpenClaw cron 运行记录入 runs 表（决策 c7ff6e02/9ec7a010）：ssh mmv 只读查 task_runs 增量 upsert，连败≥3 发一次 Bark' },
   {
     name: 'ops-model-accounts-collector', cadence: { everySec: 300 },
     needsPool: true,

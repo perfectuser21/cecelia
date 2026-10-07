@@ -8,11 +8,15 @@
  *   - b7be0e26：结果按 OpenClaw task_runs.status 判（succeeded/failed/timed_out/running/queued）
  *   - 6d4b7ed5：任务名取 cron_jobs.name，缺失回退 `openclaw-job:<job_id 前 8 位>`
  *
- * 本文件含纯函数（SQL 构造 / ssh 命令构造 / 输出解析 / 行映射）与 DB 层（游标读取 / upsert）。
- * 不执行 ssh；后续任务在此追加连败告警与主入口。
+ * 本文件含纯函数（SQL 构造 / ssh 命令构造 / 输出解析 / 行映射）、DB 层（游标读取 / upsert / 连败告警）
+ * 与主入口 runOpenclawRunIngest（ssh 经 deps.exec 注入，测试从不真连 mmv）。
  *
  * 数据源：MMV ~/.openclaw/state/openclaw.sqlite（只读），task_runs WHERE runtime='cron'。
  */
+
+import { existsSync } from 'fs';
+import { defaultExecAsync, buildHostCmd } from './host-exec.js';
+import { sendBark as defaultSendBark } from './notifier.js';
 
 const DAY_MS = 86400_000;
 const BACKFILL_DAYS = 30;
@@ -173,18 +177,28 @@ const UPSERT_SQL = `
      OR runs.ended_at IS DISTINCT FROM EXCLUDED.ended_at
      OR runs.detail IS DISTINCT FROM EXCLUDED.detail`;
 
-/** 逐行幂等写入 runs；返回实际插入/更新的行数 */
+/**
+ * 逐行幂等写入 runs；返回实际插入/更新的行数与写失败的行数。
+ * 单行失败只计入 failed_rows、不中断整批：游标 = 已写入的最大 started_at，
+ * 若一条坏行让整批中断，游标会永久卡在坏行之前。
+ */
 export async function upsertRuns(db, rows) {
   let written = 0;
+  let failedRows = 0;
   for (const r of rows) {
-    const res = await db.query(UPSERT_SQL, [
-      r.run_id, r.trigger_ref, r.executor_kind, r.executor_id,
-      r.started_at, r.ended_at, r.outcome, r.error,
-      r.detail === null || r.detail === undefined ? null : JSON.stringify(r.detail),
-    ]);
-    written += res.rowCount;
+    try {
+      const res = await db.query(UPSERT_SQL, [
+        r.run_id, r.trigger_ref, r.executor_kind, r.executor_id,
+        r.started_at, r.ended_at, r.outcome, r.error,
+        r.detail === null || r.detail === undefined ? null : JSON.stringify(r.detail),
+      ]);
+      written += res.rowCount;
+    } catch (e) {
+      failedRows += 1;
+      console.warn(`[openclaw-run-ingest] 写入失败 ${r.run_id}:`, String(e?.message).slice(0, 160));
+    }
   }
-  return { written };
+  return { written, failed_rows: failedRows };
 }
 
 const STREAK_MIN = 3;
@@ -229,4 +243,53 @@ export async function notifyFailureStreaks(db, triggerRefs, { sendBark, firstRou
     notified += 1;
   }
   return { notified };
+}
+
+const EXEC_TIMEOUT_MS = 60_000;
+
+/**
+ * 主入口：读游标 → 拉增量 → 映射 → upsert → 连败告警。
+ * ssh/解析失败直接抛错（让调度器记 fail，且不写库）；连败告警失败只告警不抛。
+ * @param {{query: Function}} db
+ * @param {{exec?: Function, inContainer?: boolean, sendBark?: Function, now?: () => number}} [deps]
+ */
+export async function runOpenclawRunIngest(db, deps = {}) {
+  const exec = deps.exec ?? defaultExecAsync;
+  const inContainer = deps.inContainer ?? existsSync('/.dockerenv');
+  const sendBark = deps.sendBark ?? defaultSendBark;
+  const now = deps.now ?? Date.now;
+
+  const cursor = await readCursorMs(db);
+  const sql = buildIngestSql({ sinceMs: cursor, nowMs: now(), limit: LIMIT_MAX });
+  const stdout = await exec(buildHostCmd(buildMmvCmd(sql), inContainer), { timeoutMs: EXEC_TIMEOUT_MS });
+  const raw = parseSqliteJson(stdout);
+
+  const rows = [];
+  let skipped = 0;
+  for (const r of raw) {
+    const mapped = mapOpenclawRow(r);
+    if (mapped) rows.push(mapped);
+    else skipped += 1;
+  }
+
+  const { written, failed_rows } = await upsertRuns(db, rows);
+
+  const failedNames = [...new Set(
+    rows.filter((r) => r.outcome === 'fail' || r.outcome === 'timeout').map((r) => r.trigger_ref),
+  )];
+  let notified = 0;
+  try {
+    ({ notified } = await notifyFailureStreaks(db, failedNames, { sendBark, firstRound: cursor === null }));
+  } catch (e) {
+    console.warn('[openclaw-run-ingest] 连败告警失败（不影响采集）:', String(e?.message).slice(0, 160));
+  }
+
+  return {
+    fetched: raw.length,
+    written,
+    skipped_rows: skipped,
+    failed_rows,
+    notified,
+    backlog: raw.length === LIMIT_MAX,
+  };
 }

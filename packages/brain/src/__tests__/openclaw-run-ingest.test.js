@@ -321,9 +321,9 @@ describe('runOpenclawRunIngest', () => {
   // 假 db：按 SQL 特征分派。cursor 为 Date/null；streak 为连败查询返回行
   function makeDb({ cursor = null, streak = null, upsertRowCount = 1 } = {}) {
     const query = vi.fn(async (sql) => {
+      if (sql.includes('WITH last_ok')) return { rows: streak ? [streak] : [] }; // 连败 SQL 也含 max(started_at)，须先判
       if (sql.includes('max(started_at)')) return { rows: [{ max_started: cursor }] };
       if (sql.includes('INSERT INTO runs')) return { rows: [], rowCount: upsertRowCount };
-      if (sql.includes('WITH last_ok')) return { rows: streak ? [streak] : [] };
       throw new Error(`unexpected sql: ${sql.slice(0, 40)}`);
     });
     return { query };
@@ -405,14 +405,17 @@ describe('runOpenclawRunIngest', () => {
 
   it('连败查询的库错误也被吞（告警是尽力而为）', async () => {
     const db = { query: vi.fn(async (sql) => {
+      if (sql.includes('WITH last_ok')) throw new Error('db_down');
       if (sql.includes('max(started_at)')) return { rows: [{ max_started: new Date(NOW_MS) }] };
       if (sql.includes('INSERT INTO runs')) return { rows: [], rowCount: 1 };
-      throw new Error('db_down');
+      throw new Error('unexpected');
     }) };
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = await runOpenclawRunIngest(db, deps());
+    expect(warn).toHaveBeenCalled();
     warn.mockRestore();
     expect(r.notified).toBe(0);
+    expect(r.written).toBe(1);
   });
 
   it('backlog：fetched === 2000 为 true', async () => {
