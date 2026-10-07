@@ -4,6 +4,7 @@ import {reconcileAppServers} from './app-server/controller.js';
 import { runPreviewCacheJanitor } from './preview-cache-scheduler.js';
 import { runCompanyKrWorkflow } from './projection/company-kr-workflow.js';
 import { runDirectoryJob } from './projection/directory-job.js';
+import { isSelfSkipped, schedulerOutcome, recordSchedulerRun, pruneSchedulerRuns } from './lib/workflow-runs.js';
 /**
  * scheduler-jobs.js — 声明式定时任务注册表（作战循环 P1-PR1）
  *
@@ -245,6 +246,22 @@ function writeSentinel(pool, jobName, record) {
   return writeSentinelRaw(pool, `${SENTINEL_KEY_PREFIX}${jobName}`, record);
 }
 
+/** 真干活的一轮写 runs（决策 ff2019e2）；自 gate 跳过的不记，写失败只告警。 */
+async function writeRun(pool, jobName, startedAt, record, result) {
+  if (record.ok && isSelfSkipped(result)) return;
+  try {
+    await recordSchedulerRun(pool, {
+      jobName, startedAt, endedAt: new Date(),
+      outcome: schedulerOutcome({ timedOut: record.timedOut, error: record.error, result }),
+      error: record.error ?? null,
+      detail: record.detail === undefined ? null : { summary: record.detail },
+    });
+    await pruneSchedulerRuns(pool);
+  } catch (e) {
+    console.warn(`[scheduler-jobs] run record failed for ${jobName}:`, e.message);
+  }
+}
+
 /**
  * 单发全部 job（供 loop 与测试）。单 job 失败/超时不影响其他 job。
  * @returns {Promise<Array<{name:string, at:string, ok:boolean}>>}
@@ -252,11 +269,13 @@ function writeSentinel(pool, jobName, record) {
 export async function runSchedulerJobsOnce(pool, jobs = JOBS) {
   const results = [];
   for (const job of jobs) {
-    const at = new Date().toISOString();
+    const startedAt = new Date();
+    const at = startedAt.toISOString();
     let record;
+    let result;
     try {
       const invocation = job.needsPool ? job.handler(pool) : job.handler();
-      const result = await raceWithTimeout(Promise.resolve(invocation), job.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      result = await raceWithTimeout(Promise.resolve(invocation), job.timeoutMs ?? DEFAULT_TIMEOUT_MS);
       if (result && result.__schedulerTimedOut) {
         console.warn(`[scheduler-jobs] ${job.name} timed out after ${job.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`);
         record = { at, ok: false, timedOut: true };
@@ -270,6 +289,7 @@ export async function runSchedulerJobsOnce(pool, jobs = JOBS) {
       console.warn(`[scheduler-jobs] ${job.name} failed:`, e.message);
       record = { at, ok: false, error: e.message };
     }
+    await writeRun(pool, job.name, startedAt, record, result);
     await writeSentinel(pool, job.name, record);
     results.push({ name: job.name, ...record });
   }

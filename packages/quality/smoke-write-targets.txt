@@ -129,3 +129,4 @@ managed-script-capacity-smoke.sh
 preview-owned-cache-smoke.sh
 phone-dispatch-identity-smoke.sh
 headed-takeover-smoke.sh
+runs-execution-table-smoke.sh

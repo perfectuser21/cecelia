@@ -1,4 +1,7 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] runsexecutiontable 执行记录统一为 runs + spans + 汇总（决策 ff2019e2）：迁移 531 新建 runs（每次流程运行一行：流程、触发来源 schedule/task/manual/external、闹钟总账 id、Brain 任务运行 id、起止与自动算时长、结果 running/pass/fail/timeout/skipped/unknown、token/费用、header_source owner/spans）；spans 加 parent_span_id 自关联与 span_level 生成列（物件调用>Step>Activity），spans.run_id 外键指向 runs.run_id（级联删），已有 spans 按 run 回填总记录；BEFORE INSERT 触发器保证总记录存在、AFTER INSERT 触发器只对真插入的 span 加总（重复上报不重复算；owner 写的总记录只加 token/费用不改结果起止）；汇总视图 v_workflow_run_stats / v_activity_span_stats 给 24h/7d/30d 次数、成功/失败、成功率、平均与 p95 时长、平均 token、平均费用、最近一次。调度器每轮真干活（非自 gate 跳过）的 job 写一行 runs，带真实起止，经 ops_schedule_entries(kind=brain_job) 挂到业务流程；写失败只告警不影响 job 与哨兵。本机 scratch 升级→回滚→再升级通过；生产库干跑回填 119 条总记录后回滚。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-531-runs-table.test.js src/__tests__/scheduler-jobs.test.js --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] notiontreeancestry Notion 目录每一层带完整祖先链：价值流库带 分组·公司/部门/子部门；能力库加 分组·价值流；流程库加 分组·能力；Activity 与 Step 库加 分组·流程（共用 Activity 取「归属引用」即 source_ref 为空的那条所在流程，没有就取第一条引用，没挂流程标「(未挂流程)」）；每层另有「树位置」一行文字写全祖先路径（不含自己）。能力的部门取自己的 area，没有就继承价值流的 area；追不到的一律「(未归属)」不留空；选项名把英文逗号换成全角、截 100 字；部门环路不死循环。生产只读核对：流程 61/能力 56/Activity 128/Step 56 全部能追到部门，价值流里 32 个无部门（均为无能力的空价值流）。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/projection --maxWorkers=1 --minWorkers=1"
 
