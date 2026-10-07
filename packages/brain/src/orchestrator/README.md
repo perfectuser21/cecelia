@@ -3,6 +3,52 @@
 本目录是 Harness 的确定性内核。它决定阶段、门禁、重试、合并与恢复；Claude
 Code、Codex 等 CLI 只是执行 TaskBundle 的 worker，不拥有流程状态机。
 
+## 通用业务活动执行（显式调用，阶段3）
+
+GP-Anchor: f1/step4（程序产物与执行回执的真实边界）；守卫见
+`tests/gp/f1/step4-activity-contract-receipt.test.js`。业务能力本身仍由业务仓库分类。
+
+`activity-contract.js` / `activity-runtime.js` / `activity-process.js` 消费业务仓库
+已经组装、解析 ref 的活动 JSON；它们不替代角色 `TaskBundle/HarnessResult`，也未接入
+生产 task 路由。业务能力与设备操作仍由活动入口实现。CLI 接收 stdin
+`{contract:{workflow,activities},input:{run_tag,...}}`：
+
+```bash
+node packages/brain/scripts/activity-contract-run.js --cwd /path/to/activity-directory --receipt /path/to/run.json < request.json
+```
+
+CLI stdout 只有一个终态 JSON；exit 0/2/1 对应 completed/partial/failed。
+`--receipt` 在每个开始、心跳、完成边界原子更新，最终文件与 stdout 相同。
+调用方可注入 `runActivityContract(...,{onEvent})` 接现有 `createRunEventStore`；本入口
+不自行建 Brain run 或写任务终态，不声称未运行的数据库对账或业务后置探针已通过。
+
+与 ZenithJoy `product-map/contracts/activity-contract.schema.json` 的 opt-in 扩展对齐：
+
+| runtime 字段 | 程序语义 |
+|---|---|
+| protocol | 必须为 `json-stdio-v1`；旧 shell 参数说明不作可执行协议 |
+| entry / argv | 活动目录下安全相对路径与字符串参数数组，拒绝绝对路径和上级目录；JS 用当前 Node、可执行 SH 直接调用，均不走 shell 拼接 |
+| input | 可选目标顶层字段→路径映射；`$.field` 为累计上下文、`$input.field` 为原输入、`$item.field` 为当前条目；缺映射传累计上下文 |
+| per_item | `{group,items:'$.collection',input:'item_field',identity:'id_field',when?:{path,equals}}`；仅用于 per_item phase，同组绑定相同且必须连续 |
+| on_failure | `continue` / `stop_run`，默认后者；失败回执保留产物并按该策略推进 |
+| max_attempts | 1 / 2，默认1；只有结果 retryable 且 failure.retryable 非空才允许第二次 |
+| cleanup_grace_s | 1–30，默认5；到预算或取消只向JSON活动根发TERM，由它通知动作在安全边界清理；宽限到期KILL同一进程组 |
+
+每个活动独立传自己的 `budget`，映射与原输入不能覆盖预算；`attempt` 由执行器注入。
+`order` 排序后，同组逐条目走完整链才进入下个条目；`when` 不满足记 skipped。
+同条目集合输出按 identity 更新该条目，其余 per_item 数组累计；batch 输出替换当前
+集合。每次调用的完整 outputs/metrics/evidence/传输结果都保存在 activities.attempts，
+聚合 metrics 按活动 key 分开，避免把不同活动的业务计数误算成一个值。
+主链错误或取消后仍按顺序执行全部 finalize；finalize 成功不能把主链失败改成成功。
+fatal、needs_human、未声明失败分类始终停止主链，即使 on_failure=continue 也不续跑。
+事件接收端失败记录 `event_sink_failed` 并停主链，保留已完成产物并执行全部 finalize。
+业务探针、锁、重放幂等与远程副作用清理由活动负责，通用执行器不猜业务规则。
+
+实施/验证路径：真实 CLI 子进程 smoke 先报 RED（提交 `ca45f4c219`），再实现并验
+`src/orchestrator/__tests__/activity-runtime.test.js`；smoke 入口为
+`packages/brain/scripts/smoke/activity-contract-runtime-smoke.sh`。后续上线仍需业务链
+等价与真机验收，不因离线测试通过而完成阶段3。
+
 ## 灰度启用与回滚
 
 仅对 `orchestrator: "skill-relay"` 的任务生效：
