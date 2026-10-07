@@ -25,13 +25,16 @@ function httpStatusOf(err) {
 }
 
 /**
- * 致命 = 继续逐行打只会放大或拖过 job 超时：429 限流、5xx、以及没有 HTTP 状态的错误
- * （AbortError/TimeoutError 超时、TypeError 'fetch failed' 网络断）。整批终止，下轮继续（digest 没写就会重推）。
+ * 致命 = 继续逐行打只会放大或拖过 job 超时：401/403（key 失效/权限收回，每行都会同样失败）、429 限流、5xx、
+ * 以及没有 HTTP 状态的错误（AbortError/TimeoutError 超时、TypeError 'fetch failed' 网络断）。整批终止，下轮继续（digest 没写就会重推）。
  */
 export function isFatalNotionError(err) {
   const status = httpStatusOf(err);
-  return status === null || status === 429 || status >= 500;
+  return status === null || status === 401 || status === 403 || status === 429 || status >= 500;
 }
+
+/** 归档时可放弃该页的错误：400（如已在回收站）/404/410——页本身已不可用，重试也不会成功 */
+const ABANDONABLE_ARCHIVE_STATUS = new Set([400, 404, 410]);
 
 /** 页已在回收站：PATCH 返回 400「Can't edit block that is archived」，只能清 id 重建 */
 const isArchivedBlockError = (err) => /can't edit block that is archived/i.test(err?.message || '');
@@ -122,8 +125,8 @@ export function buildRunProps(row) {
 
 /**
  * 归档移出窗口的页并清三列。404/页已不可用 = 已经归档，照样清列；
- * 429/5xx/网络超时停止本轮归档，行保持原样下轮再来；
- * 其余 4xx（如主理人手动删页后 400 已归档）重试也不会成功，打 warn 后照样清列继续下一行，免得一行堵死后面所有过期页。
+ * 400/410（如主理人手动删页后 400 已归档）重试也不会成功，打 warn 后照样清列继续下一行，免得一行堵死后面所有过期页；
+ * 其余错误（401/403/409/429/5xx/网络超时）停止本轮归档，行保持原样下轮再来——清列会让 Notion 页永久残留。
  */
 export async function archiveRows(db, token, rows, notionReq = defaultNotionReq) {
   let archived = 0;
@@ -132,7 +135,7 @@ export async function archiveRows(db, token, rows, notionReq = defaultNotionReq)
       await notionReq(token, `/pages/${r.notion_id}`, 'PATCH', { archived: true });
     } catch (err) {
       if (!isPageGoneError(err)) {
-        if (isFatalNotionError(err)) {
+        if (!ABANDONABLE_ARCHIVE_STATUS.has(httpStatusOf(err))) {
           console.warn(`[runs-notion-push] 归档 ${r.notion_id} 失败，本轮停止归档: ${err.message}`);
           return { archived, stopped: true };
         }
