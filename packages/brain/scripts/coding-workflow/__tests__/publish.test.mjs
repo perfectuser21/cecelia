@@ -37,7 +37,7 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     git(worktree, 'add', '--', 'README.md');
     git(worktree, 'commit', '-m', 'init');
     git(worktree, 'push', '-u', 'origin', 'main');
-    git(worktree, 'checkout', '-b', 'cp-test');
+    git(worktree, 'checkout', '-b', 'cp-1007000000-test');
     fs.mkdirSync(path.join(worktree, 'sprints/s1'), { recursive: true });
     fs.writeFileSync(path.join(worktree, 'sprints/s1/01-intent.md'), '# intent\n');
     fs.writeFileSync(path.join(worktree, 'sprints/s1/02-spec.md'), '# spec\n');
@@ -70,18 +70,18 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     const r = await run('new');
     expect(r.exitCode).toBe(0);
     expect(r.result.failure_class).toBeNull();
-    expect(r.result.outputs).toEqual({ pr_url: 'https://github.com/example/repo/pull/2', branch: 'cp-test' });
+    expect(r.result.outputs).toEqual({ pr_url: 'https://github.com/example/repo/pull/2', branch: 'cp-1007000000-test' });
     expect(r.stdout.trim().split('\n')).toHaveLength(1);
 
-    const files = git(origin, 'ls-tree', '-r', '--name-only', 'cp-test').trim().split('\n');
+    const files = git(origin, 'ls-tree', '-r', '--name-only', 'cp-1007000000-test').trim().split('\n');
     expect(files).toContain('sprints/s1/01-intent.md');
     expect(files).toContain('sprints/s1/02-spec.md');
-    expect(git(origin, 'log', '-1', '--format=%s', 'cp-test').trim()).toBe(TITLE);
+    expect(git(origin, 'log', '-1', '--format=%s', 'cp-1007000000-test').trim()).toBe(TITLE);
 
     const create = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'create');
     expect(create).toBeDefined();
     expect(create).toContain('--draft');
-    expect(create[create.indexOf('--head') + 1]).toBe('cp-test');
+    expect(create[create.indexOf('--head') + 1]).toBe('cp-1007000000-test');
     expect(create[create.indexOf('--title') + 1]).toBe(TITLE);
     const body = create[create.indexOf('--body') + 1];
     expect(body).toContain('- sprints/s1/01-intent.md');
@@ -91,7 +91,7 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
   it('existing：复用已有 PR，不再 pr create', async () => {
     const r = await run('existing');
     expect(r.exitCode).toBe(0);
-    expect(r.result.outputs).toEqual({ pr_url: 'https://github.com/example/repo/pull/1', branch: 'cp-test' });
+    expect(r.result.outputs).toEqual({ pr_url: 'https://github.com/example/repo/pull/1', branch: 'cp-1007000000-test' });
     expect(ghCalls().some((a) => a[1] === 'create')).toBe(false);
   });
 
@@ -129,7 +129,7 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(r.result.reason_code).toBe('branch_invalid');
     expect(git(worktree, 'status', '--porcelain')).toContain('?? sprints/');
     expect(() => git(origin, 'rev-parse', '--verify', 'refs/heads/main')).not.toThrow();
-    expect(() => git(origin, 'rev-parse', '--verify', 'refs/heads/cp-test')).toThrow();
+    expect(() => git(origin, 'rev-parse', '--verify', 'refs/heads/cp-1007000000-test')).toThrow();
     expect(ghCalls()).toHaveLength(0);
   });
 
@@ -146,7 +146,7 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     git(worktree, 'add', '--', 'staged.txt');
     const r = await run('new');
     expect(r.exitCode).toBe(0);
-    const files = git(origin, 'ls-tree', '-r', '--name-only', 'cp-test').trim().split('\n');
+    const files = git(origin, 'ls-tree', '-r', '--name-only', 'cp-1007000000-test').trim().split('\n');
     expect(files).toContain('sprints/s1/01-intent.md');
     expect(files).not.toContain('extra.txt');
     expect(files).not.toContain('staged.txt');
@@ -157,7 +157,7 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     const r = await run('new', { sprint_dir: bad });
     expect(r.exitCode).toBe(2);
     expect(r.result.failure_class).toBe('fatal');
-    expect(() => git(origin, 'rev-parse', '--verify', 'refs/heads/cp-test')).toThrow();
+    expect(() => git(origin, 'rev-parse', '--verify', 'refs/heads/cp-1007000000-test')).toThrow();
     expect(git(worktree, 'log', '--oneline').trim().split('\n')).toHaveLength(1);
   });
 
@@ -183,7 +183,45 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
       GIT_INDEX_FILE: path.join(root, 'bogus-index'),
     });
     expect(r.exitCode).toBe(0);
-    const files = git(origin, 'ls-tree', '-r', '--name-only', 'cp-test').trim().split('\n');
+    const files = git(origin, 'ls-tree', '-r', '--name-only', 'cp-1007000000-test').trim().split('\n');
     expect(files).toContain('sprints/s1/01-intent.md');
+  });
+
+  it.each(['cp-test', 'cp-123-x', 'cp-1007000000-', 'cp-1007000000-Upper', 'feature/x', 'cp-12345678901-x'])(
+    '分支名 %s 与全局 pre-commit 钩子正则不一致 -> fatal branch_invalid',
+    async (name) => {
+      git(worktree, 'checkout', '-b', name);
+      const r = await run('new');
+      expect(r.exitCode).toBe(2);
+      expect(r.result.failure_class).toBe('fatal');
+      expect(r.result.reason_code).toBe('branch_invalid');
+      expect(ghCalls()).toHaveLength(0);
+    },
+  );
+
+  it('分支名 cp-<8位时间戳>-name 合规 -> 通过', async () => {
+    git(worktree, 'checkout', '-b', 'cp-10071451-fix_x-1');
+    const r = await run('new');
+    expect(r.exitCode).toBe(0);
+    expect(r.result.outputs.branch).toBe('cp-10071451-fix_x-1');
+  });
+
+  it('commit 失败 -> fatal git_commit_failed，evidence 带 stderr 尾部（最多 20 行）', async () => {
+    const hooks = path.join(worktree, '.git/hooks');
+    fs.mkdirSync(hooks, { recursive: true });
+    fs.writeFileSync(
+      path.join(hooks, 'pre-commit'),
+      '#!/bin/sh\ni=1\nwhile [ $i -le 30 ]; do echo "hook line $i" >&2; i=$((i+1)); done\nexit 1\n',
+    );
+    fs.chmodSync(path.join(hooks, 'pre-commit'), 0o755);
+    git(worktree, 'config', 'core.hooksPath', hooks);
+    const r = await run('new');
+    expect(r.exitCode).toBe(2);
+    expect(r.result.failure_class).toBe('fatal');
+    expect(r.result.reason_code).toBe('git_commit_failed');
+    const tail = r.result.evidence[0].stderr_tail;
+    expect(tail).toHaveLength(20);
+    expect(tail[tail.length - 1]).toBe('hook line 30');
+    expect(tail[0]).toBe('hook line 11');
   });
 });
