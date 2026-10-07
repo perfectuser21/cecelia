@@ -3,7 +3,7 @@ import { projectCompanyKrRegistration, upsertRegistrationPage, workflowPropertie
 
 describe('公司KR登记投影', () => {
   it('正式workflow使用实际名称；历史run不捏造步骤完成关系', () => {
-    expect(workflowProperties({name:'公司 KR 分析',version:'1.0'}).Workflow.title[0].text.content).toBe('公司 KR 分析');
+    expect(workflowProperties({name:'公司 KR 分析',version:'1.0'})).toEqual({'名称':{title:[{text:{content:'公司 KR 分析'}}]}});
     const p=runProperties({run_id:'r',status:'success',started_at:'2026-10-01T00:00:00Z',ended_at:'2026-10-01T00:01:00Z'},'ops');
     expect(p.Workflow.relation).toEqual([{id:'ops'}]);
     expect(p).not.toHaveProperty('涉及步骤');

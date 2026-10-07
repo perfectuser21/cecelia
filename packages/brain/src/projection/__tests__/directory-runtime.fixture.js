@@ -37,7 +37,12 @@ export function runtimeFixture() {
     if(path.startsWith('/databases/')){
       if(path.endsWith('/query'))return{results:[...pages.values()].filter(p=>p.parent.database_id===id&&
         p.properties['Brain ID']?.rich_text?.[0]?.text?.content===body.filter.rich_text.equals),has_more:false};
-      const db=databases.get(id);if(method==='PATCH')Object.assign(db.properties,body.properties);return structuredClone(db);
+      const db=databases.get(id);
+      if(method==='PATCH')for(const [key,value] of Object.entries(body.properties)){ // 属性改名 {旧名:{name:新名}} 保值搬过去
+        if(value&&Object.keys(value).length===1&&typeof value.name==='string'){db.properties[value.name]=db.properties[key];delete db.properties[key];}
+        else db.properties[key]={...value,type:Object.keys(value)[0]};
+      }
+      return structuredClone(db);
     }
     if(path==='/pages'){
       const page={id:fixtureEntityId(next++),parent:body.parent,properties:body.properties};pages.set(page.id,page);return structuredClone(page);

@@ -17,26 +17,16 @@ function fixture({ linked = true, identity = id, parent = dbId, readbackWrong = 
   return { pool: { query }, query, notionReq, row };
 }
 describe('严格目录页投影', () => {
-  it('真实运行生成分钟整值，Notion日期分钟化读回后六层都能落收据', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-02T13:43:27.456Z'));
-    try {
-      const f = runtimeFixture();
-      const timestamps = [];
-      const notionReq = async (...args) => {
-        const sent = args[3]?.properties?.['同步时间']?.date?.start;
-        if (sent) timestamps.push(sent);
-        const result = await f.notionReq(...args);
-        const date = result.properties?.['同步时间']?.date;
-        if (date?.start) date.start = new Date(Math.floor(Date.parse(date.start) / 60000) * 60000).toISOString().replace('Z', '+00:00');
-        return result;
-      };
-      const result = await api.runDirectoryProjection(f.pool, { token: 'test', notionReq, force: true });
-      expect(result.failed).toBe(0);
-      expect(f.links).toHaveLength(6);
-      expect(timestamps).toHaveLength(6);
-      expect(new Set(timestamps)).toEqual(new Set(['2026-10-02T13:43:00.000Z']));
-    } finally { vi.useRealTimers(); }
+  it('真实运行六层都能落收据；不再写同步时间/登记缺口（只留 Brain ID + 同步状态）', async () => {
+    const f = runtimeFixture();
+    const sent = [];
+    const notionReq = async (...args) => { if (args[3]?.properties) sent.push(...Object.keys(args[3].properties)); return f.notionReq(...args); };
+    const result = await api.runDirectoryProjection(f.pool, { token: 'test', notionReq, force: true });
+    expect(result.failed).toBe(0);
+    expect(f.links).toHaveLength(6);
+    expect(sent).not.toContain('同步时间');
+    expect(sent).not.toContain('登记缺口');
+    expect(sent).toContain('同步状态');
   });
   function pagedFixture(count=26, corrupt) {
     const f=fixture(), propertyId='rel%3A%2Fid';

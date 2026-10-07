@@ -31,18 +31,33 @@ function world() {
 }
 
 describe('目录清理计划', () => {
-  it('删掉既不来自 Brain 也不是登记人工列的列；部门库 PARA 人工列与流程库「你的标记」保留', () => {
+  it('删掉既不来自 Brain 也不是登记人工列的列；部门库 PARA 人工列与流程库「去留（你填）」保留', () => {
     const plan = planDirectoryCleanup(world());
     expect(plan.areas.drop.map(c => c.name)).toEqual(['Key']);
     expect(plan.areas.keep.map(c => c.name)).toEqual(expect.arrayContaining(['Tasks', 'Archive', 'Name', 'Brain ID', '价值流']));
     expect(plan.areas.keep.find(c => c.name === 'Tasks').source).toBe('人工');
     expect(plan.workflows.drop.map(c => c.name).sort()).toEqual(['Trigger', '业务线']);
-    expect(plan.workflows.keep.find(c => c.name === '你的标记').source).toBe('人工');
+    expect(plan.workflows.keep.find(c => c.name === '去留（你填）').source).toBe('人工');
     expect(plan.workflows.keep.find(c => c.name === '7天次数').source).toMatch(/v_workflow_run_stats/);
     expect(plan.steps.drop.map(c => c.name).sort()).toEqual(['Ops Runs', 'Staging', '失败次数(rollup)', '状态(判定)']);
     expect(plan.steps.drop.find(c => c.name === 'Staging').filled).toBe(2);
     expect(plan.workflows.before).toBe(plan.workflows.keep.length + 2);
     expect(plan.workflows.after).toBe(plan.workflows.keep.length);
+  });
+
+  it('待改名的旧列（上线首轮投影器自动改名保值）不删、不算缺列；改名没完成时拒绝 --apply', () => {
+    const w = world();
+    const wf = w.databases.workflows.properties;
+    wf['你的标记'] = wf['去留（你填）']; delete wf['去留（你填）'];
+    wf['在用吗'] = wf['运行情况']; delete wf['运行情况'];
+    wf['平均时长(秒)'] = { type: 'number', number: {} };
+    const plan = planDirectoryCleanup(w);
+    expect(plan.workflows.rename).toEqual([{ from: '在用吗', to: '运行情况' }, { from: '你的标记', to: '去留（你填）' }]);
+    expect(plan.workflows.keep.find(c => c.name === '你的标记').source).toMatch(/^待改名→去留（你填）/);
+    expect(plan.workflows.drop.map(c => c.name)).toEqual(expect.arrayContaining(['平均时长(秒)']));
+    expect(plan.workflows.drop.map(c => c.name)).not.toContain('你的标记');
+    expect(plan.workflows.missing).toEqual([]);
+    expect(() => assertReadyToApply(plan)).toThrow(/workflows.*你的标记→去留（你填）/);
   });
 
   it('删列分批：公式先删、汇总再删、关系与普通列最后（汇总/公式依赖关系，反序会被 Notion 拒）', () => {
@@ -79,7 +94,7 @@ describe('目录清理计划', () => {
 
   it('旧写入方已断开：Activity 契约推送器不再补英文列、价值流地图镜子不再挂在推送轮里、KR 登记不再写 Step/Activity 旧列', () => {
     const src = f => readFileSync(new URL(`../../${f}`, import.meta.url), 'utf8');
-    expect(src('activity-contract-sync.js')).not.toMatch(/BACKBONE_DB_PROPS|pushBackboneActivities|ensureOpsDbProps/);
+    expect(src('activity-contract-sync.js')).not.toMatch(/BACKBONE_DB_PROPS|pushBackboneActivities|ensureOpsDbProps|syncBackboneBodies|notionReq/);
     expect(src('notion-push-sync.js')).not.toContain('runValueStreamMirror(');
     const kr = src('projection/company-kr-registration-notion.js');
     expect(kr).not.toMatch(/Staging|所属Workflow'|有确定性判定|buildBackboneActivityProps/);

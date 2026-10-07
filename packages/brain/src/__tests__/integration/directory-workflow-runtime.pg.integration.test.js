@@ -26,13 +26,14 @@ describe('流程运行情况（真库）', () => {
     }
   });
 
-  it('映射成 Notion 行不抛错，且每个流程行都带运行情况列、不带「你的标记」与旧任务计数列', async () => {
+  it('映射成 Notion 行不抛错，且每个流程行都带运行列、不带「去留（你填）」与旧列', async () => {
     const rows = buildDirectoryRows(await loadDirectorySource(pool), {}).filter(r => r.layer === 'workflows');
     expect(rows.length).toBeGreaterThan(0);
     for (const r of rows) {
-      for (const k of ['最近运行', '在用吗', '怎么运行', '7天次数', '7天失败', '7天成功率', '平均时长(秒)']) expect(r.properties, k).toHaveProperty(k);
-      for (const k of ['你的标记', '定时任务数', '步骤级运行次数', '旧功能状态']) expect(r.properties).not.toHaveProperty(k);
-      expect(['在跑', '有任务近7天没跑', '只登记没运行', '空壳']).toContain(r.properties['在用吗'].select.name);
+      for (const k of ['最近运行', '运行情况', '运行方式', '7天次数', '7天成功率', '平均时长']) expect(r.properties, k).toHaveProperty(k);
+      for (const k of ['去留（你填）', '你的标记', '在用吗', '怎么运行', '7天失败', '平均时长(秒)']) expect(r.properties).not.toHaveProperty(k);
+      expect(['在跑', '有任务近7天没跑', '只登记没运行', '空壳']).toContain(r.properties['运行情况'].select.name);
+      expect(r.properties['运行方式'].rich_text.length).toBeGreaterThan(0);
     }
   });
 });
