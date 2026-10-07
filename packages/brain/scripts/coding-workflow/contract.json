@@ -80,6 +80,24 @@
         "on_failure": "stop_run",
         "max_attempts": 1
       }
+    },
+    {
+      "key": "report",
+      "order": 5,
+      "budget": { "max_duration_s": 30, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["brain_unavailable"],
+        "needs_human": { "cases": [] },
+        "fatal": ["pr_url_missing", "task_id_missing", "task_not_found"]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "finalize",
+        "entry": "activities/report.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
     }
   ]
 }
