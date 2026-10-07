@@ -97,8 +97,8 @@ describe('notifyFailureStreaks（真库）', () => {
     await upsertRuns(client, [1, 2, 3].map((i) => mk(`s${i}`, {
       trigger_ref: name, outcome: 'fail', error: `炸了${i}`, started_at: t(i), ended_at: t(i),
     })));
-    const sendBark = async (...args) => { calls.push(args); };
     const calls = [];
+    const sendBark = async (...args) => { calls.push(args); };
     expect(await notifyFailureStreaks(client, [name], { sendBark, firstRound: false })).toEqual({ notified: 1 });
     expect(calls).toHaveLength(1);
     expect(calls[0][0]).toBe('OpenClaw 任务连续失败');
@@ -121,5 +121,34 @@ describe('notifyFailureStreaks（真库）', () => {
     const r = await notifyFailureStreaks(client, [name], { sendBark: async (...a) => { calls.push(a); }, firstRound: false });
     expect(r).toEqual({ notified: 1 });
     expect(calls[0][1]).toContain('连续 3 次失败');
+  });
+
+  it('连败超过 50 条：dedupeKey 不随窗口滑动；中间有成功则新连败段换键', async () => {
+    const t = (i) => new Date(T.getTime() + i * 60000);
+    const name = '长连败验收任务';
+    const fail = (i) => mk(`L${String(i).padStart(3, '0')}`, {
+      trigger_ref: name, outcome: 'fail', error: `炸了${i}`, started_at: t(i), ended_at: t(i),
+    });
+    await upsertRuns(client, Array.from({ length: 51 }, (_, k) => fail(k + 1)));
+    const calls = [];
+    const sendBark = async (...args) => { calls.push(args); };
+    await notifyFailureStreaks(client, [name], { sendBark, firstRound: false });
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toBe(`${name} 连续 51 次失败：炸了51`);
+    const key = calls[0][2].dedupeKey;
+    expect(key).toBe(`openclaw-run-streak:${name}:openclaw:L001`);
+
+    await upsertRuns(client, [fail(52)]);
+    await notifyFailureStreaks(client, [name], { sendBark, firstRound: false });
+    expect(calls).toHaveLength(2);
+    expect(calls[1][1]).toBe(`${name} 连续 52 次失败：炸了52`);
+    expect(calls[1][2].dedupeKey).toBe(key);
+
+    await upsertRuns(client, [mk('Lok', { trigger_ref: name, started_at: t(53), ended_at: t(53) }),
+      ...[54, 55, 56].map(fail)]);
+    await notifyFailureStreaks(client, [name], { sendBark, firstRound: false });
+    expect(calls).toHaveLength(3);
+    expect(calls[2][1]).toBe(`${name} 连续 3 次失败：炸了56`);
+    expect(calls[2][2].dedupeKey).toBe(`openclaw-run-streak:${name}:openclaw:L054`);
   });
 });
