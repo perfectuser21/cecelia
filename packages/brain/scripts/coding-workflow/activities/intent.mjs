@@ -31,7 +31,7 @@ await runActivity(async (input) => {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (res.status === 404 || res.status === 400) return fail('fatal', 'task_not_found');
-    if (res.status >= 500) return fail('retryable', 'brain_unavailable');
+    if (res.status >= 500 || res.status === 429 || res.status === 408) return fail('retryable', 'brain_unavailable');
     if (!res.ok) return fail('fatal', `brain_http_${res.status}`);
     task = await res.json();
   } catch (error) {

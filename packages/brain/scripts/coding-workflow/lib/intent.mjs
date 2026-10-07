@@ -1,7 +1,9 @@
 // intent 活动的纯函数：验收条目提取与 01-intent.md 渲染（不写时间戳，输出确定性）。
 
-// 列表项标记：行首的 `-`/`*`（可带复选框）、`1.`/`1、`/`1)`，以及任意位置的圈号 ①-⑳ 与分号。
-const ITEM_SPLIT_RE = /(?:^|\n)[ \t]*(?:[-*][ \t]+(?:\[[ xX]\][ \t]*)?|\d+[.、)）][ \t]*)|[①-⑳]|[；;]/;
+// 列表项标记：行首的 `-`/`*`（可带复选框）、`1.`/`1、`/`1)`，以及任意位置的圈号 ①-⑳。
+const LIST_MARKER_RE = /(?:^|\n)[ \t]*(?:[-*][ \t]+(?:\[[ xX]\][ \t]*)?|\d+[.、)）][ \t]*)|[\u2460-\u2473]/;
+// 验收段起点："验收"+可选标题后缀，之后必须紧跟冒号或换行/结尾，否则视为无关出现。
+const SECTION_RE = /验收(?:标准|条件|项|清单|要求)?[ \t]*(?:[：:]|(?=\r?\n)|$)/;
 
 function squash(text) {
   return String(text).replace(/\s+/g, ' ').trim();
@@ -15,13 +17,15 @@ function fromPayload(payload) {
 
 function fromDescription(description) {
   if (typeof description !== 'string') return [];
-  const idx = description.indexOf('验收');
-  if (idx === -1) return [];
-  let rest = description.slice(idx + '验收'.length).replace(/^[ \t]*[：:]?/, '');
+  const m = SECTION_RE.exec(description);
+  if (!m) return [];
+  let rest = description.slice(m.index + m[0].length);
   // 验收段到下一个 markdown 标题行为止
   const heading = rest.search(/\n#{1,6}[ \t]/);
   if (heading !== -1) rest = rest.slice(0, heading);
-  return rest.split(ITEM_SPLIT_RE).map(squash).filter(Boolean);
+  // 有列表标记时只按标记切；完全没有标记才退回按分号切
+  const splitter = LIST_MARKER_RE.test(rest) ? new RegExp(LIST_MARKER_RE.source, 'g') : /[；;]/;
+  return rest.split(splitter).map(squash).filter(Boolean);
 }
 
 /** payload.acceptance 优先；否则取 description 中"验收"之后的列表项。无则返回 []。 */
