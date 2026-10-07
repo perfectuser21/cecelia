@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.378.0
+**Brain 版本**: 1.379.0
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.379.0 — 通用活动执行器进 main（自 #5783 拆出）
+
+- 新增 `src/orchestrator/activity-{contract,runtime,process,event-sink}.js` 与 CLI `scripts/activity-contract-run.js`：按设计时契约顺序调用 json-stdio-v1 活动，含预算/超时/失败闭集/finalize、可选事件账；内容与草稿 PR #5783（466099e0）逐字一致
+- Commander 售后接班、事件账 PG 集成测试与 CI 数据库接线仍留在 #5783
+- coding workflow（PR #6020）不再依赖 #5783 分支；`coding_spec` 契约测试改用真实 `parseActivityContract` 回归
 
 ## Brain 1.378.0 — coding workflow 第一刀：intent→spec 两步 md 链（json-stdio-v1 活动）
 
