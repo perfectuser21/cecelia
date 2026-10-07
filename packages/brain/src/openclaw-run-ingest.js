@@ -186,3 +186,44 @@ export async function upsertRuns(db, rows) {
   }
   return { written };
 }
+
+const STREAK_MIN = 3;
+const STREAK_BODY_MAX = 120;
+const STREAK_DEDUPE_TTL_SEC = 7 * 86400;
+const RECENT_SQL = `
+  SELECT run_id, outcome, error, detail->>'summary' AS summary
+    FROM runs
+   WHERE run_id LIKE 'openclaw:%' AND trigger_ref = $1 AND outcome <> 'running'
+   ORDER BY started_at DESC LIMIT 50`;
+
+/**
+ * 最近运行（started_at 降序）里从头开始的连续 fail/timeout 段。
+ * 不足 3 条返回 null；否则 firstRunId 为该连败段最早一条（同一段稳定不变，作去重键）。
+ */
+export function findStreakStart(recent) {
+  let count = 0;
+  while (count < recent.length && (recent[count].outcome === 'fail' || recent[count].outcome === 'timeout')) count += 1;
+  if (count < STREAK_MIN) return null;
+  return { firstRunId: recent[count - 1].run_id, count };
+}
+
+/**
+ * 对给定任务名判定连败并发 Bark（同一连败段由 dedupeKey 保证只发一次）。
+ * 首轮回填（firstRound）不发，避免历史连败一次性炸出来。sendBark 由调用方注入。
+ */
+export async function notifyFailureStreaks(db, triggerRefs, { sendBark, firstRound }) {
+  if (firstRound) return { notified: 0 };
+  let notified = 0;
+  for (const name of triggerRefs) {
+    const { rows } = await db.query(RECENT_SQL, [name]);
+    const streak = findStreakStart(rows);
+    if (!streak) continue;
+    const detail = truncateText(rows[0].error || rows[0].summary || '', STREAK_BODY_MAX);
+    await sendBark('OpenClaw 任务连续失败', `${name} 连续 ${streak.count} 次失败：${detail}`, {
+      dedupeKey: `openclaw-run-streak:${name}:${streak.firstRunId}`,
+      dedupeTtlSec: STREAK_DEDUPE_TTL_SEC,
+    });
+    notified += 1;
+  }
+  return { notified };
+}
