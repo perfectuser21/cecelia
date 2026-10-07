@@ -12,9 +12,12 @@ export function log(...args) {
 
 /**
  * 把 sprintDir 解析到 worktree 下的绝对路径。
- * sprintDir 为绝对路径或含 `..` 段时抛 Error('sprint_dir_invalid')。
+ * worktree 非绝对路径字符串、sprintDir 为绝对路径或含 `..` 段时抛 Error('sprint_dir_invalid')。
  */
 export function resolveSprintDir(worktree, sprintDir) {
+  if (typeof worktree !== 'string' || !path.isAbsolute(worktree)) {
+    throw new Error('sprint_dir_invalid');
+  }
   if (typeof sprintDir !== 'string' || sprintDir === '' || path.isAbsolute(sprintDir)) {
     throw new Error('sprint_dir_invalid');
   }
