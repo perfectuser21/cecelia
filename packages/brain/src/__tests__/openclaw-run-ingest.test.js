@@ -4,7 +4,11 @@
  * 不碰数据库、不执行 ssh。
  */
 import { describe, it, expect, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { buildHostCmd } from '../host-exec.js';
 import {
+  runOpenclawRunIngest,
+  upsertRuns,
   buildIngestSql,
   buildMmvCmd,
   parseSqliteJson,
@@ -305,5 +309,159 @@ describe('notifyFailureStreaks', () => {
     const r = await notifyFailureStreaks(db, ['甲', '乙'], { sendBark, firstRound: false });
     expect(r).toEqual({ notified: 1 });
     expect(sendBark.mock.calls[0][1]).toContain('甲 连续 3 次失败');
+  });
+});
+
+// —— 采集编排 ——
+describe('runOpenclawRunIngest', () => {
+  const NOW_MS = 1791400000000;
+  const failRow = (over = {}) => baseRow({ status: 'failed', error: '炸了', ...over });
+  const sqlOf = (cmd) => Buffer.from(cmd.match(/echo ([A-Za-z0-9+/=]+) \| base64 -d/)[1], 'base64').toString('utf8');
+
+  // 假 db：按 SQL 特征分派。cursor 为 Date/null；streak 为连败查询返回行
+  function makeDb({ cursor = null, streak = null, upsertRowCount = 1 } = {}) {
+    const query = vi.fn(async (sql) => {
+      if (sql.includes('max(started_at)')) return { rows: [{ max_started: cursor }] };
+      if (sql.includes('INSERT INTO runs')) return { rows: [], rowCount: upsertRowCount };
+      if (sql.includes('WITH last_ok')) return { rows: streak ? [streak] : [] };
+      throw new Error(`unexpected sql: ${sql.slice(0, 40)}`);
+    });
+    return { query };
+  }
+  const deps = (over = {}) => ({
+    exec: vi.fn().mockResolvedValue(JSON.stringify([failRow(), failRow({ task_id: null })])),
+    inContainer: false,
+    sendBark: vi.fn().mockResolvedValue(true),
+    now: () => NOW_MS,
+    ...over,
+  });
+  const insertCalls = (db) => db.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO runs'));
+
+  it('两行（一合法 fail、一缺 task_id）→ fetched 2 / skipped_rows 1 / written 1，命令含 mmv 与 base64 -d', async () => {
+    const db = makeDb();
+    const d = deps();
+    const r = await runOpenclawRunIngest(db, d);
+    expect(r).toEqual({ fetched: 2, written: 1, skipped_rows: 1, failed_rows: 0, notified: 0, backlog: false });
+    expect(d.exec).toHaveBeenCalledTimes(1);
+    const [cmd, opts] = d.exec.mock.calls[0];
+    expect(cmd).toContain('mmv');
+    expect(cmd).toContain('base64 -d');
+    expect(cmd.startsWith('ssh -o BatchMode=yes')).toBe(true);
+    expect(opts).toEqual({ timeoutMs: 60_000 });
+    expect(insertCalls(db)).toHaveLength(1);
+  });
+
+  it('inContainer=true → 命令以 ssh -i 开头（经 buildHostCmd 逃逸）', async () => {
+    const d = deps({ inContainer: true });
+    await runOpenclawRunIngest(makeDb(), d);
+    expect(d.exec.mock.calls[0][0].startsWith('ssh -i ')).toBe(true);
+  });
+
+  it('exec 抛错 → 整体抛错且不写库', async () => {
+    const db = makeDb();
+    const d = deps({ exec: vi.fn().mockRejectedValue(new Error('ssh_timeout')) });
+    await expect(runOpenclawRunIngest(db, d)).rejects.toThrow('ssh_timeout');
+    expect(insertCalls(db)).toHaveLength(0);
+  });
+
+  it('输出不是 JSON 数组 → 抛 parse_error 且不写库', async () => {
+    const db = makeDb();
+    await expect(runOpenclawRunIngest(db, deps({ exec: vi.fn().mockResolvedValue('boom') }))).rejects.toThrow('parse_error');
+    expect(insertCalls(db)).toHaveLength(0);
+  });
+
+  it('游标为 null（首轮）→ 回填 30 天窗口，不发 Bark，也不查连败', async () => {
+    const db = makeDb({ cursor: null, streak: { count: 9, first_run_id: 'openclaw:x', error: 'e', summary: null } });
+    const d = deps();
+    const r = await runOpenclawRunIngest(db, d);
+    expect(d.sendBark).not.toHaveBeenCalled();
+    expect(r.notified).toBe(0);
+    expect(sqlOf(d.exec.mock.calls[0][0])).toContain(`>= ${NOW_MS - 30 * 86400_000}`);
+  });
+
+  it('游标非 null → SQL 用游标（已减 1h）；本批 fail/timeout 且连败≥3 → 按任务名去重各发一次 Bark', async () => {
+    const cursor = new Date(NOW_MS - 7200_000);
+    const db = makeDb({ cursor, streak: { count: 3, first_run_id: 'openclaw:r1', error: '炸了', summary: null } });
+    const rows = [failRow(), failRow({ task_id: 'b' }), failRow({ task_id: 'c', name: '另一任务', status: 'timed_out' }), baseRow({ task_id: 'd', name: '全绿任务' })];
+    const d = deps({ exec: vi.fn().mockResolvedValue(JSON.stringify(rows)) });
+    const r = await runOpenclawRunIngest(db, d);
+    expect(sqlOf(d.exec.mock.calls[0][0])).toContain(`>= ${NOW_MS - 7200_000 - 3600_000}`);
+    const streakCalls = db.query.mock.calls.filter(([s]) => s.includes('WITH last_ok'));
+    expect(streakCalls.map(([, p]) => p[0]).sort()).toEqual(['另一任务', '悦升云端企业资料同步']);
+    expect(d.sendBark).toHaveBeenCalledTimes(2);
+    expect(r.notified).toBe(2);
+  });
+
+  it('sendBark 抛错被吞：采集不失败，notified 记 0', async () => {
+    const db = makeDb({ cursor: new Date(NOW_MS), streak: { count: 3, first_run_id: 'openclaw:r1', error: 'e', summary: null } });
+    const d = deps({ sendBark: vi.fn().mockRejectedValue(new Error('bark_down')) });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await runOpenclawRunIngest(db, d);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+    expect(r.notified).toBe(0);
+    expect(r.written).toBe(1);
+  });
+
+  it('连败查询的库错误也被吞（告警是尽力而为）', async () => {
+    const db = { query: vi.fn(async (sql) => {
+      if (sql.includes('max(started_at)')) return { rows: [{ max_started: new Date(NOW_MS) }] };
+      if (sql.includes('INSERT INTO runs')) return { rows: [], rowCount: 1 };
+      throw new Error('db_down');
+    }) };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await runOpenclawRunIngest(db, deps());
+    warn.mockRestore();
+    expect(r.notified).toBe(0);
+  });
+
+  it('backlog：fetched === 2000 为 true', async () => {
+    const many = Array.from({ length: 2000 }, (_, i) => baseRow({ task_id: `t${i}` }));
+    const r = await runOpenclawRunIngest(makeDb(), deps({ exec: vi.fn().mockResolvedValue(JSON.stringify(many)) }));
+    expect(r.fetched).toBe(2000);
+    expect(r.backlog).toBe(true);
+  });
+
+  it('单行写库失败计入 failed_rows，不中断整批', async () => {
+    let n = 0;
+    const db = { query: vi.fn(async (sql) => {
+      if (sql.includes('max(started_at)')) return { rows: [{ max_started: null }] };
+      if (sql.includes('INSERT INTO runs')) { n += 1; if (n === 2) throw new Error('bad row'); return { rows: [], rowCount: 1 }; }
+      return { rows: [] };
+    }) };
+    const rows = ['a', 'b', 'c'].map((id) => baseRow({ task_id: id }));
+    const r = await runOpenclawRunIngest(db, deps({ exec: vi.fn().mockResolvedValue(JSON.stringify(rows)) }));
+    expect(r).toMatchObject({ fetched: 3, written: 2, failed_rows: 1 });
+  });
+});
+
+describe('upsertRuns 逐行容错（假 db）', () => {
+  it('单行抛错 → 其余照常写，返回 { written, failed_rows }', async () => {
+    let n = 0;
+    const db = { query: vi.fn(async () => { n += 1; if (n === 1) throw new Error('x'); return { rowCount: 1 }; }) };
+    const rows = [1, 2, 3].map((i) => ({ run_id: `openclaw:${i}`, trigger_ref: 't', executor_kind: 'agent', executor_id: 'e',
+      started_at: new Date(), ended_at: null, outcome: 'running', error: null, detail: null }));
+    expect(await upsertRuns(db, rows)).toEqual({ written: 2, failed_rows: 1 });
+    expect(db.query).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('buildHostCmd(buildMmvCmd(sql), true) 往返', () => {
+  // 用本机 sh 逐层“解包”：把 ssh 替换成打印最后一个参数的函数，得到各层远端 shell 实际收到的命令；
+  // 最后把 sqlite3 替换成 cat，验证 base64 段经两层引号嵌套后仍还原为原 SQL。不触网、不真 ssh。
+  const peel = (cmd) => execFileSync('sh', ['-c', `ssh() { for a; do last="$a"; done; printf %s "$last"; }; ${cmd}`], { encoding: 'utf8' });
+
+  it.each([
+    'select 1',
+    `select '悦升''x' as a, "b" from t where n = 'it''s'`,
+  ])('base64 段解码后仍等于原 sql：%s', (sql) => {
+    const outer = buildHostCmd(buildMmvCmd(sql), true, () => true);
+    expect(outer.startsWith('ssh -i ')).toBe(true);
+    const hostCmd = peel(outer);           // 宿主 shell 收到的：ssh ... mmv '...'
+    expect(hostCmd.startsWith('ssh -o BatchMode=yes')).toBe(true);
+    const mmvCmd = peel(hostCmd);          // mmv 远端 shell 收到的：echo b64 | base64 -d | sqlite3 ...
+    expect(mmvCmd).toContain('base64 -d | sqlite3 -readonly -json');
+    const out = execFileSync('sh', ['-c', `sqlite3() { cat; }; ${mmvCmd}`], { encoding: 'utf8' });
+    expect(out).toBe(sql);
   });
 });

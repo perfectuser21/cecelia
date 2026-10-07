@@ -216,6 +216,11 @@ vi.mock('../ops-collector.js', async (importOriginal) => ({
   ...(await importOriginal()),
   runOpsCollector: vi.fn().mockResolvedValue({ skipped: true }),
 }));
+// openclaw-run-ingest 真实 handler 会 ssh mmv 读 sqlite——单测绝不碰真机；采集逻辑由 openclaw-run-ingest.test.js 覆盖。
+vi.mock('../openclaw-run-ingest.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  runOpenclawRunIngest: vi.fn().mockResolvedValue({ skipped: true }),
+}));
 vi.mock('../openclaw-guards.js', async (importOriginal) => ({
   ...(await importOriginal()),
   runOpenclawGuards: vi.fn().mockResolvedValue({ skipped: true }),
@@ -301,6 +306,21 @@ describe('scheduler-jobs 注册表', () => {
         expect(typeof c.tz, `${j.name} cron 必须带 tz`).toBe('string');
       }
     }
+  });
+
+  // 决策 c7ff6e02/9ec7a010：OpenClaw cron 运行记录入 runs 表，每 5 分钟；没注册 = runs 表永远没有 openclaw 行
+  it('JOBS 注册了 openclaw-run-ingest（5 分钟、needsPool、挨着 ops-collector、handler 真接线）', async () => {
+    const { runOpenclawRunIngest } = await import('../openclaw-run-ingest.js');
+    const names = JOBS.map((j) => j.name);
+    const j = JOBS.find((x) => x.name === 'openclaw-run-ingest');
+    expect(j).toBeTruthy();
+    expect(j.cadence.everySec).toBe(300);
+    expect(j.needsPool).toBe(true);
+    expect(j.timeoutMs).toBe(120_000);
+    expect(names.indexOf('openclaw-run-ingest')).toBe(names.indexOf('ops-collector') + 1);
+    const pool = makePool();
+    await runSchedulerJobsOnce(pool, [j]);
+    expect(runOpenclawRunIngest).toHaveBeenCalledWith(pool);
   });
 
   // PR3 补充五：秋米设备任务改成派生子任务后，父 qiumi_task 挂在 blocked 且 blocked_until 为 NULL——

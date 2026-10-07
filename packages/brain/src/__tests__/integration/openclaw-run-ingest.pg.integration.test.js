@@ -50,15 +50,15 @@ describe('readCursorMs', () => {
 describe('upsertRuns', () => {
   it('同一批写两次：仍 2 行，第二次 written 为 0', async () => {
     const rows = [mk('a'), mk('b')];
-    expect(await upsertRuns(client, rows)).toEqual({ written: 2 });
-    expect(await upsertRuns(client, rows)).toEqual({ written: 0 });
+    expect(await upsertRuns(client, rows)).toEqual({ written: 2, failed_rows: 0 });
+    expect(await upsertRuns(client, rows)).toEqual({ written: 0, failed_rows: 0 });
     expect((await one("SELECT count(*)::int AS n FROM runs WHERE run_id LIKE 'openclaw:%'")).n).toBe(2);
   });
 
   it('先写 running 再写 pass：同一行更新结果与结束时间', async () => {
     await upsertRuns(client, [mk('a', { outcome: 'running', ended_at: null })]);
     const r = await upsertRuns(client, [mk('a')]);
-    expect(r).toEqual({ written: 1 });
+    expect(r).toEqual({ written: 1, failed_rows: 0 });
     const run = await one("SELECT outcome, ended_at, duration_ms FROM runs WHERE run_id='openclaw:a'");
     expect(run.outcome).toBe('pass');
     expect(run.ended_at.getTime()).toBe(T.getTime() + 5000);
@@ -85,8 +85,30 @@ describe('upsertRuns', () => {
       .toEqual({ schedule_entry_id: null, workflow_id: null });
   });
 
+  it('一批中夹一行会被 DB 拒绝的数据（started_at 为 Invalid Date）：其余行照常写入、failed_rows===1', async () => {
+    // 外层测试在事务里，单行失败会让事务进入 aborted；这里给每次 query 套 SAVEPOINT，模拟生产里“失败不影响后续语句”的连接
+    const db = {
+      query: async (sql, params) => {
+        await client.query('SAVEPOINT row_guard');
+        try {
+          const res = await client.query(sql, params);
+          await client.query('RELEASE SAVEPOINT row_guard');
+          return res;
+        } catch (e) {
+          await client.query('ROLLBACK TO SAVEPOINT row_guard');
+          throw e;
+        }
+      },
+    };
+    const bad = mk('bad', { started_at: new Date('not-a-date'), ended_at: null, outcome: 'running' });
+    const r = await upsertRuns(db, [mk('ok1'), bad, mk('ok2')]);
+    expect(r).toEqual({ written: 2, failed_rows: 1 });
+    const ids = (await client.query("SELECT run_id FROM runs WHERE run_id LIKE 'openclaw:%' ORDER BY run_id")).rows.map((x) => x.run_id);
+    expect(ids).toEqual(['openclaw:ok1', 'openclaw:ok2']);
+  });
+
   it('空数组 → written 为 0', async () => {
-    expect(await upsertRuns(client, [])).toEqual({ written: 0 });
+    expect(await upsertRuns(client, [])).toEqual({ written: 0, failed_rows: 0 });
   });
 });
 
