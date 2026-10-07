@@ -57,7 +57,9 @@ function report(plan) {
     console.log(`\n== ${NAMES[layer]}（${layer}，${p.rows} 行）列 ${p.before} → ${p.after}`);
     console.log(`  删 ${p.drop.length} 列：${p.drop.map(c => `${c.name}[${c.type},${c.filled}/${p.rows}]`).join('、') || '无'}`);
     console.log(`  留 ${p.keep.length} 列：${p.keep.map(c => `${c.name}（${c.source}）`).join('、')}`);
+    if (p.rename.length) console.log(`  待投影器改名（保值）${p.rename.length} 列：${p.rename.map(r => `${r.from}→${r.to}`).join('、')}`);
     if (p.missing.length) console.log(`  待投影器新建 ${p.missing.length} 列：${p.missing.join('、')}`);
+    console.log(`  上线并清理后：${p.after + p.missing.length} 列`);
     if (p.archive.length) console.log(`  归档 ${p.archive.length} 页（无 Brain ID）：${p.archive.map(a => a.title || a.id).join('、')}`);
     if (p.pending.length) console.log(`  待拍板 ${p.pending.length} 页（无 Brain ID，不自动归档）：${p.pending.map(a => a.title || a.id).join('、')}`);
   }

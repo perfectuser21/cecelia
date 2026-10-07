@@ -32,7 +32,7 @@ describe('目录运行循环',()=>{
     for(let n=0;n<4;n++)await runDirectoryProjection(f.pool,{token:'test',notionReq:f.notionReq,force:true});
     const page=layer=>[...f.pages.values()].find(p=>p.parent.database_id===f.dbs[layer]&&p.properties['Brain ID']?.rich_text?.[0]?.text?.content===
       (layer==='value_streams'?fixtureEntityId(997):fixtureEntityId(996)));
-    expect(page('value_streams').properties.Name.title[0].text.content).toBe('新价值流');
+    expect(page('value_streams').properties['名称'].title[0].text.content).toBe('新价值流');
     expect(page('capabilities').properties['所属价值流'].relation).toEqual([{id:page('value_streams').id}]);
     expect(page('value_streams').properties['同步状态'].select.name).toBe('已同步');
   });
@@ -40,6 +40,12 @@ describe('目录运行循环',()=>{
     const f=runtimeFixture();f.databases.get(f.dbs.steps).properties['所属Activity'].relation.database_id=fixtureEntityId(999);
     await expect(runDirectoryProjection(f.pool,{token:'test',notionReq:f.notionReq,force:true})).rejects.toThrow(/relation/);
     expect(f.writes).toEqual([]);expect(f.links).toEqual([]);
+  });
+  it('Activity 页面正文由目录投影写（唯一写正文的地方），正文失败只记在结果里不算目录失败', async () => {
+    const f = runtimeFixture(); const calls = [];
+    const result = await runDirectoryProjection(f.pool, { token: 'test', notionReq: f.notionReq, force: true, bodies: async (client, opts) => { calls.push(opts.token); throw new Error('正文 503'); } });
+    expect(calls).toEqual(['test']);
+    expect(result.failed).toBe(0); expect(result.body).toEqual({ error: '正文 503' });
   });
   it('每轮有限行并持久游标，跨轮收口所有层且幂等无重复页',async()=>{
     const f=runtimeFixture();
@@ -49,7 +55,7 @@ describe('目录运行循环',()=>{
     expect(f.links).toHaveLength(6);expect(f.pages.size).toBe(6);
     expect(f.pages.get(fixtureEntityId(41)).properties.Name.title[0].text.content).toBe('组织');
     const activity=f.links.find(l=>l.entity_id===fixtureEntityId(25));
-    expect(f.pages.get(activity.external_id).properties['所属Workflows'].relation).toHaveLength(1);
+    expect(f.pages.get(activity.external_id).properties['所属流程'].relation).toHaveLength(1);
     f.writes.length=0;
     for(let n=0;n<3;n++)await runDirectoryProjection(f.pool,{token:'test',notionReq:f.notionReq,force:true,batchSize:2});
     expect(f.writes).toEqual([]);

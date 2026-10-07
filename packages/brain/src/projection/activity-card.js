@@ -1,71 +1,89 @@
 /**
- * Activity 页 15 列 + 8 格颜色、Step 页三列（树+仓库 v3.0）：Brain 真身 → Notion 目录库的机器列。
- * 列名与取值只在这里定义一次：目录 schema 建列、目录源构造行都读它，不会各写各的。
- * 人只拍板三问（承诺 / 哪些失败要人 / 判定点误判后果），其余列全部机器写、Notion 上手改会被覆盖。
+ * Activity / Step 卡片（树+仓库 v3.0，第二轮「人打开看得懂」）：Brain 真身 → Notion 目录库的机器列与 Activity 页面正文。
+ * 列只放人一眼要看的：承诺（FR）/输入/输出/谁来执行/还缺什么；其余 9 项标准内容写进页面正文的机器区块（activity-body.js）。
+ * 「还缺什么」一列人话替代 8 个格子列和登记缺口：没写的标准项 + 红/待判/未验的格子。
  */
 // 与 directory-source.rich 同形（不 import 它，避免两模块互相引用）
 const rich = value => ({ rich_text: value == null || value === '' ? [] : [{ text: { content: (typeof value === 'string' ? value : JSON.stringify(value)).slice(0, 1900) } }] });
 
-/** 8 个标准格 → 页面列名；顺序固定 = 验收 8 列的顺序。 */
-export const CELL_KEYS = Object.freeze({
-  promise: '格·承诺', nfr: '格·NFR', judgment: '格·判定点', invariants: '格·不变量',
-  failure: '格·失败', readback: '格·读回', adversarial: '格·对抗', shelf_life: '格·保质期',
-});
-export const CELL_COLUMNS = Object.freeze(Object.values(CELL_KEYS));
+const EXECUTORS = Object.freeze({ code: '代码', agent: 'AI', human: '人' });
+/** executor_kind → 中文；没写 = 「未写」。 */
+export const executorLabel = kind => EXECUTORS[kind] ?? '未写';
 
-/** 格子状态 → 选项（名字带色块，颜色同时写进库定义，页面一眼看出红绿灰）。 */
-export const CELL_STATUS_OPTIONS = Object.freeze([
-  { status: 'green', name: '🟢 绿', color: 'green' },
-  { status: 'red', name: '🔴 红', color: 'red' },
-  { status: 'pending', name: '🟡 待判', color: 'yellow' },
-  { status: 'gray', name: '⚪ 灰', color: 'gray' },
+/** 13 个标准项：名字、真身字段、对应的格子（没有格子的项只查写没写）。 */
+export const ACTIVITY_ITEMS = Object.freeze([
+  { label: '承诺', field: 'promise', cell: 'promise' }, { label: '输入', field: 'inputs' }, { label: '输出', field: 'outputs' },
+  { label: '前提', field: 'preconditions' }, { label: '不变量', field: 'invariants', cell: 'invariants' }, { label: 'NFR', field: 'nfr', cell: 'nfr' },
+  { label: '失败语义', field: 'failure', cell: 'failure' }, { label: '读回', field: 'readback', cell: 'readback' },
+  { label: '判定点', field: 'judgment', cell: 'judgment' }, { label: '对抗', field: 'adversarial', cell: 'adversarial' },
+  { label: '保质期', field: 'shelf_life_days', cell: 'shelf_life' }, { label: '用料', field: null }, { label: '谁来执行', field: 'executor_kind' },
 ]);
-const GRAY = CELL_STATUS_OPTIONS[3].name;
-const statusName = status => CELL_STATUS_OPTIONS.find(o => o.status === status)?.name ?? GRAY;
-
-/** 文字/数字机器列：页面列名 → Activity 真身列。 */
-const TEXT_COLUMNS = Object.freeze({
-  '承诺': 'promise', '输入': 'inputs', '输出': 'outputs', '前提': 'preconditions', '不变量': 'invariants',
-  'NFR': 'nfr', '失败语义': 'failure', '读回': 'readback', '判定点': 'judgment', '对抗': 'adversarial',
-});
-export const ACTIVITY_CARD_COLUMNS = Object.freeze([...Object.keys(TEXT_COLUMNS), '保质期(天)', '用料', ...CELL_COLUMNS]);
-export const STEP_CARD_COLUMNS = Object.freeze(['动作', '失败处理', '模式']);
+/** 写在页面正文、不占列的 9 项（顺序即正文顺序）。 */
+export const BODY_ITEMS = Object.freeze(['前提', '不变量', 'NFR', '失败语义', '读回', '判定点', '对抗', '保质期', '用料']);
 
 const isEmpty = v => v == null || v === '' || (Array.isArray(v) && v.length === 0) || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0);
 
+/** jsonb → 人话：带 type/fields 的数据描述写成「Video(line_key, video_id)」，数组一行一个，对象写「键：值」，其余原样。 */
+export function humanize(value) {
+  if (isEmpty(value)) return '';
+  if (Array.isArray(value)) return value.map(humanize).filter(Boolean).join('\n');
+  if (typeof value === 'object') {
+    if (typeof value.type === 'string' && (Array.isArray(value.fields) || value.effect || value.cardinality)) {
+      return `${value.type}${value.cardinality === 'many' ? '[]' : ''}${value.effect ? ` ${value.effect}` : ''}(${(value.fields || []).join(', ')})`;
+    }
+    return Object.entries(value).filter(([, v]) => !isEmpty(v)).map(([k, v]) => `${k}：${inline(v)}`).join('；');
+  }
+  return String(value);
+}
+/** 嵌套值写成一行：数组用「、」，对象写「键 值」用「，」。 */
+function inline(value) {
+  if (Array.isArray(value)) return value.map(inline).join('、');
+  if (value && typeof value === 'object') return Object.entries(value).filter(([, v]) => !isEmpty(v)).map(([k, v]) => `${k} ${inline(v)}`).join('，');
+  return String(value);
+}
+
+const itemValue = (a, uses, item) => (item.label === '用料' ? uses : a[item.field]);
+const usesText = uses => uses.map(u => `${u.item_name}（${u.role}）`).join('；');
+
 /**
- * @param {object} a      activities 一行（含 15 列）
- * @param {object[]} cells 该 Activity 的格子行（cell_key / cell_status / parent_cell_key）
- * @param {object[]} uses  该 Activity 的用料（item_name / role）
+ * 还缺什么（一列人话）：没写的标准项；格子红=「X：红」、待判=「X：待判」、内容写了但格子没判过=「X：未验」；外加调用方给的登记问题。
+ * 全齐写「齐了」。
  */
-export function buildActivityCardProps(a = {}, cells = [], uses = []) {
-  const props = {};
-  for (const [column, field] of Object.entries(TEXT_COLUMNS)) props[column] = rich(isEmpty(a[field]) ? null : a[field]);
-  props['保质期(天)'] = { number: Number.isFinite(a.shelf_life_days) ? a.shelf_life_days : null };
-  props['用料'] = rich(uses.length ? uses.map(u => `${u.item_name}（${u.role}）`).join('；') : null);
-  const byKey = new Map(cells.filter(c => !c.parent_cell_key).map(c => [c.cell_key, c.cell_status]));
-  for (const [key, column] of Object.entries(CELL_KEYS)) props[column] = { select: { name: statusName(byKey.get(key)) } };
-  return props;
+export function activityMissing(a = {}, cells = [], uses = [], extra = []) {
+  const status = new Map(cells.filter(c => !c.parent_cell_key).map(c => [c.cell_key, c.cell_status]));
+  const blank = [], flagged = [];
+  for (const item of ACTIVITY_ITEMS) {
+    const written = item.label === '谁来执行' ? Boolean(EXECUTORS[a.executor_kind]) : !isEmpty(itemValue(a, uses, item));
+    if (!written) { blank.push(item.label); continue; }
+    if (!item.cell) continue;
+    const s = status.get(item.cell);
+    if (s === 'red') flagged.push(`${item.label}：红`);
+    else if (s === 'pending') flagged.push(`${item.label}：待判`);
+    else if (s !== 'green') flagged.push(`${item.label}：未验`);
+  }
+  const parts = [...(blank.length ? [`没写：${blank.join('、')}`] : []), ...flagged, ...extra];
+  return parts.length ? parts.join('\n') : '齐了';
 }
 
-/** Step 三列：动作（按脚本精度）、失败处理（retry:N | abort）、模式。名字/进出/读回沿用目录既有列。 */
+/** Activity 卡片列：承诺（FR）/输入/输出/谁来执行/还缺什么。 */
+export function buildActivityCardProps(a = {}, cells = [], uses = [], extra = []) {
+  return {
+    '承诺（FR）': rich(humanize(a.promise) || null), '输入': rich(humanize(a.inputs) || null), '输出': rich(humanize(a.outputs) || null),
+    '谁来执行': { select: { name: executorLabel(a.executor_kind) } }, '还缺什么': rich(activityMissing(a, cells, uses, extra)),
+  };
+}
+
+/** 页面正文 9 段：每段一个小标题 + 内容，没写的写「（未写）」。返回 [{ label, text }]。 */
+export function activityBodySections(a = {}, uses = []) {
+  return BODY_ITEMS.map(label => {
+    const item = ACTIVITY_ITEMS.find(i => i.label === label);
+    const value = itemValue(a, uses, item);
+    const text = label === '用料' ? usesText(uses) : label === '保质期' && Number.isFinite(value) ? `${value} 天` : humanize(value);
+    return { label, text: text || '（未写）' };
+  });
+}
+
+/** Step 卡片：做什么、失败了怎么办（名字/进出/验收在目录源里拼）。 */
 export function buildStepCardProps(s = {}) {
-  return {
-    '动作': rich(s.action ?? null),
-    '失败处理': rich(s.on_fail ?? null),
-    '模式': { select: { name: s.mode || 'action' } },
-  };
-}
-
-/** 目录 schema 里的列定义（建列用；格子列带颜色选项，重跑只补缺不改已有）。 */
-export function activityCardSchema() {
-  const cell = () => ({ select: { options: CELL_STATUS_OPTIONS.map(({ name, color }) => ({ name, color })) } });
-  return {
-    ...Object.fromEntries(Object.keys(TEXT_COLUMNS).map(c => [c, { rich_text: {} }])),
-    '保质期(天)': { number: {} }, '用料': { rich_text: {} },
-    ...Object.fromEntries(CELL_COLUMNS.map(c => [c, cell()])),
-  };
-}
-export function stepCardSchema() {
-  return { '动作': { rich_text: {} }, '失败处理': { rich_text: {} }, '模式': { select: {} } };
+  return { '做什么': rich(s.action ?? null), '失败了怎么办': rich(s.on_fail ?? null) };
 }

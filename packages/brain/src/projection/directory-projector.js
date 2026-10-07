@@ -2,7 +2,8 @@
 import { notionReq as defaultNotionReq, getToken } from '../recurring-notion-sync.js';
 import { propsDigest } from '../lib/notion-projection-engine.js';
 import { ensureDirectorySchemas } from './directory-schema.js';
-import { loadDirectorySource, buildDirectoryRows, rich } from './directory-source.js';
+import { loadDirectorySource, buildDirectoryRows } from './directory-source.js';
+import { syncActivityBodies } from './activity-body.js';
 
 export const DIRECTORY_LOCK = 613006;
 export const DIRECTORY_TARGET = 'notion-directory';
@@ -96,7 +97,7 @@ export async function projectDirectoryPage(pool, { token, dbId, row, properties,
   }
   if (!finalize && existingPage && text(existingPage.properties?.['Brain ID']) === row.id) return pageId;
   if (existingPage) existingPage = await completeRelations(existingPage, pageId, properties, token, notionReq);
-  const unchanged = existingPage && Object.entries(properties).filter(([k])=>k!=='同步时间').every(([key,expected])=>
+  const unchanged = existingPage && Object.entries(properties).every(([key,expected])=>
     JSON.stringify(value(existingPage.properties?.[key]))===JSON.stringify(value(expected)));
   let readback = existingPage;
   if (!unchanged) {
@@ -109,20 +110,19 @@ export async function projectDirectoryPage(pool, { token, dbId, row, properties,
   assertPage(readback, dbId, row.id, false);
   readback = await completeRelations(readback, pageId, properties, token, notionReq);
   for (const [key, expected] of Object.entries(properties)) {
-    if (unchanged && key === '同步时间') continue;
     if (JSON.stringify(value(readback.properties?.[key])) !== JSON.stringify(value(expected))) throw new Error(`目录属性读回不一致: ${key}`);
   }
   if (finalize) await pool.query(`INSERT INTO projection_links(target,entity_type,entity_id,external_id,content_hash,last_synced_at)
     VALUES('notion-directory',$1,$2,$3,$4,NOW()) ON CONFLICT(target,entity_type,entity_id) DO UPDATE SET
     content_hash=EXCLUDED.content_hash,last_synced_at=NOW(),updated_at=NOW()
     WHERE projection_links.external_id=EXCLUDED.external_id RETURNING external_id`,
-  [row.table, row.id, pageId, propsDigest({ database_id: dbId, properties: Object.fromEntries(Object.entries(properties).filter(([k])=>k!=='同步时间')) })]).then(result => {
+  [row.table, row.id, pageId, propsDigest({ database_id: dbId, properties })]).then(result => {
     if (result.rowCount === 0) throw new Error('目录链接已变化，拒绝成功收据');
   });
   return pageId;
 }
 
-export async function runDirectoryProjection(pool, { token, notionReq = defaultNotionReq, force = false, batchSize = 25, budgetMs = 60000, beforeSource } = {}) {
+export async function runDirectoryProjection(pool, { token, notionReq = defaultNotionReq, force = false, batchSize = 25, budgetMs = 60000, beforeSource, bodies = syncActivityBodies } = {}) {
   const deadline = Date.now() + Math.max(0, Math.min(60000,budgetMs)), request = notionReq;
   notionReq = (...args) => { if (Date.now() >= deadline) throw new Error('目录单轮预算耗尽'); return request(...args); };
   const client = await pool.connect();
@@ -146,7 +146,7 @@ export async function runDirectoryProjection(pool, { token, notionReq = defaultN
     const state = (await client.query('SELECT value_json FROM working_memory WHERE key=$1', [stateKey])).rows[0]?.value_json || {};
     const pending = state.pages || {};
     const links = (await client.query("SELECT entity_type,entity_id,external_id FROM projection_links WHERE target IN ('notion','notion-directory')")).rows;
-    const pages = new Map(), errors = [], stat = { total: rows.length, processed: 0, synced: 0, incomplete: 0, failed: 0 };
+    const pages = new Map(), errors = [], gapRows = [], stat = { total: rows.length, processed: 0, synced: 0, incomplete: 0, failed: 0 };
     for (const row of rows) {
       const key = `${row.layer}:${row.id}`, found = links.filter(l => l.entity_type === row.table && l.entity_id === row.id);
       const ids = new Set([...found.map(l => l.external_id), row.pageId, pending[key]].filter(Boolean));
@@ -162,7 +162,7 @@ export async function runDirectoryProjection(pool, { token, notionReq = defaultN
       try {
         const key = `${row.layer}:${row.id}`;
         const pageId = await projectDirectoryPage(client, { token, dbId: dbs[row.layer], row: { ...row, pageId: pages.get(key) || row.pageId }, notionReq, finalize: false,
-          properties: { ...row.properties, '同步状态': { select: { name: '待核对' } }, '登记缺口': rich(row.gaps.join('\n')) } });
+          properties: { ...row.properties, '同步状态': { select: { name: '待核对' } } } });
         pages.set(key, pageId); pending[key] = pageId; await saveState(start);
       } catch (error) { pages.delete(`${row.layer}:${row.id}`); stat.failed++; errors.push({ layer: row.layer, id: row.id, code: error.message }); }
     }
@@ -189,15 +189,17 @@ export async function runDirectoryProjection(pool, { token, notionReq = defaultN
       }
       try {
         await projectDirectoryPage(client, { token, dbId: dbs[row.layer], row: { ...row, pageId }, notionReq,
-          properties: { ...row.properties, ...relations, '同步状态': { select: { name: gaps.length ? '有缺口' : '已同步' } },
-            '登记缺口': rich(gaps.join('\n')), '同步时间': { date: { start: new Date(Math.floor(Date.now() / 60000) * 60000).toISOString() } } } });
-        if (gaps.length) stat.incomplete++; else stat.synced++;
+          properties: { ...row.properties, ...relations, '同步状态': { select: { name: gaps.length ? '有缺口' : '已同步' } } } });
+        if (gaps.length) { stat.incomplete++; gapRows.push({ layer: row.layer, id: row.id, gaps }); } else stat.synced++;
       } catch (error) { stat.failed++; errors.push({ layer: row.layer, id: row.id, code: error.message }); }
     }
     await saveState(start + batch.length >= rows.length ? 0 : start + batch.length);
+    // Activity 页面正文的机器区块（9 段标准项）；正文失败只记在结果里，不算目录失败
+    let body = null;
+    try { body = bodies ? await bodies(client, { token, notionReq }) : null; } catch (error) { body = { error: error.message }; }
     await client.query(`UPDATE projection_targets SET last_success_at=CASE WHEN $2=0 THEN NOW() ELSE last_success_at END,
       last_error=$3,updated_at=NOW() WHERE target=$1`, [DIRECTORY_TARGET, stat.failed, errors.length ? JSON.stringify(errors).slice(0, 4000) : null]);
-    return { ...stat, status: stat.failed ? 'failed' : stat.incomplete || catalogGaps.length ? 'partial' : 'batch_verified', errors, catalog_gaps: catalogGaps };
+    return { ...stat, status: stat.failed ? 'failed' : stat.incomplete || catalogGaps.length ? 'partial' : 'batch_verified', errors, catalog_gaps: catalogGaps, gap_rows: gapRows, body };
   } catch (error) {
     await client.query('UPDATE projection_targets SET last_error=$2,updated_at=NOW() WHERE target=$1', [DIRECTORY_TARGET, error.message]).catch(() => {});
     throw error;

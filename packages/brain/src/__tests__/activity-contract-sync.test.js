@@ -279,23 +279,13 @@ describe('runBackboneContractJob', () => {
     expect(pool.memory.activity_contract_sync).toMatchObject({ ok: true, lag_since: null, alerted: false, head_sha: HEAD });
   });
 
-  it('正文写失败不影响同步（各自吞错）；Activity 库的列只归目录投影写，本 job 不再推英文属性列', async () => {
+  it('本 job 不写 Notion：列与页面正文都归六层目录投影（只剩一处写正文）', async () => {
     const gh = fakeGithub({ digest: digestOf({}) });
     const pool = fakePool([]);
-    const r = await runBackboneContractJob(pool, { ...deps(gh), now: Date.now(), force: true, body: async () => { throw new Error('notion 503'); } });
+    const r = await runBackboneContractJob(pool, { ...deps(gh), now: Date.now(), force: true });
     expect(r.sync.ok).toBe(true);
-    expect(r).not.toHaveProperty('push');
-    expect(r.body).toMatchObject({ error: 'notion 503' });
+    expect(Object.keys(r)).toEqual(['sync']);
     const mod = await import('../activity-contract-sync.js');
-    for (const gone of ['pushBackboneActivities', 'BACKBONE_DB_PROPS', 'buildBackboneActivityProps']) expect(mod).not.toHaveProperty(gone);
-  });
-});
-
-describe('活动正文模型信息',()=>{
-  it('正文与属性一致，未固定型号的agent仍标明调用大模型',async()=>{
-    const {buildBackboneActivityBody}=await import('../activity-contract-sync.js');
-    const blocks=buildBackboneActivityBody({contract:{name:'分析',invokers:['agent']}});
-    expect(JSON.stringify(blocks)).toContain('调用大模型；实际型号见运行记录');
-    expect(JSON.stringify(blocks)).not.toContain('不调大模型');
+    for (const gone of ['pushBackboneActivities', 'BACKBONE_DB_PROPS', 'buildBackboneActivityProps', 'syncBackboneBodies', 'buildBackboneActivityBody']) expect(mod).not.toHaveProperty(gone);
   });
 });

@@ -66,10 +66,10 @@ describe('六层目录真实PG边界', () => {
     await client.query('INSERT INTO activity_definition_versions(id,activity_id,payload) VALUES($1,$2,$3),($4,$2,$5)',
       [version,activity,payload,history,{...payload,steps:[{...entry,contract:{...declared,implementation:'历史实现'}}]}]);
     const rows=buildDirectoryRows(await loadDirectorySource(client)),row=rows.find(r=>r.id===step);
-    expect(JSON.parse(row.properties['实现来源'].rich_text[0].text.content)).toEqual(declared.implementation);
-    expect(row.properties.Input.rich_text[0].text.content).toBe('["Device.serial"]');
-    expect(row.gaps).toContain('implementation_unverified');expect(row.definitionVersion.id).toBe(version);
-    expect(rows.find(r=>r.id===activity).gaps).toContain('step_registration_unresolved:unregistered');
+    const txt=(r,k)=>r.properties[k].rich_text.map(x=>x.text.content).join('');
+    expect(txt(row,'输入')).toBe('Device.serial');
+    expect(txt(row,'还缺什么')).toContain('实现未核验');expect(row.definitionVersion.id).toBe(version);
+    expect(txt(rows.find(r=>r.id===activity),'还缺什么')).toContain('Step 登记对不上：unregistered');
     expect(rows.filter(r=>r.layer==='steps')).toHaveLength(1);
     const page=fixtureEntityId(855),dbId=fixtureEntityId(856);let properties;
     const notionReq=async(_token,path,method,body)=>{
@@ -81,12 +81,12 @@ describe('六层目录真实PG边界', () => {
     expect((await client.query('SELECT external_id FROM projection_links WHERE entity_id=$1',[step])).rows).toEqual([{external_id:page}]);
     await client.query('UPDATE steps SET source_sha256=$2 WHERE id=$1',[step,'c'.repeat(64)]);
     const stale=buildDirectoryRows(await loadDirectorySource(client));
-    expect(stale.find(r=>r.id===step).properties['实现来源'].rich_text).toEqual([]);
-    expect(stale.find(r=>r.id===activity).gaps).toContain('step_registration_unresolved:read');
+    expect(txt(stale.find(r=>r.id===step),'还缺什么')).toContain('实现没登记');
+    expect(txt(stale.find(r=>r.id===activity),'还缺什么')).toContain('Step 登记对不上：read');
     await client.query('UPDATE steps SET source_sha256=$2 WHERE id=$1',[step,sha]);
     for(const change of [{...payload,steps:[{...entry,step_id:fixtureEntityId(999)}]}, {...payload,activity_id:fixtureEntityId(999)}]) {
       await client.query('UPDATE activity_definition_versions SET payload=$2 WHERE id=$1',[version,change]);
-      expect(buildDirectoryRows(await loadDirectorySource(client)).find(r=>r.id===step).properties['实现来源'].rich_text).toEqual([]);
+      expect(txt(buildDirectoryRows(await loadDirectorySource(client)).find(r=>r.id===step),'还缺什么')).toContain('实现没登记');
     }
   });
   it('单SQL只读当前复合身份版本与 runs 7 天统计并写读回落receipt；较新历史/错对象不能冒充当前', async () => {
@@ -108,8 +108,8 @@ describe('六层目录真实PG边界', () => {
     expect(rows.find(r=>r.id===workflows[1]).definitionVersion).toBeNull();
     expect(row.properties['7天次数']).toEqual({number:137});
     expect(row.properties['7天成功率']).toEqual({number:0.9781});
-    expect(row.properties['平均时长(秒)']).toEqual({number:12.3});
-    expect(row.properties['在用吗']).toEqual({select:{name:'在跑'}});
+    expect(row.properties['平均时长']).toEqual({rich_text:[{text:{content:'12.3 秒'}}]});
+    expect(row.properties['运行情况']).toEqual({select:{name:'在跑'}});
     const page=fixtureEntityId(820),dbId=fixtureEntityId(821);let properties;
     const notionReq=async(_token,path,method,body)=>{
       if(path.endsWith('/query'))return{results:[],has_more:false};
@@ -121,37 +121,20 @@ describe('六层目录真实PG边界', () => {
     expect((await client.query("SELECT entity_id,external_id FROM projection_links WHERE target='notion-directory'")).rows)
       .toEqual([{entity_id:workflows[0],external_id:page}]);
   });
-  it.each([0, 1000, 60000])('Notion分钟化并偏移%s毫秒：真运行仅精确日期能落PG成功receipt', async offset => {
+  it('真运行落PG成功receipt；正文同步出错只记在结果里，不算目录失败', async () => {
     const f = runtimeFixture();
     const config = { ...f.config, value_stream_bindings: [] };
     await client.query('CREATE TABLE working_memory(key text PRIMARY KEY,value_json jsonb,updated_at timestamptz)');
     await client.query('INSERT INTO areas VALUES($1,$2,$3)', [fixtureEntityId(21), '组织', fixtureEntityId(41)]);
     await client.query("INSERT INTO projection_targets(target,enabled,config) VALUES('notion-directory',true,$1)", [config]);
     const pool = { connect: async () => ({ query: client.query.bind(client), release() {} }) };
-    const notionReq = async (...args) => {
-      const result = await f.notionReq(...args);
-      const date = result.properties?.['同步时间']?.date;
-      if (date?.start) date.start = new Date(Math.floor(Date.parse(date.start) / 60000) * 60000 + offset).toISOString().replace('Z', '+00:00');
-      return result;
-    };
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-02T13:43:27.456Z'));
-    let result;
-    try { result = await runDirectoryProjection(pool, { token: 'test', notionReq, force: true }); }
-    finally { vi.useRealTimers(); }
+    const result = await runDirectoryProjection(pool, { token: 'test', notionReq: f.notionReq, force: true, bodies: async () => { throw new Error('正文失败'); } });
     const receipts = (await client.query("SELECT entity_id,external_id FROM projection_links WHERE target='notion-directory'")).rows;
     const target = (await client.query("SELECT last_success_at,last_error FROM projection_targets WHERE target='notion-directory'")).rows[0];
-    if (offset === 0) {
-      expect(result).toMatchObject({ failed: 0, synced: 1 });
-      expect(receipts).toEqual([{ entity_id: fixtureEntityId(21), external_id: fixtureEntityId(41) }]);
-      expect(target.last_success_at).not.toBeNull();
-      expect(target.last_error).toBeNull();
-    } else {
-      expect(result).toMatchObject({ failed: 1, synced: 0 });
-      expect(result.errors[0].code).toBe('目录属性读回不一致: 同步时间');
-      expect(receipts).toEqual([]);
-      expect(target.last_success_at).toBeNull();
-    }
+    expect(result).toMatchObject({ failed: 0, synced: 1, body: { error: '正文失败' } });
+    expect(receipts).toEqual([{ entity_id: fixtureEntityId(21), external_id: fixtureEntityId(41) }]);
+    expect(target.last_success_at).not.toBeNull();
+    expect(target.last_error).toBeNull();
   });
   it('真SQL反序persist同一共享refs后页面不重PATCH，成功receipt hash保持', async () => {
     const w1=fixtureEntityId(701),w2=fixtureEntityId(702),activity=fixtureEntityId(703),page=fixtureEntityId(704),dbId=fixtureEntityId(705);
@@ -252,7 +235,8 @@ describe('六层目录真实PG边界', () => {
     await client.query('INSERT INTO steps VALUES($1,\'one\',$2,true,1)',[s,a]);
     await client.query('INSERT INTO workflow_activity_refs VALUES($1,$3,\'first\',1,true),($2,$3,\'second\',2,true)',[w1,w2,a]);
     const rows=buildDirectoryRows(await loadDirectorySource(client));
-    expect(rows.find(r=>r.id===s).relations['所属Workflows'].map(x=>x.id).sort()).toEqual([w1,w2].sort());
+    expect(rows.find(r=>r.id===a).relations['所属流程'].map(x=>x.id).sort()).toEqual([w1,w2].sort());
+    expect(rows.find(r=>r.id===s).relations['所属Activity'].map(x=>x.id)).toEqual([a]);
     expect((await client.query('SELECT count(*)::int AS n FROM activities')).rows[0].n).toBe(1);
   });
   it('读回失败不写真实成功receipt；第二次成功认领同页且不重建', async () => {

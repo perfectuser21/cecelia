@@ -118,7 +118,7 @@ export async function configureDirectoryProjection(pool, input, { token, notionR
         await preflightBeforeCreate(config.dbs, token, notionReq);
         const created = await notionReq(token, '/databases', 'POST', { parent: { page_id: config.parent_page_id },
           title: [{ type: 'text', text: { content: 'Capabilities' } }],
-          description: [{ type: 'text', text: { content: MARKER } }], properties: { Name: { title: {} } } });
+          description: [{ type: 'text', text: { content: MARKER } }], properties: { '名称': { title: {} } } });
         uuid(created.id); config.dbs.capabilities = created.id;
         const verified = await findCapabilityDatabase({ token, parentPageId: config.parent_page_id, notionReq });
         if (compact(verified) !== compact(created.id)) throw new Error('能力目录创建后父页读回不一致');
