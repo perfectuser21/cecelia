@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveSprintDir, buildResult } from '../lib/protocol.mjs';
+import { resolveSprintDir, buildResult, fail, validateBase } from '../lib/protocol.mjs';
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/activity-fixture.mjs');
 
@@ -124,5 +124,48 @@ describe('resolveSprintDir', () => {
 
   it.each(['', 'relative/wt', undefined, null, 42])('非法 worktree %s 抛 sprint_dir_invalid', (bad) => {
     expect(() => resolveSprintDir(bad, 'sprints/a')).toThrow('sprint_dir_invalid');
+  });
+});
+
+describe('fail', () => {
+  it('生成 failed 结果，带 failure_class 与 reason_code', () => {
+    expect(fail('fatal', 'x_code')).toEqual({ status: 'failed', failure_class: 'fatal', reason_code: 'x_code' });
+  });
+
+  it('extra 合并进结果（如 evidence）', () => {
+    expect(fail('retryable', 'y', { evidence: [{ a: 1 }] })).toEqual({
+      status: 'failed',
+      failure_class: 'retryable',
+      reason_code: 'y',
+      evidence: [{ a: 1 }],
+    });
+  });
+});
+
+describe('validateBase', () => {
+  const ok = { task_id: 't-1', worktree: '/w', sprint_dir: 'sprints/a' };
+
+  it('合法输入返回 { dir }', () => {
+    expect(validateBase(ok)).toEqual({ dir: '/w/sprints/a' });
+  });
+
+  it.each([undefined, '', 5, null])('task_id=%s 抛 task_id_missing', (bad) => {
+    expect(() => validateBase({ ...ok, task_id: bad })).toThrow('task_id_missing');
+  });
+
+  it('task_id 与 sprint_dir 同时非法时先报 task_id_missing', () => {
+    expect(() => validateBase({ ...ok, task_id: '', sprint_dir: '../x' })).toThrow('task_id_missing');
+  });
+
+  it.each([
+    ['sprint_dir 含 ..', { sprint_dir: '../x' }],
+    ['worktree 相对路径', { worktree: 'rel/wt' }],
+    ['worktree 缺失', { worktree: undefined }],
+  ])('%s 抛 sprint_dir_invalid', (_name, patch) => {
+    expect(() => validateBase({ ...ok, ...patch })).toThrow('sprint_dir_invalid');
+  });
+
+  it('input 为 null 时抛 task_id_missing', () => {
+    expect(() => validateBase(null)).toThrow('task_id_missing');
   });
 });

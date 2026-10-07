@@ -107,4 +107,10 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(r.result.failure_class).toBe('fatal');
     expect(r.result.reason_code).toBe('intent_ids_missing');
   });
+
+  it('task_id 与 sprint_dir 同时非法 -> 先报 task_id_missing', async () => {
+    const r = await run('ok', { task_id: '', sprint_dir: '/abs' });
+    expect(r.result.reason_code).toBe('task_id_missing');
+    expect(r.stderr).not.toContain('FAKE_CWD');
+  });
 });

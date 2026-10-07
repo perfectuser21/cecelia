@@ -168,4 +168,10 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(git(worktree, 'log', '--oneline').trim().split('\n')).toHaveLength(1);
     expect(ghCalls()).toHaveLength(0);
   });
+
+  it('task_id 与 sprint_dir 同时非法 -> 先报 task_id_missing', async () => {
+    const r = await run('new', { task_id: '', sprint_dir: 'a/../../b' });
+    expect(r.result.reason_code).toBe('task_id_missing');
+    expect(ghCalls()).toHaveLength(0);
+  });
 });

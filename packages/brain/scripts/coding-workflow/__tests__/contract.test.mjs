@@ -30,7 +30,7 @@ const REPORTED = {
     fatal: ['sprint_dir_invalid', 'task_id_missing', 'intent_ids_missing', 'spec_missing'],
   },
   chain_check: {
-    fatal: ['md_chain_invalid', 'sprint_dir_invalid'],
+    fatal: ['md_chain_invalid', 'sprint_dir_invalid', 'task_id_missing'],
   },
   publish: {
     retryable: ['push_failed', 'gh_failed'],

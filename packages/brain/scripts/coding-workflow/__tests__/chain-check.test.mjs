@@ -68,4 +68,11 @@ describe('chain_check 活动（子进程）', () => {
     expect(r.result.failure_class).toBe('fatal');
     expect(r.result.reason_code).toBe('sprint_dir_invalid');
   });
+
+  it('缺 task_id -> fatal task_id_missing', async () => {
+    const r = await runActivityProcess(ENTRY, input({ task_id: '' }));
+    expect(r.exitCode).toBe(2);
+    expect(r.result.failure_class).toBe('fatal');
+    expect(r.result.reason_code).toBe('task_id_missing');
+  });
 });
