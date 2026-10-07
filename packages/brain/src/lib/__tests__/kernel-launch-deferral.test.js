@@ -37,6 +37,38 @@ describe('kernel-launch-deferral — 编排槽满排队 run 的识别', () => {
     });
   });
 
+  // JS 判定与 SQL 判定的共同契约：同一张样本表，两套实现必须给出同样结论。
+  // SQL 的 JS 等价物按 launchDeferredSql 的结构逐字翻译（IS NOT NULL / starts_with / right()）。
+  describe('JS 与 SQL 判定共用的样本契约', () => {
+    const SAMPLES = [
+      [null, false],
+      [undefined, false],
+      ['', false],
+      ['kernel_remote_launch_deferred:orchestrator_bridge_prepare_http_429:orchestrator_slots_exhausted', true],
+      ['kernel_remote_launch_deferred:orchestrator_bridge_start_request_failed:The operation was aborted', true],
+      ['kernel_reconcile_remote_requeue:no_resumable_session', true],
+      ['kernel_reconcile_remote_requeue:no_resumable_session:defers_exhausted', false],
+      ['kernel_remote_launch_failed:orchestrator_bridge_prepare_http_400', false],
+      ['boom', false],
+      ['kernel_remote_launch_deferredX', false],
+    ];
+
+    function sqlEquivalent(reason) {
+      const sql = launchDeferredSql('ir');
+      // 从生成的 SQL 里抽出前缀与后缀，确保等价物确实对应实际 SQL 文本，而非另写一份常量
+      const prefixes = [...sql.matchAll(/starts_with\(ir\.failure_reason, '([^']+)'\)/g)].map((m) => m[1]);
+      const [, suffixLen, suffix] = sql.match(/right\(ir\.failure_reason, (\d+)\) <> '([^']+)'/);
+      if (reason == null) return false; // failure_reason IS NOT NULL
+      return prefixes.some((p) => reason.startsWith(p))
+        && reason.slice(-Number(suffixLen)) !== suffix; // right(col, N) <> suffix
+    }
+
+    it.each(SAMPLES)('%j → %s', (reason, expected) => {
+      expect(isLaunchDeferredReason(reason)).toBe(expected);
+      expect(sqlEquivalent(reason)).toBe(expected);
+    });
+  });
+
   describe('launchDeferredSql', () => {
     it('默认别名 ir，用 starts_with（不用 LIKE，避免 _ 通配符）', () => {
       const sql = launchDeferredSql();

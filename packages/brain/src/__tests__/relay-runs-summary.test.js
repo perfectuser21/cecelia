@@ -133,6 +133,20 @@ describe('GET /api/brain/orchestrator/relay-runs/summary', () => {
     expect(sql).toMatch(/orchestrator_version\s*=\s*'v2'/);
   });
 
+  it('B-07b: SLO 取每任务最新 trusted run 时跳过排队 run（槽满回队不算最新终态）', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await request(app).get('/api/brain/orchestrator/relay-runs/summary');
+
+    const [sql] = mockPool.query.mock.calls[0];
+    const cte = sql.slice(sql.indexOf('latest_trusted_task_runs AS'), sql.indexOf('slo AS'));
+    expect(cte).toContain("starts_with(initiative_runs.failure_reason, 'kernel_remote_launch_deferred:')");
+    expect(cte).toMatch(/AND NOT \(/);
+    // phase 分布计数不动（那是 run 的原始分布）
+    const phaseCounts = sql.slice(sql.indexOf('phase_counts AS'), sql.indexOf('latest_trusted_task_runs AS'));
+    expect(phaseCounts).not.toContain('starts_with');
+  });
+
   it('B-08: DB 抛异常 → 500 + body 仅含 error 字段，不暴露内部信息', async () => {
     mockPool.query.mockRejectedValueOnce(new Error('connection refused: pg internal'));
 

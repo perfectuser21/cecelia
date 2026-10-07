@@ -164,6 +164,17 @@ describe('GET /warroom/line/:id/command', () => {
     expect(res.body.generated_at).toBeDefined();
   });
 
+  it('health 查询剔除排队 run（槽满回队不算失败）', async () => {
+    mockCommandQueries();
+    await request(app()).get('/warroom/line/j1/command');
+    const healthSql = mockPool.query.mock.calls
+      .map(([sql]) => sql)
+      .find((s) => /FROM initiative_runs/.test(s) && /30 days/.test(s));
+    expect(healthSql).toBeTruthy();
+    expect(healthSql).toContain("starts_with(ir.failure_reason, 'kernel_remote_launch_deferred:')");
+    expect(healthSql).toMatch(/AND NOT \(/);
+  });
+
   it('journey 不存在 → 404', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     const res = await request(app()).get('/warroom/line/bad-id/command');
