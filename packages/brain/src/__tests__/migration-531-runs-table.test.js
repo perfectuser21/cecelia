@@ -25,7 +25,8 @@ describe('migration 531 runs table', () => {
 
   it('spans 加上级记录（自关联）与自动算出的层级列', () => {
     expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS parent_span_id uuid REFERENCES spans\(id\) ON DELETE SET NULL/);
-    expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS span_level text GENERATED ALWAYS AS[\s\S]*'step'[\s\S]*'activity'[\s\S]*'enabler'/);
+    // 最深的一层优先：物件调用 > Step > Activity
+    expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS span_level text GENERATED ALWAYS AS[\s\S]*enabler_id IS NOT NULL THEN 'enabler'[\s\S]*step_id IS NOT NULL THEN 'step'[\s\S]*ELSE 'activity'/);
   });
 
   it('先按已有 spans 回填运行总记录，再加 spans.run_id → runs.run_id 外键（级联删）', () => {
