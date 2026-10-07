@@ -15,16 +15,19 @@ const TASK_ID = '11111111-2222-3333-4444-555555555555';
 
 describe('spec 活动（子进程 + 假 claude）', () => {
   let worktree;
+  let pidDir;
 
   beforeAll(() => {
     fs.chmodSync(FAKE_CLAUDE, 0o755);
   });
   beforeEach(() => {
     worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-test-'));
+    pidDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-pids-')); // 不放进 worktree，免得被当成越界写
     gitPlain('init', '-q', worktree);
   });
   afterEach(() => {
     fs.rmSync(worktree, { recursive: true, force: true });
+    fs.rmSync(pidDir, { recursive: true, force: true });
   });
 
   const input = (patch = {}) => ({
@@ -220,8 +223,8 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect.fail(`${what} (pid ${pid}) 仍然存活`);
   };
   const pidFiles = () => ({
-    FAKE_CLAUDE_PID_FILE: path.join(worktree, '.fake-claude.pid'),
-    FAKE_CLAUDE_CHILD_PID_FILE: path.join(worktree, '.fake-claude-child.pid'),
+    FAKE_CLAUDE_PID_FILE: path.join(pidDir, 'claude.pid'),
+    FAKE_CLAUDE_CHILD_PID_FILE: path.join(pidDir, 'child.pid'),
   });
 
   it('claude 卡死超时 -> retryable claude_timeout，不留 02-spec.md，claude 与孙进程都已被清理', async () => {

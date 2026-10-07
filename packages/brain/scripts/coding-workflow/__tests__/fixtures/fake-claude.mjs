@@ -19,6 +19,7 @@ function spawnGrandchild() {
   if (!process.env.FAKE_CLAUDE_CHILD_PID_FILE) return;
   const stdio = process.env.FAKE_CLAUDE_CHILD_STDIO === 'ignore' ? 'ignore' : 'inherit';
   const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio });
+  grandchild.unref(); // 孙进程不拖住假 claude 自身退出（linger 模式需要 claude 先退、孙进程留下）
   fs.writeFileSync(process.env.FAKE_CLAUDE_CHILD_PID_FILE, String(grandchild.pid));
 }
 
