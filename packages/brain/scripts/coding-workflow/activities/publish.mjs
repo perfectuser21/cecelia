@@ -1,15 +1,11 @@
 // publish 活动：把 sprint 目录的 md 链提交、推送，并开草稿 PR（该分支已有 PR 则复用）。
 import { spawn } from 'node:child_process';
-import { runActivity, resolveSprintDir, log } from '../lib/protocol.mjs';
+import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
 
 const GH_AUTH_RE = /\bHTTP 401\b|authentication|auth login|missing required scope|bad credentials/i;
 // 凭据提示会让无 tty 的子进程挂住；--literal-pathspecs 禁用 :/ 等 pathspec 魔法
 const CHILD_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
 const GIT_PATHSPEC = ['--literal-pathspecs'];
-
-function fail(failureClass, reasonCode) {
-  return { status: 'failed', failure_class: failureClass, reason_code: reasonCode };
-}
 
 /** 运行子进程（不经 shell），输出转写到本进程 stderr；返回 { code, stdout, output }。 */
 function runCmd(bin, args, cwd) {
@@ -45,14 +41,9 @@ function runCmd(bin, args, cwd) {
 const lastLine = (text) => text.trim().split('\n').filter(Boolean).pop() || '';
 
 await runActivity(async (input) => {
-  const { task_id: taskId, worktree, sprint_dir: sprintDir, chain_files: chainFiles } = input;
-
-  try {
-    resolveSprintDir(worktree, sprintDir);
-  } catch {
-    return fail('fatal', 'sprint_dir_invalid');
-  }
-  if (typeof taskId !== 'string' || taskId === '') return fail('fatal', 'task_id_missing');
+  const { worktree, sprint_dir: sprintDir, chain_files: chainFiles } = input;
+  validateBase(input);
+  const taskId = input.task_id;
   if (!Array.isArray(chainFiles) || chainFiles.length === 0) return fail('fatal', 'chain_files_missing');
 
   const branchRes = await runCmd('git', ['-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD']);

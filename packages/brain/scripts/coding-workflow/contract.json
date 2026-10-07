@@ -45,7 +45,7 @@
         "empty_ok": [],
         "retryable": [],
         "needs_human": { "cases": [] },
-        "fatal": ["md_chain_invalid", "sprint_dir_invalid"]
+        "fatal": ["md_chain_invalid", "sprint_dir_invalid", "task_id_missing"]
       },
       "runtime": {
         "protocol": "json-stdio-v1",

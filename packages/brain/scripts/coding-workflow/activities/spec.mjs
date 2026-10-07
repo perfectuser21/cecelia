@@ -4,16 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runActivity, resolveSprintDir, log } from '../lib/protocol.mjs';
+import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
 
 const SPEC_FILE = '02-spec.md';
 const DEFAULT_INTENT_FILE = '01-intent.md';
 const PROMPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '../prompts/spec.md');
 const AUTH_RE = /auth|login|quota/i;
-
-function fail(failureClass, reasonCode) {
-  return { status: 'failed', failure_class: failureClass, reason_code: reasonCode };
-}
 
 function renderPrompt(template, vars) {
   return Object.entries(vars).reduce((text, [key, value]) => text.replaceAll(`{{${key}}}`, () => value), template);
@@ -47,16 +43,11 @@ function runChild(bin, args, cwd) {
 }
 
 await runActivity(async (input) => {
-  const { task_id: taskId, worktree, sprint_dir: sprintDir, intent_ids: intentIds } = input;
+  const { worktree, intent_ids: intentIds } = input;
   const intentFile = input.intent_file || DEFAULT_INTENT_FILE;
 
-  let dir;
-  try {
-    dir = resolveSprintDir(worktree, sprintDir);
-  } catch {
-    return fail('fatal', 'sprint_dir_invalid');
-  }
-  if (typeof taskId !== 'string' || taskId === '') return fail('fatal', 'task_id_missing');
+  const { dir } = validateBase(input);
+  const taskId = input.task_id;
   if (!Array.isArray(intentIds) || intentIds.length === 0) return fail('fatal', 'intent_ids_missing');
 
   const specPath = path.join(dir, SPEC_FILE);

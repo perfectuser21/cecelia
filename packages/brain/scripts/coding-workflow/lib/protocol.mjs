@@ -32,6 +32,21 @@ export function resolveSprintDir(worktree, sprintDir) {
   return resolved;
 }
 
+/**
+ * 活动入口的公共输入校验：先 task_id，再 worktree/sprint_dir。
+ * 失败 throw Error(reason_code)，由 runActivity 转成 failed/fatal；成功返回 { dir }（sprint 目录绝对路径）。
+ */
+export function validateBase(input) {
+  const taskId = input?.task_id;
+  if (typeof taskId !== 'string' || taskId === '') throw new Error('task_id_missing');
+  return { dir: resolveSprintDir(input.worktree, input.sprint_dir) };
+}
+
+/** 生成活动失败结果；extra（如 evidence）并入。 */
+export function fail(failureClass, reasonCode, extra = {}) {
+  return { status: 'failed', failure_class: failureClass, reason_code: reasonCode, ...extra };
+}
+
 function readStdin() {
   return fs.readFileSync(0, 'utf8');
 }
