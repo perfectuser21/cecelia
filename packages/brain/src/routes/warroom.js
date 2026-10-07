@@ -25,6 +25,7 @@ import {
 } from '../work-routing-observability.js';
 import { WARROOM_FEED_TASK_TYPES } from '../lib/task-type-registry.js';
 import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
+import { launchDeferredSql } from '../lib/kernel-launch-deferral.js';
 
 const router = Router();
 
@@ -538,10 +539,11 @@ router.get('/line/:id/command', async (req, res) => {
     let health = { run_total: 0, run_success: 0, success_rate: null, pr_count: 0, is_stopped: false };
     try {
       const { rows: healthRows } = await pool.query(
-        `SELECT id, phase, created_at
-         FROM initiative_runs
-         WHERE journey_id = $1
-           AND created_at > NOW() - INTERVAL '30 days'`,
+        `SELECT ir.id, ir.phase, ir.created_at
+         FROM initiative_runs ir
+         WHERE ir.journey_id = $1
+           AND ir.created_at > NOW() - INTERVAL '30 days'
+           AND NOT ${launchDeferredSql('ir')}`, // 编排槽满回队的 run 不是真实失败，不计入健康度
         [journey.id]
       );
       const runTotal = healthRows.length;

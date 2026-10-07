@@ -19,6 +19,7 @@ import { assertExternalExecutionAllowed } from './runtime-safety.js';
  */
 import pool from './db.js';
 import { findActiveRunBlockingSpawn } from './lib/harness-run-guard.js';
+import { KERNEL_LAUNCH_DEFERRED_REASON_PREFIX } from './lib/kernel-launch-deferral.js';
 import { buildChainPromptSafe } from './handoff.js';
 import { normalizeChangeKind } from './impact-contract/change-kind.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
@@ -400,7 +401,7 @@ async function _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps
       const requeueDeferred = deps.requeueKernelRunDeferred ?? requeueKernelRunLaunchDeferred;
       const requeued = await requeueDeferred(dbPool, {
         runId, expectedTaskId: task.id,
-        reason: `kernel_remote_launch_deferred:${error.message}`,
+        reason: `${KERNEL_LAUNCH_DEFERRED_REASON_PREFIX}${error.message}`,
       });
       if (requeued?.changed) {
         console.warn(

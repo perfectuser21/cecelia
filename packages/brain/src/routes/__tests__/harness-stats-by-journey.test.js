@@ -52,6 +52,33 @@ describe('GET /harness/stats?by=journey — 战况室数据层（P2）', () => {
     expect(params).toContain(7);
   });
 
+  it('排队 run（槽满回队）不计入 runs/failed/last_failure，单列 deferred', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    await (await req())(await makeApp()).get('/api/brain/harness/stats?by=journey&days=30');
+    const sql = mockQuery.mock.calls[0][0];
+    expect(sql).toContain("starts_with(ir.failure_reason, 'kernel_remote_launch_deferred:')");
+    expect(sql).toMatch(/FILTER \(WHERE NOT \(/);
+    expect(sql).toMatch(/phase = 'failed' AND NOT \(/);
+    expect(sql).toMatch(/phase = 'done' AND NOT \(/);
+    expect(sql).toMatch(/failure_reason IS NOT NULL AND NOT \(/);
+    expect(sql).toMatch(/AS\s+deferred/);
+  });
+
+  it('响应带 deferred，success_rate 只按 done/failed 算', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { journey_id: 'j-09', journey_name: 'Line 09', runs: '4', done: '3', failed: '1', deferred: '227', last_run_at: '2026-07-05T00:00:00Z', last_failure: 'real boom' },
+      ],
+    });
+    const res = await (await req())(await makeApp()).get('/api/brain/harness/stats?by=journey');
+    const j = res.body.journeys[0];
+    expect(j.deferred).toBe(227);
+    expect(j.runs).toBe(4);
+    expect(j.failed).toBe(1);
+    expect(j.success_rate).toBe(0.75);
+    expect(j.last_failure).toBe('real boom');
+  });
+
   it('days 非法（非数字/越界）回退默认 30', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     await (await req())(await makeApp()).get('/api/brain/harness/stats?by=journey&days=abc');

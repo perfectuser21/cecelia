@@ -30,6 +30,7 @@ import {
 import { COMMANDER_MODES } from '../orchestrator/commander-contract.js';
 import { createPlannerRecoveryRouter } from './planner-recovery.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { launchDeferredSql } from '../lib/kernel-launch-deferral.js';
 
 const router = Router();
 router.use('/runs', createPlannerRecoveryRouter());
@@ -365,6 +366,7 @@ router.get('/relay-runs/summary', async (req, res) => {
           WHERE orchestrator_version = 'v2'
             AND record_trust_status = 'trusted'
             AND current_task_id IS NOT NULL
+            AND NOT ${launchDeferredSql('initiative_runs')}
           ORDER BY current_task_id, started_at DESC, id DESC
        ),
        slo AS (

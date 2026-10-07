@@ -54,6 +54,10 @@ import {
   finalizeKernelRun,
 } from './orchestrator/kernel-run-store.js';
 import { writeHeartbeat } from './orchestrator/heartbeat.js';
+import {
+  KERNEL_RECONCILE_REQUEUE_REASON_PREFIX,
+  KERNEL_REQUEUE_EXHAUSTED_SUFFIX,
+} from './lib/kernel-launch-deferral.js';
 
 export { _parseBaseRepo, _discoverPrFromGithub };
 
@@ -1001,7 +1005,7 @@ async function _recoverKernelRun(run, task, deps, out) {
   const localExecutionDisabled = (deps.env ?? process.env).CECELIA_LOCAL_EXECUTION_ENABLED === 'false';
   if (localExecutionDisabled) {
     const requeueDeferred = deps.requeueKernelRunDeferred ?? requeueKernelRunLaunchDeferred;
-    const reason = 'kernel_reconcile_remote_requeue:no_resumable_session';
+    const reason = `${KERNEL_RECONCILE_REQUEUE_REASON_PREFIX}no_resumable_session`;
     const requeued = await requeueDeferred(dbPool, { runId: run.id, expectedTaskId: task.id, reason });
     if (requeued?.exhausted) {
       const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
@@ -1009,7 +1013,7 @@ async function _recoverKernelRun(run, task, deps, out) {
         runId: run.id,
         expectedTaskId: task.id,
         outcome: 'failed',
-        reason: `${reason}:defers_exhausted`,
+        reason: `${reason}${KERNEL_REQUEUE_EXHAUSTED_SUFFIX}`,
       });
       const { raise } = await import('./alerting.js');
       await raise('P1', 'kernel_reconcile_remote_exhausted',

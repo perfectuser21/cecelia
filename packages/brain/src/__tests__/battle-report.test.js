@@ -109,6 +109,51 @@ describe('buildBattleReportData — 24h 窗口四段', () => {
     expect(data.sentinel).toHaveProperty('healthy');
   });
 
+  it('按线 run 聚合排除排队 run：runs/done/failed/last_failure 带排除条件，单列 deferred', async () => {
+    const pool = makePool();
+    await buildBattleReportData(pool);
+    const runSql = pool.query.mock.calls.map(([sql]) => sql).find((s) => /initiative_runs/.test(s));
+    expect(runSql).toContain("starts_with(ir.failure_reason, 'kernel_remote_launch_deferred:')");
+    expect(runSql).toMatch(/phase = 'failed' AND NOT \(/);
+    expect(runSql).toMatch(/phase = 'done' AND NOT \(/);
+    expect(runSql).toMatch(/failure_reason IS NOT NULL AND NOT \(/);
+    expect(runSql).toMatch(/AS\s+deferred/);
+  });
+
+  it('journeyRuns 带 deferred，success_rate 只按 done/failed 算', async () => {
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/initiative_runs/.test(sql)) {
+          return {
+            rows: [{
+              journey_id: 'j9', journey_name: 'Line 09', runs: '4', done: '3', failed: '1',
+              deferred: '227', last_run_at: '2026-07-05T00:00:00Z', last_failure: 'real boom',
+            }],
+          };
+        }
+        return { rows: [] };
+      }),
+    };
+    const data = await buildBattleReportData(pool);
+    expect(data.journeyRuns[0]).toMatchObject({
+      runs: 4, done: 3, failed: 1, deferred: 227, success_rate: 0.75, last_failure: 'real boom',
+    });
+  });
+
+  it('战报文本：有排队 run 时附"另有 N 次排队"，无则不附', () => {
+    const base = { mergedPrs: [], userDecisions: [], sentinel: { healthy: true, jobs: [] }, unconfirmedActions: [], goldenPathMode: null };
+    const withDeferred = renderBattleReportMarkdown({
+      ...base,
+      journeyRuns: [{ journey_name: 'L9', runs: 4, done: 3, failed: 1, deferred: 227, success_rate: 0.75, last_failure: null }],
+    }, '2026-07-14');
+    expect(withDeferred).toContain('另有 227 次排队');
+    const without = renderBattleReportMarkdown({
+      ...base,
+      journeyRuns: [{ journey_name: 'L9', runs: 4, done: 3, failed: 1, deferred: 0, success_rate: 0.75, last_failure: null }],
+    }, '2026-07-14');
+    expect(without).not.toContain('排队');
+  });
+
   it('哨兵 ok&&age<=1800 口径（同 routes/sentinel.js）', async () => {
     const pool = {
       query: vi.fn(async (sql) => {

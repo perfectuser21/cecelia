@@ -11,6 +11,7 @@ vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {
  */
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { spawnSkillRelaySession, isSkillRelayTask, controllerSkillFor, deriveGear, GEAR_VALUES } from '../harness-skill-relay.js';
+import { isLaunchDeferredReason } from '../lib/kernel-launch-deferral.js';
 
 const TASK = {
   id: 'aaaabbbb-cccc-dddd-eeee-ffff00001111',
@@ -223,6 +224,9 @@ describe('spawnSkillRelaySession', () => {
       reason: expect.stringContaining('orchestrator_bridge_prepare_http_429'),
     }));
     expect(deps.finalizeRun).not.toHaveBeenCalled();
+    // 衔接契约：relay 实际写入的 reason 必须被统计口径识别为"排队"
+    const { reason } = deps.requeueKernelRunDeferred.mock.calls[0][1];
+    expect(isLaunchDeferredReason(reason)).toBe(true);
   });
 
   it('远程 start 请求超时（request_failed）同样 deferred', async () => {
@@ -244,6 +248,9 @@ describe('spawnSkillRelaySession', () => {
       outcome: 'failed',
       reason: expect.stringContaining('kernel_remote_launch_failed:'),
     }));
+    // 衔接契约：用尽后的终态失败是真实失败，统计口径不得当作排队剔除
+    const { reason } = deps.finalizeRun.mock.calls[0][1];
+    expect(isLaunchDeferredReason(reason)).toBe(false);
   });
 
   it('远程 prepare 永久错误（http_400）仍 terminalized，不回队', async () => {

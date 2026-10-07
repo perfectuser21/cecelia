@@ -45,6 +45,7 @@ vi.mock('../orchestrator/kernel-run-store.js', () => ({
 
 import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '../harness-relay-watchdog.js';
 import { sendBark } from '../notifier.js';
+import { isLaunchDeferredReason } from '../lib/kernel-launch-deferral.js';
 import { createAttemptStore } from '../orchestrator/attempt-store.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
@@ -527,6 +528,9 @@ describe('resumeStalledRelayRuns', () => {
       deps.pool,
       expect.objectContaining({ runId: RUN_ID, expectedTaskId: TASK_ID }),
     );
+    // 衔接契约：watchdog 写入的回队 reason 必须被统计口径识别为"排队"
+    const { reason } = deps.requeueKernelRunDeferred.mock.calls[0][1];
+    expect(isLaunchDeferredReason(reason)).toBe(true);
   });
 
   it('远端模式下 requeue 延后次数用尽时收死 run 并告警，仍不本地 spawn', async () => {
@@ -557,6 +561,10 @@ describe('resumeStalledRelayRuns', () => {
       deps.pool,
       expect.objectContaining({ runId: RUN_ID, expectedTaskId: TASK_ID, outcome: 'failed' }),
     );
+    // 衔接契约：requeue 用尽后的终态 reason 是真实失败，不得被当作排队剔除
+    const { reason: finalReason } = deps.finalizeRun.mock.calls[0][1];
+    expect(finalReason).toMatch(/:defers_exhausted$/);
+    expect(isLaunchDeferredReason(finalReason)).toBe(false);
     expect(mockRaise).toHaveBeenCalledWith('P1', 'kernel_reconcile_remote_exhausted', expect.stringContaining(RUN_ID));
   });
 
