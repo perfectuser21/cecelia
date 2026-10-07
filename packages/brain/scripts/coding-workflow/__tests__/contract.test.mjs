@@ -2,9 +2,18 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseActivityContract } from '../../../src/orchestrator/activity-contract.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const contract = JSON.parse(fs.readFileSync(path.join(ROOT, 'contract.json'), 'utf8'));
+
+describe('coding_spec 契约通过通用执行器真实校验', () => {
+  it('parseActivityContract 接受契约且按 order 排出四个活动', () => {
+    const plan = parseActivityContract(contract);
+    expect(plan.workflow).toBe('coding_spec');
+    expect(plan.activities.map(a => a.key)).toEqual(['intent', 'spec', 'chain_check', 'publish']);
+  });
+});
 
 const ENTRY_RE = /^(?:[a-zA-Z0-9_][a-zA-Z0-9_-]*\/)*[a-zA-Z0-9_][a-zA-Z0-9_-]*\.(?:js|mjs|sh)$/;
 const PHASES = ['setup', 'source', 'per_item', 'batch_end', 'finalize'];
