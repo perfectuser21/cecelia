@@ -9,6 +9,7 @@ import {
   buildMmvCmd,
   parseSqliteJson,
   mapOpenclawRow,
+  truncateText,
   OUTCOME_BY_STATUS,
 } from '../openclaw-run-ingest.js';
 
@@ -62,6 +63,14 @@ describe('buildIngestSql', () => {
 
   it('limit 可覆盖', () => {
     expect(buildIngestSql({ sinceMs: null, nowMs: NOW, limit: 50 })).toContain('LIMIT 50');
+  });
+
+  it('limit 越界（<1 或 >2000）抛 invalid_limit，边界值放行', () => {
+    for (const bad of [0, -1, 2001]) {
+      expect(() => buildIngestSql({ sinceMs: null, nowMs: NOW, limit: bad })).toThrow(/invalid_limit/);
+    }
+    expect(buildIngestSql({ sinceMs: null, nowMs: NOW, limit: 1 })).toContain('LIMIT 1');
+    expect(buildIngestSql({ sinceMs: null, nowMs: NOW, limit: 2000 })).toContain('LIMIT 2000');
   });
 
   it('非整数入参抛错（防注入）', () => {
@@ -197,5 +206,45 @@ describe('mapOpenclawRow', () => {
   it('started_at 与 created_at 都非法 → null', () => {
     expect(mapOpenclawRow(baseRow({ started_at: null, created_at: null }))).toBeNull();
     expect(mapOpenclawRow(baseRow({ started_at: 'abc', created_at: 'xyz' }))).toBeNull();
+  });
+});
+
+describe('truncateText', () => {
+  const hasLoneSurrogate = (str) => /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(str);
+
+  it('null/undefined → null；短串原样返回', () => {
+    expect(truncateText(null, 10)).toBeNull();
+    expect(truncateText(undefined, 10)).toBeNull();
+    expect(truncateText('abc', 10)).toBe('abc');
+  });
+
+  it('普通字符串按码元截到 max', () => {
+    expect(truncateText('a'.repeat(30), 10)).toHaveLength(10);
+  });
+
+  it('恰在代理对边界截断时不留孤立高代理项，且长度 <= max', () => {
+    // 'a'*9 + emoji(2 码元) → 第 10 个码元是高代理项
+    const s = 'a'.repeat(9) + '\u{1F600}' + 'tail';
+    const out = truncateText(s, 10);
+    expect(hasLoneSurrogate(out)).toBe(false);
+    expect(out.length).toBeLessThanOrEqual(10);
+    expect(out).toBe('a'.repeat(9));
+  });
+
+  it('代理对完整落在上限内时保留', () => {
+    const out = truncateText('a'.repeat(8) + '\u{1F600}' + 'tail', 10);
+    expect(out).toBe('a'.repeat(8) + '\u{1F600}');
+  });
+
+  it('mapOpenclawRow 的 error/summary 在代理对边界截断后可安全序列化', () => {
+    const r = mapOpenclawRow(baseRow({
+      status: 'failed',
+      error: 'x'.repeat(1999) + '\u{1F600}',
+      terminal_summary: 'y'.repeat(3999) + '\u{1F600}',
+    }));
+    expect(hasLoneSurrogate(r.error)).toBe(false);
+    expect(hasLoneSurrogate(r.detail.summary)).toBe(false);
+    expect(r.error.length).toBeLessThanOrEqual(2000);
+    expect(r.detail.summary.length).toBeLessThanOrEqual(4000);
   });
 });
