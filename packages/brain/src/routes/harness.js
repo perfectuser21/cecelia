@@ -31,6 +31,7 @@ import { persistOneSessionJudgeReceipt } from '../orchestrator/one-session-judge
 import { executeOneSessionMerge } from '../orchestrator/one-session-merge.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
+import { journeyRunStatsSelectSql, mapJourneyRunStatsRow } from '../lib/kernel-launch-deferral.js';
 
 const router = Router();
 const judgeRateLimit = rateLimit({
@@ -1503,14 +1504,7 @@ router.get('/stats', async (req, res) => {
       let days = parseInt(req.query.days, 10);
       if (!Number.isInteger(days) || days < 1 || days > 365) days = 30;
       const { rows } = await pool.query(`
-        SELECT j.id   AS journey_id,
-               j.name AS journey_name,
-               COUNT(*)                                     AS runs,
-               COUNT(*) FILTER (WHERE ir.phase = 'done')    AS done,
-               COUNT(*) FILTER (WHERE ir.phase = 'failed')  AS failed,
-               MAX(ir.created_at)                           AS last_run_at,
-               (ARRAY_AGG(ir.failure_reason ORDER BY ir.created_at DESC)
-                  FILTER (WHERE ir.failure_reason IS NOT NULL))[1] AS last_failure
+        SELECT ${journeyRunStatsSelectSql('ir')}
         FROM initiative_runs ir
         JOIN ${TREE_NODES_SQL} j ON j.id = ir.journey_id
         LEFT JOIN tasks t ON t.id = ir.initiative_id
@@ -1520,22 +1514,8 @@ router.get('/stats', async (req, res) => {
         GROUP BY j.id, j.name
         ORDER BY runs DESC, last_run_at DESC NULLS LAST
       `, [days]);
-      const journeys = rows.map((r) => {
-        const done = parseInt(r.done, 10) || 0;
-        const failed = parseInt(r.failed, 10) || 0;
-        const terminal = done + failed;
-        return {
-          journey_id: r.journey_id,
-          journey_name: r.journey_name,
-          runs: parseInt(r.runs, 10) || 0,
-          done,
-          failed,
-          // 成功率 = done/(done+failed)（只算终态 run，进行中不计入分母）
-          success_rate: terminal > 0 ? Math.round((done / terminal) * 100) / 100 : 0,
-          last_run_at: r.last_run_at,
-          last_failure: r.last_failure || null,
-        };
-      });
+      // 成功率 = done/(done+failed)；编排槽满排队的 run 已在 SQL 里剔除，单列 deferred
+      const journeys = rows.map(mapJourneyRunStatsRow);
       return res.json({ by: 'journey', period_days: days, journeys });
     }
 

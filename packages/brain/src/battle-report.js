@@ -18,6 +18,7 @@ import { sendFeishu } from './notifier.js';
 import { getUnconfirmedReceipts } from './receipt-collector.js';
 import { getMachineVitals } from './machine-vitals.js';
 import { TREE_NODES_SQL } from './lib/tree-nodes-sql.js';
+import { journeyRunStatsSelectSql, mapJourneyRunStatsRow } from './lib/kernel-launch-deferral.js';
 
 /** 每日触发小时（UTC）= 北京时间 06:00 */
 const BATTLE_REPORT_HOUR_UTC = 22;
@@ -75,14 +76,7 @@ export async function buildBattleReportData(pool, now = new Date()) {
 
   // ② 按线 run 聚合（抄 routes/harness.js ?by=journey，窗口改 24h）
   const { rows: runRows } = await pool.query(
-    `SELECT j.id   AS journey_id,
-            j.name AS journey_name,
-            COUNT(*)                                     AS runs,
-            COUNT(*) FILTER (WHERE ir.phase = 'done')    AS done,
-            COUNT(*) FILTER (WHERE ir.phase = 'failed')  AS failed,
-            MAX(ir.created_at)                           AS last_run_at,
-            (ARRAY_AGG(ir.failure_reason ORDER BY ir.created_at DESC)
-               FILTER (WHERE ir.failure_reason IS NOT NULL))[1] AS last_failure
+    `SELECT ${journeyRunStatsSelectSql('ir')}
      FROM initiative_runs ir
      JOIN ${TREE_NODES_SQL} j ON j.id = ir.journey_id
      LEFT JOIN tasks t ON t.id = ir.initiative_id
@@ -92,21 +86,7 @@ export async function buildBattleReportData(pool, now = new Date()) {
      GROUP BY j.id, j.name
      ORDER BY runs DESC, last_run_at DESC NULLS LAST`
   );
-  const journeyRuns = runRows.map((r) => {
-    const done = parseInt(r.done, 10) || 0;
-    const failed = parseInt(r.failed, 10) || 0;
-    const terminal = done + failed;
-    return {
-      journey_id: r.journey_id,
-      journey_name: r.journey_name,
-      runs: parseInt(r.runs, 10) || 0,
-      done,
-      failed,
-      success_rate: terminal > 0 ? Math.round((done / terminal) * 100) / 100 : 0,
-      last_run_at: r.last_run_at,
-      last_failure: r.last_failure || null,
-    };
-  });
+  const journeyRuns = runRows.map(mapJourneyRunStatsRow);
 
   // ③ 用户决策
   const { rows: userDecisions } = await pool.query(
@@ -354,7 +334,8 @@ export function renderBattleReportMarkdown(data) {
     for (const j of data.journeyRuns) {
       const rate = `成功率 ${Math.round(j.success_rate * 100)}%`;
       const failure = j.last_failure ? `；最近卡点：${j.last_failure}` : '';
-      lines.push(`- ${j.journey_name}：${j.runs} run（done ${j.done} / failed ${j.failed}，${rate}）${failure}`);
+      const queued = j.deferred > 0 ? `；另有 ${j.deferred} 次排队` : '';
+      lines.push(`- ${j.journey_name}：${j.runs} run（done ${j.done} / failed ${j.failed}，${rate}）${queued}${failure}`);
     }
   }
 
