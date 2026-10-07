@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.379.0
+**Brain 版本**: 1.379.2
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,20 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.379.2 — harness 成功率统计剔除"编排槽满排队" run
+
+- 修 bug：bridge 429 orchestrator_slots_exhausted 等瞬时故障回队的 run（phase='failed'、failure_reason 以 `kernel_remote_launch_deferred:` / `kernel_reconcile_remote_requeue:` 开头）被 `?by=journey` 与战报直接计入 failed，近 60 天虚增 275 条失败（单任务 227 条）。
+- 新增 `lib/kernel-launch-deferral.js`：前缀常量、`isLaunchDeferredReason`、`launchDeferredSql`（starts_with，非 LIKE）、共享聚合 SELECT `journeyRunStatsSelectSql` 与行映射 `mapJourneyRunStatsRow`。
+- 覆盖范围（四处统计）：`routes/harness.js` stats?by=journey 与 `battle-report.js`（runs/done/failed/last_failure 只统计非排队 run，新增 `deferred` 计数；战报文本附"另有 N 次排队"）；`routes/warroom.js` 线健康度 success_rate 剔除排队 run；`routes/initiatives.js` relay-runs/summary 的 SLO 取"每任务最新 trusted run"时跳过排队 run。success_rate 公式不变。relay-runs/summary 的 phase 原始分布计数不动。
+- `harness-skill-relay.js` / `harness-relay-watchdog.js` 生成 reason 改用常量（行为不变）；run 仍保持 phase='failed'，表结构与 kernel 运行逻辑不动。
+- 回归测试：`lib/__tests__/kernel-launch-deferral.test.js`（含 JS/SQL 共用样本契约）、`harness-stats-by-journey.test.js`、`battle-report.test.js`、`warroom.test.js`、`relay-runs-summary.test.js`；relay / watchdog 测试锁定 reason 与 `isLaunchDeferredReason` 的衔接。
+
+## Brain 1.379.1 — coding workflow 第二刀：spec 自身超时 + report 回写 Brain
+
+- spec 活动：claude 自成进程组，超时（默认 870s，钳在契约 budget 内）报 `retryable/claude_timeout`；执行器取消时先整组 SIGTERM、2.5s 后整组 SIGKILL；正常退出后 1.5s 清理残留后代，杜绝孤儿 claude
+- 新增 report 活动（finalize）：PATCH Brain 任务 `result.coding_workflow`（pr_url/branch/sprint_dir/chain_files/run_tag/host），不改状态、jsonb 合并不覆盖 handoff；失败 evidence 带 http_status/body_code
+- coding_spec 契约扩为五活动；新增经通用执行器的五活动端到端测试（假 claude/假 gh/临时 origin/假 Brain）
 
 ## Brain 1.379.0 — 通用活动执行器进 main（自 #5783 拆出）
 
