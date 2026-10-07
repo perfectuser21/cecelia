@@ -202,7 +202,12 @@ describe('spec 活动（子进程 + 假 claude）', () => {
   it('claude 卡死超时 -> retryable claude_timeout，不留 02-spec.md，且假 claude 进程已被清理', async () => {
     const pidFile = path.join(worktree, '.fake-claude.pid');
     const started = Date.now();
-    const r = await run('sleep', {}, { CODING_WF_SPEC_TIMEOUT_MS: '500', FAKE_CLAUDE_PID_FILE: pidFile });
+    const childPidFile = path.join(worktree, '.fake-claude-child.pid');
+    const r = await run('sleep', {}, {
+      CODING_WF_SPEC_TIMEOUT_MS: '500',
+      FAKE_CLAUDE_PID_FILE: pidFile,
+      FAKE_CLAUDE_CHILD_PID_FILE: childPidFile,
+    });
     const elapsed = Date.now() - started;
     expect(r.exitCode).toBe(2);
     expect(r.result.status).toBe('failed');
@@ -215,6 +220,15 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     const pid = Number(fs.readFileSync(pidFile, 'utf8'));
     expect(Number.isInteger(pid) && pid > 0).toBe(true);
     expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+
+    // 孙进程（claude 起的子进程）也必须随进程组一起被清理，不能成孤儿
+    const grandchildPid = Number(fs.readFileSync(childPidFile, 'utf8'));
+    expect(Number.isInteger(grandchildPid) && grandchildPid > 0).toBe(true);
+    try {
+      expect(() => process.kill(grandchildPid, 0)).toThrow(/ESRCH/);
+    } finally {
+      try { process.kill(grandchildPid, 'SIGKILL'); } catch { /* 已退出 */ }
+    }
   });
 
   it.each(['abc', '0', '-5', '1.5', ''])(
