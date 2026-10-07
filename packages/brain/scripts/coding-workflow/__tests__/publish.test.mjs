@@ -127,6 +127,37 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(r.result.failure_class).toBe('fatal');
     expect(r.result.reason_code).toBe('branch_invalid');
     expect(git(worktree, 'status', '--porcelain')).toContain('?? sprints/');
+    expect(() => git(origin, 'rev-parse', '--verify', 'refs/heads/main')).not.toThrow();
+    expect(() => git(origin, 'rev-parse', '--verify', 'refs/heads/cp-test')).toThrow();
+    expect(ghCalls()).toHaveLength(0);
+  });
+
+  it('gh 非鉴权类失败（网络超时）-> retryable gh_failed', async () => {
+    const r = await run('branchfail');
+    expect(r.exitCode).toBe(2);
+    expect(r.result.failure_class).toBe('retryable');
+    expect(r.result.reason_code).toBe('gh_failed');
+  });
+
+  it('只提交 sprint_dir：目录外的未跟踪文件与已暂存文件不进 origin 分支', async () => {
+    fs.writeFileSync(path.join(worktree, 'extra.txt'), 'untracked\n');
+    fs.writeFileSync(path.join(worktree, 'staged.txt'), 'staged\n');
+    git(worktree, 'add', '--', 'staged.txt');
+    const r = await run('new');
+    expect(r.exitCode).toBe(0);
+    const files = git(origin, 'ls-tree', '-r', '--name-only', 'cp-test').trim().split('\n');
+    expect(files).toContain('sprints/s1/01-intent.md');
+    expect(files).not.toContain('extra.txt');
+    expect(files).not.toContain('staged.txt');
+  });
+
+  it.each(['.', './', ':/', ':(top)'])('sprint_dir=%s 不能扩大提交范围', async (bad) => {
+    fs.writeFileSync(path.join(worktree, 'extra.txt'), 'untracked\n');
+    const r = await run('new', { sprint_dir: bad });
+    expect(r.exitCode).toBe(2);
+    expect(r.result.failure_class).toBe('fatal');
+    expect(() => git(origin, 'rev-parse', '--verify', 'refs/heads/cp-test')).toThrow();
+    expect(git(worktree, 'log', '--oneline').trim().split('\n')).toHaveLength(1);
   });
 
   it('sprint_dir 非法 -> fatal sprint_dir_invalid，不碰 git/gh', async () => {

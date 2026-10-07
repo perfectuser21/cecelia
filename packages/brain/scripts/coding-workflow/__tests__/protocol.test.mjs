@@ -118,7 +118,7 @@ describe('resolveSprintDir', () => {
     expect(resolveSprintDir('/w', 'sprints/a')).toBe('/w/sprints/a');
   });
 
-  it.each(['../x', '/abs', 'a/../../b'])('非法 sprintDir %s 抛 sprint_dir_invalid', (bad) => {
+  it.each(['../x', '/abs', 'a/../../b', '.', './', '', 'sprints/..', './.', './/'])('非法 sprintDir %s 抛 sprint_dir_invalid', (bad) => {
     expect(() => resolveSprintDir('/w', bad)).toThrow('sprint_dir_invalid');
   });
 });

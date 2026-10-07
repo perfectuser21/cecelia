@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 假 gh：按 FAKE_GH_MODE（existing | new | auth）模拟 `gh pr list` / `gh pr create`。
+// 假 gh：按 FAKE_GH_MODE（existing | new | auth | branchfail）模拟 `gh pr list` / `gh pr create`。
 // FAKE_GH_LOG 指向文件时，把每次调用的 argv（JSON 一行）追加进去。
 import fs from 'node:fs';
 
@@ -12,7 +12,12 @@ if (mode === 'auth') {
   process.exit(1);
 }
 
-const sub = `${argv[0]} ${argv[1]}`;
+if (mode === 'branchfail') {
+  process.stderr.write('could not create pull request for branch cp-oauth-fix: network timeout\n');
+  process.exit(1);
+}
+
+const sub =`${argv[0]} ${argv[1]}`;
 if (sub === 'pr list') {
   if (mode === 'existing') process.stdout.write('https://github.com/example/repo/pull/1\n');
   process.exit(0);
