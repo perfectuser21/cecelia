@@ -4,7 +4,7 @@ import {reconcileAppServers} from './app-server/controller.js';
 import { runPreviewCacheJanitor } from './preview-cache-scheduler.js';
 import { runCompanyKrWorkflow } from './projection/company-kr-workflow.js';
 import { runDirectoryJob } from './projection/directory-job.js';
-import { isSelfSkipped, schedulerOutcome, recordSchedulerRun } from './lib/workflow-runs.js';
+import { isSelfSkipped, schedulerOutcome, recordSchedulerRun, pruneSchedulerRuns } from './lib/workflow-runs.js';
 /**
  * scheduler-jobs.js — 声明式定时任务注册表（作战循环 P1-PR1）
  *
@@ -256,6 +256,7 @@ async function writeRun(pool, jobName, startedAt, record, result) {
       error: record.error ?? null,
       detail: record.detail === undefined ? null : { summary: record.detail },
     });
+    await pruneSchedulerRuns(pool);
   } catch (e) {
     console.warn(`[scheduler-jobs] run record failed for ${jobName}:`, e.message);
   }

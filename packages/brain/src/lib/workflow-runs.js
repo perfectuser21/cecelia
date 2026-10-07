@@ -32,6 +32,22 @@ const INSERT_SCHEDULER_RUN = `
        ORDER BY active DESC, id LIMIT 1
     ) e ON true`;
 
+// 每分钟真干活的 job 约 30 个，一天约 4 万行；汇总视图最长看 30 天，失败多留些供排查。
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+const PRUNE_SQL = `
+  DELETE FROM runs
+   WHERE trigger_kind = 'schedule'
+     AND ((outcome IN ('fail', 'timeout') AND started_at < now() - interval '90 days')
+       OR (outcome NOT IN ('fail', 'timeout') AND started_at < now() - interval '30 days'))`;
+let lastPruneAt = 0;
+
+/** 保留期清理（每小时最多一次）。返回删除行数；未到间隔返回 null。 */
+export async function pruneSchedulerRuns(db, now = Date.now()) {
+  if (now - lastPruneAt < PRUNE_INTERVAL_MS) return null;
+  lastPruneAt = now;
+  return (await db.query(PRUNE_SQL)).rowCount;
+}
+
 /** 写一行定时任务运行记录。调用方负责吞错（运行记录是附带观测，不能拖垮 job）。 */
 export async function recordSchedulerRun(db, { jobName, startedAt, endedAt, outcome, error = null, detail = null }) {
   await db.query(INSERT_SCHEDULER_RUN, [
