@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.377.2
+**Brain 版本**: 1.378.0
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,13 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.378.0 — coding workflow 第一刀：intent→spec 两步 md 链（json-stdio-v1 活动）
+
+- 新增 `packages/brain/scripts/coding-workflow/`：`coding_spec` 契约 + intent / spec / chain_check / publish 四个 json-stdio-v1 活动，跑在 PR #5783 通用活动执行器上；每步产出带上游引用（task_id + `文件#锚点`）的 md，chain_check 程序判链完整，publish 只提交 sprint 目录并开草稿 PR
+- 安全边界：sprint_dir 拒绝绝对路径/`..`/工作区根、git 一律 `--literal-pathspecs`；spec 子进程剥离 `CLAUDECODE`/`CLAUDE_CODE_*` 与 `GIT_DIR` 等、禁用 Bash、越界写判 fatal；不加 `--no-verify`（publish 预算 900s 容纳 pre-push quickcheck）
+- 端到端实证：真实任务 8ad60102 经执行器四活动全 completed，PR #6020 含 01-intent.md → 02-spec.md；超时探针 spec 判 retryable/activity_timeout 并重试 2 次、无孤儿进程
+- 决策 896fb590 / 09ffb675 / 22ef1a72
 
 ## Brain 1.377.2 — Notion 六层目录第二轮：只挂直接上级、中文人话列名、改名保值、「还缺什么」一列、Activity 9 项标准内容进页面正文
 
