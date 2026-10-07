@@ -28,7 +28,27 @@ function readStdin() {
   return fs.readFileSync(0, 'utf8');
 }
 
-function buildResult(input, res) {
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function degrade(result, reasonCode) {
+  return {
+    ...result,
+    status: 'failed',
+    failure_class: 'fatal',
+    outputs: {},
+    metrics: {},
+    evidence: [],
+    reason_code: reasonCode,
+  };
+}
+
+/**
+ * 把 handler 返回值规整成协议结果。纯函数。
+ * outputs/metrics 必须是 plain object，evidence 必须是数组，否则降级 failed/fatal。
+ */
+export function buildResult(input, res) {
   const status = STATUSES.has(res?.status) ? res.status : 'failed';
   let failureClass = null;
   if (status !== 'completed') {
@@ -39,21 +59,18 @@ function buildResult(input, res) {
     run_tag: input?.run_tag ?? null,
     status,
     failure_class: failureClass,
-    outputs: res?.outputs ?? {},
-    metrics: res?.metrics ?? {},
-    evidence: res?.evidence ?? [],
+    outputs: res?.outputs === undefined ? {} : res.outputs,
+    metrics: res?.metrics === undefined ? {} : res.metrics,
+    evidence: res?.evidence === undefined ? [] : res.evidence,
   };
   if (res?.reason_code) result.reason_code = res.reason_code;
 
+  if (!isPlainObject(result.outputs) || !isPlainObject(result.metrics) || !Array.isArray(result.evidence)) {
+    return degrade(result, 'result_payload_invalid');
+  }
   const badKey = Object.keys(result.outputs).find((k) => !OUTPUT_KEY_RE.test(k));
   if (badKey !== undefined) {
-    return {
-      ...result,
-      status: 'failed',
-      failure_class: 'fatal',
-      outputs: {},
-      reason_code: `outputs_key_invalid:${badKey}`,
-    };
+    return degrade(result, `outputs_key_invalid:${badKey}`);
   }
   return result;
 }
@@ -63,6 +80,11 @@ function buildResult(input, res) {
  * completed 退出码 0，其余 2；handler 抛错 → failed/fatal，reason_code=error.message。
  */
 export async function runActivity(handler) {
+  // stdout 只留给结果 JSON：依赖或 handler 里的 console.log 一律改道 stderr
+  console.log = log;
+  console.info = log;
+  console.debug = log;
+
   let input = null;
   let result;
   try {
