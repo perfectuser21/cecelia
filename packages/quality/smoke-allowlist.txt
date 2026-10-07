@@ -410,3 +410,4 @@ pilot-release-verification-smoke.sh
 phone-runner-infra-smoke.sh
 dead-man-switch-usvps-smoke.sh
 alarm-ledger-smoke.sh
+runs-execution-table-smoke.sh
