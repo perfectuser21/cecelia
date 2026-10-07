@@ -1,0 +1,85 @@
+{
+  "workflow": "coding_spec",
+  "activities": [
+    {
+      "key": "intent",
+      "order": 1,
+      "budget": { "max_duration_s": 60, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["brain_unavailable"],
+        "needs_human": { "cases": ["acceptance_missing"] },
+        "fatal": ["task_id_missing", "sprint_dir_invalid", "task_not_found"]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "setup",
+        "entry": "activities/intent.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    },
+    {
+      "key": "spec",
+      "order": 2,
+      "budget": { "max_duration_s": 900, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["claude_failed"],
+        "needs_human": { "cases": ["claude_auth"] },
+        "fatal": ["sprint_dir_invalid", "task_id_missing", "intent_ids_missing", "spec_missing"]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "source",
+        "entry": "activities/spec.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 2
+      }
+    },
+    {
+      "key": "chain_check",
+      "order": 3,
+      "budget": { "max_duration_s": 30, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": [],
+        "needs_human": { "cases": [] },
+        "fatal": ["md_chain_invalid", "sprint_dir_invalid"]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "batch_end",
+        "entry": "activities/chain-check.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    },
+    {
+      "key": "publish",
+      "order": 4,
+      "budget": { "max_duration_s": 120, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["push_failed", "gh_failed"],
+        "needs_human": { "cases": ["gh_auth"] },
+        "fatal": [
+          "sprint_dir_invalid",
+          "task_id_missing",
+          "chain_files_missing",
+          "branch_invalid",
+          "git_add_failed",
+          "git_commit_failed",
+          "git_diff_failed"
+        ]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "batch_end",
+        "entry": "activities/publish.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    }
+  ]
+}
