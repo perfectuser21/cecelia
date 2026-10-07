@@ -16,7 +16,8 @@ const compact = id => String(id || '').replaceAll('-', '');
 const textOf = (page, key) => (page.properties?.[key]?.rich_text || []).map(x => x.plain_text ?? x.text?.content ?? '').join('');
 const paragraph = text => ({ object: 'block', type: 'paragraph', paragraph: rich(text) });
 
-export const workflowProperties = row => ({ Workflow: title(row.name), '版本': rich(row.version) });
+/** 流程库标题列叫「名称」（目录第二轮改名），版本列已删；其余列归目录投影。 */
+export const workflowProperties = row => ({ '名称': title(row.name) });
 export const runProperties = (row, runtimeId) => ({
   Name: title(`公司 KR 分析 · ${row.run_id}`), RunId: rich(row.run_id),
   Status: { select: { name: row.status } }, StartedAt: { date: { start: new Date(row.started_at).toISOString() } },
@@ -81,7 +82,7 @@ async function projectRows(pool, token, notionReq) {
   if (!w?.runtime_notion_id) throw new Error('正式工作流或运行时投影未就绪');
   const dbs = REGISTRATION_DATABASES;
   const wf = await upsertRegistrationPage(pool, token, { table: 'workflows', row: w, dbId: dbs.workflows,
-    properties: workflowProperties(w), filter: { property: 'Workflow', title: { equals: w.name } }, notionReq,
+    properties: workflowProperties(w), filter: { property: '名称', title: { equals: w.name } }, notionReq,
     verifyRecovered: async page => {
       const blocks = await notionReq(token, `/blocks/${page.id}/children?page_size=100`, 'GET');
       return blocks.results?.some(b => (b.paragraph?.rich_text || []).some(x => (x.plain_text ?? x.text?.content) === `Brain workflows:${w.id}`));
@@ -90,7 +91,7 @@ async function projectRows(pool, token, notionReq) {
       paragraph('启动：Brain 的 Notion 同步周期；按启用状态、每日时刻及正式版本去重。分析员：MMV 的 OpenClaw company-kr-analyst。'),
       paragraph('主理人在 Notion 填正式数字；AI 读取正式目标与已有证据，建议写入独立列，由主理人决定是否采纳。'),
       paragraph(`运行明细：https://app.notion.com/p/${compact(w.runtime_notion_id)}\nKR 表：https://app.notion.com/p/684c40c2ba6383a7b6ba8161f110a18c`),
-      paragraph('步骤登记可查 Workflow Steps；活动登记可查 Backbone Activities。历史运行没有逐步骤 span，不据工作流定义补造执行事实。')],
+      paragraph('步骤登记可查 Step 库；活动登记可查 Activity 库。历史运行没有逐步骤 span，不据工作流定义补造执行事实。')],
   });
   // Step/Activity 页归六层目录投影（按 Brain ID 建页、写标准列），这里不再写这两库，免得旧列被写回来
   const runs = (await pool.query(`SELECT * FROM task_runs WHERE workflow_id=$1 ORDER BY started_at DESC LIMIT 100`, [w.id])).rows;

@@ -125,6 +125,7 @@ describe('六层目录源映射', () => {
     expect(api.acceptanceText({}, {asserts:'完整建议JSON'})).toBe('应满足：完整建议JSON');
     expect(api.acceptanceText({}, {expect:'完成'})).toBe('应：完成');
     expect(api.acceptanceText({}, {})).toBeNull();
+    expect(api.acceptanceText({}, {type:'metric',ref:'metrics.a',expect:{op:'>=',ref:'metrics.b'}})).toBe('看指标：metrics.a；结果应 >= 指标 metrics.b');
   });
   it('Activity 只写 名称/承诺（FR）/输入/输出/谁来执行/还缺什么/树位置；不写 Key、正本、格子、9 项正文列', () => {
     const data=sample();Object.assign(data.activities[0],{capability_key:'cap',activity_key:'act',contract_source:'https://github.com/x/y/blob/abc/c.yaml',promise:'承诺一句'});

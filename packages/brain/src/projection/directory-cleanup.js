@@ -1,9 +1,9 @@
 /**
  * 六层目录清理计划（纯函数，scripts/ops/notion-tree-cleanup.mjs 调它）：
- * 列——在目录列合同（directory-schema）里或登记过的人工列 → 留；两样都不是 → 删。
+ * 列——在目录列合同（directory-schema）里或登记过的人工列 → 留；待改名的旧列（投影器上线首轮自动改名保值）→ 留；其余 → 删。
  * 页——没有 Brain ID 的页不是 Brain 投影出来的：价值流/能力/Activity/Step 归档（30 天可恢复），流程库只列待拍板，部门库是人建的不动。
  */
-import { buildDirectorySchemas, DIRECTORY_COLUMN_SOURCES, DIRECTORY_HUMAN_COLUMNS } from './directory-schema.js';
+import { buildDirectorySchemas, DIRECTORY_COLUMN_SOURCES, DIRECTORY_HUMAN_COLUMNS, pendingRenames } from './directory-schema.js';
 
 const LAYERS = ['areas', 'value_streams', 'capabilities', 'workflows', 'activities', 'steps'];
 export const ARCHIVE_UNBOUND_LAYERS = Object.freeze(['value_streams', 'capabilities', 'activities', 'steps']);
@@ -25,16 +25,18 @@ export function planDirectoryCleanup({ databases, pages }) {
   for (const layer of LAYERS) {
     const actual = databases[layer].properties || {}, rows = pages[layer] || [], human = DIRECTORY_HUMAN_COLUMNS[layer];
     const filled = name => rows.filter(p => hasValue(p.properties?.[name])).length;
-    const keep = [], drop = [];
+    const keep = [], drop = [], rename = pendingRenames(layer, actual, schemas[layer]).map(([from, to]) => ({ from, to }));
     for (const [name, prop] of Object.entries(actual)) {
-      if (Object.hasOwn(schemas[layer], name)) keep.push({ name, type: prop.type, source: DIRECTORY_COLUMN_SOURCES[layer][name], filled: filled(name) });
+      const renamed = rename.find(r => r.from === name);
+      if (renamed) keep.push({ name, type: prop.type, source: `待改名→${renamed.to}（${DIRECTORY_COLUMN_SOURCES[layer][renamed.to]}）`, filled: filled(name) });
+      else if (Object.hasOwn(schemas[layer], name)) keep.push({ name, type: prop.type, source: DIRECTORY_COLUMN_SOURCES[layer][name], filled: filled(name) });
       else if (human.includes(name) || prop.type === 'title') keep.push({ name, type: prop.type, source: '人工', filled: filled(name) });
       else drop.push({ name, type: prop.type, filled: filled(name) });
     }
     const unbound = rows.filter(p => !plain(p.properties?.['Brain ID']?.rich_text).trim()).map(p => ({ id: p.id, title: titleOf(p) }));
     plan[layer] = {
-      database_id: databases[layer].id, before: Object.keys(actual).length, after: keep.length, rows: rows.length, keep, drop,
-      missing: Object.keys(schemas[layer]).filter(name => !Object.hasOwn(actual, name)),
+      database_id: databases[layer].id, before: Object.keys(actual).length, after: keep.length, rows: rows.length, keep, drop, rename,
+      missing: Object.keys(schemas[layer]).filter(name => !Object.hasOwn(actual, name) && !rename.some(r => r.to === name)),
       archive: ARCHIVE_UNBOUND_LAYERS.includes(layer) ? unbound : [],
       pending: layer === 'workflows' ? unbound : [],
     };
@@ -63,8 +65,9 @@ export function buildCleanupBackup(plan, pages) {
   return backup;
 }
 
-/** 新投影器建的列还没出现 = 新代码没上线；这时删旧列会被旧写入方补回来，拒绝执行。 */
+/** 新投影器建的列/改的名还没出现 = 新代码没上线；这时删旧列会删掉还没迁走的值、或被旧写入方补回来，拒绝执行。 */
 export function assertReadyToApply(plan) {
-  const missing = Object.entries(plan).filter(([, p]) => p.missing.length).map(([layer, p]) => `${layer}: ${p.missing.join('、')}`);
+  const missing = Object.entries(plan).filter(([, p]) => p.missing.length || p.rename.length)
+    .map(([layer, p]) => `${layer}: ${[...p.missing, ...p.rename.map(r => `${r.from}→${r.to}`)].join('、')}`);
   if (missing.length) throw new Error(`目录投影新列尚未建出（新代码未上线或投影未跑过），拒绝删列：${missing.join('；')}`);
 }

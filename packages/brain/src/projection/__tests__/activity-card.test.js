@@ -64,6 +64,7 @@ describe('Activity 卡片列', () => {
     expect(humanize({ a: 1, b: null })).toBe('a：1');
     expect(humanize(null)).toBe('');
     expect(humanize([])).toBe('');
+    expect(humanize({ budget: { heartbeat_s: 60, max_duration_s: 1800 }, locks: ['device:x', 'acct:y'] })).toBe('budget：heartbeat_s 60，max_duration_s 1800；locks：device:x、acct:y');
   });
 
   it('Step 卡片：做什么、失败了怎么办；没写不编造', () => {

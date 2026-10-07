@@ -1,30 +1,18 @@
 /**
- * 六层目录的列合同。规矩：Notion 上每一列要么来自 Brain（原样或派生），要么是登记过的人工列；两样都不是就该删
- * （清理脚本 scripts/ops/notion-tree-cleanup.mjs 按本合同算删列清单）。人填名称、Parent 及部门库 PARA 关系不归此模块写入。
+ * 六层目录的列合同（第二轮：人打开看得懂、用得上）。
+ * 规矩：每层只挂直接上级（上级的上级只靠「树位置」一行文字）；Notion 上每一列要么来自 Brain（原样或派生），
+ * 要么是登记过的人工列；两样都不是就该删（清理脚本 scripts/ops/notion-tree-cleanup.mjs 按本合同算删列清单）。
+ * 带值的旧列改名不删：ensureDirectorySchemas 在「新名不存在且旧名存在」时用 Notion 属性改名迁过去，值和人工选项都保留。
  */
-import { activityCardSchema, stepCardSchema, ACTIVITY_CARD_COLUMNS, STEP_CARD_COLUMNS } from './activity-card.js';
 const LAYERS = ['areas', 'value_streams', 'capabilities', 'workflows', 'activities', 'steps'];
 const UUID = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const normalize = value => String(value ?? '').replaceAll('-', '').toLowerCase();
 const rich = () => ({ rich_text: {} });
 const relation = databaseId => ({ relation: { database_id: databaseId, single_property: {} } });
 const count = () => ({ number: { format: 'number' } });
-const group = () => ({ select: {} });
-export const SOURCE_COLUMN = '正本（只读·改请走 git）';
-// 每一层都带上面所有层的名字：选项列用来分组，「树位置」一行看全路径（机器写；选项列不含英文逗号，追不到的标「(未归属)」）
-// 部门树只有公司→部门两级，「树位置」仍写全链，不另设子部门列
-const treeSchema = levels => ({
-  '分组·公司': group(), '分组·部门': group(),
-  ...(levels.includes('vs') ? { '分组·价值流': group() } : {}), ...(levels.includes('cap') ? { '分组·能力': group() } : {}),
-  ...(levels.includes('wf') ? { '分组·流程': group() } : {}), '树位置': rich(),
-});
-// 流程库的运行情况列（机器写，来自 runs 表的 v_workflow_run_stats 与闹钟总账）；「你的标记」是人工列：只建列，投影器永远不写它的值
-const workflowRuntimeSchema = () => ({
-  '最近运行': { date: {} }, '在用吗': { select: {} }, '怎么运行': rich(),
-  '7天次数': count(), '7天失败': count(), '7天成功率': { number: { format: 'percent' } }, '平均时长(秒)': count(),
-  '你的标记': { select: { options: ['有用', '没用', '过期', '删'].map(name => ({ name })) } },
-});
-const common = () => ({ 'Brain ID': rich(), '登记缺口': rich(), '同步状态': { select: {} }, '同步时间': { date: {} } });
+const title = () => ({ title: {} });
+export const HUMAN_MARK_COLUMN = '去留（你填）';
+const common = () => ({ 'Brain ID': rich(), '同步状态': { select: {} } });
 
 export function buildDirectorySchemas(dbs) {
   const ids = new Set();
@@ -35,69 +23,90 @@ export function buildDirectorySchemas(dbs) {
     ids.add(id);
   }
   return {
-    areas: { ...common(), Name: { title: {} }, '价值流': relation(dbs.value_streams) },
-    value_streams: { ...common(), Name: { title: {} }, '说明': rich(), '所属部门': relation(dbs.areas), Capabilities: relation(dbs.capabilities), ...treeSchema([]) },
+    areas: { ...common(), Name: title(), '价值流': relation(dbs.value_streams) },
+    value_streams: { ...common(), '名称': title(), '说明': rich(), '所属部门': relation(dbs.areas), '能力': relation(dbs.capabilities), '树位置': rich() },
     capabilities: {
-      ...common(), Name: { title: {} }, Key: rich(), '说明': rich(), '登记状态': { select: {} },
-      '所属价值流': relation(dbs.value_streams), Workflows: relation(dbs.workflows), ...treeSchema(['vs']),
+      ...common(), '名称': title(), '说明': rich(), '所属价值流': relation(dbs.value_streams), '流程': relation(dbs.workflows),
+      '状态': { select: {} }, '树位置': rich(),
     },
     workflows: {
-      ...common(), Workflow: { title: {} }, '版本': rich(), Key: rich(), Capability: relation(dbs.capabilities), Activities: relation(dbs.activities),
-      '渠道': rich(), '形态': rich(), '活动编排': rich(), '登记状态': { select: {} },
-      ...workflowRuntimeSchema(), ...treeSchema(['vs', 'cap']),
+      ...common(), '名称': title(), '所属能力': relation(dbs.capabilities), 'Activity': relation(dbs.activities), 'Activity 顺序': rich(),
+      '运行方式': rich(), '运行情况': { select: {} }, '最近运行': { date: {} }, '7天次数': count(), '7天成功率': { number: { format: 'percent' } },
+      '平均时长': rich(), [HUMAN_MARK_COLUMN]: { select: { options: ['有用', '没用', '过期', '删'].map(name => ({ name })) } }, '树位置': rich(),
     },
     activities: {
-      ...common(), Name: { title: {} }, Key: rich(), '所属Workflows': relation(dbs.workflows), Steps: relation(dbs.steps),
-      '执行主体': rich(), [SOURCE_COLUMN]: { url: {} }, ...activityCardSchema(), ...treeSchema(['vs', 'cap', 'wf']),
+      ...common(), '名称': title(), '所属流程': relation(dbs.workflows), 'Step': relation(dbs.steps),
+      '承诺（FR）': rich(), '输入': rich(), '输出': rich(), '谁来执行': { select: {} }, '还缺什么': rich(), '树位置': rich(),
     },
     steps: {
-      ...common(), '步骤': { title: {} }, Key: rich(), '顺序': count(), '所属Activity': relation(dbs.activities), '所属Workflows': relation(dbs.workflows),
-      Input: rich(), Output: rich(), '验收标准': rich(), '证据读取': rich(),
-      '实现来源': rich(), '执行主体': rich(), '登记状态': { select: {} }, ...stepCardSchema(), ...treeSchema(['vs', 'cap', 'wf']),
+      ...common(), '名称': title(), '所属Activity': relation(dbs.activities), '顺序': count(), '做什么': rich(), '输入': rich(), '输出': rich(),
+      '怎么验收': rich(), '失败了怎么办': rich(), '谁来执行': { select: {} }, '还缺什么': rich(),
     },
   };
 }
 
-/** 登记过的人工列：部门库是主理人 GTD 工作区（PARA 关系 + 名称/上下级/归档，部门入口回灌读它们），流程库「你的标记」是主理人打分。 */
+/**
+ * 旧名 → 新名（带值的列改名保值）。只有新名不存在且旧名存在时才改；两个都在就不动，旧列交给清理脚本。
+ * 「平均时长(秒)」是数字列、新「平均时长」是带单位的文字，类型不同不改名（旧列由清理脚本删）。
+ */
+export const DIRECTORY_RENAMES = Object.freeze({
+  areas: {},
+  value_streams: { Name: '名称', Capabilities: '能力' },
+  capabilities: { Name: '名称', Workflows: '流程', '登记状态': '状态' },
+  workflows: { Workflow: '名称', Capability: '所属能力', Activities: 'Activity', '活动编排': 'Activity 顺序', '怎么运行': '运行方式',
+    '在用吗': '运行情况', '你的标记': HUMAN_MARK_COLUMN },
+  activities: { Name: '名称', '所属Workflows': '所属流程', Steps: 'Step', '承诺': '承诺（FR）' },
+  steps: { '步骤': '名称', '动作': '做什么', Input: '输入', Output: '输出', '验收标准': '怎么验收', '失败处理': '失败了怎么办' },
+});
+
+/** 登记过的人工列：部门库是主理人 GTD 工作区（PARA 关系 + 名称/上下级/归档，部门入口回灌读它们），流程库「去留（你填）」是主理人打分。 */
 export const DIRECTORY_HUMAN_COLUMNS = Object.freeze({
   areas: Object.freeze(['Name', 'Parent item', 'Sub-item', 'Archive', 'Domain', 'Goals', 'Issues', 'Knowledge_Opertional', 'Knowledge_Reference',
     'Project Notes', 'Project Status', 'Projects', 'Resources', 'Tasks', 'XX_Ideas']),
-  value_streams: Object.freeze([]), capabilities: Object.freeze([]), workflows: Object.freeze(['你的标记']), activities: Object.freeze([]), steps: Object.freeze([]),
+  value_streams: Object.freeze([]), capabilities: Object.freeze([]), workflows: Object.freeze([HUMAN_MARK_COLUMN]), activities: Object.freeze([]), steps: Object.freeze([]),
 });
 
-const SYSTEM = { 'Brain ID': 'Brain:id', '登记缺口': '派生:登记缺口', '同步状态': '系统:同步状态', '同步时间': '系统:同步时间' };
-const TREE = levels => Object.fromEntries(Object.keys(treeSchema(levels)).map(c => [c, c === '分组·公司' || c === '分组·部门' ? '派生:部门树' : '派生:祖先链']));
-const CARD = cols => Object.fromEntries(cols.map(c => [c, c.startsWith('格·') ? 'Brain:activity_cells' : c === '用料' ? 'Brain:activity_uses' : 'Brain:activities']));
-/** 每一列的来源（给清理脚本 dry-run 和人看）：Brain:表.列 / 派生:说明 / 人工 / 系统。 */
+const SYSTEM = { 'Brain ID': 'Brain:id', '同步状态': '系统:同步状态（有缺口=关联没连上或登记不全）' };
+/** 每一列的来源（给清理脚本 dry-run 和人看）：Brain:表.列 / 派生:说明 / 人工。 */
 export const DIRECTORY_COLUMN_SOURCES = Object.freeze({
-  areas: { ...SYSTEM, Name: '人工', '价值流': '派生:value_streams.area_id 反查' },
-  value_streams: { ...SYSTEM, ...TREE([]), Name: 'Brain:value_streams.name（建页时）', '说明': 'Brain:value_streams.description',
-    '所属部门': 'Brain:value_streams.area_id', Capabilities: '派生:capabilities.parent_journey_id 反查' },
-  capabilities: { ...SYSTEM, ...TREE(['vs']), Name: 'Brain:capabilities.name（建页时）', Key: 'Brain:capabilities.capability_code', '说明': 'Brain:capabilities.description',
-    '登记状态': 'Brain:capabilities.status', '所属价值流': 'Brain:capabilities.parent_journey_id', Workflows: '派生:workflows.capability_id 反查' },
-  workflows: { ...SYSTEM, ...TREE(['vs', 'cap']), Workflow: 'Brain:workflows.name（建页时）', '版本': 'Brain:workflows.version', Key: 'Brain:workflows.key',
-    Capability: 'Brain:workflows.capability_id', Activities: 'Brain:workflow_activity_refs', '渠道': 'Brain:workflows.channel', '形态': 'Brain:workflows.form',
-    '活动编排': '派生:workflow_activity_refs 按顺序列 Activity 名', '登记状态': 'Brain:workflows.status',
-    '最近运行': '派生:runs + ops_schedule_entries 最近一次', '在用吗': '派生:runs/闹钟/引用', '怎么运行': '派生:ops_schedule_entries',
-    '7天次数': '派生:v_workflow_run_stats.runs(7d)', '7天失败': '派生:v_workflow_run_stats.failed(7d)', '7天成功率': '派生:v_workflow_run_stats.success_rate(7d)',
-    '平均时长(秒)': '派生:v_workflow_run_stats.avg_duration_ms(7d)', '你的标记': '人工' },
-  activities: { ...SYSTEM, ...TREE(['vs', 'cap', 'wf']), ...CARD(ACTIVITY_CARD_COLUMNS), Name: 'Brain:activities.name（建页时）', Key: 'Brain:activities.capability_key+activity_key',
-    '所属Workflows': 'Brain:workflow_activity_refs', Steps: 'Brain:steps.activity_id', '执行主体': 'Brain:activities.executor_kind', [SOURCE_COLUMN]: 'Brain:activities.contract_source' },
-  steps: { ...SYSTEM, ...TREE(['vs', 'cap', 'wf']), ...Object.fromEntries(STEP_CARD_COLUMNS.map(c => [c, 'Brain:steps'])), '步骤': 'Brain:steps.name（建页时）', Key: 'Brain:steps.key',
-    '顺序': 'Brain:steps.step_order', '所属Activity': 'Brain:steps.activity_id', '所属Workflows': '派生:所属 Activity 的流程引用',
-    Input: 'Brain:steps.inputs', Output: 'Brain:steps.outputs', '验收标准': 'Brain:steps.readback', '证据读取': 'Brain:steps.readback+当前定义版本',
-    '实现来源': 'Brain:steps.contract/当前定义版本', '执行主体': 'Brain:activities.executor_kind', '登记状态': 'Brain:steps.active' },
+  areas: { ...SYSTEM, Name: '人工', '价值流': '派生:value_streams.area_id 反查（只连建了页的价值流）' },
+  value_streams: { ...SYSTEM, '名称': 'Brain:value_streams.name（建页时）', '说明': 'Brain:value_streams.description',
+    '所属部门': 'Brain:value_streams.area_id（可为子部门）', '能力': '派生:capabilities.parent_journey_id 反查', '树位置': '派生:部门树' },
+  capabilities: { ...SYSTEM, '名称': 'Brain:capabilities.name（建页时）', '说明': 'Brain:capabilities.description',
+    '所属价值流': 'Brain:capabilities.parent_journey_id', '流程': '派生:workflows.capability_id 反查', '状态': 'Brain:capabilities.status（在用/弃用）', '树位置': '派生:祖先链' },
+  workflows: { ...SYSTEM, '名称': 'Brain:workflows.name（建页时）', '所属能力': 'Brain:workflows.capability_id', 'Activity': 'Brain:workflow_activity_refs',
+    'Activity 顺序': '派生:workflow_activity_refs 按顺序列 Activity 名', '运行方式': '派生:workflows.form + ops_schedule_entries（人话）',
+    '运行情况': '派生:runs/闹钟/引用', '最近运行': '派生:runs + ops_schedule_entries 最近一次', '7天次数': '派生:v_workflow_run_stats.runs(7d)',
+    '7天成功率': '派生:v_workflow_run_stats.success_rate(7d)', '平均时长': '派生:v_workflow_run_stats.avg_duration_ms(7d)', [HUMAN_MARK_COLUMN]: '人工', '树位置': '派生:祖先链' },
+  activities: { ...SYSTEM, '名称': 'Brain:activities.name（建页时）', '所属流程': 'Brain:workflow_activity_refs', 'Step': 'Brain:steps.activity_id',
+    '承诺（FR）': 'Brain:activities.promise', '输入': 'Brain:activities.inputs', '输出': 'Brain:activities.outputs', '谁来执行': 'Brain:activities.executor_kind',
+    '还缺什么': '派生:标准项空缺 + activity_cells 红/待判/未验', '树位置': '派生:祖先链' },
+  steps: { ...SYSTEM, '名称': 'Brain:steps.name（建页时）', '所属Activity': 'Brain:steps.activity_id', '顺序': 'Brain:steps.step_order', '做什么': 'Brain:steps.action',
+    '输入': 'Brain:steps.inputs', '输出': 'Brain:steps.outputs', '怎么验收': '派生:steps.readback + 当前定义版本判定（人话）', '失败了怎么办': 'Brain:steps.on_fail',
+    '谁来执行': 'Brain:activities.executor_kind', '还缺什么': '派生:空缺项 + 实现核验状态' },
 });
+
+const typeOf = have => have?.type ?? ['rich_text', 'title', 'relation', 'select', 'date', 'number', 'people', 'checkbox', 'url']
+  .find(candidate => Object.hasOwn(have ?? {}, candidate));
+
+/** 待做的改名：新名不在、旧名在、且类型与新合同一致。返回 [[旧名, 新名], …]。 */
+export function pendingRenames(layer, properties, wanted) {
+  return Object.entries(DIRECTORY_RENAMES[layer] || {}).filter(([from, to]) => properties?.[to] === undefined && properties?.[from] !== undefined &&
+    wanted[to] && typeOf(properties[from]) === Object.keys(wanted[to])[0]);
+}
 
 function checkSchema(name, dbId, actual, wanted, requireAll = false) {
   if (!actual || normalize(actual.id) !== normalize(dbId)) throw new Error(`directory_schema:${name}:wrong_database`);
   if (actual.archived || actual.in_trash) throw new Error(`directory_schema:${name}:archived_database`);
   if (!actual.properties || typeof actual.properties !== 'object') throw new Error(`directory_schema:${name}:missing_properties`);
+  const renames = requireAll ? [] : pendingRenames(name, actual.properties, wanted);
+  const properties = { ...actual.properties };
+  for (const [from, to] of renames) { properties[to] = properties[from]; delete properties[from]; }
   const missing = {};
   for (const [key, expected] of Object.entries(wanted)) {
-    const have = actual.properties[key];
+    const have = properties[key];
     if (have === undefined) {
-      if (expected.title && Object.values(actual.properties).some(p => p?.type === 'title' || p?.title)) {
+      if (expected.title && Object.values(properties).some(p => p?.type === 'title' || p?.title)) {
         throw new Error(`directory_schema:${name}:${key}:title_name_conflict`);
       }
       if (requireAll) throw new Error(`directory_schema:${name}:${key}:missing_after_write`);
@@ -105,37 +114,38 @@ function checkSchema(name, dbId, actual, wanted, requireAll = false) {
       continue;
     }
     const type = Object.keys(expected)[0];
-    const haveType = have?.type ?? ['rich_text', 'title', 'relation', 'select', 'date', 'number', 'people', 'checkbox', 'url']
-      .find(candidate => Object.hasOwn(have ?? {}, candidate));
+    const haveType = typeOf(have);
     if (haveType !== type) throw new Error(`directory_schema:${name}:${key}:expected_${type}:got_${haveType ?? 'unknown'}`);
     if (type === 'relation' && normalize(have.relation?.database_id) !== normalize(expected.relation.database_id)) {
       throw new Error(`directory_schema:${name}:${key}:wrong_relation_target`);
     }
   }
-  return missing;
+  return { missing, renames };
 }
 
 /**
- * 所有库先预检，类型或关系冲突时整批不写；只补缺列，不重命名/删除/修改既有属性。
+ * 所有库先预检，类型或关系冲突时整批不写；先把带值旧列改成新名（保值），再补缺列；不删除既有属性。
  * Notion 无CAS或跨库事务：写前重读缩小人工并发窗口，不能承诺原子性。
- * 中途失败保留已补列，下一轮重试；只有最终逐库GET读回通过才返回verified。
+ * 中途失败保留已改/已补列，下一轮重试；只有最终逐库GET读回通过才返回verified。
  */
 export async function ensureDirectorySchemas({ dbs, token, notionReq }) {
   const schemas = buildDirectorySchemas(dbs);
-  const missing = {};
+  const plan = {};
   for (const name of LAYERS) {
     const actual = await notionReq(token, `/databases/${dbs[name]}`, 'GET');
-    missing[name] = checkSchema(name, dbs[name], actual, schemas[name]);
+    plan[name] = checkSchema(name, dbs[name], actual, schemas[name]);
   }
-  const added = {};
+  const added = {}, renamed = {};
   for (const name of LAYERS) {
-    if (Object.keys(missing[name]).length) {
+    if (Object.keys(plan[name].missing).length || plan[name].renames.length) {
       const current = await notionReq(token, `/databases/${dbs[name]}`, 'GET');
-      missing[name] = checkSchema(name, dbs[name], current, schemas[name]);
+      plan[name] = checkSchema(name, dbs[name], current, schemas[name]);
     }
-    added[name] = Object.keys(missing[name]);
-    if (added[name].length) {
-      await notionReq(token, `/databases/${dbs[name]}`, 'PATCH', { properties: missing[name] });
+    added[name] = Object.keys(plan[name].missing);
+    renamed[name] = plan[name].renames.map(([from, to]) => `${from}→${to}`);
+    if (added[name].length || renamed[name].length) {
+      await notionReq(token, `/databases/${dbs[name]}`, 'PATCH', { properties: {
+        ...Object.fromEntries(plan[name].renames.map(([from, to]) => [from, { name: to }])), ...plan[name].missing } });
       const actual = await notionReq(token, `/databases/${dbs[name]}`, 'GET');
       checkSchema(name, dbs[name], actual, schemas[name], true);
     }
@@ -144,5 +154,5 @@ export async function ensureDirectorySchemas({ dbs, token, notionReq }) {
     const actual = await notionReq(token, `/databases/${dbs[name]}`, 'GET');
     checkSchema(name, dbs[name], actual, schemas[name], true);
   }
-  return { verified: true, added };
+  return { verified: true, added, renamed };
 }
