@@ -2,18 +2,15 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runActivityProcess } from './helpers/run-activity.mjs';
+import { git, gitPlain } from './helpers/git.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = path.join(HERE, '../activities/publish.mjs');
 const FAKE_GH = path.join(HERE, 'fixtures/fake-gh.mjs');
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
 const TITLE = 'docs(sprint): 11111111 md 链 01-intent → 02-spec';
-
-const git = (cwd, ...args) =>
-  execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
 describe('publish 活动（临时裸仓 + 假 gh）', () => {
   let root;
@@ -29,8 +26,8 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     origin = path.join(root, 'origin.git');
     worktree = path.join(root, 'wt');
     ghLog = path.join(root, 'gh.log');
-    execFileSync('git', ['init', '--bare', '-b', 'main', origin], { stdio: 'ignore' });
-    execFileSync('git', ['clone', origin, worktree], { stdio: 'ignore' });
+    gitPlain('init', '--bare', '-b', 'main', origin);
+    gitPlain('clone', origin, worktree);
     git(worktree, 'config', 'user.name', 'Test');
     git(worktree, 'config', 'user.email', 'test@example.com');
     fs.writeFileSync(path.join(worktree, 'README.md'), 'hi\n');

@@ -2,21 +2,15 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseFrontmatter } from '../lib/md-chain.mjs';
 import { runActivityProcess } from './helpers/run-activity.mjs';
+import { gitPlain } from './helpers/git.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = path.join(HERE, '../activities/spec.mjs');
 const FAKE_CLAUDE = path.join(HERE, 'fixtures/fake-claude.mjs');
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
-
-function gitInit(dir) {
-  const env = { ...process.env };
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete env[key];
-  execFileSync('git', ['init', '-q', dir], { env, stdio: 'ignore' });
-}
 
 describe('spec 活动（子进程 + 假 claude）', () => {
   let worktree;
@@ -26,7 +20,7 @@ describe('spec 活动（子进程 + 假 claude）', () => {
   });
   beforeEach(() => {
     worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'spec-test-'));
-    gitInit(worktree);
+    gitPlain('init', '-q', worktree);
   });
   afterEach(() => {
     fs.rmSync(worktree, { recursive: true, force: true });
