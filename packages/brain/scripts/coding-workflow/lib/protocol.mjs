@@ -10,6 +10,24 @@ export function log(...args) {
   console.error(...args);
 }
 
+const GIT_ENV_KEYS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'];
+
+/**
+ * 子进程环境：复制 base，剥离从 git 钩子继承来的 GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE
+ * （否则 git 命令会指向错误仓库）。stripClaude 时再剥离 CLAUDECODE 与 CLAUDE_CODE_*，
+ * 避免子 claude 误判自己嵌套在另一个会话里。不修改 base。
+ */
+export function childEnv(base = process.env, { stripClaude = false } = {}) {
+  const env = { ...base };
+  for (const key of GIT_ENV_KEYS) delete env[key];
+  if (stripClaude) {
+    for (const key of Object.keys(env)) {
+      if (key === 'CLAUDECODE' || key.startsWith('CLAUDE_CODE_')) delete env[key];
+    }
+  }
+  return env;
+}
+
 /**
  * 把 sprintDir 解析到 worktree 下的绝对路径。
  * worktree 非绝对路径字符串、sprintDir 为绝对路径或含 `..` 段时抛 Error('sprint_dir_invalid')。

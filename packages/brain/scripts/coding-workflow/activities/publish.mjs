@@ -1,10 +1,10 @@
 // publish 活动：把 sprint 目录的 md 链提交、推送，并开草稿 PR（该分支已有 PR 则复用）。
 import { spawn } from 'node:child_process';
-import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
+import { runActivity, validateBase, fail, childEnv, log } from '../lib/protocol.mjs';
 
 const GH_AUTH_RE = /\bHTTP 401\b|authentication|auth login|missing required scope|bad credentials/i;
 // 凭据提示会让无 tty 的子进程挂住；--literal-pathspecs 禁用 :/ 等 pathspec 魔法
-const CHILD_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+const CHILD_ENV = { ...childEnv(), GIT_TERMINAL_PROMPT: '0' };
 const GIT_PATHSPEC = ['--literal-pathspecs'];
 
 /** 运行子进程（不经 shell），输出转写到本进程 stderr；返回 { code, stdout, output }。 */
