@@ -6,17 +6,22 @@ const GH_AUTH_RE = /\bHTTP 401\b|authentication|auth login|missing required scop
 // 凭据提示会让无 tty 的子进程挂住；--literal-pathspecs 禁用 :/ 等 pathspec 魔法
 const CHILD_ENV = { ...childEnv(), GIT_TERMINAL_PROMPT: '0' };
 const GIT_PATHSPEC = ['--literal-pathspecs'];
+// 与本机全局 pre-commit 钩子（~/.git-hooks/pre-commit）的分支名正则保持一致，否则 commit 会被钩子拒绝
+const BRANCH_RE = /^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$/;
+const STDERR_TAIL_LINES = 20;
 
-/** 运行子进程（不经 shell），输出转写到本进程 stderr；返回 { code, stdout, output }。 */
+/** 运行子进程（不经 shell），输出转写到本进程 stderr；返回 { code, stdout, stderr, output }。 */
 function runCmd(bin, args, cwd) {
   return new Promise((resolve) => {
     let stdout = '';
+    let stderr = '';
     let output = '';
     let child;
     try {
       child = spawn(bin, args, { cwd, env: CHILD_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
-      resolve({ code: null, stdout: '', output: String(error?.message || error) });
+      const message = String(error?.message || error);
+      resolve({ code: null, stdout: '', stderr: message, output: message });
       return;
     }
     child.stdout.setEncoding('utf8');
@@ -27,14 +32,15 @@ function runCmd(bin, args, cwd) {
       process.stderr.write(chunk);
     });
     child.stderr.on('data', (chunk) => {
+      stderr += chunk;
       output += chunk;
       process.stderr.write(chunk);
     });
     child.on('error', (error) => {
       log(`[publish] 启动 ${bin} 失败: ${error?.message || error}`);
-      resolve({ code: null, stdout, output: `${output}\n${error?.message || error}` });
+      resolve({ code: null, stdout, stderr: `${stderr}\n${error?.message || error}`, output: `${output}\n${error?.message || error}` });
     });
-    child.on('close', (code) => resolve({ code, stdout, output }));
+    child.on('close', (code) => resolve({ code, stdout, stderr, output }));
   });
 }
 
@@ -48,7 +54,7 @@ await runActivity(async (input) => {
 
   const branchRes = await runCmd('git', ['-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD']);
   const branch = branchRes.stdout.trim();
-  if (branchRes.code !== 0 || !branch.startsWith('cp-')) return fail('fatal', 'branch_invalid');
+  if (branchRes.code !== 0 || !BRANCH_RE.test(branch)) return fail('fatal', 'branch_invalid');
 
   const title = `docs(sprint): ${taskId.slice(0, 8)} md 链 01-intent → 02-spec`;
   const sprintRel = sprintDir.replace(/[\\/]+$/, '');
@@ -60,7 +66,10 @@ await runActivity(async (input) => {
   const staged = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'diff', '--cached', '--quiet', '--', sprintRel]);
   if (staged.code === 1) {
     const commit = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'commit', '-m', title, '--', sprintRel]);
-    if (commit.code !== 0) return fail('fatal', 'git_commit_failed');
+    if (commit.code !== 0) {
+      const stderrTail = commit.stderr.trim().split('\n').slice(-STDERR_TAIL_LINES);
+      return fail('fatal', 'git_commit_failed', { evidence: [{ stderr_tail: stderrTail }] });
+    }
   } else if (staged.code !== 0) {
     return fail('fatal', 'git_diff_failed');
   }
