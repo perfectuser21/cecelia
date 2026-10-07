@@ -2,7 +2,10 @@
 import { spawn } from 'node:child_process';
 import { runActivity, resolveSprintDir, log } from '../lib/protocol.mjs';
 
-const GH_AUTH_RE = /auth|401|scope/i;
+const GH_AUTH_RE = /\bHTTP 401\b|authentication|auth login|missing required scope|bad credentials/i;
+// 凭据提示会让无 tty 的子进程挂住；--literal-pathspecs 禁用 :/ 等 pathspec 魔法
+const CHILD_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+const GIT_PATHSPEC = ['--literal-pathspecs'];
 
 function fail(failureClass, reasonCode) {
   return { status: 'failed', failure_class: failureClass, reason_code: reasonCode };
@@ -15,7 +18,7 @@ function runCmd(bin, args, cwd) {
     let output = '';
     let child;
     try {
-      child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(bin, args, { cwd, env: CHILD_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
       resolve({ code: null, stdout: '', output: String(error?.message || error) });
       return;
@@ -59,13 +62,13 @@ await runActivity(async (input) => {
   const title = `docs(sprint): ${taskId.slice(0, 8)} md 链 01-intent → 02-spec`;
   const sprintRel = sprintDir.replace(/[\\/]+$/, '');
 
-  const add = await runCmd('git', ['-C', worktree, 'add', '--', sprintRel]);
+  const add = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'add', '--', sprintRel]);
   if (add.code !== 0) return fail('fatal', 'git_add_failed');
 
   // diff --cached --quiet：有暂存改动退出 1，无改动退出 0
-  const staged = await runCmd('git', ['-C', worktree, 'diff', '--cached', '--quiet', '--', sprintRel]);
+  const staged = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'diff', '--cached', '--quiet', '--', sprintRel]);
   if (staged.code === 1) {
-    const commit = await runCmd('git', ['-C', worktree, 'commit', '-m', title, '--', sprintRel]);
+    const commit = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'commit', '-m', title, '--', sprintRel]);
     if (commit.code !== 0) return fail('fatal', 'git_commit_failed');
   } else if (staged.code !== 0) {
     return fail('fatal', 'git_diff_failed');

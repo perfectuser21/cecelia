@@ -21,7 +21,12 @@ export function resolveSprintDir(worktree, sprintDir) {
   if (sprintDir.split(/[\\/]+/).includes('..')) {
     throw new Error('sprint_dir_invalid');
   }
-  return path.join(worktree, sprintDir);
+  const resolved = path.join(worktree, sprintDir);
+  // '.'、'./' 等解析后就是 worktree 本身：会让"只处理 sprint 目录"扩大成整个工作区
+  if (path.relative(worktree, resolved) === '') {
+    throw new Error('sprint_dir_invalid');
+  }
+  return resolved;
 }
 
 function readStdin() {
