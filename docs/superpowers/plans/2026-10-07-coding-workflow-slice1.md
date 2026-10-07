@@ -18,7 +18,7 @@
 - outputs 的 key 必须匹配 `^[A-Za-z_][A-Za-z0-9_]*$`。
 - 锚点标题行 `### <ID>`，ID 匹配 `^[A-Z]+-\d+$`；intent 用 `I-n`，spec 用 `S-n`。
 - frontmatter 只用三键：`task_id`、`step`、`upstream`（JSON 数组字面量，单行）。
-- budget：intent 60s、spec 900s、chain_check 30s、publish 120s；heartbeat_s 全部 30；spec `max_attempts: 2`，其余 1。
+- budget：intent 60s、spec 900s、chain_check 30s、publish 900s（原 120s；本仓 pre-push 钩子跑全量 quickcheck 约 10 分钟，push 不加 --no-verify，终审裁定调整）；heartbeat_s 全部 30；spec `max_attempts: 2`，其余 1。
 - 不新增 npm 依赖；只用 node 内置模块。
 - 每个 task：先 commit 失败测试，再 commit 实现。
 

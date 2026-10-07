@@ -94,7 +94,7 @@ upstream: ["01-intent.md#I-1", "01-intent.md#I-2"]
 
 - 每个活动的 failure 只声明自己会报的分类，且非空。
 - spec 设 `max_attempts: 2`，其余为 1。
-- budget：intent 60s、spec 900s、chain_check 30s、publish 120s；heartbeat 统一 30s。
+- budget：intent 60s、spec 900s、chain_check 30s、publish 900s；heartbeat 统一 30s。publish 由原 120s 调为 900s（终审裁定）：本仓 pre-push 钩子会跑全量 quickcheck（约 10 分钟），publish 内 `git push` 不加 `--no-verify`，120s 必超时。
 
 ## 错误处理
 

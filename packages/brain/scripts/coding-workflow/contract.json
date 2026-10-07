@@ -58,7 +58,7 @@
     {
       "key": "publish",
       "order": 4,
-      "budget": { "max_duration_s": 120, "heartbeat_s": 30 },
+      "budget": { "max_duration_s": 900, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],
         "retryable": ["push_failed", "gh_failed"],
