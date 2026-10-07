@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// 假 claude：按 FAKE_CLAUDE_MODE（ok | nofile | auth | fail | outside | sleep）模拟 `claude -p <prompt> ...`。
+// 假 claude：按 FAKE_CLAUDE_MODE（ok | nofile | auth | fail | outside | sleep | linger）模拟 `claude -p <prompt> ...`。
 // FAKE_CLAUDE_PID_FILE 指向文件时，启动即把自己的 pid 写进去（测试据此确认进程已被清理）。
-// sleep 模式下 FAKE_CLAUDE_CHILD_PID_FILE 指向文件时，额外起一个长睡孙进程并写入其 pid。
+// FAKE_CLAUDE_CHILD_PID_FILE 指向文件时，sleep / linger 模式额外起一个长睡孙进程并写入其 pid；
+// FAKE_CLAUDE_CHILD_STDIO=ignore 时孙进程不继承输出管道，否则继承（握着管道）。
+// linger：照常写出合法 02-spec.md 并退出 0，但留下孙进程。
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -12,13 +14,17 @@ const prompt = argv[argv.indexOf('-p') + 1] || '';
 
 if (process.env.FAKE_CLAUDE_PID_FILE) fs.writeFileSync(process.env.FAKE_CLAUDE_PID_FILE, String(process.pid));
 
+// 孙进程：与真 claude 起的子工具进程一样（默认继承 stdio，握着父进程的输出管道）；60s 后自行退出，防测试泄漏
+function spawnGrandchild() {
+  if (!process.env.FAKE_CLAUDE_CHILD_PID_FILE) return;
+  const stdio = process.env.FAKE_CLAUDE_CHILD_STDIO === 'ignore' ? 'ignore' : 'inherit';
+  const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio });
+  fs.writeFileSync(process.env.FAKE_CLAUDE_CHILD_PID_FILE, String(grandchild.pid));
+}
+
 // sleep：长睡且不写任何文件，模拟 claude 卡死（默认 SIGTERM 即可终止）
 if (mode === 'sleep') {
-  // 孙进程：与真 claude 起的子工具进程一样，继承 stdio（握着父进程的输出管道）；60s 后自行退出，防测试泄漏
-  if (process.env.FAKE_CLAUDE_CHILD_PID_FILE) {
-    const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'inherit' });
-    fs.writeFileSync(process.env.FAKE_CLAUDE_CHILD_PID_FILE, String(grandchild.pid));
-  }
+  spawnGrandchild();
   setInterval(() => {}, 1000);
   await new Promise(() => {});
 }
@@ -52,3 +58,4 @@ fs.writeFileSync(
 );
 // outside：除合法 02-spec.md 外，再往 worktree 根（子进程 cwd）写一个越界文件
 if (mode === 'outside') fs.writeFileSync('stray.txt', 'out of scope\n');
+if (mode === 'linger') spawnGrandchild();

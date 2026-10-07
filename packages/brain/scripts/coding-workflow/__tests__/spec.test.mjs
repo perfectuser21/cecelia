@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { parseFrontmatter } from '../lib/md-chain.mjs';
 import { runActivityProcess } from './helpers/run-activity.mjs';
 import { gitPlain } from './helpers/git.mjs';
+import { callActivityProcess } from '../../../src/orchestrator/activity-process.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = path.join(HERE, '../activities/spec.mjs');
@@ -199,15 +200,35 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     },
   );
 
-  it('claude 卡死超时 -> retryable claude_timeout，不留 02-spec.md，且假 claude 进程已被清理', async () => {
-    const pidFile = path.join(worktree, '.fake-claude.pid');
+  const readPid = (file) => {
+    const pid = Number(fs.readFileSync(file, 'utf8'));
+    expect(Number.isInteger(pid) && pid > 0).toBe(true);
+    return pid;
+  };
+  // 进程被杀后可能短暂以僵尸状态存在（等 init 回收），轮询到 ESRCH；到期仍存在则补杀防泄漏并失败
+  const expectGone = async (pid, what) => {
+    for (let i = 0; i < 40; i += 1) {
+      try {
+        process.kill(pid, 0);
+      } catch (error) {
+        expect(error.code, what).toBe('ESRCH');
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    try { process.kill(pid, 'SIGKILL'); } catch { /* 已退出 */ }
+    expect.fail(`${what} (pid ${pid}) 仍然存活`);
+  };
+  const pidFiles = () => ({
+    FAKE_CLAUDE_PID_FILE: path.join(worktree, '.fake-claude.pid'),
+    FAKE_CLAUDE_CHILD_PID_FILE: path.join(worktree, '.fake-claude-child.pid'),
+  });
+
+  it('claude 卡死超时 -> retryable claude_timeout，不留 02-spec.md，claude 与孙进程都已被清理', async () => {
+    const files = pidFiles();
     const started = Date.now();
-    const childPidFile = path.join(worktree, '.fake-claude-child.pid');
-    const r = await run('sleep', {}, {
-      CODING_WF_SPEC_TIMEOUT_MS: '500',
-      FAKE_CLAUDE_PID_FILE: pidFile,
-      FAKE_CLAUDE_CHILD_PID_FILE: childPidFile,
-    });
+    // 2500ms：给假 claude 留足启动并写 pid 文件的时间，CI 高负载下不早于 pid 文件写入
+    const r = await run('sleep', {}, { CODING_WF_SPEC_TIMEOUT_MS: '2500', ...files });
     const elapsed = Date.now() - started;
     expect(r.exitCode).toBe(2);
     expect(r.result.status).toBe('failed');
@@ -217,19 +238,82 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(elapsed).toBeLessThan(10000);
     expect(fs.existsSync(specFile())).toBe(false);
 
-    const pid = Number(fs.readFileSync(pidFile, 'utf8'));
-    expect(Number.isInteger(pid) && pid > 0).toBe(true);
-    expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
-
+    await expectGone(readPid(files.FAKE_CLAUDE_PID_FILE), '假 claude');
     // 孙进程（claude 起的子进程）也必须随进程组一起被清理，不能成孤儿
-    const grandchildPid = Number(fs.readFileSync(childPidFile, 'utf8'));
-    expect(Number.isInteger(grandchildPid) && grandchildPid > 0).toBe(true);
-    try {
-      expect(() => process.kill(grandchildPid, 0)).toThrow(/ESRCH/);
-    } finally {
-      try { process.kill(grandchildPid, 'SIGKILL'); } catch { /* 已退出 */ }
-    }
+    await expectGone(readPid(files.FAKE_CLAUDE_CHILD_PID_FILE), '孙进程');
   });
+
+  it('超时被 budget 钳制：CODING_WF_SPEC_TIMEOUT_MS 远大于 budget 时仍在 budget 之内报 claude_timeout', async () => {
+    const files = pidFiles();
+    const started = Date.now();
+    // budget 17s -> 钳到 17000 - 5000(KILL 宽限) - 10000(余量) = 2000ms；不钳制则要等 600s
+    const r = await run('sleep', { budget: { max_duration_s: 17, heartbeat_s: 30 } }, {
+      CODING_WF_SPEC_TIMEOUT_MS: '600000',
+      ...files,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.result.failure_class).toBe('retryable');
+    expect(r.result.reason_code).toBe('claude_timeout');
+    expect(Date.now() - started).toBeLessThan(10000);
+    await expectGone(readPid(files.FAKE_CLAUDE_CHILD_PID_FILE), '孙进程');
+  });
+
+  it('执行器取消（callActivityProcess + AbortSignal）-> claude 与孙进程都被清理，不成孤儿', async () => {
+    const files = pidFiles();
+    const saved = {};
+    const env = {
+      CODING_WF_CLAUDE_BIN: FAKE_CLAUDE,
+      FAKE_CLAUDE_MODE: 'sleep',
+      CODING_WF_SPEC_TIMEOUT_MS: '600000',
+      ...files,
+    };
+    for (const [k, v] of Object.entries(env)) {
+      saved[k] = process.env[k];
+      process.env[k] = v;
+    }
+    try {
+      const ac = new AbortController();
+      const activity = {
+        key: 'spec',
+        runtime: { entry: 'activities/spec.mjs' },
+        budget: { max_duration_s: 900, heartbeat_s: 30 },
+      };
+      const pending = callActivityProcess(activity, input(), {
+        cwd: path.join(HERE, '..'),
+        signal: ac.signal,
+      });
+      // 等假 claude 与孙进程都就绪再取消
+      for (let i = 0; i < 100 && !(fs.existsSync(files.FAKE_CLAUDE_PID_FILE) && fs.existsSync(files.FAKE_CLAUDE_CHILD_PID_FILE)); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      ac.abort();
+      const r = await pending;
+      expect(r.reason_code).toBe('run_cancelled');
+      expect(r.duration_s).toBeLessThan(10);
+      await expectGone(readPid(files.FAKE_CLAUDE_PID_FILE), '假 claude');
+      await expectGone(readPid(files.FAKE_CLAUDE_CHILD_PID_FILE), '孙进程');
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }, 30000);
+
+  it.each(['inherit', 'ignore'])(
+    'claude 正常退出但留下孙进程（stdio=%s）-> 仍 completed，孙进程被清理，不等到超时',
+    async (stdio) => {
+      const files = pidFiles();
+      const started = Date.now();
+      const r = await run('linger', {}, { FAKE_CLAUDE_CHILD_STDIO: stdio, ...files });
+      expect(r.exitCode).toBe(0);
+      expect(r.result.failure_class).toBeNull();
+      expect(r.result.outputs).toEqual({ spec_file: '02-spec.md' });
+      expect(Date.now() - started).toBeLessThan(10000);
+      expect(fs.existsSync(specFile())).toBe(true);
+      await expectGone(readPid(files.FAKE_CLAUDE_CHILD_PID_FILE), '孙进程');
+    },
+  );
 
   it.each(['abc', '0', '-5', '1.5', ''])(
     'CODING_WF_SPEC_TIMEOUT_MS=%j 非法 -> 回退默认超时，正常 claude 不受影响',
