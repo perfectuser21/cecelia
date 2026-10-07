@@ -25,7 +25,7 @@ describe('report 活动（子进程 + 假 Brain）', () => {
         requests.push({ method: req.method, url: req.url, headers: req.headers, raw });
         res.statusCode = reply.status;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify(reply.body));
+        res.end(reply.raw ?? JSON.stringify(reply.body));
       });
     });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -92,6 +92,23 @@ describe('report 活动（子进程 + 假 Brain）', () => {
     expect(r.result.status).toBe('failed');
     expect(r.result.failure_class).toBe('fatal');
     expect(r.result.reason_code).toBe('task_not_found');
+  });
+
+  it('失败结果 evidence 带 http_status 与响应体 code', async () => {
+    reply = { status: 404, body: { code: 'task_gone', error: 'nope' } };
+    const r = await runActivityProcess(ENTRY, input());
+    expect(r.result.reason_code).toBe('task_not_found');
+    expect(r.result.evidence).toEqual([{ http_status: 404, body_code: 'task_gone' }]);
+  });
+
+  it.each([
+    [500, 'upstream down', 'brain_unavailable'],
+    [401, '{"error":"no code field"}', 'brain_http_401'],
+  ])('响应体无可解析的 code（HTTP %i）-> evidence 只有 http_status', async (status, raw, reason) => {
+    reply = { status, raw };
+    const r = await runActivityProcess(ENTRY, input());
+    expect(r.result.reason_code).toBe(reason);
+    expect(r.result.evidence).toEqual([{ http_status: status }]);
   });
 
   it.each([500, 502, 429, 408])('Brain %i -> retryable brain_unavailable', async (status) => {

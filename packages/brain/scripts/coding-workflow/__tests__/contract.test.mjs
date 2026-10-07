@@ -24,7 +24,7 @@ const EXPECTED = {
   spec: { order: 2, phase: 'source', entry: 'activities/spec.mjs', max_duration_s: 900, max_attempts: 2 },
   chain_check: { order: 3, phase: 'batch_end', entry: 'activities/chain-check.mjs', max_duration_s: 30, max_attempts: 1 },
   publish: { order: 4, phase: 'batch_end', entry: 'activities/publish.mjs', max_duration_s: 900, max_attempts: 1 },
-  report: { order: 5, phase: 'finalize', entry: 'activities/report.mjs', max_duration_s: 30, max_attempts: 1 },
+  report: { order: 5, phase: 'finalize', entry: 'activities/report.mjs', max_duration_s: 30, max_attempts: 2 },
 };
 
 // 各活动实际会报出的 reason_code（grep 活动源码得到），按类别归档
