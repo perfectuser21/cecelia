@@ -177,12 +177,14 @@ const UPSERT_SQL = `
      OR runs.ended_at IS DISTINCT FROM EXCLUDED.ended_at
      OR runs.detail IS DISTINCT FROM EXCLUDED.detail`;
 
+const WARN_ROWS_MAX = 5;
+
 /**
  * 逐行幂等写入 runs；返回实际插入/更新的行数与写失败的行数。
  * 单行失败只计入 failed_rows、不中断整批：游标 = 已写入的最大 started_at，
  * 若一条坏行让整批中断，游标会永久卡在坏行之前。
  */
-export async function upsertRuns(db, rows) {
+export async function upsertRuns(db, rows, { onError } = {}) {
   let written = 0;
   let failedRows = 0;
   for (const r of rows) {
@@ -195,8 +197,15 @@ export async function upsertRuns(db, rows) {
       written += res.rowCount;
     } catch (e) {
       failedRows += 1;
-      console.warn(`[openclaw-run-ingest] 写入失败 ${r.run_id}:`, String(e?.message).slice(0, 160));
+      if (onError) onError(e);
+      // 逐行日志只打前 N 条，避免整批失败时刷出上千行
+      if (failedRows <= WARN_ROWS_MAX) {
+        console.warn(`[openclaw-run-ingest] 写入失败 ${r.run_id}:`, String(e?.message).slice(0, 160));
+      }
     }
+  }
+  if (failedRows > WARN_ROWS_MAX) {
+    console.warn(`[openclaw-run-ingest] 另有 ${failedRows - WARN_ROWS_MAX} 行写入失败（共 ${failedRows} 行，已省略逐行日志）`);
   }
   return { written, failed_rows: failedRows };
 }
@@ -246,6 +255,7 @@ export async function notifyFailureStreaks(db, triggerRefs, { sendBark, firstRou
 }
 
 const EXEC_TIMEOUT_MS = 60_000;
+const CATCHUP_MS = 24 * 3600_000;
 
 /**
  * 主入口：读游标 → 拉增量 → 映射 → upsert → 连败告警。
@@ -259,8 +269,9 @@ export async function runOpenclawRunIngest(db, deps = {}) {
   const sendBark = deps.sendBark ?? defaultSendBark;
   const now = deps.now ?? Date.now;
 
+  const nowMs = now();
   const cursor = await readCursorMs(db);
-  const sql = buildIngestSql({ sinceMs: cursor, nowMs: now(), limit: LIMIT_MAX });
+  const sql = buildIngestSql({ sinceMs: cursor, nowMs, limit: LIMIT_MAX });
   const stdout = await exec(buildHostCmd(buildMmvCmd(sql), inContainer), { timeoutMs: EXEC_TIMEOUT_MS });
   const raw = parseSqliteJson(stdout);
 
@@ -272,14 +283,21 @@ export async function runOpenclawRunIngest(db, deps = {}) {
     else skipped += 1;
   }
 
-  const { written, failed_rows } = await upsertRuns(db, rows);
+  let firstError = null;
+  const { written, failed_rows } = await upsertRuns(db, rows, { onError: (e) => { firstError ??= e; } });
+  // 整批全部写失败 = 系统性故障（schema 漂移/权限等），抛错让调度器记 fail，不能静默记 pass
+  if (rows.length > 0 && failed_rows === rows.length) {
+    throw new Error(`upsert_all_failed: ${failed_rows} 行全部写入失败，首个错误: ${String(firstError?.message).slice(0, 200)}`);
+  }
 
   const failedNames = [...new Set(
     rows.filter((r) => r.outcome === 'fail' || r.outcome === 'timeout').map((r) => r.trigger_ref),
   )];
+  // 追赶模式：首轮或游标落后 now 超过 24h（30 天回填 >2000 行要多轮追平），不发连败 Bark，避免历史连败炸出来
+  const catchingUp = cursor === null || cursor < nowMs - CATCHUP_MS;
   let notified = 0;
   try {
-    ({ notified } = await notifyFailureStreaks(db, failedNames, { sendBark, firstRound: cursor === null }));
+    ({ notified } = await notifyFailureStreaks(db, failedNames, { sendBark, firstRound: catchingUp }));
   } catch (e) {
     console.warn('[openclaw-run-ingest] 连败告警失败（不影响采集）:', String(e?.message).slice(0, 160));
   }
