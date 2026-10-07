@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { readCursorMs, upsertRuns } from '../../openclaw-run-ingest.js';
+import { readCursorMs, upsertRuns, notifyFailureStreaks } from '../../openclaw-run-ingest.js';
 
 let pool, client, workflow;
 beforeAll(async () => {
@@ -87,5 +87,39 @@ describe('upsertRuns', () => {
 
   it('空数组 → written 为 0', async () => {
     expect(await upsertRuns(client, [])).toEqual({ written: 0 });
+  });
+});
+
+describe('notifyFailureStreaks（真库）', () => {
+  it('同任务名 3 条 fail → 发 1 次；其后补一条 pass 则不再发', async () => {
+    const t = (i) => new Date(T.getTime() + i * 60000);
+    const name = '连败验收任务';
+    await upsertRuns(client, [1, 2, 3].map((i) => mk(`s${i}`, {
+      trigger_ref: name, outcome: 'fail', error: `炸了${i}`, started_at: t(i), ended_at: t(i),
+    })));
+    const sendBark = async (...args) => { calls.push(args); };
+    const calls = [];
+    expect(await notifyFailureStreaks(client, [name], { sendBark, firstRound: false })).toEqual({ notified: 1 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe('OpenClaw 任务连续失败');
+    expect(calls[0][1]).toBe(`${name} 连续 3 次失败：炸了3`);
+    expect(calls[0][2]).toEqual({ dedupeKey: `openclaw-run-streak:${name}:openclaw:s1`, dedupeTtlSec: 604800 });
+
+    await upsertRuns(client, [mk('s4', { trigger_ref: name, started_at: t(4), ended_at: t(4) })]);
+    expect(await notifyFailureStreaks(client, [name], { sendBark, firstRound: false })).toEqual({ notified: 0 });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('running 不计入连败判定', async () => {
+    const t = (i) => new Date(T.getTime() + i * 60000);
+    const name = '连败验收任务2';
+    await upsertRuns(client, [
+      ...[1, 2, 3].map((i) => mk(`q${i}`, { trigger_ref: name, outcome: 'timeout', started_at: t(i), ended_at: t(i) })),
+      mk('q4', { trigger_ref: name, outcome: 'running', ended_at: null, started_at: t(4) }),
+    ]);
+    const calls = [];
+    const r = await notifyFailureStreaks(client, [name], { sendBark: async (...a) => { calls.push(a); }, firstRound: false });
+    expect(r).toEqual({ notified: 1 });
+    expect(calls[0][1]).toContain('连续 3 次失败');
   });
 });

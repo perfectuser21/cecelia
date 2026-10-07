@@ -3,13 +3,15 @@
  * 决策 c7ff6e02 / 9ec7a010；判定点 b7be0e26（结果按 status）/ 6d4b7ed5（任务名回退 job_id 前 8 位）
  * 不碰数据库、不执行 ssh。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   buildIngestSql,
   buildMmvCmd,
   parseSqliteJson,
   mapOpenclawRow,
   truncateText,
+  findStreakStart,
+  notifyFailureStreaks,
   OUTCOME_BY_STATUS,
 } from '../openclaw-run-ingest.js';
 
@@ -246,5 +248,88 @@ describe('truncateText', () => {
     expect(hasLoneSurrogate(r.detail.summary)).toBe(false);
     expect(r.error.length).toBeLessThanOrEqual(2000);
     expect(r.detail.summary.length).toBeLessThanOrEqual(4000);
+  });
+});
+
+describe('findStreakStart', () => {
+  const rec = (...outs) => outs.map((outcome, i) => ({ run_id: `openclaw:r${i + 1}`, outcome }));
+
+  it('连败不足 3 条 → null', () => {
+    expect(findStreakStart(rec('fail', 'fail', 'pass'))).toBeNull();
+    expect(findStreakStart([])).toBeNull();
+  });
+
+  it('fail 与 timeout 混合连败 3 条 → 起点为第 3 条', () => {
+    expect(findStreakStart(rec('fail', 'timeout', 'fail'))).toEqual({ firstRunId: 'openclaw:r3', count: 3 });
+  });
+
+  it('连败段在第一条非失败处截止，更早的失败不计', () => {
+    expect(findStreakStart(rec('fail', 'fail', 'fail', 'fail', 'pass', 'fail')))
+      .toEqual({ firstRunId: 'openclaw:r4', count: 4 });
+  });
+
+  it('最近一条就是成功 → null', () => {
+    expect(findStreakStart(rec('pass', 'fail', 'fail', 'fail'))).toBeNull();
+  });
+});
+
+describe('notifyFailureStreaks', () => {
+  const failRows = (n, extra = {}) => Array.from({ length: n }, (_, i) => ({
+    run_id: `openclaw:r${i + 1}`, outcome: 'fail', error: null, summary: null, ...extra,
+  }));
+  const fakeDb = (rows) => ({ query: vi.fn().mockResolvedValue({ rows }) });
+
+  it('firstRound=true → 不查库、不发 Bark', async () => {
+    const db = fakeDb(failRows(5));
+    const sendBark = vi.fn();
+    expect(await notifyFailureStreaks(db, ['任务A'], { sendBark, firstRound: true })).toEqual({ notified: 0 });
+    expect(sendBark).not.toHaveBeenCalled();
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it('连败 3 次 → 发一次，标题/正文/去重键符合约定', async () => {
+    const rows = failRows(3, { error: null, summary: 'x' });
+    rows[0].error = '超时了';
+    const db = fakeDb(rows);
+    const sendBark = vi.fn().mockResolvedValue(true);
+    const r = await notifyFailureStreaks(db, ['任务A'], { sendBark, firstRound: false });
+    expect(r).toEqual({ notified: 1 });
+    expect(sendBark).toHaveBeenCalledTimes(1);
+    expect(sendBark).toHaveBeenCalledWith(
+      'OpenClaw 任务连续失败',
+      '任务A 连续 3 次失败：超时了',
+      { dedupeKey: 'openclaw-run-streak:任务A:openclaw:r3', dedupeTtlSec: 604800 },
+    );
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain("run_id LIKE 'openclaw:%'");
+    expect(sql).toContain("outcome <> 'running'");
+    expect(sql).toContain('ORDER BY started_at DESC');
+    expect(sql).toContain('LIMIT 50');
+    expect(params).toEqual(['任务A']);
+  });
+
+  it('error 为空时回退 summary，正文最多取 120 字且不切开代理对', async () => {
+    const rows = failRows(3, { error: '', summary: 'y'.repeat(119) + '\u{1F600}' });
+    const sendBark = vi.fn();
+    await notifyFailureStreaks(fakeDb(rows), ['任务A'], { sendBark, firstRound: false });
+    const body = sendBark.mock.calls[0][1];
+    expect(body).toBe('任务A 连续 3 次失败：' + 'y'.repeat(119));
+  });
+
+  it('连败 2 次 → 不发', async () => {
+    const sendBark = vi.fn();
+    const r = await notifyFailureStreaks(fakeDb(failRows(2)), ['任务A'], { sendBark, firstRound: false });
+    expect(r).toEqual({ notified: 0 });
+    expect(sendBark).not.toHaveBeenCalled();
+  });
+
+  it('多个任务名各自判定', async () => {
+    const db = { query: vi.fn()
+      .mockResolvedValueOnce({ rows: failRows(3) })
+      .mockResolvedValueOnce({ rows: failRows(1) }) };
+    const sendBark = vi.fn();
+    const r = await notifyFailureStreaks(db, ['甲', '乙'], { sendBark, firstRound: false });
+    expect(r).toEqual({ notified: 1 });
+    expect(sendBark.mock.calls[0][1]).toContain('甲 连续 3 次失败');
   });
 });
