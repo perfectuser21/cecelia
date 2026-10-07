@@ -179,6 +179,51 @@ describe('archiveRows 错误分类', () => {
     }
     warn.mockRestore();
   });
+
+  it('401（key 失效）/ 409（短暂 conflict）→ 停止本轮，不清该行（notion_id 保留）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const err of [mkErr(401, 'unauthorized'), mkErr(409, 'conflict')]) {
+      const db = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+      const notionReq = vi.fn(async () => { throw err; });
+      const r = await archiveRows(db, 'tok', [{ id: 'A', notion_id: 'a' }, { id: 'B', notion_id: 'b' }], notionReq);
+      expect(r).toEqual({ archived: 0, stopped: true });
+      expect(notionReq).toHaveBeenCalledTimes(1);
+      expect(db.query).not.toHaveBeenCalled();
+    }
+    warn.mockRestore();
+  });
+
+  it('410（页已不存在）→ 清三列继续下一行', async () => {
+    const db = { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }) };
+    const notionReq = vi.fn(async (tok, path) => { if (path === '/pages/a') throw mkErr(410, 'gone'); return {}; });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await archiveRows(db, 'tok', [{ id: 'A', notion_id: 'a' }, { id: 'B', notion_id: 'b' }], notionReq);
+    warn.mockRestore();
+    expect(r.stopped).toBe(false);
+    expect(notionReq).toHaveBeenCalledTimes(2);
+    expect(db.query.mock.calls.map(([, args]) => args[0])).toEqual(['A', 'B']);
+  });
+});
+
+describe('runRunsNotionPush 推送侧 403', () => {
+  beforeEach(() => { _resetRunsNotionPushGate(); });
+
+  it('首行 403（权限收回）→ 整批终止：后续行不调用、不归档', async () => {
+    const query = vi.fn(async (sql) => {
+      if (sql.includes('notion_projection_map')) return { rows: [{ notion_db_id: 'db1' }] };
+      if (sql.includes('updated_at > notion_synced_at')) {
+        return { rows: [1, 2, 3].map((i) => ({ ...brainPass, id: `r${i}`, run_id: `brain:${i}`, notion_id: null, notion_digest: null })) };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const notionReq = vi.fn(async (tok, path, method) => {
+      const e = new Error(`Notion ${method} ${path} → 403: restricted`); e.status = 403; throw e;
+    });
+    const r = await runRunsNotionPush({ query }, { notionReq, getToken: () => 'tok' });
+    expect(notionReq).toHaveBeenCalledTimes(1);
+    expect(r.archive_stopped).toBe(true);
+    expect(query.mock.calls.filter(([sql]) => sql.includes('NOT ('))).toHaveLength(0);
+  });
 });
 
 describe('runRunsNotionPush 安静跳过', () => {
