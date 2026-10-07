@@ -1,8 +1,10 @@
 /** runs 投影窗口查询与归档清列：真 Postgres（仅 scratch/CI 测试库），事务里跑，结束回滚。假 notionReq，绝不碰真 Notion。 */
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { IN_WINDOW_SQL, selectRowsToPush, selectRowsToArchive, archiveRows, runRunsNotionPush } from '../../runs-notion-projection.js';
+import {
+  IN_WINDOW_SQL, selectRowsToPush, selectRowsToArchive, archiveRows, runRunsNotionPush, _resetRunsNotionPushGate,
+} from '../../runs-notion-projection.js';
 
 let pool, client;
 beforeAll(async () => {
@@ -10,7 +12,7 @@ beforeAll(async () => {
   pool = new pg.Pool({ ...DB_DEFAULTS, max: 1 });
 });
 afterAll(async () => { await pool?.end(); });
-beforeEach(async () => { client = await pool.connect(); await client.query('BEGIN'); });
+beforeEach(async () => { _resetRunsNotionPushGate(); client = await pool.connect(); await client.query('BEGIN'); });
 afterEach(async () => { await client.query('ROLLBACK'); client.release(); });
 
 const TAG = `rnp${process.pid}x${Date.now()}`;
@@ -80,6 +82,33 @@ describe('runs 投影窗口', () => {
     expect(by(ids[0])).toMatchObject({ notion_id: null, notion_digest: null, notion_synced_at: null });
     expect(by(ids[1])).toMatchObject({ notion_id: null, notion_digest: null, notion_synced_at: null });
     expect(by(ids[2]).notion_id).toBe('pg-c');
+  });
+
+  it('archiveRows：一行 PATCH 返回 400（主理人手动删页）→ 该行清三列，下一行照常归档', async () => {
+    const s = await seed();
+    const ids = [s.oc10pass.id, s.br40fail.id];
+    await client.query("UPDATE runs SET notion_id='pg-x', notion_digest='d', notion_synced_at=now() WHERE id=$1", [ids[0]]);
+    await client.query("UPDATE runs SET notion_id='pg-y', notion_digest='d', notion_synced_at=now() WHERE id=$1", [ids[1]]);
+    const calls = [];
+    const notionReq = async (token, path) => {
+      calls.push(path);
+      if (path === '/pages/pg-x') {
+        const e = new Error("Notion PATCH /pages/pg-x → 400: Can't edit block that is archived. You must unarchive the block before editing.");
+        e.status = 400; throw e;
+      }
+      return {};
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const rows = (await client.query('SELECT id, notion_id FROM runs WHERE id = ANY($1) ORDER BY notion_id', [ids])).rows;
+    const r = await archiveRows(client, 'tok', rows, notionReq);
+    warn.mockRestore();
+    expect(r.stopped).toBe(false);
+    expect(calls).toEqual(['/pages/pg-x', '/pages/pg-y']);
+    const after = (await client.query('SELECT notion_id, notion_digest, notion_synced_at FROM runs WHERE id = ANY($1)', [ids])).rows;
+    expect(after).toEqual([
+      { notion_id: null, notion_digest: null, notion_synced_at: null },
+      { notion_id: null, notion_digest: null, notion_synced_at: null },
+    ]);
   });
 
   it('runRunsNotionPush 端到端：库已登记 → 推新行并回写 notion_id，窗口外旧页被归档清列', async () => {

@@ -1,6 +1,8 @@
 /** runs → Notion「最近执行」投影：属性构造（纯函数）+ 库未登记时安静跳过。全程注入假 notionReq，绝不碰真 Notion。 */
-import { describe, it, expect, vi } from 'vitest';
-import { buildRunProps, runRunsNotionPush, RUNS_DB_PROPS, IN_WINDOW_SQL } from '../runs-notion-projection.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  buildRunProps, runRunsNotionPush, archiveRows, RUNS_DB_PROPS, IN_WINDOW_SQL, _resetRunsNotionPushGate,
+} from '../runs-notion-projection.js';
 
 const COLUMNS = ['Brain ID', '任务', '执行者', '开始时间', '摘要', '来源', '结果', '耗时（秒）', '错误'];
 
@@ -67,6 +69,121 @@ describe('RUNS_DB_PROPS / IN_WINDOW_SQL', () => {
 });
 
 describe('runRunsNotionPush', () => {
+  beforeEach(() => { _resetRunsNotionPushGate(); });
+
+  // 假 pool：库已登记；推送查询返回 pushRows，归档查询返回 archiveRows，其余（UPDATE）记账
+  function makePool({ pushRows = [], archiveRowsList = [] } = {}) {
+    const query = vi.fn(async (sql) => {
+      if (sql.includes('notion_projection_map')) return { rows: [{ notion_db_id: 'db1' }] };
+      if (sql.includes('updated_at > notion_synced_at')) return { rows: pushRows };
+      if (sql.includes('NOT (')) return { rows: archiveRowsList };
+      return { rows: [], rowCount: 1 };
+    });
+    return { query };
+  }
+  const row = (i, over = {}) => ({ ...brainPass, id: `r${i}`, run_id: `brain:${i}`, notion_id: null, notion_digest: null, ...over });
+  const archiveSelects = (pool) => pool.query.mock.calls.filter(([sql]) => sql.includes('NOT ('));
+
+  it('自 gate：120s 内第二次调用返回 skipped，不查库；满 120s 后照常执行', async () => {
+    let t = 1_000_000;
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const r1 = await runRunsNotionPush({ query }, { now: () => t, notionReq: vi.fn() });
+    expect(r1).toEqual({ skipped: 'db_not_registered' });
+    expect(query).toHaveBeenCalledTimes(1);
+    t += 119_000;
+    expect(await runRunsNotionPush({ query }, { now: () => t, notionReq: vi.fn() })).toEqual({ skipped: true });
+    expect(query).toHaveBeenCalledTimes(1);
+    t += 1_000;
+    expect(await runRunsNotionPush({ query }, { now: () => t, notionReq: vi.fn() })).toEqual({ skipped: 'db_not_registered' });
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it('首行 notionReq 抛 AbortError（超时，无 status）→ 整批终止：后续行不调用、不归档', async () => {
+    const pool = makePool({ pushRows: [row(1), row(2), row(3)], archiveRowsList: [row(9, { notion_id: 'old' })] });
+    const notionReq = vi.fn(async () => { const e = new Error('This operation was aborted'); e.name = 'AbortError'; throw e; });
+    const r = await runRunsNotionPush(pool, { notionReq, getToken: () => 'tok' });
+    expect(notionReq).toHaveBeenCalledTimes(1);
+    expect(r.archive_stopped).toBe(true);
+    expect(archiveSelects(pool)).toHaveLength(0);
+  });
+
+  it('首行 notionReq 抛 TimeoutError / fetch failed（无 status）→ 同样整批终止', async () => {
+    for (const mk of [
+      () => { const e = new Error('The operation was aborted due to timeout'); e.name = 'TimeoutError'; return e; },
+      () => new TypeError('fetch failed'),
+    ]) {
+      _resetRunsNotionPushGate();
+      const pool = makePool({ pushRows: [row(1), row(2)] });
+      const notionReq = vi.fn(async () => { throw mk(); });
+      const r = await runRunsNotionPush(pool, { notionReq, getToken: () => 'tok' });
+      expect(notionReq).toHaveBeenCalledTimes(1);
+      expect(r.archive_stopped).toBe(true);
+      expect(archiveSelects(pool)).toHaveLength(0);
+    }
+  });
+
+  it('首行 429 → 整批终止：后续行不调用、不归档', async () => {
+    const pool = makePool({ pushRows: [row(1), row(2), row(3)], archiveRowsList: [row(9, { notion_id: 'old' })] });
+    const notionReq = vi.fn(async (tok, path, method) => {
+      const e = new Error(`Notion ${method} ${path} → 429: rate limited`); e.status = 429; throw e;
+    });
+    const r = await runRunsNotionPush(pool, { notionReq, getToken: () => 'tok' });
+    expect(notionReq).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ archived: 0, archive_stopped: true });
+    expect(archiveSelects(pool)).toHaveLength(0);
+  });
+
+  it('推送侧 PATCH 返回 400「Can\'t edit block that is archived」→ 清 notion_id 走重建，不整批终止', async () => {
+    const pool = makePool({ pushRows: [row(1, { notion_id: 'gone', notion_digest: 'old' }), row(2)] });
+    const notionReq = vi.fn(async (tok, path, method) => {
+      if (method === 'PATCH') {
+        const e = new Error(`Notion PATCH ${path} → 400: Can't edit block that is archived. You must unarchive the block before editing.`);
+        e.status = 400; throw e;
+      }
+      return { id: 'new-page' };
+    });
+    const r = await runRunsNotionPush(pool, { notionReq, getToken: () => 'tok' });
+    expect(r.pushed).toMatchObject({ cleared: 1, created: 1, failed: 0 });
+    const cleared = pool.query.mock.calls.find(([sql, args]) => sql.includes('SET notion_id = NULL') && args[0] === 'r1');
+    expect(cleared).toBeTruthy();
+  });
+});
+
+describe('archiveRows 错误分类', () => {
+  const mkErr = (status, msg) => { const e = new Error(`Notion PATCH → ${status}: ${msg}`); e.status = status; return e; };
+
+  it('非 404 的 4xx（400 已归档）→ warn、清三列、继续下一行', async () => {
+    const db = { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }) };
+    const notionReq = vi.fn(async (tok, path) => {
+      if (path === '/pages/a') throw mkErr(400, "Can't edit block that is archived.");
+      return {};
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await archiveRows(db, 'tok', [{ id: 'A', notion_id: 'a' }, { id: 'B', notion_id: 'b' }], notionReq);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+    expect(r.stopped).toBe(false);
+    expect(notionReq).toHaveBeenCalledTimes(2);
+    expect(db.query.mock.calls.map(([, args]) => args[0])).toEqual(['A', 'B']);
+  });
+
+  it('429 / 5xx / 无 status 网络错误 → 停止本轮，不清该行', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const err of [mkErr(429, 'slow down'), mkErr(502, 'bad gateway'), new TypeError('fetch failed')]) {
+      const db = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+      const notionReq = vi.fn(async () => { throw err; });
+      const r = await archiveRows(db, 'tok', [{ id: 'A', notion_id: 'a' }, { id: 'B', notion_id: 'b' }], notionReq);
+      expect(r).toEqual({ archived: 0, stopped: true });
+      expect(notionReq).toHaveBeenCalledTimes(1);
+      expect(db.query).not.toHaveBeenCalled();
+    }
+    warn.mockRestore();
+  });
+});
+
+describe('runRunsNotionPush 安静跳过', () => {
+  beforeEach(() => { _resetRunsNotionPushGate(); });
+
   it('库未注册（projection_map 无 active 行）→ skipped，不调 Notion、不读 runs', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] });
     const notionReq = vi.fn();

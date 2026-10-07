@@ -3,7 +3,7 @@
  * 决策 c7ff6e02 / 9ec7a010；判定点 b7be0e26（结果按 status）/ 6d4b7ed5（任务名回退 job_id 前 8 位）
  * 不碰数据库、不执行 ssh。
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { buildHostCmd } from '../host-exec.js';
 import {
@@ -16,6 +16,7 @@ import {
   truncateText,
   notifyFailureStreaks,
   OUTCOME_BY_STATUS,
+  _resetOpenclawIngestGate,
 } from '../openclaw-run-ingest.js';
 
 const NOW = 1791400000000;
@@ -336,6 +337,37 @@ describe('runOpenclawRunIngest', () => {
     ...over,
   });
   const insertCalls = (db) => db.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO runs'));
+  beforeEach(() => { _resetOpenclawIngestGate(); });
+
+  it('自 gate：300s 内第二次调用返回 skipped，不 exec、不查库；满 300s 后照常执行', async () => {
+    let t = NOW_MS;
+    const d = deps({ now: () => t });
+    const db1 = makeDb();
+    await runOpenclawRunIngest(db1, d);
+    expect(d.exec).toHaveBeenCalledTimes(1);
+
+    t = NOW_MS + 299_000;
+    const db2 = makeDb();
+    expect(await runOpenclawRunIngest(db2, d)).toEqual({ skipped: true });
+    expect(d.exec).toHaveBeenCalledTimes(1);
+    expect(db2.query).not.toHaveBeenCalled();
+
+    t = NOW_MS + 300_000;
+    const db3 = makeDb();
+    const r = await runOpenclawRunIngest(db3, d);
+    expect(r.skipped).toBeUndefined();
+    expect(d.exec).toHaveBeenCalledTimes(2);
+    expect(db3.query).toHaveBeenCalled();
+  });
+
+  it('自 gate：本轮失败也算一轮（ssh 炸了，间隔内不再重试）', async () => {
+    let t = NOW_MS;
+    const d = deps({ now: () => t, exec: vi.fn().mockRejectedValue(new Error('ssh_timeout')) });
+    await expect(runOpenclawRunIngest(makeDb(), d)).rejects.toThrow('ssh_timeout');
+    t = NOW_MS + 60_000;
+    expect(await runOpenclawRunIngest(makeDb(), d)).toEqual({ skipped: true });
+    expect(d.exec).toHaveBeenCalledTimes(1);
+  });
 
   it('两行（一合法 fail、一缺 task_id）→ fetched 2 / skipped_rows 1 / written 1，命令含 mmv 与 base64 -d', async () => {
     const db = makeDb();

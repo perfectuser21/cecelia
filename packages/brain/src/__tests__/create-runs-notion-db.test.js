@@ -1,6 +1,6 @@
 /** 建库脚本：buildCreateDbBody / planCreate 纯函数 + 「可 import 不执行」。绝不碰真 Notion / 真库。 */
-import { describe, it, expect } from 'vitest';
-import { buildCreateDbBody, planCreate } from '../../scripts/ops/create-runs-notion-db.mjs';
+import { describe, it, expect, vi } from 'vitest';
+import { buildCreateDbBody, planCreate, main } from '../../scripts/ops/create-runs-notion-db.mjs';
 import { RUNS_DB_PROPS } from '../runs-notion-projection.js';
 
 describe('buildCreateDbBody', () => {
@@ -32,5 +32,53 @@ describe('planCreate', () => {
   });
   it('目录投影没配父页 → 拒绝', () => {
     expect(planCreate({ mapRows: [{ status: 'pending_vessel' }], parentPageId: null }).ok).toBe(false);
+  });
+});
+
+describe('main（注入假 pool / notionReq）', () => {
+  function fakePool({ updateRowCount = 1 } = {}) {
+    const query = vi.fn(async (sql) => {
+      if (sql.includes('UPDATE notion_projection_map')) return { rows: [], rowCount: updateRowCount };
+      if (sql.includes('FROM notion_projection_map')) return { rows: [{ notion_db_id: 'unmapped:runs', status: 'pending_vessel' }] };
+      if (sql.includes('FROM projection_targets')) return { rows: [{ config: { parent_page_id: 'parent-1' } }] };
+      throw new Error(`unexpected sql: ${sql.slice(0, 40)}`);
+    });
+    return { query, end: vi.fn() };
+  }
+  const env = { DATABASE_URL: 'postgresql://fake/none' };
+  const updates = (pool) => pool.query.mock.calls.filter(([sql]) => sql.includes('UPDATE'));
+
+  it('dry-run：不调 notionReq、不执行 UPDATE，退出码 0', async () => {
+    const pool = fakePool();
+    const notionReq = vi.fn();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const code = await main([], env, { pool, notionReq, getToken: () => 'tok' });
+    log.mockRestore();
+    expect(code).toBe(0);
+    expect(notionReq).not.toHaveBeenCalled();
+    expect(updates(pool)).toHaveLength(0);
+  });
+
+  it('--apply：建库成功但 UPDATE 命中 0 行 → 退出码 2 并打印新库 id', async () => {
+    const pool = fakePool({ updateRowCount: 0 });
+    const notionReq = vi.fn().mockResolvedValue({ id: 'new-db-123' });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await main(['--apply'], env, { pool, notionReq, getToken: () => 'tok' });
+    const errText = err.mock.calls.flat().join('\n');
+    log.mockRestore(); err.mockRestore();
+    expect(code).toBe(2);
+    expect(notionReq).toHaveBeenCalledTimes(1);
+    expect(updates(pool)).toHaveLength(1);
+    expect(errText).toContain('new-db-123');
+  });
+
+  it('--apply：UPDATE 命中 1 行 → 退出码 0', async () => {
+    const pool = fakePool({ updateRowCount: 1 });
+    const notionReq = vi.fn().mockResolvedValue({ id: 'new-db-456' });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const code = await main(['--apply'], env, { pool, notionReq, getToken: () => 'tok' });
+    log.mockRestore();
+    expect(code).toBe(0);
   });
 });
