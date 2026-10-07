@@ -25,7 +25,7 @@
       "budget": { "max_duration_s": 900, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],
-        "retryable": ["claude_failed"],
+        "retryable": ["claude_failed", "claude_timeout"],
         "needs_human": { "cases": ["claude_auth"] },
         "fatal": ["sprint_dir_invalid", "task_id_missing", "intent_ids_missing", "intent_ids_invalid", "spec_missing", "spec_out_of_scope_write"]
       },
@@ -79,6 +79,24 @@
         "entry": "activities/publish.mjs",
         "on_failure": "stop_run",
         "max_attempts": 1
+      }
+    },
+    {
+      "key": "report",
+      "order": 5,
+      "budget": { "max_duration_s": 30, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["brain_unavailable"],
+        "needs_human": { "cases": [] },
+        "fatal": ["pr_url_missing", "task_id_missing", "task_not_found"]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "finalize",
+        "entry": "activities/report.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 2
       }
     }
   ]
