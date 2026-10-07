@@ -11,6 +11,9 @@ const INTENT_FILE = '01-intent.md';
 const PROMPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '../prompts/spec.md');
 const AUTH_RE = /\bauthenticat|\blogin\b|\/login|invalid api key|quota|rate limit/i;
 const INTENT_ID_RE = /^[A-Z]+-\d+$/;
+// 默认低于契约 budget（900s），这样超时由本活动先报明确的 claude_timeout，而不是执行器笼统的 activity_timeout
+const DEFAULT_TIMEOUT_MS = 870000;
+const KILL_GRACE_MS = 5000;
 // 子 claude 不继承 CLAUDECODE / CLAUDE_CODE_*（避免被当成嵌套会话）与钩子遗留的 GIT_*
 const CLAUDE_ENV = childEnv(process.env, { stripClaude: true });
 
@@ -18,10 +21,21 @@ function renderPrompt(template, vars) {
   return Object.entries(vars).reduce((text, [key, value]) => text.replaceAll(`{{${key}}}`, () => value), template);
 }
 
-/** 运行子进程，输出全部转写到本进程 stderr；返回 { code, output }，spawn 失败时 code 为 null。 */
-function runChild(bin, args, cwd) {
+/** CODING_WF_SPEC_TIMEOUT_MS 为正整数时采用，否则回退默认。 */
+function specTimeoutMs() {
+  const raw = process.env.CODING_WF_SPEC_TIMEOUT_MS;
+  return /^[1-9][0-9]*$/.test(raw ?? '') && Number.isSafeInteger(Number(raw)) ? Number(raw) : DEFAULT_TIMEOUT_MS;
+}
+
+/**
+ * 运行子进程，输出全部转写到本进程 stderr；返回 { code, output, timedOut }，spawn 失败时 code 为 null。
+ * 超过 timeoutMs 先 SIGTERM，KILL_GRACE_MS 后仍未退出再 SIGKILL，子进程退出后返回 timedOut: true。
+ */
+function runChild(bin, args, cwd, timeoutMs) {
   return new Promise((resolve) => {
     let output = '';
+    let timedOut = false;
+    let killTimer;
     let child;
     try {
       child = spawn(bin, args, { cwd, env: CLAUDE_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -37,11 +51,31 @@ function runChild(bin, args, cwd) {
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', forward);
     child.stderr.on('data', forward);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      log(`[spec] ${bin} 超过 ${timeoutMs}ms，发送 SIGTERM`);
+      child.kill('SIGTERM');
+      killTimer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
+    }, timeoutMs);
+    const clearTimers = () => {
+      clearTimeout(timer);
+      clearTimeout(killTimer);
+    };
     child.on('error', (error) => {
+      clearTimers();
       log(`[spec] 启动 ${bin} 失败: ${error?.message || error}`);
-      resolve({ code: null, output: `${output}\n${error?.message || error}` });
+      resolve({ code: null, output: `${output}\n${error?.message || error}`, timedOut: false });
     });
-    child.on('close', (code) => resolve({ code, output }));
+    // 超时后以 exit 为准：claude 的孙进程可能还握着 stdout 管道，等 close 会无限挂起
+    child.on('exit', (code) => {
+      if (!timedOut) return;
+      clearTimers();
+      resolve({ code, output, timedOut: true });
+    });
+    child.on('close', (code) => {
+      clearTimers();
+      resolve({ code, output, timedOut });
+    });
   });
 }
 
@@ -112,7 +146,10 @@ await runActivity(async (input) => {
 
   const bin = process.env.CODING_WF_CLAUDE_BIN || 'claude';
   const args = ['-p', prompt, '--permission-mode', 'acceptEdits', '--disallowedTools', 'Bash'];
-  const { code, output } = await runChild(bin, args, worktree);
+  const { code, output, timedOut } = await runChild(bin, args, worktree, specTimeoutMs());
+
+  // 超时直接返回：产物可能写了一半，不检查、不做越界检查
+  if (timedOut) return fail('retryable', 'claude_timeout');
 
   if (code !== 0) {
     if (AUTH_RE.test(output)) return fail('needs_human', 'claude_auth');
