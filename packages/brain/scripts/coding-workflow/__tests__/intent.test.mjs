@@ -42,6 +42,11 @@ describe('extractAcceptance', () => {
     expect(extractAcceptance({ description: '验收通过后上线。\n验收：A；B' })).toEqual(['A', 'B']);
   });
 
+  it('行首"2026.10 前完成"这类数字+点+数字不是列表标记：保留为首段文本，后续 "- A" 仍切分', () => {
+    expect(extractAcceptance({ description: '验收\n2026.10 前完成\n- A' })).toEqual(['2026.10 前完成', 'A']);
+    expect(extractAcceptance({ description: '验收\n1. 提升 1.5 倍\n2. B' })).toEqual(['提升 1.5 倍', 'B']);
+  });
+
   it('没有验收字样或空条目返回空数组', () => {
     expect(extractAcceptance({ description: '只有背景' })).toEqual([]);
     expect(extractAcceptance({ description: '验收：' })).toEqual([]);
