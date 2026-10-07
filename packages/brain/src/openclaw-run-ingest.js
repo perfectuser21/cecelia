@@ -190,22 +190,25 @@ export async function upsertRuns(db, rows) {
 const STREAK_MIN = 3;
 const STREAK_BODY_MAX = 120;
 const STREAK_DEDUPE_TTL_SEC = 7 * 86400;
-const RECENT_SQL = `
-  SELECT run_id, outcome, error, detail->>'summary' AS summary
-    FROM runs
-   WHERE run_id LIKE 'openclaw:%' AND trigger_ref = $1 AND outcome <> 'running'
-   ORDER BY started_at DESC LIMIT 50`;
 
-/**
- * 最近运行（started_at 降序）里从头开始的连续 fail/timeout 段。
- * 不足 3 条返回 null；否则 firstRunId 为该连败段最早一条（同一段稳定不变，作去重键）。
- */
-export function findStreakStart(recent) {
-  let count = 0;
-  while (count < recent.length && (recent[count].outcome === 'fail' || recent[count].outcome === 'timeout')) count += 1;
-  if (count < STREAK_MIN) return null;
-  return { firstRunId: recent[count - 1].run_id, count };
-}
+// 连败段 = 最近一次「已结束且非失败」运行之后的全部 fail/timeout（不设窗口，起点不随行数增长漂移）。
+// count / first_run_id（最早一条，同时刻按 run_id）/ error+summary（最近一条）一次求出。
+const STREAK_SQL = `
+  WITH last_ok AS (
+    SELECT max(started_at) AS t FROM runs
+     WHERE run_id LIKE 'openclaw:%' AND trigger_ref = $1
+       AND outcome NOT IN ('fail','timeout','running')
+  ), streak AS (
+    SELECT r.run_id, r.error, r.detail->>'summary' AS summary, r.started_at
+      FROM runs r, last_ok
+     WHERE r.run_id LIKE 'openclaw:%' AND r.trigger_ref = $1
+       AND r.outcome IN ('fail','timeout')
+       AND (last_ok.t IS NULL OR r.started_at > last_ok.t)
+  )
+  SELECT (SELECT count(*)::int FROM streak) AS count,
+         (SELECT run_id FROM streak ORDER BY started_at ASC, run_id ASC LIMIT 1) AS first_run_id,
+         (SELECT error FROM streak ORDER BY started_at DESC, run_id DESC LIMIT 1) AS error,
+         (SELECT summary FROM streak ORDER BY started_at DESC, run_id DESC LIMIT 1) AS summary`;
 
 /**
  * 对给定任务名判定连败并发 Bark（同一连败段由 dedupeKey 保证只发一次）。
@@ -215,12 +218,12 @@ export async function notifyFailureStreaks(db, triggerRefs, { sendBark, firstRou
   if (firstRound) return { notified: 0 };
   let notified = 0;
   for (const name of triggerRefs) {
-    const { rows } = await db.query(RECENT_SQL, [name]);
-    const streak = findStreakStart(rows);
-    if (!streak) continue;
-    const detail = truncateText(rows[0].error || rows[0].summary || '', STREAK_BODY_MAX);
+    const { rows } = await db.query(STREAK_SQL, [name]);
+    const streak = rows[0];
+    if (!streak || streak.count < STREAK_MIN || !streak.first_run_id) continue;
+    const detail = truncateText(streak.error || streak.summary || '', STREAK_BODY_MAX);
     await sendBark('OpenClaw 任务连续失败', `${name} 连续 ${streak.count} 次失败：${detail}`, {
-      dedupeKey: `openclaw-run-streak:${name}:${streak.firstRunId}`,
+      dedupeKey: `openclaw-run-streak:${name}:${streak.first_run_id}`,
       dedupeTtlSec: STREAK_DEDUPE_TTL_SEC,
     });
     notified += 1;
