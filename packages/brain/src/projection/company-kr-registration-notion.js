@@ -1,15 +1,12 @@
 /** 公司KR登记的定向镜子：复用现有库，仅投影已登记的这一条工作流。 */
 import { notionReq as defaultNotionReq } from '../recurring-notion-sync.js';
 import { configuredCompanyToken } from './company-kr-notion.js';
-import { readWorkflowActivities } from '../lib/workflow-read-service.js';
 import { companyKrSpec } from '../lib/company-kr-registration.js';
 import { propsDigest } from '../lib/notion-projection-engine.js';
-import { buildBackboneActivityProps } from '../activity-contract-sync.js';
 
+/** 流程页（带正文说明）与运行明细页；Step/Activity 归六层目录投影。 */
 export const REGISTRATION_DATABASES = {
   workflows: '3d9c40c2-ba63-8145-bfa8-f4c0c006e0af',
-  steps: '3d9c40c2-ba63-8195-a41b-f529056a4aa8',
-  activities: 'c213e387-b2ae-45a4-98c0-4a66fe3408be',
   runs: '3d3c40c2-ba63-81cb-985d-f44b05e787ee',
 };
 const rich = text => ({ rich_text: [{ text: { content: String(text ?? '').slice(0, 1900) } }] });
@@ -20,11 +17,6 @@ const textOf = (page, key) => (page.properties?.[key]?.rich_text || []).map(x =>
 const paragraph = text => ({ object: 'block', type: 'paragraph', paragraph: rich(text) });
 
 export const workflowProperties = row => ({ Workflow: title(row.name), '版本': rich(row.version) });
-export const stepProperties = (row, workflowId) => ({
-  '步骤': title(`KR · ${row.readback.name || row.key}`), '顺序': { number: row.step_order },
-  '所属Workflow': relation(workflowId), Staging: rich(`${row.key}\n${row.readback.implementation}`),
-  '有确定性判定?': { select: { name: row.executor_kind === 'agent' ? '部分' : '有' } },
-});
 export const runProperties = (row, runtimeId) => ({
   Name: title(`公司 KR 分析 · ${row.run_id}`), RunId: rich(row.run_id),
   Status: { select: { name: row.status } }, StartedAt: { date: { start: new Date(row.started_at).toISOString() } },
@@ -100,30 +92,7 @@ async function projectRows(pool, token, notionReq) {
       paragraph(`运行明细：https://app.notion.com/p/${compact(w.runtime_notion_id)}\nKR 表：https://app.notion.com/p/684c40c2ba6383a7b6ba8161f110a18c`),
       paragraph('步骤登记可查 Workflow Steps；活动登记可查 Backbone Activities。历史运行没有逐步骤 span，不据工作流定义补造执行事实。')],
   });
-  const activities = await readWorkflowActivities(pool,w.id);
-  const steps = activities.flatMap(a => a.steps.map(s => ({...s,executor_kind:a.executor_kind})));
-  const stepIds = new Map();
-  for (const row of steps) {
-    const properties = stepProperties(row, wf);
-    const id = await upsertRegistrationPage(pool, token, { table: 'steps', row, dbId: dbs.steps, properties,
-      filter: { and: [{ property: '所属Workflow', relation: { contains: wf } }, { property: '步骤', title: { equals: properties['步骤'].title[0].text.content } }] },
-      verifyRecovered: page => textOf(page, 'Staging').split('\n')[0] === row.key,
-      children: [paragraph(row.readback.asserts), paragraph(row.readback.implementation)], notionReq });
-    stepIds.set(row.id, id);
-  }
-  const agent = (await pool.query(`SELECT notion_id FROM ops_agents WHERE source='openclaw' AND host_alias='mmv' AND name=$1`, [companyKrSpec.agent])).rows[0];
-  for (const row of activities) {
-    const properties = { ...buildBackboneActivityProps(row),
-      Steps: { relation: steps.filter(s => s.activity_id === row.id).map(s => ({ id: stepIds.get(s.id) })) },
-      ...(row.executor_kind === 'agent' && agent?.notion_id ? { Agent: relation(agent.notion_id) } : {}),
-    };
-    const key = `${row.capability_key}.${row.activity_key}`;
-    const pageId = await upsertRegistrationPage(pool, token, { table: 'activities', row, dbId: dbs.activities,
-      properties, filter: { property: 'Key', rich_text: { equals: key } }, notionReq,
-      verifyRecovered: page => textOf(page, 'Key') === key,
-    });
-    await pool.query('UPDATE activities SET notion_id=$2,notion_synced_at=NOW(),notion_digest=$3 WHERE id=$1', [row.id, pageId, propsDigest(properties)]);
-  }
+  // Step/Activity 页归六层目录投影（按 Brain ID 建页、写标准列），这里不再写这两库，免得旧列被写回来
   const runs = (await pool.query(`SELECT * FROM task_runs WHERE workflow_id=$1 ORDER BY started_at DESC LIMIT 100`, [w.id])).rows;
   for (const row of runs) {
     await upsertRegistrationPage(pool, token, { table: 'task_runs', row, dbId: dbs.runs, properties: runProperties(row, w.runtime_notion_id),
@@ -132,5 +101,5 @@ async function projectRows(pool, token, notionReq) {
       children: [paragraph(`工作流：https://app.notion.com/p/${compact(wf)}\nBrain task_id：${row.task_id}`), paragraph('本页记录这一次真实分析执行；未采集逐步骤执行时间，不填步骤通过记录。')],
     });
   }
-  return { workflow_id: w.id, notion_workflow_id: wf, activities: activities.length, steps: steps.length, runs: runs.length };
+  return { workflow_id: w.id, notion_workflow_id: wf, runs: runs.length };
 }

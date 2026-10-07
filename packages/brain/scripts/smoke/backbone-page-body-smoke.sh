@@ -2,7 +2,7 @@
 # Smoke: backbone-page-body — Backbone Activities 契约写入 Notion 页面正文（任务 d852c852，决策 0834e2fb 单向只读）
 # 验证（不连真库、不发网络；假 notionReq + 假 pool）：
 #   1. 正文首块是只读提示（链回 git 正本），含后置条件探针；指纹不变第二轮零 Notion 调用
-#   2. 接线：job 在推属性后写正文；迁移 483 + 回滚存在；smoke 登记 allowlist
+#   2. 接线：job 写正文（Activity 库的列归目录投影）；迁移 483 + 回滚存在；smoke 登记 allowlist
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

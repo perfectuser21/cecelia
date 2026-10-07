@@ -22,6 +22,7 @@ function value(property) {
   if ('select' in (property || {})) return property.select?.name ?? null;
   if ('date' in (property || {})) return property.date?.start ? new Date(property.date.start).toISOString() : null;
   if ('number' in (property || {})) return property.number;
+  if ('url' in (property || {})) return property.url ?? null;
   return property;
 }
 
@@ -137,7 +138,7 @@ export async function runDirectoryProjection(pool, { token, notionReq = defaultN
     await ensureDirectorySchemas({ dbs, token, notionReq });
     if (beforeSource) await beforeSource({ client, token, config: target.config, notionReq });
     const sourceRows = buildDirectoryRows(await loadDirectorySource(client), target.config);
-    const catalogGap = row => row.layer==='value_streams' && row.gaps.includes('value_stream_binding_missing') ? 'value_stream_binding_missing' :
+    const catalogGap = row => row.layer==='value_streams' && row.gaps.includes('value_stream_empty') ? 'value_stream_empty' :
       row.layer==='areas' && !row.pageId ? 'area_page_binding_missing' : null;
     const catalogGaps = sourceRows.filter(catalogGap).map(r=>({id:r.id,gap:catalogGap(r)}));
     const rows = sourceRows.filter(r=>!catalogGap(r));

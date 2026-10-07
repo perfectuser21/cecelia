@@ -1,6 +1,7 @@
 /** 六层目录只读源：共享引用为准；不改契约、归属、版本或人工列。 */
 import { isDeepStrictEqual } from 'node:util';
 import { buildActivityCardProps, buildStepCardProps } from './activity-card.js';
+import { SOURCE_COLUMN } from './directory-schema.js';
 import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
 // 值是投影身份键（projection_links.entity_type 与 Notion「真身来源」文本），不是 SQL 表名；
 // value_streams / capabilities 仍记作 journeys，改了会让已有目录页被当新页重建。
@@ -11,6 +12,8 @@ const unique = items => [...new Map(items.map(x => [`${x.layer}:${x.id}`, x])).v
 const title = value => ({ title: [{ text: { content: String(value).slice(0, 200) } }] });
 const select = name => ({ select: { name: String(name || 'unknown') } });
 const num = n => ({ number: Number(n) || 0 });
+const maybeNum = n => ({ number: n == null || !Number.isFinite(Number(n)) ? null : Number(n) });
+const latest = (...values) => values.filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0] ?? null;
 const minuteDate = value => ({ date: value ? { start: new Date(Math.floor(new Date(value).getTime() / 60000) * 60000).toISOString() } : null }); // Notion 日期只到分钟，不取整读回对不上
 const shanghai = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 const shanghaiText = value => shanghai.format(new Date(value));
@@ -21,10 +24,13 @@ function scheduleText(desc) {
   try { const j = JSON.parse(s); if (j.kind === 'at' && j.at) return `一次性 ${shanghaiText(j.at)}`; } catch { /* 不是 JSON 就原样给 */ }
   return s;
 }
-/** 一个流程现在算不算在用：有步骤级运行或近 7 天有任务跑过=在跑；有任务但没动静；只登记 Activity；空壳 */
+/**
+ * 一个流程现在算不算在用：runs 近 7 天有记录或闹钟近 7 天跑过=在跑（launchd/crontab 闹钟还没写 runs，两边都算）；
+ * 有任务但没动静；只登记 Activity；空壳
+ */
 export function workflowUsageStatus(x) {
-  const { ran7 = 0, alarms = 0, spans = 0, acts = 0 } = x || {};
-  if (ran7 > 0 || spans > 0) return '在跑';
+  const { ran7 = 0, alarms = 0, runs7 = 0, acts = 0 } = x || {};
+  if (ran7 > 0 || runs7 > 0) return '在跑';
   if (alarms > 0) return '有任务近7天没跑';
   if (acts > 0) return '只登记没运行';
   return '空壳';
@@ -34,15 +40,14 @@ const howItRuns = items => (Array.isArray(items) ? items : []).map(i =>
 const NA = '(未归属)', NONE = '(无)', NOFLOW = '(未挂流程)';
 const optionName = v => String(v ?? '').replaceAll(',', '，').trim().slice(0, 100); // Notion 选项名不能含英文逗号、最长 100
 /**
- * 祖先链列：公司 / 部门 / 子部门（来自部门树）+ 价值流 / 能力 / 流程（按层级取到哪层写到哪层）。
- * 追不到的标「(未归属)」，不留空（Notion 空选项没法分组）；「树位置」只写祖先，不含自己。
+ * 祖先链列：公司 / 部门（来自部门树）+ 价值流 / 能力 / 流程（按层级取到哪层写到哪层）。
+ * 追不到的标「(未归属)」，不留空（Notion 空选项没法分组）；「树位置」只写祖先（含更深的部门层），不含自己。
  */
 function treeProps(chain, names, levels) {
   const known = chain.length > 0;
   const props = {
     '分组·公司': select(optionName(chain[0]) || NA),
     '分组·部门': select(optionName(chain[1]) || (known ? NONE : NA)),
-    '分组·子部门': select(optionName(chain.slice(2).join(' / ')) || (known ? NONE : NA)),
   };
   if (levels.includes('vs')) props['分组·价值流'] = select(optionName(names.vs) || NA);
   if (levels.includes('cap')) props['分组·能力'] = select(optionName(names.cap) || NA);
@@ -116,52 +121,50 @@ export function buildDirectoryRows(data, config = {}) {
     // Activity 的旧 notion_id 来自更早的同步（可能指向别的库或回收站里的页），不能当目录页身份：
     // 页面身份只认目录链接与 Brain ID 查询（526 把旧步骤挂进流程后这些行才进目录，不改会报「目录页身份或数据库不符」）
     const item = { layer, table, id: row.id, pageId: layer === 'activities' ? null : row.notion_id || null,
-      allowCreate: !['areas', 'value_streams'].includes(layer), relations, gaps, createProperties,
-      properties: { 'Brain ID': rich(row.id), '真身来源': rich(`Brain ${table}:${row.id}`),
-        '责任主体': rich('unknown'), ...properties } };
+      allowCreate: layer !== 'areas', relations, gaps, createProperties, properties: { 'Brain ID': rich(row.id), ...properties } };
     rows.push(item); return item;
   }
-  for (const a of data.areas) make('areas', a, { Key: rich(a.id) }, {
-    '价值流': data.journeys.filter(j => j.kind === 'value_stream' && j.area_id === a.id).map(j => ref('value_streams', j.id)),
+  // 价值流由目录接管：挂了能力的才建页（空壳不建，作 catalog gap 报出）；旧地图页只按显式绑定认领，不凭同名
+  const hasCapabilities = vsId => data.journeys.some(c => c.kind === 'capability' && c.parent_journey_id === vsId);
+  const projectedStream = j => j.kind === 'value_stream' && (hasCapabilities(j.id) || bindings.some(b => b.journey_id === j.id));
+  for (const a of data.areas) make('areas', a, {}, {
+    '价值流': data.journeys.filter(j => projectedStream(j) && j.area_id === a.id).map(j => ref('value_streams', j.id)),
   });
   for (const j of data.journeys) {
     if (j.kind === 'value_stream') {
       const b = bindings.find(b => b.journey_id === j.id);
       const node = b && data.map_nodes.find(n => n.scope === b.scope && n.node_key === b.node_key && n.active);
-      const row = make('value_streams', { ...j, notion_id: node?.notion_id || null }, treeProps(areaChain(j.area_id), {}, []), {
+      const row = make('value_streams', { ...j, notion_id: node?.notion_id || null }, { Name: title(j.name), '说明': rich(j.description),
+        ...treeProps(areaChain(j.area_id), {}, []) }, {
         ...(j.area_id ? { '所属部门': [ref('areas', j.area_id)] } : {}),
         Capabilities: data.journeys.filter(c => c.parent_journey_id === j.id).map(c => ref('capabilities', c.id)),
-      }, [...(!b ? ['value_stream_binding_missing'] : []), ...(!j.area_id ? ['area_unknown'] : [])]);
+      }, [...(!projectedStream(j) ? ['value_stream_empty'] : []), ...(!j.area_id ? ['area_unknown'] : [])]);
       row.pageId = node?.notion_id || null;
+      row.allowCreate = projectedStream(j);
     } else if (j.kind === 'capability') {
-      make('capabilities', { ...j, notion_id: null }, { Name: title(j.name), Key: rich(j.capability_code || j.id),
+      make('capabilities', { ...j, notion_id: null }, { Name: title(j.name), Key: rich(j.capability_code),
         '说明': rich(j.description), '登记状态': select(j.status), ...treeProps(capabilityContext(j.id).chain, capabilityContext(j.id).names, ['vs']) }, {
         ...(j.parent_journey_id ? { '所属价值流': [ref('value_streams', j.parent_journey_id)] } : {}),
         Workflows: data.workflows.filter(w => w.capability_id === j.id).map(w => ref('workflows', w.id)),
       }, j.parent_journey_id ? [] : ['value_stream_unknown']);
     }
   }
+  const activityNames = new Map(data.activities.map(a => [a.id, a.name]));
   for (const w of data.workflows) {
     const usage = refs.filter(r => r.workflow_id === w.id);
-    const version = currentDefinition(w, 'workflow'), declared = version?.payload.contract.trigger_inputs;
-    const validInput = Array.isArray(declared) && declared.length > 0 && new Set(declared).size === declared.length &&
-      declared.every(item => typeof item === 'string' && /^[A-Z][A-Za-z]+$/.test(item));
-    const trigger = w.trigger ?? w.contract?.trigger, input = w.input ?? w.contract?.inputs ?? (validInput ? declared : undefined);
-    const output = w.output ?? w.contract?.outputs, policy = w.execution_policy ?? w.contract?.execution_policy;
+    const version = currentDefinition(w, 'workflow');
     const rt = runtimeByWorkflow.get(w.id) || {}, acts = unique(usage.map(r => ref('activities', r.activity_id))).length;
     const row = make('workflows', w, { Workflow: title(w.name), Key: rich(w.key), '版本': rich(w.version),
-      '渠道': rich(w.channel), '形态': rich(w.form), Trigger: rich(trigger), Input: rich(input), Output: rich(output),
-      '执行策略': rich(policy), '登记状态': select(w.status),
-      'Activity 数': num(acts), '定时任务数': num(rt.alarms), '启用任务数': num(rt.enabled), '近7天有跑': num(rt.ran7),
-      '失败任务数': num(rt.failed), '静默任务数': num(rt.silent), '步骤级运行次数': num(rt.spans),
-      '最近运行': minuteDate(rt.last_run), '在用吗': select(workflowUsageStatus({ ...rt, acts })),
-      '怎么运行': rich(howItRuns(rt.items)), '旧功能状态': rich(rt.legacy),
+      '渠道': rich(w.channel), '形态': rich(w.form), '登记状态': select(w.status),
+      '最近运行': minuteDate(latest(rt.last_started, rt.last_run)), '在用吗': select(workflowUsageStatus({ ...rt, acts })),
+      '怎么运行': rich(howItRuns(rt.items)), '7天次数': num(rt.runs7), '7天失败': num(rt.failed7), '7天成功率': maybeNum(rt.success_rate),
+      '平均时长(秒)': maybeNum(rt.avg_duration_ms == null ? null : Math.round(rt.avg_duration_ms / 100) / 10),
       ...treeProps(capabilityContext(w.capability_id).chain, capabilityContext(w.capability_id).names, ['vs', 'cap']),
-      '活动编排': rich(usage.map(r => `${r.sequence_no}. ${r.slot_key} → ${r.activity_id}`).join('\n')) }, {
+      // 顺序属于流程↔Activity 引用（共用 Activity 在不同流程里位置不同），只在这里按引用顺序列名字
+      '活动编排': rich(usage.map(r => `${r.sequence_no}. ${activityNames.get(r.activity_id) ?? r.activity_id}`).join('\n')) }, {
       ...(w.capability_id ? { Capability: [ref('capabilities', w.capability_id)] } : {}),
       Activities: unique(usage.map(r => ref('activities', r.activity_id))),
-    }, [...(!w.capability_id ? ['capability_unknown'] : []), ...(!policy ? ['execution_policy_undeclared'] : []),
-      ...(!trigger ? ['workflow_trigger_undeclared'] : []), ...(!input ? ['workflow_input_undeclared'] : []), ...(!output ? ['workflow_output_undeclared'] : [])]);
+    }, !w.capability_id ? ['capability_unknown'] : []);
     row.definitionVersion = versionEvidence(version);
   }
   for (const a of data.activities) {
@@ -170,14 +173,13 @@ export function buildDirectoryRows(data, config = {}) {
     const unresolved = (Array.isArray(version?.payload.steps) ? version.payload.steps : []).filter(entry =>
       !data.steps.some(step => step.activity_id === a.id && step.id === entry.step_id && currentStepDefinition(step, a)))
       .map(entry => `step_registration_unresolved:${entry.locator?.step_key || entry.contract?.key || 'unknown'}`);
-    const row = make('activities', a, { Name: title(a.name), '执行主体': rich(a.executor_kind || 'unknown'),
-      '责任主体': rich(a.contract?.owner ? JSON.stringify(a.contract.owner) : 'unknown'),
-      '使用位置': rich(usage.map(r => `${r.workflow_id} / ${r.slot_key} / ${r.sequence_no}`).join('\n')),
+    const row = make('activities', a, { Name: title(a.name), Key: rich(a.capability_key && a.activity_key ? `${a.capability_key}.${a.activity_key}` : null),
+      '执行主体': rich(a.executor_kind || 'unknown'), [SOURCE_COLUMN]: { url: a.contract_source || null },
       ...buildActivityCardProps(a, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id)),
       ...treeProps(activityContext(a.id).chain, activityContext(a.id).names, ['vs', 'cap', 'wf']) }, {
       '所属Workflows': unique(usage.map(r => ref('workflows', r.workflow_id))),
       Steps: data.steps.filter(s => s.activity_id === a.id && s.active).sort((a, b) => a.step_order - b.step_order).map(s => ref('steps', s.id)),
-    }, [...(!a.executor_kind ? ['executor_unknown'] : []), ...(!a.contract ? ['contract_missing'] : []), ...unresolved]);
+    }, [...(!a.executor_kind ? ['executor_unknown'] : []), ...unresolved]);
     row.definitionVersion = versionEvidence(version);
   }
   for (const s of data.steps) {
@@ -187,8 +189,8 @@ export function buildDirectoryRows(data, config = {}) {
     const implementation = directImplementation ?? declared?.implementation;
     const implementationStatus = definition?.implementationStatus === 'reference_verified' && isDeepStrictEqual(implementation, declared.implementation) ? 'reference_verified' : 'unverified';
     const evidence = definition ? { ...readback, definition: { check: declared.check, dod: declared.dod, implementation_status: implementationStatus } } : readback;
-    const row = make('steps', s, { '步骤': title(readback.name || contract.name || s.key), Key: rich(s.key),
-      Input: rich(contract.input ?? fieldList(declared?.reads)), Output: rich(contract.output ?? fieldList(declared?.writes)),
+    const row = make('steps', s, { '步骤': title(readback.name || contract.name || s.key), Key: rich(s.key), '顺序': maybeNum(s.step_order),
+      Input: rich(s.inputs ?? contract.input ?? fieldList(declared?.reads)), Output: rich(s.outputs ?? contract.output ?? fieldList(declared?.writes)),
       '验收标准': rich(contract.acceptance ?? readback.asserts ?? readback.expect ?? declared?.check),
       '证据读取': rich(evidence), '实现来源': rich(implementation), '执行主体': rich(a?.executor_kind || 'unknown'),
       '登记状态': select(s.active ? 'active' : 'retired'), ...buildStepCardProps(s),
@@ -223,17 +225,15 @@ export async function loadDirectorySource(pool) {
     'workflow_runtime',COALESCE((SELECT jsonb_agg(jsonb_build_object(
       'workflow_id',w.id,
       'alarms',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id),
-      'enabled',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id AND e.enabled),
       'ran7',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id AND e.last_run_at > now() - interval '7 days'),
-      'failed',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id AND e.last_status='失败'),
-      'silent',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id AND e.last_status='静默'),
       'last_run',(SELECT max(e.last_run_at) FROM ops_schedule_entries e WHERE e.workflow_id=w.id),
-      'spans',(SELECT count(*) FROM spans s WHERE s.workflow_id=w.id),
-      'legacy',(SELECT f.status FROM journey_features f WHERE f.id::text=to_jsonb(w)->>'legacy_feature_id'),
+      'runs7',COALESCE(st.runs,0),'failed7',COALESCE(st.failed,0),'success_rate',st.success_rate,
+      'avg_duration_ms',st.avg_duration_ms,'last_started',st.last_started_at,
       'items',COALESCE((SELECT jsonb_agg(jsonb_build_object('label',x.label,'schedule',x.schedule_desc,'enabled',x.enabled,
         'status',x.last_status,'last',x.last_run_at,'source',x.source) ORDER BY x.enabled DESC, x.last_run_at DESC NULLS LAST)
         FROM (SELECT e.label,e.schedule_desc,e.enabled,e.last_status,e.last_run_at,e.source FROM ops_schedule_entries e WHERE e.workflow_id=w.id
-          ORDER BY e.enabled DESC, e.last_run_at DESC NULLS LAST LIMIT 12) x),'[]'::jsonb))) FROM workflows w),'[]'::jsonb),
+          ORDER BY e.enabled DESC, e.last_run_at DESC NULLS LAST LIMIT 12) x),'[]'::jsonb))) FROM workflows w
+      LEFT JOIN v_workflow_run_stats st ON st.workflow_id=w.id AND st.time_window='7d'),'[]'::jsonb),
     'map_nodes',COALESCE((SELECT jsonb_agg(jsonb_build_object('scope',l.scope,'node_key',l.node_key,
       'name',n.name,'notion_id',l.notion_id,'journey_id',n.attributes->>'journey_id','active',true))
       FROM notion_map_node_pages l JOIN map_projection_runs r ON r.scope_key=l.scope AND r.status='active'

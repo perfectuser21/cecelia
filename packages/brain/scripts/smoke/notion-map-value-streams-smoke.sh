@@ -59,7 +59,8 @@ console.log('归档：状态标记不删页、不重复 ✓');
 "
 
 echo "[notion-map-value-streams-smoke] 4. 接线与迁移"
-grep -q "runValueStreamMirror" src/notion-push-sync.js || { echo "FAIL runNotionPushSync 未挂价值流镜子"; exit 1; }
+# 价值流库已由六层目录投影接管：结构地图镜子不得再挂进推送轮（否则会把 Persona/Scope/地图版本 等旧列补回来）
+! grep -q "runValueStreamMirror(" src/notion-push-sync.js || { echo "FAIL 结构地图镜子仍挂在推送轮，会和目录投影抢写价值流库"; exit 1; }
 test -f migrations/487_notion_map_value_streams.sql || { echo "FAIL 缺迁移 487"; exit 1; }
 test -f migrations/rollback/487_notion_map_value_streams.down.sql || { echo "FAIL 缺回滚 487"; exit 1; }
 grep -q "'notion_map_node_pages', 'push', 'notion-map-value-streams.pushMapValueStreams', 'active'" migrations/487_notion_map_value_streams.sql \
