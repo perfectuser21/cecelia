@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { selectRowsToPush, selectRowsToArchive, archiveRows, runRunsNotionPush } from '../../runs-notion-projection.js';
+import { IN_WINDOW_SQL, selectRowsToPush, selectRowsToArchive, archiveRows, runRunsNotionPush } from '../../runs-notion-projection.js';
 
 let pool, client;
 beforeAll(async () => {
@@ -86,7 +86,9 @@ describe('runs 投影窗口', () => {
     const s = await seed();
     await client.query("UPDATE runs SET notion_id='pg-old', notion_digest='d', notion_synced_at=now() WHERE id=$1", [s.oc10pass.id]);
     // scratch 库里可能有别的 runs 行：把它们标成「已同步」，让推送集合只剩本测试插入的行
-    await client.query("UPDATE runs SET notion_synced_at = now() + interval '1 hour' WHERE run_id NOT LIKE $1", [`%${TAG}%`]);
+    await client.query(
+      `UPDATE runs SET notion_id = COALESCE(notion_id, 'other'), notion_synced_at = now() + interval '1 hour'
+        WHERE run_id NOT LIKE $1 AND (${IN_WINDOW_SQL})`, [`%${TAG}%`]);
     await client.query("UPDATE notion_projection_map SET notion_db_id='db-test', direction='push', status='active' WHERE brain_table='runs'");
     const calls = [];
     let n = 0;
