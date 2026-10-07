@@ -377,6 +377,67 @@ describe('runOpenclawRunIngest', () => {
     expect(d.sendBark).not.toHaveBeenCalled();
     expect(r.notified).toBe(0);
     expect(sqlOf(d.exec.mock.calls[0][0])).toContain(`>= ${NOW_MS - 30 * 86400_000}`);
+    expect(db.query.mock.calls.some(([s]) => s.includes('WITH last_ok'))).toBe(false);
+  });
+
+  // 追加裁定：30 天回填约 3900 行 > 2000，第 2 轮起游标已非空但仍在追赶历史，此时不得对历史连败发 Bark。
+  // 游标 = readCursorMs（max_started - 1h），追赶阈值：cursor < now - 24h。
+  it('追赶模式：游标落后 now 超过 24h（now-25h）→ 不发 Bark、不查连败', async () => {
+    const maxStarted = new Date(NOW_MS - 24 * 3600_000); // 游标 = now-25h
+    const db = makeDb({ cursor: maxStarted, streak: { count: 9, first_run_id: 'openclaw:x', error: 'e', summary: null } });
+    const d = deps();
+    const r = await runOpenclawRunIngest(db, d);
+    expect(d.sendBark).not.toHaveBeenCalled();
+    expect(r.notified).toBe(0);
+    expect(db.query.mock.calls.some(([s]) => s.includes('WITH last_ok'))).toBe(false);
+  });
+
+  it('已追平：游标在 now-2h 内且有连败 → 发 Bark', async () => {
+    const maxStarted = new Date(NOW_MS - 3600_000); // 游标 = now-2h
+    const db = makeDb({ cursor: maxStarted, streak: { count: 3, first_run_id: 'openclaw:r1', error: '炸了', summary: null } });
+    const d = deps();
+    const r = await runOpenclawRunIngest(db, d);
+    expect(d.sendBark).toHaveBeenCalledTimes(1);
+    expect(r.notified).toBe(1);
+  });
+
+  it('整批写库全部失败 → 抛错（带失败行数与首个错误摘要），让调度器记 fail', async () => {
+    const db = { query: vi.fn(async (sql) => {
+      if (sql.includes('max(started_at)')) return { rows: [{ max_started: null }] };
+      throw new Error('column "foo" does not exist');
+    }) };
+    const rows = ['a', 'b', 'c'].map((id) => baseRow({ task_id: id }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(runOpenclawRunIngest(db, deps({ exec: vi.fn().mockResolvedValue(JSON.stringify(rows)) })))
+      .rejects.toThrow(/3.*column "foo" does not exist/);
+    warn.mockRestore();
+  });
+
+  it('部分写库失败 → 仍 resolve，failed_rows 正确', async () => {
+    let n = 0;
+    const db = { query: vi.fn(async (sql) => {
+      if (sql.includes('max(started_at)')) return { rows: [{ max_started: null }] };
+      n += 1;
+      if (n <= 2) throw new Error('bad');
+      return { rows: [], rowCount: 1 };
+    }) };
+    const rows = ['a', 'b', 'c'].map((id) => baseRow({ task_id: id }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await runOpenclawRunIngest(db, deps({ exec: vi.fn().mockResolvedValue(JSON.stringify(rows)) }));
+    warn.mockRestore();
+    expect(r).toMatchObject({ written: 1, failed_rows: 2 });
+  });
+
+  it('逐行失败日志只打前 5 条，其余汇总成一条', async () => {
+    const db = { query: vi.fn(async () => { throw new Error('bad'); }) };
+    const rows = Array.from({ length: 8 }, (_, i) => ({ run_id: `openclaw:${i}`, trigger_ref: 't', executor_kind: 'agent',
+      executor_id: 'e', started_at: new Date(), ended_at: null, outcome: 'running', error: null, detail: null }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await upsertRuns(db, rows);
+    const calls = warn.mock.calls.length;
+    warn.mockRestore();
+    expect(r).toMatchObject({ written: 0, failed_rows: 8 });
+    expect(calls).toBe(6);
   });
 
   it('游标非 null → SQL 用游标（已减 1h）；本批 fail/timeout 且连败≥3 → 按任务名去重各发一次 Bark', async () => {
