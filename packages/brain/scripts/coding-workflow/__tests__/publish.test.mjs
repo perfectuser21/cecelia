@@ -54,11 +54,12 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     chain_files: ['01-intent.md', '02-spec.md'],
     ...patch,
   });
-  const run = (mode, patch) =>
+  const run = (mode, patch, extraEnv = {}) =>
     runActivityProcess(ENTRY, input(patch), {
       CODING_WF_GH_BIN: FAKE_GH,
       FAKE_GH_MODE: mode,
       FAKE_GH_LOG: ghLog,
+      ...extraEnv,
     });
   const ghCalls = () =>
     fs.existsSync(ghLog)
@@ -173,5 +174,16 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     const r = await run('new', { task_id: '', sprint_dir: 'a/../../b' });
     expect(r.result.reason_code).toBe('task_id_missing');
     expect(ghCalls()).toHaveLength(0);
+  });
+
+  it('继承的 GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE 不影响提交（子进程已剥离）', async () => {
+    const r = await run('new', {}, {
+      GIT_DIR: path.join(root, 'bogus.git'),
+      GIT_WORK_TREE: path.join(root, 'bogus-wt'),
+      GIT_INDEX_FILE: path.join(root, 'bogus-index'),
+    });
+    expect(r.exitCode).toBe(0);
+    const files = git(origin, 'ls-tree', '-r', '--name-only', 'cp-test').trim().split('\n');
+    expect(files).toContain('sprints/s1/01-intent.md');
   });
 });

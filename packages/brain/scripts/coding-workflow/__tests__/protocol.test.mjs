@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveSprintDir, buildResult, fail, validateBase } from '../lib/protocol.mjs';
+import { resolveSprintDir, buildResult, fail, validateBase, childEnv } from '../lib/protocol.mjs';
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/activity-fixture.mjs');
 
@@ -167,5 +167,42 @@ describe('validateBase', () => {
 
   it('input 为 null 时抛 task_id_missing', () => {
     expect(() => validateBase(null)).toThrow('task_id_missing');
+  });
+});
+
+describe('childEnv', () => {
+  const base = {
+    PATH: '/bin',
+    GIT_DIR: '/x/.git',
+    GIT_WORK_TREE: '/x',
+    GIT_INDEX_FILE: '/x/.git/index',
+    GIT_AUTHOR_NAME: 'keep',
+    CLAUDECODE: '1',
+    CLAUDE_CODE_ENTRYPOINT: 'cli',
+    CLAUDE_CONFIG_DIR: '/keep',
+  };
+
+  it('默认剥离 GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE，保留其余', () => {
+    const env = childEnv(base);
+    expect(env.GIT_DIR).toBeUndefined();
+    expect(env.GIT_WORK_TREE).toBeUndefined();
+    expect(env.GIT_INDEX_FILE).toBeUndefined();
+    expect(env.PATH).toBe('/bin');
+    expect(env.GIT_AUTHOR_NAME).toBe('keep');
+    expect(env.CLAUDECODE).toBe('1');
+  });
+
+  it('stripClaude 额外剥离 CLAUDECODE 与 CLAUDE_CODE_* ，保留 CLAUDE_CONFIG_DIR', () => {
+    const env = childEnv(base, { stripClaude: true });
+    expect(env.CLAUDECODE).toBeUndefined();
+    expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/keep');
+    expect(env.GIT_DIR).toBeUndefined();
+  });
+
+  it('不修改传入对象', () => {
+    childEnv(base, { stripClaude: true });
+    expect(base.GIT_DIR).toBe('/x/.git');
+    expect(base.CLAUDECODE).toBe('1');
   });
 });
