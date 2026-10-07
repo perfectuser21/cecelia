@@ -1,12 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { projectCompanyKrRegistration, upsertRegistrationPage, workflowProperties, stepProperties, runProperties } from '../company-kr-registration-notion.js';
-
-vi.mock('../../lib/workflow-read-service.js',()=>({readWorkflowActivities:vi.fn(async()=>{throw Error('共享关系读取证据');})}));
+import { projectCompanyKrRegistration, upsertRegistrationPage, workflowProperties, runProperties, REGISTRATION_DATABASES } from '../company-kr-registration-notion.js';
 
 describe('公司KR登记投影', () => {
-  it('正式workflow和步骤关系使用实际ID；历史run不捏造步骤完成关系', () => {
+  it('正式workflow使用实际名称；历史run不捏造步骤完成关系', () => {
     expect(workflowProperties({name:'公司 KR 分析',version:'1.0'}).Workflow.title[0].text.content).toBe('公司 KR 分析');
-    expect(stepProperties({key:'k',step_order:2,readback:{name:'读取目标',implementation:'ref'}}, 'wf')['所属Workflow'].relation).toEqual([{id:'wf'}]);
     const p=runProperties({run_id:'r',status:'success',started_at:'2026-10-01T00:00:00Z',ended_at:'2026-10-01T00:01:00Z'},'ops');
     expect(p.Workflow.relation).toEqual([{id:'ops'}]);
     expect(p).not.toHaveProperty('涉及步骤');
@@ -45,11 +42,16 @@ describe('公司KR登记投影', () => {
     expect(pool.query.mock.calls.some(([sql])=>sql.includes('INSERT'))).toBe(false);
   });
 
-  it('登记投影从共享关系服务读取活动',async()=>{
+  it('只写流程页与运行页：Step/Activity 归目录投影（按 Brain ID），这里不再碰 Step/Activity 库的旧列',async()=>{
     const query=vi.fn(async sql=>({rows:sql.includes('pg_try_advisory_lock')?[{locked:true}]:sql.includes('FROM workflows')?[{id:'w',name:'KR',runtime_notion_id:'runtime'}]:[]}));
     const pool={connect:async()=>({query,release(){}})};
     const notionReq=vi.fn(async()=>({id:'page',results:[]}));
-    await expect(projectCompanyKrRegistration(pool,{token:'test',notionReq})).rejects.toThrow('共享关系读取证据');
+    const result=await projectCompanyKrRegistration(pool,{token:'test',notionReq});
+    expect(result).toMatchObject({workflow_id:'w',notion_workflow_id:'page',runs:0});
+    const touched=notionReq.mock.calls.map(c=>JSON.stringify([c[1],c[3]?.parent?.database_id]));
+    for(const db of ['3d9c40c2-ba63-8195-a41b-f529056a4aa8','c213e387-b2ae-45a4-98c0-4a66fe3408be'])expect(touched.join()).not.toContain(db);
+    expect(REGISTRATION_DATABASES).not.toHaveProperty('steps');
+    expect(REGISTRATION_DATABASES).not.toHaveProperty('activities');
   });
 
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDirectorySchemas, ensureDirectorySchemas } from '../directory-schema.js';
+import { buildDirectorySchemas, ensureDirectorySchemas, DIRECTORY_COLUMN_SOURCES, DIRECTORY_HUMAN_COLUMNS } from '../directory-schema.js';
 
 const names = ['areas', 'value_streams', 'capabilities', 'workflows', 'activities', 'steps'];
 const dbs = Object.fromEntries(names.map((name, i) => [name, `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`]));
@@ -37,6 +37,27 @@ describe('六层目录字段契约', () => {
       expect(s[n]).not.toHaveProperty('Owner');
       expect(s[n]).not.toHaveProperty('负责人');
     }
+  });
+  it('只建规矩允许的列：重复/0填/旧系统列不在合同里，每列都标了来源', () => {
+    const s = buildDirectorySchemas(dbs);
+    for (const n of names) {
+      for (const gone of ['真身来源', '责任主体', '分组·子部门']) expect(s[n], `${n}.${gone}`).not.toHaveProperty(gone);
+      expect(Object.keys(DIRECTORY_COLUMN_SOURCES[n]).sort(), n).toEqual(Object.keys(s[n]).sort());
+    }
+    expect(s.areas).not.toHaveProperty('Key');
+    for (const gone of ['Trigger', 'Input', 'Output', '执行策略', 'Activity 数', '定时任务数', '启用任务数', '近7天有跑', '失败任务数', '静默任务数', '步骤级运行次数', '旧功能状态']) {
+      expect(s.workflows, gone).not.toHaveProperty(gone);
+    }
+    expect(s.activities).not.toHaveProperty('使用位置');
+    expect(s.activities.Key).toEqual({ rich_text: {} });
+    expect(s.activities['正本（只读·改请走 git）']).toEqual({ url: {} });
+    expect(s.steps['顺序']).toEqual({ number: { format: 'number' } });
+    expect(s.steps).not.toHaveProperty('Staging');
+    expect(s.value_streams.Name).toEqual({ title: {} });
+    expect(s.value_streams['说明']).toEqual({ rich_text: {} });
+    for (const gone of ['Key', 'Persona', 'Scope', '地图版本', '能力', '能力数', '状态']) expect(s.value_streams, gone).not.toHaveProperty(gone);
+    expect(DIRECTORY_HUMAN_COLUMNS.areas).toEqual(expect.arrayContaining(['Parent item', 'Archive', 'Domain', 'Tasks', 'Projects']));
+    expect(DIRECTORY_HUMAN_COLUMNS.workflows).toEqual(['你的标记']);
   });
   it('拒绝缺失、重复或非法库ID，防止把两层写进同一库', () => {
     expect(() => buildDirectorySchemas({ ...dbs, capabilities: null })).toThrow(/capabilities/);
