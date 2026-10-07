@@ -6,6 +6,18 @@ import { runActivity, fail, log } from '../lib/protocol.mjs';
 const DEFAULT_BRAIN_URL = 'http://localhost:5221';
 const REQUEST_TIMEOUT_MS = 20000;
 
+/** 失败响应的诊断信息：HTTP 状态 + 响应体 JSON 里的 code 字段（解析失败或没有则省略）。 */
+async function httpEvidence(res) {
+  const evidence = { http_status: res.status };
+  try {
+    const code = (await res.json())?.code;
+    if (typeof code === 'string' || typeof code === 'number') evidence.body_code = code;
+  } catch {
+    // 响应体不是 JSON：只留 http_status
+  }
+  return evidence;
+}
+
 await runActivity(async (input) => {
   // 不碰文件系统，只需要 task_id；pr_url 缺失说明前序 publish 没完成，不发请求
   const taskId = input.task_id;
@@ -34,9 +46,12 @@ await runActivity(async (input) => {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (res.status === 404 || res.status === 400) return fail('fatal', 'task_not_found');
-    if (res.status >= 500 || res.status === 429 || res.status === 408) return fail('retryable', 'brain_unavailable');
-    if (!res.ok) return fail('fatal', `brain_http_${res.status}`);
+    if (!res.ok) {
+      const evidence = [await httpEvidence(res)];
+      if (res.status === 404 || res.status === 400) return fail('fatal', 'task_not_found', { evidence });
+      if (res.status >= 500 || res.status === 429 || res.status === 408) return fail('retryable', 'brain_unavailable', { evidence });
+      return fail('fatal', `brain_http_${res.status}`, { evidence });
+    }
   } catch (error) {
     log(`[report] PATCH ${url} 失败: ${error?.message || error}`);
     return fail('retryable', 'brain_unavailable');

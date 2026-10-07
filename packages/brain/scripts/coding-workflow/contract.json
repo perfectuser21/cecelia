@@ -96,7 +96,7 @@
         "phase": "finalize",
         "entry": "activities/report.mjs",
         "on_failure": "stop_run",
-        "max_attempts": 1
+        "max_attempts": 2
       }
     }
   ]
