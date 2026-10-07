@@ -121,4 +121,8 @@ describe('resolveSprintDir', () => {
   it.each(['../x', '/abs', 'a/../../b', '.', './', '', 'sprints/..', './.', './/'])('非法 sprintDir %s 抛 sprint_dir_invalid', (bad) => {
     expect(() => resolveSprintDir('/w', bad)).toThrow('sprint_dir_invalid');
   });
+
+  it.each(['', 'relative/wt', undefined, null, 42])('非法 worktree %s 抛 sprint_dir_invalid', (bad) => {
+    expect(() => resolveSprintDir(bad, 'sprints/a')).toThrow('sprint_dir_invalid');
+  });
 });
