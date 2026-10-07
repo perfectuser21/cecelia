@@ -12,7 +12,7 @@
 import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 import { RUNS_DB_PROPS } from '../../src/runs-notion-projection.js';
-import { getToken, notionReq } from '../../src/recurring-notion-sync.js';
+import { getToken as defaultGetToken, notionReq as defaultNotionReq } from '../../src/recurring-notion-sync.js';
 import { DIRECTORY_TARGET } from '../../src/projection/directory-projector.js';
 
 export const RUNS_DB_TITLE = '最近执行';
@@ -35,10 +35,16 @@ export function planCreate({ mapRows, parentPageId }) {
   return { ok: true };
 }
 
-export async function main(argv = process.argv.slice(2), env = process.env) {
+/**
+ * @param {string[]} [argv]
+ * @param {object} [env]
+ * @param {{pool?: object, notionReq?: Function, getToken?: Function}} [deps] 测试注入；注入的 pool 由调用方负责关闭
+ */
+export async function main(argv = process.argv.slice(2), env = process.env, deps = {}) {
   const apply = argv.includes('--apply');
   if (!env.DATABASE_URL) { console.error('DATABASE_URL 未设置'); return 1; }
-  const pool = new pg.Pool({ connectionString: env.DATABASE_URL, max: 2 });
+  const { notionReq = defaultNotionReq, getToken = defaultGetToken } = deps;
+  const pool = deps.pool ?? new pg.Pool({ connectionString: env.DATABASE_URL, max: 2 });
   try {
     const mapRows = (await pool.query(`SELECT notion_db_id, status FROM notion_projection_map WHERE brain_table='runs'`)).rows;
     const config = (await pool.query('SELECT config FROM projection_targets WHERE target=$1', [DIRECTORY_TARGET])).rows[0]?.config;
@@ -55,6 +61,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       const res = await pool.query(
         `UPDATE notion_projection_map SET notion_db_id=$1, direction='push', status='active', title=$2
           WHERE brain_table='runs' AND status<>'active'`, [created.id, RUNS_DB_TITLE]);
+      if (res.rowCount === 0) {
+        console.error(`库已建（${created.id}）但登记更新命中 0 行（占位行被并发转正或删除？），需按此 id 补登记`);
+        return 2;
+      }
       console.log(`notion_projection_map 已转正 ${res.rowCount} 行`);
     } catch (e) {
       console.error(`库已建（${created.id}）但登记更新失败，需按此 id 补登记：${e.message}`);
@@ -62,7 +72,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     }
     return 0;
   } finally {
-    await pool.end();
+    if (!deps.pool) await pool.end();
   }
 }
 

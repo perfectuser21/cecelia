@@ -24,6 +24,10 @@ VALUES
    '一次运行=一行 run 的真身（迁移 531）；Notion「最近执行」库待建，见 OpenClaw 运行记录入库设计')
 ON CONFLICT DO NOTHING;
 
+-- 两个部分索引：OpenClaw 连败查询按任务名+时间倒序；归档查询扫已挂 Notion 页的行。IF NOT EXISTS，重跑空操作。
+CREATE INDEX IF NOT EXISTS idx_runs_openclaw_ref_started ON runs (trigger_ref, started_at DESC) WHERE run_id LIKE 'openclaw:%';
+CREATE INDEX IF NOT EXISTS idx_runs_notion_started ON runs (started_at DESC) WHERE notion_id IS NOT NULL;
+
 INSERT INTO schema_version (version, description)
 VALUES ('532', 'runs 增 Notion 投影记账列 notion_id/notion_synced_at/notion_digest')
 ON CONFLICT (version) DO NOTHING;

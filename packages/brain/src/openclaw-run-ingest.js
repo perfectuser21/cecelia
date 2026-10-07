@@ -256,6 +256,11 @@ export async function notifyFailureStreaks(db, triggerRefs, { sendBark, firstRou
 
 const EXEC_TIMEOUT_MS = 60_000;
 const CATCHUP_MS = 24 * 3600_000;
+const GATE_INTERVAL_MS = 300_000;
+let lastRunAt = 0;
+
+/** 测试用：重置自 gate 状态 */
+export function _resetOpenclawIngestGate() { lastRunAt = 0; }
 
 /**
  * 主入口：读游标 → 拉增量 → 映射 → upsert → 连败告警。
@@ -270,6 +275,9 @@ export async function runOpenclawRunIngest(db, deps = {}) {
   const now = deps.now ?? Date.now;
 
   const nowMs = now();
+  // 调度器每 ~60s 调一遍全部 JOBS，自 gate 到 300s 一跑；本轮开始即记时，失败也算一轮，避免故障时每分钟重试
+  if (lastRunAt && nowMs - lastRunAt < GATE_INTERVAL_MS) return { skipped: true };
+  lastRunAt = nowMs;
   const cursor = await readCursorMs(db);
   const sql = buildIngestSql({ sinceMs: cursor, nowMs, limit: LIMIT_MAX });
   const stdout = await exec(buildHostCmd(buildMmvCmd(sql), inContainer), { timeoutMs: EXEC_TIMEOUT_MS });
