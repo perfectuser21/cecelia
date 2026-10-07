@@ -14,6 +14,17 @@ const INTENT_ID_RE = /^[A-Z]+-\d+$/;
 // 默认低于契约 budget（900s），这样超时由本活动先报明确的 claude_timeout，而不是执行器笼统的 activity_timeout
 const DEFAULT_TIMEOUT_MS = 870000;
 const KILL_GRACE_MS = 5000;
+const GROUP_KILL = process.platform !== 'win32';
+
+/** 向 claude 所在进程组发信号（Windows 退化为只杀直接子进程）；进程已不存在（ESRCH）忽略。 */
+function signalGroup(child, signal) {
+  try {
+    if (GROUP_KILL) process.kill(-child.pid, signal);
+    else child.kill(signal);
+  } catch (error) {
+    if (error.code !== 'ESRCH') log(`[spec] 向 claude 发送 ${signal} 失败: ${error?.message || error}`);
+  }
+}
 // 子 claude 不继承 CLAUDECODE / CLAUDE_CODE_*（避免被当成嵌套会话）与钩子遗留的 GIT_*
 const CLAUDE_ENV = childEnv(process.env, { stripClaude: true });
 
@@ -38,7 +49,8 @@ function runChild(bin, args, cwd, timeoutMs) {
     let killTimer;
     let child;
     try {
-      child = spawn(bin, args, { cwd, env: CLAUDE_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
+      // detached：claude 自成进程组，超时时可整组清理它起的子进程（父进程仍等待它，不 unref）
+      child = spawn(bin, args, { cwd, env: CLAUDE_ENV, stdio: ['ignore', 'pipe', 'pipe'], detached: GROUP_KILL });
     } catch (error) {
       resolve({ code: null, output: String(error?.message || error) });
       return;
@@ -54,8 +66,8 @@ function runChild(bin, args, cwd, timeoutMs) {
     const timer = setTimeout(() => {
       timedOut = true;
       log(`[spec] ${bin} 超过 ${timeoutMs}ms，发送 SIGTERM`);
-      child.kill('SIGTERM');
-      killTimer = setTimeout(() => child.kill('SIGKILL'), KILL_GRACE_MS);
+      signalGroup(child, 'SIGTERM');
+      killTimer = setTimeout(() => signalGroup(child, 'SIGKILL'), KILL_GRACE_MS);
     }, timeoutMs);
     const clearTimers = () => {
       clearTimeout(timer);
@@ -70,6 +82,7 @@ function runChild(bin, args, cwd, timeoutMs) {
     child.on('exit', (code) => {
       if (!timedOut) return;
       clearTimers();
+      signalGroup(child, 'SIGKILL'); // 带头进程退出后，组内仍存活的孙进程一并收掉
       resolve({ code, output, timedOut: true });
     });
     child.on('close', (code) => {
