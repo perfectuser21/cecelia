@@ -148,6 +148,13 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.7.3"
+    date: "2026-10-07"
+    change: 'worktree-manage.sh cleanup 修复 set -e 下 ((x++)) 静默中断'
+    description: "脚本 set -euo pipefail 下，cmd_cleanup 的 ((cleaned++)) / ((skipped++)) 在计数为 0 时算术结果为 0、退出码 1，触发 set -e，脚本在第一个未合并 worktree 处静默 exit 1，导致 init-or-check 达到 worktree 上限（实测 75/15）时自动清理失效、无法新建 worktree。改为 x=$((x + 1)) 赋值式自增（同文件 generate_worktree_path 的 counter 一并改）。回归测试：packages/engine/tests/skills/worktree-cleanup-set-e.test.ts（任务 2a80319e）。"
+    files:
+      - packages/engine/skills/dev/scripts/worktree-manage.sh
+      - packages/engine/tests/skills/worktree-cleanup-set-e.test.ts
   - version: "19.7.2"
     date: "2026-09-25"
     change: '[CONFIG] worktree-manage.sh 守卫：*-scan-main 目录禁止起 /dev 会话'
