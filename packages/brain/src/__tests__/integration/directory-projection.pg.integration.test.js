@@ -21,8 +21,7 @@ beforeEach(async () => {
     CREATE TABLE capabilities(id uuid,name text,kind text,area_id uuid,parent_journey_id uuid);
     CREATE TABLE workflows(id uuid,name text,key text,capability_id uuid);
     CREATE TABLE ops_schedule_entries(workflow_id uuid,label text,schedule_desc text,enabled boolean,last_status text,last_run_at timestamptz,source text);
-    CREATE TABLE spans(workflow_id uuid);
-    CREATE TABLE journey_features(id uuid,status text);
+    CREATE TABLE v_workflow_run_stats(workflow_id uuid,time_window text,runs int,failed int,success_rate numeric,avg_duration_ms int,last_started_at timestamptz);
     CREATE TABLE workflow_definition_versions(id uuid,workflow_id uuid,payload jsonb,source_repo text,source_path text,source_commit text,created_at timestamptz);
     CREATE TABLE activity_definition_versions(id uuid,activity_id uuid,payload jsonb,source_repo text,source_path text,source_commit text);
     CREATE TABLE activities(id uuid,name text,workflow_id uuid);
@@ -90,30 +89,27 @@ describe('六层目录真实PG边界', () => {
       expect(buildDirectoryRows(await loadDirectorySource(client)).find(r=>r.id===step).properties['实现来源'].rich_text).toEqual([]);
     }
   });
-  it('单SQL只读当前复合身份版本并将Input写读回落receipt；较新历史/错对象/无指针不能冒充当前', async () => {
-    const current=fixtureEntityId(801),historical=fixtureEntityId(802),wrong=fixtureEntityId(803),legacy=fixtureEntityId(804);
-    const workflows=[fixtureEntityId(811),fixtureEntityId(812),fixtureEntityId(813)];
+  it('单SQL只读当前复合身份版本与 runs 7 天统计并写读回落receipt；较新历史/错对象不能冒充当前', async () => {
+    const current=fixtureEntityId(801),historical=fixtureEntityId(802),wrong=fixtureEntityId(803);
+    const workflows=[fixtureEntityId(811),fixtureEntityId(812)];
     await client.query('ALTER TABLE workflows ADD COLUMN current_definition_version_id uuid');
-    await client.query("INSERT INTO workflows VALUES($1,'关键词','keyword',NULL,$4),($2,'错指针','wrong',NULL,$5),($3,'旧流程','legacy',NULL,NULL)",
-      [...workflows,current,wrong]);
-    const insertVersion=async(id,workflowId,types,time)=>client.query('INSERT INTO workflow_definition_versions VALUES($1,$2,$3,$4,$5,$6,$7)',
-      [id,workflowId,{workflow_id:workflowId,contract:{trigger_inputs:types}},'perfectuser21/zenithjoy-workspace','product-map/contracts/keyword_acquisition.yaml','a'.repeat(40),time]);
-    await insertVersion(current,workflows[0],['Keyword','Account','Device'],'2026-10-01');
-    await insertVersion(historical,workflows[0],['BenchmarkAccount'],'2026-10-02');
-    await insertVersion(wrong,workflows[0],['Wrong'],'2026-10-03');
-    await insertVersion(legacy,workflows[2],['Historical'],'2026-10-04');
+    await client.query("INSERT INTO workflows VALUES($1,'关键词','keyword',NULL,$3),($2,'错指针','wrong',NULL,$4)",[...workflows,current,wrong]);
+    const insertVersion=async(id,workflowId,time)=>client.query('INSERT INTO workflow_definition_versions VALUES($1,$2,$3,$4,$5,$6,$7)',
+      [id,workflowId,{workflow_id:workflowId,contract:{}},'perfectuser21/zenithjoy-workspace','product-map/contracts/keyword_acquisition.yaml','a'.repeat(40),time]);
+    await insertVersion(current,workflows[0],'2026-10-01');
+    await insertVersion(historical,workflows[0],'2026-10-02');
+    await insertVersion(wrong,workflows[0],'2026-10-03');
+    await client.query("INSERT INTO v_workflow_run_stats VALUES($1,'7d',137,3,0.9781,12345,'2026-10-06T09:40:10Z'),($1,'24h',20,0,1,1000,'2026-10-06T09:40:10Z')",[workflows[0]]);
     let queries=0;
     const source=await loadDirectorySource({query:async(...args)=>{queries++;return client.query(...args);}});
     expect(queries).toBe(1);
     const rows=buildDirectoryRows(source),row=rows.find(r=>r.id===workflows[0]);
-    expect(row.properties.Input.rich_text[0].text.content).toBe('["Keyword","Account","Device"]');
     expect(row.definitionVersion.id).toBe(current);
-    expect(row.gaps).not.toContain('workflow_input_undeclared');
-    for(const id of workflows.slice(1)) {
-      const missing=rows.find(r=>r.id===id);
-      expect(missing.properties.Input.rich_text).toEqual([]);
-      expect(missing.gaps).toContain('workflow_input_undeclared');
-    }
+    expect(rows.find(r=>r.id===workflows[1]).definitionVersion).toBeNull();
+    expect(row.properties['7天次数']).toEqual({number:137});
+    expect(row.properties['7天成功率']).toEqual({number:0.9781});
+    expect(row.properties['平均时长(秒)']).toEqual({number:12.3});
+    expect(row.properties['在用吗']).toEqual({select:{name:'在跑'}});
     const page=fixtureEntityId(820),dbId=fixtureEntityId(821);let properties;
     const notionReq=async(_token,path,method,body)=>{
       if(path.endsWith('/query'))return{results:[],has_more:false};
@@ -121,19 +117,9 @@ describe('六层目录真实PG边界', () => {
       return{id:page,parent:{database_id:dbId},properties:structuredClone(properties)};
     };
     await projectDirectoryPage(client,{token:'test',dbId,row,properties:row.properties,notionReq});
-    expect(properties.Input.rich_text[0].text.content).toBe('["Keyword","Account","Device"]');
+    expect(properties['7天次数']).toEqual({number:137});
     expect((await client.query("SELECT entity_id,external_id FROM projection_links WHERE target='notion-directory'")).rows)
       .toEqual([{entity_id:workflows[0],external_id:page}]);
-  });
-  it.each([null,'Keyword',[],['Keyword','Keyword'],[1],['bad type'],{runtime:{},steps:[]}])('真PG坏声明或KR缺输入 %j 仍有缺口', async declared => {
-    const id=fixtureEntityId(831),version=fixtureEntityId(832);
-    await client.query('ALTER TABLE workflows ADD COLUMN current_definition_version_id uuid');
-    await client.query("INSERT INTO workflows VALUES($1,'旧契约','legacy',NULL,$2)",[id,version]);
-    const contract=declared?.runtime?declared:{trigger_inputs:declared};
-    await client.query('INSERT INTO workflow_definition_versions(id,workflow_id,payload) VALUES($1,$2,$3)',
-      [version,id,{workflow_id:id,contract}]);
-    const row=buildDirectoryRows(await loadDirectorySource(client)).find(r=>r.id===id);
-    expect(row.properties.Input.rich_text).toEqual([]);expect(row.gaps).toContain('workflow_input_undeclared');
   });
   it.each([0, 1000, 60000])('Notion分钟化并偏移%s毫秒：真运行仅精确日期能落PG成功receipt', async offset => {
     const f = runtimeFixture();

@@ -15,7 +15,6 @@ import { raise } from '../alerting.js';
 import {
   syncActivityContracts,
   runBackboneContractJob,
-  buildBackboneActivityProps,
   CONTRACT_REPO,
   CHECK_INTERVAL_MS,
   DRIFT_ALERT_MS,
@@ -280,81 +279,15 @@ describe('runBackboneContractJob', () => {
     expect(pool.memory.activity_contract_sync).toMatchObject({ ok: true, lag_since: null, alerted: false, head_sha: HEAD });
   });
 
-  it('推送失败不影响同步结果（各自吞错）', async () => {
+  it('正文写失败不影响同步（各自吞错）；Activity 库的列只归目录投影写，本 job 不再推英文属性列', async () => {
     const gh = fakeGithub({ digest: digestOf({}) });
     const pool = fakePool([]);
-    const r = await runBackboneContractJob(pool, { ...deps(gh), now: Date.now(), force: true, push: async () => { throw new Error('notion 429'); } });
+    const r = await runBackboneContractJob(pool, { ...deps(gh), now: Date.now(), force: true, body: async () => { throw new Error('notion 503'); } });
     expect(r.sync.ok).toBe(true);
-    expect(r.push).toMatchObject({ error: 'notion 429' });
-  });
-
-  it('正文写失败不影响属性推送与同步（各自吞错）', async () => {
-    const gh = fakeGithub({ digest: digestOf({}) });
-    const pool = fakePool([]);
-    const r = await runBackboneContractJob(pool, { ...deps(gh), now: Date.now(), force: true, push: async () => ({ created: 8 }), body: async () => { throw new Error('notion 503'); } });
-    expect(r.sync.ok).toBe(true);
-    expect(r.push).toEqual({ created: 8 });
+    expect(r).not.toHaveProperty('push');
     expect(r.body).toMatchObject({ error: 'notion 503' });
-  });
-});
-
-describe('buildBackboneActivityProps', () => {
-  const doc = yaml.load(YAML);
-  const row = (i, extra = {}) => ({
-    id: 'x', capability_key: 'keyword_acquisition', activity_key: doc.activities[i].key, contract: doc.activities[i],
-    contract_sha256: 'f'.repeat(64), contract_source: 'https://github.com/perfectuser21/zenithjoy-workspace/blob/abc/product-map/contracts/keyword_acquisition.yaml',
-    promise: null, status: 'planned', ...extra,
-  });
-
-  it('只读标记：正本链接指向 git、契约哈希、Key=能力.活动', () => {
-    const p = buildBackboneActivityProps(row(0, { promise: '中台显示可用小号数' }));
-    expect(p['正本（只读·改请走 git）'].url).toMatch(/zenithjoy-workspace\/blob\/abc\//);
-    expect(p['契约哈希'].rich_text[0].text.content).toBe('f'.repeat(12));
-    expect(p.Key.rich_text[0].text.content).toBe('keyword_acquisition.preflight');
-    expect(p['对外承诺'].rich_text[0].text.content).toBe('中台显示可用小号数');
-    expect(p.Name.title[0].text.content).toBe('预检');
-    expect(p.Order.number).toBe(1);
-  });
-
-  it('15 字段都落列：后置条件带探针、失败四类、步骤清单标未实现', () => {
-    const p = buildBackboneActivityProps(row(0));
-    const t = (k) => p[k].rich_text.map((x) => x.text.content).join('');
-    expect(t('Postconditions')).toContain('pf_lock_acquired');
-    expect(t('Failure')).toMatch(/正常为空[\s\S]*可重试: lock_busy[\s\S]*需人处理: device_offline → bark[\s\S]*致命/);
-    expect(t('步骤清单')).toMatch(/1\. 拿设备锁（acquire_device_lock）/);
-    expect(t('步骤清单')).toMatch(/读账号标记.*未实现/);
-    expect(p['执行位置'].select.name).toBe('xian-m4');
-    expect(p['Runs as'].select.name).toBe('Code');
-    expect(t('Cost')).toBe('不调大模型');
-    expect(p['Breaking?'].checkbox).toBe(false);
-  });
-
-  it('调大模型 → Cost 列出模型、Runs as=Hybrid、breaking 勾选、缺口进 Notes', () => {
-    const p = buildBackboneActivityProps(row(1));
-    const t = (k) => p[k].rich_text.map((x) => x.text.content).join('');
-    expect(t('Cost')).toContain('openrouter/bytedance/ui-tars-1.5-7b');
-    expect(p['Runs as'].select.name).toBe('Hybrid');
-    expect(p['Breaking?'].checkbox).toBe(true);
-    expect(t('Notes')).toContain('8bb3af55');
-  });
-});
-
-// KR 专用投影独占创建这些活动，两个调度lane不可同时POST同一行。
-describe('KR活动投影唯一写口', () => {
-  it('通用活动推送从SQL选行时排除KR，不能在创建后才分流', async () => {
-    const { pushBackboneActivities } = await import('../activity-contract-sync.js');
-    const pool = { query: vi.fn().mockResolvedValueOnce({ rows: [{ notion_db_id: 'db' }] }).mockResolvedValueOnce({ rows: [] }) };
-    const notionReq = vi.fn();
-    await pushBackboneActivities(pool, 'token', { notionReq });
-    expect(pool.query.mock.calls[1][0]).toContain("capability_key IS DISTINCT FROM 'company_kr_analysis'");
-    expect(notionReq).not.toHaveBeenCalled();
-  });
-});
-
-describe('活动模型信息',()=>{
-  it('agent未固定模型时不能显示不调大模型',()=>{
-    const properties=buildBackboneActivityProps({contract:{name:'分析',invokers:['agent']}});
-    expect(properties.Cost.rich_text[0].text.content).toBe('调用大模型；实际型号见运行记录');
+    const mod = await import('../activity-contract-sync.js');
+    for (const gone of ['pushBackboneActivities', 'BACKBONE_DB_PROPS', 'buildBackboneActivityProps']) expect(mod).not.toHaveProperty(gone);
   });
 });
 

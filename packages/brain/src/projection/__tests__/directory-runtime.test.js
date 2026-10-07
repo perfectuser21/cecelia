@@ -19,11 +19,22 @@ describe('目录运行循环',()=>{
     expect(readFileSync(new URL('../../scheduler-jobs.js',import.meta.url),'utf8')).toContain("name: 'notion-directory'");
     expect(readFileSync(new URL('../../../scripts/smoke/directory-projection-smoke.sh',import.meta.url),'utf8')).toContain('directory-projection.pg.integration.test.js');
   });
-  it('未绑定的历史VS只报catalog gap，不打Notion且不让正式同步failed',async()=>{
+  it('没挂能力的空壳VS只报catalog gap，不打Notion且不让正式同步failed',async()=>{
     const f=runtimeFixture();f.source.journeys.push({id:fixtureEntityId(998),name:'历史',kind:'value_stream'});
     const result=await runDirectoryProjection(f.pool,{token:'test',notionReq:f.notionReq,force:true});
-    expect(result.failed).toBe(0);expect(result.catalog_gaps).toContainEqual({id:fixtureEntityId(998),gap:'value_stream_binding_missing'});
+    expect(result.failed).toBe(0);expect(result.catalog_gaps).toContainEqual({id:fixtureEntityId(998),gap:'value_stream_empty'});
     expect(f.pages.size).toBe(6);
+  });
+  it('挂了能力但没绑旧地图页的VS由目录新建页，能力「所属价值流」连上它',async()=>{
+    const f=runtimeFixture();
+    f.source.journeys.push({id:fixtureEntityId(997),name:'新价值流',kind:'value_stream',area_id:fixtureEntityId(21)},
+      {id:fixtureEntityId(996),name:'新能力',kind:'capability',parent_journey_id:fixtureEntityId(997)});
+    for(let n=0;n<4;n++)await runDirectoryProjection(f.pool,{token:'test',notionReq:f.notionReq,force:true});
+    const page=layer=>[...f.pages.values()].find(p=>p.parent.database_id===f.dbs[layer]&&p.properties['Brain ID']?.rich_text?.[0]?.text?.content===
+      (layer==='value_streams'?fixtureEntityId(997):fixtureEntityId(996)));
+    expect(page('value_streams').properties.Name.title[0].text.content).toBe('新价值流');
+    expect(page('capabilities').properties['所属价值流'].relation).toEqual([{id:page('value_streams').id}]);
+    expect(page('value_streams').properties['同步状态'].select.name).toBe('已同步');
   });
   it('六库预检发现错relation时零页面写、零成功link',async()=>{
     const f=runtimeFixture();f.databases.get(f.dbs.steps).properties['所属Activity'].relation.database_id=fixtureEntityId(999);

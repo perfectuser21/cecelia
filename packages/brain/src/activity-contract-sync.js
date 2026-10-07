@@ -3,11 +3,11 @@
  *
  * 真身：zenithjoy-workspace 仓 product-map/contracts/<能力>.yaml（CI 组装闸守，product-map/generated/contracts.json 带每活动 sha256）。
  * Brain：journey_steps（视图 backbone_activities）存只读副本 —— contract 原文 + 仓库活动哈希 + 钉在 commit 的正本链接。
- * Notion：「Backbone Activities」镜子（notion_projection_map 登记，迁移 482），每行带「正本（只读·改请走 git）」链接。
+ * Notion：Activity 库的列（含「正本（只读·改请走 git）」链接）只归六层目录投影写；本模块只写页面正文（契约给人读）。
  *
  * scheduler job backbone-contract-sync：60s 一轮调用，同步段 30min 自 gate（只读 GitHub API，us-vps 零执行不受影响）；
  * 按显式登记工作流加载同commit所有契约与ref，验证digest后定义+使用关系单事务同步；无消费者旧活动标 deprecated。
- * 同步连续失败超 2h（副本落后真身）告 P1 一次，恢复即清。人在 Notion 手改镜子由 notion-projection-watch A8 抓。
+ * 同步连续失败超 2h（副本落后真身）告 P1 一次，恢复即清。
  */
 import { validateImplementationBindings } from './lib/implementation-bindings.js';
 import { loadActivityContracts } from './lib/activity-contract-loader.js';
@@ -15,8 +15,7 @@ import { storeActivityContracts, REGISTRATIONS_SQL } from './lib/activity-contra
 import { raise } from './alerting.js';
 import { resolveGitHubToken } from './harness-credentials.js';
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
-import { pushRegisteredRows, resolveDbId, propsDigest } from './lib/notion-projection-engine.js';
-import { ensureOpsDbProps } from './ops-quota-notion.js';
+import { propsDigest } from './lib/notion-projection-engine.js';
 
 export const CONTRACT_REPO = 'perfectuser21/zenithjoy-workspace';
 export const CONTRACTS_DIGEST_PATH = 'product-map/generated/contracts.json';
@@ -25,7 +24,6 @@ export const DRIFT_ALERT_MS = 2 * 60 * 60 * 1000;
 const STATE_KEY = 'activity_contract_sync';
 const HTTP_TIMEOUT_MS = 15_000;
 const RT_MAX = 1900;
-const SOURCE_COL = '正本（只读·改请走 git）';
 
 // ─── GitHub（只读）──────────────────────────────────────────────────────────
 
@@ -65,17 +63,11 @@ export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, 
   return storeActivityContracts(pool,plans,head,CONTRACT_REPO,registrations,{beforeCommit,synchronizeSteps});
 }
 
-// ─── Notion 镜子：journey_steps（带契约的行）→「Backbone Activities」─────────
+// ─── Notion 页面正文：契约给人读（任务 d852c852）──────────────────────────────
+// Activity 库的列只归六层目录投影写（projection/directory-*.js，按 Brain ID 建页）；本模块只写页面正文。
+// 正文完全由 contract 生成、单向只读；指纹（notion_body_digest）没变不打 Notion，变了整段替换。
 
-const rt = (s) => {
-  const t = s === null || s === undefined ? '' : String(s);
-  return t === '' ? [] : [{ type: 'text', text: { content: t.slice(0, RT_MAX) } }];
-};
-const rich = (s) => ({ rich_text: rt(s) });
-const sel = (v) => ({ select: { name: String(v).slice(0, 100) } });
-const lines = (arr) => (arr || []).join('\n');
 const io = (x) => `${x.type}${x.cardinality === 'many' ? '[]' : ''}${x.effect ? ` ${x.effect}` : ''}(${(x.fields || []).join(', ')})`;
-const list = (arr) => ((arr || []).length ? arr.join('; ') : '—');
 
 function runsAs(invokers = []) {
   const agent = invokers.includes('agent');
@@ -83,89 +75,6 @@ function runsAs(invokers = []) {
   if (agent && code) return 'Hybrid';
   return agent ? 'Agent' : 'Code';
 }
-
-function describeFailure(f = {}) {
-  const nh = f.needs_human || {};
-  return [
-    `正常为空: ${list(f.empty_ok)}`,
-    `可重试: ${list(f.retryable)}`,
-    `需人处理: ${list(nh.cases)} → ${nh.alert?.channel ?? '?'}（${nh.alert?.object ?? '无告警对象'}）`,
-    `致命: ${list(f.fatal)}`,
-  ].join('\n');
-}
-
-function describeSteps(steps = []) {
-  return [...steps].sort((x, y) => x.order - y.order).map((s) =>
-    `${s.order}. ${s.name}（${s.key}）— 判定: ${s.check}${s.implementation?.status === 'missing' ? ' ⚠未实现' : ''}${s.uses_llm ? ' 🤖' : ''}`).join('\n');
-}
-
-/** journey_steps 一行（contract 为仓库原文）→「Backbone Activities」properties。人工/关系列（Capability/Agent/Steps/Type/Accuracy）不发。 */
-export function buildBackboneActivityProps(r) {
-  const c = r.contract || {};
-  const [maj, min] = String(c.version || '0.0.0').split('.');
-  const res = c.resources || {};
-  return {
-    Name: { title: rt(c.name) },
-    Order: { number: c.order ?? null },
-    Key: rich(`${r.capability_key}.${r.activity_key}`),
-    Version: { number: Number(`${maj}.${min}`) },
-    '契约版本': rich(c.version),
-    'Breaking?': { checkbox: c.compatibility === 'breaking' },
-    '负责人': rich([c.owner?.department, c.owner?.agent].filter(Boolean).join(' / ')),
-    Input: rich(lines((c.inputs || []).map(io))),
-    Output: rich(lines((c.outputs || []).map(io))),
-    Preconditions: rich(lines(c.preconditions)),
-    Postconditions: rich(lines((c.postconditions || []).map((p) => `${p.probe}: ${p.asserts}`))),
-    '执行位置': sel(c.execution?.location ?? 'unknown'),
-    Code: rich(c.execution?.via),
-    Latency: rich(c.budget ? `预算 ${c.budget.max_duration_s}s / 心跳 ${c.budget.heartbeat_s}s` : ''),
-    Config: rich([`锁: ${list(res.locks)}`, `限额: ${list((res.limits || []).map((l) => `${l.name}=${l.value}`))}`].join('\n')),
-    '幂等': rich(c.idempotency ? `${c.idempotency.dedupe_key}（重复=${c.idempotency.on_duplicate}）` : ''),
-    Failure: rich(describeFailure(c.failure)),
-    '副作用': rich(lines((c.side_effects || []).map((s) => `${s.kind}@${s.target}: ${s.description}`)) || '无'),
-    'Runs as': sel(runsAs(c.invokers)),
-    Cost: rich((c.model || []).length ? lines(c.model.map((m) => `${m.provider}/${m.model}: ${m.purpose}`)) : (c.invokers || []).includes('agent') ? '调用大模型；实际型号见运行记录' : '不调大模型'),
-    '步骤清单': rich(describeSteps(c.steps)),
-    Notes: rich(lines((c.known_gaps || []).map((g) => `${g.gap}（${g.task}）`))),
-    '对外承诺': rich(r.promise),
-    '状态': sel(r.status || 'planned'),
-    '契约哈希': rich(String(r.contract_sha256 || '').slice(0, 12)),
-    [SOURCE_COL]: { url: r.contract_source || null },
-  };
-}
-
-/** 推前缺列即补（Notion 缺列 400 血训）；已有列（Order/Version/Breaking?/Runs as 等）类型沿用库定义。 */
-export const BACKBONE_DB_PROPS = {
-  Name: { title: {} }, Order: { number: {} }, Key: { rich_text: {} }, Version: { number: {} },
-  '契约版本': { rich_text: {} }, 'Breaking?': { checkbox: {} }, '负责人': { rich_text: {} },
-  Input: { rich_text: {} }, Output: { rich_text: {} }, Preconditions: { rich_text: {} }, Postconditions: { rich_text: {} },
-  '执行位置': { select: {} }, Code: { rich_text: {} }, Latency: { rich_text: {} }, Config: { rich_text: {} },
-  '幂等': { rich_text: {} }, Failure: { rich_text: {} }, '副作用': { rich_text: {} }, 'Runs as': { select: {} },
-  Cost: { rich_text: {} }, '步骤清单': { rich_text: {} }, Notes: { rich_text: {} }, '对外承诺': { rich_text: {} },
-  '状态': { select: {} }, '契约哈希': { rich_text: {} }, [SOURCE_COL]: { url: {} },
-};
-
-export async function pushBackboneActivities(pool, token, { notionReq = defaultNotionReq, logSyncError = async () => {} } = {}) {
-  const dbId = await resolveDbId(pool, 'activities');
-  if (!dbId || !token) return null;
-  const { rows } = await pool.query(
-    `SELECT id, capability_key, activity_key, contract, contract_sha256, contract_source, promise, status, notion_id, notion_digest
-       FROM activities
-      WHERE contract IS NOT NULL AND capability_key IS DISTINCT FROM 'company_kr_analysis'
-        AND (notion_synced_at IS NULL OR updated_at > notion_synced_at)
-      ORDER BY capability_key, activity_key
-      LIMIT 50`);
-  if (rows.length === 0) return { created: 0, patched: 0, skipped: 0, failed: 0, cleared: 0 };
-  const { added } = await ensureOpsDbProps(token, dbId, BACKBONE_DB_PROPS, { notionReq });
-  if (added.length) console.log(`[backbone-contract-sync] Backbone Activities 补列: ${added.join(', ')}`);
-  return pushRegisteredRows(pool, token, {
-    table: 'activities', dbId, rows, buildProps: buildBackboneActivityProps,
-    notionReq, logSyncError, label: 'backbone_activity',
-  });
-}
-
-// ─── Notion 页面正文：契约给人读（任务 d852c852）──────────────────────────────
-// 正文完全由 contract 生成、单向只读；指纹（notion_body_digest）没变不打 Notion，变了整段替换。
 
 export const BODY_PAGES_PER_RUN = 3;
 const NOTION_APPEND_MAX = 100;
@@ -249,11 +158,14 @@ async function replacePageBody(token, pageId, blocks, notionReq) {
 
 export async function syncBackboneBodies(pool, token, { notionReq = defaultNotionReq, logSyncError = async () => {} } = {}) {
   if (!token) return null;
+  // 页是目录投影按 Brain ID 建的那一页（目录链接）；旧 notion_id 只给还没进目录的历史行兜底
   const { rows } = await pool.query(
-    `SELECT id, notion_id, capability_key, activity_key, contract, contract_sha256, contract_source, promise, status, notion_body_digest
-       FROM activities
-      WHERE contract IS NOT NULL AND notion_id IS NOT NULL
-      ORDER BY capability_key, activity_key`);
+    `SELECT a.id, COALESCE(pl.external_id, a.notion_id) AS notion_id, a.capability_key, a.activity_key, a.contract, a.contract_sha256,
+            a.contract_source, a.promise, a.status, a.notion_body_digest
+       FROM activities a
+       LEFT JOIN projection_links pl ON pl.target = 'notion-directory' AND pl.entity_type = 'activities' AND pl.entity_id = a.id
+      WHERE a.contract IS NOT NULL AND COALESCE(pl.external_id, a.notion_id) IS NOT NULL
+      ORDER BY a.capability_key, a.activity_key`);
   const stat = { rewritten: 0, unchanged: 0, failed: 0 };
   for (const r of rows) {
     const blocks = buildBackboneActivityBody(r);
@@ -290,9 +202,9 @@ async function writeState(pool, state) {
 }
 
 /**
- * scheduler-jobs handler。同步段 30min 自 gate（force 跳过）；推送段每轮跑（无变化的行不打 Notion）。
- * 两段各自吞错：推送失败不影响同步记账。
- * @param {object} [opts] 测试注入：fetchFn / resolveToken / now / force / push / notionToken
+ * scheduler-jobs handler。同步段 30min 自 gate（force 跳过）；正文段每轮跑（指纹没变的页不打 Notion）。
+ * 两段各自吞错：正文失败不影响同步记账。
+ * @param {object} [opts] 测试注入：fetchFn / resolveToken / now / force / body / notionToken
  */
 export async function runBackboneContractJob(pool, opts = {}) {
   const now = opts.now ?? Date.now();
@@ -318,18 +230,9 @@ export async function runBackboneContractJob(pool, opts = {}) {
       await writeState(pool, { checked_at: at, ok: false, error: err.message, head_sha: prev?.head_sha ?? null, lag_since: lagSince, alerted });
     }
   }
-  // 无 Notion 凭据（CI/测试环境）→ 两段都收到空 token 安静跳过，不每分钟刷失败日志
+  // 无 Notion 凭据（CI/测试环境）→ 收到空 token 安静跳过，不每分钟刷失败日志
   const safeToken = () => { try { return getToken(); } catch { return null; } };
   const token = () => opts.notionToken ?? safeToken();
-  // 属性先推（新页面在这一步建出 notion_id），正文再写；两段各自吞错
-  let push;
-  try {
-    const pushFn = opts.push ?? ((p) => pushBackboneActivities(p, token()));
-    push = await pushFn(pool);
-  } catch (err) {
-    console.warn(`[backbone-contract-sync] 推 Notion 失败（非阻断）: ${err.message}`);
-    push = { error: err.message };
-  }
   let body;
   try {
     const bodyFn = opts.body ?? ((p) => syncBackboneBodies(p, token()));
@@ -338,5 +241,5 @@ export async function runBackboneContractJob(pool, opts = {}) {
     console.warn(`[backbone-contract-sync] 写 Notion 正文失败（非阻断）: ${err.message}`);
     body = { error: err.message };
   }
-  return { sync, push, body };
+  return { sync, body };
 }

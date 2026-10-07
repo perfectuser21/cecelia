@@ -114,6 +114,14 @@ describe('syncBackboneBodies', () => {
     expect(r).toMatchObject({ rewritten: 1, unchanged: 0, failed: 0 });
   });
 
+  it('正文写在目录投影建的页上：页 id 先取目录链接（notion-directory），旧 notion_id 只兜底', async () => {
+    const sql = [];
+    const pool = { async query(text) { sql.push(text); return { rows: [] }; } };
+    await syncBackboneBodies(pool, 'tok', { notionReq: fakeNotion().notionReq });
+    expect(sql[0]).toMatch(/LEFT JOIN projection_links[\s\S]*'notion-directory'[\s\S]*entity_type\s*=\s*'activities'/);
+    expect(sql[0]).toMatch(/COALESCE\(pl\.external_id,\s*a\.notion_id\)\s+AS notion_id/);
+  });
+
   it('指纹没变 → 一次 Notion 调用都不打', async () => {
     const first = fakePool([row()]);
     await syncBackboneBodies(first, 'tok', { notionReq: fakeNotion().notionReq });

@@ -104,37 +104,31 @@ describe('六层目录源映射', () => {
       payload:{workflow_id:w.id,contract:{trigger_inputs:['Keyword','Account','Device']}}};
     return {data,w};
   }
-  it('当前版本契约trigger_inputs映射Input并清缺口，保内部来源且不推导Trigger/Output/策略', () => {
+  it('流程行不写 Brain 没有的列（Trigger/Input/Output/执行策略），也不再报这几条恒定缺口；当前版本身份仍记录', () => {
     const {data,w}=versionedInput(),row=api.buildDirectoryRows(data,config).find(r=>r.id===w.id);
-    expect(row.properties.Input.rich_text[0].text.content).toBe('["Keyword","Account","Device"]');
-    expect(row.gaps).not.toContain('workflow_input_undeclared');
-    expect(row.gaps).toEqual(expect.arrayContaining(['workflow_trigger_undeclared','workflow_output_undeclared','execution_policy_undeclared']));
+    for(const k of ['Trigger','Input','Output','执行策略'])expect(row.properties).not.toHaveProperty(k);
+    for(const g of ['workflow_input_undeclared','workflow_trigger_undeclared','workflow_output_undeclared','execution_policy_undeclared'])expect(row.gaps).not.toContain(g);
     expect(row.definitionVersion).toEqual({id:w.current_definition_version_id,source_repo:w.definition_version.source_repo,
       source_path:w.definition_version.source_path,source_commit:w.definition_version.source_commit});
   });
-  it.each(['text','empty','duplicate','not-string','bad-type','wrong-object','wrong-version','wrong-payload','no-pointer','kr'])('当前版本%s不伪造Input', kind => {
-    const {data,w}=versionedInput(),v=w.definition_version;
-    if(kind==='text')v.payload.contract.trigger_inputs='Keyword';
-    if(kind==='empty')v.payload.contract.trigger_inputs=[];
-    if(kind==='duplicate')v.payload.contract.trigger_inputs=['Keyword','Keyword'];
-    if(kind==='not-string')v.payload.contract.trigger_inputs=[1];
-    if(kind==='bad-type')v.payload.contract.trigger_inputs=[' keyword '];
-    if(kind==='wrong-object')v.workflow_id=fixtureEntityId(302);
-    if(kind==='wrong-version')v.id=fixtureEntityId(302);
-    if(kind==='wrong-payload')v.payload.workflow_id=fixtureEntityId(302);
-    if(kind==='no-pointer')w.current_definition_version_id=null;
-    if(kind==='kr')v.payload.contract={runtime:{},steps:[],activities:[]};
-    const row=api.buildDirectoryRows(data,config).find(r=>r.id===w.id);
-    expect(row.properties.Input.rich_text).toEqual([]);
-    expect(row.gaps).toContain('workflow_input_undeclared');
+  it('Step 的 Input/Output 以 Brain steps.inputs/outputs 为准，「顺序」写 step_order', () => {
+    const {data,s}=versionedStep();
+    Object.assign(s,{inputs:['Keyword.text'],outputs:['Video.video_id']});
+    const row=api.buildDirectoryRows(data,config).find(r=>r.id===s.id);
+    expect(row.properties.Input.rich_text[0].text.content).toBe('["Keyword.text"]');
+    expect(row.properties.Output.rich_text[0].text.content).toBe('["Video.video_id"]');
+    expect(row.properties['顺序']).toEqual({number:1});
+    expect(api.buildDirectoryRows(sample(),config).find(r=>r.id===fixtureEntityId(7)).properties['顺序']).toEqual({number:null});
   });
-  it.each(['direct','contract','explicit-empty'])('已有%s Input优先，不让版本契约覆盖直接声明', kind => {
-    const {data,w}=versionedInput();
-    if(kind==='direct')w.input='原输入';
-    if(kind==='contract')w.contract={inputs:['Existing']};
-    if(kind==='explicit-empty')w.input='';
-    const row=api.buildDirectoryRows(data,config).find(r=>r.id===w.id);
-    expect(row.properties.Input.rich_text).toEqual(kind==='explicit-empty'?[]:[{text:{content:kind==='direct'?'原输入':'["Existing"]'}}]);
+  it('Activity 写业务 Key（能力.活动）与 git 正本链接；不再写使用位置/责任主体', () => {
+    const data=sample();Object.assign(data.activities[0],{capability_key:'cap',activity_key:'act',contract_source:'https://github.com/x/y/blob/abc/c.yaml'});
+    const row=api.buildDirectoryRows(data,config).find(r=>r.id===fixtureEntityId(6));
+    expect(row.properties.Key.rich_text[0].text.content).toBe('cap.act');
+    expect(row.properties['正本（只读·改请走 git）']).toEqual({url:'https://github.com/x/y/blob/abc/c.yaml'});
+    for(const k of ['使用位置','责任主体','真身来源'])expect(row.properties).not.toHaveProperty(k);
+    expect(row.gaps).not.toContain('contract_missing');
+    const bare=api.buildDirectoryRows(sample(),config).find(r=>r.id===fixtureEntityId(6));
+    expect(bare.properties.Key.rich_text).toEqual([]);expect(bare.properties['正本（只读·改请走 git）']).toEqual({url:null});
   });
   it('跨Workflow同sequence和slot的引用输入反序仍有相同使用位置、编排和属性hash', () => {
     const data = sample();
@@ -148,10 +142,13 @@ describe('六层目录源映射', () => {
     const properties = rows => rows.map(r => ({ id: r.id, properties: r.properties }));
     expect(properties(reverse)).toEqual(properties(forward));
     expect(reverse.map(r => propsDigest(r.properties))).toEqual(forward.map(r => propsDigest(r.properties)));
-    expect(forward.find(r => r.id === fixtureEntityId(6)).properties['使用位置'].rich_text[0].text.content).toBe(
-      `${fixtureEntityId(4)} / same / 1\n${fixtureEntityId(5)} / same / 1\n${fixtureEntityId(4)} / later / 2`);
-    expect(forward.find(r => r.id === fixtureEntityId(4)).properties['活动编排'].rich_text[0].text.content).toBe(
-      `1. same → ${fixtureEntityId(6)}\n2. later → ${fixtureEntityId(6)}`);
+    expect(forward.find(r => r.id === fixtureEntityId(4)).properties['活动编排'].rich_text[0].text.content).toBe('1. 共享活动\n2. 共享活动');
+  });
+  it('活动编排按顺序列 Activity 名字（不再显示 uuid）；引用的 Activity 不在源里时退回显示 id', () => {
+    const data = sample();
+    data.refs.push({ workflow_id: fixtureEntityId(4), activity_id: fixtureEntityId(66), slot_key: 'ghost', sequence_no: 3, active: true });
+    const text = api.buildDirectoryRows(data, config).find(r => r.id === fixtureEntityId(4)).properties['活动编排'].rich_text[0].text.content;
+    expect(text).toBe(`1. 共享活动\n3. ${fixtureEntityId(66)}`);
   });
   it('显式binding分别固定两个模型名称，不要求同名；KR asserts不能丢',()=>{
     const data=sample();data.journeys[0].name='工厂价值流';data.map_nodes[0].name='工厂';
@@ -159,7 +156,7 @@ describe('六层目录源映射', () => {
     const rows=api.buildDirectoryRows(data,{value_stream_bindings:[{...config.value_stream_bindings[0],expected_node_name:'工厂',expected_journey_name:'工厂价值流'}]});
     expect(rows.find(r=>r.id===fixtureEntityId(2)).pageId).toBe(fixtureEntityId(102));
     expect(rows.find(r=>r.id===fixtureEntityId(7)).properties['验收标准'].rich_text[0].text.content).toBe('完整建议JSON');
-    expect(rows.find(r=>r.id===fixtureEntityId(4)).gaps).toEqual(expect.arrayContaining(['workflow_trigger_undeclared','workflow_input_undeclared','workflow_output_undeclared']));
+    expect(rows.find(r=>r.id===fixtureEntityId(4)).gaps).toEqual([]);
   });
   it('导出独立源映射入口', () => expect(api.buildDirectoryRows).toBeTypeOf('function'));
   it('共享活动和步骤使用所有active引用，保真身ID而非legacy单父', () => {
@@ -168,12 +165,22 @@ describe('六层目录源映射', () => {
       { layer: 'workflows', id: fixtureEntityId(4) }, { layer: 'workflows', id: fixtureEntityId(5) },
     ]);
     expect(rows.find(r => r.id === fixtureEntityId(7)).relations['所属Workflows']).toHaveLength(2);
-    expect(rows.find(r => r.id === fixtureEntityId(6)).properties['使用位置'].rich_text[0].text.content).toContain('second');
   });
-  it('无显式绑定不凭同名认领价值流，也不许可新建该层页', () => {
-    const vs = api.buildDirectoryRows(sample(), {}).find(r => r.id === fixtureEntityId(2));
-    expect(vs.pageId).toBeNull(); expect(vs.allowCreate).toBe(false);
-    expect(vs.gaps).toContain('value_stream_binding_missing');
+  it('价值流由目录接管：挂了能力的价值流没绑旧地图页也许可新建（按 Brain ID 找页，不凭同名认领），名字/说明来自 Brain', () => {
+    const data = sample(); data.journeys[0].description = '从产品到交付';
+    const vs = api.buildDirectoryRows(data, {}).find(r => r.id === fixtureEntityId(2));
+    expect(vs.pageId).toBeNull(); expect(vs.allowCreate).toBe(true);
+    expect(vs.gaps).toEqual([]);
+    expect(vs.createProperties.Name.title[0].text.content).toBe('产品');
+    expect(vs.properties['说明'].rich_text[0].text.content).toBe('从产品到交付');
+    expect(api.buildDirectoryRows(sample(), {}).find(r => r.id === fixtureEntityId(3)).relations['所属价值流']).toEqual([{ layer: 'value_streams', id: fixtureEntityId(2) }]);
+  });
+  it('没挂能力的空壳价值流不建页：标 value_stream_empty，部门的「价值流」关联也不连它（否则永远连不上）', () => {
+    const data = sample(); data.journeys.push({ id: fixtureEntityId(20), name: '空壳', kind: 'value_stream', area_id: fixtureEntityId(1) });
+    const rows = api.buildDirectoryRows(data, {});
+    const shell = rows.find(r => r.id === fixtureEntityId(20));
+    expect(shell.allowCreate).toBe(false); expect(shell.gaps).toEqual(['value_stream_empty']);
+    expect(rows.find(r => r.layer === 'areas').relations['价值流']).toEqual([{ layer: 'value_streams', id: fixtureEntityId(2) }]);
   });
   it('绑定来源名不匹配、失活或重复都拒绝', () => {
     const data = sample(); data.map_nodes[0].name = '其它';
@@ -187,7 +194,8 @@ describe('六层目录源映射', () => {
     const area = rows.find(r => r.layer === 'areas');
     expect(area.properties).not.toHaveProperty('Name'); expect(area.properties).not.toHaveProperty('Parent');
     expect(area.properties).not.toHaveProperty('负责人');
-    expect(rows.find(r => r.id === fixtureEntityId(6)).properties['责任主体'].rich_text[0].text.content).toBe('unknown');
+    for (const r of rows) for (const k of ['责任主体', '真身来源', 'Key']) if (r.layer === 'areas' || k !== 'Key') expect(r.properties, `${r.layer}.${k}`).not.toHaveProperty(k);
+    expect(rows.find(r => r.id === fixtureEntityId(6)).properties['执行主体'].rich_text[0].text.content).toBe('agent');
   });
   it('缺实现声明保留gap；关系移除生成已知空数组', () => {
     const data = sample(); data.refs = [];
