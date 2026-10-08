@@ -241,6 +241,7 @@ it.each([
  s=>s.replace("()=>{assert.ok(config().jobs);}","()=>{if(false)assert.ok(config().jobs);}"),
  s=>s.replace("()=>{assert.ok(config().jobs);}","()=>{return; assert.ok(config().jobs);}"),
  s=>s.replace("test('actual config'","test.skip('actual config'"),
+ s=>s.replace("test('actual config'","config=()=>({jobs:true});test('actual config'"),
  s=>s.replace("function config()","function config(YAML)"),
  s=>s.replace("const file=new URL", "const URL=()=>({}); const file=new URL"),
  s=>s.replace("return YAML.parse(readFileSync(file,'utf8'));", "return {};/* YAML.parse(readFileSync(file,'utf8')) */"),
@@ -254,6 +255,9 @@ it.each([
  s=>s.replace('      - run: node --test','      - if: false\n        run: node --test'),
  s=>s.replace('      - run: node --test','      - continue-on-error: true\n        run: node --test'),
  s=>s.replace('run: node --test','run: echo node --test'),
+ s=>s.replace('  caller-contract:\n','  caller-contract:\n    strategy: {matrix: {include: []}}\n'),
+ s=>s.replace('      - run: node --test','      - working-directory: other-checkout\n        run: node --test'),
+ s=>s.replace('jobs:\n','defaults: {run: {working-directory: other-checkout}}\njobs:\n'),
 ])('Workspace required caller-contract必须真实调用精确reader：%#',mutate=>{
  const f=workspaceConfigFixture();writeFileSync(join(f.root,workspaceCi),mutate(f.ci));configCommit(f);
  expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow(/AUXILIARY_CONFIG_/);
