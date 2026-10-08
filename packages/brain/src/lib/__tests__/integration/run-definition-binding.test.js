@@ -14,6 +14,18 @@ beforeEach(async()=>{
 });
 afterEach(async()=>{await fixture?.close();fixture=null;});
 const post=(id,body)=>request(app).post(`/runs/${id}/definition`).send(body);
+it('旧服务曾放行的消费者历史release仍禁止起跑，零运行绑定写入', async()=>{
+  // 重放旧服务接受的release形状，不能通过新release入口造出它。
+  const payload=structuredClone(release.payload);
+  payload.workflows[0].payload.definition_scope='consumer_evidence';
+  const legacy=(await fixture.db.query(`INSERT INTO release_versions(release_key,manifest_sha256,request_sha256,environment,target,actor,payload)
+    VALUES('legacy-consumer',$1,$2,$3,$4,'legacy-fixture',$5) RETURNING *`,[releases.evidenceHash(payload),'e'.repeat(64),release.environment,release.target,payload])).rows[0];
+  const seen=(await releases.recordReleaseObservation(fixture.db,legacy.id,{...fixture.observationInput,event_key:'legacy-consumer',observed_at:new Date(Date.now()+1000).toISOString()},{trustedCollector:'fixture-collector'})).observation;
+  const response=await post('consumer-cannot-run',fixture.runInput(legacy,seen,fixture.workflows[0]));
+  expect(response.status,response.body).toBe(422);
+  expect(response.body.error.code).toBe('RELEASE_CONSUMER_EVIDENCE_NOT_EXECUTABLE');
+  expect((await fixture.db.query('SELECT count(*)::int n FROM run_definition_bindings')).rows[0].n).toBe(0);
+});
 it('两个共享Activity Workflow各自冻结，外部run不产生task_runs；幂等和不可变',async()=>{
   for(const [i,workflow] of fixture.workflows.entries()){
     const input=fixture.runInput(release,observation,workflow);let r=await post(`external-${i}`,input);expect(r.status,r.body).toBe(201);
