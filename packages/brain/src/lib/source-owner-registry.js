@@ -9,7 +9,8 @@ export async function readSourceOwnerRegistry(db,{scope,repo},workflows){
  const ids=[...new Set(workflows.map(w=>w.capability_id))];
  const journeys=(await db.query(`WITH RECURSIVE chain AS(SELECT * FROM ${TREE_NODES_SQL} n WHERE id=ANY($1::uuid[])
  UNION SELECT j.* FROM ${TREE_NODES_SQL} j JOIN chain c ON j.id=c.parent_journey_id) SELECT * FROM chain ORDER BY id`,[ids])).rows;
- const areas=(await db.query('SELECT * FROM areas WHERE id=ANY($1::uuid[]) ORDER BY id',[[...new Set(journeys.map(j=>j.area_id).filter(Boolean))]])).rows;
+ const areaIds=[...new Set(journeys.map(j=>j.area_id).filter(Boolean))];
+ const areas=(await db.query('SELECT * FROM areas WHERE id=ANY($1::uuid[]) ORDER BY id',[areaIds])).rows;
  const body=plain({schema_version:1,scope,repo,source_basis:'current_registration',canonical:{areas,journeys,workflows}});
  return {...body,registry_sha256:stepSha256(body)};
 }
