@@ -192,6 +192,7 @@ function promptOf(task) {
   const applied = block.present && Boolean(p.qiumi_department);
   const body = applied ? block.rest : sourceBody;
   return [
+    p.qiumi_department === 'skill-factory' ? `本次执行标识：task_id=${task.id}；run_id=${p.run_id}。探路阶段的锁、证据与交付 JSON 必须使用此号，不另造运行号；核验与沉淀的交付 run_id 按输入来源运行号。` : null,
     applied ? appliedParamsNotice(p) : null,
     s.title,
     s.remark ? `补充说明：${s.remark}` : null,
