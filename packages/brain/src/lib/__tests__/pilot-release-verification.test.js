@@ -16,7 +16,7 @@ function fixture(){
  const row=(n,payload,identity)=>{const source={repo,path:'contracts/pilot.json',commit:revision};return {id:id(n),...identity,source_repo:repo,source_path:source.path,source_commit:revision,payload,payload_sha256:pilotPlanHash({source,payload})};};
  const activity=row(2,{activity_id:id(3),steps:[{step_id:id(4),locator:{activity_id:id(3),step_key:'verify'}}],implementation_bindings:[{kind:'code',scope:'activity',status:'verified',repo,path:'entry.js',revision,digest:'sha256:'+createHash('sha256').update(readFileSync(join(root,'entry.js'))).digest('hex')}]},{activity_id:id(3)});
  const workflow=row(1,{workflow_id:id(5),capability_id:id(6),activities:[{reference_id:id(7),activity_id:id(3),activity_version_id:id(2)}]},{workflow_id:id(5)});
- const snapshot={schema_version:1,scope:'zenithjoy',repo,revision,status:'verified',gaps:[],definitions:{workflows:[workflow],activities:[activity]},assertions:[null,id(4)].map((step,i)=>({id:id(10+i),journey_id:id(6),step_id:id(3),step_id_ref:step,assertion_ref:'scripts/smoke/pilot.sh',assertion_revision:1}))};
+ const snapshot={schema_version:1,scope:'zenithjoy',repo,revision,status:'verified',gaps:[],definitions:{workflows:[workflow],activities:[activity]},assertions:[null,id(4)].map((step,i)=>({id:id(10+i),journey_id:id(6),step_id:id(3),step_id_ref:step,cell_kind:'scenario',cell_key:`regression:${id(6)}:${step||'activity'}`,assertion_ref:'scripts/smoke/pilot.sh',assertion_revision:1}))};
  snapshot.snapshot_sha256=pilotPlanHash(snapshot);return {root,snapshot,git,outputDir:join(root,'evidence'),event:'push',ref:'refs/heads/main'};
 }
 it('真实固定Git测试进程使用白名单环境，发布证明不要求改写unknown影响报告',async()=>{
