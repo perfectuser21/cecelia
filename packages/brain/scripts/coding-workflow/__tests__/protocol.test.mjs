@@ -200,6 +200,12 @@ describe('childEnv', () => {
     expect(env.GIT_DIR).toBeUndefined();
   });
 
+  it('CODING_WF_* 一律保留（runner→执行器→活动要读 CODING_WF_GH_BIN、超时等；只在 claude 会话 env 里剥）', () => {
+    const withRunner = { ...base, CODING_WF_REPO: '/clone', CODING_WF_GH_BIN: '/gh' };
+    expect(childEnv(withRunner, { stripClaude: true }).CODING_WF_GH_BIN).toBe('/gh');
+    expect(childEnv(withRunner).CODING_WF_REPO).toBe('/clone');
+  });
+
   it('不修改传入对象', () => {
     childEnv(base, { stripClaude: true });
     expect(base.GIT_DIR).toBe('/x/.git');

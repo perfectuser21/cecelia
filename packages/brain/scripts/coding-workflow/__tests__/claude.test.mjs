@@ -192,6 +192,14 @@ describe('runClaude（进程内 + 假 claude）', () => {
     expect(fs.existsSync(ghDir)).toBe(false);
   });
 
+  it('claude 会话不继承 runner 配置 CODING_WF_*（ea2feb66 实测：会话里跑 runner 测试被污染）', async () => {
+    setEnv({ CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'ok', CODING_WF_REPO: '/clone', CODING_WF_AUTOMERGE: '0' });
+    for (const isolateRemote of [false, true]) {
+      const r = await runClaude({ args: ['-p', prompt()], cwd: tmp, timeoutMs: 20000, tag: 'test', isolateRemote });
+      expect(r.output).toContain('FAKE_CODING_WF_KEYS: none');
+    }
+  });
+
   it('不开 isolateRemote（spec）时 GH 环境原样继承', async () => {
     setEnv({ CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'ok', GH_TOKEN: 't1' });
     const r = await runClaude({ args: ['-p', prompt()], cwd: tmp, timeoutMs: 20000, tag: 'test' });

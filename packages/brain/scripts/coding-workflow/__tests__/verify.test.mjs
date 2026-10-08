@@ -194,6 +194,17 @@ describe('verify 活动（子进程 + 假 claude）', () => {
       expect(text).toContain('只读 INTENT_PATH，不读 SPRINT_DIR 下其他文件');
     });
 
+    it('prompt 要求 command 块逐字照抄实际执行过的那条命令（不补 cd、不改写）', () => {
+      const text = fs.readFileSync(path.join(HERE, '../prompts/verify.md'), 'utf8');
+      expect(text).toContain('逐字照抄');
+      expect(text).toContain('不要补 cd 前缀');
+    });
+
+    it('verify-cdprefix：证据命令带 cd <worktree> && 前缀，实际执行时没有 -> completed', async () => {
+      const r = await run('verify-cdprefix');
+      expect(r.result.status).toBe('completed');
+    });
+
     it('verify-fabricated：04 的命令在对话记录里没执行过 -> fatal evidence_unverified，outputs 带 verification', async () => {
       const r = await run('verify-fabricated');
       expect(r.result.failure_class).toBe('fatal');

@@ -46,12 +46,14 @@ async function guardFailure({ worktree, dir, sprintDir, input, before }) {
 }
 
 /** 判分：格式/覆盖 → 执行记录核对 → verdict。 */
-function judge(text, intentIds, transcript) {
+function judge(text, intentIds, transcript, worktree) {
   const parsed = parseEvidence(text);
   const judged = judgeEvidence(parsed, intentIds);
   if (judged.reason === 'evidence_invalid') return rejected(judged.reason, { errors: judged.errors }, { errors: judged.errors });
   if (judged.reason === 'evidence_incomplete') return rejected(judged.reason, { missing: judged.missing }, { missing: judged.missing });
-  const unverified = unverifiedItems(parsed.items, bashExecutions(transcript));
+  // worktree 的原路径与真实路径都算（macOS 上 /var 与 /private/var 指向同一处）
+  const roots = [worktree, fs.realpathSync(worktree)];
+  const unverified = unverifiedItems(parsed.items, bashExecutions(transcript), { worktree: roots });
   if (unverified.length > 0) return rejected('evidence_unverified', { unverified }, { unverified });
   if (judged.reason === 'verification_failed') {
     const failed = judged.failed.map(({ id, covers, command, output }) => ({ id, covers, command, output_tail: output }));
@@ -112,7 +114,7 @@ await runActivity(async (input) => {
     state.claudeRunning = false;
     result = claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
     if (!result && !fs.existsSync(evidencePath)) result = fail('fatal', 'evidence_missing');
-    result ??= judge(fs.readFileSync(evidencePath, 'utf8'), intentIds, run.stdout);
+    result ??= judge(fs.readFileSync(evidencePath, 'utf8'), intentIds, run.stdout, worktree);
   } finally {
     process.off('SIGTERM', onSigterm);
     if (state.hidden && !state.hidden.restore()) {

@@ -6,7 +6,7 @@
 // verify 用：verify-pass | verify-fail（最后一条 FAIL）| verify-badformat（第一条缺 output）| verify-uncovered（只覆盖第一条 I-n）
 // | verify-outside（全 PASS 但往 worktree 根写越界文件）| verify-reset（先 git reset --hard HEAD~1 再写全 PASS 的 04）
 // | verify-fabricated（04 写了命令与输出，但对话记录里没执行过）| verify-bizauth（业务输出含 authentication failed 后非 0 退出）
-// | verify-authresult（result 事件报鉴权错误后非 0 退出）。verify-* 会在 stdout 输出 stream-json 的 tool_use/tool_result。
+// | verify-authresult（result 事件报鉴权错误后非 0 退出）| verify-cdprefix（全 PASS，证据命令带 cd <worktree> && 前缀）。verify-* 会在 stdout 输出 stream-json 的 tool_use/tool_result。
 // FAKE_CLAUDE_PID_FILE 指向文件时，启动即把自己的 pid 写进去（测试据此确认进程已被清理）。
 // FAKE_CLAUDE_CHILD_PID_FILE 指向文件时，sleep / linger 模式额外起一个长睡孙进程并写入其 pid；
 // FAKE_CLAUDE_CHILD_STDIO=ignore 时孙进程不继承输出管道，否则继承（握着管道）。
@@ -54,7 +54,8 @@ const unset = (k) => process.env[k] ?? '<unset>';
 console.log(`FAKE_ARGS: ${argv.filter((a) => a !== prompt).join(' ')}`);
 console.log(`FAKE_CWD: ${process.cwd()}`);
 console.log(`FAKE_ENV: CLAUDECODE=${unset('CLAUDECODE')} CLAUDE_CODE_ENTRYPOINT=${unset('CLAUDE_CODE_ENTRYPOINT')} GIT_DIR=${unset('GIT_DIR')}`);
-console.log(`FAKE_GH_ENV: GH_TOKEN=${unset('GH_TOKEN')} GITHUB_TOKEN=${unset('GITHUB_TOKEN')} GH_ENTERPRISE_TOKEN=${unset('GH_ENTERPRISE_TOKEN')} GIT_TERMINAL_PROMPT=${unset('GIT_TERMINAL_PROMPT')}`);
+console.log(`FAKE_CODING_WF_KEYS: ${Object.keys(process.env).filter((k) => k.startsWith('CODING_WF_')).sort().join(',') || 'none'}`);
+console.log(`FAKE_GH_ENV:GH_TOKEN=${unset('GH_TOKEN')} GITHUB_TOKEN=${unset('GITHUB_TOKEN')} GH_ENTERPRISE_TOKEN=${unset('GH_ENTERPRISE_TOKEN')} GIT_TERMINAL_PROMPT=${unset('GIT_TERMINAL_PROMPT')}`);
 console.log(`FAKE_GH_CONFIG_DIR: ${unset('GH_CONFIG_DIR')}`);
 console.log(`FAKE_GH_CONFIG_EMPTY: ${Boolean(process.env.GH_CONFIG_DIR) && fs.existsSync(process.env.GH_CONFIG_DIR) && fs.readdirSync(process.env.GH_CONFIG_DIR).length === 0}`);
 console.log(`FAKE_INTENT_PATH: ${(prompt.match(/^INTENT_PATH: (.+)$/m) || [])[1]}`);
@@ -135,7 +136,9 @@ function verify() {
     const command = `npm test -- ${id}`;
     const output = failed ? 'AssertionError: expected 500 to be 200' : `ok ${id} passed`;
     if (mode !== 'verify-fabricated') emitBash(command, `> vitest run ${id}\n${output}\n`);
-    const lines = [`### E-${i + 1}`, `对应: ${id}`, `verdict: ${failed ? 'FAIL' : 'PASS'}`, `${fence}command`, command, fence];
+    // verify-cdprefix：会话已在 worktree 里执行，写证据时补上 cd <当前目录> && 前缀（真实 claude 实测行为）
+    const written = mode === 'verify-cdprefix' ? `cd ${process.cwd()} && ${command}` : command;
+    const lines = [`### E-${i + 1}`, `对应: ${id}`, `verdict: ${failed ? 'FAIL' : 'PASS'}`, `${fence}command`, written, fence];
     if (!(mode === 'verify-badformat' && i === 0)) lines.push(`${fence}output`, output, fence);
     return `${lines.join('\n')}\n`;
   });
