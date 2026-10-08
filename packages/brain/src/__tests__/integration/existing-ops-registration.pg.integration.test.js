@@ -106,9 +106,19 @@ it('实际scratch双Git消费者只封存F3来源集合；不改旧current/八�
     const rebuilt=await buildPrImplementationSnapshot(fixture.db,snapshot,candidate.head,candidate.dir);
     expect(rebuilt.status,JSON.stringify(rebuilt.gaps)).toBe('verified');
     expect(rebuilt.registry_source).toEqual({repo:'perfectuser21/cecelia',revision});
+    execFileSync('git',['update-ref','HEAD',candidate.head],{cwd:candidate.dir});
+    await frozenSource.projectImplementationSnapshot(fixture.db,rebuilt,candidate.dir);
+    const graphs=(await fixture.db.query('SELECT repo,source_revision FROM graph_snapshot_versions WHERE repo=ANY($1::text[])',
+      ['perfectuser21/zenithjoy-workspace','cecelia-factory-source'])).rows;
+    expect(graphs).toContainEqual({repo:'perfectuser21/zenithjoy-workspace',source_revision:candidate.head});
+    expect(graphs).toContainEqual({repo:'cecelia-factory-source',source_revision:revision});
+    expect(graphs).not.toContainEqual({repo:'cecelia-factory-source',source_revision:candidate.head});
+    const foreignEdges=(await fixture.db.query("SELECT * FROM graph_edges WHERE repo=$1 AND dst_path=$2",
+      ['perfectuser21/zenithjoy-workspace','.github/workflows/nightly-regression.yml'])).rows;
+    expect(foreignEdges).toEqual([]);
     expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
   }finally{candidate.close();}
-},90000);
+},180000);
 
 it('生产登记拒scratch或复制proof；拒绝后没有任何历史追加',async()=>{
   expect(consumerSource.collectScratchWorkspaceConsumerSourceSet).toBeTypeOf('function');
