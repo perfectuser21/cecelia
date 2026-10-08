@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url';
 import { collectGovernanceEvidence,applyGovernanceCoverage } from './registry-lint.mjs';
 import { runImplementationGate } from './implementation-gate.mjs';
 import { collectAuxiliarySourceEvidence, auxiliaryOwnerPaths, applyAuxiliarySourceEvidence } from './implementation-auxiliary-evidence.mjs';
-import { createImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot,buildPrImplementationSnapshot } from './implementation-snapshot.mjs';
 import { ciFailure,validateImplementationSnapshot } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { canonicalRepoIdentity } from '../../packages/brain/src/lib/gp-assertion-command.js';
 import { readImplementationImpact } from '../../packages/brain/src/lib/implementation-impact.js';
@@ -25,6 +24,9 @@ export async function runImplementationPrGate({repoRoot,scope,base,head,mode,sna
     const b=validateImplementationSnapshot(read(snapshotBase));let h=validateImplementationSnapshot(read(snapshotHead));
     if(b.scope!==scope||h.scope!==scope||b.repo!==repo||h.repo!==repo||b.revision!==base||mode==='main'&&h.revision!==head)
       throw ciFailure('SNAPSHOT_SOURCE_MISMATCH','snapshot必须匹配实际repo/base/head');
+    // 输入与固定来源已通过才进入真实scratch路径；Brain-only的无效入口不依赖根扫描器。
+    const {createImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot,buildPrImplementationSnapshot}
+      =await import('./implementation-snapshot.mjs');
     scratch=await createImplementationScratch();
     parent=mkdtempSync(join(tmpdir(),'implementation-base-'));worktree=join(parent,'checkout');
     git(repoRoot,'worktree','add','--detach',worktree,base);

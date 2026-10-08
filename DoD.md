@@ -8,6 +8,11 @@ Stage A 仅改 CI 收集与验收脚本、真实 Git 回归。初始 PR 不携�
 
 必要发布配套：真实版本机器人消费 changes 碎片时，同步移除精确实际删除路径且角色为 release 的关系；其他关系原始字节保留。声明非法时在版本写入和片删除前拒绝，不放宽固定源文件存在校验。
 
+CI 实测的入口配套：Brain-only 安装没有根 scanner 依赖，独立入口必须先完成输入和固定来源校验，再动态载入其真实 scratch/snapshot 实现；合法路径仍加载并执行同一真实实现，缺依赖或 scratch 异常继续拒绝。
+
+- [x] [BEHAVIOR] auxiliarycliload 真实 Brain-only npm ci 环境下独立 Node 的无效入口记录原有 INPUT_INVALID gap，根依赖正常安装时合法 scratch 路径仍执行真实实现，未改鉴权、扫描语义或门禁。
+  Test: manual:bash -c "cd packages/brain && npx vitest run scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] auxiliaryrelease 实际机器人消费单个/多个碎片后精确移除 release 关系，保留说明、验证及未消费关系字节；非法声明、重复 JSON 键与软链接在任何片删除前拒绝，同路径其他角色缺失仍严格拒绝。
   Test: manual:bash -c "cd packages/brain && npx vitest run scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs src/__tests__/auto-version-apply.test.js --maxWorkers=1 --minWorkers=1"
 
