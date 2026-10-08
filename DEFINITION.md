@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.383.0
+**Brain 版本**: 1.384.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,13 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.384.0 — coding workflow runner：CI 红自动修复（ci_fix）
+
+- 真实端到端 #6062：CI（Linux bash 5.2）抓出 install.sh 转义 bug，链内没有修复环节，需人工补提交。
+- runner 每轮在认领新任务前先查自己开的 cw PR（分支 cp-<stamp>-cw-<id8>）：必需检查全部出结果且有失败、本 head 没修过、累计未满 CODING_WF_CIFIX_MAX_ATTEMPTS（默认 2）时，本轮只修这一个。
+- 修复：fetch PR 分支建 worktree（.dev-mode/.dev-lock、npm ci）→ 拉全部失败检查的 job 日志末尾（去时间戳、封顶 40KB）→ claude（prompts/ci-fix.md，禁 push/gh、GH 凭据隔离、超时 CODING_WF_CIFIX_TIMEOUT_MS 默认 30 分钟）修复并提交 → 程序核对：工作区干净、有新提交、只追加不改写、不碰 sprints/ 与 .claude/CLAUDE.md/AGENTS.md → runner 推送。
+- 每次尝试记 <logDir>/cifix-<pr>.json（pushed/no_commit/uncommitted/protected_path/history_rewritten/claude_failed/claude_timeout/push_failed…），并回写 Brain 任务 result.ci_fix（task_id 取 sprint 的 01-intent.md）；claude 输出存 cifix-<pr>-<ts>.log；worktree 用完即删。CODING_WF_CIFIX=0 关闭。
 
 ## Brain 1.382.3 — coding workflow 04 证据解析对真实 claude 格式容错
 
