@@ -125,3 +125,9 @@ for(const [name,value,valid] of [
  ['重复scope',JSON.stringify({schema_version:1,scopes:['zenithjoy','zenithjoy']}),false],
  ['宽泛scope',JSON.stringify({schema_version:1,scopes:['all']}),false],
 ])test(`Workspace多scope caller拒绝扩大协议：${name}`,async t=>{const f=fixture(t);const p='.github/workflows/implementation-impact.yml';f.wf[p]+= `      admission_scopes: '${value}'\n`;fixedNewBrain(f,b=>{b[p]=b[p].replace('    inputs:\n',"    inputs:\n      admission_scopes: {required: false, type: string, default: ''}\n");});const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,valid?'verified':'unknown',JSON.stringify(r.gaps));});
+
+test('生产解析真身和CI薄入口共用同一函数与身份对象',async()=>{
+ const core=await import('../../../packages/brain/src/lib/workspace-ci-source-bundle.js');
+ assert.equal(core.extractWorkspaceCiSourceBundle,extractWorkspaceCiSourceBundle);
+ assert.equal(core.F3_IDENTITY,F3_IDENTITY);
+});
