@@ -414,3 +414,5 @@ dead-man-switch-usvps-smoke.sh
 alarm-ledger-smoke.sh
 runs-execution-table-smoke.sh
 openclaw-run-ingest-smoke.sh
+
+workflow-contract-identity-smoke.sh
