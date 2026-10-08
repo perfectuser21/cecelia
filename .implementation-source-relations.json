@@ -41,11 +41,6 @@
       "owner_path": "packages/brain/src/lib/run-definition-binding.js",
       "path": "packages/brain/src/lib/__tests__/integration/run-definition-binding.test.js",
       "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/release-index.js",
-      "path": "changes/cp-10090602-consumer-evidence-execution-guard.md",
-      "role": "release"
     }
   ]
 }
