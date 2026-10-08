@@ -17,4 +17,8 @@ describe('rpa-explore-receipt', () => {
   it('不替换工厂其他阶段的结果协议', () => {
     expect(rpaExploreFailure(task, { text: '{"stage":"verify"}' })).toBeNull();
   });
+  it('核验任务引用 skill-explore 名称时不被误认成探路', () => {
+    const verify = { ...task, payload: { ...task.payload, qiumi_source: { body: '阶段：核验。使用 skill：run-verify。核验 skill-explore 产出的证据。' } } };
+    expect(rpaExploreFailure(verify, { text: '{"stage":"verify","verdict":"pass"}' })).toBeNull();
+  });
 });
