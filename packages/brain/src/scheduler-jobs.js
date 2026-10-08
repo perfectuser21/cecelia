@@ -175,7 +175,7 @@ export const JOBS = [
   // 顺序要紧：先把编码线格子成败搬进判官口粮，再让判官判——反过来判的是上一轮的旧账
   { name: 'crystal-coding-evidence', cadence: { everySec: 600 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => syncCodingEvidence({ dbPool: pool }), description: '编码线九格证据同步（10min自gate，harness_attempts+sequencer_ledger→crystal_run_evidence，只补账不代判，判官口粮第二铲）' },
   { name: 'crystal-judge', cadence: { cron: '0 5 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => maybeRunCrystalJudge(pool), description: '每日结晶判官（北京05:00窗口+当日去重，OpenClaw 八格六指标聚合→三态判决→每日结晶报告落库，Crystal 第4件）' },
-  { name: 'openclaw-agent-reaper', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reapOpenclawAgentRuns(pool), description: '秋米 openclaw-agent 收割（60s，读 MMV ~/brain-runs/<run_id>.exit → completed_no_pr/failed，PR3）' },
+  { name: 'openclaw-agent-reaper', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, completionCadenceMs: 60_000, handler: (pool) => reapOpenclawAgentRuns(pool), description: '秋米 openclaw-agent 收割（60s，读 MMV ~/brain-runs/<run_id>.exit → completed_no_pr/failed，PR3）' },
   { name: 'script-reaper', cadence: { everySec: 10 }, needsPool: true, timeoutMs: 70_000, livenessIntervalSec: 10, handler: (pool) => reapLegacyScriptRuns(pool), description: 'SSH脚本独立10秒收割；每轮10项、4并发、稳定游标轮转，未知不结算' },
   { name: 'managed-script-reaper', cadence: { everySec: 10 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, livenessIntervalSec: 10, handler: (pool) => reapManagedScriptRuns(pool), description: '受管脚本独立收尾；真实回执、精确清理和原预约合同保持' },
   { name: 'node-onboarding', cadence: { everySec: 10 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, livenessIntervalSec: 10, handler: (pool) => runNodeOnboardingJob(pool), description: '节点observer接入验收对账与受信 SSH 健康采样调度；不等待Linux外部phase' },
@@ -214,7 +214,7 @@ const PROJECTION_JOB_NAME_SET = new Set([
 
 export const PROJECTION_JOBS = JOBS.filter(job => PROJECTION_JOB_NAME_SET.has(job.name));
 // 手机派发只认自身窄授权，与收尾共用不受串行慢job阻塞的独立循环。
-const COMPLETION_JOB_NAMES = new Set(['script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding', 'phone-rpa-dispatch']);
+const COMPLETION_JOB_NAMES = new Set(['script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding', 'phone-rpa-dispatch', 'openclaw-agent-reaper']);
 export const COMPLETION_JOBS = JOBS.filter(job => COMPLETION_JOB_NAMES.has(job.name));
 export const SERIAL_JOBS = JOBS.filter(job => !PROJECTION_JOB_NAME_SET.has(job.name) && !COMPLETION_JOB_NAMES.has(job.name));
 

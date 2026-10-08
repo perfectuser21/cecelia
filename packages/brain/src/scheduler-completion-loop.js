@@ -1,6 +1,7 @@
 // 收尾与派发开关无关。超时只记录观察失败，真实调用结束前不能重复执行。
 const INTERVAL_MS = 10_000;
 const pending = new Set();
+const lastStarts = new WeakMap();
 let timer = null;
 
 export function startCompletionJobsLoop(pool, jobs, runOnce) {
@@ -8,6 +9,10 @@ export function startCompletionJobsLoop(pool, jobs, runOnce) {
   timer = setInterval(() => {
     for (const job of jobs) {
       if (pending.has(job.name)) continue;
+      const now = Date.now();
+      const last = lastStarts.get(job.handler) ?? -Infinity;
+      if (job.completionCadenceMs && now - last < job.completionCadenceMs) continue;
+      lastStarts.set(job.handler, now);
       pending.add(job.name);
       const invocation = Promise.resolve()
         .then(() => job.needsPool ? job.handler(pool) : job.handler());
@@ -26,3 +31,4 @@ export function stopCompletionJobsLoop() {
   timer = null;
   // 不清pending：stop/start不能把仍在执行的远端请求变成可重入。
 }
+

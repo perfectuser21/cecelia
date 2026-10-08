@@ -57,6 +57,33 @@ describe('脚本收尾独立周期', () => {
     expect(SERIAL_JOBS).not.toContain(job('openclaw-agent-reaper'));
   });
 
+  it('OpenClaw每60秒执行；间隔观察不写成功哨兵覆盖真实失败', async () => {
+    const reaper = job('openclaw-agent-reaper');
+    reaper.handler.mockRejectedValueOnce(new Error('ssh failed'));
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const sentinels = () => pool.query.mock.calls.filter(([, args]) => args?.[0] === 'scheduler_job_last_run:openclaw-agent-reaper');
+    expect(reaper.handler).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(sentinels()[0][1][1]).ok).toBe(false);
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(reaper.handler).toHaveBeenCalledTimes(1);
+    expect(sentinels()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reaper.handler).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(sentinels()[1][1][1]).ok).toBe(true);
+  });
+
+  it('OpenClaw超过60秒仍未完成时不重入，完成后继续回收', async () => {
+    const reaper = job('openclaw-agent-reaper');
+    const first = hang(reaper);
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(reaper.handler).toHaveBeenCalledTimes(1);
+    first.resolve({});
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reaper.handler).toHaveBeenCalledTimes(2);
+  });
+
   it('收尾任务只进入独立周期，不能同时进入serial产生双写', () => {
     expect(SERIAL_JOBS.map(item => item.name)).not.toContain('script-reaper');
     expect(SERIAL_JOBS.map(item => item.name)).not.toContain('node-onboarding');
@@ -141,3 +168,5 @@ describe('脚本收尾独立周期', () => {
     expect(job('script-reaper').handler).toHaveBeenCalled();
   });
 });
+
+
