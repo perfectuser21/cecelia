@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.379.4
+**Brain 版本**: 1.379.5
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,10 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.379.5 — 手机派发真实重试字段
+
+手机独立派发读取 `tasks.payload.next_run_at`；真实 PG 测试表不再创建不存在的顶层重试列，未来排期禁止提前启动。
 
 ## Brain 1.379.4 — OpenClaw 运行记录入 runs 表 + Notion 最近执行库
 

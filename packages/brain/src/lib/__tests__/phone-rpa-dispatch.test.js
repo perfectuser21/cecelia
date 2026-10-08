@@ -46,8 +46,15 @@ describe('phone-rpa-dispatch：关闭全局 Tick 也只接显式授权的新手�
     await runPhoneRpaDispatch(f.pool, f.deps);
     expect(f.dispatch).not.toHaveBeenCalled();
   });
+  it('真实重试时间位于payload：未来任务不派发，到期任务只启动一次', async () => {
+    const future = phone(); future.id = 'future'; future.payload.next_run_at = '2026-10-08T01:00:00Z';
+    const due = phone(); due.id = 'due'; due.payload.next_run_at = '2026-10-08T00:05:00Z';
+    const f = fixture([future, due]);
+    expect(await runPhoneRpaDispatch(f.pool, f.deps)).toMatchObject({ dispatched: 1 });
+    expect(f.dispatch.mock.calls.map(([task]) => task.id)).toEqual(['due']);
+  });
   it('保留锚点闸与到期条件；未来任务和锚点阻断不能执行', async () => {
-    const f = fixture([{ ...phone(), next_run_at: '2026-10-08T01:00:00Z' }, phone()]);
+    const f = fixture([{ ...phone(), payload: { ...phone().payload, next_run_at: '2026-10-08T01:00:00Z' } }, phone()]);
     f.deps.anchor = () => ({ blocked: true });
     await runPhoneRpaDispatch(f.pool, f.deps);
     expect(f.dispatch).not.toHaveBeenCalled();
