@@ -7,6 +7,8 @@ import { syncActivityContracts,CONTRACT_REPO } from '../activity-contract-sync.j
 import { registerCompanyKrWorkflow } from './company-kr-registration.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { TREE_NODES_SQL } from './tree-nodes-sql.js';
+import { EXISTING_OPS_SCOPE,EXISTING_OPS_REPO,EXISTING_OPS_IDENTITIES } from './existing-ops-source.js';
+import { readExistingOpsRegistry,registerExistingOpsSources,validateExistingOpsRegistry,prepareExistingOpsManifestAdvance } from './existing-ops-registration.js';
 export const ciFailure=(code,message,status=422)=>Object.assign(Error(message||code),{code:`IMPLEMENTATION_CI_${code}`,status});
 export function isImplementationScratchDatabase(database,env=process.env){
   return database==='cecelia_scratch'||database==='cecelia_test'&&env.CI==='true'&&env.GITHUB_ACTIONS==='true';
@@ -30,12 +32,16 @@ export function validateImplementationSnapshot(snapshot){
   return snapshot;
 }
 export async function readImplementationSnapshotInTransaction(db,q){
+  const factory=q.scope===EXISTING_OPS_SCOPE;
   const gaps=[],gap=(code,details={})=>gaps.push({code,...details});
+  if(factory&&q.repo!==EXISTING_OPS_REPO)gap('factory_source_repo_mismatch');
   const registrations=(await db.query('SELECT * FROM map_scope_repositories WHERE scope_key=$1 ORDER BY repo',[q.scope])).rows;
   const repositories=registrations.filter(r=>r.repo===q.repo||r.adapter_config?.source_repo===q.repo);
   if(repositories.length!==1)gap(repositories.length?'scope_repository_ambiguous':'scope_repository_missing',{scope:q.scope,repo:q.repo});
-  const workflows=(await db.query('SELECT * FROM workflows WHERE source_repo=$1 ORDER BY id',[q.repo])).rows;
-  const candidates=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[q.repo,q.revision])).rows;
+  const workflows=factory?(await db.query('SELECT * FROM workflows WHERE id=ANY($1::uuid[]) ORDER BY id',[EXISTING_OPS_IDENTITIES.map(i=>i.workflow_id)])).rows:
+    (await db.query('SELECT * FROM workflows WHERE source_repo=$1 ORDER BY id',[q.repo])).rows;
+  const candidates=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[q.repo,q.revision])).rows.filter(w=>factory?
+    w.payload.definition_scope==='consumer_evidence'&&w.payload.source_scope===EXISTING_OPS_SCOPE&&EXISTING_OPS_IDENTITIES.some(i=>i.workflow_id===w.workflow_id):w.payload.definition_scope!=='consumer_evidence');
   const selected=[];
   for(const id of [...new Set(candidates.map(r=>r.workflow_id))]){
     const rows=candidates.filter(r=>r.workflow_id===id),current=rows.find(r=>r.id===workflows.find(w=>w.id===id)?.current_definition_version_id);
@@ -47,8 +53,10 @@ export async function readImplementationSnapshotInTransaction(db,q){
   const activityVersions=[...new Set(selected.flatMap(w=>w.payload.activities.map(a=>a.activity_version_id)))];
   const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[]) ORDER BY id',[activityVersions])).rows;
   if(activities.length!==activityVersions.length)gap('activity_snapshot_missing');
-  const workflowIds=selected.map(w=>w.workflow_id),activityIds=activities.map(a=>a.activity_id);
-  const refs=selected.flatMap(w=>w.payload.activities.map(r=>r.reference_id));
+  const workflowIds=selected.map(w=>w.workflow_id);
+  const fullReferences=factory?(await db.query('SELECT * FROM workflow_activity_refs WHERE workflow_id=ANY($1::uuid[]) ORDER BY id',[workflowIds])).rows:null;
+  const activityIds=factory?[...new Set(fullReferences.map(r=>r.activity_id))]:activities.map(a=>a.activity_id);
+  const refs=factory?fullReferences.map(r=>r.id):selected.flatMap(w=>w.payload.activities.map(r=>r.reference_id));
   const canonicalActivities=(await db.query('SELECT * FROM activities WHERE id=ANY($1::uuid[]) ORDER BY id',[activityIds])).rows;
   const references=(await db.query('SELECT * FROM workflow_activity_refs WHERE id=ANY($1::uuid[]) ORDER BY id',[refs])).rows;
   const steps=(await db.query('SELECT * FROM steps WHERE activity_id=ANY($1::uuid[]) ORDER BY id',[activityIds])).rows;
@@ -58,9 +66,9 @@ export async function readImplementationSnapshotInTransaction(db,q){
       WHERE m.scope_key=$1 AND p.scope_key=$1 AND p.fact_revisions->>$2=$3 AND p.status IN ('active','superseded') ORDER BY m.version DESC`,[q.scope,repositories[0].repo,q.revision])).rows.filter(r=>manifestMatchesImplementationSource(r.manifest,q.repo,q.revision));
     if(historical.length===1){manifest=historical[0];manifestBasis='historical_projection';}
     else if(historical.length>1)gap('manifest_snapshot_ambiguous',{revision:q.revision});
-    else if(selected.length&&selected.every(w=>workflows.find(c=>c.id===w.workflow_id)?.current_definition_version_id===w.id)){
+    else if((factory&&selected.length===EXISTING_OPS_IDENTITIES.length)||(selected.length&&selected.every(w=>workflows.find(c=>c.id===w.workflow_id)?.current_definition_version_id===w.id))){
       manifest=(await db.query("SELECT * FROM map_manifest_versions WHERE scope_key=$1 AND status='active'",[q.scope])).rows[0]||null;
-      manifestBasis='current_registration';
+      manifestBasis=factory?'consumer_registry':'current_registration';
     }
   }
   if(manifest&&!manifestMatchesImplementationSource(manifest.manifest,q.repo,q.revision))gap('manifest_source_mismatch',{revision:q.revision});
@@ -79,7 +87,14 @@ export async function readImplementationSnapshotInTransaction(db,q){
   const areaIds=[...new Set(journeys.map(j=>j.area_id).filter(Boolean))];
   const areas=(await db.query('SELECT * FROM areas WHERE id=ANY($1::uuid[]) ORDER BY id',[areaIds])).rows;
   const assertions=(await db.query('SELECT * FROM activity_cells WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id',[capabilityIds,activityIds])).rows;
+  let consumerRegistry=null;
+  if(factory){
+    consumerRegistry=await readExistingOpsRegistry(db);
+    try{validateExistingOpsRegistry(consumerRegistry);}catch{gap('factory_registry_identity_invalid');}
+    if([...selected,...activities].some(w=>w.payload.registration_sha256!==consumerRegistry.registry_sha256))gap('factory_registry_changed');
+  }
   const body=json({schema_version:1,...q,status:gaps.length?'unknown':'verified',gaps,
+    ...(factory?{snapshot_scope:'consumer_evidence',execution_status:'unknown',consumer_registry:consumerRegistry,unverified_reference_ids:EXISTING_OPS_IDENTITIES.flatMap(i=>i.unverified_reference_ids)}:{}),
     canonical:{areas,journeys,workflows:workflows.filter(w=>workflowIds.includes(w.id)),activities:canonicalActivities,steps,references},
     definitions:{workflows:selected,activities},map:{manifest,repositories,source_basis:manifestBasis},assertion_source:'current_registration',assertions});
   return {...body,snapshot_sha256:digest(body)};
@@ -138,7 +153,7 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
     if((await response.text()).trim()!==q.revision)throw ciFailure('MAIN_MOVED','请求revision不等于远端main',409);
   };
   await checkMain();
-  const pilotPlan=await preparePilotManifestAdvance(pool,q);
+  const pilotPlan=q.scope===EXISTING_OPS_SCOPE ? await prepareExistingOpsManifestAdvance(pool,q) : await preparePilotManifestAdvance(pool,q);
   if(q.repo===CONTRACT_REPO){
     try{await syncActivityContracts(pool,{fetchFn,resolveToken:async()=>token,expectedRevision:q.revision,beforeCommit:checkMain,synchronizeSteps:true,readBinding});}
     catch(error){
@@ -151,9 +166,23 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
       const response=await fetchFn(implementationGitHubUrl(q.repo,{path,revision}),{redirect:'error',headers:{Accept:'application/vnd.github.raw',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
       if(!response.ok)throw ciFailure('SOURCE_UNAVAILABLE',`固定源码不可读: ${path}`);return response.text();
     };
-    const text=await readFile('packages/brain/config/company-kr-workflow.json'),spec=JSON.parse(text);
-    await registerCompanyKrWorkflow(pool,{spec,revision:q.revision,readSource:async()=>text,beforeCommit:checkMain,definitionsOnly:true,
-      readBinding:readBinding||(b=>{if(b.repo!==q.repo)throw ciFailure('CROSS_REPO_SNAPSHOT_MISSING');return readFile(b.path,b.revision);})});
+    if(q.scope===EXISTING_OPS_SCOPE){
+      const headers={Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`};
+      const commitResponse=await fetchFn(`https://api.github.com/repos/perfectuser21/cecelia/git/commits/${q.revision}`,{redirect:'error',headers,signal:AbortSignal.timeout(15000)});
+      if(!commitResponse.ok)throw ciFailure('SOURCE_COMMIT_UNAVAILABLE');
+      const commit=await commitResponse.json();
+      if(commit.sha!==q.revision||!/^[a-f0-9]{40}$/.test(commit.tree?.sha||''))throw ciFailure('SOURCE_COMMIT_MISMATCH');
+      const response=await fetchFn(`https://api.github.com/repos/perfectuser21/cecelia/git/trees/${commit.tree.sha}?recursive=1`,{redirect:'error',headers,signal:AbortSignal.timeout(15000)});
+      if(!response.ok)throw ciFailure('SOURCE_TREE_UNAVAILABLE');
+      const tree=await response.json();
+      if(tree.truncated||tree.sha!==commit.tree.sha||!Array.isArray(tree.tree))throw ciFailure('SOURCE_TREE_INCOMPLETE');
+      const paths=tree.tree.filter(n=>n.type==='blob').map(n=>n.path),registry=await readExistingOpsRegistry(pool);
+      await registerExistingOpsSources(pool,{...q,paths,readSource:readFile,checkMain,expectedRegistrySha256:registry.registry_sha256,actor:'implementation-ci-main-refresh'});
+    }else{
+      const text=await readFile('packages/brain/config/company-kr-workflow.json'),spec=JSON.parse(text);
+      await registerCompanyKrWorkflow(pool,{spec,revision:q.revision,readSource:async()=>text,beforeCommit:checkMain,definitionsOnly:true,
+        readBinding:readBinding||(b=>{if(b.repo!==q.repo)throw ciFailure('CROSS_REPO_SNAPSHOT_MISSING');return readFile(b.path,b.revision);})});
+    }
   }
   await checkMain();await advancePilotManifest(pool,pilotPlan,checkMain);return exportImplementationSnapshot(pool,q);
 }

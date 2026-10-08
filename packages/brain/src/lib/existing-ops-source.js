@@ -1,7 +1,12 @@
 /** 已有工厂活动的只读消费者证据；不执行源码，也不声明完整流程可运行。 */
 import { createHash } from 'node:crypto';
 import yaml from 'js-yaml';
-import { parse } from 'acorn';
+let parse;
+async function requireParser() {
+  if (parse) return;
+  try { parse = (await import('acorn')).parse; }
+  catch { throw Object.assign(Error('消费者来源解析器不可用，来源不能核实'), { code: 'OPS_SOURCE_PARSER_UNAVAILABLE', status: 503 }); }
+}
 
 export const EXISTING_OPS_REPO = 'perfectuser21/cecelia';
 export const EXISTING_OPS_SCOPE = 'cecelia-factory';
@@ -137,6 +142,7 @@ function nightlyReaderProven(text) {
 export async function buildExistingOpsSources({ scope, repo, revision, paths, readSource }) {
   if (scope !== EXISTING_OPS_SCOPE || repo !== EXISTING_OPS_REPO || !/^[a-f0-9]{40}$/.test(revision || '') || !Array.isArray(paths)
     || paths.some(path => !sourcePath(path)) || new Set(paths).size !== paths.length || typeof readSource !== 'function') throw Error('OPS_SOURCE_INPUT_INVALID');
+  await requireParser();
   const tree = new Set(paths), consumers = [];
   async function build(identity, prove) {
     const bindings = new Map(), gaps = [], relations = [];
