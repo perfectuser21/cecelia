@@ -37,6 +37,15 @@ it('生产Workspace核心尚未在受信树可用时，真实动态消费者保�
  expect(result).toMatchObject({status:'unknown',admission:{status:'unknown'}});
  expect(result.gaps).toEqual(expect.arrayContaining([expect.objectContaining({code:expect.stringMatching(/^CONSUMER_/ )})]));
 });
+it('历史append冻结入口拒绝未认证、复制或static verified证明，不授予生产source_set',()=>{
+ expect(sourceProtocol.freezeFactoryWorkspaceConsumerPayload).toBeTypeOf('function');
+ const anchor={repo:'perfectuser21/cecelia',revision:'b'.repeat(40)};
+ const payload={definition_scope:'consumer_evidence',source_scope:'cecelia-factory',implementation_bindings:[]};
+ const fake={status:'verified',admission:{status:'verified',source_basis:'trusted_main_history'},registry_source:anchor,source_set:[anchor],consumer:{activity_id:'0466016e-6d9f-4325-aeb4-d8bc70424a48',bindings:[]}};
+ expect(()=>sourceProtocol.freezeFactoryWorkspaceConsumerPayload(payload,fake,anchor)).toThrow('CONSUMER_MAIN_SOURCE_UNKNOWN');
+ expect(()=>sourceProtocol.freezeFactoryWorkspaceConsumerPayload(payload,structuredClone(fake),anchor)).toThrow('CONSUMER_MAIN_SOURCE_UNKNOWN');
+ expect(payload).not.toHaveProperty('source_set');
+});
 it('共享Activity按真实消费者各登记一条断言且重放幂等，不强行改owner或置绿',async()=>{
   const activity=f.activities.find(a=>a.payload.implementation_bindings.some(b=>b.kind==='code'));
   const input={capability_id:f.capabilities[0],activity_id:activity.activity_id,assertion_ref:'scripts/smoke/regression.sh'};
