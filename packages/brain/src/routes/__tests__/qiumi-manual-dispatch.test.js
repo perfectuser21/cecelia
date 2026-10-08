@@ -28,6 +28,7 @@ describe('手机单任务派发与 coding Bridge 分离', () => {
         if (sql.includes('claimed_by = $2')) task.claimed_by = args[1];
         if (sql.includes("status = 'in_progress'") || args[0] === 'in_progress') task.status = 'in_progress';
         if (sql.includes('claimed_by = NULL')) task.claimed_by = null;
+        if (sql.includes('dispatch_uncertain')) task.result = { dispatch_uncertain: JSON.parse(args[2]) };
         return { rows: [structuredClone(task)] };
       }
       return { rows: [] };
@@ -107,6 +108,7 @@ describe('手机单任务派发与 coding Bridge 分离', () => {
     expect(r.status).toBe(202);
     expect(r.body.execution_state).toBe('unknown');
     expect(r.body.run_id).toBe('qiumi-fixed-run');
+    expect(task.result.dispatch_uncertain.message).toContain('原运行');
     expect(task.status).toBe('in_progress');
     expect((await request(app).post('/api/brain/tasks/phone-task/dispatch').send({})).status).toBe(409);
     expect(mocks.trigger).toHaveBeenCalledOnce();
