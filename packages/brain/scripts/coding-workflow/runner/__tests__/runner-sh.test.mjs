@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { childEnv } from '../../lib/protocol.mjs';
+import { cleanTestEnv } from './helpers/sandbox.mjs';
 import { git, gitPlain } from '../../__tests__/helpers/git.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -49,7 +49,7 @@ describe('runner.sh 启动器', () => {
     fs.mkdirSync(path.join(seed, path.dirname(STUB_REL)), { recursive: true });
     fs.writeFileSync(path.join(seed, STUB_REL), STUB);
     commitSeed('v1');
-    env = { ...childEnv(), CODING_WF_REPO: clone, CODING_WF_ORIGIN_URL: origin };
+    env = { ...cleanTestEnv(), CODING_WF_REPO: clone, CODING_WF_ORIGIN_URL: origin };
   });
 
   afterEach(() => {

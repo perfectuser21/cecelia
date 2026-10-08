@@ -139,10 +139,22 @@ export function makeSandbox() {
   };
 }
 
+/**
+ * 测试用干净环境：在 childEnv 基础上再剥掉所有 CODING_WF_*（childEnv 为生产语义保留它们），
+ * 避免外部变量泄漏进被测子进程；不修改 base。
+ */
+export function cleanTestEnv(base = process.env, opts) {
+  const env = childEnv(base, opts);
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('CODING_WF_')) delete env[key];
+  }
+  return env;
+}
+
 /** runner 环境：全部外部依赖指向沙箱与假件。 */
 export function runnerEnv(sb, brainUrl, extra = {}) {
   return {
-    ...childEnv(process.env, { stripClaude: true }),
+    ...cleanTestEnv(process.env, { stripClaude: true }),
     BRAIN_URL: brainUrl,
     CODING_WF_REPO: sb.clone,
     CODING_WF_WORKTREE_BASE: sb.worktreeBase,
