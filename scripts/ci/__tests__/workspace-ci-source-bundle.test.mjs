@@ -20,7 +20,7 @@ function fixture(t,change=()=>{}){
  for(const [name,job] of specs){const reader=`scripts/ci/__tests__/${name==='implementation-impact'?'implementation-impact':'pilot-release'}-workflow.test.mjs`;wf[reader]=`import {test} from 'node:test';\nimport {readFileSync,existsSync} from 'node:fs';\nimport YAML from 'yaml';\nconst file=new URL('../../../.github/workflows/${name}.yml',import.meta.url);\nfunction config(){if(!existsSync(file))throw Error('missing');return YAML.parse(readFileSync(file,'utf8'));}\ntest('真实caller协议',()=>{config();});\n`;
  wf[`.github/workflows/${name}.yml`]=`name: ${name}\non:\n  ${name==='implementation-impact'?'pull_request:\n    branches: [main]\n  ':''}push:\n    branches: [main]\n  workflow_dispatch:\npermissions: {contents: read, actions: read}\njobs:\n  caller-contract:\n    steps:\n      - run: node --test ${reader}\n  ${job}:\n    needs: caller-contract\n    uses: ${BR}/.github/workflows/${name}.yml@${brainRevision}\n    with:\n      source_repo: ${WR}\n      scope: zenithjoy\n      head_revision: \${{ github.sha }}\n      tooling_revision: ${brainRevision}\n${name==='implementation-impact'?'      base_revision: \${{ github.event.before }}\n      mode: main\n':''}`;}
  change(wf,bf,brainRevision);const workspaceRoot=join(dir,'workspace'),workspaceRevision=tree(workspaceRoot,wf);
- const reads=[];return {wf,bf,brainRevision,workspaceRevision,reads, options:{workspace:{repo:WR,revision:workspaceRevision},brain:{repo:BR,revision:brainRevision},identity:{...F3_IDENTITY},readSource:async({repo,revision,path})=>{reads.push({repo,revision,path});return execFileSync('git',['show',`${revision}:${path}`],{cwd:repo===WR?workspaceRoot:brainRoot});}}};
+ const reads=[];return {wf,bf,brainRoot,workspaceRoot,brainRevision,workspaceRevision,reads, options:{workspace:{repo:WR,revision:workspaceRevision},brain:{repo:BR,revision:brainRevision},identity:{...F3_IDENTITY},readSource:async({repo,revision,path})=>{reads.push({repo,revision,path});return execFileSync('git',['show',`${revision}:${path}`],{cwd:repo===WR?workspaceRoot:brainRoot});}}};
 }
 test('真实两Git固定树：来源repo/revision/hash分离，既有F3 consumer不可执行',async t=>{
  const f=fixture(t),r=await extractWorkspaceCiSourceBundle(f.options);
@@ -57,10 +57,20 @@ for(const [name,mutate] of [
  ['helper赋值覆盖',(w)=>{const p='scripts/ci/__tests__/implementation-impact-workflow.test.mjs';w[p]=w[p].replace("test('真实caller协议'","config=()=>({});test('真实caller协议'");}],
 ])test(`词法/可达性拒认：${name}`,async t=>{const f=fixture(t,mutate),r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='READER_INPUT_UNPROVEN'));});
 test('同一Workspace base两个不同合法历史callee pin分别冻结',async t=>{
- const f=fixture(t),read=f.options.readSource,other='b'.repeat(40),pilot='.github/workflows/pilot-release-verification.yml';
- f.options.brain={repo:BR,revisions:[f.brainRevision,other]};
- f.options.readSource=async q=>{if(q.repo===WR&&q.path===pilot)return Buffer.from((await read(q)).toString().replaceAll(f.brainRevision,other));if(q.repo===BR&&q.revision===other)return read({...q,revision:f.brainRevision});return read(q);};
+ const f=fixture(t),pilot='.github/workflows/pilot-release-verification.yml';
+ const other=tree(f.brainRoot,{...f.bf,'history.txt':'第二个固定历史树'});
+ f.wf[pilot]=f.wf[pilot].replaceAll(f.brainRevision,other);
+ const updated=tree(f.workspaceRoot,f.wf);
+ f.options.workspace={repo:WR,revision:updated};f.options.brain={repo:BR,revisions:[f.brainRevision,other]};
  const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'verified',JSON.stringify(r.gaps));assert.equal(r.source_set.length,3);assert.ok(r.consumer.bindings.some(b=>b.repo===BR&&b.revision===other&&b.path===pilot));assert.equal(r.executable,false);
 });
 for(const prefix of ['# node tooling/scripts/ci/implementation-pr-gate.mjs','echo "node tooling/scripts/ci/implementation-pr-gate.mjs"'])test(`shell伪命令拒认：${prefix.split(' ')[0]}`,async t=>{const f=fixture(t),read=f.options.readSource;f.options.readSource=async q=>{const b=await read(q);return q.repo===BR&&q.path==='.github/workflows/implementation-impact.yml'?Buffer.from(b.toString().replace('node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$PWD/source"',prefix)):b;};const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='CALLEE_RUNNER_MISSING'));});
 test('来源一致也不得冒充Brain featureSHA已获main入场',async t=>{const f=fixture(t),r=await extractWorkspaceCiSourceBundle({...f.options,trusted_main_history:{status:'verified'}});assert.equal(r.admission.status,'unknown');assert.equal(r.admission.trusted_main_history.status,'not_evaluated');assert.equal(r.executable,false);});
+
+for(const [name,mutate] of [
+ ['无条件分支提前return',s=>s.replace('function config(){','function config(){if(true)return {};')],
+ ['callback参数遮蔽config',s=>s.replace('()=>{config();}','(config)=>{config();}')],
+ ['helper局部URL变量遮蔽',s=>s.replace('function config(){','function config(){const file="not-a-workflow";')],
+ ['callback内部函数遮蔽config',s=>s.replace('()=>{config();}','()=>{function config(){return {};}config();}')],
+])test(`拒伪词法来源：${name}`,async t=>{const f=fixture(t,w=>{const p='scripts/ci/__tests__/implementation-impact-workflow.test.mjs';w[p]=mutate(w[p]);}),r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='READER_INPUT_UNPROVEN'));});
+for(const fake of ['echo "\nnode tooling/scripts/ci/implementation-pr-gate.mjs\n"','cat <<EOF\nnode tooling/scripts/ci/implementation-pr-gate.mjs\nEOF'])test('多行字符串/HereDoc不能冒充node命令',async t=>{const f=fixture(t),read=f.options.readSource;f.options.readSource=async q=>{const b=await read(q);return q.repo===BR&&q.path==='.github/workflows/implementation-impact.yml'?Buffer.from(b.toString().replace('      - run: node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$PWD/source"','      - run: |\n'+fake.split('\n').map(s=>'          '+s).join('\n'))):b;};const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='CALLEE_RUNNER_MISSING'));});
