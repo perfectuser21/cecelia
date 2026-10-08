@@ -5,8 +5,10 @@ import { buildExistingOpsSources } from '../existing-ops-source.js';
 
 const revision = '0464135bfdc707530513fda1f8f6bf278ffd173e';
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-const paths = execFileSync('git', ['ls-tree', '-r', '--name-only', revision], { cwd: root, encoding: 'utf8' }).trim().split('\n');
-const read = async path => execFileSync('git', ['show', `${revision}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+const paths = execFileSync('git', ['ls-tree', '-rz', '--name-only', revision], { cwd: root, encoding: 'utf8' }).replace(/\0$/, '').split('\0');
+const sourceCache = new Map();
+const readGit = path => execFileSync('git', ['show', `${revision}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+const read = async path => { if (!sourceCache.has(path)) sourceCache.set(path, readGit(path)); return sourceCache.get(path); };
 const build = overrides => buildExistingOpsSources({ scope: 'cecelia', repo: 'perfectuser21/cecelia', revision, paths, readSource: read, ...overrides });
 
 describe('真实工厂旧消费者来源，独立于可执行完整Workflow', () => {
@@ -35,6 +37,12 @@ describe('真实工厂旧消费者来源，独立于可执行完整Workflow', ()
     const result = await build({ readSource: async path => { if (path === 'scripts/deploy-local.sh') throw Error('source missing'); return read(path); } });
     expect(result.consumers.find(c => c.activity_id.startsWith('0ab79')).status).toBe('unknown');
     expect(result.consumers.find(c => c.activity_id.startsWith('0ab79')).gaps).toContainEqual({ code: 'source_unavailable', path: 'scripts/deploy-local.sh' });
+  });
+  it('注释或字符串中保留旧迁移调用不构成实际输入关系', async () => {
+    for (const wrap of [text => `/*\n${text}\n*/\nexport function runMigrations() {}`, text => `const legacy = ${JSON.stringify(text)};\nexport function runMigrations() {}`]) {
+      const result = await build({ readSource: async path => path === 'packages/brain/src/migrate.js' ? wrap(await read(path)) : read(path) });
+      expect(result.consumers.find(c => c.activity_id.startsWith('0ab79')).status).toBe('unknown');
+    }
   });
   it('非工厂scope、跨repo、宽路径与非固定SHA拒绝', async () => {
     for (const override of [{ scope: 'cecelia-kr' }, { repo: 'perfectuser21/zenithjoy-workspace' }, { revision: 'main' }, { paths: [...paths, 'packages/brain/migrations/*.sql'] }])
