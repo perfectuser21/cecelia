@@ -39,3 +39,18 @@ it('迁移幂等且不能将已验收激活的新流程重降paused；回滚恢�
 it('部分/错误骨架应原子拒绝，不能标版本成功或退役其余旧流程',async()=>{
  await db.query('DELETE FROM workflows WHERE id=$1',[id(104)]);const before=await workflows();await expect(db.query(migration())).rejects.toThrow(/LEADGEN_SPLIT_REGISTRATION_INCOMPLETE/);await db.query('ROLLBACK');expect(await workflows()).toEqual(before);expect((await db.query("SELECT * FROM schema_version WHERE version='536'")).rows).toHaveLength(0);
 });
+
+it('错误身份或后来激活必须原子拒绝，不能覆盖当前事实',async()=>{
+ await db.query("UPDATE workflows SET key='another-workflow' WHERE id=$1",[id(104)]);let before=await workflows();
+ await expect(db.query(migration())).rejects.toThrow(/LEADGEN_SPLIT_REGISTRATION_IDENTITY_CONFLICT/);await db.query('ROLLBACK');expect(await workflows()).toEqual(before);
+ await db.query('UPDATE workflows SET key=$1,capability_id=$3 WHERE id=$2',[keys[3],id(104),randomUUID()]);before=await workflows();
+ await expect(db.query(migration())).rejects.toThrow(/LEADGEN_SPLIT_REGISTRATION_IDENTITY_CONFLICT/);await db.query('ROLLBACK');expect(await workflows()).toEqual(before);
+ await db.query('UPDATE workflows SET capability_id=$1 WHERE id=$2',[cap,id(104)]);await db.query(migration());
+ await db.query("UPDATE workflows SET status='active' WHERE id=$1",[id(103)]);before=await workflows();
+ await expect(db.query(rollback())).rejects.toThrow(/LEADGEN_SPLIT_ROLLBACK_CONFLICT/);await db.query('ROLLBACK');expect(await workflows()).toEqual(before);
+ expect((await db.query("SELECT * FROM schema_version WHERE version='536'")).rows).toHaveLength(1);
+});
+it('空隔离库迁移不伪造workflow或版本身份',async()=>{
+ await db.query('DELETE FROM workflows');await db.query(migration());expect(await workflows()).toHaveLength(0);
+ expect((await db.query('SELECT * FROM migration_536_backup')).rows).toHaveLength(0);
+});
