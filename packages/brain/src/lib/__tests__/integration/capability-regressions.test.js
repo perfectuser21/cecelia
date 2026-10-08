@@ -5,10 +5,22 @@ import {stepSha256} from '../../../../scripts/sync-steps-from-workspace.mjs';
 import {readImplementationConsumers} from '../../implementation-consumers.js';
 import {loadHistoricalImplementationContext} from '../../implementation-context.js';
 import {exportImplementationSnapshot,validateImplementationSnapshot} from '../../implementation-ci-snapshot.js';
+import * as sourceProtocol from '../../consumer-source-set.js';
 const module=await import('../../capability-regressions.js').catch(()=>({}));
 let f;
 beforeEach(async()=>{expect(module.registerCapabilityRegression).toBeTypeOf('function');f=await releaseEvidenceDatabase();const migration=new URL('../../../../migrations/537_assertion_source_repo.sql',import.meta.url);if(existsSync(migration))await f.db.query(readFileSync(migration,'utf8'));});
 afterEach(async()=>{await f?.close();f=null;});
+it('准入必须核正式main run/job/实际JSON与每个repo固定main祖先，文件名或静态verified不足',()=>{
+ expect(sourceProtocol.validateConsumerSourceMainEvidence).toBeTypeOf('function');
+ const repo='perfectuser21/cecelia',revision='b'.repeat(40),workspace='perfectuser21/zenithjoy-workspace';
+ const source_set=[{repo,revision},{repo:workspace,revision:'c'.repeat(40)}];
+ const body={schema_version:1,scope:'cecelia-kr',repo,revision,status:'verified',gaps:[],canonical:{},definitions:{},map:{},assertions:[]};
+ const witness={source_set,anchor:{repo,revision},run:{id:19,name:'Implementation impact',path:'.github/workflows/implementation-impact.yml',event:'workflow_dispatch',head_sha:revision,head_branch:'main',status:'completed',conclusion:'failure',repository:{full_name:repo}},jobs:[{name:'snapshot-main',status:'completed',conclusion:'success'}],artifact:{name:`implementation-snapshot-${revision}`,expired:false,workflow_run:{id:19,head_sha:revision}},snapshot:{...body,snapshot_sha256:stepSha256(body)},main_history:source_set.map(s=>({...s,current_main:s.revision,url:`https://api.github.com/repos/${s.repo}/compare/${s.revision}...${s.revision}`,comparison:{status:'identical',base_commit:{sha:s.revision},merge_base_commit:{sha:s.revision}}}))};
+ expect(sourceProtocol.validateConsumerSourceMainEvidence(witness)).toBe(true);
+ for(const mutate of [w=>w.run.event='pull_request',w=>w.run.head_branch='cp-fake',w=>w.jobs[0].conclusion='failure',w=>w.snapshot.revision='d'.repeat(40),w=>w.snapshot.status='unknown',w=>w.snapshot.snapshot_sha256='e'.repeat(64),w=>w.main_history.pop(),w=>w.main_history[1].comparison.status='diverged',w=>w.main_history[1].url=w.main_history[0].url,w=>w.artifact.workflow_run.id=20]){
+  const bad=structuredClone(witness);mutate(bad);expect(sourceProtocol.validateConsumerSourceMainEvidence(bad)).toBe(false);
+ }
+});
 it('共享Activity按真实消费者各登记一条断言且重放幂等，不强行改owner或置绿',async()=>{
   const activity=f.activities.find(a=>a.payload.implementation_bindings.some(b=>b.kind==='code'));
   const input={capability_id:f.capabilities[0],activity_id:activity.activity_id,assertion_ref:'scripts/smoke/regression.sh'};
