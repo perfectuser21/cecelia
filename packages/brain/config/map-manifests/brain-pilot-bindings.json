@@ -53,5 +53,36 @@
         "order": 1
       }
     ]
+  },
+  "factory": {
+    "scope_key": "cecelia-factory",
+    "source_repo": "perfectuser21/cecelia",
+    "registry_repo": "cecelia-factory-source",
+    "mode": "create",
+    "value_streams": [
+      {
+        "key": "factory",
+        "entity_id": "aaaaaaaa-f0f0-4000-8000-000000000001",
+        "name": "研发工厂",
+        "perceiver": "主理人",
+        "order": 1
+      }
+    ],
+    "capabilities": [
+      {
+        "key": "F2",
+        "entity_id": "2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6",
+        "name": "生产运维",
+        "value_stream_key": "factory",
+        "order": 1
+      },
+      {
+        "key": "F3",
+        "entity_id": "ec4eb591-e064-4886-a7b6-4452cdf333d2",
+        "name": "全量体检",
+        "value_stream_key": "factory",
+        "order": 2
+      }
+    ]
   }
 }

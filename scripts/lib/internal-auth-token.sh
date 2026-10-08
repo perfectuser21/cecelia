@@ -61,8 +61,13 @@ ensure_cecelia_internal_token() {
 
   if existing=$(_cecelia_internal_token_from_file "$env_file"); then
     local current_mode
-    current_mode=$(stat -f '%Lp' "$env_file" 2>/dev/null || stat -c '%a' "$env_file" 2>/dev/null || true)
-    [[ "$current_mode" == "600" ]] || chmod 600 "$env_file"
+    case "$(uname -s)" in
+      Darwin) current_mode=$(stat -f '%Lp' "$env_file" 2>/dev/null) || return 1 ;;
+      Linux) current_mode=$(stat -c '%a' "$env_file" 2>/dev/null) || return 1 ;;
+      *) echo "ERROR: 内部鉴权文件权限检查不支持当前系统" >&2; return 1 ;;
+    esac
+    [[ "$current_mode" =~ ^[0-7]{3,4}$ ]] || return 1
+    [[ "$current_mode" == "600" ]] || chmod 600 "$env_file" || return 1
     CECELIA_INTERNAL_TOKEN="$existing"
     export CECELIA_INTERNAL_TOKEN
     return 0
