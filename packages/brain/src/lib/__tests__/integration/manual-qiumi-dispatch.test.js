@@ -21,7 +21,7 @@ beforeAll(async () => {
     claimed_by text, claimed_at timestamptz, updated_at timestamptz DEFAULT NOW(), started_at timestamptz,
     executor_kind text, metadata jsonb, result jsonb, notion_props jsonb DEFAULT '{}',
     error_message text, blocked_reason text, blocked_detail jsonb,
-    created_at timestamptz DEFAULT NOW(), next_run_at timestamptz)`);
+    created_at timestamptz DEFAULT NOW())`);
   await a.query(`CREATE TABLE ${schema}.working_memory (key text PRIMARY KEY, value_json jsonb)`);
   await a.query(`CREATE TABLE ${schema}.phone_registry (serial text, nickname text, enabled boolean)`);
   await a.query(`INSERT INTO ${schema}.phone_registry VALUES ('blue','小蓝',true)`);
@@ -70,7 +70,7 @@ describe('定向手机派发：真实双连接 PG', () => {
     }
     await a.query("UPDATE tasks SET created_at=NOW()-INTERVAL '1 day' WHERE id='old-phone'");
     await a.query("UPDATE tasks SET notion_props='{\"qiumi_human_hold\":\"阻塞\"}' WHERE id='held-phone'");
-    await a.query("UPDATE tasks SET next_run_at=NOW()+INTERVAL '1 hour' WHERE id='future-phone'");
+    await a.query("UPDATE tasks SET payload=jsonb_set(payload, '{next_run_at}', $1::jsonb) WHERE id='future-phone'", [JSON.stringify(new Date(Date.now() + 3_600_000).toISOString())]);
     let starts = 0;
     const route = async task => {
       await a.query(`UPDATE tasks SET payload=payload || $2::jsonb WHERE id=$1`, [task.id, { run_id: 'pump-fixed-run', qiumi_department: 'skill-factory', qiumi_route: { device_hint: { serial: 'blue', nickname: '小蓝' } } }]);
