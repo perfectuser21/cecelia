@@ -21,6 +21,16 @@ it('准入必须核正式main run/job/实际JSON与每个repo固定main祖先，
   const bad=structuredClone(witness);mutate(bad);expect(sourceProtocol.validateConsumerSourceMainEvidence(bad)).toBe(false);
  }
 });
+it('认证collector入口拒绝任意repo/非法SHA且未取得实际证据时typed UNKNOWN，不把函数缺失当启动异常',async()=>{
+ expect(sourceProtocol.readConsumerSourceMainWitness).toBeTypeOf('function');
+ let calls=0;const options={fetchFn:async()=>{calls++;throw Error('unavailable');},resolveToken:async()=>'private-test-token'};
+ const anchor={repo:'perfectuser21/cecelia',revision:'b'.repeat(40)},source_set=[anchor,{repo:'perfectuser21/zenithjoy-workspace',revision:'c'.repeat(40)}];
+ const unknown=await sourceProtocol.readConsumerSourceMainWitness({anchor,source_set,run_id:19},options);
+ expect(unknown).toMatchObject({status:'unknown',admission:{status:'unknown'}});expect(calls).toBeGreaterThan(0);
+ for(const input of [{anchor:{...anchor,repo:'other/repo'},source_set,run_id:19},{anchor,source_set:[{repo:'other/repo',revision:'c'.repeat(40)}],run_id:19},{anchor,source_set:[{...anchor,revision:'main'}],run_id:19}]){
+  calls=0;expect(await sourceProtocol.readConsumerSourceMainWitness(input,options)).toMatchObject({status:'unknown'});expect(calls).toBe(0);
+ }
+});
 it('共享Activity按真实消费者各登记一条断言且重放幂等，不强行改owner或置绿',async()=>{
   const activity=f.activities.find(a=>a.payload.implementation_bindings.some(b=>b.kind==='code'));
   const input={capability_id:f.capabilities[0],activity_id:activity.activity_id,assertion_ref:'scripts/smoke/regression.sh'};
