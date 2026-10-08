@@ -9,7 +9,52 @@ import { readImplementationImpact } from '../../implementation-impact.js';
 import * as multi from '../../../../../../scripts/ci/implementation-multi-scope.mjs';
 import * as pr from '../../../../../../scripts/ci/implementation-pr-gate.mjs';
 import * as caller from '../../../../../../scripts/ci/implementation-multi-pr-gate.mjs';
+import {collectAuxiliarySourceEvidence,applyAuxiliarySourceEvidence} from '../../../../../../scripts/ci/implementation-auxiliary-evidence.mjs';
 let a,b,reports,source;
+
+it('真实两scope辅助owner联合闭包保留原始UNKNOWN，并独立覆盖共享manifest',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'multi-aux-owner-'));
+ const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
+ try{
+  git('init','-q');git('remote','add','origin','https://github.com/'+source.repo+'.git');
+  mkdirSync(join(root,'src'));mkdirSync(join(root,'docs'));
+  const rows=[{owner_path:'src/shared-lock.js',path:'docs/alpha.md',role:'documentation'},
+   {owner_path:'src/factory-deploy.js',path:'docs/beta.md',role:'documentation'}];
+  for(const file of ['src/shared-lock.js','src/factory-deploy.js'])writeFileSync(join(root,file),'export const old=true;\n');
+  for(const file of ['docs/alpha.md','docs/beta.md'])writeFileSync(join(root,file),'old\n');
+  const manifest={schema_version:1,repo:source.repo,relations:rows};
+  writeFileSync(join(root,'.implementation-source-relations.json'),JSON.stringify(manifest));
+  const commit=()=>{git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture');return git('rev-parse','HEAD');};
+  const base=commit();
+  for(const file of ['src/shared-lock.js','src/factory-deploy.js'])writeFileSync(join(root,file),'export const updated=true;\n');
+  for(const file of ['docs/alpha.md','docs/beta.md'])writeFileSync(join(root,file),'updated\n');
+  writeFileSync(join(root,'.implementation-source-relations.json'),JSON.stringify(manifest,null,2)+'\n');
+  const head=commit();
+  await a.close();await b.close();
+  a=await releaseEvidenceDatabase({scope:'cecelia-kr',baseRevision:base,headRevision:head});
+  b=await releaseEvidenceDatabase({scope:'cecelia-factory',baseRevision:base,headRevision:head});
+  await b.db.query("UPDATE graph_edge_snapshots SET dst_path='src/factory-deploy.js' WHERE dst_path='src/shared-lock.js'");
+  const full={repo:source.repo,base_revision:base,head_revision:head,changed_files:git('diff','--no-renames','--name-only',base,head).split('\n').map(path=>({path}))};
+  const auxiliary=collectAuxiliarySourceEvidence(root,full),raw=[];
+  for(const [db,scope] of [[a.db,'cecelia-kr'],[b.db,'cecelia-factory']]){
+   const report=await readImplementationImpact(db,{scope,repo:full.repo,base_revision:base,head_revision:head,changed_files:full.changed_files});
+   const owners={};for(const side of ['base','head'])owners[side]=rows.map(row=>report[side].file_coverage.find(f=>f.path===row.owner_path)).map(({path,matched_paths,truncated})=>({path,matched_paths,truncated}));
+   applyAuxiliarySourceEvidence(report,auxiliary,owners);raw.push(report);
+  }
+  expect(raw.every(r=>r.gaps.some(g=>g.code==='auxiliary_owner_unclaimed'))).toBe(true);
+  const proof=multi.resolveScopedImplementationReports({source:full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:raw});
+  expect(proof.source_reports).toEqual(raw);
+  expect(proof.evidence.auxiliary_scope_context.owner_claims.length).toBe(4);
+  const joint=proof.evidence.file_coverage.find(f=>f.path==='.implementation-source-relations.json');
+  expect(joint.claims.every(c=>c.coverage_kind==='scoped_auxiliary_source')).toBe(true);
+  expect(proof.evidence.scope_reports.every(r=>r.affected_usages.every(u=>raw.find(x=>x.scope_key===r.scope_key).affected_usages.some(v=>v.reference_id===u.reference_id)))).toBe(true);
+  expect(()=>multi.verifyScopedImplementationGitSource(root,proof.evidence)).not.toThrow();
+  for(const change of [r=>r[0].gaps.push({code:'regression_missing'}),r=>r[1].auxiliary_source_evidence.head.relations[0].owner_sha256='f'.repeat(64),r=>r[1].source.repo='foreign/repo',r=>r[1].auxiliary_source_evidence.owner_coverage.head[0].matched_paths=[],r=>r[1].required_assertions=[]]){
+   const altered=structuredClone(raw);change(altered);
+   expect(()=>multi.resolveScopedImplementationReports({source:full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:altered})).toThrow();
+  }
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
 beforeEach(async()=>{
  a=await releaseEvidenceDatabase({scope:'cecelia-kr'});b=await releaseEvidenceDatabase({scope:'cecelia-factory'});
  const r=a.releaseInput.ci_evidence[0].report;
