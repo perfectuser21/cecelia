@@ -6,8 +6,8 @@
 - [x] [BEHAVIOR] reposcopedassertions：只执行精确固定工具链的manual Node测试协议；来源仓库独立于Brain定义锚，旧null断言兼容，伪造receipt与工具链身份拒绝。
   Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run src/lib/__tests__/gp-assertion-command.test.js src/lib/__tests__/gp-assertion-toolchain.test.js src/lib/__tests__/gp-assertion-process.test.js src/lib/__tests__/gp-assertion-output.test.js src/lib/__tests__/implementation-consumers.test.js --maxWorkers=1 --minWorkers=1"
 
-- [x] [BEHAVIOR] frozenconsumersources：真实PG登记与读取保留不可变Brain定义锚和严格source_set；已认证正式主线证据才能供生产登记，scratch候选不能冒生产；缺核心模块仍UNKNOWN，零中央登记。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/lib/__tests__/integration/capability-regressions.test.js src/lib/__tests__/integration/implementation-context.test.js src/lib/__tests__/integration/implementation-report.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] frozenconsumersources 真实双Git提取、actual scratch准入、生产认证入口、锁内F3 append、不可变source_set及历史查询；两仓图使用各自固定SHA，保两WF/八引用/六UNKNOWN与current，生产拒候选proof与复制重放。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/existing-ops-registration.pg.integration.test.js src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js src/lib/__tests__/integration/capability-regressions.test.js src/__tests__/integration/implementation-impact.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
 
 # PRD / DoD：Workspace 两固定配置验证消费关系
 
