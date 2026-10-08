@@ -21,9 +21,11 @@ curl -fsm 10 "$BRAIN_URL/api/brain/health" | node -e '
 let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const j=JSON.parse(d);process.exit(j.organs&&j.organs.scheduler&&j.organs.circuit_breaker?0:1)})
 ' && ok "[运行时] /health 200 且 organs 含 scheduler/circuit_breaker 子键" || fail "/health organs 断言失败"
 
-curl -fsm 10 "$BRAIN_URL/api/brain/healthz" | node -e '
-let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const j=JSON.parse(d);process.exit(["ok","degraded","critical"].includes(j.status)?0:1)})
-' && ok "[运行时] /healthz status ∈ {ok, degraded, critical}" || fail "/healthz status 断言失败"
+# /healthz 的公开协议允许 HTTP 503，并仍返回真实 critical/degraded 状态。
+# 复用完整 schema 检查，保留正文和实际状态，不把 critical 冒充 healthy。
+bash "$(dirname "${BASH_SOURCE[0]}")/healthz-smoke.sh" \
+  && ok "[运行时] /healthz 公开 schema/status 已核对（实际状态见上方）" \
+  || fail "/healthz schema/status 断言失败"
 
 if [ "${FIRE_TEST:-0}" = "1" ]; then
   fail "FIRE_TEST 自炸（proven-to-fire 验证口）"

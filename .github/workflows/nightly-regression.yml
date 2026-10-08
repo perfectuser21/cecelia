@@ -114,6 +114,8 @@ jobs:
         run: cd packages/brain && node src/migrate.js
       - name: Integration Tests
         env:
+          POSTGRES_INTEGRATION: '1'
+          NODE_ONBOARDING_TEST_DB: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
@@ -121,7 +123,7 @@ jobs:
           DB_USER: cecelia
           DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           NODE_ENV: test
-        run: cd packages/brain && npx vitest run src/__tests__/integration/ --reporter=verbose
+        run: cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/ --reporter=verbose
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Job 3: E2E Smoke（golden-path + agent-lifecycle + dev-task-lifecycle）
@@ -161,6 +163,7 @@ jobs:
         run: cd packages/brain && node src/migrate.js
       - name: E2E 贯通冒烟（golden-path + agent-lifecycle + dev-task-lifecycle）
         env:
+          POSTGRES_INTEGRATION: '1'
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
@@ -170,6 +173,7 @@ jobs:
           NODE_ENV: test
         run: |
           cd packages/brain && npx vitest run \
+            --config vitest.integration.config.js \
             src/__tests__/integration/golden-path.integration.test.js \
             src/__tests__/integration/agent-lifecycle.integration.test.js \
             src/__tests__/integration/dev-task-lifecycle.e2e.test.js \
@@ -224,6 +228,7 @@ jobs:
             -e DB_NAME=cecelia_test \
             -e DB_USER=cecelia \
             -e DB_PASSWORD=${{ secrets.CI_DB_PASSWORD }} \
+            -e DATABASE_URL=postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test \
             -e BRAIN_PORT=5221 \
             -e NODE_ENV=test \
             -e CECELIA_TICK_ENABLED=false \
@@ -243,6 +248,8 @@ jobs:
           exit 1
       - name: Run smoke scripts
         env:
+          SMOKE_ALLOW_WRITE: '1'
+          BRAIN_CONTAINER: cecelia-brain-nightly
           BRAIN_URL: http://localhost:5221
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
@@ -250,6 +257,11 @@ jobs:
           DB_NAME: cecelia_test
           DB_USER: cecelia
           DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGDATABASE: cecelia_test
+          PGUSER: cecelia
+          PGPASSWORD: ${{ secrets.CI_DB_PASSWORD }}
         run: |
           SMOKE_DIR=packages/brain/scripts/smoke
           if [ ! -d "$SMOKE_DIR" ]; then
