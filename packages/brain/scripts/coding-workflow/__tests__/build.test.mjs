@@ -70,7 +70,7 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     expect(r.stderr).toContain(
       'FAKE_ARGS: -p --permission-mode acceptEdits --allowedTools Bash --disallowedTools Bash(git push:*) Bash(gh:*)',
     );
-    expect(r.stderr).toMatch(/FAKE_ARGS: .* --model claude-opus-5-5\n/);
+    expect(r.stderr).toMatch(/FAKE_ARGS: .* --model opus\n/);
     expect(r.stderr).toContain(`FAKE_CWD: ${fs.realpathSync(worktree)}`);
   });
 

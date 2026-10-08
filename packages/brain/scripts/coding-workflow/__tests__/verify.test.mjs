@@ -60,7 +60,7 @@ describe('verify 活动（子进程 + 假 claude）', () => {
   it('独立会话：prompt 不提 03-build；参数允许 Bash，禁 git push / git commit / gh', async () => {
     const r = await run('verify-pass');
     expect(r.stderr).toContain('FAKE_PROMPT_MENTIONS_BUILD: false');
-    expect(r.stderr).toMatch(/FAKE_ARGS: .* --model claude-opus-5-5\n/);
+    expect(r.stderr).toMatch(/FAKE_ARGS: .* --model opus\n/);
     expect(r.stderr).toContain(
       'FAKE_ARGS: -p --permission-mode acceptEdits --output-format stream-json --verbose --setting-sources user '
       + '--allowedTools Bash --disallowedTools Bash(git push:*) Bash(git commit:*) '

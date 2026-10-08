@@ -200,11 +200,11 @@ describe('runClaude（进程内 + 假 claude）', () => {
     }
   });
 
-  it('模型钉死：默认追加 --model claude-opus-5-5（决策 ac7c8801；实测不钉会落到 sonnet）', async () => {
+  it('模型钉死：默认追加 --model opus（决策 ac7c8801；实测不钉会落到 sonnet）', async () => {
     setEnv({ CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'ok' });
     for (const isolateRemote of [false, true]) {
       const r = await runClaude({ args: ['-p', prompt(), '--x', 'y'], cwd: tmp, timeoutMs: 20000, tag: 'test', isolateRemote });
-      expect(r.output).toContain('FAKE_ARGS: -p --x y --model claude-opus-5-5\n');
+      expect(r.output).toContain('FAKE_ARGS: -p --x y --model opus\n');
     }
   });
 
