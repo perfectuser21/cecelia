@@ -5,6 +5,7 @@ import request from 'supertest';
 import { releaseEvidenceDatabase,RELEASE_HEAD } from '../../../__tests__/fixtures/release-evidence-db.js';
 import * as service from '../../release-index.js';
 import * as routes from '../../../routes/releases.js';
+import { stepSha256 } from '../../../../scripts/sync-steps-from-workspace.mjs';
 let fixture,app;
 beforeEach(async()=>{
   expect(service.createRelease,'发布服务必须存在').toBeTypeOf('function');
@@ -14,6 +15,20 @@ beforeEach(async()=>{
 afterEach(async()=>{await fixture?.close();fixture=null;});
 const post=()=>request(app).post('/releases').send(fixture.releaseInput);
 const observe=(id,extra={})=>request(app).post(`/releases/${id}/observations`).send({...fixture.observationInput,...extra});
+it('消费者历史证据不能冒作完整执行release，保留旧current与不可变历史', async()=>{
+  const old=fixture.workflows[0],payload={...old.payload,definition_scope:'consumer_evidence',coverage:{status:'unknown',unverified_reference_ids:['source_unknown']}};
+  const source={repo:old.source_repo,path:old.source_path,commit:old.source_commit};
+  const hash=stepSha256({source,payload});
+  const row=(await fixture.db.query(`INSERT INTO workflow_definition_versions(workflow_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256)
+    VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,[old.workflow_id,payload,hash,old.source_repo,old.source_path,old.source_commit,old.contract_sha256])).rows[0];
+  const input=structuredClone(fixture.releaseInput);input.release_key='consumer-only';
+  input.workflows=input.workflows.map(w=>w.workflow_definition_version_id===old.id?{workflow_definition_version_id:row.id,payload_sha256:hash}:w);
+  const r=await request(app).post('/releases').send(input);
+  expect(r.status,r.body).toBe(422);expect(r.body.error.code).toBe('RELEASE_CONSUMER_EVIDENCE_NOT_EXECUTABLE');
+  expect((await fixture.db.query('SELECT current_definition_version_id FROM workflows WHERE id=$1',[old.workflow_id])).rows[0].current_definition_version_id).toBe(old.id);
+  expect((await fixture.db.query('SELECT count(*)::int n FROM release_versions')).rows[0].n).toBe(0);
+  await expect(fixture.db.query('DELETE FROM workflow_definition_versions WHERE id=$1',[row.id])).rejects.toMatchObject({code:'P0001'});
+});
 it('真实HTTP发布固定两Workflow/AV/Enabler来源，同内容幂等异内容409，数据库拒UPDATE/DELETE',async()=>{
   let r=await post();expect(r.status,r.body).toBe(201);const release=r.body.release;
   expect(release.payload.workflows).toHaveLength(2);expect(release.payload.allowed_enabler_calls[0]).toMatchObject({id:fixture.call,source_status:'verified'});

@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.392.0
+**Brain 版本**: 1.393.1
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.393.1 — 消费者来源历史拒绝执行
+
+- release拒绝消费者Workflow及Activity来源证据；此证据不代表完整可执行定义。
+- 新运行、幂等绑定和历史续跑均拒绝consumer_evidence，保留正常执行历史与原current。
+- 两个真实PG回归文件覆盖发布与续跑，未新增解析器、依赖、来源登记或激活权限。
 
 ## Brain 1.388.0 — 独立流程契约身份兼容
 
