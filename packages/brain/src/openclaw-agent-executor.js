@@ -27,6 +27,7 @@ import { sshWithStdin, sshRun } from './lib/ssh-exec.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRun, finishRun } from './lib/task-run.js';
 import { finalizeTask } from './lib/task-terminal.js';
+import { rpaExploreFailure } from './lib/rpa-explore-receipt.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
 import { splitExecParamsBlock } from './routing/exec-params.js';
 import { consumeCompanyAnalysis, markCompanyAnalysis, assertCompanyAnalysisDispatch, companyAnalysisPrompt } from './lib/company-kr-analysis.js';
@@ -441,6 +442,10 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
     if (busy === 'requeued') { out.requeued++; continue; }
     if (busy === 'failed') { out.failed++; out.reaped++; continue; }
     let outcome = reapOutcome(receipt, tail);
+    if (outcome.status === 'completed_no_pr') {
+      const reason = rpaExploreFailure(r, receipt);
+      if (reason) outcome = { status: 'failed', reason, yieldSummary: null };
+    }
     let analysis = null;
     if (companyAnalysis && outcome.status === 'completed_no_pr') {
       try { analysis = await (deps.consumeCompanyAnalysis || consumeCompanyAnalysis)(pool, r, receipt); }

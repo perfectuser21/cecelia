@@ -322,6 +322,16 @@ describe('triggerOpenclawAgent', () => {
 describe('reapOpenclawAgentRuns', () => {
   const row = { id: task.id, run_id: 'qiumi-aaaaaaaa-1' };
   it.each([
+    [JSON.stringify({ stage: 'explore', claimed_result: 'success', lock_released: true, run_id: row.run_id }), 1, 0],
+    ['没有读取成功', 0, 1],
+    [JSON.stringify({ stage: 'verify', claimed_result: 'success' }), 0, 1],
+  ])('显式探路只接受同运行号且释放锁的完整回执：%s', async (text, completed, failed) => {
+    const factoryRow = { ...row, payload: { qiumi_department: 'skill-factory', qiumi_source: { body: '使用 skill：skill-explore' } } };
+    const query = vi.fn().mockResolvedValueOnce({ rows: [factoryRow] }).mockResolvedValue({ rows: [], rowCount: 1 });
+    const execFileFn = vi.fn((c, a, o, cb) => cb(null, `EXIT=0\n${JSON.stringify({ finalAssistantVisibleText: text })}\n`, ''));
+    expect(await reapOpenclawAgentRuns({ query }, { execFileFn })).toMatchObject({ completed, failed });
+  });
+  it.each([
     ['blocked', true, 'qiumi-aaaaaaaa-1', '微信未登录'],
     ['failed', true, 'qiumi-aaaaaaaa-1', '截图失败'],
     ['success', false, 'qiumi-aaaaaaaa-1', null],
