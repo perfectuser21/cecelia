@@ -65,7 +65,8 @@ esc() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
 # 值经环境变量传入 awk（避免转义被 awk 解释），并先做 XML 转义（& 须最先转）。
 fill_automerge() {
   local val="${CODING_WF_AUTOMERGE:-}"
-  val="${val//&/&amp;}"; val="${val//</&lt;}"; val="${val//>/&gt;}"
+  # 不用 ${val//</&lt;}：bash 5.2 起替换串里的 & 代表匹配文本（patsub_replacement），Linux 上会得到 <lt;
+  val="$(printf '%s' "$val" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')"
   AUTOMERGE_XML="$val" awk '
     /^[[:space:]]*__AUTOMERGE_ENV__[[:space:]]*$/ {
       if (ENVIRON["AUTOMERGE_XML"] != "") {
