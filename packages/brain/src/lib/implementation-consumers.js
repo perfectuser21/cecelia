@@ -2,7 +2,7 @@
 import { loadHistoricalImplementationContext } from './implementation-context.js';
 import { computeFreshness } from './registry-freshness.js';
 import { canonicalAssertionCommandText,classifyAssertionRef } from './gp-assertion-command.js';
-import {hasFrozenConsumerSource,sealedConsumerVersion,sealedBrainConsumerDefinition} from './consumer-source-set.js';
+import {hasFrozenConsumerSource,sealedConsumerVersion,sealedBrainConsumerDefinition,consumerSourceAdmissionScope} from './consumer-source-set.js';
 import {stepSha256} from '../../scripts/sync-steps-from-workspace.mjs';
 import { assertionDigest } from './journey-assertion-receipt.js';
 import { readMapBrainBindings } from './map-brain-bindings.js';
@@ -67,6 +67,7 @@ async function selectedVersions(db,q,capabilities) {
 }
 
 async function readAssertions(db,usages,gaps) {
+  const admissionScope=usages.some(u=>u.consumer_source_payload?.source_set)?await consumerSourceAdmissionScope(db):{allowScratch:false};
   const capabilities=[...new Set(usages.map(u=>u.capability_id))],activities=[...new Set(usages.map(u=>u.activity_id))];
   const rows=(await db.query(`SELECT id,journey_id,step_id,step_id_ref,assertion_ref,assertion_revision,to_jsonb(c)->>'assertion_source_repo' assertion_source_repo
     FROM activity_cells c WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id`,[capabilities,activities])).rows;
@@ -82,10 +83,10 @@ async function readAssertions(db,usages,gaps) {
     if(row.assertion_source_repo){
       matched=matched.filter(u=>u.implementation_repo===row.assertion_source_repo);
       if(!matched.length)continue;
-      if(matched.some(u=>!hasFrozenConsumerSource(u.consumer_source_payload,row.assertion_source_repo,path))){gaps.push({code:'assertion_source_unknown',journey_step_link_id:row.id});continue;}
+      if(matched.some(u=>!hasFrozenConsumerSource(u.consumer_source_payload,row.assertion_source_repo,path,admissionScope))){gaps.push({code:'assertion_source_unknown',journey_step_link_id:row.id});continue;}
     }else{
       // 合法跨repo source-set 已证明实现来源时，历史 null 仍归原定义repo，不能覆盖另一repo。
-      matched=matched.filter(u=>u.source_repo===u.implementation_repo||!hasFrozenConsumerSource(u.consumer_source_payload,u.implementation_repo,u.implementation_path));
+      matched=matched.filter(u=>u.source_repo===u.implementation_repo||!hasFrozenConsumerSource(u.consumer_source_payload,u.implementation_repo,u.implementation_path,admissionScope));
       if(!matched.length)continue;
     }
     const sourceRepos=[...new Set(matched.map(u=>u.source_repo).filter(Boolean))];

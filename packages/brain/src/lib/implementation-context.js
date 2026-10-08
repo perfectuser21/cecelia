@@ -1,5 +1,5 @@
 /** scope登记与固定历史地图上下文；不以当前active地图改写旧membership。 */
-import {sealedConsumerVersion,hasFrozenConsumerSource} from './consumer-source-set.js';
+import {sealedConsumerVersion,hasFrozenConsumerSource,consumerSourceAdmissionScope} from './consumer-source-set.js';
 import {stepSha256} from '../../scripts/sync-steps-from-workspace.mjs';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function manifestMatchesImplementationSource(manifest,repo,revision) {
@@ -50,8 +50,9 @@ export async function loadHistoricalImplementationContext(db,q,gaps) {
     &&version.payload_sha256===stepSha256({source:{repo:version.source_repo,path:version.source_path,commit:version.source_commit},payload:version.payload})){
     const ids=version.payload.activities.map(r=>r.activity_version_id);
     const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[])',[ids])).rows;
+    const admissionScope=await consumerSourceAdmissionScope(db);
     const witness=activities.some(a=>sealedConsumerVersion(a)&&a.source_repo===version.source_repo&&a.source_commit===version.source_commit
-      &&hasFrozenConsumerSource(a.payload,q.repo,q.path)&&a.payload.implementation_bindings.some(b=>b.kind===q.kind&&b.repo===q.repo&&b.path===q.path&&b.revision===q.revision&&(!q.digest||b.digest===q.digest)));
+      &&hasFrozenConsumerSource(a.payload,q.repo,q.path,admissionScope)&&a.payload.implementation_bindings.some(b=>b.kind===q.kind&&b.repo===q.repo&&b.path===q.path&&b.revision===q.revision&&(!q.digest||b.digest===q.digest)));
     if(witness)sourceQuery={...q,repo:version.source_repo,revision:version.source_commit};
   }
   if(version.source_repo!==sourceQuery.repo||version.source_commit!==sourceQuery.revision)gaps.push({code:'workflow_definition_source_mismatch',workflow_definition_version_id:version.id});

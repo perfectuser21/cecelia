@@ -6,6 +6,10 @@ const TRUSTED_REPOS=new Set(['perfectuser21/cecelia','perfectuser21/zenithjoy-wo
 const trustedMainWitnesses=new WeakSet();
 export const isTrustedConsumerSourceMainWitness=witness=>trustedMainWitnesses.has(witness);
 export const validAssertionSourceRepo = repo => typeof repo==='string'&&REPO.test(repo);
+export async function consumerSourceAdmissionScope(db) {
+ const name=(await db.query('SELECT current_database() name')).rows[0]?.name;
+ return {allowScratch:name==='cecelia_scratch'||name==='cecelia_test'&&process.env.CI==='true'&&process.env.GITHUB_ACTIONS==='true'};
+}
 export function sealedBrainConsumerDefinition(row) {
  return row?.source_repo==='perfectuser21/cecelia'&&SHA.test(row.source_commit)
   &&row.payload_sha256===stepSha256({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload})
@@ -15,9 +19,12 @@ export function sealedConsumerVersion(row) {
  return sealedBrainConsumerDefinition(row)&&row.payload.source_set?.some(s=>s.repo===row.source_repo&&s.revision===row.source_commit);
 }
 // 仅消费不可变历史中已经准入的冻结来源。静态 extractor 的 verified 不构成准入。
-export function hasFrozenConsumerSource(payload,repo,path) {
+export function hasFrozenConsumerSource(payload,repo,path,{allowScratch=false}={}) {
+ const admission=payload?.source_set_admission;
+ const trusted=admission?.source_basis==='trusted_main_history';
+ const scratch=allowScratch&&admission?.source_basis==='scratch_candidate'&&admission.purpose==='admission_only';
  if(payload?.definition_scope!=='consumer_evidence'||payload.source_scope!=='cecelia-factory'
-  ||payload.source_set_admission?.status!=='verified'||payload.source_set_admission?.source_basis!=='trusted_main_history')return false;
+  ||admission?.status!=='verified'||(!trusted&&!scratch))return false;
  const sources=payload.source_set,bindings=payload.implementation_bindings;
  if(!Array.isArray(sources)||!sources.length||!Array.isArray(bindings)||!bindings.length)return false;
  if(sources.some(s=>!s||Object.keys(s).sort().join(',')!=='repo,revision'||!['perfectuser21/cecelia','perfectuser21/zenithjoy-workspace'].includes(s.repo)||!SHA.test(s.revision)))return false;

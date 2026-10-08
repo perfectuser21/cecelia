@@ -1,7 +1,7 @@
 /** 回归定义登记；共享活动按消费者归属，登记不等于验收通过。 */
 import { UUID } from './release-index.js';
 import { canonicalAssertionCommandText,classifyAssertionRef } from './gp-assertion-command.js';
-import { hasFrozenConsumerSource,validAssertionSourceRepo,sealedConsumerVersion } from './consumer-source-set.js';
+import { hasFrozenConsumerSource,validAssertionSourceRepo,sealedConsumerVersion,consumerSourceAdmissionScope } from './consumer-source-set.js';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
 const fail=(message,status=422)=>{throw Object.assign(Error(message),{status,code:'CAPABILITY_REGRESSION_INVALID'});};
 export async function registerCapabilityRegression(pool,input){
@@ -20,6 +20,7 @@ export async function registerCapabilityRegression(pool,input){
       WHERE r.active AND r.activity_id=$1 AND w.capability_id=$2 AND w.status<>'retired' LIMIT 1`,[input.activity_id,input.capability_id])).rows[0];
     if(!usage)fail('Capability没有使用此Activity，拒绝登记');
     if(sourceRepo){
+      const admissionScope=await consumerSourceAdmissionScope(db);
       const path=classifyAssertionRef(input.assertion_ref).path;
       const candidates=(await db.query(`SELECT av.*,wv.payload workflow_payload,wv.payload_sha256 workflow_hash,
         wv.source_repo workflow_repo,wv.source_path workflow_path,wv.source_commit workflow_commit
@@ -30,7 +31,7 @@ export async function registerCapabilityRegression(pool,input){
       const sealed=row=>sealedConsumerVersion(row)&&row.workflow_repo==='perfectuser21/cecelia'
        &&row.workflow_hash===stepSha256({source:{repo:row.workflow_repo,path:row.workflow_path,commit:row.workflow_commit},payload:row.workflow_payload})
        &&row.workflow_payload.definition_scope==='consumer_evidence'&&row.workflow_payload.capability_id===input.capability_id
-       &&hasFrozenConsumerSource(row.payload,sourceRepo,path);
+       &&hasFrozenConsumerSource(row.payload,sourceRepo,path,admissionScope);
       if(!path||!candidates.some(sealed))throw Object.assign(Error('断言仓库缺少已准入的冻结 consumer 来源'),{status:422,code:'CAPABILITY_REGRESSION_SOURCE_UNKNOWN'});
     }
     if(input.step_id&&!(await db.query('SELECT id FROM steps WHERE id=$1 AND activity_id=$2 AND active',[input.step_id,input.activity_id])).rows.length)fail('Step不属于此Activity或已退役');
