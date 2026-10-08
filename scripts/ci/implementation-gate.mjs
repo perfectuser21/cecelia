@@ -1,5 +1,7 @@
 /** 固定影响报告→本仓固定测试→执行收据；不执行网络报告携带的 command。 */
 import { collectGovernanceEvidence } from './registry-lint.mjs';
+import { collectAuxiliarySourceEvidence, assertAuxiliarySourceEvidence } from './implementation-auxiliary-evidence.mjs';
+export { collectAuxiliarySourceEvidence, applyAuxiliarySourceEvidence, assertAuxiliarySourceEvidence } from './implementation-auxiliary-evidence.mjs';
 import { createHash } from 'node:crypto';
 import { assertImplementationReport as assertReport } from '../../packages/brain/src/lib/implementation-report.js';
 import { execFileSync,spawnSync } from 'node:child_process';
@@ -75,6 +77,7 @@ export async function runRegisteredAssertions({repoRoot,source,required_assertio
 }
 
 export async function runImplementationGate({repoRoot,report,timeoutMs=300000}) {
+  assertAuxiliarySourceEvidence(report);
   assertReport(report);
   const root=await realpath(repoRoot);
   const source=report.source;
@@ -86,6 +89,8 @@ export async function runImplementationGate({repoRoot,report,timeoutMs=300000}) 
   if(JSON.stringify(actual)!==JSON.stringify(changedPaths(source.changed_files)))fail('IMPACT_DIFF_MISMATCH');
   const governance=collectGovernanceEvidence(root,source);
   if(JSON.stringify(governance?.files||[])!==JSON.stringify(report.governance_evidence?.files||[]))fail('IMPACT_GOVERNANCE_SOURCE_MISMATCH');
+  const auxiliary=collectAuxiliarySourceEvidence(root,source);
+  if(auxiliary?.evidence_sha256!==report.auxiliary_source_evidence?.evidence_sha256)fail('AUXILIARY_SOURCE_BYTES_MISMATCH');
   const assertions=await runRegisteredAssertions({repoRoot:root,source,required_assertions:report.required_assertions,timeoutMs});
   return {schema_version:1,source,report_sha256:sha(JSON.stringify(report)),actor:'implementation_ci_gate',
     verdict:assertions.every(item=>item.exit_code===0&&!item.error)?'PASS':'FAIL',assertions,

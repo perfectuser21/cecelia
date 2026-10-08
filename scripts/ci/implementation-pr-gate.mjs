@@ -7,6 +7,7 @@ import { join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectGovernanceEvidence,applyGovernanceCoverage } from './registry-lint.mjs';
 import { runImplementationGate } from './implementation-gate.mjs';
+import { collectAuxiliarySourceEvidence, auxiliaryOwnerPaths, applyAuxiliarySourceEvidence } from './implementation-auxiliary-evidence.mjs';
 import { createImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot,buildPrImplementationSnapshot } from './implementation-snapshot.mjs';
 import { ciFailure,validateImplementationSnapshot } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { canonicalRepoIdentity } from '../../packages/brain/src/lib/gp-assertion-command.js';
@@ -33,7 +34,21 @@ export async function runImplementationPrGate({repoRoot,scope,base,head,mode,sna
     if(mode==='pr'){h=await buildPrImplementationSnapshot(scratch.db,h,head,repoRoot);save(outputDir,'candidate.json',h);}
     await projectImplementationSnapshot(scratch.db,h,headWorktree);
     const changed_files=execFileSync('git',['diff','--no-renames','--name-only','-z',base,head,'--'],{cwd:repoRoot,encoding:'utf8'}).split('\0').filter(Boolean).map(path=>({path}));
-    const report=await readImplementationImpact(scratch.db,{scope,repo,base_revision:base,head_revision:head,changed_files});
+    const source={repo,base_revision:base,head_revision:head};
+    const auxiliary=collectAuxiliarySourceEvidence(repoRoot,source),owners=auxiliaryOwnerPaths(auxiliary);
+    const queryPaths=[...changed_files,...owners.filter(p=>!changed_files.some(f=>f.path===p)).map(path=>({path}))];
+    const report=await readImplementationImpact(scratch.db,{scope,...source,changed_files:queryPaths});
+    // owner查询使用同一固定图/定义；PR真实diff仍保持原样，绝不把辅助关系写成import边。
+    const ownerCoverage={};
+    for(const side of ['base','head']){
+      ownerCoverage[side]=owners.map(path=>report[side].file_coverage.find(f=>f.path===path)).filter(Boolean).map(({path,matched_paths,truncated})=>({path,matched_paths,truncated}));
+      report[side].file_coverage=report[side].file_coverage.slice(0,changed_files.length);
+    }
+    report.source.changed_files=changed_files;
+    const actualPaths=new Set(changed_files.map(f=>f.path));
+    report.unclaimed_paths=report.unclaimed_paths.filter(f=>actualPaths.has(f.path));
+    for(const gap of report.gaps)if(gap.code==='changed_file_unclaimed'&&!actualPaths.has(gap.path))gap.code='auxiliary_owner_unclaimed';
+    applyAuxiliarySourceEvidence(report,auxiliary,ownerCoverage);
     report.ci_context={purpose:mode==='pr'?'admission_only':'release',base_snapshot_sha256:b.snapshot_sha256,head_snapshot_sha256:h.snapshot_sha256};
     applyGovernanceCoverage(report,collectGovernanceEvidence(repoRoot,report.source));
     save(outputDir,'report.json',report);

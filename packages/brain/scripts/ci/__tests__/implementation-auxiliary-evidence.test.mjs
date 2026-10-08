@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,9 +14,11 @@ function fixture(relations=[{owner_path:'src/controller.js',path:'docs/controlle
  const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
  git('init','-q');git('config','user.email','ci@example.invalid');git('config','user.name','ci');git('remote','add','origin','https://github.com/example/repo.git');
  mkdirSync(join(root,'src'));mkdirSync(join(root,'docs'));mkdirSync(join(root,'scripts/smoke'),{recursive:true});
+ mkdirSync(join(root,'changes'));
  writeFileSync(join(root,'src/controller.js'),'export const value=1;\n');
  writeFileSync(join(root,'docs/controller.md'),'controller documentation\n');
- writeFileSync(join(root,'scripts/smoke/controller.sh'),'#!/bin/bash\nexit 0\n');
+ writeFileSync(join(root,'scripts/smoke/controller.sh'),'#!/bin/bash\nset -e\nprintf auxiliary-checked > actual-output\n');
+ writeFileSync(join(root,'changes/controller.md'),'## Brain {VERSION} — controller\n');
  git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
  writeFileSync(join(root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:'example/repo',relations}));
  writeFileSync(join(root,'docs/controller.md'),'updated controller documentation\n');
@@ -76,6 +78,36 @@ it('执行门禁从同固定SHA重算证据，拒绝报告伪造的辅助字节'
  const evidence=gate.collectAuxiliarySourceEvidence(f.root,f.source);
  gate.applyAuxiliarySourceEvidence(f.report,evidence,f.ownerCoverage);
  const receipt=await gate.runImplementationGate({repoRoot:f.root,report:f.report});expect(receipt.verdict).toBe('PASS');
+ expect(readFileSync(join(f.root,'actual-output'),'utf8')).toBe('auxiliary-checked');
  f.report.auxiliary_source_evidence.head.relations[0].sha256='f'.repeat(64);
  await expect(gate.runImplementationGate({repoRoot:f.root,report:f.report})).rejects.toThrow();
+});
+it.each([['verification','scripts/smoke/controller.sh'],['release','changes/controller.md']])('合法%s关系固定实际源字节，不成为生产代码',(_role,path)=>{
+ const f=fixture([{owner_path:'src/controller.js',path,role:_role}]);
+ const evidence=gate.collectAuxiliarySourceEvidence(f.root,f.source);
+ expect(evidence.head.relations[0]).toMatchObject({owner_path:'src/controller.js',path,role:_role});
+ expect(evidence.head.relations[0].sha256).toMatch(/^[a-f0-9]{64}$/);
+});
+it('辅助覆盖不能吞其他UNKNOWN或截断；删固定证据不能只靠matched_paths放行',()=>{
+ const f=fixture();const evidence=gate.collectAuxiliarySourceEvidence(f.root,f.source);
+ f.report.gaps.push({code:'scope_manifest_missing',side:'head'});
+ gate.applyAuxiliarySourceEvidence(f.report,evidence,f.ownerCoverage);
+ expect(f.report.gaps).toEqual([{code:'scope_manifest_missing',side:'head'}]);
+ expect(f.report.mapping_status).toBe('unknown');expect(()=>assertImplementationReport(f.report)).toThrow();
+ const copy=structuredClone(f.report);delete copy.auxiliary_source_evidence;
+ expect(()=>gate.assertAuxiliarySourceEvidence(copy)).toThrow(/MISSING/);
+ const trunc=fixture();trunc.ownerCoverage.head[0].truncated=true;
+ expect(()=>gate.applyAuxiliarySourceEvidence(trunc.report,gate.collectAuxiliarySourceEvidence(trunc.root,trunc.source),trunc.ownerCoverage)).toThrow();
+});
+it('Git软链接和父子反向配置不可声明为已核字节',()=>{
+ const f=fixture();rmSync(join(f.root,'docs/controller.md'));symlinkSync('../src/controller.js',join(f.root,'docs/controller.md'));
+ f.git('add','.');f.git('commit','-qm','symlink');f.source.head_revision=f.git('rev-parse','HEAD');
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow(/REGULAR_FILE/);
+ const reverse=fixture([{owner_path:'docs/controller.md',path:'src/controller.js',role:'documentation'}]);
+ expect(()=>gate.collectAuxiliarySourceEvidence(reverse.root,reverse.source)).toThrow(/OWNER/);
+});
+it('真实PR入口拒绝错误固定上下文并留下UNKNOWN案卷，不接数据库',async()=>{
+ const f=fixture(),outputDir=join(f.root,'evidence');
+ await expect(runImplementationPrGate({repoRoot:f.root,scope:'phones',base:f.source.base_revision,head:f.source.head_revision,mode:'invalid',outputDir})).rejects.toThrow(/INPUT_INVALID/);
+ expect(JSON.parse(readFileSync(join(outputDir,'gap.json'),'utf8'))).toMatchObject({status:'unknown',code:'IMPLEMENTATION_CI_INPUT_INVALID'});
 });
