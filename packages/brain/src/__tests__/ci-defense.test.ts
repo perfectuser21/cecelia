@@ -60,4 +60,17 @@ describe('CI 防线三件套 [BEHAVIOR]', () => {
     expect(runNode(EXISTS, ['--fixture', join(FIXTURES, 'diff-complete.txt')]).code).toBe(0);
     expect(runNode(EXISTS, ['--fixture', join(FIXTURES, 'diff-non-harness.txt')]).code).toBe(0);
   });
+
+  it('Step4 coding workflow: 仅含 01~04 产物的 sprint diff 不被当 harness PR 拦', () => {
+    expect(existsSync(EXISTS)).toBe(true);
+    const { code } = runNode(EXISTS, ['--fixture', join(FIXTURES, 'diff-coding-workflow.txt')]);
+    expect(code).toBe(0);
+  });
+
+  it('Step4 harness 残留: 仅含 sprint-prd.md 的 diff 仍被拦并点名 contract-draft.md', () => {
+    expect(existsSync(EXISTS)).toBe(true);
+    const { code, out } = runNode(EXISTS, ['--fixture', join(FIXTURES, 'diff-harness-prd-only.txt')]);
+    expect(code).not.toBe(0);
+    expect(out).toMatch(/contract-draft\.md/);
+  });
 });
