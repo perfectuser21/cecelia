@@ -1,6 +1,6 @@
 # Nightly启动与隔离环境回归
 
-- [x] [BEHAVIOR] nightlyruntime：正式nightly的Vitest选择真实集成文件、显式启用PG测试，批量smoke获得同一本机隔离测试库连接且保留失败汇总；F5真HTTP读取合法critical503并保留状态，错误schema/status/HTTP仍拒绝。
+- [x] [BEHAVIOR] nightlyruntime：正式nightly的Vitest选择真实集成文件、显式启用PG测试，批量smoke获得同一本机隔离测试库连接且保留失败汇总，Walking原脚本由独立隔离job真实执行并纳入失败汇总；F5真HTTP读取合法critical503并保留状态，错误schema/status/HTTP仍拒绝。
   Test: manual:node --test .github/workflows/scripts/__tests__/nightly-runtime.test.mjs
 
 - [x] [BEHAVIOR] phonerparetryfield 独立手机派发读取真实payload.next_run_at，生产表没有顶层重试列仍可执行；未来排期不启动，到期只派一次。真实PG私有schema不再发明列。

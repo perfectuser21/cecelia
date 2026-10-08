@@ -276,8 +276,14 @@ jobs:
           fi
           FAILED=0
           PASSED=0
+          DELEGATED=0
           for script in "${SCRIPTS[@]}"; do
             echo "── ▶️  $script"
+            if [ "${script##*/}" = 'walking-skeleton-1node-smoke.sh' ]; then
+              DELEGATED=$((DELEGATED + 1))
+              echo "── DELEGATED: Walking actual acceptance belongs to required walking-ci-e2e-nightly"
+              continue
+            fi
             if bash "$script"; then
               PASSED=$((PASSED + 1))
               echo "── ✅ PASS: $script"
@@ -286,7 +292,7 @@ jobs:
               echo "::error::❌ FAIL: $script"
             fi
           done
-          echo "📊 Smoke — 通过: $PASSED, 失败: $FAILED"
+          echo "📊 Smoke — 通过: $PASSED, 失败: $FAILED, 委托 walking-ci-e2e-nightly: $DELEGATED"
           [ "$FAILED" -eq 0 ]
       - name: Cleanup
         if: always()
@@ -295,8 +301,80 @@ jobs:
           docker rm -f cecelia-brain-nightly 2>/dev/null || true
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Job 5: Workspace Tests（apps/api + apps/dashboard）
+# Job 4.5: Walking 独立验收（正式CI实际 Docker/PG 两线程与重启）
 # ──────────────────────────────────────────────────────────────────────────────
+  walking-ci-e2e-nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          POSTGRES_DB: cecelia_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U cecelia -d cecelia_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: cecelia_test
+      DB_USER: cecelia
+      DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+      DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Permanent actual target rejection regression
+        run: node --test packages/quality/tests/walking-checkpointer-guard.node-test.mjs
+      - name: Install dependencies and migrate dedicated service
+        run: |
+          npm ci
+          cd packages/brain
+          node src/migrate.js
+      - name: Prepare isolated Brain and actual Alpine worker
+        run: |
+          docker pull alpine
+          docker build -f packages/brain/Dockerfile -t cecelia-brain:walking-ci .
+          docker run -d --name cecelia-brain-walking-nightly --network host \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e DB_HOST -e DB_PORT -e DB_NAME -e DB_USER -e DB_PASSWORD -e DATABASE_URL \
+            -e CI=true -e WALKING_CI_OWNER=1 -e NODE_ENV=test -e BRAIN_PORT=5221 \
+            -e CECELIA_TICK_ENABLED=false -e ENV_REGION=us \
+            -e CECELIA_CKPT_QUERY_TIMEOUT_MS=5000 -e CECELIA_CKPT_STATEMENT_TIMEOUT_MS=5000 \
+            -e CECELIA_CKPT_CONNECTION_TIMEOUT_MS=5000 -e DB_QUERY_TIMEOUT_MS=5000 -e REPO_ROOT=/repo_root \
+            -v "$GITHUB_WORKSPACE/packages/workflows:/repo_root/packages/workflows:ro" \
+            cecelia-brain:walking-ci
+          for i in $(seq 1 90); do
+            if curl -q -fsS --max-time 2 http://localhost:5221/api/brain/walking-skeleton-1node/instance >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: True two-thread Docker callback checkpoint restart acceptance
+        env:
+          SMOKE_ALLOW_WRITE: '1'
+          BRAIN_CONTAINER: cecelia-brain-walking-nightly
+        run: |
+          set -o pipefail
+          timeout --kill-after=10s 300s bash packages/brain/scripts/smoke/walking-skeleton-1node-smoke.sh | tee /tmp/walking-ci-e2e-proof.log
+      - name: Save owned fixture evidence
+        if: always()
+        run: docker logs cecelia-brain-walking-nightly > /tmp/walking-ci-e2e-brain.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: walking-ci-real-pg-proof
+          path: /tmp/walking-ci-e2e-*.log
+      - name: Cleanup dedicated Brain fixture
+        if: always()
+        run: docker rm -f cecelia-brain-walking-nightly 2>/dev/null || true
+
+# Job 5: Workspace Tests（apps/api + apps/dashboard）
   workspace-test-nightly:
     name: Workspace Tests (全量)
     runs-on: ubuntu-latest
@@ -360,6 +438,7 @@ jobs:
       - brain-integration-nightly
       - e2e-smoke-nightly
       - real-env-smoke-nightly
+      - walking-ci-e2e-nightly
       - workspace-test-nightly
       - test-pyramid-guard
     runs-on: ubuntu-latest
@@ -415,6 +494,7 @@ jobs:
           BRAIN_INT="${{ needs.brain-integration-nightly.result }}"
           E2E="${{ needs.e2e-smoke-nightly.result }}"
           REAL_ENV="${{ needs.real-env-smoke-nightly.result }}"
+          WALKING="${{ needs.walking-ci-e2e-nightly.result }}"
           WS="${{ needs.workspace-test-nightly.result }}"
           PYRAMID="${{ needs.test-pyramid-guard.result }}"
 
@@ -439,6 +519,7 @@ jobs:
           BODY="$BODY"$'\n'"$(format_result "Brain Integration" "$BRAIN_INT")"
           BODY="$BODY"$'\n'"$(format_result "E2E 贯通冒烟" "$E2E")"
           BODY="$BODY"$'\n'"$(format_result "Real-Env Smoke (Brain 容器)" "$REAL_ENV")"
+          BODY="$BODY"$'\n'"$(format_result "Walking 真实 Docker/PG 独立验收" "$WALKING")"
           BODY="$BODY"$'\n'"$(format_result "Workspace Tests" "$WS")"
           BODY="$BODY"$'\n'"$(format_result "测试金字塔守卫 (刀0)" "$PYRAMID")"
           BODY="$BODY"$'\n\n'"### 处理方式"$'\n'
