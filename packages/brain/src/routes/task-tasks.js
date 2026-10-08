@@ -553,12 +553,16 @@ router.post('/:id/claim', async (req, res) => {
       return res.status(400).json({ error: 'claimer is required' });
     }
     const executorKind = rawExecutorKind || 'headed-session';
+    // 执行机 coding workflow runner 认领必须落下自己的 kind（executor-contracts 据此当外部执行体，
+    // 启动同步不打回）：任务上历史认领残留的 headed-session 等要被覆盖。其他 kind 保持 COALESCE。
+    const forceKind = executorKind === 'coding-workflow-runner';
 
     const result = await pool.query(
-      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(), executor_kind = COALESCE(executor_kind, $3)
+      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
+              executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END
        WHERE id = $2 AND claimed_by IS NULL
        RETURNING id, claimed_by, claimed_at, executor_kind`,
-      [claimer, id, executorKind]
+      [claimer, id, executorKind, forceKind]
     );
 
     if (result.rows.length === 0) {

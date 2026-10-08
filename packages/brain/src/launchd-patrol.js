@@ -31,6 +31,8 @@ export const MUST_LOAD_DAEMONS = [
   'com.cecelia.pf-firewall',
   'com.cecelia.smoke-nightly',
   'com.cecelia.guard-drill',
+  // coding workflow runner（StartInterval=300）：认领带 payload.coding_workflow 开关的任务跑 coding 链
+  'com.cecelia.coding-workflow-runner',
 ];
 export const MUST_LISTEN_PORTS = [
   { port: 3457, name: 'cecelia-bridge' },

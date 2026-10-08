@@ -40,7 +40,8 @@ describe('迁移 471：登记 script 与 script_run', () => {
     expect(imageJanitor).toContain('CHECK ((%s) OR executor_kind=%L)');
     expect(imageJanitor).toContain("substring(definition FROM 8 FOR length(definition)-8),'image-janitor'");
     expect(readFileSync(join(MIG,'512_linux_pool_controller.sql'),'utf8')).toContain("substring(definition FROM 8 FOR length(definition)-8),'linux-pool-controller'");
-    expect([...list, 'preview-janitor','app-server-controller','image-janitor','phone-ssh-controller','linux-pool-controller'].sort()).toEqual([...VALID_EXECUTOR_KINDS].sort());
+    expect(readFileSync(join(MIG,'535_coding_workflow_runner_executor_kind.sql'),'utf8')).toContain("substring(definition FROM 8 FOR length(definition)-8),'coding-workflow-runner'");
+    expect([...list, 'preview-janitor','app-server-controller','image-janitor','phone-ssh-controller','linux-pool-controller','coding-workflow-runner'].sort()).toEqual([...VALID_EXECUTOR_KINDS].sort());
   });
 
   it("471 task_type 加已登记的502增量后等于当前DB白名单，且含 script_run", () => {

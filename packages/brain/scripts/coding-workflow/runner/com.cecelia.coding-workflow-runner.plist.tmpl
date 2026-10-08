@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+  <key>UserName</key>
+  <string>__USER__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__RUNNER_SH__</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>__INTERVAL__</integer>
+  <!-- ExitTimeOut（SIGTERM 到 SIGKILL）须覆盖 runner 收尾最坏耗时：执行器宽限 30s（CODING_WF_KILL_GRACE_MS）
+       + 终态回写走 409 对账 GET 20s + claim 20s + PATCH in_progress 64s + PATCH 终态 64s
+       （每次 PATCH 最多 3 次请求 × 20s 超时 + 重试间隔 1s + 3s = 64s）= 198s，取 240s 留余量。 -->
+  <key>ExitTimeOut</key>
+  <integer>240</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>WorkingDirectory</key>
+  <string>__HOME__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>PATH</key>
+    <string>__PATH__</string>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+    <key>BRAIN_URL</key>
+    <string>__BRAIN_URL__</string>
+    <key>CODING_WF_REPO</key>
+    <string>__REPO__</string>
+    <key>CODING_WF_MAIN_LOG</key>
+    <string>__LOG__</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__LOG__</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG__</string>
+  <key>ProcessType</key>
+  <string>Standard</string>
+</dict>
+</plist>
