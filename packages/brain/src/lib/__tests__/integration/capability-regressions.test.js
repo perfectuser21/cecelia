@@ -31,6 +31,12 @@ it('认证collector入口拒绝任意repo/非法SHA且未取得实际证据时ty
   calls=0;expect(await sourceProtocol.readConsumerSourceMainWitness(input,options)).toMatchObject({status:'unknown'});expect(calls).toBe(0);
  }
 });
+it('生产Workspace核心尚未在受信树可用时，真实动态消费者保持UNKNOWN且不会伪造源集准入',async()=>{
+ expect(sourceProtocol.collectWorkspaceConsumerSourceSet).toBeTypeOf('function');
+ const result=await sourceProtocol.collectWorkspaceConsumerSourceSet({});
+ expect(result).toMatchObject({status:'unknown',admission:{status:'unknown'}});
+ expect(result.gaps).toEqual(expect.arrayContaining([expect.objectContaining({code:expect.stringMatching(/^CONSUMER_/ )})]));
+});
 it('共享Activity按真实消费者各登记一条断言且重放幂等，不强行改owner或置绿',async()=>{
   const activity=f.activities.find(a=>a.payload.implementation_bindings.some(b=>b.kind==='code'));
   const input={capability_id:f.capabilities[0],activity_id:activity.activity_id,assertion_ref:'scripts/smoke/regression.sh'};
