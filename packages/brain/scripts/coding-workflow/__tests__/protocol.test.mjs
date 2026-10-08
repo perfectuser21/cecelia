@@ -200,6 +200,13 @@ describe('childEnv', () => {
     expect(env.GIT_DIR).toBeUndefined();
   });
 
+  it('stripClaude 额外剥离 runner 配置 CODING_WF_*（防止污染 claude 会话里跑的 runner 测试）；默认保留', () => {
+    const withRunner = { ...base, CODING_WF_REPO: '/clone', CODING_WF_AUTOMERGE: '0', CODING_WF_MAIN_LOG: '/log' };
+    const stripped = childEnv(withRunner, { stripClaude: true });
+    expect(Object.keys(stripped).filter((k) => k.startsWith('CODING_WF_'))).toEqual([]);
+    expect(childEnv(withRunner).CODING_WF_REPO).toBe('/clone');
+  });
+
   it('不修改传入对象', () => {
     childEnv(base, { stripClaude: true });
     expect(base.GIT_DIR).toBe('/x/.git');

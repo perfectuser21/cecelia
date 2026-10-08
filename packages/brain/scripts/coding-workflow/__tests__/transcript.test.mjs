@@ -71,6 +71,42 @@ describe('unverifiedItems', () => {
     expect(unverifiedItems([item({ output })], executions)).toEqual([]);
   });
 
+  describe('证据命令开头的 cd 前缀（真实 claude 实测 ea2feb66：会话已在 worktree 里执行，写证据时补上 cd 前缀）', () => {
+    const runs = [
+      { command: 'CODING_WF_AUTOMERGE=0 bash install.sh --dry-run 2>&1 | head -80; echo "EXIT=$?"', result: '<key>CODING_WF_AUTOMERGE</key>\nEXIT=0' },
+      { command: 'npx vitest run runner/__tests__', result: 'Tests  61 passed' },
+    ];
+    const ev = (command, output) => ({ id: 'E-1', covers: ['I-1'], verdict: 'PASS', command, output });
+
+    it('cd 到 worktree 根或其子目录再 && 的前缀被忽略，余下命令按原规则核对', () => {
+      const opts = { worktree: '/wt/cw-1' };
+      expect(unverifiedItems([ev('cd /wt/cw-1 && CODING_WF_AUTOMERGE=0 bash install.sh --dry-run 2>&1 | head -80; echo "EXIT=$?"', 'EXIT=0')], runs, opts)).toEqual([]);
+      expect(unverifiedItems([ev('cd "/wt/cw-1/packages/brain" &&  npx vitest run runner/__tests__', 'Tests  61 passed')], runs, opts)).toEqual([]);
+      expect(unverifiedItems([ev('cd packages/brain && npx vitest run runner/__tests__', 'Tests  61 passed')], runs, opts)).toEqual([]);
+    });
+
+    it('cd 到 worktree 之外（含 .. 逃逸、同名前缀目录）不忽略 -> command_not_executed', () => {
+      const opts = { worktree: '/wt/cw-1' };
+      for (const dir of ['/etc', '/wt/cw-1/../other', '/wt/cw-10', '../x']) {
+        expect(unverifiedItems([ev(`cd ${dir} && npx vitest run runner/__tests__`, 'Tests  61 passed')], runs, opts)).toEqual([
+          { id: 'E-1', reason: 'command_not_executed' },
+        ]);
+      }
+    });
+
+    it('未给 worktree 时不忽略 cd 前缀（保持原行为）', () => {
+      expect(unverifiedItems([ev('cd /wt/cw-1 && npx vitest run runner/__tests__', 'Tests  61 passed')], runs)).toEqual([
+        { id: 'E-1', reason: 'command_not_executed' },
+      ]);
+    });
+
+    it('忽略 cd 后输出仍须在该命令结果里', () => {
+      expect(unverifiedItems([ev('cd /wt/cw-1 && npx vitest run runner/__tests__', 'Tests  99 passed')], runs, { worktree: '/wt/cw-1' })).toEqual([
+        { id: 'E-1', reason: 'output_not_in_result' },
+      ]);
+    });
+  });
+
   it('没有任何执行记录 -> 全部 command_not_executed', () => {
     expect(unverifiedItems([item({}), item({ id: 'E-2' })], [])).toEqual([
       { id: 'E-1', reason: 'command_not_executed' },
