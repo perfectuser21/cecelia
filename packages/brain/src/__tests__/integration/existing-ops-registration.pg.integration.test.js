@@ -9,6 +9,10 @@ import { minimumMapSchema } from '../fixtures/minimum-map-schema.js';
 import { exportImplementationSnapshot,refreshImplementationSnapshot } from '../../lib/implementation-ci-snapshot.js';
 import { importImplementationSnapshot,buildPrImplementationSnapshot } from '../../../../../scripts/ci/implementation-snapshot.mjs';
 import { randomUUID } from 'node:crypto';
+import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,dirname} from 'node:path';
+import * as consumerSource from '../../lib/consumer-source-set.js';
 
 it('factory source anchor plan preserves fields and rejects foreign or incomplete owner trees', async()=>{
   await factoryMap();
@@ -58,6 +62,58 @@ async function factoryMap() {
   await fixture.db.query("INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES('cecelia-factory',$1,$2,$3,'fixture',$2,'active',NOW())",[manifestId,'a'.repeat(64),{'cecelia-factory-source':revision}]);
 }
 afterEach(async () => { await fixture?.close(); });
+
+function workspaceCandidate() {
+  const repo='perfectuser21/zenithjoy-workspace',dir=mkdtempSync(join(tmpdir(),'factory-workspace-source-'));
+  const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
+  git('init','-q','-b','candidate-fixture');
+  for(const [name,job,readerName] of [['implementation-impact','impact','implementation-impact'],['pilot-release-verification','verify','pilot-release']]){
+    const reader=`scripts/ci/__tests__/${readerName}-workflow.test.mjs`;
+    const files={
+      [reader]:`import {test} from 'node:test';\nimport {readFileSync,existsSync} from 'node:fs';\nimport YAML from 'yaml';\nconst file=new URL('../../../.github/workflows/${name}.yml',import.meta.url);\nfunction config(){if(!existsSync(file))throw Error('missing');return YAML.parse(readFileSync(file,'utf8'));}\ntest('actual-reader',()=>{config();});\n`,
+      [`.github/workflows/${name}.yml`]:`name: ${name}\non:\n  ${name==='implementation-impact'?'pull_request:\n    branches: [main]\n  ':''}push:\n    branches: [main]\n  workflow_dispatch:\npermissions: {contents: read, actions: read}\njobs:\n  caller-contract:\n    steps:\n      - run: node --test ${reader}\n  ${job}:\n    needs: caller-contract\n    uses: perfectuser21/cecelia/.github/workflows/${name}.yml@${revision}\n    with:\n      source_repo: ${repo}\n      scope: zenithjoy\n      head_revision: \${{ github.sha }}\n      tooling_revision: ${revision}\n${name==='implementation-impact'?'      base_revision: \${{ github.event.before }}\n      mode: main\n':''}`,
+    };
+    for(const [path,bytes] of Object.entries(files)){mkdirSync(dirname(join(dir,path)),{recursive:true});writeFileSync(join(dir,path),bytes);}
+  }
+  git('add','.');const head=git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',git('write-tree'),'-m','实际候选来源');
+  return {dir,head,input:{workspace:{repo,revision:head},brain:{repo:'perfectuser21/cecelia',revisions:[revision]},identity:{...EXISTING_OPS_IDENTITIES[1],unverified_reference_ids:undefined},anchor:{repo:'perfectuser21/cecelia',revision}},
+    readSource:async q=>q.repo===repo?execFileSync('git',['show',`${q.revision}:${q.path}`],{cwd:dir}):Buffer.from(await readSource(q.path)),close:()=>rmSync(dir,{recursive:true,force:true})};
+}
+
+it('实际scratch双Git消费者只封存F3来源集合；不改旧current/八引用或伪造完整可执行Workflow',async()=>{
+  expect(consumerSource.collectScratchWorkspaceConsumerSourceSet).toBeTypeOf('function');
+  const candidate=workspaceCandidate();
+  try{
+    delete candidate.input.identity.unverified_reference_ids;
+    const proof=await consumerSource.collectScratchWorkspaceConsumerSourceSet(fixture.db,candidate.input,{readSource:candidate.readSource});
+    expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
+    const before=await registration.readExistingOpsRegistry(fixture.db);
+    const receipt=await registration.registerExistingOpsSources(fixture.db,options({mode:'scratch_candidate',workspaceConsumerProof:proof,expectedRegistrySha256:before.registry_sha256}));
+    const f3=receipt.definitions.activities.find(a=>a.activity_id===EXISTING_OPS_IDENTITIES[1].activity_id);
+    expect(f3.source_repo).toBe('perfectuser21/cecelia');expect(f3.source_commit).toBe(revision);
+    expect(f3.payload.source_set).toContainEqual({repo:'perfectuser21/zenithjoy-workspace',revision:candidate.head});
+    expect(f3.payload.source_set_admission).toMatchObject({source_basis:'scratch_candidate',purpose:'admission_only'});
+    expect(f3.payload.implementation_bindings.some(b=>b.repo==='perfectuser21/zenithjoy-workspace'&&b.revision===candidate.head)).toBe(true);
+    expect(receipt.definitions.activities.find(a=>a.activity_id===EXISTING_OPS_IDENTITIES[0].activity_id).payload).not.toHaveProperty('source_set');
+    expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
+    expect(receipt.executable).toBe(false);expect(receipt.remaining_unknown_reference_ids).toHaveLength(6);
+  }finally{candidate.close();}
+});
+
+it('生产登记拒scratch或复制proof；拒绝后没有任何历史追加',async()=>{
+  expect(consumerSource.collectScratchWorkspaceConsumerSourceSet).toBeTypeOf('function');
+  const candidate=workspaceCandidate();
+  try{
+    delete candidate.input.identity.unverified_reference_ids;
+    const proof=await consumerSource.collectScratchWorkspaceConsumerSourceSet(fixture.db,candidate.input,{readSource:candidate.readSource});
+    expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
+    const before=await registration.readExistingOpsRegistry(fixture.db);
+    await expect(registration.registerExistingOpsSources(fixture.db,options({workspaceConsumerProof:proof,expectedRegistrySha256:before.registry_sha256}))).rejects.toMatchObject({code:'CONSUMER_MAIN_SOURCE_UNKNOWN'});
+    await expect(registration.registerExistingOpsSources(fixture.db,options({mode:'scratch_candidate',workspaceConsumerProof:structuredClone(proof),expectedRegistrySha256:before.registry_sha256}))).rejects.toMatchObject({code:'CONSUMER_SCRATCH_SOURCE_UNKNOWN'});
+    expect((await fixture.db.query('SELECT count(*)::int n FROM workflow_definition_versions')).rows[0].n).toBe(0);
+    expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
+  }finally{candidate.close();}
+});
 const options = extra => ({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths, readSource, checkMain: async () => {}, actor: 'test-real-main', ...extra });
 it('真实main消费者只append不可执行历史，保留全部旧登记和六个UNKNOWN', async () => {
   expect(registration.registerExistingOpsSources).toBeTypeOf('function');
