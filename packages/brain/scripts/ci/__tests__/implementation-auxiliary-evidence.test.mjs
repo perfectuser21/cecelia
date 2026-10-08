@@ -260,6 +260,9 @@ it.each([
  ['错误root位置',reader=>reader.replace("new URL('../../../../'","new URL('../../../'")],
  ['URL被shadow',reader=>reader.replace('const root=', 'class URL {}\nconst root=')],
  ['reader被shadow',reader=>reader.replace('const workflow=',"function dead(readFileSync){ const workflow=")+ '\n}'],
+ ['空for-of循环',reader=>reader.replace('const workflow=', 'for(const item of []){const workflow=')+'\n}'],
+ ['空for-in循环',reader=>reader.replace('const workflow=', 'for(const item in {}){const workflow=')+'\n}'],
+ ['test提前return',reader=>reader.replace('const workflow=', "import {test} from 'node:test';test('dead',()=>{return;const workflow=").replace('const official=', '});const official=')],
  ['死分支',reader=>reader.replace('const workflow=', 'if(false){const workflow=')+'\n}'],
  ['未调用函数',reader=>reader.replace('const workflow=', 'function uncalled(){const workflow=')+'\n}'],
 ])('%s不能替代真实AST读取',(_name,mutate)=>{
