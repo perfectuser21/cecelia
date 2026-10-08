@@ -1,8 +1,10 @@
 /** 注册lint只认中央UUID与固定声明，新增身份缺登记时给定位缺口。 */
 import { canonicalJson } from '../../packages/brain/scripts/sync-steps-from-workspace.mjs';
+import {sourceOwnersForSnapshot} from '../../packages/brain/src/lib/source-owner-registry.js';
 export function lintImplementationRegistry(snapshot,plans,digest){
   const gaps=[],gap=(code,details)=>gaps.push({code,...details});
-  for(const capability of Object.keys(digest.capabilities||{}))if(!snapshot.canonical.workflows.some(w=>w.source_capability===capability))gap('workflow_registration_missing',{capability});
+  const owners=sourceOwnersForSnapshot(snapshot);
+  for(const capability of Object.keys(digest.capabilities||{}))if(!owners.some(w=>w.source_capability===capability))gap('workflow_registration_missing',{capability});
   for(const plan of plans)for(const item of plan.activities){
     const a=item.activity,identity=`${a.from}.${a.key}`;
     const registered=snapshot.canonical.activities.filter(r=>r.capability_key===a.from&&r.activity_key===a.key);
