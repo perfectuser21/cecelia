@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { mkdtempSync,writeFileSync,readFileSync,rmSync } from 'node:fs';
+import { mkdtempSync,writeFileSync,readFileSync,rmSync,symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawn,execFileSync } from 'node:child_process';
@@ -52,6 +52,10 @@ it.each([false,true])('固定真实Node子进程产生真PASS/FAIL和场景计�
   const command=await assertionCommand('manual:node --test actual.test.mjs',root,{toolchains:{node:{path:process.execPath,sha256:nodeSha}}});
   expect(command.options).toMatchObject({shell:false,evidenceKind:'node',env:{inherit:false,allowlist:[]}});
   expect(command.options.toolchain).toHaveLength(1);
+  writeFileSync(join(root,'untracked.test.mjs'),'');
+  await expect(assertionCommand('manual:node --test untracked.test.mjs',root,{toolchains:{node:{path:process.execPath,sha256:nodeSha}}})).rejects.toMatchObject({code:'ASSERTION_PATH_UNTRACKED'});
+  symlinkSync(process.execPath,join(root,'escaped.test.mjs'));
+  await expect(assertionCommand('manual:node --test escaped.test.mjs',root,{toolchains:{node:{path:process.execPath,sha256:nodeSha}}})).rejects.toMatchObject({code:'ASSERTION_PATH_ESCAPE'});
   const attestation=await createToolchainAttestation({command,actual_runner_digest:SHA,expected_runner_digest:SHA});
   expect(attestation.files[0].sha256).toBe(nodeSha);
   await expect(createToolchainAttestation({command:{...command},actual_runner_digest:SHA,expected_runner_digest:SHA})).rejects.toMatchObject({code:'ASSERTION_COMMAND_UNTRUSTED'});
