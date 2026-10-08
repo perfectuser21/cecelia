@@ -17,6 +17,9 @@ import { runProjection } from '../../packages/brain/src/map/projector.js';
 import { digestMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
 import { scanRepo } from '../scan/scan-graph.mjs';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
+import { EXISTING_OPS_SCOPE,buildExistingOpsSources } from '../../packages/brain/src/lib/existing-ops-source.js';
+import { readExistingOpsRegistry,registerExistingOpsSources } from '../../packages/brain/src/lib/existing-ops-registration.js';
+import {preparePilotManifestAdvance,advancePilotManifest} from '../../packages/brain/src/lib/implementation-ci-pilot-manifest.js';
 
 // journeys 只给旧迁移 511 重放用（它按旧形状读 journeys）；读者读的是 value_streams / capabilities
 const TABLES=['areas','schema_version','journeys','value_streams','capabilities','workflows','activities','steps','spans',
@@ -44,12 +47,12 @@ export async function createImplementationScratch(){
   }catch(error){await close();throw error;}
 }
 const TABLE_KEYS={map_scope_repositories:['scope_key','repo']};
-async function insertRow(db,table,row,{immutable=false}={}){
+async function insertRow(db,table,row,{immutable=false,preserve=[]}={}){
   const generated=new Set((await db.query("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 AND is_generated<>'NEVER'",[table])).rows.map(r=>r.column_name));
   const keys=Object.keys(row).filter(k=>!generated.has(k));
   if(keys.some(k=>!/^\w+$/.test(k)))throw ciFailure('SNAPSHOT_COLUMN_INVALID');
   const columns=keys.map(k=>`"${k}"`).join(','),identity=TABLE_KEYS[table]||['id'];
-  const update=keys.filter(k=>!identity.includes(k)).map(k=>`"${k}"=EXCLUDED."${k}"`).join(',');
+  const update=keys.filter(k=>!identity.includes(k)&&!preserve.includes(k)).map(k=>`"${k}"=EXCLUDED."${k}"`).join(',');
   await db.query(`INSERT INTO ${table}(${columns}) SELECT ${columns} FROM jsonb_populate_record(NULL::${table},$1::jsonb)
     ON CONFLICT(${identity.join(',')}) DO ${immutable?'NOTHING':`UPDATE SET ${update}`}`,[JSON.stringify(row)]);
 }
@@ -60,15 +63,15 @@ export async function importImplementationSnapshot(db,input){
   try{
     for(const row of s.canonical.areas)await insertRow(db,'areas',row);
     for(const row of s.canonical.journeys)await insertRow(db,row.parent_journey_id==null?'value_streams':'capabilities',row);
-    for(const row of s.canonical.workflows)await insertRow(db,'workflows',{...row,current_definition_version_id:null});
-    for(const row of s.canonical.activities)await insertRow(db,'activities',{...row,current_definition_version_id:null});
+    for(const row of s.canonical.workflows)await insertRow(db,'workflows',{...row,current_definition_version_id:null},{preserve:s.scope===EXISTING_OPS_SCOPE?['current_definition_version_id']:[]});
+    for(const row of s.canonical.activities)await insertRow(db,'activities',{...row,current_definition_version_id:null},{preserve:s.scope===EXISTING_OPS_SCOPE?['current_definition_version_id']:[]});
     for(const row of s.canonical.steps)await insertRow(db,'steps',row);
     for(const row of s.definitions.activities)await insertRow(db,'activity_definition_versions',row,{immutable:true});
     for(const row of s.definitions.workflows)await insertRow(db,'workflow_definition_versions',row,{immutable:true});
     // 活跃关系是当前登记；固定版本查询始终走WV.payload，不用此表改写历史。
-    for(const row of s.canonical.references)await insertRow(db,'workflow_activity_refs',{...row,activity_definition_version_id:null});
-    for(const row of s.definitions.workflows)await db.query('UPDATE workflows SET current_definition_version_id=$2 WHERE id=$1',[row.workflow_id,row.id]);
-    for(const row of s.definitions.activities)await db.query('UPDATE activities SET current_definition_version_id=$2 WHERE id=$1',[row.activity_id,row.id]);
+    for(const row of s.canonical.references)await insertRow(db,'workflow_activity_refs',{...row,activity_definition_version_id:null},{preserve:s.scope===EXISTING_OPS_SCOPE?['activity_definition_version_id']:[]});
+    for(const row of s.definitions.workflows)if(row.payload.definition_scope!=='consumer_evidence')await db.query('UPDATE workflows SET current_definition_version_id=$2 WHERE id=$1',[row.workflow_id,row.id]);
+    for(const row of s.definitions.activities)if(row.payload.definition_scope!=='consumer_evidence')await db.query('UPDATE activities SET current_definition_version_id=$2 WHERE id=$1',[row.activity_id,row.id]);
     for(const row of s.map.repositories)await insertRow(db,'map_scope_repositories',row);
     // 断言来源保持current_registration，两侧使用同一明确导出的登记。
     for(const row of s.assertions)await insertRow(db,'activity_cells',row);
@@ -103,6 +106,27 @@ export function definitionEdges(s){
   }
   return edges;
 }
+export async function verifySnapshotSource(s,repoRoot){
+  validateImplementationSnapshot(s);
+  if(s.scope===EXISTING_OPS_SCOPE){
+    const paths=execFileSync('git',['ls-tree','-rz','--name-only',s.revision],{cwd:repoRoot,encoding:'utf8'}).replace(/\0$/,'').split('\0');
+    const readSource=async path=>execFileSync('git',['show',`${s.revision}:${path}`],{cwd:repoRoot,encoding:'utf8',maxBuffer:32*1024*1024});
+    const proof=await buildExistingOpsSources({scope:s.scope,repo:s.repo,revision:s.revision,paths,readSource});
+    if(proof.consumers.some(c=>c.status!=='verified'||c.gaps.length))throw ciFailure('CONSUMER_SOURCE_MISMATCH');
+    for(const consumer of proof.consumers){
+      const workflow=s.definitions.workflows.find(w=>w.workflow_id===consumer.workflow_id);
+      const activity=s.definitions.activities.find(a=>a.activity_id===consumer.activity_id);
+      if(!workflow||!activity||workflow.payload.definition_scope!=='consumer_evidence'||activity.payload.definition_scope!=='consumer_evidence'||
+        workflow.payload.source_scope!==s.scope||activity.payload.source_scope!==s.scope||workflow.payload.contract.executable!==false||
+        stepSha256(activity.payload.implementation_bindings)!==stepSha256(consumer.bindings)||
+        stepSha256(activity.payload.input_relations)!==stepSha256(consumer.input_relations)||
+        workflow.payload.registration_sha256!==s.consumer_registry?.registry_sha256||activity.payload.registration_sha256!==s.consumer_registry?.registry_sha256)
+        throw ciFailure('CONSUMER_SOURCE_MISMATCH');
+    }
+    return s;
+  }
+  return verifyGeneratedSource(s,repoRoot);
+}
 async function verifyGeneratedSource(s,repoRoot){
   if(s.repo!=='perfectuser21/zenithjoy-workspace')return s;
   const path='product-map/generated/contracts.json';
@@ -118,7 +142,7 @@ async function verifyGeneratedSource(s,repoRoot){
 }
 export async function projectImplementationSnapshot(db,s,repoRoot){
   validateImplementationSnapshot(s);
-  s=await verifyGeneratedSource(s,repoRoot);
+  s=await verifySnapshotSource(s,repoRoot);
   const edges=definitionEdges(s); // 在写隔离扫描图之前先拒绝无效定义路径。
   const repo=s.map.repositories[0].repo,staging=`ci-scan:${repo}`;
   const result=await scanRepo({name:staging,root:realpathSync(repoRoot)},db);
@@ -148,6 +172,19 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
 
 export async function buildPrImplementationSnapshot(db,registry,revision,repoRoot){
   const read=path=>execFileSync('git',['show',`${revision}:${path}`],{cwd:repoRoot,encoding:'utf8',maxBuffer:32*1024*1024});
+  if(registry.scope===EXISTING_OPS_SCOPE){
+    validateImplementationSnapshot(registry);
+    if(registry.status!=='verified'||registry.gaps.length||registry.snapshot_scope!=='consumer_evidence')throw ciFailure('REGISTRY_UNKNOWN');
+    // 候选只落既有真实scratch，绝不把PR来源登记到中央生产库。
+    const checkScratch=async()=>{const name=(await db.query('SELECT current_database() name')).rows[0].name;if(!isImplementationScratchDatabase(name))throw ciFailure('SCRATCH_REQUIRED');};
+    await checkScratch();
+    const paths=execFileSync('git',['ls-tree','-rz','--name-only',revision],{cwd:repoRoot,encoding:'utf8'}).replace(/\0$/,'').split('\0');
+    const before=await readExistingOpsRegistry(db);
+    await registerExistingOpsSources(db,{scope:registry.scope,repo:registry.repo,revision,paths,readSource:read,mode:'scratch_candidate',
+      expectedRegistrySha256:before.registry_sha256,actor:'implementation-ci-scratch-candidate'});
+    await advancePilotManifest(db,await preparePilotManifestAdvance(db,{scope:registry.scope,repo:registry.repo,revision}),checkScratch);
+    return exportImplementationSnapshot(db,{scope:registry.scope,repo:registry.repo,revision});
+  }
   if(registry.repo==='perfectuser21/cecelia'){
     const text=read('packages/brain/config/company-kr-workflow.json'),spec=JSON.parse(text);
     const workflow=registry.canonical.workflows.find(w=>w.key===spec.key&&w.capability_id===spec.capability_id);

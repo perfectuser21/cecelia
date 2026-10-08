@@ -1,3 +1,4 @@
+import { EXISTING_OPS_SCOPE,EXISTING_OPS_IDENTITIES } from './existing-ops-source.js';
 /** 两个精确源码版本各自反查依赖和冻结定义，再合并使用位置；缺证据绝不借latest。 */
 import { createHash } from 'node:crypto';
 import { resolveImplementationRegistryRepo,loadImplementationRevisionContext } from './implementation-context.js';
@@ -50,9 +51,14 @@ async function graphSnapshot(db,repo,revision,gaps) {
   if(Number(snapshot.row_count)!==edges.length)gaps.push({code:'graph_snapshot_incomplete',expected:Number(snapshot.row_count),actual:edges.length});
   return {snapshot:{...snapshot,id:`${repo}@${revision}`,digest:digest(edges)},edges};
 }
+export function selectScopedDefinitionVersions(rows,scope) {
+  return rows.filter(w=>scope===EXISTING_OPS_SCOPE?
+    w.payload.definition_scope==='consumer_evidence'&&w.payload.source_scope===EXISTING_OPS_SCOPE&&EXISTING_OPS_IDENTITIES.some(i=>i.workflow_id===w.workflow_id):
+    w.payload.definition_scope!=='consumer_evidence');
+}
 async function definitions(db,q,revision,gaps) {
-  const workflows=(await db.query(`SELECT id,workflow_id,source_repo,source_path,source_commit,payload_sha256,contract_sha256,payload
-    FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id`,[q.repo,revision])).rows;
+  const workflows=selectScopedDefinitionVersions((await db.query(`SELECT id,workflow_id,source_repo,source_path,source_commit,payload_sha256,contract_sha256,payload
+    FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id`,[q.repo,revision])).rows,q.scope);
   if(!workflows.length)gaps.push({code:'definition_snapshot_missing',repo:q.repo,revision});
   const grouped=new Map();
   for(const row of workflows){const group=grouped.get(row.workflow_id)||[];group.push(row);grouped.set(row.workflow_id,group);}

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import yaml from 'js-yaml';
 import { buildExistingOpsSources } from '../existing-ops-source.js';
 
 const revision = '0464135bfdc707530513fda1f8f6bf278ffd173e';
@@ -48,19 +49,33 @@ describe('真实工厂旧消费者来源，独立于可执行完整Workflow', ()
     for (const override of [{ scope: 'cecelia' }, { scope: 'cecelia-kr' }, { repo: 'perfectuser21/zenithjoy-workspace' }, { revision: 'main' }, { paths: [...paths, 'packages/brain/migrations/*.sql'] }])
       await expect(build(override)).rejects.toThrow(/OPS_SOURCE_INPUT_INVALID/);
   });
-  it('固定真实候选native reader仅经required CI调用认领，其bash链与两YAML来自实际输入', async()=>{
-    const head='d05e46e6c91e61407cad12f6cc0b9f771770c6d4';
-    const headPaths=execFileSync('git',['ls-tree','-rz','--name-only',head],{cwd:root,encoding:'utf8'}).replace(/\0$/,'').split('\0');
-    const cache=new Map(),reader='.github/workflows/scripts/__tests__/nightly-runtime.test.mjs';
-    const headRead=async path=>{if(!cache.has(path))cache.set(path,execFileSync('git',['show',`${head}:${path}`],{cwd:root,encoding:'utf8',maxBuffer:16000000}));return cache.get(path);};
-    const run=extra=>build({revision:head,paths:headPaths,readSource:headRead,...extra});
+  it('模型化required native reader消费链，注释与未执行函数不能提供证据', async()=>{
+    const reader='.github/workflows/scripts/__tests__/nightly-runtime.test.mjs';
+    const ci=yaml.load(await read('.github/workflows/ci.yml'));
+    ci.jobs['lint-auto-merge-decision'].steps.push({run:`node --test ${reader}`});
+    const readerSource=`import {test} from 'node:test';
+import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {spawn} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import yaml from 'js-yaml';
+const root=fileURLToPath(new URL('../../../../',import.meta.url));
+const workflow=yaml.load(readFileSync(join(root,'.github/workflows/nightly-regression.yml'),'utf8'));
+test('actual inputs',()=>{
+  const ci=yaml.load(readFileSync(join(root,'.github/workflows/ci.yml'),'utf8'));
+  const child=spawn('bash',[join(root,'packages/brain/scripts/smoke/factory-f5-cockpit-smoke.sh')]);
+});`;
+    const sources=new Map([[reader,readerSource],['.github/workflows/ci.yml',yaml.dump(ci)],
+      ['packages/brain/scripts/smoke/factory-f5-cockpit-smoke.sh','bash "$(dirname "${BASH_SOURCE[0]}")/healthz-smoke.sh" '+String.fromCharCode(92)]]);
+    const modelRead=async path=>sources.has(path)?sources.get(path):read(path);
+    const run=extra=>build({paths:[...paths,reader],readSource:modelRead,...extra});
     const result=await run(),f3=result.consumers[1];
     expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
     for(const path of [reader,'packages/brain/scripts/smoke/factory-f5-cockpit-smoke.sh','packages/brain/scripts/smoke/healthz-smoke.sh'])expect(f3.bindings.some(b=>b.path===path)).toBe(true);
     expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:'.github/workflows/ci.yml',input_path:reader,kind:'required_node_test'}));
     expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:reader,input_path:'packages/brain/scripts/smoke/factory-f5-cockpit-smoke.sh',kind:'node_test_spawn_bash'}));
     expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:'packages/brain/scripts/smoke/factory-f5-cockpit-smoke.sh',input_path:'packages/brain/scripts/smoke/healthz-smoke.sh',kind:'relative_bash_call'}));
-    const missing=await run({readSource:async path=>path===reader?'// old spawn/readFileSync names only\nexport const unused=true;':headRead(path)});
+    const missing=await run({readSource:async path=>path===reader?'// old spawn/readFileSync names only\nexport const unused=true;':modelRead(path)});
     expect(missing.consumers[1].status).toBe('unknown');expect(missing.consumers[1].bindings).toEqual([]);
   });
 });

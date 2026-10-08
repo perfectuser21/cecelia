@@ -77,6 +77,7 @@ async function readDefinitions(db, input) {
   const ids = [...new Set(workflows.flatMap(w => w.payload.activities.map(r => r.activity_version_id)))];
   const activities = (await db.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[]) ORDER BY id', [ids])).rows;
   requireEvidence(activities.length === ids.length, '固定Activity版本不存在');
+  for(const activity of activities)requireEvidence(activity.payload.definition_scope!=='consumer_evidence','消费者来源证据不是完整执行Activity','CONSUMER_EVIDENCE_NOT_EXECUTABLE');
   for (const w of workflows) requireEvidence(input.workflows.find(i => i.workflow_definition_version_id === w.id)?.payload_sha256 === w.payload_sha256, 'Workflow摘要不符');
   for (const row of [...workflows, ...activities]) requireEvidence(input.components.some(c => c.kind === 'repo' && c.repo === row.source_repo && c.revision === row.source_commit), '定义来源repo/SHA与release不符');
   for (const a of activities) for (const binding of a.payload.implementation_bindings || []) {
