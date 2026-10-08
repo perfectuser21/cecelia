@@ -27,6 +27,22 @@ it('真实PG：被同SHA流程引用的retired owner没有同SHA定义也独立�
  expect(s.source_registry.registry_sha256).toMatch(/^[0-9a-f]{64}$/);
  expect(s.source_registry.canonical.journeys.some(j=>j.id===fixture.capabilities[1])).toBe(true);
 });
+it('真实PG：两业务映射仅一个有同SHA定义；另一真实retired owner树补齐映射，错误实体/来源/父级仍UNKNOWN',async()=>{
+ fixture=await implementationImpactDatabase();const {db}=fixture,revision='b'.repeat(40),q={scope:'phones',repo:IMPACT_REPO,revision};
+ await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[fixture.ids.keyword]);await fixture.advance();
+ const valid=await exportImplementationSnapshot(db,q);
+ expect(valid.definitions.workflows).toHaveLength(1);
+ expect(valid.status,JSON.stringify(valid.gaps)).toBe('verified');
+ const wrong=await fixture.map(revision,fixture.capabilities,'phones','phone-source','evil/repo');
+ expect((await exportImplementationSnapshot(db,q)).status).toBe('unknown');
+ const actual=await fixture.map(revision,fixture.capabilities);
+ await db.query(`UPDATE map_manifest_versions SET manifest=jsonb_set(manifest,'{capabilities,1,brain_binding,entity_type}','"activity"') WHERE id=$1`,[actual.id]);
+ expect((await exportImplementationSnapshot(db,q)).gaps).toContainEqual(expect.objectContaining({code:'capability_mapping_missing'}));
+ await fixture.map(revision,fixture.capabilities);
+ await db.query('UPDATE capabilities SET parent_journey_id=NULL WHERE id=$1',[fixture.capabilities[1]]);
+ const noParent=await exportImplementationSnapshot(db,q);expect(noParent.status).toBe('unknown');
+ expect(noParent.gaps).toContainEqual(expect.objectContaining({code:'source_owner_registry_invalid'}));
+});
 it('真实固定Git字节+PG：仅验证已有定义消费者；完整retired owner闭包可验证并导入scratch，篡改摘要拒绝',async()=>{
  fixture=await implementationImpactDatabase();const {db,contracts}=fixture;
  await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[fixture.ids.keyword]);
