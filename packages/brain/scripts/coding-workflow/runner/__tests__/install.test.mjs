@@ -91,6 +91,56 @@ describe('install.sh', () => {
     expect(lint.status, lint.stdout + lint.stderr).toBe(0);
   });
 
+  it('设置 CODING_WF_AUTOMERGE=0：写进 plist 的 EnvironmentVariables，且 plist 合法', () => {
+    const r = runInstall(['--dry-run'], { ...env, CODING_WF_AUTOMERGE: '0' });
+    expect(r.status, r.stderr).toBe(0);
+    const plist = plistOf(r.stdout);
+    const entry = '<key>CODING_WF_AUTOMERGE</key>\n    <string>0</string>';
+    expect(plist).toContain(entry);
+    const envStart = plist.indexOf('<key>EnvironmentVariables</key>');
+    const envEnd = plist.indexOf('</dict>', envStart);
+    expect(plist.indexOf(entry)).toBeGreaterThan(envStart);
+    expect(plist.indexOf(entry)).toBeLessThan(envEnd);
+    expect(plist).not.toContain('__');
+
+    const plutil = spawnSync('sh', ['-c', 'command -v plutil'], { encoding: 'utf8' }).stdout.trim();
+    const file = path.join(root, 'automerge.plist');
+    fs.writeFileSync(file, plist);
+    if (!plutil) {
+      expect(fs.readFileSync(file, 'utf8')).toMatch(/^<\?xml[\s\S]*<\/plist>$/);
+      return;
+    }
+    const lint = spawnSync(plutil, ['-lint', file], { encoding: 'utf8' });
+    expect(lint.status, lint.stdout + lint.stderr).toBe(0);
+  });
+
+  it('CODING_WF_AUTOMERGE 值含 XML 特殊字符：转义后 plist 仍合法', () => {
+    const r = runInstall(['--dry-run'], { ...env, CODING_WF_AUTOMERGE: 'a&b<c>' });
+    expect(r.status, r.stderr).toBe(0);
+    const plist = plistOf(r.stdout);
+    expect(plist).toContain('<key>CODING_WF_AUTOMERGE</key>\n    <string>a&amp;b&lt;c&gt;</string>');
+  });
+
+  it('未设置 CODING_WF_AUTOMERGE：plist 不出现该键，也不留占位或空行', () => {
+    const cleanEnv = { ...env };
+    delete cleanEnv.CODING_WF_AUTOMERGE;
+    const r = runInstall(['--dry-run'], cleanEnv);
+    expect(r.status, r.stderr).toBe(0);
+    const plist = plistOf(r.stdout);
+    expect(plist).not.toContain('CODING_WF_AUTOMERGE');
+    expect(plist).not.toContain('__');
+    expect(plist).not.toContain('\n\n\n');
+    expect(plist).not.toMatch(/\n\s*\n/);
+  });
+
+  it('CODING_WF_AUTOMERGE 为空串：等同未设置', () => {
+    const r = runInstall(['--dry-run'], { ...env, CODING_WF_AUTOMERGE: '' });
+    expect(r.status, r.stderr).toBe(0);
+    const plist = plistOf(r.stdout);
+    expect(plist).not.toContain('CODING_WF_AUTOMERGE');
+    expect(plist).not.toContain('__');
+  });
+
   it('缺工具（claude 不在 PATH）：报错退出，不输出 plist', () => {
     const r = runInstall(['--dry-run'], { ...env, PATH: `${toolDirs.slice(0, 3).join(':')}:/usr/bin:/bin` });
     expect(r.status).not.toBe(0);

@@ -8,6 +8,7 @@
 #
 # 可覆盖：CODING_WF_RUN_USER（默认 administrator）、CODING_WF_USER_HOME（默认 /Users/<user>）、
 #         CODING_WF_REPO（默认 <home>/perfect21/cecelia-cw-runner）、CODING_WF_ORIGIN_URL、BRAIN_URL。
+#         CODING_WF_AUTOMERGE（设置后写入 plist 的 EnvironmentVariables，如 0=关闭自动合并；未设置/为空则不写）。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,6 +61,22 @@ done
 # sed 替换值转义：\ & 和分隔符 |
 esc() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
 
+# 把 __AUTOMERGE_ENV__ 占位行换成 CODING_WF_AUTOMERGE 的 key/string 两行；未设置/为空则整行删除。
+# 值经环境变量传入 awk（避免转义被 awk 解释），并先做 XML 转义（& 须最先转）。
+fill_automerge() {
+  local val="${CODING_WF_AUTOMERGE:-}"
+  val="${val//&/&amp;}"; val="${val//</&lt;}"; val="${val//>/&gt;}"
+  AUTOMERGE_XML="$val" awk '
+    /^[[:space:]]*__AUTOMERGE_ENV__[[:space:]]*$/ {
+      if (ENVIRON["AUTOMERGE_XML"] != "") {
+        print "    <key>CODING_WF_AUTOMERGE</key>"
+        print "    <string>" ENVIRON["AUTOMERGE_XML"] "</string>"
+      }
+      next
+    }
+    { print }'
+}
+
 render_plist() {
   sed -e "s|__LABEL__|$(esc "$LABEL")|g" \
       -e "s|__USER__|$(esc "$RUN_USER")|g" \
@@ -70,7 +87,7 @@ render_plist() {
       -e "s|__BRAIN_URL__|$(esc "$BRAIN")|g" \
       -e "s|__REPO__|$(esc "$REPO")|g" \
       -e "s|__LOG__|$(esc "$LOG_FILE")|g" \
-      "$TEMPLATE"
+      "$TEMPLATE" | fill_automerge
 }
 
 # dry-run 只打印；否则执行
