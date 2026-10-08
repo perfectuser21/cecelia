@@ -109,7 +109,7 @@ it('实际scratch双Git消费者只封存F3来源集合；不改旧current/八�
     execFileSync('git',['update-ref','HEAD',candidate.head],{cwd:candidate.dir});
     await frozenSource.projectImplementationSnapshot(fixture.db,rebuilt,candidate.dir);
     const graphs=(await fixture.db.query('SELECT repo,source_revision FROM graph_snapshot_versions WHERE repo=ANY($1::text[])',
-      ['perfectuser21/zenithjoy-workspace','cecelia-factory-source'])).rows;
+      [['perfectuser21/zenithjoy-workspace','cecelia-factory-source']])).rows;
     expect(graphs).toContainEqual({repo:'perfectuser21/zenithjoy-workspace',source_revision:candidate.head});
     expect(graphs).toContainEqual({repo:'cecelia-factory-source',source_revision:revision});
     expect(graphs).not.toContainEqual({repo:'cecelia-factory-source',source_revision:candidate.head});
