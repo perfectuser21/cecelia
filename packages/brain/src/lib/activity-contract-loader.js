@@ -12,7 +12,7 @@ export async function loadActivityContracts(registrations, digest, fetchFile, re
     if (docs.has(cap)) return;
     loading.add(cap);
     const doc = yaml.load(await fetchFile(path));
-    if (doc?.capability !== cap || !Array.isArray(doc.activities)) throw new Error(`契约能力映射无效: ${cap}`);
+    if ((doc?.contract_key ?? doc?.capability) !== cap || !IDENT.test(doc?.capability || '') || !Array.isArray(doc.activities)) throw new Error(`契约能力映射无效: ${cap}`);
     docs.set(cap,doc);
     for (const a of doc.activities) {
       if (a.ref !== undefined) {
@@ -26,6 +26,14 @@ export async function loadActivityContracts(registrations, digest, fetchFile, re
     if (w.source_path !== contractPath(w.source_capability)) throw new Error(`来源路径映射无效: ${w.key}`);
     await load(w.source_capability,w.source_path);
     if (docs.get(w.source_capability).workflow !== w.source_workflow) throw new Error(`来源工作流映射无效: ${w.key}`);
+    const doc = docs.get(w.source_capability);
+    if (doc.contract_key) {
+      const owners = registeredOwners.filter(row => row.source_capability === doc.capability);
+      const owner = owners.length === 1 ? owners[0] : null;
+      if (!owner?.capability_id || owner.source_repo !== w.source_repo || owner.capability_id !== w.capability_id) {
+        throw new Error(`流程契约能力归属无效: ${w.key}`);
+      }
+    }
   }
   for (const w of registeredOwners) {
     const doc=docs.get(w.source_capability);
