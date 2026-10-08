@@ -31,11 +31,6 @@
       "owner_path": "packages/brain/src/lib/activity-contract-loader.js",
       "path": "packages/quality/smoke-allowlist.txt",
       "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/activity-contract-loader.js",
-      "path": "changes/cp-10082313-leadgen-contract-identity.md",
-      "role": "release"
     }
   ]
 }
