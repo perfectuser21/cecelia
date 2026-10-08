@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { extractWorkspaceCiSourceBundle, F3_IDENTITY } from '../workspace-ci-source-bundle.mjs';
+import { extractWorkspaceCiSourceBundle, F3_IDENTITY } from '../../../packages/brain/src/lib/workspace-ci-source-bundle.js';
 
 const WR='perfectuser21/zenithjoy-workspace', BR='perfectuser21/cecelia';
 const specs=[['implementation-impact','impact','gate','implementation-pr-gate.mjs'],['pilot-release-verification','verify','verify','pilot-release-verification.mjs']];
@@ -125,12 +125,6 @@ for(const [name,value,valid] of [
  ['重复scope',JSON.stringify({schema_version:1,scopes:['zenithjoy','zenithjoy']}),false],
  ['宽泛scope',JSON.stringify({schema_version:1,scopes:['all']}),false],
 ])test(`Workspace多scope caller拒绝扩大协议：${name}`,async t=>{const f=fixture(t);const p='.github/workflows/implementation-impact.yml';f.wf[p]+= `      admission_scopes: '${value}'\n`;fixedNewBrain(f,b=>{b[p]=b[p].replace('    inputs:\n',"    inputs:\n      admission_scopes: {required: false, type: string, default: ''}\n");});const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,valid?'verified':'unknown',JSON.stringify(r.gaps));});
-
-test('生产解析真身和CI薄入口共用同一函数与身份对象',async()=>{
- const core=await import('../../../packages/brain/src/lib/workspace-ci-source-bundle.js');
- assert.equal(core.extractWorkspaceCiSourceBundle,extractWorkspaceCiSourceBundle);
- assert.equal(core.F3_IDENTITY,F3_IDENTITY);
-});
 
 // 固定候选callee a7e7617；仅源结构兼容，main准入仍独立UNKNOWN。
 const VERSIONED_RUN="set -euo pipefail\nif [[ \"$MODE\" == pr && -n \"$ADMISSION_SCOPES\" ]]; then\n  jq -e 'type == \"object\" and keys == [\"schema_version\", \"scopes\"] and .schema_version == 1 and (.scopes | type == \"array\" and length > 0 and all(.[]; type == \"string\" and test(\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\")) and length == (unique | length))' <<< \"$ADMISSION_SCOPES\" >/dev/null\n  jq --arg root \"$RUNNER_TEMP/implementation-input\" '.scopes | map({scope:.,snapshotBase:($root+\"/base/base-\"+.+\".json\"),snapshotHead:($root+\"/head/head-\"+.+\".json\")})' <<< \"$ADMISSION_SCOPES\" > \"$RUNNER_TEMP/implementation-input/scopes.json\"\n  node tooling/scripts/ci/implementation-multi-pr-gate.mjs --repo-root \"$GITHUB_WORKSPACE/source\" \\\n    --base \"$BASE\" --head \"$HEAD\" --mode \"$MODE\" --scopes-file \"$RUNNER_TEMP/implementation-input/scopes.json\" --output-dir \"$RUNNER_TEMP/implementation-output\"\nelse\n  node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root \"$GITHUB_WORKSPACE/source\" --scope \"$MAP_SCOPE\" \\\n    --base \"$BASE\" --head \"$HEAD\" --mode \"$MODE\" \\\n    --snapshot-base \"$RUNNER_TEMP/implementation-input/base/base.json\" \\\n    --snapshot-head \"$RUNNER_TEMP/implementation-input/head/head.json\" --output-dir \"$RUNNER_TEMP/implementation-output\"\nfi\n";
