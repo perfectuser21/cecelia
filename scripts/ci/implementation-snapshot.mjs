@@ -12,7 +12,9 @@ import { classifyAssertionRef } from '../../packages/brain/src/lib/gp-assertion-
 import { randomUUID } from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {collectScratchWorkspaceConsumerSourceSet,readWorkspaceConsumerBrainRevisions} from '../../packages/brain/src/lib/consumer-source-set.js';
-import { readFileSync,realpathSync } from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import { readFileSync,realpathSync,mkdtempSync,rmSync } from 'node:fs';
 import { DB_DEFAULTS } from '../../packages/brain/src/db-config.js';
 import { validateImplementationSnapshot,validateImplementationSnapshotForDatabase,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { runProjection } from '../../packages/brain/src/map/projector.js';
@@ -164,16 +166,18 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
   await validateImplementationSnapshotForDatabase(db,s);
   s=await verifySnapshotSource(s,repoRoot,{db});
   const edges=definitionEdges(s); // 在写隔离扫描图之前先拒绝无效定义路径。
-  const repo=s.map.repositories[0].repo,staging=`ci-scan:${repo}`;
-  const result=await scanRepo({name:staging,root:realpathSync(repoRoot)},db);
-  if(result.error||result.skipped||result.sourceRevision!==s.revision)throw ciFailure('GRAPH_SCAN_FAILED',result.error?.message||'scan revision mismatch');
-  const raw=(await db.query('SELECT src_path,dst_path,edge_type,detail FROM graph_edges WHERE repo=$1',[staging])).rows;
-  const byKey=new Map(raw.map(e=>[JSON.stringify([e.src_path,e.dst_path,e.edge_type]),e]));
-  for(const edge of edges){
-    const key=JSON.stringify([edge.src_path,edge.dst_path,edge.edge_type]);
-    if(!byKey.has(key))byKey.set(key,edge);
+  const cross=s.scope===EXISTING_OPS_SCOPE&&s.repo==='perfectuser21/zenithjoy-workspace';
+  const registryRepo=s.map.repositories[0].repo;
+  await scanFixedImplementationGraph(db,cross?s.repo:registryRepo,repoRoot,s.revision,edges);
+  if(cross){
+    const nativeRoot=fileURLToPath(new URL('../../',import.meta.url)),dir=mkdtempSync(join(tmpdir(),'implementation-native-graph-'));
+    try{
+      execFileSync('git',['clone','--shared','--no-checkout','--quiet',nativeRoot,dir],{stdio:['ignore','pipe','pipe']});
+      execFileSync('git',['checkout','--quiet','--detach',s.registry_source.revision],{cwd:dir,stdio:['ignore','pipe','pipe']});
+      const nativeEdges=definitionEdges({...s,repo:s.registry_source.repo,revision:s.registry_source.revision,assertions:[]});
+      await scanFixedImplementationGraph(db,registryRepo,dir,s.registry_source.revision,nativeEdges,'cecelia');
+    }finally{rmSync(dir,{recursive:true,force:true});}
   }
-  await replaceRepoEdges(db,repo,[...byKey.values()],{sourceRevision:s.revision,scannerVersion:'implementation-ci-v1'});
   const manifest=structuredClone(s.map.manifest.manifest);
   // 组织UUID仍来自登记；仅本次隔离扫描的source_revision重新钉到实际Git。
   for(const node of [...manifest.value_streams,...manifest.capabilities])if(node.brain_binding?.source_repo===s.repo)node.brain_binding.source_revision=s.revision;
@@ -254,4 +258,14 @@ async function scratchWorkspaceProof(db,revision,repoRoot,anchor){
  const {unverified_reference_ids,...identity}=EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops');
  const proof=await collectScratchWorkspaceConsumerSourceSet(db,{workspace,brain:{repo:'perfectuser21/cecelia',revisions},identity,anchor},{readSource});
  if(proof.status!=='verified')throw ciFailure('CONSUMER_SOURCE_MISMATCH');return proof;
+}
+
+async function scanFixedImplementationGraph(db,repo,root,revision,edges,sourceName){
+ const staging=`ci-scan:${repo}`;
+ const result=await scanRepo({name:staging,root:realpathSync(root),...(sourceName?{sourceName}:{})},db);
+ if(result.error||result.skipped||result.sourceRevision!==revision)throw ciFailure('GRAPH_SCAN_FAILED',result.error?.message||'scan revision mismatch');
+ const raw=(await db.query('SELECT src_path,dst_path,edge_type,detail FROM graph_edges WHERE repo=$1',[staging])).rows;
+ const byKey=new Map(raw.map(e=>[JSON.stringify([e.src_path,e.dst_path,e.edge_type]),e]));
+ for(const edge of edges){const key=JSON.stringify([edge.src_path,edge.dst_path,edge.edge_type]);if(!byKey.has(key))byKey.set(key,edge);}
+ await replaceRepoEdges(db,repo,[...byKey.values()],{sourceRevision:revision,scannerVersion:'implementation-ci-v1'});
 }
