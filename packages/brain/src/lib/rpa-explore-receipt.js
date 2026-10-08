@@ -4,7 +4,7 @@ export function rpaExploreFailure(task, receipt) {
   const text = (receipt.text ?? '').trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i, '$1').trim();
   let report;
   try { report = JSON.parse(text); } catch { /* 显式探路任务缺少 JSON 也不能完成。 */ }
-  const explicitExplore = /skill-explore/.test(task.payload?.qiumi_source?.body ?? '');
+  const explicitExplore = /使用\s*skill\s*[:：]\s*skill-explore\b|阶段\s*[:：]\s*探路/.test(task.payload?.qiumi_source?.body ?? '');
   if (report?.stage !== 'explore') return explicitExplore ? 'rpa_explore_result_missing' : null;
   if (report.run_id !== task.run_id) return 'rpa_explore_run_mismatch';
   if (report.claimed_result !== 'success') {
