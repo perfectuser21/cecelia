@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.379.8
+**Brain 版本**: 1.379.9
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,11 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.379.9 — 试点发布门禁修复：口径恢复为只认 CI 回归登记，回归格归还消费者能力
+
+- 试点发布验证（pilot-release-verification）：只认 registerCapabilityRegression 写的 CI 回归登记（scenario + cell_key regression:%）；element/probe 由运行时探针负责，不进门禁（迁移 520 无意放宽的口径恢复到 10-04）。regression 行 assertion_ref 为空视为未声明，对应用法照报 pilot_regression_missing；引用非法照记 pilot_assertion_invalid。
+- 迁移 534：迁移 520「格子跟随所属 Activity」误把共享 Activity 上按消费者登记的回归格（cell_key=regression:<能力>:…）改到 Activity 的能力，按 cell_key 改回（仅限该能力确有生效流程在用此 Activity 的行），先备份再改，附回滚。生产命中 43 行（对标获客 a1000000-…02）。
 
 ## Brain 1.379.7 — 获客重组：能力「智能获客」+ 四条抖音流程（视频发现 / 视频处理 / 评论评分 / 线索触达），旧流程并存
 
