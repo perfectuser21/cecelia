@@ -41,7 +41,8 @@ export async function readImplementationSnapshotInTransaction(db,q){
   if(repositories.length!==1)gap(repositories.length?'scope_repository_ambiguous':'scope_repository_missing',{scope:q.scope,repo:q.repo});
   const workflows=(await db.query('SELECT * FROM workflows WHERE source_repo=$1 ORDER BY id',[q.repo])).rows;
   const sourceRegistry=await readSourceOwnerRegistry(db,q,workflows);
-  try{validateSourceOwnerRegistry(sourceRegistry,q.repo);}
+  let sourceRegistryValid=false;
+  try{validateSourceOwnerRegistry(sourceRegistry,q.repo);sourceRegistryValid=true;}
   catch(error){gap('source_owner_registry_invalid',{reason:error.code});}
   const candidates=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[q.repo,q.revision])).rows;
   const selected=[];
@@ -77,9 +78,15 @@ export async function readImplementationSnapshotInTransaction(db,q){
   const journeys=(await db.query(`WITH RECURSIVE chain AS(SELECT * FROM ${TREE_NODES_SQL} n WHERE id=ANY($1::uuid[])
     UNION SELECT j.* FROM ${TREE_NODES_SQL} j JOIN chain c ON j.id=c.parent_journey_id) SELECT * FROM chain ORDER BY id`,[capabilityIds])).rows;
   const mapped=new Set();
+  const registeredCapabilityIds=new Set(sourceRegistry.canonical.workflows.map(w=>w.capability_id));
   for(const node of manifest?.manifest?.capabilities||[]){
     const b=node.brain_binding;
-    if(!b||b.entity_type!=='capability'||!journeys.some(j=>j.id===b.entity_id&&j.parent_journey_id))gap('capability_mapping_missing',{node_key:node.key});
+    // 额外业务映射仅由真实登记owner及完整树证明；不增加本次SHA的定义。
+    const parentBinding=manifest.manifest.value_streams?.find(v=>v.key===node.value_stream_key)?.brain_binding;
+    const registeredOwnerTree=sourceRegistryValid&&registeredCapabilityIds.has(b?.entity_id)&&
+      parentBinding?.entity_type==='value_stream'&&parentBinding.source_repo===q.repo&&parentBinding.source_revision===q.revision&&
+      sourceRegistry.canonical.journeys.some(j=>j.id===b.entity_id&&j.parent_journey_id===parentBinding.entity_id);
+    if(!b||b.entity_type!=='capability'||!journeys.some(j=>j.id===b.entity_id&&j.parent_journey_id)&&!registeredOwnerTree)gap('capability_mapping_missing',{node_key:node.key});
     else if(b.source_repo!==q.repo)gap('capability_source_repo_mismatch',{node_key:node.key,source_repo:b.source_repo});
     else mapped.add(b.entity_id);
   }
