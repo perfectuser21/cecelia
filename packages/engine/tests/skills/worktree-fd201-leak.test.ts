@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execSync } from 'child_process'
 import { existsSync, mkdtempSync, rmSync, readFileSync } from 'fs'
-import { resolve, join } from 'path'
+import { resolve, join, basename } from 'path'
 import { tmpdir, homedir } from 'os'
 
 /**
@@ -28,6 +28,19 @@ describe('worktree-manage.sh — FD 201 leak (cp-0507172354 PR-3)', () => {
       { stdio: 'pipe' }
     )
   })
+
+  // 2026-10-08：本测试曾把 worktree 建在默认 ~/worktrees/<临时仓名>/ 下且从不清理，
+  // 每次 push 前 quickcheck 都留一个 ~/worktrees/fd201-* 目录（本机累计 83 个）。
+  const worktreeEnv = (): Record<string, string> => ({})
+  const leakedDir = () => join(homedir(), 'worktrees', basename(mainRepo))
+
+  it.skipIf(!scriptExists)('测试结束后不在 ~/worktrees 下遗留目录', () => {
+    execSync(`cd ${mainRepo} && bash ${SCRIPT} create test-fd201`, {
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_SESSION_ID: 'fd201abc-test', GUARDIAN_INTERVAL_SEC: '1', ...worktreeEnv() },
+    })
+    expect(existsSync(leakedDir())).toBe(false)
+  }, 10000)
 
   afterEach(() => {
     // 杀残留 guardian
