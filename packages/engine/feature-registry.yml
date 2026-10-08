@@ -148,6 +148,15 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.7.4"
+    date: "2026-10-08"
+    change: 'pre-push quickcheck 找不到 vitest / 拿不到锁时不再静默放行'
+    description: "scripts/quickcheck.sh 原在改动包找不到 vitest 时打印跳过并 exit 0、拿不到锁 2s 即 exit 0，等于没检查就让 push 通过（10-01~10-08 brain 依赖损坏期间 brain 改动推送前从未真跑测试）。现改为：缺 vitest 判失败并给安装命令，仅 QUICKCHECK_ALLOW_MISSING_VITEST=1 跳过；锁被占等待（QUICKCHECK_LOCK_WAIT_SEC 默认 600s）后照常检查、超时失败。锁逻辑抽到 scripts/lib/quickcheck-lock.sh，mkdir 锁写持锁 pid 并回收陈旧锁。回归测试：packages/engine/tests/scripts/quickcheck-mutex.test.ts、quickcheck-missing-vitest.test.ts（任务 6105be1a）。"
+    files:
+      - scripts/quickcheck.sh
+      - scripts/lib/quickcheck-lock.sh
+      - packages/engine/tests/scripts/quickcheck-mutex.test.ts
+      - packages/engine/tests/scripts/quickcheck-missing-vitest.test.ts
   - version: "19.7.3"
     date: "2026-10-07"
     change: 'worktree-manage.sh cleanup 修复 set -e 下 ((x++)) 静默中断'
