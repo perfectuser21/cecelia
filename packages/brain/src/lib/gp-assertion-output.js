@@ -82,6 +82,15 @@ function maxCount(text, label) {
 
 export function scenarioEvidenceFromOutput(kind, stdout = '', stderr = '') {
   const text = stripAnsi(`${stdout}\n${stderr}`);
+  if (kind === 'node') {
+    // Node官方TAP/Spec汇总；使用最后汇总，不把skip/todo当成功场景。
+    const summary = {};
+    for (const match of text.matchAll(/^(?:#|ℹ)\s+(tests|pass|fail|skipped|cancelled|todo)\s+(\d+)\s*$/gm)) summary[match[1]] = Number(match[2]);
+    const valid = ['tests','pass','fail','skipped','cancelled','todo'].every(key => Number.isSafeInteger(summary[key]))
+      && summary.tests === summary.pass + summary.fail + summary.skipped + summary.cancelled + summary.todo;
+    const passed = valid ? summary.pass : 0, failed = valid ? summary.fail : 0;
+    return {scenarioCount: passed + failed, scenarioEvidence: {kind, passed, failed}};
+  }
   if (kind === 'bash') {
     const matches = [...text.matchAll(/GP_ASSERTION_SCENARIO_COUNT=(\d+)/g)];
     const count = matches.reduce((highest, match) => (
