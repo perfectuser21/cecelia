@@ -5,3 +5,6 @@
 - 收尾：回执 completed → result.runner {receipt_path, host, duration_s, automerge}，gh pr ready + merge --auto --squash（CODING_WF_AUTOMERGE=0 关闭），PATCH completed，删 worktree；回执 failed/partial、执行器崩溃/超时、准备失败 → PATCH failed，result.coding_workflow_runner {status, failed_activity, reason_code, receipt_path, host}，保留 worktree；Brain 拒绝 completed 时改写 failed（complete_rejected）。
 - runner.sh 启动器（clone 缺失则 clone，干净才自更新）；install.sh 生成系统域 LaunchDaemon com.cecelia.coding-workflow-runner（StartInterval=300，--dry-run 只打印）。
 - launchd-patrol MUST_LOAD_DAEMONS 登记 com.cecelia.coding-workflow-runner；新增 coding-workflow-runner-smoke.sh。
+- 新增执行体类型 coding-workflow-runner（迁移 535 扩 tasks_executor_kind_check；isExternallyExecuted 认它，合同探活 unknown/onStale none）：Brain 重启时启动同步不再把 runner 任务打回 queued。runner 认领时显式写该 kind。
+- runner 防重跑：终态回写 409 时对账（仍属本机则重新认领→in_progress→终态，他人接管不覆盖）；本机有回执/日志或 Brain 已有运行结果不再新跑；启动对账本机 runner 的 in_progress 任务（无终态回执标 failed runner_lost）。
+- 候选须 task_type=data + headed_manual="true" + coding_workflow===true；先 completed 再 automerge；超时按进程树清理；失败 worktree 保留 7 天、回执/日志 30 天；plist ExitTimeOut=90。
