@@ -62,6 +62,35 @@ describe('chain_check 活动（子进程）', () => {
     expect(r.result.evidence[0].errors).toContain('upstream_anchor_missing:01-intent.md#I-9');
   });
 
+  it('上下文带 build_file/evidence_file -> 校验四文件链，chain_files 按链顺序', async () => {
+    writeSpec(['01-intent.md#I-1', '01-intent.md#I-2']);
+    fs.appendFileSync(path.join(sprintAbs, '02-spec.md'), '\n### S-2\n内容\n');
+    fs.writeFileSync(
+      path.join(sprintAbs, '03-build.md'),
+      `${fm(TASK_ID, 'build', ['02-spec.md#S-1', '02-spec.md#S-2'])}\n### B-1\n`,
+    );
+    fs.writeFileSync(
+      path.join(sprintAbs, '04-evidence.md'),
+      `${fm(TASK_ID, 'verify', ['01-intent.md#I-1', '01-intent.md#I-2'])}\n### E-1\n`,
+    );
+    const r = await runActivityProcess(ENTRY, input({
+      intent_file: '01-intent.md',
+      spec_file: '02-spec.md',
+      build_file: '03-build.md',
+      evidence_file: '04-evidence.md',
+    }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.result.outputs).toEqual({ chain_files: ['01-intent.md', '02-spec.md', '03-build.md', '04-evidence.md'] });
+  });
+
+  it('上下文声明 evidence_file 但 04 缺失 -> md_chain_invalid，errors 含 file_missing', async () => {
+    writeSpec(['01-intent.md#I-1', '01-intent.md#I-2']);
+    const r = await runActivityProcess(ENTRY, input({ intent_file: '01-intent.md', spec_file: '02-spec.md', evidence_file: '04-evidence.md' }));
+    expect(r.exitCode).toBe(2);
+    expect(r.result.reason_code).toBe('md_chain_invalid');
+    expect(r.result.evidence[0].errors).toContain('file_missing:04-evidence.md');
+  });
+
   it('sprint_dir 非法 -> fatal sprint_dir_invalid', async () => {
     const r = await runActivityProcess(ENTRY, input({ sprint_dir: '../x' }));
     expect(r.exitCode).toBe(2);

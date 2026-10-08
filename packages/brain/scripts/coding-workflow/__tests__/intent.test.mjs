@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import crypto from 'node:crypto';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractAcceptance, renderIntent } from '../lib/intent.mjs';
+import { extractAcceptance, renderIntent, intentIdsError, INTENT_ID_RE } from '../lib/intent.mjs';
 import { parseFrontmatter } from '../lib/md-chain.mjs';
 import { runActivityProcess } from './helpers/run-activity.mjs';
 
@@ -113,8 +114,13 @@ describe('intent 活动（子进程 + 假 Brain）', () => {
     expect(r.exitCode).toBe(0);
     expect(r.result.failure_class).toBeNull();
     expect(r.result.run_tag).toBe('rt-1');
-    expect(r.result.outputs).toEqual({ intent_file: '01-intent.md', intent_ids: ['I-1', 'I-2'] });
     const md = fs.readFileSync(intentFile(), 'utf8');
+    // intent_sha256：后续活动据此发现 01 被改
+    expect(r.result.outputs).toEqual({
+      intent_file: '01-intent.md',
+      intent_ids: ['I-1', 'I-2'],
+      intent_sha256: crypto.createHash('sha256').update(md).digest('hex'),
+    });
     expect(md).toContain('### I-1\n条目一');
     expect(md).toContain('### I-2\n条目二');
     expect(md).not.toContain('### I-3');
@@ -209,5 +215,16 @@ describe('intent 活动（子进程 + 假 Brain）', () => {
     reply.body = { id: TASK_ID, title: '标题', payload: { acceptance: ['A'] } };
     const r = await runActivityProcess(ENTRY, input());
     expect(r.stdout.trim().split('\n')).toHaveLength(1);
+  });
+});
+
+describe('I-n 格式统一常量', () => {
+  it('INTENT_ID_RE 只认 I-<数字>', () => {
+    expect(['I-1', 'I-12'].every((id) => INTENT_ID_RE.test(id))).toBe(true);
+    expect(['S-1', 'E-1', 'i-1', 'I-', 'I-1x'].some((id) => INTENT_ID_RE.test(id))).toBe(false);
+  });
+  it('intentIdsError 用同一常量：S-1 等非 I-n 判 intent_ids_invalid', () => {
+    expect(intentIdsError(['I-1', 'S-1'])).toBe('intent_ids_invalid');
+    expect(intentIdsError(['I-1'])).toBeNull();
   });
 });

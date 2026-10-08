@@ -5,6 +5,16 @@ const LIST_MARKER_RE = /(?:^|\n)[ \t]*(?:[-*][ \t]+(?:\[[ xX]\][ \t]*)?|\d+[.、
 // 验收段起点："验收"+可选标题后缀，之后必须紧跟冒号或换行/结尾，否则视为无关出现。
 const SECTION_RE = /验收(?:标准|条件|项|清单|要求)?[ \t]*(?:[：:]|(?=\r?\n)|$)/;
 
+/** 验收条目锚点 ID 的唯一格式（01-intent.md 的 `### I-n`），intent_ids 校验与 04-evidence 的对应字段共用。 */
+export const INTENT_ID_RE = /^I-\d+$/;
+
+/** 校验上下文里的 intent_ids：空/非数组 → 'intent_ids_missing'，元素格式不对 → 'intent_ids_invalid'，合法 → null。 */
+export function intentIdsError(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return 'intent_ids_missing';
+  if (!ids.every((id) => typeof id === 'string' && INTENT_ID_RE.test(id))) return 'intent_ids_invalid';
+  return null;
+}
+
 function squash(text) {
   return String(text).replace(/\s+/g, ' ').trim();
 }

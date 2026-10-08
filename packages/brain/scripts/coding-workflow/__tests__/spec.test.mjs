@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parseFrontmatter } from '../lib/md-chain.mjs';
 import { runActivityProcess } from './helpers/run-activity.mjs';
 import { gitPlain } from './helpers/git.mjs';
+import { expectGone, readPid } from './helpers/procs.mjs';
 import { callActivityProcess } from '../../../src/orchestrator/activity-process.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -53,10 +55,10 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(r.result).not.toBeNull();
     expect(r.result.failure_class).toBeNull();
     expect(r.result.run_tag).toBe('rt-1');
-    expect(r.result.outputs).toEqual({ spec_file: '02-spec.md' });
     expect(r.stdout.trim().split('\n')).toHaveLength(1);
 
     const md = fs.readFileSync(specFile(), 'utf8');
+    expect(r.result.outputs).toEqual({ spec_file: '02-spec.md', spec_sha256: crypto.createHash('sha256').update(md).digest('hex') });
     const fm = parseFrontmatter(md);
     expect(fm.data).toEqual({
       task_id: TASK_ID,
@@ -72,6 +74,18 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(r.stderr).toContain('fake claude log line 199');
     expect(r.stderr).toContain('FAKE_ARGS: -p --permission-mode acceptEdits --disallowedTools Bash');
     expect(r.stderr).toContain(`FAKE_CWD: ${fs.realpathSync(worktree)}`);
+  });
+
+  it('claude 改了 01-intent.md（与上下文 intent_sha256 不符）-> fatal chain_tampered', async () => {
+    const intent = path.join(worktree, 'sprints/s1/01-intent.md');
+    fs.mkdirSync(path.dirname(intent), { recursive: true });
+    fs.writeFileSync(intent, '# intent\n');
+    const intentSha = crypto.createHash('sha256').update('# intent\n').digest('hex');
+    const r = await run('ok', { intent_sha256: intentSha }, { FAKE_TAMPER_FILE: 'sprints/s1/01-intent.md' });
+    expect(r.exitCode).toBe(2);
+    expect(r.result.failure_class).toBe('fatal');
+    expect(r.result.reason_code).toBe('chain_tampered');
+    expect(r.result.evidence).toEqual([{ tampered_files: ['01-intent.md'] }]);
   });
 
   it('退出 0 但没写文件 -> fatal spec_missing', async () => {
@@ -203,25 +217,6 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     },
   );
 
-  const readPid = (file) => {
-    const pid = Number(fs.readFileSync(file, 'utf8'));
-    expect(Number.isInteger(pid) && pid > 0).toBe(true);
-    return pid;
-  };
-  // 进程被杀后可能短暂以僵尸状态存在（等 init 回收），轮询到 ESRCH；到期仍存在则补杀防泄漏并失败
-  const expectGone = async (pid, what) => {
-    for (let i = 0; i < 40; i += 1) {
-      try {
-        process.kill(pid, 0);
-      } catch (error) {
-        expect(error.code, what).toBe('ESRCH');
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    try { process.kill(pid, 'SIGKILL'); } catch { /* 已退出 */ }
-    expect.fail(`${what} (pid ${pid}) 仍然存活`);
-  };
   const pidFiles = () => ({
     FAKE_CLAUDE_PID_FILE: path.join(pidDir, 'claude.pid'),
     FAKE_CLAUDE_CHILD_PID_FILE: path.join(pidDir, 'child.pid'),
@@ -311,7 +306,7 @@ describe('spec 活动（子进程 + 假 claude）', () => {
       const r = await run('linger', {}, { FAKE_CLAUDE_CHILD_STDIO: stdio, ...files });
       expect(r.exitCode).toBe(0);
       expect(r.result.failure_class).toBeNull();
-      expect(r.result.outputs).toEqual({ spec_file: '02-spec.md' });
+      expect(r.result.outputs.spec_file).toBe('02-spec.md');
       expect(Date.now() - started).toBeLessThan(10000);
       expect(fs.existsSync(specFile())).toBe(true);
       await expectGone(readPid(files.FAKE_CLAUDE_CHILD_PID_FILE), '孙进程');

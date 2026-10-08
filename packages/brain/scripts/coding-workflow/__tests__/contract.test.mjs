@@ -37,7 +37,7 @@ const REPORTED = {
   spec: {
     retryable: ['claude_failed', 'claude_timeout'],
     needs_human: ['claude_auth'],
-    fatal: ['sprint_dir_invalid', 'task_id_missing', 'intent_ids_missing', 'intent_ids_invalid', 'spec_missing', 'spec_out_of_scope_write'],
+    fatal: ['sprint_dir_invalid', 'task_id_missing', 'intent_ids_missing', 'intent_ids_invalid', 'spec_missing', 'spec_out_of_scope_write', 'chain_tampered'],
   },
   chain_check: {
     fatal: ['md_chain_invalid', 'sprint_dir_invalid', 'task_id_missing'],

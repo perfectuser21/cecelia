@@ -1,16 +1,27 @@
 #!/usr/bin/env node
-// 假 claude：按 FAKE_CLAUDE_MODE（ok | nofile | auth | fail | outside | sleep | linger）模拟 `claude -p <prompt> ...`。
+// 假 claude：按 FAKE_CLAUDE_MODE 模拟 `claude -p <prompt> ...`。
+// spec 用：ok | nofile | auth | fail | outside | sleep | linger；
+// build 用：build-ok（真实 git commit 并写 03-build.md）| build-nocommit | build-dirty（另留未提交改动）| build-noreport
+// | build-amend（把改动 amend 进运行前的 HEAD）| build-badreport（03 的 upstream 只覆盖第一条 S-n）；
+// verify 用：verify-pass | verify-fail（最后一条 FAIL）| verify-badformat（第一条缺 output）| verify-uncovered（只覆盖第一条 I-n）
+// | verify-outside（全 PASS 但往 worktree 根写越界文件）| verify-reset（先 git reset --hard HEAD~1 再写全 PASS 的 04）
+// | verify-fabricated（04 写了命令与输出，但对话记录里没执行过）| verify-bizauth（业务输出含 authentication failed 后非 0 退出）
+// | verify-authresult（result 事件报鉴权错误后非 0 退出）。verify-* 会在 stdout 输出 stream-json 的 tool_use/tool_result。
 // FAKE_CLAUDE_PID_FILE 指向文件时，启动即把自己的 pid 写进去（测试据此确认进程已被清理）。
 // FAKE_CLAUDE_CHILD_PID_FILE 指向文件时，sleep / linger 模式额外起一个长睡孙进程并写入其 pid；
 // FAKE_CLAUDE_CHILD_STDIO=ignore 时孙进程不继承输出管道，否则继承（握着管道）。
 // linger：照常写出合法 02-spec.md 并退出 0，但留下孙进程。
+// 越轨副作用（模拟工具闸失守，任一模式写完产物后执行）：FAKE_TAMPER_FILE 追加改写该文件；
+// FAKE_SWITCH_BRANCH 切到新分支；FAKE_PUSH=1 把当前分支推到 origin；FAKE_DELETE_FILE 删除该文件。
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 
-const mode = process.env.FAKE_CLAUDE_MODE || 'ok';
 const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf('-p') + 1] || '';
+// 按 prompt 认出 build / verify 步骤：FAKE_CLAUDE_MODE_BUILD / FAKE_CLAUDE_MODE_VERIFY 可单独指定该步模式（端到端一次跑三步用）
+const step = /^BUILD_PATH: /m.test(prompt) ? 'BUILD' : /^EVIDENCE_PATH: /m.test(prompt) ? 'VERIFY' : null;
+const mode = (step && process.env[`FAKE_CLAUDE_MODE_${step}`]) || process.env.FAKE_CLAUDE_MODE || 'ok';
 
 if (process.env.FAKE_CLAUDE_PID_FILE) fs.writeFileSync(process.env.FAKE_CLAUDE_PID_FILE, String(process.pid));
 
@@ -39,24 +50,114 @@ if (mode === 'fail') {
   process.exit(1);
 }
 
+const unset = (k) => process.env[k] ?? '<unset>';
 console.log(`FAKE_ARGS: ${argv.filter((a) => a !== prompt).join(' ')}`);
 console.log(`FAKE_CWD: ${process.cwd()}`);
-console.log(`FAKE_ENV: CLAUDECODE=${process.env.CLAUDECODE ?? '<unset>'} CLAUDE_CODE_ENTRYPOINT=${process.env.CLAUDE_CODE_ENTRYPOINT ?? '<unset>'} GIT_DIR=${process.env.GIT_DIR ?? '<unset>'}`);
+console.log(`FAKE_ENV: CLAUDECODE=${unset('CLAUDECODE')} CLAUDE_CODE_ENTRYPOINT=${unset('CLAUDE_CODE_ENTRYPOINT')} GIT_DIR=${unset('GIT_DIR')}`);
+console.log(`FAKE_GH_ENV: GH_TOKEN=${unset('GH_TOKEN')} GITHUB_TOKEN=${unset('GITHUB_TOKEN')} GH_ENTERPRISE_TOKEN=${unset('GH_ENTERPRISE_TOKEN')} GIT_TERMINAL_PROMPT=${unset('GIT_TERMINAL_PROMPT')}`);
+console.log(`FAKE_GH_CONFIG_DIR: ${unset('GH_CONFIG_DIR')}`);
+console.log(`FAKE_GH_CONFIG_EMPTY: ${Boolean(process.env.GH_CONFIG_DIR) && fs.existsSync(process.env.GH_CONFIG_DIR) && fs.readdirSync(process.env.GH_CONFIG_DIR).length === 0}`);
 console.log(`FAKE_INTENT_PATH: ${(prompt.match(/^INTENT_PATH: (.+)$/m) || [])[1]}`);
+console.log(`FAKE_PROMPT_MENTIONS_BUILD: ${prompt.includes('03-build')}`);
 for (let i = 0; i < 200; i += 1) console.log(`fake claude log line ${i}`);
 
 if (mode === 'nofile') process.exit(0);
 
-const specPath = (prompt.match(/^SPEC_PATH: (.+)$/m) || [])[1];
-const taskId = (prompt.match(/^TASK_ID: (.+)$/m) || [])[1];
-const ids = ((prompt.match(/^INTENT_IDS: (.+)$/m) || [])[1] || '').split(',').map((s) => s.trim()).filter(Boolean);
-const upstream = ids.map((id) => `01-intent.md#${id}`);
-const sections = ids.map((id, i) => `### S-${i + 1}\n对应 ${id}：改 foo.js，验证 npm test\n`);
-fs.mkdirSync(path.dirname(specPath), { recursive: true });
-fs.writeFileSync(
-  specPath,
-  `---\ntask_id: ${taskId}\nstep: spec\nupstream: ${JSON.stringify(upstream)}\n---\n# spec\n\n${sections.join('\n')}`,
-);
-// outside：除合法 02-spec.md 外，再往 worktree 根（子进程 cwd）写一个越界文件
-if (mode === 'outside') fs.writeFileSync('stray.txt', 'out of scope\n');
-if (mode === 'linger') spawnGrandchild();
+const field = (name) => (prompt.match(new RegExp(`^${name}: (.+)$`, 'm')) || [])[1];
+const idList = (name) => (field(name) || '').split(',').map((s) => s.trim()).filter(Boolean);
+const taskId = field('TASK_ID');
+const frontmatter = (step, upstream) => `---\ntask_id: ${taskId}\nstep: ${step}\nupstream: ${JSON.stringify(upstream)}\n---\n`;
+const writeFile = (file, text) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+};
+const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
+
+// build-*：在当前分支真实提交一份代码+测试，再按 SPEC_IDS 写 03-build.md
+function build() {
+  let sha = '';
+  if (mode === 'build-amend') {
+    writeFile('src/feature.js', 'export const feature = () => 0;\n');
+    git('add', '--', 'src');
+    git('commit', '-q', '--amend', '-m', 'feat: amended');
+    sha = git('rev-parse', 'HEAD').trim();
+  } else if (mode !== 'build-nocommit') {
+    // FAKE_BUILD_COMMITS：连续提交几次（默认 1）；FAKE_BUILD_EXTRA_FILE：额外一并提交的文件（相对 worktree）
+    for (let i = 1; i <= Number(process.env.FAKE_BUILD_COMMITS || 1); i += 1) {
+      writeFile('src/feature.js', `export const feature = () => ${i};\n`);
+      writeFile('src/feature.test.js', `import { feature } from './feature.js'; // ${i}\n`);
+      git('add', '--', 'src');
+      if (process.env.FAKE_BUILD_EXTRA_FILE) {
+        writeFile(process.env.FAKE_BUILD_EXTRA_FILE, `extra ${i}\n`);
+        git('add', '--', process.env.FAKE_BUILD_EXTRA_FILE);
+      }
+      git('commit', '-q', '-m', `feat: build feature ${i}`);
+    }
+    sha = git('rev-parse', 'HEAD').trim();
+  }
+  if (mode === 'build-dirty') writeFile('src/dirty.js', 'uncommitted\n');
+  if (mode === 'build-noreport') return;
+  const ids = idList('SPEC_IDS');
+  const upstream = (mode === 'build-badreport' ? ids.slice(0, 1) : ids).map((id) => `02-spec.md#${id}`);
+  const sections = ids.map((id, i) => `### B-${i + 1}\n对应 ${id}；改动 src/feature.js；测试 src/feature.test.js；命令 npm test；提交 ${sha}\n`);
+  writeFile(field('BUILD_PATH'), `${frontmatter('build', upstream)}# build\n\n${sections.join('\n')}`);
+}
+
+// 模拟 stream-json 对话记录里的一次 Bash 执行（tool_use + tool_result）
+let toolSeq = 0;
+function emitBash(command, result) {
+  toolSeq += 1;
+  const id = `toolu_${toolSeq}`;
+  console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } }));
+  console.log(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: result }] } }));
+}
+
+// verify-*：按 INTENT_IDS 写 04-evidence.md，并为每条证据输出对应的执行记录（verify-fabricated 不输出）
+function verify() {
+  // verify-bizauth：业务命令输出里有 authentication failed，claude 以非鉴权原因非 0 退出
+  if (mode === 'verify-bizauth') {
+    emitBash('npm test', 'FAIL auth.test.js > login: authentication failed for user admin');
+    console.log(JSON.stringify({ type: 'result', subtype: 'error_max_turns', is_error: true, result: 'max turns reached' }));
+    process.exit(1);
+  }
+  // verify-authresult：claude 自身的 result 事件报鉴权错误
+  if (mode === 'verify-authresult') {
+    console.log(JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'Invalid API key · Please run /login' }));
+    process.exit(1);
+  }
+  console.log(`FAKE_BUILD_PRESENT: ${fs.existsSync(path.join(path.dirname(field('EVIDENCE_PATH')), '03-build.md'))}`);
+  if (mode === 'verify-reset') git('reset', '-q', '--hard', 'HEAD~1');
+  const ids = idList('INTENT_IDS');
+  const covered = mode === 'verify-uncovered' ? ids.slice(0, 1) : ids;
+  const fence = '```';
+  const sections = covered.map((id, i) => {
+    const failed = mode === 'verify-fail' && i === covered.length - 1;
+    const command = `npm test -- ${id}`;
+    const output = failed ? 'AssertionError: expected 500 to be 200' : `ok ${id} passed`;
+    if (mode !== 'verify-fabricated') emitBash(command, `> vitest run ${id}\n${output}\n`);
+    const lines = [`### E-${i + 1}`, `对应: ${id}`, `verdict: ${failed ? 'FAIL' : 'PASS'}`, `${fence}command`, command, fence];
+    if (!(mode === 'verify-badformat' && i === 0)) lines.push(`${fence}output`, output, fence);
+    return `${lines.join('\n')}\n`;
+  });
+  writeFile(field('EVIDENCE_PATH'), `${frontmatter('verify', ids.map((id) => `01-intent.md#${id}`))}# 验收证据\n\n${sections.join('\n')}`);
+  if (mode === 'verify-outside') fs.writeFileSync('stray.txt', 'out of scope\n');
+}
+
+function sideEffects() {
+  if (process.env.FAKE_DELETE_FILE) fs.rmSync(process.env.FAKE_DELETE_FILE, { force: true });
+  if (process.env.FAKE_TAMPER_FILE) fs.appendFileSync(process.env.FAKE_TAMPER_FILE, '\n篡改\n');
+  if (process.env.FAKE_SWITCH_BRANCH) git('checkout', '-q', '-b', process.env.FAKE_SWITCH_BRANCH);
+  if (process.env.FAKE_PUSH === '1') git('push', '-q', 'origin', `HEAD:refs/heads/${git('rev-parse', '--abbrev-ref', 'HEAD').trim()}`);
+}
+
+if (mode.startsWith('build-')) build();
+else if (mode.startsWith('verify-')) verify();
+else {
+  const ids = idList('INTENT_IDS');
+  const sections = ids.map((id, i) => `### S-${i + 1}\n对应 ${id}：改 foo.js，验证 npm test\n`);
+  writeFile(field('SPEC_PATH'), `${frontmatter('spec', ids.map((id) => `01-intent.md#${id}`))}# spec\n\n${sections.join('\n')}`);
+  // outside：除合法 02-spec.md 外，再往 worktree 根（子进程 cwd）写一个越界文件
+  if (mode === 'outside') fs.writeFileSync('stray.txt', 'out of scope\n');
+  if (mode === 'linger') spawnGrandchild();
+}
+sideEffects();

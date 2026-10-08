@@ -98,6 +98,84 @@ describe('md-chain', () => {
     const r = checkChain({ dir, taskId: TASK });
     expect(r.errors).toContain('upstream_ref_invalid:bad-ref');
   });
+
+  it('02-spec 未覆盖时同时报 <file>_not_covered 与兼容的 intent_not_covered', () => {
+    writeIntent();
+    writeSpec(['01-intent.md#I-1']);
+    const r = checkChain({ dir, taskId: TASK });
+    expect(r.errors).toContain('02-spec.md_not_covered:I-2');
+    expect(r.errors).toContain('intent_not_covered:I-2');
+  });
+
+  it('step 与文件不符 -> step_mismatch', () => {
+    writeIntent();
+    fs.writeFileSync(
+      path.join(dir, '02-spec.md'),
+      `${fm(TASK, 'build', ['01-intent.md#I-1', '01-intent.md#I-2'])}\n### S-1\n`,
+    );
+    const r = checkChain({ dir, taskId: TASK });
+    expect(r.errors).toContain('step_mismatch:02-spec.md');
+  });
+});
+
+describe('md-chain 四文件链（files 指定本次应存在的链文件）', () => {
+  let dir;
+  const ALL = ['01-intent.md', '02-spec.md', '03-build.md', '04-evidence.md'];
+  const write = (file, step, upstream, body) => fs.writeFileSync(path.join(dir, file), `${fm(TASK, step, upstream)}\n${body}`);
+  const intentRefs = ['01-intent.md#I-1', '01-intent.md#I-2'];
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-chain4-'));
+    write('01-intent.md', 'intent', [], '### I-1\n一\n\n### I-2\n二\n');
+    write('02-spec.md', 'spec', intentRefs, '### S-1\n一\n\n### S-2\n二\n');
+    write('03-build.md', 'build', ['02-spec.md#S-1', '02-spec.md#S-2'], '### B-1\n一\n');
+    write('04-evidence.md', 'verify', intentRefs, '### E-1\n一\n\n### E-2\n二\n');
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('合法四文件链通过，files 按链顺序返回', () => {
+    const r = checkChain({ dir, taskId: TASK, files: ['04-evidence.md', '01-intent.md', '03-build.md', '02-spec.md'] });
+    expect(r).toEqual({ ok: true, errors: [], files: ALL });
+  });
+
+  it('03-build 未覆盖全部 S-n -> 03-build.md_not_covered:S-2', () => {
+    write('03-build.md', 'build', ['02-spec.md#S-1'], '### B-1\n');
+    const r = checkChain({ dir, taskId: TASK, files: ALL });
+    expect(r.ok).toBe(false);
+    expect(r.errors).toContain('03-build.md_not_covered:S-2');
+  });
+
+  it('04-evidence 未覆盖全部 I-n -> 04-evidence.md_not_covered:I-1', () => {
+    write('04-evidence.md', 'verify', ['01-intent.md#I-2'], '### E-1\n');
+    const r = checkChain({ dir, taskId: TASK, files: ALL });
+    expect(r.errors).toContain('04-evidence.md_not_covered:I-1');
+  });
+
+  it('04-evidence 引用不存在的 I-n -> upstream_anchor_missing', () => {
+    write('04-evidence.md', 'verify', [...intentRefs, '01-intent.md#I-7'], '### E-1\n');
+    const r = checkChain({ dir, taskId: TASK, files: ALL });
+    expect(r.errors).toContain('upstream_anchor_missing:01-intent.md#I-7');
+  });
+
+  it('files 声明了 04-evidence 但文件不存在 -> file_missing', () => {
+    fs.rmSync(path.join(dir, '04-evidence.md'));
+    const r = checkChain({ dir, taskId: TASK, files: ALL });
+    expect(r.errors).toContain('file_missing:04-evidence.md');
+  });
+
+  it('只有 01/02 的旧 sprint 仍可校验：files 只列 01/02 时不要求 03/04', () => {
+    fs.rmSync(path.join(dir, '03-build.md'));
+    fs.rmSync(path.join(dir, '04-evidence.md'));
+    const r = checkChain({ dir, taskId: TASK, files: ['01-intent.md', '02-spec.md'] });
+    expect(r).toEqual({ ok: true, errors: [], files: ['01-intent.md', '02-spec.md'] });
+  });
+
+  it('不认识的链文件 -> file_unknown', () => {
+    const r = checkChain({ dir, taskId: TASK, files: ['01-intent.md', '09-x.md'] });
+    expect(r.errors).toContain('file_unknown:09-x.md');
+  });
 });
 
 describe('extractAnchors', () => {
