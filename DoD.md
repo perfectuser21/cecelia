@@ -7,10 +7,10 @@
   Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run src/lib/__tests__/gp-assertion-command.test.js src/lib/__tests__/gp-assertion-toolchain.test.js src/lib/__tests__/gp-assertion-process.test.js src/lib/__tests__/gp-assertion-output.test.js src/lib/__tests__/implementation-consumers.test.js --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] factoryregistryboundary 真实main/CAS登记、生产refresh拒外部proof与scratch重放，保全部旧current和注册。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/existing-ops-registration.pg.integration.test.js -t '^(?!实际scratch双Git)' --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/existing-ops-registration.pg.integration.test.js -t 'factory source anchor|生产登记拒scratch|生产refresh拒绝|真实main消费者|人改slot|main已移动|工厂source导出|正式refresh只读|候选只在真实scratch|工厂冻结来源' --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] factorydualreposnapshot 真实双Git来源、F3锁内追加、actual隔离库导入/重建，分别扫描Workspace与Brain固定树并核两图身份。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/existing-ops-registration.pg.integration.test.js -t '^实际scratch双Git' --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/existing-ops-registration.pg.integration.test.js -t '实际scratch双Git' --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] factoryhistoryassertions 固定source_set、生产认证main证据与严格F3历史查询，八引用和六UNKNOWN保持，独立仓库断言与影响查询真实PG回归。
   Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js src/lib/__tests__/integration/capability-regressions.test.js src/__tests__/integration/implementation-impact.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
