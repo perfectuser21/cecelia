@@ -1,5 +1,8 @@
 import {execFileSync} from 'node:child_process';
 import {canonicalRepoIdentity} from '../../packages/brain/src/lib/gp-assertion-command.js';
+import {runRegisteredAssertions} from './implementation-gate.mjs';
+import {collectGovernanceEvidence} from './registry-lint.mjs';
+import {collectAuxiliarySourceEvidence,assertAuxiliarySourceEvidence} from './implementation-auxiliary-evidence.mjs';
 /** 联合证据保留领域切片，外层完整Git差异单独验收，不伪造一个投影。 */
 import {createHash} from 'node:crypto';
 import {assertImplementationReport} from '../../packages/brain/src/lib/implementation-report.js';
@@ -82,4 +85,24 @@ export function resolveScopedImplementationReports({source,expectedScopes,report
   const proof=aggregateScopedImplementationEvidence({source,expectedScopes,reports:parts});
   const body={schema_version:1,evidence:proof,source_reports:structuredClone(reports),resolved_foreign_paths:resolutions};
   return {...body,resolution_sha256:sha(body)};
+}
+
+export async function runScopedImplementationGate({repoRoot,evidence,timeoutMs=300000}){
+  verifyScopedImplementationGitSource(repoRoot,evidence);
+  const receipts=[];
+  for(const report of evidence.scope_reports){
+    assertAuxiliarySourceEvidence(report);
+    const governance=collectGovernanceEvidence(repoRoot,report.source);
+    if(JSON.stringify(governance?.files||[])!==JSON.stringify(report.governance_evidence?.files||[]))fail('IMPACT_GOVERNANCE_SOURCE_MISMATCH');
+    const auxiliary=collectAuxiliarySourceEvidence(repoRoot,report.source);
+    if(auxiliary?.evidence_sha256!==report.auxiliary_source_evidence?.evidence_sha256)fail('AUXILIARY_SOURCE_BYTES_MISMATCH');
+    const assertions=await runRegisteredAssertions({repoRoot,source:evidence.source,required_assertions:report.required_assertions,timeoutMs});
+    receipts.push({schema_version:1,actor:'implementation_ci_gate',scope_key:report.scope_key,source:report.source,
+      report_sha256:sha(report),assertions,verdict:assertions.every(a=>a.exit_code===0&&!a.error)?'PASS':'FAIL',
+      purpose:'admission_only',business_runtime_status:'not_evaluated'});
+  }
+  verifyScopedImplementationGitSource(repoRoot,evidence);
+  return {schema_version:2,actor:'implementation_ci_gate',evidence_kind:'scoped_implementation_admission',source:evidence.source,
+    evidence_sha256:evidence.evidence_sha256,scope_receipts:receipts,purpose:'admission_only',
+    verdict:receipts.every(r=>r.verdict==='PASS')?'PASS':'FAIL',business_runtime_status:'not_evaluated',recorded_at:new Date().toISOString()};
 }
