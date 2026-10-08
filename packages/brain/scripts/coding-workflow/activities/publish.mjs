@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { runActivity, validateBase, fail, childEnv, log } from '../lib/protocol.mjs';
 import { parseFrontmatter } from '../lib/md-chain.mjs';
+import { parseReview } from '../lib/review.mjs';
 
 const GH_AUTH_RE = /\bHTTP 401\b|authentication|auth login|missing required scope|bad credentials/i;
 // 凭据提示会让无 tty 的子进程挂住；--literal-pathspecs 禁用 :/ 等 pathspec 魔法
@@ -85,6 +86,29 @@ function acceptanceSummary({ evidence_file: evidenceFile, verified_ids: ids }, s
   return [`## 验收摘要（${sprintRel}/${evidenceFile}）`, ...lines].join('\n');
 }
 
+/**
+ * PR 正文的规格评审结论：上下文有 review_file 时列出评审轮数、最终 verdict 与每条 R-n 的首行；
+ * 没有 review_file 或文件读不到返回空串（不出现小节，也不让 publish 失败）。
+ */
+function reviewSummary({ review_file: reviewFile, review_rounds: rounds }, dir, sprintRel) {
+  if (typeof reviewFile !== 'string' || reviewFile === '') return '';
+  let text;
+  try {
+    text = fs.readFileSync(path.join(dir, reviewFile), 'utf8');
+  } catch {
+    return '';
+  }
+  const { verdict, issues } = parseReview(text);
+  const roundsText = Number.isInteger(rounds) && rounds > 0 ? rounds : '未知';
+  const lines = issues.map(({ id, targets, body }) => `- ${id}（针对 ${targets.join('、')}）：${body.split('\n')[0]}`);
+  return [
+    `## 规格评审（${sprintRel}/${reviewFile}）`,
+    `- 评审轮数：${roundsText}`,
+    `- 最终 verdict：${verdict ?? '未知'}`,
+    ...lines,
+  ].join('\n');
+}
+
 await runActivity(async (input) => {
   const { worktree, sprint_dir: sprintDir, chain_files: chainFiles } = input;
   const { dir } = validateBase(input);
@@ -124,7 +148,11 @@ await runActivity(async (input) => {
   let prUrl = lastLine(list.stdout);
 
   if (!prUrl) {
-    const body = [chainFiles.map((f) => `- ${sprintRel}/${f}`).join('\n'), acceptanceSummary(input, sprintRel)]
+    const body = [
+      chainFiles.map((f) => `- ${sprintRel}/${f}`).join('\n'),
+      reviewSummary(input, dir, sprintRel),
+      acceptanceSummary(input, sprintRel),
+    ]
       .filter(Boolean)
       .join('\n\n');
     const create = await runCmd(
