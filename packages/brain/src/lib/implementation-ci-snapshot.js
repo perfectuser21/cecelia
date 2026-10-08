@@ -1,5 +1,5 @@
 import {manifestMatchesImplementationSource} from './implementation-context.js';
-import {hasFrozenConsumerSource,sealedConsumerVersion} from './consumer-source-set.js';
+import {hasFrozenConsumerSource,sealedConsumerVersion,sealedBrainConsumerDefinition,consumerSourceAdmissionScope} from './consumer-source-set.js';
 /** 中央定义只读导出；身份由登记表给出，历史来源不以latest补齐。 */
 import {preparePilotManifestAdvance,advancePilotManifest} from './implementation-ci-pilot-manifest.js';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
@@ -20,11 +20,19 @@ export function validateSnapshotQuery(input){
 }
 const json=value=>JSON.parse(JSON.stringify(value));
 const digest=value=>stepSha256(json(value));
-export function validateImplementationSnapshot(snapshot){
+function validateSnapshot(snapshot,admissionScope={allowScratch:false}){
   if(snapshot?.schema_version!==1)throw ciFailure('SNAPSHOT_INVALID');
   validateSnapshotQuery(snapshot);
   const {snapshot_sha256,...body}=snapshot;
   if(typeof snapshot_sha256!=='string'||digest(body)!==snapshot_sha256)throw ciFailure('SNAPSHOT_DIGEST_MISMATCH');
+  if(snapshot.scope===EXISTING_OPS_SCOPE){
+    if(snapshot.snapshot_scope!=='consumer_evidence'||snapshot.execution_status!=='unknown'
+      ||digest(snapshot.unverified_reference_ids)!==digest(EXISTING_OPS_IDENTITIES.flatMap(i=>i.unverified_reference_ids)))throw ciFailure('FACTORY_EXECUTION_BOUNDARY_INVALID');
+    try{validateExistingOpsRegistry(snapshot.consumer_registry);}catch{throw ciFailure('FACTORY_REGISTRY_IDENTITY_INVALID');}
+    const {registry_sha256,...registryBody}=snapshot.consumer_registry;
+    if(digest(registryBody)!==registry_sha256)throw ciFailure('FACTORY_REGISTRY_DIGEST_MISMATCH');
+    for(const field of ['workflows','activities','references','steps'])if(digest(snapshot.canonical[field])!==digest(snapshot.consumer_registry[field]))throw ciFailure('FACTORY_CANONICAL_REGISTRY_MISMATCH');
+  }
   const anchor=snapshot.registry_source||{repo:snapshot.repo,revision:snapshot.revision};
   if(snapshot.registry_source){
     if(snapshot.scope!=='cecelia-factory'||anchor.repo!=='perfectuser21/cecelia'||!Array.isArray(snapshot.source_set)
@@ -34,8 +42,10 @@ export function validateImplementationSnapshot(snapshot){
     const sourceKey=s=>JSON.stringify(s);
     if(snapshot.source_set.length!==expectedSources.length||snapshot.source_set.some(s=>!expectedSources.some(e=>sourceKey(e)===sourceKey(s)))
       ||new Set(snapshot.source_set.map(sourceKey)).size!==snapshot.source_set.length)throw ciFailure('CONSUMER_SOURCE_SET_INVALID');
-    for(const row of snapshot.definitions.activities)if(!sealedConsumerVersion(row)
-      ||!row.payload.implementation_bindings.some(b=>b.repo===snapshot.repo&&b.revision===snapshot.revision&&hasFrozenConsumerSource(row.payload,b.repo,b.path)))throw ciFailure('CONSUMER_SOURCE_SET_INVALID');
+    const owners=snapshot.definitions.activities.filter(row=>row.payload.implementation_bindings.some(b=>b.repo===snapshot.repo&&b.revision===snapshot.revision));
+    if(!owners.length)throw ciFailure('CONSUMER_SOURCE_SET_INVALID');
+    for(const row of owners)if(row.activity_id!==EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops').activity_id||!sealedConsumerVersion(row)
+      ||!row.payload.implementation_bindings.some(b=>b.repo===snapshot.repo&&b.revision===snapshot.revision&&hasFrozenConsumerSource(row.payload,b.repo,b.path,admissionScope)))throw ciFailure('CONSUMER_SOURCE_SET_INVALID');
   }
   for(const kind of ['workflows','activities'])for(const row of snapshot.definitions[kind]){
     if(row.source_repo!==anchor.repo||row.source_commit!==anchor.revision||
@@ -44,27 +54,33 @@ export function validateImplementationSnapshot(snapshot){
   }
   return snapshot;
 }
+/** 默认同步验证不接受scratch准入；异步入口只由实际数据库身份派生权限。 */
+export function validateImplementationSnapshot(snapshot){return validateSnapshot(snapshot);}
+export async function validateImplementationSnapshotForDatabase(db,snapshot){return validateSnapshot(snapshot,await consumerSourceAdmissionScope(db));}
 export async function readImplementationSnapshotInTransaction(db,q){
   const factory=q.scope===EXISTING_OPS_SCOPE;
   const gaps=[],gap=(code,details={})=>gaps.push({code,...details});
   if(factory&&![EXISTING_OPS_REPO,CONTRACT_REPO].includes(q.repo))gap('factory_source_repo_mismatch');
   const registrations=(await db.query('SELECT * FROM map_scope_repositories WHERE scope_key=$1 ORDER BY repo',[q.scope])).rows;
-  const repositories=registrations.filter(r=>r.repo===q.repo||r.adapter_config?.source_repo===q.repo);
+  const crossRequested=factory&&q.repo===CONTRACT_REPO;
+  const repositories=registrations.filter(r=>crossRequested?r.adapter_config?.source_repo===EXISTING_OPS_REPO:r.repo===q.repo||r.adapter_config?.source_repo===q.repo);
   if(repositories.length!==1)gap(repositories.length?'scope_repository_ambiguous':'scope_repository_missing',{scope:q.scope,repo:q.repo});
-  const crossConsumer=q.scope==='cecelia-factory'&&repositories.length===1&&repositories[0].repo==='perfectuser21/cecelia'&&q.repo==='perfectuser21/zenithjoy-workspace';
+  const crossConsumer=crossRequested&&repositories.length===1;
+  const admissionScope=await consumerSourceAdmissionScope(db);
   let anchor={repo:q.repo,revision:q.revision};
-  let candidates;
+  let candidates;const rowsMatchingCross=new Set();
   if(crossConsumer){
     const rows=(await db.query(`SELECT DISTINCT wv.* FROM workflow_definition_versions wv
       CROSS JOIN LATERAL jsonb_array_elements(wv.payload->'activities') ref(value)
       JOIN activity_definition_versions av ON av.id=(ref.value->>'activity_version_id')::uuid
       WHERE wv.source_repo='perfectuser21/cecelia' AND wv.payload->>'source_scope'=$1
-      AND wv.payload->>'definition_scope'='consumer_evidence'
-      AND EXISTS(SELECT 1 FROM jsonb_array_elements(av.payload->'implementation_bindings') b WHERE b->>'repo'=$2 AND b->>'revision'=$3)`,[q.scope,q.repo,q.revision])).rows;
+      AND wv.payload->>'definition_scope'='consumer_evidence' AND wv.workflow_id=$4
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(av.payload->'implementation_bindings') b WHERE b->>'repo'=$2 AND b->>'revision'=$3)`,[q.scope,q.repo,q.revision,EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops').workflow_id])).rows;
+    for(const row of rows)rowsMatchingCross.add(row.id);
     const commits=[...new Set(rows.map(r=>r.source_commit))];
     if(commits.length!==1)gap('consumer_source_anchor_ambiguous');
     anchor={repo:'perfectuser21/cecelia',revision:commits.length===1?commits[0]:null};
-    candidates=rows.filter(r=>r.source_commit===anchor.revision);
+    candidates=anchor.revision?(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[anchor.repo,anchor.revision])).rows:[];
   }else candidates=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[q.repo,q.revision])).rows;
   candidates=candidates.filter(w=>factory?
     w.payload.definition_scope==='consumer_evidence'&&w.payload.source_scope===EXISTING_OPS_SCOPE&&EXISTING_OPS_IDENTITIES.some(i=>i.workflow_id===w.workflow_id):w.payload.definition_scope!=='consumer_evidence');
@@ -72,7 +88,9 @@ export async function readImplementationSnapshotInTransaction(db,q){
     (await db.query('SELECT * FROM workflows WHERE source_repo=$1 ORDER BY id',[anchor.repo])).rows;
   const selected=[];
   for(const id of [...new Set(candidates.map(r=>r.workflow_id))]){
-    const rows=candidates.filter(r=>r.workflow_id===id),current=rows.find(r=>r.id===workflows.find(w=>w.id===id)?.current_definition_version_id);
+    let rows=candidates.filter(r=>r.workflow_id===id);
+    if(crossConsumer&&id===EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops').workflow_id)rows=rows.filter(r=>rowsMatchingCross.has(r.id));
+    const current=rows.find(r=>r.id===workflows.find(w=>w.id===id)?.current_definition_version_id);
     if(current)selected.push(current);
     else if(rows.length===1)selected.push(rows[0]);
     else gap('definition_snapshot_ambiguous',{workflow_id:id,revision:q.revision});
@@ -83,8 +101,11 @@ export async function readImplementationSnapshotInTransaction(db,q){
   const activityVersions=[...new Set(selected.flatMap(w=>w.payload.activities.map(a=>a.activity_version_id)))];
   const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[]) ORDER BY id',[activityVersions])).rows;
   if(activities.length!==activityVersions.length)gap('activity_snapshot_missing');
-  if(crossConsumer)for(const a of activities)if(!sealedConsumerVersion(a)||a.source_commit!==anchor.revision
-    ||!a.payload.implementation_bindings.some(b=>b.repo===q.repo&&b.revision===q.revision&&hasFrozenConsumerSource(a.payload,b.repo,b.path)))gap('consumer_source_set_unknown',{activity_id:a.activity_id});
+  if(crossConsumer)for(const a of activities){
+    if(!sealedBrainConsumerDefinition(a)||a.source_commit!==anchor.revision)gap('consumer_source_digest_mismatch',{activity_id:a.activity_id});
+    if(a.activity_id===EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops').activity_id
+      &&(!sealedConsumerVersion(a)||!a.payload.implementation_bindings.some(b=>b.repo===q.repo&&b.revision===q.revision&&hasFrozenConsumerSource(a.payload,b.repo,b.path,admissionScope))))gap('consumer_source_set_unknown',{activity_id:a.activity_id});
+  }
   const workflowIds=selected.map(w=>w.workflow_id);
   const fullReferences=factory?(await db.query('SELECT * FROM workflow_activity_refs WHERE workflow_id=ANY($1::uuid[]) ORDER BY id',[workflowIds])).rows:null;
   const activityIds=factory?[...new Set(fullReferences.map(r=>r.activity_id))]:activities.map(a=>a.activity_id);
