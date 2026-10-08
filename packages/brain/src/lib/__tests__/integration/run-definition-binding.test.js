@@ -25,6 +25,15 @@ it('旧服务曾放行的消费者历史release仍禁止起跑，零运行绑定
   expect(response.status,response.body).toBe(422);
   expect(response.body.error.code).toBe('RELEASE_CONSUMER_EVIDENCE_NOT_EXECUTABLE');
   expect((await fixture.db.query('SELECT count(*)::int n FROM run_definition_bindings')).rows[0].n).toBe(0);
+  const input=fixture.runInput(legacy,seen,fixture.workflows[0]);
+  await fixture.db.query(`INSERT INTO run_definition_bindings(run_id,release_id,observation_id,workflow_id,workflow_definition_version_id,snapshot_sha256,
+    expected_path,source_kind,external_origin,attempt_key,actor,payload_sha256,payload)
+    VALUES('legacy-consumer-existing',$1,$2,$3,$4,$5,$6,'external',$7,$8,$9,$10,$11)`,
+  [input.release_id,input.observation_id,input.workflow_id,input.workflow_definition_version_id,input.snapshot_sha256,JSON.stringify(input.expected_path),input.external_origin,input.attempt_key,input.actor,releases.evidenceHash(input),input]);
+  const resume=await post('legacy-consumer-existing',input);
+  expect(resume.status,resume.body).toBe(422);
+  expect(resume.body.error.code).toBe('RELEASE_CONSUMER_EVIDENCE_NOT_EXECUTABLE');
+  await expect(service.getRunDefinitionBinding(fixture.db,'legacy-consumer-existing')).rejects.toMatchObject({code:'RELEASE_CONSUMER_EVIDENCE_NOT_EXECUTABLE'});
 });
 it('两个共享Activity Workflow各自冻结，外部run不产生task_runs；幂等和不可变',async()=>{
   for(const [i,workflow] of fixture.workflows.entries()){
