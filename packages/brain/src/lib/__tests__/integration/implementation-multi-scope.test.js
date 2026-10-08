@@ -40,7 +40,7 @@ it('真实PG全差异报告仅用另一scope真实原生调用闭包消解foreig
  expect(raw.every(r=>r.mapping_status==='unknown')).toBe(true);
  expect(multi.resolveScopedImplementationReports).toBeTypeOf('function');
  const proof=multi.resolveScopedImplementationReports({source:full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:raw});
- expect(proof.file_coverage.map(f=>f.claims.map(c=>c.scope_key))).toEqual([['cecelia-kr'],['cecelia-factory']]);
+ expect(proof.evidence.file_coverage.map(f=>f.claims.map(c=>c.scope_key))).toEqual([['cecelia-kr'],['cecelia-factory']]);
  expect(proof.resolved_foreign_paths).toHaveLength(2);
  for(const gap of [{code:'regression_missing'},{code:'auxiliary_owner_unclaimed',path:'src/factory-deploy.js'}]){
   const altered=structuredClone(raw);altered[0].gaps.push(gap);
@@ -64,5 +64,30 @@ it('组合准入必须核真实Git完整差异与祖先，不能拿领域切片�
   const incomplete=multi.aggregateScopedImplementationEvidence({source:{...src,changed_files:[src.changed_files[0]]},expectedScopes:['cecelia-kr'],reports:[parts[0]]});
   expect(()=>multi.verifyScopedImplementationGitSource(root,incomplete)).toThrow('IMPACT_MULTISCOPE_DIFF_MISMATCH');
   writeFileSync(join(root,'src/controller.js'),'dirty\n');expect(()=>multi.verifyScopedImplementationGitSource(root,proof)).toThrow('IMPACT_MULTISCOPE_SOURCE_DIRTY');
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+it('联合准入实际执行每scope固定提交回归并保存独立收据，任一失败拒绝PASS',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'multi-scope-gate-'));
+ const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
+ try{
+  git('init','-q');git('remote','add','origin','https://github.com/'+source.repo+'.git');mkdirSync(join(root,'src'));mkdirSync(join(root,'tests/smoke'),{recursive:true});
+  for(const name of ['controller.js','shared-lock.js'])writeFileSync(join(root,'src',name),'old\n');
+  writeFileSync(join(root,'tests/smoke/scope-a.sh'),'#!/bin/bash\nexit 0\n');writeFileSync(join(root,'tests/smoke/scope-b.sh'),'#!/bin/bash\nexit 7\n');
+  const commit=()=>{git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture');return git('rev-parse','HEAD');};
+  const base=commit();for(const name of ['controller.js','shared-lock.js'])writeFileSync(join(root,'src',name),'changed\n');const head=commit();
+  const src={...source,base_revision:base,head_revision:head},parts=structuredClone(reports);
+  for(const [i,part] of parts.entries()){
+   part.source.base_revision=base;part.source.head_revision=head;
+   for(const side of ['base','head']){part[side].revision=src[`${side}_revision`];part[side].graph_snapshot.source_revision=src[`${side}_revision`];}
+   for(const assertion of part.required_assertions){assertion.assertion_ref=`tests/smoke/scope-${i?'b':'a'}.sh`;assertion.source_repo=src.repo;}
+  }
+  const evidence=multi.aggregateScopedImplementationEvidence({source:src,expectedScopes:['cecelia-kr','cecelia-factory'],reports:parts});
+  expect(multi.runScopedImplementationGate).toBeTypeOf('function');
+  const receipt=await multi.runScopedImplementationGate({repoRoot:root,evidence});
+  expect(receipt.verdict).toBe('FAIL');expect(receipt.scope_receipts.map(r=>r.scope_key)).toEqual(['cecelia-kr','cecelia-factory']);
+  expect(receipt.scope_receipts[0].assertions.every(a=>a.exit_code===0)).toBe(true);
+  expect(receipt.scope_receipts[1].assertions.every(a=>a.exit_code===7)).toBe(true);
+  expect(receipt.business_runtime_status).toBe('not_evaluated');
  }finally{rmSync(root,{recursive:true,force:true});}
 });
