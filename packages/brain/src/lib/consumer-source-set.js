@@ -90,8 +90,44 @@ export async function readConsumerSourceMainWitness(input,{fetchFn=globalThis.fe
    history.push({...source,current_main:current,url:`https://api.github.com/repos/${path}`,comparison});
   }
   const witness={source_set:sources,anchor,run,jobs:jobsResponse.jobs,artifact,snapshot,main_history:history};
-  if(!validateConsumerSourceMainEvidence(witness))return unknown('CONSUMER_MAIN_EVIDENCE_UNKNOWN');
+  if(!validateConsumerSourceMainEvidence(witness))return {...unknown('CONSUMER_MAIN_EVIDENCE_UNKNOWN'),diagnostics:{
+   run:{id:run.id,name:run.name,path:run.path,event:run.event,head_sha:run.head_sha,head_branch:run.head_branch,status:run.status,repository:run.repository?.full_name},
+   snapshot:{repo:snapshot.repo,revision:snapshot.revision,status:snapshot.status,schema_version:snapshot.schema_version,gaps:snapshot.gaps,digest_valid:snapshot.snapshot_sha256===stepSha256((({snapshot_sha256,...body})=>body)(snapshot))},
+   artifact:{name:artifact.name,workflow_run:artifact.workflow_run,expired:artifact.expired},
+   jobs:jobsResponse.jobs?.filter(j=>j.name==='snapshot-main').map(j=>({name:j.name,status:j.status,conclusion:j.conclusion})),
+   main_history:history.map(h=>({repo:h.repo,revision:h.revision,current_main:h.current_main,status:h.comparison?.status,base_sha:h.comparison?.base_commit?.sha,merge_base_sha:h.comparison?.merge_base_commit?.sha}))}};
   const result={status:'verified',admission:{status:'verified',source_basis:'trusted_main_history'},witness};
   trustedMainWitnesses.add(result);return result;
  }catch{return unknown('CONSUMER_MAIN_SOURCE_UNAVAILABLE');}
+}
+const trustedWorkspaceConsumerSources=new WeakSet();
+export const isTrustedWorkspaceConsumerSource=proof=>trustedWorkspaceConsumerSources.has(proof);
+/** 唯一生产core的实际动态消费者；core未合入/不可加载时保持UNKNOWN。 */
+export async function collectWorkspaceConsumerSourceSet(input,{fetchFn=globalThis.fetch,resolveToken}={}) {
+ const unknown=code=>({status:'unknown',admission:{status:'unknown'},gaps:[{code}],executable:false});
+ const {workspace,brain,identity,anchor,run_id:runId}=input||{};
+ if(workspace?.repo!=='perfectuser21/zenithjoy-workspace'||!SHA.test(workspace.revision)||brain?.repo!=='perfectuser21/cecelia'
+  ||!Array.isArray(brain.revisions)||!brain.revisions.length||brain.revisions.length>2||brain.revisions.some(r=>!SHA.test(r))
+  ||new Set(brain.revisions).size!==brain.revisions.length||anchor?.repo!=='perfectuser21/cecelia'||!SHA.test(anchor.revision))return unknown('CONSUMER_CORE_INPUT_INVALID');
+ let extract;
+ try{({extractWorkspaceCiSourceBundle:extract}=await import('./workspace-ci-source-bundle.js'));}
+ catch{return unknown('CONSUMER_CORE_UNAVAILABLE');}
+ try{
+  const token=await (resolveToken||((await import('../harness-credentials.js')).resolveGitHubToken))();
+  const allowed=[workspace,...brain.revisions.map(revision=>({repo:brain.repo,revision}))];
+  const readSource=async({repo,revision,path})=>{
+   if(!allowed.some(s=>s.repo===repo&&s.revision===revision)||typeof path!=='string'||path.length>1024||path.startsWith('/')
+     ||/[\\\0?#]/.test(path)||path.split('/').some(p=>!p||p==='.'||p==='..'))throw Error('CONSUMER_SOURCE_IDENTITY_INVALID');
+   const url=`https://api.github.com/repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${revision}`;
+   const response=await fetchFn(url,{redirect:'error',headers:{Accept:'application/vnd.github.raw',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
+   if(!response.ok)throw Error('CONSUMER_SOURCE_UNAVAILABLE');const bytes=Buffer.from(await response.arrayBuffer());
+   if(!bytes.length||bytes.length>1024*1024)throw Error('CONSUMER_SOURCE_BYTES_INVALID');return bytes;
+  };
+  const proof=await extract({workspace,brain,identity,readSource});
+  if(proof.status!=='verified'||proof.gaps?.length||proof.consumer?.status!=='verified')return {...unknown('CONSUMER_CORE_SOURCE_UNKNOWN'),source_gaps:proof.gaps};
+  const witness=await readConsumerSourceMainWitness({anchor,source_set:proof.source_set,run_id:runId},{fetchFn,resolveToken:async()=>token});
+  if(!isTrustedConsumerSourceMainWitness(witness))return {...unknown('CONSUMER_MAIN_EVIDENCE_UNKNOWN'),source_gaps:witness.gaps,diagnostics:witness.diagnostics};
+  const result={...proof,registry_source:anchor,admission:{status:'verified',source_basis:'trusted_main_history',snapshot_sha256:witness.witness.snapshot.snapshot_sha256,run_id:runId},main_evidence:witness.witness};
+  trustedWorkspaceConsumerSources.add(result);return result;
+ }catch{return unknown('CONSUMER_CORE_SOURCE_UNAVAILABLE');}
 }
