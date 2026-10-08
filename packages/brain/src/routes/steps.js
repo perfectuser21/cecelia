@@ -1,6 +1,7 @@
 /**
  * GET   /api/brain/steps              — Step 只读清单（仓库 step-dod.json 为真身，迁移 492 表）。
  * GET   /api/brain/enablers           — 仓库物件清单（迁移 492 表；/warehouse-items 为别名）。
+ * POST  /api/brain/enablers           — 新建仓库物件（内部鉴权；key 重复 409）。
  * PATCH /api/brain/enablers/:key      — 写仓库物件的故障处置 failure_semantics（内部鉴权）。
  * GET   /api/brain/activity_uses      — 某 Activity 依赖的仓库物件（含故障处置）。
  * 价值流建模⑤（决策 3e867cad，任务 741cdf5a）：sync-step-probes 用 ?key= 把 YAML 里的 target:{type,key} 解析成 target_id。
@@ -85,6 +86,37 @@ function validateFailureSemantics(fs) {
   }
   return null;
 }
+
+// 取值与 warehouse_items 的 CHECK 约束一致（迁移 492 及后续）
+const SHELVES = new Set(['platform_action', 'generic_action', 'data', 'service', 'ui', 'infrastructure', 'external_dependency', 'account_secret']);
+const KINDS = new Set(['code', 'agent', 'service', 'data', 'ui', 'infra', 'external', 'account', 'doc']);
+const ITEM_KEY_RE = /^[a-z][a-z0-9_]*$/;
+
+router.post('/enablers', internalAuthOrLoopback, async (req, res) => {
+  const { key, name, kind, shelf, description = null, owner = null, impl_ref: implRef = null, failure_semantics: fs } = req.body || {};
+  if (!ITEM_KEY_RE.test(String(key || ''))) return res.status(400).json({ error: 'key 必须是小写字母开头的 snake_case' });
+  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'name 不能为空' });
+  if (!KINDS.has(kind)) return res.status(400).json({ error: `kind 必须是 ${[...KINDS].join(' / ')} 之一` });
+  if (!SHELVES.has(shelf)) return res.status(400).json({ error: `shelf 必须是 ${[...SHELVES].join(' / ')} 之一` });
+  if (fs !== undefined && fs !== null) {
+    const invalid = validateFailureSemantics(fs);
+    if (invalid) return res.status(400).json({ error: invalid });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO warehouse_items (key, name, kind, shelf, description, owner, impl_ref, failure_semantics)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (key) DO NOTHING
+       RETURNING id, key, name, kind, shelf, description, owner, impl_ref, failure_semantics, active, created_at`,
+      [key, name.trim(), kind, shelf, description, owner, implRef, fs ? JSON.stringify(fs) : null],
+    );
+    if (!rows.length) return res.status(409).json({ error: 'warehouse item key 已存在，改处置请用 PATCH /enablers/:key' });
+    res.status(201).json(parseFailureSemantics(rows[0]));
+  } catch (err) {
+    console.error('[steps] POST /enablers error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.patch('/enablers/:key', internalAuthOrLoopback, async (req, res) => {
   const fs = (req.body || {}).failure_semantics;
