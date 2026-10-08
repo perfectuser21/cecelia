@@ -9,7 +9,7 @@ export const PHONE_RPA_CANDIDATES_SQL = `SELECT * FROM tasks
  AND COALESCE(payload->>'headed_manual', 'false') <> 'true'
  AND NOT COALESCE(notion_props, '{}'::jsonb) ? 'qiumi_human_hold'
  AND created_at >= $1::timestamptz
- AND (next_run_at IS NULL OR next_run_at <= NOW())
+ AND (payload->>'next_run_at' IS NULL OR (payload->>'next_run_at')::timestamptz <= NOW())
  ORDER BY created_at ASC LIMIT 100`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 let running = false;
@@ -35,7 +35,7 @@ function eligible(task, policy, env, now, claimed = false) {
     || task.lane && task.lane !== 'AI' || task.payload?.lane && task.payload.lane !== 'AI'
     || !UUID.test(task.payload?.notion_zh_page_id ?? task.payload?.notion_page_id ?? '')
     || !Number.isFinite(Date.parse(task.created_at)) || Date.parse(task.created_at) < Date.parse(policy.since)
-    || task.next_run_at && Date.parse(task.next_run_at) > now) return false;
+    || task.payload?.next_run_at && Date.parse(task.payload.next_run_at) > now) return false;
   const params = parseExecParams(task.payload?.qiumi_source?.body, env);
   return params.present && !params.errors.length && params.agent === 'skill-factory'
     && policy.devices.includes(params.device);

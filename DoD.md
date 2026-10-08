@@ -1,3 +1,5 @@
+- [x] [BEHAVIOR] phonerparetryfield 独立手机派发读取真实payload.next_run_at，生产表没有顶层重试列仍可执行；未来排期不启动，到期只派一次。真实PG私有schema不再发明列。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/phone-rpa-dispatch.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] phonerpaautodispatch Tick关闭时独立授权新Notion手机任务，只接skill-factory和唯一白名单设备；关闭期间路由不启动。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/phone-rpa-dispatch.test.js src/__tests__/scheduler-jobs.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] rpamanualdispatch 手机定向派发两入口共用原子 claim、queued 路由、持久化 run_id 和执行通道；coding Bridge 离线不误拦手机，人工急停与并发请求不重复启动，响应不确定保留原运行并交独立收割；旧 owner 清理不释放新 owner；探路退出0仍核对业务结果、原运行号和锁释放，失败不冒充完成。
