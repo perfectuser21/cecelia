@@ -1,3 +1,5 @@
+import {execFileSync} from 'node:child_process';
+import {canonicalRepoIdentity} from '../../packages/brain/src/lib/gp-assertion-command.js';
 /** 联合证据保留领域切片，外层完整Git差异单独验收，不伪造一个投影。 */
 import {createHash} from 'node:crypto';
 import {assertImplementationReport} from '../../packages/brain/src/lib/implementation-report.js';
@@ -30,4 +32,19 @@ export function aggregateScopedImplementationEvidence({source,expectedScopes,rep
     file_coverage:changes.map(c=>({...c,claims:claims.get(key(c))})),
     business_runtime_status:'not_evaluated'};
   return {...body,evidence_sha256:sha(body)};
+}
+
+export function verifyScopedImplementationGitSource(repoRoot,proof){
+  const rebuilt=aggregateScopedImplementationEvidence({source:proof?.source,expectedScopes:(proof?.scope_reports||[]).map(r=>r.scope_key),reports:proof?.scope_reports});
+  const {evidence_sha256,...body}=proof;
+  if(evidence_sha256!==sha(body)||evidence_sha256!==rebuilt.evidence_sha256)fail('IMPACT_MULTISCOPE_DIGEST_MISMATCH');
+  const git=(...args)=>execFileSync('git',args,{cwd:repoRoot,encoding:'utf8',maxBuffer:16*1024*1024}).trim();
+  const source=proof.source,repo=canonicalRepoIdentity(git('remote','get-url','origin')).replace(/^github\.com\//,'');
+  if(repo!==source.repo||git('rev-parse','HEAD')!==source.head_revision)fail('IMPACT_MULTISCOPE_SOURCE_MISMATCH');
+  if(git('status','--porcelain=v1','--untracked-files=no'))fail('IMPACT_MULTISCOPE_SOURCE_DIRTY');
+  git('merge-base','--is-ancestor',source.base_revision,source.head_revision);
+  const actual=execFileSync('git',['diff','--no-renames','--name-only','-z',source.base_revision,source.head_revision,'--'],{cwd:repoRoot,encoding:'utf8'}).split('\0').filter(Boolean).sort();
+  const claimed=[...new Set(source.changed_files.flatMap(c=>[c.path,...(c.old_path?[c.old_path]:[])]))].sort();
+  if(JSON.stringify(actual)!==JSON.stringify(claimed))fail('IMPACT_MULTISCOPE_DIFF_MISMATCH');
+  return rebuilt;
 }
