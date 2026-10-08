@@ -7,6 +7,7 @@ import { syncActivityContracts,CONTRACT_REPO } from '../activity-contract-sync.j
 import { registerCompanyKrWorkflow } from './company-kr-registration.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 import { TREE_NODES_SQL } from './tree-nodes-sql.js';
+import {readSourceOwnerRegistry,validateSourceOwnerRegistry} from './source-owner-registry.js';
 export const ciFailure=(code,message,status=422)=>Object.assign(Error(message||code),{code:`IMPLEMENTATION_CI_${code}`,status});
 export function isImplementationScratchDatabase(database,env=process.env){
   return database==='cecelia_scratch'||database==='cecelia_test'&&env.CI==='true'&&env.GITHUB_ACTIONS==='true';
@@ -22,6 +23,10 @@ export function validateImplementationSnapshot(snapshot){
   validateSnapshotQuery(snapshot);
   const {snapshot_sha256,...body}=snapshot;
   if(typeof snapshot_sha256!=='string'||digest(body)!==snapshot_sha256)throw ciFailure('SNAPSHOT_DIGEST_MISMATCH');
+  if(snapshot.source_registry){
+    validateSourceOwnerRegistry(snapshot.source_registry,snapshot.repo);
+    if(snapshot.source_registry.scope!==snapshot.scope)throw ciFailure('SOURCE_OWNER_REGISTRY_INVALID');
+  }
   for(const kind of ['workflows','activities'])for(const row of snapshot.definitions[kind]){
     if(row.source_repo!==snapshot.repo||row.source_commit!==snapshot.revision||
       stepSha256({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload})!==row.payload_sha256)
@@ -35,6 +40,10 @@ export async function readImplementationSnapshotInTransaction(db,q){
   const repositories=registrations.filter(r=>r.repo===q.repo||r.adapter_config?.source_repo===q.repo);
   if(repositories.length!==1)gap(repositories.length?'scope_repository_ambiguous':'scope_repository_missing',{scope:q.scope,repo:q.repo});
   const workflows=(await db.query('SELECT * FROM workflows WHERE source_repo=$1 ORDER BY id',[q.repo])).rows;
+  const sourceRegistry=await readSourceOwnerRegistry(db,q,workflows);
+  let sourceRegistryValid=false;
+  try{validateSourceOwnerRegistry(sourceRegistry,q.repo);sourceRegistryValid=true;}
+  catch(error){gap('source_owner_registry_invalid',{reason:error.code});}
   const candidates=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[q.repo,q.revision])).rows;
   const selected=[];
   for(const id of [...new Set(candidates.map(r=>r.workflow_id))]){
@@ -69,9 +78,15 @@ export async function readImplementationSnapshotInTransaction(db,q){
   const journeys=(await db.query(`WITH RECURSIVE chain AS(SELECT * FROM ${TREE_NODES_SQL} n WHERE id=ANY($1::uuid[])
     UNION SELECT j.* FROM ${TREE_NODES_SQL} j JOIN chain c ON j.id=c.parent_journey_id) SELECT * FROM chain ORDER BY id`,[capabilityIds])).rows;
   const mapped=new Set();
+  const registeredCapabilityIds=new Set(sourceRegistry.canonical.workflows.map(w=>w.capability_id));
   for(const node of manifest?.manifest?.capabilities||[]){
     const b=node.brain_binding;
-    if(!b||b.entity_type!=='capability'||!journeys.some(j=>j.id===b.entity_id&&j.parent_journey_id))gap('capability_mapping_missing',{node_key:node.key});
+    // 额外业务映射仅由真实登记owner及完整树证明；不增加本次SHA的定义。
+    const parentBinding=manifest.manifest.value_streams?.find(v=>v.key===node.value_stream_key)?.brain_binding;
+    const registeredOwnerTree=sourceRegistryValid&&registeredCapabilityIds.has(b?.entity_id)&&
+      parentBinding?.entity_type==='value_stream'&&parentBinding.source_repo===q.repo&&parentBinding.source_revision===q.revision&&
+      sourceRegistry.canonical.journeys.some(j=>j.id===b.entity_id&&j.parent_journey_id===parentBinding.entity_id);
+    if(!b||b.entity_type!=='capability'||!journeys.some(j=>j.id===b.entity_id&&j.parent_journey_id)&&!registeredOwnerTree)gap('capability_mapping_missing',{node_key:node.key});
     else if(b.source_repo!==q.repo)gap('capability_source_repo_mismatch',{node_key:node.key,source_repo:b.source_repo});
     else mapped.add(b.entity_id);
   }
@@ -79,7 +94,7 @@ export async function readImplementationSnapshotInTransaction(db,q){
   const areaIds=[...new Set(journeys.map(j=>j.area_id).filter(Boolean))];
   const areas=(await db.query('SELECT * FROM areas WHERE id=ANY($1::uuid[]) ORDER BY id',[areaIds])).rows;
   const assertions=(await db.query('SELECT * FROM activity_cells WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id',[capabilityIds,activityIds])).rows;
-  const body=json({schema_version:1,...q,status:gaps.length?'unknown':'verified',gaps,
+  const body=json({schema_version:1,...q,status:gaps.length?'unknown':'verified',gaps,source_registry:sourceRegistry,
     canonical:{areas,journeys,workflows:workflows.filter(w=>workflowIds.includes(w.id)),activities:canonicalActivities,steps,references},
     definitions:{workflows:selected,activities},map:{manifest,repositories,source_basis:manifestBasis},assertion_source:'current_registration',assertions});
   return {...body,snapshot_sha256:digest(body)};

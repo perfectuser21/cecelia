@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync,realpathSync } from 'node:fs';
 import { DB_DEFAULTS } from '../../packages/brain/src/db-config.js';
 import { validateImplementationSnapshot,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
+import {sourceOwnersForSnapshot,validateContractOwners} from '../../packages/brain/src/lib/source-owner-registry.js';
 import { runProjection } from '../../packages/brain/src/map/projector.js';
 import { digestMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
 import { scanRepo } from '../scan/scan-graph.mjs';
@@ -58,6 +59,12 @@ export async function importImplementationSnapshot(db,input){
   if(s.status!=='verified'||s.gaps.length)throw ciFailure('SNAPSHOT_UNKNOWN',JSON.stringify(s.gaps));
   await db.query('BEGIN');
   try{
+    if(s.source_registry){
+      for(const row of s.source_registry.canonical.areas)await insertRow(db,'areas',row);
+      for(const row of s.source_registry.canonical.journeys)await insertRow(db,row.parent_journey_id==null?'value_streams':'capabilities',row);
+      // 只导入真实来源身份，未定义owner不伪造current指针或固定版本。
+      for(const row of sourceOwnersForSnapshot(s))await insertRow(db,'workflows',{...row,current_definition_version_id:null});
+    }
     for(const row of s.canonical.areas)await insertRow(db,'areas',row);
     for(const row of s.canonical.journeys)await insertRow(db,row.parent_journey_id==null?'value_streams':'capabilities',row);
     for(const row of s.canonical.workflows)await insertRow(db,'workflows',{...row,current_definition_version_id:null});
@@ -103,13 +110,20 @@ export function definitionEdges(s){
   }
   return edges;
 }
-async function verifyGeneratedSource(s,repoRoot){
+export async function verifyGeneratedSource(s,repoRoot){
   if(s.repo!=='perfectuser21/zenithjoy-workspace')return s;
   const path='product-map/generated/contracts.json';
   const read=path=>execFileSync('git',['show',`${s.revision}:${path}`],{cwd:repoRoot,encoding:'utf8',stdio:['ignore','pipe','pipe']});
-  let text;try{text=read(path);}catch{return s;}
-  const digest=JSON.parse(text),owners=s.canonical.workflows;
-  const plans=await loadActivityContracts(owners,digest,read,owners);
+  const owners=sourceOwnersForSnapshot(s);
+  const defined=new Set(s.definitions.workflows.map(w=>w.workflow_id));
+  let text;try{text=read(path);}catch{
+    if(owners.some(w=>!defined.has(w.id)))throw ciFailure('GENERATED_SOURCE_UNAVAILABLE','含独立来源owner的固定契约摘要不可读');
+    return s;
+  }
+  const digest=JSON.parse(text);
+  const consumers=s.canonical.workflows.filter(w=>defined.has(w.id));
+  const plans=await loadActivityContracts(consumers,digest,read,owners);
+  validateContractOwners(plans,owners,s.repo);
   for(const plan of plans){
     const version=s.definitions.workflows.find(w=>w.workflow_id===plan.workflow.id);
     if(!version||version.contract_sha256!==stepSha256(plan.contract))throw ciFailure('GENERATED_SOURCE_MISMATCH','固定定义与generated声明来源不同');

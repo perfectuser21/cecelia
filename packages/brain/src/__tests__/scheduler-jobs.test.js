@@ -3,6 +3,11 @@ import { runImageRetentionJanitor } from '../image-retention-scheduler.js';
 vi.mock('../app-server/controller.js',()=>({reconcileAppServers:vi.fn().mockResolvedValue([])}));
 vi.mock('../preview-cache-scheduler.js', () => ({ runPreviewCacheJanitor: vi.fn().mockResolvedValue({ status: 'disabled' }) }));
 import { runPreviewCacheJanitor } from '../preview-cache-scheduler.js';
+// 此文件验证调度接线；每日窗口内真 handler 会查 crystal_report，
+// 哨兵故障用例的故意拒绝 pool 不应成为判官本体测试。判官行为另有专门测试。
+vi.mock('../crystal-judge.js', () => ({
+  maybeRunCrystalJudge: vi.fn().mockResolvedValue({ triggered: false, reason: 'mocked_scheduler_handler' }),
+}));
 vi.mock('../projection/company-key-results.js', () => ({ runCompanyKrProjection: vi.fn(async () => ({ skipped: true })) }));
 // 目录真实handler会开独立连接并访问Notion；此文件仅验证调度，行为由directory单元与真实PG测试覆盖。
 vi.mock('../projection/directory-job.js', () => ({ runDirectoryJob: vi.fn().mockResolvedValue({ skipped: true, reason: 'not_configured' }) }));
@@ -545,6 +550,17 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(results).toHaveLength(JOBS.length);
     expect(results.every((r) => r.ok)).toBe(true);
+  });
+
+  it('crystal-judge 注册接线在每日窗口也由假 handler 隔离真实查询', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-08T21:02:00Z'));
+    const { maybeRunCrystalJudge } = await import('../crystal-judge.js');
+    const pool = { query: vi.fn().mockRejectedValue(new Error('sentinel unavailable')) };
+    const job = JOBS.find((j) => j.name === 'crystal-judge');
+    const [result] = await runSchedulerJobsOnce(pool, [job]);
+    expect(result.ok).toBe(true);
+    expect(maybeRunCrystalJudge).toHaveBeenCalledWith(pool);
   });
 
   it('handler 返回 liveness_at → 哨兵 record 原样带上（活性只认 handler 自报的完成时刻）', async () => {

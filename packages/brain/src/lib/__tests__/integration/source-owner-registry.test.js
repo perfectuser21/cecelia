@@ -1,0 +1,93 @@
+import {afterEach,expect,it} from 'vitest';
+import {implementationImpactDatabase,IMPACT_REPO} from '../../../__tests__/fixtures/implementation-impact-db.js';
+import {exportImplementationSnapshot} from '../../implementation-ci-snapshot.js';
+import {validateImplementationSnapshot} from '../../implementation-ci-snapshot.js';
+import {syncActivityContracts} from '../../../activity-contract-sync.js';
+import {versionsDatabase} from '../../../__tests__/fixtures/definition-versions-db.js';
+import {minimumMapSchema} from '../../../__tests__/fixtures/minimum-map-schema.js';
+import {verifyGeneratedSource,importImplementationSnapshot} from '../../../../../../scripts/ci/implementation-snapshot.mjs';
+import {stepSha256} from '../../../../scripts/sync-steps-from-workspace.mjs';
+import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {execFileSync} from 'node:child_process';
+import yaml from 'js-yaml';
+let fixture,target,root;
+afterEach(async()=>{await fixture?.close();await target?.close();fixture=target=null;if(root)rmSync(root,{recursive:true,force:true});root=null;});
+it('真实PG：被同SHA流程引用的retired owner没有同SHA定义也独立冻结，不伪造owner版本',async()=>{
+ fixture=await implementationImpactDatabase();const {db}=fixture,revision='b'.repeat(40);
+ await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[fixture.ids.keyword]);
+ await fixture.advance();
+ await fixture.map(revision,[fixture.capabilities[0]]);
+ const s=await exportImplementationSnapshot(db,{scope:'phones',repo:IMPACT_REPO,revision});
+ expect(s.definitions.workflows.some(w=>w.workflow_id===fixture.ids.keyword)).toBe(false);
+ expect(s.canonical.workflows.some(w=>w.id===fixture.ids.keyword)).toBe(false);
+ expect(s.source_registry?.source_basis).toBe('current_registration');
+ expect(s.source_registry.canonical.workflows).toContainEqual(expect.objectContaining({id:fixture.ids.keyword,status:'retired',source_capability:'keyword_acquisition'}));
+ expect(s.source_registry.registry_sha256).toMatch(/^[0-9a-f]{64}$/);
+ expect(s.source_registry.canonical.journeys.some(j=>j.id===fixture.capabilities[1])).toBe(true);
+});
+it('真实PG：两业务映射仅一个有同SHA定义；另一真实retired owner树补齐映射，错误实体/来源/父级仍UNKNOWN',async()=>{
+ fixture=await implementationImpactDatabase();const {db}=fixture,revision='b'.repeat(40),q={scope:'phones',repo:IMPACT_REPO,revision};
+ await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[fixture.ids.keyword]);await fixture.advance();
+ const valid=await exportImplementationSnapshot(db,q);
+ expect(valid.definitions.workflows).toHaveLength(1);
+ expect(valid.status,JSON.stringify(valid.gaps)).toBe('verified');
+ await db.query('UPDATE capabilities SET parent_journey_id=NULL WHERE id=$1',[fixture.capabilities[1]]);
+ const noParent=await exportImplementationSnapshot(db,q);expect(noParent.status).toBe('unknown');
+ expect(noParent.gaps).toContainEqual(expect.objectContaining({code:'source_owner_registry_invalid'}));
+});
+it('真实PG：owner树虽完整但父价值流不匹配地图仍UNKNOWN',async()=>{
+ fixture=await implementationImpactDatabase();const {db}=fixture,revision='b'.repeat(40);
+ await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[fixture.ids.keyword]);
+ const other='f0000000-0000-0000-0000-000000000001';
+ await db.query('INSERT INTO value_streams(id,name,parent_journey_id) VALUES($1,$2,NULL)',[other,'另一真实价值流']);
+ await db.query('UPDATE capabilities SET parent_journey_id=$2 WHERE id=$1',[fixture.capabilities[1],other]);
+ await fixture.advance();
+ const invalid=await exportImplementationSnapshot(db,{scope:'phones',repo:IMPACT_REPO,revision});
+ expect(invalid.status,JSON.stringify(invalid.gaps)).toBe('unknown');
+ expect(invalid.gaps).toContainEqual(expect.objectContaining({code:'capability_mapping_missing',node_key:'F1'}));
+});
+it.each(['source_repo','entity_type','source_revision'])('真实PG：额外owner映射的%s错误仍UNKNOWN，不改写不可变地图',async field=>{
+ fixture=await implementationImpactDatabase();const {db}=fixture,revision='b'.repeat(40);
+ await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[fixture.ids.keyword]);
+ // 在真实INSERT前构造负面输入，所有不可变历史与约束均保持生效。
+ const query=db.query.bind(db);db.query=(sql,values)=>{
+  if(typeof sql==='string'&&sql.startsWith('INSERT INTO map_manifest_versions')){
+   values=[...values];values[4]=structuredClone(values[4]);
+   values[4].capabilities[1].brain_binding[field]={source_repo:'evil/repo',entity_type:'activity',source_revision:'c'.repeat(40)}[field];
+  }
+  return query(sql,values);
+ };
+ try{await fixture.advance();}finally{db.query=query;}
+ const invalid=await exportImplementationSnapshot(db,{scope:'phones',repo:IMPACT_REPO,revision});
+ expect(invalid.status,JSON.stringify(invalid.gaps)).toBe('unknown');
+ expect(invalid.gaps).toContainEqual(expect.objectContaining({code:field==='entity_type'?'capability_mapping_missing':'manifest_source_mismatch'}));
+});
+it('真实固定Git字节+PG：仅验证已有定义消费者；完整retired owner闭包可验证并导入scratch，篡改摘要拒绝',async()=>{
+ fixture=await implementationImpactDatabase();const {db,contracts}=fixture;
+ await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[fixture.ids.keyword]);
+ contracts.docs.keyword_acquisition.activities[0].implementation_bindings[0].revision='contract';contracts.refresh();
+ root=mkdtempSync(join(tmpdir(),'source-owners-'));mkdirSync(join(root,'product-map/contracts'),{recursive:true});mkdirSync(join(root,'product-map/generated'),{recursive:true});mkdirSync(join(root,'src'));
+ for(const [key,doc]of Object.entries(contracts.docs))writeFileSync(join(root,`product-map/contracts/${key}.yaml`),yaml.dump(doc));
+ writeFileSync(join(root,'product-map/generated/contracts.json'),JSON.stringify(contracts.digest));writeFileSync(join(root,'src/controller.js'),'export const controller=true;\n');
+ const git=args=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']});
+ git(['init','-q']);git(['add','.']);git(['-c','user.name=Codex','-c','user.email=codex@example.invalid','commit','-qm','固定owner来源fixture']);const revision=git(['rev-parse','HEAD']).trim();
+ const read=path=>git(['show',`${revision}:${path}`]);
+ await syncActivityContracts(db,{resolveToken:async()=>'',fetchFn:async url=>({ok:true,text:async()=>url.includes('/commits/main')?revision:read(decodeURIComponent(new URL(url).pathname.split('/contents/')[1]))}),readBinding:async b=>read(b.path)});
+ await fixture.map(revision,[fixture.capabilities[0]]);
+ const s=await exportImplementationSnapshot(db,{scope:'phones',repo:IMPACT_REPO,revision});
+ expect(s.status,JSON.stringify(s.gaps)).toBe('verified');expect(s.definitions.workflows).toHaveLength(1);
+ expect((await verifyGeneratedSource(s,root)).adapter_evidence.revision).toBe(revision);
+ target=await versionsDatabase();await target.migrate();await minimumMapSchema(target.db);await importImplementationSnapshot(target.db,s);
+ const owner=(await target.db.query('SELECT status,current_definition_version_id FROM workflows WHERE id=$1',[fixture.ids.keyword])).rows[0];
+ expect(owner).toEqual({status:'retired',current_definition_version_id:null});
+ expect((await target.db.query('SELECT id FROM workflow_definition_versions WHERE workflow_id=$1',[fixture.ids.keyword])).rows).toHaveLength(0);
+ const forged=structuredClone(s);forged.source_registry.canonical.workflows[0].source_repo='evil/repo';
+ const {snapshot_sha256,...body}=forged;forged.snapshot_sha256=stepSha256(body);
+ expect(()=>validateImplementationSnapshot(forged)).toThrow(/SOURCE_OWNER/);
+ git(['rm','product-map/generated/contracts.json']);git(['-c','user.name=Codex','-c','user.email=codex@example.invalid','commit','-qm','缺契约摘要fixture']);
+ await expect(verifyGeneratedSource({...s,revision:git(['rev-parse','HEAD']).trim()},root)).rejects.toMatchObject({code:'IMPLEMENTATION_CI_GENERATED_SOURCE_UNAVAILABLE'});
+ const unknown=await exportImplementationSnapshot(db,{scope:'phones',repo:IMPACT_REPO,revision:'c'.repeat(40)});
+ expect(unknown.status).toBe('unknown');expect(unknown.gaps).toContainEqual(expect.objectContaining({code:'definition_snapshot_missing'}));
+});
