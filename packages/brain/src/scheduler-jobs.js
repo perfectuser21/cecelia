@@ -1,5 +1,6 @@
 import { runImageRetentionJanitor } from './image-retention-scheduler.js';
 import { startCompletionJobsLoop, stopCompletionJobsLoop } from './scheduler-completion-loop.js';
+import { runPhoneRpaDispatch } from './lib/phone-rpa-dispatch.js';
 import {reconcileAppServers} from './app-server/controller.js';
 import { runPreviewCacheJanitor } from './preview-cache-scheduler.js';
 import { runCompanyKrWorkflow } from './projection/company-kr-workflow.js';
@@ -96,6 +97,7 @@ export const JOBS = [
   // machine-vitals 必须排首位：串行轮内后面 19 个 job 的延迟会把采样推过 STALE_MS(180s)，
   // harness 派发热路径读到的就是过期缓存（beeba317 终审 Fix 3）。
   { name: 'machine-vitals', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => sampleMachineVitals(pool), description: '本机体征采样（docker容器数/VM内存/盘，60s，harness admission 数据源，beeba317）' },
+  { name: 'phone-rpa-dispatch', cadence: { everySec: 30 }, needsPool: true, timeoutMs: 120_000, handler: runPhoneRpaDispatch, description: '独立手机派发：默认关闭，显式since/设备授权，只接Notion新任务skill-factory；保留全局Tick关闭与独立回收' },
   { name: 'app-server-reconcile', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: reconcileAppServers, description: '按持久HOME/代际身份恢复探查与取消；无授权不启动，不按TTL释放' },
   { name: 'preview-owned-cache-janitor', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPreviewCacheJanitor, description: 'MMV专属npm cache过期回收：默认停用、真实任务与持久回执对账' },
   { name: 'us-brain-image-janitor', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runImageRetentionJanitor, description: 'US固定Brain历史镜像保留：默认停用、每轮最多两项、未知只读精确ID对账' },
@@ -211,7 +213,8 @@ const PROJECTION_JOB_NAME_SET = new Set([
 ]);
 
 export const PROJECTION_JOBS = JOBS.filter(job => PROJECTION_JOB_NAME_SET.has(job.name));
-const COMPLETION_JOB_NAMES = new Set(['script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding']);
+// 手机派发只认自身窄授权，与收尾共用不受串行慢job阻塞的独立循环。
+const COMPLETION_JOB_NAMES = new Set(['script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding', 'phone-rpa-dispatch']);
 export const COMPLETION_JOBS = JOBS.filter(job => COMPLETION_JOB_NAMES.has(job.name));
 export const SERIAL_JOBS = JOBS.filter(job => !PROJECTION_JOB_NAME_SET.has(job.name) && !COMPLETION_JOB_NAMES.has(job.name));
 

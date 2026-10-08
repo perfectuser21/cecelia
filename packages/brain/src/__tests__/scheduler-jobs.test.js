@@ -239,7 +239,14 @@ import {
   SENTINEL_KEY_PREFIX,
 } from '../scheduler-jobs.js';
 import * as schedulerJobsModule from '../scheduler-jobs.js';
+import { runPhoneRpaDispatch } from '../lib/phone-rpa-dispatch.js';
 const { startProjectionJobsLoop, stopProjectionJobsLoop } = schedulerJobsModule;
+it('手机独立派发注册30s节奏且不被串行慢job阻塞', () => {
+  const job = JOBS.find(row => row.name === 'phone-rpa-dispatch');
+  expect(job).toMatchObject({ needsPool: true, cadence: { everySec: 30 }, handler: runPhoneRpaDispatch });
+  expect(schedulerJobsModule.COMPLETION_JOBS).toContain(job);
+  expect(schedulerJobsModule.SERIAL_JOBS).not.toContain(job);
+});
 import { triggerArchReview, triggerCiPatrol } from '../daily-review-scheduler.js';
 import { maybeTriggerStrategySession } from '../active-goals-zero-trigger.js';
 import { scheduleDailyBackup } from '../daily-backup-scheduler.js';

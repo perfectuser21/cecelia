@@ -1,3 +1,5 @@
+- [x] [BEHAVIOR] phonerpaautodispatch Tick关闭时独立授权新Notion手机任务，只接skill-factory和唯一白名单设备；关闭期间路由不启动。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/phone-rpa-dispatch.test.js src/__tests__/scheduler-jobs.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] rpamanualdispatch 手机定向派发两入口共用原子 claim、queued 路由、持久化 run_id 和执行通道；coding Bridge 离线不误拦手机，人工急停与并发请求不重复启动，响应不确定保留原运行并交独立收割；旧 owner 清理不释放新 owner。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/routes/__tests__/qiumi-manual-dispatch.test.js src/__tests__/dispatcher-qiumi-routing.test.js src/__tests__/openclaw-agent-executor.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] rpareceiptdetails Notion 回执读取真实阻断详情；SQL 内容指纹令同状态的原因或结果更新重推，未知派发显示正在查询原运行，人工 hold 与归档语义保留；双 PG 连接验证唯一认领及真实指纹落库。

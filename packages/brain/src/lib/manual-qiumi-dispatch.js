@@ -64,12 +64,20 @@ export async function dispatchManualQiumi(task, pool, deps = {}) {
       return response(deviceGate.status, deviceGate.body);
     }
     deviceAcquired = deviceGate.acquired;
+    const guarded = deps.beforeStart
+      ? (await pool.query('SELECT * FROM tasks WHERE id = $1', [task.id])).rows[0] : current;
+    if (deps.beforeStart && (!guarded || guarded.claimed_by !== owner || !await deps.beforeStart(guarded))) {
+      if (deviceAcquired) await releaseDeviceLockNonFatal(task.id, 'manual-qiumi-dispatch');
+      await releaseClaim();
+      return response(409, { error: 'phone_dispatch_policy_changed', detail: '手机派发授权已关闭或改变，任务保留在队列' });
+    }
     const started = await pool.query(
       `UPDATE tasks SET status = 'in_progress', executor_kind = 'openclaw-agent',
         started_at = COALESCE(started_at, NOW()), updated_at = NOW(),
         metadata = COALESCE(metadata, '{}'::jsonb) || '{"manually_dispatched":true}'::jsonb
-        WHERE id = $1 AND status = 'queued' AND claimed_by = $2 RETURNING *`,
-      [task.id, owner],
+        WHERE id = $1 AND status = 'queued' AND claimed_by = $2${deps.beforeStart ? " AND payload = $3::jsonb AND COALESCE(notion_props, '{}'::jsonb) = $4::jsonb" : ''}${deps.policySnapshot ? ' AND EXISTS (SELECT 1 FROM working_memory WHERE key = $5 AND value_json = $6::jsonb)' : ''} RETURNING *`,
+      deps.beforeStart ? [task.id, owner, JSON.stringify(guarded.payload), JSON.stringify(guarded.notion_props ?? {}),
+        ...(deps.policySnapshot ? [deps.policySnapshot.key, JSON.stringify(deps.policySnapshot.value)] : [])] : [task.id, owner],
     );
     if (!started.rows.length) {
       if (deviceAcquired) await releaseDeviceLockNonFatal(task.id, 'manual-qiumi-dispatch');

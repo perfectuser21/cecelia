@@ -73,7 +73,7 @@ describe('定向手机派发：真实双连接 PG', () => {
     await a.query("UPDATE tasks SET next_run_at=NOW()+INTERVAL '1 hour' WHERE id='future-phone'");
     let starts = 0;
     const route = async task => {
-      await a.query(`UPDATE tasks SET payload=payload || $2::jsonb WHERE id=$1`, [task.id, { run_id: 'pump-fixed-run', qiumi_department: 'skill-factory', qiumi_route: { device_hint: { serial: 'blue' } } }]);
+      await a.query(`UPDATE tasks SET payload=payload || $2::jsonb WHERE id=$1`, [task.id, { run_id: 'pump-fixed-run', qiumi_department: 'skill-factory', qiumi_route: { device_hint: { serial: 'blue', nickname: '小蓝' } } }]);
       return { outcome: 'proceed' };
     };
     const deps = { anchor: () => ({ blocked: false }), dispatch: (task, db, guard) => dispatchManualQiumi(task, db, {
@@ -93,7 +93,7 @@ describe('定向手机派发：真实双连接 PG', () => {
     let starts = 0;
     const deps = { anchor: () => ({ blocked: false }), dispatch: (task, db, guard) => dispatchManualQiumi(task, db, {
       ...guard, route: async () => {
-        await a.query(`UPDATE tasks SET payload=payload || $2::jsonb WHERE id=$1`, [task.id, { run_id: 'cancelled-before-start', qiumi_department: 'skill-factory', qiumi_route: { device_hint: { serial: 'blue' } } }]);
+        await a.query(`UPDATE tasks SET payload=payload || $2::jsonb WHERE id=$1`, [task.id, { run_id: 'cancelled-before-start', qiumi_department: 'skill-factory', qiumi_route: { device_hint: { serial: 'blue', nickname: '小蓝' } } }]);
         await b.query("UPDATE working_memory SET value_json=jsonb_set(value_json,'{enabled}','false')");
         return { outcome: 'proceed' };
       }, trigger: async () => { starts++; return { success: true }; },
@@ -121,5 +121,21 @@ describe('定向手机派发：真实双连接 PG', () => {
     expect(patches.at(-1).properties['OpenClaw结果'].rich_text[0].text.content).toContain('微信未登录');
     await a.query(`UPDATE tasks SET result='{"summary":"新结果"}' WHERE id='receipt'`);
     expect((await a.query(PUSH_QIUMI_QUERY)).rows).toHaveLength(1);
+  });
+  it('启动CAS与授权快照同时核对，守卫之后关闭开关也不能启动', async () => {
+    const policy = { enabled: true, since: new Date(Date.now() - 60_000).toISOString(), devices: ['小蓝'] };
+    await a.query("UPDATE working_memory SET value_json=$1", [policy]);
+    const task = fixture('policy-cas');
+    await a.query("INSERT INTO tasks(id,title,task_type,status) VALUES($1,$2,'qiumi_task','queued')", [task.id, task.title]);
+    let starts = 0;
+    const reply = await dispatchManualQiumi(task, a, {
+      policySnapshot: { key: 'phone_rpa_dispatch', value: policy },
+      route: async () => { await a.query("UPDATE tasks SET payload='{\"run_id\":\"cas-run\",\"qiumi_department\":\"skill-factory\"}' WHERE id=$1", [task.id]); return { outcome: 'proceed' }; },
+      beforeStart: async () => { await b.query("UPDATE working_memory SET value_json=jsonb_set(value_json,'{enabled}','false')"); return true; },
+      trigger: async () => { starts++; return { success: true }; },
+    });
+    expect(reply.status).toBe(409); expect(starts).toBe(0);
+    const row = (await a.query('SELECT * FROM tasks WHERE id=$1', [task.id])).rows[0];
+    expect(row.status).toBe('queued'); expect(row.claimed_by).toBeNull(); expect(row.payload.run_id).toBe('cas-run');
   });
 });
