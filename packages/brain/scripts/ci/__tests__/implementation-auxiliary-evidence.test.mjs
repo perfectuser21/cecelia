@@ -52,6 +52,27 @@ it('非法声明在版本机器人写入或删除实际片之前拒绝',()=>{
  expect(existsSync(join(f.root,'changes/controller.md'))).toBe(true);
  expect(JSON.parse(readFileSync(join(f.root,'packages/brain/package.json'))).version).toBe('1.2.3');
 });
+it('真实机器人消费多个连续release行，保留分隔的文档与验证行字节',()=>{
+ const second=releaseRow.replace('controller.md','second.md');
+ const third=releaseRow.replace('controller.md','third.md');
+ const f=versionFixture([releaseRow,second,docRow,third,verifyRow]);
+ for(const file of ['second','third'])writeFileSync(join(f.root,`changes/${file}.md`),'## Brain {VERSION} — extra\n');
+ expect(applyAutoVersion(f.root)).toMatchObject({fragmentsConsumed:3,newVersion:'1.2.6'});
+ const text=readFileSync(join(f.root,'.implementation-source-relations.json'),'utf8');
+ expect(JSON.parse(text).relations).toEqual([JSON.parse(docRow),JSON.parse(verifyRow)]);
+ expect(text).toContain(docRow);expect(text).toContain(verifyRow);
+});
+it('版本机器人不跟随来源声明软链接，也拒绝重复JSON键而不删片',()=>{
+ for(const invalid of ['symlink','duplicate-key']){
+  const f=versionFixture([releaseRow]);const manifest=join(f.root,'.implementation-source-relations.json');
+  if(invalid==='symlink'){
+   rmSync(manifest);symlinkSync(join(f.root,'docs/controller.md'),manifest);
+  }else writeFileSync(manifest,f.text.replace('"schema_version":1','"schema_version":1,"schema_version":1'));
+  expect(()=>applyAutoVersion(f.root)).toThrow();
+  expect(existsSync(join(f.root,'changes/controller.md'))).toBe(true);
+  expect(JSON.parse(readFileSync(join(f.root,'packages/brain/package.json'))).version).toBe('1.2.3');
+ }
+});
 afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 function fixture(relations=[{owner_path:'src/controller.js',path:'docs/controller.md',role:'documentation'}]) {
  const root=mkdtempSync(join(tmpdir(),'auxiliary-source-'));roots.push(root);

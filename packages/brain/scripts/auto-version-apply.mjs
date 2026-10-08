@@ -11,8 +11,9 @@
  *
  * CLI: node packages/brain/scripts/auto-version-apply.mjs [--bump patch|minor|major] [--root <dir>]
  */
-import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, lstatSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { SOURCE_RELATIONS_PATH, removeConsumedReleaseRelations } from '../../../scripts/ci/implementation-auxiliary-evidence.mjs';
 
 function bumpVersion(v, type) {
   const [maj, min, pat] = v.trim().split('.').map(Number);
@@ -88,6 +89,16 @@ export function applyAutoVersion(root, { bumpType = 'patch', ifFragmentsOnly = f
     return { skipped: true, fragmentsConsumed: 0, newVersion: null };
   }
 
+  // 在任何版本写入/片删除之前校验声明；只计划实际消费片的release行清理。
+  const relationsPath = join(root, SOURCE_RELATIONS_PATH);
+  if (fragments.length && existsSync(relationsPath) && !lstatSync(relationsPath).isFile()) {
+    throw new Error('AUXILIARY_SOURCE_NOT_REGULAR_FILE');
+  }
+  const originalRelations = fragments.length && existsSync(relationsPath)
+    ? readFileSync(relationsPath, 'utf8') : null;
+  const consumedRelations = originalRelations === null ? null
+    : removeConsumedReleaseRelations(originalRelations, fragments.map(frag => relative(root, frag).split('\\').join('/')));
+
   let version = readJson(join(root, 'packages/brain/package.json')).version;
 
   if (fragments.length === 0) {
@@ -104,6 +115,9 @@ export function applyAutoVersion(root, { bumpType = 'patch', ifFragmentsOnly = f
     unlinkSync(frag);
   }
   writeVersionEverywhere(root, version);
+  if (consumedRelations !== null && consumedRelations !== originalRelations) {
+    writeFileSync(relationsPath, consumedRelations);
+  }
   return { skipped: false, fragmentsConsumed: fragments.length, newVersion: version };
 }
 

@@ -19,6 +19,45 @@ function relation(row){
  const valid=row.role==='documentation'?/\.md$/.test(row.path):row.role==='release'?/^changes\/(?!README\.md$)[^/]+\.md$/.test(row.path):row.role==='verification'?/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(row.path)||/\/smoke\/[^/]+\.sh$/.test(row.path)||['packages/quality/smoke-allowlist.txt','test-registry.yaml'].includes(row.path):false;
  if(!valid)fail('AUXILIARY_ROLE_INVALID');return row;
 }
+/** 版本机器人只移除实际消费的release行，保留其他声明原始字节。 */
+export function removeConsumedReleaseRelations(text, consumedPaths) {
+ if(Buffer.byteLength(text)>1024*1024)fail('AUXILIARY_MANIFEST_TOO_LARGE');
+ let manifest;try{manifest=JSON.parse(text);}catch{fail('AUXILIARY_MANIFEST_INVALID');}
+ if(!manifest||Object.keys(manifest).sort().join(',')!=='relations,repo,schema_version'||manifest.schema_version!==1||!/^[-\w.]+\/[-\w.]+$/.test(manifest.repo)||!Array.isArray(manifest.relations)||manifest.relations.length>1024)fail('AUXILIARY_MANIFEST_INVALID');
+ const seen=new Set();for(const row of manifest.relations){relation(row);if(seen.has(row.path))fail('AUXILIARY_RELATION_DUPLICATE');seen.add(row.path);}
+ // JSON已经解析成功；额外记录token位置以精确删除数组行及相邻逗号，不重排其余对象。
+ const tokens=[...text.matchAll(/"(?:\\.|[^"\\])*"|[{}\[\],:]|[^\s{}\[\],:]+/g)];let index=0;
+ function node(){
+  const first=tokens[index++],out={start:first.index,end:first.index+first[0].length};
+  if(first[0]==='{'){
+   out.properties=new Map();
+   while(tokens[index][0]!=='}'){
+    const key=JSON.parse(tokens[index++][0]);index++;
+    if(out.properties.has(key))fail('AUXILIARY_MANIFEST_INVALID');
+    out.properties.set(key,node());if(tokens[index][0]===',')index++;
+   }
+   const last=tokens[index++];out.end=last.index+1;
+  }else if(first[0]==='['){
+   out.children=[];out.commas=[];
+   while(tokens[index][0]!==']'){
+    out.children.push(node());if(tokens[index][0]===',')out.commas.push(tokens[index++].index);
+   }
+   const last=tokens[index++];out.end=last.index+1;
+  }
+  return out;
+ }
+ const array=node().properties.get('relations'),consumed=new Set(consumedPaths),ranges=[];
+ const selected=manifest.relations.map(row=>row.role==='release'&&consumed.has(row.path));
+ for(let start=0;start<selected.length;start++){
+  if(!selected[start])continue;let end=start;while(selected[end+1])end++;
+  if(end<selected.length-1)ranges.push([array.children[start].start,array.commas[end]+1]);
+  else if(start>0)ranges.push([array.commas[start-1],array.children[end].end]);
+  else ranges.push([array.children[start].start,array.children[end].end]);
+  start=end;
+ }
+ let result=text;for(const [start,end] of ranges.reverse())result=result.slice(0,start)+result.slice(end);
+ return result;
+}
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,maxBuffer:16*1024*1024});
 function readCommitted(root,rev,name){
  path(name);const entry=git(root,'ls-tree','-z',rev,'--',name).toString();
