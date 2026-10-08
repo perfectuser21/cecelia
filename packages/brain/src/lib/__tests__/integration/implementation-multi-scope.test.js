@@ -32,6 +32,22 @@ it('真实UNKNOWN、缺断言、截断图、错误repo/SHA必须保留并拒绝'
  }
 });
 
+it('真实PG全差异报告仅用另一scope真实原生调用闭包消解foreign unclaimed，保留所有其它UNKNOWN',async()=>{
+ await b.db.query("UPDATE graph_edge_snapshots SET dst_path='src/factory-deploy.js' WHERE dst_path='src/shared-lock.js'");
+ const full={...source,changed_files:[{path:'src/shared-lock.js'},{path:'src/factory-deploy.js'}]};
+ const raw=[];
+ for(const [db,scope] of [[a.db,'cecelia-kr'],[b.db,'cecelia-factory']])raw.push(await readImplementationImpact(db,{scope,repo:full.repo,base_revision:full.base_revision,head_revision:full.head_revision,changed_files:full.changed_files}));
+ expect(raw.every(r=>r.mapping_status==='unknown')).toBe(true);
+ expect(multi.resolveScopedImplementationReports).toBeTypeOf('function');
+ const proof=multi.resolveScopedImplementationReports({source:full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:raw});
+ expect(proof.file_coverage.map(f=>f.claims.map(c=>c.scope_key))).toEqual([['cecelia-kr'],['cecelia-factory']]);
+ expect(proof.resolved_foreign_paths).toHaveLength(2);
+ for(const gap of [{code:'regression_missing'},{code:'auxiliary_owner_unclaimed',path:'src/factory-deploy.js'}]){
+  const altered=structuredClone(raw);altered[0].gaps.push(gap);
+  expect(()=>multi.resolveScopedImplementationReports({source:full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:altered})).toThrow();
+ }
+});
+
 it('组合准入必须核真实Git完整差异与祖先，不能拿领域切片冒完整diff',()=>{
  const root=mkdtempSync(join(tmpdir(),'multi-scope-source-'));
  const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
