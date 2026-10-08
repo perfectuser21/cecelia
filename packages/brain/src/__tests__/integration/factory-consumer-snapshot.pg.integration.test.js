@@ -6,6 +6,7 @@ import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
 import * as registration from '../../lib/existing-ops-registration.js';
 import { minimumMapSchema } from '../fixtures/minimum-map-schema.js';
 import { exportImplementationSnapshot,validateImplementationSnapshot } from '../../lib/implementation-ci-snapshot.js';
+import {loadHistoricalImplementationContext} from '../../lib/implementation-context.js';
 import * as snapshots from '../../lib/implementation-ci-snapshot.js';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
 import { randomUUID } from 'node:crypto';
@@ -81,4 +82,26 @@ it('source_set未知/错hash和固定注册身份漂移均UNKNOWN，不伪装已
    const changed=structuredClone(snapshot);mutate(changed);const {snapshot_sha256,...body}=changed;changed.snapshot_sha256=stepSha256(body);
    await expect(snapshots.validateImplementationSnapshotForDatabase(fixture.db,changed)).rejects.toThrow();
  }
+});
+
+async function historicalQuery(){
+ const {snapshot,q}=await crossSnapshot(),w=snapshot.definitions.workflows.find(w=>w.payload.key==='factory_f3_ops');
+ await fixture.db.query("INSERT INTO graph_snapshot_versions(repo,source_revision,scanner_version,row_count,scanned_at) VALUES('cecelia-factory-source',$1,'fixture',0,NOW())",[revision]);
+ const run=(await fixture.db.query("SELECT id FROM map_projection_runs WHERE scope_key='cecelia-factory' AND status='active'")).rows[0].id;
+ for(const node of snapshot.map.manifest.manifest.capabilities)await fixture.db.query("INSERT INTO map_projection_nodes(run_id,node_id,node_type,node_key,name,attributes) VALUES($1,$2,'capability',$3,$3,$4)",[run,stepSha256(node.key),node.key,{canonical_entity_id:node.brain_binding.entity_id,mapping_status:'verified'}]);
+ const binding=frozenWorkspace.bindings.find(b=>b.repo===q.repo);
+ return {...q,kind:'code',path:binding.path,versionId:w.id};
+}
+it('public历史查询从真实Brain逻辑注册及严格F3封印选择来源，Workspace身份不改写定义',async()=>{
+ const q=await historicalQuery(),gaps=[];const c=await loadHistoricalImplementationContext(fixture.db,q,gaps);
+ expect(gaps).toEqual([]);expect(c.registryRepo).toBe('cecelia-factory-source');expect(c.scope_status).toBe('verified');
+ expect(c.mapped.has(EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops').capability_id)).toBe(true);
+ expect(c.fact_revisions['cecelia-factory-source']).toBe(revision);
+ expect((await fixture.db.query('SELECT source_repo FROM workflow_definition_versions WHERE id=$1',[q.versionId])).rows[0].source_repo).toBe('perfectuser21/cecelia');
+});
+it('public历史错实现SHA/path/F2版本或生产scratch来源不能借Brain注册当Workspace准入',async()=>{
+ const q=await historicalQuery(),f2=(await fixture.db.query("SELECT id FROM workflow_definition_versions WHERE payload->>'key'='factory_f2_ops' LIMIT 1")).rows[0].id;
+ for(const changed of [{...q,revision:'0'.repeat(40)},{...q,path:'scripts/ci/unknown.js'},{...q,versionId:f2}])await expect(loadHistoricalImplementationContext(fixture.db,changed,[])).rejects.toMatchObject({code:'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED'});
+ const prod={query:async(sql,args)=>sql==='SELECT current_database() name'?{rows:[{name:'cecelia'}]}:fixture.db.query(sql,args)};
+ await expect(loadHistoricalImplementationContext(prod,q,[])).rejects.toMatchObject({code:'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED'});
 });
