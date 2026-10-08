@@ -75,16 +75,25 @@ export async function importImplementationSnapshot(db,input){
     await db.query('COMMIT');
   }catch(error){await db.query('ROLLBACK');throw error;}
 }
-function definitionEdges(s){
+function definitionEdgePath(path){
+  if(typeof path!=='string'||!path.trim()||path!==path.trim()||path.startsWith('/')||path.includes('\\')||path.includes('\0')||path.split('/').some(p=>!p||p==='.'||p==='..')){
+    throw ciFailure('DEFINITION_GRAPH_PATH_INVALID','定义依赖边必须有合法仓库相对文件路径');
+  }
+  return path;
+}
+export function definitionEdges(s){
   const edges=[];
   for(const w of s.definitions.workflows)for(const ref of w.payload.activities){
     const a=s.definitions.activities.find(a=>a.id===ref.activity_version_id);
     for(const binding of a?.payload.implementation_bindings||[]){
       if(binding.repo!==s.repo||binding.revision!==s.revision||!['code','skill'].includes(binding.kind)||binding.status!=='verified')continue;
-      for(const source of new Set([w.source_path,a.source_path,...(s.adapter_evidence?.adapter==='activity-contracts-v1'&&s.adapter_evidence.revision===s.revision?[s.adapter_evidence.path]:[])]))if(source!==binding.path)edges.push({src_path:binding.path,dst_path:source,edge_type:'import',
-        detail:{via:'frozen_definition',workflow_definition_version_id:w.id,activity_definition_version_id:a.id,source_revision:s.revision}});
+      definitionEdgePath(binding.path);
+      for(const source of new Set([w.source_path,a.source_path,...(s.adapter_evidence?.adapter==='activity-contracts-v1'&&s.adapter_evidence.revision===s.revision?[s.adapter_evidence.path]:[])])){definitionEdgePath(source);if(source!==binding.path)edges.push({src_path:binding.path,dst_path:source,edge_type:'import',
+        detail:{via:'frozen_definition',workflow_definition_version_id:w.id,activity_definition_version_id:a.id,source_revision:s.revision}});}
       for(const assertion of s.assertions.filter(r=>r.journey_id===w.payload.capability_id&&r.step_id===a.activity_id)){
-        let path;try{path=classifyAssertionRef(assertion.assertion_ref).path;}catch{continue;}
+        let shape;try{shape=classifyAssertionRef(assertion.assertion_ref);}catch{continue;}
+        if(shape.kind==='probe')continue; // 业务探针仍在登记中，没有代码文件依赖。
+        const path=definitionEdgePath(shape.path);
         if(path!==binding.path)edges.push({src_path:binding.path,dst_path:path,edge_type:'import',detail:{via:'current_assertion_registration',
           assertion_source:'current_registration',source_repo_basis:'activity_definition',source_repo:s.repo,
           journey_step_link_id:assertion.id,assertion_revision:assertion.assertion_revision,activity_definition_version_id:a.id}});
@@ -110,12 +119,13 @@ async function verifyGeneratedSource(s,repoRoot){
 export async function projectImplementationSnapshot(db,s,repoRoot){
   validateImplementationSnapshot(s);
   s=await verifyGeneratedSource(s,repoRoot);
+  const edges=definitionEdges(s); // 在写隔离扫描图之前先拒绝无效定义路径。
   const repo=s.map.repositories[0].repo,staging=`ci-scan:${repo}`;
   const result=await scanRepo({name:staging,root:realpathSync(repoRoot)},db);
   if(result.error||result.skipped||result.sourceRevision!==s.revision)throw ciFailure('GRAPH_SCAN_FAILED',result.error?.message||'scan revision mismatch');
   const raw=(await db.query('SELECT src_path,dst_path,edge_type,detail FROM graph_edges WHERE repo=$1',[staging])).rows;
   const byKey=new Map(raw.map(e=>[JSON.stringify([e.src_path,e.dst_path,e.edge_type]),e]));
-  for(const edge of definitionEdges(s)){
+  for(const edge of edges){
     const key=JSON.stringify([edge.src_path,edge.dst_path,edge.edge_type]);
     if(!byKey.has(key))byKey.set(key,edge);
   }
