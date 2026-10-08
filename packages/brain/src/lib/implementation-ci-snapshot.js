@@ -28,6 +28,10 @@ export function validateImplementationSnapshot(snapshot){
     if(snapshot.scope!=='cecelia-factory'||anchor.repo!=='perfectuser21/cecelia'||!Array.isArray(snapshot.source_set)
       ||!snapshot.source_set.some(s=>s.repo===snapshot.repo&&s.revision===snapshot.revision)
       ||!snapshot.source_set.some(s=>s.repo===anchor.repo&&s.revision===anchor.revision))throw ciFailure('CONSUMER_SOURCE_SET_INVALID');
+    const expectedSources=[...new Map(snapshot.definitions.activities.flatMap(a=>a.payload.source_set||[]).map(s=>[`${s.repo}@${s.revision}`,s])).values()];
+    const sourceKey=s=>JSON.stringify(s);
+    if(snapshot.source_set.length!==expectedSources.length||snapshot.source_set.some(s=>!expectedSources.some(e=>sourceKey(e)===sourceKey(s)))
+      ||new Set(snapshot.source_set.map(sourceKey)).size!==snapshot.source_set.length)throw ciFailure('CONSUMER_SOURCE_SET_INVALID');
     for(const row of snapshot.definitions.activities)if(!sealedConsumerVersion(row)
       ||!row.payload.implementation_bindings.some(b=>b.repo===snapshot.repo&&b.revision===snapshot.revision&&hasFrozenConsumerSource(row.payload,b.repo,b.path)))throw ciFailure('CONSUMER_SOURCE_SET_INVALID');
   }
@@ -66,6 +70,8 @@ export async function readImplementationSnapshotInTransaction(db,q){
     else if(rows.length===1)selected.push(rows[0]);
     else gap('definition_snapshot_ambiguous',{workflow_id:id,revision:q.revision});
   }
+  if(crossConsumer)for(const w of selected)if(w.source_repo!==anchor.repo||w.source_commit!==anchor.revision
+    ||w.payload_sha256!==stepSha256({source:{repo:w.source_repo,path:w.source_path,commit:w.source_commit},payload:w.payload}))gap('consumer_source_digest_mismatch',{workflow_id:w.workflow_id});
   if(!selected.length)gap('definition_snapshot_missing',{repo:q.repo,revision:q.revision});
   const activityVersions=[...new Set(selected.flatMap(w=>w.payload.activities.map(a=>a.activity_version_id)))];
   const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[]) ORDER BY id',[activityVersions])).rows;
