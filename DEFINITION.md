@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.382.0
+**Brain 版本**: 1.382.1
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.382.1 — coding workflow verify 对接真实 claude：证据核对容忍 worktree 内 cd 前缀、claude 会话剥 runner 配置
+
+- 真实端到端 ea2feb66 实测：claude 在 worktree 里直接执行命令，写 04 证据时补上 `cd <worktree> &&` 前缀，被判 command_not_executed。lib/transcript.mjs `unverifiedItems(items, executions, { worktree })`：证据命令开头 cd 到 worktree 根或其子目录（原路径或 realpath）的前缀去掉后再核对；cd 到 worktree 外（含 `..` 逃逸、同名前缀目录）不放宽；输出核对规则不变。
+- prompts/verify.md：command 块必须逐字照抄 Bash 工具实际执行过的那条命令，不补 cd、不改写 grep 条件、不合并拆分。
+- lib/claude.mjs：claude 会话 env 不继承 runner 配置 CODING_WF_*（会话里跑 runner 测试曾因此 4 条失败）；childEnv 不变，runner→执行器→活动仍可读 CODING_WF_GH_BIN、超时等。
 
 ## Brain 1.382.0 — coding workflow 第四刀：执行机 runner 自动认领带开关的任务跑 coding 链
 
