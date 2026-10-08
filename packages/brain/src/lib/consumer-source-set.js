@@ -3,11 +3,13 @@ const REPO=/^[a-z0-9][a-z0-9_.-]*\/[a-z0-9][a-z0-9_.-]*$/;
 const SHA=/^[0-9a-f]{40}$/;
 const HASH=/^[0-9a-f]{64}$/;
 export const validAssertionSourceRepo = repo => typeof repo==='string'&&REPO.test(repo);
-export function sealedConsumerVersion(row) {
+export function sealedBrainConsumerDefinition(row) {
  return row?.source_repo==='perfectuser21/cecelia'&&SHA.test(row.source_commit)
   &&row.payload_sha256===stepSha256({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload})
-  &&row.payload?.definition_scope==='consumer_evidence'
-  &&row.payload.source_set?.some(s=>s.repo===row.source_repo&&s.revision===row.source_commit);
+  &&row.payload?.definition_scope==='consumer_evidence';
+}
+export function sealedConsumerVersion(row) {
+ return sealedBrainConsumerDefinition(row)&&row.payload.source_set?.some(s=>s.repo===row.source_repo&&s.revision===row.source_commit);
 }
 // 仅消费不可变历史中已经准入的冻结来源。静态 extractor 的 verified 不构成准入。
 export function hasFrozenConsumerSource(payload,repo,path) {

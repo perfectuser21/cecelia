@@ -2,7 +2,7 @@
 import { loadHistoricalImplementationContext } from './implementation-context.js';
 import { computeFreshness } from './registry-freshness.js';
 import { canonicalAssertionCommandText,classifyAssertionRef } from './gp-assertion-command.js';
-import {hasFrozenConsumerSource,sealedConsumerVersion} from './consumer-source-set.js';
+import {hasFrozenConsumerSource,sealedConsumerVersion,sealedBrainConsumerDefinition} from './consumer-source-set.js';
 import {stepSha256} from '../../scripts/sync-steps-from-workspace.mjs';
 import { assertionDigest } from './journey-assertion-receipt.js';
 import { readMapBrainBindings } from './map-brain-bindings.js';
@@ -117,7 +117,8 @@ export async function readImplementationConsumers(db,input,{pinnedContext=null}=
   const activities=new Map(),workflows=new Map(),usages=[];
   for(const row of rows){
     const payload=row.activity_payload,capabilityId=row.workflow_payload.capability_id;
-    const sealed=payload.definition_scope!=='consumer_evidence'||sealedConsumerVersion({...row,payload})
+    const singleRepoLegacy=payload.source_set===undefined&&q.repo==='perfectuser21/cecelia'&&q.repo===row.source_repo;
+    const sealed=payload.definition_scope!=='consumer_evidence'||(singleRepoLegacy?sealedBrainConsumerDefinition({...row,payload}):sealedConsumerVersion({...row,payload}))
       &&row.workflow_repo==='perfectuser21/cecelia'&&row.workflow_hash===stepSha256({source:{repo:row.workflow_repo,path:row.workflow_path,commit:row.workflow_commit},payload:row.workflow_payload});
     if(!sealed)gaps.push({code:'consumer_source_digest_mismatch',activity_id:row.activity_id});
     if(!q.versionId&&(!row.reference_active||row.reference_version!==row.activity_version_id))gaps.push({code:'workflow_usage_version_mismatch',reference_id:row.usage.reference_id});
