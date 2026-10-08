@@ -321,6 +321,21 @@ describe('triggerOpenclawAgent', () => {
 
 describe('reapOpenclawAgentRuns', () => {
   const row = { id: task.id, run_id: 'qiumi-aaaaaaaa-1' };
+  it.each([
+    ['blocked', true, 'qiumi-aaaaaaaa-1', '微信未登录'],
+    ['failed', true, 'qiumi-aaaaaaaa-1', '截图失败'],
+    ['success', false, 'qiumi-aaaaaaaa-1', null],
+    ['success', true, 'wrong-run', null],
+  ])('探路进程退出0也不能把失败/未解锁/错运行号记完成：%s', async (claimed_result, lock_released, run_id, fail_reason) => {
+    const factoryRow = { ...row, payload: { qiumi_department: 'skill-factory' } };
+    const report = JSON.stringify({ stage: 'explore', claimed_result, lock_released, run_id, fail_reason });
+    const query = vi.fn().mockResolvedValueOnce({ rows: [factoryRow] }).mockResolvedValue({ rows: [], rowCount: 1 });
+    const execFileFn = vi.fn((c, a, o, cb) => cb(null, `EXIT=0\n${JSON.stringify({ finalAssistantVisibleText: report })}\n`, ''));
+    expect(await reapOpenclawAgentRuns({ query }, { execFileFn })).toMatchObject({ completed: 0, failed: 1 });
+    const update = query.mock.calls.find(([sql]) => /SET status = 'failed'/.test(sql));
+    expect(update[1][1]).toMatch(/rpa_/);
+    if (fail_reason) expect(update[1][1]).toContain(fail_reason);
+  });
 
   it('EXIT=0 → completed_no_pr + receipt 子键（finalAssistantVisibleText）', async () => {
     const query = vi.fn().mockResolvedValueOnce({ rows: [row] }).mockResolvedValue({ rows: [], rowCount: 1 });
