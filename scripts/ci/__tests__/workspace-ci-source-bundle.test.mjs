@@ -1,15 +1,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync, cpSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { extractWorkspaceCiSourceBundle, F3_IDENTITY } from '../workspace-ci-source-bundle.mjs';
 
 const WR='perfectuser21/zenithjoy-workspace', BR='perfectuser21/cecelia';
 const specs=[['implementation-impact','impact','gate','implementation-pr-gate.mjs'],['pilot-release-verification','verify','verify','pilot-release-verification.mjs']];
 const hash=s=>createHash('sha256').update(s).digest('hex');
+const require=createRequire(import.meta.url);
+test('隔离目录只提供解析运行依赖，导入不依赖eslint或espree',t=>{
+ const dir=mkdtempSync(join(tmpdir(),'workspace-ci-parser-runtime-'));
+ t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ mkdirSync(join(dir,'node_modules'),{recursive:true});
+ for(const name of ['acorn','js-yaml']){
+  cpSync(dirname(require.resolve(`${name}/package.json`)),join(dir,'node_modules',name),{recursive:true});
+ }
+ const modulePath=join(dir,'source-bundle.mjs');
+ copyFileSync(fileURLToPath(new URL('../workspace-ci-source-bundle.mjs',import.meta.url)),modulePath);
+ assert.equal(existsSync(join(dir,'node_modules','espree')),false);
+ assert.equal(existsSync(join(dir,'node_modules','eslint')),false);
+ const probe='const m=await import(process.argv[1]);if(typeof m.extractWorkspaceCiSourceBundle!=="function")throw Error("缺少来源提取入口");process.stdout.write("runtime-import-ok");';
+ const out=execFileSync(process.execPath,['--input-type=module','-e',probe,pathToFileURL(modulePath).href],{cwd:dir,encoding:'utf8',env:{...process.env,NODE_PATH:''},timeout:10000});
+ assert.equal(out,'runtime-import-ok');
+});
 function git(root,...args){return execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();}
 function tree(root,files){mkdirSync(root,{recursive:true});git(root,'init','-q','-b','cp-10090451-source-fixture');for(const [p,s] of Object.entries(files)){mkdirSync(dirname(join(root,p)),{recursive:true});writeFileSync(join(root,p),s);}git(root,'add','.');return git(root,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',git(root,'write-tree'),'-m','固定来源对象');}
 function fixture(t,change=()=>{}){
