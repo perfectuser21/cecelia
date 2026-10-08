@@ -180,7 +180,7 @@ jobs:
             unzip -p "$RUNNER_TEMP/implementation-input/base.zip" head.json > "$RUNNER_TEMP/implementation-input/base/base.json"
             mkdir -p "$RUNNER_TEMP/implementation-input/head"
             cp "$RUNNER_TEMP/implementation-input/base/base.json" "$RUNNER_TEMP/implementation-input/head/head.json"
-            if [[ -n "$ADMISSION_SCOPES" ]]; then
+            if [[ -n "${ADMISSION_SCOPES:-}" ]]; then
               jq -e 'type == "object" and keys == ["schema_version", "scopes"] and .schema_version == 1 and (.scopes | type == "array" and length > 0 and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and length == (unique | length))' <<< "$ADMISSION_SCOPES" >/dev/null
               while IFS= read -r scope; do
                 if [[ "$scope" == "$MAP_SCOPE" ]]; then
