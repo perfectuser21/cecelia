@@ -1,5 +1,5 @@
 // spec 活动：用 claude CLI + 薄 prompt 根据 01-intent.md 生成 <sprint_dir>/02-spec.md。
-// 格式校验不在这里做，交给 chain_check。
+// 生成后自检 02（frontmatter、upstream 覆盖全部 I-n、至少一条 S-n）；跨文件整链校验仍由 chain_check 做。
 import fs from 'node:fs';
 import path from 'node:path';
 import { runActivity, validateBase, fail } from '../lib/protocol.mjs';
@@ -8,11 +8,21 @@ import {
   loadPrompt, claudeTimeoutMs, runClaude, claudeFailure, snapshotChanges, outOfScopeChanges,
 } from '../lib/claude.mjs';
 import { sha256File, chainTamperFailure } from '../lib/guards.mjs';
+import { reportErrors, parseFrontmatter, extractAnchors } from '../lib/md-chain.mjs';
 
 const SPEC_FILE = '02-spec.md';
 const INTENT_FILE = '01-intent.md';
 // 默认低于契约 budget（900s），这样超时由本活动先报明确的 claude_timeout，而不是执行器笼统的 activity_timeout
 const TIMEOUT = { envVar: 'CODING_WF_SPEC_TIMEOUT_MS', defaultMs: 870000 };
+const SPEC_ID_RE = /^S-\d+$/;
+
+/** 02 自检：frontmatter/upstream 覆盖全部 I-n（reportErrors），且至少一条 `### S-n`。返回错误码数组。 */
+function specErrors(text, taskId, intentIds) {
+  const errors = reportErrors(text, { taskId, step: 'spec', coversFile: INTENT_FILE, ids: intentIds });
+  const body = parseFrontmatter(text)?.body ?? text;
+  if (!extractAnchors(body).some((id) => SPEC_ID_RE.test(id))) errors.push('spec_ids_missing');
+  return errors;
+}
 
 await runActivity(async (input) => {
   const { worktree, sprint_dir: sprintDir, intent_ids: intentIds } = input;
@@ -46,6 +56,10 @@ await runActivity(async (input) => {
   const tampered = chainTamperFailure(dir, { intent_sha256: input.intent_sha256 });
   if (tampered) return tampered;
   if (!fs.existsSync(specPath)) return fail('fatal', 'spec_missing');
+
+  // 02 不合格当场拦（重试一次让 claude 重写），不留给 build 报 spec_ids_missing（c2afa8ba 实测）
+  const errors = specErrors(fs.readFileSync(specPath, 'utf8'), input.task_id, intentIds);
+  if (errors.length > 0) return fail('retryable', 'spec_invalid', { evidence: [{ spec_errors: errors }] });
 
   return {
     status: 'completed',
