@@ -76,7 +76,7 @@ it('生产验证拒绝scratch来源，外部allowScratch旗标不得授予权限
 });
 it('source_set未知/错hash和固定注册身份漂移均UNKNOWN，不伪装已准入',async()=>{
  const {snapshot}=await crossSnapshot();
- for(const mutate of [s=>s.source_set.push({...s.source_set[0]}),s=>s.registry_source.repo=s.repo,s=>s.definitions.activities.find(a=>a.payload.source_set).payload.source_set_sha256='0'.repeat(64),s=>s.consumer_registry.references.pop()]){
+ for(const mutate of [s=>s.source_set.push({...s.source_set[0]}),s=>s.registry_source.repo=s.repo,s=>s.definitions.activities.find(a=>a.payload.source_set).payload.source_set_sha256='0'.repeat(64),s=>s.consumer_registry.references.pop(),s=>s.execution_status='verified',s=>s.unverified_reference_ids.pop()]){
    const changed=structuredClone(snapshot);mutate(changed);const {snapshot_sha256,...body}=changed;changed.snapshot_sha256=stepSha256(body);
    await expect(snapshots.validateImplementationSnapshotForDatabase(fixture.db,changed)).rejects.toThrow();
  }
