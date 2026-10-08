@@ -219,10 +219,13 @@ jobs:
     steps:
       - run: echo true
 `);
- const config={owner_path:'src/controller.js',path:target,role:'verification_config',consumer_path:nightlyReader,ci_path:nightlyCi};
- const relations=[{owner_path:'src/controller.js',path:nightlyReader,role:'verification'},config];
+ writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:'perfectuser21/cecelia',relations:[]}));
+ f.git('add','.');f.git('commit','-qm','fixed base config files without ownership');f.source.base_revision=f.git('rev-parse','HEAD');
+ const config={owner_path:nightlyReader,path:target,role:'verification_config',consumer_path:nightlyReader,ci_path:nightlyCi};
+ const relations=[config];
+ writeFileSync(join(f.root,target),readFileSync(join(f.root,target),'utf8')+'# candidate config update\n');
  writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:'perfectuser21/cecelia',relations}));
- f.git('add','.');f.git('commit','-qm','real nightly reader and required CI');f.source.repo='perfectuser21/cecelia';f.source.head_revision=f.git('rev-parse','HEAD');
+ f.git('add','.');f.git('commit','-qm','real nightly reader and required CI');f.source.repo='perfectuser21/cecelia';f.source.head_revision=f.git('rev-parse','HEAD');f.source.changed_files=[{path:'.implementation-source-relations.json'},{path:target}];
  return {...f,reader,ci,config,relations};
 }
 it.each([nightlyYaml,nightlyCi])('真实固定Git reader读取配置且由required CI永久执行：%s',target=>{
@@ -231,4 +234,92 @@ it.each([nightlyYaml,nightlyCi])('真实固定Git reader读取配置且由requir
  expect(row).toMatchObject({role:'verification_config',consumer_path:nightlyReader,ci_path:nightlyCi});
  expect(row.consumer_sha256).toMatch(/^[a-f0-9]{64}$/);expect(row.ci_sha256).toMatch(/^[a-f0-9]{64}$/);
  expect(row.consumer_evidence).toMatchObject({read_kind:'yaml.load/readFileSync',ci_job:'lint-auto-merge-decision',aggregate_job:'ci-passed'});
+});
+
+function configCommit(f){f.git('add','.');f.git('commit','-qm','updated frozen proof');f.source.head_revision=f.git('rev-parse','HEAD');}
+it.each([
+ ['任意YAML', {path:'.github/workflows/arbitrary.yml'}],
+ ['业务SQL', {path:'packages/brain/migrations/business.sql'}],
+ ['任意reader', {consumer_path:'src/another.test.mjs'}],
+ ['任意CI', {ci_path:'.github/workflows/other.yml'}],
+ ['借无关code父', {owner_path:'src/controller.js'}],
+ ['其它test父', {owner_path:'src/other.test.js'}],
+])('%s不能获得配置消费身份',(_name,change)=>{
+ const f=configFixture();writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:f.source.repo,relations:[{...f.config,...change}]}));configCommit(f);
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow();
+});
+it.each([
+ ['注释伪调用', reader=>'/*'+reader+'*/'],
+ ['字符串伪调用', reader=>`const fake=${JSON.stringify(reader)};`],
+ ['没有YAML parse',reader=>reader.replaceAll('yaml.load(readFileSync','String(readFileSync')],
+ ['YAML方法被覆盖',reader=>reader.replace('const workflow=', 'yaml.load=JSON.parse;const workflow=')],
+ ['YAML对象转交其它函数',reader=>reader.replace('const workflow=', 'Object.assign(yaml,{load:JSON.parse});const workflow=')],
+ ['真实test回调中的FS shadow',reader=>reader.replace('const workflow=', "import {test} from 'node:test';test('shadow',readFileSync=>{const workflow=").replace("const official=", "});const official=")],
+ ['错误YAML模块',reader=>reader.replace("from 'js-yaml'","from 'fake-yaml'")],
+ ['错误FS模块',reader=>reader.replace("from 'node:fs'","from 'fake-fs'")],
+ ['错误root位置',reader=>reader.replace("new URL('../../../../'","new URL('../../../'")],
+ ['URL被shadow',reader=>reader.replace('const root=', 'class URL {}\nconst root=')],
+ ['reader被shadow',reader=>reader.replace('const workflow=',"function dead(readFileSync){ const workflow=")+ '\n}'],
+ ['死分支',reader=>reader.replace('const workflow=', 'if(false){const workflow=')+'\n}'],
+ ['未调用函数',reader=>reader.replace('const workflow=', 'function uncalled(){const workflow=')+'\n}'],
+])('%s不能替代真实AST读取',(_name,mutate)=>{
+ const f=configFixture();writeFileSync(join(f.root,nightlyReader),mutate(f.reader));configCommit(f);
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow();
+});
+it.each([
+ ['CI注释伪调用', ci=>ci.replace('run: node --test','run: "# node --test')+'"'],
+ ['CI echo伪调用', ci=>ci.replace('run: node --test','run: echo node --test')],
+ ['CI字符串伪调用', ci=>ci.replace('run: node --test','run: echo "node --test')+'"'],
+ ['无required需要', ci=>ci.replace('needs: [lint-auto-merge-decision]','needs: []')],
+ ['没有真实汇总调用', ci=>ci.replace('check "lint-auto-merge-decision"','echo "lint-auto-merge-decision"')],
+ ['汇总注释', ci=>ci.replace('check "lint-auto-merge-decision"','# check "lint-auto-merge-decision"')],
+ ['可被跳过', ci=>ci.replace('    steps:', '    if: false\n    steps:')],
+ ['吞失败', ci=>ci.replace('    steps:', '    continue-on-error: true\n    steps:')],
+])('%s不能证明永久CI消费',(_name,mutate)=>{
+ const f=configFixture();writeFileSync(join(f.root,nightlyCi),mutate(f.ci));configCommit(f);
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow();
+});
+it('同固定路径不能以业务SQL冒充workflow，跨repo不能复用精确reader声明',()=>{
+ const f=configFixture();writeFileSync(join(f.root,nightlyYaml),'SELECT * FROM tasks;');configCommit(f);
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow(/INPUT_INVALID/);
+ const cross=configFixture();cross.git('remote','set-url','origin','https://github.com/example/repo.git');cross.source.repo='example/repo';
+ writeFileSync(join(cross.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:cross.source.repo,relations:cross.relations}));configCommit(cross);cross.source.base_revision=cross.source.head_revision;
+ expect(()=>gate.collectAuxiliarySourceEvidence(cross.root,cross.source)).toThrow(/CONFIG_REPO_INVALID/);
+});
+it('配置reader缺真实图认领必须UNKNOWN，普通verification/documentation仍拒test父',()=>{
+ const f=configFixture();const evidence=gate.collectAuxiliarySourceEvidence(f.root,f.source);
+ f.report.source=f.source;f.report.head.revision=f.source.head_revision;
+ f.report.head.graph_snapshot.repo=f.source.repo;f.report.head.graph_snapshot.source_revision=f.source.head_revision;
+ gate.applyAuxiliarySourceEvidence(f.report,evidence,{base:[],head:[]});
+ expect(f.report.mapping_status).toBe('unknown');expect(f.report.gaps).toContainEqual({code:'auxiliary_owner_unclaimed',side:'head',path:nightlyReader});
+ expect(()=>assertImplementationReport(f.report)).toThrow();
+ for(const role of ['verification','documentation']){
+  const other=configFixture();writeFileSync(join(other.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:other.source.repo,relations:[{owner_path:nightlyReader,path:'docs/controller.md',role}]}));configCommit(other);
+  expect(()=>gate.collectAuxiliarySourceEvidence(other.root,other.source)).toThrow(/OWNER_INVALID/);
+ }
+});
+
+it('真实node:test回调中的YAML parse也是固定读取，不把独立未调用函数当证据',()=>{
+ const f=configFixture(nightlyCi);
+ writeFileSync(join(f.root,nightlyReader),f.reader.replace('const official=', "import {test} from 'node:test';test('ci',()=>{const official=")+'\n});');configCommit(f);
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).not.toThrow();
+});
+it('只有真实图已认领固定reader后，配置才能获得独立覆盖；篡改reader/CI摘要拒绝',async()=>{
+ const f=configFixture();f.source.changed_files=[{path:'.implementation-source-relations.json'},{path:nightlyYaml}];
+ const report=f.report;report.source=f.source;report.required_assertions[0].source_repo=f.source.repo;
+ for(const side of ['base','head']){
+  report[side].revision=f.source[`${side}_revision`];report[side].graph_snapshot.repo=f.source.repo;report[side].graph_snapshot.source_revision=report[side].revision;
+  report[side].file_coverage=f.source.changed_files.map((p,i)=>({change_index:i,path:p.path,matched_paths:[],truncated:false}));
+ }
+ report.gaps=f.source.changed_files.map(f=>({code:'changed_file_unclaimed',path:f.path}));report.unclaimed_paths=f.source.changed_files;
+ report.affected_usages[0].evidence[0].implementation.path=nightlyReader;
+ const evidence=gate.collectAuxiliarySourceEvidence(f.root,f.source);
+ gate.applyAuxiliarySourceEvidence(report,evidence,{base:[],head:[{path:nightlyReader,matched_paths:[nightlyReader],truncated:false}]});
+ expect(report.mapping_status).toBe('verified');expect(report.gaps).toEqual([]);
+ expect(report.head.file_coverage[1]).toMatchObject({coverage_kind:'auxiliary_source',auxiliary_role:'verification_config',native_matched_paths:[],matched_paths:[nightlyReader]});
+ const result=await gate.runImplementationGate({repoRoot:f.root,report});expect(result.verdict).toBe('PASS');expect(readFileSync(join(f.root,'actual-output'),'utf8')).toBe('auxiliary-checked');
+ for(const field of ['consumer_sha256','ci_sha256']){
+  const copy=structuredClone(report);copy.auxiliary_source_evidence.head.relations.find(r=>r.role==='verification_config')[field]='f'.repeat(64);
+  expect(()=>gate.assertAuxiliarySourceEvidence(copy)).toThrow();await expect(gate.runImplementationGate({repoRoot:f.root,report:copy})).rejects.toThrow();
+ }
 });
