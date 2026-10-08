@@ -117,3 +117,11 @@ for(const [name,field,valid] of [
  ['未知默认scope拒绝',"      admission_scopes: {required: false, type: string, default: all}\n",false],
  ['额外可选字段拒绝',"      admission_scopes: {required: false, type: string, default: ''}\n      whatever: {required: false, type: string}\n",false],
 ])test(`固定新增callee接口：${name}`,async t=>{const f=fixture(t);fixedNewBrain(f,b=>{const p='.github/workflows/implementation-impact.yml';b[p]=b[p].replace('    inputs:\n','    inputs:\n'+field);});const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,valid?'verified':'unknown',JSON.stringify(r.gaps));assert.equal(r.admission.status,'unknown');});
+
+for(const [name,value,valid] of [
+ ['显式两个真实scope',JSON.stringify({schema_version:1,scopes:['zenithjoy','cecelia-factory']}),true],
+ ['未知schema',JSON.stringify({schema_version:2,scopes:['zenithjoy','cecelia-factory']}),false],
+ ['额外字段',JSON.stringify({schema_version:1,scopes:['zenithjoy','cecelia-factory'],allow_unknown:true}),false],
+ ['重复scope',JSON.stringify({schema_version:1,scopes:['zenithjoy','zenithjoy']}),false],
+ ['宽泛scope',JSON.stringify({schema_version:1,scopes:['all']}),false],
+])test(`Workspace多scope caller拒绝扩大协议：${name}`,async t=>{const f=fixture(t);const p='.github/workflows/implementation-impact.yml';f.wf[p]+= `      admission_scopes: '${value}'\n`;fixedNewBrain(f,b=>{b[p]=b[p].replace('    inputs:\n',"    inputs:\n      admission_scopes: {required: false, type: string, default: ''}\n");});const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,valid?'verified':'unknown',JSON.stringify(r.gaps));});
