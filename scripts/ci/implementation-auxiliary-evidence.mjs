@@ -5,6 +5,11 @@ import { createRequire } from 'node:module';
 import { canonicalRepoIdentity } from '../../packages/brain/src/lib/gp-assertion-command.js';
 export const SOURCE_RELATIONS_PATH='.implementation-source-relations.json';
 const CONFIG_READER='.github/workflows/scripts/__tests__/nightly-runtime.test.mjs',CONFIG_CI='.github/workflows/ci.yml',CONFIG_INPUTS=[CONFIG_CI,'.github/workflows/nightly-regression.yml'];
+const WORKSPACE_REPO='perfectuser21/zenithjoy-workspace',WORKSPACE_CI='.github/workflows/implementation-impact.yml';
+const WORKSPACE_CONFIGS=[{path:WORKSPACE_CI,reader:'scripts/ci/__tests__/implementation-impact-workflow.test.mjs',job:'impact'},{path:'.github/workflows/pilot-release-verification.yml',reader:'scripts/ci/__tests__/pilot-release-workflow.test.mjs',job:'verify'}];
+const workspaceConfig=row=>WORKSPACE_CONFIGS.find(s=>s.path===row.path&&s.reader===row.owner_path&&s.reader===row.consumer_path&&row.ci_path===WORKSPACE_CI);
+const configRepo=row=>workspaceConfig(row)?WORKSPACE_REPO:'perfectuser21/cecelia';
+const configReader=value=>value===CONFIG_READER||WORKSPACE_CONFIGS.some(s=>s.reader===value);
 const brainRequire=createRequire(new URL('../../packages/brain/package.json',import.meta.url));
 const hash=/^[0-9a-f]{64}$/,revision=/^[0-9a-f]{40}$/;
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
@@ -20,10 +25,10 @@ function relation(row){
  const config=row?.role==='verification_config';
  const keys=config?'ci_path,consumer_path,owner_path,path,role':'owner_path,path,role';
  if(!row||Array.isArray(row)||Object.keys(row).sort().join(',')!==keys)fail('AUXILIARY_RELATION_INVALID');
- if(config){if(row.owner_path!==CONFIG_READER)fail('AUXILIARY_CONFIG_OWNER_INVALID');}else ownerPath(row.owner_path);
+ if(config){if(!configReader(row.owner_path))fail('AUXILIARY_CONFIG_OWNER_INVALID');}else ownerPath(row.owner_path);
  path(row.path);if(row.path===row.owner_path)fail('AUXILIARY_DIRECTION_INVALID');
  if(config){
-  if(!CONFIG_INPUTS.includes(row.path)||row.consumer_path!==CONFIG_READER||row.ci_path!==CONFIG_CI)fail('AUXILIARY_CONFIG_SCOPE_INVALID');
+  if(!workspaceConfig(row)&&(!CONFIG_INPUTS.includes(row.path)||row.owner_path!==CONFIG_READER||row.consumer_path!==CONFIG_READER||row.ci_path!==CONFIG_CI))fail('AUXILIARY_CONFIG_SCOPE_INVALID');
   return row;
  }
  const valid=row.role==='documentation'?/\.md$/.test(row.path):row.role==='release'?/^changes\/(?!README\.md$)[^/]+\.md$/.test(row.path):row.role==='verification'?/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(row.path)||/\/smoke\/[^/]+\.sh$/.test(row.path)||['packages/quality/smoke-allowlist.txt','test-registry.yaml'].includes(row.path):false;
@@ -31,6 +36,7 @@ function relation(row){
 }
 const rawRelation=row=>({owner_path:row.owner_path,path:row.path,role:row.role,...(row.role==='verification_config'?{consumer_path:row.consumer_path,ci_path:row.ci_path}:{})});
 function configProof(reader,ci,input,row){
+ if(workspaceConfig(row))return workspaceConfigProof(reader,ci,input,row);
  const {Linter}=brainRequire('eslint'),yaml=brainRequire('js-yaml');
  const linter=new Linter();
  const errors=linter.verify(reader.toString(),[{languageOptions:{ecmaVersion:'latest',sourceType:'module'}}]);
@@ -101,11 +107,57 @@ function configProof(reader,ci,input,row){
   !workflow.on||!(Array.isArray(workflow.on)?workflow.on.includes('pull_request'):Object.hasOwn(workflow.on,'pull_request')))fail('AUXILIARY_CONFIG_CI_UNPROVEN');
  return {read_kind:'yaml.load/readFileSync',read_range:read.range,owner_kind:'claimed-reader',owner_range:[0,reader.length],ci_job:'lint-auto-merge-decision',aggregate_job:'ci-passed'};
 }
+/** Workspace独立精确协议；CI依赖只在此CI collector加载，不进入生产来源提取器。 */
+function workspaceConfigProof(reader,ci,input,row){
+ const {Linter}=brainRequire('eslint'),yaml=brainRequire('js-yaml'),linter=new Linter();
+ const errors=linter.verify(reader.toString(),[{languageOptions:{ecmaVersion:'latest',sourceType:'module'}}]);
+ const code=linter.getSourceCode();if(errors.some(e=>e.fatal)||!code)fail('AUXILIARY_CONFIG_READER_INVALID');
+ const refs=new Map(code.scopeManager.scopes.flatMap(s=>s.references).map(r=>[r.identifier,r]));
+ const imported=(n,source,name)=>{const ds=refs.get(n)?.resolved?.defs;return n?.type==='Identifier'&&ds?.length===1&&ds[0].type==='ImportBinding'&&ds[0].parent.source.value===source&&(name==='default'?ds[0].node.type==='ImportDefaultSpecifier':ds[0].node.type==='ImportSpecifier'&&ds[0].node.imported.name===name);};
+ const member=(n,key)=>n?.type==='MemberExpression'&&!n.computed&&!n.optional&&n.property.name===key;
+ const call=n=>n?.type==='CallExpression'&&!n.optional;
+ const literal=(n,value)=>n?.type==='Literal'&&n.value===value;
+ const parents=new Map(),nodes=[];
+ const walk=(n,p)=>{if(!n?.type)return;parents.set(n,p);nodes.push(n);for(const [k,v] of Object.entries(n)){if(['parent','tokens','comments'].includes(k))continue;if(Array.isArray(v))for(const x of v)walk(x,n);else if(v?.type)walk(v,n);}};walk(code.ast,null);
+ const url=n=>{
+  const ds=refs.get(n)?.resolved?.defs,d=ds?.[0],init=d?.node?.init;
+  if(n?.type!=='Identifier'||ds?.length!==1||d.type!=='Variable'||d.parent.kind!=='const'||init?.type!=='NewExpression'||init.callee.name!=='URL'||refs.get(init.callee)?.resolved?.defs?.length||init.arguments.length!==2||!literal(init.arguments[0],`../../../${row.path}`)||!member(init.arguments[1],'url')||init.arguments[1].object.type!=='MetaProperty'||init.arguments[1].object.meta.name!=='import'||init.arguments[1].object.property.name!=='meta')return false;
+  return !refs.get(n).resolved.references.some(r=>r.isWrite()&&r.identifier!==d.node.id);
+ };
+ const read=n=>call(n)&&member(n.callee,'parse')&&imported(n.callee.object,'yaml','default')&&n.arguments.length===1&&call(n.arguments[0])&&imported(n.arguments[0].callee,'node:fs','readFileSync')&&n.arguments[0].arguments.length===2&&url(n.arguments[0].arguments[0])&&literal(n.arguments[0].arguments[1],'utf8');
+ // 禁止把可变YAML对象传给别的函数、赋值或包装后伪造parse。
+ for(const [n] of refs)if(imported(n,'yaml','default')){const m=parents.get(n),c=parents.get(m);if(!member(m,'parse')||!call(c)||c.callee!==m)fail('AUXILIARY_CONFIG_BINDING_MUTATED');}
+ const active=n=>{
+  for(let child=n,p=parents.get(n);p;child=p,p=parents.get(p)){
+   if(['IfStatement','ConditionalExpression','LogicalExpression','WhileStatement','ForStatement','ForOfStatement','ForInStatement','SwitchStatement','TryStatement'].includes(p.type))return false;
+   if(['Program','BlockStatement'].includes(p.type)){const i=p.body.indexOf(child);if(i>=0&&p.body.slice(0,i).some(x=>['ReturnStatement','ThrowStatement'].includes(x.type)))return false;}
+   if(['FunctionDeclaration','FunctionExpression','ArrowFunctionExpression'].includes(p.type)){const c=parents.get(p);if(!call(c)||!imported(c.callee,'node:test','test')||c.arguments.length!==2||c.arguments[1]!==p)return false;}
+  }return true;
+ };
+ const precondition=n=>n.type==='ExpressionStatement'&&call(n.expression)&&member(n.expression.callee,'ok')&&imported(n.expression.callee.object,'node:assert/strict','default')&&[1,2].includes(n.expression.arguments.length)&&call(n.expression.arguments[0])&&imported(n.expression.arguments[0].callee,'node:fs','existsSync')&&n.expression.arguments[0].arguments.length===1&&url(n.expression.arguments[0].arguments[0])&&(n.expression.arguments.length===1||n.expression.arguments[1].type==='Literal');
+ const actual=nodes.find(n=>{
+  if(!read(n))return false;
+  const ret=parents.get(n),block=parents.get(ret),fn=parents.get(block);
+  if(ret?.type!=='ReturnStatement'||ret.argument!==n||block?.type!=='BlockStatement'||fn?.type!=='FunctionDeclaration'||fn.params.length||block.body.at(-1)!==ret||block.body.slice(0,-1).some(s=>!precondition(s)))return false;
+  return nodes.some(c=>call(c)&&c.arguments.length===0&&c.callee.type==='Identifier'&&refs.get(c.callee)?.resolved?.defs?.length===1&&refs.get(c.callee).resolved.defs[0].node===fn&&!refs.get(c.callee).resolved.references.some(r=>r.isWrite())&&active(c));
+ });
+ if(!actual)fail('AUXILIARY_CONFIG_READ_UNPROVEN');
+ let workflow,parsedInput;try{workflow=yaml.load(ci.toString(),{schema:yaml.JSON_SCHEMA});parsedInput=yaml.load(input.toString(),{schema:yaml.JSON_SCHEMA});}catch{fail('AUXILIARY_CONFIG_CI_INVALID');}
+ const spec=workspaceConfig(row),required=(w,name,readerPath,allowMainGuard=false)=>{
+  const j=w?.jobs?.['caller-contract'],target=w?.jobs?.[name],needs=Array.isArray(target?.needs)?target.needs:[target?.needs];
+  const s=j?.steps?.find(s=>s.run?.trim()===`node --test ${readerPath}`);
+  return j&&j.if==null&&!j['continue-on-error']&&j.strategy==null&&w.defaults?.run?.['working-directory']==null&&j.defaults?.run?.['working-directory']==null&&s&&s.if==null&&!s['continue-on-error']&&s['working-directory']==null&&target&&!target['continue-on-error']&&needs.includes('caller-contract')&&(target.if==null||allowMainGuard&&target.if==="github.ref == 'refs/heads/main'");
+ };
+ const on=workflow?.on;
+ if(!on||!Object.hasOwn(on,'pull_request')||on.pull_request?.paths!=null||on.pull_request?.['paths-ignore']!=null||!required(workflow,'impact',row.consumer_path)||!required(parsedInput,spec.job,row.consumer_path,spec.job==='verify'))fail('AUXILIARY_CONFIG_CI_UNPROVEN');
+ return {read_kind:'YAML.parse/readFileSync',read_range:actual.range,owner_kind:'claimed-reader',owner_range:[0,reader.length],ci_job:'caller-contract',aggregate_job:'impact'};
+}
 function validateConfigEvidence(row){
  const proof=row.consumer_evidence;
+ const workspace=workspaceConfig(row);
  if(!hash.test(row.consumer_sha256)||!hash.test(row.ci_sha256)||!proof||
   Object.keys(proof).sort().join(',')!=='aggregate_job,ci_job,owner_kind,owner_range,read_kind,read_range'||
-  proof.read_kind!=='yaml.load/readFileSync'||proof.owner_kind!=='claimed-reader'||proof.ci_job!=='lint-auto-merge-decision'||proof.aggregate_job!=='ci-passed'||
+  proof.read_kind!==(workspace?'YAML.parse/readFileSync':'yaml.load/readFileSync')||proof.owner_kind!=='claimed-reader'||proof.ci_job!==(workspace?'caller-contract':'lint-auto-merge-decision')||proof.aggregate_job!==(workspace?'impact':'ci-passed')||
   [proof.read_range,proof.owner_range].some(range=>!Array.isArray(range)||range.length!==2||range.some(v=>!Number.isSafeInteger(v)||v<0)||range[1]<=range[0]))fail('AUXILIARY_CONFIG_EVIDENCE_INVALID');
 }
 /** 版本机器人只移除实际消费的release行，保留其他声明原始字节。 */
@@ -113,7 +165,7 @@ export function removeConsumedReleaseRelations(text, consumedPaths) {
  if(Buffer.byteLength(text)>1024*1024)fail('AUXILIARY_MANIFEST_TOO_LARGE');
  let manifest;try{manifest=JSON.parse(text);}catch{fail('AUXILIARY_MANIFEST_INVALID');}
  if(!manifest||Object.keys(manifest).sort().join(',')!=='relations,repo,schema_version'||manifest.schema_version!==1||!/^[-\w.]+\/[-\w.]+$/.test(manifest.repo)||!Array.isArray(manifest.relations)||manifest.relations.length>1024)fail('AUXILIARY_MANIFEST_INVALID');
- const seen=new Set();for(const row of manifest.relations){relation(row);if(row.role==='verification_config'&&manifest.repo!=='perfectuser21/cecelia')fail('AUXILIARY_CONFIG_REPO_INVALID');if(seen.has(row.path))fail('AUXILIARY_RELATION_DUPLICATE');seen.add(row.path);}
+ const seen=new Set();for(const row of manifest.relations){relation(row);if(row.role==='verification_config'&&manifest.repo!==configRepo(row))fail('AUXILIARY_CONFIG_REPO_INVALID');if(seen.has(row.path))fail('AUXILIARY_RELATION_DUPLICATE');seen.add(row.path);}
  // JSON已经解析成功；额外记录token位置以精确删除数组行及相邻逗号，不重排其余对象。
  const tokens=[...text.matchAll(/"(?:\\.|[^"\\])*"|[{}\[\],:]|[^\s{}\[\],:]+/g)];let index=0;
  function node(){
@@ -171,12 +223,12 @@ export function collectAuxiliarySourceEvidence(root,source){
    if(!manifest||Object.keys(manifest).sort().join(',')!=='relations,repo,schema_version'||manifest.schema_version!==1||manifest.repo!==source.repo||!Array.isArray(manifest.relations)||manifest.relations.length>1024)fail('AUXILIARY_MANIFEST_INVALID');
    const seen=new Set();
    for(const raw of manifest.relations){
-    const row=relation(raw);if(row.role==='verification_config'&&source.repo!=='perfectuser21/cecelia')fail('AUXILIARY_CONFIG_REPO_INVALID');if(seen.has(row.path))fail('AUXILIARY_RELATION_DUPLICATE');seen.add(row.path);
+    const row=relation(raw);if(row.role==='verification_config'&&source.repo!==configRepo(row))fail('AUXILIARY_CONFIG_REPO_INVALID');if(seen.has(row.path))fail('AUXILIARY_RELATION_DUPLICATE');seen.add(row.path);
     const owner=readCommitted(root,rev,row.owner_path),auxiliary=readCommitted(root,rev,row.path);
     if(!owner||!auxiliary)fail('AUXILIARY_SOURCE_MISSING');
     let config={};
     if(row.role==='verification_config'){
-     if(row.owner_path!==CONFIG_READER&&!manifest.relations.some(r=>r.role==='verification'&&r.path===row.consumer_path&&r.owner_path===row.owner_path))fail('AUXILIARY_CONFIG_READER_OWNER_MISSING');
+     if(!configReader(row.owner_path))fail('AUXILIARY_CONFIG_READER_OWNER_MISSING');
      const reader=readCommitted(root,rev,row.consumer_path),ci=readCommitted(root,rev,row.ci_path);if(!reader||!ci)fail('AUXILIARY_CONFIG_SOURCE_MISSING');
      config={consumer_sha256:bytesHash(reader),ci_sha256:bytesHash(ci),consumer_evidence:configProof(reader,ci,auxiliary,row)};
     }
@@ -198,7 +250,7 @@ function validateFrozen(evidence,source){
   const seen=new Set();for(const row of f.relations){
    relation(rawRelation(row));
    const keys=row.role==='verification_config'?'ci_path,ci_sha256,consumer_evidence,consumer_path,consumer_sha256,owner_path,owner_sha256,path,role,sha256':'owner_path,owner_sha256,path,role,sha256';
-   if(row.role==='verification_config'){if(source.repo!=='perfectuser21/cecelia')fail('AUXILIARY_CONFIG_REPO_INVALID');validateConfigEvidence(row);}
+   if(row.role==='verification_config'){if(source.repo!==configRepo(row))fail('AUXILIARY_CONFIG_REPO_INVALID');validateConfigEvidence(row);}
    if(Object.keys(row).sort().join(',')!==keys||seen.has(row.path)||!hash.test(row.owner_sha256)||!hash.test(row.sha256))fail('AUXILIARY_EVIDENCE_INVALID');seen.add(row.path);
   }
  }
@@ -209,7 +261,7 @@ function claimedOwners(report,evidence,side){
  const consumers=new Set(report.affected_usages.flatMap(u=>(u.evidence||[]).filter(e=>e.side===side).map(e=>e.implementation?.path)));
  const owners=new Map();
  for(const row of rows){
-  if(!(row.path===CONFIG_READER&&evidence[side].relations.some(r=>r.role==='verification_config'&&r.owner_path===row.path)))ownerPath(row.path);
+  if(!(configReader(row.path)&&evidence[side].relations.some(r=>r.role==='verification_config'&&r.owner_path===row.path)))ownerPath(row.path);
   if(owners.has(row.path)||row.source_revision!==report[side].revision||row.graph_sha256!==report[side].graph_snapshot.digest||row.truncated!==false||!Array.isArray(row.matched_paths)||row.matched_paths.some(p=>!consumers.has(p)))fail('AUXILIARY_OWNER_EVIDENCE_INVALID');
   owners.set(row.path,row.matched_paths);
  }

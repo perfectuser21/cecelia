@@ -188,6 +188,106 @@ it('真实PR入口拒绝错误固定上下文并留下UNKNOWN案卷，不接数�
 const nightlyReader='.github/workflows/scripts/__tests__/nightly-runtime.test.mjs';
 const nightlyCi='.github/workflows/ci.yml';
 const nightlyYaml='.github/workflows/nightly-regression.yml';
+const workspaceRepo='perfectuser21/zenithjoy-workspace';
+const workspaceCi='.github/workflows/implementation-impact.yml';
+const workspaceInputs=[workspaceCi,'.github/workflows/pilot-release-verification.yml'];
+function workspaceConfigFixture(target=workspaceCi){
+ const f=fixture([]);f.git('remote','set-url','origin',`https://github.com/${workspaceRepo}.git`);
+ const readerPath=target===workspaceCi?'scripts/ci/__tests__/implementation-impact-workflow.test.mjs':'scripts/ci/__tests__/pilot-release-workflow.test.mjs';
+ mkdirSync(join(f.root,'scripts/ci/__tests__'),{recursive:true});mkdirSync(join(f.root,'.github/workflows'),{recursive:true});
+ const reader=`import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {existsSync,readFileSync} from 'node:fs';
+import YAML from 'yaml';
+const file=new URL('../../../${target}',import.meta.url);
+function config(){assert.ok(existsSync(file),'exists');return YAML.parse(readFileSync(file,'utf8'));}
+test('actual config',()=>{assert.ok(config().jobs);});
+`;
+ const ci=`on: {pull_request: {branches: [main]}, push: {branches: [main]}}
+jobs:
+  caller-contract:
+    steps:
+      - run: node --test scripts/ci/__tests__/implementation-impact-workflow.test.mjs
+      - run: node --test scripts/ci/__tests__/pilot-release-workflow.test.mjs
+  impact:
+    needs: caller-contract
+    uses: perfectuser21/cecelia/.github/workflows/implementation-impact.yml@${'a'.repeat(40)}
+`;
+ const pilot=`on: {push: {branches: [main]}, workflow_dispatch: {}}
+jobs:
+  caller-contract:
+    steps:
+      - run: node --test scripts/ci/__tests__/pilot-release-workflow.test.mjs
+  verify:
+    if: github.ref == 'refs/heads/main'
+    needs: caller-contract
+    uses: perfectuser21/cecelia/.github/workflows/pilot-release-verification.yml@${'a'.repeat(40)}
+`;
+ writeFileSync(join(f.root,readerPath),reader);writeFileSync(join(f.root,workspaceCi),ci);writeFileSync(join(f.root,workspaceInputs[1]),pilot);
+ writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:workspaceRepo,relations:[]}));
+ f.git('add','.');f.git('commit','-qm','fixed workspace source');f.source.base_revision=f.git('rev-parse','HEAD');
+ const config={owner_path:readerPath,path:target,role:'verification_config',consumer_path:readerPath,ci_path:workspaceCi};
+ writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:workspaceRepo,relations:[config]}));
+ f.git('add','.');f.git('commit','-qm','candidate workspace relation');f.source.repo=workspaceRepo;f.source.head_revision=f.git('rev-parse','HEAD');f.source.changed_files=[{path:'.implementation-source-relations.json'},{path:target}];
+ return {...f,reader,readerPath,ci,config};
+}
+it.each(workspaceInputs)('Workspace 精确 reader 的实际函数读取及永久caller-contract生成固定来源证据：%s',target=>{
+ const f=workspaceConfigFixture(target),e=gate.collectAuxiliarySourceEvidence(f.root,f.source);
+ expect(e.head.relations[0]).toMatchObject({owner_path:f.readerPath,consumer_sha256:expect.stringMatching(/^[a-f0-9]{64}$/),ci_sha256:expect.stringMatching(/^[a-f0-9]{64}$/),consumer_evidence:{read_kind:'YAML.parse/readFileSync',ci_job:'caller-contract',aggregate_job:'impact'}});
+});
+it.each([
+ s=>s.replace("config().jobs","({jobs:true}).jobs"),
+ s=>s.replace("return YAML.parse","return {}; return YAML.parse"),
+ s=>s.replace("()=>{assert.ok(config().jobs);}","()=>{if(false)assert.ok(config().jobs);}"),
+ s=>s.replace("()=>{assert.ok(config().jobs);}","()=>{return; assert.ok(config().jobs);}"),
+ s=>s.replace("test('actual config'","test.skip('actual config'"),
+ s=>s.replace("test('actual config'","config=()=>({jobs:true});test('actual config'"),
+ s=>s.replace("function config()","function config(YAML)"),
+ s=>s.replace("const file=new URL", "const URL=()=>({}); const file=new URL"),
+ s=>s.replace("return YAML.parse(readFileSync(file,'utf8'));", "return {};/* YAML.parse(readFileSync(file,'utf8')) */"),
+])('Workspace 注释、shadow、跳过或不可达函数读取不能伪造消费证明：%#',mutate=>{
+ const f=workspaceConfigFixture();writeFileSync(join(f.root,f.readerPath),mutate(f.reader));configCommit(f);
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow(/AUXILIARY_CONFIG_/);
+});
+it.each([
+ s=>s.replace('needs: caller-contract','needs: other'),
+ s=>s.replace('  caller-contract:\n','  caller-contract:\n    if: false\n'),
+ s=>s.replace('      - run: node --test','      - if: false\n        run: node --test'),
+ s=>s.replace('      - run: node --test','      - continue-on-error: true\n        run: node --test'),
+ s=>s.replace('run: node --test','run: echo node --test'),
+ s=>s.replace('  caller-contract:\n','  caller-contract:\n    strategy: {matrix: {include: []}}\n'),
+ s=>s.replace('      - run: node --test','      - working-directory: other-checkout\n        run: node --test'),
+ s=>s.replace('jobs:\n','defaults: {run: {working-directory: other-checkout}}\njobs:\n'),
+])('Workspace required caller-contract必须真实调用精确reader：%#',mutate=>{
+ const f=workspaceConfigFixture();writeFileSync(join(f.root,workspaceCi),mutate(f.ci));configCommit(f);
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow(/AUXILIARY_CONFIG_/);
+});
+it('Workspace 来源关系缺真实图认领仍 UNKNOWN，不能以exact reader赋权',()=>{
+ const f=workspaceConfigFixture(),e=gate.collectAuxiliarySourceEvidence(f.root,f.source);
+ f.report.source=f.source;for(const side of ['base','head']){f.report[side].revision=f.source[`${side}_revision`];f.report[side].file_coverage=f.source.changed_files.map((p,i)=>({change_index:i,path:p.path,matched_paths:[],truncated:false}));}
+ f.report.affected_usages=[];f.report.gaps=f.source.changed_files.map(p=>({code:'changed_file_unclaimed',...p}));f.report.unclaimed_paths=f.source.changed_files;
+ gate.applyAuxiliarySourceEvidence(f.report,e,{base:[],head:[]});
+ expect(f.report.mapping_status).toBe('unknown');expect(f.report.gaps).toContainEqual({code:'auxiliary_owner_unclaimed',side:'head',path:f.readerPath});
+});
+it('Workspace exact关系不能跨repo、换reader/input或把业务SQL当配置',()=>{
+ for(const change of [{repo:'perfectuser21/cecelia'},{consumer_path:'scripts/ci/__tests__/arbitrary.test.mjs'},{path:'.github/workflows/arbitrary.yml'},{owner_path:nightlyReader}]){
+  const f=workspaceConfigFixture(),repo=change.repo||workspaceRepo;
+  if(change.repo){f.git('remote','set-url','origin',`https://github.com/${repo}.git`);f.source.repo=repo;}
+  const {repo:_repo,...changed}=change;
+  writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo,relations:[{...f.config,...changed}]}));configCommit(f);
+  expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow(/AUXILIARY_(CONFIG|MANIFEST)_/);
+ }
+ const f=workspaceConfigFixture();writeFileSync(join(f.root,workspaceCi),'SELECT * FROM tasks;');configCommit(f);
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow(/AUXILIARY_CONFIG_CI_/);
+});
+it('Workspace reader仍不允许documentation/verification角色借test父模块，错reader hash拒绝',()=>{
+ for(const role of ['documentation','verification']){
+  const f=workspaceConfigFixture();writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:workspaceRepo,relations:[{owner_path:f.readerPath,path:'docs/controller.md',role}]}));configCommit(f);
+  expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow('AUXILIARY_OWNER_INVALID');
+ }
+ const f=workspaceConfigFixture(),e=gate.collectAuxiliarySourceEvidence(f.root,f.source);e.head.relations[0].consumer_sha256='f'.repeat(64);
+ expect(()=>gate.applyAuxiliarySourceEvidence(f.report,e,{base:[],head:[]})).toThrow('AUXILIARY_EVIDENCE_INVALID');
+});
 function configFixture(target=nightlyYaml){
  const f=fixture([]);f.git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
  mkdirSync(join(f.root,'.github/workflows/scripts/__tests__'),{recursive:true});
