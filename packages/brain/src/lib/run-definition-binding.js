@@ -2,6 +2,11 @@
 import defaultPool from '../db.js';
 import { UUID,evidenceHash,evidenceObject,evidenceText,evidenceTransaction,requireEvidence,getRelease,evaluateReleaseObservation,getReleaseGate,lockReleaseTarget } from './release-index.js';
 const HASH=/^[0-9a-f]{64}$/;
+function requireExecutableWorkflow(workflow,activities){
+  requireEvidence(workflow.payload.definition_scope!=='consumer_evidence','消费者来源历史不能执行','CONSUMER_EVIDENCE_NOT_EXECUTABLE');
+  const versions=new Set(workflow.payload.activities.map(r=>r.activity_version_id));
+  for(const activity of activities.filter(a=>versions.has(a.id)))requireEvidence(activity.payload.definition_scope!=='consumer_evidence','消费者活动来源历史不能执行','CONSUMER_EVIDENCE_NOT_EXECUTABLE');
+}
 function validateInput(runId,input){
   evidenceText(runId,'run_id');
   evidenceObject(input,['release_id','observation_id','workflow_id','workflow_definition_version_id','snapshot_sha256','runtime_snapshot_sha256','expected_path','source_kind','task_run_id','external_origin','attempt_key','actor']);
@@ -60,7 +65,13 @@ export async function bindRunDefinitionInTransaction(db,runId,input){
   validateInput(runId,input);const hash=evidenceHash(input);
   await lockRunProtocol(db,runId);
   const existing=(await db.query('SELECT * FROM run_definition_bindings WHERE run_id=$1',[runId])).rows[0];
-  if(existing){requireEvidence(existing.payload_sha256===hash,'run已绑定其他定义','CONFLICT',409);return {binding:existing,created:false};}
+  if(existing){
+    requireEvidence(existing.payload_sha256===hash,'run已绑定其他定义','CONFLICT',409);
+    const frozen=await getRelease(db,existing.release_id),workflow=frozen.payload.workflows.find(w=>w.id===existing.workflow_definition_version_id&&w.workflow_id===existing.workflow_id);
+    requireEvidence(workflow,'冻结release缺少绑定Workflow','SNAPSHOT_CORRUPT',409);
+    requireExecutableWorkflow(workflow,frozen.payload.activities);
+    return {binding:existing,created:false};
+  }
   if(input.source_kind==='external'){
     const internal=(await db.query('SELECT 1 FROM task_runs WHERE run_id=$1 LIMIT 1',[runId])).rows.length;
     requireEvidence(!internal,'run_id已属于内部task_run','RUN_SOURCE_CONFLICT',409);
@@ -72,6 +83,7 @@ export async function bindRunDefinitionInTransaction(db,runId,input){
   requireEvidence(observation&&evaluateReleaseObservation(release,observation).deployed,'运行需要CI核验及匹配的实际部署观测','DEPLOYMENT_UNVERIFIED',409);
   const workflow=release.payload.workflows.find(w=>w.id===input.workflow_definition_version_id&&w.workflow_id===input.workflow_id);
   requireEvidence(workflow&&workflow.payload_sha256===input.snapshot_sha256,'运行Workflow固定版本或摘要不符');
+  requireExecutableWorkflow(workflow,release.payload.activities);
   validatePath(input,workflow,release.payload.activities);
   if(input.source_kind==='internal'){
     const taskRun=(await db.query('SELECT id,run_id,workflow_id,status,ended_at,context FROM task_runs WHERE id=$1 FOR SHARE',[input.task_run_id])).rows[0];
@@ -92,6 +104,7 @@ export async function getRunDefinitionBinding(db,runId){
   const release=await getRelease(db,binding.release_id);
   const workflow=release.payload.workflows.find(w=>w.id===binding.workflow_definition_version_id&&w.workflow_id===binding.workflow_id);
   requireEvidence(workflow,'冻结release缺少绑定Workflow','SNAPSHOT_CORRUPT',409);
+  requireExecutableWorkflow(workflow,release.payload.activities);
   const ids=new Set(workflow.payload.activities.map(a=>a.activity_version_id));
   return {binding,release,workflow,activities:release.payload.activities.filter(a=>ids.has(a.id))};
 }
