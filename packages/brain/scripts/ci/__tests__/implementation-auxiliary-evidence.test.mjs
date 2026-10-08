@@ -1,13 +1,57 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as gate from '../../../../../scripts/ci/implementation-gate.mjs';
 import { runImplementationPrGate } from '../../../../../scripts/ci/implementation-pr-gate.mjs';
 import { assertImplementationReport } from '../../../src/lib/implementation-report.js';
+import { applyAutoVersion } from '../../auto-version-apply.mjs';
 
 const roots=[];
+function versionFixture(relations) {
+ const f=fixture([]);
+ mkdirSync(join(f.root,'packages/brain'),{recursive:true});
+ writeFileSync(join(f.root,'packages/brain/package.json'),'{"version":"1.2.3"}');
+ writeFileSync(join(f.root,'packages/brain/package-lock.json'),'{"version":"1.2.3","packages":{"":{"version":"1.2.3"}}}');
+ writeFileSync(join(f.root,'package-lock.json'),'{"packages":{"packages/brain":{"version":"1.2.3"}}}');
+ writeFileSync(join(f.root,'DEFINITION.md'),'**Brain 版本**: 1.2.3\n\n## Brain 1.2.3 — old\n');
+ const text='{"schema_version":1,"repo":"example/repo","relations": [\n  '+relations.join(',\n  ')+'\n]}\n';
+ writeFileSync(join(f.root,'.implementation-source-relations.json'),text);
+ return {...f,text};
+}
+const releaseRow='{ "owner_path" : "src/controller.js", "path" : "changes/controller.md", "role" : "release" }';
+const docRow='{ "path" : "docs/controller.md", "role" : "documentation", "owner_path" : "src/controller.js" }';
+const verifyRow='{"owner_path":"src/controller.js", "role":"verification", "path":"scripts/smoke/controller.sh"}';
+it.each([[releaseRow,docRow,verifyRow],[docRow,releaseRow,verifyRow],[docRow,verifyRow,releaseRow],[releaseRow]])('真实版本机器人只消费实际删除片的release关系，保留其他关系原始字节 %j',(...rows)=>{
+ const f=versionFixture(rows);
+ const result=applyAutoVersion(f.root);
+ expect(result).toMatchObject({newVersion:'1.2.4',fragmentsConsumed:1});
+ expect(existsSync(join(f.root,'changes/controller.md'))).toBe(false);
+ const text=readFileSync(join(f.root,'.implementation-source-relations.json'),'utf8');
+ expect(JSON.parse(text).relations).toEqual(rows.filter(row=>row!==releaseRow).map(row=>JSON.parse(row)));
+ for(const row of rows.filter(row=>row!==releaseRow))expect(text).toContain(row);
+ expect(JSON.parse(readFileSync(join(f.root,'package-lock.json'))).packages['packages/brain'].version).toBe('1.2.4');
+ f.git('add','.');f.git('commit','-qm','actual bot consumption');f.source.head_revision=f.git('rev-parse','HEAD');
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).not.toThrow();
+});
+it('不消费未实际删除的release路径，也不清理同路径其他角色；严格来源缺失仍拒绝',()=>{
+ const otherRelease=releaseRow.replace('controller.md','unconsumed.md');
+ const samePathDoc=releaseRow.replace('release','documentation');
+ for(const row of [otherRelease,samePathDoc]){
+  const f=versionFixture([row]);applyAutoVersion(f.root);
+  expect(readFileSync(join(f.root,'.implementation-source-relations.json'),'utf8')).toBe(f.text);
+  f.git('add','.');f.git('commit','-qm','missing remains');f.source.head_revision=f.git('rev-parse','HEAD');
+  expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow('AUXILIARY_SOURCE_MISSING');
+ }
+});
+it('非法声明在版本机器人写入或删除实际片之前拒绝',()=>{
+ const f=versionFixture([releaseRow]);
+ writeFileSync(join(f.root,'.implementation-source-relations.json'),'{invalid');
+ expect(()=>applyAutoVersion(f.root)).toThrow();
+ expect(existsSync(join(f.root,'changes/controller.md'))).toBe(true);
+ expect(JSON.parse(readFileSync(join(f.root,'packages/brain/package.json'))).version).toBe('1.2.3');
+});
 afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 function fixture(relations=[{owner_path:'src/controller.js',path:'docs/controller.md',role:'documentation'}]) {
  const root=mkdtempSync(join(tmpdir(),'auxiliary-source-'));roots.push(root);
