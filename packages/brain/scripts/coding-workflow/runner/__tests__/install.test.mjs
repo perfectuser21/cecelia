@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { childEnv } from '../../lib/protocol.mjs';
+import { cleanTestEnv } from './helpers/sandbox.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INSTALL_SH = path.join(HERE, '../install.sh');
@@ -38,7 +38,7 @@ describe('install.sh', () => {
       return dir;
     });
     env = {
-      ...childEnv(),
+      ...cleanTestEnv(),
       PATH: `${toolDirs.join(':')}:/usr/bin:/bin:/usr/sbin:/sbin`,
       CODING_WF_RUN_USER: 'administrator',
       CODING_WF_USER_HOME: path.join(root, 'home'),
