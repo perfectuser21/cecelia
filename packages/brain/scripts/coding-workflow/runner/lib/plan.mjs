@@ -4,14 +4,31 @@ const SUPPORTED_REPOS = new Set(['cecelia']);
 
 const pad = (n) => String(n).padStart(2, '0');
 
+const RUN_RESULT_KEYS = ['coding_workflow', 'runner', 'coding_workflow_runner'];
+
+/** 开关三件套：task_type=data（不被 tick 派发、不被改道）+ headed_manual="true" + coding_workflow===true。 */
+export function isSwitched(task) {
+  return task?.task_type === 'data'
+    && task.payload?.headed_manual === 'true'
+    && task.payload?.coding_workflow === true;
+}
+
+/** Brain 里已有 runner/coding 链写过的结果（说明跑过，不能再当新任务认领）。 */
+export function hasRunResult(task) {
+  return RUN_RESULT_KEYS.some((key) => {
+    const v = task?.result?.[key];
+    return v !== null && v !== undefined && !(typeof v === 'object' && Object.keys(v).length === 0);
+  });
+}
+
 /**
- * 候选任务：payload.coding_workflow 严格为 true、未被认领、repo 缺省或 cecelia；
+ * 候选任务：开关三件套、未被认领、repo 缺省或 cecelia；
  * 按 created_at 升序（最早的先做）。非数组输入返回 []。
  */
 export function pickCandidates(tasks) {
   if (!Array.isArray(tasks)) return [];
   return tasks
-    .filter((t) => t && t.payload && t.payload.coding_workflow === true)
+    .filter(isSwitched)
     .filter((t) => !t.claimed_by)
     .filter((t) => SUPPORTED_REPOS.has(t.payload.repo ?? 'cecelia'))
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));

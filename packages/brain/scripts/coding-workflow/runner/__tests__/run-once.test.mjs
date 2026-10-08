@@ -58,9 +58,8 @@ describe('coding workflow runner run-once', () => {
     });
     const r = await runOnceProcess(runnerEnv(sb, brain.url));
     expect(r.exitCode, r.stderr).toBe(0);
-    const list = brain.calls.find((c) => c.method === 'GET');
+    const list = brain.calls.find((c) => c.method === 'GET' && new URLSearchParams(c.query).get('status') === 'queued');
     expect(list.path).toBe('/api/brain/tasks');
-    expect(new URLSearchParams(list.query).get('status')).toBe('queued');
     expect(new URLSearchParams(list.query).get('task_type')).toBe('data');
     expect(new URLSearchParams(list.query).get('limit')).toBe('500');
     expect(brain.calls.filter((c) => c.method !== 'GET')).toEqual([]);
@@ -131,7 +130,8 @@ describe('coding workflow runner run-once', () => {
     fs.writeFileSync(path.join(lock, 'pid'), String(deadPid()));
     const r = await runOnceProcess(runnerEnv(sb, brain.url));
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(brain.calls.filter((c) => c.method === 'GET')).toHaveLength(1);
+    expect(brain.calls.filter((c) => c.method === 'GET').map((c) => new URLSearchParams(c.query).get('status')))
+      .toEqual(['in_progress', 'queued']);
     expect(fs.existsSync(lock)).toBe(false);
   }, 30000);
 

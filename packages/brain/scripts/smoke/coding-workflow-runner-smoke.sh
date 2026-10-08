@@ -39,8 +39,9 @@ const server = http.createServer((req, res) => {
   req.on('data', (d) => { raw += d; });
   req.on('end', () => {
     res.setHeader('content-type', 'application/json');
-    if (req.method === 'GET') return res.end(JSON.stringify([{ id: TASK, status: 'queued', claimed_by: null,
-      created_at: new Date().toISOString(), payload: { coding_workflow: true, headed_manual: 'true' } }]));
+    if (req.method === 'GET') return res.end(JSON.stringify(req.url.includes('status=queued') && !patches.length
+      ? [{ id: TASK, status: 'queued', task_type: 'data', claimed_by: null, created_at: new Date().toISOString(),
+        payload: { coding_workflow: true, headed_manual: 'true' } }] : []));
     if (req.method === 'PATCH') patches.push(JSON.parse(raw));
     res.end(JSON.stringify({ id: TASK }));
   });

@@ -52,7 +52,7 @@ async function ensureIgnored(worktree, branch) {
  * 建 worktree。过程中把已建好的路径/分支写进 ctx（失败时调用方据此保留现场、写日志）。
  * 失败抛 Error(reason_code)：git_fetch_failed / worktree_add_failed / git_exclude_failed / npm_ci_failed。
  */
-export async function prepareWorktree(cfg, task, names, ctx) {
+export async function prepareWorktree(cfg, task, names, ctx, signal) {
   const fetch = await git(cfg.repo, ['fetch', 'origin', 'main'], { timeoutMs: FETCH_TIMEOUT_MS });
   if (fetch.code !== 0) throw fail('git_fetch_failed');
 
@@ -69,8 +69,10 @@ export async function prepareWorktree(cfg, task, names, ctx) {
   await ensureIgnored(worktree, names.branch);
 
   if (!cfg.skipNpmCi) {
+    if (signal?.aborted) throw fail('runner_terminated');
     // npm workspaces：只能在 worktree 根目录跑，单包目录里跑会清掉其他包的依赖
-    const ci = await run('npm', ['ci', '--legacy-peer-deps', '--ignore-scripts'], { cwd: worktree, timeoutMs: NPM_CI_TIMEOUT_MS });
+    const ci = await run('npm', ['ci', '--legacy-peer-deps', '--ignore-scripts'], { cwd: worktree, timeoutMs: NPM_CI_TIMEOUT_MS, signal });
+    if (signal?.aborted) throw fail('runner_terminated');
     if (ci.code !== 0) throw fail('npm_ci_failed');
   }
   return worktree;

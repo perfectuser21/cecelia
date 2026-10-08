@@ -27,6 +27,11 @@ export function loadConfig(env = process.env) {
     // null = 按契约 budget 计算
     runTimeoutMs: positiveInt(env.CODING_WF_RUN_TIMEOUT_MS),
     killGraceMs: positiveInt(env.CODING_WF_KILL_GRACE_MS) ?? DEFAULT_KILL_GRACE_MS,
+    // 列 queued/in_progress 的起始页大小（Brain 只支持 limit，满页则加倍重查）
+    listLimit: positiveInt(env.CODING_WF_LIST_LIMIT) ?? 500,
+    // 失败任务 worktree 保留天数；每任务回执/日志保留天数
+    failedRetentionDays: positiveInt(env.CODING_WF_FAILED_RETENTION_DAYS) ?? 7,
+    logRetentionDays: positiveInt(env.CODING_WF_LOG_RETENTION_DAYS) ?? 30,
     host,
     claimer: `coding-workflow-runner@${host}`,
   };

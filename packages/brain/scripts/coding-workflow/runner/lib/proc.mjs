@@ -9,9 +9,9 @@ export function runnerChildEnv(base = process.env) {
 
 /**
  * 运行命令（不经 shell）。返回 { code, stdout, stderr, timedOut }；启动失败 code=null。
- * 超时先 SIGTERM，5 秒后 SIGKILL。
+ * 超时或 signal 中止时先 SIGTERM，5 秒后 SIGKILL。
  */
-export function run(bin, args, { cwd, timeoutMs = 10 * 60 * 1000 } = {}) {
+export function run(bin, args, { cwd, timeoutMs = 10 * 60 * 1000, signal } = {}) {
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
@@ -23,11 +23,12 @@ export function run(bin, args, { cwd, timeoutMs = 10 * 60 * 1000 } = {}) {
       resolve({ code: null, stdout, stderr: String(error?.message || error), timedOut });
       return;
     }
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const stop = () => {
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 5000).unref();
-    }, timeoutMs);
+    };
+    const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
+    signal?.addEventListener('abort', stop, { once: true });
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d) => { stdout += d; });
@@ -38,6 +39,7 @@ export function run(bin, args, { cwd, timeoutMs = 10 * 60 * 1000 } = {}) {
     });
     child.on('close', (code) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
       resolve({ code, stdout, stderr, timedOut });
     });
   });

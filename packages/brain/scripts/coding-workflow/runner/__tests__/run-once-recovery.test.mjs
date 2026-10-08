@@ -19,6 +19,12 @@ const T2 = 'bbbbbbb2-0000-4000-8000-000000000002';
 const ME = `coding-workflow-runner@${os.hostname()}`;
 const PR = 'https://github.com/example/repo/pull/9';
 
+/** 只在第一次只带 result 的 PATCH（report 活动回写）后执行一次，模拟运行中 Brain 重启。 */
+function once(fn) {
+  let done = false;
+  return (task) => { if (!done) { done = true; fn(task); } };
+}
+
 describe('coding workflow runner 防重跑与对账', () => {
   let sb;
   let brain;
@@ -48,7 +54,7 @@ describe('coding workflow runner 防重跑与对账', () => {
   it('运行中 Brain 重启把任务打回 queued（保留 claim）：收尾 409 → 重新 in_progress → completed，不重跑', async () => {
     brain = await startFakeBrain({
       tasks: [codingTask(T1)],
-      onResultPatch: (task) => { task.status = 'queued'; },
+      onResultPatch: once((task) => { task.status = 'queued'; }),
     });
     const r = await runOnceProcess(runnerEnv(sb, brain.url, { FAKE_EXEC_REPORT: '1' }));
     expect(r.exitCode, r.stderr).toBe(0);
@@ -62,7 +68,7 @@ describe('coding workflow runner 防重跑与对账', () => {
   it('打回 queued 且 claim 已被清：收尾时重新认领（带 executor_kind）再写终态', async () => {
     brain = await startFakeBrain({
       tasks: [codingTask(T1)],
-      onResultPatch: (task) => { task.status = 'queued'; task.claimed_by = null; },
+      onResultPatch: once((task) => { task.status = 'queued'; task.claimed_by = null; }),
     });
     const r = await runOnceProcess(runnerEnv(sb, brain.url, { FAKE_EXEC_REPORT: '1', CODING_WF_AUTOMERGE: '0' }));
     expect(r.exitCode, r.stderr).toBe(0);
@@ -74,7 +80,7 @@ describe('coding workflow runner 防重跑与对账', () => {
   it('打回 queued 后已被他人认领：只记日志，不覆盖、不 automerge、保留 worktree', async () => {
     brain = await startFakeBrain({
       tasks: [codingTask(T1)],
-      onResultPatch: (task) => { task.status = 'queued'; task.claimed_by = 'someone-else'; },
+      onResultPatch: once((task) => { task.status = 'queued'; task.claimed_by = 'someone-else'; }),
     });
     const r = await runOnceProcess(runnerEnv(sb, brain.url, { FAKE_EXEC_REPORT: '1' }));
     expect(r.exitCode).toBe(1);
@@ -118,9 +124,9 @@ describe('coding workflow runner 防重跑与对账', () => {
     brain = await startFakeBrain({
       tasks: [
         codingTask(T1, { created_at: '2026-10-08T00:00:00.000Z', result: { coding_workflow: { pr_url: PR } } }),
-        codingTask(T2, { created_at: '2026-10-08T01:00:00.000Z', result: { runner: {}, other: 1 } }),
+        codingTask(T2, { created_at: '2026-10-08T01:00:00.000Z', result: { runner: { host: 'x' }, other: 1 } }),
         codingTask('ccccccc3-0000-4000-8000-000000000003', { created_at: '2026-10-08T02:00:00.000Z', result: { coding_workflow_runner: { reason_code: 'x' } } }),
-        codingTask('ddddddd4-0000-4000-8000-000000000004', { created_at: '2026-10-08T03:00:00.000Z', result: { unrelated: true } }),
+        codingTask('ddddddd4-0000-4000-8000-000000000004', { created_at: '2026-10-08T03:00:00.000Z', result: { unrelated: true, coding_workflow: {} } }),
       ],
     });
     const r = await runOnceProcess(runnerEnv(sb, brain.url, { CODING_WF_AUTOMERGE: '0' }));
