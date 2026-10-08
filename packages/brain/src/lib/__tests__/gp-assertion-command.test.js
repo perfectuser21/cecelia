@@ -1,4 +1,10 @@
 import { join } from 'node:path';
+import { mkdtempSync,writeFileSync,readFileSync,rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { spawn,execFileSync } from 'node:child_process';
+import { createAssertionExecutor } from '../gp-assertion-process.js';
+import { createToolchainAttestation } from '../gp-assertion-toolchain.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   assertionCommand, canonicalAssertionArgv, canonicalAssertionCommandText,
@@ -26,6 +32,36 @@ const deps = {
   pathExistsFn: vi.fn(async path => path === join(PACKAGE, 'package.json')),
   isTrackedPathFn: vi.fn(async () => true),
 };
+
+it('明确manual Node test保留独立canonical协议，裸test路径仍Vitest',()=>{
+ const ref='manual:node --test scripts/ci/__tests__/caller.test.mjs';
+ expect(classifyAssertionRef(ref)).toEqual({kind:'node',path:'scripts/ci/__tests__/caller.test.mjs'});
+ expect(canonicalAssertionCommandText(ref)).toBe('node --test scripts/ci/__tests__/caller.test.mjs');
+ expect(canonicalAssertionArgv(ref)).toEqual(['node','--test','scripts/ci/__tests__/caller.test.mjs']);
+ expect(classifyAssertionRef('scripts/ci/__tests__/caller.test.mjs').kind).toBe('vitest');
+});
+it.each(['manual:node scripts/run.js','manual:node --test scripts/run.js','manual:node --test --import evil.mjs test.test.mjs','manual:node --test a.test.mjs b.test.mjs','manual:node --test ../evil.test.mjs','manual:node --test test.test.mjs;curl bad','manual:node --test $(id).test.mjs'])('Node精确协议拒绝任意脚本、flags或shell：%s',ref=>{
+ expect(()=>canonicalAssertionArgv(ref)).toThrow();
+});
+it.each([false,true])('固定真实Node子进程产生真PASS/FAIL和场景计数，保toolchain锁与WeakSet：fail=%s',async fail=>{
+ const root=mkdtempSync(join(tmpdir(),'gp-node-assertion-'));
+ try{
+  writeFileSync(join(root,'actual.test.mjs'),`import {test} from 'node:test';test('real child',()=>{${fail?"throw Error('actual failure');":""}});`);
+  execFileSync('git',['init','-q'],{cwd:root});execFileSync('git',['add','.'],{cwd:root});
+  const nodeSha=`sha256:${createHash('sha256').update(readFileSync(process.execPath)).digest('hex')}`;
+  const command=await assertionCommand('manual:node --test actual.test.mjs',root,{toolchains:{node:{path:process.execPath,sha256:nodeSha}}});
+  expect(command.options).toMatchObject({shell:false,evidenceKind:'node',env:{inherit:false,allowlist:[]}});
+  expect(command.options.toolchain).toHaveLength(1);
+  const attestation=await createToolchainAttestation({command,actual_runner_digest:SHA,expected_runner_digest:SHA});
+  expect(attestation.files[0].sha256).toBe(nodeSha);
+  await expect(createToolchainAttestation({command:{...command},actual_runner_digest:SHA,expected_runner_digest:SHA})).rejects.toMatchObject({code:'ASSERTION_COMMAND_UNTRUSTED'});
+  const result=await createAssertionExecutor({spawnFn:spawn,environment:{LANG:'C'},timeoutMs:10000})(command.executable,command.argv,command.options);
+  expect(result.exitCode===0).toBe(!fail);expect(result.scenarioCount).toBe(1);
+  expect(result.scenarioEvidence).toMatchObject({kind:'node',passed:fail?0:1,failed:fail?1:0});
+  const bad=await assertionCommand('manual:node --test actual.test.mjs',root,{toolchains:{node:{path:process.execPath,sha256:`sha256:${'f'.repeat(64)}`}}});
+  await expect(createToolchainAttestation({command:bad,actual_runner_digest:SHA,expected_runner_digest:SHA})).rejects.toMatchObject({code:'ASSERTION_TOOLCHAIN_DIGEST_MISMATCH'});
+ }finally{rmSync(root,{recursive:true,force:true});}
+},20000);
 
 describe('trusted GP assertion command policy', () => {
   it.each([
