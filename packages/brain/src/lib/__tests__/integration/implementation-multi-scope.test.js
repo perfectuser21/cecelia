@@ -17,9 +17,12 @@ it('真实两scope辅助owner联合闭包保留原始UNKNOWN，并独立覆盖�
  const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
  try{
   git('init','-q');git('remote','add','origin','https://github.com/'+source.repo+'.git');
-  mkdirSync(join(root,'src'));mkdirSync(join(root,'docs'));
+  mkdirSync(join(root,'src'));mkdirSync(join(root,'docs'));mkdirSync(join(root,'tests/smoke'),{recursive:true});
+  writeFileSync(join(root,'tests/smoke/scope-a.sh'),'#!/bin/bash\nexit 0\n');
+  writeFileSync(join(root,'tests/smoke/scope-b.sh'),'#!/bin/bash\nexit 0\n');
   const rows=[{owner_path:'src/shared-lock.js',path:'docs/alpha.md',role:'documentation'},
-   {owner_path:'src/factory-deploy.js',path:'docs/beta.md',role:'documentation'}];
+   {owner_path:'src/factory-deploy.js',path:'docs/beta.md',role:'documentation'},
+   {owner_path:'src/factory-deploy.js',path:'tests/smoke/scope-b.sh',role:'verification'}];
   for(const file of ['src/shared-lock.js','src/factory-deploy.js'])writeFileSync(join(root,file),'export const old=true;\n');
   for(const file of ['docs/alpha.md','docs/beta.md'])writeFileSync(join(root,file),'old\n');
   const manifest={schema_version:1,repo:source.repo,relations:rows};
@@ -31,14 +34,14 @@ it('真实两scope辅助owner联合闭包保留原始UNKNOWN，并独立覆盖�
   writeFileSync(join(root,'.implementation-source-relations.json'),JSON.stringify(manifest,null,2)+'\n');
   const head=commit();
   await a.close();await b.close();
-  a=await releaseEvidenceDatabase({scope:'cecelia-kr',baseRevision:base,headRevision:head});
-  b=await releaseEvidenceDatabase({scope:'cecelia-factory',baseRevision:base,headRevision:head});
+  a=await releaseEvidenceDatabase({scope:'cecelia-kr',baseRevision:base,headRevision:head,assertionRef:'manual:bash tests/smoke/scope-a.sh'});
+  b=await releaseEvidenceDatabase({scope:'cecelia-factory',baseRevision:base,headRevision:head,assertionRef:'manual:bash tests/smoke/scope-b.sh'});
   await b.db.query("UPDATE graph_edge_snapshots SET dst_path='src/factory-deploy.js' WHERE dst_path='src/shared-lock.js'");
   const full={repo:source.repo,base_revision:base,head_revision:head,changed_files:git('diff','--no-renames','--name-only',base,head).split('\n').map(path=>({path}))};
   const auxiliary=collectAuxiliarySourceEvidence(root,full),raw=[];
   for(const [db,scope] of [[a.db,'cecelia-kr'],[b.db,'cecelia-factory']]){
    const report=await readImplementationImpact(db,{scope,repo:full.repo,base_revision:base,head_revision:head,changed_files:full.changed_files});
-   const owners={};for(const side of ['base','head'])owners[side]=rows.map(row=>report[side].file_coverage.find(f=>f.path===row.owner_path)).map(({path,matched_paths,truncated})=>({path,matched_paths,truncated}));
+   const owners={};for(const side of ['base','head'])owners[side]=[...new Set(rows.map(row=>row.owner_path))].map(path=>report[side].file_coverage.find(f=>f.path===path)).map(({path,matched_paths,truncated})=>({path,matched_paths,truncated}));
    applyAuxiliarySourceEvidence(report,auxiliary,owners);raw.push(report);
   }
   expect(raw.every(r=>r.gaps.some(g=>g.code==='auxiliary_owner_unclaimed'))).toBe(true);
@@ -49,10 +52,38 @@ it('真实两scope辅助owner联合闭包保留原始UNKNOWN，并独立覆盖�
   expect(joint.claims.every(c=>c.coverage_kind==='scoped_auxiliary_source')).toBe(true);
   expect(proof.evidence.scope_reports.every(r=>r.affected_usages.every(u=>raw.find(x=>x.scope_key===r.scope_key).affected_usages.some(v=>v.reference_id===u.reference_id)))).toBe(true);
   expect(()=>multi.verifyScopedImplementationGitSource(root,proof.evidence)).not.toThrow();
-  for(const change of [r=>r[0].gaps.push({code:'regression_missing'}),r=>r[1].auxiliary_source_evidence.head.relations[0].owner_sha256='f'.repeat(64),r=>r[1].source.repo='foreign/repo',r=>r[1].auxiliary_source_evidence.owner_coverage.head[0].matched_paths=[],r=>r[1].required_assertions=[]]){
+  const forgedParts=structuredClone(proof.evidence.scope_reports);
+  forgedParts[0].head.graph_snapshot.digest='e'.repeat(64);
+  expect(()=>multi.aggregateScopedImplementationEvidence({source:full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:forgedParts,auxiliary_scope_context:proof.evidence.auxiliary_scope_context})).toThrow('IMPACT_MULTISCOPE_AUXILIARY_CONTEXT_MISMATCH');
+  const success=await multi.runScopedImplementationGate({repoRoot:root,evidence:proof.evidence});
+  expect(success.verdict).toBe('PASS');expect(success.auxiliary_scope_receipt.verdict).toBe('PASS');
+  expect(success.scope_receipts).toHaveLength(2);
+  for(const change of [r=>r[0].gaps.push({code:'regression_missing'}),r=>r[1].auxiliary_source_evidence.head.relations[0].owner_sha256='f'.repeat(64),r=>r[1].source.repo='foreign/repo',r=>r[1].auxiliary_source_evidence.owner_coverage.head.find(o=>o.path==='src/factory-deploy.js').matched_paths=[],r=>r[1].required_assertions=[]]){
    const altered=structuredClone(raw);change(altered);
    expect(()=>multi.resolveScopedImplementationReports({source:full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:altered})).toThrow();
   }
+  await b.db.query("DELETE FROM graph_edge_snapshots WHERE dst_path='src/factory-deploy.js'");
+  const missing=await readImplementationImpact(b.db,{scope:'cecelia-factory',repo:full.repo,base_revision:base,head_revision:head,changed_files:full.changed_files});
+  const noOwners={};for(const side of ['base','head'])noOwners[side]=[...new Set(rows.map(row=>row.owner_path))].map(path=>missing[side].file_coverage.find(f=>f.path===path)).map(({path,matched_paths,truncated})=>({path,matched_paths,truncated}));
+  applyAuxiliarySourceEvidence(missing,auxiliary,noOwners);
+  expect(()=>multi.resolveScopedImplementationReports({source:full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:[raw[0],missing]})).toThrow('IMPACT_MULTISCOPE_AUXILIARY_OWNER_UNKNOWN');
+  // Another real immutable Git/PG source fixes the failing child to exit 7; no environment injection.
+  writeFileSync(join(root,'tests/smoke/scope-b.sh'),'#!/bin/bash\nexit 7\n');
+  const failingHead=commit();await a.close();await b.close();
+  a=await releaseEvidenceDatabase({scope:'cecelia-kr',baseRevision:base,headRevision:failingHead,assertionRef:'manual:bash tests/smoke/scope-a.sh'});
+  b=await releaseEvidenceDatabase({scope:'cecelia-factory',baseRevision:base,headRevision:failingHead,assertionRef:'manual:bash tests/smoke/scope-b.sh'});
+  await b.db.query("UPDATE graph_edge_snapshots SET dst_path='src/factory-deploy.js' WHERE dst_path='src/shared-lock.js'");
+  const failedSource={repo:source.repo,base_revision:base,head_revision:failingHead,changed_files:git('diff','--no-renames','--name-only',base,failingHead).split('\n').map(path=>({path}))};
+  const failedAux=collectAuxiliarySourceEvidence(root,failedSource),failedRaw=[];
+  for(const [db,scope] of [[a.db,'cecelia-kr'],[b.db,'cecelia-factory']]){
+    const r=await readImplementationImpact(db,{scope,repo:failedSource.repo,base_revision:base,head_revision:failingHead,changed_files:failedSource.changed_files});
+    const owners={};for(const side of ['base','head'])owners[side]=[...new Set(rows.map(row=>row.owner_path))].map(path=>r[side].file_coverage.find(f=>f.path===path)).map(({path,matched_paths,truncated})=>({path,matched_paths,truncated}));
+    applyAuxiliarySourceEvidence(r,failedAux,owners);failedRaw.push(r);
+  }
+  const failedProof=multi.resolveScopedImplementationReports({source:failedSource,expectedScopes:['cecelia-kr','cecelia-factory'],reports:failedRaw});
+  const failure=await multi.runScopedImplementationGate({repoRoot:root,evidence:failedProof.evidence});
+  expect(failure.verdict).toBe('FAIL');expect(failure.scope_receipts[1].assertions.some(a=>a.exit_code===7)).toBe(true);
+
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 beforeEach(async()=>{
