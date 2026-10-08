@@ -67,7 +67,7 @@ describe('parseEvidence', () => {
   it('文末仍开着的代码块按闭合到文末处理（真实 claude 2c34f677：最后一条 output 没写闭合 ```）', () => {
     const r = parseEvidence(`${FM}\n${entry('E-1')}\n### E-2\n对应: I-2\nverdict: PASS\n${FENCE}command\nnpm test\n${FENCE}\n${FENCE}output\n Tests  61 passed\n`);
     expect(r.errors).toEqual([]);
-    expect(r.items[1]).toMatchObject({ id: 'E-2', command: 'npm test', output: ' Tests  61 passed\n' });
+    expect(r.items[1]).toMatchObject({ id: 'E-2', command: 'npm test', output: ' Tests  61 passed' });
   });
 
   it('文末开着的是 command 块：按闭合处理，但缺 output 照报 output_missing', () => {
