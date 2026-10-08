@@ -10,9 +10,11 @@ import { stepSha256 } from '../../packages/brain/scripts/sync-steps-from-workspa
 import { lintImplementationRegistry } from './registry-lint.mjs';
 import { classifyAssertionRef } from '../../packages/brain/src/lib/gp-assertion-command.js';
 import { randomUUID } from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+import {collectScratchWorkspaceConsumerSourceSet,readWorkspaceConsumerBrainRevisions} from '../../packages/brain/src/lib/consumer-source-set.js';
 import { readFileSync,realpathSync } from 'node:fs';
 import { DB_DEFAULTS } from '../../packages/brain/src/db-config.js';
-import { validateImplementationSnapshot,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
+import { validateImplementationSnapshot,validateImplementationSnapshotForDatabase,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { runProjection } from '../../packages/brain/src/map/projector.js';
 import { digestMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
 import { scanRepo } from '../scan/scan-graph.mjs';
@@ -57,7 +59,7 @@ async function insertRow(db,table,row,{immutable=false,preserve=[]}={}){
     ON CONFLICT(${identity.join(',')}) DO ${immutable?'NOTHING':`UPDATE SET ${update}`}`,[JSON.stringify(row)]);
 }
 export async function importImplementationSnapshot(db,input){
-  const s=validateImplementationSnapshot(input);
+  const s=await validateImplementationSnapshotForDatabase(db,input);
   if(s.status!=='verified'||s.gaps.length)throw ciFailure('SNAPSHOT_UNKNOWN',JSON.stringify(s.gaps));
   await db.query('BEGIN');
   try{
@@ -91,7 +93,7 @@ export function definitionEdges(s){
     for(const binding of a?.payload.implementation_bindings||[]){
       if(binding.repo!==s.repo||binding.revision!==s.revision||!['code','skill'].includes(binding.kind)||binding.status!=='verified')continue;
       definitionEdgePath(binding.path);
-      for(const source of new Set([w.source_path,a.source_path,...(s.adapter_evidence?.adapter==='activity-contracts-v1'&&s.adapter_evidence.revision===s.revision?[s.adapter_evidence.path]:[])])){definitionEdgePath(source);if(source!==binding.path)edges.push({src_path:binding.path,dst_path:source,edge_type:'import',
+      for(const source of new Set([...(w.source_repo===s.repo?[w.source_path]:[]),...(a.source_repo===s.repo?[a.source_path]:[]),...(s.adapter_evidence?.adapter==='activity-contracts-v1'&&s.adapter_evidence.revision===s.revision?[s.adapter_evidence.path]:[])])){definitionEdgePath(source);if(source!==binding.path)edges.push({src_path:binding.path,dst_path:source,edge_type:'import',
         detail:{via:'frozen_definition',workflow_definition_version_id:w.id,activity_definition_version_id:a.id,source_revision:s.revision}});}
       for(const assertion of s.assertions.filter(r=>r.journey_id===w.payload.capability_id&&r.step_id===a.activity_id)){
         let shape;try{shape=classifyAssertionRef(assertion.assertion_ref);}catch{continue;}
@@ -106,8 +108,26 @@ export function definitionEdges(s){
   }
   return edges;
 }
-export async function verifySnapshotSource(s,repoRoot){
-  validateImplementationSnapshot(s);
+export async function verifySnapshotSource(s,repoRoot,{db}={}){
+  if(db)await validateImplementationSnapshotForDatabase(db,s);else validateImplementationSnapshot(s);
+  if(s.scope===EXISTING_OPS_SCOPE&&s.repo==='perfectuser21/zenithjoy-workspace'){
+    const proof=await scratchWorkspaceProof(db,s.revision,repoRoot,s.registry_source);
+    const nativeRoot=fileURLToPath(new URL('../../',import.meta.url)),anchor=s.registry_source;
+    const paths=execFileSync('git',['ls-tree','-rz','--name-only',anchor.revision],{cwd:nativeRoot,encoding:'utf8'}).replace(/\0$/,'').split('\0');
+    const native=await buildExistingOpsSources({scope:s.scope,repo:anchor.repo,revision:anchor.revision,paths,
+      readSource:async path=>execFileSync('git',['show',`${anchor.revision}:${path}`],{cwd:nativeRoot,encoding:'utf8',maxBuffer:32*1024*1024})});
+    for(const consumer of native.consumers){
+      const activity=s.definitions.activities.find(a=>a.activity_id===consumer.activity_id);
+      const extra=consumer.activity_id===proof.consumer.activity_id?proof.consumer.bindings:[];
+      const expected=[...new Map([...consumer.bindings,...extra].map(b=>[JSON.stringify([b.repo,b.revision,b.path]),b])).values()];
+      const actual=activity?.payload.implementation_bindings||[];
+      const relations=[...consumer.input_relations,...(extra.length?proof.consumer.input_relations:[])];
+      if(consumer.status!=='verified'||actual.length!==expected.length
+        ||expected.some(binding=>!actual.some(b=>stepSha256(b)===stepSha256(binding)))
+        ||stepSha256(activity?.payload.input_relations)!==stepSha256(relations))throw ciFailure('CONSUMER_SOURCE_MISMATCH');
+    }
+    return s;
+  }
   if(s.scope===EXISTING_OPS_SCOPE){
     const paths=execFileSync('git',['ls-tree','-rz','--name-only',s.revision],{cwd:repoRoot,encoding:'utf8'}).replace(/\0$/,'').split('\0');
     const readSource=async path=>execFileSync('git',['show',`${s.revision}:${path}`],{cwd:repoRoot,encoding:'utf8',maxBuffer:32*1024*1024});
@@ -141,8 +161,8 @@ async function verifyGeneratedSource(s,repoRoot){
   return {...s,adapter_evidence:{adapter:'activity-contracts-v1',path,revision:s.revision,digest_sha256:stepSha256(digest)}};
 }
 export async function projectImplementationSnapshot(db,s,repoRoot){
-  validateImplementationSnapshot(s);
-  s=await verifySnapshotSource(s,repoRoot);
+  await validateImplementationSnapshotForDatabase(db,s);
+  s=await verifySnapshotSource(s,repoRoot,{db});
   const edges=definitionEdges(s); // 在写隔离扫描图之前先拒绝无效定义路径。
   const repo=s.map.repositories[0].repo,staging=`ci-scan:${repo}`;
   const result=await scanRepo({name:staging,root:realpathSync(repoRoot)},db);
@@ -173,16 +193,22 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
 export async function buildPrImplementationSnapshot(db,registry,revision,repoRoot){
   const read=path=>execFileSync('git',['show',`${revision}:${path}`],{cwd:repoRoot,encoding:'utf8',maxBuffer:32*1024*1024});
   if(registry.scope===EXISTING_OPS_SCOPE){
-    validateImplementationSnapshot(registry);
+    await validateImplementationSnapshotForDatabase(db,registry);
     if(registry.status!=='verified'||registry.gaps.length||registry.snapshot_scope!=='consumer_evidence')throw ciFailure('REGISTRY_UNKNOWN');
     // 候选只落既有真实scratch，绝不把PR来源登记到中央生产库。
     const checkScratch=async()=>{const name=(await db.query('SELECT current_database() name')).rows[0].name;if(!isImplementationScratchDatabase(name))throw ciFailure('SCRATCH_REQUIRED');};
     await checkScratch();
-    const paths=execFileSync('git',['ls-tree','-rz','--name-only',revision],{cwd:repoRoot,encoding:'utf8'}).replace(/\0$/,'').split('\0');
+    const cross=registry.repo==='perfectuser21/zenithjoy-workspace';
+    const anchor=cross?registry.registry_source:{repo:registry.repo,revision};
+    if(!anchor||anchor.repo!=='perfectuser21/cecelia')throw ciFailure('CONSUMER_SOURCE_MISMATCH');
+    const nativeRoot=cross?fileURLToPath(new URL('../../',import.meta.url)):repoRoot;
+    const paths=execFileSync('git',['ls-tree','-rz','--name-only',anchor.revision],{cwd:nativeRoot,encoding:'utf8'}).replace(/\0$/,'').split('\0');
+    const nativeRead=path=>execFileSync('git',['show',`${anchor.revision}:${path}`],{cwd:nativeRoot,encoding:'utf8',maxBuffer:32*1024*1024});
+    const workspaceConsumerProof=cross?await scratchWorkspaceProof(db,revision,repoRoot,anchor):undefined;
     const before=await readExistingOpsRegistry(db);
-    await registerExistingOpsSources(db,{scope:registry.scope,repo:registry.repo,revision,paths,readSource:read,mode:'scratch_candidate',
+    await registerExistingOpsSources(db,{scope:registry.scope,repo:anchor.repo,revision:anchor.revision,paths,readSource:nativeRead,workspaceConsumerProof,mode:'scratch_candidate',
       expectedRegistrySha256:before.registry_sha256,actor:'implementation-ci-scratch-candidate'});
-    await advancePilotManifest(db,await prepareExistingOpsManifestAdvance(db,{scope:registry.scope,repo:registry.repo,revision}),checkScratch);
+    await advancePilotManifest(db,await prepareExistingOpsManifestAdvance(db,{scope:registry.scope,repo:anchor.repo,revision:anchor.revision}),checkScratch);
     return exportImplementationSnapshot(db,{scope:registry.scope,repo:registry.repo,revision});
   }
   if(registry.repo==='perfectuser21/cecelia'){
@@ -216,4 +242,16 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
   const {snapshot_sha256:_hash,...body}=candidate;
   body.adapter_evidence={adapter:'activity-contracts-v1',path:digestPath,revision,digest_sha256:stepSha256(digest)};
   return {...body,snapshot_sha256:stepSha256(body)};
+}
+
+async function scratchWorkspaceProof(db,revision,repoRoot,anchor){
+ if(!db)throw ciFailure('SCRATCH_REQUIRED');
+ const workspace={repo:'perfectuser21/zenithjoy-workspace',revision},nativeRoot=fileURLToPath(new URL('../../',import.meta.url));
+ const readSource=async source=>execFileSync('git',['show',`${source.revision}:${source.path}`],{
+  cwd:source.repo===workspace.repo?repoRoot:nativeRoot,maxBuffer:32*1024*1024});
+ const revisions=await readWorkspaceConsumerBrainRevisions(workspace,readSource);
+ const {EXISTING_OPS_IDENTITIES}=await import('../../packages/brain/src/lib/existing-ops-source.js');
+ const {unverified_reference_ids,...identity}=EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops');
+ const proof=await collectScratchWorkspaceConsumerSourceSet(db,{workspace,brain:{repo:'perfectuser21/cecelia',revisions},identity,anchor},{readSource});
+ if(proof.status!=='verified')throw ciFailure('CONSUMER_SOURCE_MISMATCH');return proof;
 }

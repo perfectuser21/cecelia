@@ -201,3 +201,17 @@ export function freezeScratchFactoryWorkspaceConsumerPayload(payload,proof,ancho
   throw Object.assign(Error('CONSUMER_SCRATCH_SOURCE_UNKNOWN'),{code:'CONSUMER_SCRATCH_SOURCE_UNKNOWN',status:422});
  return freezeConsumerPayload(payload,proof,anchor,'scratch_candidate');
 }
+
+/** 只发现两处固定callee pins，不授予准入；随后必须由唯一core重核全部协议与字节。 */
+export async function readWorkspaceConsumerBrainRevisions(workspace,readSource){
+ if(workspace?.repo!=='perfectuser21/zenithjoy-workspace'||!isSha(workspace.revision)||typeof readSource!=='function')throw Error('CONSUMER_CORE_INPUT_INVALID');
+ const {load}=await import('js-yaml');const revisions=[];
+ for(const [name,job] of [['implementation-impact','impact'],['pilot-release-verification','verify']]){
+  const bytes=await readSource({...workspace,path:`.github/workflows/${name}.yml`});
+  if(!(typeof bytes==='string'||Buffer.isBuffer(bytes))||!bytes.length||bytes.length>1024*1024)throw Error('CONSUMER_SOURCE_BYTES_INVALID');
+  const caller=load(bytes.toString()),value=caller?.jobs?.[job],revision=value?.with?.tooling_revision;
+  if(!isSha(revision)||value?.uses!==`perfectuser21/cecelia/.github/workflows/${name}.yml@${revision}`)throw Error('CONSUMER_SOURCE_IDENTITY_INVALID');
+  if(!revisions.includes(revision))revisions.push(revision);
+ }
+ return revisions;
+}

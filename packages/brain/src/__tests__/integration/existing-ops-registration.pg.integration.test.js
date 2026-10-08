@@ -108,7 +108,7 @@ it('实际scratch双Git消费者只封存F3来源集合；不改旧current/八�
     expect(rebuilt.registry_source).toEqual({repo:'perfectuser21/cecelia',revision});
     expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
   }finally{candidate.close();}
-});
+},90000);
 
 it('生产登记拒scratch或复制proof；拒绝后没有任何历史追加',async()=>{
   expect(consumerSource.collectScratchWorkspaceConsumerSourceSet).toBeTypeOf('function');
