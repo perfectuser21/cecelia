@@ -1,7 +1,7 @@
 /** 回归定义登记；共享活动按消费者归属，登记不等于验收通过。 */
 import { UUID } from './release-index.js';
 import { canonicalAssertionCommandText,classifyAssertionRef } from './gp-assertion-command.js';
-import { hasFrozenConsumerSource,validAssertionSourceRepo } from './consumer-source-set.js';
+import { hasFrozenConsumerSource,validAssertionSourceRepo,sealedConsumerVersion } from './consumer-source-set.js';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
 const fail=(message,status=422)=>{throw Object.assign(Error(message),{status,code:'CAPABILITY_REGRESSION_INVALID'});};
 export async function registerCapabilityRegression(pool,input){
@@ -27,7 +27,7 @@ export async function registerCapabilityRegression(pool,input){
         CROSS JOIN LATERAL jsonb_array_elements(wv.payload->'activities') ref(value)
         JOIN activity_definition_versions av ON av.id=(ref.value->>'activity_version_id')::uuid
         WHERE w.capability_id=$1 AND av.activity_id=$2`,[input.capability_id,input.activity_id])).rows;
-      const sealed=row=>row.payload_sha256===stepSha256({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload})
+      const sealed=row=>sealedConsumerVersion(row)&&row.workflow_repo==='perfectuser21/cecelia'
        &&row.workflow_hash===stepSha256({source:{repo:row.workflow_repo,path:row.workflow_path,commit:row.workflow_commit},payload:row.workflow_payload})
        &&row.workflow_payload.definition_scope==='consumer_evidence'&&row.workflow_payload.capability_id===input.capability_id
        &&hasFrozenConsumerSource(row.payload,sourceRepo,path);

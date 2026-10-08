@@ -2,7 +2,8 @@
 import { loadHistoricalImplementationContext } from './implementation-context.js';
 import { computeFreshness } from './registry-freshness.js';
 import { canonicalAssertionCommandText,classifyAssertionRef } from './gp-assertion-command.js';
-import {hasFrozenConsumerSource} from './consumer-source-set.js';
+import {hasFrozenConsumerSource,sealedConsumerVersion} from './consumer-source-set.js';
+import {stepSha256} from '../../scripts/sync-steps-from-workspace.mjs';
 import { assertionDigest } from './journey-assertion-receipt.js';
 import { readMapBrainBindings } from './map-brain-bindings.js';
 
@@ -50,7 +51,8 @@ async function loadContext(db,q,gaps) {
 
 async function selectedVersions(db,q,capabilities) {
   return (await db.query(`SELECT w.id workflow_id,wv.id workflow_version_id,wv.payload workflow_payload,
-    av.id activity_version_id,av.activity_id,av.payload activity_payload,av.source_repo,av.source_commit,
+    av.id activity_version_id,av.activity_id,av.payload activity_payload,av.source_repo,av.source_commit,av.source_path,av.payload_sha256,
+    wv.payload_sha256 workflow_hash,wv.source_repo workflow_repo,wv.source_path workflow_path,wv.source_commit workflow_commit,
     ref.value usage,r.active reference_active,r.activity_definition_version_id reference_version
     FROM workflow_definition_versions wv JOIN workflows w ON w.id=wv.workflow_id
     CROSS JOIN LATERAL jsonb_array_elements(wv.payload->'activities') ref(value)
@@ -74,6 +76,7 @@ async function readAssertions(db,usages,gaps) {
     let matched=usages.filter(u=>u.capability_id===row.journey_id&&u.activity_id===row.step_id
       &&u.assertion_step_ids.includes(row.step_id_ref||null));
     if(!matched.length)continue;
+    if(matched.some(u=>u.consumer_source_invalid)){gaps.push({code:'assertion_source_unknown',journey_step_link_id:row.id});continue;}
     let command;try{command=canonicalAssertionCommandText(row.assertion_ref);}catch{continue;}
     const path=classifyAssertionRef(row.assertion_ref).path;
     if(row.assertion_source_repo){
@@ -114,6 +117,9 @@ export async function readImplementationConsumers(db,input,{pinnedContext=null}=
   const activities=new Map(),workflows=new Map(),usages=[];
   for(const row of rows){
     const payload=row.activity_payload,capabilityId=row.workflow_payload.capability_id;
+    const sealed=payload.definition_scope!=='consumer_evidence'||sealedConsumerVersion({...row,payload})
+      &&row.workflow_repo==='perfectuser21/cecelia'&&row.workflow_hash===stepSha256({source:{repo:row.workflow_repo,path:row.workflow_path,commit:row.workflow_commit},payload:row.workflow_payload});
+    if(!sealed)gaps.push({code:'consumer_source_digest_mismatch',activity_id:row.activity_id});
     if(!q.versionId&&(!row.reference_active||row.reference_version!==row.activity_version_id))gaps.push({code:'workflow_usage_version_mismatch',reference_id:row.usage.reference_id});
     const bindings=payload.implementation_bindings.filter(b=>b.kind===q.kind&&b.repo===q.repo&&b.path===q.path&&b.revision===q.revision&&(!q.digest||b.digest===q.digest)).map(b=>{
       if(b.status!=='verified')gaps.push({code:'implementation_reference_unverified',activity_id:row.activity_id});
@@ -124,12 +130,12 @@ export async function readImplementationConsumers(db,input,{pinnedContext=null}=
     });
     activities.set(row.activity_version_id,{activity_id:row.activity_id,activity_definition_version_id:row.activity_version_id,definition_key:payload.definition_key,source_repo:row.source_repo,source_revision:row.source_commit,bindings,verification:payload.verification});
     workflows.set(row.workflow_version_id,{workflow_id:row.workflow_id,workflow_definition_version_id:row.workflow_version_id,key:row.workflow_payload.key,capability_id:capabilityId,map_node_key:context.mapped.get(capabilityId)});
-    usages.push({...row.usage,source_repo:row.source_repo,implementation_repo:q.repo,implementation_path:q.path,consumer_source_payload:payload,assertion_step_ids:[...new Set(bindings.map(b=>b.scope==='step'?b.step_id||null:null))],activity_definition_version_id:row.activity_version_id,workflow_id:row.workflow_id,workflow_definition_version_id:row.workflow_version_id,capability_id:capabilityId});
+    usages.push({...row.usage,source_repo:row.source_repo,implementation_repo:q.repo,implementation_path:q.path,consumer_source_invalid:!sealed,consumer_source_payload:sealed?payload:null,assertion_step_ids:[...new Set(bindings.map(b=>b.scope==='step'?b.step_id||null:null))],activity_definition_version_id:row.activity_version_id,workflow_id:row.workflow_id,workflow_definition_version_id:row.workflow_version_id,capability_id:capabilityId});
   }
   if(!rows.length)gaps.push({code:'implementation_mapping_missing'});
   const requiredAssertions=await readAssertions(db,usages,gaps);
   return {scope_key:q.scope,source:{repo:q.repo,registry_repo:context.registryRepo,path:q.path,kind:q.kind,revision:q.revision,digest:q.digest||null},
     manifest_version_id:context.manifest_version_id,manifest_digest:context.manifest_digest,projection_run_id:context.projection_run_id,projection_digest:context.projection_digest,
     mapping_status:gaps.length?'unknown':'verified',verification_status:'unknown',scope_status:context.scope_status??'verified',organization_status:q.versionId?'historical_membership_unknown_organization':'current',
-    activities:[...activities.values()],workflows:[...workflows.values()],usages:usages.map(({consumer_source_payload,implementation_path,...usage})=>usage),required_assertions:requiredAssertions,gaps};
+    activities:[...activities.values()],workflows:[...workflows.values()],usages:usages.map(({consumer_source_payload,consumer_source_invalid,implementation_path,...usage})=>usage),required_assertions:requiredAssertions,gaps};
 }
