@@ -7,6 +7,7 @@ import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evi
 import { readImplementationImpact } from '../../implementation-impact.js';
 import * as multi from '../../../../../../scripts/ci/implementation-multi-scope.mjs';
 import * as pr from '../../../../../../scripts/ci/implementation-pr-gate.mjs';
+import * as caller from '../../../../../../scripts/ci/implementation-multi-pr-gate.mjs';
 let a,b,reports,source;
 beforeEach(async()=>{
  a=await releaseEvidenceDatabase({scope:'cecelia-kr'});b=await releaseEvidenceDatabase({scope:'cecelia-factory'});
@@ -20,6 +21,15 @@ it('正式报告collector在进入scratch前拒绝无效固定来源，不将收
  try{
   expect(pr.collectImplementationPrEvidence).toBeTypeOf('function');
   await expect(pr.collectImplementationPrEvidence({repoRoot:outputDir,scope:'cecelia-factory',base:'a'.repeat(40),head:'b'.repeat(40),mode:'invalid',outputDir})).rejects.toThrow('INPUT_INVALID');
+ }finally{rmSync(outputDir,{recursive:true,force:true});}
+});
+it('正式联合PR入口拒绝重复scope与main发布模式，不把consumer来源证据作运行release',async()=>{
+ expect(caller.runImplementationMultiPrGate).toBeTypeOf('function');
+ const outputDir=mkdtempSync(join(tmpdir(),'multi-entry-invalid-'));
+ try{
+  const options={repoRoot:outputDir,base:'a'.repeat(40),head:'b'.repeat(40),mode:'pr',outputDir,scopes:[{scope:'cecelia-kr'},{scope:'cecelia-kr'}]};
+  await expect(caller.runImplementationMultiPrGate(options)).rejects.toThrow('SCOPES_INVALID');
+  await expect(caller.runImplementationMultiPrGate({...options,mode:'main'})).rejects.toThrow('ADMISSION_ONLY');
  }finally{rmSync(outputDir,{recursive:true,force:true});}
 });
 it('真实PG两scope报告按明确切片保留各投影，联合覆盖完整差异并不伪造单一投影',()=>{
