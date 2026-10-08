@@ -30,6 +30,9 @@ it('认证collector入口拒绝任意repo/非法SHA且未取得实际证据时ty
  for(const input of [{anchor:{...anchor,repo:'other/repo'},source_set,run_id:19},{anchor,source_set:[{repo:'other/repo',revision:'c'.repeat(40)}],run_id:19},{anchor,source_set:[{...anchor,revision:'main'}],run_id:19}]){
   calls=0;expect(await sourceProtocol.readConsumerSourceMainWitness(input,options)).toMatchObject({status:'unknown'});expect(calls).toBe(0);
  }
+ for(const input of [{anchor:{...anchor,revision:[anchor.revision]},source_set,run_id:19},{anchor,source_set:[{...anchor,revision:[anchor.revision]}],run_id:19}]){
+  calls=0;expect(await sourceProtocol.readConsumerSourceMainWitness(input,options)).toMatchObject({status:'unknown'});expect(calls).toBe(0);
+ }
 });
 it('生产Workspace核心尚未在受信树可用时，真实动态消费者保持UNKNOWN且不会伪造源集准入',async()=>{
  expect(sourceProtocol.collectWorkspaceConsumerSourceSet).toBeTypeOf('function');
