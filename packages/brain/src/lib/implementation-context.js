@@ -1,4 +1,6 @@
 /** scope登记与固定历史地图上下文；不以当前active地图改写旧membership。 */
+import {sealedConsumerVersion,hasFrozenConsumerSource} from './consumer-source-set.js';
+import {stepSha256} from '../../scripts/sync-steps-from-workspace.mjs';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function manifestMatchesImplementationSource(manifest,repo,revision) {
   const nodes=[...(manifest?.value_streams||[]),...(manifest?.capabilities||[])];
@@ -40,16 +42,26 @@ export async function loadImplementationRevisionContext(db,q,revision,registry,p
 /** 显式Workflow版本查询；缺scope历史证据时保留版本membership，但不得宣称scope已核验。 */
 export async function loadHistoricalImplementationContext(db,q,gaps) {
   const registry=await resolveImplementationRegistryRepo(db,q);
-  const version=(await db.query('SELECT id,source_repo,source_commit,payload FROM workflow_definition_versions WHERE id=$1',[q.versionId])).rows[0];
+  const version=(await db.query('SELECT * FROM workflow_definition_versions WHERE id=$1',[q.versionId])).rows[0];
   if(!version)throw Object.assign(Error('Workflow定义版本不存在'),{code:'MAP_WORKFLOW_VERSION_NOT_FOUND',status:404});
-  if(version.source_repo!==q.repo||version.source_commit!==q.revision)gaps.push({code:'workflow_definition_source_mismatch',workflow_definition_version_id:version.id});
-  const snapshot=(await db.query('SELECT source_revision,row_count FROM graph_snapshot_versions WHERE repo=$1 AND source_revision=$2',[registry,q.revision])).rows[0];
-  if(!snapshot)gaps.push({code:'graph_snapshot_missing',repo:registry,revision:q.revision});
-  else {
-    const count=(await db.query('SELECT count(*)::int count FROM graph_edge_snapshots WHERE repo=$1 AND source_revision=$2',[registry,q.revision])).rows[0].count;
-    if(Number(snapshot.row_count)!==count)gaps.push({code:'graph_snapshot_incomplete',revision:q.revision});
+  let sourceQuery=q;
+  if(q.scope==='cecelia-factory'&&version.source_repo===registry&&registry==='perfectuser21/cecelia'
+    &&version.payload.definition_scope==='consumer_evidence'&&version.payload.source_scope===q.scope
+    &&version.payload_sha256===stepSha256({source:{repo:version.source_repo,path:version.source_path,commit:version.source_commit},payload:version.payload})){
+    const ids=version.payload.activities.map(r=>r.activity_version_id);
+    const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[])',[ids])).rows;
+    const witness=activities.some(a=>sealedConsumerVersion(a)&&a.source_repo===version.source_repo&&a.source_commit===version.source_commit
+      &&hasFrozenConsumerSource(a.payload,q.repo,q.path)&&a.payload.implementation_bindings.some(b=>b.kind===q.kind&&b.repo===q.repo&&b.path===q.path&&b.revision===q.revision&&(!q.digest||b.digest===q.digest)));
+    if(witness)sourceQuery={...q,repo:version.source_repo,revision:version.source_commit};
   }
-  const context=await loadImplementationRevisionContext(db,q,q.revision,registry,null,gaps);
+  if(version.source_repo!==sourceQuery.repo||version.source_commit!==sourceQuery.revision)gaps.push({code:'workflow_definition_source_mismatch',workflow_definition_version_id:version.id});
+  const snapshot=(await db.query('SELECT source_revision,row_count FROM graph_snapshot_versions WHERE repo=$1 AND source_revision=$2',[registry,sourceQuery.revision])).rows[0];
+  if(!snapshot)gaps.push({code:'graph_snapshot_missing',repo:registry,revision:sourceQuery.revision});
+  else {
+    const count=(await db.query('SELECT count(*)::int count FROM graph_edge_snapshots WHERE repo=$1 AND source_revision=$2',[registry,sourceQuery.revision])).rows[0].count;
+    if(Number(snapshot.row_count)!==count)gaps.push({code:'graph_snapshot_incomplete',revision:sourceQuery.revision});
+  }
+  const context=await loadImplementationRevisionContext(db,sourceQuery,sourceQuery.revision,registry,null,gaps);
   if(context){
     if(!context.mapped.has(version.payload.capability_id))gaps.push({code:'workflow_scope_membership_mismatch',workflow_definition_version_id:version.id});
     return {...context,scope_status:context.mapped.has(version.payload.capability_id)?'verified':'unknown'};
