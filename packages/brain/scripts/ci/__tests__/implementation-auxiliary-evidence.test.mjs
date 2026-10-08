@@ -184,3 +184,51 @@ it('真实PR入口拒绝错误固定上下文并留下UNKNOWN案卷，不接数�
  await expect(runImplementationPrGate({repoRoot:f.root,scope:'phones',base:f.source.base_revision,head:f.source.head_revision,mode:'invalid',outputDir})).rejects.toThrow(/INPUT_INVALID/);
  expect(JSON.parse(readFileSync(join(outputDir,'gap.json'),'utf8'))).toMatchObject({status:'unknown',code:'IMPLEMENTATION_CI_INPUT_INVALID'});
 });
+
+const nightlyReader='.github/workflows/scripts/__tests__/nightly-runtime.test.mjs';
+const nightlyCi='.github/workflows/ci.yml';
+const nightlyYaml='.github/workflows/nightly-regression.yml';
+function configFixture(target=nightlyYaml){
+ const f=fixture([]);f.git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
+ mkdirSync(join(f.root,'.github/workflows/scripts/__tests__'),{recursive:true});
+ const reader=`import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import yaml from 'js-yaml';
+import {value} from '../../../../src/controller.js';
+const root=fileURLToPath(new URL('../../../../',import.meta.url));
+const workflow=yaml.load(readFileSync(join(root,'${nightlyYaml}'),'utf8'));
+const official=yaml.load(readFileSync(join(root,'${nightlyCi}'),'utf8'));
+`;
+ const ci=`on: [push, pull_request]
+jobs:
+  lint-auto-merge-decision:
+    steps:
+      - name: Self-test (nightly launch and health protocol)
+        run: node --test ${nightlyReader}
+  ci-passed:
+    needs: [lint-auto-merge-decision]
+    steps:
+      - run: |
+          check "lint-auto-merge-decision" "\${{ needs.lint-auto-merge-decision.result }}"
+`;
+ writeFileSync(join(f.root,nightlyReader),reader);writeFileSync(join(f.root,nightlyCi),ci);
+ writeFileSync(join(f.root,nightlyYaml),`on: [schedule]
+jobs:
+  smoke:
+    steps:
+      - run: echo true
+`);
+ const config={owner_path:'src/controller.js',path:target,role:'verification_config',consumer_path:nightlyReader,ci_path:nightlyCi};
+ const relations=[{owner_path:'src/controller.js',path:nightlyReader,role:'verification'},config];
+ writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:'perfectuser21/cecelia',relations}));
+ f.git('add','.');f.git('commit','-qm','real nightly reader and required CI');f.source.repo='perfectuser21/cecelia';f.source.head_revision=f.git('rev-parse','HEAD');
+ return {...f,reader,ci,config,relations};
+}
+it.each([nightlyYaml,nightlyCi])('真实固定Git reader读取配置且由required CI永久执行：%s',target=>{
+ const f=configFixture(target);const evidence=gate.collectAuxiliarySourceEvidence(f.root,f.source);
+ const row=evidence.head.relations.find(r=>r.path===target);
+ expect(row).toMatchObject({role:'verification_config',consumer_path:nightlyReader,ci_path:nightlyCi});
+ expect(row.consumer_sha256).toMatch(/^[a-f0-9]{64}$/);expect(row.ci_sha256).toMatch(/^[a-f0-9]{64}$/);
+ expect(row.consumer_evidence).toMatchObject({read_kind:'yaml.load/readFileSync',ci_job:'lint-auto-merge-decision',aggregate_job:'ci-passed'});
+});
