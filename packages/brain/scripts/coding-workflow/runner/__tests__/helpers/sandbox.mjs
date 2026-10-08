@@ -163,6 +163,8 @@ export function runnerEnv(sb, brainUrl, extra = {}) {
     CODING_WF_EXECUTOR: FAKE_EXECUTOR,
     CODING_WF_GH_BIN: FAKE_GH,
     CODING_WF_SKIP_NPM_CI: '1',
+    // CI 修复默认关：既有用例断言 gh 调用为空；ci_fix 用例显式打开
+    CODING_WF_CIFIX: '0',
     FAKE_EXEC_LOG: sb.execLog,
     FAKE_GH_LOG: sb.ghLog,
     ...extra,

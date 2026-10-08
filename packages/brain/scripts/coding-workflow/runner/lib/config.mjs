@@ -24,6 +24,10 @@ export function loadConfig(env = process.env) {
     ghBin: env.CODING_WF_GH_BIN || 'gh',
     skipNpmCi: env.CODING_WF_SKIP_NPM_CI === '1',
     automerge: env.CODING_WF_AUTOMERGE !== '0',
+    // CI 红自动修复：每轮先修自己开的 cw PR；每 PR 最多 ciFixMaxAttempts 次，claude 单次超时
+    ciFix: env.CODING_WF_CIFIX !== '0',
+    ciFixMaxAttempts: positiveInt(env.CODING_WF_CIFIX_MAX_ATTEMPTS) ?? 2,
+    ciFixTimeoutMs: positiveInt(env.CODING_WF_CIFIX_TIMEOUT_MS) ?? 30 * 60 * 1000,
     // null = 按契约 budget 计算
     runTimeoutMs: positiveInt(env.CODING_WF_RUN_TIMEOUT_MS),
     killGraceMs: positiveInt(env.CODING_WF_KILL_GRACE_MS) ?? DEFAULT_KILL_GRACE_MS,

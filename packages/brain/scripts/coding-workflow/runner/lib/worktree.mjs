@@ -10,7 +10,7 @@ const IGNORE_PATTERNS = ['.dev-mode*', '.dev-lock*'];
 const fail = (code) => new Error(code);
 
 /** 本机全局 pre-commit 钩子要求 .dev-mode.<branch>；.dev-lock.<branch> 供会话/收割工具识别归属。 */
-function writeDevFiles(worktree, branch, task) {
+export function writeDevFiles(worktree, branch, task) {
   const now = new Date().toISOString();
   const gpAnchor = typeof task.payload?.gp_anchor === 'string' && task.payload.gp_anchor
     ? task.payload.gp_anchor
@@ -38,7 +38,7 @@ function writeDevFiles(worktree, branch, task) {
 }
 
 /** 会话文件不能被提交：仓库 .gitignore 没忽略时补进 clone 的 info/exclude（所有 worktree 共享）。 */
-async function ensureIgnored(worktree, branch) {
+export async function ensureIgnored(worktree, branch) {
   const probe = await git(worktree, ['check-ignore', '-q', `.dev-mode.${branch}`]);
   if (probe.code === 0) return;
   const common = await git(worktree, ['rev-parse', '--git-common-dir']);
@@ -67,15 +67,18 @@ export async function prepareWorktree(cfg, task, names, ctx, signal) {
 
   writeDevFiles(worktree, names.branch, task);
   await ensureIgnored(worktree, names.branch);
-
-  if (!cfg.skipNpmCi) {
-    if (signal?.aborted) throw fail('runner_terminated');
-    // npm workspaces：只能在 worktree 根目录跑，单包目录里跑会清掉其他包的依赖
-    const ci = await run('npm', ['ci', '--legacy-peer-deps', '--ignore-scripts'], { cwd: worktree, timeoutMs: NPM_CI_TIMEOUT_MS, signal });
-    if (signal?.aborted) throw fail('runner_terminated');
-    if (ci.code !== 0) throw fail('npm_ci_failed');
-  }
+  await installDeps(cfg, worktree, signal);
   return worktree;
+}
+
+/** 在 worktree 根目录 npm ci（cfg.skipNpmCi 时跳过）。失败抛 Error：runner_terminated / npm_ci_failed。 */
+export async function installDeps(cfg, worktree, signal) {
+  if (cfg.skipNpmCi) return;
+  if (signal?.aborted) throw fail('runner_terminated');
+  // npm workspaces：只能在 worktree 根目录跑，单包目录里跑会清掉其他包的依赖
+  const ci = await run('npm', ['ci', '--legacy-peer-deps', '--ignore-scripts'], { cwd: worktree, timeoutMs: NPM_CI_TIMEOUT_MS, signal });
+  if (signal?.aborted) throw fail('runner_terminated');
+  if (ci.code !== 0) throw fail('npm_ci_failed');
 }
 
 /** 删除 worktree 与本地分支（分支已推到远端）；返回是否删除成功。 */
