@@ -6,13 +6,14 @@ const config = { enabled: true, since, devices: ['小蓝'] };
 const phone = (agent = 'skill-factory', device = '小蓝') => ({
   id: 'phone', task_type: 'qiumi_task', status: 'queued', claimed_by: null,
   created_at: '2026-10-08T00:01:00.000Z',
-  payload: { source: 'notion_gtd', headed_manual: false, qiumi_source: {
+  payload: { source: 'notion_gtd', headed_manual: false, notion_zh_page_id: '3f3c40c2-ba63-8194-96ae-efed0d406431', qiumi_source: {
     body: `【执行参数】\n执行Agent：${agent}\n设备：${device}\n【执行参数结束】\n读取抖音账号`,
   } },
 });
 function fixture(tasks, configuration = config) {
   const query = vi.fn(async (sql) => ({ rows: sql.includes('FROM working_memory')
-    ? [{ value_json: configuration }] : tasks }));
+    ? [{ value_json: configuration }] : sql.includes('FROM phone_registry')
+      ? [{ serial: 'blue', nickname: '小蓝', enabled: true }] : tasks }));
   const dispatch = vi.fn(async () => ({ status: 202, body: { execution_state: 'accepted' } }));
   return { pool: { query }, deps: { dispatch, now: () => Date.parse('2026-10-08T00:10:00.000Z'), anchor: () => ({ blocked: false }) }, dispatch };
 }
@@ -40,7 +41,8 @@ describe('phone-rpa-dispatch：关闭全局 Tick 也只接显式授权的新手�
   it('执行前重读开关，关闭后不继续派发', async () => {
     const f = fixture([phone()]); let reads = 0;
     f.pool.query.mockImplementation(async (sql) => ({ rows: sql.includes('FROM working_memory')
-      ? [{ value_json: ++reads === 1 ? config : { ...config, enabled: false } }] : [phone()] }));
+      ? [{ value_json: ++reads === 1 ? config : { ...config, enabled: false } }]
+      : sql.includes('FROM phone_registry') ? [{ serial: 'blue', nickname: '小蓝', enabled: true }] : [phone()] }));
     await runPhoneRpaDispatch(f.pool, f.deps);
     expect(f.dispatch).not.toHaveBeenCalled();
   });
@@ -49,6 +51,41 @@ describe('phone-rpa-dispatch：关闭全局 Tick 也只接显式授权的新手�
     f.deps.anchor = () => ({ blocked: true });
     await runPhoneRpaDispatch(f.pool, f.deps);
     expect(f.dispatch).not.toHaveBeenCalled();
+  });
+  it('配置中的设备不存在或昵称重复，不能派发', async () => {
+    const f = fixture([phone()], { ...config, devices: ['未知手机'] });
+    expect(await runPhoneRpaDispatch(f.pool, f.deps)).toMatchObject({ skipped: 'unknown_or_ambiguous_device', dispatched: 0 });
+    expect(f.dispatch).not.toHaveBeenCalled();
+  });
+  it('路由耗时期间关闭开关或移除设备，启动守卫拒绝启动', async () => {
+    for (const changed of [{ ...config, enabled: false }, { ...config, devices: ['小黄'] }]) {
+      resetPhoneRpaDispatchForTest();
+      const f = fixture([phone()]); let reads = 0;
+      f.pool.query.mockImplementation(async (sql) => ({ rows: sql.includes('FROM working_memory')
+        ? [{ value_json: ++reads < 3 ? config : changed }] : sql.includes('FROM phone_registry')
+          ? [{ serial: 'blue', nickname: '小蓝', enabled: true }, { serial: 'yellow', nickname: '小黄', enabled: true }] : [phone()] }));
+      f.dispatch.mockImplementation(async (task, _pool, deps) => {
+        const current = { ...task, claimed_by: 'our-owner', payload: { ...task.payload,
+          qiumi_department: 'skill-factory', qiumi_route: { device_hint: { serial: 'blue' } } } };
+        expect(await deps.beforeStart(current)).toBe(false);
+        return { status: 409 };
+      });
+      expect(await runPhoneRpaDispatch(f.pool, f.deps)).toMatchObject({ dispatched: 0 });
+      expect(f.dispatch).toHaveBeenCalledTimes(1);
+    }
+  });
+  it.each([{ serial: 'yellow', nickname: '小黄' }, { serial: 'blue', nickname: '小黄' }])('两台均获授权时，缓存错误设备也不能启动：%j', async (hint) => {
+    const f = fixture([phone()], { ...config, devices: ['小蓝', '小黄'] });
+    f.pool.query.mockImplementation(async (sql) => ({ rows: sql.includes('FROM working_memory')
+      ? [{ value_json: { ...config, devices: ['小蓝', '小黄'] } }] : sql.includes('FROM phone_registry')
+        ? [{ serial: 'blue', nickname: '小蓝', enabled: true }, { serial: 'yellow', nickname: '小黄', enabled: true }] : [phone()] }));
+    f.dispatch.mockImplementation(async (task, _pool, deps) => {
+      expect(await deps.beforeStart({ ...task, claimed_by: 'our-owner', payload: { ...task.payload,
+        qiumi_department: 'skill-factory', qiumi_route: { device_hint: hint } } })).toBe(false);
+      return { status: 409 };
+    });
+    expect(await runPhoneRpaDispatch(f.pool, f.deps)).toMatchObject({ dispatched: 0 });
+    expect(f.dispatch).toHaveBeenCalledTimes(1);
   });
   it('同一轮仍在派发时不重入；未知派发不重新启动原任务', async () => {
     const f = fixture([phone()]); let finish;
