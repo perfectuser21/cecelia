@@ -118,7 +118,7 @@ async function seedFrozenConsumerSource(repo='perfectuser21/zenithjoy-workspace'
  const a=f.activities.find(a=>a.payload.implementation_bindings.some(b=>b.kind==='code')),w=f.workflows.find(w=>w.payload.capability_id===f.capabilities[0]);
  const source={repo:bad==='definition_origin'?repo:'perfectuser21/cecelia',commit:'b'.repeat(40),path:'.github/workflows/nightly-regression.yml'};
  const source_set=[{repo:'perfectuser21/cecelia',revision:'b'.repeat(40)},{repo,revision:'b'.repeat(40)}],binding={kind:'code',repo,revision:'b'.repeat(40),path:'scripts/ci/__tests__/caller.test.mjs',digest,content_sha256:'f'.repeat(64),scope:'activity',validation_scope:'consumer_source',status:'verified'};
- const payload={...a.payload,definition_scope:'consumer_evidence',source_scope:'cecelia-factory',source_set,implementation_bindings:[binding],source_set_admission:{status:bad==='admission_unknown'?'unknown':'verified',source_basis:'trusted_main_history'}};
+ const payload={...a.payload,definition_scope:'consumer_evidence',source_scope:'cecelia-factory',source_set,implementation_bindings:[binding],source_set_admission:{status:bad==='admission_unknown'?'unknown':'verified',source_basis:bad==='scratch_candidate'?'scratch_candidate':'trusted_main_history',...(bad==='scratch_candidate'?{purpose:'admission_only'}:{})}};
  payload.source_set_sha256=stepSha256({source_set:payload.source_set,implementation_bindings:payload.implementation_bindings});
  if(bad==='legacy_source_set')for(const key of ['source_set','source_set_sha256','source_set_admission'])delete payload[key];
  const row=(await f.db.query('INSERT INTO activity_definition_versions(activity_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',[a.activity_id,payload,bad==='activity_hash'?'e'.repeat(64):stepSha256({source,payload}),source.repo,source.path,source.commit,stepSha256(payload.contract)])).rows[0];
@@ -135,6 +135,17 @@ it('固定consumer来源按repo分开回归且保旧null/key，幂等和CAS互�
  expect(explicit.registration.id).not.toBe(legacy.registration.id);expect(replay.registration.id).toBe(explicit.registration.id);
  expect(explicit.registration).toMatchObject({assertion_source_repo:'perfectuser21/zenithjoy-workspace',cell_status:'gray',status:'planned',cell_key:`regression:${f.capabilities[0]}:activity:repo:perfectuser21/zenithjoy-workspace`});
  expect((await f.db.query('SELECT * FROM activity_cells WHERE id=$1',[legacy.registration.id])).rows[0]).toMatchObject({assertion_source_repo:null,cell_key:`regression:${f.capabilities[0]}:activity`});
+});
+it('scratch candidate仅真实scratch允许断言来源读取，生产默认不能把它冒main准入',async()=>{
+ const repo='perfectuser21/zenithjoy-workspace',a=await seedFrozenConsumerSource(repo,undefined,'scratch_candidate'),cap=f.capabilities[0];
+ const payload=(await f.db.query("SELECT payload FROM activity_definition_versions WHERE payload->>'definition_scope'='consumer_evidence' LIMIT 1")).rows[0].payload;
+ const path='scripts/ci/__tests__/caller.test.mjs';
+ expect(sourceProtocol.hasFrozenConsumerSource(payload,repo,path)).toBe(false);
+ expect(await sourceProtocol.consumerSourceAdmissionScope({query:async()=>({rows:[{name:'cecelia'}]})})).toEqual({allowScratch:false});
+ await module.registerCapabilityRegression(f.db,{capability_id:cap,activity_id:a.activity_id,assertion_ref:`manual:node --test ${path}`,assertion_source_repo:repo});
+ const version=(await f.db.query("SELECT id FROM workflow_definition_versions WHERE payload->>'definition_scope'='consumer_evidence' LIMIT 1")).rows[0].id;
+ const report=await readImplementationConsumers(f.db,{scope:'cecelia-factory',kind:'code',repo,path,revision:'b'.repeat(40),workflow_version_id:version},{pinnedContext:{mapped:new Map([[cap,'F3']]),registryRepo:'perfectuser21/cecelia'}});
+ expect(report.gaps).toEqual([]);expect(report.required_assertions.some(r=>r.source_repo===repo)).toBe(true);expect(report.verification_status).toBe('unknown');
 });
 it('既有Brain consumer_evidence无新source_set时，旧null断言仍按Brain定义来源读取',async()=>{
  const repo='perfectuser21/cecelia',a=await seedFrozenConsumerSource(repo,undefined,'legacy_source_set'),cap=f.capabilities[0];
