@@ -77,6 +77,8 @@ export function zhWriteFor(brainStatus, { reason = '', resultText = '', today, b
     properties['OpenClaw结果'] = { rich_text: text(resultText || '已完成') };
     properties['已完成'] = { checkbox: true };
     properties['完成日期'] = { date: { start: today } };
+  } else if (brainStatus === 'in_progress' && resultText) {
+    properties['OpenClaw结果'] = { rich_text: text(resultText) };
   }
   return { properties };
 }

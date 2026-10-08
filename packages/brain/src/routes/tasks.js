@@ -20,6 +20,7 @@ import { pushHandoffAtom } from '../handoff.js';
 import { checkAnchor } from '../anchor-check.js';
 import { blockTask } from '../task-updater.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
+import { dispatchManualQiumi } from '../lib/manual-qiumi-dispatch.js';
 import { resolveAllowedTransitions } from '../lib/task-status-transitions.js';
 import { afterTerminalTransition, isRelayTerminalStatus } from '../lib/task-terminal.js';
 import { getTaskType } from '../lib/task-type-registry.js';
@@ -1360,6 +1361,11 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
         error: 'missing_anchor',
         detail: anchorResult.detail,
       });
+    }
+
+    if (task.task_type === 'qiumi_task') {
+      const dispatched = await dispatchManualQiumi(task, pool);
+      return res.status(dispatched.status).json(dispatched.body);
     }
 
     // 2.6 G5 设备锁闸（Issue e03fc740）：手动派发与 tick 派发同闸——无锁不点火

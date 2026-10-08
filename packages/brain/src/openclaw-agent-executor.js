@@ -261,6 +261,7 @@ export async function triggerOpenclawAgent(task, deps = {}) {
     } catch (second) {
       return {
         success: false,
+        dispatchUncertain: true,
         taskId: task.id,
         reason: 'openclaw_agent_spawn_failed',
         error: `${first.message} | 重试: ${second.message}`,

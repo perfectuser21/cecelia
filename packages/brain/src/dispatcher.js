@@ -270,10 +270,7 @@ export async function dispatchQiumiTask(task, deps = {}) {
     // 记一笔，然后按 skip 交回循环换下一个候选。
     console.error(`[dispatch] qiumi 路由异常 (task=${task.id}): ${err.message}`);
     try {
-      await pool.query(
-        'UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1',
-        [task.id],
-      );
+      await (await import('./lib/manual-qiumi-dispatch.js')).releaseQiumiClaim(pool, task.id, deps.claimOwner);
     } catch (releaseErr) {
       console.error(`[dispatch] claim 释放失败（非致命，task=${task.id}）: ${releaseErr.message}`);
     }
@@ -291,10 +288,7 @@ async function routeAndPersistQiumi(task, deps = {}) {
   const actions = deps.actions ?? [];
   const holSkipIds = deps.holSkipIds ?? [];
 
-  const releaseClaim = () => pool.query(
-    'UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1',
-    [task.id],
-  );
+  const releaseClaim = async () => (await import('./lib/manual-qiumi-dispatch.js')).releaseQiumiClaim(pool, task.id, deps.claimOwner);
 
   // openclaw-agent 有自己的熔断（MMV 起 agent 连败时才开），与 cecelia-run（bridge）互不牵连。
   // 放在最前面：熔断开着就别读全行、别打 Jev、别写 run_id——每 tick 白路由一次就是本刀要修的病。

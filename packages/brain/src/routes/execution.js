@@ -41,6 +41,7 @@ import { recordRunFromCallback } from '../lib/task-run.js';
 import { isTransientClass } from '../lib/retry-policy.js';
 import { checkAnchor } from '../anchor-check.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
+import { dispatchManualQiumi } from '../lib/manual-qiumi-dispatch.js';
 import { afterTerminalTransition } from '../lib/task-terminal.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { rateLimit } from 'express-rate-limit';
@@ -4015,6 +4016,11 @@ router.post('/dispatch-now', async (req, res) => {
         error: 'missing_anchor',
         detail: anchorResult.detail,
       });
+    }
+
+    if (task.task_type === 'qiumi_task') {
+      const dispatched = await dispatchManualQiumi(task, pool);
+      return res.status(dispatched.status).json(dispatched.body);
     }
 
     // G5 设备锁闸（Issue e03fc740）：手动派发与 tick 派发同闸——无锁不点火

@@ -43,7 +43,7 @@ describe('pushQiumiStatus', () => {
     const enPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${EN}` && c[2] === 'PATCH')[3];
     expect(enPatch.properties.Status.status.name).toBe('Done');
     expect(query.mock.calls.at(-1)[0]).toMatch(/qiumi_pushed_status/);
-    expect(query.mock.calls.at(-1)[1]).toEqual([TID, 'completed_no_pr']);
+    expect(query.mock.calls.at(-1)[1]).toEqual([TID, 'completed_no_pr', null, null]);
   });
   it('中文当前状态是人工态（阻塞/淘汰/收集/下一个行动）→ 不写中文页，指纹带 qiumi_human_hold 保留标记', async () => {
     const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
@@ -83,7 +83,7 @@ describe('pushQiumiStatus', () => {
     expect(zhPatch.properties['状态'].status.name).toBe('进行中');
     const [sql2, params2] = q2.mock.calls.at(-1);
     expect(sql2).toMatch(/- 'qiumi_human_hold'/);
-    expect(params2).toEqual([TID, 'in_progress']);
+    expect(params2).toEqual([TID, 'in_progress', null, null]);
   });
   it('blocked（系统等待态）→ 中文保持进行中 + [等待中: reason]；pending → 不写但仍 stamp（skippedNoMap）', async () => {
     const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
@@ -99,7 +99,7 @@ describe('pushQiumiStatus', () => {
     expect(zhPatch.properties['状态'].status.name).toBe('进行中');
     expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toBe('[等待中: quota_exhausted]');
     // 无映射行也要 stamp，否则每轮重复捞同一行
-    expect(query.mock.calls.at(-1)[1]).toEqual(['p-1', 'pending']);
+    expect(query.mock.calls.at(-1)[1]).toEqual(['p-1', 'pending', null, null]);
     // 无映射行不读页：只有 blocked 那行发了 GET
     expect(mockNotionReq.mock.calls.filter((c) => c[2] === 'GET')).toHaveLength(1);
   });
@@ -137,7 +137,7 @@ describe('pushQiumiStatus', () => {
     expect(mockNotionReq.mock.calls.some((c) => c[1] === `/pages/${ZH2}` && c[2] === 'PATCH'), '后面的行被挡住没推').toBe(true);
     // 归档行也要 stamp，否则每 30s 捞回来重试
     const stamps = query.mock.calls.slice(1).map((c) => c[1]);
-    expect(stamps).toContainEqual([TID, 'completed_no_pr']);
+    expect(stamps).toContainEqual([TID, 'completed_no_pr', null, null]);
     mockNotionReq.mockReset();
   });
   it('中文页已被彻底删除（GET 404）→ 同样记指纹跳过，不挡后面的行（09-29 实测 4c75a4ef 404 卡住整步）', async () => {
@@ -155,7 +155,7 @@ describe('pushQiumiStatus', () => {
     });
     const r = await pushQiumiStatus({ query }, 'tok', deps);
     expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0, skippedGone: 1 });
-    expect(query.mock.calls.slice(1).map((c) => c[1])).toContainEqual([TID, 'completed_no_pr']);
+    expect(query.mock.calls.slice(1).map((c) => c[1])).toContainEqual([TID, 'completed_no_pr', null, null]);
     expect(mockNotionReq.mock.calls.some((c) => c[1] === `/pages/${ZH2}` && c[2] === 'PATCH')).toBe(true);
     mockNotionReq.mockReset();
   });
@@ -174,7 +174,7 @@ describe('pushQiumiStatus', () => {
     });
     await expect(pushQiumiStatus({ query }, 'tok', deps)).rejects.toThrow(/1 行回写失败/);
     expect(mockNotionReq.mock.calls.some((c) => c[1] === `/pages/${ZH2}` && c[2] === 'PATCH'), '后面的行被挡住').toBe(true);
-    expect(query.mock.calls.slice(1).map((c) => c[1]), '临时失败的行不该记指纹').not.toContainEqual([TID, 'completed_no_pr']);
+    expect(query.mock.calls.slice(1).map((c) => c[1]), '临时失败的行不该记指纹').not.toContainEqual([TID, 'completed_no_pr', null, null]);
     mockNotionReq.mockReset();
   });
   it('英文页 id 为空 → 只写中文页，不 PATCH 英文页', async () => {

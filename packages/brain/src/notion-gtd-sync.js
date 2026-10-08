@@ -176,22 +176,30 @@ export async function syncZhToEn(pool, token, {
 }
 
 export const PUSH_QIUMI_QUERY = `
-    SELECT id, status, error_message, blocked_reason, result,
-           payload->>'notion_zh_page_id' AS zh_page_id,
-           payload->>'notion_page_id'    AS en_page_id,
-           payload->>'next_run_at'       AS next_run_at,
-           payload->'device_busy'        AS device_busy
-      FROM tasks
-     WHERE payload->>'notion_zh_page_id' IS NOT NULL
-       -- 只有 qiumi_task 这一层代表中文表那一行。派生出去的 device_job 子任务有自己的生命周期，
-       -- 放进来就会拿子任务状态去改同一行：子 queued 把行推回「委派」（下轮同步当新行二次入账）、
-       -- 子完成抢在父任务前写「已完成」、子失败写「推迟」并清空 OpenClaw任务号（急停与重排的唯一锚）。
-       -- 第一道闸是子任务根本不继承 notion_zh_page_id（routing/qiumi-router.js），这是第二道。
-       AND task_type = 'qiumi_task'
-       AND ((notion_props->>'qiumi_pushed_status') IS DISTINCT FROM status
-            OR notion_props ? 'qiumi_human_hold')
+    WITH receipts AS (
+      SELECT id, status, error_message, blocked_reason, blocked_detail, result, notion_props, updated_at,
+             payload->>'notion_zh_page_id' AS zh_page_id,
+             payload->>'notion_page_id' AS en_page_id,
+             payload->>'next_run_at' AS next_run_at, payload->'device_busy' AS device_busy,
+             md5(jsonb_build_array(status, error_message, blocked_reason, blocked_detail, result,
+                                  payload->>'next_run_at', payload->'device_busy')::text) AS receipt_fingerprint
+        FROM tasks
+       WHERE payload->>'notion_zh_page_id' IS NOT NULL
+         -- 中文行只由 qiumi_task 父任务回写；device_job 子任务不能覆盖或二次入账。
+         AND task_type = 'qiumi_task'
+    )
+    SELECT * FROM receipts
+     WHERE (notion_props->>'qiumi_pushed_receipt') IS DISTINCT FROM receipt_fingerprint
+        OR notion_props ? 'qiumi_human_hold'
      ORDER BY (notion_props ? 'qiumi_human_hold') ASC, updated_at DESC
      LIMIT 50`;
+
+// 不把结构化 detail 隐式转成 [object Object]，只读取面向人的字段。
+const readableReason = (value) => typeof value === 'string' ? value.trim()
+  : value && typeof value === 'object'
+    ? ['message', 'reason', 'summary'].map((key) => value[key]).find((v) => typeof v === 'string' && v.trim())?.trim() || ''
+    : '';
+const reasonTextOf = (t) => readableReason(t.error_message) || readableReason(t.blocked_detail) || readableReason(t.blocked_reason);
 
 const resultTextOf = (result) => {
   const r = result?.receipt ?? result ?? {};
@@ -247,17 +255,13 @@ function withDeviceBusyExpiredNote(write, t) {
 async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
   // hold 非空 = 本轮放弃推送是因为人工占着中文页：留保留标记，下轮无论 Brain 状态变没变都要重扫。
   // 推送成功则必须把标记减掉，否则这行会永远留在扫描集合里。
-  const stamp = (hold = null) => (hold
-    ? pool.query(
-      `UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb)
-         || jsonb_build_object('qiumi_pushed_status', $2::text, 'qiumi_human_hold', $3::text) WHERE id=$1`,
-      [t.id, t.status, hold],
-    )
-    : pool.query(
-      `UPDATE tasks SET notion_props = (COALESCE(notion_props,'{}'::jsonb)
-         || jsonb_build_object('qiumi_pushed_status', $2::text)) - 'qiumi_human_hold' WHERE id=$1`,
-      [t.id, t.status],
-    ));
+  const stamp = (hold = null) => pool.query(
+    `UPDATE tasks SET notion_props = (COALESCE(notion_props,'{}'::jsonb)
+       || jsonb_build_object('qiumi_pushed_status', $2::text, 'qiumi_pushed_receipt', $3::text)
+       || CASE WHEN $4::text IS NOT NULL THEN jsonb_build_object('qiumi_human_hold', $4::text) ELSE '{}'::jsonb END)
+       ${hold ? '' : "- 'qiumi_human_hold'"} WHERE id=$1`,
+    [t.id, t.status, t.receipt_fingerprint ?? null, hold],
+  );
   const map = QIUMI_STATUS_MAP[t.status];
   if (!map || !map.zh) { await stamp(); return 'nomap'; }
   try {
@@ -271,7 +275,7 @@ async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
     const write = scheduled
       ? { properties: { '状态': { status: { name: '委派' } }, 'OpenClaw结果': { rich_text: text(waitingNoteOf(t)) } } }
       : withDeviceBusyExpiredNote(zhWriteFor(t.status, {
-        reason: t.error_message || '', resultText: resultTextOf(t.result), today: today(), blockedReason: t.blocked_reason ?? null,
+        reason: reasonTextOf(t), resultText: t.status === 'in_progress' ? readableReason(t.result?.dispatch_uncertain) : resultTextOf(t.result), today: today(), blockedReason: t.blocked_reason ?? null,
       }), t);
     await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'PATCH', write));
     const enStatus = scheduled ? 'Planned' : map.en;
