@@ -81,6 +81,19 @@ describe('GET /api/brain/enablers', () => {
     expect(sql).toMatch(/\bfailure_semantics\b/);
   });
 
+  it('failure_semantics 列是 text：能解析成 JSON 就返回对象，否则原样返回', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [
+      { key: 'a', failure_semantics: '{"rows":[{"symptom":"x","class":"fatal"}]}' },
+      { key: 'b', failure_semantics: '旧的纯文本说明' },
+      { key: 'c', failure_semantics: null },
+    ] });
+    const { req, res } = mockReqRes({});
+    await handler('get', '/enablers')(req, res);
+    expect(res._data.enablers[0].failure_semantics).toEqual({ rows: [{ symptom: 'x', class: 'fatal' }] });
+    expect(res._data.enablers[1].failure_semantics).toBe('旧的纯文本说明');
+    expect(res._data.enablers[2].failure_semantics).toBeNull();
+  });
+
   it('?keys=a,b 一次取多件（ANY 参数化）', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     const { req, res } = mockReqRes({ keys: 'device_lock, network ,' });
@@ -102,14 +115,17 @@ describe('PATCH /api/brain/enablers/:key — 写故障处置', () => {
   };
 
   it('合法 → UPDATE warehouse_items SET failure_semantics 并返回该行', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ key: 'douyin_search', failure_semantics: valid.failure_semantics }] });
+    mockPool.query.mockResolvedValueOnce({ rows: [{ key: 'douyin_search', failure_semantics: JSON.stringify(valid.failure_semantics) }] });
     const { req, res } = mockReqRes({});
     req.params = { key: 'douyin_search' };
     req.body = valid;
     await handler('patch', '/enablers/:key')(req, res);
     expect(res._status).toBe(200);
     const [sql, params] = mockPool.query.mock.calls[0];
-    expect(sql).toMatch(/UPDATE warehouse_items\s+SET failure_semantics = \$1::jsonb/);
+    // 列类型是 text（生产库实测），按 JSON 文本存，不做 ::jsonb 转换
+    expect(sql).toMatch(/UPDATE warehouse_items\s+SET failure_semantics = \$1,/);
+    expect(sql).not.toMatch(/::jsonb/);
+    expect(res._data.failure_semantics).toEqual(valid.failure_semantics);
     expect(sql).toMatch(/updated_at = NOW\(\)/);
     expect(sql).toMatch(/WHERE key = \$2/);
     expect(sql).toMatch(/RETURNING/);
