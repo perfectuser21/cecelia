@@ -5,6 +5,8 @@
 -- 试点发布门禁因此报 43 个 pilot_regression_missing，重登记也会撞 409 身份冲突。
 -- 本迁移按 cell_key 里的能力改回，只改「该能力确有生效流程在用此 Activity」的行；空骨架格、非回归格不动。
 -- 改前原值进 migration_534_backup。
+-- 以后的迁移注意：共享 Activity 的回归登记按「使用它的流程所属能力」归属，不能跟着 Activity 走；
+-- 批量改 activity_cells.journey_id 时必须排除 cell_kind='scenario' AND cell_key LIKE 'regression:%'。
 
 BEGIN;
 

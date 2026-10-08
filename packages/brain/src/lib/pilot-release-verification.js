@@ -10,6 +10,7 @@ const sorted=rows=>rows.sort((a,b)=>JSON.stringify(canonical(a)).localeCompare(J
 const uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(v);
 const sha=v=>typeof v==='string'&&/^[0-9a-f]{40}$/.test(v);
 const hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
+const isRegressionRegistration=row=>row?.cell_kind==='scenario'&&typeof row.cell_key==='string'&&row.cell_key.startsWith('regression:');
 export function pilotPlanBody(report){
  return Object.fromEntries(['scope','source','definition_versions','expected_usages','required_assertions','assertion_source'].map(k=>[k,report[k]]));
 }
@@ -41,9 +42,11 @@ export function buildPilotReleasePlan({scope,repo,revision,definitions,assertion
  }
  sorted(expected_usages);
  const pair=u=>JSON.stringify([u.capability_id,u.activity_id,u.step_id||null]),covered=new Set();
- for(const row of assertions||[]){
+ // 发布门禁只认 CI 回归登记（registerCapabilityRegression 写的 scenario + regression:%）；element/probe 等格子由运行时探针负责，不进门禁。
+ // 迁移 520 把原挂价值流的格子与八格骨架带进能力后口径被无意放宽，此处恢复（e5ea8e45）。
+ for(const row of (assertions||[]).filter(isRegressionRegistration)){
   const matches=expected_usages.filter(u=>u.capability_id===row.journey_id&&u.activity_id===row.step_id&&u.step_id===(row.step_id_ref||null));
-  // 空 assertion_ref＝格子未声明断言（v3.0 八格骨架），与未匹配同等跳过；覆盖仍只认真实断言
+  // 第二道防线：空 assertion_ref＝未声明断言，不算合格也不算 invalid，对应用法照报 pilot_regression_missing
   if(!matches.length||row.assertion_ref==null||row.assertion_ref==='')continue;
   try{canonicalAssertionCommandText(row.assertion_ref);}catch{gap('pilot_assertion_invalid',{journey_step_link_id:row.id});continue;}
   const group=groups.get(row.assertion_ref)||{assertion_ref:row.assertion_ref,source_repo:repo,source_repo_basis:'activity_definition',source_bindings:[]};
