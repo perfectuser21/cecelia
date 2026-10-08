@@ -6,6 +6,9 @@
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/notion-qiumi-receipt-details.test.js src/__tests__/notion-gtd-sync-push-and-stops.test.js src/__tests__/notion-gtd-sync.test.js src/lib/__tests__/qiumi-status-map.test.js --maxWorkers=1 --minWorkers=1"
 
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] leadgenrestructure 迁移 533 获客重组（决策 eb9f8f77）：「关键词获客」改名「智能获客」保留 id，对标/视频链接/直播获客标 deprecated 并写明已并入；新建 抖音·视频发现（预检→取源→过滤去重→取链接写视频表→收尾）/视频处理（预检→判定视频→采集评论→收尾）/评论评分（评分→标记人）/线索触达（预检→发私信→回填→收尾），预检与收尾三流程共用；判定/采集/触达改名判定视频/采集评论/发私信并写新合同四列，新建 6 个 Activity；commander×3、harvest-cron 保底×8 改挂视频发现，outreach-tick 改挂线索触达，在用看护项×20 摘除；旧流程、定义版本、release、契约字段、Step 一律不动（运行绑定只认冻结 release，已核实）；先备份后改，回滚按备份还原并删新流程/新 Activity。生产库事务内干跑：能力 4、Activity 5 改，新建 6 Activity/4 流程/15 引用，闹钟 11+1 改挂、20 摘除，回滚后快照哈希与干跑前一致。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-533-leadgen-restructure.test.js --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] notionhumancolumns Notion 六层目录第二轮（人打开看得懂）：每层只挂直接上级、上级的上级只进「树位置」；删全部 分组·*、Key、正本、版本/渠道、同步时间、登记缺口，每库留 Brain ID+同步状态；列名改中文人话（名称/所属能力/Activity 顺序/运行方式/运行情况/平均时长/去留（你填）/承诺（FR）/谁来执行/还缺什么/做什么/怎么验收/失败了怎么办）；ensureDirectorySchemas 对「新名不在、旧名在、类型一致」的列用 Notion 属性改名保值（你的标记→去留（你填） 等），新代码首轮自动迁移；「还缺什么」列出没写的标准项与红/待判/未验格子，替代 8 个格子列；Activity 9 项标准内容写进页面正文一个机器维护折叠块（只换自己的块，指纹不变零调用），由目录投影唯一写正文，契约 job 不再写 Notion；清理脚本识别待改名列并在改名/新列未完成时拒绝 --apply。生产只读 dry-run：132→70 列（部门 20→18、价值流 11→7、能力 14→8、流程 26→14、Activity 36→11、Step 25→12）。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/projection/__tests__ src/__tests__/activity-contract-sync.test.js --maxWorkers=1 --minWorkers=1"
 
