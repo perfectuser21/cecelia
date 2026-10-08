@@ -45,7 +45,9 @@ const imageJanitor = readFileSync('migrations/510_us_brain_image_retention.sql',
 if (!imageJanitor.includes('CHECK ((%s) OR executor_kind=%L)') || !imageJanitor.includes(String.fromCharCode(39) + 'image-janitor' + String.fromCharCode(39))) { console.error('FAIL 510 缺镜像清理执行器精确增量'); process.exit(1); }
 const linuxController = readFileSync('migrations/512_linux_pool_controller.sql','utf8');
 if (!linuxController.includes('CHECK ((%s) OR executor_kind=%L)') || !linuxController.includes(String.fromCharCode(39) + 'linux-pool-controller' + String.fromCharCode(39))) throw Error('FAIL 512 Linux controller');
-ek.push('linux-pool-controller','preview-janitor','app-server-controller','image-janitor','phone-ssh-controller'); ek.sort(); tt.push('janitor','app_server_run'); tt.sort();
+const cwRunner = readFileSync('migrations/535_coding_workflow_runner_executor_kind.sql','utf8');
+if (!cwRunner.includes('CHECK ((%s) OR executor_kind=%L)') || !cwRunner.includes(String.fromCharCode(39) + 'coding-workflow-runner' + String.fromCharCode(39))) throw Error('FAIL 535 coding workflow runner');
+ek.push('coding-workflow-runner','linux-pool-controller','preview-janitor','app-server-controller','image-janitor','phone-ssh-controller'); ek.sort(); tt.push('janitor','app_server_run'); tt.sort();
 if (JSON.stringify(ek) !== JSON.stringify([...VALID_EXECUTOR_KINDS].sort())) { console.error('FAIL executor_kind 名单 != VALID_EXECUTOR_KINDS'); process.exit(1); }
 if (JSON.stringify(tt) !== JSON.stringify([...R.DB_WHITELISTED_TASK_TYPES].sort())) { console.error('FAIL task_type 名单 != 注册表 DB 白名单'); process.exit(1); }
 const v = readFileSync('migrations/472_validate_script_executor_constraints.sql', 'utf8');

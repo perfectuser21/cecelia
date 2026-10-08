@@ -19,7 +19,7 @@ node -e '
 import("./packages/brain/src/executor-contracts.js").then(async m => {
   // PR1-B 由七增八：openclaw-agent = 秋米中文 GTD 任务的执行者（Brain 经 ssh 在 MMV 起 agent）
   // 棒3 由八增九：script = executor=script 一等任务类型
-  const expected = ["brain-local","relay-container","kernel-process","headed-session","bridge","external-worker","codex-review-local","openclaw-agent","script","preview-janitor","app-server-controller","image-janitor","phone-ssh-controller","linux-pool-controller"];
+  const expected = ["brain-local","relay-container","kernel-process","headed-session","bridge","external-worker","codex-review-local","openclaw-agent","script","preview-janitor","app-server-controller","image-janitor","phone-ssh-controller","linux-pool-controller","coding-workflow-runner"];
   if (!Array.isArray(m.VALID_EXECUTOR_KINDS) || JSON.stringify([...m.VALID_EXECUTOR_KINDS].sort()) !== JSON.stringify(expected.sort()))
     { console.error("VALID_EXECUTOR_KINDS 精确名单不符"); process.exit(1); }
   const appServer = m.EXECUTOR_CONTRACTS["app-server-controller"];

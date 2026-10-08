@@ -27,6 +27,8 @@ import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 export const KERNEL_EXECUTOR_KIND = 'kernel-process';
 export const OPENCLAW_AGENT_EXECUTOR_KIND = 'openclaw-agent';
 export const SCRIPT_EXECUTOR_KIND = 'script';
+// coding workflow runner：执行机 LaunchDaemon 认领 task_type=data 的开关任务跑 coding 链，进程不在 Brain 本机。
+export const CODING_WORKFLOW_RUNNER_EXECUTOR_KIND = 'coding-workflow-runner';
 
 export const VALID_EXECUTOR_KINDS = [
   LINUX_POOL_EXECUTOR_KIND,
@@ -43,6 +45,7 @@ export const VALID_EXECUTOR_KINDS = [
   'codex-review-local',
   OPENCLAW_AGENT_EXECUTOR_KIND,
   SCRIPT_EXECUTOR_KIND,
+  CODING_WORKFLOW_RUNNER_EXECUTOR_KIND,
 ];
 
 // ─── 打标映射（各派发点用的快查表）────────────────────────────────────────────
@@ -111,6 +114,8 @@ export function isExternallyExecuted(task) {
   if (!task) return false;
   // audit是通用类型；只有网关私有authority铸造并持久化的kind才交专用controller。
   if (task.executor_kind === LINUX_POOL_EXECUTOR_KIND) return true;
+  // runner 认领时显式写入的 kind；task_type=data 是通用类型，只能按持久化 kind 判。
+  if (task.executor_kind === CODING_WORKFLOW_RUNNER_EXECUTOR_KIND) return true;
   if (EXTERNALLY_EXECUTED_TASK_TYPES.includes(task.task_type)) return true;
   return Boolean(task.executor_kind) && EXTERNALLY_EXECUTED_KINDS.includes(task.executor_kind);
 }
@@ -129,6 +134,8 @@ async function _defaultKernelPool() {
 
 export const EXECUTOR_CONTRACTS = {
   [LINUX_POOL_EXECUTOR_KIND]: { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
+  // runner 自带收尾对账（终态 409 重新认领、启动对账 runner_lost），Brain 不替它判生死。
+  [CODING_WORKFLOW_RUNNER_EXECUTOR_KIND]: { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   // 手机租约与容量由认证远端退出/解锁回执结算，超时不能回队。
   'phone-ssh-controller': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   // 固定HTTP回执由专属controller收割；本机进程与时间均不能证明远端删除状态。

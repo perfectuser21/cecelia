@@ -55,7 +55,7 @@ else
 import { EXECUTOR_CONTRACTS, VALID_EXECUTOR_KINDS, assessTaskLiveness } from '${CONTRACTS_JS}';
 // PR1-B 由七增八：openclaw-agent = 秋米中文 GTD 任务的执行者（Brain 经 ssh 在 MMV 起 agent）
 // 棒3 由八增九：script = executor=script 一等任务类型（Brain 经 ssh 在跑场机执行确定性脚本）
-const EXPECTED = ['brain-local','relay-container','kernel-process','headed-session','bridge','external-worker','codex-review-local','openclaw-agent','script','preview-janitor','app-server-controller','image-janitor','phone-ssh-controller','linux-pool-controller'];
+const EXPECTED = ['brain-local','relay-container','kernel-process','headed-session','bridge','external-worker','codex-review-local','openclaw-agent','script','preview-janitor','app-server-controller','image-janitor','phone-ssh-controller','linux-pool-controller','coding-workflow-runner'];
 if (JSON.stringify([...VALID_EXECUTOR_KINDS].sort()) !== JSON.stringify(EXPECTED.sort())) throw new Error('VALID_EXECUTOR_KINDS 名单不对');
 const appServer = EXECUTOR_CONTRACTS['app-server-controller'];
 if (await appServer.probe(null, null) !== 'unknown' || appServer.staleMinutes !== null || appServer.onStale !== 'none') throw new Error('app-server 只允许专属控制器确认清理');
