@@ -14,7 +14,7 @@ vi.mock('../../lib/manual-dispatch-device-gate.js', () => ({
   releaseDeviceLockNonFatal: vi.fn(),
 }));
 
-describe('手机单任务派发与 coding Bridge 分离', () => {
+describe('qiumi-manual-dispatch：手机单任务派发与 coding Bridge 分离', () => {
   let app;
   let task;
   beforeEach(async () => {
