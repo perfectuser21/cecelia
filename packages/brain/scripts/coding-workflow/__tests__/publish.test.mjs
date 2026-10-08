@@ -133,6 +133,53 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(create[create.indexOf('--body') + 1]).not.toContain('验收摘要');
   });
 
+  it('有 review_file：PR 正文含规格评审小节（轮数、最终 verdict、每条 R-n 首行）', async () => {
+    fs.writeFileSync(
+      path.join(worktree, 'sprints/s1/02-review.md'),
+      [
+        '---',
+        'task_id: x',
+        'step: spec_review',
+        'upstream: ["02-spec.md#S-1"]',
+        '---',
+        '# 规格评审',
+        '',
+        'verdict: APPROVE',
+        '',
+        '### R-1',
+        '针对: S-1',
+        'R-1 第一行说明',
+        'R-1 第二行细节',
+        '',
+        '### R-2',
+        '针对: I-1, S-2',
+        'R-2 唯一一行',
+        '',
+      ].join('\n'),
+    );
+    const r = await run('new', {
+      chain_files: ['01-intent.md', '02-spec.md', '02-review.md'],
+      review_file: '02-review.md',
+      review_rounds: 2,
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const create = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'create');
+    const body = create[create.indexOf('--body') + 1];
+    expect(body).toContain('## 规格评审（sprints/s1/02-review.md）');
+    expect(body).toContain('- 评审轮数：2');
+    expect(body).toContain('- 最终 verdict：APPROVE');
+    expect(body).toContain('- R-1（针对 S-1）：R-1 第一行说明');
+    expect(body).not.toContain('R-1 第二行细节');
+    expect(body).toContain('- R-2（针对 I-1、S-2）：R-2 唯一一行');
+  });
+
+  it('无 review_file：PR 正文不带规格评审小节', async () => {
+    const r = await run('new');
+    expect(r.exitCode).toBe(0);
+    const create = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'create');
+    expect(create[create.indexOf('--body') + 1]).not.toContain('规格评审');
+  });
+
   it('existing：复用已有 PR，不再 pr create', async () => {
     const r = await run('existing');
     expect(r.exitCode).toBe(0);
