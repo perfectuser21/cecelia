@@ -267,6 +267,7 @@ describe('triggerOpenclawAgent', () => {
     const query = vi.fn();
     const r = await triggerOpenclawAgent(task, { spawnFn, pool: { query } });
     expect(r).toMatchObject({ success: false, reason: 'openclaw_agent_spawn_failed' });
+    expect(r.dispatchUncertain, 'SSH无回复无法证明远端没有接受，不许当确定未启动').toBe(true);
     expect(spawnFn, '只试了一次就判死').toHaveBeenCalledTimes(2);
     expect(query).not.toHaveBeenCalled();
   });

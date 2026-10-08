@@ -24,6 +24,7 @@ describe('手机单任务派发与 coding Bridge 分离', () => {
       if (sql.includes('SELECT * FROM tasks')) return { rows: [structuredClone(task)] };
       if (sql.includes('UPDATE tasks')) {
         if (sql.includes("AND claimed_by IS NULL") && (task.status !== 'queued' || task.claimed_by)) return { rows: [] };
+        if (sql.includes('AND claimed_by = $2') && task.claimed_by !== args[1]) return { rows: [] };
         if (sql.includes('claimed_by = $2')) task.claimed_by = args[1];
         if (sql.includes("status = 'in_progress'") || args[0] === 'in_progress') task.status = 'in_progress';
         if (sql.includes('claimed_by = NULL')) task.claimed_by = null;
@@ -67,4 +68,64 @@ describe('手机单任务派发与 coding Bridge 分离', () => {
       expect(task.claimed_by).toBe('another-owner');
     });
   }
+
+  it('两个入口同时派同一任务，只认领并启动一次', async () => {
+    const replies = await Promise.all([
+      request(app).post('/api/brain/tasks/phone-task/dispatch').send({}),
+      request(app).post('/api/brain/dispatch-now').send({ task_id: 'phone-task' }),
+    ]);
+    expect(replies.map((r) => r.status).sort()).toEqual([202, 409]);
+    expect(mocks.trigger).toHaveBeenCalledOnce();
+  });
+
+  it.each(['qiumi_routed_device', 'qiumi_device_unresolved', 'qiumi_route_failed'])('路由 %s 不启动 Agent 或复活任务', async (reason) => {
+    mocks.route.mockImplementation(async () => {
+      task.status = reason === 'qiumi_route_failed' ? 'failed' : 'blocked';
+      task.claimed_by = null;
+      return { outcome: 'return', result: { reason } };
+    });
+    const r = await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(reason === 'qiumi_routed_device' ? 202 : 422);
+    expect(mocks.trigger).not.toHaveBeenCalled();
+    expect(task.status).toBe(reason === 'qiumi_route_failed' ? 'failed' : 'blocked');
+  });
+
+  it('路由中人工急停，不能重新标为运行或启动', async () => {
+    mocks.route.mockImplementation(async () => {
+      task.status = 'cancelled'; task.claimed_by = null;
+      return { outcome: 'proceed' };
+    });
+    const r = await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(409);
+    expect(mocks.trigger).not.toHaveBeenCalled();
+    expect(task.status).toBe('cancelled');
+  });
+
+  it('远端接受后写库抛错，保留运行状态和原 run_id，重复请求409', async () => {
+    mocks.trigger.mockRejectedValue(new Error('DB unavailable after DISPATCHED'));
+    const r = await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(202);
+    expect(r.body.execution_state).toBe('unknown');
+    expect(r.body.run_id).toBe('qiumi-fixed-run');
+    expect(task.status).toBe('in_progress');
+    expect((await request(app).post('/api/brain/tasks/phone-task/dispatch').send({})).status).toBe(409);
+    expect(mocks.trigger).toHaveBeenCalledOnce();
+  });
+
+  it('SSH 响应不确定，保留运行交结果收割，不能回队重复派单', async () => {
+    mocks.trigger.mockResolvedValue({ success: false, dispatchUncertain: true, reason: 'openclaw_agent_spawn_failed', error: 'SSH timeout' });
+    const r = await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(202);
+    expect(r.body.execution_state).toBe('unknown');
+    expect(task.status).toBe('in_progress');
+    expect(task.payload.run_id).toBe('qiumi-fixed-run');
+  });
+
+  it('coding 任务仍受 Bridge 可用性检查', async () => {
+    task.task_type = 'dev';
+    const r = await request(app).post('/api/brain/tasks/phone-task/dispatch').send({});
+    expect(r.status).toBe(503);
+    expect(mocks.available).toHaveBeenCalledOnce();
+    expect(mocks.route).not.toHaveBeenCalled();
+  });
 });
