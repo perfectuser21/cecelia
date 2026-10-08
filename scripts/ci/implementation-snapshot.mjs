@@ -75,7 +75,7 @@ export async function importImplementationSnapshot(db,input){
     await db.query('COMMIT');
   }catch(error){await db.query('ROLLBACK');throw error;}
 }
-function definitionEdges(s){
+export function definitionEdges(s){
   const edges=[];
   for(const w of s.definitions.workflows)for(const ref of w.payload.activities){
     const a=s.definitions.activities.find(a=>a.id===ref.activity_version_id);
