@@ -6,6 +6,7 @@ import { beforeEach,afterEach,it,expect } from 'vitest';
 import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evidence-db.js';
 import { readImplementationImpact } from '../../implementation-impact.js';
 import * as multi from '../../../../../../scripts/ci/implementation-multi-scope.mjs';
+import * as pr from '../../../../../../scripts/ci/implementation-pr-gate.mjs';
 let a,b,reports,source;
 beforeEach(async()=>{
  a=await releaseEvidenceDatabase({scope:'cecelia-kr'});b=await releaseEvidenceDatabase({scope:'cecelia-factory'});
@@ -14,6 +15,13 @@ beforeEach(async()=>{
  reports=[r,await readImplementationImpact(b.db,{scope:'cecelia-factory',repo:source.repo,base_revision:source.base_revision,head_revision:source.head_revision,changed_files:[{path:'src/controller.js'}]})];
 });
 afterEach(async()=>{await a?.close();await b?.close();});
+it('正式报告collector在进入scratch前拒绝无效固定来源，不将收集报告称为验收',async()=>{
+ const outputDir=mkdtempSync(join(tmpdir(),'multi-collect-invalid-'));
+ try{
+  expect(pr.collectImplementationPrEvidence).toBeTypeOf('function');
+  await expect(pr.collectImplementationPrEvidence({repoRoot:outputDir,scope:'cecelia-factory',base:'a'.repeat(40),head:'b'.repeat(40),mode:'invalid',outputDir})).rejects.toThrow('INPUT_INVALID');
+ }finally{rmSync(outputDir,{recursive:true,force:true});}
+});
 it('真实PG两scope报告按明确切片保留各投影，联合覆盖完整差异并不伪造单一投影',()=>{
  expect(multi.aggregateScopedImplementationEvidence).toBeTypeOf('function');
  const proof=multi.aggregateScopedImplementationEvidence({source,expectedScopes:['cecelia-kr','cecelia-factory'],reports});
