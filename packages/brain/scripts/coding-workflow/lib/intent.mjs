@@ -1,4 +1,5 @@
 // intent 活动的纯函数：验收条目提取与 01-intent.md 渲染（不写时间戳，输出确定性）。
+import { extractAnchors } from './md-chain.mjs';
 
 // 列表项标记：行首的 `-`/`*`（可带复选框）、`1.`/`1、`/`1)`（标记后紧跟数字如 `2026.10` 不算），以及任意位置的圈号 ①-⑳。
 const LIST_MARKER_RE = /(?:^|\n)[ \t]*(?:[-*][ \t]+(?:\[[ xX]\][ \t]*)?|\d+[.、)）](?!\d)[ \t]*)|[\u2460-\u2473]/;
@@ -45,10 +46,20 @@ export function extractAcceptance(task) {
   return fromDescription(task?.description);
 }
 
-/** 渲染 01-intent.md：frontmatter + 标题 + 每条 `### I-n`。 */
-export function renderIntent({ taskId, title, items }) {
+/** 背景原文：会被 md-chain 识别成锚点的行加反斜杠转义（渲染不变），其余原样。 */
+function escapeAnchors(text) {
+  return text
+    .split('\n')
+    .map((line) => (extractAnchors(line).length > 0 ? `\\${line}` : line))
+    .join('\n');
+}
+
+/** 渲染 01-intent.md：frontmatter + 标题 + 可选 `## 背景`（task.description）+ 每条 `### I-n`。 */
+export function renderIntent({ taskId, title, items, description }) {
   const heading = squash(title ?? '') || String(taskId);
   const lines = ['---', `task_id: ${taskId}`, 'step: intent', 'upstream: []', '---', `# ${heading}`, ''];
+  const background = typeof description === 'string' ? description.trim() : '';
+  if (background) lines.push('## 背景', '', escapeAnchors(background), '');
   items.forEach((item, i) => {
     lines.push(`### I-${i + 1}`, item, '');
   });

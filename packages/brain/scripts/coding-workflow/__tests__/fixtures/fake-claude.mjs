@@ -7,6 +7,12 @@
 // | verify-outside（全 PASS 但往 worktree 根写越界文件）| verify-reset（先 git reset --hard HEAD~1 再写全 PASS 的 04）
 // | verify-fabricated（04 写了命令与输出，但对话记录里没执行过）| verify-bizauth（业务输出含 authentication failed 后非 0 退出）
 // | verify-authresult（result 事件报鉴权错误后非 0 退出）| verify-cdprefix（全 PASS，证据命令带 cd <worktree> && 前缀）。verify-* 会在 stdout 输出 stream-json 的 tool_use/tool_result。
+// spec_review 评审用（写 REVIEW_PATH）：review-approve | review-revise（始终 REVISE + R-1 针对 S-1）
+// | review-until-fixed（02 含「已按评审修改」时 APPROVE，否则同 review-revise）| review-badformat（无 verdict 行）
+// | review-outside（同 review-approve，另往 worktree 根写越界文件）；
+// spec_review 改写用：revise-ok（保留 02 的 frontmatter 与全部 S-n，末尾 S-n 正文追加「已按评审修改 R-1」）| revise-delete（删掉 02）。
+// prompt 含 `ROLE: spec_review` / `ROLE: spec_revise` 时输出 `FAKE_ROLE: <角色>` 一行供计数，
+// FAKE_CLAUDE_MODE_REVIEW / FAKE_CLAUDE_MODE_REVISE 可单独指定该步模式。
 // FAKE_CLAUDE_PID_FILE 指向文件时，启动即把自己的 pid 写进去（测试据此确认进程已被清理）。
 // FAKE_CLAUDE_CHILD_PID_FILE 指向文件时，sleep / linger 模式额外起一个长睡孙进程并写入其 pid；
 // FAKE_CLAUDE_CHILD_STDIO=ignore 时孙进程不继承输出管道，否则继承（握着管道）。
@@ -20,7 +26,11 @@ import { spawn, execFileSync } from 'node:child_process';
 const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf('-p') + 1] || '';
 // 按 prompt 认出 build / verify 步骤：FAKE_CLAUDE_MODE_BUILD / FAKE_CLAUDE_MODE_VERIFY 可单独指定该步模式（端到端一次跑三步用）
-const step = /^BUILD_PATH: /m.test(prompt) ? 'BUILD' : /^EVIDENCE_PATH: /m.test(prompt) ? 'VERIFY' : null;
+// spec_review 的评审/改写会话按 ROLE 行认出：FAKE_CLAUDE_MODE_REVIEW / FAKE_CLAUDE_MODE_REVISE
+const role = (prompt.match(/^ROLE: (spec_review|spec_revise)$/m) || [])[1];
+const ROLE_STEPS = { spec_review: 'REVIEW', spec_revise: 'REVISE' };
+const step = role ? ROLE_STEPS[role]
+  : /^BUILD_PATH: /m.test(prompt) ? 'BUILD' : /^EVIDENCE_PATH: /m.test(prompt) ? 'VERIFY' : null;
 const mode = (step && process.env[`FAKE_CLAUDE_MODE_${step}`]) || process.env.FAKE_CLAUDE_MODE || 'ok';
 
 if (process.env.FAKE_CLAUDE_PID_FILE) fs.writeFileSync(process.env.FAKE_CLAUDE_PID_FILE, String(process.pid));
@@ -51,6 +61,7 @@ if (mode === 'fail') {
 }
 
 const unset = (k) => process.env[k] ?? '<unset>';
+if (role) console.log(`FAKE_ROLE: ${role}`);
 console.log(`FAKE_ARGS: ${argv.filter((a) => a !== prompt).join(' ')}`);
 console.log(`FAKE_CWD: ${process.cwd()}`);
 console.log(`FAKE_ENV: CLAUDECODE=${unset('CLAUDECODE')} CLAUDE_CODE_ENTRYPOINT=${unset('CLAUDE_CODE_ENTRYPOINT')} GIT_DIR=${unset('GIT_DIR')}`);
@@ -146,6 +157,34 @@ function verify() {
   if (mode === 'verify-outside') fs.writeFileSync('stray.txt', 'out of scope\n');
 }
 
+const FIXED_MARK = '已按评审修改';
+
+// review-*：按 SPEC_IDS 写 02-review.md
+function review() {
+  const specText = fs.readFileSync(field('SPEC_PATH'), 'utf8');
+  const approve = mode === 'review-approve' || mode === 'review-outside'
+    || (mode === 'review-until-fixed' && specText.includes(FIXED_MARK));
+  const upstream = idList('SPEC_IDS').map((id) => `02-spec.md#${id}`);
+  const body = mode === 'review-badformat'
+    ? '# 评审\n\n看起来还行。\n'
+    : approve
+      ? '# 评审\n\nverdict: APPROVE\n'
+      : '# 评审\n\nverdict: REVISE\n\n### R-1\n针对: S-1\nS-1 的验证方式只写了"测试通过"，需给出具体命令。\n';
+  writeFile(field('REVIEW_PATH'), `${frontmatter('spec_review', upstream)}${body}`);
+  if (mode === 'review-outside') fs.writeFileSync('stray.txt', 'out of scope\n');
+}
+
+// revise-ok：02 末尾（最后一条 S-n 正文）追加一行改写标记，frontmatter 与 S-n 不动
+function revise() {
+  const specPath = field('SPEC_PATH');
+  if (mode === 'revise-delete') {
+    fs.rmSync(specPath, { force: true });
+    return;
+  }
+  const text = fs.readFileSync(specPath, 'utf8');
+  fs.writeFileSync(specPath, `${text.replace(/\n*$/, '\n')}${FIXED_MARK} R-1\n`);
+}
+
 function sideEffects() {
   if (process.env.FAKE_DELETE_FILE) fs.rmSync(process.env.FAKE_DELETE_FILE, { force: true });
   if (process.env.FAKE_TAMPER_FILE) fs.appendFileSync(process.env.FAKE_TAMPER_FILE, '\n篡改\n');
@@ -155,6 +194,8 @@ function sideEffects() {
 
 if (mode.startsWith('build-')) build();
 else if (mode.startsWith('verify-')) verify();
+else if (mode.startsWith('review-')) review();
+else if (mode.startsWith('revise-')) revise();
 else {
   const ids = idList('INTENT_IDS');
   // titled：标题行带说明文字（真实 claude 实测 c2afa8ba）；noids：没有 S-n 标题；uncovered：upstream 只覆盖第一条 I-n

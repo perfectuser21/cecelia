@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractAcceptance, renderIntent, intentIdsError, INTENT_ID_RE } from '../lib/intent.mjs';
-import { parseFrontmatter } from '../lib/md-chain.mjs';
+import { parseFrontmatter, extractAnchors } from '../lib/md-chain.mjs';
 import { runActivityProcess } from './helpers/run-activity.mjs';
 
 const ENTRY = path.join(path.dirname(fileURLToPath(import.meta.url)), '../activities/intent.mjs');
@@ -64,6 +64,35 @@ describe('renderIntent', () => {
     expect(md).toContain('# 标题');
     expect(md).toContain('### I-1\nA');
     expect(md).toContain('### I-2\nB');
+  });
+
+  it('description 非空：在标题与 ### I-1 之间写入 ## 背景 与原文，frontmatter 不变', () => {
+    const description = '  背景第一行\n\n背景第二行\n验收：①A ②B  ';
+    const md = renderIntent({ taskId: TASK_ID, title: '标题', items: ['A', 'B'], description });
+    expect(md).toContain('## 背景\n\n背景第一行\n\n背景第二行\n验收：①A ②B\n\n### I-1');
+    expect(md.indexOf('# 标题')).toBeLessThan(md.indexOf('## 背景'));
+    expect(md.indexOf('## 背景')).toBeLessThan(md.indexOf('### I-1'));
+    expect(parseFrontmatter(md).data).toEqual({ task_id: TASK_ID, step: 'intent', upstream: [] });
+  });
+
+  it.each([
+    ['空串', ''],
+    ['纯空白', '   '],
+    ['undefined', undefined],
+    ['null', null],
+    ['非字符串', 42],
+  ])('description 为%s：不出现 ## 背景，且与不传 description 逐字节一致', (_name, description) => {
+    const base = renderIntent({ taskId: TASK_ID, title: '标题', items: ['A', 'B'] });
+    const md = renderIntent({ taskId: TASK_ID, title: '标题', items: ['A', 'B'], description });
+    expect(md).not.toContain('## 背景');
+    expect(md).toBe(base);
+  });
+
+  it('description 里的 ### I-9 行被转义成 \\### I-9，其余原样保留', () => {
+    const description = '前文\n### I-9\n#### I-7 小标题\n后文 ### I-6';
+    const md = renderIntent({ taskId: TASK_ID, title: '标题', items: ['A'], description });
+    expect(md).toContain('## 背景\n\n前文\n\\### I-9\n#### I-7 小标题\n后文 ### I-6\n\n### I-1\nA');
+    expect(extractAnchors(parseFrontmatter(md).body)).toEqual(['I-1']);
   });
 });
 
@@ -124,8 +153,28 @@ describe('intent 活动（子进程 + 假 Brain）', () => {
     expect(md).toContain('### I-1\n条目一');
     expect(md).toContain('### I-2\n条目二');
     expect(md).not.toContain('### I-3');
-    expect(md).not.toContain('X');
+    // description 原文进背景小节，X/Y/Z 不成为 I-n 条目
+    expect(md).toContain('## 背景\n\n验收：①X ②Y ③Z\n\n### I-1');
+    expect(extractAnchors(parseFrontmatter(md).body)).toEqual(['I-1', 'I-2']);
     expect(parseFrontmatter(md).data.task_id).toBe(TASK_ID);
+  });
+
+  it('description 写入 ## 背景（无 payload）：位于 ### I-1 之前，intent_ids 只按验收条目', async () => {
+    reply.body = { id: TASK_ID, title: '任务标题', description: '背景说明 XYZ\n验收：①A ②B' };
+    const r = await runActivityProcess(ENTRY, input());
+    expect(r.exitCode).toBe(0);
+    const md = fs.readFileSync(intentFile(), 'utf8');
+    expect(md).toContain('## 背景');
+    expect(md).toContain('背景说明 XYZ');
+    expect(md.indexOf('## 背景')).toBeLessThan(md.indexOf('### I-1'));
+    expect(md.indexOf('背景说明 XYZ')).toBeLessThan(md.indexOf('### I-1'));
+    expect(md).toContain('### I-1\nA');
+    expect(md).toContain('### I-2\nB');
+    expect(r.result.outputs).toEqual({
+      intent_file: '01-intent.md',
+      intent_ids: ['I-1', 'I-2'],
+      intent_sha256: crypto.createHash('sha256').update(md).digest('hex'),
+    });
   });
 
   it('无验收条目 -> needs_human acceptance_missing，且不写文件', async () => {
