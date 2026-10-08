@@ -64,9 +64,28 @@ describe('parseEvidence', () => {
     expect(r.errors).toContain('E-1:duplicate');
   });
 
-  it('代码块未闭合 -> fence_unclosed', () => {
+  it('文末仍开着的代码块按闭合到文末处理（真实 claude 2c34f677：最后一条 output 没写闭合 ```）', () => {
+    const r = parseEvidence(`${FM}\n${entry('E-1')}\n### E-2\n对应: I-2\nverdict: PASS\n${FENCE}command\nnpm test\n${FENCE}\n${FENCE}output\n Tests  61 passed\n`);
+    expect(r.errors).toEqual([]);
+    expect(r.items[1]).toMatchObject({ id: 'E-2', command: 'npm test', output: ' Tests  61 passed' });
+  });
+
+  it('文末开着的是 command 块：按闭合处理，但缺 output 照报 output_missing', () => {
     const r = parseEvidence(`### E-1\n对应: I-1\nverdict: PASS\n${FENCE}command\nnpm test\n`);
-    expect(r.errors).toContain('E-1:fence_unclosed');
+    expect(r.errors).toEqual(['E-1:output_missing']);
+  });
+
+  it('文中未闭合的代码块吞掉后面的 E-n：后面的 I-n 判未覆盖（不放宽）', () => {
+    const text = `${FM}\n### E-1\n对应: I-1\nverdict: PASS\n${FENCE}command\nnpm test\n\n${entry('E-2', { covers: 'I-2' })}`;
+    const parsed = parseEvidence(text);
+    expect(parsed.items.map((i) => i.id)).toEqual(['E-1']);
+    expect(judgeEvidence(parsed, ['I-1', 'I-2'])).toMatchObject({ reason: 'evidence_incomplete', missing: ['I-2'] });
+  });
+
+  it('verdict 不区分大小写、字段行可带 markdown 加粗', () => {
+    const r = parseEvidence(`### E-1\n**对应**: I-1\n**verdict**: pass\n${FENCE}command\nnpm test\n${FENCE}\n${FENCE}output\nok\n${FENCE}\n`);
+    expect(r.errors).toEqual([]);
+    expect(r.items[0]).toMatchObject({ covers: ['I-1'], verdict: 'PASS' });
   });
 
   it('没有任何 E-n -> items 为空、无格式错误（交给覆盖判定）', () => {

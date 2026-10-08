@@ -71,13 +71,16 @@ function parseSection({ id, lines }) {
       open = { fence: f[1], lang: f[2], body: [] };
       continue;
     }
-    const field = line.replace(LIST_MARK_RE, '').trim();
+    // 字段行去列表符号与 markdown 加粗（`**verdict**: PASS`）
+    const field = line.replace(LIST_MARK_RE, '').replace(/\*\*|__/g, '').trim();
     const c = COVERS_RE.exec(field);
     if (c && covers === null) covers = c[1].split(/[,，、\s]+/).filter(Boolean);
     const v = VERDICT_RE.exec(field);
-    if (v && verdict === null) verdict = v[1];
+    if (v && verdict === null) verdict = v[1].toUpperCase();
   }
-  if (open) errors.push(`${id}:fence_unclosed`);
+  // 文末仍开着的代码块按闭合到文末处理（真实 claude 会漏写最后的闭合 ```，2c34f677）。
+  // 文中未闭合的块会吞掉后面的 E-n，那些 I-n 照样判未覆盖，不因此放宽。
+  if (open && !(open.lang in blocks)) blocks[open.lang] = open.body.join('\n').replace(/\n+$/, '');
 
   if (!covers || covers.length === 0) errors.push(`${id}:covers_missing`);
   else for (const c of covers.filter((x) => !INTENT_ID_RE.test(x))) errors.push(`${id}:covers_invalid:${c}`);
