@@ -103,10 +103,18 @@ function calleeProof(yaml,spec,admissionScopesRequested=false){
  const checkout=(job.steps||[]).find(s=>s.uses?.startsWith('actions/checkout@')&&s.with?.repository===BRAIN&&s.with?.path==='tooling');
  if(!checkout||!/^\$\{\{ inputs\.tooling_revision(?: \|\| github\.[a-z_.]+)* \}\}$/.test(checkout.with.ref))fail('CALLEE_TOOLING_SOURCE_UNPROVEN',{path:spec.name});
  const runners=[];
- for(const step of job.steps||[])for(const m of directNodeCommands(String(step.run||''))){
-  if(step.if!==undefined||step['continue-on-error'])fail('CALLEE_REQUIRED_JOB_MISSING',{path:spec.name});
-  if(!RUNNERS.has(m[1]))fail('CALLEE_SOURCE_OUTSIDE_CONTRACT',{path:m[1]});
-  runners.push({path:m[1],selector:`jobs.${spec.calleeJob}.steps.node_tooling`});
+ for(const step of job.steps||[]){
+  const source=String(step.run||'');let commands=directNodeCommands(source),conditional=false;
+  // schema-v1的完整已审阅分支字节；复杂或改变后的shell仍UNKNOWN。
+  if(spec.name==='implementation-impact'&&optional&&sha(Buffer.from(source))==='8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d'){
+   if(job.env?.MODE!=="${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}"||job.env?.ADMISSION_SCOPES!=="${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || '' }}")fail('CALLEE_INTERFACE_MISMATCH',{path:spec.name});
+   commands=[...source.matchAll(/^\s*node\s+tooling\/([-A-Za-z0-9_./]+\.(?:mjs|js))(?:\s|$)/gm)];conditional=true;
+  }
+  for(const m of commands){
+   if(step.if!==undefined||step['continue-on-error'])fail('CALLEE_REQUIRED_JOB_MISSING',{path:spec.name});
+   if(!RUNNERS.has(m[1])&&!(conditional&&m[1]==='scripts/ci/implementation-multi-pr-gate.mjs'))fail('CALLEE_SOURCE_OUTSIDE_CONTRACT',{path:m[1]});
+   runners.push({path:m[1],selector:`jobs.${spec.calleeJob}.steps.${conditional?'fixed_versioned_conditional_node_tooling':'node_tooling'}`});
+  }
  }
  if(!runners.some(r=>r.path===spec.runner))fail('CALLEE_RUNNER_MISSING',{path:spec.name});
  return runners;
