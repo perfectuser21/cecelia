@@ -153,6 +153,18 @@ it('工厂source导出保留全旧身份而仅含消费者历史，scratch导入
   await importImplementationSnapshot(fixture.db,snapshot);
   expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
 });
+it('生产refresh拒绝外部proof、scratch旗标及未认证来源；失败不追加历史',async()=>{
+ await factoryMap();let reads=0;
+ const q={scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision};
+ const malformed=[{}, {workspace_revision:revision,brain_revisions:[revision],run_id:1,allowScratch:true},
+   {workspace_revision:revision,brain_revisions:[revision],run_id:1,proof:{status:'verified'}},
+   {workspace_revision:revision,brain_revisions:[revision,revision],run_id:1},
+   {workspace_revision:revision,brain_revisions:[revision],run_id:0}];
+ for(const workspace_consumer of malformed)await expect(refreshImplementationSnapshot(fixture.db,{...q,workspace_consumer},
+  {resolveToken:async()=>'',fetchFn:async()=>{reads++;return {ok:false};}})).rejects.toMatchObject({code:'IMPLEMENTATION_CI_CONSUMER_REFRESH_INPUT_INVALID'});
+ expect(reads).toBe(0);
+ expect((await fixture.db.query('SELECT count(*)::int n FROM workflow_definition_versions')).rows[0].n).toBe(0);
+});
 it('正式refresh只读固定main commit/tree字节，来源未知和截断树不能写历史',async()=>{
   await factoryMap(); const before=await registration.readExistingOpsRegistry(fixture.db);
   const treeSha=execFileSync('git',['rev-parse',`${revision}^{tree}`],{cwd:root,encoding:'utf8'}).trim();
