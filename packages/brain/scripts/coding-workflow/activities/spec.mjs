@@ -8,21 +8,10 @@ import {
   loadPrompt, claudeTimeoutMs, runClaude, claudeFailure, snapshotChanges, outOfScopeChanges,
 } from '../lib/claude.mjs';
 import { sha256File, chainTamperFailure } from '../lib/guards.mjs';
-import { reportErrors, parseFrontmatter, extractAnchors } from '../lib/md-chain.mjs';
+import { SPEC_FILE, INTENT_FILE, specErrors } from '../lib/spec-check.mjs';
 
-const SPEC_FILE = '02-spec.md';
-const INTENT_FILE = '01-intent.md';
 // 默认低于契约 budget（900s），这样超时由本活动先报明确的 claude_timeout，而不是执行器笼统的 activity_timeout
 const TIMEOUT = { envVar: 'CODING_WF_SPEC_TIMEOUT_MS', defaultMs: 870000 };
-const SPEC_ID_RE = /^S-\d+$/;
-
-/** 02 自检：frontmatter/upstream 覆盖全部 I-n（reportErrors），且至少一条 `### S-n`。返回错误码数组。 */
-function specErrors(text, taskId, intentIds) {
-  const errors = reportErrors(text, { taskId, step: 'spec', coversFile: INTENT_FILE, ids: intentIds });
-  const body = parseFrontmatter(text)?.body ?? text;
-  if (!extractAnchors(body).some((id) => SPEC_ID_RE.test(id))) errors.push('spec_ids_missing');
-  return errors;
-}
 
 await runActivity(async (input) => {
   const { worktree, sprint_dir: sprintDir, intent_ids: intentIds } = input;
