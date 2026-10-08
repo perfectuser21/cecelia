@@ -3,6 +3,7 @@ import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evi
 import {existsSync,readFileSync} from 'node:fs';
 import {stepSha256} from '../../../../scripts/sync-steps-from-workspace.mjs';
 import {readImplementationConsumers} from '../../implementation-consumers.js';
+import {loadHistoricalImplementationContext} from '../../implementation-context.js';
 const module=await import('../../capability-regressions.js').catch(()=>({}));
 let f;
 beforeEach(async()=>{expect(module.registerCapabilityRegression).toBeTypeOf('function');f=await releaseEvidenceDatabase();const migration=new URL('../../../../migrations/537_assertion_source_repo.sql',import.meta.url);if(existsSync(migration))await f.db.query(readFileSync(migration,'utf8'));});
@@ -14,6 +15,19 @@ it('共享Activity按真实消费者各登记一条断言且重放幂等，不�
   const other=await module.registerCapabilityRegression(f.db,{...input,capability_id:f.capabilities[1]});
   expect(one.registration.id).toBe(replay.registration.id);expect(one.registration.id).not.toBe(other.registration.id);
   expect(one.registration).toMatchObject({cell_status:'gray',status:'planned',step_id_ref:null,cell_level:'activity'});
+});
+it('真实历史完整图与地图使用Brain anchor，Workspace source_set实现身份不改WV/manifest来源',async()=>{
+ const a=await seedFrozenConsumerSource(),cap=f.capabilities[0],repo='perfectuser21/zenithjoy-workspace',anchor='b'.repeat(40);
+ await f.db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('cecelia-factory','perfectuser21/cecelia','legacy-ledger-v1',$1)",[{source_repo:repo}]);
+ await f.graph(anchor,undefined,'perfectuser21/cecelia');await f.map(anchor,[cap],'cecelia-factory','perfectuser21/cecelia','perfectuser21/cecelia');
+ const version=(await f.db.query("SELECT id FROM workflow_definition_versions WHERE payload->>'definition_scope'='consumer_evidence' LIMIT 1")).rows[0].id;
+ const q={scope:'cecelia-factory',kind:'code',repo,path:'scripts/ci/__tests__/caller.test.mjs',revision:anchor,versionId:version};
+ const gaps=[],context=await loadHistoricalImplementationContext(f.db,q,gaps);
+ expect(gaps).toEqual([]);expect(context.registryRepo).toBe('perfectuser21/cecelia');expect(context.mapped.has(cap)).toBe(true);
+ await module.registerCapabilityRegression(f.db,{capability_id:cap,activity_id:a.activity_id,assertion_ref:'manual:node --test scripts/ci/__tests__/caller.test.mjs',assertion_source_repo:repo});
+ const report=await readImplementationConsumers(f.db,{...q,workflow_version_id:version});
+ expect(report.gaps).toEqual([]);expect(report.source.repo).toBe(repo);expect(report.source.registry_repo).toBe('perfectuser21/cecelia');
+ const persisted=(await f.db.query('SELECT source_repo FROM workflow_definition_versions WHERE id=$1',[version])).rows[0];expect(persisted.source_repo).toBe('perfectuser21/cecelia');
 });
 it('规范Step断言单独登记；错Activity/Capability归属及不可执行ref拒绝且不留半条',async()=>{
   const activity=f.activities[0],step=activity.payload.steps[0].step_id;
