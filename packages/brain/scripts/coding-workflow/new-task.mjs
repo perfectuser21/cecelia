@@ -38,7 +38,7 @@ export function validatePlan(plan) {
   return { tasks, batch: nonEmpty(plan?.batch) ? plan.batch : null, projectId, project, errors };
 }
 
-function body(t, batch, ids) {
+function body(t, batch, ids, projectId) {
   const payload = {
     coding_workflow: true,
     headed_manual: 'true',
@@ -49,7 +49,7 @@ function body(t, batch, ids) {
   if (t.depends_on?.length) payload.depends_on = t.depends_on.map((k) => ids.get(k));
   if (batch) payload.batch = batch;
   if (t.key !== undefined) payload.plan_key = t.key;
-  return {
+  const req = {
     task_type: 'data',
     title: t.title,
     description: t.description ?? '',
@@ -57,6 +57,19 @@ function body(t, batch, ids) {
     trigger_source: 'manual',
     payload,
   };
+  if (projectId) req.project_id = projectId;
+  return req;
+}
+
+/** POST JSON → { ok, reply }；网络错误折成 { ok: false, reply: { error } }。 */
+async function postJson(url, data) {
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+    const reply = await res.json().catch(() => null);
+    return { ok: res.ok && Boolean(reply?.id), reply };
+  } catch (error) {
+    return { ok: false, reply: { error: String(error?.message || error) } };
+  }
 }
 
 async function main(argv, env) {
@@ -73,7 +86,9 @@ async function main(argv, env) {
     console.error(`读不了计划文件：${error.message}`);
     return 2;
   }
-  const { tasks, batch, errors } = validatePlan(plan);
+  const checked = validatePlan(plan);
+  const { tasks, batch, project, errors } = checked;
+  let { projectId } = checked;
   if (errors.length > 0) {
     console.error(`计划不合格：${errors.join(' ')}`);
     return 2;
@@ -82,19 +97,20 @@ async function main(argv, env) {
     console.log(JSON.stringify(tasks.map((t) => ({ key: t.key ?? null, title: t.title, depends_on: t.depends_on ?? [] }))));
     return 0;
   }
-  const url = `${String(env.BRAIN_URL || 'http://localhost:5221').replace(/\/+$/, '')}/api/brain/tasks`;
+  const base = `${String(env.BRAIN_URL || 'http://localhost:5221').replace(/\/+$/, '')}/api/brain`;
+  if (project) {
+    const { ok, reply } = await postJson(`${base}/projects`, project);
+    if (!ok) {
+      console.error(`建 project 失败：${JSON.stringify(reply)}`);
+      return 1;
+    }
+    projectId = reply.id;
+  }
   const ids = new Map();
   const created = [];
   for (const t of tasks) {
-    let res;
-    let reply = null;
-    try {
-      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body(t, batch, ids)) });
-      reply = await res.json().catch(() => null);
-    } catch (error) {
-      reply = { error: String(error?.message || error) };
-    }
-    if (!res?.ok || !reply?.id) {
+    const { ok, reply } = await postJson(`${base}/tasks`, body(t, batch, ids, projectId));
+    if (!ok) {
       console.error(`建任务「${t.title}」失败：${JSON.stringify(reply)}；已建：${JSON.stringify(created)}`);
       return 1;
     }
