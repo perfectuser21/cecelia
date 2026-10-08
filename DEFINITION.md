@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.382.2
+**Brain 版本**: 1.382.3
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,11 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.382.3 — coding workflow 04 证据解析对真实 claude 格式容错
+
+- 真实端到端 2c34f677：04 最后一条 output 代码块没写闭合 ``` 就到文末，判 evidence_invalid。lib/evidence.mjs：文末仍开着的代码块按闭合到文末处理；文中未闭合的块吞掉后面的 E-n 时那些 I-n 照样判未覆盖，不放宽。
+- verdict 不区分大小写；字段行（对应/verdict）去掉 markdown 加粗后再匹配。
 
 ## Brain 1.382.2 — coding workflow spec 生成后自检 02，锚点标题允许带说明文字
 
