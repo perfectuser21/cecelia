@@ -1,6 +1,9 @@
 // publish 活动：把 sprint 目录的 md 链提交、推送，并开草稿 PR（该分支已有 PR 则复用）。
+import fs from 'node:fs';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { runActivity, validateBase, fail, childEnv, log } from '../lib/protocol.mjs';
+import { parseFrontmatter } from '../lib/md-chain.mjs';
 
 const GH_AUTH_RE = /\bHTTP 401\b|authentication|auth login|missing required scope|bad credentials/i;
 // 凭据提示会让无 tty 的子进程挂住；--literal-pathspecs 禁用 :/ 等 pathspec 魔法
@@ -9,6 +12,8 @@ const GIT_PATHSPEC = ['--literal-pathspecs'];
 // 与本机全局 pre-commit 钩子（~/.git-hooks/pre-commit）的分支名正则保持一致，否则 commit 会被钩子拒绝
 const BRANCH_RE = /^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$/;
 const STDERR_TAIL_LINES = 20;
+const BUILD_FILE = '03-build.md';
+const FIX_RE = /^(?:修复|(?:bug|fix)\b)/i;
 
 /** 运行子进程（不经 shell），输出转写到本进程 stderr；返回 { code, stdout, stderr, output }。 */
 function runCmd(bin, args, cwd) {
@@ -46,9 +51,43 @@ function runCmd(bin, args, cwd) {
 
 const lastLine = (text) => text.trim().split('\n').filter(Boolean).pop() || '';
 
+/** 01-intent.md 的第一个 `# 标题`；文件或标题不存在返回 ''。 */
+function intentHeading(dir) {
+  let text;
+  try {
+    text = fs.readFileSync(path.join(dir, '01-intent.md'), 'utf8');
+  } catch {
+    return '';
+  }
+  const body = parseFrontmatter(text)?.body ?? text;
+  return (/^# (.+)$/m.exec(body)?.[1] ?? '').trim();
+}
+
+/**
+ * PR/提交标题：链里有 03-build.md（带代码提交）时用 feat(workflow): <01-intent 标题>，
+ * 标题以 bug/修复/fix 开头则用 fix(workflow):；只有文档链时保持 docs(sprint): <id> md 链 …。
+ */
+function prTitle(chainFiles, dir, taskId) {
+  if (!chainFiles.includes(BUILD_FILE)) {
+    return `docs(sprint): ${taskId.slice(0, 8)} md 链 ${chainFiles.map((f) => String(f).replace(/\.md$/, '')).join(' → ')}`;
+  }
+  const heading = intentHeading(dir) || `coding workflow ${taskId.slice(0, 8)}`;
+  return `${FIX_RE.test(heading) ? 'fix' : 'feat'}(workflow): ${heading}`;
+}
+
+/**
+ * PR 正文的验收摘要：verify 通过后上下文里有 evidence_file 与 verified_ids（全部 PASS 才会走到 publish），
+ * 逐条列出 I-n 的 verdict；没有则返回空串（只有 01/02 的旧链）。
+ */
+function acceptanceSummary({ evidence_file: evidenceFile, verified_ids: ids }, sprintRel) {
+  if (typeof evidenceFile !== 'string' || !Array.isArray(ids) || ids.length === 0) return '';
+  const lines = ids.filter((id) => typeof id === 'string').map((id) => `- ${id}：PASS`);
+  return [`## 验收摘要（${sprintRel}/${evidenceFile}）`, ...lines].join('\n');
+}
+
 await runActivity(async (input) => {
   const { worktree, sprint_dir: sprintDir, chain_files: chainFiles } = input;
-  validateBase(input);
+  const { dir } = validateBase(input);
   const taskId = input.task_id;
   if (!Array.isArray(chainFiles) || chainFiles.length === 0) return fail('fatal', 'chain_files_missing');
 
@@ -56,7 +95,7 @@ await runActivity(async (input) => {
   const branch = branchRes.stdout.trim();
   if (branchRes.code !== 0 || !BRANCH_RE.test(branch)) return fail('fatal', 'branch_invalid');
 
-  const title = `docs(sprint): ${taskId.slice(0, 8)} md 链 01-intent → 02-spec`;
+  const title = prTitle(chainFiles, dir, taskId);
   const sprintRel = sprintDir.replace(/[\\/]+$/, '');
 
   const add = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'add', '--', sprintRel]);
@@ -85,7 +124,9 @@ await runActivity(async (input) => {
   let prUrl = lastLine(list.stdout);
 
   if (!prUrl) {
-    const body = chainFiles.map((f) => `- ${sprintRel}/${f}`).join('\n');
+    const body = [chainFiles.map((f) => `- ${sprintRel}/${f}`).join('\n'), acceptanceSummary(input, sprintRel)]
+      .filter(Boolean)
+      .join('\n\n');
     const create = await runCmd(
       gh,
       ['pr', 'create', '--draft', '--head', branch, '--title', title, '--body', body],

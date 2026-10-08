@@ -1,4 +1,4 @@
-// 端到端：main 上的通用执行器 activity-contract-run.js 跑完整五活动契约。
+// 端到端：main 上的通用执行器 activity-contract-run.js 跑完整七活动契约。
 // 假 claude / 假 gh / 本地假 Brain / 临时 bare origin，全程不碰真实服务。
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
@@ -19,7 +19,8 @@ const contract = JSON.parse(fs.readFileSync(path.join(WORKFLOW_DIR, 'contract.js
 
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
 const BRANCH = 'cp-1007220300-coding-workflow-e2e';
-const ACTIVITY_KEYS = ['intent', 'spec', 'chain_check', 'publish', 'report'];
+const ACTIVITY_KEYS = ['intent', 'spec', 'build', 'verify', 'chain_check', 'publish', 'report'];
+const CHAIN_FILES = ['01-intent.md', '02-spec.md', '03-build.md', '04-evidence.md'];
 
 /** 以子进程运行 CLI：stdin 写 JSON，返回 { exitCode, stdout, stderr, result }。 */
 function runCli(envelope, env) {
@@ -48,13 +49,14 @@ function runCli(envelope, env) {
   });
 }
 
-describe('coding_spec 五活动契约端到端（通用执行器 + 假外部依赖）', () => {
+describe('coding_spec 七活动契约端到端（通用执行器 + 假外部依赖）', () => {
   let root;
   let worktree;
   let origin;
   let server;
   let brainUrl;
   let patches;
+  let ghLog;
 
   beforeAll(() => {
     fs.chmodSync(FAKE_CLAUDE, 0o755);
@@ -65,6 +67,7 @@ describe('coding_spec 五活动契约端到端（通用执行器 + 假外部依�
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-e2e-'));
     worktree = path.join(root, 'worktree');
     origin = path.join(root, 'origin.git');
+    ghLog = path.join(root, 'gh.log');
     const emptyHooks = path.join(root, 'no-hooks');
     fs.mkdirSync(emptyHooks);
     fs.mkdirSync(worktree);
@@ -113,23 +116,29 @@ describe('coding_spec 五活动契约端到端（通用执行器 + 假外部依�
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('完整五活动 completed，Brain 恰好收到一次 PATCH 且 pr_url 等于 publish 输出', async () => {
-    const env = {
-      ...childEnv(process.env, { stripClaude: true }),
-      CODING_WF_CLAUDE_BIN: FAKE_CLAUDE,
-      FAKE_CLAUDE_MODE: 'ok',
-      CODING_WF_GH_BIN: FAKE_GH,
-      FAKE_GH_MODE: 'new',
-    };
-    const input = {
-      run_tag: 'e2e-rt-1',
-      task_id: TASK_ID,
-      worktree,
-      sprint_dir: 'sprints/e2e',
-      brain_url: brainUrl,
-    };
+  const envFor = (verifyMode) => ({
+    ...childEnv(process.env, { stripClaude: true }),
+    CODING_WF_CLAUDE_BIN: FAKE_CLAUDE,
+    FAKE_CLAUDE_MODE: 'ok',
+    FAKE_CLAUDE_MODE_BUILD: 'build-ok',
+    FAKE_CLAUDE_MODE_VERIFY: verifyMode,
+    CODING_WF_GH_BIN: FAKE_GH,
+    FAKE_GH_MODE: 'new',
+    FAKE_GH_LOG: ghLog,
+  });
+  const runInput = () => ({
+    run_tag: 'e2e-rt-1',
+    task_id: TASK_ID,
+    worktree,
+    sprint_dir: 'sprints/e2e',
+    brain_url: brainUrl,
+  });
+  const ghCalls = () => (fs.existsSync(ghLog)
+    ? fs.readFileSync(ghLog, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    : []);
 
-    const r = await runCli({ contract, input }, env);
+  it('完整七活动 completed：build 真实提交、verify 全 PASS，PR 正文含验收摘要，Brain 恰好收到一次 PATCH', async () => {
+    const r = await runCli({ contract, input: runInput() }, envFor('verify-pass'));
 
     expect(r.exitCode, r.stderr).toBe(0);
     expect(r.result).not.toBeNull();
@@ -151,12 +160,72 @@ describe('coding_spec 五活动契约端到端（通用执行器 + 假外部依�
     expect(body.result.coding_workflow.pr_url).toBe(prUrl);
     expect(body.result.coding_workflow.branch).toBe(BRANCH);
     expect(body.result.coding_workflow.sprint_dir).toBe('sprints/e2e');
-    expect(body.result.coding_workflow.chain_files).toEqual(['01-intent.md', '02-spec.md']);
+    expect(body.result.coding_workflow.chain_files).toEqual(CHAIN_FILES);
     expect(body.result.coding_workflow.run_tag).toBe('e2e-rt-1');
 
-    // 真实副作用：md 链落盘，分支已推到 bare origin
-    expect(fs.existsSync(path.join(worktree, 'sprints/e2e/01-intent.md'))).toBe(true);
-    expect(fs.existsSync(path.join(worktree, 'sprints/e2e/02-spec.md'))).toBe(true);
-    expect(git(origin, 'rev-parse', '--verify', `refs/heads/${BRANCH}`).trim()).toMatch(/^[0-9a-f]{40}$/);
+    // build 的提交与 verify 的验收结果进了上下文
+    const build = r.result.activities.find((a) => a.key === 'build').attempts.at(-1).outputs;
+    expect(build.build_file).toBe('03-build.md');
+    expect(build.build_commits).toHaveLength(1);
+    expect(r.result.outputs.verified_ids).toEqual(['I-1', 'I-2']);
+    // md 链指纹贯穿全程，build/verify 的防篡改检查都实际比对过
+    expect(r.result.outputs.intent_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(r.result.outputs.spec_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(fs.existsSync(path.join(worktree, 'sprints/e2e/03-build.md'))).toBe(true);
+
+    // PR 正文：md 链 + 每条 I-n 的验收摘要
+    const create = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'create');
+    expect(create[create.indexOf('--title') + 1]).toBe('feat(workflow): e2e 任务');
+    const prBody = create[create.indexOf('--body') + 1];
+    expect(prBody).toContain('- sprints/e2e/04-evidence.md');
+    expect(prBody).toContain('- I-1：PASS');
+    expect(prBody).toContain('- I-2：PASS');
+
+    // 真实副作用：代码提交与四文件 md 链都已推到 bare origin
+    const pushed = git(origin, 'ls-tree', '-r', '--name-only', BRANCH).trim().split('\n');
+    expect(pushed).toContain('src/feature.js');
+    for (const f of CHAIN_FILES) expect(pushed).toContain(`sprints/e2e/${f}`);
+    expect(git(origin, 'log', '--format=%H', BRANCH)).toContain(build.build_commits[0]);
+  }, 60000);
+
+  it('verify 判 FAIL：链停在 verify，chain_check/publish 不执行，report 仍执行并把失败证据回写 Brain', async () => {
+    const r = await runCli({ contract, input: runInput() }, envFor('verify-fail'));
+
+    expect(r.result, r.stderr).not.toBeNull();
+    // intent/spec/build 已有产出 -> partial（执行器语义），CLI 退出码 2
+    expect(r.result.status).toBe('partial');
+    expect(r.exitCode).toBe(2);
+    expect(r.result.activities.map((a) => a.key)).toEqual(['intent', 'spec', 'build', 'verify', 'report']);
+
+    const verify = r.result.activities.find((a) => a.key === 'verify');
+    expect(verify.status).toBe('failed');
+    expect(verify.attempts).toHaveLength(1);
+    const attempt = verify.attempts[0];
+    expect(attempt.failure_class).toBe('fatal');
+    expect(attempt.reason_code).toBe('verification_failed');
+    const failure = {
+      failed: [{ id: 'E-2', covers: ['I-2'], command: 'npm test -- I-2', output: 'AssertionError: expected 500 to be 200' }],
+      verdicts: [{ intent: 'I-1', verdict: 'PASS' }, { intent: 'I-2', verdict: 'FAIL' }],
+    };
+    expect(attempt.evidence).toEqual([failure]);
+    expect(r.result.evidence).toContainEqual(failure);
+
+    // verify 的失败结论进了上下文，finalize 的 report 仍执行并把失败条目回写 Brain
+    expect(r.result.outputs.verification.reason_code).toBe('verification_failed');
+    const report = r.result.activities.find((a) => a.key === 'report');
+    expect(report.status).toBe('completed');
+    expect(patches).toHaveLength(1);
+    const cw = JSON.parse(patches[0].raw).result.coding_workflow;
+    expect(cw.status).toBe('failed');
+    expect(cw.run_tag).toBe('e2e-rt-1');
+    expect(cw.sprint_dir).toBe('sprints/e2e');
+    expect(cw.verification.failed).toEqual([
+      { id: 'E-2', covers: ['I-2'], command: 'npm test -- I-2', output_tail: 'AssertionError: expected 500 to be 200' },
+    ]);
+
+    // publish 没有执行：没调 gh，分支没推到 origin
+    expect(ghCalls()).toHaveLength(0);
+    expect(() => git(origin, 'rev-parse', '--verify', `refs/heads/${BRANCH}`)).toThrow();
+    expect(fs.existsSync(path.join(worktree, 'sprints/e2e/04-evidence.md'))).toBe(true);
   }, 60000);
 });
