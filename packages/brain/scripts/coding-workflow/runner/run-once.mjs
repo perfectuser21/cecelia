@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './lib/config.mjs';
 import { acquireLock } from './lib/lock.mjs';
-import { brainClient } from './lib/brain.mjs';
+import { brainClient, EXECUTOR_KIND } from './lib/brain.mjs';
 import { isSwitched, hasRunResult, pickCandidates, taskNames, runTimeoutMs } from './lib/plan.mjs';
 import { prepareWorktree } from './lib/worktree.mjs';
 import { cleanupRetention } from './lib/retention.mjs';
@@ -72,7 +72,7 @@ async function claimFirst(ctx, candidates) {
   }
   for (const task of candidates) {
     const r = await ctx.brain.claim(task.id, ctx.cfg.claimer);
-    if (r.ok) return task;
+    if (r.ok) return { ...task, claimed_kind: r.body?.executor_kind ?? null };
     log(`认领 ${task.id} 失败（HTTP ${r.status}），换下一条`);
   }
   return null;
@@ -127,6 +127,12 @@ export async function runOnce(cfg, signal) {
 
   const startedAt = Date.now();
   const job = { worktree: null, branch: null, receiptPath: path.join(cfg.logDir, `${task.id}.json`) };
+  // Brain 没把 kind 记成 coding-workflow-runner（旧端点保留历史残留）：重启会被当本机执行体打回重跑，不跑链
+  if (task.claimed_kind !== EXECUTOR_KIND) {
+    const detail = `认领响应 executor_kind=${task.claimed_kind ?? '空'}，不是 ${EXECUTOR_KIND}`;
+    log(`任务 ${task.id} ${detail}，不跑链`);
+    return failTask(ctx, task, job, { status: 'failed', failed_activity: null, reason_code: 'executor_kind_mismatch', pr_url: null, detail });
+  }
   let summary;
   try {
     summary = await execute(cfg, task, job, signal);

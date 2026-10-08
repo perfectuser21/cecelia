@@ -43,7 +43,7 @@ const server = http.createServer((req, res) => {
       ? [{ id: TASK, status: 'queued', task_type: 'data', claimed_by: null, created_at: new Date().toISOString(),
         payload: { coding_workflow: true, headed_manual: 'true' } }] : []));
     if (req.method === 'PATCH') patches.push(JSON.parse(raw));
-    res.end(JSON.stringify({ id: TASK }));
+    res.end(JSON.stringify({ id: TASK, executor_kind: 'coding-workflow-runner' }));
   });
 });
 try {
