@@ -182,7 +182,7 @@ describe('coding workflow runner run-once', () => {
       '--receipt', path.join(sb.logDir, `${T1}.json`),
     ]);
     expect(exec.cwd).toBe(worktree);
-    expect(exec.contract_activities).toEqual(['intent', 'spec', 'build', 'verify', 'chain_check', 'publish', 'report']);
+    expect(exec.contract_activities).toEqual(['intent', 'spec', 'spec_review', 'build', 'verify', 'chain_check', 'publish', 'report']);
     // 子进程 env 剥离 CLAUDECODE / CLAUDE_CODE_* / GIT_*，保留 CODING_WF_GH_BIN
     expect(exec.env).toEqual({
       CLAUDECODE: false,
