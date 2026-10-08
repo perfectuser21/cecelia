@@ -1,0 +1,4 @@
+A	sprints/10080335-cw-c954ebfd/01-intent.md
+A	sprints/10080335-cw-c954ebfd/02-spec.md
+A	sprints/10080335-cw-c954ebfd/03-build.md
+A	sprints/10080335-cw-c954ebfd/04-evidence.md
