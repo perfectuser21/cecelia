@@ -48,3 +48,38 @@ export function verifyScopedImplementationGitSource(repoRoot,proof){
   if(JSON.stringify(actual)!==JSON.stringify(claimed))fail('IMPACT_MULTISCOPE_DIFF_MISMATCH');
   return rebuilt;
 }
+
+/** 每个输入仍是完整差异的原生报告；仅明确的foreign文件缺归属可由另一领域真实调用闭包解释。 */
+export function resolveScopedImplementationReports({source,expectedScopes,reports}){
+  const resolutions=[],parts=[],owners=new Map();
+  if(!Array.isArray(reports)||!Array.isArray(expectedScopes)||reports.length!==expectedScopes.length)fail('IMPACT_MULTISCOPE_SCOPES_REQUIRED');
+  for(const report of reports){
+    if(report.source?.repo!==source.repo||report.source.base_revision!==source.base_revision||report.source.head_revision!==source.head_revision||
+      JSON.stringify(report.source.changed_files)!==JSON.stringify(source.changed_files))fail('IMPACT_MULTISCOPE_DIFF_MISMATCH');
+    for(const [index,change] of source.changed_files.entries()){
+      // 只认原生调用图命中；governance/辅助说明无法替别人的业务代码认领。
+      const matched=['base','head'].some(side=>report[side]?.file_coverage?.[index]?.matched_paths?.length);
+      if(matched){const list=owners.get(key(change))||[];list.push(report.scope_key);owners.set(key(change),list);}
+    }
+  }
+  for(const report of reports){
+    const indexes=source.changed_files.flatMap((change,index)=>owners.get(key(change))?.includes(report.scope_key)?[index]:[]);
+    if(!indexes.length)fail('IMPACT_MULTISCOPE_SCOPE_WITHOUT_NATIVE_CLAIM');
+    for(const gap of report.gaps||[]){
+      if(gap.code!=='changed_file_unclaimed'||gap.side)fail('IMPACT_MULTISCOPE_UNRESOLVED_UNKNOWN');
+      const change=source.changed_files.find(c=>c.path===gap.path&&(c.old_path??null)===(gap.old_path??null));
+      const other=change&&(owners.get(key(change))||[]).filter(s=>s!==report.scope_key);
+      if(!other?.length)fail('IMPACT_MULTISCOPE_FILE_UNCLAIMED');
+      resolutions.push({scope_key:report.scope_key,path:change.path,claimed_by_scopes:other,source_report_sha256:sha(report)});
+    }
+    const part=structuredClone(report);
+    part.source.changed_files=indexes.map(i=>source.changed_files[i]);
+    for(const side of ['base','head'])part[side].file_coverage=indexes.map((i,change_index)=>({...part[side].file_coverage[i],change_index}));
+    part.gaps=[];part.unclaimed_paths=[];part.mapping_status='verified';
+    // 所有side图/定义/回归证据及辅助owner UNKNOWN保留，由原校验完整拒绝。
+    assertImplementationReport(part);parts.push(part);
+  }
+  const proof=aggregateScopedImplementationEvidence({source,expectedScopes,reports:parts});
+  const body={schema_version:1,evidence:proof,source_reports:structuredClone(reports),resolved_foreign_paths:resolutions};
+  return {...body,resolution_sha256:sha(body)};
+}
