@@ -12,6 +12,7 @@ const STATUS_PATH = path.join(HERE, '../status.mjs');
 const COMPLETED_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
 const PARTIAL_ID = 'bbbbbbbb-0000-0000-0000-000000000002';
 const PR_URL = 'https://github.com/x/y/pull/1';
+const CIFIX_ID = 'eeeeeeee-0000-0000-0000-000000000077';
 
 let dirs = [];
 afterEach(() => {
@@ -94,6 +95,44 @@ describe('collectStatus / formatStatus', () => {
     expect(rows.find((r) => r.task_id === 'cccccccc')).toMatchObject({ status: 'running', failed_activity: null, reason_code: null, pr_url: null });
     expect(rows.find((r) => r.task_id === 'dddddddd')).toMatchObject({ status: 'unreadable', failed_activity: null, reason_code: null, pr_url: null });
     expect(rows.find((r) => r.task_id === COMPLETED_ID).status).toBe('completed');
+  });
+
+  it('有 cifix 状态文件的任务带 ci_fix 摘要，状态文件本身不成为任务行', () => {
+    const dir = makeLogDir();
+    fs.writeFileSync(path.join(dir, `${CIFIX_ID}.json`), JSON.stringify({
+      status: 'completed',
+      outputs: { pr_url: 'https://github.com/x/y/pull/77' },
+    }));
+    fs.writeFileSync(path.join(dir, 'cifix-77.json'), JSON.stringify({
+      attempts: [{ pr: 77, result: 'push_failed' }, { pr: 77, result: 'pushed' }],
+    }));
+    const rows = collectStatus(dir);
+    expect(rows.find((r) => r.task_id === CIFIX_ID).ci_fix).toEqual({ attempts: 2, last_result: 'pushed' });
+    expect(rows.some((r) => r.task_id === 'cifix-77')).toBe(false);
+    const line = formatStatus(rows).split('\n').find((l) => l.includes(CIFIX_ID));
+    expect(line).toContain('ci_fix=2次');
+    expect(line).toContain('pushed');
+  });
+
+  it('没有 cifix 状态文件的任务 ci_fix 为 null 且文本行不含 ci_fix', () => {
+    const dir = makeLogDir();
+    const lineOf = (text, id) => text.split('\n').find((l) => l.includes(id));
+    let rows = collectStatus(dir);
+    expect(rows.find((r) => r.task_id === COMPLETED_ID).ci_fix).toBeNull();
+    let text = formatStatus(rows);
+    expect(lineOf(text, COMPLETED_ID)).not.toContain('ci_fix');
+    expect(lineOf(text, PARTIAL_ID)).not.toContain('ci_fix');
+
+    fs.writeFileSync(path.join(dir, `${CIFIX_ID}.json`), JSON.stringify({
+      status: 'completed',
+      outputs: { pr_url: 'https://github.com/x/y/pull/77' },
+    }));
+    fs.writeFileSync(path.join(dir, 'cifix-77.json'), JSON.stringify({ attempts: [{ pr: 77, result: 'pushed' }] }));
+    rows = collectStatus(dir);
+    expect(rows.find((r) => r.task_id === COMPLETED_ID).ci_fix).toBeNull();
+    text = formatStatus(rows);
+    expect(lineOf(text, COMPLETED_ID)).not.toContain('ci_fix');
+    expect(lineOf(text, CIFIX_ID)).toContain('ci_fix=1次');
   });
 
   it('目录不存在：collectStatus 返回 []，CLI 退出 0 且提示没有运行记录', () => {

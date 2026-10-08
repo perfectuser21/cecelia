@@ -5,9 +5,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './lib/config.mjs';
 import { summarizeReceipt } from './lib/receipt.mjs';
+import { readState } from './lib/cifix-scan.mjs';
 
 const FINAL_STATUSES = new Set(['completed', 'partial', 'failed']);
 const EMPTY_HINT = '没有运行记录';
+const CIFIX_STATE_RE = /^cifix-\d+\.json$/;
+const PR_NUMBER_RE = /\/pull\/(\d+)(?:[/?#]|$)/;
 
 function parseReceipt(file) {
   let receipt;
@@ -27,6 +30,15 @@ function parseReceipt(file) {
   return { status: 'unreadable', failed_activity: null, reason_code: null, pr_url: null };
 }
 
+/** pr_url 对应的 CI 自动修复记录摘要；没有 PR 或没修过返回 null。 */
+function ciFixSummary(logDir, prUrl) {
+  const m = typeof prUrl === 'string' ? prUrl.match(PR_NUMBER_RE) : null;
+  if (!m) return null;
+  const { attempts } = readState({ logDir }, m[1]);
+  if (attempts.length === 0) return null;
+  return { attempts: attempts.length, last_result: attempts[attempts.length - 1]?.result ?? null };
+}
+
 /** 每任务回执状态，按文件 mtime 倒序；目录不存在或无回执返回 []。 */
 export function collectStatus(logDir) {
   let names;
@@ -36,7 +48,7 @@ export function collectStatus(logDir) {
     return [];
   }
   const rows = [];
-  for (const name of names.filter((n) => n.endsWith('.json'))) {
+  for (const name of names.filter((n) => n.endsWith('.json') && !CIFIX_STATE_RE.test(n))) {
     const file = path.join(logDir, name);
     let stat;
     try {
@@ -45,11 +57,13 @@ export function collectStatus(logDir) {
       continue;
     }
     if (!stat.isFile()) continue;
+    const receipt = parseReceipt(file);
     rows.push({
       task_id: name.slice(0, -'.json'.length),
       mtime: new Date(stat.mtimeMs).toISOString(),
       mtimeMs: stat.mtimeMs,
-      ...parseReceipt(file),
+      ...receipt,
+      ci_fix: ciFixSummary(logDir, receipt.pr_url),
     });
   }
   rows.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -62,7 +76,8 @@ export function formatStatus(rows) {
     const tail = r.status === 'completed'
       ? (r.pr_url ?? '')
       : `failed_activity=${r.failed_activity ?? '-'} reason_code=${r.reason_code ?? '-'}`;
-    return `${r.task_id}  ${r.status}  ${r.mtime}  ${tail}`.trimEnd();
+    const ciFix = r.ci_fix ? `  ci_fix=${r.ci_fix.attempts}次 last=${r.ci_fix.last_result ?? '-'}` : '';
+    return `${r.task_id}  ${r.status}  ${r.mtime}  ${tail}${ciFix}`.trimEnd();
   }).join('\n');
 }
 
