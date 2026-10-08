@@ -4,6 +4,7 @@ import {existsSync,readFileSync} from 'node:fs';
 import {stepSha256} from '../../../../scripts/sync-steps-from-workspace.mjs';
 import {readImplementationConsumers} from '../../implementation-consumers.js';
 import {loadHistoricalImplementationContext} from '../../implementation-context.js';
+import {exportImplementationSnapshot,validateImplementationSnapshot} from '../../implementation-ci-snapshot.js';
 const module=await import('../../capability-regressions.js').catch(()=>({}));
 let f;
 beforeEach(async()=>{expect(module.registerCapabilityRegression).toBeTypeOf('function');f=await releaseEvidenceDatabase();const migration=new URL('../../../../migrations/537_assertion_source_repo.sql',import.meta.url);if(existsSync(migration))await f.db.query(readFileSync(migration,'utf8'));});
@@ -28,6 +29,12 @@ it('真实历史完整图与地图使用Brain anchor，Workspace source_set实�
  const report=await readImplementationConsumers(f.db,{...q,workflow_version_id:version});
  expect(report.gaps).toEqual([]);expect(report.source.repo).toBe(repo);expect(report.source.registry_repo).toBe('perfectuser21/cecelia');
  const persisted=(await f.db.query('SELECT source_repo FROM workflow_definition_versions WHERE id=$1',[version])).rows[0];expect(persisted.source_repo).toBe('perfectuser21/cecelia');
+ const snapshot=await exportImplementationSnapshot(f.db,{scope:q.scope,repo:q.repo,revision:q.revision});
+ expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
+ expect(snapshot.registry_source).toEqual({repo:'perfectuser21/cecelia',revision:anchor});
+ expect(snapshot.source_set).toContainEqual({repo:q.repo,revision:q.revision});
+ expect(snapshot.definitions.workflows[0].source_repo).toBe('perfectuser21/cecelia');
+ expect(()=>validateImplementationSnapshot(snapshot)).not.toThrow();
 });
 it('规范Step断言单独登记；错Activity/Capability归属及不可执行ref拒绝且不留半条',async()=>{
   const activity=f.activities[0],step=activity.payload.steps[0].step_id;
