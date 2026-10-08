@@ -23,6 +23,12 @@ describe('parseEvidence', () => {
     ]);
   });
 
+  it('E-n 标题行后可跟说明文字（与 01/02/03 锚点规则一致）', () => {
+    const r = parseEvidence(`${FM}\n${entry('E-1').replace('### E-1', '### E-1 安装脚本写入开关')}`);
+    expect(r.errors).toEqual([]);
+    expect(r.items.map((i) => i.id)).toEqual(['E-1']);
+  });
+
   it('对应可用全角冒号、可列多个 I-n、可带列表符号', () => {
     const text = `### E-1\n- 对应：I-1、I-2\n- verdict: PASS\n${FENCE}command\nx\n${FENCE}\n${FENCE}output\ny\n${FENCE}\n`;
     const r = parseEvidence(text);
