@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const ANCHOR_RE = /^### ([A-Z]+-\d+)\s*$/;
+// `### S-1` 后可跟说明文字（空白或冒号分隔）；ID 后紧跟字母/数字/连字符不算锚点
+const ANCHOR_RE = /^### ([A-Z]+-\d+)(?:[\s:：].*)?$/;
 const REF_RE = /^([^#/\\\s]+\.md)#([A-Z]+-\d+)$/;
 
 /**

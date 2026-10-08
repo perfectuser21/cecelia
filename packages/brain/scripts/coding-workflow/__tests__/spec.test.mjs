@@ -88,6 +88,25 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(r.result.evidence).toEqual([{ tampered_files: ['01-intent.md'] }]);
   });
 
+  it('titled：S-n 标题行带说明文字（真实 claude c2afa8ba）-> completed', async () => {
+    const r = await run('titled');
+    expect(r.result.status).toBe('completed');
+  });
+
+  it('noids：02 没有任何 S-n 标题 -> retryable spec_invalid（当场拦，不留给 build 报 spec_ids_missing）', async () => {
+    const r = await run('noids');
+    expect(r.result.failure_class).toBe('retryable');
+    expect(r.result.reason_code).toBe('spec_invalid');
+    expect(JSON.stringify(r.result.evidence)).toContain('spec_ids_missing');
+  });
+
+  it('uncovered：02 的 upstream 没覆盖全部 I-n -> retryable spec_invalid，evidence 点名未覆盖的 I-n', async () => {
+    const r = await run('uncovered');
+    expect(r.result.failure_class).toBe('retryable');
+    expect(r.result.reason_code).toBe('spec_invalid');
+    expect(JSON.stringify(r.result.evidence)).toContain('not_covered:I-2');
+  });
+
   it('退出 0 但没写文件 -> fatal spec_missing', async () => {
     const r = await run('nofile');
     expect(r.exitCode).toBe(2);

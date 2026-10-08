@@ -4,7 +4,7 @@ import { parseFrontmatter } from './md-chain.mjs';
 import { INTENT_ID_RE } from './intent.mjs';
 
 export const OUTPUT_SUMMARY_MAX = 2000;
-const ITEM_RE = /^### (E-\d+)\s*$/;
+const ITEM_RE = /^### (E-\d+)(?:[\s:：].*)?$/;
 const SECTION_END_RE = /^#{1,3} /;
 const FENCE_RE = /^(`{3,}|~{3,})\s*([A-Za-z]*)\s*$/;
 const COVERS_RE = /^对应\s*[:：]\s*(.*)$/;

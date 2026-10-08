@@ -182,4 +182,8 @@ describe('extractAnchors', () => {
   it('只提取 ### <ID> 锚点标题', () => {
     expect(extractAnchors('### I-1\n### S-2\n## X-3')).toEqual(['I-1', 'S-2']);
   });
+
+  it('ID 后可跟说明文字（空白或冒号分隔），ID 必须完整（真实 claude c2afa8ba：### S-1 plist 模板…）', () => {
+    expect(extractAnchors('### S-1 plist 模板增加占位\n### S-2：渲染\n### S-10\n### S-3a\n### S-4-x')).toEqual(['S-1', 'S-2', 'S-10']);
+  });
 });
