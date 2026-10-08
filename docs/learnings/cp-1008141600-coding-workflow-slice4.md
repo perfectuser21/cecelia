@@ -15,3 +15,11 @@
 - [ ] 执行器启动前删除旧回执文件；只认 stdout 终态或无 last_event 的终态文件
 - [ ] shell 脚本里变量后接中文标点一律写 `${VAR}`
 - [ ] 改 brain/src 的 feat PR 提前规划 smoke.sh（真实运行被改链路，不写空架子）
+
+### 审查补充（同 PR 修复）
+
+- 根因：认领没传 executor_kind，默认 headed-session；Brain 重启的 startup-sync 把 in_progress 打回 queued、recovery 60 分钟后清 claim，runner 收尾 queued→completed 非法 409，下一轮再认领重跑出第二个 PR。
+- 根因：只杀执行器进程组杀不到 activity/claude（各自独立进程组）；父进程一死后代被 init 收养，pgrep -P 再也找不到。
+- [ ] 外部执行面认领一律显式写 executor_kind，并在 executor-contracts 登记为外部执行体（加 kind 要同步迁移约束与各处精确名单）
+- [ ] 终态回写必须处理 409：先 GET 对账，属于自己才重新认领再写，不覆盖他人
+- [ ] 杀进程树要在第一次发信号前把整棵树记下来
