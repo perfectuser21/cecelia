@@ -1,6 +1,6 @@
 # Workspace跨仓CI固定来源验收
 
-- [x] [BEHAVIOR] workspacecisourcebundle：真实固定Git来源提取两准确caller/reader、同BrainSHA的callee/job源码与hash，严格既有F3身份；source集合不混repo/revision，未知来源及协议缺口拒认、始终不可执行。
+- [x] [BEHAVIOR] workspacecisourcebundle：真实固定Git来源提取两准确caller/reader、分别固定BrainSHA的callee/job源码与hash，严格既有F3身份；source集合不混repo/revision，未知来源及协议缺口拒认、始终不可执行。
   Test: manual:node --test scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs
 
 # PRD / DoD：nightly 固定配置验证消费关系
