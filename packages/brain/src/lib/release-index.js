@@ -72,6 +72,7 @@ function validateRelease(input) {
 async function readDefinitions(db, input) {
   const workflows = (await db.query('SELECT * FROM workflow_definition_versions WHERE id=ANY($1::uuid[]) ORDER BY id', [input.workflows.map(w => w.workflow_definition_version_id)])).rows;
   requireEvidence(workflows.length === input.workflows.length, '固定Workflow版本不存在');
+  for (const workflow of workflows) requireEvidence(workflow.payload.definition_scope !== 'consumer_evidence', '消费者来源证据不是完整执行Workflow', 'CONSUMER_EVIDENCE_NOT_EXECUTABLE');
   requireEvidence(new Set(workflows.map(w => w.workflow_id)).size === workflows.length, '同一release不能包含一个Workflow的多个版本');
   const ids = [...new Set(workflows.flatMap(w => w.payload.activities.map(r => r.activity_version_id)))];
   const activities = (await db.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[]) ORDER BY id', [ids])).rows;

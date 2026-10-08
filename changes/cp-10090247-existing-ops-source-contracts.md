@@ -4,3 +4,4 @@
 - 顶层迁移SQL由现行migrate直接数据流证明；回滚SQL只接受PG测试实际readFile输入，不伪造生产回退关系。
 - 两个消费者证据与整个Workflow覆盖明确分开，其余六引用保留UNKNOWN，来源证据不可当执行定义。
 - 明确生产解析依赖acorn；注释、字符串、缺来源、错误scope/repo/revision与宽路径不能提供来源证据。
+- 正式release入口拒绝consumer_evidence历史，真实PG/HTTP回归确认零release写入、旧current与不可变历史保留。
