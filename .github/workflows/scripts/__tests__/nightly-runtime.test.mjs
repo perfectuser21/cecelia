@@ -57,10 +57,45 @@ set -eu
   const success = run();
   assert.equal(success.status, 0, success.stdout + success.stderr);
   assert.match(success.stdout, /通过: 1, 失败: 0/);
+  // 普通实例不能冒充专用Walking实例；该入口必须移交到被汇总的真实独立job。
+  writeFileSync(join(scripts, 'walking-skeleton-1node-smoke.sh'), '#!/bin/sh\nexit 43\n');
+  const delegated = run();
+  assert.equal(delegated.status, 0, delegated.stdout + delegated.stderr);
+  assert.match(delegated.stdout, /DELEGATED.*walking-ci-e2e-nightly/);
   writeFileSync(join(scripts, 'failure.sh'), '#!/bin/sh\nexit 42\n');
   const failure = run();
   assert.equal(failure.status, 1, '不能吞掉任何smoke失败');
   assert.match(failure.stdout, /通过: 1, 失败: 1/);
+});
+
+test('Walking专用nightly：沿用正式实际Docker/PG验收，启动隔离实例且加入失败汇总', t => {
+  const job = workflow.jobs['walking-ci-e2e-nightly'];
+  assert.ok(job, '必须有实际执行Walking的独立job，不能只从RunAll移除');
+  const official = yaml.load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8')).jobs['walking-ci-e2e'];
+  const expected = JSON.parse(JSON.stringify(official).replaceAll('cecelia-brain-walking-ci', 'cecelia-brain-walking-nightly'));
+  assert.deepEqual(job, expected, '保留正式CI的真实两线程、PG检查、重启、产出工件及清场');
+  assert.ok(workflow.jobs['open-issue-on-failure'].needs.includes('walking-ci-e2e-nightly'));
+  const cwd = mkdtempSync(join(tmpdir(), 'nightly-walking-start-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const bin = join(cwd, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'docker'), `#!${process.execPath}\nconst fs=require('fs');fs.appendFileSync(process.env.DOCKER_LOG,JSON.stringify({args:process.argv.slice(2),database:process.env.DB_NAME})+'\\n');\n`, { mode: 0o755 });
+  writeFileSync(join(bin, 'curl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const env = { PATH: `${bin}:${process.env.PATH}`, GITHUB_WORKSPACE: cwd, DOCKER_LOG: join(cwd, 'docker.log'),
+    ...Object.fromEntries(Object.entries(job.env).map(([key, value]) => [key, String(value).replaceAll('${{ secrets.CI_DB_PASSWORD }}', 'isolated-test-password')])) };
+  const startup = job.steps.find(step => step.name === 'Prepare isolated Brain and actual Alpine worker');
+  const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', startup.run], { env, encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 0, result.stderr);
+  const calls = readFileSync(env.DOCKER_LOG, 'utf8').trim().split('\n').map(JSON.parse);
+  const run = calls.find(call => call.args[0] === 'run');
+  assert.equal(run.database, 'cecelia_test');
+  assert.ok(run.args.includes('cecelia-brain-walking-nightly'));
+  for (const flag of ['CI=true', 'WALKING_CI_OWNER=1', 'NODE_ENV=test', 'CECELIA_TICK_ENABLED=false', 'DATABASE_URL']) {
+    assert.ok(run.args.includes(flag), `缺专用隔离启动参数 ${flag}`);
+  }
+  const smoke = job.steps.find(step => step.name === 'True two-thread Docker callback checkpoint restart acceptance');
+  assert.equal(smoke.env.SMOKE_ALLOW_WRITE, '1');
+  assert.equal(smoke.env.BRAIN_CONTAINER, 'cecelia-brain-walking-nightly');
 });
 
 const goodHealthz = status => ({ status, db: 'connected', tick: 'disabled', checked_at: new Date().toISOString() });
