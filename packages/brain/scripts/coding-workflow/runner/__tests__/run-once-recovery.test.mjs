@@ -135,6 +135,27 @@ describe('coding workflow runner 防重跑与对账', () => {
     expect(r.stderr).toContain(T1);
   }, 30000);
 
+  it('认领响应 executor_kind 不是 coding-workflow-runner（旧 Brain 端点保留 headed-session 残留）：不跑链，in_progress → failed executor_kind_mismatch', async () => {
+    brain = await startFakeBrain({ tasks: [codingTask(T1, { executor_kind: 'headed-session' })], legacyClaim: true });
+    const r = await runOnceProcess(runnerEnv(sb, brain.url));
+    expect(r.exitCode).toBe(1);
+    expect(readJsonLines(sb.execLog)).toEqual([]);
+    expect(statuses()).toEqual(['in_progress', 'failed']);
+    const info = brain.patches[1].body.result.coding_workflow_runner;
+    expect(info.reason_code).toBe('executor_kind_mismatch');
+    expect(info.detail).toContain('headed-session');
+    expect(r.stderr).toContain('headed-session');
+    expect(fs.existsSync(sb.worktreeBase)).toBe(false);
+  }, 30000);
+
+  it('预置 headed-session 的任务经新端点认领后 kind 被纠正，照常跑链', async () => {
+    brain = await startFakeBrain({ tasks: [codingTask(T1, { executor_kind: 'headed-session' })] });
+    const r = await runOnceProcess(runnerEnv(sb, brain.url, { CODING_WF_AUTOMERGE: '0' }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(brain.tasks[0].executor_kind).toBe('coding-workflow-runner');
+    expect(readJsonLines(sb.execLog)).toHaveLength(1);
+  }, 30000);
+
   it('启动对账：本机 runner 认领的 in_progress 任务（锁已在本进程手里 = 原执行者已不在）→ failed runner_lost；别人的不动', async () => {
     brain = await startFakeBrain({
       tasks: [

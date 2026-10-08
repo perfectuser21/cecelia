@@ -59,7 +59,7 @@ describe('install.sh', () => {
     expect(plist).toContain(`<key>Label</key>\n  <string>${LABEL}</string>`);
     expect(plist).toContain('<key>UserName</key>\n  <string>administrator</string>');
     expect(plist).toContain('<key>StartInterval</key>\n  <integer>300</integer>');
-    expect(plist).toContain('<key>ExitTimeOut</key>\n  <integer>90</integer>');
+    expect(plist).toContain('<key>ExitTimeOut</key>\n  <integer>240</integer>');
     expect(plist).toContain('<key>ProcessType</key>\n  <string>Standard</string>');
     expect(plist).toContain(`<key>CODING_WF_MAIN_LOG</key>\n    <string>${home}/Library/Logs/coding-workflow-runner.log</string>`);
     expect(plist).toContain(`<string>${home}/Library/Logs/coding-workflow-runner.log</string>`);

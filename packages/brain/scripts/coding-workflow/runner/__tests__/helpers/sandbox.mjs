@@ -20,9 +20,10 @@ const TRANSITIONS = { queued: ['in_progress'], in_progress: ['completed', 'faile
  * 假 Brain：tasks 为任务表（支持 status/task_type 过滤、按 created_at 降序 + limit 截断，同真 Brain）。
  * claim409 里的 id 认领返回 409；patchStatus 强制某目标状态返回指定 HTTP；
  * PATCH 按真 Brain 状态机校验（非法转移 409），终态清 claimed_by；
- * onResultPatch(task) 在只带 result 的 PATCH 后调用（模拟 Brain 重启把任务打回 queued 等）。
+ * onResultPatch(task) 在只带 result 的 PATCH 后调用（模拟 Brain 重启把任务打回 queued 等）；
+ * 认领对 coding-workflow-runner 强制写 kind（同真 Brain），legacyClaim=true 模拟旧端点的 COALESCE。
  */
-export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {}, onResultPatch } = {}) {
+export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {}, onResultPatch, legacyClaim = false } = {}) {
   const state = { tasks: structuredClone(tasks), calls: [], patches: [] };
   const find = (id) => state.tasks.find((t) => t.id === id);
   const send = (res, code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
@@ -54,7 +55,8 @@ export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = 
         if (claim409.includes(claim[1]) || task.claimed_by) return send(res, 409, { error: 'Task already claimed' });
         const body = JSON.parse(raw);
         task.claimed_by = body.claimer;
-        task.executor_kind = task.executor_kind ?? body.executor_kind ?? 'headed-session';
+        const force = !legacyClaim && body.executor_kind === 'coding-workflow-runner';
+        task.executor_kind = force ? body.executor_kind : (task.executor_kind ?? body.executor_kind ?? 'headed-session');
         return send(res, 200, { id: task.id, claimed_by: task.claimed_by, executor_kind: task.executor_kind });
       }
       if (req.method === 'PATCH' && one) {
