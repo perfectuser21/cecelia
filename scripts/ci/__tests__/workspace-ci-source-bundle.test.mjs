@@ -92,3 +92,16 @@ for(const [name,mutate] of [
  ['callback内部函数遮蔽config',s=>s.replace('()=>{config();}','()=>{function config(){return {};}config();}')],
 ])test(`拒伪词法来源：${name}`,async t=>{const f=fixture(t,w=>{const p='scripts/ci/__tests__/implementation-impact-workflow.test.mjs';w[p]=mutate(w[p]);}),r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='READER_INPUT_UNPROVEN'));});
 for(const fake of ['echo "\nnode tooling/scripts/ci/implementation-pr-gate.mjs\n"','cat <<EOF\nnode tooling/scripts/ci/implementation-pr-gate.mjs\nEOF'])test('多行字符串/HereDoc不能冒充node命令',async t=>{const f=fixture(t),read=f.options.readSource;f.options.readSource=async q=>{const b=await read(q);return q.repo===BR&&q.path==='.github/workflows/implementation-impact.yml'?Buffer.from(b.toString().replace('      - run: node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$PWD/source"','      - run: |\n'+fake.split('\n').map(s=>'          '+s).join('\n'))):b;};const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='CALLEE_RUNNER_MISSING'));});
+
+for(const [name, mutate] of [
+ ['callback提前return',s=>s.replace('()=>{config();}','()=>{return;config();}')],
+ ['跳过node:test',s=>s.replace("test('真实caller协议',", "test('真实caller协议',{skip:true},")],
+])test(`拒认未执行reader：${name}`,async t=>{const f=fixture(t,w=>{const p='scripts/ci/__tests__/implementation-impact-workflow.test.mjs';w[p]=mutate(w[p]);}),r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='READER_INPUT_UNPROVEN'));});
+for(const target of ['caller-contract','impact'])test(`caller布尔false条件拒认：${target}`,async t=>{const f=fixture(t,w=>{const p='.github/workflows/implementation-impact.yml';w[p]=w[p].replace(`  ${target}:`,`  ${target}:\n    if: false`);}),r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');});
+for(const [name, before, after] of [
+ ['job布尔false条件','  gate:','  gate:\n    if: false'],
+ ['step布尔false条件','      - run: node','      - if: false\n        run: node'],
+ ['死shell分支','      - run: node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$PWD/source"','      - run: |\n          if false; then\n            node tooling/scripts/ci/implementation-pr-gate.mjs\n          fi'],
+ ['未调用shell函数','      - run: node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$PWD/source"','      - run: |\n          never_called() {\n            node tooling/scripts/ci/implementation-pr-gate.mjs\n          }'],
+ ['shell提前退出','      - run: node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$PWD/source"','      - run: |\n          exit 0\n          node tooling/scripts/ci/implementation-pr-gate.mjs'],
+])test(`拒认未执行callee：${name}`,async t=>{const f=fixture(t),read=f.options.readSource;f.options.readSource=async q=>{const b=await read(q);return q.repo===BR&&q.path==='.github/workflows/implementation-impact.yml'?Buffer.from(b.toString().replace(before,after)):b;};const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');});
