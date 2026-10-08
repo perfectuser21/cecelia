@@ -46,6 +46,18 @@ describe('脚本收尾独立周期', () => {
     expect(job('node-onboarding').handler).toHaveBeenCalled();
   });
 
+  it('重启后GTD入口十秒内初始化，慢串行job不阻止入口自循环启动', async () => {
+    hang(job('machine-vitals'));
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(job('notion-gtd-sync').handler).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(job('machine-vitals').handler).toHaveBeenCalledTimes(1);
+    expect(job('notion-gtd-sync').handler).toHaveBeenCalledTimes(3);
+    expect(COMPLETION_JOBS).toContain(job('notion-gtd-sync'));
+    expect(SERIAL_JOBS).not.toContain(job('notion-gtd-sync'));
+  });
+
   it('OpenClaw手机真实完成不被串行慢job拖住，且只在独立循环运行', async () => {
     hang(job('machine-vitals'));
     startSchedulerJobsLoop(pool);
