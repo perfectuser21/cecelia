@@ -9,6 +9,14 @@ import { assertImplementationReport } from '../../../src/lib/implementation-repo
 import { applyAutoVersion } from '../../auto-version-apply.mjs';
 
 const roots=[];
+it('独立Node入口在Brain-only安装下仍真实记录无效输入，不提前加载scratch图扫描依赖',()=>{
+ const f=fixture();const outputDir=join(f.root,'node-cli-gap');
+ const moduleUrl=new URL('../../../../../scripts/ci/implementation-pr-gate.mjs',import.meta.url).href;
+ const options={repoRoot:f.root,scope:'scope',base:f.source.base_revision,head:f.source.head_revision,mode:'invalid',outputDir};
+ const code=`const {runImplementationPrGate}=await import(${JSON.stringify(moduleUrl)});try{await runImplementationPrGate(${JSON.stringify(options)});process.exitCode=2;}catch(error){if(error.code!=='IMPLEMENTATION_CI_INPUT_INVALID')throw error;}`;
+ execFileSync(process.execPath,['--input-type=module','-e',code],{cwd:f.root,encoding:'utf8'});
+ expect(JSON.parse(readFileSync(join(outputDir,'gap.json'),'utf8'))).toMatchObject({status:'unknown',code:'IMPLEMENTATION_CI_INPUT_INVALID'});
+});
 function versionFixture(relations) {
  const f=fixture([]);
  mkdirSync(join(f.root,'packages/brain'),{recursive:true});
