@@ -102,6 +102,14 @@ it('public历史查询从真实Brain逻辑注册及严格F3封印选择来源，
 it('public历史错实现SHA/path/F2版本或生产scratch来源不能借Brain注册当Workspace准入',async()=>{
  const q=await historicalQuery(),f2=(await fixture.db.query("SELECT id FROM workflow_definition_versions WHERE payload->>'key'='factory_f2_ops' LIMIT 1")).rows[0].id;
  for(const changed of [{...q,revision:'0'.repeat(40)},{...q,path:'scripts/ci/unknown.js'},{...q,versionId:f2}])await expect(loadHistoricalImplementationContext(fixture.db,changed,[])).rejects.toMatchObject({code:'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED'});
+ const w=(await fixture.db.query('SELECT * FROM workflow_definition_versions WHERE id=$1',[q.versionId])).rows[0],source={repo:w.source_repo,path:w.source_path,commit:w.source_commit};
+ for(const mutate of [p=>p.activities[0].reference_id=EXISTING_OPS_IDENTITIES[0].reference_id,p=>p.capability_id=EXISTING_OPS_IDENTITIES[0].capability_id]){
+   const payload=structuredClone(w.payload);mutate(payload);
+   const altered=(await fixture.db.query('INSERT INTO workflow_definition_versions(workflow_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',[w.workflow_id,payload,stepSha256({source,payload}),source.repo,source.path,source.commit,w.contract_sha256])).rows[0];
+   await expect(loadHistoricalImplementationContext(fixture.db,{...q,versionId:altered.id},[])).rejects.toMatchObject({code:'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED'});
+ }
+ const badHash=(await fixture.db.query('INSERT INTO workflow_definition_versions(workflow_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',[w.workflow_id,w.payload,'0'.repeat(64),source.repo,source.path,source.commit,w.contract_sha256])).rows[0];
+ await expect(loadHistoricalImplementationContext(fixture.db,{...q,versionId:badHash.id},[])).rejects.toMatchObject({code:'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED'});
  const prod={query:async(sql,args)=>sql==='SELECT current_database() name'?{rows:[{name:'cecelia'}]}:fixture.db.query(sql,args)};
  await expect(loadHistoricalImplementationContext(prod,q,[])).rejects.toMatchObject({code:'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED'});
 });
