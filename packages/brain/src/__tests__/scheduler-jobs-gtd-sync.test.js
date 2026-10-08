@@ -92,12 +92,13 @@ describe('notion-gtd-sync 调度', () => {
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
-  it('scheduler-jobs 注册了 notion-gtd-sync 且在 SERIAL_JOBS', async () => {
-    const { JOBS, SERIAL_JOBS } = await import('../scheduler-jobs.js');
+  it('scheduler-jobs 注册了 notion-gtd-sync 且由独立循环初始化', async () => {
+    const { JOBS, SERIAL_JOBS, COMPLETION_JOBS } = await import('../scheduler-jobs.js');
     const job = JOBS.find((j) => j.name === 'notion-gtd-sync');
     expect(job).toBeTruthy();
     expect(job.needsPool).toBe(true);
-    expect(SERIAL_JOBS.map((j) => j.name)).toContain('notion-gtd-sync');
+    expect(SERIAL_JOBS.map((j) => j.name)).not.toContain('notion-gtd-sync');
+    expect(COMPLETION_JOBS).toContain(job);
   });
 
   it('并存守卫：syncZhToEn 绝不处理任务号非空的行（变异钉住二次校验）', async () => {
