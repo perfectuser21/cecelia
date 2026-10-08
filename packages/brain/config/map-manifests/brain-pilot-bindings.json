@@ -38,8 +38,8 @@
     "value_streams": [
       {
         "key": "butler",
-        "entity_id": "bbbbbbbb-f0f0-4000-8000-000000000002",
-        "name": "管家",
+        "entity_id": "c5cb480f-f7f7-4b4e-8871-bd65ff65b668",
+        "name": "经营节奏",
         "perceiver": "主理人本人",
         "order": 1
       }

@@ -94,7 +94,7 @@ it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真
     await db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('cecelia-kr','cecelia-kr-source','legacy-ledger-v1',$1)",[{source_repo:'perfectuser21/cecelia'}]);
     git('remote','set-url','origin','git@github.com:perfectuser21/cecelia.git');
     expect(await pilotGraphTargets(db,{repo:'cecelia',root:dir})).toEqual([{repo:'cecelia-kr-source',root:dir,scope:'cecelia-kr'}]);
-    await db.query(`WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES('bbbbbbbb-f0f0-4000-8000-000000000002','管家',NULL)) INSERT INTO capabilities(id,name,parent_journey_id) VALUES('dddddddd-f0f0-4000-8000-000000000004','战略','bbbbbbbb-f0f0-4000-8000-000000000002')`);
+    await db.query(`WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES('c5cb480f-f7f7-4b4e-8871-bd65ff65b668','经营节奏',NULL)) INSERT INTO capabilities(id,name,parent_journey_id) VALUES('dddddddd-f0f0-4000-8000-000000000004','战略','c5cb480f-f7f7-4b4e-8871-bd65ff65b668')`);
     const kr=await submitMapManifest(db,buildPilotManifest('company-kr',{revision,decision}));await activateMapManifest(db,kr.manifest_version.id,{projector});
     expect((await db.query("SELECT fact_revisions FROM map_projection_runs WHERE scope_key='cecelia-kr' AND status='active'")).rows[0].fact_revisions).toEqual({});
     expect((await scanRepo({name:'cecelia-kr-source',root:dir},db)).sourceRevision).toBe(revision);
