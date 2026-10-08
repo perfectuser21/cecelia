@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { JOBS, SERIAL_JOBS, startSchedulerJobsLoop, stopSchedulerJobsLoop } from '../scheduler-jobs.js';
+import { JOBS, COMPLETION_JOBS, SERIAL_JOBS, startSchedulerJobsLoop, stopSchedulerJobsLoop } from '../scheduler-jobs.js';
 
 const deferred = () => {
   let resolve;
@@ -44,6 +44,17 @@ describe('脚本收尾独立周期', () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect(job('script-reaper').handler).toHaveBeenCalled();
     expect(job('node-onboarding').handler).toHaveBeenCalled();
+  });
+
+  it('OpenClaw手机真实完成不被串行慢job拖住，且只在独立循环运行', async () => {
+    hang(job('machine-vitals'));
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(60_000);
+    job('openclaw-agent-reaper').handler.mockClear();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(job('openclaw-agent-reaper').handler).toHaveBeenCalled();
+    expect(COMPLETION_JOBS).toContain(job('openclaw-agent-reaper'));
+    expect(SERIAL_JOBS).not.toContain(job('openclaw-agent-reaper'));
   });
 
   it('收尾任务只进入独立周期，不能同时进入serial产生双写', () => {
