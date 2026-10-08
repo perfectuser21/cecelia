@@ -8,10 +8,10 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const contract = JSON.parse(fs.readFileSync(path.join(ROOT, 'contract.json'), 'utf8'));
 
 describe('coding_spec 契约通过通用执行器真实校验', () => {
-  it('parseActivityContract 接受契约且按 order 排出七个活动', () => {
+  it('parseActivityContract 接受契约且按 order 排出八个活动', () => {
     const plan = parseActivityContract(contract);
     expect(plan.workflow).toBe('coding_spec');
-    expect(plan.activities.map(a => a.key)).toEqual(['intent', 'spec', 'build', 'verify', 'chain_check', 'publish', 'report']);
+    expect(plan.activities.map(a => a.key)).toEqual(['intent', 'spec', 'spec_review', 'build', 'verify', 'chain_check', 'publish', 'report']);
   });
 });
 
@@ -22,11 +22,12 @@ const PHASES = ['setup', 'source', 'per_item', 'batch_end', 'finalize'];
 const EXPECTED = {
   intent: { order: 1, phase: 'setup', entry: 'activities/intent.mjs', max_duration_s: 60, max_attempts: 1 },
   spec: { order: 2, phase: 'source', entry: 'activities/spec.mjs', max_duration_s: 900, max_attempts: 2 },
-  build: { order: 3, phase: 'source', entry: 'activities/build.mjs', max_duration_s: 2400, max_attempts: 1 },
-  verify: { order: 4, phase: 'batch_end', entry: 'activities/verify.mjs', max_duration_s: 1200, max_attempts: 1 },
-  chain_check: { order: 5, phase: 'batch_end', entry: 'activities/chain-check.mjs', max_duration_s: 30, max_attempts: 1 },
-  publish: { order: 6, phase: 'batch_end', entry: 'activities/publish.mjs', max_duration_s: 900, max_attempts: 1 },
-  report: { order: 7, phase: 'finalize', entry: 'activities/report.mjs', max_duration_s: 30, max_attempts: 2 },
+  spec_review: { order: 3, phase: 'source', entry: 'activities/spec-review.mjs', max_duration_s: 1800, max_attempts: 1 },
+  build: { order: 4, phase: 'source', entry: 'activities/build.mjs', max_duration_s: 2400, max_attempts: 1 },
+  verify: { order: 5, phase: 'batch_end', entry: 'activities/verify.mjs', max_duration_s: 1200, max_attempts: 1 },
+  chain_check: { order: 6, phase: 'batch_end', entry: 'activities/chain-check.mjs', max_duration_s: 30, max_attempts: 1 },
+  publish: { order: 7, phase: 'batch_end', entry: 'activities/publish.mjs', max_duration_s: 900, max_attempts: 1 },
+  report: { order: 8, phase: 'finalize', entry: 'activities/report.mjs', max_duration_s: 30, max_attempts: 2 },
 };
 
 // 各活动实际会报出的 reason_code（grep 活动源码得到），按类别归档
@@ -40,6 +41,14 @@ const REPORTED = {
     retryable: ['claude_failed', 'claude_timeout', 'spec_invalid'],
     needs_human: ['claude_auth'],
     fatal: ['sprint_dir_invalid', 'task_id_missing', 'intent_ids_missing', 'intent_ids_invalid', 'spec_missing', 'spec_out_of_scope_write', 'chain_tampered'],
+  },
+  spec_review: {
+    retryable: ['claude_failed', 'claude_timeout', 'review_invalid', 'spec_invalid'],
+    needs_human: ['claude_auth'],
+    fatal: [
+      'task_id_missing', 'sprint_dir_invalid', 'intent_ids_missing', 'intent_ids_invalid', 'chain_tampered',
+      'spec_missing', 'spec_review_out_of_scope_write', 'spec_review_unresolved',
+    ],
   },
   build: {
     retryable: ['claude_failed', 'claude_timeout', 'remote_check_failed', 'git_check_failed'],
@@ -80,8 +89,8 @@ describe('coding_spec 契约', () => {
   it('workflow 名与活动顺序', () => {
     expect(contract.workflow).toBe('coding_spec');
     const sorted = [...contract.activities].sort((a, b) => a.order - b.order);
-    expect(sorted.map((a) => a.key)).toEqual(['intent', 'spec', 'build', 'verify', 'chain_check', 'publish', 'report']);
-    expect(sorted.map((a) => a.order)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(sorted.map((a) => a.key)).toEqual(['intent', 'spec', 'spec_review', 'build', 'verify', 'chain_check', 'publish', 'report']);
+    expect(sorted.map((a) => a.order)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   describe.each(Object.entries(EXPECTED))('活动 %s', (key, exp) => {

@@ -1,4 +1,4 @@
-// 端到端：main 上的通用执行器 activity-contract-run.js 跑完整七活动契约。
+// 端到端：main 上的通用执行器 activity-contract-run.js 跑完整八活动契约。
 // 假 claude / 假 gh / 本地假 Brain / 临时 bare origin，全程不碰真实服务。
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
@@ -19,8 +19,8 @@ const contract = JSON.parse(fs.readFileSync(path.join(WORKFLOW_DIR, 'contract.js
 
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
 const BRANCH = 'cp-1007220300-coding-workflow-e2e';
-const ACTIVITY_KEYS = ['intent', 'spec', 'build', 'verify', 'chain_check', 'publish', 'report'];
-const CHAIN_FILES = ['01-intent.md', '02-spec.md', '03-build.md', '04-evidence.md'];
+const ACTIVITY_KEYS = ['intent', 'spec', 'spec_review', 'build', 'verify', 'chain_check', 'publish', 'report'];
+const CHAIN_FILES = ['01-intent.md', '02-spec.md', '02-review.md', '03-build.md', '04-evidence.md'];
 
 /** 以子进程运行 CLI：stdin 写 JSON，返回 { exitCode, stdout, stderr, result }。 */
 function runCli(envelope, env) {
@@ -49,7 +49,7 @@ function runCli(envelope, env) {
   });
 }
 
-describe('coding_spec 七活动契约端到端（通用执行器 + 假外部依赖）', () => {
+describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依赖）', () => {
   let root;
   let worktree;
   let origin;
@@ -120,6 +120,7 @@ describe('coding_spec 七活动契约端到端（通用执行器 + 假外部依�
     ...childEnv(process.env, { stripClaude: true }),
     CODING_WF_CLAUDE_BIN: FAKE_CLAUDE,
     FAKE_CLAUDE_MODE: 'ok',
+    FAKE_CLAUDE_MODE_REVIEW: 'review-approve',
     FAKE_CLAUDE_MODE_BUILD: 'build-ok',
     FAKE_CLAUDE_MODE_VERIFY: verifyMode,
     CODING_WF_GH_BIN: FAKE_GH,
@@ -137,7 +138,7 @@ describe('coding_spec 七活动契约端到端（通用执行器 + 假外部依�
     ? fs.readFileSync(ghLog, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
     : []);
 
-  it('完整七活动 completed：build 真实提交、verify 全 PASS，PR 正文含验收摘要，Brain 恰好收到一次 PATCH', async () => {
+  it('完整八活动 completed：build 真实提交、verify 全 PASS，PR 正文含验收摘要，Brain 恰好收到一次 PATCH', async () => {
     const r = await runCli({ contract, input: runInput() }, envFor('verify-pass'));
 
     expect(r.exitCode, r.stderr).toBe(0);
@@ -145,6 +146,7 @@ describe('coding_spec 七活动契约端到端（通用执行器 + 假外部依�
     expect(r.result.status).toBe('completed');
     expect(r.result.run_tag).toBe('e2e-rt-1');
     expect(r.result.activities.map((a) => a.key)).toEqual(ACTIVITY_KEYS);
+    expect(r.result.activities).toHaveLength(8);
     for (const a of r.result.activities) expect(a.status, a.key).toBe('completed');
 
     const publish = r.result.activities.find((a) => a.key === 'publish');
@@ -177,11 +179,12 @@ describe('coding_spec 七活动契约端到端（通用执行器 + 假外部依�
     const create = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'create');
     expect(create[create.indexOf('--title') + 1]).toBe('feat(workflow): e2e 任务');
     const prBody = create[create.indexOf('--body') + 1];
+    expect(prBody).toContain('- sprints/e2e/02-review.md');
     expect(prBody).toContain('- sprints/e2e/04-evidence.md');
     expect(prBody).toContain('- I-1：PASS');
     expect(prBody).toContain('- I-2：PASS');
 
-    // 真实副作用：代码提交与四文件 md 链都已推到 bare origin
+    // 真实副作用：代码提交与五文件 md 链都已推到 bare origin
     const pushed = git(origin, 'ls-tree', '-r', '--name-only', BRANCH).trim().split('\n');
     expect(pushed).toContain('src/feature.js');
     for (const f of CHAIN_FILES) expect(pushed).toContain(`sprints/e2e/${f}`);
@@ -192,10 +195,10 @@ describe('coding_spec 七活动契约端到端（通用执行器 + 假外部依�
     const r = await runCli({ contract, input: runInput() }, envFor('verify-fail'));
 
     expect(r.result, r.stderr).not.toBeNull();
-    // intent/spec/build 已有产出 -> partial（执行器语义），CLI 退出码 2
+    // intent/spec/spec_review/build 已有产出 -> partial（执行器语义），CLI 退出码 2
     expect(r.result.status).toBe('partial');
     expect(r.exitCode).toBe(2);
-    expect(r.result.activities.map((a) => a.key)).toEqual(['intent', 'spec', 'build', 'verify', 'report']);
+    expect(r.result.activities.map((a) => a.key)).toEqual(['intent', 'spec', 'spec_review', 'build', 'verify', 'report']);
 
     const verify = r.result.activities.find((a) => a.key === 'verify');
     expect(verify.status).toBe('failed');
