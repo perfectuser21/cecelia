@@ -105,3 +105,15 @@ for(const [name, before, after] of [
  ['未调用shell函数','      - run: node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$PWD/source"','      - run: |\n          never_called() {\n            node tooling/scripts/ci/implementation-pr-gate.mjs\n          }'],
  ['shell提前退出','      - run: node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$PWD/source"','      - run: |\n          exit 0\n          node tooling/scripts/ci/implementation-pr-gate.mjs'],
 ])test(`拒认未执行callee：${name}`,async t=>{const f=fixture(t),read=f.options.readSource;f.options.readSource=async q=>{const b=await read(q);return q.repo===BR&&q.path==='.github/workflows/implementation-impact.yml'?Buffer.from(b.toString().replace(before,after)):b;};const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');});
+
+function fixedNewBrain(f,change){
+ change(f.bf);const next=tree(f.brainRoot,f.bf);
+ for(const p of Object.keys(f.wf))if(p.startsWith('.github/workflows/'))f.wf[p]=f.wf[p].replaceAll(f.brainRevision,next);
+ f.options.brain={repo:BR,revision:next};f.options.workspace={repo:WR,revision:tree(f.workspaceRoot,f.wf)};
+}
+for(const [name,field,valid] of [
+ ['精确可选多scope协议',"      admission_scopes: {required: false, type: string, default: ''}\n",true],
+ ['required不可偷改',"      admission_scopes: {required: true, type: string, default: ''}\n",false],
+ ['未知默认scope拒绝',"      admission_scopes: {required: false, type: string, default: all}\n",false],
+ ['额外可选字段拒绝',"      admission_scopes: {required: false, type: string, default: ''}\n      whatever: {required: false, type: string}\n",false],
+])test(`固定新增callee接口：${name}`,async t=>{const f=fixture(t);fixedNewBrain(f,b=>{const p='.github/workflows/implementation-impact.yml';b[p]=b[p].replace('    inputs:\n','    inputs:\n'+field);});const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,valid?'verified':'unknown',JSON.stringify(r.gaps));assert.equal(r.admission.status,'unknown');});
