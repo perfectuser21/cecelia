@@ -31,6 +31,11 @@
       "owner_path": "packages/brain/src/lib/activity-contract-loader.js",
       "path": "packages/quality/smoke-allowlist.txt",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/migrate.js",
+      "path": "changes/cp-10082340-leadgen-split-sources.md",
+      "role": "release"
     }
   ]
 }
