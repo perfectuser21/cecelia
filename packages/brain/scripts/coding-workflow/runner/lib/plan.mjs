@@ -2,7 +2,15 @@
 const EXTRA_TIMEOUT_MS = 10 * 60 * 1000;
 const SUPPORTED_REPOS = new Set(['cecelia']);
 
-const pad = (n) => String(n).padStart(2, '0');
+// hourCycle h23：午夜是 00 而不是 24。
+const SHANGHAI_PARTS = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Shanghai',
+  hourCycle: 'h23',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+});
 
 const RUN_RESULT_KEYS = ['coding_workflow', 'runner', 'coding_workflow_runner'];
 
@@ -34,9 +42,10 @@ export function pickCandidates(tasks) {
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
 }
 
-/** 本地时间 MMDDHHmm。 */
+/** 上海时区 MMDDHHmm（与运行机器 TZ 无关）。 */
 export function stampOf(date) {
-  return `${pad(date.getMonth() + 1)}${pad(date.getDate())}${pad(date.getHours())}${pad(date.getMinutes())}`;
+  const p = Object.fromEntries(SHANGHAI_PARTS.formatToParts(date).map((x) => [x.type, x.value]));
+  return `${p.month}${p.day}${p.hour}${p.minute}`;
 }
 
 /** 一次运行的各种名字：分支满足本机全局 pre-commit 钩子 ^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$。 */

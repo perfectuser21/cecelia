@@ -1,10 +1,11 @@
 // runner 纯函数：候选筛选、命名、超时、回执解读、配置。
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { pickCandidates, isSwitched, taskNames, runTimeoutMs } from '../lib/plan.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pickCandidates, isSwitched, stampOf, taskNames, runTimeoutMs } from '../lib/plan.mjs';
 import { summarizeReceipt, readReceipt } from '../lib/receipt.mjs';
 import { loadConfig } from '../lib/config.mjs';
 
@@ -46,13 +47,30 @@ describe('pickCandidates', () => {
 
 describe('taskNames', () => {
   it('分支 cp-<MMDDHHmm>-cw-<task前8>，满足全局 pre-commit 钩子正则；sprint 与 run_tag 同戳', () => {
-    const n = taskNames('ABCDEF12-3456-4000-8000-000000000000', new Date(2026, 9, 8, 7, 5));
+    const n = taskNames('ABCDEF12-3456-4000-8000-000000000000', new Date('2026-10-07T23:05:00Z'));
     expect(n.short).toBe('abcdef12');
     expect(n.stamp).toBe('10080705');
     expect(n.branch).toBe('cp-10080705-cw-abcdef12');
     expect(n.branch).toMatch(BRANCH_RE);
     expect(n.sprintDir).toBe('sprints/10080705-cw-abcdef12');
     expect(n.runTag).toBe('cw-abcdef12-10080705');
+  });
+});
+
+describe('stampOf', () => {
+  it('固定按上海时区取 MMDDHHmm', () => {
+    expect(stampOf(new Date('2026-10-08T10:35:00Z'))).toBe('10081835');
+  });
+
+  it('午夜与跨年边界：2026-12-31T16:00:00Z → 01010000（午夜不是 24）', () => {
+    expect(stampOf(new Date('2026-12-31T16:00:00Z'))).toBe('01010000');
+  });
+
+  it.each(['America/Los_Angeles', 'UTC', 'Asia/Shanghai'])('与运行机器 TZ 无关：TZ=%s 子进程结果一致', (TZ) => {
+    const planUrl = pathToFileURL(path.join(HERE, '../lib/plan.mjs')).href;
+    const code = `import(${JSON.stringify(planUrl)}).then((m) => console.log(m.stampOf(new Date('2026-10-08T10:35:00Z'))))`;
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, TZ }, encoding: 'utf8' });
+    expect(out.trim()).toBe('10081835');
   });
 });
 
