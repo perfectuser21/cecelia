@@ -4,13 +4,15 @@
 //   单条 { title, description?, acceptance: [..], priority?, gp_anchor? }
 //   一批 { batch?, tasks: [{ key, title, acceptance, depends_on?: [前面任务的 key], ... }] }（大改拆成有序小任务）
 // 每条建成带开关的 data 任务（runner 自动认领跑七步链）；depends_on 的 key 换成前面已建任务的真实 id。
+// plan 顶层可写 project_id（已有 project 根）或 project: { name, description? }（先建再挂），整批都挂上；
+// 有 depends_on 时必须二选一（Brain 要求带依赖的任务挂 project 根），两者不能同时给。
 // 先整体校验再逐条创建；中途失败退出 1 并列出已建的任务。输出 [{key,id,title}]。
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const nonEmpty = (s) => typeof s === 'string' && s.trim() !== '';
 
-/** 计划 → { tasks, batch, errors }（errors 非空即不可建）。 */
+/** 计划 → { tasks, batch, projectId, project, errors }（errors 非空即不可建）。 */
 export function validatePlan(plan) {
   const tasks = Array.isArray(plan?.tasks) ? plan.tasks : [plan];
   const errors = [];
@@ -27,7 +29,13 @@ export function validatePlan(plan) {
       keys.add(t.key);
     }
   });
-  return { tasks, batch: nonEmpty(plan?.batch) ? plan.batch : null, errors };
+  const projectId = nonEmpty(plan?.project_id) ? plan.project_id : null;
+  const given = plan?.project !== undefined && plan?.project !== null;
+  if (given && !nonEmpty(plan.project?.name)) errors.push('project_name_missing');
+  if (given && plan?.project_id !== undefined) errors.push('project_conflict');
+  if (!projectId && !given && tasks.some((t) => t?.depends_on?.length)) errors.push('project_required');
+  const project = given ? { name: plan.project.name, description: plan.project.description ?? '' } : null;
+  return { tasks, batch: nonEmpty(plan?.batch) ? plan.batch : null, projectId, project, errors };
 }
 
 function body(t, batch, ids) {
