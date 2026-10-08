@@ -33,15 +33,36 @@ it('真实PG：两业务映射仅一个有同SHA定义；另一真实retired own
  const valid=await exportImplementationSnapshot(db,q);
  expect(valid.definitions.workflows).toHaveLength(1);
  expect(valid.status,JSON.stringify(valid.gaps)).toBe('verified');
- const wrong=await fixture.map(revision,fixture.capabilities,'phones','phone-source','evil/repo');
- expect((await exportImplementationSnapshot(db,q)).status).toBe('unknown');
- const actual=await fixture.map(revision,fixture.capabilities);
- await db.query(`UPDATE map_manifest_versions SET manifest=jsonb_set(manifest,'{capabilities,1,brain_binding,entity_type}','"activity"') WHERE id=$1`,[actual.id]);
- expect((await exportImplementationSnapshot(db,q)).gaps).toContainEqual(expect.objectContaining({code:'capability_mapping_missing'}));
- await fixture.map(revision,fixture.capabilities);
  await db.query('UPDATE capabilities SET parent_journey_id=NULL WHERE id=$1',[fixture.capabilities[1]]);
  const noParent=await exportImplementationSnapshot(db,q);expect(noParent.status).toBe('unknown');
  expect(noParent.gaps).toContainEqual(expect.objectContaining({code:'source_owner_registry_invalid'}));
+});
+it('真实PG：owner树虽完整但父价值流不匹配地图仍UNKNOWN',async()=>{
+ fixture=await implementationImpactDatabase();const {db}=fixture,revision='b'.repeat(40);
+ await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[fixture.ids.keyword]);
+ const other='f0000000-0000-0000-0000-000000000001';
+ await db.query('INSERT INTO value_streams(id,name,parent_journey_id) VALUES($1,$2,NULL)',[other,'另一真实价值流']);
+ await db.query('UPDATE capabilities SET parent_journey_id=$2 WHERE id=$1',[fixture.capabilities[1],other]);
+ await fixture.advance();
+ const invalid=await exportImplementationSnapshot(db,{scope:'phones',repo:IMPACT_REPO,revision});
+ expect(invalid.status,JSON.stringify(invalid.gaps)).toBe('unknown');
+ expect(invalid.gaps).toContainEqual(expect.objectContaining({code:'capability_mapping_missing',node_key:'F1'}));
+});
+it.each(['source_repo','entity_type','source_revision'])('真实PG：额外owner映射的%s错误仍UNKNOWN，不改写不可变地图',async field=>{
+ fixture=await implementationImpactDatabase();const {db}=fixture,revision='b'.repeat(40);
+ await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[fixture.ids.keyword]);
+ // 在真实INSERT前构造负面输入，所有不可变历史与约束均保持生效。
+ const query=db.query.bind(db);db.query=(sql,values)=>{
+  if(typeof sql==='string'&&sql.startsWith('INSERT INTO map_manifest_versions')){
+   values=[...values];values[4]=structuredClone(values[4]);
+   values[4].capabilities[1].brain_binding[field]={source_repo:'evil/repo',entity_type:'activity',source_revision:'c'.repeat(40)}[field];
+  }
+  return query(sql,values);
+ };
+ try{await fixture.advance();}finally{db.query=query;}
+ const invalid=await exportImplementationSnapshot(db,{scope:'phones',repo:IMPACT_REPO,revision});
+ expect(invalid.status,JSON.stringify(invalid.gaps)).toBe('unknown');
+ expect(invalid.gaps).toContainEqual(expect.objectContaining({code:field==='entity_type'?'capability_mapping_missing':'manifest_source_mismatch'}));
 });
 it('真实固定Git字节+PG：仅验证已有定义消费者；完整retired owner闭包可验证并导入scratch，篡改摘要拒绝',async()=>{
  fixture=await implementationImpactDatabase();const {db,contracts}=fixture;
