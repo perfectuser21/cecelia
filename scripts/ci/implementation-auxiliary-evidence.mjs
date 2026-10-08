@@ -139,14 +139,14 @@ function workspaceConfigProof(reader,ci,input,row){
   if(!read(n))return false;
   const ret=parents.get(n),block=parents.get(ret),fn=parents.get(block);
   if(ret?.type!=='ReturnStatement'||ret.argument!==n||block?.type!=='BlockStatement'||fn?.type!=='FunctionDeclaration'||fn.params.length||block.body.at(-1)!==ret||block.body.slice(0,-1).some(s=>!precondition(s)))return false;
-  return nodes.some(c=>call(c)&&c.arguments.length===0&&c.callee.type==='Identifier'&&refs.get(c.callee)?.resolved?.defs?.length===1&&refs.get(c.callee).resolved.defs[0].node===fn&&active(c));
+  return nodes.some(c=>call(c)&&c.arguments.length===0&&c.callee.type==='Identifier'&&refs.get(c.callee)?.resolved?.defs?.length===1&&refs.get(c.callee).resolved.defs[0].node===fn&&!refs.get(c.callee).resolved.references.some(r=>r.isWrite())&&active(c));
  });
  if(!actual)fail('AUXILIARY_CONFIG_READ_UNPROVEN');
  let workflow,parsedInput;try{workflow=yaml.load(ci.toString(),{schema:yaml.JSON_SCHEMA});parsedInput=yaml.load(input.toString(),{schema:yaml.JSON_SCHEMA});}catch{fail('AUXILIARY_CONFIG_CI_INVALID');}
  const spec=workspaceConfig(row),required=(w,name,readerPath,allowMainGuard=false)=>{
   const j=w?.jobs?.['caller-contract'],target=w?.jobs?.[name],needs=Array.isArray(target?.needs)?target.needs:[target?.needs];
   const s=j?.steps?.find(s=>s.run?.trim()===`node --test ${readerPath}`);
-  return j&&j.if==null&&!j['continue-on-error']&&s&&s.if==null&&!s['continue-on-error']&&target&&!target['continue-on-error']&&needs.includes('caller-contract')&&(target.if==null||allowMainGuard&&target.if==="github.ref == 'refs/heads/main'");
+  return j&&j.if==null&&!j['continue-on-error']&&j.strategy==null&&w.defaults?.run?.['working-directory']==null&&j.defaults?.run?.['working-directory']==null&&s&&s.if==null&&!s['continue-on-error']&&s['working-directory']==null&&target&&!target['continue-on-error']&&needs.includes('caller-contract')&&(target.if==null||allowMainGuard&&target.if==="github.ref == 'refs/heads/main'");
  };
  const on=workflow?.on;
  if(!on||!Object.hasOwn(on,'pull_request')||on.pull_request?.paths!=null||on.pull_request?.['paths-ignore']!=null||!required(workflow,'impact',row.consumer_path)||!required(parsedInput,spec.job,row.consumer_path,spec.job==='verify'))fail('AUXILIARY_CONFIG_CI_UNPROVEN');
