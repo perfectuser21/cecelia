@@ -8,6 +8,10 @@
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/notion-qiumi-receipt-details.test.js src/__tests__/notion-gtd-sync-push-and-stops.test.js src/__tests__/notion-gtd-sync.test.js src/lib/__tests__/qiumi-status-map.test.js --maxWorkers=1 --minWorkers=1"
 
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] pilotgateemptycell 试点发布门禁：assertion_ref 为空（null/空串）的八格骨架格视为未声明断言，与未匹配同等跳过、不记 pilot_assertion_invalid，也不能冒充覆盖（只有空格子仍报 pilot_regression_missing）；非空但解析失败（含纯空白、manual:node --test）仍记 invalid。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/pilot-release-empty-assertion.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] regressionconsumercap 迁移 534：迁移 520 格子跟随 Activity 时误改的共享 Activity 回归格（scenario，cell_key=regression:<能力>:…）按 cell_key 改回消费者能力，仅限该能力确有生效流程在用此 Activity 的行；先备份 migration_534_backup 再改，不碰骨架格、不删行，附回滚。生产只读核对命中 43 行（a1000000-…02），scratch 库事务干跑通过。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-534-regression-consumer-capability.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] leadgenrestructure 迁移 533 获客重组（决策 eb9f8f77）：「关键词获客」改名「智能获客」保留 id，对标/视频链接/直播获客标 deprecated 并写明已并入；新建 抖音·视频发现（预检→取源→过滤去重→取链接写视频表→收尾）/视频处理（预检→判定视频→采集评论→收尾）/评论评分（评分→标记人）/线索触达（预检→发私信→回填→收尾），预检与收尾三流程共用；判定/采集/触达改名判定视频/采集评论/发私信并写新合同四列，新建 6 个 Activity；commander×3、harvest-cron 保底×8 改挂视频发现，outreach-tick 改挂线索触达，在用看护项×20 摘除；旧流程、定义版本、release、契约字段、Step 一律不动（运行绑定只认冻结 release，已核实）；先备份后改，回滚按备份还原并删新流程/新 Activity。生产库事务内干跑：能力 4、Activity 5 改，新建 6 Activity/4 流程/15 引用，闹钟 11+1 改挂、20 摘除，回滚后快照哈希与干跑前一致。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-533-leadgen-restructure.test.js --maxWorkers=1 --minWorkers=1"
 

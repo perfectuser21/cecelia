@@ -43,7 +43,8 @@ export function buildPilotReleasePlan({scope,repo,revision,definitions,assertion
  const pair=u=>JSON.stringify([u.capability_id,u.activity_id,u.step_id||null]),covered=new Set();
  for(const row of assertions||[]){
   const matches=expected_usages.filter(u=>u.capability_id===row.journey_id&&u.activity_id===row.step_id&&u.step_id===(row.step_id_ref||null));
-  if(!matches.length)continue;
+  // 空 assertion_ref＝格子未声明断言（v3.0 八格骨架），与未匹配同等跳过；覆盖仍只认真实断言
+  if(!matches.length||row.assertion_ref==null||row.assertion_ref==='')continue;
   try{canonicalAssertionCommandText(row.assertion_ref);}catch{gap('pilot_assertion_invalid',{journey_step_link_id:row.id});continue;}
   const group=groups.get(row.assertion_ref)||{assertion_ref:row.assertion_ref,source_repo:repo,source_repo_basis:'activity_definition',source_bindings:[]};
   group.source_bindings.push({assertion_source:'current_registration',source_repo:repo,source_repo_basis:'activity_definition',capability_id:row.journey_id,activity_id:row.step_id,step_id:row.step_id_ref||null,journey_step_link_id:row.id,assertion_revision:row.assertion_revision,assertion_digest:assertionDigest(row.assertion_ref)});
