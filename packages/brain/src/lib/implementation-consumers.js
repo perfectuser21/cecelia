@@ -1,7 +1,8 @@
 /** 精确实现身份→版本引用→业务消费者；地图只提供显式身份，不反写业务真身。 */
 import { loadHistoricalImplementationContext } from './implementation-context.js';
 import { computeFreshness } from './registry-freshness.js';
-import { canonicalAssertionCommandText } from './gp-assertion-command.js';
+import { canonicalAssertionCommandText,classifyAssertionRef } from './gp-assertion-command.js';
+import {hasFrozenConsumerSource} from './consumer-source-set.js';
 import { assertionDigest } from './journey-assertion-receipt.js';
 import { readMapBrainBindings } from './map-brain-bindings.js';
 
@@ -65,23 +66,34 @@ async function selectedVersions(db,q,capabilities) {
 
 async function readAssertions(db,usages,gaps) {
   const capabilities=[...new Set(usages.map(u=>u.capability_id))],activities=[...new Set(usages.map(u=>u.activity_id))];
-  const rows=(await db.query(`SELECT id,journey_id,step_id,step_id_ref,assertion_ref,assertion_revision
-    FROM activity_cells WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id`,[capabilities,activities])).rows;
+  const rows=(await db.query(`SELECT id,journey_id,step_id,step_id_ref,assertion_ref,assertion_revision,to_jsonb(c)->>'assertion_source_repo' assertion_source_repo
+    FROM activity_cells c WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id`,[capabilities,activities])).rows;
   const groups=new Map(),covered=new Set();
   const pair=(cap,activity,step)=>JSON.stringify([cap,activity,step||null]);
   for(const row of rows){
-    const matched=usages.filter(u=>u.capability_id===row.journey_id&&u.activity_id===row.step_id
+    let matched=usages.filter(u=>u.capability_id===row.journey_id&&u.activity_id===row.step_id
       &&u.assertion_step_ids.includes(row.step_id_ref||null));
     if(!matched.length)continue;
     let command;try{command=canonicalAssertionCommandText(row.assertion_ref);}catch{continue;}
+    const path=classifyAssertionRef(row.assertion_ref).path;
+    if(row.assertion_source_repo){
+      matched=matched.filter(u=>u.implementation_repo===row.assertion_source_repo);
+      if(!matched.length)continue;
+      if(matched.some(u=>!hasFrozenConsumerSource(u.consumer_source_payload,row.assertion_source_repo,path))){gaps.push({code:'assertion_source_unknown',journey_step_link_id:row.id});continue;}
+    }else{
+      // 合法跨repo source-set 已证明实现来源时，历史 null 仍归原定义repo，不能覆盖另一repo。
+      matched=matched.filter(u=>u.source_repo===u.implementation_repo||!hasFrozenConsumerSource(u.consumer_source_payload,u.implementation_repo,u.implementation_path));
+      if(!matched.length)continue;
+    }
     const sourceRepos=[...new Set(matched.map(u=>u.source_repo).filter(Boolean))];
-    const sourceRepo=sourceRepos.length===1?sourceRepos[0]:null;
+    const sourceRepo=row.assertion_source_repo||(sourceRepos.length===1?sourceRepos[0]:null);
+    const basis=row.assertion_source_repo?'consumer_source_set':'activity_definition';
     if(!sourceRepo)gaps.push({code:'assertion_source_unknown',journey_step_link_id:row.id});
     if(matched.some(u=>u.implementation_repo!==sourceRepo))gaps.push({code:'assertion_source_repo_mismatch',journey_step_link_id:row.id,source_repo:sourceRepo});
     const key=JSON.stringify([sourceRepo,row.assertion_ref]);
-    const group=groups.get(key)||{assertion_ref:row.assertion_ref,source_repo:sourceRepo,source_repo_basis:'activity_definition',command,capability_ids:[],source_bindings:[],validation_status:'not_evaluated'};
+    const group=groups.get(key)||{assertion_ref:row.assertion_ref,source_repo:sourceRepo,source_repo_basis:basis,command,capability_ids:[],source_bindings:[],validation_status:'not_evaluated'};
     if(!group.capability_ids.includes(row.journey_id))group.capability_ids.push(row.journey_id);
-    group.source_bindings.push({assertion_source:'current_registration',source_repo:sourceRepo,source_repo_basis:'activity_definition',capability_id:row.journey_id,journey_step_link_id:row.id,assertion_revision:row.assertion_revision,assertion_digest:assertionDigest(row.assertion_ref),activity_id:row.step_id,step_id:row.step_id_ref});
+    group.source_bindings.push({assertion_source:'current_registration',source_repo:sourceRepo,source_repo_basis:basis,capability_id:row.journey_id,journey_step_link_id:row.id,assertion_revision:row.assertion_revision,assertion_digest:assertionDigest(row.assertion_ref),activity_id:row.step_id,step_id:row.step_id_ref});
     groups.set(key,group);covered.add(pair(row.journey_id,row.step_id,row.step_id_ref));
   }
   const missing=new Set();
@@ -112,12 +124,12 @@ export async function readImplementationConsumers(db,input,{pinnedContext=null}=
     });
     activities.set(row.activity_version_id,{activity_id:row.activity_id,activity_definition_version_id:row.activity_version_id,definition_key:payload.definition_key,source_repo:row.source_repo,source_revision:row.source_commit,bindings,verification:payload.verification});
     workflows.set(row.workflow_version_id,{workflow_id:row.workflow_id,workflow_definition_version_id:row.workflow_version_id,key:row.workflow_payload.key,capability_id:capabilityId,map_node_key:context.mapped.get(capabilityId)});
-    usages.push({...row.usage,source_repo:row.source_repo,implementation_repo:q.repo,assertion_step_ids:[...new Set(bindings.map(b=>b.scope==='step'?b.step_id||null:null))],activity_definition_version_id:row.activity_version_id,workflow_id:row.workflow_id,workflow_definition_version_id:row.workflow_version_id,capability_id:capabilityId});
+    usages.push({...row.usage,source_repo:row.source_repo,implementation_repo:q.repo,implementation_path:q.path,consumer_source_payload:payload,assertion_step_ids:[...new Set(bindings.map(b=>b.scope==='step'?b.step_id||null:null))],activity_definition_version_id:row.activity_version_id,workflow_id:row.workflow_id,workflow_definition_version_id:row.workflow_version_id,capability_id:capabilityId});
   }
   if(!rows.length)gaps.push({code:'implementation_mapping_missing'});
   const requiredAssertions=await readAssertions(db,usages,gaps);
   return {scope_key:q.scope,source:{repo:q.repo,registry_repo:context.registryRepo,path:q.path,kind:q.kind,revision:q.revision,digest:q.digest||null},
     manifest_version_id:context.manifest_version_id,manifest_digest:context.manifest_digest,projection_run_id:context.projection_run_id,projection_digest:context.projection_digest,
     mapping_status:gaps.length?'unknown':'verified',verification_status:'unknown',scope_status:context.scope_status??'verified',organization_status:q.versionId?'historical_membership_unknown_organization':'current',
-    activities:[...activities.values()],workflows:[...workflows.values()],usages,required_assertions:requiredAssertions,gaps};
+    activities:[...activities.values()],workflows:[...workflows.values()],usages:usages.map(({consumer_source_payload,implementation_path,...usage})=>usage),required_assertions:requiredAssertions,gaps};
 }
