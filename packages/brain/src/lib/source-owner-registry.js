@@ -28,7 +28,10 @@ export function validateSourceOwnerRegistry(registry,repo){
  }
  if(new Set(workflows.map(w=>w.id)).size!==workflows.length)throw failure('重复workflow身份');
  for(const w of workflows){
-  if(!uuid(w.id)||!uuid(w.capability_id)||w.source_repo!==repo||!w.key||typeof w.source_capability!=='string'||!w.source_capability||typeof w.source_path!=='string'||!w.source_path||w.source_path.startsWith('/')||w.source_path.split('/').some(p=>p==='..')||!w.source_workflow)throw failure('workflow来源身份无效');
+  // 既有Brain原生provider按doc.key冻结；workspace契约仍必须有source_workflow。
+  const nativeKeySource=w.source_workflow===null&&repo==='perfectuser21/cecelia'&&w.key==='company_kr_analysis'&&
+    w.source_capability==='company_kr_analysis'&&w.source_path==='packages/brain/config/company-kr-workflow.json';
+  if(!uuid(w.id)||!uuid(w.capability_id)||w.source_repo!==repo||!w.key||typeof w.source_capability!=='string'||!w.source_capability||typeof w.source_path!=='string'||!w.source_path||w.source_path.startsWith('/')||w.source_path.split('/').some(p=>p==='..')||!(typeof w.source_workflow==='string'&&w.source_workflow||nativeKeySource))throw failure('workflow来源身份无效');
   if(!journeys.some(j=>j.id===w.capability_id&&j.parent_journey_id))throw failure('业务owner树缺失');
  }
  return registry;
