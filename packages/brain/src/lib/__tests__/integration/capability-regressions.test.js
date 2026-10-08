@@ -92,6 +92,7 @@ async function seedFrozenConsumerSource(repo='perfectuser21/zenithjoy-workspace'
  const source_set=[{repo:'perfectuser21/cecelia',revision:'b'.repeat(40)},{repo,revision:'b'.repeat(40)}],binding={kind:'code',repo,revision:'b'.repeat(40),path:'scripts/ci/__tests__/caller.test.mjs',digest,content_sha256:'f'.repeat(64),scope:'activity',validation_scope:'consumer_source',status:'verified'};
  const payload={...a.payload,definition_scope:'consumer_evidence',source_scope:'cecelia-factory',source_set,implementation_bindings:[binding],source_set_admission:{status:bad==='admission_unknown'?'unknown':'verified',source_basis:'trusted_main_history'}};
  payload.source_set_sha256=stepSha256({source_set:payload.source_set,implementation_bindings:payload.implementation_bindings});
+ if(bad==='legacy_source_set')for(const key of ['source_set','source_set_sha256','source_set_admission'])delete payload[key];
  const row=(await f.db.query('INSERT INTO activity_definition_versions(activity_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',[a.activity_id,payload,bad==='activity_hash'?'e'.repeat(64):stepSha256({source,payload}),source.repo,source.path,source.commit,stepSha256(payload.contract)])).rows[0];
  await f.db.query('UPDATE workflows SET source_repo=$2 WHERE id=$1',[w.workflow_id,'perfectuser21/cecelia']);
  const wp={...w.payload,definition_scope:'consumer_evidence',source_scope:'cecelia-factory',activities:w.payload.activities.filter(r=>r.activity_id===a.activity_id).map(r=>({...r,activity_version_id:row.id}))};
@@ -106,6 +107,13 @@ it('固定consumer来源按repo分开回归且保旧null/key，幂等和CAS互�
  expect(explicit.registration.id).not.toBe(legacy.registration.id);expect(replay.registration.id).toBe(explicit.registration.id);
  expect(explicit.registration).toMatchObject({assertion_source_repo:'perfectuser21/zenithjoy-workspace',cell_status:'gray',status:'planned',cell_key:`regression:${f.capabilities[0]}:activity:repo:perfectuser21/zenithjoy-workspace`});
  expect((await f.db.query('SELECT * FROM activity_cells WHERE id=$1',[legacy.registration.id])).rows[0]).toMatchObject({assertion_source_repo:null,cell_key:`regression:${f.capabilities[0]}:activity`});
+});
+it('既有Brain consumer_evidence无新source_set时，旧null断言仍按Brain定义来源读取',async()=>{
+ const repo='perfectuser21/cecelia',a=await seedFrozenConsumerSource(repo,undefined,'legacy_source_set'),cap=f.capabilities[0];
+ await module.registerCapabilityRegression(f.db,{capability_id:cap,activity_id:a.activity_id,assertion_ref:'manual:node --test scripts/ci/__tests__/caller.test.mjs'});
+ const version=(await f.db.query("SELECT id FROM workflow_definition_versions WHERE payload->>'definition_scope'='consumer_evidence' LIMIT 1")).rows[0].id;
+ const report=await readImplementationConsumers(f.db,{scope:'cecelia-factory',kind:'code',repo,path:'scripts/ci/__tests__/caller.test.mjs',revision:'b'.repeat(40),workflow_version_id:version},{pinnedContext:{mapped:new Map([[cap,'F3']]),registryRepo:repo}});
+ expect(report.gaps).toEqual([]);expect(report.required_assertions.some(r=>r.source_repo===repo&&r.source_repo_basis==='activity_definition')).toBe(true);
 });
 it.each(['activity_hash','workflow_hash','definition_origin','admission_unknown'])('不可信冻结历史 %s 既不能登记也不能通过读取取代来源证明',async(kind)=>{
  const a=await seedFrozenConsumerSource(undefined,undefined,kind),cap=f.capabilities[0],repo='perfectuser21/zenithjoy-workspace';
