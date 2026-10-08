@@ -213,8 +213,8 @@ const PROJECTION_JOB_NAME_SET = new Set([
 ]);
 
 export const PROJECTION_JOBS = JOBS.filter(job => PROJECTION_JOB_NAME_SET.has(job.name));
-// 手机派发只认自身窄授权，与收尾共用不受串行慢job阻塞的独立循环。
-const COMPLETION_JOB_NAMES = new Set(['script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding', 'phone-rpa-dispatch', 'openclaw-agent-reaper']);
+// GTD幂等初始化、窄授权手机派发和收尾共用独立循环，避免重启入口排在慢job后。
+const COMPLETION_JOB_NAMES = new Set(['script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding', 'phone-rpa-dispatch', 'openclaw-agent-reaper', 'notion-gtd-sync']);
 export const COMPLETION_JOBS = JOBS.filter(job => COMPLETION_JOB_NAMES.has(job.name));
 export const SERIAL_JOBS = JOBS.filter(job => !PROJECTION_JOB_NAME_SET.has(job.name) && !COMPLETION_JOB_NAMES.has(job.name));
 
