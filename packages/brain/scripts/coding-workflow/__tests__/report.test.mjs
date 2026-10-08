@@ -142,6 +142,44 @@ describe('report 活动（子进程 + 假 Brain）', () => {
     expect(requests).toHaveLength(0);
   });
 
+  const verification = {
+    status: 'failed',
+    reason_code: 'verification_failed',
+    failed: [{ id: 'E-2', covers: ['I-2'], command: 'npm test', output_tail: 'HTTP 500' }],
+  };
+
+  it('有 pr_url 且有 verification -> verification 一并写入 result.coding_workflow', async () => {
+    const r = await runActivityProcess(ENTRY, input({ verification }));
+    expect(r.exitCode).toBe(0);
+    const cw = JSON.parse(requests[0].raw).result.coding_workflow;
+    expect(cw.pr_url).toBe('https://github.com/example/repo/pull/2');
+    expect(cw.verification).toEqual(verification);
+  });
+
+  it('没有 pr_url 但有 verification -> 仍 PATCH 失败结论，回写成功即 completed', async () => {
+    const r = await runActivityProcess(ENTRY, input({ pr_url: undefined, branch: undefined, chain_files: undefined, verification }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.result.status).toBe('completed');
+    expect(r.result.outputs).toEqual({ reported: true });
+    expect(requests).toHaveLength(1);
+    const body = JSON.parse(requests[0].raw);
+    expect(Object.keys(body)).toEqual(['result']);
+    expect(body.result.coding_workflow).toEqual({ status: 'failed', run_tag: 'rt-1', sprint_dir: 'sprints/s1', verification });
+  });
+
+  it('没有 pr_url、verification 不是对象 -> 维持 fatal pr_url_missing，请求数 0', async () => {
+    const r = await runActivityProcess(ENTRY, input({ pr_url: undefined, verification: 'failed' }));
+    expect(r.result.reason_code).toBe('pr_url_missing');
+    expect(requests).toHaveLength(0);
+  });
+
+  it('没有 pr_url 的失败回写遇 Brain 500 -> retryable brain_unavailable', async () => {
+    reply = { status: 500, body: {} };
+    const r = await runActivityProcess(ENTRY, input({ pr_url: undefined, verification }));
+    expect(r.result.failure_class).toBe('retryable');
+    expect(r.result.reason_code).toBe('brain_unavailable');
+  });
+
   it('缺 task_id -> fatal task_id_missing，请求数 0', async () => {
     const r = await runActivityProcess(ENTRY, input({ task_id: '' }));
     expect(r.exitCode).toBe(2);

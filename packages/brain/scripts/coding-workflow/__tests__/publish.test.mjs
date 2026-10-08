@@ -85,6 +85,54 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(body).toContain('- sprints/s1/02-spec.md');
   });
 
+  it('四文件链 + verified_ids：含代码提交时标题为 feat(workflow): <01-intent 标题>，PR 正文追加每条 I-n 的验收摘要', async () => {
+    fs.writeFileSync(path.join(worktree, 'sprints/s1/01-intent.md'), '---\ntask_id: x\nstep: intent\nupstream: []\n---\n# 登录功能  \n\n### I-1\n能登录\n');
+    fs.writeFileSync(path.join(worktree, 'sprints/s1/03-build.md'), '# build\n');
+    fs.writeFileSync(path.join(worktree, 'sprints/s1/04-evidence.md'), '# evidence\n');
+    const r = await run('new', {
+      chain_files: ['01-intent.md', '02-spec.md', '03-build.md', '04-evidence.md'],
+      evidence_file: '04-evidence.md',
+      verified_ids: ['I-1', 'I-2'],
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const title = 'feat(workflow): 登录功能';
+    expect(git(origin, 'log', '-1', '--format=%s', 'cp-1007000000-test').trim()).toBe(title);
+    const create = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'create');
+    expect(create[create.indexOf('--title') + 1]).toBe(title);
+    const body = create[create.indexOf('--body') + 1];
+    expect(body).toContain('- sprints/s1/04-evidence.md');
+    expect(body).toContain('## 验收摘要（sprints/s1/04-evidence.md）');
+    expect(body).toContain('- I-1：PASS');
+    expect(body).toContain('- I-2：PASS');
+  });
+
+  it.each(['修复登录超时', 'fix crash on start', 'Bug: 退出按钮无效', 'FIX 空指针'])(
+    '含代码提交且 01-intent 标题以 bug/修复/fix 开头（%s）-> fix(workflow):',
+    async (heading) => {
+      fs.writeFileSync(path.join(worktree, 'sprints/s1/01-intent.md'), `# ${heading}\n\n### I-1\nx\n`);
+      fs.writeFileSync(path.join(worktree, 'sprints/s1/03-build.md'), '# build\n');
+      const r = await run('new', { chain_files: ['01-intent.md', '02-spec.md', '03-build.md'] });
+      expect(r.exitCode, r.stderr).toBe(0);
+      const create = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'create');
+      expect(create[create.indexOf('--title') + 1]).toBe(`fix(workflow): ${heading}`);
+    },
+  );
+
+  it('含代码提交但 01-intent 没有 # 标题 -> feat(workflow): coding workflow <task_id 前 8 位>', async () => {
+    fs.writeFileSync(path.join(worktree, 'sprints/s1/01-intent.md'), '### I-1\nx\n');
+    fs.writeFileSync(path.join(worktree, 'sprints/s1/03-build.md'), '# build\n');
+    const r = await run('new', { chain_files: ['01-intent.md', '02-spec.md', '03-build.md'] });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(git(origin, 'log', '-1', '--format=%s', 'cp-1007000000-test').trim()).toBe('feat(workflow): coding workflow 11111111');
+  });
+
+  it('上下文没有 verified_ids：PR 正文不带验收摘要', async () => {
+    const r = await run('new', { verified_ids: 'I-1' });
+    expect(r.exitCode).toBe(0);
+    const create = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'create');
+    expect(create[create.indexOf('--body') + 1]).not.toContain('验收摘要');
+  });
+
   it('existing：复用已有 PR，不再 pr create', async () => {
     const r = await run('existing');
     expect(r.exitCode).toBe(0);
