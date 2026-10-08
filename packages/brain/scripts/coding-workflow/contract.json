@@ -38,8 +38,74 @@
       }
     },
     {
-      "key": "chain_check",
+      "key": "build",
       "order": 3,
+      "budget": { "max_duration_s": 2400, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["claude_failed", "claude_timeout", "remote_check_failed", "git_check_failed"],
+        "needs_human": { "cases": ["claude_auth"] },
+        "fatal": [
+          "sprint_dir_invalid",
+          "task_id_missing",
+          "spec_missing",
+          "spec_ids_missing",
+          "git_head_unavailable",
+          "build_report_missing",
+          "build_no_commit",
+          "build_uncommitted",
+          "chain_tampered",
+          "remote_changed",
+          "build_history_rewritten",
+          "build_touched_agent_config",
+          "build_report_invalid",
+          "build_sprint_polluted"
+        ]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "source",
+        "entry": "activities/build.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    },
+    {
+      "key": "verify",
+      "order": 4,
+      "budget": { "max_duration_s": 1200, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["claude_failed", "claude_timeout", "remote_check_failed"],
+        "needs_human": { "cases": ["claude_auth"] },
+        "fatal": [
+          "sprint_dir_invalid",
+          "task_id_missing",
+          "intent_ids_missing",
+          "intent_ids_invalid",
+          "evidence_missing",
+          "evidence_invalid",
+          "evidence_incomplete",
+          "verification_failed",
+          "verify_out_of_scope_write",
+          "verify_head_moved",
+          "chain_tampered",
+          "remote_changed",
+          "evidence_unverified",
+          "build_report_restore_failed"
+        ]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "batch_end",
+        "entry": "activities/verify.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    },
+    {
+      "key": "chain_check",
+      "order": 5,
       "budget": { "max_duration_s": 30, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],
@@ -57,7 +123,7 @@
     },
     {
       "key": "publish",
-      "order": 4,
+      "order": 6,
       "budget": { "max_duration_s": 900, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],
@@ -83,7 +149,7 @@
     },
     {
       "key": "report",
-      "order": 5,
+      "order": 7,
       "budget": { "max_duration_s": 30, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],
