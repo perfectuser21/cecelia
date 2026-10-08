@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.379.6
+**Brain 版本**: 1.379.7
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -70,7 +70,7 @@ type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
 
-## Brain 1.379.6 — 获客重组：能力「智能获客」+ 四条抖音流程（视频发现 / 视频处理 / 评论评分 / 线索触达），旧流程并存
+## Brain 1.379.7 — 获客重组：能力「智能获客」+ 四条抖音流程（视频发现 / 视频处理 / 评论评分 / 线索触达），旧流程并存
 
 - 迁移 533（决策 eb9f8f77，任务 82acbfff）：能力「关键词获客」改名「智能获客」（保留 id）；「对标获客」「视频链接获客」「直播获客」标 deprecated，说明写「已并入智能获客，作为发现的找法」
 - 新建流程（channel=douyin，status=paused，脚本切换前没有运行入口）：抖音·视频发现（预检→取源→过滤去重→取链接写视频表→收尾）、抖音·视频处理（预检→判定视频→采集评论→收尾）、抖音·评论评分（评分→标记人）、抖音·线索触达（预检→发私信→回填→收尾）；预检、收尾被三条占手机的流程共用
@@ -5764,3 +5764,6 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 - KR 诊断的数据库入口挂 express-rate-limit，每来源每分钟30次，超额请求在SQL执行前返回429；无KR参数的健康入口独立可读。
 
 既有xian-M4维护只追加OS支持版本，原endpoint与grant范围不变。维护HMAC绑定真实runtime配置、boot与活动计数；固定canonical owned canary清理证明、同机锁/零活跃预约及35秒总事务fence缺一即拒绝。旧grant ID按精确UUID家族撤销全部代，补偿追加新版本并保留当前revoked/expiry。normal admission仅从冻结目录消费新OS floor，部署canonical及其它阈值保持。固定drain marker使用O_EXCL创建与nonce/inode/dev/内容journal，同合作锁精确释放；未知owner/工作区inode/cleanup保占位不自动清。
+
+### OpenClaw手机完成回收独立周期（1.379.7）
+openclaw-agent-reaper与手机窄派发共用独立收尾循环，不再受串行慢job阻塞；保留60秒执行周期、真实调用防重入、preview停用及全局Tick关闭。

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { JOBS, SERIAL_JOBS, startSchedulerJobsLoop, stopSchedulerJobsLoop } from '../scheduler-jobs.js';
+import { JOBS, COMPLETION_JOBS, SERIAL_JOBS, startSchedulerJobsLoop, stopSchedulerJobsLoop } from '../scheduler-jobs.js';
 
 const deferred = () => {
   let resolve;
@@ -44,6 +44,44 @@ describe('脚本收尾独立周期', () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect(job('script-reaper').handler).toHaveBeenCalled();
     expect(job('node-onboarding').handler).toHaveBeenCalled();
+  });
+
+  it('OpenClaw手机真实完成不被串行慢job拖住，且只在独立循环运行', async () => {
+    hang(job('machine-vitals'));
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(60_000);
+    job('openclaw-agent-reaper').handler.mockClear();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(job('openclaw-agent-reaper').handler).toHaveBeenCalled();
+    expect(COMPLETION_JOBS).toContain(job('openclaw-agent-reaper'));
+    expect(SERIAL_JOBS).not.toContain(job('openclaw-agent-reaper'));
+  });
+
+  it('OpenClaw每60秒执行；间隔观察不写成功哨兵覆盖真实失败', async () => {
+    const reaper = job('openclaw-agent-reaper');
+    reaper.handler.mockRejectedValueOnce(new Error('ssh failed'));
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const sentinels = () => pool.query.mock.calls.filter(([, args]) => args?.[0] === 'scheduler_job_last_run:openclaw-agent-reaper');
+    expect(reaper.handler).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(sentinels()[0][1][1]).ok).toBe(false);
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(reaper.handler).toHaveBeenCalledTimes(1);
+    expect(sentinels()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reaper.handler).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(sentinels()[1][1][1]).ok).toBe(true);
+  });
+
+  it('OpenClaw超过60秒仍未完成时不重入，完成后继续回收', async () => {
+    const reaper = job('openclaw-agent-reaper');
+    const first = hang(reaper);
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(reaper.handler).toHaveBeenCalledTimes(1);
+    first.resolve({});
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reaper.handler).toHaveBeenCalledTimes(2);
   });
 
   it('收尾任务只进入独立周期，不能同时进入serial产生双写', () => {
@@ -130,3 +168,5 @@ describe('脚本收尾独立周期', () => {
     expect(job('script-reaper').handler).toHaveBeenCalled();
   });
 });
+
+
