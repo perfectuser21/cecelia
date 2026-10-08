@@ -35,6 +35,10 @@ it('真实历史完整图与地图使用Brain anchor，Workspace source_set实�
  expect(snapshot.source_set).toContainEqual({repo:q.repo,revision:q.revision});
  expect(snapshot.definitions.workflows[0].source_repo).toBe('perfectuser21/cecelia');
  expect(()=>validateImplementationSnapshot(snapshot)).not.toThrow();
+ for(const change of [s=>s.registry_source.repo=repo,s=>s.source_set.push({...s.source_set[0]}),s=>s.source_set.push({repo:'other/repo',revision:anchor})]){
+  const bad=structuredClone(snapshot);change(bad);const {snapshot_sha256,...body}=bad;bad.snapshot_sha256=stepSha256(body);
+  expect(()=>validateImplementationSnapshot(bad)).toThrow();
+ }
 });
 it('规范Step断言单独登记；错Activity/Capability归属及不可执行ref拒绝且不留半条',async()=>{
   const activity=f.activities[0],step=activity.payload.steps[0].step_id;
