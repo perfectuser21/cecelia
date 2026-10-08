@@ -68,8 +68,14 @@ function callerProof(yaml,spec,brainRevisions){
  const needs=Array.isArray(job.needs)?job.needs:[job.needs];
  if(!contract||!needs.includes('caller-contract')||!(contract.steps||[]).some(s=>s.run===`node --test ${spec.reader}`&&s.if===undefined&&!s['continue-on-error']))fail('CALLER_REQUIRED_JOB_MISSING',{path:spec.name});
  if(job['continue-on-error']||contract['continue-on-error']||contract.if!==undefined||job.if!==undefined&&job.if!=="github.ref == 'refs/heads/main'"||yaml.on?.pull_request_target||yaml.on?.pull_request?.paths||yaml.on?.push?.paths)fail('CALLER_FAILURE_BYPASS',{path:spec.name});
- if(job.with.source_repo!==WORKSPACE||job.with.scope!=='zenithjoy'||Object.keys(job.with).sort().join(',')!==spec.inputs.join(','))fail('CALLER_SOURCE_CONTRACT_MISMATCH',{path:spec.name});
- return {brainRevision,selector:`jobs.${spec.callerJob}.needs/caller-contract.node_test`};
+ const admissionScopesRequested=Object.hasOwn(job.with,'admission_scopes');
+ const callerInputs=admissionScopesRequested?['admission_scopes',...spec.inputs].sort():spec.inputs;
+ if(admissionScopesRequested){
+  let value;try{value=JSON.parse(job.with.admission_scopes);}catch{fail('CALLER_SOURCE_CONTRACT_MISMATCH',{path:spec.name});}
+  if(spec.name!=='implementation-impact'||!value||Object.keys(value).sort().join(',')!=='schema_version,scopes'||value.schema_version!==1||!Array.isArray(value.scopes)||value.scopes.length!==2||[...value.scopes].sort().join(',')!=='cecelia-factory,zenithjoy')fail('CALLER_SOURCE_CONTRACT_MISMATCH',{path:spec.name});
+ }
+ if(job.with.source_repo!==WORKSPACE||job.with.scope!=='zenithjoy'||Object.keys(job.with).sort().join(',')!==callerInputs.join(','))fail('CALLER_SOURCE_CONTRACT_MISMATCH',{path:spec.name});
+ return {brainRevision,admissionScopesRequested,selector:`jobs.${spec.callerJob}.needs/caller-contract.node_test`};
 }
 // 只承认未处于引号/注释/HereDoc中的行首直接node命令；复杂shell保UNKNOWN。
 function directNodeCommands(source){
@@ -85,9 +91,12 @@ function directNodeCommands(source){
  }
  return found;
 }
-function calleeProof(yaml,spec){
+function calleeProof(yaml,spec,admissionScopesRequested=false){
  const inputs=yaml?.on?.workflow_call?.inputs;
- if(!inputs||Object.keys(inputs).sort().join(',')!==spec.inputs.join(',')||spec.inputs.some(k=>inputs[k].required!==true||inputs[k].type!=='string'))fail('CALLEE_INTERFACE_MISMATCH',{path:spec.name});
+ const optional=inputs?.admission_scopes;
+ const expectedInputs=optional?['admission_scopes',...spec.inputs].sort():spec.inputs;
+ if(optional&&(spec.name!=='implementation-impact'||Object.keys(optional).sort().join(',')!=='default,required,type'||optional.required!==false||optional.type!=='string'||optional.default!==''))fail('CALLEE_INTERFACE_MISMATCH',{path:spec.name});
+ if(!inputs||admissionScopesRequested&&!optional||Object.keys(inputs).sort().join(',')!==expectedInputs.join(',')||spec.inputs.some(k=>inputs[k].required!==true||inputs[k].type!=='string'))fail('CALLEE_INTERFACE_MISMATCH',{path:spec.name});
  const job=yaml.jobs?.[spec.calleeJob];
  const knownGateGuard=spec.calleeJob==='gate'&&job?.if==="always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')"&&Array.isArray(job.needs)&&job.needs.length===1&&job.needs[0]==='snapshot-main';
  if(!job||job.if!==undefined&&!knownGateGuard||job['continue-on-error'])fail('CALLEE_REQUIRED_JOB_MISSING',{path:spec.name});
@@ -129,7 +138,7 @@ export async function extractWorkspaceCiSourceBundle({workspace,brain,readSource
    const readerEvidence=readerProof(readerBytes.toString(),spec.reader,path);
    relations.push({consumer:caller.source,input:reader,kind:'required_node_test',selector:callerEvidence.selector},{consumer:reader,input:caller.source,kind:'yaml_readfile_input',...readerEvidence});
    const calleeSide={repo:BRAIN,revision:callerEvidence.brainRevision};
-   const callee=await yaml(calleeSide,path),runners=calleeProof(callee.value,spec);
+   const callee=await yaml(calleeSide,path),runners=calleeProof(callee.value,spec,callerEvidence.admissionScopesRequested);
    relations.push({consumer:caller.source,input:callee.source,kind:'fixed_reusable_workflow',selector:`jobs.${spec.callerJob}.uses+tooling_revision`});
    for(const runner of runners){const code=await read(calleeSide,runner.path);relations.push({consumer:callee.source,input:code,kind:'fixed_job_node_source',selector:runner.selector});}
   }
