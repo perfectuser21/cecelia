@@ -167,6 +167,14 @@ describe('远端命令在本机 sh 下真跑（反「字符串断言假绿」）
 });
 
 describe('triggerOpenclawAgent', () => {
+  it('工厂探路收到Brain原执行号，锁和证据不另造身份', async () => {
+    const spawnFn = spawnMock();
+    const factory = { ...task, payload: { ...task.payload, qiumi_department: 'skill-factory' } };
+    expect((await triggerOpenclawAgent(factory, { spawnFn, pool: { query: vi.fn() } })).success).toBe(true);
+    const message = String(spawnFn.child.stdin.end.mock.calls[0][0]);
+    expect(message).toContain(`task_id=${task.id}；run_id=${task.payload.run_id}`);
+    expect(message).toContain('探路阶段的锁、证据与交付 JSON 必须使用此号');
+  });
   it('成功：走 spawn，正文经 stdin.end 送出（不进命令行），DISPATCHED → in_progress + executor_kind + 留痕', async () => {
     const spawnFn = spawnMock();
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
@@ -267,6 +275,7 @@ describe('triggerOpenclawAgent', () => {
     const query = vi.fn();
     const r = await triggerOpenclawAgent(task, { spawnFn, pool: { query } });
     expect(r).toMatchObject({ success: false, reason: 'openclaw_agent_spawn_failed' });
+    expect(r.dispatchUncertain, 'SSH无回复无法证明远端没有接受，不许当确定未启动').toBe(true);
     expect(spawnFn, '只试了一次就判死').toHaveBeenCalledTimes(2);
     expect(query).not.toHaveBeenCalled();
   });
@@ -320,6 +329,31 @@ describe('triggerOpenclawAgent', () => {
 
 describe('reapOpenclawAgentRuns', () => {
   const row = { id: task.id, run_id: 'qiumi-aaaaaaaa-1' };
+  it.each([
+    [JSON.stringify({ stage: 'explore', claimed_result: 'success', lock_released: true, run_id: row.run_id }), 1, 0],
+    ['没有读取成功', 0, 1],
+    [JSON.stringify({ stage: 'verify', claimed_result: 'success' }), 0, 1],
+  ])('显式探路只接受同运行号且释放锁的完整回执：%s', async (text, completed, failed) => {
+    const factoryRow = { ...row, payload: { qiumi_department: 'skill-factory', qiumi_source: { body: '使用 skill：skill-explore' } } };
+    const query = vi.fn().mockResolvedValueOnce({ rows: [factoryRow] }).mockResolvedValue({ rows: [], rowCount: 1 });
+    const execFileFn = vi.fn((c, a, o, cb) => cb(null, `EXIT=0\n${JSON.stringify({ finalAssistantVisibleText: text })}\n`, ''));
+    expect(await reapOpenclawAgentRuns({ query }, { execFileFn })).toMatchObject({ completed, failed });
+  });
+  it.each([
+    ['blocked', true, 'qiumi-aaaaaaaa-1', '微信未登录'],
+    ['failed', true, 'qiumi-aaaaaaaa-1', '截图失败'],
+    ['success', false, 'qiumi-aaaaaaaa-1', null],
+    ['success', true, 'wrong-run', null],
+  ])('探路进程退出0也不能把失败/未解锁/错运行号记完成：%s', async (claimed_result, lock_released, run_id, fail_reason) => {
+    const factoryRow = { ...row, payload: { qiumi_department: 'skill-factory' } };
+    const report = JSON.stringify({ stage: 'explore', claimed_result, lock_released, run_id, fail_reason });
+    const query = vi.fn().mockResolvedValueOnce({ rows: [factoryRow] }).mockResolvedValue({ rows: [], rowCount: 1 });
+    const execFileFn = vi.fn((c, a, o, cb) => cb(null, `EXIT=0\n${JSON.stringify({ finalAssistantVisibleText: report })}\n`, ''));
+    expect(await reapOpenclawAgentRuns({ query }, { execFileFn })).toMatchObject({ completed: 0, failed: 1 });
+    const update = query.mock.calls.find(([sql]) => /SET status = 'failed'/.test(sql));
+    expect(update[1][1]).toMatch(/rpa_/);
+    if (fail_reason) expect(update[1][1]).toContain(fail_reason);
+  });
 
   it('EXIT=0 → completed_no_pr + receipt 子键（finalAssistantVisibleText）', async () => {
     const query = vi.fn().mockResolvedValueOnce({ rows: [row] }).mockResolvedValue({ rows: [], rowCount: 1 });

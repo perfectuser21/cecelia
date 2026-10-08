@@ -27,6 +27,7 @@ import { sshWithStdin, sshRun } from './lib/ssh-exec.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRun, finishRun } from './lib/task-run.js';
 import { finalizeTask } from './lib/task-terminal.js';
+import { rpaExploreFailure } from './lib/rpa-explore-receipt.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
 import { splitExecParamsBlock } from './routing/exec-params.js';
 import { consumeCompanyAnalysis, markCompanyAnalysis, assertCompanyAnalysisDispatch, companyAnalysisPrompt } from './lib/company-kr-analysis.js';
@@ -191,6 +192,7 @@ function promptOf(task) {
   const applied = block.present && Boolean(p.qiumi_department);
   const body = applied ? block.rest : sourceBody;
   return [
+    p.qiumi_department === 'skill-factory' ? `本次执行标识：task_id=${task.id}；run_id=${p.run_id}。探路阶段的锁、证据与交付 JSON 必须使用此号，不另造运行号；核验与沉淀的交付 run_id 按输入来源运行号。` : null,
     applied ? appliedParamsNotice(p) : null,
     s.title,
     s.remark ? `补充说明：${s.remark}` : null,
@@ -261,6 +263,7 @@ export async function triggerOpenclawAgent(task, deps = {}) {
     } catch (second) {
       return {
         success: false,
+        dispatchUncertain: true,
         taskId: task.id,
         reason: 'openclaw_agent_spawn_failed',
         error: `${first.message} | 重试: ${second.message}`,
@@ -440,6 +443,10 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
     if (busy === 'requeued') { out.requeued++; continue; }
     if (busy === 'failed') { out.failed++; out.reaped++; continue; }
     let outcome = reapOutcome(receipt, tail);
+    if (outcome.status === 'completed_no_pr') {
+      const reason = rpaExploreFailure(r, receipt);
+      if (reason) outcome = { status: 'failed', reason, yieldSummary: null };
+    }
     let analysis = null;
     if (companyAnalysis && outcome.status === 'completed_no_pr') {
       try { analysis = await (deps.consumeCompanyAnalysis || consumeCompanyAnalysis)(pool, r, receipt); }

@@ -125,6 +125,24 @@ beforeEach(() => {
   checkCeceliaRunAvailable.mockResolvedValue({ available: true });
 });
 
+it('定向派发旧调用的异常清理不能释放并发请求新取得的 claim', async () => {
+  let currentOwner = 'old-owner';
+  mockIsAllowed.mockReturnValue(false);
+  mockQuery.mockImplementation(async (sql, args) => {
+    if (/UPDATE tasks SET claimed_by = NULL/.test(sql)) {
+      if (!sql.includes('AND claimed_by = $2') || args[1] === currentOwner) currentOwner = null;
+    }
+    return { rows: [] };
+  });
+  recordDispatchResult.mockImplementationOnce(async () => {
+    currentOwner = 'new-owner';
+    throw new Error('stats failed after old claim released');
+  });
+  const r = await dispatchQiumiTask(candidate, { claimOwner: 'old-owner' });
+  expect(r.outcome).toBe('skip');
+  expect(currentOwner).toBe('new-owner');
+});
+
 describe('dispatchQiumiTask：三态出口', () => {
   it('先读全行再路由：传给 routeQiumiTask 的 task 带 payload，且状态仍是 queued', async () => {
     wireQueries();
