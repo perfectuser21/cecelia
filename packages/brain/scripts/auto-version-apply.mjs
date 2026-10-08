@@ -91,10 +91,15 @@ export function applyAutoVersion(root, { bumpType = 'patch', ifFragmentsOnly = f
 
   // 在任何版本写入/片删除之前校验声明；只计划实际消费片的release行清理。
   const relationsPath = join(root, SOURCE_RELATIONS_PATH);
-  if (fragments.length && existsSync(relationsPath) && !lstatSync(relationsPath).isFile()) {
+  let relationsStat = null;
+  if (fragments.length) {
+    try { relationsStat = lstatSync(relationsPath); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  if (relationsStat && !relationsStat.isFile()) {
     throw new Error('AUXILIARY_SOURCE_NOT_REGULAR_FILE');
   }
-  const originalRelations = fragments.length && existsSync(relationsPath)
+  const originalRelations = relationsStat
     ? readFileSync(relationsPath, 'utf8') : null;
   const consumedRelations = originalRelations === null ? null
     : removeConsumedReleaseRelations(originalRelations, fragments.map(frag => relative(root, frag).split('\\').join('/')));
