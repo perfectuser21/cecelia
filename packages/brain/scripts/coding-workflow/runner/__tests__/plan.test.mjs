@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pickCandidates, taskNames, runTimeoutMs } from '../lib/plan.mjs';
+import { pickCandidates, isSwitched, taskNames, runTimeoutMs } from '../lib/plan.mjs';
 import { summarizeReceipt, readReceipt } from '../lib/receipt.mjs';
 import { loadConfig } from '../lib/config.mjs';
 
@@ -13,19 +13,29 @@ const contract = JSON.parse(fs.readFileSync(path.join(HERE, '../../contract.json
 const BRANCH_RE = /^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$/;
 
 describe('pickCandidates', () => {
-  const t = (id, created, payload, extra = {}) => ({ id, created_at: created, claimed_by: null, payload, ...extra });
+  const SW = { coding_workflow: true, headed_manual: 'true' };
+  const t = (id, created, payload, extra = {}) => ({ id, created_at: created, task_type: 'data', claimed_by: null, payload, ...extra });
 
-  it('只要 payload.coding_workflow === true、未认领、repo 缺省或 cecelia，按创建时间升序', () => {
+  it('开关三件套（task_type=data、headed_manual="true"、coding_workflow===true）、未认领、repo 缺省或 cecelia，按创建时间升序', () => {
     const tasks = [
-      t('a', '2026-10-08T03:00:00Z', { coding_workflow: true }),
-      t('b', '2026-10-08T01:00:00Z', { coding_workflow: true, repo: 'cecelia' }),
-      t('c', '2026-10-08T00:00:00Z', { coding_workflow: 'true' }),
-      t('d', '2026-10-08T00:00:00Z', { coding_workflow: true }, { claimed_by: 'x' }),
-      t('e', '2026-10-08T00:00:00Z', { coding_workflow: true, repo: 'zenithjoy' }),
+      t('a', '2026-10-08T03:00:00Z', SW),
+      t('b', '2026-10-08T01:00:00Z', { ...SW, repo: 'cecelia' }),
+      t('c', '2026-10-08T00:00:00Z', { ...SW, coding_workflow: 'true' }),
+      t('d', '2026-10-08T00:00:00Z', SW, { claimed_by: 'x' }),
+      t('e', '2026-10-08T00:00:00Z', { ...SW, repo: 'zenithjoy' }),
       t('f', '2026-10-08T00:00:00Z', null),
-      t('g', '2026-10-08T02:00:00Z', { coding_workflow: true }),
+      t('g', '2026-10-08T02:00:00Z', SW),
+      t('h', '2026-10-08T00:00:00Z', SW, { task_type: 'dev' }),
+      t('i', '2026-10-08T00:00:00Z', { coding_workflow: true }),
+      t('j', '2026-10-08T00:00:00Z', { ...SW, headed_manual: true }),
     ];
     expect(pickCandidates(tasks).map((x) => x.id)).toEqual(['b', 'g', 'a']);
+  });
+
+  it('isSwitched 只看开关三件套', () => {
+    expect(isSwitched({ task_type: 'data', payload: SW })).toBe(true);
+    expect(isSwitched({ task_type: 'data', payload: { coding_workflow: true } })).toBe(false);
+    expect(isSwitched(null)).toBe(false);
   });
 
   it('非数组输入返回空数组', () => {
@@ -119,6 +129,9 @@ describe('loadConfig', () => {
     expect(c.skipNpmCi).toBe(false);
     expect(c.automerge).toBe(true);
     expect(c.runTimeoutMs).toBeNull();
+    expect(c.listLimit).toBe(500);
+    expect(c.failedRetentionDays).toBe(7);
+    expect(c.logRetentionDays).toBe(30);
     expect(c.claimer).toBe(`coding-workflow-runner@${os.hostname()}`);
   });
 
@@ -131,6 +144,8 @@ describe('loadConfig', () => {
       CODING_WF_SKIP_NPM_CI: '1',
       CODING_WF_AUTOMERGE: '0',
       CODING_WF_RUN_TIMEOUT_MS: '1234',
+      CODING_WF_LIST_LIMIT: '7',
+      CODING_WF_FAILED_RETENTION_DAYS: '2',
     });
     expect(c.brainUrl).toBe('http://b:1');
     expect(c.repo).toBe('/r');
@@ -138,5 +153,7 @@ describe('loadConfig', () => {
     expect(c.skipNpmCi).toBe(true);
     expect(c.automerge).toBe(false);
     expect(c.runTimeoutMs).toBe(1234);
+    expect(c.listLimit).toBe(7);
+    expect(c.failedRetentionDays).toBe(2);
   });
 });

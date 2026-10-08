@@ -4,8 +4,11 @@
 //   failed：verify 失败（verification_failed），report 完成，整体 partial
 //   crash：stdout 写垃圾并以 3 退出
 //   hang：永不退出（等 runner 超时）
+//   hang-tree：先拉起"独立进程组的子进程 → 再独立进程组的孙进程"（都忽略 SIGTERM），pid 写入 FAKE_EXEC_TREE_PIDS，然后永不退出
+//   partial-pr：publish 已开 PR，report 失败，整体 partial
 // FAKE_EXEC_LOG 指向文件时，写入一行 JSON：argv、cwd、stdin 信封、关心的 env 是否存在。
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 
 const argv = process.argv.slice(2);
 const opt = (name) => {
@@ -44,8 +47,36 @@ function finish(result, code) {
   process.exitCode = code;
 }
 
+// 独立进程组、忽略 SIGTERM 的常驻进程；depth>0 时再拉起下一层。
+const SLEEPER = `process.on('SIGTERM', () => {});
+const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+fs.appendFileSync(process.env.FAKE_EXEC_TREE_PIDS, process.pid + '\\n');
+if (Number(process.argv[1]) > 0) {
+  spawn(process.execPath, ['-e', process.env.FAKE_SLEEPER, String(Number(process.argv[1]) - 1)], { detached: true, stdio: 'ignore', env: process.env }).unref();
+}
+setInterval(() => {}, 1000);`;
+
 if (mode === 'hang') {
   setInterval(() => {}, 1000);
+} else if (mode === 'hang-tree') {
+  spawn(process.execPath, ['-e', SLEEPER, '1'], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, FAKE_SLEEPER: SLEEPER },
+  }).unref();
+  setInterval(() => {}, 1000);
+} else if (mode === 'partial-pr') {
+  finish({
+    schema_version: 1,
+    run_tag: input.run_tag,
+    status: 'partial',
+    outputs: { pr_url: 'https://github.com/example/repo/pull/9' },
+    activities: [
+      ...['intent', 'spec', 'build', 'verify', 'chain_check', 'publish'].map(done),
+      { key: 'report', status: 'failed', attempts: [{ attempt: 1, status: 'failed', failure_class: 'retryable', reason_code: 'brain_unavailable' }] },
+    ],
+  }, 2);
 } else if (mode === 'crash') {
   process.stdout.write('not json at all\n');
   process.exit(3);

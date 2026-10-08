@@ -356,3 +356,16 @@ it('Linux audit专管kind启动同步保持父任务及证据的原claim',async(
  expect(result.requeued).toBe(0);expect(result.orphans_fixed).toBe(0);expect(result.external_skipped).toBe(2);
  expect(mockQuery.mock.calls.some(([sql])=>/UPDATE tasks/.test(sql))).toBe(false);
 });
+
+it('coding workflow runner（执行机认领的 data 任务）启动同步不打回 queued、不清 claim', async () => {
+  vi.clearAllMocks();
+  mockQuery.mockResolvedValue({ rows: [], rowCount: 1 }).mockResolvedValueOnce({ rows: [
+    { id: 'cw-task', task_type: 'data', executor_kind: 'coding-workflow-runner', claimed_by: 'coding-workflow-runner@mmv', payload: { coding_workflow: true, headed_manual: 'true' }, started_at: new Date(Date.now() - 600000).toISOString() },
+  ] });
+  const { syncOrphanTasksOnStartup } = await import('../executor.js');
+  const result = await syncOrphanTasksOnStartup();
+  expect(result.requeued).toBe(0);
+  expect(result.orphans_fixed).toBe(0);
+  expect(result.external_skipped).toBe(1);
+  expect(mockQuery.mock.calls.some(([sql]) => /UPDATE tasks/.test(sql))).toBe(false);
+});

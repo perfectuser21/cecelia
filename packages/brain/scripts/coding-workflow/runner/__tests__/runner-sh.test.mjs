@@ -85,6 +85,32 @@ describe('runner.sh 启动器', () => {
     expect(fs.readFileSync(path.join(clone, 'local-note.txt'), 'utf8')).toBe('keep me\n');
   });
 
+  it('主日志超过 10MB 时滚动（copy+truncate），保留 3 份', () => {
+    gitPlain('clone', '-q', origin, clone);
+    const main = path.join(root, 'runner.log');
+    fs.writeFileSync(main, Buffer.alloc(10 * 1024 * 1024 + 1, 'a'));
+    fs.writeFileSync(`${main}.1`, 'one');
+    fs.writeFileSync(`${main}.2`, 'two');
+    fs.writeFileSync(`${main}.3`, 'three');
+    const r = runRunner({ ...env, CODING_WF_MAIN_LOG: main });
+    expect(r.status, r.stderr).toBe(0);
+    expect(fs.statSync(`${main}.1`).size).toBe(10 * 1024 * 1024 + 1);
+    expect(fs.readFileSync(`${main}.2`, 'utf8')).toBe('one');
+    expect(fs.readFileSync(`${main}.3`, 'utf8')).toBe('two');
+    expect(fs.existsSync(`${main}.4`)).toBe(false);
+    expect(fs.statSync(main).size).toBe(0);
+  });
+
+  it('主日志未超限：不滚动', () => {
+    gitPlain('clone', '-q', origin, clone);
+    const main = path.join(root, 'runner.log');
+    fs.writeFileSync(main, 'small');
+    const r = runRunner({ ...env, CODING_WF_MAIN_LOG: main });
+    expect(r.status, r.stderr).toBe(0);
+    expect(fs.readFileSync(main, 'utf8')).toBe('small');
+    expect(fs.existsSync(`${main}.1`)).toBe(false);
+  });
+
   it('clone 失败：非零退出且不 exec', () => {
     const r = runRunner({ ...env, CODING_WF_ORIGIN_URL: path.join(root, 'missing.git') });
     expect(r.status).not.toBe(0);

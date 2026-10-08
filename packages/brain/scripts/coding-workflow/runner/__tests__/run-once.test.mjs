@@ -5,11 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { git } from '../../__tests__/helpers/git.mjs';
+import { expectGone } from '../../__tests__/helpers/procs.mjs';
 import {
   FAKE_EXECUTOR,
   FAKE_GH,
   startFakeBrain,
   codingTask,
+  SWITCH,
   makeSandbox,
   runnerEnv,
   runOnceProcess,
@@ -45,11 +47,13 @@ describe('coding workflow runner run-once', () => {
     sb.cleanup();
   });
 
-  it('没有带开关的任务：退出 0，不认领、不 PATCH、不跑执行器', async () => {
+  it('开关三件套缺一不可（task_type=data、headed_manual="true"、coding_workflow===true）：退出 0，不认领、不 PATCH、不跑执行器', async () => {
     brain = await startFakeBrain({
       tasks: [
         codingTask(T1, { payload: { headed_manual: 'true' } }),
-        codingTask(T2, { payload: { coding_workflow: 'true' } }),
+        codingTask(T2, { payload: { coding_workflow: 'true', headed_manual: 'true' } }),
+        codingTask('ccccccc3-0000-4000-8000-000000000003', { payload: { coding_workflow: true } }),
+        codingTask('ddddddd4-0000-4000-8000-000000000004', { task_type: 'dev' }),
       ],
     });
     const r = await runOnceProcess(runnerEnv(sb, brain.url));
@@ -57,6 +61,7 @@ describe('coding workflow runner run-once', () => {
     const list = brain.calls.find((c) => c.method === 'GET');
     expect(list.path).toBe('/api/brain/tasks');
     expect(new URLSearchParams(list.query).get('status')).toBe('queued');
+    expect(new URLSearchParams(list.query).get('task_type')).toBe('data');
     expect(new URLSearchParams(list.query).get('limit')).toBe('500');
     expect(brain.calls.filter((c) => c.method !== 'GET')).toEqual([]);
     expect(readJsonLines(sb.execLog)).toEqual([]);
@@ -69,7 +74,7 @@ describe('coding workflow runner run-once', () => {
       tasks: [
         codingTask(T1, { created_at: '2026-10-08T02:00:00.000Z' }),
         codingTask(T2, { created_at: '2026-10-08T01:00:00.000Z', claimed_by: 'someone' }),
-        codingTask('ccccccc3-0000-4000-8000-000000000003', { created_at: '2026-10-08T00:00:00.000Z', payload: { coding_workflow: true, repo: 'zenithjoy' } }),
+        codingTask('ccccccc3-0000-4000-8000-000000000003', { created_at: '2026-10-08T00:00:00.000Z', payload: { ...SWITCH, repo: 'zenithjoy' } }),
         codingTask('ddddddd4-0000-4000-8000-000000000004', { created_at: '2026-10-08T01:30:00.000Z' }),
       ],
     });
@@ -89,6 +94,34 @@ describe('coding workflow runner run-once', () => {
     expect(brain.calls).toEqual([]);
     // 别人的锁不能被删
     expect(fs.readFileSync(path.join(lock, 'pid'), 'utf8')).toBe(String(process.pid));
+  }, 30000);
+
+  it('列表分页：limit 截断时加大 limit 重查，保证取到最早创建的任务', async () => {
+    brain = await startFakeBrain({
+      tasks: [
+        codingTask(T1, { created_at: '2026-10-08T00:00:00.000Z' }),
+        codingTask(T2, { created_at: '2026-10-08T01:00:00.000Z' }),
+        codingTask('ccccccc3-0000-4000-8000-000000000003', { created_at: '2026-10-08T02:00:00.000Z' }),
+      ],
+    });
+    const r = await runOnceProcess(runnerEnv(sb, brain.url, { CODING_WF_LIST_LIMIT: '2' }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    const limits = brain.calls.filter((c) => c.method === 'GET' && c.path === '/api/brain/tasks'
+      && new URLSearchParams(c.query).get('status') === 'queued').map((c) => new URLSearchParams(c.query).get('limit'));
+    expect(limits).toEqual(['2', '4']);
+    expect(brain.calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual([`/api/brain/tasks/${T1}/claim`]);
+  }, 30000);
+
+  it('锁被存活进程持有但已超过最长持锁时长（总超时 + 1h）：视为陈旧并回收', async () => {
+    brain = await startFakeBrain({ tasks: [] });
+    const lock = path.join(sb.lockDir, 'coding-workflow-runner.lock');
+    fs.mkdirSync(lock, { recursive: true });
+    fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+    fs.writeFileSync(path.join(lock, 'started_at'), String(Date.now() - 2 * 3600 * 1000 - 10000));
+    const r = await runOnceProcess(runnerEnv(sb, brain.url, { CODING_WF_RUN_TIMEOUT_MS: '3600000' }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(brain.calls.some((c) => c.method === 'GET')).toBe(true);
+    expect(fs.existsSync(lock)).toBe(false);
   }, 30000);
 
   it('陈旧锁（持锁进程已死）被回收，本轮照常执行并在结束时释放', async () => {
@@ -114,12 +147,15 @@ describe('coding workflow runner run-once', () => {
     expect(r.exitCode, r.stderr).toBe(0);
     const claims = brain.calls.filter((c) => c.method === 'POST');
     expect(claims.map((c) => c.path)).toEqual([`/api/brain/tasks/${T1}/claim`, `/api/brain/tasks/${T2}/claim`]);
-    expect(JSON.parse(claims[1].raw).claimer).toBe(`coding-workflow-runner@${os.hostname()}`);
-    expect(brain.patches.map((p) => [p.id, p.body.status])).toEqual([[T2, 'in_progress'], [T2, 'completed']]);
+    expect(JSON.parse(claims[1].raw)).toEqual({
+      claimer: `coding-workflow-runner@${os.hostname()}`,
+      executor_kind: 'coding-workflow-runner',
+    });
+    expect(brain.patches.map((p) => [p.id, p.body.status ?? null])).toEqual([[T2, 'in_progress'], [T2, 'completed'], [T2, null]]);
   }, 30000);
 
-  it('成功路径：建 worktree → 执行器回执 completed → automerge 调假 gh → PATCH completed（只补 runner）→ 删 worktree', async () => {
-    brain = await startFakeBrain({ tasks: [codingTask(T1, { payload: { coding_workflow: true, headed_manual: 'true', gp_anchor: 'f1/step3' } })] });
+  it('成功路径：建 worktree → 执行器回执 completed → PATCH completed（只补 runner）→ automerge 调假 gh → 只带 result 补写 automerge → 删 worktree', async () => {
+    brain = await startFakeBrain({ tasks: [codingTask(T1, { payload: { ...SWITCH, gp_anchor: 'f1/step3' } })] });
     const env = runnerEnv(sb, brain.url, {
       FAKE_EXEC_REPORT: '1',
       CLAUDECODE: '1',
@@ -157,10 +193,15 @@ describe('coding workflow runner run-once', () => {
       CODING_WF_GH_BIN: true,
     });
 
-    // Brain：in_progress → report 的 result.coding_workflow → completed（只补 runner）
-    expect(brain.patches.map((p) => p.body.status ?? null)).toEqual(['in_progress', null, 'completed']);
+    // Brain：in_progress → report 的 result.coding_workflow → completed（只补 runner）→ automerge 结果只带 result
+    expect(brain.patches.map((p) => p.body.status ?? null)).toEqual(['in_progress', null, 'completed', null]);
     const completed = brain.patches[2].body;
     expect(Object.keys(completed.result)).toEqual(['runner']);
+    expect(completed.result.runner.automerge).toBeUndefined();
+    const merged = brain.patches[3].body;
+    expect(Object.keys(merged)).toEqual(['result']);
+    expect(merged.result.runner.automerge).toEqual({ ready: true, merge: true });
+    expect(merged.result.runner.receipt_path).toBe(completed.result.runner.receipt_path);
     expect(completed.result.runner.receipt_path).toBe(path.join(sb.logDir, `${T1}.json`));
     expect(completed.result.runner.host).toBe(os.hostname());
     expect(Number.isInteger(completed.result.runner.duration_s)).toBe(true);
@@ -179,7 +220,7 @@ describe('coding workflow runner run-once', () => {
   }, 30000);
 
   it('worktree 内容：基于 origin/main，写了 .dev-mode/.dev-lock（gp_anchor 取 payload）且不进 git status', async () => {
-    brain = await startFakeBrain({ tasks: [codingTask(T1, { payload: { coding_workflow: true, gp_anchor: 'f1/step3' } })] });
+    brain = await startFakeBrain({ tasks: [codingTask(T1, { payload: { ...SWITCH, gp_anchor: 'f1/step3' } })] });
     const r = await runOnceProcess(runnerEnv(sb, brain.url, { FAKE_EXEC_MODE: 'failed' }));
     expect(r.exitCode, r.stderr).toBe(1);
     const [{ envelope: { input: { worktree } } }] = readJsonLines(sb.execLog);
@@ -225,6 +266,7 @@ describe('coding workflow runner run-once', () => {
     expect(r.exitCode, r.stderr).toBe(1);
     expect(brain.patches.map((p) => p.body.status)).toEqual(['in_progress', 'failed']);
     const info = brain.patches[1].body.result.coding_workflow_runner;
+    expect(info.pr_url).toBeUndefined();
     expect(info).toEqual({
       status: 'partial',
       failed_activity: 'verify',
@@ -234,6 +276,18 @@ describe('coding workflow runner run-once', () => {
     });
     const [{ envelope: { input: { worktree } } }] = readJsonLines(sb.execLog);
     expect(fs.existsSync(worktree)).toBe(true);
+    expect(readJsonLines(sb.ghLog)).toEqual([]);
+  }, 30000);
+
+  it('partial 但已开 PR（report 失败）→ PATCH failed 带 pr_url，不 automerge', async () => {
+    brain = await startFakeBrain({ tasks: [codingTask(T1)] });
+    const r = await runOnceProcess(runnerEnv(sb, brain.url, { FAKE_EXEC_MODE: 'partial-pr' }));
+    expect(r.exitCode, r.stderr).toBe(1);
+    const info = brain.patches.at(-1).body.result.coding_workflow_runner;
+    expect(brain.patches.at(-1).body.status).toBe('failed');
+    expect(info.failed_activity).toBe('report');
+    expect(info.reason_code).toBe('brain_unavailable');
+    expect(info.pr_url).toBe('https://github.com/example/repo/pull/9');
     expect(readJsonLines(sb.ghLog)).toEqual([]);
   }, 30000);
 
@@ -248,19 +302,24 @@ describe('coding workflow runner run-once', () => {
     expect(fs.existsSync(path.join(sb.worktreeBase, 'cw-aaaaaaa1'))).toBe(true);
   }, 30000);
 
-  it('执行器超时 → 杀掉执行器，PATCH failed executor_timeout', async () => {
+  it('执行器超时 → 按进程树杀掉执行器及独立进程组的全部后代（忽略 SIGTERM 的也不留），PATCH failed executor_timeout', async () => {
     brain = await startFakeBrain({ tasks: [codingTask(T1)] });
+    const treePids = path.join(sb.root, 'tree.pids');
     const started = Date.now();
     const r = await runOnceProcess(runnerEnv(sb, brain.url, {
-      FAKE_EXEC_MODE: 'hang',
-      CODING_WF_RUN_TIMEOUT_MS: '800',
-      CODING_WF_KILL_GRACE_MS: '200',
+      FAKE_EXEC_MODE: 'hang-tree',
+      FAKE_EXEC_TREE_PIDS: treePids,
+      CODING_WF_RUN_TIMEOUT_MS: '1500',
+      CODING_WF_KILL_GRACE_MS: '300',
     }));
     expect(r.exitCode, r.stderr).toBe(1);
     expect(Date.now() - started).toBeLessThan(20000);
     const last = brain.patches.at(-1).body;
     expect(last.status).toBe('failed');
     expect(last.result.coding_workflow_runner.reason_code).toBe('executor_timeout');
+    const pids = fs.readFileSync(treePids, 'utf8').trim().split('\n').map(Number);
+    expect(pids).toHaveLength(2);
+    for (const pid of pids) await expectGone(pid, `后代进程 ${pid}`);
   }, 30000);
 
   it('执行器不存在 → PATCH failed，不留 in_progress 孤儿', async () => {
@@ -281,12 +340,13 @@ describe('coding workflow runner run-once', () => {
     expect(readJsonLines(sb.execLog)).toEqual([]);
   }, 30000);
 
-  it('Brain 拒绝 completed → 尽力改回写 failed（complete_rejected），worktree 保留', async () => {
+  it('Brain 拒绝 completed（422）→ 尽力改回写 failed（complete_rejected），不 automerge，worktree 保留', async () => {
     brain = await startFakeBrain({ tasks: [codingTask(T1)], patchStatus: { completed: 422 } });
-    const r = await runOnceProcess(runnerEnv(sb, brain.url, { CODING_WF_AUTOMERGE: '0' }));
+    const r = await runOnceProcess(runnerEnv(sb, brain.url));
     expect(r.exitCode, r.stderr).toBe(1);
     expect(brain.patches.map((p) => p.body.status)).toEqual(['in_progress', 'completed', 'failed']);
     expect(brain.patches[2].body.result.coding_workflow_runner.reason_code).toBe('complete_rejected');
+    expect(readJsonLines(sb.ghLog)).toEqual([]);
     expect(fs.existsSync(path.join(sb.worktreeBase, 'cw-aaaaaaa1'))).toBe(true);
   }, 30000);
 

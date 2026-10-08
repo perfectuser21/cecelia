@@ -14,12 +14,18 @@ export const FAKE_EXECUTOR = path.join(HERE, '../fixtures/fake-executor.mjs');
 export const FAKE_GH = path.join(HERE, '../fixtures/fake-gh.mjs');
 const CONTRACT = path.join(HERE, '../../../contract.json');
 
+const TRANSITIONS = { queued: ['in_progress'], in_progress: ['completed', 'failed'] };
+
 /**
- * 假 Brain：tasks 为 queued 列表；claim409 里的 id 认领返回 409。
- * 记录所有请求到 calls，PATCH 同时记到 patches 并更新内存状态。
+ * 假 Brain：tasks 为任务表（支持 status/task_type 过滤、按 created_at 降序 + limit 截断，同真 Brain）。
+ * claim409 里的 id 认领返回 409；patchStatus 强制某目标状态返回指定 HTTP；
+ * PATCH 按真 Brain 状态机校验（非法转移 409），终态清 claimed_by；
+ * onResultPatch(task) 在只带 result 的 PATCH 后调用（模拟 Brain 重启把任务打回 queued 等）。
  */
-export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {} } = {}) {
+export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {}, onResultPatch } = {}) {
   const state = { tasks: structuredClone(tasks), calls: [], patches: [] };
+  const find = (id) => state.tasks.find((t) => t.id === id);
+  const send = (res, code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
   const server = http.createServer((req, res) => {
     let raw = '';
     req.setEncoding('utf8');
@@ -29,40 +35,45 @@ export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = 
       const url = new URL(req.url, 'http://x');
       state.calls.push({ method: req.method, path: url.pathname, query: url.search, raw });
       if (req.method === 'GET' && url.pathname === '/api/brain/tasks') {
-        const status = url.searchParams.get('status');
-        res.end(JSON.stringify(state.tasks.filter((t) => !status || t.status === status)));
-        return;
+        const q = url.searchParams;
+        const rows = state.tasks
+          .filter((t) => (!q.get('status') || t.status === q.get('status')) && (!q.get('task_type') || t.task_type === q.get('task_type')))
+          .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+          .slice(0, Number(q.get('limit') || 100));
+        return send(res, 200, rows);
+      }
+      const one = /^\/api\/brain\/tasks\/([^/]+)$/.exec(url.pathname);
+      if (req.method === 'GET' && one) {
+        const task = find(one[1]);
+        return task ? send(res, 200, task) : send(res, 404, { error: 'Task not found' });
       }
       const claim = /^\/api\/brain\/tasks\/([^/]+)\/claim$/.exec(url.pathname);
       if (req.method === 'POST' && claim) {
-        const task = state.tasks.find((t) => t.id === claim[1]);
-        if (claim409.includes(claim[1]) || task?.claimed_by) {
-          res.statusCode = 409;
-          res.end(JSON.stringify({ error: 'Task already claimed' }));
-          return;
-        }
-        task.claimed_by = JSON.parse(raw).claimer;
-        res.end(JSON.stringify({ id: task.id, claimed_by: task.claimed_by }));
-        return;
-      }
-      const patch = /^\/api\/brain\/tasks\/([^/]+)$/.exec(url.pathname);
-      if (req.method === 'PATCH' && patch) {
+        const task = find(claim[1]);
+        if (!task) return send(res, 404, { error: 'Task not found' });
+        if (claim409.includes(claim[1]) || task.claimed_by) return send(res, 409, { error: 'Task already claimed' });
         const body = JSON.parse(raw);
-        state.patches.push({ id: patch[1], body });
-        const forced = body.status ? patchStatus[body.status] : undefined;
-        if (forced) {
-          res.statusCode = forced;
-          res.end(JSON.stringify({ code: 'FORCED' }));
-          return;
-        }
-        const task = state.tasks.find((t) => t.id === patch[1]);
-        if (task && body.status) task.status = body.status;
-        if (task && body.result) task.result = { ...(task.result || {}), ...body.result };
-        res.end(JSON.stringify({ id: patch[1] }));
-        return;
+        task.claimed_by = body.claimer;
+        task.executor_kind = task.executor_kind ?? body.executor_kind ?? 'headed-session';
+        return send(res, 200, { id: task.id, claimed_by: task.claimed_by, executor_kind: task.executor_kind });
       }
-      res.statusCode = 404;
-      res.end('{}');
+      if (req.method === 'PATCH' && one) {
+        const body = JSON.parse(raw);
+        state.patches.push({ id: one[1], body });
+        const forced = body.status ? patchStatus[body.status] : undefined;
+        if (forced) return send(res, forced, { code: 'FORCED' });
+        const task = find(one[1]);
+        if (!task) return send(res, 404, { code: 'TASK_NOT_FOUND' });
+        if (body.status && body.status !== task.status && !(TRANSITIONS[task.status] || []).includes(body.status)) {
+          return send(res, 409, { code: 'INVALID_TRANSITION', current_status: task.status });
+        }
+        if (body.status) task.status = body.status;
+        if (['completed', 'failed'].includes(body.status)) task.claimed_by = null;
+        if (body.result) task.result = { ...(task.result || {}), ...body.result };
+        if (!body.status && onResultPatch) onResultPatch(task);
+        return send(res, 200, { id: one[1] });
+      }
+      return send(res, 404, {});
     });
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -70,6 +81,9 @@ export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = 
   state.close = () => new Promise((resolve) => server.close(resolve));
   return state;
 }
+
+/** 开关三件套中 payload 的两项（另一项是 task_type: 'data'）。 */
+export const SWITCH = { coding_workflow: true, headed_manual: 'true' };
 
 /** 生成一条带开关的 queued 任务。 */
 export function codingTask(id, extra = {}) {
@@ -79,8 +93,9 @@ export function codingTask(id, extra = {}) {
     status: 'queued',
     task_type: 'data',
     claimed_by: null,
+    executor_kind: null,
     created_at: '2026-10-08T00:00:00.000Z',
-    payload: { coding_workflow: true, headed_manual: 'true' },
+    payload: { ...SWITCH },
     ...extra,
   };
 }
