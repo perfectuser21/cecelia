@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.385.0
+**Brain 版本**: 1.385.1
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,11 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.385.1 — coding workflow 所有 claude 会话钉死 Opus 5.5
+
+- 决策 ac7c8801：coding 研发在 MMV 用 Claude Code，Commander 与链上 claude 会话固定 Opus 5.5。实测 runner 起的 6 次会话 init 模型均为 claude-sonnet-5-5。
+- lib/claude.mjs runClaude：调用方没给 --model 时末尾追加 `--model claude-opus-5-5`（CODING_WF_CLAUDE_MODEL 覆盖），spec/build/verify/ci_fix 统一生效；真实 claude CLI 实测会话模型为 claude-opus-5-5。
 
 ## Brain 1.385.0 — coding workflow runner：CI 红自动修复（ci_fix）
 
