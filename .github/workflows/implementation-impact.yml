@@ -18,6 +18,7 @@ on:
       head_revision: {required: true, type: string}
       mode: {required: true, type: string}
       tooling_revision: {required: true, type: string}
+      admission_scopes: {required: false, type: string, default: ''}
     secrets:
       TS_AUTHKEY: {required: true}
       CECELIA_INTERNAL_TOKEN: {required: true}
@@ -42,6 +43,7 @@ jobs:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
           CECELIA_INTERNAL_TOKEN: ${{ secrets.CECELIA_INTERNAL_TOKEN }}
           MAP_SCOPE: ${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}
+          ADMISSION_SCOPES: ${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || '' }}
           SOURCE_REPO: ${{ inputs.source_repo || github.repository }}
           BASE: ${{ inputs.base_revision || github.event.before }}
           HEAD: ${{ inputs.head_revision || github.sha }}
@@ -62,18 +64,30 @@ jobs:
               -H "X-Internal-Token: $CECELIA_INTERNAL_TOKEN" -H 'Content-Type: application/json' \
               --data-binary @evidence/refresh-request.json > evidence/head.json
           fi
+          if [[ -n "$ADMISSION_SCOPES" ]]; then
+            jq -e 'type == "object" and keys == ["schema_version", "scopes"] and .schema_version == 1 and (.scopes | type == "array" and length > 0 and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and length == (unique | length))' <<< "$ADMISSION_SCOPES" >/dev/null
+            while IFS= read -r scope; do
+              for side in base head; do
+                if [[ "$scope" == "$MAP_SCOPE" ]]; then cp "evidence/$side.json" "evidence/$side-$scope.json"; continue; fi
+                revision="$BASE"; if [[ "$side" == head ]]; then revision="$HEAD"; fi
+                curl --fail-with-body --silent --show-error --get "$BRAIN_URL/api/brain/implementation-ci/snapshot" \
+                  -H "X-Internal-Token: $CECELIA_INTERNAL_TOKEN" \
+                  --data-urlencode "scope=$scope" --data-urlencode "repo=$SOURCE_REPO" --data-urlencode "revision=$revision" > "evidence/$side-$scope.json"
+              done
+            done < <(jq -r '.scopes[]' <<< "$ADMISSION_SCOPES")
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: implementation-snapshot-${{ inputs.head_revision || github.sha }}
-          path: evidence/head.json
+          path: evidence/head*.json
           retention-days: 90
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: implementation-baseline-${{ inputs.head_revision || github.sha }}
-          path: evidence/base.json
+          path: evidence/base*.json
           retention-days: 90
           if-no-files-found: error
   gate:
@@ -98,6 +112,7 @@ jobs:
       DB_USER: ci
       DB_PASSWORD: isolated-ci
       MAP_SCOPE: ${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}
+      ADMISSION_SCOPES: ${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || '' }}
       BASE: ${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}
       HEAD: ${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}
       MODE: ${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}
@@ -165,13 +180,33 @@ jobs:
             unzip -p "$RUNNER_TEMP/implementation-input/base.zip" head.json > "$RUNNER_TEMP/implementation-input/base/base.json"
             mkdir -p "$RUNNER_TEMP/implementation-input/head"
             cp "$RUNNER_TEMP/implementation-input/base/base.json" "$RUNNER_TEMP/implementation-input/head/head.json"
+            if [[ -n "$ADMISSION_SCOPES" ]]; then
+              jq -e 'type == "object" and keys == ["schema_version", "scopes"] and .schema_version == 1 and (.scopes | type == "array" and length > 0 and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and length == (unique | length))' <<< "$ADMISSION_SCOPES" >/dev/null
+              while IFS= read -r scope; do
+                if [[ "$scope" == "$MAP_SCOPE" ]]; then
+                  cp "$RUNNER_TEMP/implementation-input/base/base.json" "$RUNNER_TEMP/implementation-input/base/base-$scope.json"
+                else
+                  gap_code=IMPLEMENTATION_CI_SCOPE_ARTIFACT_MISSING
+                  unzip -p "$RUNNER_TEMP/implementation-input/base.zip" "head-$scope.json" > "$RUNNER_TEMP/implementation-input/base/base-$scope.json"
+                fi
+                cp "$RUNNER_TEMP/implementation-input/base/base-$scope.json" "$RUNNER_TEMP/implementation-input/head/head-$scope.json"
+              done < <(jq -r '.scopes[]' <<< "$ADMISSION_SCOPES")
+            fi
           fi
       - name: 实际变更影响与固定回归
         run: |
-          node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$GITHUB_WORKSPACE/source" --scope "$MAP_SCOPE" \
-            --base "$BASE" --head "$HEAD" --mode "$MODE" \
-            --snapshot-base "$RUNNER_TEMP/implementation-input/base/base.json" \
-            --snapshot-head "$RUNNER_TEMP/implementation-input/head/head.json" --output-dir "$RUNNER_TEMP/implementation-output"
+          set -euo pipefail
+          if [[ "$MODE" == pr && -n "$ADMISSION_SCOPES" ]]; then
+            jq -e 'type == "object" and keys == ["schema_version", "scopes"] and .schema_version == 1 and (.scopes | type == "array" and length > 0 and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and length == (unique | length))' <<< "$ADMISSION_SCOPES" >/dev/null
+            jq --arg root "$RUNNER_TEMP/implementation-input" '.scopes | map({scope:.,snapshotBase:($root+"/base/base-"+.+".json"),snapshotHead:($root+"/head/head-"+.+".json")})' <<< "$ADMISSION_SCOPES" > "$RUNNER_TEMP/implementation-input/scopes.json"
+            node tooling/scripts/ci/implementation-multi-pr-gate.mjs --repo-root "$GITHUB_WORKSPACE/source" \
+              --base "$BASE" --head "$HEAD" --mode "$MODE" --scopes-file "$RUNNER_TEMP/implementation-input/scopes.json" --output-dir "$RUNNER_TEMP/implementation-output"
+          else
+            node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$GITHUB_WORKSPACE/source" --scope "$MAP_SCOPE" \
+              --base "$BASE" --head "$HEAD" --mode "$MODE" \
+              --snapshot-base "$RUNNER_TEMP/implementation-input/base/base.json" \
+              --snapshot-head "$RUNNER_TEMP/implementation-input/head/head.json" --output-dir "$RUNNER_TEMP/implementation-output"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

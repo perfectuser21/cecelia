@@ -40,9 +40,13 @@ it('真实workflow shell仅显式PR scopes调用联合入口，main仍单scope�
  try{
   const capture=join(root,'args'),node=join(root,'node');writeFileSync(node,'#!/bin/bash\nprintf "%s\\n" "$@" > "$CALL_CAPTURE"\n');chmodSync(node,0o700);
   mkdirSync(join(root,'implementation-input/base'),{recursive:true});mkdirSync(join(root,'implementation-input/head'),{recursive:true});mkdirSync(join(root,'implementation-output'));
-  const env={...process.env,PATH:root+':'+process.env.PATH,CALL_CAPTURE:capture,RUNNER_TEMP:root,GITHUB_WORKSPACE:root,BASE:'a'.repeat(40),HEAD:'b'.repeat(40),MAP_SCOPE:'cecelia-kr',ADMISSION_SCOPES:'["cecelia-kr","cecelia-factory"]',MODE:'pr'};
+  const env={...process.env,PATH:root+':'+process.env.PATH,CALL_CAPTURE:capture,RUNNER_TEMP:root,GITHUB_WORKSPACE:root,BASE:'a'.repeat(40),HEAD:'b'.repeat(40),MAP_SCOPE:'cecelia-kr',ADMISSION_SCOPES:'{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}',MODE:'pr'};
   execFileSync('/bin/bash',['-c',script],{env});expect(readFileSync(capture,'utf8')).toContain('implementation-multi-pr-gate.mjs');
   const scopes=JSON.parse(readFileSync(join(root,'implementation-input/scopes.json'),'utf8'));expect(scopes.map(s=>s.scope)).toEqual(['cecelia-kr','cecelia-factory']);
+  for(const value of [JSON.stringify({schema_version:99,scopes:['cecelia-kr']}),JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-kr']}),JSON.stringify({schema_version:1,scopes:['cecelia-kr'],execute:true})]){
+   expect(()=>execFileSync('/bin/bash',['-c',script],{env:{...env,ADMISSION_SCOPES:value},stdio:'pipe'})).toThrow();
+  }
+  execFileSync('/bin/bash',['-c',script],{env:{...env,ADMISSION_SCOPES:''}});expect(readFileSync(capture,'utf8')).toContain('implementation-pr-gate.mjs');
   execFileSync('/bin/bash',['-c',script],{env:{...env,MODE:'main'}});expect(readFileSync(capture,'utf8')).toContain('implementation-pr-gate.mjs');expect(readFileSync(capture,'utf8')).not.toContain('implementation-multi-pr-gate.mjs');
  }finally{rmSync(root,{recursive:true,force:true});}
 });
@@ -76,6 +80,10 @@ it('真实PG全差异报告仅用另一scope真实原生调用闭包消解foreig
  expect(proof.resolved_foreign_paths).toHaveLength(2);
  for(const gap of [{code:'regression_missing'},{code:'auxiliary_owner_unclaimed',path:'src/factory-deploy.js'}]){
   const altered=structuredClone(raw);altered[0].gaps.push(gap);
+  expect(()=>multi.resolveScopedImplementationReports({source:full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:altered})).toThrow();
+ }
+ for(const change of [r=>r.gaps=[],r=>r.head.mapping_status='unknown']){
+  const altered=structuredClone(raw);change(altered[0]);
   expect(()=>multi.resolveScopedImplementationReports({source:full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:altered})).toThrow();
  }
 });
