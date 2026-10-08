@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // coding workflow runner：每次调用至多新跑一条开关任务（task_type=data + payload.headed_manual="true"
 // + payload.coding_workflow===true）：保留期清理 → 对账（本机丢失的 in_progress、带本机痕迹的 queued）
-// → 认领 → 建 worktree → 跑七活动 coding 链 → 回写 Brain。
+// → 自己开的 cw PR 有 CI 红则本轮只修它（lib/cifix.mjs）→ 认领 → 建 worktree → 跑七活动 coding 链 → 回写 Brain。
 // 退出码：0 = 无新任务 / 上一轮仍在跑 / 新任务完成；1 = 新任务失败或 runner 自身出错。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,6 +15,7 @@ import { cleanupRetention } from './lib/retention.mjs';
 import { runExecutor } from './lib/executor.mjs';
 import { readReceipt, summarizeReceipt } from './lib/receipt.mjs';
 import { failTask, finishSuccess, localSummary, lostSummary, settle, settleQueued } from './lib/terminal.mjs';
+import { runCiFix } from './lib/cifix.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_REL = 'packages/brain/scripts/coding-workflow';
@@ -112,6 +113,8 @@ export async function runOnce(cfg, signal) {
   let task;
   try {
     await settleLost(ctx);
+    // 先收尾再开新：自己开的 PR CI 红了，本轮只修它
+    if (cfg.ciFix && await runCiFix(ctx, signal)) return 0;
     task = await claimFirst(ctx, await pickNew(ctx, await ctx.brain.listTasks('queued')));
   } catch (error) {
     log(`查询/对账/认领失败：${error.message}`);
