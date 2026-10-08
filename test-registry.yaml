@@ -339,3 +339,10 @@ tests:
     ci: L4
     status: active
     note: "真实CLI与活动子进程验证一次性START凭证：阻塞/快任务、独占0600发布、UUID及摘要绑定、写失败、旧凭证保护、参数边界、事件库不可用与无旗标兼容。"
+
+  - id: nightly-runtime-launch-contract
+    path: .github/workflows/scripts/__tests__/nightly-runtime.test.mjs
+    type: integration
+    ci: L4
+    status: active
+    note: "真实Vitest选择、实际nightly批量shell连接环境、F5真HTTP公开协议正负回归"
