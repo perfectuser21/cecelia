@@ -45,7 +45,22 @@ describe('真实工厂旧消费者来源，独立于可执行完整Workflow', ()
     }
   });
   it('非工厂scope、跨repo、宽路径与非固定SHA拒绝', async () => {
-    for (const override of [{ scope: 'cecelia-kr' }, { repo: 'perfectuser21/zenithjoy-workspace' }, { revision: 'main' }, { paths: [...paths, 'packages/brain/migrations/*.sql'] }])
+    for (const override of [{ scope: 'cecelia' }, { scope: 'cecelia-kr' }, { repo: 'perfectuser21/zenithjoy-workspace' }, { revision: 'main' }, { paths: [...paths, 'packages/brain/migrations/*.sql'] }])
       await expect(build(override)).rejects.toThrow(/OPS_SOURCE_INPUT_INVALID/);
+  });
+  it('固定真实候选native reader仅经required CI调用认领，其bash链与两YAML来自实际输入', async()=>{
+    const head='d05e46e6c91e61407cad12f6cc0b9f771770c6d4';
+    const headPaths=execFileSync('git',['ls-tree','-rz','--name-only',head],{cwd:root,encoding:'utf8'}).replace(/\0$/,'').split('\0');
+    const cache=new Map(),reader='.github/workflows/scripts/__tests__/nightly-runtime.test.mjs';
+    const headRead=async path=>{if(!cache.has(path))cache.set(path,execFileSync('git',['show',`${head}:${path}`],{cwd:root,encoding:'utf8',maxBuffer:16000000}));return cache.get(path);};
+    const run=extra=>build({revision:head,paths:headPaths,readSource:headRead,...extra});
+    const result=await run(),f3=result.consumers[1];
+    expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
+    for(const path of [reader,'packages/brain/scripts/smoke/factory-f5-cockpit-smoke.sh','packages/brain/scripts/smoke/healthz-smoke.sh'])expect(f3.bindings.some(b=>b.path===path)).toBe(true);
+    expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:'.github/workflows/ci.yml',input_path:reader,kind:'required_node_test'}));
+    expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:reader,input_path:'packages/brain/scripts/smoke/factory-f5-cockpit-smoke.sh',kind:'node_test_spawn_bash'}));
+    expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:'packages/brain/scripts/smoke/factory-f5-cockpit-smoke.sh',input_path:'packages/brain/scripts/smoke/healthz-smoke.sh',kind:'relative_bash_call'}));
+    const missing=await run({readSource:async path=>path===reader?'// old spawn/readFileSync names only\nexport const unused=true;':headRead(path)});
+    expect(missing.consumers[1].status).toBe('unknown');expect(missing.consumers[1].bindings).toEqual([]);
   });
 });
