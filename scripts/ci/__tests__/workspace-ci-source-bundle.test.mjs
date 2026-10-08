@@ -49,3 +49,18 @@ test('未调用的读回helper不构成required测试证据',async t=>{const f=f
 test('源码callback不得收到未声明repo与路径',async t=>{const f=fixture(t),r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'verified');assert.equal(f.reads.filter(x=>x.repo!==WR&&x.repo!==BR).length,0);assert.equal(f.reads.filter(x=>!/^\.github\/workflows\/(?:implementation-impact|pilot-release-verification)\.yml$|^scripts\/ci\/(?:__tests__\/(?:implementation-impact|pilot-release)-workflow\.test\.mjs|implementation-pr-gate\.mjs|pilot-release-verification\.mjs)$/.test(x.path)).length,0);});
 
 test('死分支的config调用不能证明node:test真正读输入',async t=>{const f=fixture(t,w=>{w['scripts/ci/__tests__/implementation-impact-workflow.test.mjs']=w['scripts/ci/__tests__/implementation-impact-workflow.test.mjs'].replace("()=>{config();}","()=>{if(false)config();}");}),r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='READER_INPUT_UNPROVEN'));});
+
+for(const [name,mutate] of [
+ ['helper提前return',(w)=>{const p='scripts/ci/__tests__/implementation-impact-workflow.test.mjs';w[p]=w[p].replace('function config(){','function config(){return {};');}],
+ ['callback同名config遮蔽',(w)=>{const p='scripts/ci/__tests__/implementation-impact-workflow.test.mjs';w[p]=w[p].replace('()=>{config();}','()=>{const config=()=>({});config();}');}],
+ ['helper参数遮蔽readFileSync',(w)=>{const p='scripts/ci/__tests__/implementation-impact-workflow.test.mjs';w[p]=w[p].replace('function config(){','function config(readFileSync){');}],
+ ['helper赋值覆盖',(w)=>{const p='scripts/ci/__tests__/implementation-impact-workflow.test.mjs';w[p]=w[p].replace("test('真实caller协议'","config=()=>({});test('真实caller协议'");}],
+])test(`词法/可达性拒认：${name}`,async t=>{const f=fixture(t,mutate),r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='READER_INPUT_UNPROVEN'));});
+test('同一Workspace base两个不同合法历史callee pin分别冻结',async t=>{
+ const f=fixture(t),read=f.options.readSource,other='b'.repeat(40),pilot='.github/workflows/pilot-release-verification.yml';
+ f.options.brain={repo:BR,revisions:[f.brainRevision,other]};
+ f.options.readSource=async q=>{if(q.repo===WR&&q.path===pilot)return Buffer.from((await read(q)).toString().replaceAll(f.brainRevision,other));if(q.repo===BR&&q.revision===other)return read({...q,revision:f.brainRevision});return read(q);};
+ const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'verified',JSON.stringify(r.gaps));assert.equal(r.source_set.length,3);assert.ok(r.consumer.bindings.some(b=>b.repo===BR&&b.revision===other&&b.path===pilot));assert.equal(r.executable,false);
+});
+for(const prefix of ['# node tooling/scripts/ci/implementation-pr-gate.mjs','echo "node tooling/scripts/ci/implementation-pr-gate.mjs"'])test(`shell伪命令拒认：${prefix.split(' ')[0]}`,async t=>{const f=fixture(t),read=f.options.readSource;f.options.readSource=async q=>{const b=await read(q);return q.repo===BR&&q.path==='.github/workflows/implementation-impact.yml'?Buffer.from(b.toString().replace('node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$PWD/source"',prefix)):b;};const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='CALLEE_RUNNER_MISSING'));});
+test('来源一致也不得冒充Brain featureSHA已获main入场',async t=>{const f=fixture(t),r=await extractWorkspaceCiSourceBundle({...f.options,trusted_main_history:{status:'verified'}});assert.equal(r.admission.status,'unknown');assert.equal(r.admission.trusted_main_history.status,'not_evaluated');assert.equal(r.executable,false);});
