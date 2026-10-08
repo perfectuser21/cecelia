@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // 假 gh（CI 修复用）：argv 追加到 FAKE_GH_LOG；按 FAKE_GH_CI 指向的 JSON 回放：
-// { prs: [...], required: { <pr>: [{name,bucket}] }, checks: { <pr>: [{name,bucket,link}] }, logs: { <jobId>: "..." } }
+// { prs: [...], required: { <pr>: [{name,bucket}] }, checks: { <pr>: [{name,bucket,link}] }, logs: { <jobId>: "..." },
+//   prStates: { <pr_url>: "MERGED"|"OPEN"|"CLOSED" } }
 // `pr checks --required` 有 pending 时退出 8、有 fail 时退出 1（同真 gh），JSON 照常输出。
 import fs from 'node:fs';
 
@@ -13,6 +14,12 @@ const out = (value, code = 0) => {
 };
 
 if (argv[0] === 'pr' && argv[1] === 'list') out(state.prs ?? []);
+// pr view <url> --json state：按 prStates[url] 回放，未登记的 PR 报错退出 1
+if (argv[0] === 'pr' && argv[1] === 'view') {
+  const s = state.prStates?.[argv[2]];
+  if (!s) process.exit(1);
+  out({ state: s });
+}
 if (argv[0] === 'pr' && argv[1] === 'checks') {
   const pr = argv[2];
   if (argv.includes('--required')) {

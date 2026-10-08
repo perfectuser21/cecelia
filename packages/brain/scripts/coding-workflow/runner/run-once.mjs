@@ -16,6 +16,7 @@ import { runExecutor } from './lib/executor.mjs';
 import { readReceipt, summarizeReceipt } from './lib/receipt.mjs';
 import { failTask, finishSuccess, localSummary, lostSummary, settle, settleQueued } from './lib/terminal.mjs';
 import { runCiFix } from './lib/cifix.mjs';
+import { readyCandidates } from './lib/deps.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_REL = 'packages/brain/scripts/coding-workflow';
@@ -115,7 +116,8 @@ export async function runOnce(cfg, signal) {
     await settleLost(ctx);
     // 先收尾再开新：自己开的 PR CI 红了，本轮只修它
     if (cfg.ciFix && await runCiFix(ctx, signal)) return 0;
-    task = await claimFirst(ctx, await pickNew(ctx, await ctx.brain.listTasks('queued')));
+    const fresh = await pickNew(ctx, await ctx.brain.listTasks('queued'));
+    task = await claimFirst(ctx, await readyCandidates(ctx, fresh));
   } catch (error) {
     log(`查询/对账/认领失败：${error.message}`);
     return 1;
