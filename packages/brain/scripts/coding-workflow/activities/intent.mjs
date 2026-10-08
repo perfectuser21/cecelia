@@ -34,7 +34,7 @@ await runActivity(async (input) => {
 
   fs.mkdirSync(dir, { recursive: true });
   const intentPath = path.join(dir, INTENT_FILE);
-  fs.writeFileSync(intentPath, renderIntent({ taskId, title: task?.title, items }));
+  fs.writeFileSync(intentPath, renderIntent({ taskId, title: task?.title, items, description: task?.description }));
 
   return {
     status: 'completed',

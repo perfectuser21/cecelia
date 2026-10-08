@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { checkChain, extractAnchors } from '../lib/md-chain.mjs';
+import { checkChain, extractAnchors, parseFrontmatter } from '../lib/md-chain.mjs';
+import { renderIntent } from '../lib/intent.mjs';
 
 const TASK = 'task-123';
 
@@ -185,5 +186,32 @@ describe('extractAnchors', () => {
 
   it('ID 后可跟说明文字（空白或冒号分隔），ID 必须完整（真实 claude c2afa8ba：### S-1 plist 模板…）', () => {
     expect(extractAnchors('### S-1 plist 模板增加占位\n### S-2：渲染\n### S-10\n### S-3a\n### S-4-x')).toEqual(['S-1', 'S-2', 'S-10']);
+  });
+
+  const BACKGROUND = '## 小标题\n#### I-9\n- I-7 列表\n正文提到 I-5 字样\n### I-8 伪锚点\n验收：①一 ②二';
+
+  it('带背景的 01-intent.md：背景里的标题/列表/伪锚点都不成为锚点', () => {
+    const md = renderIntent({ taskId: TASK, title: '意图', items: ['一', '二'], description: BACKGROUND });
+    expect(md).toContain('## 背景');
+    expect(extractAnchors(parseFrontmatter(md).body)).toEqual(['I-1', 'I-2']);
+  });
+
+  it('带背景的 01-intent.md + 只覆盖 I-1/I-2 的 02-spec.md：checkChain 通过', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-chain-bg-'));
+    try {
+      fs.writeFileSync(
+        path.join(dir, '01-intent.md'),
+        renderIntent({ taskId: TASK, title: '意图', items: ['一', '二'], description: BACKGROUND }),
+      );
+      fs.writeFileSync(
+        path.join(dir, '02-spec.md'),
+        `${fm(TASK, 'spec', ['01-intent.md#I-1', '01-intent.md#I-2'])}\n### S-1\n一\n\n### S-2\n二\n`,
+      );
+      const r = checkChain({ dir, taskId: TASK });
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
