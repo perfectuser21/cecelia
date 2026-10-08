@@ -45,6 +45,7 @@ codex-gen-description-fix-smoke.sh
 codex-grok-launcher-supervisor-smoke.sh
 codex-headed-dispatch-smoke.sh
 codex-test-gen-smoke.sh
+coding-workflow-runner-smoke.sh
 commander-invoker-smoke.sh
 company-key-results-smoke.sh
 compute-ssh-reachability-smoke.sh
