@@ -4,6 +4,11 @@ const SHA=/^[0-9a-f]{40}$/;
 const HASH=/^[0-9a-f]{64}$/;
 const TRUSTED_REPOS=new Set(['perfectuser21/cecelia','perfectuser21/zenithjoy-workspace']);
 const trustedMainWitnesses=new WeakSet();
+function sealedReceipt(value){
+ const body=JSON.parse(JSON.stringify(value));
+ const freeze=v=>{if(v&&typeof v==='object'){for(const child of Object.values(v))freeze(child);Object.freeze(v);}return v;};
+ return freeze(body);
+}
 export const isTrustedConsumerSourceMainWitness=witness=>trustedMainWitnesses.has(witness);
 export const validAssertionSourceRepo = repo => typeof repo==='string'&&REPO.test(repo);
 export async function consumerSourceAdmissionScope(db) {
@@ -103,7 +108,7 @@ export async function readConsumerSourceMainWitness(input,{fetchFn=globalThis.fe
    artifact:{name:artifact.name,workflow_run:artifact.workflow_run,expired:artifact.expired},
    jobs:jobsResponse.jobs?.filter(j=>j.name==='snapshot-main').map(j=>({name:j.name,status:j.status,conclusion:j.conclusion})),
    main_history:history.map(h=>({repo:h.repo,revision:h.revision,current_main:h.current_main,status:h.comparison?.status,base_sha:h.comparison?.base_commit?.sha,merge_base_sha:h.comparison?.merge_base_commit?.sha}))}};
-  const result={status:'verified',admission:{status:'verified',source_basis:'trusted_main_history'},witness};
+  const result=sealedReceipt({status:'verified',admission:{status:'verified',source_basis:'trusted_main_history'},witness});
   trustedMainWitnesses.add(result);return result;
  }catch{return unknown('CONSUMER_MAIN_SOURCE_UNAVAILABLE');}
 }
@@ -134,7 +139,33 @@ export async function collectWorkspaceConsumerSourceSet(input,{fetchFn=globalThi
   if(proof.status!=='verified'||proof.gaps?.length||proof.consumer?.status!=='verified')return {...unknown('CONSUMER_CORE_SOURCE_UNKNOWN'),source_gaps:proof.gaps};
   const witness=await readConsumerSourceMainWitness({anchor,source_set:proof.source_set,run_id:runId},{fetchFn,resolveToken:async()=>token});
   if(!isTrustedConsumerSourceMainWitness(witness))return {...unknown('CONSUMER_MAIN_EVIDENCE_UNKNOWN'),source_gaps:witness.gaps,diagnostics:witness.diagnostics};
-  const result={...proof,registry_source:anchor,admission:{status:'verified',source_basis:'trusted_main_history',snapshot_sha256:witness.witness.snapshot.snapshot_sha256,run_id:runId},main_evidence:witness.witness};
+  const result=sealedReceipt({...proof,registry_source:anchor,admission:{status:'verified',source_basis:'trusted_main_history',snapshot_sha256:witness.witness.snapshot.snapshot_sha256,run_id:runId},main_evidence:witness.witness});
   trustedWorkspaceConsumerSources.add(result);return result;
  }catch{return unknown('CONSUMER_CORE_SOURCE_UNAVAILABLE');}
+}
+/** 只供真实F3受信refresh在registry锁内append使用；旧payload不原地改写。 */
+export function freezeFactoryWorkspaceConsumerPayload(payload,proof,anchor) {
+ const fail=code=>{throw Object.assign(Error(code),{code,status:422});};
+ if(!isTrustedWorkspaceConsumerSource(proof)||proof.status!=='verified'||proof.admission?.status!=='verified'
+   ||!validateConsumerSourceMainEvidence(proof.main_evidence)||proof.registry_source?.repo!==anchor?.repo||proof.registry_source?.revision!==anchor?.revision)fail('CONSUMER_MAIN_SOURCE_UNKNOWN');
+ if(anchor.repo!=='perfectuser21/cecelia'||payload?.activity_id!=='0466016e-6d9f-4325-aeb4-d8bc70424a48'
+  ||proof.consumer?.activity_id!==payload.activity_id||payload.definition_key!=='factory_f3_ops.step_1'
+  ||payload.definition_scope!=='consumer_evidence'||payload.source_scope!=='cecelia-factory'||payload.contract?.executable!==false
+  ||!Array.isArray(payload.steps)||payload.steps.length||!Array.isArray(payload.implementation_bindings))fail('CONSUMER_FACTORY_IDENTITY_UNKNOWN');
+ const native=payload.implementation_bindings;
+ if(!native.length||native.some(b=>b.repo!==anchor.repo||b.revision!==anchor.revision||b.status!=='verified'
+  ||b.validation_scope!=='consumer_source'||!HASH.test(b.content_sha256)||b.digest!==`sha256:${b.content_sha256}`))fail('CONSUMER_REGISTRY_ANCHOR_SOURCE_UNKNOWN');
+ const bindings=new Map();
+ for(const binding of [...native,...proof.consumer.bindings]){
+  const key=JSON.stringify([binding.repo,binding.revision,binding.path]);
+  if(bindings.has(key)&&stepSha256(bindings.get(key))!==stepSha256(binding))fail('CONSUMER_SOURCE_BINDING_CONFLICT');
+  bindings.set(key,binding);
+ }
+ const implementation_bindings=[...bindings.values()];
+ const source_set=[...new Map([...proof.source_set,anchor].map(s=>[`${s.repo}@${s.revision}`,{repo:s.repo,revision:s.revision}])).values()];
+ const result={...payload,implementation_bindings,source_set,registry_source:{...anchor},
+  source_set_sha256:stepSha256({source_set,implementation_bindings}),
+  source_set_admission:{status:'verified',source_basis:'trusted_main_history',purpose:'consumer_source_only',run_id:proof.admission.run_id,snapshot_sha256:proof.admission.snapshot_sha256},
+  input_relations:[...(payload.input_relations||[]),...proof.consumer.input_relations],verification:{runtime_status:'not_evaluated'}};
+ return sealedReceipt(result);
 }
