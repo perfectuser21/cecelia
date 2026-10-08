@@ -265,6 +265,25 @@ it('Workspace 来源关系缺真实图认领仍 UNKNOWN，不能以exact reader�
  gate.applyAuxiliarySourceEvidence(f.report,e,{base:[],head:[]});
  expect(f.report.mapping_status).toBe('unknown');expect(f.report.gaps).toContainEqual({code:'auxiliary_owner_unclaimed',side:'head',path:f.readerPath});
 });
+it('Workspace exact关系不能跨repo、换reader/input或把业务SQL当配置',()=>{
+ for(const change of [{repo:'perfectuser21/cecelia'},{consumer_path:'scripts/ci/__tests__/arbitrary.test.mjs'},{path:'.github/workflows/arbitrary.yml'},{owner_path:nightlyReader}]){
+  const f=workspaceConfigFixture(),repo=change.repo||workspaceRepo;
+  if(change.repo){f.git('remote','set-url','origin',`https://github.com/${repo}.git`);f.source.repo=repo;}
+  const {repo:_repo,...changed}=change;
+  writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo,relations:[{...f.config,...changed}]}));configCommit(f);
+  expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow(/AUXILIARY_(CONFIG|MANIFEST)_/);
+ }
+ const f=workspaceConfigFixture();writeFileSync(join(f.root,workspaceCi),'SELECT * FROM tasks;');configCommit(f);
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow(/AUXILIARY_CONFIG_CI_/);
+});
+it('Workspace reader仍不允许documentation/verification角色借test父模块，错reader hash拒绝',()=>{
+ for(const role of ['documentation','verification']){
+  const f=workspaceConfigFixture();writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:workspaceRepo,relations:[{owner_path:f.readerPath,path:'docs/controller.md',role}]}));configCommit(f);
+  expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow('AUXILIARY_OWNER_INVALID');
+ }
+ const f=workspaceConfigFixture(),e=gate.collectAuxiliarySourceEvidence(f.root,f.source);e.head.relations[0].consumer_sha256='f'.repeat(64);
+ expect(()=>gate.applyAuxiliarySourceEvidence(f.report,e,{base:[],head:[]})).toThrow('AUXILIARY_EVIDENCE_INVALID');
+});
 function configFixture(target=nightlyYaml){
  const f=fixture([]);f.git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
  mkdirSync(join(f.root,'.github/workflows/scripts/__tests__'),{recursive:true});
