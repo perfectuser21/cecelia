@@ -167,6 +167,14 @@ describe('远端命令在本机 sh 下真跑（反「字符串断言假绿」）
 });
 
 describe('triggerOpenclawAgent', () => {
+  it('工厂探路收到Brain原执行号，锁和证据不另造身份', async () => {
+    const spawnFn = spawnMock();
+    const factory = { ...task, payload: { ...task.payload, qiumi_department: 'skill-factory' } };
+    expect((await triggerOpenclawAgent(factory, { spawnFn, pool: { query: vi.fn() } })).success).toBe(true);
+    const message = String(spawnFn.child.stdin.end.mock.calls[0][0]);
+    expect(message).toContain(`task_id=${task.id}；run_id=${task.payload.run_id}`);
+    expect(message).toContain('探路阶段的锁、证据与交付 JSON 必须使用此号');
+  });
   it('成功：走 spawn，正文经 stdin.end 送出（不进命令行），DISPATCHED → in_progress + executor_kind + 留痕', async () => {
     const spawnFn = spawnMock();
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
