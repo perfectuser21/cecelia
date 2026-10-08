@@ -547,6 +547,17 @@ describe('scheduler-jobs 注册表', () => {
     expect(results.every((r) => r.ok)).toBe(true);
   });
 
+  it('crystal-judge 注册接线在每日窗口也由假 handler 隔离真实查询', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-08T21:02:00Z'));
+    const { maybeRunCrystalJudge } = await import('../crystal-judge.js');
+    const pool = { query: vi.fn().mockRejectedValue(new Error('sentinel unavailable')) };
+    const job = JOBS.find((j) => j.name === 'crystal-judge');
+    const [result] = await runSchedulerJobsOnce(pool, [job]);
+    expect(result.ok).toBe(true);
+    expect(maybeRunCrystalJudge).toHaveBeenCalledWith(pool);
+  });
+
   it('handler 返回 liveness_at → 哨兵 record 原样带上（活性只认 handler 自报的完成时刻）', async () => {
     const pool = makePool();
     const jobs = [
