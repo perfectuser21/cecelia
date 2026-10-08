@@ -1,5 +1,5 @@
 import {manifestMatchesImplementationSource} from './implementation-context.js';
-import {hasFrozenConsumerSource,sealedConsumerVersion,sealedBrainConsumerDefinition,consumerSourceAdmissionScope} from './consumer-source-set.js';
+import {hasFrozenConsumerSource,sealedConsumerVersion,collectWorkspaceConsumerSourceSet,isTrustedWorkspaceConsumerSource,sealedBrainConsumerDefinition,consumerSourceAdmissionScope} from './consumer-source-set.js';
 /** 中央定义只读导出；身份由登记表给出，历史来源不以latest补齐。 */
 import {preparePilotManifestAdvance,advancePilotManifest} from './implementation-ci-pilot-manifest.js';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
@@ -191,6 +191,14 @@ async function reuseConcurrentSnapshot(pool,q,checkMain,conflict,waitMs){
 export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalThis.fetch,resolveToken=resolveGitHubToken,
   readBinding,conflictWaitMs=5000,allowRepos=(process.env.CECELIA_IMPLEMENTATION_CI_REPOS??`${CONTRACT_REPO},perfectuser21/cecelia`).split(',').map(r=>r.trim()).filter(Boolean)}={}){
   const q=validateSnapshotQuery(input);
+  const consumer=input?.workspace_consumer;
+  if(consumer!==undefined&&(q.scope!==EXISTING_OPS_SCOPE||q.repo!==EXISTING_OPS_REPO
+    ||!consumer||Object.keys(consumer).sort().join(',')!=='brain_revisions,run_id,workspace_revision'
+    ||!/^[a-f0-9]{40}$/.test(consumer.workspace_revision||'')||!Array.isArray(consumer.brain_revisions)
+    ||consumer.brain_revisions.length<1||consumer.brain_revisions.length>2
+    ||consumer.brain_revisions.some(r=>typeof r!=='string'||!/^[a-f0-9]{40}$/.test(r))
+    ||new Set(consumer.brain_revisions).size!==consumer.brain_revisions.length
+    ||!Number.isSafeInteger(consumer.run_id)||consumer.run_id<=0))throw ciFailure('CONSUMER_REFRESH_INPUT_INVALID');
   if(!allowRepos.includes(q.repo))throw ciFailure('REFRESH_UNCONFIGURED','main同步repo未授权',503);
   if(![CONTRACT_REPO,'perfectuser21/cecelia'].includes(q.repo))throw ciFailure('SYNC_ADAPTER_MISSING','该repo缺少固定main同步adapter',422);
   const checkRegistration=async()=>{
@@ -231,7 +239,17 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
       const tree=await response.json();
       if(tree.truncated||tree.sha!==commit.tree.sha||!Array.isArray(tree.tree))throw ciFailure('SOURCE_TREE_INCOMPLETE');
       const paths=tree.tree.filter(n=>n.type==='blob').map(n=>n.path),registry=await readExistingOpsRegistry(pool);
-      await registerExistingOpsSources(pool,{...q,paths,readSource:readFile,checkMain,expectedRegistrySha256:registry.registry_sha256,actor:'implementation-ci-main-refresh'});
+      let workspaceConsumerProof;
+      if(consumer!==undefined){
+        const {unverified_reference_ids,...identity}=EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops');
+        workspaceConsumerProof=await collectWorkspaceConsumerSourceSet({
+          workspace:{repo:CONTRACT_REPO,revision:consumer.workspace_revision},
+          brain:{repo:EXISTING_OPS_REPO,revisions:consumer.brain_revisions},identity,
+          anchor:{repo:q.repo,revision:q.revision},run_id:consumer.run_id
+        },{fetchFn,resolveToken:async()=>token});
+        if(!isTrustedWorkspaceConsumerSource(workspaceConsumerProof))throw ciFailure('CONSUMER_MAIN_SOURCE_UNKNOWN');
+      }
+      await registerExistingOpsSources(pool,{...q,paths,readSource:readFile,checkMain,workspaceConsumerProof,expectedRegistrySha256:registry.registry_sha256,actor:'implementation-ci-main-refresh'});
     }else{
       const text=await readFile('packages/brain/config/company-kr-workflow.json'),spec=JSON.parse(text);
       await registerCompanyKrWorkflow(pool,{spec,revision:q.revision,readSource:async()=>text,beforeCommit:checkMain,definitionsOnly:true,
