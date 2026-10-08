@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.382.1
+**Brain 版本**: 1.382.2
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.382.2 — coding workflow spec 生成后自检 02，锚点标题允许带说明文字
+
+- 真实端到端 c2afa8ba：claude 把规格标题写成 `### S-1 <说明>`，spec 活动只查文件存在就 completed，build 解析不到 S-n 报 spec_ids_missing。
+- lib/md-chain.mjs 与 lib/evidence.mjs：锚点标题 `### <ID>` 后允许跟说明文字（空白或冒号分隔）；ID 后紧跟字母/数字/连字符仍不算锚点。
+- activities/spec.mjs：生成后自检 02（frontmatter、upstream 覆盖全部 I-n、至少一条 S-n），不合格报 retryable spec_invalid（evidence 带 spec_errors），契约 spec 最多 2 次尝试，claude 重写一次。
 
 ## Brain 1.382.1 — coding workflow verify 对接真实 claude：证据核对容忍 worktree 内 cd 前缀、claude 会话剥 runner 配置
 
