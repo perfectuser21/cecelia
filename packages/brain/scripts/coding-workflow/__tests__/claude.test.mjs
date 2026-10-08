@@ -200,6 +200,22 @@ describe('runClaude（进程内 + 假 claude）', () => {
     }
   });
 
+  it('模型钉死：默认追加 --model claude-opus-5-5（决策 ac7c8801；实测不钉会落到 sonnet）', async () => {
+    setEnv({ CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'ok' });
+    for (const isolateRemote of [false, true]) {
+      const r = await runClaude({ args: ['-p', prompt(), '--x', 'y'], cwd: tmp, timeoutMs: 20000, tag: 'test', isolateRemote });
+      expect(r.output).toContain('FAKE_ARGS: -p --x y --model claude-opus-5-5\n');
+    }
+  });
+
+  it('模型可用 CODING_WF_CLAUDE_MODEL 覆盖；调用方已给 --model 时不重复追加', async () => {
+    setEnv({ CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'ok', CODING_WF_CLAUDE_MODEL: 'claude-opus-9' });
+    let r = await runClaude({ args: ['-p', prompt()], cwd: tmp, timeoutMs: 20000, tag: 'test' });
+    expect(r.output).toContain('FAKE_ARGS: -p --model claude-opus-9\n');
+    r = await runClaude({ args: ['-p', prompt(), '--model', 'x'], cwd: tmp, timeoutMs: 20000, tag: 'test' });
+    expect(r.output).toContain('FAKE_ARGS: -p --model x\n');
+  });
+
   it('不开 isolateRemote（spec）时 GH 环境原样继承', async () => {
     setEnv({ CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'ok', GH_TOKEN: 't1' });
     const r = await runClaude({ args: ['-p', prompt()], cwd: tmp, timeoutMs: 20000, tag: 'test' });

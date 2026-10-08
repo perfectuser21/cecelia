@@ -41,6 +41,15 @@ function remoteIsolatedEnv(ghConfigDir) {
   return env;
 }
 
+// coding 链所有 claude 会话固定 Opus（决策 ac7c8801）：不显式指定时实测落到 sonnet
+const DEFAULT_MODEL = 'claude-opus-5-5';
+
+/** 调用方没给 --model 时在末尾追加（CODING_WF_CLAUDE_MODEL 覆盖默认）。 */
+function withModel(args) {
+  if (args.includes('--model')) return args;
+  return [...args, '--model', process.env.CODING_WF_CLAUDE_MODEL || DEFAULT_MODEL];
+}
+
 /** 把模板里的 `{{KEY}}` 换成 vars[KEY]（值按字面量插入，不解释 `$&` 等替换序列）。 */
 export function renderPrompt(template, vars) {
   return Object.entries(vars).reduce((text, [key, value]) => text.replaceAll(`{{${key}}}`, () => value), template);
@@ -100,7 +109,8 @@ function signalGroup(child, signal, tag) {
  * - 本进程收到 SIGTERM（执行器取消/超时/心跳失败）：对 claude 组发 SIGTERM，CANCEL_GRACE_MS 后组 SIGKILL，terminated: true。
  * - 正常退出后若输出管道被后代占着，EXIT_GRACE_MS 后整组 SIGKILL 并销毁管道，不等 close。
  */
-export async function runClaude({ args, cwd, timeoutMs, tag, isolateRemote = false }) {
+export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolateRemote = false }) {
+  const args = withModel(callerArgs);
   if (!isolateRemote) return spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv() });
   const ghConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-wf-gh-'));
   try {
