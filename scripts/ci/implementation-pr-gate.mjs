@@ -14,7 +14,7 @@ import { readImplementationImpact } from '../../packages/brain/src/lib/implement
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024}).trim();
 const read=path=>{const data=JSON.parse(readFileSync(path,'utf8'));return data.snapshot||data;};
 const save=(dir,name,data)=>writeFileSync(join(dir,name),JSON.stringify(data,null,2)+'\n');
-export async function runImplementationPrGate({repoRoot,scope,base,head,mode,snapshotBase,snapshotHead,outputDir}){
+async function implementationPrEvidence({repoRoot,scope,base,head,mode,snapshotBase,snapshotHead,outputDir},execute){
   mkdirSync(outputDir,{recursive:true});let scratch,worktree,headWorktree,parent;
   try{
     if(!['pr','main'].includes(mode)||typeof scope!=='string'||!scope||![base,head].every(v=>typeof v==='string'&&/^[0-9a-f]{40}$/.test(v)))throw ciFailure('INPUT_INVALID');
@@ -54,6 +54,7 @@ export async function runImplementationPrGate({repoRoot,scope,base,head,mode,sna
     report.ci_context={purpose:mode==='pr'?'admission_only':'release',base_snapshot_sha256:b.snapshot_sha256,head_snapshot_sha256:h.snapshot_sha256};
     applyGovernanceCoverage(report,collectGovernanceEvidence(repoRoot,report.source));
     save(outputDir,'report.json',report);
+    if(!execute)return {report};
     const receipt=await runImplementationGate({repoRoot,report});receipt.purpose=report.ci_context.purpose;
     save(outputDir,'receipt.json',receipt);
     if(receipt.verdict!=='PASS')throw ciFailure('REGRESSION_FAILED');
@@ -64,6 +65,9 @@ export async function runImplementationPrGate({repoRoot,scope,base,head,mode,sna
     try{for(const checkout of [worktree,headWorktree].filter(Boolean))git(repoRoot,'worktree','remove','--force',checkout);}finally{if(parent)rmSync(parent,{recursive:true,force:true});}
   }
 }
+// collector不是gate：保留真实UNKNOWN报告，供完整差异联合准入执行各自真实回归。
+export function collectImplementationPrEvidence(options){return implementationPrEvidence(options,false);}
+export function runImplementationPrGate(options){return implementationPrEvidence(options,true);}
 function parseArgs(args){
   const allowed={'--repo-root':'repoRoot','--scope':'scope','--base':'base','--head':'head','--mode':'mode','--snapshot-base':'snapshotBase','--snapshot-head':'snapshotHead','--output-dir':'outputDir'},options={};
   for(let i=0;i<args.length;i+=2){if(!allowed[args[i]]||!args[i+1]||options[allowed[args[i]]])throw ciFailure('ARGUMENT_INVALID');options[allowed[args[i]]]=args[i+1];}
