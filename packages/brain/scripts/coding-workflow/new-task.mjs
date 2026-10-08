@@ -4,13 +4,15 @@
 //   单条 { title, description?, acceptance: [..], priority?, gp_anchor? }
 //   一批 { batch?, tasks: [{ key, title, acceptance, depends_on?: [前面任务的 key], ... }] }（大改拆成有序小任务）
 // 每条建成带开关的 data 任务（runner 自动认领跑七步链）；depends_on 的 key 换成前面已建任务的真实 id。
+// plan 顶层可写 project_id（已有 project 根）或 project: { name, description? }（先建再挂），整批都挂上；
+// 有 depends_on 时必须二选一（Brain 要求带依赖的任务挂 project 根），两者不能同时给。
 // 先整体校验再逐条创建；中途失败退出 1 并列出已建的任务。输出 [{key,id,title}]。
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const nonEmpty = (s) => typeof s === 'string' && s.trim() !== '';
 
-/** 计划 → { tasks, batch, errors }（errors 非空即不可建）。 */
+/** 计划 → { tasks, batch, projectId, project, errors }（errors 非空即不可建）。 */
 export function validatePlan(plan) {
   const tasks = Array.isArray(plan?.tasks) ? plan.tasks : [plan];
   const errors = [];
@@ -27,10 +29,16 @@ export function validatePlan(plan) {
       keys.add(t.key);
     }
   });
-  return { tasks, batch: nonEmpty(plan?.batch) ? plan.batch : null, errors };
+  const projectId = nonEmpty(plan?.project_id) ? plan.project_id : null;
+  const given = plan?.project !== undefined && plan?.project !== null;
+  if (given && !nonEmpty(plan.project?.name)) errors.push('project_name_missing');
+  if (given && plan?.project_id !== undefined) errors.push('project_conflict');
+  if (!projectId && !given && tasks.some((t) => t?.depends_on?.length)) errors.push('project_required');
+  const project = given ? { name: plan.project.name, description: plan.project.description ?? '' } : null;
+  return { tasks, batch: nonEmpty(plan?.batch) ? plan.batch : null, projectId, project, errors };
 }
 
-function body(t, batch, ids) {
+function body(t, batch, ids, projectId) {
   const payload = {
     coding_workflow: true,
     headed_manual: 'true',
@@ -41,7 +49,7 @@ function body(t, batch, ids) {
   if (t.depends_on?.length) payload.depends_on = t.depends_on.map((k) => ids.get(k));
   if (batch) payload.batch = batch;
   if (t.key !== undefined) payload.plan_key = t.key;
-  return {
+  const req = {
     task_type: 'data',
     title: t.title,
     description: t.description ?? '',
@@ -49,6 +57,19 @@ function body(t, batch, ids) {
     trigger_source: 'manual',
     payload,
   };
+  if (projectId) req.project_id = projectId;
+  return req;
+}
+
+/** POST JSON → { ok, reply }；网络错误折成 { ok: false, reply: { error } }。 */
+async function postJson(url, data) {
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+    const reply = await res.json().catch(() => null);
+    return { ok: res.ok && Boolean(reply?.id), reply };
+  } catch (error) {
+    return { ok: false, reply: { error: String(error?.message || error) } };
+  }
 }
 
 async function main(argv, env) {
@@ -65,7 +86,9 @@ async function main(argv, env) {
     console.error(`读不了计划文件：${error.message}`);
     return 2;
   }
-  const { tasks, batch, errors } = validatePlan(plan);
+  const checked = validatePlan(plan);
+  const { tasks, batch, project, errors } = checked;
+  let { projectId } = checked;
   if (errors.length > 0) {
     console.error(`计划不合格：${errors.join(' ')}`);
     return 2;
@@ -74,19 +97,20 @@ async function main(argv, env) {
     console.log(JSON.stringify(tasks.map((t) => ({ key: t.key ?? null, title: t.title, depends_on: t.depends_on ?? [] }))));
     return 0;
   }
-  const url = `${String(env.BRAIN_URL || 'http://localhost:5221').replace(/\/+$/, '')}/api/brain/tasks`;
+  const base = `${String(env.BRAIN_URL || 'http://localhost:5221').replace(/\/+$/, '')}/api/brain`;
+  if (project) {
+    const { ok, reply } = await postJson(`${base}/projects`, project);
+    if (!ok) {
+      console.error(`建 project 失败：${JSON.stringify(reply)}`);
+      return 1;
+    }
+    projectId = reply.id;
+  }
   const ids = new Map();
   const created = [];
   for (const t of tasks) {
-    let res;
-    let reply = null;
-    try {
-      res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body(t, batch, ids)) });
-      reply = await res.json().catch(() => null);
-    } catch (error) {
-      reply = { error: String(error?.message || error) };
-    }
-    if (!res?.ok || !reply?.id) {
+    const { ok, reply } = await postJson(`${base}/tasks`, body(t, batch, ids, projectId));
+    if (!ok) {
       console.error(`建任务「${t.title}」失败：${JSON.stringify(reply)}；已建：${JSON.stringify(created)}`);
       return 1;
     }
