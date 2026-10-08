@@ -38,8 +38,35 @@
       }
     },
     {
-      "key": "build",
+      "key": "spec_review",
       "order": 3,
+      "budget": { "max_duration_s": 1800, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["claude_failed", "claude_timeout", "review_invalid", "spec_invalid"],
+        "needs_human": { "cases": ["claude_auth"] },
+        "fatal": [
+          "task_id_missing",
+          "sprint_dir_invalid",
+          "intent_ids_missing",
+          "intent_ids_invalid",
+          "chain_tampered",
+          "spec_missing",
+          "spec_review_out_of_scope_write",
+          "spec_review_unresolved"
+        ]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "source",
+        "entry": "activities/spec-review.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    },
+    {
+      "key": "build",
+      "order": 4,
       "budget": { "max_duration_s": 2400, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],
@@ -72,7 +99,7 @@
     },
     {
       "key": "verify",
-      "order": 4,
+      "order": 5,
       "budget": { "max_duration_s": 1200, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],
@@ -105,7 +132,7 @@
     },
     {
       "key": "chain_check",
-      "order": 5,
+      "order": 6,
       "budget": { "max_duration_s": 30, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],
@@ -123,7 +150,7 @@
     },
     {
       "key": "publish",
-      "order": 6,
+      "order": 7,
       "budget": { "max_duration_s": 900, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],
@@ -149,7 +176,7 @@
     },
     {
       "key": "report",
-      "order": 7,
+      "order": 8,
       "budget": { "max_duration_s": 30, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],

@@ -179,6 +179,45 @@ describe('md-chain 四文件链（files 指定本次应存在的链文件）', (
   });
 });
 
+describe('md-chain 含 02-review（spec_review 评审文件）', () => {
+  let dir;
+  const FILES = ['01-intent.md', '02-spec.md', '02-review.md', '03-build.md', '04-evidence.md'];
+  const write = (file, step, upstream, body) => fs.writeFileSync(path.join(dir, file), `${fm(TASK, step, upstream)}\n${body}`);
+  const intentRefs = ['01-intent.md#I-1', '01-intent.md#I-2'];
+  const specRefs = ['02-spec.md#S-1', '02-spec.md#S-2'];
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-chain-review-'));
+    write('01-intent.md', 'intent', [], '### I-1\n一\n\n### I-2\n二\n');
+    write('02-spec.md', 'spec', intentRefs, '### S-1\n一\n\n### S-2\n二\n');
+    write('02-review.md', 'spec_review', specRefs, 'verdict: APPROVE\n');
+    write('03-build.md', 'build', specRefs, '### B-1\n一\n');
+    write('04-evidence.md', 'verify', intentRefs, '### E-1\n一\n');
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('02-review 覆盖 02-spec 全部 S-n -> 无错误，files 按链顺序（02-review 在 02-spec 与 03-build 之间）', () => {
+    const r = checkChain({ dir, taskId: TASK, files: ['04-evidence.md', '02-review.md', '03-build.md', '01-intent.md', '02-spec.md'] });
+    expect(r).toEqual({ ok: true, errors: [], files: FILES });
+  });
+
+  it('02-review upstream 漏掉 S-2 -> 02-review.md_not_covered:S-2', () => {
+    write('02-review.md', 'spec_review', ['02-spec.md#S-1'], 'verdict: APPROVE\n');
+    const r = checkChain({ dir, taskId: TASK, files: FILES });
+    expect(r.ok).toBe(false);
+    expect(r.errors).toContain('02-review.md_not_covered:S-2');
+  });
+
+  it('02-review step 写错 -> step_mismatch:02-review.md', () => {
+    write('02-review.md', 'review', specRefs, 'verdict: APPROVE\n');
+    const r = checkChain({ dir, taskId: TASK, files: FILES });
+    expect(r.ok).toBe(false);
+    expect(r.errors).toContain('step_mismatch:02-review.md');
+  });
+});
+
 describe('extractAnchors', () => {
   it('只提取 ### <ID> 锚点标题', () => {
     expect(extractAnchors('### I-1\n### S-2\n## X-3')).toEqual(['I-1', 'S-2']);
