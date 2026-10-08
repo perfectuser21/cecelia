@@ -122,6 +122,8 @@ async function factorySourceSide(revision,anchor,{badHash=false,badSet=false,unk
  await graph(anchor,[],BRAIN);await map(anchor,[wp.capability_id],'cecelia-factory',BRAIN,BRAIN);
 }
 async function factorySourceFixture(options={}) {
+ await fixture.close();fixture=await implementationImpactDatabase({seedIds:{keyword:'c308acc7-89ec-4c18-aff6-fd67fdf31ea3',keywordCapability:'ec4eb591-e064-4886-a7b6-4452cdf333d2'}});({db,ids,capabilities,graph,map,advance}=fixture);
+ app=express();app.use(express.json());app.use('/map',createMapRouter({pool:db}));
  await db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('cecelia-factory',$1,'legacy-ledger-v1',$2)",[BRAIN,{source_repo:BRAIN}]);
  await db.query('ALTER TABLE activity_cells ADD COLUMN assertion_source_repo TEXT');await db.query('UPDATE activity_cells SET assertion_source_repo=$1',[repo]);
  await graph(BASE,undefined,repo);await graph(HEAD,undefined,repo);
@@ -153,4 +155,13 @@ it('source_set admission unknown保持未知，即使固定路径和图存在',a
 it('跨repo实现图存在但Brain anchor图缺失，保留来源缺口不声明verified',async()=>{
  await factorySourceFixture();await db.query('DELETE FROM graph_snapshot_versions WHERE repo=$1',[BRAIN]);
  const r=await post({scope:'cecelia-factory'});expect(r.body.mapping_status).toBe('unknown');expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'graph_snapshot_missing',repo:BRAIN}));
+});
+
+it('逻辑Brain graph键按真实source_repo登记解析，不把graph键当规范仓库名',async()=>{
+ await factorySourceFixture();const key='factory-source';
+ await db.query("UPDATE map_scope_repositories SET repo=$1 WHERE scope_key='cecelia-factory'",[key]);
+ await db.query('UPDATE graph_snapshot_versions SET repo=$1 WHERE repo=$2',[key,BRAIN]);await db.query('UPDATE graph_edge_snapshots SET repo=$1 WHERE repo=$2',[key,BRAIN]);
+ await db.query("UPDATE map_projection_runs SET fact_revisions=jsonb_build_object($1::text,fact_revisions->$2) WHERE scope_key='cecelia-factory'",[key,BRAIN]);
+ const r=await post({scope:'cecelia-factory'});expect(r.status,r.body).toBe(200);expect(r.body.mapping_status,JSON.stringify(r.body.gaps)).toBe('verified');
+ expect(r.body.registry_repo).toBe(key);expect(r.body.head.registry_source).toEqual({repo:BRAIN,revision:'d'.repeat(40)});expect(r.body.head.graph_snapshot.repo).toBe(repo);
 });
