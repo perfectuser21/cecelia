@@ -150,6 +150,10 @@ export function freezeFactoryWorkspaceConsumerPayload(payload,proof,anchor) {
  const fail=code=>{throw Object.assign(Error(code),{code,status:422});};
  if(!isTrustedWorkspaceConsumerSource(proof)||proof.status!=='verified'||proof.admission?.status!=='verified'
    ||!validateConsumerSourceMainEvidence(proof.main_evidence)||proof.registry_source?.repo!==anchor?.repo||proof.registry_source?.revision!==anchor?.revision)fail('CONSUMER_MAIN_SOURCE_UNKNOWN');
+ return freezeConsumerPayload(payload,proof,anchor,'trusted_main_history');
+}
+function freezeConsumerPayload(payload,proof,anchor,basis) {
+ const fail=code=>{throw Object.assign(Error(code),{code,status:422});};
  if(anchor.repo!=='perfectuser21/cecelia'||payload?.activity_id!=='0466016e-6d9f-4325-aeb4-d8bc70424a48'
   ||proof.consumer?.activity_id!==payload.activity_id||payload.definition_key!=='factory_f3_ops.step_1'
   ||payload.definition_scope!=='consumer_evidence'||payload.source_scope!=='cecelia-factory'||payload.contract?.executable!==false
@@ -167,7 +171,33 @@ export function freezeFactoryWorkspaceConsumerPayload(payload,proof,anchor) {
  const source_set=[...new Map([...proof.source_set,anchor].map(s=>[`${s.repo}@${s.revision}`,{repo:s.repo,revision:s.revision}])).values()];
  const result={...payload,implementation_bindings,source_set,registry_source:{...anchor},
   source_set_sha256:stepSha256({source_set,implementation_bindings}),
-  source_set_admission:{status:'verified',source_basis:'trusted_main_history',purpose:'consumer_source_only',run_id:proof.admission.run_id,snapshot_sha256:proof.admission.snapshot_sha256},
+  source_set_admission:{status:'verified',source_basis:basis,purpose:basis==='scratch_candidate'?'admission_only':'consumer_source_only',...(basis==='trusted_main_history'?{run_id:proof.admission.run_id,snapshot_sha256:proof.admission.snapshot_sha256}:{})},
   input_relations:[...(payload.input_relations||[]),...proof.consumer.input_relations],verification:{runtime_status:'not_evaluated'}};
  return sealedReceipt(result);
+}
+
+const scratchWorkspaceConsumerSources=new WeakSet();
+/** 候选只在实际隔离库提取；此凭据不能用于生产，也不能通过序列化重放。 */
+export async function collectScratchWorkspaceConsumerSourceSet(db,input,{readSource}={}) {
+ const unknown=code=>({status:'unknown',admission:{status:'unknown'},gaps:[{code}],executable:false});
+ if(!(await consumerSourceAdmissionScope(db)).allowScratch)return unknown('CONSUMER_SCRATCH_REQUIRED');
+ const {workspace,brain,identity,anchor}=input||{};
+ if(workspace?.repo!=='perfectuser21/zenithjoy-workspace'||!isSha(workspace.revision)
+  ||brain?.repo!=='perfectuser21/cecelia'||!Array.isArray(brain.revisions)||!brain.revisions.length||brain.revisions.length>2
+  ||brain.revisions.some(r=>!isSha(r))||new Set(brain.revisions).size!==brain.revisions.length
+  ||anchor?.repo!==brain.repo||!isSha(anchor.revision)||typeof readSource!=='function')return unknown('CONSUMER_CORE_INPUT_INVALID');
+ try{
+  const {extractWorkspaceCiSourceBundle:extract}=await import('./workspace-ci-source-bundle.js');
+  const proof=await extract({workspace,brain,identity,readSource});
+  if(proof.status!=='verified'||proof.gaps?.length||proof.consumer?.status!=='verified')return {...unknown('CONSUMER_CORE_SOURCE_UNKNOWN'),source_gaps:proof.gaps};
+  const result=sealedReceipt({...proof,registry_source:anchor,admission:{status:'verified',source_basis:'scratch_candidate',purpose:'admission_only'}});
+  scratchWorkspaceConsumerSources.add(result);return result;
+ }catch{return unknown('CONSUMER_CORE_SOURCE_UNAVAILABLE');}
+}
+export function freezeScratchFactoryWorkspaceConsumerPayload(payload,proof,anchor) {
+ if(!scratchWorkspaceConsumerSources.has(proof)||proof.status!=='verified'||proof.admission?.status!=='verified'
+  ||proof.admission.source_basis!=='scratch_candidate'||proof.admission.purpose!=='admission_only'
+  ||proof.registry_source?.repo!==anchor?.repo||proof.registry_source?.revision!==anchor?.revision)
+  throw Object.assign(Error('CONSUMER_SCRATCH_SOURCE_UNKNOWN'),{code:'CONSUMER_SCRATCH_SOURCE_UNKNOWN',status:422});
+ return freezeConsumerPayload(payload,proof,anchor,'scratch_candidate');
 }
