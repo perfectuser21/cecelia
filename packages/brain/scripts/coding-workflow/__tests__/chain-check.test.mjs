@@ -83,6 +83,46 @@ describe('chain_check 活动（子进程）', () => {
     expect(r.result.outputs).toEqual({ chain_files: ['01-intent.md', '02-spec.md', '03-build.md', '04-evidence.md'] });
   });
 
+  const writeReviewChain = (reviewUpstream) => {
+    writeSpec(['01-intent.md#I-1', '01-intent.md#I-2']);
+    fs.appendFileSync(path.join(sprintAbs, '02-spec.md'), '\n### S-2\n内容\n');
+    fs.writeFileSync(path.join(sprintAbs, '02-review.md'), `${fm(TASK_ID, 'spec_review', reviewUpstream)}\nverdict: APPROVE\n`);
+    fs.writeFileSync(
+      path.join(sprintAbs, '03-build.md'),
+      `${fm(TASK_ID, 'build', ['02-spec.md#S-1', '02-spec.md#S-2'])}\n### B-1\n`,
+    );
+    fs.writeFileSync(
+      path.join(sprintAbs, '04-evidence.md'),
+      `${fm(TASK_ID, 'verify', ['01-intent.md#I-1', '01-intent.md#I-2'])}\n### E-1\n`,
+    );
+  };
+  const fullContext = {
+    intent_file: '01-intent.md',
+    spec_file: '02-spec.md',
+    review_file: '02-review.md',
+    build_file: '03-build.md',
+    evidence_file: '04-evidence.md',
+  };
+
+  it('上下文带 review_file 且链合法 -> completed，chain_files 含 02-review 且按链顺序', async () => {
+    writeReviewChain(['02-spec.md#S-1', '02-spec.md#S-2']);
+    const r = await runActivityProcess(ENTRY, input(fullContext));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.result.status).toBe('completed');
+    expect(r.result.outputs).toEqual({
+      chain_files: ['01-intent.md', '02-spec.md', '02-review.md', '03-build.md', '04-evidence.md'],
+    });
+  });
+
+  it('02-review upstream 漏覆盖 S-n -> failed md_chain_invalid', async () => {
+    writeReviewChain(['02-spec.md#S-1']);
+    const r = await runActivityProcess(ENTRY, input(fullContext));
+    expect(r.exitCode).toBe(2);
+    expect(r.result.status).toBe('failed');
+    expect(r.result.reason_code).toBe('md_chain_invalid');
+    expect(r.result.evidence[0].errors).toContain('02-review.md_not_covered:S-2');
+  });
+
   it('上下文声明 evidence_file 但 04 缺失 -> md_chain_invalid，errors 含 file_missing', async () => {
     writeSpec(['01-intent.md#I-1', '01-intent.md#I-2']);
     const r = await runActivityProcess(ENTRY, input({ intent_file: '01-intent.md', spec_file: '02-spec.md', evidence_file: '04-evidence.md' }));

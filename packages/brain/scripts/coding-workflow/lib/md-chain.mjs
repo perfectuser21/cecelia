@@ -63,6 +63,7 @@ function readIfExists(file) {
 export const CHAIN = [
   { file: '01-intent.md', step: 'intent', covers: null },
   { file: '02-spec.md', step: 'spec', covers: '01-intent.md' },
+  { file: '02-review.md', step: 'spec_review', covers: '02-spec.md' },
   { file: '03-build.md', step: 'build', covers: '02-spec.md' },
   { file: '04-evidence.md', step: 'verify', covers: '01-intent.md' },
 ];
