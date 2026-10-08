@@ -21,7 +21,7 @@ test('隔离目录只提供解析运行依赖，导入不依赖eslint或espree',
   cpSync(dirname(require.resolve(`${name}/package.json`)),join(dir,'node_modules',name),{recursive:true});
  }
  const modulePath=join(dir,'source-bundle.mjs');
- copyFileSync(fileURLToPath(new URL('../workspace-ci-source-bundle.mjs',import.meta.url)),modulePath);
+ copyFileSync(fileURLToPath(new URL('../../../packages/brain/src/lib/workspace-ci-source-bundle.js',import.meta.url)),modulePath);
  assert.equal(existsSync(join(dir,'node_modules','espree')),false);
  assert.equal(existsSync(join(dir,'node_modules','eslint')),false);
  const probe='const m=await import(process.argv[1]);if(typeof m.extractWorkspaceCiSourceBundle!=="function")throw Error("缺少来源提取入口");process.stdout.write("runtime-import-ok");';
@@ -130,4 +130,21 @@ test('生产解析真身和CI薄入口共用同一函数与身份对象',async()
  const core=await import('../../../packages/brain/src/lib/workspace-ci-source-bundle.js');
  assert.equal(core.extractWorkspaceCiSourceBundle,extractWorkspaceCiSourceBundle);
  assert.equal(core.F3_IDENTITY,F3_IDENTITY);
+});
+
+// 固定候选callee a7e7617；仅源结构兼容，main准入仍独立UNKNOWN。
+const VERSIONED_RUN="set -euo pipefail\nif [[ \"$MODE\" == pr && -n \"$ADMISSION_SCOPES\" ]]; then\n  jq -e 'type == \"object\" and keys == [\"schema_version\", \"scopes\"] and .schema_version == 1 and (.scopes | type == \"array\" and length > 0 and all(.[]; type == \"string\" and test(\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\")) and length == (unique | length))' <<< \"$ADMISSION_SCOPES\" >/dev/null\n  jq --arg root \"$RUNNER_TEMP/implementation-input\" '.scopes | map({scope:.,snapshotBase:($root+\"/base/base-\"+.+\".json\"),snapshotHead:($root+\"/head/head-\"+.+\".json\")})' <<< \"$ADMISSION_SCOPES\" > \"$RUNNER_TEMP/implementation-input/scopes.json\"\n  node tooling/scripts/ci/implementation-multi-pr-gate.mjs --repo-root \"$GITHUB_WORKSPACE/source\" \\\n    --base \"$BASE\" --head \"$HEAD\" --mode \"$MODE\" --scopes-file \"$RUNNER_TEMP/implementation-input/scopes.json\" --output-dir \"$RUNNER_TEMP/implementation-output\"\nelse\n  node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root \"$GITHUB_WORKSPACE/source\" --scope \"$MAP_SCOPE\" \\\n    --base \"$BASE\" --head \"$HEAD\" --mode \"$MODE\" \\\n    --snapshot-base \"$RUNNER_TEMP/implementation-input/base/base.json\" \\\n    --snapshot-head \"$RUNNER_TEMP/implementation-input/head/head.json\" --output-dir \"$RUNNER_TEMP/implementation-output\"\nfi\n";
+const VERSIONED_ENV={"MODE":"${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}","ADMISSION_SCOPES":"${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || '' }}"};
+
+for(const [name,transform,valid] of [
+ ['精确版本分支',s=>s,true],
+ ['假条件不能取代MODE/pr',s=>s.replace('"$MODE" == pr','false'),false],
+ ['未知执行器',s=>s.replace('implementation-multi-pr-gate.mjs','arbitrary-command.mjs'),false],
+ ['吞执行失败',s=>s.replace('--output-dir "$RUNNER_TEMP/implementation-output"','--output-dir "$RUNNER_TEMP/implementation-output" || true'),false],
+])test('条件callee源证据：'+name,async t=>{
+ const f=fixture(t);fixedNewBrain(f,b=>{const p='.github/workflows/implementation-impact.yml';b[p]=b[p].replace('    inputs:\n',"    inputs:\n      admission_scopes: {required: false, type: string, default: ''}\n");
+ b[p]=b[p].replace('    steps:\n','    env:\n'+Object.entries(VERSIONED_ENV).map(([k,v])=>'      '+k+': '+JSON.stringify(v)+'\n').join('')+'    steps:\n');
+ b[p]=b[p].replace('      - run: node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$PWD/source"','      - run: |\n'+transform(VERSIONED_RUN).trimEnd().split('\n').map(l=>'          '+l).join('\n'));
+ b['scripts/ci/implementation-multi-pr-gate.mjs']='export const fixed_multi_source=true;\n';});
+ const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,valid?'verified':'unknown',JSON.stringify(r.gaps));if(valid)assert.ok(r.consumer.bindings.some(b=>b.path==='scripts/ci/implementation-multi-pr-gate.mjs'));assert.equal(r.admission.status,'unknown');
 });
