@@ -72,8 +72,12 @@ function configProof(reader,ci,input,row){
  }
  // 接受真实模块初始化或直接注册的node:test回调；独立未调用函数和条件死分支不能作消费证据。
  const active=node=>{
-  for(let parent=parents.get(node);parent;parent=parents.get(parent)){
-   if(['IfStatement','ConditionalExpression','LogicalExpression','WhileStatement','ForStatement','SwitchStatement'].includes(parent.type))return false;
+  for(let child=node,parent=parents.get(node);parent;child=parent,parent=parents.get(parent)){
+   if(['IfStatement','ConditionalExpression','LogicalExpression','WhileStatement','ForStatement','ForOfStatement','ForInStatement','SwitchStatement','TryStatement'].includes(parent.type))return false;
+   if(['BlockStatement','Program'].includes(parent.type)){
+    const index=parent.body.indexOf(child);
+    if(index>=0&&parent.body.slice(0,index).some(statement=>['ReturnStatement','ThrowStatement'].includes(statement.type)))return false;
+   }
    if(['FunctionExpression','ArrowFunctionExpression','FunctionDeclaration'].includes(parent.type)){
     const caller=parents.get(parent);
     if(!call(caller)||!imported(caller.callee,'node:test','test')||!caller.arguments.includes(parent))return false;
