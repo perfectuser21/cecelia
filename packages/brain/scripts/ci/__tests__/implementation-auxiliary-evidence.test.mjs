@@ -63,10 +63,10 @@ it('真实机器人消费多个连续release行，保留分隔的文档与验证
  expect(text).toContain(docRow);expect(text).toContain(verifyRow);
 });
 it('版本机器人不跟随来源声明软链接，也拒绝重复JSON键而不删片',()=>{
- for(const invalid of ['symlink','duplicate-key']){
+ for(const invalid of ['symlink','broken-symlink','duplicate-key']){
   const f=versionFixture([releaseRow]);const manifest=join(f.root,'.implementation-source-relations.json');
-  if(invalid==='symlink'){
-   rmSync(manifest);symlinkSync(join(f.root,'docs/controller.md'),manifest);
+  if(invalid.endsWith('symlink')){
+   rmSync(manifest);symlinkSync(join(f.root,invalid==='symlink'?'docs/controller.md':'missing.json'),manifest);
   }else writeFileSync(manifest,f.text.replace('"schema_version":1','"schema_version":1,"schema_version":1'));
   expect(()=>applyAutoVersion(f.root)).toThrow();
   expect(existsSync(join(f.root,'changes/controller.md'))).toBe(true);
