@@ -16,7 +16,7 @@ describe('真实工厂旧消费者来源，独立于可执行完整Workflow', ()
     expect(result.consumers.every(c => c.status === 'verified' && c.definition_scope === 'consumer_evidence')).toBe(true);
     expect(result.workflows).toHaveLength(2);
     expect(result.workflows.every(w => w.coverage.status === 'unknown' && w.coverage.unverified_reference_ids.length === 3 && w.executable === false)).toBe(true);
-    expect(result.consumers.find(c => c.activity_id.startsWith('0ab79')).bindings.some(b => b.path === 'packages/brain/migrations/535_company_kr_workflow_source.sql')).toBe(true);
+    expect(result.consumers.find(c => c.activity_id.startsWith('0ab79')).bindings.some(b => b.path === 'packages/brain/migrations/535_coding_workflow_runner_executor_kind.sql')).toBe(true);
     expect(result.consumers.find(c => c.activity_id.startsWith('0ab79')).bindings.some(b => b.path.includes('/rollback/'))).toBe(false);
     expect(result.consumers.every(c => c.bindings.every(b => b.revision === revision && /^[a-f0-9]{64}$/.test(b.content_sha256) && !b.path.includes('*')))).toBe(true);
   });
