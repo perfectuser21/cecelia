@@ -2,6 +2,7 @@ import {execFileSync} from 'node:child_process';
 import {canonicalRepoIdentity} from '../../packages/brain/src/lib/gp-assertion-command.js';
 import {runRegisteredAssertions} from './implementation-gate.mjs';
 import {collectGovernanceEvidence} from './registry-lint.mjs';
+import {assertGovernanceCoverage} from '../../packages/brain/src/lib/implementation-ci-governance.js';
 import {collectAuxiliarySourceEvidence,assertAuxiliarySourceEvidence} from './implementation-auxiliary-evidence.mjs';
 /** 联合证据保留领域切片，外层完整Git差异单独验收，不伪造一个投影。 */
 import {createHash} from 'node:crypto';
@@ -18,6 +19,8 @@ export function aggregateScopedImplementationEvidence({source,expectedScopes,rep
   if(known.size!==changes.length)fail('IMPACT_MULTISCOPE_DIFF_DUPLICATE');
   const seen=new Set(),claims=new Map(changes.map(c=>[key(c),[]]));
   for(const report of reports){
+    if(!Array.isArray(report.gaps)||report.mapping_status==='unknown'&&!report.gaps.length||
+      ['base','head'].some(side=>report[side]?.mapping_status==='unknown'))fail('IMPACT_MULTISCOPE_UNRESOLVED_UNKNOWN');
     if(!expectedScopes.includes(report?.scope_key)||seen.has(report.scope_key))fail('IMPACT_MULTISCOPE_SCOPE_MISMATCH');
     seen.add(report.scope_key);
     if(report.source?.repo!==source.repo||report.source.base_revision!==source.base_revision||report.source.head_revision!==source.head_revision)
@@ -57,12 +60,16 @@ export function resolveScopedImplementationReports({source,expectedScopes,report
   const resolutions=[],parts=[],owners=new Map();
   if(!Array.isArray(reports)||!Array.isArray(expectedScopes)||reports.length!==expectedScopes.length)fail('IMPACT_MULTISCOPE_SCOPES_REQUIRED');
   for(const report of reports){
+    if(!Array.isArray(report.gaps)||report.mapping_status==='unknown'&&!report.gaps.length||
+      ['base','head'].some(side=>report[side]?.mapping_status==='unknown'))fail('IMPACT_MULTISCOPE_UNRESOLVED_UNKNOWN');
     if(report.source?.repo!==source.repo||report.source.base_revision!==source.base_revision||report.source.head_revision!==source.head_revision||
       JSON.stringify(report.source.changed_files)!==JSON.stringify(source.changed_files))fail('IMPACT_MULTISCOPE_DIFF_MISMATCH');
     for(const [index,change] of source.changed_files.entries()){
       // 只认原生调用图命中；governance/辅助说明无法替别人的业务代码认领。
       const matched=['base','head'].some(side=>report[side]?.file_coverage?.[index]?.matched_paths?.length);
-      if(matched){const list=owners.get(key(change))||[];list.push(report.scope_key);owners.set(key(change),list);}
+      const governance=['base','head'].every(side=>report[side]?.file_coverage?.[index]?.coverage_kind==='governance');
+      if(governance)assertGovernanceCoverage(report,change.path);
+      if(matched||governance){const list=owners.get(key(change))||[];list.push(report.scope_key);owners.set(key(change),list);}
     }
   }
   for(const report of reports){
