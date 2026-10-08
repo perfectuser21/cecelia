@@ -1,4 +1,6 @@
 // claude `--output-format stream-json --verbose` 对话记录：提取实际执行过的 Bash 命令及其结果，核对 04-evidence 是否有据。
+import path from 'node:path';
+
 const OUTPUT_LINES_CHECKED = 5;
 
 const squashSpace = (text) => String(text).replace(/\s+/g, ' ').trim();
@@ -58,15 +60,37 @@ export function bashExecutions(stdout) {
   return runs;
 }
 
+const CD_PREFIX_RE = /^cd\s+("[^"]*"|'[^']*'|\S+)\s*&&\s*/;
+
+/** dir（绝对路径或相对 worktree）解析后是否落在某个 worktree 根内（含根本身）。 */
+function insideWorktree(dir, roots) {
+  return roots.some((root) => {
+    const resolved = path.resolve(root, dir);
+    return resolved === root || resolved.startsWith(`${root}${path.sep}`);
+  });
+}
+
 /**
- * 核对每条证据：command（规范化空白后）必须被某次实际执行的命令包含；
+ * 真实 claude 常在 worktree 里直接执行命令，写证据时再补上 `cd <worktree 内目录> && ` 前缀（ea2feb66 实测）。
+ * 给了 worktree（字符串或数组）且前缀目录落在其中时去掉该前缀；其余情况原样返回。
+ */
+function stripWorktreeCd(command, worktree) {
+  const roots = [worktree].flat().filter((r) => typeof r === 'string' && r).map((r) => path.resolve(r));
+  const m = roots.length > 0 ? CD_PREFIX_RE.exec(command) : null;
+  if (!m) return command;
+  const dir = m[1].replace(/^["']|["']$/g, '');
+  return insideWorktree(dir, roots) ? command.slice(m[0].length) : command;
+}
+
+/**
+ * 核对每条证据：command（规范化空白、去掉 worktree 内 cd 前缀后）必须被某次实际执行的命令包含；
  * 且 output 的前 OUTPUT_LINES_CHECKED 个非空行（去首尾空白）都是该次执行结果的子串。
  * 返回不通过的 [{ id, reason: 'command_not_executed' | 'output_not_in_result' }]。
  */
-export function unverifiedItems(items, executions) {
+export function unverifiedItems(items, executions, { worktree } = {}) {
   const bad = [];
   for (const item of items) {
-    const command = squashSpace(item.command);
+    const command = stripWorktreeCd(squashSpace(item.command), worktree);
     const matches = executions.filter((run) => squashSpace(run.command).includes(command));
     if (matches.length === 0) {
       bad.push({ id: item.id, reason: 'command_not_executed' });

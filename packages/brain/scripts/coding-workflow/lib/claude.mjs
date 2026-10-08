@@ -20,8 +20,15 @@ const GIT_TIMEOUT_MS = 60000; // ls-remote 等网络操作卡住时按失败处�
 
 const GH_TOKEN_KEYS = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN'];
 
-/** 子 claude / git 的环境：不继承 CLAUDECODE / CLAUDE_CODE_*（避免被当成嵌套会话）与钩子遗留的 GIT_*；凭据提示一律关掉。 */
-const claudeEnv = () => ({ ...childEnv(process.env, { stripClaude: true }), GIT_TERMINAL_PROMPT: '0' });
+/**
+ * 子 claude / git 的环境：不继承 CLAUDECODE / CLAUDE_CODE_*（避免被当成嵌套会话）与钩子遗留的 GIT_*；凭据提示一律关掉。
+ * 也不继承 runner 配置 CODING_WF_*：会话里跑的 runner 测试会被它污染（ea2feb66 实测）。
+ */
+function claudeEnv() {
+  const env = { ...childEnv(process.env, { stripClaude: true }), GIT_TERMINAL_PROMPT: '0' };
+  for (const key of Object.keys(env)) if (key.startsWith('CODING_WF_')) delete env[key];
+  return env;
+}
 
 /**
  * 防误操作的远端闸：剥离 GH 令牌、GH_CONFIG_DIR 指向空目录（gh 读不到登录态）。
