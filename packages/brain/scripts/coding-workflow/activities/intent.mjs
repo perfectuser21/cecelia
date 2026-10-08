@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
 import { extractAcceptance, renderIntent } from '../lib/intent.mjs';
+import { sha256File } from '../lib/guards.mjs';
 
 const INTENT_FILE = '01-intent.md';
 const DEFAULT_BRAIN_URL = 'http://localhost:5221';
@@ -32,11 +33,13 @@ await runActivity(async (input) => {
   if (items.length === 0) return fail('needs_human', 'acceptance_missing');
 
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, INTENT_FILE), renderIntent({ taskId, title: task?.title, items }));
+  const intentPath = path.join(dir, INTENT_FILE);
+  fs.writeFileSync(intentPath, renderIntent({ taskId, title: task?.title, items }));
 
   return {
     status: 'completed',
-    outputs: { intent_file: INTENT_FILE, intent_ids: items.map((_, i) => `I-${i + 1}`) },
+    // 验收标准的指纹：后续活动比对，发现被改即 chain_tampered
+    outputs: { intent_file: INTENT_FILE, intent_ids: items.map((_, i) => `I-${i + 1}`), intent_sha256: sha256File(intentPath) },
     metrics: { intent_count: items.length },
     evidence: [`${INTENT_FILE}: ${items.length} 条验收`],
   };
