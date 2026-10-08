@@ -89,7 +89,8 @@ async function seedFrozenConsumerSource(repo='perfectuser21/zenithjoy-workspace'
  const payload={...a.payload,definition_scope:'consumer_evidence',source_scope:'cecelia-factory',source_set,implementation_bindings:[binding],source_set_admission:{status:bad==='admission_unknown'?'unknown':'verified',source_basis:'trusted_main_history'}};
  payload.source_set_sha256=stepSha256({source_set:payload.source_set,implementation_bindings:payload.implementation_bindings});
  const row=(await f.db.query('INSERT INTO activity_definition_versions(activity_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',[a.activity_id,payload,bad==='activity_hash'?'e'.repeat(64):stepSha256({source,payload}),source.repo,source.path,source.commit,stepSha256(payload.contract)])).rows[0];
- const wp={...w.payload,definition_scope:'consumer_evidence',source_scope:'cecelia-factory',activities:w.payload.activities.map(r=>r.activity_id===a.activity_id?{...r,activity_version_id:row.id}:r)};
+ await f.db.query('UPDATE workflows SET source_repo=$2 WHERE id=$1',[w.workflow_id,'perfectuser21/cecelia']);
+ const wp={...w.payload,definition_scope:'consumer_evidence',source_scope:'cecelia-factory',activities:w.payload.activities.filter(r=>r.activity_id===a.activity_id).map(r=>({...r,activity_version_id:row.id}))};
  await f.db.query('INSERT INTO workflow_definition_versions(workflow_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256) VALUES($1,$2,$3,$4,$5,$6,$7)',[w.workflow_id,wp,bad==='workflow_hash'?'e'.repeat(64):stepSha256({source,payload:wp}),source.repo,source.path,source.commit,stepSha256(wp.contract)]);
  return a;
 }

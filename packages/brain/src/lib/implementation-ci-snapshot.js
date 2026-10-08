@@ -1,4 +1,5 @@
 import {manifestMatchesImplementationSource} from './implementation-context.js';
+import {hasFrozenConsumerSource,sealedConsumerVersion} from './consumer-source-set.js';
 /** 中央定义只读导出；身份由登记表给出，历史来源不以latest补齐。 */
 import {preparePilotManifestAdvance,advancePilotManifest} from './implementation-ci-pilot-manifest.js';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
@@ -22,8 +23,16 @@ export function validateImplementationSnapshot(snapshot){
   validateSnapshotQuery(snapshot);
   const {snapshot_sha256,...body}=snapshot;
   if(typeof snapshot_sha256!=='string'||digest(body)!==snapshot_sha256)throw ciFailure('SNAPSHOT_DIGEST_MISMATCH');
+  const anchor=snapshot.registry_source||{repo:snapshot.repo,revision:snapshot.revision};
+  if(snapshot.registry_source){
+    if(snapshot.scope!=='cecelia-factory'||anchor.repo!=='perfectuser21/cecelia'||!Array.isArray(snapshot.source_set)
+      ||!snapshot.source_set.some(s=>s.repo===snapshot.repo&&s.revision===snapshot.revision)
+      ||!snapshot.source_set.some(s=>s.repo===anchor.repo&&s.revision===anchor.revision))throw ciFailure('CONSUMER_SOURCE_SET_INVALID');
+    for(const row of snapshot.definitions.activities)if(!sealedConsumerVersion(row)
+      ||!row.payload.implementation_bindings.some(b=>b.repo===snapshot.repo&&b.revision===snapshot.revision&&hasFrozenConsumerSource(row.payload,b.repo,b.path)))throw ciFailure('CONSUMER_SOURCE_SET_INVALID');
+  }
   for(const kind of ['workflows','activities'])for(const row of snapshot.definitions[kind]){
-    if(row.source_repo!==snapshot.repo||row.source_commit!==snapshot.revision||
+    if(row.source_repo!==anchor.repo||row.source_commit!==anchor.revision||
       stepSha256({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload})!==row.payload_sha256)
       throw ciFailure('DEFINITION_DIGEST_MISMATCH');
   }
@@ -34,8 +43,22 @@ export async function readImplementationSnapshotInTransaction(db,q){
   const registrations=(await db.query('SELECT * FROM map_scope_repositories WHERE scope_key=$1 ORDER BY repo',[q.scope])).rows;
   const repositories=registrations.filter(r=>r.repo===q.repo||r.adapter_config?.source_repo===q.repo);
   if(repositories.length!==1)gap(repositories.length?'scope_repository_ambiguous':'scope_repository_missing',{scope:q.scope,repo:q.repo});
-  const workflows=(await db.query('SELECT * FROM workflows WHERE source_repo=$1 ORDER BY id',[q.repo])).rows;
-  const candidates=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[q.repo,q.revision])).rows;
+  const crossConsumer=q.scope==='cecelia-factory'&&repositories.length===1&&repositories[0].repo==='perfectuser21/cecelia'&&q.repo==='perfectuser21/zenithjoy-workspace';
+  let anchor={repo:q.repo,revision:q.revision};
+  let candidates;
+  if(crossConsumer){
+    const rows=(await db.query(`SELECT DISTINCT wv.* FROM workflow_definition_versions wv
+      CROSS JOIN LATERAL jsonb_array_elements(wv.payload->'activities') ref(value)
+      JOIN activity_definition_versions av ON av.id=(ref.value->>'activity_version_id')::uuid
+      WHERE wv.source_repo='perfectuser21/cecelia' AND wv.payload->>'source_scope'=$1
+      AND wv.payload->>'definition_scope'='consumer_evidence'
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(av.payload->'implementation_bindings') b WHERE b->>'repo'=$2 AND b->>'revision'=$3)`,[q.scope,q.repo,q.revision])).rows;
+    const commits=[...new Set(rows.map(r=>r.source_commit))];
+    if(commits.length!==1)gap('consumer_source_anchor_ambiguous');
+    anchor={repo:'perfectuser21/cecelia',revision:commits.length===1?commits[0]:null};
+    candidates=rows.filter(r=>r.source_commit===anchor.revision);
+  }else candidates=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[q.repo,q.revision])).rows;
+  const workflows=(await db.query('SELECT * FROM workflows WHERE source_repo=$1 ORDER BY id',[anchor.repo])).rows;
   const selected=[];
   for(const id of [...new Set(candidates.map(r=>r.workflow_id))]){
     const rows=candidates.filter(r=>r.workflow_id===id),current=rows.find(r=>r.id===workflows.find(w=>w.id===id)?.current_definition_version_id);
@@ -47,6 +70,8 @@ export async function readImplementationSnapshotInTransaction(db,q){
   const activityVersions=[...new Set(selected.flatMap(w=>w.payload.activities.map(a=>a.activity_version_id)))];
   const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[]) ORDER BY id',[activityVersions])).rows;
   if(activities.length!==activityVersions.length)gap('activity_snapshot_missing');
+  if(crossConsumer)for(const a of activities)if(!sealedConsumerVersion(a)||a.source_commit!==anchor.revision
+    ||!a.payload.implementation_bindings.some(b=>b.repo===q.repo&&b.revision===q.revision&&hasFrozenConsumerSource(a.payload,b.repo,b.path)))gap('consumer_source_set_unknown',{activity_id:a.activity_id});
   const workflowIds=selected.map(w=>w.workflow_id),activityIds=activities.map(a=>a.activity_id);
   const refs=selected.flatMap(w=>w.payload.activities.map(r=>r.reference_id));
   const canonicalActivities=(await db.query('SELECT * FROM activities WHERE id=ANY($1::uuid[]) ORDER BY id',[activityIds])).rows;
@@ -55,7 +80,7 @@ export async function readImplementationSnapshotInTransaction(db,q){
   let manifest=null,manifestBasis='unknown';
   if(repositories.length===1){
     const historical=(await db.query(`SELECT DISTINCT m.* FROM map_manifest_versions m JOIN map_projection_runs p ON p.manifest_version_id=m.id
-      WHERE m.scope_key=$1 AND p.scope_key=$1 AND p.fact_revisions->>$2=$3 AND p.status IN ('active','superseded') ORDER BY m.version DESC`,[q.scope,repositories[0].repo,q.revision])).rows.filter(r=>manifestMatchesImplementationSource(r.manifest,q.repo,q.revision));
+      WHERE m.scope_key=$1 AND p.scope_key=$1 AND p.fact_revisions->>$2=$3 AND p.status IN ('active','superseded') ORDER BY m.version DESC`,[q.scope,repositories[0].repo,anchor.revision])).rows.filter(r=>manifestMatchesImplementationSource(r.manifest,anchor.repo,anchor.revision));
     if(historical.length===1){manifest=historical[0];manifestBasis='historical_projection';}
     else if(historical.length>1)gap('manifest_snapshot_ambiguous',{revision:q.revision});
     else if(selected.length&&selected.every(w=>workflows.find(c=>c.id===w.workflow_id)?.current_definition_version_id===w.id)){
@@ -63,7 +88,7 @@ export async function readImplementationSnapshotInTransaction(db,q){
       manifestBasis='current_registration';
     }
   }
-  if(manifest&&!manifestMatchesImplementationSource(manifest.manifest,q.repo,q.revision))gap('manifest_source_mismatch',{revision:q.revision});
+  if(manifest&&!manifestMatchesImplementationSource(manifest.manifest,anchor.repo,anchor.revision))gap('manifest_source_mismatch',{revision:anchor.revision});
   if(!manifest)gap('scope_manifest_missing',{scope:q.scope,revision:q.revision});
   const capabilityIds=[...new Set(selected.map(w=>w.payload.capability_id))];
   const journeys=(await db.query(`WITH RECURSIVE chain AS(SELECT * FROM ${TREE_NODES_SQL} n WHERE id=ANY($1::uuid[])
@@ -72,14 +97,15 @@ export async function readImplementationSnapshotInTransaction(db,q){
   for(const node of manifest?.manifest?.capabilities||[]){
     const b=node.brain_binding;
     if(!b||b.entity_type!=='capability'||!journeys.some(j=>j.id===b.entity_id&&j.parent_journey_id))gap('capability_mapping_missing',{node_key:node.key});
-    else if(b.source_repo!==q.repo)gap('capability_source_repo_mismatch',{node_key:node.key,source_repo:b.source_repo});
+    else if(b.source_repo!==anchor.repo)gap('capability_source_repo_mismatch',{node_key:node.key,source_repo:b.source_repo});
     else mapped.add(b.entity_id);
   }
   for(const id of capabilityIds)if(!mapped.has(id))gap('workflow_capability_unmapped',{capability_id:id});
   const areaIds=[...new Set(journeys.map(j=>j.area_id).filter(Boolean))];
   const areas=(await db.query('SELECT * FROM areas WHERE id=ANY($1::uuid[]) ORDER BY id',[areaIds])).rows;
   const assertions=(await db.query('SELECT * FROM activity_cells WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id',[capabilityIds,activityIds])).rows;
-  const body=json({schema_version:1,...q,status:gaps.length?'unknown':'verified',gaps,
+  const sourceSet=crossConsumer?[...new Map(activities.flatMap(a=>a.payload.source_set||[]).map(s=>[`${s.repo}@${s.revision}`,s])).values()]:null;
+  const body=json({schema_version:1,...q,...(crossConsumer?{registry_source:anchor,source_set:sourceSet}:{}),status:gaps.length?'unknown':'verified',gaps,
     canonical:{areas,journeys,workflows:workflows.filter(w=>workflowIds.includes(w.id)),activities:canonicalActivities,steps,references},
     definitions:{workflows:selected,activities},map:{manifest,repositories,source_basis:manifestBasis},assertion_source:'current_registration',assertions});
   return {...body,snapshot_sha256:digest(body)};
