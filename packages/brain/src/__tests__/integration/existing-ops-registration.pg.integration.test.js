@@ -97,6 +97,16 @@ it('实际scratch双Git消费者只封存F3来源集合；不改旧current/八�
     expect(receipt.definitions.activities.find(a=>a.activity_id===EXISTING_OPS_IDENTITIES[0].activity_id).payload).not.toHaveProperty('source_set');
     expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
     expect(receipt.executable).toBe(false);expect(receipt.remaining_unknown_reference_ids).toHaveLength(6);
+    await factoryMap();
+    const query={scope:'cecelia-factory',repo:'perfectuser21/zenithjoy-workspace',revision:candidate.head};
+    const snapshot=await exportImplementationSnapshot(fixture.db,query);
+    expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
+    await importImplementationSnapshot(fixture.db,snapshot);
+    await expect(frozenSource.verifySnapshotSource(snapshot,candidate.dir,{db:fixture.db})).resolves.toEqual(snapshot);
+    const rebuilt=await buildPrImplementationSnapshot(fixture.db,snapshot,candidate.head,candidate.dir);
+    expect(rebuilt.status,JSON.stringify(rebuilt.gaps)).toBe('verified');
+    expect(rebuilt.registry_source).toEqual({repo:'perfectuser21/cecelia',revision});
+    expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
   }finally{candidate.close();}
 });
 
