@@ -9,7 +9,7 @@ const paths = execFileSync('git', ['ls-tree', '-rz', '--name-only', revision], {
 const sourceCache = new Map();
 const readGit = path => execFileSync('git', ['show', `${revision}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
 const read = async path => { if (!sourceCache.has(path)) sourceCache.set(path, readGit(path)); return sourceCache.get(path); };
-const build = overrides => buildExistingOpsSources({ scope: 'cecelia', repo: 'perfectuser21/cecelia', revision, paths, readSource: read, ...overrides });
+const build = overrides => buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths, readSource: read, ...overrides });
 
 describe('真实工厂旧消费者来源，独立于可执行完整Workflow', () => {
   it('固定main实际字节证明两个旧活动，其余六引用继续UNKNOWN且不能成为执行定义', async () => {
