@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.379.9
+**Brain 版本**: 1.380.0
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,13 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.380.0 — coding workflow 公共 claude 调用与验收基础库
+
+- claude 子进程公共逻辑抽到 lib/claude.mjs（进程组收割、超时/取消、env 剥离与 GH 凭据隔离、stdout/stderr 分开收集、stream-json 模式只按 claude 自身错误事件判鉴权），spec 改用之，行为不变。
+- 新增 lib/guards.mjs（md 链 sha256、远端分支快照、历史/分支检查、提交改动清单、agent 配置识别、文件暂移与放回）、lib/evidence.mjs（04-evidence 解析与判定）、lib/transcript.mjs（stream-json 执行记录核对）。
+- md 链校验改为数据驱动，支持 01–04 四文件链（step_mismatch、<file>_not_covered:<ID>），chain_check 从上下文取应存在的链文件；I-n 格式收敛为单一常量。
+- intent/spec 产出 intent_sha256 / spec_sha256；spec 发现 01 被改判 chain_tampered（契约已声明）。五活动工作流对外行为不变。
 
 ## Brain 1.379.9 — 试点发布门禁修复：口径恢复为只认 CI 回归登记，回归格归还消费者能力
 
