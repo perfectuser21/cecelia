@@ -42,6 +42,12 @@ export function pickCandidates(tasks) {
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
 }
 
+/** 前置任务 id（payload.depends_on 里的非空字符串）；大改拆成的有序小任务靠它排队。 */
+export function depsOf(task) {
+  const deps = task?.payload?.depends_on;
+  return Array.isArray(deps) ? deps.filter((d) => typeof d === 'string' && d) : [];
+}
+
 /** 上海时区 MMDDHHmm（与运行机器 TZ 无关）。 */
 export function stampOf(date) {
   const p = Object.fromEntries(SHANGHAI_PARTS.formatToParts(date).map((x) => [x.type, x.value]));

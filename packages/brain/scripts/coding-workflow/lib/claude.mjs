@@ -41,8 +41,8 @@ function remoteIsolatedEnv(ghConfigDir) {
   return env;
 }
 
-// coding 链所有 claude 会话固定 Opus（决策 ac7c8801）：不显式指定时实测落到 sonnet
-const DEFAULT_MODEL = 'claude-opus-5-5';
+// coding 链 claude 会话用 opus 别名（永远指向最新 Opus）：不显式指定时实测落到 sonnet
+const DEFAULT_MODEL = 'opus';
 
 /** 调用方没给 --model 时在末尾追加（CODING_WF_CLAUDE_MODEL 覆盖默认）。 */
 function withModel(args) {
