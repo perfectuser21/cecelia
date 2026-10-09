@@ -53,7 +53,9 @@ def search_entry(nodes):
 
 def airship_close_button(nodes):
     if not any(n.get('class','').startswith('com.urbanairship.android.layout.widget.') for n in nodes):return None
-    buttons=[n for n in nodes if n.get('clickable')=='true' and n.get('class')=='android.widget.ImageButton' and bounds(n)]
+    clickable=[n for n in nodes if n.get('clickable')=='true' and bounds(n)]
+    if len(clickable)!=1:return None
+    buttons=[n for n in clickable if n.get('class')=='android.widget.ImageButton']
     if len(buttons)!=1:return None
     numbers=list(map(int,re.findall(r'\d+',buttons[0].get('bounds',''))))
     all_bounds=[list(map(int,re.findall(r'\d+',n.get('bounds','')))) for n in nodes]
