@@ -451,6 +451,7 @@ router.get('/:id', async (req, res) => {
 // GET /tasks/:id/chain — 接力棒：这条任务所在的整条链（根 / 有序子任务 / 交接日志）。
 // 给人看也给下一个大脑看：根目标 + 每棒做到哪 + 最近 handoff。
 router.get('/:id/chain', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json(INVALID_TASK_ID);
   try {
     const { getChainContext } = await import('../handoff.js');
     const ctx = await getChainContext({ pool }, req.params.id, { limit: 10 });

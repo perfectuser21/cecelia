@@ -77,3 +77,24 @@ describe('GET /api/brain/tasks/:id — 合法 UUID 行为不变', () => {
     expect(res.status).not.toBe(400);
   });
 });
+
+// PR#6139 QA X-2：/chain 收到非法 id 时返回 500 并透出 PG 报错
+describe('GET /api/brain/tasks/:id/chain — 非法 id 返回 400', () => {
+  it('not-a-uuid/chain → 400，不查库，不透出 PG 报错', async () => {
+    const { app, mockPool } = await buildApp(async () => {
+      throw Object.assign(new Error('invalid input syntax for type uuid: "not-a-uuid"'), { code: '22P02' });
+    });
+    const res = await request(app).get('/api/brain/tasks/not-a-uuid/chain');
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).not.toContain('invalid input syntax');
+    expect(res.body.details).toBeUndefined();
+    expect(mockPool.query).toHaveBeenCalledTimes(0);
+  });
+
+  it('合法但不存在的 UUID → 仍走查库，返回 404', async () => {
+    const { app, mockPool } = await buildApp(async () => ({ rows: [] }));
+    const res = await request(app).get(`/api/brain/tasks/${MISSING_ID}/chain`);
+    expect(res.status).toBe(404);
+    expect(mockPool.query).toHaveBeenCalled();
+  });
+});
