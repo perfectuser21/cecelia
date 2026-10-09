@@ -79,7 +79,7 @@
     },
     {
       "owner_path": "scripts/ci/implementation-multi-scope.mjs",
-      "path": "packages/brain/src/lib/__tests__/integration/implementation-multi-scope.test.js",
+      "path": "packages/brain/src/__tests__/integration/implementation-multi-scope.test.js",
       "role": "verification"
     }
   ]

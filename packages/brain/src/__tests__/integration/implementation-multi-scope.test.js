@@ -4,12 +4,12 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import { beforeEach,afterEach,it,expect } from 'vitest';
-import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evidence-db.js';
-import { readImplementationImpact } from '../../implementation-impact.js';
-import * as multi from '../../../../../../scripts/ci/implementation-multi-scope.mjs';
-import * as pr from '../../../../../../scripts/ci/implementation-pr-gate.mjs';
-import * as caller from '../../../../../../scripts/ci/implementation-multi-pr-gate.mjs';
-import {collectAuxiliarySourceEvidence,applyAuxiliarySourceEvidence} from '../../../../../../scripts/ci/implementation-auxiliary-evidence.mjs';
+import { releaseEvidenceDatabase } from '../fixtures/release-evidence-db.js';
+import { readImplementationImpact } from '../../lib/implementation-impact.js';
+import * as multi from '../../../../../scripts/ci/implementation-multi-scope.mjs';
+import * as pr from '../../../../../scripts/ci/implementation-pr-gate.mjs';
+import * as caller from '../../../../../scripts/ci/implementation-multi-pr-gate.mjs';
+import {collectAuxiliarySourceEvidence,applyAuxiliarySourceEvidence} from '../../../../../scripts/ci/implementation-auxiliary-evidence.mjs';
 let a,b,reports,source;
 
 it('真实两scope辅助owner联合闭包保留原始UNKNOWN，并独立覆盖共享manifest',async()=>{
@@ -110,7 +110,7 @@ it('正式联合PR入口拒绝重复scope与main发布模式，不把consumer来
  }finally{rmSync(outputDir,{recursive:true,force:true});}
 });
 it('真实workflow shell仅显式PR scopes调用联合入口，main仍单scope真实release路径',()=>{
- const workflow=yaml.load(readFileSync(new URL('../../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+ const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
  const script=workflow.jobs.gate.steps.find(s=>s.name==='实际变更影响与固定回归').run;
  const root=mkdtempSync(join(tmpdir(),'multi-workflow-entry-'));
  try{

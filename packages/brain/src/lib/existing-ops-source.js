@@ -112,6 +112,52 @@ function workflowRuns(text) {
     if (typeof step.run === 'string') runs.push({ job, run: step.run, env: { ...(value.env || {}), ...(step.env || {}) } });
   return runs;
 }
+// 唯一已审核的条件shell协议；改变分支/命令/退出语义必须重新证明，不接受字符串扫描。
+const IMPACT_WORKFLOW='.github/workflows/implementation-impact.yml';
+const MULTI_ENTRY='scripts/ci/implementation-multi-pr-gate.mjs', MULTI_SOURCE='scripts/ci/implementation-multi-scope.mjs';
+const IMPACT_GATE_SHA256='8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d';
+function impactRunnerProven(text){
+  const doc=yaml.load(text),input=doc?.on?.workflow_call?.inputs?.admission_scopes,job=doc?.jobs?.gate;
+  if(!input||Object.keys(input).sort().join(',')!=='default,required,type'||input.required!==false||input.type!=='string'||input.default!=='')return false;
+  if(!doc.on.pull_request||job?.if!=="always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')"
+    ||job.env?.MODE!=="${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}"
+    ||job.env?.ADMISSION_SCOPES!=="${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || '' }}")return false;
+  return job.steps?.some(step=>!step.if&&typeof step.run==='string'&&hash(step.run)===IMPACT_GATE_SHA256);
+}
+function namedExport(program,name){return program.body.find(n=>n.type==='ExportNamedDeclaration'&&n.declaration?.type==='FunctionDeclaration'&&n.declaration.id?.name===name)?.declaration;}
+function namedImport(program,path,names){
+ const row=program.body.find(n=>n.type==='ImportDeclaration'&&literal(n.source,path));
+ return names.every(name=>row?.specifiers.some(s=>s.type==='ImportSpecifier'&&s.imported.name===name&&s.local.name===name))
+  &&!nodes(program).some(n=>(n.type==='AssignmentExpression'&&names.includes(n.left?.name))||(n.type==='UpdateExpression'&&names.includes(n.argument?.name)));
+}
+function variableCall(statements,name,callee,awaited=false){
+ const variable=statements?.filter(n=>n.type==='VariableDeclaration').flatMap(n=>n.declarations).find(n=>n.id?.name===name)?.init;
+ const expression=awaited?(variable?.type==='AwaitExpression'?variable.argument:null):variable;
+ return expression?.type==='CallExpression'&&expression.callee?.name===callee;
+}
+function impactImportsProven(entryText,multiText,prText,gateText){
+ const entry=ast(entryText),multi=ast(multiText),fn=namedExport(entry,'runImplementationMultiPrGate');
+ if(!namedImport(entry,'./implementation-pr-gate.mjs',['collectImplementationPrEvidence'])
+   ||!namedImport(entry,'./implementation-multi-scope.mjs',['resolveScopedImplementationReports','runScopedImplementationGate'])
+   ||!namedImport(multi,'./implementation-gate.mjs',['runRegisteredAssertions']))return false;
+ const statements=fn?.body.body.find(n=>n.type==='TryStatement')?.block.body;
+ if(!statements||statements.slice(0,-1).some(n=>n.type==='ReturnStatement'||n.type==='ThrowStatement'
+   ||n.type==='IfStatement'&&nodes(n).some(x=>x.type==='ReturnStatement')))return false;
+ const loop=statements.find(n=>n.type==='ForOfStatement'&&n.right?.name==='scopes');
+ const init=loop?.body.body.find(n=>n.type==='VariableDeclaration')?.declarations?.[0];
+ if(init?.id?.type!=='ObjectPattern'||!init.id.properties.some(p=>p.key.name==='report')||init.init?.type!=='AwaitExpression'
+   ||init.init.argument?.callee?.name!=='collectImplementationPrEvidence'
+   ||nodes(loop.body).some(n=>['ReturnStatement','BreakStatement','ContinueStatement','ThrowStatement'].includes(n.type)))return false;
+ if(!variableCall(statements,'resolution','resolveScopedImplementationReports')||!variableCall(statements,'receipt','runScopedImplementationGate',true))return false;
+ const cli=entry.body.find(n=>n.type==='IfStatement'&&entryText.slice(n.test.start,n.test.end)==="process.argv[1]&&fileURLToPath(import.meta.url)===realpathSync(process.argv[1])");
+ const catchCall=cli?.consequent?.expression,thenCall=catchCall?.callee?.object,run=thenCall?.callee?.object;
+ if(catchCall?.callee?.property?.name!=='catch'||thenCall?.callee?.property?.name!=='then'||run?.callee?.name!=='runImplementationMultiPrGate')return false;
+ const gate=namedExport(multi,'runScopedImplementationGate'),gateLoop=gate?.body.body.find(n=>n.type==='ForOfStatement'&&n.right?.type==='MemberExpression'&&n.right.object?.name==='evidence'&&n.right.property?.name==='scope_reports');
+ if(!variableCall(gateLoop?.body.body,'assertions','runRegisteredAssertions',true)
+   ||gate.body.body.slice(0,gate.body.body.indexOf(gateLoop)).some(n=>nodes(n).some(x=>['ReturnStatement','BreakStatement','ContinueStatement','ThrowStatement'].includes(x.type)))
+   ||nodes(gateLoop.body).some(n=>['ReturnStatement','BreakStatement','ContinueStatement','ThrowStatement'].includes(n.type)))return false;
+ return Boolean(namedExport(ast(prText),'collectImplementationPrEvidence')&&namedExport(ast(gateText),'runRegisteredAssertions'));
+}
 const NIGHTLY_READER='.github/workflows/scripts/__tests__/nightly-runtime.test.mjs';
 const F5_SMOKE='packages/brain/scripts/smoke/factory-f5-cockpit-smoke.sh';
 const HEALTH_SMOKE='packages/brain/scripts/smoke/healthz-smoke.sh';
@@ -193,6 +239,16 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     requireProof(ci && workflowRuns(ci).some(r => shellLines(r.run.replace(/\\\r?\n/g, ' ')).some(line => /^npx vitest run\s+--config vitest\.integration\.config\.js\b/.test(line))), 'ci_integration_unproven');
     requireProof(config && nativeTestSelectorProven(config), 'native_test_selector_unproven');
     requireProof(integrationConfig && nativeIntegrationConfigProven(integrationConfig), 'native_integration_config_unproven');
+    // 老main没有新入口时保留旧证据；一旦入口存在，其真实条件流与所有依赖必须全部证明。
+    if(tree.has(MULTI_ENTRY)){
+      const workflow=await read(IMPACT_WORKFLOW),entry=await read(MULTI_ENTRY),multi=await read(MULTI_SOURCE);
+      const prPath='scripts/ci/implementation-pr-gate.mjs',gatePath='scripts/ci/implementation-gate.mjs';
+      const pr=await read(prPath),gate=await read(gatePath);
+      requireProof(workflow&&impactRunnerProven(workflow),'impact_pr_runner_unproven');
+      requireProof(entry&&multi&&pr&&gate&&impactImportsProven(entry,multi,pr,gate),'impact_reachable_import_unproven');
+      relations.push({consumer_path:IMPACT_WORKFLOW,input_path:MULTI_ENTRY,kind:'conditional_pr_admission_runner',revision},
+        ...[[MULTI_ENTRY,MULTI_SOURCE],[MULTI_ENTRY,prPath],[MULTI_SOURCE,gatePath]].map(([consumer_path,input_path])=>({consumer_path,input_path,kind:'reachable_named_import_call',revision})));
+    }
     if(tree.has(NIGHTLY_READER)){
       const doc=ci?yaml.load(ci):null,job='lint-auto-merge-decision';
       const invoked=doc?.jobs?.[job]?.steps?.some(s=>typeof s.run==='string'&&shellLines(s.run).includes(`node --test ${NIGHTLY_READER}`));
