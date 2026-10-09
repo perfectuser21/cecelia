@@ -220,7 +220,7 @@ def public_report(report):
     network=report.get('restored_network')
     if network:
         public['restored_network']={key:network[key] for key in ('exit_node','xml','screenshot') if key in network}
-        public['restored_network']['country']=network.get('ip',{}).get('countryCode')
+        public['restored_network']['country']=network.get('country') or network.get('ip',{}).get('countryCode')
     return public
 
 def main():
