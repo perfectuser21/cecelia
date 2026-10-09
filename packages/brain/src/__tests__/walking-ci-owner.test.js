@@ -10,7 +10,10 @@ describe('Walking actual CI owner and PG acceptance', () => {
     expect(job).toBeDefined();
     const commands = job.steps.map(step => step.run || '').join('\n');
     expect(commands).toContain('DATABASE_URL'); expect(commands).toContain('/var/run/docker.sock');
-    expect(commands).toContain('docker pull alpine'); expect(commands).toContain('WALKING_CI_OWNER=1');
+    // worker 镜像本地名 alpine:latest 必须预先备好，且经镜像源拉取（不直连 Docker Hub，任务 7294cf3a）
+    expect(commands).toContain('docker pull mirror.gcr.io/library/alpine:latest');
+    expect(commands).toContain('docker tag mirror.gcr.io/library/alpine:latest alpine:latest');
+    expect(commands).toContain('WALKING_CI_OWNER=1');
     expect(commands).toContain('walking-skeleton-1node-smoke.sh');
     expect(workflow.jobs['ci-passed'].needs).toContain('walking-ci-e2e');
     expect(job.if).toBeUndefined();
