@@ -9,6 +9,9 @@ import { minimumMapSchema } from '../fixtures/minimum-map-schema.js';
 import { exportImplementationSnapshot,refreshImplementationSnapshot } from '../../lib/implementation-ci-snapshot.js';
 import { importImplementationSnapshot,buildPrImplementationSnapshot } from '../../../../../scripts/ci/implementation-snapshot.mjs';
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync,rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 it('factory source anchor plan preserves fields and rejects foreign or incomplete owner trees', async()=>{
   await factoryMap();
@@ -137,18 +140,26 @@ it('完整Factory候选在不含decisions的真实scratch重放冻结地图，�
   const before=await registration.readExistingOpsRegistry(fixture.db);
   await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256}));await factoryMap();
   const baseline=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision});
-  const head=execFileSync('git',['rev-parse','HEAD^'],{cwd:root,encoding:'utf8'}).trim();
-  expect(head).not.toBe(revision);
-  // The official isolated importer intentionally omits central decision rows.
-  await fixture.db.query('ALTER TABLE decisions RENAME TO omitted_central_decisions');
-  const candidate=await buildPrImplementationSnapshot(fixture.db,baseline,head,root);
-  expect(candidate.status,JSON.stringify(candidate.gaps)).toBe('verified');
-  expect(candidate.revision).toBe(head);
-  expect(candidate.map.manifest.source_decision_id).toBe(baseline.map.manifest.source_decision_id);
-  expect(candidate.map.manifest.manifest.capabilities.every(n=>n.brain_binding.source_revision===head)).toBe(true);
-  expect(candidate.execution_status).toBe('unknown');
-  expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
-  expect((await fixture.db.query("SELECT to_regclass('decisions') id")).rows[0].id).toBeNull();
+  const candidateRoot=mkdtempSync(join(tmpdir(),'factory-candidate-shallow-'));
+  try{
+    // Real depth-one Git input, including hosted checkout without HEAD^.
+    execFileSync('git',['clone','--depth','1','--single-branch',`file://${root}`,candidateRoot],{stdio:'pipe'});
+    const git=(...args)=>execFileSync('git',args,{cwd:candidateRoot,encoding:'utf8'}).trim();
+    expect(git('rev-list','--count','HEAD')).toBe('1');
+    expect(git('rev-parse','HEAD')).toBe(revision);
+    git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','actual isolated candidate revision');
+    const head=git('rev-parse','HEAD');expect(head).not.toBe(revision);
+    // The official isolated importer intentionally omits central decision rows.
+    await fixture.db.query('ALTER TABLE decisions RENAME TO omitted_central_decisions');
+    const candidate=await buildPrImplementationSnapshot(fixture.db,baseline,head,candidateRoot);
+    expect(candidate.status,JSON.stringify(candidate.gaps)).toBe('verified');
+    expect(candidate.revision).toBe(head);
+    expect(candidate.map.manifest.source_decision_id).toBe(baseline.map.manifest.source_decision_id);
+    expect(candidate.map.manifest.manifest.capabilities.every(n=>n.brain_binding.source_revision===head)).toBe(true);
+    expect(candidate.execution_status).toBe('unknown');
+    expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
+    expect((await fixture.db.query("SELECT to_regclass('decisions') id")).rows[0].id).toBeNull();
+  }finally{rmSync(candidateRoot,{recursive:true,force:true});}
 });
 
 it('scratch地图推进真实CAS冲突回滚，非scratch与外来scope在写入前拒绝',async()=>{
