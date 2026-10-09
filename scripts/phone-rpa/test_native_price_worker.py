@@ -80,12 +80,15 @@ class NativePriceTests(unittest.TestCase):
     def test_launch_denies_optional_app_list_permission_for_hd(self):
         import unittest.mock
         session=object.__new__(PhoneSession);taps=[]
-        session.adb=lambda *args,**kwargs:'com.thehomedepot/Main'
+        commands=[]
+        def adb(*args,**kwargs):commands.append(args);return 'com.thehomedepot/Main'
+        session.adb=adb
         pages=iter([nodes(['是否允许读取设备应用列表？','禁止']),nodes(['What can we help you find?'])])
         session.nodes=lambda label:(next(pages),'/tmp/page.xml')
         session.tap=lambda node:taps.append(node.get('text'))
         with unittest.mock.patch('native_price_phone.time.sleep'):session.launch('com.thehomedepot')
         self.assertEqual(taps,['禁止'])
+        self.assertIn('-a',commands[0]);self.assertIn('android.intent.action.MAIN',commands[0]);self.assertIn('-c',commands[0]);self.assertIn('android.intent.category.LAUNCHER',commands[0]);self.assertIn('-p',commands[0])
     def test_search_entry_does_not_select_image_search(self):
         ns=nodes(['Image Search','Search'])
         self.assertEqual(search_entry(ns).get('text'),'Search')
