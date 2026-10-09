@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.402.8
+**Brain 版本**: 1.402.11
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,21 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.402.11 — coding harness：判卷代码来自可信基线、QA 验的必须是待合并 head 的构建
+
+- 审计 P0 #1（对应旧 harness「judge 不在被评 worktree 跑」「合同产物只读」）：runner 的契约、执行器、各活动入口、QA 门的 evaluate 入口一律从 runner 专用 clone（每轮自更新到 main）加载，不再从任务 / PR worktree 加载——build 改过的 verify、evaluate 不能拿来判它自己。
+- 审计 P0 #2（对应旧 evaluator「必须在 PR 分支代码上验」、verdict 锚定 PR head）：QA 门读预览 Brain /api/brain/health 的 git_sha，必须等于 PR head 才开验；推送后还没重新部署则等（stale_since 留痕），超过时限升级 qa_preview_stale。检出的分支必须正是列表里的 head；evaluate 活动收到 head_sha 开跑前再核一次（不符 retryable preview_stale），QA 报告环境记录 sha。
+
+## Brain 1.402.10 — coding harness 合并门绑定 head SHA + 真实 CI 时序回放测试
+
+- 决策 a1fdbc51 第②步（对应旧 harness「merge 前 head == 锚定 SHA」硬检查）：QA 与独立裁判通过不再开 GitHub 自动合并，只「批准」验收记录推送后的 head（qa-<pr>.json approved.head）。新合并门 runner/lib/merge-gate.mjs 每轮最先跑：当前 head 就是批准的 head、且该 head 上规定的必需检查全部登记全绿 → `gh pr merge --squash --match-head-commit <head>`。批准后分支又出现提交：只碰 changes/、sprints/ 或只是从 main 合入 → 改绑新 head；动了其他文件 → 撤销批准（revoked 留痕），新 head 重新 QA + 裁判。
+- 第③步：新增真实 CI 时序回放测试（fixtures/real-timing-6139.json，取自 PR #6139 的 GitHub check-runs 真实登记时刻），逐轮回放 runner，断言必需检查未全部登记全绿前不开 QA；已验证该测试在首跑旧逻辑下于 13:29:48 那一轮报红。
+
+## Brain 1.402.9 — 任务池总闸关着时放行秋米任务，穿透 MMV 不被 fleet 槽位拦住
+
+- `dispatchNextTask`：槽位总闸（pool_exhausted / pool_c_full）复查仍不通过且无 xian 旁路时，先探测队列里有无 `qiumi_task`；有则放行，且候选循环只选 `qiumi_task`（普通任务照旧被拦）。`resourceAdmissionBlocked` 早退不变——资源数据不可信时秋米也不派。
+- `selectNextDispatchableTask` 新增 `options.onlyTaskTypes`（非空数组时 SQL 限定 task_type；null / 空数组 = 不限定）。
 
 ## Brain 1.402.8 — coding harness：QA 通过后 CI 修复改了代码须撤销通过、重新 QA 与裁判
 
