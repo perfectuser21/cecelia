@@ -205,3 +205,20 @@ test('跨任务真实回执导入保留原任务/采集来源，不能显示成�
  const c=buildCompletion(r,options,[],'/cache/new','new-task');
  assert.equal(c.facts.receipt_import,true);assert.equal(c.evidence.source_action_task_id,'original-task');
 });
+test('同型号规格待核保留两平台价格，不因规格不同算两个商品',()=>{
+ const r=receipt(), report=JSON.parse(r.result.payloads[0].text);
+ report.quotes[0].status='规格待核';report.quotes[0].specification='Battery/Charger, count unverified';
+ report.quotes.push({...quote,package:'com.thehomedepot',url:null,url_missing:true,specification:'2 batteries 1.3Ah and bag'});
+ r.result.payloads[0].text=JSON.stringify(report);
+ const out=validateReceipt(r,{...options,count:1});assert.equal(out.quotes.length,2);assert.equal(out.matched_sku_count,0);assert.equal(out.claimed_result,'partial');
+});
+test('套装误作package时依精确截图owner型号恢复包名，合法冲突包名拒绝',async()=>{
+ const {bindAuthoritativeQuote}=await import('./us-price-keyword-core.mjs');
+ const task='d3d7ad80-4486-4977-ad53-da4e0ef1dbdf',owner='priced3d7ad8044864977ad53da4e0ef1dbdf7f181eadf20b48c6be6d115ccb2b27c8';
+ const raw={...quote,action_owner:owner,price_candidates:[{amount:19.99}]};const report={action_owner:owner,raw_quotes:[raw],network_restored:true,home_verified:true};
+ const model={...raw,package:'2 batteries kit'};
+ assert.equal(bindAuthoritativeQuote(model,report,task).package,raw.package);
+ assert.throws(()=>bindAuthoritativeQuote({...model,screenshot_path:'/wrong.png'},report,task));
+ assert.throws(()=>bindAuthoritativeQuote({...model,package:'com.thehomedepot'},report,task));
+ assert.ok(buildPrompt(options,task).includes('app_package'));assert.ok(buildPrompt(options,task).includes('Android包名'));
+});
