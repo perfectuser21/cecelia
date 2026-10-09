@@ -81,6 +81,32 @@ it('版本机器人不跟随来源声明软链接，也拒绝重复JSON键而不
   expect(JSON.parse(readFileSync(join(f.root,'packages/brain/package.json'))).version).toBe('1.2.3');
  }
 });
+it('本仓库发布片段只登记为release，全部当前辅助关系提供真实Git HEAD/HEAD字节',()=>{
+ const repoRoot=new URL('../../../../../',import.meta.url);
+ const manifest=JSON.parse(readFileSync(new URL('.implementation-source-relations.json',repoRoot),'utf8'));
+ const f=fixture([]);f.git('remote','set-url','origin',`https://github.com/${manifest.repo}.git`);
+ for(const row of manifest.relations){
+  if(/^changes\/cp-.*\.md$/.test(row.path))expect(row.role).toBe('release');
+  for(const path of [row.owner_path,row.path]){
+   const source=new URL(path,repoRoot);expect(existsSync(source),path).toBe(true);
+   const target=join(f.root,path);mkdirSync(join(target,'..'),{recursive:true});writeFileSync(target,readFileSync(source));
+  }
+ }
+ writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify(manifest));
+ f.git('add','.');f.git('commit','-qm','actual current auxiliary bytes');const head=f.git('rev-parse','HEAD');
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,{repo:manifest.repo,base_revision:head,head_revision:head})).not.toThrow();
+});
+it('删除已消费缺件的失效文档关系只修新HEAD，旧Git基线严格保UNKNOWN',()=>{
+ const stale={owner_path:'src/controller.js',path:'changes/controller.md',role:'documentation'};
+ const f=fixture([stale]);rmSync(join(f.root,stale.path));f.git('add','.');f.git('commit','-qm','actual consumed fragment with stale role');
+ const broken=f.git('rev-parse','HEAD');const source={...f.source,base_revision:broken,head_revision:broken};
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,source)).toThrow('AUXILIARY_SOURCE_MISSING');
+ writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:source.repo,relations:[]}));
+ f.git('add','.');f.git('commit','-qm','remove only consumed stale relation');const repaired=f.git('rev-parse','HEAD');
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,{...source,head_revision:repaired})).toThrow('AUXILIARY_SOURCE_MISSING');
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,{...source,base_revision:repaired,head_revision:repaired})).not.toThrow();
+ expect(f.git('show',`${broken}:.implementation-source-relations.json`)).toContain('documentation');
+});
 afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 function fixture(relations=[{owner_path:'src/controller.js',path:'docs/controller.md',role:'documentation'}]) {
  const root=mkdtempSync(join(tmpdir(),'auxiliary-source-'));roots.push(root);
