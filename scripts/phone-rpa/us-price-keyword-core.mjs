@@ -110,9 +110,10 @@ export async function claimTask(taskId, owner, requestBrain) {
   await requestBrain(`/tasks/${taskId}`, 'PATCH', { status: 'in_progress' });
 }
 
-export function buildCompletion(result, o, rows, dir) {
+export function buildCompletion(result, o, rows, dir, taskId = dir.split('/').pop()) {
   return {
     actor: 'OpenClaw/us-price-compare',
+    summary: `任务 ${taskId}：${result.claimed_result === 'passed' ? '已完成' : '本轮结束，部分结果'}；关键词 ${o.keyword}；配对商品 ${result.matched_sku_count}/${o.count}；报价 ${rows.length} 条。报价明细：https://www.notion.so/7452049ef7de4da5822d4ff682869172`,
     facts: { keyword: o.keyword, requested_count: o.count, quotes_written: rows.length, matched_sku_count: result.matched_sku_count, claimed_result: result.claimed_result, actual_model: result.actual_model, network_restored: result.network_restored, home_verified: true, lock_free_verified: true, report_only: result.report_only === true },
     evidence: { run_id: result.run_id, report_run_id: result.run_id, source_action_run_id: result.source_action_run_id ?? null, source_action_owner: result.source_action_owner ?? null, collection_runs: result.collection_runs ?? [], quote_provenance: result.quotes.map(q => ({ package: q.package, model: q.model, action_owner: q.action_owner, collected_at: q.collected_at, source_action_run_id: q.source_action_run_id ?? result.source_action_run_id ?? result.run_id })), notion_rows: rows, receipt_directory: dir },
     next_steps: [],
@@ -122,5 +123,5 @@ export function buildCompletion(result, o, rows, dir) {
 export function terminalStatus(claimedResult) { return claimedResult === 'passed' ? 'completed' : 'failed'; }
 export function failurePatch(previous, reason, dir, rows) {
   const oldResult = (previous.task ?? previous).result ?? {};
-  return { status: 'failed', result: { ...oldResult, last_attempt: { actor: 'OpenClaw/us-price-compare', facts: { outcome: 'failed', reason }, evidence: { receipt_directory: dir, notion_rows: rows } } } };
+  return { status: 'failed', error_message: reason, result: { ...oldResult, summary: `本轮失败：${reason}；已写报价 ${rows.length} 条。报价明细：https://www.notion.so/7452049ef7de4da5822d4ff682869172`, last_attempt: { actor: 'OpenClaw/us-price-compare', facts: { outcome: 'failed', reason }, evidence: { receipt_directory: dir, notion_rows: rows } } } };
 }

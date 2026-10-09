@@ -13,5 +13,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --test scripts/phone-rpa/us-price-keyword.test.mjs
+      - run: node --test scripts/phone-rpa/*.test.mjs
       - run: python3 -m unittest discover -s scripts/phone-rpa -p test_native_price_worker.py

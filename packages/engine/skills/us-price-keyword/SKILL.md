@@ -13,6 +13,8 @@ node /Users/administrator/openclaw-root/workspaces-root/clawd-us-price-compare/s
 
 CLI负责先登记Brain、派发 us-price-compare、独立校验手机XML与截图、上传Notion附件、按任务/SKU/平台幂等写入并回读。未形成全部同规格跨平台配对时报告partial，保留已有有效报价并以failed终结本轮任务，不能称整批完成或留在in_progress。执行/审计/写库失败同样failed并留原因、原证据和已写页面；claim409保持他人任务不动。实际模型取provider回执，不采用模型自行声称。
 
+Notion员工入口：现有英文Tasks的Description填写独立行【执行参数】、执行Agent：us-price-compare、模型：openai/gpt-6-sol、【执行参数结束】，随后独立行关键词：英文关键词、数量：1、邮编：53132；Status改Delegated才提交。不要填写Workflow关系。已部署watcher每次仅GET回灌的queued qiumi_task，明确同Agent后用CLI --task-id认领原任务，不另建任务、不调用dispatch；显式人类lane、人工暂停、未来排期不执行。运维由launchd定时启动绝对路径 `/Users/administrator/openclaw-root/workspaces-root/clawd-us-price-compare/scripts/phone-rpa/us-price-notion-watch.mjs --once`，单实例不可重叠；执行端不运行watcher。报价写独立业务库，summary把任务编号、商品/报价数量和明细库链接回流原任务。
+
 执行端：XIAN-M4-PHONE小黄ANGYVB4402004137，controller `/Users/jinnuoshengyuan/.local/bin/douyin-phone-adb --profile legacy`。整个任务只启动一次固定dispatcher，由dispatcher内部唯一with-lock包住一个Python worker，禁止逐动作重新with-lock。被派发的采集端仅执行CLI给定base64请求，不自行改写脚本/证据目录。固定node脚本为 `/Users/jinnuoshengyuan/Library/Caches/us-price-native-staging/runtime/us_price_native_worker.py`，同目录依赖native_price_phone.py。确认空闲后按用户授权决策043693f2-c703-406b-96c6-90a0176eff0b切mac-mini-m4-us；结束或失败都恢复None/国内、HOME并释放锁；不改变小彩。已有锁或原出口与约定不符则停止。
 
 只用 `com.amazon.mShop.android.shopping`、`com.thehomedepot` 原生前台。Home Depot先设ZIP/门店再App内搜索和点击商品，外部商品深链可能Error Page。Amazon按型号页面就绪等待，不以固定冷启动延时断言失败；拒绝可选读取应用列表权限。禁止网页采价、注册登录、购买或加车。

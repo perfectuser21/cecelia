@@ -116,7 +116,7 @@ export async function main(args) {
       return proof;
     };
     const rows = await saveQuotes(result, o, taskId, requestNotion, dataSource, proofAndUpload, row => writtenRows.push(row));
-    const completion = buildCompletion(result, o, rows, dir);
+    const completion = buildCompletion(result, o, rows, dir, taskId);
     await writeFile(join(dir, 'completion.json'), JSON.stringify(completion, null, 2), { mode: 0o600 });
     await requestBrain(`/tasks/${taskId}`, 'PATCH', { status: terminalStatus(result.claimed_result), result: completion, handoff: completion });
     console.log(JSON.stringify({ task_id: taskId, status: result.claimed_result === 'passed' ? 'completed' : 'partial', ...completion }, null, 2));
