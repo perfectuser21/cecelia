@@ -3,7 +3,7 @@ name: us-price-keyword
 description: 在手机 Amazon US 与 Home Depot US 原生 App 按关键词查同型号商品价格，记录截图和 Notion 报价；适用于美国 ZIP 关键词比价，不执行购买。
 ---
 
-输入关键词、美国五位 ZIP（默认53132）、SKU上限（默认3，范围1–3）。一次任务=一个关键词+一个ZIP+最多3个不同品牌/型号/规格组合，两平台每商品各一行报价。模型优先 openai/gpt-6-luna；仅明确模型不支持时降至 openai/gpt-6-sol。
+输入关键词、美国五位 ZIP（默认53132）、SKU上限（默认3，范围1–3）。一次任务=一个关键词+一个ZIP+最多3个不同品牌/型号/规格组合，两平台每商品各一行报价。生产默认 openai/gpt-6-sol。Luna可通过 --model openai/gpt-6-luna 显式试运行，仅明确模型不支持时回落Sol。Luna已能完成同SKU两原生App采集和恢复，但本轮回执多次失败，尚不能称为稳定生产模型。
 
 调度端/员工入口在控制机调用以下已部署入口；被 us-price-compare 派发的执行端仅按给定task_id采集并返回JSON，禁止再次调用CLI、创建替代任务或递归派发自己。
 
@@ -19,7 +19,7 @@ CLI负责先登记Brain、派发 us-price-compare、独立校验手机XML与截�
 
 先搜关键词发现候选，然后核对品牌、型号和规格套装；不同电池/配件不能算同SKU。每报价保存型号/价格/ZIP原生XML、截图绝对路径、采集ISO时间及action_owner。运费税费未查清写未知，缺价不填0，不复用旧报价。
 
-证据处理优先node_exec在设备解析XML并返回紧凑字段/结构化结果，Android UI文本在属性中，应遍历root.iter()读取node.get('text','')和node.get('content-desc','')，不是itertext；控制器直接使用已给绝对路径，无需寻找，不要把shell控制器当python运行。禁止把全文XML返回模型。同一证据最多读取1次，截图存在后返回路径供CLI独立审计上传，不要调用file_fetch反复拉图。恢复网络/桌面并释放锁后立即输出JSON，不继续读取已验收证据。
+node_exec调用结果用text(r)完整返回，不要猜r.content或遍历r.content以免丢失非MCP结果。证据处理优先node_exec在设备解析XML并返回紧凑字段/结构化结果，Android UI文本在属性中，应遍历root.iter()读取node.get('text','')和node.get('content-desc','')，不是itertext；控制器直接使用已给绝对路径，无需寻找，不要把shell控制器当python运行。禁止把全文XML返回模型。同一证据最多读取1次，截图存在后返回路径供CLI独立审计上传，不要调用file_fetch反复拉图。恢复网络/桌面并释放锁后立即输出JSON，不继续读取已验收证据。
 
 返回CLI提示词规定的JSON报价结构，附network_restored/home_verified/lock_free_verified验收。失败报实际原因与已做动作，不伪造成功。
 

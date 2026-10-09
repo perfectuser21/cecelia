@@ -4,7 +4,7 @@ const platforms = { 'com.amazon.mShop.android.shopping': 'Amazon US', 'com.theho
 const demand = (value, reason) => { if (!value) throw new Error(reason); };
 const rich = value => ({ rich_text: [{ text: { content: String(value ?? '').slice(0, 2000) } }] });
 export function parseOptions(args) {
-  const o = { keyword: '', zip: '53132', count: 3, model: 'openai/gpt-6-luna' };
+  const o = { keyword: '', zip: '53132', count: 3, model: 'openai/gpt-6-sol' };
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i].replace(/^--/, '').replace(/-([a-z])/g, (_, c) => c.toUpperCase());
     demand(['keyword', 'zip', 'count', 'model', 'taskId', 'receipt', 'dataSource'].includes(key) && args[i + 1], '未知参数或缺少参数值');
@@ -21,7 +21,7 @@ export function buildPrompt(o, taskId) {
   return `执行真实原生App关键词比价任务，Brain任务 ${taskId}。关键词 ${JSON.stringify(o.keyword)}；美国ZIP ${o.zip}；最多 ${o.count} 个不同SKU，最多 ${o.count * 2} 条报价。先在原生App内搜索关键词发现候选，再按品牌+型号+规格套装在另一原生App查相同商品。不得把固定验收商品作为通用结果。找不到配对保留单平台有效报价并报告未匹配原因，不凑数。
 必须实际调用 node_exec，在 XIAN-M4-PHONE（node beb0fec23dc75b6b1172379f783cf6d9d4cdc9934ffc2c1522de07f952094654）小黄ANGYVB4402004137执行；controller /Users/jinnuoshengyuan/.local/bin/douyin-phone-adb --profile legacy with-lock 唯一owner。每步确保锁同owner、call idle。用户批准043693f2-c703-406b-96c6-90a0176eff0b允许此手机切mac-mini-m4-us出口，完毕恢复None/国内并HOME释放锁；小彩不动。若当前出口不是None/国内或已有锁，拒绝执行报告原因。
 只用Amazon US com.amazon.mShop.android.shopping和Home Depot US com.thehomedepot。禁止网页采价、登录、购买、加购物车。Home Depot通过App内搜索点击，禁止外部商品深链；Amazon按页面就绪等待并拒绝可选读取应用列表权限。只有截图/XML实际存在、明确价格/型号/规格/ZIP才算报价；所有证据新采集不可复用历史报价。不向Notion自行写入。
-工具收尾约束：优先node_exec在设备上解析XML并只返回紧凑字段/脚本结构化结果，Android UI文本在属性中，应遍历root.iter()读取node.get('text','')和node.get('content-desc','')，不是itertext；控制器直接使用已给绝对路径，无需寻找，不要把shell控制器当python运行。禁止把全文XML返回模型；同一证据最多读取1次。截图生成后只需返回已存在路径，由CLI独立审计和上传，不要调用 file_fetch，也不要为获取图片内容重复拉取同一文件。恢复网络/桌面并释放锁后立即输出JSON，不再读图或继续检查已验收项目。
+工具收尾约束：node_exec调用结果用text(r)完整返回，不要猜r.content或遍历r.content以免丢失非MCP结果；优先node_exec在设备上解析XML并只返回紧凑字段/脚本结构化结果，Android UI文本在属性中，应遍历root.iter()读取node.get('text','')和node.get('content-desc','')，不是itertext；控制器直接使用已给绝对路径，无需寻找，不要把shell控制器当python运行。禁止把全文XML返回模型；同一证据最多读取1次。截图生成后只需返回已存在路径，由CLI独立审计和上传，不要调用 file_fetch，也不要为获取图片内容重复拉取同一文件。恢复网络/桌面并释放锁后立即输出JSON，不再读图或继续检查已验收项目。
 最终只输出JSON：{quotes:[{title,brand,model,specification,category,package,zip,price_usd,seller,availability,conditions,url,collected_at,screenshot_path,price_xml,title_xml,zip_xml,action_owner}],network_restored:true,home_verified:true,lock_free_verified:true,unmatched:[],blocking_reason:null}。category限电动工具/家居五金/园艺/其他，collected_at用ISO时间，conditions明确运费/税费未知项。截图和XML用小黄绝对路径；保留证据供调度器SSH读取校验。结束即使失败也恢复网络/桌面并释放锁。`;
 }
 export function unsupportedModel(text) {
