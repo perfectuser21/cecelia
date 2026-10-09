@@ -44,6 +44,16 @@ assert_decision "SKIP" "kernel v1 PR（仅标题命中 Harness approved candidat
 assert_decision "SKIP" "kernel v1 PR（仅分支命中 cp-route-api-）→ 跳过 auto-merge" \
   "cp-route-api-5c25873d" "fix(kernel): 任意标题"
 
+# 第三次同类事故（2026-10-10，金丝雀 05ae922c / PR #6153）：coding workflow runner 产出的 PR
+# 分支固定 cp-<8~10 位时间>-cw-<8 位 hex>、标题 feat/fix(workflow):，被当普通 cp-* PR 在 CI 绿后
+# 抢先合并，真人 QA 门 + 独立裁判 + 绑定 head 的合并门全被架空。merge 归 runner 合并门。
+assert_decision "SKIP" "coding workflow PR（cp-*-cw-<hex8> 分支）→ 跳过 auto-merge，merge 归 runner 合并门" \
+  "cp-10100039-cw-05ae922c" "fix(workflow): 修复 Brain 非法参数请求挂死"
+assert_decision "SKIP" "coding workflow PR（feat 标题同样跳过，判据是分支）" \
+  "cp-1009211700-cw-4ac5fa39" "feat(workflow): 任意标题"
+assert_decision "MERGE" "分支里带 cw 字样但不是 runner 格式 → 正常 auto-merge（不误伤 /dev）" \
+  "cp-1009213500-cw-firstrun-fixes" "fix(workflow): 首跑修复"
+
 assert_decision "MERGE" "普通 fix(brain) PR → 正常 auto-merge" \
   "cp-0704084753-abc" "fix(brain): 修复调度队头阻塞"
 
