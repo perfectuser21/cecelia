@@ -385,6 +385,65 @@ kill -9 "$VMGR" 2>/dev/null || true
 rm -f "/tmp/preview-$PR.pid"
 teardown
 
+# ── 闲置回收（2026-10-10，金丝雀 05ae922c 实证：预览上限 6 个被长期挂着的旧 PR 占满，
+#    新 PR 预览一律 503，coding harness 的真人 QA 门卡死）：开着的 PR 只要预览 24h 没重新
+#    部署就回收（再推送会重新部署，QA 门发现预览不在也会请求启动）；自动版本号分支的预览直接回收。
+idle_psql() {
+  # $1 = 「pr|branch|闲置秒数」行；源 D 返回 pr 号，闲置查询（含 EXTRACT(EPOCH）返回该行
+  cat >"$BIN/psql" <<SH
+#!/bin/bash
+if [[ "\$*" == *"EXTRACT(EPOCH"* ]]; then
+  echo "$1"
+elif [[ "\$*" == *"preview_environments"* && "\$*" == *"DISTINCT pr_number"* ]]; then
+  echo "${1%%|*}"
+else
+  echo ""
+fi
+SH
+  chmod +x "$BIN/psql"
+  printf '#!/bin/bash\necho "OPEN"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
+}
+
+setup
+idle_psql "201|cp-10080000-old-feature|90000"
+OUT=$(bash "$REAPER" 2>&1)
+if echo "$OUT" | grep -q "回收 1" && echo "$OUT" | grep -q "闲置"; then
+  pass "OPEN PR 预览闲置超过 24h → 回收"
+else
+  fail "OPEN PR 预览闲置超过 24h 未回收" "output=$OUT"
+fi
+teardown
+
+setup
+idle_psql "202|cp-10100000-active-feature|3600"
+OUT=$(bash "$REAPER" 2>&1)
+if echo "$OUT" | grep -q "跳过 1"; then
+  pass "OPEN PR 预览 1 小时内部署过 → 保留"
+else
+  fail "OPEN PR 预览近期部署过却被回收" "output=$OUT"
+fi
+teardown
+
+setup
+idle_psql "203|auto-version-bump-1.403.0|60"
+OUT=$(bash "$REAPER" 2>&1)
+if echo "$OUT" | grep -q "回收 1"; then
+  pass "自动版本号分支的预览 → 直接回收"
+else
+  fail "自动版本号分支的预览未回收" "output=$OUT"
+fi
+teardown
+
+setup
+idle_psql "204|cp-10080000-old-feature|90000"
+OUT=$(PREVIEW_IDLE_HOURS=48 bash "$REAPER" 2>&1)
+if echo "$OUT" | grep -q "跳过 1"; then
+  pass "PREVIEW_IDLE_HOURS 可调（48h 时 25h 闲置保留）"
+else
+  fail "PREVIEW_IDLE_HOURS 不生效" "output=$OUT"
+fi
+teardown
+
 # ── 总结 ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "结果: PASS=${PASS}, FAIL=${FAIL}"
