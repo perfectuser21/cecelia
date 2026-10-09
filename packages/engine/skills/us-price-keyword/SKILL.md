@@ -28,3 +28,5 @@ CLI不信任模型回传的证据路径；按本次taskID和纯字母数字actio
 能力边界：同型号单SKU原生路径已验收；Luna业务与3SKU批量结果以各任务真实回执为准，不能从单SKU通过推断所有关键词稳定。
 
 锚点：Brain任务f6bc3cf0-b931-4c17-872d-cba140837461；报价库7452049ef7de4da5822d4ff682869172；数据源81b9a684-bc40-44dd-840b-235e56296bd3。
+
+原生前台守卫：launch使用am start -W并核预期包；商品节点dump/tap/input/swipe前均核预期App，错App立即拒绝，不能把关键词输入Tailscale。主动launch允许更新预期包，安全HOME由控制器专门入口执行。Tailscale仅识别到Clear search时先清空，再最多3次Back逐dump核Connected，未知页不盲退；出口None及CN探针仍需独立验证。

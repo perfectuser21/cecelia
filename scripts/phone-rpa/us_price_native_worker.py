@@ -9,7 +9,7 @@ import re
 import sys
 import time
 from urllib.parse import quote as urlquote
-from native_price_phone import CTL, PROFILE, AMAZON, HD, PhoneSession, command, validate_request, text_values, bounds, parse_hd_detail, price_candidates, extract_asin
+from native_price_phone import CTL, PROFILE, AMAZON, HD, PhoneSession, command, validate_request, text_values, bounds, parse_hd_detail, price_candidates, extract_asin, assert_app_nodes
 
 def amazon_seller(values):
     return next((v for v in values if re.fullmatch(r'Sold by\s+[^\n]{1,100}',v,re.I)), '未显示（需核对）')
@@ -48,6 +48,7 @@ def clear_search(session,edit):
     session.adb('shell','input','keyevent','67')
 
 def search_entry(nodes):
+    assert_app_nodes(nodes,HD)
     visible=[n for n in nodes if bounds(n)]
     edit=next((n for n in visible if n.get('resource-id')=='main_app_header_search_text_field' or (n.get('class')=='android.widget.EditText' and 'search' in n.get('resource-id','').lower())),None)
     if edit is not None:return edit

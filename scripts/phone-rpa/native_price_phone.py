@@ -67,6 +67,11 @@ def bounds(node):
     numbers = list(map(int,re.findall(r'\d+',node.get('bounds',''))))
     return numbers if len(numbers)==4 and numbers[2]>numbers[0] and numbers[3]>numbers[1] else None
 
+def assert_app_nodes(nodes,package):
+    if not nodes:return  # 空加载页无可点击/输入目标，交给有界就绪等待。
+    packages={n.get('package') for n in nodes if n.get('package')}
+    if package not in packages:raise RuntimeError('前台App XML包不符：预期'+package)
+
 class PhoneSession:
     def __init__(self, owner, runner=command):
         self.owner, self.runner = owner, runner
@@ -75,6 +80,7 @@ class PhoneSession:
         self.deadline = time.monotonic()+900
         self.counter = 0
         self.cleanup = False
+        self.expected_package = None
     def ctl(self, *args, timeout=40):
         return self.runner([CTL,'--profile',PROFILE,*args],timeout=timeout)
     def raw_adb(self, *args, timeout=40):
@@ -85,17 +91,29 @@ class PhoneSession:
         owner=re.search(r'owner=(\S+)',lock)
         if not ('state=device' in status and 'call_state=idle' in status and 'lock=held' in lock and owner and owner.group(1)==self.owner): raise RuntimeError('设备空闲/独占锁校验失败')
         return status
+    def require_foreground(self):
+        expected=getattr(self,'expected_package',None)
+        if not expected:return
+        status=self.check();match=re.search(r'foreground=([^\s/]+)',status)
+        if not match or match.group(1)!=expected:raise RuntimeError('前台App不符：预期'+expected)
     def adb(self,*args,timeout=40):
+        if args[:2]==('shell','input'):self.require_foreground()
         self.check(); value=self.raw_adb(*args,timeout=timeout); self.check(); return value
     def nodes(self,label):
+        self.require_foreground()
         self.counter += 1
         label=f'{self.counter}-{label}'
         remote=f'/sdcard/{self.owner}-{label}.xml'; path=self.root/(label+'.xml')
         self.adb('shell','uiautomator','dump',remote,timeout=35)
         self.adb('pull',remote,str(path),timeout=20)
         if not path.exists(): raise RuntimeError('uiautomator未产生XML')
-        return list(ET.parse(path).getroot().iter('node')),str(path)
+        nodes=list(ET.parse(path).getroot().iter('node'))
+        if getattr(self,'expected_package',None):assert_app_nodes(nodes,self.expected_package)
+        self.require_foreground()
+        return nodes,str(path)
     def tap(self,node):
+        self.require_foreground()
+        if getattr(self,'expected_package',None) and node.get('package')!=self.expected_package:raise RuntimeError('前台App点击节点包不符')
         box=bounds(node)
         if not box: raise RuntimeError('目标没有可见bounds')
         self.check(); self.ctl('tap',str((box[0]+box[2])//2),str((box[1]+box[3])//2)); self.check(); time.sleep(1.5)
@@ -104,6 +122,7 @@ class PhoneSession:
         if not matches: raise RuntimeError('目标不可见:'+needle[:100])
         return matches[0]
     def snapshot(self,label):
+        self.require_foreground()
         self.check(); name=self.owner+'-'+label
         receipt=self.ctl('snapshot-evidence',name)
         self.check()
@@ -115,21 +134,32 @@ class PhoneSession:
         if not path: raise RuntimeError('截图receipt未提供存在的截图')
         return str(path)
     def launch(self,package,url=None):
-        if url:self.adb('shell','am','start','-a','android.intent.action.VIEW','-d',shlex.quote(url),'-p',package)
+        self.expected_package=None
+        if url:self.adb('shell','am','start','-W','-a','android.intent.action.VIEW','-d',shlex.quote(url),'-p',package)
         else:
             activity=self.adb('shell','cmd','package','resolve-activity','--brief','-a','android.intent.action.MAIN','-c','android.intent.category.LAUNCHER','-p',package).strip().splitlines()[-1]
             if '/' not in activity: raise RuntimeError('无法解析原生App启动Activity')
-            self.adb('shell','am','start','-n',activity)
+            self.adb('shell','am','start','-W','-n',activity)
         time.sleep(3)
         for attempt in range(2):
             nodes,path=self.nodes('launch-permission')
             if not any('读取设备应用列表' in v for v in text_values(nodes)):break
             self.tap(self.find(nodes,'禁止',True))
+        self.expected_package=package
+        for attempt in range(3):
+            try:self.require_foreground();break
+            except RuntimeError:
+                if attempt==2:raise
+                time.sleep(1)
+        assert_app_nodes(nodes,package)
     def swipe(self):
+        self.require_foreground()
         self.check(); self.ctl('swipe','600','2100','600','700','600'); self.check(); time.sleep(1)
     def back(self):
+        self.require_foreground()
         self.check(); self.ctl('back'); self.check(); time.sleep(1)
     def input(self,value):
+        self.require_foreground()
         if not re.fullmatch(r'[A-Za-z0-9 _.,/-]{1,200}',value): raise ValueError('首版原生搜索仅支持英文/数字关键词')
         self.adb('shell','input','text',shlex.quote(value.replace(' ','%s')))
     def current_ip(self):
@@ -151,8 +181,14 @@ class PhoneSession:
         self.launch('com.tailscale.ipn')
         nodes,path=self.nodes('exit-entry')
         values=text_values(nodes)
-        if 'Connected' not in values:
-            self.back(); nodes,path=self.nodes('exit-main'); values=text_values(nodes)
+        if 'Connected' not in values and any(n.get('content-desc')=='Clear search' for n in nodes):
+            self.tap(self.find(nodes,'Clear search',True))
+            for attempt in range(3):
+                nodes,path=self.nodes('exit-search-cleared')
+                values=text_values(nodes)
+                if 'Connected' in values:break
+                self.back()
+            nodes,path=self.nodes('exit-main');values=text_values(nodes)
         if 'Connected' not in values:raise RuntimeError('Tailscale Connected未核验')
         existing='mac-mini-m4-us' if 'mac-mini-m4-us' in values else ('None' if 'None' in values else None)
         if existing is None:raise RuntimeError('当前出口无法核验')
