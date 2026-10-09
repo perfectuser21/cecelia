@@ -101,6 +101,11 @@
       "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
       "path": "packages/brain/src/lib/__tests__/workspace-ci-source-bundle.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
+      "path": "packages/brain/scripts/smoke/workspace-ci-source-bundle-smoke.sh",
+      "role": "verification"
     }
   ]
 }

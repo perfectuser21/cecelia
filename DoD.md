@@ -40,3 +40,6 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] B-08 配套测试直接执行真实来源身份与准入边界；既有纯协议用例归同名单元测试，双Git与实际PG覆盖保留，官方test-pairing不豁免。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/consumer-source-set.test.js src/lib/__tests__/workspace-ci-source-bundle.test.js src/lib/__tests__/existing-ops-registration.test.js --maxWorkers=1 --minWorkers=1 && cd ../.. && bash .github/workflows/scripts/lint-test-pairing.sh origin/main"
+
+- [x] [BEHAVIOR] B-09 跨仓来源正式smoke执行真实双Git固定树、准入边界与真实PG/HTTP发布链；unsafe数据库在任何测试前拒，正式allowlist接入不豁免。
+  Test: manual:bash -c "DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test bash packages/brain/scripts/smoke/workspace-ci-source-bundle-smoke.sh"
