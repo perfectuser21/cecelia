@@ -46,6 +46,8 @@ class NativePriceTests(unittest.TestCase):
         ns[1].set('class','android.widget.ImageButton');ns[1].set('clickable','true');ns[1].set('bounds','[1043,121][1200,278]')
         self.assertIs(airship_close_button(ns),ns[1])
         self.assertIsNone(airship_close_button(ns[1:]))
+        extra=nodes(['another control'])[0];extra.set('clickable','true')
+        self.assertIsNone(airship_close_button(ns+[extra]))
         ns[1].set('bounds','[20,1400][100,1550]');self.assertIsNone(airship_close_button(ns))
     def test_attributes_not_itertext(self):
         self.assertEqual(text_values(nodes(['Brand drill','53132'])),['Brand drill','53132'])
