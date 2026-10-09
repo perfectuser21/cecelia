@@ -181,3 +181,26 @@ test('安全收尾失败优先保留原始探针错误',()=>{
  const r=receipt(),report=JSON.parse(r.result.payloads[0].text);report.quotes=[];report.network_restored=false;report.blocking_reason='ip-api.com probe timeout';r.result.payloads[0].text=JSON.stringify(report);
  assert.throws(()=>validateReceipt(r,options),/ip-api.com probe timeout/);
 });
+test('权威held-report替换脱敏证据路径，严格绑定task owner/唯一SKU/原价格候选',async()=>{
+ const {bindAuthoritativeQuote}=await import('./us-price-keyword-core.mjs');
+ const task='d3d7ad80-4486-4977-ad53-da4e0ef1dbdf';
+ const owner='priced3d7ad8044864977ad53da4e0ef1dbdf7f181eadf20b48c6be6d115ccb2b27c8';
+ const model={...quote,action_owner:owner,price_xml:'/Users…s/redacted.xml'};
+ const raw={...quote,action_owner:owner,price_candidates:[{amount:19.99,text:'$19.99'},{amount:9.99,text:'credit offer'}],price_xml:'/Users/jinnuoshengyuan/Library/Caches/us-price-native-staging/actual.xml',collected_at:'2026-10-09T01:01:00Z'};
+ const report={action_owner:owner,raw_quotes:[raw]};
+ const bound=bindAuthoritativeQuote(model,report,task,owner);
+ assert.equal(bound.price_xml,raw.price_xml);assert.equal(bound.collected_at,raw.collected_at);
+ assert.equal(bound.price_usd,19.99);assert.equal(bound.specification,model.specification);
+ assert.throws(()=>bindAuthoritativeQuote({...model,price_usd:18},report,task,owner));
+ assert.throws(()=>bindAuthoritativeQuote(model,{...report,raw_quotes:[raw,raw]},task,owner));
+ assert.throws(()=>bindAuthoritativeQuote(model,report,'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'));
+ assert.throws(()=>bindAuthoritativeQuote({...model,action_owner:owner+'x'},report,task));
+});
+test('跨任务真实回执导入保留原任务/采集来源，不能显示成新provider调用',async()=>{
+ const {buildCompletion}=await import('./us-price-keyword-core.mjs');
+ const o=parseOptions(['--keyword','drill','--source-action-task-id','original-task']);
+ assert.equal(o.sourceActionTaskId,'original-task');
+ const r={...validateReceipt(receipt(),options),receipt_import:true,source_action_task_id:'original-task'};
+ const c=buildCompletion(r,options,[],'/cache/new','new-task');
+ assert.equal(c.facts.receipt_import,true);assert.equal(c.evidence.source_action_task_id,'original-task');
+});
