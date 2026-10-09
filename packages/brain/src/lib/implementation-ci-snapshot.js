@@ -241,7 +241,7 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
       const paths=tree.tree.filter(n=>n.type==='blob').map(n=>n.path),registry=await readExistingOpsRegistry(pool);
       let workspaceConsumerProof;
       if(consumer!==undefined){
-        const {unverified_reference_ids,...identity}=EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops');
+        const {unverified_reference_ids:_unverifiedReferenceIds,...identity}=EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops');
         workspaceConsumerProof=await collectWorkspaceConsumerSourceSet({
           workspace:{repo:CONTRACT_REPO,revision:consumer.workspace_revision},
           brain:{repo:EXISTING_OPS_REPO,revisions:consumer.brain_revisions},identity,

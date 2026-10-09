@@ -106,7 +106,7 @@ export async function readConsumerSourceMainWitness(input,{fetchFn=globalThis.fe
   const witness={source_set:sources,anchor,run,jobs:jobsResponse.jobs,artifact,snapshot,main_history:history};
   if(!validateConsumerSourceMainEvidence(witness))return {...unknown('CONSUMER_MAIN_EVIDENCE_UNKNOWN'),diagnostics:{
    run:{id:run.id,name:run.name,path:run.path,event:run.event,head_sha:run.head_sha,head_branch:run.head_branch,status:run.status,repository:run.repository?.full_name},
-   snapshot:{repo:snapshot.repo,revision:snapshot.revision,status:snapshot.status,schema_version:snapshot.schema_version,gaps:snapshot.gaps,digest_valid:snapshot.snapshot_sha256===stepSha256((({snapshot_sha256,...body})=>body)(snapshot))},
+   snapshot:{repo:snapshot.repo,revision:snapshot.revision,status:snapshot.status,schema_version:snapshot.schema_version,gaps:snapshot.gaps,digest_valid:snapshot.snapshot_sha256===stepSha256((({snapshot_sha256:_snapshotSha256,...body})=>body)(snapshot))},
    artifact:{name:artifact.name,workflow_run:artifact.workflow_run,expired:artifact.expired},
    jobs:jobsResponse.jobs?.filter(j=>j.name==='snapshot-main').map(j=>({name:j.name,status:j.status,conclusion:j.conclusion})),
    main_history:history.map(h=>({repo:h.repo,revision:h.revision,current_main:h.current_main,status:h.comparison?.status,base_sha:h.comparison?.base_commit?.sha,merge_base_sha:h.comparison?.merge_base_commit?.sha}))}};

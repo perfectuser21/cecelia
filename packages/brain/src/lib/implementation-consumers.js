@@ -139,5 +139,5 @@ export async function readImplementationConsumers(db,input,{pinnedContext=null}=
   return {scope_key:q.scope,source:{repo:q.repo,registry_repo:context.registryRepo,path:q.path,kind:q.kind,revision:q.revision,digest:q.digest||null},
     manifest_version_id:context.manifest_version_id,manifest_digest:context.manifest_digest,projection_run_id:context.projection_run_id,projection_digest:context.projection_digest,
     mapping_status:gaps.length?'unknown':'verified',verification_status:'unknown',scope_status:context.scope_status??'verified',organization_status:q.versionId?'historical_membership_unknown_organization':'current',
-    activities:[...activities.values()],workflows:[...workflows.values()],usages:usages.map(({consumer_source_payload,consumer_source_invalid,implementation_path,...usage})=>usage),required_assertions:requiredAssertions,gaps};
+    activities:[...activities.values()],workflows:[...workflows.values()],usages:usages.map(({consumer_source_payload:_consumerSourcePayload,consumer_source_invalid:_consumerSourceInvalid,implementation_path:_implementationPath,...usage})=>usage),required_assertions:requiredAssertions,gaps};
 }
