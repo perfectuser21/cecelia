@@ -81,6 +81,18 @@ class NativePriceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):session.exit_node('mac-mini-m4-us')
         self.assertEqual(events,[])
 
+    def test_real_controller_window_foreground_format_and_no_substring_spoof(self):
+        session=object.__new__(PhoneSession);session.expected_package='com.thehomedepot'
+        session.check=lambda:'state=device call_state=idle\nforeground=  mCurrentFocus=Window{c555eae u0 com.thehomedepot/com.thehomedepot.app.StartupActivity}\nlock=held'
+        session.require_foreground()
+        for status in [
+            'foreground=  mCurrentFocus=Window{c555eae u0 com.tailscale.ipn/com.thehomedepot.Spoof}',
+            'foreground=  mCurrentFocus=null extra=com.thehomedepot',
+            'other=com.thehomedepot foreground=com.tailscale.ipn/Main',
+        ]:
+            session.check=lambda status=status:status
+            with self.assertRaisesRegex(RuntimeError,'前台App'):session.require_foreground()
+
     def test_seller_requires_exact_native_text_not_substring(self):
         self.assertEqual(amazon_seller(['Visit Amazon.com.evil.com']),'未显示（需核对）')
         self.assertEqual(amazon_seller(['Sold by Amazon.com']),'Sold by Amazon.com')
