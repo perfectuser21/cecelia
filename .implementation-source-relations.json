@@ -101,11 +101,6 @@
       "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
       "path": "packages/brain/scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs",
       "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
-      "path": "changes/cp-10091640-auxiliary-release-metadata-repair.md",
-      "role": "release"
     }
   ]
 }
