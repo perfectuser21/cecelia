@@ -91,7 +91,7 @@ export async function main(args) {
     else {
       const config = JSON.parse(await readFile(join(homedir(), '.openclaw', 'openclaw.json'), 'utf8'));
       const env = { ...process.env, OPENCLAW_GATEWAY_TOKEN: config.gateway.auth.token };
-      const message = join(dir, 'prompt.txt'); await writeFile(message, buildPrompt(o, taskId), { mode: 0o600 });
+      const message = join(dir, 'prompt.txt'); await writeFile(message, buildPrompt(o, taskId, `phone-price-${taskId}-${randomUUID()}`), { mode: 0o600 });
       for (const model of [...new Set([o.model, 'openai/gpt-6-sol'])]) {
         const r = await child('openclaw', ['agent', '--agent', 'us-price-compare', '--session-id', `price-${taskId}-${randomUUID()}`, '--model', model, '--message-file', message, '--thinking', 'low', '--timeout', '1200', '--json'], env);
         await writeFile(join(dir, `${model.split('/')[1]}-receipt.json`), r.stdout, { mode: 0o600 });

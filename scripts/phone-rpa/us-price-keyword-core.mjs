@@ -12,18 +12,23 @@ export function parseOptions(args) {
   }
   o.keyword = o.keyword.trim(); o.count = Number(o.count);
   demand(o.keyword.length > 0 && o.keyword.length <= 200, '关键词应为1–200字符');
-  demand(/^\d{5}$/.test(o.zip), '需要五位美国邮编');
+  demand(o.zip === '53132', '首版仅ZIP53132已验收，其它邮编尚不支持');
   demand(Number.isInteger(o.count) && o.count >= 1 && o.count <= 3, '单次商品数量应为1–3');
   demand(['openai/gpt-6-luna', 'openai/gpt-6-sol'].includes(o.model), '模型仅支持本流程授权的 Luna 或 Sol');
   return o;
 }
-export function buildPrompt(o, taskId) {
-  return `执行真实原生App关键词比价任务，Brain任务 ${taskId}。关键词 ${JSON.stringify(o.keyword)}；美国ZIP ${o.zip}；最多 ${o.count} 个不同SKU，最多 ${o.count * 2} 条报价。先在原生App内搜索关键词发现候选，再按品牌+型号+规格套装在另一原生App查相同商品。不得把固定验收商品作为通用结果。找不到配对保留单平台有效报价并报告未匹配原因，不凑数。
-必须实际调用 node_exec，在 XIAN-M4-PHONE（node beb0fec23dc75b6b1172379f783cf6d9d4cdc9934ffc2c1522de07f952094654）小黄ANGYVB4402004137执行；controller /Users/jinnuoshengyuan/.local/bin/douyin-phone-adb --profile legacy with-lock 唯一owner。每步确保锁同owner、call idle。用户批准043693f2-c703-406b-96c6-90a0176eff0b允许此手机切mac-mini-m4-us出口，完毕恢复None/国内并HOME释放锁；小彩不动。若当前出口不是None/国内或已有锁，拒绝执行报告原因。
-只用Amazon US com.amazon.mShop.android.shopping和Home Depot US com.thehomedepot。禁止网页采价、登录、购买、加购物车。Home Depot通过App内搜索点击，禁止外部商品深链；Amazon按页面就绪等待并拒绝可选读取应用列表权限。只有截图/XML实际存在、明确价格/型号/规格/ZIP才算报价；所有证据新采集不可复用历史报价。不向Notion自行写入。
-工具收尾约束：node_exec调用结果用text(r)完整返回，不要猜r.content或遍历r.content以免丢失非MCP结果；优先node_exec在设备上解析XML并只返回紧凑字段/脚本结构化结果，Android UI文本在属性中，应遍历root.iter()读取node.get('text','')和node.get('content-desc','')，不是itertext；控制器直接使用已给绝对路径，无需寻找，不要把shell控制器当python运行。禁止把全文XML返回模型；同一证据最多读取1次。截图生成后只需返回已存在路径，由CLI独立审计和上传，不要调用 file_fetch，也不要为获取图片内容重复拉取同一文件。恢复网络/桌面并释放锁后立即输出JSON，不再读图或继续检查已验收项目。
-最终只输出JSON：{quotes:[{title,brand,model,specification,category,package,zip,price_usd,seller,availability,conditions,url,collected_at,screenshot_path,price_xml,title_xml,zip_xml,action_owner}],network_restored:true,home_verified:true,lock_free_verified:true,unmatched:[],blocking_reason:null}。category限电动工具/家居五金/园艺/其他，collected_at用ISO时间，conditions明确运费/税费未知项。截图和XML用小黄绝对路径；保留证据供调度器SSH读取校验。结束即使失败也恢复网络/桌面并释放锁。`;
+export function buildPrompt(o, taskId, owner = `phone-price-${taskId}`) {
+  const request = Buffer.from(JSON.stringify({ keyword: o.keyword, count: o.count, zip: o.zip, owner })).toString('base64');
+  return `执行Brain任务 ${taskId}：关键词 ${JSON.stringify(o.keyword)}，ZIP ${o.zip}，最多${o.count}SKU。只用两家原生App，不登录/购买/加车，不采网页价格。
+你只通过真实node_exec，在XIAN-M4-PHONE节点beb0fec23dc75b6b1172379f783cf6d9d4cdc9934ffc2c1522de07f952094654执行一次以下argv，不编写/修改UI脚本、不探索控制器、不改证据目录：
+/opt/homebrew/bin/python3 /Users/jinnuoshengyuan/Library/Caches/us-price-native-staging/runtime/us_price_native_worker.py --request-base64 ${request}
+这一个dispatcher内部只启动一次with-lock，持锁Python worker包含全部导航、查价和finally恢复。禁止外层再套with-lock，禁止逐动作重新with-lock。owner=${owner}；不要并行SSH/裸ADB，不重跑worker。
+用户授权决策043693f2-c703-406b-96c6-90a0176eff0b：小黄ANGYVB4402004137切mac-mini-m4-us后必须恢复None/国内、HOME、锁释放；小彩不动。dispatcher返回network_restored/home_verified/lock_free_verified，未全true则如实失败。
+node_exec结果用text(r)完整返回，不要猜r.content。固定worker返回raw_quotes与price_candidates上下文。你只判断默认新货标价（不要选择信用卡优惠/分期/券后价，也不能直接取最低值），核对品牌/型号/套装并规范化specification；不同套装不配对。输出价格必须来自该报价实际price_candidates。未能核实套装时status=规格待核；商品URL是可选字段，未采集可url=null,url_missing=true并在conditions写商品链接未采集，不因缺URL阻断已经核实的同SKU价格配对。对同型号两平台明确同套装才给同一canonical specification。
+证据只使用worker返回路径和时间/owner；Android文本按node.get('text','')/node.get('content-desc','')读取，不是itertext；禁止把全文XML返回模型。同一证据最多读取1次，不要调用 file_fetch，截图由CLI独立审计上传。已给ctl绝对路径，不要把shell控制器当python运行。恢复网络/桌面并释放锁后立即输出JSON，不再读图或重复UI检查。
+最终只输出JSON：{quotes:[{title,brand,model,specification,category,package,zip,price_usd,seller,availability,conditions,url,collected_at,screenshot_path,price_xml,title_xml,zip_xml,action_owner,status,url_missing}],network_restored,home_verified,lock_free_verified,unmatched,blocking_reason}。category限电动工具/家居五金/园艺/其他；数量不足就如实输出，不能复用历史报价、编造ASIN/商品链接、自己写Notion或Brain任务状态。`;
 }
+
 export function unsupportedModel(text) {
   return /(?:model[^\n]{0,100}(?:not supported|unsupported|not found|does not exist)|unsupported[^\n]{0,50}model)/i.test(text);
 }
@@ -39,20 +44,24 @@ export function validateReceipt(receipt, o) {
   demand(r && r.network_restored === true && r.home_verified === true && r.lock_free_verified === true, '缺少恢复网络/桌面/释放锁验收');
   if (r.report_only) demand(typeof r.source_action_run_id === 'string' && r.source_action_run_id && typeof r.source_action_owner === 'string' && r.source_action_owner, '补报告缺少原采集来源');
   demand(r.quotes.length > 0 && r.quotes.length <= o.count * 2, '没有有效报价或报价超量');
-  const keys = new Set(), skus = new Set();
+  const keys = new Set(), skus = new Set(), verifiedKeys = new Set();
   r.quotes = r.quotes.map(q => ({ ...q, package: q.package ?? q.app_package, specification: q.specification ?? q.pack, url: q.url ?? q.product_url, collected_at: q.collected_at ?? q.collected_at_utc }));
   for (const q of r.quotes) {
     demand(platforms[q.package] && q.zip === o.zip, '平台不是原生App或邮编不符');
     demand(typeof q.price_usd === 'number' && Number.isFinite(q.price_usd) && q.price_usd > 0, '价格无效');
     for (const key of ['title', 'brand', 'model', 'specification', 'seller', 'conditions', 'screenshot_path', 'price_xml', 'title_xml', 'action_owner']) demand(typeof q[key] === 'string' && q[key].trim(), `缺少报价字段 ${key}`);
     demand(!Number.isNaN(Date.parse(q.collected_at)), '采集时间无效');
+    if (!q.url) demand(q.url_missing === true, '缺URL必须明确标记未采集');
+    else {
     const url = new URL(q.url);
     demand(url.protocol === 'https:' && (q.package === 'com.thehomedepot' ? url.hostname === 'www.homedepot.com' : url.hostname === 'www.amazon.com'), '商品链接平台不符');
+    }
     const sku = [q.brand, q.model, q.specification].map(x => x.trim().toLowerCase()).join('|');
     demand(!keys.has(`${sku}|${q.package}`), 'SKU平台重复'); keys.add(`${sku}|${q.package}`); skus.add(sku);
+    if (q.status !== '规格待核') verifiedKeys.add(`${sku}|${q.package}`);
   }
   demand(skus.size <= o.count, '不同商品超过本次上限');
-  const matched = [...skus].filter(sku => [...keys].filter(key => key.startsWith(sku + '|')).length === 2).length;
+  const matched = [...skus].filter(sku => [...verifiedKeys].filter(key => key.startsWith(sku + '|')).length === 2).length;
   return { ...r, matched_sku_count: matched, claimed_result: matched === o.count ? 'passed' : 'partial', run_id: receipt.runId, actual_model: `${meta.provider}/${meta.model}` };
 }
 export function notionProperties(q, o, taskId, runId, actualModel, proofIndex) {
@@ -62,8 +71,8 @@ export function notionProperties(q, o, taskId, runId, actualModel, proofIndex) {
     关键词: rich(o.keyword), 分类: { select: { name: ['电动工具', '家居五金', '园艺'].includes(q.category) ? q.category : '其他' } },
     品牌: rich(q.brand), 型号: rich(q.model), 规格套装: rich(q.specification), 平台: { select: { name: platforms[q.package] } },
     '标价 USD': { number: q.price_usd }, 邮编: rich(q.zip), 卖家: rich(q.seller), 库存配送: rich(q.availability), 运费税费条件: rich(q.conditions),
-    商品链接: { url: q.url }, 采集时间: { date: { start: q.collected_at } }, 任务编号: rich(taskId), 执行编号: rich(runId), 实际模型: rich(actualModel),
-    状态: { select: { name: '已核验' } }, 证据索引: rich(proofIndex), 幂等键: rich(key),
+    商品链接: { url: q.url ?? null }, 采集时间: { date: { start: q.collected_at } }, 任务编号: rich(taskId), 执行编号: rich(runId), 实际模型: rich(actualModel),
+    状态: { select: { name: q.status === '规格待核' ? '规格待核' : '已核验' } }, 证据索引: rich(proofIndex), 幂等键: rich(key),
   };
   if (q.evidence_file_id) properties.证据 = { files: [{ name: `${q.model}-${platforms[q.package]}`, type: 'file_upload', file_upload: { id: q.evidence_file_id } }] };
   else if (q.evidence_url) {
