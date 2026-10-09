@@ -8,6 +8,7 @@ import { removeWorktree } from './worktree.mjs';
 import { findTarget, failureLogs, readState, statePath } from './cifix-scan.mjs';
 import { taskIdOf, preparePrWorktree, checkFixCommits, pushPrHead } from './pr-branch.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
+import { revokeQaPass } from './qa-gate.mjs';
 
 const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)'];
 
@@ -39,8 +40,10 @@ async function attempt(ctx, target, worktree, signal) {
   if (run.timedOut) throw stop('claude_timeout');
   if (run.code !== 0) throw stop('claude_failed');
   const { commits } = await checkFixCommits(worktree, before);
+  const files = (await git(worktree, ['diff', '--name-only', `${before}..HEAD`])).stdout.split('\n').filter(Boolean);
   await pushPrHead(worktree, pr.headRefName);
-  return { result: 'pushed', commits };
+  const revoked = await revokeQaPass(ctx, pr, files, 'ci_fix_changed_code');
+  return { result: 'pushed', commits, ...(revoked ? { qa_revoked: true } : {}) };
 }
 
 /** 记一次尝试：本地状态文件 + Brain 任务 result.ci_fix（拿不到 task_id 只记本地）。 */

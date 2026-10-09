@@ -71,6 +71,25 @@ async function escalate(ctx, pr, s, taskId, detail) {
   await report(ctx, taskId ?? (await remoteTaskId(ctx.cfg, pr.headRefName)), s);
 }
 
+// 不影响产品行为的记录性改动：版本碎片
+const RECORD_ONLY_RE = /^changes\//;
+
+/**
+ * QA/裁判通过（已开自动合并）后 PR 又被推了改动（CI 修复）：改了记录以外的文件 → 撤销通过、关自动合并，
+ * 新 head 在 CI 绿后重新过 QA 与裁判。返回是否撤销。
+ */
+export async function revokeQaPass(ctx, pr, files, reason) {
+  const s = readState(ctx.cfg, pr.number);
+  const changed = files.filter((f) => !RECORD_ONLY_RE.test(f));
+  if (!s.passed || changed.length === 0) return false;
+  const off = await run(ctx.cfg.ghBin, ['pr', 'merge', String(pr.number), '--disable-auto'], { cwd: ctx.cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+  s.passed = false;
+  s.revoked = [...(s.revoked ?? []), { at: new Date().toISOString(), reason, files: changed, automerge_disabled: off.code === 0 }];
+  writeState(ctx.cfg, pr.number, s);
+  ctx.log(`QA 门 PR #${pr.number} 已通过后又改了代码（${changed.join('、')}）：撤销通过、关自动合并，新 head 重新 QA`);
+  return true;
+}
+
 /** 已合并且 QA 通过过的 PR：停掉预览环境释放容量（只停一次）。 */
 async function stopMergedPreviews(ctx) {
   const merged = await ghJson(ctx.cfg, ['pr', 'list', '--state', 'merged', '--limit', '30', '--json', 'number,headRefName']);
