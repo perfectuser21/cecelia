@@ -95,6 +95,17 @@ it('本仓库发布片段只登记为release，全部当前辅助关系提供真
  writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify(manifest));
  f.git('add','.');f.git('commit','-qm','actual current auxiliary bytes');const head=f.git('rev-parse','HEAD');
  expect(()=>gate.collectAuxiliarySourceEvidence(f.root,{repo:manifest.repo,base_revision:head,head_revision:head})).not.toThrow();
+ for(const path of ['packages/brain/package.json','packages/brain/package-lock.json','package-lock.json','DEFINITION.md']){
+  const target=join(f.root,path);mkdirSync(join(target,'..'),{recursive:true});writeFileSync(target,readFileSync(new URL(path,repoRoot)));
+ }
+ rmSync(join(f.root,'changes/controller.md'));
+ const releases=manifest.relations.filter(row=>row.role==='release'&&/^changes\/cp-.*\.md$/.test(row.path));
+ const consumed=applyAutoVersion(f.root);expect(consumed.fragmentsConsumed).toBe(releases.length);
+ const remaining=JSON.parse(readFileSync(join(f.root,'.implementation-source-relations.json'),'utf8'));
+ expect(remaining.relations).toEqual(manifest.relations.filter(row=>!releases.includes(row)));
+ for(const row of releases)expect(existsSync(join(f.root,row.path))).toBe(false);
+ f.git('add','.');f.git('commit','-qm','actual new release consumption');const after=f.git('rev-parse','HEAD');
+ expect(()=>gate.collectAuxiliarySourceEvidence(f.root,{repo:manifest.repo,base_revision:after,head_revision:after})).not.toThrow();
 });
 it('删除已消费缺件的失效文档关系只修新HEAD，旧Git基线严格保UNKNOWN',()=>{
  const stale={owner_path:'src/controller.js',path:'changes/controller.md',role:'documentation'};
