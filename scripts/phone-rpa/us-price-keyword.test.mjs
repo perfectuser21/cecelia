@@ -117,3 +117,20 @@ test('只读补报告必须标明原采集run与owner', () => {
   r.result.payloads[0].text=JSON.stringify(report);
   assert.throws(()=>validateReceipt(r,options));
 });
+test('部分报价与异常均终结为failed，保留原账和已写行', async () => {
+  const { terminalStatus, failurePatch }=await import('./us-price-keyword-core.mjs');
+  assert.equal(terminalStatus('partial'),'failed');
+  assert.equal(terminalStatus('passed'),'completed');
+  const previous={result:{facts:{old:true},evidence:{old_proof:'keep'},handoff:{actor:'old'}}};
+  const patch=failurePatch(previous,'write failed','/run',[{id:'written-page'}]);
+  assert.equal(patch.status,'failed');
+  assert.equal(patch.result.facts.old,true);
+  assert.equal(patch.result.evidence.old_proof,'keep');
+  assert.equal(patch.result.handoff.actor,'old');
+  assert.equal(patch.result.last_attempt.evidence.notion_rows[0].id,'written-page');
+});
+test('Notion写入后读回失败仍暴露已创建页面ID供失败回执保留', async () => {
+  const result=validateReceipt(receipt(),options), written=[];
+  await assert.rejects(saveQuotes(result,options,'t',async (p,m,b)=>p.endsWith('/query')?{results:[]}:m==='POST'?{id:'already-created'}:{properties:{}},'ds',async ()=>'proof',row=>written.push(row)));
+  assert.equal(written[0].id,'already-created');
+});
