@@ -78,12 +78,15 @@ describe('unitTestEvidence / productionTouches', () => {
       { command: "node -e \"fetch('http://localhost:5221/api/brain/tasks').then(r=>r.text()).then(console.log)\"" },
       { command: 'ssh us-vps curl -s 100.79.41.61:5221/api/brain/health' },
       { command: 'nc -z localhost 5221' },
+      // 先把生产地址赋给变量再访问：分段看不出来，按「赋值指向生产 + 有访问动作」判
+      { command: 'B=http://localhost:5221; curl -s $B/api/brain/tasks' },
     ];
     expect(productionTouches(runs)).toEqual([
       'echo start && wget -qO- http://127.0.0.1:5221/api/brain/health',
       "node -e \"fetch('http://localhost:5221/api/brain/tasks').then(r=>r.text()).then(console.log)\"",
       'ssh us-vps curl -s 100.79.41.61:5221/api/brain/health',
       'nc -z localhost 5221',
+      'B=http://localhost:5221; curl -s $B/api/brain/tasks',
     ]);
   });
 });

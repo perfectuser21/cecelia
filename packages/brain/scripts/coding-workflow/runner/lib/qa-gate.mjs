@@ -280,9 +280,12 @@ async function qaRound(ctx, pr, s, signal) {
       return undefined;
     }
     ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮真人 QA 开始`);
+    // QA 会话执行记录落在 runner 日志目录（判越界、证据不实时可复核）
+    const transcript = path.join(cfg.logDir, `qa-${pr.number}-r${round}.jsonl`);
     const result = await evaluate(ctx, worktree, {
       run_tag: `qa-${pr.number}-r${round}`, task_id: intent.taskId, worktree, sprint_dir: intent.sprintDir,
       intent_ids: intent.intentIds, intent_sha256: intent.intentSha256, pr_number: pr.number, round, head_sha: pr.headRefOid,
+      transcript_path: transcript,
       ...(prior?.failure_class === 'qa_insufficient' ? { judge_feedback: `${intent.sprintDir}/${prior.file}` } : {}),
       budget: { max_duration_s: Math.round(EVALUATE_TIMEOUT_MS / 1000) },
     }, signal);
@@ -290,9 +293,9 @@ async function qaRound(ctx, pr, s, signal) {
     if (!qa) {
       s.bad = (s.bad ?? 0) + 1;
       const reason = result?.reason_code ?? 'evaluate_crashed';
-      ctx.log(`QA 门 PR #${pr.number} 评估出错（连续 ${s.bad} 次）：${reason}`);
+      ctx.log(`QA 门 PR #${pr.number} 评估出错（连续 ${s.bad} 次）：${reason} ${JSON.stringify(result?.evidence ?? []).slice(0, 500)}`);
       if (result?.failure_class === 'fatal' || result?.failure_class === 'needs_human' || s.bad >= cfg.qaMaxBadStreak) {
-        return escalate(ctx, pr, s, intent.taskId, { type: 'qa_evaluator_broken', reason_code: reason });
+        return escalate(ctx, pr, s, intent.taskId, { type: 'qa_evaluator_broken', reason_code: reason, evidence: result?.evidence ?? [], transcript });
       }
       writeState(cfg, pr.number, s);
       return undefined;

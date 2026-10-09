@@ -135,6 +135,9 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(JSON.stringify(r.result.evidence)).toContain('qa_missing');
     const prompt = fs.readFileSync(path.join(HERE, '../prompts/spec.md'), 'utf8');
     for (const s of ['## QA 场景', '### Q-n', '对应:', '前提:', '操作:', '期望:', '不能是单元测试']) expect(prompt).toContain(s);
+    // QA 场景不写死生产地址（金丝雀 3e8414f6：Q-n 写着 localhost:5221，诱发 QA 越界/误判）
+    expect(prompt).toContain('<预览环境>/api/brain/');
+    expect(prompt).toContain('不能写 `localhost:5221`');
   });
 
   it('uncovered：02 的 upstream 没覆盖全部 I-n -> retryable spec_invalid，evidence 点名未覆盖的 I-n', async () => {

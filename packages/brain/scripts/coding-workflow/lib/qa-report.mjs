@@ -11,8 +11,11 @@ const SEVERITY_RE = FIELD('严重度');
 const SCENE_RE = FIELD('场景');
 // 单元测试当证据（那是 CI 的事，不是真人 QA）
 const UNIT_TEST_RE = /\b(?:vitest|jest|mocha)\b|\bnpm\s+(?:run\s+)?test\b|\bnode\s+--test\b|\bnpx\s+playwright\s+test\b/;
-// 生产 Brain：本机 5221 是 socat 代理到 us-vps 生产；us-vps tailscale IP
-const PRODUCTION_RE = /(?:^|[^\d])5221(?:[^\d]|$)|100\.79\.41\.61/;
+// 生产 Brain：本机 5221 是 socat 代理到 us-vps 生产；us-vps tailscale IP / 主机别名
+const PRODUCTION_TARGET_RE = /:5221\b|\b(?:localhost|127\.0\.0\.1)\s+5221\b|100\.79\.41\.61|\bus-vps\b/;
+// 真正发出访问的命令（网络请求 / 数据库 / 远程登录 / 脚本里的 fetch）；grep/cat/sed 读到这些字样不算碰生产
+// （金丝雀 3e8414f6：规格 Q-n 本就写着 localhost:5221，只读命令被误判 evaluate_touched_production）
+const NETWORK_RE = /\b(?:curl|wget|nc|ncat|telnet|psql|pg_dump|ssh|scp|rsync|fetch|axios|requests|http\.get|https\.get)\b/;
 
 /** X-n 小节里的 严重度/场景（parseEvidence 不认这两个字段，单独扫）。 */
 function findingFields(text) {
@@ -74,7 +77,17 @@ export function unitTestEvidence(items) {
   return items.filter((i) => UNIT_TEST_RE.test(i.command ?? '')).map((i) => i.id);
 }
 
-/** 执行记录里碰过生产 Brain 的命令。 */
+// 变量赋值指向生产（B=http://localhost:5221 之后 curl $B）
+const PRODUCTION_ASSIGN_RE = /\b[A-Za-z_][A-Za-z0-9_]*=['"]?\S*(?::5221\b|100\.79\.41\.61|\bus-vps\b)/;
+
+/**
+ * 执行记录里访问过生产 Brain 的命令：按 ; && || | 切成片段，同一片段里既有访问动作又指向生产；
+ * 或整条命令里有变量被赋成生产地址、同时有访问动作。
+ */
 export function productionTouches(executions) {
-  return executions.map((e) => e.command).filter((c) => PRODUCTION_RE.test(c));
+  return executions.map((e) => e.command).filter((c) => {
+    const cmd = String(c);
+    if (PRODUCTION_ASSIGN_RE.test(cmd) && NETWORK_RE.test(cmd)) return true;
+    return cmd.split(/;|&&|\|\||\|/).some((part) => NETWORK_RE.test(part) && PRODUCTION_TARGET_RE.test(part));
+  });
 }
