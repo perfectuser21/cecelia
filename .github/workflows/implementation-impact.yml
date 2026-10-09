@@ -85,7 +85,7 @@ jobs:
     timeout-minutes: 40
     services:
       postgres:
-        image: pgvector/pgvector:pg15
+        image: mirror.gcr.io/pgvector/pgvector:pg15
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: isolated-ci

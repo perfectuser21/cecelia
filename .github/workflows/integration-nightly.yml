@@ -46,7 +46,7 @@ jobs:
 
     services:
       postgres:
-        image: pgvector/pgvector:pg15
+        image: mirror.gcr.io/pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
           POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
@@ -61,6 +61,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      # CI 不直连 Docker Hub：docker build/compose 拉镜像走 mirror.gcr.io（任务 7294cf3a）
+      - uses: ./.github/actions/dockerhub-mirror
 
       - uses: actions/setup-node@v4
         with:
