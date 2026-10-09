@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { DATA_SOURCE, buildTask, claimTask, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
+import { DATA_SOURCE, buildCompletion, buildTask, claimTask, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
 
 async function jsonRequest(base, path, method = 'GET', body, headers = {}) {
   const response = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
@@ -116,7 +116,7 @@ export async function main(args) {
       return proof;
     };
     const rows = await saveQuotes(result, o, taskId, requestNotion, dataSource, proofAndUpload);
-    const completion = { actor, facts: { keyword: o.keyword, requested_count: o.count, quotes_written: rows.length, matched_sku_count: result.matched_sku_count, claimed_result: result.claimed_result, actual_model: result.actual_model, network_restored: result.network_restored, home_verified: true, lock_free_verified: true }, evidence: { run_id: result.run_id, notion_rows: rows, receipt_directory: dir }, next_steps: [] };
+    const completion = buildCompletion(result, o, rows, dir);
     await writeFile(join(dir, 'completion.json'), JSON.stringify(completion, null, 2), { mode: 0o600 });
     await requestBrain(`/tasks/${taskId}`, 'PATCH', { status: result.claimed_result === 'passed' ? 'completed' : 'in_progress', result: completion, handoff: completion });
     console.log(JSON.stringify({ task_id: taskId, status: result.claimed_result === 'passed' ? 'completed' : 'partial', ...completion }, null, 2));

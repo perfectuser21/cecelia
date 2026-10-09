@@ -77,7 +77,8 @@ export async function saveQuotes(result, options, taskId, request, dataSource, v
   for (const quote of result.quotes) proofs.push(await verifyProof(quote));
   const rows = [];
   for (const [i, quote] of result.quotes.entries()) {
-    const properties = notionProperties(quote, options, taskId, result.run_id, result.actual_model, proofs[i]);
+    const execution = result.report_only ? `采集:${result.source_action_run_id};报告:${result.run_id}` : result.run_id;
+    const properties = notionProperties(quote, options, taskId, execution, result.actual_model, proofs[i]);
     const matches = await request(`/data_sources/${dataSource}/query`, 'POST', { filter: { property: '幂等键', rich_text: { equals: properties.幂等键.rich_text[0].text.content } } });
     demand(matches.results.length <= 1, '发现重复幂等键，停止写入');
     const page = matches.results[0]
@@ -96,4 +97,13 @@ export function buildTask(o) {
 export async function claimTask(taskId, owner, requestBrain) {
   await requestBrain(`/tasks/${taskId}/claim`, 'POST', { claimer: owner, executor_kind: 'headed-session' });
   await requestBrain(`/tasks/${taskId}`, 'PATCH', { status: 'in_progress' });
+}
+
+export function buildCompletion(result, o, rows, dir) {
+  return {
+    actor: 'OpenClaw/us-price-compare',
+    facts: { keyword: o.keyword, requested_count: o.count, quotes_written: rows.length, matched_sku_count: result.matched_sku_count, claimed_result: result.claimed_result, actual_model: result.actual_model, network_restored: result.network_restored, home_verified: true, lock_free_verified: true, report_only: result.report_only === true },
+    evidence: { run_id: result.run_id, report_run_id: result.run_id, source_action_run_id: result.source_action_run_id ?? null, source_action_owner: result.source_action_owner ?? null, collection_runs: result.collection_runs ?? [], quote_provenance: result.quotes.map(q => ({ package: q.package, model: q.model, action_owner: q.action_owner, collected_at: q.collected_at, source_action_run_id: q.source_action_run_id ?? result.source_action_run_id ?? result.run_id })), notion_rows: rows, receipt_directory: dir },
+    next_steps: [],
+  };
 }
