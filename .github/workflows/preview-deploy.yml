@@ -35,7 +35,8 @@ jobs:
     # Harness/Fleet infrastructure is validated by Brain CI, real-env smoke,
     # and the dedicated Kernel acceptance run. A UI preview is unrelated and
     # must not couple those stages to the host preview-disk admission gate.
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'harness') }}
+    # 自动版本号 PR 不需要预览（只改版本五件套），不占预览名额（上限 6 个）
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'harness') && !startsWith(github.head_ref, 'auto-version-bump-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:

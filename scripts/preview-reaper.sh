@@ -4,6 +4,7 @@
 # 四源并集：PREVIEW_BASE_DIR 目录 / 独立 npm cache / cecelia_preview_* DB /
 # preview_environments 表（非 inactive）
 # 对每个 PR 查 gh pr view --json state；MERGED/CLOSED → 回收；状态查询失败 → 跳过（保守）
+# OPEN：自动版本号分支 → 回收；预览最后一次部署距今 ≥ PREVIEW_IDLE_HOURS（默认 24）→ 回收（闲置）
 #
 # 用法：
 #   bash scripts/preview-reaper.sh [--dry-run]
@@ -28,6 +29,10 @@ DB_HOST="${DB_HOST:-localhost}"
 DB_USER="${DB_USER:-cecelia}"
 DB_PASSWORD="${DB_PASSWORD:-cecelia}"
 GH_REPO="${GH_REPO:-}"
+# 开着的 PR 预览闲置上限（小时）：上限 6 个预览被长期挂着的旧 PR 占满会让新 PR 预览全部 503
+#（2026-10-10 金丝雀 05ae922c 实证，coding harness 真人 QA 门因此卡死）。再推送会重新部署。
+PREVIEW_IDLE_HOURS="${PREVIEW_IDLE_HOURS:-24}"
+IDLE_LIMIT_S=$((PREVIEW_IDLE_HOURS * 3600))
 DRY_RUN=false
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=true
 
@@ -115,6 +120,13 @@ psql -h "$DB_HOST" -U "$DB_USER" -d cecelia -t -A \
   -c "SELECT DISTINCT pr_number FROM preview_environments WHERE status != 'inactive';" 2>/dev/null \
   | grep -E '^[0-9]+$' >>"$PR_LIST_FILE" || true
 
+# 闲置信息：「pr|branch|距最后一次部署的秒数」（preview_environments.updated_at 在 start/重新部署时刷新）
+IDLE_FILE=$(mktemp)
+trap 'rm -f "$PR_LIST_FILE" "$IDLE_FILE"' EXIT
+psql -h "$DB_HOST" -U "$DB_USER" -d cecelia -t -A \
+  -c "SELECT pr_number || '|' || branch_name || '|' || EXTRACT(EPOCH FROM (NOW() - updated_at))::bigint FROM preview_environments WHERE status != 'inactive';" \
+  2>/dev/null >"$IDLE_FILE" || true
+
 # 去重排序
 UNIQUE_PRS=$(sort -un "$PR_LIST_FILE" | tr '\n' ' ' | sed 's/ *$//')
 
@@ -148,12 +160,22 @@ for pr in $UNIQUE_PRS; do
   fi
 
   if [ "$PR_STATE" != "MERGED" ] && [ "$PR_STATE" != "CLOSED" ]; then
-    log "  PR#${pr} 状态=${PR_STATE}，跳过（仍活跃）"
-    SKIPPED=$((SKIPPED + 1))
-    continue
+    # 开着的 PR：自动版本号分支不需要预览；预览闲置（最后一次部署）超过 PREVIEW_IDLE_HOURS → 回收
+    IDLE_LINE=$(grep -E "^${pr}\|" "$IDLE_FILE" | head -1)
+    IDLE_BRANCH=$(echo "$IDLE_LINE" | cut -d'|' -f2)
+    IDLE_S=$(echo "$IDLE_LINE" | cut -d'|' -f3)
+    if [[ "$IDLE_BRANCH" == auto-version-bump-* ]]; then
+      log "  PR#${pr} 是自动版本号分支（${IDLE_BRANCH}），不需要预览，开始回收..."
+    elif [[ "$IDLE_S" =~ ^[0-9]+$ ]] && [ "$IDLE_S" -ge "$IDLE_LIMIT_S" ]; then
+      log "  PR#${pr} 状态=${PR_STATE}，预览闲置 $((IDLE_S / 3600))h（≥ ${PREVIEW_IDLE_HOURS}h 未重新部署），开始回收..."
+    else
+      log "  PR#${pr} 状态=${PR_STATE}，跳过（仍活跃）"
+      SKIPPED=$((SKIPPED + 1))
+      continue
+    fi
+  else
+    log "  PR#${pr} 状态=${PR_STATE}，开始回收..."
   fi
-
-  log "  PR#${pr} 状态=${PR_STATE}，开始回收..."
 
   if $DRY_RUN; then
     log "  [dry-run] 跳过实际回收"
