@@ -107,3 +107,8 @@ test('分阶段补报告保留真实采集与报告run、owner、时间', async 
   assert.equal(completion.evidence.quote_provenance[0].action_owner,quote.action_owner);
   assert.equal(completion.evidence.quote_provenance[0].collected_at,quote.collected_at);
 });
+test('只读补报告必须标明原采集run与owner', () => {
+  const r=receipt(), report=JSON.parse(r.result.payloads[0].text); report.report_only=true;
+  r.result.payloads[0].text=JSON.stringify(report);
+  assert.throws(()=>validateReceipt(r,options));
+});
