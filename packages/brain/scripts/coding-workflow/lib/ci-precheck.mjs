@@ -29,7 +29,28 @@ export function defaultChecks({ branch, feature }) {
     { name: 'registry-lint', cmd: ['node', 'scripts/registry-lint.mjs'] },
     { name: 'lint-migration-unique-version', cmd: ['node', '.github/workflows/scripts/lint-migration-unique-version.cjs'] },
     { name: 'pr-size-check', builtin: 'pr-size' },
+    { name: 'smoke-registration', builtin: 'smoke-registration' },
   ];
+}
+
+const SMOKE_DIR = 'packages/brain/scripts/smoke';
+const SMOKE_LISTS = ['smoke-allowlist.txt', 'smoke-denylist.txt', 'smoke-debt.txt'].map((f) => `packages/quality/${f}`);
+
+/**
+ * 同 Smoke Ratchet Gate（packages/quality/scripts/run-smoke-ratchet.sh）的登记检查：smoke 目录每个 .sh
+ * 都要在 allowlist / denylist / debt 之一（不起 Brain、不跑脚本，只比对文件）。分类文件或目录缺失则跳过。
+ */
+function smokeRegistration(worktree) {
+  const dir = path.join(worktree, SMOKE_DIR);
+  if (!fs.existsSync(dir) || SMOKE_LISTS.some((f) => !fs.existsSync(path.join(worktree, f)))) {
+    return { ok: true, skipped: true, output_tail: 'smoke 目录或分类文件不存在，跳过' };
+  }
+  const registered = new Set(SMOKE_LISTS.flatMap((f) => fs.readFileSync(path.join(worktree, f), 'utf8')
+    .split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))));
+  const missing = fs.readdirSync(dir).filter((f) => f.endsWith('.sh') && !registered.has(f)).sort();
+  return missing.length > 0
+    ? { ok: false, output_tail: `未登记的 smoke 脚本（新增脚本必须加入 packages/quality/smoke-allowlist.txt，因 CI 环境限制跑不了的加入 smoke-denylist.txt）：\n${missing.map((f) => `- ${f}`).join('\n')}` }
+    : { ok: true, output_tail: 'smoke 脚本全部已登记' };
 }
 
 function exec(cmd, args, { cwd, env, timeoutMs = CHECK_TIMEOUT_MS }) {
@@ -66,6 +87,10 @@ export async function runPrechecks(worktree, { checks, env = {} }) {
   for (const check of checks) {
     if (check.builtin === 'pr-size') {
       results.push({ name: check.name, ...(await prSize(worktree)) });
+      continue;
+    }
+    if (check.builtin === 'smoke-registration') {
+      results.push({ name: check.name, ...smokeRegistration(worktree) });
       continue;
     }
     const [cmd, ...args] = check.cmd;
