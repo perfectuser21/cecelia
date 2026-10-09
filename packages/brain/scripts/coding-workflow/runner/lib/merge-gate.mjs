@@ -5,9 +5,11 @@
 // → 改绑到新 head；动了别的文件（含 01 需求、02 合同）→ 撤销批准，新 head 重新 QA + 裁判。
 import { run, git } from './proc.mjs';
 import { listOwnPrs, requiredState } from './cifix-scan.mjs';
-import { readState, writeState, isRecordFile } from './qa-gate.mjs';
+import { readState, writeState, isRecordFile, escalate } from './qa-gate.mjs';
+import { remoteTaskId } from './pr-branch.mjs';
 
 const GH_TIMEOUT_MS = 60 * 1000;
+const MAX_MERGE_FAILURES = 3;
 const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** 批准之后 PR 自身新增改动的文件（不含 main 合进来的提交与 merge 提交）；取不到返回 null。 */
@@ -43,13 +45,42 @@ async function gate(ctx, pr, s) {
   if ((await requiredState(cfg, pr.number)).state !== 'pass') return false;
   const merge = await run(cfg.ghBin, ['pr', 'merge', String(pr.number), '--squash', '--match-head-commit', s.approved.head], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
   if (merge.code !== 0) {
-    ctx.log(`合并门 PR #${pr.number} 合并失败：${merge.stderr.trim().split('\n').pop() || merge.code}`);
+    await mergeFailed(ctx, pr, s, merge.stderr.trim().split('\n').pop() || String(merge.code));
     return false;
   }
   s.merged = { head: s.approved.head, at: new Date().toISOString() };
   writeState(cfg, pr.number, s);
   ctx.log(`合并门 PR #${pr.number} 已合并（head ${s.approved.head.slice(0, 9)}）`);
+  // 完成以合并为准（审计 #7）：合并结果回写 Brain 任务
+  const taskId = await remoteTaskId(cfg, pr.headRefName);
+  if (taskId) {
+    const r = await ctx.brain.patch(taskId, { result: { merge: { merged: true, ...s.merged } } });
+    if (!r.ok) ctx.log(`合并门回写 Brain 任务 ${taskId} 失败（HTTP ${r.status}）`);
+  }
   return false;
+}
+
+/**
+ * 合并失败不能静默挂着（审计 #6）：冲突 → 升级 merge_conflict；落后 main → 程序 update-branch
+ * （之后的 main 合入按改绑处理）；其他原因累计 MAX_MERGE_FAILURES 次 → 升级 merge_failed。
+ */
+async function mergeFailed(ctx, pr, s, error) {
+  const { cfg } = ctx;
+  ctx.log(`合并门 PR #${pr.number} 合并失败：${error}`);
+  const view = await run(cfg.ghBin, ['pr', 'view', String(pr.number), '--json', 'mergeable,mergeStateStatus'], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+  let info = {};
+  try {
+    info = JSON.parse(view.stdout);
+  } catch { /* 查不到按其他原因计 */ }
+  if (info.mergeable === 'CONFLICTING') return escalate(ctx, pr, s, null, { type: 'merge_conflict', error });
+  if (info.mergeStateStatus === 'BEHIND') {
+    const up = await run(cfg.ghBin, ['pr', 'update-branch', String(pr.number)], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+    ctx.log(`合并门 PR #${pr.number}：落后 main，update-branch ${up.code === 0 ? '成功' : '失败'}`);
+    return writeState(cfg, pr.number, s);
+  }
+  s.merge_failures = (s.merge_failures ?? 0) + 1;
+  if (s.merge_failures >= MAX_MERGE_FAILURES) return escalate(ctx, pr, s, null, { type: 'merge_failed', error, failures: s.merge_failures });
+  return writeState(cfg, pr.number, s);
 }
 
 /** 检查所有已批准未合并的 PR；有撤销批准（本轮算做了事）返回 true。不抛错。 */

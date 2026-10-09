@@ -28,7 +28,7 @@ export function statePath(cfg, prNumber) {
 export function readState(cfg, prNumber) {
   try {
     const state = JSON.parse(fs.readFileSync(statePath(cfg, prNumber), 'utf8'));
-    return Array.isArray(state?.attempts) ? state : { attempts: [] };
+    return { ...state, attempts: Array.isArray(state?.attempts) ? state.attempts : [] };
   } catch {
     return { attempts: [] };
   }
@@ -74,7 +74,36 @@ export async function listOwnPrs(cfg) {
   return prs.filter((p) => CW_BRANCH_RE.test(p.headRefName ?? '')).sort((a, b) => a.number - b.number);
 }
 
-/** 下一个要修的 PR：{ pr, failedRequired }，没有返回 null。 */
+const MAX_UPDATE_BRANCH = 3;
+const BASE_FRESH_CHECK = 'lint-base-fresh';
+const RUN_LINK_RE = /\/actions\/runs\/(\d+)\//;
+
+/** 失败的检查：[{ name, runId }]（runId 取自检查链接，取不到为 null）。 */
+export async function failingChecks(cfg, prNumber) {
+  const rows = await ghJson(cfg, ['pr', 'checks', String(prNumber), '--json', 'name,bucket,link']);
+  return (Array.isArray(rows) ? rows : []).filter((r) => r.bucket === 'fail')
+    .map((r) => ({ name: r.name, runId: RUN_LINK_RE.exec(r.link ?? '')?.[1] ?? null }));
+}
+
+/**
+ * 必需检查全部出结果且有红的 PR 该怎么处理（修不动必须有出口，审计 #8/#5）：
+ *   落后 main（lint-base-fresh 红）→ update_branch（程序做，不占修复次数；超过 3 次升级）
+ *   修复次数用完 → escalate attempts_exhausted
+ *   本 head 修过没改动（判定与本 PR 无关）→ 先 rerun 失败 job 一次；重跑过仍红 → escalate rerun_still_failing
+ *   否则 → fix（派 claude）
+ */
+function decide(state, pr, checks, maxAttempts) {
+  if (checks.some((c) => c.name === BASE_FRESH_CHECK)) {
+    return (state.update_branch?.length ?? 0) >= MAX_UPDATE_BRANCH ? { action: 'escalate', reason: 'update_branch_exhausted' } : { action: 'update_branch' };
+  }
+  if (state.attempts.length >= maxAttempts) return { action: 'escalate', reason: 'attempts_exhausted' };
+  if (state.attempts.some((a) => a.head === pr.headRefOid)) {
+    return state.reruns?.[pr.headRefOid] ? { action: 'escalate', reason: 'rerun_still_failing' } : { action: 'rerun' };
+  }
+  return { action: 'fix' };
+}
+
+/** 下一个要处理的 PR：{ pr, failedRequired, checks, action, reason? }，没有返回 null。已升级的 PR 不再处理。 */
 export async function findTarget(cfg, log) {
   const ours = await listOwnPrs(cfg);
   if (!ours) {
@@ -82,11 +111,12 @@ export async function findTarget(cfg, log) {
     return null;
   }
   for (const pr of ours) {
-    const { attempts } = readState(cfg, pr.number);
-    if (attempts.length >= cfg.ciFixMaxAttempts) continue;
-    if (attempts.some((a) => a.head === pr.headRefOid)) continue;
+    const state = readState(cfg, pr.number);
+    if (state.escalated) continue;
     const failed = await failedRequired(cfg, pr.number);
-    if (failed) return { pr, failedRequired: failed };
+    if (!failed) continue;
+    const checks = await failingChecks(cfg, pr.number);
+    return { pr, failedRequired: failed, checks, ...decide(state, pr, checks, cfg.ciFixMaxAttempts) };
   }
   return null;
 }
