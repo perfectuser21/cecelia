@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { DATA_SOURCE, buildOwner, terminalStatus, failurePatch, buildCompletion, buildTask, claimTask, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
+import { DATA_SOURCE, bindAuthoritativeQuote, buildOwner, terminalStatus, failurePatch, buildCompletion, buildTask, claimTask, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
 
 async function jsonRequest(base, path, method = 'GET', body, headers = {}) {
   const response = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
@@ -31,6 +31,18 @@ async function notionToken() {
     } catch { /* 尝试下一份已缓存的凭据，不输出内容。 */ }
   }
   throw new Error('缺少1Password已缓存的Notion凭据');
+}
+async function readHeldReport(owner) {
+  const script = `import json,sys,re,pathlib
+owner=json.load(sys.stdin)
+if not re.fullmatch(r'price[0-9a-f]{64}',owner,re.I): raise ValueError('invalid owner')
+p=pathlib.Path('/Users/jinnuoshengyuan/Library/Caches/us-price-native-staging/agent-runs')/owner/'held-report.json'
+with p.open() as f: data=f.read(2000001)
+if len(data)>2000000: raise ValueError('report too large')
+print(data)`;
+  const r = await child('ssh', ['-o','BatchMode=yes','-o','ConnectTimeout=10','xian-m4','python3','-c', `'${script.replaceAll("'", "'\\''")}'`], process.env, JSON.stringify(owner), 60000);
+  if (r.code !== 0) throw new Error('读取原设备权威held-report失败，未使用模型脱敏路径');
+  try { return JSON.parse(r.stdout); } catch { throw new Error('权威held-report不是JSON'); }
 }
 // 只读证据：路径经JSON标准输入传入，禁止shell插值和执行Agent生成代码。
 export async function verifyProof(quote) {
@@ -60,7 +72,7 @@ print(json.dumps(proof,ensure_ascii=False))`;
 }
 export async function main(args) {
   if (args.includes('--help')) {
-    console.log('用法: node scripts/phone-rpa/us-price-keyword.mjs --keyword "cordless drill" [--count 1] [--zip 53132] [--model openai/gpt-6-sol] [--task-id 已登记任务ID] [--receipt 真实OpenClaw回执JSON]');
+    console.log('用法: node scripts/phone-rpa/us-price-keyword.mjs --keyword "cordless drill" [--count 1] [--zip 53132] [--model openai/gpt-6-sol] [--task-id 已登记任务ID] [--receipt 真实OpenClaw回执JSON --source-action-task-id 原采集任务ID]');
     return;
   }
   const o = parseOptions(args);
@@ -86,12 +98,13 @@ export async function main(args) {
     const dataSource = o.dataSource ?? DATA_SOURCE;
     // 先检查目标库授权，避免真机执行结束才发现无写入权限。
     await requestNotion(`/data_sources/${dataSource}`, 'GET');
-    let receipt;
+    let receipt, expectedOwner;
     if (o.receipt) receipt = JSON.parse(await readFile(o.receipt, 'utf8'));
     else {
       const config = JSON.parse(await readFile(join(homedir(), '.openclaw', 'openclaw.json'), 'utf8'));
       const env = { ...process.env, OPENCLAW_GATEWAY_TOKEN: config.gateway.auth.token };
-      const message = join(dir, 'prompt.txt'); await writeFile(message, buildPrompt(o, taskId, buildOwner(taskId, randomUUID())), { mode: 0o600 });
+      expectedOwner = buildOwner(taskId, randomUUID());
+      const message = join(dir, 'prompt.txt'); await writeFile(message, buildPrompt(o, taskId, expectedOwner), { mode: 0o600 });
       for (const model of [...new Set([o.model, 'openai/gpt-6-sol'])]) {
         const r = await child('openclaw', ['agent', '--agent', 'us-price-compare', '--session-id', `price-${taskId}-${randomUUID()}`, '--model', model, '--message-file', message, '--thinking', 'low', '--timeout', '1200', '--json'], env);
         await writeFile(join(dir, `${model.split('/')[1]}-receipt.json`), r.stdout, { mode: 0o600 });
@@ -102,6 +115,17 @@ export async function main(args) {
       }
     }
     const result = validateReceipt(receipt, o);
+    result.receipt_import = Boolean(o.receipt);
+    result.source_action_task_id = o.sourceActionTaskId ?? taskId;
+    const authoritative = new Map();
+    result.quotes = await Promise.all(result.quotes.map(async q => {
+      // 先用空raw报告跑owner约束，非法owner不能导致任意远端路径读取。
+      const prefix = 'price' + result.source_action_task_id.replaceAll('-', '');
+      if (!q.action_owner?.startsWith(prefix) || !/^price[0-9a-f]{64}$/i.test(q.action_owner) || expectedOwner && q.action_owner !== expectedOwner) throw new Error('采集owner不属于本次/显式原采集任务');
+      if (!authoritative.has(q.action_owner)) authoritative.set(q.action_owner, readHeldReport(q.action_owner));
+      return bindAuthoritativeQuote(q, await authoritative.get(q.action_owner), result.source_action_task_id, expectedOwner);
+    }));
+    result.authority_reports = [...authoritative.keys()].map(action_owner => ({ action_owner, path: '/Users/jinnuoshengyuan/Library/Caches/us-price-native-staging/agent-runs/' + action_owner + '/held-report.json' }));
     const proofAndUpload = async quote => {
       const proof = await verifyProof(quote);
       const image = await child('ssh', ['-o', 'BatchMode=yes', 'xian-m4', 'python3', '-c', "'import sys,json,base64; p=json.load(sys.stdin); print(base64.b64encode(open(p, \"rb\").read()).decode())'"], process.env, JSON.stringify(quote.screenshot_path), 60000);

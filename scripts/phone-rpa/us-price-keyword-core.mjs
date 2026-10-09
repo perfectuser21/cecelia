@@ -7,7 +7,7 @@ export function parseOptions(args) {
   const o = { keyword: '', zip: '53132', count: 1, model: 'openai/gpt-6-sol' };
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i].replace(/^--/, '').replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-    demand(['keyword', 'zip', 'count', 'model', 'taskId', 'receipt', 'dataSource'].includes(key) && args[i + 1], '未知参数或缺少参数值');
+    demand(['keyword', 'zip', 'count', 'model', 'taskId', 'receipt', 'dataSource', 'sourceActionTaskId'].includes(key) && args[i + 1], '未知参数或缺少参数值');
     o[key] = args[i + 1];
   }
   o.keyword = o.keyword.trim(); o.count = Number(o.count);
@@ -115,8 +115,8 @@ export function buildCompletion(result, o, rows, dir, taskId = dir.split('/').po
   return {
     actor: 'OpenClaw/us-price-compare',
     summary: `任务 ${taskId}：${result.claimed_result === 'passed' ? '已完成' : '本轮结束，部分结果'}；关键词 ${o.keyword}；配对商品 ${result.matched_sku_count}/${o.count}；报价 ${rows.length} 条。报价明细：https://www.notion.so/7452049ef7de4da5822d4ff682869172`,
-    facts: { keyword: o.keyword, requested_count: o.count, quotes_written: rows.length, matched_sku_count: result.matched_sku_count, claimed_result: result.claimed_result, actual_model: result.actual_model, network_restored: result.network_restored, home_verified: true, lock_free_verified: true, report_only: result.report_only === true },
-    evidence: { run_id: result.run_id, report_run_id: result.run_id, source_action_run_id: result.source_action_run_id ?? null, source_action_owner: result.source_action_owner ?? null, collection_runs: result.collection_runs ?? [], quote_provenance: result.quotes.map(q => ({ package: q.package, model: q.model, action_owner: q.action_owner, collected_at: q.collected_at, source_action_run_id: q.source_action_run_id ?? result.source_action_run_id ?? result.run_id })), notion_rows: rows, receipt_directory: dir },
+    facts: { keyword: o.keyword, requested_count: o.count, quotes_written: rows.length, matched_sku_count: result.matched_sku_count, claimed_result: result.claimed_result, actual_model: result.actual_model, network_restored: result.network_restored, home_verified: true, lock_free_verified: true, report_only: result.report_only === true, receipt_import: result.receipt_import === true },
+    evidence: { source_action_task_id: result.source_action_task_id ?? null, authority_reports: result.authority_reports ?? [], run_id: result.run_id, report_run_id: result.run_id, source_action_run_id: result.source_action_run_id ?? null, source_action_owner: result.source_action_owner ?? null, collection_runs: result.collection_runs ?? [], quote_provenance: result.quotes.map(q => ({ package: q.package, model: q.model, action_owner: q.action_owner, collected_at: q.collected_at, source_action_run_id: q.source_action_run_id ?? result.source_action_run_id ?? result.run_id })), notion_rows: rows, receipt_directory: dir },
     next_steps: [],
   };
 }
@@ -124,8 +124,27 @@ export function buildCompletion(result, o, rows, dir, taskId = dir.split('/').po
 export function terminalStatus(claimedResult) { return claimedResult === 'passed' ? 'completed' : 'failed'; }
 export function failurePatch(previous, reason, dir, rows) {
   const oldResult = (previous.task ?? previous).result ?? {};
-  const visible = `本轮失败：${reason}；已写报价 ${rows.length} 条。报价明细：https://www.notion.so/7452049ef7de4da5822d4ff682869172`;
-  return { status: 'failed', error_message: reason, result: { ...oldResult, receipt: { ...(oldResult.receipt ?? {}), finalAssistantVisibleText: visible }, summary: `本轮失败：${reason}；已写报价 ${rows.length} 条。报价明细：https://www.notion.so/7452049ef7de4da5822d4ff682869172`, last_attempt: { actor: 'OpenClaw/us-price-compare', facts: { outcome: 'failed', reason }, evidence: { receipt_directory: dir, notion_rows: rows } } } };
+  const task = previous.task ?? previous;
+  const visible = `${task.id ? '任务 '+task.id+'：' : ''}本轮失败：${reason}；已写报价 ${rows.length} 条。报价明细：https://www.notion.so/7452049ef7de4da5822d4ff682869172`;
+  return { status: 'failed', error_message: reason, result: { ...oldResult, receipt: { ...(oldResult.receipt ?? {}), finalAssistantVisibleText: visible }, summary: visible, last_attempt: { actor: 'OpenClaw/us-price-compare', facts: { outcome: 'failed', reason }, evidence: { receipt_directory: dir, notion_rows: rows } } } };
 }
 
 export function buildOwner(taskId, nonce) { return 'price' + taskId.replaceAll('-', '') + nonce.replaceAll('-', ''); }
+
+export function bindAuthoritativeQuote(quote, report, sourceTaskId, expectedOwner) {
+  demand(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sourceTaskId), '权威证据缺合法原采集任务ID');
+  const owner = quote.action_owner, prefix = 'price' + sourceTaskId.replaceAll('-', '');
+  demand(typeof owner === 'string' && owner.startsWith(prefix) && /^[0-9a-f]{32}$/i.test(owner.slice(prefix.length)), '采集owner不属于原任务');
+  demand(!expectedOwner || owner === expectedOwner, '采集owner不属于本次已派发worker');
+  demand(report.action_owner === owner, 'held-report owner不匹配');
+  demand(report.network_restored === true && report.home_verified === true, '权威采集报告未完成网络/桌面恢复');
+  const equal = (a,b) => String(a??'').trim().toLowerCase() === String(b??'').trim().toLowerCase();
+  const candidates = (report.raw_quotes??[]).filter(raw => raw.package === quote.package && equal(raw.brand,quote.brand) && equal(raw.model,quote.model));
+  demand(candidates.length === 1, '权威报告SKU不是唯一匹配');
+  const raw = candidates[0];
+  demand(raw.action_owner === owner && raw.zip === quote.zip, '权威报价owner/ZIP不符');
+  demand(raw.price_candidates?.some(price => price.amount === quote.price_usd), '模型价格不在权威原生价格候选中');
+  for (const field of ['price_xml','title_xml','screenshot_path','collected_at']) demand(typeof raw[field] === 'string' && raw[field], `权威报告缺 ${field}`);
+  demand(!Number.isNaN(Date.parse(raw.collected_at)), '权威采集时间无效');
+  return { ...quote, ...raw, price_usd: quote.price_usd, specification: quote.specification, category: quote.category, status: quote.status, url: raw.url ?? null, url_missing: !raw.url };
+}
