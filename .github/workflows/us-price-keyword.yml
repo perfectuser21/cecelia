@@ -1,0 +1,16 @@
+name: Native US Price Keyword Contracts
+on:
+  push:
+    paths: ['scripts/phone-rpa/**', '.github/workflows/us-price-keyword.yml']
+  pull_request:
+    paths: ['scripts/phone-rpa/**', '.github/workflows/us-price-keyword.yml']
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test scripts/phone-rpa/us-price-keyword.test.mjs
