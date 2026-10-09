@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.398.0
+**Brain 版本**: 1.400.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,19 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.400.0 — coding harness runner 接 evaluator 门：CI 绿后真人 QA，PASS 才合并，FAIL 修复环
+
+- 决策 02d8e749：CI 绿不再直接合并。runner 开 PR 后只 ready（CODING_WF_QA_GATE=0 恢复旧行为）；每轮顺序：对账 → CI 红自动修 → **QA 门** → 认领新任务。
+- QA 门（runner/lib/qa-gate.mjs）：自己开的 cw PR 必需检查全绿、未通过 QA、当前 head 没验过 → 查 PR 预览环境（不存在则带 DEPLOY_TOKEN 请求启动；容量拒绝超 CODING_WF_QA_PREVIEW_ESCALATE_MS 默认 60 分钟升级）→ 检出 PR 版本跑 evaluate 活动 → 05 报告提交推送进 PR。
+- PASS：gh pr merge --auto --squash；合并后停掉该 PR 预览环境释放容量。FAIL：开发按 QA 报告 TDD 修复（prompts/qa-fix.md，不许碰 sprints/ 与 agent 配置、不许放宽断言），程序核对后推送 → CI → 再验，不设轮数上限。
+- 升级给 coding commander（`[coding-qa][P1]`，Brain result.escalations）：失败数连续 3 轮不降（qa_stalled）、评估会话连续 3 次出错或致命错误（qa_evaluator_broken）、预览环境长期起不来（qa_preview_unavailable）、PR 找不到 sprint（qa_sprint_missing）。状态 <logDir>/qa-<pr>.json，Brain result.qa 摘要。
+- runner.sh 运行时从 ~/.credentials/cecelia-deploy-token.env 读 DEPLOY_TOKEN（不进代码与 plist）。抽出 runner/lib/pr-branch.mjs（检出 PR 分支、读 sprint、核对修复提交、推送）与 listOwnPrs/requiredState，CI 修复与 QA 门共用。
+
+## Brain 1.399.0 — 工厂F3条件准入来源
+
+- 只在真实多scope入口存在时核固定版本1条件shell、明确PR环境及完整AST import/call链；注释、死分支、缺依赖、提前return/break继续UNKNOWN。
+- 旧main没有入口时维持既有Factory来源；不执行候选代码、不改current/引用，不把完整工厂声明可运行。
 
 ## Brain 1.398.0 — coding harness evaluator 真人 QA：在 PR 预览环境黑盒验收
 
