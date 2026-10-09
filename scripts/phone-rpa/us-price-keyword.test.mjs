@@ -7,7 +7,7 @@ function receipt() {
   return { runId: 'run1', status: 'ok', result: { payloads: [{ text: JSON.stringify({ quotes: [quote], network_restored: true, home_verified: true, lock_free_verified: true }) }], meta: { agentMeta: { provider: 'openai', model: 'gpt-6-luna', terminalReceipt: { effective: { provider: 'openai', model: 'gpt-6-luna' }, successfulToolNames: ['node_exec'] } } } } };
 }
 test('输入数量有界，邮编保留前导零', () => {
-  assert.deepEqual(parseOptions(['--keyword', 'drill', '--zip', '00501']), { keyword: 'drill', zip: '00501', count: 3, model: 'openai/gpt-6-luna' });
+  assert.deepEqual(parseOptions(['--keyword', 'drill', '--zip', '00501']), { keyword: 'drill', zip: '00501', count: 3, model: 'openai/gpt-6-sol' });
   for (const count of ['0', '4', '1.5']) assert.throws(() => parseOptions(['--keyword', 'drill', '--count', count]));
   assert.throws(() => parseOptions(['--keyword', '   ']));
 });
@@ -95,6 +95,8 @@ test('原生采集完成后直接报告，禁止重复拉图和全文XML导致�
   assert.ok(prompt.includes("node.get('text','')"));
   assert.ok(prompt.includes('不是itertext'));
   assert.ok(prompt.includes('不要把shell控制器当python运行'));
+  assert.ok(prompt.includes('text(r)'));
+  assert.ok(prompt.includes('不要猜r.content'));
   assert.ok(prompt.includes('同一证据最多读取1次'));
   assert.ok(prompt.includes('禁止把全文XML返回模型'));
   assert.ok(prompt.includes('恢复网络/桌面并释放锁后立即输出JSON'));
