@@ -22,12 +22,14 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
   let server;
   let api;
   let preview = { status: 'active', port: 5302 };
+  let previewSha = null;
   const sprint = () => path.join(worktree, 'sprints/s1');
 
   beforeAll(async () => {
     fs.chmodSync(FAKE, 0o755);
     server = http.createServer((req, res) => {
       res.setHeader('content-type', 'application/json');
+      if (req.url === '/api/brain/health') return res.end(JSON.stringify({ status: 'healthy', git_sha: previewSha }));
       if (!preview) { res.statusCode = 404; return res.end('{}'); }
       return res.end(JSON.stringify({ pr_number: 77, ...preview }));
     });
@@ -63,6 +65,20 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     expect(r.stderr).toContain('FAKE_HIDDEN_EVIDENCE: true');
     expect(fs.existsSync(path.join(sprint(), '03-build.md'))).toBe(true);
     expect(fs.existsSync(path.join(sprint(), '04-evidence.md'))).toBe(true);
+  });
+
+  it('给了 head_sha：预览 /health 的 git_sha 必须等于它，否则 retryable preview_stale（不启动 claude）；相等照常验', async () => {
+    const SHA = 'c'.repeat(40);
+    preview = { status: 'active', port: server.address().port };
+    const env = { CODING_WF_PREVIEW_HOST: '127.0.0.1' };
+    previewSha = 'd'.repeat(40);
+    let r = await run('pass', { head_sha: SHA }, env);
+    expect(r.result).toMatchObject({ status: 'failed', failure_class: 'retryable', reason_code: 'preview_stale' });
+    expect(r.stderr).not.toContain('FAKE_PREVIEW_URL');
+    previewSha = SHA;
+    r = await run('pass', { head_sha: SHA }, env);
+    expect(r.result.status, r.stderr).toBe('completed');
+    expect(r.result.outputs.qa.env).toMatchObject({ sha: SHA });
   });
 
   it('上一轮独立裁判判 QA 没真验到：judge_feedback 指向的裁决交给 QA 补验；没有时写「无」；指向不存在/sprint 外 → fatal', async () => {
