@@ -20,7 +20,7 @@ export function parseOptions(args) {
 export function buildPrompt(o, taskId, owner = `phone-price-${taskId}`) {
   const request = Buffer.from(JSON.stringify({ keyword: o.keyword, count: o.count, zip: o.zip, owner })).toString('base64');
   return `执行Brain任务 ${taskId}：关键词 ${JSON.stringify(o.keyword)}，ZIP ${o.zip}，最多${o.count}SKU。只用两家原生App，不登录/购买/加车，不采网页价格。
-你只通过真实node_exec，在XIAN-M4-PHONE节点beb0fec23dc75b6b1172379f783cf6d9d4cdc9934ffc2c1522de07f952094654执行一次以下argv，不编写/修改UI脚本、不探索控制器、不改证据目录：
+你只通过真实node_exec（参数timeoutSeconds=${o.count === 1 ? 600 : 1000}，使用这个已验证字段，不猜timeoutMs），在XIAN-M4-PHONE节点beb0fec23dc75b6b1172379f783cf6d9d4cdc9934ffc2c1522de07f952094654执行一次以下argv，不编写/修改UI脚本、不探索控制器、不改证据目录：
 /opt/homebrew/bin/python3 /Users/jinnuoshengyuan/Library/Caches/us-price-native-staging/runtime/us_price_native_worker.py --request-base64 ${request}
 这一个dispatcher内部只启动一次with-lock，持锁Python worker包含全部导航、查价和finally恢复。禁止外层再套with-lock，禁止逐动作重新with-lock。owner=${owner}；不要并行SSH/裸ADB，不重跑worker。
 用户授权决策043693f2-c703-406b-96c6-90a0176eff0b：小黄ANGYVB4402004137切mac-mini-m4-us后必须恢复None/国内、HOME、锁释放；小彩不动。dispatcher返回network_restored/home_verified/lock_free_verified，未全true则如实失败。
