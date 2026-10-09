@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.401.0
+**Brain 版本**: 1.402.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.402.0 — Native scoped admission
+
+- The existing pr-gate CLI dispatches explicit scopes-file requests to the joint collector and registered assertion engine; legacy single-scope and main release remain unchanged.
+- KR/Brain snapshots freeze an independent Factory admission companion with strict identity, digest, eight-reference, six-unknown and non-executable checks. Explicit joint admission fails closed for any UNKNOWN.
+- Extraction returns source files and EXTRACTED only. Real PG and Node subprocess tests retain separate definitions and hashes; no candidate source is registered centrally.
 
 ## Brain 1.401.0 — coding harness 独立裁判：真人 QA PASS 后不同模型复核，PASS 才合并
 
