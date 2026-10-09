@@ -98,4 +98,27 @@ esac
 
  }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+it('同base正规artifact按真实创建时间选择，拒把API首项或较大ID当更新来源',()=>{
+ const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+ const step=workflow.jobs.gate.steps.find(s=>s.name?.includes('下载固定SHA')),root=mkdtempSync(join(tmpdir(),'ci-artifact-time-order-'));
+ try{
+  const archive=join(root,'input.zip'),capture=join(root,'api-calls.log');
+  execFileSync('python3',['-c','import zipfile,sys,json; z=zipfile.ZipFile(sys.argv[1],"w"); z.writestr("head.json", json.dumps({"snapshot":{}})); z.close()',archive]);
+  mkdirSync(join(root,'bin'));writeFileSync(join(root,'bin/gh'),`#!/bin/bash
+printf '%s\\n' "$*" >> "$API_CALLS"
+case "$*" in
+ *'/actions/artifacts?name='*) printf '%s\\n' '{"artifacts":[{"id":123,"created_at":"2026-10-09T05:45:12Z","expired":false,"workflow_run":{"head_branch":"main","head_sha":"${'a'.repeat(40)}","repository_id":1,"head_repository_id":1}},{"id":122,"created_at":"2026-10-09T05:49:49Z","expired":false,"workflow_run":{"head_branch":"main","head_sha":"${'a'.repeat(40)}","repository_id":1,"head_repository_id":1}}]}' ;;
+ *'/actions/artifacts/123/zip'*|*'/actions/artifacts/122/zip'*) cat "$ARCHIVE" ;;
+ *'/actions/artifacts/123'*|*'/actions/artifacts/122'*) printf '99\\n' ;;
+ *'/actions/runs/99'*) printf 'push .github/workflows/implementation-impact.yml\\n' ;;
+ *) exit 80 ;;
+esac
+`,{mode:0o755});
+  const result=spawnSync('/bin/bash',['-c',step.run],{cwd:root,encoding:'utf8',env:{PATH:`${root}/bin:${process.env.PATH}`,API_CALLS:capture,ARCHIVE:archive,RUNNER_TEMP:root,MODE:'pr',BASE:'a'.repeat(40),HEAD:'b'.repeat(40),GITHUB_REPOSITORY:'owner/repo'}});
+  expect(result.status,result.stdout+result.stderr).toBe(0);
+  expect(readFileSync(capture,'utf8')).toContain('/actions/artifacts/122/zip');
+  expect(readFileSync(capture,'utf8')).not.toContain('/actions/artifacts/123/zip');
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
 });
