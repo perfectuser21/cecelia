@@ -1,0 +1,29 @@
+name: Docker Hub 走镜像源
+description: >-
+  把 GitHub 托管 runner 的 dockerd 配成 registry-mirrors=https://mirror.gcr.io，docker build / compose 拉
+  Docker Hub 镜像（如 FROM node:20-alpine）时走 Google 拉取缓存。2026-10-10 未登录拉取被 Docker Hub 限流
+  （toomanyrequests）致全部 PR 卡死（Brain 任务 7294cf3a）。只能用于 GitHub 托管的 ubuntu runner：
+  会改 /etc/docker/daemon.json，绝不能用在自托管机器上。registry-mirrors 可热加载：只发 SIGHUP 让 dockerd
+  重读配置、不重启，job 里已起的 service 容器（如 postgres）不受影响。
+runs:
+  using: composite
+  steps:
+    - name: dockerd 配置 registry-mirrors
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
+          echo "::error::dockerhub-mirror 只能用于 GitHub 托管 runner（当前 RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-未知}）"
+          exit 1
+        fi
+        CONF=/etc/docker/daemon.json
+        if sudo test -f "$CONF"; then CUR=$(sudo cat "$CONF"); else CUR='{}'; fi
+        printf '%s' "$CUR" | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee "$CONF" >/dev/null
+        sudo kill -HUP "$(pidof dockerd)"
+        for i in $(seq 1 30); do
+          docker info --format '{{json .RegistryConfig.Mirrors}}' 2>/dev/null | grep -q 'mirror.gcr.io' && break
+          sleep 1
+        done
+        MIRRORS=$(docker info --format '{{json .RegistryConfig.Mirrors}}')
+        echo "registry-mirrors: ${MIRRORS}"
+        printf '%s' "$MIRRORS" | grep -q 'mirror.gcr.io' || { echo "::error::dockerd 未加载 registry-mirrors"; exit 1; }

@@ -80,7 +80,7 @@ jobs:
 
     services:
       postgres:
-        image: pgvector/pgvector:pg15
+        image: mirror.gcr.io/pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
           POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD || 'cecelia' }}
