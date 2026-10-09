@@ -1,6 +1,6 @@
 import unittest
 import xml.etree.ElementTree as E
-from native_price_phone import text_values, parse_hd_detail, extract_asin, price_candidates, validate_request
+from native_price_phone import text_values, parse_hd_detail, extract_asin, price_candidates, validate_request, PhoneSession
 from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search
 
 def nodes(values, package='com.thehomedepot'):
@@ -77,4 +77,13 @@ class NativePriceTests(unittest.TestCase):
         self.assertIsNone(q['url'])
         self.assertTrue(q['url_missing'])
         self.assertEqual(q['status'],'规格待核')
+    def test_launch_denies_optional_app_list_permission_for_hd(self):
+        import unittest.mock
+        session=object.__new__(PhoneSession);taps=[]
+        session.adb=lambda *args,**kwargs:'com.thehomedepot/Main'
+        pages=iter([nodes(['是否允许读取设备应用列表？','禁止']),nodes(['What can we help you find?'])])
+        session.nodes=lambda label:(next(pages),'/tmp/page.xml')
+        session.tap=lambda node:taps.append(node.get('text'))
+        with unittest.mock.patch('native_price_phone.time.sleep'):session.launch('com.thehomedepot')
+        self.assertEqual(taps,['禁止'])
 if __name__=='__main__':unittest.main()

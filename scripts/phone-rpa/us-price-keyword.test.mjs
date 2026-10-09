@@ -151,3 +151,12 @@ test('缺商品链接仍保留可靠价格，但标待核且不能整体passed',
   const p=notionProperties(result.quotes[0],options,'t','r','model','proof');
   assert.equal(p.商品链接.url,null);assert.equal(p.状态.select.name,'规格待核');
 });
+test('商品URL为可选字段，同规格同ZIP真实两平台可完成但错误域名拒绝', () => {
+  const r=receipt(), report=JSON.parse(r.result.payloads[0].text);
+  report.quotes[0]={...quote,url:null,url_missing:true,status:'已核验'};
+  report.quotes.push({...quote,package:'com.thehomedepot',url:'https://www.homedepot.com/p/123456789'});
+  r.result.payloads[0].text=JSON.stringify(report);
+  assert.equal(validateReceipt(r,{...options,count:1}).claimed_result,'passed');
+  report.quotes[0].url='https://evil.com/product';r.result.payloads[0].text=JSON.stringify(report);
+  assert.throws(()=>validateReceipt(r,{...options,count:1}));
+});
