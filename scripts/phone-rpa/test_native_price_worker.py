@@ -27,6 +27,18 @@ class NativePriceTests(unittest.TestCase):
             amazon_specification(other,nodes(['Customer reviews','See more details']),'/reviews.xml')
         self.assertEqual(other.taps,[])
 
+    def test_amazon_details_zero_height_anchor_is_not_tapped_until_visible(self):
+        import unittest.mock
+        class Fake:
+            def __init__(self):self.swipes=0;self.taps=[]
+            def swipe(self):self.swipes+=1
+            def tap(self,n):self.taps.append(n.get('bounds'))
+            def nodes(self,label):return nodes(['See more details','Included Components','charger']),'/visible.xml'
+        fake=Fake();initial=nodes(['Product details','See more details']);initial[1].set('bounds','[45,2507][327,2507]')
+        with unittest.mock.patch('us_price_native_worker.time.sleep'):
+            amazon_specification(fake,initial,'/zero.xml')
+        self.assertEqual(fake.taps,['[0,0][100,100]']);self.assertLessEqual(fake.swipes,2)
+
     def test_seller_requires_exact_native_text_not_substring(self):
         self.assertEqual(amazon_seller(['Visit Amazon.com.evil.com']),'未显示（需核对）')
         self.assertEqual(amazon_seller(['Sold by Amazon.com']),'Sold by Amazon.com')
