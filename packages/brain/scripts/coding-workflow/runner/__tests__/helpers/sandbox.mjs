@@ -165,6 +165,8 @@ export function runnerEnv(sb, brainUrl, extra = {}) {
     CODING_WF_SKIP_NPM_CI: '1',
     // CI 修复默认关：既有用例断言 gh 调用为空；ci_fix 用例显式打开
     CODING_WF_CIFIX: '0',
+    // QA 门默认关：既有用例按「开 PR 即自动合并」断言；QA 门用例显式打开
+    CODING_WF_QA_GATE: '0',
     FAKE_EXEC_LOG: sb.execLog,
     FAKE_GH_LOG: sb.ghLog,
     ...extra,

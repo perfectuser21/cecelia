@@ -54,10 +54,14 @@ export async function failTask(ctx, task, job, summary) {
   return 1;
 }
 
-/** gh pr ready + gh pr merge --auto --squash；失败只记录。 */
+/**
+ * gh pr ready + gh pr merge --auto --squash；失败只记录。
+ * QA 门开启时只 ready：自动合并留给 QA 门在真人 QA 通过后打开（lib/qa-gate.mjs）。
+ */
 async function automerge(ctx, prUrl, cwd) {
   const { cfg, log } = ctx;
   const ready = await run(cfg.ghBin, ['pr', 'ready', prUrl], { cwd, timeoutMs: GH_TIMEOUT_MS });
+  if (cfg.qaGate) return { ready: ready.code === 0, merge: 'awaiting_qa' };
   const merge = await run(cfg.ghBin, ['pr', 'merge', prUrl, '--auto', '--squash'], { cwd, timeoutMs: GH_TIMEOUT_MS });
   if (merge.code !== 0) log(`automerge 失败：${merge.stderr.trim().split('\n').pop() || merge.code}`);
   return { ready: ready.code === 0, merge: merge.code === 0 };

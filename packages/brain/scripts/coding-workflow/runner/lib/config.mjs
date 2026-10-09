@@ -1,6 +1,7 @@
 // runner 配置：所有外部可替换点都从环境变量注入（测试用沙箱路径与假件覆盖）。
 import os from 'node:os';
 import path from 'node:path';
+import { DEFAULT_PREVIEW_API } from '../../lib/preview.mjs';
 
 const DEFAULT_KILL_GRACE_MS = 30000;
 
@@ -8,6 +9,13 @@ const DEFAULT_KILL_GRACE_MS = 30000;
 function positiveInt(value) {
   const n = Number(value);
   return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** 非负整数环境变量（0 有意义，如「立刻升级」）；缺失或非法返回 null。 */
+function nonNegativeInt(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 export function loadConfig(env = process.env) {
@@ -28,6 +36,15 @@ export function loadConfig(env = process.env) {
     ciFix: env.CODING_WF_CIFIX !== '0',
     ciFixMaxAttempts: positiveInt(env.CODING_WF_CIFIX_MAX_ATTEMPTS) ?? 2,
     ciFixTimeoutMs: positiveInt(env.CODING_WF_CIFIX_TIMEOUT_MS) ?? 30 * 60 * 1000,
+    // QA 门（evaluator 真人 QA，决策 02d8e749）：CI 绿后在 PR 预览环境验收，PASS 才开自动合并
+    qaGate: env.CODING_WF_QA_GATE !== '0',
+    previewApi: env.CODING_WF_PREVIEW_API || DEFAULT_PREVIEW_API,
+    deployToken: env.DEPLOY_TOKEN || env.CODING_WF_DEPLOY_TOKEN || null,
+    // null = 用 PR worktree 自己的 activities/evaluate.mjs
+    evaluateEntry: env.CODING_WF_EVALUATE || null,
+    qaPreviewEscalateMs: nonNegativeInt(env.CODING_WF_QA_PREVIEW_ESCALATE_MS) ?? 60 * 60 * 1000,
+    qaMaxBadStreak: positiveInt(env.CODING_WF_QA_MAX_BAD_STREAK) ?? 3,
+    qaFixTimeoutMs: positiveInt(env.CODING_WF_QA_FIX_TIMEOUT_MS) ?? 40 * 60 * 1000,
     // null = 按契约 budget 计算
     runTimeoutMs: positiveInt(env.CODING_WF_RUN_TIMEOUT_MS),
     killGraceMs: positiveInt(env.CODING_WF_KILL_GRACE_MS) ?? DEFAULT_KILL_GRACE_MS,
