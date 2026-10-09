@@ -16,6 +16,7 @@ const qaIds = field('QA_IDS').split(',').filter(Boolean);
 console.error(`FAKE_HIDDEN_BUILD: ${!fs.existsSync(path.join(sprint, '03-build.md'))}`);
 console.error(`FAKE_HIDDEN_EVIDENCE: ${!fs.existsSync(path.join(sprint, '04-evidence.md'))}`);
 console.error(`FAKE_PREVIEW_URL: ${url}`);
+console.error(`FAKE_JUDGE_FEEDBACK: ${field('JUDGE_FEEDBACK')}`);
 
 let n = 0;
 const emit = (command, output) => {
