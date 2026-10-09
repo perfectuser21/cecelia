@@ -1,4 +1,4 @@
-import {withLegacyNames} from './minimum-definition-schema.js';
+import {withLegacyNames,useStandardNames} from './minimum-definition-schema.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import pg from 'pg';
@@ -27,6 +27,8 @@ export async function releaseEvidenceDatabase(options={}){
     const migration=new URL('../../../migrations/515_release_definition_evidence.sql',import.meta.url);
     if(!existsSync(migration))throw Error('发布证据迁移515必须存在');
     await withLegacyNames(db,()=>db.query(readFileSync(migration,'utf8')));
+    await db.query(readFileSync(new URL('../../../migrations/537_assertion_source_repo.sql',import.meta.url),'utf8'));
+    await useStandardNames(db);
     const workflows=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_commit=$1 ORDER BY workflow_id',[releaseHead])).rows;
     const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE source_commit=$1 ORDER BY activity_id',[releaseHead])).rows;
     const bound=activities.find(a=>a.payload.implementation_bindings.some(b=>b.kind==='code')),binding=bound.payload.implementation_bindings.find(b=>b.kind==='code');

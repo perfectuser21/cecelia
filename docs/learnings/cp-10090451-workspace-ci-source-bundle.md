@@ -18,3 +18,7 @@
 - [x] 跨仓扫描各用实际固定Git源和不同图键；Workspace图不得写到Brain逻辑登记键，也不得把Brain YAML路径当Workspace依赖。约束：scripts/ci/implementation-snapshot.mjs 与上述真实PG测试。
 
 本轮实际验证：Node 50/50、协议单元98/98、联合真实PG59/59。包含两Git来源提取、锁内追加、隔离导入/重建、分别扫描两仓，以及严格历史查询。候选完整pre-push、正式CI、生产部署与手机业务实跑仍需分别留实际证据。
+
+首次完整pre-push真实结果：22412通过、152既有跳过、4失败。修复原生短形定义来源fallback和旧pilot_v1误接受Node协议后，相关64/64及独立pilot单测6/6通过；真实跨仓PG扫描1/1通过。官方DoD evaluator六项逐条真执行全部通过。
+
+额外真实PG复核发现9项pilot测试共享夹具缺537断言来源列；第一次把迁移放进过早的versions夹具仍因物理表尚未建立失败，日志保留。最终迁移放在共同releaseEvidenceDatabase完成515后执行，重建旧名视图，并删除单个capability测试的临时迁移；实际pilot、capability和夹具五文件40/40通过。此修复只在隔离测试库执行真实迁移，不改生产兼容语义、不跳过失败。

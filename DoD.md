@@ -31,3 +31,9 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] workspaceconfigcompat 原 nightly 精确角色、普通辅助角色、release 精确消费与原有治理语义保持；事实、版本同步及 DoD 映射一致。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/implementation-ci-gate.test.js src/lib/__tests__/implementation-ci-governance.test.js src/__tests__/auto-version-apply.test.js --maxWorkers=1 --minWorkers=1 && cd ../.. && node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs DoD.md"
+
+- [x] [BEHAVIOR] B-06 原生短形定义保留合法定义边并拒绝空路径，跨仓仍拒伪同名依赖；旧pilot_v1不扩大Node发布资格。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run ../../tests/regression/probe-definition-edges/definition-edges.test.js src/lib/__tests__/pilot-release-regression-scope.test.js src/lib/__tests__/gp-assertion-command.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] B-07 共享发布PG夹具按真实537迁移建立断言来源列与约束，旧名视图重建；所有pilot与仓库来源回归使用同一夹具，不由单个测试临时补列。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/fixtures/definition-versions-db.test.js src/__tests__/fixtures/release-evidence-db.test.js src/lib/__tests__/integration/pilot-release-verification.test.js src/__tests__/integration/pilot-release-ci.pg.integration.test.js src/lib/__tests__/integration/capability-regressions.test.js --maxWorkers=1 --minWorkers=1"

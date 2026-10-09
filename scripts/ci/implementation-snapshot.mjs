@@ -95,7 +95,9 @@ export function definitionEdges(s){
     for(const binding of a?.payload.implementation_bindings||[]){
       if(binding.repo!==s.repo||binding.revision!==s.revision||!['code','skill'].includes(binding.kind)||binding.status!=='verified')continue;
       definitionEdgePath(binding.path);
-      for(const source of new Set([...(w.source_repo===s.repo?[w.source_path]:[]),...(a.source_repo===s.repo?[a.source_path]:[]),...(s.adapter_evidence?.adapter==='activity-contracts-v1'&&s.adapter_evidence.revision===s.revision?[s.adapter_evidence.path]:[])])){definitionEdgePath(source);if(source!==binding.path)edges.push({src_path:binding.path,dst_path:source,edge_type:'import',
+      // 原生短形定义沿用所在仓库；跨仓定义默认归真实登记锚，不能变成实现仓的同名路径。
+      const definitionSources=[w,a].map(row=>({repo:row.source_repo??s.registry_source?.repo??s.repo,path:definitionEdgePath(row.source_path)}));
+      for(const source of new Set([...definitionSources.filter(row=>row.repo===s.repo).map(row=>row.path),...(s.adapter_evidence?.adapter==='activity-contracts-v1'&&s.adapter_evidence.revision===s.revision?[s.adapter_evidence.path]:[])])){definitionEdgePath(source);if(source!==binding.path)edges.push({src_path:binding.path,dst_path:source,edge_type:'import',
         detail:{via:'frozen_definition',workflow_definition_version_id:w.id,activity_definition_version_id:a.id,source_revision:s.revision}});}
       for(const assertion of s.assertions.filter(r=>r.journey_id===w.payload.capability_id&&r.step_id===a.activity_id)){
         let shape;try{shape=classifyAssertionRef(assertion.assertion_ref);}catch{continue;}
