@@ -240,6 +240,54 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     });
   });
 
+  // 审计 P1 #4：推上去之前先在本地跑 CI 规矩类门禁，红了带日志退回修（最多 2 轮），修完重新过后置检查
+  describe('CI 门禁本地预检（ci_precheck）', () => {
+    const FIXED = 'src/precheck-fixed.txt';
+    // 用例里换掉默认门禁清单（真实脚本在临时仓库里不存在）；01 默认标题 intent 不以修复开头 → feature
+    const checks = (list) => ({ CODING_WF_PRECHECKS: JSON.stringify(list) });
+    const needsFix = { name: 'lint-feature-has-smoke', cmd: ['bash', '-c', `test -f ${FIXED} || { echo "feat PR 改了 brain/src 必须新增 smoke 脚本"; exit 1; }`] };
+
+    it('全部门禁通过 → completed，outputs.ci_precheck passed、0 轮修复，不起修复会话', async () => {
+      const r = await run('build-ok', {}, checks([{ name: 'ok', cmd: ['true'] }]));
+      expect(r.result.status, r.stderr).toBe('completed');
+      expect(r.result.outputs.ci_precheck).toEqual({ passed: true, rounds: 0, failures: [] });
+      expect(r.stdout).not.toContain('FAKE_ROLE: ci_precheck_fix');
+    });
+
+    it('门禁红 → 修复会话拿到失败项与日志 → 提交修复 → 重跑通过；修复提交计入 build_commits', async () => {
+      const r = await run('build-ok', {}, { ...checks([needsFix]), FAKE_CLAUDE_MODE_PRECHECK: 'precheck-fix', FAKE_PROMPT_LOG: path.join(root, 'precheck-prompt.txt') });
+      expect(r.result.status, r.stderr).toBe('completed');
+      expect(r.result.outputs.ci_precheck).toEqual({ passed: true, rounds: 1, failures: [] });
+      expect(r.result.outputs.build_commits).toHaveLength(2);
+      expect(git(worktree, 'log', '-1', '--format=%s').trim()).toBe('fix: CI 门禁预检');
+      const prompt = fs.readFileSync(path.join(root, 'precheck-prompt.txt'), 'utf8');
+      expect(prompt).toContain('lint-feature-has-smoke');
+      expect(prompt).toContain('必须新增 smoke 脚本');
+    });
+
+    it('修 2 轮仍红 → 照常 completed，ci_precheck 标明未过的门禁（交 CI 与 CI 修复环兜底，不卡死链路）', async () => {
+      const r = await run('build-ok', {}, { ...checks([needsFix]), FAKE_CLAUDE_MODE_PRECHECK: 'precheck-noop' });
+      expect(r.result.status, r.stderr).toBe('completed');
+      expect(r.result.outputs.ci_precheck).toEqual({ passed: false, rounds: 2, failures: ['lint-feature-has-smoke'] });
+    });
+
+    it('修复会话改了 sprint 目录 → fatal（同 build 的后置检查）', async () => {
+      const r = await run('build-ok', {}, { ...checks([needsFix]), FAKE_CLAUDE_MODE_PRECHECK: 'precheck-sprint' });
+      expect(r.result.failure_class).toBe('fatal');
+      expect(['chain_tampered', 'build_sprint_polluted']).toContain(r.result.reason_code);
+    });
+
+    it('feature 判定按 publish 的 PR 标题：01 标题不以修复开头 → 门禁拿到 PR_LABELS=feature；以修复开头 → 空', async () => {
+      const probe = [{ name: 'probe', cmd: ['bash', '-c', '[ "$PR_LABELS" = feature ]'] }];
+      fs.writeFileSync(path.join(sprintAbs, '01-intent.md'), '# 新增 status 页\n');
+      let r = await run('build-ok', {}, { ...checks(probe), FAKE_CLAUDE_MODE_PRECHECK: 'precheck-noop' });
+      expect(r.result.outputs.ci_precheck.passed).toBe(true);
+      fs.writeFileSync(path.join(sprintAbs, '01-intent.md'), '# 修复 Brain 非法 id\n');
+      r = await run('build-ok', {}, { ...checks(probe), FAKE_CLAUDE_MODE_PRECHECK: 'precheck-noop' });
+      expect(r.result.outputs.ci_precheck.passed).toBe(false);
+    });
+  });
+
   it('claude 鉴权失败 -> needs_human claude_auth', async () => {
     const r = await run('auth');
     expect(r.result.failure_class).toBe('needs_human');

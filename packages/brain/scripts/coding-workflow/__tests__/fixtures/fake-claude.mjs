@@ -27,8 +27,11 @@ const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf('-p') + 1] || '';
 // 按 prompt 认出 build / verify 步骤：FAKE_CLAUDE_MODE_BUILD / FAKE_CLAUDE_MODE_VERIFY 可单独指定该步模式（端到端一次跑三步用）
 // spec_review 的评审/改写会话按 ROLE 行认出：FAKE_CLAUDE_MODE_REVIEW / FAKE_CLAUDE_MODE_REVISE
-const role = (prompt.match(/^ROLE: (spec_review|spec_revise)$/m) || [])[1];
-const ROLE_STEPS = { spec_review: 'REVIEW', spec_revise: 'REVISE' };
+// build 内 CI 门禁预检修复会话按 `ROLE: ci_precheck_fix` 认出：FAKE_CLAUDE_MODE_PRECHECK
+//   precheck-fix（提交 src/precheck-fixed.txt）| precheck-noop（什么都不改）| precheck-sprint（改 02 并提交，越界）
+const role = (prompt.match(/^ROLE: (spec_review|spec_revise|ci_precheck_fix)$/m) || [])[1];
+const ROLE_STEPS = { spec_review: 'REVIEW', spec_revise: 'REVISE', ci_precheck_fix: 'PRECHECK' };
+if (process.env.FAKE_PROMPT_LOG && role === 'ci_precheck_fix') fs.appendFileSync(process.env.FAKE_PROMPT_LOG, `${prompt}\n`);
 const step = role ? ROLE_STEPS[role]
   : /^BUILD_PATH: /m.test(prompt) ? 'BUILD' : /^EVIDENCE_PATH: /m.test(prompt) ? 'VERIFY' : null;
 const mode = (step && process.env[`FAKE_CLAUDE_MODE_${step}`]) || process.env.FAKE_CLAUDE_MODE || 'ok';
@@ -194,7 +197,22 @@ function sideEffects() {
   if (process.env.FAKE_PUSH === '1') git('push', '-q', 'origin', `HEAD:refs/heads/${git('rev-parse', '--abbrev-ref', 'HEAD').trim()}`);
 }
 
-if (mode.startsWith('build-')) build();
+function precheckFix() {
+  if (mode === 'precheck-fix') {
+    writeFile('src/precheck-fixed.txt', 'fixed\n');
+    git('add', '--', 'src/precheck-fixed.txt');
+    git('commit', '-q', '-m', 'fix: CI 门禁预检');
+  }
+  if (mode === 'precheck-sprint') {
+    const spec = path.join(field('SPRINT_DIR'), '02-spec.md');
+    fs.appendFileSync(spec, '\n改了合同\n');
+    git('add', '--', spec);
+    git('commit', '-q', '-m', 'fix: 改合同');
+  }
+}
+
+if (mode.startsWith('precheck-')) precheckFix();
+else if (mode.startsWith('build-')) build();
 else if (mode.startsWith('verify-')) verify();
 else if (mode.startsWith('review-')) review();
 else if (mode.startsWith('revise-')) revise();
