@@ -1,4 +1,5 @@
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync,readFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,rmSync,readFileSync,chmodSync} from 'node:fs';
+import yaml from 'js-yaml';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
@@ -200,4 +201,22 @@ it('真实Factory scope拒绝泛用执行workflow fixture，不借别scope覆盖
   expect(() => multi.resolveScopedImplementationReports({ source,
    expectedScopes: ['cecelia-kr', 'cecelia-factory'], reports: [reports[0], rejected] })).toThrow();
  } finally { await unrelated.close(); }
+});
+
+it('真实workflow shell仅显式PR scopes调用联合入口，main仍单scope真实release路径',()=>{
+ const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+ const script=workflow.jobs.gate.steps.find(s=>s.name==='实际变更影响与固定回归').run;
+ const root=mkdtempSync(join(tmpdir(),'multi-workflow-entry-'));
+ try{
+  const capture=join(root,'args'),node=join(root,'node');writeFileSync(node,'#!/bin/bash\nprintf "%s\\n" "$@" > "$CALL_CAPTURE"\n');chmodSync(node,0o700);
+  mkdirSync(join(root,'implementation-input/base'),{recursive:true});mkdirSync(join(root,'implementation-input/head'),{recursive:true});mkdirSync(join(root,'implementation-output'));
+  const env={...process.env,PATH:root+':'+process.env.PATH,CALL_CAPTURE:capture,RUNNER_TEMP:root,GITHUB_WORKSPACE:root,BASE:'a'.repeat(40),HEAD:'b'.repeat(40),MAP_SCOPE:'cecelia-kr',ADMISSION_SCOPES:'{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}',MODE:'pr'};
+  execFileSync('/bin/bash',['-c',script],{env});expect(readFileSync(capture,'utf8')).toContain('implementation-multi-pr-gate.mjs');
+  const scopes=JSON.parse(readFileSync(join(root,'implementation-input/scopes.json'),'utf8'));expect(scopes.map(s=>s.scope)).toEqual(['cecelia-kr','cecelia-factory']);
+  for(const value of [JSON.stringify({schema_version:99,scopes:['cecelia-kr']}),JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-kr']}),JSON.stringify({schema_version:1,scopes:['cecelia-kr'],execute:true})]){
+   expect(()=>execFileSync('/bin/bash',['-c',script],{env:{...env,ADMISSION_SCOPES:value},stdio:'pipe'})).toThrow();
+  }
+  execFileSync('/bin/bash',['-c',script],{env:{...env,ADMISSION_SCOPES:''}});expect(readFileSync(capture,'utf8')).toContain('implementation-pr-gate.mjs');
+  execFileSync('/bin/bash',['-c',script],{env:{...env,MODE:'main'}});expect(readFileSync(capture,'utf8')).toContain('implementation-pr-gate.mjs');expect(readFileSync(capture,'utf8')).not.toContain('implementation-multi-pr-gate.mjs');
+ }finally{rmSync(root,{recursive:true,force:true});}
 });

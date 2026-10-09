@@ -101,6 +101,16 @@
       "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
       "path": "packages/brain/scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs",
       "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-pr-gate.mjs",
+      "path": "changes/cp-10090507-implementation-multi-scope.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-pr-gate.mjs",
+      "path": "packages/brain/src/lib/__tests__/implementation-ci-workflow.test.js",
+      "role": "verification"
     }
   ]
 }
