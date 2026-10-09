@@ -17,11 +17,19 @@ const TASK = 'c954ebfd-469f-4006-a95f-b277fa6564f6';
 const BRANCH = 'cp-10091835-cw-c954ebfd';
 const SPRINT = 'sprints/10091835-cw-c954ebfd';
 const INTENT = `---\ntask_id: ${TASK}\nstep: intent\nupstream: []\n---\n# x\n\n### I-1\n验收\n`;
+const JUDGE_ISSUE = (type) => ({ id: 'J-1', type, severity: '阻断', covers: ['I-1'], detail: `${type} 问题`, where: 'src/feature.js:1' });
+const JUDGE_REPLY = {
+  pass: { coverage: [{ intent: 'I-1', satisfied: true, evidence: 'T-1 真实输出' }], issues: [], summary: 'ok' },
+  ...Object.fromEntries([['product', 'product'], ['qa_gap', 'qa_gap'], ['contract', 'contract_gap']].map(([mode, type]) => [mode, {
+    coverage: [{ intent: 'I-1', satisfied: false, evidence: '见 J-1' }], issues: [JUDGE_ISSUE(type)], summary: 'no',
+  }])),
+};
 
 describe('runner QA 门（evaluator 真人 QA）', () => {
   let sb;
   let brain;
   let preview;
+  let judge;
   let head;
   const files = {};
 
@@ -35,6 +43,8 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     fs.mkdirSync(path.join(sb.seed, SPRINT), { recursive: true });
     fs.writeFileSync(path.join(sb.seed, SPRINT, '01-intent.md'), INTENT);
     fs.writeFileSync(path.join(sb.seed, SPRINT, '02-spec.md'), '### S-1\n\n## QA 场景\n\n### Q-1\n对应: I-1\n操作: x\n期望: y\n');
+    fs.mkdirSync(path.join(sb.seed, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(sb.seed, 'src/feature.js'), 'export const MARKER_CODE = 1;\n');
     git(sb.seed, 'add', '.');
     git(sb.seed, 'commit', '-q', '-m', 'feat: cw');
     git(sb.seed, 'push', '-q', 'origin', BRANCH);
@@ -64,12 +74,28 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     });
     await new Promise((r) => preview.server.listen(0, '127.0.0.1', r));
     preview.api = `http://127.0.0.1:${preview.server.address().port}`;
+    // 假独立裁判（OpenAI 兼容 chat/completions）：按 judge.mode 回放
+    judge = { mode: 'pass', calls: [] };
+    judge.server = http.createServer((req, res) => {
+      let raw = '';
+      req.on('data', (d) => { raw += d; });
+      req.on('end', () => {
+        judge.calls.push({ url: req.url, auth: req.headers.authorization ?? null, body: JSON.parse(raw || '{}') });
+        if (judge.mode === 'http500') { res.statusCode = 500; return res.end('boom'); }
+        const content = judge.mode === 'garbage' ? '我觉得没问题' : JSON.stringify(JUDGE_REPLY[judge.mode]);
+        res.setHeader('content-type', 'application/json');
+        return res.end(JSON.stringify({ choices: [{ message: { content } }], usage: { total_tokens: 1234 } }));
+      });
+    });
+    await new Promise((r) => judge.server.listen(0, '127.0.0.1', r));
+    judge.api = `http://127.0.0.1:${judge.server.address().port}/v1`;
   });
 
   afterEach(async () => {
     if (brain) await brain.close();
     brain = null;
     await new Promise((r) => preview.server.close(r));
+    await new Promise((r) => judge.server.close(r));
     sb.cleanup();
   });
 
@@ -90,8 +116,19 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       CODING_WF_CLAUDE_BIN: FAKE_CLAUDE,
       FAKE_CIFIX_MODE: 'fix',
       FAKE_CIFIX_PROMPT: files.prompt,
+      CODING_WF_JUDGE_API: judge.api,
+      CODING_WF_JUDGE_MODEL: 'judge-m',
+      CODING_WF_JUDGE_CREDS: path.join(sb.root, 'no-creds.env'),
+      TOAPIS_API_KEY: 'jk',
       ...extra,
     }));
+  };
+  // 往 PR 分支追加一个文件（模拟上一轮已提交的 QA 报告）
+  const addToBranch = (rel, content) => {
+    fs.writeFileSync(path.join(sb.seed, rel), content);
+    git(sb.seed, 'add', '.');
+    git(sb.seed, 'commit', '-q', '-m', `docs: ${rel}`);
+    git(sb.seed, 'push', '-q', 'origin', BRANCH);
   };
   const statePath = () => path.join(sb.logDir, 'qa-77.json');
   const state = () => JSON.parse(fs.readFileSync(statePath(), 'utf8'));
@@ -104,21 +141,120 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
   it('配置：QA 门默认开启；CODING_WF_QA_GATE=0 关闭；预览 API 与令牌从环境读', () => {
     expect(loadConfig({ HOME: '/h', DEPLOY_TOKEN: 't' })).toMatchObject({ qaGate: true, deployToken: 't', previewApi: 'http://100.71.151.105:5241' });
     expect(loadConfig({ HOME: '/h', CODING_WF_QA_GATE: '0' }).qaGate).toBe(false);
+    expect(loadConfig({ HOME: '/h' })).toMatchObject({ judge: true, qaMaxJudgeBad: 3 });
+    expect(loadConfig({ HOME: '/h', CODING_WF_JUDGE: '0' }).judge).toBe(false);
   });
 
-  it('CI 绿 + 预览 active + QA PASS：evaluate 拿到 sprint/I-n/01 哈希/轮次；QA 报告提交推送；开自动合并；记 passed；回写 Brain；本轮不认领新任务', async () => {
+  it('CI 绿 + 预览 active + QA PASS + 独立裁判 PASS：evaluate 拿到 sprint/I-n/01 哈希/轮次；QA 报告与裁决一起提交推送；开自动合并；记 passed；回写 Brain；本轮不认领新任务', async () => {
     const r = await go(green(), { tasks: [codingTask('dddddddd-0000-4000-8000-000000000004')] });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(qaCalls()).toEqual([expect.objectContaining({
       pr_number: 77, round: 1, task_id: TASK, sprint_dir: SPRINT, intent_ids: ['I-1'],
       intent_sha256: crypto.createHash('sha256').update(INTENT).digest('hex'),
     })]);
-    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS');
-    expect(git(sb.origin, 'show', '--name-only', '--format=', BRANCH).trim()).toBe(`${SPRINT}/05-qa-report-r1.md`);
+    expect(qaCalls()[0].judge_feedback).toBeUndefined();
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判 PASS');
+    expect(git(sb.origin, 'show', '--name-only', '--format=', BRANCH).trim().split('\n').sort()).toEqual([`${SPRINT}/05-qa-report-r1.md`, `${SPRINT}/06-judge-r1.md`]);
     expect(ghCalls()).toContainEqual(['pr', 'merge', '77', '--auto', '--squash']);
-    expect(state()).toMatchObject({ passed: true, rounds: [{ round: 1, head, verdict: 'PASS' }] });
-    expect(brainQa().at(-1).qa).toMatchObject({ verdict: 'PASS', rounds: 1 });
+    expect(state()).toMatchObject({ passed: true, rounds: [{ round: 1, head, verdict: 'PASS', judge: { verdict: 'PASS', model: 'judge-m' } }] });
+    expect(brainQa().at(-1).qa).toMatchObject({ verdict: 'PASS', rounds: 1, judge: 'PASS' });
     expect(brain.patches.some((p) => p.id.startsWith('dddddddd'))).toBe(false);
+  });
+
+  it('独立裁判拿到：模型、Bearer 令牌、需求 01、合同 02、QA 报告 05、PR 代码改动（不含 sprints/）', async () => {
+    const r = await go(green());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(judge.calls).toHaveLength(1);
+    const call = judge.calls[0];
+    expect(call).toMatchObject({ url: '/v1/chat/completions', auth: 'Bearer jk' });
+    expect(call.body.model).toBe('judge-m');
+    const user = call.body.messages.find((m) => m.role === 'user').content;
+    for (const s of ['### I-1', '### Q-1', '# QA 报告 第 1 轮 pass', 'MARKER_CODE', 'I-1']) expect(user).toContain(s);
+    expect(user).not.toContain('diff --git a/sprints/');
+  });
+
+  it('裁判判产品没做到（product）→ 不合并；报告与裁决提交 → 开发按裁决修复推送；修复 prompt 带裁决路径与 J-n', async () => {
+    judge.mode = 'product';
+    const r = await go(green());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(originLog().slice(0, 2)).toEqual(['fix(ci): 修复 CI 失败', 'docs(qa): 第 1 轮真人 QA PASS，独立裁判 FAIL']);
+    expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
+    expect(state().passed).toBeFalsy();
+    expect(state().rounds).toEqual([expect.objectContaining({
+      round: 1, verdict: 'PASS', fails: 1, fix: 'pushed', judge: expect.objectContaining({ verdict: 'FAIL', failure_class: 'product_failure', file: '06-judge-r1.md' }),
+    })]);
+    const prompt = fs.readFileSync(files.prompt, 'utf8');
+    expect(prompt).toContain(`${SPRINT}/06-judge-r1.md`);
+    expect(prompt).toContain('J-1');
+    expect(brainQa().at(-1).qa).toMatchObject({ judge: 'FAIL' });
+  });
+
+  it('裁判判 QA 没真验到（qa_gap）→ 不修代码、不合并；下一轮 QA 把裁决交给 evaluator 补验', async () => {
+    judge.mode = 'qa_gap';
+    let r = await go(green());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判 FAIL');
+    expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
+    expect(fs.existsSync(files.prompt)).toBe(false);
+    expect(state().rounds[0]).toMatchObject({ judge: { failure_class: 'qa_insufficient' } });
+    await brain.close();
+    brain = null;
+    // 裁决提交后 head 变了、CI 再绿 → 第 2 轮 QA
+    const newHead = git(sb.origin, 'rev-parse', BRANCH).trim();
+    judge.mode = 'pass';
+    r = await go(green({ prs: [pr({ headRefOid: newHead })] }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls().at(-1)).toMatchObject({ round: 2, judge_feedback: `${SPRINT}/06-judge-r1.md` });
+    expect(state().passed).toBe(true);
+  });
+
+  it('裁判判合同没覆盖需求（contract_gap）→ 升级给 coding commander，不自动修、不合并', async () => {
+    judge.mode = 'contract';
+    const r = await go(green());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stderr).toContain('[coding-qa][P1]');
+    expect(state().escalated).toMatchObject({ type: 'judge_contract_gap', issues: ['J-1'] });
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判 FAIL');
+    expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
+    expect(brainQa().at(-1).escalations).toEqual([expect.objectContaining({ type: 'judge_contract_gap', pr: 77 })]);
+  });
+
+  it('裁判调用失败 → QA 报告照常提交（裁判待定），不合并；下一轮只重跑裁判（不重跑 QA），PASS 后提交裁决并合并', async () => {
+    judge.mode = 'http500';
+    let r = await go(green());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判待定');
+    expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
+    expect(state()).toMatchObject({ judge_pending: true, judge_bad: 1 });
+    await brain.close();
+    brain = null;
+    judge.mode = 'pass';
+    const newHead = git(sb.origin, 'rev-parse', BRANCH).trim();
+    r = await go(green({ prs: [pr({ headRefOid: newHead })], required: { 77: [{ name: 'ci-passed', bucket: 'pending' }] } }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls()).toHaveLength(1);
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮独立裁判 PASS');
+    expect(ghCalls()).toContainEqual(['pr', 'merge', '77', '--auto', '--squash']);
+    expect(state()).toMatchObject({ passed: true, judge_pending: false, judge_bad: 0, rounds: [{ judge: { verdict: 'PASS' } }] });
+  });
+
+  it('裁判连续 3 次不可用/输出不合格 → 升级 qa_judge_unavailable', async () => {
+    addToBranch(`${SPRINT}/05-qa-report-r1.md`, '# QA 报告 第 1 轮 pass\n');
+    seedState({ rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'PASS', fails: 0, report: `${SPRINT}/05-qa-report-r1.md`, judge: { state: 'error' } }], judge_pending: true, judge_bad: 2 });
+    judge.mode = 'garbage';
+    const r = await go(green());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls()).toEqual([]);
+    expect(judge.calls).toHaveLength(1);
+    expect(state().escalated).toMatchObject({ type: 'qa_judge_unavailable', reason: 'judge_output_invalid' });
+  });
+
+  it('CODING_WF_JUDGE=0：QA PASS 直接开自动合并（不调裁判）', async () => {
+    const r = await go(green(), { extra: { CODING_WF_JUDGE: '0' } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(judge.calls).toEqual([]);
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS');
+    expect(ghCalls()).toContainEqual(['pr', 'merge', '77', '--auto', '--squash']);
   });
 
   it('QA FAIL：报告提交 → 开发按报告修复提交 → 推送；不开自动合并；修复 prompt 带报告路径与失败条目', async () => {
