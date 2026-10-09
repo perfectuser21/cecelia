@@ -22,3 +22,5 @@
 首次完整pre-push真实结果：22412通过、152既有跳过、4失败。修复原生短形定义来源fallback和旧pilot_v1误接受Node协议后，相关64/64及独立pilot单测6/6通过；真实跨仓PG扫描1/1通过。官方DoD evaluator六项逐条真执行全部通过。
 
 额外真实PG复核发现9项pilot测试共享夹具缺537断言来源列；第一次把迁移放进过早的versions夹具仍因物理表尚未建立失败，日志保留。最终迁移放在共同releaseEvidenceDatabase完成515后执行，重建旧名视图，并删除单个capability测试的临时迁移；实际pilot、capability和夹具五文件40/40通过。此修复只在隔离测试库执行真实迁移，不改生产兼容语义、不跳过失败。
+
+正式G候选CI发现registration模块缺同名配套测试，root同步执行官方pairing又实测发现consumer-source-set和唯一解析器同样缺配对路径。没有改lint或增空wrapper：G真实边界3项正常Git整合；将4条纯准入协议从PG文件迁到consumer-source-set同名单测，2条固定身份拒认从Node文件迁到唯一解析器同名单测，双Git和其余实际PG仍保留。迁移后9条单测、48条双Git Node实跑全通过，官方pairing对12个源码路径返回通过（保留原脚本既有zero-count warning）。纯等待的8ac push由本人正常取消，未执行full，日志固定timeout文案不表示实际超时；没有碰其他锁持有人。

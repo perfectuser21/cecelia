@@ -57,8 +57,6 @@ for(const [name,mutate,code] of [
  ['continue-on-error拒绝',(w)=>{w['.github/workflows/implementation-impact.yml']=w['.github/workflows/implementation-impact.yml'].replace('needs: caller-contract','needs: caller-contract\n    continue-on-error: true');},'CALLER_FAILURE_BYPASS'],
  ['伪reader仅字符串不能证明实读',(w)=>{w['scripts/ci/__tests__/implementation-impact-workflow.test.mjs']='export const proof="YAML.parse(readFileSync(new URL(\\\"../../../.github/workflows/implementation-impact.yml\\\",import.meta.url)))";';},'READER_INPUT_UNPROVEN'],
 ])test(`拒认：${name}`,async t=>{const f=fixture(t,mutate),r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code===code),JSON.stringify(r.gaps));assert.equal(r.executable,false);});
-test('错误既有F3身份不能偷偷创建另一Activity',async t=>{const f=fixture(t);f.options.identity.activity_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='F3_IDENTITY_MISMATCH'));assert.equal(f.reads.length,0);});
-test('未固定source SHA不读任何源码，保持unknown',async t=>{const f=fixture(t);f.options.workspace.revision='main';const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='SOURCE_IDENTITY_INVALID'));assert.equal(f.reads.length,0);});
 
 test('固定callee源码不可读必须缺口，不执行其他文件兜底',async t=>{const f=fixture(t),read=f.options.readSource;f.options.readSource=async q=>{if(q.path==='scripts/ci/implementation-pr-gate.mjs')throw Error('missing fixed source');return read(q);};const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.ok(r.gaps.some(x=>x.code==='SOURCE_READ_FAILED'));});
 

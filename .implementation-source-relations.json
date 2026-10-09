@@ -91,6 +91,16 @@
       "owner_path": "packages/brain/src/lib/existing-ops-registration.js",
       "path": "packages/brain/src/lib/__tests__/existing-ops-registration.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/consumer-source-set.js",
+      "path": "packages/brain/src/lib/__tests__/consumer-source-set.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
+      "path": "packages/brain/src/lib/__tests__/workspace-ci-source-bundle.test.js",
+      "role": "verification"
     }
   ]
 }
