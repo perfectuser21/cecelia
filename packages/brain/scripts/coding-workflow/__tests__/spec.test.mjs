@@ -88,6 +88,35 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(r.result.evidence).toEqual([{ tampered_files: ['01-intent.md'] }]);
   });
 
+  // 审计 P1 #3：有铁律清单（01-invariants.md）时，02 必须有 `## 铁律对照` 逐条交代
+  describe('铁律对照', () => {
+    const writeInvariants = () => {
+      fs.mkdirSync(path.join(worktree, 'sprints/s1'), { recursive: true });
+      fs.writeFileSync(path.join(worktree, 'sprints/s1/01-invariants.md'), '# 铁律清单\n\n### INV-02d8e749\n不得缩减已拍板设计\n\n### INV-96054a8b\nus-vps 零执行\n');
+    };
+
+    it('prompt 带 INVARIANTS_PATH；02 逐条交代 → completed', async () => {
+      writeInvariants();
+      const r = await run('ok');
+      expect(r.result.status, JSON.stringify(r.result)).toBe('completed');
+      expect(fs.readFileSync(specFile(), 'utf8')).toContain('## 铁律对照');
+      const prompt = fs.readFileSync(path.join(HERE, '../prompts/spec.md'), 'utf8');
+      for (const s of ['INVARIANTS_PATH: {{INVARIANTS_PATH}}', '## 铁律对照', '不适用', '无相关铁律']) expect(prompt).toContain(s);
+    });
+
+    it('有清单但 02 没写铁律对照 → retryable spec_invalid（invariants_section_missing）', async () => {
+      writeInvariants();
+      const r = await run('noinv');
+      expect(r.result.reason_code).toBe('spec_invalid');
+      expect(JSON.stringify(r.result.evidence)).toContain('invariants_section_missing');
+    });
+
+    it('没有清单文件（旧 sprint）→ 不要求铁律对照', async () => {
+      const r = await run('noinv');
+      expect(r.result.status).toBe('completed');
+    });
+  });
+
   it('titled：S-n 标题行带说明文字（真实 claude c2afa8ba）-> completed', async () => {
     const r = await run('titled');
     expect(r.result.status).toBe('completed');

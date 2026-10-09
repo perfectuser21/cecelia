@@ -103,13 +103,24 @@ describe('intent 活动（子进程 + 假 Brain）', () => {
   let reply;
   let worktree;
 
+  let invReply;
+  let invUrls;
+
   beforeEach(async () => {
     hits = 0;
     reply = { status: 200, body: {} };
+    // 铁律清单（GET /api/brain/decisions?category=invariant…）单独回放，默认没有铁律
+    invReply = { status: 200, body: [] };
+    invUrls = [];
     server = http.createServer((req, res) => {
       hits += 1;
-      res.statusCode = reply.status;
       res.setHeader('content-type', 'application/json');
+      if (req.url.startsWith('/api/brain/decisions')) {
+        invUrls.push(req.url);
+        res.statusCode = invReply.status;
+        return res.end(JSON.stringify(invReply.body));
+      }
+      res.statusCode = reply.status;
       res.end(JSON.stringify(reply.body));
     });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -157,6 +168,29 @@ describe('intent 活动（子进程 + 假 Brain）', () => {
     expect(md).toContain('## 背景\n\n验收：①X ②Y ③Z\n\n### I-1');
     expect(extractAnchors(parseFrontmatter(md).body)).toEqual(['I-1', 'I-2']);
     expect(parseFrontmatter(md).data.task_id).toBe(TASK_ID);
+  });
+
+  // 审计 P1 #3：全部 active 铁律写进 01-invariants.md，供合同逐条对照
+  it('拉 active 铁律写 01-invariants.md（每条 ### INV-<id8>）；没有铁律也写文件（写明无）', async () => {
+    reply.body = { id: TASK_ID, title: 't', payload: { acceptance: ['A'] } };
+    invReply.body = [{ id: '02d8e749-aaaa-4bbb-8ccc-dddddddddddd', topic: '不得缩减已拍板设计', decision: 'GAN 无上限', status: 'active' }];
+    let r = await runActivityProcess(ENTRY, input());
+    expect(r.result.status, r.stderr).toBe('completed');
+    const inv = fs.readFileSync(path.join(worktree, 'sprints/s1/01-invariants.md'), 'utf8');
+    expect(inv).toContain('### INV-02d8e749');
+    expect(inv).toContain('不得缩减已拍板设计');
+    expect(invUrls[0]).toMatch(/category=invariant/);
+    expect(invUrls[0]).toMatch(/status=active/);
+    invReply.body = [];
+    r = await runActivityProcess(ENTRY, input());
+    expect(fs.readFileSync(path.join(worktree, 'sprints/s1/01-invariants.md'), 'utf8')).not.toContain('### INV-');
+  });
+
+  it('铁律清单拉取失败 → retryable invariants_unavailable（不能当作没有铁律）', async () => {
+    reply.body = { id: TASK_ID, title: 't', payload: { acceptance: ['A'] } };
+    invReply.status = 500;
+    const r = await runActivityProcess(ENTRY, input());
+    expect(r.result).toMatchObject({ status: 'failed', failure_class: 'retryable', reason_code: 'invariants_unavailable' });
   });
 
   it('description 写入 ## 背景（无 payload）：位于 ### I-1 之前，intent_ids 只按验收条目', async () => {
