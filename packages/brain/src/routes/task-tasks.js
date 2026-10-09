@@ -37,6 +37,8 @@ const TERMINAL_STATUSES = ['completed', 'cancelled'];
 const ACTIVE_DEDUP_STATUSES = ['queued', 'in_progress', 'blocked', 'paused'];
 // 名单见 lib/task-type-registry.js（CODING_MUTATION_TASK_TYPES）。
 const CODING_MUTATION_TASK_TYPES = new Set(_CM);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const INVALID_TASK_ID = { error: 'Invalid task id: must be a UUID' };
 
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
 router.post('/', async (req, res) => {
@@ -430,6 +432,7 @@ router.get('/', async (req, res) => {
 
 // GET /tasks/:id — 获取单个 task
 router.get('/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json(INVALID_TASK_ID);
   try {
     const result = await pool.query(
       'SELECT * FROM tasks WHERE id = $1',
@@ -440,6 +443,7 @@ router.get('/:id', async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (err) {
+    if (err.code === '22P02') return res.status(400).json(INVALID_TASK_ID);
     res.status(500).json({ error: 'Failed to get task', details: err.message });
   }
 });
@@ -447,6 +451,7 @@ router.get('/:id', async (req, res) => {
 // GET /tasks/:id/chain — 接力棒：这条任务所在的整条链（根 / 有序子任务 / 交接日志）。
 // 给人看也给下一个大脑看：根目标 + 每棒做到哪 + 最近 handoff。
 router.get('/:id/chain', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json(INVALID_TASK_ID);
   try {
     const { getChainContext } = await import('../handoff.js');
     const ctx = await getChainContext({ pool }, req.params.id, { limit: 10 });

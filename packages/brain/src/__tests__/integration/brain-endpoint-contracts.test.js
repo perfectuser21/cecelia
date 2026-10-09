@@ -149,10 +149,11 @@ describe('Brain Endpoint Contracts — Integration (mock DB)', () => {
 
   describe('GET /api/brain/tasks/:id — 单任务契约', () => {
     it('返回单个任务对象，包含 id / title / status / task_type', async () => {
-      pool.query.mockResolvedValueOnce({ rows: [SAMPLE_TASK] });
+      const id = '22222222-2222-4222-8222-222222222222';
+      pool.query.mockResolvedValueOnce({ rows: [{ ...SAMPLE_TASK, id }] });
 
       const res = await request(makeApp())
-        .get('/api/brain/tasks/task-contract-001')
+        .get(`/api/brain/tasks/${id}`)
         .expect(200);
 
       expect(res.body).toMatchObject({
@@ -167,7 +168,7 @@ describe('Brain Endpoint Contracts — Integration (mock DB)', () => {
       pool.query.mockResolvedValueOnce({ rows: [] });
 
       await request(makeApp())
-        .get('/api/brain/tasks/nonexistent-id')
+        .get('/api/brain/tasks/00000000-0000-4000-8000-000000000000')
         .expect(404);
     });
   });
