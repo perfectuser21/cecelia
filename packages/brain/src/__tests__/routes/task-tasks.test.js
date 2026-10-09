@@ -112,15 +112,15 @@ describe('task-tasks routes', () => {
   describe('GET /tasks/:id', () => {
     it('returns 404 for non-existent task', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
-      const res = await request(app).get('/tasks/non-existent');
+      const res = await request(app).get('/tasks/00000000-0000-4000-8000-000000000000');
       expect(res.status).toBe(404);
     });
 
     it('returns task by id', async () => {
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 't1', title: 'Task 1' }],
+        rows: [{ id: '11111111-1111-4111-8111-111111111111', title: 'Task 1' }],
       });
-      const res = await request(app).get('/tasks/t1');
+      const res = await request(app).get('/tasks/11111111-1111-4111-8111-111111111111');
       expect(res.status).toBe(200);
       expect(res.body.title).toBe('Task 1');
     });
