@@ -14,7 +14,7 @@ import { reportErrors } from '../lib/md-chain.mjs';
 import { parseReview, openIssuesAfter } from '../lib/review.mjs';
 import { decide, detectTrend } from '../lib/gan.mjs';
 import { sessionCostUsd } from '../lib/transcript.mjs';
-import { SPEC_FILE, INTENT_FILE, specErrors, specIds } from '../lib/spec-check.mjs';
+import { SPEC_FILE, INTENT_FILE, specErrors, specIds, qaScenarios } from '../lib/spec-check.mjs';
 
 const REVIEW_FILE = '02-review.md';
 const TIMEOUT = { envVar: 'CODING_WF_SPEC_REVIEW_TIMEOUT_MS', defaultMs: 900000 };
@@ -61,7 +61,9 @@ async function runSession(ctx, role, vars) {
 function readReview(file, { taskId, ids, intentIds, prevOpen, usedIds }) {
   if (!fs.existsSync(file)) return { errors: ['review_missing'] };
   const text = fs.readFileSync(file, 'utf8');
-  const review = parseReview(text, { specIds: ids, intentIds, priorIds: prevOpen.map((i) => i.id), usedIds });
+  // 问题可针对 S-n / I-n / QA 场景 Q-n（evaluator 的测试计划）
+  const qaIds = qaScenarios(fs.readFileSync(path.join(path.dirname(file), SPEC_FILE), 'utf8')).map((q) => q.id);
+  const review = parseReview(text, { specIds: [...ids, ...qaIds], intentIds, priorIds: prevOpen.map((i) => i.id), usedIds });
   const errors = [...reportErrors(text, { taskId, step: 'spec_review', coversFile: SPEC_FILE, ids }), ...review.errors];
   return errors.length > 0 ? { errors } : { review };
 }
