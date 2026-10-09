@@ -12,11 +12,21 @@ import pool from '../db.js';
 
 const router = Router();
 
+// 未传返回 undefined（走默认值）；传了但不是非负整数返回 null（调用方回 400）
+function parseNonNegativeInt(raw) {
+  if (raw === undefined) return undefined;
+  return typeof raw === 'string' && /^\d+$/.test(raw) ? parseInt(raw, 10) : null;
+}
+
 /** GET / — 列表 */
 router.get('/', async (req, res) => {
+  const rawLimit = parseNonNegativeInt(req.query.limit);
+  const rawOffset = parseNonNegativeInt(req.query.offset);
+  if (rawLimit === null) return res.status(400).json({ success: false, error: 'limit must be a non-negative integer' });
+  if (rawOffset === null) return res.status(400).json({ success: false, error: 'offset must be a non-negative integer' });
   try {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-    const offset = parseInt(req.query.offset) || 0;
+    const limit = Math.min(rawLimit || 50, 200);
+    const offset = rawOffset || 0;
     const params = [limit, offset];
     const conditions = [`is_canary IS DISTINCT FROM TRUE`];
 
@@ -47,7 +57,7 @@ router.get('/', async (req, res) => {
     res.json({ success: true, data: rows, total: parseInt(countRows[0].count) });
   } catch (err) {
     console.error('[dev-records] GET / error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Failed to list dev records' });
   }
 });
 
@@ -64,7 +74,7 @@ router.get('/:id', async (req, res) => {
     res.json({ success: true, data: rows[0] });
   } catch (err) {
     console.error('[dev-records] GET /:id error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'Failed to get dev record' });
   }
 });
 

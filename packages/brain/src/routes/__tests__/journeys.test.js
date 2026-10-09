@@ -895,3 +895,38 @@ describe('GET /journey_features/:id', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('GET /api/brain/journeys/:id 非法参数', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  async function get(path) {
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use('/api/brain', router);
+    const request = await import('supertest');
+    return request.default(await bindFixture(app)).get(path);
+  }
+
+  it('非法 id → 400 固定文案，不查库、不泄露数据库原文', async () => {
+    const res = await get('/api/brain/journeys/not-a-uuid');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Invalid journey id: must be a UUID');
+    expect(JSON.stringify(res.body)).not.toContain('invalid input syntax');
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('合法但不存在的 uuid → 404', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await get('/api/brain/journeys/00000000-0000-4000-8000-000000000000');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('not found');
+  });
+
+  it('查库抛错 → 500，响应体不含错误原文', async () => {
+    mockQuery.mockRejectedValueOnce(new Error('boom db detail'));
+    const res = await get('/api/brain/journeys/00000000-0000-4000-8000-000000000000');
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(res.body)).not.toContain('boom db detail');
+  });
+});

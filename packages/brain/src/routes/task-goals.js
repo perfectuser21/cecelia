@@ -12,6 +12,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 
 const router = Router();
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // 统一投影：将 objectives 行格式化为旧 goals 兼容格式
 const OBJ_SELECT = `
@@ -201,22 +202,27 @@ router.get('/audit', async (_req, res) => {
 // GET /goals/:id — 先查 objectives，再查 key_results
 router.get('/:id', async (req, res) => {
   const { id } = req.params;
+  if (!UUID_RE.test(id)) return res.status(400).json({ error: 'Invalid goal id: must be a UUID' });
+  try {
+    // 先查 objectives
+    const objResult = await pool.query(
+      `SELECT ${OBJ_SELECT} FROM objectives WHERE id = $1`,
+      [id]
+    );
+    if (objResult.rows[0]) return res.json(objResult.rows[0]);
 
-  // 先查 objectives
-  const objResult = await pool.query(
-    `SELECT ${OBJ_SELECT} FROM objectives WHERE id = $1`,
-    [id]
-  );
-  if (objResult.rows[0]) return res.json(objResult.rows[0]);
+    // 再查 key_results
+    const krResult = await pool.query(
+      `SELECT ${KR_SELECT} FROM key_results WHERE id = $1`,
+      [id]
+    );
+    if (krResult.rows[0]) return res.json(krResult.rows[0]);
 
-  // 再查 key_results
-  const krResult = await pool.query(
-    `SELECT ${KR_SELECT} FROM key_results WHERE id = $1`,
-    [id]
-  );
-  if (krResult.rows[0]) return res.json(krResult.rows[0]);
-
-  return res.status(404).json({ error: 'goal not found' });
+    return res.status(404).json({ error: 'goal not found' });
+  } catch (err) {
+    console.error('[task-goals] GET /:id error:', err.message);
+    res.status(500).json({ error: 'Failed to get goal' });
+  }
 });
 
 // PATCH /goals/:id — 先更新 objectives，0 行受影响再更新 key_results
