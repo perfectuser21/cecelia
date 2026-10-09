@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.405.1
+**Brain 版本**: 1.405.2
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.405.2 — CI：只改 workflow 的 PR 也跑 brain fs 守卫组；walking 断言跟进镜像源
+
+- #6168 把 walking-ci-e2e 的 worker 镜像改为从 mirror.gcr.io 拉取再 tag 回 `alpine:latest`，`walking-ci-owner.test.js` 仍断言旧字面量 `docker pull alpine`，合并后 main 的 brain-unit (3) 红（任务 a3e63245）。
+- 根因：brain-unit「Determine test scope」在 PR 无 brain 变更时判 `mode=skip` 整片跳过，读 workflow/脚本的 fs 守卫测试漏跑。改为 `mode=guards`，只跑 `list-fs-guard-tests.sh` 选出的守卫组。
+- 回归测试 `ci-brain-unit-scope.test.js`：从 ci.yml 抽出判定脚本，放进临时 git 仓库真实执行，只改 workflow 必须判 guards。
 
 ## Brain 1.404.0 — coding harness：铁律加载进需求与合同，逐条交代覆盖或不适用
 
