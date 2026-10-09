@@ -151,6 +151,33 @@ it('完整Factory候选在不含decisions的真实scratch重放冻结地图，�
   expect((await fixture.db.query("SELECT to_regclass('decisions') id")).rows[0].id).toBeNull();
 });
 
+it('scratch地图推进真实CAS冲突回滚，非scratch与外来scope在写入前拒绝',async()=>{
+  await factoryMap();
+  const query={scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:'d'.repeat(40)};
+  const before=(await fixture.db.query('SELECT id,digest,status FROM map_manifest_versions')).rows;
+  const db={query:fixture.db.query.bind(fixture.db),connect:async()=>{
+    // Actual concurrent registration changes the active frozen pointer.
+    const old=(await fixture.db.query("SELECT * FROM map_manifest_versions WHERE status='active'")).rows[0];
+    const manifest=structuredClone(old.manifest);
+    for(const node of [...manifest.value_streams,...manifest.capabilities])node.brain_binding.source_revision='e'.repeat(40);
+    const {digestMapManifest}=await import('../../lib/map-manifest-schema.js');
+    await fixture.db.query("UPDATE map_manifest_versions SET status='superseded' WHERE id=$1",[old.id]);
+    await fixture.db.query("INSERT INTO map_manifest_versions(scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,2,$2,$3,$4,'active',NOW())",[old.scope_key,old.source_decision_id,manifest,digestMapManifest(manifest)]);
+    return fixture.db.connect();
+  }};
+  await expect(frozenSource.advanceExistingOpsScratchManifest(db,query)).rejects.toMatchObject({code:'IMPLEMENTATION_CI_SCRATCH_MANIFEST_CONFLICT'});
+  const after=(await fixture.db.query('SELECT id,digest,status FROM map_manifest_versions')).rows;
+  expect(after).toHaveLength(2);
+  expect(after.find(row=>row.id===before[0].id)).toEqual({...before[0],status:'superseded'});
+  expect(after.filter(row=>row.status==='active')).toHaveLength(1);
+  await expect(frozenSource.advanceExistingOpsScratchManifest(fixture.db,{...query,scope:'foreign'})).rejects.toMatchObject({code:'OPS_MANIFEST_IDENTITY_INVALID'});
+  let reads=0;
+  await expect(frozenSource.advanceExistingOpsScratchManifest({query:async sql=>{
+    expect(sql).toBe('SELECT current_database() name');reads++;return {rows:[{name:'cecelia'}]};
+  }},query)).rejects.toMatchObject({code:'IMPLEMENTATION_CI_SCRATCH_REQUIRED'});
+  expect(reads).toBe(1);
+});
+
 it('工厂冻结来源必须重核实际Git字节，重算外层digest也不能伪绑定或输入关系',async()=>{
   const before=await registration.readExistingOpsRegistry(fixture.db);
   await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256})); await factoryMap();

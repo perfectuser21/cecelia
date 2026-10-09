@@ -5,3 +5,5 @@
 - 真下载shell调用真实受审CLI：缺companion保准确UNKNOWN且不产联合文件/PASS；PG十一项保全部原十项及实际PR/main条件shell回归，每scope固定回归独立运行。
 - 仅native KR/Brain同repo/revision来源组合受支持；Workspace跨repo伴随协议仍拒绝，不改consumer执行权限或中央current/status/refs。
 - 同base的多份正规artifact按真实created_at排序（ID仅同时间确定性次序），不把API首项或较大ID当新来源，不按body绿过滤或回退旧源。永久实际shell回归重现ID/创建时间倒序。
+
+- 修正真实联合CI的42P01：Factory scratch候选只在实际隔离库事务/CAS重放冻结manifest及原source_decision_id，不导入或伪造中央decisions；生产正式manifest store保持。完整build候选与active-pointer并发冲突永久PG覆盖。
