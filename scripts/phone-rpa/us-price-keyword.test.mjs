@@ -187,11 +187,12 @@ test('权威held-report替换脱敏证据路径，严格绑定task owner/唯一S
  const owner='priced3d7ad8044864977ad53da4e0ef1dbdf7f181eadf20b48c6be6d115ccb2b27c8';
  const model={...quote,action_owner:owner,price_xml:'/Users…s/redacted.xml'};
  const raw={...quote,action_owner:owner,price_candidates:[{amount:19.99,text:'$19.99'},{amount:9.99,text:'credit offer'}],price_xml:'/Users/jinnuoshengyuan/Library/Caches/us-price-native-staging/actual.xml',collected_at:'2026-10-09T01:01:00Z'};
- const report={action_owner:owner,raw_quotes:[raw]};
+ const report={action_owner:owner,raw_quotes:[raw],network_restored:true,home_verified:true};
  const bound=bindAuthoritativeQuote(model,report,task,owner);
  assert.equal(bound.price_xml,raw.price_xml);assert.equal(bound.collected_at,raw.collected_at);
  assert.equal(bound.price_usd,19.99);assert.equal(bound.specification,model.specification);
  assert.throws(()=>bindAuthoritativeQuote({...model,price_usd:18},report,task,owner));
+ assert.throws(()=>bindAuthoritativeQuote(model,{...report,network_restored:false},task,owner));
  assert.throws(()=>bindAuthoritativeQuote(model,{...report,raw_quotes:[raw,raw]},task,owner));
  assert.throws(()=>bindAuthoritativeQuote(model,report,'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'));
  assert.throws(()=>bindAuthoritativeQuote({...model,action_owner:owner+'x'},report,task));
