@@ -52,7 +52,7 @@ describe('合并门（绑定 head SHA）', () => {
     approve();
     const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
+    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', remoteHead()]]);
     expect(state()).toMatchObject({ merged: { head: remoteHead() } });
     expect(qaCalls()).toEqual([]);
   });
@@ -103,7 +103,7 @@ describe('合并门（绑定 head SHA）', () => {
     addToBranch(`${SPRINT}/qa-r2/a.png`, 'png');
     const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
+    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', remoteHead()]]);
   });
 
   it('批准后只补了 changes/ 碎片 → 改绑新 head 并按新 head 合并', async () => {
@@ -111,7 +111,7 @@ describe('合并门（绑定 head SHA）', () => {
     addToBranch('changes/frag.md', '## Brain {VERSION} — x\n');
     const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
+    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', remoteHead()]]);
     expect(state()).toMatchObject({ passed: true, approved: { head: remoteHead() } });
   });
 
@@ -127,6 +127,6 @@ describe('合并门（绑定 head SHA）', () => {
     git(sb.seed, 'push', '-q', 'origin', BRANCH);
     const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
+    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', remoteHead()]]);
   });
 });
