@@ -67,6 +67,16 @@ def bounds(node):
     numbers = list(map(int,re.findall(r'\d+',node.get('bounds',''))))
     return numbers if len(numbers)==4 and numbers[2]>numbers[0] and numbers[3]>numbers[1] else None
 
+def foreground_package(status):
+    field=re.search(r'(?:^|\s)foreground=([^\r\n]*)',status)
+    if not field:return None
+    value=field.group(1).strip()
+    package=r'([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)'
+    window=re.fullmatch(r'mCurrentFocus=Window\{[A-Za-z0-9]+\s+u[0-9]+\s+'+package+r'/[^\s}]+\}',value)
+    short=re.fullmatch(package+r'(?:/[^\s]+)?',value)
+    match=window or short
+    return match.group(1) if match else None
+
 def assert_app_nodes(nodes,package):
     if not nodes:return  # 空加载页无可点击/输入目标，交给有界就绪等待。
     packages={n.get('package') for n in nodes if n.get('package')}
@@ -94,8 +104,8 @@ class PhoneSession:
     def require_foreground(self):
         expected=getattr(self,'expected_package',None)
         if not expected:return
-        status=self.check();match=re.search(r'foreground=([^\s/]+)',status)
-        if not match or match.group(1)!=expected:raise RuntimeError('前台App不符：预期'+expected)
+        status=self.check()
+        if foreground_package(status)!=expected:raise RuntimeError('前台App不符：预期'+expected)
     def adb(self,*args,timeout=40):
         if args[:2]==('shell','input'):self.require_foreground()
         self.check(); value=self.raw_adb(*args,timeout=timeout); self.check(); return value
