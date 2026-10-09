@@ -673,6 +673,9 @@ jobs:
         run: bash .github/workflows/scripts/__tests__/should-auto-merge.test.sh
       - name: Self-test (aggregate gate result cases)
         run: node --test .github/workflows/scripts/__tests__/ci-aggregate-results.test.mjs
+      # CI 不直连 Docker Hub（2026-10-10 未登录拉取限流致全部 PR 卡死，任务 7294cf3a）
+      - name: Self-test (镜像不直连 Docker Hub)
+        run: bash .github/workflows/scripts/__tests__/no-dockerhub-pull.test.sh
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
