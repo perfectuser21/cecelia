@@ -39,10 +39,12 @@ function tickLog(...args) {
  * @param {string[]} [excludeIds=[]] - Task IDs to exclude (e.g. pre-flight failures)
  * @param {Object} [options]
  * @param {string[]|null} [options.priorityFilter=null] - Allowed priorities (e.g. ['P0','P1'])
+ * @param {string[]|null} [options.onlyTaskTypes=null] - 非空数组时只选这些 task_type（SQL 层限定）；
+ *   null / 空数组 = 不限定。dispatcher 在任务池总闸关着时用它只放行 qiumi_task。
  * @returns {Promise<Object|null>} - The next task to dispatch, or null
  */
 export async function selectNextDispatchableTask(goalIds, excludeIds = [], options = {}) {
-  const { priorityFilter = null } = options;
+  const { priorityFilter = null, onlyTaskTypes = null } = options;
 
   // Check if P2 tasks should be paused (alertness mitigation)
   const { getMitigationState } = await import('./alertness-actions.js');
@@ -66,6 +68,11 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
   if (excludeIds.length > 0) {
     queryParams.push(excludeIds);
     excludeClause = `AND t.id != ALL($${queryParams.length})`;
+  }
+  let onlyTypesClause = '';
+  if (Array.isArray(onlyTaskTypes) && onlyTaskTypes.length > 0) {
+    queryParams.push(onlyTaskTypes);
+    onlyTypesClause = `AND t.task_type = ANY($${queryParams.length}::text[])`;
   }
   queryParams.push([...TICK_DISPATCH_EXCLUDED]);
   const excludedTypesIdx = queryParams.length;
@@ -92,6 +99,7 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
       -- 两道闸缺一不可，见 __tests__/device-job-foundation.test.js 的变异清单。
       AND NOT (t.task_type = ANY($${excludedTypesIdx}::text[]))
       ${excludeClause}
+      ${onlyTypesClause}
       AND (
         t.payload->>'next_run_at' IS NULL
         OR t.payload->>'next_run_at' = ''

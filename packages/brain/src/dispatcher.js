@@ -518,6 +518,9 @@ export async function dispatchNextTask(goalIds) {
     await recordDispatchResult(pool, false, 'resource_unavailable');
     return { dispatched: false, reason: 'resource_unavailable', budget: slotBudget, actions };
   }
+  // 任务池总闸关着时，qiumi_task 仍可放行（穿透 MMV 网关，不占 fleet 槽位）；
+  // 置位后候选循环只选 qiumi_task，普通任务照旧被总闸挡住。
+  let qiumiOnlyBypass = false;
   if (!slotBudget.dispatchAllowed) {
     // Eviction: if a high-priority task is waiting, try to evict a low-priority one
     try {
@@ -578,6 +581,20 @@ export async function dispatchNextTask(goalIds) {
         }
       }
       if (!xianBypass) {
+        try {
+          const qiumiProbe = await selectNextDispatchableTask(goalIds, [], {
+            priorityFilter: _quotaPriorityFilter,
+            onlyTaskTypes: ['qiumi_task'],
+          });
+          if (qiumiProbe) {
+            tickLog(`[tick] qiumi bypass: task_pool 已满但队列有 qiumi_task=${qiumiProbe.id}，穿透 MMV 不占 fleet 槽位，放行（仅选 qiumi_task）`);
+            qiumiOnlyBypass = true;
+          }
+        } catch (probeErr) {
+          console.warn(`[tick] qiumi bypass probe failed (non-fatal): ${probeErr.message}`);
+        }
+      }
+      if (!xianBypass && !qiumiOnlyBypass) {
         const slotReason = slotBudget.user.mode === 'team' ? 'user_team_mode' :
                            slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full';
         tickLog(`[tick] dispatch 停止: ${slotReason}（slot budget 不足，本 tick 不派发）`);
@@ -665,7 +682,10 @@ export async function dispatchNextTask(goalIds) {
   nextTask = null;
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
     const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...breakerSkipIds, ...duplicateSkipIds];
-    const candidate = await selectNextDispatchableTask(goalIds, skipIds, { priorityFilter: _quotaPriorityFilter });
+    const candidate = await selectNextDispatchableTask(goalIds, skipIds, {
+      priorityFilter: _quotaPriorityFilter,
+      ...(qiumiOnlyBypass ? { onlyTaskTypes: ['qiumi_task'] } : {}),
+    });
     if (!candidate) {
       if (breakerSkipIds.length > 0 && noExecutorSkipIds.length === 0) {
         tickLog(`[tick] circuit_breaker_open: 已跳过 ${breakerSkipIds.length} 个依赖 bridge 的候选后队列耗尽，本 tick 放弃派发`);
