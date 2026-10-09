@@ -9,6 +9,10 @@ const UNVERIFIED=['69f2f796-c462-478e-bd80-3ab91fb2d25e','c6dfe695-6677-4104-9f0
 const WORKSPACE='perfectuser21/zenithjoy-workspace',BRAIN='perfectuser21/cecelia',SHA=/^[0-9a-f]{40}$/;
 const SPECS=[{name:'implementation-impact',reader:'scripts/ci/__tests__/implementation-impact-workflow.test.mjs',callerJob:'impact',calleeJob:'gate',runner:'scripts/ci/implementation-pr-gate.mjs',inputs:['base_revision','head_revision','mode','scope','source_repo','tooling_revision']},{name:'pilot-release-verification',reader:'scripts/ci/__tests__/pilot-release-workflow.test.mjs',callerJob:'verify',calleeJob:'verify',runner:'scripts/ci/pilot-release-verification.mjs',inputs:['head_revision','scope','source_repo','tooling_revision']}];
 const RUNNERS=new Set([...SPECS.map(s=>s.runner),'packages/brain/src/migrate.js']);
+const ADMISSION_SCOPE_ENV = new Set([
+ "${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || '' }}",
+ "${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || (github.event_name == 'pull_request' && github.repository == 'perfectuser21/cecelia' && '{\"schema_version\":1,\"scopes\":[\"cecelia-kr\",\"cecelia-factory\"]}' || '') }}",
+]);
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const fail=(code,details={})=>{throw Object.assign(Error(code),{code,details});};
 const literal=n=>n?.type==='Literal'?n.value:undefined;
@@ -107,7 +111,7 @@ function calleeProof(yaml,spec,admissionScopesRequested=false){
   const source=String(step.run||'');let commands=directNodeCommands(source),conditional=false;
   // schema-v1的完整已审阅分支字节；复杂或改变后的shell仍UNKNOWN。
   if(spec.name==='implementation-impact'&&optional&&sha(Buffer.from(source))==='8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d'){
-   if(job.env?.MODE!=="${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}"||job.env?.ADMISSION_SCOPES!=="${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || '' }}")fail('CALLEE_INTERFACE_MISMATCH',{path:spec.name});
+   if(job.env?.MODE!=="${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}"||!ADMISSION_SCOPE_ENV.has(job.env?.ADMISSION_SCOPES))fail('CALLEE_INTERFACE_MISMATCH',{path:spec.name});
    commands=[...source.matchAll(/^\s*node\s+tooling\/([-A-Za-z0-9_./]+\.(?:mjs|js))(?:\s|$)/gm)];conditional=true;
   }
   for(const m of commands){
