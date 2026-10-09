@@ -14,8 +14,7 @@ import { readFileSync,realpathSync } from 'node:fs';
 import { DB_DEFAULTS } from '../../packages/brain/src/db-config.js';
 import { validateImplementationSnapshot,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { runProjection } from '../../packages/brain/src/map/projector.js';
-import { digestMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
-import { scanRepo } from '../scan/scan-graph.mjs';
+import { digestMapManifest,validateMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
 import { EXISTING_OPS_SCOPE,buildExistingOpsSources } from '../../packages/brain/src/lib/existing-ops-source.js';
 import { readExistingOpsRegistry,registerExistingOpsSources,prepareExistingOpsManifestAdvance } from '../../packages/brain/src/lib/existing-ops-registration.js';
@@ -145,6 +144,9 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
   s=await verifySnapshotSource(s,repoRoot);
   const edges=definitionEdges(s); // 在写隔离扫描图之前先拒绝无效定义路径。
   const repo=s.map.repositories[0].repo,staging=`ci-scan:${repo}`;
+  // Pure frozen-definition readers also run in Brain-only installations.
+  // Load the scanner only when an actual graph scan is requested.
+  const {scanRepo}=await import('../scan/scan-graph.mjs');
   const result=await scanRepo({name:staging,root:realpathSync(repoRoot)},db);
   if(result.error||result.skipped||result.sourceRevision!==s.revision)throw ciFailure('GRAPH_SCAN_FAILED',result.error?.message||'scan revision mismatch');
   const raw=(await db.query('SELECT src_path,dst_path,edge_type,detail FROM graph_edges WHERE repo=$1',[staging])).rows;
@@ -170,6 +172,39 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
+/** Replay a frozen Factory manifest only inside the actual isolated scratch DB.
+ * Central decisions are not imported; their original anchor remains unchanged.
+ * Production continues to use the authenticated manifest store unchanged.
+ */
+export async function advanceExistingOpsScratchManifest(db,query){
+  const checkScratch=async()=>{
+    const name=(await db.query('SELECT current_database() name')).rows[0].name;
+    if(!isImplementationScratchDatabase(name))throw ciFailure('SCRATCH_REQUIRED');
+  };
+  await checkScratch();
+  const plan=await prepareExistingOpsManifestAdvance(db,query);
+  if(!plan)return;
+  if(!validateMapManifest(plan.manifest).valid)throw ciFailure('SCRATCH_MANIFEST_INVALID');
+  const client=await db.connect(),digest=digestMapManifest(plan.manifest);
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1::text))',[`map-manifest:${query.scope}`]);
+    const active=(await client.query("SELECT id,digest,source_decision_id FROM map_manifest_versions WHERE scope_key=$1 AND status='active' FOR UPDATE",[query.scope])).rows;
+    if(active.length!==1||active[0].id!==plan.expectedActive.id||active[0].digest!==plan.expectedActive.digest||
+      active[0].source_decision_id!==plan.manifest.source_decision_id)throw ciFailure('SCRATCH_MANIFEST_CONFLICT');
+    await client.query("UPDATE map_manifest_versions SET status='superseded' WHERE id=$1",[active[0].id]);
+    let row=(await client.query('SELECT id FROM map_manifest_versions WHERE scope_key=$1 AND digest=$2',[query.scope,digest])).rows[0];
+    if(!row)row=(await client.query(`INSERT INTO map_manifest_versions(scope_key,version,source_decision_id,manifest,digest,status,activated_at)
+      SELECT $1,COALESCE(max(version),0)+1,$2,$3,$4,'active',NOW() FROM map_manifest_versions WHERE scope_key=$1 RETURNING id`,
+    [query.scope,plan.manifest.source_decision_id,plan.manifest,digest])).rows[0];
+    else await client.query("UPDATE map_manifest_versions SET status='active' WHERE id=$1",[row.id]);
+    await runProjection({client,manifestId:row.id,manifestDigest:digest,scopeKey:query.scope,manifest:plan.manifest});
+    await checkScratch();
+    await client.query('COMMIT');
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+  await checkScratch();
+}
+
 export async function buildPrImplementationSnapshot(db,registry,revision,repoRoot){
   const read=path=>execFileSync('git',['show',`${revision}:${path}`],{cwd:repoRoot,encoding:'utf8',maxBuffer:32*1024*1024});
   if(registry.scope===EXISTING_OPS_SCOPE){
@@ -182,7 +217,7 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
     const before=await readExistingOpsRegistry(db);
     await registerExistingOpsSources(db,{scope:registry.scope,repo:registry.repo,revision,paths,readSource:read,mode:'scratch_candidate',
       expectedRegistrySha256:before.registry_sha256,actor:'implementation-ci-scratch-candidate'});
-    await advancePilotManifest(db,await prepareExistingOpsManifestAdvance(db,{scope:registry.scope,repo:registry.repo,revision}),checkScratch);
+    await advanceExistingOpsScratchManifest(db,{scope:registry.scope,repo:registry.repo,revision});
     return exportImplementationSnapshot(db,{scope:registry.scope,repo:registry.repo,revision});
   }
   if(registry.repo==='perfectuser21/cecelia'){
