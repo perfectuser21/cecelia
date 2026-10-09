@@ -5,7 +5,32 @@ const { exportImplementationSnapshot,refreshImplementationSnapshot,validateImple
 beforeEach(()=>expect(exportImplementationSnapshot,'固定CI快照服务必须实现').toBeTypeOf('function'));
 import { readFileSync } from 'node:fs';
 import { SLIM_RULES } from '../../../db-slim-rules.js';
+import {stepSha256} from '../../../../scripts/sync-steps-from-workspace.mjs';
 let fixture;
+it('新契约固定导出保留退役owner取源元数据，不将旧流程加入执行定义闭包',async()=>{
+  fixture=await implementationImpactDatabase();const {db,contracts}=fixture;
+  const old=(await db.query('SELECT * FROM workflows WHERE id=$1',[fixture.ids.keyword])).rows[0];
+  await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[old.id]);
+  const fresh=randomUUID();
+  await db.query(`INSERT INTO workflows(id,capability_id,key,name,channel,status,source_repo,source_path,source_capability,source_workflow)
+    VALUES($1,$2,'douyin_video_discovery','新发现','douyin','paused',$3,'product-map/contracts/douyin_video_discovery.yaml','douyin_video_discovery','video-discovery')`,[fresh,old.capability_id,IMPACT_REPO]);
+  contracts.docs.douyin_video_discovery={contract_key:'douyin_video_discovery',capability:'keyword_acquisition',workflow:'video-discovery',
+    activities:contracts.docs.keyword_acquisition.activities.map(a=>({ref:`keyword_acquisition.${a.key}`}))};
+  await fixture.sync('b'.repeat(40));await fixture.graph('b'.repeat(40));await fixture.map('b'.repeat(40));
+  const before=(await db.query('SELECT id,status,current_definition_version_id FROM workflows ORDER BY id')).rows;
+  const snapshot=await exportImplementationSnapshot(db,{...query,revision:'b'.repeat(40)});
+  expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
+  expect(snapshot.canonical.workflows.map(w=>w.id)).not.toContain(old.id);
+  expect(snapshot.definitions.workflows.map(w=>w.workflow_id)).not.toContain(old.id);
+  expect(snapshot.source_registry).toMatchObject({schema_version:1,purpose:'definition_source_only',repo:IMPACT_REPO,
+    workflows:[{id:old.id,status:'retired',source_capability:'keyword_acquisition'}]});
+  expect(snapshot.source_registry.workflows[0]).not.toHaveProperty('current_definition_version_id');
+  expect(validateImplementationSnapshot(snapshot)).toBe(snapshot);
+  const forged=structuredClone(snapshot);forged.source_registry.workflows[0].status='active';
+  const {snapshot_sha256:_sha,...body}=forged;forged.snapshot_sha256=stepSha256(body);
+  expect(()=>validateImplementationSnapshot(forged)).toThrow();
+  expect((await db.query('SELECT id,status,current_definition_version_id FROM workflows ORDER BY id')).rows).toEqual(before);
+});
 afterEach(async()=>{await fixture?.close();fixture=null;});
 const query={scope:'phones',repo:IMPACT_REPO,revision:'a'.repeat(40)};
 it('导出精确版本与规范身份，不把后来current版本冒作base，断言明确current_registration',async()=>{
