@@ -42,7 +42,7 @@ class NativePriceTests(unittest.TestCase):
         with unittest.mock.patch('us_price_native_worker.search_hd',side_effect=AssertionError('unexpected cold restart')):
             self.assertEqual(initial_hd_result(fake,'DEWALT Cordless Drill Driver Kit AX1234'),result)
     def test_only_explicit_airship_overlay_allows_unique_top_right_close(self):
-        ns=nodes(['','']);ns[0].set('class','com.urbanairship.android.layout.widget.WeightlessLinearLayout')
+        ns=nodes(['','']);ns[0].set('class','com.urbanairship.android.layout.widget.WeightlessLinearLayout');ns[0].set('bounds','[0,0][1200,2640]')
         ns[1].set('class','android.widget.ImageButton');ns[1].set('clickable','true');ns[1].set('bounds','[1043,121][1200,278]')
         self.assertIs(airship_close_button(ns),ns[1])
         self.assertIsNone(airship_close_button(ns[1:]))

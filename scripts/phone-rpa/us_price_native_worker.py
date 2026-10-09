@@ -51,6 +51,17 @@ def search_entry(nodes):
     if edit is not None:return edit
     return next((n for n in visible if any(n.get(k,'') in ('What can we help you find?','Search') for k in ('text','content-desc'))),None)
 
+def airship_close_button(nodes):
+    if not any(n.get('class','').startswith('com.urbanairship.android.layout.widget.') for n in nodes):return None
+    buttons=[n for n in nodes if n.get('clickable')=='true' and n.get('class')=='android.widget.ImageButton' and bounds(n)]
+    if len(buttons)!=1:return None
+    numbers=list(map(int,re.findall(r'\d+',buttons[0].get('bounds',''))))
+    all_bounds=[list(map(int,re.findall(r'\d+',n.get('bounds','')))) for n in nodes]
+    width=max((b[2] for b in all_bounds if len(b)==4),default=0)
+    height=max((b[3] for b in all_bounds if len(b)==4),default=0)
+    if len(numbers)==4 and numbers[0]>=width*.7 and numbers[1]<height*.25:return buttons[0]
+    return None
+
 def search_hd(session,keyword):
     session.adb('shell','am','force-stop',HD)
     session.launch(HD)
@@ -58,6 +69,8 @@ def search_hd(session,keyword):
         nodes,path=session.nodes('hd-home')
         edit=search_entry(nodes)
         if edit is not None:break
+        close=airship_close_button(nodes)
+        if close is not None:session.tap(close)
         if attempt<4:time.sleep(3)
     if edit is not None and edit.get('resource-id')!='main_app_header_search_text_field' and edit.get('class')!='android.widget.EditText':
         session.tap(edit);nodes,path=session.nodes('hd-search-focus')
