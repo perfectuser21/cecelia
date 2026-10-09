@@ -92,6 +92,8 @@ describe('syncZhToEn', () => {
       { property: '归档', checkbox: { equals: false } },
       { timestamp: 'created_time', created_time: { on_or_after: '2026-09-23T00:00:00.000Z' } },
     ]));
+    // 拉取入口只认「委派」：新增的排队中/受阻/失败等状态、旧推迟都不能进 filter（否则系统写的状态会被当新任务二次入账）
+    expect(JSON.stringify(queryBody.filter)).not.toMatch(/排队中|受阻|失败|推迟|进行中|已完成|淘汰|阻塞/);
     const post = mockNotionReq.mock.calls[2];
     expect(post[1]).toBe('/pages'); expect(post[2]).toBe('POST');
     const patch = mockNotionReq.mock.calls[3];
@@ -123,6 +125,21 @@ describe('syncZhToEn', () => {
   it('绝不查询/写入人工专属状态（变异守卫）', async () => {
     const { ZH_QUERY_FILTER } = await import('../notion-gtd-sync.js');
     expect(JSON.stringify(ZH_QUERY_FILTER)).not.toMatch(/收集|下一个行动|阻塞|淘汰/);
+  });
+  it('拉取入口只认「委派 ∧ 任务号空 ∧ 未归档」：排队中/受阻/失败/推迟等系统写的状态不进 filter', async () => {
+    const { ZH_QUERY_FILTER } = await import('../notion-gtd-sync.js');
+    expect(ZH_QUERY_FILTER.and[0]).toEqual({ property: '状态', status: { equals: '委派' } });
+    expect(JSON.stringify(ZH_QUERY_FILTER)).not.toMatch(/排队中|受阻|失败|推迟|进行中|已完成/);
+  });
+  it('syncZhToEn 二次校验：状态不是「委派」（含 失败/推迟/排队中/受阻）的页一律跳过、不建英文行', async () => {
+    const { syncZhToEn } = await import('../notion-gtd-sync.js');
+    for (const status of ['失败', '推迟', '排队中', '受阻', '进行中', '淘汰']) {
+      mockNotionReq.mockReset();
+      mockNotionReq.mockResolvedValueOnce({ results: [zhPage({ '状态': { status: { name: status } } })] });
+      const r = await syncZhToEn({ query: vi.fn() }, 'tok', { notionReq: mockNotionReq, fetchPageContent: async () => '' });
+      expect(r, status).toEqual({ created: 0, skipped: 1, repaired: 0 });
+      expect(mockNotionReq.mock.calls.some((c) => c[2] === 'POST' && c[1] === '/pages')).toBe(false);
+    }
   });
 });
 

@@ -126,13 +126,13 @@ describe('入账：开始时间未到 → 进库但不派', () => {
     };
   };
 
-  it('开始时间在未来：payload.next_run_at=开始时间（派发器按它闸住），due_at=结束时间，中文保持委派+已排期提示', async () => {
+  it('开始时间在未来：payload.next_run_at=开始时间（派发器按它闸住），due_at=结束时间，中文写排队中+已排期提示', async () => {
     const { meta, zhPatch, dueCall } = await run(zhPage());
     expect(meta.next_run_at).toBe('2026-10-03T17:00:00.000+08:00');
     expect(meta.delegated_by).toBe('media');
     expect(dueCall[1]).toEqual([TID, '2026-10-03T18:00:00.000+08:00']);
     expect(zhPatch.properties['OpenClaw任务号'].rich_text[0].text.content).toBe(`brain:${TID}`);
-    expect(zhPatch.properties['状态'].status.name).toBe('委派');
+    expect(zhPatch.properties['状态'].status.name).toBe('排队中');
     expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toBe('🕐 已排期 10-03 17:00，到点派发');
   });
 
@@ -150,14 +150,14 @@ describe('入账：开始时间未到 → 进库但不派', () => {
     expect(dueCall[1]).toEqual([TID, '2026-10-03T23:59:59+08:00']);
   });
 
-  it('开始时间已过或没写：照旧立即派（中文进行中），next_run_at 不设', async () => {
+  it('开始时间已过或没写：照旧立即派（中文排队中，派发后由回写翻进行中），next_run_at 不设', async () => {
     const past = await run(zhPage({ '预期开始时间': { date: { start: '2026-09-29' } } }));
     expect(past.meta.next_run_at).toBe('2026-09-29T00:00:00+08:00');
-    expect(past.zhPatch.properties['状态'].status.name).toBe('进行中');
+    expect(past.zhPatch.properties['状态'].status.name).toBe('排队中');
     mockQuery.mockReset(); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset();
     const none = await run(zhPage({ '预期开始时间': { date: null }, '预期结束时间': { date: null } }));
     expect(none.meta).not.toHaveProperty('next_run_at');
-    expect(none.zhPatch.properties['状态'].status.name).toBe('进行中');
+    expect(none.zhPatch.properties['状态'].status.name).toBe('排队中');
   });
 
   it('委派人空着：按页面创建者补——人用名字，机器人记 Agent（未标注），并回写中文「委派人」', async () => {
@@ -173,7 +173,7 @@ describe('入账：开始时间未到 → 进库但不派', () => {
 describe('回写与改期', () => {
   beforeEach(() => { mockNotionReq.mockReset(); });
 
-  it('queued 且开始时间未到 → 中文保持委派+已排期提示，英文 Planned', async () => {
+  it('queued 且开始时间未到 → 中文排队中+已排期提示，英文 Queued', async () => {
     const { pushQiumiStatus } = await import('../../notion-gtd-sync.js');
     const query = vi.fn()
       .mockResolvedValueOnce({ rows: [{
@@ -185,10 +185,10 @@ describe('回写与改期', () => {
     expect(PUSH_QIUMI_QUERY).toMatch(/next_run_at/);
     await pushQiumiStatus({ query }, 'tok', { notionReq: mockNotionReq, today: () => '2026-09-29', now: () => NOW });
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH_ID}` && c[2] === 'PATCH')[3];
-    expect(zhPatch.properties['状态'].status.name).toBe('委派');
+    expect(zhPatch.properties['状态'].status.name).toBe('排队中');
     expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toBe('🕐 已排期 10-03 17:00，到点派发');
     const enPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${EN_ID}` && c[2] === 'PATCH')[3];
-    expect(enPatch.properties.Status.status.name).toBe('Planned');
+    expect(enPatch.properties.Status.status.name).toBe('Queued');
   });
 
   it('已排期的行在中文表改了开始时间 → 任务 next_run_at 跟着改，并清回写指纹让提示刷新', async () => {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyOwnerChanges } from '../qiumi-owner-stops.js';
+import { recordProjectionCommand } from '../../projection/commands.js';
 
 vi.mock('../../recurring-notion-sync.js', () => ({ notionReq: vi.fn(), getToken: () => 'tok' }));
 vi.mock('../../task-updater.js', () => ({ blockTask: vi.fn(), unblockTask: vi.fn() }));
@@ -94,5 +95,34 @@ describe('中文页截止改期同步', () => {
     expect(update[0]).toMatch(/task_type = 'qiumi_task'/);
     expect(update[0]).toMatch(/notion_zh_page_id/);
     expect(update[0]).toMatch(/RETURNING id/);
+  });
+});
+
+describe('淘汰页急停幂等（cancelled → 淘汰 写回后不得回头触发）', () => {
+  beforeEach(() => vi.clearAllMocks());
+  const page = { id: PAGE, taskNo: `brain:${ID}` };
+  const stop = (rows) => applyOwnerChanges({ query: vi.fn(async () => ({ rows })) }, [[page], [], []], { now: () => NOW });
+
+  it.each(['cancelled', 'canceled', 'completed', 'completed_no_pr', 'failed', 'archived'])(
+    '任务已是终态 %s → 不记取消命令、cancelled=0', async (status) => {
+      const r = await stop([{ id: ID, status }]);
+      expect(r.cancelled).toBe(0);
+      expect(recordProjectionCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['queued', 'in_progress', 'blocked', 'paused', 'quarantined', 'dep_failed'])(
+    '任务仍活着 %s → 记 cancel_requested', async (status) => {
+      const r = await stop([{ id: ID, status }]);
+      expect(r.cancelled).toBe(1);
+      expect(recordProjectionCommand).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        commandType: 'cancel_requested', entityId: ID, externalId: `${PAGE}:cancel_requested`,
+      }));
+    },
+  );
+
+  it('任务行查不到 → 保持旧行为照记命令', async () => {
+    const r = await stop([]);
+    expect(r.cancelled).toBe(1);
   });
 });

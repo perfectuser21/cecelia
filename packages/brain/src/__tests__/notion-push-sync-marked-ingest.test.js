@@ -77,10 +77,10 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
     const tenantCall = mockQuery.mock.calls.find((c) => /UPDATE tasks SET tenant_id/.test(c[0]));
     expect(tenantCall).toBeDefined();
     expect(tenantCall[1]).toEqual(['15f42776-8d1b-430d-b27a-38a480b93151', 'yueshengyun']);
-    // 中文页：任务号 brain:<id> + 状态进行中；英文页：Description 追加 brain:
+    // 中文页：任务号 brain:<id> + 状态排队中（任务此刻是 queued）；英文页：Description 追加 brain:
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === '/pages/11111111-2222-3333-4444-555555555555' && c[2] === 'PATCH')[3];
     expect(zhPatch.properties['OpenClaw任务号'].rich_text[0].text.content).toBe('brain:15f42776-8d1b-430d-b27a-38a480b93151');
-    expect(zhPatch.properties['状态'].status.name).toBe('进行中');
+    expect(zhPatch.properties['状态'].status.name).toBe('排队中');
     const enPatch = mockNotionReq.mock.calls.find((c) => c[1] === '/pages/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' && c[2] === 'PATCH')[3];
     expect(enPatch.properties.Description.rich_text[0].text.content).toMatch(/brain:15f42776-8d1b-430d-b27a-38a480b93151 ✓已接管$/);
   });
