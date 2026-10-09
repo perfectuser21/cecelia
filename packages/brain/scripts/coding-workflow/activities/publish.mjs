@@ -16,6 +16,9 @@ const BRANCH_RE = /^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$/;
 const STDERR_TAIL_LINES = 20;
 const BUILD_FILE = '03-build.md';
 const FIX_RE = /^(?:修复|(?:bug|fix)\b)/i;
+const BASE_REF = process.env.CODING_WF_BASE_REF || 'origin/main';
+const BRAIN_SRC_RE = /^packages\/brain\/src\//;
+const FRAGMENT_RE = /^changes\/(?!README\.md$).+\.md$/i;
 
 /** 运行子进程（不经 shell），输出转写到本进程 stderr；返回 { code, stdout, stderr, output }。 */
 function runCmd(bin, args, cwd) {
@@ -78,6 +81,25 @@ function prTitle(chainFiles, dir, taskId) {
 }
 
 /**
+ * 版本碎片（changes/README.md：PR 不碰版本五件套，改 packages/brain/src 的 PR 带 changes/<分支>.md，
+ * 合并后 auto-version 统一 bump）：改了 Brain 源码且分支上还没有碎片 → 写一份；返回相对路径或 null。
+ */
+async function ensureVersionFragment({ worktree, branch, dir, taskId, sprintRel }) {
+  const diff = await runCmd('git', ['-C', worktree, 'diff', '--name-only', `${BASE_REF}...HEAD`]);
+  if (diff.code !== 0) {
+    log(`[publish] 取相对 ${BASE_REF} 的改动失败，不写版本碎片`);
+    return null;
+  }
+  const files = diff.stdout.split('\n').filter(Boolean);
+  if (!files.some((f) => BRAIN_SRC_RE.test(f)) || files.some((f) => FRAGMENT_RE.test(f))) return null;
+  const rel = `changes/${branch}.md`;
+  const heading = intentHeading(dir) || `coding workflow ${taskId.slice(0, 8)}`;
+  fs.mkdirSync(path.join(worktree, 'changes'), { recursive: true });
+  fs.writeFileSync(path.join(worktree, rel), `## Brain {VERSION} — ${heading}\n\n- coding workflow 任务 ${taskId.slice(0, 8)}：需求、合同与验收记录见 ${sprintRel}/。\n`);
+  return rel;
+}
+
+/**
  * PR 正文的验收摘要：verify 通过后上下文里有 evidence_file 与 verified_ids（全部 PASS 才会走到 publish），
  * 逐条列出 I-n 的 verdict；没有则返回空串（只有 01/02 的旧链）。
  */
@@ -131,13 +153,15 @@ await runActivity(async (input) => {
   const title = prTitle(chainFiles, dir, taskId);
   const sprintRel = sprintDir.replace(/[\\/]+$/, '');
 
-  const add = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'add', '--', sprintRel]);
+  const fragment = await ensureVersionFragment({ worktree, branch, dir, taskId, sprintRel });
+  const paths = [sprintRel, ...(fragment ? [fragment] : [])];
+  const add = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'add', '--', ...paths]);
   if (add.code !== 0) return fail('fatal', 'git_add_failed');
 
   // diff --cached --quiet：有暂存改动退出 1，无改动退出 0
-  const staged = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'diff', '--cached', '--quiet', '--', sprintRel]);
+  const staged = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'diff', '--cached', '--quiet', '--', ...paths]);
   if (staged.code === 1) {
-    const commit = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'commit', '-m', title, '--', sprintRel]);
+    const commit = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'commit', '-m', title, '--', ...paths]);
     if (commit.code !== 0) {
       const stderrTail = commit.stderr.trim().split('\n').slice(-STDERR_TAIL_LINES);
       return fail('fatal', 'git_commit_failed', { evidence: [{ stderr_tail: stderrTail }] });

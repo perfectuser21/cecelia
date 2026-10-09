@@ -89,9 +89,10 @@ if semver_gt "$PR_VERSION" "$BASE_VERSION"; then
 else
   echo "::error::❌ brain src 有变更但版本未 bump（base=${BASE_VERSION}，PR=${PR_VERSION}）"
   echo ""
-  echo "请在 packages/brain/ 目录运行以下命令 bump 版本："
-  echo "  cd packages/brain && npm version patch --no-git-tag-version"
-  echo ""
-  echo "然后 git add packages/brain/package.json 并 commit 到本次 PR 中。"
+  echo "正确做法（changes/README.md，PR 不碰版本五件套）：在本 PR 加一个条目碎片 changes/<分支名>.md，"
+  echo "内容为一段 DEFINITION 条目，版本号写 {VERSION} 占位，例如："
+  echo "  ## Brain {VERSION} — <一句话标题>"
+  echo "  - <条目内容>"
+  echo "合并后由 auto-version bot 统一 bump 并消费碎片。不要手改 packages/brain/package.json。"
   exit 1
 fi
