@@ -214,6 +214,15 @@ def held_worker(request,session=None):
         report_path.chmod(0o600)
     return report
 
+def public_report(report):
+    # 精确出口IP只留设备本地报告，不发送到模型/任务日志。
+    public={key:value for key,value in report.items() if key!='restored_network'}
+    network=report.get('restored_network')
+    if network:
+        public['restored_network']={key:network[key] for key in ('exit_node','xml','screenshot') if key in network}
+        public['restored_network']['country']=network.get('ip',{}).get('countryCode')
+    return public
+
 def main():
     parser=argparse.ArgumentParser(description='只支持53132的原生关键词查价固定worker')
     parser.add_argument('--request-base64',required=True)
@@ -221,6 +230,6 @@ def main():
     args=parser.parse_args()
     request=json.loads(base64.b64decode(args.request_base64).decode())
     report=held_worker(request) if args.held else dispatch(request)
-    print(json.dumps(report,ensure_ascii=False,separators=(',',':')),flush=True)
+    print(json.dumps(public_report(report),ensure_ascii=False,separators=(',',':')),flush=True)
 
 if __name__=='__main__':main()
