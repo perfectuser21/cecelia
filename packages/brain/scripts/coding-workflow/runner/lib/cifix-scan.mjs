@@ -12,7 +12,7 @@ const JOB_LINK_RE = /github\.com\/([^/]+\/[^/]+)\/actions\/runs\/\d+\/job\/(\d+)
 const ACTIONS_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/;
 
 /** gh 子命令 → 解析后的 JSON；输出不是 JSON 返回 null。`pr checks` 有失败/pending 时非 0 退出但照常输出 JSON。 */
-async function ghJson(cfg, args) {
+export async function ghJson(cfg, args) {
   const r = await run(cfg.ghBin, args, { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
   try {
     return JSON.parse(r.stdout);
@@ -34,23 +34,35 @@ export function readState(cfg, prNumber) {
   }
 }
 
+/** 必需检查的整体状态：{ state: 'none'|'pending'|'fail'|'pass', failed: [检查名] }。 */
+export async function requiredState(cfg, prNumber) {
+  const rows = await ghJson(cfg, ['pr', 'checks', String(prNumber), '--required', '--json', 'name,bucket']);
+  if (!Array.isArray(rows) || rows.length === 0) return { state: 'none', failed: [] };
+  if (rows.some((r) => r.bucket === 'pending')) return { state: 'pending', failed: [] };
+  const failed = rows.filter((r) => r.bucket === 'fail').map((r) => r.name);
+  return { state: failed.length > 0 ? 'fail' : 'pass', failed };
+}
+
 /** 必需检查：全部出结果且有失败 → 失败名单；还有 pending、全通过或没有必需检查 → null。 */
 async function failedRequired(cfg, prNumber) {
-  const rows = await ghJson(cfg, ['pr', 'checks', String(prNumber), '--required', '--json', 'name,bucket']);
-  if (!Array.isArray(rows) || rows.length === 0) return null;
-  if (rows.some((r) => r.bucket === 'pending')) return null;
-  const failed = rows.filter((r) => r.bucket === 'fail').map((r) => r.name);
-  return failed.length > 0 ? failed : null;
+  const { state, failed } = await requiredState(cfg, prNumber);
+  return state === 'fail' ? failed : null;
+}
+
+/** runner 自己开的、仍开着的 cw PR（按编号升序）；列表失败返回 null。 */
+export async function listOwnPrs(cfg) {
+  const prs = await ghJson(cfg, ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,headRefName,headRefOid,url,isDraft']);
+  if (!Array.isArray(prs)) return null;
+  return prs.filter((p) => CW_BRANCH_RE.test(p.headRefName ?? '')).sort((a, b) => a.number - b.number);
 }
 
 /** 下一个要修的 PR：{ pr, failedRequired }，没有返回 null。 */
 export async function findTarget(cfg, log) {
-  const prs = await ghJson(cfg, ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,headRefName,headRefOid,url,isDraft']);
-  if (!Array.isArray(prs)) {
+  const ours = await listOwnPrs(cfg);
+  if (!ours) {
     log('CI 修复：列 PR 失败，本轮跳过');
     return null;
   }
-  const ours = prs.filter((p) => CW_BRANCH_RE.test(p.headRefName ?? '')).sort((a, b) => a.number - b.number);
   for (const pr of ours) {
     const { attempts } = readState(cfg, pr.number);
     if (attempts.length >= cfg.ciFixMaxAttempts) continue;

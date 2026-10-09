@@ -48,4 +48,13 @@ else
 fi
 
 cd "$REPO" || exit 1
+# QA 门请求/停止 PR 预览环境要 DEPLOY_TOKEN：运行时从凭据文件读（不进代码、不进 plist）
+TOKEN_FILE="${CODING_WF_DEPLOY_TOKEN_FILE:-$HOME/.credentials/cecelia-deploy-token.env}"
+if [ -z "${DEPLOY_TOKEN:-}" ] && [ -f "$TOKEN_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$TOKEN_FILE"
+  set +a
+fi
+
 exec "$NODE_BIN" "$REPO/$RUN_ONCE_REL"

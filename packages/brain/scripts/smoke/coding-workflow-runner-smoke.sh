@@ -60,7 +60,7 @@ try {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const env = { ...env0, BRAIN_URL: `http://127.0.0.1:${server.address().port}`, CODING_WF_REPO: clone,
     CODING_WF_WORKTREE_BASE: path.join(root, 'wt'), CODING_WF_LOG_DIR: path.join(root, 'logs'),
-    CODING_WF_LOCK_DIR: path.join(root, 'lock'), CODING_WF_SKIP_NPM_CI: '1', CODING_WF_AUTOMERGE: '0', CODING_WF_CIFIX: '0',
+    CODING_WF_LOCK_DIR: path.join(root, 'lock'), CODING_WF_SKIP_NPM_CI: '1', CODING_WF_AUTOMERGE: '0', CODING_WF_CIFIX: '0', CODING_WF_QA_GATE: '0',
     CODING_WF_EXECUTOR: path.join(RUNNER, '__tests__/fixtures/fake-executor.mjs') };
   const code = await new Promise((resolve) => {
     const child = spawn(process.execPath, [path.join(RUNNER, 'run-once.mjs')], { env, stdio: ['ignore', 'inherit', 'inherit'] });
