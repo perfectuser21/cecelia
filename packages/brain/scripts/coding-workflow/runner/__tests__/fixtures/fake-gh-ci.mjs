@@ -33,6 +33,13 @@ if (argv[0] === 'pr' && argv[1] === 'checks') {
   }
   out(state.checks?.[pr] ?? []);
 }
+// 仓库规定的必需检查（分支保护 + 规则集，runner 用 --jq 取成名字数组）：requiredContexts 默认 ['ci-passed']，
+// rulesetContexts 默认 []；requiredContextsFail=true 时分支保护查询失败退出 1
+if (argv[0] === 'api' && /\/protection\/required_status_checks$/.test(argv[1] ?? '')) {
+  if (state.requiredContextsFail) process.exit(1);
+  out(state.requiredContexts ?? ['ci-passed']);
+}
+if (argv[0] === 'api' && /\/rules\/branches\//.test(argv[1] ?? '')) out(state.rulesetContexts ?? []);
 const job = argv[0] === 'api' ? /\/actions\/jobs\/(\d+)\/logs$/.exec(argv[1] ?? '') : null;
 if (job) out(state.logs?.[job[1]] ?? '');
 process.exit(Number(process.env.FAKE_GH_EXIT || 0));

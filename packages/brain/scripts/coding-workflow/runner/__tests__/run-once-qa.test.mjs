@@ -272,6 +272,10 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     for (const [gh, seed] of [
       [green({ required: { 77: [{ name: 'ci-passed', bucket: 'pending' }] } }), null],
       [green({ required: { 77: [{ name: 'ci-passed', bucket: 'fail' }] } }), null],
+      // 4ac5fa39 首跑实证：ci-passed 还没登记出来时只有 Harness 门是绿的，不能当成「必需检查全绿」
+      [green({ required: { 77: [{ name: 'Harness V5 Gate Passed', bucket: 'pass' }] }, requiredContexts: ['ci-passed', 'Harness V5 Gate Passed'] }), null],
+      [green({ rulesetContexts: ['Smoke Glob Runner Passed'] }), null],
+      [green({ requiredContextsFail: true }), null],
       [green(), { passed: true, rounds: [] }],
       [green(), { rounds: [{ round: 1, head, verdict: 'FAIL', fails: 1, fix: 'no_commit' }] }],
     ]) {
