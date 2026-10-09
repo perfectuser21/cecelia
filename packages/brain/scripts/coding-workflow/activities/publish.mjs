@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { runActivity, validateBase, fail, childEnv, log } from '../lib/protocol.mjs';
-import { parseFrontmatter } from '../lib/md-chain.mjs';
+import { intentHeading, prKindOf } from '../lib/pr-kind.mjs';
 import { parseReview } from '../lib/review.mjs';
 import { RUBRIC_DIMS } from '../lib/gan.mjs';
 
@@ -15,7 +15,6 @@ const GIT_PATHSPEC = ['--literal-pathspecs'];
 const BRANCH_RE = /^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$/;
 const STDERR_TAIL_LINES = 20;
 const BUILD_FILE = '03-build.md';
-const FIX_RE = /^(?:修复|(?:bug|fix)\b)/i;
 const BASE_REF = process.env.CODING_WF_BASE_REF || 'origin/main';
 const BRAIN_SRC_RE = /^packages\/brain\/src\//;
 const FRAGMENT_RE = /^changes\/(?!README\.md$).+\.md$/i;
@@ -56,18 +55,6 @@ function runCmd(bin, args, cwd) {
 
 const lastLine = (text) => text.trim().split('\n').filter(Boolean).pop() || '';
 
-/** 01-intent.md 的第一个 `# 标题`；文件或标题不存在返回 ''。 */
-function intentHeading(dir) {
-  let text;
-  try {
-    text = fs.readFileSync(path.join(dir, '01-intent.md'), 'utf8');
-  } catch {
-    return '';
-  }
-  const body = parseFrontmatter(text)?.body ?? text;
-  return (/^# (.+)$/m.exec(body)?.[1] ?? '').trim();
-}
-
 /**
  * PR/提交标题：链里有 03-build.md（带代码提交）时用 feat(workflow): <01-intent 标题>，
  * 标题以 bug/修复/fix 开头则用 fix(workflow):；只有文档链时保持 docs(sprint): <id> md 链 …。
@@ -77,7 +64,7 @@ function prTitle(chainFiles, dir, taskId) {
     return `docs(sprint): ${taskId.slice(0, 8)} md 链 ${chainFiles.map((f) => String(f).replace(/\.md$/, '')).join(' → ')}`;
   }
   const heading = intentHeading(dir) || `coding workflow ${taskId.slice(0, 8)}`;
-  return `${FIX_RE.test(heading) ? 'fix' : 'feat'}(workflow): ${heading}`;
+  return `${prKindOf(heading)}(workflow): ${heading}`;
 }
 
 /**

@@ -68,7 +68,7 @@
     {
       "key": "build",
       "order": 4,
-      "budget": { "max_duration_s": 2400, "heartbeat_s": 30 },
+      "budget": { "max_duration_s": 3600, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],
         "retryable": ["claude_failed", "claude_timeout", "remote_check_failed", "git_check_failed"],
