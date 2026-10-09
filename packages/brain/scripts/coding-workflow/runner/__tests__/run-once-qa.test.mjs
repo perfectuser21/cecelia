@@ -1,151 +1,23 @@
-// run-once.mjs 的 QA 门（evaluator 真人 QA，CI 绿后、合并前）：假 Brain、临时 origin 上的 cw PR、假 gh、假预览 API、假 evaluate、假修复 claude。
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import http from 'node:http';
+// run-once.mjs 的 QA 门（evaluator 真人 QA，CI 绿后、合并前）+ 独立裁判：共用测试环境见 helpers/qa-env.mjs。
+// 合并门（绑定 head SHA）用例在 run-once-merge.test.mjs。
+import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { git } from '../../__tests__/helpers/git.mjs';
-import { FAKE_EXECUTOR, startFakeBrain, codingTask, makeSandbox, runnerEnv, runOnceProcess, readJsonLines } from './helpers/sandbox.mjs';
+import { codingTask } from './helpers/sandbox.mjs';
 import { loadConfig } from '../lib/config.mjs';
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FAKE_GH_CI = path.join(HERE, 'fixtures/fake-gh-ci.mjs');
-const FAKE_EVALUATE = path.join(HERE, 'fixtures/fake-evaluate.mjs');
-const FAKE_CLAUDE = path.join(HERE, 'fixtures/fake-claude-cifix.mjs');
-const TASK = 'c954ebfd-469f-4006-a95f-b277fa6564f6';
-const BRANCH = 'cp-10091835-cw-c954ebfd';
-const SPRINT = 'sprints/10091835-cw-c954ebfd';
-const INTENT = `---\ntask_id: ${TASK}\nstep: intent\nupstream: []\n---\n# x\n\n### I-1\n验收\n`;
-const JUDGE_ISSUE = (type) => ({ id: 'J-1', type, severity: '阻断', covers: ['I-1'], detail: `${type} 问题`, where: 'src/feature.js:1' });
-const JUDGE_REPLY = {
-  pass: { coverage: [{ intent: 'I-1', satisfied: true, evidence: 'T-1 真实输出' }], issues: [], summary: 'ok' },
-  ...Object.fromEntries([['product', 'product'], ['qa_gap', 'qa_gap'], ['contract', 'contract_gap']].map(([mode, type]) => [mode, {
-    coverage: [{ intent: 'I-1', satisfied: false, evidence: '见 J-1' }], issues: [JUDGE_ISSUE(type)], summary: 'no',
-  }])),
-};
+import { useQaEnv, FAKE_EVALUATE, TASK, BRANCH, SPRINT, INTENT } from './helpers/qa-env.mjs';
 
 describe('runner QA 门（evaluator 真人 QA）', () => {
   let sb;
-  let brain;
+  let head;
   let preview;
   let judge;
-  let head;
-  const files = {};
-
-  beforeAll(async () => {
-    for (const f of [FAKE_GH_CI, FAKE_EVALUATE, FAKE_CLAUDE, FAKE_EXECUTOR]) fs.chmodSync(f, 0o755);
-  });
-
-  beforeEach(async () => {
-    sb = makeSandbox();
-    git(sb.seed, 'checkout', '-q', '-b', BRANCH);
-    fs.mkdirSync(path.join(sb.seed, SPRINT), { recursive: true });
-    fs.writeFileSync(path.join(sb.seed, SPRINT, '01-intent.md'), INTENT);
-    fs.writeFileSync(path.join(sb.seed, SPRINT, '02-spec.md'), '### S-1\n\n## QA 场景\n\n### Q-1\n对应: I-1\n操作: x\n期望: y\n');
-    fs.mkdirSync(path.join(sb.seed, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(sb.seed, 'src/feature.js'), 'export const MARKER_CODE = 1;\n');
-    git(sb.seed, 'add', '.');
-    git(sb.seed, 'commit', '-q', '-m', 'feat: cw');
-    git(sb.seed, 'push', '-q', 'origin', BRANCH);
-    head = git(sb.seed, 'rev-parse', 'HEAD').trim();
-    git(sb.clone, 'config', 'core.hooksPath', path.join(sb.root, 'no-hooks'));
-    files.gh = path.join(sb.root, 'gh-ci.json');
-    files.qaLog = path.join(sb.root, 'qa.log');
-    files.prompt = path.join(sb.root, 'prompt.txt');
-    preview = { status: { 77: { status: 'active', port: 5302 } }, start: 200, calls: [] };
-    preview.server = http.createServer((req, res) => {
-      let raw = '';
-      req.on('data', (d) => { raw += d; });
-      req.on('end', () => {
-        preview.calls.push({ method: req.method, url: req.url, auth: req.headers.authorization ?? null, raw });
-        res.setHeader('content-type', 'application/json');
-        // 预览 Brain 的 /health：git_sha 默认等于假 gh 里 PR 当前 head（已部署最新），preview.sha 可指定旧版本
-        if (req.url === '/api/brain/health') {
-          const ghState = JSON.parse(fs.readFileSync(files.gh, 'utf8'));
-          return res.end(JSON.stringify({ status: 'healthy', git_sha: preview.sha ?? ghState.prs?.[0]?.headRefOid ?? null }));
-        }
-        const st = /\/api\/brain\/preview\/status\/(\d+)$/.exec(req.url);
-        if (st) {
-          const p = preview.status[st[1]];
-          if (!p) { res.statusCode = 404; return res.end('{}'); }
-          return res.end(JSON.stringify({ pr_number: Number(st[1]), ...p }));
-        }
-        if (req.url === '/api/brain/preview/start') { res.statusCode = preview.start; return res.end(JSON.stringify({ port: 5309, reason: 'disk' })); }
-        if (/\/api\/brain\/preview\/stop\/\d+$/.test(req.url)) return res.end('{"ok":true}');
-        res.statusCode = 404;
-        return res.end('{}');
-      });
-    });
-    await new Promise((r) => preview.server.listen(0, '127.0.0.1', r));
-    preview.api = `http://127.0.0.1:${preview.server.address().port}`;
-    // 预览端口就是这个假服务自己（同时扮演预览管理 API 与预览 Brain）
-    preview.status[77].port = preview.server.address().port;
-    // 假独立裁判（OpenAI 兼容 chat/completions）：按 judge.mode 回放
-    judge = { mode: 'pass', calls: [] };
-    judge.server = http.createServer((req, res) => {
-      let raw = '';
-      req.on('data', (d) => { raw += d; });
-      req.on('end', () => {
-        judge.calls.push({ url: req.url, auth: req.headers.authorization ?? null, body: JSON.parse(raw || '{}') });
-        if (judge.mode === 'http500') { res.statusCode = 500; return res.end('boom'); }
-        const content = judge.mode === 'garbage' ? '我觉得没问题' : JSON.stringify(JUDGE_REPLY[judge.mode]);
-        res.setHeader('content-type', 'application/json');
-        return res.end(JSON.stringify({ choices: [{ message: { content } }], usage: { total_tokens: 1234 } }));
-      });
-    });
-    await new Promise((r) => judge.server.listen(0, '127.0.0.1', r));
-    judge.api = `http://127.0.0.1:${judge.server.address().port}/v1`;
-  });
-
-  afterEach(async () => {
-    if (brain) await brain.close();
-    brain = null;
-    await new Promise((r) => preview.server.close(r));
-    await new Promise((r) => judge.server.close(r));
-    sb.cleanup();
-  });
-
-  const pr = (extra = {}) => ({ number: 77, headRefName: BRANCH, headRefOid: head, url: 'https://github.com/x/y/pull/77', isDraft: false, ...extra });
-  const green = (extra = {}) => ({ prs: [pr()], required: { 77: [{ name: 'ci-passed', bucket: 'pass' }] }, checks: { 77: [] }, ...extra });
-  const go = async (ghState, { mode = 'pass', extra = {}, tasks = [] } = {}) => {
-    fs.writeFileSync(files.gh, JSON.stringify(ghState));
-    brain = await startFakeBrain({ tasks });
-    return runOnceProcess(runnerEnv(sb, brain.url, {
-      CODING_WF_QA_GATE: '1',
-      CODING_WF_GH_BIN: FAKE_GH_CI,
-      FAKE_GH_CI: files.gh,
-      CODING_WF_EVALUATE: FAKE_EVALUATE,
-      FAKE_QA_MODE: mode,
-      FAKE_QA_LOG: files.qaLog,
-      CODING_WF_PREVIEW_API: preview.api,
-      CODING_WF_PREVIEW_HOST: '127.0.0.1',
-      DEPLOY_TOKEN: 'tok-1',
-      CODING_WF_CLAUDE_BIN: FAKE_CLAUDE,
-      FAKE_CIFIX_MODE: 'fix',
-      FAKE_CIFIX_PROMPT: files.prompt,
-      CODING_WF_JUDGE_API: judge.api,
-      CODING_WF_JUDGE_MODEL: 'judge-m',
-      CODING_WF_JUDGE_CREDS: path.join(sb.root, 'no-creds.env'),
-      TOAPIS_API_KEY: 'jk',
-      ...extra,
-    }));
-  };
-  // 往 PR 分支追加一个文件（模拟上一轮已提交的 QA 报告）
-  const addToBranch = (rel, content) => {
-    fs.mkdirSync(path.dirname(path.join(sb.seed, rel)), { recursive: true });
-    fs.writeFileSync(path.join(sb.seed, rel), content);
-    git(sb.seed, 'add', '.');
-    git(sb.seed, 'commit', '-q', '-m', `docs: ${rel}`);
-    git(sb.seed, 'push', '-q', 'origin', BRANCH);
-  };
-  const statePath = () => path.join(sb.logDir, 'qa-77.json');
-  const state = () => JSON.parse(fs.readFileSync(statePath(), 'utf8'));
-  const seedState = (s) => { fs.mkdirSync(sb.logDir, { recursive: true }); fs.writeFileSync(statePath(), JSON.stringify(s)); };
-  const qaCalls = () => readJsonLines(files.qaLog);
-  const ghCalls = () => readJsonLines(sb.ghLog);
-  const originLog = () => git(sb.origin, 'log', '--format=%s', BRANCH).trim().split('\n');
-  const brainQa = () => brain.patches.filter((p) => p.id === TASK).map((p) => p.body.result);
+  let files;
+  const E = useQaEnv({ onReady: (e) => ({ sb, head, preview, judge, files } = e) });
+  const { pr, green, go, addToBranch, statePath, state, seedState, qaCalls, ghCalls, originLog } = E;
+  const brainQa = () => E.brainResults();
 
   it('配置：QA 门默认开启；CODING_WF_QA_GATE=0 关闭；预览 API 与令牌从环境读', () => {
     expect(loadConfig({ HOME: '/h', DEPLOY_TOKEN: 't' })).toMatchObject({ qaGate: true, deployToken: 't', previewApi: 'http://100.71.151.105:5241' });
@@ -170,7 +42,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       rounds: [{ round: 1, head, verdict: 'PASS', judge: { verdict: 'PASS', model: 'judge-m' } }],
     });
     expect(brainQa().at(-1).qa).toMatchObject({ verdict: 'PASS', rounds: 1, judge: 'PASS' });
-    expect(brain.patches.some((p) => p.id.startsWith('dddddddd'))).toBe(false);
+    expect(E.brain.patches.some((p) => p.id.startsWith('dddddddd'))).toBe(false);
   });
 
   it('evaluate 入口来自 runner 专用 clone（main），不用 PR 分支里可能被改过的 evaluate.mjs（审计 P0 #1）', async () => {
@@ -220,8 +92,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
     expect(fs.existsSync(files.prompt)).toBe(false);
     expect(state().rounds[0]).toMatchObject({ judge: { failure_class: 'qa_insufficient' } });
-    await brain.close();
-    brain = null;
+    await E.closeBrain();
     // 裁决提交后 head 变了、CI 再绿 → 第 2 轮 QA
     const newHead = git(sb.origin, 'rev-parse', BRANCH).trim();
     judge.mode = 'pass';
@@ -249,8 +120,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判待定');
     expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
     expect(state()).toMatchObject({ judge_pending: true, judge_bad: 1 });
-    await brain.close();
-    brain = null;
+    await E.closeBrain();
     judge.mode = 'pass';
     const newHead = git(sb.origin, 'rev-parse', BRANCH).trim();
     r = await go(green({ prs: [pr({ headRefOid: newHead })], required: { 77: [{ name: 'ci-passed', bucket: 'pending' }] } }));
@@ -282,99 +152,6 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(state()).toMatchObject({ passed: true, approved: { head: git(sb.origin, 'rev-parse', BRANCH).trim() } });
   });
 
-  // 合并门（决策 a1fdbc51）：runner 亲自合并，且只合并「被批准的那个 head」——必需检查全部登记全绿 + QA 与裁判在该 head 上通过。
-  // 批准后分支上再出现的提交：只是记录（changes/ 碎片、sprints/ 验收记录）或从 main 合进来的 merge 提交 → 改绑到新 head；
-  // 动了别的文件 → 撤销批准，新 head 重新 QA + 裁判。
-  describe('合并门（绑定 head SHA）', () => {
-    const approve = (h = git(sb.origin, 'rev-parse', BRANCH).trim()) => seedState({ passed: true, approved: { head: h, round: 1 }, rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'PASS', fails: 0 }] });
-    const remoteHead = () => git(sb.origin, 'rev-parse', BRANCH).trim();
-    const mergeCalls = () => ghCalls().filter((a) => a[1] === 'merge');
-
-    it('批准的 head 上必需检查全部登记全绿 → gh pr merge --squash --match-head-commit <该 head>；记 merged', async () => {
-      approve();
-      const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
-      expect(r.exitCode, r.stderr).toBe(0);
-      expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
-      expect(state()).toMatchObject({ merged: { head: remoteHead() } });
-      expect(qaCalls()).toEqual([]);
-    });
-
-    it('必需检查未全部登记 / 还在跑 / 有红 → 不合并', async () => {
-      for (const gh of [
-        green({ prs: [pr({ headRefOid: remoteHead() })], requiredContexts: ['ci-passed', 'Smoke Glob Runner Passed'] }),
-        green({ prs: [pr({ headRefOid: remoteHead() })], required: { 77: [{ name: 'ci-passed', bucket: 'pending' }] } }),
-        green({ prs: [pr({ headRefOid: remoteHead() })], required: { 77: [{ name: 'ci-passed', bucket: 'fail' }] } }),
-      ]) {
-        approve();
-        const r = await go(gh, { extra: { CODING_WF_CIFIX: '0' } });
-        expect(r.exitCode, r.stderr).toBe(0);
-        expect(mergeCalls()).toEqual([]);
-        await brain.close();
-        brain = null;
-      }
-    });
-
-    it('批准后分支上出现改代码的提交 → 撤销批准、不合并（新 head 重新 QA）', async () => {
-      const approvedHead = remoteHead();
-      approve(approvedHead);
-      addToBranch('src/feature.js', 'export const MARKER_CODE = 2;\n');
-      const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
-      expect(r.exitCode, r.stderr).toBe(0);
-      expect(mergeCalls()).toEqual([]);
-      // 撤销本身算本轮动作：同一轮不立刻重跑 QA
-      expect(qaCalls()).toEqual([]);
-      expect(state()).toMatchObject({ passed: false, revoked: [expect.objectContaining({ reason: 'head_changed_after_approval', from: approvedHead, files: ['src/feature.js'] })] });
-    });
-
-    it('记录范围只认本 PR 的版本碎片与本 sprint 的 QA 报告/裁决/截图：批准后改 01 需求、或写别的 sprint → 撤销批准', async () => {
-      for (const rel of [`${SPRINT}/01-intent.md`, 'sprints/other-sprint/x.md', 'changes/sub/x.md']) {
-        approve();
-        addToBranch(rel, `改了 ${rel}\n`);
-        const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
-        expect(r.exitCode, r.stderr).toBe(0);
-        expect(mergeCalls(), rel).toEqual([]);
-        expect(state().passed, rel).toBe(false);
-        await brain.close();
-        brain = null;
-        fs.rmSync(sb.ghLog, { force: true });
-      }
-    });
-
-    it('批准后补的是本 sprint 的 QA 报告/裁决/截图 → 改绑并合并', async () => {
-      approve();
-      addToBranch(`${SPRINT}/05-qa-report-r2.md`, '# r2\n');
-      addToBranch(`${SPRINT}/06-judge-r2.md`, '# j2\n');
-      addToBranch(`${SPRINT}/qa-r2/a.png`, 'png');
-      const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
-      expect(r.exitCode, r.stderr).toBe(0);
-      expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
-    });
-
-    it('批准后只补了 changes/ 碎片 → 改绑新 head 并按新 head 合并', async () => {
-      approve();
-      addToBranch('changes/frag.md', '## Brain {VERSION} — x\n');
-      const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
-      expect(r.exitCode, r.stderr).toBe(0);
-      expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
-      expect(state()).toMatchObject({ passed: true, approved: { head: remoteHead() } });
-    });
-
-    it('批准后只是把 main 合进分支（merge 提交）→ 不算 PR 自身改动，改绑并合并', async () => {
-      approve();
-      git(sb.seed, 'checkout', '-q', 'main');
-      fs.writeFileSync(path.join(sb.seed, 'other.txt'), 'main moved\n');
-      git(sb.seed, 'add', '.');
-      git(sb.seed, 'commit', '-q', '-m', 'chore: main moved');
-      git(sb.seed, 'push', '-q', 'origin', 'main');
-      git(sb.seed, 'checkout', '-q', BRANCH);
-      git(sb.seed, 'merge', '-q', '--no-edit', 'main');
-      git(sb.seed, 'push', '-q', 'origin', BRANCH);
-      const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
-      expect(r.exitCode, r.stderr).toBe(0);
-      expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
-    });
-  });
-
   it('QA FAIL：报告提交 → 开发按报告修复提交 → 推送；不开自动合并；修复 prompt 带报告路径与失败条目', async () => {
     const r = await go(green(), { mode: 'fail' });
     expect(r.exitCode, r.stderr).toBe(0);
@@ -401,8 +178,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       const r = await go(gh, { extra: { CODING_WF_CIFIX: '0' } });
       expect(r.exitCode, r.stderr).toBe(0);
       expect(qaCalls()).toEqual([]);
-      await brain.close();
-      brain = null;
+      await E.closeBrain();
     }
   });
 
@@ -413,8 +189,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(r.exitCode, r.stderr).toBe(0);
     expect(qaCalls()).toEqual([]);
     expect(state().preview).toMatchObject({ stale_since: expect.any(String), stale_sha: 'a'.repeat(40) });
-    await brain.close();
-    brain = null;
+    await E.closeBrain();
     r = await go(green(), { extra: { CODING_WF_QA_PREVIEW_ESCALATE_MS: '0' } });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(qaCalls()).toEqual([]);
@@ -472,8 +247,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(r.exitCode, r.stderr).toBe(0);
     expect(state().escalated).toMatchObject({ type: 'qa_evaluator_broken', reason_code: 'preview_unavailable' });
     fs.rmSync(statePath(), { force: true });
-    await brain.close();
-    brain = null;
+    await E.closeBrain();
     r = await go(green(), { mode: 'fatal' });
     expect(state().escalated).toMatchObject({ type: 'qa_evaluator_broken', reason_code: 'evaluate_touched_production' });
   });
