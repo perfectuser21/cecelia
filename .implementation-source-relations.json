@@ -86,6 +86,11 @@
       "owner_path": "packages/brain/src/lib/gp-assertion-output.js",
       "path": "packages/brain/src/lib/__tests__/gp-assertion-output.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-registration.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-registration.test.js",
+      "role": "verification"
     }
   ]
 }
