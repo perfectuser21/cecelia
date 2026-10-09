@@ -4,7 +4,7 @@ const platforms = { 'com.amazon.mShop.android.shopping': 'Amazon US', 'com.theho
 const demand = (value, reason) => { if (!value) throw new Error(reason); };
 const rich = value => ({ rich_text: [{ text: { content: String(value ?? '').slice(0, 2000) } }] });
 export function parseOptions(args) {
-  const o = { keyword: '', zip: '53132', count: 3, model: 'openai/gpt-6-sol' };
+  const o = { keyword: '', zip: '53132', count: 1, model: 'openai/gpt-6-sol' };
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i].replace(/^--/, '').replace(/-([a-z])/g, (_, c) => c.toUpperCase());
     demand(['keyword', 'zip', 'count', 'model', 'taskId', 'receipt', 'dataSource'].includes(key) && args[i + 1], '未知参数或缺少参数值');
@@ -17,7 +17,7 @@ export function parseOptions(args) {
   demand(['openai/gpt-6-luna', 'openai/gpt-6-sol'].includes(o.model), '模型仅支持本流程授权的 Luna 或 Sol');
   return o;
 }
-export function buildPrompt(o, taskId, owner = `phone-price-${taskId}`) {
+export function buildPrompt(o, taskId, owner = buildOwner(taskId, '')) {
   const request = Buffer.from(JSON.stringify({ keyword: o.keyword, count: o.count, zip: o.zip, owner })).toString('base64');
   return `执行Brain任务 ${taskId}：关键词 ${JSON.stringify(o.keyword)}，ZIP ${o.zip}，最多${o.count}SKU。只用两家原生App，不登录/购买/加车，不采网页价格。
 你只通过真实node_exec（参数timeoutSeconds=${o.count === 1 ? 600 : 1000}，使用这个已验证字段，不猜timeoutMs），在XIAN-M4-PHONE节点beb0fec23dc75b6b1172379f783cf6d9d4cdc9934ffc2c1522de07f952094654执行一次以下argv，不编写/修改UI脚本、不探索控制器、不改证据目录：

@@ -60,7 +60,7 @@ print(json.dumps(proof,ensure_ascii=False))`;
 }
 export async function main(args) {
   if (args.includes('--help')) {
-    console.log('用法: node scripts/phone-rpa/us-price-keyword.mjs --keyword "cordless drill" [--count 3] [--zip 53132] [--model openai/gpt-6-sol] [--task-id 已登记任务ID] [--receipt 真实OpenClaw回执JSON]');
+    console.log('用法: node scripts/phone-rpa/us-price-keyword.mjs --keyword "cordless drill" [--count 1] [--zip 53132] [--model openai/gpt-6-sol] [--task-id 已登记任务ID] [--receipt 真实OpenClaw回执JSON]');
     return;
   }
   const o = parseOptions(args);

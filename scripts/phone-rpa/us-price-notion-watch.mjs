@@ -18,7 +18,7 @@ export function selectRequest(task, now = Date.now()) {
   const keyword=field(body,'关键词|keyword');
   if(!keyword) return null;
   const model=field(block,'模型|model')??'openai/gpt-6-sol';
-  try { return parseOptions(['--keyword',keyword,'--count',field(body,'数量|count')??'3','--zip',field(body,'邮编|ZIP')??'53132','--model',model,'--task-id',task.id]); }
+  try { return parseOptions(['--keyword',keyword,'--count',field(body,'数量|count')??'1','--zip',field(body,'邮编|ZIP')??'53132','--model',model,'--task-id',task.id]); }
   catch { return null; }
 }
 export async function watchOnce({request,run}) {
