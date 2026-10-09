@@ -1,7 +1,7 @@
 import unittest
 import xml.etree.ElementTree as E
 from native_price_phone import text_values, parse_hd_detail, extract_asin, price_candidates, validate_request, PhoneSession
-from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search, search_entry, amazon_seller, public_report, search_hd, initial_hd_result, airship_close_button, held_worker
+from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search, search_entry, amazon_seller, public_report, search_hd, initial_hd_result, airship_close_button, held_worker, amazon_specification
 
 def nodes(values, package='com.thehomedepot'):
     root=E.Element('hierarchy')
@@ -9,6 +9,24 @@ def nodes(values, package='com.thehomedepot'):
     return list(root.iter('node'))
 
 class NativePriceTests(unittest.TestCase):
+    def test_amazon_specification_expands_only_exact_main_details_and_is_bounded(self):
+        import unittest.mock
+        class Fake:
+            def __init__(self):self.taps=[];self.swipes=0
+            def tap(self,n):self.taps.append(n.get('text'))
+            def swipe(self):self.swipes+=1
+            def nodes(self,label):return nodes(['Product details','Included Components','2 batteries, charger, bag','Battery Capacity','1.3 Ah','Customer reviews','Marketing 99 batteries']),'/spec.xml'
+        fake=Fake()
+        with unittest.mock.patch('us_price_native_worker.time.sleep'):
+            result=amazon_specification(fake,nodes(['Product details','Power Source','Battery Powered','Amperage','1.3 A','See more details']),'/initial.xml')
+        self.assertEqual(fake.taps,['See more details']);self.assertLessEqual(fake.swipes,2)
+        self.assertIn('2 batteries, charger, bag',str(result));self.assertNotIn('Marketing 99 batteries',str(result))
+        self.assertEqual(result['spec_xml'],'/initial.xml')
+        other=Fake()
+        with unittest.mock.patch('us_price_native_worker.time.sleep'):
+            amazon_specification(other,nodes(['Customer reviews','See more details']),'/reviews.xml')
+        self.assertEqual(other.taps,[])
+
     def test_seller_requires_exact_native_text_not_substring(self):
         self.assertEqual(amazon_seller(['Visit Amazon.com.evil.com']),'未显示（需核对）')
         self.assertEqual(amazon_seller(['Sold by Amazon.com']),'Sold by Amazon.com')
