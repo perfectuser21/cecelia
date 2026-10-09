@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync,spawnSync } from 'node:child_process';
+import {mkdtempSync,writeFileSync,existsSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { versionsDatabase } from '../fixtures/definition-versions-db.js';
 import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
@@ -155,6 +158,14 @@ it('跨仓companion原样保留UNKNOWN，完整父单scope可用但不能联合�
  expect(validateImplementationSnapshot(parent)).toEqual(parent);
  expect(snapshots.extractImplementationAdmissionSnapshots(parent,['zenithjoy'])).toEqual([parent]);
  expect(()=>snapshots.extractImplementationAdmissionSnapshots(parent,['zenithjoy','cecelia-factory'])).toThrow(/UNKNOWN/);
+ const temp=mkdtempSync(join(tmpdir(),'workspace-companion-cli-'));
+ try{
+  const input=join(temp,'head.json'),scopes=join(temp,'scopes.json'),out=join(temp,'out');
+  writeFileSync(input,JSON.stringify({snapshot:parent}));writeFileSync(scopes,JSON.stringify({schema_version:1,scopes:['zenithjoy','cecelia-factory']}));
+  const run=spawnSync(process.execPath,[join(root,'scripts/ci/implementation-pr-gate.mjs'),'--extract-scopes','--snapshot-file',input,'--scopes-file',scopes,'--side','head','--output-dir',out],{encoding:'utf8'});
+  expect(run.status).toBe(1);expect(run.stderr).toContain('IMPLEMENTATION_CI_ADMISSION_SNAPSHOT_UNKNOWN');
+  expect(existsSync(out)).toBe(false);
+ }finally{rmSync(temp,{recursive:true,force:true});}
  await fixture.db.query("DELETE FROM map_scope_repositories WHERE scope_key='cecelia-factory'");
  const missing=await exportImplementationSnapshot(fixture.db,q);
  expect(missing.admission_companion.snapshot.gaps.some(g=>g.code==='scope_repository_missing')).toBe(true);
