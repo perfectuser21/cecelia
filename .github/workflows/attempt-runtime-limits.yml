@@ -24,9 +24,11 @@ jobs:
       - name: Resolve isolated test images to immutable IDs
         run: |
           docker pull mirror.gcr.io/library/node:22-bookworm-slim
+          docker tag mirror.gcr.io/library/node:22-bookworm-slim node:22-bookworm-slim
           docker pull mirror.gcr.io/pgvector/pgvector:pg15
-          echo "HARNESS_LIMITS_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' mirror.gcr.io/library/node:22-bookworm-slim)" >> "$GITHUB_ENV"
-          echo "HARNESS_LIMITS_CANARY_POSTGRES_IMAGE=$(docker image inspect --format '{{.Id}}' mirror.gcr.io/pgvector/pgvector:pg15)" >> "$GITHUB_ENV"
+          docker tag mirror.gcr.io/pgvector/pgvector:pg15 pgvector/pgvector:pg15
+          echo "HARNESS_LIMITS_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' node:22-bookworm-slim)" >> "$GITHUB_ENV"
+          echo "HARNESS_LIMITS_CANARY_POSTGRES_IMAGE=$(docker image inspect --format '{{.Id}}' pgvector/pgvector:pg15)" >> "$GITHUB_ENV"
       - name: Real adapters enforce one shared budget and isolate runner OOM
         run: |
           set -o pipefail
