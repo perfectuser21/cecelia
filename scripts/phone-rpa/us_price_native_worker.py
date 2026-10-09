@@ -22,7 +22,13 @@ def dispatch(request, runner=command):
     payload=base64.b64encode(json.dumps(request,ensure_ascii=False).encode()).decode()
     # 只有此处启动with-lock；持锁worker没有再次开锁的代码路径。
     output=runner(prefix+['with-lock',request['owner'],'--',sys.executable,str(pathlib.Path(__file__).resolve()),'--held','--request-base64',payload],timeout=1050)
-    report=json.loads(output.strip().splitlines()[-1])
+    report=None
+    for line in reversed(output.splitlines()):
+        try: candidate=json.loads(line)
+        except (ValueError,TypeError): continue
+        if isinstance(candidate,dict) and isinstance(candidate.get('raw_quotes'),list):
+            report=candidate;break
+    if report is None:raise RuntimeError('持锁worker未返回JSON报告；检查owner目录held-report.json')
     status=runner(prefix+['preflight']); lock=runner(prefix+['lock-status'])
     report['lock_free_verified']='lock=free' in lock
     report['home_verified']=report.get('home_verified') is True and 'launcher' in status.lower()
@@ -200,6 +206,10 @@ def held_worker(request,session=None):
             report['home_verified']='launcher' in status.lower()
         except Exception as error:report['home_error']=str(error)[:400]
         report['ended_at']=utcnow()
+        # 在控制器打印锁日志或外层解析失败前，先持久化真实收尾与采集原因。
+        report_path=session.root/'held-report.json'
+        report_path.write_text(json.dumps(report,ensure_ascii=False),encoding='utf-8')
+        report_path.chmod(0o600)
     return report
 
 def main():
