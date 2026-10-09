@@ -140,3 +140,23 @@ for(const [name,transform,valid] of [
  b['scripts/ci/implementation-multi-pr-gate.mjs']='export const fixed_multi_source=true;\n';});
  const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,valid?'verified':'unknown',JSON.stringify(r.gaps));if(valid)assert.ok(r.consumer.bindings.some(b=>b.path==='scripts/ci/implementation-multi-pr-gate.mjs'));assert.equal(r.admission.status,'unknown');
 });
+
+const OWN_PR_SCOPES = "${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || (github.event_name == 'pull_request' && github.repository == 'perfectuser21/cecelia' && '{\"schema_version\":1,\"scopes\":[\"cecelia-kr\",\"cecelia-factory\"]}' || '') }}";
+for(const [name,expression,mode,valid] of [
+ ['精确自仓PR双scope',OWN_PR_SCOPES,VERSIONED_ENV.MODE,true],
+ ['删除仓库限制',OWN_PR_SCOPES.replace(" && github.repository == 'perfectuser21/cecelia'",''),VERSIONED_ENV.MODE,false],
+ ['改为其它仓库',OWN_PR_SCOPES.replace('perfectuser21/cecelia','perfectuser21/other'),VERSIONED_ENV.MODE,false],
+ ['改为主线push',OWN_PR_SCOPES.replace("== 'pull_request'","== 'push'"),VERSIONED_ENV.MODE,false],
+ ['额外scope',OWN_PR_SCOPES.replace('"cecelia-factory"]','"cecelia-factory","other"]'),VERSIONED_ENV.MODE,false],
+ ['未知schema',OWN_PR_SCOPES.replace('"schema_version":1','"schema_version":2'),VERSIONED_ENV.MODE,false],
+ ['MODE固定为main',OWN_PR_SCOPES,'main',false],
+])test('唯一自仓PR scope默认表达式：'+name,async t=>{
+ const f=fixture(t);fixedNewBrain(f,b=>{const p='.github/workflows/implementation-impact.yml';
+ b[p]=b[p].replace('    inputs:\n',"    inputs:\n      admission_scopes: {required: false, type: string, default: ''}\n");
+ const env={MODE:mode,ADMISSION_SCOPES:expression};
+ b[p]=b[p].replace('    steps:\n','    env:\n'+Object.entries(env).map(([k,v])=>'      '+k+': '+JSON.stringify(v)+'\n').join('')+'    steps:\n');
+ b[p]=b[p].replace('      - run: node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$PWD/source"','      - run: |\n'+VERSIONED_RUN.trimEnd().split('\n').map(l=>'          '+l).join('\n'));
+ b['scripts/ci/implementation-multi-pr-gate.mjs']='export const fixed_multi_source=true;\n';});
+ const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,valid?'verified':'unknown',JSON.stringify(r.gaps));
+ assert.equal(r.admission.status,'unknown');assert.equal(r.executable,false);
+});
