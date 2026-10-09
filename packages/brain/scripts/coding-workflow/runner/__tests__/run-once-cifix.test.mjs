@@ -118,6 +118,31 @@ describe('runner CI 红自动修复（ci_fix）', () => {
     }
   });
 
+  // QA/裁判通过后已开自动合并：CI 修复再改代码 → 撤销通过、关自动合并，新 head 重过 QA 与裁判（4ac5fa39 首跑发现的漏洞）
+  const seedQaPassed = () => {
+    fs.mkdirSync(sb.logDir, { recursive: true });
+    fs.writeFileSync(path.join(sb.logDir, 'qa-77.json'), JSON.stringify({ passed: true, rounds: [{ round: 1, head, verdict: 'PASS', fails: 0, judge: { verdict: 'PASS' } }] }));
+  };
+  const qaState = () => JSON.parse(fs.readFileSync(path.join(sb.logDir, 'qa-77.json'), 'utf8'));
+  const ghCalls = () => readJsonLines(sb.ghLog);
+
+  it('QA 已通过后 CI 修复改了代码 → 撤销 QA 通过、关自动合并（新 head 重新 QA + 裁判）', async () => {
+    seedQaPassed();
+    const r = await go(red());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaState()).toMatchObject({ passed: false, revoked: [expect.objectContaining({ reason: 'ci_fix_changed_code', files: ['src/fix.txt'] })] });
+    expect(ghCalls()).toContainEqual(['pr', 'merge', '77', '--disable-auto']);
+  });
+
+  it('QA 已通过后 CI 修复只补 changes/ 版本碎片 → 保留通过与自动合并', async () => {
+    seedQaPassed();
+    const r = await go(red(), { mode: 'fragment' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(state().attempts).toMatchObject([{ result: 'pushed' }]);
+    expect(qaState().passed).toBe(true);
+    expect(ghCalls().some((a) => a.includes('--disable-auto'))).toBe(false);
+  });
+
   it('同一 head 只修一次；累计 2 次后不再修', async () => {
     fs.mkdirSync(sb.logDir, { recursive: true });
     fs.writeFileSync(path.join(sb.logDir, 'cifix-77.json'), JSON.stringify({ attempts: [{ head, result: 'no_commit' }] }));
