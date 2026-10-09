@@ -39,6 +39,29 @@ class NativePriceTests(unittest.TestCase):
             amazon_specification(fake,initial,'/zero.xml')
         self.assertEqual(fake.taps,['[0,0][100,100]']);self.assertLessEqual(fake.swipes,2)
 
+    def test_actual_tailscale_search_xml_cannot_be_hd_search_entry(self):
+        # 66真实15-exit-main.xml的最小结构；关键词输入到了Tailscale。
+        ns=nodes(['DEWALT DCD771C2','No results'],'com.tailscale.ipn')
+        ns[0].set('class','android.widget.EditText');ns[0].set('content-desc','Search')
+        ns[0].set('resource-id','search_field');ns[0].set('clickable','true')
+        with self.assertRaisesRegex(RuntimeError,'前台App'):
+            search_entry(ns)
+    def test_wrong_foreground_rejects_input_before_adb_and_launch_waits(self):
+        import unittest.mock
+        session=object.__new__(PhoneSession);session.expected_package='com.thehomedepot';calls=[]
+        session.check=lambda:'state=device call_state=idle foreground=com.tailscale.ipn'
+        session.adb=lambda *args,**kw:calls.append(args)
+        with self.assertRaisesRegex(RuntimeError,'前台App'):
+            session.input('DEWALT DCD771C2')
+        self.assertEqual(calls,[])
+        session.expected_package=None
+        session.nodes=lambda label:(nodes(['Search']),'/hd.xml')
+        def adb(*args,**kw):calls.append(args);return 'com.thehomedepot/Main'
+        session.adb=adb
+        with unittest.mock.patch('native_price_phone.time.sleep'):
+            with self.assertRaisesRegex(RuntimeError,'前台App'):session.launch('com.thehomedepot')
+        self.assertTrue(any('start' in cmd and '-W' in cmd for cmd in calls))
+
     def test_seller_requires_exact_native_text_not_substring(self):
         self.assertEqual(amazon_seller(['Visit Amazon.com.evil.com']),'未显示（需核对）')
         self.assertEqual(amazon_seller(['Sold by Amazon.com']),'Sold by Amazon.com')
