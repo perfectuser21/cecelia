@@ -149,5 +149,7 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
   it('prompt：真人 QA、黑盒、用预览环境、禁单元测试、禁碰 5221、探索式测试', () => {
     const p = fs.readFileSync(path.join(HERE, '../prompts/evaluate.md'), 'utf8');
     for (const s of ['真人', '黑盒', 'PREVIEW_URL', '单元测试', '5221', '探索', 'Playwright', '### T-n', '### X-n']) expect(p).toContain(s);
+    // 金丝雀 3e8414f6：规格要求和「改动前」对比，QA 拿生产当了基线 → 只读也不行，基线须在本机从 main 起
+    for (const s of ['哪怕只是只读请求', '绝不能拿生产当基线', 'git worktree add']) expect(p).toContain(s);
   });
 });

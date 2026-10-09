@@ -29,7 +29,8 @@ JUDGE_FEEDBACK: {{JUDGE_FEEDBACK}}
 
 ## 禁止
 - **不能拿单元测试当证据**：vitest / jest / mocha / npm test / node --test / playwright test 一律不算（那是 CI 的事）。你要的是真实操作预览环境的结果。
-- **不许碰生产**：只能访问 PREVIEW_URL。绝不访问 localhost:5221（那是生产 Brain）或任何生产地址；不修改生产数据。
+- **不许碰生产**：只能访问 PREVIEW_URL。绝不访问 localhost:5221（那是生产 Brain）或任何生产地址；不修改生产数据。哪怕只是只读请求、哪怕是拿来当「改动前」基线做对比，也不行——碰了就判违规，整轮作废。
+- 场景要求和「改动前的行为」对比时：在本机用 `git worktree add <临时目录> origin/main` 起一个 main 版本的基线自己跑（或对比 PR 改动前后的代码与已有数据），绝不能拿生产当基线。做不到就在报告里如实写「无法建立基线」并说明原因，不要找捷径。
 - 不修改任何代码文件，不 commit、不 push、不切分支、不调用 gh。只写 REPORT_PATH 和 SHOTS_DIR 下的截图。
 - 不读 SPRINT_DIR 里除 01、02（以及 JUDGE_FEEDBACK 指向的裁决）以外的开发方文件。
 
