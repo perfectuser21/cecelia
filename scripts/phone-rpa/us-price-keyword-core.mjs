@@ -37,6 +37,7 @@ export function validateReceipt(receipt, o) {
   const reports = (receipt.result?.payloads ?? []).flatMap(p => { try { return [JSON.parse(p.text.replace(/^```(?:json)?\s*|\s*```$/g, ''))]; } catch { return []; } });
   const r = reports.find(x => Array.isArray(x.quotes));
   demand(r && r.network_restored === true && r.home_verified === true && r.lock_free_verified === true, '缺少恢复网络/桌面/释放锁验收');
+  if (r.report_only) demand(typeof r.source_action_run_id === 'string' && r.source_action_run_id && typeof r.source_action_owner === 'string' && r.source_action_owner, '补报告缺少原采集来源');
   demand(r.quotes.length > 0 && r.quotes.length <= o.count * 2, '没有有效报价或报价超量');
   const keys = new Set(), skus = new Set();
   r.quotes = r.quotes.map(q => ({ ...q, package: q.package ?? q.app_package, specification: q.specification ?? q.pack, url: q.url ?? q.product_url, collected_at: q.collected_at ?? q.collected_at_utc }));
