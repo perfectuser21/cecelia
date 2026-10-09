@@ -87,15 +87,18 @@ async function claimFirst(ctx, candidates) {
 async function execute(cfg, task, job, signal) {
   const names = taskNames(task.id);
   const worktree = await prepareWorktree(cfg, task, names, job, signal);
-  const contract = readContract(path.join(worktree, WORKFLOW_REL, 'contract.json'));
+  // 判卷代码（契约、执行器、各活动）一律来自 runner 专用 clone（每轮自更新到 main），不来自任务 worktree：
+  // build 改过的 verify/chain_check 不能拿来判它自己（审计 P0 #1，对应旧 harness「judge 不在被评 worktree 跑」）
+  const trusted = path.join(cfg.repo, WORKFLOW_REL);
+  const contract = readContract(path.join(trusted, 'contract.json'));
   const envelope = {
     contract,
     input: { run_tag: names.runTag, task_id: task.id, worktree, sprint_dir: names.sprintDir, brain_url: cfg.brainUrl },
   };
   log(`开跑 ${task.id}：worktree=${worktree} branch=${names.branch}`);
   const r = await runExecutor({
-    executor: cfg.executor ?? path.join(worktree, EXECUTOR_REL),
-    cwdDir: path.join(worktree, WORKFLOW_REL),
+    executor: cfg.executor ?? path.join(cfg.repo, EXECUTOR_REL),
+    cwdDir: trusted,
     worktree,
     envelope,
     receiptPath: job.receiptPath,

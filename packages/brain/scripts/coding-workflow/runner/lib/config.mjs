@@ -40,6 +40,8 @@ export function loadConfig(env = process.env) {
     // QA 门（evaluator 真人 QA，决策 02d8e749）：CI 绿后在 PR 预览环境验收，PASS 才开自动合并
     qaGate: env.CODING_WF_QA_GATE !== '0',
     previewApi: env.CODING_WF_PREVIEW_API || DEFAULT_PREVIEW_API,
+    // 预览进程与 runner 同机（MMV），按 <host>:<port> 访问
+    previewHost: env.CODING_WF_PREVIEW_HOST || 'localhost',
     deployToken: env.DEPLOY_TOKEN || env.CODING_WF_DEPLOY_TOKEN || null,
     // null = 用 PR worktree 自己的 activities/evaluate.mjs
     evaluateEntry: env.CODING_WF_EVALUATE || null,

@@ -83,7 +83,11 @@ await runActivity(async (input) => {
     api: process.env.CODING_WF_PREVIEW_API || DEFAULT_PREVIEW_API,
     timeoutMs: posInt(process.env.CODING_WF_PREVIEW_WAIT_MS, 20 * 60 * 1000),
     intervalMs: posInt(process.env.CODING_WF_PREVIEW_INTERVAL_MS, 15000),
+    host: process.env.CODING_WF_PREVIEW_HOST || 'localhost',
+    // 给了要验的 head：预览部署的必须正是它（审计 P0 #2）
+    expectSha: input.head_sha || null,
   });
+  if (preview.state === 'stale') return fail('retryable', 'preview_stale', { evidence: [{ pr: input.pr_number, expected: input.head_sha, preview_sha: preview.sha }] });
   if (preview.state !== 'active') return fail('retryable', 'preview_unavailable', { evidence: [{ pr: input.pr_number, preview }] });
 
   const round = posInt(input.round, 1);
@@ -124,7 +128,7 @@ await runActivity(async (input) => {
     result = claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
     result ??= judge({
       reportPath, reportFile, qaIds, stdout: run.stdout, worktree, round,
-      env: { kind: 'preview', url: preview.url }, cost: Math.round(sessionCostUsd(run.stdout) * 10000) / 10000,
+      env: { kind: 'preview', url: preview.url, ...(preview.sha ? { sha: preview.sha } : {}) }, cost: Math.round(sessionCostUsd(run.stdout) * 10000) / 10000,
     });
   } finally {
     process.off('SIGTERM', onSigterm);

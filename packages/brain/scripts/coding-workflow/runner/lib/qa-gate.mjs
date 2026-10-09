@@ -133,9 +133,22 @@ async function ensurePreview(ctx, pr, s, p) {
   writeState(ctx.cfg, pr.number, s);
 }
 
+/** 预览还是旧版本：记下从何时起；超过时限（与预览起不来同一阈值）升级。 */
+async function previewStale(ctx, pr, s, p) {
+  const now = Date.now();
+  const since = s.preview?.stale_since && s.preview?.stale_head === pr.headRefOid ? Date.parse(s.preview.stale_since) : now;
+  s.preview = { ...s.preview, stale_since: new Date(since).toISOString(), stale_head: pr.headRefOid, stale_sha: p.sha };
+  ctx.log(`PR #${pr.number} 预览环境还是 ${p.sha ? p.sha.slice(0, 9) : '未知版本'}，不是 head ${pr.headRefOid.slice(0, 9)}，等重新部署`);
+  if (now - since >= ctx.cfg.qaPreviewEscalateMs) {
+    return escalate(ctx, pr, s, null, { type: 'qa_preview_stale', preview_sha: p.sha, head: pr.headRefOid, since: s.preview.stale_since });
+  }
+  return writeState(ctx.cfg, pr.number, s);
+}
+
 /** 跑 evaluate 活动（json-stdio），返回解析后的结果对象或 null。 */
 async function evaluate(ctx, worktree, input, signal) {
-  const entry = ctx.cfg.evaluateEntry ?? path.join(worktree, EVALUATE_REL);
+  // evaluate 来自 runner 专用 clone（main），不用 PR 分支里可能被改过的版本（审计 P0 #1）
+  const entry = ctx.cfg.evaluateEntry || path.join(ctx.cfg.repo, EVALUATE_REL);
   const r = await run(process.execPath, [entry], { cwd: worktree, input: JSON.stringify(input), timeoutMs: EVALUATE_TIMEOUT_MS, signal });
   const line = r.stdout.trim().split('\n').reverse().find((l) => l.startsWith('{'));
   try {
@@ -260,10 +273,16 @@ async function qaRound(ctx, pr, s, signal) {
   const round = s.rounds.length + 1;
   const prior = s.rounds.at(-1)?.judge;
   return inPrWorktree(ctx, pr, s, `qa-${pr.number}-${round}`, signal, async (worktree, intent) => {
+    // 检出的必须正是列表里的 head（列表之后又推了代码 → 本轮不验，下轮按新 head 来，不计坏）
+    const checkedOut = await headOf(worktree);
+    if (checkedOut !== pr.headRefOid) {
+      ctx.log(`QA 门 PR #${pr.number}：检出的 ${checkedOut.slice(0, 9)} 不是列表里的 head ${pr.headRefOid.slice(0, 9)}，下轮再验`);
+      return undefined;
+    }
     ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮真人 QA 开始`);
     const result = await evaluate(ctx, worktree, {
       run_tag: `qa-${pr.number}-r${round}`, task_id: intent.taskId, worktree, sprint_dir: intent.sprintDir,
-      intent_ids: intent.intentIds, intent_sha256: intent.intentSha256, pr_number: pr.number, round,
+      intent_ids: intent.intentIds, intent_sha256: intent.intentSha256, pr_number: pr.number, round, head_sha: pr.headRefOid,
       ...(prior?.failure_class === 'qa_insufficient' ? { judge_feedback: `${intent.sprintDir}/${prior.file}` } : {}),
       budget: { max_duration_s: Math.round(EVALUATE_TIMEOUT_MS / 1000) },
     }, signal);
@@ -341,7 +360,12 @@ export async function runQaGate(ctx, signal) {
       }
       if (s.rounds.at(-1)?.head === pr.headRefOid) continue;
       if ((await requiredState(cfg, pr.number)).state !== 'pass') continue;
-      const p = await previewOf(pr.number, { api: cfg.previewApi });
+      // 预览部署的必须正是这个 head（审计 P0 #2）：推送后还没重新部署就等
+      const p = await previewOf(pr.number, { api: cfg.previewApi, host: cfg.previewHost, expectSha: pr.headRefOid });
+      if (p.state === 'stale') {
+        await previewStale(ctx, pr, s, p);
+        continue;
+      }
       if (p.state !== 'active') {
         await ensurePreview(ctx, pr, s, p);
         continue;
