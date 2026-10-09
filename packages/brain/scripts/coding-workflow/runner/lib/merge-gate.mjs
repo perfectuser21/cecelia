@@ -1,10 +1,11 @@
 // 合并门（决策 a1fdbc51，对应旧 harness「merge 前 head == 锚定 SHA」硬检查）：runner 亲自合并，且只合并被批准的那个 head。
 // 批准 = QA 与独立裁判在该 head 上通过（qa-gate.mjs 记 s.approved.head）。合并条件：当前 head 就是批准的 head、
 // 该 head 上规定的必需检查全部登记且全绿 → gh pr merge --squash --match-head-commit <head>（GitHub 侧再校验一次 head）。
-// 批准后分支上又出现提交：只碰记录（changes/、sprints/）或只是从 main 合进来 → 改绑到新 head；动了别的文件 → 撤销批准，新 head 重新 QA + 裁判。
+// 批准后分支上又出现提交：只碰记录（版本碎片、本 sprint 的 QA 报告/裁决/截图，见 isRecordFile）或只是从 main 合进来
+// → 改绑到新 head；动了别的文件（含 01 需求、02 合同）→ 撤销批准，新 head 重新 QA + 裁判。
 import { run, git } from './proc.mjs';
 import { listOwnPrs, requiredState } from './cifix-scan.mjs';
-import { readState, writeState, RECORD_ONLY_RE } from './qa-gate.mjs';
+import { readState, writeState, isRecordFile } from './qa-gate.mjs';
 
 const GH_TIMEOUT_MS = 60 * 1000;
 const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -27,7 +28,7 @@ async function gate(ctx, pr, s) {
       ctx.log(`合并门 PR #${pr.number}：取批准后的改动失败，本轮不合并`);
       return false;
     }
-    const code = files.filter((f) => !RECORD_ONLY_RE.test(f));
+    const code = files.filter((f) => !isRecordFile(f, pr.headRefName));
     if (code.length > 0) {
       s.passed = false;
       s.revoked = [...(s.revoked ?? []), { at: new Date().toISOString(), reason: 'head_changed_after_approval', from: s.approved.head, to: pr.headRefOid, files: code }];

@@ -307,6 +307,30 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       expect(state()).toMatchObject({ passed: false, revoked: [expect.objectContaining({ reason: 'head_changed_after_approval', from: approvedHead, files: ['src/feature.js'] })] });
     });
 
+    it('记录范围只认本 PR 的版本碎片与本 sprint 的 QA 报告/裁决/截图：批准后改 01 需求、或写别的 sprint → 撤销批准', async () => {
+      for (const rel of [`${SPRINT}/01-intent.md`, 'sprints/other-sprint/x.md', 'changes/sub/x.md']) {
+        approve();
+        addToBranch(rel, `改了 ${rel}\n`);
+        const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+        expect(r.exitCode, r.stderr).toBe(0);
+        expect(mergeCalls(), rel).toEqual([]);
+        expect(state().passed, rel).toBe(false);
+        await brain.close();
+        brain = null;
+        fs.rmSync(sb.ghLog, { force: true });
+      }
+    });
+
+    it('批准后补的是本 sprint 的 QA 报告/裁决/截图 → 改绑并合并', async () => {
+      approve();
+      addToBranch(`${SPRINT}/05-qa-report-r2.md`, '# r2\n');
+      addToBranch(`${SPRINT}/06-judge-r2.md`, '# j2\n');
+      addToBranch(`${SPRINT}/qa-r2/a.png`, 'png');
+      const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
+    });
+
     it('批准后只补了 changes/ 碎片 → 改绑新 head 并按新 head 合并', async () => {
       approve();
       addToBranch('changes/frag.md', '## Brain {VERSION} — x\n');

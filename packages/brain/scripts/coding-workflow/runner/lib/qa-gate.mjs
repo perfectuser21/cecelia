@@ -71,8 +71,15 @@ async function escalate(ctx, pr, s, taskId, detail) {
   await report(ctx, taskId ?? (await remoteTaskId(ctx.cfg, pr.headRefName)), s);
 }
 
-// 不影响产品行为的记录性改动：版本碎片、sprint 验收记录
-export const RECORD_ONLY_RE = /^(changes|sprints)\//;
+/**
+ * 不影响产品行为、也不改验收依据的记录性改动：本 PR 的版本碎片（changes/<分支>.md 或其他顶层碎片）、
+ * 本 sprint 的 QA 报告 / 裁决 / QA 截图。01 需求、02 合同、别的 sprint、changes/ 子目录都不算。
+ */
+export function isRecordFile(file, branch) {
+  if (/^changes\/[^/]+\.md$/.test(file)) return true;
+  const id8 = branch.slice(-8);
+  return new RegExp(`^sprints/[^/]+-cw-${id8}/(05-qa-report-r\\d+\\.md|06-judge-r\\d+\\.md|qa-r\\d+/.+)$`).test(file);
+}
 
 /**
  * QA/裁判通过（已开自动合并）后 PR 又被推了改动（CI 修复）：改了记录以外的文件 → 撤销通过、关自动合并，
@@ -80,7 +87,7 @@ export const RECORD_ONLY_RE = /^(changes|sprints)\//;
  */
 export async function revokeQaPass(ctx, pr, files, reason) {
   const s = readState(ctx.cfg, pr.number);
-  const changed = files.filter((f) => !RECORD_ONLY_RE.test(f));
+  const changed = files.filter((f) => !isRecordFile(f, pr.headRefName));
   if (!s.passed || changed.length === 0) return false;
   const off = await run(ctx.cfg.ghBin, ['pr', 'merge', String(pr.number), '--disable-auto'], { cwd: ctx.cfg.repo, timeoutMs: GH_TIMEOUT_MS });
   s.passed = false;
