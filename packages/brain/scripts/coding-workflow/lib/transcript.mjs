@@ -40,6 +40,15 @@ export function claudeOwnErrorText(stdout) {
   return parts.filter(Boolean).join('\n');
 }
 
+/** 一次 claude 会话的花费（stream-json 最后一个 result 事件的 total_cost_usd）；拿不到为 0。 */
+export function sessionCostUsd(stdout) {
+  let cost = 0;
+  for (const event of events(stdout)) {
+    if (event?.type === 'result' && typeof event.total_cost_usd === 'number') cost = event.total_cost_usd;
+  }
+  return cost;
+}
+
 /** stdout（每行一个 JSON 事件，非 JSON 行忽略）→ 按出现顺序的 [{ command, result }]；没有结果的命令 result 为 ''。 */
 export function bashExecutions(stdout) {
   const runs = [];

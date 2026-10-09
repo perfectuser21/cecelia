@@ -21,6 +21,12 @@ async function httpEvidence(res) {
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+/** 合同对抗摘要与升级记录（有才带）：coding commander 从 Brain 的 result.coding_workflow 读取并处理升级。 */
+const ganFields = (input) => ({
+  ...(isPlainObject(input.gan) ? { gan: input.gan } : {}),
+  ...(Array.isArray(input.escalations) && input.escalations.length > 0 ? { escalations: input.escalations } : {}),
+});
+
 /**
  * 回写内容：有 pr_url → 交付信息（有 verification 一并带上）；
  * 没有 pr_url 但有 verification（链在验收处失败）→ 失败结论；两者都没有返回 null。
@@ -36,9 +42,10 @@ function codingWorkflowResult(input) {
       run_tag: input.run_tag,
       host: os.hostname(),
       ...(verification ? { verification } : {}),
+      ...ganFields(input),
     };
   }
-  if (verification) return { status: 'failed', run_tag: input.run_tag, sprint_dir: input.sprint_dir, verification };
+  if (verification) return { status: 'failed', run_tag: input.run_tag, sprint_dir: input.sprint_dir, verification, ...ganFields(input) };
   return null;
 }
 

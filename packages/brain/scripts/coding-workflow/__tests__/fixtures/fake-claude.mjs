@@ -165,11 +165,13 @@ function review() {
   const approve = mode === 'review-approve' || mode === 'review-outside'
     || (mode === 'review-until-fixed' && specText.includes(FIXED_MARK));
   const upstream = idList('SPEC_IDS').map((id) => `02-spec.md#${id}`);
+  // 合同对抗 v2 格式：## 评分（5 维）+ 阻断问题需带场景与依据；结论由程序判
+  const scores = (v) => `## 评分\n意图对齐: ${v}\n可验证: ${v}\n场景覆盖: ${v}\n回归风险: ${v}\n可执行: ${v}\n`;
   const body = mode === 'review-badformat'
     ? '# 评审\n\n看起来还行。\n'
     : approve
-      ? '# 评审\n\nverdict: APPROVE\n'
-      : '# 评审\n\nverdict: REVISE\n\n### R-1\n针对: S-1\nS-1 的验证方式只写了"测试通过"，需给出具体命令。\n';
+      ? `# 评审\n\n${scores(8)}`
+      : `# 评审\n\n${scores(5)}\n### R-1\n针对: S-1\n严重度: 阻断\n场景: QA 按 S-1 验收时没有可运行的命令，无法判断是否达成\n依据: S-1 只写了"测试通过"\nS-1 需给出具体命令。\n`;
   writeFile(field('REVIEW_PATH'), `${frontmatter('spec_review', upstream)}${body}`);
   if (mode === 'review-outside') fs.writeFileSync('stray.txt', 'out of scope\n');
 }
