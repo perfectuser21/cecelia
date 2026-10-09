@@ -1,7 +1,7 @@
 import unittest
 import xml.etree.ElementTree as E
 from native_price_phone import text_values, parse_hd_detail, extract_asin, price_candidates, validate_request, PhoneSession
-from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search, search_entry, amazon_seller, public_report, search_hd, initial_hd_result
+from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search, search_entry, amazon_seller, public_report, search_hd, initial_hd_result, airship_close_button
 
 def nodes(values, package='com.thehomedepot'):
     root=E.Element('hierarchy')
@@ -41,6 +41,12 @@ class NativePriceTests(unittest.TestCase):
         fake.hd_results=result
         with unittest.mock.patch('us_price_native_worker.search_hd',side_effect=AssertionError('unexpected cold restart')):
             self.assertEqual(initial_hd_result(fake,'DEWALT Cordless Drill Driver Kit AX1234'),result)
+    def test_only_explicit_airship_overlay_allows_unique_top_right_close(self):
+        ns=nodes(['','']);ns[0].set('class','com.urbanairship.android.layout.widget.WeightlessLinearLayout')
+        ns[1].set('class','android.widget.ImageButton');ns[1].set('clickable','true');ns[1].set('bounds','[1043,121][1200,278]')
+        self.assertIs(airship_close_button(ns),ns[1])
+        self.assertIsNone(airship_close_button(ns[1:]))
+        ns[1].set('bounds','[20,1400][100,1550]');self.assertIsNone(airship_close_button(ns))
     def test_attributes_not_itertext(self):
         self.assertEqual(text_values(nodes(['Brand drill','53132'])),['Brand drill','53132'])
     def test_hd_dynamic_model_id_and_prices_keep_context(self):
