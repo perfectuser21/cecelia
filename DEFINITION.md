@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.402.6
+**Brain 版本**: 1.402.8
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,15 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.402.8 — coding harness：QA 通过后 CI 修复改了代码须撤销通过、重新 QA 与裁判
+
+- 4ac5fa39 首跑发现：QA 与独立裁判通过后已开自动合并，此时 CI 修复再推代码改动会不经复验直接合并。现在 CI 修复推送后若 PR 已通过 QA 且改动不只是 changes/ 版本碎片 → 撤销通过（qa-<pr>.json revoked 留痕）、`gh pr merge --disable-auto` 关自动合并，新 head 在 CI 绿后重新过真人 QA 与独立裁判；只补版本碎片则保留通过。
+
+## Brain 1.402.7 — GET /api/brain/tasks/:id 与 /:id/chain 非法 id 返回 400，不再 500 泄露数据库报错
+
+- `GET /api/brain/tasks/:id`、`GET /api/brain/tasks/:id/chain`：id 不是合法 UUID（如 `not-a-uuid`、空格）时直接返回 400 说明格式不对，不再把 PG `invalid input syntax for type uuid` 原始报错以 500 透出；合法但不存在的 uuid 仍返回 404。
+- 预览实例显式 `SKIP_MIGRATIONS=false` 时执行迁移，修复预览实例连克隆旧库缺列导致 `/chain` 500。
 
 ## Brain 1.402.6 — coding harness 首跑修复：QA 门等必需检查全部登记、改 Brain 源码自动带版本碎片
 
