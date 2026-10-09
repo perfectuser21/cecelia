@@ -9,6 +9,7 @@ ROLE: spec_review
 TASK_ID: {{TASK_ID}}
 INTENT_PATH: {{INTENT_PATH}}
 SPEC_PATH: {{SPEC_PATH}}
+INVARIANTS_PATH: {{INVARIANTS_PATH}}
 REVIEW_PATH: {{REVIEW_PATH}}
 SPEC_IDS: {{SPEC_IDS}}
 PRIOR_OPEN: {{PRIOR_OPEN}}
@@ -22,11 +23,12 @@ USED_IDS: {{USED_IDS}}
 2. 若 PRIOR_OPEN 不是「无」：读 PREV_REVIEW_PATH（你上一轮的问题）和 PREV_RESPONSE_PATH（开发方逐条的采纳/驳回与理由），再看规格是否真的改了。
 3. 只写 REVIEW_PATH 这一个文件。
 
-## 只准提这四类问题
+## 只准提这五类问题
 1. **做了也达不到**：严格按规格实现，用户要的结果仍然出不来（验收条目对应的用户可见结果缺失或错误）。
 2. **漏了真实路径**：用户真的会走到、规格没覆盖的路径——出错、超时、重复操作、空输入、并发、中途中断、权限不足等。
 3. **偷换需求**：规格缩小、放宽或改写了验收条目（漏掉要求、换了验收对象、把"用户能看到"降成"函数返回"）。
 4. **弄坏现有功能**：改动会让现有调用方、数据或流程出错。
+5. **违反铁律**：按规格做会违反 INVARIANTS_PATH 里的某条铁律；或规格的 `## 铁律对照` 漏了与本改动明显相关的铁律、「不适用」的理由站不住。说明里写出铁律编号 INV-xxxxxxxx；`针对:` 写受影响的 S-n/Q-n。
 
 ## 每个问题必须带
 - `针对:` 涉及的 S-n / Q-n / I-n（逗号分隔）

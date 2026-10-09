@@ -3,7 +3,7 @@
 // script = {
 //   reviews: [{ scores: <数字|{维度:分}>, issues: [{id, targets, severity, scene, basis, body}], prior: [{id, status, reason}],
 //               raw: <直接写入的正文，模拟格式坏>, cost, tamper: <改 01>, outside: <越界写> }, ...]（超出取最后一条）,
-//   revise: { grow: <每轮往 02 末尾追加的行数>, response: '采纳'|'驳回', cost }
+//   revise: { grow: <每轮往 02 末尾追加的行数>, response: '采纳'|'驳回', cost, dropInvariants: 删掉 02 的铁律对照段 }
 // }
 // 每次运行在 stdout 输出一行 stream-json 的 result 事件（带 total_cost_usd），prompt 里的 PRIOR_OPEN 行原样回显到 FAKE_GAN_SEEN。
 import fs from 'node:fs';
@@ -49,6 +49,11 @@ if (role === 'spec_review') {
   fs.writeFileSync(field('RESPONSE_PATH'), ids.map((id) => `### ${id}\n处理: ${v.response ?? '采纳'}\n说明: 第 ${state.revise} 轮已处理`).join('\n\n') + '\n');
   const extra = Array.from({ length: v.grow ?? 1 }, (_, i) => `补充 r${state.revise}-${i}`).join('\n');
   fs.appendFileSync(field('SPEC_PATH'), `${extra}\n`);
+  // dropInvariants：改写时把 `## 铁律对照` 整段删掉（模拟开发方改合同时丢了铁律交代）
+  if (v.dropInvariants) {
+    const text = fs.readFileSync(field('SPEC_PATH'), 'utf8');
+    fs.writeFileSync(field('SPEC_PATH'), text.replace(/^## 铁律对照[\s\S]*?(?=^## |(?![\s\S]))/m, ''));
+  }
   result(v.cost);
 } else {
   console.error(`fake-claude-gan: unknown role ${role}`);

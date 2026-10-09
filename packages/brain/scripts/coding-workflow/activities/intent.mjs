@@ -1,11 +1,14 @@
-// intent 活动：GET Brain 任务 → 提取验收条目 → 写 <sprint_dir>/01-intent.md。
+// intent 活动：GET Brain 任务 → 提取验收条目 → 写 <sprint_dir>/01-intent.md；
+// 另拉全部 active 铁律写 01-invariants.md，供合同逐条对照（审计 P1 #3）。
 import fs from 'node:fs';
 import path from 'node:path';
 import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
 import { extractAcceptance, renderIntent } from '../lib/intent.mjs';
 import { sha256File } from '../lib/guards.mjs';
+import { renderInvariants, INVARIANTS_FILE } from '../lib/invariants.mjs';
 
 const INTENT_FILE = '01-intent.md';
+const INVARIANT_LIMIT = 1000;
 const DEFAULT_BRAIN_URL = 'http://localhost:5221';
 const FETCH_TIMEOUT_MS = 30000;
 
@@ -32,9 +35,22 @@ await runActivity(async (input) => {
   const items = extractAcceptance(task);
   if (items.length === 0) return fail('needs_human', 'acceptance_missing');
 
+  // 全部 active 铁律（审计 P1 #3）：拉不到不能当作没有铁律
+  let invariants;
+  try {
+    const res = await fetch(`${base}/api/brain/decisions?category=invariant&status=active&limit=${INVARIANT_LIMIT}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (!res.ok) return fail('retryable', 'invariants_unavailable', { evidence: [{ http_status: res.status }] });
+    const body = await res.json();
+    invariants = (Array.isArray(body) ? body : body?.data ?? []).filter((r) => r?.id && (r.status ?? 'active') === 'active');
+  } catch (error) {
+    log(`[intent] 拉铁律清单失败: ${error?.message || error}`);
+    return fail('retryable', 'invariants_unavailable');
+  }
+
   fs.mkdirSync(dir, { recursive: true });
   const intentPath = path.join(dir, INTENT_FILE);
   fs.writeFileSync(intentPath, renderIntent({ taskId, title: task?.title, items, description: task?.description }));
+  fs.writeFileSync(path.join(dir, INVARIANTS_FILE), renderInvariants(invariants));
 
   return {
     status: 'completed',

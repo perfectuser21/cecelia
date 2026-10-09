@@ -223,6 +223,12 @@ else {
   const sections = ids.map((id, i) => `${heading(i)}\n对应 ${id}：改 foo.js，验证 npm test\n`);
   // QA 场景：每个 I-n 一条（noqa 模式不写，模拟漏写）
   if (mode !== 'noqa') sections.push(`## QA 场景\n\n${ids.map((id, i) => `### Q-${i + 1}\n对应: ${id}\n操作: 用户按 ${id} 操作\n期望: 看到 ${id} 的结果\n`).join('\n')}`);
+  // 铁律对照：prompt 给了 INVARIANTS_PATH 且清单里有 INV-n 时逐条写不适用（noinv 模式不写，模拟漏写）
+  const invPath = field('INVARIANTS_PATH');
+  const invIds = invPath && fs.existsSync(invPath) ? [...fs.readFileSync(invPath, 'utf8').matchAll(/^### (INV-[0-9a-f]{8})/gm)].map((m) => m[1]) : [];
+  if (invIds.length > 0 && mode !== 'noinv') {
+    sections.push(`## 铁律对照\n\n${invIds.map((id) => `- ${id}：不适用：这条约束的是别的业务线，本改动不涉及`).join('\n')}\n`);
+  }
   const upstream = (mode === 'uncovered' ? ids.slice(0, 1) : ids).map((id) => `01-intent.md#${id}`);
   writeFile(field('SPEC_PATH'), `${frontmatter('spec', upstream)}# spec\n\n${sections.join('\n')}`);
   // outside：除合法 02-spec.md 外，再往 worktree 根（子进程 cwd）写一个越界文件
