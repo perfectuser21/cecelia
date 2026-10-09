@@ -44,6 +44,8 @@ function createApp() {
   return app;
 }
 
+const P1_UUID = '00000000-0000-4000-8000-000000000001';
+
 describe('task-projects routes', () => {
   let app;
 
@@ -106,7 +108,7 @@ describe('task-projects routes', () => {
   describe('GET /projects/:id', () => {
     it('returns 404 for non-existent project with lowercase error message', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
-      const res = await request(app).get('/projects/non-existent');
+      const res = await request(app).get('/projects/00000000-0000-4000-8000-000000000002');
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('project not found');
       // 404 响应不应包含 id 字段（统一格式）
@@ -116,19 +118,41 @@ describe('task-projects routes', () => {
     it('returns project by id from projects，附 children_count/completed_count', async () => {
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ id: 'p1', name: 'Project 1', title: 'Project 1', description: 'd', kr_id: 'kr-1' }],
+          rows: [{ id: P1_UUID, name: 'Project 1', title: 'Project 1', description: 'd', kr_id: 'kr-1' }],
         })
         .mockResolvedValueOnce({ rows: [{ total: 3, completed: 1 }] });
-      const res = await request(app).get('/projects/p1');
+      const res = await request(app).get(`/projects/${P1_UUID}`);
       expect(res.status).toBe(200);
-      expect(res.body.id).toBe('p1');
+      expect(res.body.id).toBe(P1_UUID);
       expect(res.body.children_count).toBe(3);
       expect(res.body.completed_count).toBe(1);
       const [sql] = mockPool.query.mock.calls[0];
       expect(sql).toContain('FROM projects');
       const [countSql, countParams] = mockPool.query.mock.calls[1];
       expect(countSql).toContain('project_id');
-      expect(countParams).toEqual(['p1']);
+      expect(countParams).toEqual([P1_UUID]);
+    });
+
+    // 回归：非法 id 曾让 async 处理函数 reject 后请求挂死（Express 4 不接 async 错误）
+    it('非法 id → 400 固定文案，不查库、不泄露数据库原文', async () => {
+      const res = await request(app).get('/projects/not-a-uuid');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid project id: must be a UUID');
+      expect(mockPool.query).not.toHaveBeenCalled();
+      expect(JSON.stringify(res.body)).not.toContain('invalid input syntax');
+    });
+
+    it('合法但不存在的 uuid → 404', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      const res = await request(app).get('/projects/00000000-0000-4000-8000-000000000000');
+      expect(res.status).toBe(404);
+    });
+
+    it('查库抛错 → 500，响应体不含错误原文', async () => {
+      mockPool.query.mockRejectedValueOnce(new Error('boom db detail'));
+      const res = await request(app).get('/projects/00000000-0000-4000-8000-000000000000');
+      expect(res.status).toBe(500);
+      expect(JSON.stringify(res.body)).not.toContain('boom db detail');
     });
   });
 

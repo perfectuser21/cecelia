@@ -17,6 +17,7 @@ import pool from '../db.js';
 import projectLocateRoutes from './project-locate-routes.js';
 
 const router = Router();
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // POST /projects — 新建（name 必填；kr_id 若给必须是真实 key_results）
 router.post('/', async (req, res) => {
@@ -230,22 +231,28 @@ router.use('/', projectLocateRoutes);
 // GET /projects/:id — 获取单个 project（title 兼容旧读方；附 children_count/completed_count）
 router.get('/:id', async (req, res) => {
   const { id } = req.params;
-  const result = await pool.query(
-    'SELECT *, name AS title FROM projects WHERE id = $1',
-    [id]
-  );
-  if (!result.rows[0]) return res.status(404).json({ error: 'project not found' });
-  const project = result.rows[0];
-  const counts = await pool.query(
-    `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'completed')::int AS completed
-       FROM tasks WHERE project_id = $1::uuid AND task_type <> 'project'`,
-    [id]
-  );
-  res.json({
-    ...project,
-    children_count: counts.rows[0]?.total ?? 0,
-    completed_count: counts.rows[0]?.completed ?? 0,
-  });
+  if (!UUID_RE.test(id)) return res.status(400).json({ error: 'Invalid project id: must be a UUID' });
+  try {
+    const result = await pool.query(
+      'SELECT *, name AS title FROM projects WHERE id = $1',
+      [id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'project not found' });
+    const project = result.rows[0];
+    const counts = await pool.query(
+      `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'completed')::int AS completed
+         FROM tasks WHERE project_id = $1::uuid AND task_type <> 'project'`,
+      [id]
+    );
+    res.json({
+      ...project,
+      children_count: counts.rows[0]?.total ?? 0,
+      completed_count: counts.rows[0]?.completed ?? 0,
+    });
+  } catch (err) {
+    console.error('[task-projects] GET /:id error:', err.message);
+    res.status(500).json({ error: 'Failed to get project' });
+  }
 });
 
 // PATCH /projects/:id/brief — 主会话直接改项目简报（棒2，决策 ee4842a6/3feeae3e）
