@@ -133,6 +133,24 @@ it('候选只在真实scratch冻结head消费者与地图，不激活任何旧cu
   expect(candidate.execution_status).toBe('unknown');expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
 });
 
+it('完整Factory候选在不含decisions的真实scratch重放冻结地图，保留决定锚点和全部旧current',async()=>{
+  const before=await registration.readExistingOpsRegistry(fixture.db);
+  await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256}));await factoryMap();
+  const baseline=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision});
+  const head=execFileSync('git',['rev-parse','HEAD^'],{cwd:root,encoding:'utf8'}).trim();
+  expect(head).not.toBe(revision);
+  // The official isolated importer intentionally omits central decision rows.
+  await fixture.db.query('ALTER TABLE decisions RENAME TO omitted_central_decisions');
+  const candidate=await buildPrImplementationSnapshot(fixture.db,baseline,head,root);
+  expect(candidate.status,JSON.stringify(candidate.gaps)).toBe('verified');
+  expect(candidate.revision).toBe(head);
+  expect(candidate.map.manifest.source_decision_id).toBe(baseline.map.manifest.source_decision_id);
+  expect(candidate.map.manifest.manifest.capabilities.every(n=>n.brain_binding.source_revision===head)).toBe(true);
+  expect(candidate.execution_status).toBe('unknown');
+  expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
+  expect((await fixture.db.query("SELECT to_regclass('decisions') id")).rows[0].id).toBeNull();
+});
+
 it('工厂冻结来源必须重核实际Git字节，重算外层digest也不能伪绑定或输入关系',async()=>{
   const before=await registration.readExistingOpsRegistry(fixture.db);
   await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256})); await factoryMap();
