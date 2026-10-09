@@ -1,5 +1,8 @@
 import {beforeEach,afterEach,it,expect} from 'vitest';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawnSync} from 'node:child_process';
+import {mkdtempSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {versionsDatabase} from '../fixtures/definition-versions-db.js';
@@ -72,8 +75,9 @@ it('真实PG同事务KR导出独立Factory companion，父UNKNOWN不被子verifi
 it('独立Factory身份/来源/schema/嵌套篡改即使重算外层hash仍拒绝',async()=>{
  await registered();const snapshot=await snapshotApi.exportImplementationSnapshot(fixture.db,query());
  expect(snapshot.admission_companion).toBeTruthy();
- for(const mutate of [c=>c.schema_version=2,c=>c.scope='foreign',c=>c.repo='attacker/repo',c=>c.revision='a'.repeat(40),c=>c.snapshot.canonical.references.pop(),c=>c.snapshot.admission_companion={}]){
+ for(const mutate of [c=>c.schema_version=2,c=>c.scope='foreign',c=>c.repo='attacker/repo',c=>c.revision='a'.repeat(40),c=>c.snapshot.canonical.references.pop(),c=>c.snapshot.admission_companion={},c=>c.snapshot.unverified_reference_ids.pop(),c=>c.snapshot.execution_status='verified',c=>c.snapshot.definitions.workflows[0].payload.coverage.status='verified',c=>c.snapshot.definitions.activities[0].payload.contract.executable=true]){
   const forged=structuredClone(snapshot);mutate(forged.admission_companion);
+  for(const row of [...forged.admission_companion.snapshot.definitions.workflows,...forged.admission_companion.snapshot.definitions.activities])row.payload_sha256=stepSha256({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload});
   rehash(forged.admission_companion.snapshot);
   const {companion_sha256,...body}=forged.admission_companion;forged.admission_companion.companion_sha256=stepSha256(body);rehash(forged);
   expect(()=>snapshotApi.validateImplementationSnapshot(forged)).toThrow();
@@ -84,4 +88,50 @@ it('旧single及Factory导出均不混其它scope，缺companion的显式joint�
  expect(factory).not.toHaveProperty('admission_companion');
  expect(snapshotApi.extractImplementationAdmissionSnapshots).toBeTypeOf('function');
  expect(()=>snapshotApi.extractImplementationAdmissionSnapshots(factory,['cecelia-kr','cecelia-factory'])).toThrow();
+});
+
+async function registerKr(){
+ const rootId=randomUUID(),cap=randomUUID(),workflow=randomUUID(),decision=randomUUID(),manifestId=randomUUID();
+ await fixture.db.query("INSERT INTO value_streams(id,name) VALUES($1,'公司KR')",[rootId]);
+ await fixture.db.query("INSERT INTO capabilities(id,name,parent_journey_id) VALUES($1,'KR测试能力',$2)",[cap,rootId]);
+ await fixture.db.query("INSERT INTO workflows(id,capability_id,key,name,channel,source_repo) VALUES($1,$2,'company_kr','KR','ops','perfectuser21/cecelia')",[workflow,cap]);
+ const payload={workflow_id:workflow,capability_id:cap,key:'company_kr',contract:{key:'company_kr'},activities:[]},source={repo:'perfectuser21/cecelia',path:'packages/brain/config/company-kr-workflow.json',commit:revision};
+ const row=(await fixture.db.query('INSERT INTO workflow_definition_versions(workflow_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',[workflow,payload,stepSha256({source,payload}),source.repo,source.path,revision,'a'.repeat(64)])).rows[0];
+ await fixture.db.query('UPDATE workflows SET current_definition_version_id=$2 WHERE id=$1',[workflow,row.id]);
+ const binding=(entity_type,entity_id)=>({entity_type,entity_id,source_repo:source.repo,source_revision:revision});
+ const manifest={scope_key:'cecelia-kr',schema_version:1,source_decision_id:decision,value_streams:[{key:'kr',brain_binding:binding('value_stream',rootId)}],capabilities:[{key:'KR',value_stream_key:'kr',brain_binding:binding('capability',cap)}]};
+ await fixture.db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','test','KR隔离测试','active')",[decision]);
+ await fixture.db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('cecelia-kr','cecelia-kr-source','legacy-ledger-v1',$1)",[{source_repo:source.repo}]);
+ await fixture.db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,'cecelia-kr',1,$2,$3,$4,'active',NOW())",[manifestId,decision,manifest,'a'.repeat(64)]);
+ await fixture.db.query("INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES('cecelia-kr',$1,$2,$3,'fixture',$2,'active',NOW())",[manifestId,'a'.repeat(64),{'cecelia-kr-source':revision}]);
+}
+it('真实PG双verified提取独立scope且不混定义，不改current或8refs',async()=>{
+ const before=await registered();await registerKr();
+ const snapshot=await snapshotApi.exportImplementationSnapshot(fixture.db,query());
+ expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
+ const extracted=snapshotApi.extractImplementationAdmissionSnapshots(snapshot,['cecelia-kr','cecelia-factory']);
+ expect(extracted.map(s=>s.scope)).toEqual(['cecelia-kr','cecelia-factory']);
+ expect(extracted[0].definitions.workflows).toHaveLength(1);
+ expect(extracted[1].definitions.workflows).toHaveLength(2);
+ const temp=mkdtempSync(join(tmpdir(),'admission-companion-cli-'));
+ try{
+  const input=join(temp,'head.json'),scopes=join(temp,'scopes.json'),output=join(temp,'out');
+  writeFileSync(input,JSON.stringify({snapshot}));writeFileSync(scopes,JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-factory']}));
+  const child=spawnSync(process.execPath,[join(root,'scripts/ci/implementation-pr-gate.mjs'),'--extract-scopes','--snapshot-file',input,'--scopes-file',scopes,'--side','head','--output-dir',output],{encoding:'utf8'});
+  expect(child.status,child.stderr).toBe(0);expect(child.stdout).toBe('admission_source_only: EXTRACTED\n');
+  for(const original of extracted)expect(JSON.parse(readFileSync(join(output,`head-${original.scope}.json`),'utf8'))).toEqual(original);
+ }finally{rmSync(temp,{recursive:true,force:true});}
+
+ expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
+ const legacy=structuredClone(snapshot);delete legacy.admission_companion;rehash(legacy);
+ expect(snapshotApi.extractImplementationAdmissionSnapshots(legacy,['cecelia-kr'])).toEqual([legacy]);
+ expect(()=>snapshotApi.extractImplementationAdmissionSnapshots(legacy,['cecelia-kr','cecelia-factory'])).toThrow();
+});
+it('子来源缺失保留UNKNOWN，legacy父verified仍可用，joint必须拒绝',async()=>{
+ await factoryMap();await registerKr();
+ const snapshot=await snapshotApi.exportImplementationSnapshot(fixture.db,query());
+ expect(snapshot.status).toBe('verified');expect(snapshot.admission_companion.snapshot.status).toBe('unknown');
+ expect(snapshotApi.validateImplementationSnapshot(snapshot)).toBe(snapshot);
+ expect(snapshotApi.extractImplementationAdmissionSnapshots(snapshot,['cecelia-kr'])).toEqual([snapshot]);
+ expect(()=>snapshotApi.extractImplementationAdmissionSnapshots(snapshot,['cecelia-kr','cecelia-factory'])).toThrow(/UNKNOWN/);
 });

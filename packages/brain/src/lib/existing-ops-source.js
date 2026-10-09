@@ -133,10 +133,16 @@ function legacyImpactRunnerProven(text,prText,gateText){
    ||job.env?.MODE!=="${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}"
    ||!job.steps?.some(step=>step.if===undefined&&typeof step.run==='string'&&hash(step.run)===LEGACY_IMPACT_GATE_SHA256))return false;
  const pr=ast(prText),gate=ast(gateText),fn=namedExport(pr,'runImplementationPrGate'),gateFn=namedExport(gate,'runImplementationGate');
- const statements=fn?.body.body.find(n=>n.type==='TryStatement')?.block.body;
+ const delegated=fn?.body.body.at(-1)?.type==='ReturnStatement'&&fn.body.body.at(-1).argument?.callee?.name==='implementationPrEvidence'&&literal(fn.body.body.at(-1).argument.arguments[1],true);
+ if(delegated&&fn.body.body.slice(0,-1).some(n=>n.type!=='IfStatement'||n.test?.type!=='MemberExpression'||n.test.object?.name!=='options'||!['multi','extractScopes'].includes(n.test.property?.name)))return false;
+ const caller=delegated?pr.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='implementationPrEvidence'):fn;
+ const statements=caller?.body.body.find(n=>n.type==='TryStatement')?.block.body;
  return namedImport(pr,'./implementation-gate.mjs',['runImplementationGate'])
    &&variableCall(statements,'receipt','runImplementationGate',true)
-   &&!statements.slice(0,-1).some(n=>nodes(n).some(x=>x.type==='ReturnStatement'))
+   &&!statements.slice(0,-1).some(n=>{
+     if(delegated&&n.type==='IfStatement'&&n.test?.type==='UnaryExpression'&&n.test.operator==='!'&&n.test.argument?.name==='execute'&&n.consequent?.type==='ReturnStatement')return false;
+     return nodes(n).some(x=>x.type==='ReturnStatement');
+   })
    &&variableCall(gateFn?.body.body,'assertions','runRegisteredAssertions',true)
    &&cliInvokes(pr,prText,'runImplementationPrGate');
 }
@@ -264,14 +270,19 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     requireProof(config && nativeTestSelectorProven(config), 'native_test_selector_unproven');
     requireProof(integrationConfig && nativeIntegrationConfigProven(integrationConfig), 'native_integration_config_unproven');
     // 老main没有新入口时保留旧证据；一旦入口存在，其真实条件流与所有依赖必须全部证明。
-    if(!tree.has(MULTI_ENTRY)&&tree.has(IMPACT_WORKFLOW)){
+    let multiWorkflow=false;
+    if(tree.has(IMPACT_WORKFLOW)){
+      const text=await readSource(IMPACT_WORKFLOW,revision);
+      multiWorkflow=workflowRuns(text).some(step=>hash(step.run)===IMPACT_GATE_SHA256);
+    }
+    if(!multiWorkflow&&tree.has(IMPACT_WORKFLOW)){
       const workflow=await read(IMPACT_WORKFLOW),prPath='scripts/ci/implementation-pr-gate.mjs',gatePath='scripts/ci/implementation-gate.mjs';
       const pr=await read(prPath),gate=await read(gatePath);
       requireProof(workflow&&pr&&gate&&legacyImpactRunnerProven(workflow,pr,gate),'legacy_impact_runner_unproven');
       relations.push({consumer_path:IMPACT_WORKFLOW,input_path:prPath,kind:'direct_admission_runner',revision},
         {consumer_path:prPath,input_path:gatePath,kind:'reachable_named_import_call',revision});
     }
-    if(tree.has(MULTI_ENTRY)){
+    if(multiWorkflow){
       const workflow=await read(IMPACT_WORKFLOW),entry=await read(MULTI_ENTRY),multi=await read(MULTI_SOURCE);
       const prPath='scripts/ci/implementation-pr-gate.mjs',gatePath='scripts/ci/implementation-gate.mjs';
       const pr=await read(prPath),gate=await read(gatePath);

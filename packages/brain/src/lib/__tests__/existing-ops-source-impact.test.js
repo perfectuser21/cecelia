@@ -2,6 +2,7 @@ import {it,expect} from 'vitest';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {readFileSync} from 'node:fs';
 import yaml from 'js-yaml';
 import {buildExistingOpsSources} from '../existing-ops-source.js';
 const root=fileURLToPath(new URL('../../../../../',import.meta.url));
@@ -113,4 +114,13 @@ it('同名局部函数冒充真实import不能提供可认领来源',async()=>{
 
 it('被声明的入口源字节缺失仍UNKNOWN，不保留成功绑定',async()=>{
  const f3=await build({[entry]:''});expect(f3.status).toBe('unknown');expect(f3.bindings).toEqual([]);
+});
+
+it('旧YAML真实单scope在已安装联合CLI时仍有来源，未运行的联合分支不冒Factory消费者',async()=>{
+ const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];
+ const overrides=new Map([[workflow,yaml.dump(doc)],...['scripts/ci/implementation-pr-gate.mjs',entry,multi].map(path=>[path,readFileSync(new URL(path,new URL('../../../../../',import.meta.url)),'utf8')])]);
+ const f3=(await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths:[...new Set([...paths,entry,multi])],readSource:async path=>overrides.get(path)??read(path)})).consumers[1];
+ expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
+ expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:'scripts/ci/implementation-pr-gate.mjs',kind:'direct_admission_runner'}));
+ expect(f3.input_relations.some(r=>r.kind==='conditional_pr_admission_runner')).toBe(false);
 });

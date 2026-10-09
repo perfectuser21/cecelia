@@ -11,10 +11,12 @@ import { collectAuxiliarySourceEvidence, auxiliaryOwnerPaths, applyAuxiliarySour
 import { ciFailure,validateImplementationSnapshot } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { canonicalRepoIdentity } from '../../packages/brain/src/lib/gp-assertion-command.js';
 import { readImplementationImpact } from '../../packages/brain/src/lib/implementation-impact.js';
+import * as snapshotApi from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
+import {runImplementationMultiPrGate,parseImplementationMultiArgs} from './implementation-multi-pr-gate.mjs';
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024}).trim();
 const read=path=>{const data=JSON.parse(readFileSync(path,'utf8'));return data.snapshot||data;};
 const save=(dir,name,data)=>writeFileSync(join(dir,name),JSON.stringify(data,null,2)+'\n');
-export async function runImplementationPrGate({repoRoot,scope,base,head,mode,snapshotBase,snapshotHead,outputDir}){
+async function implementationPrEvidence({repoRoot,scope,base,head,mode,snapshotBase,snapshotHead,outputDir},execute){
   mkdirSync(outputDir,{recursive:true});let scratch,worktree,headWorktree,parent;
   try{
     if(!['pr','main'].includes(mode)||typeof scope!=='string'||!scope||![base,head].every(v=>typeof v==='string'&&/^[0-9a-f]{40}$/.test(v)))throw ciFailure('INPUT_INVALID');
@@ -54,6 +56,7 @@ export async function runImplementationPrGate({repoRoot,scope,base,head,mode,sna
     report.ci_context={purpose:mode==='pr'?'admission_only':'release',base_snapshot_sha256:b.snapshot_sha256,head_snapshot_sha256:h.snapshot_sha256};
     applyGovernanceCoverage(report,collectGovernanceEvidence(repoRoot,report.source));
     save(outputDir,'report.json',report);
+    if(!execute)return {report};
     const receipt=await runImplementationGate({repoRoot,report});receipt.purpose=report.ci_context.purpose;
     save(outputDir,'receipt.json',receipt);
     if(receipt.verdict!=='PASS')throw ciFailure('REGRESSION_FAILED');
@@ -64,7 +67,30 @@ export async function runImplementationPrGate({repoRoot,scope,base,head,mode,sna
     try{for(const checkout of [worktree,headWorktree].filter(Boolean))git(repoRoot,'worktree','remove','--force',checkout);}finally{if(parent)rmSync(parent,{recursive:true,force:true});}
   }
 }
+// collector不是gate：保留真实UNKNOWN报告，供完整差异联合准入执行各自真实回归。
+export function collectImplementationPrEvidence(options){return implementationPrEvidence(options,false);}
+export async function runImplementationPrGate(options){
+  if(options.multi)return runImplementationMultiPrGate(options.multi);
+  if(options.extractScopes){
+    const {snapshotFile,scopesFile,side,outputDir}=options.extractScopes;
+    const request=JSON.parse(readFileSync(scopesFile,'utf8'));
+    if(!request||Object.keys(request).sort().join(',')!=='schema_version,scopes'||request.schema_version!==1||
+      JSON.stringify(request.scopes)!==JSON.stringify(['cecelia-kr','cecelia-factory']))throw ciFailure('ADMISSION_SCOPES_INVALID');
+    const snapshots=snapshotApi.extractImplementationAdmissionSnapshots(read(snapshotFile),request.scopes);
+    mkdirSync(outputDir,{recursive:true});
+    for(const snapshot of snapshots)save(outputDir,`${side}-${snapshot.scope}.json`,snapshot);
+    return {receipt:{purpose:'admission_source_only',verdict:'EXTRACTED'}};
+  }
+  return implementationPrEvidence(options,true);
+}
 function parseArgs(args){
+  if(args[0]==='--extract-scopes'){
+    const fields={'--snapshot-file':'snapshotFile','--scopes-file':'scopesFile','--side':'side','--output-dir':'outputDir'},options={};
+    for(let i=1;i<args.length;i+=2){if(!fields[args[i]]||!args[i+1]||options[fields[args[i]]])throw ciFailure('ADMISSION_EXTRACT_ARGUMENT_INVALID');options[fields[args[i]]]=args[i+1];}
+    if(Object.values(fields).some(k=>!options[k])||!['base','head'].includes(options.side))throw ciFailure('ADMISSION_EXTRACT_ARGUMENT_INVALID');
+    return {extractScopes:options};
+  }
+  if(args.includes('--scopes-file'))return {multi:parseImplementationMultiArgs(args)};
   const allowed={'--repo-root':'repoRoot','--scope':'scope','--base':'base','--head':'head','--mode':'mode','--snapshot-base':'snapshotBase','--snapshot-head':'snapshotHead','--output-dir':'outputDir'},options={};
   for(let i=0;i<args.length;i+=2){if(!allowed[args[i]]||!args[i+1]||options[allowed[args[i]]])throw ciFailure('ARGUMENT_INVALID');options[allowed[args[i]]]=args[i+1];}
   if(Object.values(allowed).some(k=>!options[k]))throw ciFailure('ARGUMENT_MISSING');
