@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { DATA_SOURCE, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
+import { DATA_SOURCE, buildTask, claimTask, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
 
 async function jsonRequest(base, path, method = 'GET', body, headers = {}) {
   const response = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
@@ -68,7 +68,7 @@ export async function main(args) {
   const requestBrain = (path, method, body) => jsonRequest(brain, '/api/brain' + path, method, body);
   let taskId = o.taskId;
   if (!taskId) {
-    const registered = await requestBrain('/tasks', 'POST', { title: `美国原生App比价：${o.keyword}`, description: `关键词=${o.keyword}；最多${o.count}SKU；ZIP=${o.zip}；两平台原生App；报价写Notion；小黄测试后恢复网络。`, task_type: 'task', priority: 'P1', lane: 'AI', status: 'queued', payload: { workflow: 'us-price-keyword', keyword: o.keyword, count: o.count, zip: o.zip, requested_model: o.model, repo_hint: 'cecelia', map_scope_hint: 'MJ5', network_approval_decision: '043693f2-c703-406b-96c6-90a0176eff0b' } });
+    const registered = await requestBrain('/tasks', 'POST', buildTask(o));
     taskId = registered.id ?? registered.task?.id;
     if (!taskId) throw new Error('Brain未返回任务ID，未派发');
   } else {
@@ -76,7 +76,7 @@ export async function main(args) {
     const task = existing.task ?? existing;
     if (['completed', 'cancelled'].includes(task.status)) throw new Error('不能重新派发已结束任务');
   }
-  await requestBrain(`/tasks/${taskId}`, 'PATCH', { status: 'in_progress' });
+  await claimTask(taskId, `us-price-keyword:${randomUUID()}`, requestBrain);
   const dir = join(homedir(), 'Library', 'Caches', 'cecelia-us-price', taskId);
   await mkdir(dir, { recursive: true, mode: 0o700 }); await chmod(dir, 0o700);
   const actor = 'OpenClaw/us-price-compare';

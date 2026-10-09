@@ -88,3 +88,11 @@ export async function saveQuotes(result, options, taskId, request, dataSource, v
   }
   return rows;
 }
+
+export function buildTask(o) {
+  return { title: `美国原生App比价：${o.keyword}`, description: `关键词=${o.keyword}；最多${o.count}SKU；ZIP=${o.zip}；两平台原生App；报价写Notion；小黄测试后恢复网络。`, task_type: 'research', priority: 'P1', lane: 'AI', status: 'queued', actor: 'OpenClaw/us-price-compare', source: 'us-price-keyword-cli', payload: { headed_manual: true, workflow: 'us-price-keyword', keyword: o.keyword, count: o.count, zip: o.zip, requested_model: o.model, network_approval_decision: '043693f2-c703-406b-96c6-90a0176eff0b' } };
+}
+export async function claimTask(taskId, owner, requestBrain) {
+  await requestBrain(`/tasks/${taskId}/claim`, 'POST', { claimer: owner, executor_kind: 'headed-session' });
+  await requestBrain(`/tasks/${taskId}`, 'PATCH', { status: 'in_progress' });
+}

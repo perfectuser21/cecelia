@@ -5,10 +5,10 @@ description: 在手机 Amazon US 与 Home Depot US 原生 App 按关键词查同
 
 输入关键词、美国五位 ZIP（默认53132）、SKU上限（默认3，范围1–3）。一次任务=一个关键词+一个ZIP+最多3个不同品牌/型号/规格组合，两平台每商品各一行报价。模型优先 openai/gpt-6-luna；仅明确模型不支持时降至 openai/gpt-6-sol。
 
-在安装有本仓库 CLI 的控制机调用：
+调度端/员工入口在控制机调用以下已部署入口；被 us-price-compare 派发的执行端仅按给定task_id采集并返回JSON，禁止再次调用CLI、创建替代任务或递归派发自己。
 
 ```bash
-node scripts/phone-rpa/us-price-keyword.mjs --keyword "cordless drill" --count 3 --zip 53132
+node /Users/administrator/openclaw-root/workspaces-root/clawd-us-price-compare/scripts/phone-rpa/us-price-keyword.mjs --keyword "cordless drill" --count 3 --zip 53132
 ```
 
 CLI负责先登记Brain、派发 us-price-compare、独立校验手机XML与截图、上传Notion附件、按任务/SKU/平台幂等写入并回读。未形成全部同规格跨平台配对时报告partial，保留已有有效报价，不能称整批完成。实际模型取provider回执，不采用模型自行声称。
