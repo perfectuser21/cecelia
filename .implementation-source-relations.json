@@ -41,6 +41,36 @@
       "owner_path": "packages/brain/src/lib/run-definition-binding.js",
       "path": "packages/brain/src/lib/__tests__/integration/run-definition-binding.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-parser-startup.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-registration.js",
+      "path": "packages/brain/src/__tests__/integration/existing-ops-registration.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/implementation-ci-snapshot.js",
+      "path": "packages/brain/src/lib/__tests__/implementation-definition-scope.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-snapshot.mjs",
+      "path": "changes/cp-10090608-existing-ops-trusted-host-bootstrap.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-registration.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-registration.test.js",
+      "role": "verification"
     }
   ]
 }
