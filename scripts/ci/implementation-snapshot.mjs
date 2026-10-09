@@ -19,7 +19,6 @@ import { DB_DEFAULTS } from '../../packages/brain/src/db-config.js';
 import { validateImplementationSnapshot,validateImplementationSnapshotForDatabase,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { runProjection } from '../../packages/brain/src/map/projector.js';
 import { digestMapManifest,validateMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
-import { scanRepo } from '../scan/scan-graph.mjs';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
 import { EXISTING_OPS_SCOPE,buildExistingOpsSources } from '../../packages/brain/src/lib/existing-ops-source.js';
 import { readExistingOpsRegistry,registerExistingOpsSources,prepareExistingOpsManifestAdvance } from '../../packages/brain/src/lib/existing-ops-registration.js';
@@ -296,6 +295,8 @@ async function scratchWorkspaceProof(db,revision,repoRoot,anchor){
 }
 
 async function scanFixedImplementationGraph(db,repo,root,revision,edges,sourceName){
+ // Frozen-definition readers do not need the scanner's root dependencies.
+ const {scanRepo}=await import('../scan/scan-graph.mjs');
  const staging=`ci-scan:${repo}`;
  const result=await scanRepo({name:staging,root:realpathSync(root),...(sourceName?{sourceName}:{})},db);
  if(result.error||result.skipped||result.sourceRevision!==revision)throw ciFailure('GRAPH_SCAN_FAILED',result.error?.message||'scan revision mismatch');
