@@ -20,8 +20,9 @@ export function validateSnapshotQuery(input){
 const json=value=>JSON.parse(JSON.stringify(value));
 const digest=value=>stepSha256(json(value));
 const companionParent = s => s.scope==='cecelia-kr'&&s.repo===EXISTING_OPS_REPO;
-const sameIds = (rows, expected) => Array.isArray(rows)&&rows.length===expected.length
-  &&new Set(rows.map(r=>r.id)).size===expected.length&&expected.every(id=>rows.some(r=>r.id===id));
+const exactIds = (actual,expected) => Array.isArray(actual)&&actual.length===expected.length
+  &&new Set(actual).size===expected.length&&expected.every(id=>actual.includes(id));
+const sameIds = (rows,expected) => Array.isArray(rows)&&exactIds(rows.map(r=>r.id),expected);
 /** Factory 完整来源证据始终不授予流程执行权限。 */
 function validateFactoryAdmission(snapshot){
   const registry=snapshot.consumer_registry;
@@ -44,14 +45,18 @@ function validateFactoryAdmission(snapshot){
     const workflow=snapshot.definitions.workflows.find(w=>w.workflow_id===identity.workflow_id);
     const activity=snapshot.definitions.activities.find(a=>a.activity_id===identity.activity_id);
     if(!workflow||!activity||workflow.payload.capability_id!==identity.capability_id
-      ||workflow.payload.coverage?.status!=='unknown'||workflow.payload.activities?.length!==1
+      ||workflow.payload.coverage?.status!=='unknown'
+      ||!exactIds(workflow.payload.coverage.verified_reference_ids,[identity.reference_id])
+      ||!exactIds(workflow.payload.coverage.unverified_reference_ids,identity.unverified_reference_ids)
+      ||workflow.payload.activities?.length!==1
       ||workflow.payload.activities[0].reference_id!==identity.reference_id
       ||workflow.payload.activities[0].activity_id!==identity.activity_id
       ||workflow.payload.activities[0].activity_version_id!==activity.id)
       throw ciFailure('COMPANION_FACTORY_DEFINITION_INVALID');
     for(const row of [workflow,activity])if(row.payload.definition_scope!=='consumer_evidence'
       ||row.payload.source_scope!==EXISTING_OPS_SCOPE||row.payload.registration_sha256!==registry_sha256
-      ||row.payload.contract?.executable!==false)throw ciFailure('COMPANION_FACTORY_EXECUTION_INVALID');
+      ||row.payload.contract?.executable!==false||row.payload.contract.key!==identity.workflow_key
+      ||row.payload.contract.definition_scope!=='consumer_evidence'||row.payload.contract.source_basis!=='fixed_git_tree')throw ciFailure('COMPANION_FACTORY_EXECUTION_INVALID');
   }
 }
 function validateAdmissionCompanion(parent){
