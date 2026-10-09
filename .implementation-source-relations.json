@@ -163,21 +163,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/brain/src/lib/definition-versions.js",
-      "path": "packages/brain/src/lib/__tests__/integration/implementation-ci-snapshot.test.js",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-snapshot.mjs",
-      "path": "packages/brain/src/lib/__tests__/integration/implementation-ci-snapshot.test.js",
-      "role": "verification"
-    },
-    {
-      "owner_path": "scripts/ci/registry-lint.mjs",
-      "path": "packages/brain/src/lib/__tests__/integration/implementation-ci-snapshot.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "scripts/ci/registry-lint.mjs",
       "path": "packages/brain/src/lib/__tests__/registry-lint.test.js",
       "role": "verification"
