@@ -1,8 +1,6 @@
-## Brain {VERSION} — 明确多领域来源的PR联合准入
+## Brain {VERSION} — 受信快照伴随来源驱动的联合PR入口
 
-- scripts/ci/implementation-pr-gate.mjs 保留默认单领域正式验收，新增只收集完整差异原生报告的接口；新 implementation-multi-pr-gate.mjs / implementation-multi-scope.mjs 按明确冻结来源生成联合准入证据。
-- 每个scope保留实际投影/定义/原生调用/回归；完整Git差异逐文件覆盖，foreign缺归属仅由另一领域真实原生闭包说明，图/owner/断言UNKNOWN保留。每领域固定测试真实执行，联合receipt不冒业务运行成功。
-- workflow新增可选 admission_scopes JSON版本1协议，默认6required inputs原样，只有显式PR联合admission；main仍原单领域release。scoped快照须同一正规main artifact内固定repo/SHA来源，未知快照不准入。
-- 辅助声明的完整batch保留各领域原始报告，跨领域只以同SHA/hash/role真实owner闭包验证共享manifest；独立来源收据不改变业务运行状态，投影篡改、缺owner与真实回归失败仍拒。
-- artifact下载单独兼容未定义可选环境字段的旧调用，空值保持single-scope；固定版本1条件gate字节不变，真实zip边界与缺artifact拒绝保留。
-- 泛用多领域协议测试与真实Factory consumer身份分离，永久证明未登记真实consumer的Factory范围保持UNKNOWN。
+- 自仓PR使用精确版本1 `cecelia-kr` / `cecelia-factory` 来源；新增可选输入保持原6个required输入，MODE/main单scope发布路径及固定8e54条件runner字节不变。
+- 官方snapshot-main仍只保存原head.json/base.json；PR下载同一正式main来源artifact后，通过已正规发布的pr-gate提取严格Factory companion，不请求不存在的head-scope文件、不把缺失或UNKNOWN变成联合准入。
+- 真下载shell调用真实受审CLI：缺companion保准确UNKNOWN且不产联合文件/PASS；PG十一项保全部原十项及实际PR/main条件shell回归，每scope固定回归独立运行。
+- 仅native KR/Brain同repo/revision来源组合受支持；Workspace跨repo伴随协议仍拒绝，不改consumer执行权限或中央current/status/refs。
