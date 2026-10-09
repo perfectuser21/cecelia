@@ -70,4 +70,187 @@ describe('GET /api/brain/enablers', () => {
     expect(sql).toMatch(/FROM warehouse_items/);
     expect(params).toEqual(['return_to_results']);
   });
+
+  // 技能工厂故障处置表（决策 1b469079）：运行时按依赖对象取片，要读到货架与 failure_semantics
+  it('返回 shelf 与 failure_semantics 两列', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    const { req, res } = mockReqRes({});
+    await handler('get', '/enablers')(req, res);
+    const [sql] = mockPool.query.mock.calls[0];
+    expect(sql).toMatch(/\bshelf\b/);
+    expect(sql).toMatch(/\bfailure_semantics\b/);
+  });
+
+  it('failure_semantics 列是 text：能解析成 JSON 就返回对象，否则原样返回', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [
+      { key: 'a', failure_semantics: '{"rows":[{"symptom":"x","class":"fatal"}]}' },
+      { key: 'b', failure_semantics: '旧的纯文本说明' },
+      { key: 'c', failure_semantics: null },
+    ] });
+    const { req, res } = mockReqRes({});
+    await handler('get', '/enablers')(req, res);
+    expect(res._data.enablers[0].failure_semantics).toEqual({ rows: [{ symptom: 'x', class: 'fatal' }] });
+    expect(res._data.enablers[1].failure_semantics).toBe('旧的纯文本说明');
+    expect(res._data.enablers[2].failure_semantics).toBeNull();
+  });
+
+  it('?keys=a,b 一次取多件（ANY 参数化）', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    const { req, res } = mockReqRes({ keys: 'device_lock, network ,' });
+    await handler('get', '/enablers')(req, res);
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(sql).toMatch(/key = ANY\(\$1\)/);
+    expect(params).toEqual([['device_lock', 'network']]);
+  });
+});
+
+describe('PATCH /api/brain/enablers/:key — 写故障处置', () => {
+  const valid = {
+    failure_semantics: {
+      rows: [
+        { symptom: '目标暂时没出来', class: 'retryable', wait_s: 5, retries: 3, before_retry: '下拉刷新', then: '按真的没有处理' },
+        { symptom: '页面写着暂无结果', class: 'empty_ok' },
+      ],
+    },
+  };
+
+  it('合法 → UPDATE warehouse_items SET failure_semantics 并返回该行', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ key: 'douyin_search', failure_semantics: JSON.stringify(valid.failure_semantics) }] });
+    const { req, res } = mockReqRes({});
+    req.params = { key: 'douyin_search' };
+    req.body = valid;
+    await handler('patch', '/enablers/:key')(req, res);
+    expect(res._status).toBe(200);
+    const [sql, params] = mockPool.query.mock.calls[0];
+    // 列类型是 text（生产库实测），按 JSON 文本存，不做 ::jsonb 转换
+    expect(sql).toMatch(/UPDATE warehouse_items\s+SET failure_semantics = \$1,/);
+    expect(sql).not.toMatch(/::jsonb/);
+    expect(res._data.failure_semantics).toEqual(valid.failure_semantics);
+    expect(sql).toMatch(/updated_at = NOW\(\)/);
+    expect(sql).toMatch(/WHERE key = \$2/);
+    expect(sql).toMatch(/RETURNING/);
+    expect(JSON.parse(params[0])).toEqual(valid.failure_semantics);
+    expect(params[1]).toBe('douyin_search');
+  });
+
+  it('分类不在四类里 → 400，不写库', async () => {
+    const { req, res } = mockReqRes({});
+    req.params = { key: 'douyin_search' };
+    req.body = { failure_semantics: { rows: [{ symptom: 'x', class: 'maybe' }] } };
+    await handler('patch', '/enablers/:key')(req, res);
+    expect(res._status).toBe(400);
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('缺 rows 数组或 symptom 为空 → 400', async () => {
+    for (const body of [{ failure_semantics: {} }, { failure_semantics: { rows: [{ class: 'fatal', symptom: '' }] } }, {}]) {
+      const { req, res } = mockReqRes({});
+      req.params = { key: 'k' };
+      req.body = body;
+      await handler('patch', '/enablers/:key')(req, res);
+      expect(res._status).toBe(400);
+    }
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('key 不存在 → 404', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    const { req, res } = mockReqRes({});
+    req.params = { key: 'nope' };
+    req.body = valid;
+    await handler('patch', '/enablers/:key')(req, res);
+    expect(res._status).toBe(404);
+  });
+
+  it('写接口挂了内部鉴权中间件', () => {
+    const layer = routes.stack.find((l) => l.route && l.route.path === '/enablers/:key' && l.route.methods.patch);
+    expect(layer.route.stack.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('POST /api/brain/enablers — 新建仓库物件', () => {
+  const body = {
+    key: 'network', name: '网络', kind: 'infra', shelf: 'external_dependency', description: '手机与执行机的网络',
+    failure_semantics: { rows: [{ symptom: '网络慢 / 转圈', class: 'retryable', wait_s: 10, retries: 3 }] },
+  };
+
+  it('合法 → INSERT ... ON CONFLICT (key) DO NOTHING RETURNING，201', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ key: 'network', failure_semantics: JSON.stringify(body.failure_semantics) }] });
+    const { req, res } = mockReqRes({});
+    req.body = body;
+    await handler('post', '/enablers')(req, res);
+    expect(res._status).toBe(201);
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(sql).toMatch(/INSERT INTO warehouse_items \(key, name, kind, shelf, description, owner, impl_ref, failure_semantics\)/);
+    expect(sql).toMatch(/ON CONFLICT \(key\) DO NOTHING/);
+    expect(sql).toMatch(/RETURNING/);
+    expect(params.slice(0, 4)).toEqual(['network', '网络', 'infra', 'external_dependency']);
+    expect(JSON.parse(params[7])).toEqual(body.failure_semantics);
+    expect(res._data.failure_semantics).toEqual(body.failure_semantics);
+  });
+
+  it('key 已存在 → 409', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    const { req, res } = mockReqRes({});
+    req.body = body;
+    await handler('post', '/enablers')(req, res);
+    expect(res._status).toBe(409);
+  });
+
+  it('不带 failure_semantics 也能建，存 null', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ key: 'adb' }] });
+    const { req, res } = mockReqRes({});
+    req.body = { key: 'adb', name: 'adb 通道', kind: 'infra', shelf: 'infrastructure' };
+    await handler('post', '/enablers')(req, res);
+    expect(res._status).toBe(201);
+    expect(mockPool.query.mock.calls[0][1][7]).toBeNull();
+  });
+
+  it('shelf / kind 不在表约束内、key 格式不对、缺 name、处置表不合法 → 400，不写库', async () => {
+    const bad = [
+      { ...body, shelf: 'whatever' },
+      { ...body, kind: 'thing' },
+      { ...body, key: 'Bad Key' },
+      { ...body, name: '' },
+      { ...body, failure_semantics: { rows: [{ symptom: 'x', class: 'maybe' }] } },
+    ];
+    for (const b of bad) {
+      const { req, res } = mockReqRes({});
+      req.body = b;
+      await handler('post', '/enablers')(req, res);
+      expect(res._status).toBe(400);
+    }
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('写接口挂了内部鉴权中间件', () => {
+    const layer = routes.stack.find((l) => l.route && l.route.path === '/enablers' && l.route.methods.post);
+    expect(layer.route.stack.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('GET /api/brain/activity_uses', () => {
+  it('?activity_id= 取该 Activity 依赖的仓库物件（带 key 与 failure_semantics）', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ item_key: 'device_lock', role: 'uses' }] });
+    const id = '11111111-2222-3333-4444-555555555555';
+    const { req, res } = mockReqRes({ activity_id: id });
+    await handler('get', '/activity_uses')(req, res);
+    expect(res._status).toBe(200);
+    expect(res._data.uses).toHaveLength(1);
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(sql).toMatch(/FROM activity_uses/);
+    expect(sql).toMatch(/JOIN warehouse_items/);
+    expect(sql).toMatch(/failure_semantics/);
+    expect(sql).toMatch(/activity_id = \$1/);
+    expect(params).toEqual([id]);
+  });
+
+  it('activity_id 缺失或非 uuid → 400', async () => {
+    for (const q of [{}, { activity_id: 'x' }]) {
+      const { req, res } = mockReqRes(q);
+      await handler('get', '/activity_uses')(req, res);
+      expect(res._status).toBe(400);
+    }
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
 });
