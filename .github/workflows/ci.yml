@@ -789,8 +789,10 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null \
             | grep -E '^packages/brain/.+\.(js|ts|cjs|mjs)$' || true)
           if [ -z "$CHANGED" ]; then
-            echo "mode=skip" >> $GITHUB_OUTPUT
-            echo "⏭️  PR 无 brain 源/测试变更（仅 engine/其他），跳过 brain-unit shard"
+            # 不能整片跳过：fs 读取型守卫测试会读 workflow/脚本等 brain 以外的文件
+            # （#6168 只改 ci.yml，walking-ci-owner 漏跑致 main 红，任务 a3e63245）
+            echo "mode=guards" >> $GITHUB_OUTPUT
+            echo "🛡️  PR 无 brain 源/测试变更 — 只跑 fs 读取型守卫组"
           else
             echo "mode=changed" >> $GITHUB_OUTPUT
             TOTAL=$(echo "$CHANGED" | wc -l | tr -d ' ')
@@ -835,9 +837,12 @@ jobs:
             fi
             return 0
           }
-          if [ "${{ steps.scope.outputs.mode }}" = "changed" ]; then
-            # 快路：import 依赖图命中的测试
-            run_vitest changed "coverage/shard-$SHARD" --changed origin/${{ github.base_ref }} || exit $?
+          MODE="${{ steps.scope.outputs.mode }}"
+          if [ "$MODE" = "changed" ] || [ "$MODE" = "guards" ]; then
+            # 快路：import 依赖图命中的测试（guards 模式无 brain 变更，不跑）
+            if [ "$MODE" = "changed" ]; then
+              run_vitest changed "coverage/shard-$SHARD" --changed origin/${{ github.base_ref }} || exit $?
+            fi
             # 守卫组：fs 读取型测试强制全跑（第二次独立调用，无 --changed）。
             # 独立 coverage 目录避免覆盖 shard-1 主 lcov（diff-cover 依赖后者）。
             GUARDS=$(bash "$GITHUB_WORKSPACE/.github/workflows/scripts/list-fs-guard-tests.sh" src/__tests__ | tr '\n' ' ')
