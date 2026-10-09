@@ -34,7 +34,7 @@ class NativePriceTests(unittest.TestCase):
         calls=[]
         def runner(args, **kwargs):
             calls.append(args)
-            if 'with-lock' in args: return '{"raw_quotes":[],"network_restored":true,"home_verified":true}'
+            if 'with-lock' in args: return 'lock=acquired\n{"raw_quotes":[],"network_restored":true,"home_verified":true}\nlock=released'
             if 'lock-status' in args:return 'lock=free'
             return 'state=device call_state=idle foreground=com.hihonor.android.launcher'
         result=dispatch({'keyword':'drill','zip':'53132','count':1,'owner':'owner'},runner)
