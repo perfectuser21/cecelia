@@ -1,0 +1,15 @@
+{
+  "source": "PR #6139（任务 4ac5fa39）首个代码 head aa662ea5 的真实必需检查登记时序，取自 GitHub check-runs API（started_at/completed_at）。runner 13:29:48 在只登记出 Harness 门时开了 QA——本回放用于防止复发。",
+  "required_contexts": ["ci-passed", "Harness V5 Gate Passed", "Smoke Glob Runner Passed"],
+  "checks": {
+    "Harness V5 Gate Passed": { "started_at": "2026-10-09T13:24:57Z", "completed_at": "2026-10-09T13:25:00Z", "conclusion": "success" },
+    "Smoke Glob Runner Passed": { "started_at": "2026-10-09T13:32:24Z", "completed_at": "2026-10-09T13:32:28Z", "conclusion": "failure" },
+    "ci-passed": { "started_at": "2026-10-09T13:32:42Z", "completed_at": "2026-10-09T13:32:45Z", "conclusion": "failure" }
+  },
+  "ticks": [
+    { "at": "2026-10-09T13:24:40Z", "note": "PR 刚开，必需检查都没登记", "expect": "wait" },
+    { "at": "2026-10-09T13:29:48Z", "note": "首跑实际开 QA 的时刻：只登记出 Harness 门（绿）", "expect": "wait" },
+    { "at": "2026-10-09T13:32:30Z", "note": "Smoke 已红，ci-passed 仍未登记", "expect": "wait" },
+    { "at": "2026-10-09T13:34:50Z", "note": "三项都已登记：ci-passed 红", "expect": "ci_fix" }
+  ]
+}
