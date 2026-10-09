@@ -16,7 +16,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import { readFileSync,realpathSync,mkdtempSync,rmSync } from 'node:fs';
 import { DB_DEFAULTS } from '../../packages/brain/src/db-config.js';
-import { validateImplementationSnapshot,validateImplementationSnapshotForDatabase,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
+import { validateImplementationSnapshot,validateImplementationSnapshotForDatabase,implementationSourceOwners,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { runProjection } from '../../packages/brain/src/map/projector.js';
 import { digestMapManifest,validateMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
@@ -60,6 +60,8 @@ async function insertRow(db,table,row,{immutable=false,preserve=[]}={}){
     ON CONFLICT(${identity.join(',')}) DO ${immutable?'NOTHING':`UPDATE SET ${update}`}`,[JSON.stringify(row)]);
 }
 export async function importImplementationSnapshot(db,input){
+  const actual=(await db.query('SELECT current_database() name')).rows[0]?.name;
+  if(!isImplementationScratchDatabase(actual))throw ciFailure('SCRATCH_REQUIRED');
   const s=await validateImplementationSnapshotForDatabase(db,input);
   if(s.status!=='verified'||s.gaps.length)throw ciFailure('SNAPSHOT_UNKNOWN',JSON.stringify(s.gaps));
   await db.query('BEGIN');
@@ -67,6 +69,14 @@ export async function importImplementationSnapshot(db,input){
     for(const row of s.canonical.areas)await insertRow(db,'areas',row);
     for(const row of s.canonical.journeys)await insertRow(db,row.parent_journey_id==null?'value_streams':'capabilities',row);
     for(const row of s.canonical.workflows)await insertRow(db,'workflows',{...row,current_definition_version_id:null},{preserve:s.scope===EXISTING_OPS_SCOPE?['current_definition_version_id']:[]});
+    for(const row of implementationSourceOwners(s).filter(w=>!s.canonical.workflows.some(c=>c.id===w.id))){
+      // 隔离库可保留base历史版本，但退役取源owner不得保留current执行入口。
+      const previous=(await db.query('SELECT * FROM workflows WHERE id=$1',[row.id])).rows[0];
+      if(previous&&['key','capability_id','source_repo','source_path','source_capability','source_workflow'].some(k=>previous[k]!==row[k]))
+        throw ciFailure('SOURCE_REGISTRY_IMPORT_CONFLICT');
+      await insertRow(db,'workflows',{...row,current_definition_version_id:null});
+      await db.query('UPDATE workflow_activity_refs SET active=false WHERE workflow_id=$1 AND active',[row.id]);
+    }
     for(const row of s.canonical.activities)await insertRow(db,'activities',{...row,current_definition_version_id:null},{preserve:s.scope===EXISTING_OPS_SCOPE?['current_definition_version_id']:[]});
     for(const row of s.canonical.steps)await insertRow(db,'steps',row);
     for(const row of s.definitions.activities)await insertRow(db,'activity_definition_versions',row,{immutable:true});
@@ -155,8 +165,8 @@ async function verifyGeneratedSource(s,repoRoot){
   const path='product-map/generated/contracts.json';
   const read=path=>execFileSync('git',['show',`${s.revision}:${path}`],{cwd:repoRoot,encoding:'utf8',stdio:['ignore','pipe','pipe']});
   let text;try{text=read(path);}catch{return s;}
-  const digest=JSON.parse(text),owners=s.canonical.workflows;
-  const plans=await loadActivityContracts(owners,digest,read,owners);
+  const digest=JSON.parse(text),owners=implementationSourceOwners(s);
+  const plans=await loadActivityContracts(s.canonical.workflows,digest,read,owners);
   for(const plan of plans){
     const version=s.definitions.workflows.find(w=>w.workflow_id===plan.workflow.id);
     if(!version||version.contract_sha256!==stepSha256(plan.contract))throw ciFailure('GENERATED_SOURCE_MISMATCH','固定定义与generated声明来源不同');

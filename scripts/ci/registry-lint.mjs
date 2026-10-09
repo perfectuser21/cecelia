@@ -1,8 +1,14 @@
 /** 注册lint只认中央UUID与固定声明，新增身份缺登记时给定位缺口。 */
 import { canonicalJson } from '../../packages/brain/scripts/sync-steps-from-workspace.mjs';
+import {implementationSourceOwners} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 export function lintImplementationRegistry(snapshot,plans,digest){
   const gaps=[],gap=(code,details)=>gaps.push({code,...details});
-  for(const capability of Object.keys(digest.capabilities||{}))if(!snapshot.canonical.workflows.some(w=>w.source_capability===capability))gap('workflow_registration_missing',{capability});
+  const owners=snapshot.source_registry?implementationSourceOwners(snapshot):snapshot.canonical.workflows;
+  // digest也包含未消费的历史契约；只核本scope实际编译的目标及其活动来源。
+  const capabilities=new Set(plans.flatMap(p=>[p.workflow.source_capability,...p.activities.map(a=>a.activity.from)]).filter(Boolean));
+  for(const capability of capabilities)if(!owners.some(w=>w.source_capability===capability))gap('workflow_registration_missing',{capability});
+  for(const plan of plans)if(!snapshot.canonical.workflows.some(w=>w.id===plan.workflow.id))
+    gap('workflow_registration_missing',{workflow_id:plan.workflow.id,capability:plan.workflow.source_capability});
   for(const plan of plans)for(const item of plan.activities){
     const a=item.activity,identity=`${a.from}.${a.key}`;
     const registered=snapshot.canonical.activities.filter(r=>r.capability_key===a.from&&r.activity_key===a.key);

@@ -25,6 +25,62 @@ const crossCompanionParent = s => s.scope==='zenithjoy'&&s.repo===CONTRACT_REPO;
 const exactIds = (actual,expected) => Array.isArray(actual)&&actual.length===expected.length
   &&new Set(actual).size===expected.length&&expected.every(id=>actual.includes(id));
 const sameIds = (rows,expected) => Array.isArray(rows)&&exactIds(rows.map(r=>r.id),expected);
+const SOURCE_OWNER_FIELDS=['id','key','name','channel','capability_id','status','source_repo','source_path','source_capability','source_workflow'];
+const sourceOwner=row=>Object.fromEntries(SOURCE_OWNER_FIELDS.map(k=>[k,row[k]]));
+function sourceOwnerRequirements(definitions){
+  return definitions.filter(w=>w.payload.contract?.contract_key).map(w=>({
+    capability:w.payload.contract.capability,capability_id:w.payload.capability_id,
+  }));
+}
+function freezeSourceRegistry(q,definitions,workflows,gap){
+  const needs=sourceOwnerRequirements(definitions);
+  if(q.repo!==CONTRACT_REPO||q.scope===EXISTING_OPS_SCOPE||!needs.length)return null;
+  const owners=[];
+  for(const need of needs){
+    const matches=workflows.filter(w=>w.source_capability===need.capability);
+    const owner=matches.length===1?matches[0]:null;
+    if(!owner||owner.source_repo!==q.repo||owner.capability_id!==need.capability_id
+      ||owner.source_path!==`product-map/contracts/${need.capability}.yaml`
+      ||(!definitions.some(w=>w.workflow_id===owner.id)&&owner.status!=='retired')){
+      gap('definition_source_owner_unknown',need);return null;
+    }
+    if(!owners.some(w=>w.id===owner.id))owners.push(sourceOwner(owner));
+  }
+  return {schema_version:1,purpose:'definition_source_only',repo:q.repo,workflows:owners.sort((a,b)=>a.id.localeCompare(b.id))};
+}
+/** 只带取源归属；不能把退役owner升级为canonical或执行定义。 */
+function validateSourceRegistry(s){
+  const needs=sourceOwnerRequirements(s.definitions.workflows),registry=s.source_registry;
+  if(!registry){
+    if(needs.length&&s.repo===CONTRACT_REPO&&s.scope!==EXISTING_OPS_SCOPE
+      &&!(s.status==='unknown'&&s.gaps.some(g=>g.code==='definition_source_owner_unknown')))
+      throw ciFailure('SOURCE_REGISTRY_MISSING');
+    return;
+  }
+  if(s.repo!==CONTRACT_REPO||s.scope===EXISTING_OPS_SCOPE||!needs.length
+    ||Object.keys(registry).sort().join(',')!=='purpose,repo,schema_version,workflows'
+    ||registry.schema_version!==1||registry.purpose!=='definition_source_only'||registry.repo!==s.repo
+    ||!Array.isArray(registry.workflows)||new Set(registry.workflows.map(w=>w.id)).size!==registry.workflows.length)
+    throw ciFailure('SOURCE_REGISTRY_INVALID');
+  for(const owner of registry.workflows){
+    const canonical=s.canonical.workflows.find(w=>w.id===owner.id);
+    if(Object.keys(owner).sort().join(',')!==[...SOURCE_OWNER_FIELDS].sort().join(',')
+      ||!SOURCE_OWNER_FIELDS.every(k=>typeof owner[k]==='string'&&owner[k].length>0)
+      ||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(owner.id)
+      ||!/^[\w-]+$/.test(owner.source_capability)||owner.source_repo!==s.repo
+      ||owner.source_path!==`product-map/contracts/${owner.source_capability}.yaml`
+      ||!needs.some(n=>n.capability===owner.source_capability&&n.capability_id===owner.capability_id)
+      ||!s.canonical.journeys.some(j=>j.id===owner.capability_id&&j.parent_journey_id!=null)
+      ||(canonical?digest(sourceOwner(canonical))!==digest(owner):owner.status!=='retired'))
+      throw ciFailure('SOURCE_REGISTRY_OWNER_INVALID');
+  }
+  for(const need of needs)if(registry.workflows.filter(w=>w.source_capability===need.capability&&w.capability_id===need.capability_id).length!==1)
+    throw ciFailure('SOURCE_REGISTRY_OWNER_INVALID');
+}
+export function implementationSourceOwners(s){
+  validateSourceRegistry(s);
+  return [...s.canonical.workflows,...(s.source_registry?.workflows||[]).filter(w=>!s.canonical.workflows.some(c=>c.id===w.id))];
+}
 /** Factory 完整来源证据始终不授予流程执行权限。 */
 function validateFactoryAdmission(snapshot){
   const registry=snapshot.consumer_registry;
@@ -143,6 +199,7 @@ function validateSnapshot(snapshot,admissionScope={allowScratch:false}){
       stepSha256({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload})!==row.payload_sha256)
       throw ciFailure('DEFINITION_DIGEST_MISMATCH');
   }
+  validateSourceRegistry(snapshot);
   if(Object.hasOwn(snapshot,'admission_companion'))validateAdmissionCompanion(snapshot,admissionScope);
   return snapshot;
 }
@@ -219,8 +276,12 @@ export async function readImplementationSnapshotInTransaction(db,q){
   if(manifest&&!manifestMatchesImplementationSource(manifest.manifest,anchor.repo,anchor.revision))gap('manifest_source_mismatch',{revision:anchor.revision});
   if(!manifest)gap('scope_manifest_missing',{scope:q.scope,revision:q.revision});
   const capabilityIds=[...new Set(selected.map(w=>w.payload.capability_id))];
+  // scope地图保留已退役能力；核实其规范身份，不把它们加入Workflow执行闭包。
+  const mapCapabilityIds=(manifest?.manifest?.capabilities||[]).map(n=>n.brain_binding)
+    .filter(b=>b?.entity_type==='capability'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(b.entity_id||''))
+    .map(b=>b.entity_id);
   const journeys=(await db.query(`WITH RECURSIVE chain AS(SELECT * FROM ${TREE_NODES_SQL} n WHERE id=ANY($1::uuid[])
-    UNION SELECT j.* FROM ${TREE_NODES_SQL} j JOIN chain c ON j.id=c.parent_journey_id) SELECT * FROM chain ORDER BY id`,[capabilityIds])).rows;
+    UNION SELECT j.* FROM ${TREE_NODES_SQL} j JOIN chain c ON j.id=c.parent_journey_id) SELECT * FROM chain ORDER BY id`,[[...new Set([...capabilityIds,...mapCapabilityIds])]])).rows;
   const mapped=new Set();
   for(const node of manifest?.manifest?.capabilities||[]){
     const b=node.brain_binding;
@@ -239,7 +300,8 @@ export async function readImplementationSnapshotInTransaction(db,q){
     try{validateExistingOpsRegistry(consumerRegistry);}catch{gap('factory_registry_identity_invalid');}
     if([...selected,...activities].some(w=>w.payload.registration_sha256!==consumerRegistry.registry_sha256))gap('factory_registry_changed');
   }
-  const body=json({schema_version:1,...q,...(crossRequested?{registry_source:crossConsumer?anchor:{repo:EXISTING_OPS_REPO,revision:null},source_set:sourceSet||[]}:{}),status:gaps.length?'unknown':'verified',gaps,
+  const sourceRegistry=freezeSourceRegistry(q,selected,workflows,gap);
+  const body=json({schema_version:1,...q,...(sourceRegistry?{source_registry:sourceRegistry}:{}),...(crossRequested?{registry_source:crossConsumer?anchor:{repo:EXISTING_OPS_REPO,revision:null},source_set:sourceSet||[]}:{}),status:gaps.length?'unknown':'verified',gaps,
     ...(factory?{snapshot_scope:'consumer_evidence',execution_status:'unknown',consumer_registry:consumerRegistry,unverified_reference_ids:EXISTING_OPS_IDENTITIES.flatMap(i=>i.unverified_reference_ids)}:{}),
     canonical:{areas,journeys,workflows:workflows.filter(w=>workflowIds.includes(w.id)),activities:canonicalActivities,steps,references},
     definitions:{workflows:selected,activities},map:{manifest,repositories,source_basis:manifestBasis},assertion_source:'current_registration',assertions});

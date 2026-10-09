@@ -6,17 +6,35 @@ beforeEach(()=>expect(exportImplementationSnapshot,'固定CI快照服务必须�
 import { readFileSync } from 'node:fs';
 import { SLIM_RULES } from '../../../db-slim-rules.js';
 import {stepSha256} from '../../../../scripts/sync-steps-from-workspace.mjs';
+import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {execFileSync} from 'node:child_process';
+import yaml from 'js-yaml';
+import {createImplementationScratch,importImplementationSnapshot,verifySnapshotSource} from '../../../../../../scripts/ci/implementation-snapshot.mjs';
+import {lintImplementationRegistry} from '../../../../../../scripts/ci/registry-lint.mjs';
+import {loadActivityContracts} from '../../activity-contract-loader.js';
+import {implementationSourceOwners} from '../../implementation-ci-snapshot.js';
+import {syncActivityContracts} from '../../../activity-contract-sync.js';
 let fixture;
-it('新契约固定导出保留退役owner取源元数据，不将旧流程加入执行定义闭包',async()=>{
+async function generatedOwnerFixture(){
   fixture=await implementationImpactDatabase();const {db,contracts}=fixture;
   const old=(await db.query('SELECT * FROM workflows WHERE id=$1',[fixture.ids.keyword])).rows[0];
   await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[old.id]);
+  await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[fixture.ids.benchmark]);
   const fresh=randomUUID();
   await db.query(`INSERT INTO workflows(id,capability_id,key,name,channel,status,source_repo,source_path,source_capability,source_workflow)
     VALUES($1,$2,'douyin_video_discovery','新发现','douyin','paused',$3,'product-map/contracts/douyin_video_discovery.yaml','douyin_video_discovery','video-discovery')`,[fresh,old.capability_id,IMPACT_REPO]);
   contracts.docs.douyin_video_discovery={contract_key:'douyin_video_discovery',capability:'keyword_acquisition',workflow:'video-discovery',
     activities:contracts.docs.keyword_acquisition.activities.map(a=>({ref:`keyword_acquisition.${a.key}`}))};
-  await fixture.sync('b'.repeat(40));await fixture.graph('b'.repeat(40));await fixture.map('b'.repeat(40));
+  await fixture.sync('b'.repeat(40));
+  await syncActivityContracts(db,{...contracts,synchronizeSteps:true,readBinding:async()=> 'export const controller=true;\n',
+    fetchFn:async(...args)=>String(args[0]).includes('/commits/main')?{ok:true,text:async()=> 'b'.repeat(40)}:contracts.fetchFn(...args)});
+  await fixture.graph('b'.repeat(40));await fixture.map('b'.repeat(40));
+  return {old,fresh};
+}
+it('新契约固定导出保留退役owner取源元数据，不将旧流程加入执行定义闭包',async()=>{
+  const {old}=await generatedOwnerFixture();const {db}=fixture;
   const before=(await db.query('SELECT id,status,current_definition_version_id FROM workflows ORDER BY id')).rows;
   const snapshot=await exportImplementationSnapshot(db,{...query,revision:'b'.repeat(40)});
   expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
@@ -26,10 +44,28 @@ it('新契约固定导出保留退役owner取源元数据，不将旧流程加�
     workflows:[{id:old.id,status:'retired',source_capability:'keyword_acquisition'}]});
   expect(snapshot.source_registry.workflows[0]).not.toHaveProperty('current_definition_version_id');
   expect(validateImplementationSnapshot(snapshot)).toBe(snapshot);
-  const forged=structuredClone(snapshot);forged.source_registry.workflows[0].status='active';
-  const {snapshot_sha256:_sha,...body}=forged;forged.snapshot_sha256=stepSha256(body);
-  expect(()=>validateImplementationSnapshot(forged)).toThrow();
+  const plans=await loadActivityContracts(snapshot.canonical.workflows,fixture.contracts.digest,
+    async path=>yaml.dump(fixture.contracts.docs[path.match(/contracts\/(\w+)\.yaml/)[1]]),implementationSourceOwners(snapshot));
+  expect(lintImplementationRegistry(snapshot,plans,fixture.contracts.digest).gaps).toEqual([]);
+  for(const mutate of [s=>s.source_registry.workflows[0].status='active',s=>s.source_registry.workflows[0].current_definition_version_id=randomUUID(),
+    s=>s.source_registry.workflows.push({...s.source_registry.workflows[0]}),s=>s.source_registry.repo='perfectuser21/cecelia',s=>delete s.source_registry]){
+    const forged=structuredClone(snapshot);mutate(forged);
+    const {snapshot_sha256:_sha,...body}=forged;forged.snapshot_sha256=stepSha256(body);
+    expect(()=>validateImplementationSnapshot(forged)).toThrow();
+  }
   expect((await db.query('SELECT id,status,current_definition_version_id FROM workflows ORDER BY id')).rows).toEqual(before);
+});
+it.each(['missing','ambiguous','active'])('真实取源owner %s时保准确UNKNOWN，不以同capability新流程代替',async(kind)=>{
+  const {old}=await generatedOwnerFixture();const {db}=fixture;
+  if(kind==='missing')await db.query('UPDATE workflows SET source_repo=NULL,source_path=NULL,source_capability=NULL,source_workflow=NULL WHERE id=$1',[old.id]);
+  else if(kind==='active')await db.query("UPDATE workflows SET status='active' WHERE id=$1",[old.id]);
+  else await db.query(`INSERT INTO workflows(id,capability_id,key,name,channel,status,source_repo,source_path,source_capability,source_workflow)
+    SELECT $2,capability_id,'duplicate_owner',name,channel,'retired',source_repo,source_path,source_capability,source_workflow FROM workflows WHERE id=$1`,[old.id,randomUUID()]);
+  const snapshot=await exportImplementationSnapshot(db,{...query,revision:'b'.repeat(40)});
+  expect(snapshot.status).toBe('unknown');
+  expect(snapshot.gaps).toContainEqual(expect.objectContaining({code:'definition_source_owner_unknown',capability:'keyword_acquisition'}));
+  expect(snapshot).not.toHaveProperty('source_registry');
+  expect(validateImplementationSnapshot(snapshot)).toBe(snapshot);
 });
 afterEach(async()=>{await fixture?.close();fixture=null;});
 const query={scope:'phones',repo:IMPACT_REPO,revision:'a'.repeat(40)};
@@ -122,4 +158,37 @@ it('GitHub目标只选固定adapter地址，path编码且不接受路径穿越�
   if(count++===0){expect(url).toBe(`https://api.github.com/repos/${IMPACT_REPO}/commits/main`);expect(options.redirect).toBe('error');}
   return fixture.contracts.fetchFn(url,options);
  }});
+});
+
+
+it('真实固定Git与scratch导入重放新契约，退役来源owner没有current、活动引用或新定义',async()=>{
+  const {old}=await generatedOwnerFixture();const {db,contracts}=fixture;
+  const dir=mkdtempSync(join(tmpdir(),'generated-owner-source-'));let target;
+  try{
+    // 空实现绑定使Git契约不自引用自身commit；来源仍由实际不可变Git字节核实。
+    contracts.docs.keyword_acquisition.activities[0].implementation_bindings=[];contracts.refresh();
+    mkdirSync(join(dir,'product-map/contracts'),{recursive:true});mkdirSync(join(dir,'product-map/generated'),{recursive:true});
+    for(const [cap,doc] of Object.entries(contracts.docs))writeFileSync(join(dir,`product-map/contracts/${cap}.yaml`),yaml.dump(doc));
+    writeFileSync(join(dir,'product-map/generated/contracts.json'),JSON.stringify(contracts.digest));
+    const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+    git('init','--quiet');git('add','.');git('-c','user.name=fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','fixed contracts');
+    const revision=git('rev-parse','HEAD');
+    await fixture.sync(revision,{bindings:[]});await fixture.graph(revision);await fixture.map(revision);
+    const snapshot=await exportImplementationSnapshot(db,{...query,revision});
+    expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
+    expect((await verifySnapshotSource(snapshot,dir)).adapter_evidence.revision).toBe(revision);
+    target=await createImplementationScratch();
+    const base=await exportImplementationSnapshot(db,query);await importImplementationSnapshot(target.db,base);
+    await importImplementationSnapshot(target.db,snapshot);
+    expect((await target.db.query('SELECT status,current_definition_version_id FROM workflows WHERE id=$1',[old.id])).rows)
+      .toEqual([{status:'retired',current_definition_version_id:null}]);
+    expect((await target.db.query('SELECT id FROM workflow_definition_versions WHERE workflow_id=$1',[old.id])).rows).toHaveLength(1);
+    expect((await target.db.query('SELECT id FROM workflow_activity_refs WHERE workflow_id=$1 AND active',[old.id])).rows).toEqual([]);
+    expect((await verifySnapshotSource(snapshot,dir,{db:target.db})).adapter_evidence.revision).toBe(revision);
+    const before=(await target.db.query('SELECT id,status,current_definition_version_id FROM workflows ORDER BY id')).rows;
+    const forged=structuredClone(snapshot);forged.source_registry.workflows[0].capability_id=randomUUID();
+    const {snapshot_sha256:_sha,...body}=forged;forged.snapshot_sha256=stepSha256(body);
+    await expect(importImplementationSnapshot(target.db,forged)).rejects.toThrow();
+    expect((await target.db.query('SELECT id,status,current_definition_version_id FROM workflows ORDER BY id')).rows).toEqual(before);
+  }finally{await target?.close();rmSync(dir,{recursive:true,force:true});}
 });
