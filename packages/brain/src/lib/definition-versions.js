@@ -24,7 +24,7 @@ function verifyDocument(workflow,doc) {
   if(!doc||typeof doc!=='object'||Array.isArray(doc)||!Array.isArray(doc.activities)) throw Error(`工作流缺少完整契约: ${workflow.id}`);
   if((workflow.source_workflow&&doc.workflow!==workflow.source_workflow)
     ||(!workflow.source_workflow&&doc.key!==workflow.key)
-    ||(workflow.source_capability&&doc.capability!==workflow.source_capability)
+    ||(workflow.source_capability&&(doc.contract_key??doc.capability)!==workflow.source_capability)
     ||(doc.capability_id&&doc.capability_id!==workflow.capability_id)) throw Error(`工作流契约身份不匹配: ${workflow.id}`);
 }
 export async function snapshotDefinitions(client,{workflowIds,source,bindingsByActivity=new Map(),documentsByWorkflow=new Map()}) {

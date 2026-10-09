@@ -8,6 +8,11 @@ import {
 } from '../gp-assertion-output.js';
 
 describe('GP assertion output evidence', () => {
+  it.each(['#','ℹ'])('Node官方%s摘要不把skip/todo计成成功',prefix=>{
+    const output=['tests 3','pass 1','fail 0','skipped 1','cancelled 0','todo 1'].map(s=>`${prefix} ${s}`).join('\n');
+    expect(scenarioEvidenceFromOutput('node',output)).toEqual({scenarioCount:1,scenarioEvidence:{kind:'node',passed:1,failed:0}});
+    expect(scenarioEvidenceFromOutput('node',`${prefix} pass 9\n${prefix} fail 0`).scenarioCount).toBe(0);
+  });
   it.each([undefined, Number.NaN, -1, 1.5])(
     'fails closed when appending with an invalid byte limit: %s',
     (limit) => {

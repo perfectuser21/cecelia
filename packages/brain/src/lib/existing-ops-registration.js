@@ -1,5 +1,6 @@
 /** 既有工厂消费者只追加来源历史，不改任何执行登记或 current。 */
 import { buildExistingOpsSources, EXISTING_OPS_IDENTITIES, EXISTING_OPS_REPO, EXISTING_OPS_SCOPE } from './existing-ops-source.js';
+import { freezeFactoryWorkspaceConsumerPayload, freezeScratchFactoryWorkspaceConsumerPayload } from './consumer-source-set.js';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
 const ROOT = 'aaaaaaaa-f0f0-4000-8000-000000000001';
 const ids = EXISTING_OPS_IDENTITIES.map(i => i.workflow_id);
@@ -88,11 +89,16 @@ export async function registerExistingOpsSources(pool, options) {
     for (const consumer of proof.consumers) {
       const source = { repo: options.repo, commit: options.revision, path: consumer.workflow_key === 'factory_f2_ops' ? '.github/workflows/brain-ci-deploy.yml' : '.github/workflows/nightly-regression.yml' };
       const contract = { key: consumer.workflow_key, definition_scope: 'consumer_evidence', executable: false, source_basis: 'fixed_git_tree' };
-      const activity = await append(db, 'activity', consumer.activity_id, {
+      let activityPayload = {
         activity_id: consumer.activity_id, definition_key: `${consumer.workflow_key}.${consumer.slot_key}`, source_scope: EXISTING_OPS_SCOPE,
         definition_scope: 'consumer_evidence', registration_sha256:before.registry_sha256, contract, steps: [], implementation_bindings: consumer.bindings,
         input_relations: consumer.input_relations, verification: { runtime_status: 'not_evaluated' },
-      }, source);
+      };
+      if(options.workspaceConsumerProof&&consumer.workflow_key==='factory_f3_ops'){
+        const freeze=mode==='scratch_candidate'?freezeScratchFactoryWorkspaceConsumerPayload:freezeFactoryWorkspaceConsumerPayload;
+        activityPayload=freeze(activityPayload,options.workspaceConsumerProof,{repo:options.repo,revision:options.revision});
+      }
+      const activity=await append(db,'activity',consumer.activity_id,activityPayload,source);
       definitions.activities.push(activity);
       const workflow = before.workflows.find(w => w.id === consumer.workflow_id);
       definitions.workflows.push(await append(db, 'workflow', consumer.workflow_id, {

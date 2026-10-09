@@ -3,6 +3,7 @@ import { EXISTING_OPS_SCOPE,EXISTING_OPS_IDENTITIES } from './existing-ops-sourc
 import { createHash } from 'node:crypto';
 import { resolveImplementationRegistryRepo,loadImplementationRevisionContext } from './implementation-context.js';
 import { readImplementationConsumers, validateImplementationQuery } from './implementation-consumers.js';
+import {sealedConsumerVersion,sealedBrainConsumerDefinition,hasFrozenConsumerSource,consumerSourceAdmissionScope} from './consumer-source-set.js';
 const SHA=/^[0-9a-f]{40}$/;
 const HASH=/^[0-9a-f]{64}$/;
 const fail=message=>{throw Object.assign(Error(message),{code:'MAP_IMPLEMENTATION_IMPACT_INPUT_INVALID',status:400});};
@@ -69,15 +70,42 @@ async function definitions(db,q,revision,gaps) {
   for(const row of activities)if(row.source_repo!==q.repo||row.source_commit!==revision)gaps.push({code:'activity_definition_source_mismatch',activity_definition_version_id:row.id,revision});
   return {workflows,activities};
 }
+/** 双仓库消费只从封印历史选择唯一Brain注册锚点；实际依赖图仍属实现仓库。 */
+async function consumerSourceDefinitions(db,q,revision,gaps) {
+  const candidates=(await db.query(`SELECT * FROM workflow_definition_versions
+    WHERE source_repo=$1 AND payload->>'definition_scope'='consumer_evidence'
+      AND payload->>'source_scope'=$2 AND workflow_id=$3 ORDER BY workflow_id,id`,['perfectuser21/cecelia',q.scope,'c308acc7-89ec-4c18-aff6-fd67fdf31ea3'])).rows;
+  const ids=[...new Set(candidates.flatMap(w=>(w.payload.activities||[]).map(a=>a.activity_version_id)))];
+  const activities=ids.length?(await db.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[])',[ids])).rows:[];
+  const admission=await consumerSourceAdmissionScope(db),selected=[];
+  for(const w of candidates){
+    const refs=w.payload.activities||[],owned=refs.map(r=>activities.find(a=>a.id===r.activity_version_id));
+    const matches=owned.some(a=>a&&(a.payload.implementation_bindings||[]).some(b=>b.repo===q.repo&&b.revision===revision&&hasFrozenConsumerSource(a.payload,q.repo,b.path,admission)));
+    if(!matches)continue;
+    const workflowSealed=sealedBrainConsumerDefinition(w)&&w.payload.source_scope===q.scope;
+    if(!workflowSealed||owned.some(a=>!a||!sealedConsumerVersion(a)||a.source_repo!==w.source_repo||a.source_commit!==w.source_commit)){
+      gaps.push({code:'consumer_source_digest_mismatch',workflow_definition_version_id:w.id});continue;
+    }
+    selected.push({workflow:w,activities:owned});
+  }
+  const anchors=[...new Set(selected.map(s=>s.workflow.source_commit))];
+  if(anchors.length!==1){gaps.push({code:anchors.length?'consumer_source_anchor_ambiguous':'consumer_source_snapshot_missing',repo:q.repo,revision});return null;}
+  for(const id of new Set(selected.map(s=>s.workflow.workflow_id)))if(selected.filter(s=>s.workflow.workflow_id===id).length>1)gaps.push({code:'definition_snapshot_ambiguous',workflow_id:id,revision:anchors[0]});
+  return {revision:anchors[0],workflows:selected.map(s=>s.workflow),activities:unique(selected.flatMap(s=>s.activities))};
+}
 function versionEvidence(rows){return rows.map(({payload:_payload,...row})=>row);}
 function projectionEvidence(context){if(!context)return null;const {manifest:_manifest,mapped:_mapped,registryRepo:_registryRepo,...evidence}=context;return evidence;}
 function matchedBindings(activity,q,revision,paths){return (activity.payload.implementation_bindings||[]).filter(b=>['code','skill'].includes(b.kind)&&b.repo===q.repo&&b.revision===revision&&paths.has(b.path));}
 
 async function readSide(db,q,side,registry) {
   const revision=q[`${side}_revision`],gaps=[];
-  const graph=await graphSnapshot(db,registry,revision,gaps);
-  const context=await loadImplementationRevisionContext(db,q,revision,registry,q[`${side}_projection_digest`],gaps);
-  const versions=await definitions(db,q,revision,gaps);
+  const cross=q.scope==='cecelia-factory'&&q.repo==='perfectuser21/zenithjoy-workspace';
+  const graph=await graphSnapshot(db,cross?q.repo:registry,revision,gaps);
+  const frozen=cross?await consumerSourceDefinitions(db,q,revision,gaps):null;
+  if(frozen)await graphSnapshot(db,registry,frozen.revision,gaps);
+  const context=cross?(frozen?await loadImplementationRevisionContext(db,{...q,repo:'perfectuser21/cecelia'},frozen.revision,registry,q[`${side}_projection_digest`],gaps):null)
+    :await loadImplementationRevisionContext(db,q,revision,registry,q[`${side}_projection_digest`],gaps);
+  const versions=cross?(frozen||{workflows:[],activities:[]}):await definitions(db,q,revision,gaps);
   const starts=q.changed_files.map(change=>side==='base'?change.old_path||change.path:change.path);
   const traversal=reverseImplementationPaths(graph?.edges||[],starts,q);
   const reports=[],paths=new Set(traversal.paths),activityById=new Map(versions.activities.map(a=>[a.id,a]));
@@ -103,7 +131,7 @@ async function readSide(db,q,side,registry) {
   traversal.truncated ||= file_coverage.some(file=>file.truncated);
   if(traversal.truncated)gaps.push({code:'implementation_traversal_truncated'});
   if(!affected_usages.length)gaps.push({code:'implementation_mapping_missing',revision});
-  return {revision,graph_snapshot:graph?.snapshot||null,projection:projectionEvidence(context),definition_versions:{workflows:versionEvidence(versions.workflows),activities:versionEvidence(versions.activities)},
+  return {revision,...(frozen&&{registry_source:{repo:'perfectuser21/cecelia',revision:frozen.revision}}),graph_snapshot:graph?.snapshot||null,projection:projectionEvidence(context),definition_versions:{workflows:versionEvidence(versions.workflows),activities:versionEvidence(versions.activities)},
     organization_status:'historical_membership_unknown_organization',traversal,file_coverage,affected_usages,required_assertions:unique(reports.flatMap(r=>r.required_assertions)),gaps:unique(gaps),mapping_status:gaps.length?'unknown':'verified'};
 }
 function mergeUsages(base,head){
@@ -150,8 +178,17 @@ async function confirmAbsentUsages(db,base,head,{added=false}={}) {
   head.gaps=[];head.mapping_status='verified';head.impact_status=added?'known_added':'known_removed';
   head[added?'addition_evidence':'removal_evidence']=unique(evidence);
 }
+async function impactRegistryRepo(db,q) {
+  if(q.scope==='cecelia-factory'&&q.repo==='perfectuser21/zenithjoy-workspace'){
+    const rows=(await db.query(`SELECT repo FROM map_scope_repositories WHERE scope_key=$1
+      AND adapter_config->>'source_repo'='perfectuser21/cecelia'`,[q.scope])).rows;
+    if(rows.length===1)return rows[0].repo;
+    throw Object.assign(Error('Factory跨仓库查询需要唯一真实Brain来源登记'),{code:'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED',status:422});
+  }
+  return resolveImplementationRegistryRepo(db,q);
+}
 export async function readImplementationImpact(db,input) {
-  const q=validateImplementationImpact(input),registry=await resolveImplementationRegistryRepo(db,q);
+  const q=validateImplementationImpact(input),registry=await impactRegistryRepo(db,q);
   const base=await readSide(db,q,'base',registry),head=await readSide(db,q,'head',registry);
   await confirmAbsentUsages(db,base,head);
   await confirmAbsentUsages(db,head,base,{added:true});

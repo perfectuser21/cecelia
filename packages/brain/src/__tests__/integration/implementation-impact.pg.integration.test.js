@@ -3,6 +3,7 @@ import express from 'express';
 import request from 'supertest';
 import { implementationImpactDatabase,IMPACT_REPO as repo } from '../fixtures/implementation-impact-db.js';
 import { createMapRouter } from '../../routes/map.js';
+import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
 const BASE='a'.repeat(40),HEAD='b'.repeat(40);
 let fixture,db,ids,app,capabilities,graph,map,advance;
 const input=(extra={})=>({scope:'phones',repo,base_revision:BASE,head_revision:HEAD,changed_files:['src/shared-lock.js'],...extra});
@@ -105,4 +106,62 @@ it('公开历史GET按旧version固定scope地图，head移除能力不能抹去
   await db.query("DELETE FROM map_projection_runs WHERE fact_revisions->>'phone-source'=$1",[BASE]);
   r=await get();expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('unknown');expect(r.body.scope_status).toBe('unknown');expect(r.body.workflows.map(w=>w.workflow_id)).toEqual([ids.benchmark]);
   expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'projection_snapshot_missing'}));
+});
+
+const BRAIN='perfectuser21/cecelia';
+async function factorySourceSide(revision,anchor,{badHash=false,badSet=false,unknownAdmission=false}={}) {
+ const a=(await db.query("SELECT * FROM activity_definition_versions WHERE source_repo=$1 AND EXISTS(SELECT 1 FROM jsonb_array_elements(payload->'implementation_bindings') b WHERE b->>'path'='src/controller.js') ORDER BY created_at LIMIT 1",[repo])).rows[0];
+ const w=(await db.query('SELECT * FROM workflow_definition_versions WHERE workflow_id=$1 ORDER BY created_at LIMIT 1',[ids.keyword])).rows[0];
+ const source={repo:BRAIN,path:a.source_path,commit:anchor};
+ const binding={kind:'code',repo,revision,path:'src/controller.js',scope:'activity',status:'verified',validation_scope:'consumer_source',content_sha256:'f'.repeat(64),digest:'sha256:'+'f'.repeat(64)};
+ const payload={...a.payload,definition_scope:'consumer_evidence',source_scope:'cecelia-factory',source_set:[{repo:BRAIN,revision:anchor},{repo,revision}],source_set_admission:{status:unknownAdmission?'unknown':'verified',source_basis:'trusted_main_history'},implementation_bindings:[binding,{...binding,path:'tests/controller.test.js'}]};
+ payload.source_set_sha256=badSet?'e'.repeat(64):stepSha256({source_set:payload.source_set,implementation_bindings:payload.implementation_bindings});
+ const av=(await db.query('INSERT INTO activity_definition_versions(activity_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',[a.activity_id,payload,badHash?stepSha256({invalid:anchor}):stepSha256({source,payload}),BRAIN,source.path,anchor,stepSha256(payload.contract)])).rows[0];
+ const wp={...w.payload,definition_scope:'consumer_evidence',source_scope:'cecelia-factory',activities:w.payload.activities.filter(r=>r.activity_id===a.activity_id).map(r=>({...r,activity_version_id:av.id}))};
+ await db.query('INSERT INTO workflow_definition_versions(workflow_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256) VALUES($1,$2,$3,$4,$5,$6,$7)',[w.workflow_id,wp,stepSha256({source,payload:wp}),BRAIN,source.path,anchor,stepSha256(wp.contract)]);
+ await graph(anchor,[],BRAIN);await map(anchor,[wp.capability_id],'cecelia-factory',BRAIN,BRAIN);
+}
+async function factorySourceFixture(options={}) {
+ await fixture.close();fixture=await implementationImpactDatabase({seedIds:{keyword:'c308acc7-89ec-4c18-aff6-fd67fdf31ea3',keywordCapability:'ec4eb591-e064-4886-a7b6-4452cdf333d2'}});({db,ids,capabilities,graph,map,advance}=fixture);
+ app=express();app.use(express.json());app.use('/map',createMapRouter({pool:db}));
+ await db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('cecelia-factory',$1,'legacy-ledger-v1',$2)",[BRAIN,{source_repo:BRAIN}]);
+ await db.query('ALTER TABLE activity_cells ADD COLUMN assertion_source_repo TEXT');await db.query('UPDATE activity_cells SET assertion_source_repo=$1',[repo]);
+ await graph(BASE,undefined,repo);await graph(HEAD,undefined,repo);
+ await factorySourceSide(BASE,'c'.repeat(40),options);await factorySourceSide(HEAD,'d'.repeat(40),options);
+}
+it('跨repo完整impact按Workspace图遍历，Brain固定定义和地图来源保持独立',async()=>{
+ await factorySourceFixture();const r=await post({scope:'cecelia-factory'});
+ expect(r.status,r.body).toBe(200);expect(r.body.mapping_status,JSON.stringify(r.body.gaps)).toBe('verified');expect(r.body.affected_usages).toHaveLength(1);
+ for(const side of ['base','head']){expect(r.body[side].graph_snapshot.repo).toBe(repo);expect(r.body[side].definition_versions.workflows.every(w=>w.source_repo===BRAIN)).toBe(true);expect(r.body[side].projection.fact_revisions[BRAIN]).toBe((side==='base'?'c':'d').repeat(40));}
+ expect(r.body.required_assertions[0].source_repo).toBe(repo);expect(r.body.verification_status).toBe('unknown');
+});
+it('跨repoimpact拒绝错AV封印，不借同路径legacy定义授予归属',async()=>{
+ await factorySourceFixture({badHash:true});const r=await post({scope:'cecelia-factory'});expect(r.body.mapping_status).toBe('unknown');expect(r.body.affected_usages).toEqual([]);
+});
+it('跨repoimpact缺Workspace精确图不能借Brain图或其他adapter图通过',async()=>{
+ await factorySourceFixture();await db.query('DELETE FROM graph_edge_snapshots WHERE repo=$1',[repo]);await db.query('DELETE FROM graph_snapshot_versions WHERE repo=$1',[repo]);
+ const r=await post({scope:'cecelia-factory'});expect(r.body.mapping_status).toBe('unknown');expect(r.body.affected_usages).toEqual([]);expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'graph_snapshot_missing',repo}));
+});
+it('同实现SHA多个Brain anchor须明确未知，不能latest消歧',async()=>{
+ await factorySourceFixture();await factorySourceSide(HEAD,'e'.repeat(40));const r=await post({scope:'cecelia-factory'});expect(r.body.mapping_status).toBe('unknown');expect(r.body.head.gaps).toContainEqual(expect.objectContaining({code:'consumer_source_anchor_ambiguous'}));
+});
+
+it('source_set错hash或准入未知不能把静态consumer来源当已登记归属',async()=>{
+ await factorySourceFixture({badSet:true});const r=await post({scope:'cecelia-factory'});expect(r.body.mapping_status).toBe('unknown');expect(r.body.affected_usages).toEqual([]);
+});
+it('source_set admission unknown保持未知，即使固定路径和图存在',async()=>{
+ await factorySourceFixture({unknownAdmission:true});const r=await post({scope:'cecelia-factory'});expect(r.body.mapping_status).toBe('unknown');expect(r.body.affected_usages).toEqual([]);
+});
+it('跨repo实现图存在但Brain anchor图缺失，保留来源缺口不声明verified',async()=>{
+ await factorySourceFixture();await db.query('DELETE FROM graph_snapshot_versions WHERE repo=$1',[BRAIN]);
+ const r=await post({scope:'cecelia-factory'});expect(r.body.mapping_status).toBe('unknown');expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'graph_snapshot_missing',repo:BRAIN}));
+});
+
+it('逻辑Brain graph键按真实source_repo登记解析，不把graph键当规范仓库名',async()=>{
+ await factorySourceFixture();const key='factory-source';
+ await db.query("UPDATE map_scope_repositories SET repo=$1 WHERE scope_key='cecelia-factory'",[key]);
+ await db.query('UPDATE graph_snapshot_versions SET repo=$1 WHERE repo=$2',[key,BRAIN]);await db.query('UPDATE graph_edge_snapshots SET repo=$1 WHERE repo=$2',[key,BRAIN]);
+ await db.query("UPDATE map_projection_runs SET fact_revisions=jsonb_build_object($1::text,fact_revisions->$2) WHERE scope_key='cecelia-factory'",[key,BRAIN]);
+ const r=await post({scope:'cecelia-factory'});expect(r.status,r.body).toBe(200);expect(r.body.mapping_status,JSON.stringify(r.body.gaps)).toBe('verified');
+ expect(r.body.registry_repo).toBe(key);expect(r.body.head.registry_source).toEqual({repo:BRAIN,revision:'d'.repeat(40)});expect(r.body.head.graph_snapshot.repo).toBe(repo);
 });

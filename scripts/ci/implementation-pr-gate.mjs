@@ -74,8 +74,9 @@ export async function runImplementationPrGate(options){
   if(options.extractScopes){
     const {snapshotFile,scopesFile,side,outputDir}=options.extractScopes;
     const request=JSON.parse(readFileSync(scopesFile,'utf8'));
+    const supported=[['cecelia-kr','cecelia-factory'],['zenithjoy','cecelia-factory']];
     if(!request||Object.keys(request).sort().join(',')!=='schema_version,scopes'||request.schema_version!==1||
-      JSON.stringify(request.scopes)!==JSON.stringify(['cecelia-kr','cecelia-factory']))throw ciFailure('ADMISSION_SCOPES_INVALID');
+      !supported.some(scopes=>JSON.stringify(request.scopes)===JSON.stringify(scopes)))throw ciFailure('ADMISSION_SCOPES_INVALID');
     const snapshots=snapshotApi.extractImplementationAdmissionSnapshots(read(snapshotFile),request.scopes);
     mkdirSync(outputDir,{recursive:true});
     for(const snapshot of snapshots)save(outputDir,`${side}-${snapshot.scope}.json`,snapshot);

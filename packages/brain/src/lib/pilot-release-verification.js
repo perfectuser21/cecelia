@@ -1,7 +1,7 @@
 /** 完整已声明试点回归计划；与变更影响报告分离，不声称全仓覆盖或业务执行。 */
 import {createHash} from 'node:crypto';
 import {readImplementationSnapshotInTransaction} from './implementation-ci-snapshot.js';
-import {canonicalAssertionCommandText} from './gp-assertion-command.js';
+import {canonicalAssertionCommandText,classifyAssertionRef} from './gp-assertion-command.js';
 import {assertionDigest} from './journey-assertion-receipt.js';
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 export const pilotPlanHash=v=>createHash('sha256').update(JSON.stringify(canonical(v))).digest('hex');
@@ -48,7 +48,8 @@ export function buildPilotReleasePlan({scope,repo,revision,definitions,assertion
   const matches=expected_usages.filter(u=>u.capability_id===row.journey_id&&u.activity_id===row.step_id&&u.step_id===(row.step_id_ref||null));
   // 第二道防线：空 assertion_ref＝未声明断言，不算合格也不算 invalid，对应用法照报 pilot_regression_missing
   if(!matches.length||row.assertion_ref==null||row.assertion_ref==='')continue;
-  try{canonicalAssertionCommandText(row.assertion_ref);}catch{gap('pilot_assertion_invalid',{journey_step_link_id:row.id});continue;}
+  // v1 发布计划保留既有执行类型；Factory 范围回归的 Node 协议不自动扩展发布资格。
+  try{if(classifyAssertionRef(row.assertion_ref).kind==='node')throw Error('PILOT_ASSERTION_TYPE_UNSUPPORTED');canonicalAssertionCommandText(row.assertion_ref);}catch{gap('pilot_assertion_invalid',{journey_step_link_id:row.id});continue;}
   const group=groups.get(row.assertion_ref)||{assertion_ref:row.assertion_ref,source_repo:repo,source_repo_basis:'activity_definition',source_bindings:[]};
   group.source_bindings.push({assertion_source:'current_registration',source_repo:repo,source_repo_basis:'activity_definition',capability_id:row.journey_id,activity_id:row.step_id,step_id:row.step_id_ref||null,journey_step_link_id:row.id,assertion_revision:row.assertion_revision,assertion_digest:assertionDigest(row.assertion_ref)});
   groups.set(row.assertion_ref,group);for(const u of matches)covered.add(pair(u));

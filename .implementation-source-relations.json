@@ -107,6 +107,66 @@
       "owner_path": "scripts/ci/implementation-pr-gate.mjs",
       "path": "packages/brain/src/lib/__tests__/implementation-ci-workflow.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
+      "path": "scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
+      "path": "docs/learnings/cp-10090451-workspace-ci-source-bundle.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/gp-assertion-command.js",
+      "path": "packages/brain/src/lib/__tests__/gp-assertion-command.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/gp-assertion-output.js",
+      "path": "packages/brain/src/lib/__tests__/gp-assertion-output.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/consumer-source-set.js",
+      "path": "packages/brain/src/lib/__tests__/consumer-source-set.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
+      "path": "packages/brain/src/lib/__tests__/workspace-ci-source-bundle.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
+      "path": "packages/brain/scripts/smoke/workspace-ci-source-bundle-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
+      "path": "changes/cp-10090451-workspace-ci-source-bundle.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/implementation-ci-snapshot.js",
+      "path": "packages/brain/src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/implementation-ci-snapshot.js",
+      "path": "packages/brain/src/lib/__tests__/integration/implementation-ci-snapshot.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/registry-lint.mjs",
+      "path": "packages/brain/src/lib/__tests__/registry-lint.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/migrate.js",
+      "path": "changes/cp-10082340-leadgen-split-sources.md",
+      "role": "release"
     }
   ]
 }

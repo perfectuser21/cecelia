@@ -57,6 +57,8 @@ function classify(ref) {
     const command = ref.slice(7).trim();
     if (!command || SHELL_META.test(command)) fail('UNSAFE_ASSERTION_COMMAND');
     const parts = command.split(/\s+/);
+    if (parts.length === 3 && parts.slice(0, 2).join(' ') === 'node --test'
+      && VITEST.test(parts[2])) return { kind: 'node', path: parts[2] };
     if (parts.length === 4
       && parts.slice(0, 3).join(' ') === 'npx vitest run'
       && VITEST.test(parts[3])) return { kind: 'vitest', path: parts[3] };
@@ -90,6 +92,7 @@ export function canonicalAssertionCommandText(assertionRef) {
   const shape = assertShellShape(classify(assertionRef));
   const pathRef = assertCanonicalLedgerPath(shape.path);
   if (shape.kind === 'vitest') return `npx vitest run ${pathRef}`;
+  if (shape.kind === 'node') return `node --test ${pathRef}`;
   if (shape.kind === 'pytest') return `python3 -m pytest ${pathRef}`;
   if (shape.kind === 'bash') return `bash ${pathRef}`;
   fail('ASSERTION_NOT_RUNNABLE');
@@ -98,12 +101,13 @@ export function canonicalAssertionArgv(assertionRef) {
   const shape = assertShellShape(classify(assertionRef));
   const pathRef = assertCanonicalLedgerPath(shape.path);
   if (shape.kind === 'vitest') return ['npx', 'vitest', 'run', pathRef];
+  if (shape.kind === 'node') return ['node', '--test', pathRef];
   if (shape.kind === 'pytest') return ['python3', '-m', 'pytest', pathRef];
   if (shape.kind === 'bash') return ['bash', pathRef];
   fail('ASSERTION_NOT_RUNNABLE');
 }
 const matchesKind = (kind, path) => (
-  { vitest: VITEST, pytest: PYTEST, bash: SMOKE }[kind].test(path));
+  { vitest: VITEST, node: VITEST, pytest: PYTEST, bash: SMOKE }[kind].test(path));
 async function pinnedTools(toolchains, names, realpathFn) {
   if (!toolchains || typeof toolchains !== 'object' || Array.isArray(toolchains))
     fail('ASSERTION_TOOLCHAIN_REQUIRED');
@@ -175,6 +179,10 @@ export async function assertionCommand(assertionRef, repoRoot, {
   if (!matchesKind(shape.kind, target)) fail('ASSERTION_PATH_TYPE_MISMATCH');
   if (!(await fileStatFn(target)).isFile()) fail('ASSERTION_PATH_NOT_FILE');
   if (!await isTrackedPathFn(root, target)) fail('ASSERTION_PATH_UNTRACKED');
+  if (shape.kind === 'node') {
+    const tools = await pinnedTools(toolchains, ['node'], realpathFn);
+    return command(tools[0].path, ['--test', relative(root, target)], root, 'node', tools);
+  }
   if (shape.kind === 'vitest') {
     const tools = await pinnedTools(toolchains, ['node', 'vitest'], realpathFn);
     const cwd = await packageRoot(target, root, pathExistsFn);
