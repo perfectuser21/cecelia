@@ -131,6 +131,11 @@
       "owner_path": "packages/brain/src/lib/workspace-ci-source-bundle.js",
       "path": "changes/cp-10090451-workspace-ci-source-bundle.md",
       "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/implementation-ci-snapshot.js",
+      "path": "packages/brain/src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js",
+      "role": "verification"
     }
   ]
 }

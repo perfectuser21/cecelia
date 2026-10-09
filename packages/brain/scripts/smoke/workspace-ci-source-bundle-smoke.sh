@@ -16,5 +16,6 @@ node ../../node_modules/vitest/vitest.mjs run \
   src/lib/__tests__/existing-ops-registration.test.js \
   --maxWorkers=1 --minWorkers=1
 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js \
+  src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js \
   src/__tests__/integration/pilot-release-ci.pg.integration.test.js \
   --maxWorkers=1 --minWorkers=1

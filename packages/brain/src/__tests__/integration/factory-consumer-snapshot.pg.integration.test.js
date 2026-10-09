@@ -12,7 +12,8 @@ import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
 import { randomUUID } from 'node:crypto';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-const revision = '8916df494e3f6d02c3c9e9f8979e86e4d86fbd80';
+// 一次冻结真实 checkout；CI 浅历史不依赖旧提交，也不授予候选 main 身份。
+const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 const paths = execFileSync('git', ['ls-tree', '-rz', '--name-only', revision], { cwd: root, encoding: 'utf8' }).replace(/\0$/, '').split('\0');
 const cache = new Map();
 const readSource = async path => {
@@ -112,4 +113,72 @@ it('public历史错实现SHA/path/F2版本或生产scratch来源不能借Brain�
  await expect(loadHistoricalImplementationContext(fixture.db,{...q,versionId:badHash.id},[])).rejects.toMatchObject({code:'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED'});
  const prod={query:async(sql,args)=>sql==='SELECT current_database() name'?{rows:[{name:'cecelia'}]}:fixture.db.query(sql,args)};
  await expect(loadHistoricalImplementationContext(prod,q,[])).rejects.toMatchObject({code:'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED'});
+});
+
+async function workspaceParentMap(){
+ const stream=randomUUID(),cap=randomUUID(),wf=randomUUID(),decision=randomUUID(),mid=randomUUID();
+ const repo='perfectuser21/zenithjoy-workspace',commit=frozenWorkspace.source_set[0].revision;
+ await fixture.db.query("INSERT INTO value_streams(id,name) VALUES($1,'Workspace fixture')",[stream]);
+ await fixture.db.query("INSERT INTO capabilities(id,name,parent_journey_id) VALUES($1,'Workspace fixture',$2)",[cap,stream]);
+ await fixture.db.query("INSERT INTO workflows(id,capability_id,key,name,channel,source_repo) VALUES($1,$2,'workspace_fixture','Workspace fixture','ops',$3)",[wf,cap,repo]);
+ const payload={workflow_id:wf,capability_id:cap,key:'workspace_fixture',contract:{key:'workspace_fixture'},activities:[]},source={repo,path:'product-map/contracts/fixture.yaml',commit};
+ await fixture.db.query('INSERT INTO workflow_definition_versions(workflow_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256) VALUES($1,$2,$3,$4,$5,$6,$7)',[wf,payload,stepSha256({source,payload}),repo,source.path,commit,'a'.repeat(64)]);
+ const binding=(entity_type,entity_id)=>({entity_type,entity_id,source_repo:repo,source_revision:commit});
+ const manifest={scope_key:'zenithjoy',schema_version:1,source_decision_id:decision,value_streams:[{key:'fixture',brain_binding:binding('value_stream',stream)}],capabilities:[{key:'fixture',value_stream_key:'fixture',brain_binding:binding('capability',cap)}]};
+ await fixture.db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','fixture','隔离库跨仓输入测试','active')",[decision]);
+ await fixture.db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('zenithjoy','workspace-fixture','legacy-ledger-v1',$1)",[{source_repo:repo}]);
+ await fixture.db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,'zenithjoy',1,$2,$3,$4,'active',NOW())",[mid,decision,manifest,'a'.repeat(64)]);
+ await fixture.db.query("INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES('zenithjoy',$1,$2,$3,'fixture',$2,'active',NOW())",[mid,'a'.repeat(64),{'workspace-fixture':commit}]);
+ return {scope:'zenithjoy',repo,revision:commit};
+}
+it('真实PG Workspace父导出显式跨仓companion，Brain anchor不改成Workspace SHA且scratch不授生产',async()=>{
+ const {before}=await crossSnapshot();const q=await workspaceParentMap();
+ const parent=await exportImplementationSnapshot(fixture.db,q);
+ expect(parent.status,JSON.stringify(parent.gaps)).toBe('verified');
+ expect(parent.admission_companion?.source_basis).toBe('cross_repo_source_set');
+ expect(parent.admission_companion.registry_source).toEqual({repo:'perfectuser21/cecelia',revision});
+ expect(parent.admission_companion.snapshot.revision).toBe(q.revision);
+ const joint=await snapshots.extractImplementationAdmissionSnapshotsForDatabase(fixture.db,parent,['zenithjoy','cecelia-factory']);
+ expect(joint.map(s=>s.scope)).toEqual(['zenithjoy','cecelia-factory']);
+ expect(joint[1].definitions.workflows).toHaveLength(2);expect(joint[1].canonical.references).toHaveLength(8);
+ expect(joint[1].unverified_reference_ids).toHaveLength(6);expect(joint[1].execution_status).toBe('unknown');
+ expect(()=>snapshots.extractImplementationAdmissionSnapshots(parent,['zenithjoy','cecelia-factory'])).toThrow();
+ const prod={query:async()=>({rows:[{name:'cecelia'}]})};
+ await expect(snapshots.extractImplementationAdmissionSnapshotsForDatabase(prod,parent,['zenithjoy','cecelia-factory'])).rejects.toThrow();
+ expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
+});
+it('跨仓companion原样保留UNKNOWN，完整父单scope可用但不能联合准入',async()=>{
+ const before=await registration.readExistingOpsRegistry(fixture.db);
+ await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256}));await factoryMap();
+ const q=await workspaceParentMap(),parent=await exportImplementationSnapshot(fixture.db,q);
+ expect(parent.status).toBe('verified');expect(parent.admission_companion.snapshot.status).toBe('unknown');
+ expect(validateImplementationSnapshot(parent)).toEqual(parent);
+ expect(snapshots.extractImplementationAdmissionSnapshots(parent,['zenithjoy'])).toEqual([parent]);
+ expect(()=>snapshots.extractImplementationAdmissionSnapshots(parent,['zenithjoy','cecelia-factory'])).toThrow(/UNKNOWN/);
+ await fixture.db.query("DELETE FROM map_scope_repositories WHERE scope_key='cecelia-factory'");
+ const missing=await exportImplementationSnapshot(fixture.db,q);
+ expect(missing.admission_companion.snapshot.gaps.some(g=>g.code==='scope_repository_missing')).toBe(true);
+ expect(snapshots.extractImplementationAdmissionSnapshots(missing,['zenithjoy'])).toEqual([missing]);
+ expect(()=>snapshots.extractImplementationAdmissionSnapshots(missing,['zenithjoy','cecelia-factory'])).toThrow(/UNKNOWN/);
+ await fixture.db.query('DELETE FROM workflow_activity_refs WHERE workflow_id=ANY($1::uuid[])',[EXISTING_OPS_IDENTITIES.map(i=>i.workflow_id)]);
+ const drifted=await exportImplementationSnapshot(fixture.db,q);
+ expect(drifted.admission_companion.snapshot.gaps.some(g=>g.code==='factory_registry_identity_invalid')).toBe(true);
+ expect(snapshots.extractImplementationAdmissionSnapshots(drifted,['zenithjoy'])).toEqual([drifted]);
+ expect(()=>snapshots.extractImplementationAdmissionSnapshots(drifted,['zenithjoy','cecelia-factory'])).toThrow(/UNKNOWN/);
+});
+it('跨仓声明、Brain anchor、冻结source_set或执行边界重算全部hash仍拒绝',async()=>{
+ await crossSnapshot();const q=await workspaceParentMap(),parent=await exportImplementationSnapshot(fixture.db,q);
+ const changes=[c=>c.source_basis='fixed_git_tree',c=>delete c.registry_source,c=>c.registry_source.revision=q.revision,
+  c=>c.source_set.push({...c.source_set[0]}),c=>c.snapshot.source_set.push({...c.snapshot.source_set[0]}),
+  c=>c.snapshot.registry_source.revision=q.revision,c=>c.snapshot.execution_status='verified',
+  c=>c.snapshot.admission_companion={},c=>c.snapshot.definitions.activities.find(a=>a.payload.source_set).payload.source_set_admission.status='unknown',
+  c=>c.snapshot.definitions.workflows[0].payload.coverage.verified_reference_ids=[EXISTING_OPS_IDENTITIES[1].reference_id]];
+ for(const change of changes){
+  const altered=structuredClone(parent),c=altered.admission_companion;change(c);
+  for(const row of [...c.snapshot.definitions.workflows,...c.snapshot.definitions.activities])row.payload_sha256=stepSha256({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload});
+  const {snapshot_sha256:_childHash,...child}=c.snapshot;c.snapshot.snapshot_sha256=stepSha256(child);
+  const {companion_sha256:_companionHash,...body}=c;c.companion_sha256=stepSha256(body);
+  const {snapshot_sha256:_parentHash,...outer}=altered;altered.snapshot_sha256=stepSha256(outer);
+  await expect(snapshots.extractImplementationAdmissionSnapshotsForDatabase(fixture.db,altered,['zenithjoy','cecelia-factory'])).rejects.toThrow();
+ }
 });

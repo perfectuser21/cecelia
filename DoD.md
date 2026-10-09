@@ -46,3 +46,6 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] ownprscopecontract：固定Git端到端验收唯一明确的本仓PR双scope默认表达式；旧式兼容，删repo/PR限制、扩大scope、未知schema及错误MODE拒绝，admission仍unknown。
   Test: manual:node --test scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs
+
+- [x] [BEHAVIOR] workspacejointsource：真实PG在同事务导出Workspace父与独立跨仓Factory来源，明确Brain anchor与冻结source_set；scratch不授生产、重算hash篡改仍拒、子UNKNOWN保留且单scope父可用，KR原生joint保持。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js src/__tests__/integration/implementation-admission-companion.test.js src/__tests__/integration/implementation-multi-scope.test.js --maxWorkers=1 --minWorkers=1"
