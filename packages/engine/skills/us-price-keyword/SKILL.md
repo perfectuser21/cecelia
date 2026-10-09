@@ -19,6 +19,8 @@ CLI负责先登记Brain、派发 us-price-compare、独立校验手机XML与截�
 
 先搜关键词发现候选，然后核对品牌、型号和规格套装；不同电池/配件不能算同SKU。每报价保存型号/价格/ZIP原生XML、截图绝对路径、采集ISO时间及action_owner。运费税费未查清写未知，缺价不填0，不复用旧报价。
 
+证据处理优先node_exec在设备解析XML并返回紧凑字段/结构化结果，禁止把全文XML返回模型。同一证据最多读取1次，截图存在后返回路径供CLI独立审计上传，不要调用file_fetch反复拉图。恢复网络/桌面并释放锁后立即输出JSON，不继续读取已验收证据。
+
 返回CLI提示词规定的JSON报价结构，附network_restored/home_verified/lock_free_verified验收。失败报实际原因与已做动作，不伪造成功。
 
 能力边界：同型号单SKU原生路径已验收；Luna业务与3SKU批量结果以各任务真实回执为准，不能从单SKU通过推断所有关键词稳定。
