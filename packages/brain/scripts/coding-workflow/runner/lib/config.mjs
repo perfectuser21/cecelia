@@ -2,6 +2,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_PREVIEW_API } from '../../lib/preview.mjs';
+import { resolveJudgeConfig } from '../../lib/judge.mjs';
 
 const DEFAULT_KILL_GRACE_MS = 30000;
 
@@ -45,6 +46,11 @@ export function loadConfig(env = process.env) {
     qaPreviewEscalateMs: nonNegativeInt(env.CODING_WF_QA_PREVIEW_ESCALATE_MS) ?? 60 * 60 * 1000,
     qaMaxBadStreak: positiveInt(env.CODING_WF_QA_MAX_BAD_STREAK) ?? 3,
     qaFixTimeoutMs: positiveInt(env.CODING_WF_QA_FIX_TIMEOUT_MS) ?? 40 * 60 * 1000,
+    // 独立裁判（②d）：QA PASS 后不同模型复核，PASS 才开自动合并；连续 qaMaxJudgeBad 次不可用/不合格升级
+    judge: env.CODING_WF_JUDGE !== '0',
+    judgeConn: resolveJudgeConfig(env),
+    judgeTimeoutMs: positiveInt(env.CODING_WF_JUDGE_TIMEOUT_MS) ?? 10 * 60 * 1000,
+    qaMaxJudgeBad: positiveInt(env.CODING_WF_QA_MAX_JUDGE_BAD) ?? 3,
     // null = 按契约 budget 计算
     runTimeoutMs: positiveInt(env.CODING_WF_RUN_TIMEOUT_MS),
     killGraceMs: positiveInt(env.CODING_WF_KILL_GRACE_MS) ?? DEFAULT_KILL_GRACE_MS,
