@@ -40,10 +40,10 @@
     {
       "key": "spec_review",
       "order": 3,
-      "budget": { "max_duration_s": 1800, "heartbeat_s": 30 },
+      "budget": { "max_duration_s": 21600, "heartbeat_s": 30 },
       "failure": {
         "empty_ok": [],
-        "retryable": ["claude_failed", "claude_timeout", "review_invalid", "spec_invalid"],
+        "retryable": ["claude_failed", "claude_timeout", "spec_invalid", "response_missing"],
         "needs_human": { "cases": ["claude_auth"] },
         "fatal": [
           "task_id_missing",
@@ -53,7 +53,8 @@
           "chain_tampered",
           "spec_missing",
           "spec_review_out_of_scope_write",
-          "spec_review_unresolved"
+          "review_invalid",
+          "gan_budget_exceeded"
         ]
       },
       "runtime": {

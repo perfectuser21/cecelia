@@ -33,9 +33,13 @@ describe('detectTrend', () => {
     expect(detectTrend([round(s([8, 6, 6, 6, 6])), round(s([7, 6, 6, 6, 6])), round(s([6, 6, 6, 6, 6]))])).toBe('diverging');
   });
 
-  it('规格行数连续两轮净增长（越写越大）→ diverging；缺行数则不判', () => {
+  it('规格行数连续两轮净增长且总分没涨（越写越大却没变好）→ diverging；缺行数则不判', () => {
     expect(detectTrend([round(s(6), 100), round(s(6), 140), round(s(6), 200)])).toBe('diverging');
     expect(detectTrend([round(s(6), 100), round(s(6)), round(s(6), 200)])).toBe('converging');
+  });
+
+  it('规格变长但总分在涨（按 QA 意见补内容）→ 仍算 converging', () => {
+    expect(detectTrend([round(s(4), 100), round(s(5), 110), round(s(6), 120)])).toBe('converging');
   });
 
   it('只看最近 3 轮', () => {
