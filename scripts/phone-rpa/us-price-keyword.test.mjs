@@ -67,3 +67,17 @@ test('只在明确模型不支持时fallback，商品/网络错误不重复跑',
   assert.equal(unsupportedModel('Home Depot Error Page'), false);
   assert.equal(unsupportedModel('Timeout'), false);
 });
+test('报价字段别名规范化，未满足目标数量标partial', () => {
+  const r = receipt(), report = JSON.parse(r.result.payloads[0].text);
+  report.quotes = [{...quote, app_package: quote.package, pack: quote.specification, product_url: quote.url, collected_at_utc: quote.collected_at}];
+  for (const key of ['package','specification','url','collected_at']) delete report.quotes[0][key];
+  r.result.payloads[0].text = JSON.stringify(report);
+  const result = validateReceipt(r, options);
+  assert.equal(result.quotes[0].package, quote.package);
+  assert.equal(result.claimed_result, 'partial');
+  assert.equal(result.matched_sku_count, 0);
+});
+test('Notion附件采用上传文件ID', () => {
+  const p = notionProperties({...quote, evidence_file_id:'upload1'}, options, 't','r','model','proof');
+  assert.equal(p.证据.files[0].file_upload.id, 'upload1');
+});
