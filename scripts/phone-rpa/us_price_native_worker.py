@@ -54,8 +54,11 @@ def search_entry(nodes):
 def search_hd(session,keyword):
     session.adb('shell','am','force-stop',HD)
     session.launch(HD)
-    nodes,path=session.nodes('hd-home')
-    edit=search_entry(nodes)
+    for attempt in range(5):
+        nodes,path=session.nodes('hd-home')
+        edit=search_entry(nodes)
+        if edit is not None:break
+        if attempt<4:time.sleep(3)
     if edit is not None and edit.get('resource-id')!='main_app_header_search_text_field' and edit.get('class')!='android.widget.EditText':
         session.tap(edit);nodes,path=session.nodes('hd-search-focus')
         edit=next((n for n in nodes if n.get('resource-id')=='main_app_header_search_text_field' or n.get('class')=='android.widget.EditText'),None)
@@ -87,12 +90,21 @@ def discover_hd(session,keyword,count):
     titles=[]
     for page in range(5):
         titles.extend(value for value,node in hd_candidates(nodes) if value not in titles)
-        if len(titles)>=count:return titles[:count]
+        if len(titles)>=count:
+            session.hd_results=(nodes,path)
+            return titles[:count]
         session.swipe(); nodes,path=session.nodes('hd-candidate-page')
     return titles[:count]
 
+def initial_hd_result(session,candidate,keyword=None):
+    cached=getattr(session,'hd_results',None)
+    if cached and any(value==candidate for value,node in hd_candidates(cached[0])):
+        session.hd_results=None
+        return cached
+    return search_hd(session,keyword)
+
 def hd_quote(session,keyword,candidate,index,zip_code):
-    nodes,path=search_hd(session,keyword)
+    nodes,path=initial_hd_result(session,candidate,keyword)
     target=None
     for page in range(5):
         try:target=session.find(nodes,candidate,True);break

@@ -43,7 +43,8 @@ export function validateReceipt(receipt, o) {
   const r = reports.find(x => Array.isArray(x.quotes));
   demand(r && r.network_restored === true && r.home_verified === true && r.lock_free_verified === true, '缺少恢复网络/桌面/释放锁验收');
   if (r.report_only) demand(typeof r.source_action_run_id === 'string' && r.source_action_run_id && typeof r.source_action_owner === 'string' && r.source_action_owner, '补报告缺少原采集来源');
-  demand(r.quotes.length > 0 && r.quotes.length <= o.count * 2, '没有有效报价或报价超量');
+  demand(r.quotes.length > 0, r.blocking_reason || r.unmatched?.map(x => x.reason).filter(Boolean).join('；') || '没有有效报价');
+  demand(r.quotes.length <= o.count * 2, '报价超量');
   const keys = new Set(), skus = new Set(), verifiedKeys = new Set();
   r.quotes = r.quotes.map(q => ({ ...q, package: q.package ?? q.app_package, specification: q.specification ?? q.pack, url: q.url ?? q.product_url, collected_at: q.collected_at ?? q.collected_at_utc }));
   for (const q of r.quotes) {
@@ -123,7 +124,8 @@ export function buildCompletion(result, o, rows, dir, taskId = dir.split('/').po
 export function terminalStatus(claimedResult) { return claimedResult === 'passed' ? 'completed' : 'failed'; }
 export function failurePatch(previous, reason, dir, rows) {
   const oldResult = (previous.task ?? previous).result ?? {};
-  return { status: 'failed', error_message: reason, result: { ...oldResult, summary: `本轮失败：${reason}；已写报价 ${rows.length} 条。报价明细：https://www.notion.so/7452049ef7de4da5822d4ff682869172`, last_attempt: { actor: 'OpenClaw/us-price-compare', facts: { outcome: 'failed', reason }, evidence: { receipt_directory: dir, notion_rows: rows } } } };
+  const visible = `本轮失败：${reason}；已写报价 ${rows.length} 条。报价明细：https://www.notion.so/7452049ef7de4da5822d4ff682869172`;
+  return { status: 'failed', error_message: reason, result: { ...oldResult, receipt: { ...(oldResult.receipt ?? {}), finalAssistantVisibleText: visible }, summary: `本轮失败：${reason}；已写报价 ${rows.length} 条。报价明细：https://www.notion.so/7452049ef7de4da5822d4ff682869172`, last_attempt: { actor: 'OpenClaw/us-price-compare', facts: { outcome: 'failed', reason }, evidence: { receipt_directory: dir, notion_rows: rows } } } };
 }
 
 export function buildOwner(taskId, nonce) { return 'price' + taskId.replaceAll('-', '') + nonce.replaceAll('-', ''); }
