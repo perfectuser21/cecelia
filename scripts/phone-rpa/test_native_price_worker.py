@@ -1,7 +1,7 @@
 import unittest
 import xml.etree.ElementTree as E
 from native_price_phone import text_values, parse_hd_detail, extract_asin, price_candidates, validate_request, PhoneSession
-from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search, search_entry, amazon_seller
+from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search, search_entry, amazon_seller, public_report
 
 def nodes(values, package='com.thehomedepot'):
     root=E.Element('hierarchy')
@@ -12,6 +12,12 @@ class NativePriceTests(unittest.TestCase):
     def test_seller_requires_exact_native_text_not_substring(self):
         self.assertEqual(amazon_seller(['Visit Amazon.com.evil.com']),'未显示（需核对）')
         self.assertEqual(amazon_seller(['Sold by Amazon.com']),'Sold by Amazon.com')
+    def test_public_report_keeps_safety_but_not_precise_exit_ip(self):
+        report={'raw_quotes':[],'network_restored':True,'restored_network':{'exit_node':'None','ip':{'query':'192.0.2.1','countryCode':'CN'},'xml':'/proof.xml'}}
+        public=public_report(report)
+        self.assertNotIn('ip',public['restored_network'])
+        self.assertEqual(public['restored_network']['country'],'CN')
+        self.assertEqual(report['restored_network']['ip']['query'],'192.0.2.1')
     def test_attributes_not_itertext(self):
         self.assertEqual(text_values(nodes(['Brand drill','53132'])),['Brand drill','53132'])
     def test_hd_dynamic_model_id_and_prices_keep_context(self):
