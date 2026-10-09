@@ -9,7 +9,7 @@ import path from 'node:path';
 import { run, git } from './proc.mjs';
 import { removeWorktree } from './worktree.mjs';
 import { ghJson, listOwnPrs, requiredState, CW_BRANCH_RE } from './cifix-scan.mjs';
-import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead } from './pr-branch.mjs';
+import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from './pr-branch.mjs';
 import { previewOf } from '../../lib/preview.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { runJudge } from './judge-gate.mjs';
@@ -23,7 +23,7 @@ const RUNNER_ID = ['-c', 'user.name=coding-workflow-runner', '-c', 'user.email=c
 
 const statePath = (cfg, pr) => path.join(cfg.logDir, `qa-${pr}.json`);
 
-function readState(cfg, pr) {
+export function readState(cfg, pr) {
   try {
     const s = JSON.parse(fs.readFileSync(statePath(cfg, pr), 'utf8'));
     return { rounds: [], bad: 0, ...s, rounds: Array.isArray(s?.rounds) ? s.rounds : [] };
@@ -32,7 +32,7 @@ function readState(cfg, pr) {
   }
 }
 
-function writeState(cfg, pr, s) {
+export function writeState(cfg, pr, s) {
   fs.mkdirSync(cfg.logDir, { recursive: true });
   fs.writeFileSync(statePath(cfg, pr), `${JSON.stringify(s, null, 2)}\n`);
 }
@@ -71,8 +71,8 @@ async function escalate(ctx, pr, s, taskId, detail) {
   await report(ctx, taskId ?? (await remoteTaskId(ctx.cfg, pr.headRefName)), s);
 }
 
-// 不影响产品行为的记录性改动：版本碎片
-const RECORD_ONLY_RE = /^changes\//;
+// 不影响产品行为的记录性改动：版本碎片、sprint 验收记录
+export const RECORD_ONLY_RE = /^(changes|sprints)\//;
 
 /**
  * QA/裁判通过（已开自动合并）后 PR 又被推了改动（CI 修复）：改了记录以外的文件 → 撤销通过、关自动合并，
@@ -176,10 +176,10 @@ async function qaFix(ctx, pr, worktree, intent, { recordFile, issues }) {
 }
 
 /** 开自动合并，记 passed。 */
-async function approve(ctx, pr, s, entry) {
-  const merge = await run(ctx.cfg.ghBin, ['pr', 'merge', String(pr.number), '--auto', '--squash'], { cwd: ctx.cfg.repo, timeoutMs: GH_TIMEOUT_MS });
-  entry.automerge = merge.code === 0;
+/** 批准：绑定验收记录推送后的 head（合并门只合并这个 head，见 merge-gate.mjs）。 */
+async function approve(s, entry, worktree) {
   s.passed = true;
+  s.approved = { head: await headOf(worktree), round: entry.round, at: new Date().toISOString() };
 }
 
 /** 最近 3 轮失败数不降 → 不收敛。 */
@@ -210,7 +210,7 @@ async function afterJudge(ctx, pr, s, worktree, intent, entry, j) {
   if (j.error) {
     if (s.judge_bad >= ctx.cfg.qaMaxJudgeBad) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_judge_unavailable', reason: j.error });
   } else if (j.verdict === 'PASS') {
-    await approve(ctx, pr, s, entry);
+    await approve(s, entry, worktree);
   } else {
     entry.fails = Math.max(1, j.blocking.length);
     const fails = stalled(s);
@@ -296,7 +296,7 @@ async function qaRound(ctx, pr, s, signal) {
     }
     await commit(`docs(qa): 第 ${round} 轮真人 QA ${qa.verdict}`);
     if (qa.verdict === 'PASS') {
-      await approve(ctx, pr, s, entry);
+      await approve(s, entry, worktree);
     } else {
       const stall = stalled(s);
       if (stall) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_stalled', fails: stall });

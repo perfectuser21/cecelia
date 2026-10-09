@@ -125,6 +125,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
   };
   // 往 PR 分支追加一个文件（模拟上一轮已提交的 QA 报告）
   const addToBranch = (rel, content) => {
+    fs.mkdirSync(path.dirname(path.join(sb.seed, rel)), { recursive: true });
     fs.writeFileSync(path.join(sb.seed, rel), content);
     git(sb.seed, 'add', '.');
     git(sb.seed, 'commit', '-q', '-m', `docs: ${rel}`);

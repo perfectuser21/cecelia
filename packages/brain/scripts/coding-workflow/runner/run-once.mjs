@@ -18,6 +18,7 @@ import { readReceipt, summarizeReceipt } from './lib/receipt.mjs';
 import { failTask, finishSuccess, localSummary, lostSummary, settle, settleQueued } from './lib/terminal.mjs';
 import { runCiFix } from './lib/cifix.mjs';
 import { runQaGate } from './lib/qa-gate.mjs';
+import { runMergeGate } from './lib/merge-gate.mjs';
 import { readyCandidates } from './lib/deps.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -116,6 +117,8 @@ export async function runOnce(cfg, signal) {
   let task;
   try {
     await settleLost(ctx);
+    // 已批准的 PR：只合并被批准的 head（批准后又改了代码则撤销批准，本轮到此）
+    if (cfg.qaGate && await runMergeGate(ctx)) return 0;
     // 先收尾再开新：自己开的 PR CI 红了，本轮只修它
     if (cfg.ciFix && await runCiFix(ctx, signal)) return 0;
     // CI 绿了：真人 QA 门（PASS 才开自动合并，FAIL 进修复环）
