@@ -25,6 +25,13 @@ const DENIED = [
 ];
 
 const posInt = (v, d) => (Number.isInteger(Number(v)) && Number(v) > 0 ? Number(v) : d);
+
+/** 上一轮独立裁判判 QA 没真验到时 runner 传来的裁决（相对 worktree）：必须是 sprint 目录里存在的文件。→ 绝对路径 / '无' / null（非法）。 */
+function judgeFeedbackPath(worktree, dir, rel) {
+  if (rel === undefined || rel === null || rel === '') return '无';
+  const abs = path.resolve(worktree, String(rel));
+  return path.dirname(abs) === path.resolve(dir) && fs.existsSync(abs) ? abs : null;
+}
 const brief = (items) => items.map(({ id, covers, severity, scene, command, output }) => ({
   id, covers, ...(severity ? { severity, scene } : {}), command, output_tail: String(output ?? '').slice(-1000),
 }));
@@ -69,6 +76,8 @@ await runActivity(async (input) => {
   const specPath = path.join(dir, SPEC_FILE);
   const qaIds = fs.existsSync(specPath) ? qaScenarios(fs.readFileSync(specPath, 'utf8')).map((q) => q.id) : [];
   if (qaIds.length === 0) return fail('fatal', 'qa_missing');
+  const judgeFeedback = judgeFeedbackPath(worktree, dir, input.judge_feedback);
+  if (!judgeFeedback) return fail('fatal', 'judge_feedback_invalid', { evidence: [{ judge_feedback: input.judge_feedback }] });
 
   const preview = await waitPreview(input.pr_number, {
     api: process.env.CODING_WF_PREVIEW_API || DEFAULT_PREVIEW_API,
@@ -94,6 +103,7 @@ await runActivity(async (input) => {
     QA_IDS: qaIds.join(','),
     PREVIEW_URL: preview.url,
     ROUND: String(round),
+    JUDGE_FEEDBACK: judgeFeedback,
   });
   const args = ['-p', prompt, '--permission-mode', 'acceptEdits', ...SESSION_FLAGS, '--allowedTools', 'Bash', '--disallowedTools', ...DENIED];
   const before = { head: await headSha(worktree), changes: await snapshotChanges(worktree) };
