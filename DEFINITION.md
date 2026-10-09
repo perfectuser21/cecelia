@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.402.2
+**Brain 版本**: 1.402.3
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,16 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.402.3 — 受信快照伴随来源驱动的联合PR入口
+
+- 自仓PR使用精确版本1 `cecelia-kr` / `cecelia-factory` 来源；新增可选输入保持原6个required输入，MODE/main单scope发布路径及固定8e54条件runner字节不变。
+- 官方snapshot-main仍只保存原head.json/base.json；PR下载同一正式main来源artifact后，通过已正规发布的pr-gate提取严格Factory companion，不请求不存在的head-scope文件、不把缺失或UNKNOWN变成联合准入。
+- 真下载shell调用真实受审CLI：缺companion保准确UNKNOWN且不产联合文件/PASS；PG十一项保全部原十项及实际PR/main条件shell回归，每scope固定回归独立运行。
+- 仅native KR/Brain同repo/revision来源组合受支持；Workspace跨repo伴随协议仍拒绝，不改consumer执行权限或中央current/status/refs。
+- 同base的多份正规artifact按真实created_at排序（ID仅同时间确定性次序），不把API首项或较大ID当新来源，不按body绿过滤或回退旧源。永久实际shell回归重现ID/创建时间倒序。
+
+- 修正真实联合CI的42P01：Factory scratch候选只在实际隔离库事务/CAS重放冻结manifest及原source_decision_id，不导入或伪造中央decisions；生产正式manifest store保持。完整build候选与active-pointer并发冲突永久PG覆盖。
 
 ## Brain 1.402.2 — 已消费发布片辅助来源纠错
 
