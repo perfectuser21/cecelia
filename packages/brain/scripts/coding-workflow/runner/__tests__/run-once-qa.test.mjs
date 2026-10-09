@@ -60,6 +60,11 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       req.on('end', () => {
         preview.calls.push({ method: req.method, url: req.url, auth: req.headers.authorization ?? null, raw });
         res.setHeader('content-type', 'application/json');
+        // 预览 Brain 的 /health：git_sha 默认等于假 gh 里 PR 当前 head（已部署最新），preview.sha 可指定旧版本
+        if (req.url === '/api/brain/health') {
+          const ghState = JSON.parse(fs.readFileSync(files.gh, 'utf8'));
+          return res.end(JSON.stringify({ status: 'healthy', git_sha: preview.sha ?? ghState.prs?.[0]?.headRefOid ?? null }));
+        }
         const st = /\/api\/brain\/preview\/status\/(\d+)$/.exec(req.url);
         if (st) {
           const p = preview.status[st[1]];
@@ -74,6 +79,8 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     });
     await new Promise((r) => preview.server.listen(0, '127.0.0.1', r));
     preview.api = `http://127.0.0.1:${preview.server.address().port}`;
+    // 预览端口就是这个假服务自己（同时扮演预览管理 API 与预览 Brain）
+    preview.status[77].port = preview.server.address().port;
     // 假独立裁判（OpenAI 兼容 chat/completions）：按 judge.mode 回放
     judge = { mode: 'pass', calls: [] };
     judge.server = http.createServer((req, res) => {
@@ -112,6 +119,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       FAKE_QA_MODE: mode,
       FAKE_QA_LOG: files.qaLog,
       CODING_WF_PREVIEW_API: preview.api,
+      CODING_WF_PREVIEW_HOST: '127.0.0.1',
       DEPLOY_TOKEN: 'tok-1',
       CODING_WF_CLAUDE_BIN: FAKE_CLAUDE,
       FAKE_CIFIX_MODE: 'fix',
@@ -163,6 +171,17 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     });
     expect(brainQa().at(-1).qa).toMatchObject({ verdict: 'PASS', rounds: 1, judge: 'PASS' });
     expect(brain.patches.some((p) => p.id.startsWith('dddddddd'))).toBe(false);
+  });
+
+  it('evaluate 入口来自 runner 专用 clone（main），不用 PR 分支里可能被改过的 evaluate.mjs（审计 P0 #1）', async () => {
+    const rel = 'packages/brain/scripts/coding-workflow/activities/evaluate.mjs';
+    // PR 分支里放一个「被改过的」evaluate：一跑就留下 poison 记录并判 PASS
+    addToBranch(rel, `import fs from 'node:fs';\nfs.appendFileSync(process.env.FAKE_QA_LOG, '{"poison":true}\\n');\nprocess.stdout.write(JSON.stringify({ status: 'failed', failure_class: 'fatal', reason_code: 'poison' }) + '\\n');\n`);
+    fs.mkdirSync(path.dirname(path.join(sb.clone, rel)), { recursive: true });
+    fs.copyFileSync(FAKE_EVALUATE, path.join(sb.clone, rel));
+    const r = await go(green({ prs: [pr({ headRefOid: git(sb.origin, 'rev-parse', BRANCH).trim() })] }), { extra: { CODING_WF_EVALUATE: '' } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls()).toEqual([expect.objectContaining({ pr_number: 77, round: 1 })]);
   });
 
   it('独立裁判拿到：模型、Bearer 令牌、需求 01、合同 02、QA 报告 05、PR 代码改动（不含 sprints/）', async () => {
@@ -385,6 +404,35 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       await brain.close();
       brain = null;
     }
+  });
+
+  // 审计 P0 #2：QA 验的必须正是待合并 head 的构建
+  it('预览环境还是旧版本（git_sha ≠ PR head，推送后还没重新部署）→ 不验，记 stale_since；超时升级 qa_preview_stale', async () => {
+    preview.sha = 'a'.repeat(40);
+    let r = await go(green());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls()).toEqual([]);
+    expect(state().preview).toMatchObject({ stale_since: expect.any(String), stale_sha: 'a'.repeat(40) });
+    await brain.close();
+    brain = null;
+    r = await go(green(), { extra: { CODING_WF_QA_PREVIEW_ESCALATE_MS: '0' } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls()).toEqual([]);
+    expect(state().escalated).toMatchObject({ type: 'qa_preview_stale', preview_sha: 'a'.repeat(40), head });
+  });
+
+  it('列表里的 head 已过时（检出的分支比它新）→ 本轮不验、不计坏', async () => {
+    addToBranch('src/later.js', 'export const later = 1;\n');
+    const r = await go(green());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls()).toEqual([]);
+    expect(fs.existsSync(statePath()) ? state().bad ?? 0 : 0).toBe(0);
+  });
+
+  it('evaluate 拿到要验的 head（head_sha），活动开跑前自己再核一次预览版本', async () => {
+    const r = await go(green());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls()[0]).toMatchObject({ head_sha: head });
   });
 
   it('预览环境不存在 → 带令牌请求启动，本轮不验', async () => {

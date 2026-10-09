@@ -176,9 +176,10 @@ describe('coding workflow runner run-once', () => {
     expect(input.brain_url).toBe(brain.url);
     expect(input.sprint_dir).toMatch(/^sprints\/[0-9]{8}-cw-aaaaaaa1$/);
     expect(input.run_tag).toMatch(/^[A-Za-z0-9_.:/-]{1,128}$/);
-    // 执行器在 worktree 内被调用：--cwd 指向 worktree 的 coding-workflow 目录，--receipt 落 LOG_DIR
+    // 判卷代码来自可信基线（审计 P0 #1）：--cwd 指向 runner 专用 clone（main）的 coding-workflow 目录，
+    // 不是任务 worktree（build 改过的 verify 不能判它自己）；执行器进程仍在 worktree 内运行；--receipt 落 LOG_DIR
     expect(exec.argv).toEqual([
-      '--cwd', path.join(worktree, 'packages/brain/scripts/coding-workflow'),
+      '--cwd', path.join(sb.clone, 'packages/brain/scripts/coding-workflow'),
       '--receipt', path.join(sb.logDir, `${T1}.json`),
     ]);
     expect(exec.cwd).toBe(worktree);

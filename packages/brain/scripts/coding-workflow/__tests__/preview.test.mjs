@@ -31,6 +31,32 @@ describe('previewOf', () => {
   });
 });
 
+// 审计 P0 #2：QA 验的必须正是待合并 head 的构建——预览 Brain 的 /api/brain/health 带 git_sha（部署所用提交）
+describe('previewOf：绑定 head（expectSha）', () => {
+  const SHA = 'b3c0930a01aa627ebcd8604a01db3aba2456b889';
+  it('active 且预览 git_sha 等于期望 head → active，带 sha；查的是同一预览端口的 /health，可指定主机', async () => {
+    const f = fakeFetch([{ body: { status: 'active', port: 5301 } }, { body: { status: 'healthy', git_sha: SHA } }]);
+    expect(await previewOf(77, { api: 'http://x:5241', fetchImpl: f, expectSha: SHA, host: '127.0.0.1' }))
+      .toEqual({ state: 'active', url: 'http://127.0.0.1:5301', port: 5301, sha: SHA });
+    expect(f.calls[1]).toBe('http://127.0.0.1:5301/api/brain/health');
+  });
+
+  it('git_sha 不等（推送后还没重新部署）→ stale，带预览实际 sha；/health 查不到 → stale（sha=null）', async () => {
+    let f = fakeFetch([{ body: { status: 'active', port: 5301 } }, { body: { git_sha: 'a'.repeat(40) } }]);
+    expect(await previewOf(77, { api: 'a', fetchImpl: f, expectSha: SHA })).toMatchObject({ state: 'stale', sha: 'a'.repeat(40) });
+    f = fakeFetch([{ body: { status: 'active', port: 5301 } }, new Error('ECONNREFUSED')]);
+    expect(await previewOf(77, { api: 'a', fetchImpl: f, expectSha: SHA })).toMatchObject({ state: 'stale', sha: null });
+  });
+
+  it('waitPreview：stale 时继续等重新部署，sha 对上即返回', async () => {
+    const f = fakeFetch([
+      { body: { status: 'active', port: 5301 } }, { body: { git_sha: 'a'.repeat(40) } },
+      { body: { status: 'active', port: 5301 } }, { body: { git_sha: SHA } },
+    ]);
+    expect(await waitPreview(77, { api: 'a', fetchImpl: f, expectSha: SHA, timeoutMs: 1000, intervalMs: 1 })).toMatchObject({ state: 'active', sha: SHA });
+  });
+});
+
 describe('waitPreview', () => {
   it('pending 若干次后 active → 返回 active', async () => {
     const f = fakeFetch([{ body: { status: 'starting' } }, { body: { status: 'starting' } }, { body: { status: 'active', port: 5303 } }]);

@@ -7,8 +7,22 @@ const PENDING = new Set(['pending', 'starting', 'deploying', 'building', 'queued
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** 一次查询 → { state: 'active'|'pending'|'down'|'missing'|'error', url?, port?, status? } */
-export async function previewOf(pr, { api = DEFAULT_PREVIEW_API, fetchImpl = fetch } = {}) {
+/** 预览 Brain 部署所用的提交（/api/brain/health 的 git_sha）；查不到返回 null。 */
+async function deployedSha(url, fetchImpl) {
+  try {
+    const res = await fetchImpl(`${url}/api/brain/health`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    const body = res.ok ? await res.json().catch(() => null) : null;
+    return typeof body?.git_sha === 'string' && body.git_sha ? body.git_sha : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 一次查询 → { state: 'active'|'stale'|'pending'|'down'|'missing'|'error', url?, port?, sha?, status? }。
+ * 给了 expectSha：active 还要求预览部署的正是这个提交（QA 验的必须是待合并 head 的构建），否则 stale（带实际 sha）。
+ */
+export async function previewOf(pr, { api = DEFAULT_PREVIEW_API, fetchImpl = fetch, expectSha = null, host = 'localhost' } = {}) {
   let res;
   try {
     res = await fetchImpl(`${String(api).replace(/\/+$/, '')}/api/brain/preview/status/${encodeURIComponent(pr)}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
@@ -20,12 +34,17 @@ export async function previewOf(pr, { api = DEFAULT_PREVIEW_API, fetchImpl = fet
   const body = await res.json().catch(() => null);
   const status = body?.status ?? null;
   const port = Number(body?.port);
-  if (status === 'active' && Number.isInteger(port) && port > 0) return { state: 'active', url: `http://localhost:${port}`, port };
+  if (status === 'active' && Number.isInteger(port) && port > 0) {
+    const url = `http://${host}:${port}`;
+    if (!expectSha) return { state: 'active', url, port };
+    const sha = await deployedSha(url, fetchImpl);
+    return { state: sha === expectSha ? 'active' : 'stale', url, port, sha };
+  }
   if (PENDING.has(status)) return { state: 'pending', status };
   return { state: 'down', status };
 }
 
-/** 等到 active；down/missing 立刻返回（等也没用），pending/error 轮询到超时后返回最后状态。 */
+/** 等到 active；down/missing 立刻返回（等也没用），pending/stale/error 轮询到超时后返回最后状态。 */
 export async function waitPreview(pr, { timeoutMs = 20 * 60 * 1000, intervalMs = 15000, ...opts } = {}) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
