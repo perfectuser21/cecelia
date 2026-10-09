@@ -17,6 +17,7 @@ class NativePriceTests(unittest.TestCase):
         public=public_report(report)
         self.assertNotIn('ip',public['restored_network'])
         self.assertEqual(public['restored_network']['country'],'CN')
+        self.assertEqual(public_report(public)['restored_network']['country'],'CN')
         self.assertEqual(report['restored_network']['ip']['query'],'192.0.2.1')
     def test_attributes_not_itertext(self):
         self.assertEqual(text_values(nodes(['Brand drill','53132'])),['Brand drill','53132'])
