@@ -96,3 +96,14 @@ test('原生采集完成后直接报告，禁止重复拉图和全文XML导致�
   assert.ok(prompt.includes('禁止把全文XML返回模型'));
   assert.ok(prompt.includes('恢复网络/桌面并释放锁后立即输出JSON'));
 });
+test('分阶段补报告保留真实采集与报告run、owner、时间', async () => {
+  const { buildCompletion }=await import('./us-price-keyword-core.mjs');
+  const result={...validateReceipt(receipt(),options),report_only:true,source_action_run_id:'original-failed-run',source_action_owner:'original-owner'};
+  const completion=buildCompletion(result,options,[],'/evidence');
+  assert.equal(completion.evidence.report_run_id,'run1');
+  assert.equal(completion.evidence.source_action_run_id,'original-failed-run');
+  assert.equal(completion.evidence.source_action_owner,'original-owner');
+  assert.equal(completion.facts.report_only,true);
+  assert.equal(completion.evidence.quote_provenance[0].action_owner,quote.action_owner);
+  assert.equal(completion.evidence.quote_provenance[0].collected_at,quote.collected_at);
+});
