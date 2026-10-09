@@ -14,7 +14,7 @@ const FAKE = path.join(HERE, 'fixtures/fake-claude-gan.mjs');
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
 
 const INTENT_MD = `---\ntask_id: ${TASK_ID}\nstep: intent\nupstream: []\n---\n# 验收条目\n\n### I-1\n能评审。\n\n### I-2\n能改写。\n`;
-const SPEC_MD = `---\ntask_id: ${TASK_ID}\nstep: spec\nupstream: ["01-intent.md#I-1", "01-intent.md#I-2"]\n---\n# spec\n\n### S-1\n对应 I-1：改 foo.js\n\n### S-2\n对应 I-2：改 bar.js\n`;
+const SPEC_MD = `---\ntask_id: ${TASK_ID}\nstep: spec\nupstream: ["01-intent.md#I-1", "01-intent.md#I-2"]\n---\n# spec\n\n### S-1\n对应 I-1：改 foo.js\n\n### S-2\n对应 I-2：改 bar.js\n\n## QA 场景\n\n### Q-1\n对应: I-1\n操作: 用户发起评审\n期望: 看到评审结论\n\n### Q-2\n对应: I-2\n操作: 用户发起改写\n期望: 看到新规格\n`;
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 const blocker = (id, extra = {}) => ({ id, severity: '阻断', ...extra });
 
@@ -61,6 +61,12 @@ describe('spec_review 活动 v2（合同对抗）', () => {
       review_file: '02-review.md', review_rounds: 1, spec_sha256: sha256(SPEC_MD),
       gan: { verdict: 'APPROVED', rounds: 1, trend: 'insufficient_data', open_issues: [], cost_usd: 0.3 },
     });
+  });
+
+  it('QA 问题可以针对 QA 场景 Q-n（evaluator 的测试计划）', async () => {
+    const r = await run({ reviews: [{ scores: 6, issues: [blocker('R-1', { targets: 'Q-1' })] }, { scores: 8, prior: [{ id: 'R-1', status: '关闭' }] }] });
+    expect(r.result.status).toBe('completed');
+    expect(r.result.outputs.review_rounds).toBe(2);
   });
 
   it('开发采纳后关闭 → 第 2 轮通过；留下 02-response-r1.md，规格已改且 spec_sha256 为新哈希', async () => {
@@ -142,7 +148,7 @@ describe('spec_review 活动 v2（合同对抗）', () => {
 
   it('prompt：QA 立场、只准四类问题、阻断/重要必须带场景与依据、禁止措辞格式类问题', () => {
     const review = fs.readFileSync(path.join(HERE, '../prompts/spec-review.md'), 'utf8');
-    for (const s of ['QA', '场景', '依据', '阻断', '重要', '建议', '措辞', '上轮问题', 'PRIOR_OPEN']) expect(review).toContain(s);
+    for (const s of ['QA', '场景', '依据', '阻断', '重要', '建议', '措辞', '上轮问题', 'PRIOR_OPEN', 'Q-n']) expect(review).toContain(s);
     const revise = fs.readFileSync(path.join(HERE, '../prompts/spec-revise.md'), 'utf8');
     for (const s of ['RESPONSE_PATH', '采纳', '驳回']) expect(revise).toContain(s);
   });
