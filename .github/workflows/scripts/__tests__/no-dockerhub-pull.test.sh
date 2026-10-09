@@ -32,6 +32,11 @@ for (const name of fs.readdirSync(dir).filter((f) => f.endsWith('.yml'))) {
     if (ref.startsWith('${{') || ref === 'scratch') return;
     if (!ALLOWED.test(ref)) fails.push(`${name}:${i + 1} image 直连 Docker Hub：${ref}（改成 mirror.gcr.io/<原路径>，官方镜像用 mirror.gcr.io/library/<名>）`);
   });
+  // docker pull <裸名> 同样直连 Docker Hub（registry-mirrors 未命中会回落）——必须写镜像源全名
+  text.split('\n').forEach((line, i) => {
+    const m = /\bdocker pull\s+(?:--?\S+\s+)*([^\s$"'`]+)/.exec(line);
+    if (m && !ALLOWED.test(m[1])) fails.push(`${name}:${i + 1} docker pull 直连 Docker Hub：${m[1]}（改成 docker pull mirror.gcr.io/... 再 docker tag 回原名）`);
+  });
   const jobsAt = text.indexOf('\njobs:\n');
   if (jobsAt === -1) continue;
   const blocks = text.slice(jobsAt + 7).split(/\n(?=  [A-Za-z0-9_-]+:\s*\n)/);

@@ -21,8 +21,8 @@ jobs:
           node-version: '24'
       - name: Resolve test image to immutable local ID
         run: |
-          docker pull node:24-bookworm-slim
-          echo "LINUX_RESOURCE_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' node:24-bookworm-slim)" >> "$GITHUB_ENV"
+          docker pull mirror.gcr.io/library/node:24-bookworm-slim
+          echo "LINUX_RESOURCE_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' mirror.gcr.io/library/node:24-bookworm-slim)" >> "$GITHUB_ENV"
       - name: Read actual limited cgroup without granting execution
         run: |
           set -o pipefail

@@ -1928,7 +1928,9 @@ jobs:
           node src/migrate.js
       - name: Prepare isolated Brain and actual Alpine worker
         run: |
-          docker pull alpine
+          # 显式走镜像源再打本地名（registry-mirrors 未命中会回落 Docker Hub 被限流，任务 7294cf3a）
+          docker pull mirror.gcr.io/library/alpine:latest
+          docker tag mirror.gcr.io/library/alpine:latest alpine:latest
           docker build -f packages/brain/Dockerfile -t cecelia-brain:walking-ci .
           docker run -d --name cecelia-brain-walking-ci --network host \
             -v /var/run/docker.sock:/var/run/docker.sock \
