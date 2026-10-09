@@ -170,8 +170,8 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
   });
 
   it('失败数连续 3 轮不降（不收敛）→ 升级，不再自动修', async () => {
-    seedState({ rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'FAIL', fails: 2 }, { round: 2, head: 'b'.repeat(40), verdict: 'FAIL', fails: 2 }] });
-    fs.writeFileSync(path.join(sb.root, 'unused'), '');
+    // 假 evaluate 每轮 1 个失败：1 → 1 → 1 连续 3 轮不降
+    seedState({ rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'FAIL', fails: 1 }, { round: 2, head: 'b'.repeat(40), verdict: 'FAIL', fails: 1 }] });
     const r = await go(green(), { mode: 'fail' });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(qaCalls()[0].round).toBe(3);
