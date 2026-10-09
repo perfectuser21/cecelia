@@ -27,7 +27,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:17
+        image: mirror.gcr.io/library/postgres:17
         env:
           POSTGRES_USER: onboarding_ci
           POSTGRES_PASSWORD: onboarding_ci

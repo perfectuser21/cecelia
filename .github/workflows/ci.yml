@@ -105,6 +105,8 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
+      # CI 不直连 Docker Hub：docker build/compose 拉镜像走 mirror.gcr.io（任务 7294cf3a）
+      - uses: ./.github/actions/dockerhub-mirror
       - name: Build cecelia-brain image
         run: |
           set -e
@@ -927,7 +929,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: pgvector/pgvector:pg15
+        image: mirror.gcr.io/pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
           POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
@@ -1032,7 +1034,7 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: pgvector/pgvector:pg15
+        image: mirror.gcr.io/pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
           POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
@@ -1065,7 +1067,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: pgvector/pgvector:pg15
+        image: mirror.gcr.io/pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
           POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
@@ -1172,7 +1174,7 @@ jobs:
     timeout-minutes: 12
     services:
       postgres:
-        image: pgvector/pgvector:pg15
+        image: mirror.gcr.io/pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
           POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
@@ -1589,7 +1591,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: pgvector/pgvector:pg15
+        image: mirror.gcr.io/pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
           POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
@@ -1734,7 +1736,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: pgvector/pgvector:pg15
+        image: mirror.gcr.io/pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
           POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
@@ -1748,6 +1750,8 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      # CI 不直连 Docker Hub：docker build/compose 拉镜像走 mirror.gcr.io（任务 7294cf3a）
+      - uses: ./.github/actions/dockerhub-mirror
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -1891,7 +1895,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: pgvector/pgvector:pg15
+        image: mirror.gcr.io/pgvector/pgvector:pg15
         env:
           POSTGRES_USER: cecelia
           POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
@@ -1909,6 +1913,8 @@ jobs:
       DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
     steps:
       - uses: actions/checkout@v4
+      # CI 不直连 Docker Hub：docker build/compose 拉镜像走 mirror.gcr.io（任务 7294cf3a）
+      - uses: ./.github/actions/dockerhub-mirror
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
