@@ -18,6 +18,7 @@ import { startRun, finishRun } from './lib/task-run.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { readPageContent } from './lib/notion-page-content.js';
 import { qiumiSourceFromNotion } from './lib/qiumi-source.js';
+import { parseExecParams } from './routing/exec-params.js';
 import { toStartIso, toEndIso, isFuture, scheduledNote } from './lib/qiumi-schedule.js';
 import { parseEnPage, parseZhPage, GTD_DB_ID, EN_NATIVE_MARK } from './notion-gtd-sync.js';
 import { TREE_NODES_SQL, treeNodeTable } from './lib/tree-nodes-sql.js';
@@ -504,11 +505,14 @@ async function ingestQiumiPage(pool, token, page, en, { env, now = () => new Dat
   const scheduled = isFuture(startIso, now());
   const delegator = await resolveDelegator(token, zh, en);
   const tenantId = zh ? tenantFor(env, env.NOTION_GTD_DB_ID || GTD_DB_ID) : 'default';
+  const description = qiumiDescription(zhBody || enBody || en.description, title, page.id);
+  // 此Agent由独立CLI认领并回填报价；入账即隔离，不能依靠30s watcher抢先Tick。
+  const externalPriceConsumer = parseExecParams(description).agent === 'us-price-compare';
   const routed = await createRoutedTask(pool, {
     source: 'inbox',
     source_id: page.id,
     title,
-    description: qiumiDescription(zhBody || enBody || en.description, title, page.id),
+    description,
     requested_task_type: 'qiumi_task',
     mutation_intent: 'none',
     declared_domain: 'operations',
@@ -522,7 +526,7 @@ async function ingestQiumiPage(pool, token, page, en, { env, now = () => new Dat
       tenant_id: tenantId,
       // 第一道闸：门没放开就写 true，任务落地即被 tick 候选 SQL 排除（谓词见 dispatch-helpers.js）。
       // 放开后写 false（与不写等价），由 dispatcher.dispatchQiumiTask 接管派发。
-      headed_manual: env.QIUMI_DISPATCH_ENABLED !== 'true',
+      headed_manual: env.QIUMI_DISPATCH_ENABLED !== 'true' || externalPriceConsumer,
       qiumi_source: qiumiSourceFromNotion({ title, zh, en, zhBody, enBody, dueAt }),
       ...(startIso ? { next_run_at: startIso, scheduled_start: startIso } : {}),
       ...(delegator.name ? { delegated_by: delegator.name } : {}),

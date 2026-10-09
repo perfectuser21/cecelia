@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.393.2
+**Brain 版本**: 1.393.3
+
+Notion明确执行Agent=us-price-compare的任务入账即headed_manual隔离，由关键词比价CLI独立原子认领并回填报价，Tick不竞争；其它Agent保持原派发开关语义。
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
