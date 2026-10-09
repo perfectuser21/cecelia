@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { DATA_SOURCE, buildCompletion, buildTask, claimTask, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
+import { DATA_SOURCE, terminalStatus, failurePatch, buildCompletion, buildTask, claimTask, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
 
 async function jsonRequest(base, path, method = 'GET', body, headers = {}) {
   const response = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
@@ -78,9 +78,9 @@ export async function main(args) {
   }
   await claimTask(taskId, `us-price-keyword:${randomUUID()}`, requestBrain);
   const dir = join(homedir(), 'Library', 'Caches', 'cecelia-us-price', taskId);
-  await mkdir(dir, { recursive: true, mode: 0o700 }); await chmod(dir, 0o700);
-  const actor = 'OpenClaw/us-price-compare';
+  const writtenRows = [];
   try {
+    await mkdir(dir, { recursive: true, mode: 0o700 }); await chmod(dir, 0o700);
     const token = await notionToken();
     const requestNotion = (path, method, body) => jsonRequest('https://api.notion.com/v1', path, method, body, { Authorization: `Bearer ${token}`, 'Notion-Version': '2025-09-03' });
     const dataSource = o.dataSource ?? DATA_SOURCE;
@@ -115,16 +115,15 @@ export async function main(args) {
       quote.evidence_file_id = upload.id;
       return proof;
     };
-    const rows = await saveQuotes(result, o, taskId, requestNotion, dataSource, proofAndUpload);
+    const rows = await saveQuotes(result, o, taskId, requestNotion, dataSource, proofAndUpload, row => writtenRows.push(row));
     const completion = buildCompletion(result, o, rows, dir);
     await writeFile(join(dir, 'completion.json'), JSON.stringify(completion, null, 2), { mode: 0o600 });
-    await requestBrain(`/tasks/${taskId}`, 'PATCH', { status: result.claimed_result === 'passed' ? 'completed' : 'in_progress', result: completion, handoff: completion });
+    await requestBrain(`/tasks/${taskId}`, 'PATCH', { status: terminalStatus(result.claimed_result), result: completion, handoff: completion });
     console.log(JSON.stringify({ task_id: taskId, status: result.claimed_result === 'passed' ? 'completed' : 'partial', ...completion }, null, 2));
   } catch (error) {
     // 保持未完成，拒绝把部分报价/采集失败写成已成功。
     const old = await requestBrain(`/tasks/${taskId}`).catch(() => ({}));
-    const oldResult = (old.task ?? old).result ?? {};
-    await requestBrain(`/tasks/${taskId}`, 'PATCH', { result: { ...oldResult, last_attempt: { actor, facts: { outcome: 'failed', reason: error.message }, evidence: { receipt_directory: dir } } } }).catch(() => {});
+    await requestBrain(`/tasks/${taskId}`, 'PATCH', failurePatch(old, error.message, dir, writtenRows)).catch(() => {});
     throw new Error(`任务 ${taskId} 未完成：${error.message}`);
   }
 }

@@ -72,7 +72,7 @@ export function notionProperties(q, o, taskId, runId, actualModel, proofIndex) {
   }
   return properties;
 }
-export async function saveQuotes(result, options, taskId, request, dataSource, verifyProof) {
+export async function saveQuotes(result, options, taskId, request, dataSource, verifyProof, onWritten = () => {}) {
   // 先完成全量证据审计，再开始写入，避免半批未经审计的数据。
   const proofs = [];
   for (const quote of result.quotes) proofs.push(await verifyProof(quote));
@@ -85,6 +85,7 @@ export async function saveQuotes(result, options, taskId, request, dataSource, v
     const page = matches.results[0]
       ? await request(`/pages/${matches.results[0].id}`, 'PATCH', { properties })
       : await request('/pages', 'POST', { parent: { type: 'data_source_id', data_source_id: dataSource }, properties });
+    onWritten({ id: page.id, url: page.url, readback_verified: false });
     const check = await request(`/pages/${page.id}`, 'GET');
     demand(check.properties?.['标价 USD']?.number === quote.price_usd && check.properties?.幂等键?.rich_text?.[0]?.text?.content === properties.幂等键.rich_text[0].text.content, 'Notion回读校验失败');
     rows.push({ id: page.id, url: check.url ?? page.url, price_usd: quote.price_usd, platform: platforms[quote.package] });
@@ -107,4 +108,10 @@ export function buildCompletion(result, o, rows, dir) {
     evidence: { run_id: result.run_id, report_run_id: result.run_id, source_action_run_id: result.source_action_run_id ?? null, source_action_owner: result.source_action_owner ?? null, collection_runs: result.collection_runs ?? [], quote_provenance: result.quotes.map(q => ({ package: q.package, model: q.model, action_owner: q.action_owner, collected_at: q.collected_at, source_action_run_id: q.source_action_run_id ?? result.source_action_run_id ?? result.run_id })), notion_rows: rows, receipt_directory: dir },
     next_steps: [],
   };
+}
+
+export function terminalStatus(claimedResult) { return claimedResult === 'passed' ? 'completed' : 'failed'; }
+export function failurePatch(previous, reason, dir, rows) {
+  const oldResult = (previous.task ?? previous).result ?? {};
+  return { status: 'failed', result: { ...oldResult, last_attempt: { actor: 'OpenClaw/us-price-compare', facts: { outcome: 'failed', reason }, evidence: { receipt_directory: dir, notion_rows: rows } } } };
 }

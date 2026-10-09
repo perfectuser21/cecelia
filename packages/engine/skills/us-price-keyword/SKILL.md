@@ -11,7 +11,7 @@ description: 在手机 Amazon US 与 Home Depot US 原生 App 按关键词查同
 node /Users/administrator/openclaw-root/workspaces-root/clawd-us-price-compare/scripts/phone-rpa/us-price-keyword.mjs --keyword "cordless drill" --count 3 --zip 53132
 ```
 
-CLI负责先登记Brain、派发 us-price-compare、独立校验手机XML与截图、上传Notion附件、按任务/SKU/平台幂等写入并回读。未形成全部同规格跨平台配对时报告partial，保留已有有效报价，不能称整批完成。实际模型取provider回执，不采用模型自行声称。
+CLI负责先登记Brain、派发 us-price-compare、独立校验手机XML与截图、上传Notion附件、按任务/SKU/平台幂等写入并回读。未形成全部同规格跨平台配对时报告partial，保留已有有效报价并以failed终结本轮任务，不能称整批完成或留在in_progress。执行/审计/写库失败同样failed并留原因、原证据和已写页面；claim409保持他人任务不动。实际模型取provider回执，不采用模型自行声称。
 
 执行端：XIAN-M4-PHONE小黄ANGYVB4402004137，controller `/Users/jinnuoshengyuan/.local/bin/douyin-phone-adb --profile legacy`。全程一个with-lock owner，确认空闲后按用户授权决策043693f2-c703-406b-96c6-90a0176eff0b切mac-mini-m4-us；结束或失败都恢复None/国内、HOME并释放锁；不改变小彩。已有锁或原出口与约定不符则停止。
 
