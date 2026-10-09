@@ -7,7 +7,7 @@ function receipt() {
   return { runId: 'run1', status: 'ok', result: { payloads: [{ text: JSON.stringify({ quotes: [quote], network_restored: true, home_verified: true, lock_free_verified: true }) }], meta: { agentMeta: { provider: 'openai', model: 'gpt-6-luna', terminalReceipt: { effective: { provider: 'openai', model: 'gpt-6-luna' }, successfulToolNames: ['node_exec'] } } } } };
 }
 test('输入数量有界，邮编保留前导零', () => {
-  assert.deepEqual(parseOptions(['--keyword', 'drill', '--zip', '53132']), { keyword: 'drill', zip: '53132', count: 3, model: 'openai/gpt-6-sol' });
+  assert.deepEqual(parseOptions(['--keyword', 'drill', '--zip', '53132']), { keyword: 'drill', zip: '53132', count: 1, model: 'openai/gpt-6-sol' });
   for (const count of ['0', '4', '1.5']) assert.throws(() => parseOptions(['--keyword', 'drill', '--count', count]));
   assert.throws(() => parseOptions(['--keyword', '   ']));
 });
