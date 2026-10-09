@@ -8,7 +8,7 @@ export const IMPACT_REPO='perfectuser21/zenithjoy-workspace';
 /** 真PG隔离schema；SHA与断言路径可与调用方真实git仓库对齐。 */
 export async function implementationImpactDatabase({
   baseRevision='a'.repeat(40),headRevision='b'.repeat(40),assertionRef='tests/controller.test.js',
-  scope='phones',registryRepo='phone-source',seedIds,
+  scope='phones',registryRepo='phone-source',seedIds,completeManifest=false,
   readBinding=async b=>b.kind==='skill'?'---\nname: controller\nversion: 1.0.0\n---\n# controller\n':'export const controller=true;\n',
 }={}) {
   const fixture=await versionsDatabase(),db=fixture.db;
@@ -28,6 +28,11 @@ export async function implementationImpactDatabase({
       await db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','影响测试','active')",[decision]);
       const binding=(type,entity_id)=>({entity_type:type,entity_id,source_repo:sourceRepo,source_revision:revision});
       const manifest={scope_key:mapScope,schema_version:1,source_decision_id:decision,value_streams:[{key:'flow',brain_binding:binding('value_stream',ids.valueStream)}],capabilities:capIds.map((cap,i)=>({key:`F${i}`,value_stream_key:'flow',brain_binding:binding('capability',cap)}))};
+      if(completeManifest){
+        manifest.boundaries=[];manifest.crosscut_pool=[];
+        manifest.value_streams=manifest.value_streams.map((n,i)=>({...n,name:n.key,order:i+1}));
+        manifest.capabilities=manifest.capabilities.map((n,i)=>({...n,name:n.key,order:i+1}));
+      }
       if(manifest.capabilities[0])manifest.capabilities[0].brain_binding.source_revision=capabilityRevision;
       const digest=createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
       const version=(await db.query('SELECT COALESCE(max(version),0)+1 next FROM map_manifest_versions WHERE scope_key=$1',[mapScope])).rows[0].next;

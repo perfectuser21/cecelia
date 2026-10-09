@@ -181,6 +181,11 @@
       "owner_path": "scripts/ci/registry-lint.mjs",
       "path": "packages/brain/src/lib/__tests__/registry-lint.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/implementation-ci-snapshot.js",
+      "path": "packages/brain/src/__tests__/fixtures/implementation-impact-db.js",
+      "role": "verification"
     }
   ]
 }

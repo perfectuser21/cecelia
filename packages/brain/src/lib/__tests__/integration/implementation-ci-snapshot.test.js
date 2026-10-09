@@ -11,14 +11,14 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import yaml from 'js-yaml';
-import {createImplementationScratch,importImplementationSnapshot,verifySnapshotSource} from '../../../../../../scripts/ci/implementation-snapshot.mjs';
+import {createImplementationScratch,importImplementationSnapshot,verifySnapshotSource,projectImplementationSnapshot,buildPrImplementationSnapshot} from '../../../../../../scripts/ci/implementation-snapshot.mjs';
 import {lintImplementationRegistry} from '../../../../../../scripts/ci/registry-lint.mjs';
 import {loadActivityContracts} from '../../activity-contract-loader.js';
 import {implementationSourceOwners} from '../../implementation-ci-snapshot.js';
 import {syncActivityContracts} from '../../../activity-contract-sync.js';
 let fixture;
 async function generatedOwnerFixture(){
-  fixture=await implementationImpactDatabase();const {db,contracts}=fixture;
+  fixture=await implementationImpactDatabase({completeManifest:true});const {db,contracts}=fixture;
   const old=(await db.query('SELECT * FROM workflows WHERE id=$1',[fixture.ids.keyword])).rows[0];
   await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[old.id]);
   await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[fixture.ids.benchmark]);
@@ -185,6 +185,13 @@ it('真实固定Git与scratch导入重放新契约，退役来源owner没有curr
     expect((await target.db.query('SELECT id FROM workflow_definition_versions WHERE workflow_id=$1',[old.id])).rows).toHaveLength(1);
     expect((await target.db.query('SELECT id FROM workflow_activity_refs WHERE workflow_id=$1 AND active',[old.id])).rows).toEqual([]);
     expect((await verifySnapshotSource(snapshot,dir,{db:target.db})).adapter_evidence.revision).toBe(revision);
+    await projectImplementationSnapshot(target.db,snapshot,dir);
+    const rebuilt=await buildPrImplementationSnapshot(target.db,snapshot,revision,dir);
+    expect(rebuilt.status,JSON.stringify(rebuilt.gaps)).toBe('verified');
+    expect(rebuilt.canonical.workflows.map(w=>w.id)).toEqual(snapshot.canonical.workflows.map(w=>w.id));
+    expect(rebuilt.source_registry).toEqual(snapshot.source_registry);
+    expect((await target.db.query('SELECT status,current_definition_version_id FROM workflows WHERE id=$1',[old.id])).rows)
+      .toEqual([{status:'retired',current_definition_version_id:null}]);
     const before=(await target.db.query('SELECT id,status,current_definition_version_id FROM workflows ORDER BY id')).rows;
     const forged=structuredClone(snapshot);forged.source_registry.workflows[0].capability_id=randomUUID();
     const {snapshot_sha256:_sha,...body}=forged;forged.snapshot_sha256=stepSha256(body);
