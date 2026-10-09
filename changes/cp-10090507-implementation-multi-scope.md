@@ -5,3 +5,4 @@
 - workflow新增可选 admission_scopes JSON版本1协议，默认6required inputs原样，只有显式PR联合admission；main仍原单领域release。scoped快照须同一正规main artifact内固定repo/SHA来源，未知快照不准入。
 - 辅助声明的完整batch保留各领域原始报告，跨领域只以同SHA/hash/role真实owner闭包验证共享manifest；独立来源收据不改变业务运行状态，投影篡改、缺owner与真实回归失败仍拒。
 - artifact下载单独兼容未定义可选环境字段的旧调用，空值保持single-scope；固定版本1条件gate字节不变，真实zip边界与缺artifact拒绝保留。
+- 泛用多领域协议测试与真实Factory consumer身份分离，永久证明未登记真实consumer的Factory范围保持UNKNOWN。
