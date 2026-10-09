@@ -175,3 +175,16 @@ describe('loadConfig', () => {
     expect(c.failedRetentionDays).toBe(2);
   });
 });
+
+// 跨处一致性：runner 生成的分支必须被 CI 通用 auto-merge 判为 SKIP（合并权只归 runner 合并门）。
+// 两处判据各写一份（CI 脚本与 cifix-scan CW_BRANCH_RE），这条用例防止任一边改了另一边没跟（PR #6153 事故）。
+describe('runner 分支与 CI auto-merge 判据一致', () => {
+  it('taskNames 生成的分支 → should-auto-merge.sh 输出 SKIP', () => {
+    const script = path.join(HERE, '../../../../../../.github/workflows/scripts/should-auto-merge.sh');
+    for (const id of ['05ae922c-4f2a-4c1c-9f86-d24937fc32d3', 'ABCDEF12-0000-4000-8000-000000000000']) {
+      const { branch } = taskNames(id, new Date('2026-10-10T00:39:00+08:00'));
+      const out = execFileSync('bash', [script, branch, 'fix(workflow): x'], { encoding: 'utf8' });
+      expect(out, branch).toMatch(/^SKIP: coding-workflow-owned/);
+    }
+  });
+});

@@ -52,4 +52,13 @@ if printf '%s' "$HEAD_BRANCH" | grep -qE '^cp-route-api-' \
   exit 0
 fi
 
+# coding workflow runner（Claude Code coding harness）产出的 PR：分支固定 cp-<8~10 位时间>-cw-<8 位 hex>
+#（runner/lib/plan.mjs taskNames），标题 feat/fix(workflow): 与手动 /dev 撞形，只能按分支判。第三次同类事故
+#（2026-10-10 金丝雀 05ae922c / PR #6153）：CI 绿后被本通道抢先合并，真人 QA 门 + 独立裁判 + 绑定 head 的
+# 合并门全被架空。merge 由 runner 合并门（runner/lib/merge-gate.mjs）在 QA 与裁判通过后按批准的 head 执行。
+if printf '%s' "$HEAD_BRANCH" | grep -qE '^cp-[0-9]{8,10}-cw-[0-9a-f]{8}$'; then
+  echo "SKIP: coding-workflow-owned PR（cp-*-cw-<hex8> 分支），跳过 CI 通用 auto-merge，merge 归 runner 合并门（真人 QA + 独立裁判通过后按批准的 head 合并）"
+  exit 0
+fi
+
 echo "MERGE"
