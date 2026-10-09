@@ -15,7 +15,6 @@ import { DB_DEFAULTS } from '../../packages/brain/src/db-config.js';
 import { validateImplementationSnapshot,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { runProjection } from '../../packages/brain/src/map/projector.js';
 import { digestMapManifest,validateMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
-import { scanRepo } from '../scan/scan-graph.mjs';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
 import { EXISTING_OPS_SCOPE,buildExistingOpsSources } from '../../packages/brain/src/lib/existing-ops-source.js';
 import { readExistingOpsRegistry,registerExistingOpsSources,prepareExistingOpsManifestAdvance } from '../../packages/brain/src/lib/existing-ops-registration.js';
@@ -145,6 +144,9 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
   s=await verifySnapshotSource(s,repoRoot);
   const edges=definitionEdges(s); // 在写隔离扫描图之前先拒绝无效定义路径。
   const repo=s.map.repositories[0].repo,staging=`ci-scan:${repo}`;
+  // Pure frozen-definition readers also run in Brain-only installations.
+  // Load the scanner only when an actual graph scan is requested.
+  const {scanRepo}=await import('../scan/scan-graph.mjs');
   const result=await scanRepo({name:staging,root:realpathSync(repoRoot)},db);
   if(result.error||result.skipped||result.sourceRevision!==s.revision)throw ciFailure('GRAPH_SCAN_FAILED',result.error?.message||'scan revision mismatch');
   const raw=(await db.query('SELECT src_path,dst_path,edge_type,detail FROM graph_edges WHERE repo=$1',[staging])).rows;

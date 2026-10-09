@@ -35,3 +35,10 @@ it('代码断言路径穿越拒绝，既有不可分类断言保留兼容行为'
  s.assertions[1].assertion_ref='manual:echo unknown';
  expect(definitionEdges(s)).toHaveLength(2);
 });
+
+it('Brain 单包读者可读取空冻结定义图，不要求安装扫描器依赖或触发扫描',()=>{
+ const s={repo:'perfectuser21/cecelia',revision:'a'.repeat(40),definitions:{workflows:[],activities:[]},assertions:[]};
+ const before=structuredClone(s);
+ expect(definitionEdges(s)).toEqual([]);
+ expect(s).toEqual(before);
+});
