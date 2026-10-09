@@ -4,58 +4,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './proc.mjs';
-import { writeDevFiles, ensureIgnored, installDeps, removeWorktree } from './worktree.mjs';
+import { removeWorktree } from './worktree.mjs';
 import { findTarget, failureLogs, readState, statePath } from './cifix-scan.mjs';
+import { taskIdOf, preparePrWorktree, checkFixCommits, pushPrHead } from './pr-branch.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 
-const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
-const PUSH_TIMEOUT_MS = 5 * 60 * 1000;
-const PROTECTED_RE = /^(sprints\/|\.claude\/|CLAUDE\.md$|AGENTS\.md$)/;
 const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)'];
 
 const stop = (code) => new Error(code);
 
-/** PR 分支 sprint 目录 01-intent.md 里的 task_id；找不到返回 null。 */
-function taskIdOf(worktree, branch) {
-  const short = branch.slice(-8);
-  const sprints = path.join(worktree, 'sprints');
-  const dir = fs.existsSync(sprints) ? fs.readdirSync(sprints).find((d) => d.endsWith(`-cw-${short}`)) : null;
-  if (!dir) return null;
-  try {
-    return /^task_id:\s*(\S+)/m.exec(fs.readFileSync(path.join(sprints, dir, '01-intent.md'), 'utf8'))?.[1] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** 建 PR 分支的修复 worktree（本地分支同名，提交钩子按 .dev-mode.<branch> 认会话）。 */
-async function prepare(cfg, pr, worktree, signal) {
-  const branch = pr.headRefName;
-  const fetch = await git(cfg.repo, ['fetch', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeoutMs: FETCH_TIMEOUT_MS });
-  if (fetch.code !== 0) throw stop('git_fetch_failed');
-  const add = await git(cfg.repo, ['worktree', 'add', '-B', branch, worktree, `origin/${branch}`]);
-  if (add.code !== 0) throw stop('worktree_add_failed');
-  writeDevFiles(worktree, branch, { id: taskIdOf(worktree, branch) ?? 'unknown', payload: {} });
-  await ensureIgnored(worktree, branch);
-  await installDeps(cfg, worktree, signal);
-}
-
-/** claude 跑完后的核对；通过返回 { commits }，否则抛 Error(reason_code)。 */
-async function check(worktree, before) {
-  if ((await git(worktree, ['status', '--porcelain'])).stdout.trim()) throw stop('uncommitted');
-  const head = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
-  if (!head || head === before) throw stop('no_commit');
-  if ((await git(worktree, ['merge-base', '--is-ancestor', before, head])).code !== 0) throw stop('history_rewritten');
-  const changed = (await git(worktree, ['diff', '--name-only', `${before}..${head}`])).stdout.split('\n').filter(Boolean);
-  if (changed.some((f) => PROTECTED_RE.test(f))) throw stop('protected_path');
-  const log = await git(worktree, ['rev-list', '--reverse', `${before}..${head}`]);
-  return { commits: log.stdout.split('\n').filter(Boolean) };
-}
-
 async function attempt(ctx, target, worktree, signal) {
   const { cfg } = ctx;
   const { pr } = target;
-  await prepare(cfg, pr, worktree, signal);
+  await preparePrWorktree(cfg, pr, worktree, signal);
   const before = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
   const logs = await failureLogs(cfg, pr.number);
   const prompt = loadPrompt('ci-fix', {
@@ -77,9 +38,8 @@ async function attempt(ctx, target, worktree, signal) {
   if (run.terminated) throw stop('runner_terminated');
   if (run.timedOut) throw stop('claude_timeout');
   if (run.code !== 0) throw stop('claude_failed');
-  const { commits } = await check(worktree, before);
-  const push = await git(worktree, ['push', 'origin', `HEAD:refs/heads/${pr.headRefName}`], { timeoutMs: PUSH_TIMEOUT_MS });
-  if (push.code !== 0) throw stop('push_failed');
+  const { commits } = await checkFixCommits(worktree, before);
+  await pushPrHead(worktree, pr.headRefName);
   return { result: 'pushed', commits };
 }
 

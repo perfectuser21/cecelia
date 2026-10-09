@@ -35,13 +35,13 @@ export async function runImplementationMultiPrGate({repoRoot,base,head,mode,scop
     return {report:resolution,receipt};
   }catch(error){save(outputDir,'gap.json',{status:'unknown',stage:'scoped_admission',code:error.code||'IMPACT_MULTISCOPE_ERROR',message:error.message});throw error;}
 }
-function parse(args){
+export function parseImplementationMultiArgs(args){
   const fields={'--repo-root':'repoRoot','--base':'base','--head':'head','--mode':'mode','--scopes-file':'scopesFile','--output-dir':'outputDir'},options={};
   for(let i=0;i<args.length;i+=2){if(!fields[args[i]]||!args[i+1]||options[fields[args[i]]])fail('IMPACT_MULTISCOPE_ARGUMENT_INVALID');options[fields[args[i]]]=args[i+1];}
   if(Object.values(fields).some(k=>!options[k]))fail('IMPACT_MULTISCOPE_ARGUMENT_MISSING');
   options.repoRoot=realpathSync(options.repoRoot);options.outputDir=resolve(options.outputDir);
   options.scopes=JSON.parse(readFileSync(options.scopesFile,'utf8'));return options;
 }
-if(process.argv[1]&&fileURLToPath(import.meta.url)===realpathSync(process.argv[1]))runImplementationMultiPrGate(parse(process.argv.slice(2)))
+if(process.argv[1]&&fileURLToPath(import.meta.url)===realpathSync(process.argv[1]))runImplementationMultiPrGate(parseImplementationMultiArgs(process.argv.slice(2)))
   .then(({receipt})=>process.stdout.write(`admission_only: ${receipt.verdict}\n`))
   .catch(error=>{process.stderr.write(`${error.code||'IMPACT_MULTISCOPE_ERROR'}: ${error.message}\n`);process.exitCode=1;});

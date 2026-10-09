@@ -107,6 +107,18 @@ describe('unverifiedItems', () => {
     });
   });
 
+  it('长行可用 ... / … 省略中间：每段都要按顺序出现在真实结果里（真实 QA 实测：健康检查单行长 JSON）', () => {
+    const runs = [{ command: 'curl -s x/health', result: '{"status":"healthy","runtime":{"isolated":true},"uptime":1662,"git_sha":"d468"}\nHTTP 200' }];
+    const ev = (output) => ({ id: 'T-1', covers: ['Q-1'], verdict: 'PASS', command: 'curl -s x/health', output });
+    expect(unverifiedItems([ev('{"status":"healthy",...,"git_sha":"d468"}\nHTTP 200')], runs)).toEqual([]);
+    expect(unverifiedItems([ev('{"status":"healthy"…"uptime":1662…}')], runs)).toEqual([]);
+    // 段落顺序颠倒、或有一段是编的 → 不通过
+    expect(unverifiedItems([ev('"git_sha":"d468"...{"status":"healthy"')], runs)).toEqual([{ id: 'T-1', reason: 'output_not_in_result' }]);
+    expect(unverifiedItems([ev('{"status":"healthy",...,"uptime":9999')], runs)).toEqual([{ id: 'T-1', reason: 'output_not_in_result' }]);
+    // 整行只有省略号不算证据
+    expect(unverifiedItems([ev('...')], runs)).toEqual([{ id: 'T-1', reason: 'output_not_in_result' }]);
+  });
+
   it('没有任何执行记录 -> 全部 command_not_executed', () => {
     expect(unverifiedItems([item({}), item({ id: 'E-2' })], [])).toEqual([
       { id: 'E-1', reason: 'command_not_executed' },

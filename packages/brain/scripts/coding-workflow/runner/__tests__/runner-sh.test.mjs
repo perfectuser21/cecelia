@@ -14,7 +14,7 @@ const STUB_REL = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs';
 // 桩 run-once：打印标记、cwd 与当前 HEAD 提交说明，证明 exec 的是 clone 里的那份
 const STUB = `import { execFileSync } from 'node:child_process';
 const head = execFileSync('git', ['log', '-1', '--format=%s'], { encoding: 'utf8' }).trim();
-console.log(JSON.stringify({ marker: 'RUN_ONCE_STUB', cwd: process.cwd(), head }));
+console.log(JSON.stringify({ marker: 'RUN_ONCE_STUB', cwd: process.cwd(), head, token: process.env.DEPLOY_TOKEN ?? null }));
 `;
 
 function runRunner(env) {
@@ -49,7 +49,9 @@ describe('runner.sh 启动器', () => {
     fs.mkdirSync(path.join(seed, path.dirname(STUB_REL)), { recursive: true });
     fs.writeFileSync(path.join(seed, STUB_REL), STUB);
     commitSeed('v1');
-    env = { ...cleanTestEnv(), CODING_WF_REPO: clone, CODING_WF_ORIGIN_URL: origin };
+    // 不读本机真实凭据文件：默认指向不存在的路径，且不继承外部 DEPLOY_TOKEN
+    env = { ...cleanTestEnv(), CODING_WF_REPO: clone, CODING_WF_ORIGIN_URL: origin, CODING_WF_DEPLOY_TOKEN_FILE: path.join(root, 'no-token.env') };
+    delete env.DEPLOY_TOKEN;
   });
 
   afterEach(() => {
@@ -62,7 +64,17 @@ describe('runner.sh 启动器', () => {
     const r = runRunner(env);
     expect(r.status, r.stderr).toBe(0);
     expect(fs.existsSync(path.join(clone, '.git'))).toBe(true);
-    expect(stubOut(r)).toEqual({ marker: 'RUN_ONCE_STUB', cwd: clone, head: 'v1' });
+    expect(stubOut(r)).toEqual({ marker: 'RUN_ONCE_STUB', cwd: clone, head: 'v1', token: null });
+  });
+
+  it('DEPLOY_TOKEN：环境里没有时从凭据文件读（QA 门请求预览环境用）；环境已有则不覆盖', () => {
+    const tokenFile = path.join(root, 'deploy-token.env');
+    fs.writeFileSync(tokenFile, 'DEPLOY_TOKEN=from-file\n');
+    let r = runRunner({ ...env, CODING_WF_DEPLOY_TOKEN_FILE: tokenFile });
+    expect(r.status, r.stderr).toBe(0);
+    expect(stubOut(r).token).toBe('from-file');
+    r = runRunner({ ...env, CODING_WF_DEPLOY_TOKEN_FILE: tokenFile, DEPLOY_TOKEN: 'from-env' });
+    expect(stubOut(r).token).toBe('from-env');
   });
 
   it('工作区干净：fetch + reset --hard origin/main 自更新到最新', () => {

@@ -63,24 +63,44 @@
       "role": "verification"
     },
     {
-      "owner_path": "scripts/ci/implementation-snapshot.mjs",
-      "path": "changes/cp-10090608-existing-ops-trusted-host-bootstrap.md",
+      "owner_path": "packages/brain/src/lib/existing-ops-registration.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-registration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-source-impact.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-pr-gate.mjs",
+      "path": "packages/brain/src/lib/__tests__/implementation-pr-gate.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-multi-scope.mjs",
+      "path": "packages/brain/src/__tests__/integration/implementation-multi-scope.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/implementation-ci-snapshot.js",
+      "path": "packages/brain/src/__tests__/integration/implementation-admission-companion.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-pr-gate.mjs",
+      "path": "changes/cp-10091106-native-scoped-admission-bootstrap.md",
       "role": "release"
     },
     {
-      "owner_path": "packages/brain/src/lib/existing-ops-registration.js",
-      "path": "packages/brain/src/lib/__tests__/existing-ops-registration.test.js",
+      "owner_path": "scripts/ci/implementation-pr-gate.mjs",
+      "path": "packages/brain/scripts/smoke/native-scoped-admission-smoke.sh",
       "role": "verification"
     },
     {
       "owner_path": "scripts/ci/implementation-pr-gate.mjs",
       "path": "changes/cp-10090507-implementation-multi-scope.md",
       "role": "release"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-multi-scope.mjs",
-      "path": "packages/brain/src/__tests__/integration/implementation-multi-scope.test.js",
-      "role": "verification"
     }
   ]
 }

@@ -13,7 +13,7 @@ const out = (value, code = 0) => {
   process.exit(code);
 };
 
-if (argv[0] === 'pr' && argv[1] === 'list') out(state.prs ?? []);
+if (argv[0] === 'pr' && argv[1] === 'list') out(argv.includes('merged') ? (state.mergedPrs ?? []) : (state.prs ?? []));
 // pr view <url> --json state：按 prStates[url] 回放，未登记的 PR 报错退出 1
 if (argv[0] === 'pr' && argv[1] === 'view') {
   const s = state.prStates?.[argv[2]];
