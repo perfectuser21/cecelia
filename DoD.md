@@ -4,16 +4,16 @@
   Test: manual:node --test scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs
 
 - [x] [BEHAVIOR] reposcopedassertions：只执行精确固定工具链的manual Node测试协议；来源仓库独立于Brain定义锚，旧null断言兼容，伪造receipt与工具链身份拒绝。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run src/lib/__tests__/gp-assertion-command.test.js src/lib/__tests__/gp-assertion-toolchain.test.js src/lib/__tests__/gp-assertion-process.test.js src/lib/__tests__/gp-assertion-output.test.js src/lib/__tests__/implementation-consumers.test.js --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/gp-assertion-command.test.js src/lib/__tests__/gp-assertion-toolchain.test.js src/lib/__tests__/gp-assertion-process.test.js src/lib/__tests__/gp-assertion-output.test.js src/lib/__tests__/implementation-consumers.test.js --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] factoryregistryboundary 真实main/CAS登记、生产refresh拒外部proof与scratch重放，保全部旧current和注册。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/existing-ops-registration.pg.integration.test.js -t 'factory source anchor|生产登记拒scratch|生产refresh拒绝|真实main消费者|人改slot|main已移动|工厂source导出|正式refresh只读|候选只在真实scratch|工厂冻结来源' --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/existing-ops-registration.pg.integration.test.js -t 'factory source anchor|生产登记拒scratch|生产refresh拒绝|真实main消费者|人改slot|main已移动|工厂source导出|正式refresh只读|候选只在真实scratch|工厂冻结来源' --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] factorydualreposnapshot 真实双Git来源、F3锁内追加、actual隔离库导入/重建，分别扫描Workspace与Brain固定树并核两图身份。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/existing-ops-registration.pg.integration.test.js -t '实际scratch双Git' --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/existing-ops-registration.pg.integration.test.js -t '实际scratch双Git' --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] factoryhistoryassertions 固定source_set、生产认证main证据与严格F3历史查询，八引用和六UNKNOWN保持，独立仓库断言与影响查询真实PG回归。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js src/lib/__tests__/integration/capability-regressions.test.js src/__tests__/integration/implementation-impact.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js src/lib/__tests__/integration/capability-regressions.test.js src/__tests__/integration/implementation-impact.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
 
 
 # PRD / DoD：Workspace 两固定配置验证消费关系
@@ -33,19 +33,19 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
   Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/implementation-ci-gate.test.js src/lib/__tests__/implementation-ci-governance.test.js src/__tests__/auto-version-apply.test.js --maxWorkers=1 --minWorkers=1 && cd ../.. && node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs DoD.md"
 
 - [x] [BEHAVIOR] B-06 原生短形定义保留合法定义边并拒绝空路径，跨仓仍拒伪同名依赖；旧pilot_v1不扩大Node发布资格。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run ../../tests/regression/probe-definition-edges/definition-edges.test.js src/lib/__tests__/pilot-release-regression-scope.test.js src/lib/__tests__/gp-assertion-command.test.js --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run ../../tests/regression/probe-definition-edges/definition-edges.test.js src/lib/__tests__/pilot-release-regression-scope.test.js src/lib/__tests__/gp-assertion-command.test.js --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] B-07 共享发布PG夹具按真实537迁移建立断言来源列与约束，旧名视图重建；所有pilot与仓库来源回归使用同一夹具，不由单个测试临时补列。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/fixtures/definition-versions-db.test.js src/__tests__/fixtures/release-evidence-db.test.js src/lib/__tests__/integration/pilot-release-verification.test.js src/__tests__/integration/pilot-release-ci.pg.integration.test.js src/lib/__tests__/integration/capability-regressions.test.js --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/fixtures/definition-versions-db.test.js src/__tests__/fixtures/release-evidence-db.test.js src/lib/__tests__/integration/pilot-release-verification.test.js src/__tests__/integration/pilot-release-ci.pg.integration.test.js src/lib/__tests__/integration/capability-regressions.test.js --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] B-08 配套测试直接执行真实来源身份与准入边界；既有纯协议用例归同名单元测试，双Git与实际PG覆盖保留，官方test-pairing不豁免。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/consumer-source-set.test.js src/lib/__tests__/workspace-ci-source-bundle.test.js src/lib/__tests__/existing-ops-registration.test.js --maxWorkers=1 --minWorkers=1 && cd ../.. && bash .github/workflows/scripts/lint-test-pairing.sh origin/main"
 
 - [x] [BEHAVIOR] B-09 跨仓来源正式smoke执行真实双Git固定树、准入边界与真实PG/HTTP发布链；unsafe数据库在任何测试前拒，正式allowlist接入不豁免。
-  Test: manual:bash -c "DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test bash packages/brain/scripts/smoke/workspace-ci-source-bundle-smoke.sh"
+  Test: manual:bash -c "NODE_ENV=test bash packages/brain/scripts/smoke/workspace-ci-source-bundle-smoke.sh"
 
 - [x] [BEHAVIOR] ownprscopecontract：固定Git端到端验收唯一明确的本仓PR双scope默认表达式；旧式兼容，删repo/PR限制、扩大scope、未知schema及错误MODE拒绝，admission仍unknown。
   Test: manual:node --test scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs
 
 - [x] [BEHAVIOR] workspacejointsource：真实PG在同事务导出Workspace父与独立跨仓Factory来源，明确Brain anchor与冻结source_set；scratch不授生产、重算hash篡改仍拒、子UNKNOWN保留且单scope父可用，实际CLI接受精确跨仓双scope但UNKNOWN不写文件，KR原生joint保持。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js src/__tests__/integration/implementation-admission-companion.test.js src/__tests__/integration/implementation-multi-scope.test.js --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js src/__tests__/integration/implementation-admission-companion.test.js src/__tests__/integration/implementation-multi-scope.test.js --maxWorkers=1 --minWorkers=1"
