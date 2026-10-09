@@ -152,7 +152,7 @@ jobs:
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-snapshot-$HEAD" -D "$RUNNER_TEMP/implementation-input/head"
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-baseline-$HEAD" -D "$RUNNER_TEMP/implementation-input/base"
           else
-            artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=implementation-snapshot-$BASE" | jq -r --arg base "$BASE" '.artifacts | map(select(.expired == false and .workflow_run.head_branch == "main" and .workflow_run.head_sha == $base and .workflow_run.repository_id == .workflow_run.head_repository_id)) | first | .id // empty')
+            artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=implementation-snapshot-$BASE" | jq -r --arg base "$BASE" '.artifacts | map(select(.expired == false and .workflow_run.head_branch == "main" and .workflow_run.head_sha == $base and .workflow_run.repository_id == .workflow_run.head_repository_id)) | sort_by(.created_at, .id) | reverse | first | .id // empty')
             if [[ -z "$artifact" ]]; then
               gap_code=IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING
               echo '::error::固定base中央snapshot artifact缺失，不能用latest'
