@@ -168,3 +168,11 @@ test('owner只含字母数字，不受共享controller重试后缀归一化影�
  const owner=buildOwner('dc6ccdbf-e603-4f13-b3f1-a9ffbf5574e5','317d7099-55a2-4b26-a506-0b0901d5f44a');
  assert.match(owner,/^price[A-Za-z0-9]+$/);assert.ok(!owner.includes('-a506-'));
 });
+
+test('空报价保留原始阻塞原因，失败标准receipt覆盖旧可见摘要',async()=>{
+ const r=receipt(),report=JSON.parse(r.result.payloads[0].text);report.quotes=[];report.blocking_reason='HomeDepot原生搜索框未就绪';r.result.payloads[0].text=JSON.stringify(report);
+ assert.throws(()=>validateReceipt(r,options),/HomeDepot原生搜索框未就绪/);
+ const {failurePatch}=await import('./us-price-keyword-core.mjs');
+ const patch=failurePatch({result:{receipt:{text:'old'},evidence:{old:true}}},'搜索框加载超时','/run',[]);
+ assert.match(patch.result.receipt.finalAssistantVisibleText,/搜索框加载超时/);assert.equal(patch.result.evidence.old,true);
+});

@@ -1,7 +1,7 @@
 import unittest
 import xml.etree.ElementTree as E
 from native_price_phone import text_values, parse_hd_detail, extract_asin, price_candidates, validate_request, PhoneSession
-from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search, search_entry, amazon_seller, public_report
+from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search, search_entry, amazon_seller, public_report, search_hd, initial_hd_result
 
 def nodes(values, package='com.thehomedepot'):
     root=E.Element('hierarchy')
@@ -19,6 +19,28 @@ class NativePriceTests(unittest.TestCase):
         self.assertEqual(public['restored_network']['country'],'CN')
         self.assertEqual(public_report(public)['restored_network']['country'],'CN')
         self.assertEqual(report['restored_network']['ip']['query'],'192.0.2.1')
+    def test_hd_waits_for_blank_loading_and_reuses_discovered_results(self):
+        import unittest.mock
+        class Fake:
+            def __init__(self):self.dumps=0
+            def adb(self,*a):pass
+            def launch(self,*a):pass
+            def tap(self,*a):pass
+            def input(self,*a):pass
+            def nodes(self,label):
+                self.dumps+=1
+                if self.dumps<=4:return [],'/blank.xml'
+                ns=nodes(['query','DEWALT Cordless Drill Driver Kit AX1234'])
+                ns[0].set('resource-id','main_app_header_search_text_field')
+                ns[1].set('clickable','true')
+                return ns,'/results.xml'
+        fake=Fake()
+        with unittest.mock.patch('us_price_native_worker.time.sleep'):
+            result=search_hd(fake,'drill')
+        self.assertGreaterEqual(fake.dumps,5)
+        fake.hd_results=result
+        with unittest.mock.patch('us_price_native_worker.search_hd',side_effect=AssertionError('unexpected cold restart')):
+            self.assertEqual(initial_hd_result(fake,'DEWALT Cordless Drill Driver Kit AX1234'),result)
     def test_attributes_not_itertext(self):
         self.assertEqual(text_values(nodes(['Brand drill','53132'])),['Brand drill','53132'])
     def test_hd_dynamic_model_id_and_prices_keep_context(self):
