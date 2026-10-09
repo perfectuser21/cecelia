@@ -115,6 +115,26 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
     expect(mockCreateRoutedTask.mock.calls[0][1].metadata.headed_manual).not.toBe(true);
   });
 
+  it.each([
+    ['明确比价Agent', '【执行参数】\n执行Agent：us-price-compare\n【执行参数结束】\n关键词：drill', true],
+    ['其它运营Agent', '【执行参数】\n执行Agent：skill-factory\n【执行参数结束】', false],
+    ['开发Agent', '【执行参数】\n执行Agent：dev\n【执行参数结束】', false],
+    ['普通文字提及', '请参考 us-price-compare 的报价结果', false],
+    ['没有执行参数', '读取当前账号数据并截图留证', false],
+  ])('全局派发已开，%s仅比价入口交独立consumer', async (_label, body, headed) => {
+    mockNotionReq
+      .mockResolvedValueOnce({ results: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: body }] } }] })
+      .mockResolvedValueOnce(zhPage)
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValue({});
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'c4c4c4c4-1111-2222-3333-444444444444' } });
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    await ingestDelegatedPage({ query: mockQuery }, 'tok', enPage(`[zh:${ZH32}]`), { env: { QIUMI_DISPATCH_ENABLED: 'true' } });
+    expect(mockCreateRoutedTask.mock.calls[0][1].metadata.headed_manual).toBe(headed);
+    expect(mockCreateRoutedTask.mock.calls[0][1].requested_task_type).toBe('qiumi_task');
+  });
+
   it('[en-native] 行 → origin=en，中文页 id 从中文表按 [en:<id32>] 反查', async () => {
     mockNotionReq
       .mockResolvedValueOnce({ results: [] })  // en 正文
