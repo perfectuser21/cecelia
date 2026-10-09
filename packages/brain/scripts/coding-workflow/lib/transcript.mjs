@@ -91,6 +91,25 @@ function stripWorktreeCd(command, worktree) {
   return insideWorktree(dir, roots) ? command.slice(m[0].length) : command;
 }
 
+const ELLIPSIS_RE = /\.{3,}|…+/;
+
+/**
+ * 一行输出摘录是否出自真实结果：没有省略号 → 必须是子串；带 `...`/`…` 省略长行中间 → 每段（去首尾空白、非空）
+ * 都要按顺序出现在结果里（真实 QA 实测：健康检查是一行很长的 JSON）。整行只有省略号不算证据。
+ */
+function lineInResult(line, result) {
+  if (!ELLIPSIS_RE.test(line)) return result.includes(line);
+  const parts = line.split(ELLIPSIS_RE).map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return false;
+  let from = 0;
+  for (const part of parts) {
+    const at = result.indexOf(part, from);
+    if (at === -1) return false;
+    from = at + part.length;
+  }
+  return true;
+}
+
 /**
  * 核对每条证据：command（规范化空白、去掉 worktree 内 cd 前缀后）必须被某次实际执行的命令包含；
  * 且 output 的前 OUTPUT_LINES_CHECKED 个非空行（去首尾空白）都是该次执行结果的子串。
@@ -106,7 +125,7 @@ export function unverifiedItems(items, executions, { worktree } = {}) {
       continue;
     }
     const lines = item.output.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, OUTPUT_LINES_CHECKED);
-    if (!matches.some((run) => lines.every((l) => run.result.includes(l)))) bad.push({ id: item.id, reason: 'output_not_in_result' });
+    if (!matches.some((run) => lines.every((l) => lineInResult(l, run.result)))) bad.push({ id: item.id, reason: 'output_not_in_result' });
   }
   return bad;
 }
