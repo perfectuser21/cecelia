@@ -32,3 +32,9 @@ upstream: ["02-spec.md#S-1"]
 - 只在当前分支上追加新提交：不 amend、不 reset、不 rebase、不切换分支。
 - 不修改 `.claude/` 目录、`CLAUDE.md`、`AGENTS.md`。
 - 测试命令与输出摘要必须是真实运行得到的，不要编造。
+
+仓库 CI 的规矩（提交后程序会在本地先跑一遍这些门禁，没过会要求你修；一次写对最省事）：
+- 改了 packages/brain/src/**/*.js，必须有配套测试（同目录、__tests__/ 或 __tests__/integration/），测试要真引用被测模块、有真实断言，不能全是弱断言（toBeDefined 之类）、不能全是 skip、不能靠大量 mock 撑着。
+- 提交顺序：测试提交在实现提交之前，或测试与实现在同一个提交里。
+- 需求标题不是以「修复」开头的，这个 PR 会以 feat 合入：只要改了 packages/brain/src 的非测试文件，就要新增 packages/brain/scripts/smoke/<名字>.sh（至少 5 行真实代码，真的用 curl/psql/node 等验证改动），并登记进 packages/quality/smoke-allowlist.txt（如该文件存在）。
+- 改动规模：相对 main 新增不超过 3000 行。

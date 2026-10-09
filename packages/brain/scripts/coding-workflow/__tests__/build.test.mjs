@@ -57,7 +57,8 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     expect(r.stdout.trim().split('\n')).toHaveLength(1);
     const sha = head();
     expect(sha).not.toBe(before);
-    expect(r.result.outputs).toEqual({ build_file: '03-build.md', build_commits: [sha] });
+    // 临时仓库里没有 CI 门禁脚本、也没有 origin/main：默认预检全部跳过，记为通过
+    expect(r.result.outputs).toEqual({ build_file: '03-build.md', build_commits: [sha], ci_precheck: { passed: true, rounds: 0, failures: [] } });
 
     const fm = parseFrontmatter(fs.readFileSync(buildFile(), 'utf8'));
     expect(fm.data).toEqual({ task_id: TASK_ID, step: 'build', upstream: ['02-spec.md#S-1', '02-spec.md#S-2'] });
@@ -277,14 +278,12 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
       expect(['chain_tampered', 'build_sprint_polluted']).toContain(r.result.reason_code);
     });
 
-    it('feature 判定按 publish 的 PR 标题：01 标题不以修复开头 → 门禁拿到 PR_LABELS=feature；以修复开头 → 空', async () => {
-      const probe = [{ name: 'probe', cmd: ['bash', '-c', '[ "$PR_LABELS" = feature ]'] }];
-      fs.writeFileSync(path.join(sprintAbs, '01-intent.md'), '# 新增 status 页\n');
-      let r = await run('build-ok', {}, { ...checks(probe), FAKE_CLAUDE_MODE_PRECHECK: 'precheck-noop' });
-      expect(r.result.outputs.ci_precheck.passed).toBe(true);
-      fs.writeFileSync(path.join(sprintAbs, '01-intent.md'), '# 修复 Brain 非法 id\n');
-      r = await run('build-ok', {}, { ...checks(probe), FAKE_CLAUDE_MODE_PRECHECK: 'precheck-noop' });
-      expect(r.result.outputs.ci_precheck.passed).toBe(false);
+    // feature 判定按 publish 的 PR 标题：01 标题不以修复开头 → 门禁拿到 PR_LABELS=feature；以修复开头 → 空
+    const probe = [{ name: 'probe', cmd: ['bash', '-c', '[ "$PR_LABELS" = feature ]'] }];
+    it.each([['# 新增 status 页\n', true], ['# 修复 Brain 非法 id\n', false]])('01 标题 %j → 门禁看到 feature=%s', async (heading, feature) => {
+      fs.writeFileSync(path.join(sprintAbs, '01-intent.md'), heading);
+      const r = await run('build-ok', {}, { ...checks(probe), FAKE_CLAUDE_MODE_PRECHECK: 'precheck-noop' });
+      expect(r.result.outputs?.ci_precheck?.passed, JSON.stringify(r.result)).toBe(feature);
     });
   });
 
