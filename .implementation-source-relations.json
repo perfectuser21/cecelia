@@ -136,6 +136,16 @@
       "owner_path": "packages/brain/src/lib/implementation-ci-snapshot.js",
       "path": "packages/brain/src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-pr-gate.mjs",
+      "path": "changes/cp-10090507-implementation-multi-scope.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-pr-gate.mjs",
+      "path": "packages/brain/src/lib/__tests__/implementation-ci-workflow.test.js",
+      "role": "verification"
     }
   ]
 }
