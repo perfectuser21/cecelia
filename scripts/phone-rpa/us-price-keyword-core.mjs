@@ -125,3 +125,5 @@ export function failurePatch(previous, reason, dir, rows) {
   const oldResult = (previous.task ?? previous).result ?? {};
   return { status: 'failed', error_message: reason, result: { ...oldResult, summary: `本轮失败：${reason}；已写报价 ${rows.length} 条。报价明细：https://www.notion.so/7452049ef7de4da5822d4ff682869172`, last_attempt: { actor: 'OpenClaw/us-price-compare', facts: { outcome: 'failed', reason }, evidence: { receipt_directory: dir, notion_rows: rows } } } };
 }
+
+export function buildOwner(taskId, nonce) { return 'price' + taskId.replaceAll('-', '') + nonce.replaceAll('-', ''); }

@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { DATA_SOURCE, terminalStatus, failurePatch, buildCompletion, buildTask, claimTask, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
+import { DATA_SOURCE, buildOwner, terminalStatus, failurePatch, buildCompletion, buildTask, claimTask, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
 
 async function jsonRequest(base, path, method = 'GET', body, headers = {}) {
   const response = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
@@ -91,7 +91,7 @@ export async function main(args) {
     else {
       const config = JSON.parse(await readFile(join(homedir(), '.openclaw', 'openclaw.json'), 'utf8'));
       const env = { ...process.env, OPENCLAW_GATEWAY_TOKEN: config.gateway.auth.token };
-      const message = join(dir, 'prompt.txt'); await writeFile(message, buildPrompt(o, taskId, `phone-price-${taskId}-${randomUUID()}`), { mode: 0o600 });
+      const message = join(dir, 'prompt.txt'); await writeFile(message, buildPrompt(o, taskId, buildOwner(taskId, randomUUID())), { mode: 0o600 });
       for (const model of [...new Set([o.model, 'openai/gpt-6-sol'])]) {
         const r = await child('openclaw', ['agent', '--agent', 'us-price-compare', '--session-id', `price-${taskId}-${randomUUID()}`, '--model', model, '--message-file', message, '--thinking', 'low', '--timeout', '1200', '--json'], env);
         await writeFile(join(dir, `${model.split('/')[1]}-receipt.json`), r.stdout, { mode: 0o600 });

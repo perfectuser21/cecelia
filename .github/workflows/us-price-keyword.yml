@@ -4,6 +4,8 @@ on:
     paths: ['scripts/phone-rpa/**', '.github/workflows/us-price-keyword.yml']
   pull_request:
     paths: ['scripts/phone-rpa/**', '.github/workflows/us-price-keyword.yml']
+permissions:
+  contents: read
 jobs:
   contracts:
     runs-on: ubuntu-latest

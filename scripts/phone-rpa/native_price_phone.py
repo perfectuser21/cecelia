@@ -27,7 +27,7 @@ def validate_request(request):
     count = request.get('count')
     if type(count) is not int or not 1 <= count <= 3: raise ValueError('count应为1–3')
     if not isinstance(request.get('keyword'),str) or not 0 < len(request['keyword'].strip()) <= 200: raise ValueError('关键词无效')
-    if not re.fullmatch(r'[A-Za-z0-9_-]{1,160}', request.get('owner','')): raise ValueError('owner无效')
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,160}', request.get('owner','')) or re.search(r'[-_]a[0-9]+[-_]|-w[0-9]+$',request.get('owner','')): raise ValueError('owner无效')
 
 def text_values(nodes):
     result = []

@@ -11,6 +11,9 @@ import time
 from urllib.parse import quote as urlquote
 from native_price_phone import CTL, PROFILE, AMAZON, HD, PhoneSession, command, validate_request, text_values, bounds, parse_hd_detail, price_candidates, extract_asin
 
+def amazon_seller(values):
+    return next((v for v in values if re.fullmatch(r'Sold by\s+[^\n]{1,100}',v,re.I)), '未显示（需核对）')
+
 def utcnow(): return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 def dispatch(request, runner=command):
@@ -160,8 +163,7 @@ def amazon_quote(session,hd,index,zip_code):
                     import xml.etree.ElementTree as ET
                     title=next((v for v in text_values(list(ET.parse(title_xml).getroot().iter('node'))) if hd['model'].lower() in v.lower() and len(v)>25),None)
                 if title:
-                    seller=next((v for v in values if 'sold by' in v.lower()),'未显示（需核对）')
-                    if 'Amazon.com' in joined:seller='Amazon.com（页面显示；买卖方关系需核对）'
+                    seller=amazon_seller(values)
                     quote={'package':AMAZON,'title':title,'brand':title.split()[0],'model':hd['model'],'specification':title,'zip':zip_code,'price_candidates':candidates_price,'seller':seller,'availability':'; '.join(v for v in values if any(x in v.lower() for x in ('in stock','delivery','arrives')))[-700:],'conditions':'税费/运费未知；仅新货标价可与另一平台比较','price_xml':path,'title_xml':title_xml,'zip_xml':path,'screenshot_path':session.snapshot(f'amazon-{index}-price'),'collected_at':utcnow(),'action_owner':session.owner}
                     break
             session.swipe();nodes,path=session.nodes('amazon-price-page')
