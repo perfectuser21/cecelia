@@ -133,44 +133,43 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(create[create.indexOf('--body') + 1]).not.toContain('验收摘要');
   });
 
-  it('有 review_file：PR 正文含规格评审小节（轮数、最终 verdict、每条 R-n 首行）', async () => {
-    fs.writeFileSync(
-      path.join(worktree, 'sprints/s1/02-review.md'),
-      [
-        '---',
-        'task_id: x',
-        'step: spec_review',
-        'upstream: ["02-spec.md#S-1"]',
-        '---',
-        '# 规格评审',
-        '',
-        'verdict: APPROVE',
-        '',
-        '### R-1',
-        '针对: S-1',
-        'R-1 第一行说明',
-        'R-1 第二行细节',
-        '',
-        '### R-2',
-        '针对: I-1, S-2',
-        'R-2 唯一一行',
-        '',
-      ].join('\n'),
-    );
-    const r = await run('new', {
-      chain_files: ['01-intent.md', '02-spec.md', '02-review.md'],
-      review_file: '02-review.md',
-      review_rounds: 2,
-    });
-    expect(r.exitCode, r.stderr).toBe(0);
+  const REVIEW_V2 = [
+    '---', 'task_id: x', 'step: spec_review', 'upstream: ["02-spec.md#S-1"]', '---', '# 规格评审', '',
+    '## 评分', '意图对齐: 8', '可验证: 7', '场景覆盖: 9', '回归风险: 7', '可执行: 8', '',
+    '### R-3', '针对: S-1', '严重度: 建议', 'R-3 第一行说明', 'R-3 第二行细节', '',
+    '### R-4', '针对: I-1, S-2', '严重度: 重要', '场景: 用户重复提交', '依据: x.mjs', 'R-4 唯一一行', '',
+  ].join('\n');
+  const reviewCtx = (gan) => ({
+    chain_files: ['01-intent.md', '02-spec.md', '02-review.md'],
+    review_file: '02-review.md',
+    review_rounds: gan.rounds,
+    gan,
+  });
+  const prBody = () => {
     const create = ghCalls().find((a) => a[0] === 'pr' && a[1] === 'create');
-    const body = create[create.indexOf('--body') + 1];
-    expect(body).toContain('## 规格评审（sprints/s1/02-review.md）');
-    expect(body).toContain('- 评审轮数：2');
-    expect(body).toContain('- 最终 verdict：APPROVE');
-    expect(body).toContain('- R-1（针对 S-1）：R-1 第一行说明');
-    expect(body).not.toContain('R-1 第二行细节');
-    expect(body).toContain('- R-2（针对 I-1、S-2）：R-2 唯一一行');
+    return create[create.indexOf('--body') + 1];
+  };
+
+  it('有 review_file：PR 正文含合同对抗小节（轮数、结论与走势、最终评分、末轮每条问题的严重度与首行）', async () => {
+    fs.writeFileSync(path.join(worktree, 'sprints/s1/02-review.md'), REVIEW_V2);
+    const r = await run('new', reviewCtx({ verdict: 'APPROVED', rounds: 2, trend: 'insufficient_data', open_issues: [], cost_usd: 1.2 }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    const body = prBody();
+    expect(body).toContain('## 合同对抗（sprints/s1/02-review.md）');
+    expect(body).toContain('- 轮数：2');
+    expect(body).toContain('- 结论：APPROVED（走势 insufficient_data，花费 $1.2）');
+    expect(body).toContain('- 最终评分：意图对齐 8 / 可验证 7 / 场景覆盖 9 / 回归风险 7 / 可执行 8');
+    expect(body).toContain('- R-3［建议］（针对 S-1）：R-3 第一行说明');
+    expect(body).not.toContain('R-3 第二行细节');
+    expect(body).toContain('- R-4［重要］（针对 I-1、S-2）：R-4 唯一一行');
+    expect(body).not.toContain('强制通过');
+  });
+
+  it('强制通过（FORCED）：PR 正文醒目标出仍开着的问题', async () => {
+    fs.writeFileSync(path.join(worktree, 'sprints/s1/02-review.md'), REVIEW_V2);
+    const r = await run('new', reviewCtx({ verdict: 'FORCED', rounds: 3, trend: 'oscillating', open_issues: [{ id: 'R-1', severity: '阻断', targets: ['S-1'] }], cost_usd: 3 }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(prBody()).toContain('- ⚠️ 强制通过（走势 oscillating），仍开着：R-1［阻断］');
   });
 
   it('无 review_file：PR 正文不带规格评审小节', async () => {

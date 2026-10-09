@@ -156,6 +156,15 @@ describe('report 活动（子进程 + 假 Brain）', () => {
     expect(cw.verification).toEqual(verification);
   });
 
+  it('上下文有合同对抗摘要 gan 与升级 escalations → 一并写入 result.coding_workflow（coding commander 据此处理）', async () => {
+    const gan = { verdict: 'FORCED', rounds: 3, trend: 'oscillating', open_issues: [{ id: 'R-1', severity: '阻断', targets: ['S-1'] }], cost_usd: 2 };
+    const escalations = [{ type: 'gan_forced', trend: 'oscillating', round: 3, open_issues: gan.open_issues }];
+    const r = await runActivityProcess(ENTRY, input({ gan, escalations }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    const cw = JSON.parse(requests[0].raw).result.coding_workflow;
+    expect(cw.gan).toEqual(gan);
+    expect(cw.escalations).toEqual(escalations);
+  });
   it('没有 pr_url 但有 verification -> 仍 PATCH 失败结论，回写成功即 completed', async () => {
     const r = await runActivityProcess(ENTRY, input({ pr_url: undefined, branch: undefined, chain_files: undefined, verification }));
     expect(r.exitCode, r.stderr).toBe(0);

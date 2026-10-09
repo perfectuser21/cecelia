@@ -22,7 +22,7 @@ const PHASES = ['setup', 'source', 'per_item', 'batch_end', 'finalize'];
 const EXPECTED = {
   intent: { order: 1, phase: 'setup', entry: 'activities/intent.mjs', max_duration_s: 60, max_attempts: 1 },
   spec: { order: 2, phase: 'source', entry: 'activities/spec.mjs', max_duration_s: 900, max_attempts: 2 },
-  spec_review: { order: 3, phase: 'source', entry: 'activities/spec-review.mjs', max_duration_s: 1800, max_attempts: 1 },
+  spec_review: { order: 3, phase: 'source', entry: 'activities/spec-review.mjs', max_duration_s: 21600, max_attempts: 1 },
   build: { order: 4, phase: 'source', entry: 'activities/build.mjs', max_duration_s: 2400, max_attempts: 1 },
   verify: { order: 5, phase: 'batch_end', entry: 'activities/verify.mjs', max_duration_s: 1200, max_attempts: 1 },
   chain_check: { order: 6, phase: 'batch_end', entry: 'activities/chain-check.mjs', max_duration_s: 30, max_attempts: 1 },
@@ -43,11 +43,11 @@ const REPORTED = {
     fatal: ['sprint_dir_invalid', 'task_id_missing', 'intent_ids_missing', 'intent_ids_invalid', 'spec_missing', 'spec_out_of_scope_write', 'chain_tampered'],
   },
   spec_review: {
-    retryable: ['claude_failed', 'claude_timeout', 'review_invalid', 'spec_invalid'],
+    retryable: ['claude_failed', 'claude_timeout', 'spec_invalid', 'response_missing'],
     needs_human: ['claude_auth'],
     fatal: [
       'task_id_missing', 'sprint_dir_invalid', 'intent_ids_missing', 'intent_ids_invalid', 'chain_tampered',
-      'spec_missing', 'spec_review_out_of_scope_write', 'spec_review_unresolved',
+      'spec_missing', 'spec_review_out_of_scope_write', 'review_invalid', 'gan_budget_exceeded',
     ],
   },
   build: {

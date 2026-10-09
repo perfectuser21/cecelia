@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { runActivity, validateBase, fail, childEnv, log } from '../lib/protocol.mjs';
 import { parseFrontmatter } from '../lib/md-chain.mjs';
 import { parseReview } from '../lib/review.mjs';
+import { RUBRIC_DIMS } from '../lib/gan.mjs';
 
 const GH_AUTH_RE = /\bHTTP 401\b|authentication|auth login|missing required scope|bad credentials/i;
 // 凭据提示会让无 tty 的子进程挂住；--literal-pathspecs 禁用 :/ 等 pathspec 魔法
@@ -87,10 +88,10 @@ function acceptanceSummary({ evidence_file: evidenceFile, verified_ids: ids }, s
 }
 
 /**
- * PR 正文的规格评审结论：上下文有 review_file 时列出评审轮数、最终 verdict 与每条 R-n 的首行；
- * 没有 review_file 或文件读不到返回空串（不出现小节，也不让 publish 失败）。
+ * PR 正文的合同对抗小节：上下文有 review_file 时写轮数、结论与走势（gan 摘要）、最终评分、末轮每条问题（严重度 + 首行）；
+ * 强制通过时醒目标出仍开着的问题。没有 review_file 或文件读不到返回空串（不出现小节，也不让 publish 失败）。
  */
-function reviewSummary({ review_file: reviewFile, review_rounds: rounds }, dir, sprintRel) {
+function reviewSummary({ review_file: reviewFile, review_rounds: rounds, gan }, dir, sprintRel) {
   if (typeof reviewFile !== 'string' || reviewFile === '') return '';
   let text;
   try {
@@ -98,15 +99,23 @@ function reviewSummary({ review_file: reviewFile, review_rounds: rounds }, dir, 
   } catch {
     return '';
   }
-  const { verdict, issues } = parseReview(text);
-  const roundsText = Number.isInteger(rounds) && rounds > 0 ? rounds : '未知';
-  const lines = issues.map(({ id, targets, body }) => `- ${id}（针对 ${targets.join('、')}）：${body.split('\n')[0]}`);
-  return [
-    `## 规格评审（${sprintRel}/${reviewFile}）`,
-    `- 评审轮数：${roundsText}`,
-    `- 最终 verdict：${verdict ?? '未知'}`,
-    ...lines,
-  ].join('\n');
+  const { scores, issues } = parseReview(text);
+  const g = gan && typeof gan === 'object' ? gan : {};
+  const scoreText = RUBRIC_DIMS.filter((d) => d in scores).map((d) => `${d} ${scores[d]}`).join(' / ');
+  const lines = [
+    `## 合同对抗（${sprintRel}/${reviewFile}）`,
+    `- 轮数：${Number.isInteger(rounds) && rounds > 0 ? rounds : '未知'}`,
+    `- 结论：${g.verdict ?? '未知'}（走势 ${g.trend ?? '未知'}，花费 $${g.cost_usd ?? '未知'}）`,
+  ];
+  if (scoreText) lines.push(`- 最终评分：${scoreText}`);
+  if (g.verdict === 'FORCED') {
+    const open = (g.open_issues ?? []).map((i) => `${i.id}［${i.severity}］`).join('、') || '无';
+    lines.push(`- ⚠️ 强制通过（走势 ${g.trend}），仍开着：${open}`);
+  }
+  for (const { id, severity, targets, body } of issues) {
+    lines.push(`- ${id}［${severity || '未标'}］（针对 ${targets.join('、')}）：${body.split('\n')[0]}`);
+  }
+  return lines.join('\n');
 }
 
 await runActivity(async (input) => {
