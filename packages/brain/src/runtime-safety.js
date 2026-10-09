@@ -17,6 +17,14 @@ export function isIsolatedRuntime(env = process.env) {
   return false;
 }
 
+// 迁移只改实例自己连的库：隔离实例默认跳过，但调用方显式 SKIP_MIGRATIONS=false（预览启动脚本）时
+// 必须迁到 PR 代码的 schema，否则克隆来的旧库缺列，接口直接 500。
+export function shouldRunMigrations(env = process.env) {
+  if (env.SKIP_MIGRATIONS === 'true') return false;
+  if (env.SKIP_MIGRATIONS === 'false') return true;
+  return !isIsolatedRuntime(env);
+}
+
 export function assertLiveLLMAllowed(env = process.env) {
   if (isIsolatedRuntime(env) || enabled(env.CECELIA_LLM_DISABLED)) {
     const error = new Error('当前测试/预览实例禁止真实模型调用');
