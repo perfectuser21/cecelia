@@ -19,6 +19,78 @@ export function validateSnapshotQuery(input){
 }
 const json=value=>JSON.parse(JSON.stringify(value));
 const digest=value=>stepSha256(json(value));
+const companionParent = s => s.scope==='cecelia-kr'&&s.repo===EXISTING_OPS_REPO;
+const exactIds = (actual,expected) => Array.isArray(actual)&&actual.length===expected.length
+  &&new Set(actual).size===expected.length&&expected.every(id=>actual.includes(id));
+const sameIds = (rows,expected) => Array.isArray(rows)&&exactIds(rows.map(r=>r.id),expected);
+/** Factory 完整来源证据始终不授予流程执行权限。 */
+function validateFactoryAdmission(snapshot){
+  const registry=snapshot.consumer_registry;
+  if(snapshot.snapshot_scope!=='consumer_evidence'||snapshot.execution_status!=='unknown'||!registry)
+    throw ciFailure('COMPANION_FACTORY_INVALID');
+  const {registry_sha256,...body}=registry;
+  if(digest(body)!==registry_sha256)throw ciFailure('COMPANION_REGISTRY_DIGEST_MISMATCH');
+  validateExistingOpsRegistry(registry);
+  const identities=EXISTING_OPS_IDENTITIES, refs=identities.flatMap(i=>[i.reference_id,...i.unverified_reference_ids]);
+  const unknown=identities.flatMap(i=>i.unverified_reference_ids);
+  if(!sameIds(snapshot.canonical.references,refs)||digest(snapshot.canonical.references)!==digest(registry.references)
+    ||digest(snapshot.canonical.workflows)!==digest(registry.workflows)
+    ||digest(snapshot.canonical.activities)!==digest(registry.activities)
+    ||digest(snapshot.canonical.steps)!==digest(registry.steps)
+    ||!Array.isArray(snapshot.unverified_reference_ids)||snapshot.unverified_reference_ids.length!==6
+    ||new Set(snapshot.unverified_reference_ids).size!==6||unknown.some(id=>!snapshot.unverified_reference_ids.includes(id))
+    ||snapshot.definitions.workflows.length!==2||snapshot.definitions.activities.length!==2)
+    throw ciFailure('COMPANION_FACTORY_IDENTITY_INVALID');
+  for(const identity of identities){
+    const workflow=snapshot.definitions.workflows.find(w=>w.workflow_id===identity.workflow_id);
+    const activity=snapshot.definitions.activities.find(a=>a.activity_id===identity.activity_id);
+    if(!workflow||!activity||workflow.payload.capability_id!==identity.capability_id
+      ||workflow.payload.coverage?.status!=='unknown'
+      ||!exactIds(workflow.payload.coverage.verified_reference_ids,[identity.reference_id])
+      ||!exactIds(workflow.payload.coverage.unverified_reference_ids,identity.unverified_reference_ids)
+      ||workflow.payload.activities?.length!==1
+      ||workflow.payload.activities[0].reference_id!==identity.reference_id
+      ||workflow.payload.activities[0].activity_id!==identity.activity_id
+      ||workflow.payload.activities[0].activity_version_id!==activity.id)
+      throw ciFailure('COMPANION_FACTORY_DEFINITION_INVALID');
+    for(const row of [workflow,activity])if(row.payload.definition_scope!=='consumer_evidence'
+      ||row.payload.source_scope!==EXISTING_OPS_SCOPE||row.payload.registration_sha256!==registry_sha256
+      ||row.payload.contract?.executable!==false||row.payload.contract.key!==identity.workflow_key
+      ||row.payload.contract.definition_scope!=='consumer_evidence'||row.payload.contract.source_basis!=='fixed_git_tree')throw ciFailure('COMPANION_FACTORY_EXECUTION_INVALID');
+  }
+}
+function validateAdmissionCompanion(parent){
+  const c=parent.admission_companion;
+  if(!companionParent(parent)||!c||c.schema_version!==1||c.purpose!=='admission_only'
+    ||c.scope!==EXISTING_OPS_SCOPE||c.repo!==parent.repo||c.revision!==parent.revision
+    ||Object.keys(c).some(k=>!['schema_version','purpose','scope','repo','revision','snapshot','companion_sha256'].includes(k)))
+    throw ciFailure('COMPANION_IDENTITY_INVALID');
+  const {companion_sha256,...body}=c;
+  if(digest(body)!==companion_sha256)throw ciFailure('COMPANION_DIGEST_MISMATCH');
+  const child=c.snapshot;
+  if(!child||Object.hasOwn(child,'admission_companion')||child.scope!==c.scope||child.repo!==c.repo||child.revision!==c.revision)
+    throw ciFailure('COMPANION_SNAPSHOT_IDENTITY_INVALID');
+  validateImplementationSnapshot(child);
+  if(!['verified','unknown'].includes(child.status)||!Array.isArray(child.gaps)
+    ||(child.status==='verified')!==(child.gaps.length===0))throw ciFailure('COMPANION_STATUS_INVALID');
+  if(child.snapshot_scope!=='consumer_evidence'||child.execution_status!=='unknown'
+    ||[...child.definitions.workflows,...child.definitions.activities].some(row=>row.payload.definition_scope!=='consumer_evidence'
+      ||row.payload.source_scope!==EXISTING_OPS_SCOPE||row.payload.contract?.executable!==false))
+    throw ciFailure('COMPANION_FACTORY_EXECUTION_INVALID');
+  if(child.status==='verified')validateFactoryAdmission(child);
+}
+/** 提取前验证双身份，所有 scope 均通过后才暴露独立输入。 */
+export function extractImplementationAdmissionSnapshots(snapshot,scopes){
+  validateImplementationSnapshot(snapshot);
+  if(!Array.isArray(scopes)||new Set(scopes).size!==scopes.length)throw ciFailure('ADMISSION_SCOPES_INVALID');
+  if(scopes.length===1&&scopes[0]===snapshot.scope)return [snapshot];
+  if(scopes.length!==2||!companionParent(snapshot)||!scopes.includes(snapshot.scope)||!scopes.includes(EXISTING_OPS_SCOPE)
+    ||!Object.hasOwn(snapshot,'admission_companion'))throw ciFailure('ADMISSION_COMPANION_MISSING');
+  const child=snapshot.admission_companion.snapshot;
+  if([snapshot,child].some(s=>s.status!=='verified'||s.gaps?.length!==0))throw ciFailure('ADMISSION_SNAPSHOT_UNKNOWN');
+  validateFactoryAdmission(child);
+  return scopes.map(scope=>scope===snapshot.scope?snapshot:child);
+}
 export function validateImplementationSnapshot(snapshot){
   if(snapshot?.schema_version!==1)throw ciFailure('SNAPSHOT_INVALID');
   validateSnapshotQuery(snapshot);
@@ -29,6 +101,7 @@ export function validateImplementationSnapshot(snapshot){
       stepSha256({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload})!==row.payload_sha256)
       throw ciFailure('DEFINITION_DIGEST_MISMATCH');
   }
+  if(Object.hasOwn(snapshot,'admission_companion'))validateAdmissionCompanion(snapshot);
   return snapshot;
 }
 export async function readImplementationSnapshotInTransaction(db,q){
@@ -101,7 +174,18 @@ export async function readImplementationSnapshotInTransaction(db,q){
 }
 export async function exportImplementationSnapshot(pool,input){
   const q=validateSnapshotQuery(input),db=await pool.connect();
-  try{await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const result=await readImplementationSnapshotInTransaction(db,q);await db.query('COMMIT');return result;}
+  try{
+    await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    let result=await readImplementationSnapshotInTransaction(db,q);
+    if(companionParent(q)){
+      const snapshot=await readImplementationSnapshotInTransaction(db,{...q,scope:EXISTING_OPS_SCOPE});
+      const companion={schema_version:1,purpose:'admission_only',scope:EXISTING_OPS_SCOPE,repo:q.repo,revision:q.revision,snapshot};
+      const {snapshot_sha256:_snapshotSha256,...body}=result;
+      body.admission_companion={...companion,companion_sha256:digest(companion)};
+      result={...body,snapshot_sha256:digest(body)};
+    }
+    await db.query('COMMIT');return result;
+  }
   catch(error){await db.query('ROLLBACK');throw error;}finally{db.release();}
 }
 /** 目标主机与仓库由受信adapter常量选择，外部输入只作为编码后的path/query。 */
