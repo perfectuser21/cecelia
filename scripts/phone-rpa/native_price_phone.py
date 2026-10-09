@@ -134,11 +134,19 @@ class PhoneSession:
         self.adb('shell','input','text',shlex.quote(value.replace(' ','%s')))
     def current_ip(self):
         request='GET /json/ HTTP/1.1\r\nHost: ip-api.com\r\nConnection: close\r\n\r\n'
-        out=self.adb('shell','printf %s '+shlex.quote(request)+' | nc -w 15 ip-api.com 80',timeout=25)
-        start=out.find('{')
-        if start<0:raise RuntimeError('出口IP证据缺失')
-        data=json.loads(out[start:])
-        return {k:data.get(k) for k in ('query','countryCode','regionName','city')}
+        error=None
+        for attempt in range(2):
+            try:
+                out=self.adb('shell','printf %s '+shlex.quote(request)+' | nc -w 15 ip-api.com 80',timeout=25)
+                start=out.find('{')
+                if start<0:raise RuntimeError('出口IP证据缺失')
+                data=json.loads(out[start:])
+                if not data.get('query') or not re.fullmatch(r'[A-Z]{2}',data.get('countryCode','')):raise RuntimeError('出口国家/IP响应无效')
+                return {k:data.get(k) for k in ('query','countryCode','regionName','city')}
+            except Exception as failure:
+                error=failure
+                if attempt==0:time.sleep(2)
+        raise RuntimeError('ip-api.com出口探针2次失败：'+str(error)[:300]) from error
     def exit_node(self,target,require_initial=False):
         self.launch('com.tailscale.ipn')
         nodes,path=self.nodes('exit-entry')
@@ -150,6 +158,7 @@ class PhoneSession:
         if existing is None:raise RuntimeError('当前出口无法核验')
         if require_initial:
             if existing!='None':raise RuntimeError('初始出口不是None，拒绝更改')
+            self.initial_exit_none=True
             if self.current_ip().get('countryCode')!='CN':raise RuntimeError('初始直连不是国内出口')
             self.restore_allowed=True
         if existing!=target:

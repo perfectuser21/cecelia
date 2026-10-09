@@ -41,7 +41,7 @@ export function validateReceipt(receipt, o) {
   demand(terminal.successfulToolNames?.includes('node_exec'), '没有真实手机工具调用回执');
   const reports = (receipt.result?.payloads ?? []).flatMap(p => { try { return [JSON.parse(p.text.replace(/^```(?:json)?\s*|\s*```$/g, ''))]; } catch { return []; } });
   const r = reports.find(x => Array.isArray(x.quotes));
-  demand(r && r.network_restored === true && r.home_verified === true && r.lock_free_verified === true, '缺少恢复网络/桌面/释放锁验收');
+  demand(r && r.network_restored === true && r.home_verified === true && r.lock_free_verified === true, r?.blocking_reason || r?.safety_error || '缺少恢复网络/桌面/释放锁验收');
   if (r.report_only) demand(typeof r.source_action_run_id === 'string' && r.source_action_run_id && typeof r.source_action_owner === 'string' && r.source_action_owner, '补报告缺少原采集来源');
   demand(r.quotes.length > 0, r.blocking_reason || r.unmatched?.map(x => x.reason).filter(Boolean).join('；') || '没有有效报价');
   demand(r.quotes.length <= o.count * 2, '报价超量');

@@ -36,7 +36,9 @@ def dispatch(request, runner=command):
     report['lock_free_verified']='lock=free' in lock
     report['home_verified']=report.get('home_verified') is True and 'launcher' in status.lower()
     report['safety_verified']=all(report.get(k) is True for k in ('network_restored','home_verified','lock_free_verified'))
-    if not report['safety_verified']:report['blocking_reason']='安全收尾验收未通过'
+    if not report['safety_verified']:
+        report['safety_error']='安全收尾验收未通过'
+        report['blocking_reason']=report.get('blocking_reason') or report['safety_error']
     return report
 
 def clear_search(session,edit):
@@ -208,7 +210,7 @@ def held_worker(request,session=None):
     validate_request(request)
     session=session or PhoneSession(request['owner'])
     session.deadline=time.monotonic()+min(720,180+180*request['count'])
-    report={'raw_quotes':[],'unmatched':[],'action_owner':request['owner'],'started_at':utcnow(),'network_restored':False,'home_verified':False,'lock_free_verified':False,'blocking_reason':None}
+    report={'raw_quotes':[],'unmatched':[],'action_owner':request['owner'],'started_at':utcnow(),'network_restored':False,'network_unchanged':False,'home_verified':False,'lock_free_verified':False,'blocking_reason':None}
     try:
         session.check()
         session.exit_node('mac-mini-m4-us',require_initial=True)
@@ -228,6 +230,11 @@ def held_worker(request,session=None):
             if getattr(session,'restore_allowed',False):
                 report['restored_network']=session.exit_node('None')
                 report['network_restored']=True
+            elif getattr(session,'initial_exit_none',False):
+                observed,unchanged_path=session.nodes('exit-unchanged')
+                values=text_values(observed)
+                report['network_unchanged']='None' in values and 'Connected' in values and 'mac-mini-m4-us' not in values
+                report['network_unchanged_xml']=unchanged_path
             else:report['blocking_reason']=report['blocking_reason'] or '原出口未获准更改'
         except Exception as error:report['cleanup_error']=str(error)[:400]
         try:
