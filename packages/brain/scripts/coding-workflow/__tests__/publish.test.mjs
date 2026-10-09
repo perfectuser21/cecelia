@@ -315,4 +315,48 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(tail[tail.length - 1]).toBe('hook line 30');
     expect(tail[0]).toBe('hook line 11');
   });
+
+  // 改了 packages/brain/src 的 PR 必须带 changes/<分支>.md 版本碎片（scripts/ci/check-brain-version-bump.sh，
+  // 约定见 changes/README.md：PR 不碰版本五件套），否则 brain-version-bump-gate 必红（4ac5fa39 首跑实证）
+  const BUILD_CHAIN = { chain_files: ['01-intent.md', '02-spec.md', '03-build.md'] };
+  const FRAG = 'changes/cp-1007000000-test.md';
+  const branchFiles = () => git(origin, 'ls-tree', '-r', '--name-only', 'cp-1007000000-test').trim().split('\n');
+  const commitSrc = () => {
+    fs.mkdirSync(path.join(worktree, 'packages/brain/src/routes'), { recursive: true });
+    fs.writeFileSync(path.join(worktree, 'packages/brain/src/routes/x.js'), 'export const x = 1;\n');
+    git(worktree, 'add', '--', 'packages');
+    git(worktree, 'commit', '-m', 'fix(brain): x');
+    fs.writeFileSync(path.join(worktree, 'sprints/s1/01-intent.md'), '# 修复 Brain 非法 id 返回 500\n\n### I-1\n非法 id 返回 400\n');
+    fs.writeFileSync(path.join(worktree, 'sprints/s1/03-build.md'), '# build\n');
+  };
+
+  it('改了 packages/brain/src 且没有碎片 → 自动写 changes/<分支>.md（{VERSION} 占位 + 需求标题），随 sprint 一起提交', async () => {
+    commitSrc();
+    const r = await run('new', BUILD_CHAIN);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(branchFiles()).toContain(FRAG);
+    const frag = git(origin, 'show', `cp-1007000000-test:${FRAG}`);
+    expect(frag).toMatch(/^## Brain \{VERSION\} — 修复 Brain 非法 id 返回 500\n/);
+    expect(frag).toContain(TASK_ID.slice(0, 8));
+    expect(frag).toContain('sprints/s1');
+    expect(git(origin, 'show', '--name-only', '--format=', 'cp-1007000000-test').trim().split('\n')).toContain(FRAG);
+  });
+
+  it('分支上已带碎片 → 不再写', async () => {
+    commitSrc();
+    fs.mkdirSync(path.join(worktree, 'changes'), { recursive: true });
+    fs.writeFileSync(path.join(worktree, 'changes/own.md'), '## Brain {VERSION} — own\n');
+    git(worktree, 'add', '--', 'changes');
+    git(worktree, 'commit', '-m', 'docs: frag');
+    const r = await run('new', BUILD_CHAIN);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(branchFiles()).not.toContain(FRAG);
+    expect(branchFiles()).toContain('changes/own.md');
+  });
+
+  it('没改 packages/brain/src → 不写碎片', async () => {
+    const r = await run('new');
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(branchFiles()).not.toContain(FRAG);
+  });
 });

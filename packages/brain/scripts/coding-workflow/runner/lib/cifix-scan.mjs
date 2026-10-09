@@ -34,16 +34,34 @@ export function readState(cfg, prNumber) {
   }
 }
 
-/** 必需检查的整体状态：{ state: 'none'|'pending'|'fail'|'pass', failed: [检查名] }。 */
+let expectedCache = null;
+
+/**
+ * 仓库规定的必需检查名（main 的分支保护 + 规则集，本进程内缓存）；分支保护查不到返回 null。
+ * `pr checks --required` 只列已经登记出来的检查——还没开跑的必需检查不在里面，不能据此判「全绿」。
+ */
+async function expectedRequired(cfg) {
+  if (expectedCache) return expectedCache;
+  const protection = await ghJson(cfg, ['api', 'repos/{owner}/{repo}/branches/main/protection/required_status_checks', '--jq', '.contexts']);
+  if (!Array.isArray(protection)) return null;
+  const rules = await ghJson(cfg, ['api', 'repos/{owner}/{repo}/rules/branches/main', '--jq',
+    '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context]']);
+  expectedCache = [...new Set([...protection, ...(Array.isArray(rules) ? rules : [])].map(String))];
+  return expectedCache;
+}
+
+/** 必需检查的整体状态：{ state: 'none'|'pending'|'fail'|'pass', failed: [检查名] }。规定的必需检查没全部登记出来算 pending。 */
 export async function requiredState(cfg, prNumber) {
   const rows = await ghJson(cfg, ['pr', 'checks', String(prNumber), '--required', '--json', 'name,bucket']);
   if (!Array.isArray(rows) || rows.length === 0) return { state: 'none', failed: [] };
   if (rows.some((r) => r.bucket === 'pending')) return { state: 'pending', failed: [] };
+  const expected = await expectedRequired(cfg);
+  if (!expected || expected.some((name) => !rows.some((r) => r.name === name))) return { state: 'pending', failed: [] };
   const failed = rows.filter((r) => r.bucket === 'fail').map((r) => r.name);
   return { state: failed.length > 0 ? 'fail' : 'pass', failed };
 }
 
-/** 必需检查：全部出结果且有失败 → 失败名单；还有 pending、全通过或没有必需检查 → null。 */
+/** 必需检查：全部登记并出结果且有失败 → 失败名单；还有 pending/未登记、全通过或没有必需检查 → null。 */
 async function failedRequired(cfg, prNumber) {
   const { state, failed } = await requiredState(cfg, prNumber);
   return state === 'fail' ? failed : null;
