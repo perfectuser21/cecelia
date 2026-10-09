@@ -15,6 +15,15 @@ const out = (value, code = 0) => {
 
 if (argv[0] === 'pr' && argv[1] === 'list') out(argv.includes('merged') ? (state.mergedPrs ?? []) : (state.prs ?? []));
 // pr view <url> --json state：按 prStates[url] 回放，未登记的 PR 报错退出 1
+// pr view <n> --json mergeable,mergeStateStatus：合并门判冲突/落后
+if (argv[0] === 'pr' && argv[1] === 'view' && argv.join(' ').includes('mergeable')) {
+  out({ mergeable: state.mergeable ?? 'MERGEABLE', mergeStateStatus: state.mergeStateStatus ?? 'CLEAN' });
+}
+// pr merge：state.mergeExit 非 0 时模拟合并失败
+if (argv[0] === 'pr' && argv[1] === 'merge' && state.mergeExit) {
+  process.stderr.write('merge failed\n');
+  process.exit(state.mergeExit);
+}
 if (argv[0] === 'pr' && argv[1] === 'view') {
   const s = state.prStates?.[argv[2]];
   if (!s) process.exit(1);

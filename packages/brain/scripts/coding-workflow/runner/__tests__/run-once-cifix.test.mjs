@@ -32,6 +32,8 @@ describe('runner CI 红自动修复（ci_fix）', () => {
     git(sb.seed, 'checkout', '-q', '-b', BRANCH);
     fs.mkdirSync(path.join(sb.seed, SPRINT), { recursive: true });
     fs.writeFileSync(path.join(sb.seed, SPRINT, '01-intent.md'), `---\ntask_id: ${TASK}\nstep: intent\nupstream: []\n---\n# x\n\n### I-1\n验收\n`);
+    fs.mkdirSync(path.join(sb.seed, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(sb.seed, 'src/b.test.mjs'), "it('b', () => {\n  expect(1).toBe(1);\n  expect(2).toBe(2);\n});\n");
     git(sb.seed, 'add', '.');
     git(sb.seed, 'commit', '-q', '-m', 'feat: cw');
     git(sb.seed, 'push', '-q', 'origin', BRANCH);
@@ -164,12 +166,62 @@ describe('runner CI 红自动修复（ci_fix）', () => {
     ['dirty', 'uncommitted'],
     ['tamper', 'protected_path'],
     ['fail', 'claude_failed'],
+    // 审计 #31：修复环节不得靠削弱测试变绿
+    ['skiptest', 'test_weakened'],
+    ['deltest', 'test_weakened'],
+    ['lessassert', 'test_weakened'],
   ])('claude 模式 %s → 不推送，记一次尝试 %s', async (mode, reason) => {
     const r = await go(red(), { mode });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(remoteHead()).toBe(head);
     expect(state().attempts).toMatchObject([{ head, result: reason }]);
     expect(brain.patches.find((p) => p.id === TASK).body.result.ci_fix.attempts).toMatchObject([{ result: reason }]);
+  });
+
+  // 审计 #8：修不动必须有出口，不能静默挂着
+  const writeState = (s) => { fs.mkdirSync(sb.logDir, { recursive: true }); fs.writeFileSync(path.join(sb.logDir, 'cifix-77.json'), JSON.stringify(s)); };
+  const escalations = () => brain.patches.filter((p) => p.id === TASK && p.body.result?.escalations).map((p) => p.body.result.escalations).at(-1);
+
+  it('修复次数用完、CI 仍红 → 升级 ci_fix_exhausted（P1 日志 + Brain escalations），只升一次', async () => {
+    writeState({ attempts: [{ head: 'a'.repeat(40), result: 'pushed' }, { head: 'b'.repeat(40), result: 'pushed' }] });
+    let r = await go(red());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(fs.existsSync(files.prompt)).toBe(false);
+    expect(r.stderr).toContain('[coding-ci][P1]');
+    expect(state().escalated).toMatchObject({ type: 'ci_fix_exhausted', pr: 77 });
+    expect(escalations()).toEqual([expect.objectContaining({ type: 'ci_fix_exhausted', pr: 77 })]);
+    await brain.close();
+    brain = null;
+    r = await go(red());
+    expect(r.stderr).not.toContain('[coding-ci][P1]');
+  });
+
+  it('同一 head 修过但没改（判定与本 PR 无关）→ 重跑失败 job 一次；重跑后仍红 → 升级', async () => {
+    writeState({ attempts: [{ head, result: 'no_commit' }] });
+    let r = await go(red());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(readJsonLines(sb.ghLog)).toContainEqual(['run', 'rerun', '1', '--failed']);
+    expect(state().reruns).toMatchObject({ [head]: expect.any(String) });
+    expect(state().escalated).toBeUndefined();
+    await brain.close();
+    brain = null;
+    r = await go(red());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(state().escalated).toMatchObject({ type: 'ci_fix_exhausted', reason: 'rerun_still_failing' });
+  });
+
+  it('落后 main（lint-base-fresh 红）→ 程序 gh pr update-branch，不派 claude、不占修复次数；超过 3 次升级', async () => {
+    const behind = () => ({ ...red(), checks: { 77: [{ name: 'lint-base-fresh', bucket: 'fail', link: JOB_URL }, { name: 'ci-passed', bucket: 'fail', link: JOB_URL }] } });
+    let r = await go(behind());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(readJsonLines(sb.ghLog)).toContainEqual(['pr', 'update-branch', '77']);
+    expect(fs.existsSync(files.prompt)).toBe(false);
+    expect(state()).toMatchObject({ attempts: [], update_branch: [expect.objectContaining({ head })] });
+    await brain.close();
+    brain = null;
+    writeState({ attempts: [], update_branch: [{ head: 'a' }, { head: 'b' }, { head: 'c' }] });
+    r = await go(behind());
+    expect(state().escalated).toMatchObject({ type: 'ci_fix_exhausted', reason: 'update_branch_exhausted' });
   });
 
   it('配置：默认开启、每 PR 最多 2 次；CODING_WF_CIFIX=0 关闭', () => {

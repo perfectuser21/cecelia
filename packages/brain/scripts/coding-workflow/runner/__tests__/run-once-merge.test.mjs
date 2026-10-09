@@ -13,6 +13,39 @@ describe('合并门（绑定 head SHA）', () => {
   const { pr, green, go, addToBranch, remoteHead, state, seedState, qaCalls, ghCalls } = E;
   const approve = (h = remoteHead()) => seedState({ passed: true, approved: { head: h, round: 1 }, rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'PASS', fails: 0 }] });
   const mergeCalls = () => ghCalls().filter((a) => a[1] === 'merge');
+  const lastResult = () => E.brainResults().at(-1);
+
+  it('合并成功 → Brain 任务回写 merge（merged=true、合并的 head），完成以合并为准（审计 #7）', async () => {
+    approve();
+    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(lastResult()).toMatchObject({ merge: { merged: true, head: remoteHead() } });
+  });
+
+  // 审计 #6：合并失败不能静默挂着
+  it('合并失败且 PR 冲突 → 升级 merge_conflict（P1 + Brain escalations），不再重试', async () => {
+    approve();
+    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })], mergeExit: 1, mergeable: 'CONFLICTING' }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stderr).toContain('[coding-qa][P1]');
+    expect(state().escalated).toMatchObject({ type: 'merge_conflict', pr: 77 });
+    expect(lastResult().escalations).toEqual([expect.objectContaining({ type: 'merge_conflict' })]);
+  });
+
+  it('合并失败因为落后 main → 程序 gh pr update-branch（之后的 main 合入按改绑处理），不升级', async () => {
+    approve();
+    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })], mergeExit: 1, mergeStateStatus: 'BEHIND' }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(ghCalls()).toContainEqual(['pr', 'update-branch', '77']);
+    expect(state().escalated).toBeUndefined();
+  });
+
+  it('其他原因合并失败：累计 3 次 → 升级 merge_failed', async () => {
+    seedState({ passed: true, approved: { head: remoteHead(), round: 1 }, rounds: [], merge_failures: 2 });
+    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })], mergeExit: 1 }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(state()).toMatchObject({ merge_failures: 3, escalated: { type: 'merge_failed' } });
+  });
 
 
   it('批准的 head 上必需检查全部登记全绿 → gh pr merge --squash --match-head-commit <该 head>；记 merged', async () => {

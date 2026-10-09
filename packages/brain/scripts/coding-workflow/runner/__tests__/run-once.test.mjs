@@ -201,7 +201,10 @@ describe('coding workflow runner run-once', () => {
     expect(completed.result.runner.automerge).toBeUndefined();
     const merged = brain.patches[3].body;
     expect(Object.keys(merged)).toEqual(['result']);
-    expect(merged.result.runner.automerge).toEqual({ ready: true, merge: true });
+    // 审计 #32：QA 门关闭时不靠 CI 绿自动合并——只 ready，P1 交人审
+    expect(merged.result.runner.automerge).toEqual({ ready: true, merge: 'qa_gate_off' });
+    expect(completed.result.runner.phase).toBe('awaiting_manual_merge');
+    expect(r.stderr).toContain('[coding-qa][P1]');
     expect(merged.result.runner.receipt_path).toBe(completed.result.runner.receipt_path);
     expect(completed.result.runner.receipt_path).toBe(path.join(sb.logDir, `${T1}.json`));
     expect(completed.result.runner.host).toBe(os.hostname());
@@ -209,10 +212,9 @@ describe('coding workflow runner run-once', () => {
     expect(brain.tasks[0].result.coding_workflow.pr_url).toBe('https://github.com/example/repo/pull/9');
     expect(fs.existsSync(path.join(sb.logDir, `${T1}.json`))).toBe(true);
 
-    // automerge：gh pr ready + gh pr merge --auto --squash
+    // 只 gh pr ready，不 gh pr merge
     expect(readJsonLines(sb.ghLog)).toEqual([
       ['pr', 'ready', 'https://github.com/example/repo/pull/9'],
-      ['pr', 'merge', 'https://github.com/example/repo/pull/9', '--auto', '--squash'],
     ]);
 
     // worktree 已删除，clone 里不再登记它

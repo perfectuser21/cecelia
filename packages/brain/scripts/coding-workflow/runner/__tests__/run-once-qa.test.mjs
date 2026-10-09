@@ -144,12 +144,15 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(state().escalated).toMatchObject({ type: 'qa_judge_unavailable', reason: 'judge_output_invalid' });
   });
 
-  it('CODING_WF_JUDGE=0：QA PASS 直接批准（不调裁判）', async () => {
+  // 审计 #32：裁判是合并的必要条件，关掉裁判不能变成「QA PASS 就合并」
+  it('CODING_WF_JUDGE=0：QA PASS 也不批准，升级 judge_disabled 交人审', async () => {
     const r = await go(green(), { extra: { CODING_WF_JUDGE: '0' } });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(judge.calls).toEqual([]);
     expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS');
-    expect(state()).toMatchObject({ passed: true, approved: { head: git(sb.origin, 'rev-parse', BRANCH).trim() } });
+    expect(r.stderr).toContain('[coding-qa][P1]');
+    expect(state().passed).toBeFalsy();
+    expect(state().escalated).toMatchObject({ type: 'judge_disabled' });
   });
 
   it('QA FAIL：报告提交 → 开发按报告修复提交 → 推送；不开自动合并；修复 prompt 带报告路径与失败条目', async () => {
@@ -266,5 +269,8 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     const calls = ghCalls();
     expect(calls).toContainEqual(['pr', 'ready', 'https://github.com/example/repo/pull/9']);
     expect(calls.some((a) => a[1] === 'merge')).toBe(false);
+    // 审计 #7：开出 PR 不等于完成，结果里标明阶段
+    const completed = E.brain.patches.find((p) => p.id.startsWith('eeeeeee5') && p.body.status === 'completed');
+    expect(completed.body.result.runner.phase).toBe('awaiting_qa');
   });
 });
