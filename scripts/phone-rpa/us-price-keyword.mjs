@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { DATA_SOURCE, bindAuthoritativeQuote, buildOwner, terminalStatus, failurePatch, buildCompletion, buildTask, claimTask, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
+import { DATA_SOURCE, receiptReport, bindAuthoritativeQuote, buildOwner, terminalStatus, failurePatch, buildCompletion, buildTask, claimTask, parseOptions, buildPrompt, validateReceipt, saveQuotes, unsupportedModel } from './us-price-keyword-core.mjs';
 
 async function jsonRequest(base, path, method = 'GET', body, headers = {}) {
   const response = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
@@ -114,7 +114,8 @@ export async function main(args) {
         throw new Error('OpenClaw执行失败；回执保留，未写入Notion');
       }
     }
-    const result = validateReceipt(receipt, o);
+    let result = receiptReport(receipt);
+    if (!result || !Array.isArray(result.quotes)) throw new Error('缺少Agent报价报告');
     result.receipt_import = Boolean(o.receipt);
     result.source_action_task_id = o.sourceActionTaskId ?? taskId;
     const authoritative = new Map();
@@ -126,6 +127,9 @@ export async function main(args) {
       return bindAuthoritativeQuote(q, await authoritative.get(q.action_owner), result.source_action_task_id, expectedOwner);
     }));
     result.authority_reports = [...authoritative.keys()].map(action_owner => ({ action_owner, path: '/Users/jinnuoshengyuan/Library/Caches/us-price-native-staging/agent-runs/' + action_owner + '/held-report.json' }));
+    const boundResult = result;
+    receipt = { ...receipt, result: { ...receipt.result, payloads: [{ text: JSON.stringify(boundResult) }] } };
+    result = { ...validateReceipt(receipt, o), receipt_import: boundResult.receipt_import, source_action_task_id: boundResult.source_action_task_id, authority_reports: boundResult.authority_reports };
     const proofAndUpload = async quote => {
       const proof = await verifyProof(quote);
       const image = await child('ssh', ['-o', 'BatchMode=yes', 'xian-m4', 'python3', '-c', "'import sys,json,base64; p=json.load(sys.stdin); print(base64.b64encode(open(p, \"rb\").read()).decode())'"], process.env, JSON.stringify(quote.screenshot_path), 60000);

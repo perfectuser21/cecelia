@@ -26,11 +26,16 @@ export function buildPrompt(o, taskId, owner = buildOwner(taskId, '')) {
 用户授权决策043693f2-c703-406b-96c6-90a0176eff0b：小黄ANGYVB4402004137切mac-mini-m4-us后必须恢复None/国内、HOME、锁释放；小彩不动。dispatcher返回network_restored/home_verified/lock_free_verified，未全true则如实失败。
 node_exec结果用text(r)完整返回，不要猜r.content。固定worker返回raw_quotes与price_candidates上下文。你只判断默认新货标价（不要选择信用卡优惠/分期/券后价，也不能直接取最低值），核对品牌/型号/套装并规范化specification；不同套装不配对。输出价格必须来自该报价实际price_candidates。未能核实套装时status=规格待核；商品URL是可选字段，未采集可url=null,url_missing=true并在conditions写商品链接未采集，不因缺URL阻断已经核实的同SKU价格配对。对同型号两平台明确同套装才给同一canonical specification。
 证据只使用worker返回路径和时间/owner；Android文本按node.get('text','')/node.get('content-desc','')读取，不是itertext；禁止把全文XML返回模型。同一证据最多读取1次，不要调用 file_fetch，截图由CLI独立审计上传。已给ctl绝对路径，不要把shell控制器当python运行。恢复网络/桌面并释放锁后立即输出JSON，不再读图或重复UI检查。
-最终只输出JSON：{quotes:[{title,brand,model,specification,category,package,zip,price_usd,seller,availability,conditions,url,collected_at,screenshot_path,price_xml,title_xml,zip_xml,action_owner,status,url_missing}],network_restored,home_verified,lock_free_verified,unmatched,blocking_reason}。category限电动工具/家居五金/园艺/其他；数量不足就如实输出，不能复用历史报价、编造ASIN/商品链接、自己写Notion或Brain任务状态。`;
+最终只输出JSON：{quotes:[{title,brand,model,specification,category,app_package,zip,price_usd,seller,availability,conditions,url,collected_at,screenshot_path,price_xml,title_xml,zip_xml,action_owner,status,url_missing}],network_restored,home_verified,lock_free_verified,unmatched,blocking_reason}。app_package必须为Android包名com.amazon.mShop.android.shopping或com.thehomedepot，绝不是套装描述；套装只写specification。category限电动工具/家居五金/园艺/其他；数量不足就如实输出，不能复用历史报价、编造ASIN/商品链接、自己写Notion或Brain任务状态。`;
 }
 
 export function unsupportedModel(text) {
   return /(?:model[^\n]{0,100}(?:not supported|unsupported|not found|does not exist)|unsupported[^\n]{0,50}model)/i.test(text);
+}
+export function receiptReport(receipt) {
+  const reports = (receipt.result?.payloads ?? []).flatMap(p => { try { return [JSON.parse(p.text.replace(/^```(?:json)?\s*|\s*```$/g, ''))]; } catch { return []; } });
+  const r = reports.find(x => Array.isArray(x.quotes));
+  return r;
 }
 export function validateReceipt(receipt, o) {
   demand(receipt.status === 'ok' && receipt.runId, 'Agent未成功结束');
@@ -39,13 +44,12 @@ export function validateReceipt(receipt, o) {
   demand(meta?.provider === 'openai' && ['gpt-6-luna', 'gpt-6-sol'].includes(meta?.model), '缺少实际provider模型');
   demand(terminal?.effective?.model === meta.model && terminal.effective.provider === meta.provider, '实际模型回执不一致');
   demand(terminal.successfulToolNames?.includes('node_exec'), '没有真实手机工具调用回执');
-  const reports = (receipt.result?.payloads ?? []).flatMap(p => { try { return [JSON.parse(p.text.replace(/^```(?:json)?\s*|\s*```$/g, ''))]; } catch { return []; } });
-  const r = reports.find(x => Array.isArray(x.quotes));
+  const r = receiptReport(receipt);
   demand(r && r.network_restored === true && r.home_verified === true && r.lock_free_verified === true, r?.blocking_reason || r?.safety_error || '缺少恢复网络/桌面/释放锁验收');
   if (r.report_only) demand(typeof r.source_action_run_id === 'string' && r.source_action_run_id && typeof r.source_action_owner === 'string' && r.source_action_owner, '补报告缺少原采集来源');
   demand(r.quotes.length > 0, r.blocking_reason || r.unmatched?.map(x => x.reason).filter(Boolean).join('；') || '没有有效报价');
   demand(r.quotes.length <= o.count * 2, '报价超量');
-  const keys = new Set(), skus = new Set(), verifiedKeys = new Set();
+  const products = new Set(), keys = new Set(), skus = new Set(), verifiedKeys = new Set();
   r.quotes = r.quotes.map(q => ({ ...q, package: q.package ?? q.app_package, specification: q.specification ?? q.pack, url: q.url ?? q.product_url, collected_at: q.collected_at ?? q.collected_at_utc }));
   for (const q of r.quotes) {
     demand(platforms[q.package] && q.zip === o.zip, '平台不是原生App或邮编不符');
@@ -58,10 +62,10 @@ export function validateReceipt(receipt, o) {
     demand(url.protocol === 'https:' && (q.package === 'com.thehomedepot' ? url.hostname === 'www.homedepot.com' : url.hostname === 'www.amazon.com'), '商品链接平台不符');
     }
     const sku = [q.brand, q.model, q.specification].map(x => x.trim().toLowerCase()).join('|');
-    demand(!keys.has(`${sku}|${q.package}`), 'SKU平台重复'); keys.add(`${sku}|${q.package}`); skus.add(sku);
+    demand(!keys.has(`${sku}|${q.package}`), 'SKU平台重复'); keys.add(`${sku}|${q.package}`); skus.add(sku); products.add([q.brand,q.model].map(x=>x.trim().toLowerCase()).join('|'));
     if (q.status !== '规格待核') verifiedKeys.add(`${sku}|${q.package}`);
   }
-  demand(skus.size <= o.count, '不同商品超过本次上限');
+  demand(products.size <= o.count, '不同商品超过本次上限');
   const matched = [...skus].filter(sku => [...verifiedKeys].filter(key => key.startsWith(sku + '|')).length === 2).length;
   return { ...r, matched_sku_count: matched, claimed_result: matched === o.count ? 'passed' : 'partial', run_id: receipt.runId, actual_model: `${meta.provider}/${meta.model}` };
 }
@@ -139,7 +143,9 @@ export function bindAuthoritativeQuote(quote, report, sourceTaskId, expectedOwne
   demand(report.action_owner === owner, 'held-report owner不匹配');
   demand(report.network_restored === true && report.home_verified === true, '权威采集报告未完成网络/桌面恢复');
   const equal = (a,b) => String(a??'').trim().toLowerCase() === String(b??'').trim().toLowerCase();
-  const candidates = (report.raw_quotes??[]).filter(raw => raw.package === quote.package && equal(raw.brand,quote.brand) && equal(raw.model,quote.model));
+  const suppliedPackage = quote.app_package ?? quote.package;
+  const androidPackage = typeof suppliedPackage === 'string' && /^com\.[A-Za-z0-9_.]+$/.test(suppliedPackage);
+  const candidates = (report.raw_quotes??[]).filter(raw => equal(raw.brand,quote.brand) && equal(raw.model,quote.model) && (androidPackage ? raw.package === suppliedPackage : raw.screenshot_path === quote.screenshot_path && raw.action_owner === owner));
   demand(candidates.length === 1, '权威报告SKU不是唯一匹配');
   const raw = candidates[0];
   demand(raw.action_owner === owner && raw.zip === quote.zip, '权威报价owner/ZIP不符');
