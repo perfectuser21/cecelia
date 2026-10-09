@@ -1,0 +1,196 @@
+/**
+ * 接力棒 PR2 接棒 — 失败复现
+ *  1. normalizeNextSteps：字符串→note；对象保留 kind/title/detail；非法丢弃；未知 kind→note
+ *  2. materializeNextSteps：task→createRoutedTask（source child、source_id 幂等、挂根）；decision→decisions pending（去重）；note→skipped
+ *  3. ensureHandoffOnComplete：有 handoff 原样返回；没有→合成 synthesized 并 saveHandoff
+ *  4. relayOnComplete：非 completed 不动；异常吞成 null；handoff.brief_delta → applyHandoffBriefDelta（棒2）
+ */
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn(async () => null) }));
+
+const applyHandoffBriefDeltaMock = vi.fn(async () => null);
+vi.mock('../project-brief-apply.js', () => ({ applyHandoffBriefDelta: (...args) => applyHandoffBriefDeltaMock(...args) }));
+
+import { normalizeNextSteps, materializeNextSteps, ensureHandoffOnComplete, relayOnComplete } from '../relay-baton.js';
+
+const ROOT = '11111111-1111-4111-8111-111111111111';
+const SELF = '33333333-3333-4333-8333-333333333333';
+const PROJECT_ID = '66666666-6666-4666-8666-666666666666';
+
+describe('normalizeNextSteps', () => {
+  it('字符串→note，对象保留字段，非法丢弃，未知 kind→note', () => {
+    const out = normalizeNextSteps([
+      '先补文档',
+      { kind: 'task', title: '做 B', detail: 'x', task_type: 'data' },
+      { kind: 'decision', title: '要不要删列' },
+      { kind: 'weird', title: 'z' },
+      { kind: 'task' },
+      42, null, '   ',
+    ]);
+    expect(out).toEqual([
+      { kind: 'note', title: '先补文档' },
+      { kind: 'task', title: '做 B', detail: 'x', task_type: 'data' },
+      { kind: 'decision', title: '要不要删列' },
+      { kind: 'note', title: 'z' },
+    ]);
+  });
+});
+
+describe('materializeNextSteps', () => {
+  const task = { id: SELF, title: '第二棒', priority: 'P1', task_type: 'dev', parent_task_id: ROOT, payload: { repo: 'cecelia', map_scope: ['database_foundation'] } };
+  it('task→createRoutedTask：source=child、source_id 幂等、parent=根、lane=AI；decision→pending 决策；note→skipped', async () => {
+    const created = [];
+    const create = vi.fn(async (_pool, req) => { created.push(req); return { task: { id: `t-${created.length}`, title: req.title } }; });
+    const inserted = [];
+    const pool = { query: vi.fn(async (sql, params) => {
+      if (/SELECT id FROM decisions/.test(sql)) return { rows: [] };
+      if (/INSERT INTO decisions/.test(sql)) { inserted.push(params); return { rows: [{ id: 'd-1', topic: params[0] }] }; }
+      return { rows: [] };
+    }) };
+    const out = await materializeNextSteps(pool, task, { next_steps: [
+      { kind: 'task', title: '做 B', detail: '细节' },
+      { kind: 'task', title: '改代码 C', change_kind: 'bug_fix' },
+      { kind: 'decision', title: '要不要删列', detail: '四张表' },
+      '只是备注',
+    ] }, { createRoutedTask: create });
+    expect(out.tasks.map((t) => t.title)).toEqual(['做 B', '改代码 C']);
+    expect(created[0]).toMatchObject({ source: 'child', source_id: `handoff:${SELF}:0`, parent_task_id: ROOT, requested_task_type: 'data', mutation_intent: 'none' });
+    expect(created[0].metadata).toMatchObject({ lane: 'AI', from_handoff: SELF });
+    expect(created[1]).toMatchObject({ requested_task_type: 'dev', mutation_intent: 'write', declared_change_kind: 'bug_fix', repo_hint: 'cecelia', map_scope_hint: ['database_foundation'] });
+    expect(out.decisions).toEqual([{ id: 'd-1', topic: '要不要删列', reused: false }]);
+    expect(inserted[0][0]).toBe('要不要删列');
+    expect(JSON.parse(inserted[0][3])).toMatchObject({ kind: 'relay_pending', task_id: SELF, root_task_id: ROOT });
+    expect(inserted[0][5]).toBe(SELF);
+    expect(out.skipped).toEqual([{ index: 3, kind: 'note', title: '只是备注', error: null }]);
+  });
+  it('decision 去重：同 source_ref+topic 已存在 → reused，不再插', async () => {
+    const pool = { query: vi.fn(async (sql) => (/SELECT id FROM decisions/.test(sql) ? { rows: [{ id: 'd-old' }] } : { rows: [] })) };
+    const out = await materializeNextSteps(pool, task, { next_steps: [{ kind: 'decision', title: '重复' }] });
+    expect(out.decisions).toEqual([{ id: 'd-old', topic: '重复', reused: true }]);
+    expect(pool.query.mock.calls.some(([sql]) => /INSERT INTO decisions/.test(sql))).toBe(false);
+  });
+  it('无父任务时子任务挂在自己下面（自己即根）', async () => {
+    const create = vi.fn(async (_p, req) => ({ task: { id: 't', title: req.title } }));
+    await materializeNextSteps({ query: vi.fn() }, { ...task, parent_task_id: null }, { next_steps: [{ kind: 'task', title: 'x' }] }, { createRoutedTask: create });
+    expect(create.mock.calls[0][1].parent_task_id).toBe(SELF);
+  });
+  it('task.project_id 存在 → 子任务继承 project_id，sequence_no=project 下 max+1 递增（棒1，决策 ee4842a6/3feeae3e）', async () => {
+    const created = [];
+    const create = vi.fn(async (_pool, req) => { created.push(req); return { task: { id: `t-${created.length}`, title: req.title } }; });
+    const pool = { query: vi.fn(async (sql) => {
+      if (/COALESCE\(MAX\(sequence_no\), 0\) \+ 1/.test(sql)) return { rows: [{ n: 5 }] };
+      return { rows: [] };
+    }) };
+    const projTask = { ...task, project_id: PROJECT_ID };
+    await materializeNextSteps(pool, projTask, { next_steps: [
+      { kind: 'task', title: '做 B' },
+      { kind: 'task', title: '做 C' },
+    ] }, { createRoutedTask: create });
+    expect(created[0].task).toMatchObject({ project_id: PROJECT_ID, sequence_no: 5 });
+    expect(created[1].task).toMatchObject({ project_id: PROJECT_ID, sequence_no: 6 });
+  });
+
+  it('task.project_id 不存在（旧链）→ createRoutedTask 请求里不带 project_id/sequence_no（行为不变）', async () => {
+    const created = [];
+    const create = vi.fn(async (_pool, req) => { created.push(req); return { task: { id: 't', title: req.title } }; });
+    await materializeNextSteps({ query: vi.fn() }, task, { next_steps: [{ kind: 'task', title: 'x' }] }, { createRoutedTask: create });
+    expect(created[0].task.project_id).toBeUndefined();
+    expect(created[0].task.sequence_no).toBeUndefined();
+  });
+
+  it('decision 分支：context 带 project_id（有 project_id 时非空，否则 null）', async () => {
+    const inserted = [];
+    const pool = { query: vi.fn(async (sql, params) => {
+      if (/SELECT id FROM decisions/.test(sql)) return { rows: [] };
+      if (/INSERT INTO decisions/.test(sql)) { inserted.push(params); return { rows: [{ id: 'd-1', topic: params[0] }] }; }
+      return { rows: [] };
+    }) };
+    await materializeNextSteps(pool, { ...task, project_id: PROJECT_ID }, { next_steps: [{ kind: 'decision', title: '要不要' }] });
+    expect(JSON.parse(inserted[0][3])).toMatchObject({ project_id: PROJECT_ID });
+  });
+
+  it('createRoutedTask 抛错 → 进 skipped，不中断其余步骤', async () => {
+    const create = vi.fn(async (_p, req) => { if (req.title === 'bad') { const e = new Error('x'); e.code = 'routing_map_scope_unresolved'; throw e; } return { task: { id: 'ok', title: req.title } }; });
+    const out = await materializeNextSteps({ query: vi.fn() }, task, { next_steps: [{ kind: 'task', title: 'bad' }, { kind: 'task', title: 'good' }] }, { createRoutedTask: create });
+    expect(out.skipped[0]).toMatchObject({ kind: 'task', title: 'bad', error: 'routing_map_scope_unresolved' });
+    expect(out.tasks.map((t) => t.title)).toEqual(['good']);
+  });
+});
+
+describe('ensureHandoffOnComplete', () => {
+  it('已有 handoff → 原样返回，不写库', async () => {
+    const pool = { query: vi.fn() };
+    const r = await ensureHandoffOnComplete(pool, { id: SELF, result: { handoff: { schema_version: 1, done: ['a'] } } });
+    expect(r.synthesized).toBe(false);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+  it('没有 → 合成 synthesized=true，done 取 result.summary，落 saveHandoff', async () => {
+    const pool = { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) };
+    const r = await ensureHandoffOnComplete(pool, { id: SELF, title: '退役旧网关', result: { summary: '容器删了' } }, { sessionId: 's9' });
+    expect(r.synthesized).toBe(true);
+    expect(r.handoff.done).toEqual(['容器删了']);
+    expect(r.handoff.synthesized).toBe(true);
+    expect(r.handoff.session_id).toBe('s9');
+    expect(pool.query.mock.calls.some(([sql]) => /UPDATE tasks/.test(sql) && /handoff_log/.test(sql))).toBe(true);
+  });
+});
+
+describe('relayOnComplete', () => {
+  it('任务非 completed → null 且不合成', async () => {
+    const pool = { query: vi.fn(async () => ({ rows: [{ id: SELF, status: 'in_progress', result: null }] })) };
+    expect(await relayOnComplete(pool, SELF)).toBeNull();
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+  it('completed_no_pr（openclaw / 设备任务收割态）也接棒：合成 handoff 并落 next_steps', async () => {
+    const pool = { query: vi.fn(async (sql) => {
+      if (/SELECT id, title, status/.test(sql)) return { rows: [{ id: SELF, title: '秋米任务', status: 'completed_no_pr', priority: 'P2', task_type: 'qiumi_task', payload: {}, parent_task_id: ROOT, result: { summary: '发完了' }, summary: null }] };
+      return { rowCount: 1, rows: [] };
+    }) };
+    const out = await relayOnComplete(pool, SELF, { sessionId: 'oc' });
+    expect(out).toMatchObject({ synthesized: true, tasks: [], decisions: [], skipped: [] });
+    expect(pool.query.mock.calls.some(([sql]) => /UPDATE tasks/.test(sql) && /handoff_log/.test(sql))).toBe(true);
+  });
+  it('failed 不接棒', async () => {
+    const pool = { query: vi.fn(async () => ({ rows: [{ id: SELF, status: 'failed', result: null }] })) };
+    expect(await relayOnComplete(pool, SELF)).toBeNull();
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+  it('查库抛错 → null（不阻塞 PATCH）', async () => {
+    const pool = { query: vi.fn(async () => { throw new Error('boom'); }) };
+    expect(await relayOnComplete(pool, SELF)).toBeNull();
+  });
+
+  it('task 挂 project_id 且 handoff 带 brief_delta → 调用 applyHandoffBriefDelta(pool, task, handoff)，结果挂进返回值.brief（棒2，决策 ee4842a6/3feeae3e）', async () => {
+    applyHandoffBriefDeltaMock.mockClear();
+    applyHandoffBriefDeltaMock.mockResolvedValueOnce({ applied: true, brief: { goal: 'new goal' } });
+    const handoff = { schema_version: 1, done: ['a'], brief_delta: { status: '新现状' } };
+    const pool = { query: vi.fn(async (sql) => {
+      if (/SELECT id, title, status/.test(sql)) {
+        return { rows: [{ id: SELF, title: '第二棒', status: 'completed', priority: 'P1', task_type: 'dev', payload: {}, parent_task_id: ROOT, project_id: PROJECT_ID, result: { handoff }, summary: null }] };
+      }
+      return { rowCount: 1, rows: [] };
+    }) };
+    const out = await relayOnComplete(pool, SELF);
+    expect(applyHandoffBriefDeltaMock).toHaveBeenCalledTimes(1);
+    const [calledPool, calledTask, calledHandoff] = applyHandoffBriefDeltaMock.mock.calls[0];
+    expect(calledPool).toBe(pool);
+    expect(calledTask).toMatchObject({ id: SELF, project_id: PROJECT_ID });
+    expect(calledHandoff).toMatchObject({ brief_delta: { status: '新现状' } });
+    expect(out.brief).toEqual({ applied: true, brief: { goal: 'new goal' } });
+  });
+
+  it('applyHandoffBriefDelta 抛错 → 吞掉，接棒主流程不受影响', async () => {
+    applyHandoffBriefDeltaMock.mockClear();
+    applyHandoffBriefDeltaMock.mockRejectedValueOnce(new Error('brief boom'));
+    const pool = { query: vi.fn(async (sql) => {
+      if (/SELECT id, title, status/.test(sql)) {
+        return { rows: [{ id: SELF, title: '第二棒', status: 'completed', priority: 'P1', task_type: 'dev', payload: {}, parent_task_id: ROOT, project_id: PROJECT_ID, result: { handoff: { schema_version: 1, done: ['a'], brief_delta: { status: 'x' } } }, summary: null }] };
+      }
+      return { rowCount: 1, rows: [] };
+    }) };
+    const out = await relayOnComplete(pool, SELF);
+    expect(out).not.toBeNull();
+    expect(out.brief).toBeNull();
+  });
+});

@@ -3,6 +3,10 @@ import { ensureMapImpactPreflight } from './preflight/map-impact-contract.js';
 import { randomUUID } from 'node:crypto';
 import { assertRouteSnapshotLaunchAuthority } from './route-snapshot-authority.js';
 import { resolvePlannerRecoveryRunAuthority } from './planner-recovery-run-authority.js';
+import { KERNEL_RUN_ELIGIBLE_TASK_TYPES } from '../lib/task-type-registry.js';
+import { finishRun } from '../lib/task-run.js';
+import { afterTerminalTransition } from '../lib/task-terminal.js';
+import { matchesRecoveryRebase, rebaseReceiptForRecovery, validateRecoveryRebase } from './recovery-rebase.js';
 
 const ACTIVE_PHASES = new Set([
   'planning',
@@ -20,10 +24,8 @@ const CREATED_SOURCES = new Set([
   'historical_reconstruction',
 ]);
 
-const ELIGIBLE_TASK_TYPES = new Set([
-  'harness_initiative',
-  'golden_path_proposal',
-]);
+// 名单见 lib/task-type-registry.js（KERNEL_RUN_ELIGIBLE_TASK_TYPES）。
+const ELIGIBLE_TASK_TYPES = new Set(KERNEL_RUN_ELIGIBLE_TASK_TYPES);
 
 const TERMINAL_TASK_STATUSES = new Set([
   'completed',
@@ -83,6 +85,7 @@ async function terminalizeLockedKernelAttempts(client, {
 }
 
 function validateCreateInput(input) {
+  validateRecoveryRebase(input);
   if (!ACTIVE_PHASES.has(input?.phase)) {
     throw new Error(`invalid Kernel run start phase: ${input?.phase}`);
   }
@@ -126,6 +129,8 @@ export async function loadActiveKernelRun(db, taskId, { forUpdate = false } = {}
   const { rows } = await db.query(
     `SELECT id, initiative_id, current_task_id, phase,
             orchestrator_heartbeat_at, orchestrator_pid, orchestrator_host,
+            controller_session_id, controller_generation,
+            controller_lease_expires_at,
             started_at, created_source, predecessor_run_id,
             planner_recovery_receipt_id, commander_mode,
             impact_contract_policy, impact_contract_policy_reason,
@@ -145,7 +150,9 @@ export async function loadKernelRunById(db, runId) {
   const { rows } = await db.query(
     `SELECT id, initiative_id, current_task_id, phase,
             orchestrator_version, orchestrator_heartbeat_at,
-            orchestrator_pid, orchestrator_host, started_at, updated_at,
+            orchestrator_pid, orchestrator_host,
+            controller_lease_expires_at,
+            started_at, updated_at,
             deadline_at, completed_at, failure_reason, pr_url,
             evaluate_verdict, judge_verdict, cost_usd, created_source,
             record_trust_status, record_trust_reason, predecessor_run_id,
@@ -186,6 +193,9 @@ export async function patchKernelRunById(pool, {
   const ownsTransaction = transactionClient === null;
   const client = transactionClient ?? await pool.connect();
   let committed = false;
+  // 任务终态写入（事务内）→ COMMIT 后必经 afterTerminalTransition（lib/task-terminal.js）。
+  // 借用别人事务时（transactionClient）由外层 COMMIT 后按返回的 taskTerminal 调钩子。
+  let taskTerminal = null;
   try {
     if (ownsTransaction) await client.query('BEGIN');
 
@@ -292,6 +302,7 @@ export async function patchKernelRunById(pool, {
             WHERE id = $1`,
           [identity.current_task_id, taskOutcome, failureReason],
         );
+        taskTerminal = { taskId: identity.current_task_id, status: taskOutcome };
       }
       const attemptsTerminalized = await terminalizeLockedKernelAttempts(client, {
         runId,
@@ -332,6 +343,10 @@ export async function patchKernelRunById(pool, {
 
     if (ownsTransaction) await client.query('COMMIT');
     committed = true;
+    if (updatedRows[0] && taskTerminal) updatedRows[0].taskTerminal = taskTerminal;
+    if (ownsTransaction && taskTerminal) {
+      await afterTerminalTransition(pool, taskTerminal.taskId, taskTerminal.status);
+    }
     return updatedRows[0] ?? null;
   } catch (error) {
     if (ownsTransaction && !committed) await client.query('ROLLBACK');
@@ -404,6 +419,9 @@ export async function patchLegacyKernelRunByInitiative(pool, {
     );
     await client.query('COMMIT');
     committed = true;
+    if (run.taskTerminal) {
+      await afterTerminalTransition(pool, run.taskTerminal.taskId, run.taskTerminal.status);
+    }
     return { candidateCount: 1, run };
   } catch (error) {
     if (!committed) await client.query('ROLLBACK');
@@ -432,7 +450,9 @@ export async function createKernelRun(pool, input, deps = {}) {
       [`relay-initiative:${input.initiativeId}`],
     );
     const { rows: taskRows } = await client.query(
-      `SELECT id, task_type, status, payload
+      // metadata 必须一起取：重锚定（任务 d9c405e2）按 task.metadata 记 thrash 计数，
+      // 缺列会被 reanchor 当成 task_metadata_missing fail-loud。
+      `SELECT id, task_type, status, payload, metadata
          FROM tasks
         WHERE id = $1
         FOR UPDATE`,
@@ -465,6 +485,11 @@ export async function createKernelRun(pool, input, deps = {}) {
       { forUpdate: true },
     );
     if (active) {
+      if (input.recoveryRebase && (active.predecessor_run_id !== input.predecessorRunId
+          || !matchesRecoveryRebase(task.payload?.recovery_rebase, input.recoveryRebase,
+            input.predecessorRunId))) {
+        throw Object.assign(new Error('recovery_rebase_active_run'), { status: 409 });
+      }
       if (
         plannerRecovery
         && (
@@ -477,7 +502,9 @@ export async function createKernelRun(pool, input, deps = {}) {
       }
       await client.query('COMMIT');
       committed = true;
-      return { created: false, run: active };
+      return { created: false, run: active,
+        ...(input.recoveryRebase ? { base_sha: task.payload.base_sha,
+          routing_receipt_id: task.payload.routing_receipt_id } : {}) };
     }
 
     let predecessor = null;
@@ -497,10 +524,10 @@ export async function createKernelRun(pool, input, deps = {}) {
                      AND recovery.source_task_id=predecessor.current_task_id
                 ) AS planner_recovery_consumed
            FROM initiative_runs predecessor
-           JOIN initiative_contracts contract
+           ${input.recoveryRebase ? 'LEFT JOIN' : 'JOIN'} initiative_contracts contract
              ON contract.id = predecessor.contract_id
           WHERE predecessor.id = $1
-          FOR SHARE OF predecessor, contract`,
+          FOR SHARE OF predecessor${input.recoveryRebase ? '' : ', contract'}`,
         [input.predecessorRunId],
       );
       predecessor = predecessorRows[0] ?? null;
@@ -513,9 +540,11 @@ export async function createKernelRun(pool, input, deps = {}) {
         || predecessor.initiative_id !== input.initiativeId
         || !['done', 'failed'].includes(predecessor.phase)
         || !['trusted', 'reconstructed'].includes(predecessor.record_trust_status)
-        || !predecessor.contract_id
-        || predecessor.contract_status !== 'approved'
-        || !/^[a-f0-9]{40}$/.test(predecessor.approved_sha ?? '')
+        || (input.recoveryRebase
+          ? predecessor.phase !== 'failed' || (predecessor.contract_id != null
+            && (predecessor.contract_status !== 'approved' || !/^[a-f0-9]{40}$/.test(predecessor.approved_sha ?? '')))
+          : !predecessor.contract_id || predecessor.contract_status !== 'approved'
+            || !/^[a-f0-9]{40}$/.test(predecessor.approved_sha ?? ''))
       ) {
         throw new Error('explicit recovery predecessor is invalid');
       }
@@ -539,7 +568,7 @@ export async function createKernelRun(pool, input, deps = {}) {
           AND receipt.task_id = $2`,
       [receiptId, input.taskId],
     );
-    const receipt = receiptRows[0];
+    let receipt = receiptRows[0];
     if (
       !receipt
       || receipt.superseded
@@ -550,13 +579,18 @@ export async function createKernelRun(pool, input, deps = {}) {
     ) {
       throw new Error('routing_receipt_invalid');
     }
+    if (input.recoveryRebase) {
+      receipt = await rebaseReceiptForRecovery(client, {
+        task, receipt, predecessor, request: input.recoveryRebase,
+      }, deps.recoveryRebaseDeps);
+    }
     assertRouteSnapshotLaunchAuthority({
       taskStatus: task.status,
       validationVersion: receipt.map_scope_validation_version,
       hasV2Run: receipt.has_v2_run,
     });
     const runPreflight = deps.ensureMapImpactPreflight ?? ensureMapImpactPreflight;
-    const preflight = await runPreflight(client, { task, receipt });
+    const preflight = await runPreflight(client, { task, receipt, createdSource: effectiveCreatedSource });
     if (!preflight?.contract?.id || preflight.contract.status !== 'active') {
       throw new Error('impact_contract_inactive');
     }
@@ -617,7 +651,7 @@ export async function createKernelRun(pool, input, deps = {}) {
         impactContractPolicyReason,
         impactContractPolicyDecisionId,
         preflight.recovery_contract?.id ?? null,
-        predecessor?.contract_id ?? null,
+        input.recoveryRebase ? null : predecessor?.contract_id ?? null,
         plannerRecovery?.predecessorRunId ?? predecessor?.id ?? null,
         plannerRecovery?.receiptId ?? null,
         // Session Controller ownership（sprint 08131104）：controller_session_id 先于 Kernel
@@ -633,7 +667,13 @@ export async function createKernelRun(pool, input, deps = {}) {
     );
     await client.query('COMMIT');
     committed = true;
-    return { created: true, run: rows[0] };
+    return {
+      created: true,
+      run: rows[0],
+      // 重锚定（任务 d9c405e2）后收据/base_sha 已变，调用方须用它覆写内存 task.payload 再起跑场。
+      base_sha: preflight.receipt?.evidence?.base_sha ?? (input.recoveryRebase ? receipt.evidence.base_sha : null),
+      routing_receipt_id: preflight.receipt?.id ?? (input.recoveryRebase ? receipt.id : null),
+    };
   } catch (error) {
     if (!committed) {
       await client.query('ROLLBACK');
@@ -837,7 +877,8 @@ export async function finalizeKernelRun(pool, {
       );
     }
 
-    if (task.status !== taskOutcome) {
+    const taskTerminalWritten = task.status !== taskOutcome;
+    if (taskTerminalWritten) {
       await client.query(
         `UPDATE tasks
             SET status = $2::varchar,
@@ -912,6 +953,16 @@ export async function finalizeKernelRun(pool, {
 
     await client.query('COMMIT');
     committed = true;
+    // run 原语补终态（fail-open，已终态不覆盖）：kernel run 不走 execution-callback，终态只在这里落。
+    await finishRun({
+      runId,
+      status: outcome === 'done' ? 'completed' : 'failed',
+      error: outcome === 'failed' ? reason : undefined,
+    }, { pool });
+    // 任务终态已随 run 一起提交 → 接棒钩子在池上跑（事务内 client 不能 connect()）
+    if (taskTerminalWritten) {
+      await afterTerminalTransition(pool, expectedTaskId, taskOutcome);
+    }
     return {
       changed,
       outcome,
@@ -947,6 +998,102 @@ export async function finalizeKernelRun(pool, {
  * run_id 的 advisory lock 再去锁/UPDATE 这一行，否则并发时会反向死锁。
  * 调用方（loop.js）负责把持久化失败降级为告警，不炸 loop。
  */
+/**
+ * requeueKernelRunLaunchDeferred — 远程点火撞跑场机**瞬时**故障（bridge 429 槽位满 / 5xx /
+ * 请求超时）时的回队路径（任务 281aa798，2026-09-24 实证：一天 6 条刀被 429 判死）。
+ * 与 finalizeKernelRun 的区别：run 记 failed 留痕，但父任务**回 queued**（清 claim/started），
+ * 交下个 tick 重派；payload 记延后计数与原因，达到 maxDefers 返回 exhausted 让调用方回落
+ * 终态，防跑场机长期不可用时无限空转。
+ */
+// 2026-09-24 22:10 实证：两条 run 各跑 5–6 小时占满 MMV 双槽，第三条任务每 2 分钟 tick 撞一次
+// 429 deferred；上限 10 次 = 20 分钟即判终态，远小于一条 run。按"等一整轮 run"量级设默认（300 次 ≈ 10h）。
+export const DEFAULT_KERNEL_LAUNCH_MAX_DEFERS = 300;
+
+export async function requeueKernelRunLaunchDeferred(pool, {
+  runId,
+  expectedTaskId,
+  reason,
+  maxDefers = DEFAULT_KERNEL_LAUNCH_MAX_DEFERS,
+  now = () => new Date(),
+}) {
+  const client = await pool.connect();
+  let committed = false;
+  try {
+    await client.query('BEGIN');
+    const { rows: taskRows } = await client.query(
+      `SELECT id, status, payload
+         FROM tasks
+        WHERE id = $1
+        FOR UPDATE`,
+      [expectedTaskId],
+    );
+    const task = taskRows[0];
+    if (!task) {
+      throw new Error(`Kernel run parent task missing: ${expectedTaskId}`);
+    }
+    const { rows: runRows } = await client.query(
+      `SELECT id, current_task_id, phase
+         FROM initiative_runs
+        WHERE id = $1
+          AND orchestrator_version = 'v2'
+        FOR UPDATE`,
+      [runId],
+    );
+    const run = runRows[0];
+    if (!run || run.current_task_id !== expectedTaskId) {
+      throw new Error(`Kernel run/task identity mismatch: ${runId}/${expectedTaskId}`);
+    }
+    const deferCount = Number(task.payload?.kernel_launch_defer_count ?? 0) || 0;
+    if (TERMINAL_TASK_STATUSES.has(task.status)) {
+      await client.query('COMMIT');
+      committed = true;
+      return { changed: false, reason: 'task_terminal', deferCount, runId, taskId: expectedTaskId };
+    }
+    if (deferCount >= maxDefers) {
+      await client.query('COMMIT');
+      committed = true;
+      return { changed: false, exhausted: true, deferCount, runId, taskId: expectedTaskId };
+    }
+    const nextCount = deferCount + 1;
+    if (!['done', 'failed'].includes(run.phase)) {
+      await client.query(
+        `UPDATE initiative_runs
+            SET phase = 'failed',
+                failure_reason = $2,
+                completed_at = COALESCE(completed_at, NOW()),
+                updated_at = NOW()
+          WHERE id = $1`,
+        [runId, reason],
+      );
+    }
+    await client.query(
+      `UPDATE tasks
+          SET status = 'queued',
+              claimed_by = NULL,
+              claimed_at = NULL,
+              started_at = NULL,
+              payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [expectedTaskId, JSON.stringify({
+        kernel_launch_defer_count: nextCount,
+        kernel_launch_defer_reason: String(reason ?? '').slice(0, 300),
+        kernel_launch_deferred_at: now().toISOString(),
+      })],
+    );
+    await client.query('COMMIT');
+    committed = true;
+    return { changed: true, deferCount: nextCount, runId, taskId: expectedTaskId };
+  } catch (error) {
+    if (!committed) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function persistKernelRunPhase(pool, runId, phase) {
   const { rows } = await pool.query(
     `UPDATE initiative_runs
@@ -1027,6 +1174,37 @@ export async function reconcileKernelTaskTerminal(
     runId: run.id,
     outcome: run.phase,
   };
+}
+
+/**
+ * createKernelRun 返回后立即调用：预检可能已把路由锚快进到新 base_sha（接班收据），
+ * DB 已改但调用方手里的 task 仍是派发前快照；三处起跑场（bridge.prepare / headed 身份 env）
+ * 都读内存 task.payload.base_sha，不回流就是"改账不改跑场"。覆写 task.payload 为新对象
+ * （持有旧 payload 引用的调用方看不到更新）并返回同一 task。
+ */
+export function syncTaskPayloadFromKernelRun(task, created) {
+  const baseSha = created?.base_sha;
+  if (typeof baseSha !== 'string' || baseSha.length === 0) return task;
+  const oldBaseSha = task.payload?.base_sha;
+  if (
+    oldBaseSha
+    && oldBaseSha !== baseSha
+    && created.routing_receipt_id === task.payload?.routing_receipt_id
+  ) {
+    // 收据 id 没变却换了 base_sha：不是快进重锚定（reanchor 一定同时换收据），
+    // 于是 DB 里的 tasks.payload 不会被更新，内存与账本就此分叉 —— 留痕待查。
+    console.warn(
+      `[kernel-run-store] base_sha 漂移未经重锚定 task=${task.id} `
+      + `old_base_sha=${oldBaseSha} new_base_sha=${baseSha} `
+      + `routing_receipt_id=${created.routing_receipt_id ?? 'null'}`,
+    );
+  }
+  task.payload = {
+    ...(task.payload ?? {}),
+    base_sha: baseSha,
+    ...(created.routing_receipt_id ? { routing_receipt_id: created.routing_receipt_id } : {}),
+  };
+  return task;
 }
 
 export const __test__ = {

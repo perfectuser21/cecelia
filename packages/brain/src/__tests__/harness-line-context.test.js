@@ -58,9 +58,36 @@ function findCall(pool, re) {
 let warnSpy;
 beforeEach(() => {
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  // golden_path 旧表已退役（任务 7d312fd8）：step 路 / FR 路只在应急放行窗口下查旧表
+  process.env.GOLDEN_PATH_LEGACY_READ = '1';
 });
 afterEach(() => {
   warnSpy.mockRestore();
+  delete process.env.GOLDEN_PATH_LEGACY_READ;
+});
+
+describe('fetchLineContext — golden_path 退役（GOLDEN_PATH_LEGACY_READ 未开）', () => {
+  beforeEach(() => { delete process.env.GOLDEN_PATH_LEGACY_READ; });
+
+  it('三参齐全 → 只发 3 路（feature / global+area / ledger），不 JOIN golden_path、不查累积 FR', async () => {
+    const pool = makePool();
+    const r = await fetchLineContext({ pool }, { taskId: TASK_ID, abilityId: ABILITY_ID, journeyId: JOURNEY_ID });
+    expect(pool.query).toHaveBeenCalledTimes(3);
+    expect(findCall(pool, /JOIN golden_path gp/)).toBeUndefined();
+    expect(findCall(pool, /FROM golden_path gp/)).toBeUndefined();
+    expect(r.cumulativeFR).toEqual([]);
+    expect(r.invariants.every((d) => d.source_level !== 'step')).toBe(true);
+  });
+
+  it('其余三层不受影响：journey_feature / global / area 照合并，不 warn', async () => {
+    const pool = makePool({
+      feature: [{ id: 'd1', topic: '[L4]不进群', decision: '只私聊', category: 'invariant' }],
+      area: [{ id: 'd3', topic: '[全局]高风险', decision: '命中即走人', level: 'global' }],
+    });
+    const { invariants } = await fetchLineContext({ pool }, { taskId: TASK_ID, abilityId: ABILITY_ID, journeyId: JOURNEY_ID });
+    expect(invariants.map((x) => [x.id, x.source_level])).toEqual([['d1', 'journey_feature'], ['d3', 'global']]);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('fetchLineContext — 四层 invariant SQL（与 routes/abilities.js 同源）', () => {

@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 import { describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -43,6 +45,7 @@ describe('machine launch provenance command contract', () => {
         return 'TMUX_DEAD';
       },
       inDockerFn: () => false,
+      authorizeLegacyRelay: async (_identity, operation) => operation(),
       sshKeyFn: () => null,
       loadSkill: () => 'contract prompt',
       ensureWt: async () => '/tmp/contract-worktree',

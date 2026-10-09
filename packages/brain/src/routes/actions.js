@@ -146,14 +146,16 @@ router.post('/pending-actions', async (req, res) => {
 /**
  * POST /api/brain/pending-actions/:id/approve
  * 批准并执行待审批动作
- * Body: { reviewer?: string }
+ * Body: { reviewer?: string, choice?: string }
+ *   choice 仅 owner_decision 待办使用：选项标签/全文（如 "A"）或 "default"，缺省按协议 default。
+ *   未知 choice → 400（不改任何状态）；已处理过 → 409。
  */
 router.post('/pending-actions/:id/approve', async (req, res) => {
   try {
     const { id } = req.params;
-    const { reviewer } = req.body || {};
+    const { reviewer, choice } = req.body || {};
 
-    const result = await approvePendingAction(id, reviewer || 'api-user');
+    const result = await approvePendingAction(id, reviewer || 'api-user', { choice: choice ?? null });
 
     if (!result.success) {
       return res.status(result.status || 400).json(result);
@@ -178,7 +180,7 @@ router.post('/pending-actions/:id/reject', async (req, res) => {
     const result = await rejectPendingAction(id, reviewer || 'api-user', reason || '');
 
     if (!result.success) {
-      return res.status(400).json(result);
+      return res.status(result.status || 400).json(result);
     }
 
     res.json(result);
@@ -497,40 +499,23 @@ router.post('/action/create-task', async (req, res) => {
 
 /**
  * POST /api/brain/action/create-initiative
- * Create an Initiative (写入 projects 表, type='initiative', parent_id 指向 Project)
- * 秋米专用：拆解 KR 时创建 Initiative
+ * 已退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：Initiative 层随
+ * okr_initiatives 一起冻结，不再创建。GTD 模型下请直接创建 task 挂 project_id。
  */
 router.post('/action/create-initiative', async (req, res) => {
-  try {
-    const { name, parent_id, kr_id, decomposition_mode, description, plan_content, domain, owner_role } = req.body;
-
-    if (!name || !parent_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'name and parent_id are required'
-      });
-    }
-
-    const { createInitiative } = await import('../actions.js');
-    const result = await createInitiative({
-      name,
-      parent_id,
-      kr_id,
-      decomposition_mode: decomposition_mode || 'known',
-      description,
-      plan_content,
-      domain,
-      owner_role
-    });
-
-    res.status(result.success ? 200 : 400).json(result);
-  } catch (err) {
-    res.status(500).json({
+  const { name, parent_id } = req.body;
+  if (!name || !parent_id) {
+    return res.status(400).json({
       success: false,
-      error: 'Failed to create initiative',
-      details: err.message
+      error: 'name and parent_id are required'
     });
   }
+  res.status(410).json({
+    success: false,
+    error: 'layer_retired',
+    decision: 'ee4842a6',
+    message: 'Initiative 层已退役，GTD 模型下请直接创建 task 并挂 project_id',
+  });
 });
 
 /**
@@ -571,37 +556,23 @@ router.post('/action/create-project', async (req, res) => {
 
 /**
  * POST /api/brain/action/create-scope
- * Create a Scope (写入 projects 表, type='scope')
- * Scope = 2-3 天的功能边界分组，介于 Project 和 Initiative 之间
+ * 已退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：Scope 层随
+ * okr_scopes 一起冻结，不再创建。GTD 模型下请直接创建 task 挂 project_id。
  */
 router.post('/action/create-scope', async (req, res) => {
-  try {
-    const { name, parent_id, description, domain, owner_role } = req.body;
-
-    if (!name || !parent_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'name and parent_id are required'
-      });
-    }
-
-    const { createScope } = await import('../actions.js');
-    const result = await createScope({
-      name,
-      parent_id,
-      description,
-      domain,
-      owner_role,
-    });
-
-    res.status(result.success ? 200 : 400).json(result);
-  } catch (err) {
-    res.status(500).json({
+  const { name, parent_id } = req.body;
+  if (!name || !parent_id) {
+    return res.status(400).json({
       success: false,
-      error: 'Failed to create scope',
-      details: err.message
+      error: 'name and parent_id are required'
     });
   }
+  res.status(410).json({
+    success: false,
+    error: 'layer_retired',
+    decision: 'ee4842a6',
+    message: 'Scope 层已退役，GTD 模型下请直接创建 task 并挂 project_id',
+  });
 });
 
 router.post('/action/update-task', async (req, res) => {

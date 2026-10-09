@@ -7,9 +7,12 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // Mock heavy dependencies before importing executor
+// types.setTypeParser 必须一起 mock：db.js 顶层调用它注册 UTC 解析器（任务 19684870），
+// 缺了这个字段会在 import 阶段就 TypeError。
 vi.mock('pg', () => ({
-  default: { Pool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn() })) },
+  default: { Pool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn() })), types: { setTypeParser: vi.fn() } },
   Pool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn() })),
+  types: { setTypeParser: vi.fn() },
 }));
 vi.mock('../db-config.js', () => ({
   default: { user: 'test', host: 'localhost', database: 'test', password: 'test', port: 5432 },

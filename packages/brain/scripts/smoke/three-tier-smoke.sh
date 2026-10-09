@@ -118,12 +118,6 @@ else
   log_fail "packages/brain/src/routes/deploy-dev.js 不存在（FR-03 未实施）"
 fi
 
-if [[ -f "$ROOT_DIR/.github/workflows/auto-dev-deploy.yml" ]]; then
-  log_pass ".github/workflows/auto-dev-deploy.yml 存在"
-else
-  log_fail ".github/workflows/auto-dev-deploy.yml 不存在"
-fi
-
 echo ""
 
 # ---- FR-06 / BEHAVIOR-07: ZJ_DEV_PORT 占位 ----

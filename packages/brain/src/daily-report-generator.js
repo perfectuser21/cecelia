@@ -13,6 +13,19 @@
 
 import pool from './db.js';
 import { sendFeishu } from './notifier.js';
+import { findBareRuns } from './lib/task-run.js';
+import { detectSkillBindingDrift, renderSkillBindingSection } from './lib/skill-binding-registry.js';
+import { EXECUTOR_SKILL_MAP } from './lib/task-type-registry.js';
+import { readSkillDistState, renderSkillDistSection } from './lib/skill-dist-report.js';
+import { readRescanStalenessState, renderRescanStalenessSection } from './lib/rescan-staleness-report.js';
+import { readAssertionRedState, renderAssertionRedSection } from './lib/assertion-red-report.js';
+import { readMirrorDbState, renderMirrorDbSection } from './lib/mirror-db-report.js';
+
+// 业务断言红灯板块（链 bf5088a3 棒4 消费）：与 renderBareRunSection 并列对外导出，渲染实现在 lib
+// 单独一条 export（而非合并成一条）是因为 smoke/assertion-red-report-smoke.sh 对本行做精确字符串匹配
+export { renderAssertionRedSection };
+// 镜子库失联板块（决策 24a37029）
+export { renderMirrorDbSection };
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -209,6 +222,30 @@ function fmt(val) {
 }
 
 /**
+ * 裸跑检测板块（链 bf5088a3 棒1，需求④ 出口）：窗口内有 dispatch_events(dispatched)、
+ * 却没有对应 task_runs 行的执行——run 原语漏接或写入失败，留痕缺口，标 🟡 AMBER。
+ * 无裸跑返回不含 AMBER 标记的一行说明（不误报）。
+ *
+ * @param {Array<{task_id: string, dispatched_at?: string|Date}>} bareRuns findBareRuns 的返回
+ * @returns {string}
+ */
+export function renderBareRunSection(bareRuns) {
+  const list = Array.isArray(bareRuns) ? bareRuns : [];
+  const lines = ['== 裸跑检测 =='];
+  if (list.length === 0) {
+    lines.push('无裸跑执行（每次派发都有对应 run 记录）。');
+    return lines.join('\n');
+  }
+  lines.push(`🟡 AMBER 裸跑执行 ${list.length} 个（有 dispatch_events 无 task_runs，留痕缺口）：`);
+  for (const r of list.slice(0, 20)) {
+    const at = r.dispatched_at ? new Date(r.dispatched_at).toISOString() : '未知时间';
+    lines.push(`  - 🟡 AMBER 裸跑 task_id=${r.task_id} 派发于 ${at}`);
+  }
+  if (list.length > 20) lines.push(`  …另有 ${list.length - 20} 个未列出`);
+  return lines.join('\n');
+}
+
+/**
  * 生成日报文本（包含四个板块：内容产出、发布情况、数据回收、异常告警）。
  *
  * @param {string} reportDate - 日报日期（今天 YYYY-MM-DD）
@@ -217,9 +254,15 @@ function fmt(val) {
  * @param {Array<{platform: string, success: number, failed: number}>} publishStats
  * @param {Array<{platform: string, views: number|null, likes: number|null, comments: number|null}>} engagementData
  * @param {number} failureCount
+ * @param {Array|null} [bareRuns] findBareRuns 返回；null = 检测不可用，不出该板块
+ * @param {{missing:Array,mismatched:Array,conflicts:Array}|null} [skillDrift] detectSkillBindingDrift 返回；null = 检测不可用，不出该板块
+ * @param {object|null} [skillDist] readSkillDistState 返回（skill 分发漂移，链 bf5088a3 棒8）；null = 无数据，不出该板块
+ * @param {object|null} [rescanStaleness] readRescanStalenessState 返回（地图照相层 rescan 停滞哨兵，P0 9dfd873a 案）；null = 无数据，不出该板块
+ * @param {object|null} [assertionRed] readAssertionRedState 返回（业务断言红灯，链 bf5088a3 棒4 消费）；null = 24h 无探针 FAIL，不出该板块
+ * @param {object|null} [mirrorDb] readMirrorDbState 返回（镜子库失联，守夜 A11 探活，决策 24a37029）；null = 无失联，不出该板块
  * @returns {string}
  */
-export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount) {
+export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns = null, skillDrift = null, skillDist = null, rescanStaleness = null, assertionRed = null, mirrorDb = null) {
   const lines = [];
 
   lines.push(`ZenithJoy 内容日报 ${reportDate}`);
@@ -268,6 +311,42 @@ export function buildReportText(reportDate, yesterday, contentOutput, publishSta
     lines.push(`昨日 content_publish_jobs 失败 ${failureCount} 次，请及时排查。`);
   }
   lines.push('');
+
+  // ── 板块五：裸跑检测（run 原语留痕缺口，AMBER）─────────────────────────────
+  if (Array.isArray(bareRuns)) {
+    lines.push(renderBareRunSection(bareRuns));
+    lines.push('');
+  }
+
+  // ── 板块六：skill 绑定漂移（skill_registry 账本 vs 硬编码兜底，AMBER；链 bf5088a3 棒7）──
+  if (skillDrift) {
+    lines.push(renderSkillBindingSection(skillDrift));
+    lines.push('');
+  }
+
+  // ── 板块七：skill 分发漂移（真身 vs 跑场机清单哈希，AMBER；链 bf5088a3 棒8）──
+  if (skillDist) {
+    lines.push(renderSkillDistSection(skillDist));
+    lines.push('');
+  }
+
+  // ── 板块八：地图照相层 rescan 停滞哨兵（fact_snapshot_headers 账龄，AMBER；P0 9dfd873a 案）──
+  if (rescanStaleness) {
+    lines.push(renderRescanStalenessSection(rescanStaleness));
+    lines.push('');
+  }
+
+  // ── 板块九：业务断言红灯（探针 24h FAIL 回执，RED/AMBER；链 bf5088a3 棒4 消费）──
+  if (assertionRed) {
+    lines.push(renderAssertionRedSection(assertionRed));
+    lines.push('');
+  }
+
+  // ── 板块十：镜子库失联（守夜 A11 探活 in_trash/archived/404，RED；决策 24a37029）──
+  if (mirrorDb) {
+    lines.push(renderMirrorDbSection(mirrorDb));
+    lines.push('');
+  }
 
   lines.push(`---`);
   lines.push(`由 Cecelia Brain 自动生成 · ${new Date().toISOString()}`);
@@ -329,8 +408,29 @@ export async function generateDailyReport(dbPool = pool, now = new Date()) {
       fetchYesterdayFailureCount(dbPool, yesterday),
     ]);
 
-    // 4. 生成日报文本（包含四个板块：内容产出、发布情况、数据回收、异常告警）
-    const reportText = buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount);
+    // 3.5 裸跑检测（run 原语）：查询失败降级为 null（不出该板块，不拖垮日报）
+    const bareRuns = await findBareRuns(dbPool, { windowMinutes: 24 * 60 }).catch((err) => {
+      console.warn(`[daily-report-generator] 裸跑检测失败（非阻断）: ${err.message}`);
+      return null;
+    });
+
+    // 3.6 skill 绑定漂移检测：检测不可用（查询失败/列未迁移）返回 null，不出该板块
+    const skillDrift = await detectSkillBindingDrift(dbPool, EXECUTOR_SKILL_MAP);
+
+    // 3.7 skill 分发漂移（读 skill-dist-drift job 落在 working_memory 的结果）：无数据/读取失败返回 null，不出该板块
+    const skillDist = await readSkillDistState(dbPool);
+
+    // 3.8 地图照相层 rescan 停滞哨兵（读 rescan-staleness-patrol job 落在 working_memory 的结果）：无数据/读取失败返回 null，不出该板块
+    const rescanStaleness = await readRescanStalenessState(dbPool);
+
+    // 3.9 业务断言红灯（直查 journey_assertion_receipts 24h 探针 FAIL）：无 FAIL/查询失败返回 null，不出该板块
+    const assertionRed = await readAssertionRedState(dbPool);
+
+    // 3.10 镜子库失联（读 promise-map-nightly 落在 working_memory 的 A11 探活结果）：无失联/读取失败返回 null，不出该板块
+    const mirrorDb = await readMirrorDbState(dbPool);
+
+    // 4. 生成日报文本（内容产出、发布情况、数据回收、异常告警、裸跑检测、skill 绑定漂移、skill 分发漂移、rescan 停滞哨兵、业务断言红灯、镜子库失联）
+    const reportText = buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns, skillDrift, skillDist, rescanStaleness, assertionRed, mirrorDb);
 
     // 5. 写入 working_memory，key=daily_report_{YYYY-MM-DD}
     await saveReportToWorkingMemory(dbPool, today, reportText);

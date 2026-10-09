@@ -12,6 +12,7 @@
  */
 
 import { createHash } from 'crypto';
+import { finalizeTask } from './lib/task-terminal.js';
 
 // 最大解压大小：50MB
 const MAX_UNZIP_SIZE_BYTES = 50 * 1024 * 1024;
@@ -340,17 +341,9 @@ export async function releaseSlot(pool, taskId, failureMode) {
 
   // 同步更新 tasks 表状态
   try {
-    await pool.query(
-      `UPDATE tasks
-       SET status = 'failed',
-           result = jsonb_build_object(
-             'failure_reason', $1::text,
-             'failed_at', now()::text
-           ),
-           updated_at = now()
-       WHERE id = $2`,
-      [reason, taskId]
-    );
+    await finalizeTask(pool, taskId, 'failed', {
+      set: { result: { failure_reason: reason, failed_at: new Date().toISOString() } },
+    });
   } catch (err) {
     console.error(`[skill-eval] releaseSlot tasks update failed for task=${taskId}: ${err.message}`);
   }

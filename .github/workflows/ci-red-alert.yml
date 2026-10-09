@@ -28,7 +28,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GH_PAT_BOT }}
       WATCH_REPOS: perfectuser21/cecelia perfectuser21/zenithjoy-workspace perfectuser21/zenithjoy-skills perfectuser21/infrastructure
-      BRAIN_URL: http://100.71.151.105:5221
+      BRAIN_URL: http://100.79.41.61:5221
       CONSECUTIVE_N: '3'
       RECENT_DAYS: '7'
     steps:

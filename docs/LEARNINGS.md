@@ -1798,7 +1798,7 @@ vi.mock('os', () => ({
 **DB 连接池配置**：
 
 - `pg.Pool` 推荐配置：`max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000`
-- 通过环境变量覆盖：`DB_POOL_MAX`, `DB_IDLE_TIMEOUT_MS`, `DB_CONN_TIMEOUT_MS`
+- 通过环境变量覆盖：`DB_POOL_MAX`, `DB_IDLE_TIMEOUT_MS`, `DB_CONN_TIMEOUT_MS`, `DB_QUERY_TIMEOUT_MS`
 - 健康告警阈值：`waiting > 5 || idle === 0` → AWARE 级别
 
 ### [2026-03-07] domain-detector 模块 + 任务创建自动填充 domain/owner_role（PR #634, Brain v1.207.0）

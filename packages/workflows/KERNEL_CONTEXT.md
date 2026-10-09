@@ -59,6 +59,48 @@
 
 ---
 
+## 统一层级（决策 9d5fce74，2026-09-27）
+
+本节把研发侧（价值流/能力）与 OpenClaw 侧（部门/Agent/Skill/Workflow）合成一棵树，是下方词汇对照表的上位定义。
+每个术语有且只有一对正式名：**English 名 + 中文名**，对话、UI、文档一律成对使用。
+
+```
+Area 领域 → Department 部门 → Value Stream 价值流 → Capability 能力 → Backbone Activity 主干活动 → Step 步骤
+                                                      ║ 一对一
+                                                   Workflow 工作流（能力跑起来的样子）
+```
+
+### 结构层（做什么）
+
+| 层级 | English | 中文 | 定义 | 例子 | 旧叫法（退役） |
+|---|---|---|---|---|---|
+| 1 | Area | 领域 | 最大的业务范围 | ZenithJoy、Cecelia | — |
+| 2 | Department | 部门 | Area 的下一级，即 Notion Areas 的 Sub-Area；拥有价值流和数字员工 | 运营部 | Sub-Area |
+| 3 | Value Stream | 价值流 | 为某类用户持续创造一种价值的整条线；一个部门可含多条 | 智能获客、智能客服 | 线 / Line / Journey |
+| 4 | Capability | 能力 | 价值流里能独立交付的一项本事；与一条 Workflow 一对一 | 关键词获客、对标账号获客 | 路 / Golden Path / Ability |
+| 5 | Backbone Activity | 主干活动 | 能力的有序阶段，即 Workflow 的各阶段 | 视频发现、线索评分 | 骨干步骤 |
+| 6 | Step | 步骤 | 活动再往下分的最小交付单元；分 Feature 特性（客户为之而来）与 Enabler 使能项（门槛/管道）两种 | AI 生成草稿、扫码登录 | 挂片 |
+| — | Acceptance Criteria | 验收标准 | 挂在步骤或活动上的可验证断言 | 线索写入飞书表 | 格子 |
+
+### 执行层（谁来干、怎么跑）
+
+| English | 中文 | 定义 | 与结构层的关系 |
+|---|---|---|---|
+| Workflow | 工作流 | 能力的运行实现：n8n 画布、定时任务或代码；可由多个 Agent 执行，也可代码与 Agent 混合 | 与 Capability 一对一，共用同一个 key |
+| Agent | 数字员工 | 执行活动的员工，含 OpenClaw agent 与常驻服务 | 属于一个 Department；执行一个或多个 Backbone Activity |
+| Skill | 技能 | 可被多个 Agent 共享的最小操作单元 | 被 Step 调用 |
+| Run | 运行记录 | Workflow 跑一次的记录 | 属于一个 Workflow |
+| Work Item | 工作项 | 为造出或改进某个能力而做的一件工作，交给 Kernel/Harness 写代码 | 挂一个 Capability |
+
+### 硬规则
+
+1. **能力与工作流是同一个东西的两面**：清单只列 Capability；说"怎么实现"时才说它的 Workflow。
+2. **Step 不再指主干活动**：旧词"骨干步骤"= Backbone Activity；新 Step 是活动的下一层。
+3. **Skill 中文叫「技能」**，不得叫"能力"，避免与 Capability 撞名。
+4. **部门只有一套**：Notion Areas 的 Sub-Area；不另建部门表或部门库。
+
+---
+
 ## 词汇对照表（决策 a340f100，2026-08-06）
 
 本表是 Cecelia 与 ZenithJoy 全体执行体（Claude / Codex / Grok）在对话、UI、文档中使用的**唯一术语标准**。

@@ -16,7 +16,17 @@ import { join, dirname } from 'path';
 import pool from '../db.js';
 import { clearMachineCache } from '../routing/load-machines.js';
 
+import { createLinuxPoolRouter } from '../linux-pool/router.js';
+import { createLinuxPoolAuthorization } from '../linux-pool/service.js';
+import { createLinuxRuntimeAuthorization } from '../linux-pool/runtime-service.js';
+
+import { createOnboardingRouter } from '../node-onboarding/router.js';
+import { createOnboardingService } from '../node-onboarding/service.js';
+import { projectLinuxExecution } from '../linux-pool/onboarding-projection.js';
+
 const router = Router();
+router.use('/linux-pool', createLinuxPoolRouter(createLinuxPoolAuthorization({ pool }),createLinuxRuntimeAuthorization({pool})));
+router.use('/onboarding', createOnboardingRouter(createOnboardingService({ pool })));
 
 // 宿主机每分钟写入的 Tailscale 状态缓存文件路径（Brain 容器挂载了宿主机目录）
 // 宿主机 tailscale 状态缓存文件：cron 每分钟写入，容器通过挂载共享路径读取
@@ -162,7 +172,7 @@ router.get('/', async (req, res) => {
          name`
     );
     const tsStatus = getTailscaleStatus();
-    return res.json(rows.map(r => enrichMachine(r, tsStatus)));
+    return res.json(await projectLinuxExecution(pool,rows.map(r => enrichMachine(r, tsStatus))));
   } catch (err) {
     console.error('[machines] list error:', err);
     return res.status(500).json({ error: err.message });
@@ -182,7 +192,7 @@ router.get('/:name', async (req, res) => {
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const tsStatus = getTailscaleStatus();
-    return res.json(enrichMachine(rows[0], tsStatus));
+    return res.json((await projectLinuxExecution(pool,[enrichMachine(rows[0], tsStatus)]))[0]);
   } catch (err) {
     console.error('[machines] get error:', err);
     return res.status(500).json({ error: err.message });
@@ -216,7 +226,7 @@ router.patch('/:name', async (req, res) => {
     // 改机器 metadata（含 status/executors/tags）后立即清路由缓存，使变更马上生效。
     clearMachineCache();
     const tsStatus = getTailscaleStatus();
-    return res.json(enrichMachine(rows[0], tsStatus));
+    return res.json((await projectLinuxExecution(pool,[enrichMachine(rows[0], tsStatus)]))[0]);
   } catch (err) {
     console.error('[machines] patch error:', err);
     return res.status(500).json({ error: err.message });

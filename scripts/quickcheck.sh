@@ -12,7 +12,7 @@ cd "$REPO_ROOT"
 
 # ============================================================================
 # 互斥锁：同一 repo 最多一个 quickcheck 实例（防并发 vitest 抢资源）
-# 支持 flock (Linux) + mkdir 原子锁 fallback (macOS)
+# 拿不到锁时等待（上限 QUICKCHECK_LOCK_WAIT_SEC，默认 600s），超时失败——不放行
 # ============================================================================
 _GIT_DIR="$(git rev-parse --git-dir 2>/dev/null || echo "${REPO_ROOT}/.git")"
 # git-dir 对 worktree 返回 .git/worktrees/<name> -- 锁应放到主 repo 的 .git 下
@@ -20,25 +20,11 @@ _GIT_COMMON="$(git rev-parse --git-common-dir 2>/dev/null || echo "${_GIT_DIR}")
 _LOCK_FILE="${_GIT_COMMON}/quickcheck.lock"
 _LOCK_DIR="${_GIT_COMMON}/quickcheck.lockdir"
 
-if command -v flock >/dev/null 2>&1; then
-    exec 200>"${_LOCK_FILE}"
-    if ! flock -w 2 200; then
-        echo "[QuickCheck] 另一个 quickcheck 正在运行，跳过本次预检" >&2
-        exit 0
-    fi
-    # fd 200 持锁，进程退出时内核自动释放
-else
-    # macOS fallback: mkdir 原子锁
-    _lock_try=0
-    until mkdir "${_LOCK_DIR}" 2>/dev/null; do
-        _lock_try=$((_lock_try + 1))
-        if [[ ${_lock_try} -ge 20 ]]; then
-            echo "[QuickCheck] 另一个 quickcheck 正在运行 (mkdir lock 2s timeout), 跳过本次预检" >&2
-            exit 0
-        fi
-        sleep 0.1
-    done
-    trap 'rmdir "${_LOCK_DIR}" 2>/dev/null || true' EXIT INT TERM
+# shellcheck source=scripts/lib/quickcheck-lock.sh
+source "$REPO_ROOT/scripts/lib/quickcheck-lock.sh"
+if ! acquire_quickcheck_lock "${_LOCK_FILE}" "${_LOCK_DIR}"; then
+    echo "[QuickCheck] 等待 ${QUICKCHECK_LOCK_WAIT_SEC:-600}s 仍未拿到锁 — push 被阻止，请稍后重试" >&2
+    exit 1
 fi
 
 # worktree 兼容：二进制在主仓库根目录 node_modules/.bin/
@@ -116,7 +102,14 @@ for PKG in packages/engine packages/brain apps/api apps/dashboard; do
     PKG_NM="$REPO_ROOT/$PKG/node_modules"
     VITEST_BIN=$(resolve_package_vitest "$ROOT_NM" "$PKG_NM" || true)
     if [[ -z "$VITEST_BIN" ]]; then
-      echo -e "  ${YELLOW}⚠️  vitest 未安装，跳过${RESET}"
+      if [[ "${QUICKCHECK_ALLOW_MISSING_VITEST:-}" == 1 ]]; then
+        echo -e "  ${YELLOW}⚠️  vitest 未安装，按 QUICKCHECK_ALLOW_MISSING_VITEST=1 跳过 — ${PKG} 本次未测试${RESET}"
+      else
+        echo -e "  ${RED}❌ vitest 未安装 — 无法验证 ${PKG}，push 被阻止${RESET}"
+        echo -e "  ${YELLOW}   修复：cd ${MAIN_REPO_ROOT}/${PKG} && npm ci --legacy-peer-deps --ignore-scripts${RESET}"
+        echo -e "  ${YELLOW}   确需跳过：QUICKCHECK_ALLOW_MISSING_VITEST=1 git push${RESET}"
+        PASS=false
+      fi
     else
       VITEST_OUT=$(cd "$PKG" && unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE && PATH="$PKG_NM/.bin:$ROOT_NM/.bin:$PATH" NODE_OPTIONS='--max-old-space-size=2048' "$VITEST_BIN" run 2>&1)
       VITEST_EXIT=$?

@@ -19,12 +19,6 @@ interface DevRecord {
   created_at: string;
 }
 
-interface Annotation {
-  id: string;
-  content: string;
-  created_at: string;
-}
-
 function CiBadge({ level, status }: { level: string; status?: string }) {
   const color = status === 'pass' ? 'bg-green-100 text-green-700' :
     status === 'fail' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500';
@@ -32,58 +26,6 @@ function CiBadge({ level, status }: { level: string; status?: string }) {
     <span className={`text-xs px-2 py-0.5 rounded font-mono ${color}`}>
       {level.toUpperCase()}: {status || 'skip'}
     </span>
-  );
-}
-
-function AnnotationBox({ entityId }: { entityId: string }) {
-  const { data, refresh } = useApi<{ success: boolean; data: Annotation[] }>(
-    `/api/brain/user-annotations?entity_type=dev_record&entity_id=${entityId}`,
-    { staleTime: 10_000 }
-  );
-  const [text, setText] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  async function addAnnotation() {
-    if (!text.trim()) return;
-    setSaving(true);
-    await fetch('/api/brain/user-annotations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entity_type: 'dev_record', entity_id: entityId, content: text }),
-    });
-    setText('');
-    setSaving(false);
-    refresh();
-  }
-
-  const annotations = data?.data || [];
-
-  return (
-    <div className="mt-3 border-t border-gray-100 pt-3">
-      <p className="text-xs font-medium text-gray-500 mb-2">备注</p>
-      {annotations.map(a => (
-        <div key={a.id} className="bg-yellow-50 border border-yellow-200 rounded p-2 mb-1 text-sm text-gray-700">
-          {a.content}
-          <span className="text-xs text-gray-400 ml-2">{new Date(a.created_at).toLocaleDateString('zh-CN')}</span>
-        </div>
-      ))}
-      <div className="flex gap-2 mt-2">
-        <input
-          className="flex-1 text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-blue-400"
-          placeholder="添加备注..."
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && addAnnotation()}
-        />
-        <button
-          onClick={addAnnotation}
-          disabled={saving || !text.trim()}
-          className="text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-40 flex items-center gap-1"
-        >
-          <Plus size={12} /> 添加
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -184,7 +126,6 @@ function RecordCard({ record }: { record: DevRecord }) {
             </div>
           )}
           <ScoreInput recordId={record.id} initialScore={record.self_score} />
-          <AnnotationBox entityId={record.id} />
         </div>
       )}
     </div>

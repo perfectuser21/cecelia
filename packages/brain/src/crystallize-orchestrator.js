@@ -45,18 +45,18 @@
 import pool from './db.js';
 import { createTask } from './actions.js';
 import { buildMutationRoute } from './system-coding-route.js';
+import { finalizeTask } from './lib/task-terminal.js';
+import {
+  CRYSTALLIZE_ORCHESTRATOR_STAGES,
+  CRYSTALLIZE_ORCHESTRATOR_STAGE_LABELS,
+} from './lib/task-type-registry.js';
 
 // ───────────────────────────────────────────────────────
 // 常量
 // ───────────────────────────────────────────────────────
 
 /** 流水线四个阶段（有序）*/
-export const CRYSTALLIZE_STAGES = [
-  'crystallize_scope',
-  'crystallize_forge',
-  'crystallize_verify',
-  'crystallize_register',
-];
+export const CRYSTALLIZE_STAGES = CRYSTALLIZE_ORCHESTRATOR_STAGES;
 
 /** crystallize_verify 最大重试次数（超过则 pipeline 标 failed）*/
 export const MAX_VERIFY_RETRY = 3;
@@ -205,10 +205,7 @@ export async function advanceCrystallizeStage(taskId, status, findings = {}, dbP
 
   // 任务失败处理
   if (status === 'failed') {
-    await dbPool.query(
-      `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
-      [pipelineId]
-    );
+    await finalizeTask(dbPool, pipelineId, 'failed', { set: { completed_at: 'now' } });
     console.log(`[crystallize-orchestrator] pipeline ${pipelineId} 因 ${currentStage} 失败而终止`);
     return;
   }
@@ -216,10 +213,7 @@ export async function advanceCrystallizeStage(taskId, status, findings = {}, dbP
   // crystallize_verify 失败重试逻辑
   if (currentStage === 'crystallize_verify' && findings?.verify_passed === false) {
     if (retry_count >= MAX_VERIFY_RETRY) {
-      await dbPool.query(
-        `UPDATE tasks SET status = 'failed', completed_at = NOW() WHERE id = $1`,
-        [pipelineId]
-      );
+      await finalizeTask(dbPool, pipelineId, 'failed', { set: { completed_at: 'now' } });
       console.log(`[crystallize-orchestrator] pipeline ${pipelineId} verify 达到最大重试次数（${MAX_VERIFY_RETRY}），标记 failed`);
       return;
     }
@@ -264,10 +258,7 @@ export async function advanceCrystallizeStage(taskId, status, findings = {}, dbP
 
   // 最后一个阶段完成 → pipeline 完成
   if (currentIdx === CRYSTALLIZE_STAGES.length - 1) {
-    await dbPool.query(
-      `UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1`,
-      [pipelineId]
-    );
+    await finalizeTask(dbPool, pipelineId, 'completed');
     console.log(`[crystallize-orchestrator] pipeline ${pipelineId} 完成（${target}）`);
     return;
   }
@@ -275,7 +266,7 @@ export async function advanceCrystallizeStage(taskId, status, findings = {}, dbP
   // 创建下一阶段子任务
   const nextStage = CRYSTALLIZE_STAGES[currentIdx + 1];
   const stageNum = currentIdx + 2; // 1-indexed
-  const stageLabels = { crystallize_forge: 'Forge', crystallize_verify: 'Verify', crystallize_register: 'Register' };
+  const stageLabels = CRYSTALLIZE_ORCHESTRATOR_STAGE_LABELS;
   const label = stageLabels[nextStage] || nextStage;
 
   const nextPayload = {

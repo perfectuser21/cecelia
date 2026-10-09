@@ -29,7 +29,11 @@ function assert(condition, label, detail = '') {
 async function api(method, path, body) {
   const opts = {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      // execution-callback 验 Bearer（棒1）：token 只从 env 读
+      ...(process.env.CECELIA_INTERNAL_TOKEN ? { Authorization: `Bearer ${process.env.CECELIA_INTERNAL_TOKEN}` } : {}),
+    },
   };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(`${BRAIN_URL}${path}`, opts);

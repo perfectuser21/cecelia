@@ -13,7 +13,7 @@
  * Spec: docs/superpowers/specs/2026-06-03-machine-executor-routing-design.md §单元2 + 错误处理 + 测试策略
  */
 import { describe, it, expect, vi } from 'vitest';
-import { resolveExecutor, ExecutorRouteError, FALLBACK_ROUTE } from './resolve-executor.js';
+import { resolveExecutor, ExecutorRouteError } from './resolve-executor.js';
 
 // 假 machines（system_registry type=machine status=active 形态）
 const FAKE_MACHINES = [
@@ -225,7 +225,7 @@ describe('resolveExecutor — 未知 task_type 不漂移到 codex 机器 [BLOCKE
 });
 
 describe('resolveExecutor — 兜底 mac-mini-m4-us / claude', () => {
-  it('未知 task_type 标签无匹配 → 兜底 mac-mini-m4-us / claude', async () => {
+  it('未知 task_type 标签无匹配 → 明确拒绝', async () => {
     // task_type 不在 taskRequirements 里 → 默认 ['has_git'] → 无满足机器 → 兜底
     const deps = makeDeps({
       loadMachines: vi.fn().mockResolvedValue([
@@ -234,20 +234,16 @@ describe('resolveExecutor — 兜底 mac-mini-m4-us / claude', () => {
       ]),
       taskRequirements: { weird_type: ['has_browser'] },
     });
-    const route = await resolveExecutor({ task_type: 'weird_type', payload: {} }, deps);
-    expect(route).toEqual(FALLBACK_ROUTE);
-    expect(route.machineId).toBe('mac-mini-m4-us');
-    expect(route.executor).toBe('claude');
+    await expect(resolveExecutor({ task_type:'weird_type',payload:{} },deps)).rejects.toThrow('execution_grant_denied');
   });
 });
 
 describe('resolveExecutor — DB 失败降级', () => {
-  it('loadMachines 抛错 → 降级 us-m4 / claude 兜底（不抛）', async () => {
+  it('loadMachines 抛错 → 目录不可用并拒绝', async () => {
     const deps = makeDeps({
       loadMachines: vi.fn().mockRejectedValue(new Error('db down')),
     });
-    const route = await resolveExecutor({ task_type: 'dev', payload: {} }, deps);
-    expect(route).toEqual(FALLBACK_ROUTE);
+    await expect(resolveExecutor({ task_type:'dev',payload:{} },deps)).rejects.toThrow('execution_directory_unavailable');
   });
 
   it('显式请求时 loadMachines 抛错 → 抛 ExecutorRouteError（不静默改派，spec line 83）[MAJOR #3]', async () => {

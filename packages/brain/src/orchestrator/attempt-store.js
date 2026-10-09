@@ -1,3 +1,6 @@
+import { directory } from '../execution-directory/directory.js';
+import { authorize } from '../execution-directory/store.js';
+import { prepareResourceBudget, ROLE_WEIGHTS, OCCUPIED_ATTEMPTS_SQL, RESOURCE_BUDGET_GUARD_SQL } from './attempt-resource-budget.js';
 /**
  * Harness Attempt authority store.
  *
@@ -448,7 +451,15 @@ async function readConcurrentAttemptWinner(pool, runId, hop) {
   return null;
 }
 
+// 只由本store在已确认回滚后记入；错误文本/JSON/调用方属性不能伪造重选许可。
+const confirmedCapacityRollbacks = new WeakMap();
+export function isConfirmedCapacityRollback(error, input) {
+  const binding = confirmedCapacityRollbacks.get(error);
+  return Boolean(binding && ['id', 'runId', 'hop', 'machineId'].every(key => binding[key] === input?.[key]));
+}
+
 export function createAttemptStore(pool, {
+  executionDirectory = false,
   transactionClient = false,
   queryOnlyTestAdapter = false,
 } = {}) {
@@ -464,7 +475,8 @@ export function createAttemptStore(pool, {
   return Object.freeze({
     async createAttempt(input) {
       const skill = input.bundle?.skill ?? null;
-      const capacity = prepareAttemptMachineCapacity(input);
+      const inputs={...input.bundle?.inputs};delete inputs._server_execution;
+      const capacity = prepareAttemptMachineCapacity({...input,bundle:{...input.bundle,inputs}});
       const isPool = typeof pool.connect === 'function'
         && typeof pool.release !== 'function';
       if (
@@ -482,13 +494,21 @@ export function createAttemptStore(pool, {
         : pool;
       const ownsTransaction = isPool && !transactionClient;
       const releaseClient = isPool;
+      let capacityGuardRejected = false;
+      let discardClientError;
       try {
         if (ownsTransaction) await client.query('BEGIN');
         if (input.machineId != null) {
           await client.query(MACHINE_CAPACITY_LOCK_SQL, [input.machineId]);
         }
+        if(executionDirectory){
+          const auth=await authorize(client,{snapshotVersion:directory.current()?.version,machineId:input.machineId,
+            surface:'harness',provider:input.provider,account:input.accountId,repo:input.bundle?.inputs?.workspace_spec?.repo});
+          capacity.bundle.inputs._server_execution={executionVersionId:auth.executionVersionId,grantId:auth.grantId};
+        }
+        const resourceBudget = prepareResourceBudget(input);
         const result = await client.query(
-          `WITH guarded_run AS MATERIALIZED (
+          `WITH ${OCCUPIED_ATTEMPTS_SQL}, guarded_run AS MATERIALIZED (
            SELECT run.id, run.map_recovery_contract_id
              FROM initiative_runs run
             WHERE run.id = $2
@@ -527,17 +547,7 @@ export function createAttemptStore(pool, {
                      WHERE existing.run_id = guarded_run.id
                        AND existing.hop = $3
                   )
-               OR NOT EXISTS (
-                    SELECT 1
-                      FROM harness_attempts active
-                     WHERE COALESCE(active.requested_machine_id, active.machine_id) = $8
-                       AND active.status IN ('queued','starting','running')
-                       AND (
-                         $22::boolean
-                         OR active.task_bundle #>>
-                              '{inputs,_server_allocation,autonomous_progress_floor}' = 'true'
-                       )
-                  )
+               OR ${RESOURCE_BUDGET_GUARD_SQL}
          ),
          inserted AS (
            INSERT INTO harness_attempts (
@@ -599,10 +609,20 @@ export function createAttemptStore(pool, {
           input.restartReason ?? null,
           input.workstreamKey ?? 'ws1',
           input.timeDerived ?? DERIVED_TIME_ROLES.has(input.role),
-          capacity.autonomousSingleton,
+          resourceBudget.singleton,
+          resourceBudget.budget,
+          ROLE_WEIGHTS,
+          resourceBudget.valid,
+          Number.isFinite(input.capacitySnapshot?.expires_at) ? input.capacitySnapshot.expires_at : 0,
         ],
         );
-        const winner = readAttemptCreationOutcome(result)
+        // 明确容量拒绝后再查一次并发run/hop winner；已有winner必须复用，不能换机。
+        const capacityRejected = result.rows?.length === 1
+          && result.rows[0].machine_capacity_contended === true && result.rows[0].attempt === null;
+        const concurrentWinner = ownsTransaction && capacityRejected
+          ? await readConcurrentAttemptWinner(client, input.runId, input.hop) : null;
+        capacityGuardRejected = ownsTransaction && capacityRejected && !concurrentWinner;
+        const winner = concurrentWinner ?? readAttemptCreationOutcome(result)
           ?? await readConcurrentAttemptWinner(client, input.runId, input.hop);
         if (!winner) {
           throw new Error(`Kernel run is terminal or missing: ${input.runId}`);
@@ -610,10 +630,20 @@ export function createAttemptStore(pool, {
         if (ownsTransaction) await client.query('COMMIT');
         return winner;
       } catch (error) {
-        if (ownsTransaction) await client.query('ROLLBACK').catch(() => {});
+        if (ownsTransaction) {
+          try {
+            await client.query('ROLLBACK');
+            if (capacityGuardRejected) confirmedCapacityRollbacks.set(error, Object.freeze({
+              id: input.id, runId: input.runId, hop: input.hop, machineId: input.machineId,
+            }));
+          } catch (rollbackError) {
+            // 丢弃仍可能持锁的未知事务连接；既不重选，也不将它归还可复用池。
+            discardClientError = rollbackError;
+          }
+        }
         throw error;
       } finally {
-        if (releaseClient) client.release();
+        if (releaseClient) client.release(discardClientError);
       }
     },
 
@@ -790,13 +820,32 @@ export function createAttemptStore(pool, {
         leaseOwner = null,
         leaseGeneration = null,
         requireExpired = false,
+        retainResources = false,
+        cleanupIdentity = null,
       } = {},
     ) {
       if (!['failed', 'cancelled'].includes(status)) {
         throw new Error(`invalid failure status: ${status}`);
       }
       const result = await mutateAfterRunLock(id, (client) => client.query(
-        `UPDATE harness_attempts
+        `${retainResources ? `WITH cleanup_candidates AS MATERIALIZED (
+           SELECT * FROM harness_attempts
+            WHERE id=$1 AND status NOT IN (${TERMINAL_SQL})
+              AND ($6::text IS NULL OR lease_owner=$6)
+              AND ($7::integer IS NULL OR lease_generation=$7)
+              AND ($8::boolean IS FALSE OR lease_expires_at IS NULL OR lease_expires_at<NOW())
+            FOR UPDATE
+         ), cleanup_intent AS (
+           INSERT INTO harness_attempt_cleanup_outbox (
+             run_id, attempt_id, target_machine_id, execution_transport, remote_job_id,
+             lease_owner, lease_generation, cleanup_cause, cleanup_cause_message
+           ) SELECT run_id, id, COALESCE($9::jsonb->>'actualMachineId', actual_machine_id, requested_machine_id, machine_id),
+                    COALESCE($9::jsonb->>'executionTransport', execution_transport),
+                    COALESCE($9::jsonb->>'remoteJobId', remote_job_id), lease_owner, lease_generation, $3, $4
+               FROM cleanup_candidates
+           ON CONFLICT (attempt_id, lease_generation) DO NOTHING
+           RETURNING id
+         ) ` : ''}UPDATE harness_attempts
             SET status = $2,
                 error_code = $3,
                 error_message = $4,
@@ -805,6 +854,7 @@ export function createAttemptStore(pool, {
                 lease_expires_at = NULL,
                 updated_at = NOW()
           WHERE id = $1
+            ${retainResources ? "AND (SELECT COUNT(*) FROM cleanup_intent) >= 0" : ""}
             AND status NOT IN (${TERMINAL_SQL})
             AND ($6::text IS NULL OR lease_owner = $6)
             AND ($7::integer IS NULL OR lease_generation = $7)
@@ -823,6 +873,7 @@ export function createAttemptStore(pool, {
           leaseOwner,
           leaseGeneration,
           requireExpired,
+          ...(retainResources ? [cleanupIdentity] : []),
         ],
       ));
       const attempt = firstRow(result);

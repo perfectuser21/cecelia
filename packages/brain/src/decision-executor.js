@@ -13,11 +13,19 @@
 
 import pool from './db.js';
 import { createTask, updateTask } from './actions.js';
+import { finalizeTask } from './lib/task-terminal.js';
 import { validateDecision, hasDangerousActions, ACTION_WHITELIST } from './thalamus.js';
 import { CORTEX_ACTION_WHITELIST } from './cortex.js';
 import { signAndLaunchGoldenPathContract } from './golden-path-contracts.js';
 import { broadcast } from './websocket.js';
 import { pushCaptureAtom } from './capture-inbox.js';
+import {
+  applyOwnerDecisionResolution,
+  recordOwnerDecisionRejection,
+  OwnerDecisionResolveError,
+  RESOLUTION_VIA,
+} from './lib/owner-decision-resolve.js';
+import { OWNER_DECISION_ACTION_TYPE } from './lib/owner-decision.js';
 
 // ============================================================
 // Proposal Constants
@@ -36,6 +44,8 @@ const PROPOSAL_DEFAULTS = {
   'quarantine_task':          { category: 'approval', priority: 'urgent', expiresHours: 24 },
   'request_human_review':     { category: 'approval', priority: 'normal', expiresHours: 24 },
   'adjust_strategy':          { category: 'approval', priority: 'normal', expiresHours: 24 },
+  // 项目简报 A 档升级（决策 105a5868，链 2afa6d69 棒2）：改 goal / 一次砍≥3 棒 待拍板，72h 默认。
+  'project_brief_decision':   { category: 'approval', priority: 'urgent', expiresHours: 72 },
 };
 
 // ============================================================
@@ -474,10 +484,7 @@ const actionHandlers = {
     if (!task_id) {
       return { success: false, error: 'task_id is required' };
     }
-    await pool.query(
-      `UPDATE tasks SET status = 'archived', updated_at = NOW() WHERE id = $1`,
-      [task_id]
-    );
+    await finalizeTask(pool, task_id, 'archived');
     console.log(`[executor] Archived task: ${task_id}, reason: ${reason || 'not specified'}`);
     return { success: true, task_id, reason: reason || null };
   },
@@ -673,7 +680,7 @@ const actionHandlers = {
     }
 
     const result = await pool.query(
-      `UPDATE objectives SET status = 'ready', updated_at = NOW()
+      `UPDATE key_results SET status = 'ready', updated_at = NOW()
        WHERE id = $1 AND status = 'reviewing'
        RETURNING id, title, status`,
       [kr_id]
@@ -699,6 +706,43 @@ const actionHandlers = {
       contentHash: params.content_hash,
       reviewer: context.approved_by,
     });
+  },
+
+  /**
+   * 主理人「只选决策」应答（决策 105a5868，链 bf5088a3 棒 9）。
+   * 批准 = 把 choice 写回任务并经 unblockTask 放回 queued；与 sweeper 的到期默认共用同一个内部函数。
+   * 在 approvePendingAction 的事务内执行（db 即事务 client），任何一步抛错整体 ROLLBACK。
+   */
+  async owner_decision(params, context, db = pool) {
+    const taskId = params?.task_id ?? context?.task_id;
+    if (!taskId) {
+      throw new OwnerDecisionResolveError('owner_decision 待办缺 task_id', { status: 400, code: 'owner_decision_missing_task_id' });
+    }
+    return applyOwnerDecisionResolution(db, {
+      taskId,
+      choice: context?.choice ?? null,
+      by: context?.approved_by ?? 'unknown',
+      via: RESOLUTION_VIA.APPROVE,
+      pendingActionId: context?.pending_action_id ?? null,
+    });
+  },
+
+  /**
+   * 项目简报 A 档升级批准（决策 105a5868，链 2afa6d69 棒2）：主理人在这个待办上点批准 = 接受变更，
+   * 把被扣下的 goal / cancel_steps 强制应用（force:true，不再二次升档）。点拒绝走通用
+   * rejectPendingAction（不触发本 handler），brief 保持不变——对称设计，不需要在这里分支处理 choice。
+   */
+  async project_brief_decision(params, _context, _db) {
+    // 注意：这里故意不复用 approvePendingAction 的事务 client（applyProjectBriefDelta 自己
+    // 管一段独立事务，client.connect() 不能嵌套在已开的事务里）——与 owner_decision 走事务内
+    // 复用不同，这里接受「批准已落但 brief 写入失败」的极小窗口，换来实现简单、失败不拖垮批准本身。
+    const { applyApprovedBriefEscalation } = await import('./lib/project-brief-apply.js');
+    const result = await applyApprovedBriefEscalation(pool, {
+      projectId: params.project_id,
+      escalated: params.escalated,
+      taskId: params.task_id ?? null,
+    });
+    return { success: true, applied: Boolean(result?.applied), brief: result?.brief ?? null };
   },
 };
 
@@ -929,6 +973,9 @@ async function expireStaleProposals() {
     WHERE status = 'pending_approval'
       AND expires_at IS NOT NULL
       AND expires_at < NOW()
+      -- owner_decision 待办不按时间过期：截止后由 owner-decision-deadline sweeper 按协议处理，
+      -- 否则不可逆决策顺延再催时，主理人已经没有可点的待办。
+      AND action_type <> 'owner_decision'
     RETURNING id
   `);
   if (result.rowCount > 0) {
@@ -941,8 +988,9 @@ async function expireStaleProposals() {
  * 批准并执行待审批动作
  * @param {string} actionId
  * @param {string} reviewer
+ * @param {{choice?: string|null}} [opts] owner_decision 待办：选项标签/全文或 'default'（缺省取协议 default）
  */
-async function approvePendingAction(actionId, reviewer = 'unknown') {
+async function approvePendingAction(actionId, reviewer = 'unknown', { choice = null } = {}) {
   const client = await pool.connect();
 
   try {
@@ -963,11 +1011,12 @@ async function approvePendingAction(actionId, reviewer = 'unknown') {
 
     if (action.status !== 'pending_approval') {
       await client.query('ROLLBACK');
-      return { success: false, error: `Action is ${action.status}, not pending_approval` };
+      // 已处理过：409（幂等——二次批准不重复执行）
+      return { success: false, error: `Action is ${action.status}, not pending_approval`, status: 409 };
     }
 
-    // 检查是否过期
-    if (action.expires_at && new Date(action.expires_at) < new Date()) {
+    // 检查是否过期（owner_decision 不按时间过期，截止由 owner-decision-deadline sweeper 处理）
+    if (action.action_type !== OWNER_DECISION_ACTION_TYPE && action.expires_at && new Date(action.expires_at) < new Date()) {
       await client.query(
         'UPDATE pending_actions SET status = $1, reviewed_at = NOW() WHERE id = $2',
         ['expired', actionId]
@@ -988,7 +1037,7 @@ async function approvePendingAction(actionId, reviewer = 'unknown') {
 
     const executionResult = await handler(
       params,
-      { ...context, approved_by: reviewer },
+      { ...context, approved_by: reviewer, choice, pending_action_id: actionId },
       client,
     );
 
@@ -1026,20 +1075,45 @@ async function approvePendingAction(actionId, reviewer = 'unknown') {
  * @param {string} reason
  */
 async function rejectPendingAction(actionId, reviewer = 'unknown', reason = '') {
-  const result = await pool.query(`
-    UPDATE pending_actions
-    SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(),
-        execution_result = $2
-    WHERE id = $3 AND status = 'pending_approval'
-    RETURNING id
-  `, [reviewer, JSON.stringify({ rejected: true, reason }), actionId]);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(`
+      UPDATE pending_actions
+      SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(),
+          execution_result = $2
+      WHERE id = $3 AND status = 'pending_approval'
+      RETURNING id, action_type, params, context
+    `, [reviewer, JSON.stringify({ rejected: true, reason }), actionId]);
 
-  if (result.rowCount === 0) {
-    return { success: false, error: 'Action not found or already processed' };
+    if (result.rowCount === 0) {
+      const existing = await client.query('SELECT status FROM pending_actions WHERE id = $1', [actionId]);
+      await client.query('ROLLBACK');
+      // 存在但已处理 → 409（幂等）；不存在维持既有 400
+      const status = existing.rows.length > 0 ? 409 : 400;
+      return { success: false, error: 'Action not found or already processed', status };
+    }
+
+    // owner_decision：同事务把「主理人明确驳回」写进任务 payload，任务保持 blocked，
+    // sweeper 据此不再用默认覆盖主理人的表态。
+    const row = result.rows[0];
+    if (row.action_type === OWNER_DECISION_ACTION_TYPE) {
+      const params = typeof row.params === 'string' ? JSON.parse(row.params) : row.params;
+      const ctx = typeof row.context === 'string' ? JSON.parse(row.context) : row.context;
+      const taskId = params?.task_id ?? ctx?.task_id;
+      if (taskId) await recordOwnerDecisionRejection(client, { taskId, by: reviewer, reason });
+    }
+
+    await client.query('COMMIT');
+    console.log(`[executor] Pending action ${actionId} rejected by ${reviewer}: ${reason}`);
+    return { success: true };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[executor] Failed to reject action:', err.message);
+    return { success: false, error: err.message, status: err.status || 500, ...(err.code ? { code: err.code } : {}) };
+  } finally {
+    client.release();
   }
-
-  console.log(`[executor] Pending action ${actionId} rejected by ${reviewer}: ${reason}`);
-  return { success: true };
 }
 
 // ============================================================

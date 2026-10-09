@@ -9,6 +9,14 @@ fail() {
   exit 1
 }
 
+mode_of() {
+  case "$(uname -s)" in
+    Darwin) stat -f '%Lp' "$1" ;;
+    Linux) stat -c '%a' "$1" ;;
+    *) fail "unsupported operating system for mode assertion" ;;
+  esac
+}
+
 [[ -f "$INSTALLER" ]] || fail "missing install-fleet-worker.sh entrypoint"
 
 test_root="$(mktemp -d)"
@@ -258,7 +266,7 @@ printf '%s\n' \
   'fi' \
   'source="$(cat)"' \
   'case "$source" in' \
-  '  *runner_image_digest*) printf "%s" "sha256:74afa123d31ff6eda7b3dff213ecba0ac28e5d8f1b74bc40ade3e71dd635721a" ;;' \
+  '  *runner_image_digest*) printf "%s" "sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033" ;;' \
   '  *runtime_resources.postgres.image_digest*) printf "%s" "pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62" ;;' \
   '  *resources.disk_min_free_gib*) printf "%s" "10" ;;' \
   '  *worker_bind_host*) printf "%s" "100.86.57.69" ;;' \
@@ -837,18 +845,89 @@ installed_plist="$install_dir/com.perfect21.fleet-worker.plist"
 runtime_dir="$test_root/usr/local/libexec/cecelia/fleet-worker"
 installed_worker="$runtime_dir/fleet-worker.cjs"
 installed_probe="$runtime_dir/node-probe.cjs"
+installed_local_admission="$runtime_dir/local-resource-admission.cjs"
+installed_profile_registry="$runtime_dir/fleet-node-profiles.json"
 installed_workspace_manager="$runtime_dir/workspace-manager.cjs"
 installed_attempt_runner="$runtime_dir/attempt-runner.cjs"
+installed_orchestrator_runner="$runtime_dir/orchestrator-runner.cjs"
 installed_attempt_resources="$runtime_dir/attempt-resources.cjs"
 installed_credential_envelope="$runtime_dir/credential-envelope.cjs"
 installed_github_credential_envelope="$runtime_dir/github-credential-envelope.cjs"
 installed_access_helper="$runtime_dir/refresh-fleet-worker-docker-access.sh"
 installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.plist"
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
+python3 - "$installed_plist" "$shared_tmpdir" <<'PYPLIST'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as source:
+    value = plistlib.load(source)
+assert value['EnvironmentVariables']['TMPDIR'] == sys.argv[2], 'installed TMPDIR differs from preflight'
+assert '@@' not in str(value), 'unexpanded template'
+PYPLIST
+
 [[ -f "$installed_worker" && -f "$installed_probe" ]] \
   || fail "--apply did not install a stable Worker runtime"
+cmp -s "$SCRIPT_DIR/attempt-container-identity.cjs" "$runtime_dir/attempt-container-identity.cjs" \
+  || fail "--apply did not install exact container identity verifier"
+node -e 'require(process.argv[1])' "$runtime_dir/attempt-runner.cjs"
+cmp -s "$SCRIPT_DIR/attempt-resource-policy.cjs" "$runtime_dir/attempt-resource-policy.cjs" \
+  || fail "--apply did not install exact shared resource policy"
+node - "$runtime_dir/attempt-resource-policy.cjs" <<'NODE'
+const assert = require('node:assert/strict');
+assert.equal(require(process.argv[2]).resolveAttemptResourcePlan({workerId:'us-mac-m4',role:'generator'}).runner.memoryBytes, 4*1024**3);
+NODE
+auxiliary_files=(gpu-observation.cjs drain-owner.cjs runtime-config.cjs baseline-probe.cjs app-server-profile.cjs app-server-docker.cjs app-server-attach.cjs app-server-stream.cjs app-server-runner.cjs app-server-rpc.cjs app-server-stream-hub.cjs app-server-contract.json app-server-shim.cjs linux-cgroup.cjs linux-resource-probe.cjs)
+for module in "${auxiliary_files[@]}"; do
+  cmp -s "$SCRIPT_DIR/$module" "$runtime_dir/$module" \
+    || fail "--apply did not install exact $module bytes"
+  [[ "$(mode_of "$runtime_dir/$module")" == 644 ]] || fail "$module mode is not 644"
+done
+node - "$runtime_dir/app-server-runner.cjs" <<'NODE'
+const assert = require('node:assert/strict');
+assert.equal(typeof require(process.argv[2]).createAppServerRunner, 'function');
+NODE
+cmp -s "$SCRIPT_DIR/local-resource-admission.cjs" "$installed_local_admission" \
+  || fail "--apply did not install exact local admission module bytes"
+cmp -s "$SCRIPT_DIR/../../config/fleet-node-profiles.json" "$installed_profile_registry" \
+  || fail "--apply did not install exact profile registry bytes"
+# Load the installed module and its default adjacent profile, without touching
+# the host's Docker daemon or injecting loadProfile (which would mask bad paths).
+node - "$installed_local_admission" <<'NODE'
+const assert = require('node:assert/strict');
+const { createLocalResourceAdmission } = require(process.argv[2]);
+const samples = new Map([
+  ['sysctl -n hw.ncpu', '8'],
+  ['sysctl -n hw.memsize', String(16 * 1024 ** 3)],
+  ['sysctl -n vm.loadavg', '{ 1.0 0.8 0.6 }'],
+  ['memory_pressure -Q', 'System-wide memory free percentage: 60%'],
+  ['docker info --format {{json .}}', JSON.stringify({ NCPU: 8, MemTotal: 12 * 1024 ** 3 })],
+  ['df -kP /controlled', 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/test 100000000 10000000 90000000 10% /controlled'],
+]);
+let calls = 0;
+const options = {
+  workerId: 'xian-mac-m4', platform: 'darwin', diskPaths: ['/controlled'],
+  runCommand: async (file, args, commandOptions) => {
+    const key = [file, ...args].join(' ');
+    assert(samples.has(key), `unexpected probe: ${key}`);
+    assert.equal(commandOptions.shell, false);
+    calls++;
+    return { stdout: samples.get(key) };
+  },
+};
+(async () => {
+  await createLocalResourceAdmission(options)();
+  assert.equal(calls, samples.size);
+  samples.set('memory_pressure -Q', 'System-wide memory free percentage: 9%');
+  await assert.rejects(createLocalResourceAdmission(options)(), {
+    message: 'attempt_local_resources_unavailable', statusCode: 429,
+  });
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+NODE
 [[ -f "$installed_workspace_manager" && -f "$installed_attempt_runner" ]] \
   || fail "--apply omitted the Workspace/Attempt runtime modules"
+[[ -f "$runtime_dir/script-runner.cjs" && -f "$runtime_dir/script-docker.cjs" ]] \
+  || fail "--apply omitted managed script runtime modules"
+[[ -f "$installed_orchestrator_runner" ]] \
+  || fail "--apply omitted the Orchestrator runtime module"
 [[ -f "$installed_attempt_resources" ]] \
   || fail "--apply omitted the Attempt resource runtime module"
 [[ -f "$installed_credential_envelope" ]] \
@@ -943,20 +1022,26 @@ run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
 [[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 4 ]] \
   || fail "repeat --apply duplicated an existing ACL"
 
-mode_of() {
-  case "$(uname -s)" in
-    Darwin) stat -f '%Lp' "$1" ;;
-    Linux) stat -c '%a' "$1" ;;
-    *) fail "unsupported operating system for mode assertion" ;;
-  esac
-}
+
+
+cp "$installed_plist" "$test_root/canonical-worker.plist"
+
+cp "$installed_plist" "$test_root/canonical-worker.plist"
 
 seed_prior_generation() {
   local tag="$1"
   printf '%s\n' "prior-worker-$tag" > "$installed_worker"
   printf '%s\n' "prior-probe-$tag" > "$installed_probe"
   printf '%s\n' "prior-credential-envelope-$tag" > "$installed_credential_envelope"
-  printf '%s\n' "prior-plist-$tag" > "$installed_plist"
+  python3 - "$test_root/canonical-worker.plist" "$installed_plist" "$tag" "$shared_tmpdir" <<'PYPLIST'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as source:
+    value = plistlib.load(source)
+value['EnvironmentVariables']['TEST_GENERATION'] = sys.argv[3]
+value['EnvironmentVariables']['TMPDIR'] = sys.argv[4]
+with open(sys.argv[2], 'wb') as target:
+    plistlib.dump(value, target)
+PYPLIST
   printf '%s\n' "prior-access-helper-$tag" > "$installed_access_helper"
   printf '%s\n' "prior-access-plist-$tag" > "$installed_access_plist"
   chmod 0711 "$installed_worker"
@@ -1034,6 +1119,91 @@ assert_support_placement_failure_rolled_back() {
 }
 
 assert_support_placement_failure_rolled_back
+
+assert_resource_placement_failure_rolled_back() {
+  local filename="$1"
+  local snapshot_dir="$test_root/resource-rollback-$filename"
+  local failure_output
+  seed_prior_generation "resource-$filename"
+  mkdir -p "$snapshot_dir"
+  printf 'prior-admission-%s\n' "$filename" > "$installed_local_admission"
+  printf 'prior-profiles-%s\n' "$filename" > "$installed_profile_registry"
+  chmod 0600 "$installed_local_admission"
+  chmod 0640 "$installed_profile_registry"
+  cp "$installed_local_admission" "$snapshot_dir/admission"
+  cp "$installed_profile_registry" "$snapshot_dir/profiles"
+  printf 'prior-policy-%s\n' "$filename" > "$runtime_dir/attempt-resource-policy.cjs"
+  chmod 0600 "$runtime_dir/attempt-resource-policy.cjs"
+  cp "$runtime_dir/attempt-resource-policy.cjs" "$snapshot_dir/policy"
+  printf 'prior-identity-%s\n' "$filename" > "$runtime_dir/attempt-container-identity.cjs"
+  chmod 0600 "$runtime_dir/attempt-container-identity.cjs"
+  cp "$runtime_dir/attempt-container-identity.cjs" "$snapshot_dir/identity"
+  local module
+  for module in "${auxiliary_files[@]}"; do
+    printf 'prior-%s-%s\n' "$filename" "$module" > "$runtime_dir/$module"
+    chmod 0600 "$runtime_dir/$module"
+    cp "$runtime_dir/$module" "$snapshot_dir/$module"
+  done
+  rm -f "$FLEET_WORKER_MV_FAIL_ONCE"
+  if failure_output="$(FLEET_WORKER_MV="$test_root/mv" \
+    FLEET_WORKER_MV_FAIL_TARGET="$runtime_dir/$filename" \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1)"; then
+    fail "$filename placement failure unexpectedly succeeded"
+  fi
+  [[ -e "$FLEET_WORKER_MV_FAIL_ONCE" ]] || fail "$filename placement fault was not reached"
+  grep -Fq 'install_failed_rolled_back' <<<"$failure_output" \
+    || fail "$filename placement failure lacked rollback signature"
+  cmp -s "$snapshot_dir/admission" "$installed_local_admission" \
+    || fail "$filename placement failure changed old admission bytes"
+  cmp -s "$snapshot_dir/profiles" "$installed_profile_registry" \
+    || fail "$filename placement failure changed old profile bytes"
+  [[ "$(mode_of "$installed_local_admission")" == 600 \
+    && "$(mode_of "$installed_profile_registry")" == 640 ]] \
+    || fail "$filename placement rollback changed old resource file modes"
+  cmp -s "$snapshot_dir/policy" "$runtime_dir/attempt-resource-policy.cjs" || fail "$filename changed old policy bytes"
+  [[ "$(mode_of "$runtime_dir/attempt-resource-policy.cjs")" == 600 ]] || fail "$filename changed old policy mode"
+  cmp -s "$snapshot_dir/identity" "$runtime_dir/attempt-container-identity.cjs" || fail "$filename changed old identity bytes"
+  [[ "$(mode_of "$runtime_dir/attempt-container-identity.cjs")" == 600 ]] || fail "$filename changed old identity mode"
+  for module in "${auxiliary_files[@]}"; do
+    cmp -s "$snapshot_dir/$module" "$runtime_dir/$module" || fail "$filename changed old $module bytes"
+    [[ "$(mode_of "$runtime_dir/$module")" == 600 ]] || fail "$filename changed old $module mode"
+  done
+  [[ "$(<"$launch_state")" == running ]] || fail "$filename rollback did not restore loaded service"
+}
+
+assert_resource_first_install_rolled_back() (
+  filename="$1"
+  fresh_root="$test_root/resource-first-$filename"
+  install_dir="$fresh_root/Library/LaunchDaemons"
+  log_dir="$fresh_root/var/log/cecelia"
+  worker_data_root="$fresh_root/var/lib/cecelia/fleet-worker"
+  shared_tmpdir="$fresh_root/Users/Shared/cecelia-fleet-tmp"
+  fresh_runtime="$fresh_root/usr/local/libexec/cecelia/fleet-worker"
+  mkdir -p "$install_dir" "$log_dir"
+  printf 'absent\n' > "$launch_state"
+  rm -f "$FLEET_WORKER_MV_FAIL_ONCE"
+  if failure_output="$(FLEET_WORKER_MV="$test_root/mv" \
+    FLEET_WORKER_MV_FAIL_TARGET="$fresh_runtime/$filename" \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1)"; then
+    fail "first $filename placement failure unexpectedly succeeded"
+  fi
+  [[ -e "$FLEET_WORKER_MV_FAIL_ONCE" ]] || fail "first $filename placement fault was not reached"
+  grep -Fq 'install_failed_rolled_back' <<<"$failure_output" \
+    || fail "first $filename placement failure lacked rollback signature"
+  [[ ! -e "$fresh_runtime/local-resource-admission.cjs" \
+    && ! -e "$fresh_runtime/fleet-node-profiles.json" && ! -e "$fresh_runtime/attempt-resource-policy.cjs" && ! -e "$fresh_runtime/attempt-container-identity.cjs" ]] \
+    || fail "first $filename rollback leaked newly installed resource files"
+  for module in "${auxiliary_files[@]}"; do
+    [[ ! -e "$fresh_runtime/$module" ]] || fail "first $filename rollback leaked $module"
+  done
+)
+
+for resource_file in fleet-node-profiles.json local-resource-admission.cjs attempt-resource-policy.cjs attempt-container-identity.cjs "${auxiliary_files[@]}"; do
+  assert_resource_placement_failure_rolled_back "$resource_file"
+  assert_resource_first_install_rolled_back "$resource_file"
+done
+# A later placement failure proves both newly placed files are removed together.
+assert_resource_first_install_rolled_back fleet-worker.cjs
 
 assert_failed_upgrade_rolled_back() {
   local failure_match="$1"
@@ -1321,5 +1491,139 @@ derived="$(FLEET_WORKER_ORBSTACK_HOME='/Users/explicit-owner' \
 [[ "$derived" == '/Users/explicit-owner' ]] \
   || fail "explicit FLEET_WORKER_ORBSTACK_HOME should win, got: $derived"
 rm -rf "$derive_root"
+
+# 升级从已安装服务恢复有效配置；默认token缺失不能覆盖现役token引用。
+seed_prior_generation preserve
+preserved_token="$test_root/worker-auth"
+cp "$worker_token_file" "$preserved_token"
+chmod 0600 "$preserved_token"
+python3 - "$installed_plist" "$preserved_token" <<'PYPLIST'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as source:
+    value = plistlib.load(source)
+value['EnvironmentVariables'].update({
+    'CECELIA_FLEET_WORKER_HOST': '100.71.151.105',
+    'CECELIA_FLEET_WORKER_PORT': '15231',
+    'CECELIA_FLEET_WORKER_TOKEN_FILE': sys.argv[2],
+    'DEPLOY_TOKEN': 'private-upgrade-sentinel-never-log',
+    'CECELIA_RUNNER_DIGEST': 'sha256:'+'0'*64,
+})
+value['WorkingDirectory'] = '/var/empty'
+with open(sys.argv[1], 'wb') as target:
+    plistlib.dump(value, target, fmt=plistlib.FMT_BINARY)
+PYPLIST
+rm "$worker_token_file"
+: > "$startup_probe_log"
+if ! upgrade_output="$(run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1)"; then
+  fail "existing deployment upgrade failed: $upgrade_output"
+fi
+[[ "$upgrade_output" != *private-upgrade-sentinel-never-log* ]] || fail "upgrade leaked environment secret"
+grep -Fq 'http://100.71.151.105:15231/health' "$startup_probe_log" || fail "startup probe used profile instead of preserved endpoint"
+python3 - "$installed_plist" "$preserved_token" <<'PYPLIST'
+import os, plistlib, stat, sys
+with open(sys.argv[1], 'rb') as source:
+    value = plistlib.load(source)
+env = value['EnvironmentVariables']
+assert env['CECELIA_FLEET_WORKER_HOST'] == '100.71.151.105'
+assert env['CECELIA_FLEET_WORKER_PORT'] == '15231'
+assert env['CECELIA_FLEET_WORKER_TOKEN_FILE'] == sys.argv[2]
+assert env['DEPLOY_TOKEN'] == 'private-upgrade-sentinel-never-log'
+assert env['CECELIA_RUNNER_DIGEST'] == 'sha256:'+'0'*64
+assert value['WorkingDirectory'] == '/var/empty'
+assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o600
+PYPLIST
+
+# 显式canonical恢复走实际installer与持锁wrapper，旧snapshot不吞新digest。
+canonical_marker="$test_root/owned-drain/fleet-worker.drain"
+canonical_owner="$(node -e 'console.log(require("crypto").randomUUID())')"
+export NODE_ENV=test FLEET_NODECTL_DRAIN_MARKER="$canonical_marker" FLEET_NODECTL_DRAIN_OWNER="$canonical_owner"
+export FLEET_WORKER_TEST_SCRIPT_DIR="$SCRIPT_DIR"
+node - <<'NODE'
+const {createDrainOwner}=require(process.env.FLEET_WORKER_TEST_SCRIPT_DIR+'/drain-owner.cjs');
+createDrainOwner({marker:process.env.FLEET_NODECTL_DRAIN_MARKER,runLaunchctl:()=>{}}).drain('xian-mac-m4',process.env.FLEET_NODECTL_DRAIN_OWNER);
+NODE
+python3 - "$installed_plist" <<'PYPLIST'
+import plistlib,sys
+p=sys.argv[1];d=plistlib.load(open(p,'rb'));d['EnvironmentVariables']['CECELIA_RUNNER_DIGEST']='sha256:'+'0'*64
+plistlib.dump(d,open(p,'wb'),fmt=plistlib.FMT_BINARY)
+PYPLIST
+cp "$installed_plist" "$test_root/before-canonical.plist"
+canonical_hash="$(shasum -a 256 "$installed_plist" | awk '{print $1}')"
+cat > "$test_root/canonical-wrapper" <<'WRAPPER'
+#!/usr/bin/env bash
+exec node - "$@" <<'NODE'
+const {restoreCanonicalRunner}=require(process.env.FLEET_WORKER_TEST_SCRIPT_DIR+'/canonical-runner-install.cjs');
+const args=process.argv.slice(2);
+try {restoreCanonicalRunner(args[0],args[3],process.env.FLEET_NODECTL_DRAIN_OWNER,{marker:process.env.FLEET_NODECTL_DRAIN_MARKER});}
+catch(e) {console.error(e.message);process.exit(1);}
+NODE
+WRAPPER
+chmod +x "$test_root/canonical-wrapper"
+saved_installer="$INSTALLER"; INSTALLER="$test_root/canonical-wrapper"
+python3 - "$installed_plist" <<'PYPLIST'
+import plistlib,sys
+p=sys.argv[1];d=plistlib.load(open(p,'rb'));d['EnvironmentVariables']['CECELIA_DRAIN_MARKER']='/var/run/cecelia/unrelated-worker.drain'
+plistlib.dump(d,open(p,'wb'),fmt=plistlib.FMT_BINARY)
+PYPLIST
+cp "$installed_plist" "$test_root/before-wrong-worker-marker.plist"
+wrong_marker_hash="$(shasum -a 256 "$installed_plist" | awk '{print $1}')"
+: > "$launch_log"
+if wrong_marker_output="$(run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply --restore-canonical-runner "$wrong_marker_hash" 2>&1)"; then
+  fail "canonical unrelated Worker drain marker was accepted"
+fi
+cmp -s "$installed_plist" "$test_root/before-wrong-worker-marker.plist" || fail "wrong Worker marker refusal changed old plist"
+[[ ! -s "$launch_log" ]] || fail "wrong Worker marker refusal performed launch action"
+cp "$test_root/before-canonical.plist" "$installed_plist"
+: > "$launch_log"
+if stale_output="$(run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply --restore-canonical-runner "$(printf 'f%.0s' {1..64})" 2>&1)"; then
+  fail "canonical wrong-config CAS was accepted"
+fi
+cmp -s "$installed_plist" "$test_root/before-canonical.plist" || fail "wrong CAS changed old plist"
+[[ ! -s "$launch_log" ]] || fail "wrong CAS performed launch action"
+if unknown_output="$(FLEET_NODECTL_DRAIN_OWNER=11111111-1111-4111-8111-111111111111 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply --restore-canonical-runner "$canonical_hash" 2>&1)"; then
+  fail "canonical other drain owner was accepted"
+fi
+cmp -s "$installed_plist" "$test_root/before-canonical.plist" || fail "other owner changed old plist"
+[[ ! -s "$launch_log" ]] || fail "other owner performed launch action"
+if ! canonical_output="$(run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply --restore-canonical-runner "$canonical_hash" 2>&1)"; then
+  fail "canonical cutover failed: $canonical_output"
+fi
+INSTALLER="$saved_installer"
+python3 - "$installed_plist" "$test_root/before-canonical.plist" <<'PYPLIST'
+import plistlib,sys
+actual=plistlib.load(open(sys.argv[1],'rb'));old=plistlib.load(open(sys.argv[2],'rb'))
+old['EnvironmentVariables']['CECELIA_RUNNER_DIGEST']='sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033'
+assert actual==old
+PYPLIST
+[[ -f "$canonical_marker" ]] || fail "cutover released own drain marker"
+[[ "$canonical_output" != *private-upgrade-sentinel-never-log* ]] || fail "canonical cutover leaked secret"
+# 启动验真失败实际恢复旧binary plist，不能把pointer/digest改回当作已恢复。
+cp "$test_root/before-canonical.plist" "$installed_plist"
+cp "$installed_worker" "$test_root/before-canonical-failed-worker"
+INSTALLER="$test_root/canonical-wrapper"
+if failed_cutover="$(FLEET_WORKER_STARTUP_PROBE_FAIL=1 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply --restore-canonical-runner "$canonical_hash" 2>&1)"; then
+  fail "canonical failed-start cutover reported success"
+fi
+INSTALLER="$saved_installer"
+cmp -s "$installed_plist" "$test_root/before-canonical.plist" || fail "failed canonical cutover did not restore exact old plist"
+cmp -s "$installed_worker" "$test_root/before-canonical-failed-worker" || fail "failed canonical cutover changed old runtime"
+[[ -f "$canonical_marker" ]] || fail "failed canonical cutover released own marker"
+unset NODE_ENV FLEET_NODECTL_DRAIN_MARKER FLEET_NODECTL_DRAIN_OWNER FLEET_WORKER_TEST_SCRIPT_DIR
+
+# 快照阶段已有EXIT trap，但未取得的安装锁必须始终归原持有者。
+existing_lock="$install_dir/.fleet-worker.install.lock"
+mkdir "$existing_lock"
+cp "$installed_plist" "$test_root/before-locked.plist"
+cp "$installed_worker" "$test_root/before-locked-worker"
+: > "$launch_log"
+if locked_output="$(run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1)"; then
+  fail "concurrent installation unexpectedly acquired existing lock"
+fi
+[[ "$locked_output" == *install_locked* ]] || fail "concurrent installation did not report lock contention"
+[[ -d "$existing_lock" ]] || fail "failed upgrade removed another installer lock"
+cmp -s "$installed_plist" "$test_root/before-locked.plist" || fail "locked install replaced plist"
+cmp -s "$installed_worker" "$test_root/before-locked-worker" || fail "locked install replaced worker"
+! grep -Eq '^(bootout|bootstrap|kickstart)' "$launch_log" || fail "locked install changed running service"
+rmdir "$existing_lock"
 
 echo "PASS: Fleet Worker installer behavioral contract"

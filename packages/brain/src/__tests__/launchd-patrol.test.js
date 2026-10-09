@@ -7,6 +7,7 @@ import {
   runLaunchdPatrol,
   __resetLaunchdPatrolForTest,
   MUST_LISTEN_PORTS,
+  MUST_LOAD_DAEMONS,
 } from '../launchd-patrol.js';
 import { sendBark } from '../notifier.js';
 import { raise } from '../alerting.js';
@@ -52,7 +53,7 @@ describe('launchd-patrol manifest 核对', () => {
     const r = await runLaunchdPatrol({ exec: makeExec(), inContainer: false });
     expect(r.ok).toBe(true);
     expect(r.anomalies).toEqual([]);
-    expect(r.checked).toBe(7); // 1 must-run + 5 must-load（含 smoke-nightly + guard-drill）+ 1 端口（5200/5201 已迁 HK 摘除）
+    expect(r.checked).toBe(8); // 1 must-run + 6 must-load（含 smoke-nightly + guard-drill + coding-workflow-runner）+ 1 端口（5200/5201 已迁 HK 摘除）
     expect(sendBark).not.toHaveBeenCalled();
     expect(raise).not.toHaveBeenCalled();
   });
@@ -101,6 +102,15 @@ describe('launchd-patrol manifest 核对', () => {
       inContainer: false,
     });
     expect(r.anomalies).toEqual([]);
+  });
+
+  it('coding workflow runner 登记为周期型 must-load（未加载即告警）', async () => {
+    expect(MUST_LOAD_DAEMONS).toContain('com.cecelia.coding-workflow-runner');
+    const r = await runLaunchdPatrol({
+      exec: makeExec({ notLoaded: ['com.cecelia.coding-workflow-runner'] }),
+      inContainer: false,
+    });
+    expect(r.anomalies).toEqual(['not_loaded:com.cecelia.coding-workflow-runner']);
   });
 
   it('端口不通 → port_down 检出', async () => {

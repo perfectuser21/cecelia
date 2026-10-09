@@ -13,6 +13,7 @@
 /** scraper 任务类型 */
 const SCRAPER_TASK_TYPE = 'platform_scraper';
 import { createTask } from './actions.js';
+import { finalizeTask } from './lib/task-terminal.js';
 
 /**
  * 查询已完成超过 4 小时、尚未触发数据采集的 content_publish 任务。
@@ -146,18 +147,10 @@ async function writeBackToPublishTask(pool, publishTaskId, metrics) {
  * @param {object} result
  */
 async function completeScraperTask(pool, scraperTaskId, result) {
-  await pool.query(
-    `UPDATE tasks
-     SET status       = 'completed',
-         completed_at = NOW(),
-         updated_at   = NOW(),
-         payload      = COALESCE(payload, '{}'::jsonb) || $1::jsonb
-     WHERE id = $2`,
-    [
-      JSON.stringify({ result, processed_by: 'brain-internal-collector' }),
-      scraperTaskId,
-    ]
-  );
+  await finalizeTask(pool, scraperTaskId, 'completed', {
+    set: { completed_at: 'now' },
+    mergePayload: { result, processed_by: 'brain-internal-collector' },
+  });
 }
 
 /**

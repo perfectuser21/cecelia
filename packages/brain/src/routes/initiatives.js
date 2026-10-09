@@ -29,6 +29,8 @@ import {
 } from '../orchestrator/kernel-run-store.js';
 import { COMMANDER_MODES } from '../orchestrator/commander-contract.js';
 import { createPlannerRecoveryRouter } from './planner-recovery.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { launchDeferredSql } from '../lib/kernel-launch-deferral.js';
 
 const router = Router();
 router.use('/runs', createPlannerRecoveryRouter());
@@ -364,6 +366,7 @@ router.get('/relay-runs/summary', async (req, res) => {
           WHERE orchestrator_version = 'v2'
             AND record_trust_status = 'trusted'
             AND current_task_id IS NOT NULL
+            AND NOT ${launchDeferredSql('initiative_runs')}
           ORDER BY current_task_id, started_at DESC, id DESC
        ),
        slo AS (
@@ -463,11 +466,18 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
       createdSource,
       commanderMode,
       predecessorRunId: body.predecessor_run_id ?? null,
+      recoveryRebase: body.recovery_rebase ?? null,
       // 启动不变量（sprint 08131104）：foreground handoff 也须先有 Controller ownership，
       // createKernelRun fail-closed 校验后才建 run（不可绕过路由层直接产生无主 run）。
     }, kernelRunStoreDeps);
+    // M4：这条路径只建 run、不起跑场，没有内存态 task 需要回流，故不调
+    // syncTaskPayloadFromKernelRun；日后若在此处起跑场，必须补上回流，
+    // 否则 tasks.payload.routing_receipt_id 会停在旧代收据上。
     return res.status(result.created ? 201 : 200).json(result);
   } catch (err) {
+    if (err.code?.startsWith('recovery_rebase_') || err.message === 'recovery_rebase_active_run') {
+      return res.status(err.status ?? 409).json({ error: err.message });
+    }
     if (
       err.message?.startsWith('invalid Kernel run')
       || err.message?.startsWith('explicit recovery predecessor')
@@ -489,7 +499,10 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
  * Canonical foreground handoff. The caller must carry both aggregate and task
  * identity; the response always returns the authoritative run_id.
  */
-router.post('/relay-runs', (req, res) => createRelayRun(req, res));
+router.post('/relay-runs', (req, res, next) => {
+  if (req.body?.recovery_rebase != null) return internalAuthOrLoopback(req, res, next);
+  return next();
+}, (req, res) => createRelayRun(req, res));
 
 /**
  * Legacy compatibility adapter. PR2 removes initiative-addressed mutation
@@ -497,7 +510,9 @@ router.post('/relay-runs', (req, res) => createRelayRun(req, res));
  */
 router.post(
   '/relay-runs/:initiative_id',
-  (req, res) => createRelayRun(req, res, req.params.initiative_id),
+  (req, res) => req.body?.recovery_rebase != null
+    ? res.status(400).json({ error: 'recovery_rebase_requires_canonical_endpoint' })
+    : createRelayRun(req, res, req.params.initiative_id),
 );
 
 // ---- verdict/cost best-effort 归一（P1 裁决结构化回写）----

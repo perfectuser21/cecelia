@@ -15,10 +15,21 @@ vi.mock('../triage-officer-rank.js', () => ({
 
 import { isInMorningCockpitWindow, runMorningCockpitBark } from '../morning-cockpit-bark.js';
 import { sendBark } from '../notifier.js';
+import { EXECUTOR_SKILL_MAP } from '../lib/task-type-registry.js';
 
 function makePool(rows = []) {
   return { query: vi.fn().mockResolvedValue({ rows }) };
 }
+
+// 与硬编码 EXECUTOR_SKILL_MAP 完全一致的 skill_registry 行（账本无漂移）：每个非空映射一行
+function consistentSkillRows() {
+  return Object.entries(EXECUTOR_SKILL_MAP)
+    .filter(([, cmd]) => cmd)
+    .map(([taskType, cmd]) => ({
+      name: `n-${taskType}`, status: 'active', task_types: [taskType], dispatch_command: cmd,
+    }));
+}
+const isSkillRegistrySql = (sql) => /FROM skill_registry/.test(String(sql));
 
 // 北京 08:30 = UTC 00:30
 const UTC_TRIGGER_H = 0;
@@ -152,5 +163,157 @@ describe('runMorningCockpitBark', () => {
     expect(result.triage_items).toBe(0);
     const body = sendBark.mock.calls[0][1];
     expect(body).not.toMatch(/排序官 Top/);
+  });
+
+  // ─── run 原语（链 bf5088a3 棒1）：晨报裸跑检测 AMBER ─────────────────────────
+  it('[裸跑检测] 有 dispatched 无 task_runs 的执行 → Bark 正文出现 🟡 AMBER 行与裸跑数', async () => {
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/FROM dispatch_events/.test(String(sql))) {
+          return { rows: [
+            { task_id: 'aaaaaaaa-1111', dispatched_at: '2026-09-25T00:00:00Z' },
+            { task_id: 'bbbbbbbb-2222', dispatched_at: '2026-09-25T00:01:00Z' },
+          ] };
+        }
+        return { rows: [] };
+      }),
+    };
+    await runMorningCockpitBark(pool);
+    const body = sendBark.mock.calls[0][1];
+    expect(body).toMatch(/🟡\s*AMBER/);
+    expect(body).toContain('2 个');
+    expect(body).toContain('aaaaaaaa');
+  });
+
+  it('[裸跑检测] 无裸跑不误报；检测查询失败也不拖垮晨报', async () => {
+    const clean = {
+      query: vi.fn(async (sql) => (isSkillRegistrySql(sql) ? { rows: consistentSkillRows() } : { rows: [] })),
+    };
+    await runMorningCockpitBark(clean);
+    expect(sendBark.mock.calls[0][1]).not.toMatch(/AMBER/);
+
+    sendBark.mockClear();
+    const broken = {
+      query: vi.fn(async (sql) => {
+        if (/FROM dispatch_events/.test(String(sql))) throw new Error('bare down');
+        if (isSkillRegistrySql(sql)) return { rows: consistentSkillRows() };
+        return { rows: [] };
+      }),
+    };
+    const result = await runMorningCockpitBark(broken);
+    expect(result).toMatchObject({ sent: true });
+    expect(sendBark.mock.calls[0][1]).not.toMatch(/AMBER/);
+  });
+  // ─── 能力账本（链 bf5088a3 棒7）：skill_registry 缺映射 → 晨报 AMBER ─────────
+  it('[skill 绑定] registry 缺映射 → Bark 正文出现 🟡 AMBER 行并点名缺失的 task_type', async () => {
+    const rows = consistentSkillRows().filter((r) => r.task_types[0] !== 'ci_patrol');
+    const pool = {
+      query: vi.fn(async (sql) => (isSkillRegistrySql(sql) ? { rows } : { rows: [] })),
+    };
+    await runMorningCockpitBark(pool);
+    const body = sendBark.mock.calls[0][1];
+    expect(body).toMatch(/🟡\s*AMBER skill 绑定漂移/);
+    expect(body).toContain('ci_patrol');
+  });
+
+  it('[skill 绑定] 账本与硬编码一致不误报；账本查询失败（如列未迁移）不出该行也不拖垮晨报', async () => {
+    const ok = { query: vi.fn(async (sql) => (isSkillRegistrySql(sql) ? { rows: consistentSkillRows() } : { rows: [] })) };
+    await runMorningCockpitBark(ok);
+    expect(sendBark.mock.calls[0][1]).not.toMatch(/skill 绑定/);
+
+    sendBark.mockClear();
+    const broken = {
+      query: vi.fn(async (sql) => {
+        if (isSkillRegistrySql(sql)) throw new Error('column "task_types" does not exist');
+        return { rows: [] };
+      }),
+    };
+    const result = await runMorningCockpitBark(broken);
+    expect(result).toMatchObject({ sent: true });
+    expect(sendBark.mock.calls[0][1]).not.toMatch(/skill 绑定/);
+  });
+
+  // ─── 业务断言红灯（链 bf5088a3 棒4 消费，决策 702949b6）：探针 24h FAIL 回执 → RED/AMBER ──
+  const isReceiptsSql = (sql) => /FROM journey_assertion_receipts/.test(String(sql));
+
+  it('[断言红灯] 24h 内探针 FAIL 回执含 error 级 → Bark 正文出现 🔴 RED 行并点名路径/步骤/探针×次数', async () => {
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (isReceiptsSql(sql)) {
+          expect(params).toEqual(['business_probe_runner', 24]);
+          return { rows: [
+            { journey: '客户智能获客路径', step: 'Lead 表进人', assertion_ref: 'probe:videos_readback', fail_count: 3, has_error: true },
+            { journey: '客户智能获客路径', step: 'Lead 表进人', assertion_ref: 'probe:line_key_not_null', fail_count: 1, has_error: false },
+          ] };
+        }
+        return { rows: [] };
+      }),
+    };
+    await runMorningCockpitBark(pool);
+    const body = sendBark.mock.calls[0][1];
+    expect(body).toContain('🔴 RED 断言红灯：客户智能获客路径/Lead 表进人 videos_readback×3, line_key_not_null×1（24h）');
+  });
+
+  it('[断言红灯] 只有 warn 级 → 🟡 AMBER 行；无 FAIL 不出行；回执查询失败不拖垮晨报', async () => {
+    const warnOnly = {
+      query: vi.fn(async (sql) => (isReceiptsSql(sql)
+        ? { rows: [{ journey: 'J', step: 'S', assertion_ref: 'probe:k', fail_count: 2, has_error: false }] }
+        : { rows: [] })),
+    };
+    await runMorningCockpitBark(warnOnly);
+    expect(sendBark.mock.calls[0][1]).toMatch(/🟡 AMBER 断言红灯：J\/S k×2/);
+
+    sendBark.mockClear();
+    await runMorningCockpitBark(makePool());
+    expect(sendBark.mock.calls[0][1]).not.toContain('断言红灯');
+
+    sendBark.mockClear();
+    const broken = {
+      query: vi.fn(async (sql) => {
+        if (isReceiptsSql(sql)) throw new Error('relation "journey_assertion_receipts" does not exist');
+        return { rows: [] };
+      }),
+    };
+    const result = await runMorningCockpitBark(broken);
+    expect(result).toMatchObject({ sent: true });
+    expect(sendBark.mock.calls[0][1]).not.toContain('断言红灯');
+  });
+
+  // 镜子库失联行（决策 24a37029）：读 promise-map-nightly 哨兵里 mirror_db_reachable 断言；有失联 → 🔴 RED 行，无则不出行
+  const isNightlySentinelSql = (sql, params) => /FROM working_memory/.test(String(sql)) && params?.[0] === 'promise-map-nightly';
+  const nightlyWith = (results) => ({ value_json: { last_run_at: '2026-09-27T02:00:00.000Z', results } });
+
+  it('[镜子库失联] 守夜探活报红 → Bark 正文出现 🔴 RED 行并点名库名×N', async () => {
+    const pool = {
+      query: vi.fn(async (sql, params) => (isNightlySentinelSql(sql, params)
+        ? { rows: [nightlyWith([{ key: 'mirror_db_reachable', ok: false, lost: [
+          { title: 'AI Journey', table: 'journeys', dbId: 'a', reason: 'in_trash' },
+          { title: 'AI Feature', table: 'journey_features', dbId: 'b', reason: 'in_trash' },
+        ] }])] }
+        : { rows: [] })),
+    };
+    await runMorningCockpitBark(pool);
+    expect(sendBark.mock.calls[0][1]).toContain('🔴 RED 镜子库失联：AI Journey、AI Feature ×2');
+  });
+
+  it('[镜子库失联] 探活全绿不出行；哨兵读取失败不拖垮晨报', async () => {
+    const green = {
+      query: vi.fn(async (sql, params) => (isNightlySentinelSql(sql, params)
+        ? { rows: [nightlyWith([{ key: 'mirror_db_reachable', ok: true, lost: [] }])] }
+        : { rows: [] })),
+    };
+    await runMorningCockpitBark(green);
+    expect(sendBark.mock.calls[0][1]).not.toContain('镜子库失联');
+
+    sendBark.mockClear();
+    const broken = {
+      query: vi.fn(async (sql, params) => {
+        if (isNightlySentinelSql(sql, params)) throw new Error('working_memory down');
+        return { rows: [] };
+      }),
+    };
+    const result = await runMorningCockpitBark(broken);
+    expect(result).toMatchObject({ sent: true });
+    expect(sendBark.mock.calls[0][1]).not.toContain('镜子库失联');
   });
 });

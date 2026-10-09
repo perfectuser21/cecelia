@@ -185,6 +185,32 @@ describe('dispatcher circuit-breaker — harness_initiative 豁免', () => {
     expect(result.reason).toBe('circuit_breaker_open');
   });
 
+  it('case 4: 熔断 OPEN 时队头是依赖 bridge 的任务 → 跳过它继续选下一候选，不许整轮放弃（09-29 队头阻塞：11 条秋米任务轮不到）', async () => {
+    mockIsAllowed.mockReturnValue(false); // 熔断 OPEN
+    const harnessQuery = makeHarnessQueryMock('task-harness-4');
+    mockQuery.mockImplementation((sql) => {
+      if (/UPDATE tasks SET claimed_by/.test(sql)) return Promise.resolve({ rows: [{ id: 'claimed' }] });
+      return harnessQuery(sql);
+    });
+    mockSelectNextDispatchableTask
+      .mockResolvedValueOnce({
+        id: 'task-data-head', task_type: 'data', project_id: null, title: '依赖 bridge 的 P1 队头',
+        created_at: '2026-09-29T00:58:00Z',
+      })
+      .mockResolvedValueOnce({
+        id: 'task-harness-4', task_type: 'harness_initiative', project_id: 'proj-4',
+        title: 'harness sprint 4', payload: routedCodingPayload('task-harness-4'),
+      });
+
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask([]);
+
+    expect(result.reason).not.toBe('circuit_breaker_open');
+    expect(result.dispatched).toBe(true);
+    // 第二次选候选时必须把被熔断弹回的队头放进跳过列表，否则会原地打转
+    expect(mockSelectNextDispatchableTask.mock.calls[1][1]).toContain('task-data-head');
+  });
+
   it('case 3: harness_initiative + 熔断 CLOSED → dispatched（正常流程不受影响）', async () => {
     mockIsAllowed.mockReturnValue(true); // 熔断 CLOSED
     mockQuery.mockImplementation(makeHarnessQueryMock('task-harness-2'));

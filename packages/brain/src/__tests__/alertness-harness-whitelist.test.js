@@ -13,9 +13,16 @@
  *   harness_contract_propose / harness_contract_review
  *   harness_generate / harness_evaluate / harness_fix
  *   harness_ci_watch / harness_deploy_watch / harness_report
+ *
+ * Task 4 改造（qiumi_task PR1 地基）：白名单不再手抄进 SQL 字符串，改注册表派生
+ * ESCALATION_EXEMPT_TASK_TYPES 作为运行时参数 $4 绑定（见 alertness/escalation.js
+ * buildPauseLowPriorityQuery）。静态文本断言只能证明 SQL 长得像
+ * `AND NOT (task_type = ANY($4::text[]))`，证明不了绑的是哪个数组——同
+ * device-job-foundation.test.js 闸2 的手法，改断言真实绑定的 params[3]。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ESCALATION_EXEMPT_TASK_TYPES } from '../lib/task-type-registry.js';
 
 const mockQuery = vi.hoisted(() => vi.fn());
 const mockRelease = vi.hoisted(() => vi.fn());
@@ -46,70 +53,65 @@ describe('pauseLowPriorityTasks — harness_* 全家桶白名单', () => {
     executeResponse = mod.executeResponse;
   });
 
-  it('UPDATE SQL 白名单含 harness_task', async () => {
+  // 第一次 query 是 UPDATE tasks ...（pauseLowPriorityTasks），
+  // 第二次及之后可能是 recordEscalation/updateEscalationActions
+  function findUpdateCall() {
+    return mockQuery.mock.calls.find(
+      ([sql]) => /UPDATE\s+tasks/i.test(sql) && /status\s*=\s*'paused'/i.test(sql)
+    );
+  }
+
+  it('UPDATE SQL 含运行时排除闸 AND NOT (task_type = ANY($4::text[]))，绑定值严格等于 ESCALATION_EXEMPT_TASK_TYPES', async () => {
     await executeResponse({
       actions: [{ type: 'pause_low_priority', params: { priorities: ['P2', 'P3'] } }],
     });
 
-    // 第一次 query 是 UPDATE tasks ...（pauseLowPriorityTasks），
-    // 第二次及之后可能是 recordEscalation/updateEscalationActions
-    const updateCall = mockQuery.mock.calls.find(
-      ([sql]) => /UPDATE\s+tasks/i.test(sql) && /status\s*=\s*'paused'/i.test(sql)
-    );
+    const updateCall = findUpdateCall();
     expect(updateCall).toBeDefined();
-    const [sql] = updateCall;
-    expect(sql).toMatch(/'harness_task'/);
+    const [sql, params] = updateCall;
+    expect(sql).toMatch(/AND NOT \(task_type = ANY\(\$4::text\[\]\)\)/);
+    expect(params[3]).toEqual(ESCALATION_EXEMPT_TASK_TYPES);
   });
 
-  it('UPDATE SQL 白名单含 harness_initiative', async () => {
+  it('白名单含 harness_task / harness_initiative（真机事故本体）', async () => {
     await executeResponse({
       actions: [{ type: 'pause_low_priority', params: { priorities: ['P2', 'P3'] } }],
     });
-    const updateCall = mockQuery.mock.calls.find(
-      ([sql]) => /UPDATE\s+tasks/i.test(sql) && /status\s*=\s*'paused'/i.test(sql)
-    );
-    expect(updateCall[0]).toMatch(/'harness_initiative'/);
+    const [, params] = findUpdateCall();
+    expect(params[3]).toContain('harness_task');
+    expect(params[3]).toContain('harness_initiative');
   });
 
-  it('UPDATE SQL 白名单含 harness_planner / contract / generate / evaluate', async () => {
+  it('白名单含 harness_planner / contract / generate / evaluate / fix', async () => {
     await executeResponse({
       actions: [{ type: 'pause_low_priority', params: { priorities: ['P2', 'P3'] } }],
     });
-    const updateCall = mockQuery.mock.calls.find(
-      ([sql]) => /UPDATE\s+tasks/i.test(sql) && /status\s*=\s*'paused'/i.test(sql)
-    );
-    const sql = updateCall[0];
-    expect(sql).toMatch(/'harness_planner'/);
-    expect(sql).toMatch(/'harness_contract_propose'/);
-    expect(sql).toMatch(/'harness_contract_review'/);
-    expect(sql).toMatch(/'harness_generate'/);
-    expect(sql).toMatch(/'harness_evaluate'/);
-    expect(sql).toMatch(/'harness_fix'/);
+    const [, params] = findUpdateCall();
+    expect(params[3]).toContain('harness_planner');
+    expect(params[3]).toContain('harness_contract_propose');
+    expect(params[3]).toContain('harness_contract_review');
+    expect(params[3]).toContain('harness_generate');
+    expect(params[3]).toContain('harness_evaluate');
+    expect(params[3]).toContain('harness_fix');
   });
 
-  it('UPDATE SQL 白名单含 harness_ci_watch / deploy_watch / report', async () => {
+  it('白名单含 harness_ci_watch / deploy_watch / report', async () => {
     await executeResponse({
       actions: [{ type: 'pause_low_priority', params: { priorities: ['P2', 'P3'] } }],
     });
-    const updateCall = mockQuery.mock.calls.find(
-      ([sql]) => /UPDATE\s+tasks/i.test(sql) && /status\s*=\s*'paused'/i.test(sql)
-    );
-    const sql = updateCall[0];
-    expect(sql).toMatch(/'harness_ci_watch'/);
-    expect(sql).toMatch(/'harness_deploy_watch'/);
-    expect(sql).toMatch(/'harness_report'/);
+    const [, params] = findUpdateCall();
+    expect(params[3]).toContain('harness_ci_watch');
+    expect(params[3]).toContain('harness_deploy_watch');
+    expect(params[3]).toContain('harness_report');
   });
 
-  it('UPDATE SQL 仍保留既有白名单（sprint_* / content-* 不被本次改动破坏）', async () => {
+  it('仍保留既有白名单（sprint_* / content-* 不被本次改动破坏）', async () => {
     await executeResponse({
       actions: [{ type: 'pause_low_priority', params: { priorities: ['P2', 'P3'] } }],
     });
-    const updateCall = mockQuery.mock.calls.find(
-      ([sql]) => /UPDATE\s+tasks/i.test(sql) && /status\s*=\s*'paused'/i.test(sql)
-    );
-    const sql = updateCall[0];
-    expect(sql).toMatch(/'sprint_planner'/);
-    expect(sql).toMatch(/'content-pipeline'/);
-    expect(sql).toMatch(/'arch_review'/);
+    const [, params] = findUpdateCall();
+    expect(params[3]).toContain('sprint_planner');
+    expect(params[3]).toContain('content-pipeline');
+    expect(params[3]).toContain('arch_review');
   });
 });

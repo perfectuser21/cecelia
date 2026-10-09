@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import Ajv2020 from 'ajv/dist/2020.js';
 import { z } from 'zod';
+import { brainBindingSchema, brainBindingJsonSchema } from './map-brain-bindings.js';
 
 const STABLE_KEY_PATTERN = '^[A-Za-z][A-Za-z0-9_-]*$';
 const SCOPE_KEY_PATTERN = '^[a-z][a-z0-9-]*$';
@@ -11,6 +12,7 @@ const aliases = z.array(stableKey);
 const ownedPaths = z.array(nonEmptyText);
 
 const valueStreamSchema = z.object({
+  brain_binding: brainBindingSchema('value_stream').optional(),
   key: stableKey,
   name: nonEmptyText,
   perceiver: nonEmptyText,
@@ -19,6 +21,7 @@ const valueStreamSchema = z.object({
 }).strict();
 
 const capabilitySchema = z.object({
+  brain_binding: brainBindingSchema('capability').optional(),
   key: stableKey,
   name: nonEmptyText,
   value_stream_key: stableKey,
@@ -99,6 +102,7 @@ export const MAP_MANIFEST_JSON_SCHEMA = Object.freeze({
       type: 'object', additionalProperties: false,
       required: ['key', 'name', 'perceiver', 'order'],
       properties: {
+        brain_binding: brainBindingJsonSchema('value_stream'),
         key: stableKeyJsonSchema, name: nonEmptyJsonSchema, perceiver: nonEmptyJsonSchema,
         order: { type: 'integer', minimum: 1 }, aliases: aliasesJsonSchema,
       },
@@ -107,6 +111,7 @@ export const MAP_MANIFEST_JSON_SCHEMA = Object.freeze({
       type: 'object', additionalProperties: false,
       required: ['key', 'name', 'value_stream_key', 'order'],
       properties: {
+        brain_binding: brainBindingJsonSchema('capability'),
         key: stableKeyJsonSchema, name: nonEmptyJsonSchema, value_stream_key: stableKeyJsonSchema,
         order: { type: 'integer', minimum: 1 }, aliases: aliasesJsonSchema,
         path_prefixes: ownedPathsJsonSchema,

@@ -137,6 +137,22 @@ export async function assessKernelLiveness({
     }
   }
 
+  // ①.5 租约（判定点 0eef6860 + 决策 a9773a84）：跨主机判死的唯一正面证据通道。
+  // 契约：orchestrator 心跳写失败即 throw controller_lease_renewal_lost 自杀
+  // （packages/brain/src/orchestrator/heartbeat.js:40）→ handleKernelProcessFatal
+  // （packages/brain/src/orchestrator/run.js:500）→ process.exit(1)
+  // （packages/brain/src/orchestrator/run.js:561）——所以「租约过期」不是"我不知道"，
+  // 是"它要么死了要么已自杀"。这不违反 fail-open 铁律：lease 是 orchestrator 自己
+  // 续的正面存活证明，过期即失活，不是查询缺失/探测失败这类"不知道"的情形。
+  // 心跳新鲜时 ① 已经返回 alive，走到这里说明心跳已 stale。
+  const leaseMs = toEpochMs(row.controller_lease_expires_at);
+  if (leaseMs != null && now() > leaseMs) {
+    return {
+      verdict: 'dead', reason: 'controller_lease_expired',
+      source: 'lease', runId: row.id,
+    };
+  }
+
   // ② pid（必须 host 一致——跨主机裸 pid 无意义，见 orchestrator/heartbeat.js 注释）
   const pid = Number(row.orchestrator_pid);
   if (!Number.isInteger(pid) || pid <= 0) {

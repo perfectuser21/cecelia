@@ -97,6 +97,15 @@ Brain (port 5221)
 | Circuit Breaker 持久化 | `src/circuit-breaker.js` + migration 261 | 重启后自动从 DB 恢复熔断状态，消除每次重启的冷启动盲区 |
 | brain_guidance 表 | `src/guidance.js` + migration 262 | 两层架构握手基础设施，getGuidance/setGuidance/clearExpired API |
 
+**验证层·活动后置条件 + 价值流建模第一批（2026-09-30，PR #5705，决策 f425e3fd/3e867cad）**：
+
+| 能力 | 实现 | 说明 |
+|------|------|------|
+| Step 进 Brain | migration 492 `steps` + `packages/brain/scripts/sync-steps-from-workspace.mjs` | 真身=仓库 step-dod.json，Brain 为投影；按 activity_key+capability_key 挂最新 backbone 活动，幂等；**只能在生产容器内跑，镜像未拷 scripts/（任务 03cbb852）** |
+| 使能件注册表 | migration 492 `enablers` + `enabler_calls` | 挂片单份定义、多处引用；种子 `return_to_results`（归位）挂 keyword_acquisition collection |
+| 探针规范支持 metric 型 | `src/lib/step-probe-spec.js` PROBE_TYPES += metric（{type,ref}，无 target） | 执行机 verify-step 判定并回调 observed，Brain 判定端与 type 无关；`scripts/sync-step-probes.mjs` 客户端解析 |
+| 智能获客 8 格子全绑断言 | step_probes 18 条（8 metric）→ journey_step_links.assertion_ref | 此前 6 格灰（零探针）；采集格挂 `coll_rescan_rate`（归位 %C&A ≤0.3，fail_stage 只判红不拦落池） |
+
 **Brain 版本同步（4 处必须同时更新）**：
 
 | 文件 | 值 |

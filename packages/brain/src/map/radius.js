@@ -11,6 +11,8 @@ import {
 import { classifyJourneyCellAssertion } from '../lib/journey-cell-assertion.js';
 import { assertionDigest } from '../lib/journey-assertion-receipt.js';
 import { canonicalAssertionCommandText } from '../lib/gp-assertion-command.js';
+import { PROBE_REF_PREFIX } from '../lib/step-probe-spec.js';
+import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
 
 const GIT_SHA = /^[0-9a-f]{40}$/i;
 const MAX_CHANGED_FILES = 1000;
@@ -18,7 +20,11 @@ const MAX_PATH_LENGTH = 1024;
 // 毕业机械步（controller SKILL 2.7.0 graduate-sprint-tests.mjs）的目标池：设计内
 // 全局目录，无 per-capability 锚，unclaimed 判定豁免（前缀精确到带斜杠，防
 // tests/regression-fake/ 类相似前缀蹭豁免）。
-const GRADUATION_POOL_PREFIXES = Object.freeze(['tests/regression/', 'scripts/smoke/e2e/']);
+// changes/（2026-09-19，run 0f36a253 hop 78-80 实证）：版本条目碎片目录（仓规：PR 不碰版本
+// 五件套，合并后 auto-version 消费碎片），同属设计内全局目录、由 check-brain-version-bump +
+// auto-version 把守；不豁免会把 generator-fix 按规矩写的碎片判成越权 → impact_anchor_missing
+// 确定性杀 run，kernel 的 CI 自修永远推不出去。
+const GRADUATION_POOL_PREFIXES = Object.freeze(['tests/regression/', 'scripts/smoke/e2e/', 'changes/']);
 const MAX_TOTAL_PATH_BYTES = 128 * 1024;
 const MAX_CAPABILITY_IDS = 256;
 
@@ -119,6 +125,8 @@ function requiredAssertions(rows, capabilityIds) {
   for (const row of rows) {
     if (!capabilityIds.has(row.capability_code)) continue;
     const assertionId = String(row.assertion_ref ?? '').trim();
+    // 探针格子（probe:<key>，决策 702949b6）由 business_probe_runner 跑，不进 shell 必跑清单，也不算 unsafe
+    if (assertionId.startsWith(PROBE_REF_PREFIX)) continue;
     const classification = classifyJourneyCellAssertion({ assertion_ref: assertionId });
     if (!classification.runnable) continue;
     let command;
@@ -303,7 +311,7 @@ export async function resolveImpactRadius(input = {}, {
       `SELECT jf.id, jf.name, jf.unit_test_path, jf.workflow_ref, jf.guard_ref,
               j.capability_code, j.name AS capability_name
          FROM journey_features AS jf
-         JOIN journeys AS j ON j.id = jf.journey_id
+         JOIN capabilities AS j ON j.id = jf.journey_id
         WHERE jf.status <> 'deprecated'
           AND j.capability_code IS NOT NULL
           AND j.parent_journey_id IS NOT NULL
@@ -380,8 +388,8 @@ export async function resolveImpactRadius(input = {}, {
     const { rows } = await db.query(
       `SELECT link.id, link.assertion_ref, link.assertion_revision,
               journey.capability_code
-         FROM journey_step_links AS link
-         JOIN journeys AS journey ON journey.id = link.journey_id
+         FROM activity_cells AS link
+         JOIN ${TREE_NODES_SQL} AS journey ON journey.id = link.journey_id
         WHERE journey.capability_code = ANY($1::text[])
           AND link.assertion_ref IS NOT NULL
         ORDER BY journey.capability_code, link.id`,

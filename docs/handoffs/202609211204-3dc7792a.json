@@ -1,0 +1,44 @@
+{
+ "schema_version": 1,
+ "task_id": "3dc7792a-c123-4537-b978-483328d598e8",
+ "initiative_id": null,
+ "journey_id": null,
+ "title": "任务状态机隐式死胡同——漏枚举的状态伪装成终态，2483 条任务写不回账本",
+ "verdict": "PASS",
+ "done": [
+  "PATCH /tasks/:id 的转移表内联在路由且只枚举 8 个状态，生产实际 15 个；漏枚举的取 undefined → allowed:[] → 与\"设计上的终态\"完全同形，无从分辨",
+  "生产实测在押 2483 条：cancelled(双L) 1485 / archived 673 / blocked 287 / completed_no_pr 38 / quota_exhausted",
+  "表抽到 lib/task-status-transitions.js，15 个状态逐个显式写出（终态也写成 []）",
+  "等待态 8 个一律给出路且都能直接回 completed",
+  "resolveAllowedTransitions 区分 known:true（终态）/ known:false（没声明），后者返回新码 UNKNOWN_TASK_STATUS",
+  "机械守卫正则扫 brain src 全部 `UPDATE tasks ... SET status='X'` 字面量（带 >3 条下限防空集假绿），当场抓出我原本不知道的两个状态 dep_failed / pending_postdeploy",
+  "变异测试 6/6 全部真断言失败；第 4 项首轮是崩溃红（[...undefined] 抛 TypeError），已改 ?? [] 后重验为断言红——崩溃红不算数"
+ ],
+ "not_done": [
+  "287 条 blocked 全部 blocked_until IS NULL，而自愈回路条件是 blocked_until <= NOW()——该路径从未也不可能命中。本 PR 只恢复手工路径；各调用方（dispatch_fail_autoblock 144 / pre_flight_rejected 81）是否该自带退避，是策略问题未动",
+  "存量 2483 条卡死任务未做批量回收，只是恢复了通路",
+  "issue a4991491 的第三个缺陷（no_evaluator_gate 对本就无 evaluator 的路径 fail-closed）未处理"
+ ],
+ "next_steps": [
+  "待 1.309.6 上产后，把任务 a70d7743 从 blocked 回写 completed，实证通路已通",
+  "决定 dispatch_fail_autoblock / pre_flight_rejected 是否自带退避时间（决定后 287 条能自愈）",
+  "处理 a4991491 剩下的 no_evaluator_gate 缺陷"
+ ],
+ "data_sources": [
+  "packages/brain/src/lib/task-status-transitions.js（状态机 SSOT）",
+  "packages/brain/src/lib/__tests__/task-status-transitions.test.js（机械守卫）",
+  "packages/brain/src/routes/tasks.js（PATCH 校验接线处）",
+  "tasks 表的 status / blocked_at / blocked_until / blocked_reason 列",
+  "issue a4991491"
+ ],
+ "decision_refs": [],
+ "artifacts": {
+  "pr_urls": [
+   "https://github.com/perfectuser21/cecelia/pull/5459"
+  ],
+  "sprint_dir": null,
+  "branch": "cp-0921193800-task-status-deadend",
+  "docs": []
+ },
+ "created_at": "2026-09-21T12:04:47.000Z"
+}

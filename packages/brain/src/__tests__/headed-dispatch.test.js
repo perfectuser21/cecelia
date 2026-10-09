@@ -1,3 +1,7 @@
+// 本文件验证已获授权后的协议；真实默认拒绝见 execution-directory/legacy-relay.test.js。
+vi.mock('../execution-directory/legacy-relay.js',()=>({withLegacyRelayExecution:async(_identity,operation)=>operation()}));
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * TDD Red — codex headed tmux dispatch
  * Sprint: sprints/07071654-codex-headed-dispatch

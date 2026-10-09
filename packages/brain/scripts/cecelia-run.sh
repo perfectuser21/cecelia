@@ -345,16 +345,19 @@ SQLEOF
   local curl_exit=1
 
   while [[ $retry -lt $max_retries ]]; do
+    # 回执入口验 Bearer（棒1）：token 只从 env CECELIA_INTERNAL_TOKEN 读，未设则不带头（本机回环放行）
     if [[ -n "$WEBHOOK_TOKEN" ]]; then
       curl -sS "$WEBHOOK_URL" -X POST \
         -H "Content-Type: application/json" \
         -H "X-Cecilia-Token: $WEBHOOK_TOKEN" \
+        ${CECELIA_INTERNAL_TOKEN:+-H "Authorization: Bearer ${CECELIA_INTERNAL_TOKEN}"} \
         -d "$payload" \
         --max-time 10 >/dev/null 2>&1
       curl_exit=$?
     else
       curl -sS "$WEBHOOK_URL" -X POST \
         -H "Content-Type: application/json" \
+        ${CECELIA_INTERNAL_TOKEN:+-H "Authorization: Bearer ${CECELIA_INTERNAL_TOKEN}"} \
         -d "$payload" \
         --max-time 10 >/dev/null 2>&1
       curl_exit=$?

@@ -74,6 +74,7 @@ vi.mock('../fleet-resource-cache.js', () => ({
   getFleetStatus: vi.fn(() => []),
   getRemoteCapacity: vi.fn(() => null),
   isServerOnline: vi.fn(() => false),
+  getTotalEffectiveSlots: vi.fn(() => 7),
 }));
 
 import { execSync } from 'child_process';
@@ -1046,7 +1047,7 @@ describe('calculateSlotBudget 三池模型完整性', () => {
     expect(poolSum).toBeLessThanOrEqual(budget.total);
   });
 
-  it('codex 字段包含 running/max/available', async () => {
+  it('codex 字段包含 running/max/available，未知机器不提供容量', async () => {
     // New DB order: cecelia → autoDispatch → queueDepth → codex
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
@@ -1055,9 +1056,9 @@ describe('calculateSlotBudget 三池模型完整性', () => {
       .mockResolvedValueOnce({ rows: [{ count: '2' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.codex).toBeDefined();
-    expect(budget.codex.max).toBe(3);
+    expect(budget.codex.max).toBe(0);
     expect(budget.codex.running).toBe(2);
-    expect(budget.codex.available).toBe(true); // 2 < 3
+    expect(budget.codex.available).toBe(false); // 未知容量不能派单
   });
 
   it('codex.available=false when running >= MAX_CODEX_CONCURRENT', async () => {
@@ -1252,8 +1253,16 @@ describe('Backpressure', () => {
 // ============================================================
 describe('shouldBypassBackpressure: P0 harness whitelist', () => {
   it('exports BACKPRESSURE_BYPASS_TASK_TYPES with 10 types (8 harness + dev + content_publish)', async () => {
+    // Task 3（qiumi-task-router PR1）之后名单来自 lib/task-type-registry.js 的
+    // tagged() 派生，顺序follows注册表声明顺序而非这份手写字面量的原顺序——
+    // 消费方只用 .includes()（见 slot-allocator.js:93 shouldBypassBackpressure），
+    // 顺序不是行为的一部分，故改为 Set 比较（集合相等）。
     const { BACKPRESSURE_BYPASS_TASK_TYPES } = await import('../slot-allocator.js');
-    expect(BACKPRESSURE_BYPASS_TASK_TYPES).toEqual([
+    // 合并前 Minor：Set 相等只比对成员，不比对个数——数组里混进一个重复项
+    // （如 'dev' 出现两次顶替掉别的类型）不会被 Set toEqual 抓到，补一条长度
+    // 断言钉住"确实是 10 个不同类型"，不只是"这堆值的去重集合长这样"。
+    expect(BACKPRESSURE_BYPASS_TASK_TYPES).toHaveLength(10);
+    expect(new Set(BACKPRESSURE_BYPASS_TASK_TYPES)).toEqual(new Set([
       'harness_initiative',
       'harness_task',
       'harness_planner',
@@ -1264,7 +1273,7 @@ describe('shouldBypassBackpressure: P0 harness whitelist', () => {
       'harness_deploy_watch',
       'dev',
       'content_publish',
-    ]);
+    ]));
   });
 
   it('P0 harness_task → true', async () => {
@@ -1392,5 +1401,53 @@ describe('dispatch-helpers: bypass marker on candidates', () => {
     );
     expect(src).toContain('shouldBypassBackpressure');
     expect(src).toContain('_bypass_backpressure');
+  });
+});
+
+// ── 2026-09-13 调度器模式容量来源分流（handoff 202609131958 next_steps#1）──
+// 闸 CECELIA_LOCAL_EXECUTION_ENABLED=false（us-vps 纯调度器）时本机不执行任务，
+// 派发容量必须取 fleet worker 聚合（getTotalEffectiveSlots），而不是被 openclaw
+// 邻居污染的本机 checkServerResources（其 effectiveSlots 恒 0 → tick 永不派发）。
+// 闸缺省/true（MMV 执行机模式）保持本机来源，行为零变化。
+describe('calculateSlotBudget — 调度器模式容量来源分流', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetSlotBuffer();
+    execSync.mockReturnValue('');
+    pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('闸=false：本机 effectiveSlots=0 也照常用 fleet 聚合派发', async () => {
+    vi.stubEnv('CECELIA_LOCAL_EXECUTION_ENABLED', 'false');
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 0, // 调度器本机被邻居压成 0——不得影响派发
+      metrics: { max_pressure: 0.95 },
+    });
+    const budget = await calculateSlotBudget();
+    expect(budget.resources.effectiveSlots).toBe(7); // fleet 聚合 mock 值
+    expect(budget.taskPool.available).toBeGreaterThan(0);
+    expect(budget.dispatchAllowed).toBe(true);
+  });
+
+  it('闸缺省：仍用本机 checkServerResources（执行机模式零变化）', async () => {
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 12,
+      metrics: { max_pressure: 0.1 },
+    });
+    const budget = await calculateSlotBudget();
+    expect(budget.resources.effectiveSlots).toBe(12);
+  });
+
+  it('闸=false 但 fleet 聚合也为 0（全 worker 离线）→ 不派发（fail-closed）', async () => {
+    vi.stubEnv('CECELIA_LOCAL_EXECUTION_ENABLED', 'false');
+    const { getTotalEffectiveSlots } = await import('../fleet-resource-cache.js');
+    getTotalEffectiveSlots.mockReturnValue(0);
+    checkServerResources.mockReturnValue({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } });
+    const budget = await calculateSlotBudget();
+    expect(budget.dispatchAllowed).toBe(false);
   });
 });

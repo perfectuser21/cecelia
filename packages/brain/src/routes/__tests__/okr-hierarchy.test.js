@@ -26,7 +26,7 @@ describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
     vi.resetModules();
     routes = (await import('../okr-hierarchy.js')).default;
   });
-  beforeEach(() => mockPool.query.mockReset());
+  beforeEach(() => { mockPool.query.mockReset(); });
 
   it('正常 join：abilities 带 thickness + advancement 聚合', async () => {
     mockPool.query
@@ -103,5 +103,63 @@ describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
     await handler(req, res);
     expect(res._status).toBe(404);
     expect(res._data.success).toBe(false);
+  });
+});
+
+// mountCrud(/projects) 曾计划改指向 projects 表（titleField=name），brain-integration 真库实测
+// 发现 okr_scopes/okr_initiatives 仍 FK 指向 okr_projects，改指向会导致 POST /scopes 全部
+// 23503；已改回 okr_projects（不变），故不再需要 name 列相关用例——见 okr-hierarchy.js 顶部注释。
+
+// ─── GET /current：KR 下附 projects 数组（棒5，决策 ee4842a6/3feeae3e） ──────────────
+describe('GET /current（KR 下附 projects: [{id,name,status,progress,task_total,task_done}]）', () => {
+  beforeEach(() => { mockPool.query.mockReset(); });
+
+  it('有 project 的 KR 附带 projects 数组，无 project 的 KR 为空数组', async () => {
+    const objRow = { id: 'obj-1', title: 'Objective 1', status: 'active', description: null };
+    const krWithProj = { id: 'kr-1', title: 'KR 1', current_value: 0, target_value: 100, unit: '%', status: 'active', progress_pct: 50 };
+    const krNoProj = { id: 'kr-2', title: 'KR 2', current_value: 0, target_value: 100, unit: '%', status: 'active', progress_pct: 0 };
+
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [objRow] }) // objectives
+      .mockResolvedValueOnce({ rows: [krWithProj, krNoProj] }) // key_results for obj-1
+      .mockResolvedValueOnce({ // getProjectsForKrBatch: projects
+        rows: [
+          { id: 'p1', name: 'Project 1', status: 'active', kr_id: 'kr-1' },
+          { id: 'p2', name: 'Project 2', status: 'completed', kr_id: 'kr-1' },
+        ],
+      })
+      .mockResolvedValueOnce({ // getProjectsForKrBatch: task stats
+        rows: [{ project_id: 'p1', total: 4, done: 3 }],
+      });
+
+    const handler = getHandler('get', '/current');
+    const { req, res } = mockReqRes();
+    await handler(req, res);
+
+    expect(res._status).toBe(200);
+    expect(res._data.success).toBe(true);
+    const [obj] = res._data.objectives;
+    const krWithProjResult = obj.key_results.find((kr) => kr.id === 'kr-1');
+    const krNoProjResult = obj.key_results.find((kr) => kr.id === 'kr-2');
+
+    expect(krWithProjResult.projects).toHaveLength(2);
+    const p1 = krWithProjResult.projects.find((p) => p.id === 'p1');
+    expect(p1).toMatchObject({ id: 'p1', name: 'Project 1', status: 'active', task_total: 4, task_done: 3, progress: 75 });
+    const p2 = krWithProjResult.projects.find((p) => p.id === 'p2');
+    expect(p2).toMatchObject({ id: 'p2', status: 'completed', task_total: 0, task_done: 0, progress: 100 });
+
+    expect(krNoProjResult.projects).toEqual([]);
+  });
+
+  it('没有任何活跃 Objective 时不查 projects，返回空 objectives 数组', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // objectives
+
+    const handler = getHandler('get', '/current');
+    const { req, res } = mockReqRes();
+    await handler(req, res);
+
+    expect(res._status).toBe(200);
+    expect(res._data.objectives).toEqual([]);
+    expect(mockPool.query).toHaveBeenCalledTimes(1);
   });
 });

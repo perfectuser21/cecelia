@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * kernel-deadline.test.js
  *

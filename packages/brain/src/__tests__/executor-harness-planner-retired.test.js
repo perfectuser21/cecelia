@@ -6,6 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
+import { RETIRED_HARNESS_TYPES_DISPATCH } from '../lib/task-type-registry.js';
 
 describe('executor.js harness_planner retired', () => {
   const SRC = fs.readFileSync(new URL('../executor.js', import.meta.url), 'utf8');
@@ -21,8 +22,12 @@ describe('executor.js harness_planner retired', () => {
   });
 
   it('_RETIRED_HARNESS_TYPES 包含 harness_planner', () => {
-    const m = SRC.match(/_RETIRED_HARNESS_TYPES\s*=\s*new Set\(\[([\s\S]+?)\]/);
-    expect(m, '_RETIRED_HARNESS_TYPES Set 存在').not.toBeNull();
-    expect(m[1]).toMatch(/['"]harness_planner['"]/);
+    // Task 3（qiumi-task-router PR1）之后 _RETIRED_HARNESS_TYPES 改从
+    // lib/task-type-registry.js 的 RETIRED_HARNESS_TYPES_DISPATCH 派生集合构造，
+    // executor.js 里不再手抄字面量数组，断言改为对真实运行值 + 接线来源双重校验。
+    expect(RETIRED_HARNESS_TYPES_DISPATCH, 'RETIRED_HARNESS_TYPES_DISPATCH 包含 harness_planner').toContain('harness_planner');
+    expect(SRC, 'executor.js 没有接线到注册表的 RETIRED_HARNESS_TYPES_DISPATCH').toMatch(
+      /_RETIRED_HARNESS_TYPES\s*=\s*new Set\(RETIRED_HARNESS_TYPES_DISPATCH\)/,
+    );
   });
 });

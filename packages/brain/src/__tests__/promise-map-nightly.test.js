@@ -24,6 +24,7 @@ vi.mock('../notifier.js', () => ({ sendBark: (...a) => mockSendBark(...a) }));
 
 // ── mock fs (A4 gate heartbeat) ───────────────────────────
 import { existsSync } from 'node:fs';
+import { PHOTO_STALE_THRESHOLD_HOURS } from '../lib/registry-freshness.js';
 vi.mock('node:fs', () => ({ existsSync: vi.fn(() => true) }));
 
 import {
@@ -153,6 +154,11 @@ describe('[S4-N7] 全部通过 → sentinel 写入，返回 failures=0', () => {
       .mockResolvedValueOnce({ rows: [] })
       // A3b: no steps without promise
       .mockResolvedValueOnce({ rows: [] })
+      // A5 + A5b：事实快照全部新鲜。年龄必须同时满足 24h 口径和派发闸口径
+      // （0921 起 A5b 也读这一行，写死 1.2h 会让"全绿"场景其实不全绿）。
+      .mockResolvedValueOnce({
+        rows: [{ repo: 'cecelia', kind: 'api', age_hours: String(PHOTO_STALE_THRESHOLD_HOURS / 2) }],
+      })
       // sentinel write
       .mockResolvedValueOnce({ rows: [] });
 
@@ -242,7 +248,7 @@ describe('[S4-N10] A3 promise 检查按域收口', () => {
       return { rows: [] };
     }));
     await buildNightlyAssertions(pool);
-    expect(a3bSql).toContain('JOIN journeys');
+    expect(a3bSql).toContain('JOIN capabilities');
     expect(a3bSql).toMatch(/home IS NOT NULL|domain IS NOT NULL/);
   });
 });
@@ -264,5 +270,122 @@ describe('[S4-N11] A2 旁路检测与 S2 闸同口径', () => {
     expect(a2Sql).toContain('task_type');
     expect(Array.isArray(a2Params)).toBe(true);
     expect(a2Params.length).toBeGreaterThanOrEqual(3); // cutoff + exempt types + exempt actions
+  });
+});
+
+// ── [S4-N12/N13] A5 事实快照自身年龄（守夜人盲区补丁）──────────────
+// 2026-09-16 实证：扫描链因 cron 指向已迁移的库而全挂 6 天，
+// map-projection-refresh 只比「headers vs 投影」，两边同旧即判定"不漂移"，
+// 正确地跳过 rebuild——它防的是 headers 新了投影旧了，防不了 headers 自己停更。
+// 后果：13 个任务积压 + cecelia-run 熔断 OPEN，烂 6 天无人知。
+describe('[S4-N12] A5 事实快照新鲜 → pass', () => {
+  it('A5 passes when newest snapshot is within 24h', async () => {
+    const pool = makePool(vi.fn(async (sql) => {
+      if (typeof sql === 'string' && sql.includes('fact_snapshot_headers')) {
+        return { rows: [{ repo: 'cecelia', kind: 'api', age_hours: '2.5' }] };
+      }
+      if (typeof sql === 'string' && sql.includes('COUNT(*)')) return { rows: [{ count: '0' }] };
+      return { rows: [] };
+    }));
+    const assertions = await buildNightlyAssertions(pool);
+    const a5 = assertions.find(a => a.key === 'fact_snapshot_freshness');
+    expect(a5).toBeTruthy();
+    expect(a5.ok).toBe(true);
+  });
+});
+
+describe('[S4-N13] A5 扫描链停更 >24h → fail', () => {
+  it('A5 fails and names the stalled repo when scanner stopped', async () => {
+    const pool = makePool(vi.fn(async (sql) => {
+      if (typeof sql === 'string' && sql.includes('fact_snapshot_headers')) {
+        return { rows: [{ repo: 'cecelia', kind: 'api', age_hours: '150.2' }] };
+      }
+      if (typeof sql === 'string' && sql.includes('COUNT(*)')) return { rows: [{ count: '0' }] };
+      return { rows: [] };
+    }));
+    const assertions = await buildNightlyAssertions(pool);
+    const a5 = assertions.find(a => a.key === 'fact_snapshot_freshness');
+    expect(a5.ok).toBe(false);
+    expect(a5.detail).toContain('cecelia');
+    expect(a5.detail).toMatch(/150|停更|小时/);
+  });
+});
+
+// ── A5b 派发闸口径的快照年龄（0921 盲区补丁）─────────────────────
+// A5 用 24h 口径，派发闸用 PHOTO_STALE_THRESHOLD_HOURS（30min）。两者差 48 倍，
+// 于是「按派发口径已陈旧、coding 任务全挂」时 A5 照样报绿——map_stale 烂 11 天
+// 无人发现正是这么来的（issue e180b05c 误判成扫描链全挂）。本断言单独押派发闸。
+describe('A5b 派发闸口径快照年龄', () => {
+  const poolWith = (ageHours) => makePool(vi.fn(async (sql) => {
+    if (typeof sql === 'string' && sql.includes('fact_snapshot_headers')) {
+      return { rows: [{ repo: 'cecelia', kind: 'api', age_hours: String(ageHours) }] };
+    }
+    if (typeof sql === 'string' && sql.includes('COUNT(*)')) return { rows: [{ count: '0' }] };
+    return { rows: [] };
+  }));
+
+  it('快照在派发闸预算内 → pass', async () => {
+    const a = (await buildNightlyAssertions(poolWith(PHOTO_STALE_THRESHOLD_HOURS / 2)))
+      .find(x => x.key === 'fact_snapshot_dispatch_gate');
+    expect(a).toBeTruthy();
+    expect(a.ok).toBe(true);
+  });
+
+  it('A5 仍绿（<24h）但已超派发闸预算 → A5b 必须红，且点名 repo/kind 与分钟数', async () => {
+    // 2.5h：A5 的 24h 口径判绿，派发闸的 30min 口径判死——正是 0921 那个盲区。
+    const assertions = await buildNightlyAssertions(poolWith(2.5));
+    const a5 = assertions.find(x => x.key === 'fact_snapshot_freshness');
+    const a5b = assertions.find(x => x.key === 'fact_snapshot_dispatch_gate');
+    expect(a5.ok, 'A5 在 2.5h 时本就该绿，否则这条测的就不是盲区了').toBe(true);
+    expect(a5b.ok, '超派发闸预算必须报红，否则盲区没补上').toBe(false);
+    expect(a5b.detail).toContain('cecelia');
+    expect(a5b.detail).toContain('map_stale');
+    expect(a5b.detail).toMatch(/150min/);
+  });
+
+  it('headers 空表 → A5b 红并说明派发闸必挂', async () => {
+    const pool = makePool(vi.fn(async (sql) => {
+      if (typeof sql === 'string' && sql.includes('COUNT(*)')) return { rows: [{ count: '0' }] };
+      return { rows: [] };
+    }));
+    const a = (await buildNightlyAssertions(pool)).find(x => x.key === 'fact_snapshot_dispatch_gate');
+    expect(a.ok).toBe(false);
+    expect(a.detail).toContain('map_stale');
+  });
+});
+
+// ── [S4-N14/N15] A6 skill 账本一致性（新口径：ops_skills ⊆ present + 派发绑定行健康，PR1a 任务 47def5bb）──
+function a6Pool({ unregistered = [], deadBound = [] } = {}) {
+  const writes = [];
+  const q = vi.fn(async (sql, params) => {
+    if (typeof sql !== 'string') return { rows: [] };
+    if (sql.includes('INSERT INTO skill_drift_alerts')) { writes.push({ sql, params }); return { rows: [] }; }
+    if (sql.includes("key = 'skill_inventory_state'")) return { rows: [{ value_json: { last_ok_at: new Date().toISOString() } }] };
+    if (sql.includes('FROM ops_skills')) return { rows: unregistered.map((name) => ({ name })) };
+    if (sql.includes('task_types') && sql.includes('presence')) return { rows: deadBound };
+    if (sql.includes('fact_snapshot_headers')) return { rows: [{ repo: 'cecelia', kind: 'api', age_hours: '1' }] };
+    if (sql.includes('COUNT(*)')) return { rows: [{ count: '0' }] };
+    return { rows: [] };
+  });
+  return { pool: makePool(q), writes };
+}
+
+describe('[S4-N14] A6 账本一致 → pass', () => {
+  it('ops_skills 全在账且派发绑定行健康 → A6 pass', async () => {
+    const { pool } = a6Pool();
+    const a6 = (await buildNightlyAssertions(pool)).find((a) => a.key === 'skill_ledger_consistency');
+    expect(a6).toBeTruthy();
+    expect(a6.ok).toBe(true);
+  });
+});
+
+describe('[S4-N15] A6 账实分叉 → fail 且写 skill_drift_alerts', () => {
+  it('ops_skills 引用未入账 skill + 派发绑定行 gone → A6 fail、点名、落汇总行', async () => {
+    const { pool, writes } = a6Pool({ unregistered: ['zz-missing'], deadBound: [{ name: 'dev', presence: 'gone' }] });
+    const a6 = (await buildNightlyAssertions(pool)).find((a) => a.key === 'skill_ledger_consistency');
+    expect(a6.ok).toBe(false);
+    expect(a6.detail).toContain('zz-missing');
+    expect(a6.detail).toContain('dev(gone)');
+    expect(writes.length).toBeGreaterThan(0);
   });
 });

@@ -7,13 +7,16 @@
 # 与 journey-goldenpaths-invariants-smoke / handoff-smoke 的夹具纪律一致。
 # 连接：优先 DATABASE_URL（CI real-env-smoke 提供，用户 cecelia）；无则本机默认 postgres。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 cd "$(dirname "$0")/../.."   # packages/brain
 
 if [ -n "${DATABASE_URL:-}" ]; then
-  PSQL="psql ${DATABASE_URL} -tA"
+  PSQL="psql -X ${DATABASE_URL} -tA"
 else
   export PGPASSWORD="${PGPASSWORD:-postgres}"
-  PSQL="psql -h localhost -p 5432 -U postgres -d cecelia -tA"
+  PSQL="psql -X -h localhost -p 5432 -U postgres -d cecelia -tA"
 fi
 export SMOKE_DATABASE_URL="${DATABASE_URL:-}"
 export PGPASSWORD="${PGPASSWORD:-postgres}"
@@ -27,7 +30,7 @@ cleanup() {
   if [ "$SEEDED" = "1" ]; then
     $PSQL -c "DELETE FROM decisions WHERE target_id='${LINE04_ABILITY_ID}' AND decision LIKE '%${SEED_MARK}%';" >/dev/null 2>&1 || true
     $PSQL -c "DELETE FROM journey_features WHERE id='${LINE04_ABILITY_ID}' AND name='line-context-smoke-ability';" >/dev/null 2>&1 || true
-    $PSQL -c "DELETE FROM journeys WHERE id='${LINE04_JOURNEY_ID}' AND name='line-context-smoke-journey';" >/dev/null 2>&1 || true
+    $PSQL -c "DELETE FROM value_streams WHERE id='${LINE04_JOURNEY_ID}' AND name='line-context-smoke-journey';" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -37,7 +40,7 @@ HAVE=$($PSQL -c "SELECT COUNT(*) FROM decisions WHERE category='invariant' AND s
 if [ "${HAVE:-0}" -eq 0 ]; then
   echo "  本库无 Line04 真实数据（CI test DB）→ 种同 ID 最小夹具，trap 清理"
   SEEDED=1
-  $PSQL -c "INSERT INTO journeys (id, name) VALUES ('${LINE04_JOURNEY_ID}', 'line-context-smoke-journey') ON CONFLICT (id) DO NOTHING;" >/dev/null
+  $PSQL -c "INSERT INTO value_streams (id, name) VALUES ('${LINE04_JOURNEY_ID}', 'line-context-smoke-journey') ON CONFLICT (id) DO NOTHING;" >/dev/null
   $PSQL -c "INSERT INTO journey_features (id, name, journey_id, kind, status) VALUES ('${LINE04_ABILITY_ID}', 'line-context-smoke-ability', '${LINE04_JOURNEY_ID}', 'ability', 'done') ON CONFLICT (id) DO NOTHING;" >/dev/null
   $PSQL -c "INSERT INTO decisions (category, topic, decision, level, target_type, target_id, status) VALUES ('invariant', '[Line04]不进群', '只私聊;群一律跳过（${SEED_MARK}）', 'ability', 'journey_feature', '${LINE04_ABILITY_ID}', 'active');" >/dev/null
 else

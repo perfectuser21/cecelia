@@ -7,7 +7,10 @@ const SUCCESSOR_ID = '44444444-4444-4444-8444-444444444444';
 const ROUTING_ID = '55555555-5555-4555-8555-555555555555';
 const INITIATIVE_ID = '66666666-6666-4666-8666-666666666666';
 
-function authorityRows({ consumed = false } = {}) {
+// receiptGenerations：模拟链式接班后同 task_id 的多代路由收据（迁移 465，
+// supersedes_receipt_id + anchor_generation）。给了就按 SQL 是否只取最新代来决定返回几行，
+// 等价于真库行为：JOIN 全表 = 每代一行，JOIN LATERAL(... ORDER BY anchor_generation DESC LIMIT 1) = 一行。
+function authorityRows({ consumed = false, receiptGenerations = null } = {}) {
   const calls = [];
   const client = {
     release: vi.fn(),
@@ -36,17 +39,23 @@ function authorityRows({ consumed = false } = {}) {
         }] };
       }
       if (/FROM planner_recovery_receipts recovery[\s\S]*FOR UPDATE OF recovery/.test(text)) {
-        return { rows: [{
+        const base = {
           id: RECEIPT_ID,
           predecessor_run_id: RUN_ID,
           source_task_id: TASK_ID,
           repo: 'perfectuser21/cecelia',
           head_sha: 'b'.repeat(40),
           verification_method: 'remote_exact_commit_blob',
-          change_kind: 'new_capability',
           execution_profile_override: null,
-          map_scope: ['F1'],
-        }] };
+        };
+        if (!receiptGenerations) {
+          return { rows: [{ ...base, change_kind: 'new_capability', map_scope: ['F1'] }] };
+        }
+        const latestOnly = /anchor_generation\s+DESC/i.test(text) && /LIMIT\s+1/i.test(text);
+        const sorted = [...receiptGenerations].sort(
+          (a, b) => b.anchor_generation - a.anchor_generation,
+        );
+        return { rows: (latestOnly ? [sorted[0]] : sorted).map(gen => ({ ...base, ...gen })) };
       }
       if (/FROM planner_recovery_consumptions/.test(text)) {
         return consumed
@@ -134,6 +143,44 @@ describe('planner recovery consumption store', () => {
     );
     expect(harness.calls.some((sql) => /UPDATE tasks[\s\S]*WHERE id.*source/i.test(sql))).toBe(false);
     expect(harness.calls.some((sql) => /task_dependencies/i.test(sql))).toBe(false);
+  });
+
+  it('同一任务有多代接班收据时只认最新代，不再判 receipt_ambiguous', async () => {
+    const { consumePlannerRecoveryReceipt } = await import(
+      '../planner-recovery-consumption-store.js'
+    );
+    const harness = authorityRows({
+      receiptGenerations: [
+        { anchor_generation: 1, change_kind: 'new_capability', map_scope: ['F1'] },
+        { anchor_generation: 2, change_kind: 'bugfix', map_scope: ['G1'] },
+      ],
+    });
+    const createRoutedTaskFn = vi.fn(async () => ({
+      task_id: SUCCESSOR_ID,
+      routing_receipt_id: ROUTING_ID,
+    }));
+
+    const result = await consumePlannerRecoveryReceipt(harness.pool, {
+      predecessorRunId: RUN_ID,
+      idempotencyKey: 'retry-generation-2',
+    }, { createRoutedTaskFn });
+
+    expect(result).toMatchObject({
+      receipt_id: RECEIPT_ID,
+      successor_task_id: SUCCESSOR_ID,
+      deduplicated: false,
+    });
+    // 取的必须是 anchor_generation 高的那代（gen2 = bugfix / G1），不是 gen1
+    expect(createRoutedTaskFn).toHaveBeenCalledWith(
+      harness.client,
+      expect.objectContaining({
+        declared_change_kind: 'bugfix',
+        map_scope_hint: ['G1'],
+      }),
+      null,
+      { transaction: 'existing' },
+    );
+    expect(harness.calls).toContain('COMMIT');
   });
 
   it('returns the sealed winner on replay without creating another route', async () => {

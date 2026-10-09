@@ -1,0 +1,354 @@
+{
+  "preview-owned-cache-smoke.sh": {
+    "kind": "write",
+    "connection": "DB_NAME/DB_HOST/DB_PORT为实际createIntakeTestDatabase连接；默认cecelia_scratch、/tmp、5432。显式/tmp保守拒绝；TEST_DATABASE_URL/DATABASE_URL及PGHOST/PGPORT不控制该fixture。已检DB_*在callee前export冻结。",
+    "evidence": "真实PGsuite preview-cache.pg.integration.test.js使用createIntakeTestDatabase：CREATE/DROP私有schema并写tasks与路由收据；wrapper默认/生产/远端/端口/有效配置用实际首callee受控边界验证，未执行数据库。",
+    "source_commit": "ee00e9bff8c951a5e3c8eba7d9af9013b9b4ad94"
+  },
+  "managed-script-capacity-smoke.sh": {"kind":"write","connection":"TEST_DATABASE_URL最高优先，否则实际DB_HOST/DB_PORT/DB_NAME；URI缺port时实际PGPORT一致校验。","evidence":"实际NodePG两callee script-capacity-reservation/script-managed-executor.pg.integration.test.js用Client及Pool CREATE/TRUNCATE/DROP私有schema；受控真实wrapper默认及有效URI/DB边界回归不运行数据库。","source_commit":"1ef58332eda5fabf1218fc4db70e4905602811fd"},
+  "ability-id-chain-pr2-smoke.sh": {
+    "kind": "readonly",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "INSERT仅js.match源码断言；psql两处仅information_schema SELECT列类型。",
+    "sha256": "ee3bb0cfc553f6e82f9c0bf70b1d05caef97aedc258893c2afc3d3546782a077",
+    "source_commit": "d664db65c9"
+  },
+  "account-quota-gate-smoke.sh": {"kind":"write","connection":"PGHOST/PGPORT/PGDATABASE；默认localhost/5432/cecelia_test；pg.Pool与psql共用PGDATABASE显式默认","evidence":"实际SQL/写调用源码行 26,34,55,56；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
+  "action-receipts-schema-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 34；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "alertness-schema-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL文件17/19/21行INSERT，psql -f执行CREATE SCHEMA/迁移；BEGIN/ROLLBACK事务保留。","source_commit":"d664db65c9"},
+  "autoblock-sql-param-fix-smoke.sh": {"kind":"write","connection":"BRAIN_DB_URL优先DATABASE_URL；默认本机cecelia拒绝","evidence":"实际SQL/写调用源码行 12,19；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
+  "b13-dbupsert-idempotent-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL/写调用源码行 21,26,38,56；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
+  "c8a-harness-checkpoint-resume.sh": {"kind":"write","connection":"host DATABASE_URL；container额外CONTAINER_DATABASE_URL必须核对同一安全服务，缺省使用已验容器Env","evidence":"实际SQL/写调用源码行 69,70,71,97,207；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
+  "conversation-capture-multitool-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL/写调用源码行 98,102；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
+  "conversation-capture-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 90；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "crontab-ledger-smoke.sh": {
+    "kind": "write",
+    "connection": "PGHOST/PGPORT/PGDATABASE；默认localhost/5432/cecelia_test；pg.Pool与psql共用PGDATABASE显式默认",
+    "evidence": "实际SQL/写调用源码行 22；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "dev-registry-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 24,33,39,45,51,56,59,63；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "device-job-foundation-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 22,43；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "direction-proposer-t4-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 42,43；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "gp-anchor-lockdown-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 74,78,84；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "handoff-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 21,27；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "harness-executor-reliability-smoke.sh": {
+    "kind": "readonly",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "CREATE仅grep迁移源码；psql仅information_schema SELECT，HTTP GET healthz。",
+    "sha256": "336872f3fe2d17640450bfd373f1a04335ac88ac2cc33d98705b51100827711c",
+    "source_commit": "d664db65c9"
+  },
+  "harness-initiative-migrate-smoke.sh": {
+    "kind": "readonly",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "CREATE/INSERT仅node文件结构断言；q函数所有调用仅SELECT迁移映射不变量。",
+    "sha256": "35876e941cf1979109d44fe36b24043816426f47f72a44271e6aaffc2a43dd27",
+    "source_commit": "d664db65c9"
+  },
+  "harness-orchestrator-lockdown-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 65,69,76；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "harness-weighted-reservation-smoke.sh": {"kind":"write","connection":"TEST_DATABASE_URL最高优先；未指定时真实DB_HOST/DB_PORT/DB_NAME（DB_DEFAULTS）。URI省略port时有效PGPORT须与默认5432一致；显式host/port优先于PGHOST/PGPORT。","evidence":"实际Node PG callee attempt-weighted-reservation.pg.integration.test.js:35-49 Clientconnect/CREATE_SCHEMA/TABLE/migrations/ALTER；53TRUNCATE；57DROP_SCHEMA。默认及有效连接拒绝用真实wrapper+受控Vitest执行边界验证，未运行数据库。","source_commit":"df8cc371ccf200a4b0ca903a0e5ba8500dcae72f"},
+  "journeys-bizarea-smoke.sh": {
+    "kind": "write",
+    "connection": "DB_HOST/DB_PORT/DB_NAME（实际psql -h/-p/-d）；默认localhost/5432/cecelia拒绝",
+    "evidence": "实际SQL/写调用源码行 42,48,50,51,72；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "kernel-controller-lease-renewal-smoke.sh": {
+    "kind": "readonly",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "UPDATE仅说明和readFile源码断言；实际psql仅information_schema SELECT，HTTP GET tick/status。",
+    "sha256": "047d29a54e172af99dcc4cd5d7673b2236ff2c3a041235d95aecbadacb08b8bf",
+    "source_commit": "d664db65c9"
+  },
+  "line-context-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 28,29,30,40,41,42；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "map-anchor-state-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 65,84,91,97,102,107,112,118；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "map-fact-snapshot-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 38,39,127,210,211,225；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "map-manifest-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 26,27,28,29,72,73,79,80；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "map-projection-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 26,27,28,29,72,79,84,93；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "map-second-repo-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 26,27,28,29,30,31,32,33；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "migration-339-drop-abilities-gp-priority-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 45,53；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "model-accounts-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL优先DB_URL优先DB；缺失拒绝",
+    "evidence": "实际SQL/写调用源码行 52；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "notion-inlet-ingest-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 32,33,35；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "openclaw-cron-ledger-smoke.sh": {
+    "kind": "write",
+    "connection": "PGHOST/PGPORT/PGDATABASE；默认localhost/5432/cecelia_test；pg.Pool与psql共用PGDATABASE显式默认",
+    "evidence": "实际SQL/写调用源码行 22；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "ops-cockpit-sync-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 18,44,46,55,60；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "ops-graph-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 20,21,27,46,48；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "ops-probe-detect-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 14,24；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "ops-registry-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 21,22,23,36,44,53,63,67；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "ops-runs-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 14,15,29,30,46,52,53；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "ops-skill-stats-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 13,25,32,39；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "ops-skill-versions-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 13,26,29,31,37,47,54；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "ops-workflows-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 16,17,29,44,51；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "preview-ledger-activate-smoke.sh": {
+    "kind": "write",
+    "connection": "host DB_HOST优先PGHOST；port实际PGPORT；dbname DB_NAME优先PGDATABASE默认cecelia_test；activation子脚本强制相同DB_HOST",
+    "evidence": "实际SQL/写调用源码行 63,74；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "project-brief-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 15,16,17,22,23,24,35,42；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "qiumi-foundation-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 55,60,69,70,76,77,89,90；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "qiumi-schedule-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 39,42；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "relay-baton-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 14,15,16,27,29,32；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "relay-mirror-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 20,21,22,23,29,42,45；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "relay-spine-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 23,24,25；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "report-postpromote-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 74,77；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "script-executor-dispatch-smoke.sh": {
+    "kind": "write",
+    "connection": "SCRIPT_SMOKE_DB_URL；缺失或与容器真实DB不一致则拒绝",
+    "evidence": "实际SQL/写调用源码行 69,71；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "skill-inventory-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 19,20,33,52；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "skill-ledger-reconcile-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 23,24,25,26,27,47,55,58；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "skill-registry-projection-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 18,19,24,64；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "staging-e2e-permerge-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 35,61,64,66；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "staging-e2e-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 35,87,88,99,105,112,121；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "staging-promote-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 69,73,76,81,82,87；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "t10-capture-atom-routing-smoke.sh": {
+    "kind": "write",
+    "connection": "DB_HOST/DB_PORT/DB_NAME（实际Brain db-config及psql）；默认localhost/5432/cecelia_test",
+    "evidence": "实际SQL/写调用源码行 75；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "task-governance-guards-smoke.sh": {
+    "kind": "write",
+    "connection": "GOV_GUARD_SMOKE_DB_URL；缺失或与容器真实DB不一致则拒绝",
+    "evidence": "实际SQL/写调用源码行 90；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "task-kind-column-smoke.sh": {
+    "kind": "readonly",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "ALTER仅readFile源码断言；TASK_KIND_SMOKE_DB_URL所有psql实际均SELECT列/约束/NULL行数。",
+    "sha256": "970c46295d1ad64e48fb7e358703d18145975556f3981ff824b9ae263ab38f95",
+    "source_commit": "d664db65c9"
+  },
+  "task-run-outlets-smoke.sh": {
+    "kind": "readonly",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "INSERT仅grep迁移文件断言；实际psql仅SELECT notion_projection_map状态/方向。",
+    "sha256": "e3a7ba1398096a3df78ae5265c7d5e126a618bfd1fadc3505e92e103dbbecb2c",
+    "source_commit": "d664db65c9"
+  },
+  "task-run-primitive-smoke.sh": {
+    "kind": "write",
+    "connection": "TASK_RUN_SMOKE_DB_URL；缺失或与容器真实DB不一致则拒绝",
+    "evidence": "实际SQL/写调用源码行 70,73,77,82；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "task-terminal-relay-hub-smoke.sh": {
+    "kind": "readonly",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "UPDATE仅静态写口代码扫描；实际psql仅SELECT列/表存在，HTTP GET health。",
+    "sha256": "785d7bfc1132902f01c3fd80b837fa72044af3100cc9e8bc08e064eb0461b524",
+    "source_commit": "d664db65c9"
+  },
+  "tasks-ability-id-smoke.sh": {
+    "kind": "readonly",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "INSERT仅注释；node仅readFile路由结构；实际psql仅SELECT tasks列类型。",
+    "sha256": "ec26f4c3a2df52c69ec8c9c0a5c89cd456bd0fa54b43ebda32d3cb4be30a6e76",
+    "source_commit": "d664db65c9"
+  },
+  "workflow-run-lost-deadline-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL优先PGHOST/PGPORT/PGDATABASE（实际pg.Client）；缺失拒绝",
+    "evidence": "实际SQL/写调用源码行 35,56；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  }
+}

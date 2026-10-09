@@ -172,6 +172,7 @@ router.patch('/:id', async (req, res) => {
     res.json({ id: atom.id, status: 'confirmed', routed_to_table: routedTable, routed_to_id: routedId });
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.statusCode === 400) return res.status(400).json({ error: err.message });
     res.status(500).json({ error: 'Failed to process atom', details: err.message });
   } finally {
     client.release();
@@ -209,16 +210,6 @@ async function routeAtomToTarget(client, atom, targetType, targetSubtype, areaId
       return { routedTable: 'knowledge', routedId: r.rows[0].id };
     }
 
-    case 'content_seed': {
-      const r = await client.query(
-        `INSERT INTO content_topics (title, body_draft, status)
-         VALUES ($1, $2, 'pending')
-         RETURNING id`,
-        [atom.content.slice(0, 120), atom.content]
-      );
-      return { routedTable: 'content_topics', routedId: r.rows[0].id };
-    }
-
     case 'task': {
       const routed = await createRoutedTask(client, {
         source: 'inbox', source_id: String(atom.id), title: atom.content.slice(0, 200),
@@ -244,23 +235,9 @@ async function routeAtomToTarget(client, atom, targetType, targetSubtype, areaId
       return { routedTable: 'decisions', routedId: r.rows[0].id };
     }
 
-    case 'event': {
-      const r = await client.query(
-        `INSERT INTO events (name, event_type, notes, area_id)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id`,
-        [
-          atom.content.slice(0, 200),
-          targetSubtype || 'general',
-          atom.content,
-          areaId || null,
-        ]
-      );
-      return { routedTable: 'events', routedId: r.rows[0].id };
-    }
-
     default:
-      throw new Error(`Unknown target_type: ${targetType}`);
+      // 不支持的类型（含已废弃的 event：原写 events 网页分析表的不存在列，决策 9ecb9628）明确 400，不再落成 500。
+      throw Object.assign(new Error(`Unknown target_type: ${targetType}`), { statusCode: 400 });
   }
 }
 

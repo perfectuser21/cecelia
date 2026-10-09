@@ -9,6 +9,9 @@ const path = require('node:path');
 const process = require('node:process');
 const { clearTimeout, setTimeout } = require('node:timers');
 const { promisify } = require('node:util');
+const { probeDiskResources } = require('./local-resource-admission.cjs');
+const { sampleLinuxResources, projectLinuxObservation } = require('./linux-resource-probe.cjs');
+const {sampleGpu}=require('./gpu-observation.cjs');
 
 const execFileAsync = promisify(execFile);
 const { AbortController } = globalThis;
@@ -141,25 +144,6 @@ function parseMemoryPressure(output) {
   return percentage(100 - Number.parseFloat(match[1]));
 }
 
-function parseDisk(output) {
-  const lines = String(output ?? '')
-    .trim()
-    .split(/\r?\n/)
-    .filter(Boolean);
-  if (lines.length < 2) {
-    return { disk_free_bytes: 0, disk_used_percent: 100 };
-  }
-  const fields = lines.at(-1).trim().split(/\s+/);
-  const availableBlocks = Number.parseInt(fields[3], 10);
-  const usedPercent = Number.parseFloat(String(fields[4] ?? '').replace('%', ''));
-  return {
-    disk_free_bytes: Number.isFinite(availableBlocks) && availableBlocks >= 0
-      ? availableBlocks * 1_024
-      : 0,
-    disk_used_percent: percentage(usedPercent),
-  };
-}
-
 function parsePower(output) {
   const text = String(output ?? '');
   return {
@@ -266,9 +250,11 @@ async function probeDisposableResources({
     worktreePath = path.join(tempRoot, 'worktree');
     containerName = disposableContainerName(tempRoot);
     worktreeAddAttempted = true;
+    // 容器探针只检查 /workspace/.git 存在；--no-checkout 避免 O(仓库) 的全量检出
+    // 撞 DEFAULT_COMMAND_TIMEOUT_MS（MMV 8465 文件实测 4–5.5s，几乎每次被杀）。
     const addResult = await run(
       'git',
-      ['worktree', 'add', '--detach', worktreePath, 'HEAD'],
+      ['worktree', 'add', '--detach', '--no-checkout', worktreePath, 'HEAD'],
       { cwd: repoRoot },
     );
     worktreeAdded = addResult.ok;
@@ -484,6 +470,20 @@ async function probeFleetWorkerHealth(options = {}) {
     postgresImageDigest,
   });
 
+  const gpuObservation=sampleGpu({platform:options.platform??process.platform,execFileFn:options.execFileFn??execFileAsync,now:()=>Date.parse(observedAt)});
+
+  if ((options.platform ?? process.platform) === 'linux') {
+    report.os.version = 'Linux';
+    report.linux_observation = await sampleLinuxResources({
+      ...options.linuxResourceOptions,
+      now: options.now ?? options.linuxResourceOptions?.now,
+      diskPaths: options.diskPaths ?? [options.repoRoot ?? env.CECELIA_REPO_ROOT ?? process.cwd(),
+        env.CECELIA_FLEET_DATA_ROOT ?? '/var/lib/cecelia/fleet-worker', tmpdir()],
+    });
+    report.gpu=await gpuObservation;
+    return report;
+  }
+
   try {
     const run = createCommandRunner({
       execFileFn: options.execFileFn ?? execFileAsync,
@@ -510,10 +510,6 @@ async function probeFleetWorkerHealth(options = {}) {
     const workerBindHost = boundedString(
       options.workerBindHost ?? env.CECELIA_FLEET_WORKER_HOST,
       '',
-    );
-    const orbstackHome = boundedString(
-      options.orbstackHome ?? env.CECELIA_ORBSTACK_HOME,
-      '/var/empty',
     );
     const drainMarkerPath = boundedString(
       options.drainMarkerPath ?? env.CECELIA_DRAIN_MARKER,
@@ -552,9 +548,9 @@ async function probeFleetWorkerHealth(options = {}) {
       disposable,
     ] = await Promise.all([
       run('sw_vers', ['-productVersion']),
-      run('orbctl', ['version'], {
-        env: { ...env, HOME: orbstackHome },
-      }),
+      // orbctl 2.2初始化用户run目录会chmod；版本读取不应触碰管理员HOME。
+      run('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleShortVersionString',
+        '/Applications/OrbStack.app/Contents/Info.plist']),
       run('docker', ['info', '--format', '{{json .}}']),
       run('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', commandDigest]),
       run('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', postgresImageDigest]),
@@ -573,7 +569,9 @@ async function probeFleetWorkerHealth(options = {}) {
       run('sysctl', ['-n', 'hw.memsize']),
       run('sysctl', ['-n', 'vm.loadavg']),
       run('memory_pressure', ['-Q']),
-      run('df', ['-k', '/']),
+      probeDiskResources({ run, paths: [repoRoot, ...(options.diskPaths
+        ?? (env.CECELIA_FLEET_DATA_ROOT ? [env.CECELIA_FLEET_DATA_ROOT] : []))],
+      allowMissingPaths: options.allowMissingDiskPaths === true }),
       run('launchctl', ['print', 'system/com.perfect21.fleet-worker']),
       run('sntp', ['-d', 'time.apple.com']),
       probeCallback(
@@ -600,7 +598,7 @@ async function probeFleetWorkerHealth(options = {}) {
     const cpuCores = finiteNumber(parseInteger(cpuResult.stdout));
     const memoryBytes = finiteNumber(parseInteger(memoryResult.stdout));
     const loadAverage = parseLoadAverage(loadResult.stdout);
-    const disk = parseDisk(diskResult.stdout);
+    const disk = diskResult;
     const power = parsePower(powerResult.stdout);
     const timeOutput = `${timeResult.stdout}\n${timeResult.stderr}`;
 
@@ -669,9 +667,11 @@ async function probeFleetWorkerHealth(options = {}) {
     // The complete fail-closed report above remains safe for admission.
   }
 
+  report.gpu=await gpuObservation;
   return report;
 }
 
 module.exports = {
   probeFleetWorkerHealth,
+  projectLinuxObservation,
 };

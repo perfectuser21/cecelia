@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react';
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import MapPage from '@features/core/planning/pages/MapPage';
+import MapPage from '@features/core/planning/pages/LegacyFeatureMap';
 
 beforeEach(() => {
   global.fetch = vi.fn(async (input) => ({

@@ -129,11 +129,19 @@ describe('live-row status transitions', () => {
     );
   });
 
-  it('preview-env-start.sh only activates the current live row', () => {
-    const script = readFileSync(resolve(process.cwd(), '../../scripts/preview-env-start.sh'), 'utf8');
-    expect(script).toMatch(
-      /UPDATE preview_environments SET status='active'[\s\S]*WHERE pr_number=\$\{PR_NUMBER\} AND status<>'inactive'/,
+  // 2026-09-22 (#5477)：账本回写从 preview-env-start.sh 内联 SQL 搬到
+  // scripts/preview-ledger-activate.sh（原先那句把库名硬编码成 cecelia，
+  // 在执行机上必然 FATAL 且被当「非致命」咽掉，是 Deploy Preview 长期假红的根因）。
+  // 本用例的**意图不变**：点亮只能命中当前活行，绝不复活 inactive 历史行。
+  // 两条一起断言才咬得住 —— 只查新脚本的话，把 SQL 搬进一个没人调的文件也能蒙混过关。
+  it('账本点亮只命中当前活行（不复活 inactive 历史行）', () => {
+    const activate = readFileSync(resolve(process.cwd(), '../../scripts/preview-ledger-activate.sh'), 'utf8');
+    expect(activate).toMatch(
+      /UPDATE preview_environments[\s\S]*SET status='active'[\s\S]*WHERE pr_number=\$\{PR_NUMBER\} AND status<>'inactive'/,
     );
+    const script = readFileSync(resolve(process.cwd(), '../../scripts/preview-env-start.sh'), 'utf8');
+    expect(script, 'preview-env-start.sh 没有调用账本点亮脚本，SQL 搬走就等于没人执行')
+      .toMatch(/preview-ledger-activate\.sh/);
   });
 
   it('preview-env-start.sh stamps health with the checked-out preview SHA', () => {

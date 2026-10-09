@@ -181,19 +181,16 @@ describe('promoteToRegression', () => {
     ({ promoteToRegression } = await import('../harness-promote-regression.js'));
   });
 
-  it('happy path：DB 覆盖写（DELETE 后 INSERT，事务）+ yaml auto-PR 流程走完', async () => {
+  it('happy path：golden_path 旧表停写（不 connect、无 DELETE/INSERT），yaml auto-PR 流程照走', async () => {
     const d = makeDeps({ files: GOOD_FILES });
     const r = await promoteToRegression(
       { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
       { task: TASK, sprintDir: SPRINT_DIR, subTasks: [{ pr_url: 'https://github.com/x/y/pull/9' }], worktreePath: WT },
     );
     expect(r.ok).toBe(true);
-    expect(r.dbWritten).toBe(true);
-    const sqls = d.queries.map((q) => q.sql);
-    expect(sqls.some((s) => /BEGIN/i.test(s))).toBe(true);
-    expect(sqls.some((s) => /DELETE FROM golden_path WHERE owner_task_id/i.test(s))).toBe(true);
-    expect(sqls.some((s) => /INSERT INTO golden_path/i.test(s))).toBe(true);
-    expect(sqls.some((s) => /COMMIT/i.test(s))).toBe(true);
+    expect(r.dbWritten).toBe(false);
+    expect(d.poolMock.connect).not.toHaveBeenCalled();
+    expect(d.queries.some((q) => /golden_path/i.test(q.sql))).toBe(false);
     // yaml 写入 + git 流程被调用（fetch origin main / checkout -b <branch> origin/main / commit pathspec / push / gh pr create）
     expect(d.fsMock.writeFileSync).toHaveBeenCalled();
     const gitArgs = d.execFileCalls.map((c) => `${c.cmd} ${c.args.join(' ')}`);
@@ -204,13 +201,14 @@ describe('promoteToRegression', () => {
     expect(gitArgs.some((s) => s.startsWith('gh pr create'))).toBe(true);
   });
 
-  it('commit 校验失败（contract-dod.md 未被 git 跟踪）→ yaml 跳过但 DB 保留', async () => {
+  it('commit 校验失败（contract-dod.md 未被 git 跟踪）→ yaml 跳过，reason=dod_not_committed', async () => {
     const d = makeDeps({ files: GOOD_FILES, lsFilesFails: true });
     const r = await promoteToRegression(
       { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
       { task: TASK, sprintDir: SPRINT_DIR, subTasks: [], worktreePath: WT },
     );
-    expect(r.dbWritten).toBe(true);
+    expect(r.dbWritten).toBe(false);
+    expect(r.reason).toBe('dod_not_committed');
     expect(r.yamlPrUrl == null).toBe(true);
     expect(d.fsMock.writeFileSync).not.toHaveBeenCalled();
   });
@@ -225,84 +223,42 @@ describe('promoteToRegression', () => {
     expect(d.poolMock.connect).not.toHaveBeenCalled();
   });
 
-  it('sprint-prd 无 Golden Path 段 → 降级用 BEHAVIOR 序号写 golden_path 表', async () => {
+  it('sprint-prd 无 Golden Path 段 → 降级用 BEHAVIOR 条目走 yaml 冻结，仍不写库', async () => {
     const files = { ...GOOD_FILES, 'sprint-prd.md': '# 没有 golden path 段' };
     const d = makeDeps({ files });
     const r = await promoteToRegression(
       { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
       { task: TASK, sprintDir: SPRINT_DIR, subTasks: [], worktreePath: WT },
     );
-    expect(r.dbWritten).toBe(true);
-    const ins = d.queries.find((q) => /INSERT INTO golden_path/i.test(q.sql));
-    expect(ins.params.join(' ')).toContain('行为一'); // 降级 note = BEHAVIOR 描述
+    expect(r.ok).toBe(true);
+    expect(r.dbWritten).toBe(false);
+    expect(d.poolMock.connect).not.toHaveBeenCalled();
+    expect(d.fsMock.writeFileSync).toHaveBeenCalled(); // yaml 冻结照旧
   });
 
-  it('dbOnly=true 时写完 DB 直接返回，不跑 git/yaml', async () => {
+  it('dbOnly=true（callback T2 调用形态）→ 旧表退役直接返回 golden_path_retired，不读文件不跑 git', async () => {
     const d = makeDeps({ files: GOOD_FILES });
     const r = await promoteToRegression(
       { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
       { task: TASK, sprintDir: SPRINT_DIR, subTasks: [], worktreePath: WT, dbOnly: true },
     );
-    expect(r).toEqual({ ok: true, dbWritten: true, yamlPrUrl: null, reason: 'db_only' });
-    // 没碰 git/gh
+    expect(r).toEqual({ ok: true, dbWritten: false, yamlPrUrl: null, skipped: true, reason: 'golden_path_retired' });
+    expect(d.poolMock.connect).not.toHaveBeenCalled();
+    expect(d.fsMock.readFileSync).not.toHaveBeenCalled();
     expect(d.execFileMock).not.toHaveBeenCalled();
     expect(d.fsMock.writeFileSync).not.toHaveBeenCalled();
   });
 
-  it('payload.feature_id 缺失时回退 task.ability_id 写入 feature_id', async () => {
-    const abilityId = 'ab000000-0000-0000-0000-000000000009';
-    const task = {
-      id: TASK.id,
-      ability_id: abilityId,
-      payload: { journey_id: TASK.payload.journey_id }, // 无 feature_id
-    };
+  it('pool.connect 抛错也无影响：旧表写路径已删，任何输入都不再取连接', async () => {
     const d = makeDeps({ files: GOOD_FILES });
+    d.poolMock.connect.mockRejectedValue(new Error('db boom'));
+    const task = { id: TASK.id, ability_id: 'ab000000-0000-0000-0000-000000000009', payload: { journey_id: TASK.payload.journey_id } };
     const r = await promoteToRegression(
       { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
       { task, sprintDir: SPRINT_DIR, subTasks: [], worktreePath: WT },
     );
-    expect(r.dbWritten).toBe(true);
-    const ins = d.queries.find((q) => /INSERT INTO golden_path/i.test(q.sql));
-    expect(ins.params[2]).toBe(abilityId); // 第 3 个参数 = feature_id 回退到 ability_id
-  });
-
-  it('payload.feature_id 存在但 journey_features 查不到 → 回退 ability_id', async () => {
-    const badFeatureId = 'fe999999-9999-9999-9999-999999999999';
-    const abilityId = 'ab000000-0000-0000-0000-000000000009';
-    const task = {
-      id: TASK.id,
-      ability_id: abilityId,
-      payload: { journey_id: TASK.payload.journey_id, feature_id: badFeatureId },
-    };
-    const d = makeDeps({ files: GOOD_FILES });
-    // 按入参 id 路由：feature_id 候选查不到（rows 空），ability_id 候选存在
-    d.client.query.mockImplementation(async (sql, params) => {
-      d.queries.push({ sql, params });
-      if (/SELECT id FROM journey_features/i.test(sql)) {
-        return params[0] === abilityId ? { rows: [{ id: params[0] }] } : { rows: [] };
-      }
-      return { rows: [] };
-    });
-    const r = await promoteToRegression(
-      { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
-      { task, sprintDir: SPRINT_DIR, subTasks: [], worktreePath: WT },
-    );
-    expect(r.dbWritten).toBe(true);
-    const ins = d.queries.find((q) => /INSERT INTO golden_path/i.test(q.sql));
-    expect(ins.params[2]).toBe(abilityId); // 无效 feature_id 被跳过，回退 ability_id
-  });
-
-  it('DB 阶段抛错 → ROLLBACK 且不抛出（best-effort，返回 ok:false）', async () => {
-    const d = makeDeps({ files: GOOD_FILES });
-    d.client.query.mockImplementation(async (sql) => {
-      if (/INSERT INTO golden_path/i.test(sql)) throw new Error('db boom');
-      d.queries.push({ sql });
-      return { rows: [] };
-    });
-    const r = await promoteToRegression(
-      { pool: d.poolMock, execFile: d.execFileMock, fsImpl: d.fsMock },
-      { task: TASK, sprintDir: SPRINT_DIR, subTasks: [], worktreePath: WT },
-    );
-    expect(r.ok).toBe(false);
+    expect(r.ok).toBe(true);
+    expect(r.dbWritten).toBe(false);
+    expect(d.poolMock.connect).not.toHaveBeenCalled();
   });
 });

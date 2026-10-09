@@ -1,4 +1,5 @@
 import { digestMapManifest, validateMapManifest } from './map-manifest-schema.js';
+import { hasBrainBindings, validateMapBrainBindings } from './map-brain-bindings.js';
 import { projectMapManifest } from './map-projection-store.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -68,6 +69,7 @@ export async function submitMapManifest(pool, input) {
     await begin(client);
     await lockScope(client, manifest.scope_key);
     await lockSourceDecision(client, manifest.source_decision_id);
+    await validateMapBrainBindings(client, manifest);
 
     const existing = await client.query(
       `SELECT id, scope_key, version, source_decision_id, manifest, digest,
@@ -124,7 +126,7 @@ async function selectManifestVersion(client, id, lock = false) {
 export async function activateMapManifest(
   pool,
   id,
-  { projector = projectMapManifest } = {},
+  { projector = projectMapManifest, expectedActive, beforeCommit } = {},
 ) {
   if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
     throw new MapManifestError(
@@ -142,11 +144,20 @@ export async function activateMapManifest(
     }
 
     await lockScope(client, candidate.scope_key);
+    if (expectedActive !== undefined) {
+      const active = (await client.query("SELECT id,digest FROM map_manifest_versions WHERE scope_key=$1 AND status='active'", [candidate.scope_key])).rows[0];
+      if (!active || active.id !== expectedActive?.id || active.digest !== expectedActive?.digest) {
+        throw new MapManifestError('MAP_MANIFEST_ACTIVE_CONFLICT', 'Active manifest changed before activation', 409);
+      }
+    }
     const manifestVersion = await selectManifestVersion(client, id, true);
     if (!manifestVersion) {
       throw new MapManifestError('MAP_MANIFEST_NOT_FOUND', 'Map manifest version not found', 404);
     }
+    await validateMapBrainBindings(client, manifestVersion.manifest, manifestVersion.scope_key);
     if (manifestVersion.status === 'active') {
+      if (hasBrainBindings(manifestVersion.manifest)) await projector({ client, manifestVersion, mode: 'rebuild' });
+      if (beforeCommit) await beforeCommit();
       await client.query('COMMIT');
       return { manifest_version: manifestVersion, activated: false };
     }
@@ -176,6 +187,7 @@ export async function activateMapManifest(
                   status, created_at, activated_at`,
       [manifestVersion.id],
     );
+    if (beforeCommit) await beforeCommit();
     await client.query('COMMIT');
     return { manifest_version: activated.rows[0], activated: true };
   } catch (error) {

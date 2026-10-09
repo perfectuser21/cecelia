@@ -1,0 +1,78 @@
+# 设计：kernel-v1 远程 run 凭据来源修复（credential_payload_invalid）— 2026-09-24
+
+任务 d3764629（接替 91211a1c）· 决策 fbe2146c（bug-fix）· PrepPRD：Brain notes 3e5c40c2
+
+## 问题
+
+MMV 的 fleet-worker 以服务用户 `_cecelia`（HOME=/var/empty）spawn `run.js`；run.js 为 codex attempt 签发凭据信封时经 `resolveProviderAccountHome`（`os.homedir()`）找 `/var/empty/.codex-teamN/auth.json` → 不存在；即使指向真实目录 `/Users/administrator/.codex-teamN/auth.json`（属 administrator，0644），`createFileCredentialLoader` 的「属主==进程 uid 且恰为 0600/0400」校验也拒绝；`createCredentialBroker.issue` 又把所有加载错误改写成 `credential_payload_invalid`，诊断被抹。安装版 `orchestrator-runner.cjs` 含 09-20 本地热修（runner 路径走 runner-checkout、`CECELIA_SKILLS_ROOT`）未回填仓库。
+
+## 架构
+
+| 单元 | 职责 | 接口 |
+|---|---|---|
+| M1 `orchestrator/credential-broker.js` | `issue` 透传 loader 的 `credential_*` 码；loader 增 `trustedUids`、放宽权限规则、校验父目录 | `createFileCredentialLoader({ accountHomeResolver, trustedUids=[], statDirectory })` |
+| M2 `orchestrator/provider-account-home.js`（新） | 账号目录名解析单一真身；`resolveProviderAccountHome`（执行目录，仍 `os.homedir()`）与 `resolveCredentialAccountHome`（凭据目录，读 `CECELIA_CREDENTIAL_HOME_ROOT`）分离；`parseTrustedUids` | `providerAccountDirName(provider, account)`；`resolveProviderAccountHome(provider, account)`；`resolveCredentialAccountHome(provider, account, { env })`；`parseTrustedUids(env)` |
+| M3 `run.js` / `harness-relay-watchdog.js` | loader 改用 M2 的凭据目录解析与 trustedUids | 无新公开接口 |
+| M4 `scripts/fleet-worker/orchestrator-runner.cjs` | start 前探测凭据根（`CECELIA_ORBSTACK_HOME`）下 `.codex-team{1..5}/auth.json` 至少一个可读，否则 500 `orchestrator_credential_home_unavailable` 不 spawn；spawn env 注入 `CECELIA_CREDENTIAL_HOME_ROOT`、`CECELIA_CREDENTIAL_TRUSTED_UIDS=<根目录属主 uid>`；回填热修（runner 路径与 `CECELIA_SKILLS_ROOT` 走 `CECELIA_ORCHESTRATOR_RUNNER_ROOT`，默认 `/private/var/lib/cecelia/runner-checkout`） | `createOrchestratorRunner({ …, probeCredentialHome })` |
+
+`dispatcher.js` 的 `resolveProviderAccountHome` 改为从 M2 re-export，调用方不变（execution.codexHome 语义不变——那是给容器挂载用的宿主路径）。
+
+## 数据流
+
+```
+Brain(us-vps) → fleet-worker prepare/start(MMV, _cecelia)
+  start: probeCredentialHome(CECELIA_ORBSTACK_HOME) → {root, uid} 或 500
+       → spawn run.js env{CECELIA_CREDENTIAL_HOME_ROOT=root, CECELIA_CREDENTIAL_TRUSTED_UIDS=uid}
+run.js: loader(accountHomeResolver=resolveCredentialAccountHome(env), trustedUids=parseTrustedUids(env))
+  → open O_NOFOLLOW → fstat: isFile ∧ uid∈{getuid()}∪trusted ∧ mode&0o400 ∧ !(mode&0o022) ∧ !(mode&0o111)
+  → 父目录 lstat: 非符号链接 ∧ uid 可信 ∧ !(mode&0o022)
+  → broker.issue: loader 抛 credential_* 原样上抛；JSON 非法才 payload_invalid
+```
+
+## 权限规则变更说明
+
+旧规则要求 0600/0400 且属主==进程 uid。现实：凭据由 administrator 的 codex CLI / 刷新脚本产出，权限不受本仓库控制（当前 0644）。本仓库 loader 的职责收敛为「拒绝可被他人篡改/伪造的来源」：属主必须可信（进程 uid 或 fleet-worker 显式声明的宿主属主）、文件与父目录不得被组/其他人写、不得是符号链接、不得带执行位。保密性（改回 0600）由源侧脚本负责（后续刀 6378efbf）。
+
+信任假设（残余风险，明示）：凭据根目录（`CECELIA_CREDENTIAL_HOME_ROOT`，现网 `/Users/administrator`）及其祖先目录由可信方控制、不可被其他用户写。loader 只校验最后一级目录与文件；若祖父目录可被他人写，攻击者可在 lstat 与 open 之间换目录或放硬链接（macOS 无 protected_hardlinks）指向属主相同的其它 0644 文件。属主 uid 非整数 → 不可信；进程无 `getuid`（Windows/容器特例）且声明了 trustedUids → 不可信（fail-closed），未声明时跳过属主校验以保持 CI/容器现状。
+
+## 错误处理
+
+| 情形 | 行为 |
+|---|---|
+| 凭据根缺失 / 五个账号都无 auth.json | fleet-worker start 500 `orchestrator_credential_home_unavailable`，不 spawn，槽位释放 |
+| 某账号文件缺失 | loader `credential_source_unavailable` → issue 原样上抛 → attempt 失败原因可查 |
+| 属主不可信 / 组或他人可写 / 符号链接 | `credential_source_permissions` |
+| `CECELIA_CREDENTIAL_TRUSTED_UIDS` 含非整数 / 空段 / 超出 uint32 | `credential_trusted_uids_invalid`（fail-loud，error.code 为纯码，message 附出错片段） |
+| `CECELIA_CREDENTIAL_HOME_ROOT` 非空且非绝对路径 | `credential_home_root_invalid`（fail-loud） |
+| env 未设（CI、us-vps 容器、Brain） | 路径解析回退 `os.homedir()`、trustedUids=[]（与现状一致）；父目录校验与「账号目录为符号链接被拒」是新增约束，不看 env |
+| fleet 侧 `CECELIA_ORBSTACK_HOME` 非绝对路径/非目录 | 探测抛 `orbstack_home_invalid`（与 run.js 侧 `credential_home_root_invalid` 区分） |
+| fleet 侧 runner 入口（`<runner root>/packages/brain/src/orchestrator/run.js`）不存在 | start 500 `orchestrator_runner_root_unavailable`，run 置 failed |
+| fleet-worker 对 Brain 的 5xx 响应 | 默认脱敏为 `orchestrator_operation_failed`；仅 `orchestrator_credential_home_unavailable` / `orchestrator_runner_root_unavailable` 两个常量码原样透传，日志附 cause（经 safeString） |
+| fleet-worker 启动 | 探测一次凭据根，失败只 `console.warn credential_home_probe_failed`，不 crash |
+| JSON 非法 / 无 access_token | 仍 `credential_payload_invalid`，不泄露字节 |
+
+## 测试策略（TDD，先红后绿）
+
+- **unit** `credential-broker.test.js`：issue 透传 `credential_source_unavailable`/`_permissions`；非 credential_ 错误仍 payload_invalid；loader：0644 属主为进程 uid 通过；注入 fstat uid≠getuid 且不在 trusted → permissions，在 trusted → 通过；0o660/0o622 → permissions；父目录他人可写 → permissions；trustedUids 非法 → `credential_trusted_uids_invalid`。既有 `0o640 → reject` 用例改为 `0o660`（组可写）。
+- **unit** `provider-account-home.test.js`：env 未设/空串回退 homedir、非空相对路径抛 `credential_home_root_invalid`；绝对路径生效；codex/claude/grok；`parseTrustedUids`。
+- **unit** `orchestrator-runner.test.cjs`：spawn env 含两变量与 `CECELIA_SKILLS_ROOT`，runner 路径走 `CECELIA_ORCHESTRATOR_RUNNER_ROOT`；probe 抛错 → start 500 且未 spawn、job 释放。
+- **GP 步骤断言** `tests/gp/f1/step3-kernel-credential-source.test.js`：真 import broker 与 provider-account-home（不 mock），临时目录 0644 文件经 env 根走通 issue；env 未设时错误为 `credential_source_unavailable` 而非 payload_invalid。
+- **环境守卫**：M4 的 start 探测（运行时 fail-loud）；部署后真验：MMV 新派 kernel run 不再出现 `credential_payload_invalid`。
+
+## 部署接缝（MMV 现场 runbook，合并后执行；现场事实 2026-09-24 核实）
+
+现场事实：`/private/var/lib/cecelia/runner-checkout` 是无远端孤本（`fleet-baseline@15e523a25f4`，属主 `_cecelia`，工作区含 09-20 runner 镜像摘要热修：`node-profile.js` 与 `fleet-node-profiles.json` 三处 `4450aac9…→aeaf2905…`）；MMV 实有镜像/plist/`/health` 摘要均为 `aeaf2905`，main 钉 `4450aac9`（任务 89681520 待统一）；根分区仅剩约 1.2GiB，拉不下 4.4GB 镜像；`install-fleet-worker.sh` 会按 main 摘要重渲染 plist → 触发 `node_not_base_admitted`，**本次禁用整装**。
+
+1. drain：写 `/var/run/cecelia/fleet-worker.drain`，等 orchestrator 活跃数为 0（kickstart 会清空内存 jobs 表；run.js 每次新起进程）。
+2. 备份：以 `_cecelia` 身份 `git -C runner-checkout diff > /Users/Shared/runner-checkout-hotfix-<ts>.patch`，记下 HEAD。
+3. 更新 runner-checkout（`_cecelia`）：加远端拉取合并提交（超时则 `git bundle` 经 `/Users/Shared` 中转）；`git checkout -- <两个热修文件>` 后切到合并提交；重新把三处摘要改回 `aeaf2905`；对比两提交间 `package-lock.json`，有变化才 `npm ci`（先看磁盘余量）。
+4. 安装副本：`install -m 0644 -o root -g wheel` 单独替换 `/usr/local/libexec/cecelia/fleet-worker/orchestrator-runner.cjs` 与（0755）`fleet-worker.cjs`，各留 `.bak-<ts>`；两文件必须同批（新 fleet-worker 依赖 `probeCredentialHome` 导出）。
+5. `launchctl kickstart -k system/com.perfect21.fleet-worker`；确认 stderr 无 `credential_home_probe_failed`，`/health` 摘要仍 `aeaf2905`；删 drain marker。
+6. 真验：新派一条 kernel run，查 `initiative_runs.failure_reason` 不再出现 `credential_payload_invalid`。
+7. 回滚：恢复两个 `.bak`，runner-checkout 回 `15e523a25f4` 并 `git apply` 步骤 2 的 patch。
+
+步骤 3/4 顺序无关且单做任一都不回归（旧 run.js 忽略新 env；新 run.js 配旧 fleet-worker 报 `credential_source_unavailable`），但两步齐才生效。
+
+## 不做
+
+复制凭据到 `_cecelia` 私有目录；改刷新脚本权限（6378efbf）；watchdog 在容器内 resume codex（d7585e60）；kernel_process_fatal 回队/告警（26251eb3）。

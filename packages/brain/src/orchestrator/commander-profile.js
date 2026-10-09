@@ -4,6 +4,9 @@ import {
   assertNoSecretMaterial,
   parseCommanderMode,
 } from './commander-contract.js';
+import { resolvePrimaryWorkerId } from '../machine-registry.js';
+
+const PRIMARY = resolvePrimaryWorkerId();
 
 const targetSchema = z.object({
   provider: z.string().min(1).max(128),
@@ -35,7 +38,7 @@ const DEFAULT_COMMANDER_PROFILE = Object.freeze({
     provider: 'codex',
     account: 'team2',
     model: 'gpt-5.6-sol',
-    machine: 'us-mac-m4',
+    machine: PRIMARY,
   }),
   // r60 run 918422f4 案卷（第 29 批件②）：fallbacks 空=单点，primary 一次
   // lease 过期就穷尽 failover。补 claude 目标消单点。
@@ -43,7 +46,7 @@ const DEFAULT_COMMANDER_PROFILE = Object.freeze({
     Object.freeze({
       provider: 'claude',
       account: 'account2',
-      machine: 'us-mac-m4',
+      machine: PRIMARY,
     }),
   ]),
 });

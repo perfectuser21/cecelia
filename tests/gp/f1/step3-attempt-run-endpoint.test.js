@@ -22,6 +22,15 @@ function makeApp({ dispatch, getById } = {}) {
       if (/MAX\(hop\)/.test(sql)) return { rows: [{ hop: 7 }] };
       // 第 59 批起 GET 收尾先查 run host；默认答普通 run（共享 run 场景各测试自建 pool）
       if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge' }] };
+      // 第 73 批：evaluator/judge 派发前服务端从本 run 的 generator attempt 取 git_candidate
+      // 权威坐标——默认答一份合法候选，让既有 judge/evaluator 用例继续走通。
+      if (/role IN \('generator','generator-fix'\)/.test(sql)) {
+        return { rows: [{ id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9', run_id: 'cccccccc-0000-0000-0000-000000000009', result: { artifacts: [{
+          type: 'git_candidate', repo: 'perfectuser21/cecelia', branch: 'cp-harness-propose-r1-x-a1',
+          base_sha: '8'.repeat(40), head_sha: 'a'.repeat(40),
+          source_attempt_id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9',
+        }] } }] };
+      }
       return { rows: [], rowCount: 1 };
     }),
   };
@@ -127,7 +136,7 @@ describe('POST /api/brain/harness/attempt-run', () => {
       dispatch: async () => ({ status: 'DONE_WITH_CONCERNS', control_status: 'BLOCKED', fallback_reason: 'node_not_base_admitted' }),
     });
     const res = await request(app).post('/api/brain/harness/attempt-run').send({
-      role: 'evaluator', title: 'x', payload: { sprint_dir: 'y' },
+      role: 'planner', title: 'x', payload: { sprint_dir: 'y' },
     });
     expect(res.status).toBe(502);
     expect(res.body).toMatchObject({ error: 'dispatch_not_launched', control_status: 'BLOCKED', detail: 'node_not_base_admitted' });
@@ -455,6 +464,14 @@ describe('第65批：judge 桥接组装 evaluator 权威', () => {
         if (/MAX\(hop\)/.test(sql)) return { rows: [{ hop: 1 }] };
         if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge' }] };
         if (/initiative_contract_artifact_seals/.test(sql)) return { rows: [{ manifest_sha256: 'a'.repeat(64), source_revision: 'b'.repeat(40) }] };
+        // 第 73 批：judge 派发前服务端注入 git_candidate 权威坐标（head 与本用例断言一致）
+        if (/role IN \('generator','generator-fix'\)/.test(sql)) {
+          return { rows: [{ id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9', run_id: 'cccccccc-0000-0000-0000-000000000009', result: { artifacts: [{
+            type: 'git_candidate', repo: 'perfectuser21/cecelia', branch: 'cp-x',
+            base_sha: '8'.repeat(40), head_sha: 'd'.repeat(40),
+            source_attempt_id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9',
+          }] } }] };
+        }
         return { rows: [], rowCount: 1 };
       }),
     };
@@ -470,7 +487,7 @@ describe('第65批：judge 桥接组装 evaluator 权威', () => {
     app.use(express.json());
     app.use('/api/brain/harness', router);
     const res = await request(app).post('/api/brain/harness/attempt-run').send({
-      role: 'judge', title: 'x',
+      role: 'judge', title: 'x', run_id: 'cccccccc-0000-0000-0000-000000000009',
       payload: {
         sprint_dir: 'y',
         contract_id: 'cccccccc-1111-4111-8111-000000000009',
@@ -495,7 +512,7 @@ describe('第65批：judge 桥接组装 evaluator 权威', () => {
   it('judge 带 evaluate_attempt_id 但 attempt 不存在 → 400 结构化', async () => {
     const { app } = makeApp({ getById: async () => null });
     const res = await request(app).post('/api/brain/harness/attempt-run').send({
-      role: 'judge', title: 'x',
+      role: 'judge', title: 'x', run_id: 'cccccccc-0000-0000-0000-000000000009',
       payload: { sprint_dir: 'y', contract_id: 'cccccccc-1111-4111-8111-000000000009', evaluate_attempt_id: 'eeeeeeee-0000-4000-8000-000000000005' },
     });
     expect(res.status).toBe(400);
@@ -536,7 +553,7 @@ describe('第62批：验证类角色带 validationClock', () => {
   it('第64批：judge 同样带钟且窗口=5400s', async () => {
     const { app, dispatchFn } = makeApp();
     const res = await request(app).post('/api/brain/harness/attempt-run').send({
-      role: 'judge', title: 'x', payload: { sprint_dir: 'y' },
+      role: 'judge', title: 'x', run_id: 'cccccccc-0000-0000-0000-000000000009', payload: { sprint_dir: 'y' },
     });
     expect(res.status).toBe(202);
     const clock = dispatchFn.mock.calls[0][1].validationClock;
@@ -547,13 +564,63 @@ describe('第62批：验证类角色带 validationClock', () => {
   it('evaluator 同样带钟；canary/planner 不带', async () => {
     const { app, dispatchFn } = makeApp();
     await request(app).post('/api/brain/harness/attempt-run').send({
-      role: 'evaluator', title: 'x', payload: { sprint_dir: 'y' },
+      role: 'evaluator', title: 'x', run_id: 'cccccccc-0000-0000-0000-000000000009', payload: { sprint_dir: 'y' },
     });
     expect(dispatchFn.mock.calls[0][1].validationClock?.deadline_at).toBeTruthy();
     await request(app).post('/api/brain/harness/attempt-run').send({
       role: 'canary', title: 'x', payload: { sprint_dir: 'y' },
     });
     expect(dispatchFn.mock.calls[1][1].validationClock).toBeUndefined();
+  });
+});
+
+// 第 70 批（金丝雀 #37 案卷）：seal 把合同产物封进 initiative_contract_artifacts，但桥接
+// 派发 generator 时 observed.contract.artifacts 为空 → bundle 缺 contract-draft/dod 全文
+// → generator 按 CONTRACT IS LAW 正确拒绝（needs_context FROZEN_CONTRACT_ARTIFACTS_MISSING）。
+// 修法：payload.contract_id 存在时从封印表装回全套产物。
+describe('第70批：封印表装回合同产物', () => {
+  it('generator + contract_id → observed.contract.artifacts 从 DB 装回（含 path/content/sha256）', async () => {
+    const rows = [
+      { path: 'sprints/x/sprint-prd.md', content: 'PRD', sha256: 'a'.repeat(64), byte_length: 3, source_revision: 'c'.repeat(40) },
+      { path: 'sprints/x/contract-draft.md', content: 'DRAFT', sha256: 'b'.repeat(64), byte_length: 5, source_revision: 'c'.repeat(40) },
+    ];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (/MAX\(hop\)/.test(sql)) return { rows: [{ hop: 1 }] };
+        if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge-shared' }] };
+        if (/FROM initiative_contract_artifacts/.test(sql)) return { rows };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const dispatchFn = vi.fn(async () => ({ status: 'LAUNCHED', attempt_id: 'aaaaaaaa-0000-0000-0000-000000000001' }));
+    const router = createHarnessAttemptRunRouter({
+      pool,
+      buildDeps: async () => ({ dispatch: dispatchFn }),
+      attemptStoreFactory: async () => ({ getById: async () => null }),
+      createTaskFn: async () => ({ success: true, task: { id: 'dddddddd-0000-0000-0000-000000000004' } }),
+      uuid: () => 'bbbbbbbb-0000-0000-0000-000000000002',
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain/harness', router);
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'generator', title: 'x',
+      payload: { sprint_dir: 'sprints/x', contract_id: 'cccccccc-1111-4111-8111-000000000009', approved_sha: 'c'.repeat(40) },
+    });
+    expect(res.status).toBe(202);
+    const ctx = dispatchFn.mock.calls[0][1];
+    expect(Array.isArray(ctx.observed.contract.artifacts)).toBe(true);
+    expect(ctx.observed.contract.artifacts).toHaveLength(2);
+    expect(ctx.observed.contract.artifacts[1]).toMatchObject({ path: 'sprints/x/contract-draft.md', content: 'DRAFT' });
+  });
+
+  it('不带 contract_id → 不查封印表、artifacts 不出现', async () => {
+    const { app, dispatchFn, sqls } = makeApp();
+    await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'canary', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    expect(sqls.some(([sql]) => /initiative_contract_artifacts/.test(sql))).toBe(false);
+    expect(dispatchFn.mock.calls[0][1].observed.contract.artifacts).toBeUndefined();
   });
 });
 
@@ -627,6 +694,31 @@ describe('第56批：角色续接字段透传', () => {
   });
 });
 
+// 第 69 批（决策 d2de68fb，止损评估方案A）：金丝雀 #31/#36 两次死于「Worker 忘带
+// keep_open」——旗标依赖物理消除：generator/generator-fix 角色无条件建共享 run
+//（候选保留工作区必须活到 judge），不看 payload 有没有旗标。
+describe('第69批：generator 强制共享 run', () => {
+  it('generator 不带 keep_open 也建 v4-bridge-shared run', async () => {
+    const { app, sqls } = makeApp();
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'generator', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    expect(res.status).toBe(202);
+    const runInsert = sqls.find(([sql]) => /INSERT INTO initiative_runs/.test(sql));
+    expect(runInsert[1]).toContain('v4-bridge-shared');
+  });
+
+  it('canary/planner 等普通角色不受影响，仍建 v4-bridge', async () => {
+    const { app, sqls } = makeApp();
+    await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'planner', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    const runInsert = sqls.find(([sql]) => /INSERT INTO initiative_runs/.test(sql));
+    expect(runInsert[1]).toContain('v4-bridge');
+    expect(runInsert[1]).not.toContain('v4-bridge-shared');
+  });
+});
+
 describe('第54批：桥接 run 生命周期', () => {
   it('keep_open:true → run 建成 orchestrator_host=v4-bridge-shared（GET 自动收尾不会碰它）', async () => {
     const { app, sqls } = makeApp();
@@ -648,7 +740,7 @@ describe('第54批：桥接 run 生命周期', () => {
     expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(true);
     // 第 55 批：tasks 表没有 source_id 列（54 批 SQL 真库必炸）——锚 task 必须经
     // initiative_runs.current_task_id 定位。
-    const taskClose = sqls.find(([sql]) => /tasks SET status='completed'/.test(sql));
+    const taskClose = sqls.find(([sql]) => /tasks SET status = 'completed'/.test(sql));
     expect(taskClose).toBeTruthy();
     expect(taskClose[0]).toMatch(/trigger_source = 'v4_bridge'/);
     expect(taskClose[0]).toMatch(/current_task_id FROM initiative_runs/);
@@ -659,7 +751,7 @@ describe('第54批：桥接 run 生命周期', () => {
     const row = { id: 'aaaaaaaa-0000-0000-0000-000000000001', run_id: 'r', role: 'canary', status: 'completed', result: {} };
     const { app, sqls } = makeApp({ getById: async () => row });
     await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
-    const taskClose = sqls.find(([sql]) => /tasks SET status='completed'/.test(sql));
+    const taskClose = sqls.find(([sql]) => /tasks SET status = 'completed'/.test(sql));
     expect(taskClose).toBeTruthy();
     expect(taskClose[0]).toMatch(/trigger_source = 'v4_bridge'/);
     expect(taskClose[0]).toMatch(/current_task_id FROM initiative_runs/);
@@ -696,7 +788,7 @@ describe('第59批：共享 run 的 GET 收尾守卫', () => {
     const res = await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
     expect(res.status).toBe(200);
     expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(false);
-    expect(sqls.some(([sql]) => /tasks SET status='completed'/.test(sql))).toBe(false);
+    expect(sqls.some(([sql]) => /tasks SET status = 'completed'/.test(sql))).toBe(false);
     expect(sqls.some(([sql]) => /initiative_runs SET phase='done'/.test(sql))).toBe(false);
   });
 
@@ -722,7 +814,7 @@ describe('第59批：共享 run 的 GET 收尾守卫', () => {
     await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
     expect(sqls.some(([sql]) => /initiative_runs SET phase='done'/.test(sql))).toBe(true);
     expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(true);
-    expect(sqls.some(([sql]) => /tasks SET status='completed'/.test(sql))).toBe(true);
+    expect(sqls.some(([sql]) => /tasks SET status = 'completed'/.test(sql))).toBe(true);
   });
 });
 

@@ -13,6 +13,7 @@
 import os from 'os';
 import { MAX_SEATS, checkServerResources, getActiveProcessCount as _getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY as _PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';
+import { BACKPRESSURE_BYPASS_TASK_TYPES, CODEX_SLOT_TASK_TYPES, HARNESS_INFLIGHT_TASK_TYPES } from './lib/task-type-registry.js';
 import {
   listProcessesWithElapsed,
   listProcessesWithPpid,
@@ -20,7 +21,7 @@ import {
   getBrainRssMB,
 } from './platform-utils.js';
 import { calculateBudgetState } from './token-budget-planner.js';
-import { getFleetStatus, getRemoteCapacity } from './fleet-resource-cache.js';
+import { getFleetStatus, getRemoteCapacity, getTotalEffectiveSlots } from './fleet-resource-cache.js';
 import { getMachineVitals } from './machine-vitals.js';
 import { checkQuotaGuard } from './quota-guard.js';
 import { getAvailableAccountCount } from './account-usage.js';
@@ -38,7 +39,6 @@ const USER_RESERVED_BASE = 1;                // Pool B: minimum when user absent
 const USER_PRIORITY_HEADROOM = 1;            // Extra free slots when user is active (1 headroom)
 const SESSION_TTL_SECONDS = 24 * 60 * 60;   // 24 hours: long-running harness/pipeline sessions stay valid
 const CODEX_ACCOUNT_COUNT = 5;              // Codex 账号总数（硬上限）
-const CODEX_FALLBACK_CONCURRENT = 3;        // Fleet cache 不可用时的降级值
 
 /**
  * 动态计算 Codex 并发上限（基于 fleet cache 的远程机器 effectiveSlots）
@@ -48,9 +48,6 @@ function getCodexMaxConcurrent() {
   const m4 = getRemoteCapacity('xian-mac-m4');
   const m1 = getRemoteCapacity('xian-mac-m1');
   const remoteSlots = (m4?.online ? m4.effectiveSlots : 0) + (m1?.online ? m1.effectiveSlots : 0);
-  if (remoteSlots === 0 && !m4?.online && !m1?.online) {
-    return CODEX_FALLBACK_CONCURRENT; // fleet cache 不可用时降级
-  }
   return Math.min(remoteSlots, CODEX_ACCOUNT_COUNT);
 }
 const BACKPRESSURE_THRESHOLD = 20;          // 队列深度超过此值时触发降速（从5调到20，防止正常KR拆解任务卡死系统）
@@ -78,18 +75,7 @@ const DISK_PRESSURE_PCT = 85;
 // 'dev' 在列：Brain 自修复 PR 多为 dev 类型，若被卡住会形成"修 dispatcher 的
 // 任务被 dispatcher 卡住"的死循环（RCA: 2026-04-25-24h-business-failures §6）。
 // 'content_publish' 在列：P0 发布任务在 Pool C 满时被 deny 会永久积压（RCA: backpressure 根因）。
-const BACKPRESSURE_BYPASS_TASK_TYPES = [
-  'harness_initiative',
-  'harness_task',
-  'harness_planner',
-  'harness_contract_propose',
-  'harness_contract_review',
-  'harness_fix',
-  'harness_ci_watch',
-  'harness_deploy_watch',
-  'dev',
-  'content_publish',
-];
+// 名单见 lib/task-type-registry.js（BACKPRESSURE_BYPASS_TASK_TYPES）。
 
 /**
  * 判断 task 是否应该跳过 backpressure。
@@ -347,13 +333,10 @@ function getBackpressureState({
  */
 async function countCodexInProgress() {
   try {
-    const result = await pool.query(`
-      SELECT COUNT(*) FROM tasks
-      WHERE status = 'in_progress'
-      AND task_type IN ('codex_qa', 'codex_dev', 'codex_test_gen',
-                        'crystallize', 'crystallize_scope', 'crystallize_forge',
-                        'crystallize_verify', 'crystallize_register')
-    `);
+    const result = await pool.query(
+      `SELECT COUNT(*) FROM tasks WHERE status = 'in_progress' AND task_type = ANY($1::text[])`,
+      [[...CODEX_SLOT_TASK_TYPES]],
+    );
     return parseInt(result.rows[0].count, 10);
   } catch {
     return 0;
@@ -377,7 +360,8 @@ let _previousPoolCBudget = null;
  * First call (no previous value) passes through without buffering.
  */
 function applySlotBuffer(newValue) {
-  if (_previousPoolCBudget === null) {
+  // 资源耗尽必须当次归零；恢复仍沿用每 tick +1 的缓冲。
+  if (newValue === 0 || _previousPoolCBudget === null) {
     _previousPoolCBudget = newValue;
     return newValue;
   }
@@ -410,9 +394,17 @@ async function calculateSlotBudget() {
   const userMode = detectUserMode(sessions);
   const userSlotsUsed = sessions.headed.length;
 
-  // Dynamic model: resource pressure determines effective slots
+  // Dynamic model: resource pressure determines effective slots.
+  // 2026-09-13 调度器模式分流（handoff 202609131958 next_steps#1）：闸
+  // CECELIA_LOCAL_EXECUTION_ENABLED=false（us-vps 纯调度器，决策 96054a8b）时
+  // 本机不执行任务，派发容量必须取 fleet worker 聚合——本机 checkServerResources
+  // 在共享 VPS 上被邻居容器压成 0，曾致 tick 恒 pool_c_full 永不自动派发。
+  // 闸缺省/true（MMV 执行机模式）保持本机来源，行为零变化。
   const resources = checkServerResources();
-  const effectiveSlots = resources.effectiveSlots;
+  const schedulerMode = process.env.CECELIA_LOCAL_EXECUTION_ENABLED === 'false';
+  const effectiveSlots = schedulerMode
+    ? getTotalEffectiveSlots()
+    : resources.effectiveSlots;
 
   // Running processes = headed sessions (ps, accurate for real user sessions) +
   // DB counts for dispatched tasks (authoritative truth for in_progress).
@@ -535,6 +527,7 @@ async function calculateSlotBudget() {
     resources: {
       effectiveSlots,
       maxPressure: resources.metrics.max_pressure,
+      capacity_source: schedulerMode ? 'fleet_workers_http' : 'local_machine',
     },
     tokenPressure: tokenInfo,
     budgetState: budgetState ? {
@@ -543,6 +536,7 @@ async function calculateSlotBudget() {
       pool_c_scale: budgetState.pool_c_scale,
     } : null,
     dispatchAllowed: availableBuffered > 0 && !tokenExhausted,
+    resourceAdmissionBlocked: effectiveSlots === 0 && codexMax === 0,
     backpressure,
   };
 }
@@ -650,7 +644,7 @@ async function harnessSlotCheck({ candidate, _memHealthOverride } = {}) {
   try {
     const r = await pool.query(
       `SELECT count(*)::int AS n FROM tasks
-         WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
+         WHERE task_type = ANY($3::text[])
            AND status = 'in_progress'
            AND COALESCE(payload->>'harness_runtime', '') <> 'kernel-v1'
            AND started_at > NOW() - make_interval(secs => $1)
@@ -658,7 +652,7 @@ async function harnessSlotCheck({ candidate, _memHealthOverride } = {}) {
              SELECT 1 FROM unnest($2::text[]) AS c(name)
              WHERE c.name LIKE 'cecelia-relay-' || substring(tasks.id::text, 1, 8) || '%'
            )`,
-      [INFLIGHT_GRACE_MS / 1000, v.relay_containers]
+      [INFLIGHT_GRACE_MS / 1000, v.relay_containers, [...HARNESS_INFLIGHT_TASK_TYPES]]
     );
     inflight = r.rows[0]?.n ?? 0;
   } catch {

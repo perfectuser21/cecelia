@@ -20,10 +20,37 @@ _cecelia_internal_token_from_file() {
   printf '%s' "$value"
 }
 
+# 诊断 token 加载失败的具体原因，输出到 stderr（从不打印 token 本身）。
+# 调用方（run-all-scans.sh）在 cron 里 `load_cecelia_internal_token ... || true` 吞掉
+# 返回码，此前该函数任何失败路径都是完全静默的——2026-09-23 排查 P0 9dfd873a④ 时
+# 发现："token 文件存在扫描仍 FAIL"却查不出原因，正是因为从没有任何一行日志能
+# 说明「token 加载到底哪一步失败」。此函数把 4 类常见格式坑（CRLF 行尾 / 引号包裹 /
+# export 前缀 / 行尾多余空白与注释）都能命中「值格式校验未通过」这一支，明确提示
+# 排查方向，不需要再靠猜。
+_cecelia_internal_token_diagnose() {
+  local env_file="$1"
+  if [[ ! -f "$env_file" ]]; then
+    echo "WARN: 内部鉴权 token 加载失败: 文件不存在: $env_file" >&2
+    return
+  fi
+  local count
+  count=$(grep -c '^CECELIA_INTERNAL_TOKEN=' "$env_file" 2>/dev/null || echo 0)
+  if [[ "$count" -eq 0 ]]; then
+    echo "WARN: 内部鉴权 token 加载失败: $env_file 中找不到以 CECELIA_INTERNAL_TOKEN= 开头的行（是否被写成 export CECELIA_INTERNAL_TOKEN=？helper 只认裸 KEY=VALUE）" >&2
+  elif [[ "$count" -gt 1 ]]; then
+    echo "WARN: 内部鉴权 token 加载失败: $env_file 中有 $count 行 CECELIA_INTERNAL_TOKEN=（应恰好 1 行，多行会被拒绝）" >&2
+  else
+    echo "WARN: 内部鉴权 token 加载失败: $env_file 中的值未通过格式校验（应为 32-128 位 [A-Za-z0-9_-]，检查是否有引号包裹/行尾注释或空白/CRLF 行尾）" >&2
+  fi
+}
+
 load_cecelia_internal_token() {
   local env_file="$1"
   local value
-  value=$(_cecelia_internal_token_from_file "$env_file") || return 1
+  if ! value=$(_cecelia_internal_token_from_file "$env_file"); then
+    _cecelia_internal_token_diagnose "$env_file"
+    return 1
+  fi
   CECELIA_INTERNAL_TOKEN="$value"
   export CECELIA_INTERNAL_TOKEN
 }

@@ -17,7 +17,7 @@
 
 import pool from './db.js';
 import { sendFeishu } from './notifier.js';
-import { computeTopicHeatScores, saveTopicFeedback } from './topic-heat-scorer.js';
+import { computeTopicHeatScores, PIPELINE_LOOKUP_LEGACY_TASK_TYPES } from './topic-heat-scorer.js';
 import { queryWeeklyROI } from './content-analytics.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
@@ -139,11 +139,11 @@ async function fetchWeekContentOutput(dbPool, start, end) {
     `SELECT COUNT(*)::int AS cnt,
             ARRAY_AGG(DISTINCT payload->>'topic') FILTER (WHERE payload->>'topic' IS NOT NULL) AS topics
      FROM tasks
-     WHERE task_type IN ('content_pipeline', 'content_generation', 'copywriting')
+     WHERE task_type = ANY($3::text[])
        AND status = 'completed'
        AND completed_at >= $1
        AND completed_at < $2`,
-    [start, end]
+    [start, end, PIPELINE_LOOKUP_LEGACY_TASK_TYPES]
   );
   const row = rows[0] || {};
   return {
@@ -479,11 +479,6 @@ export async function generateWeeklyReport(dbPool = pool, now = new Date(), opts
         return [];
       }),
     ]);
-
-    // 4. 保存话题反馈（用于下周选题参考），不阻塞主流程
-    saveTopicFeedback(dbPool, weekKey, topicHeatData).catch(err => {
-      console.error(`[weekly-report-generator] 保存话题反馈失败: ${err.message}`);
-    });
 
     // 5. 生成周报文本
     const reportText = buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, publishStats, engagementData, failureCount, topicHeatData, roiData);

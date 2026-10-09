@@ -17,6 +17,9 @@ const RETRY_POLICY = {
   network:      { backoffMs: [5 * MIN, 10 * MIN, 15 * MIN], maxRetries: 3 }, // 线性长延迟（沿用现状）
   timeout:      { backoffMs: [3 * MIN, 6 * MIN, 12 * MIN],  maxRetries: 3 }, // 新独立类（原并入 network）
   server_error: { backoffMs: [1 * MIN, 5 * MIN, 15 * MIN],  maxRetries: 3 }, // 新独立类（5xx，原并入 network）
+  // executor=script（script_run）：脚本 exit≠0 / 超时。确定性脚本大概率重跑同样失败，所以只给一次重试
+  // （覆盖抖动型故障：目标机瞬时忙/网络闪断），耗尽即 failed 带 attempts 记录（棒 3，任务 5cdbd52a）。
+  script_exec:  { backoffMs: [1 * MIN],                     maxRetries: 1 },
 };
 
 /**

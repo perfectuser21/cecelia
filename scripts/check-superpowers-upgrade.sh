@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-SP_DIR="${HOME}/.claude-account3/plugins/cache/superpowers-marketplace/superpowers"
+SP_DIR="${HOME}/.claude/plugins/cache/superpowers-marketplace/superpowers"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SYNC_FILE="${REPO_ROOT}/docs/roadmap/superpowers-sync.md"

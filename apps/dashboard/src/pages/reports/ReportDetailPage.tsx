@@ -160,7 +160,7 @@ function GpActionPanel() {
       border: '1px solid rgba(56,189,248,0.15)',
     }}>
       <h3 style={{ fontSize: '13px', fontWeight: 600, color: '#38bdf8', margin: '0 0 12px 0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-        GP 拍板控制台
+        能力拍板控制台
       </h3>
 
       {message && (

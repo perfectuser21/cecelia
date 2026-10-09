@@ -36,26 +36,17 @@ describe('infra-status routes', () => {
   });
 
   it('should define all 7 servers in SERVERS array', async () => {
-    const content = await import('fs').then((fs) =>
-      fs.readFileSync(
-        new URL('../../routes/infra-status.js', import.meta.url),
-        'utf-8'
-      )
-    );
+    const { SERVERS } = await import('../../routes/infra-status.js');
 
-    // Count unique server IDs
-    const idMatches = content.match(/id:\s*'[^']+'/g);
-    expect(idMatches).toBeDefined();
-    expect(idMatches.length).toBeGreaterThanOrEqual(7);
+    expect(SERVERS.length).toBeGreaterThanOrEqual(7);
+    for (const server of SERVERS) {
+      expect(server.id).toBeTruthy();
+    }
   });
 
   it('should include all expected server IDs', async () => {
-    const content = await import('fs').then((fs) =>
-      fs.readFileSync(
-        new URL('../../routes/infra-status.js', import.meta.url),
-        'utf-8'
-      )
-    );
+    const { SERVERS } = await import('../../routes/infra-status.js');
+    const ids = SERVERS.map((s) => s.id);
 
     const expectedIds = [
       'us-mac-m4',
@@ -68,7 +59,7 @@ describe('infra-status routes', () => {
     ];
 
     for (const id of expectedIds) {
-      expect(content).toContain(`'${id}'`);
+      expect(ids).toContain(id);
     }
   });
 

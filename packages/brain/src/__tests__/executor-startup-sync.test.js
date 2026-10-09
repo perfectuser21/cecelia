@@ -209,7 +209,8 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
     expect(failedCall).toBeTruthy();
 
     // 验证 error_details.reason 为 oom 相关（oom_killed 或 oom_likely）
-    const payloadPatch = JSON.parse(failedCall[1][1]);
+    // finalizeTask 参数形状：[id, error_message, payload 合并 JSON]（id 恒为 $1）
+    const payloadPatch = JSON.parse(failedCall[1][2]);
     expect(['oom_killed', 'oom_likely']).toContain(payloadPatch.error_details.reason);
   });
 
@@ -344,4 +345,27 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
     expect(sql).toMatch(/claimed_at\s*=\s*NULL/i);
     expect(sql).toMatch(/started_at\s*=\s*NULL/i);
   });
+});
+
+it('Linux audit专管kind启动同步保持父任务及证据的原claim',async()=>{
+ vi.clearAllMocks();mockQuery.mockResolvedValue({rows:[],rowCount:1}).mockResolvedValueOnce({rows:[
+  {id:'linux-parent',task_type:'audit',executor_kind:'linux-pool-controller',claimed_by:'linux-pool-onboarding',payload:{},started_at:new Date(Date.now()-600000).toISOString()},
+  {id:'linux-evidence',task_type:'audit',executor_kind:'linux-pool-controller',claimed_by:'linux-script-canary:fixture',payload:{},started_at:new Date(Date.now()-600000).toISOString()}
+ ]});
+ const {syncOrphanTasksOnStartup}=await import('../executor.js');const result=await syncOrphanTasksOnStartup();
+ expect(result.requeued).toBe(0);expect(result.orphans_fixed).toBe(0);expect(result.external_skipped).toBe(2);
+ expect(mockQuery.mock.calls.some(([sql])=>/UPDATE tasks/.test(sql))).toBe(false);
+});
+
+it('coding workflow runner（执行机认领的 data 任务）启动同步不打回 queued、不清 claim', async () => {
+  vi.clearAllMocks();
+  mockQuery.mockResolvedValue({ rows: [], rowCount: 1 }).mockResolvedValueOnce({ rows: [
+    { id: 'cw-task', task_type: 'data', executor_kind: 'coding-workflow-runner', claimed_by: 'coding-workflow-runner@mmv', payload: { coding_workflow: true, headed_manual: 'true' }, started_at: new Date(Date.now() - 600000).toISOString() },
+  ] });
+  const { syncOrphanTasksOnStartup } = await import('../executor.js');
+  const result = await syncOrphanTasksOnStartup();
+  expect(result.requeued).toBe(0);
+  expect(result.orphans_fixed).toBe(0);
+  expect(result.external_skipped).toBe(1);
+  expect(mockQuery.mock.calls.some(([sql]) => /UPDATE tasks/.test(sql))).toBe(false);
 });

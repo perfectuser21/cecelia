@@ -9,6 +9,7 @@
  */
 
 import pool from './db.js';
+import { finalizeTask } from './lib/task-terminal.js';
 
 const MAX_RETRY_COUNT = 3;
 const PAUSED_AGE_MINUTES = 60;
@@ -23,14 +24,9 @@ export async function runPausedRequeue(dbPool) {
   const db = dbPool || pool;
 
   // Archive first: paused + retry_count >= MAX_RETRY_COUNT（防无限循环）
-  const archiveResult = await db.query(`
-    UPDATE tasks
-    SET status = 'archived',
-        updated_at = NOW()
-    WHERE status = 'paused'
-      AND COALESCE(retry_count, 0) >= $1
-    RETURNING id
-  `, [MAX_RETRY_COUNT]);
+  const archiveResult = await finalizeTask(db, null, 'archived', {
+    where: { sql: "status = 'paused' AND COALESCE(retry_count, 0) >= $1", params: [MAX_RETRY_COUNT] },
+  });
 
   // Requeue: paused > 1h, retry_count < MAX_RETRY_COUNT
   const requeueResult = await db.query(`

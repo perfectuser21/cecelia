@@ -1,3 +1,5 @@
+import {projectGpuObservation} from './fleet-gpu-observation.js';
+import resourcePolicy from '../scripts/fleet-worker/attempt-resource-policy.cjs';
 /**
  * Fleet Resource Cache — 全局多机器资源感知
  *
@@ -12,11 +14,12 @@
  *   - offline_reason: 'no_ping_grace_exceeded' | 'fetch_failed' | null
  */
 
-import { SERVERS, COMPUTE_SERVERS, collectLocalStats, collectRemoteUnixStats } from './routes/infra-status.js';
+import { current } from './execution-directory/directory.js';
+import { workerBridgeUrlFor } from './machine-registry.js';
 import { calculatePhysicalCapacity } from './platform-utils.js';
+import { parseWorkerResources, cachedResourceReason } from './fleet-resource-health.js';
 
 const REFRESH_INTERVAL_MS = 30_000; // 30 秒
-const STALE_THRESHOLD_MS = 90_000;  // 90 秒后数据视为过期（不影响 offline_reason 判定）
 
 /**
  * offline 判定宽限期（分钟）
@@ -43,15 +46,32 @@ let _refreshTimer = null;
  * @param {object} server
  * @param {number|null} prevLastPingAt — 上次成功 ping 的时间戳（来自缓存）
  */
+const WORKER_HEALTH_TIMEOUT_MS = 5_000;
+
+/** 经 fleet-worker /health 采集一台 worker 的资源（映射为旧 stats 形状，公式零变化） */
+async function collectWorkerHttpStats(server) {
+  const baseUrl = workerBridgeUrlFor(server.id, process.env);
+  if (!baseUrl) throw new Error(`worker_url_unresolvable:${server.id}`);
+  const response = await fetch(`${baseUrl}/health`, {
+    signal: AbortSignal.timeout(WORKER_HEALTH_TIMEOUT_MS),
+  });
+  if (!response?.ok) throw new Error(`worker_health_http_${response?.status}`);
+  const health = await response.json();
+  return parseWorkerResources(health, server.id);
+}
+
 async function collectServerStats(server, prevLastPingAt) {
   try {
-    const stats = server.isLocal
-      ? collectLocalStats()
-      : await collectRemoteUnixStats(server);
+    // 2026-09-13 采集改 fleet-worker HTTP /health（handoff 202609131958 next_steps#1）：
+    // 旧路径两条全是病——isLocal 采到【Brain 所在机】（Brain 迁 us-vps 后把 VPS 被
+    // openclaw 邻居顶高的压力记在 us-mac-m4 头上 → effectiveSlots=0 → tick 永不派发）；
+    // ssh 采集在 Brain 容器内无通路恒 offline。worker :5231 /health 自带 resources 段
+    //（三台实测可达），且「health 可达」恰好就是「能接活」的正确语义。
+    const stats = await collectWorkerHttpStats(server);
 
     const totalMemMB = Math.round(stats.memory.totalGB * 1024);
     const cpuCores = stats.cpu.cores;
-    const physicalCapacity = calculatePhysicalCapacity(totalMemMB, cpuCores, 400, 0.5);
+    const physicalCapacity = calculatePhysicalCapacity(totalMemMB, cpuCores, resourcePolicy.BASE_SLOT.memoryBytes / 1024 ** 2, resourcePolicy.BASE_SLOT.cpus);
 
     const cpuPressure = stats.cpu.usagePercent / 100;
     const memPressure = stats.memory.usagePercent / 100;
@@ -67,8 +87,9 @@ async function collectServerStats(server, prevLastPingAt) {
       lastUpdated: Date.now(),
       last_ping_at: Date.now(),    // 成功采集 → 更新 ping 时间
       offline_reason: null,
+      admission_reason: null,
     };
-  } catch {
+  } catch (error) {
     const now = Date.now();
     const graceMs = getOfflineGraceMs();
     // 从未成功 → fetch_failed；曾经成功但超出宽限 → no_ping_grace_exceeded
@@ -85,6 +106,8 @@ async function collectServerStats(server, prevLastPingAt) {
       lastUpdated: now,
       last_ping_at: prevLastPingAt ?? null,   // 保留上次成功时间戳（如有）
       offline_reason,
+      admission_reason: /^worker_health_[a-z_]+$/.test(error?.message)
+        ? error.message : 'worker_health_unavailable',
     };
   }
 }
@@ -93,7 +116,7 @@ async function collectServerStats(server, prevLastPingAt) {
  * 刷新所有编程机器的缓存
  */
 async function refreshFleetCache() {
-  const computeServers = SERVERS.filter(s => COMPUTE_SERVERS.includes(s.id));
+  const computeServers = (current()?.nodes??[]).map(n=>({id:n.canonical_id,name:n.name}));
 
   const _results = await Promise.allSettled(
     computeServers.map(async (server) => {
@@ -135,9 +158,10 @@ export function stopFleetRefresh() {
  */
 export function getFleetStatus() {
   return [..._cache.values()].map(entry => {
-    const stale = Date.now() - entry.lastUpdated >= STALE_THRESHOLD_MS;
+    const admission_reason = cachedResourceReason(entry);
+    const stale = admission_reason === 'worker_health_stale';
     // 数据过期时整体降级为 offline，但保留原始 offline_reason（或标 no_ping_grace_exceeded）
-    const online = entry.online && !stale;
+    const online = entry.online && !admission_reason;
     const offline_reason = online
       ? null
       : (entry.offline_reason || (stale ? 'no_ping_grace_exceeded' : null));
@@ -149,11 +173,16 @@ export function getFleetStatus() {
       physicalCapacity: entry.physicalCapacity,
       effectiveSlots: online ? entry.effectiveSlots : 0,
       pressure: online ? entry.pressure : 1,
+      gpu: projectGpuObservation({...entry.stats?.gpu,schema_version:'fleet-gpu-observation/v1',scope:'host'}),
       cpu: entry.stats?.cpu || null,
       memory: entry.stats?.memory || null,
+      disk: entry.stats?.disk || null,
+      observed_at: Number.isFinite(entry.stats?.observedAt)
+        ? new Date(entry.stats.observedAt).toISOString() : null,
       lastUpdated: entry.lastUpdated,
       last_ping_at: entry.last_ping_at ?? null,
       offline_reason,
+      admission_reason,
     };
   });
 }
@@ -166,15 +195,16 @@ export function getFleetStatus() {
 export function getRemoteCapacity(serverId) {
   const entry = _cache.get(serverId);
   if (!entry) return null;
-  const fresh = Date.now() - entry.lastUpdated < STALE_THRESHOLD_MS;
-  const online = entry.online && fresh;
+  const admission_reason = cachedResourceReason(entry);
+  const online = entry.online && !admission_reason;
   return {
     online,
     effectiveSlots: online ? entry.effectiveSlots : 0,
     physicalCapacity: entry.physicalCapacity,
-    pressure: entry.pressure,
+    pressure: online ? entry.pressure : 1,
     last_ping_at: entry.last_ping_at ?? null,
     offline_reason: online ? null : (entry.offline_reason || null),
+    admission_reason,
   };
 }
 
@@ -186,7 +216,7 @@ export function getRemoteCapacity(serverId) {
 export function isServerOnline(serverId) {
   const entry = _cache.get(serverId);
   if (!entry) return false;
-  return entry.online && (Date.now() - entry.lastUpdated < STALE_THRESHOLD_MS);
+  return entry.online && !cachedResourceReason(entry);
 }
 
 /**
@@ -195,6 +225,6 @@ export function isServerOnline(serverId) {
  */
 export function getTotalEffectiveSlots() {
   return [..._cache.values()]
-    .filter(e => e.online && (Date.now() - e.lastUpdated < STALE_THRESHOLD_MS))
+    .filter(e => e.online && !cachedResourceReason(e))
     .reduce((sum, e) => sum + e.effectiveSlots, 0);
 }

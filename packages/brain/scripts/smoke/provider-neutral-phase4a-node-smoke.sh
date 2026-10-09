@@ -8,10 +8,10 @@ curl -sf "$BRAIN_URL/api/brain/health" >/dev/null
 
 cd "$ROOT"
 node --input-type=module <<'NODE'
-import { listNodeProfiles } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { listDeploymentNodeProfiles as listNodeProfiles } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const expectedDigest =
-  'sha256:74afa123d31ff6eda7b3dff213ecba0ac28e5d8f1b74bc40ade3e71dd635721a';
+  'sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033';
 const profiles = listNodeProfiles();
 
 if (profiles.length !== 3) throw new Error(`expected 3 canonical nodes, got ${profiles.length}`);

@@ -5,7 +5,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockQuery = vi.fn();
-vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../../db.js', () => ({ default: { query: mockQuery, connect: async () => ({
+  query: async (sql, values) => /^(BEGIN|COMMIT|ROLLBACK|LOCK TABLE)/.test(sql)
+    ? { rows: [] } : sql.includes('AS organization FROM (SELECT * FROM value_streams')
+      ? { rows: [{ organization: { gaps: [] } }] } : mockQuery(sql, values),
+  release() {},
+}) } }));
 
 async function makeApp() {
   vi.resetModules();
@@ -65,11 +70,9 @@ describe('POST /api/brain/journey_steps — promise 字段', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 
   it('写入 promise + backbone_version', async () => {
-    const fakeRow = {
-      id: 's1', journey_id: 'j1', name: 'S1', step_number: 1,
-      promise: '账本写入', backbone_version: '1.0',
-    };
-    mockQuery.mockResolvedValueOnce({ rows: [fakeRow] });
+    const fakeRow = { id: 's1', name: 'S1', promise: '账本写入', backbone_version: '1.0' };
+    // 已有该序号的步骤 → 更新它（位置在流程引用里，journey_id / step_number 由请求回显）
+    mockQuery.mockResolvedValueOnce({ rows: [{ activity_id: 's1' }] }).mockResolvedValueOnce({ rows: [fakeRow] });
     const app = await makeApp();
     const request = await import('supertest');
     const res = await request.default(app)

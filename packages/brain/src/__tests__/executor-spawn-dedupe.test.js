@@ -51,7 +51,9 @@ describe('dispatcher spawn_deduplicated carve-out（结构断言）', () => {
     const dispatcherCode = readFileSync(join(__dirname, '..', 'dispatcher.js'), 'utf8');
     const configErrorIdx = dispatcherCode.indexOf("if (execResult.configError)");
     const spawnDedupIdx = dispatcherCode.indexOf("execResult.reason === 'spawn_deduplicated'");
-    const recordFailureIdx = dispatcherCode.indexOf("await recordFailure('cecelia-run');");
+    // 0923 秋米熔断豁免刀：这行从字面量 recordFailure('cecelia-run') 改成按注册表
+    // surface 分键的三元，定位改用正则（失败路径只有这一处 recordFailure 调用）。
+    const recordFailureIdx = dispatcherCode.search(/await recordFailure\(/);
     expect(configErrorIdx).toBeGreaterThan(-1);
     expect(spawnDedupIdx).toBeGreaterThan(configErrorIdx);
     expect(recordFailureIdx).toBeGreaterThan(spawnDedupIdx);

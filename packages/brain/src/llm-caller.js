@@ -19,7 +19,9 @@ import { join } from 'path';
 import { spawn } from 'child_process';
 import { getActiveProfile } from './model-profile.js';
 import { selectBestAccount, markAuthFailure, verifyAccountTokenLive } from './account-usage.js';
+import { CODEX_ACCOUNTS } from './llm-capacity.js';
 import { reportCall } from './langfuse-reporter.js';
+import { assertLiveLLMAllowed } from './runtime-safety.js';
 
 const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 
@@ -133,6 +135,7 @@ function stripThinking(content) {
  * @returns {Promise<{text: string, model: string, provider: string, elapsed_ms: number}>}
  */
 export async function callLLM(agentId, prompt, options = {}) {
+  assertLiveLLMAllowed();
   const startTime = Date.now();
   const profile = getActiveProfile();
 
@@ -187,6 +190,7 @@ export async function callLLM(agentId, prompt, options = {}) {
       reportCall({ agentId, model, provider, prompt, text, elapsedMs: elapsed, startedAt: startTime }).catch(() => {});
       return { text, model, provider, elapsed_ms: elapsed, attempted_fallback: isFallback };
     } catch (err) {
+      if (err.code === 'LLM_ACCOUNT_UNAVAILABLE') throw err;
       lastError = err;
       console.warn(`[llm-caller] ${agentId} ${model} 失败: ${err.message}`);
     }
@@ -347,20 +351,19 @@ async function callClaudeViaBridge(prompt, model, timeout, _originalModel, image
 
   // 统一账号选择：所有模型共用 selectBestAccount，spending cap 过滤统一处理
   // 只传 accountId，由 bridge 在宿主机侧拼出正确 CLAUDE_CONFIG_DIR
-  // fallback_account：selectBestAccount 返回 null（全账号超配额/异常）时，仍传一个账号给 bridge
-  // 避免 bridge 在无 CLAUDE_CONFIG_DIR 环境下 spawn claude 报 "Not logged in"
-  const FALLBACK_ACCOUNT = process.env.CECELIA_FALLBACK_ACCOUNT || 'account1';
-  let accountId = FALLBACK_ACCOUNT;
+  // 无可用账号时必须停，不能用默认账号绕过额度/认证熔断。
+  let selection;
   try {
-    const selection = await selectBestAccount({ model: claudeModel });
-    if (selection) {
-      accountId = selection.accountId;
-    } else {
-      console.warn(`[llm-caller] selectBestAccount 返回 null，使用 fallback_account=${FALLBACK_ACCOUNT}`);
-    }
-  } catch (err) {
-    console.warn('[llm-caller] selectBestAccount failed, using fallback_account:', err.message);
+    selection = await selectBestAccount({ model: claudeModel });
+  } catch {
+    selection = null;
   }
+  if (!selection?.accountId) {
+    const error = new Error('没有可用的 Claude 账号，停止 Bridge 调用');
+    error.code = 'LLM_ACCOUNT_UNAVAILABLE';
+    throw error;
+  }
+  const accountId = selection.accountId;
 
   const BRIDGE_500_MAX_RETRIES = 2;
   const BRIDGE_500_RETRY_BASE_MS = 500;
@@ -560,6 +563,7 @@ async function callMiniMaxAPIStream(prompt, model, timeout, onChunk) {
  * @param {Function} onChunk - (delta: string, isDone: boolean) => void
  */
 export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
+  assertLiveLLMAllowed();
   const profile = getActiveProfile();
   const agentConfig = profile?.config?.[agentId] || {};
   const model = options.model || agentConfig.model || 'MiniMax-M2.5-highspeed';
@@ -578,16 +582,19 @@ export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
 }
 
 // Codex OAuth team 账号目录列表（round-robin 轮换）
-const CODEX_TEAM_HOMES = [
-  join(homedir(), '.codex-team1'),
-  join(homedir(), '.codex-team2'),
-];
+//
+// 从 llm-capacity.js 的 CODEX_ACCOUNTS 派生，不再各写一份。
+// 2026-09-06 事故：这里曾硬编码只有 team1/team2，而 llm-capacity 登记了 team1~team5，
+// 结果 T3/T4/T5 三个 5h 与 7d 均为 0% 的满额度账号从未被派过活，
+// 调度侧却按 5 个账号的容量做规划。加账号只改 llm-capacity.js 一处。
+// 导出供 tests/gp/g5/step1-codex-account-pool-consistency 机械校验两者一致。
+export const CODEX_TEAM_HOMES = CODEX_ACCOUNTS.map((a) => a.home);
 let _codexTeamIndex = 0;
 
 /**
  * 获取下一个可用的 Codex team 账号 HOME 路径（round-robin）
  * 检查 auth.json 存在且 tokens 字段有值（OAuth 登录状态）
- * 若无可用 team 账号，返回 null（fallback 到 API key）
+ * 若无可用 team 账号，返回 null（调用方直接抛错，不再 fallback 到 API key 计费）
  */
 function getNextCodexTeamHome() {
   for (let i = 0; i < CODEX_TEAM_HOMES.length; i++) {
@@ -609,7 +616,8 @@ function getNextCodexTeamHome() {
 /**
  * 通过 codex exec 无头调用 Codex（走 OAuth 订阅账号，不消耗 API 额度）
  * model ID 格式: "codex/<model-name>"，传给 -m 时去掉前缀
- * 优先使用 ~/.codex-teamX OAuth 账号（CODEX_HOME），fallback 到 API key
+ * 只使用 ~/.codex-teamX OAuth 账号（CODEX_HOME）；全部账号掉线时直接抛错，
+ * 禁止 fallback 到 API key 计费调用
  */
 async function callCodexHeadless(prompt, model, options = {}) {
   const timeout = options.timeout || 120000;
@@ -618,21 +626,21 @@ async function callCodexHeadless(prompt, model, options = {}) {
 
   // 优先用 OAuth team 账号（走订阅，不消耗 API 额度）
   const teamHome = getNextCodexTeamHome();
-  const env = { ...process.env };
-  if (teamHome) {
-    env.CODEX_HOME = teamHome;
-    // 删除 API key，确保走 OAuth 而非直接计费
-    delete env.OPENAI_API_KEY;
-    delete env.CODEX_API_KEY;
-    console.log(`[llm-caller] codex 使用 OAuth team 账号: ${teamHome}`);
-  } else {
-    // fallback：无 team 账号时用 API key
-    const apiKey = getOpenAIKey();
-    if (!apiKey) throw new Error('Codex: 无可用 OAuth team 账号，且 OpenAI API key 不存在');
-    env.OPENAI_API_KEY = apiKey;
-    env.CODEX_API_KEY = apiKey;
-    console.warn('[llm-caller] codex 无可用 OAuth team 账号，fallback 到 API key');
+  if (!teamHome) {
+    // 2026-09-02：曾经这里会 fallback 到 OPENAI_API_KEY 直接计费调用 Codex，
+    // 在 team 账号掉线期间静默烧掉约 24 美元且无任何告警。禁止这条路径——
+    // 直接失败，交给 callLLM() 既有的 anthropic-api 紧急兜底机制接管。
+    const poolNames = CODEX_ACCOUNTS.map((a) => a.name).join('/');
+    throw new Error(
+      `Codex: 无可用 OAuth team 账号（${poolNames} 全部掉线），已禁止 fallback 到 API Key 计费，请检查 codex 账号登录状态`
+    );
   }
+  const env = { ...process.env };
+  env.CODEX_HOME = teamHome;
+  // 删除 API key，确保走 OAuth 而非直接计费
+  delete env.OPENAI_API_KEY;
+  delete env.CODEX_API_KEY;
+  console.log(`[llm-caller] codex 使用 OAuth team 账号: ${teamHome}`);
 
   return new Promise((resolve, reject) => {
     // --skip-git-repo-check: brain 进程 cwd 不是 git 仓库（容器内 /app），

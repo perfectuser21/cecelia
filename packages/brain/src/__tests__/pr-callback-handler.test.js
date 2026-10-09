@@ -396,17 +396,17 @@ describe('handlePrMerged', () => {
 
     // 验证 UPDATE SQL 包含 pr_url 和 pr_merged_at 直接列
     const updateSql = mockClient.query.mock.calls[1][0];
-    expect(updateSql).toContain('pr_url = $5');
-    expect(updateSql).toContain('pr_merged_at = COALESCE($6::timestamp, NOW())');
+    expect(updateSql).toMatch(/pr_url = \$\d+/);
+    expect(updateSql).toMatch(/pr_merged_at = \$\d+::timestamptz/);
     expect(updateSql).toContain('RETURNING');
     expect(updateSql).toContain('pr_url');
     expect(updateSql).toContain('pr_merged_at');
 
-    // 验证参数：$5 = prUrl, $6 = mergedAt
+    // 验证参数：终态经 lib/task-terminal.js 收口，id 恒为 $1，prUrl / mergedAt 走白名单列参数
     const updateParams = mockClient.query.mock.calls[1][1];
-    expect(updateParams).toHaveLength(6);
-    expect(updateParams[4]).toBe(prInfo.prUrl);
-    expect(updateParams[5]).toBe(prInfo.mergedAt);
+    expect(updateParams[0]).toBe('task-uuid-1');
+    expect(updateParams).toContain(prInfo.prUrl);
+    expect(updateParams).toContain(prInfo.mergedAt);
   });
 
   it('应该通过 pr_url 匹配 completed 任务并只更新 pr_merged_at（不改 status）', async () => {
@@ -442,16 +442,17 @@ describe('handlePrMerged', () => {
     expect(result.taskId).toBe('task-uuid-completed');
     expect(result.krProgressUpdated).toBe(false); // 不触发 KR 进度
 
-    // 验证 UPDATE SQL 只更新 pr_url 和 pr_merged_at（SET 中无 status 赋值）
+    // 验证 UPDATE SQL 只补 pr_url（COALESCE 不覆盖）和 pr_merged_at；终态经 lib/task-terminal.js 收口，
+    // status 字面量 completed（completed_no_pr 提升）、CAS 只认 completed/completed_no_pr 且 pr_merged_at IS NULL
     const updateSql = mockClient.query.mock.calls[1][0];
-    expect(updateSql).toContain('pr_url = COALESCE(pr_url, $2)');
-    expect(updateSql).toContain('pr_merged_at = $3');
-    // 参数只有 3 个（taskId, prUrl, mergedAt），没有新 status 值
+    expect(updateSql).toMatch(/pr_url = COALESCE\(pr_url, \$\d+\)/);
+    expect(updateSql).toMatch(/pr_merged_at = \$\d+::timestamptz/);
+    expect(updateSql).toContain("status IN ('completed', 'completed_no_pr')");
+    expect(updateSql).toContain('pr_merged_at IS NULL');
     const updateParams = mockClient.query.mock.calls[1][1];
-    expect(updateParams).toHaveLength(3);
     expect(updateParams[0]).toBe('task-uuid-completed');
-    expect(updateParams[1]).toBe(prInfo.prUrl);
-    expect(updateParams[2]).toBe(prInfo.mergedAt);
+    expect(updateParams).toContain(prInfo.prUrl);
+    expect(updateParams).toContain(prInfo.mergedAt);
   });
 
   it('应该幂等处理 - completed 任务 pr_merged_at 已有值时不重复更新', async () => {
@@ -534,8 +535,8 @@ describe('handlePrMerged', () => {
     // 验证 UPDATE SQL 包含 status = 'completed'
     const updateSql = mockClient.query.mock.calls[1][0];
     expect(updateSql).toContain("status = 'completed'");
-    expect(updateSql).toContain('pr_url = $5');
-    expect(updateSql).toContain('pr_merged_at = COALESCE($6::timestamp, NOW())');
+    expect(updateSql).toMatch(/pr_url = \$\d+/);
+    expect(updateSql).toMatch(/pr_merged_at = \$\d+::timestamptz/);
 
     // 验证事务序列
     const clientCalls = mockClient.query.mock.calls.map(c => c[0]);

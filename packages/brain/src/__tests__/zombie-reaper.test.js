@@ -58,7 +58,8 @@ describe('reapZombies', () => {
     const updateCall = pool.query.mock.calls[2][0];
     expect(updateCall).toMatch(/status\s*=\s*'failed'/);
     const updateParams = pool.query.mock.calls[2][1];
-    expect(updateParams[0]).toMatch(/zombie/i);
+    // finalizeTask 约定 id 恒为 $1，error_message 是 $2
+    expect(updateParams[1]).toMatch(/zombie/i);
 
     expect(result.reaped).toBe(1);
     expect(result.errors).toHaveLength(0);

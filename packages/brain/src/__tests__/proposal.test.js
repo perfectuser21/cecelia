@@ -22,6 +22,10 @@ vi.mock('../db.js', () => ({
 }));
 const mockCreateTask = vi.hoisted(() => vi.fn());
 vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
+// 依赖单一写口（链 bf5088a3 棒5）：add/remove_dependency 经 lib/task-dependencies.js 写边 + payload.depends_on
+const mockAddDep = vi.hoisted(() => vi.fn().mockResolvedValue({ added: true }));
+const mockRemoveDep = vi.hoisted(() => vi.fn().mockResolvedValue({ removed: true }));
+vi.mock('../lib/task-dependencies.js', () => ({ addTaskDependency: mockAddDep, removeTaskDependency: mockRemoveDep }));
 
 import {
   validateChange,
@@ -818,12 +822,12 @@ describe('proposal', () => {
       };
       mockQuery.mockResolvedValueOnce({ rows: [proposal] }); // getProposal
       mockQuery.mockResolvedValueOnce({ rows: [{ id: 't1', payload: { depends_on: [] } }] }); // snapshot
-      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE payload
       mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE proposals
 
       const result = await applyProposal('p4');
       expect(result.results[0].result.success).toBe(true);
       expect(result.results[0].result.action).toBe('dependency_added');
+      expect(mockAddDep).toHaveBeenCalledWith(expect.anything(), { fromTaskId: 't1', toTaskId: 't2' });
     });
 
     it('add_dependency 不重复添加已存在的依赖', async () => {
@@ -840,10 +844,12 @@ describe('proposal', () => {
         rows: [{ id: 't1', payload: { depends_on: ['t2'] } }], // t2 已存在
       }); // snapshot
       mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE proposals
+      mockAddDep.mockResolvedValueOnce({ added: false }); // 写口幂等：边已存在
 
       const result = await applyProposal('p4b');
       expect(result.results[0].result.success).toBe(true);
-      // 不应有额外的 UPDATE 调用来修改 payload
+      // 幂等由写口保证（ON CONFLICT DO NOTHING + payload 不重复追加），proposal 不再自己拼 payload
+      expect(mockQuery.mock.calls.some(([sql]) => /UPDATE tasks/.test(String(sql)))).toBe(false);
     });
 
     it('执行 remove_dependency 变更', async () => {
@@ -859,12 +865,12 @@ describe('proposal', () => {
       mockQuery.mockResolvedValueOnce({
         rows: [{ id: 't1', payload: { depends_on: ['t2', 't3'] } }],
       }); // snapshot
-      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE payload
       mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE proposals
 
       const result = await applyProposal('p5');
       expect(result.results[0].result.success).toBe(true);
       expect(result.results[0].result.action).toBe('dependency_removed');
+      expect(mockRemoveDep).toHaveBeenCalledWith(expect.anything(), { fromTaskId: 't1', toTaskId: 't2' });
     });
 
     it('split_task 返回未实现', async () => {

@@ -17,23 +17,12 @@
  * Evaluator→Fix 循环 47 轮无限 spin，跑 3 天没有 report。
  */
 
+import { PIPELINE_WATCHDOG_TASK_TYPES as HARNESS_TASK_TYPES } from './lib/task-type-registry.js';
+
 // 默认 6 小时无任何任务状态更新 → 判定 stuck
 const DEFAULT_STUCK_THRESHOLD_HOURS = parseFloat(
   process.env.PIPELINE_STUCK_THRESHOLD_HOURS || '6'
 );
-
-// 仅对 harness_* pipeline 生效
-const HARNESS_TASK_TYPES = [
-  'harness_planner',
-  'harness_contract_propose',
-  'harness_contract_review',
-  'harness_generate',
-  'harness_fix',
-  'harness_ci_watch',
-  'harness_deploy_watch',
-  'harness_evaluate',
-  'harness_report',
-];
 
 /**
  * 扫描所有活跃 harness pipeline，返回 stuck 的 sprint_dir 列表

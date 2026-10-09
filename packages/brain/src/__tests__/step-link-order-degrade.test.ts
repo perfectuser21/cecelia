@@ -44,27 +44,29 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
       .mockResolvedValueOnce({ rows: [] })   // journeys (empty)
       .mockResolvedValueOnce({ rows: [] })   // features (empty)
       .mockResolvedValueOnce({ rows: [] })   // issues (empty)
-      .mockResolvedValueOnce({ rows: [] })   // skill_registry (empty)
-      .mockResolvedValueOnce({ rows: [] })   // journey_steps (empty)
+      .mockResolvedValueOnce({ rows: [] })   // tasks (empty, pushTasks 档位)
       .mockResolvedValueOnce({ rows: [stepLink] }) // journey_step_links → 1 row
       .mockResolvedValueOnce({ rows: [] })   // decisions (empty)
       .mockResolvedValueOnce({ rows: [] })   // initiative_contracts (empty)
       .mockResolvedValue({ rows: [] });      // UPDATE fallback
 
-    // notionReq mock:
-    // 第一次: getDbSchema for STEP_LINKS_DB → schema 无 Order
-    // 第二次: create page → success
-    mockNotionReq
-      .mockResolvedValueOnce({
-        properties: {
-          Name: { type: 'title' },
-          Status: { type: 'select' },
-          Journey: { type: 'relation' },
-          Step: { type: 'relation' },
-          // 注意：没有 'Order' property
-        },
-      })
-      .mockResolvedValueOnce({ id: 'sl-notion-1' });
+    // notionReq mock 按 method 分派（棒4-2 起推送前会 PATCH 补格子列，不能再靠调用顺序）：
+    // GET schema → 无 Order；PATCH 补列 → ok；POST create page → success
+    mockNotionReq.mockImplementation(async (_t: string, _p: string, method: string) => {
+      if (method === 'GET') {
+        return {
+          properties: {
+            Name: { type: 'title' },
+            Status: { type: 'select' },
+            Journey: { type: 'relation' },
+            Step: { type: 'relation' },
+            // 注意：没有 'Order' property
+          },
+        };
+      }
+      if (method === 'POST') return { id: 'sl-notion-1' };
+      return {};
+    });
 
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
@@ -98,25 +100,28 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] }) // tasks (pushTasks 档位)
       .mockResolvedValueOnce({ rows: [stepLink] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValue({ rows: [] });
 
-    // schema 包含 Order property
-    mockNotionReq
-      .mockResolvedValueOnce({
-        properties: {
-          Name: { type: 'title' },
-          Status: { type: 'select' },
-          Order: { type: 'number' }, // schema 中存在
-          Journey: { type: 'relation' },
-          Step: { type: 'relation' },
-        },
-      })
-      .mockResolvedValueOnce({ id: 'sl-notion-2' });
+    // schema 包含 Order property（按 method 分派）
+    mockNotionReq.mockImplementation(async (_t: string, _p: string, method: string) => {
+      if (method === 'GET') {
+        return {
+          properties: {
+            Name: { type: 'title' },
+            Status: { type: 'select' },
+            Order: { type: 'number' }, // schema 中存在
+            Journey: { type: 'relation' },
+            Step: { type: 'relation' },
+          },
+        };
+      }
+      if (method === 'POST') return { id: 'sl-notion-2' };
+      return {};
+    });
 
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
@@ -148,7 +153,6 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [stepLink] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -157,9 +161,11 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
     // schema 查询成功，但 create page 抛出 400（模拟真实 Notion 400 场景）
     const notionError = new Error('Notion POST /pages → 400: is not a property');
     (notionError as any).status = 400;
-    mockNotionReq
-      .mockResolvedValueOnce({ properties: { Name: { type: 'title' } } }) // schema
-      .mockRejectedValueOnce(notionError); // create page 400
+    mockNotionReq.mockImplementation(async (_t: string, _p: string, method: string) => {
+      if (method === 'GET') return { properties: { Name: { type: 'title' } } }; // schema
+      if (method === 'POST') throw notionError; // create page 400
+      return {};
+    });
 
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     // 不应抛出（pushJourneyStepLinks 按行 try-catch）

@@ -1,39 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const srcPath = resolve(__dirname, '../publish-jobs.js');
+const src = readFileSync(join(__dirname, '../publish-jobs.js'), 'utf8');
 
-describe('routes/publish-jobs — /publish/success-rate 端点', () => {
-  it('publish-jobs.js 含 /publish/success-rate 路由定义', () => {
-    const src = fs.readFileSync(srcPath, 'utf8');
-    expect(src).toMatch(/router\.get\s*\(\s*['"]\/publish\/success-rate['"]/);
+// 迁移 486：publish_success_daily 空表删除（写入方从未跑起来），/publish/success-rate 接口同 PR 删除。
+describe('routes/publish-jobs — success-rate 已随 publish_success_daily 删除', () => {
+  it('不再注册 /publish/success-rate', () => {
+    expect(src).not.toMatch(/['"]\/publish\/success-rate['"]/);
   });
-
-  it('publish-jobs.js 查询 publish_success_daily 表', () => {
-    const src = fs.readFileSync(srcPath, 'utf8');
-    expect(src).toMatch(/publish_success_daily/);
-  });
-
-  it('响应字段包含 date / success_rate / total / completed / failed', () => {
-    const src = fs.readFileSync(srcPath, 'utf8');
-    expect(src).toMatch(/date/);
-    expect(src).toMatch(/success_rate/);
-    expect(src).toMatch(/total/);
-    expect(src).toMatch(/completed/);
-    expect(src).toMatch(/failed/);
-  });
-
-  it('days 参数上限为 90', () => {
-    const src = fs.readFileSync(srcPath, 'utf8');
-    expect(src).toMatch(/90/);
-  });
-
-  it('支持 platform 参数过滤', () => {
-    const src = fs.readFileSync(srcPath, 'utf8');
-    const successRateBlock = src.slice(src.indexOf('/success-rate'));
-    expect(successRateBlock).toMatch(/platform/);
+  it('不再查询 publish_success_daily', () => {
+    expect(src).not.toMatch(/publish_success_daily/);
   });
 });

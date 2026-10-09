@@ -35,13 +35,10 @@ services:
       # （git archive origin/main，根治工作 checkout 停 feature 分支读旧版的坑），dist 未 mount 则
       # 容器内 loadSkillContent 悬空 → Brain 无法 dispatch relay / watchdog 无法重点火（只能宿主 ignite）。
       - /Users/administrator/perfect21/zenithjoy-skills-dist:/Users/administrator/perfect21/zenithjoy-skills-dist:ro
-      # Credentials + Claude accounts — 保持宿主路径不 remap
+      # Credentials — 保持宿主路径不 remap
       # HOST_HOME=/Users/administrator + Dockerfile ENV HOME 也对齐宿主路径，
       # 这样 Brain os.homedir() 和 docker-executor 构造的子容器 mount 源都能解析。
       - /Users/administrator/.credentials:/Users/administrator/.credentials:ro
-      - /Users/administrator/.claude-account1:/Users/administrator/.claude-account1:ro
-      - /Users/administrator/.claude-account2:/Users/administrator/.claude-account2:ro
-      - /Users/administrator/.claude-account3:/Users/administrator/.claude-account3:ro
       # Provider-neutral Kernel preflight 需要看到本机已验证的全部账号状态。
       # codex home 须可写（rw）：codex 0.146 起启动即写 cache/sessions/locks，:ro 直接
       # Read-only file system 崩死 triggerCodexReview（2026-08-05 事故，决策 c62c423a）。
@@ -51,8 +48,8 @@ services:
       - /Users/administrator/.codex-team4:/Users/administrator/.codex-team4:rw
       - /Users/administrator/.codex-team5:/Users/administrator/.codex-team5:rw
       - /Users/administrator/.grok:/Users/administrator/.grok:ro
-      # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
-      - /Users/administrator/perfect21/cecelia/packages/workflows:/Users/administrator/perfect21/cecelia/packages/workflows:ro
+      # packages/workflows 不再单独叠只读挂载（09-28 事故，任务 ddee8737）：部署根守卫在本容器内对部署根
+      # git checkout -f / reset --hard，只读子挂载让任何改到该目录的提交都部署失败。该目录随部署根整体可写。
       # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
       - /Users/administrator/perfect21/cecelia/packages/config:/config:ro
       # HEARTBEAT.md (read-write for GET/PUT API)
@@ -133,8 +130,11 @@ services:
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
-      # Bark 告警推送 token（source ~/.credentials/bark.env 后由宿主 shell 展开）
-      - BARK_TOKEN=${BARK_TOKEN:-}
+      # BARK_TOKEN only comes from env_file (.env.docker) — 不要在这里写
+      # `${BARK_TOKEN:-}`：environment 优先级高于 env_file，任何不带宿主 shell
+      # 预先 export BARK_TOKEN 的 `compose up` 都会把 .env.docker 里的真实 token
+      # 盖成空串 → Bark 告警静默失效（2026-09-11 us-vps 生产实证，同
+      # KERNEL_FLEET_BRIDGE_TOKEN 那个坑一模一样）。
       - CECELIA_RUN_PATH=/Users/administrator/perfect21/cecelia/packages/brain/scripts/cecelia-run.sh
       - HOST_HOME=/Users/administrator
       # 部署根=CD 专用仓（非活人主仓），deploy-local.sh 从此仓 pull/reset origin/main 后 build
@@ -200,7 +200,7 @@ services:
     network_mode: host
     working_dir: /app
     volumes:
-      - ./apps/dashboard/dist:/app
+      - ${DASHBOARD_DIST_DIR:-./apps/dashboard/dist}:/app:ro
       - ./frontend-proxy.js:/frontend-proxy.js:ro
     command: node /frontend-proxy.js
     depends_on:

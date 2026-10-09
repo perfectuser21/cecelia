@@ -1,13 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
+// 本文件只验证模拟 worker 传输；真实隔离由 production-transport-isolation 覆盖。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 
+import { resolvePrimaryWorkerId } from '../machine-registry.js';
 import { signMachineAttestation } from './machine-attestation.js';
 import {
-  createProductionExecutionTransport,
+  createProductionExecutionTransport as createActualProductionTransport,
   DEFAULT_LOCAL_MACHINE_ID,
   DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS,
   DEFAULT_REMOTE_BRIDGE_START_TIMEOUT_MS,
   DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS,
 } from './production-transport.js';
+
+// 本文件仅验证传输协议；目录DB权威由真实PG集成用例验证。
+const createProductionExecutionTransport=options=>createActualProductionTransport({...options,
+ executionAuthority:async(_method,input,run)=>run(input,{canonical_id:input?.target?.machine,endpoints:{worker:options.env?.[`FLEET_WORKER_${input?.target?.machine?.toUpperCase().replaceAll('-','_')}_URL`]}})});
 
 const CALLBACK_URL = 'http://brain.internal:5221';
 const SHARED_SECRET = 'fleet-worker-secret-at-least-32-bytes';
@@ -120,6 +127,13 @@ function acceptedResponse(machine) {
 }
 
 describe('production execution transport', () => {
+  // 派生锁（文档性断言）：锁 DEFAULT_LOCAL_MACHINE_ID 与 primary 角色解析同源。
+  // 注意它无法侦测「字面量写回」回归——那由 scripts/ci/__tests__/machine-registry-role-guard.test.sh
+  // 的全仓 grep 守卫执法（禁 'us-mac-m4' 出现在判断逻辑）。
+  it('DEFAULT_LOCAL_MACHINE_ID 由 primary 角色派生（禁字面量）', () => {
+    expect(DEFAULT_LOCAL_MACHINE_ID).toBe(resolvePrimaryWorkerId());
+  });
+
   it('forwards the exact attempt lease when cancelling through the production transport', async () => {
     const fetchFn = vi.fn(async () => ({
       ok: true,

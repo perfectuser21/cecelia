@@ -79,10 +79,18 @@ test.afterAll(async () => {
   });
 });
 
+// 旧版 controllerchange 会触发首次 reload。必须等这个真实导航结束，
+// 再开始升级场景；仅 controller !== null 会在 reload 开始前就满足。
+async function waitForLegacyReload(page: import('@playwright/test').Page) {
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null
+    && Number(sessionStorage.getItem('legacy-page-loads')) >= 2);
+  await expect(page.getByTestId('legacy-home')).toBeVisible();
+  await page.waitForLoadState('load');
+}
+
 test('旧版 catch-all Service Worker 升级后保留 Workbench 深层路由', async ({ page }) => {
   await page.goto(origin);
-  await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-  await expect(page.getByTestId('legacy-home')).toBeVisible();
+  await waitForLegacyReload(page);
 
   const legacyCaches = await page.evaluate(() => caches.keys());
   expect(legacyCaches).toContain('legacy-navigation-cache');
@@ -121,7 +129,7 @@ for (const targetPath of workbenchPaths) {
     });
 
     await page.goto(origin);
-    await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+    await waitForLegacyReload(page);
     serveCurrentBuild = true;
 
     await page.goto(`${origin}${targetPath}`);
@@ -134,5 +142,99 @@ for (const targetPath of workbenchPaths) {
     expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(0);
 
     await context.close();
+  });
+}
+
+for (const viewport of [
+  { width: 1440, height: 1000 },
+  { width: 390, height: 844 },
+  { width: 320, height: 740 },
+]) {
+  test(`首页运行诊断及三类导航在 ${viewport.width}px 视口完整可用`, async ({ page }) => {
+    serveCurrentBuild = true;
+    await page.setViewportSize(viewport);
+    await page.route('**/api/**', route => route.fulfill({
+      status: 503, contentType: 'application/json', body: '{"error":"首页布局验收：数据服务隔离"}',
+    }));
+
+    await page.goto(origin);
+    await expect(page).toHaveURL(/\/system$/);
+    const nav = page.locator('aside nav');
+    const labels = ['运行与诊断', 'AI 管理', '机器资源'];
+    // 默认收起侧栏仍能通过三个功能按钮进入；手机保持内容区域可用。
+    await expect(nav.getByRole('button')).toHaveCount(3);
+    for (const label of labels) {
+      const entry = nav.getByRole('button', { name: label, exact: true });
+      await expect(entry).toBeVisible();
+      const box = (await entry.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+    }
+    await expect(nav.getByRole('button', { name: '交代事情', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: '交办内容' })).toHaveCount(0);
+    const main = page.locator('main');
+    await expect(main).toBeVisible();
+    await expect(page.getByRole('heading', { name: '运行健康', exact: true })).toBeVisible();
+    await expect(main.getByRole('button', { name: '运行健康', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+
+    await page.getByTitle('展开侧边栏').click();
+    for (const label of labels) await expect(nav.getByRole('link', { name: label, exact: true })).toBeVisible();
+    await expect(nav.locator('a[href="/workbench/inbox"], a[href="/cecelia/chat"]')).toHaveCount(0);
+    await page.getByTitle('收起侧边栏').click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+  });
+}
+
+for (const viewport of [
+  { width: 1440, height: 1000 },
+  { width: 390, height: 844 },
+  { width: 320, height: 740 },
+]) {
+  test(`历史交办深层页面在 ${viewport.width}px 视口中可输入且提交按钮完整可见`, async ({ page }) => {
+    serveCurrentBuild = true;
+    await page.setViewportSize(viewport);
+    await page.route('**/api/**', route => {
+      const pathname = new URL(route.request().url()).pathname;
+      if (pathname === '/api/brain/task-intake') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"tasks":[]}' });
+      if (pathname === '/api/brain/captures' || pathname === '/api/brain/initiatives') {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: '{"items":[]}' });
+      }
+      return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"首页布局验收：数据服务隔离"}' });
+    });
+
+    await page.goto(`${origin}/workbench/inbox`);
+    await expect(page).toHaveURL(/\/workbench\/inbox$/);
+    const input = page.getByRole('textbox', { name: '交办内容' });
+    const submit = page.getByRole('button', { name: '提交交办' });
+    await expect(input).toBeVisible();
+    await input.fill('检查首页输入区在不同设备上的布局');
+    await expect(submit).toBeEnabled();
+    await page.locator('main').evaluate(async main => {
+      const animations = main.getAnimations({ subtree: true })
+        .filter(animation => animation.effect?.getTiming().iterations !== Infinity);
+      await Promise.all(animations.map(animation => animation.finished.catch(() => {})));
+    });
+
+    const inputBox = (await input.boundingBox())!;
+    const submitBox = (await submit.boundingBox())!;
+    const mainBox = (await page.locator('main').boundingBox())!;
+    const inputAreaBox = (await input.locator('..').boundingBox())!;
+    expect(inputBox.width, '输入框应使用交办输入面的主要可用宽度').toBeGreaterThanOrEqual(Math.max(160, inputAreaBox.width * 0.6));
+    expect(inputBox.height, '输入框应便于手机触控').toBeGreaterThanOrEqual(44);
+    expect(submitBox.width).toBeGreaterThanOrEqual(64);
+    expect(submitBox.height).toBeGreaterThanOrEqual(44);
+
+    for (const box of [inputBox, submitBox]) {
+      expect(box.x).toBeGreaterThanOrEqual(mainBox.x);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+      expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+    }
+    expect(
+      inputBox.x + inputBox.width <= submitBox.x || inputBox.y + inputBox.height <= submitBox.y,
+      '输入框与提交按钮不能重叠',
+    ).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
   });
 }

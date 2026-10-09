@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import MapPage from '@features/core/planning/pages/MapPage';
+import MapPage from '@features/core/planning/pages/LegacyFeatureMap';
 
 // B-03 覆盖：/map 页在既有语义 DOM 之外 additive 挂载 mind-elixir 容器（data-testid=map-mindmap），
 // 且 freshness.status != fresh 时出现可见提示（role=status），不静默。
@@ -56,7 +56,7 @@ describe('MapPage mind-elixir 三层脑图 + freshness 提示', () => {
 
     it('渲染 MapPage 出现 data-testid=map-mindmap 容器', async () => {
       render(<MapPage />);
-      expect(await screen.findByRole('heading', { name: '通用地图' })).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { name: 'Feature 地图' })).toBeInTheDocument();
       expect(await screen.findByTestId('map-mindmap')).toBeInTheDocument();
     });
 

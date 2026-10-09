@@ -1,15 +1,55 @@
 /**
- * Task Projects route (migrated to new OKR table: okr_projects)
+ * Task Projects route（棒1，任务 9e785997，决策 ee4842a6/3feeae3e：迁到 projects 真身表）
  *
- * GET /        — 列出所有项目（从 okr_projects 查询，支持 area_id, status, kr_id 过滤）
- * GET /:id     — 获取单个 project（供 /decomp Phase 2 读取 Initiative/Project 信息）
- * PATCH /:id   — 更新 project 字段（status/title/area_id，供 /decomp 标记 Initiative 完成）
+ * GET /        — 列出所有项目（从 projects 查询，支持 area_id, status, kr_id 过滤）
+ * GET /:id     — 获取单个 project，附 children_count / completed_count（该 project 下非 project 类型任务的统计）
+ * POST /       — 新建 project（name 必填；kr_id 若给必须存在于 key_results，否则 400 kr_id_not_key_result）
+ * PATCH /:id   — 更新 project 字段（name/title(兼容)/description/status/kr_id/owner_role/start_date/end_date/metadata/area_id）
+ *
+ * 棒4（决策 ee4842a6/3feeae3e）起：/api/brain/okr/projects（routes/okr-hierarchy.js）
+ * 直接 `router.use('/projects', taskProjectsRoutes)` 复用本文件的 router，与
+ * /api/brain/projects 是同一份代码、同一张 projects 表，不会读到不同的行。
+ * 原 okr_projects 表保留不动，只读历史（migration 499 加了写保护 trigger）。
  */
 
 import { Router } from 'express';
 import pool from '../db.js';
+import projectLocateRoutes from './project-locate-routes.js';
 
 const router = Router();
+
+// POST /projects — 新建（name 必填；kr_id 若给必须是真实 key_results）
+router.post('/', async (req, res) => {
+  try {
+    const {
+      name, description = null, status = 'planning', area_id = null, kr_id = null,
+      owner_role = null, start_date = null, end_date = null, metadata = null, custom_props = null,
+    } = req.body;
+
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    if (kr_id) {
+      const kr = await pool.query('SELECT id FROM key_results WHERE id = $1', [kr_id]);
+      if (!kr.rows.length) {
+        return res.status(400).json({ error: 'kr_id_not_key_result', message: `kr_id ${kr_id} 不是 key_results 表里的行` });
+      }
+    }
+
+    // custom_props 是 NOT NULL DEFAULT '{}'（迁移 497）：显式传 null 会撞 not-null 违例，
+    // 未传时必须落回 DB 默认值，COALESCE 兜底（棒4 起 /api/brain/okr/projects 复用本路由，
+    // 真库集成测试才把这条撞出来——之前只有 mock 测试覆盖不到 NOT NULL 约束）。
+    const result = await pool.query(
+      `INSERT INTO projects (name, description, status, area_id, kr_id, owner_role, start_date, end_date, metadata, custom_props)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, '{}'::jsonb)) RETURNING *`,
+      [name, description, status, area_id, kr_id, owner_role, start_date, end_date, metadata, custom_props]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create project', details: err.message });
+  }
+});
 
 // GET /projects — 列出项目（支持 area_id, status, kr_id 过滤）
 router.get('/', async (req, res) => {
@@ -33,7 +73,7 @@ router.get('/', async (req, res) => {
       params.push(kr_id);
     }
 
-    let query = 'SELECT * FROM okr_projects';
+    let query = 'SELECT *, name AS title FROM projects';
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
@@ -182,21 +222,61 @@ router.post('/compare/report/push-notion', async (req, res) => {
   }
 });
 
-// GET /projects/:id — 获取单个 project（返回 intent-expand 所需字段）
+// POST /locate + POST /:id/tasks（棒3，任务 8a40825a）：独立文件，见 project-locate-routes.js
+// 顶部注释——本文件（task-projects.js）快撞 500 行拆分线，新增路由不再堆这里。
+// 挂载在 /:id 之前，否则 "locate" 会被 GET/PATCH /:id 当作 UUID 拦截。
+router.use('/', projectLocateRoutes);
+
+// GET /projects/:id — 获取单个 project（title 兼容旧读方；附 children_count/completed_count）
 router.get('/:id', async (req, res) => {
   const { id } = req.params;
   const result = await pool.query(
-    'SELECT id, title, NULL::text AS description, kr_id, NULL::uuid AS goal_id FROM okr_projects WHERE id = $1',
+    'SELECT *, name AS title FROM projects WHERE id = $1',
     [id]
   );
   if (!result.rows[0]) return res.status(404).json({ error: 'project not found' });
-  res.json(result.rows[0]);
+  const project = result.rows[0];
+  const counts = await pool.query(
+    `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'completed')::int AS completed
+       FROM tasks WHERE project_id = $1::uuid AND task_type <> 'project'`,
+    [id]
+  );
+  res.json({
+    ...project,
+    children_count: counts.rows[0]?.total ?? 0,
+    completed_count: counts.rows[0]?.completed ?? 0,
+  });
 });
 
-// PATCH /projects/:id — 更新 project 字段（status / title / area_id / owner_role）
+// PATCH /projects/:id/brief — 主会话直接改项目简报（棒2，决策 ee4842a6/3feeae3e）
+// Body: { brief_delta: {...}, task_id?: string }。同走 applyBriefDelta + A 档权限分档
+// （改 goal / 一次砍 ≥3 棒 → 升 pending_actions，不直接生效；其余字段照常生效）。
+router.patch('/:id/brief', async (req, res) => {
+  try {
+    const { brief_delta, task_id = null } = req.body || {};
+    if (!brief_delta || typeof brief_delta !== 'object' || Array.isArray(brief_delta)) {
+      return res.status(400).json({ error: 'brief_delta is required and must be an object' });
+    }
+    const { applyProjectBriefDelta } = await import('../lib/project-brief-apply.js');
+    const result = await applyProjectBriefDelta(pool, { projectId: req.params.id, rawDelta: brief_delta, taskId: task_id });
+    if (!result) {
+      const exists = await pool.query('SELECT id FROM projects WHERE id = $1', [req.params.id]);
+      if (!exists.rows.length) return res.status(404).json({ error: 'Project not found', id: req.params.id });
+      return res.status(400).json({ error: 'brief_delta 清洗后为空（全部字段非法），未生效' });
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update project brief', details: err.message });
+  }
+});
+
+// PATCH /projects/:id — 更新 project 字段
 router.patch('/:id', async (req, res) => {
   try {
-    const { status, title, name, area_id, owner_role } = req.body;
+    const {
+      status, title, name, area_id, owner_role, kr_id, description,
+      start_date, end_date, metadata, custom_props,
+    } = req.body;
 
     const setClauses = [];
     const params = [];
@@ -206,11 +286,15 @@ router.patch('/:id', async (req, res) => {
       setClauses.push(`status = $${paramIndex++}`);
       params.push(status);
     }
-    // name 映射到 title（向后兼容旧 projects.name 字段）
-    const titleValue = title !== undefined ? title : name;
-    if (titleValue !== undefined) {
-      setClauses.push(`title = $${paramIndex++}`);
-      params.push(titleValue);
+    // name 映射到 name 列；title 只是旧读方的兼容别名
+    const nameValue = name !== undefined ? name : title;
+    if (nameValue !== undefined) {
+      setClauses.push(`name = $${paramIndex++}`);
+      params.push(nameValue);
+    }
+    if (description !== undefined) {
+      setClauses.push(`description = $${paramIndex++}`);
+      params.push(description);
     }
     if (area_id !== undefined) {
       setClauses.push(`area_id = $${paramIndex++}`);
@@ -219,6 +303,26 @@ router.patch('/:id', async (req, res) => {
     if (owner_role !== undefined) {
       setClauses.push(`owner_role = $${paramIndex++}`);
       params.push(owner_role);
+    }
+    if (kr_id !== undefined) {
+      setClauses.push(`kr_id = $${paramIndex++}`);
+      params.push(kr_id);
+    }
+    if (start_date !== undefined) {
+      setClauses.push(`start_date = $${paramIndex++}`);
+      params.push(start_date);
+    }
+    if (end_date !== undefined) {
+      setClauses.push(`end_date = $${paramIndex++}`);
+      params.push(end_date);
+    }
+    if (metadata !== undefined) {
+      setClauses.push(`metadata = $${paramIndex++}`);
+      params.push(metadata);
+    }
+    if (custom_props !== undefined) {
+      setClauses.push(`custom_props = $${paramIndex++}`);
+      params.push(custom_props);
     }
 
     if (setClauses.length === 0) {
@@ -229,7 +333,7 @@ router.patch('/:id', async (req, res) => {
     params.push(req.params.id);
 
     const result = await pool.query(
-      `UPDATE okr_projects SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+      `UPDATE projects SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
       params
     );
 

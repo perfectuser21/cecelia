@@ -1,0 +1,57 @@
+import { describe, it, expect, vi } from 'vitest';
+import { projectCompanyKrRegistration, upsertRegistrationPage, workflowProperties, runProperties, REGISTRATION_DATABASES } from '../company-kr-registration-notion.js';
+
+describe('公司KR登记投影', () => {
+  it('正式workflow使用实际名称；历史run不捏造步骤完成关系', () => {
+    expect(workflowProperties({name:'公司 KR 分析',version:'1.0'})).toEqual({'名称':{title:[{text:{content:'公司 KR 分析'}}]}});
+    const p=runProperties({run_id:'r',status:'success',started_at:'2026-10-01T00:00:00Z',ended_at:'2026-10-01T00:01:00Z'},'ops');
+    expect(p.Workflow.relation).toEqual([{id:'ops'}]);
+    expect(p).not.toHaveProperty('涉及步骤');
+    expect(p.Status.select.name).toBe('success');
+  });
+  it('投影存在重复页时停止，不再创建第三份', async () => {
+    const pool={query:vi.fn().mockResolvedValue({rows:[]})};
+    const notionReq=vi.fn().mockResolvedValue({results:[{id:'a'},{id:'b'}]});
+    await expect(upsertRegistrationPage(pool,'token',{table:'steps',row:{id:'s'},dbId:'db',properties:{},filter:{},notionReq})).rejects.toThrow('重复');
+    expect(notionReq).toHaveBeenCalledTimes(1);
+    expect(notionReq.mock.calls[0][1]).toContain('/query');
+  });
+  it('丢失本地映射时按稳定身份找回旧页，不重复POST', async () => {
+    const pool={query:vi.fn().mockResolvedValue({rows:[]})};
+    const notionReq=vi.fn().mockResolvedValueOnce({results:[{id:'old'}]}).mockResolvedValueOnce({id:'old'});
+    expect(await upsertRegistrationPage(pool,'token',{table:'steps',row:{id:'s'},dbId:'db',properties:{},filter:{},notionReq})).toBe('old');
+    expect(notionReq.mock.calls[1].slice(1,3)).toEqual(['/pages/old','PATCH']);
+    expect(pool.query.mock.calls.at(-1)[1]).toContain('old');
+  });
+  it('其它entity已占用的同名页在任何PATCH前拒绝，不先污染再报错',async()=>{
+    const pool={query:vi.fn().mockResolvedValueOnce({rows:[]}).mockResolvedValueOnce({rows:[{entity_type:'steps',entity_id:'other'}]})};
+    const notionReq=vi.fn().mockResolvedValue({results:[{id:'occupied'}]});
+    await expect(upsertRegistrationPage(pool,'token',{table:'steps',row:{id:'mine'},dbId:'db',properties:{},filter:{},notionReq})).rejects.toThrow('归属');
+    expect(notionReq).toHaveBeenCalledTimes(1);
+  });
+  it('同名未映射页没有登记身份时拒绝接管',async()=>{
+    const pool={query:vi.fn().mockResolvedValue({rows:[]})};
+    const notionReq=vi.fn().mockResolvedValue({results:[{id:'unknown'}]});
+    await expect(upsertRegistrationPage(pool,'token',{table:'steps',row:{id:'mine'},dbId:'db',properties:{},filter:{},verifyRecovered:()=>false,notionReq})).rejects.toThrow('身份');
+    expect(notionReq).toHaveBeenCalledTimes(1);
+  });
+  it('Notion失败不落成功映射',async()=>{
+    const pool={query:vi.fn().mockResolvedValue({rows:[]})};
+    const notionReq=vi.fn().mockResolvedValueOnce({results:[]}).mockRejectedValueOnce(Error('503'));
+    await expect(upsertRegistrationPage(pool,'token',{table:'steps',row:{id:'s'},dbId:'db',properties:{},filter:{},notionReq})).rejects.toThrow('503');
+    expect(pool.query.mock.calls.some(([sql])=>sql.includes('INSERT'))).toBe(false);
+  });
+
+  it('只写流程页与运行页：Step/Activity 归目录投影（按 Brain ID），这里不再碰 Step/Activity 库的旧列',async()=>{
+    const query=vi.fn(async sql=>({rows:sql.includes('pg_try_advisory_lock')?[{locked:true}]:sql.includes('FROM workflows')?[{id:'w',name:'KR',runtime_notion_id:'runtime'}]:[]}));
+    const pool={connect:async()=>({query,release(){}})};
+    const notionReq=vi.fn(async()=>({id:'page',results:[]}));
+    const result=await projectCompanyKrRegistration(pool,{token:'test',notionReq});
+    expect(result).toMatchObject({workflow_id:'w',notion_workflow_id:'page',runs:0});
+    const touched=notionReq.mock.calls.map(c=>JSON.stringify([c[1],c[3]?.parent?.database_id]));
+    for(const db of ['3d9c40c2-ba63-8195-a41b-f529056a4aa8','c213e387-b2ae-45a4-98c0-4a66fe3408be'])expect(touched.join()).not.toContain(db);
+    expect(REGISTRATION_DATABASES).not.toHaveProperty('steps');
+    expect(REGISTRATION_DATABASES).not.toHaveProperty('activities');
+  });
+
+});

@@ -25,11 +25,30 @@ describe('brain-deploy blue-green contract', () => {
   });
 
   it('bluegreen_swap 失败时终止部署（exit 1，不继续 compose up 起新容器）', () => {
-    // 必须有 "if ! ... bluegreen_swap; then ... exit 1 ... fi" 的守卫。
-    // 原断言用 120 字符邻近窗口，#3700 在守卫块内插入 drain-cancel 恢复逻辑后被撑爆（契约语义未破）；
-    // 改为结构化匹配：if ! …bluegreen_swap; then 块内（fi 之前）必须出现 exit 1。
-    const guard = SH.match(/if\s+!\s[\s\S]*?bluegreen_swap;\s*then([\s\S]*?)\n\s*fi\b/);
-    expect(guard, '缺少 if ! ... bluegreen_swap; then 守卫').not.toBeNull();
-    expect(guard[1]).toMatch(/exit 1/);
-  });
-});
+    // 契约：swap 失败 → 必然 exit 1，且早于 compose up 起新容器。
+    //
+    // 断言写法已被重构撑爆两次，都不是契约破了：
+    //   #3700 在守卫块内插入 drain-cancel 恢复逻辑 → 撑爆 120 字符邻近窗口
+    //   #5529 为先 rm -f 清理临时 env 文件，把 exit 1 从 `if ! …swap; then` 块挪到
+    //         随后的 `if [[ "$SWAP_OK" == false ]]` 块 → 撑爆"块内匹配"
+    // 所以这里钉的是**失败路径这条因果链**，不绑某一种代码块形状。
+    // ⚠️ 别退化成"脚本里某处有 exit 1"——本文件另有 7 处 exit 1，那样等于没测
+    //（第一版改写就是这么松的，变异实测两条都没拦住）。
+
+    // ① swap 的失败必须被记录下来（当前形态：SWAP_OK=false；或直接 if ! …then）
+    const failMark = SH.match(/SWAP_OK=false/) || SH.match(/if\s+!\s[^\n]*bluegreen_swap;\s*then/);
+    expect(failMark, 'swap 失败没有任何记录/分支 —— 失败会被当成成功往下走').not.toBeNull();
+
+    // ② 从「记下失败」到「compose up 起新容器」之间，必须有 exit 1 把路截断
+    const markAt = SH.indexOf(failMark[0]);
+    const composeUpAt = SH.search(/docker compose[^\n]*\n?[^\n]*up -d node-brain/);
+    expect(composeUpAt, '找不到 compose up node-brain —— 守卫锚点要跟着改').toBeGreaterThan(markAt);
+
+    const between = SH.slice(markAt, composeUpAt);
+    expect(between, 'swap 失败到 compose up 之间没有 exit 1 —— canary 没过照样起新容器')
+      .toMatch(/\bexit 1\b/);
+
+    // ③ 那个 exit 1 必须真的挂在失败条件下，不是无条件执行
+    expect(between, 'exit 1 没有挂在 swap 失败的判断里')
+      .toMatch(/(SWAP_OK["'\s]*==["'\s]*false|if\s+!\s[^\n]*bluegreen_swap)/);
+  });});

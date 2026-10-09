@@ -1,0 +1,44 @@
+{
+ "schema_version": 1,
+ "task_id": "a70d7743-7929-423e-b1f3-0184e020380b",
+ "initiative_id": null,
+ "journey_id": null,
+ "title": "照相层保鲜预算盖不住刷新周期——coding 派发每周期都有死窗（P0 e180b05c 真根因）",
+ "verdict": "PASS",
+ "done": [
+  "推翻 issue e180b05c 的判断：扫描链一直在跑、source_revision 一直等于 main HEAD，不是\"全挂\"",
+  "真根因：保鲜预算(600s) 与 rescan-if-changed.sh 触发阈值(600s) 碰巧相等 → 语义成了\"刚过期才刷新\"；而一轮全扫 324s（实测 api 08:40:04 / graph 08:45:24）+ cron 粒度 300s + 上一轮未完时被锁挡掉（日志实测 age=600/899/1200s）→ 旧快照过期必然早于新快照落库 → 每周期都有稳定死窗",
+  "实测复现：任务 a70d7743 08:51 派发、快照 08:40:04，差 11 分钟 → map_stale → triggerCeceliaRun failed",
+  "预算 600s→1800s，并把 触发阈值/扫描耗时/cron 粒度 三个数各自显式命名，预算必须严格大于三者之和",
+  "机械守卫 registry-freshness-budget.test.js（6 项变异全部真断言失败）：①预算>周期 ②JS 触发阈值必须等于 shell 脚本 grep 出的真实默认值 ③四常量必须正有限数",
+  "守夜人补 A5b fact_snapshot_dispatch_gate：A5 用 24h 口径、派发闸用 10min 口径，差 48 倍——这就是缺陷烂 11 天全程报绿的原因；A5b 按派发闸口径判并点名 repo/kind+分钟数",
+  "照相层保鲜的四处落点（registry-freshness 常量 / rescan-if-changed.sh / golden-path-contracts 的 SQL / 两个 smoke 的陈旧构造）全部归一到同一 SSOT",
+  "六处测试里钉死的分钟数（11/16/16/9/16/16）改为从常量推导——它们原本靠\"魔数大于 10 分钟\"成立，预算一放宽就会静默失效"
+ ],
+ "not_done": [
+  "各调用方的扫描耗时会随仓库增长而变长；FULL_SCAN_DURATION_SECONDS=600 是当前实测值加余量，未做运行时自适应",
+  "registry_coverage 既有红（9 张表带 notion_id 列未登记，含我 #5449 留的 ops_schedule_entries）——已在 origin/main 干净 worktree 复现，属既有债，未在本 PR 处理",
+  "Deploy Preview Environment 长期假红（preview 卡在 starting 1200s 超时），未处理；real-env-smoke 是被它级联取消"
+ ],
+ "next_steps": [
+  "观察接下来数小时 coding 任务派发是否还出现 map_stale（预期不再出现）",
+  "把 ops_schedule_entries 登记进 notion_projection_map，消掉 registry_coverage 断言里属于我的那一条"
+ ],
+ "data_sources": [
+  "packages/brain/src/lib/registry-freshness.js（四个保鲜常量的 SSOT）",
+  "packages/brain/src/lib/__tests__/registry-freshness-budget.test.js（机械守卫）",
+  "scripts/scan/rescan-if-changed.sh（RESCAN_MAX_AGE_SECONDS 默认值）",
+  "fact_snapshot_headers 表（kind/repo/source_revision/scanned_at）",
+  "MMV: /tmp/registry-scan.log（rescan 节拍实证）"
+ ],
+ "decision_refs": [],
+ "artifacts": {
+  "pr_urls": [
+   "https://github.com/perfectuser21/cecelia/pull/5457"
+  ],
+  "sprint_dir": null,
+  "branch": "cp-0921165500-map-freshness-budget",
+  "docs": []
+ },
+ "created_at": "2026-09-21T12:04:47.000Z"
+}

@@ -14,9 +14,16 @@ import pool from './db.js';
 import { sendBark } from './notifier.js';
 // A2 与 S2 锚点闸同口径（豁免/存量 cutoff 单一来源；日历日边界防 naive timestamp 时区偏移）
 import { ANCHOR_EXEMPT_TASK_TYPES, ANCHOR_EXEMPT_ACTIONS, ANCHOR_LEGACY_CUTOFF_DAY } from './anchor-check.js';
+import { buildProjectionAssertions } from './lib/notion-projection-watch.js';
+import { buildSkillLedgerAssertion } from './lib/skill-ledger-assertion.js';
+import { PHOTO_STALE_THRESHOLD_HOURS } from './lib/registry-freshness.js';
+import { notionReq, getToken } from './recurring-notion-sync.js';
+import { LEGACY_DB_CONSTANTS } from './notion-push-sync.js';
 
 export const SENTINEL_KEY = 'promise-map-nightly';
 export const NIGHTLY_HOUR_UTC = 2;     // 北京时间 10:00
+/** 事实快照停更判定阈值（小时）——与 run-all-scans.sh 头注释哨兵口径同源 */
+export const SNAPSHOT_STALE_HOURS = 24;
 const DEDUP_WINDOW_MS = 23 * 3600 * 1000;
 
 const SRC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -50,7 +57,7 @@ export async function buildNightlyAssertions(queryPool) {
   let a1Failed = [];
   for (const pr of anchoredPRs) {
     const { rows: [{ count }] } = await queryPool.query(
-      `SELECT COUNT(*) FROM journey_step_links WHERE step_id = $1 AND cell_status = 'green'`,
+      `SELECT COUNT(*) FROM activity_cells WHERE step_id = $1 AND cell_status = 'green'`,
       [pr.step_id],
     );
     if (parseInt(count, 10) === 0) {
@@ -96,13 +103,18 @@ export async function buildNightlyAssertions(queryPool) {
     SELECT jf.id, jf.name FROM journey_features jf
     WHERE jf."group" IN ('家③横切件池','家②共享前置')
       AND NOT EXISTS (
-        SELECT 1 FROM journey_step_links jsl WHERE jsl.feature_id = jf.id
+        SELECT 1 FROM activity_cells jsl WHERE jsl.feature_id = jf.id
+      )
+      AND NOT EXISTS (
+        -- 底座引用格子已并入用料（迁移 525）：有 Activity 用到对应仓库物件也算有链接
+        SELECT 1 FROM warehouse_items wi JOIN activity_uses au ON au.item_id = wi.id WHERE wi.legacy_feature_id = jf.id
       )
   `);
   // promise 缺失只查承诺地图域（home/domain 非空）——全库存量步骤走豁免（判定点④同源）
   const { rows: stepsNoPromise } = await queryPool.query(`
-    SELECT js.id, js.name FROM journey_steps js
-    JOIN journeys j ON j.id = js.journey_id
+    SELECT js.id, js.name FROM activities js
+    JOIN activity_placement p ON p.activity_id = js.id
+    JOIN capabilities j ON j.id = p.capability_id
     WHERE js.promise IS NULL
       AND (j.home IS NOT NULL OR j.domain IS NOT NULL)
     LIMIT 10
@@ -132,6 +144,88 @@ export async function buildNightlyAssertions(queryPool) {
       ? `3 个闸文件均存在（S1/S2/S3）`
       : `${missingGates.length} 个闸文件缺失：${missingGates.map(f => f.split('/').pop()).join(', ')}`,
   });
+
+  // ── A5: 事实快照自身年龄（守夜人盲区补丁）────────────────
+  // 病根(2026-09-16 实证)：本机 cron 的扫描链 DATABASE_URL 指向 09-10 大迁移后
+  // 已不存在的本地库，每 5 分钟失败一次，fact_snapshot_headers 冻在 09-09。
+  // map-projection-refresh 只比「headers vs 投影 fact_revisions」，两边同旧 →
+  // 判定"不漂移" → 正确地跳过 rebuild。它防的是 headers 新了投影旧了，
+  // 防不了 headers 自己停更。后果：派发 preflight 全抛 map_stale，13 个任务
+  // 积压 + cecelia-run 熔断 OPEN，烂 6 天无人知。
+  // 本断言直接盯"数据自身多久没动"，覆盖所有"上游停更"类盲区。
+  // 24h 阈值与 run-all-scans.sh 头注释的哨兵口径一致（停摆 >24h 即 stale）。
+  // 单条断言查询异常不得掀翻整轮对账（其余 4 条仍需产出），故取值带兜底
+  const snapshotResult = await queryPool.query(`
+    SELECT repo, kind,
+           EXTRACT(EPOCH FROM (NOW() - scanned_at)) / 3600 AS age_hours
+      FROM fact_snapshot_headers
+     ORDER BY scanned_at ASC`);
+  const snapshotRows = snapshotResult?.rows ?? [];
+  const staleSnapshots = snapshotRows.filter(r => Number(r.age_hours) > SNAPSHOT_STALE_HOURS);
+  // 0921 补盲区：本断言用 24h 口径，而派发闸用的是 PHOTO_STALE_THRESHOLD_HOURS。
+  // 两个口径差 48 倍，于是「快照按派发口径已陈旧、coding 任务全挂」时，这里照样报绿——
+  // map_stale 烂了 11 天没人发现正是这么来的（issue e180b05c 误判成扫描链全挂）。
+  // 24h 那条继续押"扫描链停摆"的尾；这条单独押"派发闸会不会红"，两条口径都要出声。
+  const gateStale = snapshotRows.filter(r => Number(r.age_hours) > PHOTO_STALE_THRESHOLD_HOURS);
+  const gateBudgetMin = Math.round(PHOTO_STALE_THRESHOLD_HOURS * 60);
+  results.push({
+    key: 'fact_snapshot_dispatch_gate',
+    label: '事实快照（派发闸口径）',
+    ok: snapshotRows.length > 0 && gateStale.length === 0,
+    detail: snapshotRows.length === 0
+      ? 'fact_snapshot_headers 空表——派发闸必抛 map_stale'
+      : gateStale.length === 0
+        ? `${snapshotRows.length} 份快照均在派发闸预算 ${gateBudgetMin}min 内`
+        : `${gateStale.length} 份快照超派发闸预算 ${gateBudgetMin}min，此刻 coding 任务会抛 map_stale：`
+          + gateStale
+            .slice(0, 5)
+            .map(r => `${r.repo}/${r.kind} 已 ${Math.round(Number(r.age_hours) * 60)}min`)
+            .join('，'),
+  });
+  if (snapshotRows.length === 0) {
+    results.push({
+      key: 'fact_snapshot_freshness',
+      label: '事实快照新鲜度',
+      ok: false,
+      detail: 'fact_snapshot_headers 空表——扫描链从未成功跑过',
+    });
+  } else {
+    results.push({
+      key: 'fact_snapshot_freshness',
+      label: '事实快照新鲜度',
+      ok: staleSnapshots.length === 0,
+      detail: staleSnapshots.length === 0
+        ? `${snapshotRows.length} 份快照均在 ${SNAPSHOT_STALE_HOURS}h 内`
+        : `${staleSnapshots.length} 份快照停更超 ${SNAPSHOT_STALE_HOURS}h：`
+          + staleSnapshots
+            .slice(0, 5)
+            .map(r => `${r.repo}/${r.kind} 已 ${Math.round(Number(r.age_hours))} 小时`)
+            .join('，'),
+    });
+  }
+
+  // ── A6: skill 账本一致性（口径见 lib/skill-ledger-assertion.js；PR1a 任务 47def5bb 起比名单不比行数）──
+  results.push(await buildSkillLedgerAssertion(queryPool));
+
+  // ── A7~A10: 守夜遍历注册表（三面模型 PR③，决策 297ffee5）────────
+  // 注册表未落表 / 无 token 的环境（CI 干净库、单测顺序 mock）一律降级为 ok:true+degraded，
+  // 绝不掀翻前六条；生产上四条真断言各自红绿。
+  try {
+    let token = null;
+    try { token = getToken(); } catch { token = null; }
+    let botUserId = process.env.NOTION_BOT_USER_ID || null;
+    if (token && !botUserId) {
+      try { botUserId = (await notionReq(token, '/users/me', 'GET'))?.id ?? null; } catch { botUserId = null; }
+    }
+    const watch = await buildProjectionAssertions(queryPool, {
+      notionReq: token ? notionReq : async () => { throw new Error('no_token'); },
+      token, botUserId, constants: LEGACY_DB_CONSTANTS,
+    });
+    results.push(...watch);
+  } catch (err) {
+    results.push({ key: 'projection_watch', label: '投影守夜遍历', ok: true, degraded: true,
+      detail: `注册表不可用，跳过（${String(err?.message || err).slice(0, 80)}）` });
+  }
 
   return results;
 }

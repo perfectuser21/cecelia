@@ -3,6 +3,8 @@
  * main 的真实 pg/execSync 仍由 --dry-run 冒烟覆盖（scripts/smoke/orchestrator-smoke.sh）。
  */
 import { describe, it, expect, vi } from 'vitest';
+// 生产依赖接线使用模拟 worker fetch；隔离策略有独立真实守卫测试。
+vi.mock('../../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -269,6 +271,8 @@ describe('buildRealDeps', () => {
 
       process.chdir(imageCwd);
       const deps = await buildRealDeps({
+      startExecutionDirectory:async()=>{},
+      executionAuthority:async(_method,input,run)=>run(input,{canonical_id:input.target.machine,endpoints:{worker:'http://worker.internal:3458'}}),
         pool: { query: vi.fn() },
         dispatch: vi.fn(),
         env: { REPO_ROOT: repoRoot },
@@ -286,6 +290,8 @@ describe('buildRealDeps', () => {
   it('组装真实 dispatcher，不再返回 T3 NotImplemented 占位', async () => {
     const dispatch = vi.fn();
     const deps = await buildRealDeps({
+      startExecutionDirectory:async()=>{},
+      executionAuthority:async(_method,input,run)=>run(input,{canonical_id:input.target.machine,endpoints:{worker:'http://worker.internal:3458'}}),
       pool: { query: vi.fn() },
       dispatch,
       execCmd: vi.fn(),
@@ -328,6 +334,8 @@ describe('buildRealDeps', () => {
       hop: 50,
     }));
     const deps = await buildRealDeps({
+      startExecutionDirectory:async()=>{},
+      executionAuthority:async(_method,input,run)=>run(input,{canonical_id:input.target.machine,endpoints:{worker:'http://worker.internal:3458'}}),
       pool: { query: vi.fn() },
       dispatch: vi.fn(),
       launcher,
@@ -440,6 +448,8 @@ describe('buildRealDeps', () => {
       validateSnapshotForDispatch: vi.fn(async (snapshot) => ({ status: 'ok', snapshot })),
     };
     const deps = await buildRealDeps({
+      startExecutionDirectory:async()=>{},
+      executionAuthority:async(_method,input,run)=>run(input,{canonical_id:input.target.machine,endpoints:{worker:'http://worker.internal:3458'}}),
       pool: { query: vi.fn() },
       env: {
         KERNEL_FLEET_REMOTE_ENABLED: 'true',
@@ -536,6 +546,8 @@ describe('buildRealDeps', () => {
       cancel: vi.fn(),
     };
     const deps = await buildRealDeps({
+      startExecutionDirectory:async()=>{},
+      executionAuthority:async(_method,input,run)=>run(input,{canonical_id:input.target.machine,endpoints:{worker:'http://worker.internal:3458'}}),
       pool: { query: vi.fn() },
       attemptStore,
       launcher,
@@ -626,6 +638,8 @@ describe('buildRealDeps', () => {
     };
     try {
       const deps = await buildRealDeps({
+      startExecutionDirectory:async()=>{},
+      executionAuthority:async(_method,input,run)=>run(input,{canonical_id:input.target.machine,endpoints:{worker:'http://worker.internal:3458'}}),
         pool: { query: vi.fn() },
         attemptStore,
         env,

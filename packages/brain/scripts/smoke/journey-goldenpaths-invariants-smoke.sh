@@ -1,26 +1,31 @@
 #!/usr/bin/env bash
 # journey-goldenpaths-invariants-smoke.sh
 # 真环境 smoke：验证 A1 P0 两个只读端点全链路（harness 验证模型重构 HANDOFF 第 5 节）。
-#   1. GET /journeys/:journey_id/golden-paths — 按 line 聚合已验收 ability 的 golden_path（累积 FR）
+#   1. GET /journeys/:journey_id/golden-paths — golden_path 旧表已退役（任务 7d312fd8），默认 410
 #   2. GET /invariants — 干净的 invariant 读取端点（读 decisions 表，非 decision_log）
 # 跑法：BRAIN=http://localhost:5221 DB_URL=postgresql://localhost/cecelia bash $0
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-${DB_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
+
 BRAIN="${BRAIN_URL:-${BRAIN:-http://localhost:5221}}"
 DB_URL="${DATABASE_URL:-${DB_URL:-postgresql://localhost/cecelia}}"
 
-uuid() { psql "$DB_URL" -t -c "$1" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1; }
+uuid() { psql -X "$DB_URL" -t -c "$1" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1; }
 
 BODY=""; CODE=""
 req() {
   local method="$1" url="$2" data="${3:-}"
   local out
   if [ -n "$data" ]; then
-    echo "  \$ curl -X $method '$url' -d '$data'"
-    out=$(curl -s -w $'\n%{http_code}' -X "$method" "$url" -H 'Content-Type: application/json' -d "$data")
+    echo "  \$ curl -q -X $method '$url' -d '$data'"
+    out=$(curl -q -s -w $'\n%{http_code}' -X "$method" "$url" -H 'Content-Type: application/json' -d "$data")
   else
-    echo "  \$ curl -X $method '$url'"
-    out=$(curl -s -w $'\n%{http_code}' -X "$method" "$url")
+    echo "  \$ curl -q -X $method '$url'"
+    out=$(curl -q -s -w $'\n%{http_code}' -X "$method" "$url")
   fi
   CODE="${out##*$'\n'}"
   BODY="${out%$'\n'*}"
@@ -30,38 +35,17 @@ req() {
 
 echo "[smoke] BRAIN=$BRAIN  DB_URL=${DB_URL%%\?*}"
 
-echo "[smoke] 夹具：journey → journey_feature(ability) → task(ability_id) → golden_path 两步"
-JOURNEY_ID=$(uuid "INSERT INTO journeys (name) VALUES ('gp-agg-smoke-journey-' || gen_random_uuid()) RETURNING id")
+echo "[smoke] 夹具：journey → journey_feature(ability)（端点 2 target 过滤用）"
+JOURNEY_ID=$(uuid "INSERT INTO value_streams (name) VALUES ('gp-agg-smoke-journey-' || gen_random_uuid()) RETURNING id")
 ABILITY_ID=$(uuid "INSERT INTO journey_features (name, journey_id, kind, status) VALUES ('gp-agg-smoke-ability', '$JOURNEY_ID', 'ability', 'done') RETURNING id")
-TASK_ID=$(uuid "INSERT INTO tasks (title, ability_id) VALUES ('gp-agg-smoke-task-' || gen_random_uuid(), '$ABILITY_ID') RETURNING id")
-psql "$DB_URL" -c "INSERT INTO golden_path (owner_task_id, order_no, feature_id, note) VALUES ('$TASK_ID', 1, '$ABILITY_ID', 'smoke step one'), ('$TASK_ID', 2, '$ABILITY_ID', 'smoke step two')" >/dev/null
-echo "  JOURNEY_ID=$JOURNEY_ID ABILITY_ID=$ABILITY_ID TASK_ID=$TASK_ID (+2 golden_path 步)"
+echo "  JOURNEY_ID=$JOURNEY_ID ABILITY_ID=$ABILITY_ID"
 
-echo "[smoke] === 端点 1 Step 1: GET /journeys/:jid/golden-paths 聚合形态 ==="
+echo "[smoke] === 端点 1：GET /journeys/:jid/golden-paths —— golden_path 旧表已退役（任务 7d312fd8），默认 410 ==="
 req GET "$BRAIN/api/brain/journeys/$JOURNEY_ID/golden-paths"
-[ "$CODE" = "200" ] || { echo "FAIL: 期望 200 got $CODE"; exit 1; }
-echo "$BODY" | jq -e --arg t "$TASK_ID" --arg a "$ABILITY_ID" \
-  'type=="array" and length==1 and .[0].owner_task_id==$t and .[0].ability_id==$a and .[0].ability_status=="done" and (.[0].steps|length)==2 and .[0].steps[0].order_no==1 and .[0].steps[1].order_no==2' >/dev/null \
-  || { echo "FAIL: 聚合形态不符（应按 owner_task_id 分组、steps 按 order_no 升序）"; exit 1; }
-echo "  ✓ 200 + 按 owner_task_id 分组 + ability 元数据 + steps 有序"
-
-echo "[smoke] === 端点 1 Step 2: status 过滤 ==="
-req GET "$BRAIN/api/brain/journeys/$JOURNEY_ID/golden-paths?status=done"
-[ "$CODE" = "200" ] || { echo "FAIL: status=done 期望 200 got $CODE"; exit 1; }
-echo "$BODY" | jq -e 'length==1' >/dev/null || { echo "FAIL: status=done 应命中 1 组"; exit 1; }
-req GET "$BRAIN/api/brain/journeys/$JOURNEY_ID/golden-paths?status=planned"
-echo "$BODY" | jq -e 'type=="array" and length==0' >/dev/null || { echo "FAIL: status=planned 应空数组"; exit 1; }
-echo "  ✓ status 过滤生效（done 命中 / planned 空）"
-
-echo "[smoke] === 端点 1 边界：非法 status → 400；非法 uuid → 400；空 line → 200+[] ==="
-req GET "$BRAIN/api/brain/journeys/$JOURNEY_ID/golden-paths?status=nonsense"
-[ "$CODE" = "400" ] || { echo "FAIL: 非法 status 应 400 got $CODE"; exit 1; }
-req GET "$BRAIN/api/brain/journeys/not-a-uuid/golden-paths"
-[ "$CODE" = "400" ] || { echo "FAIL: 非法 uuid 应 400 got $CODE"; exit 1; }
-req GET "$BRAIN/api/brain/journeys/00000000-0000-0000-0000-000000000000/golden-paths"
-[ "$CODE" = "200" ] || { echo "FAIL: 空 line 应 200 got $CODE"; exit 1; }
-echo "$BODY" | jq -e 'type=="array" and length==0' >/dev/null || { echo "FAIL: 空 line 应空数组"; exit 1; }
-echo "  ✓ 400/400/200+[] 三边界全对"
+[ "$CODE" = "410" ] || { echo "FAIL: 期望 410 got $CODE"; exit 1; }
+echo "$BODY" | jq -e '.retired==true and .path_kind=="read" and .legacy_read_env=="GOLDEN_PATH_LEGACY_READ=1"' >/dev/null \
+  || { echo "FAIL: 410 体不符"; exit 1; }
+echo "  ✓ 410 retired + 放行 env 提示"
 
 echo "[smoke] === 端点 2 Step 1: POST 一条 area 级 invariant → GET /invariants?level=area 读回 ==="
 INV_TOPIC="smoke-invariant-$(date +%s)-$$"
@@ -86,4 +70,4 @@ req GET "$BRAIN/api/brain/invariants?level=galaxy"
 [ "$CODE" = "400" ] || { echo "FAIL: 非法 level 应 400 got $CODE"; exit 1; }
 echo "  ✓ 400"
 
-echo "✅ journey-goldenpaths-invariants-smoke 全链路通过（2 端点 happy-path + 6 边界，每步含响应证据）"
+echo "✅ journey-goldenpaths-invariants-smoke 全链路通过（端点 1 退役 410 + 端点 2 happy-path/边界，每步含响应证据）"

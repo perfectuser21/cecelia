@@ -9,7 +9,102 @@ import {
   patchKernelRunById,
   persistKernelRunPhase,
   reconcileKernelTaskTerminal,
+  requeueKernelRunLaunchDeferred,
+  syncTaskPayloadFromKernelRun,
 } from '../kernel-run-store.js';
+
+// 任务 281aa798：远程点火撞跑场机 429/超时 → run 记失败但任务回 queued（不终态），带延后计数。
+function deferPool({ taskStatus = 'in_progress', deferCount = 0, runPhase = 'planning' } = {}) {
+  const calls = [];
+  const client = {
+    query: vi.fn(async (sql, params) => {
+      calls.push({ sql, params });
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (/FROM tasks/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [{ id: '11111111-1111-4111-8111-111111111111', status: taskStatus, payload: { kernel_launch_defer_count: deferCount } }] };
+      }
+      if (/FROM initiative_runs/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [{ id: '33333333-3333-4333-8333-333333333333', current_task_id: '11111111-1111-4111-8111-111111111111', phase: runPhase }] };
+      }
+      if (/UPDATE initiative_runs/.test(sql)) return { rows: [], rowCount: 1 };
+      if (/UPDATE tasks/.test(sql)) return { rows: [], rowCount: 1 };
+      throw new Error(`unexpected SQL: ${sql}`);
+    }),
+    release: vi.fn(),
+  };
+  return { pool: { connect: vi.fn(async () => client) }, client, calls };
+}
+
+describe('requeueKernelRunLaunchDeferred（远程点火瞬时失败 → 任务回队）', () => {
+  const T = '11111111-1111-4111-8111-111111111111';
+  const R = '33333333-3333-4333-8333-333333333333';
+
+  it('run 置 failed、任务回 queued 并清 claim，payload 延后计数 +1', async () => {
+    const { pool, calls } = deferPool({ deferCount: 2 });
+    const result = await requeueKernelRunLaunchDeferred(pool, {
+      runId: R, expectedTaskId: T, reason: 'kernel_remote_launch_deferred:orchestrator_bridge_prepare_http_429:orchestrator_slots_exhausted',
+    });
+    expect(result).toMatchObject({ changed: true, deferCount: 3, runId: R, taskId: T });
+    const runUpdate = calls.find((c) => /UPDATE initiative_runs/.test(c.sql));
+    expect(runUpdate.sql).toMatch(/phase = 'failed'/);
+    expect(runUpdate.params).toEqual(expect.arrayContaining([R, expect.stringContaining('orchestrator_slots_exhausted')]));
+    const taskUpdate = calls.find((c) => /UPDATE tasks/.test(c.sql));
+    expect(taskUpdate.sql).toMatch(/status = 'queued'/);
+    expect(taskUpdate.sql).toMatch(/claimed_by = NULL/);
+    expect(taskUpdate.sql).toMatch(/claimed_at = NULL/);
+    expect(taskUpdate.sql).toMatch(/started_at = NULL/);
+    const payloadPatch = JSON.parse(taskUpdate.params.find((p) => typeof p === 'string' && p.startsWith('{')));
+    expect(payloadPatch.kernel_launch_defer_count).toBe(3);
+    expect(payloadPatch.kernel_launch_defer_reason).toContain('orchestrator_slots_exhausted');
+    expect(calls.map((c) => c.sql)).toContain('COMMIT');
+  });
+
+  it('延后次数达上限 → 不改任何行，返回 exhausted 让调用方走终态', async () => {
+    const { pool, calls } = deferPool({ deferCount: 10 });
+    const result = await requeueKernelRunLaunchDeferred(pool, {
+      runId: R, expectedTaskId: T, reason: 'kernel_remote_launch_deferred:x', maxDefers: 10,
+    });
+    expect(result).toMatchObject({ changed: false, exhausted: true, deferCount: 10 });
+    expect(calls.some((c) => /^\s*UPDATE/.test(c.sql))).toBe(false);
+  });
+
+  // 2026-09-24 22:10 实证：两条 run 各跑 5–6 小时占满 MMV 双槽，第三条任务每 2 分钟 tick 撞一次
+  // 429 deferred；默认上限 10 次 = 20 分钟就被判终态，远小于一条 run 的时长。上限须按"等一整轮
+  // run"量级（300 次 ≈ 10 小时）设默认。
+  it('默认延后上限覆盖整轮 run 时长：第 299 次仍回队，第 300 次才 exhausted', async () => {
+    const ok = deferPool({ deferCount: 299 });
+    await expect(requeueKernelRunLaunchDeferred(ok.pool, {
+      runId: R, expectedTaskId: T, reason: 'kernel_remote_launch_deferred:orchestrator_bridge_prepare_http_429:orchestrator_slots_exhausted',
+    })).resolves.toMatchObject({ changed: true, deferCount: 300 });
+    const full = deferPool({ deferCount: 300 });
+    await expect(requeueKernelRunLaunchDeferred(full.pool, {
+      runId: R, expectedTaskId: T, reason: 'kernel_remote_launch_deferred:x',
+    })).resolves.toMatchObject({ changed: false, exhausted: true });
+  });
+
+  it('任务已终态（failed/completed）→ 不回队，changed=false', async () => {
+    const { pool, calls } = deferPool({ taskStatus: 'failed' });
+    const result = await requeueKernelRunLaunchDeferred(pool, {
+      runId: R, expectedTaskId: T, reason: 'kernel_remote_launch_deferred:x',
+    });
+    expect(result).toMatchObject({ changed: false, reason: 'task_terminal' });
+    expect(calls.some((c) => /^\s*UPDATE/.test(c.sql))).toBe(false);
+  });
+
+  it('run 与任务身份不符 → 抛错并 ROLLBACK', async () => {
+    const { pool, client, calls } = deferPool();
+    client.query.mockImplementation(async (sql) => {
+      calls.push({ sql });
+      if (/FROM tasks/.test(sql)) return { rows: [{ id: T, status: 'in_progress', payload: {} }] };
+      if (/FROM initiative_runs/.test(sql)) return { rows: [{ id: R, current_task_id: '55555555-5555-4555-8555-555555555555', phase: 'planning' }] };
+      return { rows: [] };
+    });
+    await expect(requeueKernelRunLaunchDeferred(pool, {
+      runId: R, expectedTaskId: T, reason: 'kernel_remote_launch_deferred:x',
+    })).rejects.toThrow(/identity mismatch/);
+    expect(calls.map((c) => c.sql)).toContain('ROLLBACK');
+  });
+});
 
 const TASK_ID = '11111111-1111-4111-8111-111111111111';
 const INITIATIVE_ID = '22222222-2222-4222-8222-222222222222';
@@ -37,6 +132,8 @@ function transactionPool({
     task_type: 'harness_initiative',
     status: 'in_progress',
     payload: { initiative_id: INITIATIVE_ID, routing_receipt_id: RECEIPT_ID },
+    // 重锚定（任务 d9c405e2）对 metadata===undefined fail-loud，生产 SELECT 必须取该列。
+    metadata: {},
   },
   receipt = {
     id: RECEIPT_ID,
@@ -716,6 +813,114 @@ describe('Kernel run store creation authority', () => {
       'ROLLBACK',
       'release',
     ]);
+  });
+
+  it('把 createdSource 交给 Map/Impact preflight（重锚定需据此跳过 explicit_recovery）', async () => {
+    const harness = transactionPool();
+    const ensurePreflight = vi.fn(async () => ({ contract: { id: 'impact-1', status: 'active' } }));
+    await createRun(harness, VALID_INPUT, { ensureMapImpactPreflight: ensurePreflight });
+    expect(ensurePreflight.mock.calls[0][1]).toMatchObject({ createdSource: 'kernel_dispatch' });
+  });
+
+  it('task 行 SELECT 取 metadata 列（重锚定 thrash 计数据此读写）', async () => {
+    const harness = transactionPool();
+    await createRun(harness);
+    const taskSelect = harness.calls.find(
+      ({ sql }) => /FROM tasks/.test(sql) && /FOR UPDATE/.test(sql),
+    );
+    expect(taskSelect.sql).toMatch(/SELECT id, task_type, status, payload, metadata/);
+  });
+
+  it('返回体带预检最终收据的 base_sha 与 routing_receipt_id（重锚定后调用方据此回流内存 task）', async () => {
+    const harness = transactionPool();
+    const NEW = 'b'.repeat(40);
+    const result = await createRun(harness, VALID_INPUT, {
+      ensureMapImpactPreflight: vi.fn(async () => ({
+        contract: { id: 'impact-1', status: 'active' },
+        receipt: { id: '77777777-7777-4777-8777-777777777777', evidence: { base_sha: NEW } },
+      })),
+    });
+    expect(result).toMatchObject({
+      created: true,
+      base_sha: NEW,
+      routing_receipt_id: '77777777-7777-4777-8777-777777777777',
+    });
+  });
+
+  it('预检未返回 receipt 时返回体 base_sha/routing_receipt_id 为 null（旧行为不变）', async () => {
+    const harness = transactionPool();
+    const result = await createRun(harness);
+    expect(result).toMatchObject({ created: true, base_sha: null, routing_receipt_id: null });
+  });
+});
+
+describe('syncTaskPayloadFromKernelRun', () => {
+  it('created 带新 base_sha 时覆写内存 task.payload 的 base_sha 与 routing_receipt_id', () => {
+    const task = { id: 't', payload: { base_sha: 'a'.repeat(40), routing_receipt_id: 'r1', repo: 'cecelia' } };
+    const out = syncTaskPayloadFromKernelRun(task, { created: true, base_sha: 'b'.repeat(40), routing_receipt_id: 'r2' });
+    expect(out).toBe(task);
+    expect(task.payload).toEqual({ base_sha: 'b'.repeat(40), routing_receipt_id: 'r2', repo: 'cecelia' });
+  });
+
+  it('created 无 base_sha（null/缺省）时 payload 原样不动', () => {
+    const payload = { base_sha: 'a'.repeat(40), routing_receipt_id: 'r1' };
+    const task = { id: 't', payload };
+    syncTaskPayloadFromKernelRun(task, { created: true, run: {} });
+    syncTaskPayloadFromKernelRun(task, { created: true, base_sha: null, routing_receipt_id: null });
+    expect(task.payload).toBe(payload);
+  });
+
+  it('收据 id 没变却换了 base_sha 时告警（非快进漂移，DB payload 不会被 reanchor 更新）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const task = { id: 'task-drift', payload: { base_sha: 'a'.repeat(40), routing_receipt_id: 'r1' } };
+    syncTaskPayloadFromKernelRun(task, { created: true, base_sha: 'b'.repeat(40), routing_receipt_id: 'r1' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0][0]);
+    expect(message).toContain('task-drift');
+    expect(message).toContain('a'.repeat(40));
+    expect(message).toContain('r1');
+    warn.mockRestore();
+  });
+
+  it('快进场景（收据 id 一并换新）不告警', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const task = { id: 'task-ff', payload: { base_sha: 'a'.repeat(40), routing_receipt_id: 'r1' } };
+    syncTaskPayloadFromKernelRun(task, { created: true, base_sha: 'b'.repeat(40), routing_receipt_id: 'r2' });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe('源码哨兵：reanchor 写的 payload 字段集 ↔ 回流函数', () => {
+  // 重锚定改 DB、回流函数改内存，两边字段集必须同进同退：reanchor 以后多写一个 payload
+  // 字段而回流没跟上，就又是一次"改账不改跑场"。这条哨兵让那种漏改直接红。
+  it('reanchor UPDATE tasks SET payload 的每个字段都出现在 syncTaskPayloadFromKernelRun 函数体内', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const reanchorSrc = await readFile(
+      new URL('../preflight/base-sha-reanchor.js', import.meta.url),
+      'utf8',
+    );
+    const updateIdx = reanchorSrc.indexOf('UPDATE tasks');
+    expect(updateIdx).toBeGreaterThan(-1);
+    const blockEnd = reanchorSrc.indexOf('\n  );', updateIdx);
+    const updateBlock = reanchorSrc.slice(
+      updateIdx,
+      blockEnd > -1 ? blockEnd : updateIdx + 2000,
+    );
+    // 第一个 JSON.stringify 即 $2（payload 合并对象）；$3 是 metadata，不在回流职责内。
+    const payloadLiteral = updateBlock.match(/JSON\.stringify\(\{([^}]*)\}\)/);
+    expect(payloadLiteral).not.toBeNull();
+    const fields = [...payloadLiteral[1].matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*:/g)]
+      .map((match) => match[1]);
+    expect(fields).toEqual(expect.arrayContaining(['routing_receipt_id', 'base_sha']));
+
+    const storeSrc = await readFile(new URL('../kernel-run-store.js', import.meta.url), 'utf8');
+    const fnIdx = storeSrc.indexOf('export function syncTaskPayloadFromKernelRun');
+    expect(fnIdx).toBeGreaterThan(-1);
+    const fnBody = storeSrc.slice(fnIdx, storeSrc.indexOf('\n}', fnIdx));
+    for (const field of fields) {
+      expect(fnBody).toContain(field);
+    }
   });
 });
 

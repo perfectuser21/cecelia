@@ -1,0 +1,70 @@
+import { describe, it, expect } from 'vitest';
+import { discoverSshKey, buildHostCmd, EXEC_TIMEOUT_MS } from '../host-exec.js';
+
+describe('discoverSshKey', () => {
+  it('优先 id_ed25519（存在时）', () => {
+    const key = discoverSshKey((p) => p.endsWith('id_ed25519'));
+    expect(key).toMatch(/id_ed25519$/);
+  });
+  it('无 ed25519 回退 id_rsa（宿主实际只有 id_rsa 的先例）', () => {
+    const key = discoverSshKey((p) => p.endsWith('id_rsa'));
+    expect(key).toMatch(/id_rsa$/);
+  });
+  it('都不存在时回退 id_ed25519 默认路径', () => {
+    const key = discoverSshKey(() => false);
+    expect(key).toMatch(/id_ed25519$/);
+  });
+});
+
+describe('buildHostCmd', () => {
+  it('宿主直跑（非容器）原样返回，不包 ssh', () => {
+    expect(buildHostCmd('launchctl list', false)).toBe('launchctl list');
+  });
+  it('容器内包 ssh 逃逸宿主，带 BatchMode + ConnectTimeout', () => {
+    const wrapped = buildHostCmd('launchctl list', true, () => true);
+    expect(wrapped).toContain('ssh -i');
+    expect(wrapped).toContain('BatchMode=yes');
+    expect(wrapped).toContain('ConnectTimeout=10');
+    expect(wrapped).toContain("'launchctl list'");
+  });
+  it('单引号转义防命令拼接破损', () => {
+    const wrapped = buildHostCmd("echo 'x'", true, () => true);
+    // 原始单引号被转义为 '\'' 形式，包裹后仍是单条合法命令
+    expect(wrapped).toContain(`'\\''`);
+  });
+});
+
+describe('EXEC_TIMEOUT_MS', () => {
+  it('导出为正数（供 defaultExec 与调用方共享）', () => {
+    expect(EXEC_TIMEOUT_MS).toBeGreaterThan(0);
+  });
+});
+
+describe('defaultExec — 大输出不炸（ENOBUFS 回归）', () => {
+  it('导出 EXEC_MAX_BUFFER 且 ≥ 64MB（n8n 画布 2.1MB + run 查询数 MB，默认 1MB 必炸）', async () => {
+    const { EXEC_MAX_BUFFER } = await import('../host-exec.js');
+    expect(typeof EXEC_MAX_BUFFER).toBe('number');
+    expect(EXEC_MAX_BUFFER).toBeGreaterThanOrEqual(64 * 1024 * 1024);
+  });
+
+  it('defaultExec 真跑大输出（2MB）不抛 ENOBUFS', async () => {
+    const { defaultExec } = await import('../host-exec.js');
+    // 生成 ~2MB 输出，复现 n8n 画布导出的体量
+    const out = defaultExec('head -c 2100000 /dev/zero | tr "\\0" "x"');
+    expect(out.length).toBeGreaterThan(2_000_000);
+  });
+});
+
+describe('defaultExec — 重命令可放宽超时（归因 ETIMEDOUT 回归）', () => {
+  it('接受 opts.timeoutMs 覆盖默认 20s（拉 24MB 阶段数据必然超默认值）', async () => {
+    const { defaultExec, EXEC_TIMEOUT_MS } = await import('../host-exec.js');
+    expect(EXEC_TIMEOUT_MS).toBe(20_000);
+    // 跑一条耗时 >1s 的命令，用 3s 超时应成功（证明 opts 生效且未被默认值截断）
+    const out = defaultExec('sleep 1 && echo slow-ok', { timeoutMs: 3000 });
+    expect(out.trim()).toBe('slow-ok');
+  });
+  it('超时仍然生效——不是把超时关掉了', async () => {
+    const { defaultExec } = await import('../host-exec.js');
+    expect(() => defaultExec('sleep 3', { timeoutMs: 500 })).toThrow();
+  });
+});

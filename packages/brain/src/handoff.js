@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pushCaptureAtom } from './capture-inbox.js';
+import { sanitizeBriefDelta, formatBriefForPrompt } from './lib/project-brief.js';
 
 export const HANDOFF_SCHEMA_VERSION = 1;
 
@@ -20,6 +21,25 @@ const DEFAULT_DOCS_DIR = '/Users/administrator/perfect21/cecelia/docs/handoffs';
 const MAX_ITEMS = 20;
 const MAX_ITEM_LEN = 200;
 const PROMPT_MAX_LEN = 2000;
+/** result.handoff_log 上限：同一任务跨 session 的历史条目，超出丢最旧 */
+export const HANDOFF_LOG_MAX = 50;
+/** 链上下文注入时取最近几份 handoff */
+export const CHAIN_RECENT_LIMIT = 3;
+const CHAIN_MAX_DEPTH = 12;
+
+/** 追加进 result.handoff_log 的精简条目（不存全文，避免 result 膨胀） */
+export function buildHandoffLogEntry(h) {
+  return {
+    at: h.created_at || new Date().toISOString(),
+    task_id: h.task_id,
+    title: String(h.title || '').slice(0, MAX_ITEM_LEN),
+    verdict: h.verdict ?? null,
+    session_id: h.session_id ?? null,
+    done: clampList(h.done).slice(0, 5),
+    not_done: clampList(h.not_done).slice(0, 3),
+    next_steps: (Array.isArray(h.next_steps) ? h.next_steps : []).slice(0, 5),
+  };
+}
 
 // data_sources 固定基线：与 harness-planner Step 0.3/0.4 同源（A1）。
 // 下一个大脑照单加载即可拿到本 line 的铁律 + 已验收行为 + 本单全文。
@@ -29,6 +49,20 @@ export const BASELINE_DATA_SOURCES = [
   'GET /api/brain/journeys/<journey_id>/golden-paths',
   'GET /api/brain/tasks/<task_id>（result.handoff 本体）',
 ];
+
+/** next_steps 允许对象 {kind,title,detail}（接力棒 PR2）；字符串照旧；其余丢弃 */
+function clampNextSteps(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((x) => {
+      if (typeof x === 'string') return x.trim() ? (x.length > MAX_ITEM_LEN ? `${x.slice(0, MAX_ITEM_LEN)}…` : x) : null;
+      if (x && typeof x === 'object' && String(x.title ?? '').trim()) {
+        return { ...x, title: String(x.title).slice(0, MAX_ITEM_LEN) };
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .slice(0, MAX_ITEMS);
+}
 
 function clampList(list) {
   return (Array.isArray(list) ? list : [])
@@ -50,7 +84,7 @@ export function buildHandoff(input = {}) {
     verdict: input.verdict ?? null,
     done: clampList(input.done),
     not_done: clampList(input.not_done),
-    next_steps: clampList(input.next_steps),
+    next_steps: clampNextSteps(input.next_steps),
     data_sources: dataSources.length ? dataSources : clampList(BASELINE_DATA_SOURCES),
     decision_refs: clampList(input.decision_refs),
     artifacts: {
@@ -59,6 +93,8 @@ export function buildHandoff(input = {}) {
       branch: input.artifacts?.branch ?? null,
       docs: clampList(input.artifacts?.docs),
     },
+    // Project brief 动态文档协议（棒2，决策 ee4842a6/3feeae3e）：可选，非法项在 sanitize 阶段丢弃并 warn。
+    brief_delta: sanitizeBriefDelta(input.brief_delta),
     created_at: new Date().toISOString(),
   };
 }
@@ -135,13 +171,46 @@ export async function pushHandoffAtom(pool, taskId, handoff) {
  * DB 失败直接抛（调用方决定是否吞）；镜像失败仅 warn。
  */
 export async function saveHandoff({ pool }, handoff) {
+  // 接力棒（2026-09-23）：result.handoff 仍是"最新一份"（覆盖），
+  // 另在 result.handoff_log 追加一条精简条目——一个任务跨多个 session 时历史不丢。
+  const entry = buildHandoffLogEntry(handoff);
   const res = await pool.query(
-    `UPDATE tasks SET result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('handoff', $2::jsonb), updated_at = NOW()
-     WHERE id = $1::uuid`,
-    [handoff.task_id, JSON.stringify(handoff)]
+    `UPDATE tasks
+        SET result = COALESCE(result, '{}'::jsonb)
+                     || jsonb_build_object('handoff', $2::jsonb)
+                     || jsonb_build_object('handoff_log', (
+                          SELECT COALESCE(jsonb_agg(e ORDER BY ord), '[]'::jsonb)
+                            FROM (
+                              SELECT e, ord
+                                FROM jsonb_array_elements(COALESCE(result->'handoff_log', '[]'::jsonb) || jsonb_build_array($3::jsonb))
+                                     WITH ORDINALITY AS x(e, ord)
+                               ORDER BY ord DESC
+                               LIMIT ${HANDOFF_LOG_MAX}
+                            ) tail
+                        )),
+            updated_at = NOW()
+      WHERE id = $1::uuid`,
+    [handoff.task_id, JSON.stringify(handoff), JSON.stringify(entry)]
   );
   // task 不存在 → UPDATE 影响 0 行：抛错（也就不写镜像），防"DB 没写成却有镜像"的分裂态
   if (res.rowCount === 0) throw new Error(`saveHandoff: task not found: ${handoff.task_id}`);
+  // 接力棒：已 completed 的任务补写 handoff → 立刻落下一棒（幂等；synthesized 的不再递归）
+  if (!handoff.synthesized) {
+    try {
+      const { rows: st } = await pool.query('SELECT id, title, status, priority, task_type, payload, parent_task_id, project_id FROM tasks WHERE id = $1::uuid', [handoff.task_id]);
+      if (st[0]?.status === 'completed') {
+        const { materializeNextSteps } = await import('./lib/relay-baton.js');
+        await materializeNextSteps(pool, st[0], handoff);
+        // 棒2（决策 ee4842a6/3feeae3e）：task 挂了 project_id 且 handoff 带 brief_delta → 应用到 projects.brief。
+        if (handoff.brief_delta) {
+          const { applyHandoffBriefDelta } = await import('./lib/project-brief-apply.js');
+          await applyHandoffBriefDelta(pool, st[0], handoff);
+        }
+      }
+    } catch (err) {
+      console.warn(`[handoff] 接棒失败（不阻塞 saveHandoff）: ${err.message}`);
+    }
+  }
   // T10 统一收件箱：DB 主写成功后顺手推一条 atom（吞错，不阻塞镜像与返回；
   // 与 relay PATCH 路径共用 pushHandoffAtom 保证同口径）
   await pushHandoffAtom(pool, handoff.task_id, handoff);
@@ -180,6 +249,133 @@ export async function getRecentHandoffs({ pool }, { journeyId, limit = 3, exclud
   return rows;
 }
 
+/**
+ * 接力棒·链上下文：沿 parent_task_id 找到根（project 或最上层），
+ * 返回 {root, self, is_chained, position, recent}。recent = 同一根下（含根）最近 N 份 handoff，排除本任务。
+ * 无父无子 → is_chained=false、recent=[]（调用方按空处理，不注入）。
+ */
+export async function getChainContext({ pool }, taskId, { limit = CHAIN_RECENT_LIMIT } = {}) {
+  if (!taskId) return null;
+  const { rows: up } = await pool.query(
+    `WITH RECURSIVE up AS (
+       SELECT id, parent_task_id, title, description, task_type, status, sequence_no, project_id, 0 AS depth
+         FROM tasks WHERE id = $1::uuid
+       UNION ALL
+       SELECT t.id, t.parent_task_id, t.title, t.description, t.task_type, t.status, t.sequence_no, t.project_id, up.depth + 1
+         FROM tasks t JOIN up ON t.id = up.parent_task_id
+        WHERE up.depth < $2
+     )
+     SELECT * FROM up ORDER BY depth`,
+    [taskId, CHAIN_MAX_DEPTH]
+  );
+  if (!up.length) return null;
+  const self = up[0];
+
+  // 新路径：self 挂了 project_id → 根 = projects 行（棒1，决策 ee4842a6/3feeae3e）。
+  // projects 表查无该行（脏数据）→ 落到下面的旧祖先链逻辑，不中断。
+  if (self.project_id) {
+    const { rows: projRows } = await pool.query(
+      `SELECT id, name, description, status, kr_id, brief FROM projects WHERE id = $1::uuid`,
+      [self.project_id]
+    );
+    if (projRows.length) {
+      const proj = projRows[0];
+      const { rows: sib } = await pool.query(
+        `SELECT count(*)::int AS total FROM tasks WHERE project_id = $1::uuid AND task_type <> 'project'`,
+        [proj.id]
+      );
+      const { rows: recent } = await pool.query(
+        `SELECT t.id, t.title, t.completed_at, t.result->'handoff' AS handoff
+           FROM tasks t
+          WHERE t.project_id = $1::uuid AND t.task_type <> 'project' AND t.result ? 'handoff' AND t.id <> $2::uuid
+          ORDER BY t.completed_at DESC NULLS LAST, t.updated_at DESC
+          LIMIT $3`,
+        [proj.id, taskId, limit]
+      );
+      return {
+        root: {
+          id: proj.id,
+          title: proj.name,
+          description: proj.description,
+          status: proj.status,
+          kr_id: proj.kr_id ?? null,
+          brief: proj.brief ?? {},
+          kind: 'project',
+          task_type: 'project',
+        },
+        self: { id: self.id, title: self.title },
+        is_chained: true,
+        position: { sequence_no: self.sequence_no ?? null, total: sib[0]?.total ?? null },
+        recent,
+      };
+    }
+  }
+
+  const root = up[up.length - 1];
+  const isChained = up.length > 1;
+  let position = null;
+  if (isChained && self.parent_task_id) {
+    const { rows: sib } = await pool.query(
+      `SELECT count(*)::int AS total FROM tasks WHERE parent_task_id = $1::uuid`,
+      [self.parent_task_id]
+    );
+    position = { sequence_no: self.sequence_no ?? null, total: sib[0]?.total ?? null };
+  }
+  const { rows: recent } = await pool.query(
+    `WITH RECURSIVE down AS (
+       SELECT id, 0 AS depth FROM tasks WHERE id = $1::uuid
+       UNION ALL
+       SELECT t.id, down.depth + 1 FROM tasks t JOIN down ON t.parent_task_id = down.id WHERE down.depth < $3
+     )
+     SELECT t.id, t.title, t.completed_at, t.result->'handoff' AS handoff
+       FROM tasks t JOIN down d ON d.id = t.id
+      WHERE t.result ? 'handoff' AND t.id <> $2::uuid
+      ORDER BY t.completed_at DESC NULLS LAST, t.updated_at DESC
+      LIMIT $4`,
+    [root.id, taskId, CHAIN_MAX_DEPTH, limit]
+  );
+  return {
+    root: { id: root.id, title: root.title, description: root.description, task_type: root.task_type, status: root.status },
+    self: { id: self.id, title: self.title },
+    is_chained: isChained,
+    position,
+    recent,
+  };
+}
+
+/** 链上下文 → prompt 段。不在链上且无 handoff → ''（不注入噪音）。 */
+export function formatChainForPrompt(ctx) {
+  if (!ctx) return '';
+  if (!ctx.is_chained && !ctx.recent?.length) return '';
+  const lines = ['', '## 项目链上下文（接力棒：先读这段，再动手）'];
+  lines.push(`项目根：${ctx.root.title || ctx.root.id}（${ctx.root.task_type || 'task'} · ${ctx.root.status || ''}）`);
+  // 棒2（决策 ee4842a6/3feeae3e）：根是 project 且有 brief 内容 → 用活文档替代静态 description，
+  // 上一棒改过的现状这里能看到；brief 是空壳（新建项目还没人写过 handoff）才退回旧的 description 摘要。
+  const briefText = ctx.root.kind === 'project' ? formatBriefForPrompt(ctx.root.brief) : '';
+  if (briefText) {
+    lines.push(briefText);
+  } else {
+    const goal = String(ctx.root.description || '').trim();
+    if (goal) lines.push(`目标：${goal.length > 600 ? `${goal.slice(0, 600)}…` : goal}`);
+  }
+  if (ctx.position?.total) {
+    lines.push(`本任务是第 ${ctx.position.sequence_no ?? '?'} / ${ctx.position.total} 棒`);
+  }
+  lines.push('规矩：做完必须写 handoff（done / not_done / next_steps），next_steps 每条标 kind=task|decision|done；项目有变化（目标/现状/新事实/未决问题/增删棒）顺手带 brief_delta。');
+  const text = `${lines.join('\n')}${formatHandoffsForPrompt(ctx.recent)}`;
+  return text.length > PROMPT_MAX_LEN * 2 ? `${text.slice(0, PROMPT_MAX_LEN * 2)}…` : text;
+}
+
+/** 派发用：任何异常都吞成 ''，不能因为上下文拼装失败挡派发。 */
+export async function buildChainPromptSafe({ pool }, taskId) {
+  try {
+    return formatChainForPrompt(await getChainContext({ pool }, taskId));
+  } catch (err) {
+    console.warn(`[handoff] chain context 拼装失败（不阻塞派发）: ${err.message}`);
+    return '';
+  }
+}
+
 /** 压缩为 prompt 注入段：每份 ≤6 行，总长 ≤2000 字；空 → ''。 */
 export function formatHandoffsForPrompt(rows) {
   if (!rows?.length) return '';
@@ -188,7 +384,7 @@ export function formatHandoffsForPrompt(rows) {
     const lines = [`### Handoff ${i + 1}: ${h.title || r.title || r.id}（verdict=${h.verdict ?? 'N/A'}）`];
     for (const d of (h.done || []).slice(0, 3)) lines.push(`- ✅ ${d}`);
     for (const n of (h.not_done || []).slice(0, 2)) lines.push(`- ❌ ${n}`);
-    for (const s of (h.next_steps || []).slice(0, 2)) lines.push(`- ➡️ ${s}`);
+    for (const s of (h.next_steps || []).slice(0, 2)) lines.push(`- ➡️ ${typeof s === 'string' ? s : `[${s.kind || 'note'}] ${s.title || ''}`}`);
     return lines.join('\n');
   });
   let text = `\n\n## 最近 Handoff（本 line 交接，规划时不得与已完成项重复、优先响应 next_steps）\n${blocks.join('\n')}`;

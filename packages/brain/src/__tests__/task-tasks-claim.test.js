@@ -92,6 +92,25 @@ describe('POST /tasks/:id/claim (C1)', () => {
     expect(res._json.claimed_by).toBe('runner-alpha');
   });
 
+  it('显式 executor_kind=coding-workflow-runner → 强制写入该 kind（覆盖历史残留的 headed-session）', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-1', claimed_by: 'cw', executor_kind: 'coding-workflow-runner' }] });
+    const { req, res } = mockReqRes({ id: 'task-1' }, { claimer: 'cw', executor_kind: 'coding-workflow-runner' });
+    await claimHandler(req, res);
+    expect(res._status).toBe(200);
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toMatch(/executor_kind = CASE WHEN \$4 THEN \$3 ELSE COALESCE\(executor_kind, \$3\) END/);
+    expect(params).toEqual(['cw', 'task-1', 'coding-workflow-runner', true]);
+  });
+
+  it('其他 kind（含缺省 headed-session）保持 COALESCE：不覆盖已有 executor_kind', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-1', claimed_by: 'r' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-2', claimed_by: 'r' }] });
+    await claimHandler(...Object.values(mockReqRes({ id: 'task-1' }, { claimer: 'r', executor_kind: 'brain-local' })));
+    await claimHandler(...Object.values(mockReqRes({ id: 'task-2' }, { claimer: 'r' })));
+    expect(mockQuery.mock.calls[0][1]).toEqual(['r', 'task-1', 'brain-local', false]);
+    expect(mockQuery.mock.calls[1][1]).toEqual(['r', 'task-2', 'headed-session', false]);
+  });
+
   it('无 claimer 参数 → 400', async () => {
     const { req, res } = mockReqRes({ id: 'task-1' }, {});
     await claimHandler(req, res);

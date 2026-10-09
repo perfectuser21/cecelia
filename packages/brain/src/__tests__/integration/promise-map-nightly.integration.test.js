@@ -11,10 +11,72 @@ beforeAll(async () => {
 });
 
 describe('S4 保鲜对账 proven-to-fire', () => {
-  it('首跑四断言全绿（seed 后的干净账本）', async () => {
-    const results = await buildNightlyAssertions(pool);
-    expect(results).toHaveLength(4);
-    for (const r of results) expect(r.ok, `${r.key}: ${r.detail}`).toBe(true);
+  it('首跑断言全绿（seed 后的干净账本；A7~A10 守夜遍历在无 token 环境降级不红）', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // 起点隔离：本地开发库常留着过期快照/历史 openclaw 行，会让"全绿"用例
+      // 随库状态漂。事务内清空，ROLLBACK 后原样恢复。
+      await client.query('DELETE FROM fact_snapshot_headers');
+      await client.query(`DELETE FROM skill_registry WHERE location='openclaw' OR name LIKE 'openclaw/%'`);
+      await client.query(`DELETE FROM ops_skills WHERE source='openclaw'`);
+      // A6 新口径：扫描（skill-inventory-sync）从未成功过时走降级绿，不依赖具体名单。
+      await client.query(`DELETE FROM working_memory WHERE key='skill_inventory_state'`);
+      // A5 需要至少一份新鲜快照——空表按设计判 fail（"扫描链从未成功跑过"），故 seed。
+      await client.query(
+        `INSERT INTO fact_snapshot_headers (kind,repo,source_revision,scanner_version,scanned_at,row_count)
+         VALUES ('api','__nightly_probe__','deadbeef','itest', NOW(), 1)`);
+      const results = await buildNightlyAssertions(client);
+      expect(results.length).toBeGreaterThanOrEqual(6);
+      for (const r of results) expect(r.ok, `${r.key}: ${r.detail}`).toBe(true);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
+  it('proven-to-fire ⑤：快照停更 >24h → A5 报红并点名 repo', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM fact_snapshot_headers');
+      await client.query(
+        `INSERT INTO fact_snapshot_headers (kind,repo,source_revision,scanner_version,scanned_at,row_count)
+         VALUES ('api','__stale_probe__','deadbeef','itest', NOW() - INTERVAL '200 hours', 1)`);
+      const results = await buildNightlyAssertions(client);
+      const a5 = results.find(r => r.key === 'fact_snapshot_freshness');
+      expect(a5.ok).toBe(false);
+      expect(a5.detail).toContain('__stale_probe__');
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
+  it('proven-to-fire ⑥：ops_skills 引用未入账 skill、派发绑定行已下线 → A6 报红且落 skill_drift_alerts', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`DELETE FROM ops_skills WHERE source='openclaw'`);
+      await client.query(`INSERT INTO working_memory (key, value_json, updated_at) VALUES ('skill_inventory_state', $1, NOW())
+        ON CONFLICT (key) DO UPDATE SET value_json = $1`, [JSON.stringify({ last_ok_at: new Date().toISOString() })]);
+      await client.query(`INSERT INTO ops_skills (source, name, used_by) VALUES ('openclaw','__drift_probe__','[]'::jsonb)`);
+      await client.query(`INSERT INTO skill_registry (name, status, presence, task_types)
+        VALUES ('__dead_bound_probe__','active','gone',ARRAY['__probe_type__'])`);
+      const results = await buildNightlyAssertions(client);
+      const a6 = results.find(r => r.key === 'skill_ledger_consistency');
+      expect(a6.ok).toBe(false);
+      expect(a6.detail).toMatch(/账实分叉/);
+      expect(a6.detail).toContain('__drift_probe__');
+      expect(a6.detail).toContain('__dead_bound_probe__(gone)');
+      const { rows } = await client.query(
+        `SELECT count(*)::int AS n FROM skill_drift_alerts
+          WHERE skill_name='__skill_ledger_count__' AND drift_date=CURRENT_DATE`);
+      expect(rows[0].n).toBeGreaterThan(0);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 
   it('proven-to-fire ③a：故意造一条无锚 merge 记录 → A2 报红', async () => {

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
+import { DB_DEFAULTS } from '../db-config.js';
 
 const upSql = readFileSync(new URL('../../migrations/400_fact_snapshot_metadata.sql', import.meta.url), 'utf8');
 const downSql = readFileSync(new URL('../../migrations/rollback/400_fact_snapshot_metadata.down.sql', import.meta.url), 'utf8');
@@ -80,12 +81,16 @@ describe('migration 400 — versioned fact snapshot metadata', () => {
 });
 
 describe('migration 400 — cecelia_test 实际列与约束', () => {
-  const connectionString = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
-  const databaseName = decodeURIComponent(new URL(connectionString).pathname.slice(1));
+  const connectionString = process.env.TEST_DATABASE_URL;
+  const databaseName = connectionString
+    ? decodeURIComponent(new URL(connectionString).pathname.slice(1))
+    : process.env.DB_NAME || 'cecelia_test';
   if (!/(_test|_scratch)$/.test(databaseName)) {
     throw new Error(`migration 400 测试拒绝连接非测试库: ${databaseName}`);
   }
-  const pool = new pg.Pool({ connectionString, max: 1 });
+  const pool = new pg.Pool(connectionString
+    ? { connectionString, max: 1 }
+    : { ...DB_DEFAULTS, database: databaseName, max: 1 });
   let headerBeforeMarkerTests;
 
   async function readCeceliaApiHeader() {

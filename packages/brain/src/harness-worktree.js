@@ -11,7 +11,12 @@ import { resolveGitHubToken } from './harness-credentials.js';
  */
 function injectTokenIntoUrl(url, token) {
   if (!token || !/^https:\/\//.test(url)) return url;
-  return url.replace(/^https:\/\//, `https://x-access-token:${token}@`);
+  // 幂等（issue 946a5fcb）：url 可能已含凭据（promisor 分支读到瞬时带 token 的 origin，
+  // 或调用方直接传了带 token 的 base_repo）。若不先剥掉，二次注入会产生
+  // https://x-access-token:T@x-access-token:T@host 畸形 URL，git 无法解析 host。
+  // 复用 canonicalRemoteUrl 剥掉任何 user:pass@ 再注入，保证 x-access-token 只出现一次。
+  const clean = canonicalRemoteUrl(url);
+  return clean.replace(/^https:\/\//, `https://x-access-token:${token}@`);
 }
 
 function normalizeRemoteCloneSource(source) {
@@ -41,7 +46,12 @@ function redactRemoteUrl(source) {
 
 const execFile = promisify(execFileCb);
 
-export const DEFAULT_BASE_REPO = '/Users/administrator/perfect21/cecelia';
+// us-vps(Linux) 上没有交互式开发，只有一份 checkout（REPO_ROOT，见 docker-compose.us-vps.yml
+// 注释），worktree 物理位置和克隆源都应该是它；macOS(mmv) 上保持硬编码的"活人主仓"路径不变
+// （REPO_ROOT 在 macOS 上指向的是另一个"CD 专用部署根"，两者历来是两份不同 checkout）。
+export const DEFAULT_BASE_REPO = process.platform === 'linux'
+  ? (process.env.REPO_ROOT || '/root/cecelia')
+  : '/Users/administrator/perfect21/cecelia';
 
 /**
  * 计算 harness sub-task worktree 路径（SSOT）。

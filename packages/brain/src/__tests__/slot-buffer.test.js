@@ -90,11 +90,9 @@ describe('applySlotBuffer', () => {
     expect(applySlotBuffer(9)).toBe(9); // delta=+1, within UP limit
   });
 
-  it('大幅下降应限制为 -3（快刹车）', () => {
+  it('降至硬零立即停止新增派单', () => {
     applySlotBuffer(8);
-    expect(applySlotBuffer(0)).toBe(5);  // 8-3=5
-    expect(applySlotBuffer(0)).toBe(2);  // 5-3=2
-    expect(applySlotBuffer(0)).toBe(0);  // max(0, 2-3)=0
+    expect(applySlotBuffer(0)).toBe(0);
     expect(applySlotBuffer(0)).toBe(0);
   });
 
@@ -221,24 +219,16 @@ describe('calculateSlotBudget token 集成', () => {
     expect(budget.taskPool.budget).toBeGreaterThan(0);
   });
 
-  it('buffer 平滑：hardware 压力骤升，Pool C 快刹车(-3)逐步降', async () => {
-    // Tick 1: 正常 (Pool C = 12)
+  it('hardware 压力骤升至硬零，当次停派，持续压力保持关闭', async () => {
     checkServerResources.mockReturnValue({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } });
-    let budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(12);
-
-    // Tick 2: 极端压力 → effectiveSlots=0 → 目标 0, buffer 限制为 12-3=9
+    expect((await calculateSlotBudget()).taskPool.budget).toBe(12);
     checkServerResources.mockReturnValue({ effectiveSlots: 0, metrics: { max_pressure: 1.0 } });
-    budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(9);
-
-    // Tick 3: 继续压力 → 9-3=6
-    budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(6);
-
-    // Tick 4: 继续压力 → 6-3=3
-    budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(3);
+    for (let tick = 0; tick < 3; tick += 1) {
+      const budget = await calculateSlotBudget();
+      expect(budget.taskPool.budget).toBe(0);
+      expect(budget.dispatchAllowed).toBe(false);
+      expect(budget.resourceAdmissionBlocked).toBe(true);
+    }
   });
 });
 

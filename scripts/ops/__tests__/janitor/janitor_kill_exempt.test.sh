@@ -10,12 +10,22 @@ fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 JANITOR="$(dirname "$0")/../../janitor.sh"
 [ -f "$JANITOR" ] || { echo "ERROR: janitor.sh not found"; exit 1; }
 
-# 1. 豁免路径字面量在两个 kill 函数中各出现一次（共≥2处）
+# 1. 豁免判据存在，且两个 kill 函数都走它
+#    2026-09-21 起豁免抽成单一函数 is_exempt_resident_service（原来是两处重复的
+#    case 字面量）。断言随之改为「字面量至少 1 处 + 两个 kill 函数各调用一次」——
+#    比原来的「字面量 ≥2 处」更强：原断言只能证明字符串在，证明不了它被调用。
 EXEMPT_COUNT=$(grep -c '/usr/local/libexec/cecelia/' "$JANITOR")
-if [ "$EXEMPT_COUNT" -ge 2 ]; then
+if [ "$EXEMPT_COUNT" -ge 1 ]; then
   ok "cecelia 常驻路径豁免存在（${EXEMPT_COUNT}处）"
 else
-  fail "cecelia 常驻路径豁免缺失或不足两处（当前${EXEMPT_COUNT}处）"
+  fail "cecelia 常驻路径豁免缺失（当前${EXEMPT_COUNT}处）"
+fi
+
+CALL_COUNT=$(grep -c 'is_exempt_resident_service "\$pid" "\$cmd" && return' "$JANITOR")
+if [ "$CALL_COUNT" -ge 2 ]; then
+  ok "两个 kill 函数都调用豁免判据（${CALL_COUNT}处）"
+else
+  fail "豁免判据未被两个 kill 函数调用（当前${CALL_COUNT}处）——豁免写了但没接线等于没写"
 fi
 
 # 2. 禁用过宽匹配：不得出现裸 *cecelia* 匹配（会误豁免 perfect21/cecelia* 开发目录）

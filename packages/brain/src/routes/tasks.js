@@ -1,3 +1,7 @@
+import {headedTaskMutation,registerHeadedTakeoverRoute} from './task-headed-takeover.js';
+import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
+import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
 import pool from '../db.js';
 import { createTask, updateTask as _updateTask } from '../actions.js';
@@ -15,6 +19,12 @@ import { pushCaptureAtom } from '../capture-inbox.js';
 import { pushHandoffAtom } from '../handoff.js';
 import { checkAnchor } from '../anchor-check.js';
 import { blockTask } from '../task-updater.js';
+import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
+import { dispatchManualQiumi } from '../lib/manual-qiumi-dispatch.js';
+import { resolveAllowedTransitions } from '../lib/task-status-transitions.js';
+import { afterTerminalTransition, isRelayTerminalStatus } from '../lib/task-terminal.js';
+import { getTaskType } from '../lib/task-type-registry.js';
+import { authoringMutationError } from '../workflow-authoring/task-guard.js';
 
 const router = Router();
 
@@ -357,7 +367,8 @@ router.post('/learnings-received', async (req, res) => {
  * PATCH /api/brain/tasks/:task_id
  * 更新任务状态（Engine 调用）
  */
-router.patch('/tasks/:task_id', async (req, res) => {
+registerHeadedTakeoverRoute(router,{pool});
+router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), headedTaskMutation(pool,async (req, res, pool) => {
   try {
     const { task_id } = req.params;
     const { status, result } = req.body;
@@ -380,9 +391,15 @@ router.patch('/tasks/:task_id', async (req, res) => {
       });
     }
 
+    const reservedError = authoringMutationError(null, { result });
+    if (reservedError) return res.status(409).json(reservedError);
+
     // Validate status value if provided
     if (status) {
-      const allowedStatuses = ['in_progress', 'completed', 'failed'];
+      // completed_no_pr 补进来（任务简报未列此处，PR1 走查发现）：这道闸卡在转移表校验
+      // 之前，target status 不在这个白名单里会先 400 INVALID_STATUS 短路——不补的话
+      // openclaw-agent 面永远到不了 completed_no_pr，转移表和下面的 409 分流都是死代码。
+      const allowedStatuses = ['in_progress', 'completed', 'completed_no_pr', 'failed'];
       if (!allowedStatuses.includes(status)) {
         return res.status(400).json({
           success: false,
@@ -393,13 +410,12 @@ router.patch('/tasks/:task_id', async (req, res) => {
       }
     }
 
-
     // Get current task
     const taskResult = await pool.query(
       `SELECT id, status, claimed_by, executor_kind, task_type,
               payload->>'orchestrator' AS orchestrator,
               payload->>'review_required' AS review_required_raw,
-              review_status, pr_url, pr_merged_at
+              review_status, pr_url, pr_merged_at, payload, result
        FROM tasks WHERE id = $1`,
       [task_id]
     );
@@ -412,6 +428,8 @@ router.patch('/tasks/:task_id', async (req, res) => {
     }
 
     const task = taskResult.rows[0];
+    const authoringError = authoringMutationError(task, { status });
+    if (authoringError) return res.status(409).json(authoringError);
     const currentStatus = task.status;
 
     // status === currentStatus → 幂等 no-op：跳过 transition 校验与事件，仅应用 result 等字段
@@ -420,30 +438,50 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
     // Validate status transition if status is being changed
     if (status && !isStatusNoop) {
-      const allowedTransitions = {
-        'pending': ['in_progress'],
-        'queued': ['in_progress'],
-        'in_progress': ['completed', 'failed'],
-        'completed': [],
-        'failed': [],
-        // 补齐 quarantined / paused / canceled 三态出路，消除 allowed:[] 死锁
-        // 场景：PR 已合 main 但 Brain 内部 task 被 quarantine/pause/cancel，无 API 可回写 completed
-        // quarantine release API 只能回 queued，paused 完全无 release API
-        'quarantined': ['queued', 'completed', 'failed', 'cancelled'],
-        'paused': ['queued', 'in_progress', 'completed', 'failed', 'cancelled'],
-        'canceled': ['queued', 'completed', 'failed', 'cancelled']
-      };
+      // 转移表已抽到 lib/task-status-transitions.js。
+      // 0921 事故：这张表原先内联在此处且只枚举 8 个状态，生产实际用到 15 个——
+      // 没枚举到的取 undefined、被判否后以 allowed:[] 返回，和"设计上的终态"
+      // 长得一模一样，于是 2483 条任务（blocked 287 / cancelled 1485 / archived 673 /
+      // completed_no_pr 38 / quota_exhausted）活干完了也写不回账本（issue a4991491）。
+      const { known, allowed } = resolveAllowedTransitions(currentStatus);
 
-      if (!allowedTransitions[currentStatus]?.includes(status)) {
+      if (!known) {
+        // 和"这是终态"必须可分辨：漏枚举是缺陷，不是策略。
+        return res.status(409).json({
+          success: false,
+          error: `Task status '${currentStatus}' has no declared transitions`,
+          code: 'UNKNOWN_TASK_STATUS',
+          current_status: currentStatus,
+          requested_status: status,
+          allowed: [],
+          hint: '该状态未在 lib/task-status-transitions.js 声明；补进 TASK_STATUSES + TRANSITIONS',
+        });
+      }
+
+      if (!allowed.includes(status)) {
         return res.status(409).json({
           success: false,
           error: 'Invalid status transition',
           code: 'INVALID_TRANSITION',
           current_status: currentStatus,
           requested_status: status,
-          allowed: allowedTransitions[currentStatus] || []
+          allowed,
         });
       }
+    }
+
+    // 非产 PR 的执行面（openclaw-agent）不许写 completed：完成闸按 PR 语义设计，
+    // 这类任务的销账态是 completed_no_pr。只限该执行面——talk/research 等存量类型
+    // 今天 PATCH completed 合法，不动。
+    if (status === 'completed' && !isStatusNoop && getTaskType(task.task_type)?.surface === 'openclaw-agent') {
+      return res.status(409).json({
+        success: false,
+        error: `task_type '${task.task_type}' 不产 PR，完成态必须写 completed_no_pr`,
+        code: 'USE_COMPLETED_NO_PR',
+        current_status: currentStatus,
+        requested_status: status,
+        hint: "PATCH {\"status\":\"completed_no_pr\"}",
+      });
     }
 
     // 完成态前置条件硬闸（三案实证漏洞，2026-07-19）
@@ -489,11 +527,23 @@ router.patch('/tasks/:task_id', async (req, res) => {
     // Brain 核验外部真相不过 → 降级中间态（保持原状态 + 写 generator_done），200 accepted:false。
     let harnessDemoted = false;
     let harnessDemoteReason = null;
+    let harnessUngated = false;
+    let harnessUngatedReason = null;
     if (status === 'completed' && !isStatusNoop
         && task.task_type === 'harness_initiative' && task.orchestrator === 'skill-relay') {
       const { finalizeHarnessTask } = await import('../lib/harness-finalize.js');
-      const fin = await finalizeHarnessTask(task_id, { pool });
+      // 把本次请求里带的 pr_url 传下去：engine-pr-watchdog 的终态回写是
+      // PATCH {status:'completed', result:{pr_url}}，闸此前只看库里的字段，
+      // 协议两头对不上导致任务干完也回不去账本（issue a4991491）。
+      // 只是线索——finalize 仍会 gh pr view 核到 MERGED 才认。
+      const requestedPrUrl = req.body?.result?.pr_url ?? req.body?.pr_url ?? null;
+      const fin = await finalizeHarnessTask(task_id, { pool, requestedPrUrl });
       if (fin.applies && !fin.allow) { harnessDemoted = true; harnessDemoteReason = fin.reason; }
+      // 未验收合并：放行但留疤 + 不自动提升回归（照 relay-watchdog 的策略）
+      if (fin.applies && fin.allow && fin.ungated) {
+        harnessUngated = true;
+        harnessUngatedReason = fin.failureReason;
+      }
     }
 
     // Build dynamic UPDATE query
@@ -510,7 +560,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
       params.push(JSON.stringify([historyEntry]));
       // Clear claim on terminal states — prevents zombie locks where claimed_by residue
       // blocks selectNextDispatchableTask (which filters claimed_by IS NULL)
-      if (status === 'failed' || status === 'completed') {
+      if (status === 'failed' || status === 'completed' || status === 'completed_no_pr') {
         setClauses.push('claimed_by = NULL');
         setClauses.push('claimed_at = NULL');
       }
@@ -534,7 +584,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
     if (status === 'in_progress') {
       setClauses.push('started_at = COALESCE(started_at, NOW())');
     }
-    if (status === 'completed') {
+    if (status === 'completed' || status === 'completed_no_pr') {
       setClauses.push('started_at = COALESCE(started_at, completed_at, NOW())');
       setClauses.push('completed_at = COALESCE(completed_at, NOW())');
     }
@@ -565,6 +615,18 @@ router.patch('/tasks/:task_id', async (req, res) => {
       }
     }
 
+    // 接力棒（2026-09-23）：任务收口时确保有 handoff（没有就合成并标 synthesized），
+    // 再把 handoff.next_steps 落成下一棒（task→queued 子任务挂同根；decision→待拍板）。
+    // 统一走 lib/task-terminal.js 的终态钩子（09-25 收口：completed_no_pr 也接棒）。
+    // 两个触发口：① 本次转可接棒终态；② 已终态的任务补写 result.handoff（watchdog 顺序）。
+    let relay = null;
+    const becameRelayTerminal = isRelayTerminalStatus(status) && !isStatusNoop && !harnessDemoted;
+    const handoffArrivedOnTerminal = Boolean(result?.handoff) && isRelayTerminalStatus(updatedTask?.status);
+    if (becameRelayTerminal || handoffArrivedOnTerminal) {
+      const hook = await pool.afterCommit(pool => afterTerminalTransition(pool, task_id, updatedTask?.status || status, { sessionId: req.headers['x-session-id'] || null }));
+      relay = hook?.relay ?? null;
+    }
+
     if (status && !isStatusNoop && !harnessDemoted) {
       await emitEvent('task_status_changed', {
         task_id,
@@ -577,11 +639,17 @@ router.patch('/tasks/:task_id', async (req, res) => {
       // 任务完成时自动触发 KR 进度重算
       if (status === 'completed') {
         // T2. harness merged 终态 → 累积 FR 冻结（fail-open；harness-report Step 1 走此路径）
-        try {
-          const { promoteRegressionOnHarnessMerged } = await import('../lib/callback-postprocess.js');
-          await promoteRegressionOnHarnessMerged(task_id, result || null, req.body.pr_url || null, pool);
-        } catch (promoteErr) {
-          console.warn(`[tasks-patch] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
+        // 未验收合并不享受自动提升 —— 这是 relay-watchdog 已定策略里真正的惩罚所在
+        // （放行是因为 PR 客观已合并拦不住，惩罚落在"不提升"而不是锁死账本）。
+        if (harnessUngated) {
+          console.warn(`[tasks-patch] task=${task_id} ${harnessUngatedReason} → 跳过 regression 自动提升`);
+        } else {
+          try {
+            const { promoteRegressionOnHarnessMerged } = await import('../lib/callback-postprocess.js');
+            await promoteRegressionOnHarnessMerged(task_id, result || null, req.body.pr_url || null, pool);
+          } catch (promoteErr) {
+            console.warn(`[tasks-patch] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
+          }
         }
         try {
           const initiativeRow = await pool.query(
@@ -620,7 +688,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
                 ? Math.round((completedNum / totalNum) * target_value * 100) / 100
                 : 0;
               await pool.query(
-                'UPDATE key_results SET current_value = $1, updated_at = now() WHERE id = $2',
+                `UPDATE key_results SET current_value = $1, updated_at = now() WHERE id = $2 AND ${COMPANY_KR_SQL_GUARD}`,
                 [newValue, kr_id]
               );
             }
@@ -632,10 +700,15 @@ router.patch('/tasks/:task_id', async (req, res) => {
       }
     }
 
-
     res.json({
-      success: true,
+      // 被降级时不许再报 success:true —— 请求的状态变更没发生，
+      // 报成功就是"写被丢弃却发成功回执"（issue 9cce296f 那一族）。
+      // HTTP 仍是 200 且保留 accepted:false：既有调用方按这个契约判（见
+      // harness-completion-authority.test.js），改 HTTP 码会连带打翻它们。
+      success: !harnessDemoted,
       ...(harnessDemoted ? { accepted: false, reason: harnessDemoteReason } : {}),
+      ...(relay ? { relay } : {}),
+      ...(harnessUngated ? { ungated_merge: true, failure_reason: harnessUngatedReason } : {}),
       task_id,
       status: updatedTask.status,
       updated_at: updatedTask.updated_at,
@@ -651,7 +724,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
       details: err.message
     });
   }
-});
+}));
 
 
 // ==================== Blocked Tasks API ====================
@@ -1206,6 +1279,12 @@ router.post('/tasks/:id/block', async (req, res) => {
     const result = await blockTask(id, { reason, detail, until: until ? new Date(until) : null });
 
     if (!result.success) {
+      // owner_decision 缺协议是调用方错误（400 + 缺项清单），不是「任务不存在」
+      if (result.code === 'owner_decision_protocol_violation') {
+        return res.status(400).json({
+          error: result.code, reason_code: result.code, message: result.error, violations: result.violations ?? [],
+        });
+      }
       return res.status(404).json({ error: result.error });
     }
 
@@ -1254,6 +1333,7 @@ router.post('/tasks/:id/unblock', async (req, res) => {
  * 跳过自动调度的 drain/billing/slot 检查，但保留执行器可用性检查
  */
 router.post('/tasks/:id/dispatch', async (req, res) => {
+  let deviceLockTaskId = null; // 已抢设备锁的任务 id（失败路径需释放）
   try {
     const { id } = req.params;
 
@@ -1283,6 +1363,18 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
       });
     }
 
+    if (task.task_type === 'qiumi_task') {
+      const dispatched = await dispatchManualQiumi(task, pool);
+      return res.status(dispatched.status).json(dispatched.body);
+    }
+
+    // 2.6 G5 设备锁闸（Issue e03fc740）：手动派发与 tick 派发同闸——无锁不点火
+    const deviceGate = await checkDeviceLockForManualDispatch(task, 'tasks/:id/dispatch');
+    if (!deviceGate.pass) {
+      return res.status(deviceGate.status).json(deviceGate.body);
+    }
+    if (deviceGate.acquired) deviceLockTaskId = task.id;
+
     // 3. 更新为 in_progress
     await pool.query(
       `UPDATE tasks SET status = 'in_progress', updated_at = NOW(),
@@ -1294,7 +1386,9 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
     // 4. 检查执行器可用性
     const ceceliaAvailable = await checkCeceliaRunAvailable();
     if (!ceceliaAvailable.available) {
+      // 回滚 queued 不触发终态释放链，已抢的锁必须就地放掉
       await pool.query(`UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1`, [id]);
+      if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'tasks/:id/dispatch');
       return res.status(503).json({
         error: 'executor not available',
         detail: ceceliaAvailable.error
@@ -1304,7 +1398,9 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
     // 5. 触发执行
     const execResult = await triggerCeceliaRun(task);
     if (!execResult.success) {
+      // 同上：回滚 queued 时释放已抢的设备锁
       await pool.query(`UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1`, [id]);
+      if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'tasks/:id/dispatch');
       return res.status(500).json({
         error: 'dispatch failed',
         detail: execResult.error || execResult.reason
@@ -1320,6 +1416,8 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
       dispatched_at: new Date().toISOString()
     });
   } catch (err) {
+    // 异常路径：已抢的锁不能悬挂到 TTL（任务状态未必进终态释放链）
+    if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'tasks/:id/dispatch');
     console.error('[API] tasks/:id/dispatch error:', err.message);
     res.status(500).json({ error: err.message });
   }

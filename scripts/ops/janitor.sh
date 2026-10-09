@@ -13,7 +13,14 @@
 #   - Brain 告警 description 非空且含磁盘水位
 #   - 水位台账：~/logs/janitor-ledger.csv 每次追加一行
 #   - --dry-run 模式：只检测不清理，退出码 0
-#   - 支持 DISK_PCT / BRAIN_URL 环境变量注入（测试用）
+#   - 支持 DISK_PCT / BRAIN_URL / KALLOC_KB / KALLOC_HOUR 环境变量注入（测试用）
+#
+# v5.1 变更（2026-09-18，kalloc 内核泄漏事故后补，决策 64d38870）：
+#   - 修复 Brain 告警 task_type="alert" 非法枚举（CHECK constraint 拒绝，被
+#     2>/dev/null 吞掉，CPU/孤儿分支/磁盘三处告警从写下起就静默失效），
+#     改为合法值 harness_intervention
+#   - frequent 模式新增 check_kalloc_guard：kalloc.1024 内核内存泄漏三档检测
+#     （WARN/ALERT/CRITICAL），复用同一条 Brain 告警通道，不新建独立监控权威
 # =============================================================================
 
 MODE="daily"
@@ -42,6 +49,7 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 SCRIPT_PATH="$0"
 [[ -L "$SCRIPT_PATH" ]] && SCRIPT_PATH="$(readlink -f "$SCRIPT_PATH" 2>/dev/null || echo "$SCRIPT_PATH")"
 CECELIA_REPO="$(cd "$(dirname "$SCRIPT_PATH")/../.." && pwd)"
+source "$(dirname "$SCRIPT_PATH")/janitor-effects.sh" || exit 1
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 TOTAL_STEPS=10
 # 磁盘用量查数据卷；APFS 下 / 是只读系统卷 firmlink，数据在 /System/Volumes/Data
@@ -57,6 +65,81 @@ if $DRY_RUN; then
 else
   DRY_TAG=""
 fi
+
+# ─────────────────────────────────────────────
+# 常驻服务豁免（唯一判据，两个 kill 函数共用）
+#
+# 2026-09-21 P0（task 0db9167a）：OpenClaw 前一天迁到 MMV 后，网关被当孤儿
+# node 进程每 15 分钟杀一次。实测每轮杀 6 个、每个存活 868-910 秒，杀完重生
+# 形成自维持循环（网关 + service-child-relay + zenithjoy-releases×2 +
+# douyin-proxy + preview-agent），任何超过 15 分钟的 OpenClaw 任务永远完不成：
+# 当天跑过的 6 条业务 cron 全失败，5 条死因都是
+# "cron: job interrupted by gateway restart"。
+#
+# 原豁免只认一条字面量路径，新迁来的服务不在名单里。这是同一形状第三次
+# （2026-08-10 ops 测试零执行、2026-09-07 credentials 子目录漏跑），所以这次
+# 主判据改成**自维护**的：launchd 托管的进程一律豁免，不再依赖人记得改名单。
+# 白名单只留给 launchd 不直接托管（由 keepalive 守护拉起）的那几个。
+# ─────────────────────────────────────────────
+
+# launchd 托管的 PID 集合。每次运行只查一次（frequent 模式要对几十个 pid 判定）。
+# JANITOR_LAUNCHD_PIDS 是测试注入接缝，生产不设。
+_LAUNCHD_PIDS_CACHE=""
+launchd_managed_pids() {
+  if [ -n "${JANITOR_LAUNCHD_PIDS:-}" ]; then
+    printf '%s\n' "$JANITOR_LAUNCHD_PIDS"
+    return 0
+  fi
+  if [ -z "$_LAUNCHD_PIDS_CACHE" ]; then
+    _LAUNCHD_PIDS_CACHE=$(launchctl list 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {print $1}')
+  fi
+  printf '%s\n' "$_LAUNCHD_PIDS_CACHE"
+}
+
+# 取父进程 PID。JANITOR_PPID_MAP（形如 "47168:42594 42594:1"）是测试注入接缝。
+_ppid_of() {
+  if [ -n "${JANITOR_PPID_MAP:-}" ]; then
+    printf '%s\n' "${JANITOR_PPID_MAP}" | tr ' ' '\n' \
+      | awk -F: -v p="$1" '$1==p {print $2; exit}'
+    return 0
+  fi
+  ps -o ppid= -p "$1" 2>/dev/null | tr -d ' '
+}
+
+# 返回 0 = 豁免（不许杀）；返回 1 = 可继续走孤儿判定
+is_exempt_resident_service() {
+  local pid="${1:-}" cmd="${2:-}"
+
+  # A. 显式白名单：launchd 不直接托管、但确属常驻件的
+  #    （路径写到 current/ 这一层，避免 *zenithjoy-releases* 裸匹配误豁免备份目录）
+  case "$cmd" in
+    *"/usr/local/libexec/cecelia/"*) return 0 ;;
+    *"/zenithjoy-releases/current/"*) return 0 ;;
+  esac
+
+  # B. launchd 托管一律豁免（自维护：以后新增常驻服务不必再改本名单）
+  #    grep -x 精确整行匹配，防 1203 被 12037 子串命中
+  [ -z "$pid" ] && return 1
+  if launchd_managed_pids | grep -qx -- "$pid"; then
+    return 0
+  fi
+
+  # C. 祖先链上有 launchd 托管的服务 → 它是该服务的一部分，同样豁免。
+  #    首刀漏了这条：openclaw 网关的 service-child-relay 的 PPID 是网关，自己
+  #    既不在 launchctl list 也不在白名单，部署后拿真实 PID 实测仍判「会被杀」，
+  #    而子进程被杀一样会打断长任务。深度上限 8 防环状/异常父链把函数挂死。
+  local cur="$pid" depth=0
+  while [ "$depth" -lt 8 ]; do
+    cur=$(_ppid_of "$cur")
+    { [ -z "$cur" ] || [ "$cur" = "0" ] || [ "$cur" = "1" ]; } && break
+    if launchd_managed_pids | grep -qx -- "$cur"; then
+      return 0
+    fi
+    depth=$((depth + 1))
+  done
+
+  return 1
+}
 
 # ─────────────────────────────────────────────
 # frequent 模式：清理孤儿/僵尸进程 + 资源压力响应
@@ -104,13 +187,133 @@ if [ "$MODE" = "frequent" ]; then
   fi
 
   # CPU 高压：上报 Brain 告警
-  if [ "$CPU_PCT" -ge "$CPU_ALERT_THRESHOLD" ] 2>/dev/null; then
+  # ⚠️ title 里不得嵌 ${CPU_PCT}%：Brain 建单 API 本身按 title 去重（命中时返回
+  # deduplicated:true 并累加 payload.recurrence_requests），把每格都在变的数值写进
+  # title 等于每个百分点造一条新单——实测已积出 ~15 条 CPU 垃圾单（88%~100%）。
+  # 精确百分比放 description。抽成函数是为了能被 __tests__ 提取做行为级断言。
+  check_cpu_pressure_alert() {
+    [ "$CPU_PCT" -ge "$CPU_ALERT_THRESHOLD" ] 2>/dev/null || return 0
+    janitor_observe_only "CPU 高压 ${CPU_PCT}%，仅观察告警" && return 0
     echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] CPU 高压 ${CPU_PCT}%，上报 Brain 告警..."
-    curl -s -X POST "${BRAIN_URL}/api/brain/tasks" \
+    curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" \
       -H "Content-Type: application/json" \
-      -d "{\"title\":\"⚠️ CPU 高压告警 ${CPU_PCT}%（Janitor 检测）\",\"priority\":\"P1\",\"task_type\":\"alert\",\"domain\":\"agent_ops\",\"description\":\"CPU ${CPU_PCT}% 超过 ${CPU_ALERT_THRESHOLD}% 阈值，请检查是否有失控进程。\"}" \
+      -d "{\"title\":\"⚠️ CPU 高压告警（Janitor 检测）\",\"priority\":\"P1\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"CPU ${CPU_PCT}% 超过 ${CPU_ALERT_THRESHOLD}% 阈值，请检查是否有失控进程。\"}" \
       2>/dev/null || true
-  fi
+  }
+
+  check_cpu_pressure_alert
+
+  # 内核 kalloc.1024 泄漏哨兵（2026-09-18 事故补：mmv 本机 kalloc.1024 从几 MB
+  # 涨到 12.7GB 占满 wired 内存，kernel_task 91% CPU 致机器卡死，zprint -g 触发
+  # zone GC 回收不掉（证实真泄漏非缓存），只能重启回收。Apple Silicon+SIP enabled，
+  # 无法远程开 zlog1 boot-arg 做函数级泄漏追踪定位元凶（需进 Recovery Mode），
+  # 故做不到点名元凶，只能早发现早处理：WARN(3G仅日志)/ALERT(5G Brain告警)/
+  # CRITICAL(7G，凌晨3-5点安全时段内自动重启止损)。用户拍板：复用 janitor 既有
+  # 2026-09-24 重新标定（决策 d71efe6b）：原 4/8/11G 是 9-18 事故时按当时内存余量
+  # 定的；09-24 实测 kalloc 才 5.50G 未达 8G 告警线，机器已空闲 188M / swap 3977M /
+  # load 5.3 / 自记「内存高压 99%」——余量被其余占用吃掉，告警线落在「快死了」而非
+  # 「开始疼」。增长 +0.75G/天（/tmp/janitor-frequent.log 138 样本实测），
+  # 自动重启节奏由约 14 天变约 9 天。
+  # 清扫+告警机制，不新建独立 launchd 哨兵（决策 64d38870）。
+  # KALLOC_KB / KALLOC_HOUR 允许环境变量注入（测试用，同 DISK_PCT 约定）。
+  # 阈值与安全时段亦可用 KALLOC_*_GB / KALLOC_SAFE_* 覆盖（搬机器/换时区改 env 不改码）。
+  check_kalloc_guard() {
+    # ⚠️ 阈值与时段常量必须定义在【函数体内】，勿挪到函数外。本脚本全文无 set -u：
+    # 一旦此处引用不到（漏改/打错名/函数被挪走），$((KALLOC_CRITICAL_GB*1024*1024))
+    # 会静默取 0，[ "$kb" -ge 0 ] 恒真 → 任何微小 kalloc 都判 CRITICAL，配合 cron
+    # 每 15 分钟一跑即无限重启生产机。2026-09-25 已实测复现该行为。
+    local KALLOC_WARN_GB="${KALLOC_WARN_GB:-3}"
+    local KALLOC_ALERT_GB="${KALLOC_ALERT_GB:-5}"
+    local KALLOC_CRITICAL_GB="${KALLOC_CRITICAL_GB:-7}"
+    # 安全时段按【人所在时区】判，不按机器环境时区。本机 /etc/localtime 指向
+    # America/Los_Angeles（systemsetup 显示的 Asia/Shanghai 是未生效的偏好），cron 无 TZ
+    # 即回落它——原来的裸 date +%H 使「凌晨 3-5 点」实际落在北京 18:00-20:00，
+    # 会在傍晚重启生产机。2026-09-25 实测确认，决策 c70beb74。
+    local KALLOC_SAFE_TZ="${KALLOC_SAFE_TZ:-Asia/Shanghai}"
+    local KALLOC_SAFE_HOUR_START="${KALLOC_SAFE_HOUR_START:-3}"
+    local KALLOC_SAFE_HOUR_END="${KALLOC_SAFE_HOUR_END:-5}"
+    local kb gb hour t
+
+    # fail-closed：阈值必须是纯数字，否则什么都不判（挡住上面那颗"静默取 0"的雷）
+    for t in "${KALLOC_WARN_GB}" "${KALLOC_ALERT_GB}" "${KALLOC_CRITICAL_GB}"; do
+      case "${t}" in
+        ''|*[!0-9]*)
+          echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc 哨兵阈值常量非法（WARN=${KALLOC_WARN_GB} ALERT=${KALLOC_ALERT_GB} CRITICAL=${KALLOC_CRITICAL_GB}），不做任何判断"
+          return 0 ;;
+      esac
+    done
+
+    if [ -n "${KALLOC_KB:-}" ]; then
+      kb="$KALLOC_KB"
+    else
+      kb=$(sudo -n zprint 2>/dev/null | awk '$1=="data.kalloc.1024"{gsub(/K$/,"",$3); print $3}')
+    fi
+    [ -z "${kb:-}" ] && return 0
+
+    gb=$(awk -v k="$kb" 'BEGIN{printf "%.2f", k/1048576}')
+
+    # ⚠️ 以下四处 title 一律不嵌 ${gb} 这类每格都在变的数值，只放"${N}G 档"粗桶：
+    # Brain 建单 API 按 title 去重（命中返回 deduplicated:true + 累加
+    # payload.recurrence_requests），数值进 title 即每 0.01G 造一条新单——实测已积出
+    # ~81 条 kalloc 垃圾单（5.56GB→6.36GB）。精确值放 description。
+    if [ "$kb" -ge $((KALLOC_CRITICAL_GB*1024*1024)) ] 2>/dev/null; then
+      hour="${KALLOC_HOUR:-$(TZ="${KALLOC_SAFE_TZ}" date +%H)}"
+      # 时区名拼错 / zoneinfo 缺失时 date 不会报错：macOS 静默回落 UTC，glibc 则把
+      # 非法串当 POSIX TZ 规格解析（两者 exit 都是 0）——不校验则安全时段悄悄变成
+      # UTC 3-5 = 北京 11:00-13:00，正好工作时间。fail-closed：只告警不重启。
+      # 判据必须跨平台：不能拿 `date +%Z` 是否等于 UTC 来判（那只在 macOS 成立，
+      # 2026-09-25 CI 实测 glibc 下回显原串，该判据整条失效），直接查 zoneinfo 条目。
+      local tzdir="${TZDIR:-/usr/share/zoneinfo}"
+      if [ -z "${KALLOC_HOUR:-}" ] && [ "${KALLOC_SAFE_TZ}" != "UTC" ] \
+         && [ ! -f "${tzdir}/${KALLOC_SAFE_TZ}" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，但时区 ${KALLOC_SAFE_TZ} 不可用（${tzdir} 下查无此条目），fail-closed 不自动重启"
+        janitor_observe_only "kalloc.1024 时区不可用，仅观察告警" && return 0
+        curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
+          -d "{\"title\":\"🔴 kalloc.1024 危险（${KALLOC_CRITICAL_GB}G 档，安全时段时区不可用）（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 已超危险阈值 ${KALLOC_CRITICAL_GB}GB，但安全时段时区 ${KALLOC_SAFE_TZ} 在 ${tzdir} 下查无条目，已 fail-closed 不自动重启，请人工重启并修 KALLOC_SAFE_TZ。\"}" \
+          2>/dev/null || true
+        return 0
+      fi
+      # 勿删 10#：前导零会被 bash 按八进制解析，08/09 点会命中同一颗雷（见 etime_to_secs 教训）
+      if [ "$((10#$hour))" -ge "${KALLOC_SAFE_HOUR_START}" ] 2>/dev/null \
+         && [ "$((10#$hour))" -lt "${KALLOC_SAFE_HOUR_END}" ] 2>/dev/null; then
+        # 重启不可逆，两道闸都在【代码里】而不在测试文件里：
+        # ① --dry-run：原来 DRY_RUN 只在 daily 分支生效，跑 `--mode frequent --dry-run`
+        #    会真重启，而文件头注释写着"只检测不清理"。
+        # ② JANITOR_NO_REBOOT：给测试/排障用；即使将来重启改成 command sudo /
+        #    绝对路径 / osascript 等绕过测试 mock 的写法，这道闸仍拦得住。
+        if ${DRY_RUN:-false}; then
+          echo "${DRY_TAG:-[DRY-RUN] }$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，本应在安全时段自动重启，DRY-RUN 已跳过"
+          return 0
+        fi
+        if [ "${JANITOR_NO_REBOOT:-0}" = "1" ]; then
+          echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，安全时段内但 JANITOR_NO_REBOOT=1 已拦住自动重启"
+          return 0
+        fi
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，安全时段内自动重启止损"
+        curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
+          -d "{\"title\":\"🚨 kalloc.1024 触发自动重启（${KALLOC_CRITICAL_GB}G 档）（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 达危险阈值 ${KALLOC_CRITICAL_GB}GB，${KALLOC_SAFE_TZ} ${KALLOC_SAFE_HOUR_START}-${KALLOC_SAFE_HOUR_END} 点安全时段内自动重启止损，历史峰值12.7GB曾致机器卡死。\"}" \
+          2>/dev/null || true
+        sleep 30
+        sudo -n shutdown -r now 2>/dev/null
+      else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，非安全时段仅告警"
+        janitor_observe_only "kalloc.1024 非安全时段，仅观察告警" && return 0
+        curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
+          -d "{\"title\":\"🔴 kalloc.1024 危险（${KALLOC_CRITICAL_GB}G 档）（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 已超危险阈值 ${KALLOC_CRITICAL_GB}GB，当前不在 ${KALLOC_SAFE_TZ} ${KALLOC_SAFE_HOUR_START}-${KALLOC_SAFE_HOUR_END} 点安全时段，暂不自动重启，请尽快手动重启。\"}" \
+          2>/dev/null || true
+      fi
+    elif [ "$kb" -ge $((KALLOC_ALERT_GB*1024*1024)) ] 2>/dev/null; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 偏高 ${gb}GB，上报 Brain 告警"
+      janitor_observe_only "kalloc.1024 偏高，仅观察告警" && return 0
+      curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
+        -d "{\"title\":\"🟡 kalloc.1024 偏高（${KALLOC_ALERT_GB}G 档）（Janitor检测）\",\"priority\":\"P1\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 超过 ${KALLOC_ALERT_GB}GB 告警线，缓慢泄漏中，建议本周找空档重启一次。危险线 ${KALLOC_CRITICAL_GB}GB。\"}" \
+        2>/dev/null || true
+    elif [ "$kb" -ge $((KALLOC_WARN_GB*1024*1024)) ] 2>/dev/null; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 ${gb}GB（早期预警，仅记日志）"
+    fi
+  }
+
+  check_kalloc_guard
 
   # ── 工具函数 ──────────────────────────────────────
   # etime 格式（[[DD-]HH:]MM:SS）转秒数；非法输入返回 0。
@@ -296,12 +499,13 @@ if [ "$MODE" = "frequent" ]; then
     [ -z "$secs" ] && { echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] etime_to_secs 解析失败 elapsed=$elapsed pid=${pid}，保守跳过"; secs=0; }
     [ "$secs" -lt "$threshold" ] && return
 
-    # cecelia 常驻服务豁免（fleet-worker/toolchain 等）
+    # 常驻服务豁免（launchd 托管 + 显式白名单，判据见文件上方 is_exempt_resident_service）
     local cmd
     cmd=$(ps -o command= -p "$pid" 2>/dev/null)
-    case "$cmd" in *"/usr/local/libexec/cecelia/"*) return ;; esac
+    is_exempt_resident_service "$pid" "$cmd" && return
 
     if is_orphan "$pid"; then
+      janitor_observe_only "node/vitest 孤儿候选 pid=$pid (${secs}s)" && return 0
       kill "$pid" 2>/dev/null
       sleep 1
       kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
@@ -319,6 +523,7 @@ if [ "$MODE" = "frequent" ]; then
   # kill 后回报 Brain
   notify_brain_orphan_killed() {
     local pid="$1" cwd="$2"
+    janitor_observe_only "Brain 孤儿回报 pid=$pid" && return 0
     [ -z "$cwd" ] && return 0
 
     local lockfile branch
@@ -342,7 +547,7 @@ if [ "$MODE" = "frequent" ]; then
     else
       curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" \
         -H "Content-Type: application/json" \
-        -d "{\"title\":\"[janitor] 孤儿分支 ${branch} 任务需重调度\",\"task_type\":\"alert\",\"priority\":\"p2\",\"description\":\"orphan_killed_by_janitor: pid=${pid} branch=${branch}\"}" \
+        -d "{\"title\":\"[janitor] 孤儿分支 ${branch} 任务需重调度\",\"task_type\":\"harness_intervention\",\"priority\":\"p2\",\"description\":\"orphan_killed_by_janitor: pid=${pid} branch=${branch}\"}" \
         > /dev/null 2>&1 || true
       echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] Brain 已告警：分支=$branch 需重调度 (orphan_killed_by_janitor)"
     fi
@@ -361,12 +566,13 @@ if [ "$MODE" = "frequent" ]; then
     [ -z "$secs" ] && { echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] etime_to_secs 解析失败 elapsed=$elapsed pid=${pid}，保守跳过"; secs=0; }
     [ "$secs" -lt "$threshold" ] && return
 
-    # cecelia 常驻服务豁免（同 kill_if_orphan）
+    # 常驻服务豁免（同 kill_if_orphan，共用 is_exempt_resident_service）
     local cmd
     cmd=$(ps -o command= -p "$pid" 2>/dev/null)
-    case "$cmd" in *"/usr/local/libexec/cecelia/"*) return ;; esac
+    is_exempt_resident_service "$pid" "$cmd" && return
 
     if is_claude_orphan "$pid" "$tty" "$ppid"; then
+      janitor_observe_only "claude 孤儿候选 pid=$pid (${secs}s)" && return 0
       local cwd
       cwd=$(lsof -p "$pid" -a -d cwd -Fn 2>/dev/null | grep '^n' | head -1 | sed 's/^n//')
 
@@ -421,6 +627,7 @@ if [ "$MODE" = "frequent" ]; then
     if [ -n "$audiomxd_cpu" ] && [ "$audiomxd_cpu" -ge "$AUDIOMXD_CPU_THRESHOLD" ] 2>/dev/null; then
       audiomxd_nice=$(ps -o nice= -p "$audiomxd_pid" 2>/dev/null | tr -d ' ')
       if [ "$audiomxd_nice" != "20" ]; then
+        janitor_observe_only "audiomxd 降优先级候选 pid=$audiomxd_pid" && continue
         if sudo -n /usr/sbin/taskpolicy -b -p "$audiomxd_pid" 2>/dev/null && \
            sudo -n /usr/bin/renice 20 -p "$audiomxd_pid" >/dev/null 2>&1; then
           echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] jailed audiomxd pid=${audiomxd_pid}（CPU ${audiomxd_cpu}%，已钉死E核后台nice20，蓝牙路由死循环兜底v2）"
@@ -430,7 +637,8 @@ if [ "$MODE" = "frequent" ]; then
   done
 
   # 已退出的 harness relay 容器每轮顺手清一次（留 1h 尸检窗口）
-  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
+     && ! janitor_observe_only "已退出容器 prune 候选"; then
     relay_prune_out=$(docker container prune -f --filter "until=1h" 2>/dev/null || true)
     relay_reclaimed=$(echo "$relay_prune_out" | grep "Total reclaimed space" | awk -F': ' '{print $2}')
     [ -n "$relay_reclaimed" ] && [ "$relay_reclaimed" != "0B" ] && \
@@ -738,7 +946,7 @@ if [ "${USAGE_PCT:-0}" -gt 70 ] 2>/dev/null && ! $DRY_RUN; then
   description="磁盘使用率 ${USAGE_PCT}% 超过 70% 警戒线，可用空间约 ${AVAIL_GB}GB，请人工检查并清理大文件。"
   curl -s -X POST "${BRAIN_URL}/api/brain/tasks" \
     -H "Content-Type: application/json" \
-    -d "{\"title\":\"🚨 磁盘告警 ${USAGE_PCT}%，需人工检查\",\"priority\":\"P0\",\"skill\":\"/janitor\",\"task_type\":\"alert\",\"description\":\"${description}\"}" \
+    -d "{\"title\":\"🚨 磁盘告警 ${USAGE_PCT}%，需人工检查\",\"priority\":\"P0\",\"skill\":\"/janitor\",\"task_type\":\"harness_intervention\",\"description\":\"${description}\"}" \
     2>/dev/null || log "  Brain 不可达，告警已本地记录"
 fi
 

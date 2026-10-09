@@ -14,6 +14,7 @@
  */
 
 import pool from './db.js';
+import { finalizeTask } from './lib/task-terminal.js';
 import { assertDispatchRoutingReceipt } from './orchestrator/dispatcher.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
 import { isDraining, getDrainStartedAt } from './drain.js';
@@ -24,11 +25,14 @@ import {
   getBillingPause,
 } from './executor.js';
 import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
+import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
 import { emit } from './event-bus.js';
-import { isAllowed, recordFailure } from './circuit-breaker.js';
+import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
 import { recordDispatchResult } from './dispatch-stats.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
+import { startRunForExecResult } from './lib/task-run.js';
+import { classifyDispatchReasonCode } from './lib/dispatch-reason-code.js';
 import { incrementActionsToday } from './tick-stats.js';
 import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
@@ -40,6 +44,20 @@ import { raise } from './alerting.js';
 import { checkAnchor } from './anchor-check.js';
 import { applyDispatchAllocationGuide } from './dispatch-allocation-guide.js';
 import { getLlmCapacitySnapshot } from './llm-capacity.js';
+import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
+import { routeQiumiTask, persistDecision } from './routing/qiumi-router.js';
+import { qiumiEnv } from './routing/env.js';
+import { routeSerialOf, findSameSerialBusy } from './routing/qiumi-serial-gate.js';
+import { dispatchScriptTask, SCRIPT_BREAKER_KEY } from './script-executor.js';
+
+/**
+ * openclaw-agent 表面（qiumi_task）由 Brain 经 ssh 直派 MMV，不经 cecelia-bridge：
+ * cecelia-run 熔断与 bridge 健康检查对它都是误伤（2026-09-23 生产实证 task 72b010e9）。
+ * 判据只从注册表 surface 派生，不手抄名单（铁律 76cb816c）。
+ */
+const isOpenclawSurface = (type) => getTaskType(type)?.surface === 'openclaw-agent';
+/** script 表面（script_run，棒 3）同样是 Brain 经 ssh 直派跑场机，不经 cecelia-bridge；熔断 key 独立，互不牵连。 */
+const isScriptSurface = (type) => getTaskType(type)?.surface === 'script';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -76,8 +94,9 @@ export const HARNESS_TASK_CAP_BACKSTOP = 12;
  */
 export function shouldApplyHarnessCap(candidate) {
   if (!candidate) return false;
-  if (candidate.task_type !== 'harness_initiative'
-      && candidate.task_type !== 'golden_path_proposal') return false;
+  // 名单见 lib/task-type-registry.js（HARNESS_INFLIGHT_TASK_TYPES，与 slot-allocator.js
+  // inflight 查询同一份，= {harness_initiative, golden_path_proposal}）。
+  if (!HARNESS_INFLIGHT_TASK_TYPES.includes(candidate.task_type)) return false;
   if (candidate.payload?.resume_from_checkpoint === true) return false;
   return true;
 }
@@ -85,29 +104,30 @@ export function shouldApplyHarnessCap(candidate) {
 // Initiative-level lock 仅对 harness pipeline 类型生效。
 // dev / talk / audit / qa 等通用任务不持有 initiative lock，避免单 project 内死锁
 // （bb245cb4 教训：harness Initiative Phase A 跑期间整个 project 通用任务全被拒派）。
-const INITIATIVE_LOCK_TASK_TYPES = [
-  'harness_task',
-  'harness_planner',
-  'harness_contract_propose',
-  'harness_contract_review',
-  'harness_fix',
-  'harness_initiative',
-  'golden_path_proposal',
-];
+// 名单见 lib/task-type-registry.js（INITIATIVE_LOCK_TASK_TYPES）。
 
 // Retired harness task types — 全部归入 harness_initiative full-graph sub-graph。
 // 这些类型不再需要 executor / cecelia-bridge：派发路径上直接标 pipeline_terminal_failure。
 // 必须在 `checkCeceliaRunAvailable` 之前拦截，否则在没有 bridge 的环境（CI clean docker /
 // brain-only deploy）retired task 会被永远 revert 回 queued，无法 terminate。
 // executor.js 内 `triggerCeceliaRun` 也保留同款拦截作 defense-in-depth（老 caller 直
-// 调 executor 时仍然有效）。
-const _RETIRED_HARNESS_TYPES_DISPATCH = new Set([
-  'harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e',
-  'harness_planner',
-]);
+// 调 executor 时仍然有效）。名单见 lib/task-type-registry.js（RETIRED_HARNESS_TYPES_DISPATCH）。
+const _RETIRED_HARNESS_TYPES_DISPATCH = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
 
 // 私有计时器（旧只写不读，保留 hook 给未来 telemetry）
 let _lastDispatchTime = 0;
+
+// 设备锁释放（G5 横切件，task 104ab89f）：claim 后 revert/清理路径统一走这里。
+// 只有 payload.device_serial 的任务可能持锁——无 serial 直接跳过，不给普通任务加
+// DB round-trip。释放失败不致命（sweepStaleDeviceLocks 对账兜底）。
+async function releaseDeviceLockIfHeld(task) {
+  if (!task?.payload?.device_serial || !task?.id) return;
+  try {
+    await releaseDeviceLocksHeldBy(task.id);
+  } catch (e) {
+    console.error(`[dispatch] device lock release failed (non-fatal): ${e.message}`);
+  }
+}
 
 async function enforceDispatchRoutingReceipt(task) {
   const isCoding = task?.task_type === 'dev'
@@ -228,6 +248,183 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
 }
 
 /**
+ * qiumi_task 专用路由出口（PR3，接线点见 plan 补充四）。
+ *
+ * 调用位置是死的：候选循环里原子 claim 成功之后、标 in_progress 之前。任务此刻仍是
+ * `queued`，这是两件事的前提——persistDecision 的 device/fail 分支带 `AND status='queued'`
+ * 的 CAS；并发闸数的是 in_progress 的 openclaw-agent，任务自己不能先被算进去。
+ *
+ * 本函数自己不 spawn、不改 status：agent 决策落库后交回主流程，由主流程标 in_progress、
+ * 读全行、triggerCeceliaRun，spawn 失败也走主流程既有的回滚。
+ *
+ * @param {object} task - 已 claim 的候选行（可能不含 payload，函数内会重读整行）
+ * @param {object} [deps] - { env, actions, holSkipIds, fetchFn, callLLMFn }
+ * @returns {Promise<{outcome:'return', result:object}|{outcome:'skip'}|{outcome:'proceed'}>}
+ */
+export async function dispatchQiumiTask(task, deps = {}) {
+  try {
+    return await routeAndPersistQiumi(task, deps);
+  } catch (err) {
+    // 候选循环不在 postClaimException 的覆盖范围内（同锚点闸分支的处境）：从这里抛出去
+    // = claim 永远挂在这条任务上，它再也起不来，整轮派发也跟着断。所以兜住、放掉 claim、
+    // 记一笔，然后按 skip 交回循环换下一个候选。
+    console.error(`[dispatch] qiumi 路由异常 (task=${task.id}): ${err.message}`);
+    try {
+      await (await import('./lib/manual-qiumi-dispatch.js')).releaseQiumiClaim(pool, task.id, deps.claimOwner);
+    } catch (releaseErr) {
+      console.error(`[dispatch] claim 释放失败（非致命，task=${task.id}）: ${releaseErr.message}`);
+    }
+    try {
+      await recordDispatchResult(pool, false, 'qiumi_route_exception', undefined, task.id);
+    } catch (statErr) {
+      console.error(`[dispatch] 派发统计写入失败（非致命，task=${task.id}）: ${statErr.message}`);
+    }
+    return { outcome: 'skip' };
+  }
+}
+
+async function routeAndPersistQiumi(task, deps = {}) {
+  const env = deps.env ?? qiumiEnv();
+  const actions = deps.actions ?? [];
+  const holSkipIds = deps.holSkipIds ?? [];
+
+  const releaseClaim = async () => (await import('./lib/manual-qiumi-dispatch.js')).releaseQiumiClaim(pool, task.id, deps.claimOwner);
+
+  // openclaw-agent 有自己的熔断（MMV 起 agent 连败时才开），与 cecelia-run（bridge）互不牵连。
+  // 放在最前面：熔断开着就别读全行、别打 Jev、别写 run_id——每 tick 白路由一次就是本刀要修的病。
+  if (!isAllowed('openclaw-agent')) {
+    await releaseClaim();
+    await recordDispatchResult(pool, false, 'openclaw_agent_circuit_open', undefined, task.id);
+    tickLog(`[dispatch] HOL skip: openclaw-agent breaker open, skipping qiumi task ${task.id}`);
+    holSkipIds.push(task.id);
+    return { outcome: 'skip' };
+  }
+
+  // 选单 SQL 只取部分列，便宜闸要读 payload.qiumi_source → 先把整行捞回来
+  const fullRow = await pool.query('SELECT * FROM tasks WHERE id = $1', [task.id]);
+  const fullTask = fullRow.rows[0] ?? task;
+
+  // 机器闸：MMV 这台机器的 openclaw-agent 上限（默认 2），不是租户配额。
+  // 放在路由之前——闸满就退回，省掉一次 Jev/terra 调用。
+  // 只数 qiumi_task：与收割器（reapOpenclawAgentRuns）的候选口径一致。日后别的类型挂上同一个
+  // executor_kind，它会占着闸位却永远不被收割，闸就再也空不出来。
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS n FROM tasks
+      WHERE executor_kind = 'openclaw-agent' AND status = 'in_progress' AND task_type = 'qiumi_task'`,
+  );
+  if ((rows[0]?.n ?? 0) >= env.mmvConcurrency) {
+    await releaseClaim();
+    // 照 codex pool 的 HOL 语义：P0 停整轮（高优信号不许被绕过），非 P0 让位换下一个候选
+    if (task.priority === 'P0') {
+      await recordDispatchResult(pool, false, 'openclaw_agent_pool_full', undefined, task.id);
+      return {
+        outcome: 'return',
+        result: { dispatched: false, reason: 'openclaw_agent_pool_full', task_id: task.id, actions },
+      };
+    }
+    tickLog(`[dispatch] HOL skip: openclaw-agent pool full (${rows[0]?.n ?? 0}/${env.mmvConcurrency}), skipping ${task.priority} qiumi task ${task.id}`);
+    holSkipIds.push(task.id);
+    return { outcome: 'skip' };
+  }
+
+  // 同机串行闸（任务 5ad81457）：同一台手机已有秋米任务在跑 → 本轮不派，保持 queued、放 claim，
+  // 按 HOL skip 语义换下一个候选（P0 也只让位不停整轮：挡它的是一台手机，不是整个池子）。
+  const serialBusy = async (payload) => {
+    const serial = routeSerialOf(payload);
+    const busy = await findSameSerialBusy(pool, task.id, serial);
+    if (!busy) return null;
+    await releaseClaim();
+    await recordDispatchResult(pool, false, 'qiumi_device_busy', undefined, task.id);
+    tickLog(`[dispatch] HOL skip: 手机 ${serial} 正被秋米任务 ${busy.id} 占用，qiumi task ${task.id} 本轮不派`);
+    holSkipIds.push(task.id);
+    return { outcome: 'skip' };
+  };
+
+  // 路由幂等：上一 tick 已判定并写了 run_id/model/qiumi_route，只是 spawn 前被打回 queued
+  // （历史上是 cecelia-run 熔断，见本刀 Task 1）。决策不变就不重打 Jev、不换 run_id——
+  // 执行体的 ALREADY 探针按 run_id 防重起，换了 run_id 它就认不出上一轮可能已起的 agent。
+  if (fullTask.payload?.qiumi_route && fullTask.payload?.run_id) {
+    const held = await serialBusy(fullTask.payload);
+    if (held) return held;
+    tickLog(`[dispatch] qiumi task ${task.id} 已有路由决策 run_id=${fullTask.payload.run_id}，跳过 Jev 直接派发`);
+    return { outcome: 'proceed' };
+  }
+
+  // 手机忙回队（收割器见 DEVICE_BUSY，lib/qiumi-device-busy.js）：路由保留、run_id 已清。
+  // 不重打 Jev，只换一个新 run_id——上一轮的 .exit 已落地，沿用旧 run_id 会被 ALREADY 探针当成跑完。
+  if (fullTask.payload?.qiumi_route && !fullTask.payload?.run_id && Number(fullTask.payload?.device_busy_attempts) > 0) {
+    const held = await serialBusy(fullTask.payload);
+    if (held) return held;
+    const runId = `qiumi-${String(task.id).slice(0, 8)}-${Date.now()}`;
+    await pool.query(
+      `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('run_id', $2::text), updated_at = NOW()
+        WHERE id = $1 AND status = 'queued'`,
+      [task.id, runId],
+    );
+    tickLog(`[dispatch] qiumi task ${task.id} 手机忙回队第 ${fullTask.payload.device_busy_attempts} 次重试，保留路由、新 run_id=${runId}`);
+    return { outcome: 'proceed' };
+  }
+
+  const decision = await routeQiumiTask(fullTask, {
+    pool,
+    env,
+    fetchFn: deps.fetchFn,
+    // 懒加载：terra 兜底才真的需要 llm-caller，Jev 正常时不把这条重依赖拉进来
+    callLLMFn: deps.callLLMFn ?? (async (...args) => (await import('./llm-caller.js')).callLLM(...args)),
+  });
+  await persistDecision(pool, fullTask, decision);
+
+  // 已派生 device_job 子任务交给手机领单器、父任务挂 blocked（persistDecision 里连 claim
+  // 一起释放了，见 routing/qiumi-router.js 的 delegateDeviceJob），dispatcher 到此为止
+  if (decision.outcome === 'device') {
+    await recordDispatchResult(pool, false, 'qiumi_routed_device', undefined, task.id);
+    return {
+      outcome: 'return',
+      result: {
+        dispatched: false,
+        reason: 'qiumi_routed_device',
+        task_id: task.id,
+        actions: [...actions, { action: 'qiumi-device-delegated', task_id: task.id, serial: decision.serial }],
+      },
+    };
+  }
+
+  // 手机定不下（台账没有唯一命中）：persistDecision 已转 blocked(device_unresolved) 并放了 claim，不 spawn
+  if (decision.outcome === 'unresolved') {
+    await recordDispatchResult(pool, false, 'qiumi_device_unresolved', undefined, task.id);
+    return {
+      outcome: 'return',
+      result: {
+        dispatched: false,
+        reason: 'qiumi_device_unresolved',
+        task_id: task.id,
+        actions: [...actions, { action: 'qiumi-device-unresolved', task_id: task.id, detail: decision.detail ?? null }],
+      },
+    };
+  }
+
+  // 判定失败（设备含糊 fail-closed / Jev+terra 均不可用）已落 failed，不 spawn
+  if (decision.outcome === 'fail') {
+    await recordDispatchResult(pool, false, 'qiumi_route_failed', undefined, task.id);
+    return {
+      outcome: 'return',
+      result: {
+        dispatched: false,
+        reason: 'qiumi_route_failed',
+        task_id: task.id,
+        actions: [...actions, { action: 'qiumi-route-failed', task_id: task.id, error: decision.reason }],
+      },
+    };
+  }
+
+  // agent：model/run_id 已由 persistDecision 写进 payload，主流程标 in_progress 后读全行即可拿到。
+  // 新定到的手机正忙 → 决策已落库，本轮让位；下一轮走上面的路由幂等分支再过一次同机闸。
+  const held = await serialBusy(decision.payloadPatch);
+  if (held) return held;
+  return { outcome: 'proceed' };
+}
+
+/**
  * Dispatch the next queued task for execution.
  * Checks concurrency limit, executor availability, and dependencies.
  *
@@ -316,6 +513,11 @@ export async function dispatchNextTask(goalIds) {
 
   // 0. Three-pool slot budget check (replaces flat MAX_SEATS - INTERACTIVE_RESERVE)
   const slotBudget = await calculateSlotBudget();
+  // 无可信资源时驱逐也不能恢复容量；保留运行中的任务，只拒绝新增派单。
+  if (slotBudget.resourceAdmissionBlocked) {
+    await recordDispatchResult(pool, false, 'resource_unavailable');
+    return { dispatched: false, reason: 'resource_unavailable', budget: slotBudget, actions };
+  }
   if (!slotBudget.dispatchAllowed) {
     // Eviction: if a high-priority task is waiting, try to evict a low-priority one
     try {
@@ -398,19 +600,16 @@ export async function dispatchNextTask(goalIds) {
   //     放在所有 skip 检查（drain/quota_cooling/billing/slot/circuit）之后，
   //     这样系统不健康时不写 DB（保持调度路径侧效应一致性）。
   try {
-    const drained = await pool.query(
-      `UPDATE tasks
-         SET status='failed', completed_at=NOW(),
-             error_message='task_type ' || task_type || ' retired (subsumed by harness_initiative full graph)',
-             payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
-       WHERE status='queued'
-         AND task_type = ANY($1::text[])
-       RETURNING id, task_type`,
-      [Array.from(_RETIRED_HARNESS_TYPES_DISPATCH)]
-    );
+    const drained = await finalizeTask(pool, null, 'failed', {
+      set: { completed_at: 'now', error_message: 'task_type retired (subsumed by harness_initiative full graph)' },
+      mergePayload: { failure_class: 'pipeline_terminal_failure' },
+      onlyIfStatus: 'queued',
+      where: { sql: 'task_type = ANY($1::text[])', params: [Array.from(_RETIRED_HARNESS_TYPES_DISPATCH)] },
+      returning: ['task_type'],
+    });
     if (drained.rowCount > 0) {
       tickLog(`[dispatch] drained ${drained.rowCount} queued retired harness task(s)`);
-      for (const row of drained.rows) {
+      for (const row of drained.tasks) {
         actions.push({ action: 'retire-task', task_id: row.id, task_type: row.task_type });
       }
     }
@@ -429,6 +628,7 @@ export async function dispatchNextTask(goalIds) {
   const preFlightFailedIds = [];
   const holSkipIds = [];        // IDs skipped due to HOL blocking (codex pool full, non-P0)
   const noExecutorSkipIds = []; // IDs skipped due to executor/bridge unavailable (0014cd42)
+  const breakerSkipIds = [];    // IDs skipped because cecelia-run circuit is OPEN (bridge-dependent only)
   const duplicateSkipIds = []; // IDs skipped due to duplicate-title sibling already queued/in_progress
   let nextTask = null;
 
@@ -446,10 +646,10 @@ export async function dispatchNextTask(goalIds) {
           `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
           [nextTask.id]
         );
-        await pool.query(
-          `UPDATE tasks SET status = 'failed', error_message = $2 WHERE id = $1`,
-          [nextTask.id, String(err.message || 'dispatch_exception').slice(0, 500)]
-        );
+        await releaseDeviceLockIfHeld(nextTask);
+        await finalizeTask(pool, nextTask.id, 'failed', {
+          set: { error_message: String(err.message || 'dispatch_exception').slice(0, 500) },
+        });
       } catch (cleanupErr) {
         console.error(`[dispatch] claim-leak cleanup failed (task=${nextTask.id}): ${cleanupErr.message}`);
       }
@@ -464,9 +664,13 @@ export async function dispatchNextTask(goalIds) {
   dispatchLoop: for (;;) {
   nextTask = null;
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
-    const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...duplicateSkipIds];
+    const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...breakerSkipIds, ...duplicateSkipIds];
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, { priorityFilter: _quotaPriorityFilter });
     if (!candidate) {
+      if (breakerSkipIds.length > 0 && noExecutorSkipIds.length === 0) {
+        tickLog(`[tick] circuit_breaker_open: 已跳过 ${breakerSkipIds.length} 个依赖 bridge 的候选后队列耗尽，本 tick 放弃派发`);
+        return { dispatched: false, reason: 'circuit_breaker_open', circuit_skipped: breakerSkipIds.length, actions };
+      }
       if (noExecutorSkipIds.length > 0) {
         // 全部剩余候选都因 executor 不可用被跳过 → 最终结论仍是 no_executor（与修复前一致）
         tickLog(`[tick] no_executor: 已跳过 ${noExecutorSkipIds.length} 个候选后队列耗尽，本 tick 放弃派发`);
@@ -559,13 +763,10 @@ export async function dispatchNextTask(goalIds) {
     if (_RETIRED_HARNESS_TYPES_DISPATCH.has(candidate.task_type)) {
       tickLog(`[dispatch] retired task_type=${candidate.task_type} task=${candidate.id} → marking pipeline_terminal_failure`);
       try {
-        await pool.query(
-          `UPDATE tasks SET status='failed', completed_at=NOW(),
-            error_message=$2,
-            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
-           WHERE id=$1::uuid`,
-          [candidate.id, `task_type ${candidate.task_type} retired (subsumed by harness_initiative full graph)`]
-        );
+        await finalizeTask(pool, candidate.id, 'failed', {
+          set: { completed_at: 'now', error_message: `task_type ${candidate.task_type} retired (subsumed by harness_initiative full graph)` },
+          mergePayload: { failure_class: 'pipeline_terminal_failure' },
+        });
       } catch (err) {
         console.error(`[dispatch] mark retired task failed: ${err.message}`);
       }
@@ -585,10 +786,10 @@ export async function dispatchNextTask(goalIds) {
       // 任务数纯兜底：docker 层全瞎时防无限叠加（正常永不触发）
       const capRes = await pool.query(
         `SELECT count(*)::int AS n FROM tasks
-           WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
+           WHERE task_type = ANY($2::text[])
              AND status = 'in_progress'
              AND id != $1`,
-        [candidate.id]
+        [candidate.id, [...HARNESS_INFLIGHT_TASK_TYPES]]
       );
       const running = capRes.rows[0]?.n ?? 0;
       if (running >= HARNESS_TASK_CAP_BACKSTOP) {
@@ -650,18 +851,58 @@ export async function dispatchNextTask(goalIds) {
     if (anchorResult.blocked) {
       tickLog(`[dispatch] task ${candidate.id} missing_anchor → terminal failed`);
       try {
-        await pool.query(
-          `UPDATE tasks SET status='failed', completed_at=NOW(),
-            error_message=$2,
-            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor')
-           WHERE id=$1::uuid`,
-          [candidate.id, anchorResult.detail]
-        );
+        await finalizeTask(pool, candidate.id, 'failed', {
+          set: { completed_at: 'now', error_message: anchorResult.detail },
+          mergePayload: { failure_class: 'missing_anchor' },
+        });
       } catch (anchorMarkErr) {
         console.error(`[dispatch] anchor mark failed (non-fatal): ${anchorMarkErr.message}`);
       }
       await recordDispatchResult(pool, false, 'missing_anchor', undefined, candidate.id);
       return { dispatched: false, reason: 'missing_anchor', task_id: candidate.id, actions };
+    }
+
+    // 3c'''. 秋米任务的专用路由出口（PR3，plan 补充四）：必须在这里——claim 已持有、
+    //        任务仍 queued，persistDecision 的 `AND status='queued'` CAS 和并发闸
+    //        count(in_progress) 都指着这个前提。放到标 in_progress 之后两者同时失效。
+    if (candidate.task_type === 'qiumi_task') {
+      const q = await dispatchQiumiTask(candidate, { actions, holSkipIds });
+      if (q.outcome === 'return') return q.result;
+      if (q.outcome === 'skip') {
+        // 闸满让位：claim 已放、已进 holSkipIds，cap 与 codex HOL 分支同一套
+        if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+          tickLog(`[dispatch] HOL skip cap reached (${MAX_SKIP_HEAD_FOR_BLOCKED}), giving up`);
+          await recordDispatchResult(pool, false, 'hol_skip_cap_exceeded');
+          return { dispatched: false, reason: 'hol_skip_cap_exceeded', hol_skipped: holSkipIds.length, actions };
+        }
+        attempt--; // 让位不消耗 pre-flight attempt 预算
+        continue;
+      }
+      // proceed：agent 决策已落库 → 不进分配指南（指南只管 dev/harness 的 codex/grok 降级），
+      // 直接交给主流程标 in_progress → 读全行（拿到刚写进去的 model/run_id）→ triggerCeceliaRun
+      nextTask = candidate;
+      break;
+    }
+
+    // 3c''''. executor=script 的专用出口（棒 3）：同样必须在 claim 之后、标 in_progress 之前——
+    //         违规 payload 直接终态 failed（不重试）、并发槽 count(in_progress) 都指着任务仍 queued 这个前提。
+    if (isScriptSurface(candidate.task_type)) {
+      const sr = await dispatchScriptTask(candidate, { pool, actions, holSkipIds });
+      if (sr.outcome === 'return') {
+        await recordDispatchResult(pool, false, sr.result?.reason ?? 'script_return', undefined, candidate.id);
+        return sr.result;
+      }
+      if (sr.outcome === 'skip') {
+        if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+          tickLog(`[dispatch] HOL skip cap reached (${MAX_SKIP_HEAD_FOR_BLOCKED}), giving up`);
+          await recordDispatchResult(pool, false, 'hol_skip_cap_exceeded');
+          return { dispatched: false, reason: 'hol_skip_cap_exceeded', hol_skipped: holSkipIds.length, actions };
+        }
+        attempt--; // 让位不消耗 pre-flight attempt 预算
+        continue;
+      }
+      nextTask = candidate;
+      break;
     }
 
     // 3d. Codex Pool D: check concurrent limit for Codex-native task types.
@@ -713,6 +954,57 @@ export async function dispatchNextTask(goalIds) {
       }
     }
 
+    // 3e. 设备锁（G5 横切件，task 104ab89f）：payload.device_serial 存在时派前必抢。
+    //     必须在原子 claim 之后（claim 前抢会踩 pre-flight/HOL 等 8+ 条拒绝路径泄漏锁）。
+    const deviceSerial = guidedCandidate?.payload?.device_serial;
+    if (deviceSerial) {
+      let lockResult;
+      try {
+        lockResult = await acquireDeviceLock(candidate.id, deviceSerial, guidedCandidate?.payload?.device_ttl_minutes);
+      } catch (lockErr) {
+        console.error(`[dispatch] device lock acquire error (task=${candidate.id}): ${lockErr.message}`);
+        lockResult = { result: 'locked', holder: { locked_by: 'acquire_error' } }; // fail-closed：报错按被占跳过
+      }
+      if (lockResult.result === 'unknown_device') {
+        tickLog(`[dispatch] task ${candidate.id} device_serial=${deviceSerial} 未注册 → terminal failed`);
+        // 候选循环不在 postClaimException 覆盖范围：terminal UPDATE 必须自带 try/catch，
+        // 抛错=claim 泄漏该任务永远起不来（照 anchor 闸分支形状）。
+        try {
+          await finalizeTask(pool, candidate.id, 'failed', {
+            set: { completed_at: 'now', error_message: `device_serial "${deviceSerial}" not registered in device_locks — register via POST /api/brain/device-locks/register` },
+            mergePayload: { failure_class: 'unknown_device' },
+          });
+        } catch (markErr) {
+          // 终态标记失败 → 降级为释放 claim、按 skip 继续（此分支锁未抢到，无锁可放）
+          console.error(`[dispatch] unknown_device terminal mark failed (task=${candidate.id}): ${markErr.message}`);
+          try {
+            await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`, [candidate.id]);
+          } catch (releaseErr) {
+            console.error(`[dispatch] claim release failed (non-fatal, task=${candidate.id}): ${releaseErr.message}`);
+          }
+        }
+        await recordDispatchResult(pool, false, 'unknown_device', undefined, candidate.id);
+        holSkipIds.push(candidate.id);
+        if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+          await recordDispatchResult(pool, false, 'hol_skip_cap_exceeded');
+          return { dispatched: false, reason: 'hol_skip_cap_exceeded', hol_skipped: holSkipIds.length, actions };
+        }
+        attempt--;
+        continue;
+      }
+      if (lockResult.result === 'locked') {
+        tickLog(`[dispatch] HOL skip: device ${deviceSerial} locked by ${lockResult.holder?.locked_by}, skipping task ${candidate.id}`);
+        await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`, [candidate.id]);
+        holSkipIds.push(candidate.id);
+        if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+          await recordDispatchResult(pool, false, 'hol_skip_cap_exceeded');
+          return { dispatched: false, reason: 'hol_skip_cap_exceeded', hol_skipped: holSkipIds.length, actions };
+        }
+        attempt--;
+        continue;
+      }
+    }
+
     // Passed all checks — this is the task to dispatch
     nextTask = guidedCandidate;
     break;
@@ -736,6 +1028,7 @@ export async function dispatchNextTask(goalIds) {
       `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
       [nextTask.id]
     );
+    await releaseDeviceLockIfHeld(nextTask);
     return { dispatched: false, reason: 'update_failed', task_id: nextTask.id, actions };
   }
 
@@ -749,8 +1042,10 @@ export async function dispatchNextTask(goalIds) {
   // 5. Check executor availability and trigger
   // harness_initiative 走 Docker spawn 路径，完全不依赖 cecelia-bridge。
   // 跳过 bridge check，否则 bridge 不在时 harness 会被错误 revert 到 queued。
-  const needsBridgeCheck = nextTask.task_type !== 'harness_initiative'
-    && nextTask.task_type !== 'golden_path_proposal';
+  // 名单见 lib/task-type-registry.js（HARNESS_INFLIGHT_TASK_TYPES）。
+  const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES.includes(nextTask.task_type)
+    && !isOpenclawSurface(nextTask.task_type)
+    && !isScriptSurface(nextTask.task_type);
 
   // Circuit breaker — 只对依赖 cecelia-bridge 的任务生效（harness_initiative 豁免）
   // 注意：此检查在 atomic claim 和 mark in_progress 之后，
@@ -758,8 +1053,18 @@ export async function dispatchNextTask(goalIds) {
   if (needsBridgeCheck && !isAllowed('cecelia-run')) {
     await updateTask({ task_id: nextTask.id, status: 'queued' });
     await pool.query('UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1', [nextTask.id]);
+    await releaseDeviceLockIfHeld(nextTask);
     await recordDispatchResult(pool, false, 'circuit_breaker_open', undefined, nextTask.id);
-    return { dispatched: false, reason: 'circuit_breaker_open', actions };
+    // 与下面 no_executor 同一条 HOL 规矩：熔断只拦依赖 bridge 的这一条，跳过它继续选下一候选。
+    // 原来直接 return：P1 的 bridge 任务每轮占着队头被弹回，排在后面不依赖 bridge 的
+    // qiumi/harness/script 任务永远轮不到（09-29 实测 11 条秋米任务堵了一上午）。
+    breakerSkipIds.push(nextTask.id);
+    if (breakerSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+      tickLog(`[tick] circuit_breaker_open: 跳过数达上限 (${MAX_SKIP_HEAD_FOR_BLOCKED})，本 tick 放弃派发`);
+      return { dispatched: false, reason: 'circuit_breaker_open', circuit_skipped: breakerSkipIds.length, actions };
+    }
+    tickLog(`[tick] circuit_breaker_open: task=${String(nextTask.id).slice(0, 8)} 依赖 bridge，跳过，试下一候选`);
+    continue dispatchLoop;
   }
 
   const ceceliaAvailable = needsBridgeCheck
@@ -773,6 +1078,7 @@ export async function dispatchNextTask(goalIds) {
       `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
       [nextTask.id]
     );
+    await releaseDeviceLockIfHeld(nextTask);
     await logTickDecision(
       'tick',
       `cecelia-run not available, task reverted to queued`,
@@ -966,13 +1272,35 @@ export async function dispatchNextTask(goalIds) {
     };
   }
 
+  if (!execResult.success && execResult.wait === true) {
+    if(execResult.taskStateHandled!==true)await pool.query(`UPDATE tasks SET status='queued',claimed_by=NULL,claimed_at=NULL,updated_at=NOW()
+      WHERE id=$1 AND status='in_progress'`, [nextTask.id]);
+    await releaseDeviceLockIfHeld(nextTask);
+    await recordDispatchResult(pool,false,'wait:capacity',undefined,nextTask.id);
+    return {dispatched:false,reason:'wait:capacity',task_id:nextTask.id,actions};
+  }
+
   // 5a. Check if executor actually succeeded — revert to queued if not
+  if (!execResult.success && execResult.reason === 'company_kr_analysis_superseded' && execResult.taskTerminal === true) {
+    await recordDispatchResult(pool, false, 'company_kr_analysis_superseded', undefined, nextTask.id);
+    return { dispatched: false, reason: 'company_kr_analysis_superseded', task_id: nextTask.id, terminal: true, actions };
+  }
+  if (!execResult.success && execResult.reason === 'script_payload_invalid' && execResult.taskTerminal === true) {
+    // 执行体已把违规 payload 的任务终态 failed（不重试）：不许再被打回 queued，也不计熔断/autoblock。
+    await recordDispatchResult(pool, false, 'script_payload_invalid', undefined, nextTask.id);
+    return { dispatched: false, reason: 'script_payload_invalid', task_id: nextTask.id, terminal: true, actions };
+  }
+
   if (!execResult.success) {
     console.warn(`[dispatch] triggerCeceliaRun failed for task ${nextTask.id}: ${execResult.error || execResult.reason}`);
+    // executor 只在 kernel-v1 catch 里把 reason 也改成 needs_rebase；其他返回路径只带 reason_code，
+    // 两个都认，避免停车信号漏判后被当成执行故障计入三振。
+    const needsRebase = execResult.reason === 'needs_rebase' || execResult.reason_code === 'needs_rebase';
     // fail-closed 回执（task 94ee0ec4）：claim 后 spawn 失败必须留 task_events 行，
     // 杜绝零留痕（写失败仅告警不阻断，任务仍回 queued 可重试）。
     await recordTaskEventSafe(pool, nextTask.id, 'failed_dispatch', {
       reason: execResult.reason || 'executor_failed',
+      reason_code: classifyDispatchReasonCode(execResult),
       error: String(execResult.error || '').slice(0, 300) || null,
       config_error: !!execResult.configError,
     });
@@ -983,16 +1311,53 @@ export async function dispatchNextTask(goalIds) {
       `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
       [nextTask.id]
     );
+    await releaseDeviceLockIfHeld(nextTask);
     // configError 表示系统配置错误（如容器漏装 codex CLI），不属于运行时执行失败，
     // 不应累积 cecelia-run breaker（否则配置漂移会 trip breaker 阻断所有 dispatch）。
     // spawn_deduplicated 是 DB 级去重命中（良性防重入，跨进程/跨重启防双 spawn），
     // 不是执行故障，同样不应计入熔断（否则抖动期的正常去重会误停派全系统）。
-    if (execResult.configError) {
+    // local_execution_disabled_on_scheduler 是 skill-relay 非 kernel-v1 任务在
+    // CECELIA_LOCAL_EXECUTION_ENABLED=false 时的永久性配置态拒绝（非执行故障），
+    // 同样不应计入熔断（否则连累其他任务类型也一起派不出去，决策 96054a8b）。
+    if (needsRebase) {
+      // 分支已有产出但 base_sha 落后地图：不是执行故障，直接停车等 rebase（任务 d9c405e2），不计熔断/autoblock。
+      console.warn(`[dispatch] needs_rebase for task ${nextTask.id} — blocking without autoblock count`);
+      // blockTask 不抛异常，失败（含 WHERE status IN(...) 不匹配）时返回 {success:false}：
+      // 必须看返回值才知道有没有真停住，没停住任务仍在 queued，下个 tick 会原样重撞。
+      let parked = false;
+      try {
+        const blocked = await blockTask(nextTask.id, {
+          reason: 'needs_rebase',
+          detail: {
+            ...(execResult.detail && typeof execResult.detail === 'object' ? execResult.detail : {}),
+            reason_code: 'needs_rebase',
+            blocked_at_tick: new Date().toISOString(),
+          },
+        });
+        parked = blocked?.success === true;
+        if (!parked) {
+          console.error(`[dispatch] blockTask(needs_rebase) did not park task ${nextTask.id}: ${blocked?.error || 'unknown'}`);
+        }
+      } catch (blockErr) {
+        console.error(`[dispatch] blockTask(needs_rebase) failed for task ${nextTask.id}: ${blockErr.message}`);
+      }
+      try {
+        if (parked) {
+          await raise('P3', 'needs_rebase', `task ${nextTask.id} 分支已有产出但 base_sha 落后地图，需 rebase 后解锁`);
+        } else {
+          await raise('P2', 'needs_rebase_park_failed', `task ${nextTask.id} needs_rebase 停车失败，任务仍在队列会每 tick 重撞，需人工介入`);
+        }
+      } catch (raiseErr) {
+        console.error(`[dispatch] raise failed for needs_rebase (task ${nextTask.id}): ${raiseErr.message}`);
+      }
+    } else if (execResult.configError) {
       console.warn(`[dispatch] configError detected (reason=${execResult.reason}) — skipping cecelia-run breaker count`);
     } else if (execResult.reason === 'spawn_deduplicated') {
       console.warn(`[dispatch] spawn_deduplicated detected — skipping cecelia-run breaker count`);
+    } else if (execResult.reason === 'local_execution_disabled_on_scheduler') {
+      console.warn(`[dispatch] local_execution_disabled_on_scheduler detected — skipping cecelia-run breaker count`);
     } else {
-      await recordFailure('cecelia-run');
+      await recordFailure(isOpenclawSurface(nextTask.task_type) ? 'openclaw-agent' : isScriptSurface(nextTask.task_type) ? SCRIPT_BREAKER_KEY : 'cecelia-run');
 
       // dispatch-fail-autoblock：连续失败计数 + 自动隔离
       // configError / spawn_deduplicated 已在上方 early-return，此处只处理真实执行失败。
@@ -1016,6 +1381,7 @@ export async function dispatchNextTask(goalIds) {
             await blockTask(nextTask.id, {
               reason: 'dispatch_fail_autoblock',
               detail: {
+                reason_code: classifyDispatchReasonCode(execResult),
                 consecutive_failures: newCount,
                 last_error: String(execResult.error || execResult.reason || 'executor_failed'),
                 blocked_at_tick: new Date().toISOString(),
@@ -1040,8 +1406,26 @@ export async function dispatchNextTask(goalIds) {
       { action: 'executor_failed', task_id: nextTask.id, reason: execResult.reason, error: execResult.error, configError: !!execResult.configError },
       { success: false }
     );
-    await recordDispatchResult(pool, false, execResult.configError ? 'config_error' : 'executor_failed', undefined, nextTask.id);
-    return { dispatched: false, reason: execResult.configError ? 'config_error' : 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, configError: !!execResult.configError, actions };
+    // 停车与配置错误都不是执行故障，统计口径与返回体 reason 分开记，别混进 executor_failed
+    // （dispatch_stats.failure_reasons 是自由键计数，下游无枚举约束，已确认无硬编码消费方）。
+    const failureReason = needsRebase
+      ? 'needs_rebase'
+      : (execResult.configError ? 'config_error' : 'executor_failed');
+    await recordDispatchResult(pool, false, failureReason, undefined, nextTask.id);
+    return { dispatched: false, reason: failureReason, task_id: nextTask.id, error: execResult.error || execResult.reason, configError: !!execResult.configError, actions };
+  }
+
+  // openclaw-agent 成功：给它自己的熔断记一笔成功（HALF_OPEN → CLOSED），与 cecelia-run 互不牵连。
+  // 这里已经在 try 内、postClaimException 的覆盖范围里，而 agent 早就 spawn 出去了——
+  // 所以必须自己吞掉异常：一旦让它冒到兜底，就会放 claim + 标 status='failed'，
+  // 下个 tick 把同一个还在跑的任务再派一遍（比丢一笔事后记账糟得多）。
+  if (isOpenclawSurface(nextTask.task_type) || isScriptSurface(nextTask.task_type)) {
+    const breakerKey = isOpenclawSurface(nextTask.task_type) ? 'openclaw-agent' : SCRIPT_BREAKER_KEY;
+    try {
+      await recordSuccess(breakerKey);
+    } catch (e) {
+      tickLog(`[dispatcher] recordSuccess(${breakerKey}) 失败（不影响已 spawn 的任务）: ${e.message}`);
+    }
   }
   } catch (err) {
     return await postClaimException(err);
@@ -1138,8 +1522,12 @@ export async function dispatchNextTask(goalIds) {
       console.error(`[dispatch] Failed to record pre-flight stats: ${statsErr.message}`);
     }
 
+    // run 原语兜底：executor 漏斗已按 runId 落过行则幂等 no-op；这里保证「有 dispatched 事件必有 run」
+    // （dispatched 事件带 task_id 是裸跑检测的 join 键——此前恒为 NULL，检测无从谈起）。
+    await startRunForExecResult({ task: nextTask, execResult, source: 'dispatcher' });
+
     // Record dispatch success to rolling window stats
-    await recordDispatchResult(pool, true);
+    await recordDispatchResult(pool, true, null, undefined, nextTask.id);
   } catch (bookkeepingErr) {
     // 事后记账失败：task 已经真实派发成功，绝不能释放 claim / 标 failed，只记日志。
     console.error(`[dispatch] post-success bookkeeping failed for task=${nextTask.id} (dispatch itself succeeded, claim NOT released): ${bookkeepingErr.message}`);

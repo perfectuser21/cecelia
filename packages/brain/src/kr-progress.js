@@ -1,78 +1,70 @@
+import { isCompanyKr, COMPANY_KR_SQL_GUARD } from './lib/company-kr-metrics.js';
 /**
  * KR Progress Calculator - KR 进度自动更新
  *
- * 根据 Initiative 完成情况自动计算 KR 的 progress 百分比。
+ * 棒5（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69）：GTD 四级 O→KR→Project→Task 落地后
+ * （棒1 PR #5731 建 projects 真身表，棒4 PR #5750 冻结 scope/initiative 层），KR 进度
+ * 改为直接从它名下的 projects/tasks 聚合算出——scope/initiative 链路已不再产生新数据。
  *
- * 公式：
- *   progress = (completed_initiatives / countable_initiatives) * 100
- *   countable = active + in_progress + completed（不含 pending/archived）
+ * 公式（口径详见 project-progress.js）：
+ *   KR 进度 = 名下 projects（WHERE kr_id=$1 AND status NOT IN ('cancelled','archived')）
+ *             的 project 完成率算术平均（等权）。
+ *   KR 名下没有 project 时不覆盖 key_results.progress 现值（避免把手填/历史进度打成 0）。
  *
  * 触发位置：
- *   - initiative-closer.js：initiative 关闭后
- *   - tick.js Section 0.12：每小时定时同步
+ *   - pr-callback-handler.js：PR 合并后
+ *   - kr-progress-sync-plugin.js（经 tick-runner.js）：每小时定时同步（fallback，kr-verifier 优先）
  */
 
+import { computeKrProgressFromProjects } from './project-progress.js';
+
 /**
- * 更新单个 KR 的进度。
+ * 更新单个 KR 的进度。名下无 project 时不写库，直接回读现值。
  *
  * @param {import('pg').Pool} pool - PostgreSQL 连接池
  * @param {string} krId - KR 的 goal ID
- * @returns {Promise<{ krId: string, progress: number, completed: number, total: number }>}
+ * @returns {Promise<{ krId: string|null, progress: number, completed: number, total: number }>}
  */
 export async function updateKrProgress(pool, krId) {
   if (!krId) return { krId: null, progress: 0, completed: 0, total: 0 };
 
-  // 查 KR 关联的所有 projects（通过 okr_projects.kr_id）
-  const projectsResult = await pool.query(`
-    SELECT op.id
-    FROM okr_projects op
-    WHERE op.kr_id = $1
-  `, [krId]);
+  const identity = await pool.query('SELECT metadata, custom_props FROM key_results WHERE id=$1', [krId]);
+  if (isCompanyKr(identity.rows[0])) return { krId, skipped: true, reason: 'company_metric', progress: identity.rows[0].metadata?.company_metric?.ratio == null ? null : identity.rows[0].metadata.company_metric.ratio * 100, completed: 0, total: 0 };
 
-  if (projectsResult.rows.length === 0) {
-    return { krId, progress: 0, completed: 0, total: 0 };
+  const { hasProjects, progress, projectCount, projects } = await computeKrProgressFromProjects(pool, krId);
+
+  if (!hasProjects) {
+    const cur = await pool.query('SELECT progress FROM key_results WHERE id = $1', [krId]);
+    return { krId, progress: cur.rows[0]?.progress ?? 0, completed: 0, total: 0 };
   }
 
-  const projectIds = projectsResult.rows.map(r => r.id);
-
-  // 查这些 projects 下所有可计数的 initiatives（迁移：projects WHERE type='initiative' → okr_initiatives via scopes）
-  const statsResult = await pool.query(`
-    SELECT
-      COUNT(*) AS total,
-      COUNT(*) FILTER (WHERE oi.status = 'done') AS completed
-    FROM okr_initiatives oi
-    JOIN okr_scopes os ON oi.scope_id = os.id
-    WHERE os.project_id = ANY($1)
-      AND oi.status IN ('running', 'done')
-  `, [projectIds]);
-
-  const total = parseInt(statsResult.rows[0].total, 10);
-  const completed = parseInt(statsResult.rows[0].completed, 10);
-
-  const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
-
-  // 更新 key_results.progress（fallback 链路：基于 initiative 完成率）
   await pool.query(`
     UPDATE key_results
-    SET progress = $2, updated_at = NOW()
-    WHERE id = $1
+    SET progress = $2,
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+          'progress_source', 'projects_v1',
+          'progress_computed_at', now()::text
+        ),
+        updated_at = NOW()
+    WHERE id = $1 AND ${COMPANY_KR_SQL_GUARD}
   `, [krId, progress]);
 
-  return { krId, progress, completed, total };
+  const completed = projects.filter((p) => p.progress === 100).length;
+  return { krId, progress, completed, total: projectCount };
 }
 
 /**
  * 同步所有活跃 KR 的进度。
+ * 跳过：已有启用 kr_verifier 的 KR（避免 fallback 覆盖 verifier 的计算结果）、
+ * 已 completed/cancelled 的 KR。
  *
  * @param {import('pg').Pool} pool - PostgreSQL 连接池
  * @returns {Promise<{ updated: number, results: Array }>}
  */
 export async function syncAllKrProgress(pool) {
-  // 只查 key_results（okr_projects.kr_id → key_results.id）
-  // 排除已有启用 verifier 的 KR（避免 fallback 覆盖 kr-verifier 的计算结果）
   const krsResult = await pool.query(`
-    SELECT id, title FROM key_results
-    WHERE status NOT IN ('completed', 'cancelled')
+    SELECT id FROM key_results
+    WHERE status NOT IN ('completed', 'cancelled') AND ${COMPANY_KR_SQL_GUARD}
       AND id NOT IN (
         SELECT kr_id FROM kr_verifiers WHERE enabled = true
       )

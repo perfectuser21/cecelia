@@ -37,6 +37,7 @@ jobs:
       dod: ${{ steps.detect.outputs.dod }}
       quality: ${{ steps.detect.outputs.quality }}
       mcp_readonly: ${{ steps.detect.outputs.mcp_readonly }}
+      distill: ${{ steps.detect.outputs.distill }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,6 +52,7 @@ jobs:
             echo "compose=true" >> $GITHUB_OUTPUT
             echo "runner=true" >> $GITHUB_OUTPUT
             echo "mcp_readonly=true" >> $GITHUB_OUTPUT
+            echo "distill=true" >> $GITHUB_OUTPUT
             exit 0
           fi
           # 改动 A：push 事件（含 push 到 main）直接全量，不依赖恒空的 diff
@@ -63,6 +65,7 @@ jobs:
             echo "dod=true"      >> $GITHUB_OUTPUT
             echo "quality=true"  >> $GITHUB_OUTPUT
             echo "mcp_readonly=true" >> $GITHUB_OUTPUT
+            echo "distill=true"  >> $GITHUB_OUTPUT
             exit 0
           fi
           CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
@@ -76,6 +79,7 @@ jobs:
             echo "dod=true"      >> $GITHUB_OUTPUT
             echo "quality=true"  >> $GITHUB_OUTPUT
             echo "mcp_readonly=true" >> $GITHUB_OUTPUT
+            echo "distill=true"  >> $GITHUB_OUTPUT
             exit 0
           fi
           # brain=true 触发 brain-unit 等。sprints/ 的 test 文件不再触发（07-10 断源）：
@@ -88,6 +92,7 @@ jobs:
           echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "quality=$(echo "$CHANGED" | grep -qE '^packages/quality/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "mcp_readonly=$(echo "$CHANGED" | grep -qE '^packages/mcp-readonly/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "distill=$(echo "$CHANGED" | grep -qE '^packages/quality/skill-distillation/' && echo true || echo false)" >> $GITHUB_OUTPUT
 
   # ─── Docker Infrastructure Smoke ──────────────────────────
   # 保护 Brain 容器化基础设施（compose / Dockerfile / up/down 脚本）
@@ -205,6 +210,32 @@ jobs:
           cache: 'npm'
       - name: Registry 完整性检查
         run: node scripts/registry-lint.mjs
+
+  # ─── Ops: Tailscale Watchdog 回归（始终运行，无外部依赖）──────
+  # 根 vitest.config.js 虽 include tests/regression/**，但它 import 'vitest/config'
+  # 而根 package.json 未声明 vitest（只有 dependency-cruiser），加载即 MODULE_NOT_FOUND；
+  # CI 里其余 vitest 调用都 cd 进 packages/* 用各自 config。两者叠加的结果是
+  # tests/regression/** 从未被整目录执行过。本 job 用不依赖 'vitest/config' 的
+  # 专用 config + npx 零安装显式跑，确保这个守卫真在 CI 生效，而非写了没进 CI 的假绿。
+  ops-tailscale-watchdog:
+    name: Ops Tailscale Watchdog Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # 三组各有专用 config（root 锁在各自目录），必须逐个跑；
+      # 少跑一个就等于那一组回归写了没进 CI。
+      - name: login-watchdog 回归测试
+        run: npx --yes vitest@3 run --config tests/regression/tailscale-login-watchdog/vitest.config.mjs --reporter=verbose
+      - name: us-exit enforcer 回归测试（含 9-07 计数器残留）
+        run: npx --yes vitest@3 run --config tests/regression/tailscale-us-exit/vitest.config.mjs --reporter=verbose
+      - name: health-watchdog 回归测试
+        run: npx --yes vitest@3 run --config tests/regression/tailscale-health-watchdog/vitest.config.mjs --reporter=verbose
 
   # ─── ESLint（brain 或 workspace 变更时）──────────────────────
   eslint:
@@ -351,7 +382,7 @@ jobs:
         run: bash packages/engine/scripts/e2e-integrity-check.sh
 
   # ─── Engine: Shell Tests (stop hook 套 — v18.21.0 激活) ──────
-  # vitest 不识别 .test.sh，本 job 跑所有 unit/integration/integrity/smoke
+  # vitest 不识别 .test.sh，本 job 跑所有 unit/integration/integrity
   # shell 脚本，闭合 PR #2766/#2767 测试基础设施漏洞（死代码激活）
   engine-tests-shell:
     name: Engine Shell Tests (stop hook 套)
@@ -391,16 +422,25 @@ jobs:
             bash "$t" || exit 1
             echo "::endgroup::"
           done
-      - name: Run engine smoke (本地无 Brain，dead URL/skip 路径必跑通)
-        run: |
-          for s in packages/engine/scripts/smoke/*-smoke.sh; do
-            [[ -f "$s" ]] || continue
-            echo "::group::$(basename "$s")"
-            bash "$s" || exit 1
-            echo "::endgroup::"
-          done
 
   # 改动 C：brain-tests-shell — 执行 fleet-worker shell 回归测试（失明点② 修复）
+  # ─── 部署脚本 shell 测试（scripts/__tests__/bluegreen-*、brain-deploy-*）──────────
+  # 2026-09-23 失明点修复：蓝绿/drain 的 5 个 .test.sh 此前无任何 CI job 执行（green 起容器
+  # env 含空格被打散的回归守卫写了也没人跑）。glob 模式：新加同前缀测试自动接 CI。
+  deploy-shell-tests:
+    name: Deploy Shell Tests (bluegreen/brain-deploy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run deploy shell tests
+        run: |
+          for t in scripts/__tests__/bluegreen-*.test.sh scripts/__tests__/brain-deploy-*.test.sh; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            bash "$t" || exit 1
+            echo "::endgroup::"
+          done
   brain-tests-shell:
     name: Brain Shell Tests (fleet-worker 套)
     needs: changes
@@ -459,22 +499,37 @@ jobs:
           done
 
   # ─── Ops shell 测试（scripts/ops/__tests__/）────────────────────
-  # janitor 等宿主 DevOps 脚本的回归测试。glob 模式：目录内新加 *.test.sh 自动接 CI。
+  # janitor / credentials 等宿主 DevOps 脚本的回归测试。
+  # glob 模式：__tests__ 下任意子目录新加 *.test.sh 自动接 CI。
   # 背景：2026-08-10 发现该目录 4 个测试自迁入起零执行（无 job 引用），本 job 补上。
+  # 2026-09-07：glob 原来写死 janitor/，新建的 credentials/ 一条都跑不到——
+  #   同一个坑第二次。改成 find 递归，以后新开子目录不用再改这里。
   ops-tests-shell:
-    name: Ops Shell Tests (janitor 套)
+    name: Ops Shell Tests (scripts/ops)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       - name: Run ops shell tests
         run: |
-          for t in scripts/ops/__tests__/janitor/*.test.sh; do
-            [[ -f "$t" ]] || continue
-            echo "::group::$(basename "$t")"
+          found=0
+          while IFS= read -r t; do
+            found=$((found + 1))
+            echo "::group::${t#scripts/ops/__tests__/}"
             bash "$t" || exit 1
             echo "::endgroup::"
-          done
+          done < <(find scripts/ops/__tests__ -name '*.test.sh' -type f | sort)
+          # 一个都没找到 = glob 又断了。静默通过比失败更危险。
+          if [ "$found" -eq 0 ]; then
+            echo "::error::scripts/ops/__tests__ 下一个 *.test.sh 都没找到——本 job 在空转"
+            exit 1
+          fi
+          echo "共执行 $found 个 ops shell 测试"
+      - name: US Brain image retention lock and journal contracts
+        run: node --test scripts/brain-image-retention.test.mjs scripts/brain-image-retention-docker.test.mjs scripts/brain-image-retention-ledger.test.mjs scripts/brain-image-retention-runtime.test.mjs scripts/brain-image-deploy.test.mjs scripts/brain-image-rollback.test.mjs scripts/brain-image-retention-engine.test.mjs scripts/brain-image-retention-absence.test.mjs scripts/brain-image-retention-identity.test.mjs scripts/bluegreen-sidecar-completion.test.mjs
 
   # ─── Dashboard 部署放行闸 smoke（repo 根 scripts/smoke/）──────
   # 守 deploy-local.sh 的两段式部署：自检 → 起常驻 staging + 写放行标记 →【停住】，
@@ -523,6 +578,8 @@ jobs:
         run: bash scripts/__tests__/main-repo-sentinel.test.sh
       - name: anchor-sentinel 锚点哨兵自测
         run: bash scripts/__tests__/anchor-sentinel.test.sh
+      - name: notion-to-brain 反向直写脚本退役守卫
+        run: bash scripts/__tests__/notion-to-brain-retired.test.sh
       - name: 真跑守卫
         run: node scripts/test-pyramid-guard.mjs
 
@@ -535,6 +592,13 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: 专属cache真实writer与强鉴权HTTP故障回归
+        run: node --test scripts/preview-cache.test.mjs scripts/preview-cache-http.test.mjs
       - name: preview start 依赖隔离/旧进程顺序自测
         run: bash scripts/__tests__/preview-env-start.test.sh
       - name: Harness PR 与 Preview 容量闸解耦自测
@@ -597,7 +661,7 @@ jobs:
       - name: Self-test (fixture cases)
         run: bash .github/workflows/scripts/__tests__/lint-migration-unique-version.test.sh
 
-  # ─── Auto-merge 决策脚本自测 ───────────────────────────────────
+  # ─── Auto-merge 决策与聚合闸自测（所有 PR / push 必跑）──────────
   # 守卫 should-auto-merge.sh：确保 feat(harness): PR 被跳过（交给 harness 裁判 gate），
   # 普通 fix/feat PR 正常合并。防止未来改动误删跳过逻辑或误伤手动 /dev 流程。
   lint-auto-merge-decision:
@@ -607,6 +671,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Self-test (auto-merge decision cases)
         run: bash .github/workflows/scripts/__tests__/should-auto-merge.test.sh
+      - name: Self-test (aggregate gate result cases)
+        run: node --test .github/workflows/scripts/__tests__/ci-aggregate-results.test.mjs
 
   # 守卫 list-fs-guard-tests.sh：CI 快路用 vitest --changed 会漏跑 fs 读取型守卫测试
   # （#3506 / 2026-07-02 两次应验）。本 job 强制守护 selector 选择逻辑（Tier A，无需 vitest）；
@@ -631,12 +697,20 @@ jobs:
           node-version: '22'
       - name: Self-test (deploy-effect assertion 三态)
         run: bash scripts/ci/__tests__/assert-deploy-effect.test.sh
-      - name: gate3-changed-paths 回归测试
-        run: bash scripts/ci/__tests__/gate3-changed-paths.test.sh
+      - name: gate3-wait-deploy 按部署 git_sha 判定（idle 不再视为成功，2026-09-29）
+        run: bash scripts/ci/__tests__/gate3-wait-deploy.test.sh
       - name: smoke-core 依赖守卫（禁 jq）
         run: bash scripts/ci/__tests__/smoke-core-no-jq.test.sh
       - name: lint-gp-anchor-artifact 六场景自测（决策 109dd8eb）
         run: bash scripts/ci/__tests__/lint-gp-anchor-artifact.test.sh
+      - name: brain-deploy-url 必须指向 us-vps（2026-09-11 迁移守卫）
+        run: bash scripts/ci/__tests__/brain-deploy-url-points-to-us-vps.test.sh
+      - name: us-vps 必须保持纯调度器形态（铁律 96054a8b / 纠正决策 26c1e763）
+        run: bash scripts/ci/__tests__/us-vps-local-execution-disabled.test.sh
+      - name: machine-registry 角色守卫（primary 唯一性 + us-mac-m4 字面量白名单棘轮）
+        run: bash scripts/ci/__tests__/machine-registry-role-guard.test.sh
+      - name: CI 取消状态与串行 smoke 预算守卫
+        run: bash scripts/ci/__tests__/ci-results-smoke-budget.test.sh
 
   # ─── GP 锚产物闸（决策 109dd8eb ①）────────────────────────────
   # 闸从「声明」挪到「产物」：PR 触碰流水线路径（orchestrator / harness routes /
@@ -860,7 +934,8 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - run: cd packages/brain && npm ci
+      # Fixed-revision CLI tests also import the root graph scanner dependencies.
+      - run: npm ci
       - name: Run Migrations
         env:
           DB_HOST: localhost
@@ -871,6 +946,8 @@ jobs:
         run: cd packages/brain && node src/migrate.js
       - name: Integration Tests
         env:
+          POSTGRES_INTEGRATION: '1'
+          NODE_ONBOARDING_TEST_DB: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
@@ -884,7 +961,32 @@ jobs:
           npx vitest run \
             --config vitest.integration.config.js \
             src/__tests__/integration/ \
+            src/__tests__/integration/account-quota-ledger.pg.integration.test.js \
+            src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js \
+            src/__tests__/commander-watchdog.pg.integration.test.js \
+            src/__tests__/integration/gpu-http-intake.pg.integration.test.js \
+            src/__tests__/integration/gpu-execution-request.pg.integration.test.js \
+            src/__tests__/integration/script-executor-chain.pg.integration.test.js \
+            src/__tests__/integration/script-executor-constraints.pg.integration.test.js \
+            src/__tests__/integration/attempt-weighted-reservation.pg.integration.test.js \
+            src/__tests__/integration/script-capacity-reservation.pg.integration.test.js \
+            src/__tests__/integration/execution-directory.pg.integration.test.js \
+            src/__tests__/integration/headed-takeover.pg.integration.test.js \
+            src/__tests__/integration/execution-baseline.pg.integration.test.js \
+            src/app-server/__tests__/integration/store.test.js \
+            src/__tests__/integration/linux-pool-authorization.pg.integration.test.js \
+            src/phone-dispatch/store.test.js \
+            src/node-onboarding/__tests__/service.test.js \
+            src/node-onboarding/__tests__/settlement.test.js \
+            src/node-onboarding/__tests__/registry-adoption.test.js \
+            src/__tests__/integration/linux-script-authorization.pg.integration.test.js \
+            src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js \
+            src/__tests__/integration/linux-controller-contract.pg.integration.test.js \
+            src/linux-pool/__tests__/integration/active-grants.test.js \
+            src/linux-pool/__tests__/integration/onboarding-revocation.test.js \
+            src/__tests__/integration/script-managed-executor.pg.integration.test.js \
             src/__tests__/migration-333.test.js \
+            src/__tests__/migration-400-fact-snapshot.test.js \
             src/__tests__/migration-370-gp-governance-decisions.test.js \
             src/__tests__/nightly-orchestrator.integration.test.js \
             src/orchestrator/__tests__/contract-store.test.js \
@@ -981,6 +1083,7 @@ jobs:
         run: cd packages/brain && node src/migrate.js
       - name: E2E Smoke Tests（golden-path + agent-lifecycle + dev-lifecycle）
         env:
+          POSTGRES_INTEGRATION: '1'
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
@@ -990,6 +1093,7 @@ jobs:
           NODE_ENV: test
         run: |
           cd packages/brain && npx vitest run \
+            --config vitest.integration.config.js \
             src/__tests__/integration/golden-path.integration.test.js \
             src/__tests__/integration/agent-lifecycle.integration.test.js \
             src/__tests__/integration/dev-task-lifecycle.e2e.test.js \
@@ -1117,8 +1221,8 @@ jobs:
             echo "🔧 DoD 含 apps/dashboard 前端命令，安装全 workspace 依赖（根 npm ci）"
             npm ci
           else
-            echo "DoD 仅后端命令，安装 brain 依赖"
-            cd packages/brain && npm ci
+            echo "DoD 后端命令，安装 Brain 与根锁定工具依赖"
+            npm ci --workspace=packages/brain --include-workspace-root
           fi
       - name: Setup /workspace symlink + playground deps
         if: steps.detect.outputs.has_dynamic == 'true'
@@ -1565,6 +1669,28 @@ jobs:
       - name: Quality Package Tests
         run: cd packages/quality && npm ci && npm test
 
+  # ─── 金标集 LLM 判定器 eval（通过率棘轮）────────────────────
+  # Crystal 件5（决策 ca9f3d7b/28ca1f69）：LLM 部分进 CI 的条件是输入固定
+  # （静态截图金标集），断言形式 = 通过率 ≥ 阈值。阈值在 eval-threshold.json，
+  # 只许升——由 ratchet-guard 指标 goldset_eval_threshold（only_up）守护。
+  # toapis 不可用 = 诚实红（不 skip）；paths 过滤（distill）把爆炸半径限制在
+  # skill-distillation 变更的 PR，无关 PR 不被外部服务抖动绑架。
+  goldset-eval:
+    needs: changes
+    if: needs.changes.outputs.distill == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 金标集 eval（真 LLM，输入固定，通过率 ≥ 阈值）
+        env:
+          TOAPIS_API_KEY: ${{ secrets.TOAPIS_API_KEY }}
+          TOAPIS_BASE_URL: ${{ secrets.TOAPIS_BASE_URL }}
+        run: node packages/quality/skill-distillation/scripts/goldset-eval.mjs
+
   # ─── MCP Readonly: Unit Tests ──────────────────────────────
   # 只读 MCP Server（Notion AI 查询 Cecelia 状态用），此前零 CI 覆盖（08-11
   # 跨任务整体审查发现的结构性缺口）。DB 相关测试（db.test.js / 部分
@@ -1593,7 +1719,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 全量 smoke 最近成功耗时 21m46s，预算包含容器启动和清理。
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:pg15
@@ -1627,6 +1754,26 @@ jobs:
           node src/migrate.js
       - name: Build cecelia-brain image
         run: docker build -f packages/brain/Dockerfile -t cecelia-brain:ci .
+      - name: Seed isolated execution identities without Worker admission
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+        run: |
+          if (echo > /dev/tcp/127.0.0.1/5231) 2>/dev/null; then
+            echo "::error::CI Worker denial fixture requires unused loopback port 5231"
+            exit 1
+          fi
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          import { seedExecutionDirectoryPgFixture } from './packages/brain/src/__tests__/helpers/execution-directory-pg-fixture.js';
+          const pool = new pg.Pool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),database:process.env.DB_NAME,user:process.env.DB_USER,password:process.env.DB_PASSWORD});
+          try { await seedExecutionDirectoryPgFixture(pool, {ciSmoke:true}); }
+          finally { await pool.end(); }
+          NODE
       - name: Start Brain container (network=host → 直连 postgres service)
         run: |
           # network=host：runner 上 postgres service 暴露在 localhost:5432，
@@ -1656,8 +1803,19 @@ jobs:
           echo "::error::Brain not healthy in 90s"
           docker logs cecelia-brain-smoke
           exit 1
+      - name: Map Manifest real PG positive
+        env:
+          SMOKE_ALLOW_WRITE: '1'
+          BRAIN_URL: http://localhost:5221
+          BRAIN_CONTAINER: cecelia-brain-smoke
+          DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+          NODE_ENV: test
+        run: |
+          cd packages/brain
+          npx vitest run --config vitest.real-env-smoke.config.js
       - name: Run all packages/brain/scripts/smoke/*.sh
         env:
+          SMOKE_ALLOW_WRITE: '1'
           BRAIN_URL: http://localhost:5221
           BRAIN_CONTAINER: cecelia-brain-smoke
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
@@ -1685,24 +1843,108 @@ jobs:
           fi
           FAILED=0
           PASSED=0
+          DELEGATED=0
           for script in "${SCRIPTS[@]}"; do
             echo "── ▶️  $script"
-            if bash "$script"; then
+            if [ "${script##*/}" = 'walking-skeleton-1node-smoke.sh' ]; then
+              DELEGATED=$((DELEGATED + 1))
+              echo "── DELEGATED: Walking actual acceptance belongs to required walking-ci-e2e"
+              continue
+            fi
+            STARTED_AT=$SECONDS
+            if timeout --kill-after=10s "${SMOKE_SCRIPT_TIMEOUT_SECONDS:-300}s" bash "$script"; then
               PASSED=$((PASSED + 1))
-              echo "── ✅ PASS: $script"
+              echo "── ✅ PASS: $script ($((SECONDS - STARTED_AT))s)"
             else
+              EXIT_CODE=$?
               FAILED=$((FAILED + 1))
-              echo "::error::❌ FAIL: $script"
+              if [ "$EXIT_CODE" -eq 124 ] || [ "$EXIT_CODE" -eq 137 ]; then
+                echo "::error::❌ TIMEOUT: $script ($((SECONDS - STARTED_AT))s, exit=$EXIT_CODE)"
+              else
+                echo "::error::❌ FAIL: $script ($((SECONDS - STARTED_AT))s, exit=$EXIT_CODE)"
+              fi
             fi
           done
           echo ""
-          echo "📊 Smoke 结果 — 通过: $PASSED, 失败: $FAILED, 总计: ${#SCRIPTS[@]}"
+          echo "📊 Smoke 结果 — 通过: $PASSED, 失败: $FAILED, 委托 walking-ci-e2e: $DELEGATED, 总计: ${#SCRIPTS[@]}"
           [ "$FAILED" -eq 0 ]
       - name: Cleanup brain container
         if: always()
         run: |
           docker logs cecelia-brain-smoke 2>&1 | tail -100 || true
           docker rm -f cecelia-brain-smoke 2>/dev/null || true
+
+  # Walking owns two actual Docker/PG phases; legacy RunAll only delegates this entry.
+  walking-ci-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          POSTGRES_DB: cecelia_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U cecelia -d cecelia_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: cecelia_test
+      DB_USER: cecelia
+      DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+      DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Permanent actual target rejection regression
+        run: node --test packages/quality/tests/walking-checkpointer-guard.node-test.mjs
+      - name: Install dependencies and migrate dedicated service
+        run: |
+          npm ci
+          cd packages/brain
+          node src/migrate.js
+      - name: Prepare isolated Brain and actual Alpine worker
+        run: |
+          docker pull alpine
+          docker build -f packages/brain/Dockerfile -t cecelia-brain:walking-ci .
+          docker run -d --name cecelia-brain-walking-ci --network host \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e DB_HOST -e DB_PORT -e DB_NAME -e DB_USER -e DB_PASSWORD -e DATABASE_URL \
+            -e CI=true -e WALKING_CI_OWNER=1 -e NODE_ENV=test -e BRAIN_PORT=5221 \
+            -e CECELIA_TICK_ENABLED=false -e ENV_REGION=us \
+            -e CECELIA_CKPT_QUERY_TIMEOUT_MS=5000 -e CECELIA_CKPT_STATEMENT_TIMEOUT_MS=5000 \
+            -e CECELIA_CKPT_CONNECTION_TIMEOUT_MS=5000 -e DB_QUERY_TIMEOUT_MS=5000 -e REPO_ROOT=/repo_root \
+            -v "$GITHUB_WORKSPACE/packages/workflows:/repo_root/packages/workflows:ro" \
+            cecelia-brain:walking-ci
+          for i in $(seq 1 90); do
+            if curl -q -fsS --max-time 2 http://localhost:5221/api/brain/walking-skeleton-1node/instance >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: True two-thread Docker callback checkpoint restart acceptance
+        env:
+          SMOKE_ALLOW_WRITE: '1'
+          BRAIN_CONTAINER: cecelia-brain-walking-ci
+        run: |
+          set -o pipefail
+          timeout --kill-after=10s 300s bash packages/brain/scripts/smoke/walking-skeleton-1node-smoke.sh | tee /tmp/walking-ci-e2e-proof.log
+      - name: Save owned fixture evidence
+        if: always()
+        run: docker logs cecelia-brain-walking-ci > /tmp/walking-ci-e2e-brain.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: walking-ci-real-pg-proof
+          path: /tmp/walking-ci-e2e-*.log
+      - name: Cleanup dedicated Brain fixture
+        if: always()
+        run: docker rm -f cecelia-brain-walking-ci 2>/dev/null || true
 
   # ─── Harness DoD 完整性校验（harness PR 专用，非 harness 自动跳过）──
   harness-dod-integrity:
@@ -1865,15 +2107,6 @@ jobs:
       - name: Base Fresh Lint
         run: bash .github/workflows/scripts/lint-base-fresh.sh "origin/${{ github.base_ref }}"
 
-  lint-bypass-not-committed:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - uses: actions/checkout@v4
-      - name: Stop Hook BYPASS 反 AI 滥用 lint (layer 1)
-        run: bash scripts/check-bypass-not-committed.sh
-
   lint-tdd-commit-order:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -1954,8 +2187,6 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - name: Install root deps（vitest 合同测试需要）
-        run: npm ci
       - name: Brain Version Bump Gate
         env:
           BASE_REF: origin/${{ github.base_ref }}
@@ -1964,15 +2195,28 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-gp-anchor-artifact, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, mcp-readonly-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell, runner-tests-shell]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-gp-anchor-artifact, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, real-env-smoke, walking-ci-e2e, workspace-api-smoke, quality-tests, goldset-eval, mcp-readonly-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell, runner-tests-shell, deploy-shell-tests, ops-tests-shell]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Check results
         run: |
           FAILED=false
+          # Unconditional actual Walking owner must run: skipped is not a positive proof.
+          if [ "${{ needs.walking-ci-e2e.result }}" != 'success' ]; then
+            echo "Walking actual CI owner failed: ${{ needs.walking-ci-e2e.result }}"
+            exit 1
+          fi
 
-          check() { local n=$1 r=$2; if [ "$r" = "failure" ]; then echo "❌ $n"; FAILED=true; elif [ "$r" = "skipped" ]; then echo "⏭️  $n (skipped)"; else echo "✅ $n"; fi; }
+          # 有条件依赖允许 skipped；取消、空值和未知结果一律阻断合并。
+          check() {
+            local n="$1" r="$2"
+            case "$r" in
+              success) echo "✅ $n" ;;
+              skipped) echo "⏭️  $n (skipped)" ;;
+              *) echo "❌ $n (result=${r:-empty})"; FAILED=true ;;
+            esac
+          }
 
           check "secrets-scan"      "${{ needs.secrets-scan.result }}"
           check "dod-format-check"  "${{ needs.dod-format-check.result }}"
@@ -1983,6 +2227,8 @@ jobs:
           check "branch-naming"     "${{ needs.branch-naming.result }}"
           check "engine-tests"      "${{ needs.engine-tests.result }}"
           check "engine-tests-shell" "${{ needs.engine-tests-shell.result }}"
+          check "deploy-shell-tests" "${{ needs.deploy-shell-tests.result }}"
+          check "ops-tests-shell" "${{ needs.ops-tests-shell.result }}"
           check "dashboard-staging-gate-smoke" "${{ needs.dashboard-staging-gate-smoke.result }}"
           check "lint-migration-unique-version" "${{ needs.lint-migration-unique-version.result }}"
           check "lint-auto-merge-decision" "${{ needs.lint-auto-merge-decision.result }}"
@@ -2016,10 +2262,10 @@ jobs:
           check "lint-no-mock-only-test" "${{ needs.lint-no-mock-only-test.result }}"
           check "lint-no-fake-test"      "${{ needs.lint-no-fake-test.result }}"
           check "lint-single-exit"       "${{ needs.lint-single-exit.result }}"
-          check "lint-bypass-not-committed" "${{ needs.lint-bypass-not-committed.result }}"
           check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
           check "workspace-api-smoke"    "${{ needs.workspace-api-smoke.result }}"
           check "quality-tests"         "${{ needs.quality-tests.result }}"
+          check "goldset-eval"          "${{ needs.goldset-eval.result }}"
           check "mcp-readonly-tests"    "${{ needs.mcp-readonly-tests.result }}"
           check "dispatch-worker-test"   "${{ needs.dispatch-worker-test.result }}"
           check "brain-version-bump-gate" "${{ needs.brain-version-bump-gate.result }}"

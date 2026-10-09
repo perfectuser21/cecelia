@@ -6,7 +6,8 @@
  * 评分公式（4 个维度，权重合计 100%）：
  *   score = progress_score      * 0.35   // 进度：已走了多少
  *         + activity_score      * 0.30   // 任务活跃度：关联任务活跃数量
- *         + project_density_score * 0.20 // 项目密度：关联 okr_projects 数量
+ *         + project_density_score * 0.20 // 项目密度：关联 projects 数量（棒5起改读真身表，
+ *                                         //   决策 ee4842a6/3feeae3e，不再查已退役的 okr_projects）
  *         + metric_momentum_score * 0.15 // 指标动量：metric_current > 0
  */
 
@@ -45,11 +46,11 @@ export async function computeKrConvergence(pool) {
 
   const krIds = krs.map(kr => kr.id);
 
-  // 2. 查每个 KR 关联的 okr_projects 数量（项目密度）
+  // 2. 查每个 KR 关联的 projects 数量（项目密度；归档/取消的 Project 不计入密度）
   const projectCountResult = await pool.query(`
     SELECT kr_id, COUNT(*) AS project_count
-    FROM okr_projects
-    WHERE kr_id = ANY($1)
+    FROM projects
+    WHERE kr_id = ANY($1) AND status NOT IN ('cancelled', 'archived')
     GROUP BY kr_id
   `, [krIds]);
 

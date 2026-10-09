@@ -954,25 +954,17 @@ async function parseAndCreate(input, options = {}) {
 
   // Check if project already exists
   let targetProjectId = projectId;
-  let isInitiativeId = false; // 是否来自 okr_initiatives（用于 tasks FK 路由）
 
   if (createProject && !projectId) {
-    // 新 OKR 表：title 字段（旧 projects.name → title），UNION ALL 三张 okr_* 表
-    const existingProject = await pool.query(`
-      SELECT id, title AS name, 'okr_initiatives' AS source_table FROM okr_initiatives
-      WHERE LOWER(title) LIKE $1
-      UNION ALL
-      SELECT id, title AS name, 'okr_projects' AS source_table FROM okr_projects
-      WHERE LOWER(title) LIKE $1
-      UNION ALL
-      SELECT id, title AS name, 'okr_scopes' AS source_table FROM okr_scopes
-      WHERE LOWER(title) LIKE $1
-      LIMIT 1
-    `, [`%${parsedIntent.projectName}%`]);
+    // 棒4（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69）：scope/initiative 层退役
+    // （migration 499 写保护 okr_initiatives），search/create 改读写真身表 projects。
+    const existingProject = await pool.query(
+      `SELECT id, name FROM projects WHERE LOWER(name) LIKE $1 LIMIT 1`,
+      [`%${parsedIntent.projectName}%`]
+    );
 
     if (existingProject.rows.length > 0) {
       targetProjectId = existingProject.rows[0].id;
-      isInitiativeId = existingProject.rows[0].source_table === 'okr_initiatives';
       result.created.project = {
         ...existingProject.rows[0],
         created: false,
@@ -980,14 +972,13 @@ async function parseAndCreate(input, options = {}) {
       };
     } else {
       // Create new project
-      const newProject = await pool.query(`
-        INSERT INTO okr_initiatives (title, description, status)
-        VALUES ($1, $2, 'running')
-        RETURNING *, title AS name
-      `, [parsedIntent.projectName, `Auto-created from intent: ${input}`]);
+      const newProject = await pool.query(
+        `INSERT INTO projects (name, description, status)
+         VALUES ($1, $2, 'active') RETURNING *`,
+        [parsedIntent.projectName, `Auto-created from intent: ${input}`]
+      );
 
       targetProjectId = newProject.rows[0].id;
-      isInitiativeId = true;
       result.created.project = {
         ...newProject.rows[0],
         created: true
@@ -998,9 +989,9 @@ async function parseAndCreate(input, options = {}) {
   }
 
   // Create tasks
-  // tasks.project_id FK → projects(id)；okr_initiatives.id 用 okr_initiative_id 列
-  const taskProjectId = isInitiativeId ? null : targetProjectId;
-  const taskInitiativeId = isInitiativeId ? targetProjectId : null;
+  // tasks.project_id FK → projects(id)；okr_initiative_id 层已退役，恒为 null
+  const taskProjectId = targetProjectId;
+  const taskInitiativeId = null;
 
   if (createTasks) {
     const inferredChangeKind = {

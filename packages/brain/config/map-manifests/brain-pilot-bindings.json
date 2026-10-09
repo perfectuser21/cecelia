@@ -1,0 +1,57 @@
+{
+  "phones": {
+    "scope_key": "zenithjoy",
+    "source_repo": "perfectuser21/zenithjoy-workspace",
+    "registry_repo": "zenithjoy-pilot-source",
+    "mode": "create",
+    "value_streams": [
+      {
+        "key": "acquisition",
+        "name": "获客",
+        "perceiver": "业务负责人",
+        "order": 1,
+        "entity_id": "afa6abca-53c0-4815-8594-b7fb81ca547f"
+      }
+    ],
+    "capabilities": [
+      {
+        "key": "keyword_acquisition",
+        "name": "关键词获客",
+        "value_stream_key": "acquisition",
+        "order": 1,
+        "entity_id": "a1000000-0000-4000-8000-000000000001"
+      },
+      {
+        "key": "benchmark_link_acquisition",
+        "name": "对标获客",
+        "value_stream_key": "acquisition",
+        "order": 2,
+        "entity_id": "a1000000-0000-4000-8000-000000000002"
+      }
+    ]
+  },
+  "company-kr": {
+    "scope_key": "cecelia-kr",
+    "source_repo": "perfectuser21/cecelia",
+    "registry_repo": "cecelia-kr-source",
+    "mode": "create",
+    "value_streams": [
+      {
+        "key": "butler",
+        "entity_id": "c5cb480f-f7f7-4b4e-8871-bd65ff65b668",
+        "name": "经营节奏",
+        "perceiver": "主理人本人",
+        "order": 1
+      }
+    ],
+    "capabilities": [
+      {
+        "key": "G5",
+        "entity_id": "dddddddd-f0f0-4000-8000-000000000004",
+        "name": "战略 OKR",
+        "value_stream_key": "butler",
+        "order": 1
+      }
+    ]
+  }
+}

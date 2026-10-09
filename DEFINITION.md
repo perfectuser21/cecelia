@@ -1,5 +1,59 @@
 # Cecelia 定义文档
 
+**Brain 版本**: 1.393.2
+
+Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
+
+六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
+
+已登记试点的完整发布回归独立于变更影响报告：仅主线固定提交执行全部 Activity/Step 登记断言，首次发布按中央规范快照与当前登记重算并冻结计划及摘要；缺失步骤或断言拒绝，历史发布不随登记变化，回归不代表业务执行。 原文 raw 描述保持 unresolved，不作为部署代码组件；结构化 Code/Skill 与未知类型仍严格校验，描述不能替代 Activity 的固定实现。 同主线并发同步发生登记CAS冲突时，只读限时复用同仓、同scope、同SHA的完整快照，仍核主线与映射；超时或漂移拒绝，不重复同步。
+
+统一能力展示面复用 Areas/Journeys/Workflows/Activity/Steps 真身，分别统计共享定义与使用位置；全量未引用活动、未归属和缺执行证据保留可见。发布与运行展示只读白名单元数据，部署通过不等于业务执行通过。
+
+来源覆盖另列 Skill、地图仓库、API、已登记调度入口、资源和旧 Feature 的完整分母、固定来源及未覆盖明细；归档不隐藏，只按规范外键或完整固定实现身份关联业务，mapped 不表示执行成功。
+
+发布版本按固定Activity/Step调用位置冻结Enabler显式文件来源，保留legacy符号未核验状态；文件证据仅reference_only，新来源不改旧发布。发布版本冻结定义、实现字节与CI证据，部署状态由可信回读派生；运行在副作用前绑定固定版本，新Span逐项校验引用位置与本机快照，已有执行账原子关联。运行对账分列实际结果、缺失证据和各层耗时，旧记录保持未知。
+
+Linux接入父流程与脚本验收子任务通过私有进程内权限登记专用controller合同；通用本机孤儿探针与启动恢复不回收它们，公开任务请求不能铸造该合同。原官方retry仅在节点验收、路由与误收事件全部一致且无未结算容量/脚本许可时登记新接续棒，保留原failed历史；新安装仍核原硬预算。脚本canary拒绝在私有journal记录固定内部阶段，原错误码和验签不变。
+能力地图通过显式规范 UUID 关联业务真身，激活与读取均校验来源和层级。实现影响按固定 base/head 软件依赖图与定义版本逐文件追踪共享消费者，保留新增、删除和历史使用证据；回归入口核仓库、提交、实际改动及 Activity/Step 断言，执行结果独立记为收据，缺证据不判通过。
+
+脚本终态收割与节点接入对账每10秒独立推进；观察超时后仍等待真实调用结束才允许同job再次运行，不受慢串行任务或派发暂停影响。健康验收仍要求90秒鲜度。
+
+现役西安M4可经显式固定canonical runner安装恢复：原受保护plist摘要CAS与自属drain合作锁/真实继承FD绑定，仅runner切到受信aeaf，显式路径同时要求Worker有效drain marker为同一固定marker（缺字段采用默认），其它字段与普通升级保留语义不变；旧快照继续用于launch前核验和失败回滚。
+Span按真实发生位置和服务端规范摘要幂等入账；异内容重传整批拒绝，反序并发按统一锁序执行。契约内本仓实现引用固定到同一来源提交，并保留原声明及真实文件摘要。
+
+能力定义通过不可变 Activity/Workflow 快照固定来源提交、实现摘要及有序版本引用；部门沿 Areas，价值流与能力沿 Journeys 登记，未知归属和未版本化历史明确标记。
+
+
+OpenClaw 的创建／更新 workflow 入口依次执行需求、复用、组装、补齐、验证、登记；阶段回执由 Brain 管理，验证绑定精确定义，登记事务回读活动身份与顺序，共享活动变更保护其它引用者。
+
+Linux接入控制目录在宿主保持私有凭据缓存，容器统一挂到root父目录下的/run/cecelia-fleet-control；共享凭据目录及其所有者不变，所有权校验不放宽。
+
+
+
+
+
+GPU 观测通过 Mac Worker 的限时 IORegistry 采样与既有健康缓存传入机器监控页，保留来源、采样时刻、真实零与未知；超过90秒降级未知。Apple统一内存用量仅展示，不额外计显存容量。Linux无可信完整设备观测保持未知。结构化GPU执行声明在真建单入口拒绝，已有script任务派发前再次终态拒绝；当前没有GPU执行授权。
+
+
+
+Kernel 派发按统一机器角色表生成 M1/M4 优先、MMV 最后的默认候选，并保持执行目录授权交集。未支持的机器字段在工作区准备和预约前以 unsupported_machine_policy 拒绝，含空值；既有六处机器指定继续生效，不新增别名。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+并发合同 PG 回归在释放行锁前注册拒绝处理，避免预期拒绝被 CI 计为未捕获错误；生产合同拒绝语义保持。
+
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-08-16
@@ -8,7 +62,2022 @@
 
 
 
-**Brain 版本**: 1.273.170
+**Brain 版本**: 1.368.1
+
+type: feat
+scope: brain
+summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/自属锁证明，补齐admission与activation导入依赖；生产资源和HTTP激活默认拒绝，不接Brain派发、不安装Hub、不授grant
+
+type: fix
+scope: brain
+summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.393.1 — 消费者来源历史拒绝执行
+
+- release拒绝消费者Workflow及Activity来源证据；此证据不代表完整可执行定义。
+- 新运行、幂等绑定和历史续跑均拒绝consumer_evidence，保留正常执行历史与原current。
+- 两个真实PG回归文件覆盖发布与续跑，未新增解析器、依赖、来源登记或激活权限。
+
+## Brain 1.388.0 — 独立流程契约身份兼容
+
+- activity-contract loader 支持 contract_key 与 canonical capability 分离；独立流程只接受同仓库、唯一 canonical owner 且 capability_id 一致的登记，拒绝缺失、跨能力与歧义归属。
+- 增加正式 loader/store/sync 17 项回归与只读 smoke；本变更不登记或激活未完成的获客流程。
+
+## Brain 1.386.0 — coding workflow 分档接管入口：opus 别名、任务依赖、建任务脚本
+
+- 模型：runClaude 默认 `--model opus`（别名永远指向最新 Opus，MMV 实测解析为 claude-opus-5-5），不再写死版本号；CODING_WF_CLAUDE_MODEL 可覆盖。
+- 大改先拆：runner 认领前检查 payload.depends_on，前置任务全部 completed 且 PR 已合并（result.merged 或 gh pr view = MERGED）才认领；前置在跑/PR 未合并 → 前置未就绪，前置 failed/cancelled/PR 关闭 → 前置失败，都记日志、本轮不认领，不影响其他无依赖任务。
+- 入口：`packages/brain/scripts/coding-workflow/new-task.mjs <plan.json> [--dry-run]`，单条或一批（key + depends_on 引用前面的 key）建带开关的 data 任务；先整体校验（标题、验收非空、依赖只能指向前面、key 不重复）再按序创建，中途失败列出已建任务。
+
+## Brain 1.385.1 — coding workflow 所有 claude 会话钉死 Opus 5.5
+
+- 决策 ac7c8801：coding 研发在 MMV 用 Claude Code，Commander 与链上 claude 会话固定 Opus 5.5。实测 runner 起的 6 次会话 init 模型均为 claude-sonnet-5-5。
+- lib/claude.mjs runClaude：调用方没给 --model 时末尾追加 `--model claude-opus-5-5`（CODING_WF_CLAUDE_MODEL 覆盖），spec/build/verify/ci_fix 统一生效；真实 claude CLI 实测会话模型为 claude-opus-5-5。
+
+## Brain 1.385.0 — coding workflow runner：CI 红自动修复（ci_fix）
+
+- 真实端到端 #6062：CI（Linux bash 5.2）抓出 install.sh 转义 bug，链内没有修复环节，需人工补提交。
+- runner 每轮在认领新任务前先查自己开的 cw PR（分支 cp-<stamp>-cw-<id8>）：必需检查全部出结果且有失败、本 head 没修过、累计未满 CODING_WF_CIFIX_MAX_ATTEMPTS（默认 2）时，本轮只修这一个。
+- 修复：fetch PR 分支建 worktree（.dev-mode/.dev-lock、npm ci）→ 拉全部失败检查的 job 日志末尾（去时间戳、封顶 40KB）→ claude（prompts/ci-fix.md，禁 push/gh、GH 凭据隔离、超时 CODING_WF_CIFIX_TIMEOUT_MS 默认 30 分钟）修复并提交 → 程序核对：工作区干净、有新提交、只追加不改写、不碰 sprints/ 与 .claude/CLAUDE.md/AGENTS.md → runner 推送。
+- 每次尝试记 <logDir>/cifix-<pr>.json（pushed/no_commit/uncommitted/protected_path/history_rewritten/claude_failed/claude_timeout/push_failed…），并回写 Brain 任务 result.ci_fix（task_id 取 sprint 的 01-intent.md）；claude 输出存 cifix-<pr>-<ts>.log；worktree 用完即删。CODING_WF_CIFIX=0 关闭。
+
+## Brain 1.384.0 — contract-exists 不把 coding workflow 的 sprint 当 harness PR 拦
+
+- coding workflow PR 只带 sprints/<id>/01-intent.md、02-spec.md、03-build.md、04-evidence.md 时，contract-exists 不再要求 contract-draft.md（这类 PR 不是 harness PR）。
+- 只改 sprint-prd.md 等 harness 产物的 PR 仍然缺 contract-draft.md 就拦截；ci-defense.test.ts 新增两种情况的 fixture 回归测试。
+
+## Brain 1.382.3 — coding workflow 04 证据解析对真实 claude 格式容错
+
+- 真实端到端 2c34f677：04 最后一条 output 代码块没写闭合 ``` 就到文末，判 evidence_invalid。lib/evidence.mjs：文末仍开着的代码块按闭合到文末处理；文中未闭合的块吞掉后面的 E-n 时那些 I-n 照样判未覆盖，不放宽。
+- verdict 不区分大小写；字段行（对应/verdict）去掉 markdown 加粗后再匹配。
+
+## Brain 1.382.2 — coding workflow spec 生成后自检 02，锚点标题允许带说明文字
+
+- 真实端到端 c2afa8ba：claude 把规格标题写成 `### S-1 <说明>`，spec 活动只查文件存在就 completed，build 解析不到 S-n 报 spec_ids_missing。
+- lib/md-chain.mjs 与 lib/evidence.mjs：锚点标题 `### <ID>` 后允许跟说明文字（空白或冒号分隔）；ID 后紧跟字母/数字/连字符仍不算锚点。
+- activities/spec.mjs：生成后自检 02（frontmatter、upstream 覆盖全部 I-n、至少一条 S-n），不合格报 retryable spec_invalid（evidence 带 spec_errors），契约 spec 最多 2 次尝试，claude 重写一次。
+
+## Brain 1.382.1 — coding workflow verify 对接真实 claude：证据核对容忍 worktree 内 cd 前缀、claude 会话剥 runner 配置
+
+- 真实端到端 ea2feb66 实测：claude 在 worktree 里直接执行命令，写 04 证据时补上 `cd <worktree> &&` 前缀，被判 command_not_executed。lib/transcript.mjs `unverifiedItems(items, executions, { worktree })`：证据命令开头 cd 到 worktree 根或其子目录（原路径或 realpath）的前缀去掉后再核对；cd 到 worktree 外（含 `..` 逃逸、同名前缀目录）不放宽；输出核对规则不变。
+- prompts/verify.md：command 块必须逐字照抄 Bash 工具实际执行过的那条命令，不补 cd、不改写 grep 条件、不合并拆分。
+- lib/claude.mjs：claude 会话 env 不继承 runner 配置 CODING_WF_*（会话里跑 runner 测试曾因此 4 条失败）；childEnv 不变，runner→执行器→活动仍可读 CODING_WF_GH_BIN、超时等。
+
+## Brain 1.382.0 — coding workflow 第四刀：执行机 runner 自动认领带开关的任务跑 coding 链
+
+- 新增 packages/brain/scripts/coding-workflow/runner/：run-once.mjs 每次至多处理一条 `payload.coding_workflow === true` 的 queued 任务（建议同时 `task_type: "data"` + `payload.headed_manual: "true"`，不改任何现有路由）。
+- 流程：单实例 mkdir 锁（持锁进程已死则回收）→ 列 queued、取最早未认领候选（repo 缺省或 cecelia）→ POST claim（409 换下一条）→ PATCH in_progress → 专用 clone `~/perfect21/cecelia-cw-runner` 的 origin/main 建 worktree `cp-<MMDDHHmm>-cw-<task前8>`（写 .dev-mode/.dev-lock，根目录 npm ci）→ 跑 worktree 自己的 activity-contract-run.js（总超时 = Σ budget×max_attempts + 10 分钟）。
+- 收尾：回执 completed → result.runner {receipt_path, host, duration_s, automerge}，gh pr ready + merge --auto --squash（CODING_WF_AUTOMERGE=0 关闭），PATCH completed，删 worktree；回执 failed/partial、执行器崩溃/超时、准备失败 → PATCH failed，result.coding_workflow_runner {status, failed_activity, reason_code, receipt_path, host}，保留 worktree；Brain 拒绝 completed 时改写 failed（complete_rejected）。
+- runner.sh 启动器（clone 缺失则 clone，干净才自更新）；install.sh 生成系统域 LaunchDaemon com.cecelia.coding-workflow-runner（StartInterval=300，--dry-run 只打印）。
+- launchd-patrol MUST_LOAD_DAEMONS 登记 com.cecelia.coding-workflow-runner；新增 coding-workflow-runner-smoke.sh。
+- 新增执行体类型 coding-workflow-runner（迁移 535 扩 tasks_executor_kind_check；isExternallyExecuted 认它，合同探活 unknown/onStale none）：Brain 重启时启动同步不再把 runner 任务打回 queued。runner 认领时显式写该 kind。
+- runner 防重跑：终态回写 409 时对账（仍属本机则重新认领→in_progress→终态，他人接管不覆盖）；本机有回执/日志或 Brain 已有运行结果不再新跑；启动对账本机 runner 的 in_progress 任务（无终态回执标 failed runner_lost）。
+- 候选须 task_type=data + headed_manual="true" + coding_workflow===true；先 completed 再 automerge；超时按进程树清理；失败 worktree 保留 7 天、回执/日志 30 天；plist ExitTimeOut=90。
+
+## Brain 1.381.0 — coding workflow 第三刀：build 写代码 + verify 独立验收
+
+- coding workflow 契约扩为七活动：intent → spec → build → verify → chain_check → publish → report。
+- 新增 build 活动（claude 按 02-spec 的 S-n 以 TDD 写代码并在当前分支提交，写 03-build.md；后置检查 build_report_missing / build_no_commit / build_uncommitted；budget 2400s，不自动重试）。
+- 新增 verify 活动（全新 claude 会话只拿 01-intent，对每条 I-n 真实运行命令取证写 04-evidence.md；程序按 verdict 判分，FAIL 即 fatal verification_failed 并带失败证据；budget 1200s）。
+- claude 子进程公共逻辑抽到 lib/claude.mjs（spec/build/verify 共用）；新增 lib/evidence.mjs 解析 04-evidence。
+- md 链校验改为数据驱动，支持 01–04 四文件链（新增 step_mismatch、<file>_not_covered:<ID>），chain_check 从上下文取应存在的链文件。
+- publish 的 PR 正文追加每条 I-n 的验收摘要；链含 03-build（有代码提交）时标题用 feat/fix(workflow): <01-intent 标题>。
+- verify 运行中 HEAD 变化判 fatal verify_head_moved，并禁 git reset/checkout/rebase。
+- 防篡改与防误操作：intent/spec 产出 md 链 sha256，spec/build/verify 发现 01/02 被改或 build 提交触及 sprint 目录判 chain_tampered；build/verify 前后比对远端分支（remote_changed）并剥离 GH 凭据；build 改写历史/切分支判 build_history_rewritten，触及 .claude/CLAUDE.md/AGENTS.md 判 build_touched_agent_config，03 不合规判 build_report_invalid。
+- verify 运行期间把 03-build.md 移出 sprint 目录并禁读，--setting-sources user；用 stream-json 执行记录核对每条证据的命令与输出，对不上判 evidence_unverified。
+- 远端/祖先/改动清单查询失败判 retryable（remote_check_failed / git_check_failed），不当成正常结果；build 在 sprint 目录留下 03 以外的新文件判 build_sprint_polluted；verify 被取消/超时/中断时也放回 03（失败报 build_report_restore_failed），claude 默认超时为检查阶段预留 90s。
+- 验收失败结论写入 outputs.verification，report 在没有 PR 时也把失败条目回写 Brain result.coding_workflow。
+
+## Brain 1.380.0 — coding workflow 公共 claude 调用与验收基础库
+
+- claude 子进程公共逻辑抽到 lib/claude.mjs（进程组收割、超时/取消、env 剥离与 GH 凭据隔离、stdout/stderr 分开收集、stream-json 模式只按 claude 自身错误事件判鉴权），spec 改用之，行为不变。
+- 新增 lib/guards.mjs（md 链 sha256、远端分支快照、历史/分支检查、提交改动清单、agent 配置识别、文件暂移与放回）、lib/evidence.mjs（04-evidence 解析与判定）、lib/transcript.mjs（stream-json 执行记录核对）。
+- md 链校验改为数据驱动，支持 01–04 四文件链（step_mismatch、<file>_not_covered:<ID>），chain_check 从上下文取应存在的链文件；I-n 格式收敛为单一常量。
+- intent/spec 产出 intent_sha256 / spec_sha256；spec 发现 01 被改判 chain_tampered（契约已声明）。五活动工作流对外行为不变。
+
+## Brain 1.379.9 — 试点发布门禁修复：口径恢复为只认 CI 回归登记，回归格归还消费者能力
+
+- 试点发布验证（pilot-release-verification）：只认 registerCapabilityRegression 写的 CI 回归登记（scenario + cell_key regression:%）；element/probe 由运行时探针负责，不进门禁（迁移 520 无意放宽的口径恢复到 10-04）。regression 行 assertion_ref 为空视为未声明，对应用法照报 pilot_regression_missing；引用非法照记 pilot_assertion_invalid。
+- 迁移 534：迁移 520「格子跟随所属 Activity」误把共享 Activity 上按消费者登记的回归格（cell_key=regression:<能力>:…）改到 Activity 的能力，按 cell_key 改回（仅限该能力确有生效流程在用此 Activity 的行），先备份再改，附回滚。生产命中 43 行（对标获客 a1000000-…02）。
+
+## Brain 1.379.7 — 获客重组：能力「智能获客」+ 四条抖音流程（视频发现 / 视频处理 / 评论评分 / 线索触达），旧流程并存
+
+- 迁移 533（决策 eb9f8f77，任务 82acbfff）：能力「关键词获客」改名「智能获客」（保留 id）；「对标获客」「视频链接获客」「直播获客」标 deprecated，说明写「已并入智能获客，作为发现的找法」
+- 新建流程（channel=douyin，status=paused，脚本切换前没有运行入口）：抖音·视频发现（预检→取源→过滤去重→取链接写视频表→收尾）、抖音·视频处理（预检→判定视频→采集评论→收尾）、抖音·评论评分（评分→标记人）、抖音·线索触达（预检→发私信→回填→收尾）；预检、收尾被三条占手机的流程共用
+- 复用 Activity 改名并写新合同（promise/inputs/outputs/readback）：判定→判定视频、采集→采集评论、触达→发私信，预检/评分同名换合同；新建 取源、过滤去重、取链接写视频表、标记人、回填、收尾
+- 闹钟总账：commander 定时发起 ×3、harvest-cron 保底 ×8 改挂「抖音·视频发现」，outreach-tick 改挂「抖音·线索触达」，在用看护项 ×20 摘除（workflow_id 置空）；停用项不动
+- 不动：旧流程「抖音·关键词获客」「抖音·对标获客」及其定义版本/引用、release、契约字段、Step（契约同步按 key 维护，挪了会被下一轮同步改回）；回滚脚本按备份表还原
+
+## Brain 1.379.5 — 手机派发真实重试字段
+
+手机独立派发读取 `tasks.payload.next_run_at`；真实 PG 测试表不再创建不存在的顶层重试列，未来排期禁止提前启动。
+
+## Brain 1.379.4 — OpenClaw 运行记录入 runs 表 + Notion 最近执行库
+
+- 迁移 532：runs 增 Notion 投影记账列 notion_id/notion_synced_at/notion_digest，并在 notion_projection_map 登记 runs 占位行（pending_vessel，库建好前不会被误推）
+- OpenClaw 运行记录采集（每 5 分钟定时任务）：把 OpenClaw 每次运行落成一行 runs（run_id=openclaw:*，带任务名/起止/耗时/结果/摘要），整批写库失败即抛错，历史回填有追赶模式（不发 Bark）
+- runs 投影 Notion「最近执行」库（每 2 分钟定时任务）：窗口内（OpenClaw 7 天、失败/超时 30 天）推送，移出窗口的页归档，库未登记时安静跳过
+- 建库脚本 `scripts/ops/create-runs-notion-db.mjs`（默认 dry-run，`--apply` 才建库并把占位行转正，已有 active 行拒绝重复建）+ 只读 smoke `openclaw-run-ingest-smoke.sh`
+
+## Brain 1.379.2 — harness 成功率统计剔除"编排槽满排队" run
+
+- 修 bug：bridge 429 orchestrator_slots_exhausted 等瞬时故障回队的 run（phase='failed'、failure_reason 以 `kernel_remote_launch_deferred:` / `kernel_reconcile_remote_requeue:` 开头）被 `?by=journey` 与战报直接计入 failed，近 60 天虚增 275 条失败（单任务 227 条）。
+- 新增 `lib/kernel-launch-deferral.js`：前缀常量、`isLaunchDeferredReason`、`launchDeferredSql`（starts_with，非 LIKE）、共享聚合 SELECT `journeyRunStatsSelectSql` 与行映射 `mapJourneyRunStatsRow`。
+- 覆盖范围（四处统计）：`routes/harness.js` stats?by=journey 与 `battle-report.js`（runs/done/failed/last_failure 只统计非排队 run，新增 `deferred` 计数；战报文本附"另有 N 次排队"）；`routes/warroom.js` 线健康度 success_rate 剔除排队 run；`routes/initiatives.js` relay-runs/summary 的 SLO 取"每任务最新 trusted run"时跳过排队 run。success_rate 公式不变。relay-runs/summary 的 phase 原始分布计数不动。
+- `harness-skill-relay.js` / `harness-relay-watchdog.js` 生成 reason 改用常量（行为不变）；run 仍保持 phase='failed'，表结构与 kernel 运行逻辑不动。
+- 回归测试：`lib/__tests__/kernel-launch-deferral.test.js`（含 JS/SQL 共用样本契约）、`harness-stats-by-journey.test.js`、`battle-report.test.js`、`warroom.test.js`、`relay-runs-summary.test.js`；relay / watchdog 测试锁定 reason 与 `isLaunchDeferredReason` 的衔接。
+
+## Brain 1.379.1 — coding workflow 第二刀：spec 自身超时 + report 回写 Brain
+
+- spec 活动：claude 自成进程组，超时（默认 870s，钳在契约 budget 内）报 `retryable/claude_timeout`；执行器取消时先整组 SIGTERM、2.5s 后整组 SIGKILL；正常退出后 1.5s 清理残留后代，杜绝孤儿 claude
+- 新增 report 活动（finalize）：PATCH Brain 任务 `result.coding_workflow`（pr_url/branch/sprint_dir/chain_files/run_tag/host），不改状态、jsonb 合并不覆盖 handoff；失败 evidence 带 http_status/body_code
+- coding_spec 契约扩为五活动；新增经通用执行器的五活动端到端测试（假 claude/假 gh/临时 origin/假 Brain）
+
+## Brain 1.379.0 — 通用活动执行器进 main（自 #5783 拆出）
+
+- 新增 `src/orchestrator/activity-{contract,runtime,process,event-sink}.js` 与 CLI `scripts/activity-contract-run.js`：按设计时契约顺序调用 json-stdio-v1 活动，含预算/超时/失败闭集/finalize、可选事件账；内容与草稿 PR #5783（466099e0）逐字一致
+- Commander 售后接班、事件账 PG 集成测试与 CI 数据库接线仍留在 #5783
+- coding workflow（PR #6020）不再依赖 #5783 分支；`coding_spec` 契约测试改用真实 `parseActivityContract` 回归
+
+## Brain 1.378.0 — coding workflow 第一刀：intent→spec 两步 md 链（json-stdio-v1 活动）
+
+- 新增 `packages/brain/scripts/coding-workflow/`：`coding_spec` 契约 + intent / spec / chain_check / publish 四个 json-stdio-v1 活动，跑在 PR #5783 通用活动执行器上；每步产出带上游引用（task_id + `文件#锚点`）的 md，chain_check 程序判链完整，publish 只提交 sprint 目录并开草稿 PR
+- 安全边界：sprint_dir 拒绝绝对路径/`..`/工作区根、git 一律 `--literal-pathspecs`；spec 子进程剥离 `CLAUDECODE`/`CLAUDE_CODE_*` 与 `GIT_DIR` 等、禁用 Bash、越界写判 fatal；不加 `--no-verify`（publish 预算 900s 容纳 pre-push quickcheck）
+- 端到端实证：真实任务 8ad60102 经执行器四活动全 completed，PR #6020 含 01-intent.md → 02-spec.md；超时探针 spec 判 retryable/activity_timeout 并重试 2 次、无孤儿进程
+- 决策 896fb590 / 09ffb675 / 22ef1a72
+
+## Brain 1.377.2 — Notion 六层目录第二轮：只挂直接上级、中文人话列名、改名保值、「还缺什么」一列、Activity 9 项标准内容进页面正文
+
+- 每层只挂直接上级：价值流→部门（可为子部门）、能力→价值流、流程→能力、Activity→流程、Step→Activity；上级的上级只靠「树位置」一行文字（Step 不写树位置）。删全部「分组·*」、内部代号 Key、Activity「正本」、流程「版本」「渠道」「形态」「登记状态」「7天失败」、Step「证据读取」「实现来源」「模式」「登记状态」「所属Workflows」，以及每库的「同步时间」「登记缺口」；每库只留 Brain ID + 同步状态
+- 列名改中文人话：价值流 名称/说明/所属部门/能力/树位置；能力 名称/说明/所属价值流/流程/状态（在用/弃用）/树位置；流程 名称/所属能力/Activity/Activity 顺序/运行方式/运行情况/最近运行/7天次数/7天成功率/平均时长/去留（你填）/树位置；Activity 名称/所属流程/Step/承诺（FR）/输入/输出/谁来执行（代码/AI/人/未写）/还缺什么/树位置；Step 名称/所属Activity/顺序/做什么/输入/输出/怎么验收/失败了怎么办/谁来执行/还缺什么
+- 带值的旧列改名保值：ensureDirectorySchemas 在「新名不存在且旧名存在且类型一致」时用 Notion 属性改名迁移（如 你的标记→去留（你填）、Capability→所属能力、所属Workflows→所属流程、验收标准→怎么验收），新代码上线首轮自动完成，不删重建
+- 流程「运行方式」= 形态 + 闹钟合成一列人话（「定时·每 5 分钟（us-vps）· 名字」「安卓手机」「接口」）；「平均时长」带单位（毫秒/秒/分钟）
+- 「还缺什么」：Activity 列出没写的标准项（13 项）+ 红/待判/未验的格子 + Step 登记对不上，替代 8 个「格·*」列与登记缺口；Step 列出没写的项 + 实现未登记/未核验/未实跑验证；Step「怎么验收」把读回（查库/看日志/看指标/请求）+ 期望 + 判定合成一句
+- Activity 页面正文机器区块：前提/不变量/NFR/失败语义/读回/判定点/对抗/保质期/用料 9 段（没写的写「（未写）」）放在一个带「机器维护」标记的折叠块里，由目录投影每轮按指纹更新（只换自己的折叠块，人写的正文不动；旧契约推送器整页生成的只读正文首次接管时清掉）；契约同步 job 不再写 Notion，正文只有一处写
+- 清理脚本 notion-tree-cleanup.mjs 认得「待改名」旧列（不删、不算缺列），改名或新列没完成时拒绝 --apply；公司 KR 登记写流程页改用「名称」列
+
+## Brain 1.377.1 — Notion 六层目录库清理：只留 Brain 列与登记人工列，旧写入方断开，价值流由目录接管，流程运行列改用 runs
+
+- 规矩：Notion 部门/价值流/能力/流程/Activity/Step 六库每一列要么来自 Brain（原样或派生：分组·*、树位置、运行统计），要么是登记过的人工列（部门库 PARA 关系与名称/上下级/归档、流程库「你的标记」）；两样都不是就删。列合同 `directory-schema.js` 带每列来源表 `DIRECTORY_COLUMN_SOURCES` 与人工列登记 `DIRECTORY_HUMAN_COLUMNS`
+- 目录投影不再建/写：真身来源、责任主体、分组·子部门（全部库）；部门 Key；流程 Trigger/Input/Output/执行策略/Activity 数/定时任务数/启用任务数/近7天有跑/失败任务数/静默任务数/步骤级运行次数/旧功能状态（及 4 条恒定的 *_undeclared 缺口）；Activity 使用位置（及 contract_missing 缺口）
+- 新写：流程 7天次数/7天失败/7天成功率/平均时长(秒)（v_workflow_run_stats 7d），在用吗/最近运行同时看 runs 与闹钟总账；活动编排改为按引用顺序列 Activity 名字；Activity Key（能力.活动）与「正本（只读·改请走 git）」链接；Step 顺序（step_order），Input/Output 以 steps.inputs/outputs 为准；价值流 Name/说明
+- 价值流库由目录接管：挂了能力的 15 个价值流按 Brain ID 建页（不凭同名认领），能力「所属价值流」可全部连上；32 个空壳价值流不建页、作 catalog gap 报出；部门「价值流」关联只连建了页的
+- 旧写入方断开：Activity 契约推送器删掉英文列推送与「缺列即补」（job 只写页面正文，正文页取目录链接）；结构地图价值流镜子不再挂进推送轮；公司 KR 登记只写流程页与运行页，不再写 Step/Activity 旧列
+- 新增 `scripts/ops/notion-tree-cleanup.mjs`：默认 dry-run 打印每库删列/留列（带来源）/归档页；`--apply` 先备份被删列逐页原值与被归档页到本地 JSON，再按公式→汇总→其余删列、归档无 Brain ID 页（价值流/能力/Activity/Step；流程库只列待拍板），读回核对；新投影列未建出（新代码未上线）时拒绝执行
+
+## Brain 1.377.0 — 执行记录 runs 表：每次流程运行一行，定时任务开始逐次留痕
+
+- 决策 ff2019e2，任务 1215b441。业内通行形状（OpenTelemetry trace/span、Langfuse traces/observations、Airflow DagRun/TaskInstance）：运行表 + 明细表 + 汇总。取代交接单里「一张 spans 管三层」的方案（spans 现有约束本就禁止只带 workflow_id 的行）。
+- 迁移 531：
+  - 新表 `runs`：一次流程运行一行，`run_id` 与 `spans.run_id` 同一把键；挂 `workflows` / `ops_schedule_entries` / `task_runs`；`header_source` 区分运行方自己写（owner）与由 span 自动长出（spans）。
+  - `spans` 加 `parent_span_id`（自关联）与 `span_level`（生成列）；`spans.run_id` 外键指向 `runs`（级联删，便于以后按运行做保留期清理）；已有 spans 回填总记录（生产干跑 119 条，其中 63 条时长为 0——上游上报没真计时，待获客线上报方修）。
+  - 触发器：span 入库前保证总记录存在，入库后加总起止/结果/token/费用（只对真插入的行）。
+  - 汇总视图 `v_workflow_run_stats`、`v_activity_span_stats`（24h/7d/30d）。
+- 调度器：每轮真干活的 job 写一行 `runs`（自 gate 跳过的不记），带真实起止；流程经闹钟总账解析（72 个 brain_job 已全部挂流程）。
+- 后续步（未做）：Notion 流程/Activity 页汇总列 + 「最近执行」库；运行明细保留期；执行方上报 token；`ops_workflows` 收口；`run_events` 是 harness 内核运行观测，单独评估。
+
+## Brain 1.376.16 — Notion 目录每一层带完整祖先链，流程和 Activity 能按部门/价值流/能力分组
+
+- 任务 505b9774（主理人 10-06：流程页只有一个孤零零的 Capability 关联，看不出属于哪个部门、价值流，没法分组）。目录投影给每层补可分组的选项列和一行「树位置」：
+  - 价值流库：`分组·公司` / `分组·部门` / `分组·子部门`。
+  - 能力库：再加 `分组·价值流`。流程库：再加 `分组·能力`。Activity 库、Step 库：再加 `分组·流程`。
+  - `树位置`：祖先路径，不含自己，例如 `ZenithJoy › 内容部 › 内容生产 › 内容生产 · 内容日历与创作`。
+  - 能力的部门取自己的 area（挂在子部门时），没有就继承价值流的 area；共用 Activity 取「归属引用」（`source_ref` 为空）所在流程，没有归属引用取第一条引用；没挂流程标「(未挂流程)」。
+  - 追不到的一律标「(未归属)」，不留空（Notion 空选项没法分组）；选项名里的英文逗号换成全角（Notion 不接受）、截 100 字；部门树有环时停在重复处，不死循环。
+  - 原有关联列（`Capability`、`Activities`、`所属Workflows` 等）不动。
+- 生产库只读核对：流程 61、能力 56、Activity 128、Step 56 每一条都能追到部门；价值流 47 个里 32 个没挂部门（都是没有能力的空价值流），在 Notion 里显示「(未归属)」。
+
+## Brain 1.376.15 — Notion「流程」库补运行情况列，一眼看出哪些流程在用
+
+- 任务 ddd656e4（主理人 10-06 要求：在 Notion 里看到每个流程挂几个 Activity、怎么运行、近期跑了多少、是不是还在用）。目录投影给「流程」库补 11 个机器列并新建一个人工列：
+  - 机器列：`Activity 数`、`定时任务数`、`启用任务数`、`近7天有跑`、`失败任务数`、`静默任务数`、`步骤级运行次数`、`最近运行`（按分钟取整，Notion 日期只到分钟）、`在用吗`（在跑 / 有任务近7天没跑 / 只登记没运行 / 空壳）、`怎么运行`、`旧功能状态`。
+  - `怎么运行` 逐条列出该流程挂的定时任务（最多 12 条）：启用 ●、停用 ○、频率、最近状态、最近运行；库里一次性任务的频率是 JSON，翻成「一次性 2026-10-05 20:30」（上海时间）。
+  - 数据来自闹钟总账 `ops_schedule_entries`（按 `workflow_id`）与 `spans`，并入 `loadDirectorySource` 的同一条 SQL，保持单快照；缺列容忍（`to_jsonb(w)->>'legacy_feature_id'`），不改老测试的表结构。
+  - 人工列 `你的标记`（有用 / 没用 / 过期 / 删）只建列，行映射永远不写它，投影器不会覆盖主理人点的结果。
+- 生产库只读核对：61 个流程分组为 在跑 30 / 有任务近7天没跑 1 / 只登记没运行 18 / 空壳 12，与人工统计一致。
+- 「在用吗」的口径：有步骤级运行或近 7 天有定时任务运行=在跑；有任务但近 7 天没跑；没任务但登记了 Activity=只登记没运行；都没有=空壳。
+
+## Brain 1.376.14 — 树+仓库 v3.0 第 6 刀后清理：Notion 注册表清理与旧树 Feature 镜像停推
+
+- 任务 939ccfc9（主理人 10-06 点名要删的几样之二；`activities.workflow_id` 与旧树 Feature 表本身经核查不能删，见下）。迁移 530：
+  - 清掉 4 行已停用的旧库登记（`activities` / `activity_cells` / `okr_projects` / `tasks` 各一行），只删同一张表上已有非 archived 登记的行，所以 `registry_coverage`（每张带 `notion_id` 的表至少一行）不受影响；删前整行备份进 `migration_530_notion_map_backup`。Notion 页一律不删，口径同迁移 523。
+  - 旧树 Feature 镜像（`journey_features` → 「旧树 · Feature」）改 archived 停推，登记行保留；表本身不动。
+  - 回滚按备份还原；本机验证 升级 → 回滚 → 再升级，生产库干跑 71 → 67 行且回滚后恢复。
+- 核查结论（未改）：
+  - `activities.workflow_id` **不是冗余列**：生产 51 个非空，其中只有 13 个的归属能从流程引用的 `source_ref` 为空那条推出，其余 38 个（workflow-authoring 登记的都带 `source_ref`）只有这一列记「谁登记了这个活动」，也是 workflow-authoring 防抢占的依据。删它要先设计新的归属标记。
+  - `journey_features` 表不能直接退役：311 行，7 张活表有外键指向它（`tasks`、`initiative_runs`、`golden_path`、`activity_cells`、`advancement_items`、`warehouse_items`、`workflows`），51 个生产文件读它，视图 `features_registry` 依赖它。
+- 测试：`notion-projection-registry` 里「旧 AI Steps 行保持 archived」改为「不存在，存在则必须 archived/none」（本意是不得复活）；新增迁移形状测试与真库行为测试。
+
+## Brain 1.376.13 — 树+仓库 v3.0 第 6 刀 PR-B：journeys 空壳父表下线，改只读视图
+
+- 任务 49d057f1（主理人 10-06 拍板：拆继承后改只读视图，决策 fc6e7a99）。PR-A（#5999）已让生产代码不再读写父表；迁移 529 拆继承、删父表，同名建只读视图。
+  - 先处理依赖：`activity_flow_metrics` 的能力兜底改读 `capabilities`；`journey_ref_guard`（10 张表的多态 `journey_id` 引用守卫）改按 `value_streams` / `capabilities` 判存在。
+  - `value_streams` / `capabilities` 各自 `NO INHERIT journeys`，删父表与 INSERT 分流触发器 `trg_journeys_route_insert` 及其函数；子表上的身份锁（价值流不能改成能力）与级联删除触发器保留。
+  - `journeys` 变成只读 UNION ALL 视图（价值流 ∪ 能力，21 列与子表一致），兜底外部消费者；INSERT / UPDATE / DELETE 一律被拒（写入必须按角色直写子表）。
+  - 清点结果：没有任何外键指向父表（`pg_constraint.confrelid = journeys` 为 0 行），所以拆继承不牵动引用完整性；迁移内先断言父表自己 0 行才下线，有行就中止。
+  - 回滚脚本还原 520 的形状（父表、分流触发器、两张子表重新继承、旧守卫函数与指标视图）；检查约束从子表取文本在三边重建，避免生产与从零迁移库里表达式写法不同导致重新继承失败。已在本机库验证 升级 → 回滚 → 再升级。
+- 测试：直接写 `journeys` 的集成测试与夹具改为按角色写子表；新增迁移形状测试与真库行为测试（视图只读、子表不继承、守卫放行价值流/能力 id 并拒绝不存在的 id、身份锁仍在）。
+
+## Brain 1.376.12 — 树+仓库 v3.0 第 6 刀 PR-A：生产代码不再读写 journeys 空壳父表
+
+- 任务 49d057f1（主理人 10-06 拍板：拆继承后改只读视图，决策 fc6e7a99）。`journeys` 是迁移 520 留下的空壳父表，价值流 `value_streams`、能力 `capabilities` 是它的继承子表。本 PR 只改代码，数据库结构不动；父表拆继承与下线是下一个 PR（迁移 529）。
+  - 单一类型的读者直接读对应子表：能力读 `capabilities`（流程归属、工作流登记校验、能力来源覆盖、promise-map 夜检、图谱路由、Activity 放置），价值流读 `value_streams`。
+  - 混查（拿一个 id 可能是价值流也可能是能力）的读者统一用新片段 `src/lib/tree-nodes-sql.js` 的 `TREE_NODES_SQL`（两张子表 `UNION ALL`）。
+  - 写入口按角色直写子表：`journey-registration`（`parent_journey_id` 为空写价值流、否则写能力）、`company-kr-registration`、Notion 推送回写（推送引擎的 `table` 支持按行取表名的函数）。
+  - 登记接口显式拒绝「价值流 ↔ 能力」互换（返回 400）：身份由 `parent_journey_id` 的有无决定，与迁移 520 的身份锁一致；此前只在数据库触发器里拦。
+  - `DIRECTORY_TABLES` 里的 `journeys` 是投影身份键（`projection_links.entity_type`、Notion「真身来源」文本），不是 SQL 表名，刻意不动，加了注释。
+  - CI 快照脚本在隔离 schema 里按角色写两张子表；`journeys` 只留给旧迁移 511 重放用。
+  - 守卫 `sql-no-journeys-parent.test.js`：`src`、`brain/scripts`（含 smoke）、`scripts/ci` 的非测试代码里不得再有 `FROM/JOIN/INTO/UPDATE/LIKE journeys`。
+- 测试夹具改成终态形状：`minimum-definition-schema.js` 重放完旧迁移后把 `journeys` 拆成两张真表加只读视图（`withLegacyNames` 重放期间临时还原，并保住依赖它的视图）；自建私有 schema 的集成测试改建两张子表。
+
+## Brain 1.376.11 — 树+仓库 v3.0 第 5 刀③：删 Activity 上与流程树重复的旧直挂列
+
+- 任务 abf4a5df：树是 价值流 → 能力 → 流程 → Activity，Activity 的位置只由流程引用决定，不再在 Activity 自己身上记。迁移 528 删掉 `activities` 的 `journey_id`（直挂能力）、`step_number`（顺序）、`enabler_id`（改走用料 `activity_uses`）。
+  - 删列前把 Activity 的旧位置备份进 `migration_528_activity_columns_backup`（只留 id 与三列，不带 notion 列），回滚脚本据此还原。
+  - 保留 `capability_key` / `activity_key`（Activity 的名字键，冻结的定义版本和合同同步靠它认人）与 `workflow_id`（旧归属，仅兼容历史）。
+  - 依赖这些列的对象一并处理：别名视图 `backbone_activities` 下线；`activity_flow_metrics` 的能力兜底改读 `activity_placement`；级联函数不再按 `journey_id` 删 Activity；`journey_id` 存在性守卫触发器随列删除。
+  - `GET /api/brain/journey_steps` 响应仍带 `journey_id` / `step_number`（由 `activity_placement` 推出），Dashboard 不受影响。
+  - 共用组件的 Activity 级读取改读 `activity_uses`。
+- 测试夹具里重放历史迁移（350/374/511/513）的隔离 schema 临时补回这两列，只验证历史迁移自身。
+
+## Brain 1.376.10 — 树+仓库 v3.0 第 5 刀②：Activity 的位置改由流程引用推出
+
+- 任务 abf4a5df：树是 价值流 → 能力 → 流程 → Activity，Activity 上的直挂列（`journey_id` 指向能力、`step_number` 记顺序）与这条树重复。本 PR 先把路铺好，不删列：
+  - 迁移 527 新增 `activity_placement` 视图：每个 Activity 一行，能力 / 流程 / 顺序 / 槽位从生效的流程引用推出；被多个流程共用时，定义归属那条引用（`source_ref` 为空）优先。`journey_id` / `step_number` 放开非空，去掉按它们唯一的约束，Activity 身份改按 `(capability_key, activity_key)` 唯一。
+  - 写入方不再写这两列：合同入库、workflow-authoring 登记、公司 KR 注册都只写身份与合同，位置走流程引用；`workflow-authoring` 不再有「无引用底座」的旧模式（没有引用表一律拒绝登记，保留草案）。
+  - 登记能力时带 `steps`：经一个「主线」流程（key `gp_steps_<能力id前8位>`）挂靠，价值流不能直接带步骤（返回 400）。
+  - `POST /api/brain/journey_steps` 仍可用，语义改为「在能力的流程里按序号放一个步骤」：该序号已有步骤就更新，没有就放进能力的主线流程（没有主线且恰好一个流程就用它，否则新建）。响应里仍回显 `journey_id` / `step_number`。
+  - 读者改读 `activity_placement`：`GET /journey_steps`（响应仍带 `journey_id` / `step_number`，Dashboard 不受影响）、步骤台账、blast-radius、级联清单、金路径、战情室、依赖图、夜检。
+- 下一步：删列（迁移 528）等本 PR 部署后观察一轮再做。
+
+## Brain 1.376.9 — 修目录投影：Activity 不信任旧同步留下的 notion_id
+
+- 迁移 526 把 76 个无流程的老步骤挂进流程后，它们才进入目录投影。这些行带着更早同步留下的 `notion_id`，指向别的库或回收站里的页，目录投影把它当页面身份，报「目录页身份或数据库不符」（生产里每轮 7 条）。
+- 目录源里 Activity 行的页面身份不再取旧 `notion_id`，只认目录链接与 Brain ID 查询；部门页（人建的，旧 `notion_id` 就是它）不受影响。已有目录链接的 37 个 Activity 不变。
+
+## Brain 1.376.8 — 树+仓库 v3.0 第 5 刀①：无流程的 Activity 挂进流程
+
+- 任务 abf4a5df：树是 价值流 → 能力 → 流程 → Activity，但 128 个未退役 Activity 里只有 52 个挂进了流程，另外 76 个是老的「黄金路径步骤」，直接记在能力下（`activities.journey_id`），中间没有流程。迁移 526 让它们都经流程挂在能力下，为清理 `journey_id` / `step_number` 等旧直挂列铺路。
+- 规则：所属能力下恰好一个流程就挂进去；没有流程或有多个流程，新建「主线」流程（key `gp_steps_<能力id前8位>`）再挂，不替别的流程做主。引用顺序取 `step_number`，槽位 `step_<n>`，`source_ref` 留空表示定义归属（被别的流程共用时，别的流程那条引用才有 `source_ref`）。
+- 只处理未退役且没有生效引用的 Activity，已有引用的不动，重跑幂等；本迁移挂的引用 `source_path` 标 `migration:526`，回滚只删这些引用和因此变空的主线流程。
+- 生产干跑（回滚）：挂 76 条引用、新建 4 个主线流程（工厂 F1、客服 GP-A、客服绑定/安装、管家 G1），挂完没有无流程的 Activity。
+
+## Brain 1.376.7 — 树+仓库 v3.0 第 2 刀 c 段：旧名视图下线，底座引用格子并入用料
+
+- 任务 6112bbcc：`journey_steps` / `journey_step_links` / `enablers` 三个旧名兼容视图删除（迁移 525）。代码、集成测试、烟测早已改读标准名 `activities` / `activity_cells` / `warehouse_items`；对外 API 路径（`/journey_steps` 等）保持，只是路径名。
+- 底座引用格子（`cell_kind='base_ref'`）退役：blast-radius 改读 `activity_uses`（按 `warehouse_items.legacy_feature_id` 找用到该物件的 Activity）；`POST /journey_step_links` 拒绝 `base_ref` 并指向新增的 `POST /activity_uses`（`item_id` 或 `item_key`，角色 `uses` / `depends` / `produces`，`(activity_id, item_id)` 幂等）。
+- 迁移 525 删格子前先把整批原行备份到 `migration_525_base_ref_cells_backup`，能对上仓库物件的补进用料（幂等），对不上的（没有 feature_id，或 feature 没转成物件）留在备份里不丢；回滚能重建视图并还原格子。
+- 为旧名视图留的注册表占位一并删除。
+- 测试：依赖旧名视图的集成测试（blast-radius、350 种子、373、journey-step-ledger、业务探针裁判、影响合同闭环、地图投影等）与 4 个烟测改标准名；350 种子的幂等重放改为在事务里临时改回旧名并回滚，不再污染共享库。
+- 未做（刻意）：`activities.journey_id` 的真外键。现有守卫触发器与外键同等严格（不存在的 id 一样拒绝），且 Activity 既可挂能力也可挂价值流，指向继承树的两张子表无法用一个外键表达；`journeys` 空壳、`step_number` / `capability_key` 等多余列也留着，二十多处代码仍在读，另起一刀迁读者再删。
+
+## Brain 1.376.6 — 树+仓库 v3.0 第 4 刀收尾：收敛对账时补齐 Activity 的 8 个验收格
+
+- 合同同步新建的 Activity 没有验收格，收敛对账翻 `readback` 格颜色的那条 UPDATE 会命中 0 行，颜色静默丢掉。`reconcileActivity` 现在翻色前先调用 `ensureEightCells` 把固定 8 格补齐（缺的补灰格，已有的不动，幂等）。
+- `ensureEightCells` 与 8 个标准格键抽到 `lib/activity-cells.js`，沉淀技能登记候选与收敛对账共用。
+- 刻意没做：合同同步插入 Activity 时同步补格。试过：补格后会进入实现影响快照（快照把全部格子当断言读取），改变既有口径、让试点发布验证的夹具全红，那条口径问题另议，不在这里捆绑。
+
+## Brain 1.376.5 — 树+仓库 v3.0 第 4 刀（路 B）：技能按 Step 发 span、沉淀成候选 Activity、收敛对账
+
+- 任务 3590ec8f：探索先行的那条路补上程序。技能每做完一步发一条 Step span（`scripts/emit-step-span.mjs`，证据约定 `step_key / name / action / reads / writes / observed`，走现成的 `POST /api/brain/spans`）。
+- 收敛对账（`lib/step-reconcile.js`，`POST /api/brain/step-reconcile/:activityId`）：把最近 N 次运行里每个 Step 的观测值按 `Steps.readback` 求值，逐次判已验证 / 对不上 / 未验证 / 失败 / 缺失 / 跳过 / 豁免，抓出合同没声明的 Step；连续 N 次整个 Activity 全绿 = 收敛（可以固化），并把 `readback` 格翻绿，对不上翻红，收敛中待判，没数据不动。拿不到观测值一律「未知」，不猜通过。
+- 读回求值（`lib/step-readback-eval.js`）：支持合同的 `== >= <= not_null_all`，另加 `!= > <`。
+- 沉淀技能（`lib/skill-settlement.js`，`POST /api/brain/skill-settlement/draft` 与 `/register`）：读 spans + SKILL.md 起草 Steps（名字/动作/进出取自 span；读回只在各次观测值一致且跑过两次以上才起草 `==`；失败处理只由重试/失败痕迹推出），登记为 `candidate` 状态的 Activity：承诺列保持空、固定 8 个灰格、一条待拍板（三问：承诺对不对 / 哪些失败要人 / 判定点误判后果，72 小时不答按默认走）。同一 能力.活动 重复登记不覆盖。
+- 未做（刻意）：新 Activity 经合同同步插入时补 8 灰格，等 Step 同步那个 PR 合并后再接，避免两个 PR 改同一个文件。
+
+## Brain 1.376.4 — 树+仓库 v3.0 第 4 刀（路 A）：契约 Step 的读回终于进 Brain，不写读回不许过
+
+- 任务 3590ec8f：生产里获客线 44 个 Step 的读回全是空对象，不是合同没写，而是同步映射错了——合同把读回写在 `dod.readback`、模式写在 `dod.mode`，同步却只认 `step.readback`；且生产同步根本没开 Step 同步（只有 CI 快照路径开着）。
+- 映射集中到 `lib/contract-steps.js`：读回取 `dod.readback`、模式取 `dod.mode`，名字、动作（实现引用，按脚本精度）、进出（`reads` / `writes`）一并落库；失败处理只认合同显式写的 `retry:N` 或 `abort`，没写就是空，不编造。
+- `syncSteps` 写新列（name / action / inputs / outputs / on_fail）：新列只在来源带了才进指纹，旧来源（`step-dod.json`）的指纹不变、也不会把已同步的新列清空；库里没有这些列的旧夹具自动退回只写老字段。
+- 生产同步（`backbone-contract-sync`，30 分钟一轮）默认同时落 Step；下一轮起获客线 Step 读回自动补齐，另一条标杆链接获客线的 Step 也会入库。
+- 硬闸「不写读回不许过」：同步 Step 前先验每个 Step 都有 `dod.readback`（`type: none` 必须写原因，与合同 schema 同口径），缺口一次列全、整轮拒绝、不写任何库，按同步滞后处理（超 2 小时告警）。
+- 测试夹具：共享合同夹具与活动合同同步测试里的 Step 补上 `dod`，与真实合同形状一致。
+
+## Brain 1.376.3 — 树+仓库 v3.0 第 3 刀 b/c 段：Notion 的 Activity 页补 15 列和 8 格颜色，Step 页补三列，新增仓库物件库与用料库
+
+- 仓库物件库、用料库（c 段）：迁移 524 给 `warehouse_items` / `activity_uses` 补 Notion 记账列；新模块 `notion-warehouse-projection` 把仓库物件（8 个货架选项带色，「被用于」列出用到它的 Activity）和用料（Activity、物件各一个 relation）单向推到 Notion。库缺就在目录父页下建（带来源标记，认领同名同标记库，建后登记注册表，重跑不重复建）。Notion API 建不了按货架过滤的视图，库里的「货架」选项列按它分组/过滤即是 8 个货架视图。
+
+- 任务 f4f75a20：目录投影（Brain → Notion 六层目录库）给 Activity 页加机器列：承诺、输入、输出、前提、不变量、NFR、失败语义、读回、判定点、对抗、保质期（天）、用料，再加 8 个格子列（格·承诺 … 格·保质期），颜色取自 `activity_cells` 的 8 个标准格：🟢 绿、🔴 红、🟡 待判、⚪ 灰。缺格按灰，子项格（场景检查）不进卡片，不会串到别的 Activity。
+- Step 页补「动作」「失败处理」「模式」三列（`steps` 的 action / on_fail / mode）。
+- 列名与取值集中在 `projection/activity-card.js`，目录 schema 建列与目录源构造行共用，改一处两边一致；空值不编造。库里缺的列由目录投影器每轮 `ensureDirectorySchemas` 自动补，格子列带颜色选项。
+- 目录源 SQL 增载 `activity_cells` 与 `activity_uses`，真 PG 测试覆盖。人在 Notion 上改这些列会被下一轮覆盖：以后怎么改，改 Brain 真身（合同/技能沉淀），Notion 自动跟。
+
+## Brain 1.376.2 — 树+仓库 v3.0 第 3 刀 a 段：Notion 注册表键改标准表名，价值流/能力分库，闹钟总账改名
+
+- 任务 f4f75a20：迁移 523 把 `notion_projection_map.brain_table` 的 `journey_steps` / `journey_step_links` 换成标准名 `activities` / `activity_cells`（先清 521/522 预留的未映射占位）。旧名视图在第 2 刀 c 段会删，键不先改，`resolveDbId` 查不到 active 行，推送会静默停更。
+- 旧「价值流与能力（journeys）」混合库停推（只读保留，不删页）：价值流与 Capabilities 早已由 directory-projection 分别推到各自的库，不再两库混推。
+- 「Ops 运行图谱」登记名改「闹钟总账」；`pushOpsGraph` 每轮幂等检查 Notion 库标题，不同才 PATCH 改名。
+- 代码同步：`resolveDbId` / 推送表键 / 目录投影表映射 / `LEGACY_DB_CONSTANTS` 全部标准名；新增守卫 `notion-registry-standard-keys.test.js` 禁止再用旧名作注册表键（API 路径、别名表、cascade-list 的 source 标签除外）。
+- 同一迁移把 `projection_links` 里 `journey_steps` 的实体类型改成 `activities`（共 42 条）：目录投影与登记推送按表键查页面链接，不改的话已建页面会被判「未链接」并与旧链接冲突。
+- 迁移与新代码同一次发布；切换窗口内键名短暂不一致，最多一个推送周期不推这两库，下一轮自动补齐。
+
+## Brain 1.376.1 — 树+仓库 v3.0 第 2 刀 b 段：生产代码 SQL 全部切到标准表名
+
+- 任务 6112bbcc：迁移 522 起 `activities` / `activity_cells` / `warehouse_items` 是物理表，旧名 `journey_steps` / `journey_step_links` / `enablers` 只是兼容视图。本刀把 `packages/brain/src` 与 `scripts/ci` 里 36 个文件 95 行 SQL 改写成标准名（含 `ON CONFLICT … DO UPDATE` 里的列限定写法、`LOCK TABLE`、`definition-*` 的动态表名），代码不再往旧名视图读写。
+- 新增守卫 `sql-standard-table-names.test.js`：非测试代码里出现 `FROM/JOIN/INTO/UPDATE/TABLE/EXISTS/REFERENCES <旧名>` 或旧名列限定写法即红（注释、对外 API 路径、Notion 注册表键、`RENAME TO` 重放除外；带 proven-to-fire 合成行）。
+- 对外 API 路径保持（`/journey_steps` `/journey_step_links` `/enablers`），新增别名 `/activity-cells` → `/journey_step_links`、`/warehouse-items` → `/enablers`（`/activities/:id` 已是 workflows 路由，不占别名）。
+- 测试基础设施：隔离 schema 夹具镜像生产形状——真表用标准名、旧名建视图；重放 511/513/374/495 等旧迁移期间 `withLegacyNames` 临时叫回旧名，重放完 `useStandardNames` 改回并重建视图；`scripts/ci/implementation-snapshot.mjs` 的 scratch 同理。匹配 SQL 的 26 个单元测试文件与 2 个根测试改到标准名。
+- 未动（留给 Notion 对齐那刀）：`notion_projection_map.brain_table` 与 `resolveDbId` / `table:` 键仍是旧名；旧名视图与 `journeys` 空壳留到 c 段删。
+
+## Brain 1.376.0 — 树+仓库 v3.0 第 2 刀 a 段：三张物理表换成标准名 activities / activity_cells / warehouse_items
+
+- 迁移 522（任务 6112bbcc）：`journey_steps` → `activities`、`journey_step_links` → `activity_cells`、`enablers` → `warehouse_items` 物理换名，旧名降为自动可更新视图（SELECT / INSERT / UPDATE / DELETE / ON CONFLICT / RETURNING 照旧可用），代码本段零改动；主键/唯一/CHECK 约束名随表改成标准前缀；触发器、外键、依赖视图按对象 id 绑定自动跟随；`enforce_harness_gap_transition`、`journeys_child_after_delete` 改指新名。
+- 生产库事务演练：三张真表 138 / 1376 / 22 行，旧名视图行数一致，`activity_flow_metrics` 等依赖视图正常，经旧名视图 INSERT … ON CONFLICT 可用；scratch up→down→up→up 幂等。
+- 测试随之调整：按旧表名查目录/约束/索引的 migration-348 / 349 / 374 / dev-registry 改到标准名（374 在事务内把真表临时改回旧名重放旧迁移，验证旧迁移自身幂等）；五个用 `LIKE public.<旧名>` 复制结构的隔离 schema 夹具改走 `likeSource`（视图拿不到主键/默认值）。
+- 后续：b 段代码切标准名（47/28 个引用文件 + 接口路径别名）；c 段外键收紧、删旧名视图与 journeys 空壳、去多余列。
+
+## Brain 1.375.0 — 树+仓库定稿 v3.0 第 1 刀：Activity 15 列、Step 8 列、8 格固定、顺序归关系表、activity_uses
+
+- 迁移 521（任务 dd66b90e，决策「树+仓库定稿 v3.0」）：Activity（`journey_steps` / 标准名 `activities`）加 inputs / outputs / preconditions / invariants / nfr / failure / readback / judgment / adversarial / shelf_life_days，前七列从 `contract` JSON 拆填（只填空值，contract 留全量快照），shelf_life_days 默认 7。Step（`steps`）加 name / action / inputs / outputs / on_fail（只许 `retry:N` | `abort`），name 先从 key 末段推。
+- 8 格固定：每个未退役 Activity 恰好有 promise / nfr / judgment / invariants / failure / readback / adversarial / shelf_life 八个标准格。客服线旧格子名按名映射（FR→promise…，98 行）；获客线 `stage:*` / `regression:*`、所有场景格、能力点格、Step 级格子标 `parent_cell_key='readback'` 子项，`producer_source_revision` 标 invariants 子项；缺的补灰格（生产 926 行，id 记备份）。生产演练：128/128 Activity 恰好 8 格。
+- `activity_items` 改名 `activity_uses`（Activity 用仓库的哪几件）。有 workflow_id 但没有 `workflow_activity_refs` 行的 32 个 Activity 补关系行（sequence_no = step_number，source_ref = `migration:521`）。
+- `activities` / `activity_cells` 视图重建带新列；回滚先删视图再去列、按备份还原格子名与删补行；scratch up→down→up→up 幂等。回归：`migration-521-activity-columns.test.js`。
+
+## Brain 1.374.0 — 表名对齐框架标准（第一段）：价值流/能力两张真表，activities / activity_cells / warehouse_items 标准名立起，仓库八货架
+
+- 迁移 520（决策 61143c32，任务 b90c0f9a）：树 = `areas → value_streams → capabilities → workflows → activities → steps`，格子 `activity_cells`；仓库 = `warehouse_items`（八货架 `shelf`）+ 连线 `activity_items`（Activity 用了哪些物件）/ `item_deps`（物件依赖物件）。
+- `journeys` 拆成 `value_streams` / `capabilities` 两张真表（PostgreSQL 继承：`journeys` 留空壳父表，INSERT 由触发器按 parent_journey_id 分流、子表已有同 id 按 DO NOTHING 跳过，SELECT/UPDATE/DELETE/FOR UPDATE 透过父表照旧）；`workflows.capability_id` 改为真外键指 `capabilities`，其余 10 张引用表（含闹钟总账、Activity、格子）改触发器守卫，删除级联照原语义模拟；第二段逐表收紧成真外键。
+- `activities` / `activity_cells` / `warehouse_items` 三个标准名先以自动可更新视图立起（指向 `journey_steps` / `journey_step_links` / `enablers`），物理表本段不改名——旧迁移重放与几十个按旧名查索引/约束/LIKE 的集成测试不受影响；第二段切完代码再物理换名、旧名降视图。
+- 50 个直接挂在价值流上的 Activity 归位到能力（翻拍 9、视频剪辑 6、Shopify 4、ZenithJoy 客户管理 4、运营中枢 3、获客 18、Harness 6），新建能力「Shopify 店铺运营」「ZenithJoy 客户开通与绑定」和 5 条流程；格子跟随所属 Activity。
+- 仓库：`enablers` 加 `shelf` 八货架（NOT NULL + CHECK），合并旧树 7 条 enabler、3 条界面类 ability、10 项底座件成 22 件物件并全部上架（平台动作 4 / 通用动作 2 / 数据 3 / 服务 5 / 界面 3 / 基础设施 3 / 账号与密钥 2 / 外部依赖 0），18 件带 `legacy_feature_id` 溯源；`activity_items` 28 条连线由 enabler_calls、journey_steps.enabler_id、底座类格子合并；底座类格子行本段保留（blast-radius 还在读）。
+- 原值进 `migration_520_backup`，回滚脚本并回 journeys、复原 13 条外键与旧守卫、两个旧视图。回归：`migration-520-tree-tables-align.test.js`；`migration-325` 集成测试改为同时接受守卫触发器。
+
+## Brain 1.373.0 — 流程层登记：旧 ability 转 workflows 流程，闹钟总账全部挂到流程
+
+- 迁移 519（框架标准 v2.0，任务 6741b288）：树补齐「流程」层——22 条旧树 ability（能力 × 平台/渠道）转成 `workflows` 行并挂到 部门→价值流→能力 下（新列 `legacy_feature_id` 溯源）；26 个有闹钟但没流程的能力各补一条默认「定时作业」流程（关键词获客复用 `douyin_keyword_leadgen`）。
+- 闹钟总账 `ops_schedule_entries`：先归位能力（经营节奏价值流上 11 条 OKR 闹钟→G5 战略 OKR；40 条未挂的按实际归位到 执行资源池/清理与容量/监控与告警/分发与同步/数据投影/账号凭据/网络入口/F1/经营对象/内容日历/关键词获客；收盘报告→经营播报；投资系统 run_daily、热点/天气保持个人区），再按 能力→流程 回填 `workflow_id`。生产演练：能力下无流程的活动闹钟 0 条、挂价值流 0 条、383 条有流程。
+- 旧树 `journey_features` 只标 deprecated 不删：PC 端发布套 21 条（决策 117660b0 整套淘汰）、与能力重名/重复 11 条、已转换 22 条（`workflow_ref` 指向新流程 key）、smoke/e2e 垃圾；两条 10-05 误建的重复能力退役。原值进 `migration_519_backup`，回滚脚本按备份还原。
+- 回归：`migration-519-workflow-layer.test.js`（先红后绿）；scratch 库 up→down→up→up 幂等验证通过。
+
+## Brain 1.372.0 — 词表统一：Notion 镜子库标题同步 + Dashboard 面向人的文案改为标准词表
+
+- 迁移 518：`notion_projection_map` 5 条标题同步为 Notion 已改的新名（价值流与能力（journeys）/ Activity（活动）/ Activity 卡片格子 / 流程（workflows）/ 旧树 · Feature（只读，待退役））。按 `notion_db_id` 定位，只改 `title`，带回滚。框架标准 v2.0 术语表，决策 cebd1540。
+- Dashboard 面向人的文案 4 文件 7 处：Golden Path / GP / Journey → 能力 / 价值流（FeatureDashboard、LedgerPage、WarRoomGoldenPathPage、ReportDetailPage）。表名、列名、API 路径、TypeScript 标识符不动。
+- 回归：`migration-518-vocab-unify-titles.test.js`、`scripts/vocab-unify-labels.test.mjs`（守卫：JSX 文本与 label/tooltip 里不得再出现旧词；实测抓到一处漏改的表头）。任务 726ca1b7。
+
+## Brain 1.371.4 — 仓库侧去多账号化：Claude 只保留单账号单目录 ~/.claude
+
+- 主理人拍板只保留一个 Claude 账号（决策 7952bd84），本机 `.claude-account1/2/3` 目录已删除；仓库里仍把它们当默认值的地方一并改指 `~/.claude`，否则删除后会静默失效。
+- `ops-model-accounts-collector.js`：`claude-account1` 台账条目的 `credential_path` 改为 `~/.claude/.credentials.json`（条目 id 不变，保 DB/Notion 连续；`claude-account2` 条目保留以维持「恰好 8 条」口径，后续另议）。
+- `cecelia-bridge.cjs`：`accountId` 废弃，`claude -p` 一律走默认 `~/.claude`。`skill-eval-worker.js` / `memory-sync.js`：默认目录与候选目录改 `~/.claude`。
+- `docker-compose.yml` / `docker-compose.staging.yml`：删除 `.claude-account1~3` 挂载。
+- `scripts/claude-launch.sh`：删除账号切换（`.active-account-dir`）与 per-session projects 软链/sweep 子系统，保留 per-session worktree 与孤儿自愈；`scripts/dispatch-worker.mjs`：Claude 单账号即 controller 主线，不入 worker 池。
+- 未动（另立任务）：流水线路径内的残留——`commander-invoker.js` 默认 `SEQUENCER_COMMANDER_CONFIG_DIR` 回落 `.claude-account1`、`docker/cecelia-runner/entrypoint.sh` 注释示例（碰流水线路径须带 F1 步骤断言，`lint-gp-anchor-artifact`），与 `provider-account-home.js` 的 `.claude-accountN` 目录映射与 dispatcher 账号选择——影响其他执行机，需逐机核对后再改；`routes/harness.js` 读 `~/.claude-account1/skills`（该目录此前就不存在，静默返回 null）。
+- 回归：`packages/engine/tests/launcher/claude-launch.test.ts` 以单账号契约替换旧账号切换/软链/sweep 三组用例；`scripts/dispatch-worker.test.mjs`、`ops-model-accounts-collector.test.js` 同步更新（任务 702f6a1b）。
+
+## Brain 1.371.3 — 部署链剩余两处 healthy 硬编码：sidecar /healthz 探针与 Auto Staging Deploy 等待脚本
+
+- `scripts/lib/bluegreen-sidecar.sh`：`/api/brain/healthz` 以 tick 存活为 200 条件，tick 被有意封停（决策 751f73be）后恒为 503，`curl -f` 在「等 healthz」第一步就失败，后面折算 `/health` 的逻辑（#5949）根本走不到——1.371.2 部署时再次复现，drain 与台账都要手工收尾。新增 `_sidecar_healthz`：只放行「503 且 body.db=connected」，DB 异常/传输失败/其他状态码仍失败；tick 死亡是否属有意封停仍由后面的 `/health` 折算判定（`scheduler.enabled=false` 才折算）。
+- `scripts/wait-for-production-sha.sh`：Auto Staging Deploy 用它等生产 healthy+同 SHA，自 1.370.13 起每次因 degraded 超时失败，Dashboard staging 从未出包。改为与部署收账同口径（`policy.deployHealth`，导入失败=严格口径）。
+- 回归：sidecar fixture 忠实模拟 `/healthz` 503 与 `curl -f`；`wait-for-production-sha.test.sh` 新增封停放行、断路器 OPEN/非封停仍超时三个用例（任务 a9adc667）。
+
+## Brain 1.371.2 — 蓝绿 sidecar 健康确认折算「有意封停 tick」的 degraded
+
+- `scripts/lib/bluegreen-sidecar.sh` 的 `_sidecar_health` 内联 node 也硬要求 `/health` 为 healthy：tick 被有意封停（决策 751f73be）后恒为 degraded，新容器已起来，sidecar 却在「等 healthz」一步判 `healthz_poll_timeout_or_identity_mismatch` 退出——drain 不恢复、台账不收账（#5947 只修了官方收账 CLI 这一处，2026-10-04 部署 1.371.1 时暴露第二处）。
+- 改为复用 `policy.deployHealth`（路径可由 `CECELIA_RETENTION_POLICY` 覆盖，默认 `/app/scripts/brain-image-retention/policy.mjs`）；导入失败 = 严格口径；version/git_sha/tags 逐项核对不变。
+- 回归：`scripts/bluegreen-sidecar-completion.test.mjs` 新增 `sealed-degraded`（成功收尾）与 `sealed-open-breaker`（仍非零保持 pending）两个场景（任务 a9adc667）。
+
+## Brain 1.371.1 — 部署收账不再被「有意封停 tick」的 degraded 卡死
+
+- `scripts/brain-image-retention/policy.mjs` 新增 `deployHealth`：`/health` 的 healthy 要求 tick 循环在跑，tick 被有意封停（决策 751f73be）后恒为 degraded，导致部署换容器成功、`ledger.finish` 却永远收不了账，台账 `pending` 卡死，其后全部部署以 `DEPLOYMENT_PENDING` 失败（2026-10-04 03:49 起 Gate 3 全红）。仅当 degraded 唯一原因是调度器被有意关闭（`scheduler.enabled=false`，断路器无 OPEN，docker/fleet 无异常）才折算为 healthy；缺字段/形状不明不折算。
+- `runtime.mjs readHealth` 与 `docker.mjs containerHealth` 两条读取路径统一走 `deployHealth`；version/git_sha 原样返回，收账仍逐项核对部署身份。
+- 回归：`scripts/brain-image-retention-health.test.mjs`（任务 a9adc667）。
+
+## Brain 1.371.0 — 闹钟总账最小版：扩排程台账（不建新表）、72 个 job 与 recurring 落表、alarms 接口与 Dashboard 只读页
+
+- 迁移 517：`ops_schedule_entries` 加 15 列——机器列（周期/启用/上次运行/上次成功/最近状态/活性/登记状态）、挂树列（`journey_id`/`workflow_id`/`ops_workflow_id`）、人工列（`owner_manual`/`note_manual`/`tree_bucket_manual`）；带 CHECK 约束与回滚。决策 9e9d90b6：不新建表、不另起注册系统。
+- `scheduler-jobs.js` 72 个 JOB 各加结构化 `cadence`（`everySec` 或 `cron+tz`）；`scheduler-jobs.test.js` 断言必填、name 唯一——新增定时只能经此表注册。
+- `ops-scheduler-liveness.js` 同一份活性结论顺带 UPSERT 一行总账（沿用降噪条件，防 Notion 推送被挤）；总账写失败只告警不拖垮活性判定。`recurring-tasks` job 把模板投影进总账，取代 `agent-ops.js` API 层的临时拼接。
+- `ops-collector.js` 采集腿写新机器列（人工列与挂树列永不进 SET）；Notion「Ops 运行图谱」推送排除总账自有行。
+- `GET /api/brain/agent-ops/alarms`：统一 11 列 + 来源心跳 + 未登记数；`POST /agent-ops/alarms/import`（内部令牌，缺省干跑）+ `scripts/ops/import-alarm-ledger-inventory.mjs` 导入 2026-10-04 盘点静态快照（`source=inventory-20261004`，已被采集的来源只补挂树列，只补空）。
+- Dashboard：System → 「闹钟总账」页签（`/system/alarms`），只读表格，可按机器/机制/状态/部门筛选。
+- 回归：`ops-alarm-ledger.test.js`、`ops-alarm-ledger.pg.integration.test.js`、`alarm-ledger-smoke.sh`（任务 fe10d1a0）。
+
+## Brain 1.370.13 — 死人开关改指 us-vps 生产库、孤儿哨兵键不再误报；opc-watchdog 纳入仓库
+
+- `scripts/sentinel/dead-man-switch.sh`：psql 连接改为 `DMS_PGHOST/DMS_PGPORT/DMS_PGUSER/DMS_PGDATABASE` 可配置（默认值兼容），MMV 经 pg-tunnel `localhost:15432` 指 us-vps；判活由「最旧哨兵键年龄」改为「STALE 窗口内报到键数 ≥ 预期 job 数」，已下线 job 的孤儿键不再拖垮判定。
+- `scripts/ops/us-vps/opc-watchdog.sh`：us-vps 裸脚本纳入版本管理，去掉已退役 openclaw-gateway 网关探针（原连败 3600+ 次、每小时假告警）。
+- 回归：`packages/brain/scripts/smoke/dead-man-switch-usvps-smoke.sh`（决策 b08a085c）。
+
+## Brain 1.367.0 — legacy bridge任务一次性有头接管
+
+- 增加严格认证、真实row_version CAS与原coding路由资格检查；持久owner与advisory屏障保护执行及结果证据，保留人赢元数据编辑、同session心跳/result回写及提交后owner授权交接。
+- 接管POST与两类任务PATCH在认证和数据库访问前安装固定每IP每分钟300次限流；超额返回429，保留原会话、元数据、结果及交接合同。
+- 保留精确接棒smoke及注册表锚点；真实普通与有头旧PATCH验证提交后保存交接，失败不保存交接，复活单测保留原业务断言。
+- 退役smoke改为守卫核DB后执行私有真实HTTP/PG派发入口验收，覆盖退役终态与资源拒绝；保留生产dispatcher字节，验收范围不包括共享全局tick整轮。
+- 在守卫前冻结退役smoke原默认HOST/PORT，真实私有dotenv回归覆盖未设与部分显式目标，阻止配置加载后漂移到未核服务。
+- 合入固定共享活动511与六活动工作流主线；回执保留authoring/有头所有权双门禁及各自失败封闭，保留限流、提交后交接和退役目标冻结。
+- 修复未部署509无owner DELETE返回NULL抑制普通删除；仅DELETE返回OLD，保留owned拒绝、UPDATE与数据库CASCADE/FK约束。
+- 合入固定Linux controller与不可变定义版本主线，保511/512/513及原有头门禁；私有实际迁移叠加核image510/Linux512的真实engine台账、kind与owned保护，保版本化fixture及全部共享验收。
+
+修复未部署509对普通已删除任务设备孤儿锁净释放的兼容：只允许设备名不变、三字段全NULL，并在共享闸后拒绝任何受管owner。增加受生产守卫和固定数据库目标约束的真实HTTP/PG smoke；隔离fixture仅使用自有schema及最低实际迁移，保留callback终态断言。
+
+## Brain 1.361.0 — 手机独立派发持久身份（统一排班723b0de1）
+## Brain 1.361.2 — 手机独立派发持久身份（统一排班723b0de1）
+
+- 新增独立 phone_ssh 执行许可与持久 phone_dispatches 身份、共享整机预约、一次启动和认证回执结算；送达未知保留占位，旧守护器不得重排。默认不授予手机执行权限，后续中枢接线与业务迁移继续沿原任务推进。
+- required smoke保留完整执行器名单和历史迁移合同，纳入508手机控制器精确增量与独立收口检查；手机身份smoke登记allowlist，永久回归覆盖实际Node合同块、script安全闸与唯一登记。
+
+## Brain 1.357.6 — 恢复目标跨路径永久回归
+
+- 新增真实恢复入口→执行目标冻结→ground-truth同run候选→dispatcher的永久契约回归：无候选/旧us候选均派发西安team2，同新run西安候选保持Evaluator/Judge亲和；profile冲突和非法目标在入口拒绝且零派发。仅数据库、Git和执行边界夹具隔离，不改dispatcher算法或生产行为。
+
+## Brain 1.357.5 — 失败 Kernel 恢复冻结已授权执行目标
+
+- 内部鉴权的 canonical 创建入口仅在显式恢复请求下允许同任务 failed 前任重新进入 planning；核验最新收据、失败前任、无活动尝试、fresh 地图、同仓同分支实际 Git head 与 base 血统。
+- 在同一事务追加接班收据、更新任务锚点并签发新 Controller/run；旧收据、失败 run、旧封存合同均保留，新 run 不继承旧裁决。并发重试返回同一 Controller，失败整笔回滚；留事实、Git/map 证据与 actor。
+- 可选执行目标仅在上述恢复事务中生效；按原始 payload 规范化 profile 摘要 CAS（摘要严格为64位小写hex字符串，非字符串请求在事务前400拒绝），复用当前目录版本和现存仓库授权，冻结 Commander 与全部执行角色，收据留目标/profile/授权版本证据。模型名仅允许非空标识段及供应商限定分隔，URL、绝对路径、空段和遍历段在事务前拒绝。无新许可或路由接口；实际派发仍走角色能力、候选机器亲和和容量 floor 门禁。
+- 永久回归覆盖真实 HTTP 入口、内部鉴权、真实隔离 PostgreSQL 事务/并发、授权撤销/过期/换代、容量拒绝及真实 Map/Radius/preflight。原有无目标恢复请求保持兼容。
+
+
+失败canary的同nonce恢复可返回独立cleanup-only签名：只有已确认完整身份和精确墓碑，或持久尚未尝试创建事实，才允许后台淘汰旧挑战。该schema不兼容activate，不产生成功验收；未知仍占位。淘汰后等旧预约释放并重读安装身份，再运行全新canary，保留显式撤销停止语义。
+
+池内部淘汰标记存tasks.payload独立字段，与linux_onboarding阶段快照分离；retire提交后回执丢失仍可幂等恢复，不因错误快照覆盖而误认显式撤销。
+
+Linux接入在首次SSH前将当前镜像40位GIT_SHA对应15个Worker源码和完整远端bootstrap程序原子存入root私有artifacts缓存，任务持久revision+工件摘要。跨Brain升级后所有SSH和安装仍读取原工件字节；缓存缺失或摘要错误拒绝，不能以新源码冒充旧revision或更换既有intent。
+
+接入内部淘汰与显式撤销分开持久：外部撤销在同接入锁内停止已生成自动阶段，不能由过期恢复复活；已提交active丢回执跨24小时按同代原签名和实际current version转内部续验。执行角色上限和后续采样SSH均来自原登记任务，设备metadata仅可缩权。
+
+执行就绪投影与自动续验同时核实际execution_node_versions及逐项grant身份、状态和到期；单独撤销version/grant立即撤下就绪，禁止后台续验重新授权。
+
+现有机器接入入口对Linux worker自动登记执行子任务，固定SSH核root实际资源后生成保守单shell profile，复用CS独立凭据，bootstrap签名身份→505池证明→507真实adapter验收→同代active。凭据绑定可由root私有credential-bindings.json指定既有item，浏览器不能提供授权身份。Brain独占会话锁覆盖外部步骤，原始签名/profile保持序列化，未知保留intent与nonce。到期前一小时或boot改变自动撤销旧许可、等所有旧预约精确清理、重读安装身份并新代验收；过期挑战仅凭完整验签清理归档重建，显式撤销不自动复活。机器卡片只投影当前未过期授权及服务内部fresh身份，元数据不可伪造；US永久scheduler_only。缺Docker/systemd/cgroup前置如实报出，受信控制目录最窄RW挂载，生产HK现场验收仍由部署阶段执行。
+
+Brain接入控制面固定SSH指纹、禁agent/转发/密码交互，只经stdin传镜像内Python程序与私有payload。root复用已有bootstrap和有界命令，先持久intent，安装回执丢失只核现场不重装；安装事实按独立root key回签nonce/intent/boot/daemon/镜像/pool，Brain验真后才可登记部署。runtime配置绑定当前boot，canary仅调用两条已安装固定CLI；传输secret所有退出路径清理。Brain镜像固定op2.32.1双架构归档SHA，不含凭据；arm64在无网只读Alpine容器实测版本通过。仍待持久阶段编排与机器页接线，未部署生产。
+
+接入控制面保守预算最多2核且不超过半机，内存保留至少2GiB/半机且池最多4GiB，独占槽1；首个受信shell profile无网、非root，观测过期或预算不足拒绝配置。独立256bit Worker/root凭据按机器UUID的CS标签查找，创建意图必须先提交，结果未知只找回不重复创建；先1Password读回再双写私有600文件，secret不进入参数或回执。控制面模块尚未接机器页编排、镜像op安装和生产部署。
+
+Linux脚本预约在授权事务中固定同版本worker/boot，启动转换按既有身份CAS；能力与fresh快照的版本、boot、policy、profile摘要混代时零预约。升级前空身份只从预约对应历史版本补齐，reaper不取新boot污染旧许可。真PG永久回归核旧boot拒绝与崩溃清理，维护拒绝使用真实worker_draining码并仅凭精确墓碑释放。
+
+可信接入后台提供部署文档写入器：分别验证池/脚本完整配置及0600凭据引用，按旧policy摘要CAS，在受保护目录互斥并fsync原子替换。拒绝符号链接、宽权限、未知字段和过大文档，文档不存secret；无HTTP配置写入口，浏览器不持有授权字段。尚待接自动SSH编排。
+
+Linux脚本准入使用验收过的受信池预算与独占逻辑槽1；fresh认证身份绑定boot/revision/config，预约在DB总额锁内再核version/grant/摘要。动态资源与维护仍由root每create/start复核。新Linux目录canonical ID直接进入managed，缺profile不可退回宿主SSH，不需手填机器环境白名单。真实PG→HTTP→Unix→持久adapter回归产生实际shell输出，资源/维护拒绝只凭精确墓碑释放，create未知持续占位；尚未HK现场部署。
+
+507新增脚本runtime验收真表：prepare用受信部署根自动登记子任务并创建pending版本/grants；root签名canary逐profile验真后，同事务finalizeTask写事实/证据/actor并CAS激活同一代，仅开放managed_script。nonce十分钟、授权最长24小时，过期不续期、撤销不复活；历史清理保留，US与scheduler硬拒。JSONB不得重排下发profile摘要。此片仅scratch真表验收，生产未迁移/激活，Linux物理准入与机器页自动编排仍待接线。
+
+Linux运行时受信部署独立绑定完整脚本profile、镜像ID、父任务与双凭据；root canary回执验签严格核对所有profile、version/grant、随机输出、宿主资源证明及完整取消墓碑。此验证零件尚未接数据库激活，生产仍pending。
+
+Linux脚本canary通过独立root许可调用真实Unix adapter，持久每个profile的预约/version/grant，核对完整宿主证明、随机标记输出及精确清理后签独立验收回执。未知启动不重跑，配置撤销后仍按旧journal恢复清理；安装器和bootstrap打包此入口。当前仅完成编排及安装产物回归，尚未执行HK现场验收或激活授权。
+
+Linux脚本客户端从受信目录版本读取profile摘要及凭据引用，启动在当前DB授权链内签独立root许可，历史清理绑定持久version/grant；Worker.token只做外层传输认证，不能伪造root回执。真实HTTP→Unix→持久runner→受限Docker合同已串通；请求尚未抵达时可先持久墓碑封住迟到启动。生产版本仍pending，未开放执行。
+
+脚本Worker客户端按流累计认证封套，超过128KiB立即取消读取；正文读取继续受原请求deadline约束，不再先整包缓存再判大小。
+
+Linux可信root bootstrap 使用Python3启动，内置官方Node24.21.0双架构归档digest并只取Node二进制，不依赖或替换宿主Node20；自动准备无补充组的nologin专用账号，随后交既有事务安装器落盘pending服务。固定本地Docker/systemd完整宿主、受保护profile/token/source及空slice先验，US/scheduler/零预算拒绝；stdin非阻塞读写共用deadline、异常路径保留未回收leader身份后清理专属进程组的有界命令/下载、持久flock与0600恢复回执，账号创建结果未知也不伪称回滚。失败保留安全账号，既有配置/units由安装器恢复，不改网络/daemon/旧业务cgroup。永久回归覆盖21项；官方arm64归档已在独立无网非root受限容器真执行Node版本并清理，尚非HK systemd现场验收。
+
+Linux受限脚本核心由root journal、独立30秒HMAC许可和固定Docker adapter组成，实际复用script-runner生命周期；profile/版本/grant/预约/worker boot/daemon身份先持久，所有create/start均再验许可与本机闸。start副作用前登记持久deadline，回执丢失与超时持锁均保留精确清理机会。创建回执未知永久占位，不以单次名称缺失签清理；旧grant撤销后只允许依据持久完整ID、标签和镜像核验清理。日志/资源限额固定，默认无网非root只读，不向服务账号开放Docker。Unix桥仅提供start/inspect/cancel并用独立root密钥签回执，普通Worker认证后仅转发，正文/回包/deadline均有界。可信bootstrap可经私有文件将独立执行key交双服务事务安装器：root桥保持宿主namespace、root私有状态与0600凭据，普通Worker仅获Unix连接组和只读root boot。配置丢失或重启旧boot只许历史清理；最终闸读取维护标记、安装锁、宿主身份及实际任务池配额/压力/磁盘。当前代码链已接安装入口，未在HK部署或开放Linux执行。
+Linux可信root bootstrap 使用Python3启动，内置官方Node24.21.0双架构归档digest并只取Node二进制，不依赖或替换宿主Node20；自动准备无补充组的nologin专用账号，随后交既有事务安装器落盘pending服务。固定本地Docker/systemd完整宿主、受保护profile/token/source及空slice先验，US/scheduler/零预算拒绝；stdin非阻塞读写共用deadline、异常路径保留未回收leader身份后清理专属进程组的有界命令/下载、持久flock与0600恢复回执，账号创建结果未知也不伪称回滚。失败保留安全账号，既有配置/units由安装器恢复，不改网络/daemon/旧业务cgroup。永久回归覆盖20项；官方arm64归档已在独立无网非root受限容器真执行Node版本并清理，尚非HK systemd现场验收。
+
+Linux 受管脚本事实证明入口复用完整宿主和父slice采集核心，但独立校验reservation/intent/generation、worker boot、目录version/grant、profile摘要、固定镜像及精确CPU/内存/swap/PID/日志配额。宿主boot与daemon须匹配可信绑定，所有容器操作均只读；原pool-canary的名称、标签前缀与用户限制保留。输出linux-script-proof/v1且execution=false，不兼容旧池验收schema，不产生执行许可。本片仅adapter证明零件，未接root执行桥/runner持久profile身份或HTTP启动，也未完成真实Linux canary。
+
+Linux 池 migration505 将 nonce 挑战、验收签名及 CAS 授权准备写入独立真表。内部 machines/linux-pool 路由只接受记录 ID 与 expected_version_id；完整期望及凭据绑定来自 CECELIA_LINUX_POOL_DEPLOYMENTS_FILE 指向的受保护部署登记文件和 1Password 同步凭据文件，默认未配置拒绝。验收绑定设备 UUID、固定 revision/config、host/worker boot、daemon、完整 slice 资源证明和精确清理；nonce 限时一次消费，历史不可改，同机器锁与预约共享。ready 仅建立 pending 版本与 managed_script/script 显式 profile 许可，容量为0，API execution=false；503 的 attested active 硬拒保留。US 稳定 UUID、scheduler 和零预算均拒绝。撤销即使部署配置或凭据不可用仍按持久身份执行；过期不得续期复活，历史清理定位保留。本片未部署或执行生产DDL，仍需可信bootstrap、Linux脚本adapter/真实执行清理、机器页调用及真实systemd池验收。
+
+Linux 执行池部署合同使用独立 systemd slice 的 CPU/内存/PID 限额；仅可信私有配置指定固定 Docker socket、固定池名和镜像 digest。零预算保持不可执行，US 调度节点按稳定设备 UUID 禁止执行。受信root安装器与持久canary已实现，Brain仅准备pending目录记录；尚未现网部署，不能将生成配置当作通过验收。
+
+Linux 池证明采集器限定可信 SSH/root 验收入口和完整 systemd 宿主/VM，容器内 systemd 保守拒绝；核对固定 Docker socket 的完整容器身份、镜像、非 root 隔离参数、宿主 PID 的真实父 slice，再读取该池及可见祖先的 CPU/内存/PID 限额和可用量。宿主 boot、进程出生时间、namespace、挂载与池配置在采集前后复验；采集输出仍 execution=false，只有后续canary完成精确清理才签名；Brain验收仅允许准备pending授权，仍不开放执行。
+
+Linux pending 服务提供只读健康采样与认证 nonce 身份回执，绑定设备 UUID、固定修订、配置摘要和进程 boot；核心资源及所有执行入口保持拒绝，采样器自报状态不能授予执行。采样合并并发、请求有界，令牌只读私有安装文件；systemd 采集服务自身另限0.25核/256MiB/64进程，与任务池分离。尚未安装到现网。
+
+OpenClaw shim 每次物理启动使用新幂等键；Brain 仅对已开始RPC且持久通道closed、或明确exited/dead的旧代自动精确取消。清理回执未知继续占位，确认absent后保留原HOME与机器亲和创建下一代；不自动重放RPC，未开始RPC的closed及Worker崩溃遗留锁仍保守拒绝。
+
+OpenClaw 宿主业务工具名单绑定受保护 profile 及配置摘要；searchable/direct namespace 与消息回调保持原协议，宿主执行与派生代理入口仍拒绝。
+
+OpenClaw RPC 按固定合同区分无参数与对象参数；配置约束读取和退出登录保留 null，显式 null 不再冒充对象。
+
+聊天 app-server 与三类 Worker 执行器共用维护启动闸及同 boot；真实 create/start/attach 边界再次检查，维护回执包含聊天未清理实例和在途连接，未知 journal 拒签静默。
+聊天未绑定 HOME 的候选从有效执行目录读取，主力机最后尝试；新节点无需新增机器字面量，空目录不启动。
+
+
+执行者冒烟精确名单纳入504新增app-server-controller与app_server_run，继续核验471历史集合及502/504增量；专属控制器合同不交通用看门狗终止。
+
+Brain 镜像完整打包 Fleet Worker 共用运行模块；构建期及独立产物回归实际导入执行目录并读取部署策略。
+
+执行目录的既有回归显式登记测试设备与授权；文件系统替身保留真实节点策略读取，数据库权限及恢复断言继续使用真实 PostgreSQL。
+
+Worker维护暂停在本机三类runner与Docker最终副作用前执行；认证静默回执绑定nonce、同boot和活动版本，客户端断开不减在途计数，orchestrator真实子进程退出才归零。启动对账未确认或prepare潜在副作用后失败均拒签；候选工作区只保守占位，不自动清理。
+
+Mac Worker 版本探针只读固定 OrbStack bundle 的 CFBundleShortVersionString；不运行会初始化管理员目录的 orbctl version。Docker、镜像、自检容器与资源准入仍分别真实检查，版本不可读继续报 unavailable。
+
+Linux 首批资源观测提供 cgroup v1/v2 可见祖先、分数 CPU、内存剩余、PSI、事件计数与关键路径磁盘采样。Linux health 早返回，不执行 Mac 命令或创建探测容器；CPU/内存限额观测代表采样进程自身 cgroup；PSI 来自 /proc/pressure，逐项固定 scope=system，仅表示可见系统压力，不能当作任务池压力或宿主授权证明。namespace 根不证明宿主祖先可见。未验证 Docker 工作负载池时核心资源保持拒绝值，execution/pool_verified 固定 false；GPU 未核验标 unknown。标准 Mac 安装器完整打包解析器并可回滚。真实隔离容器 canary 验证0.5核/128MiB实际限额，仅证明自身观测，不开放 Linux 执行、systemd 接入或目录授权。
+
+
+CI趋势集成测试将北京自然日与滚动24小时设备窗口独立布置，覆盖陈旧、近期成功和无任务设备；生产巡检阈值不变。
+
+专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位；关闭事件在同一预约锁内重放，不能因锁争用丢失。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包 runner 与 RPC 所需模块，默认 profiles 为空，本次已接 Brain 持久整机预约与认证 Worker start/inspect/cancel，默认没有 app_server grant 或 HOME/profile 配置；已提供受控 OpenClaw RPC adapter，现网配置未切换，聊天尚未由此治理。
+专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位；关闭事件在同一预约锁内重放，不能因锁争用丢失。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包四模块，默认 profiles 为空，本次已接 Brain 持久整机预约与认证 Worker start/inspect/cancel，默认没有 app_server grant 或 HOME/profile 配置；尚未接 OpenClaw RPC adapter，现网聊天尚未由此治理。
+
+OpenClaw controller 使用独立 app_server 执行面、owner_kind 与 app_server_run 事件账，普通派发器不重派。受保护 HOME 配置绑定账号/仓库/profile digest；首次 M1/M4 优先、MMV 兜底，首次预约后机器亲和不可变。同 HOME 先取写锁，再取与 Harness/script 相同机器预算锁；每代独立 owner_key/intent/reservation，整机 exclusive_unclassified 占位。脚本 reaper 所有读写只处理 script owner。Worker HTTP 响应按块累计，超过 128KiB 立即取消读取并中止网络，响应体读取也受 deadline 约束；超时和断链只返回固定错误。内部 API 必须配置认证 token，客户端不能指定机器、身份、授权或配额；最终 start 再核当前目录精确 grant，撤销及换版拒绝启动。inspect/cancel 使用持久历史版本 endpoint；取消意图先落库，精确认证墓碑/缺失回执才释放，任务/turn/TTL 终态不释放。reconciler 只探查和续完已请求取消，不自动另起实例；旧 boot 且 journal 缺失时拒绝制造清理回执。
+
+受信 app-server profile 固定镜像 digest、非 root UID/GID、CPU/内存/PID/tmpfs 配额、显式隔离网络和两个受标签验证的 named volume；禁止宿主 HOME、凭据与 socket 挂载。HOME 卷须由受控初始化预建 `/home/runner/.codex` 并赋予 profile 用户写权限；runner 不创建或删除持久卷。真实离线 canary 经 runner 两次独立运行实例（不同 reservation，各 launch_generation=1）initialize 与共享 HOME marker 保留，不代表模型登录或线程恢复验证。日志驱动为 none；stdio 内容不进 journal，错误仅固定码。操作锁及未确认流/容器状态持续占位，后续控制面负责恢复。
+
+Janitor 新动作的CI冒烟使用十类执行者精确名单、471叠加502合法增量及只读任务白名单；真实PG路由验证默认停用且不触发清理。
+
+
+Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增量；healthz 只隔离真实依赖，不污染机群配置读取。
+
+## Brain 1.360.0 — 管理台三入口与模型配置变更验证
+
+- 主导航收拢成运行与诊断、AI 管理、机器资源，默认运行页并保留旧路由。
+- 单 Agent 模型配置按原值条件事务写入；数据库读回与事件留痕提交后更新缓存，前端核对实际配置和回执。
+- 保留降级配置；仅改单 Agent 供应商选路；切换或刷新配置使旧回执失效。
+
+## Brain 1.359.4 — 公司 KR 分析正式登记
+
+- 将已运行的公司 KR 分析登记至既有 G5、workflows、主干活动与 steps；关联真实 Run，并投影到现有 Notion 工作流与步骤库。正式经营指标口径与数字保持由主理人设置。
+
+## Brain 1.355.1 — 并发新增smoke入口生产隔离（原任务617259ae）
+
+- preview真实PG入口按实际DB_*连接先拒写再冻结环境；默认socket保持拒绝，显式本地隔离测试连接保留原PG验收。
+- Janitor只读请求禁读curl启动配置；新增私有本机回归证明请求方法和目标不被配置改写。
+
+## Brain 1.354.2 — 本地smoke生产写入护栏（原任务617259ae）
+
+- 默认拒绝真实写入；显式授权仍须验证本地Docker daemon、隔离容器、实际连接及健康身份，生产代理与未知目标保守拒绝。
+- 63个SQL候选逐项登记55写与8只读，Node PG和下游连接按实际优先级核验；curl与psql禁读启动配置，保留真实本机边界回归。
+- Map Manifest真实PG正例归专属测试Brain；Walking棘轮明确委托已合入的required owner，不执行且不冒充通过；保留全部主线业务与验收。
+
+## Brain 1.352.2 — preview 专属缓存受控回收
+
+- 仅回收带私有归属登记的 preview npm 缓存；writer/回收共锁、固定 GitHub 终态复验、24 小时冷却、删除前 inode 校验与真实磁盘回执。旧缓存不追认。
+- Brain 持久任务与 intent，远端固定鉴权接口；未确认操作只查询原回执，调度默认停用。新增 migration 502 约束专用任务类型及 intent 唯一性。
+- 保留前置 Harness 加权预约、Worker 本机 CPU/内存/磁盘/Docker 二次准入；不包含 OpenClaw 直聊、Linux 执行能力与动态授权。
+
+受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
+
+## Brain 1.353.10 — Harness 单任务容器硬限（12338dda）
+## Brain 1.353.8 — Harness 单任务容器硬限（12338dda）
+
+- Brain 角色预约与 Worker cgroups 共用 attempt-resource-policy：每基础槽 0.5 CPU、1 GiB、128 PID；轻档权重1、proposer权重2、generator/evaluator/judge权重4。fleet资源缓存物理槽由相同1GiB/.5CPU需求估算，替换原400MiB粗估；既有7/8/8上限不变，节点profile的最低6CPU/8GiB不当总预算。
+- 每个实际 Docker create/run 设置 CPU、内存、memory-swap和PID上限，memory-swap等于memory禁额外swap。Postgres固定占同一attempt总额中的0.25CPU/256MiB/32PID，runner扣减；轻档含PG时runner为0.25CPU/768MiB/96PID，不额外借预算。
+- 配额只从受信Worker节点与角色策略生成，忽略payload限额；缺失/未知profile或角色拒绝新容器。旧prepared/starting在新start前先持久化受信计划，再更新两个容器硬限；runner按持久精确容器ID启动。旧running仅探活/清理，不重新启动或追加预约。
+- 配额更新前inspect核对完整64位容器ID、attempt/worker/run或resource标签、固定镜像引用与Docker实际镜像ID；旧PG缺ID仅按精确归属解析一次，先持久再以ID更新。未知身份隔离占位，拒绝启动、凭据投递及自动清理；隔离写盘失败本进程仍保守保留；重启后cancel/reconcile/终态释放各自重新核验，失败零删除，PG和网络只按核验ID清理，明确不存在才幂等完成。缺失观察不覆盖已绑定container_id；后续解析与重启禁止降级为按名称认领替换容器。孤儿回收逐资源使用完整ID和独立归属核验，不借网络标签授权删除同名容器；新网络ID随PG持久化。创建响应丢失保留现场并报告cleanupUnconfirmed，Runner隔离工作区，不按名称回滚。安装器同步部署身份校验模块并验证失败回滚。
+- 真Docker canary以随机专属runner和PG验证总限额、runner OOM exit137及PG健康隔离；无provider调用，不挂宿主HOME/凭据/socket。CI永久运行。首批不开放Linux节点，不修改生产网络/schema；Linux采样、PSI及GPU准入仍属后续批次。
+
+## Brain 1.352.4 — 现有执行目录统一（阶段4a）
+
+- system_registry设备真身按UUID绑定execution_nodes；不可变execution_node_versions保留历史endpoint/profile；execution_grants按surface/provider/account/repo/profile精确授权。
+- 初次部署只导入旧三Mac的18个Harness账号组合与2个普通执行器组合，标legacy-v1/legacy_policy，不伪造boot或canary。重启不复活已撤销授权，不开放新增节点激活接口。
+- Brain启动先载目录，10秒刷新、30秒过期拒绝新增。预约与prepare/start持同机锁核DB当前授权；服务器持久化版本/grant，旧清理按原版本执行。metadata.executors仅期望配置，不能授予执行权限。
+- 普通M1 Codex、MMV普通Codex桥接组合缺少legacy授权时返回execution_legacy_grant_denied或路由execution_grant_denied；本机review/spec_review/code_review_gate与普通Docker分支缺少受信宿主/凭据绑定时返回execution_legacy_identity_required。均不改派，恢复须经后续受控能力验收登记，不能靠metadata或环境URL自行放行。
+- 受管脚本仍须SCRIPT_MANAGED_MACHINES、Worker受保护profile与本机资源准入；初次目录导入还需EXECUTION_LEGACY_SCRIPT_PROFILES显式列出允许profile。默认不增加脚本授权。
+- 恢复子任务同事务重核目录并持久化新身份；撤销后恢复不得创建child。旧script预约凭持久强身份使用legacy-v1首版endpoint清理，不依赖新增profile许可；旧Fleet未回执清理不依赖当前可派发目录。
+- 普通本机spawn、非kernel skill-relay与headed新启动缺少目录内宿主/凭据账号绑定时返回execution_legacy_identity_required；xian relay显式team3账号缺少对应legacy grant时返回execution_grant_denied。保留已有docker/tmux探活，不终止已有session、不借Harness授权或改派。
+- 安装器从getDeploymentNodeProfile读取受控部署基线；动态getNodeProfile专供Brain执行目录。Worker两仓白名单与Brain legacy repo scope同源。
+
+
+
+
+## Brain 1.350.3 — 脚本受管执行与共享预约
+
+- 容器脚本经共享机器预约、受认证 Worker 协议及精确清理回执执行；非 released 预约持续占位。
+- SCRIPT_MANAGED_MACHINES 仅在旧宿主脚本完成对账后启用；显式 profile 使用无宿主挂载容器，宿主运维脚本需另行兼容，未覆盖全部执行入口。
+- Worker 服务须显式设置 CECELIA_SCRIPT_PROFILES_FILE，指向服务账号或 root 所有、权限 0600 的配置；仅接受 legacy_host_scripts_reconciled=true 与 profile 内镜像 digest、非 root 用户、完整资源限额及显式 logMaxSizeBytes/logMaxFiles。日志轮转使用固定 local 驱动，限额纳入 profile digest，缺失拒绝启动。默认不启用，安装器不自动迁移旧宿主脚本或注入业务 profile。
+- journal 遗留操作锁不按年龄回收，script_operation_locked 保留预约并暴露运维阻断。
+
+受管脚本恢复按以下矩阵处理；所有任务状态写入均核对当前 run/reservation，取消或跨代任务只清理旧预约。
+
+| 任务 | 预约 | 认证 Worker 观测 | 处理 |
+| --- | --- | --- | --- |
+| queued / in_progress | reserved | 未送达 | 保留预约，交派发启动 |
+| queued / in_progress | launching | waiting_resources（含尚未 start 的容器） | 预约行锁下归队，不消耗执行重试 |
+| queued / in_progress | 非 released | running / restarting | 预约行锁下恢复 in_progress；等待终态 |
+| queued / in_progress | 非 released | created / unknown（启动中断） | 墓碑与精确清理确认后，按失败结算 |
+| queued / in_progress | 非 released | exited / cleaned + terminal | 认证清理释放后，原子 CAS 结算或重试 |
+| queued / in_progress | released | 已确认 terminal，结算未完成 | 继续扫描同 run/reservation，恢复结算；重试清除 run 后停止扫描 |
+| 任务终态或身份已换代 | 任意 | 任意 | 清理旧预约，不改当前任务 |
+
+cleanup_pending / blocked 预约继续清理；通信未知保留占位。预算释放与任务结算分别持久化，结算失败不得重新占回预算或漏扫。
+
+## Brain 1.349.3 — Harness 加权资源预约
+
+- 同机事务锁内按角色权重预约；未确认清理持续占位，恢复需先确认旧执行停止。
+- 历史恢复与清理 fixture 按真实容量、执行身份和事务语义验证，保留父终态并发约束。
+
+
+Worker 标准升级在预检前读取可信现役 plist 快照，保留既有地址、端口、令牌引用、路径与完整环境；预检和启动健康使用同一有效配置，私有快照及安装 plist 为0600，替换前复核旧配置指纹，失败保留事务回滚。
+
+机群统一资源预约与启动保护：Harness 按角色权重在同机事务锁内预约；资源未知、过期、并发不足均拒绝新增执行；未确认精确清理的执行继续占位。Worker 在 prepare/start 实际副作用前复验本机 CPU、内存与执行目录磁盘。安装保护保留 profile 至少10GiB可用余量和可信采样，高磁盘占用允许升级；新增受管 Harness 仍执行原85%磁盘压力门槛。
+
+## Brain 1.353.4 — Walking真实CI恢复验收（原任务617259ae）
+
+- Walking仅显式授权且实际checkpointer URI与安全测试目标一致才写；专用CI运行真实Docker、回调与PG正例，real-env RunAll 明确委托而不冒充通过。
+- 狭窄CI重启控制以每进程随机令牌为屏障；回调有界重试，真实PG interrupt跨同容器重启恢复，同线程完成事件恰一次，总预算260秒。
+- 生产默认回调地址与通用callback幂等策略保持；生产或未知重启控制在checkpoint或Docker前拒绝，无通用执行权限扩展。
+
+## Brain 1.353.2 — 公司经营KR分析数据与执行指令分离
+
+公司分析任务仅以固定参数路由到专用分析员；完整KR快照在OpenClaw执行器构造提示时传入，避免指标名称和证据触发手机操作路由。既有手机判定与正式版本复验保持。
+
+## Brain 1.352.1 — 公司经营KR人工正式值与AI独立建议
+
+正式值由Notion工作面回灌；机器观察与建议独立存储。Brain统一触发每日及正式变更分析，OpenClaw受限分析员返回绑定快照的建议，可信收割校验、任务留痕并投影AI栏。
+
+## Brain 1.350.4 — 节点接入与受控执行回执
+
+- `/machines` 接入表单提供进度、更正与幂等重试；受管主力机执行固定身份SSH安装、连续健康确认后登记台账。新节点只监控，`executors=[]`且执行能力为false，入执行池另需验收。
+- 运行机须部署 `scripts/ops/node-onboarding.mjs` 及相邻模块，并有Node、Python3、OpenSSH、已授权1Password CLI；macOS需现有GUI会话，非root Linux需现有systemd linger。不改网络或删业务文件。
+- 已认领有头会话复用现有探活合同，未知保留运行；tmux名称使用argv。
+- Janitor固定动作显式启用后才执行；专属连接互斥执行与配置，异常持久固定错误码，不确定running阻止重跑，锁响应不明及解锁失败销毁连接。生产动作注册表保持为空。
+- 本批没有migration501，不包含Linux执行器、全机自动清理或动态执行资格。
+
+
+## 1.350.1
+
+### 机群资源报告可信度与硬零派单保护（任务 de1ff21f）
+
+- Worker资源缓存校验机器身份、协议、原始采样时间及六项有限资源数值；所有容量读取按原始样本时效拒绝陈旧数据，返回可诊断拒绝原因。
+- 西安Codex节点均未知或离线时容量为零；资源容量归零立即停止新增派单，恢复继续逐步增长。
+- 本交付不改变运行中任务，不替代机器总预算原子预留或本地启动闸。
+
+## 1.348.20
+
+- 中文 Notion 截止编辑独立同步 `due_at`，只改结束时间保留设备忙与失败重试退避；任务派走后的改期不覆盖运行中任务。
+- 补写设备信息仅恢复原退回任务，重新解析真身台账；状态与事件同事务落账，失败保持原状态。
+- 页面作者缺少类型时，限时只读查询 Notion 用户并核对同一 UUID；仅确认的人类编辑可恢复设备退回，机器人、未知身份或查询失败保持原状态，两次读页分别确认。
+- 全景接口异步并行探测进程与容器，超时降级并终止子进程，健康请求不被同步命令堵塞。
+- CI 收口拒绝 cancelled，串行真实 smoke 带单脚本硬期限；超时仍判失败。
+- 手机台账入口按序列号回灌 Notion 人管名称、归属及账号；逐字段内容基线保护 Brain 后续修改，覆盖前值留事件，技术映射与在线镜子不变。
+- 新调度任务 `phone-registry-sync`：30 分钟经 MMV 向 M1/M4 同代下发台账对照表，保留实测尺寸；每日仅在设备任务空闲且获得锁后核验当前账号，错号提醒，不切号或发消息。
+
+
+## Brain 1.348.22 — 交办台真实任务回执（任务 5c8a1467）
+
+- 新增 task-intake：模型提供候选，程序核验原话证据、仓库和地图，再复用原生任务路由；按租户和来源幂等，同事务保存任务与路由回执。
+- 交办台区分交给 AI 办和保存记录，支持澄清、断线刷新重试、真实状态及迟到结果；系统补记不计为执行证据。四组导航保留管理能力和旧记录入口。
+- 永久回归涵盖组件、构建版浏览器和真实 PostgreSQL 事务；测试限定隔离数据库。生产执行仍依赖可用模型与执行器，接口拒绝冒充已接单。
+
+## 1.283.0
+
+### 运行舱驾驶舱化：Notion 双向同步 + 流程活性告警
+
+**背景**：业务流程停跑 20.4 小时无人察觉；Notion 运行舱四库停更两天。
+
+- **推送重新接电**：推送链（`runNotionPushSync`→`pushOpsGraph`→workflows/runs）代码一直完好，但唯一入口 `legacy-notion-push-scheduler` 无人 import 且需 `NOTION_LEGACY_PUSH_ENABLED=true`，等于从不执行。新增 `runOpsNotionPush` 只把 ops 这段接进现代调度层（不启用 legacy 整链，避免连带推 8 条已停用投影）
+- **流程活性告警**：`ops-liveness.js` 按各流程近 30 天中位间隔算基线（黄 5 倍 / 红 20 倍），高频流程有绝对下限（黄 5 分钟 / 红 15 分钟）防过敏，低频有 30 天上限防永不报；不足 10 次判 cold 不告警。看板显示 🟢正常/🟡放缓/🔴失联/⚪数据不足 + 「停了 20.4 小时」
+- **字段分区双向**：机器列 Brain→Notion 单向覆盖，人工列（归属身份/DisCo 人工档位/优先级关注）Notion→Brain 单向读回，两方向各管各的列不打架；`buildManualUpdateSql` 走列白名单+表白名单
+- **停用意图直接生效**（主理人拍板）：Notion 标停用 → 真调 n8n。因不可逆强制幂等（意图与现状一致不动）、留痕（`prev_active`/`enable_intent_at`）、失败可见（`enable_error` 落库，看板显红不静默）、失败不无限重试
+
+迁移 443（活性 6 列 + 人工列 + 增量游标表）。新增 smoke `ops-cockpit-sync-smoke.sh`（已 proven-to-fire）。
+
+## 1.283.1
+
+### Notion 库缺列补全 + Skills 库纳管（驾驶舱真正可用）
+
+**事故**：上一刀（#5238）加了 `Liveness`/`SilentFor` 两列，但 Notion 库里没有这两个属性，推送全部 400 `is not a property that exists`，被 `upsertOpsRows` 的逐行 catch 吞掉——看板静默停更。这是 09-06 已记过一次的坑（「建库脚本只在新建时加属性，复用已有库须单独 PATCH 补列」）第二次复发。
+
+- **列定义集中到 `ops-notion-schema.js`**：四库列写一处，`diffMissingProps` 幂等算差集，`ensureProps` 缺啥补啥、已有的不动（免得 PATCH 覆盖人手调过的列配置）
+- **Skills 库纳管**：此前它只存在于 Notion、19 条 `notion_id` 是一次性手动灌的，仓库里没有任何代码维护——与 Notion 停更同一类病。现在建库脚本纳管并写进 kv，回读能找到它（你要的 DisCo 档位人工覆盖就在这个库）
+- **真跑补列**：图谱库 +8（Type/Schedule/Repeat 三个旧坑 + 人工列）、Workflows +7（活性两列 + 人工列 + Enabled）、Skills +14。二次运行全部「列齐全，跳过」，幂等确认
+- **新增一致性闸** `ops-notion-schema-smoke.sh`：推送要发的列必须在库定义里、回读认的人工列必须在库定义里、人工列绝不能被推送发出去。两种事故形态均已 proven-to-fire
+
+生产验证：推送恢复，Notion 上现显示「🔴 失联 / 停了 3.6 天」。
+
+## 1.283.2
+
+### Skills 库推送补全（驾驶舱最后一块）
+
+#5240 把 Skills 库纳管进了建库脚本并补了 14 列，但**推送函数没写**——`pushOpsGraph` 里只有 agents/workflows/runs。结果 Skills 库继续停在手动灌入的旧快照，新加的 14 列全空，主理人要的「DisCo 档位人工覆盖」没地方显示。
+
+- 新增 `buildOpsSkillNotionProperties` + `pushOpsSkills`，接进 `pushOpsGraph`
+- 推档位的同时**必须推判定依据**（`StageReason`）——只给档位不给理由，人没法判断该不该推翻它
+- 无运行数据不发假 0（19 个 skill 里 17 个还没有阶段归因数据）；探针未知（null）不发 checkbox，因为 `false` 会被误读成「已确认没有探针」
+- 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
+
+**一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.348.19 — 测试隔离与 Claude Bridge 进程回收
+
+- 测试、预览、评估及测试库实例禁用后台自动化、真实模型调用和执行派发；生产接口行为保留。
+- 账号不可用即停；Bridge 两入口共用有界进程生命周期，默认并发2/最多4，超时及断连整组TERM后KILL，回收确认前不释放槽位。
+- with-test-brain.mjs 通过专属IPC确认服务就绪并按真实进程组收尾；避免按环境变量字符串匹配PID的错误。
+- 永久回归覆盖实际入口、部署复制产物、被忽略TERM的Node孙进程、测试成功/失败/启动超时清理；不调用真实模型。
+- 被动实例的健康状态明确区别后台停用与故障；Observer 冒烟验证持续停用，Alertness 遗留表改由显式迁移预备。
+
+## 经营 KR 纳入 Brain 与列级工作面（任务 02148cef，版本 1.349.1）
+
+- 用户决定 d5cb2fb1：原公司 8 页及 3 Goal 以显式 source page ID 幂等入 Brain；38 系统 KR 与 8 公司 KR 共 46，既有独立库镜全量。Area/未知 Vision 无来源关系保持空。
+- 原 Start/Current/Target decimal、原三位 fraction 公式与非 clamp 比值存 metadata；兼容 numeric/int 列不作为公司公式输入。历史值与人类 Current 主张标未验证，KR3.1 既有四项快照不能声称连续七天。
+- 公司 GET、窄 import/observations 接入现有 OKR router 并限流。观察必须关联任务、actor、事实、来源与幂等键，PG 微秒版本 CAS；指标与任务证据同事务。
+- 原公司库 Target/Start 值级入口，Current 以导入/已投影基线区分人类改动和待推机算；人类改动先入 Brain 留前后值事件，缺基线冲突留账停推。出站只写 Current，不写 Target/Start、公式及关系；独立镜保存 Brain ID/Source/更新时间，8/46 分别对账。
+- Current 外部写入前事务持久化待推机器尝试及 Notion writer 身份，响应超时/SQL 回执丢失后核对现场恢复基线，保留 Brain 较新观察；未确认旧基线或页面作者变化无法归因则留账停推，多进程不得覆盖未决尝试。Notion 无列级作者，值及页面作者一致只证明与机器尝试一致，不能绝对识别所有真人编辑。固定 Goal 页需仍归属于原 Goals 库，移库拒绝导入。
+- 公司投影整轮以 PG 会话级 advisory 锁串行：取得锁后才读取 Notion snapshot，覆盖 Target/Current 回读到外部写及回执确认；第二个独立连接/进程拿不到锁时零远端读取。成功和异常均 finally 解锁，解锁失败关闭连接，避免旧快照把另一进程新确认的指标当真人改动回滚。
+- callback/execution/tasks 三 writer、projects 重算、verifier、旧 KR3 批写、通用 action/PATCH 保护公司指标和来源身份；问题回答仅写 pending_questions，避免吞掉并发观察。OPC 两脚本纳入 scripts/ops 真身，保留原算法/六路径/七份 schedule，改为 Brain 观察及 Brain 读取。
+- 真实测试库事务验收 8+3 幂等、46 链接、原值精度、任务生命周期/非合成交接、人类 Current/Target、微秒 CAS 及并发元数据保留；测试结束回滚，无 schema 变更。
+
+## Brain 1.348.14 — golden_path 退役应急只读与调用观测（任务 6c2e8c71）
+
+- 旧运行回执与旧步骤决策写入口永久 410；`GOLDEN_PATH_LEGACY_READ=1` 仅允许五条旧读接口，不能写回执或推进 feature。
+- 旧接口命中通过现有 event-bus 写 `cecelia_events`，事件 `golden_path_legacy_access`；记录接口模板、方法、读写类型和拒绝/应急读放行。正文、查询参数、实体 ID 和凭据不入事件；事件失败沿用 event-bus 告警语义，退役闸仍生效。
+- 一周观察以本补丁生产上线时刻为起点，验收流量单独留证；原第一刀未记录命中，不能据此前日志无命中判定观察通过。旧表保留，第二刀及两条活链承接仍依原交接。
+
+经营 KR 只读 smoke 通过真实 GET 复核未导入空集或完整8条显式来源、raw值、fraction与观察版本；永久 HTTP 脚本回归拒绝漏条和指标失真。
+
+## Brain 1.348.13 — KR 重算统一项目口径（任务 7aeb81a6）
+
+- 重算复用 project 等权聚合，写 progress 与 projects_v1 来源；目标值 NULL 或非有限时 current_value 保持 NULL。
+- 无 project 保留现有进度；并发写入条件校验并重新读取，人类更新优先。
+- 永久接口及真库回归覆盖 NaN 清理、等权换算、幂等和人类并发更新。
+
+## Brain 1.348.12 — 归位器永远判新建修复（任务 912c1143，链 2afa6d69 第 6 棒）
+
+- 病根（2026-10-01 生产 be95ec9c 实测）：`POST /api/brain/projects/locate` 本项目排第一却 score=0.145<0.55 判 create；口语一句话前三全是 inactive 的「Test Project」。三因：embedding 对 200+ 候选逐个调用套 800ms 总超时必回退关键词；关键词用 Jaccard（交集/并集）被长候选文本稀释，又与语义共用 0.55 阈值；候选含 176 条 okr_projects 搬家带来的 inactive 历史项目。
+- 修法：关键词分改 query 覆盖率（交集/query 有效 token 数），过滤单字与含口语虚词的 bigram；关键词阈值独立 `PROJECT_LOCATE_KEYWORD_THRESHOLD` 默认 0.5，语义仍 `PROJECT_LOCATE_THRESHOLD` 0.55，响应 threshold 随打分方式返回；embedding 只对关键词预筛前 20 名调用；候选排除 inactive；reason 标签改 `keyword_bigram_coverage`。
+- 回归测试：project-locate.test.js 5 条（生产原句 attach / 噪音不压过真项目 / 阈值分开 / embedding 预筛 / 无关句仍低分）+ 真库集成测试长描述判 attach 与 inactive 不参与。
+
+## Brain 1.348.11 — KR 进度按 projects/tasks 聚合（接力棒链 2afa6d69 棒5，决策 ee4842a6/3feeae3e）
+
+- 新增 `project-progress.js`：project 进度 = 名下未取消任务（排除 `task_type='project'`、排除 `status='cancelled'`）中 `completed`/`completed_no_pr` 的占比，无任务时按 `project.status` 映射（`completed`→100，其它→0）；KR 进度 = 名下 `projects`（排除 `cancelled`/`archived`）的 project 进度算术平均（等权）
+- `kr-progress.js` 的 `updateKrProgress`/`syncAllKrProgress` 改为调用上述聚合，写 `key_results.progress` + `metadata.progress_source='projects_v1'`；KR 名下无 project 时不覆盖现值
+- `kr-completion.js`、`kr-convergence.js` 的 Project 计数改读真身表 `projects`（原 `okr_projects` 已被棒4 migration 499 冻结）
+- `pr-callback-handler.js` 的 project_id→KR 兜底查找改直读 `projects.kr_id`，不再经已退役的 `okr_initiatives → okr_scopes → okr_projects` 链路
+- `routes/okr-hierarchy.js`：`POST /key-results/:id/recalculate-progress` 改读真身表 `projects`/`tasks`；`GET /current` 每个 KR 下新增 `projects: [{id,name,status,progress,task_total,task_done}]`
+- 遗留：us-vps 上 OpenClaw cron（`/opt/openclaw/opc-*.py`）仍直写 Notion Key Results 库进度列，Brain 侧当前没有对应的 KR→Notion 推送通道（`notion-push-sync.js` 未见 `pushKeyResults`），两者不冲突但也不同步，待后续棒处理
+
+## Brain 1.348.10 — scope/initiative 层退役（接力棒链 2afa6d69 棒4，决策 ee4842a6/3feeae3e）
+
+- `okr_scopes` / `okr_initiatives` / `okr_projects` 冻结写入（migration 499：BEFORE INSERT OR UPDATE trigger 统一抛 `layer_retired`，DELETE 不受影响，表与历史数据原样保留只读）；重放一次 `okr_projects → projects` 搬家接住迁移 497 上线后到本迁移之间的新增行
+- `/api/brain/okr/scopes`、`/api/brain/okr/initiatives` 写操作一律 410 `layer_retired`；`/api/brain/okr/projects` 改为直接复用 `routes/task-projects.js` 的 router，与 `/api/brain/projects` 同源同表读写
+- `actions.js` 的 `createInitiative`/`createScope` 恒返回 `layer_retired`（不再查库）；`createProject` 改写入真身表 `projects`（顺手修了 `custom_props` 传 `null` 撞 `projects` 表 `NOT NULL DEFAULT '{}'` 约束的真 bug）；`routes/actions.js` 的 `/action/create-scope`、`/action/create-initiative` 同步改 410
+- `lib/task-type-registry.js` 新增 `LAYER_RETIRED_TASK_TYPES`（`scope_plan`/`initiative_plan`/`project_plan`/`okr_scope_plan`/`okr_initiative_plan`/`okr_project_plan`，registry 行本身保留不删）；`actions.js createTask` 与 `routes/task-tasks.js POST /tasks` 两个建单入口统一拦截，返回 `layer_retired`
+- `thalamus.js` `ACTION_WHITELIST` 移除 `okr_initiative_plan`/`okr_scope_plan`/`okr_project_plan`（48 → 45）
+- tick 热路径清空为 no-op（验收标准：一轮 tick 不产生任何对 `okr_scopes`/`okr_initiatives` 的查询）：`initiative-closer.js`、`okr-closer.js`、`decomposition-checker.js` 的 Check B（KR 状态流转）、`okr-initiative-sync.js`、`kr-progress.js`
+- `executor.js` 的 `resolveRepoPath`、`intent.js` 的 `parseAndCreate`、`daily-review-scheduler.js` 的 `getActiveRepoPaths` 改读写真身表 `projects`，不再碰 `okr_scopes`/`okr_initiatives`
+
+## Brain 1.348.9 — Project 归位器（接力棒链 2afa6d69 棒3，任务 8a40825a）
+
+- 新增 `POST /api/brain/projects/locate`（`routes/project-locate-routes.js`）：有头会话里主理人随口说"去做 X"，判断 X 该挂哪个现存 `project`（`suggestion=attach`）还是该新开一个（`suggestion=create`）；打分优先复用 `openai-client.js` 的 embedding（800ms 超时整体回退，不部分混排），无 key/超时/失败时回退中文 bigram 关键词重叠（Jaccard），打分引擎独立成 `project-locate.js`；`attach` 阈值默认 0.55，env `PROJECT_LOCATE_THRESHOLD` 可调
+- 新增 `POST /api/brain/projects/:id/tasks`：project 下第 N 棒一步建单，自动填 `project_id` / `sequence_no`（该 project 下 max+1）/ `payload.multi_task=true` / `payload.depends_on`（默认依赖该 project 下最后一个非终态任务，显式传 `depends_on: []` 声明并行）；内部走 `createRoutedTask` 同一条建单路径（`POST /tasks` 也调它），经过建单闸（`project-root-gate.js`）与依赖单一写口（`task-dependencies.js`），不绕过
+- `task-projects.js` 挂载新路由（`router.use('/', projectLocateRoutes)`，必须在 `/:id` 之前），本体保持在 500 行拆分线内，新逻辑落单独文件 `project-locate-routes.js`
+
+## Brain 1.348.8 — Project brief 动态文档（接力棒链 2afa6d69 棒2，决策 ee4842a6/3feeae3e）
+
+- `projects.brief` jsonb（棒1 已建列）升级为随每棒交棒改写的活文档：`{goal, status, facts, open_questions, changelog}`，纯函数变换在新模块 `lib/project-brief.js`（`normalizeBrief` / `applyBriefDelta` / `renderBriefMarkdown` / `formatBriefForPrompt`）
+- 新协议 `handoff.brief_delta`（`buildHandoff` 保留并清洗）：`goal`/`status`/`add_facts`/`open_questions`/`close_questions`/`add_steps`/`cancel_steps`/`reorder`，任务终态时（`relay-baton.js relayOnComplete`，以及 `handoff.js saveHandoff` 对已 completed 任务补写 handoff 的同款分支）自动应用到所属 `projects.brief`（新模块 `lib/project-brief-apply.js`）
+- 权限分档（决策 105a5868）：改 `goal` 或一次 `cancel_steps` ≥3 条 → 不直接生效，写 `pending_actions`（`action_type='project_brief_decision'`，新 `actionHandlers` 处理器）+ Bark，其余字段照常直接生效并留痕 changelog
+- `add_steps` 复用 `relay-baton.js` 落棒逻辑（继承 `project_id`，`sequence_no=max+1`）；`cancel_steps` 只砍同项目下 `status='queued'` 的任务（与 `DELETE /tasks/:id` 同一套软删状态机）；`reorder` 只改同项目下非终态任务的 `sequence_no`
+- 派发链上下文（`handoff.js formatChainForPrompt`）在 `root.kind='project'` 时用 `formatBriefForPrompt` 替代原来仅 600 字 description 摘要，brief 为空壳时退回旧逻辑
+- Notion Projects 页正文（`notion-relay-projection.js`）开头新增目标/现状/已知事实/未决问题/变更日志（最近10条）渲染，指纹随 brief 变化
+- 新增 `PATCH /api/brain/projects/:id/brief`（`task-projects.js`）：主会话直接改 brief，走同一套 `applyProjectBriefDelta` 与 A 档规则
+- `packages/engine/hooks/stop.sh` 接力棒闸提示文案追加可选 `brief_delta` 示例（纯文案，不改判定逻辑，不涉及 engine 版本五件套）
+
+## Brain 1.348.7 — golden_path 旧表退役第一刀：写路径 410、读路径默认 410（GOLDEN_PATH_LEGACY_READ=1 应急放行）、promote/line-context/ledger 停读停写（任务 7d312fd8，决策 3e867cad / f425e3fd）
+
+- 新 `lib/golden-path-legacy.js`：`legacyReadEnabled()`（只认字面 `1`）/ `sendGoldenPathRetired()` / `guardLegacyRead()`；410 体带 `hint` 指向 `GET /api/brain/steps`（步骤真身）与 `journey_step_links` + `step_probes`（格子/探针），读路径附 `legacy_read_env`，写路径不给放行口
+- `routes/abilities.js`：`POST /golden_path`、`PATCH /golden_path/:id` 写路径永久 410（路由体删除）；`GET /golden_path`、`GET /golden_path/canvas`、`POST /golden_path/:id/run-result`、`GET /golden_path/:id/decisions`、`GET /tasks/:id/golden-path-decisions`、`GET /journeys/:journey_id/golden-paths` 六条读路由默认 410，`GOLDEN_PATH_LEGACY_READ=1` 放行；`POST /decisions` 的 `target_type=golden_path` 默认 410（退役表上不再挂新决策），其他 target_type 不受影响
+- `harness-promote-regression.js`：① golden_path 覆盖写（DELETE+INSERT 事务）整段删除，不再 import db 池；`dbOnly:true`（callback T2 形态）直接返回 `reason=golden_path_retired` 零副作用；② yaml 冻结 + auto-PR 路径原样保留，返回值 `dbWritten` 恒 false
+- `harness-line-context.js`：step 级 invariant 路与累积 FR 路只在应急放行窗口下 JOIN 旧表，默认三参齐全只发 3 路（journey_feature / global+area / ledger），`cumulativeFR=[]`
+- `ledger-hygiene.js`：m1「FR沉淀率」默认 `enabled=false, retired='golden_path'`、不查旧表、不进棘轮（生产实证：旧表最后一次写入 2026-08-14，近 7 天 6 个 merged run 全被记成欠账，指标早已失真）；应急窗口下沿用旧口径
+- 未动：`golden_paths`（GP 提案流水线：`routes/golden-paths.js` / `golden-path-contracts.js` / `direction-proposer.js` / `gp-shelf-life.js` / `capture-triage.js` / `battle-report.js`）与 `golden_path_contract_versions`（合同签版）是另一条活链，`impact-contract/assertion-receipts.js` 的 JOIN 属禁区，等产品拍板再收；不 RENAME 不 DROP 不建迁移，`map/state-resolver.js`、`lib/map-state-resolver.js` 不碰
+- 生产快照（收刀前）：golden_path 134 行 / 29 个 owner_task，最后写入 2026-08-14；golden_path_run_receipts 0 行（run-result 回写从未在生产触发）；decisions target_type=golden_path 1 条（2026-07-11）
+- 回归：`lib/__tests__/golden-path-legacy.test.js`（8 例）+ abilities/canvas 路由 410 用例 + promote/line-context/ledger 停读停写用例 + `promote-regression.integration.test.js` 改钉「merged 终态零写入、line-context 默认不读旧表」
+
+## Brain 1.348.6 — Projects 真身表升格（接力棒链 2afa6d69 棒1，决策 ee4842a6/3feeae3e）
+
+- GTD 轴只保留四级 Objective → Key Result → Project → Task；Project 从 `tasks.task_type='project'` 虚拟根升格为独立的 `projects` 表（迁移 495，186 曾把它整表 DROP，本次重建并把 `tasks.project_id` 外键重新接上）
+- `okr_projects` 数据原样搬进 `projects`（同 id）；历史 `task_type='project'` 根任务迁成 `projects` 行并回填子任务 `tasks.project_id`（`okr_projects` 表本身保留不动，28 个直接读它的文件的退役是后续棒的工作）
+- 链解析（`handoff.js getChainContext` / `GET /tasks/:id/chain`）、建单闸（`project-root-gate.js`）、接力棒接棒（`relay-baton.js materializeNextSteps`）新增 `project_id` 快路径，无 `project_id` 的旧链走原有 `parent_task_id` 祖先链逻辑不受影响
+- `/api/brain/projects`（`task-projects.js`）与 `/api/brain/okr/projects`（`okr-hierarchy.js` mountCrud）改为读写同一张 `projects` 表；`task-projects.js` 新增 `POST /`（`kr_id` 若给必须是真实 `key_results`）
+- Notion「Projects」库投影（`notion-relay-projection.js`）数据源从 `tasks(task_type='project')` 改为 `projects` 表，Notion 页 id / 指纹挪进 `projects.notion_props`
+
+## Brain 1.348.4 — 地图翻色扩到 step/enabler 级格子：探针 target 回执落子格 + 活动格向上汇总（任务 45e5db42，决策 3e867cad）
+
+- `lib/business-probe-judge.js`：查探针时带出 `step_probes.target_type/target_id` 与活动格 `step_id`；`target_type=step|enabler` 的探针经一次批量查询解析到 journey 下对应的 `step:<key>` / `enabler:<key>` 格（`cell_level` + `step_id_ref`/`enabler_id` 匹配），回执 `journeyStepLinkId/assertionRevision` 与 `cell_status` 翻色都落子格；journey 没生成对应子格 → 退回活动格，判定不丢。
+- 活动格颜色 = 自身探针本轮状态 ∪ 其下全部 step/enabler 格当前颜色的最坏值（red > pending > green，gray 不参与）；先翻子格再汇总活动格，子格上一轮留下的红会拖红活动直到该子格被重判。生产 `coll_rescan_rate`（归位兜底重搜率，迁移 496 已挂 step `keyword_acquisition.collection.return_to_results`）从此翻 `step:…return_to_results` 格并把「采集」活动一起翻色。
+- 纯活动级探针（target_type=activity / 老行）不发子格解析查询，行为与从前一致；`state-resolver` 不改（总图页读 `journey_step_links.cell_status`）。
+- 新 smoke `cell-color-step-level-smoke.sh`（mock pool 不连库：step 翻色 / 活动汇总 / 退回活动格 / 纯活动级不查子格）登记 allowlist；单测 6 条新用例（红→绿）。
+
+## Brain 1.348.3 — 外部 run 镜像类型改从注册表派生（修 #5729 触发的 task-type-registry 守卫红）
+
+- `lib/external-mirror-liveness.js`：`EXTERNAL_RUN_MIRROR_*_TASK_TYPES` 从 TASK_TYPE_REGISTRY 派生（workflow+external+watchdog=none → workflow_run；surface=device → device_job），判龄 SQL IN 列表由派生集合拼出，不再手抄类型名（铁律 76cb816c）；单测钉合集恰为两者，注册表漂移即红
+- `task-type-registry.guard.test.js` 豁免清单 executor.js `_TASK_ROUTES` 行号 2330→2339（#5729 在其上方加了 import 与账本声明）
+- 补 #5729 的 handoff 镜像 `docs/handoffs/202609302240-0004aceb.md`
+
+## Brain 1.348.2 — 外部 run 镜像不再被 liveness 探针零证据回队（任务 0004aceb，决策 3c98fb36 阶段1）
+
+- `executor.probeTaskLiveness`：workflow_run / device_job（payload.source=cron）镜像单豁免 `no_spawn_evidence` 安全回队（09-30 实证 1e84cbad 五次被 watchdog_headed_requeue 回队并清 started_at，与 wall-report 阶段回执振荡；lost-deadline 4.5h 永远算不到、commander-watchdog 起跑判据被重置）
+- 活性改看镜像心跳，年龄在 SQL 内算（`lib/external-mirror-liveness.js` EXTERNAL_ACTIVITY_AGE_SQL：task_runs 阶段回执 / payload.commander_heartbeat_at / executed_at / updated_at / started_at 最新者；tasks.*_at 是无时区列，JS 解析会漂 8 小时）；超 30 分钟（env EXTERNAL_HEARTBEAT_STALE_MS）只记 task_events `external_liveness_stale`（每陈旧窗口一次），不回队、不清 started_at，出路归 workflow-run-lost-deadline / commander-watchdog
+- 既有行为不动：领单器 device_job（非 cron）认领超龄仍走 0923 回队；headed_manual dev 任务零证据仍安全回队（铁律 9f14c074）
+- 回归：`external-run-mirror-liveness.test.js`（6 例）+ `external-mirror-liveness.pg.integration.test.js`（真库钉判龄 SQL 5 例）
+
+## Brain 1.348.1 — 价值流建模⑤：探针挂点 target + 格子扩到 step/enabler 级 + GET /steps、/enablers + golden_path* 退役标注（决策 3e867cad 第 11/13 张表 / f425e3fd）
+
+- 迁移 496：`step_probes` 加 `target_type`(activity|step|enabler) / `target_id`，`journey_step_link_id` 保留（活动格照绑，翻色仍活动级）；既有 18 条探针回填 target_type=activity、target_id=活动格的 step_id，`coll_rescan_rate`（兜底重搜触发率）改挂 step `keyword_acquisition.collection.return_to_results`。任务 741cdf5a。
+- `journey_step_links` 三级格子：`cell_level`(默认 activity) / `step_id_ref`→steps / `enabler_id`→enablers；按 `steps` 给智能获客价值流 44 个 step 各生成一格 `step:<key>`（gray，挂所属活动），按 `enabler_calls` 给每个被调用的 enabler 生成一格 `enabler:<key>`（挂最早调用它的活动）；ON CONFLICT DO NOTHING 重放不覆盖颜色。state-resolver 翻色逻辑不变（step 级翻色留后续）。
+- 探针规范 `step-probe-spec.js` 认可选 `target: {type, key}`（缺省不进 spec、既有哈希不变）；`POST /api/brain/step-probes` 持久化 `target_type`/`target_id`（成对校验；不给则库侧缺省 activity + 格子 step_id）；`scripts/sync-step-probes.mjs` 经 `GET /steps?key=` / `GET /enablers?key=` 解析 target_id，查不到报错退出，journey 下已有 `step:<key>` / `enabler:<key>` 格子时额外绑 assertion_ref。
+- 新只读 API `GET /api/brain/steps`（key / activity_id / active=all）与 `GET /api/brain/enablers`（key / active=all）。
+- golden_path / golden_paths / golden_path_contract_versions：仓库仍有 74 处活引用（harness-judge / handoff / acceptance / abilities / golden-paths 路由等），本迁移不 RENAME 不 DROP 一行不动，只挂退役注释；Notion 投影无新表/视图不登记。
+- 新 smoke `probe-targets-cells-smoke.sh`（迁移/回滚结构 + 接线 + 可选真库），回滚 `rollback/496_probe_targets_cells_levels.down.sql`。
+
+## Brain 1.348.0 — 价值流建模④：spans 表 + task_runs.workflow_id + activity_flow_metrics 视图 + POST/GET /api/brain/spans（迁移 495，任务 ec643d60，决策 3e867cad 第 9-10 张表）
+
+- 新表 `spans`：一次 run 里一个 Activity / Step / Enabler 的一次执行；三个目标至少挂一个（CHECK）；`executor_kind` code|agent|human、`outcome` pass|fail|skipped|unknown；`duration_ms` 生成列；幂等唯一键 `(run_id, COALESCE(step_id, activity_id, enabler_id), started_at)` 让执行机重发不产生重复行
+- `task_runs.workflow_id`（可空，不回填）与 `spans.workflow_id` 同一根轴
+- 视图 `activity_flow_metrics`：近 7 天按 Backbone Activity 汇总 runs / span_count / p50 / p95 / avg_wait_ms / fallback_rate / first_pass_yield(=1−fallback_rate) / pass_rate / tokens_total / cost_usd_total
+- `POST /api/brain/spans`（内网/回环鉴权，单条或数组，逐条 ON CONFLICT DO NOTHING，回报 inserted/skipped/count/ids）、`GET /api/brain/spans?run_id=&activity_id=`
+- 测试：结构断言 + 真库集成（幂等 / CHECK / 幂等键 / 视图 4 条 span 2 fallback→0.5 / 回滚）+ 路由 mock + smoke `vs-model-spans-smoke.sh`
+
+## Brain 1.347.0 — 价值流建模③：workflows 真表 + 骨干活动挂 workflow/executor/enabler + ops_workflows.workflow_id（决策 3e867cad 第 4-5 张表 / 752b7166）
+
+- 迁移 494：新表 `workflows`（Capability × 渠道/形态的可执行链条；`capability_id` 触发器守卫只允许有父的 journey）；`journey_steps` 加 `workflow_id` / `executor_kind`(code|agent|human) / `enabler_id`（Call Activity），不删 `journey_id`；`backbone_activities` 视图带出 capability_key / activity_key 与三列；`ops_workflows.workflow_id`（n8n 画布降为 Workflow 的运行时实现，覆盖 09-07 定义）。词表 f425e3fd，任务 ce41cd59。
+- 回填（幂等）：智能获客价值流下建 capability「关键词获客」「对标获客」与 workflow「抖音·关键词获客」「抖音·对标获客」；8 个 3.0 骨干活动挂抖音·关键词获客，executor_kind 判定/评分=agent 其余=code；enabler 种子 `device_lock` / `account_selfcheck`，预检、收尾 enabler_id=device_lock，enabler_calls 三条。
+- 新只读 API `GET /api/brain/workflows`（capability_id / value_stream_id / status 过滤，带 capability_name、value_stream_id、activity_count）。
+- 新 smoke `vs-model-workflows-smoke.sh`（迁移/回滚结构 + 路由接线 + 可选真库），回滚 `rollback/494_vs_model_workflows.down.sql`。
+
+## Brain 1.346.3 — relay-watchdog reconcile 不再在 Brain 本地起 kernel（任务 1fe53ce4，决策 d605d3df）
+
+- 病根（2026-09-30 run 2ba6193a / 17f96547 实证，09-23 起同 error_message 8 例）：kernel-v1 远端派发时 MMV `bridge.prepare` 建工作区要 3-4 分钟，run 无心跳无 attempt；`harness-relay-watchdog` `_recoverKernelRun` 的 stale 判定 `if (heartbeatAt && …)` 在心跳为空时被跳过 → 判「无可恢复 session」→ `launchKernelProcess` 在 us-vps Brain 容器本地 spawn（cwd=/app 非 git 仓）→ `ground-truth` `git ls-remote --heads origin` 报 `'origin' does not appear to be a git repository` → `kernel_process_fatal` 任务 failed；1 分钟后远端正常 `remote-launched` 却 `singleton_conflict(hops=0)` 让位。违反铁律 96054a8b。
+- 修法①启动宽限：run 无心跳且无 attempt 时按 `started_at` 给 `KERNEL_LAUNCH_GRACE_MS`=12 分钟（严格大于远端 prepare 10 分钟 + start 30s 超时），宽限内视为 launch 在途，直接 return 不重启。
+- 修法②零执行闸：`CECELIA_LOCAL_EXECUTION_ENABLED=false` 时 reconcile 分支禁止 `launchKernelProcess`，改调既有 `requeueKernelRunLaunchDeferred`（run 置 failed 留痕、任务回 queued、defer_count+1）交 executor 下个 tick 走正规远端路径重派（fleet-worker 对同 run_id 重放 prepare 是 409，故不在 watchdog 里重起旧 run）；defer 用尽 → `finalizeKernelRun` outcome=failed 收死 + `raise('P1','kernel_reconcile_remote_exhausted')`。本地模式（闸未开）行为零变化。
+- 回归测试 3 条（先红后绿）：远端模式不本地 spawn 改 requeue / requeue 用尽收死并告警 / 启动宽限内不重启。
+
+## Brain 1.346.2 — 价值流建模②：Sub-Area 树 + journeys.kind + value_streams/capabilities 视图（决策 3e867cad 第 1-3 张表）
+
+- 迁移 493：`areas.parent_area_id`（自引用，Sub-Area = 有父的 area，如 新媒体部门 → ZenithJoy；自父 CHECK；父删子置空）；`journeys.kind` 生成列——无父 = `value_stream`（客户买的产品线）、有父 = `capability`（SAFe 义：客户能指着配置的功能），由 `parent_journey_id` 派生、不可手写、不会漂移；视图 `value_streams` 改为只出价值流，新建视图 `capabilities` = 有父的 journey。词表 f425e3fd，任务 ef3aeffa。
+- 旧表 `capabilities`（迁移 030 系统能力清单，capability-scanner / similarity 向量检索 / analytics `/capabilities` 路由 / pr_plans 外键）腾名 → `capabilities_legacy`，一行不动、外键随名走；四处代码引用同步改名。`system_capabilities`（037）语义不同不并入；391 的 `capabilities_registry`（→ golden_paths）保留过渡。
+- 新 smoke `vs-model-areas-kind-smoke.sh`（迁移/回滚结构 + 接线守卫 + 可选真库），回滚 `rollback/493_vs_model_areas_kind.down.sql`。
+
+## Brain 1.346.1 — 镜像补拷 sync-steps-from-workspace.mjs（任务 b2bba893）
+
+- `packages/brain/Dockerfile` 按白名单风格增加 `COPY packages/brain/scripts/sync-steps-from-workspace.mjs ./scripts/`：09-30 上产 sync 44 步靠手工 `docker cp` 进容器，下次部署即丢（#5705 遗留）
+- 新增 smoke `brain-image-scripts-smoke.sh`（源码层断言该 COPY 存在、两条既有 scripts/lib COPY 未丢、源文件存在；改 Dockerfile 前先报红）并登记 allowlist
+
+## Brain 1.346.0 — Commander 看门狗 + escort 心跳 + Bark 阈值（任务 17ea4536，决策 3c98fb36）
+
+- 新入口 `POST /api/brain/commander-heartbeat` {kind?, tag, host?, serial?, profile?, cap?, escort_name?, escort_id?}（不挂内部令牌：escort 在网关经 socat 非回环；只写 payload 心跳字段、只对 in_progress 行、按 tag 限流）与 `POST /api/brain/tasks/:id/commander-heartbeat`。按 payload.tag → 账本 run_id（task_runs `%-<TAG>__%`）→ serial 唯一在途镜像单定位，写 `payload.commander_heartbeat_at`（顺手补 tag/host/serial/escort_id 供 lost 善后）；kind=launch（wf-launch 起跑瞬间单还没建）落 working_memory `commander_launch:<TAG>`，后续心跳/看门狗合并。
+- 新 scheduler job `commander-watchdog`（5min 自 gate，单批 ≤20）：在途 workflow_run / device_job 镜像起跑 ≥15min 且 GREATEST(心跳, 上次接班) 超 15min（`COMMANDER_HEARTBEAT_STALE_MS`）→ ssh 网关（注册表 primary worker）`openclaw cron rm <旧 escort>` + `cron add` 同名 `escort-<host>-<TAG>`（接班消息：只读账本与日志接上，不重新发起，带 Brain 单号与心跳 curl），新 id 回写 payload，task_events `commander_relaunched`；同一 run 接班 ≥3 次 → Bark 一次（payload.commander_bark_at）并停拉；ssh 失败/无 id → `commander_relaunch_failed` 留痕并推后；缺 tag/host → `commander_relaunch_skipped`。
+- 新 scheduler job `workflow-trend-bark`（北京 08:30–10:00 窗口，working_memory 当日去重）：同一 wf（payload.wf_id/capability/cap/标题前段，不认账本 run_id 前缀）连续 2 个自然日有批但零线索 → Bark；phone_registry 里一台 serial 近 72h 有批但 24h 无 completed → Bark。单批 0 线索 / 单次接班 / 单批 lost 不叫（PRD 叫人边界）。
+- 两个 job 经 scheduler-liveness 自动入 ops_workflows(source=scheduler)。
+
+## Brain 1.345.2 — Step 进 Brain + 使能件注册表（价值流建模 13 张表第一批）
+
+- 迁移 492 新建 `steps`（Step 投影，真身 = zenithjoy-workspace step-dod.json，`source_sha256` 漂移即报）、`enablers`（使能件注册表，kind=code|agent 是执行体轴）、`enabler_calls`（活动/步骤 → 使能件调用关系，caller_type=activity|step）；种子 enabler `return_to_results`（归位，back-to-results / back-to-profile 单份定义）挂到 keyword_acquisition 最新骨干的 collection 活动。决策 3e867cad / f425e3fd，任务 8345a8dc。
+- 新脚本 `packages/brain/scripts/sync-steps-from-workspace.mjs [--file <step-dod.json>] [--dry-run]`：按 activity_key + capability_key 把 43 步 upsert 进 `steps`，挂到最新 backbone_version 的活动；缺活动整批不写并列出全部缺失 key；重跑 0 变更。
+- 探针规范库 `step-probe-spec.js` 新增 `metric` 型（`probe: {type: metric, ref: metrics.<k>}`，无 target；observed 由执行机 verify-step 回传，判定端 business-probe-judge 不变）；此前 workspace `social-keyword-leadgen.yaml` 里 8 条 metric 探针（preflight/cleanup 四件 + collection 归位一次做对率 `coll_rescan_rate`）同步进 Brain 报 STEP_PROBE_TYPE_INVALID。Notion 探针投影「查什么」metric 显示 ref。新 smoke `step-probe-metric-smoke.sh`。
+- 背景：09-30 凌晨批 cmd09300230 归位 134/134 走兜底重搜、6 小时只出 4 条线索，而 delivery/scoring 结果探针全绿——"采集"格子从画出来起就是灰的；Step 与 Enabler 进 Brain 后探针才能挂到"归位"这一步。
+
+## Brain 1.345.0 — 整批总时限到期判 lost + 收割器放锁回桌面（任务 c2d73868，决策 3c98fb36）
+
+- 新 scheduler job `workflow-run-lost-deadline`（`src/workflow-run-lost-deadline.js`，5min 自 gate，单批 ≤20，经 scheduler-liveness 自动入 ops_workflows）：in_progress 的 `workflow_run` 与 device_job 镜像（payload.source=cron）起跑（COALESCE(started_at, due_at, created_at)，SQL 内比较）超 `WORKFLOW_RUN_DEADLINE_MS`(默认 4h)+`WORKFLOW_RUN_DEADLINE_GRACE_MS`(默认 30min) 仍无 finalize → `failed`，result.reason=`lost_deadline`，task_events 留痕，未收尾 task_runs 补 timeout。09-30 三部手机各卡 6h 无人判死案。
+- 善后 fail-open 只做一次（payload.lost_cleanup_at）：现场由 payload（machine/host/profile/tag/escort_id）→ phone_registry(serial→host/profile) → 最新账本 run_id 取 TAG；ssh 执行机 `douyin-phone-adb --profile <p> lock-release <TAG>`（按 owner=TAG 释放，子命令无 --force）与 `return-safe-desktop`，ssh MMV `openclaw cron rm <escort_id>`；参数白名单、远端串作 ssh 单 argv。ZenithJoy 对账把行翻回 in_progress 时下一轮只重写终态不重复放锁。
+- 读侧能力名不认账本 run_id 前缀：`resolveWorkflow` 无锚时 task payload.wf_id/capability/cap 优先于 `-crontab-` 前缀解析（对标 run 账本前缀写死 social-keyword-leadgen-crontab-）；job 事件/日志用 `workflowRunLabel`。
+
+## Brain 1.344.9 — 手机忙排队等待不再占用执行超时：等待上限改按截止时间
+
+- 手机忙回队（lib/qiumi-device-busy.js）的等待上限不再参考执行超时（原 min(任务超时, 120 分钟) 作废）：排队时任务还没开始执行，执行超时只管真正运行的那次 run（executor 每次派发给 `openclaw agent --timeout` 的仍是完整 timeout_sec）。
+- 截止时间取值：`payload.expires_at` → `tasks.due_at`（中文表「预期结束时间」）→ 都没有则首次忙起 24 小时；`due_at` 不晚于 `payload.scheduled_start` 视为开始时间误落（存量行形状），不当截止。
+- 到截止仍忙 → failed(`device_busy_expired`，过期未执行)；中文「OpenClaw结果」写「⌛ 到截止时间仍未轮到手机（一直被 <owner> 占用），未执行」。回队事件 `qiumi_device_busy_requeued` 带 deadline_at / deadline_source。
+- 入账：`due_at` 只来自「预期结束时间」，英文 Plan Date 起点 / 旧列「预期完成日期」（现为开始时间）不再落 `due_at`；`due_at` 按上海墙钟写、收割器按 `(due_at AT TIME ZONE 'Asia/Shanghai')` 读（列是 timestamp without time zone，生产 PG 会话时区 UTC）。
+
+## Brain 1.344.8 — 手机忙时秋米任务排队等待，不再直接「受阻」收尾
+
+- dispatcher 同机串行闸（routing/qiumi-serial-gate.js）：qiumi_task 的 `payload.qiumi_route.device_hint.serial` 非空、且已有另一张 in_progress 秋米任务落在同一 serial → 本轮不派（保持 queued、放 claim、按 HOL skip 换下一个候选），记 task_events `qiumi_dispatch_device_busy`（同一占用者只记一次）。
+- 收割器（reapOpenclawAgentRuns）：最终文本含 `DEVICE_BUSY owner=<持有者> serial=<序列号>` 标记行 → 不判终态，回 queued、清 run_id（保留路由）、`next_run_at=now+5min`、`device_busy_attempts+1`、status_history 留痕、清中文表回写指纹；累计等待超过 min(任务超时, 120 分钟) 或已过 `payload.expires_at` → failed(device_busy_timeout)。
+- 回队任务再派：有路由、无 run_id、`device_busy_attempts>0` → 不重打 Jev，只换新 run_id。
+- 中文「OpenClaw结果」等待期显示「⏳ 手机忙（被 <owner> 占用），已排队，<HH:MM> 后重试（第 N 次）」。
+- executor prompt 设备提示段加 DEVICE_BUSY 约定：不要抢锁、不要操作，最后一行只输出标记行后结束。
+
+## Brain 1.344.7 — Skill 台账投影 PR1b：skill_registry 新列推到 Notion（列级分权）
+
+- 新 job skill-registry-projection（取代 notion-push-sync.pushSkillRegistry）：2min 自 gate + advisory lock，每轮最多 25 行；Notion Skill Registry 补建 13 列（已装平台/存在性/最后扫描/原件路径/分配Agent/评测分/不一致副本数 + 人管的目标平台/转OpenClaw难度/业务线/负责人/分类/备注），改掉「🔒只读镜子」库描述。任务 47def5bb，决策 19391396 / 9088e075（快路）。
+- 列账按列 id 认列：人改列名照写、人删列永不补建、人改列类型跳过该列；机器列单向覆盖，人管列三方基线合并（人在 Notion 改过的不覆盖，判定点 24736022）。
+- 建页前按标题查重认领（修 09-28 重复建页），普通 400 指数退避不再清 notion_id，404 才解绑重建；每日归档机器人建的孤儿页。
+
+## Brain 1.344.6 — 秋米 agent 不再见执行参数块自派子会话；yield 收尾不判完成
+
+- openclaw-agent-executor.js promptOf：正文带已应用的执行参数块时，prompt 顶部声明「执行参数已由 Brain 应用：你就是 <agent>，本次模型 <model>，超时 <N> 分钟。直接在本会话完成任务，不要 sessions_spawn 子会话，不要 sessions_yield 等待。」并摘掉参数块（验收/设备要求转述保留）；无参数块时 prompt 逐字不变。
+- reapOpenclawAgentRuns：exit 0 但日志显示 `yielded: true`，或无最终文本且 `result.payloads` 为空 → failed(agent_yielded_without_result)，result 留 receipt + yield_summary（子会话键），不自动重排。修 09-29 任务 55c2e84b 空报告被收割为完成、真机活在追踪外跑完。
+
+## Brain 1.344.5 — Skill 台账投影 PR1a：三平台 skill 扫描入账 + A6 改比名单
+
+- 迁移 491：skill_registry 加机器列（已装平台/在不在/原件/副本/分配 agent/正文/tier 建议）、人管列（目标平台/转 OpenClaw 难度/业务线/负责人/分类/备注）、推送基线列；去 `openclaw/` 前缀（先固定派发命令）；投影注册表 Skill Registry 改入口面 both（列级分权，同 Tasks）。决策 19391396 / 4b1da4ca，任务 47def5bb，F5 指挥舱 f20ec1cb。
+- 新 job skill-inventory-sync（2h）：经 ssh mmv 送自包含 node 采集程序，扫 ~/.claude/skills、OpenClaw 各 agent 实际加载、~/.agents/skills、zenithjoy-skills 仓库；探不到≠零个，来源不全/熔断不判缺席，缺席满 24h 才 gone，断链即 broken；人管列与 status 不碰。
+- A6 skill 账本一致性改比名单：ops_skills 引用的 skill 必须在账且在用、派发绑定行不得下线/断链；扫描未成功降级。
+- /api/brain/skills POST/PATCH 冲突改合并，不再冲掉 notion_id/status/推送指纹。
+
+## Brain 1.344.4 — P1/P2 告警汇总不再私信主理人（决策 d3e7746c）
+
+- 背景：#5687 复活了 P1 每小时 / P2 每日汇总，但 flush 走 `sendFeishu`；生产 FEISHU_BOT_WEBHOOK 为空时降级为 Open API 私信主理人，积压的系统类 P1（launchd_patrol_anomaly、guard_drill_no_fire 等）会私信轰炸。
+- 修法：flushP1/flushP2 不再调用 `sendFeishu`。配置专用系统通道 env `ALERT_DIGEST_WEBHOOK`（群机器人 webhook）则只发该 webhook；未配置则仅 console.log。两种情况都视为 flush 成功：清空缓冲、更新 last_flush，并把最近一次汇总（时间/条数/通道/最近 50 条）落 `working_memory.alerting_buffers` 的 `last_p1_digest` / `last_p2_digest`，经 `GET /api/brain/alerting/status` 可查。
+- P0 立即推送（sendFeishu + 5 分钟限流）不变；#5687 缓冲持久化 / 至少一次语义不变。
+
+## Brain 1.344.3 — P1/P2 告警汇总复活（缓冲落库 + 登记现役调度）
+
+- 根因：① flushAlertsIfNeeded 只挂在废弃的 tick-runner.executeTick（2026-05 Wave 2 起不再调用），生产 `/api/brain/alerting/status` 的 last_p1_flush/last_p2_flush 均为 null——P1 每小时 / P2 每日汇总自 5 月从未发出；② P1/P2 缓冲纯内存，Brain 一天多次部署重启即清空，0929 recurring_* 等 P2 告警静默丢失。
+- scheduler-jobs 新 job `alerting-flush`（60s 轮，自带 P1 1h / P2 24h 门控）。
+- alerting 缓冲与上次刷新时间镜像到 working_memory key `alerting_buffers`（每级最多落最近 500 条）：raise 追加后写库；flush 发送后才写回清空态（至少一次）；首次使用时恢复重启前未发项；读写串行、未恢复成功前不写库（防空态覆盖）；持久化失败只 console.warn 降级仅内存。P0 立即推送 / 5 分钟限流 / debounce 语义不变。
+
+## Brain 1.344.2 — 执行参数块头兼容 Notion 中文模板「执行参数：」
+
+- routing/exec-params.js：块头除「【执行参数】」外，也接受独占一行的「执行参数：」「执行参数:」（全/半角冒号、前后空白）；块尾规则不变。修 09-29 Notion 中文模板任务（319d933d）写了 模型：sol 实际跑默认 terra、超时/执行Agent/验收全被忽略。
+
+## Brain 1.344.1 — 外部执行体不再被启动同步/活性探针误回队
+
+- 新增统一谓词 `executor-contracts.isExternallyExecuted(task)`（集合从注册表 `surface ∈ {device, openclaw-agent, script}` 派生：device_job / qiumi_task / script_run，或 executor_kind ∈ {openclaw-agent, script}）。
+- `syncOrphanTasksOnStartup`：外部执行体跳过，不回队、不动 claimed_by（修每次部署重启把西安 Mac 上的 device_job、MMV 上的秋米 agent 回队导致重复执行）。
+- `probeTaskLiveness`：openclaw-agent / script 任务不再走本机 spawn 证据 SUSPECT→DEAD→零证据回队，生死归各自 reaper 读远端 .exit（修 0929 秋米 87c9a08b 起 4 分钟即被回队）；device_job 保留认领新鲜度 + 45 分钟兜底不变。任务 57bcc267。
+
+## Brain 1.344.0 — 手机台账 phone_registry：秋米手机活按台账唯一定案，定不下不派
+
+- 迁移 490 新表 phone_registry（serial/昵称/别名/宿主/profile/型号/归属/角色/抖音号/微信/enabled），种子 0929 实测四台（小彩/小白/小黄/小蓝）；GET/PUT /api/brain/phone-registry（PUT 走内部令牌）。决策 432172f7（方案 C：映射是台账数据，代码只查表+核验+查不到退回），任务 b923b1f7。
+- 新模块 routing/phone-resolver.js：序列号 → 昵称/别名（须后接 手机/机 或在「设备：」行）→ 技术名 → 抖音号/抖音昵称，只唯一命中定案；只写型号、多台、手机与抖音号冲突一律不定案。
+- 秋米路由手机池改读台账（表缺失/为空回退 device_locks）；设备类任务定不下 → 转 blocked(device_unresolved，blocked_until 为空) 不派，中文表「OpenClaw结果」提示写明手机昵称或抖音账号；定案时给 agent 明确的节点/profile/序列号/手机/目标抖音号，并要求开工前 account-current 核对。
+
+## Brain 1.343.1 — recurring_tasks 定时引擎复活
+
+- 根因：checkRecurringTasks 只挂在废弃的 tick-runner.executeTick（5 月起停摆，最后实例 05-09）；matchesCron 要求当前分钟恰好命中且按服务器本地时区；source_id 用 now 防不住重复；建单不透传 assigned_to/due_at；escalation 把 recurring 当系统自产会批量暂停/取消主理人排的定时单。
+- scheduler-jobs 新 job `recurring-tasks`（每轮，单模板 try/catch 隔离）：北京时区（template.timezone 可覆盖）；next_run_at 为唯一下一时间点、now≥即到点；首次启用 / PATCH 重新启用 / 改 cron 只写基线不补跑；迟到超 catchup_minutes（默认 30）记 missed + P2；CAS 占位后才建单，source_id=`recurring:<id>:<时间点>`；同模板有 queued/in_progress/paused/blocked 实例跳过（skip_streak，连续 3 次告警）；透传 task_type/priority/dept/payload/assigned_to，due_at=时间点+due_offset_minutes，expires_after_minutes→payload.expires_at 过期未认领取消（unclaimed_expired）；落后 >10min 告警一次。实例标题带时间点（避开迁移 074 的 title+cancelled 唯一索引）。
+- 迁移 489：recurring_tasks.skip_streak；状态机 queued→cancelled；escalation SYSTEM_AUTO_TRIGGER_SOURCES 移除 recurring；routes/recurring POST/PATCH/GET 收发 template、task_type。
+
+## Brain 1.343.0 — 秋米模型写系列名自动取最新版本
+
+- 【执行参数】模型字段支持系列名：Sol / Terra / Luna / Astra / Opus / Sonnet / Fable / Haiku / Grok，取允许清单内该系列最新纯版本号型号；新版本进清单即自动成为默认（决策 49d17c60，任务 c271d6a8）。
+- 具体型号支持显示名写法（「GPT-6 Sol」「Opus 4.8」「Grok 4.6」），claude/codex 简称兼容为 Sonnet/Terra 系列最新。
+- 生产允许清单（us-vps .env.docker）按 MMV 实测收敛为 21 个：补 openai/gpt-6-sol；剔除实测失败的 claude-opus-5-5、grok-4.5、grok-4.20-non-reasoning、grok-4.20-multi-agent。
+
+## Brain 1.342.1 — relay project 推送错库 400 自愈
+
+- relay 投影：project 根的 legacy notion_id 指向错库（旧 Cecelia Tasks 库页）时 PATCH 返回 400「Status is expected to be select / AI Project is not a property」，现与 notion-push-sync 同款判据放弃旧页，在 Projects 库重建并回存新 id 与指纹。isWrongDatabaseError 收进统一推送引擎导出，push-sync / probe-projection / relay 三处共用。
+
+## Brain 1.342.0 — 价值流镜子：结构地图 → Notion「价值流 Value Streams」
+
+- 新血管 notion-map-value-streams.pushMapValueStreams（挂 runNotionPushSync 末尾，吞错不连坐）：active run 的 value_stream 节点一行一条，能力列 = contains→capability 名逐行；按 (scope,node_key) upsert，指纹不变不推，节点消失页面「状态」标已归档（不删页）；地图读空不归档。
+- 迁移 487：记账表 notion_map_node_pages（主键 scope+node_key）；登记「价值流 Value Streams」库 mirror/push/active（brain_table=记账表，守夜 A7/A8 按它查覆盖与置指纹）；902b 旧库改名「产品方向（人工维护）」登记 truth/none；453 占位行 unmapped:value_streams 归档（决策 e00d9cc3 / 9d5fce74）。
+- 建库脚本 scripts/ops/create-value-stream-notion-db.js：按父页 child_database 子块幂等（/search 有索引滞后会建出平行库）。
+
+## Brain 1.341.1 — Notion 推送回收站页自愈 + Issues Status 映射
+
+- notion 推送：PATCH 返回 400「Can't edit page on block with an archived ancestor」（页或所在库进回收站）视同 404，清 notion_id 与指纹下轮重建。覆盖 tasks、skill_registry、统一推送引擎（issues 等）与 relay project 投影；新增 isPageGoneError。
+- issues 推送：Status 映射到 Notion Issues 库合法选项（Backlog→Open、Done→Closed、open→Open、closed→Closed，大小写不敏感，未知→Open），修「Invalid status option」每轮失败。
+
+## Brain 1.341.0 — 排空（drain）运行期超龄自愈
+
+- drain.js isDraining()：排空超过 DRAIN_RESTORE_MAX_AGE_MS（15 分钟）即按部署残留自动解除并清持久化行。修 09-29 部署后 drain-cancel 静默失败、新容器恢复 drain、运行期再无解除路径导致派发停摆（两次部署后秋米 11 条积压，任务 d78898ff）。
+
+## Brain 1.340.0 — Notion 投影注册表与现实对账 + 镜子库只读说明由注册表生成
+
+- 迁移 488：notion_projection_map 补登记 OPC 经营对象 / OPC 日报 / Key Results（us-vps cron 在写）与旧 Cecelia Tasks / Cecelia Projects（projection/outbox.js 曾写，决策 71e0087b 已停用 → archived）；「部门日报」推送方核实为 opc-daily-page.py；acceptance_criteria / features_registry 两个视图别名行归档（任务 a7a6b8b4）。
+- 新 scheduler job notion-mirror-labels（每天一次）：active 推送镜子库的描述开头写「🔒 只读镜子：由 Brain <表> 经 <血管> 推送…」，已是同样说明零写，两面库与无 Brain 表的库跳过；手动入口 scripts/ops/notion-mirror-labels.mjs。
+
+## Brain 1.339.1 — 熔断打开时派发不再整轮放弃
+
+- dispatcher：cecelia-run 熔断打开时只跳过依赖 bridge 的那一条候选，继续选下一条（与 no_executor 分支 0014cd42 同规矩，独立跳过列表，候选耗尽/达上限仍报 circuit_breaker_open）。修 09-29 P1 bridge 任务每轮占队头被弹回、11 条 qiumi_task 一上午派不出去（任务 4c6c0f01）。
+
+## Brain 1.339.0 — 秋米任务按预期开始时间排期派发 + 委派人
+
+- 中文「任务」表：预期完成日期 改名「预期开始时间」（=开始执行时间），新增「预期结束时间」「委派人」；英文 Tasks 新增 Delegated By，Plan Date 写开始~结束区间（决策 51c09285，任务 0b3592c9）。
+- 入账：预期开始时间 → payload.next_run_at + scheduled_start（派发器没到点不派；只写日期=当天 00:00 上海），预期结束时间 → due_at；开始时间在未来时中文保持「委派」并在 OpenClaw结果 写「🕐 已排期 MM-DD HH:mm，到点派发」，英文 Planned。
+- 委派人：写了就用；空着按页面创建者补（人=Notion 名字，集成机器人=「Agent（未标注）」）并回写中文表；存 payload.delegated_by。
+- 改期：已排期的行在中文表改预期开始时间 → 急停步复用已有「委派+brain:」查询跟着改 next_run_at（只和 scheduled_start 比，不冲掉失败重试退避）。
+
+## Brain 1.338.0 — 空表清理收尾：6 张连代码删；AI Journey / AI Feature 恢复推送
+
+- 迁移 486：删 topic_decision_feedback、publish_success_daily（D 类「接口都在从没人调用」剩余两张，主理人「全删」）；删 licenses、license_machines、license_credit_transactions、keyword_tasks（ZenithJoy 授权大脑侧空副本，真账在 hk zenithjoy）。非空闸、无 CASCADE、回滚=生产 pg_dump -s。
+- 同迁移：AI Journey / AI Feature 两镜子登记恢复 push/active（库 09-27 已从回收站恢复；决策 7a4a41a9 覆盖 24a37029）。
+- 同 PR 删代码：topic-heat-scorer 的 saveTopicFeedback / getHighPerformingTopics 及周报、选题调用；发布监控每日快照写入、kr1-kr2-updater 与 tick 调用、/publish/success-rate；license / agent-credit / acquisition 三个无调用方路由及测试、4 个冒烟脚本与名单条目。
+- 生产结构副本实测：闸拦截、6 表删除、两登记恢复、回滚复原、重放幂等；相关 69 个测试文件全绿。
+
+## Brain 1.337.0 — 秋米回写行隔离：删除页跳过、单行失败不再挡住整步
+
+- notion-gtd-sync pushQiumiStatus：每行独立 try/catch；中文/英文页 404 或已归档 = 永久失败 → 记指纹跳过（返回值 skippedArchived 改名 skippedGone）；其余错误不记指纹、下轮重试，本轮其余行照常处理，末尾汇总报错。修 09-29 上一版只处理「已归档」后又被彻底删除页（GET 404）卡住整步、十余条已完成任务在中文表停在「排队」（任务 1613c0b5）。
+
+## Brain 1.336.8 — 秋米回写跳过已归档中文行
+
+- notion-gtd-sync pushQiumiStatus：中文行已被主理人归档/删除（GET 见 archived/in_trash）→ 记指纹跳过，不再 PATCH；返回值新增 skippedArchived。修 09-28 起对同一归档页每 30s 重试（48h 586 次）且单行抛错中止整步、挡住同轮其余行的回写（任务 1613c0b5）。
+
+## Brain 1.336.7 — 删除 D 类最后 2 张空表：user_annotations（知识页批注框）/ life_events（看板人生事件路由）
+
+- 迁移 485：删 user_annotations、life_events（非空闸、无 CASCADE、回滚=生产 pg_dump -s）；生产结构副本实测闸拦截/up/down/重放。
+- 同 PR 删引用：`routes/user-annotations.js` 与 server 挂载；日记/决策登记/设计库/开发日志 4 个知识页的批注框（从未被用过）；看板服务端 `task-system/life-events.js` 与挂载（无前端调用）及其接口测试段。
+- 至此 D 类 16 张处置完毕：删 9 张（484 七张 + 485 两张）；topic_decision_feedback（活回路）待主理人定；org_unit_members 保留；ZenithJoy 授权 4 张空副本待删。
+
+## Brain 1.336.6 — 删除 D 类 7 张空表连引用代码（个人页面/开发日志/开发评审/模型额度快照/内容选题/心跳历史/项目仓库）
+
+- 迁移 484：删 alex_pages、dev_execution_logs、dev_reviews、llm_usage_snapshots、content_topics、tick_history、project_repos（非空闸、无 CASCADE、回滚=生产 pg_dump -s）；生产结构副本实测闸拦截/up/down/重放。
+- 同 PR 删引用代码：`routes/alex-pages.js`（及 server 挂载）、`routes/dev-logs.js`（从未挂载）、`routes/dev-reviews.js` + `review-parser.js`（及 routes 汇总挂载）、analytics 的 `compute-snapshot` / `compute-usage` 两接口、capture-atoms `content_seed` 分支（改判返回 400；决策 959d081f：内容走 Notion 真身）、metrics 对 tick_history 的读取（该表从无写入方，响应时间指标行为不变）、executor.resolveRepoPath 的 project_repos 首查（本就容错缺表）。
+- 看板随手记复核页去掉「内容种子」「事件」两个已无后端分支的选项。
+- 不在本 PR：topic_decision_feedback（周报写+选题读的活回路，待主理人定）；user_annotations、life_events（看板页面，另开 PR）。
+
+## Brain 1.336.5 — 部署根去掉 packages/workflows 只读子挂载：改该目录的提交不再让部署失败
+
+- 09-28 事故：brain 容器在可写部署根 `/root/cecelia` 内又同路径叠挂 `packages/workflows:ro`；部署根守卫在容器内 `git checkout -f` / `reset --hard`，#5618 改了 `packages/workflows/KERNEL_CONTEXT.md` 后报 `unable to unlink ... Read-only file system`，Gate3 01:24–02:16Z 连续 4 次失败无人察觉，1.335.2 与迁移 480/481 卡在生产之外（当时经宿主机 reset 手修恢复）。
+- `docker-compose.us-vps.yml` / `docker-compose.yml` 删除该只读子挂载，目录随部署根整体可写。
+- 回归守卫 `compose-deploy-root-writable.test.js`：部署根整体可写挂载时，根内不得有同路径 `:ro` 子挂载（先红后绿）。
+
+## Brain 1.336.4 — 秋米派活链路四修：名册读 openclaw.json、每次运行新会话、多行回执解析、秋米不进旧 pushTasks、桥接器超时收尸（任务 7951bd36）
+
+- `ops-collector` 改读 `~/.openclaw/openclaw.json`（`clawdbot.json` 自 09-21 未更新，skill-factory 等 7 个新 agent 不在 `ops_agents`，执行参数写它们被 `exec_agent_unknown` 拒）
+- `openclaw-agent` 会话键改为 `agent:<agent>:<run_id>`：重排任务换新会话，agent 不能凭旧会话记忆复述
+- 收割读日志尾巴 4000→20000 字节，按字段名取 `finalAssistantVisibleText`（真实 `--json` 为多行缩进，回执 text 此前恒空）
+- `qiumi_task` 不进旧 `pushTasks`（与 `projection/notion.js` 抢同一 `notion_id` 致 400 乒乓，近 24h 162 次）
+- `cecelia-bridge` `/llm-call` 超时立即回话，并在 5 秒宽限后 SIGKILL（`claude -p` 无视 SIGTERM，曾挂 126 个最长 3 天）
+- 注册表守卫白名单行号跟上 `executor.js`（main 上已红）
+
+## Brain 1.336.3 — 秋米派活修复：执行参数解析 + 写明即直派 + 不强传模型 + 正文全读 + 中文短标题（任务 0d4215f2，决策 56328560）
+
+- 新增 `routing/exec-params.js`：解析正文【执行参数】块（执行Agent / 模型 / 超时 / 验收 / 设备 / 思考强度），只认固定字段名，模型别名与允许清单精确匹配、不做后缀猜测；写错即 `exec_params_invalid`
+- 删除 `cheap-gates` 的「用 <型号>」正文正则：模板里的「调用Agent：」曾被匹配成 `agent` → `xai/grok-4.20-multi-agent`，09-23 起 Notion 秋米任务全挂
+- `qiumi-router`：写明执行者（执行参数 > Notion 关联列）即直派，不调 Jev；未知 agent 判 `exec_agent_unknown`；模型只取执行参数，不再由 engine 推导（空则用 agent 自身默认模型）；超时 / 思考强度 / 验收 / 设备落 payload
+- `openclaw-agent-executor`：`--model` 可选，`--timeout` 与 `--thinking` 按 payload（白名单 + 越界回落）
+- 新增 `lib/notion-page-content.js`：正文分页读完、下钻子块、表格按行、2 万字上限（原顶层前 100 块、8000 字）
+- `pre-flight-check`：`qiumi_task` 标题下限 2 字（「抖音养号」曾被三振），其余仍 5 字
+
+## Brain 1.336.2 — 探针判定：阶段没跑（blocked）不判（任务 4ca3b584）
+
+- `business-probe-judge.handleRunFinished`：`result.stage_status === 'blocked'`（not_in_profile / no_cards / lock_busy / push=0 skipped，阶段根本没跑）直接 `skipped: stage_not_run`，不写回执、不翻格子色。此前账本 init 开跑即写 scoring blocked 占位工件，探针读到「本批 0 条待分拣」判 PASS，评分格子整天假绿
+- `failed`（跑了但失败）照判，不受影响
+
+## Brain 1.336.1 — Backbone Activities 契约写入 Notion 页面正文（任务 d852c852）
+
+- `backbone-contract-sync` 每轮在推属性后重写页面正文：只读提示（链回 git 正本）→ 对外承诺 → 输入输出 → 开工前提 → 做完怎么判定 → 步骤 → 出错怎么办 → 预算与限额 → 副作用与模型 → 已知缺口 → 负责人/执行/版本/指纹
+- 正文完全由 `journey_steps.contract` 生成、单向只读；迁移 483 加 `notion_body_digest`，指纹不变不打 Notion，变了整段替换（每轮最多 3 页）；属性列本次不动
+
+## Brain 1.336.0 — 主干活动契约 git→Brain→Notion 自动同步（决策 0834e2fb / 92f6226b）
+
+- 新 scheduler job `backbone-contract-sync`（`activity-contract-sync.js`）：契约真身在 zenithjoy-workspace `product-map/contracts/*.yaml`；30min 自 gate 只读 GitHub API 比 `contracts.json` 活动哈希，变了才拉 YAML 写 `journey_steps` 只读副本（contract / contract_sha256 / 钉 commit 的 contract_source），仓库删掉的活动标 deprecated；同步连续失败超 2h 告 P1 一次
+- 每轮把变更行推 Notion「Backbone Activities」镜子（c213e387），缺列自动补，每行带「正本（只读·改请走 git）」链接与契约哈希
+- 迁移 482：journey_steps 契约副本列 + notion_digest；获客 journey 主干活动 v2.0 四承诺 → v3.0 八活动（承诺并入 promise，stage 格子改挂同名活动，补 stage:outreach）；映射表登记 Backbone Activities 镜子
+
+## Brain 1.335.3 — 删除 A 类 37 张空表 + 5 个依赖视图；capture-atoms 删写错表的 event 分支
+
+- 09-28 盘点：大脑库 262 张表中 76 张为空，逐表核实建表迁移、读写文件、外键与视图，分四类（清单与完整备份 `~/db-backups/brain-empty-tables-20260928/`，决策 28674999）。
+- 迁移 481：删除 A 类 37 张（拆库前 ZenithJoy 表 5、迁移改名备份 2、未启用的登录表 4、网页分析一套 5、瓶颈扫描一套 4、其他已删功能遗留 17）及 5 个依赖视图。非空闸：表存在且非空即 RAISE EXCEPTION 整体回滚；刻意不用 CASCADE。回滚脚本为生产 `pg_dump -s` 原样 DDL。完整生产表结构副本上实测：闸拦截、up 后 262→225、down 全恢复、重放幂等。
+- `routes/capture-atoms.js`：删除 `event` 分支（向网页分析表 `events` 插不存在的 name/notes/area_id，一触发即 500；历史 0 条 event 原子）；未知 target_type 统一返回 400（决策 9ecb9628）。
+- B 类 17 张（退役架构，写入代码仍挂着）暂不删；D 类 10 张「接口在无人调用」另走连代码删除的 PR；`org_unit_members` 与 C 类 6 张保留。
+
+## Brain 1.335.2 — 旧镜子库停推 + 守夜镜子库探活：AI Journey / AI Feature 在回收站，迁移 480 归档、注册表判推、A11 接晨报日报（决策 24a37029）
+
+- 背景：AI Journey `358c…931a`（journeys）/ AI Feature `358c…4dff`（journey_features）2026-09-19 进 Notion 回收站（GET 200、写入 404），Brain 每 5 分钟推失败刷 `notion_sync_log` 一周无人知；承诺地图已由「承诺地图格子」承载（Journey 为文本列，迁移 479）。主理人 09-27 拍板：停推，不恢复不重建。
+- 迁移 480：`notion_projection_map` 两行归档（status archived / direction none，notes 写原因与决策号），照 479 归档 Backbone-Step Map 的写法；`journeys` / `journey_features` 记账列保留不清；幂等。
+- `notion-push-sync`：`pushJourneys` / `pushJourneyFeatures` / `pushAdvancementItems` 改按注册表 active 推送行决定是否推（`activePushDbId`），无则停推，停推提示每表只在进程内 info 一次；删除硬编码 `JOURNEY_DB` / `FEATURE_DB`，守夜 A9 常量表摘掉两表（否则 A9 会报"注册表无推送行"）。Issues 库 Sub Area relation 指向承诺地图分区页非 AI Journey，无需改。
+- 守夜 A11 `mirror_db_reachable`（`lib/notion-projection-watch.js probeMirrorDbs`）：对 active 且 push/both 的每库 `GET /databases/{id}`，`in_trash`/`archived`=true 或 404 → 红并带 lost 清单；503/超时 degraded 不红。09-19 起三库进回收站都是上产后手工才发现，这条闸让它当天见（nightly Bark）。
+- 晨报 `🔴 RED 镜子库失联：<title>×N（Notion 回收站/404，推送已停）` 行与日报「== 镜子库失联 ==」板块（`lib/mirror-db-report.js` 读 promise-map-nightly 哨兵），无失联不出行，读取失败不拖垮。
+- smoke `mirror-trash-guard-smoke.sh` 入 allowlist。
+
+## Brain 1.335.1 — 承诺地图格子镜子换库：旧 Backbone-Step Map 在回收站，改推「承诺地图格子」（链 bf5088a3 棒4-2 跟进）
+
+- 09-27 1.335.0 上产实证：注册表登记的 Backbone-Step Map 库 `369c…` 2026-09-19 已进 Notion 回收站（GET 200 但 POST/PATCH 404），格子行 188 次 POST 全败并每 5 分钟刷 50 条 sync_log；AI Journey `358c…`/AI Feature `358c…` 同日进回收站，Journey relation 建不了、journeys.notion_id 全指向死页。
+- 迁移 479：旧登记行归档（status archived / direction none）；新库「承诺地图格子」`3e8c40c2-ba63-8194-a47c-dcf5f4b508bb`（`scripts/ops/create-probe-notion-dbs.js` 在「数据落脚总台账」页下建成，列 Name/Status/Order/CellKind/CellKey/CellStatus/AssertionRef/Journey 文本）登记 push/active；`journey_step_links` 三记账列清零（3 行旧 id 指死页、271 行 386 种子假同步）让 286 行按 updated_at 增量重推。
+- `STEP_LINKS_DB` 常量同步指向新库（守夜 A9）；`pushJourneyStepLinks` 不再要求 `journeys.notion_id`；`buildStepLinkDbProps()` 去掉 Journey relation，`Journey` 改文本列投路径名。
+- 未解（交主会话）：AI Journey / AI Feature 两个镜子库在回收站，`pushJourneys` / `pushJourneyFeatures` 与 Issues 的 Sub Area relation 现状待另立任务处理。
+
+## Brain 1.335.0 — 验证层探针/判定回执/格子颜色投影到 Notion 驾驶舱（链 bf5088a3 棒4-2）
+
+- 迁移 478：`step_probes` / `journey_assertion_receipts` 加 notion_id/notion_synced_at/notion_digest 记账列；回执表 append-only 触发器改为只放行「仅记账列变化」的 UPDATE（业务列 UPDATE/DELETE 仍拒，cecelia_test 实测）；`journey_step_links` 加 `updated_at` + 触发器（非记账列变化才抬，引擎回写 synced 不自激）；`notion_projection_map` 登记「探针」`3e8c40c2-ba63-8182-954e-f9eda21d137e`、「判定回执」`3e8c40c2-ba63-81d7-8c48-c70142b3f0bc`（push/active，在「数据落脚总台账」页下由 `scripts/ops/create-probe-notion-dbs.js` 幂等建成）。
+- 新血管 `notion-probe-projection.js`：探针库列=探针键/工作流/步骤/查什么/期望/严重级/启用/哈希前缀/关联格子/说明；判定回执库只投 `executor_kind='business_probe_runner'`（harness 代码断言不投），列=时间/批次(run_id 去 `<workflow>-crontab-`)/路径名/步骤名/探针/读回/期望/判定/严重级/原因；走 `pushRegisteredRows` 指纹去重、resolveDbId 注册表门、缺列即补，挂在 `runNotionPushSync` 末尾吞错不连坐。
+- `pushJourneyStepLinks` 改为推格子行且增量可更新：`notion_synced_at IS NULL OR updated_at > notion_synced_at`、LIMIT 50（283 格子首推约 30 分钟排空，之后只推翻色行）；Backbone-Step Map 补 CellKind/CellKey/CellStatus/AssertionRef/Journey(relation) 列，去掉库里不存在的 Journey/Step 旧写法（09-27 实查该库 0 行、旧推送必 400）。
+- smoke `notion-probe-projection-smoke.sh` 登记 allowlist。
+
+## Brain 1.334.0 — 回执唯一键补 assertion_ref_snapshot：同格多条业务探针回执不再互吞（链 bf5088a3 棒3a-3）
+
+- 迁移 477：`journey_assertion_receipts` 唯一键从 409 的四列 `(run_id, journey_step_link_id, source_sha, impact_contract_hash)` 改为五列补 `assertion_ref_snapshot`（NULLS NOT DISTINCT，幂等 DROP/CREATE IF EXISTS）。09-27 生产实证 run `social-keyword-leadgen-crontab-auto09262230__a1.delivery` judged=3 只落 1 行——业务探针 sha/hash 皆 NULL，后两条被当重复 DO NOTHING 吞掉，FAIL 行丢失致晨报「断言红灯」失明。harness 行一格一断言且 ref 固定，去重语义不变（pg 集成有断言）。
+- `persistTrustedEvaluatorReceipts` / `persistBusinessProbeReceipt` 的 ON CONFLICT 列集同步五列；后者不再静默：返回 `{receipt, persisted, skipped:{probe_key, reason}}`（duplicate / db_error:<code>:<msg>）。
+- `business-probe-judge` 汇总日志 `judged=N persisted=N skipped=M`，skipped 非零 `console.warn` 点名 probe_key=reason；返回值带 `persisted` / `skipped`。
+
+## Brain 1.333.7 — stage 回执作为已结束的 stage run 落账并触发 run.finished（链 bf5088a3 棒1-brain-2，任务 8e5521ae）
+
+- `lib/task-run.js recordRunFromCallback`：回执 `status` 非终态（in_progress）且 `result.stage` 为字符串 ⇒ 视为「该 stage 的 run 已结束、任务继续」——`startRun` 后立即按 `stage_status` 映射 `finishRun`：completed→success、failed→failed、blocked→success 且 `result.blocked=true`（blocked 是执行机的正常退让，不是故障，不进失败统计）。`result` 落 stage/stage_status/metrics/evidence/probes，`run.finished` 单点 emit 一次，判定器得以运行。
+- 根因（09-27 06:00 生产批实证）：非终态回执只 `startRun` 不 `finishRun` → 四行 `status=running`、`result` 空、永不结束，`run.finished` 从不发出。
+- 无 `result.stage` 或 `stage_status` 未知的中间态回执保持只补行不结束；finalize 终态回执（cleanup 段）走原终态路径不变；任务状态仍由 `normalizeCallbackStatus` 决定（in_progress 不置终态）。
+- 回归：`task-run-wiring.test.js` 新增 6 例（先红后绿）+ `task-run-primitive.pg.integration.test.js` 真 PG 三 stage 场景（重放幂等、任务状态不变）。
+
+## Brain 1.333.6 — 棒3a-2：business-probe-judge 无 anchor 时按 run_id 解析 workflow 兜底判定（任务 1be07583）
+
+- 09-27 06:00 获客链生产首跑：zenithjoy device_job 镜像建的 Brain 任务 `payload.anchor` 为空，判定器只按 journey_id 查 step_probes → run.finished 到了也 `skipped no_anchor`，格子永不翻色
+- `lib/business-probe-judge.js`：无锚时取 `result.workflow`，否则从 run_id `<workflow>-crontab-<TAG>__aN.<stage>` 解析 workflow，改查 `step_probes.workflow + stage`（保留 active 过滤与 journey_step_links JOIN）；两者皆无 → `skipped: no_anchor_no_workflow`；有锚仍走原路径
+- 判定成功且探针指向唯一 journey → 一次性回填 `tasks.payload.anchor.journey_id`（仅为空时写），便于地图/晨报按锚聚合；跨多 journey 不回填
+- 单测 6 条 + pg 集成 2 条（无锚镜像任务全链翻色/回填、无 workflow 不写回执）
+
+## Brain 1.333.5 — codex-bridge 回调 Brain 补内部鉴权 Bearer 头（任务 446aa294，决策 6ac4563e，链 bf5088a3 棒1 补棒）
+
+- `packages/brain/scripts/codex-bridge/codex-bridge.cjs` `callbackBrain()` 打 `POST /api/brain/execution-callback` 的 fetch headers 合入 `scripts/lib/brain-auth-headers.cjs` 的 `brainAuthHeaders()`（token 只从 env `CECELIA_INTERNAL_TOKEN` 或 `~/.credentials/cecelia-internal.env` 读）；#5592 上产后 xian-m4 / xian-m1 桥回调不再 401
+- `callbackBrain` 加入 module.exports，供回归测试 `src/__tests__/codex-bridge-callback-auth.test.js`（配 token 必带 `Authorization: Bearer`；未配不带）
+- `kernel-attempt-handler.cjs` 走 kernel 签发的 callback_token，未动
+- 桥机器生效需同步更新 `packages/brain/scripts/codex-bridge/codex-bridge.cjs` + `scripts/lib/brain-auth-headers.cjs`（LaunchAgent 跑的是完整仓库 clone，`git pull` 即可）并在桥机 `~/.credentials/cecelia-internal.env` 放 `CECELIA_INTERNAL_TOKEN=`
+
+## Brain 1.333.4 — 棒3a 补丁：business-probe-judge 只判 active=true 的探针（任务 32d0109a）
+
+- 棒2（#5589）漂移语义：仓库 YAML 删探针后 step_probes 库行置 `active=false`；棒3a（#5590）判定查询未过滤该列，停用探针会一直以 probe_missing 把格子打红
+- `lib/business-probe-judge.js` 查 step_probes 加 `sp.active = true`；单测断言 SQL 含该过滤，pg 集成加一条停用探针断言不出回执、不拖红同格
+
+## Brain 1.333.3 — step_probes 对齐 workspace 探针最终形状：http filter/reduce/minus 保留 + source_sha256 文件级哈希（链 bf5088a3 棒2 后续，任务 14cd9e76，决策 702949b6）
+
+- 病根：workspace PR #1982 定档的 `checks/social-keyword-leadgen.yaml`（schema.json）里 http 探针形状是 `{url, filter:{列:值}, reduce:count|field:<列>, minus?:{同形}}`，#5589 的 `normalizeProbe` 只认 `url`，会把 `filter/reduce/minus` 静默丢掉——落库的 spec 缺取数条件，棒3a 执行体拿不到
+- `lib/step-probe-spec.js`：http 探针按 schema.json 归一化（url/filter 非空标量映射/reduce 正则/minus 同形可选），sql 与 http 都拒未知键（同 schema `additionalProperties:false`）；新增 `sourceSha256(text)`
+- 哈希定档为两级并存：`spec_hash` 逐条 canonical JSON（哪条探针变了）+ 新列 `source_sha256` 整文件原文 sha256（与 probes-lib `loadChecks().sha256` 同口径，仓库那份是不是库里这版）；迁移 476 幂等加可空列 + hex64 CHECK，回滚脚本齐（475 已被棒3a #5590 占用）
+- 路由：`POST /step-probes` 收 `source_sha256`（非 hex64 → 400 `STEP_PROBE_SOURCE_SHA_INVALID`，COALESCE 保留旧值）；`drift-check` 收 `source_sha256` → 回 `source_match`（同 workflow 多版本并存 = 半同步 = false）与 `registered_source_sha256`；GET 返回该列
+- `scripts/sync-step-probes.mjs`：`loadProbesYaml` 附带 `source_sha256`，upsert 与 `--check` 都带上
+- 用 workspace main 真 YAML 过归一化器：5 条探针（delivery×3 / scoring×2，全 warn）全部通过，文件 sha256 前缀 `c1356bdf9782` 与 workspace 侧一致；格子 ref = `probe:videos_readback,comments_readback,line_key_not_null` / `probe:pool_advanced,effective_count`
+
+## Brain 1.333.2 — 棒3a 判定：run.finished → 比对探针 → 写回执 → cell 翻色（任务 33aa2bc4）
+
+- 决策 702949b6 / 95e29afd / b56e37b4：task_runs 记"活动发生了"，本棒接"活动做对了"的判定线
+- `lib/task-run.js` finishRun 补终态成功后单点 `emit('run.finished','task-run',{runId,taskId,status,result})`（五条执行路径共用，fail-open，只加事件不加写）
+- `event-bus.js` 加进程内 `on/off`，`emit` 落库后同步派发给订阅者（订阅者抛错只 warn）
+- 新 `lib/business-probe-judge.js`：按 task payload.anchor.journey_id + result.stage 查 `step_probes ⋈ journey_step_links`，op 集合 `>= == <= not_null_all`，expect.value / expect.ref→metrics.<k>；observed 缺失/带 error → FAIL（probe_missing / probe_error）；判定写回执并 UPDATE cell_status（PASS→green / FAIL&error→red / FAIL&warn→pending，同 cell 取最坏）；server.js 启动订阅
+- `impact-contract/assertion-receipts.js` 新增 `persistBusinessProbeReceipt`（占位约定：executor_kind=business_probe_runner、source_repo=zenithjoy-workspace、command_argv=["probe",key]、source_sha/machine_id NULL、assertion_ref_snapshot=probe:<key>、assertion_digest=spec_hash）；`persistTrustedEvaluatorReceipts` 不动
+- 迁移 475（474 号已被棒2 step_probes 占用）：`journey_assertion_receipts.executor_kind` CHECK 放宽为两值；verdict_chk 按 executor_kind 分支（brain 原式不动；probe 只要求 PASS↔exit 0+证据非空 / FAIL↔exit≠0）；合并闸 SQL 仍只认 brain_assertion_runner（断言测试钉住）
+- 两处 resolver（`lib/map-state-resolver.js` / `map/state-resolver.js`）对 business_probe_runner 回执只看最近一条 verdict（PASS→green / FAIL→red），不比 sha/repo；`map/state-resolver.js` 抽纯函数 `resolveReceiptState`
+- pg 集成 `business-probe-judge.pg.integration.test.js`（真库端到端：finishRun → 真 event-bus → 回执行 → cell_status；重复判定幂等；已终态不重判；brain_assertion_runner 原式未放宽）+ F1 step4 步骤断言 `tests/gp/f1/step4-business-probe-receipt.test.js`
+
+## Brain 1.333.1 — 棒1 回执线：execution-callback 回执保 stage/metrics + internal token 鉴权（链 bf5088a3，决策 702949b6/280bd091）
+
+- `POST /api/brain/execution-callback` 挂 `internalAuthOrLoopback`：`CECELIA_INTERNAL_TOKEN` 配置后严格验 `Authorization: Bearer <token>` / `x-internal-token`（缺/错 → 401 `UNAUTHORIZED`）；未配置只放行非 production 本机回环（否则 503 `INTERNAL_AUTH_NOT_CONFIGURED`）
+- `recordRunFromCallback` 终态回执从 `result` 提炼 `{stage, stage_status, metrics, evidence, probes}`（只取存在的键；evidence/probes 只留引用形态：字符串或 `{ref|url|path|name|key|observed|probed_at|error}`，不落大 blob）经 `finishRun` 新增的 `result` 入参合进 `task_runs.result`；`exit_code`/`artifacts`/`pr_url` 逻辑原样
+- 内部调用方补 Bearer（token 只从 env 读）：`cecelia-run.sh` / `flush-callback-queue.sh` 回执 curl、`executor.js` codex review fetch×2 + 本地 codex 回执 curl + docker 容器 env 透传 `CECELIA_INTERNAL_TOKEN`、`cecelia-bridge.js` 宿主 env 透传、`verify-billing-pause-e2e.js`
+- 新增 smoke `callback-stage-receipt-smoke.sh`（假 pool 跑真逻辑 + 真 HTTP 打真中间件 + 接线查验）
+- 未修（棒后续）：zenithjoy `brain-device-job-mirror.ts` psql 直写 tasks 绕过 task_runs 的漏
+
+## Brain 1.333.0 — 晨报/日报「业务断言红灯」行（链 bf5088a3 棒4 消费）
+
+- 新增 `lib/assertion-red-report.js`：直查 `journey_assertion_receipts` 过去 24h `executor_kind='business_probe_runner'` 且 `verdict='FAIL'` 的回执，经 `journey_step_links → journey_steps / journeys` 取步名/路名，按 路径/步骤/探针 key（`assertion_ref_snapshot` 去 `probe:` 前缀）分组计数；任一 `scenario_evidence.severity=error` → 🔴 RED，只有 warn（或缺失）→ 🟡 AMBER；空集/查询失败/超时 → null（决策 702949b6 / ebcbc038）
+- 晨报 `morning-cockpit-bark.js`：`fetchAssertionRedLine` 并列裸跑行，文案「🔴 RED 断言红灯：<路径>/<步骤> <key>×<n>, …（24h）」，最多 3 组步骤；日报 `daily-report-generator.js`：板块九「== 业务断言红灯（24h）==」汇总 + 每组一行带严重级；均 best-effort 不拖垮
+- 只依赖回执表形状，不依赖棒3a 合并；smoke `assertion-red-report-smoke.sh` 已登记 allowlist
+
+## Brain 1.332.0 — 步级断言认第四种形状「探针」：step_probes 注册表 + probe:<key> + 仓库 YAML 哈希漂移（链 bf5088a3 棒2，任务 ddf3fe8d，决策 702949b6）
+
+- 病根：步级断言链 `journey_step_links.assertion_ref → runner → journey_assertion_receipts → cell 翻色` 只认 vitest/pytest/smoke 三种 shell 形状；业务侧「SQL 数一下 / HTTP 探一下 + 期望值」这类探针没有落脚点，获客 journey（afa6abca）7 个 stage 格子 assertion_ref 全空
+- 迁移 474 `step_probes`：`id / probe_key UNIQUE / workflow / stage / journey_step_link_id（FK journey_step_links，格子删了 SET NULL 留痕）/ spec jsonb / spec_hash（CHECK hex64）/ source_path / severity（CHECK warn|error）/ active / created_at / updated_at`；仓库 YAML（`services/<svc>/checks/<workflow>.yaml`）是 SSOT，Brain 只存归一化 spec + `sha256(canonical JSON)`——同 skill_registry 清单哈希做法，YAML 现算 ≠ 库即漂移
+- `lib/step-probe-spec.js`：spec 归一化（type sql|http、expect op `>=|==|<=|not_null_all` + `value|ref:metrics.<k>` 二选一、severity 不默认、journey_cell 必须等于 `stage:<stage>`）、canonical JSON 哈希（键序无关、数组保序）、`probe:<k1>[,<k2>]` 引用往返、库 vs YAML 漂移分类（missing/extra/changed）
+- 路由：`GET /api/brain/step-probes?workflow=&stage=&active=all`、`POST /api/brain/step-probes`（按 probe_key upsert，哈希一致回 `unchanged`，任一条非法整批 400 带 code，`internalAuthOrLoopback`）、`POST /api/brain/step-probes/drift-check`（YAML 现算哈希 vs 库）
+- `scripts/sync-step-probes.mjs <checks.yaml> --journey-id <uuid> [--check]`：读 YAML → upsert → 按 journey_cell 找该 journey 的格子把 `assertion_ref` 写成 `probe:<keys>`（流水线副作用写，决策 df1ccf5a；一格多探针逗号连接；已一致不重 PATCH 免 bump assertion_revision）；找不到格子报错退出不静默；`--check` 只比对有漂移退 1
+- `classify()` 新增 `probe:<key>` → `{kind:'probe', keys, executor_kind:'business_probe_runner'}`；canonical 命令/argv/执行命令对 probe 显式抛 `ASSERTION_PROBE_NOT_RUNNABLE`（探针没有 shell 形态，合同/回执/闸门不会把它当命令跑）；`classifyJourneyCellAssertion` 认 `probe` 态（runnable，key 非法不放行）；map/radius `requiredAssertions` 按前缀排除 probe 格子，不计 unsafe
+- 测试：spec 43 项 + classify/命令 8 项 + cell 分类 2 项 + radius 排除 1 项 + 迁移 6 项 + 路由 14 项 + sync 脚本 7 项（真 js-yaml + 假 fetch）；smoke `step-probes-smoke.sh` 登记 allowlist
+- 未做（handoff 在任务 result）：漂移 AMBER 进晨报——YAML 在 workspace 仓，Brain（us-vps 零执行）读不到，需由 workspace CI / 跑场机 cron 跑 `--check` 把结果回报 Brain 再出行；探针执行体 business_probe_runner 归棒3a
+
+## Brain 1.331.0 — org_units 组织真身骨架：company→department→leader→members 自动升格模型（链 bf5088a3 棒6，任务 80e9f816，决策 de1e9ba9）
+
+- 病根：组织架构无真相源（部门信息散在 3 处文件，agent 24 个平级，OKR 部门列/部门卡/agent 清单三套口径互相矛盾），Brain 无 `org_units`/`departments`/`companies`，只有 `dept_configs` 4 列 1 行。
+- 主理人 2026-09-26 拍板（否定填清单/否定自动反推）：建一个从 0 到大的自动升格模型，起点只种一行代表当前真实状态，department 不手工建，靠"存活法则"（复用决策 ca3c6755：7 天试用期，连续 3 天无交卷证据自动降级，反过来达标则升格）从 Area 自动升格。
+- 迁移 473：新增 `org_units`（`unit_type` company/department + CHECK、`parent_id` 自引用、`area_id` 关联 `areas`、`status` active/incubating/demoted + CHECK）+ 轻表 `org_unit_members`（`member_type` agent/human + CHECK，human 只在真人加入时手工插行，不预建空位）；幂等种一行 company（name='Cecelia/ZenithJoy'，leader='Alex'，不编造部门/人员清单）。
+- `packages/brain/src/lib/org-unit-promotion.js` 导出纯函数 `evaluateAreaForPromotion(areaId, opsStats)`：按 `{recentDays:[{date,hasEvidence}]}` 判定最近 7 天试用窗口内是否触发连续 3 天无证据的降级阈值，只判定不查库、不接调度、不自动建 department 行。
+- 新增只读端点 `GET /api/brain/org-units`：返回 company→department 树 + 每个 unit 的成员计数（agent/human），供以后"AI 掌握公司信息"用；`POST /api/brain/org-units/promotion-check` 暴露 `evaluateAreaForPromotion` 供预览判定（不查库不写库）；挂载于 `server.js`（`app.use('/api/brain', orgUnitsRouter)`）。
+- 测试：`org-unit-promotion.test.js`（9 例，纯函数判定含数据不足/连续降级/滑动窗口边界）+ `routes/org-units.test.js`（5 例，mock pool，树形聚合/父子挂载/500 兜底/promotion-check 转发）+ `migration-473-org-units.test.js`（6 例，结构断言）；新增 `org-units-smoke.sh` 登记入 `smoke-allowlist.txt`。
+- 未做（留给下一棒，已写入任务 handoff）：升格执行（读 Area 活跃数据接线 + 定时评估 job + 自动建 department 行）、org_units 树接进 `/api/brain/context` 主提示词、飞书/Notion/ORGANIZATION.md 三投影（原始任务 ca2d0b58 范围，本棒范围收窄自决策 2e756506）。
+
+## Brain 1.330.0 — 地图照相层防污染：扫描器噪音过滤 + scan-main 会话守卫 + rescan 停滞哨兵（任务 7d7e2314）
+
+- 病根（2026-09-23 P0 9dfd873a）：只读镜像仓库 cecelia-scan-main 被某 /dev 会话当工作目录跑 `worktree-manage.sh create`，写入 `.cecelia/hb.sh` + `.cecelia/lights/*.live` 心跳灯，MMV crontab `rescan-if-changed.sh` 连续 21.5h 判定"不干净工作区"拒绝扫描，四类快照陈旧，12h 内 5 把任务（含 P0）撞 `map_stale` 触发 `dispatch_fail_autoblock`。
+- `scripts/scan/run-all-scans.sh`：clean 判定改为过滤法——`git status --porcelain` 结果剔除已知运行期噪音路径（`.cecelia/`、`.dev-lock*`、`.dev-mode*`、`node_modules/`）后再判定；扫描器全程只读，不清理/不 stash，真脏文件仍 fail-closed。四处 clean 判定（根仓预检/多仓 prepare_repo/根仓终检/多仓目标终检）统一收口到 `dirty_status()`。
+- `packages/engine/skills/dev/scripts/worktree-manage.sh`：`cmd_create` 建任何 worktree/写任何文件前先 `assert_cwd_not_scan_main`，命中 `*-scan-main` 结尾目录直接拒绝并报清晰错误（Engine 版本随附 bump 19.7.1→19.7.2，见 feature-registry.yml changelog）。
+- 新增 scheduler job `rescan-staleness-patrol`（5min 自 gate）：直接复用 `fact_snapshot_headers.scanned_at` 账龄作为"rescan 是否在失败"的信号（成功扫描必刷新该字段），账龄阈值复用 `PHOTO_STALE_THRESHOLD_SECONDS`（30min，与派发闸口径同源）；停滞时经 `alerting.js` `raise('P1', 'rescan_stale', ...)`，并写 `working_memory.rescan_staleness` 供晨报（🟡 AMBER 一行）/日报（板块）读取渲染（形状沿棒8 skill 分发漂移）。
+- `scripts/lib/internal-auth-token.sh`：`load_cecelia_internal_token` 此前任何失败路径完全静默（`|| true` 吞掉返回码且函数本身零日志），导致"token 文件存在扫描仍 FAIL"查不出原因；新增诊断输出（文件不存在/找不到 KEY=行/多行重复/格式校验未通过，从不打印 token 值），本地沙盒复现验证 CRLF 行尾/引号包裹/`export` 前缀/行尾注释/重复键 5 种常见格式坑均会静默失败，现在都能定位到具体原因。
+- 测试：`run-all-scans.test.sh` 新增 3 例（噪音不挡扫描/噪音+真脏仍拒绝/多仓目标噪音不挡）；新增 `worktree-manage-scan-main-guard.test.sh`（9 例，单元+端到端，验证拒绝发生在任何 worktree 注册/心跳写入之前）；新增 `internal-auth-token-format.test.sh`（19 例，5 种格式坑 + 正常格式）；新增 `cron/__tests__/rescan-staleness-patrol.test.js`（13 例，含晨报/日报渲染）；既有 71+55+17 个 Brain 单测与 6 个 Engine 版本同步测试全绿回归验证。
+
+## Brain 1.329.0 — skill-sync-to-runners 慢链路修复：超时可配 + --partial + 失败重试（任务 4950ccf3，棒 8 遗留缺口）
+
+- 病根（09-25 实测）：MMV→西安直连跨洋仅 7~16 KB/s，脚本里写死的 `rsync --timeout=60` 让首次全量同步（约 27MB，慢速下要二三十分钟）在 xian-m4/xian-m1 上都因 60 秒 IO 无进展而失败，每次 MMV 改 skill 都可能再撞
+- 超时可配：`SKILL_SYNC_RSYNC_TIMEOUT`（默认 60，非数字/≤0 回落 60，慢链路建议 600~900），dry-run 打印与 apply 实跑同值；rsync 的 ssh 加保活 `ServerAliveInterval=30 ServerAliveCountMax=20`
+- 续传：rsync 加 `--partial`，中断的大文件下次接着传；仍不带 `--delete`，prune 仍只在 `--prune` 时
+- 重试：第一跳 rsync 因 rc=30/35/255（IO 超时/连接超时/ssh 断线）失败自动重试，最多 `SKILL_SYNC_RETRIES`（默认 3，0=不重试）次，间隔 `SKILL_SYNC_RETRY_BACKOFF`×第几次（默认 5s/10s/15s）；耗尽才判该目标失败，其它失败码（如 23）不重试；退出码语义不变（0/1/2/64），日志记录重试次数
+- 测试：`skill-sync-to-runners.test.js` 新增假 rsync 注入（`SKILL_SYNC_RSYNC`，只记参数与注入退出码，其余转交真 rsync 走假 ssh，不连任何远端）——超时 env 传到命令行、7 种非法值回落 60、rc=30/35/255 一次失败后成功、耗尽退出 1 且不进入镜像、RETRIES 0/1/非法、rc=23 不重试、一个目标耗尽不影响另一个
+
+## Brain 1.328.0 — Skill 分发：清单哈希 + 漂移检测 + 同步脚本入库（链 bf5088a3 棒8，任务 1141f101，决策 105a5868）
+
+- 病根（09-25 只读探测实证）：MMV `~/.claude/skills` 顶层几乎全是指向 zenithjoy-skills 的符号链接，MMV 本机 cron 用 `rsync -az`（无 `-L`）把链接原样拷到跑场机——M1 上 133/133 悬空、M4 126 悬空，「条目数 135=135」的对齐是假的，经跑场池下放的会话实际没有可用 skill；cron 无 `--delete`、无校验、不在仓库，M4 还多 11 个旧残留；真身自己也有 29 个悬空链接
+- 清单：`scripts/skill-manifest.sh`（纯 bash，Dockerfile 新增一行 COPY 进镜像，经 ssh 送到目标机执行，us-vps 零执行）逐 skill 按内容算稳定哈希（跟随符号链接；忽略 `.git`/`.DS_Store`/`node_modules`/`__pycache__`；mtime 不参与），悬空链接单列 `broken` 且不进 `tree_hash`；`lib/skill-manifest.js` 解析并重算 tree_hash（输出被截断即判 invalid）、比对出 missing/extra/changed/broken
+- 漂移检测 job `skill-dist-drift`：30min 自 gate，真身 MMV 直连、跑场机 xian-m4/xian-m1 经 mmv 跳板（`SKILL_DRIFT_RUNNERS` 可配、别名严格校验），各机各两目录（`~/.claude/skills`、`~/.codex-gwremote/skills`）并行取清单，每条 exec 显式 45s timeout + maxBuffer；结果写 `working_memory.skill_manifest_drift`。ssh 失败/超时=`unreachable`、输出无效=`invalid`，都是「未核对」，不产生 missing、不计入漂移（防「探不到=零个=全漂移」假警）；真身取不到整轮不出逐机 diff
+- 晨报/日报：晨报新增 🟡 AMBER「skill 分发漂移」一行、日报新增同名板块（沿棒 7 形状）；检测数据超 6h 未刷新也 AMBER；无数据/读取失败不出、不拖垮
+- 同步脚本 `scripts/skill-sync-to-runners.sh`：默认 `--dry-run`（核对清单 + `rsync -n` 预演），`--apply` 才真同步，`--prune` 才 `--delete`；`rsync -azL` 送真内容并镜像到 `~/.codex-gwremote/skills`；同步后重算两处清单，与真身不一致退 1、目标不可达退 2；只同步有内容的 skill（真身悬空链接点名告警）。**本 PR 不替换本机 cron**
+- 测试：清单脚本 22 项（mtime/改一字节/忽略集/符号链接/悬空/目录缺失）+ 漂移 job 25 项（改/删/多/悬空/dir_missing/unreachable/invalid/真身不可达/gate/命令带 timeout/列表上限）+ 同步脚本 10 项（假 ssh 映射本地目录 + 真 rsync：dry-run 不写、apply 把悬空链接换成真内容、prune 才删、幂等、不可达退 2）+ 接线 7 项；smoke `skill-dist-drift-smoke.sh` 登记 allowlist
+
+## Brain 1.327.0 — executor=script 一等任务类型·契约与安全闸（任务 5cdbd52a，链 bf5088a3 棒 3 PR A，决策 105a5868）
+
+- 背景：确定性脚本步此前没有执行体——`executor_kind` 八值无 script，`device_job` 靠外部领单器，`workflow_run` 只记账不执行，脚本与 AI 步无法进同一条 DAG 被统一派发/重试/留痕。本 PR 落地契约与安全闸，执行接线在 PR B。
+- 迁移 471/472：`tasks_executor_kind_check` 加 `script`（九值）、`tasks_task_type_check` 加 `script_run`（86 值），照 461/462、463/464 拆法 NOT VALID 登记 + 472 单独 VALIDATE；附 rollback。
+- 注册表：`script_run` = kind `agent`（一步交付）、surface/executor/watchdog 均 `script`、免锚、`tick_dispatchable=false`（执行体接线前不许被 tick 当普通任务派给 claude，PR B 翻 true）。
+- payload 契约 `lib/script-task-spec.js`：`{host, cmd, cwd?, env?, timeout_sec, artifact_paths?}`。host 只认 machine-registry 里 primary/secondary 跑场机（id 或别名，新增 `resolveMachineId`/`aliases`），调度器（us-vps，零执行铁律 96054a8b）、回环、裸 IP、未注册一律拒绝；host/cmd/cwd/env/artifact_paths 拒控制字符（换行注入）；env 键白名单（SCRIPT_/TASK_/APP_ 前缀 + TZ/LANG/LC_ALL/CI/NODE_ENV/DEBUG），报错只点名键不回显值；`timeout_sec` 必填整数 1..3600。
+- 建单入口：`createRoutedTask` 对 `script_run` 物化前校验，违规抛 `script_payload_invalid`（事务回滚不留半截任务）；`POST /tasks` 映射 400 `INVALID_SCRIPT_PAYLOAD`。
+- 活性合同 `script`（ssh 探 `.exit/.pid`，非跑场机/缺 run_id 一律 unknown 不发 ssh，staleMinutes 75，onStale fail）；`retry-policy` 新增失败类 `script_exec`（一次重试，退避 1 分钟）。
+- 测试：`lib/__tests__/script-task-spec.test.js`（36 例含全部违规输入）、`migration-471-script-executor.test.js`、`script-executor-registry.test.js`、真 PG 临时库 `script-executor-constraints.pg.integration.test.js`；smoke `script-executor-contract-smoke.sh` 已登记 allowlist。
+
+## Brain 1.326.0 — executor=script 一等任务类型·派发/收割/重试与三步链（任务 5cdbd52a，链 bf5088a3 棒 3 PR B，决策 105a5868）
+
+- 接 PR A 的契约与安全闸：脚本步现在真的被引擎统一派发。`dispatcher` 为 script 表面加专用出口 `dispatchScriptTask`（claim 之后、标 in_progress 之前）：违规 payload 直接终态 failed（`script_payload_invalid`，不重试）、同一跑场机 in_progress 的 script 数达上限（`SCRIPT_HOST_CONCURRENCY`，默认 2）则让位、独立熔断 key `script`（不牵连 cecelia-run/openclaw-agent，也不走 bridge 检查）。`executor` 加 `script_run` 分支 → `triggerScriptRun`。`script_run` 翻 `tick_dispatchable=true`，并打 `system_no_prd`（payload.cmd 就是规格，pre-flight 不要求 PRD 描述；不打这个标签，链构建方不写 description 的脚本步会被 pre-flight 三振拒绝）。
+- 新 `script-executor.js`：ssh 命令行恒为常量 `sh -s`；runner 经 stdin 送达，只含校验过的 run_id/timeout 与 base64——cmd/cwd/env 值先组成 job 脚本（值一律单引号转义）再整体 base64，远端 0600 文件执行、跑完即删；env 值不进 ssh 命令行、事件、留痕，收割的 stdout/stderr 还会把 env 值替换为 `***`。远端 supervisor 用独立进程组跑 job，超时 TERM→KILL 整组、标 `.timedout`、exit=124。run_id = `script-<task.id>-a<第几次尝试>` 确定性，远端 `.pid/.exit` 已在回 ALREADY，重复派发绝不起第二个进程。
+- 收割 `reapScriptRuns`（scheduler job `script-reaper`，60s）：exit 0 → `finalizeTask(completed)`（不是 completed_no_pr：hard 依赖门禁只放行 completed）；exit≠0/超时 → `finishRun` 记真实 exit，按 retry-policy `script_exec` 重排一次（`payload.script_attempts[]` 记每次 run_id/exit/错误，`next_run_at` 退避），耗尽 `finalizeTask(failed)` 带 exit code 与截断 stderr。stdout 尾 64KB 落 `tasks.result.script`，task_runs 记产物引用。
+- `lib/ssh-exec.js`：把 `sshWithStdin/sshRun` 从 openclaw-agent-executor 原样抽出共用，行为不变。
+- 测试：`script-executor.test.js`（22 例，含把 runner 用本机 sh 真执行：exit 收割/超时杀进程组/ALREADY 幂等/env 与 cwd/cwd 不存在 125）、`lib/__tests__/ssh-exec.test.js`、`integration/script-executor-chain.pg.integration.test.js`（真 PG 临时库 + 真 dispatcher/executor + 真 runner，仅 ssh 换成本机 sh：`script → agent → script` 三步链由 dispatcher 自动串完，hard 依赖门控每个快照都成立，tasks 与 task_runs 每步一行；失败重试一次后 failed；超时；违规 us-vps 直插库不被派发；幂等；并发槽）；scheduler-jobs 单测补注册断言；smoke `script-executor-dispatch-smoke.sh` 已登记 allowlist。
+
+## Brain 1.325.0 — getSkillForTaskType 改查 skill_registry：能力账本参与执行时选择（链 bf5088a3 棒7，任务 9917a588，决策 105a5868）
+
+- 病根：`executor.getSkillForTaskType` 只读硬编码 `EXECUTOR_SKILL_MAP`，`skill_registry` 只用于展示对账，账本改了执行不变（账实分叉）
+- 迁移 470：`skill_registry` 加 `task_types TEXT[]` + `dispatch_command TEXT`（GIN 索引），并把 `EXECUTOR_SKILL_MAP` 全部非空条目幂等 UPSERT 灌进账本（task_types 取并集、dispatch_command 只补空值、不覆盖已有行其它列；research 空串不入账）；含回滚脚本
+- 解析改读账本：新 `lib/skill-binding-registry.js`，`getSkillForTaskType` 仍同步，读进程内快照；`preparePrompt` 经 `resolveSkillWithLedger` 刷新（TTL 60s 零逐任务查库、并发共享在途查询、800ms 超时、失败保留旧快照并退避 30s，回落硬编码，绝不拖垮派发）；`payload.skill_override` 仍最优先且不查库
+- 漂移告警：账本与硬编码不一致以账本为准并 `console.warn`（每 task_type 每进程一次）；账本缺映射走硬编码并告警；日报新增「skill 绑定漂移」板块、晨报新增一行，缺映射/分歧/多 skill 冲突均标 🟡 AMBER，检测不可用不出该行
+- 范围说明：账本驱动的是走 `_prepareDefaultPrompt` 的 task_type（dev/pipeline_rescue/initiative_execute/intent_expand 等）；`initiative_plan`/`prd_review` 等有专属 prepare 函数的类型自带硬编码 skill，不在本刀范围
+- 测试：单测 27 项（改映射/缺映射/override/故障/超时/缓存/退避/冲突）+ executor 接线 + 日报晨报渲染与接线 + 迁移 470 结构（回填清单与 `EXECUTOR_SKILL_MAP` 逐项比对）+ 真 PG 集成（建库跑全量迁移，改账本一行无需改代码即生效）；smoke `skill-registry-binding-smoke.sh` 登记 allowlist
+
+## Brain 1.324.0 — owner_decision 应答通路：待办批准/驳回处理器 + 到期按默认执行 sweeper（任务 8aa79219，链 bf5088a3 棒 9，决策 105a5868）
+
+- 根因：棒 5 让 `blocked_reason='owner_decision'` 必带协议并为 `waiting_on=human` 生成待办，但应答通路缺失——`actionHandlers` 没有 `owner_decision`（主理人点批准得到 No handler），协议承诺的「到期不答按默认走」没有任何代码执行；另有两处既有行为会让承诺落空：`unblockExpiredTasks` 在 `blocked_until` 到期时无决议地放行 owner_decision 任务，`expireStaleProposals` 在 deadline 到期把待办标 expired（不可逆决策顺延再催时主理人已无待办可点）。
+- 批准：新增 `lib/owner-decision-resolve.js`，`applyOwnerDecisionResolution` 一个内部函数（同一事务：行锁复核 → 选项解析 → 写 `payload.owner_decision.resolution={choice,chosen_option,by,at,via}` 与协议快照 → 关待办 → `unblockTask(taskId,{db})` 回 queued → 写 `decisions`）。`POST /pending-actions/:id/approve {reviewer, choice}`：choice 为选项标签/全文或 `default`，缺省取协议 default；未知 choice 400 不改任何状态；二次批准 409；`waiting_on=machine` 400。
+- 驳回：`rejectPendingAction` 事务化，owner_decision 同事务写 `resolution={choice:null,via:'reject'}`，任务保持 blocked；已处理 409。
+- 到期默认：新 scheduler job `owner-decision-deadline`（进程内 10min 自 gate，声明 `livenessIntervalSec:60`）。可逆且有 default → 与批准同一函数应用默认（`via=default_on_deadline, by=system`，decisions made_by=system，Bark P2 带 dedupeKey `owner_decision_default_<task_id>`）；不可逆 → 不自动执行，`blocked_until` 顺延 24h、`payload.owner_decision.deadline_deferrals` 计数留痕、待办 expires_at 同步顺延、Bark P1。到期时刻取 `max(deadline, blocked_until)`；已驳回的不被默认覆盖。整轮有界：SQL `query_timeout`、每任务事务 `SET LOCAL statement_timeout/lock_timeout`、取连接超时、90s 预算、单任务失败隔离。
+- 旁路堵死：`unblockExpiredTasks` 排除 `owner_decision + waiting_on=human`；`expireStaleProposals` 与 `approvePendingAction` 的过期检查对 owner_decision 待办不按时间过期。
+- `decisions.category` 用 `decision`（`execution` 不在 `decisions_category_chk` 白名单）。
+- 测试：`__tests__/integration/owner-decision-approval.pg.integration.test.js`（真库临时库，20 用例覆盖批准选 A/选 default/未知 choice/二次批准/machine 被拒/驳回/可逆走默认/不可逆顺延/幂等及旁路排除）；`lib/__tests__/owner-decision-resolve.test.js`；`routes/__tests__/actions-owner-decision.test.js`；scheduler-jobs 与 task-updater 单测补断言；smoke `owner-decision-approval-smoke.sh`。
+
+## Brain 1.323.0 — 任务终态写入收口到状态机层 lib/task-terminal.js：所有终态路径必经，completed_no_pr 也接棒
+
+- 根因（任务 384de1e7，链 bf5088a3 棒 2，决策 105a5868 / ec7bf540；09-22 七层审计）：接棒（completed → handoff.next_steps 自动登记下一棒）只挂在 `PATCH /tasks` 一条路径；executor / monitor-loop / crystallize-orchestrator / harness-attempt-run / shepherd / publish-monitor / postdeploy-verifier / pr-callback-handler / routes/harness / routes/eval 等直接 `UPDATE tasks SET status='completed'` 全部绕过；openclaw-agent 收割写 completed_no_pr 而 relay-baton 只认 completed → 秋米任务 100% 不接棒。
+- 修法：新增 `lib/task-terminal.js` 两个入口——`finalizeTask(db, taskId, status, opts)`（列白名单 SQL 构造 + CAS + jsonb 合并 + 额外 WHERE，写完自动跑钩子）与 `afterTerminalTransition(pool, taskId, status)`（动态 SET 写入者 / 事务路径 COMMIT 后调）；`RELAY_TERMINAL_STATUSES = [completed, completed_no_pr]`，relay-baton 改认它；failed / archived 走同一出口不接棒。仓库内 30+ 处字面量直写终态站点全部改经 finalizeTask；PATCH 两条路由、执行回调（队列 + HTTP）、Kernel run 终态化、actions.update_task/bulk、task-updater 终态分支接钩子（放在 completed_no_pr 重排块之后：被重排回 queued 的自然不接棒）。
+- 机械守卫 `__tests__/task-terminal-write-guard.test.js`（proven-to-fire 实证：植入直写文件即红）：① hub 之外任何 `UPDATE tasks … SET status='<终态>'` 红；② 参数化 `status = $N` 写入者必须登记 `TASK_STATUS_WRITER_REGISTRY`；③ 登记为可能写终态的模块源码必须出现 afterTerminalTransition( / finalizeTask(；④ 登记表无幽灵条目。
+- 终态写入统一副作用：清 claimed_by / claimed_at；completed 类 `completed_at = COALESCE(completed_at, NOW())`（task-updater 沿用历史 NOW() 覆盖）；接棒异常吞成 warn 不阻塞调用方。
+- 本棒不含任务描述 ③skill relay 落 step 行 / ④work-commander 派发 step 行 / ⑤task_dependencies 硬边统一 / ⑥断链晨报 AMBER——进 handoff.next_steps。
+
+## Brain 1.322.0 — 决策分档机械守卫 + 依赖单一写口（链 bf5088a3 棒5·PR A，任务 3fad28e0，决策 105a5868）
+
+- 守卫 1（goal_id 必须是 KR 级）：`POST /tasks` 与 `createRoutedTask` 给了 `goal_id` 就必须存在于 `key_results.id`，给 Objective id 返 400 `goal_id_not_key_result` 并列出其名下 KR（原先挂 Objective 的任务被 tick 派发白名单静默过滤、永远 queued 无日志）；不给 goal_id 行为不变；KR 状态不在派发白名单只提示 warning
+- 守卫 2（owner_decision 协议）：`blocked_reason=owner_decision` 必带 `blocked_detail{question,options[2+],default,deadline,reversible,waiting_on:human|machine}`，缺项 400 并列全缺项；入口四道——`blockTask`（`/tasks/:id/block` 原先一律 404，现协议违规回 400）、`POST /tasks` 建单（新增 `blocked_reason/blocked_detail` 入参）、`createRoutedTask`、迁移 469 触发器（psql 直写也拦，只拦新写入，存量 blocked 行不回填不报错）；`waiting_on=human` 生成 pending_action（signature 去重、expires_at=deadline），`machine` 不进主理人待办；`unblockTask` 关闭对应待办
+- 依赖单一写口 `lib/task-dependencies.js`：`task_dependencies` 边与 `payload.depends_on` 同步写（自环/不存在/成环拒绝）；建单带 `depends_on` 同事务写 hard 边；`harness-dag`、`proposal.js` 改走写口；新增 `GET/POST/DELETE /api/brain/tasks/:id/dependencies`；`task-dependencies-single-writer` 守卫（含变异）扫 src 内任何绕过写口的直写
+- 迁移 469 + 回滚脚本；smoke `task-governance-guards-smoke.sh` 登记 allowlist；PG 集成测试建库跑全量 migrate 验证触发器 proven-to-fire
+
+## Brain 1.321.0 — 登记闸：多刀必挂 project 根 + pushTasks 投影 Project / Blocked by（链 bf5088a3 棒5·PR B，任务 3fad28e0，决策 105a5868）
+
+- 登记闸 `lib/project-root-gate.js`：登记时 `depends_on` 非空或 `payload.multi_task===true` 即「多刀」，`parent_task_id` 祖先链（含自身，≤12 层）上必须有 `task_type='project'` 根，否则 400 `project_root_required`（带建根提示）；声明 `multi_task` 且父下已有兄弟却没写 `depends_on` 键 → 400 `depends_on_required`（显式 `depends_on: []` = 刻意并行）；project 根自身豁免。接入 `POST /tasks` 与 `POST /tasks/:id/dependencies`；闸在 Brain 建单入口，/dev Phase 0 走 POST /tasks 天然被闸，不改 engine
+- pushTasks 投影：`Blocked by` 自关联 relation（task_dependencies hard 边，前置必须已投影且带本系统指纹）+ `Project` relation 指纹（`pushed_project` / `pushed_blockers`，根后建页、依赖后加都会重推）；`ops-notion-schema.buildTasksDbProps` + `ensureOpsDbProps` 缺列即补，补不上 / 推送因 Blocked by 报错 → 该列 flag-off 冷却 10 分钟，且不清 notion_id（400 会被误判错库而重建重复页）
+- 一致性：单测断言推送用到的每个 Notion 列都在库既有列或补列清单内；smoke `project-root-gate-smoke.sh` 登记 allowlist，带 NOTION_API_KEY 时只读核对 Notion Tasks 库五列
+- 真 PG 集成测试：递归祖先链找根、`PUSH_TASKS_QUERY` 的 LATERAL 与指纹条件语义（遗产 notion_id 前置不进 relation、flag-off 不 livelock、指纹一致不再选）
+
+## Brain 1.320.0 — runner 原语出口：脚本步留痕 + task_runs Notion 投影 + 晨报/日报裸跑 AMBER（链 bf5088a3 棒1·出口 B，任务 66db3dfb）
+
+- 脚本步 run：`notion-push-sync` 的 ssh 直派（采收线「金诺采收·直驾」样板，source=`ssh-workflow`）与 OpenClaw webhook 派发（source=`openclaw-webhook`）入账后经 `startRun` 落一行 running；`reapSshWorkflowRuns` 读 `.exit` 补终态（0→success，非 0→failed，SQL 判超 6h→timeout，探不到 exit 且未超时保持 running，绝不伪造）；`syncOpenClawRuns` 随 ops_runs 终态补齐
+- `pushTaskRuns` 投影面：库在 `notion_projection_map` 登记为 push+active 才推（未登记=占位 pending_vessel，整块 flag-off 安全跳过）；推前按 `OPS_DB_PROPS.task_runs` 缺列即补；走统一引擎、失败只记日志不抛，DB 为真相源；`runNotionPushSync` 与运行舱入口 `runOpsNotionPush` 均接线（吞错壳，不连坐）
+- 晨报：`daily-report-generator` 新增 `renderBareRunSection`，`generateDailyReport` 调 `findBareRuns` 喂它，日报出现「裸跑检测」板块与 `🟡 AMBER` 裸跑行（无裸跑不误报、检测失败整块省略）；`morning-cockpit-bark` Bark 晨报加 AMBER 裸跑行
+- smoke `task-run-primitive-smoke.sh` 补出口接线断言
+
+## Brain 1.319.0 — runner 原语：一次执行 = 一行 task_runs（链 bf5088a3 棒1·地基，任务 66db3dfb）
+
+- 新增 `lib/task-run.js`：全仓唯一写 `task_runs` 的入口——`startRun`（`ON CONFLICT (run_id) DO NOTHING`，一次执行恒一行）/ `finishRun`（`WHERE ended_at IS NULL`，已终态不覆盖，无终态回执保持 running 不伪造）/ `recordRunFromCallback` / `startRunForExecResult` / `findBareRuns` + 纯逻辑 `normalizeRunStatus` / `buildRunContext` / `buildRunResult` / `detectBareRuns`；全部 fail-open（留痕失败只 warn，不拖垮执行主链）
+- 五条执行路径接线：executor 漏斗（`triggerCeceliaRun` 包装，覆盖 dispatcher / tasks 路由 / execution 路由三处调用方，internal handler 合成 run 立即成功）/ dispatcher 兜底 / openclaw-agent-executor（起时 start、收割 `.exit` 时 finish）/ `POST /execution-callback` 回执（cecelia-run、cecelia-bridge、脚本步统一出口）/ kernel `finalizeKernelRun` 终态
+- dispatcher 写 `dispatch_events(dispatched)` 补传 `task_id`（此前恒为 NULL，裸跑检测无 join 键）
+- 迁移 468：`task_runs` 加 `notion_id` / `notion_synced_at` / `notion_digest`（Notion 投影记账，纯 additive）
+- 机械守卫 `task-run-single-writer-guard.test.js`：扫 src + scripts，除 lib/task-run.js 外任何 INSERT/UPDATE/DELETE task_runs 即红（内置违规样本 proven-to-fire）
+- 二阶效应：`alertness/healing.js` 的 `quarantineProblematicTasks` 读 `task_runs.status='failed'` 三次以上隔离 queued/pending 任务，此前表为空休眠，写口上线后激活
+- smoke `task-run-primitive-smoke.sh`
+
+## Brain 1.318.0 — tasks.kind 真列（agent | workflow）+ 属性约定（任务类型模型收敛第一刀）
+
+- 迁移 466/467：`tasks.kind TEXT` + `tasks_kind_check`（agent | workflow，NULL=未分类）NOT VALID 登记 → 按注册表分批回填 → 467 VALIDATE；决策 df67a9d6 / e073bdc2，链 bf5088a3 棒4（任务 94465721）
+- `lib/task-type-registry.js`：每个 task_type 显式声明 `kind`（编排 ≥2 阶段 = workflow：workflow_run / content-pipeline / harness_initiative / golden_path_proposal / harness_task / crystallize / project；其余 agent）；导出 `TASK_KINDS` / `KIND_FOR_TASK_TYPE` / `WORKFLOW_KIND_TASK_TYPES`
+- `lib/task-kind.js`：`deriveTaskKind` / `assertTaskKind`（`invalid_task_kind`）/ `resolveTaskAttributes`（department→dept 真列，skill / workflow_ref / engine / device 走 payload 规范键，兼容旧 qiumi_* 键）
+- 建单：`createRoutedTask` INSERT 写 kind（调用方给则校验、否则按类型派生）；`POST /api/brain/tasks` 接 `kind`，非法 400 `INVALID_KIND`
+- 秋米路由：Jev kind 枚举改 import 注册表；agent 分支落库同一条 UPDATE 写 `kind` / `dept` 真列，payload 双写 `engine` / `workflow_ref`
+- 消费方：Notion 任务投影取 `t.kind`，Description = `<task_type> · <kind> · brain:<id>`
+- 84 个 task_type 本刀不退役（零行为变化）；smoke `task-kind-column-smoke.sh`
+
+## Brain 1.317.11 — 编排桥 prepare 超时默认 180s→600s 并支持 KERNEL_FLEET_ORCHESTRATOR_PREPARE_TIMEOUT_MS 覆盖
+
+- 根因（任务 f61fc0c6，2026-09-24 21:50 实证）：MMV 建工作区 = `git clone --bare --no-hardlinks` 整库拷贝 + `npm ci`，两条 run 并发时实测 7 分钟；`orchestrator-remote-bridge.js` prepare 超时 180s 硬编码、无 env 覆盖（attempt 桥有 `KERNEL_FLEET_PREPARE_TIMEOUT_MS`，编排桥没有）→ Brain 先放弃、跑场机继续 prepare → 作业停在 prepared 占槽到 TTL，期间派发全部 429 deferred 空转（run 5ae4b0e2 后连续 6 次）。
+- 修法：默认 600s；`KERNEL_FLEET_ORCHESTRATOR_PREPARE_TIMEOUT_MS` 可覆盖（非法值回落默认）；桥对象暴露 `prepareTimeoutMs` 供断言。后续刀：workspace-manager 用 `--shared/--reference` 代替整库拷贝，把 prepare 压到秒级。
+- 同 PR：`requeueKernelRunLaunchDeferred` 默认延后上限 10 → 300（`DEFAULT_KERNEL_LAUNCH_MAX_DEFERS`）——两条 run 各跑 5–6 小时占满双槽时，第三条任务每 tick 429 deferred，20 分钟就被判终态不合理，须能等完一整轮 run。后续刀：派发前先查跑场机容量，不为必 429 的派发建 run 行。
+
+## Brain 1.317.10 — 远程点火撞跑场机 429/超时改 deferred 回队 + fleet-worker prepared 作业 TTL 释放槽位
+
+- 根因（任务 281aa798，2026-09-24 实证）：MMV maxConcurrent=2 只跑 1 条 run 却持续 429——Brain 侧 prepare 请求超时放弃后，fleet-worker 的作业停在 `prepared` 永不 start，`active()` 一直计入；Brain 又把 `orchestrator_bridge_prepare_http_429` 当永久失败 terminalized，一天 6 条刀被判死。
+- 修法①（Brain）：`_spawnKernelRuntimeRemote` 对 bridge 429/502/503/504/request_failed 走新 `requeueKernelRunLaunchDeferred`——run 记 failed 留痕、任务回 queued 清 claim，payload 记 `kernel_launch_defer_count`，达 10 次回落终态；返回 `deferred:true reason=orchestrator_busy`。永久错误（400/404/409/500…）仍 terminalized。
+- 修法②（fleet-worker）：`orchestrator-runner.cjs` prepared 作业带 `preparedAt`，超过 `preparedTtlMs`（默认 10 分钟）置 `expired`（终态释放槽位），迟到 start 得 410 `orchestrator_prepared_expired`，同 run 可重新 prepare。
+- 测试：harness-skill-relay / kernel-run-store / orchestrator-runner 单测 + `tests/gp/f1/step3-orchestrator-remote-launch.test.js`（429 → deferred；永久错误用例改为 http_400）。
+
+## Brain 1.317.8 — runner 镜像摘要 repin 4450aac9 → aeaf2905（仓库为唯一真身，撤 MMV 本地热修）
+
+- 主理人 2026-09-24 拍板（决策 e2551d59，invariant）：跑场机 runner 镜像摘要唯一真身=仓库，机器跟仓库走，禁止本地热修迁就镜像。09-20 MMV 本地重建后热修 runner-checkout/plist 为 aeaf2905 未进仓库，仓库仍钉 4450aac9（#5409），两边分叉、同步代码不敢整体拉。4450 无 registry 不可复现；aeaf2905 的 entrypoint label（12b6b2ef）与 main 一致且已真验通车（run 60c1f156 越过准入）。
+- 按 repin 清单 11 处一次性重钉为 `sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033`（历史条目保留旧 digest 原文）；合并后 MMV runner-checkout 整体切 main、删热修与 .bak；xian-m4/xian-m1 经 fleet-rollout 下发同一镜像（任务 db1616d6）。
+
+## Brain 1.317.7 — fleet-worker 节点探针 worktree add 改 --no-checkout（修 MMV 永远 node_not_base_admitted）
+
+- 根因：`node-probe.cjs` disposable 探针用 `git worktree add --detach` 对 8465 文件全量检出，MMV 实测 4–5.5s，撞 `DEFAULT_COMMAND_TIMEOUT_MS`=5s 被杀 → `worktree.root_ready`/`container.probe_succeeded` 恒 false → node-admission 拒绝 MMV（run d613b4fd 卡 `node_not_base_admitted`）；副作用是每 30s 一次全量检出与 `fleet-node-probe-*` 残留
+- 修法：容器探针只检查 `/workspace/.git`，worktree add 加 `--no-checkout`（毫秒级）；回归测试 `fleet-worker.test.js` 断言参数含 `--no-checkout`（任务 e27e0bfd）
+
+## Brain 1.317.6 — 调度 job 入运行舱 + notion-gtd-sync 整轮有界（09-24 卡死 8.4h 根治）
+
+- 新 job `scheduler-liveness`（JOBS 末尾）：working_memory 哨兵 → `ops_workflows(source='scheduler')`，活性按声明间隔算（`classifyDeclaredLiveness`，不走冷启动门槛），翻转 dead 按轮合并一条 Bark（无 token 回退 P1）、恢复 P2；只写机器列，10 分钟降噪，dead 行静默秒数持续刷新，下线 job 置 cold，失败写 `scheduler` 来源心跳。
+- `notion-gtd-sync` 整轮总超时（`QIUMI_SYNC_ROUND_TIMEOUT_MS`，默认 5min，非法回落）+ 步名按轮次门控 + 超时后旧轮在步边界停下 + `liveness_at`（无完成轮取循环启动时刻）。
+- 哨兵 record 透传 handler 自报 `liveness_at`；JOBS 条目可声明 `livenessIntervalSec`。
+- pg 客户端 `query_timeout`（`DB_QUERY_TIMEOUT_MS`，默认 10min）。
+- 便宜闸 registry 只取 `source='n8n'`。
+- 决策 69cd802f / task 50a2c256。
+
+## Brain 1.317.5 — kernel-v1 远程 run 凭据来源修复（credential_payload_invalid 根治）
+
+- `credential-broker`：`issue` 透传 loader 的 `credential_*` 错误码（仅 JSON 非法才 `credential_payload_invalid`）；loader 增 `trustedUids`（属主 ∈ 进程 uid ∪ 可信 uid，非整数/无 getuid 且声明 trusted → fail-closed）、权限规则改为「可读、无组/他人写、无执行位」、校验父目录（目录/非符号链接/属主可信/无组他人写）
+- 新模块 `orchestrator/provider-account-home.js`：账号目录名单一真身；`resolveProviderAccountHome`（执行目录，homedir）与 `resolveCredentialAccountHome`（凭据目录，`CECELIA_CREDENTIAL_HOME_ROOT`，非绝对路径 fail-loud）分离；`parseTrustedUids`（uint32、带片段错误）；run.js / harness-relay-watchdog 的凭据 loader 接线
+- fleet-worker `orchestrator-runner`：start 前探测 `CECELIA_ORBSTACK_HOME` 下 codex 账号 auth.json 存在性（失败 500 `orchestrator_credential_home_unavailable`，run 置 failed 释放槽位），spawn env 注入 `CECELIA_CREDENTIAL_HOME_ROOT` / `CECELIA_CREDENTIAL_TRUSTED_UIDS`；回填 09-20 生产热修（runner/skills 路径走 `CECELIA_ORCHESTRATOR_RUNNER_ROOT`）
+- GP 守卫 `tests/gp/f1/step3-kernel-credential-source.test.js`（任务 d3764629，决策 fbe2146c）
+
+## Brain 1.317.3 — liveness 别再把「在别的机器上跑着的活」判死回队
+
+- 0923 生产实证（单 e8c1dbce，手机 ANGYVB4311010223）：21:17:50 工作机领单器认领 → in_progress 真机开始采收；21:28 liveness confirmed DEAD → 零 spawn 证据 → 回队（status 改回 queued）；21:34:09 活真干完了，回执被拒 `NOT_RUNNING`；21:35:19 同一条活**又被领走**，在真手机上重跑一遍。后果不只丢回执——回 queued 后会被再次认领，同一个活反复执行，机时浪费且在抖音上重复操作有风控风险。
+- 根因是**用错了字段**：liveness 的三条 spawn 证据全是 Brain 本机（us-vps）的（activeProcesses 条目 / `/tmp/cecelia-<id>.log` / error_message），而 `device_job` 由工作机领单器在西安的 Mac 上执行，本机这三条一条都不会有。本该有豁免（第一道检查就是 `CONTENT_PIPELINE_TYPES`），但它按 `executor` 筛，而 registry 里 `device_job: T('device', false, false, null, 'external-worker', ...)` —— **executor 是 null，watchdog 才是 `'external-worker'`**。「谁执行」和「谁管生死」是两件事，liveness 关心后者却筛了前者。
+- 改法：registry 加派生集合 `EXTERNAL_WATCHDOG_TASK_TYPES`（按 watchdog 筛，8 个：7 个 content-* 加 device_job），liveness 消费它，符合「各消费方只 import 派生集合、禁止手抄」的设计。豁免判据用**认领新鲜度**而非整类跳过：认领过久仍无回执（工作机断电、领单器挂了）落回既有 SUSPECT→DEAD 流程，不会僵死在 in_progress——那种「页面上看着在跑、实际没人做」比误杀更难发现。宽限期 45 分钟（`EXTERNAL_CLAIM_GRACE_MS` 可覆盖），真机实测单个词采收 17~25 分钟。liveness 的 SELECT 补了 `claimed_by, claimed_at`（原来没取）。
+- 守卫：新增 5 条集成测试（真连 Postgres、真 executor.js、真 ps 探测，零 vi.mock），变异四条各验红（去掉豁免 / 永不回收 / 宽限期缩回 10 分钟 / 按 executor 筛）；既有 liveness 10 条与 registry 守卫 11 条复跑全绿。
+
+## Brain 1.317.2 — 派发时重锚定 base_sha（接班收据），main 合并不再冻全队列
+
+- 迁移 465：`work_routing_receipts.anchor_generation`，唯一键改 `(source,source_id,router_version,anchor_generation)` + `UNIQUE(supersedes_receipt_id)`，`initiative_runs(current_task_id)` 索引
+- 预检 `map_revision_mismatch` 时先调 `reanchorReceiptIfEmptyBranch`：分支无产出（无 initiative_runs）→ 同事务插接班收据并同步 `tasks.payload/metadata`，留痕 `work_route_reanchored` / `base_sha_reanchored`；有产出 → `needs_rebase`；快进 ≥5 次 → `map_thrash`
+- `createKernelRun` 取 `metadata`、透传 `createdSource`、返回体带 `base_sha`/`routing_receipt_id`，relay/headed 三处 `syncTaskPayloadFromKernelRun` 回流内存 task
+- 路由收据回读取最新代（`anchor_generation DESC`），幂等比对忽略 `REANCHOR_EVIDENCE_KEYS`；planner recovery / observability 改按最新代取收据
+- dispatcher/executor 派发失败 `reason_code` 结构化（`KNOWN_REASON_CODES` 白名单）；`needs_rebase` 直接停车不计熔断，停车失败升 P2 `needs_rebase_park_failed`
+- 一次性回填脚本 `scripts/reanchor-blocked-tasks.mjs`（`--dry-run` / `--confirm-database=`，有 run 的任务改标 `needs_rebase` 不解锁）
+- 真 PG 集成测试：接班收据 × 421 触发器 × 465 唯一键 × 索引 × `createKernelRun` 端到端（任务 d9c405e2）
+
+## Brain 1.317.1 — 便宜闸读不到 Notion 指定的 Agent/Workflow（规格分叉修复）
+
+写入方 `notion-push-sync.js` 存 `qiumi_source.agent_workflow_ids`，读取方 `routing/cheap-gates.js`
+读 `src.relations.workflows`——生产代码零处写过后者，主理人在 Notion 填的「执行 Agent / Workflow」
+被整条丢弃。根因是 pr2/pr3 两份 plan 从一开始就是两份不同合同，8 处测试照 pr3 抄。
+
+- `qiumi_source` 形状抽成唯一真身 `packages/brain/src/lib/qiumi-source.js`（两层导出）
+- `cheap-gates.js` 改读真实键，分两趟匹配 ops_workflows / ops_agents
+- 契约守卫三段串联 `parseZhPage → qiumiSourceFromNotion → cheapGates`
+- 同 PR 改掉 pr2/pr3 文档里的错误合同
+
+## Brain 1.317.0 — 秋米路由认「用 <型号>」：模型允许清单显式命中，claude 引擎改走 anthropic 原生通道
+
+- 主理人 0923 拍板：厂商 × 型号两层，正文写「用 grok-4.7」「用 opus-5」「用 sol」直接命中；型号清单不手抄，`QIUMI_MODEL_ALLOWLIST`（JSON 数组）与 OpenClaw `agents.defaults.modelPolicy.allow` 同步（0923 已扩到 26 个并逐个实调）。
+- 匹配规则 `resolveModelRef`：全名 > 短名全等 > 以 `-<token>` 结尾且唯一（`sol`→`openai/gpt-5.6-sol`，`opus-5`→`anthropic/claude-opus-5`，不误吞 `opus-5-5`）；多候选不猜；清单外不认。便宜闸新增 `hardModel`（matchedBy `text:model`），agent 分支 `model = hardModel ?? modelMap[engine]`，事件留痕。
+- `DEFAULT_MODEL_MAP.claude` 由 `claude-cli/claude-sonnet-5` 改为 `anthropic/claude-sonnet-5`：OpenClaw 的 claude-cli 通道 0923 实测任何型号 180s 无输出（债 419ab185），另一会话 10:05 已把 sonnet-5 运行时切到原生 API 并验证通。
+- 守卫：env.test.js（清单解析 / 六种解析情形 / claude 映射）、cheap-gates.test.js（全名/短名/引擎词不误判/清单外/多个取首）、qiumi-router.test.js（hardModel 覆盖 engine 映射、无型号走默认、用 claude 走原生），变异各验红。executor 不改（`payload.model` 已透传 `--model`）。
+
+## Brain 1.316.0 — 秋米手机活改走 OpenClaw agent：device_job 派生封存为开关（默认关）
+
+- 主理人 0923 拍板：Notion → Brain → OpenClaw agent 一条链，手机活也走 agent。此前 Jev 判手机活即派生 `device_job` 交西安领单器，而领单器（zenithjoy `device-job-claimer.sh`）只认 `harvest_keyword/outreach_round/dm_one` 三种结构化单、Brain 又不填 `params`，自由文本手机活必失败（9/21 EXEC_RC_1/2 同源）。
+- 新增 `QIUMI_DEVICE_DELEGATION_ENABLED`（只认字面 `'true'`，默认关）：关时 `routeQiumiTask` 三道 device 闸不生效，一律 agent 分支并留痕 `qiumi_route.device_hint = {is_device, verdict, p, serial, host, matchedBy}`；开时行为逐字保留（排程看板直接建的 `device_job` 不经此路径，不受影响；`qiumi-device-reconcile` job 保留）。
+- `promptOf` 在 `device_hint.is_device` 时追加设备提示段：序列号、宿主、OpenClaw 节点名（`QIUMI_PHONE_NODE_MAP` 覆盖，缺省 `<HOST>-PHONE` 派生，xian-m4 → XIAN-M4-PHONE）、`douyin-phone-adb --profile <profile>`、`lock-acquire/lock-release`、每次 exec timeout 300000。agent 侧前提（运维已核实）：media 部门 agent 已加载 `douyin-phone-runtime` skill；XIAN-M4-PHONE / XIAN-M1-PHONE 节点 exec 白名单已放行控制器。
+- 守卫：`qiumi-router.test.js` 开关三态 + 开关关五条（含 `persistDecision` 不派生子任务）；`openclaw-agent-executor.test.js` 设备提示三条；变异（闸 1 去掉开关判断 / 删提示拼接）均验红。
+
+## Brain 1.315.1 — 秋米 qiumi_task 被 cecelia-run 熔断误伤 + 每 tick 白打 Jev 重复路由
+
+- 现象（0923 03:48–03:55 生产实证）：首条秋米真活两次 `qiumi_route_decided`（run_id 不同）无 `openclaw_agent_spawned`，每 tick 回 queued；`cecelia-run` 熔断 reset 后才派出。
+- 根因：qiumi_task 的执行体是 `openclaw-agent`（ssh 直派 MMV，不经 cecelia-bridge），却被 `needsBridgeCheck` 拉去过 `cecelia-run` 熔断 + bridge 健康两道闸；路由副作用（Jev + persistDecision）发生在闸之前，所以每 tick 重路由换 run_id；openclaw 路径失败还反向计入 `cecelia-run`。
+- 修法（四项同刀，单独上产会反向污染）：① `needsBridgeCheck` 按注册表 surface 派生，`openclaw-agent` 表面豁免两道 bridge 闸（不手抄名单）；② `dispatchQiumiTask` 入口先查独立熔断键 `openclaw-agent`，OPEN → 放 claim、派发统计记 `openclaw_agent_circuit_open`、不路由；③ 路由幂等：payload 已有 `qiumi_route`+`run_id` 直接 proceed，复用 run_id（执行体 ALREADY 探针防重起）；④ 熔断计数分键：openclaw 表面失败 `recordFailure('openclaw-agent')`、成功 `recordSuccess('openclaw-agent')`（包 try/catch，事后记账失败不影响已 spawn 任务），不动 `cecelia-run`。
+- 守卫：`dispatcher-qiumi-routing.test.js` 新增熔断豁免用例（cecelia-run OPEN 仍派 / bridge 不可用仍派 / openclaw-agent OPEN skip / 幂等 proceed / 分键 / recordSuccess 抛错不标 failed），每条已变异验证红；不改 `circuit-breaker.js`。主理人可 `POST /api/brain/circuit-breaker/openclaw-agent/reset`。
+
+## Brain 1.315.0 — grok 同步器读错配置文件：漏掉的 agent 不在分母里，日志永远显示全绿
+
+- `~/.openclaw` 下有两份配置：`openclaw.json` 是**真身**（`openclaw config set` 写它），`clawdbot.json` 是旧名、9-21 后就没更新。
+- 同步器读的是 `clawdbot.json`（23 个 agent），而真身有 **24 个**——新加的 `newmedia` 永远同步不到 grok token，几小时后必然 403。
+- **最坏的一种假绿**：漏掉的 agent 不在分母里，日志照样打「同步完成：成功 23 个，失败 0 个」，退出码 0。计数正确，样本不全。
+- 改为优先 `openclaw.json`、回退 `clawdbot.json`。守卫第 ③c 条**测行为不测字面量**：造两份配置各放一个独有 agent，看脚本同步了谁；已变异验证（退回只读旧文件即报红）。
+
+## Brain 1.311.10 — grok token 同步器在 launchd 下续期恒失败：`grok` 不在它声明的 PATH 里
+
+- 生产打脸：`grok` 装在 `~/.grok/bin/grok`，而同步器把 PATH 声明成 `/opt/homebrew/bin:/usr/local/bin`。launchd 下续期那步恒报 `timeout: failed to run command 'grok': No such file or directory`，日志只显示「续期调用失败 —— CLI 可能需要重新登录」，**把一个 PATH 问题误导成人工活**。
+- 同一天 `session-runner-router` 也栽在 launchd PATH 上（plist 没设 PATH → `timeout` 找不到 → 探活恒假 → 那个路由器从装上起一次都没成功过）。**同一类：自动化脚本在 launchd 下的 PATH 和人的 shell 不是一回事，必须显式声明全。**
+- 守卫加一条：在「脚本声明的 PATH + launchd 默认 PATH」的组合里必须找得到 `grok`。写这条断言时我自己连栽三次——变量没展开、`command -v` 是内建 env 跑不了、底座 PATH 连 `sh` 都没有，**测的一度不是要测的东西**。
+
+## Brain 1.311.9 — codex/grok 在生产恒判 0 可用：vendor 层读的是容器里不存在的本机凭据文件
+
+- 实证：7 天 61 次派单 **61 次全落 claude**，5 个 codex 号和 grok 一次没被选过。
+- 根因在 **vendor 层**不在选号层：`llm-capacity.js` 的 `pollCodexAccount` 读 `~/.codex-teamN/auth.json`、`pollGrokLedger` 用 `existsSync(~/.grok/auth.json)`，而 Brain 跑在 us-vps 容器里，`/root/.codex*` `/root/.grok*` 根本不存在（ssh 实证）→ `available_count` 恒 0 → `chooseGuidedExecutor` 在 vendor 层就把两家整个排除。**刀1 接进 capability-gate 的配额账本对这 6 个号根本没机会生效**——闸门装在了一扇已经焊死的门后面。claude 那条能通只是因为它走 `getAccountUsage()` 读 `account_usage_cache` 表，压根不碰本机文件。
+- 修法：codex/grok 改读 `ops_model_accounts`，判据**复用** `createQuotaLedgerLoader` + `judgeAccount`，不另发明第二套（#5472 教训：同一个号在 vendor 层和选号层必须得出同一结论）。`unknown` 按三态语义弃权（视为可试），只有 `unusable` 才扣可用数——把「读不到数据」压成「没额度」正是 0819 三起事故的形状。
+- 装载器自身起不来时同样退回 unknown 弃权、账号列表保持完整，只把降级原因挂到 `poller`/`error` 上；绝不让 vendor 塌成「一个号都没有」。
+- 守卫 4 项变异逐个实跑验证被抓。**其中一项返工**：装载器故障那条断言最初喂的是手造快照，改 `loadQuotaSnapshot` 照样全绿——测的是自己的输入不是代码行为；改到 `llm-capacity-pool.test.js`（fs 被 mock，天然是装载器起不来的真现场）才咬得住。
+
+## Brain 1.311.8 — grok token 同步器补可观测性：日志时刻按本地时区、逐 agent 出进度
+
+- launchd 首轮实跑暴露两处：①`date -r` 在 launchd 环境（不带 TZ）按 UTC 渲染，把到期时刻 `23:01` 打成 `08:01`，排查时会误以为 token 早已过期；②23 个 agent × 每个约 30s ≈ **11 分钟整轮零输出**，「卡住」和「正常跑」在日志上完全同形。
+- 修：到期时刻显式按 `SYNC_TZ`（默认 `Asia/Shanghai`）渲染并带时区缩写；开跑先报总数与预计耗时，每个 agent 留一行 `[N/总数] <agent>`。
+- 守卫加 3 项断言（每个 agent 有进度行 / 进度带 N/总数 / 两个时区渲染结果必须不同），共 16 项；新增 2 项变异实跑验证被抓。
+- 时刻渲染要 GNU/BSD 双兼容：`date -r <epoch>` 是 BSD/macOS 写法，GNU coreutils 的 `-r` 是「取文件 mtime」，在 Linux 上必然失败并回落成打印原始 epoch。生产在 MMV（macOS）而 CI 跑 Linux——**守卫在 CI 上把这个 macOS 专用写法抓了出来**，已改为先试 GNU `-d @<epoch>` 再试 BSD `-r`，两家本地都实跑验证过。
+
+## Brain 1.311.7 — OpenClaw 的 grok 反复 403：登录态在 CLI 每 6 小时轮换，贴进去的静态 token 不会跟着换
+
+- 实证：`openclaw agent --model xai/grok-4.5` 报 `HTTP 403`，而 grok CLI 本身真跑有结果（`auth_mode=oidc`，自动续期）。
+- 三件事叠出来的：①OpenClaw 的 **xai 插件不注册任何登录方式**（`models auth login` / `setup-token` 都回 `No provider plugins found`），唯一通路是 `paste-token` 贴**静态** token；②`~/.grok/auth.json` 的 key 是 OIDC JWT，实测**约 6 小时到期**，CLI 自己换新的，贴进 OpenClaw 那份快照不会跟着换；③**凭据是 per-agent 的**，每次 paste 都给该 agent 建私库，没有全局写入口——实证贴给 dev 后 dev 通、infra 仍 403，贴给 infra 后 infra 通、main 仍 403。
+- 新增 `scripts/ops/openclaw-xai-token-sync.sh`：读 CLI 登录态 → 快到期先触发一次最小调用让 CLI 续 → 重读 → 逐个 agent 贴。agent 名单取自 `agents.entries` 而非扫目录（实测目录 26 个、配置 23 个，多出的是遗留目录，扫目录会对废目录报假警又漏掉新 agent）。
+- 带重试：连续 23 次 openclaw 调用会偶发撞上 state-lifecycle 锁，单独重跑即成功；不重试的话每轮莫名掉一两个 agent，而掉的那个几小时后就 403，排查时看不出是锁竞争。
+- 守卫 13 项断言，6 项变异逐个实跑验证被抓。**其中一项返工**：变异「只贴第一个 agent」最初把测试本身跑崩（`$RC` 后紧跟全角冒号，`set -u` 下被当成变量名）——崩溃红≠断言红，已全文件扫掉「变量紧跟非 ASCII」的同款隐患。
+
+## Brain 1.311.6 — 预览账本回写不再写死库名，失败不再当「非致命」
+
+- `preview-env-start.sh` Step 7 把 `preview_environments` 的账本库名硬编码成 `cecelia`。预览自 2026-09-17 下放执行机后账本在 MMV 的 `cecelia_staging`，而 MMV 上没有 `cecelia` 库 → `FATAL: database "cecelia" does not exist`（实证 `/tmp/preview-5475.log:906`）。
+- 该错误被 `|| log "⚠ DB 状态更新失败（非致命）"` 咽掉，脚本照样打印「✅ 预览环境启动完成」并退出 0。于是预览环境明明健康（PR#5475 实例 `:5305` health 正常），账本却永远停在 `starting`，CI 的 `wait-preview-active.sh` 干等 1200s 超时报红——**Deploy Preview Environment 长期假红的真根因**。
+- 修法：①账本库改为 `LEDGER_DB="${PREVIEW_LEDGER_DB:-${DB_NAME:-cecelia}}"`，且**在 `DB_NAME` 被 `$4`（预览库名）覆盖之前**求值；②回写拆成 `scripts/preview-ledger-activate.sh`，`RETURNING` 计行，`UPDATE 0` 判失败；③调用改为裸调，靠 `set -euo pipefail` 令回写失败即终止，不再降级。
+- 守卫 `packages/brain/scripts/smoke/preview-ledger-activate-smoke.sh` 拿真 postgres 跑，6 项变异全部被抓（含「换个措辞把失败吞掉」——第一版断言只 grep「非致命」这个词，被该变异当场打脸后改为钉控制流结构）。
+
+## Brain 1.311.5 — grok 配额是假事实：探针无条件返回 7d=0%，配额闸对它永远放行
+
+- `normalizeGrokUsage` 的注释写着「用量字段按 proto3 默认值省略——没出现即 0%」，
+  但这段逻辑**从来没实现过**：代码从头到尾没去找任何用量字段，而是无条件返回 `0`。
+- 生产实证（0922）：`ops_model_accounts` 里 grok 行恒为 `5h=NULL / 7d=0`，于是 G5 的三态
+  配额闸 `judgeAccount` 对 grok 必然判 `usable` —— 一个可能已耗尽的号永远不会被排除。
+  **把「没读」写成「0%」，是拿假事实喂闸。**
+- 改为返回 `null`。裁决实测：`usable/within_budget` → `unknown/pct_unknown`（弃权，
+  不加分不减分，交给认证失败/真 429 回调定夺）。对照真耗尽 95% 仍判 `unusable`，闸没被削弱。
+- **为什么不顺手把真值解出来**：拿真实响应解码（grpc-status:0，111 字节）确有候选字段
+  —— 内层 `f1 w5(float32)=1`、`f7={f1=2, f2 float=1}`。但只有一个样本且恰好取在极值 1.0 上，
+  「剩余比例」与「已用比例」两种解释在这一点上完全同形，无从分辨。拿到第二个非极值样本
+  或官方字段说明之前不猜（feedback：别拿一两个样本代表一整类）。字段证据已写进代码注释。
+- 原测试用例名「无用量字段 = 0%」把这个假事实钉死了——守卫在保护一个不存在的行为，已改。
+
+## Brain 1.311.4 — 「PR 已合并但无 evaluator」两条路径策略相反，PATCH 这条把账本锁死
+
+- `relay-watchdog` 的 `_finalizeMergedRun` 对此场景早有处置（注释原文）：
+  「门禁通过 → 原行为；门禁未通过 → **仍标 done/completed**（PR 客观已合并无法撤销）
+  但打 failure_reason，跳过 regression 提升，并发未验收合并告警」。
+  即 **放行 + 留疤 + 告警 + 不自动提升**，惩罚落在"不提升"上。
+- 而 `finalizeHarnessTask`（PATCH /tasks/:id 这条路）是**硬挡**，任务永远停在 blocked。
+  同一场景两条路径相反策略 —— 这是分叉不是设计。
+- 硬挡还判错了对象：它假定"流水线跑过、只是验收员偷懒"。实际 0921-0922 那三条任务
+  （a70d7743 / 3dc7792a / 7e7d4db5）是 tick 领走后派发撞 `map_stale` 失败，
+  **流水线一步都没启动**，evaluator 记录必然不存在。拦着任务不改变"PR 已经合了"
+  这个客观事实，只让账本和现实分叉。
+- PATCH 路径改为照抄 watchdog 已定策略：放行、标 `merged_without_evaluator_gate`、
+  复用 `_raiseUngatedMergeAlert` 开 P1、跳过 regression 自动提升、回执带
+  `ungated_merge:true`。**放宽的只有 evaluator 这一条**：PR 没合并 / 查不到 PR 仍然挡。
+- 守卫 6 条 + 变异 5 项全部真断言失败（含反向守卫「PR 没合并也放行 → 必须红」）。
+
+## Brain 1.311.3 — 完成态闸不认回写协议里的 pr_url；被拒时还发成功回执
+
+- `engine-pr-watchdog` 规定的终态回写是 `PATCH {status:'completed', result:{pr_url}}`，
+  而 `finalizeHarnessTask` 只看 `task.pr_url` / `payload.pr_url`，**从不看 result.pr_url**。
+  协议两头对不上 → 必然落到"按分支名反查 GitHub"兜底 → 分支名里没有 task 短 id →
+  必然 `pr_not_found`。0921-0922 连撞三条任务：活干完、PR 已合并，账本永远回不去
+  （issue a4991491）。
+- 闸改为也认请求里带的 URL，但**只当线索**：仍要 `gh pr view` 核到 `state=MERGED` 才认，
+  非法 URL 当没给。优先级 = 库里的 > payload 里的 > 请求里的（调用方自报可信度最低）。
+- 被闸拒时不再返回 `success: true`。请求的状态变更没发生，报成功就是"写被丢弃却发成功
+  回执"（issue 9cce296f 那一族）。HTTP 仍 200 且保留 `accepted:false` —— 既有调用方按
+  这个契约判（harness-completion-authority.test.js），改 HTTP 码会连带打翻它们。
+- 守卫 6 条 + 变异 5 项全部真断言失败（含"闸不再认请求里的 pr_url"、"请求值照单全收
+  不核 MERGED"、"回执退回恒真 success"）。
+
+## Brain 1.311.2 — crontab us-vps 腿被 host 逃逸二次包装，打到了 MMV 的网关
+
+- #5463 给 us-vps 腿写了显式 `ssh root@172.17.0.1`（docker 网关=本机宿主），
+  但仍然走 `run()` —— 它会再包一层 `buildHostCmd`，于是实际发出的是
+  ssh→MMV→ssh 172.17.0.1，而 MMV 的 docker 网关不是 us-vps。上产后心跳
+  `crontab/us-vps = unreachable`。改为直接 `exec()`：本腿自己就是完整 ssh 命令，
+  容器直接能到 172.17.0.1，不需要也不能再逃一次。
+- 新增两条守卫盯**实际发出的命令**（注入 `opts.exec` 抓 calls）：
+  us-vps 腿不许被 host 逃逸包装、mmv 腿必须走包装。变异验证：把 `exec` 改回 `run`
+  立刻真断言失败，报错原文直指病因。
+- 这是 0921 同一处第三次栽在「落点假设没人验」：①以为逃逸到 us-vps（实为 MMV）
+  ②修①时又被二次包装。前两次都是靠上产后查表才发现的，现在这条守卫在 CI 里就拦住。
+
+## Brain 1.311.1 — crontab 腿采错机器：落点假设写在注释里，没人验
+
+- 上一版（#5461）按「`buildHostCmd` 逃出容器 = 到 us-vps 宿主」写了腿4。实际
+  `CECELIA_HOST_EXEC_SSH` 生产值是 `administrator@100.71.151.105` —— **MMV**。
+  上产后采到的是 MMV 的 crontab（janitor.sh / rescan-if-changed.sh /
+  refresh-claude-tokens.sh / OrbStack），却标成 `host_alias='us-vps'`；
+  真正要补的 us-vps 那 22 条一条没采到。**台账"有数据"但是错机器的，比没数据更坏——
+  它看起来是好的。**
+- 拆成两条腿：`crontab@mmv`（走 host-exec 默认逃逸）与 `crontab@us-vps`
+  （显式 ssh `root@172.17.0.1` 回本机宿主；不用 `host.docker.internal`，
+  Linux 上不解析，生产日志一直在报 `Could not resolve hostname`）。
+- 两条腿的取数命令改为 `hostname; crontab -l`，解析时比对 hostname 与声明的
+  host_alias，不符立刻抛错。**落点假设不能写在注释里靠人记，要让机器每轮自己验。**
+- 守卫 +5 条（含"采到 MMV 的表却标 us-vps → 必须抛错"）、smoke +4 项断言。
+
+## Brain 1.311.0 — 排程台账补齐第四来源：us-vps 宿主 crontab
+
+- `ops_schedule_entries` 此前只有 gha/github(20) + openclaw/mmv(41) + launchd/local(1)，
+  宿主 crontab 的 22 条（19 开 3 停：Notion 派单轮询、opc-* 五个 Notion 同步、
+  磁盘/网关守卫、库备份、磁盘采样）**完全不在台账**，Notion 上零留痕——看不见的活
+  没法被团队调度。
+- 新增 `parseCrontab` + 腿4 `crontab@us-vps`（经 `buildHostCmd` 逃出容器读宿主 root 表）。
+  真表实证：22 条全部正确分类、标签唯一。
+- 三类行分清：活的 / **被注释掉的活**（`#[retired-0921] 45 20 * * * ...` 标 disabled，
+  沿用 openclaw 腿的原则「看不见的禁用等于悄悄少干活」）/ 纯说明注释（跳过）。
+  判据是"剥掉 `#` 和 `[标记]` 之后仍是合法排期开头"，而不是看有没有 `#`。
+- label 带上排期：同一脚本常配多条不同排期（`opc-kr-current.py` 三条、
+  `opc-okr-sync.py` 四条、`opc-daily-page.py` 四条），只用 basename 会因
+  `(source, host_alias, label)` 唯一键互相覆盖，22 条只剩 13 条。
+- `next_run_utc` 一律 null：算 cron 下次运行要完整实现 cron 语义（列表/步长/
+  星期与日期的或关系/DST），算错比不算更坏。同 `parseGhaCron` 的口径——禁假精确。
+- 0 条解析结果直接抛错（0=可疑禁当真空），与 launchd/openclaw 两腿同口径：
+  一次取数失败不该把整份台账标成 inactive。
+- 配 `crontab-ledger-smoke.sh` 并登记进棘轮闸 allowlist：验取数命令没写死落点、
+  三类行分清、结果真落真 PG 并逐字段读回、同脚本多排期各占一行不互相覆盖。
+
+## Brain 1.310.0 — 任务状态机的隐式死胡同：漏枚举的状态伪装成终态
+
+- `PATCH /tasks/:id` 的转移表原先内联在 `routes/tasks.js`，只枚举 8 个状态；生产实际
+  用到 15 个。没枚举到的取 `undefined`，被判否后以 `allowed: []` 返回——**与"设计上的
+  终态"完全同形**。2026-09-21 实测在押 2483 条：blocked 287 / cancelled（双 L）1485 /
+  archived 673 / completed_no_pr 38 / quota_exhausted，活干完了也写不回账本
+  （issue a4991491，当天第五次发作）。
+- 表抽到 `lib/task-status-transitions.js`：15 个状态逐个显式写出（终态也写成 `[]`，
+  不靠"查不到"默认），等待态（blocked / quota_exhausted / paused / quarantined /
+  两种拼写的 cancel / dep_failed / pending_postdeploy）一律给出路且能直接回 `completed`。
+- `resolveAllowedTransitions` 区分「这是终态」(`known:true`) 与「我不认识这个状态」
+  (`known:false`)，后者返回新错误码 `UNKNOWN_TASK_STATUS` —— 漏枚举是缺陷，不许再伪装成策略。
+- 机械守卫 `task-status-transitions.test.js`：正则扫 brain src 里所有
+  `UPDATE tasks ... SET status = 'X'` 的字面量，任何一个不在 `TASK_STATUSES` 里就报红
+  （带 >3 条下限，防正则失效导致空集假绿）；等待态无出边、或无法回 `completed` 同样报红。
+- 附带查明：287 条 blocked 全部 `blocked_until IS NULL`，而自愈回路条件是
+  `blocked_until <= NOW()` —— 这条路径从未、也不可能命中过任何一条。`blockTask` 文档说
+  `until: null = 手工解除`，而"手工"那条路正是被本缺陷堵死的。本 PR 恢复手工路径；
+  各调用方是否该自带退避另议。
+
+## Brain 1.309.6 — 任务状态机的隐式死胡同：漏枚举的状态伪装成终态
+
+- `PATCH /tasks/:id` 的转移表原先内联在 `routes/tasks.js`，只枚举 8 个状态；生产实际
+  用到 15 个。没枚举到的取 `undefined`，被判否后以 `allowed: []` 返回——**与"设计上的
+  终态"完全同形**。2026-09-21 实测在押 2483 条：blocked 287 / cancelled（双 L）1485 /
+  archived 673 / completed_no_pr 38 / quota_exhausted，活干完了也写不回账本
+  （issue a4991491，当天第五次发作）。
+- 表抽到 `lib/task-status-transitions.js`：15 个状态逐个显式写出（终态也写成 `[]`，
+  不靠"查不到"默认），等待态（blocked / quota_exhausted / paused / quarantined /
+  两种拼写的 cancel / dep_failed / pending_postdeploy）一律给出路且能直接回 `completed`。
+- `resolveAllowedTransitions` 区分「这是终态」(`known:true`) 与「我不认识这个状态」
+  (`known:false`)，后者返回新错误码 `UNKNOWN_TASK_STATUS` —— 漏枚举是缺陷，不许再伪装成策略。
+- 机械守卫 `task-status-transitions.test.js`：正则扫 brain src 里所有
+  `UPDATE tasks ... SET status = 'X'` 的字面量，任何一个不在 `TASK_STATUSES` 里就报红
+  （带 >3 条下限，防正则失效导致空集假绿）；等待态无出边、或无法回 `completed` 同样报红。
+- 附带查明：287 条 blocked 全部 `blocked_until IS NULL`，而自愈回路条件是
+  `blocked_until <= NOW()` —— 这条路径从未、也不可能命中过任何一条。`blockTask` 文档说
+  `until: null = 手工解除`，而"手工"那条路正是被本缺陷堵死的。本 PR 恢复手工路径；
+  各调用方是否该自带退避另议。
+
+## Brain 1.309.5 — 照相层保鲜预算盖不住刷新周期，coding 派发每周期都有死窗
+
+- 保鲜预算 `PHOTO_STALE_THRESHOLD` 与 `rescan-if-changed.sh` 的触发阈值碰巧同为 600s，语义
+  变成「刚过期才去刷新」；而一轮全扫要 324s（0921 实测 cecelia：api 08:40:04 / graph 08:45:24）、
+  cron 粒度 300s、上一轮没跑完时本轮被锁挡掉（日志实测 age=600/899/1200s）。于是旧快照过期
+  在数学上必然早于新快照落库，派发闸每个刷新周期都有一段稳定死窗，落进去的 coding 任务一律
+  抛 `map_stale`（实测复现：任务 a70d7743 08:51 派发、快照 08:40:04，差 11 分钟即死）。
+  预算改为 1800s，并把触发阈值 / 扫描耗时 / cron 粒度三个数各自显式命名。
+- 放宽安全性依据：正确性由 `assertMapImpactContract` 的 `map.source_revision === base_sha`
+  精确保证，账龄只是活性心跳；真停摆由 `promise-map-nightly` 的 24h 哨兵押尾。
+- 新增机械守卫 `registry-freshness-budget.test.js`：预算必须严格大于「触发+扫描+cron 粒度」，
+  且 JS 记的触发阈值必须等于 shell 脚本里 grep 出的真实默认值（只改一边就红）。
+- `promise-map-nightly` 新增断言 `fact_snapshot_dispatch_gate`：同一批 headers 改用派发闸
+  口径判年龄。此前 A5 用 24h 口径、派发闸用 10min 口径，差 48 倍——快照按派发口径已陈旧、
+  coding 全挂时 A5 照样报绿，这正是该缺陷烂 11 天无人发现的原因（issue e180b05c 曾据此
+  误判为「扫描链全挂」）。
+
+## Brain 1.309.4 — device_job 地基：类型闸 + 防 tick 抢跑双闸 + Notion 投影隔离 + row_version
+
+- `migration 457`：`tasks_task_type_check` 纳入 `device_job`（安卓工作机的活），列表取自生产库而非抄旧 migration；`tasks` 加 `row_version INTEGER NOT NULL DEFAULT 0` 作乐观锁依据（`updated_at` 被 tick 定时 touch，不能当锁）。
+- `dispatch-helpers.js`：`device_job` 进 `task_type NOT IN` 黑名单。派发谓词是黑名单制、无白名单，漏了这道会被 2 分钟一轮的 tick 抢去派给执行体真的"跑一轮采收"，撞 invariant `96054a8b`。第一道闸是建单强制 `payload.headed_manual=true`，两道缺一不可。
+- `notion-push-sync.js`：`pushTasks` 取数提为导出常量 `PUSH_TASKS_QUERY` 并加 `task_type <> 'device_job'`。每轮 `LIMIT 10` 的窗口装不下手机单（一天约 270 次状态翻转），挤进去会连累 harness/决策的 Notion 同步。手机的活走"每机每天一条汇总"的独立通道。
+- 守卫：`__tests__/device-job-foundation.test.js`（10 条，四条变异已实测全部报红）+ `scripts/smoke/device-job-foundation-smoke.sh`（真库验证四道闸拦得住，带对照组）。
+
+## Brain 1.307.3 — 配额真正接进派单选号：三态判据 + 保底放行 + 超时保护
+
+- **此前 8 个号里 6 个在选号层面没有额度判据**：`capability-gate` 的账号闸只认 `account1`/`account2`（`isAccountUsable` 的 `ACCOUNTS` 就这两个），team1-5 与 grok 一律 fail-open —— 凭据能登录就被选中，额度满不满没人问。
+- **判据改三态**（`account-quota-ledger.js`）：读 `ops_model_accounts` 出 `usable`/`unusable`/`unknown`，与内存标记（`isSpendingCapped`/`isAuthFailed`）取 OR —— 表判据看配额，内存标记看真撞过的 429/认证失败（表里没有这两列）。装载器一次读全表 + 30s 缓存；读不到账本连续 15min（= 采集器自 gate 5min × 失败阈值 3）才转 fail-closed。
+- **账号闸包进 `probe()` 超时保护**：它原本是候选循环里唯一的裸 `await`，改读 PG 之后一旦库慢就把整个 dispatch hop 挂死；catch 里也不再静默 fail-open，留痕 `account_marker_error:*` 并发降级告警。
+- **全灭时保底放行 pct 最低的号 + P0 告警**：`loop.js` 把 `infrastructure_blocked` 排除在 blocked-streak 之外，所以全灭原本是 90s 静默转圈直到 run deadline，没人看得见。保底只读不写 `exhaustedAccounts`，且存下选中那一刻的健康快照（health/capacity 是循环外 let，否则保底选中 A 却带着 B 的快照）。
+- **`emitAlert` 此前是无注入方的死接缝**，`run.js` 一并接上 `loadAccountQuota` + `emitAlert`（生产 us-vps 不挂账号凭据，`llm-capacity` 的本机凭据探测在生产恒 ENOENT，`ops_model_accounts` 是唯一真配额来源）。
+- **阈值 5h ≥ 95 / 7d ≥ 90 单独成组**（主理人 0920 拍板），**不动** `account-usage` 的 tier 阈值与 `quota-guard` 的全局刹车；采集器 pct 写库前取整（参数绑定向 INTEGER 列传浮点直接抛 `invalid input syntax`，会中断整轮采集，已用真 PG integration 钉死）。
+- 守卫落 `tests/gp/g5/step2-quota-gate-into-dispatch.test.js` + `src/__tests__/account-quota-ledger.test.js`，各步变异逐一验过必红；`isAccountUsable` 两处 fail-open 此前零守卫（两条变异全绿），本版补上守卫并验红。
+
+## Brain 1.307.1 — P0 热修：claude 与 codex 必须走两条独立 ssh 路由
+
+- **事故**：1.306.6 把跑场路由切到 XIAN-M1 后，Claude 在生产上直接不可用。
+- **根因不在跑场池选谁，在两个 CLI 共用了同一个 ssh 别名**：`/usr/local/bin/claude` 是个包装脚本，内容是 `SR='-F /root/.openclaw/ssh-router.conf session-runner'; ssh $SR ...`；codex 的 `appServer` 也是 `ssh ... session-runner ...`。路由一动，**Claude 被 codex 的负载均衡一起带走**，而 XIAN-M1 既没装 claude CLI 也没有 claude 凭据。
+- **判断失误记录**：此前只在 `clawdbot.json` 里 grep 到 1 处 `ssh-router.conf` 引用就断言「Claude 不走跑场」——漏了文件系统里的包装脚本。**配置不是唯一的事实来源**。
+- 主理人 0920 拍板的形态：凭据只在 MMV，**不在 M4/M1 登录 Claude/Grok**；只有 codex 穿透到 M4/M1；Claude CLI 与 Grok 只在 MMV 跑。
+- **修法**：拆成两个别名。`session-runner` 钉死 MMV（claude 包装脚本里写死了这个名字，一行都不用改）；新增 `codex-runner` 跟跑场池走，`checkConfigDrift`/`restoreConfigShape` 同步改判 `codex-runner`。M1 因此不需要任何 Claude 凭证。
+- 守卫 5 条新断言，两条变异验过必红：claude 别名跟跑场走 / 漂移检查改回认 `session-runner`。
+
+## Brain 1.306.6 — codex 跑场池按负载选机：M4/M1 当主力，MMV 让给 Claude/Grok
+
+- 旧逻辑 `pickRunner` 是「按 `RUNNERS` 顺序取第一个探活成功的」，而 MMV 排第一且从不掉线 —— **XIAN-M4 / XIAN-M1 作为备胎一次都没被召唤过**。2026-09-20 实测佐证：MMV 上 45 个 codex 进程，M4/M1 各只有 1 个。
+- 为什么 MMV 不该干 codex 的活（主理人 0920 拍板）：Claude 与 Grok 的凭据只在 MMV，OpenClaw 用 `auth.profiles` 的 token 直连它们（`clawdbot.json`: `xai:manual` / `anthropic:manual`）——**MMV 是这两家唯一的执行机**；而 codex 走 `agentRuntime` → ssh 到 `session-runner` 跑 CLI，哪台机都行。
+- 三台召唤链路 0920 实测完全等价：网关 key 都能 ssh、codex 0.151.0 都在、用网关原样命令都能起 app-server（M4 实测通过）、出网 IP 同为 `38.23.47.81`（M4/M1 无需额外代理）；且 M4/M1 都有 `~/.codex/auth.json`，MMV 反而没有。
+- 改法：`RUNNERS` 加 `role`（M4/M1=`codex-primary`，MMV=`fallback`）；`pickRunner` 只在主力间竞争，按 codex 会话数选最闲、打平比 load average；负载探不到的机器按最忙处理（不拿编造的 0 误导）；加切换滞后（新候选要少 2 个会话才值得切，否则维持现状不打断在跑的会话）；主力全不可达才回落 MMV，全灭返回 null 保持现状。
+- 守卫落 `src/__tests__/openclaw-guards.test.js`（12 条新断言），三条变异逐一验过必红：MMV 改成主力 / 去掉滞后 / 探测失败当最闲。
+
+## Brain 1.306.4 — 配额采集器三处止血：自 gate / 异步化 / 失败不擦白
+
+- 2026-09-20 实证：`ops_model_accounts` 里两个 Claude 号 pct 恒 NULL、`last_error='anthropic usage HTTP 429'`。三条根因叠加，导致配额数据不能当选号权威：
+  - **自造 429**：scheduler 是「60s 轮询 + 模块自 gate」，而 `ops-model-accounts-collector` 是裸调用、没有自己那半边 gate → 每分钟全量打 8 个账号的厂商 usage API（≈480 次/小时）。现加 5min 自 gate（`only`/`force` 可绕过，供选号侧按需刷新单账号），并加单轮总预算 60s。
+  - **同步掐死事件循环**：`defaultExec` 是 `execSync`，8 账号串行 × 30s = 最坏 240s 阻塞；而 job 的 `timeoutMs` 走 `Promise.race`，对同步阻塞完全无效（定时器根本没机会跑）——那道超时闸是纸糊的。新增 `defaultExecAsync` 并改用；`defaultExec` 保留不动。
+  - **失败擦白历史读数**：catch 后仍以 `EMPTY_SNAPSHOT` 走全列 upsert，一次抖动就把上一轮真实读数抹成 NULL，于是 NULL 的语义变成「最近一次采集失败」而非「没查到」。拆出 `upsertModelAccountFailure`，失败只写 status/last_error/计数/时间戳。
+- 主理人判定（decisions category=judgment）：单次失败不算数——可重试类错误轮内重试 2 次（退避 1s→2s），**429 不重试**（重试加剧限流，与第一条根因同源）并新增独立分类 `rate_limited`，`key_expired`/`no_credential` 是确定性否定事实不重试；`consecutive_failures`（migration 455）在 SQL 里 `+1`/归零、status 用 `CASE` 在未达 3 轮前保持上轮值（不做 SELECT-then-UPDATE），连续 3 轮（15min）才告警一次。
+- 守卫 `tests/gp/g5/step1-quota-collector-stabilize.test.js`，三条变异逐一验过必红。
+
+## Brain 1.306.3 — bugfix 快车道修通：直配合同产物根目录改用任务 sprint_dir
+
+- 2026-09-19 run 35c352b3 实证：hotfix-v1 直配合同把四份产物落在 `direct-contracts/<receipt>/`（含 `tests/impact-contract.md`），而 runner `materialize-frozen-contract-artifacts` 只认 `${sprint_dir}/tests/`、`${sprint_dir}/` 前缀 → `invalid frozen test descriptor` → generator 每次启动即 `frozen_contract_artifacts_invalid` 循环烧额度，bugfix 类任务在 kernel 里从未跑通。
+- 修：`direct-profile-contract.js` 产物根目录优先任务 `payload.sprint_dir`（校验绝对路径/`..`/反斜杠/空段，非法回退 `direct-contracts/<receipt>`）；task 查询只多取 `payload->>'sprint_dir'`，description/thin_prd 仍不入合同。
+
+## Brain 1.306.1 — 刀2 Notion 收尾：Ops Agent 图谱库补配额三列并按 provider 填值
+
+- PRD 第 4 步（判定点：并入现有 Agents&机器 库加列）在 #5411 只落了列定义：既有库无 FiveHourPct/SevenDayPct/QuotaUpdatedAt，push 也不填值。
+- `ops-notion-schema.js` 的 `diffMissingProps`（"缺列即补"）此前无人调用——新增 `ops-quota-notion.js: ensureOpsDbProps`，ops-notion-push 每轮先对四库幂等补缺列（只发缺的）。
+- agent 行按 `meta.model` 推 provider（claude/codex/grok），取该 provider 下 status=ok 且 7d 最紧张的账号填三列；无匹配不发（禁编造 0）。
+
+## Brain 1.302.9 — impact 门豁免 changes/ 版本碎片（kernel CI 自修被误杀根因）
+
+- 2026-09-19 run 0f36a253 实证：generator-fix 按仓规写入 `changes/<分支>.md` 版本碎片，`map/radius.js` unclaimed 判定把它当无能力锚文件 → `impact_anchor_missing` 确定性 run_terminal，修复提交推不出去只能人工搬。
+- 修：`GRADUATION_POOL_PREFIXES` 加 `changes/`（与毕业池同类：设计内全局目录，由 auto-version + check-brain-version-bump 把守）；集成测试锁死「changes/ 不判 unclaimed、changes-fake/ 仍判」。
+
+## Brain 1.302.8 — 刀2 收口：模型账号配额采集接入调度 + 真实三家 usage 探针
+
+- PR #5411 上产后验收发现两处空转：`runModelAccountsCollector` 只导出未注册进 scheduler-jobs（`ops_model_accounts` 恒空、端点恒返 0 条）；`defaultFetchUsage` 把 `cat 凭据文件` 当 usage JSON，从未真正调过 usage 接口。
+- 新增 `model-accounts-usage-probe.js`（自包含 ESM，base64 经 host-exec ssh 投到 mmv 用 node 从 stdin 执行）：在凭据所在宿主读当前 token/key，调 Anthropic oauth/usage、ChatGPT wham/usage、Grok GetGrokCreditsConfig（gRPC-web 解帧），**只回传归一化 usage JSON，凭据不离开宿主**；任何路径不碰 refresh 类字段，Grok grpc-status 7 以非零退出上抛 → key_expired。
+- wham 实测形状归一（primary/secondary 窗按 limit_window_seconds 归 5h/7d，reset_at epoch → ISO）；scheduler 注册 `ops-model-accounts-collector`（5min 自 gate，timeout 120s）。
+
+## Brain 1.302.7 — 模型账号配额+机器可达性投影（工厂·F5 指挥舱 刀2）
+
+- 新增 GET /api/brain/agent-ops/model-accounts：8 个静态模型账号（Claude Code x2 + Codex team x5 + Grok）配额快照只读投影，每条 11 字段（provider/plan/five_hour_pct/seven_day_pct/reset_at/host_alias/forwardable/forward_targets/status/last_checked_at/last_error）；单账号失败只标该条（unknown/key_expired/no_credential + last_error）不阻塞整体，HTTP 200。
+- agents 端点每条追加 model_role{model_id, primary_count, fallback_count}（全体分身真实聚合，不造分层标签）。
+- 新表 ops_model_accounts（migration 449）+ ops-model-accounts-collector（三家 usage parser 归一 schema + 幂等 ON CONFLICT upsert + Grok key 过期只标 key_expired、任何路径绝不刷 refresh_token）。
+- Notion「Agents&机器」库 schema 加配额列 FiveHourPct/SevenDayPct/QuotaUpdatedAt。
+
+## Brain 1.302.5 — fleet runner digest repin 4450aac9（prune 二次误删重建，复刻第 68 批）
+
+2026-09-19 实证：pin 74afa123 的 cecelia/runner 镜像在 us-mac-m4 / xian-mac-m4 / xian-mac-m1 / us-vps 全部不存在（us-mac-m4 09-18 16:47 重启后 OrbStack 镜像表仅剩 pgvector/alpine/node），fleet 探针 docker.available=false → kernel-v1 远程 run（task ae630773）attempt 准入必挂。按 verify-digest-pin 清单从 build head e38e6a47 重建镜像后一次性重钉为 `sha256:4450aac9d8710bd02b37ec1f5e46ef06ab2e1ae108f453c3d25f85318af5be8e`（原 74afa123），worker 版本 pin 不动（准入只校验 runner/postgres digest，不校验 worker 版本）。同批顺带修好的现场：us-vps postgresql 开机抢在 tailscaled 前起绑不上 100.79.41.61（决策 cc11772e，已加 systemd drop-in）、us-mac-m4 `_cecelia` 对 docker.sock 的 ACL 重启后丢失（refresh-fleet-worker-docker-access 在 socket 就绪前被 WatchPaths 触发即退出，需手动 kickstart）。教训：prune 白名单仍未落地，第二次踩同一坑。
+
+## Brain 1.302.4 — Notion 排单正文作为任务 prompt
+
+- pullNotionTasks 读取页面正文（blocks API，异常不阻塞排单）：普通排单入 description；ssh 派发以 base64 写达执行机 ~/brain-runs/<run_id>.prompt 并替换 command 的 {PROMPT_FILE} 占位；webhook 派发 payload 带 prompt 字段
+
+## Brain 1.302.1 — 手动派发旁路补设备锁
+
+- dispatch-now 与 tasks/:id/dispatch 触发前对 payload.device_serial 任务抢锁：被占 409 / 未注册 422 / fail-closed，闭掉绕过互斥的最后两个 Brain 内入口（Issue e03fc740）
+
+## Brain 1.302.0 — 凭据保鲜守卫（活性探测 + auth key 自动续期）
+
+- 2026-09-16/17 一夜撞出三条实证：Tailscale API key **过期 18 天没人知道**（直到 CI 红了才反查出来）；1Password 里的备用 GitHub PAT **元数据什么都没写、实际早已 401**；99 个凭据条目里**只有 1 个**写了到期日。
+- 由此定下判据：**读元数据只能抓到"老实写了到期日"的那一个**，真相必须靠"定期真去用一次"。新增 `credential-freshness.js`，每日探活 Tailscale API / GitHub PAT / 飞书 app 三类凭据，失活即 P1 告警；元数据用于提前 14 天预警，两条腿都要有。
+- 几处刻意的判定选择，都对应实际踩过的坑：无到期信息判 `unknown` 而非 `ok`（今晚出事的正是"没写"那把）；探测出错算失活而非通过（宁可误报不可漏报）；到期日未知时**不**自动续期（否则每轮重发新 key 把旧 key 冲掉，比不续更糟）。
+- **CI auth key 自动续期**：剩 14 天时用 API token 自动签发新 key，能力与现用一致（`reusable`+`ephemeral`+`preauthorized`，缺一项则 CI 连不进来或在设备列表堆僵尸节点）。真调 Tailscale API 验证过签发与删除权限。
+- **API token 自己不能自续**（Tailscale 安全设计，不允许旧 token 生成新 token），因此改为到期前 14 天给出可照做的人工步骤，并注明"CI 的 auth key 会自动续、不用管"，避免重复劳动。主理人要盯的从"随时可能爆的一堆"收敛成"90 天一次、有预告的一件"。
+- 顺带修正：1Password 里 `TAILSCALE_TAILNET` 记的是占位值 `xx@gmail.com`，用它调 API 报 `tailnet not found`；正确用默认 tailnet `-`，已用 `_V2` 字段记下。
+- 配 `credential-freshness-smoke.sh` 并登记 allowlist，两道闸 proven-to-fire。
+
+## Brain 1.301.0 — 预览环境执行下放执行机（MMV）
+
+- **病根是架构不是代码**：起预览环境 = 起一个 Brain 实例 + 克隆一整份数据库，这是执行活，而 us-vps 有零执行铁律（决策 96054a8b）。整套预览功能本就是为 Mac 写的——`preview-env-start.sh` 硬编码 `/Users/administrator/...`、磁盘门槛 35G 底线 + 3.5G 预留按 Mac 盘设计，而 us-vps 根分区仅 24G，**数学上不可能通过**。搬去 us-vps 那天（09-09）起，`preview_environments` 从 842 次历史记录直接归零，一次没成功过。
+- 新增 `scripts/preview-agent.mjs`：MMV 侧预览代理，**复用 `routes/preview.js` 的全部逻辑与 `DEPLOY_TOKEN` 鉴权**，挂载路径与 Brain 完全一致。于是 CI 只需改指向——`request-preview-start.sh` / `wait-preview-active.sh` 一行未动，**未新增任何 GitHub secret**。
+- CI 指向从 `MMV:5221` 改为 `MMV:5241`：**5221 是 socat，会把流量整个转发到 us-vps**，必须错开端口才能让执行留在本机。这是"CI 明明打的是 Mac 却落到 us-vps 执行"的真正原因。
+- 克隆源改为 `PREVIEW_SOURCE_DB` 可配置（执行机上用 `cecelia_staging`，schema 443 > 最低要求 430）：执行机没有生产库 `cecelia`，且预览环境用 staging 数据足够，顺带避免生产数据复制进临时环境。源库缺失时明确报错并列出可用库，不再退化成难查的 `pg_dump` 静默失败。
+- `scripts/preview-agent-install.sh` 装 LaunchAgent 常驻（KeepAlive），并硬性校验必须跑在部署根——代理与 `capacity-gate` 必须同 repo，否则后者按自身位置算 `REPO_ROOT`、去别处找采样文件，报 `sample_missing`。
+- 配 `preview-agent-mmv-smoke.sh` 并登记 allowlist，两道关键闸 proven-to-fire（注入"CI 指回 us-vps"「CI 指向 socat 端口」各自报红）。
+
+## Brain 1.300.0 — 手机设备资源锁（G5 横切件）
+
+- device_locks 纳管 4 台安卓手机（migration 448，serial 主键 + host/device_type 登记列）
+- acquire 原子化（单条 UPDATE + 过期抢占双重判据：expires_at 过期且持有任务已非 in_progress）
+- 派发接线：dispatcher 原子 claim 后抢锁（被占 HOL 跳过 / 未注册 fail-fast）+ worker-pool 旁路同接
+- 释放：recovery-loop 对账 sweeper（按持有任务非活跃判，uuid 守卫）+ 终态即时释放；新增 POST /device-locks/register 幂等注册
+
+## Brain 1.299.2 — 修 host-disk-sampler 的 DEPLOY_ROOT 自推断
+
+- `git -C <repo>/scripts rev-parse --git-common-dir` 返回的是**相对 `-C` 目录**的路径（实测 `../.git`）。旧实现只处理了返回值恰好等于 `.git` 的情况，其余走 `dirname` + `cd`，而 `cd` 的基准是「调用者的当前工作目录」而非 `SCRIPT_DIR`——同一个 bug 在三种环境算出三个不同的错答案：本机交互少一层（`…/perfect21`）、SSH 非交互少两层（`/Users`，直接 `mkdir: Permission denied`）、容器内与 `capacity-gate` 读取路径不一致。
+- 后果：样本落错地方 → `capacity-gate` 报 `sample_missing` → **预览环境永久 503**（自 09-09 起 842 次历史记录归零）。
+- 修法：一律在 `SCRIPT_DIR` 下解析，让相对路径有正确基准；无 git 信息时回退 `SCRIPT_DIR/..` 而非硬编码某台机器的绝对路径。
+- 回归测试补 3 条**不传 `CECELIA_DEPLOY_ROOT`** 的用例——既有用例全部显式传它，把推断逻辑整个绕过去了，这正是 bug 能长期存活的原因。
+
+## Brain 1.299.1 — harness-watchdog 不再把有头会话判成 failed
+
+- 根因：手动注册的改代码任务被 work-router 改写成 `task_type=harness_initiative`，而有头 `/dev` 执行**从不创建 initiative_runs 行**；watchdog 的 never-started 豁免只看 `claimed_at`（开工那一刻），认不出「还在干活」——认真干了 44/118 分钟的会话，和 40 分钟前就死掉的会话长得一模一样。2026-09-16 一次会话里 4 个有头任务全中。
+- 更要命的是判死方式：`failed` 是终端态（状态机 `allowed: []`），API 无法回正，只能直写 DB——当天四次人工直写库都是为此。而 `executor-contracts` 给 `headed-session` 定的处置本就是 `release-claim-and-alert` 而非 fail，`zombie-reaper` 遵守、`harness-watchdog` 绕过。
+- 修法：never-started 分支按 `executor_kind='headed-session'` 或 `claimed_by` 含 `interactive-dev-skill` 识别有头，降级为 `blocked`（带 `blocked_at`，满足 `chk_blocked_at_not_null`）——人工可见、可恢复、不会被 tick 抢跑重复执行。自动流水线路径仍判 `failed`（那条是对的，它本就该在阈值内建起 run）。
+- 配套 `watchdog-headed-not-failed-smoke.sh` 并登记 allowlist，两道闸 proven-to-fire。
+
+## Brain 1.299.0 — 飞书交办入账改按「秋米为什么没干」分根因
+
+- 原判定只看有没有执行记录，答不了「为什么没干」。E2E 实证秋米每条都回了，**回复里就写着原因**——机器回复有固定套话，用关键词就能分，不需要 LLM 猜人说的话。
+- 四类根因（全部模式取自悦升云端群真实回复原文）：`fault` 系统故障（401/invalid api key/无法连接工作手机/provider internal error）→ 入账 blocked 并附故障原文，可直接起告警；`waiting` 等主理人补料（「先把两份资料发来」「还需要确认两点」）→ 入账 blocked，球在主理人；`done` 已完成（有 run，**或**回复「已整理并创建…已回读核验」——用 MCP 直接干的不留 run）→ completed；`answer` 纯咨询答复 / `silent` 无人接茬 / `unknown` 证据窗口外 → 一律不入账。
+- **修回复串台**：原按 30min 窗口取回复，实测「表在哪」会把 17 分钟后另一件事的 401 回复认成自己的、被误判成系统故障。回复归属改为截止到下一条人发消息。
+- 修 title 残留飞书 `@_user_N` 占位符的脏数据 bug；入账附 `bot_reply_excerpt`，主理人一眼看到卡在哪、不用回群里翻。
+- 删除被取代的三态判定（`resolveDisposition`/`dispositionToStatus`），避免两套判定并存。
+
+## Brain 1.298.2 — 飞书交办入账修两处静默错判
+
+- **证据覆盖窗口**：OpenClaw 会清理老 `task_runs`（实测只保 7 天），而归集回溯 14 天。早于最早一条 run 的消息「查不到执行记录」只说明记录被清了，不代表没人干——原实现照判 `dropped`，会往主理人账本灌一批假的「派了没人管」。新增 `resolveEvidenceFloor()` 取 run 最早时间戳为下界，早于下界一律判 `unknown` 不入账；回溯默认收敛到 7 天与 run 保留期对齐。
+- **blocked 必带 blocked_at**：`tasks` 表有 `chk_blocked_at_not_null` 约束，status=blocked 不带 blocked_at 会让整批入账在 INSERT 处报错、`created` 恒为 0（2026-09-16 E2E 实证，两个群同时失败）。
+- smoke 补两道闸并均 proven-to-fire（注入缺陷各自报红，还原恢复绿）。
+
+## Brain 1.298.1 — 飞书交办入账去 LLM 化 + 修 mentions 漏判
+
+- **修阻断性 bug**：飞书历史消息 API 的 `mentions[].id` 是扁平字符串（`{"id":"ou_xxx","id_type":"open_id"}`），而 webhook 事件才是嵌套 `{"id":{"open_id":...}}`。模块原先只认后者，导致 requireMention 群候选恒空——悦升云端群一条都入不了账。新增 `mentionOpenId()` 兼容两种形态，回归测试锁死。
+- **判据2 去 LLM 化**：「秋米有没有真派 agent 去干」是机械事实，OpenClaw `task_runs` 已记录，不需要让 LLM 猜意图。原实现在 us-vps 上遇 Anthropic 欠费 / MiniMax 超额即整条腿卡死（2026-09-16 实证）。
+- **改为三态机械判定**（零 LLM、零 API 费用）：交办后 10min 内有非 cron 执行记录 → `executed`（入账 completed）；无执行但秋米有回复 → `answered`（当场答完的提问，不入账）；既无执行也无回复 → `dropped`（派了没人管的活，入账 blocked——主理人最该看见的一类）。重发组内任一条命中即算 executed（实测 run 常挂在后一次重发上）。
+- Brain 镜像加 `sqlite` CLI（~1.5MB）只读查 OpenClaw 库；容器 Node 20 无 `node:sqlite`（22.5+ 才内置）。`-readonly` 防写穿第三方状态库。
+- 真实数据验证：近 7 天 56 条 @秋米 消息，抽最新 25 条人工核对——「帮我整理成表格」「mcp+cli 联动同步」「给于瑾弹授权」全部命中 run；「表在哪」「现在的模型是什么」「在吗？」「授权成功了」全部 0 run 正确排除。
+
+## Brain 1.298.0 — 飞书群交办入账
+
+- 新增 `feishu-task-ledger` scheduler job（60min 自 gate）：拉三个在册飞书群消息，经三道判据识别出主理人真正派给秋米的活，入 tasks 账并经既有 pushTasks 投影 Notion。
+- 三道判据（决策 1c6679cd / 判定点 398d5f36）：①@ 对象必须是 bot open_id 而非人（实测 14 天 232 条带 @ 消息里仅 81 条 @秋米）②LLM 四档语义分类只放行 task（规则法不可分：「你拉个会议」5 字是任务，「现在的模型是什么」7 字是提问）③30min 窗口重发去重（实测同一任务因无响应被重发 3 次）。
+- 执行回执用机器回复当凭据：交办后 30min 内同群 bot 有回复 → completed，否则 blocked。**入账状态绝不产出 queued**，否则 Brain tick 会把群里的客户对话当任务真去执行（smoke 已 proven-to-fire）。
+- 前序「从 OpenClaw task_runs 回填」方案作废：实勘证明 OpenClaw 不持久化群消息原文（ingress payload 完成后清空、transcript 表 0 行、飞书群在 task_runs 只留 13 行 CLI 噪音），唯一可信源是飞书开放平台 API。
+
+## Brain 1.296.2 — 守卫补 agent 级模型漂移检测（6 个本机 embedded 漏网）
+
+- defaults 切跑场池后，media/dev/work-commander/zenithjoy-owner/yujin/suyanqing 六个 agent 有显式 sol 覆盖绕过默认值，仍在 us-vps 本机跑推理——守卫此前只查 defaults 是盲区
+- checkConfigDrift 逐个点名 agent 级 sol；restoreConfigShape 一并拉回池（保留 fallbacks 断池兜底）
+
+## Brain 1.296.1 — 修错库孤儿链接无限重试（push 噪音 269次/2h）
+
+- 249 条 legacy notion_id 绑到错库，PATCH 返回 400 schema 不符（非 404）→ 不命中既有解绑分支 → 每轮重试刷屏
+- 新增 isWrongDatabaseError 判定，400 属性不符一并解绑重建
+
+## Brain 1.296.0 — 触达线活性告警 + memlog 观测线修复
+
+- 守卫加第五腿：读 xian-m4 outreach.log 判活性，连续空转（话术缺失/发送失败且无出单）→ P1 告警（3h debounce）。09-15 话术全「停用」致 22 小时零触达无人知晓
+- 修 memlog：docker top 缺 pid 字段被 daemon 拒绝，泄漏甄别观测线一直空跑
+
+## Brain 1.295.1 — 守卫阈值校正+泄漏甄别观测线（escort 误伤案）
+
+- 内存阈值 1400→2000（env OPENCLAW_MEM_LIMIT_MB 可调）：旧值低于网关多会话正常工作态（1.4-1.7G），一天误摁 9 次打断在跑 escort；容器硬顶同步在线抬 2.29G
+- 新增 memlog 观测线（每轮记 mem/会话数/node 进程数）：真泄漏判据=会话归零后不回落，替代此前的体温误诊
+
+## Brain 1.295.0 — us-vps 零执行守卫收编为 Brain 器官
+
+- 三个宿主散装 crontab（网关内存回收/配置漂移还原/跑场探活路由）+ agent 教义补种收编为 scheduler job openclaw-guards（5min 自 gate，纯函数内核可测）
+- compose 挂 /opt/openclaw/{state,workspaces-root}；决策 95477a66 物理闸从游离脚本转正入库
+
+## Brain 1.294.1 — 修 ssh 收割超时时区误判
+
+- created_at 无时区字符串被 UTC 容器错解（LA 差 7h），刚派发的 run 被误收 failed(timeout)；判据改 SQL 内 INTERVAL 比较 + 回归断言
+
+## Brain 1.294.0 — 机器路由 ssh 直派：排单自动填机器直接下派
+
+- dispatch 新通道 channel=ssh：machine+command 落数据行，Brain 经 machine-registry sshTargetFor 路由到目标机 nohup 起批（直驾线接进 Notion 排单）
+- 收割器 reapSshWorkflowRuns：轮询读目标机 ~/brain-runs/<run_id>.exit 收账（0→Done/非零→Cancelled/超 6h timeout），目标机零反向依赖
+- machine-registry 补 us-mac-m4 sshUser；workflow_run 账带 channel/machine 维度
+
+## Brain 1.293.1 — 修排班员 ⏸ 回执污染幂等标记致队列死锁
+
+- ⏸ 排队文案含 run:notion-… 命中 pull 幂等跳过正则，排队行永不重试（生产实证）；文案去 run: 前缀 + 回归断言
+
+## Brain 1.293.0 — workflow_run 进 tasks 账 + 排班员 v1
+
+- OpenClaw/n8n 派发不再绕账：派发即建 workflow_run task（operations 路线），run 终态自动收账（决策 2dbabb48）
+- 排班员 v1：同 workflow 在途互斥（⏸ 排队回执，Delegated 即队列自动重试）+ Plan Date 时间窗（🕐 到点自动派发）
+- 状态回执防雪球：⚠/⏸/🕐/▶ 尾巴剥离后重拼；migration 446 扩 task_type 枚举
+
+## Brain 1.292.2 — OpenClaw 采集腿改本机直取（容器已迁 us-vps）
+
+- 旧命令 ssh hk-vps 找 openclaw-gateway 在 09-12 容器迁移后必然 No such container，腿常年 unreachable
+- 改经挂载 docker.sock 本机 docker exec 直取；host_alias 账随 migration 445 迁 us-vps（保 notion_id）
+
+## Brain 1.292.1 — 修 syncOpenClawRuns 引用不存在列 finished_at
+
+- ops_runs 真实列为 stopped_at；旧 SQL 次次抛错被 catch，OpenClaw 终态→Notion Status 同步腿从未生效（09-14 生产实证）
+- 回归用例断言 SQL 不得含 finished_at
+
+## Brain 1.292.0 — Notion 排单 OpenClaw 分流改 relation 数据驱动
+
+- Tasks 库派发从硬编码「执行方」select 改为 relation「Workflow」「Agent」指向运行舱四表真实 Notion 行
+- pull 反查 ops_workflows/ops_agents.notion_id 取 dispatch 人工列（migration 444：webhook_url / template）
+- 删除 OPENCLAW_EXECUTORS 代码枚举；smoke 反向守卫防回潮；缺配置写 ⚠ 回执可自愈重派
+
+## Brain 1.291.0 — 排单分流 OpenClaw（执行方路由）
+
+- feat(brain): Notion Tasks「执行方」select 路由——OpenClaw·悦升获客/金诺获客 直接注入 run_id(内嵌 pageid32) POST hk-vps n8n V4 获客画布，回执「▶已派发 run:…」并推 In Progress；ops_runs 终态反解 page 推 Done/Cancelled；Cecelia编码/空 走既有编码路线。compose 挂 /opt/openclaw/dispatch:ro + N8N_V4_WEBHOOK_URL
+
+## Brain 1.290.1 — 排单接手路由参数修正
+
+- fix(brain): Notion 排单接手补齐 work-router 硬校验四参数（source=inbox/mutation_intent=write/repo_hint=cecelia/blocked_at）——实吃首单逐个踩出，修正后 5min 周期自动接手真正生效
+
+## Brain 1.290.0 — Notion 排单接手（双向·pull 半边）
+
+- feat(brain): runNotionTaskPull——主理人在 Notion Tasks 库把行拖到 Delegated 即排单，Brain 建任务并回执 brain:<id> ✓已接管 进 Description；幂等（已带 brain: 标记跳过）；接手先落 blocked 等 map 路由（防 tick 撞墙 autoblock）；与 push 并联进 legacy scheduler 默认周期
+
+## Brain 1.289.0 — Notion 任务编排接线（双向·push 半边）
+
+- feat(brain): pushTasks 挂入 runNotionPushSync——Brain tasks 推送 Notion Tasks 库(d5bc40c2)：范围=活任务+近7天终态；幂等指纹 notion_props.pushed_status（updated_at 被 tick touch 不可作增量判据）；13483 条历史 notion_id 遗产禁 PATCH 仅 create 覆盖；我方页被删则清指纹下轮重建
+
+## Brain 1.288.4 — fleet 容量喂数改 worker HTTP，自动派发解堵
+
+- fix(brain): fleet-resource-cache 采集从 ssh/isLocal 改为 fleet-worker :5231 /health HTTP（machine-registry 解析地址）——旧 isLocal 路径在 Brain 迁 us-vps 后把 VPS 被邻居顶高的压力记在 us-mac-m4 头上致 effectiveSlots=0
+- fix(brain): slot-allocator 调度器模式（CECELIA_LOCAL_EXECUTION_ENABLED=false）派发容量改取 fleet worker 聚合 getTotalEffectiveSlots；执行机模式保持本机来源零变化——终结 tick 恒 pool_c_full 永不自动派发
+
+## Brain 1.288.3 — Notion 驾驶舱推送复活
+
+- fix(brain): SUB_AREA_NOTION_IDS 整表死 ID（对 Notion API 全 404）换为 Sub Area 库实查真 ID——此前每条 brain/engine issue 推送 404 被静默标已同步（notion_id 空）无声丢弃；配合 us-vps 补配 NOTION_API_KEY（09-11 迁机丢失致同步链静默停摆两天）
+
+## Brain 1.288.2 — 远程 kernel 派发 createdSource 白名单修复
+
+- fix(brain): _spawnKernelRuntimeRemote 的 createdSource 从不在白名单的 kernel_dispatch_remote 改用既有枚举 kernel_dispatch（铁律 76cb816c 不扩枚举）；此前 createKernelRun 抛 invalid created source 致 dispatch_fail_autoblock 把远程任务打 blocked
+
+## Brain 1.288.1 — alertness CPU 指标邻居负载免疫
+
+- fix(brain): alertness collectCPUMetric 从全机 loadavg 改为 Brain 自身进程 CPU（PR#5290 executor 同病同修）——修复 us-vps 上 openclaw 邻居把 loadavg 顶高导致 Escalation 误升 emergency_brake+safe_mode 把调度器自己刹停；全机压力保留为 system_pressure_pct 观测字段
+
+## Brain 1.288.0 — orchestrator 远程化 + 机器角色模型：CI 闸配套
+
+- 新增 `sprints/09131144-orchestrator-remote-launch/contract-draft.md`：orchestrator 远程化 + machine-registry 角色模型的 Test Contract，覆盖 machine-registry primary 唯一性 / step3 远程派发 / step3 非 kernel 拒绝 / orchestrator-runner 槽位 / kernel-liveness 租约判死 / credential-broker 权威判据锁定 六条 BEHAVIOR + 一条 SMOKE。
+- 新增 smoke `packages/brain/scripts/smoke/orchestrator-remote-launch-smoke.sh`：锁住生产不变量——`local_execution.enabled=false`（调度器闸关）时 `fleet_transport` 必须就绪且有 worker 机器，否则等于 harness 全类任务无任何执行路径、静默停摆（96054a8b 铁律的反面）。已登记进 `packages/quality/smoke-allowlist.txt`。
+- 新增配置守卫 `scripts/ci/__tests__/machine-registry-role-guard.test.sh`：machine-registry 必须恰好一台 primary；`us-mac-m4` 字面量收窄为**文件级白名单 + 每文件命中数棘轮**（只许降不许升）——白名单即 Mac Studio 到货时的迁移清单，届时每个白名单文件都要动。
+
+## Brain 1.287.0 — us-vps 纯调度器化第一刀：本机执行闸
+
+- 新增 `CECELIA_LOCAL_EXECUTION_ENABLED` 表达宿主角色（缺省/`true` 放行＝行为零变化，仅显式 `false` 拦），闸落在 `harness-skill-relay.js` 的 `spawnSkillRelaySession`——所有 harness 派发路径的唯一咽喉，与既有 `preview-guard` 同位。拒绝时不建 run 也不碰 worktree，不留半态，避免「建了 run 再失败 → spawn 返回 pid 算 ok → 静默卡到租约过期」那条死法。落实铁律 `96054a8b`（us-vps 只当调度器，执行全下放 Mac worker）。
+- `docker-compose.us-vps.yml`：`FLEET_WORKER_US_MAC_M4_URL` 默认值从 `host.docker.internal:5231` 改为 MMV 真实 Tailscale 地址 `100.71.151.105:5231`。实测 us-vps 的 `.env.docker` 从未定义过该变量，原注释里「必须显式覆盖」从未被兑现，占位符一直是生效值，导致按铁律 `ca6bf8e7` 只能走 MMV 的 Claude 类任务远程目标不可达。
+- **明确不改 `CECELIA_MACHINE_ID`**（纠正决策 `26c1e763` supersede `962281b2`，三条亲验）：① `production-transport.js:137` 那道 `localMachineId` 守卫是死代码——判据是入参且默认值即 `DEFAULT_LOCAL_MACHINE_ID`，而 `server.js:145`、`attempt-cleanup-worker.js:208` 等四个生产调用方全不传它，`if` 恒为假；② `harness-skill-relay.js` 对 `machineId` 引用数为 0，本机 spawn 判据只有 `payload.harness_runtime`，改身份拦不住、不减 VPS 一丝 CPU；③ `credential-broker.js:144` 与 `github-credential-broker.js:36` 硬编码要求 `controllerMachineId === 'us-mac-m4'`——这台 Brain 必须自称 `us-mac-m4` 因为它是凭据权威，改身份会让远程派发到 MMV 也签不出凭据，全面 fail-closed。该变量语义＝fleet 可调度节点身份＋凭据签发权，不是宿主物理机标识。
+- CI 守卫 `scripts/ci/__tests__/us-vps-local-execution-disabled.test.sh`（proven-to-fire，已亲验会响）四条断言：worker 地址不得退回占位符 / 执行闸在位且默认 false / **`CECELIA_MACHINE_ID` 必须仍是 `us-mac-m4`（防回归到已证伪方案）** / 闸必须读 `(deps.env ?? process.env)` 可注入形式（防重演死代码守卫）。
+- 已知后果（有意，非 bug）：闸生效后 `kernel-v1` 任务在 us-vps 上被明确拒绝而非偷偷占用 2 核 CPU。在 handoff 缺口 1（skill-relay 远程化）完成前，该类任务在 us-vps 无法执行；受影响 task_type：`golden_path_proposal`、`harness_initiative`（kernel runtime）。
+
+## Brain 1.282.0 — 探针检测：DisCo 档位补全最后一块拼图
+
+- `detectPostcondition` 从 SKILL.md 正文判断 skill 有无探针（识别「产出契约」段、postcondition、后置条件、最小 evidence 等**结构化声明**；随口一句"记得验证"不算——那不是机器能检查的东西）。结果落 `ops_skills.has_postcondition`。
+- 补上后 DisCo 三条固化判据齐备（频率 + 变体收敛度 + 探针），档位可自动判定，不再停在"数据不全等人确认"。判据来自决策：**无 postcondition 不许固化**，因为"碎了能当场发现"是固化前提。
+- 未知一律判 false——不知道有没有探针时按"没有"处理，宁可不升档也不误固化。
+
+## Brain 1.281.1 — 修阶段归因 ETIMEDOUT + 预筛提效
+
+- 刀8 部署后阶段归因整段静默跳过：`spawnSync /bin/sh ETIMEDOUT`。根因是拉 300 条 × ~80KB ≈ 24MB 超过 host-exec 默认 20s 超时。
+- `defaultExec` 支持 `opts.timeoutMs` 覆盖（超时机制本身保留，回归测试双向验证：3s 内跑通 1s 命令、500ms 超时仍会抛）；归因单独用 120s。
+- **SQL 预筛**：只拉真正含业务阶段的执行（`position(chr(38454)||chr(27573)||chr(32) IN d.data) > 0`，用 chr() 拼中文避开 shell/psql 多层引号转义）。实测效果——预筛前 120 条里仅 7 条含阶段（19.5MB / 95 秒，96% 是通道类废数据）；预筛后 30 条里 24 条含阶段（5.5MB / 46 秒），归因样本反而更多且留足超时余量。
+
+## Brain 1.281.0 — 运行舱刀8：skill 级 run 归因 + eval 入库通道
+
+- **A（阶段级归因）**：从 n8n `execution_data.data`（扁平指针格式，每条 ~80KB）解析节点级执行——每个「阶段 X」节点带 `executionStatus` 与 `executionTime`，按 `STAGE_TO_SKILL` 映射反推**逐 skill 的运行次数/成功率/平均耗时**，回填 ops_skills（migration 442 五列）。DisCo 档位据此自动判定，不再全是 `stage_confident=false`。
+- **实测发现**：流程级 `status=success` ≠ 每阶段都成功。真实 40 条 run 里仅 19 条走到首阶段之后——手机预检 19 次 100%（均 6 分），视频发现只跑了 2 次。这解释了"流程 80% 成功率但业务产出少"：绝大多数 run 卡在进入视频发现之前。
+- **B（eval 入库通道·框架）**：`buildEvalRecord` 接收真机 A/B 评测结果（有 skill 臂 vs 无 skill 臂同题对照），算出 score/baseline/**lift（提升幅度）**，落成 ops_skill_versions 新一代，Notion 自动出演进曲线。非法输入（缺 total、分数超题数）直接抛错——不接受说不清的分数入库。评测执行本身需真机（xian-m4/HONOR/抖音）+ 评测集设计，另行安排。
+- 阶段→skill 映射手工维护且改名会静默失效，故未知阶段一律跳过（禁硬塞给某个 skill）。
+
+## Brain 1.280.0 — 运行舱刀7：skill 版本历史 + DisCo 成熟度 + 消除双写
+
+- migration 441 `ops_skill_versions`（一代一行、只追加永不覆盖、**真外键**级联到 ops_skills）+ ops_skills 加 generation/eval_score/eval_baseline/eval_raw/disco_stage/stage_reason/stage_confident/has_postcondition 八列。解决「skill_registry 只存最新版、上一代考多少分全丢」的硬伤。
+- DisCo 三档判定（判据来自决策「Workflow 执行体形态定线」）：software3 / disco / code。固化三条必须同时满足——形状重复 + 变体已探明 + 有探针；不可逆写入永远 code；无 postcondition 绝不升档。机器只算能算的（频率/成功率/有无探针），`stage_confident=false` 时等人确认，不自己拍板。
+- 成熟度归属定型：**挂 skill**（被蒸馏的主体，有版本演进）；`rollupAgentMaturity`/`rollupWorkflowMaturity` 取最弱环节算出 agent 与 workflow 的成熟度（木桶效应），workflow 额外点名瓶颈阶段——下一刀该固化谁一目了然。
+- eval 分数接 `skill_registry.metadata.eval_score`（180 个 skill 中 14 个有真分数；`skill_evals` 表 19 条全是 e2e 测试垃圾，不采用）。
+- **消除 agent↔skill 双写**：真相源定为 `ops_agents.meta.skills`（直接来自 clawdbot.json），`ops_skills.used_by` 降为每轮从同一份 cfg 现算的派生反向索引，不接受其他写入方。
+
+## Brain 1.279.2 — 判官口粮第二铲：编码线九格 run 证据接线 + 成本缺口与数据缺口分家
+
+- 新增 `packages/brain/src/crystal/coding-grids.js`：编码九格从 home-sequencer `STAGE_ORDER`
+  派生（不留硬编码副本），kernel 六相→九格归一（planning→plan / gan→contract / generate /
+  evaluate / judge / publish / merge），认不出的相（review 人审、failed/done 终态）返回 null
+  不猜；探针认定取 `STAGE_REQUIRED_HANDOFFS`（contract/seal/generate/publish 四格有）。
+- 新增 `packages/brain/src/crystal/coding-evidence.js` + CLI
+  `packages/brain/scripts/backfill-crystal-coding-evidence.mjs`：`harness_attempts` ∪
+  `sequencer_ledger` → `crystal_run_evidence`，一格一日一行，幂等键 (unit_key, verified_at)
+  由 (格, 北京日) 唯一确定；`completed_with_concerns` 计次不计通过，cancelled/在途不入账。
+  新 scheduler job `crystal-coding-evidence`（10min 自 gate，排在 crystal-judge 之前，
+  只补账不代判）。
+- 判决单位册页从「漏斗八格」扩到「漏斗八格 + 编码九格」：九格常驻册页而非只靠当日证据触发，
+  否则某天没跑整条线就从报告里凭空消失（判决本就按滚动窗口聚合）。
+- migration 440 `crystal_ledger.cost_gap`：把「成本证据缺口」从「整源数据缺口」里拆出来。
+  编码线有真实跑量但天生无 token 源（task_run_metrics 08-23 断流、kernel attempt 不记 token），
+  旧逻辑一律降级 `data_gap` 会把跑过几百次的格子在账上写成 `n_runs=0`——用一种诚实
+  （不编成本）换来另一种谎。新增判据 `cost_evidence_missing`（仍 keep_llm，不许晋升）。
+- 实测（09-07 本地真库）：2546 条 attempt → 122 行证据（74 条无法归格诚实丢弃），判官
+  `coding:contract` n=354/成功率 0.819、`coding:evaluate` n=64/0.828、`coding:generate`
+  n=27/0.815 全部基于真数出判；重跑证据行数不变。og1..og8 仍 data_gap：那是 OpenClaw 视觉
+  获客八格，逐格证据在 hk-vps n8n 节点级执行记录里，本地无源（留给第三铲）。
+
+## Brain 1.279.1 — worker 池第四病：残留 claude 占槽 + 重复发射（僵尸检测 + 发射后探活）
+
+- `worker-pool-dispatch` 发射前僵尸检测：busy 槽在 DB 里找不到在途任务对应（dispatch_events ⨝ tasks，
+  `claimed_by='interactive-dev-skill'` 且 status 在途）即判空启动残留 claude，`kill-session` 后按 missing 重建。
+  三重保守：只碰 slot7-9、只杀无在途任务认领的、查库失败一律不杀。僵尸不再白占产能，也杜绝 send-keys
+  打进残留 claude 的 composer。
+- `worker-pool-dispatch` 发射后阻塞探活：send-keys 后轮询 `pane_current_command`（默认 10s 窗口 / 2s 一探），
+  确认 pane 真离开 shell 才计 dispatched；超时记 `failed_dispatch(liveness_timeout)` + 回滚预占 claim。
+  同时根治同轮与跨轮重复发射——跨轮现场案：16:38 A 发射到 slot8 后 claude 未接管，16:43 下一轮探测仍判
+  idle，B 又发同槽，命令打进 A 的 composer。
+- 槽位游标 `slotIdx` 改为成败都推进：旧代码发射失败时不推进，第二个任务照打同一个槽（同轮重复发射）。
+- 探活窗口可调：`CECELIA_WORKER_LIVENESS_TIMEOUT_MS` / `CECELIA_WORKER_LIVENESS_POLL_MS`。
+
+## Brain 1.278.3 — 判官口粮第一铲：近 30 天 run 数据回填 crystal_ledger
+
+- 新增 `packages/brain/scripts/backfill-crystal-ledger.mjs`：把 `ops_runs`（n8n 实录）与
+  `tasks`（dev / payload.pipeline=canvas 终态）近 N 天（默认 30）运行数据聚合成
+  `crystal_ledger` 行，幂等键 `(report_date, grid_key)`，支持 `--days=` / `--dry-run`。
+- grid_key 一律带 `n8n:` / `task:` 前缀，与判官自管单位（og1..og8 + 证据段名）写者隔离；
+  只写台账不写 `crystal_verdict`（只补账不代判）。
+- token 无源（`task_run_metrics` 08-23 断流、n8n 不记 token）→ `token_cost=0` +
+  `data_gap=true` 诚实标注成本缺口，不编造。
+- 实测：台账 10 行 → 63 行（53 行历史真数，含智能获客/编码两条 Canvas 主线），重跑行数不变。
+
+## Brain 1.278.2 — worker 池 ssh 套壳 $ 转义(并行血管 P1 补丁3)
+
+- wrap() 补 `$`→`\$` 转义:双引号 ssh 参数里 `$(cat promptFile)` 被容器 shell 先求值成空串,发射命令落地成 `claude-launch.sh ""`(金丝雀案 worker 空转);修后 $(…) 活到宿主端求值
+
+## Brain 1.278.1 — 修 ENOBUFS：host-exec 大输出静默失败
+
+- `host-exec.js` 的 `execSync` 未设 maxBuffer（Node 默认仅 1MB），而采集命令早已超限：n8n 画布导出 2.1MB、执行历史 JSON 数 MB。超限抛 `spawnSync /bin/sh ENOBUFS`，**报错不含真实原因**，第 4 腿（n8n workflow 采集）因此静默转 parse_error 停摆（2026-09-06 生产实证）。
+- 修法：新增 `EXEC_MAX_BUFFER = 128MB` 并传入 execSync。回归守卫：`host-exec.test.js` 真跑 2MB 输出断言不抛（proven-to-fire——修前该用例确实红）。
+
+## Brain 1.278.0 — 运行舱刀6：run 记录 + 流程健康汇总
+
+- migration 439 `ops_runs`（每次执行的机器/状态/耗时；crashed 无 stoppedAt 时 duration 留 NULL，禁编造）+ `ops_workflows` 加 machine / run_total / run_success_rate / run_avg_sec / last_run_at / last_run_status 六列。
+- 采集器第 5 腿：从 n8n `execution_entity`（hk-vps 容器 zenithjoy-db-postgres，非 sqlite）采执行历史 4481 条并回填流程健康汇总。实证智能获客成功率 80% 均 38 分/日均 21 轮、编码流水线 89% 均 70 分/日均 10 轮。
+- Notion 新增 `Ops Runs` 库：只推有业务阶段的流程 run（日均 10-21 条）；通道/触发器类（日均 154-234 次、4 秒一次）只在流程行看汇总，避免噪音淹没视线。指挥舱 G1 S1，task bfad945f。
+
+## Brain 1.277.4 — worker 池槽位探针修复(并行血管 P1 补丁2)
+
+- 探针 display-message→list-panes:真机实证 display-message -p -t 不存在的会话返回空串+rc=0,空串被判 busy → 全槽假忙永不派发(金丝雀案 busy=3 而宿主无 slot7-9);空串防御性归 missing
+
+## Brain 1.277.1 — worker 池任务对 kernel tick 隔离(并行血管 P1 补丁)
+
+- `payload.parallel_worker=true` 的任务从 kernel tick 候选谓词排除(同 headed_manual 模式)——09-06 金丝雀实证:tick(2min)必快过 worker-pool job(5min gate),两派发器猎同池
+
+## Brain 1.276.0 — 并行血管P1:worker池自动派发 scheduler job
+
+- 新增 `worker-pool-dispatch` scheduler job(5min自gate):扫 queued 的 parallel_worker/canvas+exploratory 任务→tmux slot7-9 发射交互 /dev worker(slot1-6 是 harness 地盘,白名单铁律进 smoke)
+- 并发上限2;CAS 预占 claimed_by=interactive-dev-skill(/dev claim 409 预占约定);发射即记 dispatch_events,失败 failed_dispatch+回滚 claim
+- prompt 经宿主文件交付;SSH 逃逸对齐 harness headed 先例(任务 873acc6d)
+
+## Brain 1.275.0 — watchdog never-started 有头豁免条目补录（并行血管P2，随 1.274.1 上产）
+
+- harness-watchdog 区段 C：claimed_by 含 interactive-dev-skill 且 claimed_at < 40min（HEADED_CLAIM_GRACE_MINUTES）不判 never-started——有头 /dev 会话 PrepPRD/TDD 阶段本就不写 initiative_runs，docker 容器探测救不了有头；候选 SELECT 与事务内 FOR UPDATE 双处谓词防 TOCTOU；超 40min 无 run 活动落回原判死。09-06 战役误杀 4 次案卷，decision 45a2bcfb。（功能已随 #5183/1.274.1 上产；条目走碎片补录——#5183 合并抢跑于五件套改造 push 之前）
+
+## Brain 1.274.0 — 版本发布碎片化(并行血管 P3)
+
+- PR 不再自带版本五件套 bump;DEFINITION 条目写 `changes/<分支>.md` 碎片(1.274.0 占位),并行零冲突
+- auto-version bot 合并后统一应用:新增 `packages/brain/scripts/auto-version-apply.mjs`(五件套+根 lock workspace 条目同步+碎片消费),超越式关闭过时 bot PR
+- 根因案卷:09-06 四舰队版本五连撞(O(n²) 人肉 rebase);根 lock 失同步 npm10 edgesOut 案回归防线并入
+
+## Brain 1.273.197 — 运行舱刀4/5：业务流程库+skill最小单元（第 84 批）
+
+- 三层打通：workflow(n8n业务流程) → agent(数字员工,含归属/岗位) → skill(最小执行单元,与agent多对多)。migration 436/437；采集器第4腿采 n8n；mermaid 流程图按真实连线；召唤权限正名 CanCall/CalledBy。
+
+## Brain 1.273.195 — 契约 schema 化(Crystal 件2,认领 kernel 遗孤 PR#5162,九件收官)
+
+- check-handoffs 收编 brain(orchestrator/check-handoffs.mjs 337行):CONTRACTS={CODING九格+LEADGEN}可执行 pre/postcondition 断言集+冻结合同测试14断言+smoke+Test Contract 登记同步(.mjs→.js)。kernel b690296f 死于 deadline 后认领。
+
+## Brain 1.273.194 — 三镜头接新入口(Crystal 件6,认领 kernel 遗孤 PR#5166)
+
+- capability-gate.js 接线 work-routing-store:new_capability 必经三镜头闸,reject 即 fail-closed;pass 必须带 postcondition+NFR 三数。首次接上主链。kernel aa069d30 死于 evaluate deadline 后认领。
+
+## Brain 1.273.192 — 四格路由器(Crystal 件1)
+
+- work-router 两轴 artifact_kind × answer_known;execution 永不进 kernel-harness-v2(meta 三杀手案卷回归防线),路由 canvas/exploratory 免 impact contract;code 类老契约字节不动;intake 默认 tenant_id:default 不算执行标记(30 任务回放实证)。
+
+## Brain 1.273.189 — 结晶判官(Crystal 件4,认领 kernel 遗孤)
+
+- crystal-judge job(北京05:00)+ /crystal 四端点 + 迁移435;铁律引擎=决策 28ca1f69(判定层不蒸馏/探针强制/N≥20/碎3降级/频率×失败率);认领收尾含 DoD 活体20条+配对测试17断言+根lock/playground锁/毒缓存三雷根治。原 .188 位被 #5168 运行舱刀2 占用顺延。
+
+## Brain 1.273.188 — 运行舱刀2：两库合并+编排关系可见（第 83 批）
+
+- `extractOpenclawAgents` meta 增采 `orchestrates`(=subagents.allowAgents)+`delegation_mode`(免 migration)；`GET /agent-ops/graph` 合并投影(computeAgentRole 双向判定 orchestrator/member/solo + agent 与 schedule 按 name==label 去重为运行单元行 + 孤儿排程独立行)；Notion 两库合并为单库「Ops 运行图谱」(buildOpsUnitNotionProperties + pushOpsGraph，kv 改 graph_db)。决策 ac7a0911，G1 S1 加厚刀2。
+
+## Brain 1.273.186 — 投影自动重建 scheduler job（Crystal 件9，map_radius_stale 根治）
+
+- 新增 `map-projection-refresh.js`（scheduler job，3min 自 gate，env `CECELIA_MAP_PROJECTION_REFRESH_INTERVAL_MS` 可调）：比较各 active scope 的 fact_snapshot_headers 四 kind revision 与 map_projection_runs.fact_revisions，漂移即调 map-read-service.rebuild；扫描中窗口（kind 缺/revision 不一致）静默跳过留 reason；多 scope 单点失败不连坐、console.error 留两侧 revision。案卷：09-05/06 生产两轮确定性 map_radius_stale（投影换代随 kernel 闲置 08-30 起停转），手动 rebuild 即愈实证 3 次。决策 8f22f71c。
+
+## Brain 1.273.185 — 指挥舱运行舱 ops 投影（第 82 批）
+
+- 新增 `ops-collector.js`（scheduler job，5min 自 gate，复用 host-exec ssh 逃逸）三腿采集本机 launchd / HK OpenClaw / GHA cron → `ops_agents` / `ops_schedule_entries` / `ops_source_heartbeats`（迁移 433）只读投影；per-source 心跳（单腿断只灰对应分区）、0条=可疑不写空快照、宁 stale 不假数据、meta 白名单禁凭据、OpenClaw 只读 docker exec 写死路径、next_run 采集端算绝对 UTC（DST 正确）。
+- 新增 `routes/agent-ops.js`：`GET /agent-ops/agents|calendar` 现算（per-source freshness、42P01→503 migration_pending、recurring_tasks 死排程标 ⚠️）；`notion-push-sync` 加两库 upsert 推送；`host-exec.js` 从 launchd-patrol 提取共享三件套。指挥舱 G1 S1 加厚刀1，决策 1f4fbc0f。
+
+## Brain 1.273.184 — 常驻监工唤醒器（第 81 批）
+
+- 新增 `orchestrator/commander-invoker.js`：监工"记忆常驻、进程不常驻"形态——一 run 一个 Claude Code 会话（`--session-id` 开局喂 charter+冻结题目，`--resume` 逐收口唤醒），每次只喂 home-sequencer 蒸馏摘要（>1200B 直接抛 digest_too_large，喂食纪律是闸不是建议）。裁定+分析写 `sequencer_ledger`（迁移 432）双职责：审计 + 会话丢失重建源。
+- 唤醒失败三级降级：①同会话重问一次（点明机器行格式）②`rebuildSessionFromLedger` 从台账回放裁定史重开会话 ③verdict=null 升人——封闭词表解析失败绝不猜。charter 判则含瞬时/持久基础设施故障之分（v1423a 重放偏差的纠正）。
+- 机制实证（建模前）：fojc1r 重放 8/8 含 c8 盲区题、v1423a 跨格对质、单唤醒 10-13 秒。
+
+## Brain 1.273.183 — Commander Harness 回家·序列器核心（第 80 批）
+
+- 新增 `orchestrator/home-sequencer.js`：coding 线三代合流架构的确定性核心——完整格序（init+九格+finalize）、四档 change_kind 裁剪表（决策 29ae54ae：new_capability 全链 / capability_change 免对抗 / bugfix 跳 plan 免人审 / parameter_only 最轻且 evaluator 保留）、裁定词路由（r54 evaluate FAIL→generator-fix、#51/#52 seal blocked→contract、c8 publish 确定性 409→终局、attempt≥4 熔断）、收口摘要蒸馏（≤1200B，交接件坐标原样保留）、监工回复封闭词表解析。
+- 架构（Alex 2026-09-05 拍板）：顺序=本模块死代码；判断=常驻监工 claude -p --resume（一 run 一会话，只喂蒸馏收口摘要）；状态=台账；手=现役 fleet 多 provider 不动。判断力永不写进死代码（Kernel derive.js 1640 行血训）。已实证：fojc1r 重放 8/8 含 c8 盲区题、v1423a 跨格对质、单唤醒 10-13 秒。
+- 本批只交付确定性核心；监工唤醒器与派发驱动接线在后续批。leadgen 留 OpenClaw 不动。
+
+## Brain 1.273.182 — 九格交接 schema 化（第 79 批）
+
+- 新增 `orchestrator/handoff-schemas.js`：五类交接对象（`planner_prd_artifact`/`seal_coordinates`/`sealed_contract`/`candidate_coordinates`/`published_pr`）的字段+格式契约（zod），`validateHandoffObject` 单件校验、`validateStageEvidence` 阶段级校验（该格必交的件缺席或字段坏 → 结构化 issue 清单，点名到字段）。沿用 commander-contract 防泄密判据（交接对象禁夹带密钥）。
+- 背景：多 agent 流水线的 bug 通常活在交接处（Anthropic building-effective-agents 及多 agent 失效模式研究一致结论），本仓三发实证 r40（编造 40hex 假 sha）/r42（递错 run）/r53（少第五字段）。两层互补：本模块管**形状**，取值真伪由第 73/74/78 批的服务端权威注入管。
+- 本批只交付校验器本体（可被桥接与 Commander 两端调用）；派发点接线单独一批，避免一次改动过大。
+
+## Brain 1.273.181 — publish-pr 分支反查候选（第 78 批）
+
+- `routes/harness-attempt-run.js` publish-pr：r53 案卷——judge 三 PASS 后 publish 409，因 Commander 台账 `candidate_coordinates` 只记四字段无 `source_attempt_id`，端点未尝试 FF 推送。修：字段缺席/非法时按 `git_candidate.branch===branch` 反查最新 completed(±concerns) generator/generator-fix（74 批同源权威模式），反查命中即推送；无候选保持原 409。台账规格已同步补第五字段（HK skill 热改）。
+
+## Brain 1.273.180 — contract-seal 引用完备性校验（第 77 批）
+
+- `routes/harness-attempt-run.js` contract-seal：r51 案卷——合同把 `sprints/<dir>/task-plan.json` 列进范围白名单却从未提交，seal 照封，40 分钟后 generate 才按 CONTRACT IS LAW 拦停。修：落印前扫描合同/PRD 正文中 sprint 内合同期管理文件（contract-draft/dod、sprint-prd、task-plan、tests/**）的全路径引用，缺席 → 409 `contract_references_missing_artifact` 带清单即刻打回 contract 格（重试 5 分钟 vs generate 陪葬 40 分钟）。generator 自产文件（red-evidence 等）不在管理家族，零误伤。
+
+## Brain 1.273.179 — publish-pr 头不一致时尝试 fast-forward 推送（第 76 批）
+
+- `routes/harness-attempt-run.js` publish-pr：r47 案卷——judge 全 PASS 后 publish 409 `publish_head_mismatch`：候选分支与 planner 预推的提案分支同名，远端头=旧 PRD commit，判过的候选是其后代。修：mismatch 且带 `source_attempt_id` 时尝试非强制推送（git 原生 fast-forward-only 即安全栏，非 FF 必败），推败才 409 并带 `push_error`。无 source_attempt_id 行为不变。
+
+## Brain 1.273.178 — 候选定位认 completed_with_concerns（第 75 批）
+
+- `routes/harness-attempt-run.js`：r43 案卷——generator 终态 `completed_with_concerns`（INV-2 shell 展开边角，候选产物完好且 Commander 已验收放行），注入查询只认 `completed` → evaluate 断供 candidate_not_found。修：状态过滤加 `completed_with_concerns`——阶段验收权在 Commander，桥接不重审。
+
+## Brain 1.273.177 — 候选定位改 sprint_dir 寻址（第 74 批）
+
+- `routes/harness-attempt-run.js`：r42 案卷——工人把 contract 共享 run 当 generate 共享 run 递给 evaluate 派发，73 批 fail-fast 正确拦截但 17 连拦致死。定位键也不信工人：按 `task_bundle inputs.sprint_dir`（每工作流唯一、每格必带、服务端已校验）匹配最新 completed generator/generator-fix attempt，`runId` 一并覆写为该 attempt 的 run（close 所有权契约：evaluate/judge 必须活在 generate 开的共享 run 里）。工人递错/不递 run_id 均照常注入。
+
+## Brain 1.273.176 — evaluator/judge 服务端权威注入候选坐标与基线（第 73 批）
+
+- `routes/harness-attempt-run.js` POST /attempt-run：r40 双死因（evaluate a1 工人**编造**格式合法的 base_sha——锚 task uuid 前缀续写 40hex；a2 工人**丢失**候选坐标——check-handoffs 只查缺漏与格式防不住编造值）。修：evaluator/judge 派发 ①run_id 必填（400 `role_requires_bridge_run`）②candidate 五坐标+base_sha 由服务端从本 run 最新 completed generator/generator-fix attempt 的 `git_candidate` 产物覆写（fleet 验证过的权威，Worker 抄的值一律无视）③查无候选 409 `candidate_not_found`。铁律「机械判定不能建立在 LLM 自愿配合上」在坐标转交层收口。HK coding-evaluator/judge skill 已同步注明（run_id 必带、坐标勿自抄）。
+
+## Brain 1.273.175 — publish-pr 补候选推送线（第 72 批）
+
+- `routes/harness-attempt-run.js` publish-pr：V4 候选不推远端为设计（generate/evaluate/judge 全在 fleet 本地工作区），全链此前无任何环节推送候选分支——远端 ref 必 404，publish 格必死 `publish_branch_unavailable`（r40 预演抓获，未烧金丝雀）。修：body 收 `source_attempt_id`（candidate_coordinates 既有字段），ref 404 时起一次性只读容器进 fleet 候选工作区（`fleet-mounts/worktrees/<attempt>`）验 `HEAD===head_sha` 后推 `<sha>:refs/heads/<cp-branch>` 再开 PR（响应带 `pushed:true`）。绝不 force：远端已存在但头不一致仍 409 `publish_head_mismatch`；ref 非 404 失败不盲推；工作区已释放 → 409 `candidate_workspace_unavailable`。HK coding-publisher skill 同步加字段（已热改+备份）。
+
+## Brain 1.273.174 — judge 机械闸认封印测试产物（第 71 批）
+
+- `harness-judge.js` runMechanicalGate②：sprint 目录文件扫描为零时，认 `ctx.frozenContractArtifacts` 中 sprint `tests/` 路径的封印产物计数（封印集装载已过 `requireTests:true` + seal 对账，密封证据即测试存在性证明）。根除 r39（run 2se9fh）误杀：V4 judge 走 Brain API 时 authority worktree 回落 kernel 默认路径（锚 task 无 `worktree_path`，候选文件在桥接工作区）→ 文件扫描必零；docs-only 合同 DoD 用 [ARTIFACT] 条目 → [BEHAVIOR] 计数也零 → 双零 FAIL（`contract_tests=0`），与 judge 自身重跑冻结测试 6/6 全过自相矛盾。封印集缺席（kernel 旧路径）行为不变。
+
+## Brain 1.273.173 — 桥接从封印表装回合同产物（第 70 批）
+
+- `routes/harness-attempt-run.js`：generator/generator-fix/evaluator/judge 派发带 `contract_id` 时，从 `initiative_contract_artifacts` 装回全套产物到 `observed.contract.artifacts`——金丝雀 #37 实证：bundle 缺 contract-draft/dod 正文时 generator 按 CONTRACT IS LAW 正确拒绝（needs_context FROZEN_CONTRACT_ARTIFACTS_MISSING）。
+
+## Brain 1.273.172 — generator 强制共享 run（第 69 批，决策 d2de68fb）
+
+- `routes/harness-attempt-run.js`：generator/generator-fix 角色无条件建 `v4-bridge-shared` run（候选保留工作区活到 judge）——keep_open 旗标依赖物理消除（金丝雀 #31/#36 两次死于 Worker 忘带；止损评估方案 A）。
+
+## Brain 1.273.171 — 关闭 Codex OAuth 掉线时静默 fallback 到 API Key 计费
+
+`llm-caller.js` 的 `callCodexHeadless()`：两个 Codex OAuth team 账号全部不可用时，此前会静默改用 `OPENAI_API_KEY` 直接按量计费调用 Codex CLI，曾在生产环境静默烧掉约 24 美元且无任何告警。现改为直接抛错，交给 `callLLM()` 既有的 anthropic-api 紧急兜底机制接管（该机制未改动）。排查 AFFiNE AI 故障时顺带发现，决策 `7cecc252`。
 
 ## Brain 1.273.170 — fleet runner digest repin 74afa123（第 68 批，prune 误删重建）
 
@@ -2834,7 +4903,7 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**48 个白名单 action**：
+**45 个白名单 action**（棒4起 okr_initiative_plan/okr_scope_plan/okr_project_plan 随 scope/initiative 层退役移除，决策 ee4842a6）：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task
 - OKR：create_okr, update_okr_progress, assign_to_autumnrice
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
@@ -3084,10 +5153,10 @@ queued → in_progress → completed
 | crystallize_register | 西安 | crystallize 子任务：注册到 SKILL.md + 部署 | Codex | 固定 openai |
 | codex_test_gen | 西安 | 自动生成测试（扫描覆盖率低模块 + 生成测试） | Codex | 固定 openai |
 | decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
-| initiative_plan | US | Initiative 规划 | Opus / - | 默认 anthropic |
+| initiative_plan | US | ⛔ 已退役（决策 ee4842a6，棒4）：Initiative 层随 scope/initiative 退役，建单拒绝 | Opus / - | 默认 anthropic |
 | initiative_verify | US | Initiative 验收 (/arch-review verify) | Sonnet / - | 默认 anthropic |
-| scope_plan | US | Scope 内规划下一个 Initiative (/decomp Phase 3) | Opus / - | 默认 anthropic |
-| project_plan | US | Project 内规划下一个 Scope (/decomp Phase 4) | Opus / - | 默认 anthropic |
+| scope_plan | US | ⛔ 已退役（决策 ee4842a6，棒4）：Scope 层退役，建单拒绝 | Opus / - | 默认 anthropic |
+| project_plan | US | ⛔ 已退役（决策 ee4842a6，棒4）：原"Project 内规划下一个 Scope"，Scope 层退役后建单拒绝 | Opus / - | 默认 anthropic |
 | pipeline_rescue | US | Pipeline 救援 — 卡住的 pipeline 接管修复 (/dev) | Opus / - | 默认 anthropic |
 | platform_scraper | CN | 平台数据采集（CDP 浏览器 + 各平台登录态） | - | - |
 | suggestion_plan | US | Suggestion 层级识别 | Sonnet / - | 默认 anthropic |
@@ -3107,9 +5176,9 @@ queued → in_progress → completed
 | spec_review | US | Spec 审查 (/spec-review) | 本机 Codex | 固定 openai |
 | code_review_gate | US | 代码质量门禁 (/code-review-gate) | 本机 Codex | 固定 openai |
 | initiative_review | US | Initiative 整体审查 (/initiative-review) | 本机 Codex | 固定 openai |
-| okr_initiative_plan | 西安 | OKR Scope 下规划下一个 Initiative (/decomp) | - | general |
-| okr_scope_plan | 西安 | OKR Project 下规划下一个 Scope (/decomp) | - | general |
-| okr_project_plan | 西安 | OKR Project 层完成后规划下一步 (/decomp) | - | general |
+| okr_initiative_plan | 西安 | ⛔ 已退役（决策 ee4842a6，棒4）：原"OKR Scope 下规划下一个 Initiative"，建单拒绝 | - | general |
+| okr_scope_plan | 西安 | ⛔ 已退役（决策 ee4842a6，棒4）：原"OKR Project 下规划下一个 Scope"，建单拒绝 | - | general |
+| okr_project_plan | 西安 | ⛔ 已退役（决策 ee4842a6，棒4）：原"OKR Project 层完成后规划下一步"，建单拒绝 | - | general |
 | sprint_generate | US | Harness Generator — 写 sprint contract + 代码 (/dev) | Sonnet / - | 默认 anthropic |
 | sprint_evaluate | US | Harness Evaluator — 测运行中的代码 (/sprint-evaluator) | Sonnet / - | 默认 anthropic |
 | sprint_fix | US | Harness Generator 修复轮次 (/dev) | Sonnet / - | 默认 anthropic |
@@ -3764,10 +5833,27 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 - **部署**：`bash scripts/dev-deploy.sh`（含 pg_dump 备份 + migrate 幂等）
 - **验证**：`bash scripts/dev-verify.sh`
 - **健康监控**：`scripts/dev-healthcheck.sh`（每 5 分钟轮询 5220，宕机 10 分钟后向 5221 创建 alert 任务）
-- **CI 自动部署**：develop 分支 push 触发 `.github/workflows/auto-dev-deploy.yml`
+- **CI 自动部署**：旧 develop 分支部署工作流已退役；Dev 环境配置、部署脚本和隔离检查保留。
 
 ### ZenithJoy 联动占位
 
 - Cecelia develop 环境与 ZenithJoy develop 环境（`ZJ_DEV_PORT=5230`，待 ZJ 侧确认）配合
 - `staging-e2e-runner.js` 导出 `ZJ_DEV_PORT` 常量（默认 5230，可通过环境变量覆盖）
 - 本 Sprint 不修改任何 ZenithJoy 仓库文件，联动在后续 Sprint 实施
+
+
+## 1.348.17
+
+### Project 按需读取与拆解审查闭环（任务 d8ca5e1e）
+
+- 七处按需读方统一读取 projects 真身，子任务直接按 Task.project_id 关联，排除迁移保留的 project 根任务。
+- 实际拆解提示使用 Objective → Key Result → Project → Task；首次复用或新建项目通过本棒 result.decomposition_project_id 显式保存归属。
+- 拆解回调、修正再审与确认门刷新使用同一 Project；主理人确认放行更新 key_results。多项目未显式选择时拒绝猜选。
+- 真 PostgreSQL 事务回归覆盖真实 HTTP 选择项目、首次送审、修正再审、审批激活与 KR 放行；测试结束回滚。
+
+- KR 诊断的数据库入口挂 express-rate-limit，每来源每分钟30次，超额请求在SQL执行前返回429；无KR参数的健康入口独立可读。
+
+既有xian-M4维护只追加OS支持版本，原endpoint与grant范围不变。维护HMAC绑定真实runtime配置、boot与活动计数；固定canonical owned canary清理证明、同机锁/零活跃预约及35秒总事务fence缺一即拒绝。旧grant ID按精确UUID家族撤销全部代，补偿追加新版本并保留当前revoked/expiry。normal admission仅从冻结目录消费新OS floor，部署canonical及其它阈值保持。固定drain marker使用O_EXCL创建与nonce/inode/dev/内容journal，同合作锁精确释放；未知owner/工作区inode/cleanup保占位不自动清。
+
+### OpenClaw手机完成回收独立周期（1.379.7）
+openclaw-agent-reaper与手机窄派发共用独立收尾循环，不再受串行慢job阻塞；保留60秒执行周期、真实调用防重入、preview停用及全局Tick关闭。

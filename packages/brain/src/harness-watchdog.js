@@ -22,6 +22,11 @@
 import pool from './db.js';
 import { execSync } from 'child_process';
 import { patchKernelRunById } from './orchestrator/kernel-run-store.js';
+import { finalizeTask } from './lib/task-terminal.js';
+
+// 有头 /dev 会话（claimed_by 含 interactive-dev-skill）的 never-started 豁免窗（分钟）。
+// 宽于通用 staleMinutesA=20：有头 PrepPRD/探索/TDD 阶段正常就要 20-40min 才产生 run 活动。
+export const HEADED_CLAIM_GRACE_MINUTES = 40;
 
 function runIdentityPredicate(runAlias, taskIdentity) {
   return `(
@@ -293,7 +298,16 @@ export async function resumeStalledHarnessDrivers({
   // initiative_runs 行都没有，说明 graph 从未被 invoke（dispatcher 侧异常吞掉了）。
   // 区段 A/B 都靠 JOIN/EXISTS initiative_runs 判活，这类任务对它们完全不可见。
   // 没有 checkpoint 可续 → 不是 resume，直接标 failed 释放 claim，让上游/用户重新点火。
+  //
+  // 有头豁免（并行血管P2，decision 45a2bcfb）：有头 /dev 会话（claimed_by 含
+  // interactive-dev-skill）在 PrepPRD/探索/TDD 阶段 40min 内不写 initiative_runs 属正常
+  // 在工，不是野鬼——docker 容器探测救不了有头（没有 cecelia-relay-* 容器）。
+  // 超 HEADED_CLAIM_GRACE_MINUTES 无任何 run 活动才落回判死（防真死会话永久占坑）。
   const neverStartedThresholdMin = staleMinutesA; // 复用 A 阶段阈值，不新增参数
+  const headedExemptPredicate = (alias) => `NOT (
+          ${alias}.claimed_by LIKE '%interactive-dev-skill%'
+          AND ${alias}.claimed_at >= NOW() - INTERVAL '${HEADED_CLAIM_GRACE_MINUTES} minutes'
+        )`;
   const neverStarted = await dbPool.query(
     `SELECT t.id
        FROM tasks t
@@ -304,6 +318,7 @@ export async function resumeStalledHarnessDrivers({
                WHERE ${runIdentityPredicate('ir', 't.id')})
         AND t.claimed_at IS NOT NULL
         AND t.claimed_at < NOW() - ($1 || ' minutes')::interval
+        AND ${headedExemptPredicate('t')}
       ORDER BY t.claimed_at ASC
       LIMIT 20`,
     [String(neverStartedThresholdMin)]
@@ -337,13 +352,14 @@ export async function resumeStalledHarnessDrivers({
         transactionOpen = true;
 
         const locked = await client.query(
-          `SELECT id, status, claimed_at
+          `SELECT id, status, claimed_at, claimed_by, executor_kind
              FROM tasks
             WHERE id = $1
               AND task_type = 'harness_initiative'
               AND status = 'in_progress'
               AND claimed_at IS NOT NULL
               AND claimed_at < NOW() - ($2 || ' minutes')::interval
+              AND ${headedExemptPredicate('tasks')}
             FOR UPDATE`,
           [row.id, String(neverStartedThresholdMin)]
         );
@@ -366,21 +382,35 @@ export async function resumeStalledHarnessDrivers({
           continue;
         }
 
-        const upd = await client.query(
-          `UPDATE tasks SET
-             status = 'failed',
-             claimed_by = NULL,
-             claimed_at = NULL,
-             error_message = 'harness_initiative never started graph (no initiative_runs row, claimed_at stale)',
-             updated_at = NOW()
-           WHERE id = $1 AND status = 'in_progress'
-           RETURNING id`,
-          [row.id]
-        );
+        // 有头会话降级处置（2026-09-16）：豁免只看 claimed_at（开工那一刻），认不出
+        // "还在干活"——认真干了 44/118 分钟的会话和 40 分钟前死掉的长得一样。
+        // 判 failed 是终端态（状态机 allowed:[]），API 无法回正、只能直写 DB；
+        // executor-contracts 给 headed-session 定的也是 release-claim-and-alert 而非 fail。
+        // 故有头一律降级为 blocked：人工可见、可恢复、不会被 tick 抢跑重复执行。
+        const lockedRow = locked.rows[0];
+        const isHeaded = lockedRow.executor_kind === 'headed-session'
+          || String(lockedRow.claimed_by ?? '').includes('interactive-dev-skill');
+        const upd = isHeaded
+          ? await client.query(
+            `UPDATE tasks SET
+               status = 'blocked',
+               blocked_at = NOW(),
+               claimed_by = NULL,
+               claimed_at = NULL,
+               error_message = 'headed session stale: no initiative_runs row past grace — 降级 blocked（可恢复），非 failed',
+               updated_at = NOW()
+             WHERE id = $1 AND status = 'in_progress'
+             RETURNING id`,
+            [row.id]
+          )
+          : await finalizeTask(client, row.id, 'failed', {
+            set: { error_message: 'harness_initiative never started graph (no initiative_runs row, claimed_at stale)' },
+            onlyIfStatus: 'in_progress',
+          });
         await client.query('COMMIT');
         transactionOpen = false;
 
-        if (upd.rows.length > 0) {
+        if ((upd.rows ?? upd.tasks).length > 0) {
           resumed.push(row.id);
           console.warn(
             `[harness-watchdog] marked never-started harness task failed: task=${row.id} ` +

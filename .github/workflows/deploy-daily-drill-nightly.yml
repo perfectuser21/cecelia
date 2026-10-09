@@ -33,7 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BARK_KEY: ${{ secrets.BARK_KEY }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
           GH_REPO: ${{ github.repository }}
           DRILL_GH_API_FAIL: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
         run: |

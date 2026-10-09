@@ -1,3 +1,12 @@
+import {directory} from '../../execution-directory/directory.js';
+import {legacyRecords} from '../../execution-directory/legacy-policy.js';
+// Fleet传输、凭据、数据库和执行进程在本文件注入模拟；隔离策略由专用runtime回归验证。
+vi.mock('../../db.js', () => ({ default: { query: vi.fn(async () => ({ rows: [] })) } }));
+vi.mock('../../runtime-safety.js', async (importOriginal) => ({
+  ...await importOriginal(),
+  assertExternalExecutionAllowed: () => {},
+}));
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildRealDeps } from '../run.js';
@@ -29,9 +38,19 @@ function testCredentialPayload() {
 
 function buildTestDeps(overrides = {}) {
   return buildRealDeps({
+      startExecutionDirectory:async()=>directory.refresh({pool:{query:async()=>({rows:legacyRecords({env:{FLEET_WORKER_US_MAC_M4_URL:WORKER_URL,FLEET_WORKER_XIAN_MAC_M1_URL:'http://xian-m1.internal:5231',FLEET_WORKER_XIAN_MAC_M4_URL:'http://xian-m4.internal:5231',...overrides.env}})})}}),
+    executionAuthority:async(_method,input,run)=>run(input,{canonical_id:input.target.machine,endpoints:{worker:overrides.env?.[`FLEET_WORKER_${input.target.machine.toUpperCase().replaceAll('-','_')}_URL`]}}),
     resolveRepoHead: vi.fn(async () => BASE_SHA),
     loadCredential: vi.fn(async () => testCredentialPayload()),
     resolveGitHubToken: vi.fn(async () => 'github-pat-for-production-wiring-test'),
+    // 准入失败/账号冷缓存也不得落到真实告警持久化或宿主凭据探测。
+    isAccountUsable: vi.fn(async () => true),
+    emitAlert: vi.fn(async () => {}),
+    onPreflightBlocked: vi.fn(async () => {}),
+    onFailurePersistenceFailed: vi.fn(async () => {}),
+    fetchFn: vi.fn(async () => { throw new Error('unexpected unmocked fetch'); }),
+    spawnDetached: vi.fn(async () => { throw new Error('unexpected unmocked spawn'); }),
+    removeContainer: vi.fn(async () => { throw new Error('unexpected unmocked removal'); }),
     ...overrides,
   });
 }
@@ -758,7 +777,7 @@ describe('production capability wiring', () => {
       taskId: TASK_ID,
       runId: RUN_ID,
       hop: 12,
-      observed: observed(),
+      observed: observed({role_assignments: {generator: {...target, strict_affinity: true}}}),
       decision: { phase: 'generate', reason: 'contract_approved' },
     })).resolves.toMatchObject({
       status: 'LAUNCHED',
@@ -867,7 +886,7 @@ describe('production capability wiring', () => {
       taskId: TASK_ID,
       runId: RUN_ID,
       hop: 13,
-      observed: observed(),
+      observed: observed({role_assignments: {generator: {...target, strict_affinity: true}}}),
       decision: { phase: 'generate' },
     })).rejects.toThrow('execution_transport_unavailable:xian-mac-m4');
 
@@ -895,6 +914,7 @@ describe('production capability wiring', () => {
     }, {
       leaseOwner: LEASE_OWNER,
       leaseGeneration: 4,
+      ...(!canExactCancel ? { retainResources: true, cleanupIdentity: { actualMachineId: target.machine, executionTransport: 'fleet-worker' } } : {}),
     });
   });
 
@@ -931,7 +951,7 @@ describe('production capability wiring', () => {
       taskId: TASK_ID,
       runId: RUN_ID,
       hop: 15,
-      observed: observed(),
+      observed: observed({role_assignments: {generator: {...target, strict_affinity: true}}}),
       decision: { phase: 'generate' },
     })).rejects.toThrow('execution_transport_unavailable:xian-mac-m4');
     expect(spawnDetached).not.toHaveBeenCalled();
@@ -1002,7 +1022,7 @@ describe('production capability wiring', () => {
       taskId: TASK_ID,
       runId: RUN_ID,
       hop: 14,
-      observed: observed(),
+      observed: observed({role_assignments: {generator: {...target, strict_affinity: true}}}),
       decision: { phase: 'generate' },
     })).rejects.toThrow('remote_bridge_attestation_invalid');
 
@@ -1019,6 +1039,8 @@ describe('production capability wiring', () => {
     }, {
       leaseOwner: LEASE_OWNER,
       leaseGeneration: 4,
+      retainResources: true,
+      cleanupIdentity: { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
     });
     expect(spawnDetached).not.toHaveBeenCalled();
   });
@@ -1066,7 +1088,7 @@ describe('production capability wiring', () => {
       taskId: TASK_ID,
       runId: RUN_ID,
       hop: 14,
-      observed: observed(),
+      observed: observed({role_assignments: {generator: {...target, strict_affinity: true}}}),
       decision: { phase: 'generate' },
     })).rejects.toThrow('remote_bridge_prepare_request_failed');
 

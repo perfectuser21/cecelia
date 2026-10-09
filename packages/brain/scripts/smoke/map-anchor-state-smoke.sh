@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # scratch-only 真验火：精确锚点、查询时五态、revision receipt 与影响半径。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT_DIR"
@@ -13,9 +16,9 @@ NODE_EXECUTABLE="$(command -v node)"
 PSQL_EXECUTABLE="$(command -v psql)"
 DATABASE_NAME="$($NODE_EXECUTABLE -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DATABASE_NAME" =~ (_test|_scratch)$ ]] || fail "拒绝连接非测试库: ${DATABASE_NAME:-<empty>}"
-[[ "$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')" == "$DATABASE_NAME" ]] \
+[[ "$($PSQL_EXECUTABLE -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')" == "$DATABASE_NAME" ]] \
   || fail '数据库连接目标不一致'
-[[ "$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='407')")" == 't' ]] \
+[[ "$($PSQL_EXECUTABLE -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='407')")" == 't' ]] \
   || fail 'schema_version 407 不存在'
 
 SMOKE_SCOPE="map-anchor-state-smoke-$$"
@@ -34,6 +37,9 @@ import { digestMapManifest } from './packages/brain/src/lib/map-manifest-schema.
 import { loadMapImpactRadius } from './packages/brain/src/lib/map-impact-radius.js';
 import { projectMapManifest } from './packages/brain/src/lib/map-projection-store.js';
 import { loadMapNodeStates } from './packages/brain/src/lib/map-state-resolver.js';
+// 陈旧边界从预算常量推导：0921 之前这里钉着 16 分钟，预算一放宽就变 fresh，
+// smoke 会在无人察觉时失去意义（本次抬预算正是被它和 CI 一起抓出来的）。
+import { PHOTO_STALE_THRESHOLD_SECONDS } from './packages/brain/src/lib/registry-freshness.js';
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
 const client = await pool.connect();
@@ -91,14 +97,12 @@ try {
     [scopeKey, repo],
   );
   const journeyId = (await client.query(
-    `INSERT INTO journeys (name, biz_area, capability_code)
+    `INSERT INTO value_streams (name, biz_area, capability_code)
      VALUES ($1,'infrastructure',$2) RETURNING id`,
     [scopeKey, capabilityKey],
   )).rows[0].id;
   const stepId = (await client.query(
-    `INSERT INTO journey_steps (journey_id,name,step_number)
-     VALUES ($1,'smoke step',1) RETURNING id`,
-    [journeyId],
+    `INSERT INTO activities (name) VALUES ('smoke step') RETURNING id`,
   )).rows[0].id;
   featureId = (await client.query(
     `INSERT INTO journey_features (journey_id,step_id,name,unit_test_path)
@@ -106,7 +110,7 @@ try {
     [journeyId, stepId, testPath],
   )).rows[0].id;
   assertionId = (await client.query(
-    `INSERT INTO journey_step_links
+    `INSERT INTO activity_cells
       (journey_id,step_id,feature_id,cell_kind,cell_key,cell_status,assertion_ref)
      VALUES ($1,$2,$3,'capability',$4,'green',$5) RETURNING id`,
     [journeyId, stepId, featureId, capabilityKey, testPath],
@@ -193,7 +197,7 @@ try {
 
   await client.query(
     `UPDATE fact_snapshot_headers SET scanned_at=$2 WHERE kind='test' AND repo=$1`,
-    [repo, new Date(now.getTime() - 16 * 60_000)],
+    [repo, new Date(now.getTime() - (PHOTO_STALE_THRESHOLD_SECONDS + 60) * 1000)],
   );
   requireState(await loadMapNodeStates(client, { scopeKey, now: new Date(now.getTime() + 7000) }), assertionId, 'unknown', 'snapshot_stale');
 
@@ -224,7 +228,7 @@ pass '当前 revision 最新 FAIL→red'
 pass '快照超过 15 分钟→unknown'
 pass 'repo 隔离 radius 返回业务节点/必跑断言，Cross-cut radius 非空'
 
-RESIDUE="$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "
+RESIDUE="$($PSQL_EXECUTABLE -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "
   SELECT
     (SELECT count(*) FROM map_projection_runs WHERE scope_key='$SMOKE_SCOPE')::text || '|' ||
     (SELECT count(*) FROM map_manifest_versions WHERE scope_key='$SMOKE_SCOPE')::text || '|' ||

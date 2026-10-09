@@ -1,3 +1,7 @@
+// 旧路由/payload合同使用注入执行动作；目录真实DB权限由execution-directory.pg覆盖。
+vi.mock('../execution-directory/legacy-executor.js',async original=>({...await original(),withLegacyExecution:async(_input,operation)=>operation()}));
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * codex-bridge-payload-callback-url.test.js
  *
@@ -100,7 +104,7 @@ describe('buildCodexBridgePayload — callback_url 必填字段', () => {
   it('research 任务的 payload 必须包含 callback_url', async () => {
     fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ ok: true, account: 'team1' }),
+      json: async () => ({ok:true,status:'healthy',accounts:[{primaryUsedPct:10,tokenExpired:false}],account:'team1'}),
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -128,7 +132,7 @@ describe('buildCodexBridgePayload — callback_url 必填字段', () => {
   it('bridge 请求携带同一个 run_id，并在发请求前写入 task current_run_id', async () => {
     fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ ok: true, account: 'team1' }),
+      json: async () => ({ok:true,status:'healthy',accounts:[{primaryUsedPct:10,tokenExpired:false}],account:'team1'}),
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -155,7 +159,7 @@ describe('buildCodexBridgePayload — callback_url 必填字段', () => {
   it('bridge 请求携带 canonical base_repo，且不发送源机器绝对 work_dir', async () => {
     fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ ok: true, account: 'team1' }),
+      json: async () => ({ok:true,status:'healthy',accounts:[{primaryUsedPct:10,tokenExpired:false}],account:'team1'}),
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -178,7 +182,7 @@ describe('buildCodexBridgePayload — callback_url 必填字段', () => {
 
     fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ ok: true, account: 'team1' }),
+      json: async () => ({ok:true,status:'healthy',accounts:[{primaryUsedPct:10,tokenExpired:false}],account:'team1'}),
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -205,7 +209,7 @@ describe('buildCodexBridgePayload — callback_url 必填字段', () => {
 
     fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ ok: true, account: 'team1' }),
+      json: async () => ({ok:true,status:'healthy',accounts:[{primaryUsedPct:10,tokenExpired:false}],account:'team1'}),
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -230,7 +234,7 @@ describe('buildCodexBridgePayload — callback_url 必填字段', () => {
   it('codex_dev 等其他 xian task_type 同样携带 callback_url', async () => {
     fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ ok: true, account: 'team1' }),
+      json: async () => ({ok:true,status:'healthy',accounts:[{primaryUsedPct:10,tokenExpired:false}],account:'team1'}),
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -271,10 +275,7 @@ describe('triggerCodexBridge — research 任务 — bridge 拒绝缺 callback_u
   });
 
   it('bridge 拒绝缺字段时返回 success=false（task_id 和 callback_url 必填）', async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ ok: false, error: 'task_id 和 callback_url 必填' }),
-    }));
+    const fetchMock = vi.fn(async url => ({ok:true,json:async()=>String(url).endsWith('/health')?{ok:true,status:'healthy',accounts:[{primaryUsedPct:10}]}:{ok:false,error:'task_id 和 callback_url 必填'}}));
     vi.stubGlobal('fetch', fetchMock);
 
     const executor = await import('../executor.js');

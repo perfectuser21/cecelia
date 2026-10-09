@@ -14,10 +14,11 @@ import pool from './db.js';
 import { generateL0Summary } from './memory-utils.js';
 import { isNoiseLearningCategory } from './learning.js';
 import { pushCaptureAtom } from './capture-inbox.js';
+import { VALUABLE_LEARNING_TASK_TYPES } from './lib/task-type-registry.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_AUTO_LEARNING_BUDGET = 50;
-export const VALUABLE_TASK_TYPES = ['dev', 'feature', 'research', 'harness_initiative']; // 排除 code_review 等高频低价值类型
+export const VALUABLE_TASK_TYPES = VALUABLE_LEARNING_TASK_TYPES; // 排除 code_review 等高频低价值类型
 
 // 运行时状态（进程内，午夜通过 hasBudget() 中日期对比自动重置）
 let _autoLearningDailyCount = 0;

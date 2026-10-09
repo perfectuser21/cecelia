@@ -1,0 +1,197 @@
+{
+  "workflow": "coding_spec",
+  "activities": [
+    {
+      "key": "intent",
+      "order": 1,
+      "budget": { "max_duration_s": 60, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["brain_unavailable"],
+        "needs_human": { "cases": ["acceptance_missing"] },
+        "fatal": ["task_id_missing", "sprint_dir_invalid", "task_not_found"]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "setup",
+        "entry": "activities/intent.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    },
+    {
+      "key": "spec",
+      "order": 2,
+      "budget": { "max_duration_s": 900, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["claude_failed", "claude_timeout", "spec_invalid"],
+        "needs_human": { "cases": ["claude_auth"] },
+        "fatal": ["sprint_dir_invalid", "task_id_missing", "intent_ids_missing", "intent_ids_invalid", "spec_missing", "spec_out_of_scope_write", "chain_tampered"]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "source",
+        "entry": "activities/spec.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 2
+      }
+    },
+    {
+      "key": "spec_review",
+      "order": 3,
+      "budget": { "max_duration_s": 21600, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["claude_failed", "claude_timeout", "spec_invalid", "response_missing"],
+        "needs_human": { "cases": ["claude_auth"] },
+        "fatal": [
+          "task_id_missing",
+          "sprint_dir_invalid",
+          "intent_ids_missing",
+          "intent_ids_invalid",
+          "chain_tampered",
+          "spec_missing",
+          "spec_review_out_of_scope_write",
+          "review_invalid",
+          "gan_budget_exceeded"
+        ]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "source",
+        "entry": "activities/spec-review.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    },
+    {
+      "key": "build",
+      "order": 4,
+      "budget": { "max_duration_s": 2400, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["claude_failed", "claude_timeout", "remote_check_failed", "git_check_failed"],
+        "needs_human": { "cases": ["claude_auth"] },
+        "fatal": [
+          "sprint_dir_invalid",
+          "task_id_missing",
+          "spec_missing",
+          "spec_ids_missing",
+          "git_head_unavailable",
+          "build_report_missing",
+          "build_no_commit",
+          "build_uncommitted",
+          "chain_tampered",
+          "remote_changed",
+          "build_history_rewritten",
+          "build_touched_agent_config",
+          "build_report_invalid",
+          "build_sprint_polluted"
+        ]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "source",
+        "entry": "activities/build.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    },
+    {
+      "key": "verify",
+      "order": 5,
+      "budget": { "max_duration_s": 1200, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["claude_failed", "claude_timeout", "remote_check_failed"],
+        "needs_human": { "cases": ["claude_auth"] },
+        "fatal": [
+          "sprint_dir_invalid",
+          "task_id_missing",
+          "intent_ids_missing",
+          "intent_ids_invalid",
+          "evidence_missing",
+          "evidence_invalid",
+          "evidence_incomplete",
+          "verification_failed",
+          "verify_out_of_scope_write",
+          "verify_head_moved",
+          "chain_tampered",
+          "remote_changed",
+          "evidence_unverified",
+          "build_report_restore_failed"
+        ]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "batch_end",
+        "entry": "activities/verify.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    },
+    {
+      "key": "chain_check",
+      "order": 6,
+      "budget": { "max_duration_s": 30, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": [],
+        "needs_human": { "cases": [] },
+        "fatal": ["md_chain_invalid", "sprint_dir_invalid", "task_id_missing"]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "batch_end",
+        "entry": "activities/chain-check.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    },
+    {
+      "key": "publish",
+      "order": 7,
+      "budget": { "max_duration_s": 900, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["push_failed", "gh_failed"],
+        "needs_human": { "cases": ["gh_auth"] },
+        "fatal": [
+          "sprint_dir_invalid",
+          "task_id_missing",
+          "chain_files_missing",
+          "branch_invalid",
+          "git_add_failed",
+          "git_commit_failed",
+          "git_diff_failed"
+        ]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "batch_end",
+        "entry": "activities/publish.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 1
+      }
+    },
+    {
+      "key": "report",
+      "order": 8,
+      "budget": { "max_duration_s": 30, "heartbeat_s": 30 },
+      "failure": {
+        "empty_ok": [],
+        "retryable": ["brain_unavailable"],
+        "needs_human": { "cases": [] },
+        "fatal": ["pr_url_missing", "task_id_missing", "task_not_found"]
+      },
+      "runtime": {
+        "protocol": "json-stdio-v1",
+        "phase": "finalize",
+        "entry": "activities/report.mjs",
+        "on_failure": "stop_run",
+        "max_attempts": 2
+      }
+    }
+  ]
+}

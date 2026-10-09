@@ -71,6 +71,8 @@ vi.mock('../platform-utils.js', () => ({
   calculatePhysicalCapacity: vi.fn(() => ({})),
   evaluateMemoryHealth: vi.fn(() => ({ healthy: true })),
   getBrainRssMB: vi.fn(() => 0),
+  sampleBrainCpuUsage: vi.fn(() => 5),
+  evaluateCpuHealth: vi.fn(() => ({ action: 'proceed', reason: 'mock' })),
   IS_DARWIN: false,
 }));
 vi.mock('uuid', () => ({ v4: vi.fn(() => 'test-uuid-1234') }));

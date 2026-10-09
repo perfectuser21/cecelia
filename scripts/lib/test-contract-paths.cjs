@@ -272,9 +272,13 @@ function listRegisteredSprintArtifacts(root) {
   }
 
   const registered = new Set();
-  for (const entry of sprintEntries) {
-    if (!entry.isDirectory() || entry.name === "archive") continue;
-    const sprintDir = path.join(sprintsRoot, entry.name);
+  const sprintDirs = [
+    sprintsRoot,
+    ...sprintEntries
+      .filter((entry) => entry.isDirectory() && entry.name !== "archive")
+      .map((entry) => path.join(sprintsRoot, entry.name)),
+  ];
+  for (const sprintDir of sprintDirs) {
     let contractPath = null;
     let content = null;
     for (const contractFilename of CONTRACT_FILENAMES) {
@@ -309,7 +313,9 @@ function listRegisteredSprintArtifacts(root) {
         relativeToSprint.length > 0 &&
         !path.isAbsolute(relativeToSprint) &&
         relativeToSprint !== ".." &&
-        !relativeToSprint.startsWith(`..${path.sep}`);
+        !relativeToSprint.startsWith(`..${path.sep}`) &&
+        // 根 Sprint 只拥有自身 tests；子 Sprint 必须用自身合同登记。
+        (sprintDir !== sprintsRoot || relativeToSprint.startsWith(`tests${path.sep}`));
       if (
         belongsToSprint &&
         isSprintArtifact(resolution.resolvedPath)

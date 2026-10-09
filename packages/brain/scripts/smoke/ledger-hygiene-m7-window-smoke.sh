@@ -62,19 +62,29 @@ console.log('capture-inbox 溯源列落库 ✓');
 "
 
 echo "[ledger-hygiene-m7-window-smoke] 4. auto-learning 覆盖 harness_initiative"
-node -e "
-const fs = require('fs');
-const src = fs.readFileSync('packages/brain/src/auto-learning.js', 'utf8');
-const m = src.match(/VALUABLE_TASK_TYPES\s*=\s*\[[^\]]*\]/);
-if (!m || !m[0].includes('harness_initiative')) {
-  console.error('FAIL: VALUABLE_TASK_TYPES 未含 harness_initiative');
+# PR1-B 起 VALUABLE_TASK_TYPES 已从 auto-learning.js 字面量搬进
+# lib/task-type-registry.js（VALUABLE_LEARNING_TASK_TYPES），改成真 import 求值。
+node --input-type=module -e "
+import { VALUABLE_LEARNING_TASK_TYPES } from './packages/brain/src/lib/task-type-registry.js';
+if (!VALUABLE_LEARNING_TASK_TYPES.includes('harness_initiative')) {
+  console.error('FAIL: VALUABLE_LEARNING_TASK_TYPES 未含 harness_initiative');
   process.exit(1);
 }
-if (m[0].includes('code_review')) {
-  console.error('FAIL: VALUABLE_TASK_TYPES 不应纳入 code_review');
+if (VALUABLE_LEARNING_TASK_TYPES.includes('code_review')) {
+  console.error('FAIL: VALUABLE_LEARNING_TASK_TYPES 不应纳入 code_review');
   process.exit(1);
 }
-console.log('VALUABLE_TASK_TYPES 覆盖正确 ✓');
+console.log('VALUABLE_LEARNING_TASK_TYPES 覆盖正确 ✓');
+"
+# 消费方必须真的接上注册表（防\"注册表对了但 auto-learning 还在用自己那份\"）
+node --input-type=module -e "
+import { readFileSync } from 'node:fs';
+const src = readFileSync('packages/brain/src/auto-learning.js', 'utf8');
+if (!/VALUABLE_LEARNING_TASK_TYPES/.test(src) || !/task-type-registry\.js/.test(src)) {
+  console.error('FAIL: auto-learning.js 未从注册表 import VALUABLE_LEARNING_TASK_TYPES');
+  process.exit(1);
+}
+console.log('auto-learning.js 已接入注册表 ✓');
 "
 
 echo "[ledger-hygiene-m7-window-smoke] 5. pushHandoffAtom 导出 + PATCH 接线"

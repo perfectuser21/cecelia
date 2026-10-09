@@ -62,6 +62,11 @@ describe('SYSTEM_AUTO_TRIGGER_SOURCES', () => {
     expect(SYSTEM_AUTO_TRIGGER_SOURCES).not.toContain('user_headed');
     expect(SYSTEM_AUTO_TRIGGER_SOURCES).not.toContain('owner_input');
   });
+
+  it('不含 recurring：主理人排的定时单不能被降级批量暂停/取消（定时引擎复活，任务 3d0db274）', async () => {
+    const { SYSTEM_AUTO_TRIGGER_SOURCES } = await import('../escalation.js');
+    expect(SYSTEM_AUTO_TRIGGER_SOURCES).not.toContain('recurring');
+  });
 });
 
 describe('pauseLowPriorityTasks (graceful_degrade)', () => {

@@ -257,6 +257,31 @@ vi.mock('../../tick-helpers.js', () => ({
   getRampedDispatchMax: vi.fn().mockReturnValue(1),
 }));
 
+// 保留真实 executeTick 与 8 个 plugin wire；隔离用户机器、凭据和外部服务边界。
+vi.mock('../../zombie-cleaner.js', () => ({
+  runZombieCleanup: vi.fn().mockResolvedValue({ slotsReclaimed: 0, worktreesRemoved: 0 }),
+}));
+vi.mock('../../harness-worktree.js', () => ({
+  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0 }),
+}));
+vi.mock('../../heartbeat-inspector.js', () => ({
+  HEARTBEAT_INTERVAL_MS: 30 * 60 * 1000,
+  runHeartbeatInspection: vi.fn().mockResolvedValue({ skipped: false, actions_count: 0 }),
+}));
+vi.mock('../../active-goals-zero-trigger.js', () => ({
+  maybeTriggerStrategySession: vi.fn().mockResolvedValue({ created: false }),
+}));
+vi.mock('../../orphan-pr-worker.js', () => ({
+  scanOrphanPrs: vi.fn().mockResolvedValue({ scanned: 0, merged: 0, labeled: 0, closed: 0 }),
+}));
+vi.mock('../../shepherd.js', () => ({
+  shepherdOpenPRs: vi.fn().mockResolvedValue({ processed: 0 }),
+  reconcileTerminalOpenPRs: vi.fn().mockResolvedValue({ reconciled: 0 }),
+}));
+vi.mock('../../llm-caller.js', () => ({
+  callLLM: vi.fn().mockResolvedValue({ text: '', provider: 'fixture' }),
+}));
+
 // ─── 动态 import（避免 mock 注册之前 import）────────────────────────────────
 import { tickState, resetTickStateForTests } from '../../tick-state.js';
 
@@ -265,6 +290,23 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     // tickState 是单例 — 每次测试前重置，避免 last*Time 干扰节流判断
     resetTickStateForTests();
     vi.clearAllMocks();
+  });
+
+  it('fixture 外部边界阻止真实清理、凭据读取和 LLM/GitHub 调用', async () => {
+    for (const [path, names] of [
+      ['../../zombie-cleaner.js', ['runZombieCleanup']],
+      ['../../harness-worktree.js', ['cleanupStaleHarnessWorktrees']],
+      ['../../zombie-sweep.js', ['zombieSweep']],
+      ['../../heartbeat-inspector.js', ['runHeartbeatInspection']],
+      ['../../active-goals-zero-trigger.js', ['maybeTriggerStrategySession']],
+      ['../../orphan-pr-worker.js', ['scanOrphanPrs']],
+      ['../../credential-expiry-checker.js', ['checkAndAlertExpiringCredentials', 'recoverAuthQuarantinedTasks', 'scanAuthLayerHealth', 'cleanupDuplicateRescueTasks', 'cancelCredentialAlertTasks']],
+      ['../../shepherd.js', ['shepherdOpenPRs', 'reconcileTerminalOpenPRs']],
+      ['../../llm-caller.js', ['callLLM']],
+    ]) {
+      const module = await import(path);
+      for (const name of names) expect(vi.isMockFunction(module[name]), `${path}:${name}`).toBe(true);
+    }
   });
 
   it('一次 executeTick：8 个 plugin .tick 都被调；dispatcher 被调；tickState 时间戳前移', async () => {
@@ -289,6 +331,21 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     expect(result).toBeDefined();
     expect(result.success).toBe(true);
 
+    // 真实 tick 必须实际触达隔离后的清理/凭据/GitHub 边界，不能删调用换取安全。
+    for (const [path, names] of [
+      ['../../zombie-cleaner.js', ['runZombieCleanup']],
+      ['../../harness-worktree.js', ['cleanupStaleHarnessWorktrees']],
+      ['../../zombie-sweep.js', ['zombieSweep']],
+      ['../../orphan-pr-worker.js', ['scanOrphanPrs']],
+      ['../../credential-expiry-checker.js', ['checkAndAlertExpiringCredentials']],
+      ['../../shepherd.js', ['shepherdOpenPRs', 'reconcileTerminalOpenPRs']],
+    ]) {
+      const module = await import(path);
+      for (const name of names) expect(module[name], `${path}:${name}`).toHaveBeenCalled();
+    }
+    const { callLLM } = await import('../../llm-caller.js');
+    expect(callLLM).not.toHaveBeenCalled();
+
     // ── 8 个 plugin .tick 必须全被调 ─────────────────────────────────────
     expect(dept.tick).toHaveBeenCalled();
     expect(krProgress.tick).toHaveBeenCalled();
@@ -304,5 +361,18 @@ describe('tick-runner executeTick — full tick wire-up', () => {
 
     // ── tickState 感知层时间戳被推进（lastZombieSweepTime 是首个无条件推进字段）
     expect(tickState.lastZombieSweepTime).toBeGreaterThan(before);
+
+    // ── 棒4验收（决策 ee4842a6）：tick 一轮不产生任何对 okr_scopes/okr_initiatives 的
+    // 查询。复用本测试已经跑过的真实 executeTick；清理边界已隔离，
+    // 不额外运行第二轮调度。planner.js/
+    // kr-progress-sync-plugin.js/daily-review-scheduler.js 本文件顶部整体 mock 掉，
+    // 下面覆盖的是没被 mock、真实参与每轮 tick 的模块：initiative-closer.js /
+    // okr-closer.js / decomposition-checker.js / kr-completion.js /
+    // project-activator.js——这些才是真正可能触达 okr_scopes/okr_initiatives 的查询源，
+    // 已在棒4逐一清空为 no-op 或改读 projects。
+    const offendingCalls = mockPool.query.mock.calls
+      .map(call => String(call[0] || ''))
+      .filter(sql => /okr_scopes|okr_initiatives/i.test(sql));
+    expect(offendingCalls).toEqual([]);
   }, 30000);
 });

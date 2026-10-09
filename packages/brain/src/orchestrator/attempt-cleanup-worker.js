@@ -205,7 +205,7 @@ async function confirmWithDecision({ pool, storeFactory, row, receipt }) {
 export function createAttemptCleanupWorker({
   pool,
   env = process.env,
-  transport = createProductionExecutionTransport({ env }),
+  transport = createProductionExecutionTransport({ env,pool }),
   storeFactory = createAttemptCleanupOutboxStore,
   claimOwner,
   leaseSeconds = 30,

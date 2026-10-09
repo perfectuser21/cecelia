@@ -191,4 +191,36 @@ describePg('Map radius × Impact Contract [PostgreSQL]', () => {
       expect.objectContaining({ capability_id: 'F1' }),
     ]);
   });
+
+  it('changes/ 版本碎片（仓规：PR 不碰版本五件套）不得判 unclaimed 杀 run', async () => {
+    // 2026-09-19 实证（run 0f36a253 hop 78-80）：generator-fix 按 changes/README.md 写入
+    // changes/cp-route-api-5c016e3e.md，被 unclaimed 判定当无锚文件 → impact_anchor_missing
+    // 确定性 run_terminal，修复提交没推出。碎片目录与毕业池同类：设计内全局目录，由
+    // auto-version + check-brain-version-bump 把守，不属任何 capability。
+    const deps = dependencies();
+    deps.capabilityNodes = async () => ([{
+      node_key: 'F1', name: '工厂 · F1 开发闭环',
+      attributes: { path_prefixes: ['packages/brain/'], exact_paths: [] },
+    }]);
+    const result = await resolveImpactRadius({
+      repo: 'perfectuser21/cecelia',
+      base_revision: baseRevision,
+      head_revision: headRevision,
+      changed_files: ['packages/brain/src/new-module.js', 'changes/cp-route-api-5c016e3e.md'],
+      capability_ids: ['F1'],
+    }, deps);
+    expect(result.freshness).toMatchObject({ status: 'fresh', reason_code: null });
+    expect(result.unclaimed_files).toEqual([]);
+
+    // 相似前缀不得蹭豁免（changes-fake/ 仍是无锚文件）
+    const fake = await resolveImpactRadius({
+      repo: 'perfectuser21/cecelia',
+      base_revision: baseRevision,
+      head_revision: headRevision,
+      changed_files: ['changes-fake/x.md'],
+      capability_ids: ['F1'],
+    }, deps);
+    expect(fake.freshness).toMatchObject({ status: 'unknown', reason_code: 'impact_anchor_missing' });
+    expect(fake.unclaimed_files).toEqual(['changes-fake/x.md']);
+  });
 });

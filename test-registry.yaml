@@ -262,3 +262,80 @@ tests:
     ci: L3
     status: active
     note: "GET /api/brain/topics 路由契约：文件存在、路由注册、实现结构、topic-selector/llm-caller 契约"
+
+  - id: brain-runtime-isolation
+    path: packages/brain/src/__tests__/runtime-safety.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "测试实例的模型/派发入口与真实服务器启动顺序隔离"
+  - id: brain-health-runtime-isolation
+    path: packages/brain/src/__tests__/health-runtime-isolation.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "执行真实健康handler，隔离实例仅检查被动API与DB，禁止Docker/Xian探测且保留生产降级语义"
+  - id: brain-bridge-process-lifecycle
+    path: packages/brain/src/__tests__/bridge-process-lifecycle.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "两个真实Bridge入口、部署产物及受控Node进程组回收，不调用模型"
+  - id: brain-test-process-owner
+    path: packages/brain/src/__tests__/test-brain-runner.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "测试服务启动、成功、失败、超时按实际PID收尾"
+  - id: brain-production-transport-isolation
+    path: packages/brain/src/__tests__/production-transport-isolation.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "新版Fleet传输隔离，宿主及注入配置均不得解锁真实执行"
+  - id: brain-orchestrator-realtime-isolation
+    path: packages/brain/src/__tests__/orchestrator-realtime-isolation.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "Realtime配置和WebSocket在凭据和模型连接前拒绝隔离实例"
+  - id: brain-runtime-direct-io-isolation
+    path: packages/brain/src/__tests__/runtime-direct-io-isolation.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "MiniMax、embedding和导出执行函数不能绕过运行隔离"
+  - id: brain-profile-facts-runtime-isolation
+    path: packages/brain/src/routes/__tests__/profile-facts.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "文本事实导入不能绕过模型隔离读取凭据或发起请求"
+
+  - id: brain-alertness-passive-schema
+    path: packages/brain/scripts/smoke/alertness-schema-smoke.sh
+    type: integration
+    ci: L4
+    status: active
+    note: "真实PG事务验证被动实例三表显式迁移、索引及重复迁移数据保留"
+
+  - id: brain-observer-smoke-isolation
+    path: packages/brain/src/__tests__/observer-smoke-isolation.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "受控HTTP验证Observer冒烟：隔离必须停止、生产必须推进、后台泄漏报红"
+
+  - id: brain-health-smoke-isolation
+    path: packages/brain/src/__tests__/health-smoke-isolation.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "健康冒烟真实HTTP夹具：隔离时执行通道全禁，生产调度器仍必须有远端通道"
+
+  - id: activity-startup-cli
+    path: packages/brain/src/orchestrator/__tests__/activity-startup-cli.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "真实CLI与活动子进程验证一次性START凭证：阻塞/快任务、独占0600发布、UUID及摘要绑定、写失败、旧凭证保护、参数边界、事件库不可用与无旗标兼容。"

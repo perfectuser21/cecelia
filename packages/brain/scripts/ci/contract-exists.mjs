@@ -7,10 +7,15 @@
 //   - 改动了 sprints/ 且含 contract-draft.md → 退出 0
 //   - 未改 sprints/（非 harness PR）/ 空 diff → 退出 0（不误拦）
 //   - sprints/archive/ 下的归档老 sprint 不算 harness PR（不强制合同）
+//   - coding workflow 的 01~04 产物文件（sprints/<目录>/01-intent.md、02-spec.md、03-build.md、
+//     04-evidence.md）不算 harness PR（不强制合同）
 //
 // diff 清单格式：兼容 `git diff --name-status`（status<TAB>path）与纯路径，每行一个文件。
 
 import { readFileSync } from 'fs';
+
+// coding workflow 的四个固定产物，直接位于 sprints/<目录>/ 下一层
+const CODING_WORKFLOW_FILE = /(^|\/)sprints\/[^/]+\/0[1-4]-(intent|spec|build|evidence)\.md$/;
 
 function parseArgs(argv) {
   const out = { fixture: null };
@@ -44,7 +49,10 @@ try {
 
 const files = extractPaths(raw);
 const touchesSprints = files.some(
-  (f) => /(^|\/)sprints\//.test(f) && !f.includes('sprints/archive/'),
+  (f) =>
+    /(^|\/)sprints\//.test(f) &&
+    !f.includes('sprints/archive/') &&
+    !CODING_WORKFLOW_FILE.test(f),
 );
 
 if (!touchesSprints) {

@@ -1,3 +1,7 @@
+import { hostname } from 'node:os';
+import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
+import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
+import { assertExternalExecutionAllowed } from './runtime-safety.js';
 /**
  * harness-skill-relay — N3 最小接线（harness-skill-relay initiative，主理人 2026-07-04 拍板）。
  *
@@ -15,6 +19,8 @@
  */
 import pool from './db.js';
 import { findActiveRunBlockingSpawn } from './lib/harness-run-guard.js';
+import { KERNEL_LAUNCH_DEFERRED_REASON_PREFIX } from './lib/kernel-launch-deferral.js';
+import { buildChainPromptSafe } from './handoff.js';
 import { normalizeChangeKind } from './impact-contract/change-kind.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync, copyFileSync, openSync } from 'node:fs';
@@ -24,8 +30,11 @@ import { fileURLToPath } from 'node:url';
 import {
   createKernelRun,
   finalizeKernelRun,
+  requeueKernelRunLaunchDeferred,
+  syncTaskPayloadFromKernelRun,
 } from './orchestrator/kernel-run-store.js';
 import { spawnHeadedKernelRuntime } from './orchestrator/headed-kernel-runtime.js';
+import { createOrchestratorBridge } from './orchestrator-remote-bridge.js';
 
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
@@ -280,6 +289,8 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     createdSource: 'kernel_dispatch',
     gear,
   });
+  // 预检可能已重锚定到新 base_sha（DB 已改）；内存 task 必须同步，否则跑场用旧 sha。
+  syncTaskPayloadFromKernelRun(task, created);
   const runId = created.run?.id;
   if (!runId) throw new Error('kernel-v1 run authority returned no id');
   if (!created.created) {
@@ -317,6 +328,116 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
       terminalized: true,
     };
   }
+}
+
+/**
+ * _spawnKernelRuntimeRemote — us-vps 纯调度器化闸开着时的 kernel-v1 headless 路径
+ * （决策 e3a41ecc）。与 _spawnKernelRuntime 结构刻意同构：同样先 createKernelRun
+ * 拿 durable authority，唯一区别是不在本机 ensureHarnessWorktree/launchKernelProcess，
+ * 改经 orchestrator-remote-bridge 把 prepare（建远端 worktree）+ start（远端起
+ * kernel 进程）都交给 primary worker。
+ */
+async function _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps }) {
+  const bridge = deps.orchestratorBridge
+    ?? createOrchestratorBridge({ env: deps.env ?? process.env });
+  const sprintDir = task.payload?.sprint_dir
+    || `sprints/${stampMMDDHHNN(now())}-kernel-${shortId(task.id)}`;
+  const reviewRequired = deriveReviewRequired(task);
+  const gear = deriveGear(task);
+  const createRun = deps.createKernelRun ?? createKernelRun;
+  const created = await createRun(dbPool, {
+    taskId: task.id,
+    initiativeId,
+    phase: 'planning',
+    journeyId: task.payload?.journey_id || null,
+    abilityId: task.ability_id || task.payload?.ability_id || null,
+    host: 'kernel-v1',
+    deadlineHours: 8,
+    // created_source 用既有枚举 kernel_dispatch（枚举语义常量只许一份，铁律 76cb816c；
+    // DB CHECK 约束 migration 430 同为该集合）。远程与否由 task.payload.execution_location
+    // 与 initiative_runs.orchestrator_host 表达，不新增枚举值。
+    // 2026-09-13 生产实锤：kernel_dispatch_remote 不在两层白名单 → createKernelRun 抛
+    // invalid created source → dispatch_fail_autoblock 3 连击把任务打 blocked。
+    createdSource: 'kernel_dispatch',
+    gear,
+  });
+  // 同上：bridge.prepare 读 task.payload.base_sha，重锚定后必须先回流再远程建 worktree。
+  syncTaskPayloadFromKernelRun(task, created);
+  const runId = created.run?.id;
+  if (!runId) throw new Error('kernel-v1 run authority returned no id');
+  if (!created.created) {
+    return { ok: false, mode: 'kernel-v1', deferred: true, reason: 'kernel_run_exists', runId };
+  }
+  try {
+    const prep = await bridge.prepare({
+      run_id: runId,
+      task_id: task.id,
+      repo: parseBaseRepoOrDefault(task.payload?.base_repo),
+      ...(task.payload?.base_sha ? { base_sha: task.payload.base_sha } : {}),
+    });
+    const started = await bridge.start({
+      run_id: runId,
+      controller_session_id: created.run.controller_session_id,
+      controller_generation: Number(created.run.controller_generation),
+    });
+    await dbPool.query(
+      `UPDATE tasks SET payload = COALESCE(payload,'{}'::jsonb) || $2::jsonb, updated_at=NOW() WHERE id=$1`,
+      [task.id, JSON.stringify({
+        harness_runtime: 'kernel-v1',
+        sprint_dir: sprintDir,
+        worktree_path: prep.worktree_path,
+        execution_location: `remote:${bridge.targetMachineId}`,
+        review_required: reviewRequired,
+      })],
+    );
+    console.log(`[skill-relay][kernel-v1] remote-launched run=${runId} machine=${bridge.targetMachineId} pid=${started.pid ?? '?'}`);
+    return { ok: true, mode: 'kernel-v1', runId, remote: true, pid: started.pid, host: started.host, sprintDir, worktreePath: prep.worktree_path };
+  } catch (error) {
+    const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
+    // 跑场机忙/抖（429 槽位满、5xx、请求超时）是瞬时状态：run 记失败留痕，任务回 queued 等下个
+    // tick 重派，不 terminalized（任务 281aa798，2026-09-24 实证一天 6 条刀被 429 判死）。
+    // 延后次数用尽（requeue 返回 exhausted）或任务已终态 → 回落原终态路径。
+    if (isTransientRemoteLaunchError(error)) {
+      const requeueDeferred = deps.requeueKernelRunDeferred ?? requeueKernelRunLaunchDeferred;
+      const requeued = await requeueDeferred(dbPool, {
+        runId, expectedTaskId: task.id,
+        reason: `${KERNEL_LAUNCH_DEFERRED_REASON_PREFIX}${error.message}`,
+      });
+      if (requeued?.changed) {
+        console.warn(
+          `[skill-relay][kernel-v1] remote launch deferred run=${runId} task=${task.id} `
+          + `defers=${requeued.deferCount}: ${error.message}`,
+        );
+        return {
+          ok: false, mode: 'kernel-v1', runId, deferred: true, reason: 'orchestrator_busy',
+          error: error.message, deferCount: requeued.deferCount,
+        };
+      }
+    }
+    await finalizeRun(dbPool, {
+      runId, expectedTaskId: task.id, outcome: 'failed',
+      reason: `kernel_remote_launch_failed:${error.message}`,
+    });
+    return { ok: false, mode: 'kernel-v1', runId, error: error.message, terminalized: true };
+  }
+}
+
+/**
+ * 远程点火的瞬时故障判定：bridge 对 prepare/start 抛的 429（槽位满）、502/503/504、
+ * request_failed（含 AbortSignal 超时）。400/401/404/409/500 等视为永久错误走终态。
+ */
+export function isTransientRemoteLaunchError(error) {
+  const message = String(error?.message ?? '');
+  return /^orchestrator_bridge_(prepare|start)_(http_(429|502|503|504)|request_failed)(:|$)/.test(message);
+}
+
+/** base_repo（URL 或 owner/name）→ worker repoAllowlist 键；解析不出回落 cecelia。 */
+function parseBaseRepoOrDefault(baseRepo) {
+  if (typeof baseRepo === 'string') {
+    const m = baseRepo.match(/([\w-]+\/[\w.-]+?)(?:\.git)?$/);
+    if (m) return m[1];
+  }
+  return 'perfectuser21/cecelia';
 }
 
 async function _spawnHeadedKernelRuntime(task, context) {
@@ -391,7 +512,37 @@ export function snapshotCodexRelayHome(codexRelayHome, taskId) {
  * deps 全注入（测试 fake）：{pool, spawnFn, sshSpawnFn, loadSkill, ensureWt, resolveAccountFn, tokenFn, now, snapshotCodexHome}
  * @returns {Promise<{ok:boolean, mode:string, containerId?:string, error?:string}>}
  */
+/**
+ * 派发 prompt 组装（接力棒 2026-09-23 抽出为纯函数，好在 Golden Path 边上直接断言）。
+ * kind='controller'（headless harness-controller）/ 'headed'（Kernel Harness 2.0 headed）。
+ * chainContext 来自 handoff.buildChainPromptSafe：任务在链上 → 注入根目标 + 最近 handoff；
+ * 孤立任务 → 空串，prompt 与之前逐字一致（不给无链任务加噪音）。
+ */
+export function buildRelayPrompt({ kind, skillContent, task, sprintDir, brainUrl, reviewRequired, gear, chainContext = '' }) {
+  const head = kind === 'headed'
+    ? '你是 Kernel Harness 2.0 headed session。按下面 SKILL 指令跑完整条 sprint。'
+    : '你是 harness-controller session。按下面 SKILL 指令跑完整条 sprint。';
+  const lines = [
+    head,
+    '',
+    skillContent,
+    '',
+    '---',
+    '## 本次上下文',
+    `HARNESS_TASK_ID=${task.id}`,
+    `SPRINT_DIR=${sprintDir}`,
+    `BRAIN_URL=${brainUrl}`,
+  ];
+  if (kind !== 'headed') {
+    lines.push(`REVIEW_REQUIRED=${reviewRequired}`, `HARNESS_GEAR=${gear}`);
+  }
+  lines.push(`任务标题：${task.title || ''}`);
+  if (chainContext) lines.push(chainContext);
+  return lines.join('\n');
+}
+
 export async function spawnSkillRelaySession(task, deps = {}) {
+  assertExternalExecutionAllowed();
   // preview Brain 隔离闸（2026-08-05 preview-4643 事故）：预览 Brain 由生产快照
   // 整库克隆而来且作为生产 Brain 子进程启动，继承生产 env（同一 fleet bridge
   // token、callback 指回生产 Brain）。startup-sync 会把克隆的 in_progress 任务
@@ -403,6 +554,32 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     console.warn(`[skill-relay][preview-guard] BRAIN_PREVIEW=${previewFlag} — refusing harness spawn task=${task?.id}`);
     return { ok: false, mode: RELAY_FLAG, error: 'preview_brain_harness_spawn_forbidden' };
   }
+  // 本机执行闸（us-vps 纯调度器化第一刀，方案 A —— 主理人 2026-09-13 拍板，
+  // 纠正决策 26c1e763 supersede 962281b2）。铁律 96054a8b：us-vps 上的 Brain 只当
+  // 任务调度器/分发器，真实执行负载全部下放 Mac worker。
+  //
+  // 为什么另开变量而不是用 CECELIA_MACHINE_ID 表达「我是调度器」：
+  //  · 它的语义是「fleet 可调度节点身份 + 凭据签发权」，不是宿主物理机标识
+  //    （canonical-machine-id.js 注释明示 hostname 被刻意忽略）；
+  //  · credential-broker.js:144 与 github-credential-broker.js:36 硬编码要求
+  //    controllerMachineId === 'us-mac-m4'——这台 Brain 必须自称 us-mac-m4 因为它是
+  //    凭据权威，改身份会让远程派发到 MMV 也签不出凭据，全面 fail-closed；
+  //  · 另有六处 allowlist（kernel 启动校验/canonical id/preflight 探针/两个 broker/
+  //    派发目标表）都假设它恒等于 us-mac-m4。
+  // 故用独立变量表达宿主角色，那六处一处都不碰。
+  //
+  // 拦在这里而不是 launchKernelProcess 内部：此处是所有 harness 派发路径的唯一咽喉
+  // （与上面 preview-guard 同位），拒绝时既不建 run 也不碰 worktree，不留半态——
+  // 避免「建了 run 再失败 → spawn 返回 pid 算 ok → 静默卡到租约过期」那条死法。
+  // 缺省或 'true' 一律放行 = 行为零变化；只有显式 'false' 才拦。
+  //
+  // 闸语义反转（决策 e3a41ecc，2026-09-13）：闸的原意是「禁止调度器自己本机起活，
+  // 放行远程」，不是「禁止一切执行」。kernel-v1 headless 路径可以经
+  // orchestrator-remote-bridge 把执行权交给远端 primary worker（Task 6 交付），
+  // 因此这里只计算标志、不再提前 return；headed kernel（尚无远程头模式）与所有
+  // 非 kernel 路径在闸=true 时维持一刀切拒绝，错误码不变。
+  const localExecutionDisabled =
+    (deps.env ?? process.env).CECELIA_LOCAL_EXECUTION_ENABLED === 'false';
   const dbPool = deps.pool || pool;
   const now = deps.now || (() => new Date());
   const initiativeId = task.payload?.initiative_id || task.id; // B51: initiative_id = task.id
@@ -414,12 +591,24 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   // kernel-v1 路径与 executor 无关（使用 launchKernelProcess，不走头/无头路由），
   // 必须在 executor 白名单校验之前处理，避免 executor='auto' 被误拦截。
   if (task.payload?.harness_runtime === 'kernel-v1' && isHeaded) {
+    if (localExecutionDisabled) {
+      console.warn(`[skill-relay][local-exec-guard] headed kernel 无法远程化 task=${task?.id}`);
+      return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
+    }
     return _spawnHeadedKernelRuntime(task, {
       dbPool, now, short, initiativeId, deps,
     });
   }
   if (task.payload?.harness_runtime === 'kernel-v1') {
+    if (localExecutionDisabled) {
+      // 判定点 e3a41ecc：闸语义=「禁本机起，放行远程」——这是闸 reason 文案的原意
+      return _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps });
+    }
     return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
+  }
+  if (localExecutionDisabled) {
+    console.warn(`[skill-relay][local-exec-guard] CECELIA_LOCAL_EXECUTION_ENABLED=false — refusing local harness spawn task=${task?.id}（执行须下放 Mac worker，见决策 96054a8b）`);
+    return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
   }
 
   // INV-8: unsupported executor loud-fail（三处文件 —— harness-skill-relay.js 这处）
@@ -651,26 +840,23 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       return { ok: false, deferred: true, reason: 'no_available_claude_account' };
     }
 
+    // 在凭据签发和工作区启动之外先核绑定，最终 doSpawn 仍在同机锁内复核。
+    await (deps.authorizeLegacyRelay??withLegacyRelayExecution)({pool:dbPool,location:hostname(),provider:isCodex?'codex':isGrok?'grok':'claude',
+      credentialIdentity:isCodex?codexRelayHome:isGrok?grokRelayHome:acctOpts.env.CECELIA_CREDENTIALS,
+      repo:task.payload?.repo??parseBaseRepoOrDefault(task.payload?.base_repo)},()=>{});
+
     // 5. github token
     const tokenFn = deps.tokenFn
       || (await import('./harness-credentials.js')).resolveGitHubToken;
     const githubToken = await tokenFn();
 
     // 6. prompt：skill 全文 inline + 上下文头（与图节点的 loadSkillContent 注入模式一致）
-    const prompt = [
-      `你是 harness-controller session。按下面 SKILL 指令跑完整条 sprint。`,
-      ``,
-      skillContent,
-      ``,
-      `---`,
-      `## 本次上下文`,
-      `HARNESS_TASK_ID=${task.id}`,
-      `SPRINT_DIR=${sprintDir}`,
-      `BRAIN_URL=http://host.docker.internal:5221`,
-      `REVIEW_REQUIRED=${reviewRequired}`,
-      `HARNESS_GEAR=${gear}`,
-      `任务标题：${task.title || ''}`,
-    ].join('\n');
+    // 接力棒：沿 parent_task_id 注入项目根目标 + 最近 3 份 handoff（失败吞成空串不挡派发）
+    const chainContext = await buildChainPromptSafe({ pool }, task.id);
+    const prompt = buildRelayPrompt({
+      kind: 'controller', skillContent, task, sprintDir,
+      brainUrl: 'http://host.docker.internal:5221', reviewRequired, gear, chainContext,
+    });
 
     // 7. spawn detached session
     // B5: codex 路径容器名用 -cx 后缀；grok 路径用 -gk 后缀（对齐命名规约）
@@ -705,7 +891,9 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       const spawnExtraMounts = isCodex
         ? [`${codexRelayCredDir}:/home/cecelia/.codex:rw`]
         : (spawnExecutor === 'grok' ? grokExtraMounts : undefined);
-      await spawnFn({
+      await (deps.authorizeLegacyRelay??withLegacyRelayExecution)({pool:dbPool,location:hostname(),provider:spawnExecutor,
+        credentialIdentity:isCodex?codexRelayHome:(spawnExecutor==='grok'?grokRelayHome:acctOpts.env.CECELIA_CREDENTIALS),
+        repo:task.payload?.repo??parseBaseRepoOrDefault(task.payload?.base_repo)},()=>spawnFn({
         containerId,
         task: { ...task, task_type: 'harness_controller' },
         prompt,
@@ -733,7 +921,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           GITHUB_TOKEN: githubToken,
           BRAIN_URL: 'http://host.docker.internal:5221',
         },
-      });
+      }));
     };
 
     try {
@@ -817,7 +1005,6 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 // ─── xian bridge 分支实现 ────────────────────────────────────────────────────
 
 const XIAN_RELAY_DEADLINE_HOURS = 8;
-const XIAN_BRIDGE_URL = 'http://100.86.57.69:3458';
 const XIAN_BRAIN_URL = 'http://100.86.57.69:5221';
 
 /**
@@ -846,7 +1033,7 @@ async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId,
     || `sprints/${stampMMDDHHNN(now())}-relay-xian-${short}`;
   const containerId = `cecelia-relay-xian-${short}-${Math.random().toString(16).slice(2, 6)}`;
   const xianBrainUrl = process.env.XIAN_BRAIN_URL || XIAN_BRAIN_URL;
-  const bridgeBaseUrl = process.env.XIAN_CODEX_BRIDGE_URL || XIAN_BRIDGE_URL;
+  const bridgeBaseUrl = legacyExecutorEntries().find(e=>e.machineId==='xian-mac-m4'&&e.executor==='codex')?.url;
 
   // 2. 取 github token（复用既有 harness-credentials.js）
   let githubToken = '';
@@ -876,7 +1063,7 @@ async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId,
     || (await import('./spawn/detached.js')).spawnCodexBridgeDetached;
 
   try {
-    await bridgeFn(`${bridgeBaseUrl}/run`, bridgePayload);
+    await withLegacyExecution({pool:dbPool,machineId:'xian-mac-m4',provider:'codex',endpoint:bridgeBaseUrl,account:bridgePayload.account_id,repo:task.payload?.repo??parseBaseRepoOrDefault(task.payload?.base_repo)},()=>bridgeFn(`${bridgeBaseUrl}/run`, bridgePayload));
   } catch (spawnErr) {
     // 5. spawn 失败 → 回滚 task（INV-2：loud 失败，不静默降级）
     console.error(`[skill-relay][xian][ALERT] bridge spawn 失败: ${spawnErr.message}`);
@@ -1051,6 +1238,11 @@ async function _spawnHeadedSession(task, {
     console.warn(`[skill-relay][headed][GUARD] tmux 存活检查失败（保守放行 spawn）: ${err.message}`);
   }
   // ─── end 雷11 ────────────────────────────────────────────────────────────────
+  const authorizeRelay=operation=>(deps.authorizeLegacyRelay??withLegacyRelayExecution)({pool:dbPool,location:sshHost,provider:headedExecutor,
+    credentialIdentity:isClaudeHeaded?process.env.HEADED_CLAUDE_CONFIG_DIR:(isGrokHeaded?process.env.GROK_RELAY_HOME:codexRelayHome),
+    repo:task.payload?.repo??parseBaseRepoOrDefault(task.payload?.base_repo)},operation);
+  try { await authorizeRelay(()=>{}); } catch(error) { return {ok:false,mode:headedHost,error:error.message}; }
+
 
   // issue 45dd6925：缺省生成的 sprint_dir 必须回写 payload，否则重派换新目录（断点恢复产物路径漂移）。
   // 放在雷11去重守卫之后：命中守卫 early-return 时不产生 DB 副作用。
@@ -1108,18 +1300,8 @@ async function _spawnHeadedSession(task, {
   // claude headed 进程跑在宿主，直连 localhost；其余路径走 docker DNS
   let brainUrl = 'http://host.docker.internal:5221';
   if (isClaudeHeaded) { brainUrl = 'http://localhost:5221'; }
-  const prompt = [
-    `你是 Kernel Harness 2.0 headed session。按下面 SKILL 指令跑完整条 sprint。`,
-    ``,
-    skillContent,
-    ``,
-    `---`,
-    `## 本次上下文`,
-    `HARNESS_TASK_ID=${task.id}`,
-    `SPRINT_DIR=${sprintDir}`,
-    `BRAIN_URL=${brainUrl}`,
-    `任务标题：${task.title || ''}`,
-  ].join('\n');
+  const chainContext = await buildChainPromptSafe({ pool }, task.id);
+  const prompt = buildRelayPrompt({ kind: 'headed', skillContent, task, sprintDir, brainUrl, chainContext });
 
   // ─── 雷9：codex TUI 首次进新目录会卡"Do you trust the contents of this directory?"
   // 交互确认——trust 记忆按精确项目目录写进 $CODEX_HOME/config.toml 的 [projects."<dir>"]，
@@ -1198,9 +1380,9 @@ async function _spawnHeadedSession(task, {
       innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id}${identityEnv} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
     }
     try {
-      execFn(
+      await authorizeRelay(()=>execFn(
         `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} '${innerCmd}'"`
-      );
+      ));
     } catch (spawnErr) {
       console.error(`[skill-relay][headed][ALERT] ssh tmux spawn failed: ${spawnErr.message}`);
       if (!kernelAuthority) {
@@ -1214,12 +1396,12 @@ async function _spawnHeadedSession(task, {
   } else {
     // 测试注入路径
     try {
-      await sshSpawnFn({
+      await authorizeRelay(()=>sshSpawnFn({
         sshHost,
         tmuxSession,
         promptFile,
         prompt,
-      });
+      }));
     } catch (spawnErr) {
       console.error(`[skill-relay][headed][ALERT] ssh spawn failed: ${spawnErr.message}`);
       try {

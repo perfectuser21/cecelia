@@ -812,6 +812,98 @@ export function getBrainRssMB() {
   }
 }
 
+// ============================================================
+// PIVOT 2026-09-12: Brain-self CPU vs system-wide /proc/stat separation
+// ============================================================
+//
+// Docker does not virtualize /proc/stat per-container (verified byte-for-byte
+// identical between `docker exec <brain> head -1 /proc/stat` and the host's
+// own `/proc/stat` on us-vps). sampleCpuUsage() therefore reports the ENTIRE
+// HOST's CPU usage, not Brain's own. On a shared VPS, unrelated sibling
+// containers (e.g. openclaw-gateway) can drive host-wide CPU into the 90%+
+// band while Brain's own container sits at <1% — yet checkServerResources()
+// zeroed effectiveSlots anyway, halting ALL dispatch on the machine.
+//
+// Same shape as the memory pivot above: only a real Brain-level CPU hog
+// halts dispatch; system-noisy-but-Brain-fine downgrades to a warn log.
+
+/** Brain process own CPU% (of one core) above which we call it genuinely busy. */
+const BRAIN_CPU_BUSY_PCT = 50;
+
+let _prevBrainCpuUsage = null;
+let _prevBrainCpuTimeMs = null;
+
+/**
+ * Sample Brain's own process CPU usage via process.cpuUsage() deltas
+ * (self-scoped, unaffected by sibling containers on the same host).
+ * @returns {number|null} Percentage (0-100+) of one core, or null on first call.
+ */
+export function sampleBrainCpuUsage() {
+  const nowMs = Date.now();
+  const usage = process.cpuUsage();
+  if (!_prevBrainCpuUsage) {
+    _prevBrainCpuUsage = usage;
+    _prevBrainCpuTimeMs = nowMs;
+    return null;
+  }
+  const elapsedMs = nowMs - _prevBrainCpuTimeMs;
+  const deltaUs = (usage.user - _prevBrainCpuUsage.user) + (usage.system - _prevBrainCpuUsage.system);
+  _prevBrainCpuUsage = usage;
+  _prevBrainCpuTimeMs = nowMs;
+  if (elapsedMs <= 0) return null;
+  return Math.round((deltaUs / 1000 / elapsedMs) * 100);
+}
+
+/** Reset Brain CPU sampler state (for testing) */
+export function _resetBrainCpuSampler() {
+  _prevBrainCpuUsage = null;
+  _prevBrainCpuTimeMs = null;
+}
+
+/**
+ * Evaluate combined Brain-process + system-wide CPU health.
+ *
+ *   action === 'halt'    → Brain itself is genuinely CPU-bound, respect pressure
+ *   action === 'warn'    → system busy but Brain idle, log only, don't halt
+ *   action === 'proceed' → everything OK
+ *
+ * @param {object} opts
+ * @param {number} opts.brain_cpu_pct        - Brain process own CPU% (one core)
+ * @param {number} opts.system_cpu_pressure  - system-wide CPU pressure ratio (raw, pre-smoothing)
+ * @param {number} [opts.brain_cpu_busy_pct] - Override BRAIN_CPU_BUSY_PCT
+ * @returns {{brain_cpu_ok: boolean, action: 'proceed'|'warn'|'halt', reason: string, brain_cpu_pct: number, brain_cpu_busy_pct: number}}
+ */
+export function evaluateCpuHealth({
+  brain_cpu_pct,
+  system_cpu_pressure,
+  brain_cpu_busy_pct = BRAIN_CPU_BUSY_PCT,
+} = {}) {
+  const brainCpu = Number.isFinite(brain_cpu_pct) ? brain_cpu_pct : 0;
+  const sysPressure = Number.isFinite(system_cpu_pressure) ? system_cpu_pressure : 0;
+  const brainBusy = brainCpu >= brain_cpu_busy_pct;
+
+  let action;
+  let reason;
+  if (brainBusy) {
+    action = 'halt';
+    reason = `Brain own CPU ${brainCpu}% >= ${brain_cpu_busy_pct}% (real load)`;
+  } else if (sysPressure >= 0.9) {
+    action = 'warn';
+    reason = `System-wide CPU pressure ${sysPressure.toFixed(2)} high but Brain own CPU only ${brainCpu}% (likely sibling containers on shared host)`;
+  } else {
+    action = 'proceed';
+    reason = 'cpu health OK';
+  }
+
+  return {
+    brain_cpu_ok: !brainBusy,
+    action,
+    reason,
+    brain_cpu_pct: brainCpu,
+    brain_cpu_busy_pct,
+  };
+}
+
 export {
   SYSTEM_RESERVED_MB,
   MAX_PHYSICAL_CAP,
@@ -819,4 +911,5 @@ export {
   BRAIN_RSS_WARN_MB,
   SYSTEM_AVAILABLE_FLOOR_MB,
   SYSTEM_AVAILABLE_RATIO,
+  BRAIN_CPU_BUSY_PCT,
 };

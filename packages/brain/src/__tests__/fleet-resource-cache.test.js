@@ -1,3 +1,4 @@
+import {seedExecutionDirectoryFixture} from './helpers/execution-directory-fixture.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../routes/infra-status.js', () => ({
@@ -6,7 +7,7 @@ vi.mock('../routes/infra-status.js', () => ({
     { id: 'xian-mac-m4', name: 'Xian M4', tailscaleIp: '100.86.57.69', role: 'Codex', sshUser: 'test' },
     { id: 'xian-mac-m1', name: 'Xian M1', tailscaleIp: '100.103.88.66', role: 'CI', sshUser: 'test' },
   ],
-  COMPUTE_SERVERS: ['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1'],
+  COMPUTE_SERVERS: ['us-mac-m4', 'xian-mac-m1', 'xian-mac-m4'],
   collectLocalStats: vi.fn(() => ({
     status: 'online',
     cpu: { cores: 10, usagePercent: 15 },
@@ -29,13 +30,31 @@ describe('fleet-resource-cache', () => {
 
   beforeEach(async () => {
     vi.useFakeTimers();
+    // 2026-09-13 采集传输换为 worker HTTP：本块断言意图不变（3台/online/slots），
+    // 铺垫从 collect* mock 换成 fetch stub（三台全通）。
+    vi.stubGlobal('fetch', vi.fn(async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        schema_version: 'fleet-node-health/v1',
+        machine_id: String(url).includes('100.71.151.105') ? 'us-mac-m4' : String(url).includes('100.86.57.69') ? 'xian-mac-m4' : 'xian-mac-m1',
+        observed_at: new Date().toISOString(),
+        resources: {
+          disk_free_bytes: 40 * 1024 ** 3, disk_used_percent: 60,
+          cpu_cores: 10, memory_bytes: 16 * 1024 ** 3,
+          cpu_pressure_percent: 20, memory_pressure_percent: 40,
+        },
+      }),
+    })));
     fleetCache = await import('../fleet-resource-cache.js');
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     fleetCache.stopFleetRefresh();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
     vi.resetModules();
+    await seedExecutionDirectoryFixture();
   });
 
   it('未启动时 getFleetStatus 返回空数组', () => {
@@ -55,7 +74,7 @@ describe('fleet-resource-cache', () => {
     await vi.advanceTimersByTimeAsync(100);
     const status = fleetCache.getFleetStatus();
     expect(status.length).toBe(3);
-    expect(status.map(s => s.id)).toEqual(['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1']);
+    expect(status.map(s => s.id)).toEqual(['us-mac-m4', 'xian-mac-m1', 'xian-mac-m4']);
   });
 
   it('采集后机器 online 且有 effectiveSlots', async () => {
@@ -66,6 +85,12 @@ describe('fleet-resource-cache', () => {
     expect(cap.online).toBe(true);
     expect(cap.effectiveSlots).toBeGreaterThanOrEqual(0);
     expect(cap.physicalCapacity).toBe(8);
+  });
+
+  it('真实 fleet 采样按 Worker 共享 policy 的 1GiB/.5CPU 基础槽估算', async () => {
+    fleetCache.startFleetRefresh(); await vi.advanceTimersByTimeAsync(100);
+    const { calculatePhysicalCapacity } = await import('../platform-utils.js');
+    expect(calculatePhysicalCapacity).toHaveBeenCalledWith(16384,10,1024,0.5);
   });
 
   it('getTotalEffectiveSlots 返回正数', async () => {
@@ -80,5 +105,84 @@ describe('fleet-resource-cache', () => {
     expect(fleetCache.isServerOnline('us-mac-m4')).toBe(true);
     vi.advanceTimersByTime(120_000);
     expect(fleetCache.isServerOnline('us-mac-m4')).toBe(false);
+  });
+});
+
+// ── 2026-09-13 容量喂数改 worker HTTP（handoff 202609131958 next_steps#1）──
+// 病：collectServerStats 对 us-mac-m4 走 isLocal 采【Brain 所在机=us-vps】数据，
+// 把 VPS 被 openclaw 邻居顶高的压力记在 MMV 头上 → effectiveSlots=0 → tick 恒
+// pool_c_full 永不自动派发；西安两台 ssh 采集自容器失败恒 offline。
+// 修法：COMPUTE workers 一律经 fleet-worker :5231 /health HTTP 采集
+//（machine-registry.workerBridgeUrlFor 解析地址），ssh/isLocal 路径退役。
+describe('容量采集走 worker HTTP（弃 ssh/isLocal）', () => {
+  let fleetCache;
+  let infra;
+  const HEALTH = {
+    'us-mac-m4': {
+      schema_version: 'fleet-node-health/v1', machine_id: 'us-mac-m4',
+      resources: {
+        disk_free_bytes: 40 * 1024 ** 3, disk_used_percent: 60,
+          cpu_cores: 10, memory_bytes: 16 * 1024 ** 3,
+        cpu_pressure_percent: 16.3, memory_pressure_percent: 54,
+      },
+    },
+    'xian-mac-m4': {
+      schema_version: 'fleet-node-health/v1', machine_id: 'xian-mac-m4',
+      resources: {
+        disk_free_bytes: 40 * 1024 ** 3, disk_used_percent: 60,
+          cpu_cores: 10, memory_bytes: 16 * 1024 ** 3,
+        cpu_pressure_percent: 20, memory_pressure_percent: 30,
+      },
+    },
+  };
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const hit = Object.keys(HEALTH).find((id) => String(url).includes(id === 'us-mac-m4' ? '100.71.151.105' : '100.86.57.69'));
+      if (!hit) throw new Error('ECONNREFUSED');
+      return { ok: true, status: 200, json: async () => ({ ...HEALTH[hit], observed_at: new Date().toISOString() }) };
+    }));
+    infra = await import('../routes/infra-status.js');
+    fleetCache = await import('../fleet-resource-cache.js');
+  });
+
+  afterEach(async () => {
+    fleetCache.stopFleetRefresh();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.resetModules();
+    await seedExecutionDirectoryFixture();
+  });
+
+  it('stats 来自 worker /health 映射，且不再触碰 ssh/local 采集', async () => {
+    fleetCache.startFleetRefresh();
+    await vi.advanceTimersByTimeAsync(100);
+    const entry = fleetCache.getFleetStatus().find((e) => e.id === 'us-mac-m4');
+    expect(entry.online).toBe(true);
+    expect(entry.cpu.cores).toBe(10);
+    expect(entry.cpu.usagePercent).toBeCloseTo(16.3, 1);
+    expect(entry.memory.usagePercent).toBe(54);
+    expect(entry.memory.totalGB).toBeCloseTo(16, 1);
+    // 病根路径必须一次都没被调用（isLocal 采到调度器自身=毒源）
+    expect(infra.collectLocalStats).not.toHaveBeenCalled();
+    expect(infra.collectRemoteUnixStats).not.toHaveBeenCalled();
+  });
+
+  it('worker HTTP 不可达 → offline:fetch_failed（fail-closed，不回落毒源）', async () => {
+    fleetCache.startFleetRefresh();
+    await vi.advanceTimersByTimeAsync(100);
+    const m1 = fleetCache.getFleetStatus().find((e) => e.id === 'xian-mac-m1'); // HEALTH 未配 → fetch 抛
+    expect(m1.online).toBe(false);
+    expect(m1.offline_reason).toBe('fetch_failed');
+    expect(infra.collectLocalStats).not.toHaveBeenCalled();
+  });
+
+  it('聚合 effectiveSlots 按 worker 真实压力计算（不再被调度器邻居污染成 0）', async () => {
+    fleetCache.startFleetRefresh();
+    await vi.advanceTimersByTimeAsync(100);
+    // physicalCapacity mock=8：us-mac-m4 maxPressure=0.54→floor(8*0.46)=3；
+    // xian-mac-m4 maxPressure=0.30→floor(8*0.70)=5；m1 offline=0 → 总 8
+    expect(fleetCache.getTotalEffectiveSlots()).toBe(8);
   });
 });

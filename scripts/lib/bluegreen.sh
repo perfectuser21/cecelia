@@ -137,6 +137,17 @@ bluegreen_wait_for_stable_http() {
   return 1
 }
 
+# bluegreen_green_run_args <blue> <env_file>：把 blue 的 env 写成 env-file、卷拼成 -v，
+# 输出可直接放进 GREEN_RUN_ARGS 的参数串。blue 的 env 值可能含空格（QIUMI_MODEL_MAP 等），
+# 拼成 `-e K=V` 字符串再不加引号展开会把 docker run 参数打散（2026-09-23 Gate3 全红根因），
+# 所以值只经 env-file 传递；`-e CECELIA_INTERNAL_TOKEN` 从当前进程透传刚校验的 token。
+bluegreen_green_run_args() {
+  local blue="$1" env_file="$2" vols=""
+  docker inspect "$blue" --format '{{range .Config.Env}}{{println .}}{{end}}' > "$env_file" || return 1
+  vols=$(docker inspect "$blue" --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}{{if not .RW}}:ro{{end}} {{end}}' 2>/dev/null || echo "")
+  echo "--env-file ${env_file} ${vols} -e CECELIA_INTERNAL_TOKEN"
+}
+
 # bluegreen_swap：green canary 验证后原子切。入参走 env：
 #   BLUE_NAME(默认 cecelia-node-brain) / GREEN_NAME(默认 cecelia-node-brain-green)
 #   TEMP_PORT(默认 5233，故意避开 dashboard-slot-server.cjs 的默认端口 5223——两者曾撞车导致
@@ -162,14 +173,33 @@ bluegreen_swap() {
   # green 必须加入 blue 所在网络：webhook 链路里本脚本在 blue 容器内执行，
   # 容器内 localhost:${port} 是 blue 自己的 loopback 而非宿主端口；green 落默认
   # bridge 则与 blue 跨网络隔离 → health/smoke 全部秒拒（2026-07-15 Gate3 全红根因）。
-  local blue_net="" net_args=""
+  local blue_net="" net_args="" port_args="-p ${port}:5221" green_port_env=""
   blue_net=$(docker inspect "$blue" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null | awk '{print $1}') || true
-  [[ -n "$blue_net" ]] && net_args="--network ${blue_net}"
-  # BRAIN_DEPLOY_CANARY=1 关 tick，避免 canary 与 blue 连同一 DB double-dispatch
+  if [[ "$blue_net" == "host" ]]; then
+    # host 网络（us-vps compose）：-p 被 docker 丢弃，容器内直接绑宿主端口 →
+    # green 必须用 BRAIN_PORT 换绑定口，否则与 blue 抢 5221 起不来
+    # （2026-09-17 实锤：green "port 5221 still in use" 循环重试，health 恒败）。
+    # green_port_env 必须排在 GREEN_RUN_ARGS 之后，覆盖从 blue 复制来的 BRAIN_PORT=5221。
+    net_args="--network host"
+    port_args=""
+    green_port_env="-e BRAIN_PORT=${port}"
+    # host 网络下执行环境（blue 容器）的 loopback 就是宿主 loopback，green:${port} 直达；
+    # host.docker.internal 在 Linux docker 默认不存在，探活会恒败（2026-09-17 03:26 实锤）。
+    # 注意与 bridge 情形相反（那里容器内 localhost 是自己，见 canary-host 回归测试）——
+    # 仅此 host 分支覆写，CANARY_HOST 显式指定时仍以其为准。
+    canary_host="${CANARY_HOST:-localhost}"
+    canary_url="http://${canary_host}:${port}"
+  elif [[ -n "$blue_net" ]]; then
+    net_args="--network ${blue_net}"
+  fi
+  # BRAIN_DEPLOY_CANARY=1 关 tick，避免 canary 与 blue 连同一 DB double-dispatch。
+  # GREEN_RUN_ARGS 只能含无空格 token（--env-file/-v/-e NAME），blue 的 env 值走 env-file
+  # （见 bluegreen_green_run_args）；docker 的 stderr 必须留在日志里，否则失败原因不可见。
+  local run_err=""
   # shellcheck disable=SC2086
-  if ! docker run -d --name "$green" -p "${port}:5221" ${net_args} \
-        -e BRAIN_DEPLOY_CANARY=1 ${GREEN_RUN_ARGS:-} "cecelia-brain:${version}" >/dev/null 2>&1; then
-    echo "[bluegreen] green 起容器失败，保留 blue"
+  if ! run_err=$(docker run -d --name "$green" ${port_args} ${net_args} \
+        -e BRAIN_DEPLOY_CANARY=1 ${GREEN_RUN_ARGS:-} ${green_port_env} "cecelia-brain:${version}" 2>&1 >/dev/null); then
+    echo "[bluegreen] green 起容器失败，保留 blue：${run_err}"
     docker rm -f "$green" >/dev/null 2>&1 || true
     send_bark "green 镜像 v${version} 启动失败，已保留旧版(5221不受影响)"
     bluegreen_guard_blue "$blue"
@@ -259,6 +289,18 @@ bluegreen_swap() {
       send_bark "⚠️ 蓝绿 sidecar 缺少内部鉴权凭据 SSOT v${version}，已保留 blue（5221 仍可用）"
       return 1
     fi
+    local expected_sha="${EXPECTED_SHA:-}"
+    [[ -n "$expected_sha" ]] || expected_sha=$(git -C "$root_dir" rev-parse HEAD 2>/dev/null) || return 1
+    if [[ ! "$expected_sha" =~ ^[a-f0-9]{40}$ ]]; then
+      echo "[bluegreen] ❌ 缺少部署目标 SHA，终止切换（blue 保留）"
+      return 1
+    fi
+    # docker run -d 只确认sidecar创建；目标SHA错误必须在blue仍存活时拦截。
+    if ! timeout -k 2 8 docker image inspect --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "GIT_SHA"}}{{.}}{{end}}{{end}}' "cecelia-brain:${version}" \
+      | node -e 'let s="";process.stdin.on("data",x=>{s+=x;if(s.length>128)process.exit(1)});process.stdin.on("end",()=>{if(s.trim()!=="GIT_SHA="+process.argv[1])process.exit(1)})' "$expected_sha"; then
+      echo "[bluegreen] ❌ 目标镜像 SHA 未确认，终止切换（blue 保留）"
+      return 1
+    fi
     docker rm -f "$sidecar_name" >/dev/null 2>&1 || true  # 清理上次残留
 
     # ── 打 blue-fallback 快照（sidecar compose up 失败时回退用）──────────────
@@ -281,13 +323,24 @@ bluegreen_swap() {
     # 挂载 docker.sock 和部署根目录，等 blue 消失后执行 compose up。
     # sidecar 脚本（bluegreen-sidecar.sh）通过 root_dir 挂载可访问，
     # 失败时自动用 blue-fallback tag 恢复（见 bluegreen-sidecar.sh）。
+    # sidecar 的健康/收尾经既有 Docker socket 在固定容器内执行；网络配置保持现状。
+    local retention_mounts=()
+    if [[ -n "${CECELIA_IMAGE_DEPLOYMENT_ID:-}" ]]; then
+      retention_mounts=(-v "${CECELIA_IMAGE_RETENTION_DIR}:${CECELIA_IMAGE_RETENTION_DIR}:rw"
+        -v /mnt/openclaw_data/docker:/run/cecelia-docker-data:ro
+        -e "CECELIA_IMAGE_DEPLOYMENT_ID=${CECELIA_IMAGE_DEPLOYMENT_ID}"
+        -e "CECELIA_IMAGE_RETENTION_DIR=${CECELIA_IMAGE_RETENTION_DIR}")
+    fi
     if docker run -d --rm \
+        ${retention_mounts[@]+"${retention_mounts[@]}"} \
         --name "$sidecar_name" \
+        --add-host=host.docker.internal:host-gateway \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "${root_dir}:${root_dir}:rw" \
         -v "${CECELIA_INTERNAL_ENV_FILE}:${CECELIA_INTERNAL_ENV_FILE}:ro" \
         -w "${root_dir}" \
         -e "BRAIN_VERSION=${version}" \
+        -e "EXPECTED_SHA=${expected_sha}" \
         -e "ENV_REGION=${env_region}" \
         -e "DEPLOY_ROOT=${root_dir}" \
         -e "CECELIA_INTERNAL_ENV_FILE=${CECELIA_INTERNAL_ENV_FILE}" \

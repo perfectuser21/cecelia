@@ -1,18 +1,33 @@
+import companyKeyResultsRoutes from './company-key-results.js';
+import { assertCompanyPatch, COMPANY_METRIC_MODE } from '../lib/company-kr-metrics.js';
 /**
  * OKR 层级 CRUD API
  * 路由: /api/brain/okr/*
  *
- * 7层结构：Vision → Objective → KeyResult → Project → Scope → Initiative → Task
- * 本文件覆盖前6层，Task 层由现有 tasks 表/路由处理
+ * 棒4（决策 ee4842a6/3feeae3e）起：scope/initiative 层退役，GTD 轴只剩
+ * Vision → Objective → KeyResult → Project → Task。/scopes、/initiatives 写操作
+ * 一律 410 layer_retired（只读历史）；/projects 复用 routes/task-projects.js，
+ * 读写真身表 projects（与 /api/brain/projects 同源）。Task 层由现有 tasks 表/路由处理。
  *
- * 表: visions / objectives / key_results / okr_projects / okr_scopes / okr_initiatives
+ * 表: visions / objectives / key_results / projects（真身）/ okr_scopes（冻结只读）/
+ *     okr_initiatives（冻结只读）/ okr_projects（冻结只读，migration 499 写保护）
  */
 
 import { Router } from 'express';
 import pool from '../db.js';
 import { computeProgress } from '../advancement-progress.js';
+import taskProjectsRoutes from './task-projects.js';
+import { getProjectsForKrBatch } from '../project-progress.js';
+import { recalculateKrProgress } from '../lib/kr-recalculate-progress.js';
 
 const router = Router();
+router.use(companyKeyResultsRoutes);
+
+// scope/initiative 层退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：
+// 写操作统一 410，body 格式与 migration 499 的 DB trigger 报错口径对齐。
+function retiredLayerWrite(req, res) {
+  res.status(410).json({ error: 'layer_retired', decision: 'ee4842a6' });
+}
 
 // ─── 通用 CRUD 工厂函数 ─────────────────────────────────────────────────────
 
@@ -22,8 +37,11 @@ const router = Router();
  * @param {string} prefix - 路由前缀（如 '/visions'）
  * @param {string} table - 表名（如 'visions'）
  * @param {string|null} parentField - 父级外键字段名（如 'vision_id'），可为 null
+ * @param {{ writesRetired?: boolean }} [opts] - writesRetired=true 时只挂 GET（只读历史），
+ *   POST/PATCH/DELETE 一律 410 layer_retired（决策 ee4842a6）
  */
-function mountCrud(r, prefix, table, parentField) {
+function mountCrud(r, prefix, table, parentField, opts = {}) {
+  const { writesRetired = false } = opts;
   // GET /prefix - 列表
   r.get(prefix, async (req, res) => {
     try {
@@ -59,7 +77,7 @@ function mountCrud(r, prefix, table, parentField) {
       );
       res.json({ success: true, items: result.rows, total: parseInt(countResult.rows[0].count) });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.status || 500).json({ success: false, error: err.message });
     }
   });
 
@@ -70,13 +88,21 @@ function mountCrud(r, prefix, table, parentField) {
       if (!result.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
       res.json({ success: true, item: result.rows[0] });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.status || 500).json({ success: false, error: err.message });
     }
   });
 
-  // POST /prefix - 创建
+  // POST /prefix - 创建（写退役层直接 410，不查库）
+  if (writesRetired) {
+    r.post(prefix, retiredLayerWrite);
+    r.patch(`${prefix}/:id`, retiredLayerWrite);
+    r.delete(`${prefix}/:id`, retiredLayerWrite);
+    return;
+  }
+
   r.post(prefix, async (req, res) => {
     try {
+      if (['key_results', 'objectives'].includes(table) && (req.body.metadata?.metric_mode === COMPANY_METRIC_MODE || req.body.custom_props?.company_notion || req.body.metadata?.source_system === 'notion-company-okr')) return res.status(409).json({ error: '公司来源身份须走幂等导入入口' });
       const { title } = req.body;
       if (!title) return res.status(400).json({ success: false, error: 'title is required' });
 
@@ -102,7 +128,7 @@ function mountCrud(r, prefix, table, parentField) {
       );
       res.status(201).json({ success: true, item: result.rows[0] });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.status || 500).json({ success: false, error: err.message });
     }
   });
 
@@ -110,6 +136,7 @@ function mountCrud(r, prefix, table, parentField) {
   r.patch(`${prefix}/:id`, async (req, res) => {
     try {
       const { id } = req.params;
+      if (['key_results', 'objectives'].includes(table)) await assertCompanyPatch(pool, id, req.body, table);
       const allowed = [
         'title', 'status', 'area_id', 'owner_role', 'start_date', 'end_date',
         'metadata', 'custom_props', 'target_value', 'current_value', 'unit',
@@ -121,7 +148,7 @@ function mountCrud(r, prefix, table, parentField) {
       for (const key of allowed) {
         if (key in req.body) {
           values.push(req.body[key]);
-          updates.push(`${key} = $${values.length}`);
+          updates.push(['metadata','custom_props'].includes(key) ? `${key} = COALESCE(${key}, '{}'::jsonb) || $${values.length}::jsonb` : `${key} = $${values.length}`);
         }
       }
       if (!updates.length) return res.status(400).json({ success: false, error: 'No fields to update' });
@@ -134,7 +161,7 @@ function mountCrud(r, prefix, table, parentField) {
       if (!result.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
       res.json({ success: true, item: result.rows[0] });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.status || 500).json({ success: false, error: err.message });
     }
   });
 
@@ -148,7 +175,7 @@ function mountCrud(r, prefix, table, parentField) {
       if (!result.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
       res.json({ success: true, id: result.rows[0].id });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.status || 500).json({ success: false, error: err.message });
     }
   });
 }
@@ -158,9 +185,17 @@ function mountCrud(r, prefix, table, parentField) {
 mountCrud(router, '/visions', 'visions', null);
 mountCrud(router, '/objectives', 'objectives', 'vision_id');
 mountCrud(router, '/key-results', 'key_results', 'objective_id');
-mountCrud(router, '/projects', 'okr_projects', 'kr_id');
-mountCrud(router, '/scopes', 'okr_scopes', 'project_id');
-mountCrud(router, '/initiatives', 'okr_initiatives', 'scope_id');
+// 棒4（决策 ee4842a6/3feeae3e）：scope/initiative 层退役，okr_scopes.project_id /
+// okr_initiatives.scope_id 原本挡着 /projects 改指真身表（指向 projects 会导致
+// POST /scopes、/initiatives 的 FK 违反 23503）——现在 /scopes、/initiatives 的
+// 写操作直接 410，不会再触发那条 FK 校验，改指真身表安全。/projects 复用
+// routes/task-projects.js 同一套 handler（与 /api/brain/projects 完全同源，
+// 读到同一行）；migration 499 已给 okr_projects 加写保护 trigger，新 Project
+// 一律进 projects 表。okr_projects.title/okr_scopes/okr_initiatives 表和历史
+// 数据原样保留，只读（mountCrud 的 GET 依旧指向旧表，见下方两行）。
+router.use('/projects', taskProjectsRoutes);
+mountCrud(router, '/scopes', 'okr_scopes', 'project_id', { writesRetired: true });
+mountCrud(router, '/initiatives', 'okr_initiatives', 'scope_id', { writesRetired: true });
 
 // ─── 层级树状查询 ─────────────────────────────────────────────────────────────
 
@@ -188,12 +223,14 @@ router.get('/tree', async (req, res) => {
           [obj.id]
         )).rows;
 
-        // 批量查询所有 KR 下的 projects
+        // 批量查询所有 KR 下的 projects（棒4起真身表 projects；name AS title 兼容旧读方，
+        // scope/initiative 历史行的 project_id 仍是 okr_projects.id——与 projects.id 因
+        // migration 497/499 的同 id 搬家而对齐，下面按 id 关联不受影响）
         const krIds = krs.map(kr => kr.id);
         const projectsByKr = {};
         if (krIds.length > 0) {
           const projectRows = (await pool.query(
-            `SELECT * FROM okr_projects WHERE kr_id = ANY($1) AND status != 'archived' ORDER BY created_at`,
+            `SELECT *, name AS title FROM projects WHERE kr_id = ANY($1) AND status != 'archived' ORDER BY created_at`,
             [krIds]
           )).rows;
 
@@ -272,76 +309,32 @@ router.get('/tree', async (req, res) => {
 
     res.json({ success: true, tree: result });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
 // ─── KR 进度重算 ──────────────────────────────────────────────────────────────
 
-/**
- * POST /api/brain/okr/key-results/:id/recalculate-progress
- * 重算指定 KR 的进度：
- *   current_value = completed tasks / total tasks × target_value
- *
- * 链路：key_result → okr_projects → okr_scopes → okr_initiatives → tasks
- */
+/** 重算与定时同步共用 project 等权聚合；无有效 target 时 current_value 为 NULL。 */
 router.post('/key-results/:id/recalculate-progress', async (req, res) => {
   try {
-    const { id } = req.params;
-
-    // 验证 KR 存在
-    const krResult = await pool.query('SELECT id, target_value FROM key_results WHERE id = $1', [id]);
-    if (!krResult.rows.length) {
-      return res.status(404).json({ success: false, error: 'KeyResult not found' });
-    }
-    const { target_value } = krResult.rows[0];
-
-    // 统计该 KR 下所有 initiatives 关联的 tasks
-    const statsResult = await pool.query(`
-      SELECT
-        COUNT(t.id) FILTER (WHERE t.status = 'completed') AS completed_count,
-        COUNT(t.id) AS total_count
-      FROM okr_projects p
-      JOIN okr_scopes s ON s.project_id = p.id
-      JOIN okr_initiatives i ON i.scope_id = s.id
-      LEFT JOIN tasks t ON t.okr_initiative_id = i.id
-      WHERE p.kr_id = $1
-    `, [id]);
-
-    const { completed_count, total_count } = statsResult.rows[0];
-    const completedNum = parseInt(completed_count, 10) || 0;
-    const totalNum = parseInt(total_count, 10) || 0;
-
-    // 计算新进度（total=0 时进度为 0）
-    const newValue = totalNum > 0
-      ? Math.round((completedNum / totalNum) * parseFloat(target_value) * 100) / 100
-      : 0;
-
-    // 更新 current_value
-    await pool.query(
-      'UPDATE key_results SET current_value = $1, updated_at = now() WHERE id = $2',
-      [newValue, id]
-    );
-
-    res.json({
-      success: true,
-      kr_id: id,
-      completed_tasks: completedNum,
-      total_tasks: totalNum,
-      target_value: parseFloat(target_value),
-      current_value: newValue
-    });
+    const result = await recalculateKrProgress(pool, req.params.id);
+    if (!result) return res.status(404).json({ success: false, error: 'KeyResult not found' });
+    res.json({ success: true, ...result });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
-
 
 // ─── OKR 当前进度快照 ──────────────────────────────────────────────────────────
 
 /**
  * GET /api/brain/okr/current
  * 返回当前活跃 OKR 树形结构 + 每层完成度
+ *
+ * 棒5（决策 ee4842a6/3feeae3e）：每个 KR 下附 projects: [{id,name,status,progress,
+ * task_total,task_done}]，数据来自真身表 projects/tasks（project-progress.js），
+ * 替代此前经已退役 okr_projects 链路才能看到的 Project 信息。
  */
 router.get('/current', async (req, res) => {
   try {
@@ -353,7 +346,9 @@ router.get('/current', async (req, res) => {
       LIMIT 5
     `)).rows;
 
-    const result = await Promise.all(objectives.map(async (obj) => {
+    const allKrs = [];
+    const krsByObjective = {};
+    for (const obj of objectives) {
       const krs = (await pool.query(`
         SELECT id, title, current_value, target_value, unit, status,
           COALESCE(
@@ -367,17 +362,28 @@ router.get('/current', async (req, res) => {
         WHERE objective_id = $1 AND status != 'archived'
         ORDER BY created_at
       `, [obj.id])).rows;
+      krsByObjective[obj.id] = krs;
+      allKrs.push(...krs);
+    }
 
+    const projectsByKr = await getProjectsForKrBatch(pool, allKrs.map((kr) => kr.id));
+
+    const result = objectives.map((obj) => {
+      const krs = krsByObjective[obj.id];
       const avgProgress = krs.length > 0
         ? Math.round(krs.reduce((sum, kr) => sum + parseFloat(kr.progress_pct || 0), 0) / krs.length)
         : 0;
 
-      return { ...obj, progress_pct: avgProgress, key_results: krs };
-    }));
+      return {
+        ...obj,
+        progress_pct: avgProgress,
+        key_results: krs.map((kr) => ({ ...kr, projects: projectsByKr[kr.id] || [] })),
+      };
+    });
 
     res.json({ success: true, objectives: result, generated_at: new Date().toISOString() });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -394,7 +400,7 @@ router.post('/sync-verifiers', async (req, res) => {
     const result = await runAllVerifiers();
     res.json({ success: true, ...result });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -411,7 +417,7 @@ router.post('/backfill-current-values', async (req, res) => {
     const result = await resetAllKrProgress();
     res.json({ success: true, ...result });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -473,7 +479,7 @@ router.get('/kr/:id/ability-progress', async (req, res) => {
 
     res.json({ success: true, kr_id: kr.id, kr_title: kr.title, abilities, missing_ability_ids });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 

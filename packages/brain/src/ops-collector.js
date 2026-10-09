@@ -1,0 +1,1214 @@
+/**
+ * ops-collector.js — 运行舱采集器（指挥舱 G1 S1 刀1，task 6fcb5356）
+ * 拉取模型：scheduler job 复用 host-exec ssh 逃逸，无宿主 daemon/写端点。
+ * 契约（PrepPRD D1-D3）：0条=可疑须 source_status 佐证；失败 reason_code+last_error 双写；
+ * 宁 stale 不假数据；next_run 绝对 UTC 或 NULL；OpenClaw 只读 docker exec 写死路径；
+ * launchd 只认已加载；meta 白名单禁凭据。
+ */
+import { existsSync } from 'fs';
+import { defaultExec, buildHostCmd } from './host-exec.js';
+import { summarizeLiveness } from './ops-liveness.js';
+import { statusFromCollectorState } from './ops-alarm-ledger.js';
+
+export const OWN_LABEL_RE = /(cecelia|zenithjoy|perfect21|openclaw|claude|n8n|cloudflare)/i;
+export const INTERVAL_MS = parseInt(process.env.OPS_COLLECTOR_INTERVAL_MS || String(5 * 60 * 1000), 10);
+
+export function parseLaunchctlList(out, labelRe = OWN_LABEL_RE) {
+  const rows = [];
+  for (const line of String(out).split('\n').slice(1)) {
+    const m = line.trim().match(/^(-|\d+)\s+(-?\d+)\s+(\S+)$/);
+    if (!m) continue;
+    const [, pid, status, label] = m;
+    if (!labelRe.test(label)) continue;
+    rows.push({ label, pid: pid === '-' ? null : Number(pid), lastExitCode: Number(status) });
+  }
+  return rows;
+}
+
+export function parsePlistDump(out) {
+  const plists = new Map();
+  const badFiles = [];
+  for (const block of String(out).split(/^== /m).slice(1)) {
+    const nl = block.indexOf('\n');
+    const path = block.slice(0, nl).trim();
+    const body = block.slice(nl + 1).trim();
+    if (!body) continue;
+    try {
+      const j = JSON.parse(body);
+      if (j.Label) plists.set(j.Label, {
+        path,
+        StartInterval: j.StartInterval ?? null,
+        StartCalendarInterval: j.StartCalendarInterval ?? null,
+      });
+    } catch { badFiles.push(path); }
+  }
+  return { plists, badFiles };
+}
+
+const WEEKDAY_NUM = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+/** StartCalendarInterval → 下次触发绝对 UTC（DST 正确：逐分钟用 Intl 在目标时区比对）。算不出=null。 */
+export function computeNextRunUTC(cal, from, timeZone, horizonDays = 8) {
+  const entries = (Array.isArray(cal) ? cal : [cal]).filter(Boolean);
+  if (!entries.length) return null;
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone, weekday: 'short', month: 'numeric', day: 'numeric',
+    hour: 'numeric', minute: 'numeric', hourCycle: 'h23',
+  });
+  const start = Math.ceil((from.getTime() + 1) / 60000) * 60000;
+  for (let i = 0; i < horizonDays * 24 * 60; i++) {
+    const t = new Date(start + i * 60000);
+    const parts = Object.fromEntries(fmt.formatToParts(t).map((p) => [p.type, p.value]));
+    const local = {
+      Minute: Number(parts.minute), Hour: Number(parts.hour),
+      Day: Number(parts.day), Month: Number(parts.month),
+      Weekday: WEEKDAY_NUM[parts.weekday],
+    };
+    for (const e of entries) {
+      let match = true;
+      for (const [k, v] of Object.entries(e)) {
+        if (!(k in local)) continue; // 未知键容忍（schema_drift 不失败）
+        const want = k === 'Weekday' && Number(v) === 7 ? 0 : Number(v);
+        if (local[k] !== want) { match = false; break; }
+      }
+      if (match) return t.toISOString();
+    }
+  }
+  return null;
+}
+
+export function extractOpenclawAgents(config) {
+  const entries = config?.agents?.entries;
+  const list = Array.isArray(entries) ? entries
+    : entries && typeof entries === 'object'
+      ? Object.entries(entries).map(([id, v]) => ({ id, ...(v || {}) }))
+      : null;
+  if (!list) throw new Error('schema_drift: agents.entries 缺失或形状未知');
+  return list
+    .map((e) => {
+      const sa = e.subagents;
+      // 编排关系：subagents.allowAgents = 这个 agent 能编排的下级 agent 清单（图，dev 可被多父编排）。
+      const orchestrates = Array.isArray(sa?.allowAgents)
+        ? sa.allowAgents.filter((x) => typeof x === 'string')
+        : [];
+      // model 可能是字符串或 { primary, fallbacks }
+      const model = typeof e.model === 'string' ? e.model
+        : (typeof e.model?.primary === 'string' ? e.model.primary : null);
+      const id = e.identity || {};
+      return {
+        name: String(e.id || e.name || ''),
+        agent_type: 'openclaw_agent',
+        meta: { // 白名单——clawdbot.json 含明文凭据（apiKey/auth），绝不整份入库
+          model,
+          workspace: typeof e.workspace === 'string' ? e.workspace : null,
+          agent_dir: typeof e.agentDir === 'string' ? e.agentDir : null,
+          orchestrates,
+          delegation_mode: typeof sa?.delegationMode === 'string' ? sa.delegationMode : null,
+          // 人设（agent 是什么角色）
+          identity_name: typeof id.name === 'string' ? id.name : null,
+          identity_theme: typeof id.theme === 'string' ? id.theme : null,
+          identity_emoji: typeof id.emoji === 'string' ? id.emoji : null,
+          // skill 才是最小执行单元——agent 只是承载它的容器
+          skills: Array.isArray(e.skills) ? e.skills.filter((x) => typeof x === 'string') : [],
+          tools_allow: Array.isArray(e.tools?.alsoAllow) ? e.tools.alsoAllow.filter((x) => typeof x === 'string') : [],
+          tools_deny: Array.isArray(e.tools?.deny) ? e.tools.deny.filter((x) => typeof x === 'string') : [],
+          // 组织维度（花名册）：归属 + 岗位类型
+          org: inferAgentOrg(String(e.id || e.name || '')),
+          role_type: inferAgentRoleType(String(e.id || e.name || '')),
+        },
+      };
+    })
+    .filter((a) => a.name);
+}
+
+/**
+ * skill 提取：skill 是最小执行单元（真正定义"怎么干"的那层），与 agent 多对多——
+ * 实证 social-leadgen-workflow 被 4 个 agent 共用。汇总每个 skill 被哪些 agent 使用。
+ */
+export function extractOpenclawSkills(config) {
+  const entries = config?.agents?.entries;
+  const list = Array.isArray(entries) ? entries
+    : entries && typeof entries === 'object'
+      ? Object.entries(entries).map(([id, v]) => ({ id, ...(v || {}) }))
+      : [];
+  const usedBy = new Map();
+  for (const e of list) {
+    const owner = String(e?.id || e?.name || '');
+    for (const s of e?.skills || []) {
+      if (typeof s !== 'string') continue;
+      if (!usedBy.has(s)) usedBy.set(s, []);
+      if (owner) usedBy.get(s).push(owner);
+    }
+  }
+  return [...usedBy.entries()].map(([name, used]) => ({ name, used_by: used.sort() }))
+    .sort((a, b) => b.used_by.length - a.used_by.length || a.name.localeCompare(b.name));
+}
+
+
+// ─── 组织维度（数字员工花名册）────────────────────────────────────────
+// 主理人 2026-09-06 定调：管理单位是 agent（数字员工，组部门/分职责），
+// skill 是可共享能力——同一套 social-* skill 装在悦升号和金诺号两个不同身份上。
+const ORG_PREFIX = [
+  ['zenithjoy-', '悦升'], ['jinoshengyuan-', '金诺盛源'],
+  ['affine-jinnuo', '金诺盛源'], ['affine-yuesheng', '悦升'],
+];
+/** 组织归属：按命名前缀推（无前缀=自家内部平台 agent）。认不出不硬猜租户。 */
+export function inferAgentOrg(name = '') {
+  const n = String(name);
+  for (const [p, org] of ORG_PREFIX) if (n.startsWith(p)) return org;
+  return '内部平台';
+}
+
+const ROLE_RULES = [
+  [/-router$|^.*-router$/, 'router'],
+  [/commander/, 'commander'],
+  [/-worker$|worker$/, 'worker'],
+  [/^verifier$|verifier/, 'verifier'],
+  [/^curator$|curator/, 'curator'],
+  [/social-media|ai-office|office-operator|research/, 'operator'],
+];
+/** 岗位类型：同一 skill 可装在不同岗位上，故岗位与能力分开表达。认不出=通用 agent。 */
+export function inferAgentRoleType(name = '') {
+  const n = String(name);
+  for (const [re, role] of ROLE_RULES) if (re.test(n)) return role;
+  return 'agent';
+}
+
+
+// ─── run 记录（n8n 执行历史）────────────────────────────────────────────
+// 数据源实证：n8n 用 Postgres（非 sqlite），hk-vps 容器 zenithjoy-db-postgres 库 n8n
+// 表 execution_entity。字段 workflowId/status(success|error|crashed)/startedAt/stoppedAt/mode。
+// 频次实证（12天）：业务流程日均 10-21 轮、每轮 38-70 分钟；通道类日均 154-234 次、4秒-9分钟。
+// token 消耗 n8n 不记录（在 OpenClaw 会话侧），本模块不含。
+
+export function parseN8nRuns(list, machine) {
+  if (!Array.isArray(list)) return [];
+  return list.map((e) => {
+    const started = e?.startedAt ? new Date(e.startedAt) : null;
+    const stopped = e?.stoppedAt ? new Date(e.stoppedAt) : null;
+    // crashed 常无 stoppedAt → duration 留 null，禁编造耗时
+    const duration = started && stopped ? Math.round((stopped - started) / 1000) : null;
+    return {
+      run_id: String(e?.id ?? ''),
+      wf_id: String(e?.workflowId ?? ''),
+      status: String(e?.status ?? ''),
+      mode: e?.mode ? String(e.mode) : null,
+      machine: machine || null,
+      started_at: started ? started.toISOString() : null,
+      stopped_at: stopped ? stopped.toISOString() : null,
+      duration_sec: duration,
+    };
+  }).filter((r) => r.run_id && r.wf_id);
+}
+
+/**
+ * 业务流程 vs 通道/触发器：有业务阶段的才是业务流程。
+ * 用途：业务流程的 run 全量推 Notion（一天几十条）；通道类只推汇总（日均上百次会淹没视线）。
+ */
+export function isBusinessWorkflow(wf) {
+  return (wf?.stage_count ?? 0) > 0;
+}
+
+/** 流程健康汇总：次数/成功率/平均耗时/最近一次。没样本不编造成功率。 */
+export function summarizeRuns(runs = []) {
+  const list = Array.isArray(runs) ? runs : [];
+  const total = list.length;
+  const success = list.filter((r) => r.status === 'success').length;
+  const withDur = list.filter((r) => typeof r.duration_sec === 'number');
+  const sorted = [...list].filter((r) => r.started_at)
+    .sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+  return {
+    total,
+    success,
+    failed: total - success,                       // error + crashed 都算失败
+    success_rate: total ? Math.round((success / total) * 100) : null,
+    avg_duration_sec: withDur.length
+      ? Math.round(withDur.reduce((s, r) => s + r.duration_sec, 0) / withDur.length)
+      : null,                                      // 全崩无耗时 → null 而非 0
+    last_run_at: sorted[0]?.started_at ?? null,
+    last_status: sorted[0]?.status ?? null,
+  };
+}
+
+// n8n 执行历史查询（hk-vps 容器内 psql，输出 JSON）。限 45 天窗口避免拉全表。
+// SQL 是代码内固定常量（无任何外部输入拼接），双引号按 shell 需要**直接写成转义形态**，
+// 不做运行时 replace 转义——避免不完整转义（未处理反斜杠）的安全告警。
+const N8N_RUNS_SQL_ESCAPED = [
+  'SELECT json_agg(t) FROM (',
+  '  SELECT id, \\"workflowId\\", status, mode, \\"startedAt\\", \\"stoppedAt\\"',
+  '  FROM execution_entity',
+  '  WHERE \\"startedAt\\" > NOW() - make_interval(days => 45)',
+  '  ORDER BY \\"startedAt\\" DESC LIMIT 5000',
+  ') t',
+].join(' ');
+
+export const N8N_RUNS_CMD =
+  'ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 ' +
+  `'docker exec zenithjoy-db-postgres psql -U n8n -d n8n -tAc "${N8N_RUNS_SQL_ESCAPED}"'`;
+
+
+// ─── DisCo 成熟度（刀7）─────────────────────────────────────────────────
+// 判据来自主理人拍板（决策「Workflow 执行体形态定线：走 Skill-DisCo 路线」）：
+//   三档 = software3(提示词即程序,跑完即弃) / disco(技能体+契约+LLM调度层) / code(不可逆写入,永远纯代码)
+//   固化三条必须同时满足：形状跨多次重复 + 变体已探明 + 碎了能当场发现(有探针)
+//   分档看**执行频率与变体收敛度**，不是任务复杂度
+// 成熟度挂 skill（被蒸馏的主体，有版本演进）；agent/workflow 的成熟度是**算出来的**。
+
+export const DISCO_STAGES = ['software3', 'disco', 'code'];
+const STAGE_RANK = { software3: 0, disco: 1, code: 2 };
+
+/** 频率下限：低于此不值得固化（跑完即弃）。变体收敛线：成功率稳定在此之上才算探明。 */
+export const DISCO_MIN_RUNS = 20;
+export const DISCO_CONVERGED_RATE = 90;
+
+/** 从 skill_registry.metadata.eval_score 提分数。非分数文本返回 null，禁编造。 */
+export function parseEvalScore(raw) {
+  const text = raw == null ? '' : String(raw);
+  const out = { score: null, baseline: null, raw: text };
+  if (!text) return out;
+  // 对照式：with_skill 16/16 (100%) vs without_skill 6/16 (38%)
+  const pair = text.match(/with_skill[^(]*\((\d+)%\)[\s\S]*?without_skill[^(]*\((\d+)%\)/i);
+  if (pair) { out.score = Number(pair[1]); out.baseline = Number(pair[2]); return out; }
+  // 单值：27/27 (100%)
+  const single = text.match(/\((\d+)%\)/);
+  if (single) { out.score = Number(single[1]); return out; }
+  return out;
+}
+
+/**
+ * 判 DisCo 档位。机器只算它能算的（频率/成功率/有无探针），
+ * 「变体已探明」需要看失败形状——机器给建议，confident=false 时等人确认。
+ */
+export function inferDiscoStage(m = {}) {
+  // 不可逆写入永远纯代码（merge/publish/发帖/写生产库/发钱）
+  if (m.irreversible) {
+    return { stage: 'code', confident: true, reason: '不可逆写入，按决策永远纯代码' };
+  }
+  const { runs, successRate, hasPostcondition } = m;
+  if (runs == null || successRate == null || hasPostcondition == null) {
+    return { stage: 'software3', confident: false, reason: '数据不全（缺频率/成功率/探针信息），等人确认' };
+  }
+  if (!hasPostcondition) {
+    return { stage: 'software3', confident: true, reason: '无探针（postcondition）不许固化——碎了发现不了' };
+  }
+  if (runs < DISCO_MIN_RUNS) {
+    return { stage: 'software3', confident: true, reason: `执行 ${runs} 次未达固化门槛 ${DISCO_MIN_RUNS}，跑完即弃` };
+  }
+  if (successRate < DISCO_CONVERGED_RATE) {
+    return { stage: 'software3', confident: true, reason: `成功率 ${successRate}% 仍在波动，变体未收敛（<${DISCO_CONVERGED_RATE}%）` };
+  }
+  return { stage: 'disco', confident: true, reason: `执行 ${runs} 次、成功率 ${successRate}%、有探针——三条固化判据齐备` };
+}
+
+/** agent 成熟度 = 它当前装备的 skill 的最低档（一个还在试错，整体就没固化）。 */
+export function rollupAgentMaturity(skillNames = [], stageBySkill = new Map()) {
+  const known = (skillNames || []).map((n) => [n, stageBySkill.get(n)]).filter(([, st]) => st);
+  if (!known.length) return { stage: null, weakest: null };
+  let weakest = known[0];
+  for (const cur of known) if (STAGE_RANK[cur[1]] < STAGE_RANK[weakest[1]]) weakest = cur;
+  return { stage: weakest[1], weakest: weakest[0] };
+}
+
+/** workflow 成熟度 = 各阶段 skill 的最低档（木桶），并点名瓶颈阶段——下一刀该固化谁。 */
+export function rollupWorkflowMaturity(stages = [], stageBySkill = new Map()) {
+  const known = (stages || [])
+    .map((s) => ({ stage: s.stage, skill: s.skill, lvl: stageBySkill.get(s.skill) }))
+    .filter((x) => x.lvl);
+  if (!known.length) return { stage: null, bottleneck: null };
+  let weakest = known[0];
+  for (const cur of known) if (STAGE_RANK[cur.lvl] < STAGE_RANK[weakest.lvl]) weakest = cur;
+  const allSame = known.every((x) => x.lvl === weakest.lvl);
+  return { stage: weakest.lvl, bottleneck: allSame ? null : weakest.stage };
+}
+
+
+/**
+ * 版本历史（刀7）：只在 eval 分数或 DisCo 档位**真的变了**时追加一代。
+ * 采集器每 5 分钟跑一次，若无条件追加会灌成流水账——历史要的是"演进节点"不是心跳。
+ */
+async function recordSkillVersionIfChanged(pool, skillRow, name, ev, st) {
+  const { rows: [last] } = await pool.query(
+    `SELECT generation, eval_score, disco_stage FROM ops_skill_versions
+     WHERE skill_id=$1 ORDER BY generation DESC LIMIT 1`, [skillRow.id]);
+  const changed = !last
+    || last.eval_score !== ev.score
+    || last.disco_stage !== st.stage;
+  if (!changed) return;
+  const gen = (last?.generation ?? 0) + 1;
+  const note = !last ? '首次记录'
+    : [last.eval_score !== ev.score ? `分数 ${last.eval_score ?? '-'}→${ev.score ?? '-'}` : null,
+       last.disco_stage !== st.stage ? `档位 ${last.disco_stage ?? '-'}→${st.stage}` : null]
+      .filter(Boolean).join('；');
+  await pool.query(
+    `INSERT INTO ops_skill_versions (skill_id, skill_name, generation, eval_score, eval_baseline,
+                                     eval_raw, disco_stage, stage_reason, change_note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (skill_id, generation) DO NOTHING`,
+    [skillRow.id, name, gen, ev.score, ev.baseline, ev.raw || null, st.stage, st.reason, note]);
+  await pool.query(`UPDATE ops_skills SET generation=$1 WHERE id=$2`, [gen, skillRow.id]);
+}
+
+
+// ─── 阶段级归因（刀8-A）───────────────────────────────────────────────
+// n8n execution_data.data 是**扁平化指针格式**：顶层数组，字符串数字=索引引用。
+// 实证：runData 含全部节点，每个「阶段 X」节点带 executionStatus 与 executionTime（毫秒）。
+// 价值：流程级 status=success ≠ 每阶段都成功（实测有 success 的 run 走了中止归档），
+// 逐 skill 的真实成功率只能从这里来。
+
+/** 扁平指针解引用：字符串数字 → 取数组对应项；否则原样。 */
+function derefFlat(flat, v) {
+  return (typeof v === 'string' && /^\d+$/.test(v)) ? flat[Number(v)] : v;
+}
+
+export function parseN8nExecutionStages(flat) {
+  const empty = { stages: [], last_node: null };
+  if (!Array.isArray(flat) || flat.length === 0) return empty;
+  try {
+    const resultData = derefFlat(flat, flat[0]?.resultData);
+    if (!resultData || typeof resultData !== 'object') return empty;
+    const runData = derefFlat(flat, resultData.runData);
+    if (!runData || typeof runData !== 'object') return empty;
+    const lastNode = derefFlat(flat, resultData.lastNodeExecuted);
+    const stages = [];
+    for (const [nodeName, ptr] of Object.entries(runData)) {
+      if (!String(nodeName).startsWith('阶段')) continue;   // 裁决/准备等非业务阶段不计
+      const runs = derefFlat(flat, ptr);
+      const first = Array.isArray(runs) ? derefFlat(flat, runs[0]) : null;
+      if (!first || typeof first !== 'object') continue;
+      const ms = Number(derefFlat(flat, first.executionTime));
+      stages.push({
+        stage: String(nodeName).replace(/^阶段\s*/, ''),
+        status: String(derefFlat(flat, first.executionStatus) || 'unknown'),
+        duration_sec: Number.isFinite(ms) ? Math.round(ms / 1000) : null,
+      });
+    }
+    return { stages, last_node: typeof lastNode === 'string' ? lastNode : null };
+  } catch {
+    return empty;   // 一条坏记录不能让整条采集腿死
+  }
+}
+
+/** 按 阶段→skill 映射汇总：每个 skill 跑了几次、成功率、平均耗时。映射不到的阶段跳过。 */
+export function aggregateStageStats(executions, stageToSkill = {}) {
+  const acc = new Map();
+  for (const ex of (Array.isArray(executions) ? executions : [])) {
+    for (const st of (ex?.stages || [])) {
+      const skill = stageToSkill[st.stage];
+      if (!skill) continue;                              // 未知阶段绝不硬塞给某个 skill
+      if (!acc.has(skill)) acc.set(skill, { runs: 0, success: 0, _sum: 0, _n: 0 });
+      const a = acc.get(skill);
+      a.runs += 1;
+      if (st.status === 'success') a.success += 1;
+      if (typeof st.duration_sec === 'number') { a._sum += st.duration_sec; a._n += 1; }
+    }
+  }
+  const out = new Map();
+  for (const [skill, a] of acc) {
+    out.set(skill, {
+      runs: a.runs,
+      success: a.success,
+      success_rate: Math.round((a.success / a.runs) * 100),
+      avg_sec: a._n ? Math.round(a._sum / a._n) : null,
+    });
+  }
+  return out;
+}
+
+
+/**
+ * 阶段名 → 执行它的 skill（刀8）。目前手工维护：n8n 阶段名与 skill 名不同源，
+ * 无法自动推断。改阶段名会让映射失效且**不报错**——故 aggregateStageStats 对
+ * 未知阶段一律跳过（禁硬塞给某个 skill），未映射阶段可由 /agent-ops/graph 观察到。
+ */
+export const STAGE_TO_SKILL = {
+  手机预检: 'douyin-phone-runtime',
+  视频发现: 'social-video-discovery',
+  全文判定: 'social-video-qualifier',
+  评论采集: 'social-comment-lead-collector',
+  线索评分: 'social-comment-lead-scorer',
+  去重配送: 'social-lead-delivery',
+  线索触达: 'social-lead-outreach',
+  手机归位: 'douyin-phone-runtime',
+};
+
+// 阶段级执行数据查询（限量避免拉爆：每条 ~80KB）
+const N8N_STAGE_SQL = [
+  'SELECT json_agg(t.d) FROM (',
+  '  SELECT d.data::json AS d FROM execution_data d',
+  '  JOIN execution_entity e ON e.id = d.$$executionId$$',
+  '  WHERE e.$$startedAt$$ > NOW() - make_interval(days => 30)',
+  // 只拉真正含业务阶段的执行：120 条里仅 7 条有（其余是通道/触发器的轻量 run），
+  // 不筛的话 19.5MB 里 96% 是废数据，95 秒贴近超时上限（2026-09-08 实证）
+  // 用 chr() 拼中文字面量，避开 shell/psql 多层引号转义（LIKE 里不能用双引号）
+  '    AND position(chr(38454) || chr(27573) || chr(32) IN d.data) > 0',
+  '  ORDER BY d.$$executionId$$ DESC LIMIT 30',
+  ') t',
+].join(' ').replace(/[$][$]/g, String.fromCharCode(92, 34));  // $$ → \" （shell 内的转义双引号）
+
+export const N8N_STAGE_DATA_CMD =
+  'ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 ' +
+  `'docker exec zenithjoy-db-postgres psql -U n8n -d n8n -tAc "${N8N_STAGE_SQL}"'`;
+
+
+/**
+ * eval 分数入库通道（刀8-B 框架）。真机评测跑完后调它把分数落成新的一代，
+ * Notion 上自动出演进曲线。评测执行本身需真机（xian-m4/HONOR/抖音）+ 评测集，另行安排。
+ * 判据来自 09-05 A/B 实测方法：有 skill 臂 vs 无 skill 臂同题同模型对照。
+ */
+export function buildEvalRecord({ skill, withSkill, withoutSkill, total, suite, note } = {}) {
+  if (!skill) throw new Error('skill 必填');
+  if (!Number.isFinite(total) || total <= 0) throw new Error('total（评测题数）必填且为正');
+  if (!Number.isFinite(withSkill) || withSkill < 0) throw new Error('withSkill 必填');
+  if (withSkill > total) throw new Error(`withSkill(${withSkill}) 超过 total(${total})`);
+  if (withoutSkill != null && withoutSkill > total) throw new Error(`withoutSkill 超过 total`);
+  const pct = (n) => Math.round((n / total) * 100);
+  const score = pct(withSkill);
+  const baseline = withoutSkill == null ? null : pct(withoutSkill);
+  const raw = baseline == null
+    ? `${withSkill}/${total} (${score}%)${suite ? ` [${suite}]` : ''}`
+    : `with_skill ${withSkill}/${total} (${score}%) vs without_skill ${withoutSkill}/${total} (${baseline}%)${suite ? ` [${suite}]` : ''}`;
+  return {
+    skill_name: skill,
+    eval_score: score,
+    eval_baseline: baseline,
+    lift: baseline == null ? null : score - baseline,   // 提升幅度=这个 skill 到底值不值
+    eval_raw: raw,
+    suite: suite || null,
+    change_note: [suite ? `评测集 ${suite}` : null, note].filter(Boolean).join('；') || '评测入库',
+  };
+}
+
+
+/**
+ * 从 SKILL.md 判断有无探针（postcondition）。决策要求：无探针不许固化——
+ * 因为"碎了能当场发现"是固化三条件之一。只认**结构化声明**，
+ * 随口一句"记得验证"不算（那不是机器能检查的东西）。
+ */
+export function detectPostcondition(doc) {
+  const t = String(doc || '');
+  if (!t) return false;
+  const PATTERNS = [
+    /产出契约/,                       // 业务 skill 实际写法（含 metrics 必填 + 最小 evidence）
+    /postcondition/i,
+    /后置条件/,
+    /最小\s*evidence/i,              // "真实模式 completed 的最小 evidence"
+    /evidence\s*(必须|必填)/,
+  ];
+  return PATTERNS.some((re) => re.test(t));
+}
+
+export function parseGhaCron(out) {
+  const rows = [];
+  for (const line of String(out).split('\n')) {
+    const m = line.match(/\.github\/workflows\/([^:]+):\d+:.*cron:\s*'([^']+)'/);
+    if (!m) continue;
+    const repo = line.includes('/cecelia/') ? 'cecelia' : 'zenithjoy';
+    rows.push({ label: `${repo}/${m[1]}`, schedule_desc: `cron(UTC): ${m[2]}`, kind: 'gha_cron' });
+  }
+  return rows;
+}
+
+// OpenClaw 落点迁移史：hk-vps → us-vps(2026-09-12) → MMV(2026-09-20)。
+// 前两版都把落点写死在命令里（`ssh hk-vps ...` / `docker exec openclaw-gateway ...`），
+// 于是每迁一次这条腿就坏一次：上一版的注释原话是「旧 ssh hk-vps 版在迁移后必然
+// No such container，腿常年 unreachable」—— 0920 迁 MMV 后同一句话又应验了一遍。
+//
+// 这一版改走 **ssh 别名 mmv**：落点变了只需改 us-vps 的 ~/.ssh/config，不必改代码。
+// （2026-09-21 实证：那条别名原先指向过期 IP 100.108.7.63，已修为 100.71.151.105。）
+// 命令仍经 buildHostCmd 逃出容器到 us-vps 宿主，再由宿主 ssh 到 MMV。
+const MMV_SSH = 'ssh -o BatchMode=yes -o ConnectTimeout=20 mmv';
+// 读 OpenClaw 真在用的 openclaw.json；clawdbot.json 自 09-21 起不再更新，新建的 agent 全不在里面（任务 7951bd36）
+export const OPENCLAW_CONFIG_CMD = `${MMV_SSH} 'cat ~/.openclaw/openclaw.json'`;
+export const OPENCLAW_CRON_CMD = `${MMV_SSH} '/opt/homebrew/bin/openclaw cron list --all --json'`;
+
+/**
+ * `openclaw cron list --all --json` → ops_schedule_entries 行。
+ *
+ * 为什么要收：41 条 OpenClaw cron（含 18 条业务）此前从不进台账，Notion 上零留痕
+ * —— 团队要能调用 OpenClaw 的全部任务，前提是先看得见。
+ *
+ * 禁用的活也收（标 last_state=disabled）：看不见的禁用等于悄悄少干活。
+ * 0 条视为可疑直接抛错，不当真空——否则一次取数失败就会把整份台账标成 inactive
+ * （同 launchd 腿「0=可疑，禁当真空」的处置）。
+ */
+export function parseOpenclawCrons(raw) {
+  let doc;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    throw new Error(`parse_error: openclaw cron list 非法 JSON（前100字符: ${String(raw).slice(0, 100)}）`);
+  }
+  const jobs = Array.isArray(doc?.jobs) ? doc.jobs : [];
+  if (jobs.length === 0) {
+    throw new Error('parse_error: openclaw cron list 解析出 0 条（0=可疑，禁当真空把台账清空）');
+  }
+  return jobs.map((j) => {
+    const sch = j?.schedule ?? {};
+    const kind = String(sch.kind ?? 'unknown');
+    let desc;
+    if (kind === 'cron') {
+      desc = `cron(${sch.tz || 'UTC'}): ${sch.expr ?? ''}`.trim();
+    } else if (kind === 'every') {
+      // 锚点是注册时刻，不是整点——写“约每 N 秒”，禁假精确（同 launchd_interval 的处置）
+      desc = `约每 ${Math.round(Number(sch.everyMs ?? 0) / 1000)} 秒`;
+    } else {
+      desc = JSON.stringify(sch);
+    }
+    const next = j?.state?.nextRunAtMs ?? j?.nextRunAtMs ?? null;
+    const lastRunMs = Number(j?.state?.lastRunAtMs ?? j?.lastRunAtMs ?? 0);
+    const lastRunAt = Number.isFinite(lastRunMs) && lastRunMs > 0 ? new Date(lastRunMs).toISOString() : null;
+    const lastState = j?.enabled === false
+      ? 'disabled'
+      : (j?.lastRunStatus ?? j?.status ?? null);
+    return {
+      label: String(j?.name || j?.id || '(未命名)'),
+      kind: `openclaw_${kind}`,
+      schedule_desc: desc,
+      next_run_utc: Number.isFinite(Number(next)) && next ? new Date(Number(next)).toISOString() : null,
+      last_state: lastState,
+      last_exit_code: null,
+      interval_sec: kind === 'every' && Number(sch.everyMs) > 0 ? Math.round(Number(sch.everyMs) / 1000) : null,
+      last_run_at: lastRunAt,
+      last_success_at: lastState === 'ok' ? lastRunAt : null,
+    };
+  });
+}
+
+export const PLIST_DUMP_CMD =
+  'for f in /Library/LaunchDaemons/*.plist; do echo "== $f"; /usr/bin/plutil -convert json -o - "$f" 2>/dev/null; echo ""; done';
+
+// ─── n8n workflow（真业务流程，非"谁召唤谁"）───────────────────────────
+// 实证：AwrSocialLeadgenV4「Social Leadgen V4」8 阶段(手机预检/视频发现/全文判定/评论采集/
+// 线索评分/去重配送…)，每阶段经 OpcCmdStageCallV4 通道单点调 agentId=work-commander。
+// 故 agent 归属必须走**传递闭包**（主流程自身不含 agentId，只有子流程有）。
+
+/** 只数「阶段 X」节点——裁决/入口/准备节点不算业务阶段 */
+export function countStages(nodes = []) {
+  return (nodes || []).filter((n) => String(n?.name || '').startsWith('阶段')).length;
+}
+
+export function parseN8nWorkflows(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((w) => {
+    const nodes = w?.nodes || [];
+    return {
+      wf_id: String(w?.id || ''),
+      name: String(w?.name || ''),
+      active: w?.active === true,
+      node_count: nodes.length,
+      stage_count: countStages(nodes),
+      meta: {
+        stages: buildStageFlow(w),   // 按真实连线的执行序，非画布摆放序
+        // 画布骨架（仅节点名/类型+连线，无参数/凭据）——供 Notion 页画流程图
+        canvas: {
+          nodes: nodes.map((n) => ({ name: n?.name, type: n?.type })),
+          connections: w?.connections || {},
+        },
+      },
+    };
+  }).filter((r) => r.wf_id);
+}
+
+/** 一个画布调用的子流程 id（executeWorkflow 节点，workflowId 可能是字符串或 {value}） */
+function subWorkflowIds(w) {
+  const out = new Set();
+  for (const n of w?.nodes || []) {
+    if (!String(n?.type || '').includes('executeWorkflow')) continue;
+    let wid = n?.parameters?.workflowId;
+    if (wid && typeof wid === 'object') wid = wid.value || wid.cachedResultName;
+    if (typeof wid === 'string' && wid) out.add(wid);
+  }
+  return out;
+}
+
+/**
+ * 传递闭包解析一条流程真正用到的 agent：自身 agentId 引用 ∪ 所有子流程的（递归）。
+ * seen 防循环调用死循环。
+ */
+export function resolveWorkflowAgents(wfId, allWorkflows, seen = new Set()) {
+  if (!wfId || seen.has(wfId)) return [];
+  seen.add(wfId);
+  const w = (allWorkflows || []).find((x) => x?.id === wfId);
+  if (!w) return [];
+  // 真实格式（实证 OpcCmdStageCallV4）：agent 走 HTTP 头 x-openclaw-agent-id，
+  // 形如 {"name":"x-openclaw-agent-id","value":"work-commander"}；也兼容 JSON 字段 agentId 写法。
+  // 序列化后字符串参数内的引号会被转义，故正则容忍反斜杠。
+  const raw = JSON.stringify(w);
+  const found = new Set([
+    ...[...raw.matchAll(/x-openclaw-agent-id\\?["'],?\s*\\?["']?value\\?["']?\s*:\s*\\?["']([a-z0-9-]{3,40})/gi)].map((m) => m[1]),
+    ...[...raw.matchAll(/agentId\\?["']\s*:\s*\\?["']([a-z0-9-]{3,40})/gi)].map((m) => m[1]),
+  ]);
+  for (const sub of subWorkflowIds(w)) {
+    for (const a of resolveWorkflowAgents(sub, allWorkflows, seen)) found.add(a);
+  }
+  return [...found].sort();
+}
+
+// ─── 流程图（Notion 页正文画出每条 workflow 长什么样）──────────────────
+const stageName = (n) => String(n || '').replace(/^阶段\s*/, '');
+const isStage = (n) => String(n || '').startsWith('阶段');
+
+/** 按真实连线走出业务阶段顺序（不靠 nodes 数组顺序，那是画布摆放次序不是执行序） */
+export function buildStageFlow(w) {
+  const nodes = w?.nodes || [];
+  const conn = w?.connections || {};
+  const stages = nodes.filter((n) => isStage(n?.name)).map((n) => n.name);
+  if (!stages.length) return [];
+  if (!Object.keys(conn).length) return stages.map(stageName);
+
+  // 从入口出发走连线，记录遇到的阶段顺序；防环
+  const entry = nodes.find((n) => String(n?.type || '').includes('webhook'))?.name
+    || Object.keys(conn)[0];
+  const order = [];
+  const seen = new Set();
+  const walk = (name) => {
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    if (isStage(name) && !order.includes(name)) order.push(name);
+    for (const out of conn[name]?.main || []) {
+      for (const t of out || []) walk(t?.node);
+    }
+  };
+  walk(entry);
+  // 连线走不到的阶段（孤立分支）补在后面，不丢
+  for (const s of stages) if (!order.includes(s)) order.push(s);
+  return order.map(stageName);
+}
+
+/** 画成 mermaid flowchart。无业务阶段的流程返回 null（不画空图）。 */
+export function buildWorkflowMermaid(w) {
+  const flow = buildStageFlow(w);
+  if (!flow.length) return null;
+  const lines = ['flowchart TD'];
+  const id = (i) => `S${i + 1}`;
+  flow.forEach((s, i) => {
+    lines.push(`  ${id(i)}["${i + 1}. ${s}"]`);
+  });
+  for (let i = 0; i < flow.length - 1; i++) {
+    lines.push(`  ${id(i)}["${i + 1}. ${flow[i]}"] --> ${id(i + 1)}["${i + 2}. ${flow[i + 1]}"]`);
+  }
+  // 裁决可中止：每阶段后若有 switch 分支到归档，标一条中止出口
+  const hasAbort = (w?.nodes || []).some((n) => String(n?.name || '').includes('中止'));
+  if (hasAbort) {
+    lines.push('  ABORT["⛔ 中止归档"]');
+    flow.forEach((s, i) => lines.push(`  ${id(i)} -.裁决不通过.-> ABORT`));
+  }
+  return lines.join('\n');
+}
+
+/** Notion 页正文 blocks：流程图 + 阶段清单 + 节点构成说明 */
+export function buildWorkflowPageBlocks(w, row = {}) {
+  const blocks = [];
+  const para = (t) => ({ object: 'block', type: 'paragraph',
+    paragraph: { rich_text: [{ type: 'text', text: { content: String(t).slice(0, 1800) } }] } });
+  const head = (t) => ({ object: 'block', type: 'heading_3',
+    heading_3: { rich_text: [{ type: 'text', text: { content: t } }] } });
+
+  const mermaid = buildWorkflowMermaid(w);
+  if (mermaid) {
+    blocks.push(head('流程图'));
+    blocks.push({ object: 'block', type: 'code',
+      code: { language: 'mermaid', rich_text: [{ type: 'text', text: { content: mermaid.slice(0, 1900) } }] } });
+    blocks.push(head('业务阶段'));
+    buildStageFlow(w).forEach((s) => blocks.push({
+      object: 'block', type: 'numbered_list_item',
+      numbered_list_item: { rich_text: [{ type: 'text', text: { content: s } }] },
+    }));
+  }
+  blocks.push(head('画布构成'));
+  const types = {};
+  for (const n of w?.nodes || []) {
+    const t = String(n?.type || '').split('.').pop();
+    types[t] = (types[t] || 0) + 1;
+  }
+  const detail = Object.entries(types).map(([t, c]) => `${t}×${c}`).join('、');
+  blocks.push(para(
+    `共 ${row.node_count ?? (w?.nodes || []).length} 个节点，其中业务阶段 ${row.stage_count ?? 0} 个。` +
+    `\n节点构成：${detail || '无'}` +
+    `\n（Nodes=画布全部节点，含入口/准备/裁决/告警等技术脚手架；Stages=真正的业务阶段）`));
+  const agents = row.uses_agents || [];
+  if (agents.length) blocks.push(para(`执行 agent：${agents.join('、')}`));
+  return blocks;
+}
+
+export const N8N_LIST_CMD =
+  "ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 " +
+  "'docker exec n8n sh -c \"n8n export:workflow --all --output=/tmp/ops-all.json >/dev/null 2>&1; cat /tmp/ops-all.json\"'";
+
+/**
+ * us-vps 宿主 crontab -> ops_schedule_entries 行（排程台账第四来源）。
+ *
+ * 为什么要收：台账已有 gha/github、openclaw/mmv、launchd/local 三家，唯独宿主
+ * crontab 的 19 条业务活（Notion 派单轮询、opc-* 五个 Notion 同步、磁盘/网关守卫、
+ * 库备份）完全不在里面，Notion 上零留痕。看不见的活没法被团队调度。
+ *
+ * 真表（2026-09-21）里有三类行，必须分清：
+ *  1. 活的                 -> 收，last_state=null（crontab 不记运行历史）
+ *  2. 被注释掉的活         -> 收，last_state='disabled'
+ *     形如 `#[retired-0921] 45 20 * * * docker restart ...`。沿用 openclaw 腿的原则：
+ *     看不见的禁用等于悄悄少干活。判据是「剥掉 # 和 [标记] 之后仍是合法排期开头」，
+ *     而不是看有没有 # —— 否则纯说明注释会被当成活收进来。
+ *  3. 纯说明注释           -> 跳过
+ *
+ * label 是 (source, host_alias, label) 唯一键的一部分，必须稳定且互不相同：
+ * 优先取行尾的 `# 名字`（人给的名字比推断的好）；没有就用
+ * `<命令里第一个脚本的 basename> @ <排期>` —— 带上排期是因为同一个脚本常配多条
+ * 不同排期（opc-kr-current.py 就有三条），只用 basename 会互相覆盖只剩一条。
+ *
+ * next_run_utc 一律 null：算 cron 下次运行要完整实现 cron 语义（列表/步长/星期与
+ * 日期的或关系/DST），算错比不算更坏。同 parseGhaCron 的口径——禁假精确。
+ */
+const CRON_FIELD = String.raw`[0-9*,\-/]+`;
+const CRON_EXPR_RE = new RegExp(`^(${CRON_FIELD}(?:\\s+${CRON_FIELD}){4})\\s+(.*)$`);
+const CRON_MACRO_RE = /^(@(?:reboot|yearly|annually|monthly|weekly|daily|midnight|hourly))\s+(.*)$/;
+/** 被注释掉的活：`#` + 可选 `[任意标记]` + 空白，剥掉后再按正常行判。 */
+const DISABLED_PREFIX_RE = /^#\s*(?:\[[^\]]*\]\s*)?/;
+
+function splitCronLine(line) {
+  const macro = line.match(CRON_MACRO_RE);
+  if (macro) return { schedule: macro[1], command: macro[2] };
+  const m = line.match(CRON_EXPR_RE);
+  if (!m) return null;
+  return { schedule: m[1], command: m[2] };
+}
+
+/** 从命令里挑一个能当名字的脚本 basename；挑不出就用命令首词。 */
+function inferCronLabelBase(command) {
+  const script = command.match(/([\w.-]+\.(?:sh|py|mjs|js|ts))\b/);
+  if (script) return script[1];
+  const words = command.trim().split(/\s+/);
+  const firstReal = words.find((w) => !/^[A-Z_]+=/.test(w) && w !== 'cd' && w !== 'set') || words[0] || 'job';
+  return firstReal.split('/').pop();
+}
+
+export function parseCrontab(out) {
+  const rows = [];
+  const seen = new Set();
+  for (const raw of String(out).split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+
+    let disabled = false;
+    let body = line;
+    if (line.startsWith('#')) {
+      body = line.replace(DISABLED_PREFIX_RE, '').trim();
+      // 剥掉 # 后仍是合法排期才算"被注释掉的活"；否则就是人写的说明。
+      if (!splitCronLine(body)) continue;
+      disabled = true;
+    }
+    // VAR=value 环境行不是活
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(body)) continue;
+
+    const parsed = splitCronLine(body);
+    if (!parsed) continue;
+
+    // 行尾 `# 名字`：只认注释里没有空白分隔的单个 token，避免把中文说明当名字
+    const tail = parsed.command.match(/#\s*([\w.-]+)\s*$/);
+    let label = tail ? tail[1] : `${inferCronLabelBase(parsed.command)} @ ${parsed.schedule}`;
+    // 极端情况下仍可能撞名（同名 tail 注释），加序号保证唯一——撞名会静默互相覆盖。
+    if (seen.has(label)) {
+      let n = 2;
+      while (seen.has(`${label} #${n}`)) n += 1;
+      label = `${label} #${n}`;
+    }
+    seen.add(label);
+
+    rows.push({
+      label,
+      kind: 'crontab',
+      schedule_desc: `cron(UTC): ${parsed.schedule}`,
+      next_run_utc: null,
+      last_state: disabled ? 'disabled' : null,
+    });
+  }
+  if (rows.length === 0) {
+    throw new Error('parse_error: crontab 解析出 0 条（0=可疑，禁当真空；空表会把整份台账标 inactive）');
+  }
+  return rows;
+}
+
+/**
+ * 取数命令自带落点证明：先 `hostname` 再 `crontab -l`。
+ *
+ * 0921 上产即错：我按「buildHostCmd 逃出容器就是到 us-vps 宿主」写了腿4，
+ * 而 `CECELIA_HOST_EXEC_SSH` 生产值是 `administrator@100.71.151.105` —— **MMV**。
+ * 结果采到 MMV 的 crontab（janitor.sh / rescan-if-changed.sh / refresh-claude-tokens.sh）
+ * 却标成 host_alias='us-vps'，真正缺的 us-vps 那 22 条一条没采到。
+ * 台账"有数据"但数据是错机器的，比没数据更坏——它看起来是好的。
+ *
+ * 落点假设不能写在注释里靠人记。每轮自己验：hostname 对不上就抛错。
+ */
+const HOSTNAME_PROBE = 'hostname; crontab -l';
+
+/** MMV：走 buildHostCmd 的默认逃逸（CECELIA_HOST_EXEC_SSH 就指向它）。 */
+export const CRONTAB_CMD_MMV = HOSTNAME_PROBE;
+
+/**
+ * us-vps：Brain 容器跑在 us-vps 上，但 host-exec 的逃逸目标是 MMV，
+ * 所以必须显式 ssh 回本机宿主。172.17.0.1 是 docker 默认网关 = 宿主，
+ * 不依赖 tailscale 也不依赖 host.docker.internal（Linux 上后者不解析，
+ * 生产日志里一直在报 `Could not resolve hostname host.docker.internal`）。
+ */
+export const CRONTAB_CMD_USVPS =
+  'ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=no '
+  + `-o UserKnownHostsFile=/dev/null root@172.17.0.1 '${HOSTNAME_PROBE}'`;
+
+/** 各腿期望的 hostname 特征。对不上即抛——宁可缺数据，不要错机器的数据。 */
+export const CRONTAB_HOST_EXPECT = Object.freeze({
+  'us-vps': /^ubuntu-s-/,
+  mmv: /macminivault|^aad\d/,
+});
+
+/**
+ * 带落点自证的 crontab 解析：首行必须是 hostname 且匹配 expect。
+ *
+ * @param {string} out  `hostname; crontab -l` 的完整输出
+ * @param {RegExp} expect 该腿期望的 hostname 特征
+ */
+export function parseCrontabWithHost(out, expect) {
+  const lines = String(out).split('\n');
+  const host = (lines[0] || '').trim();
+  if (!host || !expect.test(host)) {
+    throw new Error(
+      `parse_error: 落点不符 —— 期望 hostname 匹配 ${expect}，实得 ${JSON.stringify(host)}。`
+      + '（采到了别的机器的 crontab；宁可缺数据也不入错机器的数据）'
+    );
+  }
+  return parseCrontab(lines.slice(1).join('\n'));
+}
+
+
+
+export const GHA_CRON_CMD =
+  "grep -RnoE \"cron: *'[^']+'\" /Users/administrator/perfect21/cecelia/.github/workflows /Users/administrator/perfect21/zenithjoy-workspace/.github/workflows 2>/dev/null || true";
+
+let lastRunAt = 0;
+export function __resetOpsCollectorForTest() { lastRunAt = 0; }
+
+export async function writeHeartbeat(pool, source, host, status, reasonCode, lastError, collectedAt) {
+  await pool.query(
+    `INSERT INTO ops_source_heartbeats (source, host_alias, last_report_at, last_collected_at, source_status, reason_code, last_error, updated_at)
+     VALUES ($1,$2,NOW(),$3,$4,$5,$6,NOW())
+     ON CONFLICT (source, host_alias) DO UPDATE SET
+       last_report_at=NOW(), source_status=$4, reason_code=$5, last_error=$6, updated_at=NOW(),
+       last_collected_at=COALESCE($3, ops_source_heartbeats.last_collected_at)`,
+    [source, host, collectedAt || null, status, reasonCode, lastError ? String(lastError).slice(0, 500) : null]
+  );
+}
+
+async function writeAgentsSnapshot(pool, source, host, agents, collectedAt) {
+  for (const a of agents) {
+    await pool.query(
+      `INSERT INTO ops_agents (source, host_alias, name, agent_type, status, last_seen_at, meta, updated_at)
+       VALUES ($1,$2,$3,$4,'active',$5,$6,NOW())
+       ON CONFLICT (source, host_alias, name) DO UPDATE SET
+         agent_type=EXCLUDED.agent_type, status='active', last_seen_at=EXCLUDED.last_seen_at,
+         meta=EXCLUDED.meta, updated_at=NOW()`,
+      [source, host, a.name, a.agent_type || null, collectedAt, JSON.stringify(a.meta || {})]
+    );
+  }
+  // 快照缺席 → offline（不删行，保 notion_id 与历史）
+  await pool.query(
+    `UPDATE ops_agents SET status='offline', updated_at=NOW()
+     WHERE source=$1 AND host_alias=$2 AND status='active' AND last_seen_at < $3`,
+    [source, host, collectedAt]
+  );
+}
+
+async function writeSchedulesSnapshot(pool, source, host, entries, collectedAt) {
+  for (const s of entries) {
+    await pool.query(
+      // updated_at 显式写 collectedAt（应用时钟），与下方 deactivation 阈值同源——
+      // 若用 NOW()（DB 时钟）而 DB 时钟落后于应用时钟，本轮刚写的行会 updated_at < collectedAt 被误标 active=FALSE 闪断。
+      // 闹钟总账（517，任务 fe10d1a0）：机器列随快照一起写；SET 里只有机器列——
+      // owner_manual/note_manual/tree_bucket_manual 与挂树列（journey_id/workflow_id/ledger_status/registered_via）
+      // 是人或导入脚本的结论，机器每 5 分钟覆盖会冲掉。前 9 个参数位置不动（测试按下标断言），新列只追加在后。
+      `INSERT INTO ops_schedule_entries (source, host_alias, label, kind, schedule_desc, next_run_utc, last_state, last_exit_code, active, updated_at,
+          interval_sec, enabled, last_run_at, last_success_at, last_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10,$11,$12,$13,$14)
+       ON CONFLICT (source, host_alias, label) DO UPDATE SET
+         kind=EXCLUDED.kind, schedule_desc=EXCLUDED.schedule_desc, next_run_utc=EXCLUDED.next_run_utc,
+         last_state=EXCLUDED.last_state, last_exit_code=EXCLUDED.last_exit_code, active=TRUE, updated_at=$9,
+         interval_sec=EXCLUDED.interval_sec, enabled=EXCLUDED.enabled,
+         last_run_at=COALESCE(EXCLUDED.last_run_at, ops_schedule_entries.last_run_at),
+         last_success_at=COALESCE(EXCLUDED.last_success_at, ops_schedule_entries.last_success_at),
+         last_status=EXCLUDED.last_status`,
+      [source, host, s.label, s.kind, s.schedule_desc || '', s.next_run_utc || null, s.last_state || null, s.last_exit_code ?? null, collectedAt,
+        s.interval_sec ?? null, s.last_state !== 'disabled', s.last_run_at ?? null, s.last_success_at ?? null,
+        statusFromCollectorState(s.last_state, s.last_exit_code)]
+    );
+  }
+  if (entries.length) {
+    await pool.query(
+      `UPDATE ops_schedule_entries SET active=FALSE, updated_at=$3
+       WHERE source=$1 AND host_alias=$2 AND active=TRUE AND updated_at < $3`,
+      [source, host, collectedAt]
+    );
+  }
+}
+
+export function classifyError(e) {
+  const msg = String(e?.message || '');
+  if (/timed? ?out|connect|unreachable|Connection refused|ETIMEDOUT/i.test(msg)) return ['unreachable', 'ssh_or_exec_failed'];
+  if (/schema_drift/.test(msg)) return ['schema_drift', 'schema_drift'];
+  if (/No such file|not found|config_missing/i.test(msg)) return ['config_missing', 'config_missing'];
+  return ['parse_error', 'parse_error'];
+}
+
+/** scheduler-jobs handler（needsPool:true）。opts 仅供测试注入。 */
+export async function runOpsCollector(pool, opts = {}) {
+  const now = opts.now ?? Date.now();
+  if (now - lastRunAt < INTERVAL_MS) return { skipped: true };
+  lastRunAt = now;
+  const exec = opts.exec || defaultExec;
+  const inContainer = opts.inContainer ?? existsSync('/.dockerenv');
+  const run = (cmd) => exec(buildHostCmd(cmd, inContainer, opts.keyExistsFn));
+  const collectedAt = new Date(now).toISOString();
+  const results = {};
+
+  // —— 腿1: launchd@local ——（只认已加载；0行=可疑判失败）
+  try {
+    const list = parseLaunchctlList(run('launchctl list'));
+    if (list.length === 0) throw new Error('parse_error: launchctl list 解析出 0 行自家任务（0=可疑，禁当真空）');
+    let hostTz = 'America/Los_Angeles';
+    try { hostTz = String(run('readlink /etc/localtime')).split('zoneinfo/')[1]?.trim() || hostTz; } catch { /* 展示级信息，失败用默认 */ }
+    const { plists } = parsePlistDump(run(PLIST_DUMP_CMD));
+    const agents = list.map((l) => ({
+      name: l.label, agent_type: 'launchd_job',
+      meta: { pid: l.pid, last_exit_code: l.lastExitCode },
+    }));
+    const schedules = [];
+    for (const l of list) {
+      const p = plists.get(l.label);
+      if (!p) continue;
+      const lastState = l.pid ? 'running' : (l.lastExitCode === 0 ? 'ok' : `exit ${l.lastExitCode}`);
+      if (p.StartCalendarInterval) {
+        schedules.push({
+          label: l.label, kind: 'launchd_calendar',
+          schedule_desc: `calendar(${hostTz}): ${JSON.stringify(p.StartCalendarInterval)}`,
+          next_run_utc: computeNextRunUTC(p.StartCalendarInterval, new Date(now), hostTz),
+          last_state: lastState, last_exit_code: l.lastExitCode,
+        });
+      } else if (p.StartInterval) {
+        schedules.push({
+          label: l.label, kind: 'launchd_interval',
+          schedule_desc: `约每 ${p.StartInterval} 秒`, // 锚点=加载时刻，禁假精确
+          next_run_utc: null, last_state: lastState, last_exit_code: l.lastExitCode,
+          interval_sec: Number(p.StartInterval) > 0 ? Number(p.StartInterval) : null,
+        });
+      }
+    }
+    await writeAgentsSnapshot(pool, 'launchd', 'local', agents, collectedAt);
+    await writeSchedulesSnapshot(pool, 'launchd', 'local', schedules, collectedAt);
+    await writeHeartbeat(pool, 'launchd', 'local', 'ok', null, null, collectedAt);
+    results.launchd = { ok: true, agents: agents.length, schedules: schedules.length };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'launchd', 'local', status, code, e.message);
+    results.launchd = { ok: false };
+  }
+
+  // —— 腿2: openclaw@mmv ——（解析失败整份丢弃，沿用上轮+stale）
+  // 0921 起落点是 MMV，经 host 逃逸 + ssh 别名 mmv 取数（见 OPENCLAW_CONFIG_CMD 注释）。
+  try {
+    const raw = run(OPENCLAW_CONFIG_CMD);
+    let cfg;
+    try { cfg = JSON.parse(raw); } catch { throw new Error(`parse_error: clawdbot.json 非法 JSON（前100字符: ${String(raw).slice(0, 100)}）`); }
+    const agents = extractOpenclawAgents(cfg);
+    await writeAgentsSnapshot(pool, 'openclaw', 'mmv', agents, collectedAt);
+
+    // cron 台账（0921 新增）：41 条 OpenClaw cron 此前从不进台账、Notion 零留痕。
+    // 与 agents 同一条腿但独立 try —— cron 取数失败不该把 agents/skills 一起拖废。
+    try {
+      const crons = parseOpenclawCrons(run(OPENCLAW_CRON_CMD));
+      await writeSchedulesSnapshot(pool, 'openclaw', 'mmv', crons, collectedAt);
+      results.openclaw_crons = { ok: true, schedules: crons.length };
+    } catch (ce) {
+      results.openclaw_crons = { ok: false, error: String(ce.message).slice(0, 160) };
+    }
+    // skill 投影（最小执行单元，与 agent 多对多）
+    // 双写消除（刀7）：真相源是 ops_agents.meta.skills（直接来自 clawdbot.json 的 agent 定义）；
+    // ops_skills.used_by 是它的**派生反向索引**，每轮由 extractOpenclawSkills 从同一份 cfg 现算，
+    // 不接受任何其他写入方——避免两处各写一份而分叉。
+    const skills = extractOpenclawSkills(cfg);
+    // eval 分数来自 skill_registry.metadata.eval_score（180 个 skill 中 14 个有真分数；
+    // skill_evals 表 19 条全是 e2e 测试垃圾，不可用）
+    const evalRows = (await pool.query(
+      `SELECT name, metadata->>'eval_score' AS es FROM skill_registry WHERE metadata->>'eval_score' IS NOT NULL`)).rows;
+    const evalByName = new Map(evalRows.map((r) => [String(r.name).replace(/^\//, ''), r.es]));
+    for (const sk of skills) {
+      const ev = parseEvalScore(evalByName.get(sk.name));
+      // 用上刀8-A 归因出的真实运行数据（上一轮写入），使档位可自动判定
+      const { rows: [prev] } = await pool.query(
+        `SELECT runs, run_success_rate, doc_excerpt FROM ops_skills WHERE source='openclaw' AND name=$1`,
+        [sk.name]);
+      // 探针从 SKILL.md 正文现判（doc_excerpt 由 SKILL.md 采集写入）
+      const hasProbe = prev?.doc_excerpt ? detectPostcondition(prev.doc_excerpt) : null;
+      const st = inferDiscoStage({
+        name: sk.name,
+        runs: prev?.runs ?? null,
+        successRate: prev?.run_success_rate ?? null,
+        hasPostcondition: hasProbe,
+      });
+      const { rows: [row] } = await pool.query(
+        `INSERT INTO ops_skills (source, name, used_by, eval_score, eval_baseline, eval_raw,
+                                 disco_stage, stage_reason, stage_confident, has_postcondition, updated_at)
+         VALUES ('openclaw',$1,$2,$3,$4,$5,$6,$7,$8,$10,$9)
+         ON CONFLICT (source, name) DO UPDATE SET
+           used_by=EXCLUDED.used_by, eval_score=EXCLUDED.eval_score,
+           eval_baseline=EXCLUDED.eval_baseline, eval_raw=EXCLUDED.eval_raw,
+           disco_stage=EXCLUDED.disco_stage, stage_reason=EXCLUDED.stage_reason,
+           stage_confident=EXCLUDED.stage_confident,
+           has_postcondition=EXCLUDED.has_postcondition, updated_at=EXCLUDED.updated_at
+         RETURNING id, generation`,
+        [sk.name, JSON.stringify(sk.used_by), ev.score, ev.baseline, ev.raw || null,
+         st.stage, st.reason, st.confident, collectedAt, hasProbe]);
+      // 版本历史：只在**分数或档位真变了**时追加一代，避免每 5 分钟灌一行流水
+      if (row) await recordSkillVersionIfChanged(pool, row, sk.name, ev, st);
+    }
+    await writeHeartbeat(pool, 'openclaw', 'mmv', 'ok', null, null, collectedAt);
+    results.openclaw = { ok: true, agents: agents.length, skills: skills.length };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'openclaw', 'mmv', status, code, e.message);
+    results.openclaw = { ok: false };
+  }
+
+  // —— 腿3: gha@github（静态解析宿主 checkout，失败不阻塞）——
+  try {
+    const entries = parseGhaCron(run(GHA_CRON_CMD));
+    await writeSchedulesSnapshot(pool, 'gha', 'github', entries, collectedAt);
+    await writeHeartbeat(pool, 'gha', 'github', 'ok', null, null, collectedAt);
+    results.gha = { ok: true, schedules: entries.length };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'gha', 'github', status, code, e.message);
+    results.gha = { ok: false };
+  }
+
+  // —— 腿4a: crontab@mmv ——（buildHostCmd 的逃逸目标就是 MMV，见 CRONTAB_CMD_MMV 注释）
+  try {
+    const entries = parseCrontabWithHost(run(CRONTAB_CMD_MMV), CRONTAB_HOST_EXPECT.mmv);
+    await writeSchedulesSnapshot(pool, 'crontab', 'mmv', entries, collectedAt);
+    await writeHeartbeat(pool, 'crontab', 'mmv', 'ok', null, null, collectedAt);
+    results.crontab_mmv = { ok: true, schedules: entries.length };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'crontab', 'mmv', status, code, e.message);
+    results.crontab_mmv = { ok: false };
+  }
+
+  // —— 腿4b: crontab@us-vps ——（显式 ssh 回本机宿主；host-exec 的默认逃逸到不了这里）
+  // 这才是本次要补的缺口：22 条活（Notion 派单轮询、opc-* 五个同步、守卫、备份）零留痕。
+  // 两腿都用 parseCrontabWithHost 自证落点：采到别的机器立刻抛错，不入错机器的数据。
+  try {
+    // 这里**故意不用 run()**：run 会再包一层 buildHostCmd，把命令套进
+    // ssh→MMV，于是变成 ssh→MMV→ssh 172.17.0.1，而 MMV 的 docker 网关不是
+    // us-vps（0921 实证：心跳 unreachable）。本腿自己就是完整的 ssh 命令，
+    // 容器直接能到 172.17.0.1，不需要也不能再逃一次。
+    const entries = parseCrontabWithHost(exec(CRONTAB_CMD_USVPS), CRONTAB_HOST_EXPECT['us-vps']);
+    await writeSchedulesSnapshot(pool, 'crontab', 'us-vps', entries, collectedAt);
+    await writeHeartbeat(pool, 'crontab', 'us-vps', 'ok', null, null, collectedAt);
+    results.crontab_usvps = { ok: true, schedules: entries.length };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'crontab', 'us-vps', status, code, e.message);
+    results.crontab_usvps = { ok: false };
+  }
+
+  // —— 腿5: n8n run 执行历史@hk-vps（每次跑的记录 + 流程健康汇总）——
+  try {
+    const rawRuns = run(N8N_RUNS_CMD);
+    let runList;
+    try { runList = JSON.parse(rawRuns || '[]'); } catch { throw new Error(`parse_error: n8n run 导出非法 JSON（前100字符: ${String(rawRuns).slice(0, 100)}）`); }
+    const runs = parseN8nRuns(runList, 'hk-vps');
+    if (runs.length === 0) throw new Error('parse_error: n8n 执行历史解析出 0 条（0=可疑，禁当真空）');
+    for (const r of runs) {
+      await pool.query(
+        `INSERT INTO ops_runs (source, run_id, wf_id, status, mode, machine, started_at, stopped_at, duration_sec)
+         VALUES ('n8n',$1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (source, run_id) DO UPDATE SET
+           status=EXCLUDED.status, stopped_at=EXCLUDED.stopped_at, duration_sec=EXCLUDED.duration_sec`,
+        [r.run_id, r.wf_id, r.status, r.mode, r.machine, r.started_at, r.stopped_at, r.duration_sec]);
+    }
+    // 回填每条流程的健康汇总 + 机器
+    const byWf = new Map();
+    for (const r of runs) {
+      if (!byWf.has(r.wf_id)) byWf.set(r.wf_id, []);
+      byWf.get(r.wf_id).push(r);
+    }
+    for (const [wfId, list] of byWf) {
+      const s = summarizeRuns(list);
+      // 活性判定：这条流程还会不会跑（按它自己的历史节奏，不是一刀切阈值）。
+      // 只写机器列，人工列（owner/note/priority/starred/enable_intent）不在 SET 里，
+      // 采集永远不会冲掉主理人在 Notion 上填的东西。
+      const lv = summarizeLiveness(list, Date.now());
+      await pool.query(
+        `UPDATE ops_workflows SET machine='hk-vps', run_total=$1, run_success_rate=$2,
+           run_avg_sec=$3, last_run_at=$4, last_run_status=$5,
+           baseline_interval_sec=$6, liveness=$7, silent_sec=$8,
+           warn_after_sec=$9, dead_after_sec=$10, liveness_at=NOW(), updated_at=NOW()
+         WHERE source='n8n' AND wf_id=$11`,
+        [s.total, s.success_rate, s.avg_duration_sec, s.last_run_at, s.last_status,
+         lv.baseline_interval_sec, lv.liveness, lv.silent_sec,
+         lv.warn_after_sec, lv.dead_after_sec, wfId]);
+    }
+    // 阶段级归因（刀8-A）：逐 skill 的真实运行次数/成功率/耗时。
+    // 失败不影响 run 记录本身——归因是增益不是前提。
+    try {
+      // 阶段数据体积大（~80KB/条），单独放宽超时——默认 20s 拉 120 条必 ETIMEDOUT
+      // （2026-09-08 生产实证：拉 300 条 ≈24MB 超时，归因整段跳过）
+      const rawStages = exec(buildHostCmd(N8N_STAGE_DATA_CMD, inContainer, opts.keyExistsFn), { timeoutMs: 120_000 });
+      const execList = JSON.parse(rawStages || '[]') || [];
+      const parsed = execList.map((x) => parseN8nExecutionStages(x));
+      const stats = aggregateStageStats(parsed, STAGE_TO_SKILL);
+      for (const [skillName, st] of stats) {
+        await pool.query(
+          `UPDATE ops_skills SET runs=$1, run_success=$2, run_success_rate=$3,
+             run_avg_sec=$4, run_stats_at=$5, updated_at=NOW()
+           WHERE source='openclaw' AND name=$6`,
+          [st.runs, st.success, st.success_rate, st.avg_sec, collectedAt, skillName]);
+      }
+      results.stage_attribution = { ok: true, skills: stats.size, executions: parsed.length };
+    } catch (e) {
+      console.warn('[ops-collector] 阶段归因失败（不影响 run 记录）:', e.message?.slice(0, 160));
+      results.stage_attribution = { ok: false };
+    }
+    await writeHeartbeat(pool, 'n8n-runs', 'hk-vps', 'ok', null, null, collectedAt);
+    results.n8n_runs = { ok: true, runs: runs.length, workflows: byWf.size };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'n8n-runs', 'hk-vps', status, code, e.message);
+    results.n8n_runs = { ok: false };
+  }
+
+  // —— 腿4: n8n workflow@hk-vps（业务流程，非"谁召唤谁"）——
+  // 解析失败整份丢弃沿用上轮+stale（同 OpenClaw 腿契约）；agent 归属走传递闭包。
+  try {
+    const raw = run(N8N_LIST_CMD);
+    let all;
+    try { all = JSON.parse(raw); } catch { throw new Error(`parse_error: n8n 导出非法 JSON（前100字符: ${String(raw).slice(0, 100)}）`); }
+    const rows = parseN8nWorkflows(all);
+    if (rows.length === 0) throw new Error('parse_error: n8n 解析出 0 条流程（0=可疑，禁当真空）');
+    for (const r of rows) {
+      await pool.query(
+        `INSERT INTO ops_workflows (source, wf_id, name, active, node_count, stage_count, uses_agents, meta, updated_at)
+         VALUES ('n8n',$1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (source, wf_id) DO UPDATE SET
+           name=EXCLUDED.name, active=EXCLUDED.active, node_count=EXCLUDED.node_count,
+           stage_count=EXCLUDED.stage_count, uses_agents=EXCLUDED.uses_agents,
+           meta=EXCLUDED.meta, updated_at=EXCLUDED.updated_at`,
+        [r.wf_id, r.name, r.active, r.node_count, r.stage_count,
+         JSON.stringify(resolveWorkflowAgents(r.wf_id, all)), JSON.stringify(r.meta), collectedAt]
+      );
+    }
+    await writeHeartbeat(pool, 'n8n', 'hk-vps', 'ok', null, null, collectedAt);
+    results.n8n = { ok: true, workflows: rows.length };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'n8n', 'hk-vps', status, code, e.message);
+    results.n8n = { ok: false };
+  }
+
+  return { ok: true, results };
+}

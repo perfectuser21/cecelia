@@ -1,85 +1,100 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execSync, spawn } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'fs';
+import { execSync, spawn, spawnSync } from 'child_process';
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-// quickcheck.sh 真实路径（相对工作目录）
-const REAL_SCRIPT = join(process.cwd(), '..', '..', 'scripts', 'quickcheck.sh');
+// quickcheck 互斥锁：同一 repo 同时只跑一个 quickcheck。
+// 2026-10-08 起语义：拿不到锁时**等待**（上限 QUICKCHECK_LOCK_WAIT_SEC），等到后照常检查；
+// 超时失败（exit 1）而不是放行——旧行为"跳过并 exit 0"等于没检查就让 push 通过。
+const LOCK_LIB = join(process.cwd(), '..', '..', 'scripts', 'lib', 'quickcheck-lock.sh');
+const HAS_FLOCK = spawnSync('bash', ['-c', 'command -v flock']).status === 0;
 
-describe('quickcheck.sh — 并发互斥锁', () => {
-  let fakeRepo: string;
-  let fakeScript: string;
+function writeWorkload(dir: string, impl: 'flock' | 'mkdir'): string {
+  const script = join(dir, 'qc.sh');
+  writeFileSync(script, [
+    '#!/usr/bin/env bash',
+    `export QUICKCHECK_LOCK_IMPL=${impl}`,
+    `source "${LOCK_LIB}"`,
+    `acquire_quickcheck_lock "${dir}/qc.lock" "${dir}/qc.lockdir" || exit 1`,
+    'echo "[test] working" >&2',
+    'sleep "${HOLD_SEC:-2}"',
+    `touch "${dir}/ran.$$"`,
+    '',
+  ].join('\n'));
+  execSync(`chmod +x "${script}"`);
+  return script;
+}
 
-  beforeEach(() => {
-    fakeRepo = mkdtempSync(join(tmpdir(), 'qcmutex-'));
-    execSync(`git init -q "${fakeRepo}"`, { stdio: 'pipe' });
-    execSync(`git -C "${fakeRepo}" config user.email test@test.com`, { stdio: 'pipe' });
-    execSync(`git -C "${fakeRepo}" config user.name test`, { stdio: 'pipe' });
-    execSync(`git -C "${fakeRepo}" commit --allow-empty -qm init`, { stdio: 'pipe' });
+function runAsync(script: string, env: Record<string, string> = {}) {
+  const child = spawn('bash', [script], { env: { ...process.env, ...env }, stdio: 'pipe' });
+  let out = '';
+  child.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+  child.stderr.on('data', (d: Buffer) => { out += d.toString(); });
+  const done = new Promise<{ code: number | null; out: string }>(resolve =>
+    child.on('close', code => resolve({ code, out })));
+  return { child, done };
+}
 
-    // 构造测试用 quickcheck —— 只包含锁逻辑 + sleep + marker，绕过真 vitest
-    fakeScript = join(fakeRepo, 'quickcheck.sh');
-    const realContent = readFileSync(REAL_SCRIPT, 'utf8');
-    // 截取到第一个 "echo" 之前（锁逻辑之后）+ sleep + touch marker
-    // 简化：直接取锁逻辑块，后面自定义工作负载
-    const lockBlockMatch = realContent.match(/^([\s\S]*?trap '.*?EXIT INT TERM[\s\S]*?fi)/m);
-    if (!lockBlockMatch) {
-      // fallback: 找 flock 相关
-      const flockMatch = realContent.match(/^([\s\S]*?exec 200[\s\S]*?(?:exit 0|fi))/m);
-      writeFileSync(fakeScript, (flockMatch ? flockMatch[1] : realContent.slice(0, 2000)) +
-        '\necho "[test] working..." >&2\nsleep 3\ntouch "${REPO_ROOT:-$(pwd)}/ran.$$"\nexit 0\n');
-    } else {
-      writeFileSync(fakeScript, lockBlockMatch[1] +
-        '\necho "[test] working..." >&2\nsleep 3\ntouch "${REPO_ROOT:-$(pwd)}/ran.$$"\nexit 0\n');
-    }
-    execSync(`chmod +x "${fakeScript}"`);
-  });
+const markers = (dir: string) => readdirSync(dir).filter(f => f.startsWith('ran.'));
 
-  afterEach(() => rmSync(fakeRepo, { recursive: true, force: true }));
+describe.each([
+  ['mkdir', true],
+  ['flock', HAS_FLOCK],
+] as const)('quickcheck 互斥锁（%s 实现）', (impl, available) => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'qcmutex-')); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('两次并发调用，只有一个真正跑完，另一个跳过', async () => {
-    const run1 = spawn('bash', [fakeScript], { cwd: fakeRepo, stdio: 'pipe' });
-    let run1Stderr = '';
-    run1.stderr.on('data', (d: Buffer) => { run1Stderr += d.toString(); });
+  it.skipIf(!available)('并发第二个等待第一个结束后照常执行，两个都跑完', async () => {
+    const script = writeWorkload(dir, impl);
+    const first = runAsync(script, { HOLD_SEC: '2' });
+    await new Promise(r => setTimeout(r, 300));
+    const second = runAsync(script, { HOLD_SEC: '0' });
+    const [r1, r2] = await Promise.all([first.done, second.done]);
+    expect(r1.code).toBe(0);
+    expect(r2.code).toBe(0);
+    expect(markers(dir).length).toBe(2);
+  }, 20000);
 
-    // 200ms 后启动第二个，确保第一个已拿到锁
-    await new Promise(r => setTimeout(r, 200));
+  it.skipIf(!available)('等待超时则失败（exit 1），不放行', async () => {
+    const script = writeWorkload(dir, impl);
+    const first = runAsync(script, { HOLD_SEC: '4' });
+    await new Promise(r => setTimeout(r, 300));
+    const second = spawnSync('bash', [script], {
+      env: { ...process.env, HOLD_SEC: '0', QUICKCHECK_LOCK_WAIT_SEC: '1' }, encoding: 'utf8',
+    });
+    expect(second.status).toBe(1);
+    await first.done;
+    expect(markers(dir).length).toBe(1);
+  }, 20000);
 
-    let run2Output = '';
-    let run2ExitCode = 0;
-    try {
-      run2Output = execSync(`bash "${fakeScript}" 2>&1`, {
-        cwd: fakeRepo,
-        encoding: 'utf8',
-        timeout: 5000,
-      });
-    } catch (e: any) {
-      run2Output = (e.stdout || '') + (e.stderr || '');
-      run2ExitCode = e.status || 0;
-    }
-
-    // 第二个应跳过 (exit 0)
-    expect(run2ExitCode).toBe(0);
-    expect(run2Output).toMatch(/跳过|已在运行|另一个 quickcheck/);
-
-    // 等第一个跑完
-    await new Promise<void>(resolve => run1.on('close', () => resolve()));
-
-    // 只有一个 marker（第一个产生的）
-    const markers = readdirSync(fakeRepo).filter(f => f.startsWith('ran.'));
-    expect(markers.length).toBe(1);
+  it.skipIf(!available)('锁在脚本结束后释放，下一次立即能跑', () => {
+    const script = writeWorkload(dir, impl);
+    expect(spawnSync('bash', [script], { env: { ...process.env, HOLD_SEC: '0' } }).status).toBe(0);
+    expect(existsSync(join(dir, 'qc.lockdir'))).toBe(false);
+    const again = spawnSync('bash', [script], {
+      env: { ...process.env, HOLD_SEC: '0', QUICKCHECK_LOCK_WAIT_SEC: '1' }, encoding: 'utf8',
+    });
+    expect(again.status).toBe(0);
+    expect(markers(dir).length).toBe(2);
   }, 15000);
+});
 
-  it('锁在脚本结束后自动释放（下一次能正常跑）', async () => {
-    // 第一次跑完
-    execSync(`bash "${fakeScript}"`, { cwd: fakeRepo, encoding: 'utf8' });
-    // 锁文件/目录应被释放（flock 的 lock file 可能保留但不持锁；mkdir 的 lockdir 应删）
-    const lockDirExists = existsSync(join(fakeRepo, '.git', 'quickcheck.lockdir'));
-    expect(lockDirExists).toBe(false);
+describe('quickcheck 互斥锁（mkdir 陈旧锁回收）', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'qcmutex-')); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-    // 第二次应正常跑（不跳过，不报"另一个"）
-    const out = execSync(`bash "${fakeScript}" 2>&1`, { cwd: fakeRepo, encoding: 'utf8' });
-    expect(out).not.toMatch(/跳过|另一个 quickcheck/);
-  }, 10000);
+  it('持锁进程已不存在（被强杀）时回收锁并立即执行', () => {
+    const script = writeWorkload(dir, 'mkdir');
+    const dead = spawnSync('bash', ['-c', 'echo $$']).stdout.toString().trim();
+    mkdirSync(join(dir, 'qc.lockdir'));
+    writeFileSync(join(dir, 'qc.lockdir', 'pid'), `${dead}\n`);
+    const r = spawnSync('bash', [script], {
+      env: { ...process.env, HOLD_SEC: '0', QUICKCHECK_LOCK_WAIT_SEC: '2' }, encoding: 'utf8',
+    });
+    expect(r.status).toBe(0);
+    expect(markers(dir).length).toBe(1);
+  }, 15000);
 });

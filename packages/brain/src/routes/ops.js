@@ -400,7 +400,7 @@ router.get('/learnings', async (req, res) => {
 
     // 日期过滤（YYYY-MM-DD，Asia/Shanghai 时区）
     if (req.query.date) {
-      conditions.push(`DATE(created_at AT TIME ZONE 'Asia/Shanghai') = $${paramIdx++}`);
+      conditions.push(`DATE(created_at::timestamptz AT TIME ZONE 'Asia/Shanghai') = $${paramIdx++}`);
       params.push(req.query.date);
     }
 

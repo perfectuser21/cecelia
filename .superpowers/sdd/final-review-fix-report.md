@@ -1,85 +1,124 @@
-# 终审修复报告 — 军师对话抽屉（cp-warroom-chat-panel）
+# orchestrator 远程化分支 — 终审全量修复报告
 
-## Finding 1（Important）：`e.message ||` 死代码前缀泄漏英文网络错误文案
+分支：`cp-09131145-orchestrator-remote-launch`
+关联决策：2e756506（orchestrator 远程化方案B）、a9773a84（DB 通路）
 
-**问题**：4 处网络请求错误处理（`ConversationDrawer.fetchList`、`handleCreate`；
-`ConversationThread.fetchMessages`、`handleSend`）在 HTTP 错误路径上都是 `throw new Error()`
-（空 message），随后 `catch (e: any) { setXError(e.message || '<中文兜底>'); }`。因为 HTTP 错误
-路径抛出的 Error 恒无 message，`e.message ||` 前缀在这条路径上永远是死代码；它唯一还活着的效果
-是泄漏：一旦 `fetch()` 本身在网络层被拒绝（如 Brain API 重启期间的 `TypeError: Failed to fetch`，
-这在本项目里是常态）或 `res.json()` 抛出 JSON 解析错误，`e.message` 会变成非空英文字符串直接展示
-给用户，违反全局简体中文 UI 文案约束。
+## C1（Critical）orchestrator 槽位只借不还
 
-**修法**：4 处 catch 块统一去掉 `e.message ||` 前缀，改为固定中文兜底文案；由于 `e` 不再被使用，
-一并把 `catch (e: any)` 改成裸 `catch {`（TS/ESLint 均无异议，`tsc --noEmit` 验证通过）。
+**文件**：`packages/brain/scripts/fleet-worker/orchestrator-runner.cjs`（`start()`）
 
-- `fetchList`：`catch { setListError('加载议题列表失败'); }`
-- `handleCreate`：`catch { setListError('创建议题失败'); }`
-- `fetchMessages`：`catch { setError('加载消息失败'); }`
-- `handleSend`：`catch { setError('发送失败'); }`
+**问题**：spawn 成功后没有挂 exit 钩子，`terminal()` 又零调用方，job 永停 `running`，
+`active()` 恒占坑，第 3 个 prepare 起撞 `orchestrator_slots_exhausted`。
 
-文件：`apps/dashboard/src/pages/warroom/ConversationDrawer.tsx`
+**修法**：spawn 成功（pid 校验通过）后立刻挂：
 
-## Finding 2（Important）：`fetchMessages` 缺失设计文档规定的 404 处理
+```js
+child.once('exit', (code) => {
+  job.status = code === 0 ? 'done' : 'failed';
+});
+```
 
-**问题**：设计文档（`docs/superpowers/specs/2026-07-24-warroom-chat-panel-design.md` 错误处理节）
-明确要求 `conversation_id` 不存在（404）→ 提示"议题已归档或不存在"，回到列表视图。但原实现把
-404 和其它任意失败一视同仁，只是内联展示通用"加载消息失败"，用户被留在空的对话线程视图里，只能
-靠手动点返回箭头逃出。
+detached + unref 下，只要父进程（fleet-worker）存活，`exit` 事件仍会送达，槽位随子进程
+退出自动释放，不再依赖 `terminal()` 端点。
+
+**测试**：`orchestrator-runner.test.cjs`
+- `C1：exit 钩子释放槽位——进程退出后第 3 个 prepare 不再撞 slots_exhausted`
+- `C1：非 0 退出码 → job 置 failed（同样释放槽位）`
+
+## C2（Critical）spawn 'error' 无监听会带崩 fleet-worker
+
+**文件**：同上，`start()`
+
+**问题**：detached spawn 的异步 ENOENT/EACCES 走 `error` 事件，无监听 = uncaughtException =
+整个 fleet-worker 进程崩溃（连坐所有 attempt）。
+
+**修法**：参照本仓先例 `packages/brain/src/harness-skill-relay.js` 的监听手法，spawn 后立刻
+挂 `error` 监听（在同步 pid 检查之前，因为 error 事件可能在下一个 tick 就到）：
+
+```js
+child.once('error', (err) => {
+  job.status = 'failed';
+  console.error(`[orchestrator-runner] spawn_error run=${runId}: ${err?.message}`);
+});
+```
+
+同步 pid 检查（`Number.isInteger(child.pid)`）保留不变。
+
+**测试**：`orchestrator-runner.test.cjs` → `C2：spawn 触发 error 事件 → job 置 failed，不抛顶层异常`
+
+## I1（Important）部署文档 env 落错机器
+
+**文件**：`docs/superpowers/plans/2026-09-13-orchestrator-remote-launch.md`（部署段步骤 2/3）
+
+**问题**：orchestrator 搬到 MMV 后，它是 orchestrator-runner.cjs `spawn(..., {env:{...process.env}})`
+拉起的子进程，读的是**自己进程的 env**（即 MMV fleet-worker 的 launchd env，经透传），
+不是 us-vps Brain 的 env。它内部经 `production-transport.js` 回连三台 worker 派 attempt、
+回调 Brain 写终态，所以 `FLEET_WORKER_*_URL` / `KERNEL_FLEET_BRIDGE_TOKEN` /
+`KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL` 必须配在 **MMV worker 的 launchd env**，
+不能只在 us-vps Brain compose 里配。
 
 **修法**：
-1. `ConversationThread` 新增 `onNotFound: (message: string) => void` prop，与已有的 `onBack`
-   （挂在可见返回箭头按钮上的同一个语义）并列传入。
-2. `fetchMessages` 里在 `!res.ok` 判断之前先检查 `res.status === 404`：命中时调用
-   `onNotFound('议题已归档或不存在')` 并 `return`（不再走通用错误分支/不再 setMessages）。
-3. `ConversationDrawer` 新增 `handleThreadNotFound`：`setActiveId(null)` 切回列表视图 +
-   `setListError(message)` 把"议题已归档或不存在"展示在列表视图已有的错误提示区（复用
-   `ConversationList` 现有的 `AlertCircle` + 红色文案渲染路径，不新增 UI 结构）。
-4. `<ConversationThread ... onNotFound={handleThreadNotFound} />` 接线。
+- 步骤 2 补充三类 env 清单（`FLEET_WORKER_US_MAC_M4_URL` / `FLEET_WORKER_XIAN_MAC_M4_URL` /
+  `FLEET_WORKER_XIAN_MAC_M1_URL`、`KERNEL_FLEET_BRIDGE_TOKEN`、
+  `KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL`）
+- 步骤 3 保留 us-vps 侧配置，注明「Brain 本机 fallback 用；对远程 orchestrator 生效的是
+  步骤 2 的 worker env，两处应同值但物理落点不同」
 
-端到端行为：用户点开一个已归档/不存在的议题 → 拉消息命中 404 → 自动切回议题列表 → 列表页顶部
-展示"议题已归档或不存在"错误提示，不再需要手动点返回箭头。
+无代码改动，无测试。
 
-文件：`apps/dashboard/src/pages/warroom/ConversationDrawer.tsx`
+## 顺手项
 
-## 新增测试
+1. **`inspect()`/`terminal()` UUID 校验**：非法 `run_id` → 400 `orchestrator_run_id_invalid`，
+   与 `prepare()` 同型（之前非法 id 走 404 `orchestrator_not_found`，语义不准）。
+   测试：`inspect/terminal：非法 run_id → 400 orchestrator_run_id_invalid`
 
-`apps/dashboard/src/pages/warroom/__tests__/ConversationDrawer.test.tsx`，"对话区" describe 块内
-新增用例「消息拉取404→提示"议题已归档或不存在"并自动回到议题列表」：mock 一个议题列表（1条）+
-mock `GET /api/brain/conversations/conv-1/messages` 返回 `{ ok: false, status: 404, json: async
-() => ({}) }`，点击该议题后断言 `screen.getByTestId('new-conversation-btn')` 重新可见（回到列表
-视图，与已有"点返回按钮回到议题列表"用例断言方式一致）且 `screen.getByText('议题已归档或不存在')`
-可见。
+2. **`terminal()` 注释**：标注为预留端点，当前无生产调用方（Brain 侧将来终态回执用），
+   槽位释放已由 exit 钩子承担，本端点不再是槽位释放的唯一路径。
 
-原有 15 个测试（含专门验证 Chinese 兜底文案的用例，如 500 响应 `json: async () => ({})` 场景）全部
-未改动断言，验证行为不变——因为这些用例走的本来就是 `!res.ok` 空 Error 路径，`e.message` 恒为空，
-去掉 `e.message ||` 前缀后展示的中文兜底文案与之前完全相同。
+3. **`orchestrator-remote-bridge.js`**：2xx 但 `response.json()` 解析失败不再静默吞成 `null`，
+   改为 `throw new Error('orchestrator_bridge_<op>_invalid_json:...')`。非 2xx 分支的
+   json 解析失败仍保持原有容错（错误体未必是 json）。
+   测试：`orchestrator-remote-bridge.test.js` → `2xx 但 response.json() 解析失败 → 不静默 null，抛 invalid_json`
 
-## 测试命令与结果
+## 测试结果
 
 ```
-cd apps/dashboard && npx vitest run src/pages/warroom/__tests__/ConversationDrawer.test.tsx
-→ ✓ 16 tests passed (15 原有 + 1 新增 404 用例)
-
-cd apps/dashboard && npx vitest run \
-  src/pages/warroom/__tests__/WarRoomLineCommandPage.chat.test.tsx \
-  src/pages/warroom/__tests__/WarRoomPage.test.ts
-→ ✓ 2 files passed, 80 tests passed（无回归）
-
-cd apps/dashboard && npx vitest run
-→ ✓ 30 files passed, 305 tests passed（全量套件零回归）
-
-cd apps/dashboard && npx tsc --noEmit -p .
-→ ConversationDrawer.tsx 无类型错误
+cd packages/brain && npx vitest run scripts/fleet-worker/ src/__tests__/orchestrator-remote-bridge.test.js
 ```
 
-## 改动文件
+```
+ ✓ scripts/fleet-worker/attempt-runner.test.cjs  (122 tests)
+ ✓ scripts/fleet-worker/fleet-worker.test.js  (61 tests)
+ ✓ scripts/fleet-worker/workspace-manager.test.cjs  (19 tests)
+ ✓ scripts/fleet-worker/attempt-resources.test.cjs  (7 tests)
+ ✓ scripts/fleet-worker/orchestrator-runner.test.cjs  (10 tests)
+ ✓ scripts/fleet-worker/credential-envelope.test.cjs  (11 tests)
+ ✓ scripts/fleet-worker/github-credential-envelope.test.cjs  (2 tests)
+ ✓ src/__tests__/orchestrator-remote-bridge.test.js  (5 tests)
 
-- `apps/dashboard/src/pages/warroom/ConversationDrawer.tsx`
-- `apps/dashboard/src/pages/warroom/__tests__/ConversationDrawer.test.tsx`
+ Test Files  8 passed (8)
+      Tests  237 passed (237)
+```
 
-## 顾虑
+```
+bash scripts/ci/__tests__/machine-registry-role-guard.test.sh
+```
 
-- 无。两处均为局部行为修正，未改变组件对外 props 签名（`ConversationDrawer` 本身签名不变，
-  `ConversationThread` 是模块内私有组件，新增的 `onNotFound` prop 由同文件内的父组件接线，不影响
-  外部消费方 `WarRoomLineCommandPage`）。
+```
+== machine-registry 角色守卫 ==
+  ✅ 恰好一台 primary（1）
+  ✅ orchestrator/production-transport.js 命中数 2（登记 2）
+  ✅ harness-skill-relay.js 命中数 1（登记 1）
+  ✅ orchestrator/fleet-node/node-profile.js 命中数 3（登记 3）
+  ✅ orchestrator/fleet-node/node-admission-client.js 命中数 1（登记 1）
+
+✅ machine-registry role guard OK
+```
+
+## DevGate
+
+```
+node scripts/facts-check.mjs            → All facts consistent. ✅
+bash scripts/check-version-sync.sh      → All version files in sync ✅
+node packages/quality/scripts/devgate/check-dod-mapping.cjs → 映射检查通过 (3 项) ✅
+```

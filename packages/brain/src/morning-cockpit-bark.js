@@ -13,6 +13,13 @@
  */
 
 import { sendBark } from './notifier.js';
+import { findBareRuns } from './lib/task-run.js';
+import { detectSkillBindingDrift, renderSkillBindingLine } from './lib/skill-binding-registry.js';
+import { EXECUTOR_SKILL_MAP } from './lib/task-type-registry.js';
+import { readSkillDistState, renderSkillDistLine } from './lib/skill-dist-report.js';
+import { readRescanStalenessState, renderRescanStalenessLine } from './lib/rescan-staleness-report.js';
+import { readAssertionRedState, renderAssertionRedLine } from './lib/assertion-red-report.js';
+import { readMirrorDbState, renderMirrorDbLine } from './lib/mirror-db-report.js';
 import { LEADERBOARD_KEY } from './triage-officer-rank.js';
 
 /** 触发小时（UTC）= 北京时间 08:30 */
@@ -120,6 +127,101 @@ function fmtVetoDeadline(isoStr) {
 }
 
 /**
+ * 裸跑检测行（run 原语留痕缺口）：过去 24h 有 dispatched 事件却无 task_runs 行的执行 → 🟡 AMBER。
+ * best-effort：查询失败/无裸跑返回 null（不出这一行，不拖垮晨报）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string|null>}
+ */
+async function fetchBareRunLine(pool) {
+  try {
+    const rows = await findBareRuns(pool, { windowMinutes: 24 * 60 });
+    if (!rows.length) return null;
+    const ids = rows.slice(0, 3).map((r) => String(r.task_id).slice(0, 8)).join('、');
+    return `🟡 AMBER 裸跑执行 ${rows.length} 个（有派发无 run 记录）：${ids}${rows.length > 3 ? ' …' : ''}`;
+  } catch (e) {
+    console.warn('[morning-cockpit-bark] bare-run detect failed:', e.message);
+    return null;
+  }
+}
+
+/**
+ * 业务断言红灯行（链 bf5088a3 棒4 消费，决策 702949b6）：过去 24h 探针执行体
+ * （business_probe_runner）的 FAIL 回执按 路径/步骤/探针 分组计数；任一 severity=error → 🔴 RED，
+ * 只有 warn → 🟡 AMBER。best-effort：无 FAIL/查询失败返回 null（不出这一行，不拖垮晨报）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string|null>}
+ */
+async function fetchAssertionRedLine(pool) {
+  try {
+    return renderAssertionRedLine(await readAssertionRedState(pool));
+  } catch (e) {
+    console.warn('[morning-cockpit-bark] assertion-red line failed:', e.message);
+    return null;
+  }
+}
+
+/**
+ * 镜子库失联行（决策 24a37029）：守夜 A11 探活（GET /databases in_trash/archived/404）报红的推送库 → 🔴 RED。
+ * best-effort：无失联 / 守夜从未跑 / 读取失败返回 null（不出这一行，不拖垮晨报）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string|null>}
+ */
+async function fetchMirrorDbLine(pool) {
+  try {
+    return renderMirrorDbLine(await readMirrorDbState(pool));
+  } catch (e) {
+    console.warn('[morning-cockpit-bark] mirror-db line failed:', e.message);
+    return null;
+  }
+}
+
+/**
+ * skill 绑定漂移行（链 bf5088a3 棒7）：skill_registry 缺 task_type 映射 / 与硬编码分歧 / 多 skill 冲突 → 🟡 AMBER。
+ * best-effort：检测不可用（查询失败/列未迁移）或无漂移返回 null（不出这一行，不拖垮晨报）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string|null>}
+ */
+async function fetchSkillBindingLine(pool) {
+  try {
+    return renderSkillBindingLine(await detectSkillBindingDrift(pool, EXECUTOR_SKILL_MAP));
+  } catch (e) {
+    console.warn('[morning-cockpit-bark] skill-binding drift detect failed:', e.message);
+    return null;
+  }
+}
+
+/**
+ * skill 分发漂移行（链 bf5088a3 棒8）：真身 vs 跑场机清单哈希不一致 / 未核对 / 检测过期 → 🟡 AMBER。
+ * best-effort：无数据（job 从未跑）、读取失败、无漂移都返回 null（不出这一行，不拖垮晨报）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string|null>}
+ */
+async function fetchSkillDistLine(pool) {
+  try {
+    return renderSkillDistLine(await readSkillDistState(pool));
+  } catch (e) {
+    console.warn('[morning-cockpit-bark] skill-dist line failed:', e.message);
+    return null;
+  }
+}
+
+/**
+ * 地图照相层 rescan 停滞行（P0 9dfd873a 案）：fact_snapshot_headers 账龄超派发闸
+ * 预算(30min) / 缺失快照类型 / 检测过期 → 🟡 AMBER。
+ * best-effort：无数据（job 从未跑）、读取失败、不停滞都返回 null（不拖垮晨报）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string|null>}
+ */
+async function fetchRescanStalenessLine(pool) {
+  try {
+    return renderRescanStalenessLine(await readRescanStalenessState(pool));
+  } catch (e) {
+    console.warn('[morning-cockpit-bark] rescan-staleness line failed:', e.message);
+    return null;
+  }
+}
+
+/**
  * 采集简报数据：完成率 + 在途任务数。
  * @param {import('pg').Pool} pool
  * @returns {Promise<{completionRate: string, inProgressCount: number}>}
@@ -180,9 +282,15 @@ export async function runMorningCockpitBark(pool) {
   }
 
   // 3. 采集简报数据 + 榜单（并行，榜单 best-effort）
-  const [{ completionRate, inProgressCount }, triageBoard] = await Promise.all([
+  const [{ completionRate, inProgressCount }, triageBoard, bareRunLine, assertionRedLine, mirrorDbLine, skillBindingLine, skillDistLine, rescanStalenessLine] = await Promise.all([
     buildBriefData(pool),
     fetchTriageLeaderboard(pool),
+    fetchBareRunLine(pool),
+    fetchAssertionRedLine(pool),
+    fetchMirrorDbLine(pool),
+    fetchSkillBindingLine(pool),
+    fetchSkillDistLine(pool),
+    fetchRescanStalenessLine(pool),
   ]);
 
   // 4. 构造推送内容
@@ -204,6 +312,13 @@ export async function runMorningCockpitBark(pool) {
     const vetoTime = fmtVetoDeadline(triageBoard.veto_deadline);
     if (vetoTime) lines.push(`否决窗至 ${vetoTime}，逾时自动放行`);
   }
+
+  if (bareRunLine) lines.push(bareRunLine);
+  if (assertionRedLine) lines.push(assertionRedLine);
+  if (mirrorDbLine) lines.push(mirrorDbLine);
+  if (skillBindingLine) lines.push(skillBindingLine);
+  if (skillDistLine) lines.push(skillDistLine);
+  if (rescanStalenessLine) lines.push(rescanStalenessLine);
 
   lines.push(`点击进入指挥舱 → ${DASHBOARD_URL}`);
   const body = lines.join('\n');

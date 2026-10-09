@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { executeDecision, actionHandlers, isActionDangerous } from '../decision-executor.js';
+import pool from '../db.js';
 
 // Mock client for transactions
 const mockClient = {
@@ -31,6 +32,13 @@ vi.mock('../actions.js', () => ({
 // Mock tick.js dispatchNextTask
 vi.mock('../tick.js', () => ({
   dispatchNextTask: vi.fn().mockResolvedValue({ dispatched: true, task_id: 'dispatched-task' })
+}));
+
+// project_brief_decision handler 动态 import 这个模块；业务逻辑单测见
+// lib/__tests__/project-brief-apply.test.js，这里只验证 handler 接线正确。
+const applyApprovedBriefEscalationMock = vi.fn().mockResolvedValue({ applied: true, brief: { goal: '新目标' } });
+vi.mock('../lib/project-brief-apply.js', () => ({
+  applyApprovedBriefEscalation: (...args) => applyApprovedBriefEscalationMock(...args),
 }));
 
 describe('decision-executor', () => {
@@ -329,6 +337,20 @@ describe('decision-executor', () => {
       });
     });
 
+    describe('project_brief_decision', () => {
+      it('批准 → 调用 applyApprovedBriefEscalation(pool, {projectId, escalated, taskId})，透传结果', async () => {
+        applyApprovedBriefEscalationMock.mockClear();
+        const result = await actionHandlers.project_brief_decision(
+          { project_id: 'proj-1', escalated: { goal: '新目标' }, task_id: 'task-1' },
+          { approved_by: 'alex' },
+        );
+        expect(applyApprovedBriefEscalationMock).toHaveBeenCalledTimes(1);
+        const [, args] = applyApprovedBriefEscalationMock.mock.calls[0];
+        expect(args).toEqual({ projectId: 'proj-1', escalated: { goal: '新目标' }, taskId: 'task-1' });
+        expect(result).toEqual({ success: true, applied: true, brief: { goal: '新目标' } });
+      });
+    });
+
     describe('reprioritize_task', () => {
       it('should update task priority', async () => {
         const result = await actionHandlers.reprioritize_task({
@@ -523,5 +545,17 @@ describe('decision-executor', () => {
       // Dangerous actions should be queued, not executed directly
       expect(report.actions_pending_approval.length).toBeGreaterThanOrEqual(0);
     });
+  });
+});
+
+
+describe('项目拆解确认门放行 KR 真身', () => {
+  it('仅更新 key_results 并放行 reviewing 状态', async () => {
+    pool.query.mockImplementationOnce(async sql => {
+      return { rows: sql.includes('UPDATE key_results') ? [{ id: 'kr-new', title: '真实 KR', status: 'ready' }] : [] };
+    });
+    expect(await actionHandlers.okr_decomp_review({ kr_id: 'kr-new' }, {}))
+      .toMatchObject({ success: true, kr_id: 'kr-new' });
+    expect(pool.query.mock.lastCall[0]).toContain('UPDATE key_results');
   });
 });

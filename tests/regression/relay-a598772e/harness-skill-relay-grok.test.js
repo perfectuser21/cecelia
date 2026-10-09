@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * 合同测试 — harness relay grok executor 收编
  * TASK_ID: a598772e-7f74-40f0-a022-d0e8d2b35dc0
@@ -35,6 +37,7 @@ function makeGrokTask(overrides = {}) {
 
 function makeDeps(overrides = {}) {
   return {
+    authorizeLegacyRelay: async (_identity, operation) => operation(),
     pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
     spawnFn: vi.fn().mockResolvedValue({ containerId: 'cid-gk', dockerStdout: 'ok' }),
     loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT harness-controller'),
@@ -332,6 +335,7 @@ describe('[BEHAVIOR-7] headed grok 入口白名单', () => {
     });
 
     const deps = {
+      authorizeLegacyRelay:async(_identity,operation)=>operation(),
       pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
       execFn,
       loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
@@ -371,6 +375,7 @@ describe('[BEHAVIOR-7] headed grok 入口白名单', () => {
     });
 
     const deps = {
+      authorizeLegacyRelay:async(_identity,operation)=>operation(),
       pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
       execFn,
       loadSkill: vi.fn().mockReturnValue('SKILL'),

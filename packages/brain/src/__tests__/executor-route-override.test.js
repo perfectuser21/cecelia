@@ -1,3 +1,8 @@
+vi.mock('../spawn/index.js',()=>({spawn:vi.fn(async()=>({exit_code:0,started_at:'now',container:'fake'}))}));
+// 旧路由/payload合同使用注入执行动作；目录真实DB权限由execution-directory.pg覆盖。
+vi.mock('../execution-directory/legacy-executor.js',async original=>({...await original(),withLegacyExecution:async(_input,operation)=>operation()}));
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * executor-route-override.test.js — phase 2 单元 1
  *
@@ -86,11 +91,21 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
     getInternalTaskHandlerMock.mockReturnValue(null);
 
     // fetch：codex bridge /run 命中此 mock；US claude 不走 fetch
-    fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, account: 'team3' }) }));
+    fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ok:true,status:'healthy',accounts:[{primaryUsedPct:10,tokenExpired:false}],account:'team3'}) }));
     vi.stubGlobal('fetch', fetchMock);
 
     const executor = await import('../executor.js');
     triggerCeceliaRun = executor.triggerCeceliaRun;
+  });
+
+  it('普通Docker本地启动不能借MMV bridge grant或控制器身份执行',async()=>{
+    vi.stubEnv('HARNESS_DOCKER_ENABLED','true');vi.stubEnv('CECELIA_MACHINE_ID','us-mac-m4');
+    const claim=vi.spyOn(await import('../lib/dedupe.js'),'claimDedupeKey').mockResolvedValue({claimed:true,degraded:true});
+    try {
+      const result=await triggerCeceliaRun({id:'cccccccc-cccc-4ddd-aeee-ffffffffffff',task_type:'dev',title:'local authority',payload:{repo:'perfectuser21/cecelia'}});
+      expect(result.success).toBe(false);expect(result.error).toContain('execution_legacy_identity_required');
+      expect((await import('../spawn/index.js')).spawn).not.toHaveBeenCalled();
+    }finally{claim.mockRestore();vi.unstubAllEnvs();}
   });
 
   // 找出所有打到「/run」（codex bridge 入口）的 fetch 调用

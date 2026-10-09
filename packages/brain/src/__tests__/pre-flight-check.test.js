@@ -22,6 +22,18 @@ describe('preFlightCheck', () => {
       expect(result.issues).toContain('Task title too short (< 5 characters)');
     });
 
+    it('秋米任务（来自 Notion）中文 2 字标题可过，如「抖音养号」；1 字仍拒（任务 0d4215f2）', async () => {
+      const ok = await preFlightCheck({ task_type: 'qiumi_task', title: '抖音养号', description: '对指定抖音账号做日常养号，避免限流', priority: 'P2' });
+      expect(ok.issues.some((i) => /title too short/.test(i))).toBe(false);
+      const bad = await preFlightCheck({ task_type: 'qiumi_task', title: '号', description: '对指定抖音账号做日常养号，避免限流', priority: 'P2' });
+      expect(bad.issues).toContain('Task title too short (< 2 characters)');
+    });
+
+    it('非秋米任务仍按 5 字下限（dev 任务「抖音养号」被拒）', async () => {
+      const r = await preFlightCheck({ task_type: 'dev', title: '抖音养号', description: 'Valid description with enough characters', priority: 'P1' });
+      expect(r.issues).toContain('Task title too short (< 5 characters)');
+    });
+
     it('should pass for valid title', async () => {
       const task = { title: 'Implement feature X', description: 'Valid description with enough characters', priority: 'P1' };
       const result = await preFlightCheck(task);

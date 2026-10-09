@@ -58,6 +58,8 @@ printf '%s\n' \
 chmod +x "$test_root/baseline"
 
 run_nodectl() {
+  NODE_ENV=test \
+  FLEET_NODECTL_DRAIN_OWNER=77b9d1e2-58f2-42f3-b8df-5342318235fb \
   CECELIA_MACHINE_ID=us-mac-m4 \
   FLEET_NODECTL_DRAIN_MARKER="$marker" \
   FLEET_NODECTL_HEALTH_FILE="$health" \
@@ -136,7 +138,7 @@ FLEET_NODECTL_TEST_LAUNCH_FAIL=bootout \
   run_nodectl drain us-mac-m4 --apply >/dev/null \
   || fail "drain rejected an absent Worker service"
 [[ -f "$marker" ]] || fail "absent-service drain did not keep the marker"
-/bin/rm -f "$marker"
+/bin/rm -f "$marker" "$test_root/.fleet-worker.drain-owner-77b9d1e2-58f2-42f3-b8df-5342318235fb.json"
 
 run_nodectl drain us-mac-m4 --apply >/dev/null
 [[ -f "$marker" ]] || fail "drain --apply did not create the marker"
@@ -181,7 +183,7 @@ if FLEET_NODECTL_TEST_LAUNCH_FAIL=kickstart \
   fail "undrain hid a failed loaded-service kickstart"
 fi
 [[ -f "$marker" ]] || fail "failed loaded-service undrain did not restore marker"
-/bin/rm -f "$marker"
+/bin/rm -f "$marker" "$test_root/.fleet-worker.drain-owner-77b9d1e2-58f2-42f3-b8df-5342318235fb.json"
 
 printf '%s\n' '{"machine_id":"us-mac-m4","base_admitted":true,"dispatch_ready":true}' > "$health"
 if run_nodectl admit us-mac-m4 >/dev/null 2>&1; then
@@ -195,7 +197,7 @@ fi
 
 cd "$ROOT"
 node --input-type=module > "$health" <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile('us-mac-m4');
 const policy = profile.version_policy;

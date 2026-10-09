@@ -72,7 +72,22 @@ export async function restoreDrainState() {
 
 // ─── Getter API（供 tick.js 等 caller 读取状态）────────────────────────
 export function isDraining() {
+  // 运行期超龄自愈（09-29 实证，两次部署后派发停摆一上午）：restoreDrainState 的 15 分钟上限只在启动时生效，
+  // 部署 swap 后 drain-cancel 一旦静默失败，新容器会把刚设不久的 drain 恢复，之后再无任何解除路径
+  // （auto-complete 要求 in_progress=0，被有头任务/人审卡死的任务钉住，且只挂在 HTTP 路由）。
+  // drain 的合法生命周期 = pre-swap 等待 + swap 数分钟，超过上限的一律按残留解除。
+  if (_draining && isDrainExpired()) {
+    log(`[tick] Drain expired at runtime (started_at=${_drainStartedAt}, >${Math.round(DRAIN_RESTORE_MAX_AGE_MS / 60000)}min) — auto-cancelled, resuming dispatch`);
+    _draining = false;
+    _drainStartedAt = null;
+    clearPersistedDrainState().catch((err) => log(`[tick] clear stale drain state failed: ${err.message}`));
+  }
   return _draining;
+}
+
+function isDrainExpired() {
+  const startedMs = Date.parse(_drainStartedAt ?? '');
+  return Number.isNaN(startedMs) || Date.now() - startedMs > DRAIN_RESTORE_MAX_AGE_MS;
 }
 export function getDrainStartedAt() {
   return _drainStartedAt;
@@ -183,17 +198,24 @@ export async function getDrainStatus() {
 
 /**
  * Cancel drain mode — resume normal dispatching.
+ *
+ * 无条件清持久化状态（不只在 _draining===true 时才清）：部署脚本的健康检查可能在
+ * restoreDrainState() 把旧容器持久化的排空状态读回内存之前就先发来 drain-cancel，
+ * 此时若只在 _draining===true 时才清库，会让这次 cancel 变成 no-op——旧持久化行
+ * 留在 DB 里，随后 restoreDrainState() 一执行就把它误当"刚发生的排空"恢复进内存，
+ * 派单卡到 15 分钟运行期超龄自愈（任务 30861749；见 restoreDrainState() 迁移到
+ * listenWithRetry() 之前那处改动，这里是纵深防御第二层）。
  */
 export async function cancelDrain() {
-  if (!_draining) {
-    return { success: true, was_draining: false };
-  }
-
-  log('[tick] Drain mode cancelled, resuming normal dispatch');
+  const wasDraining = _draining;
   _draining = false;
   _drainStartedAt = null;
   await clearPersistedDrainState();
-  return { success: true, was_draining: true };
+
+  if (wasDraining) {
+    log('[tick] Drain mode cancelled, resuming normal dispatch');
+  }
+  return { success: true, was_draining: wasDraining };
 }
 
 // ─── 测试 hook ───────────────────────────────────────────────────────────

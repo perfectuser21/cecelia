@@ -3,6 +3,7 @@ import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { bootstrapNotionDatabases, configureNotionProjection } from '../projection/notion.js';
 import { queueLaneSql } from '../task-queue-lanes.js';
+import { configureKrProjection } from '../projection/key-results.js';
 
 const router = Router();
 router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
@@ -48,6 +49,15 @@ router.post('/projections/requeue', async (req, res) => {
     res.json({ requeued: rowCount });
   } catch (error) {
     res.status(500).json({ error: 'Failed to requeue projection', details: error.message });
+  }
+});
+
+router.post('/projections/notion/key-results/configure', async (req, res) => {
+  try {
+    const result = await configureKrProjection(pool, req.body?.database_id);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
   }
 });
 

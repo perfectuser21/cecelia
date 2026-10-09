@@ -1,24 +1,91 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
+import { createRoutedTask } from './work-routing-store.js';
+import { finalizeTask } from './lib/task-terminal.js';
+import { execFileSync as nodeExecFileSync } from 'child_process';
+import { sshTargetFor } from './machine-registry.js';
+import { readFileSync } from 'node:fs';
+import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
+import { buildWorkflowPageBlocks } from './ops-collector.js';
+import { pushRegisteredRows, resolveDbId, isPageGoneError, isWrongDatabaseError } from './lib/notion-projection-engine.js';
+import { OPS_DB_PROPS, buildTasksDbProps, buildStepLinkDbProps, diffMissingProps } from './ops-notion-schema.js';
+import { buildStepLinkNotionProperties } from './notion-probe-projection.js';
+import {
+  ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
+} from './ops-quota-notion.js';
+import { PUSH_EXCLUDED_TASK_TYPES } from './lib/task-type-registry.js';
+import { startRun, finishRun } from './lib/task-run.js';
+import { SSH_BASE_ARGS } from './lib/ssh-args.js';
+import { readPageContent } from './lib/notion-page-content.js';
+import { qiumiSourceFromNotion } from './lib/qiumi-source.js';
+import { toStartIso, toEndIso, isFuture, scheduledNote } from './lib/qiumi-schedule.js';
+import { parseEnPage, parseZhPage, GTD_DB_ID, EN_NATIVE_MARK } from './notion-gtd-sync.js';
+import { TREE_NODES_SQL, treeNodeTable } from './lib/tree-nodes-sql.js';
 
-const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
-const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
+// journeys / journey_features 不再硬编码库常量：AI Journey / AI Feature 两库 2026-09-19 进回收站，
+// 迁移 480 把注册表两行归档（决策 24a37029：停推，不恢复不重建）。这两张表只认 notion_projection_map
+// 的 active 推送行（resolveDbId），没有就停推——不再每 5 分钟推失败刷 notion_sync_log。
 const ISSUES_DB  = 'a17c40c2-ba63-82fb-9888-8152cefe29ec';
 // AI Notes DB — decisions 用 Type=Decision，initiative_contracts 用 Type=Contract
 const DECISIONS_DB           = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 const INITIATIVE_CONTRACTS_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 
-const SKILL_REGISTRY_DB  = '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7';
-const STEPS_DB           = '369c40c2-ba63-812c-9f35-e7e43db25014';
-const STEP_LINKS_DB      = '369c40c2-ba63-81e2-b95a-e5e3d0592676';
+// Notion 任务编排库（2026-09-13 双向·push 半边接线；库早已存在但 Brain 从未接）
+// PR2 起导出：notion-gtd-sync.js 的 EN_TASKS_DB 需与此同值（Task 4 起改为唯一真源）。
+export const NOTION_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
+// 排单分流 OpenClaw（2026-09-14 v2 数据驱动）：Tasks 库 relation「Workflow」「Agent」
+// 指向运行舱四表的真实 Notion 行（workflows_db/graph_db，见 working_memory.ops_notion_dbs），
+// pull 反查 ops_workflows/ops_agents.notion_id 拿 dispatch 人工列（migration 444）：
+//   workflow.dispatch.webhook_url  = 派发入口（缺省回退 env.N8N_V4_WEBHOOK_URL）
+//   agent.dispatch.template        = 租户任务模板文件名（OPENCLAW_DISPATCH_DIR 下）
+// 禁止在代码里枚举执行方——排单可选项即两张 ops 表本身（决策：主理人 2026-09-14 纠正）。
 
+export const TASK_STATUS_TO_NOTION = Object.freeze({
+  queued: 'Delegated',
+  in_progress: 'In Progress',
+  blocked: 'Planned',
+  completed: 'Done',
+  failed: 'Cancelled',
+  canceled: 'Cancelled',
+  cancelled: 'Cancelled',
+});
+
+const SKILL_REGISTRY_DB  = '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7';
+// 「承诺地图格子」（迁移 479）：旧 Backbone-Step Map 369c… 2026-09-19 进回收站（GET 200 写入 404），09-27 换库
+const STEP_LINKS_DB      = '3e8c40c2-ba63-8194-a47c-dcf5f4b508bb';
+
+/** 代码硬编码的库常量（brain_table → id）。守夜 A9 断言它们 == notion_projection_map；全绿后 resolveDbId 才翻转为注册表优先。 */
+export const LEGACY_DB_CONSTANTS = Object.freeze({
+  issues: ISSUES_DB,
+  decisions: DECISIONS_DB, initiative_contracts: INITIATIVE_CONTRACTS_DB,
+  tasks: NOTION_TASKS_DB, skill_registry: SKILL_REGISTRY_DB, activity_cells: STEP_LINKS_DB,
+});
+
+/**
+ * 注册表停推提示只在进程内出一次（每表一条）：archived/none 的登记是运维终态，不是瞬时错误，
+ * 每 5 分钟刷一遍日志正是 09-19~09-27 那周"推失败一周无人知"的噪音来源。
+ */
+const stopNoticed = new Set();
+async function activePushDbId(pool, table) {
+  const dbId = await resolveDbId(pool, table);
+  if (!dbId && !stopNoticed.has(table)) {
+    stopNoticed.add(table);
+    console.info(`[notion-push-sync] ${table} 停推：注册表无 active 推送行（archived/none，见迁移 480 / 决策 24a37029），本进程不再推`);
+  }
+  return dbId;
+}
+
+// 2026-09-13 实测修复：旧 6 个 ID 对 Notion API 全 404（页面早已不存在），
+// 导致每条 brain/engine issue 推送 404 → isStaleRelationError 静默标已同步
+// （notion_id 为空）= 无声丢弃。真 ID 取自 Sub Area 库
+// 300c40c2-ba63-82d5-9ec1-81990d181950 实查（承诺地图分区），映射按 repo 区归就近价值区。
 const SUB_AREA_NOTION_IDS = {
-  brain:         '5c0c40c2-ba63-8184-bc3d-f1c5e48caee4',
-  engine:        '64bc40c2-ba63-81b0-a7e2-c2f7bb3b2e31',
-  cecelia:       '7e7c40c2-ba63-8117-8d5d-e3e18a3c6b04',
-  'multi-agent': '8acc40c2-ba63-810b-8e07-c5c3d34d8e13',
-  zenithjoy:     'cf5c40c2-ba63-8182-9b3e-f2d1a4e5c6f0',
-  dashboard:     'a17c40c2-ba63-83e2-9c3d-b4e2f1a5c7d8',
+  brain:         '7e7c40c2-ba63-839d-b0bc-017f1cc7d49d', // Cecelia
+  engine:        '7e7c40c2-ba63-839d-b0bc-017f1cc7d49d', // Cecelia
+  cecelia:       '7e7c40c2-ba63-839d-b0bc-017f1cc7d49d', // Cecelia
+  'multi-agent': '7e7c40c2-ba63-839d-b0bc-017f1cc7d49d', // Cecelia
+  zenithjoy:     'cf5c40c2-ba63-82c8-a00a-015c593f6268', // ZenithJoy
+  dashboard:     'a17c40c2-ba63-83e2-b922-8197b09af030', // Dashboard
 };
 
 function buildRichText(text) {
@@ -79,16 +146,20 @@ async function logSyncError(pool, errMsg) {
 }
 
 async function pushJourneys(pool, token) {
+  const dbId = await activePushDbId(pool, 'journeys');
+  if (!dbId) return;
   const { rows } = await pool.query(`
     SELECT j.*, a.notion_id AS area_notion_id
-    FROM journeys j
+    FROM ${TREE_NODES_SQL} j
     LEFT JOIN areas a ON a.id = j.area_id
-    WHERE j.notion_synced_at IS NULL
+    WHERE j.notion_synced_at IS NULL OR j.updated_at > j.notion_synced_at
+    ORDER BY j.notion_synced_at NULLS FIRST, j.updated_at
     LIMIT 10
   `);
-
-  for (const j of rows) {
-    try {
+  if (rows.length === 0) return;
+  await pushRegisteredRows(pool, token, {
+    table: (j) => treeNodeTable(j.parent_journey_id), dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'journey',
+    buildProps: (j) => {
       const properties = {
         Name: { title: [{ text: { content: j.name } }] },
         Description: { rich_text: buildRichText(j.description) },
@@ -96,267 +167,972 @@ async function pushJourneys(pool, token) {
         Maturity: { select: { name: j.maturity } },
         Status: { select: { name: j.status || 'active' } },
       };
-      // E2E Test Path 字段在 Notion Journey DB 不存在，已移除推送
-      if (j.area_notion_id) {
-        properties['Area'] = { relation: [{ id: j.area_notion_id }] };
-      }
-
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: JOURNEY_DB },
-        properties,
-      });
-
-      await pool.query(
-        'UPDATE journeys SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, j.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] journey ${j.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-    }
-  }
+      // E2E Test Path 字段在 Notion Journey DB 不存在，不推
+      if (j.area_notion_id) properties['Area'] = { relation: [{ id: j.area_notion_id }] };
+      return properties;
+    },
+  });
 }
-
 async function pushJourneyFeatures(pool, token) {
+  const dbId = await activePushDbId(pool, 'journey_features');
+  if (!dbId) return;
   const { rows } = await pool.query(`
     SELECT f.*, j.notion_id AS journey_notion_id, a.notion_id AS area_notion_id
     FROM journey_features f
-    LEFT JOIN journeys j ON j.id = f.journey_id
+    LEFT JOIN ${TREE_NODES_SQL} j ON j.id = f.journey_id
     LEFT JOIN areas a ON a.id = f.area_id
-    WHERE f.notion_synced_at IS NULL
+    WHERE (f.notion_synced_at IS NULL OR f.updated_at > f.notion_synced_at)
       AND (f.journey_id IS NULL OR j.notion_id IS NOT NULL)
+    ORDER BY f.notion_synced_at NULLS FIRST, f.updated_at
     LIMIT 10
   `);
-
-  for (const f of rows) {
-    try {
+  if (rows.length === 0) return;
+  await pushRegisteredRows(pool, token, {
+    table: 'journey_features', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'feature',
+    buildProps: (f) => {
       const properties = {
         Name: { title: [{ text: { content: f.name } }] },
-        // Kind: Notion select 选项为首字母大写 Ability/Feature；DB 存小写 → 映射，避免自动创建重复小写选项
+        // Kind: Notion select 选项首字母大写；DB 小写 → 映射，避免自动创建重复小写选项
         Kind: { select: { name: (f.kind || 'feature') === 'ability' ? 'Ability' : 'Feature' } },
-        // Status: Notion Feature 库该属性是 status 类型（非 select）；发 select 会 400「Status is expected to be status」。
-        // DB 的值(planned/working/building/broken/deprecated/done)与 Notion status 选项一一匹配，仅类型需对齐。
+        // Status: Notion Feature 库该属性是 status 类型（非 select）
         Status: { status: { name: f.status || 'planned' } },
       };
-      if (f.thickness) {
-        properties['Thickness'] = { select: { name: f.thickness } };
-      }
-      if (f.journey_notion_id) {
-        properties['Journey'] = { relation: [{ id: f.journey_notion_id }] };
-      }
-      if (f.area_notion_id) {
-        properties['Area'] = { relation: [{ id: f.area_notion_id }] };
-      }
-      if (f.unit_test_path) {
-        properties['Unit Test Path'] = { rich_text: buildRichText(f.unit_test_path) };
-      }
+      if (f.thickness) properties['Thickness'] = { select: { name: f.thickness } };
+      if (f.journey_notion_id) properties['Journey'] = { relation: [{ id: f.journey_notion_id }] };
+      if (f.area_notion_id) properties['Area'] = { relation: [{ id: f.area_notion_id }] };
+      if (f.unit_test_path) properties['Unit Test Path'] = { rich_text: buildRichText(f.unit_test_path) };
+      return properties;
+    },
+  });
+}
+/**
+ * Notion Issues 库 Status（status 类型）只有 Open / Triage / In progress / Closed。
+ * issues 表历史值有 Backlog / Done / open / closed 等 → 映射到合法选项，未知值归 Open；
+ * 否则 400「Invalid status option」每轮重推失败。
+ */
+const ISSUE_NOTION_STATUSES = ['Open', 'Triage', 'In progress', 'Closed'];
+const ISSUE_STATUS_ALIASES = { backlog: 'Open', done: 'Closed' };
+export function issueStatusToNotion(status) {
+  const key = String(status || '').trim().toLowerCase();
+  const legal = ISSUE_NOTION_STATUSES.find((s) => s.toLowerCase() === key);
+  return legal || ISSUE_STATUS_ALIASES[key] || 'Open';
+}
 
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: FEATURE_DB },
-        properties,
-      });
-
-      await pool.query(
-        'UPDATE journey_features SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, f.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] feature ${f.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-      if (isStaleRelationError(err)) {
-        await pool.query('UPDATE journey_features SET notion_synced_at=NOW() WHERE id=$1', [f.id]).catch(() => {});
-      }
-    }
+export function buildIssueNotionProperties(issue) {
+  const properties = {
+    Issue: { title: [{ text: { content: issue.title } }] },
+    Priority: { select: { name: issue.priority || 'P2' } },
+    Status: { status: { name: issueStatusToNotion(issue.status) } },
+  };
+  if (issue.sub_area && SUB_AREA_NOTION_IDS[issue.sub_area]) {
+    properties['Sub Area'] = { relation: [{ id: SUB_AREA_NOTION_IDS[issue.sub_area] }] };
   }
+  return properties;
 }
 
 async function pushIssues(pool, token) {
   const { rows } = await pool.query(
-    'SELECT * FROM issues WHERE notion_synced_at IS NULL LIMIT 10'
+    `SELECT * FROM issues
+      WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
+      ORDER BY notion_synced_at NULLS FIRST, updated_at LIMIT 10`);
+  if (rows.length === 0) return;
+  const dbId = ISSUES_DB || await resolveDbId(pool, 'issues');
+  await pushRegisteredRows(pool, token, {
+    table: 'issues', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'issue',
+    buildProps: buildIssueNotionProperties,
+    buildChildren: (issue) => issue.body ? [{
+      object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(issue.body) },
+    }] : undefined,
+  });
+}
+/**
+ * Brain tasks → Notion Tasks 库（d5bc40c2）。
+ * 三条纪律：
+ *  1. 范围=活任务(queued/in_progress/blocked)+近7天终态，历史不进驾驶舱；
+ *  2. 幂等指纹 notion_props.pushed_status——tasks.updated_at 被 tick 定时 touch
+ *     不能当增量判据，status 未变不重推；
+ *  3. 13483 条历史 notion_id 是旧时代遗产指向别处：仅当 notion_props 带本指纹
+ *     才 PATCH，否则一律 create 新页并覆盖（防打错对象）。
+ */
+/**
+ * pushTasks 的取数（导出供守卫测试断言，不要内联回去）。
+ *
+ * device_job 必须排除在外：它是安卓工作机（手机）的活，四台机一天约 90 单，
+ * 每单至少 queued→in_progress→completed 三次状态翻转 ≈ 270 次推送。而本查询
+ * 每轮只推 LIMIT 10，Notion API 又限流 3 req/s——手机单一旦涌进来就会把投影
+ * 窗口整个挤占，连累 harness/决策/任务的 Notion 同步（延迟已实测最长 3090s，
+ * 账本债近三天发作过三次）。
+ *
+ * 手机的活在 Notion 上走**每机每天一条汇总**的独立通道（独立 push 函数 + 独立
+ * 日配额），逐单明细只留在工作机页；这里一条都不推。
+ */
+export const PUSH_TASKS_QUERY = `
+    SELECT t.id, t.title, t.status, t.priority, t.task_type, t.kind, t.notion_id, t.notion_props,
+           proj.notion_id AS project_notion_id,
+           blk.ids AS blocker_notion_ids
+      FROM tasks t
+      LEFT JOIN tasks proj ON proj.id = t.parent_task_id AND proj.task_type = 'project'
+      -- Blocked by：hard 依赖里「已投影且带本系统指纹」的前置任务（旧时代遗产 notion_id 指向别处，不能当 relation 目标）
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(array_agg(b.notion_id ORDER BY b.notion_id), ARRAY[]::text[]) AS ids
+          FROM task_dependencies d
+          JOIN tasks b ON b.id = d.to_task_id
+         WHERE d.from_task_id = t.id
+           AND d.edge_type = 'hard'
+           AND d.gap_id IS NULL
+           AND b.notion_id IS NOT NULL
+           AND (b.notion_props->>'pushed_status') IS NOT NULL
+      ) blk ON true
+     WHERE (
+             (t.notion_props->>'pushed_status') IS DISTINCT FROM t.status
+             -- 根后建页 / 依赖后加：status 没变也要重推（$1=Blocked by 投影未被 flag-off 时才看依赖指纹）
+             OR (proj.notion_id IS NOT NULL AND (t.notion_props->>'pushed_project') IS DISTINCT FROM proj.notion_id)
+             OR ($1::boolean AND COALESCE(t.notion_props->>'pushed_blockers', '') IS DISTINCT FROM array_to_string(blk.ids, ','))
+           )
+       AND NOT (t.task_type = ANY(ARRAY[${PUSH_EXCLUDED_TASK_TYPES.map((t) => `'${t}'`).join(',')}]::text[]))
+       AND t.task_type <> 'project'
+       AND (
+         t.status IN ('queued','in_progress','blocked')
+         OR (t.status IN ('completed','failed','canceled','cancelled')
+             AND t.updated_at > NOW() - INTERVAL '7 days')
+       )
+     ORDER BY t.updated_at DESC
+     LIMIT 10`;
+
+// ── Tasks 库 Blocked by 投影的 flag-off 状态（链 bf5088a3 棒5·PR B）──────────────────────────
+// 缺列先补；补不上 / 推送含 Blocked by 报错 → 本进程停投影该列一个 TTL（默认 active，条件 SQL 里 $1）。
+// Project 列是库既有列，不在此开关内。
+const TASKS_PROJECTION_TTL_MS = 10 * 60 * 1000;
+const tasksProjectionState = { ensuredAt: 0, disabledUntil: 0 };
+
+export function isTasksBlockedByActive(now = Date.now()) {
+  return now >= tasksProjectionState.disabledUntil;
+}
+
+export function resetTasksProjectionStateForTest() {
+  tasksProjectionState.ensuredAt = 0;
+  tasksProjectionState.disabledUntil = 0;
+}
+
+/**
+ * 缺列即补（幂等）。库的 id 用推送用的同一常量（守夜 A9 断言它 == notion_projection_map 的 tasks 行）。
+ * @returns {Promise<boolean>} Blocked by 是否可投影；失败只记日志、进入 TTL 冷却，绝不抛。
+ */
+export async function ensureTasksProjection(pool, token, now = Date.now()) {
+  if (now < tasksProjectionState.disabledUntil) return false;
+  if (now - tasksProjectionState.ensuredAt < TASKS_PROJECTION_TTL_MS && tasksProjectionState.ensuredAt > 0) return true;
+  try {
+    const { added } = await ensureOpsDbProps(token, NOTION_TASKS_DB, buildTasksDbProps(NOTION_TASKS_DB), { notionReq });
+    if (added.length) console.log(`[tasks-push] Tasks 库补列: ${added.join(', ')}`);
+    tasksProjectionState.ensuredAt = now;
+    return true;
+  } catch (err) {
+    tasksProjectionState.disabledUntil = now + TASKS_PROJECTION_TTL_MS;
+    await logSyncError(pool, `[tasks-push] Tasks 库补列失败，Blocked by 投影暂停 10 分钟: ${err.message}`);
+    return false;
+  }
+}
+
+async function pushTasks(pool, token) {
+  const { rows } = await pool.query(PUSH_TASKS_QUERY, [isTasksBlockedByActive()]);
+  if (rows.length === 0) return;
+  const blockedBy = await ensureTasksProjection(pool, token);
+  await pushTaskRows(pool, token, rows, { blockedBy });
+}
+
+/** 可测内核：对给定行执行推送（导出仅供测试注入行数据） */
+export async function pushTasksForTest(pool, token, rows, opts = {}) {
+  return pushTaskRows(pool, token, rows, opts);
+}
+
+/**
+ * 一个任务 → Notion Tasks 库 properties（纯函数，可独立验证）。
+ * Blocked by 只在 blockedBy 开启时发：有前置 → relation；前置被清空（指纹里曾有）→ 发空 relation 清掉；从没有过 → 不发。
+ */
+export function buildTaskNotionProperties(t, { blockedBy = false } = {}) {
+  const notionStatus = TASK_STATUS_TO_NOTION[t.status] || 'Planned';
+  const blockers = Array.isArray(t.blocker_notion_ids) ? t.blocker_notion_ids : [];
+  const hadBlockers = Boolean(t.notion_props?.pushed_blockers);
+  return {
+    Name: { title: [{ text: { content: `[${t.priority || 'P2'}] ${String(t.title || '').slice(0, 180)}` } }] },
+    Status: { status: { name: notionStatus } },
+    // kind 真列（决策 df67a9d6）进 Description 文本，不给 Notion 加列（缺列即整条推送红）；
+    // `brain:<id>` 标记位置不变，各 ingest 用 includes('brain:') 判定不受影响。
+    Description: { rich_text: buildRichText(`${t.task_type || 'task'}${t.kind ? ` · ${t.kind}` : ''} · brain:${t.id}`) },
+    // 接力棒：子任务挂回 Projects 里的根页（根由 notion-relay-projection 推）
+    ...(t.project_notion_id ? { Project: { relation: [{ id: t.project_notion_id }] } } : {}),
+    // 依赖：Blocked by 自关联（task_dependencies hard 边，前置必须已投影）
+    ...(blockedBy && (blockers.length > 0 || hadBlockers)
+      ? { 'Blocked by': { relation: blockers.map((id) => ({ id })) } }
+      : {}),
+  };
+}
+
+async function pushTaskRows(pool, token, rows, { blockedBy = false } = {}) {
+  for (const t of rows) {
+    try {
+      const properties = buildTaskNotionProperties(t, { blockedBy });
+      // 指纹：status 之外再记 Project 根 / 前置任务集合，根后建页、依赖后加才会重推。
+      // blockedBy 关闭时不碰 pushed_blockers，等列恢复后条件 SQL 会自然把它们重新选出来。
+      const fpProject = t.project_notion_id || '';
+      const fpBlockers = (Array.isArray(t.blocker_notion_ids) ? t.blocker_notion_ids : []).join(',');
+      const fpSql = blockedBy
+        ? `jsonb_build_object('pushed_status', $2::text, 'pushed_project', $3::text, 'pushed_blockers', $4::text)`
+        : `jsonb_build_object('pushed_status', $2::text, 'pushed_project', $3::text)`;
+      const fpParams = blockedBy ? [t.status, fpProject, fpBlockers] : [t.status, fpProject];
+      const managed = t.notion_props && t.notion_props.pushed_status && t.notion_id;
+      if (managed) {
+        await notionReq(token, `/pages/${t.notion_id}`, 'PATCH', { properties });
+        await pool.query(
+          `UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb) || ${fpSql}, notion_synced_at=NOW() WHERE id=$1`,
+          [t.id, ...fpParams],
+        );
+      } else {
+        const page = await notionReq(token, '/pages', 'POST', {
+          parent: { database_id: NOTION_TASKS_DB },
+          properties,
+        });
+        // 页 id 是 $2，指纹参数顺延一位
+        const createFpSql = fpSql.replace(/\$([234])::text/g, (_m, n) => `$${Number(n) + 1}::text`);
+        await pool.query(
+          `UPDATE tasks SET notion_id=$2, notion_props = COALESCE(notion_props,'{}'::jsonb) || ${createFpSql}, notion_synced_at=NOW() WHERE id=$1`,
+          [t.id, page.id, ...fpParams],
+        );
+      }
+    } catch (err) {
+      console.warn(`[notion-push-sync] task ${t.id} 推送失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+      // 推送因 Blocked by 列报错：只暂停该列投影，绝不走下面的「清 notion_id 重建」——
+      // 400 会被 isWrongDatabaseError 误判成错库，重建 = 每个有依赖的任务多出一页重复页
+      if (blockedBy && /Blocked by/i.test(err.message)) {
+        tasksProjectionState.disabledUntil = Date.now() + TASKS_PROJECTION_TTL_MS;
+        continue;
+      }
+      // 我方页面被人在 Notion 删除(404)、页/库进回收站(400 archived ancestor)，
+      // 或 legacy id 绑到错库(400 schema 不符) → 清指纹与 id，下轮 create 重建到正确的库
+      if ((isPageGoneError(err) && t.notion_props?.pushed_status) || isWrongDatabaseError(err)) {
+        await pool.query(
+          `UPDATE tasks SET notion_id=NULL, notion_props = notion_props - 'pushed_status' WHERE id=$1`,
+          [t.id],
+        ).catch(() => {});
+      }
+    }
+  }
+}
+
+/**
+ * 拉取 Notion 页面正文（blocks API）作为任务 prompt（2026-09-17；0928 改为全读，见 lib/notion-page-content.js）。
+ * 主理人把任务描述写在排单页正文里 → 送达执行体。任何异常都不阻塞排单主流程。
+ */
+export async function fetchNotionPageContent(token, pageId) {
+  try {
+    return await readPageContent(pageId, { request: (path) => notionReq(token, path, 'GET') });
+  } catch (err) {
+    console.warn(`[notion-pull] 页面正文拉取失败 ${pageId}（不阻塞排单）: ${err.message}`);
+    return '';
+  }
+}
+
+const richText = (arr) => (arr ?? []).map((t) => t.plain_text ?? t.text?.content ?? '').join('');
+
+function tenantFor(env, zhDbId) {
+  try {
+    const map = JSON.parse(env.NOTION_TENANT_MAP || '{}');
+    return map[zhDbId] ?? map[String(zhDbId).replace(/-/g, '')] ?? 'default';
+  } catch { return 'default'; }
+}
+
+/** 同步标记不是正文：入账算"有没有描述"时必须先把它们摘掉 */
+const SYNC_MARK_RE = /\[(?:zh|en):[0-9a-f]{32}\]|\[en-native\]/g;
+
+/**
+ * 入账描述兜底。dispatcher pre-flight（pre-flight-check.js）对非系统类型要求
+ * description.trim().length >= 20，不够长就是一条 issue → 任务连吃三振进 blocked。
+ * 秋米行的"正文"经常整条都是同步标记（[zh:<id32>] / [en-native]），摘掉标记后往往剩不下
+ * 20 个字，甚至一个字都不剩——那就用标题把描述撑成一句人能读的话，而不是把任务送去撞墙。
+ */
+export function qiumiDescription(rawBody, title, pageId) {
+  const body = String(rawBody ?? '').replace(SYNC_MARK_RE, '').trim().slice(0, 2000);
+  if (body.length >= 20) return body;
+  const label = title || `页 ${pageId}`;
+  const hint = `来自秋米中文任务表「${label}」（${body ? '正文过短' : '页面正文为空'}，按标题执行）`;
+  return [body, hint].filter(Boolean).join(' · ');
+}
+
+/** 英文页 [en:<id32>] 反查中文行（反向回填生成的中文行备注带该标记） */
+async function findZhPageByEnMark(token, enId32) {
+  const resp = await notionReq(token, `/databases/${GTD_DB_ID}/query`, 'POST', {
+    page_size: 1, filter: { property: '备注', rich_text: { contains: `[en:${enId32}]` } },
+  });
+  return resp?.results?.[0] ?? null;
+}
+
+/**
+ * 秋米标记行（[zh:<id32>] 或 [en-native]）→ Brain qiumi_task。
+ * 页 id 只进 payload（notion_page_id=英文页，为 458 去重豁免键；notion_zh_page_id=中文页），
+ * 绝不写 tasks.notion_id（canonical 投影会覆盖）。tenant 由 NOTION_TENANT_MAP 给。
+ */
+/**
+ * 委派人：中文「委派人」/英文 Delegated By 写了就用；空着按页面创建者补——人用 Notion 名字，
+ * 集成机器人（Agent 经 API 建的行）记「Agent（未标注）」。Agent 委派 Agent 时应自己写上名字。
+ */
+async function resolveDelegator(token, zh, en) {
+  if (zh?.delegatedBy || en.delegatedBy) return { name: zh?.delegatedBy || en.delegatedBy, inferred: false };
+  if (!zh?.createdById) return { name: null, inferred: false };
+  const user = await notionReq(token, `/users/${zh.createdById}`, 'GET').catch(() => null);
+  if (user?.type === 'person' && user.name) return { name: user.name, inferred: true };
+  return { name: user?.type === 'bot' ? 'Agent（未标注）' : null, inferred: true };
+}
+
+async function ingestQiumiPage(pool, token, page, en, { env, now = () => new Date() }) {
+  const enBody = await fetchNotionPageContent(token, page.id);
+  let zhPage = null;
+  if (en.zhId32) {
+    const zhId = en.zhId32.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+    zhPage = await notionReq(token, `/pages/${zhId}`, 'GET');
+  } else {
+    zhPage = await findZhPageByEnMark(token, en.id32);
+  }
+  const zh = zhPage ? parseZhPage(zhPage) : null;
+  const zhBody = zh ? await fetchNotionPageContent(token, zh.id) : '';
+  const title = (zh?.title || en.name.replace(/^\[P[0-3]\]\s*/, '')).trim();
+  const priority = zh?.priority ?? (en.name.match(/^\[(P[0-2])\]/)?.[1] ?? 'P2');
+  const dueAt = zh?.dueAt ?? en.planDate ?? null;
+  // 预期开始时间 → next_run_at（派发器没到点不派），预期结束时间 → due_at（决策 51c09285）
+  const startIso = toStartIso(zh?.startAt ?? en.planDate ?? null);
+  const endIso = toEndIso(zh?.endAt ?? en.planEnd ?? null);
+  const scheduled = isFuture(startIso, now());
+  const delegator = await resolveDelegator(token, zh, en);
+  const tenantId = zh ? tenantFor(env, env.NOTION_GTD_DB_ID || GTD_DB_ID) : 'default';
+  const routed = await createRoutedTask(pool, {
+    source: 'inbox',
+    source_id: page.id,
+    title,
+    description: qiumiDescription(zhBody || enBody || en.description, title, page.id),
+    requested_task_type: 'qiumi_task',
+    mutation_intent: 'none',
+    declared_domain: 'operations',
+    map_scope_hint: ['F2', 'execution_pool'],
+    metadata: {
+      source: 'notion_gtd',
+      origin: en.zhId32 ? 'zh' : 'en',
+      notion_page_id: page.id,            // 信息字段，不承担去重语义
+      notion_zh_page_id: zh?.id ?? null,
+      dedup_by_notion_page: 'true',       // 461 idx_tasks_dedup_active 豁免键（同名中文行不撞）
+      tenant_id: tenantId,
+      // 第一道闸：门没放开就写 true，任务落地即被 tick 候选 SQL 排除（谓词见 dispatch-helpers.js）。
+      // 放开后写 false（与不写等价），由 dispatcher.dispatchQiumiTask 接管派发。
+      headed_manual: env.QIUMI_DISPATCH_ENABLED !== 'true',
+      qiumi_source: qiumiSourceFromNotion({ title, zh, en, zhBody, enBody, dueAt }),
+      ...(startIso ? { next_run_at: startIso, scheduled_start: startIso } : {}),
+      ...(delegator.name ? { delegated_by: delegator.name } : {}),
+    },
+    task: { priority, status: 'queued', trigger_source: 'manual', executor_kind: 'openclaw-agent' },
+  });
+  const taskId = routed?.task?.id ?? routed?.task_id;
+  if (!taskId) throw new Error('routed_task_id_missing');
+  // due_at 只来自「预期结束时间」：它是截止（手机忙排队的等待上限读它，lib/qiumi-device-busy.js）。
+  // 旧列「预期完成日期」/ 英文 Plan Date 起点现在都是开始时间，落进 due_at 会让任务一忙就判过期。
+  // due_at 是 timestamp without time zone，直接存真实 UTC 时刻（任务 19684870：db.js 全局
+  // setTypeParser 已经把这一类列的读取修正为按 UTC 解析，这里不再需要"故意存上海墙钟数字、
+  // 靠读取 bug 纠正回来"的补偿写法——与 recurring.js:111 / decision-executor.js:507 两处
+  // 本来就写真实 UTC 的路径统一语义）。
+  if (endIso) {
+    await pool.query(
+      'UPDATE tasks SET due_at=$2::timestamptz, updated_at=NOW() WHERE id=$1', [taskId, endIso],
+    );
+  }
+  // 458 给 tasks 建了 tenant_id 列，路由账房不认这个字段 → 不补写就恒 NULL，
+  // 按列过滤的看板/查询一条秋米任务都看不见，租户隔离形同虚设。payload 里有不算数。
+  await pool.query('UPDATE tasks SET tenant_id=$2, updated_at=NOW() WHERE id=$1', [taskId, tenantId]);
+  if (zh) {
+    // 没到预期开始时间：进库但保持委派，结果栏写已排期提示；到点派发后由回写翻成进行中
+    await notionReq(token, `/pages/${zh.id}`, 'PATCH', { properties: {
+      'OpenClaw任务号': { rich_text: [{ type: 'text', text: { content: `brain:${taskId}` } }] },
+      '状态': { status: { name: scheduled ? '委派' : '进行中' } },
+      ...(scheduled ? { 'OpenClaw结果': { rich_text: [{ type: 'text', text: { content: scheduledNote(startIso) } }] } } : {}),
+      ...(delegator.inferred && delegator.name ? { '委派人': { select: { name: delegator.name } } } : {}),
+    } });
+  }
+  await writeStatusReceipt(token, page, en.description, `brain:${taskId} ✓已接管`);
+  console.log(`[notion-gtd] 入账 "${title}" → qiumi_task ${taskId}`);
+  return { taskId, kind: 'qiumi_task' };
+}
+
+/**
+ * 一页 Delegated 的完整接手逻辑（从 pullNotionTasks 抽出；非标记行逐字保持原行为）。
+ * 主理人在 Notion 新建行并把 Status 拖到 Delegated 即"排单"：
+ *  · 只认 Status=Delegated 且 Description 不含 brain: 标记的页（幂等防重复接手）
+ *  · 带 [zh:<id32>] 或 [en-native] 标记的秋米行 → 直落 qiumi_task（queued，见 ingestQiumiPage）
+ *  · 其余非标记行接手落 status='blocked'——map 扫描器未迁 us-vps 前 kernel 准入不通，
+ *    直接 queued 会被 tick 抓去撞墙三连 autoblock；error_message 注明等待路由。
+ *    map 刀落地后由 unblock 流程放行。
+ *  · notion_props.pushed_status 写入=当前 status，防 pushTasks 反手改用户的 Delegated
+ *  · Name 前缀 [P0-3] 解析 priority，缺省 P2；回执 `brain:<id> ✓已接管` PATCH 回页面
+ * @returns {{taskId: string|null, kind: 'qiumi_task'|'dev'|'openclaw'|'skipped'}}
+ */
+export async function ingestDelegatedPage(pool, token, page, opts = {}) {
+  const props = page.properties ?? {};
+  const name = richText(props.Name?.title).trim();
+  const desc = richText(props.Description?.rich_text);
+  if (!name) return { taskId: null, kind: 'skipped' };
+  if (/brain:/.test(desc)) return { taskId: null, kind: 'skipped' }; // 已接手，幂等跳过
+  if (/run:notion-/.test(desc)) return { taskId: null, kind: 'skipped' }; // OpenClaw 已派发，幂等跳过
+
+  const en = parseEnPage(page);
+  if (en.zhId32 || en.enNative) {
+    return ingestQiumiPage(pool, token, page, en, { env: opts.env ?? process.env, ...(opts.now ? { now: opts.now } : {}) });
+  }
+
+  // ─── 以下为原 pullNotionTasks 循环体，逐字搬入，非标记行行为不变 ───
+  const wfRelation = (props.Workflow?.relation ?? [])[0]?.id ?? null;
+  if (wfRelation) {
+    // 排班员 v1a·时间窗：Plan Date 在未来 = 意图排期，到点后自然进派发流程
+    const planStart = props['Plan Date']?.date?.start ?? null;
+    if (planStart && new Date(planStart).getTime() > Date.now()) {
+      await writeStatusReceipt(token, page, desc, `🕐 已排期 ${planStart}，到点自动派发`);
+      return { taskId: null, kind: 'skipped' };
+    }
+    await dispatchOpenClawFromNotion({
+      pool, token, page, desc,
+      pageContent: await fetchNotionPageContent(token, page.id),
+      workflowNotionId: wfRelation,
+      agentNotionId: (props.Agent?.relation ?? [])[0]?.id ?? null,
+      env: opts.env ?? process.env,
+      readTemplateFn: opts.readTemplateFn ?? defaultReadTemplate,
+      fetchFn: opts.fetchFn ?? globalThis.fetch,
+      execFn: opts.execFn,
+    });
+    return { taskId: null, kind: 'openclaw' };
+  }
+
+  const m = name.match(/^\[(P[0-3])\]\s*(.+)$/);
+  const priority = m ? m[1] : 'P2';
+  const title = m ? m[2] : name;
+  // 页面正文=主理人写的任务描述/prompt（拉取失败返回 ''，回落固定文案）
+  const pageContent = await fetchNotionPageContent(token, page.id);
+
+  // 建任务必须走原子路由账房（task-creation-inventory 守卫），获得 Routing Receipt。
+  // source_id=Notion 页 id → 账房自带幂等（同页重放拿回同一 task）。
+  // 2026-09-14 实吃第一单踩出的四个路由参数（work-router 硬校验）：
+  // source 枚举无 notion_tasks_db → 归 inbox（主理人收件箱语义）；
+  // mutation_intent 必填（排单默认 write）；repo_hint 必须唯一匹配仓库事实。
+  const routed = await createRoutedTask(pool, {
+    source: 'inbox',
+    source_id: page.id,
+    title,
+    description: pageContent.slice(0, 2000) || '来自 Notion Tasks 编排（主理人排单）',
+    requested_task_type: 'dev',
+    declared_change_kind: 'capability_change',
+    mutation_intent: 'write',
+    repo_hint: 'cecelia',
+    metadata: { source: 'notion_tasks_db', notion_page_id: page.id },
+    map_scope_hint: ['F2', 'execution_pool'],
+    task: { priority, status: 'queued' },
+  });
+  const taskId = routed?.task?.id ?? routed?.task_id;
+  if (!taskId) throw new Error('routed_task_id_missing');
+  // 接手先落 blocked——map 扫描器未迁 us-vps 前 kernel 准入不通，直接 queued
+  // 会被 tick 抓去三连 autoblock；同步写 notion 列与幂等指纹（防 pushTasks
+  // 反手改用户设的 Delegated）。map 刀后由 unblock 放行。
+  await pool.query(
+    `UPDATE tasks SET status='blocked',
+            blocked_at=NOW(),
+            error_message='awaiting_execution_route: map 扫描器迁移后由 unblock 放行',
+            notion_id=$2,
+            notion_props = COALESCE(notion_props,'{}'::jsonb)
+              || jsonb_build_object('pushed_status','blocked','origin','notion'),
+            updated_at=NOW()
+      WHERE id=$1`,
+    [taskId, page.id],
   );
+  const receipt = `${desc ? desc + ' · ' : ''}brain:${taskId} ✓已接管`;
+  await notionReq(token, `/pages/${page.id}`, 'PATCH', {
+    properties: { Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] } },
+  });
+  console.log(`[notion-pull] 接手排单 "${title}" → task ${taskId}`);
+  return { taskId, kind: 'dev' };
+}
 
-  for (const issue of rows) {
+/** 只拉带秋米标记的 Delegated 行（notion-gtd-sync 30s 轮用；与 legacy pullNotionTasks 共用入账函数，幂等） */
+export async function pullMarkedNotionTasks(pool, token, opts = {}) {
+  let ingested = 0; let skipped = 0;
+  for (const mark of ['[zh:', EN_NATIVE_MARK]) {
+    let resp;
     try {
-      const properties = {
-        Issue: { title: [{ text: { content: issue.title } }] },
-        Priority: { select: { name: issue.priority || 'P2' } },
-        Status: { status: { name: issue.status || 'In progress' } },
-      };
-      if (issue.sub_area && SUB_AREA_NOTION_IDS[issue.sub_area]) {
-        properties['Sub Area'] = { relation: [{ id: SUB_AREA_NOTION_IDS[issue.sub_area] }] };
-      }
-
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: ISSUES_DB },
-        properties,
-        children: issue.body ? [{
-          object: 'block',
-          type: 'paragraph',
-          paragraph: { rich_text: buildRichText(issue.body) },
-        }] : undefined,
+      resp = await notionReq(token, `/databases/${NOTION_TASKS_DB}/query`, 'POST', {
+        page_size: 50,
+        filter: { and: [
+          { property: 'Status', status: { equals: 'Delegated' } },
+          { property: 'Description', rich_text: { contains: mark } },
+        ] },
       });
-
-      await pool.query(
-        'UPDATE issues SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, issue.id]
-      );
     } catch (err) {
-      console.warn(`[notion-push-sync] issue ${issue.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-      if (isStaleRelationError(err)) {
-        await pool.query('UPDATE issues SET notion_synced_at=NOW() WHERE id=$1', [issue.id]).catch(() => {});
+      console.warn(`[notion-gtd] Tasks 库查询失败(${mark}): ${err.message}`);
+      continue;
+    }
+    for (const page of resp?.results ?? []) {
+      try {
+        const r = await ingestDelegatedPage(pool, token, page, opts);
+        if (r.kind === 'qiumi_task') ingested += 1; else skipped += 1;
+      } catch (err) {
+        console.warn(`[notion-gtd] 页面 ${page?.id} 入账失败: ${err.message}`);
+        await logSyncError(pool, err.message);
       }
+    }
+  }
+  return { ingested, skipped };
+}
+
+/**
+ * Notion Tasks 库 → Brain 接手（双向·pull 半边，2026-09-14；PR2 起收敛为对 ingestDelegatedPage 的循环）。
+ */
+async function pullNotionTasks(pool, token, opts = {}) {
+  let resp;
+  try {
+    resp = await notionReq(token, `/databases/${NOTION_TASKS_DB}/query`, 'POST', {
+      page_size: 20,
+      filter: { property: 'Status', status: { equals: 'Delegated' } },
+    });
+  } catch (err) {
+    console.warn(`[notion-pull] Tasks 库查询失败: ${err.message}`);
+    return;
+  }
+  for (const page of resp?.results ?? []) {
+    try {
+      await ingestDelegatedPage(pool, token, page, opts);
+    } catch (err) {
+      console.warn(`[notion-pull] 页面 ${page?.id} 接手失败: ${err.message}`);
+      await logSyncError(pool, err.message);
     }
   }
 }
 
-async function pushSkillRegistry(pool, token) {
-  const { rows } = await pool.query(
-    `SELECT * FROM skill_registry WHERE notion_synced_at IS NULL LIMIT 10`
+/** 正式入口：由 legacy-notion-push-scheduler 与 push 并联周期调用 */
+export async function runNotionTaskPull(pool) {
+  const token = getToken();
+  if (!token) return;
+  await pullNotionTasks(pool, token);
+  await syncOpenClawRuns(pool, token);
+  await reapSshWorkflowRuns(pool, token);
+}
+
+// ssh 直派公共参数：定义已抽到 lib/ssh-args.js（终审 I6，解除 executor-contracts.js
+// 对本文件的分层倒置依赖）；本文件仍是原调用方，import 后行为不变。
+function defaultSshExec(args) {
+  return nodeExecFileSync('ssh', args, { encoding: 'utf8', timeout: 30_000 });
+}
+
+// 状态回执尾巴（⚠/⏸/🕐/▶）可被下一轮覆盖——剥离后再拼，防 desc 滚雪球
+const STATUS_TAIL_RE = /\s*·?\s*(?:▶ 已派发|⚠ 派发[未失][成败]|⏸ 排队|🕐 已排期)[\s\S]*$/;
+function stripStatusTail(desc) {
+  return String(desc || '').replace(STATUS_TAIL_RE, '').trim();
+}
+
+/**
+ * 状态回执 PATCH——截 base 而非整串，保证尾巴（` · <status>`，含 brain:<id> 标记）
+ * 永远完整：长正文时若对 `base + tail` 整串 slice(0,1900)，超长 base 会把尾巴挤出
+ * 截断窗口，下一轮 `/brain:/` 判不出已接手 → 每轮重复入账（PR2 审查 Important #1）。
+ */
+async function writeStatusReceipt(token, page, desc, status) {
+  const base = stripStatusTail(desc);
+  const tail = base ? ` · ${status}` : status;
+  const content = `${base.slice(0, Math.max(0, 1900 - tail.length))}${tail}`;
+  await notionReq(token, `/pages/${page.id}`, 'PATCH', {
+    properties: {
+      Description: { rich_text: [{ type: 'text', text: { content } }] },
+    },
+  });
+}
+
+function defaultReadTemplate(dir, file) {
+  return JSON.parse(readFileSync(joinPath(dir, file), 'utf8'));
+}
+
+/**
+ * OpenClaw 排单派发（relation 版）：Notion relation 页 id → 反查 ops_workflows /
+ * ops_agents（notion_id 归一去杠比对）→ dispatch 人工列取入口与模板 →
+ * 注入唯一 run_id（内嵌 pageid32 供终态反解）→ POST n8n webhook。
+ * 一切缺配置都写 ⚠ 回执到页面（不含幂等标记，修好配置下轮自动重派）。
+ */
+async function dispatchOpenClawFromNotion({
+  pool, token, page, desc, pageContent = '', workflowNotionId, agentNotionId, env, readTemplateFn, fetchFn, execFn: execFnIn,
+}) {
+  const norm = (id) => String(id).replace(/-/g, '');
+  const failReceipt = async (why) => {
+    await writeStatusReceipt(token, page, desc, `⚠ 派发未成(${String(why).slice(0, 80)})`);
+    console.warn(`[notion-pull] OpenClaw 派发未成 page=${page.id}: ${why}`);
+  };
+  // 只认 n8n 业务流程：09-24 起 ops_workflows 也装 Brain 调度 job（source='scheduler'），人在
+  // relation 里误选 ci-patrol 之类不能回退到默认 webhook 真派出去，查不到即走 workflow 不在 ops 的回执
+  const { rows: wfRows } = await pool.query(
+    `SELECT wf_id, name, dispatch FROM ops_workflows WHERE replace(notion_id::text,'-','') = $1 AND source = 'n8n' LIMIT 1`,
+    [norm(workflowNotionId)],
   );
-  for (const s of rows) {
+  const wf = wfRows[0];
+  if (!wf) return failReceipt('workflow_not_in_ops：所选行不是 n8n 业务流程（Brain 调度 job 不可排单），请改选 source=n8n 的工作流');
+  let agent = null;
+  if (agentNotionId) {
+    const { rows } = await pool.query(
+      `SELECT name, dispatch FROM ops_agents WHERE replace(notion_id::text,'-','') = $1 LIMIT 1`,
+      [norm(agentNotionId)],
+    );
+    agent = rows[0] ?? null;
+    if (!agent) return failReceipt('agent_not_in_ops：所选行不在 ops_agents 账上');
+  }
+  const executorLabel = agent ? `${wf.name}·${agent.name}` : wf.name;
+  // 排班员 v1b·在途互斥：同 workflow 已有 in_progress run（物理资源相同）→ 排队。
+  // Delegated 行本身就是队列：不改 Status，下轮 pull 自动重试 = 资源释放自动放行。
+  const { rows: busyRows } = await pool.query(
+    `SELECT id, payload->>'run_id' AS run_id FROM tasks
+      WHERE task_type='workflow_run' AND status='in_progress'
+        AND payload->>'wf_id' = $1 LIMIT 1`,
+    [wf.wf_id],
+  );
+  if (busyRows[0]) {
+    // 文案禁写 run: 前缀——会命中 pull 幂等跳过正则 /run:notion-/，排队行永不重试（09-14 实证死锁）
+    await writeStatusReceipt(token, page, desc,
+      `⏸ 排队：${wf.name} 在途(${busyRows[0].run_id ?? busyRows[0].id})，完成后自动派发`);
+    return;
+  }
+  // ssh 直派通道（决策 2026-09-15：任务自动填机器直接下派）——直驾线入口。
+  // 派发=目标机 nohup 起后台批，exit code 落 ~/brain-runs/<run_id>.exit 由收割器回收。
+  if (wf.dispatch?.channel === 'ssh') {
+    const machine = wf.dispatch.machine;
+    const command = wf.dispatch.command;
+    if (!machine) return failReceipt(`no_machine：给 ops_workflows(${wf.wf_id}).dispatch 配 machine`);
+    if (!command) return failReceipt(`no_command：给 ops_workflows(${wf.wf_id}).dispatch 配 command`);
+    let target;
+    try { target = sshTargetFor(machine); } catch (err) { return failReceipt(err.message); }
+    const pageId32ssh = String(page.id).replace(/-/g, '');
+    const runIdSsh = `notion-${pageId32ssh}-${Date.now()}`;
+    const exitPath = `~/brain-runs/${runIdSsh}.exit`;
+    const logPath = `~/brain-runs/${runIdSsh}.log`;
+    // 页面正文=执行 prompt：base64 先写达目标机 prompt 文件（base64 经 ssh 传输零注入面），
+    // command 里的 {PROMPT_FILE} 字面量替换为该路径；无占位符则 prompt 文件照写供 command 自取。
+    let promptFile = null;
+    let promptSetup = '';
+    let effectiveCommand = command;
+    if (pageContent) {
+      promptFile = `~/brain-runs/${runIdSsh}.prompt`;
+      const promptB64 = Buffer.from(pageContent).toString('base64');
+      promptSetup = `printf '%s' '${promptB64}' | base64 -d > ${promptFile} && `;
+      effectiveCommand = command.split('{PROMPT_FILE}').join(promptFile);
+    }
+    const remote = `mkdir -p ~/brain-runs && ${promptSetup}nohup sh -c '${effectiveCommand.replace(/'/g, `'\\''`)}; echo $? > ${exitPath}' > ${logPath} 2>&1 & echo DISPATCHED`;
+    // execFile 参数数组：remote 作为 ssh 的单个 argv 传递，本地 shell 零解释
+    // （dispatch.command 本就是"要执行的命令"数据行，写入权=运维权；这里只堵本地注入面）
+    const sshArgs = [...SSH_BASE_ARGS, target, remote];
+    const execFn = execFnIn ?? defaultSshExec;
     try {
-      const properties = {
-        Name:        { title: [{ text: { content: s.name } }] },
-        Description: { rich_text: buildRichText(s.description) },
-        Status:      { select: { name: s.status || 'active' } },
-      };
-      if (s.location) {
-        properties['Source'] = { select: { name: s.location } };
-      }
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: SKILL_REGISTRY_DB },
-        properties,
-      });
-      await pool.query(
-        'UPDATE skill_registry SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, s.id]
-      );
+      execFn(sshArgs);
     } catch (err) {
-      console.warn(`[notion-push-sync] skill ${s.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
+      return failReceipt(`ssh_dispatch_failed(${machine}): ${String(err.message).slice(0, 60)}`);
+    }
+    try {
+      const created = await createRoutedTask(pool, {
+        source: 'inbox',
+        source_id: runIdSsh,
+        title: `[run] ${wf.name}@${machine}`,
+        description: '来自 Notion 排单的直驾 run（ssh 直派）',
+        mutation_intent: 'none',
+        declared_domain: 'operations',
+        requested_task_type: 'workflow_run',
+        metadata: {
+          run_id: runIdSsh, wf_id: wf.wf_id, channel: 'ssh', machine,
+          notion_page_id: page.id, exit_path: `brain-runs/${runIdSsh}.exit`,
+          ...(pageContent ? { prompt_preview: pageContent.slice(0, 500), prompt_file: promptFile } : {}),
+        },
+        task: { status: 'in_progress', priority: 'P2' },
+      });
+      // 脚本步 run 原语：一次执行 = 一行 task_runs（fail-open）。终态由 reapSshWorkflowRuns 读 .exit 补齐。
+      await startRun({
+        taskId: created?.task_id ?? created?.task?.id,
+        runId: runIdSsh,
+        source: 'ssh-workflow',
+        context: { wf_id: wf.wf_id, machine },
+      }, { pool });
+    } catch (err) {
+      console.warn(`[notion-pull] ssh 直派入账失败（不阻塞）: ${err.message}`);
+    }
+    const baseSsh = stripStatusTail(desc);
+    await notionReq(token, `/pages/${page.id}`, 'PATCH', {
+      properties: {
+        Description: { rich_text: [{ type: 'text', text: { content: `${baseSsh ? baseSsh + ' · ' : ''}▶ 已派发 ${wf.name}@${machine} run:${runIdSsh}`.slice(0, 1900) } }] },
+        Status: { status: { name: 'In Progress' } },
+      },
+    });
+    console.log(`[notion-pull] ssh 直派成功 ${wf.wf_id}@${machine} run=${runIdSsh}`);
+    return;
+  }
+  const webhookUrl = wf.dispatch?.webhook_url || env.N8N_V4_WEBHOOK_URL;
+  if (!webhookUrl) return failReceipt(`no_webhook_url：给 ops_workflows(${wf.wf_id}).dispatch 配 webhook_url`);
+  const template = agent?.dispatch?.template || wf.dispatch?.default_template || null;
+  if (!template) return failReceipt('no_template：给所选 Agent 的 ops_agents.dispatch 配 template（或 workflow 配 default_template）');
+  const dispatchDir = env.OPENCLAW_DISPATCH_DIR || '/opt/openclaw/dispatch';
+  let payload;
+  try {
+    payload = readTemplateFn(dispatchDir, template);
+  } catch (err) {
+    return failReceipt(`template_read_failed(${template}): ${err.message}`);
+  }
+  const pageId32 = String(page.id).replace(/-/g, '');
+  const runId = `notion-${pageId32}-${Date.now()}`;
+  payload = { ...payload, run_id: runId, attempt_id: 'a1' };
+  if (pageContent) payload.prompt = pageContent.slice(0, 4000); // 页面正文=执行 prompt 随 webhook 送达
+  let ok = false;
+  let detail = '';
+  try {
+    const resp = await fetchFn(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(90_000),
+    });
+    ok = !!resp?.ok;
+    if (!ok) detail = `http_${resp?.status}`;
+  } catch (err) {
+    detail = err.message;
+  }
+  if (ok) {
+    // 一切执行进 tasks 账（决策 2dbabb48）：run 入账 workflow_run（operations 路线，
+    // 不解析 repo/branch），source_id=run_id 天然幂等；终态由 syncOpenClawRuns 回写。
+    try {
+      const created = await createRoutedTask(pool, {
+        source: 'inbox',
+        source_id: runId,
+        title: `[run] ${executorLabel}`,
+        description: '来自 Notion 排单的业务流程 run',
+        mutation_intent: 'none',
+        declared_domain: 'operations',
+        requested_task_type: 'workflow_run',
+        metadata: {
+          run_id: runId, wf_id: wf.wf_id, agent_name: agent?.name ?? null,
+          notion_page_id: page.id,
+        },
+        task: { status: 'in_progress', priority: 'P2' },
+      });
+      // 脚本步 run 原语（fail-open）：终态由 syncOpenClawRuns 依 ops_runs 回写时补齐。
+      await startRun({
+        taskId: created?.task_id ?? created?.task?.id,
+        runId,
+        source: 'openclaw-webhook',
+        context: { wf_id: wf.wf_id, agent: agent?.name ?? null },
+      }, { pool });
+    } catch (err) {
+      console.warn(`[notion-pull] workflow_run 入账失败（不阻塞派发）: ${err.message}`);
+    }
+  }
+  const base = stripStatusTail(desc);
+  const receipt = ok
+    ? `${base ? base + ' · ' : ''}▶ 已派发 ${executorLabel} run:${runId}`
+    : `${base ? base + ' · ' : ''}⚠ 派发失败(${detail.slice(0, 60)})，请重试或联系 Brain`;
+  const properties = {
+    Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
+  };
+  if (ok) properties.Status = { status: { name: 'In Progress' } };
+  await notionReq(token, `/pages/${page.id}`, 'PATCH', { properties });
+  console.log(`[notion-pull] OpenClaw 派发${ok ? '成功' : '失败'} ${executorLabel} run=${runId}`);
+}
+
+/**
+ * ssh 直派收割器：轮询 in_progress 的 ssh 型 workflow_run，去目标机读
+ * ~/brain-runs/<run_id>.exit —— 有 exit code 即收账（0→completed/Done，
+ * 非零→failed/Cancelled）；无 exit 且开跑超 6 小时判 failed(timeout)。
+ * 目标机零反向依赖：不需要它能回连 Brain，收割是 Brain 主动伸手。
+ */
+async function reapSshWorkflowRuns(pool, token, opts = {}) {
+  const execFn = opts.execFn ?? defaultSshExec;
+  let rows;
+  try {
+    ({ rows } = await pool.query(`
+      SELECT id, payload->>'run_id' AS run_id, payload->>'machine' AS machine,
+             payload->>'notion_page_id' AS notion_page_id,
+             (created_at < NOW() - INTERVAL '6 hours') AS is_stale
+        FROM tasks
+       WHERE task_type='workflow_run' AND status='in_progress'
+         AND payload->>'channel' = 'ssh'
+       LIMIT 20`));
+  } catch (err) {
+    console.warn(`[notion-pull] ssh 收割查询失败: ${err.message}`);
+    return;
+  }
+  for (const r of rows ?? []) {
+    try {
+      let exitCode = null;
+      try {
+        const target = sshTargetFor(r.machine);
+        const out = execFn([...SSH_BASE_ARGS, target, `cat ~/brain-runs/${r.run_id}.exit 2>/dev/null || echo NO_EXIT`]);
+        const trimmed = String(out).trim();
+        if (/^\d+$/.test(trimmed)) exitCode = parseInt(trimmed, 10);
+      } catch (err) {
+        console.warn(`[notion-pull] ssh 收割 ${r.run_id} 探测失败: ${err.message}`);
+      }
+      let status = null;
+      let note = '';
+      if (exitCode !== null) {
+        status = exitCode === 0 ? 'completed' : 'failed';
+        note = `exit=${exitCode}`;
+      } else if (r.is_stale) {
+        // 时区案（2026-09-15）：判据在 SQL 内比较，禁 JS 解析无时区 created_at
+        status = 'failed';
+        note = 'timeout>6h';
+      }
+      if (!status) continue;
+      await finalizeTask(pool, r.id, status, { mergeResult: { run_status: note }, onlyIfStatus: 'in_progress' });
+      // 脚本步 run 补终态：只认真实 exit（0→success，非 0→failed）；无 exit 仅在 SQL 判定超 6h 时记 timeout，
+      // 未超时探不到 exit 的 run 保持 running（上面 continue），绝不伪造终态。
+      await finishRun({
+        runId: r.run_id,
+        status: exitCode !== null ? (exitCode === 0 ? 'completed' : 'failed') : 'timeout',
+        exitCode: exitCode !== null ? exitCode : undefined,
+        error: exitCode === 0 ? undefined : note,
+      }, { pool });
+      if (r.notion_page_id) {
+        await notionReq(token, `/pages/${r.notion_page_id}`, 'PATCH', {
+          properties: { Status: { status: { name: status === 'completed' ? 'Done' : 'Cancelled' } } },
+        }).catch((err) => console.warn(`[notion-pull] ssh 收割回写 ${r.notion_page_id} 失败: ${err.message}`));
+      }
+      console.log(`[notion-pull] ssh 收割 ${r.run_id} → ${status}(${note})`);
+    } catch (err) {
+      console.warn(`[notion-pull] ssh 收割 ${r.run_id} 失败: ${err.message}`);
     }
   }
 }
 
-async function pushJourneySteps(pool, token) {
-  const { rows } = await pool.query(`
-    SELECT s.*, j.notion_id AS journey_notion_id
-    FROM journey_steps s
-    LEFT JOIN journeys j ON j.id = s.journey_id
-    WHERE s.notion_synced_at IS NULL
-      AND j.notion_id IS NOT NULL
-    LIMIT 10
-  `);
-  for (const s of rows) {
+export async function reapSshWorkflowRunsForTest(pool, token, opts = {}) {
+  return reapSshWorkflowRuns(pool, token, opts);
+}
+
+/** OpenClaw run 终态 → 反解 page id 推 Notion Status（Done/Cancelled） */
+async function syncOpenClawRuns(pool, token) {
+  let rows;
+  try {
+    ({ rows } = await pool.query(`
+      SELECT run_id, status FROM ops_runs
+       WHERE run_id LIKE 'notion-%'
+         AND status IN ('success','completed','failed','error','cancelled')
+         AND (stopped_at IS NULL OR stopped_at > NOW() - INTERVAL '2 days')
+       LIMIT 20`));
+  } catch (err) {
+    console.warn(`[notion-pull] ops_runs 查询失败: ${err.message}`);
+    return;
+  }
+  for (const r of rows ?? []) {
+    const m = String(r.run_id).match(/^notion-([0-9a-f]{32})-/);
+    if (!m) continue;
+    const pageId = m[1].replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+    const done = ['success', 'completed'].includes(r.status);
+    // 事件账闭环：workflow_run task 随 run 终态收账（幂等：仅 in_progress 行）
     try {
-      const properties = {
-        Name: { title: [{ text: { content: s.name } }] },
-        // Status 字段在 Notion Steps DB 不存在，已移除推送
-      };
-      if (s.description) {
-        properties['Description'] = { rich_text: buildRichText(s.description) };
-      }
-      if (s.journey_notion_id) {
-        properties['Journey'] = { relation: [{ id: s.journey_notion_id }] };
-      }
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: STEPS_DB },
-        properties,
+      await finalizeTask(pool, null, done ? 'completed' : 'failed', {
+        mergeResult: { run_status: r.status },
+        onlyIfStatus: 'in_progress',
+        where: { sql: `task_type = 'workflow_run' AND payload->>'run_id' = $1`, params: [r.run_id] },
       });
-      await pool.query(
-        'UPDATE journey_steps SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, s.id]
-      );
     } catch (err) {
-      console.warn(`[notion-push-sync] step ${s.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
+      console.warn(`[notion-pull] workflow_run task 收账失败 ${r.run_id}: ${err.message}`);
+    }
+    // 脚本步 run 补终态（run 原语，fail-open；已终态不覆盖）
+    await finishRun({
+      runId: r.run_id,
+      status: done ? 'completed' : 'failed',
+      error: done ? undefined : `ops_runs:${r.status}`,
+    }, { pool });
+    try {
+      await notionReq(token, `/pages/${pageId}`, 'PATCH', {
+        properties: { Status: { status: { name: done ? 'Done' : 'Cancelled' } } },
+      });
+    } catch (err) {
+      console.warn(`[notion-pull] run 终态回写 ${pageId} 失败: ${err.message}`);
     }
   }
 }
 
+/** 可测导出 */
+export async function syncOpenClawRunsForTest(pool, token) {
+  return syncOpenClawRuns(pool, token);
+}
+
+/** 可测内核导出（直接注入 token） */
+export async function pullNotionTasksForTest(pool, token, opts = {}) {
+  return pullNotionTasks(pool, token, opts);
+}
+
+// pushSkillRegistry 已迁出（Skill 台账投影 PR1b，任务 47def5bb）：改由独立 job skill-registry-projection.js 推，
+// 列级分权 + 列账 + 三方基线 + advisory lock；旧实现只推 4 列且挂在无防重入的 setInterval 上。
+
+
+// pushJourneySteps 已摘除（2026-09-19，决策 297ffee5）：journey_steps 自 2026-06-09 废弃只读，
+// 主链却仍每 5 分钟往 AI Steps 推死数据。注册表 notion_projection_map 中该库标 archived/none。
+
+/**
+ * journey_step_links → Backbone-Step Map（棒4-2，决策 10a68212）：格子行（cell_kind 非空，承诺地图）与旧连接行一起推，
+ * 增量 = 新行 或 updated_at > notion_synced_at（迁移 478 触发器：cell_status 等非记账列变化才抬）。
+ * 每轮最多 50 行：283 个格子首推约 30 分钟排空，之后每轮只有翻色的行；指纹不变的行引擎只抬 synced 不打 Notion。
+ * 格子列 CellKind/CellKey/CellStatus/AssertionRef + Journey（文本）缺列即补；不要求 step/journey notion_id
+ * （AI Steps 已废弃；AI Journey 库 358c… 在回收站，journeys.notion_id 全指向死页，不能做 relation）。
+ */
 async function pushJourneyStepLinks(pool, token) {
   const { rows } = await pool.query(`
-    SELECT l.*, j.notion_id AS journey_notion_id, s.notion_id AS step_notion_id,
-           j.name AS journey_name, s.name AS step_name
-    FROM journey_step_links l
-    LEFT JOIN journeys j ON j.id = l.journey_id
-    LEFT JOIN journey_steps s ON s.id = l.step_id
-    WHERE l.notion_synced_at IS NULL
-      AND l.cell_kind IS NULL
-      AND j.notion_id IS NOT NULL
-      AND s.notion_id IS NOT NULL
-    LIMIT 10
+    SELECT l.*, j.name AS journey_name, s.name AS step_name
+    FROM activity_cells l
+    JOIN ${TREE_NODES_SQL} j ON j.id = l.journey_id
+    LEFT JOIN activities s ON s.id = l.step_id
+    WHERE l.notion_synced_at IS NULL OR l.updated_at > l.notion_synced_at
+    ORDER BY l.updated_at
+    LIMIT 50
   `);
   if (rows.length === 0) return;
-
+  const dbId = STEP_LINKS_DB || await resolveDbId(pool, 'activity_cells');
   let schemaProps = {};
   try {
-    const schema = await notionReq(token, `/databases/${STEP_LINKS_DB}`, 'GET');
-    schemaProps = schema?.properties || {};
-  } catch {
-    schemaProps = {};
-  }
-
-  for (const l of rows) {
-    try {
-      const properties = {
-        Name:   { title: [{ text: { content: `${l.journey_name} — ${l.step_name}` } }] },
-        Status: { select: { name: l.status || 'planned' } },
-        ...('Order' in schemaProps && { Order: { number: l.step_order } }),
-      };
-      if (l.journey_notion_id) {
-        properties['Journey'] = { relation: [{ id: l.journey_notion_id }] };
-      }
-      if (l.step_notion_id) {
-        properties['Step'] = { relation: [{ id: l.step_notion_id }] };
-      }
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: STEP_LINKS_DB },
-        properties,
-      });
-      await pool.query(
-        'UPDATE journey_step_links SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, l.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] step_link ${l.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
+    // 只读一次 schema：既判 Order 列有无，也算缺列（有缺才 PATCH，不重发已有列）
+    const schema = await notionReq(token, `/databases/${dbId}`, 'GET');
+    schemaProps = { ...(schema?.properties || {}) };
+    const missing = diffMissingProps(schemaProps, buildStepLinkDbProps());
+    const added = Object.keys(missing);
+    if (added.length) {
+      await notionReq(token, `/databases/${dbId}`, 'PATCH', { properties: missing });
+      Object.assign(schemaProps, missing);
+      console.log(`[step_link] Backbone-Step Map 补列: ${added.join(', ')}`);
     }
+  } catch (err) {
+    await logSyncError(pool, `[step_link] 补列/读 schema 失败: ${err.message}`);
   }
+  await pushRegisteredRows(pool, token, {
+    table: 'activity_cells', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'step_link',
+    buildProps: (l) => buildStepLinkNotionProperties(l, schemaProps),
+  });
 }
-
 async function pushDecisions(pool, token) {
-  // 去重：只取未同步行（notion_synced_at IS NULL）；LEFT JOIN journey_features
-  // 取 target ability 的 notion_id，供映射成 Notion relation 链
+  // 三面定稿（决策 297ffee5）：AI Notes 是决策的机器镜子；「决策」库(f93e)是人写入口（PR②b 接 ingest）。
+  // LEFT JOIN journey_features 取 target ability 的 notion_id，供映射成 Notion relation 链
   const { rows } = await pool.query(
     `SELECT d.*, jf.notion_id AS ability_notion_id
        FROM decisions d
        LEFT JOIN journey_features jf
          ON jf.id = d.target_id AND d.target_type = 'journey_feature'
-      WHERE d.notion_synced_at IS NULL
+      WHERE (d.notion_synced_at IS NULL OR d.updated_at > d.notion_synced_at)
+        AND d.status <> 'pending'
+      ORDER BY d.notion_synced_at NULLS FIRST, d.updated_at
       LIMIT 10`
   );
-  // 无待同步行直接返回，不触碰 Notion API（与其他 push 函数一致的去重边界）
   if (rows.length === 0) return;
-
-  // 取一次 AI Notes 库 schema：决定 Level/Scope 属性类型（status vs select），
-  // 并据此判断 Level/Scope/ability relation 等自定义属性是否真实存在 —— 库里没有的属性
-  // 一旦发出 Notion 会 400「is not a property that exists」，故缺列时跳过该属性。
+  const dbId = DECISIONS_DB || await resolveDbId(pool, 'decisions');
+  // 取一次库 schema：Level/Scope/ability relation 等自定义属性只在库里真实存在时才发，
+  // 否则 Notion 400「is not a property that exists」
   let schemaProps = {};
   try {
-    const schema = await notionReq(token, `/databases/${DECISIONS_DB}`, 'GET');
+    const schema = await notionReq(token, `/databases/${dbId}`, 'GET');
     schemaProps = schema?.properties || {};
   } catch {
     schemaProps = {};
   }
-
-  for (const d of rows) {
-    try {
-      // Type=Decision / Title / Level / Scope / ability relation 由 buildDecisionNotionProperties 统一构造
+  await pushRegisteredRows(pool, token, {
+    table: 'decisions', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'decision',
+    buildProps: (d) => {
       const mapped = buildDecisionNotionProperties(d, d.ability_notion_id, schemaProps);
-      // Title/Type 是 AI Notes 基础属性恒发；其余自定义属性（Level/Scope/Ability）只在库 schema
-      // 真实存在时才发，避免对未建列的库 400（合同 assumption：Level/Scope 字段「已有或可加」）
       const properties = {};
       for (const [k, v] of Object.entries(mapped)) {
         if (k === 'Title' || k === 'Type' || k in schemaProps) properties[k] = v;
@@ -364,66 +1140,49 @@ async function pushDecisions(pool, token) {
       if (d.created_at) {
         properties.Date = { date: { start: d.created_at.toISOString?.() || d.created_at } };
       }
+      return properties;
+    },
+    buildChildren: (d) => {
       const bodyLines = [
         d.decision && `**决策**: ${d.decision}`,
         d.reason && `**原因**: ${d.reason}`,
         d.category && `**分类**: ${d.category}`,
       ].filter(Boolean).join('\n\n');
-
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: DECISIONS_DB },
-        properties,
-        children: bodyLines ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(bodyLines) } }] : [],
-      });
-
-      await pool.query(
-        'UPDATE decisions SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, d.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] decision ${d.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-    }
-  }
+      return bodyLines ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(bodyLines) } }] : [];
+    },
+  });
 }
-
 async function pushInitiativeContracts(pool, token) {
   const { rows } = await pool.query(
-    'SELECT * FROM initiative_contracts WHERE notion_synced_at IS NULL LIMIT 10'
-  );
-
-  for (const ic of rows) {
-    try {
+    `SELECT * FROM initiative_contracts
+      WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
+      ORDER BY notion_synced_at NULLS FIRST, updated_at LIMIT 10`);
+  if (rows.length === 0) return;
+  const dbId = INITIATIVE_CONTRACTS_DB || await resolveDbId(pool, 'initiative_contracts');
+  await pushRegisteredRows(pool, token, {
+    table: 'initiative_contracts', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'initiative_contract',
+    buildProps: (ic) => {
       const title = `Contract ${String(ic.initiative_id).slice(0, 8)} v${ic.version}`;
-      const properties = {
+      return {
         Title: { title: [{ text: { content: title } }] },
         Type: { select: { name: 'Contract' } },
         ...(ic.approved_at ? { Date: { date: { start: ic.approved_at.toISOString?.() || ic.approved_at } } } : {}),
       };
+    },
+    buildChildren: (ic) => {
       const bodyLines = [
         ic.status && `**状态**: ${ic.status}`,
         ic.review_rounds != null && `**GAN 轮次**: ${ic.review_rounds}`,
         ic.prd_content && `**Sprint PRD**:\n${ic.prd_content.slice(0, 1800)}`,
       ].filter(Boolean).join('\n\n');
-
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: INITIATIVE_CONTRACTS_DB },
-        properties,
-        children: bodyLines ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(bodyLines) } }] : [],
-      });
-
-      await pool.query(
-        'UPDATE initiative_contracts SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, ic.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] initiative_contract ${ic.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-    }
-  }
+      return bodyLines ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(bodyLines) } }] : [];
+    },
+  });
 }
-
 async function pushAdvancementItems(pool, token) {
+  // ability 页住在 AI Feature 库：该库登记 archived（迁移 480）时 PATCH 只会 404，一并停推
+  const featureDbId = await activePushDbId(pool, 'journey_features');
+  if (!featureDbId) return;
   // 按 ability 聚合该 ability **全部**推进项的累积进度（非仅未同步子集）——
   // WHERE 子查询只用来判断"这个 ability 这一轮有没有变化值得推"，
   // 但 COUNT 必须覆盖全量行，否则 done/total 只反映本轮新增/变化的子集，
@@ -448,7 +1207,7 @@ async function pushAdvancementItems(pool, token) {
   // （同 pushDecisions 的 schema-check 安全模式）
   let schemaProps = {};
   try {
-    const schema = await notionReq(token, `/databases/${FEATURE_DB}`, 'GET');
+    const schema = await notionReq(token, `/databases/${featureDbId}`, 'GET');
     schemaProps = schema?.properties || {};
   } catch {
     schemaProps = {};
@@ -484,6 +1243,506 @@ async function pushAdvancementItems(pool, token) {
   }
 }
 
+// ─── ops 运行舱两库（指挥舱 G1 S1 刀1，task 6fcb5356）───────────────────────────
+// DB id 不硬编码：来自 working_memory key='ops_notion_dbs'（scripts/ops/create-ops-notion-dbs.js 一次性写入）。
+// kv 缺失=库未创建（运维状态，静默跳过不刷错误）；value.disabled=true 为终止态（库被删，禁自动重建防平行库）。
+
+export function isMissingDatabaseError(err) {
+  return !!(err?.message && err.message.includes('Could not find database'));
+}
+
+// 合并单库「Ops 运行图谱」：一行=一个运行单元（agent 或排程），role/workflow/schedule 都是属性。
+export function buildOpsUnitNotionProperties(u) {
+  const p = {
+    Name: { title: [{ text: { content: String(u.name).slice(0, 200) } }] },
+    Source: { select: { name: u.source } },
+    Machine: { select: { name: u.host_alias } },
+    Status: { select: { name: u.status || 'active' } },
+    Role: { select: { name: u.role || 'solo' } },
+    Repeat: { checkbox: !!u.schedule_desc },          // 有调度=定时重复
+  };
+  // Suspicious（死排程）当前唯一数据源是 recurring_tasks，而 brain_recurring 因 notion_page_id
+  // 已被 recurring-notion-sync 占用不推本库——故 Notion 图谱不设该列（避免恒 false 误导）。
+  // 死排程识别在 /agent-ops/graph API 层保留（Dashboard 刀3 消费），Notion 是过渡展示子集。
+  if (u.agent_type) p.Type = { rich_text: buildRichText(u.agent_type) };
+  if (u.schedule_desc) p.Schedule = { rich_text: buildRichText(u.schedule_desc) };
+  if (u.next_run_utc) p.NextRun = { date: { start: new Date(u.next_run_utc).toISOString() } };
+  if (u.last_seen_at) p.LastSeen = { date: { start: new Date(u.last_seen_at).toISOString() } };
+  // Members/Workflow 是同库 relation，需目标页 id → 第二阶段 buildOpsRelationProperties 补。
+  // Kind 列已删（45/67 为空，信息量太低）。
+  return p;
+}
+
+/**
+ * 第二阶段：同库 relation 自关联。Members = 它编排谁（relation → 本库）；
+ * Workflow（谁编排它）由 Notion dual_property 反向自动生成，不手工发——
+ * 故共享 agent（如 dev 被 main+work-commander 编排）只需两个父各自发一次，
+ * dev 那行的 Workflow 自动出现两个值，数据仍只存一份。
+ * @param {{name:string, orchestrates?:string[]}} u
+ * @param {Map<string,string>} idByName  agent 名 → 已建 Notion 页 id
+ */
+export function buildOpsRelationProperties(u, idByName) {
+  const ids = (u.orchestrates || [])
+    .map((child) => idByName.get(child))
+    .filter(Boolean)                    // 下级页尚未建 → 跳过，不发 undefined id
+    .map((id) => ({ id }));
+  return { CanCall: { relation: ids } }; // 空数组=清掉历史残留关系
+}
+
+
+/** run 记录行（刀6）：一次执行 = 一行。crashed 无耗时则不发 Minutes（禁编造 0）。 */
+export function buildOpsRunNotionProperties(r, wfName) {
+  const when = r.started_at ? new Date(r.started_at) : null;
+  const label = `${wfName || r.wf_id} · ${when ? when.toISOString().slice(5, 16).replace('T', ' ') : r.run_id}`;
+  const p = {
+    Name: { title: [{ text: { content: label.slice(0, 200) } }] },
+    Status: { select: { name: r.status || 'unknown' } },
+    RunId: { rich_text: buildRichText(String(r.run_id)) },
+  };
+  if (r.machine) p.Machine = { select: { name: r.machine } };
+  if (r.mode) p.Mode = { select: { name: r.mode } };
+  if (typeof r.duration_sec === 'number') p.Minutes = { number: Math.round(r.duration_sec / 60) };
+  if (when) p.StartedAt = { date: { start: when.toISOString() } };
+  return p;
+}
+
+async function getOpsNotionDbs(pool) {
+  const { rows } = await pool.query(`SELECT value_json FROM working_memory WHERE key = 'ops_notion_dbs'`);
+  return rows[0]?.value_json || null;
+}
+
+async function disableOpsPush(pool, errMsg) {
+  await pool.query(
+    `UPDATE working_memory SET value_json = value_json || '{"disabled":true}'::jsonb, updated_at = NOW()
+     WHERE key = 'ops_notion_dbs'`);
+  await logSyncError(pool, `[ops-push] Notion 库不可访问已停推（终止态，禁自动重建）: ${errMsg}`);
+}
+
+async function upsertOpsRows(pool, token, { table, dbId, rows, buildProps }) {
+  // 委托统一引擎：指纹同不打 Notion；库不可达 → 停推（终止态，禁自动重建）
+  await pushRegisteredRows(pool, token, {
+    table, dbId, rows, buildProps, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError,
+    onFatal: (err) => { if (isMissingDatabaseError(err)) { disableOpsPush(pool, err.message).catch(() => {}); return true; } return false; },
+  });
+}
+/**
+ * 运行舱专用推送入口（scheduler-jobs 的 ops-notion-push 调这个）。
+ *
+ * 为什么不复用 runNotionPushSync：那条链的唯一入口是 legacy-notion-push-scheduler，
+ * 既没人 import 又要 NOTION_LEGACY_PUSH_ENABLED=true 才跑——等于整条链没接电
+ * （2026-09-08 查实：Notion 运行舱四库停更两天就是这个原因）。而启用整条 legacy 链
+ * 会连带推 journeys/issues/decisions 等 8 条已被有意停用的投影，风险不可控。
+ * 故只把 ops 这一段接到现代调度层。
+ */
+export async function runOpsNotionPush(pool) {
+  let token;
+  try {
+    token = getToken();
+  } catch {
+    return { ok: false, reason: 'no_token' };
+  }
+  // run 投影独立于运行舱四库配置：库未登记时 pushTaskRuns 自己 flag-off 跳过
+  await pushTaskRunsSafe(pool, token);
+  const dbs = await getOpsNotionDbs(pool);
+  if (!dbs?.graph_db) return { ok: false, reason: 'not_configured' };
+  if (dbs.disabled) return { ok: false, reason: 'disabled' };
+  await pushOpsGraph(pool, token);
+  return { ok: true };
+}
+
+/** 四库缺列即补；单库失败只记 sync log 不阻塞（推送本身仍会因缺列 400，下轮再补）。 */
+async function ensureOpsDbsProps(pool, token, dbs) {
+  const pairs = [
+    ['graph', dbs.graph_db], ['workflows', dbs.workflows_db],
+    ['skills', dbs.skills_db], ['runs', dbs.runs_db],
+  ];
+  for (const [lib, dbId] of pairs) {
+    if (!dbId || !OPS_DB_PROPS[lib]) continue;
+    try {
+      const { added, retitled } = await ensureOpsDbProps(token, dbId, OPS_DB_PROPS[lib], { notionReq, title: lib === 'graph' ? '闹钟总账' : null });
+      if (added.length) console.log(`[ops-push] ${lib} 库补列: ${added.join(', ')}`);
+      if (retitled) console.log(`[ops-push] ${lib} 库改名: 闹钟总账`);
+    } catch (err) {
+      await logSyncError(pool, `[ops-push] ${lib} 库补列失败: ${err.message}`);
+    }
+  }
+}
+
+// 合并推送：agent 行（带 role/workflow/合并调度）+ 孤儿排程行，全推同一个 graph_db。
+async function pushOpsGraph(pool, token) {
+  const dbs = await getOpsNotionDbs(pool);
+  if (!dbs?.graph_db || dbs.disabled) return;
+
+  // 0. 缺列即补（幂等）：ops-notion-schema 的列定义此前只在新建库时生效，既有库加列
+  //    （如刀2 配额三列）推送会 400 被逐行 catch 吞掉 → 静默停更。每轮先补，只发缺的。
+  await ensureOpsDbsProps(pool, token, dbs);
+
+  // 0.5 模型账号配额（刀2）：agent 行按 meta.model 的 provider 取该 provider 最紧张账号。
+  //     表不存在/查询失败 → 空数组，不影响其余推送。
+  let modelAccounts = [];
+  try {
+    modelAccounts = (await pool.query(
+      `SELECT account_id, provider, status, five_hour_pct, seven_day_pct, last_checked_at FROM ops_model_accounts`,
+    )).rows;
+  } catch (err) {
+    await logSyncError(pool, `[ops-push] ops_model_accounts 读取失败（配额列本轮留空）: ${err.message}`);
+  }
+
+  // 全局：算 orchestrated_by（child→[parents]）+ active schedule 索引（供 agent 行合并 + 孤儿判定）
+  const allAgents = (await pool.query(`SELECT name, meta FROM ops_agents`)).rows;
+  const orchestratedBy = new Map();
+  for (const a of allAgents) {
+    for (const child of a.meta?.orchestrates || []) {
+      if (!orchestratedBy.has(child)) orchestratedBy.set(child, []);
+      orchestratedBy.get(child).push(a.name);
+    }
+  }
+  const allSched = (await pool.query(`SELECT * FROM ops_schedule_entries WHERE active = TRUE`)).rows;
+  const schedByKey = new Map(allSched.map((s) => [`${s.source}|${s.host_alias}|${s.label}`, s]));
+  const agentKeys = new Set((await pool.query(`SELECT source, host_alias, name FROM ops_agents`)).rows
+    .map((a) => `${a.source}|${a.host_alias}|${a.name}`));
+
+  // 1. agent 行（合并对应调度）
+  const agentRows = (await pool.query(
+    `SELECT * FROM ops_agents
+     WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
+     ORDER BY updated_at LIMIT 50`)).rows;
+  await upsertOpsRows(pool, token, {
+    table: 'ops_agents', dbId: dbs.graph_db, rows: agentRows,
+    buildProps: (a) => {
+      const orchestrates = a.meta?.orchestrates || [];
+      const parents = orchestratedBy.get(a.name) || [];
+      const sched = schedByKey.get(`${a.source}|${a.host_alias}|${a.name}`);
+      const quota = pickProviderQuota(modelAccounts, inferProviderFromModelId(a.meta?.model));
+      return {
+        ...buildOpsUnitNotionProperties({
+          source: a.source, host_alias: a.host_alias, name: a.name, agent_type: a.agent_type,
+          status: a.status, last_seen_at: a.last_seen_at,
+          role: orchestrates.length ? 'orchestrator' : (parents.length ? 'member' : 'solo'),
+          orchestrated_by: parents,
+          kind: sched?.kind ?? null, schedule_desc: sched?.schedule_desc ?? null, next_run_utc: sched?.next_run_utc ?? null,
+        }),
+        ...buildQuotaProps(quota),
+      };
+    },
+  });
+
+  // 2. 孤儿排程行（无对应 agent，如 gha）→ 独立行 role=scheduled
+  const orphanRows = (await pool.query(
+    // 闹钟总账自有行（Brain job/recurring 落表行、盘点静态快照）不是"运行图谱"里的运行单元，不推——
+    // 否则 70+ 行 job 每分钟刷新 updated_at 会把本查询的 LIMIT 50 吃光（任务 fe10d1a0，Notion 推送另立任务）。
+    `SELECT * FROM ops_schedule_entries
+     WHERE active = TRUE AND (notion_synced_at IS NULL OR updated_at > notion_synced_at)
+       AND source <> 'inventory-20261004'
+       AND COALESCE(registered_via, '') NOT IN ('brain-job', 'brain-loop', 'recurring')
+     ORDER BY updated_at LIMIT 50`)).rows
+    .filter((s) => !agentKeys.has(`${s.source}|${s.host_alias}|${s.label}`));
+  await upsertOpsRows(pool, token, {
+    table: 'ops_schedule_entries', dbId: dbs.graph_db, rows: orphanRows,
+    buildProps: (s) => buildOpsUnitNotionProperties({
+      source: s.source, host_alias: s.host_alias, name: s.label, agent_type: 'schedule',
+      status: 'active', role: 'scheduled', orchestrated_by: [],
+      schedule_desc: s.schedule_desc, next_run_utc: s.next_run_utc,
+    }),
+  });
+
+  // 3. relation 阶段：所有页建完后，给编排者补 Members（同库自关联）。
+  // 必须在建页之后——relation 需要目标页的 notion_id。Workflow（反向）由 Notion 自动生成。
+  await syncOpsMembersRelation(pool, token);
+  await pushOpsWorkflows(pool, token);   // 业务流程库（刀4）
+  await pushOpsRuns(pool, token);        // run 记录库（刀6）
+  await pushOpsSkills(pool, token);      // 技能池（此前无任何推送代码，靠手动灌数据）
+}
+
+// ─── 技能池「Ops Skills」──────────────────────────────────
+// 此前这个库只存在于 Notion：19 条 notion_id 是早前一次性手动脚本灌的，
+// 仓库里没有任何代码维护它——与 Notion 停更同一类病（手动做的事没固化）。
+async function pushOpsSkills(pool, token) {
+  const dbs = await getOpsNotionDbs(pool);
+  if (!dbs?.skills_db || dbs.disabled) return;
+  const rows = (await pool.query(
+    `SELECT * FROM ops_skills
+     WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
+     ORDER BY updated_at LIMIT 50`)).rows;
+  await upsertOpsRows(pool, token, {
+    table: 'ops_skills', dbId: dbs.skills_db, rows,
+    buildProps: buildOpsSkillNotionProperties,
+  });
+}
+
+// ─── 业务流程库「Ops Workflows」（刀4）────────────────────────────────
+// 与图谱库的区别：workflow=业务流程（智能获客8阶段），agent=执行资源。
+// 主理人 2026-09-06 纠正：allowAgents 是"谁能召唤谁"的权限，不是 workflow。
+
+export function buildOpsWorkflowNotionProperties(w) {
+  const p = {
+    Name: { title: [{ text: { content: String(w.name).slice(0, 200) } }] },
+    Source: { select: { name: w.source || 'n8n' } },  // 采集器行未带 source 时按来源默认
+    Active: { checkbox: w.active === true },
+    Stages: { number: w.stage_count ?? 0 },
+  };
+  const stages = w.meta?.stages || [];
+  if (stages.length) p.Flow = { rich_text: buildRichText(stages.join(' → ')) }; // 流程长什么样
+  // 健康汇总（刀6）：无 run 数据时不发，避免显示假 0
+  if (w.machine) p.Machine = { select: { name: w.machine } };
+  if (typeof w.run_total === 'number') p.Runs = { number: w.run_total };
+  if (typeof w.run_success_rate === 'number') p.SuccessRate = { number: w.run_success_rate };
+  if (typeof w.run_avg_sec === 'number') p.AvgMinutes = { number: Math.round(w.run_avg_sec / 60) };
+  if (w.last_run_at) p.LastRun = { date: { start: new Date(w.last_run_at).toISOString() } };
+  if (w.last_run_status) p.LastStatus = { select: { name: w.last_run_status } };
+  if (w.node_count != null) p.Nodes = { number: w.node_count };
+  if (w.wf_id) p.WfId = { rich_text: buildRichText(w.wf_id) };
+  // 活性（443）：看板要一眼看出"还会不会跑"，不能让人拿最后运行时间自己去减。
+  // 起因：业务流程停跑 20.4 小时，四表全绿因为它们只答"跑过多少次"。
+  if (w.liveness) {
+    p.Liveness = { select: { name: LIVENESS_LABEL[w.liveness] || LIVENESS_LABEL.cold } };
+    if (typeof w.silent_sec === 'number') {
+      p.SilentFor = { rich_text: buildRichText(formatSilentFor(w.silent_sec)) };
+    }
+  }
+  // 人工列（owner/note/priority/starred/enable_intent）一律不发：
+  // Notion 是它们的真相源，推回去会把主理人刚改的冲掉。
+  return p; // Agents（跨库 relation）第二阶段补
+}
+
+/** 活性灯：手机上扫一眼就能挑出红的 */
+const LIVENESS_LABEL = {
+  ok: '🟢 正常',
+  warn: '🟡 放缓',
+  dead: '🔴 失联',
+  cold: '⚪ 数据不足',
+};
+
+/** 静默时长按量级换单位——固定用小时会出现"停了 0.0 小时"这种废话 */
+export function formatSilentFor(sec) {
+  const s = Number(sec);
+  if (!Number.isFinite(s) || s < 0) return '';
+  if (s < 60) return `停了 ${Math.round(s)} 秒`;
+  if (s < 3600) return `停了 ${Math.round(s / 60)} 分钟`;
+  if (s < 86400) return `停了 ${(s / 3600).toFixed(1)} 小时`;
+  return `停了 ${(s / 86400).toFixed(1)} 天`;
+}
+
+/**
+ * 技能池机器列。人工列（Stage/Owner/Note/Priority/Starred）一律不发——
+ * Stage 正是主理人推翻自动判定的地方，推回去就把人改的冲掉了。
+ */
+export function buildOpsSkillNotionProperties(s) {
+  const p = {
+    Name: { title: [{ text: { content: String(s.name ?? '').slice(0, 200) } }] },
+    Source: { select: { name: s.source || 'openclaw' } },
+    UsedBy: { number: Array.isArray(s.used_by) ? s.used_by.length : 0 },
+  };
+  if (s.generation != null) p.Generation = { number: s.generation };
+  if (typeof s.eval_score === 'number') p.EvalScore = { number: s.eval_score };
+  // 无运行数据的不发假 0——19 个 skill 里 17 个还没有阶段归因数据
+  if (typeof s.runs === 'number') p.Runs = { number: s.runs };
+  if (typeof s.run_success_rate === 'number') p.SuccessRate = { number: s.run_success_rate };
+  if (typeof s.run_avg_sec === 'number') p.AvgSeconds = { number: s.run_avg_sec };
+  if (s.disco_stage) p.DiscoStage = { select: { name: s.disco_stage } };
+  // 判定依据必须一起给：只给档位不给理由，人没法判断该不该推翻它
+  if (s.stage_reason) p.StageReason = { rich_text: buildRichText(String(s.stage_reason).slice(0, 500)) };
+  // 探针未知（null）不发——false 会被误读成"已确认没有探针"
+  if (typeof s.has_postcondition === 'boolean') p.HasProbe = { checkbox: s.has_postcondition };
+  return p;
+}
+
+/** DisCo 合法档位——人工覆盖只认这三个，乱填一律忽略免得把档位写脏 */
+const VALID_STAGES = new Set(['software3', 'disco', 'code']);
+
+/**
+ * 从 Notion 页面读回**人工列**。机器列即使人改了也一概不读——
+ * 它们的真相源在 n8n/OpenClaw，下一轮推送会覆盖回去。
+ * 空值读成 null（不是 undefined）：人主动清空一个字段必须能传达到 Brain。
+ */
+export function buildOpsManualReadback(page) {
+  const props = page?.properties;
+  if (!props || typeof props !== 'object') return {};
+  const out = {};
+  const text = (k) => {
+    const rt = props[k]?.rich_text;
+    if (!Array.isArray(rt)) return undefined;
+    const v = rt.map((x) => x?.plain_text ?? '').join('').trim();
+    return v || null;
+  };
+  const select = (k) => {
+    if (!(k in props)) return undefined;
+    return props[k]?.select?.name ?? null;
+  };
+  const check = (k) => (typeof props[k]?.checkbox === 'boolean' ? props[k].checkbox : undefined);
+
+  const owner = text('Owner'); if (owner !== undefined) out.owner_manual = owner;
+  const note = text('Note'); if (note !== undefined) out.note_manual = note;
+  const org = text('Org'); if (org !== undefined) out.org_manual = org;
+  const role = text('RoleManual'); if (role !== undefined) out.role_manual = role;
+  const prio = select('Priority'); if (prio !== undefined) out.priority_manual = prio;
+  const star = check('Starred'); if (star !== undefined) out.starred = star;
+  const stage = select('Stage');
+  if (stage !== undefined && (stage === null || VALID_STAGES.has(stage))) out.stage_manual = stage;
+  const enabled = check('Enabled'); if (enabled !== undefined) out.enable_intent = enabled;
+  return out;
+}
+
+/** 生效档位：人工优先，人工空则用自动判定值 */
+export function effectiveStage(skill = {}) {
+  return skill.stage_manual ?? skill.disco_stage ?? null;
+}
+
+/** workflow → 它用到的 agent（跨库 relation 指向图谱库） */
+export function buildWorkflowAgentsRelation(w, agentIdByName) {
+  const ids = (w.uses_agents || [])
+    .map((n) => agentIdByName.get(n))
+    .filter(Boolean)
+    .map((id) => ({ id }));
+  return { Agents: { relation: ids } };
+}
+
+async function pushOpsWorkflows(pool, token) {
+  const dbs = await getOpsNotionDbs(pool);
+  if (!dbs?.workflows_db || dbs.disabled) return;
+  const { rows } = await pool.query(
+    `SELECT * FROM ops_workflows
+     WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
+     ORDER BY updated_at LIMIT 50`);
+  const dbId = dbs.workflows_db || await resolveDbId(pool, 'ops_workflows');
+  // 建页时带正文 children（流程图 mermaid + 阶段清单 + 画布构成）；raw 画布存 meta.raw_nodes
+  await pushRegisteredRows(pool, token, {
+    table: 'ops_workflows', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'workflow',
+    buildProps: (w) => buildOpsWorkflowNotionProperties(w),
+    buildChildren: (w) => (w.meta?.canvas ? buildWorkflowPageBlocks(w.meta.canvas, w) : undefined),
+    onFatal: (err) => { if (isMissingDatabaseError(err)) { disableOpsPush(pool, err.message).catch(() => {}); return true; } return false; },
+  });
+  // 跨库 relation：workflow → agent（需图谱库页 id）
+  const agentIdByName = new Map(
+    (await pool.query(`SELECT name, notion_id FROM ops_agents WHERE notion_id IS NOT NULL`)).rows
+      .map((r) => [r.name, r.notion_id]));
+  const withAgents = (await pool.query(
+    `SELECT wf_id, uses_agents, notion_id FROM ops_workflows
+     WHERE notion_id IS NOT NULL AND jsonb_array_length(uses_agents) > 0`)).rows;
+  for (const w of withAgents) {
+    try {
+      const props = buildWorkflowAgentsRelation(w, agentIdByName);
+      if (!props.Agents.relation.length) continue;
+      await notionReq(token, `/pages/${w.notion_id}`, 'PATCH', { properties: props });
+    } catch (err) {
+      if (isMissingDatabaseError(err)) return;
+      console.warn(`[notion-push-sync] workflow relation ${w.wf_id} 失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
+
+/**
+ * run 推送（刀6）：只推**业务流程**的 run（有阶段的，日均 10-21 轮）；
+ * 通道/触发器类（日均 154-234 次、4 秒一次）只在流程行上看汇总，不推明细——
+ * 否则 2800 条 4 秒记录会把视线淹没（主理人 2026-09-06 定调）。
+ */
+async function pushOpsRuns(pool, token) {
+  const dbs = await getOpsNotionDbs(pool);
+  if (!dbs?.runs_db || dbs.disabled) return;
+  // ops_runs 无 updated_at：run 记录只增不改，保持 IS NULL 增量
+  const { rows } = await pool.query(
+    `SELECT r.*, w.name AS wf_name
+     FROM ops_runs r
+     JOIN ops_workflows w ON w.source = r.source AND w.wf_id = r.wf_id
+     WHERE w.stage_count > 0 AND r.notion_synced_at IS NULL
+     ORDER BY r.started_at DESC LIMIT 100`);
+  if (rows.length === 0) return;
+  const dbId = dbs.runs_db || await resolveDbId(pool, 'ops_runs');
+  await upsertOpsRows(pool, token, {
+    table: 'ops_runs', dbId, rows, buildProps: (r) => buildOpsRunNotionProperties(r, r.wf_name),
+  });
+}
+/** 给有召唤权限的 agent 补 CanCall relation（同库自关联，反向=CalledBy）。目标页未建则下轮自愈。 */
+async function syncOpsMembersRelation(pool, token) {
+  const { rows } = await pool.query(
+    `SELECT name, meta, notion_id FROM ops_agents WHERE notion_id IS NOT NULL`);
+  const idByName = new Map(rows.map((r) => [r.name, r.notion_id]));
+  const orchestrators = rows.filter((r) => (r.meta?.orchestrates || []).length > 0);
+  for (const o of orchestrators) {
+    try {
+      const props = buildOpsRelationProperties({ name: o.name, orchestrates: o.meta.orchestrates }, idByName);
+      if (!props.CanCall.relation.length) continue; // 下级页全未建，等下轮
+      await notionReq(token, `/pages/${o.notion_id}`, 'PATCH', { properties: props });
+    } catch (err) {
+      if (isMissingDatabaseError(err)) return;      // 库没了，停推（终止态）
+      console.warn(`[notion-push-sync] ops relation ${o.name} 失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
+/**
+ * task_runs 行 → Notion 「Runs」库 properties：一次执行一行，开始/结束/exit/产物人可见。
+ * 没发生的事不编造：running 行无 EndedAt/ExitCode/Minutes。
+ */
+export function buildTaskRunNotionProperties(r) {
+  const started = r.started_at ? new Date(r.started_at) : null;
+  const ended = r.ended_at ? new Date(r.ended_at) : null;
+  const source = r.context?.source || null;
+  const label = `${r.task_title || r.task_id} · ${started ? started.toISOString().slice(5, 16).replace('T', ' ') : r.run_id}`;
+  const p = {
+    Name: { title: [{ text: { content: label.slice(0, 200) } }] },
+    Status: { select: { name: r.status || 'unknown' } },
+    TaskId: { rich_text: buildRichText(String(r.task_id)) },
+    RunId: { rich_text: buildRichText(String(r.run_id)) },
+  };
+  if (source) p.Source = { select: { name: String(source).slice(0, 100) } };
+  if (started) p.StartedAt = { date: { start: started.toISOString() } };
+  if (ended) p.EndedAt = { date: { start: ended.toISOString() } };
+  const exit = r.result?.exit_code;
+  if (exit !== undefined && exit !== null && Number.isFinite(Number(exit))) p.ExitCode = { number: Number(exit) };
+  const artifacts = Array.isArray(r.result?.artifacts) ? r.result.artifacts : [];
+  if (artifacts.length) p.Artifacts = { rich_text: buildRichText(artifacts.join(', ').slice(0, 1900)) };
+  if (started && ended) p.Minutes = { number: Math.round((ended.getTime() - started.getTime()) / 60000) };
+  if (r.error_message) p.Error = { rich_text: buildRichText(String(r.error_message).slice(0, 500)) };
+  return p;
+}
+
+/**
+ * task_runs 投影面（链 bf5088a3 棒1）：库在 notion_projection_map 登记为 push+active 才推，
+ * 未登记（Notion「Runs」库尚未建，占位行为 pending_vessel）→ 整个跳过（flag-off 安全）。
+ * 推前缺列即补（Notion 缺列 400 的血训）；失败只记日志，DB（task_runs）才是真相源。
+ */
+async function pushTaskRuns(pool, token) {
+  const dbId = await resolveDbId(pool, 'task_runs');
+  if (!dbId) return;
+  try {
+    const { added } = await ensureOpsDbProps(token, dbId, OPS_DB_PROPS.task_runs, { notionReq });
+    if (added.length) console.log(`[task-runs-push] Runs 库补列: ${added.join(', ')}`);
+  } catch (err) {
+    await logSyncError(pool, `[task-runs-push] Runs 库补列失败: ${err.message}`);
+  }
+  const { rows } = await pool.query(
+    `SELECT r.*, t.title AS task_title
+       FROM task_runs r
+       JOIN tasks t ON t.id = r.task_id
+      WHERE r.notion_id IS NULL OR r.notion_synced_at IS NULL OR r.updated_at > r.notion_synced_at
+      ORDER BY r.started_at DESC
+      LIMIT 100`);
+  if (rows.length === 0) return;
+  // 直接走统一引擎、不经 upsertOpsRows：后者的 onFatal 会把「库不可达」写成 ops_notion_dbs.disabled，
+  // 那是运行舱四库的终止开关，Runs 库出问题不许连坐运行舱推送。
+  await pushRegisteredRows(pool, token, {
+    table: 'task_runs', dbId, rows, buildProps: buildTaskRunNotionProperties,
+    notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'task_run',
+  });
+}
+
+/** 吞错壳：投影失败绝不连坐同轮其它推送。 */
+async function pushTaskRunsSafe(pool, token) {
+  try {
+    await pushTaskRuns(pool, token);
+  } catch (err) {
+    console.warn(`[notion-push-sync] task_runs 投影失败（非阻断）: ${err.message}`);
+  }
+}
+
+export async function pushTaskRunsForTest(pool, token) {
+  return pushTaskRuns(pool, token);
+}
+
 export async function runNotionPushSync(pool) {
   let token;
   try {
@@ -495,10 +1754,33 @@ export async function runNotionPushSync(pool) {
   await pushJourneys(pool, token);
   await pushJourneyFeatures(pool, token);
   await pushIssues(pool, token);
-  await pushSkillRegistry(pool, token);
-  await pushJourneySteps(pool, token);
+  await pushTasks(pool, token);
   await pushJourneyStepLinks(pool, token);
   await pushDecisions(pool, token);
   await pushInitiativeContracts(pool, token);
   await pushAdvancementItems(pool, token);
+  await pushOpsGraph(pool, token);
+  await pushTaskRunsSafe(pool, token);
+  // 接力棒投影：project 根 → Projects 库；待拍板 → 「决策」库草案（吞错，不连坐前面的推送）
+  try {
+    const { runRelayProjection } = await import('./notion-relay-projection.js');
+    await runRelayProjection(pool, { token });
+  } catch (err) {
+    console.warn(`[notion-push-sync] relay projection 失败（非阻断）: ${err.message}`);
+  }
+  // 验证层投影（棒4-2）：探针库 + 判定回执库；库未登记自跳过，吞错不连坐
+  try {
+    const { runProbeProjection } = await import('./notion-probe-projection.js');
+    await runProbeProjection(pool, { token, logSyncError });
+  } catch (err) {
+    console.warn(`[notion-push-sync] probe projection 失败（非阻断）: ${err.message}`);
+  }
+  // 仓库物件库 + 用料库（v3.0 第 3 刀 c 段）：缺库自建并登记，前提不足自跳过，吞错不连坐
+  try {
+    const { runWarehouseProjection } = await import('./notion-warehouse-projection.js');
+    await runWarehouseProjection(pool, { token, logSyncError });
+  } catch (err) {
+    console.warn(`[notion-push-sync] warehouse projection 失败（非阻断）: ${err.message}`);
+  }
+  // 「价值流 Value Streams」库已由六层目录投影接管（Brain value_streams 为准）；结构地图镜子不再写这个库
 }

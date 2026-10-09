@@ -12,6 +12,7 @@ import {
 } from './golden-path-contract-task.js';
 import { createRoutedTask } from './work-routing-store.js';
 import { CHANGE_KINDS, normalizeRepoHint } from './work-router.js';
+import { PHOTO_STALE_THRESHOLD_SECONDS } from './lib/registry-freshness.js';
 
 export {
   DEFAULT_GP_YIELD_ORDER,
@@ -73,8 +74,12 @@ async function resolveFreshMapBaseline(db, baseRepo) {
       GROUP BY repositories.repo
      HAVING count(DISTINCT headers.kind) = 4
         AND count(DISTINCT headers.source_revision) = 1
-        AND bool_and(headers.scanned_at >= now() - interval '15 minutes')`,
-    [repoHint],
+        AND bool_and(headers.scanned_at >= now() - ($2 || ' seconds')::interval)`,
+    // 0921：此处原先硬编码 interval '15 minutes'，是照相层保鲜的第三份独立口径
+    // （另两份：registry-freshness 的 PHOTO_STALE_THRESHOLD、rescan-if-changed.sh 的
+    // RESCAN_MAX_AGE_SECONDS）。三份各走各的，任何一份和刷新周期对不上都会造出
+    // 周期性死窗，而且改了其中一份另外两份不会跟——统一读同一个常量。
+    [repoHint, PHOTO_STALE_THRESHOLD_SECONDS],
   );
   const baseline = rows[0];
   if (rows.length !== 1 || !/^[a-f0-9]{40}$/.test(baseline?.source_revision ?? '')) {
@@ -475,6 +480,13 @@ export async function signAndLaunchGoldenPathContract(db, {
     change_kind: harnessGlue.changeKind,
     map_scope: harnessGlue.mapScope,
     base_sha: mapBaseline.source_revision,
+    // GP锚定闭环刀4（executor.js）drive-time 硬校验：base_repo 含 zenithjoy-workspace 时
+    // payload.gp_anchor 必须是合法三形态之一，否则新建的任务立刻 terminal failed
+    // （实证：task ff6a7302，GP f6f96e17 签字后永远开不了工）。golden_paths 目前没有落地
+    // product-map.yaml 步骤锚点的字段，推不出真实 line/gp#stepN，诚实地给
+    // none(backlog)——代表这条 GP 尚未登记进 product-map.yaml 的步骤追踪体系，
+    // 而不是编造一个不存在的锚点。对非 zenithjoy-workspace 的 base_repo 无害（字段被忽略）。
+    gp_anchor: 'none(backlog)',
   };
   const routed = await createRoutedTask(db, {
     source: 'discovery',

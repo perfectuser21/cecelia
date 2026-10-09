@@ -13,6 +13,12 @@
  * - GP-5 [BEHAVIOR-5]  configError 失败不计入计数，不触发 autoblock
  * - BEHAVIOR-6         spawn_deduplicated 失败不计入计数，不触发 autoblock
  * - BEHAVIOR-7         阈值非法值（NaN / <1）回退默认 3
+ * - BEHAVIOR-8         local_execution_disabled_on_scheduler 失败不计入计数、不 trip cecelia-run breaker
+ *                      （根因：us-vps 纯调度器化后，非 kernel-v1 的 skill-relay 任务在
+ *                       CECELIA_LOCAL_EXECUTION_ENABLED=false 时必然返回此 reason，是永久性的
+ *                       配置态失败而非任务执行故障，不应像真实执行失败一样累积熔断计数——
+ *                       否则会像 configError 一样"配置漂移 trip breaker 阻断所有 dispatch"，
+ *                       而且是共享的 'cecelia-run' key，会连累其他任务类型也派不出去）
  *
  * 规范：
  * - failing test 先 commit（Phase 1），实现后全绿（Phase 2）
@@ -616,6 +622,62 @@ describe('[BEHAVIOR-6]: spawn_deduplicated 失败不计入计数', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// [BEHAVIOR-8]：local_execution_disabled_on_scheduler 不计入连续计数、不 trip cecelia-run breaker
+//
+// 复现场景：us-vps 纯调度器化（决策 96054a8b）后，非 kernel-v1 的 skill-relay 任务
+// （如 golden_path_proposal）在 CECELIA_LOCAL_EXECUTION_ENABLED=false 时，
+// spawnSkillRelaySession 必然返回 { ok:false, error:'local_execution_disabled_on_scheduler' }
+// ——这是永久性的配置态失败，不是任务本身执行故障。修复前 dispatcher 把它当真实执行失败，
+// 每次都调 recordFailure('cecelia-run')，把共享的 'cecelia-run' 熔断器打到 OPEN，
+// 连累其他任务类型（如需要 cecelia-bridge 的任务）也一起派不出去。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('[BEHAVIOR-8]: local_execution_disabled_on_scheduler 失败不计入计数、不 trip breaker', () => {
+  const task = makeTask();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTriggerCeceliaRun.mockResolvedValue({
+      success: false,
+      reason: 'local_execution_disabled_on_scheduler',
+      error: 'local_execution_disabled_on_scheduler',
+    });
+  });
+
+  it('local_execution_disabled_on_scheduler 连续 3 次：不计入 dispatch_fail_consecutive，不 block，不 trip breaker', async () => {
+    mockSelectNextDispatchableTask
+      .mockResolvedValueOnce(task)
+      .mockResolvedValueOnce(task)
+      .mockResolvedValueOnce(task);
+
+    for (let i = 0; i < 3; i++) {
+      mockQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: task.id }] })
+        .mockResolvedValueOnce({ rows: [task] })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+        .mockResolvedValue({ rows: [], rowCount: 1 });
+
+      const { dispatchNextTask } = await import('../dispatcher.js');
+      await dispatchNextTask(['goal-1']);
+    }
+
+    expect(mockBlockTask).not.toHaveBeenCalled();
+    expect(mockRaise).not.toHaveBeenCalled();
+
+    // 核心断言：不应 trip 共享的 cecelia-run 熔断器（否则连累其他任务类型）
+    expect(mockRecordFailure).not.toHaveBeenCalledWith('cecelia-run');
+
+    const anyCountWrite = mockQuery.mock.calls.some(
+      (c) => typeof c[0] === 'string' &&
+        c[0].includes('dispatch_fail_consecutive') &&
+        c[0].includes('UPDATE')
+    );
+    expect(anyCountWrite).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // [BEHAVIOR-7]：阈值非法值回退默认 3
 // ─────────────────────────────────────────────────────────────────────────────
 describe('[BEHAVIOR-7]: DISPATCH_FAIL_AUTOBLOCK_THRESHOLD 非法值回退默认 3', () => {
@@ -664,5 +726,95 @@ describe('[BEHAVIOR-7]: DISPATCH_FAIL_AUTOBLOCK_THRESHOLD 非法值回退默认 
 
     const { DISPATCH_FAIL_AUTOBLOCK_THRESHOLD } = await import('../dispatcher.js');
     expect(DISPATCH_FAIL_AUTOBLOCK_THRESHOLD).toBe(3);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// reason_code 与 needs_rebase 停车（任务 d9c405e2）
+//
+// 预检重锚定在「分支已有产出但 base_sha 落后地图」时抛 code='needs_rebase'，
+// 这不是执行故障——不应累计 dispatch_fail_consecutive、不应走三振 autoblock，
+// 而是直接停车（blocked reason='needs_rebase'）等 rebase 后解锁。
+// 同时所有派发失败的 detail / task_events 都带结构化 reason_code，便于回填与归因。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('reason_code 与 needs_rebase（任务 d9c405e2）', () => {
+  // 与本文件其余用例一致用默认 task_type（research）：harness_initiative 在本文件的
+  // slot-allocator mock 下（codex.available=false）会被 HOL skip，根本走不到派发失败路径。
+  const task = makeTask({ metadata: {} });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // vi.clearAllMocks 不清 Once 队列：本 describe 下多个用例各自注册 setupQuerySequence，
+    // 不 reset 会让上一条用例的残留 Once 顶掉下一条的 claim 结果（表现为 already_claimed）。
+    mockQuery.mockReset();
+    mockSelectNextDispatchableTask.mockReset();
+    mockBlockTask.mockReset().mockResolvedValue({ success: true });
+    mockSelectNextDispatchableTask.mockResolvedValueOnce(task);
+  });
+
+  it('三振时 blockTask detail 带 reason_code=map_revision_mismatch', async () => {
+    mockTriggerCeceliaRun.mockResolvedValue({ success: false, reason: 'kernel_authority_not_created', error: 'map_revision_mismatch' });
+    setupQuerySequence(task, 2, true);
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    await dispatchNextTask(['goal-1']);
+    expect(mockBlockTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      reason: 'dispatch_fail_autoblock',
+      detail: expect.objectContaining({ reason_code: 'map_revision_mismatch', consecutive_failures: 3 }),
+    }));
+  });
+
+  it('needs_rebase：直接 block（reason=needs_rebase）、不累计 dispatch_fail_consecutive、P3 告警', async () => {
+    mockTriggerCeceliaRun.mockResolvedValue({
+      success: false, reason: 'needs_rebase', reason_code: 'needs_rebase', error: 'needs_rebase',
+      detail: { old_base_sha: 'a'.repeat(40), new_base_sha: 'b'.repeat(40), branch: 'cp-route-api-1' },
+    });
+    setupQuerySequence(task, 0, false);
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask(['goal-1']);
+    expect(result.dispatched).toBe(false);
+    // 停车不是执行故障：统计口径与返回体 reason 都用 needs_rebase，不混进 executor_failed
+    expect(result.reason).toBe('needs_rebase');
+    expect(mockRecordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'needs_rebase', undefined, task.id);
+    expect(mockBlockTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      reason: 'needs_rebase',
+      detail: expect.objectContaining({ reason_code: 'needs_rebase', branch: 'cp-route-api-1' }),
+    }));
+    const countUpdate = mockQuery.mock.calls.find(([sql]) => /dispatch_fail_consecutive/.test(String(sql)) && /UPDATE tasks/.test(String(sql)));
+    expect(countUpdate).toBeUndefined();
+    // 也不能计入共享的 cecelia-run 熔断器（否则停车会连累其他任务类型派不出去）
+    expect(mockRecordFailure).not.toHaveBeenCalled();
+    expect(mockRaise).toHaveBeenCalledWith('P3', 'needs_rebase', expect.stringContaining(task.id));
+  });
+
+  it('reason 未标 needs_rebase 但 reason_code 是：同样停车，detail 里的 reason_code 不能覆盖停车码', async () => {
+    mockTriggerCeceliaRun.mockResolvedValue({
+      success: false, reason: 'kernel_authority_not_created', reason_code: 'needs_rebase', error: 'needs_rebase',
+      // detail 自带一个陈旧 reason_code：展开后必须被停车码压掉，不能反向覆盖
+      detail: { branch: 'cp-route-api-2', reason_code: 'stale_value' },
+    });
+    setupQuerySequence(task, 0, false);
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask(['goal-1']);
+    expect(result.reason).toBe('needs_rebase');
+    expect(mockBlockTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      reason: 'needs_rebase',
+      detail: expect.objectContaining({ reason_code: 'needs_rebase', branch: 'cp-route-api-2' }),
+    }));
+    const countUpdate = mockQuery.mock.calls.find(([sql]) => /dispatch_fail_consecutive/.test(String(sql)) && /UPDATE tasks/.test(String(sql)));
+    expect(countUpdate).toBeUndefined();
+  });
+
+  it('blockTask 没停住（返回 success:false）→ P2 needs_rebase_park_failed，不静默', async () => {
+    mockTriggerCeceliaRun.mockResolvedValue({
+      success: false, reason: 'needs_rebase', reason_code: 'needs_rebase', error: 'needs_rebase',
+      detail: { branch: 'cp-route-api-3' },
+    });
+    // blockTask 不抛异常，失败时返回 {success:false}；WHERE status IN(...) 不匹配也走这条路径。
+    // 任务因此仍留在 queued，会每 tick 重撞——必须告警让人看见。
+    mockBlockTask.mockResolvedValueOnce({ success: false, error: 'Task not found or not in blockable state' });
+    setupQuerySequence(task, 0, false);
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    await dispatchNextTask(['goal-1']);
+    expect(mockRaise).toHaveBeenCalledWith('P2', 'needs_rebase_park_failed', expect.stringContaining(task.id));
   });
 });

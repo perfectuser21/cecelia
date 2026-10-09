@@ -1,3 +1,7 @@
+// 本文件验证已获授权后的协议；真实默认拒绝见 execution-directory/legacy-relay.test.js。
+vi.mock('../execution-directory/legacy-relay.js',()=>({withLegacyRelayExecution:async(_identity,operation)=>operation()}));
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * N3 skill-relay 最小接线（harness-skill-relay initiative，主理人 2026-07-04 拍板）：
  * task.payload.orchestrator==='skill-relay' → spawn 单 claude session 跑 harness-controller skill，
@@ -7,6 +11,7 @@
  */
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { spawnSkillRelaySession, isSkillRelayTask, controllerSkillFor, deriveGear, GEAR_VALUES } from '../harness-skill-relay.js';
+import { isLaunchDeferredReason } from '../lib/kernel-launch-deferral.js';
 
 const TASK = {
   id: 'aaaabbbb-cccc-dddd-eeee-ffff00001111',
@@ -189,6 +194,72 @@ describe('spawnSkillRelaySession', () => {
     expect(deps.pool.query.mock.calls.some(([sql]) => (
       /UPDATE tasks/.test(sql) && /status='queued'/.test(sql)
     ))).toBe(false);
+  });
+
+  // 2026-09-24 实证（任务 281aa798）：MMV 槽位被占时 bridge.prepare 返回 429，Brain 把它当
+  // 永久失败 terminalized → 任务终态 failed，一天里 6 条刀就这样被判死。跑场机忙是瞬时状态，
+  // 必须 deferred：run 记失败、任务回 queued，下个 tick 再派。
+  function remoteKernelDeps(overrides = {}) {
+    return makeDeps({
+      env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' },
+      orchestratorBridge: {
+        targetMachineId: 'us-mac-m4',
+        prepare: vi.fn(async () => { throw new Error('orchestrator_bridge_prepare_http_429:orchestrator_slots_exhausted'); }),
+        start: vi.fn(async () => ({ pid: 1, host: 'us-mac-m4', status: 'running' })),
+      },
+      requeueKernelRunDeferred: vi.fn(async () => ({ changed: true, deferCount: 1 })),
+      ...overrides,
+    });
+  }
+  const remoteKernelTask = { ...TASK, payload: { ...TASK.payload, harness_runtime: 'kernel-v1', executor: 'auto' } };
+
+  it('远程 prepare 429（跑场机槽位满）→ deferred：run 记失败、任务回 queued，不 terminalized', async () => {
+    const deps = remoteKernelDeps();
+    const result = await spawnSkillRelaySession(remoteKernelTask, deps);
+    expect(result).toMatchObject({ ok: false, mode: 'kernel-v1', runId: KERNEL_RUN_ID, deferred: true, reason: 'orchestrator_busy' });
+    expect(result.terminalized).toBeUndefined();
+    expect(deps.requeueKernelRunDeferred).toHaveBeenCalledWith(deps.pool, expect.objectContaining({
+      runId: KERNEL_RUN_ID,
+      expectedTaskId: TASK.id,
+      reason: expect.stringContaining('orchestrator_bridge_prepare_http_429'),
+    }));
+    expect(deps.finalizeRun).not.toHaveBeenCalled();
+    // 衔接契约：relay 实际写入的 reason 必须被统计口径识别为"排队"
+    const { reason } = deps.requeueKernelRunDeferred.mock.calls[0][1];
+    expect(isLaunchDeferredReason(reason)).toBe(true);
+  });
+
+  it('远程 start 请求超时（request_failed）同样 deferred', async () => {
+    const deps = remoteKernelDeps();
+    deps.orchestratorBridge.prepare = vi.fn(async () => ({ worktree_path: '/ws/r', status: 'prepared' }));
+    deps.orchestratorBridge.start = vi.fn(async () => { throw new Error('orchestrator_bridge_start_request_failed:The operation was aborted'); });
+    const result = await spawnSkillRelaySession(remoteKernelTask, deps);
+    expect(result).toMatchObject({ ok: false, mode: 'kernel-v1', deferred: true, reason: 'orchestrator_busy' });
+    expect(deps.finalizeRun).not.toHaveBeenCalled();
+  });
+
+  it('延后次数用尽（requeue 返回 exhausted）→ 回落 terminalized + finalize failed', async () => {
+    const deps = remoteKernelDeps({
+      requeueKernelRunDeferred: vi.fn(async () => ({ changed: false, exhausted: true, deferCount: 10 })),
+    });
+    const result = await spawnSkillRelaySession(remoteKernelTask, deps);
+    expect(result).toMatchObject({ ok: false, mode: 'kernel-v1', terminalized: true });
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, expect.objectContaining({
+      outcome: 'failed',
+      reason: expect.stringContaining('kernel_remote_launch_failed:'),
+    }));
+    // 衔接契约：用尽后的终态失败是真实失败，统计口径不得当作排队剔除
+    const { reason } = deps.finalizeRun.mock.calls[0][1];
+    expect(isLaunchDeferredReason(reason)).toBe(false);
+  });
+
+  it('远程 prepare 永久错误（http_400）仍 terminalized，不回队', async () => {
+    const deps = remoteKernelDeps();
+    deps.orchestratorBridge.prepare = vi.fn(async () => { throw new Error('orchestrator_bridge_prepare_http_400:orchestrator_task_id_invalid'); });
+    const result = await spawnSkillRelaySession(remoteKernelTask, deps);
+    expect(result).toMatchObject({ ok: false, mode: 'kernel-v1', terminalized: true });
+    expect(deps.requeueKernelRunDeferred).not.toHaveBeenCalled();
+    expect(deps.finalizeRun).toHaveBeenCalled();
   });
 
   it('harness_runtime 缺省继续走旧 controller，保留一键回滚路径', async () => {
@@ -822,5 +893,124 @@ describe('spawnSkillRelaySession preview 隔离闸（2026-08-05 preview-4643 事
     } finally {
       delete process.env.BRAIN_PREVIEW;
     }
+  });
+});
+
+/**
+ * us-vps 纯调度器化第一刀（方案 A，主理人 2026-09-13 拍板；纠正决策 26c1e763
+ * supersede 962281b2）：新增 CECELIA_LOCAL_EXECUTION_ENABLED 表达宿主角色，
+ * 拦在 spawnSkillRelaySession 这个「所有 harness 派发路径的唯一咽喉」上。
+ *
+ * 为什么不改 CECELIA_MACHINE_ID（原方案已证伪，三条硬阻碍逐条亲验）：
+ *  1. production-transport.js:137 那道守卫是死代码 —— 判据是入参 localMachineId，
+ *     默认值即 DEFAULT_LOCAL_MACHINE_ID，而 server.js:145 / attempt-cleanup-worker.js:208
+ *     等四个生产调用方全不传它，if 恒为假；
+ *  2. 本文件对 machineId 的引用数为 0，本机 spawn 判据只有 payload.harness_runtime，
+ *     改身份拦不住它（改 env 不减 VPS 一丝 CPU）；
+ *  3. credential-broker.js:144 与 github-credential-broker.js:36 硬编码
+ *     controllerMachineId !== 'us-mac-m4' 即 fail —— 这台 Brain 必须自称 us-mac-m4
+ *     因为它是凭据权威，改身份会让远程派发也签不出凭据，全面 fail-closed。
+ *
+ * PrepPRD: sprints/09130012-us-vps-scheduler-identity/prep-prd.md
+ */
+describe('本机执行闸 CECELIA_LOCAL_EXECUTION_ENABLED（us-vps 纯调度器化）', () => {
+  // 闸语义反转（决策 e3a41ecc，2026-09-13，本文件描述的三条硬阻碍分析之后追加）：
+  // kernel-v1 headless 不再一刀切拒绝，改经 orchestrator-remote-bridge 远程派发；
+  // 本机 ensureWt/spawnFn（本机 launchKernelProcess 那条链）仍然一次都不能碰——
+  // 半态风险不变，只是「半态」换成了「本机误起」。
+  it('=false 时 kernel-v1 headless 经桥远程派发，不本机建 worktree/spawn（不留半态）', async () => {
+    const bridgeCalls = [];
+    const deps = makeDeps({
+      env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' },
+      orchestratorBridge: {
+        targetMachineId: 'primary-under-test',
+        prepare: vi.fn(async (input) => { bridgeCalls.push(['prepare', input]); return { worktree_path: '/ws/r', status: 'prepared' }; }),
+        start: vi.fn(async (input) => { bridgeCalls.push(['start', input]); return { pid: 4242, host: 'primary-under-test', status: 'running' }; }),
+      },
+    });
+    const kernelTask = {
+      ...TASK,
+      payload: { ...TASK.payload, harness_runtime: 'kernel-v1' },
+    };
+    const r = await spawnSkillRelaySession(kernelTask, deps);
+    expect(r.ok).toBe(true);
+    expect(r.remote).toBe(true);
+    expect(r.pid).toBe(4242);
+    // 关键：远程路径不碰本机执行原语，本机不留半态
+    expect(deps.ensureWt).not.toHaveBeenCalled();
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    // run 仍要建（供远端 controller 认领），只是不再本机 launchKernelProcess
+    expect(deps.createKernelRun).toHaveBeenCalled();
+    expect(bridgeCalls.map(([op]) => op)).toEqual(['prepare', 'start']);
+  });
+
+  it('=false 时同样拒绝普通 skill-relay 派发（咽喉拦所有路径，不只 kernel-v1）', async () => {
+    const deps = makeDeps({ env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' } });
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('local_execution_disabled_on_scheduler');
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('未设置时行为零变化（防误杀：默认放行，走正常派发路径）', async () => {
+    const deps = makeDeps({ env: {} });
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.error).not.toBe('local_execution_disabled_on_scheduler');
+    expect(deps.spawnFn).toHaveBeenCalled();
+  });
+
+  it("='true' 时放行（显式开启也不拦）", async () => {
+    const deps = makeDeps({ env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'true' } });
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.error).not.toBe('local_execution_disabled_on_scheduler');
+    expect(deps.spawnFn).toHaveBeenCalled();
+  });
+
+  it('createKernelRun 返回重锚定后的 base_sha 时，bridge.prepare 用新 sha（账实不分叉）', async () => {
+    const NEW = 'b'.repeat(40);
+    const bridgeCalls = [];
+    const deps = makeDeps({
+      env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' },
+      orchestratorBridge: {
+        targetMachineId: 'primary-under-test',
+        prepare: vi.fn(async (input) => { bridgeCalls.push(['prepare', input]); return { worktree_path: '/ws/r', status: 'prepared' }; }),
+        start: vi.fn(async (input) => { bridgeCalls.push(['start', input]); return { pid: 4242, host: 'primary-under-test', status: 'running' }; }),
+      },
+      createKernelRun: vi.fn().mockResolvedValue({
+        created: true,
+        run: { id: KERNEL_RUN_ID, controller_session_id: '11111111-1111-4111-8111-111111111111', controller_generation: 1 },
+        base_sha: NEW,
+        routing_receipt_id: '77777777-7777-4777-8777-777777777777',
+      }),
+    });
+    const kernelTask = {
+      ...TASK,
+      payload: {
+        ...TASK.payload,
+        harness_runtime: 'kernel-v1',
+        base_sha: 'a'.repeat(40),
+        routing_receipt_id: '66666666-6666-4666-8666-666666666666',
+      },
+    };
+    const r = await spawnSkillRelaySession(kernelTask, deps);
+    expect(r.ok).toBe(true);
+    expect(bridgeCalls[0][1]).toMatchObject({ base_sha: NEW });
+    expect(kernelTask.payload.routing_receipt_id).toBe('77777777-7777-4777-8777-777777777777');
+  });
+
+  it('源码哨兵：闸必须读可注入的 env（防重演「测了一段生产不可达代码」）', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../harness-skill-relay.js', import.meta.url), 'utf8');
+    expect(src).toMatch(/CECELIA_LOCAL_EXECUTION_ENABLED/);
+    // 必须走 (deps.env ?? process.env) 这个可注入形式。直接读 process.env 会让闸
+    // 在测试里不可控，正是阻碍1（production-transport.js:137 判入参默认值 → 四个
+    // 生产调用方全不传 → if 恒为假 → 守卫是死代码）那个错误的形状。
+    expect(src).toMatch(/\(deps\.env \?\? process\.env\)\.CECELIA_LOCAL_EXECUTION_ENABLED/);
+    // 闸必须在 spawnSkillRelaySession 函数体内（咽喉），不在 _spawnKernelRuntime 里 ——
+    // 后者已经建过 run，拦在那儿会留半态。
+    const entryIdx = src.indexOf('export async function spawnSkillRelaySession');
+    const guardIdx = src.indexOf('CECELIA_LOCAL_EXECUTION_ENABLED');
+    expect(entryIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeGreaterThan(entryIdx);
   });
 });

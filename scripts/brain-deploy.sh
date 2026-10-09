@@ -12,15 +12,24 @@ DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"
 source "$SCRIPT_DIR/lib/bluegreen.sh"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/internal-auth-token.sh"
+source "$SCRIPT_DIR/lib/brain-image-retention.sh"
 
 VERSION=$(node -e "console.log(require('$BRAIN_DIR/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
-CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:-/Users/administrator/.credentials/cecelia-internal.env}"
+# 默认凭据路径跟着 HOST_HOME 走（macOS/us-vps 两份 compose 都在容器 env 里显式设了
+# HOST_HOME=/Users/administrator 或 /root），不再硬编码 macOS 路径。
+CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:-${HOST_HOME:-$HOME}/.credentials/cecelia-internal.env}"
 export CECELIA_INTERNAL_ENV_FILE
 
 # ── 部署状态文件：供 Brain 重启后感知 deploy 结果 ──────────────────────────
 DEPLOY_SUCCESS=false
 _write_deploy_status() {
+    local retention_failed=false
+    if [[ "$DEPLOY_SUCCESS" == "true" ]]; then
+        retention_finish success || { DEPLOY_SUCCESS=false; retention_failed=true; }
+    else
+        retention_finish recovered || true
+    fi
     if [[ "$DEPLOY_SUCCESS" == "true" ]]; then
         printf '{"status":"success","version":"%s","finished_at":"%s"}' \
             "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
@@ -28,6 +37,7 @@ _write_deploy_status() {
         printf '{"status":"failed","error":"brain-deploy.sh exited before success","finished_at":"%s"}' \
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
     fi
+    if [[ "$retention_failed" == true ]]; then exit 1; fi
 }
 trap '_write_deploy_status' EXIT
 
@@ -274,7 +284,17 @@ if ! docker info >/dev/null 2>&1 || ! docker inspect cecelia-node-brain >/dev/nu
     fi
 fi
 
-echo "=== Deploying cecelia-brain v${VERSION} (region=${ENV_REGION}, mode=${DEPLOY_MODE}) ==="
+# ── Compose 文件选择：Linux(us-vps) 用专属文件，其余(macOS/mmv)用默认文件 ────
+# COMPOSE_FILE 允许环境变量显式覆盖（测试/未来手动指定用），缺省按 uname -s 自动探测。
+if [[ -z "${COMPOSE_FILE:-}" ]]; then
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        COMPOSE_FILE="docker-compose.us-vps.yml"
+    else
+        COMPOSE_FILE="docker-compose.yml"
+    fi
+fi
+
+echo "=== Deploying cecelia-brain v${VERSION} (region=${ENV_REGION}, mode=${DEPLOY_MODE}, compose=${COMPOSE_FILE}) ==="
 echo ""
 
 # ── 主机 home 目录（兼容 Docker 镜像内 /home/xx 和 macOS /Users/xxx）────────
@@ -282,6 +302,7 @@ HOST_HOME="${HOST_HOME:-$HOME}"
 
 if [[ "$DRY_RUN" == true ]]; then
     echo "[dry-run] DEPLOY_MODE=${DEPLOY_MODE}"
+    echo "[dry-run] COMPOSE_FILE=${COMPOSE_FILE}"
     echo "[dry-run] ROOT_DIR=${ROOT_DIR}"
     echo "[dry-run] HOST_HOME=${HOST_HOME}"
     echo ""
@@ -300,6 +321,10 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         echo "[dry-run] ensure_cecelia_internal_token $CECELIA_INTERNAL_ENV_FILE"
     else
         ensure_cecelia_internal_token "$CECELIA_INTERNAL_ENV_FILE" || exit 1
+    fi
+
+    if [[ "$DRY_RUN" == false ]]; then
+        retention_begin "$VERSION" "${EXPECTED_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}" || exit 1
     fi
 
     # 1. Build image
@@ -414,44 +439,53 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
 
         # blue 是 bridge 网络（docker ps 显示 0.0.0.0:5221->5221），green 用 bridge + -p 5233:5221，
         # 不加 --network host（否则 green 抢占 host 5221 与 blue 冲突）。
-        GREEN_ENV=$(docker inspect cecelia-node-brain --format '{{range .Config.Env}}-e {{.}} {{end}}' 2>/dev/null || echo "")
-        GREEN_VOL=$(docker inspect cecelia-node-brain --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}{{if not .RW}}:ro{{end}} {{end}}' 2>/dev/null || echo "")
-        # 最后的 `-e CECELIA_INTERNAL_TOKEN` 从当前部署进程复制刚校验的值，
-        # 覆盖旧 blue 中可能存在的旧 token，且不把 secret 本身放进 argv。
-        export GREEN_RUN_ARGS="${GREEN_ENV} ${GREEN_VOL} -e CECELIA_INTERNAL_TOKEN"
+        # blue 的 env 值可能含空格，必须走 env-file（bluegreen_green_run_args），不能拼 -e K=V；
+        # 文件 600 权限、swap 结束即删（docker run 读完就不再需要）。
+        GREEN_ENV_FILE=$(mktemp "${TMPDIR:-/tmp}/cecelia-green-env.XXXXXX")
+        chmod 600 "$GREEN_ENV_FILE"
+        if ! GREEN_RUN_ARGS=$(bluegreen_green_run_args cecelia-node-brain "$GREEN_ENV_FILE"); then
+            rm -f "$GREEN_ENV_FILE"
+            echo "[FAIL] 读取旧 Brain 容器 env/卷失败，终止部署"
+            drain_cancel_with_retry
+            exit 1
+        fi
+        export GREEN_RUN_ARGS
         # sidecar 需要知道部署根和 region（bluegreen.sh 通过 env 读取）
         export DEPLOY_ROOT_DIR="$ROOT_DIR"
+        # 守卫块内必须直接 exit 1（tests/packages/brain/bluegreen-deploy-contract.test.js 结构化匹配 if ! …bluegreen_swap; then … exit 1 … fi）
         if ! TARGET_VERSION="${VERSION}" BLUE_NAME=cecelia-node-brain \
              GREEN_NAME=cecelia-node-brain-green TEMP_PORT=5233 HEALTH_TIMEOUT=90 bluegreen_swap; then
+            rm -f "$GREEN_ENV_FILE"
             echo "[FAIL] green canary 未通过，已保留旧生产容器(5221 不受影响)，终止部署"
             # blue 仍在运行且已进入 drain 模式 → 恢复正常派发
             echo "  [drain] green 未通过，恢复旧 Brain 派发..."
             drain_cancel_with_retry
             exit 1
         fi
+        rm -f "$GREEN_ENV_FILE"
     else
         # 无 blue（首次部署）→ 无 outage 风险，跳过 drain + canary 直接起
         echo "  [首次部署] 无旧生产容器，跳过 drain + canary，直接起新容器"
     fi
 
     if [[ "$DRY_RUN" == true ]]; then
-        echo "  [dry-run] docker compose up -d node-brain (cecelia-brain:${VERSION})"
+        echo "  [dry-run] docker compose -f ${COMPOSE_FILE} up -d node-brain (cecelia-brain:${VERSION})"
     elif ! BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
-      docker compose --env-file "$ROOT_DIR/.env.docker" \
-        -f "$ROOT_DIR/docker-compose.yml" up -d node-brain; then
+      docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
+        -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain; then
         echo ""
         echo "[FAIL] docker compose up -d failed. Rolling back..."
         if [ -f "$VERSIONS_FILE" ] && [ "$(wc -l < "$VERSIONS_FILE")" -ge 2 ]; then
             PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
             echo "  Rolling back to v${PREV_VERSION}..."
             BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
-              docker compose --env-file "$ROOT_DIR/.env.docker" \
-                -f "$ROOT_DIR/docker-compose.yml" up -d node-brain || true
+              docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
+                -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain || true
             echo "  Rolled back to v${PREV_VERSION}"
         else
             echo "  No previous version found. Stopping container."
-            docker compose --env-file "$ROOT_DIR/.env.docker" \
-              -f "$ROOT_DIR/docker-compose.yml" stop node-brain || true
+            docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
+              -f "$ROOT_DIR/${COMPOSE_FILE}" stop node-brain || true
         fi
         exit 1
     fi
@@ -461,6 +495,10 @@ fi  # end Docker mode
 # ─── launchd 模式 ────────────────────────────────────────────────────────────
 
 if [[ "$DEPLOY_MODE" == "launchd" ]]; then
+
+    if [[ "$DRY_RUN" == false ]]; then
+        retention_begin "$VERSION" "${EXPECTED_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}" || exit 1
+    fi
 
     # 1. Build image: SKIPPED (not using Docker)
     echo "[1/7] Building image... SKIPPED (launchd mode, no Docker)"
@@ -634,8 +672,20 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     BRIDGE_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-bridge.js"
     BRIDGE_DST="${HOST_HOME}/bin/cecelia-bridge.js"
     if [[ -f "$BRIDGE_SRC" ]]; then
-      # 同 cecelia-run 的 cp identical 防中止
-      cp "$BRIDGE_SRC" "$BRIDGE_DST" 2>&1 || true
+      # Bridge文件未落地不算部署成功；复制异常时EXIT回执必须保留failed。
+      DEPLOY_SUCCESS=false
+      # 入口依赖先到位再更新入口，避免宿主bin首次部署缺模块导致Bridge起不来。
+      BRIDGE_LIB_SRC="$ROOT_DIR/packages/brain/scripts/lib/bridge-lifecycle.cjs"
+      BRIDGE_LIB_DIR="${HOST_HOME}/bin/lib"
+      mkdir -p "$BRIDGE_LIB_DIR"
+      if ! cmp -s "$BRIDGE_LIB_SRC" "$BRIDGE_LIB_DIR/bridge-lifecycle.cjs"; then
+        cp "$BRIDGE_LIB_SRC" "$BRIDGE_LIB_DIR/bridge-lifecycle.cjs"
+      fi
+      # 内容一致时不cp；真正的权限/磁盘错误必须让set -e终止，不能吞掉。
+      if ! cmp -s "$BRIDGE_SRC" "$BRIDGE_DST"; then
+        cp "$BRIDGE_SRC" "$BRIDGE_DST"
+      fi
+      DEPLOY_SUCCESS=true
       echo "  Updated $BRIDGE_DST (v${VERSION})"
       # 重启 bridge（launchd 或 systemd）
       if [[ "$DEPLOY_MODE" == "launchd" ]]; then
@@ -699,13 +749,13 @@ else
         PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
         echo "  Rolling back to v${PREV_VERSION}..."
         BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
-          docker compose --env-file "$ROOT_DIR/.env.docker" \
-            -f "$ROOT_DIR/docker-compose.yml" up -d node-brain
+          docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
+            -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain
         echo "  Rolled back to v${PREV_VERSION}"
     else
         echo "  No previous version found. Stopping container."
-        docker compose --env-file "$ROOT_DIR/.env.docker" \
-          -f "$ROOT_DIR/docker-compose.yml" stop node-brain
+        docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
+          -f "$ROOT_DIR/${COMPOSE_FILE}" stop node-brain
     fi
 fi
 

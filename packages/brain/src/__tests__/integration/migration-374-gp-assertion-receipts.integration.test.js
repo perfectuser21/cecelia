@@ -48,11 +48,17 @@ async function rejectReceipts(values) {
 beforeAll(async () => {
   client = await pool.connect();
   await client.query('BEGIN');
+  // 迁移 522 起真表是 activity_cells / activities（525 起旧名视图已删）。374 是旧迁移，对旧名做 ALTER TABLE，
+  // 视图上做不了：在本事务内把真表临时改回旧名重放（afterAll 的 ROLLBACK 会还原），验证的是旧迁移自身的幂等。
+  await client.query('DROP VIEW IF EXISTS journey_step_links');
+  await client.query('DROP VIEW IF EXISTS journey_steps');
+  await client.query('ALTER TABLE activity_cells RENAME TO journey_step_links');
+  await client.query('ALTER TABLE activities RENAME TO journey_steps');
   await client.query(migration);
   await client.query(migration);
-  const journeyId = (await client.query("INSERT INTO journeys (name, description) VALUES ($1, 'assertion receipt migration fixture') RETURNING id", [fixture])).rows[0].id;
+  const journeyId = (await client.query("INSERT INTO value_streams (name, description) VALUES ($1, 'assertion receipt migration fixture') RETURNING id", [fixture])).rows[0].id;
   const stepId = (await client.query(
-    "INSERT INTO journey_steps (journey_id, name, step_number) VALUES ($1, 'execute assertion', 1) RETURNING id", [journeyId],
+    "INSERT INTO journey_steps (name) VALUES ('execute assertion') RETURNING id",
   )).rows[0].id;
   const cell = (await client.query(
     `INSERT INTO journey_step_links (
@@ -104,12 +110,12 @@ describe('migration 374 Golden Path assertion receipts [PostgreSQL]', () => {
     ]);
   });
   it('rejects PASS without a machine identity', async () => rejectReceipts([{ machineId: null }]));
-  it('makes repeated run delivery idempotent by run, cell, source, and contract', async () => {
+  it('makes repeated run delivery idempotent by run, cell, source, contract, and assertion ref (迁移 477 五列键)', async () => {
     const runId = `${fixture}-idempotent`;
     await insertReceipt({ runId });
     const repeated = await insertReceipt(
       { runId }, `ON CONFLICT (
-        run_id, journey_step_link_id, source_sha, impact_contract_hash
+        run_id, journey_step_link_id, source_sha, impact_contract_hash, assertion_ref_snapshot
       ) DO NOTHING`,
     );
     const count = await client.query(

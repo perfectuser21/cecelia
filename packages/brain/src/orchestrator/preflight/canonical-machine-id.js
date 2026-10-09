@@ -1,10 +1,4 @@
-const CANONICAL_MACHINE_IDS = Object.freeze([
-  'us-mac-m4',
-  'xian-mac-m4',
-  'xian-mac-m1',
-]);
-
-const CANONICAL_MACHINE_SET = new Set(CANONICAL_MACHINE_IDS);
+import { listComputeWorkerIds, resolvePrimaryWorkerId } from '../../machine-registry.js';
 
 function registeredFleetIds(fleet) {
   return new Set((fleet ?? [])
@@ -28,7 +22,7 @@ export function resolveCanonicalMachineId({
   if (!candidate) {
     throw new Error('missing canonical machine id');
   }
-  if (!CANONICAL_MACHINE_SET.has(candidate)) {
+  if (!listCanonicalMachineIds().includes(candidate)) {
     throw new Error(`unknown canonical machine id: ${candidate}`);
   }
 
@@ -42,6 +36,7 @@ export function resolveCanonicalMachineId({
 }
 
 export function listCanonicalMachineIds() {
-  return [...CANONICAL_MACHINE_IDS];
+  const ids=listComputeWorkerIds();const primary=resolvePrimaryWorkerId();
+  return [primary,...ids.filter(id=>id!==primary)].filter(id=>ids.includes(id));
 }
 

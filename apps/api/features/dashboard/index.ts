@@ -12,8 +12,8 @@ const manifest: FeatureManifest = {
   ],
 
   routes: [
-    // Default route — 主理人指挥舱 (task:80a5be84)
-    { path: '/', redirect: '/workbench/overview', requireAuth: true },
+    // 默认进入交代事情。
+    { path: '/', redirect: '/system', requireAuth: true },
     // Dashboard 退役重定向 → 军师台
     { path: '/dashboard', redirect: '/strategist' },
     { path: '/dashboard/command', redirect: '/strategist' },

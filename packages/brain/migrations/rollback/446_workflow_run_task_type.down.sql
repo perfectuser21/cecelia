@@ -1,0 +1,2 @@
+-- 回滚需先无 workflow_run 行；仅还原 constraint 到 336+strategist_decision 版本。
+-- 具体重建语句照 336_strategist_decision_task_type.sql。

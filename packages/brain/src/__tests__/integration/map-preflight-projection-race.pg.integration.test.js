@@ -101,7 +101,7 @@ async function insertProjection(pool, {
   );
 }
 
-async function seedRaceFixture() {
+async function seedRaceFixture({ routedBaseSha = null } = {}) {
   const suffix = randomUUID().slice(0, 8);
   const scopeKey = `race-scope-${suffix}`;
   const repo = `race-repo-${suffix}`;
@@ -174,7 +174,8 @@ async function seedRaceFixture() {
     repo_hint: repo,
     map_scope_hint: ['F1'],
     branch: `cp-projection-race-${suffix}`,
-    base_sha: baseSha,
+    // 默认与地图 fact revision 同锚；传 routedBaseSha 则种一个陈旧锚，走派发时重锚定。
+    base_sha: routedBaseSha ?? baseSha,
     task: { priority: 'P0', payload: { initiative_id: initiativeId } },
   });
   return {
@@ -331,4 +332,60 @@ describe.sequential('Map preflight projection authority on PostgreSQL', () => {
     );
     expect(halfState.rows[0]).toEqual({ contracts: 0, runs: 0 });
   });
+
+  it('派发时把陈旧 base_sha 快进到地图 revision 并改锚（任务 d9c405e2）', async () => {
+    const staleSha = 'f'.repeat(40);
+    const fixture = await seedRaceFixture({ routedBaseSha: staleSha });
+    const seeded = await testPool.query(
+      `SELECT r.id, r.anchor_generation, r.evidence->>'base_sha' AS base_sha,
+              t.metadata
+         FROM work_routing_receipts r JOIN tasks t ON t.id=r.task_id
+        WHERE r.task_id=$1`,
+      [fixture.taskId],
+    );
+    expect(seeded.rows).toHaveLength(1);
+    expect(seeded.rows[0]).toMatchObject({ anchor_generation: 1, base_sha: staleSha });
+    expect(seeded.rows[0].metadata ?? {}).toEqual({});
+
+    const created = await createKernelRun(testPool, {
+      taskId: fixture.taskId,
+      initiativeId: fixture.initiativeId,
+      phase: 'planning',
+      journeyId: null,
+      abilityId: null,
+      host: 'kernel-v1',
+      deadlineHours: 8,
+      createdSource: 'kernel_dispatch',
+    });
+
+    const successor = await testPool.query(
+      `SELECT id, anchor_generation, supersedes_receipt_id, evidence->>'base_sha' AS base_sha
+         FROM work_routing_receipts
+        WHERE task_id=$1 ORDER BY anchor_generation DESC LIMIT 1`,
+      [fixture.taskId],
+    );
+    expect(successor.rows[0]).toMatchObject({
+      anchor_generation: 2,
+      supersedes_receipt_id: seeded.rows[0].id,
+      base_sha: fixture.baseSha,
+    });
+    expect(created).toMatchObject({
+      created: true,
+      base_sha: fixture.baseSha,
+      routing_receipt_id: successor.rows[0].id,
+      run: { current_task_id: fixture.taskId },
+    });
+    const projected = await testPool.query(
+      `SELECT payload->>'base_sha' AS base_sha,
+              payload->>'routing_receipt_id' AS routing_receipt_id,
+              metadata->>'base_sha_fastforward_count' AS fastforward_count
+         FROM tasks WHERE id=$1`,
+      [fixture.taskId],
+    );
+    expect(projected.rows[0]).toEqual({
+      base_sha: fixture.baseSha,
+      routing_receipt_id: successor.rows[0].id,
+      fastforward_count: '1',
+    });
+  }, 15_000);
 });

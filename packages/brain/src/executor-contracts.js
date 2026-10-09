@@ -1,3 +1,4 @@
+import {LINUX_POOL_EXECUTOR_KIND} from './linux-pool/task-authority.js';
 /**
  * executor-contracts.js
  *
@@ -16,12 +17,25 @@
  */
 
 import { execSync } from 'child_process';
+import { execFileSync } from 'node:child_process';
 import { assessKernelLiveness } from './lib/kernel-liveness.js';
 import { probeCodexReviewLock } from './lib/codex-review-liveness.js';
+import { EXECUTOR_KIND_FOR_TASK_TYPE, EXTERNALLY_EXECUTED_TASK_TYPES } from './lib/task-type-registry.js';
+import { sshTargetFor, resolvePrimaryWorkerId, resolveMachineId, listComputeWorkerIds } from './machine-registry.js';
+import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 
 export const KERNEL_EXECUTOR_KIND = 'kernel-process';
+export const OPENCLAW_AGENT_EXECUTOR_KIND = 'openclaw-agent';
+export const SCRIPT_EXECUTOR_KIND = 'script';
+// coding workflow runner：执行机 LaunchDaemon 认领 task_type=data 的开关任务跑 coding 链，进程不在 Brain 本机。
+export const CODING_WORKFLOW_RUNNER_EXECUTOR_KIND = 'coding-workflow-runner';
 
 export const VALID_EXECUTOR_KINDS = [
+  LINUX_POOL_EXECUTOR_KIND,
+  'phone-ssh-controller',
+  'app-server-controller',
+  'preview-janitor',
+  'image-janitor',
   'brain-local',
   'relay-container',
   KERNEL_EXECUTOR_KIND,
@@ -29,29 +43,20 @@ export const VALID_EXECUTOR_KINDS = [
   'bridge',
   'external-worker',
   'codex-review-local',
+  OPENCLAW_AGENT_EXECUTOR_KIND,
+  SCRIPT_EXECUTOR_KIND,
+  CODING_WORKFLOW_RUNNER_EXECUTOR_KIND,
 ];
 
 // ─── 打标映射（各派发点用的快查表）────────────────────────────────────────────
-// 特殊 key __bridge_path / __local_spawn 代表路由路径（非 task_type）
-export const EXECUTOR_KIND_FOR = {
-  // harness_initiative 由 runHarnessInitiativeRouter → spawnSkillRelaySession 跑 relay-container
-  harness_initiative: 'relay-container',
-  // golden_path_proposal 同走 runHarnessInitiativeRouter → spawnSkillRelaySession（GP2/T2）
-  golden_path_proposal: 'relay-container',
-  // dev 由 dispatcher 暂标 brain-local（迁离 LangGraph 后，走 triggerCeceliaRun 本地 spawn）
-  dev: 'brain-local',
-  // content-pipeline 系列由外部 ZJ pipeline-worker 管，不探活
-  'content-pipeline': 'external-worker',
-  'content-research': 'external-worker',
-  'content-copywriting': 'external-worker',
-  'content-copy-review': 'external-worker',
-  'content-generate': 'external-worker',
-  'content-image-review': 'external-worker',
-  'content-export': 'external-worker',
-  // 路由路径 sentinel（用于测试断言和文档）
+// task_type → kind 来自注册表（铁律 76cb816c，lib/task-type-registry.js 的 `executor` 字段）
+// ——不再在本文件手抄，守卫①对本文件的豁免已撤（Task 6）。特殊 key __bridge_path /
+// __local_spawn 代表路由路径（非 task_type），由注册表覆盖不到，本文件自己补两个 sentinel。
+export const EXECUTOR_KIND_FOR = Object.freeze({
+  ...EXECUTOR_KIND_FOR_TASK_TYPE,
   __bridge_path: 'bridge',
   __local_spawn: 'brain-local',
-};
+});
 
 // EXECUTOR_KIND_FOR 是纯常量、被 executor.js 与多个测试直接 import，形态不能改。
 // 运行时分派（harness_runtime='kernel-v1' → kernel-process）走下面两个解析函数。
@@ -90,6 +95,31 @@ export function resolveLivenessKind(task) {
   return persisted;
 }
 
+// ─── 外部执行体统一谓词 ──────────────────────────────────────────────────────
+// 外部执行体 = 进程不在 Brain 本机的活：本机查进程/日志/派发回执恒为空，
+// 启动同步与运行期探针不得据此判死回队——生死交给各自专属收割/对账
+// （openclaw-agent-reaper / script-reaper 读远端 .exit；device_job 走认领新鲜度 + 超时兜底）。
+// 集合全部从注册表派生（铁律 76cb816c）。
+
+/** 外部执行体类型在注册表里声明的 executor_kind（当前 = openclaw-agent / script）。 */
+export const EXTERNALLY_EXECUTED_KINDS = Object.freeze([
+  ...new Set(EXTERNALLY_EXECUTED_TASK_TYPES.map((t) => EXECUTOR_KIND_FOR_TASK_TYPE[t]).filter(Boolean)),
+]);
+
+/**
+ * task_type 属外部执行体类型，或库里持久化的 executor_kind 属外部执行体 kind。
+ * 按 task_type 判是为了覆盖「ssh 派发在途、executor_kind 尚未落库」的窗口（0929 87c9a08b 网关慢 4 分钟）。
+ */
+export function isExternallyExecuted(task) {
+  if (!task) return false;
+  // audit是通用类型；只有网关私有authority铸造并持久化的kind才交专用controller。
+  if (task.executor_kind === LINUX_POOL_EXECUTOR_KIND) return true;
+  // runner 认领时显式写入的 kind；task_type=data 是通用类型，只能按持久化 kind 判。
+  if (task.executor_kind === CODING_WORKFLOW_RUNNER_EXECUTOR_KIND) return true;
+  if (EXTERNALLY_EXECUTED_TASK_TYPES.includes(task.task_type)) return true;
+  return Boolean(task.executor_kind) && EXTERNALLY_EXECUTED_KINDS.includes(task.executor_kind);
+}
+
 // kernel-process probe 的默认 pool：懒加载，只在调用方没给 ctx.pool 时才 import，
 // 避免单测里意外拉起真 pg Pool。
 let _defaultPoolPromise = null;
@@ -103,6 +133,15 @@ async function _defaultKernelPool() {
 // ─── 五合同 ────────────────────────────────────────────────────────────────────
 
 export const EXECUTOR_CONTRACTS = {
+  [LINUX_POOL_EXECUTOR_KIND]: { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
+  // runner 自带收尾对账（终态 409 重新认领、启动对账 runner_lost），Brain 不替它判生死。
+  [CODING_WORKFLOW_RUNNER_EXECUTOR_KIND]: { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
+  // 手机租约与容量由认证远端退出/解锁回执结算，超时不能回队。
+  'phone-ssh-controller': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
+  // 固定HTTP回执由专属controller收割；本机进程与时间均不能证明远端删除状态。
+  'app-server-controller': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
+  'image-janitor': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
+  'preview-janitor': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   /**
    * brain-local: Brain 直接 spawn 的本地进程（cecelia-run / codex exec）
    * 活性：activeProcesses pid kill -0
@@ -214,7 +253,7 @@ export const EXECUTOR_CONTRACTS = {
         if (claimedBy.startsWith('session:') || claimedBy.startsWith('tmux:')) {
           const sessionName = claimedBy.replace(/^(session:|tmux:)/, '');
           try {
-            execSync(`tmux has-session -t ${JSON.stringify(sessionName)} 2>/dev/null`, {
+            execFileSync('tmux', ['has-session', '-t', sessionName], {
               timeout: 3000, stdio: 'pipe',
             });
             return 'alive';
@@ -255,6 +294,64 @@ export const EXECUTOR_CONTRACTS = {
     probe: async () => 'alive',
     staleMinutes: null,
     onStale: 'never',
+  },
+
+  /**
+   * openclaw-agent: Brain 经 ssh 在 MMV(us-mac-m4) 起的 `openclaw agent` 进程。
+   * 活性：远端 ~/brain-runs/<run_id>.exit 存在 → 进程已结束（dead，等收割）；
+   * 不存在但 .pid 存活 → alive；ssh 拿不到答案 → unknown（fail-open）。
+   * staleMinutes 45 = AGENT_TIMEOUT 1800s + 余量；onStale 'fail'（守护刀只认 fail/requeue/release-claim-and-alert）。
+   */
+  'openclaw-agent': {
+    probe: async (task, _ctx) => {
+      const runId = task?.payload?.run_id;
+      if (!runId || !/^[A-Za-z0-9._-]+$/.test(runId)) return 'unknown';
+      let target;
+      try { target = sshTargetFor(resolvePrimaryWorkerId()); } catch { return 'unknown'; }
+      const remote = `if [ -f ~/brain-runs/${runId}.exit ]; then cat ~/brain-runs/${runId}.exit; elif [ -f ~/brain-runs/${runId}.pid ] && kill -0 "$(cat ~/brain-runs/${runId}.pid)" 2>/dev/null; then echo RUNNING; else echo NO_EXIT; fi`;
+      try {
+        const out = String(execFileSync('ssh', [
+          ...SSH_BASE_ARGS, target, remote,
+        ], { encoding: 'utf-8', timeout: 15000, stdio: 'pipe' })).trim();
+        if (out === 'RUNNING') return 'alive';
+        if (out === 'NO_EXIT') return 'unknown';
+        return 'dead';
+      } catch {
+        return 'unknown';
+      }
+    },
+    staleMinutes: 45,
+    onStale: 'fail',
+  },
+
+  /**
+   * script: Brain 经 ssh 在跑场机（payload.host）上起的确定性脚本（script_run，棒 3）。
+   * 活性：远端 ~/brain-runs/<script_run_id>.exit 存在 → 已结束（dead，等收割）；.pid 存活 → alive；
+   * 拿不到答案（host 缺失/非跑场机/run_id 非法/ssh 失败）一律 unknown（fail-open，绝不误杀，
+   * 也绝不向非跑场机发 ssh）。staleMinutes 75 = 最长 timeout 3600s + 15 分钟余量；onStale 'fail'。
+   */
+  [SCRIPT_EXECUTOR_KIND]: {
+    probe: async (task, _ctx) => {
+      const runId = task?.payload?.script_run_id;
+      if (!runId || !/^[A-Za-z0-9._-]+$/.test(runId) || runId.includes('..')) return 'unknown';
+      const hostId = resolveMachineId(task?.payload?.host);
+      if (!hostId || !listComputeWorkerIds().includes(hostId)) return 'unknown';
+      let target;
+      try { target = sshTargetFor(hostId); } catch { return 'unknown'; }
+      const remote = `if [ -f ~/brain-runs/${runId}.exit ]; then cat ~/brain-runs/${runId}.exit; elif [ -f ~/brain-runs/${runId}.pid ] && kill -0 "$(cat ~/brain-runs/${runId}.pid)" 2>/dev/null; then echo RUNNING; else echo NO_EXIT; fi`;
+      try {
+        const out = String(execFileSync('ssh', [
+          ...SSH_BASE_ARGS, target, remote,
+        ], { encoding: 'utf-8', timeout: 15000, stdio: 'pipe' })).trim();
+        if (out === 'RUNNING') return 'alive';
+        if (out === 'NO_EXIT') return 'unknown';
+        return 'dead';
+      } catch {
+        return 'unknown';
+      }
+    },
+    staleMinutes: 75,
+    onStale: 'fail',
   },
 };
 

@@ -25,6 +25,7 @@ import { execSync } from 'child_process';
 import pool from './db.js';
 import { raise } from './alerting.js';
 import { pushCaptureAtom } from './capture-inbox.js';
+import { finalizeTask } from './lib/task-terminal.js';
 
 const MAX_RETRIES = 3;
 const DEFAULT_TIMEOUT_S = 30;
@@ -112,21 +113,15 @@ async function fetchPendingBatch(dbPool) {
  * 将任务标为 completed（验证通过）。
  */
 async function markCompleted(dbPool, taskId, verifyResult) {
-  await dbPool.query(
-    `UPDATE tasks
-     SET status = 'completed',
-         completed_at = NOW(),
-         updated_at = NOW(),
-         claimed_by = NULL,
-         claimed_at = NULL,
-         payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
-           'postdeploy_verified', true,
-           'postdeploy_verify_at', NOW()::text,
-           'postdeploy_verify_stdout', $2::text
-         )
-     WHERE id = $1 AND status = 'pending_postdeploy'`,
-    [taskId, verifyResult.stdout]
-  );
+  await finalizeTask(dbPool, taskId, 'completed', {
+    set: { completed_at: 'now' },
+    mergePayload: {
+      postdeploy_verified: true,
+      postdeploy_verify_at: new Date().toISOString(),
+      postdeploy_verify_stdout: verifyResult.stdout,
+    },
+    onlyIfStatus: 'pending_postdeploy',
+  });
   console.log(`[postdeploy-verifier] ✅ task=${taskId} 验证通过 → completed`);
 }
 
@@ -136,26 +131,28 @@ async function markCompleted(dbPool, taskId, verifyResult) {
 async function recordRetryOrFail(dbPool, task, verifyResult) {
   const nextRetry = (task.retry_count ?? 0) + 1;
   const exceeded = nextRetry >= MAX_RETRIES;
-  const newStatus = exceeded ? 'failed' : 'pending_postdeploy';
+  const retryPayload = {
+    postdeploy_retry_count: nextRetry,
+    postdeploy_last_error: verifyResult.stderr || verifyResult.stdout || '（无输出）',
+  };
 
-  await dbPool.query(
-    `UPDATE tasks
-     SET status = $2,
-         updated_at = NOW(),
-         error_message = $3,
-         payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
-           'postdeploy_retry_count', $4::int,
-           'postdeploy_last_error', $5::text
-         )
-     WHERE id = $1 AND status = 'pending_postdeploy'`,
-    [
-      task.id,
-      newStatus,
-      exceeded ? `postdeploy 验证连续 ${MAX_RETRIES} 次失败，task 标 failed` : null,
-      nextRetry,
-      verifyResult.stderr || verifyResult.stdout || '（无输出）',
-    ]
-  );
+  if (exceeded) {
+    await finalizeTask(dbPool, task.id, 'failed', {
+      set: { error_message: `postdeploy 验证连续 ${MAX_RETRIES} 次失败，task 标 failed` },
+      mergePayload: retryPayload,
+      onlyIfStatus: 'pending_postdeploy',
+    });
+  } else {
+    await dbPool.query(
+      `UPDATE tasks
+       SET status = 'pending_postdeploy',
+           updated_at = NOW(),
+           error_message = NULL,
+           payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+       WHERE id = $1 AND status = 'pending_postdeploy'`,
+      [task.id, JSON.stringify(retryPayload)]
+    );
+  }
 
   if (exceeded) {
     console.error(
@@ -225,10 +222,9 @@ export async function runPostdeployVerifier(dbPool = pool) {
       console.error(
         `[postdeploy-verifier] task=${task.id} command 校验失败（${validation.reason}），标 failed`
       );
-      await dbPool.query(
-        `UPDATE tasks SET status='failed', error_message=$2, updated_at=NOW() WHERE id=$1`,
-        [task.id, `postdeploy_check command 非法: ${validation.reason}`]
-      );
+      await finalizeTask(dbPool, task.id, 'failed', {
+        set: { error_message: `postdeploy_check command 非法: ${validation.reason}` },
+      });
       failed++;
       continue;
     }

@@ -1,3 +1,5 @@
+import { confirmExpiredParentCleanup } from './orchestrator/attempt-resource-cleanup.js';
+import { reserveExpiredAttemptReplacement } from './orchestrator/attempt-resource-replacement.js';
 /**
  * harness-relay-watchdog — skill-relay run 的重点火看门狗（eval-1 实证的产品化）。
  *
@@ -14,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 
 import pool from './db.js';
+import { isPrimaryWorker } from './machine-registry.js';
 import { createAttemptStore } from './orchestrator/attempt-store.js';
 import { HEADED_HOSTS, HEADED_TMUX_PREFIXES } from './harness-skill-relay.js';
 import {
@@ -35,14 +38,26 @@ import {
   createCredentialBroker,
   createFileCredentialLoader,
 } from './orchestrator/credential-broker.js';
+import {
+  parseTrustedUids,
+  resolveCredentialAccountHome,
+} from './orchestrator/provider-account-home.js';
 import { createGitHubCredentialBroker } from './orchestrator/github-credential-broker.js';
 import { resolveGitHubToken } from './harness-credentials.js';
 import {
   createProductionExecutionTransport,
   DEFAULT_LOCAL_MACHINE_ID,
 } from './orchestrator/production-transport.js';
-import { patchKernelRunById } from './orchestrator/kernel-run-store.js';
+import {
+  patchKernelRunById,
+  requeueKernelRunLaunchDeferred,
+  finalizeKernelRun,
+} from './orchestrator/kernel-run-store.js';
 import { writeHeartbeat } from './orchestrator/heartbeat.js';
+import {
+  KERNEL_RECONCILE_REQUEUE_REASON_PREFIX,
+  KERNEL_REQUEUE_EXHAUSTED_SUFFIX,
+} from './lib/kernel-launch-deferral.js';
 
 export { _parseBaseRepo, _discoverPrFromGithub };
 
@@ -85,6 +100,10 @@ export const MAX_CODEX_RELAY_ATTEMPTS = 2;
 // generator 完成后 6h 无 MERGED → failed（防 e90c0fbb pr_url 空永挂）
 export const GENERATOR_DONE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const KERNEL_RECONCILE_STALE_MS = 3 * 60 * 1000;
+// 任务 1fe53ce4：远端 prepare（MMV 建工作区）实测 3-4 分钟，桥 prepare 超时默认 10 分钟 + start 30s。
+// 新 run 无心跳、无 attempt 的窗口是「launch 在途」，不是失联；宽限（取 12 分钟，严格大于
+// prepare+start 超时）内 reconcile 不得重启，否则在 Brain 本地起 kernel 抢占远端 singleton。
+const KERNEL_LAUNCH_GRACE_MS = 12 * 60 * 1000;
 
 function sameMachineResumeBundle(rawBundle, { attemptId, hop }) {
   const bundle = tryParseJson(rawBundle);
@@ -167,8 +186,11 @@ export async function reconcileExpiredKernelAttempt({
   reserveChildHop,
   randomUUIDFn = randomUUID,
   onRecoveryAlert,
+  confirmCleanup,
+  collectSnapshot,
+  replaceExpiredAttempt = reserveExpiredAttemptReplacement,
 }) {
-  const store = injectedAttemptStore ?? createAttemptStore(db);
+  const store = injectedAttemptStore ?? createAttemptStore(db, { executionDirectory: true });
   const originalParentAttempt = await store.getById(attemptId);
   if (
     !originalParentAttempt
@@ -195,19 +217,6 @@ export async function reconcileExpiredKernelAttempt({
     return { ok: false, deduped: true };
   }
 
-  const reclaimed = await store.reclaim(attemptId, {
-    leaseOwner,
-    leaseSeconds: 300,
-  });
-  if (!reclaimed) return { ok: false, deduped: true };
-
-  const rotatedParent = await store.rotateCallbackSecret(attemptId, {
-    leaseOwner: reclaimed.lease_owner,
-    leaseGeneration: reclaimed.lease_generation,
-    callbackSecretHash: hashCallbackSecret(generateCallbackSecret()),
-  });
-  if (!rotatedParent) return { ok: false, deduped: true };
-
   const callbackSecret = generateCallbackSecret();
   const childId = randomUUIDFn();
   const resumeMachineId = originalParentAttempt.actual_machine_id
@@ -217,7 +226,7 @@ export async function reconcileExpiredKernelAttempt({
     originalParentAttempt.task_bundle,
     { attemptId: childId, hop: childHop },
   );
-  const child = await store.createAttempt({
+  const childInput = {
     id: childId,
     runId: originalParentAttempt.run_id,
     hop: childHop,
@@ -235,7 +244,19 @@ export async function reconcileExpiredKernelAttempt({
     restartReason: 'lease_expired',
     workstreamKey: originalParentAttempt.workstream_key ?? 'ws1',
     timeDerived: originalParentAttempt.time_derived === true,
-  });
+  };
+  let replacement;
+  try {
+    replacement = await replaceExpiredAttempt({
+      pool: db, parentAttempt: originalParentAttempt, childInput,
+      ...(collectSnapshot ? { collectSnapshot } : {}),
+      confirmCleanup: confirmCleanup ?? (parent => confirmExpiredParentCleanup(parent, { pool: db })),
+    });
+  } catch (error) {
+    return { ok: false, action: 'wait:capacity', failure_code: error?.message ?? 'replacement_cleanup_unconfirmed' };
+  }
+  if (!replacement) return { ok: false, deduped: true };
+  const { child, parent: reclaimed } = replacement;
   if (!child || child.id !== childId) {
     return { ok: false, deduped: true };
   }
@@ -256,6 +277,7 @@ export async function reconcileExpiredKernelAttempt({
   try {
     resumed = await resumeAttempt(resumableChild, {
       parentAttempt: reclaimed,
+      parentCleanupConfirmed: true,
       originalParentAttempt,
       reclaimedParentAttempt: reclaimed,
       callbackSecret,
@@ -289,6 +311,9 @@ export async function reconcileExpiredKernelAttempt({
     }, {
       leaseOwner: resumableChild.lease_owner,
       leaseGeneration: resumableChild.lease_generation,
+      ...(resumed?.cleanup_confirmed !== true ? { retainResources: true,
+        cleanupIdentity: resumed?.cleanup_identity ?? { actualMachineId: resumeMachineId, executionTransport: 'fleet-worker' },
+      } : {}),
     });
     const parentFailure = await tryFailClaimedAttempt(store, attemptId, {
       code: failureCode,
@@ -312,7 +337,7 @@ export async function reconcileExpiredKernelAttempt({
     if (persistenceEvidence.length > 0 || additionalErrors.length > 0) {
       throw aggregateFailureEvidence(persistenceEvidence, additionalErrors);
     }
-    return parentFailure.result?.deduped
+    return childFailure.result?.deduped
       ? { ok: false, deduped: true }
       : { ok: false, terminal: true, failure_code: failureCode };
   }
@@ -349,7 +374,7 @@ function shortId(id) {
 
 function isProvableLegacyLocalParent(attempt, target) {
   return (
-    target?.machine === 'us-mac-m4'
+    isPrimaryWorker(target?.machine)
     && attempt?.local_container_naming === 'legacy-unsuffixed'
   );
 }
@@ -560,7 +585,7 @@ export async function resumeKernelAttempt(attempt, {
       ? Promise.resolve({})
       : import('./spawn/detached.js'),
   ]);
-  const store = injectedAttemptStore ?? createAttemptStore(dbPool);
+  const store = injectedAttemptStore ?? createAttemptStore(dbPool, { executionDirectory: true });
   if (
     !originalParentAttempt?.id
     || !reclaimedParentAttempt?.id
@@ -605,8 +630,9 @@ export async function resumeKernelAttempt(attempt, {
         loadCredential: injectedLoadCredential
           ?? createFileCredentialLoader({
             accountHomeResolver: (accountId) => (
-              resolveProviderAccountHome('codex', accountId)
+              resolveCredentialAccountHome('codex', accountId, { env })
             ),
+            trustedUids: parseTrustedUids(env),
           }),
       })
       : undefined);
@@ -616,6 +642,7 @@ export async function resumeKernelAttempt(attempt, {
       loadToken: injectedResolveGitHubToken ?? resolveGitHubToken,
     });
   const launcher = injectedLauncher ?? transportFactory({
+    pool: dbPool,
     env,
     attemptStore: store,
     spawnDetached: injectedSpawnDetached ?? detached.spawnDockerDetached,
@@ -750,6 +777,8 @@ export async function resumeKernelAttempt(attempt, {
         ok: false,
         failure_code: 'resume_child_cleanup_unconfirmed',
         cleanup_status: childCleanup.status,
+        cleanup_confirmed: childCleanup.confirmed,
+        cleanup_identity: launched ?? { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
         error: diagnostic,
         recovery_alert: recoveryAlert,
       };
@@ -758,6 +787,8 @@ export async function resumeKernelAttempt(attempt, {
       ok: false,
       failure_code: 'resume_launch_failed',
       cleanup_status: childCleanup.status,
+        cleanup_confirmed: childCleanup.confirmed,
+        cleanup_identity: launched ?? { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
       error: errorMessage(error),
     };
   }
@@ -803,6 +834,8 @@ export async function resumeKernelAttempt(attempt, {
       ok: false,
       failure_code: 'resume_receipt_persist_failed',
       cleanup_status: childCleanup.status,
+        cleanup_confirmed: childCleanup.confirmed,
+        cleanup_identity: launched ?? { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
       cleanup_diagnostic: sanitizedCleanupDiagnostic,
       lifecycle_detail: lifecycleDetail,
       recovery_alert: recoveryAlert,
@@ -838,6 +871,8 @@ export async function resumeKernelAttempt(attempt, {
         ok: false,
         failure_code: 'resume_child_cleanup_unconfirmed',
         cleanup_status: childCleanup.status,
+        cleanup_confirmed: childCleanup.confirmed,
+        cleanup_identity: launched ?? { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
         error: diagnostic,
         recovery_alert: recoveryAlert,
       };
@@ -846,6 +881,8 @@ export async function resumeKernelAttempt(attempt, {
       ok: false,
       failure_code: 'resume_start_failed',
       cleanup_status: childCleanup.status,
+        cleanup_confirmed: childCleanup.confirmed,
+        cleanup_identity: launched ?? { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
       error: errorMessage(error),
     };
   }
@@ -859,7 +896,7 @@ export async function resumeKernelAttempt(attempt, {
 
 async function _recoverKernelRun(run, task, deps, out) {
   const dbPool = deps.pool || deps.dbPool || pool;
-  const attemptStore = deps.attemptStore ?? createAttemptStore(dbPool);
+  const attemptStore = deps.attemptStore ?? createAttemptStore(dbPool, { executionDirectory: true });
   const onRecoveryAlert = deps.onRecoveryAlert ?? (async (detail) => {
     const { raise } = await import('./alerting.js');
     const alertCode = detail.kind === 'failure_persistence'
@@ -887,6 +924,13 @@ async function _recoverKernelRun(run, task, deps, out) {
     [run.id],
   );
   const attempt = latestQ.rows?.[0] ?? null;
+  if (!attempt && !heartbeatAt) {
+    const startedAt = run.started_at ? new Date(run.started_at).getTime() : 0;
+    if (startedAt && Date.now() - startedAt <= KERNEL_LAUNCH_GRACE_MS) {
+      console.log(`[relay-watchdog][kernel-v1] launch in flight run=${run.id} age=${Math.round((Date.now() - startedAt) / 1000)}s, skip reconcile`);
+      return;
+    }
+  }
   const activeStatus = attempt && ['queued', 'starting', 'running'].includes(attempt.status);
   const leaseLive = activeStatus && attempt.lease_expires_at
     && new Date(attempt.lease_expires_at).getTime() > Date.now();
@@ -905,6 +949,14 @@ async function _recoverKernelRun(run, task, deps, out) {
       leaseOwner: `watchdog:${process.pid}`,
       reserveChildHop: (parentAttempt) => reserveResumeIntent(dbPool, parentAttempt),
       onRecoveryAlert,
+      confirmCleanup: (parent) => confirmExpiredParentCleanup(parent, {
+        pool: dbPool,
+        env: deps.env ?? process.env, launcher: deps.launcher,
+        transportFactory: deps.transportFactory ?? createProductionExecutionTransport,
+        fetchFn: deps.fetchFn, removeContainer: deps.removeContainer,
+        inspectContainer: deps.inspectContainer,
+      }),
+      ...(deps.collectCapacitySnapshot ? { collectSnapshot: deps.collectCapacitySnapshot } : {}),
       resumeAttempt: (child, context) => lowerResume(child, {
         ...context,
         task,
@@ -943,6 +995,34 @@ async function _recoverKernelRun(run, task, deps, out) {
       leaseGeneration: attempt.lease_generation,
       requireExpired: true,
     });
+  }
+
+  // 任务 1fe53ce4 / 铁律 96054a8b：us-vps 零执行闸开着时禁止在 Brain 本地 spawn kernel
+  // （cwd 非 git 仓 → ground-truth `git ls-remote origin` 必死，且抢占远端 singleton）。
+  // fleet-worker 对同 run_id 重放 prepare 是 409 orchestrator_already_exists，所以不在这里
+  // 重起旧 run：run 置 failed 留痕、任务回 queued，交 executor 下个 tick 走正规远端路径重派；
+  // 延后次数用尽则收死并告警，绝不回落本地。
+  const localExecutionDisabled = (deps.env ?? process.env).CECELIA_LOCAL_EXECUTION_ENABLED === 'false';
+  if (localExecutionDisabled) {
+    const requeueDeferred = deps.requeueKernelRunDeferred ?? requeueKernelRunLaunchDeferred;
+    const reason = `${KERNEL_RECONCILE_REQUEUE_REASON_PREFIX}no_resumable_session`;
+    const requeued = await requeueDeferred(dbPool, { runId: run.id, expectedTaskId: task.id, reason });
+    if (requeued?.exhausted) {
+      const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
+      await finalizeRun(dbPool, {
+        runId: run.id,
+        expectedTaskId: task.id,
+        outcome: 'failed',
+        reason: `${reason}${KERNEL_REQUEUE_EXHAUSTED_SUFFIX}`,
+      });
+      const { raise } = await import('./alerting.js');
+      await raise('P1', 'kernel_reconcile_remote_exhausted',
+        `run ${run.id} task ${task.id}: reconcile requeue defers exhausted (${requeued.deferCount ?? '?'})`);
+      console.warn(`[relay-watchdog][kernel-v1] reconcile remote requeue exhausted run=${run.id} task=${task.id}`);
+      return;
+    }
+    console.log(`[relay-watchdog][kernel-v1] reconcile requeued for remote redispatch run=${run.id} task=${task.id} defers=${requeued?.deferCount ?? '?'} changed=${requeued?.changed ?? '?'}`);
+    return;
   }
 
   // No resumable session: restart only the deterministic reconcile process. It re-reads

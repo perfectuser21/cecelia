@@ -1,6 +1,10 @@
+import { createTransportAuthority } from '../execution-directory/transport-authority.js';
+import { currentWorkerUrls } from '../execution-directory/directory.js';
+import { resolvePrimaryWorkerId } from '../machine-registry.js';
+import { assertExternalExecutionAllowed } from '../runtime-safety.js';
 import { createRemoteBridgeTransport } from './remote-bridge-transport.js';
 
-export const DEFAULT_LOCAL_MACHINE_ID = 'us-mac-m4';
+export const DEFAULT_LOCAL_MACHINE_ID = resolvePrimaryWorkerId();
 export const DEFAULT_WORKER_BRAIN_URL = 'http://host.docker.internal:5221';
 export const DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS = 60_000;
 export const DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS = 180_000;
@@ -28,12 +32,15 @@ function isValidHttpBaseUrl(value) {
 }
 
 function guardWorkerConfiguration(worker, {
+  env,
   enabled,
   workerUrls,
   sharedSecret,
   callbackBaseUrl,
 }) {
   const assertAvailable = (input, { requireWorkspace = false } = {}) => {
+    assertExternalExecutionAllowed();
+    assertExternalExecutionAllowed(env);
     const machine = input?.target?.machine;
     const workerUrl = workerUrls?.[machine];
     const workspaceSpec = input?.bundle?.inputs?.workspace_spec;
@@ -126,6 +133,8 @@ export function describeFleetTransportReadiness(env = process.env) {
 
 export function createProductionExecutionTransport({
   env = {},
+  pool,
+  executionAuthority = createTransportAuthority({pool}),
   localMachineId = DEFAULT_LOCAL_MACHINE_ID,
   fetchFn,
   credentialBroker,
@@ -138,11 +147,7 @@ export function createProductionExecutionTransport({
     throw new Error(`invalid_local_execution_machine_id:${String(localMachineId)}`);
   }
   const enabled = env.KERNEL_FLEET_REMOTE_ENABLED === 'true';
-  const workerUrls = {
-    'us-mac-m4': env.FLEET_WORKER_US_MAC_M4_URL,
-    'xian-mac-m4': env.FLEET_WORKER_XIAN_MAC_M4_URL,
-    'xian-mac-m1': env.FLEET_WORKER_XIAN_MAC_M1_URL,
-  };
+
   const sharedSecret = env.KERNEL_FLEET_BRIDGE_TOKEN;
   const callbackBaseUrl = env.KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL;
   const configuredPrepareTimeout = remoteBridgePrepareTimeoutMs
@@ -159,23 +164,15 @@ export function createProductionExecutionTransport({
         ? (remoteBridgeTimeoutMs ?? DEFAULT_REMOTE_BRIDGE_START_TIMEOUT_MS)
         : Number(env.KERNEL_FLEET_START_TIMEOUT_MS)
     );
-  const worker = createRemoteBridgeTransport({
-    enabled,
-    bridgeUrls: workerUrls,
-    sharedSecret,
-    brainUrl: callbackBaseUrl,
-    credentialBroker,
-    githubCredentialBroker,
-    fetchFn,
-    timeoutMs: remoteBridgeTimeoutMs ?? DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS,
-    prepareTimeoutMs: configuredPrepareTimeout,
-    startTimeoutMs: configuredStartTimeout,
-  });
+  return Object.freeze(Object.fromEntries(['prepare','start','inspect','cancel','terminal'].map(method=>[method,async input=>{
+    assertExternalExecutionAllowed();assertExternalExecutionAllowed(env);
+    return executionAuthority(method,input,async(trusted,node)=>{
+      const workerUrls=node?{[node.canonical_id]:node.endpoints.worker}:currentWorkerUrls();
+      const worker=createRemoteBridgeTransport({enabled,bridgeUrls:workerUrls,sharedSecret,brainUrl:callbackBaseUrl,
+        credentialBroker,githubCredentialBroker,fetchFn,timeoutMs:remoteBridgeTimeoutMs??DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS,
+        prepareTimeoutMs:configuredPrepareTimeout,startTimeoutMs:configuredStartTimeout});
+      return guardWorkerConfiguration(worker,{env,enabled,workerUrls,sharedSecret,callbackBaseUrl})[method](trusted);
+    });
+  }])));
 
-  return guardWorkerConfiguration(worker, {
-    enabled,
-    workerUrls,
-    sharedSecret,
-    callbackBaseUrl,
-  });
 }

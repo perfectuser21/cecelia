@@ -85,7 +85,7 @@ export default function FeatureDashboard() {
         return false;
       }
 
-      // Golden Path 筛选
+      // 能力筛选（旧称 Golden Path）
       if (filterGoldenPath !== null && f.hasGoldenPath !== filterGoldenPath) {
         return false;
       }
@@ -176,7 +176,7 @@ export default function FeatureDashboard() {
         <div className="bg-white rounded-lg p-6 shadow">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-gray-600 text-sm">Golden Path Coverage</p>
+              <p className="text-gray-600 text-sm">能力覆盖</p>
               <p className="text-3xl font-bold mt-2">
                 {stats.goldenPathCoverage}%{' '}
                 <span className="text-base text-gray-600">({stats.withGoldenPath}/{stats.total})</span>
@@ -290,7 +290,7 @@ export default function FeatureDashboard() {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Priority</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">RCI</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">GP</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">能力</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
             </tr>
           </thead>
@@ -454,7 +454,7 @@ export default function FeatureDashboard() {
                     ) : (
                       <X className="w-5 h-5 text-gray-300" />
                     )}
-                    <span>Golden Path</span>
+                    <span>能力</span>
                   </div>
                 </div>
               </div>

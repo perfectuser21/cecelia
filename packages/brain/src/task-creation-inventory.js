@@ -3,6 +3,12 @@ import { ROUTER_VERSION } from './work-router.js';
 export const TASK_CREATION_INVENTORY_VERSION = ROUTER_VERSION;
 
 export const TASK_CREATION_INVENTORY = Object.freeze([
+  { module: 'linux-pool/runtime-service.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'app-server/store.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed', delegates_to: 'app-server/task-authority.js' },
+  { module: 'app-server/task-authority.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'linux-pool/onboarding-flow.js', source: 'scheduler', creates_executable_task: false, migration_status: 'routed' },
+  { module: 'linux-pool/runtime-service.js', source: 'scheduler', creates_executable_task: false, migration_status: 'routed' },
+  { module: 'node-onboarding/service.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'actions.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   // 第 51 批（决策 bc242b62）：V4 attempt-run 薄端点的惰性 task 锚（status 直建 in_progress，非可执行任务）
   { module: 'routes/harness-attempt-run.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
@@ -31,11 +37,13 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'harness-initiative-patrol.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'intent.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'impact-contract/gap-dependencies.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'initiative-closer.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative 层退役，闭环检测清空为 no-op，不再建任务
+  { module: 'initiative-closer.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
   { module: 'learning.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'line-strategist-dispatch.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'nightly-tick.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'okr-closer.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative/project 完成检测清空为 no-op，不再建任务
+  { module: 'okr-closer.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
   { module: 'okr-tick.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'orchestrator-chat.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'orchestrator/run.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
@@ -44,6 +52,18 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'post-publish-data-collector.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'progress-reviewer.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'proposal.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 2026-09-14 Notion 排单接手（双向·pull）：主理人 Notion Tasks 库 Delegated → createRoutedTask
+  { module: 'notion-push-sync.js', source: 'inbox', creates_executable_task: true, migration_status: 'routed' },
+  // 2026-09-23 接力棒（主理人拍板）：handoff.next_steps kind=task → 自动登记下一棒挂根；
+  // 「决策」库草案改已决定 → 自动登记「执行拍板」子任务。都是 child 来源、source_id 幂等
+  { module: 'lib/relay-baton.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 棒2（决策 ee4842a6/3feeae3e）：brief_delta.add_steps → 同 project 下新增 queued 子任务，
+  // 复用 relay-baton 同款落棒逻辑（同样 child 来源、source_id 幂等）
+  { module: 'lib/project-brief-apply.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'notion-inlet-ingest.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 2026-09-16 飞书群交办入账（决策 1c6679cd）：群里派给秋米的活 → tasks 账本留痕，
+  // 状态只写 completed/blocked，不产可执行任务
+  { module: 'feishu-task-ledger.js', source: 'inbox', creates_executable_task: false, migration_status: 'routed' },
   { module: 'recurring.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'review-gate.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/capture-atoms.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
@@ -54,12 +74,22 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'routes/execution.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/golden-paths.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/harness.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 链 2afa6d69 棒3（任务 8a40825a）：POST /projects/:id/tasks 一步建单，与 task-tasks.js 同走 createRoutedTask。
+  { module: 'routes/project-locate-routes.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/task-tasks.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/tasks.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
+  // 秋米路由（PR3）：判定为设备任务时派生 device_job 子任务。迁移 421 的回执不可变触发器
+  // 挡死带回执行的 task_type 原地转换，只能另建一条子任务（见计划补充五）。
+  // 子任务由手机领单器真领真跑，所以 creates_executable_task=true。
+  { module: 'routing/qiumi-router.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'rumination.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'staging-promote.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'suggestion-dispatcher.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'image-retention-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'preview-cache-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'task-intake.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'task-generator-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'lib/company-kr-analysis.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'thalamus.js', source: 'conversation', creates_executable_task: true, migration_status: 'routed' },
   { module: 'topic-selection-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'topic-suggestion-manager.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },

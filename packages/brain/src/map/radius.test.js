@@ -32,7 +32,7 @@ function fixture({
     if (text.includes('FROM map_projection_nodes')) {
       return { rows: [{ node_key: 'F1', name: 'Factory', attributes: capabilityAttributes }] };
     }
-    if (text.includes('FROM journey_step_links')) {
+    if (text.includes('FROM activity_cells')) {
       return { rows: assertionRows ?? [{
         id: LINK_ID, assertion_ref: assertionRef, assertion_revision: 1,
         capability_code: 'F1',
@@ -139,6 +139,25 @@ describe('Impact radius authority boundary', () => {
     expect(result.freshness).toMatchObject({
       status: 'unknown', reason_code: 'unsafe_assertion_ref',
     });
+  });
+
+  it('excludes probe:<key> cells from must-run shell assertions without flagging them unsafe', async () => {
+    const PROBE_LINK = '33333333-3333-4333-8333-333333333333';
+    const { deps } = fixture({
+      assertionRows: [
+        { id: LINK_ID, assertion_ref: TEST_REF, assertion_revision: 1, capability_code: 'F1' },
+        { id: PROBE_LINK, assertion_ref: 'probe:delivery.leads_count,delivery.no_dup', assertion_revision: 2, capability_code: 'F1' },
+      ],
+    });
+    const result = await resolveImpactRadius({
+      repo: 'perfectuser21/cecelia', base_revision: BASE, head_revision: HEAD,
+      changed_files: ['packages/brain/src/routes/map.js'],
+    }, deps);
+    expect(result.freshness).toMatchObject({ status: 'fresh', reason_code: null });
+    expect(result.required_assertions).toEqual([expect.objectContaining({
+      assertion_id: TEST_REF, journey_step_link_id: LINK_ID,
+    })]);
+    expect(JSON.stringify(result.required_assertions)).not.toContain('probe:');
   });
 
   it('resolves Structure Gate capability seeds only through the active projection', async () => {

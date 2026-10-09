@@ -64,23 +64,25 @@ if (missing.length > 0) {
 console.log('tick-loop.js 已接入 line-strategist 独立循环 ✓');
 "
 
-echo "[line-strategist-dispatch-smoke] 4. task-router.js 四张表均已注册 strategist_decision"
-node -e "
-const fs = require('fs');
-const src = fs.readFileSync('packages/brain/src/task-router.js', 'utf8');
+echo "[line-strategist-dispatch-smoke] 4. 路由注册表四张表均已注册 strategist_decision"
+# PR1-B 起四张路由表已从 task-router.js 字面量搬进 lib/task-type-registry.js，
+# 这里改成真 import 求值（原来的 includes 连缩进/逗号都要对上，搬家即假红）。
+node --input-type=module -e "
+import { VALID_TASK_TYPES, SKILL_WHITELIST, LOCATION_MAP, TASK_REQUIREMENTS } from './packages/brain/src/lib/task-type-registry.js';
+const T = 'strategist_decision';
 const checks = [
-  [\"'strategist_decision',\", 'VALID_TASK_TYPES 含 strategist_decision'],
-  [\"'strategist_decision': '/line-strategist',\", 'SKILL_WHITELIST 路由到 /line-strategist'],
-  [\"'strategist_decision': 'us',\", 'LOCATION_MAP 定位 us'],
-  [\"'strategist_decision':['has_git'],\", 'TASK_REQUIREMENTS 要求 has_git'],
+  [VALID_TASK_TYPES.includes(T), 'VALID_TASK_TYPES 含 strategist_decision'],
+  [SKILL_WHITELIST[T] === '/line-strategist', 'SKILL_WHITELIST 路由到 /line-strategist'],
+  [LOCATION_MAP[T] === 'us', 'LOCATION_MAP 定位 us'],
+  [Array.isArray(TASK_REQUIREMENTS[T]) && TASK_REQUIREMENTS[T].includes('has_git'), 'TASK_REQUIREMENTS 要求 has_git'],
 ];
-const missing = checks.filter(([p]) => !src.includes(p));
+const missing = checks.filter(([ok]) => !ok);
 if (missing.length > 0) {
-  console.error('FAIL: task-router.js 缺少:');
+  console.error('FAIL: 注册表缺少:');
   missing.forEach(([,desc]) => console.error('  - ' + desc));
   process.exit(1);
 }
-console.log('task-router.js 四张表注册完整 ✓')
+console.log('注册表四张表注册完整 ✓')
 "
 
 echo "[line-strategist-dispatch-smoke] 全部检查通过 ✓"

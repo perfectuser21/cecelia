@@ -1,3 +1,9 @@
+import { GP_SCOPE_TASK_TYPES } from './lib/task-type-registry.js';
+
+// 收据链式接班（迁移 465）后，同一 task_id 会有多代 work_routing_receipts。
+// 本文件两处 receipt JOIN 一律走「取最新代」的 LATERAL：裸 JOIN 会把任务按代数复制，
+// coding/receipts/missing_business_receipts 全部虚高，审计投影也会一任务多行。
+
 function ratio(numerator, denominator) {
   return denominator === 0 ? 1 : numerator / denominator;
 }
@@ -35,13 +41,17 @@ export async function loadWorkRoutingObservability(db, { days = 7 } = {}) {
        SELECT task.id,task.task_type,task.payload,receipt.id AS receipt_id,
               receipt.work_kind
          FROM tasks task
-         LEFT JOIN work_routing_receipts receipt ON receipt.task_id=task.id
+         LEFT JOIN LATERAL (
+           SELECT * FROM work_routing_receipts r
+            WHERE r.task_id=task.id
+            ORDER BY r.anchor_generation DESC,r.created_at DESC LIMIT 1
+         ) receipt ON true
         WHERE task.created_at > NOW() - ($1 || ' days')::interval
      ), coding_tasks AS (
        SELECT * FROM recent_tasks
         WHERE work_kind='coding_mutation'
            OR payload->>'work_kind'='coding_mutation'
-           OR task_type IN ('harness_initiative','dev')
+           OR task_type = ANY($2::text[])
      ), recent_runs AS (
        SELECT run.id,run.current_task_id,run.impact_contract_policy
          FROM initiative_runs run
@@ -66,7 +76,7 @@ export async function loadWorkRoutingObservability(db, { days = 7 } = {}) {
        (SELECT count(*)::int FROM recent_events WHERE event_type='work_route_blocked') AS work_route_blocked,
        (SELECT count(*)::int FROM recent_events WHERE event_type='route_violation') AS route_violation,
        (SELECT count(*)::int FROM recent_events WHERE event_type='map_preflight_failed') AS map_preflight_failed`,
-    [String(days)],
+    [String(days), GP_SCOPE_TASK_TYPES],
   );
   const row = rows[0] ?? {};
   return summarizeWorkRouting({
@@ -109,7 +119,11 @@ export async function loadTaskRoutingAudit(db, taskIds) {
               ELSE NULL
             END AS blocking_gate
        FROM tasks task
-       LEFT JOIN work_routing_receipts receipt ON receipt.task_id=task.id
+       LEFT JOIN LATERAL (
+         SELECT * FROM work_routing_receipts r
+          WHERE r.task_id=task.id
+          ORDER BY r.anchor_generation DESC,r.created_at DESC LIMIT 1
+       ) receipt ON true
        LEFT JOIN LATERAL (
          SELECT candidate.* FROM initiative_runs candidate
           WHERE candidate.current_task_id=task.id

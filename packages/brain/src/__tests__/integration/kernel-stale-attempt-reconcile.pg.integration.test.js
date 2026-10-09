@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from '../../../tests/helpers/lifecycle-attempt-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
@@ -138,7 +139,7 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
     );
     await seedOwnedActiveV2Run(testPool, { runId, taskId, phase: 'generate' });
     const store = createAttemptStore(testPool);
-    await store.createAttempt({
+    await seedLifecycleAttempt(testPool, {
       id: attemptId,
       runId,
       hop: 1,
@@ -239,7 +240,7 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
     );
     await seedOwnedActiveV2Run(testPool, { runId, taskId, phase: 'planning' });
     const store = createAttemptStore(testPool);
-    await store.createAttempt({
+    await seedLifecycleAttempt(testPool, {
       id: attemptId,
       runId,
       hop: 1,

@@ -35,6 +35,16 @@ fi
 echo "检测到 packages/brain/src/ 变更："
 echo "$SRC_CHANGED" | head -10
 
+# ─── 1.5 新规:携带 changes/ 碎片的 PR 免 bump(bump 全权归 auto-version bot)──
+# 并行零冲突发版(09-06 四舰队五连撞案):PR 写 changes/<分支>.md 条目碎片,
+# 合并后 auto-version.yml 统一 bump 五件套并消费碎片。约定见 changes/README.md。
+FRAGMENT_ADDED=$(echo "$CHANGED" | grep -E '^changes/.+\.md$' | grep -vi '^changes/README\.md$' || true)
+if [ -n "$FRAGMENT_ADDED" ]; then
+  echo "✅ 检测到 changes/ 条目碎片,免 PR 内 bump(合并后由 auto-version bot 统一处理)："
+  echo "$FRAGMENT_ADDED" | head -5
+  exit 0
+fi
+
 # ─── 2. 读取 PR 分支的 version ────────────────────────────────────────────
 BRAIN_PKG="packages/brain/package.json"
 

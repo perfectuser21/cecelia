@@ -1,3 +1,4 @@
+import { MACHINE_CAPACITY_CONTENDED } from './attempt-resource-budget.js';
 import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import os from 'node:os';
@@ -11,8 +12,10 @@ import {
   sanitizeDiagnostic,
 } from './failure-persistence.js';
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
-import { expandUnresolvedAccountTargets } from './preflight/execution-targets.js';
+import { expandUnresolvedAccountTargets, defaultCodexTargets, hasUnsupportedMachinePolicy } from './preflight/execution-targets.js';
+import { isConfirmedCapacityRollback } from './attempt-store.js';
 import { HARNESS_BUNDLE_MAX_BYTES } from './constants.js';
+import { resolvePrimaryWorkerId } from '../machine-registry.js';
 import { AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED } from './attempt-machine-capacity.js';
 import { assertRouteSnapshotLaunchAuthority } from './route-snapshot-authority.js';
 import { DIRECT_PROFILE_CONTRACT_POLICY_VERSION } from './direct-profile-contract.js';
@@ -23,6 +26,7 @@ import {
   objectiveWithImplementationBaseline,
   parseImplementationBaseline,
 } from './implementation-baseline.js';
+import { resolveProviderAccountHome } from './provider-account-home.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -313,26 +317,8 @@ function buildJudgeProductFeedback(observed) {
   });
 }
 
-export function resolveProviderAccountHome(provider, account) {
-  if (!account) return null;
-  const value = String(account);
-  if (provider === 'codex') {
-    const number = value.match(/^(?:codex-)?team([1-9]\d*)$/)?.[1]
-      ?? value.match(/^([1-9]\d*)$/)?.[1];
-    if (!number) throw new Error(`invalid codex account: ${value}`);
-    return path.join(os.homedir(), `.codex-team${number}`);
-  }
-  if (provider === 'claude') {
-    const number = value.match(/^(?:claude-)?account([1-9]\d*)$/)?.[1]
-      ?? value.match(/^([1-9]\d*)$/)?.[1];
-    if (!number) throw new Error(`invalid claude account: ${value}`);
-    return path.join(os.homedir(), `.claude-account${number}`);
-  }
-  if (provider === 'grok' && ['grok', 'default'].includes(value)) {
-    return path.join(os.homedir(), '.grok');
-  }
-  throw new Error(`invalid ${provider} account: ${value}`);
-}
+// 账号目录解析的单一真身在 provider-account-home.js；此处 re-export 保持既有 import 路径不变。
+export { resolveProviderAccountHome };
 
 function buildInputs(action, spec, ctx, attemptMetadata) {
   const { observed } = ctx;
@@ -926,8 +912,12 @@ function freezeLaunchReceipt(receipt, target, executionSurface = null) {
   });
 }
 
-function unsafeCancelDiagnostic(result) {
-  if (['cancelled', 'cleaned', 'already_clean'].includes(result?.status)) return null;
+function unsafeCancelDiagnostic(result, attempt) {
+  const fleet = attempt?.task_bundle?.inputs?.execution_surface === 'fleet-worker';
+  const identityMatches = result?.attempt_id === attempt?.id;
+  if (['cleaned', 'already_clean'].includes(result?.status) && identityMatches) return null;
+  if (!fleet && result?.status === 'cancelled'
+      && (result.attempt_id == null || identityMatches)) return null;
   const status = result?.status ?? 'unknown';
   const httpStatus = result?.httpStatus == null ? '' : ` (HTTP ${result.httpStatus})`;
   return `orphan cancellation unsafe: ${status}${httpStatus}`;
@@ -936,7 +926,7 @@ function unsafeCancelDiagnostic(result) {
 async function cancelAfterLaunch(launcher, { attempt, target, launchReceipt }) {
   try {
     const result = await launcher.cancel({ attempt, target, launchReceipt });
-    return unsafeCancelDiagnostic(result);
+    return unsafeCancelDiagnostic(result, attempt);
   } catch (error) {
     return `orphan cancellation failed: ${errorMessage(error)}`;
   }
@@ -989,6 +979,14 @@ export function createDispatcher(deps) {
     const callbackSecret = createCallbackSecret();
     const skill = spec.skill ? deps.loadSkill(spec.skill) : null;
     const payload = asObject(ctx.observed.task.payload);
+    const roleAssignment = spec.role === 'commander'
+      ? {}
+      : asObject(asObject(payload.role_assignments)[spec.role]);
+    if (spec.role !== 'commander' && hasUnsupportedMachinePolicy(payload, roleAssignment)) {
+      return {status: 'DONE_WITH_CONCERNS', control_status: 'BLOCKED',
+        action: 'wait:human_review', failure_class: 'infrastructure_blocked', fallback_reason: 'unsupported_machine_policy',
+        should_create_attempt: false, should_enter_generator_fix: false};
+    }
     const attemptMetadata = {
       logicalCycleId: commanderContext?.logical_cycle_id
         ?? ctx.retry?.logical_cycle_id
@@ -1059,9 +1057,6 @@ export function createDispatcher(deps) {
         return preAttemptAssemblyFault(error, 'WORKSPACE_RESOLUTION_FAILED');
       }
     }
-    const roleAssignment = spec.role === 'commander'
-      ? {}
-      : asObject(asObject(payload.role_assignments)[spec.role]);
     const {
       role: _commanderRole,
       ...commanderTarget
@@ -1081,7 +1076,7 @@ export function createDispatcher(deps) {
       requires: ['structured_output'],
     });
     const candidateMachine = ctx.observed.candidate?.machine_id ?? null;
-    const preferredTarget = spec.role === 'commander'
+    let preferredTarget = spec.role === 'commander'
         ? {
             provider: commanderTarget.provider ?? adapter.name,
             account: commanderTarget.account ?? null,
@@ -1092,15 +1087,28 @@ export function createDispatcher(deps) {
           provider: roleAssignment.provider ?? adapter.name,
           account: roleAssignment.account ?? requestedAccount,
           ...(requestedModel ? { model: requestedModel } : {}),
-          machine: candidateMachine ?? roleAssignment.machine ?? machineId,
+          machine: candidateMachine ?? roleAssignment.machine ?? payload.routing?.preferred_machine
+            ?? payload.machine ?? payload.machine_id ?? payload.requested_machine_id ?? payload.executor_machine ?? machineId,
         };
     let candidateTargets = spec.role === 'commander'
         ? (commanderContext.candidate_targets ?? [commanderContext.target]).map(
             ({ role: _role, ...target }) => target,
           )
-      : roleAssignment.strict_affinity === true
+      : roleAssignment.strict_affinity === true || payload.routing?.strict_affinity === true
+          || payload.strict_affinity === true || candidateMachine
         ? [preferredTarget]
         : [preferredTarget, ...(roleAssignment.fallback_targets ?? [])];
+    const defaults = bundle.inputs.execution_surface === 'fleet-worker' && deps.preflightGate
+      ? defaultCodexTargets({role: spec.role, provider: adapter.name, account: requestedAccount,
+          model: requestedModel, candidateMachine, payload, roleAssignment, repo: bundle.inputs.workspace_spec?.repo})
+      : null;
+    if (defaults !== null) {
+      if (!defaults.length) return {status: 'DONE_WITH_CONCERNS', control_status: 'BLOCKED',
+        action: 'wait:human_review', failure_class: 'infrastructure_blocked', fallback_reason: 'execution_grant_unavailable',
+        should_create_attempt: false, should_enter_generator_fix: false};
+      candidateTargets = defaults;
+      preferredTarget = defaults[0];
+    }
     // run c06b79af 案卷：account 未解析（null）的目标不在 VERIFIED_TARGETS，
     // capability gate 会零探针跳过并判 all_execution_targets_exhausted。
     // 此处按白名单展开为具体账号候选；显式指定 account 的行为不变。
@@ -1114,7 +1122,7 @@ export function createDispatcher(deps) {
         ) ?? preferredTarget;
       }
     }
-    const resolvedPreferredTarget = preferredTarget2;
+    let resolvedPreferredTarget = preferredTarget2;
     let selectedAccount = resolvedPreferredTarget?.account ?? requestedAccount;
     let selectedMachine = candidateMachine ?? resolvedPreferredTarget?.machine ?? machineId;
     let selectedTarget = resolvedPreferredTarget;
@@ -1147,145 +1155,172 @@ export function createDispatcher(deps) {
       return blocked;
     }
 
-    if (deps.preflightGate) {
-      const taskBundle = {
-        ...bundle,
-        task_id: ctx.observed.task.id ?? ctx.taskId,
-        logical_cycle: attemptMetadata.logicalCycleId,
-      };
-      const failedTargets = await deps.attemptStore.listFailedExecutionTargets?.(
-        ctx.runId,
-        spec.role,
-      ) ?? [];
-      const preflight = await deps.preflightGate.evaluate({
-        preferred_target: resolvedPreferredTarget,
-        candidate_targets: candidateTargets,
-        failed_targets: failedTargets,
-        requirements: capabilityRequirements ?? {},
-        task_bundle: taskBundle,
-      });
-      if (preflight.status !== 'ok') {
-        const blocked = {
-          ...preflight,
-          status: 'DONE_WITH_CONCERNS',
-          control_status: 'BLOCKED',
-          detail: `dispatch preflight blocked: ${preflight.fallback_reason}`,
-          should_create_attempt: false,
-          should_enter_generator_fix: false,
-        };
-        await deps.onPreflightBlocked?.(blocked, { action, ctx });
-        return blocked;
-      }
-
-      const freshness = await deps.preflightGate.validateSnapshotForDispatch(
-        preflight.snapshot,
-        taskBundle,
-      );
-      if (freshness.status !== 'ok') {
-        const blocked = {
-          ...freshness,
-          status: 'DONE_WITH_CONCERNS',
-          control_status: 'BLOCKED',
-          detail: `dispatch preflight blocked: ${freshness.fallback_reason}`,
-          should_create_attempt: false,
-          should_enter_generator_fix: false,
-        };
-        await deps.onPreflightBlocked?.(blocked, { action, ctx });
-        return blocked;
-      }
-      trustedCapacitySnapshot = preflight.snapshot;
-      const preflightTarget = preflight.to_target ?? {
-        provider: preflight.snapshot.provider,
-        account: preflight.snapshot.account,
-        machine: preflight.snapshot.machine,
-      };
-      selectedTarget = {
-        provider: preflightTarget.provider,
-        account: preflightTarget.account,
-        ...((preflightTarget.model ?? resolvedPreferredTarget.model)
-          ? { model: preflightTarget.model ?? resolvedPreferredTarget.model }
-          : {}),
-        machine: preflightTarget.machine,
-      };
-      adapter = deps.registry.resolve({
-        provider: selectedTarget.provider,
-        requires: ['structured_output'],
-      });
-      selectedAccount = selectedTarget.account;
-      selectedMachine = selectedTarget.machine;
-      bundle = {
-        ...bundle,
-        inputs: {
-          ...bundle.inputs,
-          ...(capabilityRequirements.postgres
-            ? {
-                // node_deps 可能已经被 buildInputs 对仓库验证角色默认置
-                // true（见上）——这里只加 postgres:true，不能整体替换掉
-                // runtime_resources，否则会把刚设好的 node_deps 冲掉。
-                runtime_resources: {
-                  ...bundle.inputs.runtime_resources,
-                  postgres: true,
-                },
-              }
-            : {}),
-          capability_snapshot_id: preflight.snapshot.capability_snapshot_id,
-          capability_evidence: preflight.evidence,
-        },
-      };
-    }
-    if (candidateMachine && selectedMachine !== candidateMachine) {
-      throw new Error('candidate_machine_affinity_violation');
-    }
-    if (selectedAccount) {
-      accountHome = resolveAccountHome(adapter.name, selectedAccount);
-    }
-
-    try {
-      bundle = enforceBundleSizeLimit(bundle);
-    } catch (error) {
-      return preAttemptAssemblyFault(error, 'TASK_BUNDLE_SIZE_LIMIT_EXCEEDED');
-    }
-
+    const originalBundle = bundle;
+    const skippedMachines = [];
     let persisted;
-    try {
-      persisted = await deps.attemptStore.createAttempt({
-        id: attemptId,
-        runId: ctx.runId,
-        run_id: ctx.runId,
-        hop: ctx.hop,
-        phase: bundle.phase,
-        role: spec.role,
-        provider: adapter.name,
-        accountId: selectedAccount,
-        machineId: selectedMachine,
-        bundle,
-        callbackSecretHash: hashCallbackSecret(callbackSecret),
-        logicalCycleId: attemptMetadata.logicalCycleId,
-        attemptKind: attemptMetadata.attemptKind,
-        retryOfAttemptId: commanderContext?.retry_of_attempt_id
-          ?? ctx.retry?.retry_of_attempt_id
-          ?? null,
-        restartReason: commanderContext?.restart_reason
-          ?? ctx.retry?.restart_reason
-          ?? (action === 'spawn:generator-fix' ? 'evaluator_failed' : null),
-        workstreamKey: attemptMetadata.workstreamKey,
-        timeDerived: ['judge', 'reporter'].includes(spec.role),
-        ...(trustedCapacitySnapshot
-          ? { capacitySnapshot: trustedCapacitySnapshot }
-          : {}),
-      });
-    } catch (error) {
-      if (error?.message !== AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED) throw error;
-      return {
-        status: 'DONE_WITH_CONCERNS',
-        control_status: 'BLOCKED',
-        detail: error.message,
-        action: 'wait:capacity',
-        failure_class: 'infrastructure_blocked',
-        fallback_reason: error.message,
-        should_create_attempt: false,
-        should_enter_generator_fix: false,
-      };
+    // 默认候选只有三台机器；每次确认回滚移除整台机器，循环至多预约三次。
+    for (;;) {
+      bundle = originalBundle;
+      trustedCapacitySnapshot = null;
+      accountHome = null;
+      if (deps.preflightGate) {
+        const taskBundle = {
+          ...bundle,
+          task_id: ctx.observed.task.id ?? ctx.taskId,
+          logical_cycle: attemptMetadata.logicalCycleId,
+        };
+        const failedTargets = await deps.attemptStore.listFailedExecutionTargets?.(
+          ctx.runId,
+          spec.role,
+        ) ?? [];
+        const preflight = await deps.preflightGate.evaluate({
+          preferred_target: resolvedPreferredTarget,
+          candidate_targets: candidateTargets,
+          failed_targets: failedTargets,
+          requirements: capabilityRequirements ?? {},
+          task_bundle: taskBundle,
+        });
+        if (preflight.status !== 'ok') {
+          const blocked = {
+            ...preflight,
+            status: 'DONE_WITH_CONCERNS',
+            control_status: 'BLOCKED',
+            detail: `dispatch preflight blocked: ${preflight.fallback_reason}`,
+            should_create_attempt: false,
+            should_enter_generator_fix: false,
+          };
+          await deps.onPreflightBlocked?.(blocked, { action, ctx });
+          return blocked;
+        }
+
+        const freshness = await deps.preflightGate.validateSnapshotForDispatch(
+          preflight.snapshot,
+          taskBundle,
+        );
+        if (freshness.status !== 'ok') {
+          const blocked = {
+            ...freshness,
+            status: 'DONE_WITH_CONCERNS',
+            control_status: 'BLOCKED',
+            detail: `dispatch preflight blocked: ${freshness.fallback_reason}`,
+            should_create_attempt: false,
+            should_enter_generator_fix: false,
+          };
+          await deps.onPreflightBlocked?.(blocked, { action, ctx });
+          return blocked;
+        }
+        trustedCapacitySnapshot = preflight.snapshot;
+        const preflightTarget = preflight.to_target ?? {
+          provider: preflight.snapshot.provider,
+          account: preflight.snapshot.account,
+          machine: preflight.snapshot.machine,
+        };
+        selectedTarget = {
+          provider: preflightTarget.provider,
+          account: preflightTarget.account,
+          ...((preflightTarget.model ?? resolvedPreferredTarget.model)
+            ? { model: preflightTarget.model ?? resolvedPreferredTarget.model }
+            : {}),
+          machine: preflightTarget.machine,
+        };
+        if (defaults !== null && (
+          !candidateTargets.some(target => ['provider', 'account', 'machine'].every(key => target[key] === selectedTarget[key]))
+          || !['provider', 'account', 'machine'].every(key => preflight.snapshot[key] === selectedTarget[key])
+        )) throw new Error('preflight_target_identity_mismatch');
+        adapter = deps.registry.resolve({
+          provider: selectedTarget.provider,
+          requires: ['structured_output'],
+        });
+        selectedAccount = selectedTarget.account;
+        selectedMachine = selectedTarget.machine;
+        bundle = {
+          ...bundle,
+          inputs: {
+            ...bundle.inputs,
+            ...(capabilityRequirements.postgres
+              ? {
+                  // node_deps 可能已经被 buildInputs 对仓库验证角色默认置
+                  // true（见上）——这里只加 postgres:true，不能整体替换掉
+                  // runtime_resources，否则会把刚设好的 node_deps 冲掉。
+                  runtime_resources: {
+                    ...bundle.inputs.runtime_resources,
+                    postgres: true,
+                  },
+                }
+              : {}),
+            capability_snapshot_id: preflight.snapshot.capability_snapshot_id,
+            capability_evidence: {
+              ...preflight.evidence,
+              ...(defaults !== null ? {capacity_reselection: {skipped_machines: [...skippedMachines], selected_target: selectedTarget}} : {}),
+            },
+          },
+        };
+      }
+      if (candidateMachine && selectedMachine !== candidateMachine) {
+        throw new Error('candidate_machine_affinity_violation');
+      }
+      if (selectedAccount) {
+        accountHome = resolveAccountHome(adapter.name, selectedAccount);
+      }
+
+      try {
+        bundle = enforceBundleSizeLimit(bundle);
+      } catch (error) {
+        return preAttemptAssemblyFault(error, 'TASK_BUNDLE_SIZE_LIMIT_EXCEEDED');
+      }
+
+      try {
+        persisted = await deps.attemptStore.createAttempt({
+          id: attemptId,
+          runId: ctx.runId,
+          run_id: ctx.runId,
+          hop: ctx.hop,
+          phase: bundle.phase,
+          role: spec.role,
+          provider: adapter.name,
+          accountId: selectedAccount,
+          machineId: selectedMachine,
+          bundle,
+          callbackSecretHash: hashCallbackSecret(callbackSecret),
+          logicalCycleId: attemptMetadata.logicalCycleId,
+          attemptKind: attemptMetadata.attemptKind,
+          retryOfAttemptId: commanderContext?.retry_of_attempt_id
+            ?? ctx.retry?.retry_of_attempt_id
+            ?? null,
+          restartReason: commanderContext?.restart_reason
+            ?? ctx.retry?.restart_reason
+            ?? (action === 'spawn:generator-fix' ? 'evaluator_failed' : null),
+          workstreamKey: attemptMetadata.workstreamKey,
+          timeDerived: ['judge', 'reporter'].includes(spec.role),
+          ...(trustedCapacitySnapshot
+            ? { capacitySnapshot: trustedCapacitySnapshot }
+            : {}),
+        });
+      } catch (error) {
+        if (defaults !== null && isConfirmedCapacityRollback(error, {
+          id: attemptId, runId: ctx.runId, hop: ctx.hop, machineId: selectedMachine,
+        })) {
+          skippedMachines.push(selectedMachine);
+          candidateTargets = candidateTargets.filter(target => target.machine !== selectedMachine);
+          if (candidateTargets.length) {
+            resolvedPreferredTarget = candidateTargets[0];
+            continue;
+          }
+        }
+        if (![AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED, MACHINE_CAPACITY_CONTENDED].includes(error?.message)) throw error;
+        return {
+          status: 'DONE_WITH_CONCERNS',
+          control_status: 'BLOCKED',
+          detail: error.message,
+          action: 'wait:capacity',
+          failure_class: 'infrastructure_blocked',
+          fallback_reason: error.message,
+          evidence: {capacity_reselection: {skipped_machines: [...skippedMachines], selected_target: null}},
+          should_create_attempt: false,
+          should_enter_generator_fix: false,
+        };
+      }
+      break;
     }
     if (persisted?.id && persisted.id !== attemptId) {
       return {
@@ -1375,6 +1410,9 @@ export function createDispatcher(deps) {
         }, {
           leaseOwner: attempt.lease_owner,
           leaseGeneration: attempt.lease_generation,
+          ...(cancelDiagnostic !== null ? { retainResources: true,
+            ...(fleetLaunch ? { cleanupIdentity: { actualMachineId: selectedMachine, executionTransport: 'fleet-worker' } } : {}),
+          } : {}),
         });
       } catch (failError) {
         throw await failurePersistenceError(deps, {
@@ -1423,6 +1461,7 @@ export function createDispatcher(deps) {
         }, {
           leaseOwner: attempt.lease_owner,
           leaseGeneration: attempt.lease_generation,
+          ...(cancelDiagnostic !== null ? { retainResources: true, cleanupIdentity: launched } : {}),
         });
       } catch (failError) {
         const lifecycleError = new Error(message);
@@ -1469,6 +1508,7 @@ export function createDispatcher(deps) {
           }, {
             leaseOwner: attempt.lease_owner,
             leaseGeneration: attempt.lease_generation,
+          ...(cancelDiagnostic !== null ? { retainResources: true, cleanupIdentity: launched } : {}),
           });
         } catch (failError) {
           throw await failurePersistenceError(deps, {
@@ -1505,7 +1545,7 @@ export function createDetachedLauncher({
   sessionRoot = process.env.CECELIA_HARNESS_SESSION_DIR
     ?? path.join(os.tmpdir(), 'cecelia-harness-sessions'),
   ensureDir = mkdirSync,
-  machineId = 'us-mac-m4',
+  machineId = resolvePrimaryWorkerId(),
 }) {
   const requestedContainerId = (attempt, generation = attempt?.lease_generation) => (
     localContainerIdForAttempt(attempt?.id, generation)

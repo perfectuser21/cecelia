@@ -141,7 +141,8 @@ describeDb('map recovery PostgreSQL consumption', () => {
       role: 'generator',
       provider: 'codex',
       accountId: null,
-      machineId: 'integration',
+      machineId: 'xian-mac-m4',
+      capacitySnapshot: { verified: true, machine: 'xian-mac-m4', expires_at: Date.now() + 60_000, capacity: { ok: true, physical_base_slots: 8, effective_base_slots: 8 } },
       callbackSecretHash: 'e'.repeat(64),
       bundle: {},
     });
@@ -157,7 +158,8 @@ describeDb('map recovery PostgreSQL consumption', () => {
     }]);
     await expect(attemptStore.createAttempt({
       id: randomUUID(), runId, hop: 2, phase: 'generate', role: 'generator',
-      provider: 'codex', accountId: null, machineId: 'integration',
+      provider: 'codex', accountId: null, machineId: 'xian-mac-m4',
+      capacitySnapshot: { verified: true, machine: 'xian-mac-m4', expires_at: Date.now() + 60_000, capacity: { ok: true, physical_base_slots: 8, effective_base_slots: 8 } },
       callbackSecretHash: 'f'.repeat(64), bundle: {},
     })).rejects.toThrow(`Kernel run is terminal or missing: ${runId}`);
   });

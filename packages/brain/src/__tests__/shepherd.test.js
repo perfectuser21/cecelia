@@ -138,7 +138,9 @@ describe('shepherdOpenPRs', () => {
 
     const result = await shepherdOpenPRs(mockPool);
     expect(result.merged).toBe(1);
-    expect(mockPool.query.mock.calls[1][0]).toContain("pr_status = 'merged'");
+    // 终态经 lib/task-terminal.js 收口：pr_status 走参数
+    expect(mockPool.query.mock.calls[1][0]).toMatch(/pr_status = \$\d+/);
+    expect(mockPool.query.mock.calls[1][1]).toContain('merged');
   });
 
   it('S3: CI 失败 + retry=0 + lint → 重排 queued', async () => {
@@ -190,7 +192,9 @@ describe('shepherdOpenPRs', () => {
 
     const result = await shepherdOpenPRs(mockPool);
     expect(result.merged).toBe(1);
-    expect(mockPool.query.mock.calls[1][0]).toContain("pr_status = 'merged'");
+    // 终态经 lib/task-terminal.js 收口：pr_status 走参数
+    expect(mockPool.query.mock.calls[1][0]).toMatch(/pr_status = \$\d+/);
+    expect(mockPool.query.mock.calls[1][1]).toContain('merged');
     expect(mockPool.query.mock.calls[1][0]).toContain("pr_merged_at");
   });
 

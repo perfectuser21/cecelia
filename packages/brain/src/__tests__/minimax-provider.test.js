@@ -1,3 +1,7 @@
+// provider合同使用受控授权替身；真实授权拒绝由目录PG回归验证。
+vi.mock('../execution-directory/legacy-executor.js',async original=>({...await original(),withLegacyExecution:async(_input,operation)=>operation()}));
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * minimax-provider.test.js
  *
@@ -78,6 +82,15 @@ vi.mock('../platform-utils.js', () => ({
     system_threshold_mb: 600,
     brain_rss_danger_mb: 1500,
     brain_rss_warn_mb: 1000,
+  })),
+  // PIVOT 2026-09-12: Brain self CPU% vs system-wide /proc/stat separation
+  sampleBrainCpuUsage: vi.fn(() => 5),
+  evaluateCpuHealth: vi.fn(() => ({
+    brain_cpu_ok: true,
+    action: 'proceed',
+    reason: 'mock',
+    brain_cpu_pct: 5,
+    brain_cpu_busy_pct: 50,
   })),
 }));
 

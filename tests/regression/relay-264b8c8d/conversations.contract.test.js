@@ -21,6 +21,12 @@ vi.mock('../../../packages/brain/src/db.js', () => ({
   default: { query: mockQuery },
 }));
 
+// ── Mock agent：POST role=user 会 invokeAgent → spawnSync('claude')，契约测试不得真起 headless claude
+// （2026-09-24 实证：bridge/claude 慢时该用例 30s 超时，且每跑一次烧一次订阅）──
+vi.mock('../../../packages/brain/src/lib/conversation-agent.js', () => ({
+  invokeAgent: vi.fn(() => ({ reply: 'mock reply', turnMarker: null, sessionId: 'mock-session' })),
+}));
+
 // 辅助：创建 express app + 挂载路由
 async function createApp() {
   const express = await import('express');

@@ -1,3 +1,17 @@
+// 本文件验证watchdog状态机，PG原子替换合同由attempt-weighted-reservation.pg回归验证。
+vi.mock('../orchestrator/attempt-resource-replacement.js', async original => ({...await original(),
+ reserveExpiredAttemptReplacement: async ({pool,parentAttempt,childInput,confirmCleanup}) => {
+  const receipt=await confirmCleanup(parentAttempt);
+  if(!['cleaned','already_clean'].includes(receipt?.status)||receipt.attempt_id!==parentAttempt.id)throw Error('replacement_cleanup_unconfirmed');
+  const {createAttemptStore}=await import('../orchestrator/attempt-store.js');
+  const store=createAttemptStore(pool,{queryOnlyTestAdapter:true});
+  const failed=await store.fail(parentAttempt.id,{code:'resumed_as_child',message:'fixture exact cleanup confirmed'},
+   {leaseOwner:parentAttempt.lease_owner,leaseGeneration:parentAttempt.lease_generation,requireExpired:true});
+  if(!failed.attempt)return null;
+  return {parent:parentAttempt,child:await store.createAttempt(childInput)};
+ }
+}));
+import './helpers/execution-directory-fixture.js';
 /**
  * relay watchdog（重点火循环产品化）+ PATCH phase 白名单扩展（进度条数据源）。
  *
@@ -31,6 +45,7 @@ vi.mock('../orchestrator/kernel-run-store.js', () => ({
 
 import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '../harness-relay-watchdog.js';
 import { sendBark } from '../notifier.js';
+import { isLaunchDeferredReason } from '../lib/kernel-launch-deferral.js';
 import { createAttemptStore } from '../orchestrator/attempt-store.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
@@ -54,11 +69,17 @@ function makeDeps({
   harnessRuntime = null,
   latestAttempt = null,
   orchestratorHeartbeatAt = null,
+  startedAt = null,
 } = {}) {
+  latestAttempt = latestAttempt ? {
+    run_id: RUN_ID, hop: 1, phase: 'evaluate', role: 'evaluator', machine_id: 'us-mac-m4',
+    lease_owner: 'dispatcher-parent', lease_generation: 0, ...latestAttempt,
+  } : null;
   const pool = { query: vi.fn() };
+  pool.connect = async () => ({ query: (...args) => pool.query(...args), release: vi.fn() });
   pool.query.mockImplementation(async (sql, params = []) => {
     if (/FROM initiative_runs r(?:\s|$)/.test(sql)) {
-      return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt, controller_session_id: CONTROLLER_SESSION_ID, controller_generation: '1' }] };
+      return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt, started_at: startedAt, controller_session_id: CONTROLLER_SESSION_ID, controller_generation: '1' }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator, ...(harnessRuntime ? { harness_runtime: harnessRuntime } : {}) } }] };
@@ -70,7 +91,7 @@ function makeDeps({
       return { rows: [{ hop: params[1] }] };
     }
     if (
-      /WITH guarded_run AS MATERIALIZED \([\s\S]*inserted AS \(\s*INSERT INTO harness_attempts/.test(sql)
+      /guarded_run AS MATERIALIZED \([\s\S]*inserted AS \(\s*INSERT INTO harness_attempts/.test(sql)
     ) {
       return {
         rows: [{
@@ -156,6 +177,9 @@ function makeDeps({
   return {
     pool,
     attemptStore: createAttemptStore(pool, { queryOnlyTestAdapter: true }),
+    collectCapacitySnapshot: async ({ machineId }) => ({ verified: true, machine: machineId, expires_at: Date.now() + 30_000,
+      capacity: { ok: true, physical_base_slots: 7, effective_base_slots: 7 } }),
+    launcher: { cancel: vi.fn(async ({ attempt }) => ({ status: 'cleaned', attempt_id: attempt.id })) },
     execFn,
     spawnFn: vi.fn().mockResolvedValue({ ok: true, containerId: 'cecelia-relay-x' }),
   };
@@ -308,8 +332,8 @@ describe('resumeStalledRelayRuns', () => {
       expect.objectContaining({
         parentAttempt: expect.objectContaining({
           id: '22222222-2222-4222-8222-222222222222',
-          lease_owner: expect.stringMatching(/^watchdog:/),
-          lease_generation: 1,
+          lease_owner: 'dispatcher-parent',
+          lease_generation: 0,
         }),
         originalParentAttempt: expect.objectContaining({
           id: '22222222-2222-4222-8222-222222222222',
@@ -320,8 +344,8 @@ describe('resumeStalledRelayRuns', () => {
         reclaimedParentAttempt: expect.objectContaining({
           id: '22222222-2222-4222-8222-222222222222',
           provider_session_id: 'thread-1',
-          lease_owner: expect.stringMatching(/^watchdog:/),
-          lease_generation: 1,
+          lease_owner: 'dispatcher-parent',
+          lease_generation: 0,
         }),
         callbackSecret: expect.any(String),
         onRecoveryAlert: expect.any(Function),
@@ -373,7 +397,7 @@ describe('resumeStalledRelayRuns', () => {
     });
     const queryImpl = deps.pool.query.getMockImplementation();
     deps.pool.query.mockImplementation(async (sql, params) => {
-      if (/UPDATE harness_attempts\s+SET status = \$2/.test(String(sql))) {
+      if (/UPDATE harness_attempts\s+SET status = \$2/.test(String(sql)) && params[2] === 'resume_launch_failed') {
         throw new Error(persistenceDiagnostic);
       }
       return queryImpl(sql, params);
@@ -471,6 +495,95 @@ describe('resumeStalledRelayRuns', () => {
     }));
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(result.resumed).toBe(1);
+  });
+
+  // 任务 1fe53ce4（2026-09-30 实证 run 2ba6193a/17f96547）：us-vps 零执行闸开着时，
+  // watchdog 的 reconcile 分支绕过闸在 Brain 容器本地 spawn kernel（cwd 非 git 仓 →
+  // ground-truth ls-remote origin 必死），随后远端正常起来又因 singleton 让位。
+  it('远端模式（CECELIA_LOCAL_EXECUTION_ENABLED=false）下 reconcile 不得本地 spawn，改 requeue 交 executor 远端重派', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      startedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+      latestAttempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        run_id: RUN_ID,
+        role: 'planner',
+        provider: 'claude',
+        provider_session_id: null,
+        status: 'failed',
+        lease_expires_at: null,
+      },
+    });
+    deps.env = { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' };
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn(async () => ({ pid: 5252 }));
+    deps.requeueKernelRunDeferred = vi.fn(async () => ({ changed: true, deferCount: 1 }));
+
+    await resumeStalledRelayRuns(deps);
+
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    expect(deps.requeueKernelRunDeferred).toHaveBeenCalledOnce();
+    expect(deps.requeueKernelRunDeferred).toHaveBeenCalledWith(
+      deps.pool,
+      expect.objectContaining({ runId: RUN_ID, expectedTaskId: TASK_ID }),
+    );
+    // 衔接契约：watchdog 写入的回队 reason 必须被统计口径识别为"排队"
+    const { reason } = deps.requeueKernelRunDeferred.mock.calls[0][1];
+    expect(isLaunchDeferredReason(reason)).toBe(true);
+  });
+
+  it('远端模式下 requeue 延后次数用尽时收死 run 并告警，仍不本地 spawn', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      startedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+      latestAttempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        run_id: RUN_ID,
+        role: 'planner',
+        provider: 'claude',
+        provider_session_id: null,
+        status: 'failed',
+        lease_expires_at: null,
+      },
+    });
+    deps.env = { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' };
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn(async () => ({ pid: 5252 }));
+    deps.requeueKernelRunDeferred = vi.fn(async () => ({ changed: false, exhausted: true, deferCount: 3 }));
+    deps.finalizeRun = vi.fn(async () => ({ ok: true }));
+
+    await resumeStalledRelayRuns(deps);
+
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    expect(deps.finalizeRun).toHaveBeenCalledWith(
+      deps.pool,
+      expect.objectContaining({ runId: RUN_ID, expectedTaskId: TASK_ID, outcome: 'failed' }),
+    );
+    // 衔接契约：requeue 用尽后的终态 reason 是真实失败，不得被当作排队剔除
+    const { reason: finalReason } = deps.finalizeRun.mock.calls[0][1];
+    expect(finalReason).toMatch(/:defers_exhausted$/);
+    expect(isLaunchDeferredReason(finalReason)).toBe(false);
+    expect(mockRaise).toHaveBeenCalledWith('P1', 'kernel_reconcile_remote_exhausted', expect.stringContaining(RUN_ID));
+  });
+
+  it('kernel-v1 新 run 无心跳无 attempt 且在启动宽限内（远端 prepare 在途）不重启', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      startedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+      latestAttempt: null,
+    });
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn(async () => ({ pid: 7373 }));
+    deps.requeueKernelRunDeferred = vi.fn();
+
+    const result = await resumeStalledRelayRuns(deps);
+
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    expect(deps.requeueKernelRunDeferred).not.toHaveBeenCalled();
+    expect(result.resumed).toBe(0);
   });
 
   it('expired Fleet attempt without a provider session restarts the controller without DB-only failure', async () => {

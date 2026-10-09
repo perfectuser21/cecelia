@@ -1,0 +1,4 @@
+{
+  "pass_rate_min": 0.9,
+  "note": "LLM判定器在金标集v0的通过率下限。棘轮只许升(ratchet-registry.json goldset_eval_threshold 守护),不许为过CI调低。"
+}

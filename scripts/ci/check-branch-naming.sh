@@ -18,6 +18,14 @@ if echo "$BRANCH" | grep -qE '^dependabot/'; then
   exit 0
 fi
 
+# auto-version.yml bot 的版本 bump 分支（auto-version-bump-<semver>），机器产出、
+# 合并即删——历史上 bot PR 全部死在本闸(从未合并成功),碎片化发版(PR#5179)后 bot PR
+# 成为版本发布唯一通道,必须放行
+if echo "$BRANCH" | grep -qE '^auto-version-bump-[0-9]+\.[0-9]+\.[0-9]+$'; then
+  echo "✅ auto-version bot 分支，跳过命名检查: $BRANCH"
+  exit 0
+fi
+
 # kernel Work Router 受信分支（r41 案卷 run 5bfc1af9 / PR #5006）：
 # 受信 publisher 按 routing receipt 的 cp-route-api-<hex8> 发布，是合法造分支方。
 if echo "$BRANCH" | grep -qE '^cp-route-api-[0-9a-f]{8}$'; then

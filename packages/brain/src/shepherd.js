@@ -15,6 +15,7 @@
  */
 
 import { spawnSync } from 'child_process';
+import { finalizeTask } from './lib/task-terminal.js';
 import { isValidGithubPrUrl } from './lib/callback-utils.js';
 
 // 最多允许的 CI 修复重试次数
@@ -209,15 +210,11 @@ export async function shepherdOpenPRs(pool) {
 
       if (prInfo.state === 'MERGED' || prInfo.ciStatus === 'merged') {
         // PR 已被外部合并 → 同步关闭任务，触发 KR 进度链
-        await pool.query(
-          `UPDATE tasks
-           SET pr_status = 'merged',
-               pr_merged_at = COALESCE(pr_merged_at, NOW()),
-               status = 'completed',
-               completed_at = COALESCE(completed_at, NOW())
-           WHERE id = $1 AND status != 'completed'`,
-          [task.id]
-        );
+        await finalizeTask(pool, task.id, 'completed', {
+          set: { pr_status: 'merged' },
+          setIfNull: { pr_merged_at: new Date() },
+          onlyIfStatusNot: 'completed',
+        });
         console.log(`[shepherd] PR 已合并，任务标记完成: ${task.title} (${task.pr_url})`);
         result.merged++;
 
@@ -241,15 +238,10 @@ export async function shepherdOpenPRs(pool) {
             console.warn(`[shepherd] reload PR state 失败 (non-fatal): ${reloadErr.message}`);
           }
           if (merged) {
-            await pool.query(
-              `UPDATE tasks
-                 SET pr_status = 'merged',
-                     pr_merged_at = COALESCE(pr_merged_at, NOW()),
-                     status = 'completed',
-                     completed_at = COALESCE(completed_at, NOW())
-               WHERE id = $1`,
-              [task.id]
-            );
+            await finalizeTask(pool, task.id, 'completed', {
+              set: { pr_status: 'merged' },
+              setIfNull: { pr_merged_at: new Date() },
+            });
             console.log(`[shepherd] auto-merge 成功并推进 completed: ${task.title}`);
           } else {
             await pool.query(

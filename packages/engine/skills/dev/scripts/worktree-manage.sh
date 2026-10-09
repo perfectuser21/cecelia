@@ -65,6 +65,27 @@ get_main_worktree() {
     git worktree list 2>/dev/null | head -1 | awk '{print $1}'
 }
 
+# *-scan-main 是地图照相层扫描器专用的只读镜像仓库（cecelia-scan-main），
+# 绝不能被当作 /dev 会话工作目录：在这里建 worktree/写心跳灯文件会直接污染
+# 扫描器的 clean 判定（2026-09-23 P0 事故 9dfd873a：MMV rescan 连续拒绝 21.5h，
+# 根因就是有会话把这里当工作区跑 cmd_create，heartbeat 灯写进了 scan-main/.cecelia/）。
+# 命中时在建任何文件/worktree 前就拒绝——cmd_create 的所有副作用都源自当前 cwd 的
+# toplevel，堵在入口比事后清理更可靠。
+assert_cwd_not_scan_main() {
+    local toplevel
+    toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+    local base
+    base=$(basename "$toplevel")
+    if [[ "$base" == *-scan-main ]]; then
+        echo -e "${RED}错误: 当前目录是只读镜像仓库(scan-main)，不能在这里开发${NC}" >&2
+        echo -e "${RED}  路径: $toplevel${NC}" >&2
+        echo -e "${RED}  scan-main 专供地图照相层扫描器只读使用，在这里建 worktree 会污染扫描判定${NC}" >&2
+        echo -e "${RED}  请换到正常主仓库或已有 worktree 里运行 worktree-manage.sh create${NC}" >&2
+        return 1
+    fi
+    return 0
+}
+
 # 获取项目名称
 get_project_name() {
     local main_wt
@@ -126,7 +147,7 @@ generate_worktree_path() {
     # 如果路径已存在，追加序号
     while [[ -d "$final_path" ]]; do
         final_path="${base_path}-${counter}"
-        ((counter++))
+        counter=$((counter + 1))
     done
 
     echo "$final_path"
@@ -135,6 +156,8 @@ generate_worktree_path() {
 # 创建 worktree（带 flock 防并发竞争）
 cmd_create() {
     local task_name="${1:-}"
+
+    assert_cwd_not_scan_main || exit 1
 
     if [[ -z "$task_name" ]]; then
         echo -e "${RED}错误: 请提供任务名${NC}" >&2
@@ -531,10 +554,11 @@ cmd_cleanup() {
                 safe_rm_rf "$wt_path" "$worktree_base"
             fi
             git branch -D "$wt_branch" 2>/dev/null || true
-            ((cleaned++))
+            # set -e 下算术命令式自增在计数为 0 时退出码为 1 会中断脚本，必须用赋值式自增
+            cleaned=$((cleaned + 1))
         else
             echo -e "  跳过: ${wt_branch}（未合并或无 PR）"
-            ((skipped++))
+            skipped=$((skipped + 1))
         fi
     done < <(git worktree list 2>/dev/null | tail -n +2)
 

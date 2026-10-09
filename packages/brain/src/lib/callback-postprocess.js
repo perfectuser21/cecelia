@@ -114,8 +114,9 @@ export async function writeReviewResult(task_id, result, pool) {
 /**
  * T2. harness 任务 merged 终态 → promoteToRegression（累积 FR 通电，九要素 T2）
  *
- * 只写 golden_path 表（dbOnly:true），yaml PR ② 本版不通电（架构文档风险条）。
- * 多路触发幂等安全：promoteToRegression ① 为 DELETE by owner_task_id + INSERT 覆盖写。
+ * dbOnly:true 形态原本只写 golden_path 旧表；旧表已退役（任务 7d312fd8），promoteToRegression
+ * 对 dbOnly 直接返回 reason=golden_path_retired、零副作用。本函数保留接线（4 处调用点 .catch 只 warn），
+ * 收口调用点与本函数是后续任务。yaml PR ② 本版仍不通电（架构文档风险条）。
  * 调用点（4 处，全部 .catch 只 warn）：callback-processor.js / routes/execution.js /
  * routes/tasks.js PATCH completed / harness-relay-watchdog.js 两处直写。
  *

@@ -26,15 +26,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 if [[ -n "${CECELIA_DEPLOY_ROOT:-}" ]]; then
   DEPLOY_ROOT="$(cd "$CECELIA_DEPLOY_ROOT" && pwd)"
 else
+  # git --git-common-dir 可能返回相对路径（相对 -C 指定的目录，实测在 scripts/ 下返回
+  # "../.git"）。2026-09-16 事故：旧实现只处理了恰好等于 ".git" 的情况，其余走
+  # dirname + cd，而 cd 的基准是「调用者的当前工作目录」不是 SCRIPT_DIR，于是同一
+  # 个 bug 在三种环境算出三个错答案——本机交互少一层、SSH 非交互少两层（mkdir
+  # Permission denied）、容器内与 capacity-gate 读取路径不一致。样本落错地方 →
+  # capacity-gate 报 sample_missing → 预览环境永久 503。
+  # 修法：一律在 SCRIPT_DIR 下解析，让相对路径有正确的基准。
   GIT_COMMON=$(git -C "$SCRIPT_DIR" rev-parse --git-common-dir 2>/dev/null || echo "")
   if [[ -n "$GIT_COMMON" ]]; then
-    if [[ "$GIT_COMMON" == ".git" ]]; then
-      DEPLOY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-    else
-      DEPLOY_ROOT="$(cd "$(dirname "$GIT_COMMON")" && pwd)"
-    fi
+    DEPLOY_ROOT="$(cd "$SCRIPT_DIR" && cd "$(dirname "$GIT_COMMON")" && pwd)"
   else
-    DEPLOY_ROOT="/Users/administrator/perfect21/cecelia"
+    DEPLOY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
   fi
 fi
 

@@ -15,9 +15,11 @@
 
 import pool from './db.js';
 import { updateTask, createTask } from './actions.js';
+import { finalizeTask } from './lib/task-terminal.js';
 import { sortTasksByWeight } from './task-weight.js';
 import { handleTaskFailure } from './quarantine.js';
 import { shouldBypassBackpressure } from './slot-allocator.js';
+import { TICK_DISPATCH_EXCLUDED } from './lib/task-type-registry.js';
 
 // 日志 helper：[tick] 前缀（保持与原 tick.js 输出一致），Asia/Shanghai 时间戳。
 function tickLog(...args) {
@@ -65,6 +67,8 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
     queryParams.push(excludeIds);
     excludeClause = `AND t.id != ALL($${queryParams.length})`;
   }
+  queryParams.push([...TICK_DISPATCH_EXCLUDED]);
+  const excludedTypesIdx = queryParams.length;
   const result = await pool.query(`
     SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload,
            t.queued_at, t.task_type, t.created_at, t.metadata, t.project_id
@@ -77,8 +81,16 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
       -- 对两种写法都返回文本 'true'）的任务留给有头人工执行，不进无头自动派发。
       -- 只做收窄/排除（NFR：不放宽探测/派发基底谓词）。
       AND COALESCE(t.payload->>'headed_manual', 'false') <> 'true'
-      AND t.task_type NOT IN ('content-pipeline', 'content-export', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review',
-                               'harness_ci_watch', 'harness_deploy_watch')
+      -- payload.parallel_worker=true 是 worker 池专属(worker-pool-dispatch.js 扫描),
+      -- kernel tick 禁抢——09-06 金丝雀实证 tick(2min)必快过 worker-pool(5min gate)
+      AND COALESCE(t.payload->>'parallel_worker', 'false') <> 'true'
+      -- device_job = 安卓工作机（手机）的活，执行体是 Mac 上的领单器 + adb，不是 LLM。
+      -- 本谓词是**黑名单制**（没有白名单），device_job 一旦 queued 就会被 2 分钟一轮的
+      -- tick 抢去派给执行体真的"跑一轮采收"：既烧模型配额，又直接撞 invariant 96054a8b
+      -- （us-vps 零执行），且永远不会完成，会堆成僵尸触发 eviction/requeue 循环。
+      -- 这是第二道闸；第一道是建单强制 payload.headed_manual=true（上面那条谓词）。
+      -- 两道闸缺一不可，见 __tests__/device-job-foundation.test.js 的变异清单。
+      AND NOT (t.task_type = ANY($${excludedTypesIdx}::text[]))
       ${excludeClause}
       AND (
         t.payload->>'next_run_at' IS NULL
@@ -283,10 +295,11 @@ export async function processCortexTask(task, actions) {
         completed_at: new Date().toISOString()
       }
     };
-    await pool.query(`
-      UPDATE tasks SET status = $1, payload = $2, completed_at = NOW(), updated_at = NOW()
-      WHERE id = $3
-    `, ['completed', JSON.stringify(updatedPayload), task.id]);
+    // payload 整体覆盖（保留原语义：{...task.payload, rca_result}）→ 用 mergePayload 叠加同等效果
+    await finalizeTask(pool, task.id, 'completed', {
+      set: { completed_at: 'now' },
+      mergePayload: updatedPayload,
+    });
 
     tickLog(`[tick] Cortex task completed: ${task.id}, confidence=${rcaResult.confidence}`);
 

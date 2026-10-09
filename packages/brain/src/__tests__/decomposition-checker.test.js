@@ -45,7 +45,7 @@ describe('decomposition-checker v2.0', () => {
   // ─── Check A: checkPendingKRs ───
 
   describe('Check A: checkPendingKRs', () => {
-    it('should create decomposition task for pending KR', async () => {
+    it('initiative_plan 已退役（决策 ee4842a6）→ createDecompositionTask 恒 rejected，skip_rejected', async () => {
       const { checkPendingKRs } = await import('../decomposition-checker.js');
 
       // Find pending KRs
@@ -59,14 +59,13 @@ describe('decomposition-checker v2.0', () => {
       // canCreateDecompositionTask → under WIP limit
       pool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
-      // UPDATE key_results status → decomposing
-      pool.query.mockResolvedValueOnce({ rows: [] });
-
       const actions = await checkPendingKRs();
 
       expect(actions.length).toBe(1);
-      expect(actions[0].action).toBe('create_decomposition');
+      expect(actions[0].action).toBe('skip_rejected');
       expect(actions[0].goal_id).toBe('kr-1');
+      // 退役后不再写 key_results.status='decomposing'（没有 UPDATE 调用）
+      expect(pool.query).toHaveBeenCalledTimes(3);
     });
 
     it('should skip when decomposition task already exists (dedup)', async () => {
@@ -117,94 +116,26 @@ describe('decomposition-checker v2.0', () => {
 
   // ─── Check B: checkReadyKRInitiatives ───
 
-  describe('Check B: checkReadyKRInitiatives', () => {
-    // initiative_plan 自动创建逻辑已删除（改用 pr_plans 路径），
-    // Check B 现在只负责 KR 状态流转
+  describe('Check B: checkReadyKRInitiatives（已退役，决策 ee4842a6，棒4）', () => {
+    // 原逻辑经 okr_initiatives → okr_scopes → okr_projects 驱动 KR 状态流转
+    // （ready→in_progress / →completed）。scope/initiative 层退役后（migration 499
+    // 写保护）这条链不再产生数据，已清空为 no-op：恒返回空数组，不查询任何表——
+    // 这是"tick 一轮无 okr_scopes/okr_initiatives 查询"验收标准的关键回归守卫。
 
-    it('should transition KR from ready to in_progress when tasks running', async () => {
+    it('恒返回空数组，且从不查询数据库', async () => {
       const { checkReadyKRInitiatives } = await import('../decomposition-checker.js');
-
-      pool.query.mockResolvedValueOnce({
-        rows: [{ id: 'kr-1', title: 'Ready KR', status: 'ready' }]
-      });
-
-      pool.query.mockResolvedValueOnce({
-        rows: [{
-          id: 'init-1', name: 'Active Initiative', status: 'running',
-          active_tasks: '2', running_tasks: '1'
-        }]
-      });
-
-      // UPDATE KR status
-      pool.query.mockResolvedValueOnce({ rows: [] });
 
       const actions = await checkReadyKRInitiatives();
 
-      const statusChange = actions.filter(a => a.action === 'status_change');
-      expect(statusChange.length).toBe(1);
-      expect(statusChange[0].from).toBe('ready');
-      expect(statusChange[0].to).toBe('in_progress');
-    });
-
-    it('should mark KR completed when all initiatives done', async () => {
-      const { checkReadyKRInitiatives } = await import('../decomposition-checker.js');
-
-      pool.query.mockResolvedValueOnce({
-        rows: [{ id: 'kr-1', title: 'Almost Done KR', status: 'in_progress' }]
-      });
-
-      pool.query.mockResolvedValueOnce({
-        rows: [{
-          id: 'init-1', name: 'Done Initiative', status: 'done',
-          active_tasks: '0', running_tasks: '0'
-        }]
-      });
-
-      // UPDATE KR status → completed
-      pool.query.mockResolvedValueOnce({ rows: [] });
-
-      const actions = await checkReadyKRInitiatives();
-
-      const statusChange = actions.filter(a => a.action === 'status_change');
-      expect(statusChange.length).toBe(1);
-      expect(statusChange[0].to).toBe('completed');
-    });
-
-    it('should handle no ready KRs gracefully', async () => {
-      const { checkReadyKRInitiatives } = await import('../decomposition-checker.js');
-
-      pool.query.mockResolvedValueOnce({ rows: [] });
-
-      const actions = await checkReadyKRInitiatives();
-      expect(actions.length).toBe(0);
-    });
-
-    it('should not create initiative_plan for initiatives without active tasks (removed)', async () => {
-      const { checkReadyKRInitiatives } = await import('../decomposition-checker.js');
-
-      pool.query.mockResolvedValueOnce({
-        rows: [{ id: 'kr-1', title: 'Ready KR', status: 'ready' }]
-      });
-
-      pool.query.mockResolvedValueOnce({
-        rows: [{
-          id: 'init-1', name: 'Idle Initiative', status: 'running',
-          active_tasks: '0', running_tasks: '0', domain: null
-        }]
-      });
-
-      const actions = await checkReadyKRInitiatives();
-
-      // initiative_plan 创建逻辑已删除，不应有 create_initiative_plan action
-      const created = actions.filter(a => a.action === 'create_initiative_plan');
-      expect(created.length).toBe(0);
+      expect(actions).toEqual([]);
+      expect(pool.query).not.toHaveBeenCalled();
     });
   });
 
   // ─── Check C: checkKRWithoutProject ───
 
   describe('Check C: checkKRWithoutProject', () => {
-    it('should create decomposition task and roll back KR to decomposing when KR has no project', async () => {
+    it('initiative_plan 已退役（决策 ee4842a6）→ createDecompositionTask 恒 rejected，skip_rejected', async () => {
       const { checkKRWithoutProject } = await import('../decomposition-checker.js');
 
       // Find ready/in_progress KRs with no project_kr_links
@@ -218,18 +149,15 @@ describe('decomposition-checker v2.0', () => {
       // canCreateDecompositionTask → under WIP limit
       pool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
-      mockCreateTask.mockResolvedValueOnce({ task: { id: 'task-c1', title: 'KR 拆解（修复）: Orphan KR' } });
-
-      // UPDATE key_results status → decomposing
-      pool.query.mockResolvedValueOnce({ rows: [] });
-
       const actions = await checkKRWithoutProject();
 
       expect(actions.length).toBe(1);
-      expect(actions[0].action).toBe('create_decomposition');
+      expect(actions[0].action).toBe('skip_rejected');
       expect(actions[0].check).toBe('kr_without_project');
       expect(actions[0].goal_id).toBe('kr-1');
-      expect(actions[0].task_id).toBe('task-c1');
+      // 退役后不再调用 createTask / 不再写 key_results.status='decomposing'
+      expect(mockCreateTask).not.toHaveBeenCalled();
+      expect(pool.query).toHaveBeenCalledTimes(3);
     });
 
     it('should skip when decomposition task already exists (dedup)', async () => {
@@ -393,32 +321,20 @@ describe('decomposition-checker v2.0', () => {
       ).rejects.toThrow('Refusing to create task without goalId');
     });
 
-    it('should reject when quality gate fails', async () => {
-      vi.resetModules();
-
-      // Re-mock with failing quality gate
-      vi.doMock('../task-quality-gate.js', () => ({
-        validateTaskDescription: () => ({ valid: false, reasons: ['too_short'] }),
-      }));
-      vi.doMock('../db.js', () => ({
-        default: { query: vi.fn() }
-      }));
-      vi.doMock('../capacity.js', () => ({
-        computeCapacity: () => ({ project: { max: 2 }, initiative: { max: 9 }, task: { queuedCap: 27 } }),
-        isAtCapacity: () => false,
-      }));
-
+    it('initiative_plan 已退役（决策 ee4842a6）→ 恒 rejected，不查库不调 createTask', async () => {
       const { createDecompositionTask } = await import('../decomposition-checker.js');
 
       const result = await createDecompositionTask({
-        title: 'Bad Task',
-        description: 'too short',
+        title: 'Any Task',
+        description: 'irrelevant, retired path never reads it',
         goalId: 'kr-1',
         payload: {}
       });
 
       expect(result.rejected).toBe(true);
-      expect(result.reasons).toContain('too_short');
+      expect(result.reasons[0]).toContain('layer_retired');
+      expect(pool.query).not.toHaveBeenCalled();
+      expect(mockCreateTask).not.toHaveBeenCalled();
     });
   });
 });

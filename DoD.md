@@ -1,91 +1,15 @@
-contract_branch: cp-harness-propose-r2-3a6e8f56-r698bc118-a38
-sprint_dir: sprints/08300956-kernel-pr-conflict-rebase
+# PRD / DoD：Workspace 两固定配置验证消费关系
 
----
-skeleton: false
-journey_type: autonomous
----
-# Contract DoD — Sprint: PR 冲突(DIRTY)路由 generator-fix rebase [r84]
+任务：15ac5200-a7c6-4e71-b2c5-18b48c442180；父任务：dffd5885-46f7-4cf1-b55b-8729497b9928。
 
-**范围**: 仅 `packages/brain/src/orchestrator/derive.js` 纯函数路由层新增 DIRTY/CONFLICTING → `spawn:generator-fix(pr_conflict_rebase)` 有界路由 + 超界升人审(`pr_conflict_unresolved`)；`tests/gp/f1/` + `sprints/.../tests/` 冻结回归；版本 bump 四处。
-**大小**: S
+Workspace 两份真实发布入口配置由两个精确测试读取和 YAML parse，已有 nightly 专用 verification_config 无法表达其独立消费协议。本刀只支持 perfectuser21/zenithjoy-workspace 的 implementation-impact.yml / pilot-release-verification.yml，与各自 scripts/ci/__tests__ 下固定 reader 一一对应。固定 Git SHA 冻结 reader、输入与永久 CI 的摘要；CI collector 的公开 ESLint AST 核真实导入绑定、literal new URL、YAML.parse/readFileSync 返回函数和 node:test 的真实可达调用。caller-contract 必须永久直接 node --test，并由 impact / verify needs 承接。
 
-## 合同边界（claim 与可写白名单 — PRD 铁律 #7）
+reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consumer_evidence 图认领，否则继续 UNKNOWN；不借 loader 或任意 JS。其余既有角色继续拒绝 test/spec 父模块。初始机制 PR 不携带新关系自授权，只沿用正式 current assertion 的真实测试引用与原生 imports。跨仓生产来源 bundle 与多 scope caller 由独立正规实现处理，本刀不引 CI ESLint 依赖进生产。
 
-generator 可写白名单（除此清单外禁创建计划外文件；禁止执行为锁死清单）：
-- `packages/brain/src/orchestrator/derive.js`（唯一实现面）
-- `tests/gp/f1/step3-pr-conflict-rebase-route.test.js`（新回归，PRD #5）
-- `sprints/08300956-kernel-pr-conflict-rebase/**`（含冻结测试、合同、DoD、task-plan）
-- 版本 bump 四处：`packages/brain/package.json` / `packages/brain/package-lock.json` / `.brain-versions` / `DEFINITION.md`（Brain 版本行）→ 1.273.151 → **1.273.152**
-- 行为变更冲突的既有回归测试（若断言与新路由冲突则 claim 更新）：本单经核 `tests/gp/f1/step3-merge-dirty-not-fatal.test.js`（测 kernel-handlers.merge_pr，不改）**无冲突**，不 claim 更新。
+只改 CI collector 与永久回归；没有 Brain runtime、版本静态修改或依赖新增。版本继承主线，保持现行发布策略。
 
-## ARTIFACT 条目
+- [x] [BEHAVIOR] workspaceconfigproof 固定 Git 两准确 Workspace reader/CI 消费链获得独立辅助证据，缺图认领仍 UNKNOWN；摘要、范围、模块/变量 shadow、注释、跳过/死分支、任意 YAML/SQL、错仓库与伪 CI 调用全部拒绝，执行入口重算同 SHA。
+  Test: manual:bash -c "cd packages/brain && npx vitest run scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs --maxWorkers=1 --minWorkers=1"
 
-- [x] [ARTIFACT] derive.js 含 DIRTY/CONFLICTING → pr_conflict_rebase 路由分支
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/derive.js','utf8');if(!c.includes('pr_conflict_rebase'))process.exit(1)"
-- [x] [ARTIFACT] derive.js 含超界 pr_conflict_unresolved 升人审
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/derive.js','utf8');if(!c.includes('pr_conflict_unresolved'))process.exit(1)"
-- [x] [ARTIFACT] 版本四处同步到 1.273.152
-  Test: manual:bash -c 'bash scripts/check-version-sync.sh && node -e "process.exit(require(\"./packages/brain/package.json\").version===\"1.273.152\"?0:1)"'
-
-## BEHAVIOR 条目（五行剧本，evaluator 原样真跑 — 真 import derive.js）
-
-- [x] [BEHAVIOR] [L2] B-01: DIRTY 双PASS 路由 generator-fix rebase
-  动作: 构造 mergeStateStatus=DIRTY 的双 PASS merge-gate observed，调用 derive()
-  预期观察: derive() 返回 action=spawn:generator-fix, reason=pr_conflict_rebase（不再 merge_pr 死等）
-  等待预算: 0s
-  留证: vitest 输出末 20 行（含该 it PASS）
-  Test: manual:bash -c 'npx vitest run sprints/08300956-kernel-pr-conflict-rebase/tests/pr-conflict-rebase-route.test.js -t "DIRTY 双PASS 路由 generator-fix rebase pr_conflict_rebase"'
-
-- [x] [BEHAVIOR] [L2] B-02: CONFLICTING 双PASS 路由 generator-fix rebase
-  动作: 构造 mergeStateStatus=CONFLICTING 的双 PASS observed，调用 derive()
-  预期观察: derive() 返回 action=spawn:generator-fix, reason=pr_conflict_rebase
-  等待预算: 0s
-  留证: vitest 输出末 20 行（含该 it PASS）
-  Test: manual:bash -c 'npx vitest run sprints/08300956-kernel-pr-conflict-rebase/tests/pr-conflict-rebase-route.test.js -t "CONFLICTING 双PASS 路由 generator-fix rebase pr_conflict_rebase"'
-
-- [x] [BEHAVIOR] [L2] B-03: DIRTY ci_pending 优先于 poll_ci 路由 generator-fix
-  动作: 构造 mergeStateStatus=DIRTY 且 ci=pending 的 observed，调用 derive()
-  预期观察: derive() 返回 spawn:generator-fix/pr_conflict_rebase，不再 wait:poll_ci 死等（DIRTY 时 GitHub 不触发 CI）
-  等待预算: 0s
-  留证: vitest 输出末 20 行（含该 it PASS）
-  Test: manual:bash -c 'npx vitest run sprints/08300956-kernel-pr-conflict-rebase/tests/pr-conflict-rebase-route.test.js -t "DIRTY ci_pending 优先于 poll_ci 路由 generator-fix"'
-
-- [x] [BEHAVIOR] [L2] B-04: 有界升人审（≥3 条 rebase 意图行仍 DIRTY）
-  动作: 构造含 3 条 reason=pr_conflict_rebase 意图行的 decisionLog + DIRTY，调用 derive()
-  预期观察: derive() 返回 action=wait:human_review, reason=pr_conflict_unresolved（第 4 次才升人审）
-  等待预算: 0s
-  留证: vitest 输出末 20 行（含该 it PASS）
-  Test: manual:bash -c 'npx vitest run sprints/08300956-kernel-pr-conflict-rebase/tests/pr-conflict-rebase-route.test.js -t "DIRTY 已有3条rebase意图 第4次升 human_review pr_conflict_unresolved"'
-
-- [x] [BEHAVIOR] [L2] B-05: 负向非冲突枚举/已 merged 既有路由一字不变
-  动作: 逐一构造 BEHIND/CLEAN/BLOCKED/UNSTABLE/null/UNKNOWN、已 merged、CLEAN+ci_pending 的 observed，调用 derive()
-  预期观察: BEHIND/CLEAN/BLOCKED/UNSTABLE/null/UNKNOWN → merge_pr；已 merged → report/pr_merged；CLEAN+ci_pending → wait:poll_ci（全部原路由）
-  等待预算: 0s
-  留证: vitest 输出末 20 行（8 条负向 it 全 PASS）
-  Test: manual:bash -c 'npx vitest run sprints/08300956-kernel-pr-conflict-rebase/tests/pr-conflict-rebase-route.test.js -t "负向"'
-
-- [x] [BEHAVIOR] [L2] B-06: 计数只认 pr_conflict_rebase reason
-  动作: 构造含 3 条非 pr_conflict_rebase reason（ci_fail/container_exit）的 generator-fix 意图行 + DIRTY，调用 derive()
-  预期观察: derive() 仍返回 spawn:generator-fix/pr_conflict_rebase（其它 reason 不占本界额度，未误升人审）
-  等待预算: 0s
-  留证: vitest 输出末 20 行（含该 it PASS）
-  Test: manual:bash -c 'npx vitest run sprints/08300956-kernel-pr-conflict-rebase/tests/pr-conflict-rebase-route.test.js -t "计数只认 pr_conflict_rebase reason"'
-
-- [x] [BEHAVIOR] [L2] INV-1 [PR冲突不空等]: DIRTY 不按 CI 卡死空等
-  动作: 构造 DIRTY + ci=pending 的 observed，调用 derive()
-  预期观察: 不返回 wait:poll_ci（不空等），而是 spawn:generator-fix/pr_conflict_rebase 自愈
-  等待预算: 0s
-  留证: vitest 输出末 20 行（含该 it PASS）
-  Test: manual:bash -c 'npx vitest run sprints/08300956-kernel-pr-conflict-rebase/tests/pr-conflict-rebase-route.test.js -t "DIRTY ci_pending 优先于 poll_ci 路由 generator-fix"'
-
-### Invariant 铁律映射（PRD 第 49-59 行；无对应断言者显式 N/A）
-
-- INV-1 [PR冲突不空等] → 见上方 [BEHAVIOR] INV-1（本 sprint 核心达成）
-- INV-2 [merge权归controller]: N/A —— derive 只返回路由决策对象（含 merge_pr），不执行 merge；本单不触碰 merge 执行权，负向断言证明 derive 仍只出 merge_pr 决策交 controller。
-- INV-3 [planner分支]: N/A —— 纯函数改动，不涉及分支 checkout/switch。
-- INV-4 [验证时钟]: N/A —— 不改 evaluator/validation clock；derive 是纯函数无时钟。
-- INV-5 [不写死环境]: N/A —— DIRTY/CONFLICTING 等为 GitHub 协议枚举常量（PRD 假设 #38），非环境假设值；无坐标/阈值/env 硬编码。
-- INV-6 [真环境验证]: N/A —— 纯函数逻辑，真 import derive.js 真跑即真验（无替身），无真机接缝。
-- INV-7 [多租户]: N/A —— 无租户数据面，纯路由函数。
-- INV-8 [单slot串行]: N/A —— 不涉及调度并发编排。
+- [x] [BEHAVIOR] workspaceconfigcompat 原 nightly 精确角色、普通辅助角色、release 精确消费与原有治理语义保持；事实、版本同步及 DoD 映射一致。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/implementation-ci-gate.test.js src/lib/__tests__/implementation-ci-governance.test.js src/__tests__/auto-version-apply.test.js --maxWorkers=1 --minWorkers=1 && cd ../.. && node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs DoD.md"

@@ -23,7 +23,6 @@ import taskSystemRoutes from '../task-system/routes.js';
 import areasRoutes from '../task-system/areas.js';
 import capturesRoutes from '../task-system/captures.js';
 import captureAtomsRoutes from '../task-system/capture-atoms.js';
-import lifeEventsRoutes from '../task-system/life-events.js';
 // Brain routes migrated to cecelia-semantic-brain (port 5221)
 import okrRoutes from '../okr/routes.js';
 import watchdogRoutes from '../watchdog/routes.js';
@@ -217,7 +216,6 @@ app.use('/api/tasks', taskSystemRoutes);
 app.use('/api/areas', areasRoutes);
 app.use('/api/captures', capturesRoutes);
 app.use('/api/capture-atoms', captureAtomsRoutes);
-app.use('/api/life-events', lifeEventsRoutes);
 
 // Intent Recognition API routes (KR1: Natural Language → OKR/Project/Task)
 app.use('/api/intent', intentRoutes);

@@ -99,9 +99,9 @@ describe('upsertTaskPlan — 不再 INSERT harness_task 到 tasks 表', () => {
       tasks: [makeTask('ws1'), makeTask('ws2', ['ws1'])],
     };
     const depInsertCalls = [];
-    mockClient.query = vi.fn((sql, _params) => {
+    mockClient.query = vi.fn((sql, params) => {
       if (/INSERT INTO task_dependencies/i.test(sql)) {
-        depInsertCalls.push(sql);
+        depInsertCalls.push({ sql, params });
       }
       return Promise.resolve({ rows: [], rowCount: 0 });
     });
@@ -113,6 +113,7 @@ describe('upsertTaskPlan — 不再 INSERT harness_task 到 tasks 表', () => {
       taskPlan: plan,
     });
     expect(depInsertCalls).toHaveLength(1);
-    expect(depInsertCalls[0]).toMatch(/hard/i);
+    // 依赖单一写口（lib/task-dependencies.js insertEdgeRow）：edge_type 是绑定参数第 3 位
+    expect(depInsertCalls[0].params[2]).toBe('hard');
   });
 });

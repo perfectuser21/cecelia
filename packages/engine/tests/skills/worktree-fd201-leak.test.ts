@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execSync } from 'child_process'
 import { existsSync, mkdtempSync, rmSync, readFileSync } from 'fs'
-import { resolve, join } from 'path'
+import { resolve, join, basename } from 'path'
 import { tmpdir, homedir } from 'os'
 
 /**
@@ -20,14 +20,30 @@ const scriptExists = existsSync(SCRIPT);
 
 describe('worktree-manage.sh — FD 201 leak (cp-0507172354 PR-3)', () => {
   let mainRepo: string
+  let wtBase: string
 
   beforeEach(() => {
     mainRepo = mkdtempSync(join(tmpdir(), 'fd201-'))
+    wtBase = mkdtempSync(join(tmpdir(), 'fd201-wt-'))
     execSync(
       `cd ${mainRepo} && git init -q && git config user.email t@t && git config user.name t && git commit --allow-empty -m init -q && git branch -M main`,
       { stdio: 'pipe' }
     )
   })
+
+  // 2026-10-08：本测试曾把 worktree 建在默认 ~/worktrees/<临时仓名>/ 下且从不清理，
+  // 每次 push 前 quickcheck 都留一个 ~/worktrees/fd201-* 目录（本机累计 83 个）。
+  // worktree 建到测试自己的临时目录，afterEach 一并删除
+  const worktreeEnv = (): Record<string, string> => ({ WORKTREE_BASE: wtBase })
+  const leakedDir = () => join(homedir(), 'worktrees', basename(mainRepo))
+
+  it.skipIf(!scriptExists)('测试结束后不在 ~/worktrees 下遗留目录', () => {
+    execSync(`cd ${mainRepo} && bash ${SCRIPT} create test-fd201`, {
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_SESSION_ID: 'fd201abc-test', GUARDIAN_INTERVAL_SEC: '1', ...worktreeEnv() },
+    })
+    expect(existsSync(leakedDir())).toBe(false)
+  }, 10000)
 
   afterEach(() => {
     // 杀残留 guardian
@@ -35,6 +51,7 @@ describe('worktree-manage.sh — FD 201 leak (cp-0507172354 PR-3)', () => {
       execSync(`pkill -f 'hb.sh.*${mainRepo}' 2>/dev/null || true`)
     } catch {}
     rmSync(mainRepo, { recursive: true, force: true })
+    rmSync(wtBase, { recursive: true, force: true })
   })
 
   it.skipIf(!scriptExists)('cmd_create 退出后 worktree-create.lock 不再被 guardian 持有', () => {
@@ -42,6 +59,7 @@ describe('worktree-manage.sh — FD 201 leak (cp-0507172354 PR-3)', () => {
       ...process.env,
       CLAUDE_SESSION_ID: 'fd201abc-test',
       GUARDIAN_INTERVAL_SEC: '1',
+      ...worktreeEnv(),
     }
 
     // 创建 worktree（fork guardian）

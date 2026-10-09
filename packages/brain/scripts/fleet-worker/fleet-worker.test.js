@@ -323,9 +323,10 @@ describe('Fleet Worker health-only service', () => {
       expect(args).toBeInstanceOf(Array);
       expect(options).toMatchObject({ shell: false });
       if (file === 'sw_vers') return { stdout: '15.5\n' };
-      if (file === 'orbctl') {
-        expect(options.env.HOME).toBe('/Users/orbstack-owner');
-        return { stdout: '{"version":"1.9.4"}' };
+      if (file === 'orbctl') throw new Error('panic: chmod administrator run: operation not permitted');
+      if (file === '/usr/libexec/PlistBuddy') {
+        expect(args).toEqual(['-c', 'Print :CFBundleShortVersionString', '/Applications/OrbStack.app/Contents/Info.plist']);
+        return { stdout: '1.9.4\n' };
       }
       if (file === 'docker' && args[0] === 'info') return { stdout: '{"ServerVersion":"27.5"}' };
       if (file === 'docker' && args[0] === 'image') return { stdout: JSON.stringify([`runner@${DIGEST}`]) };
@@ -379,6 +380,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const input = {
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       postgresImageDigest: POSTGRES_IMAGE,
@@ -424,9 +426,10 @@ describe('Fleet Worker health-only service', () => {
         postgres: { available: true, image_digest: POSTGRES_IMAGE },
       });
     }
+    expect(execFileFn.mock.calls.some(([file]) => file === 'orbctl')).toBe(false);
     const requiredCommands = [
       ['sw_vers', (args) => args.includes('-productVersion')],
-      ['orbctl', (args) => args.length === 1 && args[0] === 'version'],
+      ['/usr/libexec/PlistBuddy', (args) => args[0] === '-c' && args[1] === 'Print :CFBundleShortVersionString'],
       ['docker', (args) => args[0] === 'info'],
       ['docker', (args) => args[0] === 'image'
         && args[1] === 'inspect'
@@ -450,7 +453,7 @@ describe('Fleet Worker health-only service', () => {
       ['sysctl', (args) => args.includes('hw.memsize')],
       ['sysctl', (args) => args.includes('vm.loadavg')],
       ['memory_pressure', (args) => args.includes('-Q')],
-      ['df', (args) => args.includes('-k')],
+      ['df', (args) => args.includes('-kP')],
       ['launchctl', (args) => args[0] === 'print'
         && args.includes('system/com.perfect21.fleet-worker')],
       ['sntp', (args) => args.length === 2
@@ -518,6 +521,47 @@ describe('Fleet Worker health-only service', () => {
     }
   });
 
+  it('adds the disposable worktree without checking out files so the probe fits the command timeout', async () => {
+    // 回归守卫：MMV 仓库 8465 文件全量检出实测 4–5.5s，撞 DEFAULT_COMMAND_TIMEOUT_MS=5s 被杀，
+    // worktree.root_ready 永远 false → node_not_base_admitted。容器探针只检查 /workspace/.git，
+    // 所以 worktree add 必须 --no-checkout（毫秒级），不允许再做 O(仓库) 的检出。
+    const { probeFleetWorkerHealth } = await loadProbeContract();
+    const worktreeAddCalls = [];
+    const execFileFn = vi.fn(async (file, args) => {
+      if (file === 'docker' && args[0] === 'info') return { stdout: '{}' };
+      if (file === 'docker' && args[0] === 'image') return { stdout: '[]' };
+      if (file === 'git' && args[0] === 'worktree' && args[1] === 'add') {
+        worktreeAddCalls.push(args);
+      }
+      return { stdout: '' };
+    });
+
+    const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
+      machineId: 'us-mac-m4',
+      runnerImageDigest: DIGEST,
+      postgresImageDigest: POSTGRES_IMAGE,
+      repoRoot: '/private/var/lib/cecelia/repository',
+      execFileFn,
+      fetchFn: vi.fn(async () => new Response('{}', { status: 200 })),
+      makeTempDirFn: vi.fn(async () => '/private/tmp/fleet-node-probe-no-checkout'),
+      chmodTempDirFn: vi.fn(async () => undefined),
+      removeTempDirFn: vi.fn(async () => undefined),
+      statFn: vi.fn(async () => undefined),
+    });
+
+    expect(worktreeAddCalls).toEqual([[
+      'worktree',
+      'add',
+      '--detach',
+      '--no-checkout',
+      '/private/tmp/fleet-node-probe-no-checkout/worktree',
+      'HEAD',
+    ]]);
+    expect(report.worktree).toEqual({ root_ready: true });
+    expect(report.container).toEqual({ probe_succeeded: true });
+  });
+
   it('reports PostgreSQL unavailable when the pinned image exists but cannot start and become ready', async () => {
     const { probeFleetWorkerHealth } = await loadProbeContract();
     const execFileFn = vi.fn(async (file, args) => {
@@ -530,6 +574,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       postgresImageDigest: POSTGRES_IMAGE,
@@ -561,6 +606,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       postgresImageDigest: POSTGRES_IMAGE,
@@ -597,6 +643,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'xian-mac-m4',
       workerBindHost: '100.86.57.69',
       runnerImageDigest: DIGEST,
@@ -620,6 +667,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'xian-mac-m4',
       workerBindHost: '100.86.57.69',
       runnerImageDigest: DIGEST,
@@ -665,6 +713,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       repoRoot: '/repo',
@@ -719,6 +768,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       repoRoot: '/repo',
@@ -739,6 +789,7 @@ describe('Fleet Worker health-only service', () => {
     const execFileFn = vi.fn(async () => ({ stdout: '' }));
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       repoRoot: '/repo',
@@ -883,6 +934,17 @@ describe('Fleet Worker Attempt API', () => {
       ...overrides,
     };
   }
+
+  it('资源复验拒绝返回429固定码', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const runner = runnerDouble();
+    runner.prepare.mockRejectedValue(Object.assign(new Error('attempt_local_resources_unavailable'), { statusCode: 429 }));
+    const server = createFleetWorkerServer({ attemptRunner: runner, attemptToken: token });
+    const response = await request(server, 'POST', '/harness/attempts/prepare', { headers: auth, body: launchBody() });
+    expect(response.statusCode).toBe(429);
+    expect(JSON.parse(response.body)).toEqual({ error: 'attempt_local_resources_unavailable' });
+    server.close();
+  });
 
   function runnerDouble() {
     return {
@@ -1309,6 +1371,217 @@ describe('Fleet Worker Attempt API', () => {
   });
 });
 
+describe('Fleet Worker Orchestrator API', () => {
+  const token = 'fleet-worker-token-at-least-32-bytes';
+  const auth = { authorization: `Bearer ${token}` };
+  const runId = '44444444-4444-4444-8444-444444444444';
+  const taskId = '55555555-5555-4555-8555-555555555555';
+
+  function orchestratorRunnerDouble() {
+    return {
+      prepare: vi.fn(async (body) => ({
+        orchestrator_id: body.run_id,
+        status: 'prepared',
+        worktree_path: '/ws/x',
+        base_sha: '0123456789abcdef0123456789abcdef01234567',
+        pid: null,
+        host: 'us-mac-m4',
+      })),
+      start: vi.fn(async (id) => ({
+        orchestrator_id: id,
+        status: 'running',
+        pid: 77,
+        host: 'us-mac-m4',
+      })),
+      inspect: vi.fn(async (id) => ({ orchestrator_id: id, status: 'running' })),
+      terminal: vi.fn(async (id) => ({ orchestrator_id: id, status: 'done' })),
+    };
+  }
+
+  it('accepts an authenticated orchestrator prepare with 202 and the receipt body', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(server, 'POST', '/harness/orchestrators/prepare', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: { run_id: runId, task_id: taskId, repo: 'perfectuser21/cecelia' },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(JSON.parse(response.body)).toEqual({
+      orchestrator_id: runId,
+      status: 'prepared',
+      worktree_path: '/ws/x',
+      base_sha: '0123456789abcdef0123456789abcdef01234567',
+      pid: null,
+      host: 'us-mac-m4',
+    });
+    expect(orchestratorRunner.prepare).toHaveBeenCalledWith({
+      run_id: runId,
+      task_id: taskId,
+      repo: 'perfectuser21/cecelia',
+    });
+    server.close();
+  });
+
+  it('returns pid/host from orchestrator start with 200', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      `/harness/orchestrators/${runId}/start`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: { controller_session_id: taskId, controller_generation: 1 },
+      },
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      orchestrator_id: runId,
+      status: 'running',
+      pid: 77,
+      host: 'us-mac-m4',
+    });
+    expect(orchestratorRunner.start).toHaveBeenCalledWith(runId, {
+      controller_session_id: taskId,
+      controller_generation: 1,
+    });
+    server.close();
+  });
+
+  it('rejects an unauthenticated orchestrator prepare before runner invocation', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(server, 'POST', '/harness/orchestrators/prepare', {
+      headers: { 'content-type': 'application/json' },
+      body: { run_id: runId, task_id: taskId },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(JSON.parse(response.body)).toEqual({ error: 'unauthorized' });
+    expect(orchestratorRunner.prepare).not.toHaveBeenCalled();
+    server.close();
+  });
+
+  it('returns 404 for an unknown orchestrator action', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      `/harness/orchestrators/${runId}/bogus`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: {},
+      },
+    );
+
+    expect(response.statusCode).toBe(404);
+    server.close();
+  });
+
+  it.each([
+    'orchestrator_credential_home_unavailable',
+    'orchestrator_runner_root_unavailable',
+  ])('5xx 白名单稳定码 %s 原样回给调用方，日志带 cause', async (code) => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    orchestratorRunner.start.mockImplementation(async () => {
+      const error = new Error(code);
+      error.statusCode = 500;
+      error.cause = new Error('credential_home_no_accounts');
+      throw error;
+    });
+    const errors = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args) => { errors.push(args.join(' ')); });
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+    try {
+      const response = await request(server, 'POST', `/harness/orchestrators/${runId}/start`, {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: { controller_session_id: taskId, controller_generation: 1 },
+      });
+      expect(response.statusCode).toBe(500);
+      expect(JSON.parse(response.body)).toEqual({ error: code });
+      expect(errors.join('\n')).toContain(`reason=${code}`);
+      expect(errors.join('\n')).toContain('cause=credential_home_no_accounts');
+    } finally {
+      spy.mockRestore();
+      server.close();
+    }
+  });
+
+  it('非白名单 5xx 仍脱敏为 orchestrator_operation_failed，无 cause 时日志写 cause=-', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    orchestratorRunner.start.mockImplementation(async () => { throw new Error('secret_internal_detail'); });
+    const errors = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args) => { errors.push(args.join(' ')); });
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+    try {
+      const response = await request(server, 'POST', `/harness/orchestrators/${runId}/start`, {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: { controller_session_id: taskId, controller_generation: 1 },
+      });
+      expect(response.statusCode).toBe(500);
+      expect(JSON.parse(response.body)).toEqual({ error: 'orchestrator_operation_failed' });
+      expect(errors.join('\n')).toContain('reason=secret_internal_detail');
+      expect(errors.join('\n')).toContain('cause=-');
+    } finally {
+      spy.mockRestore();
+      server.close();
+    }
+  });
+
+  it('returns 404 for orchestrator routes when no orchestratorRunner is wired', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptToken: token,
+    });
+
+    const response = await request(server, 'POST', '/harness/orchestrators/prepare', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: { run_id: runId, task_id: taskId },
+    });
+
+    expect(response.statusCode).toBe(404);
+    server.close();
+  });
+});
+
 describe('Fleet Worker production runtime assembly', () => {
   it('uses one explicit Worker-owned repository allowlist for Cecelia and ZenithJoy', async () => {
     const { createFleetRepoAllowlist } = await loadServerContract();
@@ -1349,6 +1622,7 @@ describe('Fleet Worker production runtime assembly', () => {
         reconcile: expect.any(Function),
       });
       expect(runtime.runnerImageDigest).toBe(`sha256:${'a'.repeat(64)}`);
+      expect(runtime.healthDiskPaths).toEqual([dataRoot, dataRoot, dataRoot]);
       expect(runtime.roots).toEqual({
         mirrors: path.join(dataRoot, 'mirrors'),
         worktrees: path.join(dataRoot, 'worktrees'),
@@ -1400,6 +1674,7 @@ describe('Fleet Worker production runtime assembly', () => {
       });
       expect(fs.statSync(mountRoot).mode & 0o777).toBe(0o755);
       expect(fs.statSync(runtime.roots.worktrees).mode & 0o777).toBe(0o755);
+      expect(runtime.healthDiskPaths).toEqual([dataRoot, mountRoot, mountRoot]);
       expect(fs.statSync(runtime.roots.runtime).mode & 0o777).toBe(0o755);
       expect(
         fs.statSync(path.join(runtime.roots.worktrees, '.admin')).mode & 0o777,
@@ -1407,6 +1682,39 @@ describe('Fleet Worker production runtime assembly', () => {
       expect(runtime.roots.credentials.startsWith(mountRoot)).toBe(false);
       expect(runtime.roots.state.startsWith(mountRoot)).toBe(false);
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('启动时探测一次凭据根：失败只 console.warn credential_home_probe_failed，不 crash', async () => {
+    const { createFleetWorkerRuntime } = await loadServerContract();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-worker-runtime-'));
+    const tokenFile = path.join(root, 'worker-token');
+    fs.writeFileSync(tokenFile, 'fleet-worker-token-at-least-32-bytes\n', { mode: 0o600 });
+    const sharedTmp = path.join(root, 'shared-tmp');
+    fs.mkdirSync(sharedTmp, { mode: 0o755 });
+    const warnings = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...args) => { warnings.push(args.join(' ')); });
+    const probeCredentialHome = vi.fn(() => { throw new Error('credential_home_no_accounts'); });
+    try {
+      const runtime = createFleetWorkerRuntime({
+        env: {
+          CECELIA_MACHINE_ID: 'us-mac-m4',
+          CECELIA_RUNNER_DIGEST: `sha256:${'a'.repeat(64)}`,
+          CECELIA_FLEET_WORKER_TOKEN_FILE: tokenFile,
+          CECELIA_FLEET_DATA_ROOT: path.join(root, 'data'),
+          CECELIA_ORBSTACK_HOME: '/Users/orbstack-owner',
+          TMPDIR: sharedTmp,
+        },
+        runCommand: vi.fn(),
+        probeCredentialHome,
+      });
+      expect(runtime.orchestratorRunner).toBeTruthy();
+      expect(probeCredentialHome).toHaveBeenCalledTimes(1);
+      expect(probeCredentialHome).toHaveBeenCalledWith('/Users/orbstack-owner');
+      expect(warnings.join('\n')).toContain('[fleet-worker] credential_home_probe_failed: credential_home_no_accounts');
+    } finally {
+      spy.mockRestore();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -1452,13 +1760,13 @@ describe('Fleet Worker production runtime assembly', () => {
 });
 
 describe('Fleet Worker launchd plist template', () => {
-  it('pins TMPDIR to the OrbStack-shareable path (重装回归守卫：_cecelia 私有临时目录 OrbStack 读不了，container probe 必死)', () => {
+  it('renders TMPDIR from the validated shared directory (真实展开由安装器行为回归验证)', () => {
     const template = fs.readFileSync(
       path.join(path.dirname(new URL(import.meta.url).pathname), 'com.cecelia.fleet-worker.plist.template'),
       'utf8',
     );
     expect(template).toContain('<key>TMPDIR</key>');
-    expect(template).toContain('<string>/Users/Shared/cecelia-fleet-tmp</string>');
+    expect(template).toContain('<string>@@SHARED_TMPDIR@@</string>');
   });
 });
 

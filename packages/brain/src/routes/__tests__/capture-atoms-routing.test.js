@@ -74,4 +74,51 @@ describe('capture atoms routing', () => {
       { transaction: 'existing' },
     );
   });
+  // 回归（决策 9ecb9628）：event 分支曾向 events（网页分析表）插入不存在的 name/notes/area_id 列，一触发即 500。
+  // 人工复核把原子改判为 event 时，必须明确 400 拒绝，且不得对 events 表发出任何写入。
+  it('rejects target_type=event with 400 and never writes to the analytics events table', async () => {
+    const atom = {
+      id: 'atom-event-1', capture_id: 'capture-event-1', content: '周五和客户吃饭',
+      target_type: 'notes', target_subtype: null, suggested_area_id: null,
+      status: 'pending_review', metadata: {},
+    };
+    const client = { query: vi.fn(), release: vi.fn() };
+    client.query.mockImplementation(async (sql) => {
+      if (/SELECT \* FROM capture_atoms/.test(sql)) return { rows: [atom] };
+      return { rows: [{ id: 'x', count: '0' }] };
+    });
+    mockPool.connect.mockResolvedValueOnce(client);
+
+    const response = await request(app)
+      .patch('/capture-atoms/atom-event-1')
+      .send({ action: 'confirm', target_type: 'event' });
+
+    expect(response.status).toBe(400);
+    const sqls = client.query.mock.calls.map(([sql]) => String(sql));
+    expect(sqls.some((sql) => /INSERT INTO events/i.test(sql))).toBe(false);
+    expect(sqls).toContain('ROLLBACK');
+  });
+  // 决策 959d081f：content_seed 分支连同 content_topics 表一起删（内容走 Notion 内容链真身，不在 Brain 做）。
+  it('rejects target_type=content_seed with 400 and never writes content_topics', async () => {
+    const atom = {
+      id: 'atom-seed-1', capture_id: 'capture-seed-1', content: '写一篇关于 AI 训练师的选题',
+      target_type: 'notes', target_subtype: null, suggested_area_id: null,
+      status: 'pending_review', metadata: {},
+    };
+    const client = { query: vi.fn(), release: vi.fn() };
+    client.query.mockImplementation(async (sql) => {
+      if (/SELECT \* FROM capture_atoms/.test(sql)) return { rows: [atom] };
+      return { rows: [{ id: 'x', count: '0' }] };
+    });
+    mockPool.connect.mockResolvedValueOnce(client);
+
+    const response = await request(app)
+      .patch('/capture-atoms/atom-seed-1')
+      .send({ action: 'confirm', target_type: 'content_seed' });
+
+    expect(response.status).toBe(400);
+    const sqls = client.query.mock.calls.map(([sql]) => String(sql));
+    expect(sqls.some((sql) => /content_topics/i.test(sql))).toBe(false);
+  });
 });
+

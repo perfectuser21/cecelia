@@ -47,6 +47,13 @@ ALLOW_PKGS=(
   #   移除条件：react-router-dom 发布依赖 react-router >=8.3.0 的兼容版本后升级并删本行。
   #   TODO(deps): 跟踪 react-router-dom 的 8.3+ 发布。
   "react-router"
+  # braces — GHSA-vfj7-8cjw-p6xm（2026-09-18）：深度嵌套的 brace 模式导致栈耗尽 DoS。
+  #   不可利用：运行时唯一引入链 apps/api → http-proxy-middleware → micromatch → braces；
+  #   apps/api/src/dashboard/server.ts 全部以 app.use(固定路径, createProxyMiddleware(...)) 挂载，
+  #   不传 pathFilter，glob 模式只来自本仓代码常量，攻击者无法控制被解析的模式字符串。
+  #   不能 non-breaking 修：braces 最新版即 3.0.3（受影响），公告无 first_patched_version。
+  #   移除条件：braces 发布修复版后经 micromatch 带入并删本行。TODO(deps): 跟踪 braces 修复版。
+  "braces"
 )
 
 JSON=$(npm audit --audit-level=high --omit=dev --json 2>/dev/null || true)

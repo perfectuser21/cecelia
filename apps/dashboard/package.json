@@ -11,12 +11,13 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
-    "test:pwa-upgrade": "GIT_SHA=pwa-upgrade-e2e vite build --outDir .dist-pwa-e2e && node e2e/playwright-cli.mjs test e2e/pwa-upgrade.spec.ts"
+    "test:pwa-upgrade": "GIT_SHA=pwa-upgrade-e2e vite build --outDir .dist-pwa-e2e && node e2e/playwright-cli.mjs test e2e/pwa-upgrade.spec.ts",
+    "test:task-desk": "GIT_SHA=task-desk-e2e vite build --outDir .dist-task-desk-e2e && node e2e/playwright-cli.mjs test e2e/task-desk.spec.ts"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
     "@xyflow/react": "^12.10.1",
-    "axios": "^1.6.2",
+    "axios": "^1.20.0",
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.6",
     "lucide-react": "^0.294.0",

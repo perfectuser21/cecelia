@@ -84,7 +84,11 @@ function fakeDb(snapshot = authority()) {
         return { rows: [snapshot.run] };
       }
       if (text.includes('SELECT task.status') && text.includes('FROM tasks')) {
-        return { rows: snapshot.receipt ? [{ status: snapshot.receipt.task_status }] : [] };
+        return {
+          rows: snapshot.receipt
+            ? [{ status: snapshot.receipt.task_status, sprint_dir: snapshot.task_sprint_dir ?? null }]
+            : [],
+        };
       }
       if (text.includes('FROM work_routing_receipts') && text.includes('FOR SHARE')) {
         return { rows: snapshot.receipt ? [snapshot.receipt] : [] };
@@ -151,6 +155,43 @@ describe('direct profile frozen contract materializer', () => {
       impact_contract_hash: authority().impact.contract_hash,
       input_base_sha: BASE_SHA,
     });
+  });
+
+  // 2026-09-19 run 35c352b3 实证：runner materialize-frozen-contract-artifacts 只认
+  // `${sprint_dir}/tests/` 前缀的 frozen_contract_test 与 `${sprint_dir}/` 前缀的文档；
+  // 直配产物落在 direct-contracts/<receipt>/ 下 → "invalid frozen test descriptor" →
+  // generator 每次启动即 frozen_contract_artifacts_invalid 循环，bugfix 快车道从未跑通。
+  it('产物根目录用任务 payload.sprint_dir（runner 物化前缀契约），缺省才回退 direct-contracts/', async () => {
+    const sprintDir = 'sprints/09192245-kernel-848e07bf';
+    const { pool } = fakeDb(authority({ task_sprint_dir: sprintDir }));
+    const materializeApprovedContract = vi.fn(async (_client, input) => input);
+    const materialize = createDirectProfileContractMaterializer({ pool, materializeApprovedContract });
+
+    await materialize(RUN_ID);
+
+    const input = materializeApprovedContract.mock.calls[0][1];
+    expect(input.artifacts.map(({ path }) => path)).toEqual([
+      `${sprintDir}/contract-dod.md`,
+      `${sprintDir}/contract-draft.md`,
+      `${sprintDir}/sprint-prd.md`,
+      `${sprintDir}/tests/impact-contract.md`,
+    ]);
+  });
+
+  it.each([
+    ['绝对路径', '/etc/sprints'],
+    ['路径穿越', 'sprints/../x'],
+    ['反斜杠', 'sprints\\x'],
+    ['空串', ''],
+  ])('sprint_dir 非法（%s）不采用，回退 direct-contracts/', async (_label, bad) => {
+    const { pool } = fakeDb(authority({ task_sprint_dir: bad }));
+    const materializeApprovedContract = vi.fn(async (_client, input) => input);
+    const materialize = createDirectProfileContractMaterializer({ pool, materializeApprovedContract });
+
+    await materialize(RUN_ID);
+
+    const input = materializeApprovedContract.mock.calls[0][1];
+    expect(input.artifacts[0].path).toBe(`direct-contracts/${RECEIPT_ID}/contract-dod.md`);
   });
 
   it('never selects or projects mutable task description/thin_prd', async () => {

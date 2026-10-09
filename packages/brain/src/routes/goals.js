@@ -12,6 +12,7 @@ import { getTickStatus } from '../tick.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from '../proposal.js';
 import { probe as dockerRuntimeProbe } from '../docker-runtime-probe.js';
 import { describeFleetTransportReadiness } from '../orchestrator/production-transport.js';
+import { isIsolatedRuntime } from '../runtime-safety.js';
 
 // Constants previously in old alertness.js
 const EVENT_BACKLOG_THRESHOLD = 50;
@@ -101,6 +102,8 @@ router.post('/circuit-breaker/:key/reset', async (req, res) => {
  * One-stop health check for all Cecelia organs
  */
 router.get('/health', async (req, res) => {
+  const isolated = isIsolatedRuntime();
+  const runtime = { isolated, background_automation: !isolated };
   try {
     const [tickStatus, cbStates, activePipelinesResult, evaluatorStatsResult, docker_runtime, xian_bridge_status] = await Promise.all([
       getTickStatus(),
@@ -115,15 +118,26 @@ router.get('/health', async (req, res) => {
         FROM tasks
         WHERE task_type = 'harness_evaluate'
           AND status IN ('completed', 'canceled', 'failed')
-      `).catch(() => null),
-      dockerRuntimeProbe().catch((err) => ({
+      `).catch((err) => {
+        // 被动实例依靠 DB 提供 API，查询失败不能伪装成健康；生产统计仍按原约定容错。
+        if (isolated) throw err;
+        return null;
+      }),
+      isolated ? {
+        enabled: false,
+        status: 'disabled',
+        reachable: false,
+        version: null,
+        error: null,
+        reason: 'runtime_isolated',
+      } : dockerRuntimeProbe().catch((err) => ({
         enabled: true,
         status: 'unhealthy',
         reachable: false,
         version: null,
         error: err && err.message ? err.message : 'docker probe failed',
       })),
-      checkXianBridgeHealth()
+      isolated ? 'disabled' : checkXianBridgeHealth()
     ]);
 
     const esRow = evaluatorStatsResult?.rows?.[0] ?? null;
@@ -147,9 +161,16 @@ router.get('/health', async (req, res) => {
     const dockerDegraded = !!(docker_runtime && docker_runtime.enabled === true && docker_runtime.status === 'unhealthy');
     // fleet_transport.enabled=true && status='unavailable'（token 缺失/过短/无 worker URL）⇒ 顶层 degraded：
     // 否则 Brain 看似 healthy，Kernel attempt 却全部 execution_transport_unavailable（2026-08-16 生产实证）。
-    const fleet_transport = describeFleetTransportReadiness(process.env);
+    const fleet_transport = isolated ? {
+      enabled: false,
+      status: 'disabled',
+      reason: 'runtime_isolated',
+      shared_secret_configured: false,
+      worker_machines: [],
+    } : describeFleetTransportReadiness(process.env);
     const fleetTransportDegraded = fleet_transport.enabled === true && fleet_transport.status === 'unavailable';
-    const healthy = tickStatus.loop_running && openBreakers.length === 0 && !dockerDegraded && !fleetTransportDegraded;
+    // 测试/预览只提供被动 HTTP + DB，后台循环停止是预期状态；生产仍要求 tick 存活。
+    const healthy = (isolated || tickStatus.loop_running) && openBreakers.length === 0 && !dockerDegraded && !fleetTransportDegraded;
 
     let cbStatus;
     if (openBreakers.length > 0) {
@@ -161,11 +182,26 @@ router.get('/health', async (req, res) => {
     }
 
     const uptimeSeconds = Math.floor(process.uptime());
+    // 本机执行角色声明（us-vps 纯调度器化，铁律 96054a8b）。
+    // 故意不参与 healthy 判定：scheduler_only 是正常运行形态而非故障——us-vps 上就该是
+    // 这个值。它存在的意义是让「这台 Brain 到底会不会自己接活干」变成可观测事实，而不是
+    // 要靠翻 compose 才知道。缺省视为 executor（行为零变化，与闸的缺省放行一致）。
+    const localExecutionEnabled = !isolated && process.env.CECELIA_LOCAL_EXECUTION_ENABLED !== 'false';
+    const local_execution = {
+      enabled: localExecutionEnabled,
+      role: isolated ? 'disabled' : localExecutionEnabled ? 'executor' : 'scheduler_only',
+      guard: 'harness-skill-relay.spawnSkillRelaySession',
+      reason: isolated ? 'runtime_isolated' : localExecutionEnabled
+        ? null
+        : 'CECELIA_LOCAL_EXECUTION_ENABLED=false — 本机执行已禁用，harness 派发一律拒绝并要求下放 Mac worker（决策 96054a8b）',
+    };
     res.json({
       status: healthy ? 'healthy' : 'degraded',
+      runtime,
       // Gate3 部署效果确认依赖 version：assert-deploy-effect.sh 断言"跑的是预期版本 + uptime 新鲜"
       version: pkg.version,
       xian_bridge_status,
+      local_execution,
       uptime: uptimeSeconds,
       uptime_seconds: uptimeSeconds,
       active_pipelines: activePipelinesResult.rows[0].cnt,
@@ -204,7 +240,7 @@ router.get('/health', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (err) {
-    res.status(500).json({ status: 'error', error: err.message });
+    res.status(500).json({ status: 'error', error: err.message, runtime });
   }
 });
 

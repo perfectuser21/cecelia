@@ -19,6 +19,7 @@
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { finalizeTask } from '../lib/task-terminal.js';
 
 export const ALLOWED_ROLES = Object.freeze([
   'canary',
@@ -44,6 +45,50 @@ const ATTEMPT_PROJECTION = Object.freeze([
 ]);
 
 const SHA40 = /^[a-f0-9]{40}$/;
+const ATTEMPT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// V4 候选不推远端为设计（generate/evaluate/judge 全在 fleet 本地工作区）。publish 是唯一
+// 允许仓库写终态的格子，推送因此归本端点：起一次性只读容器进 fleet 候选工作区
+// （fleet-mounts/worktrees/<source_attempt_id>，judge 验过头的那份），容器内先验
+// HEAD===head_sha 再推 <sha>:refs/heads/<cp-branch>——绝不 force、绝不推别的 ref。
+const FLEET_WORKTREES_ROOT = process.env.CECELIA_FLEET_WORKTREES_ROOT
+  || '/Users/Shared/cecelia-fleet-tmp/fleet-mounts/worktrees';
+
+async function pushCandidateViaDocker({ sourceAttemptId, branch, headSha, repo, token }) {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const execFileP = promisify(execFile);
+  const workspace = `${FLEET_WORKTREES_ROOT}/${sourceAttemptId}`;
+  const script = 'set -e; '
+    + 'ACTUAL=$(git -c safe.directory=/ws rev-parse HEAD); '
+    + 'if [ "$ACTUAL" != "$HEAD_SHA" ]; then echo "CANDIDATE_HEAD_MISMATCH:$ACTUAL"; exit 42; fi; '
+    + 'git -c safe.directory=/ws push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$HEAD_SHA:refs/heads/$BRANCH"';
+  try {
+    await execFileP('docker', [
+      'run', '--rm',
+      '-v', `${workspace}:/ws:ro`,
+      '-w', '/ws',
+      '-e', `HEAD_SHA=${headSha}`,
+      '-e', `BRANCH=${branch}`,
+      '-e', `REPO=${repo}`,
+      '-e', `GH_TOKEN=${token}`,
+      '--entrypoint', '/bin/sh',
+      'cecelia/runner:latest',
+      '-c', script,
+    ], { timeout: 180_000, maxBuffer: 4 * 1024 * 1024 });
+    return { ok: true };
+  } catch (error) {
+    const output = `${error?.stderr ?? ''}\n${error?.stdout ?? ''}`;
+    const sanitized = output.replace(/x-access-token:[^@]+@/g, 'x-access-token:***@').slice(0, 500);
+    if (/bind source path does not exist|no such file or directory.*fleet-mounts/i.test(output)) {
+      return { ok: false, error: 'candidate_workspace_unavailable', detail: sanitized };
+    }
+    if (/CANDIDATE_HEAD_MISMATCH/.test(output)) {
+      return { ok: false, error: 'candidate_head_mismatch', detail: sanitized };
+    }
+    return { ok: false, error: 'candidate_push_failed', detail: sanitized };
+  }
+}
 
 export function createHarnessAttemptRunRouter({
   pool,
@@ -95,7 +140,11 @@ export function createHarnessAttemptRunRouter({
     publishDepsPromise ??= (async () => {
       if (publishDepsFactory) return publishDepsFactory();
       const { resolveGitHubToken } = await import('../harness-credentials.js');
-      return { resolveToken: resolveGitHubToken, fetchFn: globalThis.fetch };
+      return {
+        resolveToken: resolveGitHubToken,
+        fetchFn: globalThis.fetch,
+        pushCandidateFn: pushCandidateViaDocker,
+      };
     })();
     return publishDepsPromise;
   };
@@ -125,11 +174,50 @@ export function createHarnessAttemptRunRouter({
       const cleanPayload = { ...payload };
       delete cleanPayload.work_kind;
 
-      const runId = typeof body.run_id === 'string' && body.run_id ? body.run_id : uuid();
+      let runId = typeof body.run_id === 'string' && body.run_id ? body.run_id : uuid();
+
+      // 第 73 批（r40 双死因案卷）：evaluator/judge 的候选坐标与基线不再信 Worker 抄写。
+      // 第 74 批（r42 案卷）：定位键也不信——工人把 contract 共享 run 当 generate 共享 run
+      // 递进来，73 批 fail-fast 连拦 17 次致死。sprint_dir 每个工作流唯一且每格 payload
+      // 必带（服务端已校验非空），按它匹配最新 completed generator/generator-fix attempt，
+      // runId 一并覆写为该 attempt 的 run（close 所有权契约：evaluate/judge 必须活在
+      // generate 开的共享 run 里）。必须在 createTask 前覆写：implementation_baseline
+      // 从锚 task payload 取（source=task_payload）。
+      if (['evaluator', 'judge'].includes(role)) {
+        const { rows: genRows } = await pool.query(
+          `SELECT id, run_id, result FROM harness_attempts
+            WHERE task_bundle->'inputs'->>'sprint_dir' = $1
+              AND role IN ('generator','generator-fix')
+              AND status IN ('completed','completed_with_concerns')
+            ORDER BY created_at DESC LIMIT 1`,
+          [sprintDir],
+        );
+        const genResult = genRows[0]?.result ?? null;
+        const gitCandidate = Array.isArray(genResult?.artifacts)
+          ? genResult.artifacts.find((a) => a && typeof a === 'object' && a.type === 'git_candidate')
+          : null;
+        if (!gitCandidate || !SHA40.test(String(gitCandidate.head_sha ?? ''))) {
+          return res.status(409).json({ error: 'candidate_not_found', sprint_dir: sprintDir });
+        }
+        runId = genRows[0].run_id;
+        cleanPayload.candidate = {
+          repo: gitCandidate.repo,
+          branch: gitCandidate.branch,
+          head_sha: gitCandidate.head_sha,
+          source_attempt_id: gitCandidate.source_attempt_id ?? genRows[0].id,
+          bridge_run_id: runId,
+        };
+        if (SHA40.test(String(gitCandidate.base_sha ?? ''))) {
+          cleanPayload.base_sha = gitCandidate.base_sha;
+        }
+      }
       // 第 54 批：keep_open=true 建 orchestrator_host='v4-bridge-shared' 的 run——GET 终态
       // 自动收尾只认 'v4-bridge'，天然跳过共享 run；同阶段多角色（proposer→reviewer）复用
       // 同一 run_id 才能互见 contract_artifacts（金丝雀 #6b 实证），最后由显式 close 口收尾。
-      const orchestratorHost = body.keep_open === true ? 'v4-bridge-shared' : 'v4-bridge';
+      // 第 69 批（决策 d2de68fb）：generator 的候选保留工作区必须活到 judge 用完——
+      // 共享 run 不再依赖调用方旗标（#31/#36 两次死于 Worker 忘带），角色即语义。
+      const orchestratorHost = (body.keep_open === true || ['generator', 'generator-fix'].includes(role))
+        ? 'v4-bridge-shared' : 'v4-bridge';
       // v2 run 行有硬约束（migration 375）：current_task_id（FK→tasks.id）与 created_source
       // 非空。task 行必须走正门 createTask（task-creation-inventory 守卫禁止任何模块绕过原子路由仓直写 tasks 表）；status 直接建成 in_progress，tick 不会捡走。source_id 幂等：
       // 同一 run_id 复用同一 task 锚。
@@ -252,6 +340,20 @@ export function createHarnessAttemptRunRouter({
         });
       }
 
+      // 第 70 批（金丝雀 #37 案卷）：seal 已把合同产物封进 initiative_contract_artifacts，
+      // generator/evaluator/judge 的 bundle 需要全套（contract-draft/dod 正文）——按
+      // contract_id 从封印表装回 observed.contract.artifacts（CONTRACT IS LAW 的供给侧）。
+      let contractArtifacts;
+      if (typeof cleanPayload.contract_id === 'string' && cleanPayload.contract_id
+        && ['generator', 'generator-fix', 'evaluator', 'judge'].includes(role)) {
+        const { rows: artifactRows } = await pool.query(
+          `SELECT path, content, sha256, byte_length, source_revision
+             FROM initiative_contract_artifacts WHERE contract_id = $1::uuid ORDER BY path`,
+          [cleanPayload.contract_id],
+        );
+        if (artifactRows.length > 0) contractArtifacts = artifactRows;
+      }
+
       // 第 65 批：judge 派发要求 observed 里有与合同身份逐位一致的 evaluator 权威
       //（dispatcher judge_evaluator_authority_mismatch 闸，judge 预演实证）。桥接按
       // evaluate_attempt_id 查 attempt、按 contract_id 查封印表组 identity。
@@ -316,6 +418,7 @@ export function createHarnessAttemptRunRouter({
           contract: (typeof cleanPayload.contract_id === 'string' && cleanPayload.contract_id)
             ? {
               approved: true,
+              ...(contractArtifacts ? { artifacts: contractArtifacts } : {}),
               ...(judgeAuthority?.identity ? { identity: judgeAuthority.identity } : {}),
               row: {
                 id: cleanPayload.contract_id,
@@ -388,6 +491,32 @@ export function createHarnessAttemptRunRouter({
       } catch (error) {
         return res.status(409).json({ error: 'contract_seal_rejected', detail: String(error?.message ?? error) });
       }
+      // 第 77 批（r51 案卷）：引用完备性——合同/PRD 正文引用的 sprint 内**合同期管理文件**
+      //（contract-draft/dod、sprint-prd、task-plan、tests/**）必须已在封印集。r51 的合同把
+      // task-plan.json 列进范围白名单却从未提交，seal 照封，40 分钟后 generate 才按
+      // CONTRACT IS LAW 拦停。fail-fast 到这里：打回 contract 格重试只要 5 分钟。
+      // generator 自产文件（red-evidence.md 等）不在管理家族，引用不受限（零误伤）。
+      {
+        const managedRe = /^(?:contract-draft\.md|contract-dod\.md|sprint-prd\.md|task-plan\.json|tests\/[A-Za-z0-9._/-]+)$/;
+        const sealedPaths = new Set((collected.artifacts ?? []).map((a) => a?.path));
+        const refText = `${collected.contractContent ?? ''}\n${collected.prdContent ?? ''}`;
+        const escaped = sprintDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const refRe = new RegExp(`${escaped}/([A-Za-z0-9._/-]+)`, 'g');
+        const missing = new Set();
+        let refMatch;
+        while ((refMatch = refRe.exec(refText)) !== null) {
+          const rel = refMatch[1].replace(/[.]+$/, '');
+          if (!managedRe.test(rel)) continue;
+          const full = `${sprintDir}/${rel}`;
+          if (!sealedPaths.has(full)) missing.add(full);
+        }
+        if (missing.size > 0) {
+          return res.status(409).json({
+            error: 'contract_references_missing_artifact',
+            missing: [...missing],
+          });
+        }
+      }
       try {
         const sealed = await sealDeps.materialize(pool, {
           runId,
@@ -423,7 +552,7 @@ export function createHarnessAttemptRunRouter({
       if (!branch.startsWith('cp-')) return res.status(400).json({ error: 'branch_must_be_cp' });
       if (!SHA40.test(headSha)) return res.status(400).json({ error: 'head_sha_invalid' });
       if (!title) return res.status(400).json({ error: 'title_required' });
-      const { resolveToken, fetchFn } = await getPublishDeps();
+      const { resolveToken, fetchFn, pushCandidateFn } = await getPublishDeps();
       const token = await resolveToken();
       const gh = (url, opts = {}) => fetchFn(`https://api.github.com/repos/${repo}${url}`, {
         ...opts,
@@ -435,14 +564,71 @@ export function createHarnessAttemptRunRouter({
         },
         signal: AbortSignal.timeout(15_000),
       });
+      let sourceAttemptId = typeof body.source_attempt_id === 'string'
+        && ATTEMPT_UUID.test(body.source_attempt_id) ? body.source_attempt_id : null;
+      // 第 78 批（r53 案卷）：Commander 台账的 candidate_coordinates 曾只记四字段，
+      // publish 工人递不出 source_attempt_id → 端点没尝试 FF 推送就报 mismatch。
+      // 服务端自给：按 git_candidate.branch===branch 反查最新 completed generator
+      //（74 批同源权威模式），工人带不带字段都能推。
+      if (!sourceAttemptId) {
+        const { rows: genRows } = await pool.query(
+          `SELECT id, result FROM harness_attempts
+            WHERE role IN ('generator','generator-fix') AND status IN ('completed','completed_with_concerns')
+              AND result::text LIKE '%git_candidate%'
+            ORDER BY created_at DESC LIMIT 20`,
+        );
+        for (const row of genRows) {
+          const cand = Array.isArray(row.result?.artifacts)
+            ? row.result.artifacts.find((a) => a && typeof a === 'object' && a.type === 'git_candidate')
+            : null;
+          if (cand?.branch === branch) {
+            sourceAttemptId = cand.source_attempt_id ?? row.id;
+            break;
+          }
+        }
+      }
       const refResp = await gh(`/git/ref/heads/${encodeURIComponent(branch)}`);
-      if (!refResp.ok) {
+      let remoteSha = null;
+      let pushed = false;
+      if (refResp.ok) {
+        const refJson = await refResp.json();
+        remoteSha = refJson?.object?.sha ?? null;
+      } else if (refResp.status === 404 && sourceAttemptId && typeof pushCandidateFn === 'function') {
+        // V4：候选从未推远端（设计），ref 404 是常态——从 fleet 候选工作区验头后推送。
+        // ref 非 404 的失败（限流/鉴权/网络）不推送，如实报 unavailable。
+        const pushResult = await pushCandidateFn({ sourceAttemptId, branch, headSha, repo, token });
+        if (!pushResult?.ok) {
+          return res.status(409).json({
+            error: pushResult?.error ?? 'candidate_push_failed',
+            ...(pushResult?.detail ? { detail: pushResult.detail } : {}),
+          });
+        }
+        remoteSha = headSha;
+        pushed = true;
+      } else {
         return res.status(409).json({ error: 'publish_branch_unavailable', status: refResp.status });
       }
-      const refJson = await refResp.json();
-      const remoteSha = refJson?.object?.sha ?? null;
       if (remoteSha !== headSha) {
-        return res.status(409).json({ error: 'publish_head_mismatch', remote_sha: remoteSha, expected: headSha });
+        // 第 76 批（r47 案卷）：候选分支与 planner 预推的提案分支同名，远端头=旧 PRD
+        // commit——判过的候选是它的后代。尝试非强制推送：git 原生 fast-forward-only
+        // 即安全栏（非 FF 推送必败），推败才如实报 mismatch。
+        if (sourceAttemptId && typeof pushCandidateFn === 'function') {
+          const pushResult = await pushCandidateFn({ sourceAttemptId, branch, headSha, repo, token });
+          if (pushResult?.ok) {
+            remoteSha = headSha;
+            pushed = true;
+          } else {
+            return res.status(409).json({
+              error: 'publish_head_mismatch',
+              remote_sha: remoteSha,
+              expected: headSha,
+              push_error: pushResult?.error ?? 'candidate_push_failed',
+              ...(pushResult?.detail ? { detail: pushResult.detail } : {}),
+            });
+          }
+        } else {
+          return res.status(409).json({ error: 'publish_head_mismatch', remote_sha: remoteSha, expected: headSha });
+        }
       }
       const createResp = await gh('/pulls', {
         method: 'POST',
@@ -456,7 +642,7 @@ export function createHarnessAttemptRunRouter({
       });
       if (createResp.status === 201 || createResp.ok) {
         const pr = await createResp.json();
-        return res.json({ ok: true, pr_url: pr.html_url, pr_number: pr.number });
+        return res.json({ ok: true, pr_url: pr.html_url, pr_number: pr.number, ...(pushed ? { pushed: true } : {}) });
       }
       if (createResp.status === 422) {
         const listResp = await gh(`/pulls?state=open&head=${encodeURIComponent(`${repo.split('/')[0]}:${branch}`)}`);
@@ -544,12 +730,10 @@ export function createHarnessAttemptRunRouter({
           WHERE run_id = $1::uuid AND source = 'v4-bridge' AND status = 'active'`,
         [runId],
       );
-      await pool.query(
-        `UPDATE tasks SET status='completed', updated_at=NOW()
-          WHERE id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid)
-            AND trigger_source = 'v4_bridge' AND status = 'in_progress'`,
-        [runId],
-      );
+      await finalizeTask(pool, null, 'completed', {
+        where: { sql: `id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid) AND trigger_source = 'v4_bridge'`, params: [runId] },
+        onlyIfStatus: 'in_progress',
+      });
       return res.json({ ok: true, run_id: runId, run_closed: runClosed > 0 });
     } catch (error) {
       return res.status(500).json({ error: 'attempt_run_close_failed', detail: String(error?.message ?? error) });
@@ -589,12 +773,10 @@ export function createHarnessAttemptRunRouter({
         );
         // 锚 task 一并闭合（52 批漏了这步，data 型 in_progress 锚会永久堆积）。
         // 第 55 批：tasks 表没有 source_id 列，必须经 run.current_task_id 定位。
-        await pool.query(
-          `UPDATE tasks SET status='completed', updated_at=NOW()
-            WHERE id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid)
-              AND trigger_source = 'v4_bridge' AND status = 'in_progress'`,
-          [row.run_id],
-        );
+        await finalizeTask(pool, null, 'completed', {
+          where: { sql: `id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid) AND trigger_source = 'v4_bridge'`, params: [row.run_id] },
+          onlyIfStatus: 'in_progress',
+        });
       }
       const out = {};
       for (const key of ATTEMPT_PROJECTION) out[key] = row[key] ?? null;

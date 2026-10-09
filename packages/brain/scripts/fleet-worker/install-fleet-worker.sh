@@ -28,8 +28,19 @@ NODE_PROBE="${FLEET_WORKER_NODE_PROBE:-$DEFAULT_NODE_PROBE}"
 NODE_EXECUTABLE="${FLEET_WORKER_NODE_EXECUTABLE:-$(command -v node || true)}"
 WORKER_SOURCE="$SCRIPT_DIR/fleet-worker.cjs"
 PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
+PROFILE_REGISTRY_SOURCE="$SCRIPT_DIR/../../config/fleet-node-profiles.json"
+LOCAL_RESOURCE_ADMISSION_SOURCE="$SCRIPT_DIR/local-resource-admission.cjs"
+SCRIPT_RUNNER_SOURCE="$SCRIPT_DIR/script-runner.cjs"
+SCRIPT_DOCKER_SOURCE="$SCRIPT_DIR/script-docker.cjs"
+RESOURCE_POLICY_SOURCE="$SCRIPT_DIR/attempt-resource-policy.cjs"
+CONTAINER_IDENTITY_SOURCE="$SCRIPT_DIR/attempt-container-identity.cjs"
+# 专用 runner 仅打包，不增加服务入口或默认可执行 profile。
+AUXILIARY_FILES=(gpu-observation.cjs drain-owner.cjs runtime-config.cjs baseline-probe.cjs app-server-profile.cjs app-server-docker.cjs app-server-attach.cjs app-server-stream.cjs app-server-runner.cjs app-server-rpc.cjs app-server-stream-hub.cjs app-server-contract.json app-server-shim.cjs linux-cgroup.cjs linux-resource-probe.cjs)
+STAGED_AUXILIARY_FILES=('' '' '' '' '' '' '' '' '' '' '' '' '' '' '')
+PRIOR_AUXILIARY_MODES=('' '' '' '' '' '' '' '' '' '' '' '' '' '' '')
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
+ORCHESTRATOR_RUNNER_SOURCE="$SCRIPT_DIR/orchestrator-runner.cjs"
 ATTEMPT_RESOURCES_SOURCE="$SCRIPT_DIR/attempt-resources.cjs"
 CREDENTIAL_ENVELOPE_SOURCE="$SCRIPT_DIR/credential-envelope.cjs"
 GITHUB_CREDENTIAL_ENVELOPE_SOURCE="$SCRIPT_DIR/github-credential-envelope.cjs"
@@ -37,16 +48,29 @@ ACCESS_HELPER_SOURCE="$SCRIPT_DIR/refresh-fleet-worker-docker-access.sh"
 ACCESS_TEMPLATE="$SCRIPT_DIR/com.cecelia.fleet-worker-docker-access.plist.template"
 DRAIN_MARKER="${FLEET_WORKER_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
 RUNNER_DIGEST=''
+CANONICAL_RUNNER_DIGEST=''
+canonical_expected=''
 POSTGRES_IMAGE=''
 DISK_MIN_FREE_GIB=''
 WORKER_BIND_HOST=''
+WORKER_PORT='5231'
+WORKER_DOCKER_HOST='unix:///var/run/docker.sock'
+EXISTING_CONFIG_SNAPSHOT=''
+EXISTING_CONFIG_HELPER="$SCRIPT_DIR/install-existing-config.py"
 BRAIN_HEALTH_URL=''
 LOCK_DIR=''
 BACKUP_DIR=''
 STAGED_WORKER=''
 STAGED_PROBE=''
+STAGED_PROFILE_REGISTRY=''
+STAGED_LOCAL_RESOURCE_ADMISSION=''
+STAGED_SCRIPT_RUNNER=''
+STAGED_SCRIPT_DOCKER=''
+STAGED_RESOURCE_POLICY=''
+STAGED_CONTAINER_IDENTITY=''
 STAGED_WORKSPACE_MANAGER=''
 STAGED_ATTEMPT_RUNNER=''
+STAGED_ORCHESTRATOR_RUNNER=''
 STAGED_ATTEMPT_RESOURCES=''
 STAGED_CREDENTIAL_ENVELOPE=''
 STAGED_GITHUB_CREDENTIAL_ENVELOPE=''
@@ -74,9 +98,17 @@ esac
 RUNTIME_DIR="${FLEET_WORKER_RUNTIME_DIR:-$SYSTEM_ROOT/usr/local/libexec/cecelia/fleet-worker}"
 TOOLCHAIN_BIN="$SYSTEM_ROOT/usr/local/libexec/cecelia/toolchain/bin"
 COMMAND_PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+WORKER_COMMAND_PATH="$COMMAND_PATH"
 WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
+PROFILE_REGISTRY_SCRIPT="$RUNTIME_DIR/fleet-node-profiles.json"
+LOCAL_RESOURCE_ADMISSION_SCRIPT="$RUNTIME_DIR/local-resource-admission.cjs"
+SCRIPT_RUNNER_SCRIPT="$RUNTIME_DIR/script-runner.cjs"
+SCRIPT_DOCKER_SCRIPT="$RUNTIME_DIR/script-docker.cjs"
+RESOURCE_POLICY_SCRIPT="$RUNTIME_DIR/attempt-resource-policy.cjs"
+CONTAINER_IDENTITY_SCRIPT="$RUNTIME_DIR/attempt-container-identity.cjs"
 WORKSPACE_MANAGER_SCRIPT="$RUNTIME_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SCRIPT="$RUNTIME_DIR/attempt-runner.cjs"
+ORCHESTRATOR_RUNNER_SCRIPT="$RUNTIME_DIR/orchestrator-runner.cjs"
 ATTEMPT_RESOURCES_SCRIPT="$RUNTIME_DIR/attempt-resources.cjs"
 CREDENTIAL_ENVELOPE_SCRIPT="$RUNTIME_DIR/credential-envelope.cjs"
 GITHUB_CREDENTIAL_ENVELOPE_SCRIPT="$RUNTIME_DIR/github-credential-envelope.cjs"
@@ -137,7 +169,7 @@ load_runner_digest() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.runner_image_digest);
@@ -151,7 +183,7 @@ load_postgres_image() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.runtime_resources.postgres.image_digest);
@@ -165,7 +197,7 @@ load_disk_min_free_gib() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(String(profile.resources.disk_min_free_gib));
@@ -179,7 +211,7 @@ load_worker_bind_host() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.worker_bind_host);
@@ -193,7 +225,7 @@ load_brain_health_url() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.brain_health_url);
@@ -210,15 +242,18 @@ run_default_preflight() {
   service_uid="$("$ID_COMMAND" -u _cecelia)"
   service_gid="$("$ID_COMMAND" -g _cecelia)"
 
-  PATH="$COMMAND_PATH" \
+  PATH="$WORKER_COMMAND_PATH" \
   TMPDIR="$SHARED_TMPDIR" \
-  DOCKER_HOST='unix:///var/run/docker.sock' \
+  DOCKER_HOST="$WORKER_DOCKER_HOST" \
   CECELIA_CALLBACK_URL="$BRAIN_HEALTH_URL" \
   CECELIA_MACHINE_ID="$machine_id" \
+  CECELIA_FLEET_WORKER_HOST="$WORKER_BIND_HOST" \
+  CECELIA_FLEET_WORKER_PORT="$WORKER_PORT" \
   CECELIA_RUNNER_DIGEST="$RUNNER_DIGEST" \
   CECELIA_POSTGRES_IMAGE="$POSTGRES_IMAGE" \
   CECELIA_ORBSTACK_HOME="$ORBSTACK_HOME" \
   CECELIA_REPO_ROOT="$WORKTREE_ROOT" \
+  CECELIA_FLEET_DATA_ROOT="$FLEET_DATA_ROOT" \
   CECELIA_DRAIN_MARKER="$DRAIN_MARKER" \
     "$NODE_EXECUTABLE" - \
       "$NODE_PROBE" "$RUNNER_DIGEST" "$service_uid" "$service_gid" \
@@ -242,7 +277,10 @@ try {
   process.exit(1);
 }
 
-probeFleetWorkerHealth().then((report) => {
+probeFleetWorkerHealth({
+  diskPaths: [process.env.CECELIA_FLEET_DATA_ROOT, process.env.TMPDIR],
+  allowMissingDiskPaths: true,
+}).then((report) => {
   const failures = [];
   if (!report || report.orbstack?.version === 'unavailable') failures.push('orbstack');
   if (report?.docker?.available !== true) failures.push('docker');
@@ -250,7 +288,9 @@ probeFleetWorkerHealth().then((report) => {
   if (report?.runtime_resources?.postgres?.available !== true) failures.push('postgres');
   if (!Number.isFinite(report?.resources?.disk_free_bytes)
       || report.resources.disk_free_bytes < diskMinFreeGib * GIB
-      || report.resources.disk_used_percent > 85) failures.push('disk');
+      || !Number.isFinite(report.resources.disk_used_percent)
+      || report.resources.disk_used_percent < 0
+      || report.resources.disk_used_percent > 100) failures.push('disk');
   if (!Number.isFinite(report?.resources?.memory_bytes)
       || report.resources.memory_bytes < 8 * GIB) failures.push('memory');
   if (report?.worktree?.root_ready !== true) failures.push('repository_access');
@@ -311,7 +351,9 @@ run_preflight_with_retry() {
 }
 
 probe_started_worker_once() {
-  local health_url="http://$WORKER_BIND_HOST:5231/health"
+  local health_host="$WORKER_BIND_HOST"
+  [[ "$health_host" != *:* ]] || health_host="[$health_host]"
+  local health_url="http://$health_host:$WORKER_PORT/health"
   if [[ -n "$STARTUP_PROBE" ]]; then
     "$STARTUP_PROBE" "$health_url" "$machine_id"
     return
@@ -543,6 +585,7 @@ render_plist() {
   [[ -n "$NODE_EXECUTABLE" ]] || die "prerequisite_node"
   [[ -f "$WORKER_SOURCE" && -f "$PROBE_SOURCE" \
     && -f "$WORKSPACE_MANAGER_SOURCE" && -f "$ATTEMPT_RUNNER_SOURCE" \
+    && -f "$ORCHESTRATOR_RUNNER_SOURCE" \
     && -f "$ATTEMPT_RESOURCES_SOURCE" \
     && -f "$CREDENTIAL_ENVELOPE_SOURCE" \
     && -f "$GITHUB_CREDENTIAL_ENVELOPE_SOURCE" ]] \
@@ -574,6 +617,8 @@ render_plist() {
       line="${line//@@RUNNER_DIGEST@@/$escaped_digest}"
       line="${line//@@POSTGRES_IMAGE@@/$escaped_postgres}"
       line="${line//@@WORKER_BIND_HOST@@/$escaped_bind_host}"
+      line="${line//@@WORKER_PORT@@/$WORKER_PORT}"
+      line="${line//@@SHARED_TMPDIR@@/$(xml_escape "$SHARED_TMPDIR")}"
       line="${line//@@BRAIN_HEALTH_URL@@/$escaped_brain_health}"
       line="${line//@@NODE_EXECUTABLE@@/$escaped_node}"
       line="${line//@@WORKER_SCRIPT@@/$escaped_worker}"
@@ -586,7 +631,11 @@ render_plist() {
       printf '%s\n' "$line"
     done < "$TEMPLATE" > "$temporary"
 
-    chmod 0644 "$temporary"
+    chmod 0600 "$temporary"
+    if [[ -n "$EXISTING_CONFIG_SNAPSHOT" ]]; then
+      python3 "$EXISTING_CONFIG_HELPER" merge "$temporary" "$EXISTING_CONFIG_SNAPSHOT" \
+        || die "existing_configuration_untrusted"
+    fi
     "$MOVE" "$temporary" "$target"
   )
 }
@@ -620,10 +669,22 @@ render_access_plist() {
 }
 
 cleanup_transaction() {
+  local staged module
+  for staged in "${STAGED_AUXILIARY_FILES[@]}"; do
+    [[ -z "$staged" ]] || rm -f "$staged"
+  done
+  [[ -z "$EXISTING_CONFIG_SNAPSHOT" ]] || rm -f "$EXISTING_CONFIG_SNAPSHOT"
   [[ -z "$STAGED_WORKER" ]] || rm -f "$STAGED_WORKER"
   [[ -z "$STAGED_PROBE" ]] || rm -f "$STAGED_PROBE"
+  [[ -z "$STAGED_PROFILE_REGISTRY" ]] || rm -f "$STAGED_PROFILE_REGISTRY"
+  [[ -z "$STAGED_LOCAL_RESOURCE_ADMISSION" ]] || rm -f "$STAGED_LOCAL_RESOURCE_ADMISSION"
+  [[ -z "$STAGED_SCRIPT_RUNNER" ]] || rm -f "$STAGED_SCRIPT_RUNNER"
+  [[ -z "$STAGED_SCRIPT_DOCKER" ]] || rm -f "$STAGED_SCRIPT_DOCKER"
+  [[ -z "$STAGED_RESOURCE_POLICY" ]] || rm -f "$STAGED_RESOURCE_POLICY"
+  [[ -z "$STAGED_CONTAINER_IDENTITY" ]] || rm -f "$STAGED_CONTAINER_IDENTITY"
   [[ -z "$STAGED_WORKSPACE_MANAGER" ]] || rm -f "$STAGED_WORKSPACE_MANAGER"
   [[ -z "$STAGED_ATTEMPT_RUNNER" ]] || rm -f "$STAGED_ATTEMPT_RUNNER"
+  [[ -z "$STAGED_ORCHESTRATOR_RUNNER" ]] || rm -f "$STAGED_ORCHESTRATOR_RUNNER"
   [[ -z "$STAGED_ATTEMPT_RESOURCES" ]] || rm -f "$STAGED_ATTEMPT_RESOURCES"
   [[ -z "$STAGED_CREDENTIAL_ENVELOPE" ]] || rm -f "$STAGED_CREDENTIAL_ENVELOPE"
   [[ -z "$STAGED_GITHUB_CREDENTIAL_ENVELOPE" ]] \
@@ -632,11 +693,19 @@ cleanup_transaction() {
   [[ -z "$STAGED_ACCESS_HELPER" ]] || rm -f "$STAGED_ACCESS_HELPER"
   [[ -z "$STAGED_ACCESS_PLIST" ]] || rm -f "$STAGED_ACCESS_PLIST"
   if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
+    for module in "${AUXILIARY_FILES[@]}"; do rm -f "$BACKUP_DIR/$module"; done
     rm -f \
       "$BACKUP_DIR/worker" \
       "$BACKUP_DIR/probe" \
+      "$BACKUP_DIR/fleet-node-profiles" \
+      "$BACKUP_DIR/local-resource-admission" \
+      "$BACKUP_DIR/script-runner" \
+      "$BACKUP_DIR/script-docker" \
+      "$BACKUP_DIR/resource-policy" \
+      "$BACKUP_DIR/container-identity" \
       "$BACKUP_DIR/workspace-manager" \
       "$BACKUP_DIR/attempt-runner" \
+      "$BACKUP_DIR/orchestrator-runner" \
       "$BACKUP_DIR/attempt-resources" \
       "$BACKUP_DIR/credential-envelope" \
       "$BACKUP_DIR/github-credential-envelope" \
@@ -653,22 +722,35 @@ cleanup_transaction() {
 }
 
 prepare_transaction_paths() {
-  local runtime_parent
+  local runtime_parent candidate_lock index
 
   [[ ! -L "$RUNTIME_DIR" ]] || die "runtime_path_invalid"
   runtime_parent="$(dirname "$RUNTIME_DIR")"
   mkdir -p "$RUNTIME_DIR"
   chmod 0755 "$runtime_parent" "$RUNTIME_DIR"
-  LOCK_DIR="$INSTALL_DIR/.fleet-worker.install.lock"
-  mkdir "$LOCK_DIR" 2>/dev/null || die "install_locked"
+  candidate_lock="$INSTALL_DIR/.fleet-worker.install.lock"
+  mkdir "$candidate_lock" 2>/dev/null || die "install_locked"
+  LOCK_DIR="$candidate_lock"
   trap cleanup_transaction EXIT
   BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleet-worker-backup.XXXXXX")"
   STAGED_WORKER="$(mktemp "$RUNTIME_DIR/.fleet-worker.cjs.XXXXXX")"
   STAGED_PROBE="$(mktemp "$RUNTIME_DIR/.node-probe.cjs.XXXXXX")"
+  STAGED_PROFILE_REGISTRY="$(mktemp "$RUNTIME_DIR/.fleet-node-profiles.json.XXXXXX")"
+  STAGED_LOCAL_RESOURCE_ADMISSION="$(mktemp "$RUNTIME_DIR/.local-resource-admission.cjs.XXXXXX")"
+  STAGED_SCRIPT_RUNNER="$(mktemp "$RUNTIME_DIR/.script-runner.cjs.XXXXXX")"
+  STAGED_SCRIPT_DOCKER="$(mktemp "$RUNTIME_DIR/.script-docker.cjs.XXXXXX")"
+  STAGED_RESOURCE_POLICY="$(mktemp "$RUNTIME_DIR/.attempt-resource-policy.cjs.XXXXXX")"
+  STAGED_CONTAINER_IDENTITY="$(mktemp "$RUNTIME_DIR/.attempt-container-identity.cjs.XXXXXX")"
+  for index in "${!AUXILIARY_FILES[@]}"; do
+    STAGED_AUXILIARY_FILES[$index]="$(mktemp "$RUNTIME_DIR/.${AUXILIARY_FILES[$index]}.XXXXXX")"
+  done
   STAGED_WORKSPACE_MANAGER="$(
     mktemp "$RUNTIME_DIR/.workspace-manager.cjs.XXXXXX"
   )"
   STAGED_ATTEMPT_RUNNER="$(mktemp "$RUNTIME_DIR/.attempt-runner.cjs.XXXXXX")"
+  STAGED_ORCHESTRATOR_RUNNER="$(
+    mktemp "$RUNTIME_DIR/.orchestrator-runner.cjs.XXXXXX"
+  )"
   STAGED_ATTEMPT_RESOURCES="$(mktemp "$RUNTIME_DIR/.attempt-resources.cjs.XXXXXX")"
   STAGED_CREDENTIAL_ENVELOPE="$(
     mktemp "$RUNTIME_DIR/.credential-envelope.cjs.XXXXXX"
@@ -684,10 +766,28 @@ prepare_transaction_paths() {
 }
 
 stage_generation() {
+  local index
+  for index in "${!AUXILIARY_FILES[@]}"; do
+    cp "$SCRIPT_DIR/${AUXILIARY_FILES[$index]}" "${STAGED_AUXILIARY_FILES[$index]}"
+    chmod 0644 "${STAGED_AUXILIARY_FILES[$index]}"
+  done
   cp "$WORKER_SOURCE" "$STAGED_WORKER"
   cp "$PROBE_SOURCE" "$STAGED_PROBE"
+  cp "$PROFILE_REGISTRY_SOURCE" "$STAGED_PROFILE_REGISTRY"
+  chmod 0644 "$STAGED_PROFILE_REGISTRY"
+  cp "$LOCAL_RESOURCE_ADMISSION_SOURCE" "$STAGED_LOCAL_RESOURCE_ADMISSION"
+  cp "$SCRIPT_RUNNER_SOURCE" "$STAGED_SCRIPT_RUNNER"
+  cp "$SCRIPT_DOCKER_SOURCE" "$STAGED_SCRIPT_DOCKER"
+  cp "$RESOURCE_POLICY_SOURCE" "$STAGED_RESOURCE_POLICY"
+  cp "$CONTAINER_IDENTITY_SOURCE" "$STAGED_CONTAINER_IDENTITY"
+  chmod 0644 "$STAGED_RESOURCE_POLICY"
+  chmod 0644 "$STAGED_CONTAINER_IDENTITY"
+  chmod 0644 "$STAGED_LOCAL_RESOURCE_ADMISSION"
+  chmod 0644 "$STAGED_SCRIPT_RUNNER"
+  chmod 0644 "$STAGED_SCRIPT_DOCKER"
   cp "$WORKSPACE_MANAGER_SOURCE" "$STAGED_WORKSPACE_MANAGER"
   cp "$ATTEMPT_RUNNER_SOURCE" "$STAGED_ATTEMPT_RUNNER"
+  cp "$ORCHESTRATOR_RUNNER_SOURCE" "$STAGED_ORCHESTRATOR_RUNNER"
   cp "$ATTEMPT_RESOURCES_SOURCE" "$STAGED_ATTEMPT_RESOURCES"
   cp "$CREDENTIAL_ENVELOPE_SOURCE" "$STAGED_CREDENTIAL_ENVELOPE"
   cp "$GITHUB_CREDENTIAL_ENVELOPE_SOURCE" "$STAGED_GITHUB_CREDENTIAL_ENVELOPE"
@@ -697,6 +797,7 @@ stage_generation() {
   chmod 0644 \
     "$STAGED_WORKSPACE_MANAGER" \
     "$STAGED_ATTEMPT_RUNNER" \
+    "$STAGED_ORCHESTRATOR_RUNNER" \
     "$STAGED_ATTEMPT_RESOURCES" \
     "$STAGED_CREDENTIAL_ENVELOPE" \
     "$STAGED_GITHUB_CREDENTIAL_ENVELOPE"
@@ -852,7 +953,7 @@ prepare_logs() {
   fi
 }
 
-[[ $# -ge 1 && $# -le 3 ]] || { usage; exit 64; }
+[[ $# -ge 1 && $# -le 4 ]] || { usage; exit 64; }
 machine_id="$1"
 shift
 require_machine "$machine_id"
@@ -862,7 +963,13 @@ render_target=''
 if [[ $# -gt 0 ]]; then
   case "$1" in
     --apply)
-      [[ $# -eq 1 ]] || { usage; exit 64; }
+      if [[ $# -eq 3 && "$2" == '--restore-canonical-runner' ]]; then
+        canonical_expected="$3"
+        [[ "$machine_id" == 'xian-mac-m4' && "$canonical_expected" =~ ^[a-f0-9]{64}$ ]] \
+          || die "canonical_runner_request_invalid"
+      else
+        [[ $# -eq 1 ]] || { usage; exit 64; }
+      fi
       mode='apply'
       ;;
     --render-to)
@@ -891,6 +998,7 @@ fi
 if ! RUNNER_DIGEST="$(load_runner_digest)"; then
   die "node_profile_unavailable"
 fi
+CANONICAL_RUNNER_DIGEST="$RUNNER_DIGEST"
 if ! POSTGRES_IMAGE="$(load_postgres_image)"; then
   die "node_profile_unavailable"
 fi
@@ -907,6 +1015,58 @@ fi
 
 if [[ "$mode" == 'apply' && "$("$ID_COMMAND" -u)" != '0' ]]; then
   die "root_required" 77
+fi
+if [[ -n "$canonical_expected" ]]; then
+  python3 "$EXISTING_CONFIG_HELPER" canonical-install-guard "$machine_id" \
+    || die "canonical_runner_owner_unconfirmed"
+fi
+
+installed_plist="$INSTALL_DIR/$LABEL.plist"
+installed_access_plist="$INSTALL_DIR/$ACCESS_LABEL.plist"
+if [[ "$mode" == 'apply' ]]; then
+  [[ ! -L "$INSTALL_DIR" && ! -L "$installed_plist" \
+    && ! -L "$installed_access_plist" ]] || die "install_path_invalid"
+  if [[ -e "$installed_plist" ]]; then
+    EXISTING_CONFIG_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/fleet-worker-config.XXXXXX")"
+    chmod 0600 "$EXISTING_CONFIG_SNAPSHOT"
+    trap cleanup_transaction EXIT
+    if ! existing_settings="$(python3 "$EXISTING_CONFIG_HELPER" snapshot \
+      "$installed_plist" "$machine_id" "$RUNTIME_DIR" "$EXISTING_CONFIG_SNAPSHOT")"; then
+      die "existing_configuration_untrusted"
+    fi
+    while IFS=$'\t' read -r setting value; do
+      case "$setting" in
+        WORKER_BIND_HOST) WORKER_BIND_HOST="$value" ;;
+        WORKER_PORT) WORKER_PORT="$value" ;;
+        WORKER_TOKEN_FILE) WORKER_TOKEN_FILE="$value" ;;
+        FLEET_DATA_ROOT) FLEET_DATA_ROOT="$value" ;;
+        WORKTREE_ROOT) WORKTREE_ROOT="$value" ;;
+        ORBSTACK_HOME) ORBSTACK_HOME="$value" ;;
+        BRAIN_HEALTH_URL) BRAIN_HEALTH_URL="$value" ;;
+        RUNNER_DIGEST) RUNNER_DIGEST="$value" ;;
+        POSTGRES_IMAGE) POSTGRES_IMAGE="$value" ;;
+        DRAIN_MARKER) DRAIN_MARKER="$value" ;;
+        SHARED_TMPDIR) SHARED_TMPDIR="$value" ;;
+        WORKER_DOCKER_HOST) WORKER_DOCKER_HOST="$value" ;;
+        WORKER_COMMAND_PATH) WORKER_COMMAND_PATH="$value" ;;
+        NODE_EXECUTABLE) NODE_EXECUTABLE="$value" ;;
+        *) die "existing_configuration_untrusted" ;;
+      esac
+    done <<< "$existing_settings"
+    unset existing_settings setting value
+    if [[ -n "$canonical_expected" ]]; then
+      if ! canonical_setting="$(python3 "$EXISTING_CONFIG_HELPER" canonical-runner \
+        "$EXISTING_CONFIG_SNAPSHOT" "$canonical_expected")"; then
+        die "canonical_runner_configuration_changed"
+      fi
+      [[ "$canonical_setting" == $'RUNNER_DIGEST\t'"$CANONICAL_RUNNER_DIGEST" ]] \
+        || die "canonical_runner_baseline_mismatch"
+      RUNNER_DIGEST="$CANONICAL_RUNNER_DIGEST"
+      unset canonical_setting
+    fi
+  elif [[ -n "$canonical_expected" ]]; then
+    die "canonical_runner_existing_node_required"
+  fi
 fi
 
 validate_worker_data_root_path
@@ -972,7 +1132,17 @@ prepare_logs
 prepare_transaction_paths
 stage_generation
 
+for index in "${!AUXILIARY_FILES[@]}"; do
+  module="${AUXILIARY_FILES[$index]}"
+  PRIOR_AUXILIARY_MODES[$index]="$(snapshot_file "$RUNTIME_DIR/$module" "$BACKUP_DIR/$module")"
+done
 prior_worker_mode="$(snapshot_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker")"
+prior_profile_registry_mode="$(snapshot_file "$PROFILE_REGISTRY_SCRIPT" "$BACKUP_DIR/fleet-node-profiles")"
+prior_local_resource_admission_mode="$(snapshot_file "$LOCAL_RESOURCE_ADMISSION_SCRIPT" "$BACKUP_DIR/local-resource-admission")"
+prior_script_runner_mode="$(snapshot_file "$SCRIPT_RUNNER_SCRIPT" "$BACKUP_DIR/script-runner")"
+prior_script_docker_mode="$(snapshot_file "$SCRIPT_DOCKER_SCRIPT" "$BACKUP_DIR/script-docker")"
+prior_resource_policy_mode="$(snapshot_file "$RESOURCE_POLICY_SCRIPT" "$BACKUP_DIR/resource-policy")"
+prior_container_identity_mode="$(snapshot_file "$CONTAINER_IDENTITY_SCRIPT" "$BACKUP_DIR/container-identity")"
 prior_probe_mode="$(
   snapshot_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe"
 )"
@@ -981,6 +1151,9 @@ prior_workspace_manager_mode="$(
 )"
 prior_attempt_runner_mode="$(
   snapshot_file "$ATTEMPT_RUNNER_SCRIPT" "$BACKUP_DIR/attempt-runner"
+)"
+prior_orchestrator_runner_mode="$(
+  snapshot_file "$ORCHESTRATOR_RUNNER_SCRIPT" "$BACKUP_DIR/orchestrator-runner"
 )"
 prior_attempt_resources_mode="$(
   snapshot_file "$ATTEMPT_RESOURCES_SCRIPT" "$BACKUP_DIR/attempt-resources"
@@ -1001,6 +1174,11 @@ prior_access_plist_mode="$(
   snapshot_file "$installed_access_plist" "$BACKUP_DIR/access-plist"
 )"
 
+if [[ -n "$EXISTING_CONFIG_SNAPSHOT" ]]; then
+  python3 "$EXISTING_CONFIG_HELPER" check "$installed_plist" "$EXISTING_CONFIG_SNAPSHOT" \
+    || die "existing_configuration_untrusted"
+fi
+
 if [[ "$prior_access_service_loaded" == true ]]; then
   "$LAUNCHCTL" bootout "system/$ACCESS_LABEL" >/dev/null 2>&1 || true
 fi
@@ -1009,12 +1187,25 @@ if [[ "$prior_service_loaded" == true ]]; then
 fi
 
 placement_ok=true
-"$MOVE" "$STAGED_PROBE" "$RUNTIME_DIR/node-probe.cjs" || placement_ok=false
+for index in "${!AUXILIARY_FILES[@]}"; do
+  [[ "$placement_ok" != true ]] || "$MOVE" "${STAGED_AUXILIARY_FILES[$index]}" \
+    "$RUNTIME_DIR/${AUXILIARY_FILES[$index]}" || placement_ok=false
+done
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_PROBE" "$RUNTIME_DIR/node-probe.cjs" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_PROFILE_REGISTRY" "$PROFILE_REGISTRY_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_LOCAL_RESOURCE_ADMISSION" "$LOCAL_RESOURCE_ADMISSION_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_SCRIPT_RUNNER" "$SCRIPT_RUNNER_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_SCRIPT_DOCKER" "$SCRIPT_DOCKER_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_RESOURCE_POLICY" "$RESOURCE_POLICY_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_CONTAINER_IDENTITY" "$CONTAINER_IDENTITY_SCRIPT" || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_WORKSPACE_MANAGER" "$WORKSPACE_MANAGER_SCRIPT" \
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_ATTEMPT_RUNNER" "$ATTEMPT_RUNNER_SCRIPT" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_ORCHESTRATOR_RUNNER" "$ORCHESTRATOR_RUNNER_SCRIPT" \
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_ATTEMPT_RESOURCES" "$ATTEMPT_RESOURCES_SCRIPT" \
@@ -1065,7 +1256,24 @@ if [[ "$launch_ok" != true ]]; then
   "$LAUNCHCTL" bootout "system/$ACCESS_LABEL" >/dev/null 2>&1 || true
   "$LAUNCHCTL" bootout "system/$LABEL" >/dev/null 2>&1 || true
   rollback_ok=true
+  for index in "${!AUXILIARY_FILES[@]}"; do
+    module="${AUXILIARY_FILES[$index]}"
+    restore_file "$RUNTIME_DIR/$module" "$BACKUP_DIR/$module" "${PRIOR_AUXILIARY_MODES[$index]}" \
+      || rollback_ok=false
+  done
   restore_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker" "$prior_worker_mode" \
+    || rollback_ok=false
+  restore_file "$PROFILE_REGISTRY_SCRIPT" "$BACKUP_DIR/fleet-node-profiles" "$prior_profile_registry_mode" \
+    || rollback_ok=false
+  restore_file "$LOCAL_RESOURCE_ADMISSION_SCRIPT" "$BACKUP_DIR/local-resource-admission" "$prior_local_resource_admission_mode" \
+    || rollback_ok=false
+  restore_file "$SCRIPT_RUNNER_SCRIPT" "$BACKUP_DIR/script-runner" "$prior_script_runner_mode" \
+    || rollback_ok=false
+  restore_file "$SCRIPT_DOCKER_SCRIPT" "$BACKUP_DIR/script-docker" "$prior_script_docker_mode" \
+    || rollback_ok=false
+  restore_file "$RESOURCE_POLICY_SCRIPT" "$BACKUP_DIR/resource-policy" "$prior_resource_policy_mode" \
+    || rollback_ok=false
+  restore_file "$CONTAINER_IDENTITY_SCRIPT" "$BACKUP_DIR/container-identity" "$prior_container_identity_mode" \
     || rollback_ok=false
   restore_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe" "$prior_probe_mode" \
     || rollback_ok=false
@@ -1078,6 +1286,11 @@ if [[ "$launch_ok" != true ]]; then
     "$ATTEMPT_RUNNER_SCRIPT" \
     "$BACKUP_DIR/attempt-runner" \
     "$prior_attempt_runner_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$ORCHESTRATOR_RUNNER_SCRIPT" \
+    "$BACKUP_DIR/orchestrator-runner" \
+    "$prior_orchestrator_runner_mode" \
     || rollback_ok=false
   restore_file \
     "$ATTEMPT_RESOURCES_SCRIPT" \

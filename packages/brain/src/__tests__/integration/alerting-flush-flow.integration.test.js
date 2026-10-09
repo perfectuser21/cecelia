@@ -5,8 +5,8 @@
  *   Path 1: raise('P0', ...) — 立即推送 + 5 分钟限流（同 eventType 第二次跳过）
  *   Path 2: raise('P1', ...) — 加入 P1 缓冲区，不立即推送
  *   Path 3: raise('P2', ...) — 加入 P2 缓冲区，不立即推送
- *   Path 4: flushP1() — 缓冲区有内容时调用 sendFeishu，然后清空
- *   Path 5: flushP2() — 缓冲区有内容时调用 sendFeishu，然后清空
+ *   Path 4: flushP1() — 缓冲区有内容时汇总（不私信，不调 sendFeishu，决策 d3e7746c），然后清空
+ *   Path 5: flushP2() — 同上
  *   Path 6: flushAlertsIfNeeded() — 时间门控：首次调用触发 P1/P2 flush
  *   Path 7: getStatus() — 反映当前缓冲区和限流状态
  *
@@ -19,6 +19,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// alerting 缓冲会持久化到 working_memory：隔离共享测试库，防其他用例写入的 alerting_buffers 被恢复进缓冲
+vi.mock('../../db.js', () => ({
+  default: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+}));
 
 // ─── Mock notifier.js（不发真实飞书 API 请求）────────────────────────────────
 vi.mock('../../notifier.js', () => ({
@@ -123,17 +128,15 @@ describe('Alerting flush-flow 集成测试', () => {
       expect(after).toBe(before + 2);
     });
 
-    it('P1 多条 raise 后 flushP1 → sendFeishu 调用一次，缓冲区清空', async () => {
+    it('P1 多条 raise 后 flushP1 → 不私信（sendFeishu 0 次），汇总记录 3 条，缓冲区清空', async () => {
       await raise('P1', 'ev_1', '消息 1');
       await raise('P1', 'ev_2', '消息 2');
       await raise('P1', 'ev_3', '消息 3');
       expect(getStatus().p1_pending).toBe(3);
 
       await flushP1();
-      expect(sendFeishu).toHaveBeenCalledTimes(1);
-      const msg = sendFeishu.mock.calls[0][0];
-      expect(msg).toContain('[P1');
-      expect(msg).toContain('3');
+      expect(sendFeishu).not.toHaveBeenCalled();
+      expect(getStatus().last_p1_digest).toMatchObject({ count: 3, channel: 'log' });
       // 缓冲区清空
       expect(getStatus().p1_pending).toBe(0);
     });
@@ -159,15 +162,14 @@ describe('Alerting flush-flow 集成测试', () => {
       expect(after).toBe(before + 1);
     });
 
-    it('P2 raise 后 flushP2 → sendFeishu 调用一次，缓冲区清空', async () => {
+    it('P2 raise 后 flushP2 → 不私信（sendFeishu 0 次），缓冲区清空', async () => {
       await raise('P2', 'fail_x', '任务 X 失败');
       await raise('P2', 'fail_y', '任务 Y 失败');
       expect(getStatus().p2_pending).toBe(2);
 
       await flushP2();
-      expect(sendFeishu).toHaveBeenCalledTimes(1);
-      const msg = sendFeishu.mock.calls[0][0];
-      expect(msg).toContain('[P2');
+      expect(sendFeishu).not.toHaveBeenCalled();
+      expect(getStatus().last_p2_digest).toMatchObject({ count: 2, channel: 'log' });
       expect(getStatus().p2_pending).toBe(0);
     });
 
@@ -204,8 +206,9 @@ describe('Alerting flush-flow 集成测试', () => {
       await raise('P1', 'degraded', '降级');
       // 首次调用时 _lastP1FlushAt=0，距 now > P1_FLUSH_INTERVAL_MS (1h)
       await flushAlertsIfNeeded();
-      expect(sendFeishu).toHaveBeenCalledTimes(1);
+      expect(sendFeishu).not.toHaveBeenCalled();
       expect(getStatus().p1_pending).toBe(0);
+      expect(getStatus().last_p1_digest.count).toBe(1);
     });
 
     it('首次调用后立即再次调用 → P1 不重复 flush（时间窗口未过）', async () => {
@@ -229,7 +232,9 @@ describe('Alerting flush-flow 集成测试', () => {
       await raise('P1', 'ev_second', '第二次消息');
       vi.advanceTimersByTime(60 * 60 * 1000 + 1); // 推进 1h+
       await flushAlertsIfNeeded(); // 再次 flush
-      expect(sendFeishu).toHaveBeenCalledTimes(1);
+      expect(sendFeishu).not.toHaveBeenCalled();
+      expect(getStatus().p1_pending).toBe(0);
+      expect(getStatus().last_p1_digest.items.map(i => i.eventType)).toEqual(['ev_second']);
     });
   });
 

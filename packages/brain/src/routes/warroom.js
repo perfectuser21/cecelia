@@ -23,6 +23,9 @@ import {
   loadWorkRoutingObservability,
   summarizeWorkRouting,
 } from '../work-routing-observability.js';
+import { WARROOM_FEED_TASK_TYPES } from '../lib/task-type-registry.js';
+import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
+import { launchDeferredSql } from '../lib/kernel-launch-deferral.js';
 
 const router = Router();
 
@@ -33,7 +36,7 @@ const NODE_PCT = {
 };
 
 // 纳入 feed 的任务类型（有实质执行的；排除 harness_report 等子任务噪音）
-const FEED_TYPES = ['harness_initiative', 'dev', 'content-pipeline', 'platform_scraper'];
+const FEED_TYPES = WARROOM_FEED_TASK_TYPES;
 
 const AREA_NAMES = { cecelia: 'Cecelia', zenithjoy: 'ZenithJoy', infrastructure: 'Infrastructure' };
 
@@ -128,7 +131,7 @@ router.get('/feed', async (req, res) => {
     // 2. journey 名映射（id + notion_id 双键，因 payload.journey_id 两种格式都有）
     const journeyNameById = {};
     try {
-      const { rows: js } = await pool.query('SELECT id, notion_id, name FROM journeys');
+      const { rows: js } = await pool.query(`SELECT id, notion_id, name FROM ${TREE_NODES_SQL} n`);
       for (const j of js) {
         if (j.id) journeyNameById[j.id] = j.name;
         if (j.notion_id) journeyNameById[j.notion_id] = j.name;
@@ -205,7 +208,7 @@ router.get('/lines', async (req, res) => {
     // 1. active journeys
     const { rows: journeys } = await pool.query(
       `SELECT id, notion_id, name, status, maturity, biz_area
-       FROM journeys WHERE status = 'active'`
+       FROM ${TREE_NODES_SQL} n WHERE status = 'active'`
     );
 
     // 2. 所有 active journey 的 steps（一次拉，内存按 journey_id 分组）
@@ -213,7 +216,8 @@ router.get('/lines', async (req, res) => {
     const stepsByJourney = new Map();
     if (journeyDbIds.length > 0) {
       const { rows: steps } = await pool.query(
-        `SELECT journey_id, status FROM journey_steps WHERE journey_id = ANY($1::uuid[])`,
+        `SELECT p.capability_id AS journey_id, a.status FROM activities a
+         JOIN activity_placement p ON p.activity_id = a.id WHERE p.capability_id = ANY($1::uuid[])`,
         [journeyDbIds]
       );
       for (const s of steps) {
@@ -284,7 +288,7 @@ router.get('/line/:id', async (req, res) => {
 
     // 1. journey 本体
     const { rows: jrows } = await pool.query(
-      `SELECT id, notion_id, name, description, status, maturity, biz_area FROM journeys WHERE id = $1`,
+      `SELECT id, notion_id, name, description, status, maturity, biz_area FROM ${TREE_NODES_SQL} n WHERE id = $1`,
       [id]
     );
     if (jrows.length === 0) return res.status(404).json({ error: 'journey not found' });
@@ -293,8 +297,9 @@ router.get('/line/:id', async (req, res) => {
 
     // 2. steps（按 step_number 升序 = roadmap）
     const { rows: stepRows } = await pool.query(
-      `SELECT step_number, name, status, description
-       FROM journey_steps WHERE journey_id = $1 ORDER BY step_number ASC`,
+      `SELECT p.step_number, a.name, a.status, a.description
+       FROM activities a JOIN activity_placement p ON p.activity_id = a.id
+       WHERE p.capability_id = $1 ORDER BY p.step_number ASC`,
       [journey.id]
     );
     const steps = stepRows.map((s) => ({
@@ -420,7 +425,7 @@ router.get('/line/:id/command', async (req, res) => {
 
     // 1. journey 本体
     const { rows: jrows } = await pool.query(
-      `SELECT id, notion_id, name, description, status, maturity, biz_area FROM journeys WHERE id = $1`,
+      `SELECT id, notion_id, name, description, status, maturity, biz_area FROM ${TREE_NODES_SQL} n WHERE id = $1`,
       [id]
     );
     if (jrows.length === 0) return res.status(404).json({ error: 'journey not found' });
@@ -534,10 +539,11 @@ router.get('/line/:id/command', async (req, res) => {
     let health = { run_total: 0, run_success: 0, success_rate: null, pr_count: 0, is_stopped: false };
     try {
       const { rows: healthRows } = await pool.query(
-        `SELECT id, phase, created_at
-         FROM initiative_runs
-         WHERE journey_id = $1
-           AND created_at > NOW() - INTERVAL '30 days'`,
+        `SELECT ir.id, ir.phase, ir.created_at
+         FROM initiative_runs ir
+         WHERE ir.journey_id = $1
+           AND ir.created_at > NOW() - INTERVAL '30 days'
+           AND NOT ${launchDeferredSql('ir')}`, // 编排槽满回队的 run 不是真实失败，不计入健康度
         [journey.id]
       );
       const runTotal = healthRows.length;
@@ -600,7 +606,7 @@ router.get('/line/:id/context-manifest', async (req, res) => {
   try {
     const { id } = req.params;
     const { rows: jrows } = await pool.query(
-      `SELECT id, name, status, maturity FROM journeys WHERE id = $1`,
+      `SELECT id, name, status, maturity FROM ${TREE_NODES_SQL} n WHERE id = $1`,
       [id]
     );
     if (jrows.length === 0) return res.status(404).json({ error: 'journey not found' });

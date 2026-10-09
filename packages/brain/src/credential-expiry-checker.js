@@ -19,6 +19,7 @@ import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { createTask } from './actions.js';
 import { sendBark } from './notifier.js';
+import { AUTH_RECOVERY_SKIP_TASK_TYPES as SKIP_TASK_TYPES } from './lib/task-type-registry.js';
 
 // token 过期超过此时长 → cron 已连续失败，需人工介入
 const STUCK_EXPIRED_MS = 60 * 60 * 1000; // 1 小时（cron 每 2h 一次，1h 说明至少错过一次）
@@ -198,9 +199,6 @@ export async function cancelCredentialAlertTasks(pool) {
 
 // 凭据恢复时，最多追溯多久之前的 auth 失败任务
 const RECOVERY_LOOKBACK_HOURS = 48;
-
-// 不恢复的任务类型（这些任务即使 auth 恢复也不应重新排队）
-const SKIP_TASK_TYPES = ['pipeline_rescue'];
 
 /**
  * 凭据恢复后自动重排队 auth 隔离任务

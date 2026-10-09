@@ -7,7 +7,7 @@
  * 导致 docker-executor 拿这个 worktree 跑容器后秒崩 exit 125。
  */
 import { describe, it, expect } from 'vitest';
-import { ensureHarnessWorktree } from '../harness-worktree.js';
+import { ensureHarnessWorktree, DEFAULT_BASE_REPO } from '../harness-worktree.js';
 
 const BASE = '/tmp/cec';
 
@@ -64,7 +64,7 @@ describe('ensureHarnessWorktree .git 状态校验', () => {
 
     // 期望：探测到 origin remote 缺失 → rm 整个 dir
     expect(rmCalled).toBe(true);
-    expect(rmPath).toBe('/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2/task-39d535f3');
+    expect(rmPath).toBe(`${DEFAULT_BASE_REPO}/.claude/worktrees/harness-v2/task-39d535f3`);
     // 期望：rm 之后重新 clone
     const cloneCall = calls.find(c => c.startsWith('git clone'));
     expect(cloneCall).toBeTruthy();
@@ -84,7 +84,7 @@ describe('ensureHarnessWorktree .git 状态校验', () => {
       logFn: () => {},
     });
 
-    expect(p).toBe('/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2/task-beefcafe');
+    expect(p).toBe(`${DEFAULT_BASE_REPO}/.claude/worktrees/harness-v2/task-beefcafe`);
     expect(rmCalled).toBe(false);
     expect(calls.some(c => c.startsWith('git clone'))).toBe(false);
   });
@@ -122,7 +122,7 @@ describe('ensureHarnessWorktree .git 状态校验', () => {
     expect(rmCalled).toBe(false);
     // 没触发 orphan 校验（orphan 校验是 git -C <wtPath> remote get-url，跑在已存在 dir 路径上）
     // H16 后 clone 路径也调 git -C <baseRepo> remote get-url —— 区别在 -C 后面是 baseRepo 不是 wtPath
-    const wtPath = '/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2/task-aaaabbbb';
+    const wtPath = `${DEFAULT_BASE_REPO}/.claude/worktrees/harness-v2/task-aaaabbbb`;
     expect(calls.some(c => c.includes('remote get-url') && c.includes(wtPath))).toBe(false);
     // 走 clone
     expect(calls.some(c => c.startsWith('git clone'))).toBe(true);

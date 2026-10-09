@@ -93,14 +93,24 @@ export async function consumePlannerRecoveryReceipt(
       throw recoveryError('planner_recovery_source_not_eligible', 409);
     }
 
+    // 路由收据自迁移 465 起链式接班：同一 task_id 每次 base_sha 快进都追加一代
+    // （anchor_generation 递增，supersedes_receipt_id 指向前代）。裸 JOIN 会按代数
+    // 放大行数，rows.length !== 1 于是把快进过的任务永久判成 receipt_ambiguous。
+    // 只取最新代（LATERAL + LIMIT 1）后，行数回到「一条 planner 收据一行」，
+    // !== 1 的语义保持不变：0 行 = 缺失，>1 行 = 真的有多条 planner 收据要人看。
     const receiptResult = await client.query(
       `SELECT recovery.id,recovery.predecessor_run_id,recovery.source_task_id,
               recovery.repo,recovery.head_sha,recovery.verification_method,
               route.change_kind,route.execution_profile_override,route.map_scope
          FROM planner_recovery_receipts recovery
-         JOIN work_routing_receipts route
-           ON route.task_id=recovery.source_task_id
-          AND route.work_kind='coding_mutation'
+         JOIN LATERAL (
+           SELECT r.change_kind,r.execution_profile_override,r.map_scope
+             FROM work_routing_receipts r
+            WHERE r.task_id=recovery.source_task_id
+              AND r.work_kind='coding_mutation'
+            ORDER BY r.anchor_generation DESC,r.created_at DESC
+            LIMIT 1
+         ) route ON true
         WHERE recovery.predecessor_run_id=$1::uuid
           AND recovery.source_task_id=$2::uuid
           AND recovery.verification_method='remote_exact_commit_blob'

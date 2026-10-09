@@ -1,3 +1,5 @@
+import { seedLifecycleAttempt } from '../../../tests/helpers/lifecycle-attempt-fixture.js';
+import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
 /**
  * [BEHAVIOR] kernel 真读 gear：initiative_runs.gear round-trip + observed.gear 注入 +
  * hotfix 一跳角色分布（sprint 08091640）。真 Postgres 集成——真 migrate（含 396）+ 真
@@ -63,11 +65,11 @@ async function createIsolatedDatabase() {
     },
     stdio: 'pipe',
   });
-  testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 });
+  testPool = trackPgPool(new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 }));
 }
 
 async function dropIsolatedDatabase() {
-  if (testPool) await testPool.end().catch(() => {});
+  if (testPool) await closePgPool(testPool);
   if (adminPool && databaseName) {
     // 不用 DROP DATABASE ... WITH (FORCE)：FORCE 会发一个 cluster 级 ProcSignalBarrier，等待集群
     // 内每一个 backend（含与本库无关、卡在认证阶段的连接）应答后才落库。CI 上曾有别的进程连接
@@ -190,7 +192,7 @@ async function driveOneHop({ taskId, runId, payload }) {
         dispatch: async (action, ctx) => {
           dispatchedAction = action;
           dispatchedRole = resolveAction(action).role; // 真 dispatcher 的 action→role 映射
-          await attemptStore.createAttempt({
+          await seedLifecycleAttempt(testPool, {
             id: randomUUID(),
             runId,
             hop: ctx.hop,

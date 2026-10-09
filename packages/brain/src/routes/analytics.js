@@ -18,7 +18,6 @@ import {
   upsertPipelinePublishStats,
 } from '../content-analytics.js';
 import { scheduleDailyScrape } from '../daily-scrape-scheduler.js';
-import { getAccountUsage } from '../account-usage.js';
 
 const router = Router();
 
@@ -444,7 +443,7 @@ router.get('/capabilities', async (req, res) => {
   try {
     const { current_stage, owner, scope } = req.query;
 
-    let query = 'SELECT * FROM capabilities WHERE 1=1';
+    let query = 'SELECT * FROM capabilities_legacy WHERE 1=1';
     const params = [];
 
     if (current_stage) {
@@ -490,7 +489,7 @@ router.get('/capabilities/:id', async (req, res) => {
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM capabilities WHERE id = $1',
+      'SELECT * FROM capabilities_legacy WHERE id = $1',
       [id]
     );
 
@@ -585,7 +584,7 @@ router.post('/capabilities', async (req, res) => {
 
     // Check for duplicate ID
     const existingCheck = await pool.query(
-      'SELECT id FROM capabilities WHERE id = $1',
+      'SELECT id FROM capabilities_legacy WHERE id = $1',
       [id]
     );
     if (existingCheck.rows.length > 0) {
@@ -598,7 +597,7 @@ router.post('/capabilities', async (req, res) => {
 
     // Insert capability
     const result = await pool.query(
-      `INSERT INTO capabilities (
+      `INSERT INTO capabilities_legacy (
         id, name, description, current_stage, stage_definitions,
         related_repos, related_skills, key_tables, evidence, owner
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -660,7 +659,7 @@ router.patch('/capabilities/:id', async (req, res) => {
 
     // Check capability exists
     const existingCheck = await pool.query(
-      'SELECT * FROM capabilities WHERE id = $1',
+      'SELECT * FROM capabilities_legacy WHERE id = $1',
       [id]
     );
     if (existingCheck.rows.length === 0) {
@@ -731,7 +730,7 @@ router.patch('/capabilities/:id', async (req, res) => {
     updates.push('updated_at = NOW()');
 
     const query = `
-      UPDATE capabilities
+      UPDATE capabilities_legacy
       SET ${updates.join(', ')}
       WHERE id = $1
       RETURNING *
@@ -810,11 +809,9 @@ router.post('/pr-plans', async (req, res) => {
       });
     }
 
-    // Validate project exists（迁移：projects → okr_projects UNION okr_scopes UNION okr_initiatives）
+    // Validate project exists（projects 真身）
     const projectCheck = await pool.query(
-      `SELECT id FROM okr_projects WHERE id = $1
-       UNION ALL SELECT id FROM okr_scopes WHERE id = $1
-       UNION ALL SELECT id FROM okr_initiatives WHERE id = $1
+      `SELECT id FROM projects WHERE id = $1
        LIMIT 1`,
       [project_id]
     );
@@ -1432,32 +1429,32 @@ router.post('/attach-decision', async (req, res) => {
     }
 
     // Short-circuit B: Check for related initiatives (score >= 0.65)
-    const relatedInitiatives = (matches || []).filter(m => m.level === 'initiative' && m.score >= 0.65);
-    if (relatedInitiatives.length > 0) {
-      const target = relatedInitiatives[0];
+    const relatedProjects = (matches || []).filter(m => m.level === 'project' && m.score >= 0.65);
+    if (relatedProjects.length > 0) {
+      const target = relatedProjects[0];
       return res.json({
         success: true,
         input,
         attach: {
-          action: 'extend_initiative',
+          action: 'extend_project',
           target: {
             level: target.level,
             id: target.id,
             title: target.title
           },
           confidence: target.score,
-          reason: `属于现有 Initiative 的合理扩展（相似度 ${Math.round(target.score * 100)}%）`,
-          top_matches: relatedInitiatives.slice(0, 3)
+          reason: `属于现有 Project 的合理扩展（相似度 ${Math.round(target.score * 100)}%）`,
+          top_matches: relatedProjects.slice(0, 3)
         },
         route: {
-          path: 'extend_initiative_then_dev',
-          why: ['在现有 Initiative 下扩展功能', '直接创建 dev 任务'],
+          path: 'extend_project_then_dev',
+          why: ['在现有 Project 下扩展功能', '直接创建 dev 任务'],
           confidence: 0.75
         },
         next_call: {
           skill: '/dev',
           args: {
-            initiative_id: target.id,
+            project_id: target.id,
             task_description: input
           }
         }
@@ -1472,19 +1469,19 @@ router.post('/attach-decision', async (req, res) => {
         success: true,
         input,
         attach: {
-          action: 'create_initiative_under_kr',
+          action: 'create_project_under_kr',
           target: {
             level: target.level,
             id: target.id,
             title: target.title
           },
           confidence: target.score,
-          reason: `在现有 KR 下创建新 Initiative（相似度 ${Math.round(target.score * 100)}%）`,
+          reason: `在现有 KR 下创建新 Project（相似度 ${Math.round(target.score * 100)}%）`,
           top_matches: relatedKRs.slice(0, 3)
         },
         route: {
           path: 'okr_then_dev',
-          why: ['需要先创建 Initiative', '然后进行技术验证'],
+          why: ['需要先创建 Project', '然后进行技术验证'],
           confidence: 0.7
         },
         next_call: {
@@ -1509,12 +1506,12 @@ router.post('/attach-decision', async (req, res) => {
           title: null
         },
         confidence: 0.5,
-        reason: '没有找到相关的 OKR/KR/Initiative，需要创建新的',
+        reason: '没有找到相关的 Objective/KR/Project，需要创建新的',
         top_matches: []
       },
       route: {
         path: 'okr_then_dev',
-        why: ['需要完整规划（OKR → Initiative → PR Plans）', '然后进行开发'],
+        why: ['需要完整规划（Objective → KR → Project → Task）', '然后进行开发'],
         confidence: 0.6
       },
       next_call: {
@@ -1896,98 +1893,6 @@ router.post('/analytics/trigger-platform-scrape', async (req, res) => {
     res.status(201).json({ created: scheduled, skipped });
   } catch (err) {
     console.error('[API] analytics/trigger-platform-scrape POST 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── 算力消耗快照 ──────────────────────────────────────────────────────────────
-
-/**
- * POST /api/brain/analytics/compute-snapshot
- * 立即将当前账号用量快照写入 llm_usage_snapshots。
- * tick 每日调用一次；也支持手动触发。
- *
- * Returns: { saved: number }
- */
-router.post('/analytics/compute-snapshot', async (req, res) => {
-  try {
-    const usage = await getAccountUsage(true);
-    const accounts = Object.values(usage);
-    let saved = 0;
-    for (const acc of accounts) {
-      await pool.query(
-        `INSERT INTO llm_usage_snapshots
-           (account_id, five_hour_pct, seven_day_pct, seven_day_sonnet_pct, is_spending_capped, recorded_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())`,
-        [
-          acc.account_id,
-          acc.five_hour_pct || 0,
-          acc.seven_day_pct || 0,
-          acc.seven_day_sonnet_pct || 0,
-          acc.is_spending_capped || false,
-        ]
-      );
-      saved++;
-    }
-    res.json({ saved });
-  } catch (err) {
-    console.error('[API] analytics/compute-snapshot POST 失败:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * GET /api/brain/analytics/compute-usage
- * 查询最近 N 天的算力消耗历史快照。
- *
- * Query params:
- * - days: 统计天数（默认 7）
- * - account_id: 筛选特定账号（可选）
- *
- * Returns: { snapshots: Array, summary: { avg_five_hour_pct, avg_seven_day_pct } }
- */
-router.get('/analytics/compute-usage', async (req, res) => {
-  try {
-    const days = parseInt(req.query.days) || 7;
-    const accountId = req.query.account_id;
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-
-    const params = [since];
-    const accountClause = accountId ? `AND account_id = $2` : '';
-    if (accountId) params.push(accountId);
-
-    const { rows } = await pool.query(
-      `SELECT
-         account_id,
-         ROUND(AVG(five_hour_pct)::numeric, 1)         AS avg_five_hour_pct,
-         ROUND(AVG(seven_day_pct)::numeric, 1)         AS avg_seven_day_pct,
-         ROUND(AVG(seven_day_sonnet_pct)::numeric, 1)  AS avg_sonnet_pct,
-         ROUND(MAX(five_hour_pct)::numeric, 1)         AS peak_five_hour_pct,
-         COUNT(*)::int                                  AS snapshot_count,
-         MIN(recorded_at)                               AS first_recorded_at,
-         MAX(recorded_at)                               AS last_recorded_at
-       FROM llm_usage_snapshots
-       WHERE recorded_at >= $1
-         ${accountClause}
-       GROUP BY account_id
-       ORDER BY account_id`,
-      params
-    );
-
-    const snapshots = rows.map(r => ({
-      account_id: r.account_id,
-      avg_five_hour_pct: Number(r.avg_five_hour_pct),
-      avg_seven_day_pct: Number(r.avg_seven_day_pct),
-      avg_sonnet_pct: Number(r.avg_sonnet_pct),
-      peak_five_hour_pct: Number(r.peak_five_hour_pct),
-      snapshot_count: Number(r.snapshot_count),
-      first_recorded_at: r.first_recorded_at,
-      last_recorded_at: r.last_recorded_at,
-    }));
-
-    res.json({ since: since.toISOString(), days, snapshots });
-  } catch (err) {
-    console.error('[API] analytics/compute-usage GET 失败:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

@@ -111,10 +111,9 @@ source "$SCRIPT_DIR/lib/worktree-guard.sh"
             # 检查该 worktree 对应的 PR 是否已 merged
             _orphan_pr_state=$(gh pr view "$_orphan_wt_branch" --json state --jq '.state' 2>/dev/null || echo "")
             if [[ "$_orphan_pr_state" == "MERGED" ]]; then
-                # git worktree remove 失败不阻塞 hook（|| true）
-                git worktree remove --force "$_orphan_wt_path" 2>/dev/null || \
-                    echo "[Stop Hook] worktree remove 失败（已忽略）: $_orphan_wt_path" >&2 || true
-                echo "[Stop Hook] 已清理已合并 PR 孤儿 worktree: $_orphan_wt_branch" >&2
+                # 真正删除见 lib/worktree-guard.sh::stop_hook_remove_merged_worktree
+                # （2026-09-28 修复：旧实现删除失败仍无条件打印成功日志）
+                stop_hook_remove_merged_worktree "$_orphan_wt_path" "$_orphan_wt_branch" || true
             fi
         fi
     done < <(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null)
@@ -143,6 +142,33 @@ if [[ -n "${CLAUDE_HOOK_TRANSCRIPT_PATH:-}" && -f "${CLAUDE_HOOK_TRANSCRIPT_PATH
             fi
         done
     fi
+fi
+
+# ===== 接力棒闸（2026-09-23 主理人拍板）：有头 /dev 会话绑定的任务，没 handoff 不放行 =====
+# 规则：.dev-mode(.<branch>) 里有 task_id → 查 Brain；任务 in_progress/blocked 且 result.handoff 为空
+#       → exit 2，逼 Claude 先写 handoff（PATCH result.handoff）。completed/其它状态不拦。
+# 逃生：Brain 不可达 / 无 task_id / RELAY_HANDOFF_GATE=off → 放行（闸不能把人锁在 Brain 挂掉的夜里）。
+if [[ "${RELAY_HANDOFF_GATE:-on}" != "off" ]]; then
+    _RELAY_BRAIN="${BRAIN_URL:-http://localhost:5221}"
+    for _dm in "$PROJECT_ROOT"/.dev-mode "$PROJECT_ROOT"/.dev-mode.*; do
+        [[ -f "$_dm" ]] || continue
+        _tid="$(grep -E '^task_id:' "$_dm" 2>/dev/null | head -1 | awk '{print $2}')"
+        [[ -n "$_tid" && "$_tid" != "unknown" ]] || continue
+        _body="$(curl -s --max-time 4 "$_RELAY_BRAIN/api/brain/tasks/$_tid" 2>/dev/null || true)"
+        [[ -n "$_body" ]] || continue
+        _st="$(_parse_json_field status "$_body")"
+        [[ "$_st" == "in_progress" || "$_st" == "blocked" ]] || continue
+        if ! echo "$_body" | grep -qE '"handoff"[[:space:]]*:[[:space:]]*\{'; then
+            echo "⛔ [接力棒] 任务 ${_tid:0:8} 仍 ${_st} 且没有 handoff。收工前必须交棒："
+            echo "   curl -X PATCH $_RELAY_BRAIN/api/brain/tasks/$_tid -H 'Content-Type: application/json' \\"
+            echo "     -d '{\"result\":{\"handoff\":{\"schema_version\":1,\"task_id\":\"$_tid\",\"title\":\"…\",\"verdict\":\"PASS\",\"done\":[\"…\"],\"not_done\":[],\"next_steps\":[{\"kind\":\"task|decision|done\",\"title\":\"…\"}],\"created_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}}'"
+            echo "   （做完了就一并 PATCH status=completed；没做完也要写 not_done + next_steps 再走）"
+            echo "   任务挂了 project_id（接力棒链）、且项目现状/目标/事实/未决问题有变化 → handoff 里顺手带可选 brief_delta（棒2，决策 ee4842a6/3feeae3e），例："
+            echo '     "brief_delta":{"status":"…现状一句话…","add_facts":["…"],"open_questions":["…"],"close_questions":[{"id":"…","resolution":"…"}],"add_steps":[{"title":"…"}],"cancel_steps":["task-id"],"reorder":["task-id",...]}'
+            echo "   （改 goal 或一次 cancel_steps≥3 条会升级为待拍板，不直接生效，其余字段照常生效）"
+            exit 2
+        fi
+    done
 fi
 
 # ===== 没有任何 mode 文件 → 普通对话，允许结束 =====

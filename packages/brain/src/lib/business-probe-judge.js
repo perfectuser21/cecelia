@@ -1,0 +1,395 @@
+/**
+ * business-probe-judge：业务探针判定（棒3a，任务 33aa2bc4，决策 702949b6 / 95e29afd）。
+ *
+ * 一条线：run.finished（lib/task-run.js finishRun 单点发）→ 按 task 的 payload.anchor.journey_id
+ * + result.stage 查 step_probes ⋈ journey_step_links（无锚 → 按 result.workflow / run_id 解析的 workflow
+ * 查 step_probes.workflow，任务 1be07583）→ 逐条比对 observed（task_runs.result.probes）
+ * 与 expected（spec.expect.value 或 expect.ref → result.metrics.<k>）→ 写 journey_assertion_receipts
+ * （executor_kind=business_probe_runner）→ UPDATE journey_step_links.cell_status 翻色。
+ *
+ * 三级格子（迁移 496，任务 45e5db42，决策 3e867cad）：探针 target_type=step|enabler 时回执与翻色落到
+ * journey 下对应的 step:<key> / enabler:<key> 格（没有子格则退回活动格）；活动格颜色 = 自身探针 ∪
+ * 其下 step/enabler 格的最坏值（red > pending > green，gray 不参与）。
+ *
+ * 分层：judgeProbes / cellStatusFor / normalizeProbes / aggregateCellStatus 纯逻辑不碰 DB；
+ * handleRunFinished 走注入 pool（默认 db.js）。全程 fail-open：任何异常只 warn，永不拖垮 finishRun。
+ *
+ * 合同（棒1/棒2）：result = {stage, stage_status, metrics, evidence, probes:[{key, observed, probed_at, error?}]}；
+ * step_probes(probe_key UNIQUE, stage, journey_step_link_id, spec jsonb, spec_hash, severity, active)，
+ * spec = {key, stage, journey_cell, probe:{...}, expect:{op, value?|ref?}, severity}。
+ * 只判 active=true：仓库 YAML 删探针后库行置 active=false（棒2 漂移语义），停用探针不得再以
+ * probe_missing 把格子打红。
+ */
+
+import { persistBusinessProbeReceipt } from '../impact-contract/assertion-receipts.js';
+
+export const SUPPORTED_OPS = Object.freeze(['>=', '==', '<=', 'not_null_all']);
+
+const CELL_RANK = Object.freeze({ red: 3, pending: 2, green: 1 });
+
+/**
+ * probes 两种形状归一：数组 [{key,...}] 或对象 {key:{...}} → Map<key, {key, observed, probed_at?, error?}>。
+ */
+export function normalizeProbes(probes) {
+  const map = new Map();
+  if (Array.isArray(probes)) {
+    for (const p of probes) {
+      if (p && typeof p === 'object' && typeof p.key === 'string') map.set(p.key, p);
+    }
+  } else if (probes && typeof probes === 'object') {
+    for (const [key, p] of Object.entries(probes)) {
+      if (p && typeof p === 'object') map.set(key, { key, ...p });
+    }
+  }
+  return map;
+}
+
+function readPath(root, path) {
+  let cur = root;
+  for (const seg of String(path).split('.')) {
+    if (cur === null || cur === undefined || typeof cur !== 'object') return undefined;
+    cur = cur[seg];
+  }
+  return cur;
+}
+
+/** expect.value 直取；expect.ref="metrics.x" 解析 result.metrics.x。未解析到 → {ok:false}。 */
+function resolveExpected(expect, result) {
+  if (!expect || typeof expect !== 'object') return { ok: false, value: null };
+  if (expect.value !== undefined) return { ok: true, value: expect.value };
+  if (typeof expect.ref === 'string' && expect.ref.trim()) {
+    const value = readPath(result, expect.ref);
+    return value === undefined ? { ok: false, value: null } : { ok: true, value };
+  }
+  return { ok: false, value: null };
+}
+
+function toNumber(v) {
+  if (typeof v === 'boolean' || v === null || v === undefined || v === '') return NaN;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function allNotNull(observed) {
+  if (Array.isArray(observed)) return observed.every((v) => v !== null && v !== undefined);
+  if (observed && typeof observed === 'object') return Object.values(observed).every((v) => v !== null && v !== undefined);
+  return observed !== null && observed !== undefined;
+}
+
+function compare(op, observed, expected) {
+  if (op === 'not_null_all') return allNotNull(observed);
+  if (op === '==') {
+    const a = toNumber(observed);
+    const b = toNumber(expected);
+    if (!Number.isNaN(a) && !Number.isNaN(b)) return a === b;
+    return JSON.stringify(observed) === JSON.stringify(expected);
+  }
+  const a = toNumber(observed);
+  const b = toNumber(expected);
+  if (Number.isNaN(a) || Number.isNaN(b)) return false;
+  return op === '>=' ? a >= b : a <= b;
+}
+
+function severityOf(row) {
+  return row.severity ?? row.spec?.severity ?? 'error';
+}
+
+function judgeOne(row, probeMap, result) {
+  const key = row.probe_key ?? row.spec?.key;
+  const expect = row.spec?.expect ?? {};
+  const op = expect.op;
+  const entry = probeMap.get(key);
+  const base = {
+    key,
+    op: op ?? null,
+    severity: severityOf(row),
+    observed: entry?.observed ?? null,
+    expected: null,
+    probed_at: entry?.probed_at ?? null,
+  };
+  const fail = (reason) => ({ ...base, verdict: 'FAIL', reason });
+  if (!entry) return fail('probe_missing');
+  if (entry.error) return fail('probe_error');
+  if (!SUPPORTED_OPS.includes(op)) return fail('op_unsupported');
+  if (op !== 'not_null_all') {
+    const exp = resolveExpected(expect, result);
+    if (!exp.ok) return fail('ref_unresolved');
+    base.expected = exp.value;
+  }
+  return compare(op, entry.observed, base.expected)
+    ? { ...base, verdict: 'PASS' }
+    : fail('value_mismatch');
+}
+
+/**
+ * 比对：只判 stage 与 result.stage 相同的 spec（stage 为空的 spec 视为不限）。
+ * @param {Array<{probe_key, stage?, severity?, spec, spec_hash, journey_step_link_id, assertion_revision}>} specs
+ * @param {{stage?: string, metrics?: object, probes?: any}} result
+ * @returns {Array<{key, verdict:'PASS'|'FAIL', reason?, observed, expected, op, severity, probed_at}>}
+ */
+export function judgeProbes(specs = [], result = {}) {
+  const probeMap = normalizeProbes(result?.probes);
+  const out = [];
+  for (const row of Array.isArray(specs) ? specs : []) {
+    const stage = row.stage ?? row.spec?.stage ?? null;
+    if (stage && result?.stage && stage !== result.stage) continue;
+    out.push(judgeOne(row, probeMap, result));
+  }
+  return out;
+}
+
+/** PASS→green；FAIL&error→red；FAIL&warn→pending。 */
+export function cellStatusFor(verdict, severity) {
+  if (verdict === 'PASS') return 'green';
+  return severity === 'warn' ? 'pending' : 'red';
+}
+
+/** 同一 cell 多探针取最坏：red > pending > green。 */
+export function aggregateCellStatus(statuses) {
+  let worst = 'green';
+  for (const s of statuses) if ((CELL_RANK[s] ?? 0) > CELL_RANK[worst]) worst = s;
+  return worst;
+}
+
+async function resolvePool(deps) {
+  if (deps?.pool) return deps.pool;
+  return (await import('../db.js')).default;
+}
+
+const PROBE_SELECT = `SELECT sp.probe_key, sp.stage, sp.severity, sp.spec, sp.spec_hash,
+              sp.target_type, sp.target_id,
+              jsl.id AS journey_step_link_id, jsl.assertion_revision, jsl.journey_id,
+              jsl.step_id AS activity_step_id
+         FROM step_probes sp
+         JOIN activity_cells jsl ON jsl.id = sp.journey_step_link_id`;
+
+const CHILD_LEVELS = Object.freeze(['step', 'enabler']);
+
+/**
+ * 子格解析（迁移 496 三级格子，任务 45e5db42）：探针 target_type=step|enabler 时，回执与翻色落到
+ * journey 下对应的 step:<key> / enabler:<key> 格（step_id_ref / enabler_id 匹配），而不是活动格。
+ * 没有对应子格（journey 没生成 / 老探针）→ 退回活动格，判定不丢。
+ * @returns {Map<string, {id, assertion_revision, journey_id, step_id}>} key = `${journey_id}:${level}:${target_id}`
+ */
+async function resolveChildCells(pool, specs) {
+  const journeys = new Set();
+  const stepIds = new Set();
+  const enablerIds = new Set();
+  for (const s of specs) {
+    if (!CHILD_LEVELS.includes(s.target_type) || !s.target_id || !s.journey_id) continue;
+    journeys.add(s.journey_id);
+    (s.target_type === 'step' ? stepIds : enablerIds).add(s.target_id);
+  }
+  const map = new Map();
+  if (journeys.size === 0) return map;
+  const r = await pool.query(
+    `SELECT id, journey_id, step_id, cell_level, step_id_ref, enabler_id, assertion_revision
+       FROM activity_cells
+      WHERE journey_id = ANY($1::uuid[])
+        AND cell_level IN ('step', 'enabler')
+        AND (step_id_ref = ANY($2::uuid[]) OR enabler_id = ANY($3::uuid[]))`,
+    [[...journeys], [...stepIds], [...enablerIds]],
+  );
+  for (const row of r?.rows ?? []) {
+    const targetId = row.cell_level === 'step' ? row.step_id_ref : row.enabler_id;
+    map.set(`${row.journey_id}:${row.cell_level}:${targetId}`, row);
+  }
+  return map;
+}
+
+/** 探针落哪格：子格命中 → 子格（并记所属活动格做汇总）；否则活动格。 */
+function cellFor(row, childCells) {
+  const activity = {
+    linkId: row.journey_step_link_id, assertionRevision: row.assertion_revision,
+    journeyId: row.journey_id, activityStepId: row.activity_step_id ?? null, activityLinkId: row.journey_step_link_id,
+  };
+  if (!CHILD_LEVELS.includes(row.target_type) || !row.target_id) return activity;
+  const child = childCells.get(`${row.journey_id}:${row.target_type}:${row.target_id}`);
+  if (!child) return activity;
+  return { ...activity, linkId: child.id, assertionRevision: child.assertion_revision, isChild: true };
+}
+
+/**
+ * 活动格汇总（决策 3e867cad）：活动格颜色 = 自身探针本轮状态 ∪ 其下全部 step/enabler 格当前颜色的最坏值
+ * （red > pending > green；gray 不参与）。子格上一轮留下的红也会拖红活动，直到该子格被重判。
+ */
+async function rollupActivity(pool, { journeyId, activityStepId, ownStatuses }) {
+  const statuses = [...ownStatuses];
+  if (journeyId && activityStepId) {
+    const r = await pool.query(
+      `SELECT cell_status FROM activity_cells
+        WHERE journey_id = $1 AND step_id = $2 AND cell_level IN ('step', 'enabler')`,
+      [journeyId, activityStepId],
+    );
+    for (const row of r?.rows ?? []) if (CELL_RANK[row.cell_status]) statuses.push(row.cell_status);
+  }
+  return statuses.length > 0 ? aggregateCellStatus(statuses) : null;
+}
+const PROBE_TAIL = `AND sp.active = true
+        ORDER BY sp.probe_key`;
+
+/**
+ * 无锚兜底的 workflow 来源：result.workflow → task payload 能力名（hints.wf_id/capability/cap）→ 从 run_id 解析。
+ * zenithjoy workflow-result.sh 生成的 run_id 形如 `<workflow>-crontab-<TAG>__a<N>.<stage>`
+ * （如 social-keyword-leadgen-crontab-auto09270600__a1.delivery）。
+ */
+export function resolveWorkflow(runId, result, hints = {}) {
+  if (typeof result?.workflow === 'string' && result.workflow.trim()) return result.workflow.trim();
+  // 任务 payload 能力名优先（任务 c2d73868）：对标 run 的账本 run_id 前缀写死 social-keyword-leadgen-crontab-，
+  // 只认前缀会把对标 run 错归到关键词获客；wf_id / capability / cap 任一有值即以它为准。
+  for (const k of ['wf_id', 'capability', 'cap']) {
+    if (typeof hints?.[k] === 'string' && hints[k].trim()) return hints[k].trim();
+  }
+  const id = String(runId ?? '');
+  const idx = id.indexOf('-crontab-');
+  if (idx <= 0) return null;
+  return id.slice(0, idx);
+}
+
+/**
+ * 查探针：有锚按 journey_id；无锚按 step_probes.workflow（zenithjoy device_job 镜像建的任务 payload.anchor
+ * 为空，09-27 获客链首跑判定被 no_anchor 拦死）。两者皆无 → 不查。
+ */
+async function loadSpecs(pool, { journeyId, workflow, stage }) {
+  if (journeyId) {
+    const r = await pool.query(`${PROBE_SELECT}
+        WHERE jsl.journey_id = $1 AND sp.stage = $2
+          ${PROBE_TAIL}`, [journeyId, stage]);
+    return r?.rows ?? [];
+  }
+  const r = await pool.query(`${PROBE_SELECT}
+        WHERE sp.workflow = $1 AND sp.stage = $2
+          ${PROBE_TAIL}`, [workflow, stage]);
+  return r?.rows ?? [];
+}
+
+/** 无锚任务判定成功后：探针指向唯一 journey → 一次性回填 payload.anchor.journey_id（仅为空时写）。 */
+async function backfillAnchor(pool, taskId, specs) {
+  const journeys = new Set(specs.map((s) => s.journey_id).filter(Boolean));
+  if (journeys.size !== 1) return null;
+  const [journeyId] = journeys;
+  await pool.query(
+    `UPDATE tasks
+        SET payload = jsonb_set(COALESCE(payload, '{}'::jsonb), '{anchor}',
+              COALESCE(payload->'anchor', '{}'::jsonb) || jsonb_build_object('journey_id', $1::text), true)
+      WHERE id = $2 AND payload->'anchor'->>'journey_id' IS NULL`,
+    [journeyId, taskId],
+  );
+  return journeyId;
+}
+
+/**
+ * run.finished 处理器：查锚 → 查探针 → 判定 → 写回执 → 翻色。fail-open，返回摘要供日志/测试。
+ * @param {{runId: string, taskId: string, status?: string, result?: object}} payload
+ * @param {{pool?: {query: Function}, persist?: Function}} [deps]
+ */
+export async function handleRunFinished(payload = {}, deps = {}) {
+  const { runId, taskId, result } = payload;
+  try {
+    const stage = typeof result?.stage === 'string' ? result.stage : null;
+    if (!runId || !taskId || !stage) return { skipped: 'no_stage' };
+    // blocked = 阶段没跑（not_in_profile / no_cards / lock_busy / push=0 skipped）：没有结果可判。
+    // 此前照判——账本 init 开跑即写 scoring blocked 占位，探针读到「0 条待分拣」判 PASS，格子整天假绿（任务 4ca3b584）。
+    // failed（跑了但失败）不在此列：失败态的读回正是要暴露问题的。
+    if (result?.stage_status === 'blocked') return { skipped: 'stage_not_run' };
+    const pool = await resolvePool(deps);
+    const persist = deps.persist ?? persistBusinessProbeReceipt;
+
+    const anchor = await pool.query(
+      `SELECT payload->'anchor'->>'journey_id' AS journey_id,
+              payload->>'wf_id' AS wf_id, payload->>'capability' AS capability, payload->>'cap' AS cap
+         FROM tasks WHERE id = $1`,
+      [taskId],
+    );
+    const taskRow = anchor?.rows?.[0] ?? {};
+    const journeyId = taskRow.journey_id || null;
+    const workflow = journeyId ? null : resolveWorkflow(runId, result, taskRow);
+    if (!journeyId && !workflow) return { skipped: 'no_anchor_no_workflow' };
+
+    const specs = await loadSpecs(pool, { journeyId, workflow, stage });
+    if (specs.length === 0) return { skipped: 'no_probes' };
+
+    const verdicts = judgeProbes(specs, result);
+    const childCells = await resolveChildCells(pool, specs);
+    const byLink = new Map();
+    const activities = new Map();
+    const receipts = [];
+    const skipped = [];
+    for (let i = 0; i < specs.length; i += 1) {
+      const row = specs[i];
+      const v = verdicts[i];
+      const cell = cellFor(row, childCells);
+      const evidence = { observed: v.observed, expected: v.expected, op: v.op, severity: v.severity };
+      if (v.reason) evidence.reason = v.reason;
+      const out = await persist(pool, {
+        journeyStepLinkId: cell.linkId,
+        assertionRevision: cell.assertionRevision,
+        probeKey: v.key,
+        specHash: row.spec_hash,
+        runId: String(runId),
+        verdict: v.verdict,
+        evidence,
+        probedAt: v.probed_at,
+      });
+      // 回执落库结果不静默（09-27 生产 judged=3 只落 1 行）：没落库的一律进 skipped 汇总告警
+      const persisted = out?.persisted === true;
+      const skippedReason = persisted ? null : (out?.skipped?.reason ?? 'unknown');
+      if (!persisted) skipped.push({ probe_key: v.key, reason: skippedReason });
+      receipts.push({
+        key: v.key, verdict: v.verdict, reason: v.reason ?? null,
+        receipt_id: out?.receipt?.id ?? null, persisted, skipped_reason: skippedReason,
+      });
+      const status = cellStatusFor(v.verdict, v.severity);
+      const act = activities.get(cell.activityLinkId)
+        ?? { journeyId: cell.journeyId, activityStepId: cell.activityStepId, ownStatuses: [] };
+      if (cell.isChild) {
+        const list = byLink.get(cell.linkId) ?? [];
+        list.push(status);
+        byLink.set(cell.linkId, list);
+      } else {
+        act.ownStatuses.push(status);
+      }
+      activities.set(cell.activityLinkId, act);
+    }
+    const persistedCount = receipts.length - skipped.length;
+
+    const cells = {};
+    const paint = async (linkId, status) => {
+      await pool.query(`UPDATE activity_cells SET cell_status = $1 WHERE id = $2`, [status, linkId]);
+      cells[linkId] = status;
+    };
+    // 先翻子格（step/enabler），再汇总活动格：汇总读的是子格已更新后的颜色
+    for (const [linkId, statuses] of byLink) await paint(linkId, aggregateCellStatus(statuses));
+    for (const [activityLinkId, act] of activities) {
+      const status = await rollupActivity(pool, act);
+      if (status) await paint(activityLinkId, status);
+    }
+    const backfilled = workflow ? await backfillAnchor(pool, taskId, specs) : null;
+    const via = journeyId ? 'anchor' : `workflow:${workflow}`;
+    console.log(`[business-probe-judge] run=${runId} stage=${stage} via=${via} judged=${verdicts.length} persisted=${persistedCount} skipped=${skipped.length} cells=${JSON.stringify(cells)}${backfilled ? ` anchor_backfilled=${backfilled}` : ''}`);
+    if (skipped.length > 0) {
+      console.warn(`[business-probe-judge] run=${runId} stage=${stage} receipts skipped=${skipped.length}: ${skipped.map((s) => `${s.probe_key}=${s.reason}`).join(', ')}`);
+    }
+    return {
+      judged: verdicts.length, persisted: persistedCount, skipped, receipts, cells,
+      ...(workflow ? { workflow, anchor_backfilled: backfilled } : {}),
+    };
+  } catch (err) {
+    console.warn(`[business-probe-judge] run=${runId} judge failed (non-fatal): ${err.message}`);
+    return { error: err.message };
+  }
+}
+
+/**
+ * 启动接线：订阅 run.finished。on / handle 可注入（测试）；默认 event-bus.on + handleRunFinished。
+ * @returns {() => void} 取消订阅
+ */
+export function registerBusinessProbeJudge({ pool, on, handle = handleRunFinished } = {}) {
+  const subscribe = on ?? ((...args) => import('../event-bus.js').then((m) => m.on(...args)));
+  const handler = (payload) => handle(payload, { pool });
+  const unsub = subscribe('run.finished', handler);
+  return () => {
+    if (typeof unsub === 'function') unsub();
+    else if (unsub && typeof unsub.then === 'function') unsub.then((fn) => typeof fn === 'function' && fn());
+  };
+}

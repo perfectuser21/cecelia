@@ -103,7 +103,6 @@ import { memorySyncIfNeeded } from './memory-sync.js';
 import { scheduleDailyScrape } from './daily-scrape-scheduler.js';
 import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { calculateAndWrite as calculateKR3Progress } from './kr3-progress-calculator.js';
-import { updatePublishSuccessKRs } from './kr1-kr2-updater.js';
 import { runDailySmoke } from './cron/daily-real-business-smoke.js';
 import { runDriftSentinel, DRIFT_SENTINEL_INTERVAL_MS } from './cron/drift-sentinel.js';
 import { runSkillDriftPatrol, isInPatrolWindow } from './cron/skill-drift-patrol.js';
@@ -1684,10 +1683,6 @@ async function executeTick() {
   // 10.17g2 KR3 进度回写（每 tick，将里程碑 decisions 转化为 key_results.progress，修复 25% 陈旧数据）
   Promise.resolve().then(() => calculateKR3Progress(pool))
     .catch(e => console.warn('[tick] KR3 进度回写失败:', e.message));
-
-  // 10.17g3 KR1/KR2 发布成功率回写（每 tick，从 publish_success_daily 计算7日均值 → current_value）
-  Promise.resolve().then(() => updatePublishSuccessKRs(pool))
-    .catch(e => console.warn('[tick] KR1/KR2 成功率回写失败:', e.message));
 
   // 10.17h 每日真业务 E2E smoke（UTC 20:00 = 北京时间 04:00，防生产腐蚀，fire-and-forget）
   Promise.resolve().then(() => runDailySmoke(pool))

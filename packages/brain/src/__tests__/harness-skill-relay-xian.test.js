@@ -1,3 +1,7 @@
+// bridge payload 协议测试显式注入授权；真实账号拒绝由目录回归覆盖。
+vi.mock('../execution-directory/legacy-executor.js',()=>({withLegacyExecution:async(_identity,operation)=>operation(),legacyExecutorEntries:()=>[{machineId:'xian-mac-m4',executor:'codex',url:'http://trusted-xian:3458'}]}));
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * [RED] harness-skill-relay xian 派发路径测试
  * BEHAVIOR-2: xian 分支白名单门禁

@@ -1,12 +1,25 @@
+import {assertLinuxPoolAuthority} from './linux-pool/task-authority.js';
+import {assertGpuExecutionSupported} from './lib/gpu-execution-contract.js';
+import {assertAppServerAuthority} from './app-server/task-authority.js';
+import { assertJanitorAuthority } from './janitor-authority.js';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 import { routeWork } from './work-router.js';
+import { runCapabilityGate } from './capability-gate.js';
 import { isCanonicalTaskBranch } from './orchestrator/workspace-spec.js';
 import {
   assertRouteSnapshotLaunchAuthority,
   MAP_SCOPE_VALIDATION_VERSION,
 } from './orchestrator/route-snapshot-authority.js';
+import { REANCHOR_EVIDENCE_KEYS } from './orchestrator/preflight/base-sha-reanchor.js';
+import { assertTaskKind, deriveTaskKind } from './lib/task-kind.js';
+import { assertScriptPayloadForType } from './lib/script-task-spec.js';
+import { assertGoalIsKeyResult } from './lib/goal-guard.js';
+import {
+  assertOwnerDecisionProtocol, openOwnerDecisionPendingAction, OWNER_DECISION_REASON,
+} from './lib/owner-decision.js';
+import { addTaskDependencies } from './lib/task-dependencies.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 
@@ -96,7 +109,7 @@ export async function resolveCanonicalRoutingEvidence(request, repositoryFacts) 
   return Object.freeze({ branch, base_sha: baseSha });
 }
 
-async function loadRepositoryFacts(client) {
+export async function loadRepositoryFacts(client) {
   const result = await client.query(
     `SELECT scope_key, repo, adapter_config
        FROM map_scope_repositories
@@ -150,7 +163,37 @@ async function assertMutationMapScopeResolvable(client, decision) {
   }
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 父任务校验：null 直通；非 uuid / 不存在 → 抛 parent_task_not_found（路由层映射 400）。 */
+export async function resolveParentTaskId(client, raw) {
+  if (raw == null || raw === '') return null;
+  const id = String(raw).trim();
+  if (!UUID_RE.test(id)) {
+    const err = new Error('parent_task_not_found'); err.code = 'parent_task_not_found'; err.parent_task_id = id; throw err;
+  }
+  const { rows } = await client.query('SELECT id FROM tasks WHERE id = $1::uuid', [id]);
+  if (!rows.length) {
+    const err = new Error('parent_task_not_found'); err.code = 'parent_task_not_found'; err.parent_task_id = id; throw err;
+  }
+  return rows[0].id;
+}
+
+// 接班收据只改 REANCHOR_EVIDENCE_KEYS 这几个字段（任务 d9c405e2）；幂等比对时剔除，
+// 避免重入撞 idempotency_conflict。过滤键来自 base-sha-reanchor.js 的共享常量，
+// 与接班收据实际写入的字段保持单一来源，不在此处重复硬编码键名。
+export function stripReanchorEvidence(evidence) {
+  return Object.fromEntries(
+    Object.entries(evidence ?? {}).filter(([key]) => !REANCHOR_EVIDENCE_KEYS.includes(key)),
+  );
+}
+
 export async function createRoutedTask(db, request, repositoryFacts = null, options = {}) {
+  assertGpuExecutionSupported(request.metadata);
+  assertGpuExecutionSupported(request.task?.payload);
+  assertJanitorAuthority(request, options);
+  assertAppServerAuthority(request, options);
+  assertLinuxPoolAuthority(request, options);
   const ownsTransaction = options.transaction !== 'existing';
   const client = ownsTransaction && typeof db.connect === 'function'
     ? await db.connect()
@@ -159,7 +202,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
     if (ownsTransaction) await client.query('BEGIN');
     const facts = repositoryFacts ?? await loadRepositoryFacts(client);
     let routedRequest = request;
-    let decision = routeWork(routedRequest, facts);
+    let decision = routeWork(routedRequest, facts, options);
     await client.query(
       'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
       [`work-route:${request.source}:${request.source_id}:${decision.router_version}`],
@@ -175,7 +218,9 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
               ) AS has_v2_run
          FROM work_routing_receipts r
          JOIN tasks t ON t.id = r.task_id
-        WHERE r.source=$1 AND r.source_id=$2 AND r.router_version=$3`,
+        WHERE r.source=$1 AND r.source_id=$2 AND r.router_version=$3
+        ORDER BY r.anchor_generation DESC, r.created_at DESC
+        LIMIT 1`,
       [request.source, request.source_id, decision.router_version],
     );
     if (
@@ -193,7 +238,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
           facts,
         );
       routedRequest = { ...routedRequest, ...evidence };
-      decision = routeWork(routedRequest, facts);
+      decision = routeWork(routedRequest, facts, options);
     }
     if (
       decision.work_kind === 'coding_mutation'
@@ -207,10 +252,25 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       throw error;
     }
     const task = request.task ?? {};
+    // kind 真列（迁移 466，决策 df67a9d6）：调用方给了就校验后照写（Jev/人工判定优先），
+    // 没给按 canonical_task_type 从注册表派生。非法值在这里抛 → 走下面的 ROLLBACK，不 INSERT。
+    const taskKind = task.kind != null ? assertTaskKind(task.kind) : deriveTaskKind(decision.canonical_task_type);
+    // 接力棒脊柱：parent_task_id 走真列（458）。合法 uuid + 父存在 + 不指向自己，否则 400 级错误。
+    const parentTaskId = await resolveParentTaskId(client, task.parent_task_id ?? request.parent_task_id ?? null);
+    // sequence_no 缺省 = 父下 max+1；无父不查（不给无链任务加查询）
+    let sequenceNo = task.sequence_no ?? null;
+    if (parentTaskId && sequenceNo == null) {
+      const seq = await client.query(
+        'SELECT COALESCE(MAX(sequence_no), 0) + 1 AS n FROM tasks WHERE parent_task_id = $1::uuid',
+        [parentTaskId],
+      );
+      sequenceNo = Number(seq.rows[0]?.n ?? 1);
+    }
     const directContractSeed = normalizeDirectContractSeed(routedRequest, decision);
     const payload = {
       ...(request.metadata || {}),
       ...(task.payload || {}),
+      ...(parentTaskId ? { parent_task_id: parentTaskId } : {}),
       work_kind: decision.work_kind,
       change_kind: decision.change_kind,
       requested_task_type: request.requested_task_type ?? task.task_type ?? null,
@@ -241,8 +301,8 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         && JSON.stringify(persisted.map_scope) === JSON.stringify(decision.map_scope)
         && persisted.impact_contract_required === decision.impact_contract_required
         && persisted.orchestrator === decision.orchestrator
-        && JSON.stringify(canonicalJson(persisted.evidence))
-          === JSON.stringify(canonicalJson(decision.evidence))
+        && JSON.stringify(canonicalJson(stripReanchorEvidence(persisted.evidence)))
+          === JSON.stringify(canonicalJson(stripReanchorEvidence(decision.evidence)))
         && (
           legacyDirectSeed
           || JSON.stringify(canonicalJson(persistedDirectSeed))
@@ -287,16 +347,43 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       };
     }
     await assertMutationMapScopeResolvable(client, decision);
+    // 决策分档机械守卫（决策 105a5868，链 bf5088a3 棒5）：幂等命中之后、物化 task 之前。
+    // ① goal_id 给了必须是 KR 级（Objective id 会被 tick 派发白名单静默过滤）
+    // ② blocked_reason=owner_decision 必须带协议（缺项抛，事务 ROLLBACK，不留半截任务）
+    await assertGoalIsKeyResult(client, task.goal_id ?? null);
+    assertOwnerDecisionProtocol({ reason: task.blocked_reason ?? null, detail: task.blocked_detail ?? null });
+    // executor=script 一等类型（棒 3）：script_run 的 payload 契约（host 只认跑场机 / cmd 无控制字符 / env 白名单 / timeout 必填）
+    // 在物化 task 前必过，违规抛 script_payload_invalid，事务 ROLLBACK，不留半截任务。
+    assertScriptPayloadForType(decision.canonical_task_type, payload);
+    // 三镜头能力级前置门禁：new_capability 在选 pipeline 后、物化 task 前必经三镜头对抗，
+    // 判决 + postcondition + NFR 三数落 decisions（同事务，reject/落库失败 → ROLLBACK 不建 task）。
+    // adjudicate 由生产接线（harness-skill-relay 的 capability-controller relay）注入；
+    // 未注入时不触发门禁，保持既有路由行为不变（三镜头本体是更外层第三方推理边界）。
+    const adjudicateCapability = options.adjudicateCapability;
+    if (decision.change_kind === 'new_capability' && typeof adjudicateCapability === 'function') {
+      const capabilityStepId = options.capabilityStepId
+        ?? request.step_id
+        ?? request.journey_step_id
+        ?? null;
+      await runCapabilityGate(client, {
+        changeKind: decision.change_kind,
+        stepId: capabilityStepId,
+        request: routedRequest,
+        adjudicate: adjudicateCapability,
+      });
+    }
     const taskResult = await client.query(
       `INSERT INTO tasks (
          title, description, priority, task_type, status,
          project_id, area_id, goal_id, location, payload, trigger_source,
          domain, okr_initiative_id, ability_id, blocked_at,
          tags, prd_content, execution_profile, owner_role, delivery_type,
-         created_by, dept, phase, executor_kind
+         created_by, dept, phase, executor_kind,
+         parent_task_id, sequence_no, kind, blocked_reason, blocked_detail
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,
-         $16,$17,$18,$19,$20,$21,$22,$23,$24
+         $16,$17,$18,$19,$20,$21,$22,$23,$24,
+         $25::uuid, $26::int, $27, $28, $29::jsonb
        ) RETURNING *`,
       [
         request.title,
@@ -323,6 +410,11 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         task.dept ?? null,
         task.phase ?? 'dev',
         task.executor_kind ?? null,
+        parentTaskId,
+        sequenceNo,
+        taskKind,
+        task.blocked_reason ?? null,
+        task.blocked_detail == null ? null : JSON.stringify(task.blocked_detail),
       ],
     );
     const taskId = taskResult.rows[0].id;
@@ -347,6 +439,14 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         route_reason: decision.route_reason,
       })],
     );
+    // owner_decision：waiting_on=human 才进主理人待办（同事务，任务与待办同生共死）
+    if (task.blocked_reason === OWNER_DECISION_REASON) {
+      await openOwnerDecisionPendingAction(client, { taskId, title: request.title, detail: task.blocked_detail });
+    }
+    // 依赖单一写口：建单带 payload.depends_on → 同事务写 hard 边（宽松：脏 id 跳过，不因历史调用方让建单失败）
+    if (Array.isArray(payload.depends_on) && payload.depends_on.length > 0) {
+      await addTaskDependencies(client, taskId, payload.depends_on, { strict: false });
+    }
     if (ownsTransaction) await client.query('COMMIT');
     return {
       task_id: taskId,

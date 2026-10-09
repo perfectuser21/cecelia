@@ -158,7 +158,7 @@ describe('runPostdeployVerifier — DB 状态流转', () => {
     const result = await runPostdeployVerifier(pool);
 
     expect(result.failed).toBe(1);
-    const failedUpdate = updateCalls.find((q) => q.sql.includes("status='failed'"));
+    const failedUpdate = updateCalls.find((q) => q.sql.includes("status = 'failed'"));
     expect(failedUpdate).toBeTruthy();
     expect(failedUpdate.params[1]).toMatch(/非法/);
   });
@@ -217,10 +217,11 @@ describe('runPostdeployVerifier — DB 状态流转', () => {
     // retry 1/3，还没到 MAX_RETRIES，不算 failed
     expect(result.failed).toBe(0);
     // status 保持 pending_postdeploy
-    const update = updateCalls.find((q) => q.sql.includes('postdeploy_retry_count'));
+    const update = updateCalls.find((q) => q.params?.some((p) => typeof p === 'string' && p.includes('postdeploy_retry_count')));
     expect(update).toBeTruthy();
-    const statusArg = update.params[1]; // $2 = newStatus
-    expect(statusArg).toBe('pending_postdeploy');
+    // 未超上限：非终态写，status 留 pending_postdeploy 字面量，绝不进终态 hub
+    expect(update.sql).toContain("status = 'pending_postdeploy'");
+    expect(update.sql).not.toContain("status = 'failed'");
   });
 
   it('节流：连续两次调用第二次跳过', async () => {

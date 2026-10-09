@@ -40,6 +40,49 @@ fi
 
 echo "=== registry photo-layer scan $(date '+%F %T %Z') ==="
 
+# 运行期噪音过滤（2026-09-23 P0 事故 9dfd873a：cecelia-scan-main/.cecelia/hb.sh +
+# .cecelia/lights/*.live 心跳文件把只读扫描镜像仓库标记为不干净，rescan 连续拒绝
+# 21.5h，四类快照陈旧，派发闸连撞 map_stale 触发 dispatch_fail_autoblock）。
+#
+# 两种候选修法二选一，此处选「过滤法」：
+#   A) 过滤法（本实现）——git status --porcelain 结果里剔除已知运行期路径模式后再判定 clean。
+#      优点：扫描器全程只读，绝不改动/删除 checkout 里的任何文件；被扫描的仓库可能同时
+#      被其它会话使用（如 scan-main 本不该被开发但若已被污染，这里也不该越权清理它），
+#      过滤判定不承担"我猜这些文件可以删"的责任，行为可预测、易审计。
+#   B) 自动清理法（未采用）——扫描前 stash/rm 掉运行期文件。
+#      缺点：这是只读扫描器，赋予它写权限（哪怕只删自己不认识的文件）本身就是风险面；
+#      且两种做法混用会让"谁负责清理"边界不清，故只选一种。
+# 已知运行期路径模式（非代码产物，不该参与 clean 判定）：
+#   .cecelia/          — dev-heartbeat-guardian 心跳灯（hb.sh + lights/*.live）
+#   .dev-lock* / .dev-mode* — /dev 会话锁与模式标记（已在 .gitignore，双重保险）
+#   node_modules/      — 依赖树（已在 .gitignore，双重保险）
+RUNTIME_NOISE_PATTERN='^\.cecelia/|^\.dev-lock|^\.dev-mode|^node_modules/'
+
+# 读取 `git status --porcelain` 的原始输出（经 stdin），剔除已知运行期噪音路径后
+# 打印剩余的"真脏"行；不改动、不删除任何文件。
+filter_runtime_noise() {
+  local line path
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    path="${line:3}"
+    path="${path#* -> }"  # rename 条目 "R  old -> new"：按目标路径判断
+    if [[ "$path" =~ $RUNTIME_NOISE_PATTERN ]]; then
+      continue
+    fi
+    printf '%s\n' "$line"
+  done
+}
+
+# 过滤后的 dirty 判定：$1 = 目标 repo root（省略 = 当前目录）。
+dirty_status() {
+  local root="${1:-}"
+  if [[ -n "$root" ]]; then
+    git -C "$root" status --porcelain 2>/dev/null | filter_runtime_noise
+  else
+    git status --porcelain 2>/dev/null | filter_runtime_noise
+  fi
+}
+
 # 2. 确定 node 可执行路径（不依赖 ${HOME}）
 if [[ -z "${NODE_BIN:-}" ]]; then
   NODE_BIN=""
@@ -75,7 +118,7 @@ if [[ "${FACT_SNAPSHOT_TEST_MODE:-}" != "1" ]]; then
     echo "ERROR: 事实扫描必须运行在 main 分支" >&2
     exit 3
   fi
-  if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+  if [[ -n "$(dirty_status)" ]]; then
     echo "ERROR: 事实扫描拒绝不干净工作区" >&2
     exit 3
   fi
@@ -115,7 +158,7 @@ FAIL=0
 run_scanner() {
   local scanner="$1" repo_name="${2:-}" repo_root="${3:-}" source_database_url="${4:-}"
   if [[ -n "$repo_name" ]]; then
-    SCAN_REPO_NAME="$repo_name" SCAN_REPO_ROOT="$repo_root" \
+    SCAN_REPO_NAME="$repo_name" SCAN_REPO_ROOT="$repo_root" SCAN_SOURCE_REPO_NAME="${5:-$repo_name}" \
       SOURCE_DATABASE_URL="${source_database_url:-${DATABASE_URL:-}}" \
       GRAPH_REPOS="$repo_name" "$NODE_BIN" "scripts/scan/${scanner}"
   else
@@ -128,7 +171,7 @@ prepare_repo() {
   PREPARED_HEAD="$SCAN_HEAD"
   [[ "${FACT_SNAPSHOT_TEST_MODE:-}" == "1" ]] && return 0
   if [[ "$(git -C "$repo_root" branch --show-current 2>/dev/null)" != "main" ]] \
-    || [[ -n "$(git -C "$repo_root" status --porcelain 2>/dev/null)" ]]; then
+    || [[ -n "$(dirty_status "$repo_root")" ]]; then
     echo "ERROR: 目标事实仓必须是 clean main: $repo_root" >&2
     return 3
   fi
@@ -179,10 +222,34 @@ fi
   exit 3
 }
 
+# 既有定时批次自动追加已显式登记的试点图；原仓四类事实与scope保持不变。
+TARGET_SOURCE_NAMES=("${TARGET_NAMES[@]}")
+PRIMARY_TARGET_COUNT=${#TARGET_NAMES[@]}
+PRIMARY_TARGET_NAMES="${TARGET_NAMES[*]}"
+PILOT_SCOPES=()
+if [[ $DEFAULT_BATCH -eq 1 ]]; then
+  for ((_i=0; _i<PRIMARY_TARGET_COUNT; _i++)); do
+    if ! _pilot_targets="$("$NODE_BIN" scripts/scan/pilot-graph-targets.mjs "${TARGET_NAMES[$_i]}" "${TARGET_ROOTS[$_i]}")"; then
+      echo "ERROR: pilot graph target registration/source verification failed" >&2
+      exit 3
+    fi
+    while IFS='|' read -r _pilot_repo _pilot_root _pilot_scope; do
+      [[ -z "$_pilot_repo" ]] && continue
+      TARGET_SOURCE_NAMES+=("${TARGET_NAMES[$_i]}")
+      TARGET_NAMES+=("$_pilot_repo")
+      TARGET_ROOTS+=("$_pilot_root")
+      TARGET_DATABASE_URLS+=("")
+      TARGET_HEADS+=("${TARGET_HEADS[$_i]}")
+      PILOT_SCOPES+=("$_pilot_scope")
+    done <<< "$_pilot_targets"
+  done
+fi
+
 for _target_index in "${!TARGET_NAMES[@]}"; do
   for _s in "${SCANNERS[@]}"; do
+    if [[ $_target_index -ge $PRIMARY_TARGET_COUNT && "$_s" != "scan-graph.mjs" ]]; then continue; fi
     if run_scanner "$_s" "${TARGET_NAMES[$_target_index]}" \
-      "${TARGET_ROOTS[$_target_index]}" "${TARGET_DATABASE_URLS[$_target_index]}"; then
+      "${TARGET_ROOTS[$_target_index]}" "${TARGET_DATABASE_URLS[$_target_index]}" "${TARGET_SOURCE_NAMES[$_target_index]}"; then
       echo "OK: repo=${TARGET_NAMES[$_target_index]} ${_s}"
     else
       echo "FAIL: repo=${TARGET_NAMES[$_target_index]} ${_s}"
@@ -199,7 +266,7 @@ fi
 
 FINAL_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
 if [[ "$FINAL_HEAD" != "$EXPECTED_HEAD" ]] \
-  || { [[ "${FACT_SNAPSHOT_TEST_MODE:-}" != "1" ]] && [[ -n "$(git status --porcelain 2>/dev/null)" ]]; }; then
+  || { [[ "${FACT_SNAPSHOT_TEST_MODE:-}" != "1" ]] && [[ -n "$(dirty_status)" ]]; }; then
   echo "ERROR: 扫描期间 checkout revision 或工作区状态发生变化，拒绝发布" >&2
   exit 3
 fi
@@ -209,12 +276,12 @@ for _target_index in "${!TARGET_NAMES[@]}"; do
     && [[ "${TARGET_ROOTS[$_target_index]}" != "$REPO_ROOT" ]]; then
     _final_target_head="$(git -C "${TARGET_ROOTS[$_target_index]}" rev-parse HEAD 2>/dev/null || true)"
     if [[ "$_final_target_head" != "${TARGET_HEADS[$_target_index]}" ]] \
-      || [[ -n "$(git -C "${TARGET_ROOTS[$_target_index]}" status --porcelain 2>/dev/null)" ]]; then
+      || [[ -n "$(dirty_status "${TARGET_ROOTS[$_target_index]}")" ]]; then
       echo "ERROR: repo=${TARGET_NAMES[$_target_index]} 扫描期间 revision 或工作区漂移" >&2
       exit 3
     fi
   fi
-  if [[ $DEFAULT_BATCH -eq 1 ]] \
+  if [[ $DEFAULT_BATCH -eq 1 && $_target_index -lt $PRIMARY_TARGET_COUNT ]] \
     && ! SCAN_REPO="${TARGET_NAMES[$_target_index]}" \
       "$NODE_BIN" scripts/scan/verify-scan-batch.mjs "${TARGET_HEADS[$_target_index]}"; then
     echo "ERROR: repo=${TARGET_NAMES[$_target_index]} 四类事实未锁定到同一 revision" >&2
@@ -230,10 +297,11 @@ fi
 if [[ -n "${MAP_REBUILD_SCOPES+x}" ]]; then
   MAP_SCOPES_RAW="$MAP_REBUILD_SCOPES"
 elif [[ -n "${SCAN_REPO_SPECS+x}" ]]; then
-  MAP_SCOPES_RAW="${TARGET_NAMES[*]}"
+  MAP_SCOPES_RAW="$PRIMARY_TARGET_NAMES"
 else
   MAP_SCOPES_RAW="cecelia"
 fi
+MAP_SCOPES_RAW="$MAP_SCOPES_RAW ${PILOT_SCOPES[*]:-}"
 MAP_SCOPES=()
 for _scope in $MAP_SCOPES_RAW; do
   [[ -n "${_scope//[[:space:]]/}" ]] && MAP_SCOPES+=("$_scope")

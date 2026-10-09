@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from '../../../tests/helpers/lifecycle-attempt-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -5,7 +6,6 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { DB_DEFAULTS } from '../../db-config.js';
-import { createAttemptStore } from '../../orchestrator/attempt-store.js';
 import { seedOwnedActiveV2Run } from './helpers/controller-authority-fixture.js';
 
 const { Pool } = pg;
@@ -30,7 +30,7 @@ async function seedPendingIntent() {
     [taskId, `migration 425 shape ${taskId}`],
   );
   await seedOwnedActiveV2Run(testPool, { runId, taskId, phase: 'planning' });
-  await createAttemptStore(testPool).createAttempt({
+  await seedLifecycleAttempt(testPool, {
     id: attemptId,
     runId,
     hop: 1,

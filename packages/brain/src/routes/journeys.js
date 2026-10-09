@@ -4,74 +4,18 @@ import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { buildCascadeReport } from '../cascade-list.js';
 import { classifyJourneyCellAssertion } from '../lib/journey-cell-assertion.js';
+import { journeyRegistrationRouter } from './journey-registration.js';
+import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
 
 const router = Router();
 router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
 
-const VALID_JOURNEY_TYPES = ['user_facing', 'autonomous', 'dev_pipeline', 'agent_remote'];
 const VALID_THICKNESS     = ['thin', 'medium', 'thick', 'mature'];
 const VALID_PRIORITY      = ['P0', 'P1', 'P2', 'P3'];
-const VALID_HOME          = ['biz', 'pre', 'xcut', 'factory'];
 const VALID_SOFTNESS      = ['hard', 'soft'];
 const VALID_CELL_STATUS   = ['gray', 'red', 'pending', 'green'];
 
-// POST /api/brain/journeys
-router.post('/journeys', internalAuthOrLoopback, async (req, res) => {
-  try {
-    const { name, journey_type, description, maturity, status, e2e_test_path, area, steps,
-            home, trigger, endpoint } = req.body;
-    if (!name) return res.status(400).json({ error: 'name is required' });
-    if (!journey_type || !VALID_JOURNEY_TYPES.includes(journey_type)) {
-      return res.status(400).json({ error: `journey_type must be one of: ${VALID_JOURNEY_TYPES.join(',')}` });
-    }
-    if (home && !VALID_HOME.includes(home)) {
-      return res.status(400).json({ error: `home must be one of: ${VALID_HOME.join(',')}` });
-    }
-
-    // area name → area_id lookup
-    let areaId = null;
-    if (area) {
-      const { rows } = await pool.query('SELECT id FROM areas WHERE name=$1 LIMIT 1', [area]);
-      if (rows.length > 0) areaId = rows[0].id;
-    }
-
-    const { rows } = await pool.query(
-      `INSERT INTO journeys
-         (name, journey_type, description, maturity, status, e2e_test_path, area_id,
-          home, trigger, endpoint, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL)
-       RETURNING *`,
-      [
-        name,
-        journey_type,
-        description || null,
-        maturity || 'not_started',
-        status || 'active',
-        e2e_test_path || null,
-        areaId,
-        home || null,
-        trigger || null,
-        endpoint || null,
-      ]
-    );
-    const journey = rows[0];
-
-    if (Array.isArray(steps) && steps.length > 0) {
-      for (let i = 0; i < steps.length; i++) {
-        await pool.query(
-          `INSERT INTO journey_steps (journey_id, name, step_number, notion_synced_at)
-           VALUES ($1,$2,$3,NULL) ON CONFLICT (journey_id, step_number) DO NOTHING`,
-          [journey.id, steps[i], i + 1]
-        );
-      }
-    }
-
-    res.status(201).json(journey);
-  } catch (err) {
-    console.error('[journeys] POST /journeys error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
+router.use(journeyRegistrationRouter(pool));
 
 // GET /api/brain/journeys
 router.get('/journeys', async (req, res) => {
@@ -85,7 +29,7 @@ router.get('/journeys', async (req, res) => {
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     params.push(limit, offset);
     const { rows } = await pool.query(
-      `SELECT * FROM journeys ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      `SELECT * FROM ${TREE_NODES_SQL} n ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
     res.json(rows);
@@ -98,40 +42,11 @@ router.get('/journeys', async (req, res) => {
 // GET /api/brain/journeys/:id
 router.get('/journeys/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM journeys WHERE id=$1', [req.params.id]);
+    const { rows } = await pool.query(`SELECT * FROM ${TREE_NODES_SQL} n WHERE id=$1`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'not found' });
     res.json(rows[0]);
   } catch (err) {
     console.error('[journeys] GET /journeys/:id error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// PATCH /api/brain/journeys/:id — 承诺地图字段（mapper 落账用）
-router.patch('/journeys/:id', internalAuthOrLoopback, async (req, res) => {
-  try {
-    const { home, domain, trigger, endpoint, description, maturity } = req.body;
-    if (home && !VALID_HOME.includes(home)) {
-      return res.status(400).json({ error: `home must be one of: ${VALID_HOME.join(',')}` });
-    }
-    const sets = [];
-    const vals = [];
-    let idx = 1;
-    if (home !== undefined)        { sets.push(`home=$${idx++}`);        vals.push(home); }
-    if (domain !== undefined)      { sets.push(`domain=$${idx++}`);      vals.push(domain); }
-    if (trigger !== undefined)     { sets.push(`trigger=$${idx++}`);     vals.push(trigger); }
-    if (endpoint !== undefined)    { sets.push(`endpoint=$${idx++}`);    vals.push(endpoint); }
-    if (description !== undefined) { sets.push(`description=$${idx++}`); vals.push(description); }
-    if (maturity !== undefined)    { sets.push(`maturity=$${idx++}`);    vals.push(maturity); }
-    if (!sets.length) return res.status(400).json({ error: 'no fields to update' });
-    sets.push(`updated_at=NOW()`);
-    vals.push(req.params.id);
-    const { rows } = await pool.query(
-      `UPDATE journeys SET ${sets.join(',')} WHERE id=$${idx} RETURNING *`, vals);
-    if (!rows.length) return res.status(404).json({ error: 'not found' });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error('[journeys] PATCH /journeys/:id error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -158,12 +73,14 @@ router.get('/journey_features/:id/blast-radius', async (req, res) => {
     if (!frows.length) return res.status(404).json({ error: 'feature not found' });
     const { rows } = await pool.query(
       `SELECT j.id AS journey_id, j.name AS journey_name, j.domain,
-              s.id AS step_id, s.name AS step_name, s.step_number, s.promise, l.cell_status
-       FROM journey_step_links l
-       JOIN journey_steps s ON s.id = l.step_id
-       JOIN journeys j ON j.id = s.journey_id
-       WHERE l.feature_id = $1 AND l.cell_kind = 'base_ref'
-       ORDER BY j.name, s.step_number`, [req.params.id]);
+              s.id AS step_id, s.name AS step_name, p.step_number, s.promise, COALESCE(u.cell_status, 'gray') AS cell_status
+       FROM warehouse_items i
+       JOIN activity_uses u ON u.item_id = i.id
+       JOIN activities s ON s.id = u.activity_id
+       JOIN activity_placement p ON p.activity_id = s.id
+       JOIN capabilities j ON j.id = p.capability_id
+       WHERE i.legacy_feature_id = $1
+       ORDER BY j.name, p.step_number`, [req.params.id]);
     res.json({ feature: frows[0], blast_radius: rows, count: rows.length });
   } catch (err) {
     console.error('[journeys] GET blast-radius error:', err.message);
@@ -231,7 +148,7 @@ router.post('/journey_features', internalAuthOrLoopback, async (req, res) => {
     let journeyUuid = null;
     if (journey_id) {
       const { rows: jr } = await pool.query(
-        'SELECT id FROM journeys WHERE id::text=$1 OR notion_id=$1 LIMIT 1', [journey_id]
+        `SELECT id FROM ${TREE_NODES_SQL} n WHERE id::text=$1 OR notion_id=$1 LIMIT 1`, [journey_id]
       );
       journeyUuid = jr.length ? jr[0].id : null;
     }
@@ -409,11 +326,12 @@ router.get('/journey_steps', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 100, 500);
     const params = [];
     const clauses = [];
-    if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`journey_id=$${params.length}`); }
+    if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`p.capability_id=$${params.length}`); }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     params.push(limit);
     const { rows } = await pool.query(
-      `SELECT * FROM journey_steps ${where} ORDER BY journey_id, step_number LIMIT $${params.length}`,
+      `SELECT a.*, p.capability_id AS journey_id, p.step_number FROM activities a
+         LEFT JOIN activity_placement p ON p.activity_id = a.id ${where} ORDER BY p.capability_id, p.step_number, a.created_at LIMIT $${params.length}`,
       params
     );
     res.json(rows);
@@ -425,26 +343,48 @@ router.get('/journey_steps', async (req, res) => {
 
 // POST /api/brain/journey_steps
 router.post('/journey_steps', internalAuthOrLoopback, async (req, res) => {
+  const client = await pool.connect();
   try {
     const { journey_id, name, step_number, description, status, promise, backbone_version } = req.body;
     if (!journey_id || !name || step_number === undefined) {
       return res.status(400).json({ error: 'journey_id, name, step_number are required' });
     }
-    const { rows } = await pool.query(
-      `INSERT INTO journey_steps (journey_id, name, step_number, description, status, promise, backbone_version, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'1.0'),NULL)
-       ON CONFLICT (journey_id, step_number) DO UPDATE SET
-         name=EXCLUDED.name, description=EXCLUDED.description,
-         promise=COALESCE(EXCLUDED.promise, journey_steps.promise),
-         backbone_version=COALESCE($7, journey_steps.backbone_version),
-         updated_at=NOW()
-       RETURNING *`,
-      [journey_id, name, step_number, description || null, status || 'planned', promise || null, backbone_version || null]
-    );
-    res.status(200).json(rows[0]);
+    // 位置在流程引用里（迁移 527）：journey_id 是能力，step_number 是该能力某个流程里的顺序。
+    // 已有该序号的步骤就更新它，没有就放进能力的主线流程（没有主线流程且能力下恰好一个流程就用它，否则新建主线流程）。
+    await client.query('BEGIN');
+    const slot = `step_${step_number}`;
+    const existing = (await client.query(
+      `SELECT r.activity_id FROM workflow_activity_refs r JOIN workflows w ON w.id = r.workflow_id
+        WHERE w.capability_id = $1 AND r.slot_key = $2 AND r.active ORDER BY w.created_at LIMIT 1`, [journey_id, slot])).rows[0];
+    let row;
+    if (existing) {
+      row = (await client.query(
+        `UPDATE activities SET name=$2, description=$3, promise=COALESCE($4, promise),
+           backbone_version=COALESCE($5, backbone_version), updated_at=NOW(), notion_synced_at=NULL
+         WHERE id=$1 RETURNING *`, [existing.activity_id, name, description || null, promise || null, backbone_version || null])).rows[0];
+    } else {
+      const flows = (await client.query('SELECT id, key FROM workflows WHERE capability_id = $1 ORDER BY created_at', [journey_id])).rows;
+      const main = flows.find(f => f.key.startsWith('gp_steps_')) || (flows.length === 1 ? flows[0] : null);
+      const workflowId = main?.id || (await client.query(
+        `INSERT INTO workflows(capability_id,key,name,channel,version,status)
+         VALUES($1,$2,$3,'internal','1.0','active') RETURNING id`,
+        [journey_id, `gp_steps_${String(journey_id).slice(0, 8)}`, '主线'])).rows[0].id;
+      row = (await client.query(
+        `INSERT INTO activities (name, description, status, promise, backbone_version, notion_synced_at)
+         VALUES ($1,$2,$3,$4,COALESCE($5,'1.0'),NULL) RETURNING *`,
+        [name, description || null, status || 'planned', promise || null, backbone_version || null])).rows[0];
+      await client.query('INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no) VALUES($1,$2,$3,$4)',
+        [workflowId, slot, row.id, step_number]);
+    }
+    await client.query('COMMIT');
+    res.status(200).json({ ...row, journey_id, step_number });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === '23503') return res.status(404).json({ error: 'capability not found' });
     console.error('[journeys] POST /journey_steps error:', err.message);
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -466,13 +406,49 @@ router.get('/journey_step_links', async (req, res) => {
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     params.push(limit);
     const { rows } = await pool.query(
-      `SELECT * FROM journey_step_links ${where} ORDER BY journey_id, step_order LIMIT $${params.length}`,
+      `SELECT * FROM activity_cells ${where} ORDER BY journey_id, step_order LIMIT $${params.length}`,
       params
     );
     res.json(rows);
   } catch (err) {
     console.error('[journeys] GET /journey_step_links error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/brain/activity_uses —— 登记 Activity 用了哪件仓库物件（取代底座引用格子；(activity_id, item_id) 幂等）
+router.post('/activity_uses', internalAuthOrLoopback, async (req, res) => {
+  try {
+    const { activity_id, item_id, item_key, role = 'uses', assertion_ref = null, cell_status = null } = req.body || {};
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID.test(activity_id || '')) return res.status(400).json({ error: 'activity_id must be a uuid' });
+    if (!['uses', 'depends', 'produces'].includes(role)) return res.status(400).json({ error: 'role must be one of: uses,depends,produces' });
+    if (cell_status !== null && !['gray', 'red', 'pending', 'green'].includes(cell_status)) {
+      return res.status(400).json({ error: 'cell_status must be one of: gray,red,pending,green' });
+    }
+    if (!item_id && !item_key) return res.status(400).json({ error: 'item_id or item_key is required' });
+    if (item_id && !UUID.test(item_id)) return res.status(400).json({ error: 'item_id must be a uuid' });
+
+    let itemId = item_id;
+    if (!itemId) {
+      const { rows: found } = await pool.query('SELECT id FROM warehouse_items WHERE key = $1', [item_key]);
+      if (!found.length) return res.status(404).json({ error: 'warehouse item not found' });
+      itemId = found[0].id;
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO activity_uses (activity_id, item_id, role, assertion_ref, cell_status)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (activity_id, item_id) DO UPDATE SET
+         role = EXCLUDED.role,
+         assertion_ref = COALESCE(EXCLUDED.assertion_ref, activity_uses.assertion_ref),
+         cell_status = COALESCE(EXCLUDED.cell_status, activity_uses.cell_status)
+       RETURNING *`,
+      [activity_id, itemId, role, assertion_ref, cell_status]);
+    return res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23503') return res.status(404).json({ error: 'activity or item not found' });
+    console.error('[journeys] POST /activity_uses error:', err.message);
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -488,8 +464,12 @@ router.post('/journey_step_links', internalAuthOrLoopback, async (req, res) => {
     }
 
     if (cell_kind) {
-      const VALID_CELL_KINDS = ['capability', 'element', 'scenario', 'base_ref'];
+      const VALID_CELL_KINDS = ['capability', 'element', 'scenario'];
       const VALID_CELL_STATUS = ['gray', 'red', 'pending', 'green'];
+      // 底座引用格子已退役（迁移 525）：Activity 用哪件仓库物件改走用料表
+      if (cell_kind === 'base_ref') {
+        return res.status(400).json({ error: 'base_ref cells are retired; register the dependency with POST /activity_uses instead' });
+      }
       if (!VALID_CELL_KINDS.includes(cell_kind)) {
         return res.status(400).json({ error: `cell_kind must be one of: ${VALID_CELL_KINDS.join(',')}` });
       }
@@ -497,15 +477,10 @@ router.post('/journey_step_links', internalAuthOrLoopback, async (req, res) => {
       if (cell_status && !VALID_CELL_STATUS.includes(cell_status)) {
         return res.status(400).json({ error: `cell_status must be one of: ${VALID_CELL_STATUS.join(',')}` });
       }
-      // base_ref 格子是 blast-radius 的锚，没有 feature_id 的底座引用查不到塌红范围
-      if (cell_kind === 'base_ref' && !feature_id) {
-        return res.status(400).json({ error: 'feature_id is required for base_ref cells' });
-      }
-
       // 一致性护栏：格子行的 step_id 必须真实存在，且其 journey_id 必须与传入的 journey_id 一致
       // （防止调用方传错 journey_id，格子挂到错误的 GP 下却无感知）
       const { rows: steprows } = await pool.query(
-        `SELECT journey_id FROM journey_steps WHERE id=$1`, [step_id]
+        `SELECT p.capability_id AS journey_id FROM activities a LEFT JOIN activity_placement p ON p.activity_id = a.id WHERE a.id=$1`, [step_id]
       );
       if (!steprows.length) return res.status(404).json({ error: 'step not found' });
       if (String(steprows[0].journey_id) !== String(journey_id)) {
@@ -513,7 +488,7 @@ router.post('/journey_step_links', internalAuthOrLoopback, async (req, res) => {
       }
 
       const { rows } = await pool.query(
-        `INSERT INTO journey_step_links
+        `INSERT INTO activity_cells
            (journey_id, step_id, cell_kind, cell_key, cell_status, feature_id, assertion_ref, na_reason, status, notion_synced_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'planned',NOW())
          ON CONFLICT (step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL DO UPDATE SET
@@ -530,7 +505,7 @@ router.post('/journey_step_links', internalAuthOrLoopback, async (req, res) => {
       return res.status(400).json({ error: 'step_order is required for non-cell links' });
     }
     const { rows } = await pool.query(
-      `INSERT INTO journey_step_links (journey_id, step_id, step_order, status, notion_synced_at)
+      `INSERT INTO activity_cells (journey_id, step_id, step_order, status, notion_synced_at)
        VALUES ($1,$2,$3,$4,NULL)
        ON CONFLICT (journey_id, step_id) WHERE cell_kind IS NULL DO UPDATE SET
          step_order=EXCLUDED.step_order, status=EXCLUDED.status
@@ -556,7 +531,7 @@ router.patch('/journey_step_links/:id', internalAuthOrLoopback, async (req, res)
 
     if (cell_status === 'green' && !assertion_ref) {
       const { rows: existing } = await pool.query(
-        'SELECT assertion_ref FROM journey_step_links WHERE id=$1',
+        'SELECT assertion_ref FROM activity_cells WHERE id=$1',
         [req.params.id]
       );
       if (!existing.length) return res.status(404).json({ error: 'not found' });
@@ -577,7 +552,7 @@ router.patch('/journey_step_links/:id', internalAuthOrLoopback, async (req, res)
     if (!sets.length) return res.status(400).json({ error: 'no fields to update' });
     vals.push(req.params.id);
     const { rows } = await pool.query(
-      `UPDATE journey_step_links SET ${sets.join(',')} WHERE id=$${idx} RETURNING *`,
+      `UPDATE activity_cells SET ${sets.join(',')} WHERE id=$${idx} RETURNING *`,
       vals
     );
     if (!rows.length) return res.status(404).json({ error: 'not found' });
@@ -602,7 +577,7 @@ router.get('/journeys/steps/:step_id/impact', async (req, res) => {
          jsl.cell_status,
          jsl.assertion_ref,
          jsl.na_reason
-       FROM journey_step_links jsl
+       FROM activity_cells jsl
        LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
        WHERE jsl.step_id = $1
        ORDER BY jsl.step_order, jsl.id`,
@@ -635,14 +610,17 @@ router.get('/journey_steps/:step_id/ledger', async (req, res) => {
       `SELECT
          js.id,
          js.name,
-         js.step_number,
+         p.step_number,
          js.promise,
-         js.journey_id,
+         COALESCE(p.capability_id, first_cell.journey_id) AS journey_id,
          j.name AS journey_name,
          j.home,
          j.domain
-       FROM journey_steps js
-       JOIN journeys j ON j.id = js.journey_id
+       FROM activities js
+       LEFT JOIN activity_placement p ON p.activity_id = js.id
+       -- 还没挂进流程的老步骤：回退到它的格子记的能力，台账照常可读
+       LEFT JOIN LATERAL (SELECT c.journey_id FROM activity_cells c WHERE c.step_id = js.id ORDER BY c.created_at LIMIT 1) first_cell ON true
+       JOIN ${TREE_NODES_SQL} j ON j.id = COALESCE(p.capability_id, first_cell.journey_id)
        WHERE js.id=$1`,
       [stepId]
     );
@@ -666,7 +644,7 @@ router.get('/journey_steps/:step_id/ledger', async (req, res) => {
          jf.unit_test_path,
          jf.workflow_ref,
          jf.guard_ref
-       FROM journey_step_links jsl
+       FROM activity_cells jsl
        LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
        WHERE jsl.step_id = $1
          AND jsl.cell_kind IS NOT NULL
@@ -755,15 +733,16 @@ router.get('/features/:id/blast-radius', async (req, res) => {
          js.id           AS step_id,
          js.name         AS step_name,
          js.promise,
-         js.step_number,
+         p.step_number,
          j.id            AS journey_id,
          j.name          AS journey_name,
          j.home
-       FROM journey_step_links jsl
-       JOIN journey_steps js ON js.id = jsl.step_id
-       JOIN journeys j       ON j.id  = js.journey_id
+       FROM activity_cells jsl
+       JOIN activities js ON js.id = jsl.step_id
+       JOIN activity_placement p ON p.activity_id = js.id
+       JOIN capabilities j       ON j.id  = p.capability_id
        WHERE jsl.feature_id = $1
-       ORDER BY j.name, js.step_number`,
+       ORDER BY j.name, p.step_number`,
       [req.params.id]
     );
     const feature = await pool.query(
@@ -809,17 +788,18 @@ router.post('/cascade-list', internalAuthOrLoopback, async (req, res) => {
          js.id            AS step_id,
          js.name          AS step_name,
          js.promise,
-         js.step_number,
+         p.step_number,
          j.id             AS journey_id,
          j.name           AS journey_name
-       FROM journey_step_links jsl
+       FROM activity_cells jsl
        LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
-       LEFT JOIN journey_steps    js ON js.id  = jsl.step_id
-       LEFT JOIN journeys          j ON j.id   = js.journey_id
+       LEFT JOIN activities    js ON js.id  = jsl.step_id
+       LEFT JOIN activity_placement p ON p.activity_id = js.id
+       LEFT JOIN capabilities          j ON j.id   = p.capability_id
        WHERE
          (jsl.assertion_ref = ANY($1::text[]))
          OR (jf.unit_test_path = ANY($1::text[]))
-       ORDER BY j.name, js.step_number`,
+       ORDER BY j.name, p.step_number`,
       [changed_files]
     );
 
@@ -848,7 +828,7 @@ router.get('/ledger', async (req, res) => {
       ? await pool.query(
           `SELECT jf.*, j.name AS journey_name, j.e2e_test_path
              FROM journey_features jf
-             LEFT JOIN journeys j ON j.id = jf.journey_id
+             LEFT JOIN ${TREE_NODES_SQL} j ON j.id = jf.journey_id
             WHERE jf.journey_id = $1
             ORDER BY jf.created_at DESC
             LIMIT $2`,
@@ -857,7 +837,7 @@ router.get('/ledger', async (req, res) => {
       : await pool.query(
           `SELECT jf.*, j.name AS journey_name, j.e2e_test_path
              FROM journey_features jf
-             LEFT JOIN journeys j ON j.id = jf.journey_id
+             LEFT JOIN ${TREE_NODES_SQL} j ON j.id = jf.journey_id
             WHERE jf.name NOT LIKE 'gp-agg-smoke%'
             ORDER BY jf.created_at DESC
             LIMIT $1`,

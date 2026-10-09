@@ -18,7 +18,9 @@ import { homedir, tmpdir } from 'os';
 import { createHash, randomUUID } from 'crypto';
 import pool from '../db.js';
 import { createTask } from '../actions.js';
+import { finalizeTask } from '../lib/task-terminal.js';
 import { runJudgeGate, runMechanicalPreflightChecks, checkJudgmentsWritten } from '../harness-judge.js';
+import { HARNESS_BUILD_STAGE_ORDER, HARNESS_BUILD_STAGE_LABELS } from '../lib/task-type-registry.js';
 import {
   DEFAULT_BASE_REPO,
   harnessTaskWorktreePath,
@@ -28,6 +30,8 @@ import { sameContractIdentity } from '../orchestrator/gates.js';
 import { persistOneSessionJudgeReceipt } from '../orchestrator/one-session-judge-receipt.js';
 import { executeOneSessionMerge } from '../orchestrator/one-session-merge.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
+import { journeyRunStatsSelectSql, mapJourneyRunStatsRow } from '../lib/kernel-launch-deferral.js';
 
 const router = Router();
 const judgeRateLimit = rateLimit({
@@ -699,22 +703,8 @@ function buildGanRounds(tasks) {
  */
 function buildStages(tasks) {
   // 注：harness_planner stage 已退役（PR retire-harness-planner），从 STAGE_ORDER/LABELS 移除
-  const STAGE_ORDER = [
-    'harness_contract_propose', 'harness_contract_review',
-    'harness_generate', 'harness_evaluate', 'harness_report',
-    'harness_auto_merge', 'harness_deploy', 'harness_smoke_test', 'harness_cleanup',
-  ];
-  const STAGE_LABELS = {
-    harness_contract_propose: 'Propose',
-    harness_contract_review: 'Review',
-    harness_generate: 'Generate',
-    harness_evaluate: 'Evaluate',
-    harness_report: 'Report',
-    harness_auto_merge: 'Auto-merge',
-    harness_deploy: 'Deploy',
-    harness_smoke_test: 'Smoke-test',
-    harness_cleanup: 'Cleanup',
-  };
+  const STAGE_ORDER = HARNESS_BUILD_STAGE_ORDER;
+  const STAGE_LABELS = HARNESS_BUILD_STAGE_LABELS;
 
   return STAGE_ORDER.map(type => {
     // 取该类型最新的任务
@@ -1514,16 +1504,9 @@ router.get('/stats', async (req, res) => {
       let days = parseInt(req.query.days, 10);
       if (!Number.isInteger(days) || days < 1 || days > 365) days = 30;
       const { rows } = await pool.query(`
-        SELECT j.id   AS journey_id,
-               j.name AS journey_name,
-               COUNT(*)                                     AS runs,
-               COUNT(*) FILTER (WHERE ir.phase = 'done')    AS done,
-               COUNT(*) FILTER (WHERE ir.phase = 'failed')  AS failed,
-               MAX(ir.created_at)                           AS last_run_at,
-               (ARRAY_AGG(ir.failure_reason ORDER BY ir.created_at DESC)
-                  FILTER (WHERE ir.failure_reason IS NOT NULL))[1] AS last_failure
+        SELECT ${journeyRunStatsSelectSql('ir')}
         FROM initiative_runs ir
-        JOIN journeys j ON j.id = ir.journey_id
+        JOIN ${TREE_NODES_SQL} j ON j.id = ir.journey_id
         LEFT JOIN tasks t ON t.id = ir.initiative_id
         WHERE ir.created_at >= NOW() - make_interval(days => $1)
           AND ir.journey_id IS NOT NULL                    -- 排除无 journey 孤儿 run
@@ -1531,22 +1514,8 @@ router.get('/stats', async (req, res) => {
         GROUP BY j.id, j.name
         ORDER BY runs DESC, last_run_at DESC NULLS LAST
       `, [days]);
-      const journeys = rows.map((r) => {
-        const done = parseInt(r.done, 10) || 0;
-        const failed = parseInt(r.failed, 10) || 0;
-        const terminal = done + failed;
-        return {
-          journey_id: r.journey_id,
-          journey_name: r.journey_name,
-          runs: parseInt(r.runs, 10) || 0,
-          done,
-          failed,
-          // 成功率 = done/(done+failed)（只算终态 run，进行中不计入分母）
-          success_rate: terminal > 0 ? Math.round((done / terminal) * 100) / 100 : 0,
-          last_run_at: r.last_run_at,
-          last_failure: r.last_failure || null,
-        };
-      });
+      // 成功率 = done/(done+failed)；编排槽满排队的 run 已在 SQL 里剔除，单列 deferred
+      const journeys = rows.map(mapJourneyRunStatsRow);
       return res.json({ by: 'journey', period_days: days, journeys });
     }
 
@@ -1702,12 +1671,12 @@ router.post('/complete', async (req, res) => {
       console.warn(`[POST /harness/complete] initiative ${initiative_id} completed 申请被拒 → 降级（${fin.reason}）`);
       return res.json({ ok: true, accepted: false, reason: fin.reason, initiative_id });
     }
-    const updateResult = await pool.query(
-      `UPDATE tasks SET status='completed', completed_at=NOW(),
-       result = COALESCE(result, '{}'::jsonb) || $1::jsonb
-       WHERE id::text = $2 AND status != 'completed'`,
-      [JSON.stringify(result), initiative_id]
-    );
+    const updateResult = await finalizeTask(pool, initiative_id, 'completed', {
+      set: { completed_at: 'now' },
+      mergeResult: result,
+      idCast: 'text',
+      onlyIfStatusNot: 'completed',
+    });
     if (updateResult.rowCount === 0) {
       console.warn(`[POST /harness/complete] initiative ${initiative_id} UPDATE affected 0 rows — not found or already completed`);
     }

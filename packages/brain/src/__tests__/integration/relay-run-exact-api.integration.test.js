@@ -58,6 +58,7 @@ beforeAll(async () => {
       task_type TEXT NOT NULL,
       status TEXT NOT NULL,
       payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       error_message TEXT,
       completed_at TIMESTAMPTZ,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -74,6 +75,7 @@ beforeAll(async () => {
       orchestrator_heartbeat_at TIMESTAMPTZ,
       orchestrator_pid INTEGER,
       orchestrator_host TEXT,
+      controller_lease_expires_at TIMESTAMPTZ,
       started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       deadline_at TIMESTAMPTZ,

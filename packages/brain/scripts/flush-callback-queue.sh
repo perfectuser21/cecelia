@@ -15,6 +15,7 @@ for f in "$QUEUE_DIR"/*.json; do
   if curl -sS --fail "$WEBHOOK_URL" -X POST \
       -H "Content-Type: application/json" \
       ${WEBHOOK_TOKEN:+-H "X-Cecilia-Token: $WEBHOOK_TOKEN"} \
+      ${CECELIA_INTERNAL_TOKEN:+-H "Authorization: Bearer ${CECELIA_INTERNAL_TOKEN}"} \
       -d @"$f" --max-time 10 >/dev/null 2>&1; then
     rm -f "$f"
     echo "[flush-callback-queue] 补投成功: $(basename "$f")" >&2

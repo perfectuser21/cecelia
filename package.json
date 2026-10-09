@@ -13,9 +13,13 @@
     "brain:build": "bash scripts/brain-build.sh",
     "dashboard:build": "npm run build -w apps/dashboard",
     "dashboard:dev": "npm run dev -w apps/dashboard",
-    "test": "npm run brain:test"
+    "test": "npm run brain:test",
+    "ci:implementation-impact": "node scripts/ci/implementation-gate.mjs"
   },
   "devDependencies": {
     "dependency-cruiser": "^17.4.3"
+  },
+  "overrides": {
+    "fast-uri": "^3.1.6"
   }
 }

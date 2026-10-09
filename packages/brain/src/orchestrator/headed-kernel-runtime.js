@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createKernelRun, finalizeKernelRun } from './kernel-run-store.js';
+import { createKernelRun, finalizeKernelRun, syncTaskPayloadFromKernelRun } from './kernel-run-store.js';
 
 async function createHeadedKernelAttempt(dbPool, {
   runId,
@@ -93,6 +93,8 @@ export async function spawnHeadedKernelRuntime({
     createdSource: 'kernel_dispatch',
     gear,
   });
+  // 预检重锚定后 DB 的 base_sha/收据已换新；headed 身份 env 读内存 task.payload，先回流。
+  syncTaskPayloadFromKernelRun(task, created);
   const runId = created.run?.id;
   if (!runId) throw new Error('kernel-v1 headed run authority returned no id');
   if (!created.created) {

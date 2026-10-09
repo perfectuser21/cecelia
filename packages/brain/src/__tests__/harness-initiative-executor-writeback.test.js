@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * harness-initiative-executor-writeback.test.js
  *
@@ -103,6 +105,8 @@ vi.mock('../platform-utils.js', async (importOriginal) => {
       system_threshold_mb: 600, brain_rss_danger_mb: 1500, brain_rss_warn_mb: 1000,
     })),
     getBrainRssMB: vi.fn(() => 200),
+    sampleBrainCpuUsage: vi.fn(() => 5),
+    evaluateCpuHealth: vi.fn(() => ({ action: 'proceed', reason: 'mock' })),
     IS_DARWIN: false,
   };
 });
@@ -172,12 +176,13 @@ vi.mock('fs/promises', () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('fs', () => ({
-  readFileSync: vi.fn(() => 'SwapTotal: 0\nSwapFree: 0'),
+vi.mock('fs', async importOriginal => { const actual=await importOriginal(); return ({
+  ...actual,
+  readFileSync: vi.fn((file,...args) => String(file).endsWith('fleet-node-profiles.json')?actual.readFileSync(file,...args):'SwapTotal: 0\nSwapFree: 0'),
   readdirSync: vi.fn(() => []),
   unlinkSync: vi.fn(),
   existsSync: vi.fn(() => false),
-}));
+}); });
 
 vi.mock('../auto-learning.js', () => ({
   processExecutionAutoLearning: vi.fn().mockResolvedValue(undefined),

@@ -22,7 +22,7 @@ describe('migration 325: advancement_items journey_id + ability_id nullable', ()
     expect(result.rows[0].is_nullable).toBe('YES');
   });
 
-  it('advancement_items.journey_id has a foreign key to journeys', async () => {
+  it('advancement_items.journey_id has a foreign key to journeys（迁移 520 起 journeys 拆为继承子表，改为触发器守卫 trg_journey_ref_advancement_items）', async () => {
     const result = await pool.query(`
       SELECT tc.constraint_name FROM information_schema.table_constraints tc
       JOIN information_schema.key_column_usage kcu
@@ -31,6 +31,9 @@ describe('migration 325: advancement_items journey_id + ability_id nullable', ()
         AND tc.constraint_type = 'FOREIGN KEY'
         AND kcu.column_name = 'journey_id'
     `);
-    expect(result.rows.length).toBeGreaterThanOrEqual(1);
+    const guard = await pool.query(
+      `SELECT 1 FROM pg_trigger WHERE tgname = 'trg_journey_ref_advancement_items' AND tgrelid = 'advancement_items'::regclass AND NOT tgisinternal`,
+    );
+    expect(result.rows.length + guard.rows.length).toBeGreaterThanOrEqual(1);
   });
 });

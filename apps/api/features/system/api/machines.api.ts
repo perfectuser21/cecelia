@@ -22,6 +22,11 @@ export interface MachineConflict {
 }
 
 export interface MachineMetadata {
+  node_health?: {
+    observed_at?: string;
+    capabilities?: { collector: boolean; janitor: boolean; execution: boolean };
+  };
+  onboarding?: { state?: string };
   hardware?: string;
   cpu?: string;
   gpu?: string;
@@ -30,6 +35,7 @@ export interface MachineMetadata {
   disk?: string;
   os?: string;
   tailscale_name?: string;
+  address?: string;
   tailscale_ip?: string;
   public_ip?: string;
   ssh_alias?: string;
@@ -50,6 +56,7 @@ export interface MachineMetadata {
 }
 
 export interface Machine {
+  execution?: { enabled: boolean; expires_at: string | null; verified_until: string | null };
   id: string;
   name: string;
   description: string;

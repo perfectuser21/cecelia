@@ -59,8 +59,26 @@ function canonicalBody(value) {
   return value;
 }
 
-function buildArtifacts({ receipt, seed, impact, baseSha, executionProfile }) {
-  const root = `direct-contracts/${receipt.id}`;
+/**
+ * 产物根目录：优先任务 payload.sprint_dir。runner 的 materialize-frozen-contract-artifacts 只认
+ * `${sprint_dir}/tests/` 前缀的 frozen_contract_test 与 `${sprint_dir}/` 前缀的文档（2026-09-19
+ * run 35c352b3 实证：落在 direct-contracts/ 下 → invalid frozen test descriptor → generator 循环
+ * frozen_contract_artifacts_invalid）。sprint_dir 缺失/非法才回退 direct-contracts/<receipt>。
+ */
+export function resolveDirectArtifactRoot(receipt, sprintDir) {
+  const s = typeof sprintDir === 'string' ? sprintDir.trim().replace(/\/+$/, '') : '';
+  if (s
+    && !s.startsWith('/')
+    && !s.includes('\\')
+    && !s.split('/').includes('..')
+    && !s.split('/').includes('')) {
+    return s;
+  }
+  return `direct-contracts/${receipt.id}`;
+}
+
+function buildArtifacts({ receipt, seed, impact, baseSha, executionProfile, sprintDir = null }) {
+  const root = resolveDirectArtifactRoot(receipt, sprintDir);
   const assertions = impact.contract_body.required_assertions;
   const provenance = {
     kind: 'direct',
@@ -190,8 +208,9 @@ export function createDirectProfileContractMaterializer({
           [`contract-initiative:${candidate.initiative_id}`],
         );
       }
+      // 只取 status + payload.sprint_dir（产物根目录契约）；description/thin_prd 一律不选（可变正文不得入合同）
       const task = candidate ? (await client.query(
-        `SELECT task.status
+        `SELECT task.status, task.payload->>'sprint_dir' AS sprint_dir
            FROM tasks AS task
           WHERE task.id = $1::uuid
           FOR UPDATE OF task`,
@@ -233,6 +252,7 @@ export function createDirectProfileContractMaterializer({
         impact: { ...impact, contract_body: authority.contractBody },
         baseSha: authority.baseSha,
         executionProfile: authority.executionProfile,
+        sprintDir: task?.sprint_dir ?? null,
       });
       const result = await materializeApprovedContract(client, {
         runId,

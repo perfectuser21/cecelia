@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createGitHubCredentialBroker } from './github-credential-broker.js';
+import { resolvePrimaryWorkerId } from '../machine-registry.js';
 
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 const CREDENTIAL_REF = '33333333-3333-4333-8333-333333333333';
@@ -19,7 +20,7 @@ describe('GitHub Credential Broker', () => {
       randomUUID: () => CREDENTIAL_REF,
     });
 
-    const envelope = await broker.issue({
+    const envelope = await broker.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
       attemptId: ATTEMPT_ID,
       machineId: 'xian-mac-m4',
       deadlineAt: DEADLINE,
@@ -43,7 +44,7 @@ describe('GitHub Credential Broker', () => {
       controllerMachineId: 'xian-mac-m4',
       loadToken: vi.fn(async () => TOKEN),
     });
-    await expect(outsideAuthority.issue({
+    await expect(outsideAuthority.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
       attemptId: ATTEMPT_ID,
       machineId: 'xian-mac-m4',
       deadlineAt: DEADLINE,
@@ -54,7 +55,7 @@ describe('GitHub Credential Broker', () => {
       loadToken: vi.fn(async () => ''),
       now: () => NOW,
     });
-    await expect(missing.issue({
+    await expect(missing.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
       attemptId: ATTEMPT_ID,
       machineId: 'us-mac-m4',
       deadlineAt: DEADLINE,
@@ -65,10 +66,49 @@ describe('GitHub Credential Broker', () => {
       loadToken: vi.fn(async () => null),
       now: () => NOW,
     });
-    await expect(nonString.issue({
+    await expect(nonString.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
       attemptId: ATTEMPT_ID,
       machineId: 'us-mac-m4',
       deadlineAt: DEADLINE,
     })).rejects.toThrow('github_credential_payload_invalid');
+  });
+
+  describe('权威判据锁定（角色置换前基线）', () => {
+    it('primary worker（resolvePrimaryWorkerId()）放行：issue 走到凭据加载', async () => {
+      const loadToken = vi.fn(async () => TOKEN);
+      const broker = createGitHubCredentialBroker({
+        controllerMachineId: resolvePrimaryWorkerId(),
+        loadToken,
+        now: () => NOW,
+        randomUUID: () => CREDENTIAL_REF,
+      });
+
+      const envelope = await broker.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
+        attemptId: ATTEMPT_ID,
+        machineId: 'xian-mac-m4',
+        deadlineAt: DEADLINE,
+      });
+
+      expect(loadToken).toHaveBeenCalledTimes(1);
+      expect(envelope.credential_ref).toBe(CREDENTIAL_REF);
+    });
+
+    it.each([
+      ['非 primary 机器（us-vps）', 'us-vps'],
+      ['未知控制器（undefined）', undefined],
+    ])('%s fail-closed，错误码不变', async (_label, controllerMachineId) => {
+      const loadToken = vi.fn(async () => TOKEN);
+      const broker = createGitHubCredentialBroker({
+        controllerMachineId,
+        loadToken,
+        now: () => NOW,
+      });
+      await expect(broker.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
+        attemptId: ATTEMPT_ID,
+        machineId: 'xian-mac-m4',
+        deadlineAt: DEADLINE,
+      })).rejects.toThrow('github_credential_broker_us_authority_required');
+      expect(loadToken).not.toHaveBeenCalled();
+    });
   });
 });

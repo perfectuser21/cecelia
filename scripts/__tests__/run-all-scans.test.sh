@@ -55,7 +55,12 @@ if [[ "${1:-}" == "branch" && "${2:-}" == "--show-current" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "status" && "${2:-}" == "--porcelain" ]]; then
-  if [[ $TARGET_REPO -eq 1 && -n "${GIT_TARGET_DIRTY:-}" ]]; then printf '%s\n' ' M changed'; fi
+  if [[ $TARGET_REPO -eq 1 ]]; then
+    if [[ -n "${GIT_TARGET_DIRTY:-}" ]]; then printf '%s\n' ' M changed'; fi
+    if [[ -n "${GIT_TARGET_STATUS_LINES:-}" ]]; then printf '%s\n' "$GIT_TARGET_STATUS_LINES"; fi
+  else
+    if [[ -n "${GIT_STATUS_LINES:-}" ]]; then printf '%s\n' "$GIT_STATUS_LINES"; fi
+  fi
   exit 0
 fi
 if [[ "${1:-}" == "pull" && "${2:-}" == "--ff-only" ]]; then
@@ -90,6 +95,13 @@ cat > "$NODE_STUB" <<'STUB'
 if [[ -n "${NODE_LOG:-}" ]]; then
   printf '%s\n' "$*" >> "$NODE_LOG"
 fi
+if [[ "${1##*/}" == "pilot-graph-targets.mjs" ]]; then
+  case "${2:-}" in
+    cecelia) [[ -z "${TEST_PILOTS:-}" ]] || printf 'cecelia-kr-source|%s|cecelia-kr\n' "$3" ;;
+    zenithjoy-workspace) [[ -z "${TEST_PILOTS:-}" ]] || printf 'zenithjoy-pilot-source|%s|zenithjoy\n' "$3" ;;
+  esac
+  exit 0
+fi
 if [[ "${1##*/}" == "verify-scan-batch.mjs" ]]; then
   if [[ -n "${VERIFY_LOG:-}" ]]; then printf '%s\n' "${2:-}" > "$VERIFY_LOG"; fi
   exit "${VERIFY_EXIT:-0}"
@@ -98,6 +110,7 @@ if [[ -n "${ENV_LOG:-}" ]]; then
   printf '%s|%s|%s|%s\n' "${SCAN_REPO_NAME:-}" "${SCAN_REPO_ROOT:-}" \
     "${SOURCE_DATABASE_URL:-}" "${GRAPH_REPOS:-}" >> "$ENV_LOG"
 fi
+[[ -z "${PROFILE_LOG:-}" ]] || printf '%s|%s\n' "${SCAN_REPO_NAME:-}" "${SCAN_SOURCE_REPO_NAME:-}" >> "$PROFILE_LOG"
 printf '%s\n' "$1" >> "$SCAN_LOG"
 if [[ -n "${HEAD_CHANGE_MARKER:-}" ]]; then : > "$HEAD_CHANGE_MARKER"; fi
 if [[ -n "${TARGET_HEAD_CHANGE_MARKER:-}" ]]; then : > "$TARGET_HEAD_CHANGE_MARKER"; fi
@@ -380,5 +393,68 @@ done
 if [[ $ROOT_DEPS_OK -eq 1 ]]; then pass "真实 smoke CI 安装 graph scanner 的根依赖"; else fail "真实 smoke CI 仅安装 Brain 依赖"; fi
 
 echo ""
+echo "=== 运行期噪音过滤(P0 9dfd873a：.cecelia/ 心跳灯不该挡扫描) ==="
+
+# 根 repo 只有已知运行期噪音(.cecelia/hb.sh + .cecelia/lights/x.live 未追踪) → 仍判定 clean，rescan 成功
+NOISE_ONLY_LOG="$TMPD/noise-only-scans.log"
+NOISE_ONLY_OUT="$TMPD/noise-only.out"
+NOISE_ONLY_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$NOISE_ONLY_LOG" \
+  GIT_STATUS_LINES=$'?? .cecelia/hb.sh\n?? .cecelia/lights/x.live' \
+  SCAN_SCRIPTS="probe.js" \
+  /bin/bash "$RUNNER" > "$NOISE_ONLY_OUT" 2>&1 || NOISE_ONLY_RC=$?
+if [[ $NOISE_ONLY_RC -eq 0 && "$(cat "$NOISE_ONLY_LOG" 2>/dev/null)" == 'scripts/scan/probe.js' ]]; then
+  pass "仅有 .cecelia/ 运行期噪音时仍判定 clean 并完成扫描"
+else
+  fail "运行期噪音被误判为脏工作区，扫描被挡(rc=$NOISE_ONLY_RC): $(tr '\n' ' ' < "$NOISE_ONLY_OUT")"
+fi
+
+# 根 repo 噪音 + 真实未追踪文件混合 → 仍应 fail-closed（过滤只剔除已知模式，不放过真脏）
+MIXED_DIRTY_SCAN_LOG="$TMPD/mixed-dirty-scan.log"
+MIXED_DIRTY_OUT="$TMPD/mixed-dirty.out"
+MIXED_DIRTY_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$MIXED_DIRTY_SCAN_LOG" \
+  GIT_STATUS_LINES=$'?? .cecelia/hb.sh\n?? real-uncommitted-change.js' \
+  SCAN_SCRIPTS="probe.js" \
+  /bin/bash "$RUNNER" > "$MIXED_DIRTY_OUT" 2>&1 || MIXED_DIRTY_RC=$?
+if [[ $MIXED_DIRTY_RC -eq 3 && ! -e "$MIXED_DIRTY_SCAN_LOG" ]] \
+  && grep -q '事实扫描拒绝不干净工作区' "$MIXED_DIRTY_OUT"; then
+  pass "真实未追踪改动混入噪音时仍 fail-closed（过滤不放过真脏文件）"
+else
+  fail "真脏文件被噪音过滤误伤放行(rc=$MIXED_DIRTY_RC): $(tr '\n' ' ' < "$MIXED_DIRTY_OUT")"
+fi
+
+# 多仓扫描：目标 repo 只有已知运行期噪音 → prepare_repo 仍判定 clean main
+NOISE_TARGET_LOG="$TMPD/noise-target-scans.log"
+NOISE_TARGET_OUT="$TMPD/noise-target.out"
+NOISE_TARGET_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SKIP_GIT_PULL=1 \
+  SCAN_LOG="$NOISE_TARGET_LOG" \
+  GIT_TARGET_STATUS_LINES=$'?? .cecelia/lights/x.live' \
+  SCAN_REPO_SPECS="repo-a|$TMPD/repo-a|postgresql://source/a" \
+  /bin/bash "$RUNNER" > "$NOISE_TARGET_OUT" 2>&1 || NOISE_TARGET_RC=$?
+if [[ $NOISE_TARGET_RC -eq 0 ]]; then
+  pass "多仓目标 repo 只有运行期噪音时 prepare_repo 仍判定 clean main"
+else
+  fail "多仓目标 repo 运行期噪音被误判为脏(rc=$NOISE_TARGET_RC): $(tr '\n' ' ' < "$NOISE_TARGET_OUT")"
+fi
+
+echo ""
+PILOT_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SKIP_GIT_PULL=1 TEST_PILOTS=1 \
+  PROFILE_LOG="$TMPD/pilot-profiles" SCAN_LOG="$TMPD/pilot-scans" ENV_LOG="$TMPD/pilot-env" CURL_LOG="$TMPD/pilot-curl" \
+  SCAN_REPO_SPECS="cecelia|$TMPD/repo-a|postgresql://source/a;zenithjoy-workspace|$TMPD/repo-b|postgresql://source/b" \
+  /bin/bash "$RUNNER" > "$TMPD/pilot-out" 2>&1 || PILOT_RC=$?
+if [[ $PILOT_RC -eq 0 && $(wc -l < "$TMPD/pilot-scans") -eq 10 ]] \
+  && grep -q '^cecelia-kr-source|cecelia$' "$TMPD/pilot-profiles" \
+  && grep -q '^zenithjoy-pilot-source|zenithjoy-workspace$' "$TMPD/pilot-profiles" \
+  && grep -q '^cecelia-kr-source|' "$TMPD/pilot-env" \
+  && grep -q '^zenithjoy-pilot-source|' "$TMPD/pilot-env" \
+  && grep -q 'scope_key.*cecelia-kr' "$TMPD/pilot-curl" \
+  && grep -q 'scope_key.*zenithjoy"' "$TMPD/pilot-curl"; then
+  pass "既有定时批次保留两仓四扫描器并追加两alias graph-only与scope重建"
+else fail "试点alias未纳入正式扫描批次: $(cat "$TMPD/pilot-out")"; fi
 echo "结果: PASS=$PASS FAIL=$ERRORS"
 [[ $ERRORS -eq 0 ]] || exit 1

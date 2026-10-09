@@ -37,18 +37,17 @@ async function ensureScratchAssertionAnchor() {
     link: '0f000000-0000-4000-8000-000000000004',
   };
   const journeyResult = await pool.query(
-    `SELECT id FROM journeys
+    `SELECT id FROM (SELECT id,biz_area,capability_code FROM value_streams UNION ALL SELECT id,biz_area,capability_code FROM capabilities) n
       WHERE biz_area='cecelia' AND capability_code='F0'`,
   );
   const journeyId = journeyResult.rows[0]?.id;
   invariant(journeyId, 'scratch F0 authoritative Journey is absent');
   await pool.query(
-    `INSERT INTO journey_steps (id,journey_id,name,step_number,status)
-     VALUES ($1,$2,'route coding through Harness',1,'planned')
+    `INSERT INTO activities (id,name,status)
+     VALUES ($1,'route coding through Harness','planned')
      ON CONFLICT (id) DO UPDATE
-       SET journey_id=EXCLUDED.journey_id,name=EXCLUDED.name,
-           step_number=EXCLUDED.step_number,status=EXCLUDED.status`,
-    [fixtureIds.step, journeyId],
+       SET name=EXCLUDED.name,status=EXCLUDED.status`,
+    [fixtureIds.step],
   );
   await pool.query(
     `INSERT INTO journey_features
@@ -61,7 +60,7 @@ async function ensureScratchAssertionAnchor() {
     [fixtureIds.feature, journeyId, fixtureIds.step, assertionRef],
   );
   await pool.query(
-    `INSERT INTO journey_step_links
+    `INSERT INTO activity_cells
       (id,journey_id,step_id,feature_id,cell_kind,cell_key,
        assertion_ref,assertion_revision,notion_synced_at)
      VALUES ($1,$2,$3,$4,'capability','F0',$5,1,NOW())

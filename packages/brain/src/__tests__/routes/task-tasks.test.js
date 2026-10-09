@@ -35,6 +35,14 @@ function coding(body = {}) {
   };
 }
 
+function mockUnownedPatch(rows){
+  mockPool.query.mockImplementation(async sql=>{
+    if(sql.includes("payload->'headed_takeover'"))return {rows:rows.length?[{headed_takeover:null}]:[]};
+    if(/^UPDATE tasks/.test(sql))return {rows};
+    throw new Error('unexpected SQL outside PATCH owner lookup and UPDATE');
+  });
+}
+
 describe('task-tasks routes', () => {
   let app;
 
@@ -225,6 +233,12 @@ describe('task-tasks routes', () => {
     // ── 回归测试：Bug1/Bug2/Bug3 修复验证 ──
 
     it('[Bug1] 传 payload 字段 → INSERT params 包含 payload JSON', async () => {
+      const DEP_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const DEP_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+      // 依赖单一写口的入口校验（链 bf5088a3 棒5）：depends_on 必须是存在的任务 uuid，这次查询排在去重查询之前
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: DEP_A }, { id: DEP_B }] });
+      // 登记闸（PR B）：带依赖 = 多刀，parent 祖先链上必须有 project 根
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }] });
       mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
       mockPool.query.mockResolvedValueOnce({
         rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
@@ -232,11 +246,12 @@ describe('task-tasks routes', () => {
 
       await request(app).post('/tasks').send(coding({
         title: 'T',
-        payload: { depends_on: ['task-a', 'task-b'], architecture_ref: 'arch.md' },
+        parent_task_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        payload: { depends_on: [DEP_A, DEP_B], architecture_ref: 'arch.md' },
       }));
 
       expect(mockCreateRoutedTask.mock.calls[0][1].metadata).toEqual({
-        depends_on: ['task-a', 'task-b'],
+        depends_on: [DEP_A, DEP_B],
         architecture_ref: 'arch.md',
         tenant_id: 'default',
         change_kind: 'capability_change',
@@ -336,34 +351,41 @@ describe('task-tasks routes', () => {
     });
 
     it('returns 404 when task not found', async () => {
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      mockUnownedPatch([]);
       const res = await request(app).patch('/tasks/missing').send({ title: 'x' });
       expect(res.status).toBe(404);
+      expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
+      expect(mockPool.query.mock.calls.filter(([sql])=>/^UPDATE tasks/.test(sql))).toHaveLength(1);
     });
 
     it('updates okr_initiative_id when provided', async () => {
       const initId = 'c0362394-ba7c-44c7-9386-e7947f604237';
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 't1', status: 'queued', okr_initiative_id: initId }],
-      });
+      mockUnownedPatch([{ id: 't1', status: 'queued', okr_initiative_id: initId }]);
 
       const res = await request(app).patch('/tasks/t1').send({ okr_initiative_id: initId });
       expect(res.status).toBe(200);
-      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
+      const [sql, params] = mockPool.query.mock.calls.find(([sql])=>/^UPDATE tasks/.test(sql));
       expect(sql).toContain('okr_initiative_id = $1');
       expect(params).toContain(initId);
     });
 
     it('sets okr_initiative_id to null when explicitly passed null', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 't1', status: 'queued', okr_initiative_id: null }],
-      });
+      mockUnownedPatch([{ id: 't1', status: 'queued', okr_initiative_id: null }]);
 
       const res = await request(app).patch('/tasks/t1').send({ okr_initiative_id: null });
       expect(res.status).toBe(200);
-      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
+      const [sql, params] = mockPool.query.mock.calls.find(([sql])=>/^UPDATE tasks/.test(sql));
       expect(sql).toContain('okr_initiative_id');
       expect(params).toContain(null);
+    });
+    it('owner读取失败时不能继续UPDATE',async()=>{
+      mockPool.query.mockRejectedValueOnce(new Error('owner lookup unavailable'));
+      const res=await request(app).patch('/tasks/t1').send({okr_initiative_id:null});
+      expect(res.status).toBe(500);expect(mockPool.query).toHaveBeenCalledTimes(1);
+      expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
+      expect(mockPool.query.mock.calls.some(([sql])=>/^UPDATE tasks/.test(sql))).toBe(false);
     });
   });
 

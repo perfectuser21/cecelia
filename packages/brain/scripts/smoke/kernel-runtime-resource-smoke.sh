@@ -14,7 +14,9 @@ const { createAttemptResourceManager } = require(
 );
 
 const execFileAsync = promisify(execFile);
-const attemptId = '99999999-9999-4999-8999-999999999999';
+const attemptId = require('node:crypto').randomUUID();
+const {resolveAttemptResourcePlan,dockerLimitArgs} = require('./packages/brain/scripts/fleet-worker/attempt-resource-policy.cjs');
+const plan=resolveAttemptResourcePlan({workerId:'us-mac-m4',role:'generator',postgres:true});
 const postgresName = `cecelia-pg-${attemptId}`;
 const networkName = `cecelia-attempt-${attemptId}`;
 const runnerName = `cecelia-runtime-smoke-runner-${attemptId}`;
@@ -29,6 +31,7 @@ const ignore = (promise) => promise.catch(() => undefined);
   await ignore(runCommand('docker', ['rm', '-f', '--', postgresName]));
   await ignore(runCommand('docker', ['network', 'rm', '--', networkName]));
   const manager = createAttemptResourceManager({
+    workerId: 'us-mac-m4',
     runCommand,
     postgresImageDigest: process.env.POSTGRES_IMAGE,
     healthAttempts: 60,
@@ -37,6 +40,7 @@ const ignore = (promise) => promise.catch(() => undefined);
   let runtime;
   try {
     const provisioned = await manager.provision({
+      role: 'generator',
       attemptId,
       requirements: { postgres: true },
     });
@@ -51,7 +55,7 @@ const ignore = (promise) => promise.catch(() => undefined);
     // Simulate the callback-sending Runner as an active endpoint. Pre-commit
     // release must remove PostgreSQL but retain both Runner and network.
     await runCommand('docker', [
-      'run', '--detach', '--name', runnerName, '--network', networkName,
+      'run', ...dockerLimitArgs(plan.runner), '--detach', '--name', runnerName, '--network', networkName,
       '--entrypoint', 'sleep', process.env.POSTGRES_IMAGE, '300',
     ]);
     await manager.releaseService({ attemptId, runtime });

@@ -699,9 +699,11 @@ describe('thalamus', () => {
       expect(ACTION_WHITELIST['trigger_rca'].description).toBe('触发根因分析 (RCA) 流程');
     });
 
-    it('should have 48 total actions in whitelist', () => {
+    it('should have 45 total actions in whitelist', () => {
       // write_self_model 已移除（PRD f63cf8e8 / 代码层 self_model 写入锁）
-      expect(Object.keys(ACTION_WHITELIST).length).toBe(48);
+      // okr_initiative_plan/okr_scope_plan/okr_project_plan 已移除（决策 ee4842a6/3feeae3e，
+      // 接力棒链 2afa6d69 棒4：scope/initiative 层退役，48→45）
+      expect(Object.keys(ACTION_WHITELIST).length).toBe(45);
     });
 
     it('should include suggest_task_type action with dangerous=false', () => {

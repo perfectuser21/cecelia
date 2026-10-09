@@ -1,0 +1,391 @@
+import {buildLinuxOnboardingPolicy} from '../../linux-pool/onboarding-policy.js';
+import {ONBOARDING_IMAGE} from '../../linux-pool/onboarding-step.js';
+import {MACHINE_CAPACITY_LOCK_SQL} from '../../orchestrator/attempt-machine-capacity.js';
+import {assertLinuxPoolAuthority} from '../../linux-pool/task-authority.js';
+import pg from 'pg';
+import {randomUUID,createHmac,createHash} from 'node:crypto';
+import {normalizeDeployment} from '../../linux-pool/deployment.js';
+import {normalizeRuntimeDeployment,runtimeDigest} from '../../linux-pool/runtime-deployment.js';
+import {createBootstrapRecovery} from '../../linux-pool/onboarding-upgrade.js';
+import {it,expect,beforeAll,afterAll,beforeEach} from 'vitest';
+import {DB_DEFAULTS} from '../../db-config.js';
+import {createLinuxOnboardingFlow} from '../../linux-pool/onboarding-flow.js';
+import {projectLinuxExecution} from '../../linux-pool/onboarding-projection.js';
+const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
+const database=process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname.slice(1):DB_DEFAULTS.database;
+if(database!=='cecelia_scratch'&&!(process.env.CI&&database==='cecelia_test'))throw Error('local scratch only');
+const schema='linux_onboard_'+randomUUID().replaceAll('-',''),admin=new pg.Client(options),pool=new pg.Pool({...options,application_name:schema,options:`-c search_path=${schema},public`});
+let machine,parent;
+beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,goal_id UUID,project_id UUID,task_type TEXT,executor_kind TEXT,created_by TEXT,error_message TEXT,status TEXT,payload JSONB,result JSONB,parent_task_id UUID,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),created_at TIMESTAMPTZ DEFAULT now(),completed_at TIMESTAMPTZ);
+ -- 与 migration 461 的生产去重合同一致：包括空 goal/project 和 Notion 专用豁免。
+ CREATE UNIQUE INDEX idx_tasks_dedup_active ON tasks (
+  title,COALESCE(goal_id,'00000000-0000-0000-0000-000000000000'),COALESCE(project_id,'00000000-0000-0000-0000-000000000000')
+ ) WHERE status IN ('queued','in_progress') AND COALESCE(payload->>'dedup_by_notion_page','false')<>'true';
+ CREATE TABLE work_routing_receipts(task_id UUID,source TEXT,source_id TEXT,canonical_task_type TEXT);
+ CREATE TABLE task_events(task_id UUID,event_type TEXT,payload JSONB,created_at TIMESTAMPTZ DEFAULT now());
+ CREATE TABLE capacity_reservations(id UUID,machine_id TEXT,status TEXT);
+ CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB,updated_at TIMESTAMPTZ DEFAULT now());
+ CREATE TABLE execution_nodes(machine_registry_id UUID PRIMARY KEY,current_version_id UUID);
+ CREATE TABLE execution_node_versions(id uuid PRIMARY KEY,state text,machine_registry_id uuid);
+ CREATE TABLE execution_grants(id uuid PRIMARY KEY,node_version_id uuid,state text,expires_at timestamptz,surface text,provider text,profile_id text);
+ CREATE TABLE linux_script_authorizations(id UUID PRIMARY KEY,machine_registry_id UUID,execution_version_id UUID,state TEXT,authorization_expires_at TIMESTAMPTZ,grant_ids jsonb,policy JSONB,evidence_task_id UUID,expected_version_id UUID,policy_digest TEXT,nonce TEXT,created_at TIMESTAMPTZ DEFAULT now(),signed_payload TEXT);
+ CREATE FUNCTION fixture_grants() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE grant_id uuid:=gen_random_uuid(); BEGIN
+ INSERT INTO execution_node_versions(id,state) VALUES(NEW.execution_version_id,'active');
+ INSERT INTO execution_grants VALUES(grant_id,NEW.execution_version_id,'active',NEW.authorization_expires_at,'managed_script','script','shell');
+ NEW.grant_ids:=jsonb_build_object('shell',grant_id);RETURN NEW;END $$;
+ CREATE TRIGGER fixture_grants BEFORE INSERT ON linux_script_authorizations FOR EACH ROW EXECUTE FUNCTION fixture_grants();`);});
+afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();});
+beforeEach(async()=>{await pool.query('TRUNCATE tasks,system_registry,execution_nodes,linux_script_authorizations,execution_node_versions,execution_grants,task_events,work_routing_receipts,capacity_reservations');parent=randomUUID();machine={id:randomUUID(),name:'new-linux',metadata:{role:'worker',node_health:{os:'linux'},onboarding:{request:{name:'new-linux',address:'100.64.0.2',ssh_user:'root',ssh_port:22,credential_ref:'op://CS/test/private key',host_key_fingerprint:'SHA256:'+'a'.repeat(43),role:'worker',region:'HK'}}}};
+ machine.metadata.onboarding.id=machine.id;
+ await pool.query("INSERT INTO tasks(id,status,payload) VALUES($1,'completed',$2)",[parent,{node_onboarding:{id:machine.metadata.onboarding.id,request:machine.metadata.onboarding.request}}]);
+ await pool.query("INSERT INTO system_registry(id,type,name,status,metadata) VALUES($1,'machine',$2,'active',$3)",[machine.id,machine.name,machine.metadata]);});
+const createTask=async (args,internal)=>{expect(assertLinuxPoolAuthority({...args,requested_task_type:args.task_type,task:args},internal)).toBe(true);return {success:true,task:(await args.db.query('INSERT INTO tasks(id,title,task_type,status,payload,parent_task_id,executor_kind,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[randomUUID(),args.title,args.task_type,args.status,{...args.payload,parent_task_id:args.parent_task_id,routing_receipt_id:randomUUID(),work_kind:'operational_action'},args.parent_task_id,args.executor_kind,args.created_by])).rows[0]};};
+const flow=extra=>createLinuxOnboardingFlow({pool,createTask,revision:'a'.repeat(40),afterTerminal:async()=>{},...extra});
+it('并发只登记一个内部接入子任务，nonce/intent服务端生成且observer不登记',async()=>{
+ const f=flow({step:async()=>{}});const results=await Promise.all([f.ensure(machine,parent),f.ensure(machine,parent)]);expect(results[0]).toBe(results[1]);
+ const rows=(await pool.query("SELECT * FROM tasks WHERE payload ? 'linux_onboarding'")).rows;expect(rows).toHaveLength(1);expect(rows[0].parent_task_id).toBe(parent);expect(rows[0].executor_kind).toBe('linux-pool-controller');
+ expect(rows[0].payload.linux_onboarding).toMatchObject({phase:'probe',nonce:expect.stringMatching(/^[a-f0-9]{64}$/),intent_id:expect.any(String)});
+ expect(await f.ensure({...machine,metadata:{...machine.metadata,role:'observer'}},parent)).toBe(null);
+});
+it('metadata把原observer改成worker不能自行登记执行验收，原任务角色才是授权上限',async()=>{
+ machine.metadata.onboarding.request.role='observer';
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,request,role}','\"observer\"') WHERE id=$1",[parent]);
+ await pool.query('UPDATE system_registry SET metadata=$2 WHERE id=$1',[machine.id,machine.metadata]);
+ let called=false;const f=flow({step:async()=>{called=true;}}),id=await f.ensure(machine,parent);if(id)await f.advance(id);
+ expect(id).toBe(null);expect(called).toBe(false);
+});
+it('已生成的续验阶段收到持久撤销后不会再触SSH，也不能通过ensure重建',async()=>{
+ let calls=0;const f=flow({step:async()=>{calls++;}}),id=await f.ensure(machine,parent);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,phase}','\"renew_wait\"'),'{linux_onboarding,revoked}','true') WHERE id=$1",[id]);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,execution_revoked}','true') WHERE id=$1",[parent]);
+ expect(await f.advance(id)).toMatchObject({advanced:false});expect(calls).toBe(0);expect(await f.ensure(machine,parent)).toBe(null);
+ expect(await f.view(id)).toMatchObject({phase:'revoked',execution:false});
+});
+it('会话锁覆盖外部副作用；阶段先落库，未知保留同intent，重试不重建任务',async()=>{
+ let calls=0,release;const wait=new Promise(r=>{release=r;});
+ const f=flow({step:async(_task,_machine,s,save)=>{calls++;await save({...s,phase:'bootstrap'});await wait;throw Error('private-secret');}});
+ const id=await f.ensure(machine,parent),first=f.advance(id);while(calls===0)await new Promise(r=>setTimeout(r,5));
+ expect(await f.advance(id)).toMatchObject({busy:true});release();await first;
+ const row=(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];expect(row.payload.linux_onboarding.phase).toBe('bootstrap');expect(JSON.stringify(row)).not.toContain('private-secret');
+ await f.retry(id);expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);expect(calls).toBe(1);
+});
+it('仅当前未过期active授权才能完成接入任务并写事实证据actor；失效界面回到续验中',async()=>{
+ const version=randomUUID(),runtime=randomUUID();const f=flow({step:async(_t,_m,s,save)=>save({...s,phase:'active',runtime_json:JSON.stringify({id:runtime}),active:{execution:true,execution_version_id:version,expires_at:new Date(Date.now()+86400000).toISOString()}})});
+ const id=await f.ensure(machine,parent);await pool.query('INSERT INTO execution_nodes VALUES($1,$2)',[machine.id,version]);await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,authorization_expires_at) VALUES($1,$2,$3,'active',now()+interval '24 hours')",[runtime,machine.id,version]);
+ await f.advance(id);const task=(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];expect(task.status).toBe('completed');expect(task.result).toMatchObject({fact:expect.any(String),actor:'linux-pool-onboarding',evidence:{runtime_id:runtime,execution_version_id:version}});
+ expect((await f.view(id)).execution).toBe(true);await pool.query("UPDATE linux_script_authorizations SET authorization_expires_at=now()-interval '1 second'");
+ expect(await f.view(id)).toMatchObject({execution:false,phase:'renewal'});
+});
+it('可编辑设备请求和执行能力不会替代原登记请求或内部身份验收',async()=>{
+ let received;const f=flow({step:async(_t,m)=>{received=m;}}),id=await f.ensure(machine,parent);
+ await pool.query("UPDATE system_registry SET metadata=jsonb_set(jsonb_set(metadata,'{onboarding,request,address}','\"attacker.invalid\"'),'{node_health,capabilities}','{\"execution\":true}')");
+ await f.advance(id);expect(received.metadata.onboarding.request.address).toBe('100.64.0.2');
+ expect((await projectLinuxExecution(pool,[machine]))[0].execution.enabled).toBe(false);
+});
+it('卡片状态绑定当前许可、内部fresh身份及最新接入任务，registry伪造无效',async()=>{
+ const version=randomUUID(),runtime=randomUUID();const f=flow({step:async(_t,_m,s,save)=>save({...s,phase:'active',runtime_json:JSON.stringify({id:runtime})})});
+ const id=await f.ensure(machine,parent);await pool.query('INSERT INTO execution_nodes VALUES($1,$2)',[machine.id,version]);await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,authorization_expires_at) VALUES($1,$2,$3,'active',now()+interval '24 hours')",[runtime,machine.id,version]);await f.advance(id);
+ expect((await projectLinuxExecution(pool,[machine]))[0].execution.enabled).toBe(true);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,identity_ok}','false') WHERE id=$1",[id]);
+ expect((await projectLinuxExecution(pool,[machine]))[0].execution.enabled).toBe(false);
+});
+it('续验不依赖设备metadata中的可编辑任务指针',async()=>{
+ const version=randomUUID(),runtime=randomUUID(),boot=randomUUID(),f=flow({checkIdentity:async()=>({worker_boot_id:boot}),step:async(_t,_m,s,save)=>save({...s,phase:'active',
+  installation_json:JSON.stringify({receipt:{worker_boot_id:boot}}),runtime_json:JSON.stringify({id:runtime}),active:{execution_version_id:version}})});
+ const id=await f.ensure(machine,parent);await pool.query('INSERT INTO execution_nodes VALUES($1,$2)',[machine.id,version]);await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,authorization_expires_at) VALUES($1,$2,$3,'active',now()+interval '30 minutes')",[runtime,machine.id,version]);await f.advance(id);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,identity_checked_at}','\"2000-01-01T00:00:00Z\"') WHERE id=$1",[id]);
+ await pool.query("UPDATE system_registry SET metadata=jsonb_set(metadata,'{onboarding,execution_task_id}',$1::jsonb)",[JSON.stringify(randomUUID())]);
+ expect(await f.renew()).toEqual(expect.any(String));
+});
+it.each(['expiry','boot'])('%s自动生成唯一下一棒，保留已完成历史及凭据/安装intent',async kind=>{
+ const version=randomUUID(),runtime=randomUUID(),boot=randomUUID();const f=flow({checkIdentity:async()=>({worker_boot_id:kind==='boot'?randomUUID():boot}),step:async(_t,_m,s,save)=>save({...s,phase:'active',
+  installation_json:JSON.stringify({receipt:{worker_boot_id:boot}}),runtime_json:JSON.stringify({id:runtime}),active:{execution:true,execution_version_id:version}})});
+ const id=await f.ensure(machine,parent);await pool.query('INSERT INTO execution_nodes VALUES($1,$2)',[machine.id,version]);
+ await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,authorization_expires_at) VALUES($1,$2,$3,'active',now()+$4::interval)",[runtime,machine.id,version,kind==='expiry'?'30 minutes':'24 hours']);await f.advance(id);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,identity_checked_at}','\"2000-01-01T00:00:00Z\"') WHERE payload ? 'linux_onboarding'");
+ await Promise.all([f.renew(),f.renew()]);const rows=(await pool.query("SELECT * FROM tasks WHERE payload ? 'linux_onboarding' ORDER BY created_at")).rows;
+ expect(rows).toHaveLength(2);expect(rows[0].status).toBe('completed');expect(rows[1].parent_task_id).toBe(id);
+ expect(rows[1].payload.linux_onboarding).toMatchObject({phase:'renew_revoke',previous_runtime_id:runtime,intent_id:rows[0].payload.linux_onboarding.intent_id});
+ expect(rows[1].payload.linux_onboarding.nonce).not.toBe(rows[0].payload.linux_onboarding.nonce);
+});
+it('显式撤销不会被后台续验自动重新授权',async()=>{
+ const version=randomUUID(),runtime=randomUUID(),boot=randomUUID(),f=flow({checkIdentity:async()=>({worker_boot_id:boot}),step:async(_t,_m,s,save)=>save({...s,phase:'active',
+  installation_json:JSON.stringify({receipt:{worker_boot_id:boot}}),runtime_json:JSON.stringify({id:runtime}),active:{execution:true,execution_version_id:version}})});
+ const id=await f.ensure(machine,parent);await pool.query('INSERT INTO execution_nodes VALUES($1,$2)',[machine.id,version]);await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,authorization_expires_at) VALUES($1,$2,$3,'active',now()+interval '24 hours')",[runtime,machine.id,version]);await f.advance(id);
+ await pool.query("UPDATE linux_script_authorizations SET state='revoked'");await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,identity_checked_at}','\"2000-01-01T00:00:00Z\"') WHERE payload ? 'linux_onboarding'");
+ expect(await f.renew()).toBe(null);expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
+ expect(await f.view(id)).toMatchObject({execution:false,phase:'revoked'});
+});
+
+it.each(['grant_revoke','grant_expiry','version_revoke'])('%s后接入视图与机器卡片都不能假报执行已启用',async kind=>{
+ const version=randomUUID(),runtime=randomUUID(),f=flow({step:async(_t,_m,s,save)=>save({...s,phase:'active',runtime_json:JSON.stringify({id:runtime})})});
+ const id=await f.ensure(machine,parent);await pool.query('INSERT INTO execution_nodes VALUES($1,$2)',[machine.id,version]);
+ await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,authorization_expires_at) VALUES($1,$2,$3,'active',now()+interval '24 hours')",[runtime,machine.id,version]);await f.advance(id);
+ if(kind==='version_revoke')await pool.query("UPDATE execution_node_versions SET state='revoked'");
+ else if(kind==='grant_revoke')await pool.query("UPDATE execution_grants SET state='revoked'");
+ else await pool.query("UPDATE execution_grants SET expires_at=now()-interval '1 second'");
+ expect((await f.view(id)).execution).toBe(false);expect((await projectLinuxExecution(pool,[machine]))[0].execution.enabled).toBe(false);
+ if(kind!=='grant_expiry'){
+  await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,identity_checked_at}','\"2000-01-01T00:00:00Z\"') WHERE id=$1",[id]);
+  expect(await f.renew()).toBe(null);expect(await f.view(id)).toMatchObject({phase:'revoked',execution:false});
+ }
+});
+
+async function failedController(){
+ const f=flow({step:async()=>{}}),id=await f.ensure(machine,parent),at=new Date().toISOString();
+ const report={type:'node_onboarding_receipt',id:machine.id,name:machine.name,mode:'enroll',verified:true,service:{active:true,enabled:true},health:{schema_version:1,node_id:machine.id,agent_version:'1',observed_at:at,boot_id:randomUUID(),sequence:2,hostname:machine.name,os:'linux',capabilities:{collector:true,janitor:true,execution:false},janitor:{mode:'observe',policy:'owned-cache-only'},resources:{memory_total_bytes:8e9,memory_available_bytes:4e9,cpu_load_1m:0,cpu_cores:4,disk_free_bytes:10e9,disk_total_bytes:40e9}}};
+ await pool.query("UPDATE tasks SET completed_at=$2,result=$3,payload=jsonb_set(jsonb_set(payload,'{node_onboarding,mode}','\"enroll\"'),'{node_onboarding,reconciled}','true') WHERE id=$1",[parent,at,{script:{exit_code:0,stdout:JSON.stringify(report)}}]);
+ await pool.query("UPDATE tasks SET status='failed',executor_kind=NULL,claimed_by=NULL,error_message=$2,payload=jsonb_set(payload,'{linux_onboarding,phase}','\"script_prepare\"') WHERE id=$1",[id,'S2锚点执法：task缺少 payload.anchor.{journey_id,gp_id,step_id}，拒绝点火']);
+ const policy=buildLinuxOnboardingPolicy({machine_registry_id:machine.id,machine_id:machine.name,role:'worker',endpoint_host:machine.metadata.onboarding.request.address,observation:report.health,image:ONBOARDING_IMAGE,image_id:'sha256:'+'c'.repeat(64)});
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,policy_json}',$2) WHERE id=$1",[id,JSON.stringify(JSON.stringify(policy))]);
+ const old=(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];
+ await pool.query("INSERT INTO work_routing_receipts VALUES($1,'scheduler',$2,'audit')",[id,'linux-pool-onboarding:'+old.payload.linux_onboarding.nonce]);
+ await pool.query("INSERT INTO task_events(task_id,event_type,payload) VALUES($1,'watchdog_safe_requeue',$2)",[id,{reason:'no_spawn_evidence',headed_manual:false,evidence:{active_process:false,process_log:false,dispatch_receipt:false}}]);
+ return {f,id,old};
+}
+it('原官方retry保留误收failed历史，以同机新私有controller棒从probe接续且幂等',async()=>{
+ const {f,id,old}=await failedController();const next=await f.retry(id);
+ expect(next.task_id).not.toBe(id);expect(next.phase).toBe('probe');
+ const row=(await pool.query('SELECT * FROM tasks WHERE id=$1',[next.task_id])).rows[0];
+ expect(row).toMatchObject({status:'in_progress',executor_kind:'linux-pool-controller',claimed_by:'linux-pool-onboarding',parent_task_id:id});
+ expect(row.payload.linux_onboarding.nonce).not.toBe(old.payload.linux_onboarding.nonce);
+ expect(row.payload.linux_onboarding.intent_id).not.toBe(old.payload.linux_onboarding.intent_id);
+ expect(row.payload.linux_onboarding.policy_json).toBe(old.payload.linux_onboarding.policy_json);
+ expect((await pool.query('SELECT status,error_message FROM tasks WHERE id=$1',[id])).rows[0]).toMatchObject({status:'failed',error_message:old.error_message});
+ expect((await f.retry(id)).task_id).toBe(next.task_id);
+});
+it.each(['event','route','source','revoked','occupied','other_error','foreign_claim','active_grant','unretired_runtime'])('恢复拒绝%s，不能把公共payload变成controller授权',async kind=>{
+ const {f,id}=await failedController();
+ if(kind==='event')await pool.query('DELETE FROM task_events WHERE task_id=$1',[id]);
+ if(kind==='route')await pool.query('DELETE FROM work_routing_receipts WHERE task_id=$1',[id]);
+ if(kind==='source')await pool.query('UPDATE tasks SET result=NULL WHERE id=$1',[parent]);
+ if(kind==='revoked')await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,execution_revoked}','true') WHERE id=$1",[parent]);
+ if(kind==='occupied')await pool.query("INSERT INTO capacity_reservations VALUES($1,$2,'running')",[randomUUID(),machine.name]);
+ if(kind==='other_error')await pool.query("UPDATE tasks SET error_message='unrelated_failure' WHERE id=$1",[id]);
+ if(kind==='foreign_claim')await pool.query("UPDATE tasks SET claimed_by='other-session' WHERE id=$1",[id]);
+ if(kind==='active_grant'){const v=randomUUID();await pool.query("INSERT INTO execution_node_versions VALUES($1,'active',$2)",[v,machine.id]);await pool.query("INSERT INTO execution_grants VALUES($1,$2,'active',now()+interval '1 hour','managed_script','script','shell')",[randomUUID(),v]);}
+ if(kind==='unretired_runtime')await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,authorization_expires_at) VALUES($1,$2,$3,'prepared',now()+interval '1 hour')",[randomUUID(),machine.id,randomUUID()]);
+ await expect(f.retry(id)).rejects.toThrow();expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
+});
+
+it('并发原retry只登记一棒，新父子claim不冒领，source指针原子更新',async()=>{
+ const {f,id}=await failedController();const results=await Promise.all([f.retry(id),f.retry(id)]);
+ expect(results[0].task_id).toBe(results[1].task_id);
+ expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(2);
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(results[0].task_id);
+});
+
+it('retry等待capacity期间不抢registry行锁，避免与runtime的capacity→registry锁序互锁',async()=>{
+ const {f,id}=await failedController(),other=await pool.connect();let pending,readError;
+ try{
+  await other.query('BEGIN');await other.query(MACHINE_CAPACITY_LOCK_SQL,[machine.name]);
+  pending=f.retry(id);let waiting=false;
+  for(let n=0;n<100;n++){
+   waiting=(await admin.query("SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event='advisory' AND query LIKE '%harness_attempt_machine%'",[schema])).rowCount>0;
+   if(waiting)break;await new Promise(r=>setTimeout(r,5));
+  }
+  expect(waiting).toBe(true);
+  try{await other.query('SELECT id FROM tasks WHERE id=$1 FOR SHARE NOWAIT',[id]);await other.query('SELECT id FROM system_registry WHERE id=$1 FOR SHARE NOWAIT',[machine.id]);}catch(e){readError=e.code;}
+ }finally{await other.query('ROLLBACK');other.release();await pending;}
+ expect(readError).toBeUndefined();
+});
+
+it.each(['missing','empty','malformed','shape','machine','profile','oversized','capacity','endpoint'])('原硬预算%s时拒绝误收恢复，不登记新棒或改来源指针',async kind=>{
+ const {f,id,old}=await failedController(),state=old.payload.linux_onboarding,p=JSON.parse(state.policy_json);
+ if(kind==='missing')delete state.policy_json;
+ else if(kind==='empty')state.policy_json='';
+ else if(kind==='malformed')state.policy_json='{';
+ else if(kind==='shape')state.policy_json='{}';
+ else {
+  if(kind==='machine')p.pool.machine_registry_id=randomUUID();
+  if(kind==='profile')p.profiles.shell.profile.memoryBytes=2**31;
+  if(kind==='oversized')p.pool.pool.cpu_cores=4;
+  if(kind==='capacity')p.capacity=2;
+  if(kind==='endpoint')p.pool.endpoint_host='100.64.0.99';
+  state.policy_json=JSON.stringify(p);
+ }
+ await pool.query('UPDATE tasks SET payload=$2 WHERE id=$1',[id,old.payload]);
+ await expect(f.retry(id)).rejects.toThrow('linux_pool_retry_unconfirmed');
+ expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(id);
+});
+
+it('官方bootstrap恢复持原会话锁后换新intent，旧尝试留事件，重复retry幂等',async()=>{
+ let prepared=0;const f=flow({step:async()=>{},bootstrapRecovery:{prepare:async(_db,t)=>{prepared++;return {...t.payload.linux_onboarding,intent_id:randomUUID(),revision:'b'.repeat(40),error:null,upgrade_json:'{}',previous_attempt:{intent_id:t.payload.linux_onboarding.intent_id,binding:'a'.repeat(64)}};}}});
+ const id=await f.ensure(machine,parent);await pool.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"'),'{linux_onboarding,error}','\"linux_pool_ssh_unavailable\"') WHERE id=$1",[id]);
+ const old=(await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding;
+ await f.retry(id);await f.retry(id);const state=(await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding;
+ expect(prepared).toBe(1);expect(state.intent_id).not.toBe(old.intent_id);expect(state.previous_attempt.intent_id).toBe(old.intent_id);
+ const events=(await pool.query("SELECT payload FROM task_events WHERE task_id=$1 AND event_type='linux_bootstrap_retry'",[id])).rows;
+ expect(events).toHaveLength(1);expect(events[0].payload.evidence.previous_attempt.intent_id).toBe(old.intent_id);
+});
+it('bootstrap全远端窗口持capacity锁，其他连接不能在SSH期间获得同机新预算',async()=>{
+ let entered,release;const inside=new Promise(r=>entered=r),wait=new Promise(r=>release=r);
+ const f=flow({step:async()=>{entered();await wait;}}),id=await f.ensure(machine,parent);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"') WHERE id=$1",[id]);
+ const advance=f.advance(id),other=await pool.connect();let contended;
+ try{await inside;await other.query('BEGIN');contended=(await other.query("SELECT pg_try_advisory_xact_lock(hashtextextended('harness_attempt_machine:' || $1::text,0)) AS locked",[machine.name])).rows[0].locked;}
+ finally{await other.query('ROLLBACK');other.release();release();await advance;}
+ expect(contended).toBe(false);
+});
+it.each(['reservation','runtime','grant'])('bootstrap发现%s阻止SSH，失败仍持久且不释放未知产物',async kind=>{
+ let calls=0;const f=flow({step:async()=>{calls++;}}),id=await f.ensure(machine,parent);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"') WHERE id=$1",[id]);
+ if(kind==='reservation')await pool.query("INSERT INTO capacity_reservations VALUES($1,$2,'running')",[randomUUID(),machine.name]);
+ if(kind==='runtime')await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,authorization_expires_at) VALUES($1,$2,$3,'prepared',now()+interval '1 hour')",[randomUUID(),machine.id,randomUUID()]);
+ if(kind==='grant'){const version=randomUUID();await pool.query("INSERT INTO execution_node_versions VALUES($1,'active',$2)",[version,machine.id]);await pool.query("INSERT INTO execution_grants VALUES($1,$2,'active',now()+interval '1 hour','managed_script','script','shell')",[randomUUID(),version]);}
+ await f.advance(id);expect(calls).toBe(0);
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding.error).toBe('linux_pool_bootstrap_recovery_unconfirmed');
+});
+it('升级授权复核错误不能进入SSH；容量事务正常结束且原intent保留',async()=>{
+ let calls=0;const f=flow({step:async()=>{calls++;},bootstrapRecovery:{authorize:async()=>{throw Error('linux_pool_bootstrap_recovery_unconfirmed');}}}),id=await f.ensure(machine,parent);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"'),'{linux_onboarding,upgrade_json}','\"{}\"') WHERE id=$1",[id]);
+ await f.advance(id);expect(calls).toBe(0);expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding.phase).toBe('bootstrap');
+});
+
+it('等待容量锁期间任务被撤销或换intent，不覆盖新状态也不执行SSH',async()=>{
+ let calls=0;const f=flow({step:async()=>{calls++;}}),id=await f.ensure(machine,parent),other=await pool.connect(),nonce='f'.repeat(64);let pending;
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"') WHERE id=$1",[id]);
+ try{
+  await other.query('BEGIN');await other.query(MACHINE_CAPACITY_LOCK_SQL,[machine.name]);pending=f.advance(id).catch(()=>null);
+  let waiting=false;for(let n=0;n<100;n++){waiting=(await admin.query("SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event='advisory' AND query LIKE '%harness_attempt_machine%'",[schema])).rowCount>0;if(waiting)break;await new Promise(r=>setTimeout(r,5));}expect(waiting).toBe(true);
+  await other.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,nonce}',$2::jsonb) WHERE id=$1",[id,JSON.stringify(nonce)]);
+  await other.query('COMMIT');await pending;
+ }finally{await other.query('ROLLBACK');other.release();await pending;}
+ expect(calls).toBe(0);expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding.nonce).toBe(nonce);
+});
+
+async function installedContinuation(extra={}){
+ let prepared=0;const prepareInstalled=async(_db,task)=>{
+  prepared++;const s=task.payload.linux_onboarding;
+  return {machine_registry_id:s.machine_registry_id,parent_task_id:s.parent_task_id,onboarding_id:s.onboarding_id,request_hash:s.request_hash,
+   phase:'bootstrap',revision:'b'.repeat(40),artifact_digest:'b'.repeat(64),intent_id:randomUUID(),nonce:'c'.repeat(64),expected_version_id:null,
+   policy_json:'preserved-policy',credential_files:{worker_credential_file:'/trusted/worker',execution_credential_file:'/trusted/key'},
+   resume_of_task_id:task.id,upgrade_cleanup_runtime_id:s.last_cleanup_runtime_id,upgrade_json:'{}',previous_attempt:{intent_id:s.intent_id,binding:'d'.repeat(64)}};
+ };
+ const f=flow({step:async()=>{},bootstrapRecovery:{prepareInstalled},...extra}),id=await f.ensure(machine,parent);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding}',(payload->'linux_onboarding')||$2::jsonb) WHERE id=$1",
+  [id,JSON.stringify({phase:'renew_wait',last_cleanup_runtime_id:randomUUID(),installation_json:'old-install-receipt',upgrade_json:'old-upgrade',previous_attempt:{intent_id:randomUUID(),binding:'e'.repeat(64)}})]);
+ const before=(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];return {f,id,before,get prepared(){return prepared;}};
+}
+it('官方已安装接续并发只建一棒，旧payload完整保留且双指针原子前移，commit前不SSH',async()=>{
+ const x=await installedContinuation();const [a,b]=await Promise.all([x.f.retry(x.id),x.f.retry(x.id)]);
+ expect(a.task_id).not.toBe(x.id);expect(a.task_id).toBe(b.task_id);expect(x.prepared).toBe(1);
+ const old=(await pool.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0],next=(await pool.query('SELECT * FROM tasks WHERE id=$1',[a.task_id])).rows[0];
+ expect(old.status).toBe('archived');expect(old.payload).toEqual(x.before.payload);expect(old.result).toMatchObject({actor:'linux-pool-onboarding',evidence:{continuation_task_id:next.id}});
+ expect(next.parent_task_id).toBe(x.id);expect(next.claimed_by).toBe('linux-pool-onboarding');expect(next.executor_kind).toBe('linux-pool-controller');
+ expect(next.payload.linux_onboarding).toMatchObject({phase:'bootstrap',resume_of_task_id:x.id,upgrade_cleanup_runtime_id:x.before.payload.linux_onboarding.last_cleanup_runtime_id});
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(next.id);
+ expect((await pool.query('SELECT metadata FROM system_registry WHERE id=$1',[machine.id])).rows[0].metadata.onboarding.execution_task_id).toBe(next.id);
+ expect((await pool.query("SELECT payload FROM task_events WHERE task_id=$1 AND event_type='linux_installed_upgrade'",[x.id])).rows).toHaveLength(1);
+});
+it.each(['source_pointer','registry_pointer','phase','foreign_claim','revoked','wrong_kind'])('已安装接续%s漂移零新棒且旧历史不终态',async kind=>{
+ const x=await installedContinuation();
+ if(kind==='source_pointer')await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,execution_task_id}',$2::jsonb) WHERE id=$1",[parent,JSON.stringify(randomUUID())]);
+ if(kind==='registry_pointer')await pool.query("UPDATE system_registry SET metadata=jsonb_set(metadata,'{onboarding,execution_task_id}',$2::jsonb) WHERE id=$1",[machine.id,JSON.stringify(randomUUID())]);
+ if(kind==='phase')await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,phase}','\"refresh_installation\"') WHERE id=$1",[x.id]);
+ if(kind==='foreign_claim')await pool.query("UPDATE tasks SET claimed_by='foreign' WHERE id=$1",[x.id]);
+ if(kind==='revoked')await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,revoked}','true') WHERE id=$1",[x.id]);
+ if(kind==='wrong_kind')await pool.query("UPDATE tasks SET executor_kind='headed-session' WHERE id=$1",[x.id]);
+ await expect(x.f.retry(x.id)).rejects.toThrow();expect(x.prepared).toBe(0);
+ expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
+ expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[x.id])).rows[0].status).toBe('in_progress');
+});
+it('新棒登记或终态事件失败回滚全部旧状态与双指针',async()=>{
+ let fail=false;const creator=async(...args)=>{const r=await createTask(...args);if(fail)throw Error('transaction-proof');return r;};
+ const x=await installedContinuation({createTask:creator});fail=true;
+ await expect(x.f.retry(x.id)).rejects.toThrow('transaction-proof');
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0]).toEqual(x.before);
+ expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(x.id);
+});
+
+async function handoffSnapshot(){
+ return {tasks:(await pool.query('SELECT * FROM tasks ORDER BY id')).rows,registry:(await pool.query('SELECT * FROM system_registry ORDER BY id')).rows,
+  events:(await pool.query('SELECT * FROM task_events ORDER BY task_id,event_type')).rows};
+}
+it.each(['creator_before','creator_after','source_pointer','registry_pointer','result_link','event'])('接续%s失败在自有或外层事务均完整回滚',async point=>{
+ let armed=false;const creator=async(...args)=>{
+  if(armed&&point==='creator_before')throw Error('handoff-proof');
+  const made=await createTask(...args);if(armed&&point==='creator_after')throw Error('handoff-proof');return made;
+ };
+ const x=await installedContinuation({createTask:creator});armed=true;
+ const trigger=['source_pointer','registry_pointer','result_link','event'].includes(point),table=point==='registry_pointer'?'system_registry':point==='event'?'task_events':'tasks';
+ if(trigger){
+  const condition=point==='source_pointer'?`OLD.id='${parent}'::uuid`:point==='registry_pointer'?'TRUE':point==='result_link'?"OLD.status='archived' AND NEW.result->'evidence'->>'continuation_task_id' IS NOT NULL":'TRUE';
+  await pool.query(`CREATE FUNCTION reject_handoff() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'handoff-proof'; END $$;
+   CREATE TRIGGER reject_handoff BEFORE ${point==='event'?'INSERT':'UPDATE'} ON ${table} FOR EACH ROW WHEN (${condition}) EXECUTE FUNCTION reject_handoff()`);
+ }
+ const before=await handoffSnapshot();
+ try{
+  await expect(x.f.retry(x.id)).rejects.toThrow('handoff-proof');expect(await handoffSnapshot()).toEqual(before);
+  const c=await pool.connect();try{
+   await c.query('BEGIN');await expect(x.f.retry(x.id,c)).rejects.toThrow('handoff-proof');await c.query('ROLLBACK');
+  }finally{await c.query('ROLLBACK');c.release();}
+  expect(await handoffSnapshot()).toEqual(before);
+ }finally{if(trigger)await pool.query(`DROP TRIGGER reject_handoff ON ${table};DROP FUNCTION reject_handoff()`);}
+});
+it('归档到新棒登记的事务中间外部只见旧active，提交后只见新active',async()=>{
+ let armed=false,entered,release;const reached=new Promise(r=>{entered=r;}),wait=new Promise(r=>{release=r;});
+ const creator=async(...args)=>{if(armed){entered((await args[0].db.query('SELECT status FROM tasks WHERE id=$1',[args[0].parent_task_id])).rows[0].status);await wait;}return createTask(...args);};
+ const x=await installedContinuation({createTask:creator});armed=true;const pending=x.f.retry(x.id).then(value=>({value}),err=>({err}));
+ try{
+  expect(await reached).toBe('archived');
+  expect((await pool.query("SELECT id FROM tasks WHERE status IN ('queued','in_progress')")).rows).toEqual([{id:x.id}]);
+  expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(x.id);
+ }finally{release();await pending;}
+ const outcome=await pending;expect(outcome.err).toBeUndefined();const next=outcome.value;
+ expect((await pool.query("SELECT id FROM tasks WHERE status IN ('queued','in_progress')")).rows).toEqual([{id:next.task_id}]);
+});
+it('外层事务成功返回后仍可整体回滚，未提交接续不影响读者',async()=>{
+ const x=await installedContinuation(),before=await handoffSnapshot(),c=await pool.connect();
+ try{await c.query('BEGIN');const next=await x.f.retry(x.id,c);expect(next.task_id).not.toBe(x.id);expect(await handoffSnapshot()).toEqual(before);await c.query('ROLLBACK');}
+ finally{await c.query('ROLLBACK');c.release();}
+ expect(await handoffSnapshot()).toEqual(before);
+});
+it('无关同标题活跃任务仍按原唯一索引拒绝，旧棒和双指针完整保留',async()=>{
+ const x=await installedContinuation();await pool.query('UPDATE tasks SET goal_id=$2 WHERE id=$1',[x.id,randomUUID()]);
+ await pool.query("INSERT INTO tasks(id,title,status,payload) VALUES($1,$2,'queued','{}')",[randomUUID(),x.before.title]);
+ const before=await handoffSnapshot();await expect(x.f.retry(x.id)).rejects.toMatchObject({code:'23505',constraint:'idx_tasks_dedup_active'});
+ expect(await handoffSnapshot()).toEqual(before);
+});
+it.each(['parent_task_id','payload','created_by','executor_kind','status','task_type','title'])('creator返回的%s不属于当前接续时拒绝认领或前移',async field=>{
+ let armed=false;const creator=async(...args)=>{
+  const made=await createTask(...args);if(!armed)return made;
+  const value=field==='parent_task_id'?randomUUID():field==='payload'?{unrelated:true}:field==='status'?'queued':'foreign';
+  await args[0].db.query(`UPDATE tasks SET ${field}=$2 WHERE id=$1`,[made.task.id,value]);return made;
+ };
+ const x=await installedContinuation({createTask:creator});armed=true;const before=await handoffSnapshot();
+ await expect(x.f.retry(x.id)).rejects.toThrow('linux_pool_retry_unconfirmed');expect(await handoffSnapshot()).toEqual(before);
+});
+
+it('真实SQL重验签名清理与私有旧安装，再原子接续；证据签名损坏不建棒',async()=>{
+ const f=flow({step:async()=>{}}),id=await f.ensure(machine,parent),row=(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0],s=row.payload.linux_onboarding;
+ const policy=buildLinuxOnboardingPolicy({machine_registry_id:machine.id,machine_id:machine.name,role:'worker',endpoint_host:'100.64.0.2',image:ONBOARDING_IMAGE,image_id:'sha256:'+'c'.repeat(64),observation:{os:'linux',observed_at:new Date().toISOString(),resources:{cpu_cores:4,memory_total_bytes:8*2**30}}});
+ const files={worker_credential_file:'/trusted/worker',execution_credential_file:'/trusted/key'},common={revision:s.revision,host_boot_id:randomUUID(),worker_boot_id:randomUUID(),daemon_id:'daemon'};
+ const d=normalizeRuntimeDeployment({...common,pool:policy.pool,profiles:policy.profiles,...files,parent_task_id:id},'e'.repeat(64),'f'.repeat(64));
+ const pd=normalizeDeployment({...common,profile:policy.pool,image_id:'sha256:'+'c'.repeat(64),script_profiles:['shell'],credential_file:files.worker_credential_file},d.workerToken);
+ const receipt={schema_version:'linux-onboarding-install/v1',nonce:s.nonce,machine_registry_id:machine.id,...common,image_id:'sha256:'+'c'.repeat(64),image:ONBOARDING_IMAGE,observed_at:new Date().toISOString(),intent_id:s.intent_id,pool:policy.pool,installed:true,execution:false,os:'linux',resources:{cpu_cores:4,memory_total_bytes:8*2**30}};
+ const sign=r=>({receipt:r,signature:createHmac('sha256',d.key).update(JSON.stringify(r)).digest('hex')}),runtime=randomUUID(),evidence=randomUUID(),version=randomUUID(),nonce='7'.repeat(64);
+ await pool.query("INSERT INTO tasks(id,status,executor_kind,created_by,parent_task_id,payload) VALUES($1,'archived','linux-pool-controller','linux-pool-onboarding',$2,$3)",[evidence,id,{linux_script_runtime_id:runtime,machine_registry_id:machine.id,linux_runtime_retired:runtime}]);
+ const auth=(await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,evidence_task_id,policy_digest,nonce) VALUES($1,$2,$3,'revoked',$4,$5,$6) RETURNING *",[runtime,machine.id,version,evidence,d.policyDigest,nonce])).rows[0];
+ await pool.query("UPDATE execution_grants SET state='revoked' WHERE node_version_id=$1",[version]);
+ const reservation=randomUUID(),profile=d.profiles.shell.profile,pdigest=runtimeDigest(profile),identity={reservation_id:reservation,intent_id:randomUUID(),launch_generation:1,machine_id:machine.name,owner_key:`script-${reservation}-a1`,config_digest:runtimeDigest({job:{profile:'shell',cmd:`printf '%s\\n' '${nonce}:shell'; sleep 8`,timeout_sec:20,env:{}},profile_digest:pdigest}),worker_id:machine.name,worker_boot_id:d.expected.worker_boot_id,execution_version_id:version,execution_grant_id:auth.grant_ids.shell,profile_id:'shell'};
+ const cleanup={schema_version:'linux-script-canary-cleanup/v1',nonce,machine_id:machine.name,...d.expected,execution_version_id:version,started_at:new Date().toISOString(),completed_at:new Date().toISOString(),execution:false,cleanup_confirmed:true,cases:[{identity,profile_digest:pdigest,container_id:'8'.repeat(64),not_started:false,cleanup:{...identity,container_id:'8'.repeat(64),challenge:randomUUID(),status:'cleaned',absent:true,tombstoned:true}}]};
+ await pool.query('UPDATE tasks SET result=$2 WHERE id=$1',[evidence,{actor:'linux-pool-onboarding',evidence:{...sign(cleanup),envelope_json:JSON.stringify(sign(cleanup))}}]);
+ Object.assign(s,{phase:'renew_wait',policy_json:JSON.stringify(policy),credential_files:files,installation_json:JSON.stringify(sign(receipt)),artifact_digest:'2'.repeat(64),runtime_policy_digest:d.policyDigest,pool_policy_digest:pd.policyDigest,last_cleanup_runtime_id:runtime});
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding}',$2::jsonb) WHERE id=$1",[id,JSON.stringify(s)]);
+ const artifacts={read:(revision,digest)=>({revision,digest,files:{'linux-pool-installer.cjs':'installer','linux-pool-server.cjs':'server'}}),capture:()=>({revision:'b'.repeat(40),digest:'3'.repeat(64)})};
+ const recovery=createBootstrapRecovery({artifacts,readRuntime:async()=>d,readPool:async()=>pd}),real=flow({bootstrapRecovery:recovery,step:async()=>{}});
+ await pool.query("UPDATE tasks SET result=jsonb_set(result,'{evidence,signature}',$2::jsonb) WHERE id=$1",[evidence,JSON.stringify('0'.repeat(64))]);
+ await expect(real.retry(id)).rejects.toThrow('linux_pool_bootstrap_recovery_unconfirmed');
+ expect((await pool.query("SELECT count(*) FROM tasks WHERE payload ? 'linux_onboarding'")).rows[0].count).toBe('1');
+ await pool.query('UPDATE tasks SET result=$2 WHERE id=$1',[evidence,{actor:'linux-pool-onboarding',evidence:{...sign(cleanup),envelope_json:JSON.stringify(sign(cleanup))}}]);
+ const result=await real.retry(id),next=(await pool.query('SELECT * FROM tasks WHERE id=$1',[result.task_id])).rows[0];
+ expect(next.id).not.toBe(id);expect(next.payload.linux_onboarding.policy_json).toBe(s.policy_json);
+ const old=(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];expect(old.status).toBe('archived');expect(old.payload.linux_onboarding).toEqual(s);
+ // Commit之后、SSH之前重启仍可从正式旧棒与同一签名证明重验，不生成第二意图。
+ const source=(await pool.query('SELECT * FROM tasks WHERE id=$1',[parent])).rows[0],registry=(await pool.query('SELECT * FROM system_registry WHERE id=$1',[machine.id])).rows[0];
+ await expect(recovery.authorize(pool,next,source,registry)).resolves.toBeUndefined();
+ expect(next.payload.linux_onboarding.previous_attempt.binding).toBe(createHash('sha256').update(JSON.stringify({machine_registry_id:machine.id,pool:policy.pool,revision:s.revision,sources:artifacts.read(s.revision,s.artifact_digest).files})).digest('hex'));
+});

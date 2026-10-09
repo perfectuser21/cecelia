@@ -464,7 +464,7 @@ describe('Harness Impact Gate 生产接线适配器', () => {
     const receiptSql = db.query.mock.calls[1][0];
     expect(receiptSql).toMatch(/JOIN harness_attempts AS attempt/i);
     expect(receiptSql).toMatch(/attempt\.run_id::text = receipt\.run_id/i);
-    expect(receiptSql).toMatch(/JOIN journey_step_links AS link/i);
+    expect(receiptSql).toMatch(/JOIN activity_cells AS link/i);
     expect(receiptSql).toMatch(/attempt\.status = 'completed'/i);
     expect(receiptSql).toMatch(/outcome' IN \('PASS', 'FIXED'\)/i);
   });
@@ -509,5 +509,26 @@ describe('Harness Impact Gate 生产接线适配器', () => {
       taskId: TASK_ID, runId: RUN_ID, headRevision: HEAD_SHA,
       expectedContractHash: active.contract_hash,
     })).resolves.toMatchObject({ gate: 'pass' });
+  });
+
+  it('合并闸只认 brain_assertion_runner 回执——business_probe_runner（棒3a 业务探针）不进合并闸', async () => {
+    const assertion = {
+      assertion_id: 'packages/brain/src/assert-1.test.js',
+      journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+      assertion_revision: 2, assertion_digest: 'd'.repeat(64),
+    };
+    const active = {
+      id: '22222222-2222-4222-8222-222222222222', contract_hash: 'c'.repeat(64),
+      contract_body: { required_assertions: [assertion] },
+    };
+    const db = { query: vi.fn()
+      .mockResolvedValueOnce({ rows: [active] })
+      .mockResolvedValueOnce({ rows: [] }) };
+    await verifyImpactMergeFence(db, {
+      taskId: TASK_ID, runId: RUN_ID, headRevision: HEAD_SHA, expectedContractHash: active.contract_hash,
+    });
+    const receiptSql = db.query.mock.calls[1][0];
+    expect(receiptSql).toMatch(/receipt\.executor_kind = 'brain_assertion_runner'/);
+    expect(receiptSql).not.toMatch(/business_probe_runner/);
   });
 });

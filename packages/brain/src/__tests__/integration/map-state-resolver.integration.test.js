@@ -15,6 +15,10 @@ import {
   readUnclaimed,
 } from '../../lib/map-read-service.js';
 import { loadMapNodeStates } from '../../lib/map-state-resolver.js';
+import { PHOTO_STALE_THRESHOLD_SECONDS } from '../../lib/registry-freshness.js';
+
+// 「刚过保鲜期」从预算常量推导：原先钉死 16 分钟，预算一放宽就变 fresh，
+// 这条断言会在无人察觉时失去意义（0921 抬预算时正是被 CI 抓出来的）。
 
 const testConnectionString = process.env.TEST_DATABASE_URL;
 const databaseName = testConnectionString
@@ -94,14 +98,12 @@ beforeAll(async () => {
     [scopeKey, repo],
   );
   const journey = await client.query(
-    `INSERT INTO journeys (name, biz_area, capability_code)
+    `INSERT INTO value_streams (name, biz_area, capability_code)
      VALUES ($1, 'infrastructure', $2) RETURNING id`,
     [scopeKey, capabilityKey],
   );
   const step = await client.query(
-    `INSERT INTO journey_steps (journey_id, name, step_number)
-     VALUES ($1, 'state step', 1) RETURNING id`,
-    [journey.rows[0].id],
+    `INSERT INTO activities (name) VALUES ('state step') RETURNING id`,
   );
   const feature = await client.query(
     `INSERT INTO journey_features (journey_id, step_id, name, unit_test_path)
@@ -110,7 +112,7 @@ beforeAll(async () => {
   );
   featureId = feature.rows[0].id;
   const assertion = await client.query(
-    `INSERT INTO journey_step_links
+    `INSERT INTO activity_cells
       (journey_id, step_id, feature_id, cell_kind, cell_key, cell_status, assertion_ref)
      VALUES ($1, $2, $3, 'capability', $4, 'green', $5) RETURNING id`,
     [journey.rows[0].id, step.rows[0].id, featureId, capabilityKey, testPath],
@@ -234,7 +236,7 @@ describe('Map State Resolver — 真实 PostgreSQL', () => {
     await client.query(
       `UPDATE fact_snapshot_headers SET scanned_at=$2
         WHERE kind='test' AND repo=$1`,
-      [repo, new Date(now.getTime() - 16 * 60_000)],
+      [repo, new Date(now.getTime() - (PHOTO_STALE_THRESHOLD_SECONDS + 60) * 1000)],
     );
     const unknown = await loadMapNodeStates(client, {
       scopeKey, now: new Date(now.getTime() + 7000),

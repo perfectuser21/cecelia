@@ -150,7 +150,7 @@ export async function verifyImpactMergeFence(db, {
             link.assertion_revision AS current_assertion_revision,
             link.assertion_ref AS current_assertion_ref
        FROM journey_assertion_receipts AS receipt
-       JOIN journey_step_links AS link
+       JOIN activity_cells AS link
          ON link.id = receipt.journey_step_link_id
        JOIN harness_attempts AS attempt
          ON attempt.id = receipt.harness_attempt_id

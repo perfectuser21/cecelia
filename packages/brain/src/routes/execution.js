@@ -1,3 +1,5 @@
+import {assertAutomaticTaskOwner} from '../lib/headed-task-owner.js';
+import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
 import pool from '../db.js';
 import { exec, execSync } from 'child_process';
@@ -18,6 +20,7 @@ import { raise } from '../alerting.js';
 import { handleTaskFailure } from '../quarantine.js';
 import { triggerCeceliaRun } from '../executor.js';
 import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
+import { EXEC_STATUS_US_TASK_TYPES, EXEC_STATUS_HK_TASK_TYPES, DEV_DASHBOARD_TASK_TYPES, VERDICT_HARNESS_TASK_TYPES } from '../lib/task-type-registry.js';
 import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from '../lib/callback-postprocess.js';
 import { writeCascadeCellStatuses } from '../lib/cascade-writeback.js';
 import { internalServiceHeaders } from '../lib/internal-service-auth.js';
@@ -34,14 +37,33 @@ import {
 } from '../execution.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, firstValidGithubPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
 import { runSyncCommand } from '../lib/safe-sync-command.js';
+import { recordRunFromCallback } from '../lib/task-run.js';
 import { isTransientClass } from '../lib/retry-policy.js';
 import { checkAnchor } from '../anchor-check.js';
+import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
+import { dispatchManualQiumi } from '../lib/manual-qiumi-dispatch.js';
+import { afterTerminalTransition } from '../lib/task-terminal.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { rateLimit } from 'express-rate-limit';
+import { authoringMutationError, assertAuthoringCompletion } from '../workflow-authoring/task-guard.js';
 
 const router = Router();
+
+// 回执入口按 task_id 限流：同一任务一分钟内超 60 次回执视为失控（正常一次执行只有 1~3 次）
+const executionCallbackRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  keyGenerator: (req) => String(req.body?.task_id ?? 'no-task'),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  identifier: 'execution-callback',
+  message: { success: false, error: 'execution-callback rate limit exceeded' },
+});
 const execAsync = promisify(exec);
 const HEARTBEAT_PATH = new URL('../../../HEARTBEAT.md', import.meta.url);
 
-router.post('/execution-callback', async (req, res) => {
+// 内部回执入口：CECELIA_INTERNAL_TOKEN 配置后严格验 Bearer / x-internal-token；未配置只放行非生产本机回环
+router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoopback, async (req, res) => {
   let callbackQueueId = null;
   let callbackQueueFinalized = false;
   const finalizeCallbackQueue = async (processed) => {
@@ -78,6 +100,23 @@ router.post('/execution-callback', async (req, res) => {
         success: false,
         error: 'task_id is required'
       });
+    }
+
+    // 必须在 callback_queue 入队前验证，避免重放器再次处理被拒绝的伪造回执。
+    const reservedError = authoringMutationError(null, { result });
+    if (reservedError) return res.status(409).json(reservedError);
+    try {
+      await assertAuthoringCompletion(pool, normalizeCallbackStatus(status), 'id = $1', [task_id]);
+    } catch (error) {
+      if (error.code === 'WORKFLOW_AUTHORING_INCOMPLETE') {
+        return res.status(409).json({ success: false, code: error.code, error: error.message });
+      }
+      return res.status(503).json({ success: false, code: 'WORKFLOW_AUTHORING_GUARD_UNAVAILABLE',
+        error: '任务完成门禁暂不可读，请重试回执' });
+    }
+    try { await assertAutomaticTaskOwner(pool, task_id); } catch (ownerError) {
+      if (ownerError.statusCode === 409) return res.status(409).json({success:false,error:ownerError.message});
+      throw ownerError;
     }
 
     console.log(`[execution-callback] Received callback for task ${task_id}, status: ${status}`);
@@ -127,6 +166,19 @@ router.post('/execution-callback', async (req, res) => {
         return res.status(503).json({ success: false, error: 'callback_queue unavailable, retry later' });
       }
     }
+
+    // ── run 原语留痕：一次执行 = 一行 task_runs ──
+    // 回执是脚本步 / 设备 / cecelia-run 的统一出口：补齐 run 行（幂等 upsert）并在终态回执时 finishRun
+    // （exit code / 产物 / 终态）。fail-open——留痕失败绝不影响下面的回执主链；DB 才是真相源。
+    await recordRunFromCallback({
+      taskId: task_id,
+      runId: run_id,
+      status,
+      exitCode: exit_code,
+      result,
+      prUrl: pr_url,
+      error: stderr ? String(stderr).slice(-300) : undefined,
+    });
 
     // ── 幂等性保护：run_id + status 组合去重 ──
     // 网络重试或外部系统重复调用时，同一 run_id + status 不应重复处理
@@ -274,6 +326,7 @@ router.post('/execution-callback', async (req, res) => {
           claimed_at = NULL
         WHERE id = $1
           AND status IN ('in_progress', 'queued', 'dispatched')
+          AND NOT (COALESCE(payload,'{}'::jsonb) ? 'headed_takeover')
           AND ($14::text IS NULL OR payload->>'current_run_id' = $14::text)
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, resolvedPrUrl || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson, isTerminal, run_id || null]);
 
@@ -499,6 +552,10 @@ router.post('/execution-callback', async (req, res) => {
         console.error(`[execution-callback] reschedule error (non-fatal): ${rescheduleErr.message}`);
       }
     }
+
+    // 终态收口（lib/task-terminal.js）：completed / completed_no_pr 落库后接棒；放在重排块之后，
+    // 被重排回 queued 的 completed_no_pr 重读状态非终态自然不接棒。非终态钩子直接返回。
+    await afterTerminalTransition(pool, task_id, newStatus);
 
     // Record to EventBus, Circuit Breaker, and Notifier
     if (newStatus === 'completed') {
@@ -961,7 +1018,7 @@ router.post('/execution-callback', async (req, res) => {
             const newValue = targetVal > 0
               ? Math.round((krProgress / 100) * targetVal * 100) / 100
               : krProgress;
-            await pool.query('UPDATE key_results SET current_value = $1, updated_at = NOW() WHERE id = $2', [newValue, krId]);
+            await pool.query(`UPDATE key_results SET current_value = $1, updated_at = NOW() WHERE id = $2 AND ${COMPANY_KR_SQL_GUARD}`, [newValue, krId]);
           }
         }
       } catch (rollupErr) {
@@ -1038,106 +1095,10 @@ router.post('/execution-callback', async (req, res) => {
         console.error(`[execution-callback] Decomp review handling error: ${decompReviewErr.message}`);
       }
 
-      // 5c2. 秋米拆解完成 → 触发 Vivian 审查 + KR 状态更新
+      // 5c2. 拆解完成：只读取 Project 真身及直接 Tasks。
       try {
-        const decompCheckResult = await pool.query('SELECT task_type, payload, goal_id FROM tasks WHERE id = $1', [task_id]);
-        const decompCheckRow = decompCheckResult.rows[0];
-
-        // 只处理秋米的拆解任务（不是 Vivian 的 decomp_review）
-        if (decompCheckRow?.payload?.decomposition === 'true'
-            && decompCheckRow?.task_type !== 'decomp_review'
-            && decompCheckRow?.goal_id) {
-          const krId = decompCheckRow.goal_id;
-
-          // 检查 KR 是否处于 decomposing 状态（key_results 表）
-          const krCheckResult = await pool.query(
-            'SELECT id, title, status FROM key_results WHERE id = $1 AND status = $2',
-            [krId, 'decomposing']
-          );
-
-          if (krCheckResult.rows.length > 0) {
-            // 找到秋米创建的 Project（通过 okr_projects.kr_id）
-            const projectCheckResult = await pool.query(`
-              SELECT id, title AS name FROM okr_projects
-              WHERE kr_id = $1
-              ORDER BY created_at DESC LIMIT 1
-            `, [krId]);
-
-            if (projectCheckResult.rows.length > 0) {
-              const project = projectCheckResult.rows[0];
-
-              // 触发 Vivian 审查
-              const { shouldTriggerReview, createReviewTask } = await import('../review-gate.js');
-              const needsReview = await shouldTriggerReview(pool, 'project', project.id);
-
-              if (needsReview) {
-                await createReviewTask(pool, {
-                  entityType: 'project',
-                  entityId: project.id,
-                  entityName: project.name,
-                  parentKrId: krId,
-                });
-                console.log(`[execution-callback] Vivian review triggered for KR ${krId} project ${project.id}`);
-              }
-
-              // 创建用户确认门：okr_decomp_review pending_action
-              try {
-                const krTitle = krCheckResult.rows[0].title;
-                const projectName = project.name;
-
-                // 查询拆解产出的 Initiatives（通过 okr_scopes → okr_initiatives）
-                const initiativesResult = await pool.query(`
-                  SELECT oi.title AS name
-                  FROM okr_scopes os
-                  JOIN okr_initiatives oi ON oi.scope_id = os.id
-                  WHERE os.project_id = $1
-                  ORDER BY oi.created_at ASC
-                `, [project.id]);
-                const initiatives = initiativesResult.rows.map(r => r.name);
-
-                // 签名去重：同一 KR 24h 内不重复创建
-                const existingApproval = await pool.query(`
-                  SELECT id FROM pending_actions
-                  WHERE action_type = 'okr_decomp_review'
-                    AND status = 'pending_approval'
-                    AND (params->>'kr_id') = $1
-                    AND created_at > NOW() - INTERVAL '24 hours'
-                  LIMIT 1
-                `, [krId]);
-
-                if (existingApproval.rows.length === 0) {
-                  await pool.query(`
-                    INSERT INTO pending_actions
-                      (action_type, category, params, context, priority, source, expires_at, status)
-                    VALUES
-                      ('okr_decomp_review', 'approval', $1, $2, 'urgent', 'okr_decomposer',
-                       NOW() + INTERVAL '72 hours', 'pending_approval')
-                  `, [
-                    JSON.stringify({ kr_id: krId, project_id: project.id }),
-                    JSON.stringify({
-                      kr_title: krTitle,
-                      project_name: projectName,
-                      initiatives,
-                      decomposed_at: new Date().toISOString()
-                    })
-                  ]);
-                  console.log(`[execution-callback] OKR 确认门已创建：KR ${krId}「${krTitle}」，${initiatives.length} 个 Initiative`);
-                } else {
-                  console.log(`[execution-callback] OKR 确认门已存在（去重跳过）：KR ${krId}`);
-                }
-              } catch (approvalErr) {
-                console.error(`[execution-callback] 创建 OKR 确认门失败（非阻塞）: ${approvalErr.message}`);
-              }
-            }
-
-            // 更新 KR 状态: decomposing → reviewing（key_results 表）
-            await pool.query(
-              `UPDATE key_results SET status = 'reviewing', updated_at = NOW() WHERE id = $1`,
-              [krId]
-            );
-            console.log(`[execution-callback] KR ${krId} → reviewing (秋米拆解完成)`);
-          }
-        }
+        const { triggerCompletedDecompositionReview } = await import('../decomposition-review-trigger.js');
+        await triggerCompletedDecompositionReview(pool, task_id);
       } catch (decompTriggerErr) {
         console.error(`[execution-callback] Decomp → review trigger error: ${decompTriggerErr.message}`);
       }
@@ -1654,11 +1615,7 @@ ${resultStr.substring(0, 2000)}
         };
 
         // Fix 1: 对产生 verdict 的 harness 任务类型，将 verdict 持久化到 tasks.result
-        const VERDICT_HARNESS_TYPES = new Set([
-          'harness_contract_propose',
-          'harness_contract_review',
-          'harness_evaluate',
-        ]);
+        const VERDICT_HARNESS_TYPES = new Set(VERDICT_HARNESS_TASK_TYPES);
         if (VERDICT_HARNESS_TYPES.has(harnessType)) {
           const extractedVerdict = extractVerdictFromResult(result, null);
           if (extractedVerdict) {
@@ -3002,7 +2959,7 @@ router.get('/cluster/status', async (req, res) => {
         reserved: 1,
         processes: usProcesses
       },
-      task_types: ['dev', 'review', 'qa', 'audit']
+      task_types: EXEC_STATUS_US_TASK_TYPES
     };
 
     // HK server status (via bridge)
@@ -3021,7 +2978,7 @@ router.get('/cluster/status', async (req, res) => {
         reserved: 0,
         processes: []
       },
-      task_types: ['talk', 'research', 'data']
+      task_types: EXEC_STATUS_HK_TASK_TYPES
     };
 
     // Try to fetch HK status from bridge
@@ -3716,13 +3673,13 @@ router.get('/dev/tasks', async (req, res) => {
         NULL::text as repo_path
       FROM tasks t
       LEFT JOIN key_results g ON t.goal_id = g.id
-      WHERE t.task_type IN ('dev', 'review')
+      WHERE t.task_type = ANY($1::text[])
         AND (t.status IN ('in_progress', 'queued') OR t.completed_at >= CURRENT_DATE - INTERVAL '1 day')
       ORDER BY
         CASE t.status WHEN 'in_progress' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
         t.created_at DESC
       LIMIT 20
-    `);
+    `, [DEV_DASHBOARD_TASK_TYPES]);
 
     // Get live process info
     const activeProcs = getActiveProcesses();
@@ -4027,6 +3984,7 @@ router.get('/work/streams', async (_req, res) => {
 // 用途：/dev 工作流注册 Codex 审查任务后立即触发，不依赖调度器状态
 // 调用 executor.triggerCeceliaRun() 直接执行（完全独立于 tick loop）
 router.post('/dispatch-now', async (req, res) => {
+  let deviceLockTaskId = null; // 已抢设备锁的任务 id（失败路径需释放）
   try {
     const { task_id } = req.body;
     if (!task_id) {
@@ -4060,6 +4018,18 @@ router.post('/dispatch-now', async (req, res) => {
       });
     }
 
+    if (task.task_type === 'qiumi_task') {
+      const dispatched = await dispatchManualQiumi(task, pool);
+      return res.status(dispatched.status).json(dispatched.body);
+    }
+
+    // G5 设备锁闸（Issue e03fc740）：手动派发与 tick 派发同闸——无锁不点火
+    const deviceGate = await checkDeviceLockForManualDispatch(task, 'dispatch-now');
+    if (!deviceGate.pass) {
+      return res.status(deviceGate.status).json(deviceGate.body);
+    }
+    if (deviceGate.acquired) deviceLockTaskId = task.id;
+
     // 标记为 in_progress
     await pool.query(
       'UPDATE tasks SET status = $1, started_at = NOW() WHERE id = $2',
@@ -4078,11 +4048,12 @@ router.post('/dispatch-now', async (req, res) => {
         executor: execResult.executor || 'local',
       });
     } else {
-      // 执行失败：回退 status
+      // 执行失败：回退 status（任务回 queued 不触发终态释放链，锁必须就地放掉）
       await pool.query(
         'UPDATE tasks SET status = $1 WHERE id = $2',
         ['queued', task_id]
       );
+      if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'dispatch-now');
       console.error(`[dispatch-now] Task ${task_id} dispatch failed: ${execResult.error}`);
       res.status(500).json({
         success: false,
@@ -4091,6 +4062,8 @@ router.post('/dispatch-now', async (req, res) => {
       });
     }
   } catch (err) {
+    // 异常路径：已抢的锁不能悬挂到 TTL（任务状态未必进终态释放链）
+    if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'dispatch-now');
     console.error(`[dispatch-now] Error: ${err.message}`);
     res.status(500).json({ error: 'Failed to dispatch', details: err.message });
   }

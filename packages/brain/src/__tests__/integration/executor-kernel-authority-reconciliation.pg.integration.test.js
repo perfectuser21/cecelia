@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -270,6 +272,7 @@ describe.sequential('executor Kernel authority reconciliation on PostgreSQL', ()
       'SELECT status,claimed_by FROM tasks WHERE id=$1',
       [taskId],
     );
-    expect(persisted.rows[0]).toEqual({ status: 'failed', claimed_by: 'brain-tick-7' });
+    // 终态统一经 lib/task-terminal.js 的 finalizeTask 写入，一并清 claimed_by（终态任务不应残留占用者）
+    expect(persisted.rows[0]).toEqual({ status: 'failed', claimed_by: null });
   });
 });

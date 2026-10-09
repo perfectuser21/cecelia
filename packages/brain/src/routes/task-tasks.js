@@ -1,3 +1,5 @@
+import {registerHeadedTakeoverRoute} from './task-headed-takeover.js';
+import {assertGpuExecutionSupported} from '../lib/gpu-execution-contract.js';
 /**
  * Task Tasks route — 对应 tasks 表（Cecelia 执行任务）
  *
@@ -17,21 +19,30 @@ import { queueLaneSql } from '../task-queue-lanes.js';
 import { normalizeChangeKind, CHANGE_KINDS } from '../impact-contract/change-kind.js';
 import { registerTaskPatchRoute } from './task-task-patch.js';
 import { createRoutedTask } from '../work-routing-store.js';
+import { TASK_KINDS, isTaskKind } from '../lib/task-kind.js';
+import { CODING_MUTATION_TASK_TYPES as _CM, LAYER_RETIRED_TASK_TYPES } from '../lib/task-type-registry.js';
+import { assertGoalIsKeyResult } from '../lib/goal-guard.js';
+import { assertOwnerDecisionProtocol } from '../lib/owner-decision.js';
+import { normalizeDependsOn, assertDependsOnExist } from '../lib/task-dependencies.js';
+import { assertProjectRootForMultiTask } from '../lib/project-root-gate.js';
+import { governanceErrorResponse } from '../lib/governance-errors.js';
+import { registerTaskDependencyRoutes } from './task-dependencies.js';
 
 const router = Router();
+registerHeadedTakeoverRoute(router,{pool,path:'/:id/headed-takeover'});
 
 // 状态机保护：已终止的任务不能回退到非终止状态（PATCH /:id 与 DELETE /:id 共用同一常量，
 // 避免两套终态定义产生语义分裂）
 const TERMINAL_STATUSES = ['completed', 'cancelled'];
 const ACTIVE_DEDUP_STATUSES = ['queued', 'in_progress', 'blocked', 'paused'];
-const CODING_MUTATION_TASK_TYPES = new Set([
-  'dev', 'codex_dev', 'initiative_execute', 'sprint_generate', 'sprint_fix',
-  'harness_generate', 'harness_fix', 'pipeline_rescue', 'harness_initiative',
-]);
+// 名单见 lib/task-type-registry.js（CODING_MUTATION_TASK_TYPES）。
+const CODING_MUTATION_TASK_TYPES = new Set(_CM);
 
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
 router.post('/', async (req, res) => {
   try {
+    assertGpuExecutionSupported(req.body?.payload);
+    assertGpuExecutionSupported(req.body?.metadata);
     let {
       title,
       description = null,
@@ -59,10 +70,36 @@ router.post('/', async (req, res) => {
       branch: branchInput = null,
       base_sha: baseShaInput = null,
       execution_profile_override_request: executionProfileOverride = null,
+      parent_task_id: parentTaskIdInput = null,
+      sequence_no: sequenceNoInput = null,
+      kind: kindInput = null,
+      blocked_reason: blockedReasonInput = null,
+      blocked_detail: blockedDetailInput = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
       return res.status(400).json({ error: 'title is required' });
+    }
+
+    // scope/initiative 层退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：这几个
+    // headless 拆解 task_type 的目标层已冻结，建单在入口统一拒绝（registry 行本身保留，
+    // 见 lib/task-type-registry.js LAYER_RETIRED_TASK_TYPES）。
+    if (LAYER_RETIRED_TASK_TYPES.includes(task_type)) {
+      return res.status(410).json({
+        error: 'layer_retired',
+        decision: 'ee4842a6',
+        message: `task_type="${task_type}" 所属层已退役，不再接受建单`,
+      });
+    }
+
+    // kind 真列入口校验（决策 df67a9d6）：给了就必须是 agent|workflow；不给由存储层按
+    // task_type 派生，入口不猜（Jev 路由判出来的值也是从这条路进真列）。
+    if (kindInput != null && !isTaskKind(kindInput)) {
+      return res.status(400).json({
+        error: `Invalid kind: ${String(kindInput)}`,
+        code: 'INVALID_KIND',
+        allowed: [...TASK_KINDS],
+      });
     }
 
     // Tenant scope is assigned at the server ingress. Body payload cannot
@@ -184,6 +221,39 @@ router.post('/', async (req, res) => {
       warnings.push('journey_id missing in payload — initiative_run.journey_id will be null, Notion Project will be orphaned');
     }
 
+    // ─── 决策分档机械守卫（决策 105a5868，链 bf5088a3 棒5，任务 3fad28e0）─────────
+    // 均为「给了才校验」：不给 goal_id / blocked_reason / depends_on 的调用方行为与查询次序不变。
+    if (blockedReasonInput != null && initialStatus !== 'blocked') {
+      return res.status(400).json({
+        error: 'blocked_reason_requires_blocked_status',
+        reason_code: 'blocked_reason_requires_blocked_status',
+        message: 'blocked_reason 只能配 status=blocked 建单',
+      });
+    }
+    try {
+      // 守卫 2：owner_decision 必须带协议（缺项 400，不落库）
+      assertOwnerDecisionProtocol({ reason: blockedReasonInput, detail: blockedDetailInput });
+      // 守卫 1：goal_id 给了必须是 KR 级（Objective id 会被派发白名单静默过滤）
+      const goalCheck = await assertGoalIsKeyResult(pool, goal_id);
+      if (goalCheck.warning) warnings.push(goalCheck.warning);
+      // 依赖单一写口的入口校验：depends_on 必须是存在的任务 uuid 数组
+      const dependsOnIds = normalizeDependsOn(payload?.depends_on);
+      await assertDependsOnExist(pool, dependsOnIds);
+      // 登记闸（PR B）：多刀工作（带依赖 / 声明 multi_task）必须挂 project 根，否则 400
+      await assertProjectRootForMultiTask(pool, {
+        taskType: task_type,
+        parentTaskId: parentTaskIdInput ?? payload?.parent_task_id ?? null,
+        dependsOn: dependsOnIds,
+        payload,
+        projectId: project_id ?? null,
+      });
+    } catch (guardErr) {
+      const mapped = governanceErrorResponse(guardErr);
+      if (!mapped) throw guardErr;
+      return res.status(mapped.status).json(mapped.body);
+    }
+    // ─── end 治理守卫 ────────────────────────────────────────────────
+
     // C3: 服务端去重护栏（issue 655691d2）——title 精确匹配 + goal_id/project_id 一致
     // + 仍是活跃状态，命中则直接返回已有任务，不重新 INSERT。
     // 防止外部 agent/人工反复对同一意图重新注册 task（2026-07-09 实测 5 个重复 PR 的根因）。
@@ -254,6 +324,10 @@ router.post('/', async (req, res) => {
           okr_initiative_id,
           ability_id,
           blocked_at: initialBlockedAt,
+          ...(blockedReasonInput != null ? { blocked_reason: blockedReasonInput, blocked_detail: blockedDetailInput } : {}),
+          parent_task_id: parentTaskIdInput ?? payload.parent_task_id ?? null,
+          sequence_no: sequenceNoInput,
+          ...(kindInput != null ? { kind: kindInput } : {}),
         },
       });
       result = { rows: [routed.task] };
@@ -279,6 +353,17 @@ router.post('/', async (req, res) => {
     if (resolvedChangeKind !== null) responseBody.change_kind = resolvedChangeKind;
     res.status(201).json(responseBody);
   } catch (err) {
+    const governance = governanceErrorResponse(err);
+    if (governance) return res.status(governance.status).json(governance.body);
+    if (err.code === 'parent_task_not_found') {
+      return res.status(400).json({ error: 'parent_task_not_found', reason_code: 'parent_task_not_found', parent_task_id: err.parent_task_id });
+    }
+    if (err.code === 'gpu_execution_unsupported') {
+      return res.status(400).json({error: err.message, reason_code: err.code});
+    }
+    if (err.code === 'script_payload_invalid') {
+      return res.status(400).json({ error: err.message, code: 'INVALID_SCRIPT_PAYLOAD', reason_code: err.reason, field: err.field });
+    }
     if ([
       'repo_unknown',
       'change_kind_required',
@@ -359,7 +444,72 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// GET /tasks/:id/chain — 接力棒：这条任务所在的整条链（根 / 有序子任务 / 交接日志）。
+// 给人看也给下一个大脑看：根目标 + 每棒做到哪 + 最近 handoff。
+router.get('/:id/chain', async (req, res) => {
+  try {
+    const { getChainContext } = await import('../handoff.js');
+    const ctx = await getChainContext({ pool }, req.params.id, { limit: 10 });
+    if (!ctx) return res.status(404).json({ error: 'Task not found', id: req.params.id });
+    let children;
+    let logRows;
+    if (ctx.root.kind === 'project') {
+      // 新路径：根 = projects 行（棒1，决策 ee4842a6/3feeae3e）。children/log 按 project_id 取，
+      // 不走旧的 parent_task_id 递归（root.id 是 projects.id，不是 task id）。
+      ({ rows: children } = await pool.query(
+        `SELECT id, title, status, task_type, sequence_no, completed_at,
+                result->'handoff'->'verdict' AS verdict,
+                (result->'handoff'->'done'->>0) AS last_done,
+                result->'handoff'->'next_steps' AS next_steps
+           FROM tasks WHERE project_id = $1::uuid AND task_type <> 'project'
+          ORDER BY sequence_no NULLS LAST, created_at`,
+        [ctx.root.id]
+      ));
+      ({ rows: logRows } = await pool.query(
+        `SELECT e AS entry FROM tasks t,
+              jsonb_array_elements(COALESCE(t.result->'handoff_log', '[]'::jsonb)) e
+         WHERE t.project_id = $1::uuid AND t.task_type <> 'project'
+         ORDER BY e->>'at' DESC LIMIT 50`,
+        [ctx.root.id]
+      ));
+    } else {
+      ({ rows: children } = await pool.query(
+        `SELECT id, title, status, task_type, sequence_no, completed_at,
+                result->'handoff'->'verdict' AS verdict,
+                (result->'handoff'->'done'->>0) AS last_done,
+                result->'handoff'->'next_steps' AS next_steps
+           FROM tasks WHERE parent_task_id = $1::uuid
+          ORDER BY sequence_no NULLS LAST, created_at`,
+        [ctx.root.id]
+      ));
+      ({ rows: logRows } = await pool.query(
+        `WITH RECURSIVE down AS (
+           SELECT id, 0 AS depth FROM tasks WHERE id = $1::uuid
+           UNION ALL
+           SELECT t.id, down.depth + 1 FROM tasks t JOIN down ON t.parent_task_id = down.id WHERE down.depth < 12
+         )
+         SELECT e AS entry FROM tasks t JOIN down d ON d.id = t.id,
+              jsonb_array_elements(COALESCE(t.result->'handoff_log', '[]'::jsonb)) e
+          ORDER BY e->>'at' DESC LIMIT 50`,
+        [ctx.root.id]
+      ));
+    }
+    res.json({
+      root: ctx.root,
+      self: ctx.self,
+      is_chained: ctx.is_chained,
+      position: ctx.position,
+      children,
+      log: logRows.map((r) => r.entry),
+      recent_handoffs: ctx.recent,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get chain', details: err.message });
+  }
+});
+
 registerTaskPatchRoute(router, { pool, terminalStatuses: TERMINAL_STATUSES });
+registerTaskDependencyRoutes(router, { pool });
 
 // DELETE /tasks/:id — 软删除（status='cancelled'）。复用 PATCH 同一套 TERMINAL_STATUSES
 // 状态机保护：不存在 → 404；已终态（completed/cancelled）→ 409（防误删历史记录，幂等）；
@@ -403,12 +553,16 @@ router.post('/:id/claim', async (req, res) => {
       return res.status(400).json({ error: 'claimer is required' });
     }
     const executorKind = rawExecutorKind || 'headed-session';
+    // 执行机 coding workflow runner 认领必须落下自己的 kind（executor-contracts 据此当外部执行体，
+    // 启动同步不打回）：任务上历史认领残留的 headed-session 等要被覆盖。其他 kind 保持 COALESCE。
+    const forceKind = executorKind === 'coding-workflow-runner';
 
     const result = await pool.query(
-      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(), executor_kind = COALESCE(executor_kind, $3)
+      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
+              executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END
        WHERE id = $2 AND claimed_by IS NULL
        RETURNING id, claimed_by, claimed_at, executor_kind`,
-      [claimer, id, executorKind]
+      [claimer, id, executorKind, forceKind]
     );
 
     if (result.rows.length === 0) {

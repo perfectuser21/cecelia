@@ -1,5 +1,6 @@
 import { loadMapRepoAdapters } from './map-repo-adapter.js';
 import { stableMapEdgeId, stableMapNodeId } from './map-projector.js';
+import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 
 const SUPPORTED_LEDGER_ADAPTER = 'legacy-ledger-v1';
 
@@ -315,7 +316,7 @@ async function loadLedgerFeatures(client, scopeKey, capabilityKeys) {
     `SELECT f.id, f.name, f.unit_test_path, f.workflow_ref, f.guard_ref,
             j.capability_code AS capability_key
        FROM journey_features f
-       JOIN journeys j ON j.id = f.journey_id
+       JOIN ${TREE_NODES_SQL} j ON j.id = f.journey_id
       WHERE j.biz_area = $1
         AND j.capability_code = ANY($2::text[])
       ORDER BY f.id ASC`,
@@ -323,9 +324,9 @@ async function loadLedgerFeatures(client, scopeKey, capabilityKeys) {
   );
   const { rows: assertions } = await client.query(
     `SELECT l.id, l.feature_id, l.assertion_ref, l.assertion_revision, l.na_reason
-       FROM journey_step_links l
+       FROM activity_cells l
        JOIN journey_features f ON f.id = l.feature_id
-       JOIN journeys j ON j.id = f.journey_id
+       JOIN ${TREE_NODES_SQL} j ON j.id = f.journey_id
       WHERE j.biz_area = $1
         AND j.capability_code = ANY($2::text[])
         AND l.assertion_ref IS NOT NULL

@@ -40,5 +40,13 @@
     "watermark": 13,
     "guard": "ratchet-guard smoke_pool",
     "source": "find scripts/smoke -name '*.sh' | wc -l"
+  },
+  {
+    "name": "goldset_eval_threshold",
+    "label": "金标集 eval 通过率阈值（LLM判定器）",
+    "direction": "only_up",
+    "watermark": 0.9,
+    "guard": "goldset-eval CI job + ratchet-guard",
+    "source": "packages/quality/skill-distillation/eval-threshold.json pass_rate_min"
   }
 ]

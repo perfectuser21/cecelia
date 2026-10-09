@@ -13,6 +13,22 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 SCRIPT="$REPO_ROOT/scripts/scan/rescan-if-changed.sh"
 TMPD=$(mktemp -d -t rescan-test.XXXXXX)
 trap 'rm -rf "$TMPD"' EXIT
+# 每轮测试拥有真实的本地远端；不能把运行中会推进的生产 main 当固定夹具。
+SOURCE_SCRIPT="$SCRIPT"
+git init --quiet --bare "$TMPD/origin.git"
+git init --quiet "$TMPD/repository"
+git -C "$TMPD/repository" symbolic-ref HEAD refs/heads/cp-rescan-fixture
+mkdir -p "$TMPD/fixture-hooks"
+git -C "$TMPD/repository" config core.hooksPath "$TMPD/fixture-hooks"
+git -C "$TMPD/repository" config commit.gpgsign false
+git -C "$TMPD/repository" -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet --allow-empty -m fixture
+git -C "$TMPD/repository" remote add origin "$TMPD/origin.git"
+git -C "$TMPD/repository" push --quiet origin HEAD:refs/heads/main
+mkdir -p "$TMPD/repository/scripts/scan"
+SCRIPT="$TMPD/repository/scripts/scan/rescan-if-changed.sh"
+cp "$SOURCE_SCRIPT" "$SCRIPT"
+cd "$TMPD/repository"
+export RESCAN_LOCK_DIR="$TMPD/cecelia-rescan-script.lock"
 STATE="$TMPD/last-sha"
 MARK="$TMPD/scan-called"
 STUB_OK="$TMPD/stub-ok.sh"; STUB_FAIL="$TMPD/stub-fail.sh"
@@ -26,7 +42,7 @@ if [[ -f "$SCRIPT" ]]; then pass "脚本存在"; else fail "脚本缺失: $SCRIP
 
 CUR_SHA=$(git ls-remote origin refs/heads/main 2>/dev/null | awk '{print $1}')
 if [[ -z "$CUR_SHA" ]]; then
-  echo "⚠️ 拿不到 origin/main SHA(离线环境),跳过行为用例"; echo "结果: PASS=$PASS FAIL=$ERRORS"; exit $((ERRORS>0?1:0))
+  fail "本地origin/main夹具缺少SHA"; exit 1
 fi
 
 # 2 SHA 未变 → 不触发扫描
@@ -51,6 +67,13 @@ if [[ $RC -eq 0 && ! -f "$MARK" ]]; then pass "GNU stat:旧记账无效时间戳
 echo "old-sha-000" > "$STATE"; rm -f "$MARK"
 RC=0; RESCAN_NOW_EPOCH=1200 RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" bash "$SCRIPT" >/dev/null 2>&1 || RC=$?
 if [[ $RC -eq 0 && -f "$MARK" && "$(cat "$STATE")" == "$CUR_SHA|1200" && "$(cat "$TMPD/expected-sha")" == "$CUR_SHA" ]]; then pass "SHA 变化:锁定目标 revision 扫描并记账时间"; else fail "SHA 变化路径异常(rc=$RC, mark=$([[ -f $MARK ]] && echo y || echo n), state=$(cat "$STATE"))"; fi
+
+# 真实推进夹具远端后必须采用新 SHA，禁止缓存首次读取的 revision。
+git -c user.name=fixture -c user.email=fixture@example.invalid commit --quiet --allow-empty -m advanced
+git push --quiet origin HEAD:refs/heads/main
+CUR_SHA=$(git rev-parse HEAD); rm -f "$MARK"
+RC=0; RESCAN_NOW_EPOCH=1201 RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" bash "$SCRIPT" >/dev/null 2>&1 || RC=$?
+if [[ $RC -eq 0 && -f "$MARK" && "$(cat "$STATE")" == "$CUR_SHA|1201" && "$(cat "$TMPD/expected-sha")" == "$CUR_SHA" ]]; then pass "远端推进:扫描与记账采用新revision"; else fail "远端推进未采用新SHA"; fi
 
 # 4 扫描失败 → 不记账(下轮重试)且退出非 0
 echo "old-sha-000" > "$STATE"; rm -f "$MARK"
@@ -115,13 +138,13 @@ fi
 # 11 脚本内锁不得与 crontab 外层应急锁同路径
 # 2026-08-18 回归:两层同路径时外层先占住,脚本每轮都判"上一轮仍在运行"直接跳过,
 # 扫描一轮都不跑。这里用真实的外层锁复现,不是形式检查。
-OUTER_LOCK=/tmp/cecelia-rescan.lock
-rm -rf "$OUTER_LOCK"; mkdir "$OUTER_LOCK"
+OUTER_LOCK="$TMPD/cecelia-rescan.lock"
+mkdir "$OUTER_LOCK"
 echo "old-sha-000|0" > "$STATE"; rm -f "$MARK"; OUT4="$TMPD/outer.err"; RC=0
 RESCAN_NOW_EPOCH=99999 RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" \
   bash "$SCRIPT" >/dev/null 2>"$OUT4" || RC=$?
 rmdir "$OUTER_LOCK" 2>/dev/null || true
-if [[ $RC -eq 0 && -f "$MARK" ]]; then
+if [[ $RC -eq 0 && -f "$MARK" ]] && grep -Fq 'RESCAN_LOCK_DIR:-/tmp/cecelia-rescan-script.lock' "$SOURCE_SCRIPT"; then
   pass "外层同名锁在场时脚本仍能扫描(锁路径已错开)"
 else
   fail "脚本被外层锁挡住,扫描不执行(rc=$RC, err=$(head -c 120 "$OUT4"))"

@@ -15,13 +15,20 @@ set -uo pipefail
 BRAIN_VERSION="${BRAIN_VERSION:?BRAIN_VERSION 必填}"
 ENV_REGION="${ENV_REGION:-us}"
 DEPLOY_ROOT="${DEPLOY_ROOT:?DEPLOY_ROOT 必填}"
+
+# compose 文件按 region 选：us-vps 有专用 compose（host 网络 + Linux 路径），
+# 硬编码 docker-compose.yml（macOS 版）会把新 Brain 起进 bridge 网络连不上
+# 宿主 5432 postgres，崩溃循环（2026-09-17 04:5x 实锤，手动正确 compose 止血）。
+COMPOSE_FILE_PATH="$DEPLOY_ROOT/docker-compose.yml"
+if [[ "$ENV_REGION" == "us" && -f "$DEPLOY_ROOT/docker-compose.us-vps.yml" ]]; then
+  COMPOSE_FILE_PATH="$DEPLOY_ROOT/docker-compose.us-vps.yml"
+fi
 CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:?CECELIA_INTERNAL_ENV_FILE 必填}"
 BARK_TOKEN="${BARK_TOKEN:-}"
-# sidecar 本身由 `docker run` 起在独立容器内（见 bluegreen.sh bluegreen_swap），
-# 不在 node-brain 的 compose 网络里，也未 --network host。要够到宿主发布的
-# 5221 必须走 host.docker.internal（同 bluegreen_canary_host 的 /.dockerenv 判据，
-# 这里恒为容器内执行，直接定死，不必再判 /.dockerenv）。可用 BRAIN_URL 覆盖测试。
-BRAIN_URL="${BRAIN_URL:-http://host.docker.internal:5221}"
+source "$DEPLOY_ROOT/scripts/lib/brain-image-retention.sh"
+# 收尾使用既有 Docker socket 进入固定 Brain 容器；不依赖 bridge→宿主端口。
+EXPECTED_SHA="${EXPECTED_SHA:?EXPECTED_SHA 必填}"
+[[ "$BRAIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
 
 # 告警（non-fatal，token 缺失静默）
 _sidecar_bark() {
@@ -43,40 +50,126 @@ _sidecar_log() {
     >> "$DEPLOY_ROOT/logs/cecelia-deploy-sidecar-failures.log" 2>/dev/null || true
 }
 
-# ── drain 收尾（issue 53e7ee4b 根治①）─────────────────────────────
-# 部署型 drain 由 brain-deploy.sh pre-swap 挂上；Docker 蓝绿下 deploy 进程随 blue
-# 容器被 docker rm -f 截断，其 brain-deploy.sh:520 的 drain_cancel_with_retry 永远够
-# 不着——sidecar 是 swap 后唯一存活路径，必须由这里收 drain。cancel 失败不 fail 部署
-# （15min 过期闸与 getDrainStatus 归零是下层兜底），但必须红日志留痕。
-#
-# cancel 前先等 healthz 就绪：容器刚起时 Brain 尚未监听端口，原先 5×5s(~20-45s) 的
-# cancel 重试兜不住 Brain 实测启动耗时（>68s），会在 Brain 还没起来时就把 5 次重试
-# 打空。按 CI 预算轮询 healthz：最多 90 次、每次 2s，通了立即 break；超时打 ❌ 红日
-# 志但继续往下尝试 drain-cancel（"不 fail 部署"原则不变）。主路径成功分支与
-# blue-fallback 成功分支都要收 drain，抽成函数两处各调一次，避免重复漂移。
+# 外层时限覆盖 Docker socket/exec 握手；输出有界后才交给 shell 解析。
+# timeout/Node 留在新版 sidecar，旧 fallback 内仍只依赖 curl。
+_sidecar_docker() {
+  timeout -k 2 8 docker "$@" | node -e '
+    let text="", size=0;
+    process.stdin.on("data", data=>{
+      size+=data.length;if(size>262144)process.exit(1);text+=data.toString();
+    });
+    process.stdin.on("end",()=>process.stdout.write(text));'
+}
+
+# 镜像身份在 compose 前冻结；仅输出非敏感 GIT_SHA，不读取或打印其它环境值。
+_sidecar_image() {
+  _sidecar_docker image inspect --format '{{.Id}}|{{json .RepoTags}}|{{range .Config.Env}}{{if eq (index (split . "=") 0) "GIT_SHA"}}{{.}}{{end}}{{end}}' "$1"
+}
+_sidecar_same_target() {
+  local observed
+  observed=$(_sidecar_docker inspect --format '{{.Id}} {{.Image}} {{.Name}} {{.State.Running}} {{index .Config.Labels "com.docker.compose.service"}}' cecelia-node-brain) || return 1
+  [[ "$observed" == "$TARGET_CONTAINER $TARGET_IMAGE /cecelia-node-brain true node-brain" ]]
+}
+_sidecar_pin_target() {
+  local outcome="$1" observed extra name running service
+  if [[ "$outcome" == success ]]; then
+    TARGET_IMAGE="$PRIMARY_IMAGE"; TARGET_SHA="$EXPECTED_SHA"; TARGET_TAGS="$PRIMARY_TAGS"
+  else
+    TARGET_IMAGE="$FALLBACK_IMAGE"; TARGET_SHA="$FALLBACK_SHA"; TARGET_TAGS="$FALLBACK_TAGS"
+  fi
+  [[ "$TARGET_IMAGE" =~ ^sha256:[a-f0-9]{64}$ && "$TARGET_SHA" =~ ^[a-f0-9]{40}$ ]] || return 1
+  observed=$(_sidecar_docker inspect --format '{{.Id}} {{.Image}} {{.Name}} {{.State.Running}} {{index .Config.Labels "com.docker.compose.service"}}' cecelia-node-brain) || return 1
+  read -r TARGET_CONTAINER extra name running service <<< "$observed"
+  [[ "$TARGET_CONTAINER" =~ ^[a-f0-9]{64}$ ]] && _sidecar_same_target
+}
+# /healthz 以 tick 存活为 200 条件；tick 被有意封停（决策 751f73be）后恒为 503（body: db=connected, tick=dead）。
+# 只放行「503 且 db=connected」——DB 连不上仍失败；tick 死亡是否属有意封停，由后面的 /health 折算判定
+#（scheduler.enabled=false 才折算，否则 degraded 照旧失败）。传输失败/其他状态码一律失败。
+_sidecar_healthz() {
+  local out code body
+  out=$(_sidecar_docker exec "$TARGET_CONTAINER" curl -q -sm 3 --max-filesize 262144 -w '\n%{http_code}' http://127.0.0.1:5221/api/brain/healthz 2>/dev/null) || return 1
+  code="${out##*$'\n'}"; body="${out%$'\n'*}"
+  [[ "$code" == 200 ]] && return 0
+  [[ "$code" == 503 ]] || return 1
+  printf '%s' "$body" | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{
+    try{process.exit(JSON.parse(s).db==="connected"?0:1)}catch{process.exit(1)}})'
+}
+_sidecar_health() {
+  local health
+  _sidecar_same_target || return 1
+  _sidecar_healthz || return 1
+  health=$(_sidecar_docker exec "$TARGET_CONTAINER" curl -q -fsm 5 --max-filesize 262144 http://127.0.0.1:5221/api/brain/health) || return 1
+  # 健康口径与官方收账同源（policy.deployHealth）：tick 被有意封停（决策 751f73be）使 /health 恒为 degraded，
+  # 仅折算这一个原因；导入失败（旧镜像无该模块）= 严格口径，不放宽。version/git_sha/tags 逐项核对不变。
+  printf '%s' "$health" | node --input-type=module -e '
+    const [sha,tags,version]=process.argv.slice(1);
+    let data="";for await (const x of process.stdin) data+=x;
+    let fold=h=>h;
+    try { const m=await import(process.env.CECELIA_RETENTION_POLICY||"/app/scripts/brain-image-retention/policy.mjs");
+      if(typeof m.deployHealth==="function") fold=h=>({...h,...m.deployHealth(h)}); } catch {}
+    try { const h=fold(JSON.parse(data));
+      if(h.status!=="healthy" || h.git_sha!==sha || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(h.version)
+        || !JSON.parse(tags).includes("cecelia-brain:"+h.version) || (version && h.version!==version)) process.exit(1);
+    } catch {process.exit(1);}' "$TARGET_SHA" "$TARGET_TAGS" "$HEALTH_VERSION" || return 1
+  _sidecar_same_target
+}
+# 当前发布的官方CLI持锁收尾；健康探测在固定目标容器内执行，旧fallback无需新CLI。
+retention_finish() {
+  [[ -n "${CECELIA_IMAGE_DEPLOYMENT_ID:-}" ]] || return 0
+  local receipt
+  _sidecar_same_target || return 1
+  receipt=$(BRAIN_URL=http://127.0.0.1:5221 CECELIA_IMAGE_EXPECTED_CONTAINER_ID="$TARGET_CONTAINER" \
+    node /app/scripts/brain-image-retention/cli.mjs finish "$CECELIA_IMAGE_DEPLOYMENT_ID" "$1") || return 1
+  [[ "$receipt" == "$1" ]] && _sidecar_same_target
+}
+
+# 健康未确认、身份漂移、drain失败都不进入finish，不把compose成功当部署成功。
 cancel_drain_after_up() {
-  echo "[sidecar] 等待 Brain healthz 就绪后再收 drain..."
+  local outcome="$1" i response
+  HEALTH_VERSION=""; [[ "$outcome" != success ]] || HEALTH_VERSION="$BRAIN_VERSION"
+  if ! _sidecar_pin_target "$outcome"; then
+    _sidecar_log "[completion-fail] target_identity_unconfirmed brain_version=${BRAIN_VERSION}"
+    return 1
+  fi
+  echo "[sidecar] 等待固定 Brain 容器 healthz 与版本/SHA 就绪后再收 drain..."
   HEALTHZ_OK=0
   for i in $(seq 1 90); do
-    if curl -fsm 3 "${BRAIN_URL}/api/brain/healthz" >/dev/null 2>&1; then
-      echo "[sidecar] healthz 就绪（第 ${i} 次，约 $((i * 2))s）"
-      HEALTHZ_OK=1; break
-    fi
+    # 身份漂移不重新选择容器，也不尝试回退或删除。
+    _sidecar_same_target || break
+    if _sidecar_health; then HEALTHZ_OK=1; break; fi
     sleep 2
   done
-  [ "$HEALTHZ_OK" = "1" ] || echo "[sidecar] ❌ healthz 轮询 90 次未就绪，仍继续尝试 drain-cancel"
-
+  if [ "$HEALTHZ_OK" != "1" ]; then
+    _sidecar_log "[cancel-drain-fail] healthz_poll_timeout_or_identity_mismatch brain_version=${BRAIN_VERSION}"
+    return 1
+  fi
   DRAIN_CANCEL_OK=0
   for i in 1 2 3 4 5; do
-    if curl -fsm 5 -X POST "${BRAIN_URL}/api/brain/tick/drain-cancel" >/dev/null 2>&1; then
-      echo "[sidecar] drain-cancel 成功（第 ${i} 次尝试）"
+    _sidecar_same_target || break
+    if response=$(_sidecar_docker exec "$TARGET_CONTAINER" curl -q -fsm 5 --max-filesize 262144 -X POST http://127.0.0.1:5221/api/brain/tick/drain-cancel) \
+      && printf '%s' "$response" | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{try{if(JSON.parse(s).success!==true)process.exit(1)}catch{process.exit(1)}})' \
+      && _sidecar_same_target; then
       DRAIN_CANCEL_OK=1; break
     fi
-    echo "[sidecar] drain-cancel 第 ${i} 次失败，5s 后重试"
     sleep 5
   done
-  [ "$DRAIN_CANCEL_OK" = "1" ] || echo "[sidecar] ❌ drain-cancel 5 次全失败——依赖 15min 过期闸兜底，请检查（issue 53e7ee4b）"
+  if [ "$DRAIN_CANCEL_OK" != "1" ]; then
+    _sidecar_log "[cancel-drain-fail] drain_cancel_retries_exhausted brain_version=${BRAIN_VERSION}"
+    return 1
+  fi
 }
+
+PRIMARY_METADATA=$(_sidecar_image "cecelia-brain:${BRAIN_VERSION}") || exit 1
+IFS='|' read -r PRIMARY_IMAGE PRIMARY_TAGS PRIMARY_SHA <<< "$PRIMARY_METADATA"
+if [[ "$PRIMARY_SHA" != "GIT_SHA=$EXPECTED_SHA" || ! "$PRIMARY_IMAGE" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+  _sidecar_log "[completion-fail] requested_image_sha_mismatch brain_version=${BRAIN_VERSION}"
+  exit 1
+fi
+FALLBACK_IMAGE=""; FALLBACK_TAGS='[]'; FALLBACK_SHA=""
+if FALLBACK_METADATA=$(_sidecar_image cecelia-brain:blue-fallback 2>/dev/null); then
+  IFS='|' read -r FALLBACK_IMAGE FALLBACK_TAGS FALLBACK_SHA <<< "$FALLBACK_METADATA"
+  FALLBACK_SHA="${FALLBACK_SHA#GIT_SHA=}"
+fi
 
 # ── 等待 blue 容器消失（brain-deploy.sh 将 docker rm -f blue）───────────────
 echo "[sidecar] 等待 cecelia-node-brain 消失..."
@@ -88,29 +181,32 @@ done
 # ── 主路径：用新版镜像 compose up ────────────────────────────────────────────
 echo "[sidecar] compose up node-brain (BRAIN_VERSION=${BRAIN_VERSION})..."
 if BRAIN_VERSION="$BRAIN_VERSION" ENV_REGION="$ENV_REGION" \
-    docker compose --env-file "$DEPLOY_ROOT/.env.docker" \
-      -f "$DEPLOY_ROOT/docker-compose.yml" up -d node-brain 2>&1; then
+    docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$DEPLOY_ROOT/.env.docker" \
+      -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
   echo "[sidecar] ✅ compose up 成功 v${BRAIN_VERSION}"
 
-  cancel_drain_after_up
+  cancel_drain_after_up success || exit 1
+  retention_finish success || { _sidecar_log "[completion-fail] retention_finish_unconfirmed outcome=success"; exit 1; }
 
   exit 0
+else
+  PRIMARY_EXIT=$?
 fi
 
-PRIMARY_EXIT=$?
 echo "[sidecar] ❌ compose up 失败 exit=${PRIMARY_EXIT}，尝试 blue-fallback 恢复..."
 
 # ── 恢复路径：用 blue-fallback 镜像重启（bluegreen_swap 在起 sidecar 前已 tag）──
 # blue-fallback = 删 blue 前由 bluegreen_swap 打的 docker tag，是最后一次健康 blue 的快照。
 # 退出码语义：fallback 成功 → exit 0（5221 已恢复）；fallback 也失败 → exit 1（5221 宕机）
 if BRAIN_VERSION=blue-fallback ENV_REGION="$ENV_REGION" \
-    docker compose --env-file "$DEPLOY_ROOT/.env.docker" \
-      -f "$DEPLOY_ROOT/docker-compose.yml" up -d node-brain 2>&1; then
+    docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$DEPLOY_ROOT/.env.docker" \
+      -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
   echo "[sidecar] ✅ blue-fallback 恢复成功，5221 已恢复旧版本"
   _sidecar_bark "⚠️ 蓝绿 sidecar：v${BRAIN_VERSION} 新镜像启动失败，已回退 blue-fallback，5221 已恢复，请检查新镜像问题"
   _sidecar_log "[sidecar-partial-fail] primary_exit=${PRIMARY_EXIT} brain_version=${BRAIN_VERSION} recovered=blue-fallback"
 
-  cancel_drain_after_up
+  cancel_drain_after_up recovered || exit 1
+  retention_finish recovered || { _sidecar_log "[completion-fail] retention_finish_unconfirmed outcome=recovered"; exit 1; }
 
   exit 0  # 5221 已恢复，sidecar 整体视为成功
 else

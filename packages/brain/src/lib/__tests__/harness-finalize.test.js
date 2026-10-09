@@ -155,16 +155,22 @@ describe('finalizeHarnessTask — 外部真相核验', () => {
     expect(r).toMatchObject({ applies: true, allow: true });
   });
 
-  it('PR MERGED 但无 evaluator gate → allow:false 且 reason 含 evaluator', async () => {
+  // 0922 改策略：evaluator 缺席由「硬挡」改为「放行 + 留疤 + 告警 + 不自动提升」，
+  // 照抄 relay-watchdog `_finalizeMergedRun` 早就定好的同场景处置。
+  // 原因见 __tests__/finalize-ungated-merge-parity.test.js 的头注释：
+  // 同一场景两条路径相反策略是分叉；而且硬挡判错了对象——它假定"流水线跑过、
+  // 只是验收员偷懒"，实际那三条任务是派发撞 map_stale 压根没启动过流水线。
+  it('PR MERGED 但无 evaluator gate → 放行但标 merged_without_evaluator_gate', async () => {
     const { deps } = makeDeps({
       taskRow: { id: TASK_ID, status: 'in_progress', task_type: 'harness_initiative', pr_url: PR_URL, payload: { orchestrator: 'skill-relay', base_repo: BASE_REPO } },
       prViewState: 'MERGED',
       evaluatorGate: false,
     });
-    const r = await finalizeHarnessTask(TASK_ID, deps);
+    const r = await finalizeHarnessTask(TASK_ID, { ...deps, raiseUngatedMergeAlertFn: async () => {} });
     expect(r.applies).toBe(true);
-    expect(r.allow).toBe(false);
-    expect(r.reason).toMatch(/evaluator/i);
+    expect(r.allow, 'PR 客观已合并，拦着只会让账本和现实分叉').toBe(true);
+    expect(r.ungated).toBe(true);
+    expect(r.failureReason).toBe('merged_without_evaluator_gate');
   });
 
   it('pr_url 为 shell 注入串 → 不采信，ghFn args 不含注入内容且无 pr view 调用（威胁模型正主）', async () => {

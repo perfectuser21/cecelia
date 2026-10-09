@@ -1,3 +1,5 @@
+import {assertAutomaticTaskOwner} from './lib/headed-task-owner.js';
+import { COMPANY_KR_SQL_GUARD } from './lib/company-kr-metrics.js';
 /**
  * callback-processor.js
  *
@@ -19,6 +21,7 @@ import { resolveRelatedFailureMemories } from './routes/shared.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from './lib/callback-postprocess.js';
+import { afterTerminalTransition } from './lib/task-terminal.js';
 
 const TERMINAL_CALLBACK_STATUSES = new Set(['completed', 'completed_no_pr', 'failed', 'cancelled']);
 
@@ -48,6 +51,7 @@ export async function processExecutionCallback(data, pool) {
   } = data;
 
   if (!task_id) throw new Error('task_id is required');
+  await assertAutomaticTaskOwner(pool, task_id);
 
   console.log(`[callback-processor] Processing callback for task ${task_id}, status: ${status}`);
 
@@ -130,6 +134,7 @@ export async function processExecutionCallback(data, pool) {
         claimed_at = CASE WHEN $13::boolean THEN NULL ELSE claimed_at END
       WHERE id = $1
         AND status IN ('in_progress', 'queued', 'dispatched')
+        AND NOT (COALESCE(payload,'{}'::jsonb) ? 'headed_takeover')
         AND ($14::text IS NULL OR payload->>'current_run_id' = $14::text)
     `, [
       task_id, newStatus, JSON.stringify(lastRunResult), status, resolvedPrUrl || null,
@@ -241,6 +246,12 @@ export async function processExecutionCallback(data, pool) {
     } catch (rescheduleErr) {
       console.error(`[callback-processor] reschedule error (non-fatal): ${rescheduleErr.message}`);
     }
+  }
+
+  // 终态收口（lib/task-terminal.js）：completed / completed_no_pr 落库后接棒。放在重排块之后——
+  // completed_no_pr 被重排回 queued 时 relayOnComplete 重读状态非终态，自然不接棒。
+  if (TERMINAL_CALLBACK_STATUSES.has(newStatus)) {
+    await afterTerminalTransition(pool, task_id, newStatus);
   }
 
   // Post-commit downstream triggers
@@ -405,7 +416,7 @@ export async function processExecutionCallback(data, pool) {
             ? Math.round((krProgress / 100) * targetVal * 100) / 100
             : krProgress;
           await pool.query(
-            'UPDATE key_results SET current_value = $1, updated_at = NOW() WHERE id = $2',
+            `UPDATE key_results SET current_value = $1, updated_at = NOW() WHERE id = $2 AND ${COMPANY_KR_SQL_GUARD}`,
             [newValue, krId]
           );
         }

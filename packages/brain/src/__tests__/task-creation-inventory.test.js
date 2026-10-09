@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import os from 'node:os';
 import {
   TASK_CREATION_INVENTORY,
   TASK_CREATION_INVENTORY_VERSION,
@@ -16,7 +17,7 @@ async function listProductionModules(directory) {
     if (entry.isDirectory()) {
       if (entry.name === '__tests__') continue;
       modules.push(...await listProductionModules(absolute));
-    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+    } else if (entry.isFile() && entry.name.endsWith('.js') && !/\.(?:test|spec)\.js$/.test(entry.name)) {
       modules.push(absolute);
     }
   }
@@ -24,6 +25,28 @@ async function listProductionModules(directory) {
 }
 
 describe('task creation inventory', () => {
+  it('colocated permanent tests are excluded while production task writers remain scanned', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'task-inventory-boundary-'));
+    try {
+      await mkdir(path.join(root, '__tests__'));
+      for (const name of ['ledger.test.js', 'ledger.spec.js', 'ledger.js', 'ledger.test-adapter.js', '__tests__/nested.js']) {
+        await writeFile(path.join(root, name), 'export const fixture = "INSERT INTO tasks(id) VALUES(1)";');
+      }
+      const modules = await listProductionModules(root);
+      expect(modules.map(file => path.relative(root, file)).sort()).toEqual(['ledger.js', 'ledger.test-adapter.js']);
+      expect(await Promise.all(modules.map(file => readFile(file, 'utf8')))).toEqual([
+        expect.stringMatching(/INSERT\s+INTO\s+tasks/i), expect.stringMatching(/INSERT\s+INTO\s+tasks/i),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it('交办台按 API 来源登记到原子任务创建边界', () => {
+    expect(TASK_CREATION_INVENTORY.find(row => row.module === 'task-intake.js')).toEqual({
+      module: 'task-intake.js', source: 'api', creates_executable_task: true, migration_status: 'routed',
+    });
+  });
+
   it('records each executable creation boundary', () => {
     expect(TASK_CREATION_INVENTORY_VERSION).toBe(ROUTER_VERSION);
     expect(TASK_CREATION_INVENTORY.length).toBeGreaterThanOrEqual(33);
@@ -57,7 +80,17 @@ describe('task creation inventory', () => {
       if ((callsWriterDirectly || callsInjectedWriter) && row.module !== 'actions.js') {
         const importsActionsBoundary = /(?:from\s+|import\()['"].*actions\.js['"]/.test(source);
         const importsAtomicStore = /(?:from\s+|import\()['"].*work-routing-store\.js['"]/.test(source);
-        expect(importsActionsBoundary || importsAtomicStore, row.module).toBe(true);
+        // 专用controller通过已登记的私有authority写账：同时核验真实import边与其直接actions边。
+        let delegatesToWriter=false;
+        if(row.delegates_to){
+          const target=TASK_CREATION_INVENTORY.find(entry=>entry.module===row.delegates_to);
+          const relative='./'+path.relative(path.dirname(row.module),row.delegates_to);
+          const imported=source.includes(`from '${relative}'`)||source.includes(`from "${relative}"`);
+          const delegated=await readFile(new URL(`../${row.delegates_to}`,import.meta.url),'utf8');
+          delegatesToWriter=target?.creates_executable_task===true&&target.migration_status==='routed'&&imported
+            &&/(?:from\s+|import\()['"].*actions\.js['"]/.test(delegated)&&/createTask\s*\(/.test(delegated);
+        }
+        expect(importsActionsBoundary || importsAtomicStore || delegatesToWriter, row.module).toBe(true);
       }
       expect(source, row.module).not.toMatch(/INSERT\s+INTO\s+tasks/i);
     }

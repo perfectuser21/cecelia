@@ -11,7 +11,6 @@ import opsRouter from './routes/ops.js';
 import publishResultsRouter from './routes/publish-results.js';
 import publishJobsRouter from './routes/publish-jobs.js';
 import capacityBudgetRouter from './routes/capacity-budget.js';
-import devReviewsRouter from './routes/dev-reviews.js';
 import registryRouter from './routes/registry.js';
 import machinesRouter from './routes/machines.js';
 import skillsRouter from './routes/skills.js';
@@ -35,12 +34,17 @@ import opsPanoramaRouter from './routes/ops-panorama.js';
 import kernelReviewsRouter from './routes/harness-kernel-approvals.js';
 import impactContractsRouter from './routes/impact-contracts.js';
 import harnessGapsRouter from './routes/gaps.js';
+import agentOpsRouter from './routes/agent-ops.js';
+import crystalRouter from './routes/crystal.js';
+import { createDirectoryProjectionRouter } from './routes/directory-projection.js';
+import directoryPool from './db.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
 
 const router = Router();
-for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter, devReviewsRouter, harnessSelftestRouter]) {
+router.use('/projections/notion/directory', createDirectoryProjectionRouter({ pool: directoryPool }));
+for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter, harnessSelftestRouter]) {
   router.stack.push(...subRouter.stack);
 }
 
@@ -110,5 +114,11 @@ router.use('/', impactContractsRouter);
 // Gap Ledger — GET/POST /harness/gaps, GET /harness/gaps/:id/events, PATCH /harness/gaps/:id/status
 // （FR-5 Gap 生命周期台账，sprint 08110022-relay-d96c9fa0 ws5）
 router.use('/harness/gaps', harnessGapsRouter);
+
+// 运行舱只读投影 — GET /agent-ops/agents, /agent-ops/calendar（指挥舱 G1 S1 刀1）
+router.use('/agent-ops', agentOpsRouter);
+// Crystal 结晶判官 — POST /crystal/run, GET /crystal/report, POST /crystal/locator,
+// POST /crystal/evidence/validate（结晶台账+三态判决+每日报告，Crystal 第4件）
+router.use('/crystal', crystalRouter);
 
 export default router;

@@ -1,3 +1,5 @@
+// 本文件显式模拟模型网络与凭据，独立测试 provider 行为；真实隔离由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
 /**
  * llm-caller.js 单元测试
  * 覆盖：callLLM、callLLMStream、_resetMinimaxKey、_resetAnthropicKey
@@ -48,13 +50,23 @@ vi.mock('fs', () => ({
     if (path.includes('minimax.json')) {
       return JSON.stringify({ api_key: 'test-minimax-key' });
     }
+    // 包括 .codex-teamX/auth.json 和 ~/.credentials/openai.json：
+    // 默认全部找不到，模拟「无可用 OAuth team 账号」场景。
     throw new Error('File not found');
   }),
+}));
+
+// callCodexHeadless 用 spawn 起 codex CLI 子进程。不 mock 的话，一旦代码路径
+// 意外走到这里就会在测试环境里尝试拉起真实 codex 二进制——用 mock 断言它
+// 「有没有被调用」，比放任真实子进程失败更能精确定位问题。
+vi.mock('child_process', () => ({
+  spawn: vi.fn(),
 }));
 
 import { callLLM, callLLMStream, _resetMinimaxKey, _resetAnthropicKey, _resetOpenAIKey } from '../llm-caller.js';
 import { getActiveProfile } from '../model-profile.js';
 import { selectBestAccount } from '../account-usage.js';
+import { spawn } from 'child_process';
 
 // ─── 辅助工具 ──────────────────────────────────────────────
 
@@ -255,27 +267,16 @@ describe('llm-caller', () => {
       await expect(callLLM('cortex', '测试')).rejects.toThrow('Bridge /llm-call error: 500');
     });
 
-    it('selectBestAccount 失败时仍能调用（使用 fallback accountId）', async () => {
+    it('selectBestAccount 失败时停止，不猜测默认账号', async () => {
       selectBestAccount.mockRejectedValueOnce(new Error('DB down'));
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('降级回复'));
-
-      const result = await callLLM('cortex', '测试');
-
-      expect(result.text).toBe('降级回复');
-      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // 异常时使用 fallback_account（account1），确保 Bridge 有 CLAUDE_CONFIG_DIR
-      expect(body.accountId).toBe('account1');
+      await expect(callLLM('cortex', '测试')).rejects.toMatchObject({ code: 'LLM_ACCOUNT_UNAVAILABLE' });
+      expect(global.fetch).not.toHaveBeenCalled();
     });
 
-    it('selectBestAccount 返回 null 时使用 fallback accountId', async () => {
+    it('selectBestAccount 返回 null 时停止，不绕过账号熔断', async () => {
       selectBestAccount.mockResolvedValueOnce(null);
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('ok'));
-
-      await callLLM('cortex', '测试');
-
-      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // null 时使用 fallback_account（account1），避免 Bridge 无 CLAUDE_CONFIG_DIR 报 "Not logged in"
-      expect(body.accountId).toBe('account1');
+      await expect(callLLM('cortex', '测试')).rejects.toMatchObject({ code: 'LLM_ACCOUNT_UNAVAILABLE' });
+      expect(global.fetch).not.toHaveBeenCalled();
     });
 
     it('有图片时 provider=anthropic 保持 bridge（P0-5: bridge 现支持图片）', async () => {
@@ -705,6 +706,50 @@ describe('llm-caller', () => {
       global.fetch.mockRejectedValueOnce(new Error('唯一失败'));
 
       await expect(callLLM('empty_agent', '测试')).rejects.toThrow('唯一失败');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // callLLM - Codex provider：OAuth team 账号全掉线时禁止 API Key 计费
+  // ═══════════════════════════════════════════════════════════
+
+  describe('callLLM - Codex provider fallback 行为', () => {
+    it('无可用 OAuth team 账号时直接失败，绝不用 API Key 调用 spawn，且自动落到 anthropic-api 紧急兜底', async () => {
+      // 模拟「OPENAI_API_KEY 恰好在环境变量里可用」的真实事故场景——
+      // 即便有 key 可用，也不应该被这条路径拿去用。
+      const poisonKey = 'sk-should-never-be-used-by-codex-fallback';
+      const originalEnv = process.env.OPENAI_API_KEY;
+      process.env.OPENAI_API_KEY = poisonKey;
+
+      getActiveProfile.mockReturnValueOnce({
+        config: {
+          codex_agent: {
+            provider: 'codex',
+            model: 'codex/gpt-5.4-mini',
+            // 无 anthropic 候选 → 触发 197-223 行「所有候选失败时紧急兜底 anthropic-api」
+          },
+        },
+      });
+      // anthropic-api 紧急兜底调用会命中这个 fetch
+      global.fetch.mockResolvedValueOnce(makeAnthropicResponse('紧急兜底回复'));
+
+      try {
+        const result = await callLLM('codex_agent', '测试 prompt');
+
+        // 断言 1：codex 失败后自动落到 anthropic-api 紧急兜底，调用方拿到正常结果
+        expect(result.text).toBe('紧急兜底回复');
+        expect(result.provider).toBe('anthropic-api');
+        expect(result.model).toBe('claude-haiku-4-5-20251001');
+
+        // 断言 2（核心）：spawn 从未被调用——证明没有滑进「用 API Key 调 codex CLI」这条路
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env.OPENAI_API_KEY;
+        } else {
+          process.env.OPENAI_API_KEY = originalEnv;
+        }
+      }
     });
   });
 });

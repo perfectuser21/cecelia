@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+# openclaw_xai_token_sync.test.sh — grok token 同步器守卫
+#
+# 背景（2026-09-22 实证）：OpenClaw 的 xai 插件不注册任何登录方式，唯一通路是
+# paste-token 贴静态 token；而 grok CLI 的 OIDC JWT 约 6 小时到期、CLI 自己续，
+# 贴进去那份不会跟着续 → 每隔几小时必然 403。且凭据 per-agent，漏一个就 403 一个。
+#
+# 守卫盯五件事：
+#   ① 逐个 agent 都贴到 —— 漏掉哪个哪个就继续 403，这是最容易悄悄退化的一条
+#   ② 有 agent 失败必须退出码非 0 —— 静默吞掉的结果是几小时后又 403 而没人知道
+#   ③ 快到期先触发 CLI 续期；充裕时不白花 token
+#   ④ CLI 未登录要报死，不假装成功
+#   ⑤ 绝不把 token 打进日志
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+SYNC="$ROOT/scripts/ops/openclaw-xai-token-sync.sh"
+PASS=0; FAIL=0
+ok()  { PASS=$((PASS+1)); printf '  ✅ %s\n' "$1"; }
+bad() { FAIL=$((FAIL+1)); printf '  ❌ %s\n' "$1"; }
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# ── 测试替身 ─────────────────────────────────────────────────────────────
+# openclaw：把 (agent, provider) 记到文件；stdin 读到的 token 也记下来，
+#           用来验证"贴的是新 token"和"没把 token 打进 stdout"。
+# grok    ：记录被调用过，模拟 CLI 续期。
+mk_env() {
+  BIN="$WORK/bin"; rm -rf "$BIN"; mkdir -p "$BIN"
+  : > "$WORK/pasted.txt"; : > "$WORK/grok-calls.txt"
+  cat > "$BIN/openclaw" <<'SH'
+#!/bin/bash
+agent=""; provider=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --agent) agent="$2"; shift 2;;
+    --provider) provider="$2"; shift 2;;
+    *) shift;;
+  esac
+done
+tok="$(cat)"
+echo "$agent|$provider|$tok" >> "${PASTE_LOG:?}"
+[ "$agent" = "${FAIL_AGENT:-}" ] && exit 1
+# FLAKY_AGENT：前 FLAKY_TIMES 次失败，之后成功（模拟撞锁后重试成功）
+if [ "$agent" = "${FLAKY_AGENT:-}" ]; then
+  n=$(grep -c "^${agent}|" "${PASTE_LOG}")
+  [ "$n" -le "${FLAKY_TIMES:-1}" ] && exit 1
+fi
+exit 0
+SH
+  cat > "$BIN/grok" <<'SH'
+#!/bin/bash
+echo "called" >> "${GROK_LOG:?}"
+# 模拟 CLI 续期：把 auth.json 换成一个更晚到期的 token
+if [ -n "${REFRESH_TO_FILE:-}" ] && [ -f "$REFRESH_TO_FILE" ]; then
+  cp "$REFRESH_TO_FILE" "${GROK_AUTH_FILE:?}"
+fi
+exit 0
+SH
+  chmod +x "$BIN/openclaw" "$BIN/grok"
+  export PASTE_LOG="$WORK/pasted.txt" GROK_LOG="$WORK/grok-calls.txt"
+  export XAI_SYNC_PATH="$BIN"
+  export OPENCLAW_AGENTS_DIR="$WORK/agents"
+  rm -rf "$WORK/agents"; mkdir -p "$WORK/agents"/{main,dev,infra,media,verifier}
+  unset FAIL_AGENT REFRESH_TO_FILE FLAKY_AGENT FLAKY_TIMES XAI_SYNC_AGENTS
+  export XAI_PASTE_RETRY_SLEEP=0
+  # 每个用例一份干净的指纹目录，免得上一例的「已同步」让本例跳过
+  rm -rf "$WORK/state"; export XAI_SYNC_STATE_DIR="$WORK/state"
+}
+
+# 造一个 exp 在 now+minutes 的假 JWT（只有 payload 需要合法）
+mk_auth() {
+  local file="$1" minutes="$2" marker="${3:-TOKENBODY}"
+  python3 - "$file" "$minutes" "$marker" <<'PY'
+import base64, json, sys, time
+path, minutes, marker = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+def b64(o): return base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
+jwt = f'{b64({"alg":"RS256","typ":"JWT"})}.{b64({"exp":int(time.time())+minutes*60,"m":marker})}.sig{marker}'
+json.dump({"https://auth.x.ai::probe": {"key": jwt, "email": "t@example.com"}}, open(path, "w"))
+PY
+}
+
+echo "▶️  grok token 同步器守卫"
+
+# ── ① 逐个 agent 都贴到 ──────────────────────────────────────────────────
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"
+mk_auth "$GROK_AUTH_FILE" 300 FRESH
+OUT=$(bash "$SYNC" 2>&1); RC=$?
+GOT=$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort | tr '\n' ' ')
+EXPECT="dev infra main media verifier "
+[ "$GOT" = "$EXPECT" ] && ok "5 个 agent 全部贴到（漏一个就 403 一个）" \
+  || bad "贴到的 agent 不全：得到 '${GOT}'，期望 '${EXPECT}'"
+[ "$RC" -eq 0 ] && ok "全成功 → 退出码 0" || bad "全成功却退出码 ${RC}：$OUT"
+grep -q '|xai|' "$WORK/pasted.txt" && ok "provider 传的是 xai" || bad "provider 不是 xai"
+
+# ── ② 有 agent 失败必须退出码非 0 ────────────────────────────────────────
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+OUT=$(FAIL_AGENT=media bash "$SYNC" 2>&1); RC=$?
+[ "$RC" -ne 0 ] && ok "有 agent 同步失败 → 退出码非 0（不静默吞）" \
+  || bad "有 agent 失败却退出码 0 —— 几小时后 grok 又 403 而没人知道"
+printf '%s' "$OUT" | grep -q 'media' && ok "失败的 agent 名出现在输出里" \
+  || bad "没说清哪个 agent 失败"
+
+# ── ②b 瞬时失败要重试（撞 OpenClaw 的 state-lifecycle 锁）────────────────
+# 0922 实测：连续 23 次 openclaw 调用会偶发掉一个，单独重跑立刻成功。
+# 不重试的话每轮莫名掉一两个 agent，而掉的那个几小时后就 403，
+# 排查时根本看不出是锁竞争 —— 所以"偶发失败能自愈"必须是被断言的行为。
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+OUT=$(FLAKY_AGENT=media FLAKY_TIMES=1 bash "$SYNC" 2>&1); RC=$?
+[ "$RC" -eq 0 ] && ok "某 agent 首次失败、重试成功 → 整体判成功" \
+  || bad "瞬时失败没被重试救回来，退出码 ${RC}：$OUT"
+[ "$(grep -c '^media|' "$WORK/pasted.txt")" -ge 2 ] && ok "确实重试了该 agent（调用 ≥2 次）" \
+  || bad "没有重试，只调了一次"
+
+# ── ③ 快到期先续期；充裕时不白花 token ───────────────────────────────────
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+bash "$SYNC" >/dev/null 2>&1
+[ ! -s "$WORK/grok-calls.txt" ] && ok "token 充裕（300min）→ 不触发续期调用" \
+  || bad "token 还很充裕却调了 CLI，白花额度"
+
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 10 STALE
+mk_auth "$WORK/renewed.json" 360 RENEWED
+OUT=$(REFRESH_TO_FILE="$WORK/renewed.json" bash "$SYNC" 2>&1)
+[ -s "$WORK/grok-calls.txt" ] && ok "token 剩 10min（低于阈值 90）→ 触发 CLI 续期" \
+  || bad "快到期却没触发续期 —— 贴过去的还是快死的那份"
+# 续期后必须**重读**：贴出去的应当是新 token，不是续期前那份
+if grep -q 'RENEWED' "$WORK/pasted.txt" && ! grep -q 'STALE' "$WORK/pasted.txt"; then
+  ok "续期后重读了 auth.json，贴的是新 token"
+else
+  bad "贴的仍是续期前的旧 token —— 续期等于白做"
+fi
+
+# ── ③b grok 可执行文件必须在同步器自己的 PATH 里 ──────────────────────────
+# 2026-09-23 生产打脸：同步器把 PATH 设成 /opt/homebrew/bin:/usr/local/bin，
+# 而 grok 实际装在 ~/.grok/bin/grok。于是 launchd 下续期那一步恒报
+# `timeout: failed to run command 'grok': No such file or directory`，
+# 日志里只看见「续期调用失败 —— CLI 可能需要重新登录」，把一个 PATH 问题
+# 误导成"要人工重新登录"。同一天 session-runner-router 也栽在 launchd PATH 上，
+# 是同一类：**自动化脚本在 launchd 下的 PATH 和人的 shell 不是一回事**。
+#
+# 两段断言，因为 CI runner 上没装 grok：
+#   ①（到处都跑）声明的 PATH 必须含 grok 的安装目录 ~/.grok/bin
+#   ②（只在装了 grok 的机器上跑，如 MMV）真拿那个 PATH 去找，必须找得到
+# 第②段跳过时**明说跳过**，不静默 —— 静默跳过的守卫等于没有。
+mk_env
+DEFAULT_PATH_RAW=$(grep -oE 'XAI_SYNC_PATH:-[^}"]+' "$SYNC" | head -1 | sed 's/XAI_SYNC_PATH:-//')
+DEFAULT_PATH=$(eval printf '%s' "\"${DEFAULT_PATH_RAW}\"")
+if [ -z "$DEFAULT_PATH_RAW" ]; then
+  bad "读不出脚本里的默认 PATH（守卫失去锚点）"
+else
+  case "$DEFAULT_PATH_RAW" in
+    *'$HOME/.grok/bin'*|*"${HOME}/.grok/bin"*)
+      ok "声明的 PATH 含 grok 安装目录 ~/.grok/bin" ;;
+    *)
+      bad "声明的 PATH 不含 ~/.grok/bin：${DEFAULT_PATH_RAW} —— launchd 下必然找不到 grok" ;;
+  esac
+  # 底座用 launchd 的默认 PATH，脚本那段前置上去 —— 这才是生产里真实的组合；
+  # 只给脚本那段会连 sh 都找不到，测的就不是要测的东西了。
+  if [ -x "${HOME}/.grok/bin/grok" ] || command -v grok >/dev/null 2>&1; then
+    if env -i PATH="${DEFAULT_PATH}:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$HOME" sh -c 'command -v grok' >/dev/null 2>&1; then
+      ok "拿这个 PATH 真的找得到 grok（本机已装）"
+    else
+      bad "本机装了 grok，却用声明的 PATH 找不到：${DEFAULT_PATH}"
+    fi
+  else
+    printf '  ⏭️  本机未装 grok，跳过「真找一次」那段（CI runner 属此情况）\n'
+  fi
+fi
+
+# ── ③c agent 名单必须读「活」配置，不是陈旧那份 ──────────────────────────
+# 2026-09-23 打脸：~/.openclaw 下有两份配置。
+#   clawdbot.json —— 旧名，9-21 之后就没再更新（23 个 agent）
+#   openclaw.json —— **真身**，`openclaw config set` 写的是它（24 个 agent）
+# 同步器原来读 clawdbot.json，于是新加的 agent（newmedia）永远同步不到 token，
+# 几小时后它的 grok 就 403，而日志显示「23/23 成功」—— **漏掉的那个不在分母里，
+# 所以看起来永远全绿**。这是最坏的一种假绿：计数正确，样本不全。
+#
+# 这条断言测行为不测字面量：造两份配置，各放一个独有的 agent，看脚本同步了谁。
+mk_env
+FAKE_HOME="$WORK/fakehome"; rm -rf "$FAKE_HOME"; mkdir -p "$FAKE_HOME/.openclaw"
+python3 - "$FAKE_HOME" <<'PYCFG'
+import json, sys, os
+h = sys.argv[1]
+json.dump({"agents": {"entries": {"only-in-live": {}}}}, open(os.path.join(h, ".openclaw/openclaw.json"), "w"))
+json.dump({"agents": {"entries": {"only-in-stale": {}}}}, open(os.path.join(h, ".openclaw/clawdbot.json"), "w"))
+PYCFG
+mk_auth "$WORK/auth.json" 300 FRESH
+# 必须清掉 OPENCLAW_AGENTS_DIR —— 它优先级高于配置文件，留着就测不到配置路径这条分支
+OUT=$(env -u OPENCLAW_AGENTS_DIR HOME="$FAKE_HOME" GROK_AUTH_FILE="$WORK/auth.json" \
+      PASTE_LOG="$WORK/pasted.txt" GROK_LOG="$WORK/grok-calls.txt" \
+      XAI_SYNC_PATH="$BIN" XAI_PASTE_RETRY_SLEEP=0 bash "$SYNC" 2>&1)
+if grep -q '^only-in-live|' "$WORK/pasted.txt" 2>/dev/null; then
+  ok "读的是活配置 openclaw.json（同步了 only-in-live）"
+elif grep -q '^only-in-stale|' "$WORK/pasted.txt" 2>/dev/null; then
+  bad "读了陈旧的 clawdbot.json —— 新加的 agent 会被静默漏掉，日志却显示全绿"
+else
+  bad "两份配置的 agent 都没同步到：$(cut -d'|' -f1 < "$WORK/pasted.txt" | tr '\n' ' ')"
+fi
+
+# ── ④ CLI 未登录要报死 ───────────────────────────────────────────────────
+mk_env
+export GROK_AUTH_FILE="$WORK/nonexistent.json"
+OUT=$(bash "$SYNC" 2>&1); RC=$?
+[ "$RC" -ne 0 ] && ok "CLI 未登录 → 退出码非 0" || bad "CLI 未登录却判成功"
+[ ! -s "$WORK/pasted.txt" ] && ok "CLI 未登录 → 一个 agent 都不贴" \
+  || bad "没有可用 token 却还在贴，会把坏值推给所有 agent"
+
+# ── ④b 进度必须可见 ─────────────────────────────────────────────────────
+# 23 个 agent × 每个约 30s ≈ 11 分钟。首版整轮零输出，"卡住"和"正常跑"在日志上
+# 完全同形，根本没法判断。每个 agent 都要留一行。
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+OUT=$(bash "$SYNC" 2>&1)
+MISSING=""
+for a in main dev infra media verifier; do
+  printf '%s' "$OUT" | grep -q "$a" || MISSING="$MISSING $a"
+done
+[ -z "$MISSING" ] && ok "每个 agent 都在日志里留了进度行" \
+  || bad "这些 agent 没有进度行：${MISSING} —— 卡住时看不出卡在哪"
+printf '%s' "$OUT" | grep -qE '\[[0-9]+/5\]' && ok "进度带 N/总数（能看出还剩多少）" \
+  || bad "进度没带 N/总数"
+
+# ── ④c 到期时刻按本地时区渲染 ───────────────────────────────────────────
+# launchd 环境不带 TZ，date -r 默认按 UTC 渲染 —— 首轮日志把 23:01 打成 08:01，
+# 排查时会以为 token 早就过期了。这条断言比对两个时区下的渲染必须不同，
+# 证明确实按指定时区渲染，而不是碰巧。
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+A=$(SYNC_TZ=UTC bash "$SYNC" 2>&1 | grep '到期于' | head -1)
+B=$(SYNC_TZ=Asia/Shanghai bash "$SYNC" 2>&1 | grep '到期于' | head -1)
+if [ -n "$A" ] && [ -n "$B" ] && [ "$A" != "$B" ]; then
+  ok "到期时刻按指定时区渲染（UTC 与 Asia/Shanghai 输出不同）"
+else
+  bad "两个时区渲染结果相同或为空 —— 时区没生效，日志时刻会误导排查：A='${A}' B='${B}'"
+fi
+
+# ── ⑤ 绝不把 token 打进日志 ──────────────────────────────────────────────
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 SECRETBODY
+OUT=$(bash "$SYNC" 2>&1)
+printf '%s' "$OUT" | grep -q 'SECRETBODY' \
+  && bad "token 被打进了日志（日志会进 launchd 输出文件）" \
+  || ok "token 不出现在日志里"
+
+# ── ⑥ token 没变就不重贴 ────────────────────────────────────────────────
+# 2026-09-28 实测：每小时对 30 个 agent 重贴同一个 token（每个约 30s），
+# 每贴一次网关就重发布一代模型目录，整点后 15 分钟网关在白忙，还刷
+# 「Model auth changes were saved, but the running Gateway could not refresh them」。
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 SAME
+bash "$SYNC" >/dev/null 2>&1
+: > "$WORK/pasted.txt"
+OUT=$(bash "$SYNC" 2>&1); RC=$?
+[ ! -s "$WORK/pasted.txt" ] && ok "token 未变 → 第二轮一个都不重贴" \
+  || bad "token 未变却重贴了：$(cut -d'|' -f1 < "$WORK/pasted.txt" | tr '\n' ' ')"
+[ "$RC" -eq 0 ] && ok "全部跳过 → 退出码 0" || bad "全部跳过却退出码非 0"
+printf '%s' "$OUT" | grep -q "跳过" && ok "跳过写进日志（看得出不是卡住）" || bad "跳过没留日志"
+
+# token 换了 → 全部重贴
+mk_auth "$GROK_AUTH_FILE" 300 ROTATED
+: > "$WORK/pasted.txt"
+bash "$SYNC" >/dev/null 2>&1
+[ "$(grep -c . "$WORK/pasted.txt")" -eq 5 ] && ok "token 换了 → 5 个 agent 全部重贴" \
+  || bad "token 换了却没全贴：$(cut -d'|' -f1 < "$WORK/pasted.txt" | tr '\n' ' ')"
+
+# 失败的 agent 不记指纹 → 下一轮必须重试，不能被当成已同步跳过
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 SAME
+FAIL_AGENT=dev bash "$SYNC" >/dev/null 2>&1
+: > "$WORK/pasted.txt"
+bash "$SYNC" >/dev/null 2>&1
+if [ "$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')" = "dev " ]; then
+  ok "上一轮失败的 agent 下一轮重贴，成功过的不重贴"
+else
+  bad "失败重试不对，本轮贴了：$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')"
+fi
+
+# 指纹文件里不许出现 token 明文
+grep -rq 'SAME' "$WORK/state" 2>/dev/null && bad "指纹目录里有 token 明文" || ok "指纹目录只存哈希，不存 token"
+
+# ── ⑦ XAI_SYNC_AGENTS 白名单（Brain 任务 7902b997，决策 ae189458）────────
+# 每次 paste-token 都让网关重建一代 prepared-model-catalog（插件源码复制 + 重新作为
+# ES 模块加载、不卸载），30 个 agent 逐个贴 = 一轮 30 次重建，网关单线程涨到 ~8GB，
+# 重建期间新 agent 报 "prepared model runtime publication was superseded"。
+# 真正用 grok 的只有少数几个 agent —— 白名单把重建次数从 30 压到个位数。
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+OUT=$(XAI_SYNC_AGENTS="main,infra" bash "$SYNC" 2>&1); RC=$?
+GOT=$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')
+[ "$GOT" = "infra main " ] && ok "白名单（逗号分隔）→ 只贴名单内的 agent" \
+  || bad "白名单没生效，贴到了：'${GOT}'（期望 'infra main '）"
+[ "$RC" -eq 0 ] && ok "白名单全成功 → 退出码 0" || bad "白名单全成功却退出码 ${RC}：$OUT"
+printf '%s' "$OUT" | grep -q '白名单模式 2 个' && ok "日志写明「白名单模式 2 个」" \
+  || bad "日志没写明白名单模式与数量：$OUT"
+
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+XAI_SYNC_AGENTS="dev  verifier" bash "$SYNC" >/dev/null 2>&1
+GOT=$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')
+[ "$GOT" = "dev verifier " ] && ok "白名单（空格分隔）同样生效" \
+  || bad "空格分隔的白名单没生效，贴到了：'${GOT}'"
+
+# 名单里写了配置里不存在的 agent → 必须出声（拼错名字 = 那个 agent 永远 403，却没人知道）
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+OUT=$(XAI_SYNC_AGENTS="main,ghost" bash "$SYNC" 2>&1); RC=$?
+printf '%s' "$OUT" | grep -q 'FAULT.*ghost' && ok "白名单里的未知 agent → 报 FAULT 且点名" \
+  || bad "未知 agent 被静默吞掉：$OUT"
+[ "$RC" -ne 0 ] && ok "白名单含未知 agent → 退出码非 0" || bad "白名单含未知 agent 却退出码 0"
+GOT=$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')
+[ "$GOT" = "main " ] && ok "未知 agent 不影响名单内合法 agent 照常同步" \
+  || bad "有未知 agent 时合法 agent 没被同步，贴到了：'${GOT}'"
+
+# 未设置 → 行为完全不变：全量同步、日志不出现白名单字样
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+OUT=$(env -u XAI_SYNC_AGENTS bash "$SYNC" 2>&1); RC=$?
+GOT=$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')
+[ "$GOT" = "dev infra main media verifier " ] && [ "$RC" -eq 0 ] \
+  && ok "未设 XAI_SYNC_AGENTS → 全量同步 5 个（行为不变）" \
+  || bad "未设白名单时行为变了：贴到 '${GOT}'，退出码 ${RC}"
+printf '%s' "$OUT" | grep -q '白名单' && bad "未设白名单却在日志里出现白名单字样" \
+  || ok "未设白名单 → 日志不出现白名单模式"
+
+printf '\n结果: PASS=%d FAIL=%d\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

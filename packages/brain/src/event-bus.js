@@ -28,6 +28,40 @@ async function ensureEventsTable() {
 }
 
 /**
+ * 进程内订阅表：eventType → Set<handler>。
+ * 落库是审计（cecelia_events），订阅是接线（如 run.finished → business-probe-judge，棒3a）；
+ * 两者解耦：落库失败照样派发，订阅者抛错只 warn 不外溢。
+ */
+const listeners = new Map();
+
+/**
+ * 订阅一个事件类型。handler(payload, { eventType, source }) 可 async。
+ * @returns {() => void} 取消订阅函数
+ */
+function on(eventType, handler) {
+  if (typeof handler !== 'function') throw new TypeError('event-bus on() requires a function handler');
+  if (!listeners.has(eventType)) listeners.set(eventType, new Set());
+  listeners.get(eventType).add(handler);
+  return () => off(eventType, handler);
+}
+
+function off(eventType, handler) {
+  listeners.get(eventType)?.delete(handler);
+}
+
+async function dispatch(eventType, source, payload) {
+  const handlers = listeners.get(eventType);
+  if (!handlers?.size) return;
+  for (const handler of [...handlers]) {
+    try {
+      await handler(payload, { eventType, source });
+    } catch (err) {
+      console.warn(`[event-bus] subscriber for ${eventType} failed (non-fatal):`, err.message);
+    }
+  }
+}
+
+/**
  * Emit an event
  * @param {string} eventType - e.g. task_dispatched, task_completed, task_failed, circuit_open, patrol_cleanup
  * @param {string} source - e.g. tick, executor, patrol, circuit_breaker
@@ -43,6 +77,7 @@ async function emit(eventType, source, payload = {}) {
     // Don't let event logging failures break the main flow
     console.error(`[event-bus] Failed to emit ${eventType}:`, err.message);
   }
+  await dispatch(eventType, source, payload);
 }
 
 /**
@@ -102,4 +137,4 @@ async function getEventCounts(since) {
   return result.rows;
 }
 
-export { ensureEventsTable, emit, queryEvents, getEventCounts };
+export { ensureEventsTable, emit, on, off, queryEvents, getEventCounts };

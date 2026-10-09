@@ -594,6 +594,16 @@ function createWorkspaceManager({
   });
 }
 
+const FLEET_REPOSITORIES = Object.freeze({
+ 'perfectuser21/cecelia': 'CECELIA_FLEET_REPO_SOURCE',
+ 'perfectuser21/zenithjoy-workspace': 'CECELIA_FLEET_ZENITHJOY_REPO_SOURCE',
+});
+function createFleetRepoAllowlist(env={}){
+ return Object.freeze(Object.fromEntries(Object.entries(FLEET_REPOSITORIES).map(([repo,key])=>[repo,env[key]??`https://github.com/${repo}.git`])));
+}
 module.exports = {
+  createFleetRepoAllowlist,
+  FLEET_REPOSITORIES,
   createWorkspaceManager,
+  validateSpec,
 };

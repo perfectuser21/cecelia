@@ -9,6 +9,11 @@ vi.mock('../notifier.js', () => ({
   sendFeishu: vi.fn().mockResolvedValue(true),
 }));
 
+// 缓冲持久化走 working_memory：此处隔离真实 DB（持久化行为见 alerting-persist.test.js）
+vi.mock('../db.js', () => ({
+  default: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+}));
+
 import { sendFeishu } from '../notifier.js';
 import { raise, flushP1, flushP2, flushAlertsIfNeeded, getStatus } from '../alerting.js';
 
@@ -88,7 +93,7 @@ describe('Alerting', () => {
   });
 
   describe('flushP1()', () => {
-    it('缓冲区有内容时发送汇总并清空', async () => {
+    it('缓冲区有内容时汇总（不私信）并清空', async () => {
       // 先加几条 P1
       await raise('P1', 'flush_test_1', 'P1 消息 A');
       await raise('P1', 'flush_test_2', 'P1 消息 B');
@@ -98,9 +103,9 @@ describe('Alerting', () => {
       vi.clearAllMocks();
       await flushP1();
 
-      expect(sendFeishu).toHaveBeenCalledTimes(1);
-      const msg = sendFeishu.mock.calls[0][0];
-      expect(msg).toContain('[P1 每小时汇总]');
+      // 决策 d3e7746c：系统类汇总不私信主理人，不走 sendFeishu
+      expect(sendFeishu).not.toHaveBeenCalled();
+      expect(getStatus().last_p1_digest.count).toBeGreaterThanOrEqual(2);
 
       // 缓冲区已清空
       expect(getStatus().p1_pending).toBe(0);
@@ -117,7 +122,7 @@ describe('Alerting', () => {
   });
 
   describe('flushP2()', () => {
-    it('缓冲区有内容时发送汇总并清空', async () => {
+    it('缓冲区有内容时汇总（不私信）并清空', async () => {
       await raise('P2', 'flush2_test_1', 'P2 消息 A');
       const beforeCount = getStatus().p2_pending;
       expect(beforeCount).toBeGreaterThanOrEqual(1);
@@ -125,9 +130,8 @@ describe('Alerting', () => {
       vi.clearAllMocks();
       await flushP2();
 
-      expect(sendFeishu).toHaveBeenCalledTimes(1);
-      const msg = sendFeishu.mock.calls[0][0];
-      expect(msg).toContain('[P2 每日记录]');
+      expect(sendFeishu).not.toHaveBeenCalled();
+      expect(getStatus().last_p2_digest.count).toBeGreaterThanOrEqual(1);
       expect(getStatus().p2_pending).toBe(0);
     });
 

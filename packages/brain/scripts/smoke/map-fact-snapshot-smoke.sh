@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # scratch-only 真验火：四类事实快照、provenance、原子替换与 freshness fail-closed。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT_DIR"
@@ -16,7 +19,7 @@ DATABASE_NAME="$("$NODE_EXECUTABLE" -e "const u=new URL(process.argv[1]); proces
 [[ "$DATABASE_NAME" =~ (_test|_scratch)$ ]] \
   || fail "拒绝连接非测试库: ${DATABASE_NAME:-<empty>}"
 
-ACTIVE_DATABASE="$("$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
+ACTIVE_DATABASE="$("$PSQL_EXECUTABLE" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
 [[ "$ACTIVE_DATABASE" == "$DATABASE_NAME" ]] \
   || fail "连接目标不一致: expected=$DATABASE_NAME actual=$ACTIVE_DATABASE"
 
@@ -25,8 +28,16 @@ TARGET_REVISION="$(git -C "$REPO_ROOT_CECELIA" rev-parse HEAD)"
   || fail "目标 repo HEAD 不是完整 Git object id"
 
 SMOKE_REPO="map-fact-snapshot-smoke-$$"
+
+# 构造"刚过保鲜期"的快照年龄。绝不手抄分钟数——0921 之前这里钉着 16 分钟，
+# 预算一放宽 16 分钟就变 fresh，smoke 会在无人察觉时失去意义。直接读 JS 常量。
+STALE_AGE_SECONDS="$("$NODE_EXECUTABLE" --input-type=module -e "
+  import { PHOTO_STALE_THRESHOLD_SECONDS } from '$ROOT_DIR/packages/brain/src/lib/registry-freshness.js';
+  process.stdout.write(String(PHOTO_STALE_THRESHOLD_SECONDS + 60));
+")"
+[[ "$STALE_AGE_SECONDS" =~ ^[0-9]+$ ]] || { echo "❌ 读不到 PHOTO_STALE_THRESHOLD_SECONDS（得到 '$STALE_AGE_SECONDS'）" >&2; exit 1; }
 cleanup() {
-  "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
+  "$PSQL_EXECUTABLE" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
     -c "DELETE FROM api_registry WHERE repo = '$SMOKE_REPO'" \
     -c "DELETE FROM fact_snapshot_headers WHERE kind = 'api' AND repo = '$SMOKE_REPO'" \
     >/dev/null 2>&1 || true
@@ -34,7 +45,7 @@ cleanup() {
 trap cleanup EXIT
 
 db_scalar() {
-  "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"
+  "$PSQL_EXECUTABLE" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"
 }
 
 verify_headers_and_facts() {
@@ -214,7 +225,7 @@ NODE
 pass '消失事实原子替换演习'
 
 verify_freshness fresh '' "$SMOKE_REPO" api
-db_scalar "UPDATE fact_snapshot_headers SET scanned_at = NOW() - interval '16 minutes' WHERE kind = 'api' AND repo = '$SMOKE_REPO'" >/dev/null
+db_scalar "UPDATE fact_snapshot_headers SET scanned_at = NOW() - ($STALE_AGE_SECONDS || ' seconds')::interval WHERE kind = 'api' AND repo = '$SMOKE_REPO'" >/dev/null
 verify_freshness unknown snapshot_stale "$SMOKE_REPO" api
 pass '16 分钟快照 fail-closed unknown/snapshot_stale'
 

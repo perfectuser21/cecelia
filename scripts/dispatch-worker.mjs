@@ -13,8 +13,7 @@ export const USABLE_THRESHOLD = 90;
 export const ACCOUNT_POOL = [
   { vendor: 'codex', name: 'team1', home: join(homedir(), '.codex-team1') },
   { vendor: 'codex', name: 'team2', home: join(homedir(), '.codex-team2') },
-  // account1 是 controller 主线账号，不下场当 worker
-  { vendor: 'claude', name: 'account2', home: join(homedir(), '.claude-account2') },
+  // 单 Claude 账号即 controller 主线，不下场当 worker
   { vendor: 'grok', name: 'grok', home: join(homedir(), '.grok') },
 ];
 

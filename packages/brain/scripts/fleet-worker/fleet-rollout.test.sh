@@ -34,7 +34,7 @@ artifact_log="$test_root/artifacts.log"
 transport_log="$test_root/transport.log"
 node_log="$test_root/node.log"
 worker_token="$test_root/worker-token"
-expected_runner_digest='sha256:74afa123d31ff6eda7b3dff213ecba0ac28e5d8f1b74bc40ade3e71dd635721a'
+expected_runner_digest='sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033'
 touch "$artifact_log" "$transport_log" "$node_log"
 printf 'fleet-worker-transport-token-at-least-32-bytes\n' > "$worker_token"
 chmod 0600 "$worker_token"
@@ -156,7 +156,7 @@ write_executable "$fake_bin/sudo" \
   'fi' \
   'if [[ "${1:-}" == "/bin/kill" && "${FLEET_TEST_SUDO_FAIL_KILL:-0}" == 1 ]]; then exit 25; fi' \
   'if [[ "${1:-}" == "/bin/mkdir" && "${*: -1}" == "/var/run/cecelia" ]]; then exit 0; fi' \
-  'if [[ "${1:-}" == "/usr/bin/touch" && "${2:-}" == "/var/run/cecelia/fleet-worker.drain" ]]; then' \
+  'if [[ "${1:-}" == "/usr/local/libexec/cecelia/toolchain/bin/node" && "${2:-}" == "/usr/local/libexec/cecelia/fleet-worker/drain-owner.cjs" && "${3:-}" == "emergency" ]]; then' \
   '  [[ "${FLEET_TEST_SUDO_FAIL_TOUCH:-0}" == 1 ]] && exit 26' \
   '  [[ -n "${FLEET_TEST_NODE_LOG:-}" ]] && printf "drain emergency\n" >> "$FLEET_TEST_NODE_LOG"' \
   '  exit 0' \
@@ -338,7 +338,7 @@ grep -Fq 'docker save --output' "$artifact_log" \
   || fail "rollout did not export the Runner image"
 grep -Fq 'docker image tag pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62 pgvector/pgvector:pg15' "$artifact_log" \
   || fail "rollout did not preserve the pinned PostgreSQL repository tag"
-grep -Eq 'docker save --output .* sha256:74afa123d31ff6eda7b3dff213ecba0ac28e5d8f1b74bc40ade3e71dd635721a pgvector/pgvector:pg15$' "$artifact_log" \
+grep -Eq 'docker save --output .* sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033 pgvector/pgvector:pg15$' "$artifact_log" \
   || fail "rollout archive did not save the tagged PostgreSQL reference"
 grep -Fq 'docker run --rm --entrypoint sh' "$artifact_log" \
   && fail "rollout still uses a static source-string image contract"
@@ -416,7 +416,7 @@ if CECELIA_MACHINE_ID=us-mac-m4 \
 fi
 [[ ! -e "$remote_transfer_stage" ]] \
   || fail "truncated remote transport left root staging behind"
-grep -Fq 'sudo -n /usr/bin/touch /var/run/cecelia/fleet-worker.drain' \
+grep -Fq 'sudo -n /usr/local/libexec/cecelia/toolchain/bin/node /usr/local/libexec/cecelia/fleet-worker/drain-owner.cjs emergency' \
   "$transport_log" \
   || fail "truncated remote transport did not fail closed with drain"
 
@@ -727,6 +727,7 @@ node_source="$payload_root/source/packages/brain/scripts/fleet-worker"
 mkdir -p "$node_source"
 cp "$fake_bin/nodectl" "$node_source/fleet-nodectl.sh"
 printf 'bundle\n' > "$payload_root/repository.bundle"
+printf '77b9d1e2-58f2-42f3-b8df-5342318235fb\n' > "$payload_root/drain-owner"
 printf 'runner\n' > "$payload_root/runner.tar"
 
 run_node_apply_for_test() (
@@ -824,8 +825,15 @@ if run_rollout moon-base --apply >/dev/null 2>&1; then
   fail "unknown rollout target was accepted"
 fi
 
-if grep -Eni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt|bridge.*/run' \
-  "$artifact_log" "$transport_log" "$node_log"; then
+# 工作区根目录名不是归档内容；仅替换精确根前缀，根下敏感路径仍参与扫描。
+scan_log="$test_root/authority-scan.log"
+python3 - "$(cd "$SCRIPT_DIR/../../../.." && pwd)" \
+  "$artifact_log" "$transport_log" "$node_log" > "$scan_log" <<'PYSCAN'
+import pathlib, sys
+for filename in sys.argv[2:]:
+    print(pathlib.Path(filename).read_text().replace(sys.argv[1] + '/', '<repo-root>/').replace(sys.argv[1] + ' ', '<repo-root> '))
+PYSCAN
+if grep -Eni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt|bridge.*/run' "$scan_log"; then
   fail "rollout artifacts or transport contain account, Prompt, or Bridge authority"
 fi
 

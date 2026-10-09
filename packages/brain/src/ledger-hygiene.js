@@ -11,6 +11,7 @@
  */
 import { sendBark } from './notifier.js';
 import { pushCaptureAtom } from './capture-inbox.js';
+import { legacyReadEnabled } from './lib/golden-path-legacy.js';
 
 /** 每晚触发窗口（UTC）= 北京时间 05:10-05:15 */
 const LEDGER_HYGIENE_HOUR_UTC = 21;
@@ -69,7 +70,10 @@ const toInt = (v) => parseInt(v ?? '0', 10) || 0;
  * debt=欠账数（棘轮口径）；enabled=false 表示该指标暂不可用/未激活，不参与棘轮。
  */
 export async function computeMetrics(pool, now = new Date()) {
-  const m1 = await safeMetric(async () => {
+  // m1 读 golden_path 旧表（已退役，任务 7d312fd8）：默认停计、不参与棘轮；应急放行窗口下沿用旧口径
+  const m1 = !legacyReadEnabled()
+    ? { key: 'm1', name: 'FR沉淀率', value: null, debt: 0, enabled: false, retired: 'golden_path' }
+    : await safeMetric(async () => {
     // FR 沉淀率：近 7 天 merged 的 harness run 中 golden_path 有行的比例
     const { rows } = await pool.query(
       `SELECT count(*) AS total,

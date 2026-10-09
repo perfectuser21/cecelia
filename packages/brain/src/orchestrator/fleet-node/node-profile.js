@@ -1,3 +1,4 @@
+import resourcePolicy from '../../../scripts/fleet-worker/attempt-resource-policy.cjs';
 import { readFileSync } from 'node:fs';
 
 const REGISTRY_URL = new URL('../../../config/fleet-node-profiles.json', import.meta.url);
@@ -17,7 +18,7 @@ const CANONICAL_BASELINE = Object.freeze({
     'xian-mac-m4': 'http://100.71.151.105:5221/api/brain/health',
     'xian-mac-m1': 'http://100.71.151.105:5221/api/brain/health',
   }),
-  runner_image_digest: 'sha256:74afa123d31ff6eda7b3dff213ecba0ac28e5d8f1b74bc40ade3e71dd635721a',
+  runner_image_digest: 'sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033',
   runtime_resources: Object.freeze({
     postgres: Object.freeze({
       image_digest: 'pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62',
@@ -132,35 +133,19 @@ validateNodeProfileRegistry(registry.profiles);
 const profiles = deepFreeze(registry.profiles);
 const profilesById = new Map(profiles.map((profile) => [profile.machine_id, profile]));
 
-const ROLE_WEIGHTS = Object.freeze({
-  commander: 1,
-  planner: 1,
-  reviewer: 1,
-  proposer: 2,
-  generator: 4,
-  evaluator: 4,
-  judge: 4,
-  reporter: 1,
-  // Publisher 只做 git 发布（把 Judge 批准的精确候选 ref 推到远端），不跑测试、
-  // 不起 Provider 推理，与 reporter 同为最轻档。
-  // 2026-08-18 生产实证：Judge 首次 PASS 后 dispatcher 走 publish:approved_ref
-  // （role:'publisher'），而这张表没有它 → getRoleCapacity 抛 unknown_fleet_role →
-  // 容量算 0 → all_execution_targets_exhausted。Publisher 在设计上一直存在
-  // （有 objective，Generator/Judge 的 objective 也都写明"Publisher owns remote
-  // publication after Judge PASS"），只是从没有 run 走到 Judge PASS，这个漏注册
-  // 就一直没被发现——产线走得越远，暴露得越晚。
-  publisher: 1,
-});
+export const ROLE_WEIGHTS = resourcePolicy.ROLE_WEIGHTS;
+
+let executionProfileReader=()=>[];
+export function bindExecutionProfileReader(reader){executionProfileReader=reader;}
 
 export function listNodeProfiles() {
-  return profiles;
+  return Object.freeze(executionProfileReader().map(n=>n.profile).sort((a,b)=>profiles.findIndex(p=>p.machine_id===a.machine_id)-profiles.findIndex(p=>p.machine_id===b.machine_id)));
 }
 
 export function getNodeProfile(machineId) {
-  if (typeof machineId !== 'string' || !profilesById.has(machineId)) {
-    throw new Error('unknown_fleet_node');
-  }
-  return profilesById.get(machineId);
+  const profile=executionProfileReader().find(n=>n.canonical_id===machineId)?.profile;
+  if(!profile)throw new Error('unknown_fleet_node');
+  return profile;
 }
 
 export function getRoleCapacity({ baseCapacity, role } = {}) {
@@ -177,4 +162,17 @@ export function getRoleCapacity({ baseCapacity, role } = {}) {
     weight,
     capacity: Math.floor(baseCapacity / weight),
   };
+}
+
+// 安装器只读取受控部署配置；它不构成Brain派发授权。
+export function getDeploymentNodeProfile(machineId){
+ const profile=profilesById.get(machineId);if(!profile)throw Error('unknown_fleet_node');return profile;
+}
+export function listDeploymentNodeProfiles(){return profiles;}
+
+// 支持版本只来自已注册且冻结的执行目录对象；部署registry验证仍严格canonical。
+export function validateRegisteredAdmissionProfile(profile){
+ if(!executionProfileReader().some(n=>n.profile===profile&&n.canonical_id===profile?.machine_id&&n.platform==='darwin'&&n.identity_mode==='legacy-v1'&&n.state==='active'))return false;
+ if(!/^\d+\.\d+\.\d+$/.test(profile.version_policy?.os??''))return false;
+ return validateNodeProfile({...profile,version_policy:{...profile.version_policy,os:CANONICAL_BASELINE.version_policy.os}});
 }

@@ -1,6 +1,10 @@
+import {createExecutionBaselineRouter} from './src/routes/execution-baseline.js';
+import {createAppServerRouter} from './src/routes/app-server.js';
+import { startExecutionDirectory } from './src/execution-directory/store.js';
 // OTel 必须在所有其他 import 之前初始化（auto-instrumentation 要求）
 import { initOtel } from './src/otel.js';
-await initOtel();
+import { isIsolatedRuntime } from './src/runtime-safety.js';
+if (!isIsolatedRuntime()) await initOtel();
 
 import 'dotenv/config';
 import express from 'express';
@@ -27,6 +31,7 @@ import taskGoalsRoutes from './src/routes/task-goals.js';
 import taskAreasRoutes from './src/routes/task-areas.js';
 import taskTasksRoutes from './src/routes/task-tasks.js';
 import workRoutingRoutes from './src/routes/work-routing.js';
+import taskIntakeRoutes from './src/routes/task-intake.js';
 import innerLifeRoutes from './src/routes/inner-life.js';
 import intentMatchRoutes from './src/routes/intent-match.js';
 import selfReportsRoutes from './src/routes/self-reports.js';
@@ -36,9 +41,6 @@ import brainManifestRoutes from './src/routes/brain-manifest.js';
 import perceptionSignalsRoutes from './src/routes/perception-signals.js';
 import architectureRoutes from './src/routes/architecture.js';
 import taskRouterDiagnoseRoutes from './src/routes/task-router-diagnose.js';
-import licenseRoutes from './src/routes/license.js';
-import agentCreditRoutes from './src/routes/agent-credit.js';
-import acquisitionRoutes from './src/routes/acquisition.js';
 import notebookAuditRoutes from './src/routes/notebook-audit.js';
 import alertingRoutes from './src/routes/alerting.js';
 import systemReportsRoutes from './src/routes/system-reports.js';
@@ -46,14 +48,12 @@ import evolutionRoutes from './src/routes/evolution.js';
 import recurringRoutes from './src/routes/recurring.js';
 import statsRoutes from './src/routes/stats.js';
 import timeRoutes from './src/routes/time.js';
-import alexPagesRoutes from './src/routes/alex-pages.js';
 import metricsRoutes from './src/routes/metrics.js';
 import ruminationRoutes from './src/routes/rumination.js';
 import curiosityRoutes from './src/routes/curiosity.js';
 import knowledgeRoutes from './src/routes/knowledge.js';
 import devRecordsRoutes from './src/routes/dev-records.js';
 import designDocsRoutes from './src/routes/design-docs.js';
-import userAnnotationsRoutes from './src/routes/user-annotations.js';
 import strategicDecisionsRoutes from './src/routes/strategic-decisions.js';
 import createDecisionsMatchRouter from './src/routes/decisions.js';
 import conversationsRoutes from './src/routes/conversations.js';
@@ -87,12 +87,27 @@ import clipsRoutes from './src/routes/clips.js';
 import journeysRouter from './src/routes/journeys.js';
 import vocabAlias from './src/vocab-alias.js'; // 行业词汇别名（决策 a340f100）
 import abilitiesRouter from './src/routes/abilities.js';
+import orgUnitsRouter from './src/routes/org-units.js';
+import stepProbesRouter from './src/routes/step-probes.js';
+import stepsRouter from './src/routes/steps.js';
+import workflowsRouter from './src/routes/workflows.js';
+import workflowAuthoringRouter from './src/routes/workflow-authoring.js';
+import spansRouter from './src/routes/spans.js';
+import skillSettlementRouter from './src/routes/skill-settlement.js';
+import { createReleasesRouter } from './src/routes/releases.js';
+import { createRunDefinitionsRouter } from './src/routes/run-definitions.js';
+import { createRunReconciliationRouter } from './src/routes/run-reconciliation.js';
+import phoneRegistryRouter from './src/routes/phone-registry.js';
+import commanderHeartbeatRouter from './src/routes/commander-heartbeat.js';
 import goldenPathsRouter from './src/routes/golden-paths.js';
 import skillEvalRoutes from './src/routes/eval.js';
 import rpaDevVerifyRouter from './src/routes/rpa-dev-verify.js';
 import deployDevRouter from './src/routes/deploy-dev.js';
 import incidentsRouter from './src/routes/incidents.js';
 import graphRoutes from './src/routes/graph.js';
+import { createImplementationCiRouter } from './src/routes/implementation-ci.js';
+import { createCapabilityRegressionsRouter } from './src/routes/capability-regressions.js';
+import { createCapabilitySystemRouter } from './src/routes/capability-system.js';
 import { createMapManifestRouter } from './src/routes/map-manifests.js';
 import mapRoutes from './src/routes/map.js';
 import opsPanoramaRoutes from './src/routes/ops-panorama.js';
@@ -133,7 +148,7 @@ import {
 // 宿主 ~/.gitconfig 只读挂载进容器、配了容器内不存在的 credential.helper，
 // 导致 GitHub-URL base_repo 的 harness clone/fetch/push 全失败。写可写 GIT_CONFIG_GLOBAL
 // 用 url.insteadOf 注入 x-access-token，一处修复 clone/fetch/push 全部。
-setupGitCredentials({
+if (!isIsolatedRuntime()) setupGitCredentials({
   token: process.env.GITHUB_TOKEN,
   configPath: '/tmp/brain-gitconfig',
   env: process.env,
@@ -143,6 +158,7 @@ const app = express();
 app.locals.pool = pool;
 app.set('kernelFleetBridgeToken', process.env.KERNEL_FLEET_BRIDGE_TOKEN);
 const kernelFleetTerminalTransport = createProductionExecutionTransport({
+  pool,
   env: process.env,
   fetchFn: globalThis.fetch,
 });
@@ -314,6 +330,8 @@ app.use('/api/brain/graph', graphRoutes);
 // 旧 app 级 GET（available 语义 + 连字符转下划线取键）已删：与 kv.js 双实现分脑——
 // POST 原样写 -、GET 转 _ 读，写进去的键永远读不到。
 app.use('/api/brain/janitor', janitorRoutes);
+app.use('/api/brain/internal/app-server', createAppServerRouter({pool}));
+app.use('/api/brain/internal/execution-directory',createExecutionBaselineRouter({pool}));
 app.use('/api/brain/profile/facts', profileFactsRoutes);
 
 // Cron 手动触发（E2E 测试用）
@@ -360,14 +378,12 @@ app.use('/api/brain/evolution', evolutionRoutes);
 app.use('/api/brain/recurring-tasks', recurringRoutes);
 app.use('/api/brain/stats', statsRoutes);
 app.use('/api/brain/time', timeRoutes);
-app.use('/api/brain/alex-pages', alexPagesRoutes);
 app.use('/api/brain/metrics', metricsRoutes);
 app.use('/api/brain/rumination', ruminationRoutes);
 app.use('/api/brain/curiosity', curiosityRoutes);
 app.use('/api/brain/knowledge', knowledgeRoutes);
 app.use('/api/brain/dev-records', devRecordsRoutes);
 app.use('/api/brain/design-docs', designDocsRoutes);
-app.use('/api/brain/user-annotations', userAnnotationsRoutes);
 app.use('/api/brain/strategic-decisions', strategicDecisionsRoutes);
 app.use('/api/brain/conversations', conversationsRoutes);
 app.post('/api/brain/decisions/match', express.json(), createDecisionsMatchRouter());
@@ -393,6 +409,9 @@ app.get('/api/brain/decisions', async (req, res) => {
 });
 app.use('/api/brain/capture-atoms', captureAtomsRoutes);
 app.use('/api/brain/captures', capturesRoutes);
+app.use('/api/brain/capability-regressions', createCapabilityRegressionsRouter({pool}));
+app.use('/api/brain/implementation-ci', createImplementationCiRouter({pool}));
+app.use('/api/brain/map', createCapabilitySystemRouter({pool}));
 app.use('/api/brain/map/manifests', createMapManifestRouter({ pool }));
 app.use('/api/brain/map', mapRoutes);
 app.use('/api/brain', projectionsRoutes);
@@ -440,6 +459,18 @@ app.get('/api/brain/issues', async (req, res) => {
   }
 });
 app.use('/api/brain', abilitiesRouter);
+app.use('/api/brain', orgUnitsRouter);
+app.use('/api/brain', stepProbesRouter); // 步级探针注册表（链 bf5088a3 棒2，决策 702949b6）
+app.use('/api/brain', stepsRouter); // Step / 使能件只读清单 GET /steps、/enablers（价值流建模⑤，决策 3e867cad，任务 741cdf5a）
+app.use('/api/brain', workflowsRouter); // Workflow 只读清单 GET /workflows（价值流建模③，决策 3e867cad，任务 ce41cd59）
+app.use('/api/brain/workflow-authoring', workflowAuthoringRouter);
+app.use('/api/brain', spansRouter); // 执行段上报 POST/GET /spans（价值流建模④，决策 3e867cad，任务 ec643d60）
+app.use('/api/brain', skillSettlementRouter); // 路 B：收敛对账 + 沉淀技能候选（v3.0 第 4 刀，任务 3590ec8f）
+app.use('/api/brain/releases', createReleasesRouter());
+app.use('/api/brain/runs', createRunDefinitionsRouter());
+app.use('/api/brain/runs', createRunReconciliationRouter());
+app.use('/api/brain', phoneRegistryRouter); // 手机台账 GET/PUT /phone-registry（任务 b923b1f7，决策 432172f7）
+app.use('/api/brain', commanderHeartbeatRouter); // Commander escort 心跳 POST /commander-heartbeat（任务 17ea4536，决策 3c98fb36）
 app.use('/api/brain', goldenPathsRouter);
 app.use('/api/brain/harness', harnessCommanderRouter);
 // 第 51 批（决策 bc242b62）：V4 画布 Worker 的单角色 attempt 接线（派发+轮询结果）。
@@ -467,10 +498,8 @@ app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fi
 // 必须在 brainRoutes 之后，避免干扰已有 GET/PATCH /api/brain/tasks
 app.use('/api/brain/tasks', taskTasksRoutes);
 app.use('/api/brain/work-routing', workRoutingRoutes);
+app.use('/api/brain/task-intake', taskIntakeRoutes);
 
-app.use('/api/brain', licenseRoutes);
-app.use('/api/brain', agentCreditRoutes);
-app.use('/api/brain', acquisitionRoutes);
 
 // RPA 开发快验通道（execFile channel）
 app.use('/api/brain/rpa', rpaDevVerifyRouter);
@@ -555,8 +584,8 @@ app.use((err, _req, res, _next) => {
 });
 
 // Run migrations with retry (PG transient failures should not kill the process)
-if (process.env.SKIP_MIGRATIONS === 'true') {
-  console.log('[Server] SKIP_MIGRATIONS=true — 跳过数据库迁移');
+if (isIsolatedRuntime() || process.env.SKIP_MIGRATIONS === 'true') {
+  console.log('[Server] 被动实例或 SKIP_MIGRATIONS=true — 跳过数据库迁移');
 } else {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -581,7 +610,9 @@ if (process.env.SKIP_MIGRATIONS === 'true') {
   }
 }
 
-try {
+if (!isIsolatedRuntime()) await startExecutionDirectory({pool});
+
+if (!isIsolatedRuntime()) try {
   const selfCheckOk = await runSelfCheck(pool);
   if (!selfCheckOk) {
     console.warn('[Server] Self-check failed, starting in degraded mode');
@@ -627,6 +658,7 @@ server.on('upgrade', (req, socket, head) => {
  * Idempotent: skips if /health returns 200.
  */
 async function startCeceliaBridge() {
+  if (isIsolatedRuntime()) return;
   const BRIDGE_PORT = process.env.BRIDGE_PORT || 3457;
   const bridgeUrl = `http://localhost:${BRIDGE_PORT}`;
   try {
@@ -682,18 +714,35 @@ if (!process.env.VITEST) {
     process.exit(1);
   }
 
-  // DBOS durable 底座（flag 门控，默认关=行为零变化）。bootDurable 内部 try/catch degrade，
-  // launch 失败只记日志、绝不阻断 brain 启动。放 listen 之前，确保 tick 路由时 DBOS 已就绪。
-  await bootDurable();
+  if (!isIsolatedRuntime()) {
+    // DBOS durable 底座（flag 门控，默认关=行为零变化）。bootDurable 内部 try/catch degrade，
+    // launch 失败只记日志、绝不阻断 brain 启动。放 listen 之前，确保 tick 路由时 DBOS 已就绪。
+    await bootDurable();
 
-  // migration 422 会把无法证明存活 authority 的旧 active v2 run 留为 ownerless。
-  // 在 listener 接受任何请求前先 fail-closed 收敛，定时 orphan guard 只做后备。
-  const { reconcileOwnerlessKernelRuns } = await import(
-    './src/orchestrator/kernel-controller-lifecycle.js'
-  );
-  const startupRecovered = await reconcileOwnerlessKernelRuns(pool);
-  if (startupRecovered.length > 0) {
-    console.log(`[Server] startup ownerless Kernel runs recovered=${startupRecovered.length}`);
+    // migration 422 会把无法证明存活 authority 的旧 active v2 run 留为 ownerless。
+    // 在 listener 接受任何请求前先 fail-closed 收敛，定时 orphan guard 只做后备。
+    const { reconcileOwnerlessKernelRuns } = await import(
+      './src/orchestrator/kernel-controller-lifecycle.js'
+    );
+    const startupRecovered = await reconcileOwnerlessKernelRuns(pool);
+    if (startupRecovered.length > 0) {
+      console.log(`[Server] startup ownerless Kernel runs recovered=${startupRecovered.length}`);
+    }
+
+    // 排空状态必须在 listener 接受任何请求前恢复完毕（任务 30861749）：原先
+    // restoreDrainState() 在 onBrainListening() 异步链尾部（initTickLoop 里）才跑，
+    // 而 Express 路由在 listenWithRetry() 之后立即可用——部署脚本的健康检查和
+    // drain-cancel 请求几乎必然抢在 restore 之前到达，新容器 _draining 还是初始
+    // false，cancel 被当 no-op，随后 restore 又把旧容器的持久化排空状态误恢复。
+    // 挪到这里与 reconcileOwnerlessKernelRuns 同一处 "listener 前收敛"，从根本上
+    // 消除这个时间窗口。
+    try {
+      const { restoreDrainState } = await import('./src/drain.js');
+      await restoreDrainState();
+    } catch (drainErr) {
+      console.error('[Server] restoreDrainState failed (non-fatal):', drainErr.message);
+    }
+
   }
 
   await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
@@ -701,7 +750,9 @@ if (!process.env.VITEST) {
   // Acceptance 公网 listener（刀 1，决策 c08c2173）：token 未配置时静默不启动
   try {
     const ACCEPTANCE_PUBLIC_PORT = Number(process.env.ACCEPTANCE_PUBLIC_PORT || 5223);
-    acceptancePublicServer = startAcceptancePublicServer({ pool, port: ACCEPTANCE_PUBLIC_PORT });
+    if (!isIsolatedRuntime()) {
+      acceptancePublicServer = startAcceptancePublicServer({ pool, port: ACCEPTANCE_PUBLIC_PORT });
+    }
   } catch (err) {
     console.error('[acceptance-public] 启动失败（不影响主服务）:', err.message);
   }
@@ -712,6 +763,18 @@ if (!process.env.VITEST) {
 
 async function onBrainListening() {
   console.log(`Cecelia Brain running on http://localhost:${PORT}`);
+
+  // 必须先于恢复、自动派发、资源轮询和所有定时器，不能只关闭 tick。
+  if (isIsolatedRuntime()) {
+    initWebSocketServer(server);
+    // fork 启动器消失时自动退出，不允许测试服务变成无人持有的后台常驻。
+    if (typeof process.send === 'function') {
+      process.once('disconnect', () => process.exit(0));
+      process.send({ type: 'brain-test-ready' });
+    }
+    console.log('[Server] 被动测试/预览实例：后台自动化和真实模型调用已禁用');
+    return;
+  }
 
   if (shouldStartAttemptCleanupLoop(process.env)) {
     attemptCleanupLoop.start();
@@ -776,7 +839,7 @@ async function onBrainListening() {
   try {
     const syncResult = await syncOrphanTasksOnStartup();
     const failed = (syncResult.orphans_fixed || 0) - (syncResult.requeued || 0) - (syncResult.rebuilt || 0);
-    console.log(`[Server] Startup sync: orphans_found=${syncResult.orphans_found} requeued=${syncResult.requeued} rebuilt=${syncResult.rebuilt} failed=${failed}`);
+    console.log(`[Server] Startup sync: orphans_found=${syncResult.orphans_found} requeued=${syncResult.requeued} rebuilt=${syncResult.rebuilt} failed=${failed} external_skipped=${syncResult.external_skipped || 0}`);
   } catch (syncErr) {
     console.error('[Server] Startup sync failed:', syncErr.message);
   }
@@ -825,6 +888,16 @@ async function onBrainListening() {
     console.log('[Server] Callback Queue Worker started (2s interval) - async execution callback processing');
   } catch (cbWorkerErr) {
     console.error('[Server] Callback Worker init failed (non-fatal):', cbWorkerErr.message);
+  }
+
+  // 棒3a 判定：订阅 run.finished（finishRun 单点发）→ 比对 step_probes → 写回执 → cell 翻色
+  try {
+    const { registerBusinessProbeJudge } = await import('./src/lib/business-probe-judge.js');
+    const { on: onEvent } = await import('./src/event-bus.js');
+    registerBusinessProbeJudge({ pool, on: onEvent });
+    console.log('[Server] Business probe judge subscribed to run.finished');
+  } catch (judgeErr) {
+    console.error('[Server] Business probe judge init failed (non-fatal):', judgeErr.message);
   }
 
   // 预热 consciousness graph 单例（pg pool ready 后、tick loop 前）

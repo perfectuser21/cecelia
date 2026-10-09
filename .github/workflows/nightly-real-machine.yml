@@ -1,10 +1,7 @@
 name: Nightly Real-Machine Smoke
 
 # 每夜在真实机器（Tailscale 内网 staging，端口 5222）跑 smoke，
-# 作为 promote-all-prod Release Gate 的证据。
-#
-# Release Gate 查询规则：最近 2 晚均绿才允许 promote。
-# 若连续 2 晚失败 → promote 被阻断，必须先修 staging 再 promote。
+# 提供常驻 Staging 的真机健康证据。
 
 on:
   schedule:
@@ -35,7 +32,7 @@ jobs:
 
       - name: Staging Smoke（真实机器 5222）
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           set -uo pipefail
           HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
@@ -45,7 +42,7 @@ jobs:
       - name: Staging 不可用时的诊断信息
         if: failure()
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
           echo "::error::nightly smoke 失败 — staging ${HOST}:5222 不健康"
@@ -53,7 +50,7 @@ jobs:
           echo "  1. 检查 staging 容器：docker logs cecelia-node-brain-staging --tail 50"
           echo "  2. 检查机器磁盘/内存：df -h && free -h"
           echo "  3. 本地重启 staging：bash scripts/staging-deploy.sh"
-          echo "  4. 若 2 晚连续失败，promote-all-prod Release Gate 将被阻断"
+          echo "  4. 结合本工作流失败记录和 Staging 部署日志排查"
           curl -sf "http://${HOST}:5222/api/brain/health" 2>/dev/null \
             && echo "staging /health 实际可达（smoke 脚本逻辑问题）" \
             || echo "staging /health 不可达"

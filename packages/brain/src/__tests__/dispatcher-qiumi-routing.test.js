@@ -1,0 +1,555 @@
+/**
+ * dispatcher-qiumi-routing.test.js
+ *
+ * 秋米任务路由 PR3 · Task 4：dispatcher 对 qiumi_task 的专用出口（接线点见 plan 补充四）。
+ *
+ * 接线点必须在原子 claim 之后、标 in_progress 之前。审查发现的 Critical 就在这里：
+ * 放到标 in_progress 之后，任务状态已不是 queued，于是
+ *   · persistDecision 的 device/fail 两条分支带 `AND status='queued'` CAS → 0 行，
+ *     设备没转、失败没落、claim 没放，dispatcher 却照样报 routed/failed（账实分叉）；
+ *   · 并发闸 count(in_progress) 把自己数进去，上限 2 实际只剩 1；
+ *   · 闸满/spawn 失败只放 claim 不退 status → 任务永久卡 in_progress 占着闸。
+ *
+ * 所以 dispatchQiumiTask 返回三态，自己不 spawn、不改 status 为 in_progress：
+ *   return  —— device / fail / P0 闸满：已落库或已放 claim，result 带累计 actions
+ *   skip    —— 非 P0 闸满：已放 claim、已进 holSkipIds，交回候选循环换下一个
+ *   proceed —— agent 决策已落库，回主流程标 in_progress → 读全行 → triggerCeceliaRun
+ *
+ * 变异清单：
+ *   删并发闸 `>=` 判断            → 闸用例红
+ *   把接线点挪回 taskToDispatch 之后 → 「接线点在标 in_progress 之前」两条用例红
+ *   agent 分支在函数内 spawn       → proceed 用例红
+ *   qiumi_task 去掉锚点豁免        → 锚点用例红
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const mockQuery = vi.fn();
+vi.mock('../db.js', () => ({ default: { query: (...args) => mockQuery(...args) } }));
+
+vi.mock('../routing/qiumi-router.js', () => ({
+  routeQiumiTask: vi.fn(),
+  persistDecision: vi.fn().mockResolvedValue(undefined),
+}));
+
+const mockTriggerCeceliaRun = vi.fn(async () => ({ success: true, runId: 'r' }));
+vi.mock('../executor.js', () => ({
+  triggerCeceliaRun: (...args) => mockTriggerCeceliaRun(...args),
+  checkCeceliaRunAvailable: vi.fn(async () => ({ available: true })),
+  killProcessTwoStage: vi.fn(async () => ({ killed: false })),
+  getBillingPause: () => ({ active: false }),
+}));
+
+vi.mock('../dispatch-stats.js', () => ({
+  recordDispatchResult: vi.fn().mockResolvedValue(undefined),
+  getDispatchStats: vi.fn().mockResolvedValue({}),
+  DISPATCH_STATS_KEY: 'dispatch_stats',
+}));
+
+const mockUpdateTask = vi.fn(async () => ({ success: true }));
+vi.mock('../actions.js', () => ({ updateTask: (...args) => mockUpdateTask(...args) }));
+
+let _candidatePool = [];
+const mockSelectNextDispatchableTask = vi.fn(async (goalIds, excludeIds = []) => (
+  _candidatePool.find((c) => !excludeIds.includes(c.id)) || null
+));
+vi.mock('../dispatch-helpers.js', () => ({
+  selectNextDispatchableTask: (...args) => mockSelectNextDispatchableTask(...args),
+  processCortexTask: vi.fn(async () => ({ dispatched: false })),
+}));
+
+vi.mock('../alertness-actions.js', () => ({ getMitigationState: () => ({ drain_mode_requested: false }) }));
+vi.mock('../quota-cooling.js', () => ({ isGlobalQuotaCooling: () => false, getQuotaCoolingState: () => ({ until: null }) }));
+vi.mock('../drain.js', () => ({ isDraining: () => false, getDrainStartedAt: () => null }));
+vi.mock('../slot-allocator.js', () => ({
+  harnessSlotCheck: vi.fn().mockResolvedValue({ allow: true, reason: 'ok' }),
+  calculateSlotBudget: async () => ({
+    dispatchAllowed: true, taskPool: { budget: 10 }, user: { mode: 'solo' },
+    codex: { available: true, running: 0, max: 5 }, budgetState: { state: 'abundant' },
+  }),
+  shouldBypassBackpressure: () => false,
+}));
+vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: () => false }));
+vi.mock('../event-bus.js', () => ({ emit: vi.fn(async () => {}) }));
+const mockIsAllowed = vi.fn(() => true);
+const mockRecordFailure = vi.fn(async () => {});
+const mockRecordSuccess = vi.fn(async () => {});
+vi.mock('../circuit-breaker.js', () => ({
+  isAllowed: (k) => mockIsAllowed(k),
+  recordFailure: (...a) => mockRecordFailure(...a),
+  recordSuccess: (...a) => mockRecordSuccess(...a),
+}));
+vi.mock('../events/taskEvents.js', () => ({ publishTaskStarted: vi.fn() }));
+vi.mock('../tick-stats.js', () => ({ incrementActionsToday: vi.fn(async () => {}) }));
+vi.mock('../account-usage.js', () => ({ proactiveTokenCheck: vi.fn(async () => {}) }));
+vi.mock('../quota-guard.js', () => ({ checkQuotaGuard: async () => ({ allow: true, priorityFilter: null, bestPct: 10 }) }));
+vi.mock('../pre-flight-check.js', () => ({
+  preFlightCheck: async () => ({ passed: true, issues: [], suggestions: [] }),
+  alertOnPreFlightFail: vi.fn(async () => {}),
+  getPreFlightStats: async () => ({}),
+  PRE_FLIGHT_ALERT_THRESHOLD: 3,
+}));
+vi.mock('../dispatch-dedup.js', () => ({ findDuplicateSibling: vi.fn(async () => null) }));
+
+import { routeQiumiTask, persistDecision } from '../routing/qiumi-router.js';
+import { buildQiumiSource } from '../lib/qiumi-source.js';
+import { recordDispatchResult } from '../dispatch-stats.js';
+import { checkAnchor } from '../anchor-check.js';
+import { checkCeceliaRunAvailable } from '../executor.js';
+import { dispatchQiumiTask, dispatchNextTask } from '../dispatcher.js';
+
+// 候选行（选单 SQL 只取部分列，payload 未必带全）
+const candidate = { id: 'q1', task_type: 'qiumi_task', status: 'queued', priority: 'P2', title: '给张三发个私信确认收货地址', created_at: new Date().toISOString() };
+// 库里的整行
+const fullRow = { ...candidate, payload: { qiumi_source: buildQiumiSource({ title: '给张三发个私信确认收货地址' }) } };
+
+/** 按 SQL 形状回答，不靠调用次序——dispatchNextTask 前面还有若干条真查询 */
+function wireQueries({ running = 0, claimed = true } = {}) {
+  mockQuery.mockImplementation(async (sql) => {
+    if (/UPDATE tasks SET claimed_by = \$1/.test(sql)) return { rows: claimed ? [{ id: 'q1' }] : [] };
+    if (/SELECT \* FROM tasks WHERE id = \$1/.test(sql)) return { rows: [fullRow] };
+    if (/count\(\*\)::int AS n FROM tasks/.test(sql) && /openclaw-agent/.test(sql)) return { rows: [{ n: running }] };
+    return { rows: [] };
+  });
+}
+
+const sqlsOf = () => mockQuery.mock.calls.map(([sql]) => sql);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockQuery.mockReset();
+  _candidatePool = [];
+  mockUpdateTask.mockResolvedValue({ success: true });
+  mockTriggerCeceliaRun.mockResolvedValue({ success: true, runId: 'r' });
+  mockIsAllowed.mockImplementation(() => true);
+  checkCeceliaRunAvailable.mockResolvedValue({ available: true });
+});
+
+it('定向派发旧调用的异常清理不能释放并发请求新取得的 claim', async () => {
+  let currentOwner = 'old-owner';
+  mockIsAllowed.mockReturnValue(false);
+  mockQuery.mockImplementation(async (sql, args) => {
+    if (/UPDATE tasks SET claimed_by = NULL/.test(sql)) {
+      if (!sql.includes('AND claimed_by = $2') || args[1] === currentOwner) currentOwner = null;
+    }
+    return { rows: [] };
+  });
+  recordDispatchResult.mockImplementationOnce(async () => {
+    currentOwner = 'new-owner';
+    throw new Error('stats failed after old claim released');
+  });
+  const r = await dispatchQiumiTask(candidate, { claimOwner: 'old-owner' });
+  expect(r.outcome).toBe('skip');
+  expect(currentOwner).toBe('new-owner');
+});
+
+describe('dispatchQiumiTask：三态出口', () => {
+  it('先读全行再路由：传给 routeQiumiTask 的 task 带 payload，且状态仍是 queued', async () => {
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'fail', reason: 'device_uncertain', detail: 'p=0.6' });
+
+    await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+
+    const routed = routeQiumiTask.mock.calls[0][0];
+    expect(routed.payload, '路由拿到的是候选行不是库里整行——便宜闸读不到 qiumi_source').toBeTruthy();
+    expect(
+      routed.status,
+      '进路由时任务已不是 queued——persistDecision 的 CAS 会全部落空',
+    ).toBe('queued');
+  });
+
+  // 候选循环不在 postClaimException 的覆盖范围内（对照锚点闸分支的注释）：这里抛出去
+  // = claim 永远挂着，那条任务再也起不来，整轮派发也跟着断。
+  it('路由抛异常 → outcome=skip，释放 claim + 记 qiumi_route_exception，不把异常往外抛', async () => {
+    wireQueries();
+    routeQiumiTask.mockRejectedValue(new Error('loadRegistryPool boom'));
+
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+
+    expect(r).toMatchObject({ outcome: 'skip' });
+    expect(sqlsOf().some((s) => /UPDATE tasks SET claimed_by = NULL/.test(s)), 'claim 泄漏：这条任务再也起不来').toBe(true);
+    expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'qiumi_route_exception', undefined, 'q1');
+  });
+
+  it('落库抛异常（persistDecision）同样被兜住，不往外抛', async () => {
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', engine: 'terra', payloadPatch: {} });
+    persistDecision.mockRejectedValueOnce(new Error('db down'));
+
+    await expect(dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] }))
+      .resolves.toMatchObject({ outcome: 'skip' });
+  });
+
+  it('并发闸只数 qiumi_task：别的类型挂同一 executor_kind 不该占闸位（收割器也不认它）', async () => {
+    wireQueries({ running: 0 });
+    routeQiumiTask.mockResolvedValue({ outcome: 'fail', reason: 'x', detail: 'y' });
+    await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    const gate = sqlsOf().find((s) => /count\(\*\)::int AS n FROM tasks/.test(s));
+    expect(gate).toMatch(/task_type = 'qiumi_task'/);
+  });
+
+  it('并发闸：非 P0 闸满 → outcome=skip，释放 claim、进 holSkipIds，不路由', async () => {
+    wireQueries({ running: 2 });
+    const holSkipIds = [];
+
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds });
+
+    expect(r).toMatchObject({ outcome: 'skip' });
+    expect(routeQiumiTask, '闸满还去问 Jev——白烧一次路由').not.toHaveBeenCalled();
+    expect(holSkipIds).toContain('q1');
+    expect(sqlsOf().some((s) => /claimed_by = NULL/.test(s))).toBe(true);
+  });
+
+  it('并发闸：P0 闸满 → outcome=return，reason=openclaw_agent_pool_full，带累计 actions', async () => {
+    wireQueries({ running: 3 });
+    const actions = [{ action: 'earlier-action' }];
+
+    const r = await dispatchQiumiTask({ ...candidate, priority: 'P0' }, { env: { mmvConcurrency: 2 }, actions, holSkipIds: [] });
+
+    expect(r.outcome).toBe('return');
+    expect(r.result).toMatchObject({ dispatched: false, reason: 'openclaw_agent_pool_full', task_id: 'q1' });
+    expect(r.result.actions, '返回体丢了此前累计的 actions').toEqual(expect.arrayContaining([{ action: 'earlier-action' }]));
+    expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'openclaw_agent_pool_full', undefined, 'q1');
+  });
+
+  it('并发闸只数 in_progress 的 openclaw-agent，且不把自己标 in_progress', async () => {
+    wireQueries({ running: 0 });
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+
+    await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+
+    const countSql = sqlsOf().find((s) => /count\(\*\)::int AS n FROM tasks/.test(s));
+    expect(countSql).toMatch(/executor_kind\s*=\s*'openclaw-agent'/);
+    expect(countSql).toMatch(/status\s*=\s*'in_progress'/);
+    expect(
+      sqlsOf().some((s) => /status\s*=\s*'in_progress'/.test(s) && /^\s*UPDATE/i.test(s.trim())),
+      'dispatchQiumiTask 自己把任务标成了 in_progress——闸会把自己数进去，CAS 也会落空',
+    ).toBe(false);
+    expect(mockUpdateTask).not.toHaveBeenCalled();
+  });
+
+  it('device 决策 → outcome=return，persistDecision 落库，不 spawn', async () => {
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'device', serial: 'S1', workflowRef: 'wf-1', payloadPatch: {} });
+
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+
+    expect(r.outcome).toBe('return');
+    expect(r.result).toMatchObject({ dispatched: false, reason: 'qiumi_routed_device', task_id: 'q1' });
+    // 补充五之后不再"转换"父任务，而是派生子任务——action 名跟着语义改
+    expect(r.result.actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'qiumi-device-delegated', task_id: 'q1', serial: 'S1' }),
+    ]));
+    expect(persistDecision).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'q1' }), expect.objectContaining({ outcome: 'device' }));
+    expect(mockTriggerCeceliaRun, 'device 决策还去 spawn——同一件活手机和 agent 会各做一遍').not.toHaveBeenCalled();
+    expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'qiumi_routed_device', undefined, 'q1');
+  });
+
+  it('fail 决策 → outcome=return，reason=qiumi_route_failed，不 spawn', async () => {
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'fail', reason: 'device_uncertain', detail: 'conf=0.6' });
+
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+
+    expect(r.outcome).toBe('return');
+    expect(r.result).toMatchObject({ dispatched: false, reason: 'qiumi_route_failed', task_id: 'q1' });
+    expect(persistDecision).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'q1' }), expect.objectContaining({ outcome: 'fail' }));
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+    expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'qiumi_route_failed', undefined, 'q1');
+  });
+
+  it('unresolved 决策（手机定不下）→ outcome=return，reason=qiumi_device_unresolved，persistDecision 落 blocked，不 spawn', async () => {
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'unresolved', reason: 'device_unresolved', detail: { reason: 'no_match', candidates: [] }, note: 'n' });
+
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+
+    expect(r.outcome).toBe('return');
+    expect(r.result).toMatchObject({ dispatched: false, reason: 'qiumi_device_unresolved', task_id: 'q1' });
+    expect(persistDecision).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'q1' }), expect.objectContaining({ outcome: 'unresolved' }));
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+    expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'qiumi_device_unresolved', undefined, 'q1');
+  });
+
+  it('agent 决策 → outcome=proceed：决策已落库，spawn 交回主流程（函数内不 spawn）', async () => {
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({
+      outcome: 'agent', engine: 'claude', model: 'claude-cli/claude-sonnet-5',
+      runId: 'qiumi-q1-1', payloadPatch: { model: 'claude-cli/claude-sonnet-5', run_id: 'qiumi-q1-1' },
+    });
+
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+
+    expect(r.outcome).toBe('proceed');
+    expect(persistDecision).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'q1' }), expect.objectContaining({ outcome: 'agent' }));
+    expect(
+      mockTriggerCeceliaRun,
+      'agent 分支在函数内 spawn 了——此时任务还没标 in_progress，主流程的回滚也管不到它',
+    ).not.toHaveBeenCalled();
+  });
+
+  it('openclaw-agent 自己的熔断 OPEN → outcome=skip，释放 claim、记 openclaw_agent_circuit_open，不路由', async () => {
+    wireQueries();
+    mockIsAllowed.mockImplementation((k) => k !== 'openclaw-agent');
+    const holSkipIds = [];
+
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds });
+
+    expect(r).toEqual({ outcome: 'skip' });
+    expect(routeQiumiTask, '熔断开着还去打 Jev').not.toHaveBeenCalled();
+    expect(sqlsOf().some((s) => /claimed_by = NULL/.test(s))).toBe(true);
+    expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'openclaw_agent_circuit_open', undefined, 'q1');
+    expect(holSkipIds).toContain('q1');
+    expect(mockIsAllowed).toHaveBeenCalledWith('openclaw-agent');
+  });
+
+  it('payload 已有 qiumi_route + run_id（上轮路由过、spawn 前被打回）→ 不再打 Jev，直接 proceed', async () => {
+    const routedRow = { ...fullRow, payload: { ...fullRow.payload, run_id: 'qiumi-q1-1', model: 'openai/gpt-5.6-terra', qiumi_route: { source: 'jev', decided_at: '2026-09-23T03:48:25.000Z' } } };
+    mockQuery.mockImplementation(async (sql) => {
+      if (/SELECT \* FROM tasks WHERE id = \$1/.test(sql)) return { rows: [routedRow] };
+      if (/count\(\*\)::int AS n FROM tasks/.test(sql) && /openclaw-agent/.test(sql)) return { rows: [{ n: 0 }] };
+      return { rows: [] };
+    });
+
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [] });
+
+    expect(r).toEqual({ outcome: 'proceed' });
+    expect(routeQiumiTask, '已有决策还去打 Jev——每 tick 生成新 run_id 就是这么来的').not.toHaveBeenCalled();
+    expect(persistDecision).not.toHaveBeenCalled();
+  });
+});
+
+describe('dispatchNextTask：接线点在 claim 之后、标 in_progress 之前', () => {
+  it('公司分析快照过期已终态，不回queued、不三振、不熔断其它OpenClaw任务', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: null, runId: 'r1', payloadPatch: {} });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: false, reason: 'company_kr_analysis_superseded', taskTerminal: true });
+    const result = await dispatchNextTask(null);
+    expect(result).toMatchObject({ dispatched: false, reason: 'company_kr_analysis_superseded', terminal: true });
+    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: 'q1', status: 'queued' });
+    expect(mockRecordFailure).not.toHaveBeenCalled();
+    expect(sqlsOf().some(s => s.includes('dispatch_fail_consecutive'))).toBe(false);
+  });
+  it('device 决策：全程没把任务标成 in_progress，直接返回 qiumi_routed_device', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'device', serial: 'S1', payloadPatch: {} });
+
+    const r = await dispatchNextTask(null);
+
+    expect(r).toMatchObject({ dispatched: false, reason: 'qiumi_routed_device', task_id: 'q1' });
+    expect(
+      mockUpdateTask,
+      '任务被标了 in_progress——persistDecision 的 `AND status=queued` CAS 会 0 行，设备根本没转过去',
+    ).not.toHaveBeenCalled();
+  });
+
+  it('agent 决策：路由发生在 updateTask(in_progress) 之前（调用序守卫）', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockUpdateTask.mockResolvedValue({ success: false }); // 标 in_progress 失败 → 主流程就地返回，用例到此为止
+
+    const r = await dispatchNextTask(null);
+
+    expect(r).toMatchObject({ dispatched: false, reason: 'update_failed', task_id: 'q1' });
+    expect(mockUpdateTask).toHaveBeenCalledWith({ task_id: 'q1', status: 'in_progress' });
+    expect(
+      routeQiumiTask.mock.invocationCallOrder[0],
+      '路由发生在标 in_progress 之后——接线点又掉回 taskToDispatch 那一段了',
+    ).toBeLessThan(mockUpdateTask.mock.invocationCallOrder[0]);
+  });
+
+  it('claim 没抢到 → 不路由（省掉一次 Jev 调用）', async () => {
+    _candidatePool = [candidate];
+    wireQueries({ claimed: false });
+
+    const r = await dispatchNextTask(null);
+
+    expect(r).toMatchObject({ dispatched: false, reason: 'already_claimed' });
+    expect(routeQiumiTask).not.toHaveBeenCalled();
+  });
+});
+
+describe('锚点闸：qiumi_task 免锚（第二道闸放开后的连带项）', () => {
+  it('新建的 qiumi_task 没有 payload.anchor 也不被锚点闸拦', () => {
+    const r = checkAnchor({ task_type: 'qiumi_task', payload: {}, created_at: new Date().toISOString() });
+    expect(
+      r.blocked,
+      'qiumi_task 不免锚——入账链从不写 payload.anchor，每条秋米任务都会在路由之前被终态 failed',
+    ).toBe(false);
+  });
+});
+
+describe('接线点静态守卫', () => {
+  it('分支在原子 claim 之后、候选期分配指南之前，且不在标 in_progress 之后那一段', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join, dirname } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'dispatcher.js'), 'utf8')
+      .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+    const claimIdx = src.indexOf('UPDATE tasks SET claimed_by = $1, claimed_at = NOW()');
+    const hookIdx = src.indexOf("candidate.task_type === 'qiumi_task'");
+    const guideIdx = src.indexOf('applyDispatchAllocationGuide(candidate');
+    const inProgressIdx = src.indexOf("status: 'in_progress'");
+
+    expect(hookIdx, '候选循环里没有 qiumi_task 的接线点').toBeGreaterThan(-1);
+    expect(hookIdx, '接线点在原子 claim 之前——没拿到独占权就开始路由').toBeGreaterThan(claimIdx);
+    expect(hookIdx, '接线点在候选期分配指南之后').toBeLessThan(guideIdx);
+    expect(hookIdx, '接线点在标 in_progress 之后——本次审查 Critical 的原样复发').toBeLessThan(inProgressIdx);
+    expect(
+      src.indexOf("taskToDispatch.task_type === 'qiumi_task'"),
+      '标 in_progress 之后那一段还留着 qiumi 分支',
+    ).toBe(-1);
+  });
+});
+
+describe('熔断豁免：qiumi_task 走 ssh 直派，不受 cecelia-run 熔断与 bridge 健康检查约束', () => {
+  it('cecelia-run 熔断 OPEN 时 qiumi 仍走到 triggerCeceliaRun，且不查 bridge、不回滚 queued', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockIsAllowed.mockImplementation((k) => k !== 'cecelia-run');
+
+    const r = await dispatchNextTask(null);
+
+    expect(mockTriggerCeceliaRun, 'qiumi 被 cecelia-run 熔断挡住了——它根本不走 bridge').toHaveBeenCalledTimes(1);
+    expect(checkCeceliaRunAvailable).not.toHaveBeenCalled();
+    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: 'q1', status: 'queued' });
+    expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
+  });
+
+  it('bridge 健康检查不可用时 qiumi 也不回滚 queued（第二道闸同样豁免）', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    checkCeceliaRunAvailable.mockResolvedValue({ available: false, error: 'bridge down' });
+
+    const r = await dispatchNextTask(null);
+
+    expect(mockTriggerCeceliaRun).toHaveBeenCalledTimes(1);
+    expect(checkCeceliaRunAvailable).not.toHaveBeenCalled();
+    expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
+  });
+
+  it('openclaw 起 agent 失败 → recordFailure("openclaw-agent")，绝不计 cecelia-run', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: false, reason: 'openclaw_agent_spawn_failed', error: 'ssh timeout' });
+
+    const r = await dispatchNextTask(null);
+
+    expect(r).toMatchObject({ dispatched: false, reason: 'executor_failed', task_id: 'q1' });
+    expect(mockRecordFailure).toHaveBeenCalledWith('openclaw-agent');
+    expect(mockRecordFailure).not.toHaveBeenCalledWith('cecelia-run');
+  });
+
+  it('openclaw 起 agent 成功 → recordSuccess("openclaw-agent")', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: true, taskId: 'q1', runId: 'qiumi-q1-1', executor: 'openclaw-agent' });
+
+    const r = await dispatchNextTask(null);
+
+    expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
+    expect(mockRecordSuccess).toHaveBeenCalledWith('openclaw-agent');
+  });
+
+  // agent 已经 spawn 出去了，recordSuccess 只是「事后记账」。它落在 try 内、
+  // postClaimException 的覆盖范围里 → 熔断器库一抛错，兜底就会放 claim + 标 failed，
+  // 下个 tick 把同一个已经在跑的任务再派一遍（比不记账糟得多）。
+  it('recordSuccess("openclaw-agent") 抛错也不得把已 spawn 的任务标 failed / 放 claim', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: true, taskId: 'q1', runId: 'qiumi-q1-1', executor: 'openclaw-agent' });
+    mockRecordSuccess.mockRejectedValueOnce(new Error('cb down'));
+
+    const r = await dispatchNextTask(null);
+
+    expect(r, 'recordSuccess 抛错被当成派发失败——任务已 spawn，这是重复执行的入口').toMatchObject({
+      dispatched: true, task_id: 'q1',
+    });
+    expect(r.reason).not.toBe('dispatch_exception');
+    // tick 开头的 retired 批量 drain（task_type = ANY）也是 failed 写入且清 claim，不是针对本任务的，排除
+    const sqls = sqlsOf().filter((s) => !/task_type = ANY/.test(s));
+    expect(sqls.filter((s) => /status = 'failed'/.test(s)), '已 spawn 的任务被标 failed').toEqual([]);
+    expect(sqls.filter((s) => /claimed_by = NULL/.test(s)), 'claim 被放掉 → 下个 tick 会重复派发').toEqual([]);
+    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: 'q1', status: 'queued' });
+  });
+});
+
+describe('同机串行（任务 5ad81457）：同一台手机已有秋米任务在跑 → 本轮不派，保持 queued 换下一个', () => {
+  const hint = (serial) => ({ source: 'jev', device_hint: { is_device: true, serial, host: 'xian-m1' } });
+  const routedRow = (serial, extra = {}) => ({
+    ...fullRow, payload: { ...fullRow.payload, run_id: 'qiumi-q1-1', qiumi_route: hint(serial), ...extra },
+  });
+  /** busySerial：库里另一张 in_progress 秋米任务占着的序列号 */
+  function wire(row, busySerial) {
+    mockQuery.mockImplementation(async (sql, params) => {
+      if (/SELECT \* FROM tasks WHERE id = \$1/.test(sql)) return { rows: [row] };
+      if (/count\(\*\)::int AS n FROM tasks/.test(sql) && /openclaw-agent/.test(sql)) return { rows: [{ n: 1 }] };
+      if (/device_hint/.test(sql) && /in_progress/.test(sql)) {
+        return { rows: params?.[1] === busySerial ? [{ id: 'q0-busy', started_at: null }] : [] };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+  }
+
+  it('已路由的任务：同 serial 已有 in_progress → skip、放 claim、进 holSkipIds、记 task_events', async () => {
+    wire(routedRow('S1'), 'S1');
+    const holSkipIds = [];
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds });
+    expect(r).toEqual({ outcome: 'skip' });
+    expect(holSkipIds).toContain('q1');
+    expect(sqlsOf().some((s) => /claimed_by = NULL/.test(s)), 'claim 泄漏').toBe(true);
+    const ev = mockQuery.mock.calls.find(([s, p]) => /INSERT INTO task_events/.test(s) && p?.[1] === 'qiumi_dispatch_device_busy');
+    expect(ev, '没记 task_events').toBeTruthy();
+    expect(JSON.parse(ev[1][2])).toMatchObject({ serial: 'S1', busy_task_id: 'q0-busy' });
+    const gate = sqlsOf().find((s) => /device_hint/.test(s) && /in_progress/.test(s));
+    expect(gate).toMatch(/task_type = 'qiumi_task'/);
+    expect(gate).toMatch(/id <> \$1/);
+  });
+
+  it('不同 serial → 照派（proceed）', async () => {
+    wire(routedRow('S2'), 'S1');
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    expect(r).toEqual({ outcome: 'proceed' });
+  });
+
+  it('没有 serial（非设备活）→ 不查同机闸，照派', async () => {
+    wire({ ...fullRow, payload: { ...fullRow.payload, run_id: 'qiumi-q1-1', qiumi_route: { source: 'jev' } } }, 'S1');
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    expect(r).toEqual({ outcome: 'proceed' });
+    expect(sqlsOf().some((s) => /device_hint/.test(s) && /in_progress/.test(s))).toBe(false);
+  });
+
+  it('新路由（本轮刚打 Jev 定到 S1）且 S1 忙 → 决策照落库，但本轮 skip', async () => {
+    wire(fullRow, 'S1');
+    routeQiumiTask.mockResolvedValue({
+      outcome: 'agent', model: 'm', runId: 'qiumi-q1-2',
+      payloadPatch: { run_id: 'qiumi-q1-2', qiumi_route: hint('S1') },
+    });
+    const holSkipIds = [];
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds });
+    expect(persistDecision).toHaveBeenCalled();
+    expect(r).toEqual({ outcome: 'skip' });
+    expect(holSkipIds).toContain('q1');
+  });
+
+  it('DEVICE_BUSY 回队的任务（有路由、run_id 已清）→ 不重打 Jev，换新 run_id 后 proceed', async () => {
+    const row = { ...fullRow, payload: { ...fullRow.payload, qiumi_route: hint('S3'), device_busy_attempts: 1 } };
+    wire(row, 'S1');
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    expect(r).toEqual({ outcome: 'proceed' });
+    expect(routeQiumiTask, '回队重试还去打 Jev——路由应保留').not.toHaveBeenCalled();
+    const upd = mockQuery.mock.calls.find(([s]) => /UPDATE tasks/.test(s) && /run_id/.test(s));
+    expect(upd, '没写新 run_id').toBeTruthy();
+    const newRunId = upd[1].find((v) => typeof v === 'string' && v.startsWith('qiumi-'));
+    expect(newRunId).toMatch(/^qiumi-q1-\d+$/);
+  });
+});

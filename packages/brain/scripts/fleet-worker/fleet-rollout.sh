@@ -3,11 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-RUNNER_DIGEST='sha256:74afa123d31ff6eda7b3dff213ecba0ac28e5d8f1b74bc40ade3e71dd635721a'
+RUNNER_DIGEST='sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033'
 POSTGRES_IMAGE='pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62'
 POSTGRES_TAG="${POSTGRES_IMAGE%@*}"
 FLEET_WORKER_LABEL='com.perfect21.fleet-worker'
-FLEET_WORKER_DRAIN_MARKER='/var/run/cecelia/fleet-worker.drain'
 
 GIT="${FLEET_ROLLOUT_GIT:-$(command -v git || true)}"
 DOCKER="${FLEET_ROLLOUT_DOCKER:-$(command -v docker || true)}"
@@ -152,6 +151,7 @@ run_node_apply() {
   local node_ctl_override="${3:-}"
   local apply_mode="${4:-standard}"
   local node_ctl
+  local drain_owner
   local drain_guard_armed=false
   local admission_attempt admitted=false
 
@@ -172,9 +172,14 @@ run_node_apply() {
   node_ctl="${node_ctl_override:-$payload_root/source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh}"
   [[ -x "$node_ctl" && ! -L "$node_ctl" ]] || die "rollout_nodectl_invalid"
 
+  [[ -f "$payload_root/drain-owner" && ! -L "$payload_root/drain-owner" ]] || die "rollout_drain_owner_missing"
+  drain_owner="$(cat "$payload_root/drain-owner")"
+  [[ "$drain_owner" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || die "rollout_drain_owner_invalid"
+
   run_node_command() {
     /usr/bin/env \
       CECELIA_MACHINE_ID="$machine_id" \
+      FLEET_NODECTL_DRAIN_OWNER="$drain_owner" \
       FLEET_BASELINE_REPOSITORY_BUNDLE="$payload_root/repository.bundle" \
       FLEET_BASELINE_RUNNER_ARCHIVE="$payload_root/runner.tar" \
       FLEET_BASELINE_WORKER_TOKEN_FILE="$payload_root/worker-token" \
@@ -249,7 +254,9 @@ validate_internal_staging() {
 
   for relative_path in \
     source/packages/brain/scripts/fleet-worker/fleet-rollout.sh \
-    source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh; do
+    source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh \
+    source/packages/brain/scripts/fleet-worker/drain-owner.cjs \
+    drain-owner; do
     path="$staged_root/$relative_path"
     /bin/test -f "$path" && /bin/test ! -L "$path" || return 1
     canonical_path="$(/bin/realpath -- "$path")" || return 1
@@ -275,7 +282,9 @@ validate_root_staging() {
 
   for relative_path in \
     source/packages/brain/scripts/fleet-worker/fleet-rollout.sh \
-    source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh; do
+    source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh \
+    source/packages/brain/scripts/fleet-worker/drain-owner.cjs \
+    drain-owner; do
     path="$staged_root/$relative_path"
     "$SUDO" -n /bin/test -f "$path" \
       && "$SUDO" -n /bin/test ! -L "$path" \
@@ -293,9 +302,9 @@ validate_root_staging() {
 emergency_drain_local() {
   local status=0
 
-  "$SUDO" -n /bin/mkdir -p /var/run/cecelia >/dev/null 2>&1 || status=1
-  "$SUDO" -n /usr/bin/touch \
-    "$FLEET_WORKER_DRAIN_MARKER" >/dev/null 2>&1 || status=1
+  "$SUDO" -n /usr/local/libexec/cecelia/toolchain/bin/node \
+    /usr/local/libexec/cecelia/fleet-worker/drain-owner.cjs emergency \
+    "${CECELIA_MACHINE_ID:-us-mac-m4}" >/dev/null 2>&1 || status=1
   "$SUDO" -n /bin/launchctl bootout \
     "system/$FLEET_WORKER_LABEL" >/dev/null 2>&1 || true
   if [[ "$status" -ne 0 ]]; then
@@ -451,6 +460,8 @@ repository_bundle="$TEMP_ROOT/repository.bundle"
 runner_archive="$TEMP_ROOT/runner.tar"
 worker_token="$TEMP_ROOT/worker-token"
 payload_tar="$TEMP_ROOT/payload.tar"
+"$(command -v node)" -e 'process.stdout.write(require("node:crypto").randomUUID()+"\n")' > "$TEMP_ROOT/drain-owner"
+chmod 0600 "$TEMP_ROOT/drain-owner"
 bundle_repository="$TEMP_ROOT/bundle.git"
 
 stage_worker_token "$worker_token"
@@ -488,7 +499,7 @@ if ! "$DOCKER" run --rm \
 fi
 "$DOCKER" save --output "$runner_archive" "$RUNNER_DIGEST" "$POSTGRES_TAG"
 "$TAR" -cf "$payload_tar" -C "$TEMP_ROOT" \
-  source.tar repository.bundle runner.tar worker-token
+  source.tar repository.bundle runner.tar worker-token drain-owner
 rollout_commit_after="$(
   "$GIT" -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}'
 )"
@@ -514,10 +525,9 @@ remote_root="$("$sudo_command" -n /usr/bin/mktemp \
 controller_pid=''
 emergency_drain_remote() {
   local status=0
-  "$sudo_command" -n /bin/mkdir \
-    -p /var/run/cecelia >/dev/null 2>&1 || status=1
-  "$sudo_command" -n /usr/bin/touch \
-    /var/run/cecelia/fleet-worker.drain >/dev/null 2>&1 || status=1
+  "$sudo_command" -n /usr/local/libexec/cecelia/toolchain/bin/node \
+    /usr/local/libexec/cecelia/fleet-worker/drain-owner.cjs emergency \
+    "$machine_id" >/dev/null 2>&1 || status=1
   "$sudo_command" -n /bin/launchctl bootout \
     system/com.perfect21.fleet-worker >/dev/null 2>&1 || true
   if [[ "$status" -ne 0 ]]; then
@@ -551,7 +561,9 @@ validate_remote_staging() {
     || return 1
   for relative_path in \
     source/packages/brain/scripts/fleet-worker/fleet-rollout.sh \
-    source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh; do
+    source/packages/brain/scripts/fleet-worker/fleet-nodectl.sh \
+    source/packages/brain/scripts/fleet-worker/drain-owner.cjs \
+    drain-owner; do
     path="$staged_root/$relative_path"
     "$sudo_command" -n /bin/test -f "$path" \
       && "$sudo_command" -n /bin/test ! -L "$path" \

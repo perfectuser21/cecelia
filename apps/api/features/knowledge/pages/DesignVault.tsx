@@ -42,47 +42,6 @@ function renderMarkdown(text: string): string {
     .replace(/\n/g, '<br/>');
 }
 
-function AnnotationBox({ entityId }: { entityId: string }) {
-  const { data, refresh } = useApi<{ success: boolean; data: Array<{ id: string; content: string }> }>(
-    `/api/brain/user-annotations?entity_type=design_doc&entity_id=${entityId}`,
-    { staleTime: 15_000 }
-  );
-  const [text, setText] = useState('');
-
-  async function add() {
-    if (!text.trim()) return;
-    await fetch('/api/brain/user-annotations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entity_type: 'design_doc', entity_id: entityId, content: text }),
-    });
-    setText('');
-    refresh();
-  }
-
-  return (
-    <div className="mt-3 pt-3 border-t border-gray-100">
-      <p className="text-xs text-gray-400 mb-1">批注</p>
-      {(data?.data || []).map(a => (
-        <p key={a.id} className="text-xs bg-yellow-50 rounded px-2 py-1 mb-1 text-gray-700">{a.content}</p>
-      ))}
-      <div className="flex gap-1 mt-1">
-        <input
-          className="flex-1 text-xs border border-gray-200 rounded px-2 py-0.5 focus:outline-none"
-          placeholder="添加批注..."
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && add()}
-        />
-        <button onClick={add} disabled={!text.trim()}
-          className="text-xs px-2 py-0.5 bg-blue-500 text-white rounded disabled:opacity-40">
-          <Plus size={10} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function DetailPanel({ doc, onStatusChange, onClose }: {
   doc: DesignDoc;
   onStatusChange: (id: string, status: string) => void;
@@ -136,7 +95,6 @@ function DetailPanel({ doc, onStatusChange, onClose }: {
         className="text-sm text-gray-700 leading-relaxed"
         dangerouslySetInnerHTML={{ __html: renderMarkdown(full.content || '（无内容）') }}
       />
-      <AnnotationBox entityId={doc.id} />
     </div>
   );
 }

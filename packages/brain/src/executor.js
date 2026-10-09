@@ -1,3 +1,6 @@
+import { isPhoneDispatchTask } from './phone-dispatch/task-ownership.js';
+import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
+import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
 /**
  * Cecelia Executor - Trigger headless Claude Code execution
  *
@@ -14,6 +17,7 @@
  */
 
 import crypto from 'crypto';
+import { assertExternalExecutionAllowed } from './runtime-safety.js';
 import { spawn, execSync, exec } from 'child_process';
 import { writeFile, mkdir, access } from 'fs/promises';
 import { readFileSync, readdirSync, unlinkSync, existsSync } from 'fs';
@@ -30,16 +34,44 @@ import { getTaskLocation, getInternalTaskHandler } from './task-router.js';
 import { resolveExecutor } from './routing/resolve-executor.js';
 import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCache as _refreshCache } from './task-type-config-cache.js';
 import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
+import { finalizeTask } from './lib/task-terminal.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable, resolveBrainBaseUrl } from './docker-executor.js';
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
+import {
+  RETIRED_HARNESS_TYPES_DISPATCH,
+  RECOVERY_HARNESS_TASK_TYPES,
+  FIX_MODE_TASK_TYPES,
+  HARNESS_V4_TASK_TYPES,
+  SPRINT_HARNESS_DEV_TASK_TYPES,
+  CONTENT_PIPELINE_TYPES as CONTENT_PIPELINE_EXTERNAL_WORKER_TYPES,
+  EXTERNAL_WATCHDOG_TASK_TYPES,
+  EXECUTOR_SKILL_MAP,
+  EXECUTOR_MODE_MAP,
+} from './lib/task-type-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
+import { startRunForExecResult } from './lib/task-run.js';
+import { internalServiceHeaders } from './lib/internal-service-auth.js';
+import { resolveTaskTypeSkill, resolveSkillWithLedger } from './lib/skill-binding-registry.js';
+
+// 外部执行体（工作机领单器等）认领后的活性宽限期。
+// 真机实测单个关键词采收 17~25 分钟（逐个点进评论者主页核验身份），45 分钟留足余量；
+// 超过仍无回执 → 落回既有 SUSPECT→DEAD 流程，工作机断电/领单器挂了照样有出路。
+const EXTERNAL_CLAIM_GRACE_MS = Number(process.env.EXTERNAL_CLAIM_GRACE_MS || 45 * 60 * 1000);
 import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
+import { classifyDispatchReasonCode, dispatchFailureFromError } from './lib/dispatch-reason-code.js';
 import { raise } from './alerting.js';
-import { EXECUTOR_KIND_FOR, resolveExecutorKind } from './executor-contracts.js';
+import { EXECUTOR_KIND_FOR, resolveExecutorKind, isExternallyExecuted, assessTaskLiveness } from './executor-contracts.js';
+import {
+  isExternalRunMirror,
+  externalActivityAgeMs,
+  createStaleLedger,
+  EXTERNAL_ACTIVITY_AGE_SQL,
+  EXTERNAL_HEARTBEAT_STALE_MS,
+} from './lib/external-mirror-liveness.js';
 import { probeCodexReviewLock, CODEX_REVIEW_LOCK_DIR as CODEX_REVIEW_LOCK_DIR_SSOT } from './lib/codex-review-liveness.js';
 import { pushCaptureAtom } from './capture-inbox.js';
 import {
@@ -51,6 +83,8 @@ import {
   calculatePhysicalCapacity,
   evaluateMemoryHealth,
   getBrainRssMB,
+  sampleBrainCpuUsage,
+  evaluateCpuHealth,
   IS_DARWIN,
 } from './platform-utils.js';
 
@@ -180,16 +214,12 @@ const XIAN_CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.8
 // 西安 Mac mini M1 Codex Bridge URL (via Tailscale)
 const XIAN_M1_BRIDGE_URL = process.env.XIAN_M1_BRIDGE_URL || 'http://100.88.166.55:3458';
 
-// 多机 Codex Bridge 列表（负载均衡）
-const CODEX_BRIDGES = (process.env.CODEX_BRIDGES || 'http://100.86.57.69:3458,http://100.88.166.55:3458')
-  .split(',').map(s => s.trim()).filter(Boolean);
-
 /**
  * 从多个 Codex Bridge 中选择最空闲的
  */
 async function selectBestBridge() {
   const results = await Promise.allSettled(
-    CODEX_BRIDGES.map(async (url) => {
+    legacyExecutorEntries().filter(e=>e.executor==='codex').map(e=>e.url).map(async (url) => {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -209,7 +239,7 @@ async function selectBestBridge() {
 
   if (healthy.length === 0) {
     console.warn('[executor] 所有 Codex Bridge 不可用，降级到 XIAN_CODEX_BRIDGE_URL');
-    return XIAN_CODEX_BRIDGE_URL;
+    throw new Error('execution_legacy_grant_unavailable:codex');
   }
 
   const selected = healthy[0];
@@ -436,42 +466,21 @@ function sampleCpuUsage() {
 function _resetCpuSampler() { platformResetCpuSampler(); }
 
 /**
- * Resolve repo_path from a project, checking project_repos first, then parent chain.
- * Initiatives (sub-projects) have parent_id but no repo_path — walk up to find it.
- * Max 5 levels to prevent infinite loops.
+ * Resolve repo_path from a project（project_repos 空表已删，迁移 482）.
+ * 棒4（决策 ee4842a6/3feeae3e）：scope/initiative 层退役，task.project_id 现在
+ * 直接指向真身表 projects(id)，不再需要 okr_initiatives/okr_scopes/okr_projects
+ * 三表 UNION（旧实现每个分支都硬编码 NULL::uuid AS parent_id，"向上走父链"从未
+ * 真正执行过，等价于单层查询——这里按等价行为简化）。
+ * repo_path 优先取真身表自己的列，旧数据（迁移 497 搬家时未回填该列）回退读 metadata。
  */
 async function resolveRepoPath(projectId) {
-  let currentId = projectId;
-  for (let depth = 0; depth < 5 && currentId; depth++) {
-    // Check project_repos table first (multi-repo support)
-    try {
-      const repoResult = await pool.query(
-        'SELECT repo_path FROM project_repos WHERE project_id = $1 LIMIT 1',
-        [currentId]
-      );
-      if (repoResult.rows.length > 0) return repoResult.rows[0].repo_path;
-    } catch {
-      // project_repos table may not exist yet (pre-migration 029)
-    }
-
-    // Fallback to okr_initiatives/okr_scopes/okr_projects metadata.repo_path（迁移：projects → new tables）
-    const result = await pool.query(
-      `SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
-       FROM okr_initiatives WHERE id = $1
-       UNION ALL
-       SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
-       FROM okr_scopes WHERE id = $1
-       UNION ALL
-       SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
-       FROM okr_projects WHERE id = $1
-       LIMIT 1`,
-      [currentId]
-    );
-    if (result.rows.length === 0) return null;
-    if (result.rows[0].repo_path) return result.rows[0].repo_path;
-    currentId = result.rows[0].parent_id;
-  }
-  return null;
+  if (!projectId) return null;
+  const result = await pool.query(
+    `SELECT COALESCE(repo_path, metadata->>'repo_path') AS repo_path
+     FROM projects WHERE id = $1`,
+    [projectId]
+  );
+  return result.rows[0]?.repo_path || null;
 }
 
 // ============================================================
@@ -543,9 +552,25 @@ function checkServerResources(memReservedMb = 0) {
   _pushHistory(_memHistory, rawMemPressure, HISTORY_SIZE_MEM);
 
   // Smoothed values: CPU = avg of last 5, MEM = max of last 3 (conservative)
-  const cpuPressure = _cpuHistory.length > 0 ? _avgHistory(_cpuHistory) : rawCpuPressure;
+  let cpuPressure = _cpuHistory.length > 0 ? _avgHistory(_cpuHistory) : rawCpuPressure;
   let memPressure = _memHistory.length > 0 ? _maxHistory(_memHistory) : rawMemPressure;
   const swapPressure = swapUsedPct / SWAP_USED_MAX_PCT;
+
+  // PIVOT 2026-09-12: distinguish Brain-process CPU health from system-wide
+  // /proc/stat. Docker does not virtualize /proc/stat per-container, so
+  // sampleCpuUsage() reads the ENTIRE HOST's CPU — on a shared VPS, sibling
+  // containers (e.g. openclaw-gateway) can drive this into the halt band
+  // while Brain's own container sits idle. Only real Brain-level CPU load
+  // halts dispatch; system-noisy-but-Brain-fine downgrades to a warn log.
+  const brainCpuPct = sampleBrainCpuUsage();
+  const cpuHealth = evaluateCpuHealth({
+    brain_cpu_pct: brainCpuPct,
+    system_cpu_pressure: rawCpuPressure,
+  });
+  if (cpuHealth.action === 'warn' && cpuPressure >= 0.9) {
+    console.warn(`[executor] cpu warn (not halting): ${cpuHealth.reason}`);
+    cpuPressure = Math.min(cpuPressure, 0.6);
+  }
 
   // PIVOT 2026-04-18: distinguish Brain-process health from system-wide memory.
   // If Brain's own RSS is fine but the system is noisy (other apps eating
@@ -605,6 +630,9 @@ function checkServerResources(memReservedMb = 0) {
     brain_rss_mb: brainRssMB,
     memory_health_action: memHealth.action,
     memory_health_reason: memHealth.reason,
+    brain_cpu_pct: brainCpuPct,
+    cpu_health_action: cpuHealth.action,
+    cpu_health_reason: cpuHealth.reason,
   };
 
   if (effectiveSlots === 0) {
@@ -836,6 +864,8 @@ const activeProcesses = new Map();
  * auto-fail only if still suspect on next tick.
  */
 const suspectProcesses = new Map();
+/** 外部 run 镜像心跳陈旧留痕账本（每陈旧窗口一次；见 lib/external-mirror-liveness.js） */
+const externalStaleNoted = createStaleLedger();
 
 /**
  * Get the number of actively tracked processes (with liveness check)
@@ -1368,60 +1398,10 @@ function getSkillForTaskType(taskType, payload) {
     return '/dev';
   }
 
-  const skillMap = {
-    'dev': '/dev',           // 写代码：Opus
-    'review': '/code-review', // 审查：已迁移到 /code-review
-    'qa_init': '/review init', // QA 初始化：设置 CI 和分支保护
-    'talk': '/talk',         // 对话：写文档，不改代码
-    'research': '',          // 研究：完全只读，不挂 skill，由 preparePrompt 直接构建 prompt
-    'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
-    'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
-    'ci_patrol': '/ci-patrol', // CI/CD 巡检：每日按 line 报硬伤（ci-patrol skill）
-    // Initiative 执行循环
-    'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
-    'initiative_verify': '/architect', // Initiative 收尾验收 → /architect Mode 3
-    'decomp_review': '/decomp-check', // 拆解质检：/decomp-check
-    // Suggestion 驱动的自主规划
-    'suggestion_plan': '/plan',       // Suggestion 层级识别 → /plan skill
-    // Architecture 设计
-    'architecture_design': '/architect', // Initiative 级架构设计 → /architect skill
-    // 战略会议：C-Suite 模拟讨论，输出带 domain 的 KR
-    'strategy_session': '/strategy-session',
-    // 内容工厂 Pipeline（Content Factory）
-    'content-pipeline': '/content-creator',      // 编排入口：触发完整内容生成流程
-    'content-research': '/notebooklm',           // 调研阶段：NotebookLM 深度调研
-    'content-copywriting': '/content-creator',   // 文案生成阶段
-    'content-copy-review': '/content-creator',   // 文案审核阶段
-    'content-generate': '/content-creator',      // 生成阶段：图片+文案生成
-    'content-image-review': '/content-creator',  // 图片审核阶段
-    'content-review': '/content-creator',        // 审核阶段：AI 质量评分
-    'content-export': '/content-creator',        // 导出阶段：NAS 存储 + manifest
-    // 旧类型向后兼容 → 统一走 /code-review
-    'qa': '/code-review',
-    'audit': '/code-review',
-    // 前置审查
-    'intent_expand': '/intent-expand',  // 意图扩展：查 OKR/Vision 链路补全 PRD
-    // Initiative 执行
-    'initiative_execute': '/dev',       // Initiative 执行：/dev 全流程
-    // 多平台发布（payload.platform 动态路由，见上方特判逻辑）
-    'content_publish': '/dev',          // fallback：正常由上方平台路由拦截
-    // Codex Gate 审查任务类型（替代旧的多步审查流程）
-    'prd_review': '/prd-review',              // PRD 审查
-    'spec_review': '/spec-review',            // Spec 审查
-    'code_review_gate': '/code-review-gate',  // 代码质量门禁
-    'initiative_review': '/initiative-review', // Initiative 整体审查
-    // Scope 层飞轮（Project→Scope→Initiative）
-    'scope_plan': '/decomp',        // Phase 3: Scope 内规划下一个 Initiative
-    'project_plan': '/decomp',      // Phase 4: Project 内规划下一个 Scope
-    'pipeline_rescue': '/dev',       // 卡住的 pipeline 接管修复 → /dev 全流程
-    'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 → 西安 M4
-    'platform_scraper': '/media-scraping', // 平台数据采集 → CN Mac mini (/media-scraping skill)
-    'strategist_decision': '/line-strategist',  // Line 军师决策（PR3674 终态钩子派发，见 line-strategist-dispatch.js）
-    // 注意：harness_generate/harness_fix 等不在此处
-    // 它们由 preparePrompt() 提前路由，不经过 skillMap。
-    // 实际路由见 task-router.js LOCATION_MAP。
-  };
-  return skillMap[taskType] || '/dev';
+  // 任务→技能解析：skill_registry（能力账本，进程内快照，由 preparePrompt 经 resolveSkillWithLedger
+  // 刷新）优先；硬编码 EXECUTOR_SKILL_MAP（lib/task-type-registry.js）降为兜底，漂移/缺映射会告警。
+  // 账本读取失败或尚未加载时等价于旧行为（纯硬编码）。链 bf5088a3 棒7。
+  return resolveTaskTypeSkill(taskType, EXECUTOR_SKILL_MAP) || '/dev';
 }
 
 // ============================================================
@@ -1495,16 +1475,8 @@ function getCredentialsForTask(task) {
 function getPermissionModeForTaskType(taskType) {
   // Plan Mode: 只能读文件，不能执行 Bash，不能写文件
   // Bypass Mode: 完全权限，可以执行 Bash、调 API、写文件
-  const modeMap = {
-    'dev': 'bypassPermissions',        // 写代码
-    'review': 'bypassPermissions',     // 已迁移到 /code-review，需写报告
-    'talk': 'bypassPermissions',       // 要调 API 写数据库
-    'research': 'bypassPermissions',   // 要调 API
-    'code_review': 'bypassPermissions', // 需要写报告文件到 docs/reviews/
-    // 旧类型向后兼容 → 统一走 /code-review
-    'qa': 'bypassPermissions',
-    'audit': 'bypassPermissions',
-  };
+  // 名单见 lib/task-type-registry.js（EXECUTOR_MODE_MAP）。
+  const modeMap = EXECUTOR_MODE_MAP;
   return modeMap[taskType] || 'bypassPermissions';
 }
 
@@ -1591,11 +1563,14 @@ async function buildTimeContext(krId) {
     if (!kr) return '';
 
     // 2. KR 下所有 Projects（按 sequence_order 排列）
-    // 迁移：projects → okr_projects（name → title）
+    // 时间预算存 projects.metadata；完成时间来自已完成子任务。
     const projResult = await pool.query(
-      `SELECT op.id, op.title AS name, op.status, NULL::int AS sequence_order,
-              NULL::int AS time_budget_days, op.created_at, op.completed_at
-       FROM okr_projects op
+      `SELECT op.id, op.name, op.status,
+              op.metadata->>'sequence_order' AS sequence_order,
+              op.metadata->>'time_budget_days' AS time_budget_days, op.created_at,
+              (SELECT MAX(t.completed_at) FROM tasks t
+               WHERE t.project_id = op.id AND t.task_type <> 'project' AND t.status = 'completed') AS completed_at
+       FROM projects op
        WHERE op.kr_id = $1
        ORDER BY op.created_at ASC`,
       [krId]
@@ -1761,80 +1736,44 @@ async function _fetchSprintFile(branch, filePath) {
 
 // ─── preparePrompt 子函数 ────────────────────────────────────────────────────
 
-function _prepareContinueDecompWithInitiative(task, krId, krTitle, initiativeId) {
+function _prepareProjectTaskDecomp(task, krId, krTitle, projectId) {
   const previousResult = task.payload?.previous_result || '';
+  const revision = task.payload?.revision === true;
+  const reviewSetup = [true, 'true'].includes(task.payload?.decomposition)
+    ? `PATCH /api/brain/okr/key-results/${krId} 设置 {"status":"decomposing"}；保持该状态，完成回调自动送审。\n`
+    : '';
+  const completionStep = revision
+    ? '根据审查意见修正拆解，并保留已有完成任务的证据；修正结果重新送审。'
+    : `判断 Project 的成功标准是否已达成；已有证据达成时 PATCH /api/brain/projects/${projectId} 状态为 completed。`;
   return `/decomp
 
-# 继续拆解: ${krTitle}
+# 项目拆解: ${krTitle}
 
-## 任务类型
-探索型任务继续拆解
+## 四层结构
+Objective → Key Result → Project → Task
 
-## Initiative ID
-${initiativeId}
+## 既有 Project
+- Project ID: ${projectId}
+- KR ID: ${krId}
+- 目标: ${task.payload?.kr_goal || task.description || krTitle}
+- 前一棒结果: ${previousResult || '(无)'}
 
-## 前一个 Task 执行结果
-${previousResult}
+## 执行
+${reviewSetup}1. GET /api/brain/projects/${projectId}，核对项目简报与已完成子任务。
+2. ${completionStep}
+3. 未达成时只登记下一步可执行任务，避免重复已完成任务。
 
-## KR 目标
-${task.payload?.kr_goal || task.description || ''}
-
-## 你的任务
-1. 分析前一个 Task 的执行结果
-2. 判断 Initiative 是否已完成 KR 目标
-   - 如果已完成 → 更新 Initiative 状态，不创建新 Task
-   - 如果未完成 → 创建下一个 Task，继续推进
-
-## 创建下一个 Task（如需要）
 POST /api/brain/action/create-task
 {
   "title": "下一步任务标题",
-  "project_id": "${initiativeId}",
-  "goal_id": "${krId}",
-  "task_type": "dev",
-  "prd_content": "完整 PRD...",
-  "payload": {
-    "initiative_id": "${initiativeId}",
-    "kr_goal": "${task.payload?.kr_goal || ''}"
-  }
-}`;
-}
-
-function _prepareInitiativeSupplementDecomp(task, krId, krTitle, projectId, initiativeId) {
-  return `/decomp
-
-# Initiative 补充拆解: ${krTitle}
-
-## 任务类型
-为已有 Initiative 创建可执行 Task
-
-## Initiative 信息
-- Initiative ID: ${initiativeId}
-- KR ID: ${krId}
-- Project ID: ${projectId}
-- 目标: ${task.description || krTitle}
-
-## 你的任务
-这个 Initiative 下缺少可执行的 Task。请为其创建 1-3 个具体、可执行的 Task。
-
-### 创建 Task
-POST /api/brain/action/create-task
-{
-  "title": "实现 [功能]",
-  "project_id": "${initiativeId}",
+  "project_id": "${projectId}",
   "goal_id": "${krId}",
   "task_type": "dev",
   "prd_content": "完整 PRD（目标、方案、验收标准）",
-  "payload": {
-    "initiative_id": "${initiativeId}",
-    "kr_goal": "${task.description || ''}"
-  }
+  "payload": { "kr_goal": "${task.payload?.kr_goal || ''}" }
 }
 
-## ⛔ 禁止
-- ❌ 不要创建新的 Initiative 或 Project（已经有了）
-- ❌ Task 的 project_id 必须指向 Initiative ID: ${initiativeId}
-- ❌ Task 的 goal_id 必须 = KR ID: ${krId}`;
+Task.project_id 必须指向上述 Project。`;
 }
 
 async function _prepareFirstDecomp(task, krId, krTitle) {
@@ -1849,111 +1788,55 @@ async function _prepareFirstDecomp(task, krId, krTitle) {
 
 ${timeContext}
 
-## 6 层架构（必须严格遵守）
-Global OKR (季度) → Area OKR (月度) → KR → **Project (1-2周)** → Initiative (1-2小时) → Task (PR)
+## 四层结构
+Objective → Key Result → Project → Task
 
-## 你的任务（按顺序执行）
+## 执行步骤
+1. PATCH /api/brain/okr/key-results/${krId} 设置 {"status":"decomposing"}；GET /api/brain/projects?kr_id=${krId}，核对既有项目、简报和任务；已有项目覆盖本次目标时继续该项目。
+2. 需要独立交付时创建 Project，并明确 KR 归属与项目目标。
 
-### Step 1: 为该 KR 新建专属 Project（⛔ 禁止复用已有 project！）
-
-**CRITICAL**: 每个 KR 必须有自己独立的 Project，不能复用 cecelia-core 或其他已有 project。
-
-首先查询 cecelia-core 的 repo_path：
-\`\`\`
-GET /api/tasks/projects
-找到 name='cecelia-core' 的记录，记录其 repo_path
-\`\`\`
-
-然后新建 KR 专属 Project：
-\`\`\`
-POST /api/brain/projects
+POST /api/brain/action/create-project
 {
   "name": "<KR 简短标题> 实现",
-  "type": "project",
   "description": "${task.description || krTitle}",
-  "repo_path": "<从 cecelia-core 获取的 repo_path>"
+  "kr_ids": ["${krId}"],
+  "repo_path": "<任务上下文中的真实仓库路径>"
 }
-\`\`\`
 
-okr_projects.kr_id 已在创建时直接绑定到该 KR（无需额外的桥接表）。
+3. 确认复用或新建的 Project 后，先 PATCH /api/brain/tasks/${task.id} 设置 {"result":{"decomposition_project_id": "<选定 Project ID>"}}，保存本棒的显式产出归属；再直接拆成有序 Tasks，Task.goal_id 绑定当前 KR。
 
-记录新建 Project 的 ID（后面 Step 2 要用）。
-
-### Step 2: 拆解模式
-- 使用 known 模式，直接拆解为 dev 任务
-
-### Step 3: 创建 Initiatives（写入 projects 表，type='initiative'，不是 goals 表！）
-
-Initiative 的 parent_id 必须指向 Step 1 新建的 KR 专属 Project ID。
-
-\`\`\`
-POST /api/brain/action/create-initiative
-{
-  "name": "Initiative 名称",
-  "parent_id": "<Step 1 新建的 Project ID>",
-  "kr_id": "${krId}",
-  "decomposition_mode": "known"
-}
-\`\`\`
-
-### Step 4: 创建 Tasks（goal_id 必须 = KR ID）
-
-\`\`\`
 POST /api/brain/action/create-task
 {
   "title": "实现 [功能]",
-  "project_id": "<Initiative ID>",
+  "project_id": "<Project ID>",
   "goal_id": "${krId}",
   "task_type": "dev",
   "prd_content": "完整 PRD（目标、方案、验收标准）",
-  "payload": {
-    "initiative_id": "<Initiative ID>",
-    "kr_goal": "${task.description || ''}"
-  }
+  "payload": { "kr_goal": "${task.description || ''}" }
 }
-\`\`\`
 
-### Step 5: 更新 KR 状态
-\`\`\`
-PUT /api/tasks/goals/${krId}
-{"status": "in_progress"}
-\`\`\`
+4. 保持 KR 的 decomposing 状态；完成回调自动送审并更新为 reviewing，确认通过后继续执行。
 
-## ⛔ 绝对禁止
-- ❌ 不能复用已有 project（cecelia-core 或其他）作为 Initiative 的 parent！
-- ❌ 不能在 goals 表创建 KR 以下的记录！goals 表只存 Global OKR / Area OKR / KR
-- ❌ 不能把 Task.project_id 指向 Project，必须指向 Initiative！
-- ❌ Task 的 goal_id 不能为空或指向错误的 KR！
-
-## 质量验证（创建完成后逐项检查）
-
-1. ✅ 新建了 KR 专属 Project（type='project'，有 repo_path）
-2. ✅ okr_projects.kr_id 已设置为当前 KR（新表直接存储，无需桥接表）
-3. ✅ Initiatives 的 parent_id = 新建 Project（不是 cecelia-core）
-4. ✅ 第一个 Task 的 task_type='dev'
-5. ✅ 所有 Task 的 goal_id = ${krId}
-6. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
-
-参考：~/.claude/skills/okr/SKILL.md Stage 2 (Line 332-408)`;
+## 验收
+- Project.kr_id = 当前 KR；Project 有明确目标与验收标准。
+- Tasks 的 project_id = Project ID，goal_id = 当前 KR。
+- 核对已有完成项，避免重复登记；逐棒完成留下 handoff。`;
 }
 
 async function _prepareDecompositionPrompt(task) {
   const krId = task.goal_id || task.payload?.kr_id || '';
   const krTitle = task.title?.replace(/^(OKR 拆解|拆解|继续拆解)[：:]\s*/, '') || '';
-  const projectId = task.project_id || task.payload?.project_id || '';
-  const isContinue = task.payload?.decomposition === 'continue';
-  const initiativeId = task.payload?.initiative_id || task.payload?.feature_id || '';
-
-  if (isContinue && initiativeId) return _prepareContinueDecompWithInitiative(task, krId, krTitle, initiativeId);
-  if (!isContinue && initiativeId) return _prepareInitiativeSupplementDecomp(task, krId, krTitle, projectId, initiativeId);
+  const projectId = task.project_id || task.payload?.project_id
+    || (task.payload?.entity_type === 'project' ? task.payload?.entity_id : '') || '';
+  if (projectId) return _prepareProjectTaskDecomp(task, krId, krTitle, projectId);
   return _prepareFirstDecomp(task, krId, krTitle);
 }
 
-function _prepareScopePlanPrompt(task) {
+async function _prepareScopePlanPrompt(task) {
   const formatHint = [
     '\n\n## 输出格式要求',
-    '用结构化 Markdown 输出。每个 Initiative：',
-    '### Initiative N：名称',
+    '用结构化 Markdown 输出。每个 Task：',
+    '### Task N：名称',
     '| 维度 | 内容 |',
     '|------|------|',
     '| **功能边界** | 只做什么、不碰什么 |',
@@ -1964,14 +1847,14 @@ function _prepareScopePlanPrompt(task) {
     '| **SPIDR-D** | Data 范围 |',
     '| **SPIDR-R** | Rules 渐进 |',
   ].join('\n');
-  return `/decomp\n\n[scope_plan] ${task.description || task.title}${formatHint}`;
+  return `${await _prepareDecompositionPrompt(task)}\n${formatHint}`;
 }
 
-function _prepareProjectPlanPrompt(task) {
+async function _prepareProjectPlanPrompt(task) {
   const formatHint = [
     '\n\n## 输出格式要求',
-    '用结构化 Markdown 输出。每个 Scope：',
-    '### Scope N：名称',
+    '用结构化 Markdown 输出。每个 Task：',
+    '### Task N：名称',
     '| 维度 | 内容 |',
     '|------|------|',
     '| **功能边界** | 只处理什么、不碰什么 |',
@@ -1984,18 +1867,18 @@ function _prepareProjectPlanPrompt(task) {
     '| **SPIDR-R** | Rules 渐进 |',
     '',
     '最后加总结表：',
-    '| Scope | 对应成功标准 | 预计天数 | 执行顺序 |',
+    '| Task | 对应成功标准 | 预计天数 | 执行顺序 |',
     '|-------|------------|---------|---------|',
   ].join('\n');
-  return `/decomp\n\n[project_plan] ${task.description || task.title}${formatHint}`;
+  return `${await _prepareDecompositionPrompt({ ...task, project_id: task.project_id || task.payload?.entity_id || task.payload?.project_id })}\n${formatHint}`;
 }
 
 function _prepareSprintPrompt(task, taskType) {
   const payload = task.payload || {};
   const sprintDir = assertSprintDir(payload.sprint_dir, '_prepareSprintPrompt');
   const evalRound = payload.eval_round || 0;
-  const isFixMode = ['sprint_fix', 'harness_fix'].includes(taskType);
-  const isHarnessV4 = ['harness_generate', 'harness_fix'].includes(taskType);
+  const isFixMode = FIX_MODE_TASK_TYPES.includes(taskType);
+  const isHarnessV4 = HARNESS_V4_TASK_TYPES.includes(taskType);
   const skillCmd = isHarnessV4 ? '/harness-generator' : '/sprint-generator';
   const mode = isFixMode ? taskType : (isHarnessV4 ? 'harness_generate' : 'sprint_generate');
   const headerText = isHarnessV4
@@ -2322,12 +2205,12 @@ async function _prepareContractReviewPrompt(task, taskType) {
 // ─── preparePrompt 辅助：条件判断 + 路由内联 lambda 拆分 ────────────────────
 
 function _isSprintOrHarnessDevMode(taskType, payload) {
-  return ['sprint_generate', 'sprint_fix'].includes(taskType)
+  return SPRINT_HARNESS_DEV_TASK_TYPES.includes(taskType)
     || (taskType === 'dev' && payload?.harness_mode);
 }
 
 function _prepareInitiativePlanPrompt(t) {
-  return `/decomp\n\n${t.description || t.title}`;
+  return _prepareDecompositionPrompt(t);
 }
 
 function _prepareInitiativeVerifyPrompt(t) {
@@ -2351,7 +2234,7 @@ function _prepareInitiativeReviewPrompt(t) {
 }
 
 const _DECOMP_TYPES = new Set(['true', 'continue']);
-const _HARNESS_GENERATE_TYPES = new Set(['harness_generate', 'harness_fix']);
+const _HARNESS_GENERATE_TYPES = new Set(HARNESS_V4_TASK_TYPES);
 
 // 路由表：taskType → handler（模块级常量，避免每次调用重建）
 const _TASK_ROUTES = {
@@ -2388,7 +2271,8 @@ const _TASK_ROUTES = {
 
 async function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
-  const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
+  // skill_override 最优先（不碰库）；否则先刷新 skill_registry 快照（TTL 内零查库、失败开放）再解析。
+  const skill = await resolveSkillWithLedger(pool, { ...task, task_type: taskType }, getSkillForTaskType);
 
   if (_DECOMP_TYPES.has(task.payload?.decomposition)) return _prepareDecompositionPrompt(task);
   if (_HARNESS_GENERATE_TYPES.has(taskType)) return _prepareHarnessGeneratePrompt(task);
@@ -2431,6 +2315,7 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
  * @returns {Object} - { success, taskId, runId, error? }
  */
 async function triggerCodexReview(task) {
+  assertExternalExecutionAllowed();
   const runId = generateRunId(task.id);
 
   try {
@@ -2486,12 +2371,12 @@ async function triggerCodexReview(task) {
       };
     }
 
-    const child = spawn(codexBin, ['exec', '-c', 'approval_policy="never"', promptContent], {
+    const child = await withLegacyRelayExecution({pool,location:os.hostname(),provider:'codex',credentialIdentity:process.env.CODEX_HOME,repo:task.payload?.repo??task.repo_hint},()=>spawn(codexBin, ['exec', '-c', 'approval_policy="never"', promptContent], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: WORK_DIR,
       env: { ...process.env, TASK_ID: task.id, RUN_ID: runId, BRAIN_URL: process.env.BRAIN_URL || 'http://localhost:5221' },
-    });
+    }));
 
     // 收集 stdout，解析审查结果后回调 Brain
     let stdout = '';
@@ -2506,7 +2391,7 @@ async function triggerCodexReview(task) {
         const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
         await fetch(`${brainUrl}/api/brain/execution-callback`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalServiceHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             task_id: task.id,
             run_id: runId,
@@ -2582,7 +2467,7 @@ async function triggerCodexReview(task) {
         };
         await fetch(`${brainUrl}/api/brain/execution-callback`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalServiceHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify(payload),
         });
         console.log(`[executor] codex review callback sent verdict=${payload.result?.verdict} task=${task.id}`);
@@ -2748,6 +2633,7 @@ async function selectCodexAccounts() {
  * @returns {Object} - { success, taskId, runId, error? }
  */
 async function triggerCodexBridge(task, forceBridgeUrl = null) {
+  assertExternalExecutionAllowed();
   const runId = generateRunId(task.id);
   try {
     const isCodexDev = task.task_type === 'codex_dev';
@@ -2766,12 +2652,12 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
 
     const bridgeUrl = forceBridgeUrl ?? await selectBestBridge();
     const payload = buildCodexBridgePayload(task, runId, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize);
-    const response = await fetch(`${bridgeUrl}/run`, {
+    const response = await withLegacyExecution({pool,provider:'codex',endpoint:bridgeUrl},()=>fetch(`${bridgeUrl}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15000),
-    });
+    }));
 
     const result = await response.json();
 
@@ -2794,6 +2680,7 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
  * @returns {Object} - { success, taskId, result?, error? }
  */
 async function triggerMiniMaxExecutor(task) {
+  assertExternalExecutionAllowed();
   const runId = generateRunId(task.id);
 
   try {
@@ -2959,13 +2846,13 @@ async function triggerLocalCodexExec(task) {
       `CODEX_HOME="${CODEX_HOME}" "${CODEX_BIN}" exec --model "${CODEX_MODEL}" --sandbox danger-full-access "$(cat '${tmpPromptFile}')" 2>&1`,
       'EXIT=$?',
       `rm -f "${tmpPromptFile}" 2>/dev/null; rm -rf "${slotPath}" 2>/dev/null; rm -f "${tmpScriptFile}" 2>/dev/null`,
-      `curl -s -X POST "${WEBHOOK_URL}" -H "Content-Type: application/json" \\`,
+      `curl -s -X POST "${WEBHOOK_URL}" -H "Content-Type: application/json" \${CECELIA_INTERNAL_TOKEN:+-H "Authorization: Bearer $CECELIA_INTERNAL_TOKEN"} \\`,
       `  -d "{\\"task_id\\":\\"${task.id}\\",\\"run_id\\":\\"${runId}\\",\\"status\\":\\"AI Done\\",\\"exit_code\\":$EXIT}" \\`,
       '  --max-time 10 2>/dev/null || true',
     ].join('\n');
     await writeFile(tmpScriptFile, scriptContent, { mode: 0o755 });
 
-    const proc = spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' });
+    const proc = await withLegacyRelayExecution({pool,location:os.hostname(),provider:'codex',credentialIdentity:CODEX_HOME,repo:task.payload?.repo??task.repo_hint},()=>spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' }));
     proc.unref();
     // 打标：本地 codex-bin spawn → brain-local
     await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__local_spawn);
@@ -3002,12 +2889,10 @@ export const MAX_INITIATIVE_FRESH_STARTS = 3;
  */
 async function markInitiativeTerminalFailed(dbPool, taskId, failureClass, errorMessage) {
   try {
-    await dbPool.query(
-      `UPDATE tasks SET status='failed', error_message=$1,
-         custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', $2::jsonb)
-       WHERE id=$3`,
-      [String(errorMessage).slice(0, 500), JSON.stringify(failureClass), taskId]
-    );
+    await finalizeTask(dbPool, taskId, 'failed', {
+      set: { error_message: String(errorMessage).slice(0, 500) },
+      mergeCustomProps: { failure_class: failureClass },
+    });
     // 2b-2b: 镜像同步对应 okr_initiative → failed（non-fatal，best-effort）
     try {
       const { syncOkrInitiativeStatus } = await import('./okr-initiative-sync.js');
@@ -3429,12 +3314,25 @@ export function summarizeNodeState(state) {
 // - Sprint 1 (PR #2640)：harness_task / harness_ci_watch / harness_fix / harness_final_e2e
 // - retire-harness-planner：harness_planner（subsumed by harness_initiative full graph）
 // 模块级常量：override 分支（排除 harness/retired）与下方 retired 短路块共用，引用顺序无忧。
-const _RETIRED_HARNESS_TYPES = new Set([
-  'harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e',
-  'harness_planner',  // retired in PR retire-harness-planner; subsumed by harness_initiative full graph
-]);
+const _RETIRED_HARNESS_TYPES = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
 
+/**
+ * 所有执行的漏斗（dispatcher / routes/tasks / routes/execution 三处调用）：
+ * 内层分派完成后统一经 run 原语落一行 task_runs（一次执行 = 一行，幂等；fail-open 不拖垮执行）。
+ * openclaw-agent 等自己已 startRun 的分支先落（source 更精确），这里只是幂等兜底。
+ */
 async function triggerCeceliaRun(task) {
+  assertExternalExecutionAllowed();
+  const execResult = await _triggerCeceliaRunInner(task);
+  const source = task?.payload?.harness_runtime === 'kernel-v1' ? 'kernel' : 'executor';
+  const runId = await startRunForExecResult({ task, execResult, source });
+  if (runId && execResult && execResult.success === true && !execResult.runId) {
+    return { ...execResult, runId };
+  }
+  return execResult;
+}
+
+async function _triggerCeceliaRunInner(task) {
   // 动态路由：优先从 task_type_configs 缓存读取（其余 Codex B类，前台可调）
   // A类和 Coding pathway B类不在缓存中，getCachedLocation 返回 null，走 hardcoded 逻辑
   const dynamicLocation = getCachedLocation(task.task_type);
@@ -3465,13 +3363,28 @@ async function triggerCeceliaRun(task) {
     const intResult = await internalHandler(task, {
       pool,
       updateTaskResult: async (id, result) => {
-        await pool.query(
-          `UPDATE tasks SET result = $2, status = 'completed', updated_at = NOW() WHERE id = $1`,
-          [id, JSON.stringify(result)],
-        );
+        await finalizeTask(pool, id, 'completed', { set: { result } });
       },
     });
     return { success: true, internal: true, taskId: task.id, action: intResult?.action };
+  }
+
+  // 0.7 秋米非设备任务（PR3）→ openclaw-agent 执行体：ssh 到主力 worker 起 `openclaw agent`。
+  //     不占 claude/codex 槽位，也绝不在 us-vps 本地跑（铁律 96054a8b）。
+  //     动态 import：executor.js 是热路径，秋米链路只在真有 qiumi_task 时才拉起来。
+  if (task.task_type === 'qiumi_task') {
+    console.log(`[executor] 路由决策: task_type=qiumi_task → openclaw-agent executor (run_id=${task.payload?.run_id})`);
+    const { triggerOpenclawAgent } = await import('./openclaw-agent-executor.js');
+    return triggerOpenclawAgent(task);
+  }
+
+  // 0.8 executor=script（链 bf5088a3 棒3）：确定性脚本步 → Brain 经 ssh 在跑场机执行 payload.cmd，
+  //     不占 claude/codex 槽位，也绝不在 us-vps 本地跑（铁律 96054a8b，host 由 script-task-spec 校验只认跑场机）。
+  //     动态 import：executor.js 是热路径，脚本链路只在真有 script_run 时才拉起来。
+  if (task.task_type === 'script_run') {
+    console.log(`[executor] 路由决策: task_type=script_run → script executor (host=${task.payload?.host_id ?? task.payload?.host})`);
+    const { triggerScriptRun } = await import('./script-executor.js');
+    return triggerScriptRun(task);
   }
 
   // 1. 显式 override（phase 2 单元1）：payload.{machine,executor} → DB 驱动路由。
@@ -3588,6 +3501,7 @@ async function triggerCeceliaRun(task) {
           taskId: task.id,
           initiative: true,
           reason: 'kernel_authority_not_created',
+          reason_code: classifyDispatchReasonCode({ error: result?.error, reason: result?.reason }),
           error: String(result?.error || result?.reason || 'kernel_authority_not_created')
             .slice(0, 500),
         };
@@ -3648,7 +3562,8 @@ async function triggerCeceliaRun(task) {
           success: false,
           taskId: task.id,
           initiative: true,
-          reason: 'kernel_authority_not_created',
+          // 重锚定预检抛的白名单码（needs_rebase / 契约违约码）优先于文本猜码
+          ...dispatchFailureFromError(err),
           error: err.message?.slice(0, 500),
         };
       }
@@ -3661,13 +3576,10 @@ async function triggerCeceliaRun(task) {
   if (_RETIRED_HARNESS_TYPES.has(task.task_type)) {
     console.warn(`[executor] retired task_type=${task.task_type} task=${task.id} → marking pipeline_terminal_failure`);
     try {
-      await pool.query(
-        `UPDATE tasks SET status='failed', completed_at=NOW(),
-          error_message=$2,
-          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
-         WHERE id=$1::uuid`,
-        [task.id, `task_type ${task.task_type} retired (subsumed by harness_initiative full graph)`]
-      );
+      await finalizeTask(pool, task.id, 'failed', {
+        set: { completed_at: 'now', error_message: `task_type ${task.task_type} retired (subsumed by harness_initiative full graph)` },
+        mergePayload: { failure_class: 'pipeline_terminal_failure' },
+      });
     } catch (err) {
       console.error(`[executor] mark retired task failed: ${err.message}`);
     }
@@ -3854,6 +3766,8 @@ async function triggerCeceliaRun(task) {
       const dockerEnv = {
         ...extraEnv,
         WEBHOOK_URL: `${brainBase}/api/brain/execution-callback`,
+        // 回执入口验 Bearer（棒1）：容器内 cecelia-run.sh 从 env 读 token 回投
+        CECELIA_INTERNAL_TOKEN: process.env.CECELIA_INTERNAL_TOKEN,
         CECELIA_CORE_API: brainBase,
         BRAIN_URL: brainBase,
         CECELIA_PERMISSION_MODE: permissionMode,
@@ -3864,7 +3778,10 @@ async function triggerCeceliaRun(task) {
       // 旧的西安 harness 全局开关 env 透传已删除（死代码）：harness 路由收编进
       // resolveExecutor（DB 驱动 machine+executor），graph 不再读任何全局开关。
 
+      const authorizeSpawn=operation=>withLegacyRelayExecution({pool,location:os.hostname(),provider:provider??'claude',credentialIdentity:credentials,repo:task.payload?.repo??task.repo_hint},operation);
+      await authorizeSpawn(()=>{});
       const dockerResult = await spawnDocker({
+        authorizeSpawn,
         task,
         prompt: promptContent,
         env: dockerEnv,
@@ -3920,7 +3837,7 @@ async function triggerCeceliaRun(task) {
     const extraEnvKeys = Object.keys(extraEnv);
     console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${provider ? ` provider=${provider}` : ''}${repoPath ? ` repo=${repoPath}` : ''}${extraEnvKeys.length ? ` extra_env=[${extraEnvKeys.join(',')}]` : ''}`);
 
-    const response = await fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
+    const response = await withLegacyExecution({pool,provider:provider??'claude',endpoint:EXECUTOR_BRIDGE_URL},()=>fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(30000),
@@ -3935,7 +3852,7 @@ async function triggerCeceliaRun(task) {
         provider: provider,
         extra_env: extraEnvKeys.length ? extraEnv : undefined
       })
-    });
+    }));
 
     const result = await response.json();
 
@@ -4127,12 +4044,23 @@ async function probeTaskLiveness() {
 
   // Get all in_progress tasks from DB
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, task_type, error_message
+    SELECT id, title, payload, started_at, task_type, executor_kind, error_message, claimed_by, claimed_at, updated_at,
+           ${EXTERNAL_ACTIVITY_AGE_SQL} AS external_activity_age_sec
     FROM tasks
     WHERE status = 'in_progress'
   `);
 
   for (const task of result.rows) {
+    // 已认领有头会话可能在远端；本机无 PID 不足以判死，沿用合同的 unknown 保留语义。
+    if (task.executor_kind === 'headed-session'
+        && typeof task.claimed_by === 'string' && task.claimed_by.trim()) {
+      const liveness = await assessTaskLiveness(task, { activeProcesses, pool });
+      if (liveness.verdict === 'alive' || liveness.verdict === 'unknown') {
+        suspectProcesses.delete(task.id);
+        continue;
+      }
+    }
+
     const runId = task.payload?.current_run_id;
     const entry = activeProcesses.get(task.id);
 
@@ -4174,10 +4102,7 @@ async function probeTaskLiveness() {
     // by the ZJ pipeline-worker (Python LangGraph, see PR zenithjoy#216). They have no OS
     // process inside Brain, so the liveness probe must skip them — otherwise it would mark
     // legitimate ZJ-managed tasks as zombies.
-    const CONTENT_PIPELINE_TYPES = new Set([
-      'content-pipeline', 'content-research', 'content-copywriting',
-      'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
-    ]);
+    const CONTENT_PIPELINE_TYPES = new Set(CONTENT_PIPELINE_EXTERNAL_WORKER_TYPES);
     if (CONTENT_PIPELINE_TYPES.has(task.task_type) || task.payload?.pipeline_orchestrated === true) {
       continue;
     }
@@ -4185,12 +4110,72 @@ async function probeTaskLiveness() {
     // harness_* 任务由 harness-watchdog-loop（心跳判据）专管，运行在 Docker 容器内无 OS 进程，
     // reAttachActiveExecutors 未能重建其 activeProcesses 条目时会被误判为死进程。
     // 统一排除，避免 wall-clock 孤儿探针与心跳看门狗双重处理同一任务。
-    const HARNESS_LIVENESS_EXEMPT_TYPES = new Set([
-      'harness_initiative', 'harness_task', 'harness_evaluate',
-      'harness_contract_propose', 'harness_contract_review',
-      'harness_planner', 'harness_generator', 'harness_generate', 'harness_fix',
-    ]);
+    const HARNESS_LIVENESS_EXEMPT_TYPES = new Set(RECOVERY_HARNESS_TASK_TYPES);
+    const EXTERNAL_WATCHDOG_TYPES = new Set(EXTERNAL_WATCHDOG_TASK_TYPES);
     if (HARNESS_LIVENESS_EXEMPT_TYPES.has(task.task_type)) {
+      continue;
+    }
+
+    // 外部 run 镜像（workflow_run / device_job source=cron，任务 0004aceb，决策 3c98fb36 阶段1）：
+    // wall-report / Notion ssh 直派在执行机上起跑，Brain 行只是账本镜像——从不 claim（下方认领新鲜度分支
+    // 接不住）、Brain 从不 spawn（三条 spawn 证据恒空）。09-30 实证 1e84cbad 五次被 no_spawn_evidence 回队
+    // 并清 started_at → workflow-run-lost-deadline 永远算不到 4.5h、commander-watchdog 起跑判据被重置，
+    // wall-report 阶段回执又设回 in_progress 形成振荡。
+    // 活性看镜像心跳（SQL 内算龄：task_runs 阶段回执 / commander 心跳 / 行更新 / 起跑的最新者）；
+    // 陈旧也**不回队、不清 started_at**，只留痕 external_liveness_stale（每陈旧窗口一次），
+    // 出路归 workflow-run-lost-deadline（总时限判 lost）与 commander-watchdog（接班）。
+    if (isExternalRunMirror(task)) {
+      suspectProcesses.delete(task.id);
+      const ageMs = externalActivityAgeMs(task);
+      if (externalStaleNoted.shouldNote(task.id, ageMs)) {
+        const staleMinutes = ageMs === null ? null : Math.round(ageMs / 60000);
+        await recordTaskEventSafe(pool, task.id, 'external_liveness_stale', {
+          reason: 'heartbeat_stale',
+          stale_minutes: staleMinutes,
+          threshold_minutes: Math.round(EXTERNAL_HEARTBEAT_STALE_MS / 60000),
+          task_type: task.task_type,
+          source: task.payload?.source || null,
+          serial: task.payload?.serial || null,
+          tag: task.payload?.tag || null,
+        });
+        console.log(
+          `[liveness] 外部 run 镜像 ${task.id} 心跳陈旧 ${staleMinutes ?? '?'}min（阈值 ${Math.round(EXTERNAL_HEARTBEAT_STALE_MS / 60000)}min）→ 只留痕不回队（归 lost-deadline / commander-watchdog）`
+        );
+      }
+      continue;
+    }
+
+    // device_job 由**工作机领单器**在另一台机器上执行（西安的 Mac），进程和日志都在那边，
+    // us-vps 本机的三条 spawn 证据（activeProcesses 条目 / /tmp/cecelia-{id}.log /
+    // error_message）一条都不会有 —— 于是每一个 device_job 都必然被判死回队。
+    //
+    // 0923 生产实证（单 e8c1dbce，手机 ANGYVB4311010223）：
+    //   21:17:50 领单器认领 → in_progress，真机开始采收
+    //   21:28    confirmed DEAD → 零 spawn 证据 → 回队（status 改回 queued）
+    //   21:34:09 活真干完了，回执被拒 NOT_RUNNING「这条活已不在执行中」
+    //   21:35:19 同一条活又被领走，手机上重跑一遍
+    // 后果不只丢回执：回 queued 后会被再次认领，同一个活在真手机上反复执行 ——
+    // 机时浪费，且在抖音上重复操作有风控风险。
+    //
+    // 判据用**认领新鲜度**而不是直接豁免类型：认领过久仍无回执（工作机断电/领单器挂了）
+    // 时落回既有 SUSPECT→DEAD 流程，活有出路，不会僵死在 in_progress ——
+    // 那种「页面上看着在跑、实际没人做」比误杀更难发现。
+    // 宽限期取 45 分钟：真机实测单个词采收 17~25 分钟（逐个点进评论者主页核验身份）。
+    if (EXTERNAL_WATCHDOG_TYPES.has(task.task_type) && task.claimed_by && task.claimed_at) {
+      const claimAgeMs = Date.now() - new Date(task.claimed_at).getTime();
+      if (Number.isFinite(claimAgeMs) && claimAgeMs < EXTERNAL_CLAIM_GRACE_MS) {
+        suspectProcesses.delete(task.id);
+        continue;
+      }
+    }
+
+    // 外部执行体（openclaw-agent / script）：进程在 MMV / 跑场机上，本机三条 spawn 证据恒为空，
+    // 走下方 SUSPECT→DEAD 必然「零证据回队」——0929 秋米 87c9a08b 起 4 分钟即被回队，而 MMV 上
+    // agent 实际在跑。生死交给专属收割器（reapOpenclawAgentRuns / script-reaper 读远端 .exit）
+    // 与合同层超时（executor-contracts staleMinutes → zombie-reaper）。
+    // 旧device_job保留45分钟策略；独立手机controller由持久租约及远端退出/解锁回执收口。
+    if (isPhoneDispatchTask(task) || (isExternallyExecuted(task) && !EXTERNAL_WATCHDOG_TYPES.has(task.task_type))) {
+      suspectProcesses.delete(task.id);
       continue;
     }
 
@@ -4331,6 +4316,7 @@ async function probeTaskLiveness() {
     });
   }
 
+  externalStaleNoted.prune(new Set(result.rows.map((row) => row.id)));
   return actions;
 }
 
@@ -4520,12 +4506,13 @@ async function reAttachActiveExecutors(dbPool) {
  */
 async function syncOrphanTasksOnStartup() {
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, error_message, task_type
+    SELECT id, title, payload, started_at, error_message, task_type, executor_kind
     FROM tasks
     WHERE status = 'in_progress'
   `);
 
   let orphansFound = 0;
+  let externalSkipped = 0;
   let orphansFixed = 0;
   let requeued = 0;
   let rebuilt = 0;
@@ -4546,6 +4533,16 @@ async function syncOrphanTasksOnStartup() {
     // → 整个跳过，交给 harness-relay-watchdog 处理，不 requeue、不清 claim、不计数。
     if (task.payload?.orchestrator === 'skill-relay') {
       console.log(`[startup-sync] skip skill-relay task=${task.id} title="${task.title}"（归 harness-relay-watchdog 管）`);
+      continue;
+    }
+    // 外部执行体（device_job 在西安 Mac、openclaw-agent 秋米在 MMV、script 在跑场机）：
+    // 本机永远查不到进程，下方孤儿路径会在每次部署重启时把它回 queued 且不清 claimed_by
+    // → device_job 被中台 /api/schedule/claim 再领一次，同一活在真手机上重跑（0929 实证）。
+    // 不回队、不动 claim、不计孤儿，交给各自收割/对账（reaper 读远端 .exit；device_job 走运行期
+    // 认领新鲜度 + 超时兜底）。
+    if (isExternallyExecuted(task)) {
+      externalSkipped++;
+      console.log(`[startup-sync] skip external executor task=${task.id} type=${task.task_type} kind=${task.executor_kind || '-'}（进程不在本机，归专属收割/对账）`);
       continue;
     }
     if (LANGGRAPH_TYPES.has(task.task_type)) {
@@ -4656,18 +4653,10 @@ async function syncOrphanTasksOnStartup() {
           diagnostic_info: diagnostic_info,
         };
 
-        await pool.query(
-          `UPDATE tasks SET
-            status = 'failed',
-            error_message = $3,
-            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-          WHERE id = $1`,
-          [
-            task.id,
-            JSON.stringify({ error_details: errorDetails }),
-            `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
-          ]
-        );
+        await finalizeTask(pool, task.id, 'failed', {
+          set: { error_message: `[orphan_detected] reason=${reason} at ${new Date().toISOString()}` },
+          mergePayload: { error_details: errorDetails },
+        });
 
         // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
         import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
@@ -4683,8 +4672,8 @@ async function syncOrphanTasksOnStartup() {
     }
   }
 
-  console.log(`[startup-sync] Complete: orphans_found=${orphansFound} orphans_fixed=${orphansFixed} requeued=${requeued} rebuilt=${rebuilt}`);
-  return { orphans_found: orphansFound, orphans_fixed: orphansFixed, requeued, rebuilt };
+  console.log(`[startup-sync] Complete: orphans_found=${orphansFound} orphans_fixed=${orphansFixed} requeued=${requeued} rebuilt=${rebuilt} external_skipped=${externalSkipped}`);
+  return { orphans_found: orphansFound, orphans_fixed: orphansFixed, requeued, rebuilt, external_skipped: externalSkipped };
 }
 
 /**
@@ -4745,6 +4734,7 @@ export {
   isRunIdProcessAlive,
   isTaskProcessAlive,
   suspectProcesses,
+  externalStaleNoted,
   MAX_SEATS,
   INTERACTIVE_RESERVE,
   // v5: Watchdog integration

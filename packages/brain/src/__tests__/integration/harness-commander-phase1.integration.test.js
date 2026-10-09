@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from '../../../tests/helpers/lifecycle-attempt-fixture.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import pg from 'pg';
@@ -381,7 +382,7 @@ describe('migration 367 through the real PostgreSQL migration runner', () => {
     });
 
     const attempts = createAttemptStore(migrationPool);
-    await attempts.createAttempt({
+    await seedLifecycleAttempt(migrationPool, {
       id: attemptId,
       runId,
       hop: 1,

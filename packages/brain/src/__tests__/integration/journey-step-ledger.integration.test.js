@@ -1,21 +1,12 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import express from 'express';
 import request from 'supertest';
 
 let pool;
 let app;
-const migration373 = readFileSync(
-  new URL('../../../migrations/373_gp_ledger_data_knife.sql', import.meta.url),
-  'utf8',
-);
 
 beforeAll(async () => {
   pool = (await import('../../db.js')).default;
-  // The full integration job replays migration 350 in an idempotency test,
-  // which intentionally restores its historical NULL assertion refs. Reapply
-  // 373 so this route contract observes the production post-migration state.
-  await pool.query(migration373);
   const { default: router } = await import('../../routes/journeys.js');
   app = express();
   app.use(express.json());
@@ -26,9 +17,8 @@ describe('product journey-step ledger [PostgreSQL]', () => {
   it('returns a real four-zone cell ledger instead of a journey_features column error', async () => {
     const step = await pool.query(
       `SELECT id
-       FROM journey_steps
-       WHERE journey_id='ac2e35bc-849a-48cd-917f-79d15c5ac886'
-         AND step_number=1`,
+       FROM activities
+       WHERE id=(SELECT target_id FROM decisions WHERE source_ref='gp-ledger-phase3:nfr:gp-b:s1')`,
     );
     expect(step.rows).toHaveLength(1);
 

@@ -12,6 +12,7 @@ const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 const OTHER_ATTEMPT_ID = '33333333-3333-4333-8333-333333333333';
 const TASK_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const WORKER_ID = 'us-mac-m4';
+const DOCKER_ID = 'd'.repeat(64);
 const IMAGE_DIGEST = `cecelia/runner@sha256:${'a'.repeat(64)}`;
 const CREDENTIAL_ENVELOPE = Object.freeze({
   contract_version: 'credential-envelope/v1',
@@ -203,6 +204,7 @@ function dependencies(overrides = {}) {
     }),
   };
   const docker = {
+    verifyIdentity: vi.fn(async () => DOCKER_ID),
     prepare: vi.fn(async () => {
       events.push('docker.prepare');
       return {
@@ -237,6 +239,8 @@ function dependencies(overrides = {}) {
     }),
   };
   const resourceManager = {
+    resolveIdentity: vi.fn(async ({runtime}) => ({postgres:{...runtime.postgres,container_id:'a'.repeat(64)}})),
+    enforceLimits: vi.fn(async () => {}),
     provision: vi.fn(async () => {
       events.push('resource.provision');
       return {
@@ -288,6 +292,8 @@ function createRunner(deps) {
     credentialConsumer: deps.credentialConsumer,
     githubCredentialConsumer: deps.githubCredentialConsumer,
     resourceManager: deps.resourceManager,
+    assertLocalResources: deps.assertLocalResources ?? (async () => {}),
+    assertCanLaunch: deps.assertCanLaunch,
   });
 }
 
@@ -303,6 +309,7 @@ async function prepareAndStart(runner, input) {
 async function prepareAndStartContainer(docker, input) {
   const prepared = await docker.prepare(input);
   await docker.start({
+    role: input.role, hasPostgres: Boolean(input.runtimeNetwork), runId: input.runId, image: input.image,
     attemptId: input.attemptId,
     ...prepared,
     credential: input.credential,
@@ -912,6 +919,7 @@ describe('Fleet Worker Attempt runner', () => {
       credential_delivery_status: 'delivered',
     });
     deps.docker.inspect.mockResolvedValueOnce({ status: 'missing' });
+    deps.docker.verifyIdentity.mockImplementation(async ({cleanup}) => cleanup ? null : DOCKER_ID);
     const restarted = createRunner(deps);
 
     await restarted.reconcile();
@@ -975,6 +983,7 @@ describe('Fleet Worker Attempt runner', () => {
     await createRunner(deps).prepare(request());
     deps.stateStore.states.get(ATTEMPT_ID).status = 'starting';
     deps.docker.inspect.mockResolvedValueOnce({ status: 'missing' });
+    deps.docker.verifyIdentity.mockImplementation(async ({cleanup}) => cleanup ? null : DOCKER_ID);
     const restarted = createRunner(deps);
 
     await expect(restarted.start(ATTEMPT_ID, {
@@ -1370,6 +1379,7 @@ describe('Fleet Worker Attempt runner', () => {
       }));
 
       expect(deps.resourceManager.provision).toHaveBeenCalledWith({
+        role: 'evaluator',
         attemptId: ATTEMPT_ID,
         requirements: { postgres: true },
       });
@@ -1605,6 +1615,7 @@ describe('Fleet Worker Attempt runner', () => {
     await prepareAndStart(runner, postgresRequest);
 
     expect(deps.resourceManager.provision).toHaveBeenCalledWith({
+        role: 'evaluator',
       attemptId: ATTEMPT_ID,
       requirements: { postgres: true },
     });
@@ -1625,6 +1636,7 @@ describe('Fleet Worker Attempt runner', () => {
     const state = deps.stateStore.states.get(ATTEMPT_ID);
     expect(state.runtime_resources).toEqual({
       postgres: {
+        container_id: 'a'.repeat(64),
         container_name: `cecelia-pg-${ATTEMPT_ID}`,
         network_name: `cecelia-attempt-${ATTEMPT_ID}`,
         image_digest: `sha256:${'f'.repeat(64)}`,
@@ -1666,6 +1678,7 @@ describe('Fleet Worker Attempt runner', () => {
     const rawImageId = `sha256:${'b'.repeat(64)}`;
     const { createAttemptRunner } = loadAttemptRunner();
     const runner = createAttemptRunner({
+      assertLocalResources: async () => {},
       workspaceManager: deps.workspaceManager,
       docker: deps.docker,
       stateStore: deps.stateStore,
@@ -1853,6 +1866,7 @@ describe('Fleet Worker Attempt runner', () => {
       attemptId: ATTEMPT_ID,
       runtime: {
         postgres: {
+          container_id: 'a'.repeat(64),
           container_name: `cecelia-pg-${ATTEMPT_ID}`,
           network_name: `cecelia-attempt-${ATTEMPT_ID}`,
           image_digest: `sha256:${'f'.repeat(64)}`,
@@ -2275,6 +2289,7 @@ describe('Fleet Worker Attempt runner', () => {
         },
       },
     ]);
+    deps.docker.verifyIdentity.mockImplementation(async ({containerId,cleanup}) => cleanup && containerId === 'missing-owned-container' ? null : DOCKER_ID);
     const runner = createRunner(deps);
 
     const result = await runner.reconcile();
@@ -2299,7 +2314,7 @@ describe('Fleet Worker Attempt runner', () => {
     });
     expect(deps.resourceManager.release).toHaveBeenCalledWith({
       attemptId: ATTEMPT_ID,
-      runtime: ownedOrphan.runtime_resources,
+      runtime: {postgres:{...ownedOrphan.runtime_resources.postgres,container_id:'a'.repeat(64)}},
     });
     expect(deps.docker.remove).toHaveBeenCalledWith({
       containerId: 'unrecorded-owned-container',
@@ -2349,7 +2364,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       error.stderr = 'No such object: exact-attempt';
       throw error;
     });
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const docker = createDockerAdapter({ workerId: WORKER_ID, runCommand, runtimeRoot });
 
     try {
       await expect(docker.inspect({
@@ -2371,7 +2386,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     const runCommand = vi.fn(async () => {
       throw new Error(message);
     });
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const docker = createDockerAdapter({ workerId: WORKER_ID, runCommand, runtimeRoot });
 
     try {
       await expect(docker.inspect({
@@ -2532,11 +2547,12 @@ describe('Fleet Worker durable runtime adapters', () => {
     }
   });
 
-  it('removes the container and runtime when Docker omits the created id', async () => {
+  it('Docker创建响应缺ID时保留现场而非按名称删除', async () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
     const runCommand = vi.fn(async () => ({ stdout: '' }));
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       resolveMountSource: (source) => source,
@@ -2581,12 +2597,8 @@ describe('Fleet Worker durable runtime adapters', () => {
         credential: CREDENTIAL,
       })).rejects.toThrow(/attempt_container_id_missing/);
 
-      expect(runCommand).toHaveBeenCalledWith(
-        'docker',
-        ['rm', '-f', '--', `cecelia-fleet-${ATTEMPT_ID}`],
-        undefined,
-      );
-      expect(fs.existsSync(path.join(runtimeRoot, ATTEMPT_ID))).toBe(false);
+      expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
+      expect(fs.existsSync(path.join(runtimeRoot, ATTEMPT_ID))).toBe(true);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
@@ -2600,6 +2612,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       return { stdout: '' };
     });
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       resolveMountSource: (source) => source,
@@ -2639,30 +2652,31 @@ describe('Fleet Worker durable runtime adapters', () => {
       }).catch((caught) => caught);
 
       expect(error.message).toContain('attempt_container_rollback_failed');
-      expect(error.rollbackContainerId).toBe(`cecelia-fleet-${ATTEMPT_ID}`);
+      expect(error.rollbackContainerId).toBeUndefined();
+      expect(error.cleanupUnconfirmed).toBe(true);
       expect(fs.existsSync(path.join(runtimeRoot, ATTEMPT_ID))).toBe(true);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
   });
 
-  it('removes an owned runtime without calling Docker when reconciliation proves the container missing', async () => {
+  it('清理入口独立确认原容器ID缺失才移除runtime', async () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
     const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
     fs.mkdirSync(attemptRuntime, { recursive: true });
     fs.writeFileSync(path.join(attemptRuntime, 'task-bundle.json'), 'bounded prompt');
-    const runCommand = vi.fn();
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const runCommand = vi.fn(async()=>{throw Error('No such container');});
+    const docker = createDockerAdapter({ workerId: WORKER_ID, runCommand, runtimeRoot });
 
     try {
       await docker.remove({
-        containerId: 'already-missing',
+        containerId: DOCKER_ID,
         attemptId: ATTEMPT_ID,
         containerMissing: true,
       });
 
-      expect(runCommand).not.toHaveBeenCalled();
+      expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
       expect(fs.existsSync(attemptRuntime)).toBe(false);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
@@ -2677,11 +2691,11 @@ describe('Fleet Worker durable runtime adapters', () => {
     const runCommand = vi.fn(async () => {
       throw new Error('Error response from daemon: No such container: exact-attempt');
     });
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const docker = createDockerAdapter({ workerId: WORKER_ID, runCommand, runtimeRoot });
 
     try {
       await expect(docker.remove({
-        containerId: 'already-missing',
+        containerId: DOCKER_ID,
         attemptId: ATTEMPT_ID,
       })).resolves.toEqual({ removed: true });
       expect(fs.existsSync(attemptRuntime)).toBe(false);
@@ -2694,13 +2708,17 @@ describe('Fleet Worker durable runtime adapters', () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
     const runCommand = vi.fn(async (_command, args) => {
-      if (args[0] === 'create') return { stdout: 'container-created\n' };
+      if (args[0] === 'create') return { stdout: DOCKER_ID };
+      if (args[0] === 'inspect') return { stdout: JSON.stringify([{Id:DOCKER_ID,Name:`/cecelia-fleet-${ATTEMPT_ID}`,Image:`sha256:${'a'.repeat(64)}`,
+        Config:{Image:IMAGE_DIGEST,Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.worker_id':WORKER_ID,'cecelia.fleet.run_id':RUN_ID}}}]) };
+      if (args[0] === 'image') return { stdout:`sha256:${'a'.repeat(64)}` };
       return { stdout: '' };
     });
     const writeCredential = vi.fn(async () => undefined);
     const writeGitHubCredential = vi.fn(async () => undefined);
     const resolveMountSource = vi.fn((source) => `/canonical${source}`);
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       writeCredential,
@@ -2758,7 +2776,7 @@ describe('Fleet Worker durable runtime adapters', () => {
           DB_PASSWORD: 'secret',
           DB_NAME: 'acceptance_scratch',
         },
-      })).resolves.toEqual({ containerId: 'container-created' });
+      })).resolves.toEqual({ containerId: DOCKER_ID });
 
       expect(runCommand.mock.calls[0]).toEqual([
         'mkfifo',
@@ -2853,14 +2871,14 @@ describe('Fleet Worker durable runtime adapters', () => {
       expect(createArgs.join(' ')).not.toContain(CREDENTIAL.authJson);
       expect(createArgs.join(' ')).not.toContain(GITHUB_TOKEN);
       expect(createArgs).toEqual(expect.arrayContaining(['--user', 'root']));
-      expect(runCommand.mock.calls[4]).toEqual([
+      expect(runCommand.mock.calls.find(([,args])=>args[0]==='start')).toEqual([
         'docker',
-        ['start', 'cecelia-fleet-22222222-2222-4222-8222-222222222222'],
+        ['start', DOCKER_ID],
         undefined,
       ]);
       expect(writeGitHubCredential).not.toHaveBeenCalled();
       expect(writeCredential).toHaveBeenCalledWith(
-        `cecelia-fleet-${ATTEMPT_ID}`,
+        DOCKER_ID,
         '/tmp/cecelia-prompts/credential.fifo',
         CREDENTIAL.authJson,
       );
@@ -2868,7 +2886,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       expect(fs.existsSync(attemptRuntime)).toBe(true);
 
       await docker.remove({
-        containerId: 'container-created',
+        containerId: DOCKER_ID,
         attemptId: ATTEMPT_ID,
       });
 
@@ -2882,10 +2900,13 @@ describe('Fleet Worker durable runtime adapters', () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-evaluator-root-'));
     const runCommand = vi.fn(async (_command, args) => {
-      if (args[0] === 'create') return { stdout: 'evaluator-container\n' };
+      if (args[0] === 'create') return { stdout: DOCKER_ID+'\n' };
+      if (args[0] === 'inspect') return { stdout: JSON.stringify([{Id:DOCKER_ID,Name:`/cecelia-fleet-${ATTEMPT_ID}`,Image:`sha256:${'a'.repeat(64)}`,Config:{Image:IMAGE_DIGEST,Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.run_id':RUN_ID,'cecelia.fleet.worker_id':WORKER_ID}}}]) };
+      if (args[0] === 'image') return {stdout:`sha256:${'a'.repeat(64)}`};
       return { stdout: '' };
     });
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       writeCredential: vi.fn(async () => undefined),
@@ -2951,10 +2972,13 @@ describe('Fleet Worker durable runtime adapters', () => {
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-frozen-env-'));
     const startSha = '0dc4e3c07ff19a0ac95440723986bf3cb78580b2';
     const runCommand = vi.fn(async (_command, args) => {
-      if (args[0] === 'create') return { stdout: 'frozen-container\n' };
+      if (args[0] === 'create') return { stdout: DOCKER_ID+'\n' };
+      if (args[0] === 'inspect') return { stdout: JSON.stringify([{Id:DOCKER_ID,Name:`/cecelia-fleet-${ATTEMPT_ID}`,Image:`sha256:${'a'.repeat(64)}`,Config:{Image:IMAGE_DIGEST,Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.run_id':RUN_ID,'cecelia.fleet.worker_id':WORKER_ID}}}]) };
+      if (args[0] === 'image') return {stdout:`sha256:${'a'.repeat(64)}`};
       return { stdout: '' };
     });
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       writeCredential: vi.fn(async () => undefined),
@@ -3047,10 +3071,12 @@ describe('Fleet Worker durable runtime adapters', () => {
 
     try {
       expect(() => createDockerAdapter({
+    workerId: WORKER_ID,
         runtimeRoot,
         mountAccessPrincipal: 'operator allow everyone',
       })).toThrow(/attempt_runner_invalid_mount_access_principal/);
       expect(() => createDockerAdapter({
+    workerId: WORKER_ID,
         runtimeRoot,
         cleanupAccessPrincipal: '_cecelia allow everyone',
       })).toThrow(/attempt_runner_invalid_cleanup_access_principal/);
@@ -3181,6 +3207,7 @@ describe('Fleet claude 单链挂载（attempt d80312c0 Not logged in 案卷回�
     const deps = dependencies();
     const { createAttemptRunner } = loadAttemptRunner();
     const runner = createAttemptRunner({
+      assertLocalResources: async () => {},
       workspaceManager: deps.workspaceManager,
       docker: deps.docker,
       stateStore: deps.stateStore,
@@ -3209,6 +3236,7 @@ describe('Fleet claude 单链挂载（attempt d80312c0 Not logged in 案卷回�
     const deps = dependencies();
     const { createAttemptRunner } = loadAttemptRunner();
     const runner = createAttemptRunner({
+      assertLocalResources: async () => {},
       workspaceManager: deps.workspaceManager,
       docker: deps.docker,
       stateStore: deps.stateStore,
@@ -3241,11 +3269,15 @@ describe('Fleet claude 单链挂载（attempt d80312c0 Not logged in 案卷回�
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
     const runCommand = vi.fn(async (_command, args) => {
-      if (args[0] === 'create') return { stdout: 'container-created\n' };
+      if (args[0] === 'create') return { stdout: DOCKER_ID };
+      if (args[0] === 'inspect') return { stdout: JSON.stringify([{Id:DOCKER_ID,Name:`/cecelia-fleet-${ATTEMPT_ID}`,Image:`sha256:${'a'.repeat(64)}`,
+        Config:{Image:IMAGE_DIGEST,Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.worker_id':WORKER_ID,'cecelia.fleet.run_id':RUN_ID}}}]) };
+      if (args[0] === 'image') return { stdout:`sha256:${'a'.repeat(64)}` };
       return { stdout: '' };
     });
     const resolveMountSource = vi.fn((source) => `/canonical${source}`);
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       writeCredential: vi.fn(async () => undefined),
@@ -3331,4 +3363,303 @@ describe('worker 物化不覆盖已存在合同文件（r40 evaluator 候选被�
     expect(fs.readFileSync(path.join(ws, rel), 'utf8')).toBe('RED');
     fs.rmSync(ws, { recursive: true, force: true });
   });
+});
+
+
+describe('新增执行前本机资源复验', () => {
+  const lease = { owner: 'dispatcher-1', generation: 0 };
+  const denied = () => Object.assign(new Error('attempt_local_resources_unavailable'), { statusCode: 429 });
+  it('prepare拒绝发生在消费凭据和创建工作区之前', async () => {
+    const deps = dependencies({ assertLocalResources: vi.fn(async () => { throw denied(); }) });
+    await expect(createRunner(deps).prepare(request())).rejects.toMatchObject({ statusCode: 429 });
+    for (const fn of [deps.credentialConsumer.consume, deps.githubCredentialConsumer.consume,
+      deps.workspaceManager.prepare, deps.resourceManager.provision, deps.docker.prepare]) expect(fn).not.toHaveBeenCalled();
+  });
+  it('PG启动前重新复验，拒绝清理当前工作区', async () => {
+    const guard = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(denied());
+    const deps = dependencies({ assertLocalResources: guard });
+    const input = request({ runtime_resources: { postgres: true }, provider_spec: {
+      ...request().provider_spec, stdin: providerPrompt('generator', { runtime_resources: { postgres: true } }),
+    } });
+    await expect(createRunner(deps).prepare(input)).rejects.toMatchObject({ statusCode: 429 });
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledOnce();
+    expect(deps.resourceManager.provision).not.toHaveBeenCalled();
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
+  });
+  it.each(['prepared','starting'])('%s启动拒绝保留状态和凭据，恢复后同lease可启动', async (status) => {
+    const guard = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(denied()).mockResolvedValue(undefined);
+    const deps = dependencies({ assertLocalResources: guard });
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+    const state = await deps.stateStore.get(ATTEMPT_ID);
+    await deps.stateStore.save({ ...state, status });
+    deps.docker.inspect.mockResolvedValue({ status: 'created' });
+    await expect(runner.start(ATTEMPT_ID, lease)).rejects.toMatchObject({ statusCode: 429 });
+    expect((await deps.stateStore.get(ATTEMPT_ID)).status).toBe(status);
+    expect(deps.docker.start).not.toHaveBeenCalled();
+    await runner.start(ATTEMPT_ID, lease);
+    expect(deps.docker.start).toHaveBeenCalledOnce();
+    expect(deps.docker.start.mock.calls[0][0].credential).toEqual(CREDENTIAL);
+  });
+  it.each(['probe', 'save'])('%s期间取消，不得在返回后启动Docker', async (phase) => {
+    let enterPause; let releasePause;
+    const entered = new Promise((resolve) => { enterPause = resolve; });
+    const blocked = new Promise((resolve) => { releasePause = resolve; });
+    const guard = vi.fn(async () => {});
+    const deps = dependencies({ assertLocalResources: guard });
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+    const pause = async () => { enterPause(); await blocked; };
+    if (phase === 'probe') guard.mockImplementationOnce(pause);
+    else {
+      const originalSave = deps.stateStore.save.getMockImplementation();
+      deps.stateStore.save.mockImplementationOnce(async (state) => { await pause(); return originalSave(state); });
+    }
+    const starting = runner.start(ATTEMPT_ID, lease);
+    await entered;
+    const cancelling = runner.cancel(ATTEMPT_ID, lease);
+    await new Promise((resolve) => setImmediate(resolve));
+    releasePause();
+    await Promise.all([starting, cancelling]);
+    expect(deps.docker.start).not.toHaveBeenCalled();
+  });
+  it('错误lease在探针前拒绝', async () => {
+    const guard = vi.fn(async () => {});
+    const deps = dependencies({ assertLocalResources: guard });
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+    await expect(runner.start(ATTEMPT_ID, { owner: 'other', generation: 99 })).rejects.toThrow('attempt_lease_conflict');
+    expect(guard).toHaveBeenCalledOnce();
+  });
+  it('精确重复prepare与running start不重复复验', async () => {
+    const guard = vi.fn(async () => {});
+    const deps = dependencies({ assertLocalResources: guard });
+    const runner = createRunner(deps);
+    const input = request();
+    await Promise.all([runner.prepare(input), runner.prepare(input)]);
+    expect(guard).toHaveBeenCalledTimes(1);
+    await Promise.all([runner.start(ATTEMPT_ID, lease), runner.start(ATTEMPT_ID, lease)]);
+    await runner.prepare(input);
+    await runner.start(ATTEMPT_ID, lease);
+    expect(guard).toHaveBeenCalledTimes(2);
+    expect(deps.docker.start).toHaveBeenCalledOnce();
+  });
+});
+describe('Harness actual Docker hard limits', () => {
+  it('actual prepare applies shared role CPU/memory/swap/PID limits instead of caller limits', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-limits-'));
+    const runCommand = vi.fn(async () => ({ stdout: DOCKER_ID }));
+    const docker = createDockerAdapter({workerId: WORKER_ID, runtimeRoot:root,runCommand,resolveMountSource:source=>source});
+    const deps = dependencies(); const runner = createRunner(deps);
+    try {
+      await runner.prepare(request());
+      const input = deps.docker.prepare.mock.calls[0][0];
+      await docker.prepare({...input,limits:{cpus:100,memoryBytes:-1,pidsLimit:-1}});
+      const args = runCommand.mock.calls.find(([file,args])=>file==='docker'&&args[0]==='create')[1];
+      for(const [flag,value] of [['--cpus','2'],['--memory',String(4*1024**3)],['--memory-swap',String(4*1024**3)],['--pids-limit','512']]) {
+        expect(args[args.indexOf(flag)+1]).toBe(value);
+      }
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+  });
+  it('old prepared journal persists trusted limits before start and cannot use caller limits', async () => {
+    const deps = dependencies(); const runner = createRunner(deps); await runner.prepare(request());
+    const state = deps.stateStore.states.get(ATTEMPT_ID); delete state.resource_limits;
+    deps.docker.start.mockImplementation(async () => {
+      expect(deps.stateStore.states.get(ATTEMPT_ID).resource_limits.runner.memoryBytes).toBe(4*1024**3);
+      return {containerId: state.container_id};
+    });
+    await runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0,limits:{memoryBytes:-1}});
+    expect(deps.docker.start).toHaveBeenCalledWith(expect.objectContaining({role:'generator',hasPostgres:false}));
+  });
+});
+it('Docker adapter 默认缺少受信Worker profile时拒绝create，不能借payload workerId自授', async () => {
+  const { createDockerAdapter } = loadAttemptRunner();
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fleet-unknown-profile-'));
+  const runCommand=vi.fn(async()=>({stdout:'unexpected'}));
+  try {
+    const docker=createDockerAdapter({runtimeRoot:root,runCommand});
+    await expect(docker.prepare({workerId:WORKER_ID,role:'generator',limits:{memoryBytes:1}})).rejects.toThrow('attempt_resource_profile_unavailable');
+    expect(runCommand).not.toHaveBeenCalled();
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it('旧带PG的prepared记录先持久化总预算并限制sidecar，再启动runner', async () => {
+  const deps=dependencies(),runner=createRunner(deps);
+  await runner.prepare(request({runtime_resources:{postgres:true},provider_spec:{...request().provider_spec,
+    stdin:providerPrompt('generator',{runtime_resources:{postgres:true}})}}));
+  const state=deps.stateStore.states.get(ATTEMPT_ID);delete state.resource_limits;
+  const steps=[];
+  deps.resourceManager.enforceLimits.mockImplementation(async()=>{
+    expect(deps.stateStore.states.get(ATTEMPT_ID).resource_limits.postgres.memoryBytes).toBe(256*1024**2);steps.push('pg');
+  });
+  deps.docker.start.mockImplementation(async input=>{expect(input.hasPostgres).toBe(true);steps.push('runner');});
+  await runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0});
+  expect(steps).toEqual(['pg','runner']);
+});
+it('旧PG journal先核验并持久完整ID，再允许更新，保存失败零update', async()=>{
+  for(const failSave of [false,true]){
+    const deps=dependencies(),runner=createRunner(deps);
+    await runner.prepare(request({runtime_resources:{postgres:true},provider_spec:{...request().provider_spec,
+      stdin:providerPrompt('generator',{runtime_resources:{postgres:true}})}}));
+    const id='a'.repeat(64),steps=[];
+    deps.resourceManager.resolveIdentity=vi.fn(async({runtime})=>{steps.push('resolve');return {postgres:{...runtime.postgres,container_id:id}};});
+    const save=deps.stateStore.save;
+    deps.stateStore.save=async state=>{
+      if(state.runtime_resources?.postgres?.container_id===id){steps.push('persist');if(failSave)throw Error('identity_save_failed');}
+      return save(state);
+    };
+    deps.resourceManager.enforceLimits.mockImplementation(async({runtime})=>{
+      expect(deps.stateStore.states.get(ATTEMPT_ID).runtime_resources.postgres.container_id).toBe(id);
+      expect(runtime.postgres.container_id).toBe(id);steps.push('update');
+    });
+    const launch=runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0});
+    if(failSave){await expect(launch).rejects.toThrow('identity_save_failed');expect(deps.resourceManager.enforceLimits).not.toHaveBeenCalled();}
+    else{await launch;expect(steps.slice(0,3)).toEqual(['resolve','persist','update']);}
+  }
+});
+describe('Runner limit update verifies exact container authority',()=>{
+  const id='d'.repeat(64);
+  it.each(['short-id','wrong-attempt','wrong-worker','wrong-run','wrong-image','replacement'])('%s cannot update/start/write credentials',async scenario=>{
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'runner-identity-'));
+    const value={Id:id,Name:`/cecelia-fleet-${ATTEMPT_ID}`,Image:`sha256:${'a'.repeat(64)}`,
+      Config:{Image:IMAGE_DIGEST,Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.worker_id':WORKER_ID,'cecelia.fleet.run_id':RUN_ID}}};
+    if(scenario==='wrong-attempt')value.Config.Labels['cecelia.fleet.attempt_id']=OTHER_ATTEMPT_ID;
+    if(scenario==='wrong-worker')value.Config.Labels['cecelia.fleet.worker_id']='xian-mac-m4';
+    if(scenario==='wrong-run')value.Config.Labels['cecelia.fleet.run_id']=OTHER_ATTEMPT_ID;
+    if(scenario==='wrong-image')value.Config.Image=`sha256:${'f'.repeat(64)}`;
+    if(scenario==='replacement')value.Id='e'.repeat(64);
+    const runCommand=vi.fn(async()=>({stdout:JSON.stringify([value])})),writeCredential=vi.fn();
+    const docker=loadAttemptRunner().createDockerAdapter({workerId:WORKER_ID,runtimeRoot:root,runCommand,writeCredential});
+    try{
+      await expect(docker.start({attemptId:ATTEMPT_ID,runId:RUN_ID,image:IMAGE_DIGEST,containerId:scenario==='short-id'?'named-container':id,
+        role:'generator',credential:CREDENTIAL,credentialFifo:path.join(root,ATTEMPT_ID,'credential.fifo')})).rejects.toThrow('attempt_container_identity_unverified');
+      expect(runCommand.mock.calls.some(([,args])=>['update','start','rm'].includes(args[0]))).toBe(false);
+      expect(writeCredential).not.toHaveBeenCalled();
+    }finally{fs.rmSync(root,{recursive:true,force:true});}
+  });
+  it('identity failure inside start parks the attempt; cancel cannot remove an unverified ID',async()=>{
+    const deps=dependencies(),runner=createRunner(deps);await runner.prepare(request());
+    deps.docker.start.mockRejectedValueOnce(Error('attempt_container_identity_unverified'));
+    await expect(runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0})).rejects.toThrow('attempt_container_identity_unverified');
+    expect(deps.docker.remove).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({status:'quarantined',resource_identity_unverified:true});
+    await runner.cancel(ATTEMPT_ID,{owner:'dispatcher-1',generation:0});
+    expect(deps.docker.remove).not.toHaveBeenCalled();expect(deps.resourceManager.release).not.toHaveBeenCalled();
+  });
+});
+it('starting journal身份不明不能先按终态清理',async()=>{
+  const deps=dependencies(),runner=createRunner(deps);await runner.prepare(request());
+  deps.stateStore.states.get(ATTEMPT_ID).status='starting';
+  deps.docker.inspect.mockResolvedValue({status:'exited'});
+  deps.docker.verifyIdentity.mockRejectedValue(Error('attempt_container_identity_unverified'));
+  await expect(runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0})).rejects.toThrow('attempt_container_identity_unverified');
+  expect(deps.docker.remove).not.toHaveBeenCalled();
+});
+it('身份隔离落盘失败后本进程cancel仍不得误清理',async()=>{
+  const deps=dependencies(),runner=createRunner(deps);await runner.prepare(request());
+  deps.docker.verifyIdentity.mockRejectedValue(Error('attempt_container_identity_unverified'));
+  deps.stateStore.save.mockRejectedValueOnce(Error('journal_unavailable'));
+  await expect(runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0})).rejects.toThrow('journal_unavailable');
+  await runner.cancel(ATTEMPT_ID,{owner:'dispatcher-1',generation:0});
+  expect(deps.docker.remove).not.toHaveBeenCalled();expect(deps.resourceManager.release).not.toHaveBeenCalled();
+});
+describe('身份隔离写盘失败后重建Runner仍保护清理',()=>{
+  it.each(['cancel','reconcile','terminal'].flatMap(entry=>['runner','postgres'].map(resource=>({entry,resource}))))('$resource / $entry',async({entry,resource})=>{
+    const deps=dependencies(),runner=createRunner(deps);
+    await runner.prepare(request({runtime_resources:{postgres:true},provider_spec:{...request().provider_spec,
+      stdin:providerPrompt('generator',{runtime_resources:{postgres:true}})}}));
+    if(resource==='runner')deps.docker.verifyIdentity.mockRejectedValue(Error('attempt_container_identity_unverified'));
+    else deps.resourceManager.resolveIdentity.mockRejectedValue(Error('attempt_runtime_resource_owner_mismatch'));
+    deps.stateStore.save.mockRejectedValueOnce(Error('journal_unavailable'));
+    await expect(runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0})).rejects.toThrow('journal_unavailable');
+    expect(deps.stateStore.states.get(ATTEMPT_ID).resource_identity_unverified).toBeUndefined();
+    const restarted=createRunner(deps);
+    deps.docker.inspect.mockResolvedValue({status:'exited'});
+    const result=entry==='reconcile'?await restarted.reconcile():await restarted[entry](ATTEMPT_ID,{owner:'dispatcher-1',generation:0});
+    if(entry!=='reconcile')expect(result.status).toBe('quarantined');
+    expect(deps.docker.remove).not.toHaveBeenCalled();
+    expect(deps.resourceManager.release).not.toHaveBeenCalled();
+    expect(deps.resourceManager.releaseService).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+  });
+});
+it('真实Docker adapter历史清理允许无镜像journal与明确缺失，但拒绝未知探测失败',async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'runner-cleanup-identity-'));
+  const id='d'.repeat(64),oldImage=`sha256:${'f'.repeat(64)}`;
+  const runCommand=vi.fn(async(_file,args)=>({stdout:args[0]==='image'?oldImage:JSON.stringify([{Id:id,Name:`/cecelia-fleet-${ATTEMPT_ID}`,Image:oldImage,
+    Config:{Image:oldImage,Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.worker_id':WORKER_ID,'cecelia.fleet.run_id':RUN_ID}}}])}));
+  const docker=loadAttemptRunner().createDockerAdapter({workerId:WORKER_ID,runtimeRoot:root,runCommand});
+  const identity={attemptId:ATTEMPT_ID,runId:RUN_ID,containerId:id,cleanup:true};
+  try {
+    await expect(docker.verifyIdentity(identity)).resolves.toBe(id);
+    runCommand.mockRejectedValueOnce(Error(`Error: No such container: ${id}`));
+    await expect(docker.verifyIdentity(identity)).resolves.toBeNull();
+    runCommand.mockRejectedValueOnce(Error('Docker daemon unavailable'));
+    await expect(docker.verifyIdentity(identity)).rejects.toThrow('attempt_container_identity_unverified');
+    expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it('真实adapter remove拒绝完整ID但错误run归属，删除入口独立核验',async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'runner-remove-owner-'));
+  const runCommand=vi.fn(async()=>({stdout:JSON.stringify([{Id:DOCKER_ID,Name:`/cecelia-fleet-${ATTEMPT_ID}`,Image:IMAGE_DIGEST,
+    Config:{Image:IMAGE_DIGEST,Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.worker_id':WORKER_ID,'cecelia.fleet.run_id':OTHER_ATTEMPT_ID}}}])}));
+  try{
+    const docker=loadAttemptRunner().createDockerAdapter({workerId:WORKER_ID,runtimeRoot:root,runCommand});
+    await expect(docker.remove({attemptId:ATTEMPT_ID,runId:RUN_ID,containerId:DOCKER_ID})).rejects.toThrow('attempt_container_identity_unverified');
+    expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+it('Docker create响应丢失时真实adapter保留现场，Runner回滚隔离工作区且零按名删除',async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'runner-create-lost-'));
+  const runCommand=vi.fn(async(_file,args)=>{if(args[0]==='create')throw Error('create response lost');return {stdout:''};});
+  const docker=loadAttemptRunner().createDockerAdapter({workerId:WORKER_ID,runtimeRoot:root,runCommand,resolveMountSource:source=>source});
+  const deps=dependencies({docker}),runner=createRunner(deps);
+  try{
+    await expect(runner.prepare(request())).rejects.toThrow('attempt_launch_rollback_failed');
+    expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
+    expect(deps.workspaceManager.quarantine).toHaveBeenCalledOnce();
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(root,ATTEMPT_ID))).toBe(true);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+describe('Worker维护暂停的Attempt最终边界',()=>{
+ it('异步prepare资源采样后暂停，未消费凭据或准备工作区',async()=>{
+  let drain=false;const deps=dependencies({assertLocalResources:async()=>{drain=true;},assertCanLaunch:()=>{if(drain)throw Error('worker_draining');}});
+  await expect(createRunner(deps).prepare(request())).rejects.toThrow('worker_draining');
+  expect(deps.credentialConsumer.consume).not.toHaveBeenCalled();expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+ });
+ it('prepared状态写盘后暂停，零start并保留凭据与原容器；解除后正常重试',async()=>{
+  let drain=false;const deps=dependencies({assertCanLaunch:()=>{if(drain)throw Error('worker_draining');}}),runner=createRunner(deps);await runner.prepare(request());
+  const save=deps.stateStore.save;deps.stateStore.save=async state=>{const result=await save(state);if(state.status==='starting')drain=true;return result;};
+  await expect(runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0})).rejects.toThrow('worker_draining');
+  expect(deps.docker.start).not.toHaveBeenCalled();expect(deps.docker.remove).not.toHaveBeenCalled();
+  drain=false;deps.stateStore.save=save;deps.docker.inspect.mockResolvedValue({status:'created'});
+  await expect(runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0})).resolves.toMatchObject({status:'running'});expect(deps.docker.start).toHaveBeenCalledTimes(1);
+ });
+ it('docker adapter最终暂停拒绝start，不删除尚未投递的FIFO',async()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'drain-fifo-'));try{const own=path.join(dir,ATTEMPT_ID);fs.mkdirSync(own);const fifo=path.join(own,'credential.fifo');fs.writeFileSync(fifo,'fixture');const runCommand=vi.fn();
+   const adapter=loadAttemptRunner().createDockerAdapter({runtimeRoot:dir,runCommand,assertCanLaunch:()=>{throw Error('worker_draining');}});
+   await expect(adapter.start({attemptId:ATTEMPT_ID,containerId:'existing',credentialFifo:fifo,credential:CREDENTIAL})).rejects.toThrow('worker_draining');expect(fs.existsSync(fifo)).toBe(true);expect(runCommand).not.toHaveBeenCalled();
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+ });
+});
+it.each(['state-and-remove','postgres-unknown','workspace-unknown'])('prepare副作用后%s失败且无journal时maintenance保守未决',async(mode)=>{
+ const deps=dependencies();
+ if(mode==='state-and-remove'){
+  deps.stateStore.save.mockRejectedValue(Error('disk_full'));
+  deps.docker.remove.mockRejectedValue(Error('docker_unavailable'));
+ }else if(mode==='postgres-unknown'){
+  deps.resourceManager.provision.mockRejectedValue(Error('command_result_lost'));
+ }else deps.workspaceManager.prepare.mockRejectedValue(Error('workspace_result_lost'));
+ const runner=createRunner(deps),input=mode==='postgres-unknown'?request({runtime_resources:{postgres:true},provider_spec:{...request().provider_spec,stdin:providerPrompt('evaluator',{runtime_resources:{postgres:true}})},target:{...request().target,role:'evaluator'}}):request();
+ await expect(runner.prepare(input)).rejects.toThrow();expect(await deps.stateStore.list()).toEqual([]);
+ await expect(runner.maintenance()).rejects.toThrow('worker_maintenance_unconfirmed');
+ await runner.reconcile();await expect(runner.maintenance()).rejects.toThrow('worker_maintenance_unconfirmed');
+});
+
+it('副作用前drain拒绝不会将干净Worker永久标记未决',async()=>{
+ const deps=dependencies();deps.assertCanLaunch=()=>{throw Error('worker_draining');};const runner=createRunner(deps);
+ await expect(runner.prepare(request())).rejects.toThrow('worker_draining');expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+ expect(await runner.maintenance()).toEqual({pending:0});
 });

@@ -1,8 +1,12 @@
 import express from 'express';
 import pool from '../db.js';
 import { computeProgress } from '../advancement-progress.js';
+import { sendGoldenPathRetired, guardLegacyRead } from '../lib/golden-path-legacy.js';
+
+import { observeGoldenPathLegacy } from '../lib/golden-path-observation.js';
 
 const router = express.Router();
+router.use(observeGoldenPathLegacy);
 
 const ABILITY_KINDS = ['ability', 'feature'];
 const ABILITY_STATUS = ['working', 'broken', 'planned', 'building', 'done', 'deprecated'];
@@ -114,20 +118,8 @@ router.post('/decisions', async (req, res) => {
       if (!exists.rows.length)
         return res.status(400).json({ error: `target_id not found in journey_features: ${target_id}` });
     }
-    // target_type=golden_path 时 target_id 必须真实存在于 golden_path（step 级 NFR 决策不可悬空）
-    if (target_type === 'golden_path') {
-      if (!target_id)
-        return res.status(400).json({ error: 'target_id is required when target_type=golden_path' });
-      let exists;
-      try {
-        exists = await pool.query('SELECT id FROM golden_path WHERE id=$1', [target_id]);
-      } catch {
-        // 非法 uuid 格式 → 视为不存在的 target_id（400 而非 500）
-        return res.status(400).json({ error: `invalid target_id: ${target_id}` });
-      }
-      if (!exists.rows.length)
-        return res.status(400).json({ error: `target_id not found in golden_path: ${target_id}` });
-    }
+    // 应急窗口只读：旧步骤不再承接新决策。
+    if (target_type === 'golden_path') return sendGoldenPathRetired(res, { write: true });
     const { rows } = await pool.query(
       `INSERT INTO decisions (category, topic, decision, reason, level, target_type, target_id, scope)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
@@ -157,11 +149,14 @@ router.get('/abilities/:id/decisions', async (req, res) => {
   }
 });
 
-// ---------- golden_path（唯一正模型：每个 Task 一条 Golden Path，owner_task_id + order_no + feature_id）----------
+// ---------- golden_path（L4 step 旧表，已退役——任务 7d312fd8）----------
+// 真身：steps / journey_step_links / step_probes（GET /api/brain/steps）。
+// 写路由一律 410；读路由默认 410，GOLDEN_PATH_LEGACY_READ=1 放行（lib/golden-path-legacy.js）。
 
 // GET /api/brain/golden_path?owner_task_id=...  — 列某 task 整条 golden path 的步骤（按 order_no）
 router.get('/golden_path', async (req, res) => {
   try {
+    if (guardLegacyRead(res)) return;
     const { owner_task_id, limit = 200 } = req.query;
     const params = [];
     const clauses = [];
@@ -178,53 +173,91 @@ router.get('/golden_path', async (req, res) => {
   }
 });
 
-// POST /api/brain/golden_path — 建一条 golden path 步（带 owner_task 存在性校验，不可悬空）
-router.post('/golden_path', async (req, res) => {
+// POST /api/brain/golden_path — 写路径已退役：一律 410（步骤真身走 steps 表 + sync-steps-from-workspace）
+router.post('/golden_path', (_req, res) => sendGoldenPathRetired(res, { write: true }));
+
+// ---------- 件7：map↔画布对齐（map=SSOT，决策 e66cf847）----------
+
+// GET /api/brain/golden_path/canvas?owner_task_id=...
+//   只读画布生成器：golden_path（L4 step，order_no）→ n8n V4 骨架 stages JSON。
+//   V4 黄金格式 {id, skill, label, objective, index, max_attempts}（源自 AwrSocialLeadgenV4 冻结合同节点），
+//   扩展 step_id/feature_id/order_no/maturity/last_run——stage 必须显式携带 step_id，
+//   回写按 step_id 对号入座（name 会改、order_no 会插队）。
+//   index 用数组位置（连续 1..N），V4 画布按 ctx.stages[i] 下标取格；order_no 保留原值。
+//   不写 n8n：画布热更由调用方走 n8n 公共 REST（deactivate/activate），禁 import:workflow（掉 webhook）。
+router.get('/golden_path/canvas', async (req, res) => {
   try {
-    const { owner_task_id, order_no, feature_id, note } = req.body;
-    if (!owner_task_id || order_no == null)
-      return res.status(400).json({ error: 'owner_task_id, order_no are required' });
-    // owner_task_id 必须真实存在于 tasks（非法 uuid → 400 而非 500）
-    let taskExists;
+    if (guardLegacyRead(res)) return;
+    const { owner_task_id } = req.query;
+    if (!owner_task_id)
+      return res.status(400).json({ error: 'owner_task_id is required' });
+    let taskRows;
     try {
-      taskExists = await pool.query('SELECT id FROM tasks WHERE id=$1', [owner_task_id]);
-    } catch {
-      return res.status(400).json({ error: `invalid owner_task_id: ${owner_task_id}` });
+      ({ rows: taskRows } = await pool.query(
+        'SELECT id, title FROM tasks WHERE id=$1', [owner_task_id]
+      ));
+    } catch (err) {
+      if (err.code === '22P02')
+        return res.status(400).json({ error: `invalid owner_task_id: ${owner_task_id}` });
+      throw err;
     }
-    if (!taskExists.rows.length)
-      return res.status(400).json({ error: `owner_task_id not found in tasks: ${owner_task_id}` });
+    if (!taskRows.length)
+      return res.status(404).json({ error: `owner_task_id not found in tasks: ${owner_task_id}` });
     const { rows } = await pool.query(
-      `INSERT INTO golden_path (owner_task_id, order_no, feature_id, note)
-       VALUES ($1,$2,$3,$4) RETURNING *`,
-      [owner_task_id, order_no, feature_id || null, note || null]
+      `SELECT gp.id, gp.order_no, gp.note,
+              jf.id AS feature_id, jf.name AS feature_name, jf.workflow_ref,
+              jf.thickness, jf.status AS feature_status,
+              r.run_id AS last_run_id, r.verdict AS last_verdict, r.created_at AS last_run_at
+       FROM golden_path gp
+       LEFT JOIN journey_features jf ON jf.id = gp.feature_id
+       LEFT JOIN LATERAL (
+         SELECT run_id, verdict, created_at
+         FROM golden_path_run_receipts
+         WHERE golden_path_id = gp.id
+         ORDER BY created_at DESC LIMIT 1
+       ) r ON true
+       WHERE gp.owner_task_id = $1
+       ORDER BY gp.order_no ASC`,
+      [owner_task_id]
     );
-    res.status(201).json(rows[0]);
+    if (!rows.length)
+      return res.status(404).json({ error: `no golden_path steps for owner_task_id: ${owner_task_id}` });
+    const stages = rows.map((row, i) => ({
+      id: `step-${i + 1}`,
+      index: i + 1,
+      order_no: row.order_no,
+      step_id: row.id,
+      feature_id: row.feature_id,
+      skill: row.workflow_ref || null,
+      label: row.feature_name || row.note || `step-${i + 1}`,
+      objective: row.note || '',
+      max_attempts: 2,
+      maturity: row.thickness || null,
+      feature_status: row.feature_status || null,
+      last_run: row.last_run_id
+        ? { run_id: row.last_run_id, verdict: row.last_verdict, at: row.last_run_at }
+        : null,
+    }));
+    res.json({
+      source: 'golden_path',
+      schema_version: 1,
+      owner_task_id,
+      canvas_name: taskRows[0].title,
+      total_steps: stages.length,
+      stages,
+      generated_at: new Date().toISOString(),
+    });
   } catch (err) {
-    console.error('[abilities] POST /golden_path error:', err.message);
+    console.error('[abilities] GET /golden_path/canvas error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// PATCH /api/brain/golden_path/:id
-router.patch('/golden_path/:id', async (req, res) => {
-  try {
-    const { order_no, feature_id, note } = req.body;
-    const sets = [], vals = []; let idx = 1;
-    if (order_no != null) { sets.push(`order_no=$${idx++}`);   vals.push(order_no); }
-    if (feature_id)       { sets.push(`feature_id=$${idx++}`); vals.push(feature_id); }
-    if (note != null)     { sets.push(`note=$${idx++}`);       vals.push(note); }
-    if (!sets.length) return res.status(400).json({ error: 'no fields to update' });
-    vals.push(req.params.id);
-    const { rows } = await pool.query(
-      `UPDATE golden_path SET ${sets.join(',')} WHERE id=$${idx} RETURNING *`, vals
-    );
-    if (!rows.length) return res.status(404).json({ error: 'not found' });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error('[abilities] PATCH /golden_path/:id error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
+// POST /api/brain/golden_path/:id/run-result — 旧回执写路径永久退役，应急读 flag 不放行。
+router.post('/golden_path/:id/run-result', (_req, res) => sendGoldenPathRetired(res, { write: true }));
+
+// PATCH /api/brain/golden_path/:id — 写路径已退役：一律 410
+router.patch('/golden_path/:id', (_req, res) => sendGoldenPathRetired(res, { write: true }));
 
 // ---------- golden_path 决策读回视图（step 级 NFR 验收单）----------
 
@@ -232,6 +265,7 @@ router.patch('/golden_path/:id', async (req, res) => {
 //   无匹配返回空数组（200，不报错）
 router.get('/golden_path/:id/decisions', async (req, res) => {
   try {
+    if (guardLegacyRead(res)) return;
     const { scope, category } = req.query;
     const params = [req.params.id];
     let sql = `SELECT * FROM decisions WHERE target_type='golden_path' AND target_id=$1`;
@@ -251,6 +285,7 @@ router.get('/golden_path/:id/decisions', async (req, res) => {
 //   每行附 order_no 便于按步骤顺序读；无匹配返回空数组（200，不报错）
 router.get('/tasks/:id/golden-path-decisions', async (req, res) => {
   try {
+    if (guardLegacyRead(res)) return;
     const { category, scope } = req.query;
     const params = [req.params.id];
     let sql = `
@@ -278,6 +313,7 @@ router.get('/tasks/:id/golden-path-decisions', async (req, res) => {
 //   无匹配返回空数组（200，不报错）。
 router.get('/journeys/:journey_id/golden-paths', async (req, res) => {
   try {
+    if (guardLegacyRead(res)) return;
     const { status } = req.query;
     if (status && !ABILITY_STATUS.includes(status))
       return res.status(400).json({ error: `status must be one of: ${ABILITY_STATUS.join(',')}` });
