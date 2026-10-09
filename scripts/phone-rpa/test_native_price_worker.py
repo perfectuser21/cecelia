@@ -1,7 +1,7 @@
 import unittest
 import xml.etree.ElementTree as E
 from native_price_phone import text_values, parse_hd_detail, extract_asin, price_candidates, validate_request, PhoneSession
-from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search, search_entry, amazon_seller, public_report, search_hd, initial_hd_result, airship_close_button
+from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search, search_entry, amazon_seller, public_report, search_hd, initial_hd_result, airship_close_button, held_worker
 
 def nodes(values, package='com.thehomedepot'):
     root=E.Element('hierarchy')
@@ -49,6 +49,33 @@ class NativePriceTests(unittest.TestCase):
         extra=nodes(['another control'])[0];extra.set('clickable','true')
         self.assertIsNone(airship_close_button(ns+[extra]))
         ns[1].set('bounds','[20,1400][100,1550]');self.assertIsNone(airship_close_button(ns))
+    def test_network_probe_retries_once_and_validates_country(self):
+        import unittest.mock
+        session=object.__new__(PhoneSession);calls=[]
+        def adb(*args,**kwargs):
+            calls.append(args)
+            if len(calls)==1:raise TimeoutError('probe timeout')
+            return 'HTTP/1.1 200 OK\r\n\r\n{"status":"success","query":"192.0.2.1","countryCode":"CN"}'
+        session.adb=adb
+        with unittest.mock.patch('native_price_phone.time.sleep'):
+            self.assertEqual(session.current_ip()['countryCode'],'CN')
+        self.assertEqual(len(calls),2)
+    def test_initial_probe_failure_preserves_reason_and_verifies_unchanged_none(self):
+        import tempfile
+        from pathlib import Path
+        class Fake:
+            owner='owner';initial_exit_none=True;restore_allowed=False
+            def check(self):return 'state=device call_state=idle foreground=launcher'
+            def exit_node(self,*a,**kw):raise RuntimeError('ip-api.com probe timeout')
+            def nodes(self,*a):return nodes(['Connected','None'],'com.tailscale.ipn'),'/unchanged.xml'
+            def ctl(self,*a):return ''
+        fake=Fake()
+        with tempfile.TemporaryDirectory() as folder:
+            fake.root=Path(folder)
+            report=held_worker({'keyword':'drill','count':1,'zip':'53132','owner':'owner'},fake)
+        self.assertTrue(report['network_unchanged'])
+        self.assertFalse(report['network_restored'])
+        self.assertEqual(report['blocking_reason'],'ip-api.com probe timeout')
     def test_attributes_not_itertext(self):
         self.assertEqual(text_values(nodes(['Brand drill','53132'])),['Brand drill','53132'])
     def test_hd_dynamic_model_id_and_prices_keep_context(self):
@@ -80,6 +107,12 @@ class NativePriceTests(unittest.TestCase):
         result=dispatch({'keyword':'drill','zip':'53132','count':1,'owner':'owner'},runner)
         self.assertEqual(sum('with-lock' in c for c in calls),1)
         self.assertTrue(result['lock_free_verified'])
+        def broken(args,**kwargs):
+            if 'with-lock' in args:return '{"raw_quotes":[],"blocking_reason":"original probe timeout","network_restored":false,"home_verified":true}'
+            return 'lock=free state=device call_state=idle foreground=launcher'
+        failed=dispatch({'keyword':'drill','zip':'53132','count':1,'owner':'owner'},broken)
+        self.assertEqual(failed['blocking_reason'],'original probe timeout')
+        self.assertIn('safety_error',failed)
         self.assertGreater(next(i for i,c in enumerate(calls) if 'with-lock' in c),0)
     def test_dispatch_rejects_existing_lock_without_starting_worker(self):
         calls=[]

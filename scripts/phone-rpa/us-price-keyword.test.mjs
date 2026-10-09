@@ -176,3 +176,8 @@ test('空报价保留原始阻塞原因，失败标准receipt覆盖旧可见摘�
  const patch=failurePatch({result:{receipt:{text:'old'},evidence:{old:true}}},'搜索框加载超时','/run',[]);
  assert.match(patch.result.receipt.finalAssistantVisibleText,/搜索框加载超时/);assert.equal(patch.result.evidence.old,true);
 });
+
+test('安全收尾失败优先保留原始探针错误',()=>{
+ const r=receipt(),report=JSON.parse(r.result.payloads[0].text);report.quotes=[];report.network_restored=false;report.blocking_reason='ip-api.com probe timeout';r.result.payloads[0].text=JSON.stringify(report);
+ assert.throws(()=>validateReceipt(r,options),/ip-api.com probe timeout/);
+});
