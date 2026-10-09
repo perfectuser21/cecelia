@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.393.2
+**Brain 版本**: 1.395.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,21 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.395.0 — coding harness 合同对抗 v2：QA 立场、带场景的问题、代码判分、不限轮数按走势收敛
+
+- 决策 02d8e749 / 696c9f96：恢复已拍板的 GAN 设计——不设轮数上限，靠走势收敛（原 spec_review 写死最多 2 轮，违反 harness-gan-design）。
+- spec_review 改为 QA 立场：只准提四类问题（做了也达不到 / 漏了真实路径 / 偷换需求 / 弄坏现有功能），每个问题带 针对、严重度（阻断/重要/建议）、场景、依据；阻断/重要缺场景或依据判评审不合格；措辞格式类不算问题。
+- 每轮 5 维评分（意图对齐/可验证/场景覆盖/回归风险/可执行，0–10），程序判通过：5 维都 ≥7 且没有仍开着的阻断/重要问题（lib/gan.mjs decide），不信 AI 自报结论。
+- 开发方逐条采纳/驳回（02-response-rN.md），QA 下一轮对上轮仍开着的问题逐条 关闭/坚持；坚持的仍算开着。
+- 收敛：lib/gan.mjs detectTrend 移植 harness-gan.graph.js detectConvergenceTrend（最近 3 轮震荡/走低；规格连续变长且总分没涨算发散），发散/震荡 → 强制通过（gan.verdict=FORCED）+ `[coding-gan][P1]` + outputs.escalations 升级给 coding commander。
+- 只有真坏掉才中止：评审连续 3 次格式不合格（review_invalid）、累计花费超 CODING_WF_GAN_BUDGET_USD（默认 $20，gan_budget_exceeded）、claude 失败、越界写、01 被改。spec_review 时间预算 1800s → 21600s。
+- 每轮留 02-review-rN.md / 02-response-rN.md，最终一轮另存 02-review.md；PR 正文「合同对抗」小节写轮数、结论与走势、最终评分、末轮问题严重度，强制通过醒目标出仍开着的问题；report 把 gan 摘要与 escalations 回写 Brain result.coding_workflow。
+
+## Brain 1.394.0 — 仓库物件故障处置读写（技能工厂第③棒）
+
+- `GET /enablers`（`/warehouse-items`）多返回 `shelf`、`failure_semantics`，`?keys=a,b` 一次取多件；`POST /enablers` 新建仓库物件（货架 / kind 按表约束校验，key 重复 409）；`PATCH /enablers/:key` 写故障处置（rows 非空、class 为 empty_ok / retryable / fatal / needs_human）；`GET /activity_uses?activity_id=` 取 Activity 依赖的物件及处置。
+- `failure_semantics` 列为 text：按 JSON 文本存，读出能解析给对象、旧纯文本原样给；不改表结构。新增 enablers-failure-semantics smoke（写操作仅 CI 执行）。
 
 ## Brain 1.393.1 — 消费者来源历史拒绝执行
 
