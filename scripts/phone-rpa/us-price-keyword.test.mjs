@@ -81,3 +81,11 @@ test('Notion附件采用上传文件ID', () => {
   const p = notionProperties({...quote, evidence_file_id:'upload1'}, options, 't','r','model','proof');
   assert.equal(p.证据.files[0].file_upload.id, 'upload1');
 });
+test('任务登记归属有头执行，原子claim失败时不得更新状态', async () => {
+  const { buildTask, claimTask } = await import('./us-price-keyword-core.mjs');
+  assert.equal(buildTask(options).payload.headed_manual, true);
+  assert.equal(buildTask(options).task_type, 'research');
+  const calls=[];
+  await assert.rejects(claimTask('t1','owner',async (p,m,b) => { calls.push(p); throw Error('409'); }));
+  assert.deepEqual(calls,['/tasks/t1/claim']);
+});
