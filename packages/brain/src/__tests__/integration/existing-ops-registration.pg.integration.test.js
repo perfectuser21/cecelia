@@ -32,7 +32,9 @@ it('factory source anchor plan preserves fields and rejects foreign or incomplet
   }
 });
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
-const revision = '8916df494e3f6d02c3c9e9f8979e86e4d86fbd80';
+// Freeze the actual checkout once: hosted CI deliberately has shallow history.
+// This is test input provenance, never a claim that the candidate is trusted main.
+const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 const paths = execFileSync('git', ['ls-tree', '-rz', '--name-only', revision], { cwd: root, encoding: 'utf8' }).replace(/\0$/, '').split('\0');
 const cache = new Map();
 const readSource = async path => {
