@@ -162,3 +162,9 @@ test('商品URL为可选字段，同规格同ZIP真实两平台可完成但错�
   report.quotes[0].url='https://evil.com/product';r.result.payloads[0].text=JSON.stringify(report);
   assert.throws(()=>validateReceipt(r,{...options,count:1}));
 });
+
+test('owner只含字母数字，不受共享controller重试后缀归一化影响',async()=>{
+ const {buildOwner}=await import('./us-price-keyword-core.mjs');
+ const owner=buildOwner('dc6ccdbf-e603-4f13-b3f1-a9ffbf5574e5','317d7099-55a2-4b26-a506-0b0901d5f44a');
+ assert.match(owner,/^price[A-Za-z0-9]+$/);assert.ok(!owner.includes('-a506-'));
+});

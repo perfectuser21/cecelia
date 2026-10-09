@@ -31,7 +31,7 @@ class NativePriceTests(unittest.TestCase):
         self.assertIsNone(extract_asin('generic keyword no ID'))
     def test_request_is_bounded_zip_explicitly_limited(self):
         validate_request({'keyword':'cordless drill','zip':'53132','count':3,'owner':'phone-price-test'})
-        for patch in [{'zip':'10001'},{'count':4},{'owner':'../unsafe'}]:
+        for patch in [{'zip':'10001'},{'count':4},{'owner':'../unsafe'},{'owner':'owner-a506-suffix'},{'owner':'owner_a3_suffix'},{'owner':'owner-w2'},{'owner':'owner:x'}]:
             with self.assertRaises(ValueError):validate_request({'keyword':'drill','zip':'53132','count':1,'owner':'owner',**patch})
     def test_dispatch_holds_exactly_one_lock_and_verifies_after_release(self):
         calls=[]
