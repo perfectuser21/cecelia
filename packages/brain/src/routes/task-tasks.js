@@ -37,6 +37,8 @@ const TERMINAL_STATUSES = ['completed', 'cancelled'];
 const ACTIVE_DEDUP_STATUSES = ['queued', 'in_progress', 'blocked', 'paused'];
 // 名单见 lib/task-type-registry.js（CODING_MUTATION_TASK_TYPES）。
 const CODING_MUTATION_TASK_TYPES = new Set(_CM);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const INVALID_TASK_ID = { error: 'Invalid task id: must be a UUID' };
 
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
 router.post('/', async (req, res) => {
@@ -430,6 +432,7 @@ router.get('/', async (req, res) => {
 
 // GET /tasks/:id — 获取单个 task
 router.get('/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json(INVALID_TASK_ID);
   try {
     const result = await pool.query(
       'SELECT * FROM tasks WHERE id = $1',
@@ -440,6 +443,7 @@ router.get('/:id', async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (err) {
+    if (err.code === '22P02') return res.status(400).json(INVALID_TASK_ID);
     res.status(500).json({ error: 'Failed to get task', details: err.message });
   }
 });
