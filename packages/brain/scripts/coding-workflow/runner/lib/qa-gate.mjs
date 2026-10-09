@@ -64,7 +64,7 @@ async function report(ctx, taskId, s) {
 }
 
 /** 升级给 coding commander：记状态、P1 日志、回写 Brain；之后本 PR 不再自动处理。 */
-async function escalate(ctx, pr, s, taskId, detail) {
+export async function escalate(ctx, pr, s, taskId, detail) {
   s.escalated = { ...detail, pr: pr.number, at: new Date().toISOString() };
   ctx.log(`[coding-qa][P1] PR #${pr.number} QA 门升级给 coding commander：${detail.type} ${JSON.stringify(detail)}`);
   writeState(ctx.cfg, pr.number, s);
@@ -322,7 +322,8 @@ async function qaRound(ctx, pr, s, signal) {
     }
     await commit(`docs(qa): 第 ${round} 轮真人 QA ${qa.verdict}`);
     if (qa.verdict === 'PASS') {
-      await approve(s, entry, worktree);
+      // 裁判是合并的必要条件（审计 #32）：关掉裁判时不批准，交人审
+      return escalate(ctx, pr, s, intent.taskId, { type: 'judge_disabled', round });
     } else {
       const stall = stalled(s);
       if (stall) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_stalled', fails: stall });

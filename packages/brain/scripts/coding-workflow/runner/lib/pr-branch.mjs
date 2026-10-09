@@ -65,7 +65,33 @@ export async function preparePrWorktree(cfg, pr, worktree, signal) {
   await installDeps(cfg, worktree, signal);
 }
 
-/** claude 修复后的核对：工作区干净、有新提交、只追加不改写、不碰受保护路径。通过返回 { commits }，否则抛 Error(reason_code)。 */
+// 修复环节不得靠削弱测试变绿（审计 #31，对应旧 generator「CONTRACT IS LAW」）
+const TEST_FILE_RE = /(^|\/)(__tests__|tests?)\/|\.(test|spec)\.[cm]?[jt]sx?$/;
+const SKIP_RE = /\b(?:it|test|describe)\.(?:skip|only|todo)\s*\(|\bx(?:it|describe)\s*\(/;
+const ASSERT_RE = /\bexpect\s*\(|\bassert(?:\.\w+)?\s*\(/g;
+
+const assertCount = (text) => (text.match(ASSERT_RE) ?? []).length;
+
+/** before..head 是否删了测试文件、在测试里加了 skip/only/todo、或减少了断言。 */
+async function weakenedTests(worktree, before, head) {
+  const status = (await git(worktree, ['diff', '--name-status', `${before}..${head}`])).stdout.split('\n').filter(Boolean);
+  for (const line of status) {
+    const [kind, file] = line.split('\t');
+    if (!TEST_FILE_RE.test(file ?? '')) continue;
+    if (kind === 'D') return true;
+    const added = (await git(worktree, ['diff', '-U0', `${before}..${head}`, '--', file])).stdout
+      .split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'));
+    if (added.some((l) => SKIP_RE.test(l))) return true;
+    if (kind === 'M') {
+      const old = (await git(worktree, ['show', `${before}:${file}`])).stdout;
+      const now = (await git(worktree, ['show', `${head}:${file}`])).stdout;
+      if (assertCount(now) < assertCount(old)) return true;
+    }
+  }
+  return false;
+}
+
+/** claude 修复后的核对：工作区干净、有新提交、只追加不改写、不碰受保护路径、不削弱测试。通过返回 { commits }，否则抛 Error(reason_code)。 */
 export async function checkFixCommits(worktree, before) {
   if ((await git(worktree, ['status', '--porcelain'])).stdout.trim()) throw stop('uncommitted');
   const head = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
@@ -73,6 +99,7 @@ export async function checkFixCommits(worktree, before) {
   if ((await git(worktree, ['merge-base', '--is-ancestor', before, head])).code !== 0) throw stop('history_rewritten');
   const changed = (await git(worktree, ['diff', '--name-only', `${before}..${head}`])).stdout.split('\n').filter(Boolean);
   if (changed.some((f) => PROTECTED_RE.test(f))) throw stop('protected_path');
+  if (await weakenedTests(worktree, before, head)) throw stop('test_weakened');
   const log = await git(worktree, ['rev-list', '--reverse', `${before}..${head}`]);
   return { commits: log.stdout.split('\n').filter(Boolean) };
 }

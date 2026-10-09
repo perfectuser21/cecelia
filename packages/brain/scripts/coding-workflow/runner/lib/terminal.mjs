@@ -55,16 +55,15 @@ export async function failTask(ctx, task, job, summary) {
 }
 
 /**
- * gh pr ready + gh pr merge --auto --squash；失败只记录。
- * QA 门开启时只 ready：自动合并留给 QA 门在真人 QA 通过后打开（lib/qa-gate.mjs）。
+ * gh pr ready；合并一律由合并门在真人 QA + 独立裁判通过后按批准的 head 执行（lib/merge-gate.mjs）。
+ * QA 门关闭时不靠 CI 绿自动合并（审计 #32，对应旧 harness「judge 是合并唯一权威」）：只 ready，P1 交人审。
  */
 async function automerge(ctx, prUrl, cwd) {
   const { cfg, log } = ctx;
   const ready = await run(cfg.ghBin, ['pr', 'ready', prUrl], { cwd, timeoutMs: GH_TIMEOUT_MS });
   if (cfg.qaGate) return { ready: ready.code === 0, merge: 'awaiting_qa' };
-  const merge = await run(cfg.ghBin, ['pr', 'merge', prUrl, '--auto', '--squash'], { cwd, timeoutMs: GH_TIMEOUT_MS });
-  if (merge.code !== 0) log(`automerge 失败：${merge.stderr.trim().split('\n').pop() || merge.code}`);
-  return { ready: ready.code === 0, merge: merge.code === 0 };
+  log(`[coding-qa][P1] QA 门关闭（CODING_WF_QA_GATE=0）：${prUrl} 只 ready 不合并，需人审`);
+  return { ready: ready.code === 0, merge: 'qa_gate_off' };
 }
 
 /**
@@ -73,7 +72,8 @@ async function automerge(ctx, prUrl, cwd) {
  */
 export async function finishSuccess(ctx, task, job, summary, extra = {}) {
   const { cfg, brain, log } = ctx;
-  const runner = { receipt_path: job.receiptPath, host: cfg.host, ...extra };
+  // 开出 PR 不等于完成：phase 标明还在等 QA/人审，合并结果由合并门回写 result.merge（审计 #7）
+  const runner = { receipt_path: job.receiptPath, host: cfg.host, phase: cfg.qaGate ? 'awaiting_qa' : 'awaiting_manual_merge', ...extra };
   const r = await writeTerminal(ctx, task.id, { status: 'completed', result: { runner } });
   if (r.foreign) return 1;
   if (!r.ok) {
