@@ -162,6 +162,26 @@ def amazon_search(session,model):
         time.sleep(2)
     raise RuntimeError('Amazon原生搜索未出现同型号候选')
 
+def amazon_specification(session,nodes,path):
+    evidence=[];expanded=False;in_details=False
+    stop_markers=('customer reviews','customers also','sponsored','frequently bought','similar items')
+    for page in range(3):
+        values=text_values(nodes)
+        for value in values:
+            lower=value.strip().lower()
+            if lower=='product details':in_details=True;continue
+            if any(lower.startswith(marker) for marker in stop_markers):in_details=False;break
+            if in_details and lower!='see more details' and len(evidence)<30:
+                evidence.append({'text':value[:600],'xml':path})
+        exact=next((n for n in nodes if (n.get('text','') or n.get('content-desc','')).strip()=='See more details' and bounds(n)),None)
+        # 只展开已有主商品详情段；评论和营销模块同名按钮不触碰。
+        if not expanded and in_details and exact is not None:
+            session.tap(exact);expanded=True;time.sleep(1)
+            nodes,path=session.nodes('amazon-spec-expanded');continue
+        if page==2:break
+        session.swipe();nodes,path=session.nodes('amazon-spec-page')
+    return {'specification_evidence':evidence,'spec_xml':evidence[0]['xml'] if evidence else None}
+
 def amazon_quote(session,hd,index,zip_code):
     candidates=amazon_search(session,hd['model'])
     failures=[]
@@ -197,6 +217,7 @@ def amazon_quote(session,hd,index,zip_code):
                     break
             session.swipe();nodes,path=session.nodes('amazon-price-page')
         if not quote:failures.append('详情缺少同型号/ZIP/标价');continue
+        quote.update(amazon_specification(session,nodes,path))
         # 只读当前已采原生节点；链接可选，不为ASIN额外翻页或读取剪贴板。
         asin=asin or extract_asin('\n'.join(text_values(nodes)))
         if not asin:

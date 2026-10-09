@@ -23,7 +23,7 @@ worker先在HomeDepot搜关键词发现商品候选，清空残留搜索，精�
 
 node_exec使用已验证的timeoutSeconds参数：count1=600，count2..3=1000，不猜字段。node_exec调用结果用text(r)完整返回，不要猜r.content或遍历r.content以免丢失非MCP结果。证据处理优先node_exec在设备解析XML并返回紧凑字段/结构化结果，Android UI文本在属性中，应遍历root.iter()读取node.get('text','')和node.get('content-desc','')，不是itertext；控制器直接使用已给绝对路径，无需寻找，不要把shell控制器当python运行。禁止把全文XML返回模型。同一证据最多读取1次，截图存在后返回路径供CLI独立审计上传，不要调用file_fetch反复拉图。恢复网络/桌面并释放锁后立即输出JSON，不继续读取已验收证据。
 
-CLI不信任模型回传的证据路径；按本次taskID和纯字母数字action_owner只读设备权威held-report.json，唯一匹配package/brand/model、原价候选及恢复标记后，绑定原截图/XML/采集时间再独立审计。旧真实回执导入须显式--source-action-task-id并标receipt_import和原provider run，不伪称新采集。app_package必须为Android包名，套装描述只写specification。商品数量按品牌/型号计；规格不同或待核不构成跨平台配对，但保留各自报价。缺套装细节只能待核，不从同型号推断电池容量或数量。返回CLI提示词规定的JSON报价结构，附network_restored/home_verified/lock_free_verified验收。失败报实际原因与已做动作，不伪造成功。
+CLI不信任模型回传的证据路径；按本次taskID和纯字母数字action_owner只读设备权威held-report.json，唯一匹配package/brand/model、原价候选及恢复标记后，绑定原截图/XML/采集时间再独立审计。旧真实回执导入须显式--source-action-task-id并标receipt_import和原provider run，不伪称新采集。app_package必须为Android包名，套装描述只写specification。商品数量按品牌/型号计；规格不同或待核不构成跨平台配对，但保留各自报价。Amazon仅在主商品Product details段精确See more details按钮有效可见时展开；零高度bounds先有限滚动再读新节点，最多2次滚动。specification_evidence与spec_xml来自原生XML并经CLI独立审计；Amperage 1.3 A不是电池容量1.3 Ah，评论/营销不作套装证明。缺套装细节只能待核，不从同型号推断电池容量或数量。返回CLI提示词规定的JSON报价结构，附network_restored/home_verified/lock_free_verified验收。失败报实际原因与已做动作，不伪造成功。
 
 能力边界：同型号单SKU原生路径已验收；Luna业务与3SKU批量结果以各任务真实回执为准，不能从单SKU通过推断所有关键词稳定。
 

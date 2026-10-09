@@ -48,7 +48,7 @@ print(data)`;
 export async function verifyProof(quote) {
   const script = `import json,sys,hashlib,os,re,xml.etree.ElementTree as E
 q=json.load(sys.stdin)
-paths=[q['price_xml'],q['title_xml'],q.get('zip_xml'),q['screenshot_path']]
+paths=[q['price_xml'],q['title_xml'],q.get('zip_xml'),q.get('spec_xml'),q['screenshot_path']]+[item.get('xml') for item in q.get('specification_evidence',[])]
 proof=[];texts=[]
 for p in dict.fromkeys(filter(None,paths)):
  if not os.path.isabs(p) or not p.startswith(('/Users/jinnuoshengyuan/Library/Caches/us-price-native-staging/','/private/tmp/openclaw-phone/','/Volumes/EvidenceRAM/openclaw-phone/')): raise ValueError('证据路径不在设备运行目录')
@@ -61,6 +61,8 @@ for p in dict.fromkeys(filter(None,paths)):
   if not any(n.attrib.get('package')==q['package'] for n in root.iter()): raise ValueError('XML缺少原生App包')
   texts.extend(n.attrib.get('text','')+' '+n.attrib.get('content-desc','') for n in root.iter())
  proof.append({'path':p,'sha256':hashlib.sha256(data).hexdigest()})
+for item in q.get('specification_evidence',[]):
+ if item.get('text') not in ' '.join(texts): raise ValueError('规格证据文本不在原生XML中')
 text=' '.join(texts).replace(',','')
 if q['model'].lower() not in text.lower() or q['zip'] not in text: raise ValueError('XML缺少型号或邮编')
 price=format(q['price_usd'],'.2f')
