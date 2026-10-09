@@ -140,6 +140,8 @@ test('固定worker只用一次dispatcher，不让模型重写UI/逐步with-lock'
   assert.ok(prompt.includes('us_price_native_worker.py'));
   assert.ok(prompt.includes('禁止逐动作重新with-lock'));
   assert.ok(prompt.includes('--request-base64'));
+  assert.ok(prompt.includes('timeoutSeconds=1000'));
+  assert.ok(buildPrompt({...options,count:1},'task1').includes('timeoutSeconds=600'));
   assert.throws(()=>parseOptions(['--keyword','drill','--zip','00501']));
 });
 test('缺商品链接仍保留可靠价格，但标待核且不能整体passed', () => {
