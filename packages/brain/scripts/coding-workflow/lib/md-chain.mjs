@@ -82,7 +82,12 @@ function refError(dir, ref) {
 }
 
 /** 下游 file 的 upstream 没覆盖到的上游锚点：`<file>_not_covered:<ID>`（02-spec 另报兼容的 intent_not_covered）。 */
-function coverageErrors(file, upstream, target, targetAnchors) {
+// 下游必须覆盖的是上游的「条目」锚点：01 的 I-n、02 的 S-n（02 里的 QA 场景 Q-n 是给 evaluator 的测试计划，不要求 03 覆盖）
+const ITEM_PREFIX = { '01-intent.md': 'I-', '02-spec.md': 'S-' };
+
+function coverageErrors(file, upstream, target, allAnchors) {
+  const prefix = ITEM_PREFIX[target];
+  const targetAnchors = prefix ? allAnchors.filter((a) => a.startsWith(prefix)) : allAnchors;
   const covered = new Set();
   for (const ref of upstream) {
     const m = REF_RE.exec(ref);

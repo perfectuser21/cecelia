@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 假 claude：按 FAKE_CLAUDE_MODE 模拟 `claude -p <prompt> ...`。
-// spec 用：ok | nofile | auth | fail | outside | sleep | linger | titled | noids | uncovered；
+// spec 用：ok | nofile | auth | fail | outside | sleep | linger | titled | noids | uncovered | noqa；
 // build 用：build-ok（真实 git commit 并写 03-build.md）| build-nocommit | build-dirty（另留未提交改动）| build-noreport
 // | build-amend（把改动 amend 进运行前的 HEAD）| build-badreport（03 的 upstream 只覆盖第一条 S-n）；
 // verify 用：verify-pass | verify-fail（最后一条 FAIL）| verify-badformat（第一条缺 output）| verify-uncovered（只覆盖第一条 I-n）
@@ -203,6 +203,8 @@ else {
   // titled：标题行带说明文字（真实 claude 实测 c2afa8ba）；noids：没有 S-n 标题；uncovered：upstream 只覆盖第一条 I-n
   const heading = (i) => (mode === 'titled' ? `### S-${i + 1} 改 foo.js 的第 ${i + 1} 处` : mode === 'noids' ? `#### 规格 ${i + 1}` : `### S-${i + 1}`);
   const sections = ids.map((id, i) => `${heading(i)}\n对应 ${id}：改 foo.js，验证 npm test\n`);
+  // QA 场景：每个 I-n 一条（noqa 模式不写，模拟漏写）
+  if (mode !== 'noqa') sections.push(`## QA 场景\n\n${ids.map((id, i) => `### Q-${i + 1}\n对应: ${id}\n操作: 用户按 ${id} 操作\n期望: 看到 ${id} 的结果\n`).join('\n')}`);
   const upstream = (mode === 'uncovered' ? ids.slice(0, 1) : ids).map((id) => `01-intent.md#${id}`);
   writeFile(field('SPEC_PATH'), `${frontmatter('spec', upstream)}# spec\n\n${sections.join('\n')}`);
   // outside：除合法 02-spec.md 外，再往 worktree 根（子进程 cwd）写一个越界文件
