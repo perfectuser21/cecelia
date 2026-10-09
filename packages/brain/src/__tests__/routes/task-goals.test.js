@@ -52,6 +52,9 @@ function mockGoalPatch({ objective = null, keyResult = null } = {}) {
 }
 const patchWrites = () => mockPool.query.mock.calls.filter(([sql]) => sql.startsWith('UPDATE '));
 
+const G1_UUID = '00000000-0000-4000-8000-000000000011';
+const KR1_UUID = '00000000-0000-4000-8000-000000000012';
+
 describe('task-goals routes', () => {
   beforeEach(() => {
     // clearAllMocks 只清调用记录，不清未消费的 mockResolvedValueOnce 队列；
@@ -117,7 +120,7 @@ describe('task-goals routes', () => {
       // 查询2: key_results 未找到
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      const res = await request(app).get('/goals/non-existent');
+      const res = await request(app).get('/goals/00000000-0000-4000-8000-000000000003');
       expect(res.status).toBe(404);
       expect(res.body.error).toBe('goal not found');
       // 404 响应不应包含 id 字段（统一格式）
@@ -128,11 +131,11 @@ describe('task-goals routes', () => {
 
     it('returns goal by id from objectives', async () => {
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'g1', type: 'area_okr', title: 'Goal 1', description: null, parent_id: null, project_id: null }],
+        rows: [{ id: G1_UUID, type: 'area_okr', title: 'Goal 1', description: null, parent_id: null, project_id: null }],
       });
-      const res = await request(app).get('/goals/g1');
+      const res = await request(app).get(`/goals/${G1_UUID}`);
       expect(res.status).toBe(200);
-      expect(res.body.id).toBe('g1');
+      expect(res.body.id).toBe(G1_UUID);
       // 第一次查询应查 objectives
       const [sql] = mockPool.query.mock.calls[0];
       expect(sql).toContain('FROM objectives');
@@ -145,14 +148,36 @@ describe('task-goals routes', () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
       // key_results 找到
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'kr1', type: 'area_kr', title: 'KR 1', description: null, parent_id: 'obj1', project_id: null }],
+        rows: [{ id: KR1_UUID, type: 'area_kr', title: 'KR 1', description: null, parent_id: 'obj1', project_id: null }],
       });
-      const res = await request(app).get('/goals/kr1');
+      const res = await request(app).get(`/goals/${KR1_UUID}`);
       expect(res.status).toBe(200);
-      expect(res.body.id).toBe('kr1');
+      expect(res.body.id).toBe(KR1_UUID);
       expect(mockPool.query).toHaveBeenCalledTimes(2);
       const [sql2] = mockPool.query.mock.calls[1];
       expect(sql2).toContain('FROM key_results');
+    });
+
+    // 回归：非法 id 曾让 async 处理函数 reject 后请求挂死（Express 4 不接 async 错误）
+    it('非法 id → 400 固定文案，不查库', async () => {
+      const res = await request(app).get('/goals/not-a-uuid');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid goal id: must be a UUID');
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('合法 uuid 两表都查不到 → 404', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+      const res = await request(app).get('/goals/00000000-0000-4000-8000-000000000000');
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('goal not found');
+    });
+
+    it('查库抛错 → 500，响应体不含错误原文', async () => {
+      mockPool.query.mockRejectedValueOnce(new Error('boom db detail'));
+      const res = await request(app).get('/goals/00000000-0000-4000-8000-000000000000');
+      expect(res.status).toBe(500);
+      expect(JSON.stringify(res.body)).not.toContain('boom db detail');
     });
   });
 
