@@ -1,7 +1,7 @@
 import unittest
 import xml.etree.ElementTree as E
 from native_price_phone import text_values, parse_hd_detail, extract_asin, price_candidates, validate_request, PhoneSession
-from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search
+from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search, search_entry
 
 def nodes(values, package='com.thehomedepot'):
     root=E.Element('hierarchy')
@@ -76,7 +76,7 @@ class NativePriceTests(unittest.TestCase):
             q=amazon_quote(Fake(),{'model':'DXX123','brand':'DEWALT'},0,'53132')
         self.assertIsNone(q['url'])
         self.assertTrue(q['url_missing'])
-        self.assertEqual(q['status'],'规格待核')
+        self.assertEqual(q['status'],'已核验')
     def test_launch_denies_optional_app_list_permission_for_hd(self):
         import unittest.mock
         session=object.__new__(PhoneSession);taps=[]
@@ -86,4 +86,10 @@ class NativePriceTests(unittest.TestCase):
         session.tap=lambda node:taps.append(node.get('text'))
         with unittest.mock.patch('native_price_phone.time.sleep'):session.launch('com.thehomedepot')
         self.assertEqual(taps,['禁止'])
+    def test_search_entry_does_not_select_image_search(self):
+        ns=nodes(['Image Search','Search'])
+        self.assertEqual(search_entry(ns).get('text'),'Search')
+        self.assertIsNone(search_entry(nodes(['Image Search'])))
+        ns=nodes(['Image Search','old query']);ns[1].set('resource-id','main_app_header_search_text_field')
+        self.assertEqual(search_entry(ns).get('text'),'old query')
 if __name__=='__main__':unittest.main()
