@@ -145,7 +145,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(loadConfig({ HOME: '/h', CODING_WF_JUDGE: '0' }).judge).toBe(false);
   });
 
-  it('CI 绿 + 预览 active + QA PASS + 独立裁判 PASS：evaluate 拿到 sprint/I-n/01 哈希/轮次；QA 报告与裁决一起提交推送；开自动合并；记 passed；回写 Brain；本轮不认领新任务', async () => {
+  it('CI 绿 + 预览 active + QA PASS + 独立裁判 PASS：evaluate 拿到 sprint/I-n/01 哈希/轮次；QA 报告与裁决一起提交推送；批准绑定推送后的 head（不开 GitHub 自动合并）；回写 Brain；本轮不认领新任务', async () => {
     const r = await go(green(), { tasks: [codingTask('dddddddd-0000-4000-8000-000000000004')] });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(qaCalls()).toEqual([expect.objectContaining({
@@ -155,8 +155,11 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(qaCalls()[0].judge_feedback).toBeUndefined();
     expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判 PASS');
     expect(git(sb.origin, 'show', '--name-only', '--format=', BRANCH).trim().split('\n').sort()).toEqual([`${SPRINT}/05-qa-report-r1.md`, `${SPRINT}/06-judge-r1.md`]);
-    expect(ghCalls()).toContainEqual(['pr', 'merge', '77', '--auto', '--squash']);
-    expect(state()).toMatchObject({ passed: true, rounds: [{ round: 1, head, verdict: 'PASS', judge: { verdict: 'PASS', model: 'judge-m' } }] });
+    expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
+    expect(state()).toMatchObject({
+      passed: true, approved: { head: git(sb.origin, 'rev-parse', BRANCH).trim(), round: 1 },
+      rounds: [{ round: 1, head, verdict: 'PASS', judge: { verdict: 'PASS', model: 'judge-m' } }],
+    });
     expect(brainQa().at(-1).qa).toMatchObject({ verdict: 'PASS', rounds: 1, judge: 'PASS' });
     expect(brain.patches.some((p) => p.id.startsWith('dddddddd'))).toBe(false);
   });
@@ -219,7 +222,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(brainQa().at(-1).escalations).toEqual([expect.objectContaining({ type: 'judge_contract_gap', pr: 77 })]);
   });
 
-  it('裁判调用失败 → QA 报告照常提交（裁判待定），不合并；下一轮只重跑裁判（不重跑 QA），PASS 后提交裁决并合并', async () => {
+  it('裁判调用失败 → QA 报告照常提交（裁判待定），不合并；下一轮只重跑裁判（不重跑 QA），PASS 后提交裁决并批准', async () => {
     judge.mode = 'http500';
     let r = await go(green());
     expect(r.exitCode, r.stderr).toBe(0);
@@ -234,8 +237,10 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(r.exitCode, r.stderr).toBe(0);
     expect(qaCalls()).toHaveLength(1);
     expect(originLog()[0]).toBe('docs(qa): 第 1 轮独立裁判 PASS');
-    expect(ghCalls()).toContainEqual(['pr', 'merge', '77', '--auto', '--squash']);
-    expect(state()).toMatchObject({ passed: true, judge_pending: false, judge_bad: 0, rounds: [{ judge: { verdict: 'PASS' } }] });
+    expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
+    expect(state()).toMatchObject({
+      passed: true, judge_pending: false, judge_bad: 0, approved: { head: git(sb.origin, 'rev-parse', BRANCH).trim() }, rounds: [{ judge: { verdict: 'PASS' } }],
+    });
   });
 
   it('裁判连续 3 次不可用/输出不合格 → 升级 qa_judge_unavailable', async () => {
@@ -249,12 +254,81 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(state().escalated).toMatchObject({ type: 'qa_judge_unavailable', reason: 'judge_output_invalid' });
   });
 
-  it('CODING_WF_JUDGE=0：QA PASS 直接开自动合并（不调裁判）', async () => {
+  it('CODING_WF_JUDGE=0：QA PASS 直接批准（不调裁判）', async () => {
     const r = await go(green(), { extra: { CODING_WF_JUDGE: '0' } });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(judge.calls).toEqual([]);
     expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS');
-    expect(ghCalls()).toContainEqual(['pr', 'merge', '77', '--auto', '--squash']);
+    expect(state()).toMatchObject({ passed: true, approved: { head: git(sb.origin, 'rev-parse', BRANCH).trim() } });
+  });
+
+  // 合并门（决策 a1fdbc51）：runner 亲自合并，且只合并「被批准的那个 head」——必需检查全部登记全绿 + QA 与裁判在该 head 上通过。
+  // 批准后分支上再出现的提交：只是记录（changes/ 碎片、sprints/ 验收记录）或从 main 合进来的 merge 提交 → 改绑到新 head；
+  // 动了别的文件 → 撤销批准，新 head 重新 QA + 裁判。
+  describe('合并门（绑定 head SHA）', () => {
+    const approve = (h = git(sb.origin, 'rev-parse', BRANCH).trim()) => seedState({ passed: true, approved: { head: h, round: 1 }, rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'PASS', fails: 0 }] });
+    const remoteHead = () => git(sb.origin, 'rev-parse', BRANCH).trim();
+    const mergeCalls = () => ghCalls().filter((a) => a[1] === 'merge');
+
+    it('批准的 head 上必需检查全部登记全绿 → gh pr merge --squash --match-head-commit <该 head>；记 merged', async () => {
+      approve();
+      const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
+      expect(state()).toMatchObject({ merged: { head: remoteHead() } });
+      expect(qaCalls()).toEqual([]);
+    });
+
+    it('必需检查未全部登记 / 还在跑 / 有红 → 不合并', async () => {
+      for (const gh of [
+        green({ prs: [pr({ headRefOid: remoteHead() })], requiredContexts: ['ci-passed', 'Smoke Glob Runner Passed'] }),
+        green({ prs: [pr({ headRefOid: remoteHead() })], required: { 77: [{ name: 'ci-passed', bucket: 'pending' }] } }),
+        green({ prs: [pr({ headRefOid: remoteHead() })], required: { 77: [{ name: 'ci-passed', bucket: 'fail' }] } }),
+      ]) {
+        approve();
+        const r = await go(gh, { extra: { CODING_WF_CIFIX: '0' } });
+        expect(r.exitCode, r.stderr).toBe(0);
+        expect(mergeCalls()).toEqual([]);
+        await brain.close();
+        brain = null;
+      }
+    });
+
+    it('批准后分支上出现改代码的提交 → 撤销批准、不合并（新 head 重新 QA）', async () => {
+      const approvedHead = remoteHead();
+      approve(approvedHead);
+      addToBranch('src/feature.js', 'export const MARKER_CODE = 2;\n');
+      const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(mergeCalls()).toEqual([]);
+      // 撤销本身算本轮动作：同一轮不立刻重跑 QA
+      expect(qaCalls()).toEqual([]);
+      expect(state()).toMatchObject({ passed: false, revoked: [expect.objectContaining({ reason: 'head_changed_after_approval', from: approvedHead, files: ['src/feature.js'] })] });
+    });
+
+    it('批准后只补了 changes/ 碎片 → 改绑新 head 并按新 head 合并', async () => {
+      approve();
+      addToBranch('changes/frag.md', '## Brain {VERSION} — x\n');
+      const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
+      expect(state()).toMatchObject({ passed: true, approved: { head: remoteHead() } });
+    });
+
+    it('批准后只是把 main 合进分支（merge 提交）→ 不算 PR 自身改动，改绑并合并', async () => {
+      approve();
+      git(sb.seed, 'checkout', '-q', 'main');
+      fs.writeFileSync(path.join(sb.seed, 'other.txt'), 'main moved\n');
+      git(sb.seed, 'add', '.');
+      git(sb.seed, 'commit', '-q', '-m', 'chore: main moved');
+      git(sb.seed, 'push', '-q', 'origin', 'main');
+      git(sb.seed, 'checkout', '-q', BRANCH);
+      git(sb.seed, 'merge', '-q', '--no-edit', 'main');
+      git(sb.seed, 'push', '-q', 'origin', BRANCH);
+      const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--match-head-commit', remoteHead()]]);
+    });
   });
 
   it('QA FAIL：报告提交 → 开发按报告修复提交 → 推送；不开自动合并；修复 prompt 带报告路径与失败条目', async () => {
