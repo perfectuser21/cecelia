@@ -112,10 +112,14 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     expect(r.result.reason_code).toBe('qa_evidence_unverified');
   });
 
-  it('碰了生产 Brain → fatal evaluate_touched_production', async () => {
-    const r = await run('prod');
+  it('碰了生产 Brain → fatal evaluate_touched_production，evidence 点名命令；给了 transcript_path 时会话执行记录落盘（留证）', async () => {
+    const transcript = path.join(worktree, '..', `qa-transcript-${process.pid}.jsonl`);
+    const r = await run('prod', { transcript_path: transcript });
     expect(r.result.failure_class).toBe('fatal');
     expect(r.result.reason_code).toBe('evaluate_touched_production');
+    expect(JSON.stringify(r.result.evidence)).toContain('5221');
+    expect(fs.readFileSync(transcript, 'utf8')).toContain('"tool_use"');
+    fs.rmSync(transcript, { force: true });
   });
 
   it('漏测 Q-n → retryable qa_incomplete；报告没条目 → retryable qa_report_invalid', async () => {

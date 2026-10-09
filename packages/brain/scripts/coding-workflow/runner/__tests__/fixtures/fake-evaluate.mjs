@@ -13,7 +13,9 @@ const out = (r) => {
   process.exit(r.status === 'completed' ? 0 : 2);
 };
 if (mode === 'retry') out({ status: 'failed', failure_class: 'retryable', reason_code: 'preview_unavailable', outputs: {} });
-if (mode === 'fatal') out({ status: 'failed', failure_class: 'fatal', reason_code: 'evaluate_touched_production', outputs: {} });
+if (mode === 'fatal') {
+  out({ status: 'failed', failure_class: 'fatal', reason_code: 'evaluate_touched_production', outputs: {}, evidence: [{ commands: ['curl -s http://localhost:5221/api/brain/tasks'] }] });
+}
 const file = `05-qa-report-r${input.round}.md`;
 fs.writeFileSync(path.join(input.worktree, input.sprint_dir, file), `# QA 报告 第 ${input.round} 轮 ${mode}\n`);
 const failed = mode === 'fail' ? [{ id: 'T-1', covers: ['Q-1'], command: 'curl x', output_tail: '500' }] : [];
