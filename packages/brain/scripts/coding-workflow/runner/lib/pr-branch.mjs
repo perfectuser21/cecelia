@@ -42,6 +42,17 @@ export function taskIdOf(worktree, branch) {
   return intentOf(worktree, branch)?.taskId ?? null;
 }
 
+/** 不检出 worktree，直接从远端 PR 分支读 sprint 01-intent.md 的 task_id；拿不到返回 null。 */
+export async function remoteTaskId(cfg, branch) {
+  const fetch = await git(cfg.repo, ['fetch', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeoutMs: FETCH_TIMEOUT_MS });
+  if (fetch.code !== 0) return null;
+  const ls = await git(cfg.repo, ['ls-tree', '--name-only', `origin/${branch}`, 'sprints/']);
+  const dir = ls.stdout.split('\n').find((d) => d.endsWith(`-cw-${branch.slice(-8)}`));
+  if (!dir) return null;
+  const show = await git(cfg.repo, ['show', `origin/${branch}:${dir}/01-intent.md`]);
+  return show.code === 0 ? /^task_id:\s*(\S+)/m.exec(show.stdout)?.[1] ?? null : null;
+}
+
 /** 建 PR 分支的 worktree（本地分支同名，提交钩子按 .dev-mode.<branch> 认会话）。失败抛 Error(reason_code)。 */
 export async function preparePrWorktree(cfg, pr, worktree, signal) {
   const branch = pr.headRefName;
