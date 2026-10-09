@@ -62,6 +62,25 @@ class NativePriceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'前台App'):session.launch('com.thehomedepot')
         self.assertTrue(any('start' in cmd and '-W' in cmd for cmd in calls))
 
+    def test_tailscale_recovers_only_recognized_search_by_clear_then_bounded_back(self):
+        import unittest.mock
+        session=object.__new__(PhoneSession);events=[];state={'main':False}
+        session.launch=lambda package:None
+        def page(label):
+            if state['main']:return nodes(['Connected','mac-mini-m4-us'],'com.tailscale.ipn'),'/main.xml'
+            ns=nodes(['DEWALT DCD771C2','No results'],'com.tailscale.ipn');ns[0].set('class','android.widget.EditText');ns[0].set('content-desc','Clear search')
+            return ns,'/search.xml'
+        session.nodes=page
+        session.tap=lambda node:events.append('clear')
+        def back():events.append('back');state['main']=True
+        session.back=back;session.current_ip=lambda:{'countryCode':'US'};session.snapshot=lambda label:'/proof.png'
+        with unittest.mock.patch('native_price_phone.time.sleep'):
+            session.exit_node('mac-mini-m4-us')
+        self.assertEqual(events,['clear','back'])
+        state['main']=False;events.clear();session.nodes=lambda label:(nodes(['Unknown screen'],'com.tailscale.ipn'),'/unknown.xml')
+        with self.assertRaises(RuntimeError):session.exit_node('mac-mini-m4-us')
+        self.assertEqual(events,[])
+
     def test_seller_requires_exact_native_text_not_substring(self):
         self.assertEqual(amazon_seller(['Visit Amazon.com.evil.com']),'未显示（需核对）')
         self.assertEqual(amazon_seller(['Sold by Amazon.com']),'Sold by Amazon.com')
@@ -206,6 +225,7 @@ class NativePriceTests(unittest.TestCase):
     def test_launch_denies_optional_app_list_permission_for_hd(self):
         import unittest.mock
         session=object.__new__(PhoneSession);taps=[]
+        session.check=lambda:'state=device call_state=idle foreground=com.thehomedepot'
         commands=[]
         def adb(*args,**kwargs):commands.append(args);return 'com.thehomedepot/Main'
         session.adb=adb
