@@ -57,6 +57,8 @@ async function report(ctx, taskId, s) {
   const last = s.rounds.at(-1);
   const result = { qa: {
     verdict: last?.verdict ?? null, judge: last?.judge?.verdict ?? null, rounds: s.rounds.length, passed: Boolean(s.passed), last_report: last?.report ?? null,
+    // 「完成但有疑虑」可见（审计 #41）：裁判的建议级问题
+    concerns: last?.judge?.concerns ?? [],
   } };
   if (s.escalated) result.escalations = [s.escalated];
   const r = await ctx.brain.patch(taskId, { result });
@@ -211,6 +213,11 @@ function stalled(s) {
 /** 跑独立裁判，结果记进 entry.judge 与 s.judge_pending/judge_bad；返回 runJudge 结果。 */
 async function judgeStep(ctx, pr, s, worktree, intent, entry) {
   const j = await runJudge(ctx.cfg, worktree, intent, { round: entry.round, reportRel: entry.report, log: ctx.log });
+  // 需要人处理的（如改动超过裁判上限）：不算裁判坏、不重试，交 afterJudge 升级
+  if (j.escalate) {
+    entry.judge = { state: 'escalated', reason: j.error };
+    return j;
+  }
   if (j.error) {
     s.judge_bad = (s.judge_bad ?? 0) + 1;
     s.judge_pending = true;
@@ -220,13 +227,17 @@ async function judgeStep(ctx, pr, s, worktree, intent, entry) {
   }
   s.judge_bad = 0;
   s.judge_pending = false;
-  entry.judge = { verdict: j.verdict, failure_class: j.failure_class, file: j.file, model: j.model, issues: j.blocking.map((i) => i.id), unsatisfied: j.unsatisfied, usage: j.usage };
+  entry.judge = {
+    verdict: j.verdict, failure_class: j.failure_class, file: j.file, model: j.model,
+    issues: j.blocking.map((i) => i.id), unsatisfied: j.unsatisfied, concerns: j.concerns ?? [], usage: j.usage,
+  };
   ctx.log(`QA 门 PR #${pr.number} 第 ${entry.round} 轮独立裁判 ${j.verdict}${j.failure_class ? `（${j.failure_class}）` : ''}`);
   return j;
 }
 
 /** 裁决（已提交）之后：PASS 合并；product 修复；qa_gap 等下轮补验；contract_gap / 不收敛 / 裁判连坏 升级。 */
 async function afterJudge(ctx, pr, s, worktree, intent, entry, j) {
+  if (j.escalate) return escalate(ctx, pr, s, intent.taskId, { type: j.error, ...(j.diff_chars ? { diff_chars: j.diff_chars } : {}) });
   if (j.error) {
     if (s.judge_bad >= ctx.cfg.qaMaxJudgeBad) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_judge_unavailable', reason: j.error });
   } else if (j.verdict === 'PASS') {

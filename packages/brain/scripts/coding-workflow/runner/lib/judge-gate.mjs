@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './proc.mjs';
-import { buildJudgePrompt, parseJudge, decideJudge, renderJudgeReport, callJudge, judgeFileName } from '../../lib/judge.mjs';
+import { buildJudgePrompt, parseJudge, decideJudge, renderJudgeReport, callJudge, judgeFileName, JUDGE_DIFF_LIMIT } from '../../lib/judge.mjs';
 
 /** PR 相对 main 的代码改动（三点 diff，排除 sprints/ 验收记录）。 */
 async function prDiff(worktree) {
@@ -28,6 +28,8 @@ export async function runJudge(cfg, worktree, intent, { round, reportRel, log })
   let reply;
   try {
     const diff = await prDiff(worktree);
+    // 裁判必须看到完整改动（审计 #43）：超限不截断照判，交 coding commander
+    if (diff.length > JUDGE_DIFF_LIMIT) return { error: 'judge_input_truncated', escalate: true, diff_chars: diff.length };
     const prompt = buildJudgePrompt({ ...texts, diff, qaReportFile: path.basename(reportRel), intentIds: intent.intentIds, round });
     reply = await callJudge(prompt, { ...cfg.judgeConn, timeoutMs: cfg.judgeTimeoutMs });
   } catch (error) {
@@ -44,5 +46,7 @@ export async function runJudge(cfg, worktree, intent, { round, reportRel, log })
   const file = judgeFileName(round);
   const model = cfg.judgeConn.model;
   fs.writeFileSync(path.join(worktree, intent.sprintDir, file), renderJudgeReport({ round, model, parsed, decision, qaReport: path.basename(reportRel) }));
-  return { ...decision, file, model, usage: reply.usage };
+  // 建议级问题不阻断，但要可见（审计 #41）
+  const concerns = parsed.issues.filter((i) => i.severity === '建议').map(({ id, severity, covers, detail, where }) => ({ id, severity, covers, detail, where }));
+  return { ...decision, concerns, file, model, usage: reply.usage };
 }
