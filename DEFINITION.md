@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.402.11
+**Brain 版本**: 1.403.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,16 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.403.0 — coding harness runner：修不动/合不上必须有出口，修复不得削弱测试，关门不合并
+
+- 决策 a1fdbc51 第①步审计 P1（旧 harness 对应规矩见审计表）：
+  - #6 合并失败：冲突 → 升级 merge_conflict；落后 main → 程序 `gh pr update-branch`（之后的 main 合入按改绑处理）；其他原因累计 3 次 → 升级 merge_failed。
+  - #7 完成以合并为准：链跑完开出 PR 时 result.runner.phase=awaiting_qa（QA 门关闭为 awaiting_manual_merge）；合并门合并成功后回写 result.merge（merged、head、at）。
+  - #8 CI 修不动：修复次数用完 → 升级 ci_fix_exhausted；本 head 修过无改动（判定与本 PR 无关）→ 先 `gh run rerun --failed` 一次，仍红再升级；lint-base-fresh 红 → 程序 update-branch（不派 claude、不占修复次数，超过 3 次升级）。升级只发一次，`[coding-ci][P1]` + Brain result.escalations。
+  - #31 修复环节（CI 修复与 QA 修复）不得削弱测试：删测试文件、新增 skip/only/todo、测试断言数减少 → 拒绝推送（test_weakened）。
+  - #32 裁判是合并的必要条件：CODING_WF_JUDGE=0 时 QA PASS 不批准，升级 judge_disabled；CODING_WF_QA_GATE=0 时只 ready 不合并（P1 交人审），不再凭 CI 绿自动合并。
+- 测试：QA 门测试环境抽成 runner/__tests__/helpers/qa-env.mjs，合并门用例拆到 run-once-merge.test.mjs。
 
 ## Brain 1.402.11 — coding harness：判卷代码来自可信基线、QA 验的必须是待合并 head 的构建
 
