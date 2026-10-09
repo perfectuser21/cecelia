@@ -112,6 +112,82 @@ function workflowRuns(text) {
     if (typeof step.run === 'string') runs.push({ job, run: step.run, env: { ...(value.env || {}), ...(step.env || {}) } });
   return runs;
 }
+// 唯一已审核的条件shell协议；改变分支/命令/退出语义必须重新证明，不接受字符串扫描。
+const IMPACT_WORKFLOW='.github/workflows/implementation-impact.yml';
+const MULTI_ENTRY='scripts/ci/implementation-multi-pr-gate.mjs', MULTI_SOURCE='scripts/ci/implementation-multi-scope.mjs';
+const LEGACY_IMPACT_GATE_SHA256='4b63956a9e5f6753f8fb9cb4d1ddada6fa4e281f1cd45dd4078afc0a5f3dc522';
+const LEGACY_ADMISSION_SCOPES="${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || '' }}";
+const SELF_PR_ADMISSION_SCOPES="${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || (github.event_name == 'pull_request' && github.repository == 'perfectuser21/cecelia' && '{\"schema_version\":1,\"scopes\":[\"cecelia-kr\",\"cecelia-factory\"]}' || '') }}";
+const IMPACT_GATE_SHA256='8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d';
+function impactRunnerProven(text){
+  const doc=yaml.load(text),input=doc?.on?.workflow_call?.inputs?.admission_scopes,job=doc?.jobs?.gate;
+  if(!input||Object.keys(input).sort().join(',')!=='default,required,type'||input.required!==false||input.type!=='string'||input.default!=='')return false;
+  if(!doc.on.pull_request||job?.if!=="always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')"
+    ||job.env?.MODE!=="${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}"
+    ||![LEGACY_ADMISSION_SCOPES,SELF_PR_ADMISSION_SCOPES].includes(job.env?.ADMISSION_SCOPES))return false;
+  return job.steps?.some(step=>step.if===undefined&&typeof step.run==='string'&&hash(step.run)===IMPACT_GATE_SHA256);
+}
+function legacyImpactRunnerProven(text,prText,gateText){
+ const doc=yaml.load(text),job=doc?.jobs?.gate;
+ if(!doc?.on?.pull_request||job?.if!=="always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')"
+   ||job.env?.MODE!=="${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}"
+   ||!job.steps?.some(step=>step.if===undefined&&typeof step.run==='string'&&hash(step.run)===LEGACY_IMPACT_GATE_SHA256))return false;
+ const pr=ast(prText),gate=ast(gateText),fn=namedExport(pr,'runImplementationPrGate'),gateFn=namedExport(gate,'runImplementationGate');
+ const delegated=fn?.body.body.at(-1)?.type==='ReturnStatement'&&fn.body.body.at(-1).argument?.callee?.name==='implementationPrEvidence'&&literal(fn.body.body.at(-1).argument.arguments[1],true);
+ if(delegated&&fn.body.body.slice(0,-1).some(n=>n.type!=='IfStatement'||n.test?.type!=='MemberExpression'||n.test.object?.name!=='options'||!['multi','extractScopes'].includes(n.test.property?.name)))return false;
+ const caller=delegated?pr.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='implementationPrEvidence'):fn;
+ const statements=caller?.body.body.find(n=>n.type==='TryStatement')?.block.body;
+ return namedImport(pr,'./implementation-gate.mjs',['runImplementationGate'])
+   &&variableCall(statements,'receipt','runImplementationGate',true)
+   &&!statements.slice(0,-1).some(n=>{
+     if(delegated&&n.type==='IfStatement'&&n.test?.type==='UnaryExpression'&&n.test.operator==='!'&&n.test.argument?.name==='execute'&&n.consequent?.type==='ReturnStatement')return false;
+     return nodes(n).some(x=>x.type==='ReturnStatement');
+   })
+   &&variableCall(gateFn?.body.body,'assertions','runRegisteredAssertions',true)
+   &&cliInvokes(pr,prText,'runImplementationPrGate');
+}
+function cliInvokes(program,text,name){
+ const cli=program.body.find(n=>n.type==='IfStatement'&&text.slice(n.test.start,n.test.end)==="process.argv[1]&&fileURLToPath(import.meta.url)===realpathSync(process.argv[1])");
+ const body=cli?.consequent?.type==='BlockStatement'?cli.consequent.body:[cli?.consequent];
+ if(body.length!==1)return false;
+ const catchCall=body[0]?.expression,thenCall=catchCall?.callee?.object,run=thenCall?.callee?.object;
+ return catchCall?.callee?.property?.name==='catch'&&thenCall?.callee?.property?.name==='then'&&run?.callee?.name===name;
+}
+
+function namedExport(program,name){return program.body.find(n=>n.type==='ExportNamedDeclaration'&&n.declaration?.type==='FunctionDeclaration'&&n.declaration.id?.name===name)?.declaration;}
+function namedImport(program,path,names){
+ const row=program.body.find(n=>n.type==='ImportDeclaration'&&literal(n.source,path));
+ return names.every(name=>row?.specifiers.some(s=>s.type==='ImportSpecifier'&&s.imported.name===name&&s.local.name===name))
+  &&!nodes(program).some(n=>(n.type==='VariableDeclarator'&&nodes(n.id).some(id=>id.type==='Identifier'&&names.includes(id.name)))
+    ||n.type==='FunctionDeclaration'&&names.includes(n.id?.name))
+  &&!nodes(program).some(n=>(n.type==='AssignmentExpression'&&names.includes(n.left?.name))||(n.type==='UpdateExpression'&&names.includes(n.argument?.name)));
+}
+function variableCall(statements,name,callee,awaited=false){
+ const variable=statements?.filter(n=>n.type==='VariableDeclaration').flatMap(n=>n.declarations).find(n=>n.id?.name===name)?.init;
+ const expression=awaited?(variable?.type==='AwaitExpression'?variable.argument:null):variable;
+ return expression?.type==='CallExpression'&&expression.callee?.name===callee;
+}
+function impactImportsProven(entryText,multiText,prText,gateText){
+ const entry=ast(entryText),multi=ast(multiText),fn=namedExport(entry,'runImplementationMultiPrGate');
+ if(!namedImport(entry,'./implementation-pr-gate.mjs',['collectImplementationPrEvidence'])
+   ||!namedImport(entry,'./implementation-multi-scope.mjs',['resolveScopedImplementationReports','runScopedImplementationGate'])
+   ||!namedImport(multi,'./implementation-gate.mjs',['runRegisteredAssertions']))return false;
+ const statements=fn?.body.body.find(n=>n.type==='TryStatement')?.block.body;
+ if(!statements||statements.slice(0,-1).some(n=>n.type==='ReturnStatement'||n.type==='ThrowStatement'
+   ||n.type==='IfStatement'&&nodes(n).some(x=>x.type==='ReturnStatement')))return false;
+ const loop=statements.find(n=>n.type==='ForOfStatement'&&n.right?.name==='scopes');
+ const init=loop?.body.body.find(n=>n.type==='VariableDeclaration')?.declarations?.[0];
+ if(init?.id?.type!=='ObjectPattern'||!init.id.properties.some(p=>p.key.name==='report')||init.init?.type!=='AwaitExpression'
+   ||init.init.argument?.callee?.name!=='collectImplementationPrEvidence'
+   ||nodes(loop.body).some(n=>['ReturnStatement','BreakStatement','ContinueStatement','ThrowStatement'].includes(n.type)))return false;
+ if(!variableCall(statements,'resolution','resolveScopedImplementationReports')||!variableCall(statements,'receipt','runScopedImplementationGate',true))return false;
+ if(!cliInvokes(entry,entryText,'runImplementationMultiPrGate'))return false;
+ const gate=namedExport(multi,'runScopedImplementationGate'),gateLoop=gate?.body.body.find(n=>n.type==='ForOfStatement'&&n.right?.type==='MemberExpression'&&n.right.object?.name==='evidence'&&n.right.property?.name==='scope_reports');
+ if(!variableCall(gateLoop?.body.body,'assertions','runRegisteredAssertions',true)
+   ||gate.body.body.slice(0,gate.body.body.indexOf(gateLoop)).some(n=>nodes(n).some(x=>['ReturnStatement','BreakStatement','ContinueStatement','ThrowStatement'].includes(x.type)))
+   ||nodes(gateLoop.body).some(n=>['ReturnStatement','BreakStatement','ContinueStatement','ThrowStatement'].includes(n.type)))return false;
+ return Boolean(namedExport(ast(prText),'collectImplementationPrEvidence')&&namedExport(ast(gateText),'runRegisteredAssertions'));
+}
 const NIGHTLY_READER='.github/workflows/scripts/__tests__/nightly-runtime.test.mjs';
 const F5_SMOKE='packages/brain/scripts/smoke/factory-f5-cockpit-smoke.sh';
 const HEALTH_SMOKE='packages/brain/scripts/smoke/healthz-smoke.sh';
@@ -193,6 +269,28 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     requireProof(ci && workflowRuns(ci).some(r => shellLines(r.run.replace(/\\\r?\n/g, ' ')).some(line => /^npx vitest run\s+--config vitest\.integration\.config\.js\b/.test(line))), 'ci_integration_unproven');
     requireProof(config && nativeTestSelectorProven(config), 'native_test_selector_unproven');
     requireProof(integrationConfig && nativeIntegrationConfigProven(integrationConfig), 'native_integration_config_unproven');
+    // 老main没有新入口时保留旧证据；一旦入口存在，其真实条件流与所有依赖必须全部证明。
+    let multiWorkflow=false;
+    if(tree.has(IMPACT_WORKFLOW)){
+      const text=await readSource(IMPACT_WORKFLOW,revision);
+      multiWorkflow=workflowRuns(text).some(step=>hash(step.run)===IMPACT_GATE_SHA256);
+    }
+    if(!multiWorkflow&&tree.has(IMPACT_WORKFLOW)){
+      const workflow=await read(IMPACT_WORKFLOW),prPath='scripts/ci/implementation-pr-gate.mjs',gatePath='scripts/ci/implementation-gate.mjs';
+      const pr=await read(prPath),gate=await read(gatePath);
+      requireProof(workflow&&pr&&gate&&legacyImpactRunnerProven(workflow,pr,gate),'legacy_impact_runner_unproven');
+      relations.push({consumer_path:IMPACT_WORKFLOW,input_path:prPath,kind:'direct_admission_runner',revision},
+        {consumer_path:prPath,input_path:gatePath,kind:'reachable_named_import_call',revision});
+    }
+    if(multiWorkflow){
+      const workflow=await read(IMPACT_WORKFLOW),entry=await read(MULTI_ENTRY),multi=await read(MULTI_SOURCE);
+      const prPath='scripts/ci/implementation-pr-gate.mjs',gatePath='scripts/ci/implementation-gate.mjs';
+      const pr=await read(prPath),gate=await read(gatePath);
+      requireProof(workflow&&impactRunnerProven(workflow),'impact_pr_runner_unproven');
+      requireProof(entry&&multi&&pr&&gate&&impactImportsProven(entry,multi,pr,gate),'impact_reachable_import_unproven');
+      relations.push({consumer_path:IMPACT_WORKFLOW,input_path:MULTI_ENTRY,kind:'conditional_pr_admission_runner',revision},
+        ...[[MULTI_ENTRY,MULTI_SOURCE],[MULTI_ENTRY,prPath],[MULTI_SOURCE,gatePath]].map(([consumer_path,input_path])=>({consumer_path,input_path,kind:'reachable_named_import_call',revision})));
+    }
     if(tree.has(NIGHTLY_READER)){
       const doc=ci?yaml.load(ci):null,job='lint-auto-merge-decision';
       const invoked=doc?.jobs?.[job]?.steps?.some(s=>typeof s.run==='string'&&shellLines(s.run).includes(`node --test ${NIGHTLY_READER}`));

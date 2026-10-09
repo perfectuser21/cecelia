@@ -4,7 +4,8 @@ import { parseFrontmatter } from './md-chain.mjs';
 import { INTENT_ID_RE } from './intent.mjs';
 
 export const OUTPUT_SUMMARY_MAX = 2000;
-const ITEM_RE = /^### (E-\d+)(?:[\s:：].*)?$/;
+// 条目标题 `### <前缀>-n`（04 用 E-n 对应 I-n；QA 报告用 T-n 对应 Q-n、X-n 对应 I-n/Q-n）
+const itemRe = (prefix) => new RegExp(`^### (${prefix}-\\d+)(?:[\\s:：].*)?$`);
 const SECTION_END_RE = /^#{1,3} /;
 const FENCE_RE = /^(`{3,}|~{3,})\s*([A-Za-z]*)\s*$/;
 const COVERS_RE = /^对应\s*[:：]\s*(.*)$/;
@@ -22,7 +23,7 @@ function closes(f, fence) {
 }
 
 /** 按行切出 `### E-n` 段；代码块内的标题行不算结构。返回 [{ id, lines }]。 */
-function sections(lines) {
+function sections(lines, ITEM_RE) {
   const out = [];
   let current = null;
   let fence = null;
@@ -49,7 +50,7 @@ function sections(lines) {
 }
 
 /** 解析一段：字段行在代码块外，command/output 取第一个同名代码块。 */
-function parseSection({ id, lines }) {
+function parseSection({ id, lines }, coversRe) {
   const errors = [];
   const blocks = {};
   let covers = null;
@@ -83,7 +84,7 @@ function parseSection({ id, lines }) {
   if (open && !(open.lang in blocks)) blocks[open.lang] = open.body.join('\n').replace(/\n+$/, '');
 
   if (!covers || covers.length === 0) errors.push(`${id}:covers_missing`);
-  else for (const c of covers.filter((x) => !INTENT_ID_RE.test(x))) errors.push(`${id}:covers_invalid:${c}`);
+  else for (const c of covers.filter((x) => !coversRe.test(x))) errors.push(`${id}:covers_invalid:${c}`);
   if (verdict === null) errors.push(`${id}:verdict_missing`);
   else if (verdict !== 'PASS' && verdict !== 'FAIL') errors.push(`${id}:verdict_invalid`);
   for (const lang of ['command', 'output']) {
@@ -93,20 +94,23 @@ function parseSection({ id, lines }) {
   return { item: { id, covers: covers ?? [], verdict, command: blocks.command ?? '', output: blocks.output ?? '' }, errors };
 }
 
-/** 解析 04-evidence.md 文本 → { items: [{id, covers, verdict, command, output}], errors }。有无 frontmatter 均可。 */
-export function parseEvidence(text) {
+/**
+ * 解析证据文本 → { items: [{id, covers, verdict, command, output}], errors }。有无 frontmatter 均可。
+ * 缺省按 04-evidence.md（E-n 对应 I-n）；QA 报告传 { prefix: 'T', coversRe: /^Q-\d+$/ } 等。
+ */
+export function parseEvidence(text, { prefix = 'E', coversRe = INTENT_ID_RE } = {}) {
   if (typeof text !== 'string') return { items: [], errors: ['evidence_not_text'] };
   const body = parseFrontmatter(text)?.body ?? text;
   const items = [];
   const errors = [];
   const seen = new Set();
-  for (const section of sections(body.split(/\r?\n/))) {
+  for (const section of sections(body.split(/\r?\n/), itemRe(prefix))) {
     if (seen.has(section.id)) {
       errors.push(`${section.id}:duplicate`);
       continue;
     }
     seen.add(section.id);
-    const parsed = parseSection(section);
+    const parsed = parseSection(section, coversRe);
     items.push(parsed.item);
     errors.push(...parsed.errors);
   }

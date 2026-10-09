@@ -9,19 +9,23 @@ export function runnerChildEnv(base = process.env) {
 
 /**
  * 运行命令（不经 shell）。返回 { code, stdout, stderr, timedOut }；启动失败 code=null。
- * 超时或 signal 中止时先 SIGTERM，5 秒后 SIGKILL。
+ * input 非空时写进子进程 stdin（活动协议 json-stdio）。超时或 signal 中止时先 SIGTERM，5 秒后 SIGKILL。
  */
-export function run(bin, args, { cwd, timeoutMs = 10 * 60 * 1000, signal } = {}) {
+export function run(bin, args, { cwd, timeoutMs = 10 * 60 * 1000, signal, input } = {}) {
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let timedOut = false;
     let child;
     try {
-      child = spawn(bin, args, { cwd, env: runnerChildEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(bin, args, { cwd, env: runnerChildEnv(), stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     } catch (error) {
       resolve({ code: null, stdout, stderr: String(error?.message || error), timedOut });
       return;
+    }
+    if (input !== undefined) {
+      child.stdin.on('error', () => {});
+      child.stdin.end(input);
     }
     const stop = () => {
       child.kill('SIGTERM');

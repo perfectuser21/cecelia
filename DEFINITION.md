@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.393.2
+**Brain 版本**: 1.402.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,72 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.402.0 — Native scoped admission
+
+- The existing pr-gate CLI dispatches explicit scopes-file requests to the joint collector and registered assertion engine; legacy single-scope and main release remain unchanged.
+- KR/Brain snapshots freeze an independent Factory admission companion with strict identity, digest, eight-reference, six-unknown and non-executable checks. Explicit joint admission fails closed for any UNKNOWN.
+- Extraction returns source files and EXTRACTED only. Real PG and Node subprocess tests retain separate definitions and hashes; no candidate source is registered centrally.
+
+## Brain 1.401.0 — coding harness 独立裁判：真人 QA PASS 后不同模型复核，PASS 才合并
+
+- 决策 02d8e749 ②d：QA 门里真人 QA PASS 后、开自动合并前，加独立裁判（lib/judge.mjs + runner/lib/judge-gate.mjs）。裁判用不同于开发/QA 的模型（默认与 Brain 现役裁判一致 gpt-5.6-sol，CODING_WF_JUDGE_MODEL/TOAPIS_JUDGE_MODEL 可改；ToAPIs 凭据运行时从 ~/.credentials/toapis.env 读），复核「需求 01 + 合同 02 + QA 报告 05 + PR 代码改动（不含 sprints/）」，逐条判 I-n 是否真被满足，裁决写 `06-judge-r<round>.md` 随 QA 报告提交进 PR。
+- 程序裁决（不信模型自报）：每条 I-n 都满足且没有阻断/重要问题才 PASS；判某条不满足必须给出对应的阻断/重要问题。问题三类：product → 开发按裁决 TDD 修复（qa-fix 环）；qa_gap → 下一轮 QA 带着裁决补验（evaluate 新增 judge_feedback 输入）；contract_gap → 升级 coding commander（judge_contract_gap）。
+- 裁判不可用/输出不合格：QA 报告照常提交（"独立裁判待定"），下轮只重跑裁判、不重跑 QA；连续 3 次升级 qa_judge_unavailable。裁判 FAIL 计入不收敛判定（qa_stalled）。CODING_WF_JUDGE=0 关闭裁判（QA PASS 直接合并）。
+- 裁判提示词只追究用户真实受影响的问题，不抠字面（真模型三情形实测：如实通过→PASS、QA 漏验→qa_insufficient、QA 看错→product_failure）。
+
+## Brain 1.400.0 — coding harness runner 接 evaluator 门：CI 绿后真人 QA，PASS 才合并，FAIL 修复环
+
+- 决策 02d8e749：CI 绿不再直接合并。runner 开 PR 后只 ready（CODING_WF_QA_GATE=0 恢复旧行为）；每轮顺序：对账 → CI 红自动修 → **QA 门** → 认领新任务。
+- QA 门（runner/lib/qa-gate.mjs）：自己开的 cw PR 必需检查全绿、未通过 QA、当前 head 没验过 → 查 PR 预览环境（不存在则带 DEPLOY_TOKEN 请求启动；容量拒绝超 CODING_WF_QA_PREVIEW_ESCALATE_MS 默认 60 分钟升级）→ 检出 PR 版本跑 evaluate 活动 → 05 报告提交推送进 PR。
+- PASS：gh pr merge --auto --squash；合并后停掉该 PR 预览环境释放容量。FAIL：开发按 QA 报告 TDD 修复（prompts/qa-fix.md，不许碰 sprints/ 与 agent 配置、不许放宽断言），程序核对后推送 → CI → 再验，不设轮数上限。
+- 升级给 coding commander（`[coding-qa][P1]`，Brain result.escalations）：失败数连续 3 轮不降（qa_stalled）、评估会话连续 3 次出错或致命错误（qa_evaluator_broken）、预览环境长期起不来（qa_preview_unavailable）、PR 找不到 sprint（qa_sprint_missing）。状态 <logDir>/qa-<pr>.json，Brain result.qa 摘要。
+- runner.sh 运行时从 ~/.credentials/cecelia-deploy-token.env 读 DEPLOY_TOKEN（不进代码与 plist）。抽出 runner/lib/pr-branch.mjs（检出 PR 分支、读 sprint、核对修复提交、推送）与 listOwnPrs/requiredState，CI 修复与 QA 门共用。
+
+## Brain 1.399.0 — 工厂F3条件准入来源
+
+- 只在真实多scope入口存在时核固定版本1条件shell、明确PR环境及完整AST import/call链；注释、死分支、缺依赖、提前return/break继续UNKNOWN。
+- 旧main没有入口时维持既有Factory来源；不执行候选代码、不改current/引用，不把完整工厂声明可运行。
+
+## Brain 1.398.0 — coding harness evaluator 真人 QA：在 PR 预览环境黑盒验收
+
+- 决策 02d8e749：evaluator 是 CI 绿后、合并前的门，像真人 QA 一样在真实环境里验。新增 evaluate 活动（本 PR 只做活动本身，接入 runner 在下一步）。
+- 环境：lib/preview.mjs 查 PR 预览环境（MMV :5241 /api/brain/preview/status/<pr>，PR 版本 Brain + 打包 Dashboard + 克隆库，隔离运行时），等到 active；不可用 → retryable preview_unavailable。
+- 黑盒：全新 Opus 会话只拿 01 需求与 02 的 QA 场景 Q-n，运行期间 03/04（开发自述与自测）藏起；按 Q-n 逐条测（### T-n）+ 探索式测试（### X-n，FAIL 必须带严重度与场景），写 05-qa-report-r<round>.md。
+- 程序判（lib/qa-report.mjs）：格式与 Q-n 覆盖（qa_report_invalid / qa_incomplete）→ 碰生产 Brain（5221 / us-vps）fatal evaluate_touched_production → 单元测试当证据 qa_unit_test_evidence → 证据须在执行记录里 qa_evidence_unverified → T-n 全 PASS 且无 FAIL 的阻断/重要发现才 PASS；产品 FAIL 是正常结果（completed + outputs.qa.verdict=FAIL，交修复环）。
+- lib/evidence.mjs parseEvidence 支持条目前缀与对应 ID 规则参数；证据输出摘录允许用 `...`/`…` 省略长行中间，但每段须按序出自真实结果（verify 同样受益）。
+- 真实 Opus 试跑（PR #6117 预览环境）：两条计划场景 PASS；探索式测试发现非法任务 id 时 GET /api/brain/tasks/:id 返回 500 并泄露数据库报错（重要）→ 判 FAIL，花费 $0.47。
+
+## Brain 1.397.0 — coding harness 规格必须带用户视角 QA 场景 Q-n
+
+- evaluator 真人 QA 的测试计划来源（决策 02d8e749）：02-spec.md 在规格 S-n 之后必须有 `## QA 场景`，每个 `### Q-n` 写 对应（I-n）/前提/操作（真人操作步骤）/期望（用户可见结果）；每个 I-n 至少一条 Q-n；单元测试不算 QA 场景。
+- lib/spec-check.mjs 新增 qaScenarios 解析与校验（qa_missing / qa_not_covered:I-n / Q-n:covers_missing|steps_missing|expect_missing|covers_unknown），spec 活动与合同对抗改写共用；不合格同样 retryable spec_invalid。
+- 合同对抗 QA 的问题可针对 Q-n；「可验证」维度改为看 Q-n 能否在真实环境从用户视角验证。
+- md-chain 覆盖只计条目锚点（01 的 I-n、02 的 S-n），02 里的 Q-n 不要求 03 覆盖。
+
+## Brain 1.396.0 — coding harness 合同对抗 v2：QA 立场、带场景的问题、代码判分、不限轮数按走势收敛
+
+- 决策 02d8e749 / 696c9f96：恢复已拍板的 GAN 设计——不设轮数上限，靠走势收敛（原 spec_review 写死最多 2 轮，违反 harness-gan-design）。
+- spec_review 改为 QA 立场：只准提四类问题（做了也达不到 / 漏了真实路径 / 偷换需求 / 弄坏现有功能），每个问题带 针对、严重度（阻断/重要/建议）、场景、依据；阻断/重要缺场景或依据判评审不合格；措辞格式类不算问题。
+- 每轮 5 维评分（意图对齐/可验证/场景覆盖/回归风险/可执行，0–10），程序判通过：5 维都 ≥7 且没有仍开着的阻断/重要问题（lib/gan.mjs decide），不信 AI 自报结论。
+- 开发方逐条采纳/驳回（02-response-rN.md），QA 下一轮对上轮仍开着的问题逐条 关闭/坚持；坚持的仍算开着。
+- 收敛：lib/gan.mjs detectTrend 移植 harness-gan.graph.js detectConvergenceTrend（最近 3 轮震荡/走低；规格连续变长且总分没涨算发散），发散/震荡 → 强制通过（gan.verdict=FORCED）+ `[coding-gan][P1]` + outputs.escalations 升级给 coding commander。
+- 只有真坏掉才中止：评审连续 3 次格式不合格（review_invalid）、累计花费超 CODING_WF_GAN_BUDGET_USD（默认 $20，gan_budget_exceeded）、claude 失败、越界写、01 被改。spec_review 时间预算 1800s → 21600s。
+- 每轮留 02-review-rN.md / 02-response-rN.md，最终一轮另存 02-review.md；PR 正文「合同对抗」小节写轮数、结论与走势、最终评分、末轮问题严重度，强制通过醒目标出仍开着的问题；report 把 gan 摘要与 escalations 回写 Brain result.coding_workflow。
+
+## Brain 1.395.0 — 既有工厂消费者可信来源bootstrap
+
+- 仅真实F2/F3活动的固定Git调用链及输入可提供非执行来源历史，其余六引用继续UNKNOWN。
+- 正式main refresh认证来源、完整树和字节后CAS追加历史，current、旧引用和状态不变；候选只进scratch。
+- 解析器调用时加载；生产缺依赖时正常启动、来源提取明确503拒绝，不写历史。
+- 两真实工厂cap/root来源锚点由正式map store CAS推进，拒绝错误repo、实体、父级和缺来源，不改变完整业务字段。
+- 不带生产Acorn/package变更、Auth修复、factory JSON或Vitest配置；生产解析依赖仍待真实来源准入后独立发布。
+- 正式CI同名配对门禁要求由真实登记边界测试承接，原PG事务/不可变历史测试完整保留。
+
+## Brain 1.394.0 — 仓库物件故障处置读写（技能工厂第③棒）
+
+- `GET /enablers`（`/warehouse-items`）多返回 `shelf`、`failure_semantics`，`?keys=a,b` 一次取多件；`POST /enablers` 新建仓库物件（货架 / kind 按表约束校验，key 重复 409）；`PATCH /enablers/:key` 写故障处置（rows 非空、class 为 empty_ok / retryable / fatal / needs_human）；`GET /activity_uses?activity_id=` 取 Activity 依赖的物件及处置。
+- `failure_semantics` 列为 text：按 JSON 文本存，读出能解析给对象、旧纯文本原样给；不改表结构。新增 enablers-failure-semantics smoke（写操作仅 CI 执行）。
 
 ## Brain 1.393.1 — 消费者来源历史拒绝执行
 
