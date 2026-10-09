@@ -25,3 +25,8 @@ test('summary回流原任务时含库链接/任务ID/报价数量；失败error_
  assert.ok(c.summary.includes('existing-id'));assert.ok(c.summary.includes('7452049ef7de4da5822d4ff682869172'));assert.ok(c.summary.includes('1'));
  assert.equal(failurePatch({},'证据审计失败','/cache',[]).error_message,'证据审计失败');
 });
+
+test('生产顶层human_hold键存在即拒绝；payload排期未到拒绝',()=>{
+ assert.equal(selectRequest({...task,notion_props:{qiumi_human_hold:false}}),null);
+ assert.equal(selectRequest({...task,payload:{...task.payload,next_run_at:'2099-01-01T00:00:00Z'}}),null);
+});
