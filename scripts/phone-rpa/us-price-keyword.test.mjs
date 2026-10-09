@@ -89,3 +89,10 @@ test('任务登记归属有头执行，原子claim失败时不得更新状态', 
   await assert.rejects(claimTask('t1','owner',async (p,m,b) => { calls.push(p); throw Error('409'); }));
   assert.deepEqual(calls,['/tasks/t1/claim']);
 });
+test('原生采集完成后直接报告，禁止重复拉图和全文XML导致模型不收尾', () => {
+  const prompt=buildPrompt(options,'task1');
+  assert.ok(prompt.includes('不要调用 file_fetch'));
+  assert.ok(prompt.includes('同一证据最多读取1次'));
+  assert.ok(prompt.includes('禁止把全文XML返回模型'));
+  assert.ok(prompt.includes('恢复网络/桌面并释放锁后立即输出JSON'));
+});
