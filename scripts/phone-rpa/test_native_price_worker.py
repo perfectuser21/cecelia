@@ -1,7 +1,7 @@
 import unittest
 import xml.etree.ElementTree as E
 from native_price_phone import text_values, parse_hd_detail, extract_asin, price_candidates, validate_request
-from us_price_native_worker import dispatch
+from us_price_native_worker import dispatch, hd_candidates, amazon_quote, clear_search
 
 def nodes(values, package='com.thehomedepot'):
     root=E.Element('hierarchy')
@@ -48,4 +48,33 @@ class NativePriceTests(unittest.TestCase):
             return 'lock=held owner=other' if 'lock-status' in args else 'state=device call_state=idle'
         with self.assertRaises(RuntimeError):dispatch({'keyword':'drill','zip':'53132','count':1,'owner':'owner'},runner)
         self.assertFalse(any('with-lock' in c for c in calls))
+    def test_hd_product_candidates_reject_marketing(self):
+        ns=nodes(['Save $25 when you open a new credit card today','Shop all departments and discover great deals','DEWALT 20V MAX Cordless Drill Driver Kit DXX123'])
+        for node in ns:node.set('clickable','true')
+        self.assertEqual([v for v,n in hd_candidates(ns)],['DEWALT 20V MAX Cordless Drill Driver Kit DXX123'])
+    def test_clear_existing_search_before_new_input(self):
+        class Fake:
+            def __init__(self):self.actions=[]
+            def tap(self,node):self.actions.append('focus')
+            def adb(self,*args):self.actions.append(args[-1])
+        fake=Fake();clear_search(fake,nodes(['old keyword'])[0])
+        self.assertIn('67',fake.actions)
+    def test_hd_merge_title_and_price_pages(self):
+        first=nodes(['ACME drill kit AX1234 - The Home Depot','Shop ACME','Model # AX1234','Internet # 987654321'])
+        second=nodes(['$79.95','Delivering to 53132'])
+        self.assertEqual(parse_hd_detail(first+second,'53132')['model'],'AX1234')
+    def test_amazon_missing_asin_retains_price_as_pending(self):
+        class Fake:
+            owner='owner'
+            def launch(self,*args):pass
+            def tap(self,*args):pass
+            def swipe(self):pass
+            def snapshot(self,*args):return '/tmp/price.png'
+            def nodes(self,*args):return nodes(['DEWALT Cordless Drill Kit DXX123','Add to Cart','$79.95','53132','In Stock'],'com.amazon.mShop.android.shopping'),'/tmp/price.xml'
+        import unittest.mock
+        with unittest.mock.patch('us_price_native_worker.time.sleep'):
+            q=amazon_quote(Fake(),{'model':'DXX123','brand':'DEWALT'},0,'53132')
+        self.assertIsNone(q['url'])
+        self.assertTrue(q['url_missing'])
+        self.assertEqual(q['status'],'规格待核')
 if __name__=='__main__':unittest.main()

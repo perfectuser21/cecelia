@@ -7,7 +7,7 @@ function receipt() {
   return { runId: 'run1', status: 'ok', result: { payloads: [{ text: JSON.stringify({ quotes: [quote], network_restored: true, home_verified: true, lock_free_verified: true }) }], meta: { agentMeta: { provider: 'openai', model: 'gpt-6-luna', terminalReceipt: { effective: { provider: 'openai', model: 'gpt-6-luna' }, successfulToolNames: ['node_exec'] } } } } };
 }
 test('输入数量有界，邮编保留前导零', () => {
-  assert.deepEqual(parseOptions(['--keyword', 'drill', '--zip', '00501']), { keyword: 'drill', zip: '00501', count: 3, model: 'openai/gpt-6-sol' });
+  assert.deepEqual(parseOptions(['--keyword', 'drill', '--zip', '53132']), { keyword: 'drill', zip: '53132', count: 3, model: 'openai/gpt-6-sol' });
   for (const count of ['0', '4', '1.5']) assert.throws(() => parseOptions(['--keyword', 'drill', '--count', count]));
   assert.throws(() => parseOptions(['--keyword', '   ']));
 });
@@ -133,4 +133,21 @@ test('Notion写入后读回失败仍暴露已创建页面ID供失败回执保留
   const result=validateReceipt(receipt(),options), written=[];
   await assert.rejects(saveQuotes(result,options,'t',async (p,m,b)=>p.endsWith('/query')?{results:[]}:m==='POST'?{id:'already-created'}:{properties:{}},'ds',async ()=>'proof',row=>written.push(row)));
   assert.equal(written[0].id,'already-created');
+});
+
+test('固定worker只用一次dispatcher，不让模型重写UI/逐步with-lock', () => {
+  const prompt=buildPrompt(options,'task1');
+  assert.ok(prompt.includes('us_price_native_worker.py'));
+  assert.ok(prompt.includes('禁止逐动作重新with-lock'));
+  assert.ok(prompt.includes('--request-base64'));
+  assert.throws(()=>parseOptions(['--keyword','drill','--zip','00501']));
+});
+test('缺商品链接仍保留可靠价格，但标待核且不能整体passed', () => {
+  const r=receipt(), report=JSON.parse(r.result.payloads[0].text);
+  report.quotes[0].url=null;report.quotes[0].url_missing=true;report.quotes[0].status='规格待核';
+  r.result.payloads[0].text=JSON.stringify(report);
+  const result=validateReceipt(r,{...options,count:1});
+  assert.equal(result.claimed_result,'partial');
+  const p=notionProperties(result.quotes[0],options,'t','r','model','proof');
+  assert.equal(p.商品链接.url,null);assert.equal(p.状态.select.name,'规格待核');
 });
