@@ -9,6 +9,7 @@ import {
 } from '../lib/claude.mjs';
 import { sha256File, chainTamperFailure } from '../lib/guards.mjs';
 import { SPEC_FILE, INTENT_FILE, specErrors } from '../lib/spec-check.mjs';
+import { INVARIANTS_FILE, loadInvariantIds } from '../lib/invariants.mjs';
 
 // 默认低于契约 budget（900s），这样超时由本活动先报明确的 claude_timeout，而不是执行器笼统的 activity_timeout
 const TIMEOUT = { envVar: 'CODING_WF_SPEC_TIMEOUT_MS', defaultMs: 870000 };
@@ -26,7 +27,9 @@ await runActivity(async (input) => {
     INTENT_PATH: path.join(dir, INTENT_FILE),
     SPEC_PATH: specPath,
     INTENT_IDS: intentIds.join(','),
+    INVARIANTS_PATH: path.join(dir, INVARIANTS_FILE),
   });
+  const invariantIds = loadInvariantIds(dir);
 
   // 重试/重跑时旧产物会被当成新产物，先删
   fs.rmSync(specPath, { force: true });
@@ -47,7 +50,7 @@ await runActivity(async (input) => {
   if (!fs.existsSync(specPath)) return fail('fatal', 'spec_missing');
 
   // 02 不合格当场拦（重试一次让 claude 重写），不留给 build 报 spec_ids_missing（c2afa8ba 实测）
-  const errors = specErrors(fs.readFileSync(specPath, 'utf8'), input.task_id, intentIds);
+  const errors = specErrors(fs.readFileSync(specPath, 'utf8'), input.task_id, intentIds, { invariantIds });
   if (errors.length > 0) return fail('retryable', 'spec_invalid', { evidence: [{ spec_errors: errors }] });
 
   return {

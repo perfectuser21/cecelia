@@ -82,6 +82,18 @@ describe('spec_review 活动 v2（合同对抗）', () => {
     expect(r.result.outputs.spec_sha256).toBe(sha256(spec));
   });
 
+  // 审计 P1 #3：有铁律清单时，开发方改写后的合同照样要过铁律对照自检；评审 prompt 拿到清单路径
+  it('有铁律清单：改写时删掉了 `## 铁律对照` → retryable spec_invalid（invariants_section_missing）', async () => {
+    fs.writeFileSync(path.join(sprint(), '01-invariants.md'), '# 铁律清单\n\n### INV-02d8e749\n不得缩减已拍板设计\n');
+    fs.appendFileSync(path.join(sprint(), '02-spec.md'), '\n## 铁律对照\n\n- INV-02d8e749：不适用：本改动只动评审文案\n');
+    const r = await run({ reviews: [{ scores: 6, issues: [blocker('R-1')] }], revise: { dropInvariants: true } });
+    expect(r.result.reason_code).toBe('spec_invalid');
+    expect(JSON.stringify(r.result.evidence)).toContain('invariants_section_missing');
+    const prompt = fs.readFileSync(path.join(path.dirname(ENTRY), '../prompts/spec-review.md'), 'utf8');
+    expect(prompt).toContain('INVARIANTS_PATH: {{INVARIANTS_PATH}}');
+    expect(prompt).toContain('违反铁律');
+  });
+
   it('QA 坚持的问题仍算开着：评分再高也不通过，下一轮把仍开着的编号告诉 QA', async () => {
     const r = await run({ reviews: [
       { scores: 6, issues: [blocker('R-1')] },

@@ -98,6 +98,11 @@ describe('coding_spec 八活动契约端到端（通用执行器 + 假外部依�
           }));
           return;
         }
+        // 铁律清单（intent 写 01-invariants.md）：一条铁律，假 spec 会在 02 的铁律对照里交代它
+        if (req.method === 'GET' && req.url.startsWith('/api/brain/decisions?category=invariant')) {
+          res.end(JSON.stringify([{ id: '02d8e749-aaaa-4bbb-8ccc-dddddddddddd', topic: '不得缩减已拍板设计', decision: 'GAN 无上限', status: 'active' }]));
+          return;
+        }
         if (req.method === 'PATCH') {
           patches.push({ url: req.url, raw });
           res.end(JSON.stringify({ id: TASK_ID }));

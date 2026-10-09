@@ -15,6 +15,7 @@ import { parseReview, openIssuesAfter } from '../lib/review.mjs';
 import { decide, detectTrend } from '../lib/gan.mjs';
 import { sessionCostUsd } from '../lib/transcript.mjs';
 import { SPEC_FILE, INTENT_FILE, specErrors, specIds, qaScenarios } from '../lib/spec-check.mjs';
+import { INVARIANTS_FILE, loadInvariantIds } from '../lib/invariants.mjs';
 
 const REVIEW_FILE = '02-review.md';
 const TIMEOUT = { envVar: 'CODING_WF_SPEC_REVIEW_TIMEOUT_MS', defaultMs: 900000 };
@@ -79,7 +80,10 @@ await runActivity(async (input) => {
   if (!fs.existsSync(specPath)) return fail('fatal', 'spec_missing');
 
   const ctx = { input, worktree, sprintDir, dir, startedAt: Date.now() };
-  const base = { TASK_ID: taskId, INTENT_PATH: path.join(dir, INTENT_FILE), SPEC_PATH: specPath, INTENT_IDS: intentIds.join(',') };
+  const base = {
+    TASK_ID: taskId, INTENT_PATH: path.join(dir, INTENT_FILE), SPEC_PATH: specPath, INTENT_IDS: intentIds.join(','), INVARIANTS_PATH: path.join(dir, INVARIANTS_FILE),
+  };
+  const invariantIds = loadInvariantIds(dir);
   const budget = budgetUsd();
   const history = [];
   let prevOpen = [];
@@ -150,7 +154,7 @@ await runActivity(async (input) => {
     const blownAfterRevise = overBudget();
     if (blownAfterRevise) return blownAfterRevise;
     if (!fs.existsSync(specPath)) return fail('fatal', 'spec_missing');
-    const specErr = specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds);
+    const specErr = specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds });
     if (specErr.length > 0) return fail('retryable', 'spec_invalid', { evidence: [{ spec_errors: specErr }] });
     if (!fs.existsSync(responsePath)) return fail('retryable', 'response_missing', { evidence: [{ round }] });
   }
