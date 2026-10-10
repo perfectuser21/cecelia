@@ -6,6 +6,11 @@ const mockGetGuidance = vi.fn();
 const mockIsAllowed = vi.fn();
 const mockDispatchNextTask = vi.fn();
 const mockQuery = vi.fn();
+const mockCanDispatch = vi.fn();
+
+vi.mock('../alertness/index.js', () => ({
+  canDispatch: () => mockCanDispatch(),
+}));
 
 vi.mock('../guidance.js', () => ({
   getGuidance: (...args) => mockGetGuidance(...args),
@@ -31,12 +36,17 @@ describe('tick-scheduler', () => {
     vi.clearAllMocks();
     // 默认：circuit breaker CLOSED（允许派发）
     mockIsAllowed.mockReturnValue(true);
+    mockCanDispatch.mockReturnValue(true);
     // 默认：无 guidance 建议
     mockGetGuidance.mockResolvedValue(null);
     // 默认：有活跃 KR
     mockQuery.mockResolvedValue({ rows: [{ id: 'kr-1' }, { id: 'kr-2' }] });
     // 默认：dispatch 成功
-    mockDispatchNextTask.mockResolvedValue({ dispatched: true, actions: [], reason: 'ok' });
+    mockDispatchNextTask.mockImplementation(async (_goalIds, options) => (
+      options?.codeOnly
+        ? { dispatched: false, actions: [], reason: 'no_dispatchable_task' }
+        : { dispatched: true, actions: [], reason: 'ok' }
+    ));
   });
 
   // 测试 1: 有 guidance 建议时 guidance_found=true
@@ -89,5 +99,40 @@ describe('tick-scheduler', () => {
     expect(src).not.toContain('generateDecision');
     expect(src).not.toContain('runRumination');
     expect(src).not.toContain('planNextTask');
+  });
+
+  it('正式定时入口先派发代码且无活跃KR也可执行', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockDispatchNextTask.mockResolvedValue({ dispatched: true, task_id: 'code-1', actions: [], reason: 'ok' });
+    const result = await runScheduler();
+    expect(mockDispatchNextTask).toHaveBeenCalledTimes(1);
+    expect(mockDispatchNextTask).toHaveBeenCalledWith(null, { codeOnly: true });
+    expect(result).toMatchObject({ dispatched: true, task_id: 'code-1', dispatch_lane: 'code' });
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('代码暂无候选后仍按原KR约束派发AI任务', async () => {
+    const result = await runScheduler();
+    expect(mockDispatchNextTask.mock.calls).toEqual([
+      [null, { codeOnly: true }],
+      [['kr-1', 'kr-2']],
+    ]);
+    expect(result).toMatchObject({ dispatched: true, code_dispatch: { dispatched: false, reason: 'no_dispatchable_task' } });
+  });
+
+  it('目标资源忙且没有KR时如实返回代码等待原因', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockDispatchNextTask.mockResolvedValue({ dispatched: false, reason: 'script_host_resource_unavailable', actions: [] });
+    const result = await runScheduler();
+    expect(result).toMatchObject({ dispatched: false, reason: 'no_goals', code_dispatch: { reason: 'script_host_resource_unavailable' } });
+    expect(mockDispatchNextTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('PANIC或人工禁派发不运行任何代码任务', async () => {
+    mockCanDispatch.mockReturnValue(false);
+    const result = await runScheduler();
+    expect(result).toMatchObject({ dispatched: false, reason: 'alertness_disabled' });
+    expect(mockDispatchNextTask).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 });
