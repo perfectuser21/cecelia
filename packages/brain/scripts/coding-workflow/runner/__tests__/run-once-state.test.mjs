@@ -8,7 +8,7 @@ describe('QA / CI 修复状态写进 Brain', () => {
   const E = useQaEnv();
   const { green, go, state, statePath, qaCalls } = E;
   const brainTask = (extra = {}) => ({ id: TASK, status: 'completed', ...extra });
-  const qaStates = () => E.brainResults().map((x) => x?.qa_state).filter(Boolean);
+  const qaStates = () => E.brainStateResults().map((x) => x?.qa_state).filter(Boolean);
 
   it('QA 升级 → Brain result.qa_state 带 escalated；状态没变的下一轮不重复写', async () => {
     let r = await go(green(), { mode: 'fatal', tasks: [brainTask()] });
@@ -29,6 +29,16 @@ describe('QA / CI 修复状态写进 Brain', () => {
     expect(qaCalls()).toEqual([]);
     expect(state().escalated).toMatchObject({ type: 'qa_evaluator_broken' });
     expect(r.stderr).toContain('已从 Brain 任务');
+  });
+
+  it('CI 修复状态同样写进 Brain result.ci_fix_state（次数、升级）', async () => {
+    fs.mkdirSync(E.sb.logDir, { recursive: true });
+    fs.writeFileSync(`${E.sb.logDir}/cifix-77.json`, JSON.stringify({ attempts: [{ head: 'a'.repeat(40), result: 'pushed' }], escalated: { type: 'ci_fix_exhausted' } }));
+    const r = await go(green(), { mode: 'pass', tasks: [brainTask()] });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(E.brainStateResults().map((x) => x?.ci_fix_state).filter(Boolean).at(-1)).toMatchObject({
+      attempts: [{ result: 'pushed' }], escalated: { type: 'ci_fix_exhausted' },
+    });
   });
 
   it('Brain 里也没有（新 PR）→ 照常 QA', async () => {
