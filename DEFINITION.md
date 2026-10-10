@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.405.2
+**Brain 版本**: 1.406.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,14 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.406.0 — coding harness：裁判看完整改动、追究范围蔓延与安全问题、疑虑可见、合并删分支
+
+- 决策 a1fdbc51 审计 P2：
+  - #43 裁判必须看到完整改动：上限 6 万 → 15 万字（JUDGE_DIFF_LIMIT）；PR 改动超限不再截断照判，直接升级 judge_input_truncated（不算裁判坏、不重试）。
+  - #39 #40 裁判提示词：与任何 I-n 都无关的改动（范围蔓延）、安全与数据破坏（注入、凭据入代码/日志、越权、删改已有数据、不可逆迁移）记「重要」。
+  - #41 「完成但有疑虑」可见：裁判建议级问题写进 Brain result.qa.concerns。
+  - #28 合并门合并时带 --delete-branch。
 
 ## Brain 1.405.2 — CI：只改 workflow 的 PR 也跑 brain fs 守卫组；walking 断言跟进镜像源
 
