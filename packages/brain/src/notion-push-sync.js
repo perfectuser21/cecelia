@@ -18,6 +18,7 @@ import { startRun, finishRun } from './lib/task-run.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { readPageContent } from './lib/notion-page-content.js';
 import { qiumiSourceFromNotion } from './lib/qiumi-source.js';
+import { QIUMI_STATUS_MAP } from './lib/qiumi-status-map.js';
 import { toStartIso, toEndIso, isFuture, scheduledNote } from './lib/qiumi-schedule.js';
 import { parseEnPage, parseZhPage, GTD_DB_ID, EN_NATIVE_MARK } from './notion-gtd-sync.js';
 import { TREE_NODES_SQL, treeNodeTable } from './lib/tree-nodes-sql.js';
@@ -40,12 +41,20 @@ export const NOTION_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
 //   agent.dispatch.template        = 租户任务模板文件名（OPENCLAW_DISPATCH_DIR 下）
 // 禁止在代码里枚举执行方——排单可选项即两张 ops 表本身（决策：主理人 2026-09-14 纠正）。
 
+// 与中文 GTD 表一一对应的英文 Tasks 库 Status（2026-10-10）；与 lib/qiumi-status-map.js 的 en 列保持一致（测试钉住）。
+// pending/archived 不在表里：buildTaskNotionProperties 兜底 Planned。
 export const TASK_STATUS_TO_NOTION = Object.freeze({
-  queued: 'Delegated',
+  queued: 'Queued',
   in_progress: 'In Progress',
-  blocked: 'Planned',
+  blocked: 'Blocked',
+  paused: 'Blocked',
+  quota_exhausted: 'Blocked',
+  pending_postdeploy: 'Blocked',
   completed: 'Done',
-  failed: 'Cancelled',
+  completed_no_pr: 'Done',
+  failed: 'Failed',
+  quarantined: 'Failed',
+  dep_failed: 'Failed',
   canceled: 'Cancelled',
   cancelled: 'Cancelled',
 });
@@ -546,10 +555,10 @@ async function ingestQiumiPage(pool, token, page, en, { env, now = () => new Dat
   // 按列过滤的看板/查询一条秋米任务都看不见，租户隔离形同虚设。payload 里有不算数。
   await pool.query('UPDATE tasks SET tenant_id=$2, updated_at=NOW() WHERE id=$1', [taskId, tenantId]);
   if (zh) {
-    // 没到预期开始时间：进库但保持委派，结果栏写已排期提示；到点派发后由回写翻成进行中
+    // 任务此刻是 queued → 中文写排队中；没到预期开始时间时结果栏另写已排期提示，到点派发后由回写翻成进行中
     await notionReq(token, `/pages/${zh.id}`, 'PATCH', { properties: {
       'OpenClaw任务号': { rich_text: [{ type: 'text', text: { content: `brain:${taskId}` } }] },
-      '状态': { status: { name: scheduled ? '委派' : '进行中' } },
+      '状态': { status: { name: QIUMI_STATUS_MAP.queued.zh } },
       ...(scheduled ? { 'OpenClaw结果': { rich_text: [{ type: 'text', text: { content: scheduledNote(startIso) } }] } } : {}),
       ...(delegator.inferred && delegator.name ? { '委派人': { select: { name: delegator.name } } } : {}),
     } });

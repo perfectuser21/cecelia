@@ -1,8 +1,13 @@
 import { blockTask, unblockTask } from '../task-updater.js';
 import { recordProjectionCommand } from '../projection/commands.js';
 import { toStartIso, toEndIso, sameInstant, isFuture } from './qiumi-schedule.js';
+import { TERMINAL_STATUSES } from './task-status-transitions.js';
 
-export const OWNER_STOP_FILTERS = Object.freeze(['淘汰', '阻塞', '委派'].map((s) => Object.freeze({
+/**
+ * 急停读取的四个状态，顺序即 applyOwnerStops 解包顺序：淘汰=急停、阻塞=挂起、委派/排队中=恢复与改期。
+ * 排队中是系统对 queued 任务写的新页状态，委派是旧页（及主理人手拖）；两者同等对待。
+ */
+export const OWNER_STOP_FILTERS = Object.freeze(['淘汰', '阻塞', '委派', '排队中'].map((s) => Object.freeze({
   and: [
     { property: '状态', status: { equals: s } },
     { property: 'OpenClaw任务号', rich_text: { starts_with: 'brain:' } },
@@ -11,6 +16,9 @@ export const OWNER_STOP_FILTERS = Object.freeze(['淘汰', '阻塞', '委派'].m
 
 const taskIdOf = (page) => page.taskNo.match(/brain:([0-9a-f-]{36})/)?.[1] ?? null;
 
+/** 任务已有结论（含 cancelled 两种拼写）：页面上的「淘汰」是 AI 回写的结果，不是新的急停。 */
+const SETTLED_STATUSES = new Set([...TERMINAL_STATUSES, 'cancelled', 'canceled']);
+
 /** 已解析中文页 → Brain 急停、恢复与改期；Notion IO 留在入口模块。 */
 export async function applyOwnerChanges(pool, [discarded, holds, redelegated], { now }) {
   let cancelled = 0; let held = 0; let resumed = 0; let rescheduled = 0;
@@ -18,6 +26,10 @@ export async function applyOwnerChanges(pool, [discarded, holds, redelegated], {
   for (const page of discarded) {
     const id = taskIdOf(page);
     if (!id) continue;
+    // cancelled 任务会被回写成「淘汰」：任务已是终态就不再记命令，AI 自己写的淘汰不回头触发任何变更。
+    // 查不到任务行保持旧行为（交给命令处理器判定）。
+    const found = await pool.query('SELECT status FROM tasks WHERE id=$1', [id]);
+    if (SETTLED_STATUSES.has(found?.rows?.[0]?.status)) continue;
     // 固定命令键：编辑时间不能进幂等键，否则页面每次编辑都会给终态新增死命令。
     await recordProjectionCommand(pool, {
       target: 'notion', externalId: `${page.id}:cancel_requested`, entityType: 'tasks',

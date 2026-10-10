@@ -7,14 +7,15 @@
  *  - en→zh：英文原生 Delegated（无 [zh:]、无 brain:、无 [en-native]）→ 中文表建行（备注 [en:<id32>]，任务号 en:占位）
  *  - 入账（Task 4）：notion-push-sync.ingestDelegatedPage 认标记 → Brain qiumi_task
  *  - 回写/急停（Task 5）：pushQiumiStatus / applyOwnerStops
- * 铁律：中文「收集/下一个行动/阻塞/淘汰」永不写、除急停外永不读（ZH_QUERY_FILTER 只含 委派）。
+ * 铁律：中文「收集/下一个行动/阻塞」永不写、除急停外永不读（ZH_QUERY_FILTER 只含 委派）；
+ *       「淘汰」仅在 Brain 任务已 cancelled 时回写，急停读到已终态任务的淘汰页不再触发变更（见 lib/qiumi-status-map.js 文件头）。
  * 页 id 只放 payload，不碰 tasks.notion_id（canonical 投影 projection/notion.js 会覆盖它）。
  */
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
 import { pullMarkedNotionTasks, fetchNotionPageContent } from './notion-push-sync.js';
 import { withBackoff } from './lib/notion-backoff.js';
 import {
-  QIUMI_STATUS_MAP, ZH_HUMAN_ONLY_STATUSES, zhPriorityToBrain, zhWriteFor,
+  QIUMI_STATUS_MAP, ZH_HUMAN_ONLY_STATUSES, OWNER_HOLD_REASON, zhPriorityToBrain, zhWriteFor, enStatusFor,
 } from './lib/qiumi-status-map.js';
 import { applyOwnerChanges, OWNER_STOP_FILTERS } from './lib/qiumi-owner-stops.js';
 import { rerouteUnresolvedDevices } from './lib/qiumi-device-reroute.js';
@@ -37,7 +38,7 @@ const text = (content) => [{ type: 'text', text: { content: String(content ?? ''
 const plain = (arr) => (arr ?? []).map((t) => t.plain_text ?? t.text?.content ?? '').join('').trim();
 const rel = (p) => (p?.relation ?? []).map((r) => r.id);
 
-/** 只查「委派」——四个人工态从不进这个 filter（变异守卫钉住） */
+/** 只查「委派」——人工态与系统写的状态（排队中/受阻/失败/推迟…）从不进这个 filter（变异守卫钉住） */
 export const ZH_QUERY_FILTER = Object.freeze({
   and: [
     { property: '状态', status: { equals: '委派' } },
@@ -269,19 +270,32 @@ async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
     // 主理人删掉（归档）的中文行永远写不进去（400 Can't edit archived），09-28 实测 48h 重试 586 次。
     if (zhPage?.archived || zhPage?.in_trash) { await stamp(); return 'gone'; }
     const zhStatus = zhPage?.properties?.['状态']?.status?.name ?? null;
-    if (ZH_HUMAN_ONLY_STATUSES.includes(zhStatus)) { await stamp(zhStatus); return 'human'; }
-    // 排队中但没到预期开始时间：中文保持委派并写已排期提示，英文 Planned（决策 51c09285）
+    const enStatus = enStatusFor(t.status, { blockedReason: t.blocked_reason });
+    const patchEn = () => (t.en_page_id && enStatus
+      ? withBackoff(() => notionReq(token, `/pages/${t.en_page_id}`, 'PATCH', { properties: { Status: { status: { name: enStatus } } } }))
+      : null);
+    // 主理人自己拖的「阻塞」(owner_hold)：中文页永不写，只同步英文 Blocked；不挂保留标记，英文只写这一次
+    if (t.status === 'blocked' && t.blocked_reason === OWNER_HOLD_REASON) {
+      await patchEn();
+      await stamp();
+      return 'human';
+    }
+    // 页面已是「淘汰」且任务确已取消：无需再写中文页（不碰主理人刚编辑的页），只补英文 Cancelled。
+    // 页面是「淘汰」但任务还没取消 = 主理人的急停命令尚未处理完，按人工态保留，不得覆盖成别的状态。
+    const alreadyDiscarded = zhStatus === '淘汰' && map.zh === '淘汰';
+    if (ZH_HUMAN_ONLY_STATUSES.includes(zhStatus) || (zhStatus === '淘汰' && !alreadyDiscarded)) {
+      await stamp(zhStatus);
+      return 'human';
+    }
+    // 排队中但没到预期开始时间：中文写排队中并附已排期/手机忙提示（决策 51c09285）
     const scheduled = t.status === 'queued' && isFuture(t.next_run_at, now());
     const write = scheduled
-      ? { properties: { '状态': { status: { name: '委派' } }, 'OpenClaw结果': { rich_text: text(waitingNoteOf(t)) } } }
+      ? { properties: { '状态': { status: { name: map.zh } }, 'OpenClaw结果': { rich_text: text(waitingNoteOf(t)) } } }
       : withDeviceBusyExpiredNote(zhWriteFor(t.status, {
         reason: reasonTextOf(t), resultText: t.status === 'in_progress' ? readableReason(t.result?.dispatch_uncertain) : resultTextOf(t.result), today: today(), blockedReason: t.blocked_reason ?? null,
       }), t);
-    await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'PATCH', write));
-    const enStatus = scheduled ? 'Planned' : map.en;
-    if (t.en_page_id && enStatus) {
-      await withBackoff(() => notionReq(token, `/pages/${t.en_page_id}`, 'PATCH', { properties: { Status: { status: { name: enStatus } } } }));
-    }
+    if (write && !alreadyDiscarded) await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'PATCH', write));
+    await patchEn();
   } catch (err) {
     if (!isPageGone(err)) throw err;
     await stamp();
@@ -291,13 +305,16 @@ async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
   return 'pushed';
 }
 
-/** 急停三个查询：只读三个人工动作态，且必须 OpenClaw任务号 以 brain: 开头（归属铁律） */
+/** 急停四个查询（淘汰/阻塞/委派/排队中），且必须 OpenClaw任务号 以 brain: 开头（归属铁律） */
 /** 主理人急停与 queued 改期，查询/解析中文页后交给 Brain 写入模块。 */
 export async function applyOwnerStops(pool, token, { notionReq = defaultNotionReq, now = () => new Date() } = {}) {
   const groups = await Promise.all(
     OWNER_STOP_FILTERS.map((filter) => queryAll(notionReq, token, GTD_DB_ID, filter)),
   );
-  const ownerStats = await applyOwnerChanges(pool, groups.map((pages) => pages.map(parseZhPage)), { now });
+  // 委派（旧页/主理人手拖）与排队中（系统对 queued 任务写的新页）同属「恢复与改期」组
+  const [discarded, holds, delegated, queued] = groups.map((pages) => pages.map(parseZhPage));
+  const redelegated = [...new Map([...delegated, ...queued].map((zh) => [zh.id, zh])).values()];
+  const ownerStats = await applyOwnerChanges(pool, [discarded, holds, redelegated], { now });
   const deviceStats = await rerouteUnresolvedDevices(pool, token, { notionReq, parsePage: parseZhPage });
   return { ...ownerStats, ...deviceStats };
 }
@@ -352,7 +369,7 @@ const safe = async (label, fn) => {
 /**
  * 一轮完整同步，顺序固定：zh→en → en→zh → 入账 → 急停 → 回写。
  * 顺序要紧：先把人写的行同步成英文行，再入账拿 task id，急停排在回写前——
- * 否则本轮刚被主理人拖到「淘汰」的行会先被回写成「进行中」，人机互踩。
+ * 否则本轮刚被主理人拖到「淘汰」的行会先被回写成别的状态，人机互踩。
  */
 export async function runGtdSyncOnce(pool, {
   token = null, env = process.env, notionReq = defaultNotionReq,

@@ -85,7 +85,7 @@ describe('pushQiumiStatus', () => {
     expect(sql2).toMatch(/- 'qiumi_human_hold'/);
     expect(params2).toEqual([TID, 'in_progress', null, null]);
   });
-  it('blocked（系统等待态）→ 中文保持进行中 + [等待中: reason]；pending → 不写但仍 stamp（skippedNoMap）', async () => {
+  it('blocked（系统等待态）→ 中文受阻 + [受阻: reason]，英文 Blocked；pending → 不写但仍 stamp（skippedNoMap）', async () => {
     const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
     const query = vi.fn()
       .mockResolvedValueOnce({ rows: [
@@ -96,8 +96,10 @@ describe('pushQiumiStatus', () => {
     const r = await pushQiumiStatus({ query }, 'tok', deps);
     expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 1, skippedGone: 0 });
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
-    expect(zhPatch.properties['状态'].status.name).toBe('进行中');
-    expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toBe('[等待中: quota_exhausted]');
+    expect(zhPatch.properties['状态'].status.name).toBe('受阻');
+    expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toBe('[受阻: quota_exhausted]');
+    const enPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${EN}` && c[2] === 'PATCH')[3];
+    expect(enPatch.properties.Status.status.name).toBe('Blocked');
     // 无映射行也要 stamp，否则每轮重复捞同一行
     expect(query.mock.calls.at(-1)[1]).toEqual(['p-1', 'pending', null, null]);
     // 无映射行不读页：只有 blocked 那行发了 GET
@@ -113,7 +115,7 @@ describe('pushQiumiStatus', () => {
     mockNotionReq.mockResolvedValueOnce(zhPageWith('进行中')).mockResolvedValue({});
     await pushQiumiStatus({ query }, 'tok', deps);
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
-    expect(zhPatch.properties['状态'].status.name).toBe('进行中');
+    expect(zhPatch.properties['状态'].status.name).toBe('受阻');
     expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toBe(note);
   });
   it('中文行已被主理人归档/删除 → 不 PATCH、记指纹不再重扫，且不挡住同轮后面的行（09-28 实测 48h 重试 586 次）', async () => {
@@ -259,7 +261,9 @@ describe('pushQiumiStatus：手机忙排队等待（任务 5ad81457）', () => {
     mockNotionReq.mockResolvedValueOnce(zhPageWith('进行中')).mockResolvedValue({});
     await pushQiumiStatus({ query }, 'tok', { ...deps, now: () => new Date('2026-09-30T01:15:00.000Z') });
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
-    expect(zhPatch.properties['状态'].status.name).toBe('委派');
+    expect(zhPatch.properties['状态'].status.name).toBe('排队中');
+    const enPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${EN}` && c[2] === 'PATCH')[3];
+    expect(enPatch.properties.Status.status.name).toBe('Queued');
     expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content)
       .toBe('⏳ 手机忙（被 t3-readonly-20260930-01 占用），已排队，09:20 后重试（第 2 次）');
   });
@@ -282,7 +286,8 @@ describe('pushQiumiStatus：手机忙到截止仍未执行（device_busy_expired
     });
     expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content)
       .toBe('⌛ 到截止时间仍未轮到手机（一直被 harvest-cron 占用），未执行');
-    // 其余失败态写法（状态、清任务号）不变
+    // 其余失败态写法不变，状态改为「失败」（旧为「推迟」），仍清任务号
+    expect(zhPatch.properties['状态'].status.name).toBe('失败');
     expect(zhPatch.properties['OpenClaw任务号'].rich_text).toEqual([]);
   });
   it('result 里没有 owner → 回落 payload.device_busy.owner', async () => {
@@ -293,5 +298,165 @@ describe('pushQiumiStatus：手机忙到截止仍未执行（device_busy_expired
   it('其他失败原因照旧 [执行失败: …]', async () => {
     const zhPatch = await push({ status: 'failed', error_message: 'openclaw_agent_exit_1', result: null });
     expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toMatch(/^\[执行失败: openclaw_agent_exit_1\]/);
+  });
+});
+
+describe('pushQiumiStatus：中英文状态一一对应（排队中/受阻/失败/淘汰）', () => {
+  beforeEach(() => { mockNotionReq.mockReset(); });
+  const patchOf = (id) => mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${id}` && c[2] === 'PATCH')?.[3];
+  const pushOne = async (row, page, extra = {}) => {
+    const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
+    const query = vi.fn().mockResolvedValueOnce({ rows: [taskRow(row)] }).mockResolvedValue({ rows: [] });
+    mockNotionReq.mockResolvedValueOnce(page).mockResolvedValue({});
+    const result = await pushQiumiStatus({ query }, 'tok', { ...deps, ...extra });
+    return { result, query };
+  };
+
+  it('queued 未排期 → 中文排队中 / 英文 Queued，不写结果栏', async () => {
+    await pushOne({ status: 'queued' }, zhPageWith('排队中'));
+    expect(patchOf(ZH).properties['状态'].status.name).toBe('排队中');
+    expect(patchOf(ZH).properties['OpenClaw结果']).toBeUndefined();
+    expect(patchOf(EN).properties.Status.status.name).toBe('Queued');
+  });
+
+  it('queued 已排期（next_run_at 在未来）→ 排队中 + 已排期提示，英文 Queued（不再回「委派」/Planned）', async () => {
+    await pushOne({ status: 'queued', next_run_at: '2026-10-12T01:00:00.000Z' }, zhPageWith('委派'),
+      { now: () => new Date('2026-10-10T00:00:00.000Z') });
+    expect(patchOf(ZH).properties['状态'].status.name).toBe('排队中');
+    expect(patchOf(ZH).properties['OpenClaw结果'].rich_text[0].text.content).toMatch(/已排期/);
+    expect(patchOf(EN).properties.Status.status.name).toBe('Queued');
+  });
+
+  it('failed → 失败 / Failed，清任务号（失败拖回「委派」= 重试的锚）', async () => {
+    await pushOne({ status: 'failed', error_message: 'ssh_down' }, zhPageWith('进行中'));
+    expect(patchOf(ZH).properties['状态'].status.name).toBe('失败');
+    expect(patchOf(ZH).properties['OpenClaw任务号'].rich_text).toEqual([]);
+    expect(patchOf(EN).properties.Status.status.name).toBe('Failed');
+  });
+
+  it('旧「推迟」页 + failed → 仍可被改写成「失败」（旧页只识别、不当人工态）', async () => {
+    const { result } = await pushOne({ status: 'failed', error_message: 'x' }, zhPageWith('推迟'));
+    expect(result.pushed).toBe(1);
+    expect(patchOf(ZH).properties['状态'].status.name).toBe('失败');
+  });
+
+  it('cancelled → 淘汰 / Cancelled，保留任务号', async () => {
+    await pushOne({ status: 'cancelled', error_message: 'api_cancel' }, zhPageWith('进行中'));
+    expect(patchOf(ZH).properties['状态'].status.name).toBe('淘汰');
+    expect(patchOf(ZH).properties['OpenClaw任务号']).toBeUndefined();
+    expect(patchOf(EN).properties.Status.status.name).toBe('Cancelled');
+  });
+
+  it('cancelled 且页面本来就是「淘汰」（主理人拖的急停）→ 不再 PATCH 中文页、不挂保留标记，只同步英文 Cancelled', async () => {
+    const { result, query } = await pushOne({ status: 'cancelled' }, zhPageWith('淘汰'));
+    expect(result.pushed + result.skippedHuman).toBe(1);
+    expect(patchOf(ZH)).toBeUndefined();
+    expect(patchOf(EN).properties.Status.status.name).toBe('Cancelled');
+    expect(query.mock.calls.at(-1)[1]).toEqual([TID, 'cancelled', null, null]);
+  });
+
+  it('页面是「淘汰」但任务还没取消（急停命令未处理完）→ 视为人工态，不覆盖、挂保留标记', async () => {
+    const { result, query } = await pushOne({ status: 'in_progress' }, zhPageWith('淘汰'));
+    expect(result.skippedHuman).toBe(1);
+    expect(patchOf(ZH)).toBeUndefined();
+    expect(patchOf(EN)).toBeUndefined();
+    expect(query.mock.calls.at(-1)[1]).toEqual([TID, 'in_progress', null, '淘汰']);
+  });
+
+  it('blocked + delegated_device_job（转手机领单通道）→ 进行中 / In Progress，不显示受阻', async () => {
+    await pushOne({ status: 'blocked', blocked_reason: 'delegated_device_job' }, zhPageWith('排队中'));
+    expect(patchOf(ZH).properties['状态'].status.name).toBe('进行中');
+    expect(patchOf(ZH).properties['OpenClaw结果'].rich_text[0].text.content).not.toMatch(/受阻/);
+    expect(patchOf(EN).properties.Status.status.name).toBe('In Progress');
+  });
+
+  it('blocked + owner_hold（页面是主理人设的「阻塞」）→ 中文页不动，英文 Blocked，指纹不挂保留标记', async () => {
+    const { result, query } = await pushOne({ status: 'blocked', blocked_reason: 'owner_hold', error_message: 'owner_hold' }, zhPageWith('阻塞'));
+    expect(result.skippedHuman).toBe(1);
+    expect(patchOf(ZH)).toBeUndefined();
+    expect(patchOf(EN).properties.Status.status.name).toBe('Blocked');
+    expect(query.mock.calls.at(-1)[1]).toEqual([TID, 'blocked', null, null]);
+  });
+
+  it('blocked + owner_hold 但页面已不是「阻塞」→ 仍不写中文页（owner_hold 永不回写中文）', async () => {
+    await pushOne({ status: 'blocked', blocked_reason: 'owner_hold' }, zhPageWith('进行中'));
+    expect(patchOf(ZH)).toBeUndefined();
+    expect(patchOf(EN).properties.Status.status.name).toBe('Blocked');
+  });
+
+  it('人工态「收集」+ 普通任务 → 仍整行跳过（中英文都不写）', async () => {
+    const { result } = await pushOne({ status: 'in_progress' }, zhPageWith('收集'));
+    expect(result.skippedHuman).toBe(1);
+    expect(patchOf(ZH)).toBeUndefined();
+    expect(patchOf(EN)).toBeUndefined();
+  });
+});
+
+describe('applyOwnerStops：新旧状态页都识别（排队中/受阻 与 委派/进行中），淘汰幂等', () => {
+  beforeEach(() => { mockNotionReq.mockReset(); mockBlock.mockReset(); mockUnblock.mockReset(); mockRecord.mockReset(); });
+  const STOP_STATUSES = ['淘汰', '阻塞', '委派', '排队中'];
+
+  it('OWNER_STOP_FILTERS：淘汰/阻塞/委派/排队中四个状态，且都限定任务号 brain: 开头', async () => {
+    const { OWNER_STOP_FILTERS } = await import('../notion-gtd-sync.js');
+    expect(OWNER_STOP_FILTERS.map((f) => f.and[0].status.equals)).toEqual(STOP_STATUSES);
+    for (const f of OWNER_STOP_FILTERS) expect(f.and[1]).toEqual({ property: 'OpenClaw任务号', rich_text: { starts_with: 'brain:' } });
+  });
+
+  const stopsWith = async (byStatus, rows, options = {}) => {
+    const { applyOwnerStops } = await import('../notion-gtd-sync.js');
+    mockNotionReq.mockImplementation(async (_t, _p, _m, body) => ({
+      results: (byStatus[body.filter.and[0].status.equals] ?? []).map((s) => zhPageWith(s)),
+    }));
+    const query = vi.fn().mockResolvedValue({ rows });
+    mockBlock.mockResolvedValue({ success: true }); mockUnblock.mockResolvedValue({ success: true });
+    return { r: await applyOwnerStops({ query }, 'tok', { notionReq: mockNotionReq, ...options }), query };
+  };
+
+  it('页面「排队中」+ 任务 owner_hold 阻塞（主理人把「阻塞」拖到排队中）→ 恢复', async () => {
+    const { r } = await stopsWith({ 排队中: ['排队中'] }, [{ id: TID, status: 'blocked', blocked_reason: 'owner_hold' }]);
+    expect(r.resumed).toBe(1);
+    expect(mockUnblock).toHaveBeenCalledWith(TID);
+  });
+
+  it('页面「排队中」+ 任务系统阻塞（非 owner_hold）→ 不 unblock', async () => {
+    const { r } = await stopsWith({ 排队中: ['排队中'] }, [{ id: TID, status: 'blocked', blocked_reason: 'quota_exhausted' }]);
+    expect(r.resumed).toBe(0);
+    expect(mockUnblock).not.toHaveBeenCalled();
+  });
+
+  it('页面「排队中」+ queued 任务：改开始时间 → 改期生效（原本只有「委派」页才认）', async () => {
+    const { applyOwnerStops } = await import('../notion-gtd-sync.js');
+    const page = zhPageWith('排队中');
+    page.properties['预期开始时间'] = { date: { start: '2030-10-04T17:00:00+08:00' } };
+    mockNotionReq.mockImplementation(async (_t, _p, _m, body) => ({ results: body.filter.and[0].status.equals === '排队中' ? [page] : [] }));
+    const query = vi.fn(async (sql) => (/SELECT/.test(sql)
+      ? { rows: [{ id: TID, status: 'queued', scheduled_start: '2030-10-03T09:00:00Z', due_at: null }] }
+      : { rows: [{ id: TID }], rowCount: 1 }));
+    const r = await applyOwnerStops({ query }, 'tok', { notionReq: mockNotionReq, now: () => new Date('2026-10-10T00:00:00Z') });
+    expect(r.rescheduled).toBe(1);
+  });
+
+  it.each(['cancelled', 'canceled', 'completed', 'completed_no_pr', 'failed', 'archived'])(
+    '「淘汰」页 + 任务已是终态 %s → 不记取消命令、不计 cancelled（幂等，AI 自己写的淘汰不回头触发）', async (status) => {
+      const { r } = await stopsWith({ 淘汰: ['淘汰'] }, [{ id: TID, status }]);
+      expect(mockRecord).not.toHaveBeenCalled();
+      expect(r.cancelled).toBe(0);
+      expect(mockBlock).not.toHaveBeenCalled();
+      expect(mockUnblock).not.toHaveBeenCalled();
+      expect(mockNotionReq.mock.calls.some((c) => c[2] === 'PATCH')).toBe(false);
+    },
+  );
+
+  it.each(['queued', 'in_progress', 'blocked', 'paused', 'quarantined'])(
+    '「淘汰」页 + 任务仍活着（%s）→ 照旧记 cancel_requested（主理人的急停有效）', async (status) => {
+      const { r } = await stopsWith({ 淘汰: ['淘汰'] }, [{ id: TID, status }]);
+      expect(r.cancelled).toBe(1);
+      expect(mockRecord).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ commandType: 'cancel_requested', entityId: TID }));
+    },
+  );
+
+  it('「淘汰」页 + 任务行查不到 → 保持旧行为照记命令（交给命令处理器判定）', async () => {
+    const { r } = await stopsWith({ 淘汰: ['淘汰'] }, []);
+    expect(r.cancelled).toBe(1);
   });
 });

@@ -64,7 +64,7 @@ async function run(o) {
 }
 describe('qiumi-device-reroute 原Notion页设备补写自动恢复原task', () => {
   it('独立helper与同步入口共享同一台账解析', async () => { expect((await run({ direct: true })).result.rerouted).toBe(1); });
-  it.each(['进行中', '委派'])('%s完整读分页嵌套后恢复原task', async (status) => {
+  it.each(['进行中', '委派', '受阻', '排队中'])('%s完整读分页嵌套后恢复原task', async (status) => {
     const { result, updates, events, notionReq } = await run({ status, nested: '账号：验收小彩' });
     expect(result.rerouted).toBe(1); expect(updates).toHaveLength(1);
     const [sql, args] = updates[0];
@@ -89,7 +89,7 @@ describe('qiumi-device-reroute 原Notion页设备补写自动恢复原task', () 
     const { result, updates } = await run({ candidate: { payload: { notion_zh_page_id: PAGE, qiumi_source: original } } });
     expect(result.rerouted).toBe(0); expect(updates).toHaveLength(0);
   });
-  it.each(['淘汰', '阻塞', '暂停', '完成'])('人工%s不恢复', async (status) => {
+  it.each(['淘汰', '阻塞', '暂停', '完成', '失败', '已完成', '推迟'])('页状态%s不恢复', async (status) => {
     const { result, updates } = await run({ status }); expect(result.rerouted).toBe(0); expect(updates).toHaveLength(0);
   });
   it.each([{ marker: `brain:${ID} extra` }, { marker: 'brain:other' }, { page: { id: 'copy' } },

@@ -28,8 +28,8 @@ describe('员工任务阻断回执', () => {
     const notionReq = vi.fn().mockResolvedValue({ properties: { 状态: { status: { name: '进行中' } } } });
     await pushQiumiStatus({ query }, 'tok', { notionReq });
     const patch = notionReq.mock.calls.find((c) => c[2] === 'PATCH')[3];
-    expect(patch.properties['OpenClaw结果'].rich_text[0].text.content).toBe(`[等待中: ${expected}]`);
-    expect(patch.properties['状态'].status.name).toBe('进行中');
+    expect(patch.properties['OpenClaw结果'].rich_text[0].text.content).toBe(`[受阻: ${expected}]`);
+    expect(patch.properties['状态'].status.name).toBe('受阻');
   });
 
   it('同状态原因或结果更新也能被查询；指纹不包含 updated_at', () => {

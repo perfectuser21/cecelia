@@ -465,7 +465,7 @@ describe('pushTasks — Brain tasks → Notion Tasks 库', () => {
     const create = mockNotionReq.mock.calls.find((c) => c[1] === '/pages' && c[2] === 'POST');
     expect(create).toBeTruthy();
     expect(create[3].parent.database_id).toBe(TASKS_DB);
-    expect(create[3].properties.Status.status.name).toBe('Delegated'); // queued→Delegated
+    expect(create[3].properties.Status.status.name).toBe('Queued'); // queued→Queued
     expect(create[3].properties.Name.title[0].text.content).toContain('[P1]');
     const patched = mockNotionReq.mock.calls.find((c) => String(c[1]).includes('legacy-old-page-id'));
     expect(patched).toBeUndefined();
@@ -485,13 +485,38 @@ describe('pushTasks — Brain tasks → Notion Tasks 库', () => {
     expect(patch[3].properties.Status.status.name).toBe('Done'); // completed→Done
   });
 
-  it('status 映射全表：blocked→Planned / failed→Cancelled / in_progress→In Progress', async () => {
+  it('TASK_STATUS_TO_NOTION 逐项断言：与中文 GTD 表一一对应的英文 Tasks 库 Status', async () => {
     const mod = await import('../notion-push-sync.js');
-    expect(mod.TASK_STATUS_TO_NOTION.blocked).toBe('Planned');
-    expect(mod.TASK_STATUS_TO_NOTION.failed).toBe('Cancelled');
-    expect(mod.TASK_STATUS_TO_NOTION.in_progress).toBe('In Progress');
-    expect(mod.TASK_STATUS_TO_NOTION.queued).toBe('Delegated');
-    expect(mod.TASK_STATUS_TO_NOTION.completed).toBe('Done');
+    expect({ ...mod.TASK_STATUS_TO_NOTION }).toEqual({
+      queued: 'Queued',
+      in_progress: 'In Progress',
+      blocked: 'Blocked',
+      paused: 'Blocked',
+      quota_exhausted: 'Blocked',
+      pending_postdeploy: 'Blocked',
+      completed: 'Done',
+      completed_no_pr: 'Done',
+      failed: 'Failed',
+      quarantined: 'Failed',
+      dep_failed: 'Failed',
+      cancelled: 'Cancelled',
+      canceled: 'Cancelled',
+    });
+  });
+
+  it('TASK_STATUS_TO_NOTION 的值都属于英文 Tasks 库已知 Status 选项，且与秋米映射表的英文列一致', async () => {
+    const mod = await import('../notion-push-sync.js');
+    const { QIUMI_STATUS_MAP } = await import('../lib/qiumi-status-map.js');
+    const EN_KNOWN = ['Planned', 'Delegated', 'In Progress', 'Done', 'Cancelled', 'Queued', 'Blocked', 'Failed'];
+    for (const [brain, en] of Object.entries(mod.TASK_STATUS_TO_NOTION)) {
+      expect(EN_KNOWN, `${brain}→${en}`).toContain(en);
+      expect(QIUMI_STATUS_MAP[brain].en, `${brain} 与 QIUMI_STATUS_MAP 不一致`).toBe(en);
+    }
+  });
+
+  it('未映射状态（pending/archived 等）仍落 Planned 兜底', async () => {
+    const mod = await import('../notion-push-sync.js');
+    expect(mod.buildTaskNotionProperties({ id: 'x', title: 't', status: 'pending', priority: 'P2' }).Status.status.name).toBe('Planned');
   });
 
   it('推送成功后写回幂等指纹（notion_props.pushed_status=当前 status）', async () => {

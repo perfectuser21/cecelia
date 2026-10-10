@@ -423,3 +423,4 @@ native-scoped-admission-smoke.sh
 task-list-query-validation-smoke.sh
 activity-judgments-smoke.sh
 resource-health-smoke.sh
+qiumi-status-map-smoke.sh

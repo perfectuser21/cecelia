@@ -5,6 +5,8 @@ import { readPageContent } from './notion-page-content.js';
 
 const ROUTE_KEYS = ['qiumi_route', 'run_id', 'provider', 'model', 'engine', 'qiumi_department',
   'qiumi_kind', 'qiumi_workflow_ref', 'workflow_ref', 'timeout_sec', 'thinking', 'acceptance'];
+// 任务还活着的页状态：旧页（进行中/委派）与新页（受阻/排队中）都认；设备未确定的任务现在显示「受阻」。
+const ZH_LIVE_STATUSES = Object.freeze(['进行中', '委派', '受阻', '排队中']);
 const normId = (s) => String(s ?? '').replace(/-/g, '').toLowerCase();
 const validUserId = (id) => typeof id === 'string'
   && /^(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i.test(id);
@@ -28,7 +30,7 @@ async function confirmedHuman(page, token, notionReq) {
 const editable = (page, row, parsePage) => {
   const zh = parsePage(page);
   return normId(page.id) === normId(row.payload.notion_zh_page_id)
-    && zh.taskNo === `brain:${row.id}` && ['进行中', '委派'].includes(zh.status)
+    && zh.taskNo === `brain:${row.id}` && ZH_LIVE_STATUSES.includes(zh.status)
     && !page.archived && !page.in_trash && !zh.archived
     && !!page.last_edited_time;
 };
