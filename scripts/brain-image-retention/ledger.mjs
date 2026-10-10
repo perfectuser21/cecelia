@@ -1,5 +1,6 @@
 import { fail, UUID, VERSION, IMAGE } from './policy.mjs';
 import { digest } from './storage.mjs';
+export const RECONCILE_MIN_AGE_MS = 15 * 60 * 1000;
 function current(snapshot, expectedContainerId) {
   const matches = snapshot.containers.filter(x => x.name === '/cecelia-node-brain' && x.running === true);
   if (expectedContainerId !== undefined && (matches.length !== 1 || matches[0].id !== expectedContainerId)) throw fail('DEPLOY_CONTAINER_MISMATCH');
@@ -22,7 +23,7 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
     if (old) { if (digest(old.request) !== digest(request) || old.target_image_id !== target_image_id) throw fail('DEPLOYMENT_CONFLICT'); return old; }
     if (ledger.pending && digest(ledger.pending.request) !== digest(request)) throw fail('DEPLOYMENT_PENDING');
     const previous = ledger.pending?.previous ?? current(await docker.snapshot(lease));
-    const pending = ledger.pending ?? { deployment_id: request.deployment_id, request, previous: { id: previous.id, git_sha: previous.git_sha, tags: previous.tags }, ...(target_image_id ? { target_image_id } : {}) };
+    const pending = ledger.pending ?? { deployment_id: request.deployment_id, request, previous: { id: previous.id, git_sha: previous.git_sha, tags: previous.tags }, ...(target_image_id ? { target_image_id } : {}), begun_at: new Date(now()).toISOString() };
     await store.save('ledger.json', { ...ledger, generation: ledger.generation + 1, pending }, lease);
     const row = { request, previous: pending.previous, ...(pending.target_image_id ? { target_image_id: pending.target_image_id } : {}), receipt: null };
     await store.save(name(request.deployment_id), row, lease); return row;
@@ -94,5 +95,16 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
       return receipt;
     });
   }
-  return Object.freeze({ begin, rollback, finish });
+  // 陈旧 pending 自动补收账（任务 502f2852）：sidecar 收账失败留下的 pending 会让下一次 begin 抛 DEPLOYMENT_PENDING。
+  // 只走 success 一条路，且全部核验交给 finish（运行容器镜像/tag/git_sha 与 pending 目标一致且健康），核验不过即抛错、不改状态。
+  // 新鲜期内（部署可能在途）与恢复中（rollback 在途）一律拒绝；无 begun_at 的旧格式 pending 视为陈旧。
+  async function reconcile() {
+    const ledger = await state();
+    if (!ledger.pending) return null;
+    const pending = ledger.pending, begunAt = Date.parse(pending.begun_at);
+    if (pending.recovering) throw fail('DEPLOYMENT_RECOVERING');
+    if (pending.begun_at !== undefined && (!Number.isFinite(begunAt) || now() - begunAt < RECONCILE_MIN_AGE_MS)) throw fail('DEPLOYMENT_PENDING_FRESH');
+    return finish(pending.deployment_id, 'success');
+  }
+  return Object.freeze({ begin, rollback, finish, reconcile });
 }

@@ -35,6 +35,7 @@ async function fixture(t, scenario = '') {
     let id=recovered?'${previousImage}':'${image}', s=recovered?'${previousSha}':'${sha}';
     if(args[0]==='info') {
       if(scenario==='finish-fail')process.exit(1);
+      if(scenario==='finish-flaky'&&!fs.existsSync(root+'/info-failed-once')){fs.writeFileSync(root+'/info-failed-once','');process.exit(1);}
       console.log(JSON.stringify({OSType:'linux',ID:'fixture-daemon',DockerRootDir:root+'/volume'}));process.exit(0);
     }
     if(args[0]==='image' && args[1]==='ls'){console.log(id);process.exit(0);}
@@ -81,13 +82,14 @@ if [ "$1" = /app/scripts/brain-image-retention/cli.mjs ]; then
 fi
 exec ${JSON.stringify(process.execPath)} "$@"
 `, { mode: 0o755 });
-  await writeFile(join(root, 'bin/curl'), '#!/bin/sh\nexit 7\n', { mode: 0o755 });
+  await writeFile(join(root, 'bin/curl'), '#!/bin/sh\necho "$*" >> "$FIXTURE_ROOT/curl-calls"\nexit 7\n', { mode: 0o755 });
   // 缩短重试时钟；生产仍为90轮，错误路径保留多次尝试。
   await writeFile(join(root, 'bin/seq'), '#!/bin/sh\nprintf \"1\\n2\\n3\\n\"\n', { mode: 0o755 });
   await writeFile(join(root, 'bin/sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, NODE_OPTIONS: `--import=${root}/deny-http.mjs`, FIXTURE_ROOT: root, SCENARIO: scenario, BRAIN_VERSION: '1.360.5', EXPECTED_SHA: scenario === 'request-sha' ? previousSha : sha, ENV_REGION: 'us', DEPLOY_ROOT: root, CECELIA_INTERNAL_ENV_FILE: `${root}/internal.env`, CECELIA_IMAGE_DEPLOYMENT_ID: deployment, CECELIA_IMAGE_RETENTION_DIR: `${root}/ledger`, CECELIA_RETENTION_POLICY: `${root}/scripts/brain-image-retention/policy.mjs`, BARK_TOKEN: '' };
+  const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, NODE_OPTIONS: `--import=${root}/deny-http.mjs`, FIXTURE_ROOT: root, SCENARIO: scenario, BRAIN_VERSION: '1.360.5', EXPECTED_SHA: scenario === 'request-sha' ? previousSha : sha, ENV_REGION: 'us', DEPLOY_ROOT: root, CECELIA_INTERNAL_ENV_FILE: `${root}/internal.env`, CECELIA_IMAGE_DEPLOYMENT_ID: deployment, CECELIA_IMAGE_RETENTION_DIR: `${root}/ledger`, CECELIA_RETENTION_POLICY: `${root}/scripts/brain-image-retention/policy.mjs`, BARK_TOKEN: 'fixture-token' };
   const result = await run('bash', [new URL('./lib/bluegreen-sidecar.sh', import.meta.url).pathname], { env, timeout: 20000 }).then(x => ({ ...x, code: 0 }), e => ({ ...e, code: e.code }));
-  return { ...result, root, calls: (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(JSON.parse), ledger: JSON.parse(await readFile(join(root, 'ledger/ledger.json'), 'utf8')) };
+  const text = async name => readFile(join(root, name), 'utf8').catch(() => '');
+  return { ...result, root, sidecarLog: await text('logs/cecelia-deploy-sidecar-failures.log'), barks: await text('curl-calls'), calls: (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(JSON.parse), ledger: JSON.parse(await readFile(join(root, 'ledger/ledger.json'), 'utf8')) };
 }
 test('宿主端口不可达时经固定容器localhost确认健康、恢复drain及正式ledger真实收尾', async t => {
   const f = await fixture(t);
@@ -125,4 +127,26 @@ test('tick 被有意封停（决策 751f73be）的 degraded：sidecar 健康确�
   assert.equal(f.ledger.successes.length, 1);
   assert.equal(f.ledger.successes[0].git_sha, sha);
   assert.ok(f.calls.some(x => x.some(a => a.endsWith('/drain-cancel'))), '健康确认后必须恢复 drain');
+});
+
+// 任务 502f2852：retention_finish 只试一次 → 10-09 三次 pending 卡死部署链约 7 小时。
+test('finish第一次失败、第二次成功：有界重试后正常收账，失败尝试的退出码与stderr落sidecar日志，不告警',async t=>{
+  const f = await fixture(t, 'finish-flaky');
+  assert.equal(f.code, 0, f.stdout + f.stderr);
+  assert.equal(f.ledger.pending, null);
+  assert.equal(f.ledger.successes.length, 1);
+  assert.match(f.sidecarLog, /\[completion-retry\] retention_finish attempt=1\/\d+ outcome=success exit=1 stderr=\S+/);
+  assert.ok(!f.sidecarLog.includes('[completion-fail]'), f.sidecarLog);
+  assert.ok(!f.barks.includes('api.day.app'), '重试成功不应告警');
+});
+test('finish全部失败：重试有界、每次stderr落日志、最终告警且pending不清',async t=>{
+  const f = await fixture(t, 'finish-fail');
+  assert.equal(f.code, 1);
+  assert.equal(f.ledger.pending.deployment_id, deployment);
+  assert.deepEqual(f.ledger.successes, []);
+  const retries = f.sidecarLog.match(/\[completion-retry\] retention_finish attempt=\d+\/\d+ outcome=success exit=1 stderr=\S+/g) || [];
+  assert.ok(retries.length >= 2, f.sidecarLog);
+  assert.ok(retries.length <= 10, '重试必须有界');
+  assert.match(f.sidecarLog, /\[completion-fail\] retention_finish_unconfirmed outcome=success attempts=\d+ exit=1 stderr=\S+/);
+  assert.match(f.barks, /api\.day\.app\/fixture-token\//, '最终失败必须告警，不能静默');
 });
