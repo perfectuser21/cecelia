@@ -1,7 +1,7 @@
 # 运行定义回读瘦身（任务 e961f9a9）
 
 - [x] [BEHAVIOR] rundefinitioncompact 运行定义回读瘦身（任务 e961f9a9）：GET /api/brain/runs/:run_id/definition 默认改回紧凑视图（definition_view=compact）——binding 原样，release 只留身份/摘要列+full_href（去 payload），workflow 去 payload.contract，activities 只留本次绑定 Activity 的身份、payload_sha256/contract_sha256、Step 的 step_id/locator/registration 摘要与 optional/required/condition；?view=full 原样返回旧形状，完整 release 走 GET /releases/:id。生产形状夹具完整定义 >500KB、紧凑 <64KB 且 2 秒内返回，预期路径每个 Activity/Step 身份都能在紧凑定义里找到；紧凑化异常回退完整定义不 500。生产 12 条真实绑定实测 652KB→30KB。
-  Test: manual:bash -c "cd packages/brain && npx vitest run src/routes/__tests__/run-definitions-size.test.js --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/routes/__tests__/run-definitions-size.test.js src/lib/__tests__/run-definition-view.test.js --maxWorkers=1 --minWorkers=1"
 
 # 部署收账有界重试与陈旧 pending 核验补收账
 
