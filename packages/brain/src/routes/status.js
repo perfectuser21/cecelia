@@ -8,6 +8,7 @@ import { getActivePolicy, getWorkingMemory, getTopTasks, getRecentDecisions, IDE
 import { getNightlyOrchestratorStatus } from '../nightly-orchestrator.js';
 import websocketService, { WS_EVENTS } from '../websocket.js';
 import { EXPECTED_SCHEMA_VERSION } from '../selfcheck.js';
+import { parseTaskListQuery } from '../lib/task-list-query.js';
 
 const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url)));
 const router = Router();
@@ -282,9 +283,11 @@ router.get('/decisions', async (req, res) => {
  * GET /api/brain/tasks
  */
 router.get('/tasks', async (req, res) => {
+  const parsed = parseTaskListQuery(req.query, { defaultLimit: 100 });
+  if (!parsed.ok) return res.status(parsed.status).json(parsed.body);
   try {
-    const limit = parseInt(req.query.limit) || 100;
-    const { status, task_type } = req.query;
+    const { status, limit } = parsed;
+    const { task_type } = req.query;
     const sprintDir = req.query.sprint_dir || null;
 
     // If filters provided, use custom query instead of getTopTasks
@@ -322,7 +325,8 @@ router.get('/tasks', async (req, res) => {
     const tasks = await getTopTasks(limit);
     res.json(tasks);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to get tasks', details: err.message });
+    console.error('[GET /api/brain/tasks] 查询失败:', err.message);
+    res.status(500).json({ error: 'Failed to get tasks' });
   }
 });
 
