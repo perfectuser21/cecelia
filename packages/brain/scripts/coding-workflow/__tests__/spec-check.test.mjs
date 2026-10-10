@@ -30,15 +30,15 @@ describe('lib/spec-check', () => {
   });
 
   it('没有任何 QA 场景 -> qa_missing', () => {
-    expect(specErrors(`${fm(FULL)}### S-1\n`, TASK, ['I-1', 'I-2'])).toEqual(['qa_missing']);
+    expect(specErrors(`${fm(FULL)}### S-1\n\n${UNCOVERED_OK}`, TASK, ['I-1', 'I-2'])).toEqual(['qa_missing']);
   });
 
   it('有 I-n 没被任何 Q-n 覆盖 -> qa_not_covered:I-n', () => {
-    expect(specErrors(`${fm(FULL)}### S-1\n\n## QA 场景\n\n${qa('Q-1')}\n`, TASK, ['I-1', 'I-2'])).toEqual(['qa_not_covered:I-2']);
+    expect(specErrors(`${fm(FULL)}### S-1\n\n## QA 场景\n\n${qa('Q-1')}\n\n${UNCOVERED_OK}`, TASK, ['I-1', 'I-2'])).toEqual(['qa_not_covered:I-2']);
   });
 
   it('Q-n 缺 对应/操作/期望、对应未知 I-n -> 逐条报错；前提可省略', () => {
-    const text = `${fm(FULL)}### S-1\n\n## QA 场景\n\n${qa('Q-1', { covers: null })}\n\n${qa('Q-2', { steps: null, pre: null })}\n\n${qa('Q-3', { expect: null })}\n\n${qa('Q-4', { covers: 'I-1, I-9' })}\n\n${qa('Q-5', { covers: 'I-2' })}\n`;
+    const text = `${fm(FULL)}### S-1\n\n## QA 场景\n\n${qa('Q-1', { covers: null })}\n\n${qa('Q-2', { steps: null, pre: null })}\n\n${qa('Q-3', { expect: null })}\n\n${qa('Q-4', { covers: 'I-1, I-9' })}\n\n${qa('Q-5', { covers: 'I-2' })}\n\n${UNCOVERED_OK}`;
     expect(specErrors(text, TASK, ['I-1', 'I-2'])).toEqual(['Q-1:covers_missing', 'Q-2:steps_missing', 'Q-3:expect_missing', 'Q-4:covers_unknown:I-9']);
   });
 

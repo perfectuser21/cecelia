@@ -15,7 +15,7 @@ const FAKE = path.join(HERE, 'fixtures/fake-claude-gan.mjs');
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
 
 const INTENT_MD = `---\ntask_id: ${TASK_ID}\nstep: intent\nupstream: []\n---\n# 验收条目\n\n### I-1\n能评审。\n\n### I-2\n能改写。\n`;
-const SPEC_MD = `---\ntask_id: ${TASK_ID}\nstep: spec\nupstream: ["01-intent.md#I-1", "01-intent.md#I-2"]\n---\n# spec\n\n### S-1\n对应 I-1：改 foo.js\n\n### S-2\n对应 I-2：改 bar.js\n\n## QA 场景\n\n### Q-1\n对应: I-1\n操作: 用户发起评审\n期望: 看到评审结论\n\n### Q-2\n对应: I-2\n操作: 用户发起改写\n期望: 看到新规格\n`;
+const SPEC_MD = `---\ntask_id: ${TASK_ID}\nstep: spec\nupstream: ["01-intent.md#I-1", "01-intent.md#I-2"]\n---\n# spec\n\n### S-1\n对应 I-1：改 foo.js\n\n### S-2\n对应 I-2：改 bar.js\n\n## QA 场景\n\n### Q-1\n对应: I-1\n操作: 用户发起评审\n期望: 看到评审结论\n\n### Q-2\n对应: I-2\n操作: 用户发起改写\n期望: 看到新规格\n\n## 未覆盖真实链路\n\n无：只改本仓库内代码，没有外部调用方与第三方\n`;
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 const blocker = (id, extra = {}) => ({ id, severity: '阻断', ...extra });
 
