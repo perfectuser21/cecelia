@@ -18,7 +18,7 @@ const state = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, '
 const DIMS = ['意图对齐', '可验证', '场景覆盖', '回归风险', '可执行'];
 const result = (cost) => console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: cost ?? 0.1 }));
 
-if (process.env.FAKE_GAN_SEEN) fs.appendFileSync(process.env.FAKE_GAN_SEEN, `${role} PRIOR_OPEN=${field('PRIOR_OPEN')} SPEC_ERRORS=${field('SPEC_ERRORS')} PREV_REVIEW_ERRORS=${field('PREV_REVIEW_ERRORS')} STUCK=${field('STUCK')}\n`);
+if (process.env.FAKE_GAN_SEEN) fs.appendFileSync(process.env.FAKE_GAN_SEEN, `${role} PRIOR_OPEN=${field('PRIOR_OPEN')} SPEC_ERRORS=${field('SPEC_ERRORS')} PREV_REVIEW_ERRORS=${field('PREV_REVIEW_ERRORS')} STUCK=${field('STUCK')} UNTRACKED_DEFERRALS=${field('UNTRACKED_DEFERRALS')}\n`);
 
 if (role === 'spec_review') {
   const r = script.reviews[Math.min(state.review, script.reviews.length - 1)];
@@ -48,7 +48,7 @@ if (role === 'spec_review') {
   state.revise += 1;
   fs.writeFileSync(statePath, JSON.stringify(state));
   const ids = [...fs.readFileSync(field('REVIEW_PATH'), 'utf8').matchAll(/^### (R-\d+)/gm)].map((m) => m[1]);
-  fs.writeFileSync(field('RESPONSE_PATH'), ids.map((id) => `### ${id}\n处理: ${v.response ?? '采纳'}\n说明: 第 ${state.revise} 轮已处理`).join('\n\n') + '\n');
+  fs.writeFileSync(field('RESPONSE_PATH'), ids.map((id) => `### ${id}\n处理: ${v.response ?? '采纳'}\n说明: ${v.note ?? `第 ${state.revise} 轮已处理`}`).join('\n\n') + '\n');
   const extra = Array.from({ length: v.grow ?? 1 }, (_, i) => `补充 r${state.revise}-${i}`).join('\n');
   fs.appendFileSync(field('SPEC_PATH'), `${extra}\n`);
   // dropInvariants：改写时把 `## 铁律对照` 整段删掉（模拟开发方改合同时丢了铁律交代）

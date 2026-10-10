@@ -6,6 +6,7 @@ import { runActivity, validateBase, fail, childEnv, log } from '../lib/protocol.
 import { intentHeading, prKindOf } from '../lib/pr-kind.mjs';
 import { parseReview } from '../lib/review.mjs';
 import { RUBRIC_DIMS } from '../lib/gan.mjs';
+import { SPEC_FILE, uncoveredSection } from '../lib/spec-check.mjs';
 
 const GH_AUTH_RE = /\bHTTP 401\b|authentication|auth login|missing required scope|bad credentials/i;
 // 凭据提示会让无 tty 的子进程挂住；--literal-pathspecs 禁用 :/ 等 pathspec 魔法
@@ -127,6 +128,18 @@ function reviewSummary({ review_file: reviewFile, review_rounds: rounds, gan }, 
   return lines.join('\n');
 }
 
+/** 审计 #10：02 的「未覆盖真实链路」原样转呈 PR 正文；读不到或没有这一段返回空串。 */
+function uncoveredSummary(dir, sprintRel) {
+  let text;
+  try {
+    text = fs.readFileSync(path.join(dir, SPEC_FILE), 'utf8');
+  } catch {
+    return '';
+  }
+  const body = uncoveredSection(text);
+  return body ? `## 未覆盖真实链路（${sprintRel}/${SPEC_FILE}）\n${body}` : '';
+}
+
 await runActivity(async (input) => {
   const { worktree, sprint_dir: sprintDir, chain_files: chainFiles } = input;
   const { dir } = validateBase(input);
@@ -171,6 +184,7 @@ await runActivity(async (input) => {
     const body = [
       chainFiles.map((f) => `- ${sprintRel}/${f}`).join('\n'),
       reviewSummary(input, dir, sprintRel),
+      uncoveredSummary(dir, sprintRel),
       acceptanceSummary(input, sprintRel),
     ]
       .filter(Boolean)

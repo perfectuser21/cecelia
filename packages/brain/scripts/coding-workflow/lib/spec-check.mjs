@@ -76,5 +76,79 @@ function qaErrors(text, intentIds) {
 export function specErrors(text, taskId, intentIds, { invariantIds = [] } = {}) {
   const errors = reportErrors(text, { taskId, step: 'spec', coversFile: INTENT_FILE, ids: intentIds });
   if (specIds(text).length === 0) errors.push('spec_ids_missing');
-  return [...errors, ...qaErrors(text, intentIds), ...invariantErrors(text, invariantIds)];
+  return [...errors, ...qaErrors(text, intentIds), ...invariantErrors(text, invariantIds), ...uncoveredErrors(text), ...judgmentErrors(text)];
+}
+
+/** `## <标题>` 段的正文（到下一个 `#`/`##` 标题为止，去首尾空行）；没有这一段返回 null。 */
+function section(text, title) {
+  const lines = bodyOf(text).split(/\r?\n/);
+  const start = lines.findIndex((l) => l.trim() === `## ${title}`);
+  if (start === -1) return null;
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((l) => /^#{1,2}\s/.test(l));
+  return (end === -1 ? rest : rest.slice(0, end)).join('\n').trim();
+}
+
+// 「无：理由」/「N/A：理由」：显式声明没有
+const NONE_RE = /^(?:无|N\/A)\s*[:：]\s*\S/i;
+
+/** 审计 #10（旧 proposer 规则C）：没真验的链路必须显式登记（可写「无：理由」），publish 原样转呈 PR。 */
+export function uncoveredSection(text) {
+  return section(text, '未覆盖真实链路');
+}
+
+function uncoveredErrors(text) {
+  const body = uncoveredSection(text);
+  if (body === null) return ['uncovered_section_missing'];
+  return body === '' ? ['uncovered_section_empty'] : [];
+}
+
+const JUDGMENT_FIELDS = { 候选: 'candidates', 所选: 'chosen', 依据: 'basis', 误判后果: 'consequence' };
+
+/** 判定点段的条目行（`- ` 开头）；没有段或写「无：理由」返回 []。 */
+function judgmentLines(text) {
+  const body = section(text, '判定点');
+  if (!body || NONE_RE.test(body)) return [];
+  return body.split('\n').map((l) => l.trim()).filter((l) => /^[-*]\s+/.test(l)).map((l) => l.replace(/^[-*]\s+/, ''));
+}
+
+function parseJudgment(line) {
+  const [name, ...parts] = line.split(/[｜|]/).map((x) => x.trim());
+  const out = { name };
+  for (const part of parts) {
+    const m = /^(候选|所选|依据|误判后果)\s*[:：]\s*(.+)$/.exec(part);
+    if (m) out[JUDGMENT_FIELDS[m[1]]] = m[2].trim();
+  }
+  return out;
+}
+
+const complete = (j) => Boolean(j.name) && Object.values(JUDGMENT_FIELDS).every((k) => j[k]);
+
+/**
+ * 审计 #13/#14（旧 proposer 9.6 判定点登记表）：可选段 `## 判定点`，每条
+ * `- <名称>｜候选: …｜所选: …｜依据: …｜误判后果: …`（五要素齐全才算）。
+ */
+export function judgmentPoints(text) {
+  return judgmentLines(text).map(parseJudgment).filter(complete);
+}
+
+function judgmentErrors(text) {
+  return judgmentLines(text).map(parseJudgment).flatMap((j, i) => (complete(j) ? [] : [`judgment_invalid:${i + 1}`]));
+}
+
+const DEFER_RE = /后续|以后|另开|另立|下一期|下期|之后再|后面再|留待/;
+const TASK_REF_RE = /\b[0-9a-f]{8}(?:-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?\b/i;
+
+/**
+ * 审计 #16（旧 reviewer 9.7）：开发方回应里，以「后续再做/另开/下一期」驳回却没给 Brain 任务 ID 的问题编号。
+ * 风险规避不能只是一句文字承诺。
+ */
+export function untrackedDeferrals(responseText) {
+  const out = [];
+  for (const block of String(responseText ?? '').split(/^(?=### R-\d+)/m)) {
+    const id = /^### (R-\d+)/.exec(block)?.[1];
+    if (!id || !/处理\s*[:：]\s*驳回/.test(block)) continue;
+    if (DEFER_RE.test(block) && !TASK_REF_RE.test(block)) out.push(id);
+  }
+  return out;
 }

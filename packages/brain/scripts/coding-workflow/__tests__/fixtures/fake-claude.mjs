@@ -223,6 +223,8 @@ else {
   const heading = (i) => (mode === 'titled' ? `### S-${i + 1} 改 foo.js 的第 ${i + 1} 处` : mode === 'noids' ? `#### 规格 ${i + 1}` : `### S-${i + 1}`);
   const sections = ids.map((id, i) => `${heading(i)}\n对应 ${id}：改 foo.js，验证 npm test\n`);
   // QA 场景：每个 I-n 一条（noqa 模式不写，模拟漏写）
+  // 审计 #10：02 必须登记未覆盖的真实链路（可写「无：理由」）
+  if (mode !== 'nouncovered') sections.push('## 未覆盖真实链路\n\n无：测试替身，没有外部调用方');
   if (mode !== 'noqa') sections.push(`## QA 场景\n\n${ids.map((id, i) => `### Q-${i + 1}\n对应: ${id}\n操作: 用户按 ${id} 操作\n期望: 看到 ${id} 的结果\n`).join('\n')}`);
   // 铁律对照：prompt 给了 INVARIANTS_PATH 且清单里有 INV-n 时逐条写不适用（noinv 模式不写，模拟漏写）
   const invPath = field('INVARIANTS_PATH');

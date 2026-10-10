@@ -14,7 +14,7 @@ import { reportErrors } from '../lib/md-chain.mjs';
 import { parseReview, openIssuesAfter } from '../lib/review.mjs';
 import { decide, detectTrend, stalled } from '../lib/gan.mjs';
 import { sessionCostUsd } from '../lib/transcript.mjs';
-import { SPEC_FILE, INTENT_FILE, specErrors, specIds, qaScenarios } from '../lib/spec-check.mjs';
+import { SPEC_FILE, INTENT_FILE, specErrors, specIds, qaScenarios, judgmentPoints, untrackedDeferrals } from '../lib/spec-check.mjs';
 import { INVARIANTS_FILE, loadInvariantIds } from '../lib/invariants.mjs';
 
 const REVIEW_FILE = '02-review.md';
@@ -43,6 +43,42 @@ function sessionTimeoutMs(budget, startedAt) {
   return Math.min(ms, Math.max(1000, budgetS * 1000 - BUDGET_RESERVE_MS - (Date.now() - startedAt)));
 }
 
+const DEFAULT_BRAIN_URL = 'http://localhost:5221';
+const BRAIN_TIMEOUT_MS = 15000;
+
+async function brainJson(url, init = {}) {
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(BRAIN_TIMEOUT_MS) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/**
+ * 判定点写库并回读自证（审计 #14，旧 reviewer 9.4/9.6：a85e0582 登记表被静默漏写）：
+ * topic `判定点[<task 前 8 位>#n]: <名称>` 作去重键（重跑不重复写）；写完回读同前缀条数作为 judgments_written。
+ */
+async function writeJudgments(brainUrl, taskId, points) {
+  const base = String(brainUrl || DEFAULT_BRAIN_URL).replace(/\/+$/, '');
+  const prefix = `判定点[${String(taskId).slice(0, 8)}#`;
+  const list = async () => {
+    const r = await brainJson(`${base}/api/brain/strategic-decisions?category=judgment&limit=1000`);
+    return new Set((r?.data ?? []).map((d) => d.topic).filter((t) => typeof t === 'string' && t.startsWith(prefix)));
+  };
+  const existing = await list();
+  for (const [i, j] of points.entries()) {
+    const topic = `${prefix}${i + 1}]: ${j.name}`;
+    if (existing.has(topic)) continue;
+    await brainJson(`${base}/api/brain/strategic-decisions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        category: 'judgment', topic, decision: `所选方法: ${j.chosen}｜候选: ${j.candidates}`,
+        reason: `依据: ${j.basis}｜误判后果: ${j.consequence}｜来源: coding workflow 合同对抗`,
+        made_by: 'ai', author: 'coding-workflow', source_ref: `coding-workflow:${taskId}`,
+      }),
+    });
+  }
+  return (await list()).size;
+}
+
 /** 起一个全新会话（评审或改写）；返回 { failure } 或 { cost }。会话后查：claude 失败 → 越界写 → 01 哈希。 */
 async function runSession(ctx, role, vars) {
   const { input, worktree, sprintDir, dir } = ctx;
@@ -59,7 +95,7 @@ async function runSession(ctx, role, vars) {
 }
 
 /** 读并解析本轮评审；格式问题返回 { errors }，否则 { review }。 */
-function readReview(file, { taskId, ids, intentIds, prevOpen, usedIds, requirePivot }) {
+function readReview(file, { taskId, ids, intentIds, prevOpen, usedIds, requirePivot, untracked = [] }) {
   if (!fs.existsSync(file)) return { errors: ['review_missing'] };
   const text = fs.readFileSync(file, 'utf8');
   // 问题可针对 S-n / I-n / QA 场景 Q-n（evaluator 的测试计划）
@@ -68,6 +104,8 @@ function readReview(file, { taskId, ids, intentIds, prevOpen, usedIds, requirePi
   const errors = [...reportErrors(text, { taskId, step: 'spec_review', coversFile: SPEC_FILE, ids }), ...review.errors];
   // 原地打转时评审必须给出换思路（审计 #27）
   if (requirePivot && !/^## 换思路\s*$/m.test(text)) errors.push('pivot_missing');
+  // 「后续再做」却没登记任务的驳回（审计 #16）：QA 不能关掉
+  for (const p of review.prior) if (p.status === '关闭' && untracked.includes(p.id)) errors.push(`deferral_closed_without_task:${p.id}`);
   return errors.length > 0 ? { errors } : { review };
 }
 
@@ -93,20 +131,34 @@ await runActivity(async (input) => {
   let cost = 0;
   let badStreak = 0;
   let reviewErrors = [];
+  let untracked = [];
   // 重试必须带新信息（审计 #33）：每个会话都拿到当前 02 的程序校验问题（活动被重试时，上次改写可能把规格改坏了）
   const specErrorsNow = () => specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds }).join(' ') || '无';
 
   const overBudget = () => cost > budget
     && fail('fatal', 'gan_budget_exceeded', { evidence: [{ cost_usd: money(cost), budget_usd: budget, rounds: history.length, open_issues: brief(prevOpen) }] });
 
-  const finish = (verdict, round, trend, open) => {
+  const finish = async (verdict, round, trend, open) => {
     fs.copyFileSync(path.join(dir, reviewName(round)), path.join(dir, REVIEW_FILE));
     const gan = { verdict, rounds: round, trend, open_issues: brief(open), cost_usd: money(cost), scores: history.at(-1).scores };
     const outputs = { review_file: REVIEW_FILE, review_rounds: round, spec_sha256: sha256File(specPath), gan };
+    const escalations = [];
     if (verdict === 'FORCED') {
       log(`[coding-gan][P1] 合同对抗走势 ${trend}，第 ${round} 轮强制通过，仍开着 ${open.map((i) => i.id).join(',') || '无'}，升级给 coding commander`);
-      outputs.escalations = [{ type: 'gan_forced', trend, round, open_issues: brief(open) }];
+      escalations.push({ type: 'gan_forced', trend, round, open_issues: brief(open) });
     }
+    // 判定点写库（审计 #14）：写不进去不挡合同，但升级、不静默
+    const points = judgmentPoints(fs.readFileSync(specPath, 'utf8'));
+    gan.judgments_written = 0;
+    if (points.length > 0) {
+      try {
+        gan.judgments_written = await writeJudgments(input.brain_url, taskId, points);
+      } catch (error) {
+        log(`[coding-gan][P1] 判定点 ${points.length} 条写入 Brain 失败：${error?.message || error}，升级给 coding commander`);
+        escalations.push({ type: 'judgments_write_failed', count: points.length, error: String(error?.message || error) });
+      }
+    }
+    if (escalations.length > 0) outputs.escalations = escalations;
     return { status: 'completed', outputs, evidence: [`合同对抗 ${verdict}：${round} 轮，走势 ${trend}，花费 $${money(cost)}`] };
   };
 
@@ -128,13 +180,14 @@ await runActivity(async (input) => {
       SPEC_ERRORS: specErrorsNow(),
       PREV_REVIEW_ERRORS: reviewErrors.join(' ') || '无',
       STUCK: stuck ? '是' : '否',
+      UNTRACKED_DEFERRALS: untracked.join(',') || '无',
     });
     if (reviewed.failure) return reviewed.failure;
     cost += reviewed.cost;
     const blown = overBudget();
     if (blown) return blown;
 
-    const { review, errors } = readReview(reviewPath, { taskId, ids, intentIds, prevOpen, usedIds, requirePivot: stuck });
+    const { review, errors } = readReview(reviewPath, { taskId, ids, intentIds, prevOpen, usedIds, requirePivot: stuck, untracked });
     if (errors) {
       badStreak += 1;
       reviewErrors = errors;
@@ -169,5 +222,6 @@ await runActivity(async (input) => {
     const specErr = specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds });
     if (specErr.length > 0) return fail('retryable', 'spec_invalid', { evidence: [{ spec_errors: specErr }] });
     if (!fs.existsSync(responsePath)) return fail('retryable', 'response_missing', { evidence: [{ round }] });
+    untracked = untrackedDeferrals(fs.readFileSync(responsePath, 'utf8')).filter((id) => open.some((i) => i.id === id));
   }
 });
