@@ -102,7 +102,6 @@
       "path": "packages/brain/scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs",
       "role": "verification"
     },
-    
     {
       "owner_path": "scripts/ci/implementation-pr-gate.mjs",
       "path": "packages/brain/src/lib/__tests__/implementation-ci-workflow.test.js",
@@ -143,7 +142,6 @@
       "path": "packages/brain/scripts/smoke/workspace-ci-source-bundle-smoke.sh",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/src/lib/implementation-ci-snapshot.js",
       "path": "packages/brain/src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js",
@@ -157,6 +155,46 @@
     {
       "owner_path": "scripts/ci/registry-lint.mjs",
       "path": "packages/brain/src/lib/__tests__/registry-lint.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": ".prd-cp-10101732-code-scheduling.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": ".dod-cp-10101732-code-scheduling.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": "changes/cp-10101732-code-scheduling.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": "packages/brain/src/__tests__/dispatcher-code-only.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatch-helpers.js",
+      "path": "packages/brain/src/__tests__/dispatch-helpers.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/slot-allocator.js",
+      "path": "packages/brain/src/__tests__/slot-allocator.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/code-script-policy.js",
+      "path": "packages/brain/src/lib/__tests__/code-script-policy.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/check-brain-version-bump.sh",
+      "path": "tests/regression/version-gate-silent/check-brain-version-bump.test.js",
       "role": "verification"
     }
   ]
