@@ -213,16 +213,7 @@
       "path": "docs/learnings/cp-10101725-patrol-impact-adapter.md",
       "role": "documentation"
     },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": ".prd-cp-10101732-code-scheduling.md",
-      "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": ".dod-cp-10101732-code-scheduling.md",
-      "role": "documentation"
-    },
+    
     
     {
       "owner_path": "packages/brain/src/dispatcher.js",
