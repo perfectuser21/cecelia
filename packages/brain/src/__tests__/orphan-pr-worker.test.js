@@ -500,6 +500,48 @@ describe('orphan-pr-worker', () => {
     // 不应查 Brain DB（豁免在 DB 查询之前）
     expect(pool.query).not.toHaveBeenCalled();
   });
+
+  // 金丝雀 4（PR #6232）回归：cw runner 自管 PR 链跑完即 task completed，被当孤儿——
+  // 标题与已合并 PR 相似就被关，CI 绿就被直接合并（绕过 QA + 独立裁判合并门）
+  it('case 14: coding workflow runner PR（cp-*-cw-<hex8>）→ skip coding_workflow_pr，不合不关不 label', async () => {
+    const merged = [];
+    const closed = [];
+    const base = routeExec({
+      prList: [
+        {
+          number: 6232,
+          url: 'https://github.com/o/r/pull/6232',
+          headRefName: 'cp-10101755-cw-bd2b1556',
+          createdAt: hoursAgoIso(5),
+          updatedAt: hoursAgoIso(1),
+          labels: [],
+          title: 'fix(workflow): 修复 POST /api/brain/strategic-decisions 非法 category 返回 500 并透出数据库约束报错',
+        },
+      ],
+      prChecks: { 6232: [{ name: 'ci', state: 'SUCCESS', conclusion: 'SUCCESS' }] },
+      onMerge: (n, c) => merged.push({ n, c }),
+    });
+    execSync.mockImplementation((cmd) => {
+      if (cmd.startsWith('gh pr list --author @me --state merged')) {
+        return JSON.stringify([
+          { number: 6139, url: 'https://github.com/o/r/pull/6139', headRefName: 'cp-10092117-cw-4ac5fa39',
+            title: 'fix(workflow): 修复 Brain GET /api/brain/tasks/:id 非法 id 返回 400 不再 500 泄露数据库报错' },
+        ]);
+      }
+      if (/^gh pr close \d+/.test(cmd)) closed.push(cmd);
+      return base(cmd);
+    });
+    pool.query.mockResolvedValue({ rows: [] });
+
+    const r = await scanOrphanPrs(pool);
+    expect(r.scanned).toBe(1);
+    expect(r.skipped).toBe(1);
+    expect(r.merged).toBe(0);
+    expect(r.details[0]).toMatchObject({ pr: 6232, action: 'skipped', reason: 'coding_workflow_pr' });
+    expect(merged).toHaveLength(0);
+    expect(closed).toHaveLength(0);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
 });
 
 describe('orphan-pr-worker 红孤儿超期关闭', () => {
