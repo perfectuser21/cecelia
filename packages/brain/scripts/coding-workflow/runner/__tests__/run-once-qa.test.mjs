@@ -335,15 +335,11 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
   });
 
   // 金丝雀 3（PR #6220）：修复没推上去（削弱测试被拦 / 会话失败）后 head 不变，QA 门「同 head 已验过」跳过 → 静默挂住。必须升级
-  it('QA 修复没推上去（test_weakened / claude_failed）→ 立刻升级 qa_fix_failed（P1，带原因），不静默挂着', async () => {
-    for (const [fixMode, reason] of [['skiptest', 'test_weakened'], ['fail', 'claude_failed']]) {
-      fs.rmSync(statePath(), { force: true });
-      const r = await go(green(), { mode: 'fail', extra: { FAKE_CIFIX_MODE: fixMode } });
-      expect(r.exitCode, r.stderr).toBe(0);
-      expect(state().escalated, fixMode).toMatchObject({ type: 'qa_fix_failed', reason });
-      expect(r.stderr).toContain('[coding-qa][P1]');
-      await E.closeBrain();
-    }
+  it.each([['skiptest', 'test_weakened'], ['fail', 'claude_failed']])('QA 修复没推上去（%s → %s）→ 立刻升级 qa_fix_failed（P1，带原因），不静默挂着', async (fixMode, reason) => {
+    const r = await go(green(), { mode: 'fail', extra: { FAKE_CIFIX_MODE: fixMode } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(state().escalated).toMatchObject({ type: 'qa_fix_failed', reason });
+    expect(r.stderr).toContain('[coding-qa][P1]');
   });
 
   it('已合并且 QA 通过过的 PR → 停掉它的预览环境释放容量（只停一次）', async () => {
