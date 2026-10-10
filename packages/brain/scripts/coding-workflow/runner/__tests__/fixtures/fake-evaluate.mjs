@@ -21,7 +21,11 @@ if (mode === 'fatal') {
   out({ status: 'failed', failure_class: 'fatal', reason_code: 'evaluate_touched_production', outputs: {}, evidence: [{ commands: ['curl -s http://localhost:5221/api/brain/tasks'] }] });
 }
 const file = `05-qa-report-r${input.round}.md`;
-fs.writeFileSync(path.join(input.worktree, input.sprint_dir, file), `# QA 报告 第 ${input.round} 轮 ${mode}\n`);
+const F = '```';
+const body = mode === 'pass-api'
+  ? `### T-1\n对应: Q-1\nverdict: PASS\n${F}command\ncurl -s -X POST http://localhost:5302/api/brain/tasks -d '{"title":"qa"}' | jq -e '.id'\n${F}\n${F}output\ntrue\n${F}\n`
+  : '';
+fs.writeFileSync(path.join(input.worktree, input.sprint_dir, file), `# QA 报告 第 ${input.round} 轮 ${mode}\n\n${body}`);
 const cannot = mode === 'cannot' ? [{ id: 'T-2', covers: ['Q-1'], reason: '工具缺失：预览环境没有 ffprobe' }] : [];
 const failed = mode === 'fail' ? [{ id: 'T-1', covers: ['Q-1'], command: 'curl x', output_tail: '500' }] : [];
 out({
