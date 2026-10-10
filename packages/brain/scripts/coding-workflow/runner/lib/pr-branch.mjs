@@ -72,21 +72,29 @@ const ASSERT_RE = /\bexpect\s*\(|\bassert(?:\.\w+)?\s*\(/g;
 
 const assertCount = (text) => (text.match(ASSERT_RE) ?? []).length;
 
-/** before..head 是否删了测试文件、在测试里加了 skip/only/todo、或减少了断言。 */
+/**
+ * before..head 是否削弱了 main 上已有的测试（决策 b057089b）：删除、加 skip/only/todo、断言比 main 上的版本少。
+ * 只守与 origin/main 合并基点上已存在的测试文件——PR 自己新加的测试允许随代码改删
+ * （金丝雀 3/4：按裁决删超范围代码时连带删它的测试被拦；行为由真人 QA + 独立裁判兜底）。
+ * 取不到合并基点时退回对照 before（从严）。
+ */
 async function weakenedTests(worktree, before, head) {
+  // 合并基点要按最新的 main 算（克隆里的 origin/main 可能是旧的）；拉不到就用现有的
+  await git(worktree, ['fetch', 'origin', 'main'], { timeoutMs: FETCH_TIMEOUT_MS });
+  const mb = await git(worktree, ['merge-base', 'origin/main', head]);
+  const base = mb.code === 0 && mb.stdout.trim() ? mb.stdout.trim() : before;
+  const atBase = async (file) => (await git(worktree, ['cat-file', '-e', `${base}:${file}`])).code === 0;
   const status = (await git(worktree, ['diff', '--name-status', `${before}..${head}`])).stdout.split('\n').filter(Boolean);
   for (const line of status) {
     const [kind, file] = line.split('\t');
-    if (!TEST_FILE_RE.test(file ?? '')) continue;
+    if (!TEST_FILE_RE.test(file ?? '') || !(await atBase(file))) continue;
     if (kind === 'D') return true;
     const added = (await git(worktree, ['diff', '-U0', `${before}..${head}`, '--', file])).stdout
       .split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'));
     if (added.some((l) => SKIP_RE.test(l))) return true;
-    if (kind === 'M') {
-      const old = (await git(worktree, ['show', `${before}:${file}`])).stdout;
-      const now = (await git(worktree, ['show', `${head}:${file}`])).stdout;
-      if (assertCount(now) < assertCount(old)) return true;
-    }
+    const old = (await git(worktree, ['show', `${base}:${file}`])).stdout;
+    const now = (await git(worktree, ['show', `${head}:${file}`])).stdout;
+    if (assertCount(now) < assertCount(old)) return true;
   }
   return false;
 }
