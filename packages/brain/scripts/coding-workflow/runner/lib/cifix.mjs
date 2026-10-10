@@ -1,12 +1,13 @@
 // CI 红自动修复：对 findTarget 找到的 cw PR，在 PR 分支 worktree 里让 claude 按失败日志修复并提交，
 // 程序核对（有新提交、工作区干净、只追加不改写、不碰 sprints/ 与 agent 配置）后由 runner 推送。
+// 与 main 冲突的 PR（kind=conflict）：程序合并 origin/main（只追加的登记表取并集），剩余冲突才派 claude 解决。
 // 每次尝试都记进 <logDir>/cifix-<pr>.json 并回写 Brain 任务 result.ci_fix；worktree 用完即删。
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, run } from './proc.mjs';
 import { removeWorktree } from './worktree.mjs';
 import { findTarget, failureLogs, readState, statePath } from './cifix-scan.mjs';
-import { taskIdOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead } from './pr-branch.mjs';
+import { taskIdOf, remoteTaskId, preparePrWorktree, checkFixCommits, ownChangedFiles, pushPrHead } from './pr-branch.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { revokeQaPass } from './qa-gate.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
@@ -15,25 +16,19 @@ const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git p
 const GH_TIMEOUT_MS = 2 * 60 * 1000;
 
 const stop = (code) => new Error(code);
+const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
+const RUNNER_ID = ['-c', 'user.name=coding-workflow-runner', '-c', 'user.email=coding-workflow-runner@cecelia.local'];
+// 每个 PR 都往末尾追加的登记表：与 main 冲突时按并集合并（程序做，不派 claude，也不算改了 PR 的代码）
+const UNION_FILES = ['packages/quality/smoke-allowlist.txt', 'packages/quality/smoke-write-targets.txt'];
 
-async function attempt(ctx, target, worktree, signal) {
+/** 跑一次修复会话：记会话日志与花费；终止/超时/非 0 退出抛 Error(reason_code)。 */
+async function runFixSession(ctx, pr, prompt, worktree, tag) {
   const { cfg } = ctx;
-  const { pr } = target;
-  await preparePrWorktree(cfg, pr, worktree, signal);
-  const before = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
-  const logs = await failureLogs(cfg, pr.number);
-  const prompt = loadPrompt('ci-fix', {
-    BRANCH: pr.headRefName,
-    PR_URL: pr.url ?? '',
-    FAILED_CHECKS: (logs.names.length > 0 ? logs.names : target.failedRequired).join('、'),
-    CI_LOGS: logs.text || '（未取到失败 job 日志，请先本地运行相关测试定位）',
-  });
-  ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：失败检查 ${target.failedRequired.join('、')}`);
   const run = await runClaude({
     args: ['-p', prompt, '--permission-mode', 'acceptEdits', ...CLAUDE_TOOLS],
     cwd: worktree,
     timeoutMs: cfg.ciFixTimeoutMs,
-    tag: 'ci-fix',
+    tag,
     isolateRemote: true,
   });
   fs.mkdirSync(cfg.logDir, { recursive: true });
@@ -47,12 +42,70 @@ async function attempt(ctx, target, worktree, signal) {
   if (run.terminated) throw stop('runner_terminated');
   if (run.timedOut) throw stop('claude_timeout');
   if (run.code !== 0) throw stop('claude_failed');
+}
+
+async function attemptCi(ctx, target, worktree, signal) {
+  const { cfg } = ctx;
+  const { pr } = target;
+  await preparePrWorktree(cfg, pr, worktree, signal);
+  const before = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
+  const logs = await failureLogs(cfg, pr.number);
+  const prompt = loadPrompt('ci-fix', {
+    BRANCH: pr.headRefName,
+    PR_URL: pr.url ?? '',
+    FAILED_CHECKS: (logs.names.length > 0 ? logs.names : target.failedRequired).join('、'),
+    CI_LOGS: logs.text || '（未取到失败 job 日志，请先本地运行相关测试定位）',
+  });
+  ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：失败检查 ${target.failedRequired.join('、')}`);
+  await runFixSession(ctx, pr, prompt, worktree, 'ci-fix');
   const { commits } = await checkFixCommits(worktree, before);
   const files = (await git(worktree, ['diff', '--name-only', `${before}..HEAD`])).stdout.split('\n').filter(Boolean);
   await pushPrHead(worktree, pr.headRefName);
   const revoked = await revokeQaPass(ctx, pr, files, 'ci_fix_changed_code');
   return { result: 'pushed', commits, ...(revoked ? { qa_revoked: true } : {}) };
 }
+
+/**
+ * 与 main 冲突：在 PR 分支上合并 origin/main（登记表按并集），还有冲突才派 claude 解决并完成合并。
+ * 核对只看 PR 自身相对 main 的改动；改了登记表以外的 PR 代码 → 撤销 QA 通过（新 head 重新 QA + 裁判）。
+ */
+async function attemptConflict(ctx, target, worktree, signal) {
+  const { cfg } = ctx;
+  const { pr } = target;
+  await preparePrWorktree(cfg, pr, worktree, signal);
+  const before = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
+  if ((await git(worktree, ['fetch', 'origin', 'main'], { timeoutMs: FETCH_TIMEOUT_MS })).code !== 0) throw stop('git_fetch_failed');
+  const attributes = `${worktree}.union-attributes`;
+  fs.writeFileSync(attributes, UNION_FILES.map((f) => `${f} merge=union\n`).join(''));
+  const merge = await git(worktree, [...RUNNER_ID, '-c', `core.attributesFile=${attributes}`, 'merge', '--no-ff', '--no-edit', 'origin/main']);
+  fs.rmSync(attributes, { force: true });
+  let resolvedBy = 'runner';
+  if (merge.code !== 0) {
+    const conflicts = (await git(worktree, ['diff', '--name-only', '--diff-filter=U'])).stdout.split('\n').filter(Boolean);
+    if (conflicts.length === 0) throw stop('merge_failed');
+    ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：与 main 冲突 ${conflicts.join('、')}，派 claude 解决`);
+    const prompt = loadPrompt('conflict-fix', {
+      BRANCH: pr.headRefName,
+      PR_URL: pr.url ?? '',
+      BEFORE: before,
+      CONFLICT_FILES: conflicts.map((f) => `- ${f}`).join('\n'),
+    });
+    await runFixSession(ctx, pr, prompt, worktree, 'conflict-fix');
+    if ((await git(worktree, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])).code === 0) throw stop('merge_unfinished');
+    resolvedBy = 'claude';
+  } else {
+    ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：与 main 冲突，程序合并 origin/main 完成`);
+  }
+  if ((await git(worktree, ['merge-base', '--is-ancestor', 'origin/main', 'HEAD'])).code !== 0) throw stop('merge_unfinished');
+  const { commits } = await checkFixCommits(worktree, before, { mainRef: 'origin/main' });
+  const own = (await ownChangedFiles(worktree, before, 'origin/main')).filter((f) => !UNION_FILES.includes(f));
+  await pushPrHead(worktree, pr.headRefName);
+  const revoked = await revokeQaPass(ctx, pr, own, 'conflict_fix_changed_code');
+  return { result: 'pushed', resolved_by: resolvedBy, commits, ...(revoked ? { qa_revoked: true } : {}) };
+}
+
+const attempt = (ctx, target, worktree, signal) =>
+  (target.kind === 'conflict' ? attemptConflict : attemptCi)(ctx, target, worktree, signal);
 
 /** 记一次尝试：本地状态文件 + Brain 任务 result.ci_fix（拿不到 task_id 只记本地）。 */
 async function record(ctx, pr, taskId, entry) {
@@ -125,7 +178,7 @@ export async function runCiFix(ctx, signal) {
 
   const startedAt = Date.now();
   const attemptNo = readState(cfg, pr.number).attempts.length + 1;
-  const entry = { pr: pr.number, head: pr.headRefOid, at: new Date().toISOString(), failed_checks: target.failedRequired };
+  const entry = { pr: pr.number, head: pr.headRefOid, at: new Date().toISOString(), failed_checks: target.failedRequired, ...(target.kind ? { kind: target.kind } : {}) };
   try {
     Object.assign(entry, await attempt(ctx, target, worktree, signal));
   } catch (error) {
