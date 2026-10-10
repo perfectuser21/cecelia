@@ -355,6 +355,27 @@ describe('reapOpenclawAgentRuns', () => {
     if (fail_reason) expect(update[1][1]).toContain(fail_reason);
   });
 
+  it.each([
+    ['blocked', 'failed', 0, 1],
+    ['success', 'completed', 1, 0],
+  ])('秋米 trial 回执 claimed_result=%s，退出码 0 → %s（任务 c244dd02）', async (claimed_result, _label, completed, failed) => {
+    const factoryRow = { ...row, payload: { qiumi_department: 'skill-factory' } };
+    const report = JSON.stringify({ stage: 'trial', claimed_result, fail_reason: '抖音登录态失效' });
+    const query = vi.fn().mockResolvedValueOnce({ rows: [factoryRow] }).mockResolvedValue({ rows: [], rowCount: 1 });
+    const execFileFn = vi.fn((c, a, o, cb) => cb(null, `EXIT=0\n${JSON.stringify({ finalAssistantVisibleText: report })}\n`, ''));
+    expect(await reapOpenclawAgentRuns({ query }, { execFileFn })).toMatchObject({ completed, failed });
+    const failedUpd = query.mock.calls.find(([sql]) => /SET status = 'failed'/.test(sql));
+    const doneUpd = query.mock.calls.find(([sql]) => /completed_no_pr/.test(sql));
+    if (failed) {
+      expect(failedUpd[1][1]).toContain('agent_receipt_blocked');
+      expect(failedUpd[1][1]).toContain('抖音登录态失效');
+      expect(doneUpd).toBeUndefined();
+    } else {
+      expect(doneUpd).toBeDefined();
+      expect(failedUpd).toBeUndefined();
+    }
+  });
+
   it('EXIT=0 → completed_no_pr + receipt 子键（finalAssistantVisibleText）', async () => {
     const query = vi.fn().mockResolvedValueOnce({ rows: [row] }).mockResolvedValue({ rows: [], rowCount: 1 });
     const execFileFn = vi.fn((c, a, o, cb) => cb(null, 'EXIT=0\n{"finalAssistantVisibleText":"done ✓"}\n', ''));
