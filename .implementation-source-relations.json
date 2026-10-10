@@ -191,6 +191,11 @@
       "owner_path": "packages/brain/src/lib/existing-ops-source.js",
       "path": ".prd-cp-10101834-f3-test-consumer.md",
       "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
+      "path": "docs/learnings/cp-10101725-patrol-impact-adapter.md",
+      "role": "documentation"
     }
   ]
 }
