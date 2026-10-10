@@ -232,7 +232,7 @@ describe('Session Controller durable authority（真 PG）', () => {
     const scratchDir = `/tmp/cecelia-headed-authority-${randomUUID()}`;
     const seeded = await seedRoutedKernelTask(testPool, {
       titlePrefix:'headed-authority',changeKind:'bugfix',
-      payload:{mode:'headed',executor:'claude',branch:'cp-headed-authority',
+      payload:{mode:'headed',executor:'codex',branch:'cp-headed-authority',
         base_sha:'a'.repeat(40),sprint_dir:scratchDir,worktree_path:'/tmp/wt-headed'},
     });
     const task={id:seeded.taskId,ability_id:null,payload:seeded.payload};
