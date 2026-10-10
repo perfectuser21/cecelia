@@ -13,6 +13,47 @@ const read = async path => { if (!sourceCache.has(path)) sourceCache.set(path, r
 const build = overrides => buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths, readSource: read, ...overrides });
 
 describe('真实工厂旧消费者来源，独立于可执行完整Workflow', () => {
+  const regression = 'tests/regression/version-gate-silent/check-brain-version-bump.test.js';
+  const versionGate = 'scripts/ci/check-brain-version-bump.sh';
+  it('真实夜间选择的毕业池测试与 required PR 版本脚本均以固定字节登记', async () => {
+    const f3 = (await build()).consumers[1];
+    expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
+    expect(f3.bindings.some(b => b.path === regression)).toBe(true);
+    expect(f3.bindings.some(b => b.path === versionGate)).toBe(true);
+    expect(f3.input_relations).toContainEqual(expect.objectContaining({ consumer_path: 'packages/brain/vitest.config.js', input_path: regression, kind: 'literal_vitest_regression_selector' }));
+    expect(f3.input_relations).toContainEqual(expect.objectContaining({ consumer_path: '.github/workflows/ci.yml', input_path: versionGate, kind: 'required_pr_bash_gate' }));
+    expect(f3.bindings.some(b => b.path === 'tests/regression/relay-1b1f1ffa/capacity-gate.test.js')).toBe(false);
+  });
+  it('真实 exclude 令毕业池文件不被 unit 消费，不以文件存在认领', async () => {
+    const f3 = (await build({ readSource: async path => path === 'packages/brain/vitest.config.js'
+      ? (await read(path)).replace('exclude: [', `exclude: ['../../${regression}',`) : read(path) })).consumers[1];
+    expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
+    expect(f3.bindings.some(b => b.path === regression)).toBe(false);
+  });
+  it('动态 include/exclude 或非支持 glob 不可充当 literal 选择器证据', async () => {
+    for (const mutate of [text => text.replace('include: [', 'include: [process.env.EXTRA_TEST,'),
+      text => text.replace('exclude: [', 'exclude: [...UNKNOWN_TESTS,'),
+      text => text.replace('../../tests/regression/**/*.{test,spec}.?(c|m)[jt]s?(x)', '../../tests/regression/**/!(draft).test.js')]) {
+      const f3 = (await build({ readSource: async path => path === 'packages/brain/vitest.config.js' ? mutate(await read(path)) : read(path) })).consumers[1];
+      expect(f3.status).toBe('unknown');
+      expect(f3.bindings).toEqual([]);
+    }
+  });
+  it('选择到的真实毕业池字节缺失不得保留部分成功绑定', async () => {
+    const f3 = (await build({ readSource: async path => { if (path === regression) throw Error('missing blob'); return read(path); } })).consumers[1];
+    expect(f3.status).toBe('unknown');
+    expect(f3.bindings).toEqual([]);
+    expect(f3.gaps).toContainEqual({ code: 'source_unavailable', path: regression });
+  });
+  it('版本 gate 注释、echo 或未执行分支不得认领生产 bash 脚本', async () => {
+    for (const run of [`# bash ${versionGate}`, `echo bash ${versionGate}`, `if false; then bash ${versionGate}; fi`]) {
+      const ci = yaml.load(await read('.github/workflows/ci.yml'));
+      ci.jobs['brain-version-bump-gate'].steps.find(step => step.run?.includes(versionGate)).run = run;
+      const f3 = (await build({ readSource: async path => path === '.github/workflows/ci.yml' ? yaml.dump(ci) : read(path) })).consumers[1];
+      expect(f3.status).toBe('unknown');
+      expect(f3.bindings).toEqual([]);
+    }
+  });
   it('固定main实际字节证明两个旧活动，其余六引用继续UNKNOWN且不能成为执行定义', async () => {
     const result = await build();
     expect(result.consumers.map(c => c.activity_id).sort()).toEqual(['0466016e-6d9f-4325-aeb4-d8bc70424a48', '0ab79a73-1ec3-4ddc-bb88-1433568ae2e2'].sort());
