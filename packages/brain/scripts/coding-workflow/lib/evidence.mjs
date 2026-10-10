@@ -10,6 +10,8 @@ const SECTION_END_RE = /^#{1,3} /;
 const FENCE_RE = /^(`{3,}|~{3,})\s*([A-Za-z]*)\s*$/;
 const COVERS_RE = /^对应\s*[:：]\s*(.*)$/;
 const VERDICT_RE = /^verdict\s*[:：]\s*(\S*)\s*$/;
+const REASON_RE = /^原因\s*[:：]\s*(.*?)\s*$/;
+const DEFAULT_VERDICTS = ['PASS', 'FAIL'];
 const LIST_MARK_RE = /^\s*(?:[-*]\s+)?/;
 
 /** 尾部摘要：超过 OUTPUT_SUMMARY_MAX 时保留末尾并以 … 开头。 */
@@ -50,11 +52,12 @@ function sections(lines, ITEM_RE) {
 }
 
 /** 解析一段：字段行在代码块外，command/output 取第一个同名代码块。 */
-function parseSection({ id, lines }, coversRe) {
+function parseSection({ id, lines }, coversRe, verdicts) {
   const errors = [];
   const blocks = {};
   let covers = null;
   let verdict = null;
+  let reason = '';
   let open = null;
   for (const line of lines) {
     if (open) {
@@ -78,6 +81,8 @@ function parseSection({ id, lines }, coversRe) {
     if (c && covers === null) covers = c[1].split(/[,，、\s]+/).filter(Boolean);
     const v = VERDICT_RE.exec(field);
     if (v && verdict === null) verdict = v[1].toUpperCase();
+    const r = REASON_RE.exec(field);
+    if (r && !reason) reason = r[1];
   }
   // 文末仍开着的代码块按闭合到文末处理（真实 claude 会漏写最后的闭合 ```，2c34f677）。
   // 文中未闭合的块会吞掉后面的 E-n，那些 I-n 照样判未覆盖，不因此放宽。
@@ -86,19 +91,20 @@ function parseSection({ id, lines }, coversRe) {
   if (!covers || covers.length === 0) errors.push(`${id}:covers_missing`);
   else for (const c of covers.filter((x) => !coversRe.test(x))) errors.push(`${id}:covers_invalid:${c}`);
   if (verdict === null) errors.push(`${id}:verdict_missing`);
-  else if (verdict !== 'PASS' && verdict !== 'FAIL') errors.push(`${id}:verdict_invalid`);
+  else if (!verdicts.includes(verdict)) errors.push(`${id}:verdict_invalid`);
   for (const lang of ['command', 'output']) {
     if (!(lang in blocks)) errors.push(`${id}:${lang}_missing`);
     else if (blocks[lang].trim() === '') errors.push(`${id}:${lang}_empty`);
   }
-  return { item: { id, covers: covers ?? [], verdict, command: blocks.command ?? '', output: blocks.output ?? '' }, errors };
+  return { item: { id, covers: covers ?? [], verdict, ...(reason ? { reason } : {}), command: blocks.command ?? '', output: blocks.output ?? '' }, errors };
 }
 
 /**
  * 解析证据文本 → { items: [{id, covers, verdict, command, output}], errors }。有无 frontmatter 均可。
  * 缺省按 04-evidence.md（E-n 对应 I-n）；QA 报告传 { prefix: 'T', coversRe: /^Q-\d+$/ } 等。
+ * verdicts：允许的结论，缺省 PASS/FAIL；QA 报告另允许 CANNOT_VERIFY（验不了，配 `原因:` 字段，记在 item.reason）。
  */
-export function parseEvidence(text, { prefix = 'E', coversRe = INTENT_ID_RE } = {}) {
+export function parseEvidence(text, { prefix = 'E', coversRe = INTENT_ID_RE, verdicts = DEFAULT_VERDICTS } = {}) {
   if (typeof text !== 'string') return { items: [], errors: ['evidence_not_text'] };
   const body = parseFrontmatter(text)?.body ?? text;
   const items = [];
@@ -110,7 +116,7 @@ export function parseEvidence(text, { prefix = 'E', coversRe = INTENT_ID_RE } = 
       continue;
     }
     seen.add(section.id);
-    const parsed = parseSection(section, coversRe);
+    const parsed = parseSection(section, coversRe, verdicts);
     items.push(parsed.item);
     errors.push(...parsed.errors);
   }

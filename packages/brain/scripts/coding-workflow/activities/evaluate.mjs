@@ -8,7 +8,7 @@ import path from 'node:path';
 import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
 import { intentIdsError } from '../lib/intent.mjs';
 import { qaScenarios, SPEC_FILE, INTENT_FILE } from '../lib/spec-check.mjs';
-import { parseQaReport, judgeQa, unitTestEvidence, productionTouches } from '../lib/qa-report.mjs';
+import { parseQaReport, judgeQa, unitTestEvidence, productionTouches, trivialAssertions, screenshotProblems } from '../lib/qa-report.mjs';
 import { bashExecutions, unverifiedItems, sessionCostUsd } from '../lib/transcript.mjs';
 import { waitPreview, DEFAULT_PREVIEW_API } from '../lib/preview.mjs';
 import {
@@ -48,12 +48,13 @@ async function guardFailure({ worktree, dir, sprintDir, input, before }) {
 }
 
 /** 报告判分；产品 PASS/FAIL 都返回 completed。 */
-function judge({ reportPath, reportFile, qaIds, stdout, worktree, round, env, cost }) {
+function judge({ reportPath, reportFile, qaIds, stdout, worktree, dir, shotsDir, round, env, cost }) {
   const executions = bashExecutions(stdout);
   const prod = productionTouches(executions);
   if (prod.length > 0) return fail('fatal', 'evaluate_touched_production', { evidence: [{ commands: prod }] });
   if (!fs.existsSync(reportPath)) return fail('retryable', 'qa_report_missing');
-  const report = parseQaReport(fs.readFileSync(reportPath, 'utf8'));
+  const reportText = fs.readFileSync(reportPath, 'utf8');
+  const report = parseQaReport(reportText);
   const judged = judgeQa(report, qaIds);
   if (judged.reason) return fail('retryable', judged.reason, { evidence: [{ errors: judged.errors, missing: judged.missing }] });
   const items = [...report.tests, ...report.findings];
@@ -61,8 +62,17 @@ function judge({ reportPath, reportFile, qaIds, stdout, worktree, round, env, co
   if (unit.length > 0) return fail('retryable', 'qa_unit_test_evidence', { evidence: [{ items: unit }] });
   const unverified = unverifiedItems(items, executions, { worktree: [worktree, fs.realpathSync(worktree)] });
   if (unverified.length > 0) return fail('retryable', 'qa_evidence_unverified', { evidence: [{ unverified }] });
-  const qa = { verdict: judged.verdict, round, env, failed: brief(judged.failed), blocking: brief(judged.blocking), cost_usd: cost };
-  log(`[evaluate] 第 ${round} 轮真人 QA ${judged.verdict}：失败场景 ${qa.failed.map((i) => i.id).join(',') || '无'}，阻断发现 ${qa.blocking.map((i) => i.id).join(',') || '无'}`);
+  // 恒真断言（审计 #36）：判 PASS 的命令吞掉失败 / 只回显结论
+  const trivial = trivialAssertions(items);
+  if (trivial.length > 0) return fail('retryable', 'qa_trivial_assertion', { evidence: [{ items: trivial }] });
+  // 截图（审计 #37）：引用的截图要真存在，用了浏览器的条目要真留下截图
+  const shots = screenshotProblems({ reportText, items, executions, sprintDir: dir, shotsDir });
+  if (shots.length > 0) return fail('retryable', 'qa_screenshot_missing', { evidence: [{ problems: shots }] });
+  const qa = {
+    verdict: judged.verdict, round, env, failed: brief(judged.failed), blocking: brief(judged.blocking),
+    cannot_verify: judged.cannot_verify.map(({ id, covers, reason }) => ({ id, covers, reason })), cost_usd: cost,
+  };
+  log(`[evaluate] 第 ${round} 轮真人 QA ${judged.verdict}：失败场景 ${qa.failed.map((i) => i.id).join(',') || '无'}，阻断发现 ${qa.blocking.map((i) => i.id).join(',') || '无'}，验不了 ${qa.cannot_verify.map((i) => i.id).join(',') || '无'}`);
   return { status: 'completed', outputs: { qa_report_file: reportFile, qa }, evidence: [`${reportFile}：${judged.verdict}`] };
 }
 
@@ -138,7 +148,7 @@ await runActivity(async (input) => {
     }
     result = claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
     result ??= judge({
-      reportPath, reportFile, qaIds, stdout: run.stdout, worktree, round,
+      reportPath, reportFile, qaIds, stdout: run.stdout, worktree, dir, shotsDir: path.join(dir, `qa-r${round}`), round,
       env: { kind: 'preview', url: preview.url, ...(preview.sha ? { sha: preview.sha } : {}) }, cost: Math.round(sessionCostUsd(run.stdout) * 10000) / 10000,
     });
   } finally {
