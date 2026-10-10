@@ -14,3 +14,5 @@ F3已有消费者以固定Git字节解析Vitest导出的literal include/exclude�
 来源扩展仅在固定Git源码具有literal schema 2标记时激活；旧修订仍保持原冻结binding与关系。已有正式PG来源登记suite实际执行版本gate合同，并真PG保存/读回选择器绑定及失败无追加；不修改PG选择名单。
 
 旧跨仓消费者仅在固定 zenithjoy scope 下排除精确版本的巡查身份预读stage（phone-only guard、实际shell摘要、固定scope/tooling环境）；未执行helper不认领，其余 required runner/失败守卫保持，错scope/环境覆盖/字节变化拒绝。
+
+唯一巡查分支交付Learning精确认领为开发治理文档；真实Git正文摘要与其它Learning拒绝回归通过，不扩大手机Activity或业务aux名单。

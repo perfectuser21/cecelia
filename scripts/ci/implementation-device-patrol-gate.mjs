@@ -10,7 +10,7 @@ const exists=(root,revision,path)=>{try{return !!git(root,'ls-tree','-z',revisio
 const save=(root,name,value)=>writeFileSync(join(root,name),JSON.stringify(value,null,2)+'\n');
 const REVIEW_TEST='scripts/ci/__tests__/pr-review-thinking.test.mjs';
 const governancePaths=new Set(['.gitleaksignore','.github/workflows/pr-review.yml',REVIEW_TEST,'.github/workflows/phone-account-patrol.yml','.github/workflows/scripts/smoke/phone-account-patrol-smoke.sh','.github/workflows/scripts/smoke-baseline.txt','.github/workflows/implementation-impact.yml','scripts/ci/__tests__/implementation-impact-workflow.test.mjs','scripts/ci/__tests__/pilot-release-workflow.test.mjs']);
-const projectDoc=path=>/^\.(?:prd|dod)-cp-10101635-phone-account-patrol\.md$/.test(path);
+const projectDoc=path=>/^\.(?:prd|dod)-cp-10101635-phone-account-patrol\.md$/.test(path)||path==='docs/learnings/cp-10101635-phone-account-patrol.md';
 function contractProof(root,revision,registration,{emptyAllowed=false}={}){
  if(!exists(root,revision,PATROL_PATH)){
   const treeSha=git(root,'rev-parse',`${revision}^{tree}`).toString().trim();
