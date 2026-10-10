@@ -203,11 +203,23 @@ describe('onSpansWritten（挂在 POST /spans 主路径上的钩子）', () => {
     expect(judge).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(4_000);
     expect(judge).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1_500);
+    await vi.advanceTimersByTimeAsync(2_500); // 静默期剩余 5s + 1s 余量
     expect(judge).toHaveBeenCalledTimes(2);
     expect(judge).toHaveBeenLastCalledWith(db, ACT, { trigger: 'auto', triggerRef: 'r3' });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('等重判期间来了新 span：按去抖窗口照常冲，不跟着等静默期，待判的一起带上', async () => {
+    vi.useFakeTimers();
+    const db = fakeDb([[/FROM spans/, (p) => ({ rows: p[0].includes('s9') ? [{ activity_id: ACT2, run_id: 'r9' }] : [{ activity_id: ACT, run_id: 'r3' }] })]]);
+    const judge = vi.fn(async (_db, id, o) => (id === ACT && judge.mock.calls.length === 1
+      ? { activity_id: ACT, deferred: true, run_id: 'r3', retry_after_ms: 600_000 } : { activity_id: id, judgment_id: o.triggerRef }));
+    onSpansWritten(db, { ids: ['s1'] }, { debounceMs: 1000, judge, log: silent });
+    await vi.advanceTimersByTimeAsync(1001);
+    onSpansWritten(db, { ids: ['s9'] }, { debounceMs: 1000, judge, log: silent });
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(judge.mock.calls.map(c => [c[1], c[2].triggerRef])).toEqual([[ACT, 'r3'], [ACT2, 'r9'], [ACT, 'r3']]);
   });
 
   it('没有新插入的 span（全是重复上报）→ 不排裁判', () => {
