@@ -168,6 +168,16 @@
       "role": "verification"
     },
     {
+      "owner_path": "packages/brain/src/lib/device-patrol-registration.js",
+      "path": "packages/brain/src/lib/__tests__/device-patrol-registration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/device-patrol-registration.js",
+      "path": "packages/brain/scripts/smoke/device-patrol-admission-smoke.sh",
+      "role": "verification"
+    },
+    {
       "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
       "path": "scripts/ci/__tests__/device-patrol-governance.test.mjs",
       "role": "verification"

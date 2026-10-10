@@ -16,3 +16,5 @@ F3已有消费者以固定Git字节解析Vitest导出的literal include/exclude�
 旧跨仓消费者仅在固定 zenithjoy scope 下排除精确版本的巡查身份预读stage（phone-only guard、实际shell摘要、固定scope/tooling环境）；未执行helper不认领，其余 required runner/失败守卫保持，错scope/环境覆盖/字节变化拒绝。
 
 唯一巡查分支交付Learning精确认领为开发治理文档；真实Git正文摘要与其它Learning拒绝回归通过，不扩大手机Activity或业务aux名单。
+
+登记模块同名unit保留事务前Git字节拒绝验收；新增隔离feature smoke真实串联unit、PostgreSQL来源登记/API及Node可信ZIP/治理回归，不访问生产库。
