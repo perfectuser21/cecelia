@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { git } from '../../__tests__/helpers/git.mjs';
-import { useQaEnv, BRANCH, SPRINT } from './helpers/qa-env.mjs';
+import { useQaEnv, BRANCH, SPRINT, TASK } from './helpers/qa-env.mjs';
 
 describe('合并门（绑定 head SHA）', () => {
   let sb;
@@ -18,10 +18,12 @@ describe('合并门（绑定 head SHA）', () => {
   it('合并成功 → Brain 任务回写 merge（merged=true、合并的 head），完成以合并为准（审计 #7）', async () => {
     const head = remoteHead();
     approve(head);
-    const r = await go(green({ prs: [pr({ headRefOid: head })] }));
+    // Brain 里真有这个任务（生产同样），回写必须成功
+    const r = await go(green({ prs: [pr({ headRefOid: head })] }), { tasks: [{ id: TASK, status: 'in_progress' }] });
     expect(r.exitCode, r.stderr).toBe(0);
     // 合并带 --delete-branch，远端分支已删：task_id 必须在合并前取到，回写不能被静默跳过
-    expect(r.stderr).not.toContain('回写 Brain');
+    expect(r.stderr).not.toContain('找不到 task_id');
+    expect(r.stderr).not.toContain('合并门回写 Brain 任务');
     expect(lastResult()).toMatchObject({ merge: { merged: true, head } });
   });
 
