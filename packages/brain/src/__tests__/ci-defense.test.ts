@@ -67,12 +67,6 @@ describe('CI 防线三件套 [BEHAVIOR]', () => {
     expect(code).toBe(0);
   });
 
-  it('Step4 coding workflow 全链产物: 含铁律/评审轮次/QA 报告/裁判的 sprint diff 不被当 harness PR 拦', () => {
-    expect(existsSync(EXISTS)).toBe(true);
-    const { code } = runNode(EXISTS, ['--fixture', join(FIXTURES, 'diff-coding-workflow-full.txt')]);
-    expect(code).toBe(0);
-  });
-
   it('Step4 harness 残留: 仅含 sprint-prd.md 的 diff 仍被拦并点名 contract-draft.md', () => {
     expect(existsSync(EXISTS)).toBe(true);
     const { code, out } = runNode(EXISTS, ['--fixture', join(FIXTURES, 'diff-harness-prd-only.txt')]);

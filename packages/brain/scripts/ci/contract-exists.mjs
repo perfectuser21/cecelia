@@ -7,17 +7,15 @@
 //   - 改动了 sprints/ 且含 contract-draft.md → 退出 0
 //   - 未改 sprints/（非 harness PR）/ 空 diff → 退出 0（不误拦）
 //   - sprints/archive/ 下的归档老 sprint 不算 harness PR（不强制合同）
-//   - coding workflow 的全链产物文件（sprints/<目录>/01-intent.md、01-invariants.md、02-spec.md、
-//     02-review[-rN].md、02-response-rN.md、03-build.md、04-evidence.md、05-qa-report-rN.md、
-//     06-judge-rN.md）不算 harness PR（不强制合同）
+//   - coding workflow 的 01~04 产物文件（sprints/<目录>/01-intent.md、02-spec.md、03-build.md、
+//     04-evidence.md）不算 harness PR（不强制合同）
 //
 // diff 清单格式：兼容 `git diff --name-status`（status<TAB>path）与纯路径，每行一个文件。
 
 import { readFileSync } from 'fs';
 
-// coding workflow 的固定产物（含评审/QA/裁判轮次文件），直接位于 sprints/<目录>/ 下一层
-const CODING_WORKFLOW_FILE =
-  /(^|\/)sprints\/[^/]+\/(01-(intent|invariants)|02-spec|02-review(-r\d+)?|02-response-r\d+|03-build|04-evidence|05-qa-report-r\d+|06-judge-r\d+)\.md$/;
+// coding workflow 的四个固定产物，直接位于 sprints/<目录>/ 下一层
+const CODING_WORKFLOW_FILE = /(^|\/)sprints\/[^/]+\/0[1-4]-(intent|spec|build|evidence)\.md$/;
 
 function parseArgs(argv) {
   const out = { fixture: null };
