@@ -98,11 +98,11 @@ describe('GET /api/brain/tasks 查询参数校验', () => {
     },
   );
 
-  it('status=queued&limit=5 → 200，SQL 参数为 [queued, 5]', async () => {
+  it('status=queued&limit=5 → 200，SQL 参数包含缺省 offset=0', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ id: 't1', status: 'queued' }] });
     const res = await request(app).get('/api/brain/tasks?status=queued&limit=5');
     expect(res.status).toBe(200);
-    expect(mockPool.query.mock.calls[0][1]).toEqual(['queued', 5]);
+    expect(mockPool.query.mock.calls[0][1]).toEqual(['queued', 5, 0]);
   });
 
   it('无参数 → 200 数组，getTopTasks(100)', async () => {
