@@ -33,12 +33,12 @@ vi.mock('../dispatch-stats.js', () => ({
 const mockUpdateTask = vi.fn(async () => ({ success: true }));
 vi.mock('../actions.js', () => ({ updateTask: (...args) => mockUpdateTask(...args) }));
 
-// 候选池按队列顺序；选单必须尊重 options.onlyTaskTypes（与真实 SQL 的限定等价）
+// 候选池按队列顺序；正规 codeOnly SQL 已负责限定代码类型。
 let _candidatePool = [];
 const mockSelectNextDispatchableTask = vi.fn(async (goalIds, excludeIds = [], options = {}) => {
   const only = options?.onlyTaskTypes;
   return _candidatePool.find((c) => (
-    !excludeIds.includes(c.id) && (!Array.isArray(only) || only.length === 0 || only.includes(c.task_type))
+    !excludeIds.includes(c.id) && (!options.codeOnly || c.task_type === 'script_run') && (!Array.isArray(only) || only.length === 0 || only.includes(c.task_type))
   )) || null;
 });
 vi.mock('../dispatch-helpers.js', () => ({
@@ -124,7 +124,7 @@ describe('受控代码选择不使用 AI 预算',()=>{
  it('AI 池满仍实际派发一条明确代码任务',async()=>{
   _candidatePool=[codeTask];const result=await dispatchNextTask(null,{codeOnly:true});
   expect(result.dispatched).toBe(true);expect(mockScriptDispatch).toHaveBeenCalledTimes(1);
-  expect(mockSelectNextDispatchableTask.mock.calls[0][2]).toMatchObject({codeOnly:true,onlyTaskTypes:['script_run']});
+  expect(mockSelectNextDispatchableTask.mock.calls[0][2]).toMatchObject({codeOnly:true});
  });
  it('配额冷却不影响代码入口',async()=>{_cooling=true;_candidatePool=[codeTask];expect((await dispatchNextTask(null,{codeOnly:true})).dispatched).toBe(true);});
  it('全局停止仍阻止代码任务',async()=>{_drain=true;_candidatePool=[codeTask];expect((await dispatchNextTask(null,{codeOnly:true})).reason).toBe('draining');expect(mockScriptDispatch).not.toHaveBeenCalled();});
