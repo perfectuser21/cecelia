@@ -8,7 +8,7 @@
  *   默认 advisory 的原因：退回只改账面指针，执行端仍跑已部署的 release（还没有重新部署执行器），而且代码/技能变更不进内容版本，
  *   失败可能算错版本——这两件事落地前不真退。
  * 只退到曾经收敛过的、之前当过生产版的版本；没有 → rollback_unavailable。去重落库：同一 Activity、同一生产版 24 小时内只记一次，
- *   其间出现过一次全绿运行才重置。告警：生产版曾收敛（从受保护状态退化）才发 P1；从未收敛的只记事件和日志，不告警、不发 Bark。
+ *   其间出现过一次全绿运行才重置。告警（在去重之后，不刷屏）：生产版曾收敛（从受保护状态退化）发 P1；从未收敛的发 P2；都不发 Bark。
  * 并发：拿 release-line 锁后重新读指针、重新评估，最后比较交换改指针（WHERE production_version_id = 评估时的版本），影响 0 行就放弃。
  */
 import { raise as defaultRaise } from '../alerting.js';
@@ -121,9 +121,8 @@ export async function onJudgmentRecorded(db, activityId, judgment = {}, {
       const degraded = await everConverged(tx, activityId, prod);
       if (target) after.push(() => alert('P1', `activity_production_rollback_advisory:${activityId}`,
         `Activity ${activityId} 生产版连续 ${flags.rollbackFailures} 次运行失败，建议退回到 ${target}（advisory 模式未改指针）`));
-      else if (degraded) after.push(() => alert('P1', `activity_production_rollback_unavailable:${activityId}`,
-        `Activity ${activityId} 曾收敛的生产版连续 ${flags.rollbackFailures} 次运行失败，没有可退回的已收敛版本`));
-      else log.info?.(`[release-line] ${activityId} 未收敛生产版连续失败，无可退目标（只记事件，不告警）`);
+      else after.push(() => alert(degraded ? 'P1' : 'P2', `activity_production_rollback_unavailable:${activityId}`,
+        `Activity ${activityId} ${degraded ? '曾收敛的' : '未收敛的'}生产版连续 ${flags.rollbackFailures} 次运行失败，没有可退回的已收敛版本（不退回，只告警）`));
       return { action: kind, event_id: event?.id ?? null, to_version_id: target };
     });
     for (const fn of after) fire(fn);
