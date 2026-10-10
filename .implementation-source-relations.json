@@ -201,6 +201,11 @@
       "owner_path": "packages/brain/src/tick-runner.js",
       "path": "packages/brain/src/__tests__/integration/consciousness-tick-runtime.integration.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": "docs/learnings/cp-10101732-code-scheduling.md",
+      "role": "documentation"
     }
   ]
 }
