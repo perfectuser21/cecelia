@@ -283,6 +283,14 @@ describe('spec_review 活动 v2（合同对抗）', () => {
     expect(r.result.reason_code).toBe('spec_review_out_of_scope_write');
   });
 
+  // 审计 #39 漏迁的一半（金丝雀 3：需求只要修 category，规格顺手加 made_by/priority 校验，合同对抗没拦）
+  it('prompt：偷换需求包含「扩大」——超出 I-n 的改动（顺手修存量、改无关调用方、需求外的校验）必须提阻断/重要', () => {
+    const p = fs.readFileSync(path.join(path.dirname(ENTRY), '../prompts/spec-review.md'), 'utf8');
+    for (const s of ['扩大', '顺手修', '无关的调用方', 'I-n 之外']) expect(p).toContain(s);
+    const spec = fs.readFileSync(path.join(path.dirname(ENTRY), '../prompts/spec.md'), 'utf8');
+    for (const s of ['不顺手修', '另立任务']) expect(spec).toContain(s);
+  });
+
   it('prompt：QA 立场、只准四类问题、阻断/重要必须带场景与依据、禁止措辞格式类问题', () => {
     const review = fs.readFileSync(path.join(HERE, '../prompts/spec-review.md'), 'utf8');
     for (const s of ['QA', '场景', '依据', '阻断', '重要', '建议', '措辞', '上轮问题', 'PRIOR_OPEN', 'Q-n']) expect(review).toContain(s);
