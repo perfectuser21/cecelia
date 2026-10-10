@@ -1,3 +1,5 @@
+- [x] [BEHAVIOR] taskrunsvesselpg 正式450/453迁移与真实PG唯一索引验证登记幂等、旧Ops及pending占位保留、失败零登记与抢占拒绝。
+  Test: manual:bash packages/brain/scripts/smoke/task-runs-projection-smoke.sh
 - [x] [BEHAVIOR] versionfragmenthint 未提供发版碎片时版本门禁给出当前 changes/{VERSION} 合同，拒绝手动版本五件套提示漂移。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run ../../tests/regression/version-gate-silent/check-brain-version-bump.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] taskrunsvessel 正式 Runs 配置：内部鉴权与显式启用；补列读回成功才登记；不抢占旧库、不删除映射；来源标记及有界分页防重复创建。
