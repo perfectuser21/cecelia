@@ -13,6 +13,9 @@ async function fixture(t){
  await writeFile(join(root,'scripts','brain-image-retention','cli.mjs'),`import fs from 'node:fs';
  fs.appendFileSync(process.env.FIXTURE_LOG,JSON.stringify(process.argv.slice(2))+'\\n');
  if(process.env.FIXTURE_FAIL==='1')process.exit(1);
+ const marker=process.env.FIXTURE_LOG+'.pending-once';
+ if(process.env.FIXTURE_PENDING==='1'&&process.argv[2]==='begin'&&!fs.existsSync(marker)){fs.writeFileSync(marker,'');process.stderr.write('DEPLOYMENT_PENDING\\n');process.exit(1);}
+ if(process.argv[2]==='reconcile'){if(process.env.FIXTURE_RECONCILE_FAIL==='1'){process.stderr.write('DEPLOY_IMAGE_MISMATCH\\n');process.exit(1);}process.stdout.write('11111111-1111-4111-8111-111111111111 success\\n');process.exit(0);}
  process.stdout.write(process.env.FIXTURE_DISABLED==='1'?'disabled':process.argv[2]==='begin'?process.argv[3]:'success');`);
  return {root,log:join(root,'calls'),helper:join(root,'scripts','lib','brain-image-retention.sh')};
 }
@@ -51,4 +54,27 @@ test('默认disabled不引入不存在的Janitor挂载，可信intent才选择�
  assert.match(enabled.stdout,/-f .*docker-compose.image-retention.yml/);
  const overlay=await readFile(new URL('../docker-compose.image-retention.yml',import.meta.url),'utf8');
  assert.match(overlay,/create_host_path: false/);assert.match(overlay,/\/run\/cecelia-docker-data/);
+});
+
+// 任务 502f2852：begin 撞 DEPLOYMENT_PENDING 时先走 CLI reconcile（自带核验）补收账，成功才重试一次 begin。
+test('begin撞DEPLOYMENT_PENDING：reconcile核验通过后自动重试begin继续部署',async t=>{
+ const f=await fixture(t),env={...process.env,FIXTURE_LOG:f.log,FIXTURE_PENDING:'1'};
+ const r=await run('bash',['-ec','source "$1"; retention_begin 1.0.2 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; echo "id=$CECELIA_IMAGE_DEPLOYMENT_ID"','_',f.helper],{env});
+ const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
+ assert.deepEqual(calls.map(x=>x[0]),['begin','reconcile','begin']);
+ assert.match(r.stdout,new RegExp('id='+calls[2][1]));
+});
+test('begin撞DEPLOYMENT_PENDING且reconcile核验不过：保持失败、不重试begin、告警并输出原因',async t=>{
+ const f=await fixture(t),env={...process.env,FIXTURE_LOG:f.log,FIXTURE_PENDING:'1',FIXTURE_RECONCILE_FAIL:'1'};
+ const e=await run('bash',['-ec','send_bark(){ echo "BARK:$1" >&2; }; source "$1"; retention_begin 1.0.2 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; echo forbidden','_',f.helper],{env}).then(()=>assert.fail('必须失败'),x=>x);
+ assert.ok(!e.stdout.includes('forbidden'));
+ const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
+ assert.deepEqual(calls.map(x=>x[0]),['begin','reconcile']);
+ assert.match(e.stderr,/DEPLOYMENT_PENDING/);assert.match(e.stderr,/DEPLOY_IMAGE_MISMATCH/);assert.match(e.stderr,/BARK:/);
+});
+test('begin其它失败（非PENDING）不触发reconcile',async t=>{
+ const f=await fixture(t),env={...process.env,FIXTURE_LOG:f.log,FIXTURE_FAIL:'1'};
+ await assert.rejects(run('bash',['-ec','source "$1"; retention_begin 1.0.2 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','_',f.helper],{env}));
+ const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
+ assert.deepEqual(calls.map(x=>x[0]),['begin']);
 });

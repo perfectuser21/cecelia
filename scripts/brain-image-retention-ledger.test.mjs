@@ -81,3 +81,38 @@ for (const duringHealth of [false, true]) {
   assert.equal((await x.store.read(`deployment-${x.request.deployment_id}.json`)).receipt,null);
  });
 }
+
+// 自动补收账（任务 502f2852）：下一次部署 begin 撞上 pending 时，仅当运行中容器已是 pending 目标且健康，
+// 才复用 finish 的完整核验补收账；核验不过/仍在新鲜期/恢复中一律不改状态。
+async function reconcileSetup(t,{ageMs}){
+ const x=await setup(t);let clock=Date.parse('2026-10-09T19:51:00Z');
+ const ledger=createDeploymentLedger({store:x.store,docker:{snapshot:async()=>({containers:[{id:'a'.repeat(64),name:'/cecelia-node-brain',running:true,image_id:image(x.state.current)}],images:[1,2,3].map(n=>({id:image(n),tags:[`cecelia-brain:1.0.${n}`],git_sha:sha(n)}))})},
+  health:async()=>({version:`1.0.${x.state.health}`,git_sha:sha(x.state.health),status:'healthy'}),now:()=>clock});
+ await ledger.begin(x.request);clock+=ageMs;return {...x,ledger};
+}
+test('reconcile：无pending返回null，不写任何状态',async t=>{
+ const x=await setup(t);assert.equal(await x.ledger.reconcile(),null);assert.equal(await x.store.read('ledger.json'),null);
+});
+test('reconcile：pending目标已在跑且健康（陈旧pending）→ 复用finish核验补收账，清pending并记成功史',async t=>{
+ const x=await reconcileSetup(t,{ageMs:60*60*1000});x.state.current=x.state.health=2;
+ const receipt=await x.ledger.reconcile();
+ assert.equal(receipt.deployment_id,x.request.deployment_id);assert.equal(receipt.outcome,'success');assert.equal(receipt.image_id,image(2));
+ const state=await x.store.read('ledger.json');assert.equal(state.pending,null);assert.equal(state.successes.length,1);
+ await x.ledger.begin({...x.request,deployment_id:randomUUID()});
+});
+test('reconcile：运行中仍是旧镜像（核验不过）→ 抛错且pending原样保留，不登记成功',async t=>{
+ const x=await reconcileSetup(t,{ageMs:60*60*1000});
+ await assert.rejects(x.ledger.reconcile(),/DEPLOY_IMAGE_MISMATCH|DEPLOY_HEALTH_MISMATCH/);
+ const state=await x.store.read('ledger.json');assert.equal(state.pending.deployment_id,x.request.deployment_id);assert.equal(state.successes.length,0);
+});
+test('reconcile：pending仍在新鲜期（部署可能在途）→ 拒绝且不改状态',async t=>{
+ const x=await reconcileSetup(t,{ageMs:60*1000});x.state.current=x.state.health=2;
+ await assert.rejects(x.ledger.reconcile(),/DEPLOYMENT_PENDING_FRESH/);
+ assert.equal((await x.store.read('ledger.json')).pending.deployment_id,x.request.deployment_id);
+});
+test('reconcile：pending处于恢复中（rollback在途）→ 拒绝且不改状态',async t=>{
+ const x=await reconcileSetup(t,{ageMs:60*60*1000});x.state.current=x.state.health=2;
+ await x.ledger.rollback({deployment_id:randomUUID(),version:'1.0.1',git_sha:sha(1),image_id:image(1)});
+ await assert.rejects(x.ledger.reconcile(),/DEPLOYMENT_RECOVERING/);
+ assert.ok((await x.store.read('ledger.json')).pending.recovering);
+});

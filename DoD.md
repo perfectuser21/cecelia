@@ -1,3 +1,10 @@
+# 部署收账有界重试与陈旧 pending 核验补收账
+
+- [x] [BEHAVIOR] sidecarfinishretry 部署收账有界重试（任务 502f2852）：bluegreen sidecar 的 retention_finish 第一次失败、第二次成功 → 正常收账清 pending，失败那次的退出码与 stderr 落 sidecar 失败日志（[completion-retry]），不告警；全部失败 → 重试有界（默认 5 次/180s）、每次 stderr 落日志、最终写 [completion-fail] 并 Bark 告警、pending 不清、不写成功史。
+  Test: manual:node --test scripts/bluegreen-sidecar-completion.test.mjs
+- [x] [BEHAVIOR] pendingreconcile 陈旧 pending 核验补收账（任务 502f2852）：ledger.reconcile 只在 pending 非恢复中、begin 超过 15 分钟、finish 自带核验（运行容器=pending 目标且健康）通过时清 pending；旧镜像仍在跑/新鲜期/恢复中一律抛错不改状态。retention_begin 撞 DEPLOYMENT_PENDING 先 reconcile，通过才重试一次 begin，不通过保持失败并告警；其它 begin 失败不触发 reconcile。
+  Test: manual:node --test scripts/brain-image-retention-ledger.test.mjs scripts/brain-image-deploy.test.mjs
+
 # 自动裁判等运行结束再判（PR #6179 审查阻断项）
 
 任务：2f50cf2a-1cda-41d3-ba81-3c9efd1017c5；父任务：add0acfc-2c79-4e82-b6e8-f3b15a3dfbbd。

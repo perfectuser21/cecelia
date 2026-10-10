@@ -114,13 +114,48 @@ _sidecar_health() {
   _sidecar_same_target
 }
 # 当前发布的官方CLI持锁收尾；健康探测在固定目标容器内执行，旧fallback无需新CLI。
+# 单次 finish 可能因锁被 janitor 占用（IMAGE_RETENTION_BUSY）等瞬时原因失败；只试一次会把 pending 留在台账，
+# 下一次 begin 抛 DEPLOYMENT_PENDING 卡死整条部署链（10-09 三次，约 7 小时）。故有界重试（退避+总时长上限），
+# 每次失败的退出码与 stderr 落 sidecar 失败日志；身份漂移不重试。finish 本身幂等，重复调用不会重复记成功史。
+RETENTION_FINISH_ATTEMPTS="${RETENTION_FINISH_ATTEMPTS:-5}"
+RETENTION_FINISH_DEADLINE_SECS="${RETENTION_FINISH_DEADLINE_SECS:-180}"
+RETENTION_FINISH_LAST=""
+_retention_finish_once() {
+  local errfile="$1" receipt
+  receipt=$(BRAIN_URL=http://127.0.0.1:5221 CECELIA_IMAGE_EXPECTED_CONTAINER_ID="$TARGET_CONTAINER" \
+    timeout -k 5 60 node /app/scripts/brain-image-retention/cli.mjs finish "$CECELIA_IMAGE_DEPLOYMENT_ID" "$2" 2>"$errfile") || return $?
+  [[ "$receipt" == "$2" ]] || { printf 'RECEIPT_MISMATCH:%s' "${receipt:0:64}" >> "$errfile"; return 1; }
+}
 retention_finish() {
   [[ -n "${CECELIA_IMAGE_DEPLOYMENT_ID:-}" ]] || return 0
-  local receipt
-  _sidecar_same_target || return 1
-  receipt=$(BRAIN_URL=http://127.0.0.1:5221 CECELIA_IMAGE_EXPECTED_CONTAINER_ID="$TARGET_CONTAINER" \
-    node /app/scripts/brain-image-retention/cli.mjs finish "$CECELIA_IMAGE_DEPLOYMENT_ID" "$1") || return 1
-  [[ "$receipt" == "$1" ]] && _sidecar_same_target
+  local outcome="$1" attempt=0 delay=3 code err errfile started=$SECONDS
+  [[ "$RETENTION_FINISH_ATTEMPTS" =~ ^[1-9][0-9]?$ ]] || RETENTION_FINISH_ATTEMPTS=5
+  errfile=$(mktemp 2>/dev/null) || errfile="/tmp/sidecar-finish-$$.err"
+  while (( attempt < RETENTION_FINISH_ATTEMPTS )); do
+    attempt=$((attempt + 1))
+    if ! _sidecar_same_target; then
+      RETENTION_FINISH_LAST="attempts=${attempt} exit=identity stderr=target_identity_drift"; break
+    fi
+    : > "$errfile"
+    if _retention_finish_once "$errfile" "$outcome" && _sidecar_same_target; then
+      rm -f "$errfile"; return 0
+    else
+      code=$?
+    fi
+    err=$(tr '\n\r\t' '   ' < "$errfile" 2>/dev/null | head -c 300); err="${err// /_}"
+    RETENTION_FINISH_LAST="attempts=${attempt} exit=${code} stderr=${err:-none}"
+    _sidecar_log "[completion-retry] retention_finish attempt=${attempt}/${RETENTION_FINISH_ATTEMPTS} outcome=${outcome} exit=${code} stderr=${err:-none}"
+    (( attempt < RETENTION_FINISH_ATTEMPTS )) || break
+    (( SECONDS - started + delay <= RETENTION_FINISH_DEADLINE_SECS )) || break
+    sleep "$delay"; delay=$((delay * 2))
+  done
+  rm -f "$errfile"
+  return 1
+}
+# 最终收账失败：落日志 + Bark 告警（pending 原样保留，下一次 begin 由 reconcile 核验补收账或中止）。
+_retention_finish_failed() {
+  _sidecar_log "[completion-fail] retention_finish_unconfirmed outcome=$1 ${RETENTION_FINISH_LAST}"
+  _sidecar_bark "🚨 部署收账失败 v${BRAIN_VERSION} outcome=$1（${RETENTION_FINISH_LAST}），台账 pending 未清，下次部署将先核验补收账"
 }
 
 # 健康未确认、身份漂移、drain失败都不进入finish，不把compose成功当部署成功。
@@ -186,7 +221,7 @@ if BRAIN_VERSION="$BRAIN_VERSION" ENV_REGION="$ENV_REGION" \
   echo "[sidecar] ✅ compose up 成功 v${BRAIN_VERSION}"
 
   cancel_drain_after_up success || exit 1
-  retention_finish success || { _sidecar_log "[completion-fail] retention_finish_unconfirmed outcome=success"; exit 1; }
+  retention_finish success || { _retention_finish_failed success; exit 1; }
 
   exit 0
 else
@@ -206,7 +241,7 @@ if BRAIN_VERSION=blue-fallback ENV_REGION="$ENV_REGION" \
   _sidecar_log "[sidecar-partial-fail] primary_exit=${PRIMARY_EXIT} brain_version=${BRAIN_VERSION} recovered=blue-fallback"
 
   cancel_drain_after_up recovered || exit 1
-  retention_finish recovered || { _sidecar_log "[completion-fail] retention_finish_unconfirmed outcome=recovered"; exit 1; }
+  retention_finish recovered || { _retention_finish_failed recovered; exit 1; }
 
   exit 0  # 5221 已恢复，sidecar 整体视为成功
 else
