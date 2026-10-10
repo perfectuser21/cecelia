@@ -140,7 +140,7 @@ describe('check-brain-version-bump.sh', () => {
     }
   });
 
-  it('GP-2: 改 brain src 未提供版本条目 → exit 1 且提示添加 changes 碎片', () => {
+  it('GP-2: 改 brain src 未 bump 版本 → exit 1 且含当前自动发版碎片提示', () => {
     const { dir, baseRef } = createFixture({
       mainVersion: '1.267.0',
       prVersion: '1.267.0', // 未 bump，与 main 相同
@@ -153,6 +153,7 @@ describe('check-brain-version-bump.sh', () => {
       // 必须含可操作 fix 提示
       expect(stdout).toContain('changes/<分支名>.md');
       expect(stdout).toContain('{VERSION}');
+      expect(stdout).toContain('不要手改 packages/brain/package.json');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
