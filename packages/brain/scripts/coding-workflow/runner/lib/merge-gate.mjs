@@ -43,6 +43,8 @@ async function gate(ctx, pr, s) {
     ctx.log(`合并门 PR #${pr.number}：批准后只有记录/主干合入，改绑到 ${pr.headRefOid.slice(0, 9)}`);
   }
   if ((await requiredState(cfg, pr.number)).state !== 'pass') return false;
+  // task_id 在 sprint 的 01-intent.md 里，只能从远端分支读：必须在合并（--delete-branch 删分支）之前取
+  const taskId = await remoteTaskId(cfg, pr.headRefName);
   // --delete-branch：合并后删远端分支（审计 #28）
   const merge = await run(cfg.ghBin, ['pr', 'merge', String(pr.number), '--squash', '--delete-branch', '--match-head-commit', s.approved.head], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
   if (merge.code !== 0) {
@@ -52,12 +54,13 @@ async function gate(ctx, pr, s) {
   s.merged = { head: s.approved.head, at: new Date().toISOString() };
   writeState(cfg, pr.number, s);
   ctx.log(`合并门 PR #${pr.number} 已合并（head ${s.approved.head.slice(0, 9)}）`);
-  // 完成以合并为准（审计 #7）：合并结果回写 Brain 任务
-  const taskId = await remoteTaskId(cfg, pr.headRefName);
-  if (taskId) {
-    const r = await ctx.brain.patch(taskId, { result: { merge: { merged: true, ...s.merged } } });
-    if (!r.ok) ctx.log(`合并门回写 Brain 任务 ${taskId} 失败（HTTP ${r.status}）`);
+  // 完成以合并为准（审计 #7）：合并结果回写 Brain 任务；回写不了必须留痕，不能静默
+  if (!taskId) {
+    ctx.log(`合并门 PR #${pr.number}：分支上找不到 task_id，合并结果没有回写 Brain`);
+    return false;
   }
+  const r = await ctx.brain.patch(taskId, { result: { merge: { merged: true, ...s.merged } } });
+  if (!r.ok) ctx.log(`合并门回写 Brain 任务 ${taskId} 失败（HTTP ${r.status}）`);
   return false;
 }
 

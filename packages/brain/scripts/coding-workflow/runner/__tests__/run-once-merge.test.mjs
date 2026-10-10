@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { git } from '../../__tests__/helpers/git.mjs';
-import { useQaEnv, BRANCH, SPRINT } from './helpers/qa-env.mjs';
+import { useQaEnv, BRANCH, SPRINT, TASK } from './helpers/qa-env.mjs';
 
 describe('合并门（绑定 head SHA）', () => {
   let sb;
@@ -16,10 +16,15 @@ describe('合并门（绑定 head SHA）', () => {
   const lastResult = () => E.brainResults().at(-1);
 
   it('合并成功 → Brain 任务回写 merge（merged=true、合并的 head），完成以合并为准（审计 #7）', async () => {
-    approve();
-    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    const head = remoteHead();
+    approve(head);
+    // Brain 里真有这个任务（生产同样），回写必须成功
+    const r = await go(green({ prs: [pr({ headRefOid: head })] }), { tasks: [{ id: TASK, status: 'in_progress' }] });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(lastResult()).toMatchObject({ merge: { merged: true, head: remoteHead() } });
+    // 合并带 --delete-branch，远端分支已删：task_id 必须在合并前取到，回写不能被静默跳过
+    expect(r.stderr).not.toContain('找不到 task_id');
+    expect(r.stderr).not.toContain('合并门回写 Brain 任务');
+    expect(lastResult()).toMatchObject({ merge: { merged: true, head } });
   });
 
   // 审计 #6：合并失败不能静默挂着
@@ -49,11 +54,12 @@ describe('合并门（绑定 head SHA）', () => {
 
 
   it('批准的 head 上必需检查全部登记全绿 → gh pr merge --squash --match-head-commit <该 head>；记 merged', async () => {
-    approve();
-    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    const head = remoteHead();
+    approve(head);
+    const r = await go(green({ prs: [pr({ headRefOid: head })] }));
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', remoteHead()]]);
-    expect(state()).toMatchObject({ merged: { head: remoteHead() } });
+    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', head]]);
+    expect(state()).toMatchObject({ merged: { head } });
     expect(qaCalls()).toEqual([]);
   });
 
@@ -101,18 +107,20 @@ describe('合并门（绑定 head SHA）', () => {
     addToBranch(`${SPRINT}/05-qa-report-r2.md`, '# r2\n');
     addToBranch(`${SPRINT}/06-judge-r2.md`, '# j2\n');
     addToBranch(`${SPRINT}/qa-r2/a.png`, 'png');
-    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    const head = remoteHead();
+    const r = await go(green({ prs: [pr({ headRefOid: head })] }));
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', remoteHead()]]);
+    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', head]]);
   });
 
   it('批准后只补了 changes/ 碎片 → 改绑新 head 并按新 head 合并', async () => {
     approve();
     addToBranch('changes/frag.md', '## Brain {VERSION} — x\n');
-    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    const head = remoteHead();
+    const r = await go(green({ prs: [pr({ headRefOid: head })] }));
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', remoteHead()]]);
-    expect(state()).toMatchObject({ passed: true, approved: { head: remoteHead() } });
+    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', head]]);
+    expect(state()).toMatchObject({ passed: true, approved: { head } });
   });
 
   it('批准后只是把 main 合进分支（merge 提交）→ 不算 PR 自身改动，改绑并合并', async () => {
@@ -125,8 +133,9 @@ describe('合并门（绑定 head SHA）', () => {
     git(sb.seed, 'checkout', '-q', BRANCH);
     git(sb.seed, 'merge', '-q', '--no-edit', 'main');
     git(sb.seed, 'push', '-q', 'origin', BRANCH);
-    const r = await go(green({ prs: [pr({ headRefOid: remoteHead() })] }));
+    const head = remoteHead();
+    const r = await go(green({ prs: [pr({ headRefOid: head })] }));
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', remoteHead()]]);
+    expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', head]]);
   });
 });
