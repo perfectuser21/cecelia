@@ -169,7 +169,9 @@ function addActualPatrolPrelude(f, mutate=()=>{}) {
  assert.ok(step,'实际Git中巡查身份预读step必须存在');
  fixedNewBrain(f,bf=>{
   const path='.github/workflows/implementation-impact.yml',doc=load(bf[path]);
-  doc.jobs.gate.env={...actual.env};doc.jobs.gate.steps.unshift(structuredClone(step));
+  doc.jobs.gate.env={...actual.env};
+  doc.jobs.gate.env.TOOLING_REVISION=doc.jobs.gate.steps.find(s=>s.with?.path==='tooling').with.ref;
+  doc.jobs.gate.steps.unshift(structuredClone(step));
   mutate(doc.jobs.gate);bf[path]=dump(doc,{lineWidth:-1});
  });
 }
