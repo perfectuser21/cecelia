@@ -153,6 +153,15 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(prompt).toContain('PREV_ERRORS: {{PREV_ERRORS}}');
   });
 
+  it('prompt：未覆盖真实链路必写、真实调用方 shape、第三方至少真调一次、判定点/失败语义/输入对抗面', () => {
+    const p = fs.readFileSync(path.join(HERE, '../prompts/spec.md'), 'utf8');
+    for (const s of ['## 未覆盖真实链路', '真实调用方', '出处', '第三方', '至少一条', '## 判定点', '候选:', '所选:', '依据:', '误判后果:', '失败语义', '输入对抗面']) expect(p).toContain(s);
+    const review = fs.readFileSync(path.join(HERE, '../prompts/spec-review.md'), 'utf8');
+    for (const s of ['UNTRACKED_DEFERRALS: {{UNTRACKED_DEFERRALS}}', '真实调用方', '未覆盖真实链路']) expect(review).toContain(s);
+    const revise = fs.readFileSync(path.join(HERE, '../prompts/spec-revise.md'), 'utf8');
+    expect(revise).toContain('Brain 任务 ID');
+  });
+
   it('uncovered：02 的 upstream 没覆盖全部 I-n -> retryable spec_invalid，evidence 点名未覆盖的 I-n', async () => {
     const r = await run('uncovered');
     expect(r.result.failure_class).toBe('retryable');

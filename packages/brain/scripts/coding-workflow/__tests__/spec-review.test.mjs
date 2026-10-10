@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,11 +39,11 @@ describe('spec_review 活动 v2（合同对抗）', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  const run = (script, env = {}) => {
+  const run = (script, env = {}, extraInput = {}) => {
     fs.writeFileSync(path.join(tmp, 'script.json'), JSON.stringify(script));
     return runActivityProcess(ENTRY, {
       run_tag: 'rt-1', task_id: TASK_ID, worktree, sprint_dir: 'sprints/s1',
-      intent_ids: ['I-1', 'I-2'], intent_sha256: sha256(INTENT_MD),
+      intent_ids: ['I-1', 'I-2'], intent_sha256: sha256(INTENT_MD), ...extraInput,
     }, {
       CODING_WF_CLAUDE_BIN: FAKE,
       FAKE_GAN_SCRIPT: path.join(tmp, 'script.json'),
@@ -190,6 +191,80 @@ describe('spec_review 活动 v2（合同对抗）', () => {
       expect(p).toContain('STUCK: {{STUCK}}');
       expect(p).toContain('## 换思路');
     }
+  });
+
+  // 审计 #14（旧 reviewer 9.4/9.6）：合同对抗结束时判定点写进 Brain decisions（category=judgment）并回读计数；重跑不重复写
+  describe('判定点写库', () => {
+    let server;
+    let decisions;
+    let brainUrl;
+    beforeEach(async () => {
+      decisions = [];
+      server = http.createServer((req, res) => {
+        let raw = '';
+        req.on('data', (c) => { raw += c; });
+        req.on('end', () => {
+          res.setHeader('content-type', 'application/json');
+          if (req.method === 'POST' && req.url === '/api/brain/strategic-decisions') {
+            const row = { id: `d-${decisions.length + 1}`, ...JSON.parse(raw) };
+            decisions.push(row);
+            res.statusCode = 201;
+            return res.end(JSON.stringify({ success: true, data: row }));
+          }
+          if (req.method === 'GET' && req.url.startsWith('/api/brain/strategic-decisions?')) {
+            return res.end(JSON.stringify({ success: true, data: decisions.filter((d) => d.category === 'judgment') }));
+          }
+          res.statusCode = 404;
+          return res.end('{}');
+        });
+      });
+      await new Promise((r) => server.listen(0, '127.0.0.1', r));
+      brainUrl = `http://127.0.0.1:${server.address().port}`;
+      fs.appendFileSync(path.join(sprint(), '02-spec.md'), '\n## 判定点\n\n- 部署成功判定｜候选: 看 HTTP 200、看 git_sha｜所选: 看 git_sha｜依据: 200 只说明活着｜误判后果: 旧版本被当新版本验收\n');
+    });
+    afterEach(() => new Promise((r) => server.close(r)));
+
+    it('APPROVED → 判定点 POST 到 Brain（category judgment），回读计数写进 outputs.gan.judgments_written；重跑不重复写', async () => {
+      let r = await run({ reviews: [{ scores: 8 }] }, {}, { brain_url: brainUrl });
+      expect(r.result.status, r.stderr).toBe('completed');
+      expect(decisions).toEqual([expect.objectContaining({
+        category: 'judgment', topic: '判定点[11111111#1]: 部署成功判定',
+        decision: '所选方法: 看 git_sha｜候选: 看 HTTP 200、看 git_sha', reason: '依据: 200 只说明活着｜误判后果: 旧版本被当新版本验收｜来源: coding workflow 合同对抗',
+      })]);
+      expect(r.result.outputs.gan.judgments_written).toBe(1);
+      fs.rmSync(path.join(tmp, 'state.json'));
+      r = await run({ reviews: [{ scores: 8 }] }, {}, { brain_url: brainUrl });
+      expect(decisions).toHaveLength(1);
+      expect(r.result.outputs.gan.judgments_written).toBe(1);
+    });
+
+    it('Brain 写不进去 → 合同照常通过，judgments_written 0 并升级 judgments_write_failed（P1），不静默', async () => {
+      const r = await run({ reviews: [{ scores: 8 }] }, {}, { brain_url: 'http://127.0.0.1:1' });
+      expect(r.result.status, r.stderr).toBe('completed');
+      expect(r.result.outputs.gan.judgments_written).toBe(0);
+      expect(r.result.outputs.escalations).toEqual([expect.objectContaining({ type: 'judgments_write_failed' })]);
+      expect(r.stderr).toContain('[coding-gan][P1]');
+    });
+  });
+
+  // 审计 #16（旧 reviewer 9.7）：开发方用「后续再做」驳回却没给 Brain 任务 ID → QA 必须坚持，关掉算格式不合格
+  it('驳回理由是「后续再做」且没带任务 ID → 下一轮 UNTRACKED_DEFERRALS 点名；QA 关掉它 → 格式不合格', async () => {
+    let r = await run({ reviews: [
+      { scores: 6, issues: [blocker('R-1')] },
+      { scores: 8, prior: [{ id: 'R-1', status: '坚持', reason: '没有登记任务' }] },
+      { scores: 9, prior: [{ id: 'R-1', status: '关闭' }] },
+    ], revise: { response: '驳回', note: '这个后续再做' } });
+    expect(seen()).toMatch(/spec_review .*UNTRACKED_DEFERRALS=R-1/);
+    expect(r.result.status, r.stderr).toBe('completed');
+    fs.rmSync(path.join(tmp, 'state.json'));
+    fs.rmSync(path.join(tmp, 'seen.log'));
+    fs.writeFileSync(path.join(sprint(), '02-spec.md'), SPEC_MD);
+    r = await run({ reviews: [
+      { scores: 6, issues: [blocker('R-1')] },
+      { scores: 8, prior: [{ id: 'R-1', status: '关闭' }] },
+    ], revise: { response: '驳回', note: '这个后续再做' } });
+    expect(r.result).toMatchObject({ failure_class: 'fatal', reason_code: 'review_invalid' });
+    expect(JSON.stringify(r.result.evidence)).toContain('deferral_closed_without_task:R-1');
   });
 
   it('累计花费超过上限 → fatal gan_budget_exceeded（带已花费与仍开着的问题），不会无声放行', async () => {

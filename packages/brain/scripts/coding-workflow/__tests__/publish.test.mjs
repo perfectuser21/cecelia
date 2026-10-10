@@ -172,6 +172,14 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(prBody()).toContain('- ⚠️ 强制通过（走势 oscillating），仍开着：R-1［阻断］');
   });
 
+  // 审计 #10：02 的「未覆盖真实链路」原样转呈 PR 正文，主理人一眼看到哪些没真验
+  it('02 有「## 未覆盖真实链路」→ PR 正文原样转呈；没有这一段 → 不出现', async () => {
+    fs.writeFileSync(path.join(worktree, 'sprints/s1/02-spec.md'), '# spec\n\n## 未覆盖真实链路\n\n- 飞书推送：预览环境无凭据，只验到落库\n');
+    let r = await run('new');
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(prBody()).toContain('## 未覆盖真实链路（sprints/s1/02-spec.md）\n- 飞书推送：预览环境无凭据，只验到落库');
+  });
+
   it('无 review_file：PR 正文不带规格评审小节', async () => {
     const r = await run('new');
     expect(r.exitCode).toBe(0);
