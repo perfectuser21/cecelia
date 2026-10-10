@@ -136,6 +136,17 @@ describe('看板行', () => {
     expect(text(p['裁判结论'])).toBe('树上没找到这个流程');
   });
 
+  it('试跑交付的 flow_skill_v1 是整份 skill 正文 → skill@版本 只取 frontmatter 的 name@version（生产实测整篇正文被塞进单元格）', () => {
+    const skillDoc = '---\nname: android-douyin-private-video\nversion: 1.0.0\nlayer: business\ndescription: |\n  在任务指定安卓真机…\n---\n# 安卓抖音私密视频发布\n\n## 说明书\n很长的正文';
+    const done = trialTask({ status: 'completed', result: { delivery: { claimed_result: 'success', flow_skill_v1: skillDoc, fail_reason: null } } });
+    const [r] = buildBoardRows({ stageTasks: [done], children: [], followups: [], workflows: [workflow] });
+    const p = buildBoardProps(r);
+    expect(text(p['skill@版本'])).toBe('android-douyin-private-video@1.0.0');
+    expect(p['最近运行结果'].select.name).toBe('success');
+    const noFront = trialTask({ result: { delivery: { flow_skill_v1: 'x'.repeat(500) } } });
+    expect(text(buildBoardProps(buildBoardRows({ stageTasks: [noFront], children: [], followups: [], workflows: [] })[0])['skill@版本']).length).toBeLessThanOrEqual(81);
+  });
+
   it('子任务读不到（children=null）→「无法计数」，不当 0', () => {
     const verify = { ...trialTask(), id: 'v-1', payload: {}, description: TRIAL_BODY.replace('阶段：试跑', '阶段：验证') };
     const [r] = buildBoardRows({ stageTasks: [verify], children: null, followups: [], workflows: [] });
