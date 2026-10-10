@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # strategic-decisions-category-smoke — POST /strategic-decisions 非法 category 返回 400（允许值读自 decisions_category_chk，不透出 SQL 原文），
-# 迁移 545 让 general 进白名单（不带 category 默认 general 能 201），迁移 546 让 made_by=ai 进白名单；coding-workflow 判定点（made_by=ai / system）都不被误伤。
+# 迁移 545 让 general 进白名单（不带 category 默认 general 能 201），coding-workflow 判定点（made_by=system）不被误伤。
 set -euo pipefail
 # 真 Brain 写入必须显式授权，并核对本机测试容器与 DATABASE_URL 指向同一安全库。
 if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
@@ -50,8 +50,8 @@ for body in "{\"topic\":\"smoke-nocat-$TS\",\"decision\":\"smoke\"}" "{\"categor
 done
 pass "不带 category 默认 general、合法 decision 均 201"
 
-# 4. coding-workflow 写判定点 shape（规格 Q-5 用 made_by:'ai'，spec-review.mjs 现行 made_by:'system'）→ 201 且能按 judgment 查到
-for MB in ai system; do
+# 4. coding-workflow 写判定点 shape（spec-review.mjs 现行 made_by:'system'）→ 201 且能按 judgment 查到
+for MB in system; do
   JT="判定点[smoke-$TS-$MB#1]: smoke"
   body="{\"category\":\"judgment\",\"topic\":\"$JT\",\"decision\":\"所选方法: x｜候选: y\",\"reason\":\"依据: z\",\"made_by\":\"$MB\",\"author\":\"coding-workflow\",\"source_ref\":\"coding-workflow:smoke-$TS\"}"
   out="$(curl -q -s -w '\n%{http_code}' -X POST "$API" -H 'Content-Type: application/json' -d "$body")"
@@ -59,4 +59,4 @@ for MB in ai system; do
   N="$(curl -q -s "$API?category=judgment&limit=1000" | JT="$JT" MB="$MB" node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).data.filter(r=>r.topic===process.env.JT&&r.made_by===process.env.MB).length))')"
   [[ "$N" == "1" ]] || fail "判定点（made_by=$MB）应能按 judgment 查到 1 行，得 $N"
 done
-pass "coding-workflow 判定点（made_by=ai / system）201 且可查"
+pass "coding-workflow 判定点（made_by=system）201 且可查"

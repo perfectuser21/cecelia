@@ -42,7 +42,7 @@ upstream: ["01-intent.md#I-1", "01-intent.md#I-2", "01-intent.md#I-3"]
 - `''` / `null`：按「不带 category」处理（I-2）。
 
 真实调用方 shape（发送方式都是 POST `/api/brain/strategic-decisions`，header 只有 `Content-Type: application/json`，没有鉴权头，body 是 JSON）：
-- `packages/brain/scripts/coding-workflow/activities/spec-review.mjs:70-77`：`{ category:'judgment', topic, decision, reason, made_by:'ai', author:'coding-workflow', source_ref }`。`judgment` 在白名单里，行为不变。
+- `packages/brain/scripts/coding-workflow/activities/spec-review.mjs:70-77`：`{ category:'judgment', topic, decision, reason, made_by:'system', author:'coding-workflow', source_ref }`。`judgment` 在白名单里，行为不变。（coding commander 更正：main 已经 #6238 把该调用方改为 `made_by:'system'`，原文写的 `'ai'` 是过时 shape；`made_by` 约束不在本需求范围，不加迁移。）
 - `apps/api/features/knowledge/pages/DecisionRegistry.tsx:74-78`：`{ topic, decision, reason, category:'general' }`。要靠 S-2 让 `general` 进白名单，才能继续 201。
 - `packages/quality/tests/api/cross-package-integration.test.ts:175`：用 fetch 直接 POST。
 
@@ -125,7 +125,7 @@ upstream: ["01-intent.md#I-1", "01-intent.md#I-2", "01-intent.md#I-3"]
 ### Q-5
 对应: I-3
 前提: 同 Q-1。
-操作: 按真实调用方 coding-workflow 合同对抗写判定点的 shape（`spec-review.mjs:70-77`）发请求：POST `<预览环境>/api/brain/strategic-decisions`，body 为 `{"category":"judgment","topic":"判定点[qa<时间戳>#1]: qa","decision":"所选方法: x｜候选: y","reason":"依据: z","made_by":"ai","author":"coding-workflow","source_ref":"coding-workflow:qa-<时间戳>"}`。然后 GET `?category=judgment&limit=1000`。
+操作: 按真实调用方 coding-workflow 合同对抗写判定点的 shape（`spec-review.mjs:70-77`）发请求：POST `<预览环境>/api/brain/strategic-decisions`，body 为 `{"category":"judgment","topic":"判定点[qa<时间戳>#1]: qa","decision":"所选方法: x｜候选: y","reason":"依据: z","made_by":"system","author":"coding-workflow","source_ref":"coding-workflow:qa-<时间戳>"}`。然后 GET `?category=judgment&limit=1000`。
 期望: POST 返回 201。GET 能按 topic 找到这条，`category` 为 `judgment`。原有调用方没有被新校验误伤。
 
 ## 铁律对照
