@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.411.0
+**Brain 版本**: 1.417.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,61 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.417.0 — coding harness：全链计费 + 合并后交付复盘落库
+
+- 决策 a1fdbc51 审计 P2 #35（旧 controller「cost 诚实」）：以前只有合同对抗和 QA 评估会话计费，spec/build/CI 预检修复/verify/CI 修复/QA 修复都漏了。
+  - `runClaude` 没指定输出格式时统一补 `--output-format json`（真 claude 实测：末尾一行 result 事件带 total_cost_usd），返回 `cost_usd`。
+  - 各活动把会话花费写进 `metrics.cost_usd`（失败也计），执行器回执汇总后写入 `result.runner.cost_usd`。
+  - QA 门（evaluate + qa-fix）和 CI 修复的花费累加进各自状态（随 #6192 同步进 Brain）。
+  - 合并时写 `result.cost_usd = {chain, qa, ci_fix, total}`。
+- 审计 P2 #22（旧 report 6.5/6.8）：合并门合并后，用这次的真实记录拼交付复盘（合同对抗轮数与结论、真人 QA 各轮结论、CI 修复的检查与结果、撤销批准、强制通过时仍开着的问题、总花费），POST `/api/brain/learnings-received`，带 task_id，不传 issues_found（免得自动建 fix 任务）。
+- 判为不适用：
+  - #15 api/db registry 是扫描生成的照相表，没有 planned→done；
+  - #20 blast-radius 只有读接口；
+  - #21 staging-e2e 只服务旧 harness，coding workflow 已有预览环境 + 真人 QA；
+  - #23 journey_features 翻牌已退役，现行改为 spans 驱动；
+  - #24 / #26 spans 需要 coding workflow 活动先登记 activity uuid，另行决定。
+
+## Brain 1.416.0 — coding harness：规格必须登记未真验的链路，判定点写库，推迟必须带任务
+
+- 决策 a1fdbc51 审计 P2 批次 D，对应旧 proposer / reviewer 规矩：
+  - #10：02 必须有 `## 未覆盖真实链路`（可写「无：理由」），spec-check 强制；publish 把这一段原样放进 PR 正文。
+  - #11 / #12 / #13：spec prompt 要求写真实调用方的请求 shape 与出处、第三方至少一条 Q-n 真调（调不了登记进未覆盖链路）、对外改动写失败语义与输入对抗面、可选 `## 判定点`（五要素齐全才算，缺要素判 `judgment_invalid`）；合同对抗的「漏了真实路径」点名这些。
+  - #14：合同对抗结束时，`## 判定点` 写进 Brain decisions（category=judgment，topic `判定点[<task 前 8 位>#n]: 名称` 去重，重跑不重复写），回读条数记 `outputs.gan.judgments_written`。写不进去不挡合同，升级 `judgments_write_failed`。
+  - #16：开发方以「后续再做/另开/下一期」驳回却没给 Brain 任务 ID → 下一轮 `UNTRACKED_DEFERRALS` 点名，QA 必须坚持，关掉判格式不合格。
+
+## Brain 1.415.0 — coding harness：QA 报告校验加严（验不了第三态 / 恒真断言 / 截图 / 不许降级）
+
+- 决策 a1fdbc51 审计 P2 批次 C，对应旧 evaluator / proposer 规矩：
+  - #38 + #19：QA 的 T-n 可判 `CANNOT_VERIFY`，必须写 `原因:`（例如工具缺失），不许换更弱的测法凑 PASS。整份报告有 FAIL 时按 FAIL 进修复环；没有 FAIL 但有验不了的 → verdict `CANNOT_VERIFY`，QA 门不进修复环（否则无限改代码），升级 `qa_cannot_verify` 并带上条目与原因。04 开发自测证据仍只认 PASS/FAIL。
+  - #36：判 PASS 的命令带 `|| true`、`; exit 0`、`--dry-run`，或只有 echo/printf/true → 报告不合格（`qa_trivial_assertion`），带原因重跑。
+  - #37：报告 `截图:` 引用的文件必须存在；用了浏览器（命令或本次会话写的脚本引用 playwright/chromium/puppeteer）的条目，本轮截图目录必须至少有一张图，否则 `qa_screenshot_missing`。DB 断言带本轮时间窗写进 prompt。
+  - #17 + #18：异步/外部类场景跑两次，结果不一致判 FAIL（FLAKY）；页面类场景每个 Q-n 用全新浏览器上下文（写进 evaluate prompt）。
+
+## Brain 1.414.0 — 获客三张 Notion 镜子库登记 + Activity 页加「裁判结论」「生产版本」两列
+
+任务 f6ad056e，决策 a029a7a7（PG 为真身，Notion 内部看，飞书给客户）。
+
+- 迁移 540：「获客·视频 / 获客·评论 / 获客·线索」三张 Notion 库（挂在「数据落脚总台账 › 获客业务数据（PG 镜像）」）以 mirror/push/active 登记进 `notion_projection_map`，`brain_table` 为空（真身在 hk-vps `zenithjoy.leadgen_*`），血管为 zenithjoy-workspace `leadgen-notion-mirror.js`（MMV launchd 每 5 分钟）；登记后镜子库探活自动覆盖。附回滚。
+- 六层目录 Activity 库新增两列：「裁判结论」= `activity_judgments` 最新一条 verdict 翻中文 + 连续绿/要求绿（如「收敛 · 连续绿 3/3」，没裁判过写「未裁判」）；「生产版本」= 发布线生产版指针，发布线未接线前留空。缺列由 `ensureDirectorySchemas` 自动补，列来源登记进 `DIRECTORY_COLUMN_SOURCES`。
+
+## Brain 1.413.0 — 运行定义回读瘦身：GET /runs/:id/definition 默认只回本次运行的定义骨架
+
+任务 e961f9a9。10-09 22:15/22:45 智能获客 crontab 运行因「运行发布绑定未确认」拒跑：执行端 bind-run 回读 GET /api/brain/runs/{run_id}/definition 带回整个 release（payload 约 528KB：15 个 Activity 全量 269KB、CI 证据 119KB、4 个 Workflow 86KB、断言计划 79KB），响应约 669KB，跨境 curl `-m 60` 超时。服务端本身 0.12s 出完。
+
+- 新增 `lib/run-definition-view.js`（`compactRunDefinition`、`RUN_DEFINITION_COMPACT_LIMIT_BYTES=64KB`）。默认回读 `definition_view=compact`：binding 原样；release 只留 id/release_key/manifest_sha256/request_sha256/environment/target/actor/created_at + `full_href`；workflow 去 `payload.contract`；activities 只留本次绑定的 Activity 身份与 payload_sha256/contract_sha256，Step 留 step_id/locator/registration 摘要与 optional/required/condition。
+- `?view=full` 原样返回旧形状；完整 release 走已有的 GET /api/brain/releases/:id。紧凑化遇异常形状回退完整定义，不 500。
+- 执行端（zenithjoy-workspace runtime-binding.mjs）只读 `binding`，字段契约兼容；Brain 内部消费者用 lib 函数 `getRunDefinitionBinding`，未改。
+- 生产 12 条真实绑定实测：视频发现 651,859→30,546 字节，视频处理 653,184→29,474，评论评分 564,975→9,016。
+
+## Brain 1.412.0 — 秋米中英文 Notion 状态一一对应：排队中/受阻/失败单独显示（任务 125a0cd2）
+
+- 中文 GTD 表「状态」新增 排队中/受阻/失败，改为与英文 Tasks 库一一对应：queued→排队中/Queued，blocked/paused/quota_exhausted/pending_postdeploy→受阻/Blocked，failed/quarantined/dep_failed→失败/Failed（仍清任务号，拖回「委派」= 重试），cancelled→淘汰/Cancelled，completed→已完成/Done；「推迟」旧页只识别不再写，「委派」只作拉取入口。
+- 两个受阻例外：`delegated_device_job`（转手机领单通道）→ 进行中/In Progress；`owner_hold`（主理人自己拖的「阻塞」）→ 中文页不写、英文 Blocked。`[等待中: …]` 措辞改为 `[受阻: …]`。
+- `notion-push-sync.js` 的 `TASK_STATUS_TO_NOTION` 补全 paused/quota_exhausted/pending_postdeploy→Blocked、quarantined/dep_failed→Failed、completed_no_pr→Done，queued→Queued、failed→Failed；测试钉住与秋米映射表英文列一致。
+- 急停/改期/换设备重派同时认新旧页状态：急停新增读「排队中」页（改期、阻塞拖回恢复），设备重派认 进行中/委派/受阻/排队中；入账后中文页写「排队中」。
+- 「cancelled → 淘汰」安全：急停读到「淘汰 ∧ brain:xxx」页时，Brain 任务已是终态（含 cancelled/canceled）则不记取消命令（幂等）；页面是「淘汰」但任务未取消仍按人工态保留，不被覆盖；页面已淘汰且任务已取消时不再 PATCH 中文页。
 
 ## Brain 1.411.0 — 部署收账有界重试 + 失败告警 + 陈旧 pending 核验补收账（修部署链 DEPLOYMENT_PENDING 卡死）
 
