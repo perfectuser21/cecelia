@@ -41,8 +41,10 @@ const isArchivedBlockError = (err) => /can't edit block that is archived/i.test(
 const isWrongDbOrArchived = (err) => isWrongDatabaseError(err) || isArchivedBlockError(err);
 
 /** 窗口内的 runs（SQL 片段，供推送与归档两个查询共用，保证两边互补） */
+// coding workflow（run_id coding-workflow:<task>，决策 b34e346a）与 OpenClaw 一样 7 天内全量可见，失败留 30 天
 export const IN_WINDOW_SQL = `(run_id LIKE 'openclaw:%' AND (started_at >= now() - interval '7 days' OR (outcome IN ('fail','timeout') AND started_at >= now() - interval '30 days')))
-  OR (run_id NOT LIKE 'openclaw:%' AND outcome IN ('fail','timeout') AND started_at >= now() - interval '30 days')`;
+  OR (run_id LIKE 'coding-workflow:%' AND (started_at >= now() - interval '7 days' OR (outcome IN ('fail','timeout') AND started_at >= now() - interval '30 days')))
+  OR (run_id NOT LIKE 'openclaw:%' AND run_id NOT LIKE 'coding-workflow:%' AND outcome IN ('fail','timeout') AND started_at >= now() - interval '30 days')`;
 
 const OUTCOME_LABEL = { pass: '成功', fail: '失败', timeout: '超时', running: '运行中', skipped: '跳过' };
 
@@ -64,6 +66,7 @@ export const RUNS_DB_PROPS = {
     select: {
       options: [
         { name: 'OpenClaw', color: 'purple' }, { name: 'Brain', color: 'blue' }, { name: '外部上报', color: 'yellow' },
+        { name: 'Coding Workflow', color: 'green' },
       ],
     },
   },
@@ -102,6 +105,7 @@ const richText = (v) => {
 
 function sourceLabel(row) {
   if (String(row.run_id || '').startsWith('openclaw:')) return 'OpenClaw';
+  if (String(row.run_id || '').startsWith('coding-workflow:')) return 'Coding Workflow';
   return row.trigger_kind === 'external' ? '外部上报' : 'Brain';
 }
 

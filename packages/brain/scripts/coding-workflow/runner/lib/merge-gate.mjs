@@ -8,6 +8,7 @@ import { listOwnPrs, requiredState } from './cifix-scan.mjs';
 import { readState, writeState, isRecordFile, escalate } from './qa-gate.mjs';
 import { remoteTaskId } from './pr-branch.mjs';
 import { readState as readCiFixState } from './cifix-scan.mjs';
+import { gateSpan, postSpans } from './spans.mjs';
 
 const GH_TIMEOUT_MS = 60 * 1000;
 const MAX_MERGE_FAILURES = 3;
@@ -46,8 +47,17 @@ async function gate(ctx, pr, s) {
   if ((await requiredState(cfg, pr.number)).state !== 'pass') return false;
   // task_id 在 sprint 的 01-intent.md 里，只能从远端分支读：必须在合并（--delete-branch 删分支）之前取
   const taskId = await remoteTaskId(cfg, pr.headRefName);
+  const startedAt = Date.now();
   // --delete-branch：合并后删远端分支（审计 #28）
   const merge = await run(cfg.ghBin, ['pr', 'merge', String(pr.number), '--squash', '--delete-branch', '--match-head-commit', s.approved.head], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+  // 执行记录（决策 b34e346a）：合并成功/失败各一条，失败按累计次数区分幂等键
+  if (taskId) {
+    await postSpans(ctx, [gateSpan({
+      taskId, key: 'merge', startedAt, endedAt: Date.now(), ok: merge.code === 0,
+      occurrence: merge.code === 0 ? `${pr.number}` : `${pr.number}:f${(s.merge_failures ?? 0) + 1}`,
+      evidence: { head: s.approved.head, ...(merge.code === 0 ? {} : { error: merge.stderr.trim().split('\n').pop() || String(merge.code) }) },
+    })]);
+  }
   if (merge.code !== 0) {
     await mergeFailed(ctx, pr, s, merge.stderr.trim().split('\n').pop() || String(merge.code));
     return false;
