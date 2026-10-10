@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.418.10
+**Brain 版本**: 1.418.11
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,13 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.418.11 — CI：pr-size-check 行数统计不计 sprints/ 过程记录
+
+- 金丝雀 4 #6232 跑到第 10 轮时被 pr-size-check 拦下：新增 3129 行超过 3000 行硬门槛，其中代码只有 566 行，其余是 sprints/ 下的规格、QA 报告与裁判报告（任务 1a94983b）。
+- coding workflow 的 GAN 轮次无上限（invariant 02d8e749），过程记录随轮次增长；计入行数会让多轮 PR 必然被要求拆分，而记录无法拆出。
+- 行数统计抽成 `.github/workflows/scripts/pr-size-count.sh`，`git diff --numstat` 排除 `sprints/`；3000 行硬门槛与 800 行软警告不变。
+- 回归测试 `pr-size-count.test.sh`：临时 git 仓库真实提交，4 个用例覆盖只改代码、代码加大量记录、只有记录、删除行；去掉排除条件时 3 条变红。挂在 lint-auto-merge-decision job，所有 PR 与 push 都跑。
 
 ## Brain 1.418.10 — 纯代码并行任务按业务身份判重
 
