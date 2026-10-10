@@ -215,7 +215,9 @@ const DUPLICATE_TASK_TITLE_THRESHOLD = 0.6;
 
 /**
  * 派发前判重：同 task_type 且状态 queued/in_progress 的任务里，
- * 找创建时间窗口内标题高度相似的 sibling。查询失败保守放行（返回 null），
+ * 在创建时间窗口内，正式纯代码 multi_task 先按真实任务与绑定来源收据判业务重复；
+ * 已验证的不同业务身份独立排队，未知身份和其他任务保留原标题相似规则。
+ * 查询失败保守放行（返回 null），
  * 不能因为一次 DB 抖动阻塞整个派发循环。
  */
 export async function _internals_findDuplicateTaskSibling(candidate) {

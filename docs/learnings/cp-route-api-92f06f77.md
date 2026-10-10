@@ -4,4 +4,4 @@
 
 正确判据只对JSON false runtime_requires_llm、JSON true multi_task、active正式Workflow生效，并从绑定真实任务的routing receipt核source identity。父批次/slot与phone_serial区分业务实例；同源和同业务身份仍抑制，不靠改标题或放宽阈值。非法Workflow、伪造slot、盗用receipt和字符串布尔保持原标题规则。
 
-先记录unit七条失败与实际私有PostgreSQL三条失败，再实现。当前16unit、10真PG及既有codeOnly/scheduler目标测试通过。正常PR/CI/发布后必须等原queued自动派发、中央Run和Notion实际回执；本Learning不声明生产或自动巡查已完成。
+先记录unit七条失败与实际私有PostgreSQL三条失败，再实现。当前独立81条unit（含既有codeOnly/scheduler回归）和10条真PG测试通过，重复运行的16条判重测试只计一次。正常PR/CI/发布后必须等原queued自动派发、中央Run和Notion实际回执；本Learning不声明生产或自动巡查已完成。
