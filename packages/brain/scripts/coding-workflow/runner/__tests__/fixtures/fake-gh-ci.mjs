@@ -4,6 +4,7 @@
 //   prStates: { <pr_url>: "MERGED"|"OPEN"|"CLOSED" } }
 // `pr checks --required` 有 pending 时退出 8、有 fail 时退出 1（同真 gh），JSON 照常输出。
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 const argv = process.argv.slice(2);
 if (process.env.FAKE_GH_LOG) fs.appendFileSync(process.env.FAKE_GH_LOG, `${JSON.stringify(argv)}\n`);
@@ -23,6 +24,11 @@ if (argv[0] === 'pr' && argv[1] === 'view' && argv.join(' ').includes('mergeable
 if (argv[0] === 'pr' && argv[1] === 'merge' && state.mergeExit) {
   process.stderr.write('merge failed\n');
   process.exit(state.mergeExit);
+}
+// pr merge 成功 + --delete-branch：同真 gh 删掉远端分支（cwd 是 runner 的仓库克隆）
+if (argv[0] === 'pr' && argv[1] === 'merge' && argv.includes('--delete-branch')) {
+  const branch = (state.prs ?? []).find((p) => String(p.number) === argv[2])?.headRefName;
+  if (branch) execFileSync('git', ['push', '-q', 'origin', '--delete', branch], { stdio: 'ignore' });
 }
 if (argv[0] === 'pr' && argv[1] === 'view') {
   const s = state.prStates?.[argv[2]];
