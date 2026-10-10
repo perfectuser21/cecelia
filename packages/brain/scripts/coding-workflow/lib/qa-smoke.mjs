@@ -13,7 +13,39 @@ const BROWSER_RE = /\bplaywright\b|\bchromium\b|\bpuppeteer\b|qa-page/i;
 // 同 packages/quality/tests/smoke-production-guard.node-test.mjs 的写请求判定
 const HTTP_WRITE_RE = /\b(?:curl|brain_curl)\b[^\n]*-X\s+(POST|PATCH|DELETE|PUT|["']?\$)/;
 
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/**
+ * 预览地址换成 $BRAIN_URL，按所在引号上下文写成能展开的形式（金丝雀 4 裁判 J-4：单引号里写 "$BRAIN_URL" 不展开）：
+ * 单引号里 '"$BRAIN_URL"'（先闭合单引号）；双引号里 $BRAIN_URL；不在引号里 "$BRAIN_URL"。
+ */
+export function replaceOrigin(command, origin) {
+  let out = '';
+  let quote = null;
+  for (let i = 0; i < command.length;) {
+    if (command.startsWith(origin, i)) {
+      out += quote === "'" ? `'"$BRAIN_URL"'` : quote === '"' ? '$BRAIN_URL' : '"$BRAIN_URL"';
+      i += origin.length;
+      continue;
+    }
+    const c = command[i];
+    if (c === '\\' && quote !== "'") {
+      out += command.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+    if ((c === "'" || c === '"') && (quote === null || quote === c)) quote = quote ? null : c;
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
+/** 一个 T-n 包进子 shell：退出码非 0 即判失败退出（&& 断言链中途失败时 set -e 不会退出，J-4）。 */
+const block = (t, command) => [
+  `echo "== ${t.id}（对应 ${t.covers.join('、')}）"`,
+  'if ! (',
+  command,
+  `); then echo "FAIL: ${t.id}" >&2; exit 1; fi`,
+].join('\n');
 
 /**
  * 由 QA 报告生成 smoke：{ name, content, writes, items }；没有可固化的条目返回 null。
@@ -22,13 +54,12 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export function buildQaSmoke({ taskId, previewUrl, reportText }) {
   const origin = String(previewUrl ?? '').replace(/\/+$/, '');
   if (!origin) return null;
-  const urlRe = new RegExp(escapeRe(origin), 'g');
   const picked = parseQaReport(reportText).tests.filter((t) => t.verdict === 'PASS'
     && t.command.includes(`${origin}/api/`) && !BROWSER_RE.test(t.command));
   if (picked.length === 0) return null;
   // curl 第一个参数统一 -q（不读外部 ~/.curlrc；仓库 smoke 守卫的硬要求）
   const fixCurl = (cmd) => cmd.replace(/\bcurl[ \t]+(?!-q(?:[ \t]|$))/g, 'curl -q ');
-  const blocks = picked.map((t) => `echo "== ${t.id}（对应 ${t.covers.join('、')}）"\n${fixCurl(t.command.replace(urlRe, '"$BRAIN_URL"'))}`);
+  const blocks = picked.map((t) => block(t, fixCurl(replaceOrigin(t.command, origin))));
   const writes = picked.some((t) => HTTP_WRITE_RE.test(t.command.replace(/\\\r?\n/g, ' ')));
   const name = `cw-${String(taskId).slice(0, 8)}-qa-smoke.sh`;
   const content = [
