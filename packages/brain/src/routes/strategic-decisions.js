@@ -51,26 +51,22 @@ export function _resetAllowedCategoriesCache() {
   allowedCategoriesCache = null;
 }
 
-const CATEGORIES_UNAVAILABLE = {
-  status: 503,
-  body: { success: false, error: 'category 允许值暂时无法读取，请稍后重试' },
-};
-
 function categoryRejection(loaded) {
-  if (loaded.unavailable || !loaded.values) return CATEGORIES_UNAVAILABLE;
+  const values = loaded.values || [];
   return {
     status: 400,
     body: {
       success: false,
-      error: `category 非法，合法值：${loaded.values.join('|')}`,
-      allowed_categories: loaded.values,
+      error: values.length ? `category 非法，合法值：${values.join('|')}` : 'category 非法',
+      allowed_categories: values,
     },
   };
 }
 
 /**
  * 校验 category。返回 null 表示放行，否则返回 { status, body }。
- * 允许值读不到（且无缓存）时不放行：返回 503，非法值绝不进 INSERT。
+ * 允许值读不到（且无缓存）时：非字符串直接 400；字符串放行进 INSERT，
+ * 由数据库约束兜底（23514 / 超长 22001 在 catch 里转译为 400）。
  */
 async function checkCategory(category) {
   if (category === undefined || category === null || category === '') return null;
@@ -78,11 +74,21 @@ async function checkCategory(category) {
     return categoryRejection(await loadAllowedCategories());
   }
   const cached = await loadAllowedCategories();
-  if (cached.unavailable) return CATEGORIES_UNAVAILABLE;
-  if (!cached.values || cached.values.includes(category)) return null;
+  if (cached.unavailable || !cached.values || cached.values.includes(category)) return null;
   const fresh = await loadAllowedCategories({ fresh: true });
-  if (!fresh.values || fresh.values.includes(category)) return null;
+  if (fresh.unavailable || !fresh.values || fresh.values.includes(category)) return null;
   return categoryRejection(fresh);
+}
+
+/**
+ * INSERT 失败是否由 category 非法引起：撞 category CHECK（23514），
+ * 或 category 超出数据库报出的 varchar 长度（22001）。
+ */
+function isCategoryInsertError(err, category) {
+  if (err.code === '23514') return err.constraint === CATEGORY_CONSTRAINT;
+  if (err.code !== '22001' || typeof category !== 'string') return false;
+  const limit = Number(/character varying\((\d+)\)/.exec(err.message || '')?.[1]);
+  return Number.isFinite(limit) && category.length > limit;
 }
 
 /**
@@ -171,7 +177,7 @@ router.post('/', async (req, res) => {
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) {
     console.error('[strategic-decisions] POST error:', err.message);
-    if (err.code === '23514' && err.constraint === CATEGORY_CONSTRAINT) {
+    if (isCategoryInsertError(err, req.body?.category)) {
       const rejection = categoryRejection(await loadAllowedCategories({ fresh: true }));
       return res.status(rejection.status).json(rejection.body);
     }

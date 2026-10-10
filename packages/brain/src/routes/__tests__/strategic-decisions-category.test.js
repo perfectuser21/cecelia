@@ -119,19 +119,64 @@ describe('POST /strategic-decisions category 校验', () => {
     expect(insertCalls().at(-1)[1]).toContain('retro');
   });
 
-  it('约束读取失败且无缓存：非法 / 超长 category 不进 INSERT，503 不透出 SQL 原文', async () => {
+  it('约束读取失败且无缓存：非法 category 放行进 INSERT，撞 23514 → 400 不是 503，不透出 SQL 原文', async () => {
     constraintError = Object.assign(new Error('relation "pg_constraint" connection terminated'), { code: '57P01' });
+    insertError = Object.assign(
+      new Error('new row for relation "decisions" violates check constraint "decisions_category_chk"'),
+      { code: '23514', constraint: 'decisions_category_chk' }
+    );
+    const res = await post({ category: 'workflow_bogus', topic: 't', decision: 'd' });
+    expect(insertCalls()).toHaveLength(1);
+    expect(res.statusCode).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error).toBe('category 非法');
+    expect(res.body.allowed_categories).toEqual([]);
+    expect(JSON.stringify(res.body)).not.toMatch(/decisions_category_chk|check constraint|violates|relation|connection/i);
+  });
+
+  it('约束读取失败且无缓存：超长 category 撞 varchar 长度 22001 → 400 不是 500/503，不透出 SQL 原文', async () => {
+    constraintError = new Error('boom');
     insertError = Object.assign(
       new Error('value too long for type character varying(50)'),
       { code: '22001' }
     );
-    for (const category of ['workflow_bogus', 'x'.repeat(5000), 'decision']) {
+    const res = await post({ category: 'x'.repeat(5000), topic: 't', decision: 'd' });
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('category 非法');
+    expect(JSON.stringify(res.body)).not.toMatch(/character varying|value too long/i);
+  });
+
+  it('约束读取失败且无缓存：非字符串 category → 400 不写库；合法 category 照常 201', async () => {
+    constraintError = new Error('boom');
+    for (const category of [123, ['decision'], {}, true]) {
       const res = await post({ category, topic: 't', decision: 'd' });
-      expect(res.statusCode).toBe(503);
-      expect(res.body.success).toBe(false);
-      expect(JSON.stringify(res.body)).not.toMatch(/decisions_category_chk|check constraint|violates|relation|character varying|connection/i);
+      expect(res.statusCode).toBe(400);
+      expect(res.body.allowed_categories).toEqual([]);
     }
     expect(insertCalls()).toHaveLength(0);
+    const ok = await post({ category: 'decision', topic: 't', decision: 'd' });
+    expect(ok.statusCode).toBe(201);
+    expect(insertCalls()).toHaveLength(1);
+  });
+
+  it('约束读取失败且无缓存：23514 后重读约束成功 → 400 列出允许值', async () => {
+    insertError = Object.assign(
+      new Error('new row for relation "decisions" violates check constraint "decisions_category_chk"'),
+      { code: '23514', constraint: 'decisions_category_chk' }
+    );
+    let failOnce = true;
+    mockQuery.mockImplementation(async (sql) => {
+      if (/pg_constraint/.test(sql)) {
+        if (failOnce) { failOnce = false; throw new Error('boom'); }
+        return { rows: [{ def: constraintDef }] };
+      }
+      if (/INSERT INTO decisions/.test(sql)) throw insertError;
+      return { rows: [] };
+    });
+    const res = await post({ category: 'workflow_bogus', topic: 't', decision: 'd' });
+    expect(res.statusCode).toBe(400);
+    expect(res.body.allowed_categories).toEqual(['decision', 'general', 'judgment']);
+    expect(res.body.error).toBe('category 非法，合法值：decision|general|judgment');
   });
 
   it('约束重读失败但有缓存：非法 / 超长 category 用缓存列出允许值 → 400，不写库', async () => {
