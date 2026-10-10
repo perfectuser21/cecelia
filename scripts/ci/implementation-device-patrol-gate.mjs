@@ -31,7 +31,7 @@ function governanceProof(root,base,head,path){
  if(path.endsWith('.yml')&&(/continue-on-error:\s*true/.test(text)||/allow_failure|skip.check|--no-verify/.test(text)))fail('PATROL_GOVERNANCE_FAIL_OPEN');
  if(path==='.github/workflows/scripts/smoke-baseline.txt'){
   const before=read(root,base,path).toString().trim().split('\n'),after=text.trim().split('\n');
-  if(after.length!==before.length+1||before.some(line=>!after.includes(line))||!after.includes('.github/workflows/scripts/smoke/phone-account-patrol-smoke.sh'))fail('PATROL_SMOKE_BASELINE_CHANGED');
+  if(after.length!==before.length+1||before.some(line=>!after.includes(line))||!after.includes('phone-account-patrol-smoke.sh'))fail('PATROL_SMOKE_BASELINE_CHANGED');
  }
  if(path==='.github/workflows/pr-review.yml'&&(!text.includes('thinking')||!text.includes('disabled')||!text.includes('4096')||!text.includes('exit 1')))fail('PATROL_REVIEW_CONTRACT_CHANGED');
  if(path==='.github/workflows/phone-account-patrol.yml'&&(!text.includes('unittest')||!text.includes('compileall')))fail('PATROL_CI_REGRESSION_MISSING');
