@@ -120,9 +120,14 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 - [x] [BEHAVIOR] workspacejointsource：真实PG在同事务导出Workspace父与独立跨仓Factory来源，明确Brain anchor与冻结source_set；scratch不授生产、重算hash篡改仍拒、子UNKNOWN保留且单scope父可用，实际CLI接受精确跨仓双scope但UNKNOWN不写文件，KR原生joint保持。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js src/__tests__/integration/implementation-admission-companion.test.js src/__tests__/integration/implementation-multi-scope.test.js --maxWorkers=1 --minWorkers=1"
 
+<<<<<<< HEAD
 - [x] [BEHAVIOR] codeidentitydedup 正式JSON false LLM与JSON true multi的active Workflow按可信父/slot/手机区分身份；不同工作流/手机不会被相似标题互挡，同ledger/业务身份即使改标题仍抑制，缺证据保原标题规则。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/dispatcher-dedup.test.js src/lib/__tests__/code-task-identity.test.js --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] codeidentitysql 实际scratch私有schema执行原生产判重SQL，inactive/非法Workflow、字符串布尔、伪造slot、盗用另一任务receipt和候选对象冒充均不能取得标题豁免；真ledger唯一键保留。
   Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator npx vitest run --config vitest.integration.config.js src/__tests__/integration/code-task-dedup.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
 
+=======
+- [x] [BEHAVIOR] cleanup-source-retirement：执行真实 Git 与实际清理工作流 shell，瞬态资料删除/来源退役同行提交；未删和持久文档原字节保护，严格解析及已有 release 消费保持。
+  Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run scripts/ci/__tests__/cleanup-source-retirement.test.mjs scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs --maxWorkers=1 --minWorkers=1"
+>>>>>>> origin/main

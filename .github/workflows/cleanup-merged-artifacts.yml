@@ -24,6 +24,7 @@ jobs:
       - name: Find and remove prd/task artifacts
         id: cleanup
         run: |
+          set -euo pipefail
           # 找出所有合并后的残留 md：
           #   旧命名：.prd-*.md / .task-*.md / .dod-*.md（带前导点、小写，保留向后兼容）
           #   新命名：DoD.cp-*.md / PRD.cp-*.md / TASK_CARD.cp-*.md（大写、无前导点）
@@ -44,6 +45,27 @@ jobs:
 
           # 删除文件
           echo "$FILES" | xargs git rm -q
+
+          # 从实际Git删除索引核验清单；文件删除与声明退役进入同一提交。
+          CLEANUP_DELETE_LIST="$FILES" node --input-type=module <<'NODE'
+          import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          import { SOURCE_RELATIONS_PATH, removeDeletedArtifactRelations } from './scripts/ci/implementation-auxiliary-evidence.mjs';
+          const deleted = process.env.CLEANUP_DELETE_LIST.split('\n').filter(Boolean);
+          const staged = new Set(execFileSync('git', ['diff', '--cached', '--name-only', '--diff-filter=D', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean));
+          if (deleted.some(path => !staged.has(path) || existsSync(path))) throw new Error('Cleanup deletion is not staged');
+          let stat;
+          try { stat = lstatSync(SOURCE_RELATIONS_PATH); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+          if (stat) {
+            if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Source relations must be a regular file');
+            const before = readFileSync(SOURCE_RELATIONS_PATH, 'utf8');
+            const after = removeDeletedArtifactRelations(before, deleted);
+            if (after !== before) {
+              writeFileSync(SOURCE_RELATIONS_PATH, after);
+              execFileSync('git', ['add', '--', SOURCE_RELATIONS_PATH]);
+            }
+          }
+          NODE
 
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
@@ -73,5 +95,5 @@ jobs:
           git push origin "$BRANCH"
           gh pr create --head "$BRANCH" --base main \
             --title "chore(cleanup): 自动清理合并后的 prd/task 残留（${COUNT} 个）" \
-            --body "由 cleanup-merged-artifacts.yml 自动创建。仅删除合并后残留的流程文件（.prd-*/.task-*/.dod-*/.dev-mode.*/.dev-seal.*/.enriched-prd-*/DoD.cp-*/PRD.cp-*/TASK_CARD.cp-*），不含任何代码改动。"
+            --body "由 cleanup-merged-artifacts.yml 自动创建。仅删除合并后残留的流程文件（.prd-*/.task-*/.dod-*/.dev-mode.*/.dev-seal.*/.enriched-prd-*/DoD.cp-*/PRD.cp-*/TASK_CARD.cp-*），同步退役实际删除资料的来源登记，保留未删与持久资料登记。"
           gh pr merge "$BRANCH" --auto --squash

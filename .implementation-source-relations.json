@@ -203,25 +203,11 @@
       "role": "verification"
     },
     {
-      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
-      "path": ".prd-cp-10101725-patrol-impact-adapter.md",
-      "role": "documentation"
-    },
-    {
       "owner_path": "scripts/ci/implementation-patrol-baseline.mjs",
       "path": "scripts/ci/__tests__/device-patrol-baseline.test.mjs",
       "role": "verification"
     },
-    {
-      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
-      "path": "changes/cp-10101725-patrol-impact-adapter.md",
-      "role": "release"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
-      "path": ".prd-cp-10101834-f3-test-consumer.md",
-      "role": "documentation"
-    },
+    
     {
       "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
       "path": "docs/learnings/cp-10101725-patrol-impact-adapter.md",
@@ -237,11 +223,7 @@
       "path": ".dod-cp-10101732-code-scheduling.md",
       "role": "documentation"
     },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": "changes/cp-10101732-code-scheduling.md",
-      "role": "release"
-    },
+    
     {
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "packages/brain/src/__tests__/dispatcher-code-only.test.js",
@@ -293,6 +275,7 @@
       "role": "verification"
     },
     {
+<<<<<<< HEAD
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": ".prd-cp-route-api-92f06f77.md",
       "role": "documentation"
@@ -316,6 +299,16 @@
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "packages/brain/src/__tests__/integration/code-task-dedup.pg.integration.test.js",
       "role": "verification"
+=======
+      "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
+      "path": "changes/cp-route-api-f5dc89cf.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
+      "path": "docs/learnings/cp-route-api-f5dc89cf.md",
+      "role": "documentation"
+>>>>>>> origin/main
     }
   ]
 }
