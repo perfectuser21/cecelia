@@ -157,6 +157,37 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     expect((await run('pass')).result.reason_code).toBe('qa_missing');
   });
 
+  // 审计 #38/#19：验不了是第三态——不当 FAIL 进修复环
+  it('有条目验不了（缺工具）→ completed，qa.verdict CANNOT_VERIFY，带验不了的条目与原因；没写原因 → retryable qa_report_invalid', async () => {
+    let r = await run('cannot');
+    expect(r.result.status, r.stderr).toBe('completed');
+    expect(r.result.outputs.qa).toMatchObject({ verdict: 'CANNOT_VERIFY', failed: [], cannot_verify: [{ id: 'T-2', reason: '工具缺失：预览环境没有 ffprobe，无法验证视频流' }] });
+    r = await run('cannot-noreason');
+    expect(r.result).toMatchObject({ failure_class: 'retryable', reason_code: 'qa_report_invalid' });
+  });
+
+  // 审计 #36：PASS 的命令恒真 → 报告不合格（带原因重跑）
+  it('PASS 条目命令带 `|| true` → retryable qa_trivial_assertion', async () => {
+    const r = await run('trivial');
+    expect(r.result).toMatchObject({ failure_class: 'retryable', reason_code: 'qa_trivial_assertion', evidence: [{ items: ['T-1'] }] });
+  });
+
+  // 审计 #37：页面类条目必须真的留下截图
+  it('报告引用的截图不存在 / 用了 Playwright 却没留截图 → retryable qa_screenshot_missing；留了截图 → completed', async () => {
+    let r = await run('shot-missing');
+    expect(r.result).toMatchObject({ failure_class: 'retryable', reason_code: 'qa_screenshot_missing' });
+    expect(JSON.stringify(r.result.evidence)).toContain('screenshot_missing:qa-r1/missing.png');
+    r = await run('playwright-noshot');
+    expect(r.result).toMatchObject({ failure_class: 'retryable', reason_code: 'qa_screenshot_missing' });
+    r = await run('playwright-shot');
+    expect(r.result.status, r.stderr).toBe('completed');
+  });
+
+  it('prompt：验不了写 CANNOT_VERIFY 不降级、恒真断言禁止、截图、跑两次判 FLAKY、全新浏览器上下文、DB 带时间窗', () => {
+    const p = fs.readFileSync(path.join(HERE, '../prompts/evaluate.md'), 'utf8');
+    for (const s of ['CANNOT_VERIFY', '原因:', '工具缺失', '不许换一种更弱的测法', '|| true', '--dry-run', '截图:', '跑两次', 'FLAKY', 'newContext', '时间窗']) expect(p).toContain(s);
+  });
+
   it('prompt：真人 QA、黑盒、用预览环境、禁单元测试、禁碰 5221、探索式测试', () => {
     const p = fs.readFileSync(path.join(HERE, '../prompts/evaluate.md'), 'utf8');
     for (const s of ['真人', '黑盒', 'PREVIEW_URL', '单元测试', '5221', '探索', 'Playwright', '### T-n', '### X-n']) expect(p).toContain(s);

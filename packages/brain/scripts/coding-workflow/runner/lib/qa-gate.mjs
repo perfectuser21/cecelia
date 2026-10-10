@@ -342,6 +342,9 @@ async function qaRound(ctx, pr, s, signal) {
     if (qa.verdict === 'PASS') {
       // 裁判是合并的必要条件（审计 #32）：关掉裁判时不批准，交人审
       return escalate(ctx, pr, s, intent.taskId, { type: 'judge_disabled', round });
+    } else if (qa.verdict === 'CANNOT_VERIFY') {
+      // 验不了 ≠ 产品不合格（审计 #38/#19）：进修复环只会无限改代码，交 coding commander 判断（补工具 / 改场景 / 人验）
+      return escalate(ctx, pr, s, intent.taskId, { type: 'qa_cannot_verify', round, cannot_verify: qa.cannot_verify ?? [] });
     } else {
       const stall = stalled(s);
       if (stall) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_stalled', fails: stall });
