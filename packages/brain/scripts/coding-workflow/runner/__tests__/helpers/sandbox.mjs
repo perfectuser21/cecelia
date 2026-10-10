@@ -23,7 +23,7 @@ const TRANSITIONS = { queued: ['in_progress'], in_progress: ['completed', 'faile
  * onResultPatch(task) 在只带 result 的 PATCH 后调用（模拟 Brain 重启把任务打回 queued 等）；
  * 认领对 coding-workflow-runner 强制写 kind（同真 Brain），legacyClaim=true 模拟旧端点的 COALESCE。
  */
-export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {}, onResultPatch, legacyClaim = false } = {}) {
+export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {}, onResultPatch, legacyClaim = false, internalToken = null } = {}) {
   const state = { tasks: structuredClone(tasks), calls: [], patches: [], learnings: [], spans: [] };
   const find = (id) => state.tasks.find((t) => t.id === id);
   const send = (res, code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
@@ -45,6 +45,9 @@ export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = 
       }
       // 执行记录（决策 b34e346a）：同真 Brain 的 POST /api/brain/spans（单条或数组）
       if (req.method === 'POST' && url.pathname === '/api/brain/spans') {
+        // 同真 Brain 的 internalAuthOrLoopback：配了令牌就必须带 X-Internal-Token / Bearer
+        const provided = req.headers['x-internal-token'] || String(req.headers.authorization || '').replace(/^Bearer /, '');
+        if (internalToken && provided !== internalToken) return send(res, 401, { error: { code: 'UNAUTHORIZED' } });
         const body = JSON.parse(raw);
         state.spans.push(...(Array.isArray(body) ? body : [body]));
         return send(res, 201, { inserted: Array.isArray(body) ? body.length : 1 });

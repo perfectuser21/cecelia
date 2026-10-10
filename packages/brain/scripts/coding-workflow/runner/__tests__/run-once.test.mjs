@@ -267,6 +267,15 @@ describe('coding workflow runner run-once', () => {
     expect(spans[1].activity_id).toBe(ACTIVITY_IDS.spec);
   });
 
+  // 金丝雀 3：生产 POST /spans 要内部令牌，runner 不带 → 全部 401
+  it('上报 spans 带内部令牌（X-Internal-Token）：Brain 配了令牌也能写进去', async () => {
+    brain = await startFakeBrain({ tasks: [codingTask(T1, { payload: { ...SWITCH } })], internalToken: 'tok-internal' });
+    const r = await runOnceProcess(runnerEnv(sb, brain.url, { FAKE_EXEC_REPORT: '1', CECELIA_INTERNAL_TOKEN: 'tok-internal' }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain('执行记录上报 Brain 失败');
+    expect(brain.spans.filter((s) => s.run_id === `coding-workflow:${T1}`).length).toBeGreaterThan(0);
+  });
+
   it('CODING_WF_AUTOMERGE=0：成功但不调 gh', async () => {
     brain = await startFakeBrain({ tasks: [codingTask(T1)] });
     const r = await runOnceProcess(runnerEnv(sb, brain.url, { CODING_WF_AUTOMERGE: '0' }));

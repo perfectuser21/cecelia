@@ -57,4 +57,11 @@ if [ -z "${DEPLOY_TOKEN:-}" ] && [ -f "$TOKEN_FILE" ]; then
   set +a
 fi
 
+# 上报执行记录（POST /api/brain/spans）要 Brain 内部令牌：同样运行时从凭据文件读，只取这一项（不把整份文件导进环境）
+INTERNAL_TOKEN_FILE="${CODING_WF_INTERNAL_TOKEN_FILE:-$HOME/.credentials/cecelia-internal.env}"
+if [ -z "${CECELIA_INTERNAL_TOKEN:-}" ] && [ -f "$INTERNAL_TOKEN_FILE" ]; then
+  CECELIA_INTERNAL_TOKEN="$(sed -n 's/^CECELIA_INTERNAL_TOKEN=//p' "$INTERNAL_TOKEN_FILE" | head -1 | tr -d "\"' \r")"
+  export CECELIA_INTERNAL_TOKEN
+fi
+
 exec "$NODE_BIN" "$REPO/$RUN_ONCE_REL"
