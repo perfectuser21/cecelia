@@ -16,7 +16,9 @@ const SEVERITIES = new Set(['阻断', '重要', '建议']);
 // 问题类型 → 失败类别；顺序即优先级（产品问题先修，其次补验，最后回到需求层面）
 const TYPE_CLASS = [['product', 'product_failure'], ['qa_gap', 'qa_insufficient'], ['contract_gap', 'contract_gap']];
 const TYPES = new Set(TYPE_CLASS.map(([t]) => t));
-const CAPS = { intent: 20000, spec: 40000, qaReport: 40000, diff: 60000 };
+// 裁判必须看到完整改动（审计 #43）：超过 JUDGE_DIFF_LIMIT 由调用方升级（runner/lib/judge-gate.mjs），这里的截断只是兜底
+export const JUDGE_DIFF_LIMIT = 150000;
+const CAPS = { intent: 20000, spec: 40000, qaReport: 40000, diff: JUDGE_DIFF_LIMIT };
 const I_RE = /^I-\d+$/;
 
 export const judgeFileName = (round) => `06-judge-r${round}.md`;

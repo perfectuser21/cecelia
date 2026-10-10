@@ -19,6 +19,8 @@ import { failTask, finishSuccess, localSummary, lostSummary, settle, settleQueue
 import { runCiFix } from './lib/cifix.mjs';
 import { runQaGate } from './lib/qa-gate.mjs';
 import { runMergeGate } from './lib/merge-gate.mjs';
+import { listOwnPrs } from './lib/cifix-scan.mjs';
+import { restoreStates, mirrorStates } from './lib/state-store.mjs';
 import { readyCandidates } from './lib/deps.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -114,18 +116,34 @@ async function execute(cfg, task, job, signal) {
   return summarizeReceipt(receipt);
 }
 
+/**
+ * 合并门 → CI 修复 → QA 门；有一个做了事返回 true（本轮到此）。
+ * 状态外部真相（审计 #34）：跑之前本机缺状态文件的 PR 从 Brain 恢复，跑完把有变化的关键字段写回 Brain。
+ */
+async function runGates(ctx, signal) {
+  const { cfg } = ctx;
+  if (!cfg.qaGate && !cfg.ciFix) return false;
+  const prs = await listOwnPrs(cfg).catch(() => null);
+  await restoreStates(ctx, prs);
+  try {
+    // 已批准的 PR：只合并被批准的 head（批准后又改了代码则撤销批准，本轮到此）
+    if (cfg.qaGate && await runMergeGate(ctx)) return true;
+    // 先收尾再开新：自己开的 PR CI 红了，本轮只修它
+    if (cfg.ciFix && await runCiFix(ctx, signal)) return true;
+    // CI 绿了：真人 QA 门（PASS 才开自动合并，FAIL 进修复环）
+    return Boolean(cfg.qaGate && await runQaGate(ctx, signal));
+  } finally {
+    await mirrorStates(ctx, prs);
+  }
+}
+
 export async function runOnce(cfg, signal) {
   await cleanupRetention(cfg).catch((error) => log(`保留期清理失败：${error.message}`));
   const ctx = { cfg, brain: brainClient(cfg.brainUrl, { listLimit: cfg.listLimit, log }), log };
   let task;
   try {
     await settleLost(ctx);
-    // 已批准的 PR：只合并被批准的 head（批准后又改了代码则撤销批准，本轮到此）
-    if (cfg.qaGate && await runMergeGate(ctx)) return 0;
-    // 先收尾再开新：自己开的 PR CI 红了，本轮只修它
-    if (cfg.ciFix && await runCiFix(ctx, signal)) return 0;
-    // CI 绿了：真人 QA 门（PASS 才开自动合并，FAIL 进修复环）
-    if (cfg.qaGate && await runQaGate(ctx, signal)) return 0;
+    if (await runGates(ctx, signal)) return 0;
     const fresh = await pickNew(ctx, await ctx.brain.listTasks('queued'));
     task = await claimFirst(ctx, await readyCandidates(ctx, fresh));
   } catch (error) {

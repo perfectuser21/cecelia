@@ -57,6 +57,8 @@ async function report(ctx, taskId, s) {
   const last = s.rounds.at(-1);
   const result = { qa: {
     verdict: last?.verdict ?? null, judge: last?.judge?.verdict ?? null, rounds: s.rounds.length, passed: Boolean(s.passed), last_report: last?.report ?? null,
+    // 「完成但有疑虑」可见（审计 #41）：裁判的建议级问题
+    concerns: last?.judge?.concerns ?? [],
   } };
   if (s.escalated) result.escalations = [s.escalated];
   const r = await ctx.brain.patch(taskId, { result });
@@ -211,6 +213,11 @@ function stalled(s) {
 /** 跑独立裁判，结果记进 entry.judge 与 s.judge_pending/judge_bad；返回 runJudge 结果。 */
 async function judgeStep(ctx, pr, s, worktree, intent, entry) {
   const j = await runJudge(ctx.cfg, worktree, intent, { round: entry.round, reportRel: entry.report, log: ctx.log });
+  // 需要人处理的（如改动超过裁判上限）：不算裁判坏、不重试，交 afterJudge 升级
+  if (j.escalate) {
+    entry.judge = { state: 'escalated', reason: j.error };
+    return j;
+  }
   if (j.error) {
     s.judge_bad = (s.judge_bad ?? 0) + 1;
     s.judge_pending = true;
@@ -220,13 +227,17 @@ async function judgeStep(ctx, pr, s, worktree, intent, entry) {
   }
   s.judge_bad = 0;
   s.judge_pending = false;
-  entry.judge = { verdict: j.verdict, failure_class: j.failure_class, file: j.file, model: j.model, issues: j.blocking.map((i) => i.id), unsatisfied: j.unsatisfied, usage: j.usage };
+  entry.judge = {
+    verdict: j.verdict, failure_class: j.failure_class, file: j.file, model: j.model,
+    issues: j.blocking.map((i) => i.id), unsatisfied: j.unsatisfied, concerns: j.concerns ?? [], usage: j.usage,
+  };
   ctx.log(`QA 门 PR #${pr.number} 第 ${entry.round} 轮独立裁判 ${j.verdict}${j.failure_class ? `（${j.failure_class}）` : ''}`);
   return j;
 }
 
 /** 裁决（已提交）之后：PASS 合并；product 修复；qa_gap 等下轮补验；contract_gap / 不收敛 / 裁判连坏 升级。 */
 async function afterJudge(ctx, pr, s, worktree, intent, entry, j) {
+  if (j.escalate) return escalate(ctx, pr, s, intent.taskId, { type: j.error, ...(j.diff_chars ? { diff_chars: j.diff_chars } : {}) });
   if (j.error) {
     if (s.judge_bad >= ctx.cfg.qaMaxJudgeBad) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_judge_unavailable', reason: j.error });
   } else if (j.verdict === 'PASS') {
@@ -280,24 +291,31 @@ async function qaRound(ctx, pr, s, signal) {
       return undefined;
     }
     ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮真人 QA 开始`);
+    // QA 会话执行记录落在 runner 日志目录（判越界、证据不实时可复核）
+    const transcript = path.join(cfg.logDir, `qa-${pr.number}-r${round}.jsonl`);
     const result = await evaluate(ctx, worktree, {
       run_tag: `qa-${pr.number}-r${round}`, task_id: intent.taskId, worktree, sprint_dir: intent.sprintDir,
       intent_ids: intent.intentIds, intent_sha256: intent.intentSha256, pr_number: pr.number, round, head_sha: pr.headRefOid,
+      transcript_path: transcript,
       ...(prior?.failure_class === 'qa_insufficient' ? { judge_feedback: `${intent.sprintDir}/${prior.file}` } : {}),
+      // 重试必须带新信息（审计 #33）：上次评估不合格的原因交给这次
+      ...(s.last_eval_error ? { prev_errors: `${s.last_eval_error.reason_code}: ${s.last_eval_error.evidence}` } : {}),
       budget: { max_duration_s: Math.round(EVALUATE_TIMEOUT_MS / 1000) },
     }, signal);
     const qa = result?.status === 'completed' ? result.outputs?.qa : null;
     if (!qa) {
       s.bad = (s.bad ?? 0) + 1;
       const reason = result?.reason_code ?? 'evaluate_crashed';
-      ctx.log(`QA 门 PR #${pr.number} 评估出错（连续 ${s.bad} 次）：${reason}`);
+      ctx.log(`QA 门 PR #${pr.number} 评估出错（连续 ${s.bad} 次）：${reason} ${JSON.stringify(result?.evidence ?? []).slice(0, 500)}`);
+      s.last_eval_error = { reason_code: reason, evidence: JSON.stringify(result?.evidence ?? []).slice(0, 1500) };
       if (result?.failure_class === 'fatal' || result?.failure_class === 'needs_human' || s.bad >= cfg.qaMaxBadStreak) {
-        return escalate(ctx, pr, s, intent.taskId, { type: 'qa_evaluator_broken', reason_code: reason });
+        return escalate(ctx, pr, s, intent.taskId, { type: 'qa_evaluator_broken', reason_code: reason, evidence: result?.evidence ?? [], transcript });
       }
       writeState(cfg, pr.number, s);
       return undefined;
     }
     s.bad = 0;
+    delete s.last_eval_error;
     const fails = qa.failed.length + qa.blocking.length;
     const report0 = `${intent.sprintDir}/${result.outputs.qa_report_file}`;
     const entry = { round, head: pr.headRefOid, verdict: qa.verdict, fails, report: report0, cost_usd: qa.cost_usd, at: new Date().toISOString() };

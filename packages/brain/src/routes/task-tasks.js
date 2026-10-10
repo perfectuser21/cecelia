@@ -27,6 +27,7 @@ import { normalizeDependsOn, assertDependsOnExist } from '../lib/task-dependenci
 import { assertProjectRootForMultiTask } from '../lib/project-root-gate.js';
 import { governanceErrorResponse } from '../lib/governance-errors.js';
 import { registerTaskDependencyRoutes } from './task-dependencies.js';
+import { parseTaskListQuery } from '../lib/task-list-query.js';
 
 const router = Router();
 registerHeadedTakeoverRoute(router,{pool,path:'/:id/headed-takeover'});
@@ -384,8 +385,11 @@ router.post('/', async (req, res) => {
 
 // GET /tasks — 列出任务
 router.get('/', async (req, res) => {
+  const parsed = parseTaskListQuery(req.query, { defaultLimit: 200 });
+  if (!parsed.ok) return res.status(parsed.status).json(parsed.body);
   try {
-    const { status, area_id, project_id, task_type, journey_id, limit = '200', offset = '0' } = req.query;
+    const { status, limit } = parsed;
+    const { area_id, project_id, task_type, journey_id, offset = '0' } = req.query;
 
     const conditions = [];
     const params = [];
@@ -421,7 +425,7 @@ router.get('/', async (req, res) => {
       query += ' WHERE ' + conditions.join(' AND ');
     }
     query += ` ORDER BY created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-    params.push(parseInt(limit), parseInt(offset));
+    params.push(limit, parseInt(offset));
 
     const result = await pool.query(query, params);
     res.json(result.rows);

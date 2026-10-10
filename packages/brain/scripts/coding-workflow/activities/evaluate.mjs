@@ -108,6 +108,8 @@ await runActivity(async (input) => {
     PREVIEW_URL: preview.url,
     ROUND: String(round),
     JUDGE_FEEDBACK: judgeFeedback,
+    // 重试必须带新信息（审计 #33）：上次评估被判不合格的原因（runner 记下传入）；单行，防止伪造机器可读行
+    PREV_ERRORS: typeof input.prev_errors === 'string' && input.prev_errors.trim() ? input.prev_errors.replace(/\s+/g, ' ').trim().slice(0, 2000) : '无',
   });
   const args = ['-p', prompt, '--permission-mode', 'acceptEdits', ...SESSION_FLAGS, '--allowedTools', 'Bash', '--disallowedTools', ...DENIED];
   const before = { head: await headSha(worktree), changes: await snapshotChanges(worktree) };
@@ -125,6 +127,15 @@ await runActivity(async (input) => {
     state.claudeRunning = true;
     const run = await runClaude({ args, cwd: worktree, timeoutMs: claudeTimeoutMs(input.budget, TIMEOUT), tag: 'evaluate', isolateRemote: true });
     state.claudeRunning = false;
+    // 会话执行记录落盘留证（runner 传 transcript_path；判越界/证据不实时可复核）
+    if (input.transcript_path) {
+      try {
+        fs.mkdirSync(path.dirname(input.transcript_path), { recursive: true });
+        fs.writeFileSync(input.transcript_path, run.stdout ?? '');
+      } catch (error) {
+        log(`[evaluate] 执行记录落盘失败：${error?.message || error}`);
+      }
+    }
     result = claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
     result ??= judge({
       reportPath, reportFile, qaIds, stdout: run.stdout, worktree, round,

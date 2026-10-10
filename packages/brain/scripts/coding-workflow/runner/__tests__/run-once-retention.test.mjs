@@ -81,4 +81,23 @@ describe('coding workflow runner 保留期清理', () => {
     expect(fs.existsSync(newJson)).toBe(true);
     expect(fs.existsSync(otherOld)).toBe(true);
   }, 30000);
+
+  // 审计 #34：QA 门 / CI 修复状态是台账不是日志——超期也不删（删了已升级的 PR 会被当新的重新处理）
+  it('qa-<pr>.json / cifix-<pr>.json 是状态台账：超期也不删；同目录的执行记录照常按期清', async () => {
+    fs.mkdirSync(sb.logDir, { recursive: true });
+    const file = (name, days) => {
+      const p = path.join(sb.logDir, name);
+      fs.writeFileSync(p, '{}');
+      age(p, days);
+      return p;
+    };
+    const qa = file('qa-77.json', 90);
+    const cifix = file('cifix-77.json', 90);
+    const transcript = file('cifix-77-1791574642348.log', 90);
+    const r = await runOnceProcess(runnerEnv(sb, brain.url));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(fs.existsSync(qa)).toBe(true);
+    expect(fs.existsSync(cifix)).toBe(true);
+    expect(fs.existsSync(transcript)).toBe(false);
+  }, 30000);
 });

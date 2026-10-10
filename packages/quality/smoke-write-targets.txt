@@ -131,3 +131,5 @@ phone-dispatch-identity-smoke.sh
 headed-takeover-smoke.sh
 runs-execution-table-smoke.sh
 enablers-failure-semantics-smoke.sh
+activity-judgments-smoke.sh
+resource-health-smoke.sh

@@ -1,6 +1,6 @@
 // lib/gan.mjs：合同对抗的代码判分与收敛走势（移植 harness-gan.graph.js detectConvergenceTrend，不设轮数上限）。
 import { describe, it, expect } from 'vitest';
-import { RUBRIC_DIMS, THRESHOLD, detectTrend, decide } from '../lib/gan.mjs';
+import { RUBRIC_DIMS, THRESHOLD, detectTrend, decide, stalled } from '../lib/gan.mjs';
 
 const s = (v) => Object.fromEntries(RUBRIC_DIMS.map((d, i) => [d, Array.isArray(v) ? v[i] : v]));
 const round = (scores, specLines) => ({ scores, specLines });
@@ -68,5 +68,20 @@ describe('decide', () => {
 
   it('缺评分 → 不通过', () => {
     expect(decide({ scores: {}, openIssues: [] }).approved).toBe(false);
+  });
+});
+
+// 审计 #27（旧 reviewer「Pivot vs Refine」）：总分连续两轮不涨 = 原地打转，要换思路
+describe('stalled', () => {
+  const r = (v) => ({ scores: Object.fromEntries(RUBRIC_DIMS.map((d) => [d, v])) });
+  it('不足两轮 → false', () => {
+    expect(stalled([])).toBe(false);
+    expect(stalled([r(6)])).toBe(false);
+  });
+  it('最近一轮总分没高于上一轮 → true；涨了 → false', () => {
+    expect(stalled([r(6), r(6)])).toBe(true);
+    expect(stalled([r(6), r(5)])).toBe(true);
+    expect(stalled([r(5), r(6)])).toBe(false);
+    expect(stalled([r(4), r(6), r(7)])).toBe(false);
   });
 });

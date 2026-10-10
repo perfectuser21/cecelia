@@ -20,6 +20,12 @@ export const INTENT = `---\ntask_id: ${TASK}\nstep: intent\nupstream: []\n---\n#
 const JUDGE_ISSUE = (type) => ({ id: 'J-1', type, severity: '阻断', covers: ['I-1'], detail: `${type} 问题`, where: 'src/feature.js:1' });
 const JUDGE_REPLY = {
   pass: { coverage: [{ intent: 'I-1', satisfied: true, evidence: 'T-1 真实输出' }], issues: [], summary: 'ok' },
+  // 通过，但带一条建议级疑虑（不阻断合并，但要在 Brain 结果里可见）
+  'pass-concern': {
+    coverage: [{ intent: 'I-1', satisfied: true, evidence: 'T-1 真实输出' }],
+    issues: [{ id: 'J-1', type: 'product', severity: '建议', covers: ['I-1'], detail: '错误提示可以更具体', where: 'src/feature.js:1' }],
+    summary: 'ok',
+  },
   ...Object.fromEntries([['product', 'product'], ['qa_gap', 'qa_gap'], ['contract', 'contract_gap']].map(([mode, type]) => [mode, {
     coverage: [{ intent: 'I-1', satisfied: false, evidence: '见 J-1' }], issues: [JUDGE_ISSUE(type)], summary: 'no',
   }])),
@@ -151,6 +157,11 @@ export function useQaEnv({ onReady } = {}) {
   E.qaCalls = () => readJsonLines(E.files.qaLog);
   E.ghCalls = () => readJsonLines(E.sb.ghLog);
   E.originLog = () => git(E.sb.origin, 'log', '--format=%s', BRANCH).trim().split('\n');
-  E.brainResults = () => E.brain.patches.filter((p) => p.id === TASK).map((p) => p.body.result);
+  // 业务回写（不含 runner 每轮的状态同步 qa_state / ci_fix_state，审计 #34；那部分看 brainStateResults）
+  const STATE_KEYS = ['qa_state', 'ci_fix_state'];
+  const ofTask = () => E.brain.patches.filter((p) => p.id === TASK);
+  const stateOnly = (p) => p.body.result && !p.body.status && Object.keys(p.body.result).every((k) => STATE_KEYS.includes(k));
+  E.brainResults = () => ofTask().filter((p) => !stateOnly(p)).map((p) => p.body.result);
+  E.brainStateResults = () => ofTask().filter(stateOnly).map((p) => p.body.result);
   return E;
 }

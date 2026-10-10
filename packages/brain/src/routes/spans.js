@@ -3,11 +3,13 @@
  *
  * POST /api/brain/spans   内网/回环鉴权；body 单条或数组；整批事务写入，发生位置同内容幂等、异内容409，旧客户端原键兼容
  * GET  /api/brain/spans   ?run_id=（必填）&activity_id=（可选）按 started_at 排序
+ * 写入成功后把新插入的 span 交给自动裁判（lib/activity-judge.js onSpansWritten，去抖异步，出错只记日志不影响上报）。
  */
 import { Router } from 'express';
 import pool from '../db.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { normalizeSpan, optionalUuid, writeSpans } from '../lib/span-ingestion.js';
+import { onSpansWritten } from '../lib/activity-judge.js';
 
 const router = Router();
 
@@ -22,13 +24,20 @@ router.post('/spans', internalAuthOrLoopback, async (req, res) => {
     return res.status(e.status || 400).json({ error: e.message,...(e.code?.startsWith('SPAN_')?{code:e.code}:{}) });
   }
 
+  let written;
   try {
-    return res.json(await writeSpans(pool, rows));
+    written = await writeSpans(pool, rows);
   } catch (e) {
     return res.status(e.status || 500).json({ error: e.message,
       ...(e.code?.startsWith('SPAN_') ? { code: e.code, run_id: e.run_id, occurrence_key: e.occurrence_key } : {}),
     });
   }
+  try {
+    onSpansWritten(pool, written);
+  } catch (e) {
+    console.warn('[spans] 自动裁判钩子异常（不影响上报）:', String(e?.message).slice(0, 200));
+  }
+  return res.json(written);
 });
 
 router.get('/spans', async (req, res) => {

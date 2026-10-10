@@ -23,6 +23,7 @@
 import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
+import { resourceHealthGate } from './lib/resource-health-gate.js';
 import { finalizeTask } from './lib/task-terminal.js';
 
 export const WORKER_SLOTS = ['slot7', 'slot8', 'slot9'];
@@ -152,6 +153,13 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
   for (const task of tasks) {
     if (slotIdx >= freeSlots.length || dispatched >= budget) break;
     const slot = freeSlots[slotIdx];
+
+    // 资源健康闸（任务 5bf2512a）：预占之前判，被挡不碰 claim、留队列等资源恢复；闸出错 fail-safe 放行。
+    const healthGate = await resourceHealthGate(task, { pool, tag: 'worker-pool' });
+    if (healthGate.blocked) {
+      console.log(`[worker-pool] 资源不健康 ${healthGate.summary}，task ${task.id} 本轮不派`);
+      continue;
+    }
 
     // CAS 预占：/dev worker claim 撞 409 见此名字即知预占、继续（任务 873acc6d 约定）
     const claim = await pool.query(

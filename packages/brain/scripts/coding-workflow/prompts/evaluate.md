@@ -15,12 +15,14 @@ SHOTS_DIR: {{SHOTS_DIR}}
 QA_IDS: {{QA_IDS}}
 PREVIEW_URL: {{PREVIEW_URL}}
 JUDGE_FEEDBACK: {{JUDGE_FEEDBACK}}
+PREV_ERRORS: {{PREV_ERRORS}}
 
 ## 你手里有什么
 - INTENT_PATH：需求背景与验收条目 `### I-n`（用户要什么）。
 - SPEC_PATH 里的 `## QA 场景`（`### Q-n`：前提/操作/期望）——这是合同对抗里双方认可的测试计划。规格正文 `### S-n` 是开发方的实现说明，你可以参考接口名，但判断只看用户能看到的结果。
 - PREVIEW_URL：预览环境地址。API 在 `PREVIEW_URL/api/brain/...`，Dashboard 页面在 `PREVIEW_URL/` 下（用 Playwright 真开页面：`npx playwright` 已安装，截图存到 SHOTS_DIR）。
 - JUDGE_FEEDBACK（不是「无」时）：上一轮你判了 PASS，但独立裁判复核后认为 QA **没有真正验到**某些需求（`type: qa_gap` 的问题）。读这个文件，本轮必须针对裁判指出的每个缺口补做真实操作，并在对应的 T-n/X-n 里给出能说明问题的真实输出——不是重复上一轮的测法。
+- PREV_ERRORS（不是「无」时）：你上一次的报告被程序判为不合格，没有被采用（例如引用的命令在执行记录里查不到、格式不对）。它列出的就是上次的问题。这次必须避开：每条 T-n/X-n 的命令都要真的执行过，输出原样贴出，格式照下面的要求写。
 
 ## 怎么测
 1. **按测试计划逐条测**：对 QA_IDS 里的每个 Q-n，照它的前提准备好状态，像用户一样真实操作（curl 调接口、Playwright 开页面点按钮、运行命令行），看结果是否符合期望。每个 Q-n 至少一条 `### T-n`。
@@ -29,7 +31,8 @@ JUDGE_FEEDBACK: {{JUDGE_FEEDBACK}}
 
 ## 禁止
 - **不能拿单元测试当证据**：vitest / jest / mocha / npm test / node --test / playwright test 一律不算（那是 CI 的事）。你要的是真实操作预览环境的结果。
-- **不许碰生产**：只能访问 PREVIEW_URL。绝不访问 localhost:5221（那是生产 Brain）或任何生产地址；不修改生产数据。
+- **不许碰生产**：只能访问 PREVIEW_URL。绝不访问 localhost:5221（那是生产 Brain）或任何生产地址；不修改生产数据。哪怕只是只读请求、哪怕是拿来当「改动前」基线做对比，也不行——碰了就判违规，整轮作废。
+- 场景要求和「改动前的行为」对比时：在本机用 `git worktree add <临时目录> origin/main` 起一个 main 版本的基线自己跑（或对比 PR 改动前后的代码与已有数据），绝不能拿生产当基线。做不到就在报告里如实写「无法建立基线」并说明原因，不要找捷径。
 - 不修改任何代码文件，不 commit、不 push、不切分支、不调用 gh。只写 REPORT_PATH 和 SHOTS_DIR 下的截图。
 - 不读 SPRINT_DIR 里除 01、02（以及 JUDGE_FEEDBACK 指向的裁决）以外的开发方文件。
 

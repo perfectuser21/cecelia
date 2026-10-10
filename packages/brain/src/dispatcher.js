@@ -45,6 +45,8 @@ import { checkAnchor } from './anchor-check.js';
 import { applyDispatchAllocationGuide } from './dispatch-allocation-guide.js';
 import { getLlmCapacitySnapshot } from './llm-capacity.js';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
+import { resourceHealthGate } from './lib/resource-health-gate.js';
+import { qiumiRouteHealthGate, rememberBlockedRoute, recallBlockedRoute, forgetBlockedRoute } from './lib/qiumi-resource-health.js';
 import { routeQiumiTask, persistDecision } from './routing/qiumi-router.js';
 import { qiumiEnv } from './routing/env.js';
 import { routeSerialOf, findSameSerialBusy } from './routing/qiumi-serial-gate.js';
@@ -258,8 +260,9 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
  * 读全行、triggerCeceliaRun，spawn 失败也走主流程既有的回滚。
  *
  * @param {object} task - 已 claim 的候选行（可能不含 payload，函数内会重读整行）
- * @param {object} [deps] - { env, actions, holSkipIds, fetchFn, callLLMFn }
- * @returns {Promise<{outcome:'return', result:object}|{outcome:'skip'}|{outcome:'proceed'}>}
+ * @param {object} [deps] - { env, actions, holSkipIds, resourceSkipIds, fetchFn, callLLMFn }
+ *   资源健康闸挡下的单进 resourceSkipIds（不占 HOL 让位名额），返回 {outcome:'skip', resource:true}。
+ * @returns {Promise<{outcome:'return', result:object}|{outcome:'skip', resource?:true}|{outcome:'proceed'}>}
  */
 export async function dispatchQiumiTask(task, deps = {}) {
   try {
@@ -287,8 +290,19 @@ async function routeAndPersistQiumi(task, deps = {}) {
   const env = deps.env ?? qiumiEnv();
   const actions = deps.actions ?? [];
   const holSkipIds = deps.holSkipIds ?? [];
+  const resourceSkipIds = deps.resourceSkipIds ?? [];
 
   const releaseClaim = async () => (await import('./lib/manual-qiumi-dispatch.js')).releaseQiumiClaim(pool, task.id, deps.claimOwner);
+
+  // 资源健康闸挡下（任务 5bf2512a）：放 claim、保持 queued、进 resourceSkipIds——不占 HOL 让位名额，
+  // 手机/账号掉线可能持续几天，占名额会让队首积压的单把整个派发器卡死。
+  const blockedByHealth = async (sick) => {
+    await releaseClaim();
+    await recordDispatchResult(pool, false, 'resource_unhealthy', undefined, task.id);
+    tickLog(`[dispatch] 资源不健康 ${sick.summary}，qiumi task ${task.id} 本轮不派`);
+    resourceSkipIds.push(task.id);
+    return { outcome: 'skip', resource: true };
+  };
 
   // openclaw-agent 有自己的熔断（MMV 起 agent 连败时才开），与 cecelia-run（bridge）互不牵连。
   // 放在最前面：熔断开着就别读全行、别打 Jev、别写 run_id——每 tick 白路由一次就是本刀要修的病。
@@ -365,6 +379,14 @@ async function routeAndPersistQiumi(task, deps = {}) {
     return { outcome: 'proceed' };
   }
 
+  // 上一轮路由定到的手机/账号不健康被挡过：先只复查那台手机，仍不健康就不再打 Jev（防每 tick 白路由）
+  const memoSerial = recallBlockedRoute(task.id);
+  if (memoSerial) {
+    const stillSick = await qiumiRouteHealthGate(fullTask, memoSerial, { pool, tag: 'dispatch-qiumi-recheck' });
+    if (stillSick.blocked) return blockedByHealth(stillSick);
+    forgetBlockedRoute(task.id);
+  }
+
   const decision = await routeQiumiTask(fullTask, {
     pool,
     env,
@@ -372,6 +394,18 @@ async function routeAndPersistQiumi(task, deps = {}) {
     // 懒加载：terra 兜底才真的需要 llm-caller，Jev 正常时不把这条重依赖拉进来
     callLLMFn: deps.callLLMFn ?? (async (...args) => (await import('./llm-caller.js')).callLLM(...args)),
   });
+  // device 出口：persistDecision 会直接派生 device_job 交手机领单器（dispatcher 之外认领），
+  // 所以健康闸必须在落库之前——手机或它当前账号不健康就不派生、不落库，下一轮复查。
+  if (decision.outcome === 'device' && decision.serial) {
+    const sick = await qiumiRouteHealthGate(fullTask, decision.serial, {
+      pool, payload: { ...(fullTask.payload ?? {}), ...(decision.payloadPatch ?? {}) }, tag: 'dispatch-qiumi-device',
+    });
+    if (sick.blocked) {
+      rememberBlockedRoute(task.id, decision.serial);
+      return blockedByHealth(sick);
+    }
+  }
+
   await persistDecision(pool, fullTask, decision);
 
   // 已派生 device_job 子任务交给手机领单器、父任务挂 blocked（persistDecision 里连 claim
@@ -421,6 +455,10 @@ async function routeAndPersistQiumi(task, deps = {}) {
   // 新定到的手机正忙 → 决策已落库，本轮让位；下一轮走上面的路由幂等分支再过一次同机闸。
   const held = await serialBusy(decision.payloadPatch);
   if (held) return held;
+  // 新定到的手机/账号不健康（任务 5bf2512a）→ 决策已落库，本轮让位；下一轮候选循环的资源健康闸再判。
+  const routedPayload = { ...(fullTask.payload ?? {}), ...(decision.payloadPatch ?? {}) };
+  const sick = await qiumiRouteHealthGate(fullTask, routeSerialOf(routedPayload), { pool, payload: routedPayload, tag: 'dispatch-qiumi' });
+  if (sick.blocked) return blockedByHealth(sick);
   return { outcome: 'proceed' };
 }
 
@@ -642,12 +680,23 @@ export async function dispatchNextTask(goalIds) {
   //    Max MAX_SKIP_HEAD_FOR_BLOCKED HOL skips before giving up.
   const MAX_PRE_FLIGHT_RETRIES = 5;
   const MAX_SKIP_HEAD_FOR_BLOCKED = 10;
+  // 资源健康闸挡单单独计数（任务 5bf2512a 审查修复）：手机/账号掉线可能持续几天，
+  // 占 HOL 名额会让队首 10 张同资源积压单每 tick 把整个派发器卡死；单独一个大上限只防一轮查太多次。
+  const MAX_RESOURCE_SKIPS = 100;
   const preFlightFailedIds = [];
   const holSkipIds = [];        // IDs skipped due to HOL blocking (codex pool full, non-P0)
   const noExecutorSkipIds = []; // IDs skipped due to executor/bridge unavailable (0014cd42)
   const breakerSkipIds = [];    // IDs skipped because cecelia-run circuit is OPEN (bridge-dependent only)
   const duplicateSkipIds = []; // IDs skipped due to duplicate-title sibling already queued/in_progress
+  const resourceSkipIds = [];  // IDs skipped because a referenced resource is offline/restricted（不计入 HOL 上限）
   let nextTask = null;
+
+  const resourceSkipCapped = async () => {
+    if (resourceSkipIds.length < MAX_RESOURCE_SKIPS) return null;
+    tickLog(`[dispatch] resource skip cap reached (${MAX_RESOURCE_SKIPS}), giving up this tick`);
+    await recordDispatchResult(pool, false, 'resource_skip_cap_exceeded');
+    return { dispatched: false, reason: 'resource_skip_cap_exceeded', resource_skipped: resourceSkipIds.length, actions };
+  };
 
   const { preFlightCheck, alertOnPreFlightFail } = await import('./pre-flight-check.js');
   const claimerId = process.env.BRAIN_RUNNER_ID || `brain-tick-${process.pid}`;
@@ -681,7 +730,7 @@ export async function dispatchNextTask(goalIds) {
   dispatchLoop: for (;;) {
   nextTask = null;
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
-    const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...breakerSkipIds, ...duplicateSkipIds];
+    const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...breakerSkipIds, ...duplicateSkipIds, ...resourceSkipIds];
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, {
       priorityFilter: _quotaPriorityFilter,
       ...(qiumiOnlyBypass ? { onlyTaskTypes: ['qiumi_task'] } : {}),
@@ -882,15 +931,38 @@ export async function dispatchNextTask(goalIds) {
       return { dispatched: false, reason: 'missing_anchor', task_id: candidate.id, actions };
     }
 
+    // 3c'''-pre. 资源健康闸（任务 5bf2512a，决策 de6dff5d 第 5 步）：任务引用的账号/手机/仓库物件
+    //        offline / restricted → 放 claim、保持 queued、本轮让位（资源恢复后自然放行）。
+    //        闸自身 fail-safe：出错只记日志放行；放 claim 失败也只记日志，按让位继续。
+    const healthGate = await resourceHealthGate(candidate, { pool, tag: 'dispatch' });
+    if (healthGate.blocked) {
+      tickLog(`[dispatch] 资源不健康 ${healthGate.summary}，task ${candidate.id} 本轮不派（不占 HOL 名额）`);
+      try {
+        await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`, [candidate.id]);
+      } catch (releaseErr) {
+        console.error(`[dispatch] resource_unhealthy claim release failed (non-fatal, task=${candidate.id}): ${releaseErr.message}`);
+      }
+      await recordDispatchResult(pool, false, 'resource_unhealthy', undefined, candidate.id);
+      resourceSkipIds.push(candidate.id);
+      const capped = await resourceSkipCapped();
+      if (capped) return capped;
+      attempt--;
+      continue;
+    }
+
     // 3c'''. 秋米任务的专用路由出口（PR3，plan 补充四）：必须在这里——claim 已持有、
     //        任务仍 queued，persistDecision 的 `AND status='queued'` CAS 和并发闸
     //        count(in_progress) 都指着这个前提。放到标 in_progress 之后两者同时失效。
     if (candidate.task_type === 'qiumi_task') {
-      const q = await dispatchQiumiTask(candidate, { actions, holSkipIds });
+      const q = await dispatchQiumiTask(candidate, { actions, holSkipIds, resourceSkipIds });
       if (q.outcome === 'return') return q.result;
       if (q.outcome === 'skip') {
-        // 闸满让位：claim 已放、已进 holSkipIds，cap 与 codex HOL 分支同一套
-        if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+        // 资源健康闸挡下：已进 resourceSkipIds，只看它自己的上限，不占 HOL 名额
+        if (q.resource) {
+          const capped = await resourceSkipCapped();
+          if (capped) return capped;
+        } else if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+          // 闸满让位：claim 已放、已进 holSkipIds，cap 与 codex HOL 分支同一套
           tickLog(`[dispatch] HOL skip cap reached (${MAX_SKIP_HEAD_FOR_BLOCKED}), giving up`);
           await recordDispatchResult(pool, false, 'hol_skip_cap_exceeded');
           return { dispatched: false, reason: 'hol_skip_cap_exceeded', hol_skipped: holSkipIds.length, actions };

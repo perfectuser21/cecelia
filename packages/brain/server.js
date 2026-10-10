@@ -94,10 +94,12 @@ import workflowsRouter from './src/routes/workflows.js';
 import workflowAuthoringRouter from './src/routes/workflow-authoring.js';
 import spansRouter from './src/routes/spans.js';
 import skillSettlementRouter from './src/routes/skill-settlement.js';
+import activityJudgmentsRouter from './src/routes/activity-judgments.js';
 import { createReleasesRouter } from './src/routes/releases.js';
 import { createRunDefinitionsRouter } from './src/routes/run-definitions.js';
 import { createRunReconciliationRouter } from './src/routes/run-reconciliation.js';
 import phoneRegistryRouter from './src/routes/phone-registry.js';
+import resourceHealthRouter from './src/routes/resource-health.js';
 import commanderHeartbeatRouter from './src/routes/commander-heartbeat.js';
 import goldenPathsRouter from './src/routes/golden-paths.js';
 import skillEvalRoutes from './src/routes/eval.js';
@@ -466,10 +468,12 @@ app.use('/api/brain', workflowsRouter); // Workflow 只读清单 GET /workflows�
 app.use('/api/brain/workflow-authoring', workflowAuthoringRouter);
 app.use('/api/brain', spansRouter); // 执行段上报 POST/GET /spans（价值流建模④，决策 3e867cad，任务 ec643d60）
 app.use('/api/brain', skillSettlementRouter); // 路 B：收敛对账 + 沉淀技能候选（v3.0 第 4 刀，任务 3590ec8f）
+app.use('/api/brain', activityJudgmentsRouter); // 裁判：Activity 最新裁判 / 裁判史 / 新旧版本对比（五块模型，决策 de6dff5d）
 app.use('/api/brain/releases', createReleasesRouter());
 app.use('/api/brain/runs', createRunDefinitionsRouter());
 app.use('/api/brain/runs', createRunReconciliationRouter());
 app.use('/api/brain', phoneRegistryRouter); // 手机台账 GET/PUT /phone-registry（任务 b923b1f7，决策 432172f7）
+app.use('/api/brain', resourceHealthRouter); // 资源健康进仓库 /resource-health（任务 5bf2512a，决策 de6dff5d 第 5 步）
 app.use('/api/brain', commanderHeartbeatRouter); // Commander escort 心跳 POST /commander-heartbeat（任务 17ea4536，决策 3c98fb36）
 app.use('/api/brain', goldenPathsRouter);
 app.use('/api/brain/harness', harnessCommanderRouter);

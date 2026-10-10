@@ -9,15 +9,19 @@ REVIEW_PATH: {{REVIEW_PATH}}
 RESPONSE_PATH: {{RESPONSE_PATH}}
 INTENT_IDS: {{INTENT_IDS}}
 OPEN_ISSUES: {{OPEN_ISSUES}}
+SPEC_ERRORS: {{SPEC_ERRORS}}
+STUCK: {{STUCK}}
 
 步骤：
 1. 读 REVIEW_PATH：`## 评分`、`## 上轮问题`（QA 对上一轮的关闭/坚持）与新问题 `### R-n`。OPEN_ISSUES 是本轮之后仍开着、必须回应的问题编号。
 2. 读 INTENT_PATH、SPEC_PATH，读仓库相关代码核实 QA 说的场景是否真的会发生。
-3. 对 OPEN_ISSUES 里的每个问题二选一：
+3. SPEC_ERRORS 不是「无」时：当前规格没通过程序校验（错误码列表），本轮必须先把这些改好，否则改写会被直接判不合格。
+4. STUCK 为「是」时：最近两轮总分没涨，QA 在 REVIEW_PATH 的 `## 换思路` 里给了不同的方向。你必须在 RESPONSE_PATH 开头写 `## 换思路` 小节，说明采纳（并照新方向改规格）还是不采纳（给出具体理由），不能继续在原方向上小修小补。
+5. 对 OPEN_ISSUES 里的每个问题二选一：
    - **采纳**：在 SPEC_PATH 里改规格把它解决（写清改哪、用户能看到什么、怎么验证）。
    - **驳回**：QA 的场景不会发生或不属于本需求——必须给出具体依据（代码位置、需求原文），不能只说"不需要"。
    `建议` 级问题可按需处理，不强制回应。
-4. 写 RESPONSE_PATH，每个回应一节：
+6. 写 RESPONSE_PATH，每个回应一节：
 ```
 ### R-n
 处理: 采纳

@@ -107,6 +107,25 @@ describe('task-tasks routes', () => {
       expect(params).toContain(10);
       expect(params).toContain(30);
     });
+
+    it.each([
+      ['status=bogus', 'invalid_status'],
+      ['limit=abc', 'invalid_limit'],
+    ])('?%s → 400 %s 且不查库', async (qs, error) => {
+      const res = await request(app).get(`/tasks?${qs}`);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe(error);
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('?status=queued&limit=5 → 200，SQL 参数含 queued 与 5', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      const res = await request(app).get('/tasks?status=queued&limit=5');
+      expect(res.status).toBe(200);
+      const params = mockPool.query.mock.calls[0][1];
+      expect(params).toContain('queued');
+      expect(params).toContain(5);
+    });
   });
 
   describe('GET /tasks/:id', () => {

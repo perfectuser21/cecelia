@@ -145,6 +145,25 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
   });
 
   // 审计 #32：裁判是合并的必要条件，关掉裁判不能变成「QA PASS 就合并」
+  // 审计 #43：裁判必须看到完整改动；超过上限不截断照判，直接升级
+  it('PR 改动超过裁判上限 → 不调裁判、不批准，升级 judge_input_truncated', async () => {
+    addToBranch('src/huge.js', `${'x'.repeat(151000)}\n`);
+    const r = await go(green({ prs: [pr({ headRefOid: git(sb.origin, 'rev-parse', BRANCH).trim() })] }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(judge.calls).toEqual([]);
+    expect(state().passed).toBeFalsy();
+    expect(state().escalated).toMatchObject({ type: 'judge_input_truncated' });
+  });
+
+  // 审计 #41：「完成但有疑虑」要可见——裁判的建议级问题写进 Brain result.qa.concerns
+  it('裁判 PASS 但有建议级问题 → 照常批准，Brain result.qa.concerns 列出', async () => {
+    judge.mode = 'pass-concern';
+    const r = await go(green());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(state().passed).toBe(true);
+    expect(brainQa().at(-1).qa.concerns).toEqual([expect.objectContaining({ id: 'J-1', severity: '建议', detail: '错误提示可以更具体' })]);
+  });
+
   it('CODING_WF_JUDGE=0：QA PASS 也不批准，升级 judge_disabled 交人审', async () => {
     const r = await go(green(), { extra: { CODING_WF_JUDGE: '0' } });
     expect(r.exitCode, r.stderr).toBe(0);
@@ -252,7 +271,27 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     fs.rmSync(statePath(), { force: true });
     await E.closeBrain();
     r = await go(green(), { mode: 'fatal' });
-    expect(state().escalated).toMatchObject({ type: 'qa_evaluator_broken', reason_code: 'evaluate_touched_production' });
+    // 升级记录带上触发的证据（金丝雀 3e8414f6：只有原因码、无从判断真越界还是误判）；evaluate 拿到落盘执行记录的路径
+    expect(state().escalated).toMatchObject({
+      type: 'qa_evaluator_broken', reason_code: 'evaluate_touched_production',
+      evidence: [{ commands: ['curl -s http://localhost:5221/api/brain/tasks'] }],
+      transcript: path.join(sb.logDir, 'qa-77-r1.jsonl'),
+    });
+    expect(qaCalls().at(-1).transcript_path).toBe(path.join(sb.logDir, 'qa-77-r1.jsonl'));
+  });
+
+  // 审计 #33：评估报告不合格（金丝雀 #6160：T-5 的命令执行记录里查不到）→ 下一次评估带上次的问题；通过后清掉
+  it('评估出错 → 记下原因；下一次 evaluate 拿到 prev_errors；评估成功后清掉', async () => {
+    let r = await go(green(), { mode: 'unverified' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls()[0].prev_errors).toBeUndefined();
+    expect(state().last_eval_error).toMatchObject({ reason_code: 'qa_evidence_unverified' });
+    await E.closeBrain();
+    r = await go(green(), { mode: 'pass' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls().at(-1).prev_errors).toContain('qa_evidence_unverified');
+    expect(qaCalls().at(-1).prev_errors).toContain('T-5');
+    expect(state().last_eval_error).toBeUndefined();
   });
 
   it('已合并且 QA 通过过的 PR → 停掉它的预览环境释放容量（只停一次）', async () => {
