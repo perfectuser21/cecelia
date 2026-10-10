@@ -11,10 +11,21 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import {
+  DECISION_CATEGORIES, DEFAULT_DECISION_CATEGORY, DECISION_MADE_BY, DECISION_PRIORITIES,
+  isValidDecisionCategory,
+} from '../decision-categories.js';
 
 const router = Router();
 
 const VALID_STATUSES = ['active', 'executed', 'expired'];
+
+// 数据库 CHECK 约束名 → 字段名（兜底 check_violation 时只告诉调用方字段，不回显约束原文）
+const CHECK_CONSTRAINT_FIELDS = {
+  decisions_category_chk: 'category',
+  decisions_made_by_check: 'made_by',
+  decisions_priority_check: 'priority',
+};
 
 /**
  * GET /
@@ -87,19 +98,48 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ success: false, error: `status 非法，合法值：${VALID_STATUSES.join('|')}` });
     }
 
+    const categoryOmitted = category === undefined || category === null || category === '';
+    if (!categoryOmitted && !isValidDecisionCategory(category)) {
+      return res.status(400).json({
+        success: false,
+        error: `category 非法，合法值：${DECISION_CATEGORIES.join('|')}`,
+        allowed_categories: [...DECISION_CATEGORIES],
+      });
+    }
+
+    if (!DECISION_MADE_BY.includes(made_by)) {
+      return res.status(400).json({
+        success: false,
+        error: `made_by 非法，合法值：${DECISION_MADE_BY.join('|')}`,
+        allowed_made_by: [...DECISION_MADE_BY],
+      });
+    }
+
+    if (!DECISION_PRIORITIES.includes(priority)) {
+      return res.status(400).json({
+        success: false,
+        error: `priority 非法，合法值：${DECISION_PRIORITIES.join('|')}`,
+        allowed_priorities: [...DECISION_PRIORITIES],
+      });
+    }
+
     const result = await pool.query(
       `INSERT INTO decisions
          (category, topic, decision, reason, status, trigger, author, made_by, priority, area, alternatives, decided_at, source_ref)
        VALUES ($1, $2, $3, $4, $5, 'user', $6, $7, $8, $9, $10, $11, $12)
        RETURNING id, category, topic, decision, reason, status, author, made_by, priority, created_at`,
-      [category || 'general', topic, decision, reason || null, status,
+      [categoryOmitted ? DEFAULT_DECISION_CATEGORY : category, topic, decision, reason || null, status,
        author, made_by, priority, area, alternatives, decided_at, source_ref]
     );
 
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) {
     console.error('[strategic-decisions] POST error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
+    if (err.code === '23514') {
+      const field = CHECK_CONSTRAINT_FIELDS[err.constraint] || '未知';
+      return res.status(400).json({ success: false, error: `字段 ${field} 取值不符合约束` });
+    }
+    res.status(500).json({ success: false, error: '创建决策失败' });
   }
 });
 
