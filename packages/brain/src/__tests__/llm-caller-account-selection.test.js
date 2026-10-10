@@ -4,15 +4,13 @@ vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
 /**
  * llm-caller-account-selection.test.js
  *
- * 测试 callClaudeViaBridge 正确传递 accountId 给 bridge：
- *  - selectBestAccount() 返回 { accountId, model } 时，提取 accountId（修复容器内 homedir 路径 bug）
- *  - selectBestAccount({ model: 'haiku' }) 统一选账号（PR #547 统一入口）
- *  - bridge 在宿主机侧用 accountId 拼出正确 CLAUDE_CONFIG_DIR（不在容器内拼）
+ * 原「callClaudeViaBridge 把 selectBestAccount 选出的 accountId 传给 bridge」ACS1-4 已随 Claude 通道退役删除（任务 76a160b3）。
+ * 新行为：provider=anthropic 不再选 Claude 订阅账号、不 POST bridge，改由 anthropic-api（API key）直连兜底。
  *
  * DoD 映射：
- *  - ACS1 → 'selectBestAccount 返回 {accountId} 对象时，requestBody.accountId 为正确 accountId 字符串'
- *  - ACS2 → 'Haiku 模型走 selectBestAccount({ model: "haiku" })，requestBody.accountId 为正确账号'
- *  - ACS3 → 'selectBestAccount 返回 null 时，不传 accountId'
+ *  - ACS1 → 'sonnet + provider=anthropic：不调 selectBestAccount，只请求 api.anthropic.com'
+ *  - ACS2 → 'haiku + provider=anthropic：不调 selectBestAccount，只请求 api.anthropic.com'
+ *  - ACS3 → '账号查询失败/无账号都不影响：不抛 LLM_ACCOUNT_UNAVAILABLE'
  */
 
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
@@ -41,7 +39,7 @@ vi.mock('../model-profile.js', () => ({
   }),
 }));
 
-// Mock fetch (bridge call)
+// Mock fetch
 // vi.stubGlobal 确保 afterAll 可以通过 vi.unstubAllGlobals() 恢复，不污染后续文件
 const mockFetch = vi.hoisted(() => vi.fn());
 vi.stubGlobal('fetch', mockFetch);
@@ -52,15 +50,25 @@ afterAll(() => {
 
 import { callLLM } from '../llm-caller.js';
 
-describe('llm-caller accountId 传递给 bridge（ACS 系列）', () => {
+const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+
+function anthropicOk(text) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ content: [{ type: 'text', text }] }),
+    text: async () => JSON.stringify({ content: [{ type: 'text', text }] }),
+  };
+}
+
+function fetchedUrls() {
+  return mockFetch.mock.calls.map(([url]) => String(url));
+}
+
+describe('llm-caller Claude 通道退役：不再选 Claude 账号、不 POST bridge（ACS 系列）', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    // Default: fetch returns ok
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ ok: true, text: '测试回复' }),
-      text: async () => JSON.stringify({ ok: true, text: '测试回复' }),
-    });
+    mockFetch.mockResolvedValue(anthropicOk('测试回复'));
     // 每个测试前重置 model profile 为 sonnet（避免测试间 mock 状态污染）
     const { getActiveProfile } = await import('../model-profile.js');
     getActiveProfile.mockReturnValue({
@@ -70,66 +78,51 @@ describe('llm-caller accountId 传递给 bridge（ACS 系列）', () => {
     });
   });
 
-  it('ACS1: selectBestAccount 返回 {accountId, model} 对象时，requestBody.accountId 为正确字符串', async () => {
+  it('ACS1: sonnet + provider=anthropic → 不调 selectBestAccount，只请求 api.anthropic.com', async () => {
     mockSelectBestAccount.mockResolvedValue({ accountId: 'account2', model: 'sonnet' });
 
-    await callLLM('thalamus', '测试 prompt');
+    const result = await callLLM('thalamus', '测试 prompt');
 
-    expect(mockFetch).toHaveBeenCalled();
-    const callArgs = mockFetch.mock.calls[0];
-    const requestBody = JSON.parse(callArgs[1].body);
-
-    // 发给 bridge 的是 accountId 字符串（不是 configDir 路径，不是 [object Object]）
-    expect(requestBody.accountId).toBe('account2');
-    expect(requestBody.configDir).toBeUndefined();
+    expect(mockSelectBestAccount).not.toHaveBeenCalled();
+    expect(fetchedUrls()).toEqual([ANTHROPIC_URL]);
+    const requestBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(requestBody.model).toBe('claude-sonnet-4-6');
+    expect(requestBody.accountId).toBeUndefined();
+    expect(result.provider).toBe('anthropic-api');
   });
 
-  it('ACS2: Haiku 模型走 selectBestAccount({ model: "haiku" })，requestBody.accountId 为正确账号', async () => {
-    // PR #547: Haiku 模型统一走 selectBestAccount({ model: 'haiku' })
+  it('ACS2: haiku + provider=anthropic → 不调 selectBestAccount，只请求 api.anthropic.com', async () => {
     const { getActiveProfile } = await import('../model-profile.js');
     getActiveProfile.mockReturnValue({
       config: {
         thalamus: { model: 'claude-haiku-4-5-20251001', provider: 'anthropic' },
       },
     });
-
     mockSelectBestAccount.mockResolvedValue({ accountId: 'account3', model: 'haiku' });
 
     await callLLM('thalamus', '测试 prompt');
 
-    expect(mockSelectBestAccount).toHaveBeenCalledWith({ model: 'haiku' });
-    expect(mockFetch).toHaveBeenCalled();
-    const callArgs = mockFetch.mock.calls[0];
-    const requestBody = JSON.parse(callArgs[1].body);
-
-    expect(requestBody.accountId).toBe('account3');
-    expect(requestBody.configDir).toBeUndefined();
+    expect(mockSelectBestAccount).not.toHaveBeenCalled();
+    expect(fetchedUrls()).toEqual([ANTHROPIC_URL]);
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body).model).toBe('claude-haiku-4-5-20251001');
   });
 
-  it('ACS3: 无可用账号时拒绝，不回落到 account1', async () => {
-    mockSelectBestAccount.mockResolvedValue(null);
-    await expect(callLLM('thalamus', '测试 prompt')).rejects.toMatchObject({ code: 'LLM_ACCOUNT_UNAVAILABLE' });
-    expect(mockFetch).not.toHaveBeenCalled();
-  });
-
-  it('ACS4: 账号状态查询失败时拒绝，不猜测默认账号', async () => {
+  it('ACS3: 账号查询失败 / 无可用账号都不影响 → 不抛 LLM_ACCOUNT_UNAVAILABLE，走 anthropic-api', async () => {
     mockSelectBestAccount.mockRejectedValue(new Error('account store unavailable'));
-    await expect(callLLM('thalamus', '测试 prompt')).rejects.toMatchObject({ code: 'LLM_ACCOUNT_UNAVAILABLE' });
-    expect(mockFetch).not.toHaveBeenCalled();
-  });
+    await expect(callLLM('thalamus', '测试 prompt')).resolves.toMatchObject({ provider: 'anthropic-api', text: '测试回复' });
 
+    mockSelectBestAccount.mockResolvedValue(null);
+    await expect(callLLM('thalamus', '测试 prompt')).resolves.toMatchObject({ provider: 'anthropic-api' });
+
+    expect(mockSelectBestAccount).not.toHaveBeenCalled();
+    expect(fetchedUrls().some((u) => u.includes('/llm-call'))).toBe(false);
+  });
 });
 
 describe('llm-caller 图片视觉支持（VB 系列）', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    // P0-5: bridge 现已支持图片，默认走 bridge
-    mockFetch.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ ok: true, text: '我看到了一张图片' }),
-      text: async () => JSON.stringify({ ok: true, text: '我看到了一张图片' }),
-    });
+    mockFetch.mockResolvedValue(anthropicOk('我看到了一张图片'));
     const { getActiveProfile } = await import('../model-profile.js');
     getActiveProfile.mockReturnValue({
       config: {
@@ -139,36 +132,27 @@ describe('llm-caller 图片视觉支持（VB 系列）', () => {
     mockSelectBestAccount.mockResolvedValue({ accountId: 'account1', model: 'claude-sonnet-4-6' });
   });
 
-  it('VB1: imageContent 存在 + provider=anthropic → 走 bridge（P0-5 改造后 bridge 支持图片）', async () => {
+  it('VB1: imageContent 存在 + provider=anthropic → 不走 bridge，图片随 anthropic-api 透传', async () => {
     const imageContent = [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'abc123' } }];
 
-    await callLLM('mouth', '这张图片是什么？', { imageContent });
+    const result = await callLLM('mouth', '这张图片是什么？', { imageContent });
 
-    expect(mockFetch).toHaveBeenCalled();
-    const calledUrl = mockFetch.mock.calls[0][0];
-    // P0-5: bridge 现支持图片，不再升级到 anthropic-api
-    expect(calledUrl).toContain('/llm-call');
-    expect(calledUrl).not.toContain('api.anthropic.com');
-    // body 应带 image_base64 + image_mime
+    expect(fetchedUrls()).toEqual([ANTHROPIC_URL]);
     const requestBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(requestBody.image_base64).toBe('abc123');
-    expect(requestBody.image_mime).toBe('image/jpeg');
+    expect(requestBody.image_base64).toBeUndefined();
+    expect(requestBody.messages[0].content[1]).toEqual(imageContent[0]);
+    expect(result.text).toBe('我看到了一张图片');
   });
 
-  it('VB2: 无 imageContent + provider=anthropic → 调用 bridge（原有逻辑不破坏）', async () => {
-    // 无图片时走 bridge，bridge 返回格式
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ ok: true, text: '纯文字回复' }),
-      text: async () => JSON.stringify({ ok: true, text: '纯文字回复' }),
-    });
+  it('VB2: 无 imageContent + provider=anthropic → 不调用 bridge（localhost）', async () => {
+    mockFetch.mockResolvedValue(anthropicOk('纯文字回复'));
 
-    await callLLM('mouth', '你好，世界！');
+    const result = await callLLM('mouth', '你好，世界！');
 
     expect(mockFetch).toHaveBeenCalled();
     const calledUrl = mockFetch.mock.calls[0][0];
-    // 应该走 bridge（localhost）
-    expect(calledUrl).toContain('localhost');
-    expect(calledUrl).not.toContain('api.anthropic.com');
+    expect(calledUrl).not.toContain('localhost');
+    expect(calledUrl).toBe(ANTHROPIC_URL);
+    expect(result.text).toBe('纯文字回复');
   });
 });

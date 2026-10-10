@@ -9,35 +9,12 @@ const code = readFileSync(join(__dirname, '..', 'executor.js'), 'utf8');
 // executor.js 巨型模块依赖面太宽，行为级测试成本高（会拉起 langgraph/docker 链）；
 // 本任务用源码结构断言锁接线点存在性 + dedupe.test.js 已覆盖 claim 行为本身。
 describe('executor spawn dedupe 接线（结构断言）', () => {
-  it('DEDUP CHECK 之后接了 DB 级 claimDedupeKey(spawn)', () => {
-    const dedupCheckIdx = code.indexOf('=== DEDUP CHECK ===');
-    const claimIdx = code.indexOf("claimDedupeKey('spawn'");
-    expect(dedupCheckIdx).toBeGreaterThan(-1);
-    expect(claimIdx).toBeGreaterThan(dedupCheckIdx);
-  });
-
-  it('claim 在 RESOURCE CHECK 之后、docker/bridge spawn 之前（终审修复：避免 server_overloaded 路径泄漏 key）', () => {
-    const resourceCheckIdx = code.indexOf('=== RESOURCE CHECK ===');
-    const claimIdx = code.indexOf("claimDedupeKey('spawn'");
-    const dockerSpawnIdx = code.indexOf('HARNESS_DOCKER_ENABLED');
-    expect(resourceCheckIdx).toBeGreaterThan(-1);
-    expect(claimIdx).toBeGreaterThan(resourceCheckIdx);
-    expect(dockerSpawnIdx).toBeGreaterThan(claimIdx);
-  });
-
-  it('server_overloaded return 出现在 claim 之前（资源过载路径不可能泄漏 dedupe key）', () => {
-    const overloadedIdx = code.indexOf("reason: 'server_overloaded'");
-    const claimIdx = code.indexOf("claimDedupeKey('spawn'");
-    expect(overloadedIdx).toBeGreaterThan(-1);
-    expect(overloadedIdx).toBeLessThan(claimIdx);
-  });
-
-  it('被去重返回 spawn_deduplicated 语义', () => {
-    expect(code).toMatch(/reason:\s*'spawn_deduplicated'/);
-  });
-
-  it('spawn 失败路径释放 key', () => {
-    expect(code).toMatch(/releaseDedupeKey\('spawn'/);
+  // 原 5 条用例（DEDUP CHECK 后 claimDedupeKey(spawn) / RESOURCE CHECK 顺序 / server_overloaded 先于 claim /
+  // spawn_deduplicated 返回 / spawn 失败 releaseDedupeKey）测的是 _triggerCeceliaRunInner 第 3 步 Claude 桥接/容器 spawn 段，
+  // 已随 Claude 通道退役删除（任务 76a160b3）。
+  it('Claude spawn 段已删：executor 不再 claim/release spawn dedupe key', () => {
+    expect(code).not.toMatch(/claimDedupeKey\('spawn'/);
+    expect(code).not.toMatch(/releaseDedupeKey\('spawn'/);
   });
 
   it('不碰 harness-callback claim（该文件零改动）', () => {

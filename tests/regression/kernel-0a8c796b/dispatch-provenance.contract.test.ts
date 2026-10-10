@@ -24,7 +24,7 @@ describe('machine launch provenance command contract', () => {
     expect(result.stdout).toContain(`HARNESS_TASK_ID=${taskId}`);
   });
 
-  it('headed Claude 生产命令构造器透传 machine provenance 三字段', async () => {
+  it('headed Claude 已退役（任务 76a160b3）：拒绝 claude_channel_retired，不构造 tmux 启动命令', async () => {
     const { spawnSkillRelaySession } = await import(
       '../../../packages/brain/src/harness-skill-relay.js'
     );
@@ -51,12 +51,7 @@ describe('machine launch provenance command contract', () => {
       ensureWt: async () => '/tmp/contract-worktree',
       now: () => new Date('2026-07-25T00:00:00Z'),
     });
-    expect(result.ok).toBe(true);
-    const tmux = calls.find((command) => command.includes('tmux new-session'));
-    expect(tmux).toBeTruthy();
-    expect(tmux).toContain('CECELIA_DISPATCH=1');
-    expect(tmux).toContain('CECELIA_LAUNCHED_BY=skill-relay-claude-headed');
-    expect(tmux).toContain(`HARNESS_TASK_ID=${taskId}`);
-    expect(tmux).toContain('claude-launch.sh');
+    expect(result).toMatchObject({ ok: false, error: 'claude_channel_retired' });
+    expect(calls.some((command) => command.includes('tmux new-session'))).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import { CLAUDE_CHANNEL_RETIRED } from './lib/claude-channel.js';
 import { homedir } from 'os';
 import { join } from 'path';
 import { getAccountUsage } from './account-usage.js';
@@ -143,10 +144,11 @@ async function pollGrokLedger() {
 export function chooseGuidedExecutor(taskType, budgetState, snapshot) {
   if (!snapshot?.vendors) return null;
   const vendors = snapshot?.vendors || {};
-  const claudeAvailable = (vendors.claude?.available_count || 0) > 0;
+  // Claude Code 无头通道已退役（任务 76a160b3）：claude 账号再多也不可选，等同 0 可用
+  const claudeAvailable = !CLAUDE_CHANNEL_RETIRED && (vendors.claude?.available_count || 0) > 0;
   const codexAvailable = (vendors.codex?.available_count || 0) > 0;
   const grokAvailable = (vendors.grok?.available_count || 0) > 0;
-  const prefersCodex = budgetState === 'tight' || budgetState === 'critical';
+  const prefersCodex = CLAUDE_CHANNEL_RETIRED || budgetState === 'tight' || budgetState === 'critical';
   const primary = prefersCodex ? 'codex' : 'claude';
   const fallback = prefersCodex ? 'claude' : 'codex';
 

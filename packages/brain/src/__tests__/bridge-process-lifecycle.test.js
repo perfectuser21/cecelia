@@ -55,156 +55,43 @@ function loadBridge(entry, env = {}) {
     handler(req, res); req.emit('data', JSON.stringify({ prompt: '测试', ...payload })); req.emit('end');
     return { req, res };
   }
-  function finish(child, code = 0) {
-    groups.delete(child.pid); child.exitCode = code; child.emit('exit', code); child.emit('close', code);
-  }
-  return { request, children, spawn, proc, groups, finish, fs, server, execSync, logger };
+  return { request, children, spawn, execSync, handler };
 }
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
+// 原「进程生命周期」用例组（并发槽/超时/进程组 KILL/输出上限/信号回收等，测的是 /llm-call 拉起 claude -p）
+// 已随 Claude 通道退役删除（任务 76a160b3）；bridge-lifecycle.cjs 模块本身仍由下方真实 OS 进程组验收覆盖。
 for (const entry of ['cecelia-bridge.cjs', 'cecelia-bridge.js']) {
-  describe(`${entry} 进程生命周期`, () => {
-    it('默认并发2，第三次请求立即拒绝且不创建进程', () => {
-      const b = loadBridge(entry); b.request(); b.request();
-      expect(b.request().res.statusCode).toBe(503);
-      expect(b.children).toHaveLength(2);
-      expect(b.spawn.mock.calls[0][2].detached).toBe(true);
+  describe(`${entry} Claude 通道退役`, () => {
+    it.each(['/llm-call', '/trigger-cecelia'])('%s 一律 410 claude_channel_retired，不创建任何进程', (url) => {
+      const b = loadBridge(entry);
+      const { res } = b.request({ task_id: 't', checkpoint_id: 'c', model: 'sonnet' }, url);
+      expect(res.statusCode).toBe(410);
+      expect(res.body).toEqual({ ok: false, error: 'claude_channel_retired' });
+      expect(b.spawn).not.toHaveBeenCalled();
+      expect(b.execSync).not.toHaveBeenCalled();
+      expect(b.children).toHaveLength(0);
     });
-    it.each([['1', 1], ['99', 4], ['Infinity', 2], ['invalid', 2], ['-3', 2], ['0', 2]])('并发配置%s安全归一化为%s', (value, count) => {
-      const b = loadBridge(entry, { CECELIA_BRIDGE_MAX_CONCURRENT: value });
-      for (let i = 0; i < count; i++) b.request();
-      expect(b.request().res.statusCode).toBe(503);
-      expect(b.children).toHaveLength(count);
-    });
-    it('超时立即回复，TERM后5秒KILL整组，组消失前保持槽位', () => {
+    it('重复请求不受并发上限影响，始终 410（无槽位概念）', () => {
       const b = loadBridge(entry, { CECELIA_BRIDGE_MAX_CONCURRENT: '1' });
-      const { res } = b.request({ timeout: 100 }); const child = b.children[0];
-      vi.advanceTimersByTime(100);
-      expect(res.body).toMatchObject({ ok: false, status: 'timeout', degraded: true });
-      expect(b.proc.kill).toHaveBeenCalledWith(-child.pid, 'SIGTERM');
-      expect(b.request().res.statusCode).toBe(503);
-      child.exitCode = 0; child.emit('exit', 0); child.emit('close', 0);
-      vi.advanceTimersByTime(4999);
-      expect(b.proc.kill).not.toHaveBeenCalledWith(-child.pid, 'SIGKILL');
-      vi.advanceTimersByTime(1);
-      expect(b.proc.kill).toHaveBeenCalledWith(-child.pid, 'SIGKILL');
-      expect(b.request().res.statusCode).toBe(503);
-      b.groups.delete(child.pid); vi.advanceTimersByTime(100); b.request();
-      expect(b.children).toHaveLength(2); expect(res.end).toHaveBeenCalledTimes(1);
+      for (let i = 0; i < 3; i++) expect(b.request().res.statusCode).toBe(410);
+      expect(b.spawn).not.toHaveBeenCalled();
     });
-    it('leader先退出也回收存活孙进程，不等待close', () => {
-      const b = loadBridge(entry); b.request(); const child = b.children[0];
-      child.exitCode = 0; child.emit('exit', 0);
-      expect(b.proc.kill).toHaveBeenCalledWith(-child.pid, 'SIGTERM');
-      vi.advanceTimersByTime(5000);
-      expect(b.proc.kill).toHaveBeenCalledWith(-child.pid, 'SIGKILL');
-    });
-    it('req.close不误杀，响应连接断开立即回收', () => {
-      const b = loadBridge(entry); const { req, res } = b.request();
-      req.emit('close'); expect(b.proc.kill).not.toHaveBeenCalledWith(-b.children[0].pid, 'SIGTERM');
-      res.destroyed = true; res.emit('close');
-      expect(b.proc.kill).toHaveBeenCalledWith(-b.children[0].pid, 'SIGTERM');
-      vi.advanceTimersByTime(5000);
-      expect(b.proc.kill).toHaveBeenCalledWith(-b.children[0].pid, 'SIGKILL');
-      expect(res.end).not.toHaveBeenCalled();
-    });
-    it('req.aborted回收，error/close重复事件不重复回复或释放槽位', () => {
-      const b = loadBridge(entry, { CECELIA_BRIDGE_MAX_CONCURRENT: '1' });
-      const { req, res } = b.request(); req.aborted = true; req.emit('aborted');
-      const child = b.children[0]; expect(b.proc.kill).toHaveBeenCalledWith(-child.pid, 'SIGTERM');
-      child.emit('error', new Error('cancelled')); child.emit('close', 1);
-      expect(b.request().res.statusCode).toBe(503);
-      b.groups.delete(child.pid); vi.advanceTimersByTime(100); b.request();
-      expect(b.request().res.statusCode).toBe(503);
-      expect(b.children).toHaveLength(2); expect(res.end).not.toHaveBeenCalled();
-    });
-    it('spawn同步失败不占槽，异步ENOENT与后续close幂等', () => {
-      const b = loadBridge(entry, { CECELIA_BRIDGE_MAX_CONCURRENT: '1' });
-      b.spawn.mockImplementationOnce(() => { throw new Error('spawn failed'); });
-      expect(b.request().res.body.error).toBe('spawn failed');
-      const failed = b.request();
-      const child = b.children[0]; b.groups.delete(child.pid); child.pid = undefined;
-      child.emit('error', new Error('ENOENT')); child.emit('close', -2);
-      expect(failed.res.statusCode).toBe(500); expect(failed.res.end).toHaveBeenCalledTimes(1);
-      b.request(); expect(b.request().res.statusCode).toBe(503);
-      expect(b.children).toHaveLength(2);
-    });
-    it('成功输出在UTF8字符跨数据块时仍保持完整', () => {
-      const b = loadBridge(entry); const { res } = b.request();
-      const text = Buffer.from('图片');
-      b.children[0].stdout.emit('data', text.subarray(0, 1));
-      b.children[0].stdout.emit('data', text.subarray(1));
-      b.finish(b.children[0]); expect(res.body.text).toBe('图片');
-    });
-    it('生命周期日志带ISO时间和原因，不记录prompt/账号凭据/模型输出', () => {
-      const b = loadBridge(entry, { CECELIA_BRIDGE_MAX_CONCURRENT: '1' });
-      b.request({ prompt: 'private-prompt', model: 'sonnet', accountId: 'private-account', timeout: 100 });
-      const child = b.children[0];
-      child.stdout.emit('data', Buffer.from('private-model-output'));
-      b.request();
-      expect(b.logger.log).toHaveBeenCalledWith('[bridge] /llm-call start', expect.objectContaining({
-        at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/), pid: child.pid, model: 'sonnet', timeout_ms: 100, active: 1,
-      }));
-      expect(b.logger.warn).toHaveBeenCalledWith('[bridge] /llm-call rejected', expect.objectContaining({ reason: 'capacity', active: 1 }));
-      vi.advanceTimersByTime(5100);
-      expect(b.logger.warn).toHaveBeenCalledWith('[bridge] /llm-call timeout', expect.objectContaining({ pid: child.pid, reason: 'timeout' }));
-      expect(b.logger.warn).toHaveBeenCalledWith('[bridge] /llm-call kill', expect.objectContaining({ pid: child.pid, reason: 'timeout' }));
-      b.groups.delete(child.pid); vi.advanceTimersByTime(100);
-      expect(b.logger.log).toHaveBeenCalledWith('[bridge] /llm-call reaped', expect.objectContaining({ pid: child.pid, active: 0 }));
-      expect(JSON.stringify(Object.values(b.logger).flatMap(fn => fn.mock.calls))).not.toMatch(/private-prompt|private-account|private-model-output/);
-    });
-    it('正常结束保持协议并释放槽位', () => {
-      const b = loadBridge(entry, { CECELIA_BRIDGE_MAX_CONCURRENT: '1' });
-      const { res } = b.request({ model: 'sonnet' });
-      b.children[0].stdout.emit('data', Buffer.from(' 完成 ')); b.finish(b.children[0]);
+    it('/health 仍返回 200 healthy', () => {
+      const b = loadBridge(entry);
+      const req = new EventEmitter(); Object.assign(req, { method: 'GET', url: '/health' });
+      const res = new EventEmitter();
+      res.writeHead = vi.fn((status) => { res.statusCode = status; });
+      res.end = vi.fn((body) => { res.body = JSON.parse(body); });
+      b.handler(req, res);
       expect(res.statusCode).toBe(200);
-      expect(res.body).toMatchObject({ ok: true, text: '完成', model: 'sonnet' });
-      b.request(); expect(b.children).toHaveLength(2); expect(res.end).toHaveBeenCalledTimes(1);
-    });
-    it.each(['SIGTERM', 'SIGINT'])('%s回收所有组，KILL后才能退出Bridge', (signal) => {
-      const b = loadBridge(entry); b.request(); b.request(); b.proc.emit(signal);
-      expect(b.server.close).toHaveBeenCalledTimes(1);
-      for (const child of b.children) expect(b.proc.kill).toHaveBeenCalledWith(-child.pid, 'SIGTERM');
-      expect(b.proc.exit).not.toHaveBeenCalled(); expect(b.request().res.statusCode).toBe(503);
-      vi.advanceTimersByTime(5000);
-      for (const child of b.children) expect(b.proc.kill).toHaveBeenCalledWith(-child.pid, 'SIGKILL');
-      b.groups.clear(); vi.advanceTimersByTime(100); expect(b.proc.exit).toHaveBeenCalledWith(0);
-    });
-    it.each(['stdout', 'stderr'])('%s超过1MiB后停止缓冲并回收组', (stream) => {
-      const b = loadBridge(entry); const { res } = b.request(); const child = b.children[0];
-      child[stream].emit('data', Buffer.alloc(1024 * 1024 + 1, 'x'));
-      expect(res.statusCode).toBe(500); expect(res.body.error).toMatch(/output.*limit/i);
-      expect(b.proc.kill).toHaveBeenCalledWith(-child.pid, 'SIGTERM');
-      child[stream].emit('data', Buffer.alloc(16, 'y')); b.finish(child);
-      expect(res.end).toHaveBeenCalledTimes(1);
-    });
-    it.each([-1, 'Infinity', 'invalid', 0])('非法timeout%s安全回落120秒', (timeout) => {
-      const b = loadBridge(entry, { CECELIA_BRIDGE_TIMEOUT_MS: 'invalid', CECELIA_BRIDGE_MAX_TIMEOUT_MS: '-1' });
-      const { res } = b.request({ timeout }); vi.advanceTimersByTime(119999);
-      expect(res.end).not.toHaveBeenCalled(); vi.advanceTimersByTime(1); expect(res.body.status).toBe('timeout');
-    });
-    it('大timeout硬封600秒，合法300秒不被默认120秒截断', () => {
-      const b = loadBridge(entry, { CECELIA_BRIDGE_MAX_TIMEOUT_MS: 'Infinity' });
-      const first = b.request({ timeout: 300000 }), second = b.request({ timeout: 999999999 });
-      vi.advanceTimersByTime(299999); expect(first.res.end).not.toHaveBeenCalled();
-      vi.advanceTimersByTime(1); expect(first.res.body.status).toBe('timeout');
-      vi.advanceTimersByTime(300000); expect(second.res.body.status).toBe('timeout');
+      expect(res.body).toMatchObject({ ok: true, status: 'healthy' });
     });
   });
 }
 describe('入口功能保留与部署依赖', () => {
-  it('cjs图片在进程组消失后清理，仍放行Read工具', () => {
-    const b = loadBridge('cecelia-bridge.cjs'); b.request({ image_base64: 'AAAA', image_mime: 'image/png', timeout: 100 });
-    expect(b.spawn.mock.calls[0][1]).toContain('--allowedTools'); expect(b.spawn.mock.calls[0][1]).toContain('Read');
-    vi.advanceTimersByTime(100); expect(b.fs.unlinkSync).not.toHaveBeenCalled();
-    b.finish(b.children[0]); expect(b.fs.unlinkSync).toHaveBeenCalledTimes(1);
-  });
-  it('旧js任务触发保留GOAL_SETTINGS原始JSON', () => {
-    const b = loadBridge('cecelia-bridge.js'), settings = '{"steps":2}';
-    const { res } = b.request({ task_id: 't', checkpoint_id: 'c', extra_env: { CECELIA_GOAL_SETTINGS: settings } }, '/trigger-cecelia');
-    expect(res.body.ok).toBe(true); expect(b.execSync.mock.calls.at(-1)[0]).toContain(`CECELIA_GOAL_SETTINGS='${settings}'`);
-  });
+  // 原「cjs图片清理/Read工具」「旧js任务触发保留GOAL_SETTINGS」用例已随 Claude 通道退役删除（任务 76a160b3）。
   it('部署js入口时同步生命周期模块至bin/lib', () => {
     const deploy = readFileSync(path.resolve(scriptDir, '../../../scripts/brain-deploy.sh'), 'utf8');
     const begin = deploy.indexOf('    BRIDGE_SRC=');
@@ -219,7 +106,10 @@ describe('入口功能保留与部署依赖', () => {
       expect(readFileSync(path.join(destination, 'bin/lib/bridge-lifecycle.cjs'), 'utf8'))
         .toBe(readFileSync(path.join(scriptDir, 'lib/bridge-lifecycle.cjs'), 'utf8'));
       const b = loadBridge(path.relative(scriptDir, installed));
-      b.request(); b.request(); expect(b.request().res.statusCode).toBe(503);
+      const retired = b.request();
+      expect(retired.res.statusCode).toBe(410);
+      expect(retired.res.body).toEqual({ ok: false, error: 'claude_channel_retired' });
+      expect(b.spawn).not.toHaveBeenCalled();
       // 内容一致时应完全避免cp；macOS的同文件cp会返回非零。
       const unchanged = spawnSync('/bin/bash', ['-eu', '-c',
         'cp() { echo unexpected-copy >&2; return 1; }\n' + deploy.slice(begin, end) + '\nfi'], {

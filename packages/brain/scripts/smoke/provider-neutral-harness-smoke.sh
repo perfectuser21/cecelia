@@ -17,7 +17,15 @@ const bundle = {
   inputs: { worktree_path: process.cwd() },
 };
 
-for (const provider of ['claude', 'codex', 'grok']) {
+// Claude 无头通道已退役（任务 76a160b3）：registry 不再注册 claude，显式请求即 claude_channel_retired
+try {
+  registry.resolve({ provider: 'claude', requires: ['structured_output'] });
+  throw new Error('claude: expected claude_channel_retired');
+} catch (err) {
+  if (err.code !== 'claude_channel_retired') throw err;
+}
+
+for (const provider of ['codex', 'grok']) {
   const adapter = registry.resolve({ provider, requires: ['structured_output', 'resume'] });
   const spec = adapter.start({ bundle });
   if (spec.provider !== provider || spec.args.includes('--model')) {

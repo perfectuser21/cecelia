@@ -55,6 +55,17 @@ LOG_FILE="${CECELIA_LOG_FILE:-$HOME/logs/cecelia-run.log}"
 WORK_DIR="${CECELIA_WORK_DIR:-/Users/administrator/perfect21/cecelia}"
 MAX_RETRIES="${CECELIA_MAX_RETRIES:-5}"
 
+# Claude 无头通道已退役（任务 76a160b3，决策 067867c8，单一来源 packages/brain/src/lib/claude-channel.js）：
+# 本脚本只做一件事——拉起 claude -p。任何调用方（bridge / n8n / 手动）到此即止：
+# 不建日志目录、不建锁、不建 worktree、不回调 Brain。--dry-run 只打印命令行，保留给契约测试。
+case " $* " in
+  *" --dry-run "*) ;;
+  *)
+    echo '{"success":false,"error":"claude_channel_retired"}' >&2
+    exit 1
+    ;;
+esac
+
 # 确保日志目录存在
 mkdir -p "$(dirname "$LOG_FILE")"
 

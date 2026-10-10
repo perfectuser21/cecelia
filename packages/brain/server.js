@@ -10,7 +10,6 @@ import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
 import { spawn } from 'child_process';
-import { createWriteStream } from 'fs';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import brainRoutes from './src/routes.js';
@@ -659,56 +658,6 @@ server.on('upgrade', (req, socket, head) => {
   // /ws path handled by initWebSocketServer's own WSS
 });
 
-/**
- * Auto-start cecelia-bridge on port 3457 if not already running.
- * Idempotent: skips if /health returns 200.
- */
-async function startCeceliaBridge() {
-  if (isIsolatedRuntime()) return;
-  const BRIDGE_PORT = process.env.BRIDGE_PORT || 3457;
-  const bridgeUrl = `http://localhost:${BRIDGE_PORT}`;
-  try {
-    const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(2000) });
-    if (res.ok) {
-      console.log('[Server] cecelia-bridge already running on port', BRIDGE_PORT);
-      return;
-    }
-  } catch (_) {
-    // Not running — will start below
-  }
-
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  const bridgeScript = join(__dirname, 'scripts', 'cecelia-bridge.cjs');
-  const logFile = createWriteStream('/tmp/cecelia-bridge.log', { flags: 'a' });
-  // Wait for the stream to open before passing to spawn.
-  // On Linux (ubuntu-latest) a freshly created WriteStream has fd:null until
-  // the underlying file is opened; passing fd:null to spawn throws
-  // "TypeError: The argument stdio is invalid".
-  await new Promise((resolve, reject) => {
-    logFile.once('open', resolve);
-    logFile.once('error', reject);
-  });
-
-  const child = spawn(process.execPath, [bridgeScript], {
-    detached: false,
-    stdio: ['ignore', logFile, logFile],
-    env: { ...process.env, BRIDGE_PORT: String(BRIDGE_PORT) },
-  });
-
-  child.on('error', (err) => {
-    console.error('[Server] Failed to start cecelia-bridge:', err.message);
-  });
-
-  child.on('exit', (code, signal) => {
-    if (code !== null) {
-      console.warn(`[Server] cecelia-bridge exited with code ${code}`);
-    }
-  });
-
-  console.log(`[Server] cecelia-bridge started (pid=${child.pid}), log: /tmp/cecelia-bridge.log`);
-}
-
 // Startup guard: wait for port to be released by any prior (still-exiting) process,
 // then listen with EADDRINUSE retry. Replaces the old `lsof … kill -9` sledgehammer
 // which fought the launchd restart race instead of giving the OS time to release.
@@ -1102,8 +1051,7 @@ async function onBrainListening() {
     console.warn('[Server] Zombie Reaper init failed (non-fatal):', e.message);
   }
 
-  // Auto-start cecelia-bridge if not already running
-  await startCeceliaBridge();
+  // cecelia-bridge 不再随 Brain（含 PR 预览环境）自动拉起：Claude 无头通道已退役（任务 76a160b3，见 lib/claude-channel.js）
 
   // Janitor docker-prune 自动调度已取消（2026-07-08 用户拍板：旧机制 + 部署自杀竞态 Issue 97cf5a41）。
   // REGISTRY 已清空（src/janitor.js），janitor 框架保留，新 job 接入时在此补调度即可。

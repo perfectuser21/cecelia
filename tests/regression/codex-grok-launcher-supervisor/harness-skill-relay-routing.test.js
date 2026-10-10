@@ -33,10 +33,13 @@ describe('harness-skill-relay-routing: INV-1 三分支路由', () => {
     expect(/grok-launch\.sh/.test(section)).toBe(true);
   });
 
-  // ─── 测试 2: executor=claude 时 innerCmd 含 claude-launch.sh（GP1 不回归） ──
-  test('executor=claude 时 innerCmd 仍含 claude-launch.sh（GP1 零回归）', () => {
+  // ─── 测试 2: executor=claude 时拒绝，不再拉起 claude-launch.sh ──────────────
+  // 2026-10-10 更新（任务 76a160b3，决策 067867c8）：Claude Code 通道已退役，原「claude 分支
+  // 仍含 claude-launch.sh（GP1 零回归）」不再成立——headed claude 分支已删除，入口直接拒绝。
+  test('executor=claude 时拒绝 claude_channel_retired，innerCmd 不含 claude-launch.sh', () => {
     const section = readSpawnHeadedSession();
-    expect(/claude-launch\.sh/.test(section)).toBe(true);
+    expect(/claude-launch\.sh/.test(section)).toBe(false);
+    expect(/executor === 'claude'\)\s*\{\s*return \{ ok: false, mode: HEADED_HOSTS\.claude, error: CLAUDE_CHANNEL_RETIRED_CODE \}/.test(section)).toBe(true);
   });
 
   // ─── 测试 3: 禁止二元形式 isClaudeHeaded ? ... : codex（INV-1 反向断言） ────

@@ -4,7 +4,8 @@
  * 所有 Brain 组件的 LLM 调用都通过这个模块。
  * 根据 model-profile 配置决定用哪个模型和 provider：
  *   - anthropic-api → 直接调用 Anthropic REST API（走 API key，快 5-8x）
- *   - anthropic     → 通过 cecelia-bridge /llm-call 调用 claude -p（走订阅，降级用）
+ *   - anthropic     → 已退役：原经 cecelia-bridge /llm-call 调 claude -p（订阅 OAuth），
+ *                     现不发任何请求，按该候选失败（claude_channel_retired）走 fallbacks
  *   - minimax       → 直接调用 MiniMax API
  *
  * 使用方式：
@@ -18,45 +19,21 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { spawn } from 'child_process';
 import { getActiveProfile } from './model-profile.js';
-import { selectBestAccount, markAuthFailure, verifyAccountTokenLive } from './account-usage.js';
 import { CODEX_ACCOUNTS } from './llm-capacity.js';
 import { reportCall } from './langfuse-reporter.js';
 import { assertLiveLLMAllowed } from './runtime-safety.js';
-
-const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
-
-// ─── Bridge exit-code-1 熔断跟踪 ─────────────────────────────────────────────
-// accountId → { count: number, lastErrorAt: number }
-// 连续 3 次 bridge exit-code-1 失败 → markAuthFailure(accountId, 1h, 'api_error')
-const BRIDGE_EXIT1_THRESHOLD = 3;
-const BRIDGE_EXIT1_WINDOW_MS = 10 * 60 * 1000; // 10 分钟窗口内计数（跨窗口重置）
-const BRIDGE_EXIT1_RESET_MS = 60 * 60 * 1000;  // markAuthFailure 熔断 1h
-const _bridgeExit1Counters = new Map();
-
-function _recordBridgeExit1(accountId) {
-  const now = Date.now();
-  const existing = _bridgeExit1Counters.get(accountId);
-  const count = (existing && now - existing.lastErrorAt <= BRIDGE_EXIT1_WINDOW_MS)
-    ? existing.count + 1
-    : 1;
-  _bridgeExit1Counters.set(accountId, { count, lastErrorAt: now });
-  return count;
-}
-
-function _resetBridgeExit1(accountId) {
-  _bridgeExit1Counters.delete(accountId);
-}
+import { ClaudeChannelRetiredError } from './lib/claude-channel.js';
 
 // ─── Anthropic API 余额告警去重 ───────────────────────────────────────────────
 // 同一 runtime 只 raise 一次，Brain 重启后重新计数
 const _anthropicBalanceAlerted = new Set();
 
-// Model ID → claude --model flag
-const CLAUDE_MODEL_FLAG = {
-  'claude-haiku-4-5-20251001': 'haiku',
-  'claude-sonnet-4-6': 'sonnet',
-  'claude-opus-4-6': 'opus',
-};
+// 曾映射到 claude --model 的模型 ID：非 anthropic-api provider 配了这些模型时，原本也落到 bridge（claude -p）
+const CLAUDE_CLI_MODELS = new Set([
+  'claude-haiku-4-5-20251001',
+  'claude-sonnet-4-6',
+  'claude-opus-4-6',
+]);
 
 // MiniMax credentials cache
 let _minimaxKey = null;
@@ -130,8 +107,7 @@ function stripThinking(content) {
  * @param {string} [options.provider] - 覆盖 profile 的 provider 选择
  * @param {Array} [options.imageContent] - 图片 content blocks（Anthropic 多模态格式）
  *   例: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '...' } }]
- *   anthropic-api provider 走 Anthropic REST API 多模态字段，anthropic provider（bridge）
- *   走宿主机 tmp PNG + claude -p Read 工具（首张图）。minimax / openai 暂不支持图片。
+ *   anthropic-api provider 走 Anthropic REST API 多模态字段。minimax / openai 暂不支持图片。
  * @returns {Promise<{text: string, model: string, provider: string, elapsed_ms: number}>}
  */
 export async function callLLM(agentId, prompt, options = {}) {
@@ -167,13 +143,12 @@ export async function callLLM(agentId, prompt, options = {}) {
 
     try {
       let text;
-      // bridge 现已支持图片（bridge 内部写 tmp 文件 + Read 工具让 claude -p 看图），
-      // 不再因为有图片就强制升级到 anthropic-api。imageContent 继续原样透传。
       const effectiveProvider = provider;
       if (effectiveProvider === 'anthropic-api') {
         text = await callAnthropicAPI(prompt, model, timeout, maxTokens, imageContent);
-      } else if (effectiveProvider === 'anthropic' || CLAUDE_MODEL_FLAG[model]) {
-        text = await callClaudeViaBridge(prompt, model, timeout, model, imageContent);
+      } else if (effectiveProvider === 'anthropic' || CLAUDE_CLI_MODELS.has(model)) {
+        // Claude 无头通道已退役：不发请求，按该候选失败走 fallbacks（不碰任何账号熔断）
+        throw new ClaudeChannelRetiredError(`llm-caller provider=${provider} model=${model}`);
       } else if (effectiveProvider === 'minimax' || provider === 'minimax') {
         text = await callMiniMaxAPI(prompt, model, timeout, maxTokens);
       } else if (effectiveProvider === 'openai' || provider === 'openai') {
@@ -197,7 +172,7 @@ export async function callLLM(agentId, prompt, options = {}) {
   }
 
   // Implicit fallback to anthropic-api when all configured candidates fail.
-  // Covers: anthropic (bridge) failures AND non-anthropic providers (codex/openai) with no Anthropic fallback configured.
+  // Covers: anthropic（已退役通道）AND non-anthropic providers (codex/openai) with no Anthropic fallback configured.
   // Reason: codex/openai may be unavailable (no OAuth accounts, no API key), but Anthropic API key is typically stable.
   const ANTHROPIC_PROVIDERS = ['anthropic', 'anthropic-api'];
   const hasAnthropicCandidate = candidates.some(c => ANTHROPIC_PROVIDERS.includes(c.provider));
@@ -212,21 +187,9 @@ export async function callLLM(agentId, prompt, options = {}) {
       return { text, model: fallbackModel, provider: 'anthropic-api', elapsed_ms: elapsed, attempted_fallback: true };
     } catch (apiErr) {
       console.warn(`[llm-caller] ${agentId} anthropic-api 兜底也失败: ${apiErr.message}`);
-      // 终极兜底：anthropic-api 失败（如余额不足）时，继续尝试 anthropic bridge（走订阅）
-      // 场景：codex 无 OAuth + anthropic-api 余额不足 + bridge 可用
-      console.warn(`[llm-caller] ${agentId} 尝试 anthropic bridge 终极兜底`);
-      try {
-        const text = await callClaudeViaBridge(prompt, fallbackModel, timeout, fallbackModel, imageContent);
-        const elapsed = Date.now() - startTime;
-        console.log(`[llm-caller] ${agentId} → ${fallbackModel} (anthropic bridge ultimate fallback) in ${elapsed}ms`);
-        reportCall({ agentId, model: fallbackModel, provider: 'anthropic', prompt, text, elapsedMs: elapsed, startedAt: startTime }).catch(() => {});
-        return { text, model: fallbackModel, provider: 'anthropic', elapsed_ms: elapsed, attempted_fallback: true };
-      } catch (bridgeErr) {
-        console.warn(`[llm-caller] ${agentId} anthropic bridge 终极兜底也失败: ${bridgeErr.message}`);
-      }
     }
   } else if (primary.provider === 'anthropic') {
-    console.warn(`[llm-caller] ${agentId} bridge 所有候选失败，尝试 anthropic-api 直连`);
+    console.warn(`[llm-caller] ${agentId} anthropic 通道已退役（claude_channel_retired），尝试 anthropic-api 直连`);
     try {
       const text = await callAnthropicAPI(prompt, primary.model, timeout, maxTokens, imageContent);
       const elapsed = Date.now() - startTime;
@@ -319,138 +282,6 @@ async function callAnthropicAPI(prompt, model, timeout, maxTokens, imageContent 
   const text = data.content?.[0]?.text || '';
   if (!text) throw new Error('Anthropic API returned empty content');
   return text;
-}
-
-/**
- * 通过 cecelia-bridge 调用 claude -p（走订阅，不需要 API key）
- * 自动选择配额最优账号（通过 configDir 传给 bridge）
- * Bridge 500 时自动重试（最多 2 次，指数退避 500ms/1000ms）
- *
- * 多模态支持（vision-via-bridge）：若传入 imageContent（Anthropic content block 格式），
- * 本函数把第一张图的 base64 + mime 单独字段传给 bridge，bridge 在宿主机侧写 tmp PNG 并
- * 让 claude -p 通过 Read 工具读图。claude CLI 本身无 --image 参数，用 Read 工具绕过。
- *
- * @param {Array|null} imageContent - [{type:'image', source:{type:'base64', media_type, data}}]
- *   目前只取数组里第一张图（claude -p + Read 工具单图场景）。
- */
-async function callClaudeViaBridge(prompt, model, timeout, _originalModel, imageContent = null) {
-  const claudeModel = CLAUDE_MODEL_FLAG[model] || 'haiku';
-
-  // 从 imageContent 提取首张图片的 base64 + mime（bridge /llm-call 字段）
-  let imageBase64 = null;
-  let imageMime = null;
-  if (Array.isArray(imageContent) && imageContent.length > 0) {
-    const first = imageContent.find(
-      (c) => c && c.type === 'image' && c.source && c.source.type === 'base64' && c.source.data
-    );
-    if (first) {
-      imageBase64 = first.source.data;
-      imageMime = first.source.media_type || 'image/png';
-    }
-  }
-
-  // 统一账号选择：所有模型共用 selectBestAccount，spending cap 过滤统一处理
-  // 只传 accountId，由 bridge 在宿主机侧拼出正确 CLAUDE_CONFIG_DIR
-  // 无可用账号时必须停，不能用默认账号绕过额度/认证熔断。
-  let selection;
-  try {
-    selection = await selectBestAccount({ model: claudeModel });
-  } catch {
-    selection = null;
-  }
-  if (!selection?.accountId) {
-    const error = new Error('没有可用的 Claude 账号，停止 Bridge 调用');
-    error.code = 'LLM_ACCOUNT_UNAVAILABLE';
-    throw error;
-  }
-  const accountId = selection.accountId;
-
-  const BRIDGE_500_MAX_RETRIES = 2;
-  const BRIDGE_500_RETRY_BASE_MS = 500;
-  let bridge500Retry = 0;
-
-  while (true) {
-    const response = await fetch(`${BRIDGE_URL}/llm-call`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt,
-        model: claudeModel,
-        timeout,
-        ...(accountId ? { accountId } : {}),
-        ...(imageBase64 ? { image_base64: imageBase64, image_mime: imageMime } : {}),
-      }),
-      signal: AbortSignal.timeout(timeout + 10000), // bridge 自身超时 + 缓冲
-    });
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => 'unknown');
-      // dyld/Library not loaded/ENOENT 是启动级别失败，重试无意义，直接抛出
-      const isStartupError = /dyld|Library not loaded|ENOENT|cannot open shared object/.test(errText);
-      // 明确的 claude CLI exit-code-1 错误（bridge 响应体形如 {"error":"exit code 1",...}）
-      // 仅精确匹配 "exit code 1"（不命中 "exit code 137" 等其他退出码），避免误伤
-      const isExitCode1 = /\bexit code 1\b/.test(errText) && !/\bexit code 1\d+/.test(errText);
-      // exit-code-1 熔断：每次 500+exit-code-1 都计数（包括内部重试），
-      // 连续 3 次同一 account exit-code-1 → markAuthFailure(1h, 'api_error')
-      if (isExitCode1 && accountId) {
-        const count = _recordBridgeExit1(accountId);
-        console.warn(`[llm-caller] [bridge-circuit] ${accountId} exit-code-1 count=${count}/${BRIDGE_EXIT1_THRESHOLD}`);
-        if (count >= BRIDGE_EXIT1_THRESHOLD) {
-          // 限流(429)会让 claude CLI exit-1，但 token 仍有效——不能当 auth 失败熔断。
-          // markAuthFailure 前用 usage API 实时探测二次确认：仅 token 真失效才熔断。
-          let tokenState = 'unknown';
-          try {
-            tokenState = await verifyAccountTokenLive(accountId);
-          } catch (probeErr) {
-            console.warn(`[llm-caller] [bridge-circuit] ${accountId}: token 探测异常 ${probeErr.message}，保守不熔断`);
-          }
-          if (tokenState === 'auth_failed') {
-            try {
-              const resetTime = new Date(Date.now() + BRIDGE_EXIT1_RESET_MS).toISOString();
-              markAuthFailure(accountId, resetTime, 'api_error');
-              console.warn(`[llm-caller] [bridge-circuit] ${accountId}: 连续 ${count} 次 exit-code-1 且 token 探测=auth_failed，熔断 1h`);
-            } catch (mafErr) {
-              console.warn(`[llm-caller] [bridge-circuit] markAuthFailure 失败: ${mafErr.message}`);
-            }
-          } else {
-            console.warn(`[llm-caller] [bridge-circuit] ${accountId}: 连续 ${count} 次 exit-code-1 但 token 探测=${tokenState}（疑似限流，非 auth 失败），不熔断`);
-          }
-          _resetBridgeExit1(accountId);
-        }
-      }
-      // 500 是瞬态错误（CLI 限流/临时失败），重试；4xx 或启动错误直接抛出
-      if (response.status === 500 && !isStartupError && bridge500Retry < BRIDGE_500_MAX_RETRIES) {
-        bridge500Retry++;
-        const delayMs = BRIDGE_500_RETRY_BASE_MS * bridge500Retry;
-        console.warn(`[llm-caller] Bridge /llm-call 500，第 ${bridge500Retry} 次重试（${delayMs}ms 后）model=${claudeModel}`);
-        await new Promise(r => setTimeout(r, delayMs));
-        continue;
-      }
-      if (isStartupError) {
-        console.warn(`[llm-caller] Bridge /llm-call 启动错误，跳过重试: ${errText.slice(0, 120)}`);
-      }
-      const bridgeErr = new Error(`Bridge /llm-call error: ${response.status} - ${errText}`);
-      bridgeErr.status = response.status;
-      bridgeErr.isStartupError = isStartupError;
-      bridgeErr.isExitCode1 = isExitCode1;
-      throw bridgeErr;
-    }
-
-    const data = await response.json();
-    if (data.degraded === true) {
-      const err = new Error(`LLM call timed out after ${data.elapsed_ms || timeout}ms`);
-      err.degraded = true;
-      err.status = data.status;
-      throw err;
-    }
-    if (!data.text) {
-      throw new Error('Bridge /llm-call returned empty text');
-    }
-
-    // 成功 → 重置 exit-code-1 计数（证明该账号已恢复）
-    if (accountId) _resetBridgeExit1(accountId);
-    return data.text;
-  }
 }
 
 /**
@@ -573,9 +404,9 @@ export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
   if (provider === 'minimax') {
     await callMiniMaxAPIStream(prompt, model, timeout, onChunk);
   } else {
-    // Anthropic via bridge 不支持流式 → 降级到非流式，一次性返回
+    // 非 minimax 不支持流式 → 降级到 callLLM 非流式（含 fallbacks），一次性返回
     console.warn(`[llm-caller] callLLMStream: provider ${provider} does not support streaming, falling back`);
-    const text = await callClaudeViaBridge(prompt, model, timeout);
+    const { text } = await callLLM(agentId, prompt, { ...options, model, provider, timeout });
     onChunk(text, false);
     onChunk('', true);
   }
@@ -723,8 +554,7 @@ export function _resetMinimaxKey() { _minimaxKey = null; }
 export function _resetAnthropicKey() { _anthropicKey = null; }
 export function _resetOpenAIKey() { _openaiKey = null; }
 
-// 测试辅助：重置 bridge exit-code-1 计数和 anthropic balance 告警去重
-export function _resetBridgeCircuitState() {
-  _bridgeExit1Counters.clear();
+// 测试辅助：重置 anthropic balance 告警去重
+export function _resetAnthropicBalanceAlerted() {
   _anthropicBalanceAlerted.clear();
 }

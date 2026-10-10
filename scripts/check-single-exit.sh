@@ -38,6 +38,12 @@ check_contains() {
 #   旧心跳体系（stop-dev.sh / devloop-check.sh / guardian / ship-finalize）已全部删除。
 #   新体系：executor.js buildGoalSettings → CECELIA_GOAL_SETTINGS → cecelia-run.sh --settings
 #
+#   2026-10-10 改写（任务 76a160b3，决策 067867c8）：Claude Code 无头通道已退役，executor.js
+#   里旧的 Docker/claude 派发段（唯一往 extraEnv 注入 CECELIA_GOAL_SETTINGS 的地方）随之删除，
+#   cecelia-bridge.js 的 /trigger-cecelia 也改为 410，不再透传。故去掉「executor.js 注入
+#   CECELIA_GOAL_SETTINGS」断言；buildGoalSettings（仍导出）与 cecelia-run.sh 的 --settings
+#   读取（--dry-run 契约保留）照旧校验。
+#
 #   例外：dev-heartbeat-guardian.sh 在 Stop Hook v23 PR-2（dd60f635c，心跳模型核心
 #   切换）里被重新引入，worktree-manage.sh 的 cmd_create 从那次起持续调用它做
 #   .cecelia/lights/*.live 心跳续期——同名但语义完全不同于此处检查的 v22 时代旧
@@ -55,10 +61,6 @@ check_deleted "$REPO_ROOT/packages/engine/scripts/ship-finalize.sh"      "ship-f
 check_contains "$REPO_ROOT/packages/brain/src/executor.js" \
     "buildGoalSettings" \
     "executor.js 含 buildGoalSettings"
-
-check_contains "$REPO_ROOT/packages/brain/src/executor.js" \
-    "CECELIA_GOAL_SETTINGS" \
-    "executor.js 注入 CECELIA_GOAL_SETTINGS"
 
 check_contains "$REPO_ROOT/packages/brain/scripts/cecelia-run.sh" \
     "CECELIA_GOAL_SETTINGS" \

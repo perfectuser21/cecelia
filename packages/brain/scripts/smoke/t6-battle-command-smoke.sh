@@ -4,7 +4,7 @@
 #   1. battle-report.js 含军师决策节 v2（v1 notes 明细已被五段取代，深度断言见 battle-report-v2-smoke.sh）
 #   2. journeys.js 含 GET /issues 列表路由（status=open 特判）
 #   3. task-tasks.js 已放开 claude+headed（无拒绝分支）
-#   4. harness-skill-relay.js headed 分支泛化（HEADED_HOSTS 映射 + claude-launch.sh）
+#   4. harness-skill-relay.js headed 分支泛化（HEADED_HOSTS 映射）；claude 分支已退役（决策 067867c8）→ 拒绝 claude、无 claude-launch.sh
 #   5. harness-relay-watchdog.js 识别两个 headed host
 set -euo pipefail
 
@@ -53,12 +53,20 @@ const checks = [
   ['const HEADED_HOSTS', 'HEADED_HOSTS 映射'],
   ['skill-relay-claude-headed', 'claude headed host 值'],
   ['claude-relay-', 'claude tmux 前缀'],
-  ['claude-launch.sh', 'claude 分支 launcher'],
   ['export { HEADED_HOSTS, HEADED_TMUX_PREFIXES }', '映射导出供 watchdog'],
+  [\"from './lib/claude-channel.js'\", '退役码单一来源'],
 ];
 const missing = checks.filter(([p]) => !src.includes(p));
 if (missing.length) { missing.forEach(([,d]) => console.error('FAIL: 缺少 ' + d)); process.exit(1); }
-console.log('harness-skill-relay.js headed 泛化 ✓');
+// claude 分支 launcher（claude-launch.sh）随 Claude 通道退役删除（任务 76a160b3，决策 067867c8）：
+// headed 入口对 executor=claude 必须先拒绝并返回 claude_channel_retired，且全文件不再拉起 claude-launch.sh。
+if (src.includes('claude-launch.sh')) { console.error('FAIL: claude-launch.sh 残留（claude 分支 launcher 未退役）'); process.exit(1); }
+const headedStart = src.indexOf('async function _spawnHeadedSession(');
+const headedHead = headedStart < 0 ? '' : src.slice(headedStart, headedStart + 600);
+if (!/executor === 'claude'\\)\\s*\\{\\s*return \\{ ok: false, mode: HEADED_HOSTS\\.claude, error: CLAUDE_CHANNEL_RETIRED_CODE \\}/.test(headedHead)) {
+  console.error('FAIL: _spawnHeadedSession 未对 claude 返回 claude_channel_retired'); process.exit(1);
+}
+console.log('harness-skill-relay.js headed 泛化（claude 分支已退役）✓');
 "
 
 echo "[t6-battle-command-smoke] 5. harness-relay-watchdog.js 双 host 识别"

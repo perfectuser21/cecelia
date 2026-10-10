@@ -7,13 +7,13 @@ vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {
  *
  * 测试双 Provider 路由（Anthropic 默认）：
  * - T1 (D1): getProviderForTask() 默认返回 'anthropic'
- * - T2 (D2): triggerCeceliaRun 传 provider 给 bridge body
+ * - T2 (D2): triggerCeceliaRun 不再请求 bridge（Claude 通道退役，任务 76a160b3），返回 claude_channel_retired
  * - T3 (D3): getProviderForTask 已正确导出
  * - T4 (D4): FIXED_PROVIDER 固定路由覆盖默认
  *
  * DoD 映射：
  * - D1 → 'getProviderForTask returns anthropic by default'
- * - D2 → 'triggerCeceliaRun passes provider to bridge'
+ * - D2 → 'triggerCeceliaRun returns claude_channel_retired without bridge fetch'
  * - D3 → 'getProviderForTask is exported'
  * - D4 → 'FIXED_PROVIDER overrides default'
  */
@@ -144,10 +144,10 @@ describe('getProviderForTask - 双 Provider 路由', () => {
 });
 
 // ================================================================
-// T2: triggerCeceliaRun 传 provider 给 bridge
+// T2: triggerCeceliaRun 不再把 provider 传给 bridge（Claude 通道退役，任务 76a160b3）
 // ================================================================
 
-describe('triggerCeceliaRun - provider 传递给 bridge', () => {
+describe('triggerCeceliaRun - Claude 桥接退役', () => {
   let triggerCeceliaRun;
   let capturedBody;
 
@@ -178,7 +178,8 @@ describe('triggerCeceliaRun - provider 传递给 bridge', () => {
     vi.unstubAllGlobals();
   });
 
-  it('T2 (D2): bridge 请求 body 包含 provider=anthropic', async () => {
+  // 原断言「bridge /trigger-cecelia 请求 body 含 provider=anthropic」随 Claude 通道退役改写：不再 fetch bridge。
+  it('T2 (D2): dev 任务落 US Claude 路径 → 返回 claude_channel_retired，不请求 /trigger-cecelia', async () => {
     const task = {
       id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
       title: '测试任务',
@@ -189,12 +190,9 @@ describe('triggerCeceliaRun - provider 传递给 bridge', () => {
 
     const result = await triggerCeceliaRun(task);
 
-    // 验证 fetch 被调用
-    expect(fetch).toHaveBeenCalled();
-
-    // 验证 body 包含 provider 字段
-    expect(capturedBody).toBeDefined();
-    expect(capturedBody.provider).toBe('anthropic');
-    expect(capturedBody.task_id).toBe(task.id);
-  });
+    expect(result).toMatchObject({ success: false, reason: 'claude_channel_retired' });
+    expect(capturedBody).toBeNull();
+    const urls = fetch.mock.calls.map(([url]) => String(url));
+    expect(urls.some(u => u.includes('/trigger-cecelia'))).toBe(false);
+});
 });

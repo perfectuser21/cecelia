@@ -9,7 +9,7 @@ vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {
  * 测试 mode=headed 新分支逻辑（harness-skill-relay.js）：
  * 1. headed → ssh+tmux 路径（无 docker extraMounts）
  * 2. 缺省/headless → docker 路径零回归
- * 3. claude+headed → 400 拒绝
+ * 3. claude+headed → claude_channel_retired（Claude 通道退役，任务 76a160b3）
  *
  * 这些测试在实现前都应 FAIL（TDD Red 阶段）。
  */
@@ -179,31 +179,36 @@ describe('mode=headed 路由分支', () => {
   });
 });
 
-describe('3. claude+headed → 放行（T6 解锁）', () => {
-  it('executor=claude + mode=headed → 不再被 spawnSkillRelaySession 内部防御拒绝', async () => {
-    const task = {
-      id: '00000000-0000-0000-0000-00000000c1de',
-      title: 'claude headed unlocked',
-      payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' },
-    };
-    const calls = [];
-    const fakePool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
-    const result = await spawnSkillRelaySession(task, {
-      pool: fakePool,
-      execFn: (cmd) => { calls.push(cmd); return 'TMUX_DEAD'; },
-      inDockerFn: () => false,
-      sshKeyFn: () => null,
-      loadSkill: () => 'SKILL CONTENT',
-      ensureWt: async () => '/tmp/fake-worktree',
-      now: () => new Date('2026-07-10T04:00:00Z'),
-    });
-    // 不再返回"不支持 headed"错误；走 headed 分支（mode 为 claude headed host 值）
-    expect(result.error || '').not.toMatch(/不支持 headed/);
-    expect(result.mode).toBe('skill-relay-claude-headed');
+// 原「3. claude+headed → 放行（T6 解锁）」与「4. claude headed 分支」的 claude-launch.sh / claude-relay- 前缀 /
+// 跳过 trust preseed / orchestrator_host=skill-relay-claude-headed 四例已随 Claude 通道退役删除（任务 76a160b3），
+// 改为断言拒绝；codex 回落与 codex 不回归两例保留。
+describe('3. claude+headed → claude_channel_retired（任务 76a160b3）', () => {
+  it('executor=claude + mode=headed → 拒绝：不起 tmux、不写 prompt、不 trust preseed、不落 initiative_runs', async () => {
+    const calls = []; const inserts = [];
+    process.env.CODEX_RELAY_HOME = '/tmp/fake-codex-home';
+    try {
+      const task = { id: '00000000-0000-0000-0000-00000000c1de', title: 'claude headed retired', payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' } };
+      const ensureWt = vi.fn(async () => '/tmp/fake-worktree');
+      const result = await spawnSkillRelaySession(task, {
+        pool: { query: vi.fn(async (sql, params) => { if (/INSERT INTO initiative_runs/i.test(sql)) inserts.push([sql, params]); return { rows: [] }; }) },
+        execFn: (cmd) => { calls.push(cmd); return 'TMUX_DEAD'; },
+        inDockerFn: () => false,
+        sshKeyFn: () => null,
+        loadSkill: () => 'SKILL CONTENT',
+        ensureWt,
+        now: () => new Date('2026-07-10T04:00:00Z'),
+        snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
+      });
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe('claude_channel_retired');
+      expect(calls).toHaveLength(0);
+      expect(inserts).toHaveLength(0);
+      expect(ensureWt).not.toHaveBeenCalled();
+    } finally { delete process.env.CODEX_RELAY_HOME; }
   });
 });
 
-describe('4. claude headed 分支（T6）', () => {
+describe('4. headed 执行体路由（claude 分支已退役）', () => {
   function makeDeps(calls, insertCapture) {
     return {
       // 现文件既有 codex 用例断言 host 内联在 INSERT SQL 里，这里捕获 [sql, params] 整体做断言
@@ -217,44 +222,6 @@ describe('4. claude headed 分支（T6）', () => {
       snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     };
   }
-
-  it('executor=claude → tmux 命令跑 claude-launch.sh，session 前缀 claude-relay-，不含 CODEX_HOME', async () => {
-    const calls = []; const inserts = [];
-    const task = { id: '00000000-0000-0000-0000-00000000c1de', title: 't', payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' } };
-    const result = await spawnSkillRelaySession(task, makeDeps(calls, inserts));
-    expect(result.ok).toBe(true);
-    expect(result.mode).toBe('skill-relay-claude-headed');
-    expect(result.tmuxSession).toMatch(/^claude-relay-/);
-    const tmuxCmd = calls.find((c) => c.includes('tmux new-session'));
-    expect(tmuxCmd).toContain('claude-launch.sh');
-    expect(tmuxCmd).toContain('--dangerously-skip-permissions');
-    expect(tmuxCmd).toContain('CECELIA_DISPATCH=1');
-    expect(tmuxCmd).toContain('CECELIA_LAUNCHED_BY=skill-relay-claude-headed');
-    expect(tmuxCmd).toContain(`HARNESS_TASK_ID=${task.id}`);
-    expect(tmuxCmd).not.toContain('CODEX_HOME');
-    expect(tmuxCmd).not.toContain(' codex ');
-  });
-
-  it('executor=claude → 跳过 codex trust preseed（无 config.toml 写入命令）', async () => {
-    const calls = []; const inserts = [];
-    process.env.CODEX_RELAY_HOME = '/tmp/fake-codex-home';
-    try {
-      const task = { id: '00000000-0000-0000-0000-00000000c1df', title: 't', payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' } };
-      await spawnSkillRelaySession(task, makeDeps(calls, inserts));
-      expect(calls.some((c) => c.includes('config.toml'))).toBe(false);
-    } finally { delete process.env.CODEX_RELAY_HOME; }
-  });
-
-  it('executor=claude → initiative_runs 落 orchestrator_host=skill-relay-claude-headed', async () => {
-    const calls = []; const inserts = [];
-    const task = { id: '00000000-0000-0000-0000-00000000c1e0', title: 't', payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' } };
-    await spawnSkillRelaySession(task, makeDeps(calls, inserts));
-    expect(JSON.stringify(inserts[0])).toContain('skill-relay-claude-headed');
-    // 刀C1（决策 dc18d43d）：current_task_id 必须写入
-    const [sql, params] = inserts[0];
-    expect(sql).toMatch(/current_task_id/);
-    expect(params).toContain(task.id);
-  });
 
   it('executor 缺省（payload 无 executor）+ mode=headed → fallback 走 codex 分支', async () => {
     const calls = []; const inserts = [];

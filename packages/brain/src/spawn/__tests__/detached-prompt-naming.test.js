@@ -53,6 +53,8 @@ describe('spawnDockerDetached 写入路径 == 注入容器 CECELIA_PROMPT_FILE [
     await spawnDockerDetached({
       task: { id: taskId, task_type: 'harness_planner' },
       prompt,
+      // 容器执行体缺省=claude 已退役（任务 76a160b3）：prompt 命名协议与执行体无关，用 codex 覆盖
+      env: { CECELIA_EXECUTOR: 'codex' },
       containerId: 'cecelia-task-detached-test',
     });
 

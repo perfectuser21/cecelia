@@ -1,3 +1,5 @@
+import { ClaudeChannelRetiredError } from '../lib/claude-channel.js';
+
 const REQUIRED_METHODS = ['start', 'resume', 'inspect', 'cancel', 'normalizeResult'];
 
 function assertAdapter(adapter) {
@@ -19,11 +21,15 @@ function missingCapabilities(adapter, requires) {
   return requires.filter((capability) => !available.has(capability));
 }
 
+/** Claude Code 无头通道已退役（任务 76a160b3）：claude 永不注册，显式请求即 claude_channel_retired。 */
+const RETIRED_PROVIDERS = new Set(['claude']);
+
 /** Build an ordered, deterministic provider registry. `auto` picks a provider, never a model. */
 export function createProviderRegistry(adapters) {
   const providers = new Map();
   for (const adapter of adapters) {
     assertAdapter(adapter);
+    if (RETIRED_PROVIDERS.has(adapter.name)) continue;
     if (providers.has(adapter.name)) {
       throw new Error(`duplicate provider adapter: ${adapter.name}`);
     }
@@ -31,6 +37,7 @@ export function createProviderRegistry(adapters) {
   }
 
   function get(name) {
+    if (RETIRED_PROVIDERS.has(name)) throw new ClaudeChannelRetiredError(`provider ${name}`);
     const adapter = providers.get(name);
     if (!adapter) throw new Error(`unknown provider: ${name}`);
     return adapter;

@@ -116,12 +116,11 @@ describe('内部调用方接线（Bearer 头只从 env CECELIA_INTERNAL_TOKEN �
     expect(run).not.toMatch(/CECELIA_INTERNAL_TOKEN=["'][^"'$]/);
   });
 
-  it('executor.js：docker 容器 env 透传 token；codex review fetch / 本地 codex curl 带 Bearer', () => {
+  it('executor.js：codex review fetch / 本地 codex curl 带 Bearer（docker claude 容器分支已删）', () => {
     const ex = read('src/executor.js');
     expect(ex).toMatch(/import \{[^}]*internalServiceHeaders[^}]*\} from '\.\/lib\/internal-service-auth\.js'/);
-    const dockerEnvIdx = ex.indexOf('const dockerEnv = {');
-    expect(dockerEnvIdx).toBeGreaterThan(0);
-    expect(ex.slice(dockerEnvIdx, dockerEnvIdx + 1200)).toContain('CECELIA_INTERNAL_TOKEN');
+    // 原「docker 容器 env 透传 token」断言随 Claude 通道退役删除（任务 76a160b3）：dockerEnv 构造已不存在
+    expect(ex).not.toContain('const dockerEnv = {');
     // 两处 codex review fetch 用 internalServiceHeaders 包头
     const fetches = ex.split('/api/brain/execution-callback`, {').length - 1;
     expect(fetches).toBe(2);
@@ -130,9 +129,14 @@ describe('内部调用方接线（Bearer 头只从 env CECELIA_INTERNAL_TOKEN �
     expect(ex).toMatch(/curl -s -X POST "\$\{WEBHOOK_URL\}"[^\n]*Authorization: Bearer/);
   });
 
-  it('cecelia-bridge.js 把宿主 CECELIA_INTERNAL_TOKEN 透传给 cecelia-run', () => {
+  // 原「cecelia-bridge.js 把宿主 CECELIA_INTERNAL_TOKEN 透传给 cecelia-run」随 Claude 通道退役改写（任务 76a160b3）：
+  // bridge 不再拉起 cecelia-run，也就没有 token 透传对象。
+  it('cecelia-bridge.js 不再拉起 cecelia-run，/trigger-cecelia 返回 claude_channel_retired', () => {
     const bridge = read('scripts/cecelia-bridge.js');
-    expect(bridge).toMatch(/CECELIA_INTERNAL_TOKEN/);
+    expect(bridge).not.toMatch(/execSync|spawn\(/);
+    expect(bridge).not.toMatch(/CECELIA_INTERNAL_TOKEN/);
+    expect(bridge).toContain("'/trigger-cecelia'");
+    expect(bridge).toContain('claude_channel_retired');
   });
 });
 

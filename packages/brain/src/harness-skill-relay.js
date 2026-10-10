@@ -2,6 +2,7 @@ import { hostname } from 'node:os';
 import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
 import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
 import { assertExternalExecutionAllowed } from './runtime-safety.js';
+import { CLAUDE_CHANNEL_RETIRED_CODE, isClaudeExecutor } from './lib/claude-channel.js';
 /**
  * harness-skill-relay — N3 最小接线（harness-skill-relay initiative，主理人 2026-07-04 拍板）。
  *
@@ -588,27 +589,44 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const isGrok = task.payload?.executor === 'grok';
   const isHeaded = task.payload?.mode === 'headed';
 
+  const isKernelRuntime = task.payload?.harness_runtime === 'kernel-v1';
+
+  // 本机执行闸先于 Claude 退役检查（任务 76a160b3）：闸=false 时 headed kernel 与非 kernel 路径
+  // 维持原错误码 local_execution_disabled_on_scheduler 不变；kernel-v1 headless 走远程（下方）。
+  if (localExecutionDisabled && (isHeaded || !isKernelRuntime)) {
+    if (isKernelRuntime) {
+      console.warn(`[skill-relay][local-exec-guard] headed kernel 无法远程化 task=${task?.id}`);
+    } else {
+      console.warn(`[skill-relay][local-exec-guard] CECELIA_LOCAL_EXECUTION_ENABLED=false — refusing local harness spawn task=${task?.id}（执行须下放 Mac worker，见决策 96054a8b）`);
+    }
+    return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
+  }
+
+  // Claude Code 无头通道已退役（任务 76a160b3，决策 067867c8）：显式 executor=claude 一律拒绝；
+  // 非 kernel 无头路径缺省执行体即 claude，同样拒绝。不建 run、不碰 worktree、不起容器/tmux。
+  // kernel-v1 缺省 executor 走 orchestrator provider registry（已不含 claude）；
+  // task.location='xian' 走西安 codex bridge（从不拉起 claude），缺省执行体不拦。
+  const relayExecutor = task.payload?.executor;
+  if (relayExecutor === 'claude'
+    || (!isHeaded && !isKernelRuntime && task.location !== 'xian'
+      && isClaudeExecutor(relayExecutor))) {
+    console.warn(`[skill-relay][claude-retired] task=${task?.id} executor=${relayExecutor ?? 'claude(default)'} → ${CLAUDE_CHANNEL_RETIRED_CODE}`);
+    return { ok: false, mode: RELAY_FLAG, error: CLAUDE_CHANNEL_RETIRED_CODE };
+  }
+
   // kernel-v1 路径与 executor 无关（使用 launchKernelProcess，不走头/无头路由），
   // 必须在 executor 白名单校验之前处理，避免 executor='auto' 被误拦截。
-  if (task.payload?.harness_runtime === 'kernel-v1' && isHeaded) {
-    if (localExecutionDisabled) {
-      console.warn(`[skill-relay][local-exec-guard] headed kernel 无法远程化 task=${task?.id}`);
-      return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
-    }
+  if (isKernelRuntime && isHeaded) {
     return _spawnHeadedKernelRuntime(task, {
       dbPool, now, short, initiativeId, deps,
     });
   }
-  if (task.payload?.harness_runtime === 'kernel-v1') {
+  if (isKernelRuntime) {
     if (localExecutionDisabled) {
       // 判定点 e3a41ecc：闸语义=「禁本机起，放行远程」——这是闸 reason 文案的原意
       return _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps });
     }
     return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
-  }
-  if (localExecutionDisabled) {
-    console.warn(`[skill-relay][local-exec-guard] CECELIA_LOCAL_EXECUTION_ENABLED=false — refusing local harness spawn task=${task?.id}（执行须下放 Mac worker，见决策 96054a8b）`);
-    return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
   }
 
   // INV-8: unsupported executor loud-fail（三处文件 —— harness-skill-relay.js 这处）
@@ -631,8 +649,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   // ─── headed 分支：ssh+tmux 路径 ──────────────────────────────────────────
   if (isHeaded) {
     return _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps });
-    // innerCmd 三分支（INV-1 + FR-R1/R3/R4，isGrokHeaded 决策在函数内）：
-    //   isClaudeHeaded → claude-launch.sh（GP1 零回归）
+    // innerCmd 两分支（INV-1 + FR-R3/R4，isGrokHeaded 决策在函数内；claude 分支随通道退役删除）：
     //   isGrokHeaded   → grok-launch.sh（FR-R4 新增 GP3 路径）
     //   default(codex) → 直接调 codex TUI（INV-11 快照 CODEX_HOME，不走 launcher 脚本）
   }
@@ -885,9 +902,8 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const effectiveExecutor = isCodex ? 'codex' : isGrok ? 'grok' : 'claude';
 
     // B4: spawn 失败回滚（在 spawn 前不落 initiative_runs 行）
-    // grok 路径额外支持 detectQuotaWall fallback：撞墙 → 降级 claude 重试一次
-    const doSpawn = async (overrideExecutor) => {
-      const spawnExecutor = overrideExecutor || effectiveExecutor;
+    const doSpawn = async () => {
+      const spawnExecutor = effectiveExecutor;
       const spawnExtraMounts = isCodex
         ? [`${codexRelayCredDir}:/home/cecelia/.codex:rw`]
         : (spawnExecutor === 'grok' ? grokExtraMounts : undefined);
@@ -927,28 +943,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     try {
       await doSpawn();
     } catch (spawnErr) {
-      // grok 路径：检测额度撞墙，命中时降级 claude 重试一次
-      if (isGrok && detectQuotaWall(spawnErr.message)) {
-        console.warn(`[skill-relay][grok] 额度撞墙（${spawnErr.message}），降级 claude 重试`);
-        try {
-          await doSpawn('claude');
-          // fallback 成功：继续落 initiative_runs（executor 已切换；orchestrator_host 仍标 grok 留痕）
-          const abilityId = task.ability_id || task.payload?.ability_id || null;
-          await dbPool.query(
-            `INSERT INTO initiative_runs
-               (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
-                deadline_at, ability_id, current_task_id, created_source)
-             VALUES ($1, 'A_planning', $2, 'v1', 'skill-relay-grok',
-                     NOW() + INTERVAL '${GROK_RELAY_DEADLINE_HOURS} hours',
-                     $3, $4, 'legacy_relay')`,
-            [initiativeId, task.payload?.journey_id || null, abilityId, task.id]
-          );
-          console.log(`[skill-relay][grok] fallback claude spawn ok: container=${containerId} sprint=${sprintDir}`);
-          return { ok: true, mode: RELAY_FLAG, containerId, sprintDir, worktreePath, fallback: 'claude' };
-        } catch (fallbackErr) {
-          console.error(`[skill-relay][grok][ALERT] fallback claude spawn failed: ${fallbackErr.message}`);
-        }
-      }
+      // grok 额度撞墙曾降级 claude 重试一次；Claude 通道退役后不再降级，按普通 spawn 失败回滚
       // B4: spawn 失败 → 回滚 task，不落 initiative_runs
       console.error(`[skill-relay][ALERT] spawn failed: ${spawnErr.message}`);
       try {
@@ -1110,7 +1105,7 @@ const HEADED_RELAY_DEADLINE_HOURS = 8;
 export { HEADED_HOSTS, HEADED_TMUX_PREFIXES };
 
 /**
- * headed 模式：ssh 逃逸宿主，tmux new-session 启动 codex TUI / claude-launch.sh / grok。
+ * headed 模式：ssh 逃逸宿主，tmux new-session 启动 codex TUI / grok（claude 已退役，任务 76a160b3）。
  * 不走 docker，不产生 extraMounts，不注入 GITHUB_TOKEN 进 tmux 命令串。
  */
 async function _spawnHeadedSession(task, {
@@ -1121,21 +1116,20 @@ async function _spawnHeadedSession(task, {
   deps,
   kernelAuthority = null,
 }) {
-  // executor 映射：claude/grok 显式判，其余（codex/缺省）按 codex 处理（入口白名单已限 claude/codex/grok/缺省）
-  const headedExecutor = task.payload?.executor === 'claude'
-    ? 'claude'
-    : task.payload?.executor === 'grok'
-      ? 'grok'
-      : 'codex';
+  // Claude Code 通道已退役（任务 76a160b3）：headed kernel 等经此直达的路径同样拒绝 claude
+  if (task.payload?.executor === 'claude') {
+    return { ok: false, mode: HEADED_HOSTS.claude, error: CLAUDE_CHANNEL_RETIRED_CODE };
+  }
+  // executor 映射：grok 显式判，其余（codex/缺省）按 codex 处理
+  const headedExecutor = task.payload?.executor === 'grok' ? 'grok' : 'codex';
   const headedHost = HEADED_HOSTS[headedExecutor];
-  const isClaudeHeaded = headedExecutor === 'claude';
   const isGrokHeaded = headedExecutor === 'grok';
 
   // B6 门禁在 headed 分支同样生效（headed 早退绕过了 spawnSkillRelaySession 主体里的
   // CODEX_RELAY_HOME/GROK_RELAY_HOME 检查）。
   // 未配置（undefined）→ 放行（本地/测试环境）；显式配置为空字符串 → loud-fail。
   const codexRelayHome = process.env.CODEX_RELAY_HOME;
-  if (!isClaudeHeaded && !isGrokHeaded) {
+  if (!isGrokHeaded) {
     if (codexRelayHome !== undefined && !codexRelayHome) {
       console.error('[skill-relay][headed][ALERT] CODEX_RELAY_HOME 未配置，codex executor 无法挂载凭据');
       try {
@@ -1155,7 +1149,7 @@ async function _spawnHeadedSession(task, {
   // 一次性临时目录再用。快照失败（真实目录下没有 auth.json，配置错误）loud-fail
   // + task 回滚，跟 docker 路径的处理方式一致。
   let codexRelayCredDir;
-  if (!isClaudeHeaded && !isGrokHeaded && codexRelayHome) {
+  if (!isGrokHeaded && codexRelayHome) {
     const snapshotFn = deps.snapshotCodexHome || snapshotCodexRelayHome;
     try {
       codexRelayCredDir = snapshotFn(codexRelayHome, task.id);
@@ -1239,7 +1233,7 @@ async function _spawnHeadedSession(task, {
   }
   // ─── end 雷11 ────────────────────────────────────────────────────────────────
   const authorizeRelay=operation=>(deps.authorizeLegacyRelay??withLegacyRelayExecution)({pool:dbPool,location:sshHost,provider:headedExecutor,
-    credentialIdentity:isClaudeHeaded?process.env.HEADED_CLAUDE_CONFIG_DIR:(isGrokHeaded?process.env.GROK_RELAY_HOME:codexRelayHome),
+    credentialIdentity:isGrokHeaded?process.env.GROK_RELAY_HOME:codexRelayHome,
     repo:task.payload?.repo??parseBaseRepoOrDefault(task.payload?.base_repo)},operation);
   try { await authorizeRelay(()=>{}); } catch(error) { return {ok:false,mode:headedHost,error:error.message}; }
 
@@ -1295,11 +1289,7 @@ async function _spawnHeadedSession(task, {
     if (!kernelAttempt?.id) throw new Error('headed_kernel_attempt_missing');
   }
 
-  // claude-launch.sh 在宿主直跑，host.docker.internal 对宿主进程不可达是已知形态；
-  // codex 原值不动防回归。
-  // claude headed 进程跑在宿主，直连 localhost；其余路径走 docker DNS
-  let brainUrl = 'http://host.docker.internal:5221';
-  if (isClaudeHeaded) { brainUrl = 'http://localhost:5221'; }
+  const brainUrl = 'http://host.docker.internal:5221';
   const chainContext = await buildChainPromptSafe({ pool }, task.id);
   const prompt = buildRelayPrompt({ kind: 'headed', skillContent, task, sprintDir, brainUrl, chainContext });
 
@@ -1309,7 +1299,7 @@ async function _spawnHeadedSession(task, {
   // 在起 tmux 之前，经同一条 ssh 通道幂等预写 trust 段：
   //   ①config.toml 不存在（账号未初始化）→ 跳过 + warn，不硬造文件，让 codex 自己处理
   //   ②该 worktree 表已存在 → grep 命中跳过，不产生重复 TOML 表
-  if (!isClaudeHeaded && codexRelayCredDir) {
+  if (codexRelayCredDir) {
     const codexConfigPath = `${codexRelayCredDir}/config.toml`;
     try {
       execFn(
@@ -1318,7 +1308,7 @@ async function _spawnHeadedSession(task, {
     } catch (trustErr) {
       console.warn(`[skill-relay][headed] trust preseed 失败（non-fatal，交给 codex 自行处理交互确认）: ${trustErr.message}`);
     }
-  } else if (!isClaudeHeaded) {
+  } else {
     console.warn('[skill-relay][headed] CODEX_RELAY_HOME 未配置，跳过 trust preseed');
   }
 
@@ -1349,18 +1339,14 @@ async function _spawnHeadedSession(task, {
     // --dangerously-bypass-approvals-and-sandbox，一个 flag 跳过 trust 确认 + shell 命令
     // 批准 + MCP 工具批准，与无头 docker 里 claude 的 --dangerously-skip-permissions 对等
     // （worktree 隔离 + 有头可 esc 打断 = externally sandboxed 受控环境，适用场景成立）。
-    // claude headed：宿主 claude-launch.sh（自动补 --session-id，位置参数=交互初始 prompt，
-    // tmux 提供 TTY——youtou-dispatch-pattern 首航实证）。宿主 repo 根可被 CECELIA_HOST_REPO
-    // 覆盖（对齐 spawn/host-executor.js 先例）；HEADED_CLAUDE_CONFIG_DIR 可显式指定账号目录，
-    // 未配置时由 launcher 按 .active-account-dir 路由（会烧当前交互账号，主理人知情接受）。
+    // grok headed：宿主 grok-launch.sh，宿主 repo 根可被 CECELIA_HOST_REPO 覆盖。
+    // （claude headed 分支随 Claude 通道退役删除，任务 76a160b3）
     const hostRepo = process.env.CECELIA_HOST_REPO || '/Users/administrator/perfect21/cecelia';
-    const claudeCfgPrefix = process.env.HEADED_CLAUDE_CONFIG_DIR
-      ? `CLAUDE_CONFIG_DIR=${process.env.HEADED_CLAUDE_CONFIG_DIR} ` : '';
-    // export HARNESS_TASK_ID + HARNESS_NODE 到 claude session 环境——
+    // export HARNESS_TASK_ID + HARNESS_NODE 到 headed session 环境——
     // post-pr-create.sh hook 检测到该变量后跳过 auto-merge，保证 evaluator gate 不被绕过
     // (P0 a638f840 根治：PR 在 evaluator 运行前被 GitHub 自动合并)。
     // headless docker relay 已通过 spawnFn env 参数注入，此处仅补 headed 路径。
-    // 三分支路由（INV-1 + FR-R1/R3/R4）：claude / grok / codex 各占一条独立分支
+    // 两分支路由（INV-1 + FR-R3/R4）：grok / codex 各占一条独立分支
     const identityEnv = kernelAuthority
       ? ` CECELIA_TASK_ID=${task.id}`
         + ` CECELIA_ROUTING_RECEIPT_ID=${task.payload.routing_receipt_id}`
@@ -1372,9 +1358,7 @@ async function _spawnHeadedSession(task, {
         + ` CECELIA_BASE_SHA=${task.payload.base_sha}`
       : '';
     let innerCmd;
-    if (isClaudeHeaded) {
-      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller${identityEnv} CECELIA_DISPATCH=1 CECELIA_LAUNCHED_BY=skill-relay-claude-headed && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`;
-    } else if (isGrokHeaded) {
+    if (isGrokHeaded) {
       innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller${identityEnv} && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`;
     } else {
       innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id}${identityEnv} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;

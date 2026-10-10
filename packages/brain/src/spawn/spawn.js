@@ -52,6 +52,7 @@ import { checkCostCap } from './middleware/cost-cap.js';
 import { preparePromptAndCidfile } from './middleware/spawn-pre.js';
 import { createSpawnLogger } from './middleware/logging.js';
 import { recordBilling } from './middleware/billing.js';
+import { ClaudeChannelRetiredError, isClaudeExecutor } from '../lib/claude-channel.js';
 
 export const SPAWN_MAX_ATTEMPTS = 3;
 
@@ -60,13 +61,17 @@ function isSpawnV2Enabled() {
   return !(v === 'false' || v === '0');
 }
 
-async function attemptLoop(opts) {
-  // mac_web 任务：Claude 必须在宿主 Mac 上跑（真实浏览器 + localhost:5174）。
-  // Brain 在容器内，直接 spawn('claude') → ENOENT。host-executor 处理 SSH 逃逸。
-  if (opts.task?.payload?.target_environment === 'mac_web') {
-    return executeOnHost(opts);
+/**
+ * 最底层硬拦截（任务 76a160b3）：容器 entrypoint 的执行体缺省即 claude，
+ * CECELIA_EXECUTOR 为空/claude 的容器一律拒绝，不进任何 middleware、不碰 docker。
+ */
+function refuseClaudeExecution(opts) {
+  if (isClaudeExecutor(opts?.env?.CECELIA_EXECUTOR)) {
+    throw new ClaudeChannelRetiredError(`spawn task=${opts?.task?.id ?? 'unknown'} executor=${opts?.env?.CECELIA_EXECUTOR || 'claude(default)'}`);
   }
+}
 
+async function attemptLoop(opts) {
   let lastResult = null;
   for (let attempt = 0; attempt < SPAWN_MAX_ATTEMPTS; attempt++) {
     const result = await executeInDocker(opts);
@@ -80,6 +85,9 @@ async function attemptLoop(opts) {
 }
 
 export async function spawn(opts, ctx = {}) {
+  // mac_web 任务：原在宿主 Mac 上跑 Claude；通道已退役，host-executor 直接拒绝（不发起 SSH）。
+  if (opts?.task?.payload?.target_environment === 'mac_web') return executeOnHost(opts);
+  refuseClaudeExecution(opts);
   if (!isSpawnV2Enabled()) {
     return attemptLoop(opts);
   }

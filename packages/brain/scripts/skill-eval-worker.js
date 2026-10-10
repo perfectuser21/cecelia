@@ -6,7 +6,9 @@
  * 单次执行：
  *   1. 查一条 pending 的 skill_evals（复用 ../src/db.js 的 pool，与 API 同一套连接方式）
  *   2. 解压 staging_path 的 zip 到临时目录，定位 SKILL.md 所在目录
- *   3. 拼 eval-prompt.txt + 目标 skill 目录路径，spawn 本地 claude 二进制评估
+ *   3. 原：拼 eval-prompt.txt + 目标 skill 目录路径，spawn 本地 claude 二进制评估。
+ *      Claude 无头通道已退役（任务 76a160b3，决策 067867c8）：不再启动 claude，任务按
+ *      claude_channel_retired 写 failed
  *   4. 解析 stdout 中的 report_data JSON（含兜底正则修复）
  *   5. 成功 → POST /api/skill-eval/complete；失败 → 直接写库 status=failed
  *
@@ -15,24 +17,14 @@
  * 本 PR 范围：验证"跑一次能 work"。常驻循环（pm2/systemd）留到 PR merge 后单独配置，不产生 git diff。
  */
 
-import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import pool from '../src/db.js';
+import { ClaudeChannelRetiredError } from '../src/lib/claude-channel.js';
 
 // ─── 配置 ──────────────────────────────────────────────────────────────────
-
-// claude 在交互 shell 里是函数（alias/shell function），不是可执行文件——
-// child_process.spawn 走的是真实 execve，必须给绝对路径，否则报 ENOENT。
-const CLAUDE_BIN = process.env.CLAUDE_BIN || '/opt/homebrew/bin/claude';
-const CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || '/Users/administrator/.claude';
-const EVAL_PROMPT_PATH =
-  process.env.EVAL_PROMPT_PATH || '/Users/administrator/perfect21/skill-eval-formb-assets/eval-prompt.txt';
-// eval-prompt.txt 里硬编码了一个示例路径（daily-report-v1-2 的调研路径），
-// 每次真实运行时要把它替换成本次解压出来的目标 skill 目录。
-const PROMPT_EXAMPLE_PATH = '/tmp/eval-exp/daily-report-v1-2';
 
 const EVAL_PROXY_TOKEN = process.env.EVAL_PROXY_TOKEN || '';
 const BRAIN_BASE_URL =
@@ -118,30 +110,10 @@ function findSkillDir(rootDir) {
   throw new Error(`解压后未找到 SKILL.md（搜索根目录: ${rootDir}）`);
 }
 
-// ─── spawn claude ──────────────────────────────────────────────────────────
+// ─── 评估执行（Claude 通道已退役）───────────────────────────────────────────
 
-function runClaudeEval(skillDir) {
-  return new Promise((resolve, reject) => {
-    const promptTemplate = fs.readFileSync(EVAL_PROMPT_PATH, 'utf8');
-    const prompt = promptTemplate.split(PROMPT_EXAMPLE_PATH).join(skillDir);
-
-    const child = spawn(CLAUDE_BIN, ['-p', prompt, '--model', 'sonnet', '--output-format', 'json'], {
-      env: { ...process.env, CLAUDE_CONFIG_DIR },
-    });
-
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d) => { stdout += d; });
-    child.stderr.on('data', (d) => { stderr += d; });
-    child.on('error', (err) => reject(new Error(`claude 进程启动失败: ${err.message}`)));
-    child.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`claude 退出码非 0: ${code}, stderr: ${stderr.slice(0, 2000)}`));
-        return;
-      }
-      resolve(stdout);
-    });
-  });
+async function runClaudeEval(skillDir) {
+  throw new ClaudeChannelRetiredError(`skill-eval-worker skillDir=${skillDir}`);
 }
 
 // ─── running 超时回收（进程崩溃后解除死锁）──────────────────────────────────

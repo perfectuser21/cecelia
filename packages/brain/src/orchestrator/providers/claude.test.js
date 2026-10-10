@@ -16,25 +16,17 @@ const directive = {
 };
 
 describe('claudeAdapter', () => {
-  it('starts a fresh structured-output session in the assigned account home', () => {
-    const spec = claudeAdapter.start({
+  // 原「start 生成 claude -p --session-id 命令 / resume 生成 --resume 命令」两条：
+  // 已随 Claude 通道退役删除（任务 76a160b3），改为抛 claude_channel_retired；normalizeResult 保留
+  it('start 抛 claude_channel_retired，不生成任何 claude 命令', () => {
+    expect(() => claudeAdapter.start({
       bundle,
       execution: { claudeHome: '/tmp/claude-home', resultSchema: { type: 'object' } },
-    });
-
-    expect(spec).toMatchObject({
-      provider: 'claude',
-      cwd: '/workspace',
-      env: { CLAUDE_CONFIG_DIR: '/tmp/claude-home' },
-    });
-    expect(spec.args).toEqual(expect.arrayContaining([
-      '-p', '--output-format', 'json', '--json-schema', '--session-id', bundle.attempt_id,
-    ]));
-    expect(spec.args).not.toContain('--model');
+    })).toThrow(expect.objectContaining({ code: 'claude_channel_retired' }));
   });
 
-  it('resumes the persisted session and normalizes its structured result', () => {
-    const resumed = claudeAdapter.resume({
+  it('resume 抛 claude_channel_retired；历史 attempt 的结构化结果仍可 normalize', () => {
+    expect(() => claudeAdapter.resume({
       attempt: {
         id: bundle.attempt_id,
         provider: 'claude',
@@ -42,9 +34,7 @@ describe('claudeAdapter', () => {
         task_bundle: bundle,
       },
       input: 'continue',
-    });
-    expect(resumed.args).toEqual(expect.arrayContaining(['--resume', 'claude-session']));
-    expect(resumed.args).not.toContain('--session-id');
+    })).toThrow(/claude_channel_retired/);
 
     const result = claudeAdapter.normalizeResult({
       attempt: { id: bundle.attempt_id },

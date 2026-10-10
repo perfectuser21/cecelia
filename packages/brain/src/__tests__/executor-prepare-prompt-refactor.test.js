@@ -127,7 +127,8 @@ describe('preparePrompt 重构：路由表覆盖关键 taskType', () => {
     expect(EXECUTOR_MODE_MAP).toHaveProperty('review');
     expect(EXECUTOR_MODE_MAP).toHaveProperty('qa');
     expect(EXECUTOR_MODE_MAP).toHaveProperty('audit');
-    expect(executorSrc).toContain('const modeMap = EXECUTOR_MODE_MAP');
+    // executor.js 的 modeMap 接线点（getPermissionModeForTaskType，claude --permission-mode）随 Claude 通道退役删除（任务 76a160b3）
+    expect(executorSrc).not.toContain('getPermissionModeForTaskType');
   });
 
   it('routes 对象包含 code_review', () => {

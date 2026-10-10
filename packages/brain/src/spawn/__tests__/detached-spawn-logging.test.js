@@ -23,6 +23,9 @@ vi.mock('../../docker-executor.js', () => ({
   }),
 }));
 
+// 容器执行体缺省=claude 已退役（任务 76a160b3）：日志机制与执行体无关，用 codex 执行体覆盖
+const CODEX_ENV = { CECELIA_EXECUTOR: 'codex' };
+
 function makeFakeProc() {
   const proc = new EventEmitter();
   proc.stdout = new EventEmitter();
@@ -48,7 +51,7 @@ describe('spawnDockerDetached — Fix #5 spawn 日志', () => {
     const proc = makeFakeProc();
     spawnMock.mockReturnValue(proc);
 
-    const p = spawnDockerDetached({ task: { id: 't1' }, prompt: 'hi', containerId: 'harness-task-t1-r0-aaaa' });
+    const p = spawnDockerDetached({ task: { id: 't1' }, prompt: 'hi', env: CODEX_ENV, containerId: 'harness-task-t1-r0-aaaa' });
     // 模拟 docker run -d 输出全长容器 id 然后退出 0
     proc.stdout.emit('data', Buffer.from('abcdef0123456789'.repeat(4)));
     proc.emit('exit', 0);
@@ -64,7 +67,7 @@ describe('spawnDockerDetached — Fix #5 spawn 日志', () => {
     const proc = makeFakeProc();
     spawnMock.mockReturnValue(proc);
 
-    const p = spawnDockerDetached({ task: { id: 't2' }, prompt: 'hi', containerId: 'harness-task-t2-r0-bbbb' });
+    const p = spawnDockerDetached({ task: { id: 't2' }, prompt: 'hi', env: CODEX_ENV, containerId: 'harness-task-t2-r0-bbbb' });
     proc.stderr.emit('data', Buffer.from('image not found'));
     proc.emit('exit', 1);
     await expect(p).rejects.toThrow();
@@ -72,5 +75,14 @@ describe('spawnDockerDetached — Fix #5 spawn 日志', () => {
     const allErrs = errSpy.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(allErrs).toMatch(/spawn-detached/);
     expect(allErrs).toContain('FAILED');
+  });
+
+  it('CECELIA_EXECUTOR 缺省/claude → 抛 claude_channel_retired，不 docker run（任务 76a160b3）', async () => {
+    const { spawnDockerDetached } = await import('../detached.js');
+    for (const env of [undefined, { CECELIA_EXECUTOR: 'claude' }]) {
+      await expect(spawnDockerDetached({ task: { id: 't3' }, prompt: 'hi', env, containerId: 'harness-task-t3-r0-cccc' }))
+        .rejects.toMatchObject({ code: 'claude_channel_retired' });
+    }
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 });

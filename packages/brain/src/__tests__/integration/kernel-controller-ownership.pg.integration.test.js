@@ -232,7 +232,7 @@ describe('Session Controller durable authority（真 PG）', () => {
     const scratchDir = `/tmp/cecelia-headed-authority-${randomUUID()}`;
     const seeded = await seedRoutedKernelTask(testPool, {
       titlePrefix:'headed-authority',changeKind:'bugfix',
-      payload:{mode:'headed',executor:'claude',branch:'cp-headed-authority',
+      payload:{mode:'headed',executor:'codex',branch:'cp-headed-authority',
         base_sha:'a'.repeat(40),sprint_dir:scratchDir,worktree_path:'/tmp/wt-headed'},
     });
     const task={id:seeded.taskId,ability_id:null,payload:seeded.payload};
@@ -243,6 +243,7 @@ describe('Session Controller durable authority（真 PG）', () => {
       execFn:(command)=>String(command).includes('tmux has-session')?'TMUX_DEAD':'',
       loadSkill:()=> 'SKILL_CONTENT',
       ensureWt:async()=>'/tmp/wt-headed',
+      snapshotCodexHome:()=>'/tmp/fake-snapshot-dir',
       now:()=>new Date(),inDockerFn:()=>false,sshKeyFn:()=>null,env:{},
     });
     expect(result).toMatchObject({ok:true,mode:'kernel-v1-headed'});

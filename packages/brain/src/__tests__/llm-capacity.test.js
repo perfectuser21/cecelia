@@ -20,9 +20,16 @@ function makeSnapshot(counts, sentinel = 'ok') {
 }
 
 describe('llm-capacity', () => {
-  it('abundant + claude 可用 → L1 primary claude', () => {
+  // 原「abundant + claude 可用 → L1 primary claude」：Claude 通道已退役（任务 76a160b3），改为永不选 claude
+  it('abundant + claude 可用 → 仍不选 claude，L2 primary codex', () => {
     expect(chooseGuidedExecutor('dev', 'abundant', makeSnapshot({ claude: 1, codex: 1, grok: 1 }))).toEqual(
-      expect.objectContaining({ executor: 'claude', level: 'L1_primary_claude' })
+      expect.objectContaining({ executor: 'codex', level: 'L2_primary_codex' })
+    );
+  });
+
+  it('只有 claude 有余量（codex/grok 都不可用）→ 也不回落 claude，fail-open 到 codex', () => {
+    expect(chooseGuidedExecutor('dev', 'abundant', makeSnapshot({ claude: 2, codex: 0, grok: 0 }))).toEqual(
+      expect.objectContaining({ executor: 'codex', level: 'L4_fail_open' })
     );
   });
 
@@ -32,9 +39,10 @@ describe('llm-capacity', () => {
     );
   });
 
-  it('abundant + claude 不可用但 codex 可用 → L3 cross vendor fallback', () => {
+  // 原断言 L3_cross_vendor_fallback：claude 退役后 codex 恒为主偏好，命中 L2（任务 76a160b3）
+  it('abundant + claude 不可用但 codex 可用 → L2 primary codex', () => {
     expect(chooseGuidedExecutor('harness_initiative', 'abundant', makeSnapshot({ claude: 0, codex: 1, grok: 1 }))).toEqual(
-      expect.objectContaining({ executor: 'codex', level: 'L3_cross_vendor_fallback' })
+      expect.objectContaining({ executor: 'codex', level: 'L2_primary_codex' })
     );
   });
 

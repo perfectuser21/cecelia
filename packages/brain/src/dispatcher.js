@@ -25,7 +25,7 @@ import {
   getBillingPause,
 } from './executor.js';
 import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
-import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
+import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES, OPENCLAW_PASSTHROUGH_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
@@ -51,6 +51,7 @@ import { routeQiumiTask, persistDecision } from './routing/qiumi-router.js';
 import { qiumiEnv } from './routing/env.js';
 import { routeSerialOf, findSameSerialBusy } from './routing/qiumi-serial-gate.js';
 import { dispatchScriptTask, SCRIPT_BREAKER_KEY } from './script-executor.js';
+import { CLAUDE_CHANNEL_RETIRED_CODE } from './lib/claude-channel.js';
 
 /**
  * openclaw-agent 表面（qiumi_task）由 Brain 经 ssh 直派 MMV，不经 cecelia-bridge：
@@ -622,7 +623,7 @@ export async function dispatchNextTask(goalIds) {
         try {
           const qiumiProbe = await selectNextDispatchableTask(goalIds, [], {
             priorityFilter: _quotaPriorityFilter,
-            onlyTaskTypes: ['qiumi_task'],
+            onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES],
           });
           if (qiumiProbe) {
             tickLog(`[tick] qiumi bypass: task_pool 已满但队列有 qiumi_task=${qiumiProbe.id}，穿透 MMV 不占 fleet 槽位，放行（仅选 qiumi_task）`);
@@ -724,6 +725,10 @@ export async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'dispatch_exception', task_id: nextTask?.id, error: err.message, actions };
   };
 
+  // Claude 无头通道退役（任务 76a160b3）：执行时才知道落到 claude 路径，triggerCeceliaRun 返回
+  // claude_channel_retired 后同样记入 noExecutorSkipIds，回到这里换下一个候选。
+  let execResult;
+  candidateLoop: for (;;) {
   // HOL fix (0014cd42)：外层循环把「claim 之后的 executor 可用性检查」纳入候选重选——
   // no_executor 时 revert + 记入 noExecutorSkipIds，回来选下一个候选，而不是整个 tick 直接放弃。
   // circuit_breaker / cortex / retired / harness 并发上限等分支保持原「直接 return 让位」语义不变。
@@ -733,7 +738,7 @@ export async function dispatchNextTask(goalIds) {
     const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...breakerSkipIds, ...duplicateSkipIds, ...resourceSkipIds];
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, {
       priorityFilter: _quotaPriorityFilter,
-      ...(qiumiOnlyBypass ? { onlyTaskTypes: ['qiumi_task'] } : {}),
+      ...(qiumiOnlyBypass ? { onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES] } : {}),
     });
     if (!candidate) {
       if (breakerSkipIds.length > 0 && noExecutorSkipIds.length === 0) {
@@ -1159,8 +1164,9 @@ export async function dispatchNextTask(goalIds) {
     continue dispatchLoop;
   }
 
+  // 按候选任务判定：经桥接拉起 claude 的路径已退役（任务 76a160b3）→ no_executor 跳过
   const ceceliaAvailable = needsBridgeCheck
-    ? await checkCeceliaRunAvailable()
+    ? await checkCeceliaRunAvailable(nextTask)
     : { available: true };
   if (!ceceliaAvailable.available) {
     // Revert task to queued so it can be retried next tick
@@ -1198,7 +1204,6 @@ export async function dispatchNextTask(goalIds) {
   } // dispatchLoop
 
   // 6. 真正派发（claim 已持有；任何未预期异常仍走 postClaimException 兜底）
-  let execResult;
   try {
   const fullTaskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [nextTask.id]);
   if (fullTaskResult.rows.length === 0) {
@@ -1383,6 +1388,22 @@ export async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'script_payload_invalid', task_id: nextTask.id, terminal: true, actions };
   }
 
+  if (!execResult.success && (execResult.reason === CLAUDE_CHANNEL_RETIRED_CODE || execResult.error === CLAUDE_CHANNEL_RETIRED_CODE)) {
+    // Claude 无头通道已退役（任务 76a160b3）：不是执行故障，与 no_executor 同语义——
+    // 回 queued、释放 claim，不写 failed_dispatch、不计熔断/autoblock，换下一个候选
+    await updateTask({ task_id: nextTask.id, status: 'queued' });
+    await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`, [nextTask.id]);
+    await releaseDeviceLockIfHeld(nextTask);
+    await recordDispatchResult(pool, false, 'no_executor', undefined, nextTask.id);
+    noExecutorSkipIds.push(nextTask.id);
+    if (noExecutorSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+      tickLog(`[tick] no_executor: 跳过数达上限 (${MAX_SKIP_HEAD_FOR_BLOCKED})，本 tick 放弃派发`);
+      return { dispatched: false, reason: 'no_executor', task_id: nextTask.id, error: CLAUDE_CHANNEL_RETIRED_CODE, no_executor_skipped: noExecutorSkipIds.length, actions };
+    }
+    tickLog(`[tick] no_executor: task=${String(nextTask.id).slice(0, 8)} (${CLAUDE_CHANNEL_RETIRED_CODE}) 跳过，试下一候选`);
+    continue candidateLoop;
+  }
+
   if (!execResult.success) {
     console.warn(`[dispatch] triggerCeceliaRun failed for task ${nextTask.id}: ${execResult.error || execResult.reason}`);
     // executor 只在 kernel-v1 catch 里把 reason 也改成 needs_rebase；其他返回路径只带 reason_code，
@@ -1522,6 +1543,8 @@ export async function dispatchNextTask(goalIds) {
   } catch (err) {
     return await postClaimException(err);
   }
+  break;
+  } // candidateLoop
 
   // ─────────────────────────────────────────────────────────────────────────
   // triggerCeceliaRun 已经 success=true → task 已真正派发出去（进程/graph 已 spawn）。

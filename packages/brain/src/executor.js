@@ -28,18 +28,15 @@ import pool from './db.js';
 import { buildLearningContext } from './learning-retriever.js';
 import { generateL0Summary } from './memory-utils.js';
 import { getDecisionsSummary } from './decisions-context.js';
-import { recordExpectedReward } from './dopamine.js';
 import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
 import { getTaskLocation, getInternalTaskHandler } from './task-router.js';
 import { resolveExecutor } from './routing/resolve-executor.js';
 import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCache as _refreshCache } from './task-type-config-cache.js';
 import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
 import { finalizeTask } from './lib/task-terminal.js';
-import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
-import { writeDockerCallback, resolveResourceTier, isDockerAvailable, resolveBrainBaseUrl } from './docker-executor.js';
+import { writeDockerCallback, resolveResourceTier, isDockerAvailable } from './docker-executor.js';
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
-import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import {
   RETIRED_HARNESS_TYPES_DISPATCH,
@@ -50,8 +47,8 @@ import {
   CONTENT_PIPELINE_TYPES as CONTENT_PIPELINE_EXTERNAL_WORKER_TYPES,
   EXTERNAL_WATCHDOG_TASK_TYPES,
   EXECUTOR_SKILL_MAP,
-  EXECUTOR_MODE_MAP,
 } from './lib/task-type-registry.js';
+import { CLAUDE_CHANNEL_RETIRED_CODE } from './lib/claude-channel.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRunForExecResult } from './lib/task-run.js';
 import { internalServiceHeaders } from './lib/internal-service-auth.js';
@@ -1465,19 +1462,6 @@ function getCredentialsForTask(task) {
   const profile = getActiveProfile();
   const profileMap = profile?.config?.executor?.model_map;
   return profileMap?.[taskType]?.credentials || profileMap?.[taskType]?.minimax_credentials || null;
-}
-
-/**
- * Get permission mode based on task_type
- * plan = 只读/Plan Mode，不能修改文件
- * bypassPermissions = 完全自动化，跳过权限检查
- */
-function getPermissionModeForTaskType(taskType) {
-  // Plan Mode: 只能读文件，不能执行 Bash，不能写文件
-  // Bypass Mode: 完全权限，可以执行 Bash、调 API、写文件
-  // 名单见 lib/task-type-registry.js（EXECUTOR_MODE_MAP）。
-  const modeMap = EXECUTOR_MODE_MAP;
-  return modeMap[taskType] || 'bypassPermissions';
 }
 
 // 各 harness 阶段的预定义 goal conditions（task.goal_condition 为空时作为 fallback）
@@ -3306,7 +3290,7 @@ export function summarizeNodeState(state) {
 //   location='hk'   → HK MiniMax
 //   location='xian' → 西安 Codex Bridge
 //   us + spec_review/code_review_gate → 本机 Codex CLI（独立 2-slot 池）
-//   location='us'   → US cecelia-bridge（Claude Code，10-slot 池）
+//   location='us'   → 原 US cecelia-bridge（Claude Code）——已退役，返回 claude_channel_retired（任务 76a160b3）
 // 注意：Coding 通道（dev/codex_dev/initiative_plan 等）在 task-router.js 中标注为 'us'，
 //       不需要在此维护第二份白名单，改 task-router.js 即可影响路由。
 
@@ -3392,7 +3376,7 @@ async function _triggerCeceliaRunInner(task) {
   //    [MINOR 3] 排除 harness_initiative / retired harness types：这些任务即使误传
   //    payload.executor 也必须走下方 harness graph / retired 短路，不进 override。
   //    resolveExecutor 抛错 → loud-fail（标 failed + return），绝不静默改派。
-  let forceUsClaude = false; // [BLOCKER 1] claude override 命中后短路掉下方 location 路由
+  let forceUsClaude = false; // [BLOCKER 1] claude override 命中后短路掉下方 location 路由（落到退役收口）
   if (
     (task.payload?.machine || task.payload?.executor) &&
     task.task_type !== 'harness_initiative' &&
@@ -3415,7 +3399,7 @@ async function _triggerCeceliaRunInner(task) {
     if (route.executor === 'codex') {
       return triggerCodexBridge(task, route.url);
     }
-    // [BLOCKER 1] route.executor === 'claude' → 必须落到下方 US Claude 默认派发。
+    // [BLOCKER 1] route.executor === 'claude' → 必须落到下方 US Claude 收口（现为退役拒绝）。
     // 置 forceUsClaude 短路掉后续所有 location 分支（xian / xian_m1 / review / us+codex），
     // 否则天然 location='xian' 的 task_type（codex_dev 等）会被二次劫持送到西安 codex。
     forceUsClaude = true;
@@ -3586,353 +3570,29 @@ async function _triggerCeceliaRunInner(task) {
     return { success: false, retired: true, taskType: task.task_type };
   }
 
-  // 3. US → Claude Code（本机 cecelia-bridge，10-slot 池）
-  // Use original cecelia-bridge on port 3457
-  const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
-
-  // Generate run_id early (Hard Boundary #1: L0 generates run_id)
-  const runId = generateRunId(task.id);
-
-  // Create trace step for this execution (v1.1.1 observability)
-  const trace = traceStep({
+  // 3. US → Claude Code（cecelia-bridge /trigger-cecelia → cecelia-run → claude -p；或 HARNESS_DOCKER_ENABLED 起 claude 容器）
+  //    Claude 无头通道已退役（任务 76a160b3，决策 067867c8）：不 fetch、不起容器，返回 claude_channel_retired。
+  //    dispatcher 按 no_executor 收口（不计熔断 / dispatch 失败 / autoblock）。
+  console.warn(`[executor] task=${task.id} type=${task.task_type} 落在已退役的 Claude 桥接路径 → ${CLAUDE_CHANNEL_RETIRED_CODE}`);
+  return {
+    success: false,
     taskId: task.id,
-    runId,
-    layer: LAYER.L0_ORCHESTRATOR,
-    stepName: 'trigger_cecelia_run',
-    executorHost: EXECUTOR_HOSTS.US_VPS,
-    agent: task.task_type || 'dev',
-    region: 'us',
-    inputSummary: {
-      task_type: task.task_type,
-      task_title: task.title,
-    },
-  });
-
-  // 协议卫生包：spawnClaim/releaseDedupeKey 需要在外层 catch 里也可见（fail 路径要 release）
-  let spawnClaim = null;
-  let releaseDedupeKey = null;
-  let spawned = false; // spawn 真实发生后置 true，outer catch 不再 release（防提前打开重入窗口）
-
-  try {
-    // Start trace
-    await trace.start();
-
-    // === DEDUP CHECK ===
-    const existing = activeProcesses.get(task.id);
-    if (existing && isProcessAlive(existing.pid)) {
-      console.log(`[executor] Task ${task.id} already running (pid=${existing.pid}), skipping`);
-      await trace.end({
-        status: STATUS.FAILED,
-        error: new Error('Task already running'),
-      });
-      return {
-        success: false,
-        taskId: task.id,
-        reason: 'already_running',
-        existingPid: existing.pid,
-        existingRunId: existing.runId,
-      };
-    }
-    // Clean stale entry if process is dead
-    if (existing) {
-      activeProcesses.delete(task.id);
-    }
-
-    // === RESOURCE CHECK ===
-    const resources = checkServerResources();
-    if (!resources.ok) {
-      console.log(`[executor] Server overloaded, refusing to spawn: ${resources.reason}`);
-      await trace.end({
-        status: STATUS.FAILED,
-        error: new Error(`Server overloaded: ${resources.reason}`),
-      });
-      return {
-        success: false,
-        taskId: task.id,
-        reason: 'server_overloaded',
-        detail: resources.reason,
-        metrics: resources.metrics,
-      };
-    }
-
-    // 协议卫生包：DB 级 spawn 幂等（跨进程/跨重启防 tick 重入双 spawn；120s 短 TTL）
-    // 内存 activeProcesses 检查覆盖同进程场景；本检查覆盖蓝绿窗口期双 Brain / 重启后状态丢失场景。
-    // ⚠️ 不碰 harness-callback.js 的 containerId claim（那是 callback 重入幂等，语义不同）。
-    // 放在资源检查之后：资源过载路径不 spawn，不该占用 dedupe key（挪之前泄漏 key 120s）。
-    const dedupeMod = await import('./lib/dedupe.js');
-    releaseDedupeKey = dedupeMod.releaseDedupeKey;
-    spawnClaim = await dedupeMod.claimDedupeKey('spawn', String(task.id), 120);
-    if (!spawnClaim.claimed) {
-      console.log(`[executor] Task ${task.id} spawn dedupe hit (DB), skipping`);
-      await trace.end({ status: STATUS.FAILED, error: new Error('Spawn deduplicated') });
-      return { success: false, taskId: task.id, reason: 'spawn_deduplicated' };
-    }
-
-    const checkpointId = `cp-${task.id.slice(0, 8)}`;
-
-    // 检查 task_type 合理性（warning 级别，不阻塞执行）
-    checkTaskTypeMatch(task);
-
-    // 防御性修正：task_type=null 但 skill=/dev 时自动填充 task_type=dev
-    if (!task.task_type && task.payload?.skill === '/dev') {
-      console.warn(`[executor] task_type=null but skill=/dev for task ${task.id}, auto-filling task_type=dev`);
-      task = { ...task, task_type: 'dev' };
-    }
-
-    // Prepare prompt content, permission mode, extra env, and model based on task_type
-    const taskType = task.task_type || 'dev';
-    let promptContent = await preparePrompt(task);
-
-    // 注入 decisions 摘要（用户/系统决策的 SSOT）
-    try {
-      const decisionsSummary = await getDecisionsSummary();
-      if (decisionsSummary) {
-        promptContent = `${decisionsSummary}\n\n---\n\n${promptContent}`;
-      }
-    } catch (err) {
-      console.warn(`[executor] decisions 注入失败（不阻塞派发）: ${err.message}`);
-    }
-    const permissionMode = getPermissionModeForTaskType(taskType);
-    const extraEnv = getExtraEnvForTaskType(taskType);
-    const model = getModelForTask(task);
-
-    // Update task with run info before execution
-    await updateTaskRunInfo(task.id, runId, 'triggered');
-
-    // RPE 基线：记录期望奖赏（fire-and-forget，失败不阻塞派发）
-    const skill = task.payload?.skill || taskType;
-    recordExpectedReward(task.id, taskType, skill)
-      .catch(e => console.warn(`[executor] recordExpectedReward 失败（非阻断）: ${e.message}`));
-
-    // 记录执行尝试次数（用于成功率统计）
-    try {
-      await pool.query(
-        `UPDATE tasks
-         SET
-           execution_attempts = COALESCE(execution_attempts, 0) + 1,
-           last_attempt_at = NOW(),
-           updated_at = NOW()
-         WHERE id = $1`,
-        [task.id]
-      );
-    } catch (attemptErr) {
-      // P3 级别：不影响主派发流程
-      console.warn(`[executor] execution_attempt_record_failed task=${task.id}: ${attemptErr.message}`);
-    }
-
-    // Resolve repo_path from task's project (traverse parent chain for Features)
-    let repoPath = null;
-    if (task.project_id) {
-      try {
-        repoPath = await resolveRepoPath(task.project_id);
-      } catch { /* ignore */ }
-    }
-    // Fallback: dept_heartbeat (and any task with payload.repo_path) uses payload directly
-    if (!repoPath && task.payload?.repo_path) {
-      repoPath = task.payload.repo_path;
-    }
-
-    // Get provider (minimax = 1/12 cost via api.minimaxi.com)
-    let provider = getProviderForTask(task);
-
-    // 凭据：profile 显式配置的就传给 spawn()，由其内层 account-rotation middleware
-    // 检查 spending cap / auth fail 并按 cascade 兜底。caller 不再做内联 fallback，
-    // dispatched_account 记账由 spawn 外层 billing middleware 接管。
-    const credentials = getCredentialsForTask(task);
-    if (credentials) {
-      extraEnv.CECELIA_CREDENTIALS = credentials;
-    }
-
-    // goal-based stop hook: inject --settings JSON for tasks with goal_condition
-    const _goalCond = task.goal_condition || HARNESS_GOAL_CONDITIONS[taskType] || null;
-    const _goalSettings = buildGoalSettings(_goalCond);
-    if (_goalSettings) {
-      extraEnv.CECELIA_GOAL_SETTINGS = _goalSettings;
-    }
-
-    // ── Docker Sandbox 分支（HARNESS_DOCKER_ENABLED=true）───────────────────
-    // 用 Docker container 替换 cecelia-run.sh + worktree spawn 的脆弱模式。
-    // 完成后写 callback_queue，下游 callback-worker 与 bridge 路径一致。
-    if (process.env.HARNESS_DOCKER_ENABLED === 'true') {
-      const extraEnvKeys = Object.keys(extraEnv);
-      const tier = resolveResourceTier(taskType);
-      console.log(
-        `[executor] HARNESS_DOCKER_ENABLED=true → spawn() task=${task.id} type=${taskType} tier=${tier.tier}${repoPath ? ` repo=${repoPath}` : ''}${extraEnvKeys.length ? ` extra_env=[${extraEnvKeys.join(',')}]` : ''}`
-      );
-
-      // 注入 webhook + 上下文（与 cecelia-run 行为对齐）
-      // bridge 容器内 localhost:5221 不可达（issue 219a9efc），base 默认 host.docker.internal
-      const brainBase = resolveBrainBaseUrl();
-      const dockerEnv = {
-        ...extraEnv,
-        WEBHOOK_URL: `${brainBase}/api/brain/execution-callback`,
-        // 回执入口验 Bearer（棒1）：容器内 cecelia-run.sh 从 env 读 token 回投
-        CECELIA_INTERNAL_TOKEN: process.env.CECELIA_INTERNAL_TOKEN,
-        CECELIA_CORE_API: brainBase,
-        BRAIN_URL: brainBase,
-        CECELIA_PERMISSION_MODE: permissionMode,
-        CECELIA_TASK_TYPE: taskType,
-      };
-      if (model) dockerEnv.CECELIA_MODEL = model;
-      if (provider) dockerEnv.CECELIA_PROVIDER = provider;
-      // 旧的西安 harness 全局开关 env 透传已删除（死代码）：harness 路由收编进
-      // resolveExecutor（DB 驱动 machine+executor），graph 不再读任何全局开关。
-
-      const authorizeSpawn=operation=>withLegacyRelayExecution({pool,location:os.hostname(),provider:provider??'claude',credentialIdentity:credentials,repo:task.payload?.repo??task.repo_hint},operation);
-      await authorizeSpawn(()=>{});
-      const dockerResult = await spawnDocker({
-        authorizeSpawn,
-        task,
-        prompt: promptContent,
-        env: dockerEnv,
-        worktreePath: repoPath || undefined,
-      });
-
-      activeProcesses.set(task.id, {
-        pid: null,
-        startedAt: dockerResult.started_at,
-        runId,
-        checkpointId,
-        docker: true,
-        container: dockerResult.container,
-      });
-      // spawn 已真实发生（容器跑过），不 release dedupe key——即使 exit_code≠0 也一样：
-      // release 会打开 120s 内重复 spawn 窗口；TTL 自然过期兜底。
-      spawned = true;
-
-      // 完成后写 callback_queue（保持下游路径兼容）
-      try {
-        await writeDockerCallback(task, runId, checkpointId, dockerResult);
-      } catch (cbErr) {
-        console.error(`[executor] writeDockerCallback failed task=${task.id}: ${cbErr.message}`);
-      }
-
-      await trace.end({
-        status: dockerResult.exit_code === 0 ? STATUS.SUCCESS : STATUS.FAILED,
-        outputSummary: {
-          checkpoint_id: checkpointId,
-          container: dockerResult.container,
-          exit_code: dockerResult.exit_code,
-          duration_ms: dockerResult.duration_ms,
-          timed_out: dockerResult.timed_out,
-        },
-      });
-
-      recordSessionStart();
-
-      return {
-        success: dockerResult.exit_code === 0 && !dockerResult.timed_out,
-        runId,
-        taskId: task.id,
-        checkpointId,
-        docker: true,
-        container: dockerResult.container,
-        exitCode: dockerResult.exit_code,
-        durationMs: dockerResult.duration_ms,
-        timedOut: dockerResult.timed_out,
-      };
-    }
-
-    // Call original cecelia-bridge via HTTP (POST /trigger-cecelia)
-    const extraEnvKeys = Object.keys(extraEnv);
-    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${provider ? ` provider=${provider}` : ''}${repoPath ? ` repo=${repoPath}` : ''}${extraEnvKeys.length ? ` extra_env=[${extraEnvKeys.join(',')}]` : ''}`);
-
-    const response = await withLegacyExecution({pool,provider:provider??'claude',endpoint:EXECUTOR_BRIDGE_URL},()=>fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(30000),
-      body: JSON.stringify({
-        task_id: task.id,
-        checkpoint_id: checkpointId,
-        prompt: promptContent,
-        task_type: taskType,
-        permission_mode: permissionMode,
-        repo_path: repoPath,
-        model: model,
-        provider: provider,
-        extra_env: extraEnvKeys.length ? extraEnv : undefined
-      })
-    }));
-
-    const result = await response.json();
-
-    if (!result.ok) {
-      console.log(`[executor] Bridge rejected: ${result.error}`);
-      // 协议卫生包：spawn 没起来（bridge 拒绝），释放 dedupe key 让 120s 内的合法重派不被误挡
-      if (spawnClaim && !spawnClaim.degraded) await releaseDedupeKey('spawn', String(task.id)).catch(() => {});
-      return {
-        success: false,
-        taskId: task.id,
-        reason: 'bridge_error',
-        error: result.error
-      };
-    }
-
-    // Original bridge doesn't return PID, but we track by task_id
-    activeProcesses.set(task.id, {
-      pid: null, // Bridge doesn't return PID
-      startedAt: new Date().toISOString(),
-      runId,
-      checkpointId,
-      bridge: true
-    });
-    // spawn 已真实发生（bridge 已接单），此后即使 return 前抛异常也不 release dedupe key
-    spawned = true;
-    // 打标：cecelia-bridge(localhost:3457) 派发 → bridge
-    await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__bridge_path);
-
-    console.log(`[executor] Bridge dispatched task=${task.id} checkpoint=${checkpointId}`);
-
-    // Trace: success
-    await trace.end({
-      status: STATUS.SUCCESS,
-      outputSummary: {
-        checkpoint_id: checkpointId,
-        log_file: result.log_file,
-      },
-    });
-
-    // 记录 session 开始（仅首次派发时，用于 spending cap 时长分析）
-    recordSessionStart();
-
-    return {
-      success: true,
-      runId,
-      taskId: task.id,
-      checkpointId,
-      logFile: result.log_file,
-      bridge: true
-    };
-
-  } catch (err) {
-    if (err.name === 'AbortError' || err.name === 'TimeoutError') {
-      console.error(`[executor] Bridge /trigger-cecelia timed out (30s) for task=${task.id} — bridge may be unresponsive`);
-    } else {
-      console.error(`[executor] Error triggering via bridge: ${err.message}`);
-    }
-
-    // Trace: failure
-    await trace.end({
-      status: STATUS.FAILED,
-      error: err,
-    });
-
-    // 协议卫生包：spawn 未真实发生时才释放 dedupe key，让 120s 内的合法重派不被误挡；
-    // spawned=true 说明进程/容器已起，release 反而打开重入窗口。
-    if (spawnClaim && !spawnClaim.degraded && releaseDedupeKey && !spawned) await releaseDedupeKey('spawn', String(task.id)).catch(() => {});
-
-    return {
-      success: false,
-      taskId: task.id,
-      error: err.name === 'AbortError' || err.name === 'TimeoutError' ? 'bridge_timeout' : err.message,
-    };
-  }
+    reason: CLAUDE_CHANNEL_RETIRED_CODE,
+    error: CLAUDE_CHANNEL_RETIRED_CODE,
+  };
 }
 
 /**
  * Check if cecelia-run is available (via cecelia-bridge on port 3457)
+ *
+ * 传入候选任务（派发前检查）→ 恒可用：Claude 桥接已退役（任务 76a160b3），探活它没有意义，
+ * 还会把不经 :3457 的 codex/西安/OpenClaw 任务误判成不可用。落到 claude 路径的任务在执行时由
+ * triggerCeceliaRun 返回 claude_channel_retired 拦截。不传 task 的调用方（健康检查等）保持原探活行为。
  */
-async function checkCeceliaRunAvailable() {
+async function checkCeceliaRunAvailable(task = null) {
+  if (task) {
+    return { available: true, path: null, bridge: false };
+  }
   const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
   try {
     const response = await fetch(`${EXECUTOR_BRIDGE_URL}/health`, { method: 'GET', signal: AbortSignal.timeout(3000) });

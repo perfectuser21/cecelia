@@ -5,7 +5,7 @@
 #   2. quarantine.js 已拆 TIMEOUT/SERVER_ERROR 且 getRetryStrategy 返回结构不变
 #   3. migration 326 side_effect_dedupe 表 + dedupe.js fail-open
 #   4. alert-debounce opt-in 接入 raise()
-#   5. 三入口接线存在（createTask / executor spawn / notifier）
+#   5. 入口接线存在（createTask / notifier）；executor spawn 入口随 Claude 通道退役（决策 067867c8），改证明退役
 #   6. dispatcher 对 spawn_deduplicated 不计熔断
 set -euo pipefail
 
@@ -72,16 +72,25 @@ if (!al.includes('opts.debounce')) { console.error('FAIL: raise() 未接 debounc
 console.log('alert-debounce opt-in 正确 ✓');
 "
 
-echo "[protocol-hygiene-smoke] 5. 三入口接线"
+echo "[protocol-hygiene-smoke] 5. 入口接线（createTask / notifier）+ executor claude 入口退役"
 node -e "
 const fs = require('fs');
 const actions = fs.readFileSync('packages/brain/src/actions.js', 'utf8');
 if (!actions.includes('dedupe_key_hit')) { console.error('FAIL: createTask 未接 dedupe_key'); process.exit(1); }
+// executor 的 spawn dedupe 只挂在 US → cecelia-bridge（claude -p / claude 容器）派发段上，
+// 防的是同一任务被 tick 重入双拉起 claude。Claude 无头通道已退役（任务 76a160b3，决策 067867c8），
+// 该段不再 spawn 任何进程，dedupe 随之消失、无等价实现；改为证明该入口已退役：
+// triggerCeceliaRun 落到 claude 段时返回 claude_channel_retired，且不再 fetch /trigger-cecelia。
 const executor = fs.readFileSync('packages/brain/src/executor.js', 'utf8');
-if (!executor.includes(\"claimDedupeKey('spawn'\") || !executor.includes('spawn_deduplicated')) { console.error('FAIL: executor 未接 spawn dedupe'); process.exit(1); }
+const segStart = executor.indexOf('// 3. US → Claude Code');
+if (segStart < 0) { console.error('FAIL: executor 找不到 US → Claude Code 段'); process.exit(1); }
+const seg = executor.slice(segStart, executor.indexOf('\n}\n', segStart));
+if (!seg.includes('reason: CLAUDE_CHANNEL_RETIRED_CODE')) { console.error('FAIL: executor claude 段未返回 claude_channel_retired'); process.exit(1); }
+if (/\bfetch\(|\bspawn\(|claimDedupeKey/.test(seg)) { console.error('FAIL: executor claude 段仍在拉起/派发（fetch/spawn/dedupe 残留）'); process.exit(1); }
+if (executor.includes('/trigger-cecelia\`')) { console.error('FAIL: executor 仍 fetch cecelia-bridge /trigger-cecelia'); process.exit(1); }
 const notifier = fs.readFileSync('packages/brain/src/notifier.js', 'utf8');
 if (!notifier.includes('dedupeKey')) { console.error('FAIL: notifier 未接 dedupeKey'); process.exit(1); }
-console.log('三入口接线正确 ✓');
+console.log('入口接线正确（executor spawn 入口已退役）✓');
 "
 
 echo "[protocol-hygiene-smoke] 6. dispatcher spawn_deduplicated 不计熔断"

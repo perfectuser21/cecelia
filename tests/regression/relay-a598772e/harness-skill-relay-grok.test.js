@@ -258,28 +258,35 @@ describe('[BEHAVIOR-5] detectQuotaWall — 全 6 个 pattern 覆盖', () => {
 // ──────────────────────────────────────────────────────────────────────────────
 // [BEHAVIOR-6] 额度撞墙 fallback 路径
 // ──────────────────────────────────────────────────────────────────────────────
-describe('[BEHAVIOR-6] 额度撞墙 fallback — grok 撞墙 → claude 重试', () => {
+// 2026-10-10 更新（任务 76a160b3，决策 067867c8）：Claude Code 无头通道已退役，
+// 原「grok 撞墙 → 降级 claude 重试一次」不再成立——撞墙按普通 spawn 失败回滚，不得再起 claude。
+describe('[BEHAVIOR-6] 额度撞墙 — Claude 退役后不再降级 claude 重试', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it('grok 撞墙 → 第二次 spawnFn 调用使用 CECELIA_EXECUTOR=claude', async () => {
+  it('grok 撞墙 → 只 spawn 一次（无 claude 重试），回滚返回 ok=false', async () => {
     vi.stubEnv('GROK_RELAY_HOME', '/home/user/.grok');
-    // 第一次（grok）spawn 失败且输出含配额撞墙信息
+    // 撞墙信息仍能被识别（detectQuotaWall 保留），但不再触发换执行体
     const quotaError = new Error('out of credits');
+    expect(detectQuotaWall(quotaError.message)).toBe(true);
     const spawnFn = vi.fn()
-      .mockRejectedValueOnce(quotaError)   // grok 第一次失败（配额撞墙）
-      .mockResolvedValueOnce({ containerId: 'cid-claude', dockerStdout: 'ok' }); // claude 重试成功
+      .mockRejectedValueOnce(quotaError)
+      .mockResolvedValueOnce({ containerId: 'cid-claude', dockerStdout: 'ok' });
 
     const deps = makeDeps({ spawnFn });
     const task = makeGrokTask();
     const r = await spawnSkillRelaySession(task, deps);
 
-    expect(r.ok).toBe(true);
-    expect(spawnFn).toHaveBeenCalledTimes(2);
-
-    const secondCall = spawnFn.mock.calls[1][0];
-    expect(secondCall.env.CECELIA_EXECUTOR).toBe('claude');
+    expect(r.ok).toBe(false);
+    expect(r.fallback).toBeUndefined();
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+    expect(spawnFn.mock.calls[0][0].env.CECELIA_EXECUTOR).toBe('grok');
+    expect(spawnFn.mock.calls.some(([o]) => o.env?.CECELIA_EXECUTOR === 'claude')).toBe(false);
+    // 回滚：不落 initiative_runs，task 打回 queued
+    const sqls = deps.pool.query.mock.calls.map(([sql]) => sql);
+    expect(sqls.some((sql) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
+    expect(sqls.some((sql) => /UPDATE tasks SET status='queued'/.test(sql))).toBe(true);
   });
 
   it('非撞墙失败 → 不换 executor，直接回滚返回 ok=false', async () => {
@@ -425,7 +432,9 @@ describe('[BEHAVIOR-8] 回归：isCodex/claude 路径零影响', () => {
     expect(sql).not.toContain('skill-relay-grok');
   });
 
-  it('executor 缺省（claude）→ CECELIA_EXECUTOR=claude，containerId 无 -gk 后缀', async () => {
+  // 2026-10-10 更新（任务 76a160b3，决策 067867c8）：非 kernel 无头路径缺省执行体即 claude，
+  // Claude 无头通道退役后缺省 executor 被拒绝，不再起 claude 容器。
+  it('executor 缺省（claude）→ 拒绝 claude_channel_retired，不 spawn、不落 initiative_runs', async () => {
     const deps = makeDeps();
     const task = {
       id: 'aaaabbbb-cccc-dddd-eeee-ffff00008888',
@@ -435,11 +444,12 @@ describe('[BEHAVIOR-8] 回归：isCodex/claude 路径零影响', () => {
         sprint_dir: 'sprints/test-claude',
       },
     };
-    await spawnSkillRelaySession(task, deps);
+    const r = await spawnSkillRelaySession(task, deps);
 
-    const spawnOpts = deps.spawnFn.mock.calls[0][0];
-    expect(spawnOpts.env.CECELIA_EXECUTOR).toBe('claude');
-    expect(spawnOpts.containerId).not.toMatch(/-gk$/);
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('claude_channel_retired');
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+    expect(deps.pool.query.mock.calls.some(([sql]) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
   });
 
   it('_activeCodexRelays 守门在 grok 路径无效（grok 初版不限并发）', async () => {

@@ -9,12 +9,12 @@ vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {
  * 验证 triggerCeceliaRun 顶部的显式 override 分支（REVIEW 短路之后、location 路由之前）：
  *   - payload.executor=codex + machine=xian-m4 → triggerCodexBridge(task, route.url)
  *     （断言：fetch 被调到 route.url/run；走 codex-bridge，不进 US claude 路径）
- *   - payload.executor=claude → 不调 codex bridge，落 US Claude 默认路径
- *     （断言：fetch 没被调到 codex /run；进入 US claude（traceStep 被调））
+ *   - payload.executor=claude → 不调 codex bridge，落 US Claude 收口——已退役（任务 76a160b3）
+ *     （断言：fetch 没被调到 codex /run；返回 reason=claude_channel_retired，不 spawn、不 trace）
  *   - resolveExecutor 抛错 → 任务标 failed + 不派发
  *     （断言：updateTaskStatus(task.id,'failed',...) 被调；fetch / traceStep 都没被调）
  *   - 无 payload.machine/executor → 现有 location 路由完全不变（回归保护）
- *     （location='xian' → triggerCodexBridge(task)；默认 → US claude）
+ *     （location='xian' → triggerCodexBridge(task)；默认 → US claude 收口 = claude_channel_retired）
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -98,15 +98,24 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
     triggerCeceliaRun = executor.triggerCeceliaRun;
   });
 
-  it('普通Docker本地启动不能借MMV bridge grant或控制器身份执行',async()=>{
+  // 原「普通Docker本地启动不能借MMV bridge grant（execution_legacy_identity_required）」测的 HARNESS_DOCKER_ENABLED
+  // 起 claude 容器分支已随 Claude 通道退役删除（任务 76a160b3）；改为断言开着该 env 也不起容器。
+  it('HARNESS_DOCKER_ENABLED=true 也不起 claude 容器，返回 claude_channel_retired',async()=>{
     vi.stubEnv('HARNESS_DOCKER_ENABLED','true');vi.stubEnv('CECELIA_MACHINE_ID','us-mac-m4');
-    const claim=vi.spyOn(await import('../lib/dedupe.js'),'claimDedupeKey').mockResolvedValue({claimed:true,degraded:true});
     try {
       const result=await triggerCeceliaRun({id:'cccccccc-cccc-4ddd-aeee-ffffffffffff',task_type:'dev',title:'local authority',payload:{repo:'perfectuser21/cecelia'}});
-      expect(result.success).toBe(false);expect(result.error).toContain('execution_legacy_identity_required');
+      expect(result).toMatchObject({success:false,reason:'claude_channel_retired',error:'claude_channel_retired'});
       expect((await import('../spawn/index.js')).spawn).not.toHaveBeenCalled();
-    }finally{claim.mockRestore();vi.unstubAllEnvs();}
+      expect(fetchMock.mock.calls.some(([url])=>String(url).includes('/trigger-cecelia'))).toBe(false);
+    }finally{vi.unstubAllEnvs();}
   });
+
+  // US claude 收口已退役：不 trace、不 fetch /trigger-cecelia，返回 claude_channel_retired
+  function expectClaudeRetired(res) {
+    expect(res).toMatchObject({ success: false, reason: 'claude_channel_retired' });
+    expect(traceStepMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/trigger-cecelia'))).toBe(false);
+  }
 
   // 找出所有打到「/run」（codex bridge 入口）的 fetch 调用
   function codexFetchCalls() {
@@ -140,7 +149,7 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
     expect(traceStepMock).not.toHaveBeenCalled();
   });
 
-  it('claude override（executor=claude）→ 不调 codex bridge，落 US Claude 默认路径', async () => {
+  it('claude override（executor=claude）→ 不调 codex bridge，落 US Claude 收口 → claude_channel_retired', async () => {
     resolveExecutorMock.mockResolvedValue({
       machineId: 'mac-mini-m4-us',
       executor: 'claude',
@@ -153,13 +162,13 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
       payload: { machine: 'mac-mini-m4-us', executor: 'claude' },
     };
 
-    await triggerCeceliaRun(task);
+    const res = await triggerCeceliaRun(task);
 
     expect(resolveExecutorMock).toHaveBeenCalledWith(task);
     // 没有任何 codex bridge /run 调用
     expect(codexFetchCalls().length).toBe(0);
-    // 进入 US claude 默认路径（traceStep 在 US claude 块最前面被调）
-    expect(traceStepMock).toHaveBeenCalled();
+    // 原断言「进入 US claude 默认路径（traceStep 被调）」→ 已退役：返回 claude_channel_retired
+    expectClaudeRetired(res);
     // 不应被标 failed
     expect(updateTaskStatusMock).not.toHaveBeenCalledWith(
       task.id, 'failed', expect.anything(),
@@ -194,7 +203,7 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
     expect(res.taskId).toBe(task.id);
   });
 
-  it('[BLOCKER 1] claude override + getTaskLocation=xian → 短路 location 路由，落 US claude（不被西安劫持）', async () => {
+  it('[BLOCKER 1] claude override + getTaskLocation=xian → 短路 location 路由，落 US claude 收口（不被西安劫持）→ claude_channel_retired', async () => {
     // 天然 location='xian' 的 task_type（如 codex_dev/explore），显式 payload.executor='claude'
     // 必须落 US claude，绝不能被下方 if(location==='xian') 二次劫持送到西安 codex。
     resolveExecutorMock.mockResolvedValue({
@@ -210,13 +219,13 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
       payload: { machine: 'mac-mini-m4-us', executor: 'claude' },
     };
 
-    await triggerCeceliaRun(task);
+    const res = await triggerCeceliaRun(task);
 
     expect(resolveExecutorMock).toHaveBeenCalledWith(task);
     // 关键断言：codex bridge 完全没被调（没被西安劫持）
     expect(codexFetchCalls().length).toBe(0);
-    // 落到 US claude 默认派发
-    expect(traceStepMock).toHaveBeenCalled();
+    // 原断言「落到 US claude 默认派发（traceStep 被调）」→ 已退役：返回 claude_channel_retired
+    expectClaudeRetired(res);
     expect(updateTaskStatusMock).not.toHaveBeenCalledWith(
       task.id, 'failed', expect.anything(),
     );
@@ -259,7 +268,7 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
     expect(traceStepMock).not.toHaveBeenCalled();
   });
 
-  it('无 payload → 默认 location=us 仍走 US Claude（traceStep 被调），不调 resolveExecutor（回归保护）', async () => {
+  it('无 payload → 默认 location=us 落 US Claude 收口 → claude_channel_retired，不调 resolveExecutor（回归保护）', async () => {
     getTaskLocationMock.mockReturnValue('us');
     const task = {
       id: 'eeeeeeee-ffff-0000-1111-222222222222',
@@ -268,11 +277,11 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
       payload: {},
     };
 
-    await triggerCeceliaRun(task);
+    const res = await triggerCeceliaRun(task);
 
     expect(resolveExecutorMock).not.toHaveBeenCalled();
     expect(codexFetchCalls().length).toBe(0);
-    expect(traceStepMock).toHaveBeenCalled();
+    expectClaudeRetired(res);
   });
 
   // Slice5: internal task handler 内联短路 —— harness_intervention 等注册的 internal type 被
@@ -313,9 +322,10 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
       payload: {},
     };
 
-    await triggerCeceliaRun(task);
+    const res = await triggerCeceliaRun(task);
 
-    // 走正常 US claude 路径
-    expect(traceStepMock).toHaveBeenCalled();
+    // 走正常 location 路由，落 US claude 收口（已退役 → claude_channel_retired）
+    expect(getInternalTaskHandlerMock).toHaveBeenCalledWith('dev');
+    expectClaudeRetired(res);
   });
 });

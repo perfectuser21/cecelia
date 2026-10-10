@@ -21,6 +21,7 @@ import { checkAnchor } from '../anchor-check.js';
 import { blockTask } from '../task-updater.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
 import { dispatchManualQiumi } from '../lib/manual-qiumi-dispatch.js';
+import { CLAUDE_CHANNEL_RETIRED_CODE } from '../lib/claude-channel.js';
 import { resolveAllowedTransitions } from '../lib/task-status-transitions.js';
 import { afterTerminalTransition, isRelayTerminalStatus } from '../lib/task-terminal.js';
 import { getTaskType } from '../lib/task-type-registry.js';
@@ -1384,7 +1385,7 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
     );
 
     // 4. 检查执行器可用性
-    const ceceliaAvailable = await checkCeceliaRunAvailable();
+    const ceceliaAvailable = await checkCeceliaRunAvailable(task);
     if (!ceceliaAvailable.available) {
       // 回滚 queued 不触发终态释放链，已抢的锁必须就地放掉
       await pool.query(`UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1`, [id]);
@@ -1401,6 +1402,13 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
       // 同上：回滚 queued 时释放已抢的设备锁
       await pool.query(`UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1`, [id]);
       if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'tasks/:id/dispatch');
+      // Claude 无头通道已退役（任务 76a160b3）：不是执行故障，给出明确原因（任务已回 queued）
+      if (execResult.reason === CLAUDE_CHANNEL_RETIRED_CODE || execResult.error === CLAUDE_CHANNEL_RETIRED_CODE) {
+        return res.status(409).json({
+          error: CLAUDE_CHANNEL_RETIRED_CODE,
+          detail: '该任务路由到已退役的 Claude 无头通道，未派发，任务已回 queued；请改用 codex 等执行体（payload.executor）后重派',
+        });
+      }
       return res.status(500).json({
         error: 'dispatch failed',
         detail: execResult.error || execResult.reason

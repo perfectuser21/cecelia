@@ -25,7 +25,9 @@ describe('dispatch-allocation-guide', () => {
     }));
   });
 
-  it('budget_state=abundant 的 dev 任务 → 保持 claude 默认路由，仅写 allocation 账本', () => {
+  // 原「abundant → 保持 claude 默认路由（不写 executor，reason=default_claude）」：
+  // Claude 通道已退役（任务 76a160b3），兜底执行体改为 codex
+  it('budget_state=abundant 的 dev 任务（无容量快照）→ 兜底写 payload.executor=codex，不再落 claude', () => {
     const task = {
       id: 'task-2',
       task_type: 'dev',
@@ -35,12 +37,13 @@ describe('dispatch-allocation-guide', () => {
     const res = applyDispatchAllocationGuide(task, { budgetState: 'abundant' });
 
     expect(res.changed).toBe(true);
-    expect(res.task.payload.executor).toBeUndefined();
+    expect(res.task.payload.executor).toBe('codex');
     expect(res.task.payload.allocation).toEqual(expect.objectContaining({
-      selected_executor: 'claude',
+      selected_executor: 'codex',
       budget_state: 'abundant',
-      reason: 'default_claude',
+      continuation_level: 'legacy',
     }));
+    expect(res.task.payload.allocation.reason).not.toBe('default_claude');
   });
 
   it('harness_initiative 纳入引导范围，claude 不可用时续接到 codex', () => {
@@ -64,9 +67,10 @@ describe('dispatch-allocation-guide', () => {
     });
 
     expect(res.task.payload.executor).toBe('codex');
+    // 原断言 L3_cross_vendor_fallback/primary_vendor_unavailable：claude 退役后 codex 恒为主偏好（任务 76a160b3）
     expect(res.task.payload.allocation).toEqual(expect.objectContaining({
-      continuation_level: 'L3_cross_vendor_fallback',
-      reason: 'primary_vendor_unavailable',
+      continuation_level: 'L2_primary_codex',
+      reason: 'primary_vendor_available',
     }));
   });
 

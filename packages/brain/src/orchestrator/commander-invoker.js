@@ -12,22 +12,17 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { execFile } from 'node:child_process';
 import { parseCommanderReply } from './home-sequencer.js';
+import { ClaudeChannelRetiredError } from '../lib/claude-channel.js';
 
 const DIGEST_MAX_BYTES = 1200;
-const WAKE_TIMEOUT_MS = 240_000;
-const COMMANDER_MODEL = process.env.SEQUENCER_COMMANDER_MODEL || 'claude-haiku-4-5-20251001';
 
-/** 默认 CLI runner：真 spawn claude -p。测试注入 fake。 */
-function defaultRunner(args, prompt) {
-  return new Promise((resolve, reject) => {
-    execFile('claude', ['-p', ...args, '--model', COMMANDER_MODEL, prompt], {
-      timeout: WAKE_TIMEOUT_MS,
-      env: { ...process.env, CLAUDE_CONFIG_DIR: process.env.SEQUENCER_COMMANDER_CONFIG_DIR || process.env.HOME + '/.claude-account1' },
-      maxBuffer: 4 * 1024 * 1024,
-    }, (err, stdout) => (err ? reject(err) : resolve(String(stdout).trim())));
-  });
+/**
+ * 默认 runner：Claude 无头通道已退役（任务 76a160b3，决策 067867c8），不再 execFile claude -p。
+ * 生产无调用方；未注入 runner 时直接失败，wakeCommander 按既有语义包成 commander_wake_failed。
+ */
+function defaultRunner() {
+  return Promise.reject(new ClaudeChannelRetiredError('commander-invoker 默认 runner'));
 }
 
 /**

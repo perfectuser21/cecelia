@@ -23,6 +23,7 @@ import { spawn as nodeSpawn } from 'child_process';
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import path from 'path';
 import { buildDockerArgs } from '../docker-executor.js';
+import { ClaudeChannelRetiredError, isClaudeExecutor } from '../lib/claude-channel.js';
 
 /** Best-effort cleanup before a reclaimed attempt starts a new container generation. */
 export function removeDockerContainer(containerId) {
@@ -49,6 +50,10 @@ export async function spawnDockerDetached(opts) {
   }
   if (!opts.containerId) {
     throw new Error('spawnDockerDetached: opts.containerId is required');
+  }
+  // Claude 无头通道已退役（任务 76a160b3）：容器执行体缺省即 claude，空/claude 一律拒绝，不写 prompt、不 docker run
+  if (isClaudeExecutor(opts.env?.CECELIA_EXECUTOR)) {
+    throw new ClaudeChannelRetiredError(`spawnDockerDetached container=${opts.containerId}`);
   }
 
   // 先 buildDockerArgs 拿挂载 + env + forensics.promptFile（runInstance SSOT），

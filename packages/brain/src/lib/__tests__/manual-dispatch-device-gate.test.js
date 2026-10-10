@@ -405,6 +405,25 @@ describe('POST /api/brain/tasks/:id/dispatch — 设备锁站岗（Issue e03fc74
     expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
   });
 
+  it('Claude 通道退役：执行时返回 claude_channel_retired → 409 claude_channel_retired（非 503/500），回滚 queued 并释放锁', async () => {
+    currentTask = phoneTask();
+    mockAcquireDeviceLock.mockResolvedValue({
+      result: 'acquired',
+      lock: { device_name: SERIAL, locked_by: currentTask.id },
+    });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: false, taskId: currentTask.id, reason: 'claude_channel_retired', error: 'claude_channel_retired' });
+
+    const app = await makeTasksApp();
+    const res = await request(app).post(`/api/brain/tasks/${currentTask.id}/dispatch`);
+
+    expect(mockCheckAvailable).toHaveBeenCalledWith(expect.objectContaining({ id: currentTask.id }));
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ error: 'claude_channel_retired' });
+    expect(res.body.detail).toMatch(/Claude/);
+    expect(allQueries.some(({ sql, params }) => /SET status = 'queued'/.test(sql) && params?.[0] === currentTask.id)).toBe(true);
+    expect(mockReleaseDeviceLocksHeldBy).toHaveBeenCalledWith(currentTask.id);
+  });
+
   it('revert 释放：acquired 后执行失败（500 回滚 queued）→ releaseDeviceLocksHeldBy 被调用', async () => {
     currentTask = phoneTask();
     mockAcquireDeviceLock.mockResolvedValue({

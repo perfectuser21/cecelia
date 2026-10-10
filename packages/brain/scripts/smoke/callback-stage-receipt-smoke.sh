@@ -4,7 +4,7 @@
 #   1. recordRunFromCallback 终态回执：result.{stage,stage_status,metrics,evidence,probes} 合进 task_runs.result，
 #      evidence/probes 只留引用形态（大 blob 不落），artifacts + pr_url 原样保留；非终态只 startRun
 #   2. 真 express + internalAuthOrLoopback：CECELIA_INTERNAL_TOKEN 配置后 curl 缺头 401 / 错 token 401 / Bearer 200
-#   3. 接线：execution.js 路由挂中间件；cecelia-run.sh / flush-callback-queue.sh / executor.js / cecelia-bridge.js 带 Bearer 或透传 token
+#   3. 接线：execution.js 路由挂中间件；cecelia-run.sh / flush-callback-queue.sh / executor.js 带 Bearer；executor/cecelia-bridge 的 claude 路径已退役（76a160b3）
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -69,11 +69,11 @@ for (const f of ['scripts/cecelia-run.sh', 'scripts/flush-callback-queue.sh']) {
   if (!/Authorization: Bearer \\\$\{?CECELIA_INTERNAL_TOKEN\}?/.test(fs.readFileSync(f, 'utf8'))) { console.error('FAIL ' + f + ' 回执 curl 缺 Bearer 头'); process.exit(1); }
 }
 const exe = fs.readFileSync('src/executor.js', 'utf8');
-const i = exe.indexOf('const dockerEnv = {');
-if (i < 0 || !exe.slice(i, i + 1200).includes('CECELIA_INTERNAL_TOKEN')) { console.error('FAIL executor.js dockerEnv 未透传 CECELIA_INTERNAL_TOKEN'); process.exit(1); }
+// executor 的 docker claude 分支与 cecelia-bridge 透传已随 Claude 无头通道退役删除（任务 76a160b3），改验收口
+if (!exe.includes('CLAUDE_CHANNEL_RETIRED_CODE')) { console.error('FAIL executor.js 未收口 claude_channel_retired'); process.exit(1); }
 if ((exe.match(/execution-callback\`, \{\s*method: 'POST',\s*headers: internalServiceHeaders\(/g) || []).length !== 2) { console.error('FAIL executor.js codex review fetch 未用 internalServiceHeaders'); process.exit(1); }
-if (!fs.readFileSync('scripts/cecelia-bridge.js', 'utf8').includes('CECELIA_INTERNAL_TOKEN')) { console.error('FAIL cecelia-bridge.js 未透传 token'); process.exit(1); }
-console.log('路由中间件 ✓ run.sh/flush Bearer ✓ executor docker env + fetch ✓ bridge 透传 ✓');
+if (!fs.readFileSync('scripts/cecelia-bridge.js', 'utf8').includes('claude_channel_retired')) { console.error('FAIL cecelia-bridge.js 未 410 claude_channel_retired'); process.exit(1); }
+console.log('路由中间件 ✓ run.sh/flush Bearer ✓ executor 退役收口 + fetch ✓ bridge 410 ✓');
 "
 
 echo "[callback-stage-receipt-smoke] PASS"
