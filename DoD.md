@@ -1,5 +1,8 @@
 # Workspace跨仓CI固定来源与真实消费验收
 
+- [x] [BEHAVIOR] activityjudgments 裁判接线（决策 de6dff5d 五块模型第 2 步）：POST /spans 写入成功后，新插入的 span 经 Step 找到归属 Activity，去抖（默认 30s，ACTIVITY_JUDGE_DEBOUNCE_MS；ACTIVITY_JUDGE_AUTO=off 关闭）异步跑 reconcileActivity，结果只追加写入迁移 538 新表 activity_judgments（verdict/连续绿/要求绿/窗口运行数/触发方式与运行/定义版本/完整报告，UPDATE/DELETE 被触发器拒绝），readback 格同时翻色；钩子出任何错只记日志，上报照常 200；POST /step-reconcile 同样记一条手动裁判。新增 compareActivityVersions：同一 Activity 候选版本 vs 基线版本按 spans.activity_definition_version_id 分组，比成功率/读回 verified 比例/观测形状一致性，给 not_worse/worse/insufficient_data（样本下限默认 5）带数字依据；GET /activities/:id/judgments/latest、/judgments、/version-compare 可查。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/activity-version-compare.test.js src/lib/__tests__/activity-judge.test.js src/routes/activity-judgments.test.js src/routes/spans-judge-hook.test.js src/routes/skill-settlement.test.js src/__tests__/migration-538-activity-judgments.test.js --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] workspacecisourcebundle：真实固定Git来源提取两准确caller/reader、分别固定BrainSHA的callee/job源码与hash，严格既有F3身份；source集合不混repo/revision，未知来源及协议缺口拒认、始终不可执行。
   Test: manual:node --test scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs
 
