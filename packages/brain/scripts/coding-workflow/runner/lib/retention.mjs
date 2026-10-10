@@ -8,6 +8,8 @@ const DAY_MS = 24 * 3600 * 1000;
 const WORKTREE_RE = /^cw-[0-9a-f]{8}/;
 const BRANCH_RE = /^cp-[0-9]{8,10}-cw-[0-9a-f]{8}$/;
 const LOG_RE = /\.(json|log)$/;
+// QA 门 / CI 修复的状态台账（审计 #34）：不是日志，超期也不删——删了已升级的 PR 会被当新的重新处理
+const STATE_RE = /^(qa|cifix)-\d+\.json$/;
 
 function mtimeMs(file) {
   try {
@@ -35,7 +37,7 @@ async function cleanWorktrees(cfg, cutoff) {
 function cleanLogs(cfg, cutoff) {
   if (!fs.existsSync(cfg.logDir)) return;
   for (const name of fs.readdirSync(cfg.logDir)) {
-    if (!LOG_RE.test(name)) continue;
+    if (!LOG_RE.test(name) || STATE_RE.test(name)) continue;
     const file = path.join(cfg.logDir, name);
     const mtime = mtimeMs(file);
     if (mtime !== null && mtime < cutoff) fs.rmSync(file, { force: true });
