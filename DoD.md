@@ -1,4 +1,4 @@
-- [ ] [BEHAVIOR] taskrunsvessel 正式 Runs 配置：内部鉴权与显式启用；补列读回成功才登记；不抢占旧库、不删除映射；来源标记及有界分页防重复创建。
+- [x] [BEHAVIOR] taskrunsvessel 正式 Runs 配置：内部鉴权与显式启用；补列读回成功才登记；不抢占旧库、不删除映射；来源标记及有界分页防重复创建。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/projection/__tests__/task-runs-config.test.js src/routes/__tests__/task-runs-projection.test.js --maxWorkers=1 --minWorkers=1"
 # 发布线审查修复：无可退目标也告警（去重）
 
