@@ -10,7 +10,7 @@ BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
 echo "== T-1（对应 Q-1）"
 if ! (
-TS=$(date +%s%N); R=$(curl -q -s -w '\n%{http_code}' -X POST "$BRAIN_URL"/api/brain/strategic-decisions -H 'Content-Type: application/json' -d "{\"category\":\"workflow_bogus\",\"topic\":\"qa-bogus-$TS\",\"decision\":\"qa 非法 category\"}"); echo "$R"; CODE=$(echo "$R" | tail -n1); BODY=$(echo "$R" | sed '$d'); G=$(curl -q -s ''"$BRAIN_URL"'/api/brain/strategic-decisions?category=workflow_bogus&limit=10'); echo "$G"; [ "$CODE" = "400" ] && echo "$BODY" | jq -e '.success == false and (.error | startswith("category 非法，合法值：")) and (.allowed_categories | length > 0 and index("decision") != null and index("judgment") != null and index("general") != null)' && ! echo "$BODY" | grep -qiE 'decisions_category_chk|check constraint|violates|relation' && echo "$G" | jq -e '.data == []' && echo Q1_OK
+TS=$(date +%s%N); R=$(curl -q -s -w '\n%{http_code}' -X POST "$BRAIN_URL"/api/brain/strategic-decisions -H 'Content-Type: application/json' -d "{\"category\":\"workflow_bogus\",\"topic\":\"qa-bogus-$TS\",\"decision\":\"qa 非法 category\"}"); echo "$R"; CODE=$(echo "$R" | tail -n1); BODY=$(echo "$R" | sed '$d'); G=$(curl -q -s ''"$BRAIN_URL"'/api/brain/strategic-decisions?category=workflow_bogus&limit=10'); echo "$G"; [ "$CODE" = "400" ] && echo "$BODY" | jq -e '.success == false and (.error | startswith("category 非法，合法值：")) and (.allowed_categories | length > 0 and index("decision") != null and index("judgment") != null and index("general") != null)' && ! echo "$BODY" | grep -qiE 'decisions_category_chk|check constraint|violates|relation' && echo "$G" | jq -e '.data == []'
 ); then echo "FAIL: T-1" >&2; exit 1; fi
 
 echo "== T-2（对应 Q-2）"

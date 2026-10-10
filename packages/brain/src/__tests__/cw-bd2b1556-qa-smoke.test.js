@@ -5,6 +5,7 @@
  * set -e 不终止 → Q-1 断言失败时脚本仍打印 PASS。
  * 这里用假 Brain 跑脚本：行为正确 → PASS 退出 0；被拒请求仍写库 → 必须非零退出且不打印 PASS。
  * 写入守卫换成放行桩（守卫本身另有测试），只验证脚本断言链。
+ * 脚本在 QA+裁判通过后由 runner 重新生成（勿手改），这里只断言退出码与 PASS 行，不依赖生成器之外的手加标记。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer } from 'node:http';
@@ -68,14 +69,12 @@ async function runAgainst(server) {
 describe('cw-bd2b1556-qa-smoke.sh', () => {
   it('假 Brain 行为正确 → 全部场景通过，打印 PASS', async () => {
     const r = await runAgainst(fakeBrain({ writeRejected: false }));
-    expect(r.stdout).toContain('Q1_OK');
     expect(r.stdout).toContain('PASS: cw-bd2b1556-qa-smoke.sh');
     expect(r.code).toBe(0);
   }, 70000);
 
   it('被拒的非法 category 仍写了库 → Q-1 失败即非零退出，不打印 PASS', async () => {
     const r = await runAgainst(fakeBrain({ writeRejected: true }));
-    expect(r.stdout).not.toContain('Q1_OK');
     expect(r.stdout).not.toContain('PASS: cw-bd2b1556-qa-smoke.sh');
     expect(r.code).not.toBe(0);
   }, 70000);
