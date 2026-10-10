@@ -1,4 +1,4 @@
--- 544: decisions_category_chk 补 general（只增不减）
+-- 545: decisions_category_chk 补 general（只增不减）
 --
 -- 路由 POST /api/brain/strategic-decisions 不带 category 时默认写 'general'，Dashboard 决策登记台也显式传 'general'，
 -- 但迁移 384 的白名单不含它：从迁移建出的库（CI 空库 / 全新部署）上这类请求直接被约束拒绝。
@@ -36,7 +36,7 @@ BEGIN
 END $$;
 
 INSERT INTO schema_version (version, description)
-VALUES ('544', 'decisions_category_chk 补 general（只增不减）')
+VALUES ('545', 'decisions_category_chk 补 general（只增不减）')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

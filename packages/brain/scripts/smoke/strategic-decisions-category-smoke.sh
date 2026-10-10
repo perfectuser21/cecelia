@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # strategic-decisions-category-smoke — POST /strategic-decisions 非法 category 返回 400（允许值读自 decisions_category_chk，不透出 SQL 原文），
-# 迁移 544 让 general 进白名单（不带 category 默认 general 能 201），迁移 545 让 made_by=ai（coding-workflow 判定点）能 201。
+# 迁移 545 让 general 进白名单（不带 category 默认 general 能 201），迁移 546 让 made_by=ai（coding-workflow 判定点）能 201。
 set -euo pipefail
 # 真 Brain 写入必须显式授权，并核对本机测试容器与 DATABASE_URL 指向同一安全库。
 if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
@@ -11,13 +11,13 @@ pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 TS="$(date +%s)-$$"
 
-# 1. 约束真身含 general（迁移 544），且 384 的取值都还在
+# 1. 约束真身含 general（迁移 545），且 384 的取值都还在
 if [[ -n "${DATABASE_URL:-}" ]]; then
   DEF="$(psql -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='decisions'::regclass AND conname='decisions_category_chk'")"
   for v in general decision judgment nfr testing; do
     [[ "$DEF" == *"'$v'"* ]] || fail "decisions_category_chk 缺 '$v'"
   done
-  pass "迁移 544：decisions_category_chk 含 general 且保留 384 取值"
+  pass "迁移 545：decisions_category_chk 含 general 且保留 384 取值"
 fi
 
 # 2. 非法 category（字符串 / 数字 / 超长）→ 400 + allowed_categories，不透出约束名或 SQL 原文；不写库
@@ -50,7 +50,7 @@ for body in "{\"topic\":\"smoke-nocat-$TS\",\"decision\":\"smoke\"}" "{\"categor
 done
 pass "不带 category 默认 general、合法 decision 均 201"
 
-# 4. 真实调用方 coding-workflow 写判定点 shape（spec-review.mjs，made_by:'ai'）→ 201 且能按 judgment 查到（迁移 545）
+# 4. 真实调用方 coding-workflow 写判定点 shape（spec-review.mjs，made_by:'ai'）→ 201 且能按 judgment 查到（迁移 546）
 JT="判定点[smoke-$TS#1]: smoke"
 body="{\"category\":\"judgment\",\"topic\":\"$JT\",\"decision\":\"所选方法: x｜候选: y\",\"reason\":\"依据: z\",\"made_by\":\"ai\",\"author\":\"coding-workflow\",\"source_ref\":\"coding-workflow:smoke-$TS\"}"
 out="$(curl -q -s -w '\n%{http_code}' -X POST "$API" -H 'Content-Type: application/json' -d "$body")"

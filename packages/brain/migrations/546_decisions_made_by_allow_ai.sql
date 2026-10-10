@@ -1,4 +1,4 @@
--- 545: decisions_made_by_check 补 ai（只增不减）
+-- 546: decisions_made_by_check 补 ai（只增不减）
 --
 -- coding-workflow 写判定点（scripts/coding-workflow/activities/spec-review.mjs）POST /api/brain/strategic-decisions
 -- 带 made_by:'ai'，但迁移 193 的约束只允许 user/cecelia/system：从迁移建出的库（CI 空库 / 预览环境 / 全新部署）上
@@ -35,7 +35,7 @@ BEGIN
 END $$;
 
 INSERT INTO schema_version (version, description)
-VALUES ('545', 'decisions_made_by_check 补 ai（只增不减）')
+VALUES ('546', 'decisions_made_by_check 补 ai（只增不减）')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
