@@ -429,3 +429,4 @@ leadgen-notion-registry-smoke.sh
 coding-workflow-spans-smoke.sh
 skill-factory-board-smoke.sh
 strategic-decisions-category-smoke.sh
+cw-bd2b1556-qa-smoke.sh
