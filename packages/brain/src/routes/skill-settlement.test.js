@@ -8,11 +8,12 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  query: vi.fn(), reconcileActivity: vi.fn(), draftFromSpans: vi.fn(), registerCandidate: vi.fn(),
+  query: vi.fn(), reconcileActivity: vi.fn(), judgeActivity: vi.fn(), draftFromSpans: vi.fn(), registerCandidate: vi.fn(),
 }));
 vi.mock('../db.js', () => ({ default: { query: mocks.query } }));
 vi.mock('../middleware/internal-auth.js', () => ({ internalAuthOrLoopback: (_q, _s, next) => next() }));
 vi.mock('../lib/step-reconcile.js', () => ({ reconcileActivity: mocks.reconcileActivity }));
+vi.mock('../lib/activity-judge.js', () => ({ judgeActivity: mocks.judgeActivity }));
 vi.mock('../lib/skill-settlement.js', async importOriginal => ({
   ...(await importOriginal()), draftFromSpans: mocks.draftFromSpans, registerCandidate: mocks.registerCandidate,
 }));
@@ -31,24 +32,24 @@ beforeAll(async () => { vi.resetModules(); routes = (await import('./skill-settl
 beforeEach(() => Object.values(mocks).forEach(m => m.mockReset()));
 
 describe('POST /step-reconcile/:activityId', () => {
-  it('把 runs / required_green 传给对账，回报告', async () => {
-    mocks.reconcileActivity.mockResolvedValue({ verdict: 'converged' });
+  it('把 runs / required_green 传给裁判（手动触发），对账结果落裁判表并回报告', async () => {
+    mocks.judgeActivity.mockResolvedValue({ verdict: 'converged', judgment_id: 'j1' });
     const { req, res } = reqRes({ runs: 7, required_green: 3 }, { activityId: ACT });
     await handler('/step-reconcile/:activityId')(req, res);
-    expect(mocks.reconcileActivity).toHaveBeenCalledWith(expect.anything(), ACT, { runsWanted: 7, requiredGreen: 3 });
-    expect(res._data).toEqual({ verdict: 'converged' });
+    expect(mocks.judgeActivity).toHaveBeenCalledWith(expect.anything(), ACT, { trigger: 'manual', runsWanted: 7, requiredGreen: 3 });
+    expect(res._data).toEqual({ verdict: 'converged', judgment_id: 'j1' });
   });
   it('默认 5 次、连续 5 次绿', async () => {
-    mocks.reconcileActivity.mockResolvedValue({});
+    mocks.judgeActivity.mockResolvedValue({});
     const { req, res } = reqRes({}, { activityId: ACT });
     await handler('/step-reconcile/:activityId')(req, res);
-    expect(mocks.reconcileActivity.mock.calls[0][2]).toEqual({ runsWanted: 5, requiredGreen: 5 });
+    expect(mocks.judgeActivity.mock.calls[0][2]).toEqual({ trigger: 'manual', runsWanted: 5, requiredGreen: 5 });
   });
   it('id 不是 uuid / 次数越界 → 400；活动不存在 → 404', async () => {
     let r = reqRes({}, { activityId: 'nope' }); await handler('/step-reconcile/:activityId')(r.req, r.res); expect(r.res._status).toBe(400);
     r = reqRes({ runs: 0 }, { activityId: ACT }); await handler('/step-reconcile/:activityId')(r.req, r.res); expect(r.res._status).toBe(400);
     r = reqRes({ required_green: 99 }, { activityId: ACT }); await handler('/step-reconcile/:activityId')(r.req, r.res); expect(r.res._status).toBe(400);
-    mocks.reconcileActivity.mockRejectedValue(Object.assign(new Error('activity_not_found: x'), { status: 404 }));
+    mocks.judgeActivity.mockRejectedValue(Object.assign(new Error('activity_not_found: x'), { status: 404 }));
     r = reqRes({}, { activityId: ACT }); await handler('/step-reconcile/:activityId')(r.req, r.res); expect(r.res._status).toBe(404);
   });
 });
