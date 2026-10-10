@@ -1,3 +1,5 @@
+- [ ] [BEHAVIOR] taskrunsvessel 正式 Runs 配置：内部鉴权与显式启用；补列读回成功才登记；不抢占旧库、不删除映射；来源标记及有界分页防重复创建。
+  Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/projection/__tests__/task-runs-config.test.js src/routes/__tests__/task-runs-projection.test.js --maxWorkers=1 --minWorkers=1"
 # 发布线审查修复：无可退目标也告警（去重）
 
 - [x] [BEHAVIOR] releaselineunavailablealert 发布线无可退目标告警（审查阻断，任务 d9eb572d，父任务 37568378）：自动退回评估连续失败且没有曾收敛的可退目标时，生产版从未收敛也发告警 P2（activity_production_rollback_unavailable:<activity>，曾收敛的仍 P1），不发 Bark、不退回；告警在 recentlyNotified 去重之后——同一 Activity+生产版 24 小时内、期间没有全绿只告警一次，超过 24 小时再失败再告一次；告警函数抛错不影响返回。
