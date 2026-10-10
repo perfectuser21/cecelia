@@ -206,6 +206,11 @@
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "docs/learnings/cp-10101732-code-scheduling.md",
       "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/tick-scheduler.js",
+      "path": "packages/brain/src/__tests__/tick-scheduler.test.js",
+      "role": "verification"
     }
   ]
 }
