@@ -423,5 +423,6 @@ native-scoped-admission-smoke.sh
 task-list-query-validation-smoke.sh
 activity-judgments-smoke.sh
 resource-health-smoke.sh
+release-line-smoke.sh
 qiumi-status-map-smoke.sh
 leadgen-notion-registry-smoke.sh

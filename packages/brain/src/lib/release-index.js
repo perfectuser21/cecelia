@@ -4,6 +4,7 @@ import {validatePilotReleaseEvidence} from './pilot-release-verification.js';
 import { createHash } from 'node:crypto';
 import defaultPool from '../db.js';
 import { assertImplementationReport } from './implementation-report.js';
+import { releaseLineGapsForRelease } from './release-line.js';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{40}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -148,7 +149,9 @@ export async function createRelease(pool, input) {
     const allowed_enabler_calls = await readEnablerCalls(db, definitions.activities, input.components);
     const ci = await validateCiEvidence(db, input.ci_evidence, definitions, input.components);
     const stepGaps = definitions.activities.flatMap(a => (a.payload.steps || []).filter(s => !s.step_id || !UUID.test(s.step_id) || s.locator?.activity_id !== a.activity_id).map(s => ({code:'step_identity_missing',activity_definition_version_id:a.id,step_key:s.locator?.step_key || null})));
-    const gaps = [...stepGaps, ...ci.gaps, ...allowed_enabler_calls.filter(c => c.source_status !== 'verified').map(c => ({ code: 'enabler_source_unknown', enabler_call_id: c.id }))];
+    // 发布线把关（RELEASE_LINE_ENFORCE_RELEASE 默认 off → 零查询、返回 []；打开也只查受保护的生产版，出错放行）
+    const releaseLineGaps = await releaseLineGapsForRelease(db, input.environment, definitions.activities);
+    const gaps = [...stepGaps, ...releaseLineGaps, ...ci.gaps, ...allowed_enabler_calls.filter(c => c.source_status !== 'verified').map(c => ({ code: 'enabler_source_unknown', enabler_call_id: c.id }))];
     const payload = { schema_version: 1, ...definitions, components: input.components, ci_evidence: input.ci_evidence, allowed_enabler_calls,
       ...(ci.assertionPlans.length ? {assertion_plans:ci.assertionPlans} : {}),
       verification: { definition_status: stepGaps.length ? 'unknown' : 'verified', step_coverage_status: stepGaps.length ? 'unknown' : 'verified', ci_status: ci.status, status: gaps.length ? 'unknown' : 'verified', gaps } };

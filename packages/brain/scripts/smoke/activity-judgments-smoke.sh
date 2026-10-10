@@ -73,7 +73,7 @@ try {
   const ver = async (n) => (await client.query(
     `INSERT INTO activity_definition_versions(activity_id, payload, contract_sha256, payload_sha256, source_repo, source_path, source_commit)
      VALUES($1,$2::jsonb,$3,$4,'smoke/repo',$5,$6) RETURNING id`,
-    [act, JSON.stringify({ activity_id: act, contract: {} }), sha, String(n).repeat(64).slice(0, 64), `smoke/${n}.json`, commit])).rows[0].id;
+    [act, JSON.stringify({ activity_id: act, contract: { smoke_version: n } }), sha, String(n).repeat(64).slice(0, 64), `smoke/${n}.json`, commit])).rows[0].id;
   const v1 = await ver(1), v2 = await ver(2);
   const cmp = await compareActivityVersions(client, act, { candidateVersionId: v2, baselineVersionId: v1 });
   if (cmp.verdict !== 'insufficient_data' || cmp.sample.min_runs !== 5) die(`无样本时应 insufficient_data: ${JSON.stringify(cmp)}`);

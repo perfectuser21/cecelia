@@ -3,9 +3,9 @@
  * 按 spans.activity_definition_version_id 分组，比成功率 / 读回 verified 比例 / 读回观测值一致性，
  * 给 not_worse / worse / insufficient_data，带数字依据。这里锁纯函数口径。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
-  summarizeVersionRuns, decideVersionComparison, stepsFromVersionPayload, observationShape, DEFAULT_MIN_RUNS,
+  summarizeVersionRuns, decideVersionComparison, stepsFromVersionPayload, observationShape, DEFAULT_MIN_RUNS, compareActivityVersions,
 } from '../activity-version-compare.js';
 
 const S1 = 'a0000000-0000-4000-8000-000000000001';
@@ -152,16 +152,49 @@ describe('decideVersionComparison', () => {
     expect(d.verdict).toBe('not_worse');
   });
 
-  it('读回指标一边不可算 → 该项标不可比，不参与判更差', () => {
+  it('读回指标基线不可算、候选可算 → 该项标不可比，不参与判更差', () => {
+    const d = decideVersionComparison({
+      candidate: summary(), baseline: summary({ readback: { verified_ratio: null } }),
+    });
+    expect(d.metrics.readback_verified_ratio).toMatchObject({ comparable: false, worse: null });
+    expect(d.verdict).toBe('not_worse');
+  });
+
+  it('发布线修复：基线读回可算、候选不可算（读回被删或改成 none）→ worse，reason=readback_coverage_dropped', () => {
     const d = decideVersionComparison({
       candidate: summary({ readback: { verified_ratio: null } }), baseline: summary(),
     });
-    expect(d.metrics.readback_verified_ratio).toMatchObject({ comparable: false, worse: null });
+    expect(d.metrics.readback_verified_ratio).toMatchObject({ comparable: false, worse: true });
+    expect(d.verdict).toBe('worse');
+    expect(d.reasons.join('\n')).toMatch(/readback_coverage_dropped/);
+  });
+
+  it('发布线修复：基线有读回的 Step 在候选里没了读回 → worse，reason=readback_removed:<keys>', () => {
+    const d = decideVersionComparison({
+      candidate: summary({ readback_step_keys: ['open'] }), baseline: summary({ readback_step_keys: ['open', 'save'] }),
+    });
+    expect(d.verdict).toBe('worse');
+    expect(d.reasons.join('\n')).toMatch(/readback_removed:save/);
+  });
+
+  it('两边都不可算的读回指标照旧跳过', () => {
+    const d = decideVersionComparison({
+      candidate: summary({ observation: { consistency: null } }), baseline: summary({ observation: { consistency: null } }),
+    });
+    expect(d.metrics.observation_consistency).toMatchObject({ comparable: false, worse: null });
     expect(d.verdict).toBe('not_worse');
   });
 
   it('自定义样本下限', () => {
     const d = decideVersionComparison({ candidate: summary({ runs: 3 }), baseline: summary({ runs: 3 }), minRuns: 3 });
     expect(d.verdict).toBe('not_worse');
+  });
+});
+
+describe('发布线修复：compareActivityVersions 参数校验', () => {
+  it('minRuns > maxRuns → 400，不查库', async () => {
+    const db = { query: vi.fn() };
+    await expect(compareActivityVersions(db, 'a', { candidateVersionId: 'c', minRuns: 10, maxRuns: 5 })).rejects.toMatchObject({ status: 400 });
+    expect(db.query).not.toHaveBeenCalled();
   });
 });

@@ -133,3 +133,4 @@ runs-execution-table-smoke.sh
 enablers-failure-semantics-smoke.sh
 activity-judgments-smoke.sh
 resource-health-smoke.sh
+release-line-smoke.sh
