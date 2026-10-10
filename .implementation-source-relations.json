@@ -268,16 +268,7 @@
       "path": "docs/learnings/cp-route-api-f5dc89cf.md",
       "role": "documentation"
     },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": ".prd-cp-route-api-92f06f77.md",
-      "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": ".dod-cp-route-api-92f06f77.md",
-      "role": "documentation"
-    },
+    
     {
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "docs/learnings/cp-route-api-92f06f77.md",
