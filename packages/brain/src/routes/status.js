@@ -301,7 +301,7 @@ router.get('/tasks', async (req, res) => {
     const sprintDir = req.query.sprint_dir || null;
 
     // If filters provided, use custom query instead of getTopTasks
-    if (status || task_type || sprintDir || projectId || offset > 0) {
+    if (status || task_type || sprintDir || projectId) {
       let query = 'SELECT * FROM tasks WHERE 1=1';
       const params = [];
       let paramIndex = 1;
@@ -338,7 +338,7 @@ router.get('/tasks', async (req, res) => {
     }
 
     // Default behavior: use getTopTasks
-    const tasks = await getTopTasks(limit);
+    const tasks = offset > 0 ? await getTopTasks(limit, offset) : await getTopTasks(limit);
     res.json(tasks);
   } catch (err) {
     console.error('[GET /api/brain/tasks] 查询失败:', err.message);

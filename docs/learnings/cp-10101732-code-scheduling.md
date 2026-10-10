@@ -14,6 +14,8 @@
 
 生产只读 HTTP 另证实 GET/tasks 先被 statusRouter 命中：project_id 与 offset 被忽略，offset 0/200 都返回同 200 条且混入别的项目。先提交 11 项真实失败测试，再窄补实际入口的参数化项目筛选、严格 offset/UUID 校验和 created_at/id 稳定分页。真实 scratch 独占 schema 上由实际 statusRouter HTTP 读取 202 条同时间戳任务，得到 200/2/0，无重复、无其他项目/类型，并清理 fixture。
 
+无过滤而只带 offset 的请求还需沿原 getTopTasks 活跃队列，不能改成所有任务或泄漏终态。先补路由 1 失败、helper 3 失败测试，再给既有队列可选 OFFSET；默认调用仍单 limit 绑定，活跃集合与优先级/时间主排序不变，所有页只补 ID 稳定同时间戳顺序。真实 scratch HTTP 验证 204 条活跃任务为 100/100/4/0，完整已知 ID 顺序满足 P0→P1→P2，completed/cancelled 不出现；项目过滤仍 200/2/0。
+
 ### 下次预防
 
 - [ ] 先区分 AI 预算与实际执行资源，再选用现有调度入口；不放宽全局 CPU、并发或停止开关。

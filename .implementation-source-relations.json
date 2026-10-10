@@ -216,6 +216,11 @@
       "owner_path": "packages/brain/src/routes/status.js",
       "path": "packages/brain/src/__tests__/routes/status-tasks-query-validation.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/shared.js",
+      "path": "packages/brain/src/routes/__tests__/shared.test.js",
+      "role": "verification"
     }
   ]
 }
