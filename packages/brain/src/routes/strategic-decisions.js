@@ -22,10 +22,12 @@ let allowedCategoriesCache = null;
 
 /**
  * 从 decisions_category_chk 约束定义解析允许的 category 列表。
- * 成功结果缓存；{ fresh: true } 绕过缓存重查。失败/查不到返回 null（不缓存）。
+ * 成功结果缓存；{ fresh: true } 绕过缓存重查。
+ * 返回 { values }：values 为数组；库里没有该约束时为 null（不限制取值）。
+ * 查询失败返回 { unavailable: true }；有旧缓存时退回旧缓存（不缓存失败）。
  */
 export async function loadAllowedCategories({ fresh = false } = {}) {
-  if (allowedCategoriesCache && !fresh) return allowedCategoriesCache;
+  if (allowedCategoriesCache && !fresh) return { values: allowedCategoriesCache };
   try {
     const { rows } = await pool.query(
       `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
@@ -33,14 +35,15 @@ export async function loadAllowedCategories({ fresh = false } = {}) {
       [CATEGORY_CONSTRAINT]
     );
     const def = rows?.[0]?.def;
-    if (typeof def !== 'string') return null;
+    if (typeof def !== 'string') return { values: null };
     const values = [...new Set([...def.matchAll(/'([^']+)'::/g)].map((m) => m[1]))].sort();
-    if (values.length === 0) return null;
+    if (values.length === 0) return { values: null };
     allowedCategoriesCache = values;
-    return values;
+    return { values };
   } catch (err) {
     console.error('[strategic-decisions] load categories error:', err.message);
-    return null;
+    if (allowedCategoriesCache) return { values: allowedCategoriesCache };
+    return { unavailable: true };
   }
 }
 
@@ -48,18 +51,26 @@ export function _resetAllowedCategoriesCache() {
   allowedCategoriesCache = null;
 }
 
-function categoryRejection(allowed) {
-  const list = allowed || [];
+const CATEGORIES_UNAVAILABLE = {
+  status: 503,
+  body: { success: false, error: 'category 允许值暂时无法读取，请稍后重试' },
+};
+
+function categoryRejection(loaded) {
+  if (loaded.unavailable || !loaded.values) return CATEGORIES_UNAVAILABLE;
   return {
-    success: false,
-    error: list.length ? `category 非法，合法值：${list.join('|')}` : 'category 非法',
-    allowed_categories: list,
+    status: 400,
+    body: {
+      success: false,
+      error: `category 非法，合法值：${loaded.values.join('|')}`,
+      allowed_categories: loaded.values,
+    },
   };
 }
 
 /**
- * 校验 category。返回 null 表示放行，否则返回 400 响应体。
- * 约束读不到时放行，由 INSERT 的 23514 兜底。
+ * 校验 category。返回 null 表示放行，否则返回 { status, body }。
+ * 允许值读不到（且无缓存）时不放行：返回 503，非法值绝不进 INSERT。
  */
 async function checkCategory(category) {
   if (category === undefined || category === null || category === '') return null;
@@ -67,9 +78,10 @@ async function checkCategory(category) {
     return categoryRejection(await loadAllowedCategories());
   }
   const cached = await loadAllowedCategories();
-  if (!cached || cached.includes(category)) return null;
+  if (cached.unavailable) return CATEGORIES_UNAVAILABLE;
+  if (!cached.values || cached.values.includes(category)) return null;
   const fresh = await loadAllowedCategories({ fresh: true });
-  if (!fresh || fresh.includes(category)) return null;
+  if (!fresh.values || fresh.values.includes(category)) return null;
   return categoryRejection(fresh);
 }
 
@@ -145,7 +157,7 @@ router.post('/', async (req, res) => {
     }
 
     const rejection = await checkCategory(category);
-    if (rejection) return res.status(400).json(rejection);
+    if (rejection) return res.status(rejection.status).json(rejection.body);
 
     const result = await pool.query(
       `INSERT INTO decisions
@@ -160,7 +172,8 @@ router.post('/', async (req, res) => {
   } catch (err) {
     console.error('[strategic-decisions] POST error:', err.message);
     if (err.code === '23514' && err.constraint === CATEGORY_CONSTRAINT) {
-      return res.status(400).json(categoryRejection(await loadAllowedCategories({ fresh: true })));
+      const rejection = categoryRejection(await loadAllowedCategories({ fresh: true }));
+      return res.status(rejection.status).json(rejection.body);
     }
     res.status(500).json({ success: false, error: err.message });
   }
