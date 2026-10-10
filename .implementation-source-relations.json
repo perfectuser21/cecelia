@@ -102,7 +102,6 @@
       "path": "packages/brain/scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs",
       "role": "verification"
     },
-    
     {
       "owner_path": "scripts/ci/implementation-pr-gate.mjs",
       "path": "packages/brain/src/lib/__tests__/implementation-ci-workflow.test.js",
@@ -143,7 +142,6 @@
       "path": "packages/brain/scripts/smoke/workspace-ci-source-bundle-smoke.sh",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/src/lib/implementation-ci-snapshot.js",
       "path": "packages/brain/src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js",
@@ -158,6 +156,26 @@
       "owner_path": "scripts/ci/registry-lint.mjs",
       "path": "packages/brain/src/lib/__tests__/registry-lint.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/device-patrol-admission.js",
+      "path": "packages/brain/src/lib/__tests__/device-patrol-admission.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/device-patrol-registration.js",
+      "path": "packages/brain/src/lib/__tests__/device-patrol-admission.pg.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
+      "path": "scripts/ci/__tests__/device-patrol-governance.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
+      "path": ".prd-cp-10101725-patrol-impact-adapter.md",
+      "role": "documentation"
     }
   ]
 }
