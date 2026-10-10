@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.405.5
+**Brain 版本**: 1.405.6
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,10 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.405.6 — 修复 Brain GET /api/brain/tasks 非法筛选参数静默返回（status 拼错返回空列表、limit 非数字被忽略）
+
+- coding workflow 任务 3e8414f6：需求、合同与验收记录见 sprints/10100222-cw-3e8414f6/。
 
 ## Brain 1.405.5 — 秋米回执 claimed_result 非 success 一律记失败
 
