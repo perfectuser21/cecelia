@@ -50,7 +50,7 @@ describe('六层目录字段契约', () => {
     expect(cols('value_streams')).toEqual(['名称', '说明', '所属部门', '能力', '树位置'].sort());
     expect(cols('capabilities')).toEqual(['名称', '说明', '所属价值流', '流程', '状态', '树位置'].sort());
     expect(cols('workflows')).toEqual(['名称', '所属能力', 'Activity', 'Activity 顺序', '运行方式', '运行情况', '最近运行', '7天次数', '7天成功率', '平均时长', '去留（你填）', '树位置'].sort());
-    expect(cols('activities')).toEqual(['名称', '所属流程', 'Step', '承诺（FR）', '输入', '输出', '谁来执行', '还缺什么', '树位置'].sort());
+    expect(cols('activities')).toEqual(['名称', '所属流程', 'Step', '承诺（FR）', '输入', '输出', '谁来执行', '还缺什么', '裁判结论', '生产版本', '树位置'].sort());
     expect(cols('steps')).toEqual(['名称', '所属Activity', '顺序', '做什么', '输入', '输出', '怎么验收', '失败了怎么办', '谁来执行', '还缺什么'].sort());
     for (const n of names) expect(Object.keys(DIRECTORY_COLUMN_SOURCES[n]).sort(), n).toEqual(Object.keys(s[n]).sort());
     expect(DIRECTORY_HUMAN_COLUMNS.areas).toEqual(expect.arrayContaining(['Parent item', 'Archive', 'Domain', 'Tasks', 'Projects']));

@@ -1,3 +1,12 @@
+# 获客业务数据 Notion 镜像登记 + Activity 裁判结论/生产版本两列
+
+任务：f6ad056e-cd8f-4dff-841e-e5e7c9cbb5ea；决策 a029a7a7。
+
+- [x] [BEHAVIOR] leadgennotionregistry 迁移 540：获客·视频/评论/线索三张 Notion 镜子库以 mirror/push/active、brain_table 为空登记进 notion_projection_map，重跑空操作，回滚只删这三行；scratch 库升级→重跑→回滚→再升级通过。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-540-leadgen-notion-mirror-registry.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] activityjudgmentcolumns Activity 目录页新增「裁判结论」（activity_judgments 最新一条 verdict 中文 + 连续绿/要求绿，无裁判写「未裁判」）与「生产版本」（发布线未接线前留空）两列，列合同与列来源同步登记，目录源 SQL 每个 Activity 只取最新一条裁判。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/projection/__tests__/activity-card.test.js src/projection/__tests__/directory-source.test.js src/projection/__tests__/directory-schema.test.js --maxWorkers=1 --minWorkers=1"
+
 # 运行定义回读瘦身（任务 e961f9a9）
 
 - [x] [BEHAVIOR] rundefinitioncompact 运行定义回读瘦身（任务 e961f9a9）：GET /api/brain/runs/:run_id/definition 默认改回紧凑视图（definition_view=compact）——binding 原样，release 只留身份/摘要列+full_href（去 payload），workflow 去 payload.contract，activities 只留本次绑定 Activity 的身份、payload_sha256/contract_sha256、Step 的 step_id/locator/registration 摘要与 optional/required/condition；?view=full 原样返回旧形状，完整 release 走 GET /releases/:id。生产形状夹具完整定义 >500KB、紧凑 <64KB 且 2 秒内返回，预期路径每个 Activity/Step 身份都能在紧凑定义里找到；紧凑化异常回退完整定义不 500。生产 12 条真实绑定实测 652KB→30KB。
