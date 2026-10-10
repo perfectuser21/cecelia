@@ -15,6 +15,7 @@
 
 import pool from './db.js';
 import { getFleetStatus } from './fleet-resource-cache.js';
+import { codeTaskIdentitySql, compareCodeTaskIdentity } from './lib/code-task-identity.js';
 import { validateScriptPayload } from './lib/script-task-spec.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { assertDispatchRoutingReceipt } from './orchestrator/dispatcher.js';
@@ -219,12 +220,31 @@ const DUPLICATE_TASK_TITLE_THRESHOLD = 0.6;
  */
 export async function _internals_findDuplicateTaskSibling(candidate) {
   try {
+    const codeMulti = candidate.task_type === 'script_run'
+      && candidate.payload?.runtime_requires_llm === false && candidate.payload?.multi_task === true;
+    const identityColumns = codeMulti ? `,
+              candidate_context.identity AS candidate_identity,
+              ${codeTaskIdentitySql('tasks', 'sibling_receipt')} AS code_identity` : '';
+    const identityJoins = codeMulti ? `
+        LEFT JOIN work_routing_receipts sibling_receipt
+          ON sibling_receipt.id::text = tasks.payload->>'routing_receipt_id'
+         AND sibling_receipt.task_id = tasks.id
+         AND sibling_receipt.canonical_task_type = tasks.task_type
+        LEFT JOIN (
+          SELECT ${codeTaskIdentitySql('code_candidate', 'candidate_receipt')} AS identity
+          FROM tasks code_candidate
+          LEFT JOIN work_routing_receipts candidate_receipt
+            ON candidate_receipt.id::text = code_candidate.payload->>'routing_receipt_id'
+           AND candidate_receipt.task_id = code_candidate.id
+           AND candidate_receipt.canonical_task_type = code_candidate.task_type
+          WHERE code_candidate.id = $2
+        ) candidate_context ON TRUE` : '';
     // SELECT 列顺序/别名与下方 initiative-lock 查询（"SELECT id, title FROM tasks"）刻意区分，
     // 避免两条查询的 SQL 指纹在测试里按字符串前缀匹配时被混淆（同一 dispatchNextTask 内两条
     // 语义不同的查询都含 "task_type" + "SELECT ... FROM tasks"，纯前缀匹配无法区分）。
     const { rows } = await pool.query(
-      `SELECT tasks.id AS id, tasks.title AS title
-        FROM tasks
+      `SELECT tasks.id AS id, tasks.title AS title${identityColumns}
+        FROM tasks${identityJoins}
         WHERE tasks.task_type = $1
           AND tasks.status IN ('queued', 'in_progress')
           AND tasks.id != $2
@@ -233,7 +253,13 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
         LIMIT 20`,
       [candidate.task_type, candidate.id, candidate.created_at]
     );
-    return findDuplicateSibling(candidate.title || '', rows, {
+    const comparable = [];
+    for (const row of rows) {
+      const identity = compareCodeTaskIdentity(row.candidate_identity, row.code_identity);
+      if (identity === 'same') return { ...row, duplicate_reason: 'duplicate_code_task_business_identity_match' };
+      if (identity === 'unknown') comparable.push(row);
+    }
+    return findDuplicateSibling(candidate.title || '', comparable, {
       threshold: DUPLICATE_TASK_TITLE_THRESHOLD,
       keyFn: (r) => r.title || '',
     });
@@ -844,8 +870,9 @@ export async function dispatchNextTask(goalIds, options = {}) {
     //      跳过本候选，让已在办的那个继续走，避免重复派发出两个几乎相同的 PR。
     const duplicateSibling = await _internals_findDuplicateTaskSibling(candidate);
     if (duplicateSibling) {
-      tickLog(`[dispatch] task ${candidate.id} 与 sibling ${duplicateSibling.id} 标题高度相似，判定重复，跳过: ${candidate.title}`);
-      await recordDispatchResult(pool, false, 'duplicate_task_title_match');
+      const duplicateReason = duplicateSibling.duplicate_reason ?? 'duplicate_task_title_match';
+      tickLog(`[dispatch] task ${candidate.id} 与 sibling ${duplicateSibling.id} 判定重复，reason=${duplicateReason}，跳过: ${candidate.title}`);
+      await recordDispatchResult(pool, false, duplicateReason);
       duplicateSkipIds.push(candidate.id);
       // 与下方 HOL skip（line ~602 "HOL skip does not count against pre-flight attempt limit"）
       // 同类语义：候选本身没问题，只是暂不该选它，换下一个——不应消耗 pre-flight attempt

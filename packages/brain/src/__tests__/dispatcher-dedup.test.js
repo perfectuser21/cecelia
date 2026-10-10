@@ -149,7 +149,7 @@ describe('正式纯代码 multi-task 的业务身份判重', () => {
   const title='账号巡查 · 小白 · '+parent;
   const scheduled=(workflow_id=batch)=>({canonical_code:true,multi_task:true,workflow_id,source:'scheduler',source_id:`recurring:${schedule}:${slot}`,recurring_task_id:schedule,recurring_slot:slot,parent_task_id:null,phone_serial:null});
   const device=(serial='white')=>({canonical_code:true,multi_task:true,workflow_id:phone,source:'api',source_id:`phone-account-patrol:${parent}:${serial}`,parent_task_id:parent,phone_serial:serial,recurring_task_id:null,recurring_slot:null});
-  const candidate={id:parent,task_type:'script_run',title,created_at:slot};
+  const candidate={id:parent,task_type:'script_run',title,created_at:slot,payload:{runtime_requires_llm:false,multi_task:true}};
   const compare=async(left,right,siblingTitle=title)=>{
     mockQuery.mockResolvedValueOnce({rows:[{id:'sibling',title:siblingTitle,candidate_identity:left,code_identity:right}]});
     return _internals_findDuplicateTaskSibling(candidate);
