@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildDirectoryRows } from '../directory-source.js';
 import { buildDirectorySchemas } from '../directory-schema.js';
-import { buildActivityCardProps, buildStepCardProps, activityMissing, activityBodySections, humanize, executorLabel, judgmentText, BODY_ITEMS } from '../activity-card.js';
+import { buildActivityCardProps, buildStepCardProps, activityMissing, activityBodySections, humanize, executorLabel, judgmentText, releaseText, BODY_ITEMS } from '../activity-card.js';
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const text = p => p.rich_text.map(t => t.text.content).join('');
@@ -105,5 +105,13 @@ describe('裁判结论一列人话（五块模型第 2 步裁判接线后接进 
     expect(judgmentText({ verdict: 'diverged', consecutive_green: 0, required_green: 3 })).toBe('发散 · 连续绿 0/3');
     expect(judgmentText({ verdict: 'no_data', consecutive_green: 0, required_green: 3 })).toBe('无数据 · 连续绿 0/3');
     expect(judgmentText(null)).toBe('未裁判');
+  });
+});
+
+describe('生产版本一列人话（发布线生产指针，任务 1b3c0000）', () => {
+  it('v<版本号> + 收敛过 / 冷启动（未收敛过）；没有生产指针给空', () => {
+    expect(releaseText({ version_no: 2, ever_converged: true })).toBe('v2 · 收敛过');
+    expect(releaseText({ version_no: 1, ever_converged: false })).toBe('v1 · 冷启动（未收敛过）');
+    expect(releaseText(null)).toBe(null);
   });
 });
