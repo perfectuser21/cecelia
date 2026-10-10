@@ -164,7 +164,7 @@
     },
     {
       "owner_path": "packages/brain/src/lib/device-patrol-registration.js",
-      "path": "packages/brain/src/lib/__tests__/device-patrol-admission.pg.test.js",
+      "path": "packages/brain/src/__tests__/integration/device-patrol-admission.pg.integration.test.js",
       "role": "verification"
     },
     {

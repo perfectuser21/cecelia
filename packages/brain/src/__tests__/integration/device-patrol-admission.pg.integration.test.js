@@ -7,9 +7,9 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {DB_DEFAULTS} from '../../db-config.js';
-import {bootstrapPatrolScope,exportPatrolAdmissionSnapshot} from '../device-patrol-registration.js';
+import {bootstrapPatrolScope,exportPatrolAdmissionSnapshot} from '../../lib/device-patrol-registration.js';
 import {runDevicePatrolGate} from '../../../../../scripts/ci/implementation-device-patrol-gate.mjs';
-import {PATROL_PATH,PATROL_SCOPE,PATROL_REPO,PATROL_CAPABILITY,validatePatrolSnapshot} from '../device-patrol-admission.js';
+import {PATROL_PATH,PATROL_SCOPE,PATROL_REPO,PATROL_CAPABILITY,validatePatrolSnapshot} from '../../lib/device-patrol-admission.js';
 let client,db,dir,schema,base,introduced,contract,reader;
 const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
 beforeAll(async()=>{
