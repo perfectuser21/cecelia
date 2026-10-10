@@ -12,8 +12,14 @@ async function getWorkingMemory() {
   for (const row of result.rows) memory[row.key] = row.value_json;
   return memory;
 }
-async function getTopTasks(limit = 10) {
-  const result = await pool.query(`SELECT id, title, description, priority, status, project_id, queued_at, updated_at, due_at, custom_props FROM tasks WHERE status NOT IN ('completed', 'cancelled') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC LIMIT $1`, [limit]);
+async function getTopTasks(limit = 10, offset = 0) {
+  let query = `SELECT id, title, description, priority, status, project_id, queued_at, updated_at, due_at, custom_props FROM tasks WHERE status NOT IN ('completed', 'cancelled') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC, id ASC LIMIT $1`;
+  const params = [limit];
+  if (offset > 0) {
+    query += ' OFFSET $2';
+    params.push(offset);
+  }
+  const result = await pool.query(query, params);
   return result.rows;
 }
 async function getRecentDecisions(limit = 10) {

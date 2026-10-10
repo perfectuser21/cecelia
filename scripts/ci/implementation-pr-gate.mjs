@@ -17,6 +17,11 @@ const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxB
 const read=path=>{const data=JSON.parse(readFileSync(path,'utf8'));return data.snapshot||data;};
 const save=(dir,name,data)=>writeFileSync(join(dir,name),JSON.stringify(data,null,2)+'\n');
 async function implementationPrEvidence({repoRoot,scope,base,head,mode,snapshotBase,snapshotHead,outputDir},execute){
+  if(scope==='cecelia-device-patrol'){
+    if(!execute)throw ciFailure('PATROL_ADMISSION_COLLECTOR_UNSUPPORTED');
+    const {runDevicePatrolGate}=await import('./implementation-device-patrol-gate.mjs');
+    return runDevicePatrolGate({repoRoot,scope,base,head,mode,snapshotBase,snapshotHead,outputDir});
+  }
   mkdirSync(outputDir,{recursive:true});let scratch,worktree,headWorktree,parent;
   try{
     if(!['pr','main'].includes(mode)||typeof scope!=='string'||!scope||![base,head].every(v=>typeof v==='string'&&/^[0-9a-f]{40}$/.test(v)))throw ciFailure('INPUT_INVALID');

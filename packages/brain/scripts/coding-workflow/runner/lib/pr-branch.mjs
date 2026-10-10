@@ -72,34 +72,58 @@ const ASSERT_RE = /\bexpect\s*\(|\bassert(?:\.\w+)?\s*\(/g;
 
 const assertCount = (text) => (text.match(ASSERT_RE) ?? []).length;
 
-/** before..head 是否删了测试文件、在测试里加了 skip/only/todo、或减少了断言。 */
-async function weakenedTests(worktree, before, head) {
+/**
+ * before..head 是否削弱了 main 上已有的测试（决策 b057089b）：删除、加 skip/only/todo、断言比 main 上的版本少。
+ * 只守与 origin/main 合并基点上已存在的测试文件——PR 自己新加的测试允许随代码改删
+ * （金丝雀 3/4：按裁决删超范围代码时连带删它的测试被拦；行为由真人 QA + 独立裁判兜底）。
+ * 取不到合并基点时退回对照 before（从严）。
+ */
+async function weakenedTests(worktree, before, head, only = null) {
+  // 合并基点要按最新的 main 算（克隆里的 origin/main 可能是旧的）；拉不到就用现有的
+  await git(worktree, ['fetch', 'origin', 'main'], { timeoutMs: FETCH_TIMEOUT_MS });
+  const mb = await git(worktree, ['merge-base', 'origin/main', head]);
+  const base = mb.code === 0 && mb.stdout.trim() ? mb.stdout.trim() : before;
+  const atBase = async (file) => (await git(worktree, ['cat-file', '-e', `${base}:${file}`])).code === 0;
   const status = (await git(worktree, ['diff', '--name-status', `${before}..${head}`])).stdout.split('\n').filter(Boolean);
   for (const line of status) {
     const [kind, file] = line.split('\t');
-    if (!TEST_FILE_RE.test(file ?? '')) continue;
+    if (!TEST_FILE_RE.test(file ?? '') || (only && !only.includes(file)) || !(await atBase(file))) continue;
     if (kind === 'D') return true;
     const added = (await git(worktree, ['diff', '-U0', `${before}..${head}`, '--', file])).stdout
       .split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'));
     if (added.some((l) => SKIP_RE.test(l))) return true;
-    if (kind === 'M') {
-      const old = (await git(worktree, ['show', `${before}:${file}`])).stdout;
-      const now = (await git(worktree, ['show', `${head}:${file}`])).stdout;
-      if (assertCount(now) < assertCount(old)) return true;
-    }
+    const old = (await git(worktree, ['show', `${base}:${file}`])).stdout;
+    const now = (await git(worktree, ['show', `${head}:${file}`])).stdout;
+    if (assertCount(now) < assertCount(old)) return true;
   }
   return false;
 }
 
-/** claude 修复后的核对：工作区干净、有新提交、只追加不改写、不碰受保护路径、不削弱测试。通过返回 { commits }，否则抛 Error(reason_code)。 */
-export async function checkFixCommits(worktree, before) {
+const names = async (worktree, range) => (await git(worktree, ['diff', '--name-only', range])).stdout.split('\n').filter(Boolean);
+
+/**
+ * before..HEAD 里 PR 自身的改动：合进了 mainRef 时只算合并后仍与 mainRef 不同的文件
+ * （main 带进来的 sprints/、测试等不算本 PR 的改动）；不传 mainRef 即 before..HEAD 全部。
+ */
+export async function ownChangedFiles(worktree, before, mainRef = null) {
+  const changed = await names(worktree, `${before}..HEAD`);
+  if (!mainRef) return changed;
+  const own = new Set(await names(worktree, `${mainRef}..HEAD`));
+  return changed.filter((f) => own.has(f));
+}
+
+/**
+ * claude 修复后的核对：工作区干净、有新提交、只追加不改写、不碰受保护路径、不削弱测试。通过返回 { commits }，否则抛 Error(reason_code)。
+ * mainRef：本次合进了 main（冲突修复），受保护路径与削弱测试只核对 PR 自身的改动。
+ */
+export async function checkFixCommits(worktree, before, { mainRef = null } = {}) {
   if ((await git(worktree, ['status', '--porcelain'])).stdout.trim()) throw stop('uncommitted');
   const head = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
   if (!head || head === before) throw stop('no_commit');
   if ((await git(worktree, ['merge-base', '--is-ancestor', before, head])).code !== 0) throw stop('history_rewritten');
-  const changed = (await git(worktree, ['diff', '--name-only', `${before}..${head}`])).stdout.split('\n').filter(Boolean);
+  const changed = await ownChangedFiles(worktree, before, mainRef);
   if (changed.some((f) => PROTECTED_RE.test(f))) throw stop('protected_path');
-  if (await weakenedTests(worktree, before, head)) throw stop('test_weakened');
+  if (await weakenedTests(worktree, before, head, mainRef ? changed : null)) throw stop('test_weakened');
   const log = await git(worktree, ['rev-list', '--reverse', `${before}..${head}`]);
   return { commits: log.stdout.split('\n').filter(Boolean) };
 }

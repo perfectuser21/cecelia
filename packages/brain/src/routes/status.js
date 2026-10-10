@@ -285,13 +285,23 @@ router.get('/decisions', async (req, res) => {
 router.get('/tasks', async (req, res) => {
   const parsed = parseTaskListQuery(req.query, { defaultLimit: 100 });
   if (!parsed.ok) return res.status(parsed.status).json(parsed.body);
+  const { project_id: projectId, offset: rawOffset } = req.query;
+  if (projectId !== undefined && (typeof projectId !== 'string'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId))) {
+    return res.status(400).json({ error: 'invalid_project_id', message: 'project_id 必须是 UUID' });
+  }
+  const offset = rawOffset === undefined ? 0 : Number(rawOffset);
+  if (rawOffset !== undefined && (typeof rawOffset !== 'string'
+    || !/^(0|[1-9]\d*)$/.test(rawOffset) || !Number.isSafeInteger(offset))) {
+    return res.status(400).json({ error: 'invalid_offset', message: 'offset 必须是非负安全整数' });
+  }
   try {
     const { status, limit } = parsed;
     const { task_type } = req.query;
     const sprintDir = req.query.sprint_dir || null;
 
     // If filters provided, use custom query instead of getTopTasks
-    if (status || task_type || sprintDir) {
+    if (status || task_type || sprintDir || projectId) {
       let query = 'SELECT * FROM tasks WHERE 1=1';
       const params = [];
       let paramIndex = 1;
@@ -308,21 +318,27 @@ router.get('/tasks', async (req, res) => {
         paramIndex++;
       }
 
+      if (projectId) {
+        query += ` AND project_id = $${paramIndex}`;
+        params.push(projectId);
+        paramIndex++;
+      }
+
       if (sprintDir) {
         query += ` AND sprint_dir = $${paramIndex}`;
         params.push(sprintDir);
         paramIndex++;
       }
 
-      query += ` ORDER BY created_at DESC LIMIT $${paramIndex}`;
-      params.push(limit);
+      query += ` ORDER BY created_at DESC, id DESC LIMIT $${paramIndex++} OFFSET $${paramIndex}`;
+      params.push(limit, offset);
 
       const result = await pool.query(query, params);
       return res.json(result.rows);
     }
 
     // Default behavior: use getTopTasks
-    const tasks = await getTopTasks(limit);
+    const tasks = offset > 0 ? await getTopTasks(limit, offset) : await getTopTasks(limit);
     res.json(tasks);
   } catch (err) {
     console.error('[GET /api/brain/tasks] 查询失败:', err.message);

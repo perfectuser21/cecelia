@@ -28,12 +28,18 @@ describe('runner CI 红自动修复（ci_fix）', () => {
 
   beforeEach(() => {
     sb = makeSandbox();
+    // main 上已有的测试（削弱守卫只保护它们，决策 b057089b）
+    fs.mkdirSync(path.join(sb.seed, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(sb.seed, 'src/b.test.mjs'), "it('b', () => {\n  expect(1).toBe(1);\n  expect(2).toBe(2);\n});\n");
+    git(sb.seed, 'add', '.');
+    git(sb.seed, 'commit', '-q', '-m', 'test: main 上已有测试');
+    git(sb.seed, 'push', '-q', 'origin', 'main');
     // 模拟 runner 之前开出的 PR 分支：带 sprint 链文件（01 里有 task_id）
     git(sb.seed, 'checkout', '-q', '-b', BRANCH);
     fs.mkdirSync(path.join(sb.seed, SPRINT), { recursive: true });
     fs.writeFileSync(path.join(sb.seed, SPRINT, '01-intent.md'), `---\ntask_id: ${TASK}\nstep: intent\nupstream: []\n---\n# x\n\n### I-1\n验收\n`);
-    fs.mkdirSync(path.join(sb.seed, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(sb.seed, 'src/b.test.mjs'), "it('b', () => {\n  expect(1).toBe(1);\n  expect(2).toBe(2);\n});\n");
+    // PR 自己新加的测试（不在 main 上，修复时允许随代码改删）
+    fs.writeFileSync(path.join(sb.seed, 'src/pr-only.test.mjs'), "it('p', () => {\n  expect(3).toBe(3);\n});\n");
     git(sb.seed, 'add', '.');
     git(sb.seed, 'commit', '-q', '-m', 'feat: cw');
     git(sb.seed, 'push', '-q', 'origin', BRANCH);
@@ -176,6 +182,14 @@ describe('runner CI 红自动修复（ci_fix）', () => {
     expect(remoteHead()).toBe(head);
     expect(state().attempts).toMatchObject([{ head, result: reason }]);
     expect(brain.patches.find((p) => p.id === TASK).body.result.ci_fix.attempts).toMatchObject([{ result: reason }]);
+  });
+
+  // 决策 b057089b（金丝雀 3/4）：只守 main 上已有的测试；PR 自己新加的测试允许随代码改删（按裁决删超范围代码时连带删）
+  it('删的是 PR 自己新加、main 上没有的测试 → 不算削弱，照常推送', async () => {
+    const r = await go(red(), { mode: 'del-pr-test' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(remoteHead()).not.toBe(head);
+    expect(state().attempts).toMatchObject([{ head, result: 'pushed' }]);
   });
 
   // 审计 #8：修不动必须有出口，不能静默挂着

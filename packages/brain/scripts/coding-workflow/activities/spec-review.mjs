@@ -72,7 +72,7 @@ async function writeJudgments(brainUrl, taskId, points) {
       body: JSON.stringify({
         category: 'judgment', topic, decision: `所选方法: ${j.chosen}｜候选: ${j.candidates}`,
         reason: `依据: ${j.basis}｜误判后果: ${j.consequence}｜来源: coding workflow 合同对抗`,
-        made_by: 'ai', author: 'coding-workflow', source_ref: `coding-workflow:${taskId}`,
+        made_by: 'system', author: 'coding-workflow', source_ref: `coding-workflow:${taskId}`,
       }),
     });
   }

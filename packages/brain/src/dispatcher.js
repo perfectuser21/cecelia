@@ -14,6 +14,8 @@
  */
 
 import pool from './db.js';
+import { getFleetStatus } from './fleet-resource-cache.js';
+import { validateScriptPayload } from './lib/script-task-spec.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { assertDispatchRoutingReceipt } from './orchestrator/dispatcher.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
@@ -470,7 +472,10 @@ async function routeAndPersistQiumi(task, deps = {}) {
  * @param {string[]} goalIds - Goal IDs to scope the dispatch
  * @returns {Object} - Dispatch result with actions taken
  */
-export async function dispatchNextTask(goalIds) {
+export async function dispatchNextTask(goalIds, options = {}) {
+  const codeOnly = options.codeOnly === true;
+  let _quotaPriorityFilter = null;
+  let qiumiOnlyBypass = false;
   const actions = [];
   let llmCapacitySnapshot = null;
 
@@ -489,6 +494,7 @@ export async function dispatchNextTask(goalIds) {
     };
   }
 
+  if (!codeOnly) {
   // 0a-pre. Quota cooling check — 全局 quota 冷却期内跳过派发
   let _qcActive = false;
   try {
@@ -527,7 +533,7 @@ export async function dispatchNextTask(goalIds) {
   }
 
   // 0b. Quota guard check — 根据账号 5h 余量限制调度范围（MINIMAL_MODE 下跳过）
-  let _quotaPriorityFilter = null;
+  _quotaPriorityFilter = null;
   if (!MINIMAL_MODE) {
     try {
       const qg = await checkQuotaGuard();
@@ -550,8 +556,11 @@ export async function dispatchNextTask(goalIds) {
     }
   }
 
+  } // AI quota / billing only; registered deterministic scripts use host capacity.
+
   // 0. Three-pool slot budget check (replaces flat MAX_SEATS - INTERACTIVE_RESERVE)
-  const slotBudget = await calculateSlotBudget();
+  const slotBudget = codeOnly ? null : await calculateSlotBudget();
+  if (!codeOnly) {
   // 无可信资源时驱逐也不能恢复容量；保留运行中的任务，只拒绝新增派单。
   if (slotBudget.resourceAdmissionBlocked) {
     await recordDispatchResult(pool, false, 'resource_unavailable');
@@ -559,7 +568,6 @@ export async function dispatchNextTask(goalIds) {
   }
   // 任务池总闸关着时，qiumi_task 仍可放行（穿透 MMV 网关，不占 fleet 槽位）；
   // 置位后候选循环只选 qiumi_task，普通任务照旧被总闸挡住。
-  let qiumiOnlyBypass = false;
   if (!slotBudget.dispatchAllowed) {
     // Eviction: if a high-priority task is waiting, try to evict a low-priority one
     try {
@@ -648,6 +656,8 @@ export async function dispatchNextTask(goalIds) {
     }
   }
 
+  } // AI slots; codeOnly uses existing independent script-host concurrency.
+
   // 2.5 Drain retired harness tasks — 一次 SQL 把所有 queued retired 类型批量
   //     标 pipeline_terminal_failure。必须在 selectNextDispatchableTask 之前，
   //     防止 retired task 跟正常 P0/P1 队列竞争 — 在 bridge 不可用的环境（CI
@@ -655,7 +665,7 @@ export async function dispatchNextTask(goalIds) {
   //     永远循环，挤占调度器算力。
   //     放在所有 skip 检查（drain/quota_cooling/billing/slot/circuit）之后，
   //     这样系统不健康时不写 DB（保持调度路径侧效应一致性）。
-  try {
+  if (!codeOnly) try {
     const drained = await finalizeTask(pool, null, 'failed', {
       set: { completed_at: 'now', error_message: 'task_type retired (subsumed by harness_initiative full graph)' },
       mergePayload: { failure_class: 'pipeline_terminal_failure' },
@@ -738,6 +748,7 @@ export async function dispatchNextTask(goalIds) {
     const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...breakerSkipIds, ...duplicateSkipIds, ...resourceSkipIds];
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, {
       priorityFilter: _quotaPriorityFilter,
+      ...(codeOnly ? {codeOnly:true} : {}),
       ...(qiumiOnlyBypass ? { onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES] } : {}),
     });
     if (!candidate) {
@@ -756,6 +767,25 @@ export async function dispatchNextTask(goalIds) {
     // 3a. Check if task requires Cortex processing (Brain-internal RCA)
     if (candidate.payload && candidate.payload.requires_cortex === true) {
       return await processCortexTask(candidate, actions);
+    }
+
+    // Target machine admission remains fail closed, independent of unrelated AI fleet slots.
+    if (codeOnly) {
+      let host;
+      try { host = validateScriptPayload(candidate.payload).host; } catch {
+        resourceSkipIds.push(candidate.id);
+        continue;
+      }
+      const target = getFleetStatus().find(machine => machine.id === host);
+      if (!target?.online || !Number.isFinite(target.pressure) || target.pressure >= 0.9) {
+        await recordDispatchResult(pool, false, 'script_host_resource_unavailable', undefined, candidate.id);
+        await recordTaskEventSafe(pool, candidate.id, 'script_host_resource_wait', {host,reason:target?.admission_reason ?? (target?.online?'host_pressure':'host_health_unavailable'),pressure:target?.pressure??null,observed_at:target?.observed_at??null});
+        resourceSkipIds.push(candidate.id);
+        const capped = await resourceSkipCapped();
+        if (capped) return capped;
+        attempt--;
+        continue;
+      }
     }
 
     // 3b. Pre-flight Check — validate task quality before dispatch
