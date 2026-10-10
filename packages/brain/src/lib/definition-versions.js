@@ -29,7 +29,9 @@ function verifyDocument(workflow,doc) {
     ||(workflow.source_capability&&(doc.contract_key??doc.capability)!==workflow.source_capability)
     ||(doc.capability_id&&doc.capability_id!==workflow.capability_id)) throw Error(`工作流契约身份不匹配: ${workflow.id}`);
 }
-export async function snapshotDefinitions(client,{workflowIds,source,bindingsByActivity=new Map(),documentsByWorkflow=new Map()}) {
+export async function snapshotDefinitions(client,{workflowIds,source,bindingsByActivity=new Map(),documentsByWorkflow=new Map(),admissionScope}) {
+  if(admissionScope!==undefined&&admissionScope!=='cecelia-device-patrol') throw Error('unsupported admission scope');
+  const metadata=admissionScope?{definition_scope:'device_workflow_admission',source_scope:admissionScope}:{};
   if(!/^[0-9a-f]{40}$/.test(source.commit||'')) throw Error('快照必须使用固定commit');
   const workflows=new Map();
   for(const id of workflowIds) {
@@ -51,20 +53,20 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
   }
   for(const a of activities) {
     const binding=bindingsByActivity.get(a.id),activitySource=sources.get(a.id);
-    const payload={activity_id:a.id,definition_key:`${a.capability_key}.${a.activity_key}`,contract:a.contract,
+    const payload={...metadata,activity_id:a.id,definition_key:`${a.capability_key}.${a.activity_key}`,contract:a.contract,
       steps:await snapshotSteps(client,a),implementation_bindings:binding,resources:a.contract?.resources||{},verification:{preconditions:a.contract?.preconditions||[],postconditions:a.contract?.postconditions||[],steps:a.contract?.steps||[]}};
     const saved=await saveVersion(client,'activity',a.id,payload,activitySource),versionId=saved.id;
     versions.set(a.id,versionId);
     // 发布线（迁移 541）：构建登记到内容版本、按冷启动规则动生产指针；SAVEPOINT 内 fail-open，出错不影响同步
-    await runReleaseLineHook(client,'register_build',db=>registerActivityBuild(db,{activityId:a.id,buildId:versionId,inserted:saved.inserted}));
+    if(!admissionScope)await runReleaseLineHook(client,'register_build',db=>registerActivityBuild(db,{activityId:a.id,buildId:versionId,inserted:saved.inserted}));
     await client.query('UPDATE workflow_activity_refs SET activity_definition_version_id=$2 WHERE activity_id=$1 AND workflow_id=ANY($3::uuid[]) AND active AND activity_definition_version_id IS DISTINCT FROM $2',[a.id,versionId,workflowIds]);
   }
   for(const id of workflowIds) {
     const workflow=workflows.get(id);
     const refs=(await client.query('SELECT * FROM workflow_activity_refs WHERE workflow_id=$1 AND active ORDER BY sequence_no',[id])).rows;
-    const payload={workflow_id:id,key:workflow.key,name:workflow.name,capability_id:workflow.capability_id,channel:workflow.channel,form:workflow.form,
+    const payload={...metadata,workflow_id:id,key:workflow.key,name:workflow.name,capability_id:workflow.capability_id,channel:workflow.channel,form:workflow.form,
       contract:documentsByWorkflow.get(id),activities:refs.map(r=>({reference_id:r.id,slot_key:r.slot_key,sequence_no:r.sequence_no,activity_id:r.activity_id,activity_version_id:versions.get(r.activity_id),source_ref:r.source_ref}))};
     await saveVersion(client,'workflow',id,payload,{...source,path:workflow.source_path||source.path});
-    await runReleaseLineHook(client,'refresh_recipe',db=>refreshWorkflowRecipe(db,id,{cause:'definition_sync'}));
+    if(!admissionScope)await runReleaseLineHook(client,'refresh_recipe',db=>refreshWorkflowRecipe(db,id,{cause:'definition_sync'}));
   }
 }

@@ -6238,3 +6238,7 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 
 ### OpenClaw手机完成回收独立周期（1.379.7）
 openclaw-agent-reaper与手机窄派发共用独立收尾循环，不再受串行慢job阻塞；保留60秒执行周期、真实调用防重入、preview停用及全局Tick关闭。
+
+### 手机巡查独立来源准入（任务 a8448b2b，迁移543）
+
+`cecelia-device-patrol` 仅允许系统看护·设备与手机台账中已登记的单手机/批次Workflow。内部认证 `POST /implementation-ci/device-patrol/bootstrap` 从固定仓库GitHub读取Git树与blob，核SHA1/长度及base祖先，证明base没有巡查路径后保存不可变引入账；现存completed Workflow authoring回执及有序Activity身份必须一致。定义版本标为device_workflow_admission，合同executable=false，不拨发布线生产指针。固定Git CI窄gate逐文件核绑定/辅助来源/开发交付治理并运行真实回归；旧scope协议保留。此账只证明源码准入，不证明手机实际执行或Run绑定。
