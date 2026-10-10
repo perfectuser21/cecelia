@@ -7,3 +7,5 @@
 先记录unit七条失败与实际私有PostgreSQL三条失败，再实现。当前独立81条unit（含既有codeOnly/scheduler回归）和10条真PG测试通过，重复运行的16条判重测试只计一次。正常PR/CI/发布后必须等原queued自动派发、中央Run和Notion实际回执；本Learning不声明生产或自动巡查已完成。
 
 正式968 KR快照与已发布68工具在真实scratch投影证明：dispatcher真实静态import使新身份模块有原生运行归属，但两个unit没有原生认领。按各自实际import的生产模块补verification辅助关系；不把运行模块挂到F3，也不修改来源检查器。全量检查曾因依赖指向被清理旧工作区真实失败；改连稳定主仓后原16失败文件57测试通过，最终新HEAD仍须完整正常检查。
+
+98a正式CI的DoD动态命令真实失败：本机scratch连接参数覆盖了CI正式测试库参数，fixture安全guard正确拒绝。测试命令必须优先使用执行环境已有参数，本机缺省才取scratch；不改fixture guard，也不把CI的失败说成业务代码通过。

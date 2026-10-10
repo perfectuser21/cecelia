@@ -127,5 +127,5 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/dispatcher-dedup.test.js src/lib/__tests__/code-task-identity.test.js --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] codeidentitysql 实际scratch私有schema执行原生产判重SQL，inactive/非法Workflow、字符串布尔、伪造slot、盗用另一任务receipt和候选对象冒充均不能取得标题豁免；真ledger唯一键保留。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator npx vitest run --config vitest.integration.config.js src/__tests__/integration/code-task-dedup.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/__tests__/integration/code-task-dedup.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
 
