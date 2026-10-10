@@ -33,12 +33,25 @@ beforeAll(async()=>{
 });
 afterAll(async()=>{if(client){await client.query('ROLLBACK');await client.query('SET search_path TO public');if(schema)await client.query(`DROP SCHEMA ${schema} CASCADE`);await client.end();}if(dir)rmSync(dir,{recursive:true,force:true});});
 it('真实Git空base证明后生成两组不可变定义版本；重复登记没有第三版',async()=>{
+ const canonicalSource='https://github.com/perfectuser21/workspace/blob/'+'c'.repeat(40)+'/scripts/phone-account-patrol/runner.py';
+ await client.query('UPDATE activities SET contract_source=$1',[canonicalSource]);
+ const canonicalBefore=(await client.query('SELECT id,contract,contract_source,current_definition_version_id FROM activities ORDER BY id')).rows;
  const input={base_revision:base,introduced_revision:introduced,actor:'主理人授权/Codex'};
  const first=await bootstrapPatrolScope(db,input,{reader});expect(first.created).toBe(true);expect(first.registration.source.bindings).toHaveLength(2);expect(first.registration.definition_versions).toHaveLength(2);
  const second=await bootstrapPatrolScope(db,input,{reader});expect(second.created).toBe(false);
  expect((await client.query('SELECT count(*) AS n FROM workflow_definition_versions')).rows[0].n).toBe('2');
  const exported=await exportPatrolAdmissionSnapshot(db,{scope:PATROL_SCOPE,repo:PATROL_REPO,revision:base});expect(validatePatrolSnapshot(exported)).toBe(exported);
  const rows=(await client.query('SELECT payload FROM workflow_definition_versions')).rows;expect(rows.every(r=>r.payload.definition_scope==='device_workflow_admission'&&r.payload.contract.executable===false)).toBe(true);
+ expect((await client.query('SELECT id,contract,contract_source,current_definition_version_id FROM activities ORDER BY id')).rows).toEqual(canonicalBefore);
+ expect((await client.query('SELECT current_definition_version_id FROM workflows')).rows.every(r=>r.current_definition_version_id===null)).toBe(true);
+ expect((await client.query('SELECT activity_definition_version_id FROM workflow_activity_refs')).rows.every(r=>r.activity_definition_version_id===null)).toBe(true);
+ for(const row of (await client.query('SELECT activity_id,payload,source_commit FROM activity_definition_versions')).rows){
+  expect(row.source_commit).toBe(introduced);
+  expect(row.payload.contract).toEqual(contract.workflows.flatMap(w=>w.activities).find(a=>a.id===row.activity_id));
+  expect(row.payload.canonical_reference.contract_source).toBe(canonicalSource);
+  expect(row.payload.canonical_reference.contract_sha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(row.payload.steps).toEqual([]);
+ }
 });
 it('伪造Git不存在/已存在base与未验收身份全部拒绝且不修改事实',async()=>{
  const before=(await client.query('SELECT registration_sha256 FROM implementation_scope_bootstraps')).rows;
