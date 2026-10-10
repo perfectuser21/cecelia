@@ -117,6 +117,17 @@ function runResult(task) {
   return task.status || '未运行';
 }
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
+/** skill 字段可能是「名@版本」，也可能是整份 skill 正文（试跑交付 flow_skill_v1）：正文取 frontmatter name@version，否则截短 */
+export function skillLabel(v) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  const front = /^---\s*\n([\s\S]*?)\n---/.exec(s);
+  if (front) {
+    const field = k => (new RegExp(`^${k}:\\s*(.+)$`, 'm').exec(front[1]) || [])[1]?.trim();
+    if (field('name')) return field('version') ? `${field('name')}@${field('version')}` : field('name');
+  }
+  return clip(s.split('\n')[0], 80);
+}
 const firstSentence = s => String(s || '').split(/[。；;]/)[0].trim(); // 卡点只要一句话
 const ts = v => (v ? new Date(v).getTime() : 0);
 
@@ -175,7 +186,7 @@ export function buildBoardRows(data) {
     const lastRun = execs.at(-1) || t;
     const lastParams = execs.length ? parseParams(bodyOf(lastRun)) : {};
     const delivered = t.result?.delivery?.flow_skill || t.result?.delivery?.flow_skill_v1 || t.payload?.flow_skill;
-    const skill = lastParams.skill || delivered || `整流程 skill 未产出（本阶段用 ${p['使用 skill'] || p.skill || t.payload?.skill || '未写'}）`;
+    const skill = skillLabel(lastParams.skill) || skillLabel(delivered) || `整流程 skill 未产出（本阶段用 ${p['使用 skill'] || p.skill || t.payload?.skill || '未写'}）`;
     const result = runResult(lastRun);
     const parentId = t.parent_task_id || t.payload?.parent_task_id;
     const fixes = (data.followups || []).filter(f => parentId && f.parent_task_id === parentId && f.id !== t.id && ts(f.created_at) >= ts(t.created_at)
