@@ -11,6 +11,7 @@ import { removeWorktree } from './worktree.mjs';
 import { ghJson, listOwnPrs, requiredState, CW_BRANCH_RE } from './cifix-scan.mjs';
 import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from './pr-branch.mjs';
 import { previewOf } from '../../lib/preview.mjs';
+import { buildQaSmoke, registerSmoke } from '../../lib/qa-smoke.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { runJudge } from './judge-gate.mjs';
 
@@ -173,6 +174,27 @@ const qaIssueLines = (qa) => [...qa.failed, ...qa.blocking]
 const judgeIssueLines = (j) => j.blocking
   .map((i) => `- ${i.id}（对应 ${i.covers.join('、')}，${i.severity}，${i.type}）${i.where ? `［${i.where}］` : ''}：${i.detail}`).join('\n');
 
+/**
+ * QA 与裁判都通过：把 PASS 的 T-n API 命令固化成回归 smoke 并登记（审计 #9，决策 c8621227），
+ * 返回要随 QA 记录一并提交的路径；没有可固化的条目返回 []。
+ */
+function solidifyQa(ctx, pr, worktree, intent, reportFile, previewUrl) {
+  try {
+    const reportText = fs.readFileSync(path.join(worktree, intent.sprintDir, reportFile), 'utf8');
+    const smoke = buildQaSmoke({ taskId: intent.taskId, previewUrl, reportText });
+    if (!smoke) {
+      ctx.log(`QA 门 PR #${pr.number}：QA 报告里没有可固化的 API 验收命令，不生成回归 smoke`);
+      return [];
+    }
+    const changed = registerSmoke(worktree, smoke);
+    ctx.log(`QA 门 PR #${pr.number}：验收命令 ${smoke.items.join(',')} 固化为 ${smoke.name}（登记 allowlist${smoke.writes ? ' + write-targets' : ''}）`);
+    return changed;
+  } catch (error) {
+    ctx.log(`QA 门 PR #${pr.number}：固化回归 smoke 失败：${error?.message || error}`);
+    return [];
+  }
+}
+
 /** QA 门累计花费（审计 #35）：evaluate 与 qa-fix 会话，随状态同步进 Brain，合并时汇总。 */
 function addCost(s, usd) {
   if (typeof usd === 'number' && usd > 0) s.cost_usd = Math.round(((s.cost_usd ?? 0) + usd) * 10000) / 10000;
@@ -324,7 +346,7 @@ async function qaRound(ctx, pr, s, signal) {
     delete s.last_eval_error;
     const fails = qa.failed.length + qa.blocking.length;
     const report0 = `${intent.sprintDir}/${result.outputs.qa_report_file}`;
-    const entry = { round, head: pr.headRefOid, verdict: qa.verdict, fails, report: report0, cost_usd: qa.cost_usd, at: new Date().toISOString() };
+    const entry = { round, head: pr.headRefOid, verdict: qa.verdict, fails, report: report0, env_url: qa.env?.url, cost_usd: qa.cost_usd, at: new Date().toISOString() };
     addCost(s, qa.cost_usd);
     ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮 ${qa.verdict}（失败 ${fails}）`);
     const records = [report0, `${intent.sprintDir}/qa-r${round}`];
@@ -342,6 +364,7 @@ async function qaRound(ctx, pr, s, signal) {
     if (qa.verdict === 'PASS' && cfg.judge) {
       const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
       if (j.file) records.push(`${intent.sprintDir}/${j.file}`);
+      if (!j.error && j.verdict === 'PASS') records.push(...solidifyQa(ctx, pr, worktree, intent, result.outputs.qa_report_file, qa.env?.url));
       await commit(`docs(qa): 第 ${round} 轮真人 QA PASS，${j.error ? '独立裁判待定' : `独立裁判 ${j.verdict}`}`);
       return afterJudge(ctx, pr, s, worktree, intent, entry, j);
     }
@@ -367,7 +390,9 @@ async function judgeRound(ctx, pr, s, signal) {
   const entry = s.rounds.at(-1);
   return inPrWorktree(ctx, pr, s, `qa-${pr.number}-j${entry.round}`, signal, async (worktree, intent) => {
     const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
-    if (j.file) await commitRecords(worktree, pr, [`${intent.sprintDir}/${j.file}`], `docs(qa): 第 ${entry.round} 轮独立裁判 ${j.verdict}`);
+    const smoke = !j.error && j.verdict === 'PASS' && entry.report
+      ? solidifyQa(ctx, pr, worktree, intent, path.basename(entry.report), entry.env_url) : [];
+    if (j.file) await commitRecords(worktree, pr, [`${intent.sprintDir}/${j.file}`, ...smoke], `docs(qa): 第 ${entry.round} 轮独立裁判 ${j.verdict}`);
     return afterJudge(ctx, pr, s, worktree, intent, entry, j);
   });
 }

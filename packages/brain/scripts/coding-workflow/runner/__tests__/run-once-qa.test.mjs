@@ -311,6 +311,21 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(state().cost_usd).toBeGreaterThanOrEqual(0.5);
   });
 
+  // 审计 #9（决策 c8621227）：QA + 裁判都通过 → T-n 的 API 命令固化成 smoke 并登记 allowlist/write-targets，
+  // 与 QA 报告、裁决同一个提交（批准绑定这个 head，合并门不会因此撤销批准）
+  it('QA PASS + 裁判 PASS → 固化 smoke 脚本并登记，与报告/裁决同一提交；批准绑定该提交', async () => {
+    const r = await go(green(), { mode: 'pass-api' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const files = git(sb.origin, 'show', '--name-only', '--format=', BRANCH).trim().split('\n').sort();
+    expect(files).toEqual([
+      'packages/brain/scripts/smoke/cw-c954ebfd-qa-smoke.sh', 'packages/quality/smoke-allowlist.txt', 'packages/quality/smoke-write-targets.txt',
+      `${SPRINT}/05-qa-report-r1.md`, `${SPRINT}/06-judge-r1.md`,
+    ].sort());
+    const script = git(sb.origin, 'show', `${BRANCH}:packages/brain/scripts/smoke/cw-c954ebfd-qa-smoke.sh`);
+    expect(script).toContain('curl -q -s -X POST "$BRAIN_URL"/api/brain/tasks');
+    expect(state()).toMatchObject({ passed: true, approved: { head: git(sb.origin, 'rev-parse', BRANCH).trim() } });
+  });
+
   it('已合并且 QA 通过过的 PR → 停掉它的预览环境释放容量（只停一次）', async () => {
     seedState({ passed: true, rounds: [] });
     const r = await go({ prs: [], mergedPrs: [pr()] });
