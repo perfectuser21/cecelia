@@ -119,3 +119,6 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] workspacejointsource：真实PG在同事务导出Workspace父与独立跨仓Factory来源，明确Brain anchor与冻结source_set；scratch不授生产、重算hash篡改仍拒、子UNKNOWN保留且单scope父可用，实际CLI接受精确跨仓双scope但UNKNOWN不写文件，KR原生joint保持。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/factory-consumer-snapshot.pg.integration.test.js src/__tests__/integration/implementation-admission-companion.test.js src/__tests__/integration/implementation-multi-scope.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] cleanup-source-retirement：执行真实 Git 与实际清理工作流 shell，瞬态资料删除/来源退役同行提交；未删和持久文档原字节保护，严格解析及已有 release 消费保持。
+  Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run scripts/ci/__tests__/cleanup-source-retirement.test.mjs scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs --maxWorkers=1 --minWorkers=1"

@@ -160,8 +160,8 @@ function validateConfigEvidence(row){
   proof.read_kind!==(workspace?'YAML.parse/readFileSync':'yaml.load/readFileSync')||proof.owner_kind!=='claimed-reader'||proof.ci_job!==(workspace?'caller-contract':'lint-auto-merge-decision')||proof.aggregate_job!==(workspace?'impact':'ci-passed')||
   [proof.read_range,proof.owner_range].some(range=>!Array.isArray(range)||range.length!==2||range.some(v=>!Number.isSafeInteger(v)||v<0)||range[1]<=range[0]))fail('AUXILIARY_CONFIG_EVIDENCE_INVALID');
 }
-/** 版本机器人只移除实际消费的release行，保留其他声明原始字节。 */
-export function removeConsumedReleaseRelations(text, consumedPaths) {
+/** 共用严格解析与局部删除，保留未选声明的原始字节。 */
+function removeSelectedSourceRelations(text, select) {
  if(Buffer.byteLength(text)>1024*1024)fail('AUXILIARY_MANIFEST_TOO_LARGE');
  let manifest;try{manifest=JSON.parse(text);}catch{fail('AUXILIARY_MANIFEST_INVALID');}
  if(!manifest||Object.keys(manifest).sort().join(',')!=='relations,repo,schema_version'||manifest.schema_version!==1||!/^[-\w.]+\/[-\w.]+$/.test(manifest.repo)||!Array.isArray(manifest.relations)||manifest.relations.length>1024)fail('AUXILIARY_MANIFEST_INVALID');
@@ -187,8 +187,8 @@ export function removeConsumedReleaseRelations(text, consumedPaths) {
   }
   return out;
  }
- const array=node().properties.get('relations'),consumed=new Set(consumedPaths),ranges=[];
- const selected=manifest.relations.map(row=>row.role==='release'&&consumed.has(row.path));
+ const array=node().properties.get('relations'),ranges=[];
+ const selected=manifest.relations.map(select);
  for(let start=0;start<selected.length;start++){
   if(!selected[start])continue;let end=start;while(selected[end+1])end++;
   if(end<selected.length-1)ranges.push([array.children[start].start,array.commas[end]+1]);
@@ -198,6 +198,19 @@ export function removeConsumedReleaseRelations(text, consumedPaths) {
  }
  let result=text;for(const [start,end] of ranges.reverse())result=result.slice(0,start)+result.slice(end);
  return result;
+}
+/** 版本机器人保持已有仅消费release的语义。 */
+export function removeConsumedReleaseRelations(text, consumedPaths) {
+ const consumed=new Set(consumedPaths);
+ return removeSelectedSourceRelations(text,row=>row.role==='release'&&consumed.has(row.path));
+}
+/** 清理机器人只退役实际删除的瞬态资料，持久文档不因删除清单而被授权退役。 */
+export function removeDeletedArtifactRelations(text, deletedPaths) {
+ if(!Array.isArray(deletedPaths)||deletedPaths.length>1024)fail('AUXILIARY_DELETE_LIST_INVALID');
+ for(const name of deletedPaths)path(name);
+ const deleted=new Set(deletedPaths);
+ const transient=/^(?:\.prd-|\.task-|\.dod-|\.dev-mode\.|\.dev-seal\.|\.enriched-prd-|DoD\.cp-|PRD\.cp-|TASK_CARD\.cp-)[^/]+\.md$/;
+ return removeSelectedSourceRelations(text,row=>deleted.has(row.path)&&(row.role==='release'||row.role==='documentation'&&transient.test(row.path)));
 }
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,maxBuffer:16*1024*1024});
 function readCommitted(root,rev,name){
