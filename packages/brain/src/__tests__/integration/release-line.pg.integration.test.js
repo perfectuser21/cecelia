@@ -282,7 +282,7 @@ describe('自动退回 / 手动退回', () => {
     }
   }
 
-  it('无可退目标 → rollback_unavailable 只记一次（去重），未收敛生产版不告警', async () => {
+  it('无可退目标 → rollback_unavailable 只记一次（去重），未收敛生产版也告警 P2 一次、不发 Bark', async () => {
     const a = await activity('退回');
     const s = await step(a, 's');
     const b1 = await build(a, 1, { stepId: s }); await register(a, b1);
@@ -294,7 +294,8 @@ describe('自动退回 / 手动退回', () => {
     expect(r2).toMatchObject({ action: 'deduped' });
     expect((await events(a)).filter(e => e.kind === 'rollback_unavailable')).toHaveLength(1);
     await new Promise(r => setTimeout(r, 5));
-    expect(alert).not.toHaveBeenCalled();
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(alert.mock.calls[0].slice(0, 2)).toEqual(['P2', `activity_production_rollback_unavailable:${a}`]);
     expect(bark).not.toHaveBeenCalled();
   });
 
