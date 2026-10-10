@@ -49,6 +49,15 @@ describe('合并门（绑定 head SHA）', () => {
     for (const s of ['合同对抗 3 轮 APPROVED', '真人 QA 2 轮', '第 1 轮 FAIL（2 处失败', 'CI 修复 1 次', 'brain-unit (3)', '$5.5']) expect(text).toContain(s);
   });
 
+  // 决策 b34e346a：合并门合并成功上报「合并」span
+  it('合并成功 → 上报合并 span（pass，幂等键带 PR 号）', async () => {
+    const head = remoteHead();
+    approve(head);
+    const r = await go(green({ prs: [pr({ headRefOid: head })] }), { tasks: [{ id: TASK, status: 'completed' }] });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(E.brain.spans).toContainEqual(expect.objectContaining({ run_id: `coding-workflow:${TASK}`, occurrence_key: 'merge:77', outcome: 'pass' }));
+  });
+
   // 审计 #6：合并失败不能静默挂着
   it('合并失败且 PR 冲突 → 升级 merge_conflict（P1 + Brain escalations），不再重试', async () => {
     approve();

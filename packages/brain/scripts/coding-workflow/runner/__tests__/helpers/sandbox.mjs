@@ -24,7 +24,7 @@ const TRANSITIONS = { queued: ['in_progress'], in_progress: ['completed', 'faile
  * 认领对 coding-workflow-runner 强制写 kind（同真 Brain），legacyClaim=true 模拟旧端点的 COALESCE。
  */
 export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {}, onResultPatch, legacyClaim = false } = {}) {
-  const state = { tasks: structuredClone(tasks), calls: [], patches: [], learnings: [] };
+  const state = { tasks: structuredClone(tasks), calls: [], patches: [], learnings: [], spans: [] };
   const find = (id) => state.tasks.find((t) => t.id === id);
   const send = (res, code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
   const server = http.createServer((req, res) => {
@@ -42,6 +42,12 @@ export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = 
           .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
           .slice(0, Number(q.get('limit') || 100));
         return send(res, 200, rows);
+      }
+      // 执行记录（决策 b34e346a）：同真 Brain 的 POST /api/brain/spans（单条或数组）
+      if (req.method === 'POST' && url.pathname === '/api/brain/spans') {
+        const body = JSON.parse(raw);
+        state.spans.push(...(Array.isArray(body) ? body : [body]));
+        return send(res, 201, { inserted: Array.isArray(body) ? body.length : 1 });
       }
       // learnings 落库（审计 #22）：同真 Brain 的 POST /api/brain/learnings-received
       if (req.method === 'POST' && url.pathname === '/api/brain/learnings-received') {
