@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SPEC_FILE, INTENT_FILE, specErrors, specIds, qaScenarios, uncoveredSection, judgmentPoints, untrackedDeferrals } from '../lib/spec-check.mjs';
+import { SPEC_FILE, INTENT_FILE, specErrors, specIds, qaScenarios, uncoveredSection, judgmentPoints, untrackedDeferrals, explainSpecErrors } from '../lib/spec-check.mjs';
 
 const TASK = 't-1';
 const fm = (upstream, step = 'spec') => `---\ntask_id: ${TASK}\nstep: ${step}\nupstream: ${JSON.stringify(upstream)}\n---\n`;
@@ -101,6 +101,23 @@ describe('lib/spec-check', () => {
         '### R-5\n处理: 驳回\n说明: 代码 activities/x.mjs:12 已处理这个场景',
       ].join('\n\n');
       expect(untrackedDeferrals(resp)).toEqual(['R-1']);
+    });
+  });
+
+  // 金丝雀 3（任务 1329bba0）：重试只给错误码，模型不知道怎么改，两次都 INV-x:unaddressed → 每个错误码带上改法
+  describe('explainSpecErrors', () => {
+    it('铁律对照 unaddressed：说明这一行必须引用 S-n/Q-n 或以「不适用：」开头写理由，并给出两种正确写法', () => {
+      const t = explainSpecErrors(['INV-50954d28:unaddressed']);
+      expect(t).toContain('INV-50954d28');
+      expect(t).toContain('- INV-50954d28：S-');
+      expect(t).toContain('- INV-50954d28：不适用：');
+    });
+    it('常见错误码都有改法：未知码原样保留；多条用分号连成一行（prompt 变量单行）', () => {
+      const t = explainSpecErrors(['spec_ids_missing', 'qa_missing', 'qa_not_covered:I-2', 'Q-3:expect_missing', 'uncovered_section_missing',
+        'judgment_invalid:2', 'INV-1129ee0d:unknown', 'invariants_section_missing', 'not_covered:I-1', 'weird_code']);
+      for (const s of ['### S-', '## QA 场景', 'I-2', 'Q-3', '期望:', '## 未覆盖真实链路', '第 2 条', 'INV-1129ee0d', '## 铁律对照', 'upstream', 'weird_code']) expect(t).toContain(s);
+      expect(t).not.toContain('\n');
+      expect(explainSpecErrors([])).toBe('无');
     });
   });
 });

@@ -14,7 +14,7 @@ import { reportErrors } from '../lib/md-chain.mjs';
 import { parseReview, openIssuesAfter } from '../lib/review.mjs';
 import { decide, detectTrend, stalled } from '../lib/gan.mjs';
 import { sessionCostUsd } from '../lib/transcript.mjs';
-import { SPEC_FILE, INTENT_FILE, specErrors, specIds, qaScenarios, judgmentPoints, untrackedDeferrals } from '../lib/spec-check.mjs';
+import { SPEC_FILE, INTENT_FILE, specErrors, specIds, qaScenarios, judgmentPoints, untrackedDeferrals, explainSpecErrors } from '../lib/spec-check.mjs';
 import { INVARIANTS_FILE, loadInvariantIds } from '../lib/invariants.mjs';
 
 const REVIEW_FILE = '02-review.md';
@@ -133,7 +133,7 @@ await runActivity(async (input) => {
   let reviewErrors = [];
   let untracked = [];
   // 重试必须带新信息（审计 #33）：每个会话都拿到当前 02 的程序校验问题（活动被重试时，上次改写可能把规格改坏了）
-  const specErrorsNow = () => specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds }).join(' ') || '无';
+  const specErrorsNow = () => explainSpecErrors(specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds }));
 
   const overBudget = () => cost > budget
     && fail('fatal', 'gan_budget_exceeded', { evidence: [{ cost_usd: money(cost), budget_usd: budget, rounds: history.length, open_issues: brief(prevOpen) }] });

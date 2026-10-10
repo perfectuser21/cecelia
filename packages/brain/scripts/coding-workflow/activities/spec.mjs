@@ -8,7 +8,7 @@ import {
   loadPrompt, claudeTimeoutMs, runClaude, claudeFailure, snapshotChanges, outOfScopeChanges,
 } from '../lib/claude.mjs';
 import { sha256File, chainTamperFailure } from '../lib/guards.mjs';
-import { SPEC_FILE, INTENT_FILE, specErrors } from '../lib/spec-check.mjs';
+import { SPEC_FILE, INTENT_FILE, specErrors, explainSpecErrors } from '../lib/spec-check.mjs';
 import { INVARIANTS_FILE, loadInvariantIds } from '../lib/invariants.mjs';
 
 // 默认低于契约 budget（900s），这样超时由本活动先报明确的 claude_timeout，而不是执行器笼统的 activity_timeout
@@ -33,7 +33,7 @@ await runActivity(async (input) => {
     SPEC_PATH: specPath,
     INTENT_IDS: intentIds.join(','),
     INVARIANTS_PATH: path.join(dir, INVARIANTS_FILE),
-    PREV_ERRORS: prevErrors.join(' ') || '无',
+    PREV_ERRORS: explainSpecErrors(prevErrors),
   });
 
   // 重试/重跑时旧产物会被当成新产物，先删

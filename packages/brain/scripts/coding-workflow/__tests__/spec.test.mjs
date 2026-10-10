@@ -149,6 +149,8 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     r = await run('ok');
     expect(r.result.status, r.stderr).toBe('completed');
     expect(r.stderr).toMatch(/FAKE_PREV_ERRORS: .*spec_ids_missing/);
+    // 金丝雀 3：带改法，不只是错误码
+    expect(r.stderr).toMatch(/FAKE_PREV_ERRORS: .*### S-/);
     const prompt = fs.readFileSync(path.join(HERE, '../prompts/spec.md'), 'utf8');
     expect(prompt).toContain('PREV_ERRORS: {{PREV_ERRORS}}');
   });

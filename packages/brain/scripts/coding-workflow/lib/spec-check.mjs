@@ -152,3 +152,34 @@ export function untrackedDeferrals(responseText) {
   }
   return out;
 }
+
+// 错误码 → 改法（金丝雀 3：重试只给错误码，模型两次都没改对 INV-x:unaddressed）
+const EXPLAIN = [
+  [/^(INV-[0-9a-f]{8}):unaddressed$/, (m) => `${m[1]}：## 铁律对照里这一行既没引用任何 S-n/Q-n，也没以「不适用：」开头——改成「- ${m[1]}：S-1、Q-2 覆盖（一句话说明怎么遵守）」或「- ${m[1]}：不适用：理由」，引用的 S-n/Q-n 必须在正文真实存在`],
+  [/^(INV-[0-9a-f]{8}):unknown$/, (m) => `${m[1]}：铁律清单里没有这一条，删掉这一行（只能对照 INVARIANTS_PATH 里的编号）`],
+  [/^invariants_section_missing$/, () => '缺 ## 铁律对照 小节：在 QA 场景之后补上，相关铁律逐条交代，一条都不相关写「无相关铁律：理由」'],
+  [/^invariants_section_empty$/, () => '## 铁律对照 是空的：逐条写「- INV-xxxxxxxx：S-n 覆盖」或「不适用：理由」，确实无关写「无相关铁律：理由」'],
+  [/^spec_ids_missing$/, () => '正文没有任何规格条目：每条规格写成「### S-1」这样的标题行'],
+  [/^qa_missing$/, () => '缺 ## QA 场景 小节：每个场景写「### Q-n」，下面写 对应:/前提:/操作:/期望:'],
+  [/^qa_not_covered:(I-\d+)$/, (m) => `${m[1]} 没有被任何 QA 场景覆盖：补一个「对应: ${m[1]}」的 ### Q-n`],
+  [/^(Q-\d+):covers_missing$/, (m) => `${m[1]} 缺「对应:」行，写出它验的 I-n`],
+  [/^(Q-\d+):steps_missing$/, (m) => `${m[1]} 缺「操作:」行，写出用户真实的操作步骤`],
+  [/^(Q-\d+):expect_missing$/, (m) => `${m[1]} 缺「期望:」行，写出用户能看到的结果`],
+  [/^(Q-\d+):covers_unknown:(.+)$/, (m) => `${m[1]} 的「对应:」写了不存在的 ${m[2]}，只能写 01 里的 I-n`],
+  [/^uncovered_section_missing$/, () => '缺 ## 未覆盖真实链路 小节：列出这次 QA 没法真验的链路，确实没有写一行「无：理由」'],
+  [/^uncovered_section_empty$/, () => '## 未覆盖真实链路 是空的：逐条列出，或写一行「无：理由」'],
+  [/^judgment_invalid:(\d+)$/, (m) => `## 判定点 第 ${m[1]} 条五要素不全：写成「- 名称｜候选: …｜所选: …｜依据: …｜误判后果: …」`],
+  [/^not_covered:(I-\d+)$/, (m) => `frontmatter 的 upstream 漏了 ${m[1]}：upstream 必须列出全部「01-intent.md#I-n」`],
+];
+
+/** 错误码列表 → 带改法的一行说明（分号分隔；没有返回「无」）。认不出的错误码原样保留。 */
+export function explainSpecErrors(codes) {
+  if (!Array.isArray(codes) || codes.length === 0) return '无';
+  return codes.map((code) => {
+    for (const [re, say] of EXPLAIN) {
+      const m = re.exec(code);
+      if (m) return `${code} → ${say(m)}`;
+    }
+    return code;
+  }).join('；');
+}
