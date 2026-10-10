@@ -30,6 +30,8 @@ export function defaultChecks({ branch, feature }) {
     { name: 'lint-migration-unique-version', cmd: ['node', '.github/workflows/scripts/lint-migration-unique-version.cjs'] },
     { name: 'pr-size-check', builtin: 'pr-size' },
     { name: 'smoke-registration', builtin: 'smoke-registration' },
+    // 写入型 smoke 要登记 write-targets、curl 先带 -q 等（Smoke Glob Runner 同一条守卫，离线可跑；金丝雀 4 到 CI 才红）
+    { name: 'smoke-write-guard', cmd: ['node', '--test', 'packages/quality/tests/smoke-production-guard.node-test.mjs'] },
   ];
 }
 
@@ -94,7 +96,8 @@ export async function runPrechecks(worktree, { checks, env = {} }) {
       continue;
     }
     const [cmd, ...args] = check.cmd;
-    const script = ['bash', 'node'].includes(cmd) && args[0] && !args[0].startsWith('-') ? args[0] : null;
+    // 被跑的脚本 = 参数里第一个脚本文件（`node --test <文件>` 也算；`bash -c` 内联命令不算）；仓库里没有就跳过
+    const script = ['bash', 'node'].includes(cmd) ? (args.find((a) => /\.(?:sh|js|mjs|cjs)$/.test(a)) ?? null) : null;
     if (script && !fs.existsSync(path.join(worktree, script))) {
       results.push({ name: check.name, ok: true, skipped: true, output_tail: `${script} 不存在，跳过` });
       continue;

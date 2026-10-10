@@ -12,8 +12,10 @@ describe('defaultChecks', () => {
     expect(checks.map((c) => c.name)).toEqual([
       'lint-test-pairing', 'lint-feature-has-smoke', 'lint-tdd-commit-order', 'lint-test-quality', 'lint-no-mock-only-test',
       'lint-no-fake-test', 'lint-gp-anchor-artifact', 'branch-naming', 'registry-lint', 'lint-migration-unique-version', 'pr-size-check',
-      'smoke-registration',
+      'smoke-registration', 'smoke-write-guard',
     ]);
+    // 金丝雀 4（PR #6232）：写入型 smoke 没登记 write-targets、curl 没带 -q，到 CI 才红 → 左移到本地预检
+    expect(checks.find((c) => c.name === 'smoke-write-guard').cmd).toEqual(['node', '--test', 'packages/quality/tests/smoke-production-guard.node-test.mjs']);
     const smoke = checks.find((c) => c.name === 'lint-feature-has-smoke');
     expect(smoke.cmd).toEqual(['bash', '.github/workflows/scripts/lint-feature-has-smoke.sh', 'origin/main']);
     expect(smoke.env).toEqual({ PR_LABELS: 'feature' });
