@@ -1,3 +1,5 @@
+- [x] [BEHAVIOR] versionfragmenthint 未提供发版碎片时版本门禁给出当前 changes/{VERSION} 合同，拒绝手动版本五件套提示漂移。
+  Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run ../../tests/regression/version-gate-silent/check-brain-version-bump.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] taskrunsvessel 正式 Runs 配置：内部鉴权与显式启用；补列读回成功才登记；不抢占旧库、不删除映射；来源标记及有界分页防重复创建。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/projection/__tests__/task-runs-config.test.js src/routes/__tests__/task-runs-projection.test.js --maxWorkers=1 --minWorkers=1"
 # 发布线审查修复：无可退目标也告警（去重）
