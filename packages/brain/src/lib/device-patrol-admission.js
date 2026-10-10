@@ -21,7 +21,7 @@ export function validatePatrolContract(doc){
    if(!uuid(a.id)||activities.has(a.id)||typeof a.key!=='string'||!a.key||a.assertion_ref!==PATROL_ASSERTION||!Array.isArray(a.bindings)||!a.bindings.length||a.bindings.some(p=>!safePath(p)||!(/\.(?:py|mjs|swift)$/.test(p))||/test/.test(p)))fail('PATROL_ACTIVITY_IDENTITY');activities.add(a.id);
   }
  }
- const permitted=new Set([PATROL_PATH,PATROL_PREFIX+'implementation-regression.test.mjs',PATROL_PREFIX+'test_runner.py',PATROL_PREFIX+'test_identity.py',PATROL_PREFIX+'test_runtime_safety.py',PATROL_PREFIX+'test_deploy.py',PATROL_PREFIX+'test_publish.mjs',PATROL_PREFIX+'SKILL.md',PATROL_PREFIX+'RUNBOOK.md']);
+ const permitted=new Set([PATROL_PATH,PATROL_PREFIX+'implementation-regression.test.mjs',PATROL_PREFIX+'test_runner.py',PATROL_PREFIX+'test_identity.py',PATROL_PREFIX+'test_runtime_safety.py',PATROL_PREFIX+'test_deploy.py',PATROL_PREFIX+'test_publish.mjs',PATROL_PREFIX+'test_mirror.mjs',PATROL_PREFIX+'SKILL.md',PATROL_PREFIX+'RUNBOOK.md']);
  if(!Array.isArray(doc.auxiliary_paths)||doc.auxiliary_paths.some(p=>!permitted.has(p))||new Set(doc.auxiliary_paths).size!==doc.auxiliary_paths.length)fail('PATROL_AUXILIARY_SCOPE');
  if(doc.maintenance_owner!=='主理人'||doc.schedule?.time!=='22:00'||doc.schedule?.timezone!=='Asia/Shanghai')fail('PATROL_OWNER_SCHEDULE');
  return doc;
