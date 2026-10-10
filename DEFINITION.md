@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.405.6
+**Brain 版本**: 1.408.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,31 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.408.0 — coding harness：合并门合并后的 Brain 回写不再被删分支吞掉
+
+- canary 2（#6160）合并门按批准 head 合并成功，Brain 任务却没有 `result.merge`。根因：#6167 给合并加了 `--delete-branch`，合并门合并之后才去远端分支读 `01-intent.md` 取 task_id，分支已删、取不到，回写被静默跳过、连日志都没有（任务 2a049ff4）。
+- 改为合并前取 task_id；取不到时记日志「找不到 task_id，合并结果没有回写 Brain」，不再静默。
+- 测试假 gh 合并带 `--delete-branch` 时同真 gh 删远端分支；「合并成功 → Brain 回写 merge」测试改为 Brain 里真有该任务（原测试 PATCH 404 也算通过，掩盖了问题）。
+
+## Brain 1.407.0 — 资源健康进仓库：账号/手机等资源当下五态落库、账号切换三态判据、调度前检查与变坏预警
+
+决策 de6dff5d（五块模型）第 5 步，任务 5bf2512a。仓库 warehouse_items 原来只登记「有什么」，现在知道「现在能不能用」。
+
+- 迁移 539：`resource_health` 一资源一行当下健康（类型 account/phone/machine/warehouse_item/service/other；状态 healthy/degraded/offline/restricted/unknown；原因、证据 jsonb、来源、观测时间取库时钟、执行端自报时间另存 reported_at、status_since），可挂到仓库物件 `warehouse_item_id`；`resource_health_events` 状态变化历史由触发器写（首报、每次状态变化各一条，同状态不记，psql 直改也留痕）；视图 `v_warehouse_item_health` 给每件仓库物件的各态计数与最差状态。不另造设备表：手机键 = device_locks / phone_registry 的 serial，账号键 = `<平台>:<账号 id>`，仓库物件键 = warehouse_items.key。
+- 账号切换三态判据（主理人规矩，平台通用）：切换列表里账号消失 = offline（掉线，停用该号）；切换要身份校验/人脸 = restricted（被风控，立即退出不验证）；切换成功可用 = healthy。
+- 接口：`POST /api/brain/resource-health/report`、`POST /api/brain/resource-health/account-switch`（内部令牌；不健康结果必须带证据；回 `action` 告诉执行端怎么做）、`POST /api/brain/resource-health/check`（按资源清单或 task_id）、`GET /api/brain/resource-health`、`GET /api/brain/resource-health/warehouse`、`GET /api/brain/resource-health/:type/:key/history`。
+- 调度前检查：任务经 `payload.device_serial` / 秋米路由手机 / `payload.account_ref` / `payload.resource_refs` 引用的资源若 offline/restricted，dispatcher 候选循环、秋米新定路由、worker 池、两个手动派发入口都不派（保持 queued，恢复后自动放行），原因写 task_events `resource_health_blocked`（同单同原因只记一次）、派发统计记 `resource_unhealthy`；手动派发可设 `resource_health_override=true` 人工放行。degraded、没记录、过期的 healthy 只提示不挡。闸自身出错一律放行只记日志。
+- 预警：变成 offline/restricted → Bark（按资源+状态 6 小时去重）+ alerting P1；变成 degraded → P1；从 offline/restricted 恢复 → P2。告警失败不影响写入。
+
+## Brain 1.406.0 — 裁判接线：运行后自动裁判落库，新旧版本对比可查
+
+- 决策 de6dff5d（五块模型：树+仓库+账本+裁判+发布线）第 2 步，任务 add0acfc。此前 `reconcileActivity` 与 `POST /step-reconcile/:activityId` 只能手动调用，生产 Activity 的 readback 格全空。
+- 迁移 538：新表 `activity_judgments`（只追加，UPDATE/DELETE 由触发器拒绝）：activity_id、activity_definition_version_id（对账窗口内最新一条带版本的 span 的定义版本）、verdict、converged、consecutive_green、required_green、runs_considered、trigger_kind（auto/manual）、trigger_ref（触发运行）、report jsonb、judged_at。
+- 自动裁判 `lib/activity-judge.js`：`POST /spans` 写入成功后 `onSpansWritten` 把新插入的 span 放进缓冲，最多每 30s（`ACTIVITY_JUDGE_DEBOUNCE_MS`）冲一次，Step 级 span 经 steps 表找归属 Activity，逐个跑 `judgeActivity`（复用 `reconcileActivity`，readback 格同时翻色）。自动触发且 no_data 不落库。钩子 fail-safe：任何错误只记日志，上报照常返回；`ACTIVITY_JUDGE_AUTO=off` 整体关闭。`POST /step-reconcile/:activityId` 同样记一条手动裁判。
+- 新旧版本对比 `lib/activity-version-compare.js` `compareActivityVersions`（晋级门调用的稳定接口）：同一 Activity 候选 vs 基线版本按 `spans.activity_definition_version_id` 分组，各取最近 50 次运行，比成功率、读回 verified 比例（复用 `reconcileSteps` 逐 Step 判定）、观测形状一致性；`insufficient_data`（样本 < 下限，默认 5）/ `worse`（任一项低于基线超容差，默认 0）/ `not_worse`，带每项数字与理由。Step 读回取版本快照里冻结的 Steps，快照没有才退回当前 Step 表。
+- 接口：`GET /api/brain/activities/:id/judgments/latest`、`GET /api/brain/activities/:id/judgments?limit=`、`GET /api/brain/activities/:id/version-compare?candidate=&baseline=&min_runs=&max_runs=&tolerance=`（baseline 省略取 Activity 当前版本）。
+- smoke：`activity-judgments-smoke.sh`（真库真函数，事务内跑完回滚；已验证迁移缺失时报红）。
 
 ## Brain 1.405.6 — 修复 Brain GET /api/brain/tasks 非法筛选参数静默返回（status 拼错返回空列表、limit 非数字被忽略）
 
