@@ -540,7 +540,10 @@ hooks:
 
   - id: H7-029
     feature: H7
-    name: "executor.js 注入 CECELIA_GOAL_SETTINGS 到 extraEnv"
+    # 2026-10-10 改写（任务 76a160b3，决策 067867c8）：Claude Code 无头通道已退役，executor.js
+    # 旧 Docker/claude 派发段（唯一往 extraEnv 注入 CECELIA_GOAL_SETTINGS 处）已删除；
+    # 只保留 buildGoalSettings 序列化能力本身的断言。
+    name: "executor.js buildGoalSettings 序列化目标条件为 Stop hook JSON"
     scope: executor
     priority: P1
     trigger: [PR, Release]
@@ -548,32 +551,34 @@ hooks:
     tags: [goal-hook, executor, harness, stop-hook]
     owner: infra
     steps:
-      given: "task.goal_condition 非空或 taskType 有对应 HARNESS_GOAL_CONDITIONS"
-      when: "executor.js 构建任务环境变量"
-      then: "extraEnv.CECELIA_GOAL_SETTINGS 被设置，包含序列化的目标条件"
+      given: "goal_condition 非空"
+      when: "调用 executor.js 导出的 buildGoalSettings"
+      then: "返回 prompt 型 Stop hook JSON，goal_condition 原文写入 prompt；空条件返回 null"
     evidence:
       type: code
       file: "../../brain/src/executor.js"
-      contains: "CECELIA_GOAL_SETTINGS"
+      contains: "buildGoalSettings"
     test: "../../brain/src/__tests__/goal-settings-serializer.test.js"
 
   - id: H7-030
     feature: H7
-    name: "cecelia-bridge.js 透传 CECELIA_GOAL_SETTINGS（不加 SKILLENV_ 前缀）"
+    # 2026-10-10 改写（任务 76a160b3，决策 067867c8）：Claude Code 无头通道已退役，
+    # cecelia-bridge.js 不再构建 claude 命令、不再透传 CECELIA_GOAL_SETTINGS，/trigger-cecelia 一律 410。
+    name: "cecelia-bridge.js /trigger-cecelia 已退役（410 claude_channel_retired，不再拉起 claude）"
     scope: bridge
     priority: P1
     trigger: [PR, Release]
     method: auto
-    tags: [goal-hook, bridge, json-passthrough]
+    tags: [goal-hook, bridge, claude-retired]
     owner: infra
     steps:
-      given: "executor 在 extraEnv 中设置了 CECELIA_GOAL_SETTINGS"
-      when: "cecelia-bridge.js 构建 claude 命令"
-      then: "CECELIA_GOAL_SETTINGS 使用单引号包裹，JSON 内容完整保留，不被 quote-stripping 破坏"
+      given: "任意调用方 POST /trigger-cecelia 或 /llm-call"
+      when: "cecelia-bridge.js 处理请求"
+      then: "返回 410 claude_channel_retired，不执行任何进程"
     evidence:
       type: code
       file: "../../brain/scripts/cecelia-bridge.js"
-      contains: "CECELIA_GOAL_SETTINGS"
+      contains: "claude_channel_retired"
     test: "tests/integration/goal-injection-chain.test.ts"
 
   - id: H7-031

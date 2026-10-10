@@ -589,13 +589,26 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const isGrok = task.payload?.executor === 'grok';
   const isHeaded = task.payload?.mode === 'headed';
 
+  const isKernelRuntime = task.payload?.harness_runtime === 'kernel-v1';
+
+  // 本机执行闸先于 Claude 退役检查（任务 76a160b3）：闸=false 时 headed kernel 与非 kernel 路径
+  // 维持原错误码 local_execution_disabled_on_scheduler 不变；kernel-v1 headless 走远程（下方）。
+  if (localExecutionDisabled && (isHeaded || !isKernelRuntime)) {
+    if (isKernelRuntime) {
+      console.warn(`[skill-relay][local-exec-guard] headed kernel 无法远程化 task=${task?.id}`);
+    } else {
+      console.warn(`[skill-relay][local-exec-guard] CECELIA_LOCAL_EXECUTION_ENABLED=false — refusing local harness spawn task=${task?.id}（执行须下放 Mac worker，见决策 96054a8b）`);
+    }
+    return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
+  }
+
   // Claude Code 无头通道已退役（任务 76a160b3，决策 067867c8）：显式 executor=claude 一律拒绝；
   // 非 kernel 无头路径缺省执行体即 claude，同样拒绝。不建 run、不碰 worktree、不起容器/tmux。
   // kernel-v1 缺省 executor 走 orchestrator provider registry（已不含 claude）；
   // task.location='xian' 走西安 codex bridge（从不拉起 claude），缺省执行体不拦。
   const relayExecutor = task.payload?.executor;
   if (relayExecutor === 'claude'
-    || (!isHeaded && task.payload?.harness_runtime !== 'kernel-v1' && task.location !== 'xian'
+    || (!isHeaded && !isKernelRuntime && task.location !== 'xian'
       && isClaudeExecutor(relayExecutor))) {
     console.warn(`[skill-relay][claude-retired] task=${task?.id} executor=${relayExecutor ?? 'claude(default)'} → ${CLAUDE_CHANNEL_RETIRED_CODE}`);
     return { ok: false, mode: RELAY_FLAG, error: CLAUDE_CHANNEL_RETIRED_CODE };
@@ -603,25 +616,17 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 
   // kernel-v1 路径与 executor 无关（使用 launchKernelProcess，不走头/无头路由），
   // 必须在 executor 白名单校验之前处理，避免 executor='auto' 被误拦截。
-  if (task.payload?.harness_runtime === 'kernel-v1' && isHeaded) {
-    if (localExecutionDisabled) {
-      console.warn(`[skill-relay][local-exec-guard] headed kernel 无法远程化 task=${task?.id}`);
-      return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
-    }
+  if (isKernelRuntime && isHeaded) {
     return _spawnHeadedKernelRuntime(task, {
       dbPool, now, short, initiativeId, deps,
     });
   }
-  if (task.payload?.harness_runtime === 'kernel-v1') {
+  if (isKernelRuntime) {
     if (localExecutionDisabled) {
       // 判定点 e3a41ecc：闸语义=「禁本机起，放行远程」——这是闸 reason 文案的原意
       return _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps });
     }
     return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
-  }
-  if (localExecutionDisabled) {
-    console.warn(`[skill-relay][local-exec-guard] CECELIA_LOCAL_EXECUTION_ENABLED=false — refusing local harness spawn task=${task?.id}（执行须下放 Mac worker，见决策 96054a8b）`);
-    return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
   }
 
   // INV-8: unsupported executor loud-fail（三处文件 —— harness-skill-relay.js 这处）

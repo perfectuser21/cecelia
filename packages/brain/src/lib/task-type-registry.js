@@ -56,6 +56,7 @@ const LOCK = 'initiative_lock';      // dispatcher INITIATIVE_LOCK_TASK_TYPES
 const RET = 'retired_dispatch';      // dispatcher _RETIRED_HARNESS_TYPES_DISPATCH
 const BP = 'backpressure_bypass';    // slot-allocator BACKPRESSURE_BYPASS_TASK_TYPES
 const CODEX = 'codex_slot';          // slot-allocator countCodexInProgress
+const OCPASS = 'openclaw_passthrough'; // dispatcher 任务池总闸关着时仍可放行的类型（穿透 MMV 网关，不占 fleet 槽位）
 const INF = 'harness_inflight';      // slot-allocator inflight 计数
 const GUIDE = 'allocation_guided';   // dispatch-allocation-guide GUIDED_TASK_TYPES
 const KR = 'kernel_run_eligible';    // kernel-run-store ELIGIBLE_TASK_TYPES
@@ -192,7 +193,7 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // 不豁免的话放开 tick 派发当天每条秋米任务都会被锚点闸终态 failed。
   // push_to_notion=false：秋米状态走 pushQiumiStatus 专线回写原中英文行；进旧 pushTasks 会与
   // projection/notion.js 抢同一个 notion_id，推错库 400 后清 id 再重建，来回乒乓（任务 7951bd36）。
-  qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', false, true, 'none', true, [V, ANC]),
+  qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', false, true, 'none', true, [V, ANC, OCPASS]),
   // ── executor=script 一等任务类型（链 bf5088a3 棒 3，任务 5cdbd52a）──
   // 确定性脚本步：Brain 经 ssh 在跑场机执行 payload.cmd（{host,cmd,cwd,env,timeout_sec}），与 AI 步同一条 DAG。
   // kind=agent：脚本也是「一步交付」（df67a9d6 判据）。pr=false 但成功终态写 completed 而非 completed_no_pr——
@@ -241,6 +242,7 @@ export const RETIRED_HARNESS_TYPES_DISPATCH = tagged(RET);
 export const GUIDED_TASK_TYPES = tagged(GUIDE);
 export const BACKPRESSURE_BYPASS_TASK_TYPES = tagged(BP);
 export const CODEX_SLOT_TASK_TYPES = tagged(CODEX);
+export const OPENCLAW_PASSTHROUGH_TASK_TYPES = tagged(OCPASS);
 export const HARNESS_INFLIGHT_TASK_TYPES = tagged(INF);
 export const SYSTEM_TASK_TYPES = tagged(SYS);
 export const VALID_TASK_TYPES = tagged(V);

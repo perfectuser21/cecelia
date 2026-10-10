@@ -92,11 +92,14 @@ describe('goal injection chain', () => {
     expect(buildGoalSettings('')).toBeNull();
   });
 
-  it('cecelia-bridge.js special-cases CECELIA_GOAL_SETTINGS (no SKILLENV_ prefix, JSON preserved)', () => {
+  // 2026-10-10 改写（任务 76a160b3，决策 067867c8）：Claude Code 无头通道已退役，
+  // cecelia-bridge.js 不再构建 claude 命令，CECELIA_GOAL_SETTINGS 透传随之删除，/trigger-cecelia 一律 410。
+  it('cecelia-bridge.js retires /trigger-cecelia (410 claude_channel_retired, no goal-settings passthrough)', () => {
     const source = readFileSync(resolve(BRAIN_ROOT, 'scripts/cecelia-bridge.js'), 'utf8');
-    expect(source).toContain('CECELIA_GOAL_SETTINGS');
-    expect(source).not.toMatch(/CECELIA_SKILLENV_CECELIA_GOAL_SETTINGS/);
-    expect(source).toMatch(/CECELIA_GOAL_SETTINGS='/);
+    expect(source).toContain("'/trigger-cecelia'");
+    expect(source).toContain('claude_channel_retired');
+    expect(source).toContain('410');
+    expect(source).not.toContain('CECELIA_GOAL_SETTINGS');
   });
 
   it('cecelia-run.sh writes CECELIA_GOAL_SETTINGS to temp file and appends --settings flag', () => {

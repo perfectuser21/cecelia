@@ -25,7 +25,7 @@ import {
   getBillingPause,
 } from './executor.js';
 import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
-import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
+import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES, OPENCLAW_PASSTHROUGH_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
@@ -623,7 +623,7 @@ export async function dispatchNextTask(goalIds) {
         try {
           const qiumiProbe = await selectNextDispatchableTask(goalIds, [], {
             priorityFilter: _quotaPriorityFilter,
-            onlyTaskTypes: ['qiumi_task'],
+            onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES],
           });
           if (qiumiProbe) {
             tickLog(`[tick] qiumi bypass: task_pool 已满但队列有 qiumi_task=${qiumiProbe.id}，穿透 MMV 不占 fleet 槽位，放行（仅选 qiumi_task）`);
@@ -738,7 +738,7 @@ export async function dispatchNextTask(goalIds) {
     const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...breakerSkipIds, ...duplicateSkipIds, ...resourceSkipIds];
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, {
       priorityFilter: _quotaPriorityFilter,
-      ...(qiumiOnlyBypass ? { onlyTaskTypes: ['qiumi_task'] } : {}),
+      ...(qiumiOnlyBypass ? { onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES] } : {}),
     });
     if (!candidate) {
       if (breakerSkipIds.length > 0 && noExecutorSkipIds.length === 0) {
