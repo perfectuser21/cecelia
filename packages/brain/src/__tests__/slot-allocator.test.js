@@ -1451,3 +1451,11 @@ describe('calculateSlotBudget — 调度器模式容量来源分流', () => {
     expect(budget.dispatchAllowed).toBe(false);
   });
 });
+
+describe('代码运行不记入 AI 池',()=>{
+ it('运行中的正规代码由脚本host计数，AI计数排除同一正式代码合同',async()=>{
+  vi.clearAllMocks();pool.query.mockResolvedValue({rows:[{count:'0'}]});
+  await countAutoDispatchInProgress();const sql=pool.query.mock.calls[0][0];
+  expect(sql).toContain("runtime_requires_llm");expect(sql).toContain("workflow.status = 'active'");
+ });
+});

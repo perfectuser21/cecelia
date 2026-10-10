@@ -13,6 +13,7 @@
 import os from 'os';
 import { MAX_SEATS, checkServerResources, getActiveProcessCount as _getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY as _PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';
+import { deterministicScriptSql } from './lib/code-script-policy.js';
 import { BACKPRESSURE_BYPASS_TASK_TYPES, CODEX_SLOT_TASK_TYPES, HARNESS_INFLIGHT_TASK_TYPES } from './lib/task-type-registry.js';
 import {
   listProcessesWithElapsed,
@@ -220,6 +221,7 @@ async function countAutoDispatchInProgress() {
       WHERE status = 'in_progress'
       AND (payload->>'decomposition' IS NULL
            AND (payload->>'requires_cortex' IS NULL OR payload->>'requires_cortex' != 'true'))
+      AND NOT ${deterministicScriptSql('tasks')}
     `);
     return parseInt(result.rows[0].count, 10);
   } catch {

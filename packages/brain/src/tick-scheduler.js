@@ -12,6 +12,7 @@ import pool from './db.js';
 import { dispatchNextTask } from './dispatcher.js';
 import { isAllowed } from './circuit-breaker.js';
 import { getGuidance } from './guidance.js';
+import { canDispatch } from './alertness/index.js';
 
 export const EXECUTOR_ROUTING = {
   dev_task:    'cecelia_bridge',
@@ -34,6 +35,9 @@ export async function runScheduler() {
   if (!isAllowed('dispatch')) {
     return { dispatched: false, reason: 'circuit_open', elapsed_ms: Date.now() - start, guidance_found: false };
   }
+  if (!canDispatch()) {
+    return { dispatched: false, reason: 'alertness_disabled', elapsed_ms: Date.now() - start, guidance_found: false };
+  }
 
   // 2. 读取全局策略 guidance（DB 查询，< 5ms）
   const strategyGuidance = await getGuidance('strategy:global');
@@ -46,6 +50,12 @@ export async function runScheduler() {
     console.log('[tick-scheduler] 无 guidance，使用 EXECUTOR_ROUTING 默认路由:', JSON.stringify(EXECUTOR_ROUTING));
   }
 
+  // 正式代码任务沿用 dispatcher 的停止开关、独立脚本熔断和主机容量，不受 AI/KR 预算限制。
+  const codeDispatch = await dispatchNextTask(null, { codeOnly: true });
+  if (codeDispatch.dispatched) {
+    return { ...codeDispatch, dispatch_lane: 'code', elapsed_ms: Date.now() - start, guidance_found: guidanceFound };
+  }
+
   // 3. 获取活跃 KR IDs（DB 查询）
   const { rows } = await pool.query(
     `SELECT id FROM key_results WHERE status IN ('active', 'in_progress', 'decomposing')`
@@ -53,7 +63,7 @@ export async function runScheduler() {
   const goalIds = rows.map(r => r.id);
 
   if (goalIds.length === 0) {
-    return { dispatched: false, reason: 'no_goals', elapsed_ms: Date.now() - start, guidance_found: guidanceFound };
+    return { dispatched: false, reason: 'no_goals', code_dispatch: codeDispatch, elapsed_ms: Date.now() - start, guidance_found: guidanceFound };
   }
 
   // 4. 派发（调 dispatcher，不含任何 LLM）
@@ -61,6 +71,7 @@ export async function runScheduler() {
 
   return {
     ...result,
+    code_dispatch: codeDispatch,
     elapsed_ms: Date.now() - start,
     guidance_found: guidanceFound,
   };
