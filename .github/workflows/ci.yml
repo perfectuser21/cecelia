@@ -274,8 +274,8 @@ jobs:
         run: |
           BASE="${{ github.event.pull_request.base.sha }}"
           HEAD="${{ github.event.pull_request.head.sha }}"
-          ADDITIONS=$(git diff --numstat "$BASE"..."$HEAD" | awk '{s+=$1} END {print s+0}')
-          DELETIONS=$(git diff --numstat "$BASE"..."$HEAD" | awk '{s+=$2} END {print s+0}')
+          # sprints/ 是 coding workflow 过程记录（QA/裁判报告），不计入（#6232，见脚本注释）
+          read -r ADDITIONS DELETIONS < <(bash .github/workflows/scripts/pr-size-count.sh "$BASE" "$HEAD")
           TOTAL=$((ADDITIONS + DELETIONS))
 
           echo "📊 PR 变更统计："
@@ -675,6 +675,8 @@ jobs:
         run: bash .github/workflows/scripts/__tests__/should-auto-merge.test.sh
       - name: Self-test (aggregate gate result cases)
         run: node --test .github/workflows/scripts/__tests__/ci-aggregate-results.test.mjs
+      - name: Self-test (pr-size-check 行数统计不计 sprints/)
+        run: bash .github/workflows/scripts/__tests__/pr-size-count.test.sh
       # CI 不直连 Docker Hub（2026-10-10 未登录拉取限流致全部 PR 卡死，任务 7294cf3a）
       - name: Self-test (镜像不直连 Docker Hub)
         run: bash .github/workflows/scripts/__tests__/no-dockerhub-pull.test.sh

@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.418.3
+**Brain 版本**: 1.418.10
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,73 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.418.10 — 纯代码并行任务按业务身份判重
+
+正式纯代码并行任务按已登记 Workflow、手机与父批次/定时slot的真实来源身份判重，避免四手机巡查和独立维护被相似标题互相拦住；原AI标题判重、停止开关和设备锁继续有效。
+
+## Brain 1.418.9 — coding harness：QA 验收命令固化的 smoke 不再假通过
+
+- 金丝雀 4 第 3 轮独立裁判 J-4 发现，runner 固化的 cw-bd2b1556-qa-smoke.sh 有两个问题：
+  - 单引号里的预览地址被替换成 '"$BRAIN_URL"/api…'，变量不展开，请求根本没打到 Brain；
+  - 每个 T-n 是一条 && 断言链，set -e 不会因为链中途失败而退出，断言失败了脚本照样打印 PASS。
+- 修法：
+  - 预览地址按所在的引号上下文替换：单引号里写 '"$BRAIN_URL"'，双引号里写 $BRAIN_URL，引号外写 "$BRAIN_URL"；
+  - 每个 T-n 包进子 shell，退出码非 0 就输出 FAIL: T-n 并让脚本退出 1；
+  - evaluate prompt 要求每条命令的整体退出码代表结论。
+- 测试：新增两条真跑生成脚本的用例（用假 curl 回显收到的地址），覆盖三种引号上下文都能展开，以及断言链中途失败时脚本非 0 退出、不打印 PASS。
+
+## Brain 1.418.8 — 清理瞬态文档时原子退役来源登记
+
+- 修复已删除 PRD 的两条来源死引用，保留所有其他登记。
+- 清理机器人核验实际 Git 暂存删除，并将瞬态资料对应来源退役与文件删除一起提交；持久资料及未删声明保持原字节。
+- 真实 Git/工作流执行回归保护现有 release 消费和严格 manifest 校验。
+
+## Brain 1.418.7 — coding harness：runner 处理与 main 冲突的 cw PR
+
+- 金丝雀 4 的 PR #6232：真人 QA 与独立裁判都通过后，runner 推了记录提交，PR 却和 main 冲突（smoke-allowlist.txt 两边都在末尾追加，加上 main 占了 544 迁移号）。冲突的 PR 不跑 pull_request CI，必需检查永远出不来：CI 修复找不到失败检查，合并门也等不到绿灯，runner 只是静默空转。
+- CI 修复找目标时，先认出 mergeable=CONFLICTING 的 cw PR，在 PR 分支上合并 origin/main：
+  - smoke-allowlist / smoke-write-targets 这类只追加的登记表按并集合并，由程序完成，不派 claude；
+  - 还有冲突才派修复会话（新 prompt conflict-fix）解决并完成合并；
+  - 迁移编号与 main 撞了，就把本 PR 的迁移顺延到下一个空闲编号。
+- 核对只看 PR 自身相对 main 的改动：main 带进来的 sprints/ 和测试不算受保护路径或削弱测试。
+- QA 通过的处理：改到 PR 自身代码时撤销 QA 通过、关掉自动合并，新 head 重新 QA 加裁判；只合了登记表就保留通过，交给合并门改绑。
+- 冲突修复每个 PR 最多 3 次，不占 CI 修复次数。同一 head 合过没成，或次数用完，就升级（conflict_unresolved / conflict_exhausted）。
+- 测试：新增 run-once-conflict.test.mjs，覆盖登记表并集合并、代码冲突派 claude 并撤销 QA、合并未完成后升级、不占 CI 修复次数四种情况。
+
+## Brain 1.418.6 — orphan-pr-worker 不再碰 coding workflow runner 的 PR
+
+- 金丝雀 4 的 PR #6232 在 QA 重走前，被 orphan-pr-worker 以「已被 #6139 取代」为由自动关闭。两个 PR 只是标题措辞相近，改的是不同接口。
+- 根因：cw 链跑完后任务即为 completed，result 里也没有 pr_url，所以每个 cw PR 都被当成孤儿。标题相似会被关；CI 全绿时会被直接 squash 合并，绕过 QA 和独立裁判的合并门。
+- 修法：与 harness 子任务 PR 一样，分支为 cp-<stamp>-cw-<task8> 的 PR 一律跳过（reason=coding_workflow_pr），不合、不关、不打标签，交给 MMV runner 的合并门自管。
+- 测试：新增回归用例 case 14，用真实分支名和标题，断言跳过、不合并、不关闭、不查库。
+
+## Brain 1.418.5 — 正式确定性脚本使用代码主机容量，不被 AI 配额和并发误伤
+
+- 生产手机巡查不调用 LLM，但曾被 AI 池满、配额冷却与优雅降级阻塞。中央 tick 每轮最多派一条 `runtime_requires_llm=false` 且关联 active 正式 Workflow 的 script_run，代码运行不计入 AI 并发池。
+- 保留停止开关、紧急暂停、显式软硬依赖与既有脚本主机并发/熔断/原生设备锁。只绕过同项目人工研发活动的无关互斥，四手机独立任务依赖仍为明确 `depends_on:[]`。
+- 目标机器健康报告过期、离线或真实 CPU/内存压力过高仍等待；事件保存原始拒绝原因、压力与采样时间。纯代码声明与 requires_cortex=true 冲突时不进入代码选择。
+
+## Brain 1.418.4 — 手机巡查独立固定Git来源准入
+
+### 手机巡查独立来源准入（任务 a8448b2b，迁移544）
+
+`cecelia-device-patrol` 仅允许系统看护·设备与手机台账中已登记的单手机/批次Workflow。内部认证 `POST /implementation-ci/device-patrol/bootstrap` 从固定仓库GitHub读取Git树与blob，核SHA1/长度及base祖先，证明base没有巡查路径后保存不可变引入账；现存completed Workflow authoring回执及有序Activity身份必须一致。定义版本标为device_workflow_admission，合同executable=false，不拨发布线生产指针。固定Git CI窄gate逐文件核绑定/辅助来源/开发交付治理并运行真实回归；旧scope协议保留。此账只证明源码准入，不证明手机实际执行或Run绑定。
+
+首次引入账与canonical当前定义/source/ref版本相隔离；Git声明版本只含来源声明，当前合同摘要及authoring回执另作canonical_reference。可信工具main的Implementation impact独立巡查baseline job只读导出固定73bd/f092来源身份；巡查分支严格核发布工具SHA、成功main run、workflow路径、artifact SHA256，PR不持Brain写token。后继实际BASE逐棵Git全树证明phone前缀不存在，HEAD逐blob与真实断言验证，源身份账不充当HEAD执行证明。
+
+### F3真实毕业池与版本检查来源
+
+F3已有消费者以固定Git字节解析Vitest导出的literal include/exclude及已证明的POSTGRES清单展开，保守枚举真实tests/regression子池并保留内容摘要/修订及选择关系；不逐文件远程读取整个unit树。固定CI required PR版本gate的真实直接bash命令证明检查脚本来源。动态配置、不支持glob、假命令或缺失blob保持UNKNOWN及空绑定，完整Workflow仍不可执行。任务0cdef0e1，归属F3，随正式手机巡查来源准入PR集成发布。
+
+
+来源扩展仅在固定Git源码具有literal schema 2标记时激活；旧修订仍保持原冻结binding与关系。已有正式PG来源登记suite实际执行版本gate合同，并真PG保存/读回选择器绑定及失败无追加；不修改PG选择名单。
+
+旧跨仓消费者仅在固定 zenithjoy scope 下排除精确版本的巡查身份预读stage（phone-only guard、实际shell摘要、固定scope/tooling环境）；未执行helper不认领，其余 required runner/失败守卫保持，错scope/环境覆盖/字节变化拒绝。
+
+唯一巡查分支交付Learning精确认领为开发治理文档；真实Git正文摘要与其它Learning拒绝回归通过，不扩大手机Activity或业务aux名单。
+
+登记模块同名unit保留事务前Git字节拒绝验收；新增隔离feature smoke真实串联unit、PostgreSQL来源登记/API及Node可信ZIP/治理回归，不访问生产库。
 
 ## Brain 1.418.3 — coding harness：削弱测试守卫只守 main 上已有的测试
 

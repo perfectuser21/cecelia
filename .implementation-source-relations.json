@@ -203,44 +203,14 @@
       "role": "verification"
     },
     {
-      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
-      "path": ".prd-cp-10101725-patrol-impact-adapter.md",
-      "role": "documentation"
-    },
-    {
       "owner_path": "scripts/ci/implementation-patrol-baseline.mjs",
       "path": "scripts/ci/__tests__/device-patrol-baseline.test.mjs",
       "role": "verification"
     },
     {
       "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
-      "path": "changes/cp-10101725-patrol-impact-adapter.md",
-      "role": "release"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
-      "path": ".prd-cp-10101834-f3-test-consumer.md",
-      "role": "documentation"
-    },
-    {
-      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
       "path": "docs/learnings/cp-10101725-patrol-impact-adapter.md",
       "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": ".prd-cp-10101732-code-scheduling.md",
-      "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": ".dod-cp-10101732-code-scheduling.md",
-      "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": "changes/cp-10101732-code-scheduling.md",
-      "role": "release"
     },
     {
       "owner_path": "packages/brain/src/dispatcher.js",
@@ -290,6 +260,34 @@
     {
       "owner_path": "packages/brain/src/routes/shared.js",
       "path": "packages/brain/src/routes/__tests__/shared.test.js",
+      "role": "verification"
+    },
+    
+    {
+      "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
+      "path": "docs/learnings/cp-route-api-f5dc89cf.md",
+      "role": "documentation"
+    },
+    
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": "docs/learnings/cp-route-api-92f06f77.md",
+      "role": "documentation"
+    },
+    
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": "packages/brain/src/__tests__/integration/code-task-dedup.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": "packages/brain/src/__tests__/dispatcher-dedup.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/code-task-identity.js",
+      "path": "packages/brain/src/lib/__tests__/code-task-identity.test.js",
       "role": "verification"
     }
   ]
