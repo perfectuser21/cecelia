@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockQuery = vi.fn();
+const mockTaskEvent=vi.fn(async()=>{});
+vi.mock('../lib/task-event-log.js',()=>({recordTaskEventSafe:(...args)=>mockTaskEvent(...args)}));
 vi.mock('../db.js', () => ({ default: { query: (...args) => mockQuery(...args) } }));
 
 vi.mock('../routing/qiumi-router.js', () => ({
@@ -128,5 +130,6 @@ describe('受控代码选择不使用 AI 预算',()=>{
  it('全局停止仍阻止代码任务',async()=>{_drain=true;_candidatePool=[codeTask];expect((await dispatchNextTask(null,{codeOnly:true})).reason).toBe('draining');expect(mockScriptDispatch).not.toHaveBeenCalled();});
  it('目标机器离线保持不执行',async()=>{_fleet=[{id:'us-mac-m4',online:false,pressure:1}];_candidatePool=[codeTask];expect((await dispatchNextTask(null,{codeOnly:true})).dispatched).toBe(false);expect(mockScriptDispatch).not.toHaveBeenCalled();});
  it('目标实际 CPU 满保持不执行',async()=>{_fleet=[{id:'us-mac-m4',online:true,pressure:0.96}];_candidatePool=[codeTask];expect((await dispatchNextTask(null,{codeOnly:true})).dispatched).toBe(false);expect(mockScriptDispatch).not.toHaveBeenCalled();});
+ it('过期健康报告给出明确队列原因且不点火',async()=>{_fleet=[{id:'us-mac-m4',online:false,pressure:1,admission_reason:'worker_health_stale'}];_candidatePool=[codeTask];await dispatchNextTask(null,{codeOnly:true});expect(mockTaskEvent.mock.calls[0][3].reason).toBe('worker_health_stale');expect(mockScriptDispatch).not.toHaveBeenCalled();});
  it('普通任务在池满时仍不得派发',async()=>{_candidatePool=[normal];expect((await dispatchNextTask(null)).reason).toBe('pool_c_full');expect(mockScriptDispatch).not.toHaveBeenCalled();});
 });
