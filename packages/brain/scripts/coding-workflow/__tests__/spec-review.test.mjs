@@ -206,7 +206,13 @@ describe('spec_review 活动 v2（合同对抗）', () => {
         req.on('end', () => {
           res.setHeader('content-type', 'application/json');
           if (req.method === 'POST' && req.url === '/api/brain/strategic-decisions') {
-            const row = { id: `d-${decisions.length + 1}`, ...JSON.parse(raw) };
+            const body = JSON.parse(raw);
+            // 同生产约束 decisions_made_by_check（迁移 193）：made_by 只允许 user/cecelia/system，否则 500（金丝雀 4 暴露 ai 写不进）
+            if (body.made_by && !['user', 'cecelia', 'system'].includes(body.made_by)) {
+              res.statusCode = 500;
+              return res.end(JSON.stringify({ success: false, error: 'violates check constraint "decisions_made_by_check"' }));
+            }
+            const row = { id: `d-${decisions.length + 1}`, ...body };
             decisions.push(row);
             res.statusCode = 201;
             return res.end(JSON.stringify({ success: true, data: row }));
