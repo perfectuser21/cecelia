@@ -1,3 +1,13 @@
+# 自动裁判等运行结束再判（PR #6179 审查阻断项）
+
+任务：2f50cf2a-1cda-41d3-ba81-3c9efd1017c5；父任务：add0acfc-2c79-4e82-b6e8-f3b15a3dfbbd。
+
+- [x] [BEHAVIOR] activityjudgedefer 按 Step 逐条上报的运行跑到一半不裁判：自动触发先 applyCell:false 对账，触发运行有 missing、无 failed、最后一条 span 在静默期内（默认 10 分钟，ACTIVITY_JUDGE_RUN_IDLE_MS）→ 返回 deferred，不写 activity_judgments、readback 不翻红，调度器放回待判队列过了静默期自动重判；补齐后落 converging；过静默期仍缺步按真实结果落 diverged 并翻红；新 span 不跟着等重判定时器；翻色出错只记日志。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/activity-judge.test.js src/lib/__tests__/step-reconcile.test.js src/routes/spans-judge-hook.test.js src/routes/skill-settlement.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] activityjudgedeferpg 真 PG：两 Step 的 Activity，r1/r2 全绿、r3 只报第 1 步处理一次 → activity_judgments 不新增、readback 不是 red；补第 2 步再处理 → 落一条 converging（连续绿 3）；静默期过后仍缺步 → diverged 且翻红。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/activity-judgments.pg.integration.test.js src/__tests__/integration/step-reconcile-settlement.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+
 # Workspace跨仓CI固定来源与真实消费验收
 
 - [x] [BEHAVIOR] activityjudgments 裁判接线（决策 de6dff5d 五块模型第 2 步）：POST /spans 写入成功后，新插入的 span 经 Step 找到归属 Activity，去抖（默认 30s，ACTIVITY_JUDGE_DEBOUNCE_MS；ACTIVITY_JUDGE_AUTO=off 关闭）异步跑 reconcileActivity，结果只追加写入迁移 538 新表 activity_judgments（verdict/连续绿/要求绿/窗口运行数/触发方式与运行/定义版本/完整报告，UPDATE/DELETE 被触发器拒绝），readback 格同时翻色；钩子出任何错只记日志，上报照常 200；POST /step-reconcile 同样记一条手动裁判。新增 compareActivityVersions：同一 Activity 候选版本 vs 基线版本按 spans.activity_definition_version_id 分组，比成功率/读回 verified 比例/观测形状一致性，给 not_worse/worse/insufficient_data（样本下限默认 5）带数字依据；GET /activities/:id/judgments/latest、/judgments、/version-compare 可查。

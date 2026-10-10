@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # activity-judgments-smoke — 裁判接线（迁移 538，决策 de6dff5d 五块模型第 2 步，任务 add0acfc）真库真代码火：
 # span 入库 → 经 Step 找到归属 Activity → 收敛对账结果只追加落 activity_judgments（readback 格同时翻色）；
-# 改/删裁判行被拒；最新裁判可查；新旧版本对比在样本不足时给 insufficient_data、版本错配给 404；
+# 跑到一半的运行（还有 Step 没上报、在静默期内）推迟裁判不落库不翻红；改/删裁判行被拒；最新裁判可查；新旧版本对比在样本不足时给 insufficient_data、版本错配给 404；
 # 真容器里三个 GET 接口已挂载。全程一个事务内跑，结束回滚（裁判表只追加、定义版本不可变，不能靠 DELETE 清理）。
 set -euo pipefail
 if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
@@ -52,6 +52,17 @@ try {
   const latest = await getLatestJudgment(client, act);
   if (latest?.verdict !== 'converging' || latest.consecutive_green !== 2 || latest.trigger_kind !== 'auto' || latest.trigger_ref !== `${tag}-r2`) die(`最新裁判不对: ${JSON.stringify(latest)}`);
   ok('Step 级 span 经 steps 找到 Activity，对账结果只追加落库，最新裁判可查（连续绿 2、触发运行 r2）');
+
+  const half = (await client.query(
+    `INSERT INTO spans(run_id, step_id, started_at, ended_at, executor_kind, outcome, evidence)
+     VALUES($1,$2,now(),now(),'code','pass',$3::jsonb) RETURNING id`, [`${tag}-r3`, s1, JSON.stringify({ observed: 1 })])).rows[0].id;
+  const partial = await flushJudgments(client, [half]);
+  const count = Number((await client.query('SELECT count(*) FROM activity_judgments WHERE activity_id=$1', [act])).rows[0].count);
+  if (partial[0]?.deferred !== true || count !== 1) die(`跑到一半的运行不该落库: ${JSON.stringify(partial)} count=${count}`);
+  const cell = (await client.query(
+    "SELECT cell_status FROM activity_cells WHERE step_id=$1 AND cell_key='readback' AND parent_cell_key IS NULL", [act])).rows[0]?.cell_status;
+  if (cell === 'red') die('跑到一半的运行把 readback 格翻红了');
+  ok('运行只报了第 1 步（静默期内）→ 推迟裁判：不落库、readback 不翻红');
 
   await client.query('SAVEPOINT a');
   try { await client.query('UPDATE activity_judgments SET verdict=$1 WHERE activity_id=$2', ['converged', act]); die('UPDATE 没被拒'); }

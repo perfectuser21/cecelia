@@ -56,7 +56,10 @@ export function reconcileSteps({ steps, spans, runsWanted = 5, requiredGreen = 5
     });
     const undeclared = [...new Set(list.filter(sp => !stepById.has(sp.step_id)).map(sp => sp.step_id))];
     for (const step_id of undeclared) issues.push({ code: 'undeclared_step', step_id, run_id });
-    return { run_id, steps: stepStatuses, undeclared, green: stepStatuses.every(s => GREEN_OK.has(s.status)) && undeclared.length === 0 };
+    return {
+      run_id, steps: stepStatuses, undeclared, last_span_at: new Date(latest(list)).toISOString(),
+      green: stepStatuses.every(s => GREEN_OK.has(s.status)) && undeclared.length === 0,
+    };
   });
 
   let consecutive = 0;
@@ -74,18 +77,38 @@ export function reconcileSteps({ steps, spans, runsWanted = 5, requiredGreen = 5
 
 const CELL_FOR_VERDICT = { converged: 'green', diverged: 'red', converging: 'pending' };
 
-/**
- * 读库对账：取 Activity 的 active Steps 与它名下全部 Step 级 span，对账后把 readback 格翻色
- * （converged→绿，diverged→红，converging→待判，no_data 不动）。格子不全时先补齐 8 个灰格，翻色只动这一格。
- */
-export async function reconcileActivity(db, activityId, { runsWanted = 5, requiredGreen = 5 } = {}) {
+async function capabilityOf(db, activityId) {
   // 能力不再记在 Activity 上（迁移 528）：取生效流程引用所在流程的能力（归属引用优先），没有引用才退回它已有格子记的能力
-  const act = (await db.query(
+  return (await db.query(
     `SELECT a.id, COALESCE(
         (SELECT w.capability_id FROM workflow_activity_refs r JOIN workflows w ON w.id = r.workflow_id
           WHERE r.activity_id = a.id AND r.active ORDER BY (r.source_ref IS NULL) DESC, w.created_at LIMIT 1),
         (SELECT c.journey_id FROM activity_cells c WHERE c.step_id = a.id ORDER BY c.id LIMIT 1)) AS journey_id
        FROM activities a WHERE a.id = $1`, [activityId])).rows[0];
+}
+
+/**
+ * 按对账结论给 readback 格翻色（converged→绿，diverged→红，converging→待判，no_data 等其它结论不动）。
+ * 格子不全时先补齐 8 个灰格，翻色只动这一格。journeyId 省略时现查。
+ */
+export async function applyReadbackCell(db, activityId, verdict, { journeyId } = {}) {
+  const cell = CELL_FOR_VERDICT[verdict];
+  if (!cell) return false;
+  const jid = journeyId !== undefined ? journeyId : (await capabilityOf(db, activityId))?.journey_id;
+  // 合同同步新建的 Activity 没有验收格：先补齐固定 8 格再翻色，不然这条 UPDATE 命中 0 行，颜色静默丢了
+  if (jid) await ensureEightCells(db, activityId, jid);
+  await db.query(
+    `UPDATE activity_cells SET cell_status = $2
+      WHERE step_id = $1 AND cell_key = 'readback' AND parent_cell_key IS NULL AND cell_status IS DISTINCT FROM $2`, [activityId, cell]);
+  return true;
+}
+
+/**
+ * 读库对账：取 Activity 的 active Steps 与它名下全部 Step 级 span 对账。
+ * applyCell=true（默认）时按结论把 readback 格翻色；false 只算报告不动格子（自动裁判先判这次运行跑完没有再决定翻不翻）。
+ */
+export async function reconcileActivity(db, activityId, { runsWanted = 5, requiredGreen = 5, applyCell = true } = {}) {
+  const act = await capabilityOf(db, activityId);
   if (!act) throw Object.assign(new Error(`activity_not_found: ${activityId}`), { status: 404 });
   const steps = (await db.query(
     'SELECT id, key, readback FROM steps WHERE activity_id = $1 AND active IS NOT FALSE ORDER BY step_order', [activityId])).rows;
@@ -94,13 +117,6 @@ export async function reconcileActivity(db, activityId, { runsWanted = 5, requir
       WHERE step_id IS NOT NULL AND (activity_id = $1 OR step_id = ANY($2::uuid[]))
       ORDER BY started_at`, [activityId, steps.map(s => s.id)])).rows;
   const report = reconcileSteps({ steps, spans, runsWanted, requiredGreen });
-  const cell = CELL_FOR_VERDICT[report.verdict];
-  if (cell) {
-    // 合同同步新建的 Activity 没有验收格：先补齐固定 8 格再翻色，不然这条 UPDATE 命中 0 行，颜色静默丢了
-    if (act.journey_id) await ensureEightCells(db, activityId, act.journey_id);
-    await db.query(
-      `UPDATE activity_cells SET cell_status = $2
-        WHERE step_id = $1 AND cell_key = 'readback' AND parent_cell_key IS NULL AND cell_status IS DISTINCT FROM $2`, [activityId, cell]);
-  }
+  if (applyCell) await applyReadbackCell(db, activityId, report.verdict, { journeyId: act.journey_id });
   return { activity_id: activityId, ...report };
 }
