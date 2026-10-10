@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.408.0
+**Brain 版本**: 1.408.1
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,14 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.408.1 — 自动裁判等运行结束再判：跑到一半的运行不落库不翻色
+
+- PR #6179 审查阻断项（任务 2f50cf2a，父任务 add0acfc）：技能按 Step 逐条上报（`emit-step-span.mjs`），一次运行常超过 30s 去抖窗口，自动裁判在运行跑到一半时把还没上报的 Step 判成 missing → diverged，readback 格翻红，且这条假结论永久留在只追加的 `activity_judgments` 里。
+- `reconcileActivity` 新增参数 `applyCell`（默认 true）：false 时只算报告不动格子；翻色逻辑抽成 `applyReadbackCell(db, activityId, verdict)`。`reconcileSteps` 每次运行带 `last_span_at`（该运行最后一条 span 时间）。
+- `judgeActivity` 自动触发时先 `applyCell:false` 对账，用 `pendingRunWaitMs` 判断触发运行是否没跑完（有 missing、没有 failed、最后一条 span 距今不到静默期，默认 10 分钟，`ACTIVITY_JUDGE_RUN_IDLE_MS`）：没跑完返回 `{ deferred:true, run_id, retry_after_ms }`，不落库不翻色；跑完了先落库再翻色（翻色出错只记日志）。过了静默期仍缺步按真实结果落库翻红。手动裁判行为不变。
+- 调度器：`flushJudgments` 新增 `extraTargets`（被推迟的运行），`onSpansWritten` 把推迟的运行放回内存待判队列，过了静默期自动重判，不需要新 span 触发；新 span 照常按去抖窗口冲，不跟着等重判定时器。全程 fail-safe，不影响 POST /spans。
+- smoke `activity-judgments-smoke.sh` 增加跑到一半的运行不落库、不翻红一段（已验证静默期设 0 时报红）。
 
 ## Brain 1.408.0 — coding harness：合并门合并后的 Brain 回写不再被删分支吞掉
 
