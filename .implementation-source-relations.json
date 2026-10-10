@@ -265,11 +265,7 @@
       "path": "packages/brain/src/routes/__tests__/shared.test.js",
       "role": "verification"
     },
-    {
-      "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
-      "path": "changes/cp-route-api-f5dc89cf.md",
-      "role": "release"
-    },
+    
     {
       "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
       "path": "docs/learnings/cp-route-api-f5dc89cf.md",
