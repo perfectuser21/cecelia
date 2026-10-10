@@ -18,7 +18,8 @@ describe('真实工厂旧消费者来源，独立于可执行完整Workflow', ()
   // 固定旧 Git 字节不变，仅在 IO 边界模型化独立的新版协议标记。
   const expandedBuild = (overrides = {}) => {
     const underlying = overrides.readSource || read;
-    return build({ ...overrides, readSource: async path => path === 'packages/brain/src/lib/existing-ops-source.js'
+    return build({ ...overrides, paths: [...new Set([...(overrides.paths ?? paths), 'packages/brain/src/lib/existing-ops-source.js'])],
+      readSource: async path => path === 'packages/brain/src/lib/existing-ops-source.js'
       ? (overrides.schemaText ?? 'export const EXISTING_OPS_SELECTOR_SCHEMA = 2;') : underlying(path) });
   };
   it('旧固定修订及注释中的协议标记保留旧绑定，未知协议不能猜成功', async () => {
