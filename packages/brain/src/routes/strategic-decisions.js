@@ -16,6 +16,63 @@ const router = Router();
 
 const VALID_STATUSES = ['active', 'executed', 'expired'];
 
+// category 允许值唯一真身 = 数据库约束 decisions_category_chk（不手抄副本）
+const CATEGORY_CONSTRAINT = 'decisions_category_chk';
+let allowedCategoriesCache = null;
+
+/**
+ * 从 decisions_category_chk 约束定义解析允许的 category 列表。
+ * 成功结果缓存；{ fresh: true } 绕过缓存重查。失败/查不到返回 null（不缓存）。
+ */
+export async function loadAllowedCategories({ fresh = false } = {}) {
+  if (allowedCategoriesCache && !fresh) return allowedCategoriesCache;
+  try {
+    const { rows } = await pool.query(
+      `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+       WHERE conrelid = 'decisions'::regclass AND conname = $1`,
+      [CATEGORY_CONSTRAINT]
+    );
+    const def = rows?.[0]?.def;
+    if (typeof def !== 'string') return null;
+    const values = [...new Set([...def.matchAll(/'([^']+)'::/g)].map((m) => m[1]))].sort();
+    if (values.length === 0) return null;
+    allowedCategoriesCache = values;
+    return values;
+  } catch (err) {
+    console.error('[strategic-decisions] load categories error:', err.message);
+    return null;
+  }
+}
+
+export function _resetAllowedCategoriesCache() {
+  allowedCategoriesCache = null;
+}
+
+function categoryRejection(allowed) {
+  const list = allowed || [];
+  return {
+    success: false,
+    error: list.length ? `category 非法，合法值：${list.join('|')}` : 'category 非法',
+    allowed_categories: list,
+  };
+}
+
+/**
+ * 校验 category。返回 null 表示放行，否则返回 400 响应体。
+ * 约束读不到时放行，由 INSERT 的 23514 兜底。
+ */
+async function checkCategory(category) {
+  if (category === undefined || category === null || category === '') return null;
+  if (typeof category !== 'string') {
+    return categoryRejection(await loadAllowedCategories());
+  }
+  const cached = await loadAllowedCategories();
+  if (!cached || cached.includes(category)) return null;
+  const fresh = await loadAllowedCategories({ fresh: true });
+  if (!fresh || fresh.includes(category)) return null;
+  return categoryRejection(fresh);
+}
+
 /**
  * GET /
  * 查询战略决策列表
@@ -87,6 +144,9 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ success: false, error: `status 非法，合法值：${VALID_STATUSES.join('|')}` });
     }
 
+    const rejection = await checkCategory(category);
+    if (rejection) return res.status(400).json(rejection);
+
     const result = await pool.query(
       `INSERT INTO decisions
          (category, topic, decision, reason, status, trigger, author, made_by, priority, area, alternatives, decided_at, source_ref)
@@ -99,6 +159,9 @@ router.post('/', async (req, res) => {
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) {
     console.error('[strategic-decisions] POST error:', err.message);
+    if (err.code === '23514' && err.constraint === CATEGORY_CONSTRAINT) {
+      return res.status(400).json(categoryRejection(await loadAllowedCategories({ fresh: true })));
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 });
