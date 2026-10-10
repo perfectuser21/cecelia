@@ -243,6 +243,7 @@ describe('Session Controller durable authority（真 PG）', () => {
       execFn:(command)=>String(command).includes('tmux has-session')?'TMUX_DEAD':'',
       loadSkill:()=> 'SKILL_CONTENT',
       ensureWt:async()=>'/tmp/wt-headed',
+      snapshotCodexHome:()=>'/tmp/fake-snapshot-dir',
       now:()=>new Date(),inDockerFn:()=>false,sshKeyFn:()=>null,env:{},
     });
     expect(result).toMatchObject({ok:true,mode:'kernel-v1-headed'});
