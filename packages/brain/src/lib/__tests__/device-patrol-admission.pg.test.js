@@ -58,6 +58,17 @@ it('伪造Git不存在/已存在base与未验收身份全部拒绝且不修改�
  await expect(bootstrapPatrolScope(db,{base_revision:introduced,introduced_revision:base,actor:'operator'},{reader})).rejects.toThrow();
  expect((await client.query('SELECT registration_sha256 FROM implementation_scope_bootstraps')).rows).toEqual(before);
 });
+it('后继canonical版本独立变化，首次Git登记保留旧源且不回拨当前版本',async()=>{
+ const admitted=(await client.query('SELECT id,payload FROM activity_definition_versions ORDER BY id')).rows;
+ const id=contract.workflows[0].activities[0].id;
+ const next=(await client.query("INSERT INTO activity_definition_versions(activity_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",[id,{activity_id:id,contract:{version:'0.1.1'}},'a'.repeat(64),PATROL_REPO,'scripts/phone-account-patrol/preflight.py','c'.repeat(40),'b'.repeat(64)])).rows[0].id;
+ await client.query('UPDATE activities SET contract=$2,current_definition_version_id=$3 WHERE id=$1',[id,{version:'0.1.1'},next]);
+ await client.query('UPDATE workflow_activity_refs SET activity_definition_version_id=$2 WHERE activity_id=$1',[id,next]);
+ const repeated=await bootstrapPatrolScope(db,{base_revision:base,introduced_revision:introduced,actor:'operator'},{reader});expect(repeated.created).toBe(false);
+ expect((await client.query('SELECT contract,current_definition_version_id FROM activities WHERE id=$1',[id])).rows[0]).toEqual({contract:{version:'0.1.1'},current_definition_version_id:next});
+ expect((await client.query('SELECT activity_definition_version_id FROM workflow_activity_refs WHERE activity_id=$1',[id])).rows[0].activity_definition_version_id).toBe(next);
+ expect((await client.query('SELECT id,payload FROM activity_definition_versions WHERE source_commit=$1 ORDER BY id',[introduced])).rows).toEqual(admitted);
+});
 
 it('窄CI入口在真实Git+PG登记上运行回归；未登记路径保持fail-closed',async()=>{
  const outputDir=mkdtempSync(join(tmpdir(),'patrol-gate-evidence-'));
@@ -67,7 +78,12 @@ it('窄CI入口在真实Git+PG登记上运行回归；未登记路径保持fail-
   const snapshotBase=join(outputDir,'base.json'),snapshotHead=join(outputDir,'head.json');writeFileSync(snapshotBase,JSON.stringify(baseline));writeFileSync(snapshotHead,JSON.stringify(candidate));
   const options={repoRoot:dir,base,head:introduced,scope:PATROL_SCOPE,mode:'pr',outputDir,snapshotBase,snapshotHead};
   const result=await runDevicePatrolGate(options);expect(result.receipt.verdict).toBe('PASS');expect(result.report.base.kind).toBe('verified_scope_absent');expect(result.report.business_runtime_status).toBe('not_evaluated');
+  writeFileSync(join(dir,'scripts/phone-account-patrol/runner.py'),'print("real subsequent implementation")\n');git('add','.');git('commit','-q','-m','subsequent real implementation');
+  const changedHead=git('rev-parse','HEAD');writeFileSync(snapshotHead,JSON.stringify(await exportPatrolAdmissionSnapshot(db,{scope:PATROL_SCOPE,repo:PATROL_REPO,revision:changedHead})));
+  const changed=await runDevicePatrolGate({...options,head:changedHead});expect(changed.receipt.verdict).toBe('PASS');
+  expect(changed.report.head.bindings.find(b=>b.path.endsWith('runner.py')).sha256).toBe(createHash('sha256').update('print("real subsequent implementation")\n').digest('hex'));
   writeFileSync(join(dir,'unregistered-script.py'),'raise Exception("unregistered")\n');git('add','.');git('commit','-q','-m','unclaimed code must fail');
+  writeFileSync(snapshotHead,JSON.stringify(await exportPatrolAdmissionSnapshot(db,{scope:PATROL_SCOPE,repo:PATROL_REPO,revision:git('rev-parse','HEAD')})));
   await expect(runDevicePatrolGate({...options,head:git('rev-parse','HEAD')})).rejects.toThrow('PATROL_CHANGED_FILE_UNCLAIMED');
  }finally{rmSync(outputDir,{recursive:true,force:true});}
 });

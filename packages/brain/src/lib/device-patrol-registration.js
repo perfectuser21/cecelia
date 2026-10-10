@@ -26,21 +26,21 @@ export async function bootstrapPatrolScope(pool,input,{fetchFn=globalThis.fetch,
   await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtext('device-patrol-scope-bootstrap'))");
   const existing=(await client.query('SELECT * FROM implementation_scope_bootstraps WHERE scope_key=$1 AND source_repo=$2 FOR UPDATE',[PATROL_SCOPE,PATROL_REPO])).rows[0];
   if(existing){if(existing.base_revision!==input.base_revision||existing.introduced_revision!==input.introduced_revision||existing.registration.source.source_sha256!==source.source_sha256)fail('PATROL_BOOTSTRAP_CONFLICT',409);await client.query('COMMIT');return {registration:existing.registration,created:false};}
-  const definitions=new Map(),bindings=new Map();
+  const definitions=new Map(),bindings=new Map(),authoringReceipts=new Map();
   for(const w of contract.workflows){
    const actual=(await client.query('SELECT * FROM workflows WHERE id=$1 FOR UPDATE',[w.id])).rows[0];
    if(!actual||actual.key!==w.key||actual.capability_id!==PATROL_CAPABILITY||actual.status==='retired')fail('PATROL_CANONICAL_WORKFLOW_MISMATCH');
    const authoring=(await client.query(`SELECT result->'workflow_authoring' AS state FROM tasks WHERE result->'workflow_authoring'->'outputs'->'register'->>'workflow_id'=$1 AND result->'workflow_authoring'->'outputs'->'register'->>'readback_verified'='true' ORDER BY updated_at DESC LIMIT 1`,[w.id])).rows[0]?.state;
    if(authoring?.stage!=='completed')fail('PATROL_AUTHORING_NOT_VERIFIED');
+   authoringReceipts.set(w.id,authoring.outputs.register);
    const refs=(await client.query('SELECT r.*,a.activity_key FROM workflow_activity_refs r JOIN activities a ON a.id=r.activity_id WHERE r.workflow_id=$1 AND r.active ORDER BY r.sequence_no FOR UPDATE OF r',[w.id])).rows;
    if(refs.length!==w.activities.length||refs.some((r,i)=>r.activity_id!==w.activities[i].id||r.slot_key!==w.activities[i].key))fail('PATROL_CANONICAL_ACTIVITY_MISMATCH');
    definitions.set(w.id,{...w,capability_id:PATROL_CAPABILITY,executable:false,scope:PATROL_SCOPE,maintenance_owner:contract.maintenance_owner,schedule:contract.schedule});
    for(const a of w.activities){
-    await client.query('UPDATE activities SET contract_source=$2 WHERE id=$1',[a.id,`https://github.com/${PATROL_REPO}/blob/${input.introduced_revision}/${PATROL_PATH}`]);
     bindings.set(a.id,source.bindings.filter(b=>b.activity_id===a.id).map(b=>({kind:b.path.endsWith('SKILL.md')?'skill':'code',repo:b.repo,path:b.path,revision:b.revision,content_sha256:b.sha256,status:'verified',validation_scope:'reference_only'})));
    }
   }
-  await snapshotDefinitions(client,{workflowIds:contract.workflows.map(w=>w.id),source:{repo:PATROL_REPO,path:PATROL_PATH,commit:input.introduced_revision},bindingsByActivity:bindings,documentsByWorkflow:definitions,admissionScope:PATROL_SCOPE});
+  await snapshotDefinitions(client,{workflowIds:contract.workflows.map(w=>w.id),source:{repo:PATROL_REPO,path:PATROL_PATH,commit:input.introduced_revision},bindingsByActivity:bindings,documentsByWorkflow:definitions,admissionScope:PATROL_SCOPE,authoringByWorkflow:authoringReceipts});
   const versions=(await client.query('SELECT id,workflow_id,source_commit,payload_sha256 FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 AND workflow_id=ANY($3::uuid[]) ORDER BY workflow_id',[PATROL_REPO,input.introduced_revision,contract.workflows.map(w=>w.id)])).rows;
   const registration={schema_version:1,purpose:'source_admission_only',scope:PATROL_SCOPE,repo:PATROL_REPO,provenance,source,definition_versions:versions};
   const hash=sha(JSON.stringify(canonical(registration)));
