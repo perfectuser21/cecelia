@@ -111,7 +111,7 @@ function validateFactoryAdmission(snapshot){
       ||workflow.payload.activities[0].activity_id!==identity.activity_id
       ||workflow.payload.activities[0].activity_version_id!==activity.id)
       throw ciFailure('COMPANION_FACTORY_DEFINITION_INVALID');
-    for(const row of [workflow,activity])if(ro!['consumer_evidence','device_workflow_admission'].includes(w.payload.definition_scope)
+    for(const row of [workflow,activity])if(row.payload.definition_scope!=='consumer_evidence'
       ||row.payload.source_scope!==EXISTING_OPS_SCOPE||row.payload.registration_sha256!==registry_sha256
       ||row.payload.contract?.executable!==false||row.payload.contract.key!==identity.workflow_key
       ||row.payload.contract.definition_scope!=='consumer_evidence'||row.payload.contract.source_basis!=='fixed_git_tree')throw ciFailure('COMPANION_FACTORY_EXECUTION_INVALID');
@@ -137,7 +137,7 @@ function validateAdmissionCompanion(parent,admissionScope){
   if(!['verified','unknown'].includes(child.status)||!Array.isArray(child.gaps)
     ||(child.status==='verified')!==(child.gaps.length===0))throw ciFailure('COMPANION_STATUS_INVALID');
   if(child.snapshot_scope!=='consumer_evidence'||child.execution_status!=='unknown'
-    ||[...child.definitions.workflows,...child.definitions.activities].some(row=>ro!['consumer_evidence','device_workflow_admission'].includes(w.payload.definition_scope)
+    ||[...child.definitions.workflows,...child.definitions.activities].some(row=>row.payload.definition_scope!=='consumer_evidence'
       ||row.payload.source_scope!==EXISTING_OPS_SCOPE||row.payload.contract?.executable!==false))
     throw ciFailure('COMPANION_FACTORY_EXECUTION_INVALID');
   if(child.status==='verified')validateFactoryAdmission(child);
