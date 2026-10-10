@@ -9,7 +9,7 @@ describe('implementation-ci-workflow',()=>{
 it('正常Brain单测执行巡查可信baseline实际ZIP与治理行为回归',()=>{
  const root=new URL('../../../../../',import.meta.url);
  const child=spawnSync(process.execPath,['--test','scripts/ci/__tests__/device-patrol-baseline.test.mjs','scripts/ci/__tests__/device-patrol-governance.test.mjs'],{cwd:root,encoding:'utf8',timeout:30000});
- expect(child.status,child.stdout+child.stderr).toBe(0);expect(child.stdout).toMatch(/(?:pass 3|tests 3)/);expect(child.stdout).toMatch(/(?:fail 0)/);
+ expect(child.status,child.stdout+child.stderr).toBe(0);expect(Number(child.stdout.match(/pass (\d+)/)?.[1])).toBeGreaterThanOrEqual(5);expect(child.stdout).toMatch(/(?:fail 0)/);expect(child.stdout).toMatch(/(?:skipped 0)/);
  const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
  expect(workflow.on.workflow_dispatch).toBeDefined();expect(JSON.stringify(workflow.jobs)).toContain('refs/heads/main');
  expect(JSON.stringify(workflow.jobs['device-patrol-baseline'])).not.toContain('--data-binary');expect(JSON.stringify(workflow.jobs['device-patrol-baseline'])).not.toContain('pull_request');
