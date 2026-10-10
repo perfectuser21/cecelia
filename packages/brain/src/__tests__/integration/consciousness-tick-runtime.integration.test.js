@@ -442,7 +442,9 @@ describe('consciousness tick runtime (real executeTick + mocked deps)', () => {
       details: [],
     });
     expect(externalBoundaryMocks.calculateSlotBudget).toHaveBeenCalledTimes(1);
-    expect(externalBoundaryMocks.dispatchNextTask).not.toHaveBeenCalled();
+    // AI budget is zero; only the deterministic code lane may attempt dispatch.
+    expect(externalBoundaryMocks.dispatchNextTask).toHaveBeenCalledTimes(1);
+    expect(externalBoundaryMocks.dispatchNextTask).toHaveBeenCalledWith(null, { codeOnly: true });
     expect(externalBoundaryMocks.triggerDailyReview).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.triggerArchReview).toHaveBeenCalledTimes(1);
     expect(externalBoundaryMocks.triggerContractScan).toHaveBeenCalledTimes(1);

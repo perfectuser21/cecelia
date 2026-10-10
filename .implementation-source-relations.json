@@ -196,6 +196,11 @@
       "owner_path": "scripts/ci/check-brain-version-bump.sh",
       "path": "tests/regression/version-gate-silent/check-brain-version-bump.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/tick-runner.js",
+      "path": "packages/brain/src/__tests__/integration/consciousness-tick-runtime.integration.test.js",
+      "role": "verification"
     }
   ]
 }
