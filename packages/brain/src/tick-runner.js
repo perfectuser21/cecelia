@@ -653,6 +653,17 @@ async function executeTick() {
   // 感知层结束 — 以下是行动层（受 canDispatch/thalamus 控制）
   // ═══════════════════════════════════════════════════════════════════
 
+  // 一轮至多一条正式确定性脚本，沿用停止开关与目标机器容量，不消耗 AI 预算。
+  if (canDispatch()) {
+    try {
+      const codeDispatch = await dispatchNextTask(null, {codeOnly:true});
+      actionsTaken.push(...(codeDispatch.actions ?? []));
+      if (codeDispatch.dispatched) actionsTaken.push({action:'code_dispatch',task_id:codeDispatch.task_id});
+    } catch (error) {
+      console.error('[tick] code dispatch failed:', error.message);
+    }
+  }
+
   // 0. Thalamus: Analyze tick event (quick route for simple ticks)
   if (isConsciousnessEnabled()) {
   publishCognitiveState({ phase: 'thalamus', detail: '丘脑路由分析…' });
