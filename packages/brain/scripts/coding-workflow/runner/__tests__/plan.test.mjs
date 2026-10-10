@@ -87,6 +87,13 @@ describe('runTimeoutMs', () => {
 });
 
 describe('summarizeReceipt', () => {
+  // 审计 #35：链路总花费 = 各活动 metrics.cost_usd 之和（有才带）
+  it('回执 metrics 里各活动的 cost_usd 求和为 cost_usd；没有花费不带这个字段', () => {
+    const receipt = { status: 'completed', outputs: { pr_url: 'u' }, activities: [], metrics: { spec: { cost_usd: 0.3 }, build: { cost_usd: 1.25 }, intent: {} } };
+    expect(summarizeReceipt(receipt)).toMatchObject({ status: 'completed', pr_url: 'u', cost_usd: 1.55 });
+    expect(summarizeReceipt({ status: 'completed', outputs: { pr_url: 'u' }, activities: [], metrics: { intent: {} } })).not.toHaveProperty('cost_usd');
+  });
+
   it('completed：取 outputs.pr_url', () => {
     expect(summarizeReceipt({ status: 'completed', outputs: { pr_url: 'u' }, activities: [] }))
       .toEqual({ status: 'completed', failed_activity: null, reason_code: null, pr_url: 'u' });

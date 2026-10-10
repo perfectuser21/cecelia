@@ -159,7 +159,7 @@ await runActivity(async (input) => {
       }
     }
     if (escalations.length > 0) outputs.escalations = escalations;
-    return { status: 'completed', outputs, evidence: [`合同对抗 ${verdict}：${round} 轮，走势 ${trend}，花费 $${money(cost)}`] };
+    return { status: 'completed', outputs, metrics: { cost_usd: money(cost) }, evidence: [`合同对抗 ${verdict}：${round} 轮，走势 ${trend}，花费 $${money(cost)}`] };
   };
 
   for (;;) {

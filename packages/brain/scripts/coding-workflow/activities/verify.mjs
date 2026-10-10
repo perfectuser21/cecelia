@@ -12,6 +12,8 @@ import {
 } from '../lib/claude.mjs';
 import { chainTamperFailure, remoteChangeFailure, remoteSnapshot, hideFile, recoverHidden } from '../lib/guards.mjs';
 
+const spend = { usd: 0 };
+
 const INTENT_FILE = '01-intent.md';
 const BUILD_FILE = '03-build.md';
 const EVIDENCE_FILE = '04-evidence.md';
@@ -66,7 +68,7 @@ function judge(text, intentIds, transcript, worktree) {
   };
 }
 
-await runActivity(async (input) => {
+async function main(input) {
   const { worktree, sprint_dir: sprintDir, intent_ids: intentIds } = input;
   const { dir } = validateBase(input);
   const idsError = intentIdsError(intentIds);
@@ -111,6 +113,7 @@ await runActivity(async (input) => {
     const timeoutMs = claudeTimeoutMs(input.budget, TIMEOUT);
     state.claudeRunning = true;
     const run = await runClaude({ args, cwd: worktree, timeoutMs, tag: 'verify', isolateRemote: true });
+    spend.usd += run.cost_usd ?? 0;
     state.claudeRunning = false;
     result = claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
     if (!result && !fs.existsSync(evidencePath)) result = fail('fatal', 'evidence_missing');
@@ -122,4 +125,10 @@ await runActivity(async (input) => {
     }
   }
   return result;
+}
+
+// 会话花费进 metrics（审计 #35）：本活动所有 claude 会话累加，成功失败都计
+await runActivity(async (input) => {
+  const result = await main(input);
+  return { ...result, metrics: { ...(result?.metrics ?? {}), cost_usd: Math.round(spend.usd * 10000) / 10000 } };
 });

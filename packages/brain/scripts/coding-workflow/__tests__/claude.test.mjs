@@ -200,20 +200,31 @@ describe('runClaude（进程内 + 假 claude）', () => {
     }
   });
 
+  // 审计 #35（旧 controller cost 诚实）：每个 claude 会话都能计费——没指定输出格式就补 --output-format json，返回 cost_usd
+  it('计费：没指定输出格式时补 --output-format json；已指定不重复；cost_usd 取 result 事件的 total_cost_usd', async () => {
+    setEnv({ CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'ok', FAKE_CLAUDE_COST: '0.42' });
+    let r = await runClaude({ args: ['-p', prompt(), '--x', 'y'], cwd: tmp, timeoutMs: 20000, tag: 'test' });
+    expect(r.output).toContain('FAKE_ARGS: -p --x y --output-format json --model opus\n');
+    expect(r.cost_usd).toBe(0.42);
+    r = await runClaude({ args: ['-p', prompt(), '--output-format', 'stream-json'], cwd: tmp, timeoutMs: 20000, tag: 'test' });
+    expect(r.output).toContain('FAKE_ARGS: -p --output-format stream-json --model opus\n');
+    expect(r.cost_usd).toBe(0.42);
+  });
+
   it('模型钉死：默认追加 --model opus（决策 ac7c8801；实测不钉会落到 sonnet）', async () => {
     setEnv({ CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'ok' });
     for (const isolateRemote of [false, true]) {
       const r = await runClaude({ args: ['-p', prompt(), '--x', 'y'], cwd: tmp, timeoutMs: 20000, tag: 'test', isolateRemote });
-      expect(r.output).toContain('FAKE_ARGS: -p --x y --model opus\n');
+      expect(r.output).toContain('FAKE_ARGS: -p --x y --output-format json --model opus\n');
     }
   });
 
   it('模型可用 CODING_WF_CLAUDE_MODEL 覆盖；调用方已给 --model 时不重复追加', async () => {
     setEnv({ CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'ok', CODING_WF_CLAUDE_MODEL: 'claude-opus-9' });
     let r = await runClaude({ args: ['-p', prompt()], cwd: tmp, timeoutMs: 20000, tag: 'test' });
-    expect(r.output).toContain('FAKE_ARGS: -p --model claude-opus-9\n');
+    expect(r.output).toContain('FAKE_ARGS: -p --output-format json --model claude-opus-9\n');
     r = await runClaude({ args: ['-p', prompt(), '--model', 'x'], cwd: tmp, timeoutMs: 20000, tag: 'test' });
-    expect(r.output).toContain('FAKE_ARGS: -p --model x\n');
+    expect(r.output).toContain('FAKE_ARGS: -p --model x --output-format json\n');
   });
 
   it('不开 isolateRemote（spec）时 GH 环境原样继承', async () => {

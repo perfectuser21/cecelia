@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fail, childEnv, log } from './protocol.mjs';
-import { claudeOwnErrorText } from './transcript.mjs';
+import { claudeOwnErrorText, sessionCostUsd } from './transcript.mjs';
 
 const PROMPTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../prompts');
 // 只认 claude CLI 自身的鉴权/额度报错措辞；裸 login、/login 路由等业务输出不算
@@ -109,12 +109,17 @@ function signalGroup(child, signal, tag) {
  * - 本进程收到 SIGTERM（执行器取消/超时/心跳失败）：对 claude 组发 SIGTERM，CANCEL_GRACE_MS 后组 SIGKILL，terminated: true。
  * - 正常退出后若输出管道被后代占着，EXIT_GRACE_MS 后整组 SIGKILL 并销毁管道，不等 close。
  */
+// 每个会话都要能计费（审计 #35）：没指定输出格式就用 json（末尾一个 result 事件带 total_cost_usd，与 stream-json 同形）
+const withCostOutput = (args) => (args.includes('--output-format') ? args : [...args, '--output-format', 'json']);
+
+/** 起 claude 会话；返回值另带 cost_usd（result 事件的 total_cost_usd，取不到为 0）。 */
 export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolateRemote = false }) {
-  const args = withModel(callerArgs);
-  if (!isolateRemote) return spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv() });
+  const args = withModel(withCostOutput(callerArgs));
+  const priced = (run) => ({ ...run, cost_usd: sessionCostUsd(run.stdout ?? '') });
+  if (!isolateRemote) return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv() }));
   const ghConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-wf-gh-'));
   try {
-    return await spawnClaude({ args, cwd, timeoutMs, tag, env: remoteIsolatedEnv(ghConfigDir) });
+    return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: remoteIsolatedEnv(ghConfigDir) }));
   } finally {
     fs.rmSync(ghConfigDir, { recursive: true, force: true });
   }

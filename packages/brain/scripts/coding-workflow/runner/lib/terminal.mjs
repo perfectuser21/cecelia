@@ -47,6 +47,7 @@ export async function failTask(ctx, task, job, summary) {
     host: cfg.host,
     ...(summary.pr_url ? { pr_url: summary.pr_url } : {}),
     ...(summary.detail ? { detail: summary.detail } : {}),
+    ...(summary.cost_usd ? { cost_usd: summary.cost_usd } : {}),
   };
   const r = await writeTerminal(ctx, task.id, { status: 'failed', result: { coding_workflow_runner: info } });
   if (!r.ok && !r.foreign) log(`回写 failed 失败（HTTP ${r.status}），任务 ${task.id} 需人工收账`);
@@ -73,7 +74,7 @@ async function automerge(ctx, prUrl, cwd) {
 export async function finishSuccess(ctx, task, job, summary, extra = {}) {
   const { cfg, brain, log } = ctx;
   // 开出 PR 不等于完成：phase 标明还在等 QA/人审，合并结果由合并门回写 result.merge（审计 #7）
-  const runner = { receipt_path: job.receiptPath, host: cfg.host, phase: cfg.qaGate ? 'awaiting_qa' : 'awaiting_manual_merge', ...extra };
+  const runner = { receipt_path: job.receiptPath, host: cfg.host, phase: cfg.qaGate ? 'awaiting_qa' : 'awaiting_manual_merge', ...(summary.cost_usd ? { cost_usd: summary.cost_usd } : {}), ...extra };
   const r = await writeTerminal(ctx, task.id, { status: 'completed', result: { runner } });
   if (r.foreign) return 1;
   if (!r.ok) {

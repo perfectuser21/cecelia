@@ -72,7 +72,7 @@ describe('spec 活动（子进程 + 假 claude）', () => {
   it('ok：子进程输出转写到 stderr，参数与 cwd 正确', async () => {
     const r = await run('ok');
     expect(r.stderr).toContain('fake claude log line 199');
-    expect(r.stderr).toContain('FAKE_ARGS: -p --permission-mode acceptEdits --disallowedTools Bash --model opus\n');
+    expect(r.stderr).toContain('FAKE_ARGS: -p --permission-mode acceptEdits --disallowedTools Bash --output-format json --model opus\n');
     expect(r.stderr).toContain(`FAKE_CWD: ${fs.realpathSync(worktree)}`);
   });
 
@@ -160,6 +160,13 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     for (const s of ['UNTRACKED_DEFERRALS: {{UNTRACKED_DEFERRALS}}', '真实调用方', '未覆盖真实链路']) expect(review).toContain(s);
     const revise = fs.readFileSync(path.join(HERE, '../prompts/spec-revise.md'), 'utf8');
     expect(revise).toContain('Brain 任务 ID');
+  });
+
+  // 审计 #35：spec 会话的花费进活动 metrics（执行器回执汇总、runner 回写 Brain）
+  it('spec 会话花费写进 metrics.cost_usd', async () => {
+    const r = await run('ok', {}, { FAKE_CLAUDE_COST: '0.31' });
+    expect(r.result.status, r.stderr).toBe('completed');
+    expect(r.result.metrics).toMatchObject({ cost_usd: 0.31 });
   });
 
   it('uncovered：02 的 upstream 没覆盖全部 I-n -> retryable spec_invalid，evidence 点名未覆盖的 I-n', async () => {

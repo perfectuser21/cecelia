@@ -42,25 +42,27 @@ await runActivity(async (input) => {
 
   const args = ['-p', prompt, '--permission-mode', 'acceptEdits', '--disallowedTools', 'Bash'];
   const run = await runClaude({ args, cwd: worktree, timeoutMs: claudeTimeoutMs(input.budget, TIMEOUT), tag: 'spec' });
+  // 会话花费进 metrics（审计 #35），失败也计——重试同样花钱
+  const priced = (r) => ({ ...r, metrics: { ...(r.metrics ?? {}), cost_usd: run.cost_usd ?? 0 } });
   // 超时/被取消/非 0 直接返回：产物可能写了一半，不检查、不做越界检查
   const failure = claudeFailure(run);
-  if (failure) return failure;
+  if (failure) return priced(failure);
 
   const stray = await outOfScopeChanges(worktree, sprintDir, before, 'spec');
   if (stray.length > 0) {
-    return fail('fatal', 'spec_out_of_scope_write', { evidence: [{ out_of_scope_changes: stray }] });
+    return priced(fail('fatal', 'spec_out_of_scope_write', { evidence: [{ out_of_scope_changes: stray }] }));
   }
   const tampered = chainTamperFailure(dir, { intent_sha256: input.intent_sha256 });
-  if (tampered) return tampered;
-  if (!fs.existsSync(specPath)) return fail('fatal', 'spec_missing');
+  if (tampered) return priced(tampered);
+  if (!fs.existsSync(specPath)) return priced(fail('fatal', 'spec_missing'));
 
   // 02 不合格当场拦（重试一次让 claude 重写），不留给 build 报 spec_ids_missing（c2afa8ba 实测）
   const errors = specErrors(fs.readFileSync(specPath, 'utf8'), input.task_id, intentIds, { invariantIds });
-  if (errors.length > 0) return fail('retryable', 'spec_invalid', { evidence: [{ spec_errors: errors }] });
+  if (errors.length > 0) return priced(fail('retryable', 'spec_invalid', { evidence: [{ spec_errors: errors }] }));
 
-  return {
+  return priced({
     status: 'completed',
     outputs: { spec_file: SPEC_FILE, spec_sha256: sha256File(specPath) },
     evidence: [`${SPEC_FILE} 已生成`],
-  };
+  });
 });

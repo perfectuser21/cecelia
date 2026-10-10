@@ -36,11 +36,14 @@ export function readReceipt(stdout, receiptPath) {
  * 没有活动级原因时取回执级 reason_code，再没有则 run_<status>。
  */
 export function summarizeReceipt(receipt) {
+  // 链路总花费（审计 #35）：各活动 metrics.cost_usd 之和，有才带
+  const costs = Object.values(receipt?.metrics ?? {}).map((m) => m?.cost_usd).filter((v) => typeof v === 'number');
+  const cost = costs.length > 0 ? { cost_usd: Math.round(costs.reduce((a, b) => a + b, 0) * 10000) / 10000 } : {};
   const prUrl = typeof receipt?.outputs?.pr_url === 'string' && receipt.outputs.pr_url !== ''
     ? receipt.outputs.pr_url
     : null;
   if (receipt?.status === 'completed') {
-    return { status: 'completed', failed_activity: null, reason_code: prUrl ? null : 'pr_url_missing', pr_url: prUrl };
+    return { status: 'completed', failed_activity: null, reason_code: prUrl ? null : 'pr_url_missing', pr_url: prUrl, ...cost };
   }
   const activities = Array.isArray(receipt?.activities) ? receipt.activities : [];
   const failed = activities.find((a) => a?.status !== 'completed' && a?.status !== 'skipped');
@@ -50,5 +53,6 @@ export function summarizeReceipt(receipt) {
     failed_activity: failed?.key ?? null,
     reason_code: attemptReason || failed?.reason_code || receipt?.reason_code || `run_${receipt?.status ?? 'failed'}`,
     pr_url: prUrl,
+    ...cost,
   };
 }

@@ -37,6 +37,12 @@ async function attempt(ctx, target, worktree, signal) {
   });
   fs.mkdirSync(cfg.logDir, { recursive: true });
   fs.writeFileSync(path.join(cfg.logDir, `cifix-${pr.number}-${Date.now()}.log`), run.output ?? '');
+  // 会话一结束就记花费（审计 #35），后面抛错的路径也不漏
+  if (typeof run.cost_usd === 'number' && run.cost_usd > 0) {
+    const state = readState(cfg, pr.number);
+    state.cost_usd = Math.round(((state.cost_usd ?? 0) + run.cost_usd) * 10000) / 10000;
+    saveState(cfg, pr.number, state);
+  }
   if (run.terminated) throw stop('runner_terminated');
   if (run.timedOut) throw stop('claude_timeout');
   if (run.code !== 0) throw stop('claude_failed');
