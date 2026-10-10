@@ -15,8 +15,25 @@ const build = overrides => buildExistingOpsSources({ scope: 'cecelia-factory', r
 describe('真实工厂旧消费者来源，独立于可执行完整Workflow', () => {
   const regression = 'tests/regression/version-gate-silent/check-brain-version-bump.test.js';
   const versionGate = 'scripts/ci/check-brain-version-bump.sh';
-  it('真实夜间选择的毕业池测试与 required PR 版本脚本均以固定字节登记', async () => {
-    const f3 = (await build()).consumers[1];
+  // 固定旧 Git 字节不变，仅在 IO 边界模型化独立的新版协议标记。
+  const expandedBuild = (overrides = {}) => {
+    const underlying = overrides.readSource || read;
+    return build({ ...overrides, readSource: async path => path === 'packages/brain/src/lib/existing-ops-source.js'
+      ? (overrides.schemaText ?? 'export const EXISTING_OPS_SELECTOR_SCHEMA = 2;') : underlying(path) });
+  };
+  it('旧固定修订及注释中的协议标记保留旧绑定，未知协议不能猜成功', async () => {
+    const legacy = (await build()).consumers[1];
+    const commented = (await expandedBuild({ schemaText: '// export const EXISTING_OPS_SELECTOR_SCHEMA = 2;' })).consumers[1];
+    expect(commented.bindings).toEqual(legacy.bindings);
+    expect(commented.input_relations).toEqual(legacy.input_relations);
+    for (const schemaText of ['export const EXISTING_OPS_SELECTOR_SCHEMA = 3;', 'export const EXISTING_OPS_SELECTOR_SCHEMA = process.env.SCHEMA;']) {
+      const f3 = (await expandedBuild({ schemaText })).consumers[1];
+      expect(f3.status).toBe('unknown');
+      expect(f3.bindings).toEqual([]);
+    }
+  });
+  it('升级来源协议下，真实夜间选择的毕业池测试与 required PR 版本脚本均以固定字节登记', async () => {
+    const f3 = (await expandedBuild()).consumers[1];
     expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
     expect(f3.bindings.some(b => b.path === regression)).toBe(true);
     expect(f3.bindings.some(b => b.path === versionGate)).toBe(true);
@@ -25,7 +42,7 @@ describe('真实工厂旧消费者来源，独立于可执行完整Workflow', ()
     expect(f3.bindings.some(b => b.path === 'tests/regression/relay-1b1f1ffa/capacity-gate.test.js')).toBe(false);
   });
   it('真实 exclude 令毕业池文件不被 unit 消费，不以文件存在认领', async () => {
-    const f3 = (await build({ readSource: async path => path === 'packages/brain/vitest.config.js'
+    const f3 = (await expandedBuild({ readSource: async path => path === 'packages/brain/vitest.config.js'
       ? (await read(path)).replace('exclude: [', `exclude: ['../../${regression}',`) : read(path) })).consumers[1];
     expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
     expect(f3.bindings.some(b => b.path === regression)).toBe(false);
@@ -34,13 +51,13 @@ describe('真实工厂旧消费者来源，独立于可执行完整Workflow', ()
     for (const mutate of [text => text.replace('include: [', 'include: [process.env.EXTRA_TEST,'),
       text => text.replace('exclude: [', 'exclude: [...UNKNOWN_TESTS,'),
       text => text.replace('../../tests/regression/**/*.{test,spec}.?(c|m)[jt]s?(x)', '../../tests/regression/**/!(draft).test.js')]) {
-      const f3 = (await build({ readSource: async path => path === 'packages/brain/vitest.config.js' ? mutate(await read(path)) : read(path) })).consumers[1];
+      const f3 = (await expandedBuild({ readSource: async path => path === 'packages/brain/vitest.config.js' ? mutate(await read(path)) : read(path) })).consumers[1];
       expect(f3.status).toBe('unknown');
       expect(f3.bindings).toEqual([]);
     }
   });
   it('选择到的真实毕业池字节缺失不得保留部分成功绑定', async () => {
-    const f3 = (await build({ readSource: async path => { if (path === regression) throw Error('missing blob'); return read(path); } })).consumers[1];
+    const f3 = (await expandedBuild({ readSource: async path => { if (path === regression) throw Error('missing blob'); return read(path); } })).consumers[1];
     expect(f3.status).toBe('unknown');
     expect(f3.bindings).toEqual([]);
     expect(f3.gaps).toContainEqual({ code: 'source_unavailable', path: regression });
@@ -49,7 +66,7 @@ describe('真实工厂旧消费者来源，独立于可执行完整Workflow', ()
     for (const run of [`# bash ${versionGate}`, `echo bash ${versionGate}`, `if false; then bash ${versionGate}; fi`]) {
       const ci = yaml.load(await read('.github/workflows/ci.yml'));
       ci.jobs['brain-version-bump-gate'].steps.find(step => step.run?.includes(versionGate)).run = run;
-      const f3 = (await build({ readSource: async path => path === '.github/workflows/ci.yml' ? yaml.dump(ci) : read(path) })).consumers[1];
+      const f3 = (await expandedBuild({ readSource: async path => path === '.github/workflows/ci.yml' ? yaml.dump(ci) : read(path) })).consumers[1];
       expect(f3.status).toBe('unknown');
       expect(f3.bindings).toEqual([]);
     }
@@ -59,6 +76,7 @@ describe('真实工厂旧消费者来源，独立于可执行完整Workflow', ()
     expect(result.consumers.map(c => c.activity_id).sort()).toEqual(['0466016e-6d9f-4325-aeb4-d8bc70424a48', '0ab79a73-1ec3-4ddc-bb88-1433568ae2e2'].sort());
     expect(result.consumers.every(c => c.status === 'verified' && c.definition_scope === 'consumer_evidence')).toBe(true);
     expect(result.workflows).toHaveLength(2);
+    expect(result.consumers[1].bindings.some(b => b.path === regression || b.path === versionGate)).toBe(false);
     expect(result.workflows.every(w => w.coverage.status === 'unknown' && w.coverage.unverified_reference_ids.length === 3 && w.executable === false)).toBe(true);
     expect(result.consumers.find(c => c.activity_id.startsWith('0ab79')).bindings.some(b => b.path === 'packages/brain/migrations/535_coding_workflow_runner_executor_kind.sql')).toBe(true);
     expect(result.consumers.find(c => c.activity_id.startsWith('0ab79')).bindings.some(b => b.path.includes('/rollback/'))).toBe(false);
