@@ -1,3 +1,4 @@
+import { deterministicScriptSql } from '../lib/code-script-policy.js';
 /**
  * Alertness Escalation - 升级机制
  *
@@ -358,6 +359,7 @@ export function buildPauseLowPriorityQuery() {
         AND priority = ANY($1)
         AND trigger_source = ANY($2)
         AND NOT (task_type = ANY($4::text[]))
+        AND NOT ${deterministicScriptSql('tasks')}
       RETURNING id
     `;
 }

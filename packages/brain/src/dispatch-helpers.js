@@ -14,6 +14,7 @@
  */
 
 import pool from './db.js';
+import { deterministicScriptSql } from './lib/code-script-policy.js';
 import { updateTask, createTask } from './actions.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { sortTasksByWeight } from './task-weight.js';
@@ -44,7 +45,7 @@ function tickLog(...args) {
  * @returns {Promise<Object|null>} - The next task to dispatch, or null
  */
 export async function selectNextDispatchableTask(goalIds, excludeIds = [], options = {}) {
-  const { priorityFilter = null, onlyTaskTypes = null } = options;
+  const { priorityFilter = null, onlyTaskTypes = null, codeOnly = false } = options;
 
   // Check if P2 tasks should be paused (alertness mitigation)
   const { getMitigationState } = await import('./alertness-actions.js');
@@ -76,6 +77,17 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
   }
   queryParams.push([...TICK_DISPATCH_EXCLUDED]);
   const excludedTypesIdx = queryParams.length;
+  // 正规代码任务由显式依赖与主机/设备锁控制，不与同项目人工研发会话互斥。
+  const projectGate = `AND (
+        t.project_id IS NULL
+        OR NOT EXISTS (
+          SELECT 1 FROM tasks t2
+          WHERE t2.project_id = t.project_id
+            AND t2.status = 'in_progress'
+            AND t2.id != t.id
+            AND t2.task_type != 'content-pipeline'
+        )
+      )`;
   const result = await pool.query(`
     SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload,
            t.queued_at, t.task_type, t.created_at, t.metadata, t.project_id
@@ -105,16 +117,7 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
         OR t.payload->>'next_run_at' = ''
         OR (t.payload->>'next_run_at')::timestamptz <= NOW()
       )
-      AND (
-        t.project_id IS NULL
-        OR NOT EXISTS (
-          SELECT 1 FROM tasks t2
-          WHERE t2.project_id = t.project_id
-            AND t2.status = 'in_progress'
-            AND t2.id != t.id
-            AND t2.task_type != 'content-pipeline'
-        )
-      )
+      ${codeOnly ? `AND ${deterministicScriptSql('t')}` : projectGate}
       -- 依赖门禁：task_dependencies 表里有未完成 edge 的 task 不可派发
       -- 参考 harness-dag.js:nextRunnableTask —— from_task_id=本 task，
       -- to_task_id 的依赖 status 不在 completed/cancelled/canceled 即阻塞。
@@ -151,7 +154,7 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
     }
 
     // Skip P2 tasks if mitigation is active (EMERGENCY+ state)
-    if (mitigationState.p2_paused && task.priority === 'P2') {
+    if (!codeOnly && mitigationState.p2_paused && task.priority === 'P2') {
       tickLog(`[tick] Skipping P2 task ${task.id} (alertness mitigation active)`);
       continue;
     }
