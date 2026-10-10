@@ -1,7 +1,8 @@
 /**
  * 路 B 入口（树+仓库 v3.0 第 4 刀，任务 3590ec8f）：技能按 Step 发 span → 沉淀成候选 Activity → 收敛对账。
  *
- * POST /api/brain/step-reconcile/:activityId   body {runs?=5, required_green?=5}：Step span 与 Steps.readback 对账，readback 格翻色
+ * POST /api/brain/step-reconcile/:activityId   body {runs?=5, required_green?=5}：Step span 与 Steps.readback 对账，readback 格翻色，
+ *                                               结果作为一次手动裁判追加进 activity_judgments（返回带 judgment_id）
  * POST /api/brain/skill-settlement/draft       body {run_ids[], capability_key, activity_key, skill_md?, skill_name?}：读 spans 起草，不写库
  * POST /api/brain/skill-settlement/register    body {draft, journey_id, skill_name?}：登记候选 Activity + Steps + 8 灰格 + 一条待拍板
  * 写入口走内网/回环鉴权（同 POST /spans）。
@@ -9,7 +10,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
-import { reconcileActivity } from '../lib/step-reconcile.js';
+import { judgeActivity } from '../lib/activity-judge.js';
 import { draftFromSpans, registerCandidate, parseSkillMd } from '../lib/skill-settlement.js';
 
 const router = Router();
@@ -28,7 +29,7 @@ router.post('/step-reconcile/:activityId', internalAuthOrLoopback, async (req, r
   const requiredGreen = intIn(req.body?.required_green, 5, 1, 50);
   if (runsWanted === null || requiredGreen === null) return res.status(400).json({ error: 'runs / required_green must be integers in 1..50' });
   try {
-    return res.json(await reconcileActivity(pool, activityId, { runsWanted, requiredGreen }));
+    return res.json(await judgeActivity(pool, activityId, { trigger: 'manual', runsWanted, requiredGreen }));
   } catch (e) {
     return res.status(e.status || 500).json({ error: e.message });
   }
