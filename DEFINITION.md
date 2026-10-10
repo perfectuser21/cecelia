@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.417.0
+**Brain 版本**: 1.417.3
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,43 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.417.3 — coding harness：真人 QA 的验收命令固化成回归 smoke
+
+- 审计 P2 #9（旧 controller 1.5.0「E2E 验收脚本必须有 CI 回归宿主」），主理人决策 c8621227：
+  - QA 与独立裁判都通过后，把 PASS 的 T-n 里请求预览环境 API 的命令搬进 `packages/brain/scripts/smoke/cw-<task 前 8 位>-qa-smoke.sh`：
+    - 预览地址换成 `$BRAIN_URL`，curl 统一 `-q`；
+    - 开浏览器的条目不收；
+    - 有写请求的加生产保护并登记 write-targets。
+  - 登记 allowlist，CI 跑不过就挡合并。
+  - 和 QA 报告、裁决放在同一个提交里，批准绑定这个 head，合并门不会撤销批准。
+- spec prompt：每个 Q-n 的前提必须由场景自己造，能在空库复现。evaluate prompt：API 命令会被固化成回归，必须自己造数据、用会失败的断言，不能依赖预览库里已有的数据。
+- 用仓库真实的 smoke 写入守卫（`smoke-production-guard.node-test`，87 条）验证过生成的脚本。
+
+## Brain 1.417.2 — 发布线：内容版本去重、生产指针、晋级门/成组晋级、自动与手动退回、流程生产配方（迁移 541）
+
+决策 de6dff5d（五块模型：树+仓库+账本+裁判+发布线）第 3 步，任务 37568378。
+
+- 迁移 541：构建层与版本层分开。构建 `activity_definition_versions` 仍每 commit 一行、不加列（部署证据，release-index / CI 快照 / zenithjoy preflight 的 commit 校验原样不动）；新表 `activity_versions`（同一 Activity 按内容去重，内容 = payload 去掉 `implementation_bindings` 的 md5，`version_no` 每个 Activity 内 1、2、3…）、`activity_version_builds`（构建→版本映射）、`activity_release_state`（每个 Activity 一行生产指针，独立表，不给 activities 加列）、`activity_release_events`（initial/promote/group_promote/bootstrap/promote_rejected/promote_would_reject/candidate_held/rollback_auto/rollback_manual/rollback_advisory/rollback_unavailable）、`workflow_production_recipes`（每格填该 Activity 的生产版），四张记录表只追加；`activity_judgments.trigger_kind` 放行 `promotion_gate`。初始生产版 = 今天 `current_definition_version_id` 所在构建的内容版本（生产库副本干跑：1386 构建 → 64 版本、29 指针、7 配方，指针与 current 不一致 0 行），`current_definition_version_id` 语义不变，执行端今天拿到的定义不变。附回滚脚本。
+- 冷启动规则：「受保护」= 该版本曾被判收敛（纯净窗口的 converged 裁判，或 gate.converged 的晋级）。生产版从未收敛 → 新内容直接成为生产版，记 `bootstrap`（reason=`bootstrap_no_converged_baseline`），不要求 N 绿、不做对比；今天裁判表无任何收敛，合同每次内容变化生产指针都跟着走。
+- 合同同步挂钩（`snapshotDefinitions`）：每个构建登记到内容版本；同内容新 commit 不出新版本；命中已存在的旧构建（CI 重跑旧 commit）只补映射，不拨回指针；每个流程刷新生产配方。挂钩在 SAVEPOINT 里 fail-open：出错回滚到 savepoint、记日志 + P2，同步照常提交；`POST /api/brain/release-line/reconcile` 幂等补账。
+- 晋级门（`lib/release-line-gate.js`）：`POST /api/brain/activities/:id/promotions` 生产版受保护时要求候选自己的 span 连续 N 次全绿（默认 5，`RELEASE_GATE_REQUIRED_GREEN`，作为 `promotion_gate` 裁判落库）且对比 not_worse，不过写 `promote_rejected` 返回 409 GATE_FAILED；`force` 必须带 reason。接口（inputs/outputs 规范化）变了且有受影响上下游 → 409 INTERFACE_CHANGED，须 `POST /api/brain/release-line/group-promotions` 成组晋级（同事务原子，任一成员不过一个指针都不动）。
+- 退回（`lib/release-line-rollback.js`）：自动裁判落库后 fire-and-forget 评估，取 trigger_ref 那次运行、按 run_id 去重、只认纯属生产版的运行，连续 3 次（`RELEASE_ROLLBACK_FAILURES`）没绿才触发；锁内重读 + 比较交换改指针。只退到曾收敛过的历史生产版；没有 → `rollback_unavailable`，按 Activity+生产版 24h 去重落库，未收敛生产版不告警，曾收敛的才 P1；`POST /api/brain/activities/:id/rollbacks` 手动退回。
+- 裁判对比修漏洞：基线读回可算、候选不可算 → worse（readback_coverage_dropped）；基线有读回的 Step 在候选里没了 → worse（readback_removed:<keys>）；迁移后按内容版本对比（样本按内容合并，不再按 commit 碎开），基线默认取生产版；min_runs > max_runs → 400（库函数与 GET version-compare）。裁判报告新增 `run_version_ids` / `window_unversioned_run_count`。
+- 开关（全部默认保持今天行为）：`RELEASE_LINE_SYNC_HOOK` 默认 on（off 同步完全不碰发布线）；`RELEASE_LINE_PROTECT` 默认 off = 影子模式（受保护时只记 promote_would_reject，指针照常前进）；`RELEASE_LINE_AUTO_ROLLBACK` 默认 advisory（只记事件+P1，不改指针；on 才真退回并 P0+Bark）；`RELEASE_LINE_ENFORCE_RELEASE` 默认 off（production 发布时把关，打开也只查受保护的生产版，出错放行）。把关关闭期间生产版只是账面指针，`GET /api/brain/activities/:id/release` 同时返回各目标机最近 release 的版本。
+- 查询：`GET /api/brain/activities/:id/release`、`/release-events`、`/content-versions`，`GET /api/brain/workflows/:id/production-recipe?commit=`、`/production-recipes`。
+
+## Brain 1.417.1 — 彻底下线 Claude Code 无头调用通道
+
+任务 76a160b3（决策 067867c8、3859041e）。主理人曾因 claude -p / 订阅 OAuth 被自动化调用而封号，Brain 侧所有拉起 claude CLI 的路径下线，单一来源 `lib/claude-channel.js`（`claude_channel_retired`）。
+
+- Brain 不再自动拉起 cecelia-bridge；桥接的 `/llm-call`、`/trigger-cecelia` 一律 410 `claude_channel_retired`，notebook 端点不变；cecelia-run.sh 开头即退出。
+- executor 的 US 桥接 / Docker claude 派发删除，执行时返回 `claude_channel_retired`；dispatcher 按 no_executor 收口（回 queued、放 claim，不计熔断 / dispatch 失败 / autoblock），同一 tick 换下一个候选继续派。派发前可用性检查传入任务时恒可用（不探活已不自启的桥接、不预测路由）；手动派发落到 claude 路径返回 409 `claude_channel_retired`。
+- llm-caller 的 anthropic（经桥接）不发请求、直接走 fallbacks，不计入账号熔断；anthropic-api、codex、minimax、openai 不变。
+- Commander 默认 runner、宿主 SSH 逃逸（host-executor）、skill-relay 的 claude 执行体（含 headed tmux）、容器缺省 claude 执行体、worker 池 tmux 发射、对话回路、skill 评估 worker 均拒绝 claude；orchestrator 不再注册 claude provider，auto 落 codex；分配引导员不再选 claude。
+- 删除无运行进程的 AI Gateway（packages/workflows/gateway）及 deploy.sh 中对应段落。
+- 保留新编码流水线 `scripts/coding-workflow/`（runClaude/spawnClaude 用机器默认 Claude 登录），防复活守卫对该目录白名单并有反向用例证明白名单生效。
+- skill-relay 本机执行闸（`local_execution_disabled_on_scheduler`）先于 claude 退役检查，闸关时错误码不变；秋米总闸旁路的 `onlyTaskTypes` 改从注册表 `OPENCLAW_PASSTHROUGH_TASK_TYPES` 派生（行为不变）。
 
 ## Brain 1.417.0 — coding harness：全链计费 + 合并后交付复盘落库
 
