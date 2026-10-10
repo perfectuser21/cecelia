@@ -34,6 +34,23 @@ describe('生产任务列表的项目隔离与分页', () => {
   const projectId = '8386209b-ed0f-4f0f-a1f0-9ddf1bddbff6';
   beforeEach(() => { mockPool.query.mockReset(); mockGetTopTasks.mockReset(); });
 
+  it('只有 offset 的分页保留默认活跃队列和优先级，不查全任务列表', async () => {
+    mockGetTopTasks.mockResolvedValueOnce([{ id: 'active-next', status: 'queued', priority: 'P1' }]);
+    const res = await request(app).get('/api/brain/tasks?limit=2&offset=2');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([{ id: 'active-next', status: 'queued', priority: 'P1' }]);
+    expect(mockGetTopTasks).toHaveBeenCalledWith(2, 2);
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('无过滤 offset=0 保持原 getTopTasks 单参数调用', async () => {
+    mockGetTopTasks.mockResolvedValueOnce([{ id: 'active-first', status: 'queued' }]);
+    const res = await request(app).get('/api/brain/tasks?limit=2&offset=0');
+    expect(res.status).toBe(200);
+    expect(mockGetTopTasks).toHaveBeenCalledWith(2);
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
   it('巡查项目两页绑定不同 offset，同时隔离项目和脚本类型', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'first', project_id: projectId }] });
     mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'second', project_id: projectId }] });
