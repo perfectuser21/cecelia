@@ -69,12 +69,13 @@ async function failedRequired(cfg, prNumber) {
 
 /** runner 自己开的、仍开着的 cw PR（按编号升序）；列表失败返回 null。 */
 export async function listOwnPrs(cfg) {
-  const prs = await ghJson(cfg, ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,headRefName,headRefOid,url,isDraft']);
+  const prs = await ghJson(cfg, ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,headRefName,headRefOid,url,isDraft,mergeable']);
   if (!Array.isArray(prs)) return null;
   return prs.filter((p) => CW_BRANCH_RE.test(p.headRefName ?? '')).sort((a, b) => a.number - b.number);
 }
 
 const MAX_UPDATE_BRANCH = 3;
+const MAX_CONFLICT_FIXES = 3;
 const BASE_FRESH_CHECK = 'lint-base-fresh';
 const RUN_LINK_RE = /\/actions\/runs\/(\d+)\//;
 
@@ -96,11 +97,24 @@ function decide(state, pr, checks, maxAttempts) {
   if (checks.some((c) => c.name === BASE_FRESH_CHECK)) {
     return (state.update_branch?.length ?? 0) >= MAX_UPDATE_BRANCH ? { action: 'escalate', reason: 'update_branch_exhausted' } : { action: 'update_branch' };
   }
-  if (state.attempts.length >= maxAttempts) return { action: 'escalate', reason: 'attempts_exhausted' };
-  if (state.attempts.some((a) => a.head === pr.headRefOid)) {
+  const ciAttempts = state.attempts.filter((a) => a.kind !== 'conflict');
+  if (ciAttempts.length >= maxAttempts) return { action: 'escalate', reason: 'attempts_exhausted' };
+  if (ciAttempts.some((a) => a.head === pr.headRefOid)) {
     return state.reruns?.[pr.headRefOid] ? { action: 'escalate', reason: 'rerun_still_failing' } : { action: 'rerun' };
   }
   return { action: 'fix' };
+}
+
+/**
+ * 与 main 冲突的 PR（GitHub 不跑 pull_request CI，必需检查永远出不来，金丝雀 4 #6232）：
+ * 本 head 合过没成 → escalate conflict_unresolved；冲突修复次数用完 → escalate conflict_exhausted；否则 → fix（kind=conflict）。
+ * 冲突来自 main 前进，不占 CI 修复次数。
+ */
+function decideConflict(state, pr) {
+  const tries = state.attempts.filter((a) => a.kind === 'conflict');
+  if (tries.some((a) => a.head === pr.headRefOid)) return { action: 'escalate', reason: 'conflict_unresolved' };
+  if (tries.length >= MAX_CONFLICT_FIXES) return { action: 'escalate', reason: 'conflict_exhausted' };
+  return { action: 'fix', kind: 'conflict' };
 }
 
 /** 下一个要处理的 PR：{ pr, failedRequired, checks, action, reason? }，没有返回 null。已升级的 PR 不再处理。 */
@@ -113,6 +127,7 @@ export async function findTarget(cfg, log) {
   for (const pr of ours) {
     const state = readState(cfg, pr.number);
     if (state.escalated) continue;
+    if (pr.mergeable === 'CONFLICTING') return { pr, failedRequired: [], checks: [], ...decideConflict(state, pr) };
     const failed = await failedRequired(cfg, pr.number);
     if (!failed) continue;
     const checks = await failingChecks(cfg, pr.number);
