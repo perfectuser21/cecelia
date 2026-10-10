@@ -42,14 +42,14 @@ function assertDatabase(db, id) {
 async function findDatabase(token, parent, notionReq) {
   const found = [], seen = new Set(); let cursor = null;
   for (let pageNo = 0; pageNo < 100; pageNo++) {
-    const page = await notionReq(token, `/blocks/${parent}/children?page_size=100${cursor ? `&start_cursor=${encodeURIComponent(cursor)}` : ''}`, 'GET');
+    const page = await notionReq(token, `/blocks/${encodeURIComponent(parent)}/children?page_size=100${cursor ? `&start_cursor=${encodeURIComponent(cursor)}` : ''}`, 'GET');
     if (!Array.isArray(page?.results) || typeof page.has_more !== 'boolean' || page.results.length > 100) throw Error('Runs 父页分页不完整');
     found.push(...page.results.filter(b => !b.archived && !b.in_trash && b.type === 'child_database' && b.child_database?.title === TASK_RUNS_TITLE));
     if (!page.has_more) {
       if (page.next_cursor != null) throw Error('Runs 父页分页终态不完整');
       if (found.length > 1) throw Error('Runs 父页出现重复库');
       if (!found.length) return null;
-      const db = await notionReq(token, `/databases/${found[0].id}`, 'GET');
+      const db = await notionReq(token, `/databases/${encodeURIComponent(found[0].id)}`, 'GET');
       if (compact(db.parent?.page_id) !== compact(parent) || text(db.description) !== TASK_RUNS_MARKER) throw Error('Runs 既有库来源不符');
       assertDatabase(db, found[0].id); return db.id;
     }
@@ -83,13 +83,13 @@ export async function configureTaskRunsProjection(pool, input, { token, notionRe
       }
     }
     assertOwnership(rows, target);
-    let db = await notionReq(token, `/databases/${target}`, 'GET');
+    let db = await notionReq(token, `/databases/${encodeURIComponent(target)}`, 'GET');
     assertDatabase(db, target);
     if (config.parent_page_id && (compact(db.parent?.page_id) !== compact(config.parent_page_id) || text(db.description) !== TASK_RUNS_MARKER)) throw Error('Runs 父页来源不符');
     const missing = diffMissingProps(db.properties, OPS_DB_PROPS.task_runs);
     if (Object.keys(missing).length) {
-      await notionReq(token, `/databases/${target}`, 'PATCH', { properties: missing });
-      db = await notionReq(token, `/databases/${target}`, 'GET');
+      await notionReq(token, `/databases/${encodeURIComponent(target)}`, 'PATCH', { properties: missing });
+      db = await notionReq(token, `/databases/${encodeURIComponent(target)}`, 'GET');
       assertDatabase(db, target);
       if (Object.keys(diffMissingProps(db.properties, OPS_DB_PROPS.task_runs)).length) throw Error('Runs 补列读回不完整');
     }
