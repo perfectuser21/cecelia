@@ -212,11 +212,7 @@
       "path": "scripts/ci/__tests__/device-patrol-baseline.test.mjs",
       "role": "verification"
     },
-    {
-      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
-      "path": "changes/cp-10101725-patrol-impact-adapter.md",
-      "role": "release"
-    },
+    
     {
       "owner_path": "packages/brain/src/lib/existing-ops-source.js",
       "path": ".prd-cp-10101834-f3-test-consumer.md",
@@ -237,11 +233,7 @@
       "path": ".dod-cp-10101732-code-scheduling.md",
       "role": "documentation"
     },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": "changes/cp-10101732-code-scheduling.md",
-      "role": "release"
-    },
+    
     {
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "packages/brain/src/__tests__/dispatcher-code-only.test.js",
