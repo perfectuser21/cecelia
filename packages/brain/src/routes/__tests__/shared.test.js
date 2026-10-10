@@ -5,8 +5,31 @@
  * 测纯导出常量（无 DB、无 mock）：动作白名单与库存阈值是真实业务契约。
  */
 
-import { describe, it, expect } from 'vitest';
-import { ALLOWED_ACTIONS, INVENTORY_CONFIG } from '../shared.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
+vi.mock('../../db.js', () => ({ default: mockPool }));
+import { ALLOWED_ACTIONS, INVENTORY_CONFIG, getTopTasks } from '../shared.js';
+
+describe('默认活跃任务队列的稳定分页', () => {
+  beforeEach(() => mockPool.query.mockReset());
+  it.each([undefined, 0])('offset=%s 保留单一 limit 绑定、活跃集合和优先级排序', async (offset) => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'active' }] });
+    expect(await getTopTasks(2, offset)).toEqual([{ id: 'active' }]);
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(params).toEqual([2]);
+    expect(sql).toContain("status NOT IN ('completed', 'cancelled')");
+    expect(sql).toContain("CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC, id ASC");
+    expect(sql).not.toContain('OFFSET');
+  });
+  it('后续页增加 OFFSET 绑定，保留同一集合和完整排序', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'next' }] });
+    expect(await getTopTasks(2, 2)).toEqual([{ id: 'next' }]);
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(params).toEqual([2, 2]);
+    expect(sql).toContain("status NOT IN ('completed', 'cancelled')");
+    expect(sql).toMatch(/created_at ASC, id ASC LIMIT \$1 OFFSET \$2$/);
+  });
+});
 
 describe('routes/shared — ALLOWED_ACTIONS 白名单', () => {
   it('create-task 必填 title，update-task 必填 task_id', () => {
