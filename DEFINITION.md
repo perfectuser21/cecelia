@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.418.2
+**Brain 版本**: 1.418.3
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.418.3 — coding harness：削弱测试守卫只守 main 上已有的测试
+
+- 主理人决策 b057089b。金丝雀 3、4 都卡在同一处：独立裁判判 PR 超范围，修复会话按裁决删掉超范围代码，连带删了 PR 自己为它加的测试，被「不许削弱测试」拦下（test_weakened），合不进。
+- weakenedTests 改为对照与 origin/main 的合并基点（先拉最新 main）：只对基点上已存在的测试文件判删除、加 skip/only/todo、断言比 main 上的版本少。PR 自己新加的测试允许在修复时随代码改删，行为仍由真人 QA 加独立裁判兜底。取不到合并基点时退回对照修复前的 head（从严）。
+- 测试：CI 修复和 QA 门的测试夹具把被守护的测试放到 main 上，新增「删 PR 自加测试照常推送」用例。
 
 ## Brain 1.418.2 — coding harness：判定点写库改用 made_by=system（生产约束不允许 ai）
 
