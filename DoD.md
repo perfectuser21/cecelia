@@ -1,3 +1,8 @@
+# 技能工厂看板 skill@版本 修正（任务 1b3c0000）
+
+- [x] [BEHAVIOR] skillfactoryboardskilllabel 试跑交付的 flow_skill_v1 为整份 skill 正文时，看板「skill@版本」只取 frontmatter 的 name@version；无 frontmatter 取第一行截到 80 字。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/skill-factory-board.test.js --maxWorkers=1 --minWorkers=1"
+
 # 技能工厂看板 + Activity 生产版本列（任务 1b3c0000）
 
 - [x] [BEHAVIOR] skillfactoryboard 技能工厂看板：阶段任务（payload.stage / 【执行参数】阶段）按流程（树上坐标最后一段，去空白归一）取最新一张排成一行；执行单与审计单不当阶段任务；连续通过与 count_streak.py 同规则（待核验/无法核对跳过、同输入不重复计、外部原因作废、改版或片指纹变清零），子任务读不到写「无法计数」；blocked 取 claimed_result；卡点取失败原因第一句并附同父任务下进行中的修复单；推送按注册表 vessel 找库、未登记跳过、指纹未变不写、无链接按 Brain ID 认领、页被删重建、5 分钟自 gate；scheduler 注册 skill-factory-board。
