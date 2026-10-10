@@ -1,16 +1,18 @@
 /** 调用方持有定义写事务；每个稳定对象的语义内容复用版本，版本中的来源永久固定。 */
 import { stepSha256,canonicalJson } from '../../scripts/sync-steps-from-workspace.mjs';
+import { runReleaseLineHook,registerActivityBuild,refreshWorkflowRecipe } from './release-line.js';
 async function saveVersion(client,kind,id,payload,source) {
   const table=kind==='activity'?'activity_definition_versions':'workflow_definition_versions';
   const column=kind==='activity'?'activity_id':'workflow_id';
   const hash=stepSha256({source,payload}),contractHash=stepSha256(payload.contract);
+  let inserted=true;
   let row=(await client.query(`INSERT INTO ${table}(${column},payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256)
     VALUES($1,$2::jsonb,$3,$4,$5,$6,$7) ON CONFLICT(${column},source_repo,source_path,payload_sha256) DO NOTHING RETURNING id`,[id,canonicalJson(payload),hash,source.repo,source.path,source.commit,contractHash])).rows[0];
-  if(!row) row=(await client.query(`SELECT id FROM ${table} WHERE ${column}=$1 AND payload_sha256=$2 AND source_repo=$3 AND source_path=$4`,[id,hash,source.repo,source.path])).rows[0];
+  if(!row){inserted=false;row=(await client.query(`SELECT id FROM ${table} WHERE ${column}=$1 AND payload_sha256=$2 AND source_repo=$3 AND source_path=$4`,[id,hash,source.repo,source.path])).rows[0];}
   if(!row) throw Error('定义版本未返回身份');
   const object=kind==='activity'?'activities':'workflows';
   await client.query(`UPDATE ${object} SET current_definition_version_id=$2 WHERE id=$1 AND current_definition_version_id IS DISTINCT FROM $2`,[id,row.id]);
-  return row.id;
+  return {id:row.id,inserted};
 }
 async function snapshotSteps(client,activity) {
   const registered=(await client.query('SELECT id,key,step_order,mode,readback,source_sha256 FROM steps WHERE activity_id=$1 AND active ORDER BY step_order',[activity.id])).rows;
@@ -51,8 +53,10 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
     const binding=bindingsByActivity.get(a.id),activitySource=sources.get(a.id);
     const payload={activity_id:a.id,definition_key:`${a.capability_key}.${a.activity_key}`,contract:a.contract,
       steps:await snapshotSteps(client,a),implementation_bindings:binding,resources:a.contract?.resources||{},verification:{preconditions:a.contract?.preconditions||[],postconditions:a.contract?.postconditions||[],steps:a.contract?.steps||[]}};
-    const versionId=await saveVersion(client,'activity',a.id,payload,activitySource);
+    const saved=await saveVersion(client,'activity',a.id,payload,activitySource),versionId=saved.id;
     versions.set(a.id,versionId);
+    // 发布线（迁移 541）：构建登记到内容版本、按冷启动规则动生产指针；SAVEPOINT 内 fail-open，出错不影响同步
+    await runReleaseLineHook(client,'register_build',db=>registerActivityBuild(db,{activityId:a.id,buildId:versionId,inserted:saved.inserted}));
     await client.query('UPDATE workflow_activity_refs SET activity_definition_version_id=$2 WHERE activity_id=$1 AND workflow_id=ANY($3::uuid[]) AND active AND activity_definition_version_id IS DISTINCT FROM $2',[a.id,versionId,workflowIds]);
   }
   for(const id of workflowIds) {
@@ -61,5 +65,6 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
     const payload={workflow_id:id,key:workflow.key,name:workflow.name,capability_id:workflow.capability_id,channel:workflow.channel,form:workflow.form,
       contract:documentsByWorkflow.get(id),activities:refs.map(r=>({reference_id:r.id,slot_key:r.slot_key,sequence_no:r.sequence_no,activity_id:r.activity_id,activity_version_id:versions.get(r.activity_id),source_ref:r.source_ref}))};
     await saveVersion(client,'workflow',id,payload,{...source,path:workflow.source_path||source.path});
+    await runReleaseLineHook(client,'refresh_recipe',db=>refreshWorkflowRecipe(db,id,{cause:'definition_sync'}));
   }
 }

@@ -5,7 +5,7 @@
  * GET /api/brain/activities/:activityId/judgments?limit=20  裁判历史，新→旧，limit 1..100
  * GET /api/brain/activities/:activityId/version-compare?candidate=<版本id>&baseline=<版本id>&min_runs=5&max_runs=50&tolerance=0
  *     同一 Activity 两个定义版本对比（lib/activity-version-compare.js compareActivityVersions），晋级门调用；
- *     baseline 省略取 Activity 当前版本；verdict = not_worse / worse / insufficient_data，带每项指标数字依据。
+ *     发布线迁移后 candidate/baseline 可为内容版本 id 或构建 id，样本按内容合并；baseline 省略取生产版；min_runs > max_runs → 400；verdict = not_worse / worse / insufficient_data，带每项指标数字依据。
  */
 import { Router } from 'express';
 import pool from '../db.js';
@@ -57,6 +57,7 @@ router.get('/activities/:activityId/version-compare', async (req, res) => {
   const maxRuns = intIn(req.query.max_runs, 50, 1, 1000);
   const tolerance = req.query.tolerance === undefined || req.query.tolerance === '' ? 0 : Number(req.query.tolerance);
   if (minRuns === null || maxRuns === null) return res.status(400).json({ error: 'min_runs / max_runs must be integers in 1..1000' });
+  if (minRuns > maxRuns) return res.status(400).json({ error: `min_runs (${minRuns}) must not exceed max_runs (${maxRuns})` });
   if (!Number.isFinite(tolerance) || tolerance < 0 || tolerance > 1) return res.status(400).json({ error: 'tolerance must be a number in 0..1' });
   try {
     return res.json(await compareActivityVersions(pool, req.params.activityId, {

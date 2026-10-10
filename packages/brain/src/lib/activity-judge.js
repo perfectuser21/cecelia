@@ -12,6 +12,7 @@
  * 缓冲与待判队列在内存里，进程重启时未冲的会丢；下一次运行会再触发，也可手动 POST /step-reconcile/:activityId 补判。
  */
 import { reconcileActivity, applyReadbackCell } from './step-reconcile.js';
+import { onJudgmentRecorded } from './release-line-rollback.js';
 
 const DEFAULT_DEBOUNCE_MS = 30_000;
 const DEFAULT_RUN_IDLE_MS = 600_000;
@@ -55,7 +56,7 @@ const INSERT_JUDGMENT = `
  */
 export async function judgeActivity(db, activityId, {
   trigger = 'manual', triggerRef = null, runsWanted = 5, requiredGreen = 5, reconcile = reconcileActivity,
-  applyCell = applyReadbackCell, now = Date.now(), runIdleMs = msFromEnv('ACTIVITY_JUDGE_RUN_IDLE_MS', DEFAULT_RUN_IDLE_MS),
+  applyCell = applyReadbackCell, onRecorded = onJudgmentRecorded, now = Date.now(), runIdleMs = msFromEnv('ACTIVITY_JUDGE_RUN_IDLE_MS', DEFAULT_RUN_IDLE_MS),
   log = console,
 } = {}) {
   const auto = trigger === 'auto';
@@ -71,7 +72,17 @@ export async function judgeActivity(db, activityId, {
       WHERE activity_id = $1 AND run_id = ANY($2::text[]) AND activity_definition_version_id IS NOT NULL
       GROUP BY activity_definition_version_id ORDER BY last DESC`, [activityId, runIds])).rows.map(r => r.version_id) : [];
   const versionId = versionIds[0] ?? null;
-  const stored = { ...report, window_version_ids: versionIds };
+  // 发布线用：每次运行带版本的 span 属于哪些构建（自动退回只认触发运行纯属生产版的），以及窗口里没有任何带版本 span 的运行数
+  //（everConverged 只认 window_unversioned_run_count = 0 的纯净窗口）
+  const runVersionIds = {};
+  if (runIds.length) {
+    const perRun = (await db.query(
+      `SELECT DISTINCT run_id, activity_definition_version_id AS version_id FROM spans
+        WHERE activity_id = $1 AND run_id = ANY($2::text[]) AND activity_definition_version_id IS NOT NULL`, [activityId, runIds])).rows;
+    for (const r of perRun) if (r.run_id) (runVersionIds[r.run_id] ||= []).push(r.version_id);
+  }
+  const stored = { ...report, window_version_ids: versionIds, run_version_ids: runVersionIds,
+    window_unversioned_run_count: runIds.filter(id => !runVersionIds[id]).length };
   const row = (await db.query(INSERT_JUDGMENT, [
     activityId, versionId, report.verdict, Boolean(report.converged), report.consecutive_green ?? 0,
     report.required_green ?? requiredGreen, runIds.length, trigger, triggerRef, JSON.stringify(stored),
@@ -82,6 +93,13 @@ export async function judgeActivity(db, activityId, {
     } catch (e) {
       log.warn(`[activity-judge] ${activityId} readback 格翻色失败（裁判已落库）: ${String(e?.message).slice(0, 200)}`);
     }
+    // 发布线自动退回评估：fire-and-forget，出任何错只记日志，绝不影响上报与裁判落库。
+    // 只在拿到连接池时评估（它要另开事务）；调用方传的是单连接（可能正处在调用方自己的事务里）就跳过，不碰别人的事务。
+    try {
+      if (typeof db?.totalCount === 'number') Promise.resolve()
+        .then(() => onRecorded(db, activityId, { id: row?.id ?? null, trigger_kind: trigger, trigger_ref: triggerRef }, { log }))
+        .catch(e => log.warn(`[activity-judge] ${activityId} 发布线退回评估失败: ${String(e?.message).slice(0, 200)}`));
+    } catch { /* 钩子本身坏了也不影响 */ }
   }
   return { ...stored, activity_definition_version_id: versionId, judgment_id: row?.id ?? null, judged_at: row?.judged_at ?? null };
 }

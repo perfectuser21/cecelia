@@ -95,6 +95,7 @@ import workflowAuthoringRouter from './src/routes/workflow-authoring.js';
 import spansRouter from './src/routes/spans.js';
 import skillSettlementRouter from './src/routes/skill-settlement.js';
 import activityJudgmentsRouter from './src/routes/activity-judgments.js';
+import releaseLineRouter from './src/routes/release-line.js';
 import { createReleasesRouter } from './src/routes/releases.js';
 import { createRunDefinitionsRouter } from './src/routes/run-definitions.js';
 import { createRunReconciliationRouter } from './src/routes/run-reconciliation.js';
@@ -469,6 +470,7 @@ app.use('/api/brain/workflow-authoring', workflowAuthoringRouter);
 app.use('/api/brain', spansRouter); // 执行段上报 POST/GET /spans（价值流建模④，决策 3e867cad，任务 ec643d60）
 app.use('/api/brain', skillSettlementRouter); // 路 B：收敛对账 + 沉淀技能候选（v3.0 第 4 刀，任务 3590ec8f）
 app.use('/api/brain', activityJudgmentsRouter); // 裁判：Activity 最新裁判 / 裁判史 / 新旧版本对比（五块模型，决策 de6dff5d）
+app.use('/api/brain', releaseLineRouter); // 发布线：内容版本 / 生产指针 / 晋级 / 退回 / 流程生产配方（迁移 541，决策 de6dff5d 第 3 步）
 app.use('/api/brain/releases', createReleasesRouter());
 app.use('/api/brain/runs', createRunDefinitionsRouter());
 app.use('/api/brain/runs', createRunReconciliationRouter());

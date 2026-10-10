@@ -78,3 +78,13 @@ describe('GET /activities/:activityId/version-compare', () => {
     r = reqRes({ activityId: ACT }, { candidate: V2 }); await get(path)(r.req, r.res); expect(r.res._status).toBe(404);
   });
 });
+
+describe('发布线修复：min_runs > max_runs', () => {
+  it('min_runs 大于 max_runs → 400，不调库函数', async () => {
+    const { req, res } = reqRes({ activityId: ACT }, { candidate: V2, min_runs: '30', max_runs: '10' });
+    await get('/activities/:activityId/version-compare')(req, res);
+    expect(res._status).toBe(400);
+    expect(res._data.error).toMatch(/min_runs/);
+    expect(mocks.compareActivityVersions).not.toHaveBeenCalled();
+  });
+});
