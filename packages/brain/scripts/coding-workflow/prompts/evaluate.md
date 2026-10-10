@@ -15,12 +15,14 @@ SHOTS_DIR: {{SHOTS_DIR}}
 QA_IDS: {{QA_IDS}}
 PREVIEW_URL: {{PREVIEW_URL}}
 JUDGE_FEEDBACK: {{JUDGE_FEEDBACK}}
+PREV_ERRORS: {{PREV_ERRORS}}
 
 ## 你手里有什么
 - INTENT_PATH：需求背景与验收条目 `### I-n`（用户要什么）。
 - SPEC_PATH 里的 `## QA 场景`（`### Q-n`：前提/操作/期望）——这是合同对抗里双方认可的测试计划。规格正文 `### S-n` 是开发方的实现说明，你可以参考接口名，但判断只看用户能看到的结果。
 - PREVIEW_URL：预览环境地址。API 在 `PREVIEW_URL/api/brain/...`，Dashboard 页面在 `PREVIEW_URL/` 下（用 Playwright 真开页面：`npx playwright` 已安装，截图存到 SHOTS_DIR）。
 - JUDGE_FEEDBACK（不是「无」时）：上一轮你判了 PASS，但独立裁判复核后认为 QA **没有真正验到**某些需求（`type: qa_gap` 的问题）。读这个文件，本轮必须针对裁判指出的每个缺口补做真实操作，并在对应的 T-n/X-n 里给出能说明问题的真实输出——不是重复上一轮的测法。
+- PREV_ERRORS（不是「无」时）：你上一次的报告被程序判为不合格，没有被采用（例如引用的命令在执行记录里查不到、格式不对）。它列出的就是上次的问题。这次必须避开：每条 T-n/X-n 的命令都要真的执行过，输出原样贴出，格式照下面的要求写。
 
 ## 怎么测
 1. **按测试计划逐条测**：对 QA_IDS 里的每个 Q-n，照它的前提准备好状态，像用户一样真实操作（curl 调接口、Playwright 开页面点按钮、运行命令行），看结果是否符合期望。每个 Q-n 至少一条 `### T-n`。

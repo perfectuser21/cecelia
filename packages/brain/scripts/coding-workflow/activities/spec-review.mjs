@@ -12,7 +12,7 @@ import {
 import { sha256File, chainTamperFailure } from '../lib/guards.mjs';
 import { reportErrors } from '../lib/md-chain.mjs';
 import { parseReview, openIssuesAfter } from '../lib/review.mjs';
-import { decide, detectTrend } from '../lib/gan.mjs';
+import { decide, detectTrend, stalled } from '../lib/gan.mjs';
 import { sessionCostUsd } from '../lib/transcript.mjs';
 import { SPEC_FILE, INTENT_FILE, specErrors, specIds, qaScenarios } from '../lib/spec-check.mjs';
 import { INVARIANTS_FILE, loadInvariantIds } from '../lib/invariants.mjs';
@@ -59,13 +59,15 @@ async function runSession(ctx, role, vars) {
 }
 
 /** 读并解析本轮评审；格式问题返回 { errors }，否则 { review }。 */
-function readReview(file, { taskId, ids, intentIds, prevOpen, usedIds }) {
+function readReview(file, { taskId, ids, intentIds, prevOpen, usedIds, requirePivot }) {
   if (!fs.existsSync(file)) return { errors: ['review_missing'] };
   const text = fs.readFileSync(file, 'utf8');
   // 问题可针对 S-n / I-n / QA 场景 Q-n（evaluator 的测试计划）
   const qaIds = qaScenarios(fs.readFileSync(path.join(path.dirname(file), SPEC_FILE), 'utf8')).map((q) => q.id);
   const review = parseReview(text, { specIds: [...ids, ...qaIds], intentIds, priorIds: prevOpen.map((i) => i.id), usedIds });
   const errors = [...reportErrors(text, { taskId, step: 'spec_review', coversFile: SPEC_FILE, ids }), ...review.errors];
+  // 原地打转时评审必须给出换思路（审计 #27）
+  if (requirePivot && !/^## 换思路\s*$/m.test(text)) errors.push('pivot_missing');
   return errors.length > 0 ? { errors } : { review };
 }
 
@@ -90,6 +92,9 @@ await runActivity(async (input) => {
   const usedIds = [];
   let cost = 0;
   let badStreak = 0;
+  let reviewErrors = [];
+  // 重试必须带新信息（审计 #33）：每个会话都拿到当前 02 的程序校验问题（活动被重试时，上次改写可能把规格改坏了）
+  const specErrorsNow = () => specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds }).join(' ') || '无';
 
   const overBudget = () => cost > budget
     && fail('fatal', 'gan_budget_exceeded', { evidence: [{ cost_usd: money(cost), budget_usd: budget, rounds: history.length, open_issues: brief(prevOpen) }] });
@@ -110,6 +115,7 @@ await runActivity(async (input) => {
     const reviewPath = path.join(dir, reviewName(round));
     fs.rmSync(reviewPath, { force: true });
     const ids = specIds(fs.readFileSync(specPath, 'utf8'));
+    const stuck = stalled(history);
     const reviewed = await runSession(ctx, 'spec_review', {
       ...base,
       REVIEW_PATH: reviewPath,
@@ -119,20 +125,25 @@ await runActivity(async (input) => {
       PREV_REVIEW_PATH: round > 1 ? path.join(dir, reviewName(round - 1)) : '无',
       PREV_RESPONSE_PATH: round > 1 ? path.join(dir, responseName(round - 1)) : '无',
       USED_IDS: usedIds.join(',') || '无',
+      SPEC_ERRORS: specErrorsNow(),
+      PREV_REVIEW_ERRORS: reviewErrors.join(' ') || '无',
+      STUCK: stuck ? '是' : '否',
     });
     if (reviewed.failure) return reviewed.failure;
     cost += reviewed.cost;
     const blown = overBudget();
     if (blown) return blown;
 
-    const { review, errors } = readReview(reviewPath, { taskId, ids, intentIds, prevOpen, usedIds });
+    const { review, errors } = readReview(reviewPath, { taskId, ids, intentIds, prevOpen, usedIds, requirePivot: stuck });
     if (errors) {
       badStreak += 1;
+      reviewErrors = errors;
       log(`[spec_review] 第 ${round} 轮评审格式不合格（连续 ${badStreak} 次）：${errors.join(' ')}`);
       if (badStreak >= MAX_BAD_REVIEW_STREAK) return fail('fatal', 'review_invalid', { evidence: [{ review_errors: errors }] });
       continue;
     }
     badStreak = 0;
+    reviewErrors = [];
     usedIds.push(...review.issues.map((i) => i.id));
     const open = openIssuesAfter(prevOpen, review);
     history.push({ scores: review.scores, specLines: fs.readFileSync(specPath, 'utf8').split('\n').length });
@@ -147,6 +158,7 @@ await runActivity(async (input) => {
     fs.rmSync(responsePath, { force: true });
     const revised = await runSession(ctx, 'spec_revise', {
       ...base, REVIEW_PATH: reviewPath, RESPONSE_PATH: responsePath, OPEN_ISSUES: open.map((i) => i.id).join(',') || '无',
+      SPEC_ERRORS: specErrorsNow(), STUCK: stalled(history) ? '是' : '否',
     });
     if (revised.failure) return revised.failure;
     cost += revised.cost;

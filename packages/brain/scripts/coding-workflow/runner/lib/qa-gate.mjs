@@ -298,6 +298,8 @@ async function qaRound(ctx, pr, s, signal) {
       intent_ids: intent.intentIds, intent_sha256: intent.intentSha256, pr_number: pr.number, round, head_sha: pr.headRefOid,
       transcript_path: transcript,
       ...(prior?.failure_class === 'qa_insufficient' ? { judge_feedback: `${intent.sprintDir}/${prior.file}` } : {}),
+      // 重试必须带新信息（审计 #33）：上次评估不合格的原因交给这次
+      ...(s.last_eval_error ? { prev_errors: `${s.last_eval_error.reason_code}: ${s.last_eval_error.evidence}` } : {}),
       budget: { max_duration_s: Math.round(EVALUATE_TIMEOUT_MS / 1000) },
     }, signal);
     const qa = result?.status === 'completed' ? result.outputs?.qa : null;
@@ -305,6 +307,7 @@ async function qaRound(ctx, pr, s, signal) {
       s.bad = (s.bad ?? 0) + 1;
       const reason = result?.reason_code ?? 'evaluate_crashed';
       ctx.log(`QA 门 PR #${pr.number} 评估出错（连续 ${s.bad} 次）：${reason} ${JSON.stringify(result?.evidence ?? []).slice(0, 500)}`);
+      s.last_eval_error = { reason_code: reason, evidence: JSON.stringify(result?.evidence ?? []).slice(0, 1500) };
       if (result?.failure_class === 'fatal' || result?.failure_class === 'needs_human' || s.bad >= cfg.qaMaxBadStreak) {
         return escalate(ctx, pr, s, intent.taskId, { type: 'qa_evaluator_broken', reason_code: reason, evidence: result?.evidence ?? [], transcript });
       }
@@ -312,6 +315,7 @@ async function qaRound(ctx, pr, s, signal) {
       return undefined;
     }
     s.bad = 0;
+    delete s.last_eval_error;
     const fails = qa.failed.length + qa.blocking.length;
     const report0 = `${intent.sprintDir}/${result.outputs.qa_report_file}`;
     const entry = { round, head: pr.headRefOid, verdict: qa.verdict, fails, report: report0, cost_usd: qa.cost_usd, at: new Date().toISOString() };

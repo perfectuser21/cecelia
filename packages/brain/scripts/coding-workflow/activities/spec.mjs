@@ -22,14 +22,19 @@ await runActivity(async (input) => {
   if (idsError) return fail('fatal', idsError);
 
   const specPath = path.join(dir, SPEC_FILE);
+  const invariantIds = loadInvariantIds(dir);
+  // 重试必须带新信息（审计 #33）：上次写出的 02 还在 = 上次没通过，把它的校验问题交给这次
+  const prevErrors = fs.existsSync(specPath)
+    ? specErrors(fs.readFileSync(specPath, 'utf8'), input.task_id, intentIds, { invariantIds })
+    : [];
   const prompt = loadPrompt('spec', {
     TASK_ID: input.task_id,
     INTENT_PATH: path.join(dir, INTENT_FILE),
     SPEC_PATH: specPath,
     INTENT_IDS: intentIds.join(','),
     INVARIANTS_PATH: path.join(dir, INVARIANTS_FILE),
+    PREV_ERRORS: prevErrors.join(' ') || '无',
   });
-  const invariantIds = loadInvariantIds(dir);
 
   // 重试/重跑时旧产物会被当成新产物，先删
   fs.rmSync(specPath, { force: true });

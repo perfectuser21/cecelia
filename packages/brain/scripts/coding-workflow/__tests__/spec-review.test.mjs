@@ -107,7 +107,8 @@ describe('spec_review 活动 v2（合同对抗）', () => {
 
   it('不设轮数上限：分数稳步上升、每轮都有新阻断问题，跑到第 6 轮才通过', async () => {
     const reviews = [3, 4, 5, 6, 6].map((sc, i) => ({ scores: sc, prior: i ? [{ id: `R-${i}`, status: '关闭' }] : [], issues: [blocker(`R-${i + 1}`)] }));
-    reviews.push({ scores: 8, prior: [{ id: 'R-5', status: '关闭' }] });
+    // 第 4、5 轮同分（6→6）= 打转，第 6 轮评审必须写换思路（审计 #27）
+    reviews.push({ scores: 8, prior: [{ id: 'R-5', status: '关闭' }], pivot: true });
     const r = await run({ reviews });
     expect(r.result.status).toBe('completed');
     expect(r.result.outputs.gan).toMatchObject({ verdict: 'APPROVED', rounds: 6 });
@@ -118,7 +119,8 @@ describe('spec_review 活动 v2（合同对抗）', () => {
     const r = await run({ reviews: [
       { scores: sc(8), issues: [blocker('R-1')] },
       { scores: sc(5), prior: [{ id: 'R-1', status: '坚持' }], issues: [blocker('R-2')] },
-      { scores: sc(8), prior: [{ id: 'R-1', status: '坚持' }, { id: 'R-2', status: '坚持' }] },
+      // 第 2 轮总分下降 → 第 3 轮评审处于打转，要写换思路（审计 #27）
+      { scores: sc(8), prior: [{ id: 'R-1', status: '坚持' }, { id: 'R-2', status: '坚持' }], pivot: true },
     ] });
     expect(r.result.status).toBe('completed');
     expect(r.result.outputs.gan).toMatchObject({ verdict: 'FORCED', rounds: 3, trend: 'oscillating' });
@@ -128,7 +130,7 @@ describe('spec_review 活动 v2（合同对抗）', () => {
   });
 
   it('规格越改越长（评分不动）→ diverging 强制通过', async () => {
-    const r = await run({ reviews: [{ scores: 6, issues: [blocker('R-1')] }, { scores: 6, prior: [{ id: 'R-1', status: '坚持' }] }], revise: { grow: 30 } });
+    const r = await run({ reviews: [{ scores: 6, issues: [blocker('R-1')] }, { scores: 6, prior: [{ id: 'R-1', status: '坚持' }], pivot: true }], revise: { grow: 30 } });
     expect(r.result.outputs.gan).toMatchObject({ verdict: 'FORCED', trend: 'diverging' });
   });
 
