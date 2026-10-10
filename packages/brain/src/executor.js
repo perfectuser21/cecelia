@@ -47,7 +47,6 @@ import {
   CONTENT_PIPELINE_TYPES as CONTENT_PIPELINE_EXTERNAL_WORKER_TYPES,
   EXTERNAL_WATCHDOG_TASK_TYPES,
   EXECUTOR_SKILL_MAP,
-  GUIDED_TASK_TYPES,
 } from './lib/task-type-registry.js';
 import { CLAUDE_CHANNEL_RETIRED_CODE } from './lib/claude-channel.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
@@ -3584,44 +3583,17 @@ async function _triggerCeceliaRunInner(task) {
 }
 
 /**
- * 判定任务是否会落到已退役的 Claude 桥接路径（_triggerCeceliaRunInner 第 3 步 / 显式 executor=claude）。
- * 与 _triggerCeceliaRunInner 的路由顺序保持一致；拿不准的（只给 machine、要异步 resolveExecutor 的显式路由，
- * 以及执行体由分配引导员稍后决定的 GUIDED 类型）返回 false，交给 triggerCeceliaRun 兜底收口。
- */
-export function routesToRetiredClaudeBridge(task) {
-  if (!task) return false;
-  const taskType = task.task_type;
-  if (REVIEW_TASK_TYPES.includes(taskType)) return false;
-  // 逐条镜像 _triggerCeceliaRunInner 里先于桥接返回的原生分支（staging_e2e / qiumi_task / script_run / harness relay）
-  if (taskType === 'staging_e2e' || taskType === 'qiumi_task' || taskType === 'script_run') return false;
-  if (taskType === 'harness_initiative' || taskType === 'golden_path_proposal') return false;
-  if (getInternalTaskHandler(taskType)) return false;
-  if (_RETIRED_HARNESS_TYPES.has(taskType)) return false;
-  const explicitExecutor = task.payload?.executor;
-  if (explicitExecutor || task.payload?.machine) return explicitExecutor === 'claude';
-  const location = getCachedLocation(taskType) ?? getTaskLocation(taskType);
-  if (location === 'xian' || location === 'xian_m1') return false;
-  if (taskType === 'spec_review' || taskType === 'code_review_gate') return false;
-  if (location === 'us' && getCachedConfig(taskType)?.executor === 'codex') return false;
-  if (GUIDED_TASK_TYPES.includes(taskType)) return false;
-  return true;
-}
-
-/**
  * Check if cecelia-run is available (via cecelia-bridge on port 3457)
  *
- * 传入候选任务时先判 Claude 通道退役：落在 claude 桥接路径 → 不探活，直接不可用（claude_channel_retired），
- * dispatcher 走既有 no_executor 跳过语义。不走 claude 桥接的任务（codex/西安/review 等）本就不经 :3457，
- * 而桥接已不随 Brain 自启，不能再拿它的探活结果挡这些任务。不传 task 的调用方（健康检查等）保持原探活行为。
+ * 传入候选任务（派发前检查）→ 恒可用：Claude 桥接已退役（任务 76a160b3），探活它没有意义，
+ * 还会把不经 :3457 的 codex/西安/OpenClaw 任务误判成不可用。落到 claude 路径的任务在执行时由
+ * triggerCeceliaRun 返回 claude_channel_retired 拦截。不传 task 的调用方（健康检查等）保持原探活行为。
  */
 async function checkCeceliaRunAvailable(task = null) {
-  const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
-  if (routesToRetiredClaudeBridge(task)) {
-    return { available: false, path: EXECUTOR_BRIDGE_URL, retired: true, error: CLAUDE_CHANNEL_RETIRED_CODE };
-  }
   if (task) {
     return { available: true, path: null, bridge: false };
   }
+  const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
   try {
     const response = await fetch(`${EXECUTOR_BRIDGE_URL}/health`, { method: 'GET', signal: AbortSignal.timeout(3000) });
     if (response.ok) {

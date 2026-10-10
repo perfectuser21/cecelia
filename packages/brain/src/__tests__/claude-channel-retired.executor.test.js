@@ -4,8 +4,7 @@ vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {
 /**
  * Claude 无头通道下线 —— executor 的 claude 桥接派发（任务 76a160b3）
  *
- * - checkCeceliaRunAvailable(task)：任务落在 claude 桥接路径 → {available:false, error:'claude_channel_retired'}，
- *   不探活 bridge；codex 等其它路径不经 :3457，直接可用、不探活（桥接已不随 Brain 自启，不能挡它们）；
+ * - checkCeceliaRunAvailable(task)：传入任务恒可用，不探活桥接、不预测路由（退役拦截只在执行时）；
  *   不传 task 的健康检查照旧探活
  * - triggerCeceliaRun：claude 桥接 / Docker claude / 显式 executor=claude 一律不 fetch /trigger-cecelia、
  *   不起容器，返回 reason=claude_channel_retired
@@ -65,28 +64,28 @@ describe('executor：claude 桥接派发下线', () => {
 
   const bridgeCalls = () => fetchMock.mock.calls.filter(([url]) => /trigger-cecelia|:3457/.test(String(url)));
 
-  it('checkCeceliaRunAvailable(claude 桥接任务) → 不可用 claude_channel_retired，不探活 bridge', async () => {
-    const r = await executor.checkCeceliaRunAvailable(CLAUDE_BOUND);
-    expect(r).toMatchObject({ available: false, error: 'claude_channel_retired' });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('checkCeceliaRunAvailable(显式 executor=claude) → 不可用 claude_channel_retired', async () => {
-    const r = await executor.checkCeceliaRunAvailable({ ...CLAUDE_BOUND, task_type: 'codex_dev', payload: { executor: 'claude' } });
-    expect(r).toMatchObject({ available: false, error: 'claude_channel_retired' });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it.each([
+    ['claude 桥接任务', {}, {}],
+    ['显式 executor=claude', {}, { task_type: 'codex_dev', payload: { executor: 'claude' } }],
     ['西安 codex（location=xian）', { location: 'xian' }, { task_type: 'codex_dev' }],
     ['显式 executor=codex', {}, { payload: { executor: 'codex', machine: 'xian-m4' } }],
     ['动态 executor=codex', { dynamic: 'codex' }, {}],
-  ])('checkCeceliaRunAvailable(%s) 不受影响：直接可用，不探活已不自启的桥接', async (_label, env, patch) => {
+  ])('checkCeceliaRunAvailable(%s) → 恒可用，不探活桥接、不预测路由', async (_label, env, patch) => {
     if (env.location) getTaskLocationMock.mockReturnValue(env.location);
     if (env.dynamic) getCachedConfigMock.mockReturnValue({ executor: env.dynamic });
     const r = await executor.checkCeceliaRunAvailable({ ...CLAUDE_BOUND, ...patch });
     expect(r.available).toBe(true);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('routesToRetiredClaudeBridge 不再导出（不在派发前手抄路由表预测）', () => {
+    expect(executor.routesToRetiredClaudeBridge).toBeUndefined();
+  });
+
+  it('checkCeceliaRunAvailable() 桥接不在 → 健康检查显示不可用', async () => {
+    fetchMock.mockRejectedValueOnce(Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED' } }));
+    const r = await executor.checkCeceliaRunAvailable();
+    expect(r).toMatchObject({ available: false, error: 'Bridge not running' });
   });
 
   it('checkCeceliaRunAvailable() 不传 task（健康检查）→ 照旧探活 /health', async () => {

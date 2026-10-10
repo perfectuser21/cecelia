@@ -725,6 +725,10 @@ export async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'dispatch_exception', task_id: nextTask?.id, error: err.message, actions };
   };
 
+  // Claude 无头通道退役（任务 76a160b3）：执行时才知道落到 claude 路径，triggerCeceliaRun 返回
+  // claude_channel_retired 后同样记入 noExecutorSkipIds，回到这里换下一个候选。
+  let execResult;
+  candidateLoop: for (;;) {
   // HOL fix (0014cd42)：外层循环把「claim 之后的 executor 可用性检查」纳入候选重选——
   // no_executor 时 revert + 记入 noExecutorSkipIds，回来选下一个候选，而不是整个 tick 直接放弃。
   // circuit_breaker / cortex / retired / harness 并发上限等分支保持原「直接 return 让位」语义不变。
@@ -1200,7 +1204,6 @@ export async function dispatchNextTask(goalIds) {
   } // dispatchLoop
 
   // 6. 真正派发（claim 已持有；任何未预期异常仍走 postClaimException 兜底）
-  let execResult;
   try {
   const fullTaskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [nextTask.id]);
   if (fullTaskResult.rows.length === 0) {
@@ -1387,12 +1390,18 @@ export async function dispatchNextTask(goalIds) {
 
   if (!execResult.success && (execResult.reason === CLAUDE_CHANNEL_RETIRED_CODE || execResult.error === CLAUDE_CHANNEL_RETIRED_CODE)) {
     // Claude 无头通道已退役（任务 76a160b3）：不是执行故障，与 no_executor 同语义——
-    // 回 queued、释放 claim，不写 failed_dispatch、不计熔断/autoblock
+    // 回 queued、释放 claim，不写 failed_dispatch、不计熔断/autoblock，换下一个候选
     await updateTask({ task_id: nextTask.id, status: 'queued' });
     await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`, [nextTask.id]);
     await releaseDeviceLockIfHeld(nextTask);
     await recordDispatchResult(pool, false, 'no_executor', undefined, nextTask.id);
-    return { dispatched: false, reason: 'no_executor', task_id: nextTask.id, error: CLAUDE_CHANNEL_RETIRED_CODE, actions };
+    noExecutorSkipIds.push(nextTask.id);
+    if (noExecutorSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+      tickLog(`[tick] no_executor: 跳过数达上限 (${MAX_SKIP_HEAD_FOR_BLOCKED})，本 tick 放弃派发`);
+      return { dispatched: false, reason: 'no_executor', task_id: nextTask.id, error: CLAUDE_CHANNEL_RETIRED_CODE, no_executor_skipped: noExecutorSkipIds.length, actions };
+    }
+    tickLog(`[tick] no_executor: task=${String(nextTask.id).slice(0, 8)} (${CLAUDE_CHANNEL_RETIRED_CODE}) 跳过，试下一候选`);
+    continue candidateLoop;
   }
 
   if (!execResult.success) {
@@ -1534,6 +1543,8 @@ export async function dispatchNextTask(goalIds) {
   } catch (err) {
     return await postClaimException(err);
   }
+  break;
+  } // candidateLoop
 
   // ─────────────────────────────────────────────────────────────────────────
   // triggerCeceliaRun 已经 success=true → task 已真正派发出去（进程/graph 已 spawn）。
