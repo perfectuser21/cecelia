@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.417.5
+**Brain 版本**: 1.417.6
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.417.6 — coding harness：规格校验错误带上改法再交给重试
+
+- 金丝雀 3（任务 1329bba0）在 spec 卡死：第 1 次 4 条铁律 `unaddressed`，第 2 次带着上次错误码重试降到 1 条，两次机会用完失败。现场看，模型其实写了实质的「不适用」理由，只是没以「不适用：」开头、也没引用 S-n/Q-n。重试只拿到 `INV-50954d28:unaddressed` 这种错误码，不知道该怎么改。
+- 新增 `explainSpecErrors`：每个错误码附带具体改法（铁律对照两种正确写法、缺哪个小节、Q-n 缺哪个字段、upstream 漏了哪个 I-n 等），认不出的错误码原样保留，多条用分号连成一行。
+- spec 重试的 `PREV_ERRORS`、合同对抗评审和改写的 `SPEC_ERRORS` 都改用带改法的说明。
 
 ## Brain 1.417.5 — coding workflow 执行记录接入 runs/spans，Notion「最近执行」可见
 
