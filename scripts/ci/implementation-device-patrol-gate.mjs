@@ -9,7 +9,7 @@ const read=(root,revision,path)=>git(root,'show',`${revision}:${path}`);
 const exists=(root,revision,path)=>{try{return !!git(root,'ls-tree','-z',revision,'--',path).length;}catch{return false;}};
 const save=(root,name,value)=>writeFileSync(join(root,name),JSON.stringify(value,null,2)+'\n');
 const REVIEW_TEST='scripts/ci/__tests__/pr-review-thinking.test.mjs';
-const governancePaths=new Set(['.github/workflows/pr-review.yml',REVIEW_TEST,'.github/workflows/phone-account-patrol.yml','.github/workflows/scripts/smoke/phone-account-patrol-smoke.sh','.github/workflows/scripts/smoke-baseline.txt','.github/workflows/implementation-impact.yml','scripts/ci/__tests__/implementation-impact-workflow.test.mjs','scripts/ci/__tests__/pilot-release-workflow.test.mjs']);
+const governancePaths=new Set(['.gitleaksignore','.github/workflows/pr-review.yml',REVIEW_TEST,'.github/workflows/phone-account-patrol.yml','.github/workflows/scripts/smoke/phone-account-patrol-smoke.sh','.github/workflows/scripts/smoke-baseline.txt','.github/workflows/implementation-impact.yml','scripts/ci/__tests__/implementation-impact-workflow.test.mjs','scripts/ci/__tests__/pilot-release-workflow.test.mjs']);
 const projectDoc=path=>/^\.(?:prd|dod)-cp-10101635-phone-account-patrol\.md$/.test(path);
 function contractProof(root,revision,registration,{emptyAllowed=false}={}){
  if(!exists(root,revision,PATROL_PATH)){
@@ -21,13 +21,23 @@ function contractProof(root,revision,registration,{emptyAllowed=false}={}){
  return {...patrolSourceProof(contract,revision,path=>read(root,revision,path)),kind:'fixed_git_source'};
 }
 function runAssertion(root,path){
- const env={PATH:`${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,CI:'true',NODE_ENV:'test',LANG:'C.UTF-8',PYTHONDONTWRITEBYTECODE:'1'};
+ const env={PATH:`${dirname(process.execPath)}:${process.platform==='darwin'?'/opt/homebrew/bin:':''}/usr/bin:/bin:/usr/sbin:/sbin`,CI:'true',NODE_ENV:'test',LANG:'C.UTF-8',PYTHONDONTWRITEBYTECODE:'1'};
  const result=spawnSync(process.execPath,['--test',path],{cwd:root,env,encoding:'utf8',timeout:300000,maxBuffer:16*1024*1024});
  return {assertion_ref:`node --test ${path}`,test_sha256:sha(readFileSync(join(root,path))),exit_code:result.status,error:result.error?.code||result.signal||null,stdout_sha256:sha(result.stdout||''),stderr_sha256:sha(result.stderr||'')};
 }
 /** CI配置消费必须真实校验；新配置不得把检查改成可跳过或continue-on-error。 */
+export function validatePatrolSecretIgnore(before,after,readLine){
+ if(!after.startsWith(before))fail('PATROL_SECRET_IGNORE_CHANGED');
+ const added=after.slice(before.length).split('\n').map(line=>line.trim()).filter(line=>line&&!line.startsWith('#'));
+ if(added.length!==1)fail('PATROL_SECRET_IGNORE_SCOPE');
+ const match=/^([a-f0-9]{40}):scripts\/phone-account-patrol\/test_deploy\.py:generic-api-key:7$/.exec(added[0]);if(!match)fail('PATROL_SECRET_IGNORE_SCOPE');
+ const sourceLine=readLine(match[1],'scripts/phone-account-patrol/test_deploy.py',7).trim();
+ const exact="good = {key: '66fe22f5-1a60-4e23-bcfb-7b4df2f0fbff' for key in ['single_workflow_id', 'batch_workflow_id', 'schedule_id', 'project_id']}";
+ if(sourceLine!==exact)fail('PATROL_SECRET_IGNORE_NOT_PUBLIC_IDENTITY');return {fingerprint:added[0],historical_line_sha256:sha(sourceLine)};
+}
 function governanceProof(root,base,head,path){
- const bytes=read(root,head,path),text=bytes.toString();
+ const bytes=read(root,head,path),text=bytes.toString();let extra={};
+ if(path==='.gitleaksignore')extra=validatePatrolSecretIgnore(read(root,base,path).toString(),text,(revision,file,line)=>{git(root,'merge-base','--is-ancestor',revision,head);return read(root,revision,file).toString().split('\n')[line-1]||'';});
  if(path.endsWith('.yml')&&(/continue-on-error:\s*true/.test(text)||/allow_failure|skip.check|--no-verify/.test(text)))fail('PATROL_GOVERNANCE_FAIL_OPEN');
  if(path==='.github/workflows/scripts/smoke-baseline.txt'){
   const before=read(root,base,path).toString().trim().split('\n'),after=text.trim().split('\n');
@@ -36,7 +46,7 @@ function governanceProof(root,base,head,path){
  if(path==='.github/workflows/pr-review.yml'&&(!text.includes('thinking')||!text.includes('disabled')||!text.includes('4096')||!text.includes('exit 1')))fail('PATROL_REVIEW_CONTRACT_CHANGED');
  if(path==='.github/workflows/phone-account-patrol.yml'&&(!text.includes('unittest')||!text.includes('compileall')))fail('PATROL_CI_REGRESSION_MISSING');
  if(path==='.github/workflows/scripts/smoke/phone-account-patrol-smoke.sh'&&(!text.includes('unittest')||!text.includes('compileall')||!text.includes('set -e')))fail('PATROL_SMOKE_CHECK_MISSING');
- return {path,kind:projectDoc(path)?'project_document':'verification_governance',owner:'开发交付治理',capability_id:'ec4eb591-e064-4886-a7b6-4452cdf333d2',head_sha256:sha(bytes),base_sha256:exists(root,base,path)?sha(read(root,base,path)):null};
+ return {...extra,path,kind:projectDoc(path)?'project_document':'verification_governance',owner:'开发交付治理',capability_id:'ec4eb591-e064-4886-a7b6-4452cdf333d2',head_sha256:sha(bytes),base_sha256:exists(root,base,path)?sha(read(root,base,path)):null};
 }
 export async function runDevicePatrolGate(options){
  const {repoRoot,base,head,outputDir,snapshotBase,snapshotHead,mode}=options;mkdirSync(outputDir,{recursive:true});
