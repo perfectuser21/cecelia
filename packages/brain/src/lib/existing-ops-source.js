@@ -1,5 +1,6 @@
 /** 已有工厂活动的只读消费者证据；不执行源码，也不声明完整流程可运行。 */
 import { createHash } from 'node:crypto';
+import { posix } from 'node:path';
 import yaml from 'js-yaml';
 let parse;
 async function requireParser() {
@@ -67,6 +68,63 @@ function nativeTestSelectorProven(text) {
   const test = config.arguments[0]?.properties?.find(p => p.key?.name === 'test')?.value;
   const include = test?.properties?.find(p => p.key?.name === 'include')?.value;
   return include?.type === 'ArrayExpression' && include.elements.some(n => literal(n, 'src/**/*.{test,spec}.?(c|m)[jt]s?(x)'));
+}
+/** 仅证明现有毕业池，避免逐个远程读取整个 unit 树。未知配置/语法不能扩大认领。 */
+function regressionSelectors(text) {
+  const program = ast(text);
+  const imported = program.body.find(n => n.type === 'ImportDeclaration' && literal(n.source, 'vitest/config'));
+  if (!imported?.specifiers.some(n => n.type === 'ImportSpecifier' && n.imported.name === 'defineConfig' && n.local.name === 'defineConfig')) throw Error('selector_import_unproven');
+  const config = program.body.find(n => n.type === 'ExportDefaultDeclaration')?.declaration;
+  if (config?.type !== 'CallExpression' || config.callee?.name !== 'defineConfig' || config.arguments.length !== 1) throw Error('selector_config_unproven');
+  const object = config.arguments[0];
+  const property = (parent, key) => {
+    if (parent?.type !== 'ObjectExpression' || parent.properties.some(p => p.type === 'SpreadElement' || p.computed)) throw Error('selector_object_unproven');
+    const matches = parent.properties.filter(p => (p.key?.name ?? p.key?.value) === key);
+    if (matches.length !== 1 || matches[0].kind !== 'init') throw Error('selector_property_unproven');
+    return matches[0].value;
+  };
+  const test = property(object, 'test');
+  const postgres = integrationConfigInputs(text).map(path => path.slice('packages/brain/'.length));
+  const array = node => {
+    if (node?.type !== 'ArrayExpression') throw Error('selector_array_unproven');
+    return node.elements.flatMap(n => {
+      if (n?.type === 'Literal' && typeof n.value === 'string') return [n.value];
+      if (n?.type === 'SpreadElement' && n.argument?.name === 'POSTGRES_INTEGRATION_TESTS') return postgres;
+      throw Error('selector_literal_unproven');
+    });
+  };
+  // 支持当前配置实际使用的 glob 子集；新语法必须重新证明，不能猜匹配结果。
+  const compile = pattern => {
+    if (!pattern || pattern.startsWith('/') || /[\\\0]/.test(pattern)) throw Error('selector_path_unproven');
+    const normalized = posix.normalize(`packages/brain/${pattern}`);
+    if (normalized === '..' || normalized.startsWith('../')) throw Error('selector_escapes_repo');
+    let result = '';
+    for (let i = 0; i < normalized.length;) {
+      const rest = normalized.slice(i);
+      if (rest.startsWith('**/') && (i === 0 || normalized[i - 1] === '/')) { result += '(?:[^/]+/)*'; i += 3; }
+      else if (rest === '**' && (i === 0 || normalized[i - 1] === '/')) { result += '.*'; i += 2; }
+      else if (rest.startsWith('**')) throw Error('selector_globstar_unproven');
+      else if (rest[0] === '*') { result += '[^/]*'; i++; }
+      else if (rest.startsWith('?(')) {
+        const group = rest.match(/^\?\(([a-zA-Z]+(?:\|[a-zA-Z]+)*)\)/);
+        if (!group) throw Error('selector_extglob_unproven');
+        result += `(?:${group[1]})?`; i += group[0].length;
+      } else if (rest[0] === '?') { result += '[^/]'; i++; }
+      else if (rest[0] === '{') {
+        const group = rest.match(/^\{([a-zA-Z0-9_-]+(?:,[a-zA-Z0-9_-]+)+)\}/);
+        if (!group) throw Error('selector_braces_unproven');
+        result += `(?:${group[1].split(',').join('|')})`; i += group[0].length;
+      } else if (rest[0] === '[') {
+        const group = rest.match(/^\[([a-zA-Z0-9]+)\]/);
+        if (!group) throw Error('selector_class_unproven');
+        result += group[0]; i += group[0].length;
+      } else if (/^[a-zA-Z0-9_/@:-]$/.test(rest[0])) { result += rest[0]; i++; }
+      else if (rest[0] === '.') { result += '\\.'; i++; }
+      else throw Error('selector_glob_unproven');
+    }
+    return new RegExp(`^${result}$`);
+  };
+  return { include: array(property(test, 'include')).map(compile), exclude: array(property(test, 'exclude')).map(compile) };
 }
 function nativeIntegrationConfigProven(text) {
   const program = ast(text);
@@ -269,6 +327,20 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     requireProof(ci && workflowRuns(ci).some(r => shellLines(r.run.replace(/\\\r?\n/g, ' ')).some(line => /^npx vitest run\s+--config vitest\.integration\.config\.js\b/.test(line))), 'ci_integration_unproven');
     requireProof(config && nativeTestSelectorProven(config), 'native_test_selector_unproven');
     requireProof(integrationConfig && nativeIntegrationConfigProven(integrationConfig), 'native_integration_config_unproven');
+    const selectors = config ? regressionSelectors(config) : null;
+    if (selectors) for (const path of paths.filter(path => path.startsWith('tests/regression/') && !path.split('/').some(part => part.startsWith('.'))
+      && selectors.include.some(pattern => pattern.test(path)) && !selectors.exclude.some(pattern => pattern.test(path)))) {
+      if (await read(path)) relations.push({ consumer_path: 'packages/brain/vitest.config.js', input_path: path,
+        kind: 'literal_vitest_regression_selector', selector: 'native_nightly_include_minus_exclude', revision });
+    }
+    const ciDoc = ci ? yaml.load(ci) : null, versionJob = 'brain-version-bump-gate', versionPath = 'scripts/ci/check-brain-version-bump.sh';
+    if (ciDoc?.jobs?.[versionJob]) {
+      const job = ciDoc.jobs[versionJob];
+      const invoked = job.if === "github.event_name == 'pull_request'" && ciDoc.jobs['ci-passed']?.needs?.includes(versionJob)
+        && job.steps?.some(step => step.if === undefined && typeof step.run === 'string' && step.run.trim() === `bash ${versionPath}`);
+      if (requireProof(invoked, 'required_version_gate_unproven') && await read(versionPath))
+        relations.push({ consumer_path: '.github/workflows/ci.yml', input_path: versionPath, kind: 'required_pr_bash_gate', revision });
+    }
     // 老main没有新入口时保留旧证据；一旦入口存在，其真实条件流与所有依赖必须全部证明。
     let multiWorkflow=false;
     if(tree.has(IMPACT_WORKFLOW)){

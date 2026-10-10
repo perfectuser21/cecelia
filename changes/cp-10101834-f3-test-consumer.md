@@ -1,0 +1,3 @@
+## Brain {VERSION} — F3真实毕业池与版本检查来源
+
+F3已有消费者以固定Git字节解析Vitest导出的literal include/exclude及已证明的POSTGRES清单展开，保守枚举真实tests/regression子池并保留内容摘要/修订及选择关系；不逐文件远程读取整个unit树。固定CI required PR版本gate的真实直接bash命令证明检查脚本来源。动态配置、不支持glob、假命令或缺失blob保持UNKNOWN及空绑定，完整Workflow仍不可执行。任务0cdef0e1，归属F3，随正式手机巡查来源准入PR集成发布。
