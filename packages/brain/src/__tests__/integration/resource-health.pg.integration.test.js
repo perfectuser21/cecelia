@@ -1,4 +1,4 @@
-/** 迁移 538 + resource-health 真库行为（任务 5bf2512a）：上报写当前状态、状态变化由触发器留历史、调度前检查读真表。每个用例事务内跑，结束回滚。 */
+/** 迁移 539 + resource-health 真库行为（任务 5bf2512a）：上报写当前状态、状态变化由触发器留历史、调度前检查读真表。每个用例事务内跑，结束回滚。 */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';

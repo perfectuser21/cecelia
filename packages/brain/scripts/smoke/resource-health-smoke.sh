@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# resource-health-smoke — 资源健康进仓库（迁移 538，决策 de6dff5d 第 5 步，任务 5bf2512a）真库真代码火：
+# resource-health-smoke — 资源健康进仓库（迁移 539，决策 de6dff5d 第 5 步，任务 5bf2512a）真库真代码火：
 # 执行端上报账号切换结果 → 按三态判据落当前状态；状态变化由触发器留历史；
 # 调度前检查读真表：被风控/掉线的资源挡住并给原因，没记录的放行；仓库物件汇总视图给最差状态。
 # 纯真 PG + 真函数，无 mock；CI real-env-smoke 在 cecelia_test 上跑。
@@ -30,9 +30,9 @@ cleanup
 
 # 1. 结构
 for t in resource_health resource_health_events v_warehouse_item_health; do
-  [[ "$(q "SELECT to_regclass('public.$t') IS NOT NULL")" == "t" ]] || fail "缺 $t（迁移 538 未跑？）"
+  [[ "$(q "SELECT to_regclass('public.$t') IS NOT NULL")" == "t" ]] || fail "缺 ${t}（迁移 539 未跑？）"
 done
-pass "迁移 538：当前状态表、状态变化历史表、仓库物件健康汇总视图齐全"
+pass "迁移 539：当前状态表、状态变化历史表、仓库物件健康汇总视图齐全"
 
 # 2. 真函数：账号切换三态 → 上报 → 调度前检查
 q "INSERT INTO warehouse_items (key, name, kind, shelf) VALUES ('${TAG}-item', '${TAG} 物件', 'infra', 'infrastructure')" >/dev/null
