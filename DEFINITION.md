@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.418.0
+**Brain 版本**: 1.418.2
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,17 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.418.2 — coding harness：判定点写库改用 made_by=system（生产约束不允许 ai）
+
+- #6200 合同对抗把判定点写进 Brain decisions 时用的是 made_by=ai，但生产约束 decisions_made_by_check（迁移 193）只允许 user/cecelia/system，判定点在生产必然写入 500、触发 judgments_write_failed。原测试的假 Brain 不校验这个约束，所以没发现。
+- 金丝雀 4（PR #6232）的 QA 场景照这个真实调用方用了 ai，PR 顺手加迁移放开 ai，被独立裁判判为超范围（J-2）——问题出在调用方，不该改约束。
+- 改为 made_by=system（机器写入）；测试假 Brain 按生产约束校验 made_by。
+
+## Brain 1.418.1 — task_runs 正式 Notion 投影配置
+
+- 新增内部鉴权的 configure/bootstrap 入口，显式 enabled 与 actor 才能登记代码运行记录库。
+- 复用现有 task_runs 推送；补列读回、来源标记及有界分页防重复，不抢占旧 Ops Runs 映射。
 
 ## Brain 1.418.0 — coding harness：本地 CI 预检加 smoke 写入守卫
 
