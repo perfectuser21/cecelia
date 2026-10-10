@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  judgeFileName, buildJudgePrompt, parseJudge, decideJudge, renderJudgeReport, resolveJudgeConfig, callJudge, DEFAULT_JUDGE_MODEL,
+  judgeFileName, buildJudgePrompt, parseJudge, decideJudge, renderJudgeReport, resolveJudgeConfig, callJudge, DEFAULT_JUDGE_MODEL, JUDGE_DIFF_LIMIT,
 } from '../lib/judge.mjs';
 
 const ok = (extra = {}) => ({
@@ -23,13 +23,28 @@ describe('judgeFileName', () => {
   });
 });
 
+describe('裁判关注面（审计 #39 #40）', () => {
+  it('提示词要求追究与任何 I-n 无关的改动（范围蔓延）和安全/数据破坏类问题', () => {
+    const p = buildJudgePrompt({ intent: 'i', spec: 's', qaReport: 'q', diff: 'd', intentIds: ['I-1'] }).user;
+    expect(p).toContain('与任何 I-n 都无关的改动');
+    expect(p).toContain('安全');
+    expect(p).toContain('数据破坏');
+  });
+
+  it('改动上限 JUDGE_DIFF_LIMIT 足够大（15 万字），超过时由调用方升级而不是截断照判', () => {
+    expect(JUDGE_DIFF_LIMIT).toBe(150000);
+    const p = buildJudgePrompt({ intent: 'i', spec: 's', qaReport: 'q', diff: 'D'.repeat(140000), intentIds: ['I-1'] }).user;
+    expect(p).not.toContain('已截断');
+  });
+});
+
 describe('buildJudgePrompt', () => {
-  it('把需求、合同、QA 报告、PR 改动和 I-n 清单放进提示词；改动过长截断并标注', () => {
-    const p = buildJudgePrompt({ intent: 'INTENT-TEXT', spec: 'SPEC-TEXT', qaReport: 'QA-TEXT', diff: 'D'.repeat(200000), intentIds: ['I-1', 'I-2'], round: 2 });
+  it('把需求、合同、QA 报告、PR 改动和 I-n 清单放进提示词；超过上限的改动兜底截断并标注（调用方应先升级）', () => {
+    const p = buildJudgePrompt({ intent: 'INTENT-TEXT', spec: 'SPEC-TEXT', qaReport: 'QA-TEXT', diff: 'D'.repeat(300000), intentIds: ['I-1', 'I-2'], round: 2 });
     expect(p.system).toContain('JSON');
     for (const s of ['INTENT-TEXT', 'SPEC-TEXT', 'QA-TEXT', 'I-1,I-2', '第 2 轮']) expect(p.user).toContain(s);
     expect(p.user).toContain('已截断');
-    expect(p.user.length).toBeLessThan(150000);
+    expect(p.user.length).toBeLessThan(260000);
   });
 });
 

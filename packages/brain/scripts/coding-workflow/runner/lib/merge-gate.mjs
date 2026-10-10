@@ -43,7 +43,8 @@ async function gate(ctx, pr, s) {
     ctx.log(`合并门 PR #${pr.number}：批准后只有记录/主干合入，改绑到 ${pr.headRefOid.slice(0, 9)}`);
   }
   if ((await requiredState(cfg, pr.number)).state !== 'pass') return false;
-  const merge = await run(cfg.ghBin, ['pr', 'merge', String(pr.number), '--squash', '--match-head-commit', s.approved.head], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+  // --delete-branch：合并后删远端分支（审计 #28）
+  const merge = await run(cfg.ghBin, ['pr', 'merge', String(pr.number), '--squash', '--delete-branch', '--match-head-commit', s.approved.head], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
   if (merge.code !== 0) {
     await mergeFailed(ctx, pr, s, merge.stderr.trim().split('\n').pop() || String(merge.code));
     return false;
