@@ -7,8 +7,8 @@ const TASK = 'c954ebfd-469f-4006-a95f-b277fa6564f6';
 const T0 = Date.parse('2026-10-10T05:00:00.000Z');
 
 describe('ACTIVITY_IDS', () => {
-  it('与迁移 541 登记的 Activity id 逐个一致（两边不许漂移）', () => {
-    const sql = fs.readFileSync(new URL('../../../../migrations/541_coding_workflow_activities.sql', import.meta.url), 'utf8');
+  it('与迁移 542 登记的 Activity id 逐个一致（两边不许漂移）', () => {
+    const sql = fs.readFileSync(new URL('../../../../migrations/542_coding_workflow_activities.sql', import.meta.url), 'utf8');
     expect(sql).toContain(`'${CODING_WORKFLOW_ID}'`);
     for (const [key, id] of Object.entries(ACTIVITY_IDS)) expect(sql).toMatch(new RegExp(`\\('${key}',\\s+'${id}'`));
     expect(Object.keys(ACTIVITY_IDS)).toEqual(['intent', 'spec', 'spec_review', 'build', 'verify', 'chain_check', 'publish', 'report', 'ci_fix', 'qa', 'judge', 'merge']);

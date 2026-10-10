@@ -1,4 +1,4 @@
--- Migration 541: coding workflow 登记为框架里的一条流程 + 12 个 Activity（决策 b34e346a，审计 #24/#26）
+-- Migration 542: coding workflow 登记为框架里的一条流程 + 12 个 Activity（决策 b34e346a，审计 #24/#26）
 --
 -- 目的：runner 每个活动结束上报 span（POST /api/brain/spans，activity_id 必须是真实存在的 activities.id），
 --   经 runs 触发器汇总，同步 Notion「最近执行」。
@@ -8,7 +8,7 @@
 -- 第一阶段只登记 Activity、不登记 Step：只报 Activity 级 span 时自动裁判判 no_data 不落库，格子不会被判红；
 --   以后 runner 逐步上报 Step 级 span 再加 Step。
 -- 活动 id 与 runner 上报用的 packages/brain/scripts/coding-workflow/runner/lib/spans.mjs 必须一致（有测试核对）。
--- 回滚：rollback/541_coding_workflow_activities.down.sql 按 id 删除。
+-- 回滚：rollback/542_coding_workflow_activities.down.sql 按 id 删除。
 
 BEGIN;
 

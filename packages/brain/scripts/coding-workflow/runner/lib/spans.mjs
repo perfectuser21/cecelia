@@ -1,6 +1,6 @@
 // coding workflow 执行记录上报 Brain spans（决策 b34e346a，审计 #24/#26，旧 controller phase-event 心跳 / relay-runs 进度）。
 // 每个活动的每次尝试一条 span，run_id = coding-workflow:<task_id>；runs 表由触发器自动汇总，runs-notion-push 同步 Notion「最近执行」。
-// activity_id 必须是已登记的 Activity：迁移 541 按下面的固定 id 登记（有测试核对两边一致）。
+// activity_id 必须是已登记的 Activity：迁移 542 按下面的固定 id 登记（有测试核对两边一致）。
 // 只报 Activity 级 span：没有登记 Step，自动裁判判 no_data 不落库，格子不会被判红。
 export const CODING_WORKFLOW_ID = 'c0de0000-0000-4000-8000-000000000001';
 export const ACTIVITY_IDS = {

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Smoke: coding workflow 执行记录接入 runs/spans（迁移 541，决策 b34e346a，任务 eb831e90）
+# Smoke: coding workflow 执行记录接入 runs/spans（迁移 542，决策 b34e346a，任务 eb831e90）
 # 不发网络写，验证：
-#   1. 迁移 541 / 回滚结构：F1 能力下 coding_workflow 流程 + 12 个 Activity + 引用，固定 id 与 runner 上报一致
+#   1. 迁移 542 / 回滚结构：F1 能力下 coding_workflow 流程 + 12 个 Activity + 引用，固定 id 与 runner 上报一致
 #   2. 接线：runner 执行器跑完、QA/裁判/合并/CI 修复都调用 postSpans；Brain 客户端 POST /api/brain/spans
 #   3. Notion 最近执行：coding-workflow 运行 7 天全量进窗口，来源 Coding Workflow
-#   4. 真库（可选）：DB_NAME 指向 *_test / *_scratch 且 PG 可达时，跑迁移 541 集成测试
+#   4. 真库（可选）：DB_NAME 指向 *_test / *_scratch 且 PG 可达时，跑迁移 542 集成测试
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-echo "[coding-workflow-spans-smoke] 1. 迁移 541 / 回滚 结构 + id 一致"
+echo "[coding-workflow-spans-smoke] 1. 迁移 542 / 回滚 结构 + id 一致"
 node --input-type=module -e "
 import { readFileSync } from 'node:fs';
 import { CODING_WORKFLOW_ID, ACTIVITY_IDS } from './scripts/coding-workflow/runner/lib/spans.mjs';
-const up = readFileSync('migrations/541_coding_workflow_activities.sql', 'utf8');
-const down = readFileSync('migrations/rollback/541_coding_workflow_activities.down.sql', 'utf8');
+const up = readFileSync('migrations/542_coding_workflow_activities.sql', 'utf8');
+const down = readFileSync('migrations/rollback/542_coding_workflow_activities.down.sql', 'utf8');
 if (!up.includes(\"'e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29'\")) { console.error('FAIL 未挂 F1 开发闭环能力'); process.exit(1); }
 if (!up.includes(\"'\" + CODING_WORKFLOW_ID + \"'\")) { console.error('FAIL 流程 id 与 runner 不一致'); process.exit(1); }
 for (const [key, id] of Object.entries(ACTIVITY_IDS)) {
@@ -54,7 +54,7 @@ console.log('Notion 窗口 + 来源 ✓');
 
 echo "[coding-workflow-spans-smoke] 4. 真库集成（可选）"
 if [[ "${DB_NAME:-}" =~ _(test|scratch)$ ]] && command -v pg_isready >/dev/null 2>&1 && pg_isready -q 2>/dev/null; then
-  npx vitest run --config vitest.integration.config.js src/__tests__/integration/migration-541-coding-workflow-activities.pg.integration.test.js
+  npx vitest run --config vitest.integration.config.js src/__tests__/integration/migration-542-coding-workflow-activities.pg.integration.test.js
 else
   echo "skip 真库（DB_NAME 非 *_test/*_scratch 或 PG 不可达）"
 fi
