@@ -10,12 +10,33 @@
  * - acquire 抛异常 → fail-closed 按 locked 处理，绝不放行双 RPA 同机
  */
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from '../device-lock-helpers.js';
+import pool from '../db.js';
+import { resourceHealthGate } from './resource-health-gate.js';
 
 /**
  * 触发执行前的设备锁检查。
  * @returns {{pass:true, acquired:boolean}|{pass:false, status:number, body:object}}
  */
 export async function checkDeviceLockForManualDispatch(task, tag) {
+  // 资源健康闸（任务 5bf2512a）：两个手动入口共用本函数，挂在最前面一次站住。
+  // payload.resource_health_override=true = 人工确认过资源可用；闸出错 fail-safe 放行。
+  if (task?.payload?.resource_health_override !== true) {
+    const health = await resourceHealthGate(task, { pool, tag });
+    if (health.blocked) {
+      return {
+        pass: false,
+        status: 409,
+        body: {
+          success: false,
+          error: 'resource_unhealthy',
+          summary: health.summary,
+          reasons: health.reasons,
+          hint: '资源恢复 healthy 后再派；人工确认可用可在 payload 设 resource_health_override=true',
+        },
+      };
+    }
+  }
+
   const serial = task?.payload?.device_serial;
   if (!serial) return { pass: true, acquired: false };
 

@@ -99,6 +99,7 @@ import { createReleasesRouter } from './src/routes/releases.js';
 import { createRunDefinitionsRouter } from './src/routes/run-definitions.js';
 import { createRunReconciliationRouter } from './src/routes/run-reconciliation.js';
 import phoneRegistryRouter from './src/routes/phone-registry.js';
+import resourceHealthRouter from './src/routes/resource-health.js';
 import commanderHeartbeatRouter from './src/routes/commander-heartbeat.js';
 import goldenPathsRouter from './src/routes/golden-paths.js';
 import skillEvalRoutes from './src/routes/eval.js';
@@ -472,6 +473,7 @@ app.use('/api/brain/releases', createReleasesRouter());
 app.use('/api/brain/runs', createRunDefinitionsRouter());
 app.use('/api/brain/runs', createRunReconciliationRouter());
 app.use('/api/brain', phoneRegistryRouter); // 手机台账 GET/PUT /phone-registry（任务 b923b1f7，决策 432172f7）
+app.use('/api/brain', resourceHealthRouter); // 资源健康进仓库 /resource-health（任务 5bf2512a，决策 de6dff5d 第 5 步）
 app.use('/api/brain', commanderHeartbeatRouter); // Commander escort 心跳 POST /commander-heartbeat（任务 17ea4536，决策 3c98fb36）
 app.use('/api/brain', goldenPathsRouter);
 app.use('/api/brain/harness', harnessCommanderRouter);

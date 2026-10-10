@@ -45,6 +45,7 @@ import { checkAnchor } from './anchor-check.js';
 import { applyDispatchAllocationGuide } from './dispatch-allocation-guide.js';
 import { getLlmCapacitySnapshot } from './llm-capacity.js';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
+import { resourceHealthGate } from './lib/resource-health-gate.js';
 import { routeQiumiTask, persistDecision } from './routing/qiumi-router.js';
 import { qiumiEnv } from './routing/env.js';
 import { routeSerialOf, findSameSerialBusy } from './routing/qiumi-serial-gate.js';
@@ -421,6 +422,15 @@ async function routeAndPersistQiumi(task, deps = {}) {
   // 新定到的手机正忙 → 决策已落库，本轮让位；下一轮走上面的路由幂等分支再过一次同机闸。
   const held = await serialBusy(decision.payloadPatch);
   if (held) return held;
+  // 新定到的手机/账号不健康（任务 5bf2512a）→ 决策已落库，本轮让位；下一轮候选循环的资源健康闸再判。
+  const sick = await resourceHealthGate(fullTask, { pool, payload: { ...(fullTask.payload ?? {}), ...(decision.payloadPatch ?? {}) }, tag: 'dispatch-qiumi' });
+  if (sick.blocked) {
+    await releaseClaim();
+    await recordDispatchResult(pool, false, 'resource_unhealthy', undefined, task.id);
+    tickLog(`[dispatch] HOL skip: 资源不健康 ${sick.summary}，qiumi task ${task.id} 本轮不派`);
+    holSkipIds.push(task.id);
+    return { outcome: 'skip' };
+  }
   return { outcome: 'proceed' };
 }
 
@@ -880,6 +890,27 @@ export async function dispatchNextTask(goalIds) {
       }
       await recordDispatchResult(pool, false, 'missing_anchor', undefined, candidate.id);
       return { dispatched: false, reason: 'missing_anchor', task_id: candidate.id, actions };
+    }
+
+    // 3c'''-pre. 资源健康闸（任务 5bf2512a，决策 de6dff5d 第 5 步）：任务引用的账号/手机/仓库物件
+    //        offline / restricted → 放 claim、保持 queued、本轮让位（资源恢复后自然放行）。
+    //        闸自身 fail-safe：出错只记日志放行；放 claim 失败也只记日志，按让位继续。
+    const healthGate = await resourceHealthGate(candidate, { pool, tag: 'dispatch' });
+    if (healthGate.blocked) {
+      tickLog(`[dispatch] HOL skip: 资源不健康 ${healthGate.summary}，task ${candidate.id} 本轮不派`);
+      try {
+        await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`, [candidate.id]);
+      } catch (releaseErr) {
+        console.error(`[dispatch] resource_unhealthy claim release failed (non-fatal, task=${candidate.id}): ${releaseErr.message}`);
+      }
+      await recordDispatchResult(pool, false, 'resource_unhealthy', undefined, candidate.id);
+      holSkipIds.push(candidate.id);
+      if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+        await recordDispatchResult(pool, false, 'hol_skip_cap_exceeded');
+        return { dispatched: false, reason: 'hol_skip_cap_exceeded', hol_skipped: holSkipIds.length, actions };
+      }
+      attempt--;
+      continue;
     }
 
     // 3c'''. 秋米任务的专用路由出口（PR3，plan 补充四）：必须在这里——claim 已持有、
