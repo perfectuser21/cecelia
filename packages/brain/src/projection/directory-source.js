@@ -1,6 +1,6 @@
 /** 六层目录只读源：共享引用为准；不改契约、归属、版本或人工列。 */
 import { isDeepStrictEqual } from 'node:util';
-import { buildActivityCardProps, buildStepCardProps, executorLabel, humanize, judgmentText } from './activity-card.js';
+import { buildActivityCardProps, buildStepCardProps, executorLabel, humanize, judgmentText, releaseText } from './activity-card.js';
 import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
 // 值是投影身份键（projection_links.entity_type 与 Notion「真身来源」文本），不是 SQL 表名；
 // value_streams / capabilities 仍记作 journeys，改了会让已有目录页被当新页重建。
@@ -178,6 +178,7 @@ export function buildDirectoryRows(data, config = {}) {
     const cur = latestJudgment.get(j.activity_id);
     if (!cur || new Date(j.judged_at) > new Date(cur.judged_at)) latestJudgment.set(j.activity_id, j);
   }
+  const releases = new Map((data.releases || []).map(r => [r.activity_id, r]));
   for (const w of data.workflows) {
     const usage = refs.filter(r => r.workflow_id === w.id);
     const version = currentDefinition(w, 'workflow'), ctx = capabilityContext(w.capability_id);
@@ -202,8 +203,8 @@ export function buildDirectoryRows(data, config = {}) {
     const row = make('activities', a, { '名称': title(a.name),
       ...buildActivityCardProps(a, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id), unresolved),
       '裁判结论': rich(judgmentText(latestJudgment.get(a.id))),
-      // 发布线（五块模型第 5 块）的生产版指针还没进 main：列先建出来留空，接线后从这里取
-      '生产版本': rich(null),
+      // 发布线生产指针（activity_release_state）：v<版本号> + 是否收敛过；没有指针留空
+      '生产版本': rich(releaseText(releases.get(a.id))),
       '树位置': treePath(ctx.chain, [ctx.names.vs, ctx.names.cap, ctx.names.wf]) }, {
       '所属流程': unique(usage.map(r => ref('workflows', r.workflow_id))),
       'Step': data.steps.filter(s => s.activity_id === a.id && s.active).sort((a, b) => a.step_order - b.step_order).map(s => ref('steps', s.id)),
@@ -243,11 +244,24 @@ export async function loadDirectorySource(pool) {
     'activities',COALESCE((SELECT jsonb_agg(to_jsonb(a) || jsonb_build_object('definition_version',to_jsonb(v))) FROM activities a
       LEFT JOIN activity_definition_versions v ON v.activity_id=a.id AND v.id::text=to_jsonb(a)->>'current_definition_version_id'
       WHERE (to_jsonb(a)->>'capability_key' IS NOT NULL AND to_jsonb(a)->>'activity_key' IS NOT NULL)
-      OR EXISTS(SELECT 1 FROM workflow_activity_refs r WHERE r.activity_id=a.id AND r.active)),'[]'::jsonb),
+      OR EXISTS(SELECT 1 FROM workflow_activity_refs r WHERE r.activity_id=a.id AND r.active)
+      -- 已有目录页的 Activity 失去引用后仍投影，否则页上的机器列永远停在最后一次同步（10-10 实测 6 页裁判结论为空）
+      OR EXISTS(SELECT 1 FROM projection_links pl WHERE pl.target='notion-directory' AND pl.entity_type='activities' AND pl.entity_id=a.id)),'[]'::jsonb),
     'steps',COALESCE((SELECT jsonb_agg(to_jsonb(s)) FROM steps s),'[]'::jsonb),
     'judgments',COALESCE((SELECT jsonb_agg(jsonb_build_object('activity_id',j.activity_id,'verdict',j.verdict,
       'consecutive_green',j.consecutive_green,'required_green',j.required_green,'judged_at',j.judged_at))
       FROM (SELECT DISTINCT ON (activity_id) * FROM activity_judgments ORDER BY activity_id, judged_at DESC, id DESC) j),'[]'::jsonb),
+    -- 收敛过 = 与 release-line.js everConverged 同口径：晋级事件 gate.converged=true，或窗口纯净的收敛裁判
+    'releases',COALESCE((SELECT jsonb_agg(jsonb_build_object('activity_id',s.activity_id,'version_no',v.version_no,
+      'ever_converged',EXISTS(SELECT 1 FROM activity_release_events e WHERE e.activity_id=s.activity_id AND e.to_version_id=s.production_version_id
+          AND e.kind IN ('promote','group_promote') AND e.gate->>'converged'='true')
+        OR EXISTS(SELECT 1 FROM activity_judgments j WHERE j.activity_id=s.activity_id AND j.converged
+          AND j.report->'window_unversioned_run_count'='0'::jsonb AND jsonb_typeof(j.report->'window_version_ids')='array'
+          AND jsonb_array_length(j.report->'window_version_ids')>0
+          AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(j.report->'window_version_ids') w(build_id)
+            LEFT JOIN activity_version_builds m ON m.build_id::text=w.build_id
+            WHERE m.activity_version_id IS DISTINCT FROM s.production_version_id))))
+      FROM activity_release_state s JOIN activity_versions v ON v.id=s.production_version_id),'[]'::jsonb),
     'cells',COALESCE((SELECT jsonb_agg(jsonb_build_object('step_id',c.step_id,'cell_key',c.cell_key,'cell_status',c.cell_status,'parent_cell_key',c.parent_cell_key))
       FROM activity_cells c WHERE c.step_id IS NOT NULL),'[]'::jsonb),
     'uses',COALESCE((SELECT jsonb_agg(jsonb_build_object('activity_id',u.activity_id,'item_name',i.name,'role',u.role) ORDER BY i.name)

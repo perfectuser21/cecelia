@@ -1,3 +1,12 @@
+# 技能工厂看板 + Activity 生产版本列（任务 1b3c0000）
+
+- [x] [BEHAVIOR] skillfactoryboard 技能工厂看板：阶段任务（payload.stage / 【执行参数】阶段）按流程（树上坐标最后一段，去空白归一）取最新一张排成一行；执行单与审计单不当阶段任务；连续通过与 count_streak.py 同规则（待核验/无法核对跳过、同输入不重复计、外部原因作废、改版或片指纹变清零），子任务读不到写「无法计数」；blocked 取 claimed_result；卡点取失败原因第一句并附同父任务下进行中的修复单；推送按注册表 vessel 找库、未登记跳过、指纹未变不写、无链接按 Brain ID 认领、页被删重建、5 分钟自 gate；scheduler 注册 skill-factory-board。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/skill-factory-board.test.js src/__tests__/scheduler-jobs.test.js src/__tests__/migration-543-skill-factory-board-registry.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] activityreleasecolumn Activity 目录页「生产版本」= activity_release_state 生产指针的 v<版本号> + 收敛过/冷启动（未收敛过），无指针留空；目录源真 SQL 带出 releases，已有目录页但失去引用的 Activity 仍投影。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/projection/__tests__/activity-card.test.js src/projection/__tests__/directory-source.test.js src/projection/__tests__/directory-schema.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] skillfactoryboardpg 真 PG：隔离 schema 里目录源带出生产版本号与是否收敛过、孤儿 Activity 仍在目录源；smoke 在迁移 543 缺失时报红。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/directory-projection.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+
 # 发布线审查修复：无可退目标也告警（去重）
 
 - [x] [BEHAVIOR] releaselineunavailablealert 发布线无可退目标告警（审查阻断，任务 d9eb572d，父任务 37568378）：自动退回评估连续失败且没有曾收敛的可退目标时，生产版从未收敛也发告警 P2（activity_production_rollback_unavailable:<activity>，曾收敛的仍 P1），不发 Bark、不退回；告警在 recentlyNotified 去重之后——同一 Activity+生产版 24 小时内、期间没有全绿只告警一次，超过 24 小时再失败再告一次；告警函数抛错不影响返回。

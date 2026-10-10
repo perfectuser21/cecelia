@@ -82,7 +82,7 @@ export const DIRECTORY_COLUMN_SOURCES = Object.freeze({
   activities: { ...SYSTEM, '名称': 'Brain:activities.name（建页时）', '所属流程': 'Brain:workflow_activity_refs', 'Step': 'Brain:steps.activity_id',
     '承诺（FR）': 'Brain:activities.promise', '输入': 'Brain:activities.inputs', '输出': 'Brain:activities.outputs', '谁来执行': 'Brain:activities.executor_kind',
     '还缺什么': '派生:标准项空缺 + activity_cells 红/待判/未验', '裁判结论': 'Brain:activity_judgments 最新一条 verdict + 连续绿/要求绿',
-    '生产版本': '派生:发布线生产版指针（发布线未接线前留空）', '树位置': '派生:祖先链' },
+    '生产版本': 'Brain:activity_release_state 生产指针 → v<版本号> + 收敛过/冷启动（无指针留空）', '树位置': '派生:祖先链' },
   steps: { ...SYSTEM, '名称': 'Brain:steps.name（建页时）', '所属Activity': 'Brain:steps.activity_id', '顺序': 'Brain:steps.step_order', '做什么': 'Brain:steps.action',
     '输入': 'Brain:steps.inputs', '输出': 'Brain:steps.outputs', '怎么验收': '派生:steps.readback + 当前定义版本判定（人话）', '失败了怎么办': 'Brain:steps.on_fail',
     '谁来执行': 'Brain:activities.executor_kind', '还缺什么': '派生:空缺项 + 实现核验状态' },
