@@ -214,16 +214,6 @@
     },
     {
       "owner_path": "packages/brain/src/dispatcher.js",
-      "path": ".prd-cp-10101732-code-scheduling.md",
-      "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": ".dod-cp-10101732-code-scheduling.md",
-      "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
       "path": "packages/brain/src/__tests__/dispatcher-code-only.test.js",
       "role": "verification"
     },
