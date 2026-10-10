@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import {load,dump} from 'js-yaml';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync, cpSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -159,4 +160,31 @@ for(const [name,expression,mode,valid] of [
  b['scripts/ci/implementation-multi-pr-gate.mjs']='export const fixed_multi_source=true;\n';});
  const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,valid?'verified':'unknown',JSON.stringify(r.gaps));
  assert.equal(r.admission.status,'unknown');assert.equal(r.executable,false);
+});
+
+function addActualPatrolPrelude(f, mutate=()=>{}) {
+ const project=fileURLToPath(new URL('../../../',import.meta.url));
+ const actual=load(git(project,'show','HEAD:.github/workflows/implementation-impact.yml')).jobs.gate;
+ const step=actual.steps.find(s=>s.if==="env.MAP_SCOPE == 'cecelia-device-patrol'");
+ assert.ok(step,'实际Git中巡查身份预读step必须存在');
+ fixedNewBrain(f,bf=>{
+  const path='.github/workflows/implementation-impact.yml',doc=load(bf[path]);
+  doc.jobs.gate.env={...actual.env};doc.jobs.gate.steps.unshift(structuredClone(step));
+  mutate(doc.jobs.gate);bf[path]=dump(doc,{lineWidth:-1});
+ });
+}
+test('固定Git巡查预读仅在专用scope执行：既有zenithjoy mandatory runner消费原样',async t=>{
+ const f=fixture(t);addActualPatrolPrelude(f);const r=await extractWorkspaceCiSourceBundle(f.options);
+ assert.equal(r.status,'verified',JSON.stringify(r.gaps));
+ assert.ok(r.consumer.bindings.some(b=>b.path==='scripts/ci/implementation-pr-gate.mjs'));
+ assert.equal(r.consumer.bindings.some(b=>b.path==='scripts/ci/implementation-patrol-baseline.mjs'),false);
+});
+for(const [name,mutate]of[
+ ['误在legacy scope启用',job=>job.steps[0].if="env.MAP_SCOPE == 'zenithjoy'"],
+ ['scope环境覆盖',job=>job.steps[0].env.MAP_SCOPE='cecelia-device-patrol'],
+ ['不固定scope来源',job=>job.env.MAP_SCOPE='cecelia-device-patrol'],
+ ['预读shell字节变动',job=>job.steps[0].run+='\nexit 0'],
+])test(`scope预读不得放宽核心合同：${name}`,async t=>{
+ const f=fixture(t);addActualPatrolPrelude(f,mutate);const r=await extractWorkspaceCiSourceBundle(f.options);
+ assert.equal(r.status,'unknown');
 });
