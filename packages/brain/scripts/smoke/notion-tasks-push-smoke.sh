@@ -15,7 +15,7 @@ if (!map) fail("TASK_STATUS_TO_NOTION 未导出");
 for (const k of ["queued","in_progress","blocked","completed","failed"]) {
   if (!map[k]) fail("状态缺映射: " + k);
 }
-const legal = new Set(["Planned","Delegated","In Progress","Done","Cancelled"]);
+const legal = new Set(["Planned","Delegated","In Progress","Done","Cancelled","Queued","Blocked","Failed"]);
 for (const [k,v] of Object.entries(map)) {
   if (!legal.has(v)) fail(`映射到 Notion 非法选项: ${k}→${v}`);
 }
