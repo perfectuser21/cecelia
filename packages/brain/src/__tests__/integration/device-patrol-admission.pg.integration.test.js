@@ -1,6 +1,10 @@
 /** 真Postgres隔离schema + 真Git树/commit/blob；只有GitHub transport替换为本机Git。 */
 import {beforeAll,afterAll,it,expect} from 'vitest';
 import pg from 'pg';
+import express from 'express';
+import request from 'supertest';
+import {createImplementationCiRouter} from '../../routes/implementation-ci.js';
+import {validatePatrolBaselineRun} from '../../../../../scripts/ci/implementation-patrol-baseline.mjs';
 import {randomUUID,createHash} from 'node:crypto';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
@@ -57,6 +61,20 @@ it('伪造Git不存在/已存在base与未验收身份全部拒绝且不修改�
  const before=(await client.query('SELECT registration_sha256 FROM implementation_scope_bootstraps')).rows;
  await expect(bootstrapPatrolScope(db,{base_revision:introduced,introduced_revision:base,actor:'operator'},{reader})).rejects.toThrow();
  expect((await client.query('SELECT registration_sha256 FROM implementation_scope_bootstraps')).rows).toEqual(before);
+});
+it('真实HTTP入口只读回冻结身份；缺token和恶意bootstrap字段拒绝且不改事实',async()=>{
+ const before=(await client.query('SELECT registration_sha256 FROM implementation_scope_bootstraps')).rows;
+ const old=process.env.CECELIA_INTERNAL_TOKEN;process.env.CECELIA_INTERNAL_TOKEN='fixture-only-patrol-token';
+ try{
+  const app=express();app.use(express.json());app.use(createImplementationCiRouter({pool:db}));
+  await request(app).get('/snapshot').query({scope:PATROL_SCOPE,repo:PATROL_REPO,revision:base}).expect(401);
+  const result=await request(app).get('/snapshot').set('X-Internal-Token','fixture-only-patrol-token').query({scope:PATROL_SCOPE,repo:PATROL_REPO,revision:base}).expect(200);
+  expect(result.body.snapshot.registration.source.revision).toBe(introduced);expect(validatePatrolSnapshot(result.body.snapshot)).toBe(result.body.snapshot);
+  await request(app).post('/device-patrol/bootstrap').set('X-Internal-Token','fixture-only-patrol-token').send({base_revision:base,introduced_revision:introduced,actor:'operator',arbitrary_source:'not permitted'}).expect(422);
+  expect((await client.query('SELECT registration_sha256 FROM implementation_scope_bootstraps')).rows).toEqual(before);
+  const run={head_sha:introduced,head_branch:'main',event:'workflow_dispatch',path:'.github/workflows/implementation-impact.yml',conclusion:'success',repository:{full_name:'perfectuser21/cecelia'},head_repository:{full_name:'perfectuser21/cecelia'}};
+  expect(validatePatrolBaselineRun(run,introduced)).toBe(run);expect(()=>validatePatrolBaselineRun({...run,conclusion:'failure'},introduced)).toThrow();
+ }finally{if(old===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=old;}
 });
 it('后继canonical版本独立变化，首次Git登记保留旧源且不回拨当前版本',async()=>{
  const admitted=(await client.query('SELECT id,payload FROM activity_definition_versions ORDER BY id')).rows;

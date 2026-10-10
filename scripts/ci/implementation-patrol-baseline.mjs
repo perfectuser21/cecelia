@@ -8,7 +8,7 @@ import {PATROL_SCOPE,PATROL_REPO,validatePatrolSnapshot} from '../../packages/br
 const REPO='perfectuser21/cecelia',BASE='73bd094ae34ecccb1514b09fd4fec8733b846769',INTRO='f0923e5396bade1986ba5452e766cabb5f4a30b3';
 const fail=()=>{throw Error('PATROL_BASELINE_ORIGIN_INVALID');};
 export function validatePatrolBaselineRun(run,tooling){
- if(!/^[a-f0-9]{40}$/.test(tooling)||run.head_sha!==tooling||run.head_branch!=='main'||run.event!=='workflow_dispatch'||run.path!=='.github/workflows/device-patrol-admission.yml'||run.conclusion!=='success'||run.repository?.full_name!==REPO||run.head_repository?.full_name!==REPO)fail();return run;
+ if(!/^[a-f0-9]{40}$/.test(tooling)||run.head_sha!==tooling||run.head_branch!=='main'||run.event!=='workflow_dispatch'||run.path!=='.github/workflows/implementation-impact.yml'||run.conclusion!=='success'||run.repository?.full_name!==REPO||run.head_repository?.full_name!==REPO)fail();return run;
 }
 export function downloadPatrolBaseline(tooling,output,{execute=execFileSync}={}){
  const json=path=>JSON.parse(execute('gh',['api',`repos/${REPO}/${path}`],{encoding:'utf8'}));

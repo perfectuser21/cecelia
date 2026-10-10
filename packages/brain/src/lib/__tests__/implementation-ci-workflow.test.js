@@ -10,9 +10,9 @@ it('正常Brain单测执行巡查可信baseline实际ZIP与治理行为回归',(
  const root=new URL('../../../../../',import.meta.url);
  const child=spawnSync(process.execPath,['--test','scripts/ci/__tests__/device-patrol-baseline.test.mjs','scripts/ci/__tests__/device-patrol-governance.test.mjs'],{cwd:root,encoding:'utf8',timeout:30000});
  expect(child.status,child.stdout+child.stderr).toBe(0);expect(child.stdout).toMatch(/(?:pass 3|tests 3)/);expect(child.stdout).toMatch(/(?:fail 0)/);
- const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/device-patrol-admission.yml',import.meta.url),'utf8'));
+ const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
  expect(workflow.on.workflow_dispatch).toBeDefined();expect(JSON.stringify(workflow.jobs)).toContain('refs/heads/main');
- expect(JSON.stringify(workflow.jobs)).not.toContain('--data-binary');expect(JSON.stringify(workflow.jobs)).not.toContain('pull_request');
+ expect(JSON.stringify(workflow.jobs['device-patrol-baseline'])).not.toContain('--data-binary');expect(JSON.stringify(workflow.jobs['device-patrol-baseline'])).not.toContain('pull_request');
 });
 it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace安装裁剪',()=>{
  const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/ci.yml',import.meta.url),'utf8'));
