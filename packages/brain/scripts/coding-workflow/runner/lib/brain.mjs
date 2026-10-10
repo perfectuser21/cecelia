@@ -25,9 +25,11 @@ const retryable = (r) => r.status === 0 || r.status >= 500 || r.status === 429;
 
 export function brainClient(baseUrl, { listLimit = 500, log = () => {} } = {}) {
   const tasksUrl = `${baseUrl}/api/brain/tasks`;
+  // Brain 内部令牌（runner.sh 从凭据文件读入）：POST /spans 等内部入口走 internalAuthOrLoopback，runner 经 socat 不算 loopback
+  const internal = process.env.CECELIA_INTERNAL_TOKEN ? { 'x-internal-token': process.env.CECELIA_INTERNAL_TOKEN } : {};
   const json = (method, body) => ({
     method,
-    headers: { 'content-type': 'application/json', 'x-session-id': 'coding-workflow-runner' },
+    headers: { 'content-type': 'application/json', 'x-session-id': 'coding-workflow-runner', ...internal },
     body: JSON.stringify(body),
   });
 
