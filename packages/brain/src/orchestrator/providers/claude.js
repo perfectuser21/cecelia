@@ -1,47 +1,24 @@
 import {
-  addExplicitModel,
-  assertResumeAttempt,
-  buildProviderPrompt,
   normalizeProviderResult,
   parseJsonValue,
 } from './shared.js';
+import { ClaudeChannelRetiredError } from '../../lib/claude-channel.js';
 
-const DEFAULT_RESULT_SCHEMA = { type: 'object' };
-
-function invocation({ bundle, execution = {}, sessionId = null, continuation = null }) {
-  const args = ['-p', '--output-format', 'json'];
-  if (sessionId) args.push('--resume', sessionId);
-  else args.push('--session-id', bundle.attempt_id);
-  addExplicitModel(args, execution.model);
-  args.push('--json-schema', JSON.stringify(execution.resultSchema ?? DEFAULT_RESULT_SCHEMA));
-
-  return Object.freeze({
-    provider: 'claude',
-    command: execution.command ?? 'claude',
-    args,
-    cwd: execution.cwd ?? bundle?.inputs?.worktree_path,
-    env: execution.claudeHome ? { CLAUDE_CONFIG_DIR: execution.claudeHome } : {},
-    stdin: buildProviderPrompt(bundle, continuation),
-    output: { format: 'json' },
-  });
-}
-
+/**
+ * Claude Code 无头通道已退役（任务 76a160b3，决策 067867c8）：start/resume 不再生成任何 claude 命令。
+ * 只保留 inspect/cancel/normalizeResult，用于收尾退役前已经跑完的历史 attempt。
+ * provider-registry 也不会注册本 adapter，Brain 永不选择 claude 作为 attempt provider。
+ */
 export const claudeAdapter = Object.freeze({
   name: 'claude',
   capabilities: Object.freeze(['structured_output', 'resume', 'skills_inline']),
 
-  start({ bundle, execution = {} }) {
-    return invocation({ bundle, execution });
+  start({ bundle }) {
+    throw new ClaudeChannelRetiredError(`provider claude start attempt=${bundle?.attempt_id ?? 'unknown'}`);
   },
 
-  resume({ attempt, input, execution = {} }) {
-    assertResumeAttempt(attempt, 'claude');
-    return invocation({
-      bundle: attempt.task_bundle,
-      execution,
-      sessionId: attempt.provider_session_id,
-      continuation: input,
-    });
+  resume({ attempt }) {
+    throw new ClaudeChannelRetiredError(`provider claude resume attempt=${attempt?.id ?? 'unknown'}`);
   },
 
   inspect({ attempt }) {

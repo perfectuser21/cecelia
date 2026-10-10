@@ -1,112 +1,19 @@
 #!/usr/bin/env node
-// cecelia-bridge.js — HTTP bridge between Brain and cecelia-run
+// cecelia-bridge.js — 宿主侧 HTTP bridge（brain-deploy.sh 部署到 ~/bin 的版本；NotebookLM 等宿主 CLI 代理）
+//
+// Claude 无头通道已退役（任务 76a160b3，决策 067867c8，单一来源 src/lib/claude-channel.js）：
+// /llm-call 与 /trigger-cecelia 曾经拉起 claude -p / cecelia-run，现一律 410，不再执行任何进程。
+// 保留 /health（外部探活）与 notebook 端点。
 const http = require('http');
-const fs = require('fs');
-const { execSync } = require('child_process');
-const { createBridgeLifecycle } = require('./lib/bridge-lifecycle.cjs');
-const llmLifecycle = createBridgeLifecycle();
 
 const PORT = process.env.BRIDGE_PORT || 3457;
 const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
+const RETIRED_ENDPOINTS = new Set(['/llm-call', '/trigger-cecelia']);
 
 const server = http.createServer((req, res) => {
-  if (req.method === 'POST' && req.url === '/trigger-cecelia') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => {
-      try {
-        const { task_id, checkpoint_id, prompt, task_type, permission_mode, repo_path, model, provider, extra_env } = JSON.parse(body);
-
-        if (!task_id || !checkpoint_id || !prompt) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: 'Missing required fields' }));
-          return;
-        }
-
-        const promptDir = '/tmp/cecelia-prompts';
-        execSync(`mkdir -p ${promptDir}`);
-        const promptFile = `${promptDir}/${task_id}-${checkpoint_id}.prompt`;
-        fs.writeFileSync(promptFile, prompt);
-
-        const webhookUrl = `${BRAIN_URL}/api/brain/execution-callback`;
-        const ceceliaBin = '/Users/administrator/bin/cecelia-run';
-        const mode = permission_mode || 'bypassPermissions';
-        const type = task_type || 'dev';
-
-        let envVars = `WEBHOOK_URL="${webhookUrl}" CECELIA_CORE_API="${BRAIN_URL}" CECELIA_WEBHOOK_TOKEN="" CECELIA_PERMISSION_MODE="${mode}" CECELIA_TASK_TYPE="${type}"`;
-        // 回执入口验 Bearer（棒1）：宿主 env 里的 CECELIA_INTERNAL_TOKEN 透传给 cecelia-run，值不进日志
-        if (process.env.CECELIA_INTERNAL_TOKEN) envVars += ` CECELIA_INTERNAL_TOKEN="${process.env.CECELIA_INTERNAL_TOKEN.replace(/["$`\\]/g, '')}"`;
-        if (repo_path) envVars += ` CECELIA_WORK_DIR="${repo_path}"`;
-        if (model) envVars += ` CECELIA_MODEL="${model}"`;
-        if (provider) envVars += ` CECELIA_PROVIDER="${provider}"`;
-        // extra_env: 逐键注入为 CECELIA_XXX 形式，供 cecelia-run 透传给 claude
-        if (extra_env && typeof extra_env === 'object') {
-          // Special case: CECELIA_GOAL_SETTINGS is a JSON string containing double quotes.
-          // Bypass quote-stripping and SKILLENV_ prefix — use single-quote wrapping.
-          if (extra_env.CECELIA_GOAL_SETTINGS) {
-            const jsonStr = String(extra_env.CECELIA_GOAL_SETTINGS);
-            const escaped = jsonStr.replace(/'/g, "'\\''");
-            envVars += ` CECELIA_GOAL_SETTINGS='${escaped}'`;
-          }
-          for (const [k, v] of Object.entries(extra_env)) {
-            if (k === 'CECELIA_GOAL_SETTINGS') continue;
-            const safeKey = String(k).replace(/[^a-zA-Z0-9_]/g, '_');
-            const safeVal = String(v).replace(/['"]/g, '');
-            envVars += ` CECELIA_SKILLENV_${safeKey}="${safeVal}"`;
-          }
-        }
-
-        const cmd = `${envVars} ${ceceliaBin} "${task_id}" "${checkpoint_id}" "${promptFile}" > /tmp/cecelia-${task_id}.log 2>&1 &`;
-        console.log(`[bridge] Dispatching task=${task_id} type=${type} mode=${mode}${model ? ` model=${model}` : ''}${provider ? ` provider=${provider}` : ''}`);
-        execSync(cmd, { shell: '/bin/bash' });
-
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, task_id, checkpoint_id, pid: 'async' }));
-      } catch (err) {
-        console.error(`[bridge] Error: ${err.message}`);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: err.message }));
-      }
-    });
-  } else if (req.method === 'POST' && req.url === '/llm-call') {
-    // 轻量同步 LLM 调用 — Brain 的思考用（不是任务执行）
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => {
-      try {
-        const { prompt, model, timeout, accountId } = JSON.parse(body);
-        if (!prompt) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: 'Missing prompt' }));
-          return;
-        }
-
-        const modelArg = model || 'haiku';
-        const claudeBin = process.env.CLAUDE_BIN || '/opt/homebrew/bin/claude';
-        const args = ['-p', prompt, '--model', modelArg, '--output-format', 'text'];
-
-        const env = Object.assign({}, process.env);
-        delete env.CLAUDECODE;
-        // 账号轮换：如果传入 accountId，用 homedir 拼出正确路径
-        if (accountId) {
-          const { homedir } = require('os');
-          const { join } = require('path');
-          env.CLAUDE_CONFIG_DIR = join(homedir(), '.claude-' + accountId);
-        }
-
-        // cwd 隔离：LLM 调用的 session 不污染 cecelia 项目的 /resume 列表
-        const llmWorkDir = '/tmp/cecelia-llm';
-        try { require('fs').mkdirSync(llmWorkDir, { recursive: true }); } catch {}
-        llmLifecycle.run(req, res, {
-          command: claudeBin, args, timeout, model: modelArg,
-          options: { env, cwd: llmWorkDir, stdio: ['ignore', 'pipe', 'pipe'] },
-        });
-      } catch (err) {
-        console.error(`[bridge] /llm-call parse error: ${err.message}`);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: err.message }));
-      }
-    });
+  if (req.method === 'POST' && RETIRED_ENDPOINTS.has(req.url)) {
+    res.writeHead(410, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'claude_channel_retired' }));
   } else if (req.method === 'POST' && req.url === '/notebook/query') {
     // NotebookLM 查询 — 容器内 Brain 通过 bridge 调用宿主机 CLI
     let body = '';
@@ -324,8 +231,6 @@ const server = http.createServer((req, res) => {
     res.end('Not Found');
   }
 });
-
-llmLifecycle.bindShutdown(server);
 
 server.listen(PORT, () => {
   console.log(`[bridge] cecelia-bridge listening on port ${PORT}`);

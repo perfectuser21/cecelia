@@ -22,77 +22,22 @@ function mockClaudeOutput({ result, session_id }) {
 }
 
 describe('conversation-agent — invokeAgent', () => {
+  // 原 [B1] 首次 spawn 无 --resume + 锚点 / [B2] 续接 --resume / [B2b] 采用新 session_id：
+  // 已随 Claude 通道退役删除（任务 76a160b3）
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('[B1] 首次调用：无 sessionId → spawn 参数不含 --resume，prompt 含 journey_id 锚点', () => {
-    spawnSync.mockReturnValue({
-      status: 0,
-      stdout: mockClaudeOutput({ result: '收到，[TURN: chat]', session_id: 'sess-new-1' }),
-      stderr: '',
-    });
-
-    const out = invokeAgent({
-      content: '你好',
-      sessionId: null,
-      journeyId: 'j-1',
-      gpId: null,
-    });
-
-    expect(spawnSync).toHaveBeenCalledTimes(1);
-    const [cmd, args] = spawnSync.mock.calls[0];
-    expect(cmd).toBe('claude');
-    expect(args).not.toContain('--resume');
-    expect(args).toContain('-p');
-    expect(args).toContain('--output-format');
-    expect(args).toContain('json');
-    const promptArg = args[args.indexOf('-p') + 1];
-    expect(promptArg).toContain('j-1');
-    expect(promptArg).toContain('[TURN:');
-    expect(out.sessionId).toBe('sess-new-1');
-    expect(out.reply).toBe('收到，[TURN: chat]');
+  it('[B1] 首次调用：抛 claude_channel_retired，不 spawn 任何进程', () => {
+    expect(() => invokeAgent({ content: '你好', sessionId: null, journeyId: 'j-1', gpId: null }))
+      .toThrow(expect.objectContaining({ code: 'claude_channel_retired' }));
+    expect(spawnSync).not.toHaveBeenCalled();
   });
 
-  it('[B2] 续接调用：有 sessionId → spawn 参数含 --resume <sessionId>', () => {
-    spawnSync.mockReturnValue({
-      status: 0,
-      stdout: mockClaudeOutput({ result: '继续，[TURN: chat]', session_id: 'sess-existing-1' }),
-      stderr: '',
-    });
-
-    const out = invokeAgent({
-      content: '接着说',
-      sessionId: 'sess-existing-1',
-      journeyId: 'j-1',
-      gpId: 'gp-1',
-    });
-
-    const [, args] = spawnSync.mock.calls[0];
-    const resumeIdx = args.indexOf('--resume');
-    expect(resumeIdx).toBeGreaterThan(-1);
-    expect(args[resumeIdx + 1]).toBe('sess-existing-1');
-    // 续接调用不重复注入完整锚定文本，只传用户原始内容
-    const promptArg = args[args.indexOf('-p') + 1];
-    expect(promptArg).toBe('接着说');
-    expect(out.sessionId).toBe('sess-existing-1');
-  });
-
-  it('[B2b] 续接调用若返回新 session_id（compact/rollover）→ 采用新值', () => {
-    spawnSync.mockReturnValue({
-      status: 0,
-      stdout: mockClaudeOutput({ result: '好', session_id: 'sess-rolled-2' }),
-      stderr: '',
-    });
-
-    const out = invokeAgent({
-      content: '继续',
-      sessionId: 'sess-existing-1',
-      journeyId: 'j-1',
-      gpId: null,
-    });
-
-    expect(out.sessionId).toBe('sess-rolled-2');
+  it('[B2] 续接调用：同样抛 claude_channel_retired，不 --resume', () => {
+    expect(() => invokeAgent({ content: '接着说', sessionId: 'sess-existing-1', journeyId: 'j-1', gpId: 'gp-1' }))
+      .toThrow(/claude_channel_retired/);
+    expect(spawnSync).not.toHaveBeenCalled();
   });
 });
 

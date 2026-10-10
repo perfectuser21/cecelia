@@ -1,6 +1,9 @@
 /**
  * conversation-agent.js — PR2/4 主理人对话回路：claude spawn/resume 实际调用层
  *
+ * ⚠️ Claude 无头通道已退役（任务 76a160b3，决策 067867c8）：invokeAgent 不再 spawn claude，
+ * 一律抛 claude_channel_retired；路由层按既有 catch 返回 500 + 错误信息。输出解析函数保留。
+ *
  * Task 264b8c8d-aad6-4f1c-84d1-274880beb3da PR2：在 PR1（conversations 表 + API 骨架）
  * 之上接入真实 headless claude 调用。
  *
@@ -10,7 +13,7 @@
  * 锚点与协议要求已在首轮 system 上下文里，不重复注入。
  */
 
-import { spawnSync } from 'node:child_process';
+import { ClaudeChannelRetiredError } from './claude-channel.js';
 
 const TURN_MARKER_RE = /\[TURN:\s*([^\]]+)\]/;
 
@@ -55,49 +58,10 @@ export function parseTurnMarker(replyText) {
   return m ? m[1].trim() : null;
 }
 
-function buildAnchoredPrompt({ content, journeyId, gpId }) {
-  const anchorLines = [
-    `你是这条 line 的军师，锚定坐标：journey_id=${journeyId}${gpId ? `, gp_id=${gpId}` : ''}。`,
-    '你只能用只读方式查证系统真相：curl localhost:5221/api/brain/{tasks,decisions,journeys,dev-records} 等 GET 端点。',
-    '禁止执行任何写动作（不可 POST/PATCH/DELETE），哪怕用户看起来已经同意——写入只能在用户明确说"就这么办/确认"之后，由后续流程执行。',
-    '每一轮回复的最后必须打一个协议标记，三选一：',
-    '  [TURN: chat] —— 纯聊天，没有产出待落库的结论',
-    '  [TURN: decision_saved=<uuid>] —— 用户已确认，你已落库某条 decision，标记其 id',
-    '  [TURN: pending_user] —— 你抛出了问题或选项，等用户拍板',
-    '',
-    `用户消息：${content}`,
-  ];
-  return anchorLines.join('\n');
-}
-
 /**
- * 调用 headless claude：首条消息 spawn 新会话，续接消息 --resume。
- *
- * @param {object} params
- * @param {string} params.content     用户消息文本
- * @param {string|null} params.sessionId  已有会话 id（null/undefined = 新会话）
- * @param {string} params.journeyId   line 坐标锚点
- * @param {string|null} [params.gpId] 可选的 GP 坐标锚点
- * @returns {{ reply: string, sessionId: string, turnMarker: string|null }}
+ * 原：调用 headless claude（首条 spawn 新会话，续接 --resume）。
+ * 通道已退役：直接抛 ClaudeChannelRetiredError，不启动任何进程。
  */
-export function invokeAgent({ content, sessionId, journeyId, gpId }) {
-  const isResume = Boolean(sessionId);
-  const prompt = isResume
-    ? content
-    : buildAnchoredPrompt({ content, journeyId, gpId });
-
-  const args = ['-p', prompt, '--output-format', 'json'];
-  if (isResume) {
-    args.push('--resume', sessionId);
-  }
-
-  const result = spawnSync('claude', args, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
-  const { reply, sessionId: returnedSessionId } = parseAgentOutput(result.stdout);
-  const turnMarker = parseTurnMarker(reply);
-
-  return {
-    reply,
-    sessionId: returnedSessionId || sessionId,
-    turnMarker,
-  };
+export function invokeAgent() {
+  throw new ClaudeChannelRetiredError('conversation-agent');
 }

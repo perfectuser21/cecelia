@@ -285,6 +285,17 @@ router.post('/:id/messages', async (req, res) => {
     }
     const conv = convCheck.rows[0];
 
+    // role=user 先调 agent 再落库：agent 失败（如 Claude 通道已退役抛 claude_channel_retired，任务 76a160b3）
+    // 时整条请求 500 且不留半截状态——不插孤儿 user 消息、不自增 turn_count、不动 current_session_id
+    const agentOut = role === 'user'
+      ? invokeAgent({
+        content,
+        sessionId: conv.current_session_id,
+        journeyId: conv.journey_id,
+        gpId: conv.gp_id,
+      })
+      : null;
+
     // 插入消息
     const msgResult = await pool.query(
       `INSERT INTO conversation_messages (conversation_id, role, content, turn_marker)
@@ -293,8 +304,8 @@ router.post('/:id/messages', async (req, res) => {
       [id, role, content, turn_marker || null]
     );
 
-    // role=user 时 turn_count 自增 + 触发 agent 调用（spawn 首轮/resume 续接）
-    if (role === 'user') {
+    // role=user 时 turn_count 自增 + 落 agent 回复与会话 id
+    if (agentOut) {
       await pool.query(
         `UPDATE conversations
          SET turn_count = turn_count + 1, updated_at = NOW()
@@ -302,13 +313,6 @@ router.post('/:id/messages', async (req, res) => {
          RETURNING turn_count`,
         [id]
       );
-
-      const agentOut = invokeAgent({
-        content,
-        sessionId: conv.current_session_id,
-        journeyId: conv.journey_id,
-        gpId: conv.gp_id,
-      });
 
       await pool.query(
         `INSERT INTO conversation_messages (conversation_id, role, content, turn_marker)

@@ -5,7 +5,8 @@ vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
  * llm-caller.js — bridge 脆弱性熔断硬化测试
  *
  * 覆盖 3 个场景（对应 P0-2 任务 A/B/C）：
- *   1. bridge 连续 3 次 exit-code-1 → markAuthFailure(accountId, 1h, 'api_error')
+ *   1. 原「bridge 连续 3 次 exit-code-1 → markAuthFailure」已随 Claude 通道退役删除（任务 76a160b3）；
+ *      改为断言 provider=anthropic 不 fetch bridge、不计熔断、不 markAuthFailure
  *   2. Anthropic API 返回 "credit balance is too low" → raise('P1', ...) 一次
  *      （同 runtime 去重，不重复告警）
  *   3. api_error 熔断账号 token 刷新后不会被 proactiveTokenCheck 清除
@@ -64,7 +65,7 @@ vi.mock('fs', () => ({
 // 动态导入（避免 hoist 顺序问题）
 let callLLM;
 let _resetAnthropicKey;
-let _resetBridgeCircuitState;
+let _resetAnthropicBalanceAlerted;
 
 // 辅助：构造 bridge 500 exit-code-1 response
 function makeBridgeExit1Response() {
@@ -102,13 +103,13 @@ describe('llm-caller — bridge 熔断硬化', () => {
     // 默认让 selectBestAccount 返回 account3（用户报告的挂掉账号）
     mockSelectBestAccount.mockResolvedValue({ accountId: 'account3', model: 'sonnet' });
 
-    // 每个测试前都重置 llm-caller 的模块内 state（bridge 计数 + 告警去重）
+    // 每个测试前都重置 llm-caller 的模块内 state（余额告警去重）
     const mod = await import('../llm-caller.js');
     callLLM = mod.callLLM;
     _resetAnthropicKey = mod._resetAnthropicKey;
-    _resetBridgeCircuitState = mod._resetBridgeCircuitState;
+    _resetAnthropicBalanceAlerted = mod._resetAnthropicBalanceAlerted;
     _resetAnthropicKey();
-    _resetBridgeCircuitState();
+    _resetAnthropicBalanceAlerted();
   });
 
   afterEach(() => {
@@ -119,106 +120,39 @@ describe('llm-caller — bridge 熔断硬化', () => {
   // Task A：bridge 连续 3 次 exit-code-1 → markAuthFailure
   // ═════════════════════════════════════════════════════════════════════════
 
-  describe('Task A: bridge exit-code-1 熔断', () => {
-    it('单次 exit-code-1 不触发 markAuthFailure（仅计数）', async () => {
-      // bridge 500 会触发 2 次内部重试（共 3 次），但单次 callLLM → 3 次计数
-      // 此测试验证 "单次调用的 3 次重试全是 exit-code-1 → 3 次计数已达阈值 → markAuthFailure"
-      // 为测试 "单次不触发"，我们让第一次 bridge 成功但设置计数逻辑
-      //
-      // 实际：单次 callLLM 可能产生 1~3 次 exit-code-1（取决于内部重试）
-      // 我们用 bridge 首次就成功来验证 "未达阈值时不触发 markAuthFailure"
+  describe('Task A: Claude 通道退役后不再有 bridge exit-code-1 熔断', () => {
+    it('provider=anthropic 下游一律 exit-code-1 → 不 fetch bridge，不 markAuthFailure，抛 claude_channel_retired', async () => {
+      global.fetch.mockResolvedValue(makeBridgeExit1Response());
+
+      for (let i = 0; i < 3; i++) {
+        await expect(
+          callLLM('cortex', `测试${i}`, { provider: 'anthropic', model: 'claude-sonnet-4-6' })
+        ).rejects.toMatchObject({ code: 'claude_channel_retired' });
+      }
+
+      const urls = global.fetch.mock.calls.map(([u]) => String(u));
+      expect(urls.some((u) => u.includes('/llm-call'))).toBe(false);
+      expect(mockSelectBestAccount).not.toHaveBeenCalled();
+      expect(mockVerifyToken).not.toHaveBeenCalled();
+      expect(mockMarkAuthFailure).not.toHaveBeenCalled();
+    });
+
+    it('provider=anthropic 且 anthropic-api 直连成功 → 返回 anthropic-api 结果，不 markAuthFailure', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ text: 'ok' }),
+        json: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
         text: async () => '',
       });
 
-      await callLLM('cortex', '测试', { provider: 'anthropic', model: 'claude-sonnet-4-6' });
+      const result = await callLLM('cortex', '测试', { provider: 'anthropic', model: 'claude-sonnet-4-6' });
 
+      expect(result).toMatchObject({ text: 'ok', provider: 'anthropic-api', attempted_fallback: true });
+      expect(global.fetch.mock.calls[0][0]).toBe('https://api.anthropic.com/v1/messages');
       expect(mockMarkAuthFailure).not.toHaveBeenCalled();
     });
 
-    it('连续 3 次 bridge exit-code-1 → markAuthFailure(accountId, ~1h, "api_error")', async () => {
-      // 让 bridge 500 exit-code-1 持续失败（每次 callLLM 会尝试 3 次：1 初 + 2 重试）
-      // 单次 callLLM 就可能触发 3 次 exit-code-1 计数 → 熔断
-      global.fetch.mockResolvedValue(makeBridgeExit1Response());
-
-      await expect(
-        callLLM('cortex', '测试', { provider: 'anthropic', model: 'claude-sonnet-4-6' })
-      ).rejects.toThrow(/Bridge \/llm-call error|exit code 1/);
-
-      // 验证 markAuthFailure 被调用，account 为 account3，source=api_error
-      expect(mockMarkAuthFailure).toHaveBeenCalled();
-      const call = mockMarkAuthFailure.mock.calls[0];
-      expect(call[0]).toBe('account3');
-      // 第 2 参数是 resetTime ISO string（约 1h 后）
-      const resetTime = new Date(call[1]).getTime();
-      const hourFromNow = Date.now() + 60 * 60 * 1000;
-      expect(Math.abs(resetTime - hourFromNow)).toBeLessThan(10 * 1000); // ±10s 容差
-      // 第 3 参数是 source='api_error'
-      expect(call[2]).toBe('api_error');
-    });
-
-    it('bridge network timeout（非 exit-code-1）→ 不触发 markAuthFailure（不误伤）', async () => {
-      global.fetch.mockRejectedValue(new Error('network timeout'));
-
-      await expect(
-        callLLM('cortex', '测试', { provider: 'anthropic', model: 'claude-sonnet-4-6' })
-      ).rejects.toThrow();
-
-      expect(mockMarkAuthFailure).not.toHaveBeenCalled();
-    });
-
-    it('bridge 500 其他 5xx 错误（非 exit-code-1）→ 不触发 markAuthFailure', async () => {
-      // "exit code 137" (OOM) 不应被认为是 exit-code-1
-      global.fetch.mockResolvedValue({
-        ok: false,
-        status: 500,
-        text: async () => JSON.stringify({ ok: false, error: 'exit code 137', elapsed_ms: 5000 }),
-      });
-
-      await expect(
-        callLLM('cortex', '测试', { provider: 'anthropic', model: 'claude-sonnet-4-6' })
-      ).rejects.toThrow();
-
-      expect(mockMarkAuthFailure).not.toHaveBeenCalled();
-    });
-
-    it('bridge 500 generic error 文本（非 exit-code-1）→ 不触发 markAuthFailure', async () => {
-      global.fetch.mockResolvedValue({
-        ok: false,
-        status: 500,
-        text: async () => 'Internal Server Error',
-      });
-
-      await expect(
-        callLLM('cortex', '测试', { provider: 'anthropic', model: 'claude-sonnet-4-6' })
-      ).rejects.toThrow();
-
-      expect(mockMarkAuthFailure).not.toHaveBeenCalled();
-    });
-
-    it('达到阈值后 _bridgeExit1Counters 被重置（避免重复 markAuthFailure）', async () => {
-      global.fetch.mockResolvedValue(makeBridgeExit1Response());
-
-      // 第 1 次 callLLM：3 次 exit-code-1 → markAuthFailure
-      await expect(
-        callLLM('cortex', '测试1', { provider: 'anthropic', model: 'claude-sonnet-4-6' })
-      ).rejects.toThrow();
-
-      const firstCallCount = mockMarkAuthFailure.mock.calls.length;
-      expect(firstCallCount).toBeGreaterThanOrEqual(1);
-
-      // 第 2 次 callLLM：又 3 次 exit-code-1 → 再次 markAuthFailure（新一轮计数）
-      // 这是预期行为：上次熔断已 reset，下次再连续 3 次才熔断
-      await expect(
-        callLLM('cortex', '测试2', { provider: 'anthropic', model: 'claude-sonnet-4-6' })
-      ).rejects.toThrow();
-
-      // markAuthFailure 被调用了两轮（每次 callLLM 一次）
-      expect(mockMarkAuthFailure.mock.calls.length).toBe(firstCallCount * 2);
-    });
+    // 原「单次 exit-code-1 仅计数 / network timeout / exit code 137 / generic 500 不误伤 / 达阈值后计数重置」已随 Claude 通道退役删除（任务 76a160b3）
   });
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -253,7 +187,7 @@ describe('llm-caller — bridge 熔断硬化', () => {
       expect(mockRaise).toHaveBeenCalledTimes(1);
     });
 
-    it('_resetBridgeCircuitState 后可再次 raise（测试隔离）', async () => {
+    it('_resetAnthropicBalanceAlerted 后可再次 raise（测试隔离）', async () => {
       global.fetch.mockResolvedValue(makeAnthropicBalanceLowResponse());
 
       await expect(
@@ -261,7 +195,7 @@ describe('llm-caller — bridge 熔断硬化', () => {
       ).rejects.toThrow();
       expect(mockRaise).toHaveBeenCalledTimes(1);
 
-      _resetBridgeCircuitState();
+      _resetAnthropicBalanceAlerted();
 
       await expect(
         callLLM('thalamus', '测试2', { provider: 'anthropic-api', model: 'claude-haiku-4-5-20251001' })

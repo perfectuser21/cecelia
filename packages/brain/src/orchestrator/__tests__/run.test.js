@@ -607,7 +607,9 @@ describe('buildRealDeps', () => {
 
   it.each([
     ['injected env machine', { CECELIA_MACHINE_ID: 'xian-mac-m1' }, 'xian-mac-m1'],
-    ['canonical default', {}, 'us-mac-m4'],
+    // Claude 无头通道已退役（任务 76a160b3）：provider=auto 不再落 claude（原默认 us-mac-m4），
+    // 改落 codex，首选目标取 codex 账号花名册首台机器；核心断言仍是 ambient env 身份不泄漏
+    ['canonical default', {}, 'xian-mac-m1'],
   ])('uses %s instead of ambient process.env identity', async (_case, env, expectedMachine) => {
     const previous = process.env.CECELIA_MACHINE_ID;
     process.env.CECELIA_MACHINE_ID = 'ambient-host-must-not-leak';
@@ -693,6 +695,7 @@ describe('buildRealDeps', () => {
       expect(preflightGate.evaluate).toHaveBeenCalledWith(expect.objectContaining({
         preferred_target: expect.objectContaining({ machine: expectedMachine }),
       }));
+      expect(preflightGate.evaluate.mock.calls[0][0].preferred_target.machine).not.toBe('ambient-host-must-not-leak');
       expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
         machineId: expectedMachine,
       }));

@@ -1384,7 +1384,7 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
     );
 
     // 4. 检查执行器可用性
-    const ceceliaAvailable = await checkCeceliaRunAvailable();
+    const ceceliaAvailable = await checkCeceliaRunAvailable(task);
     if (!ceceliaAvailable.available) {
       // 回滚 queued 不触发终态释放链，已抢的锁必须就地放掉
       await pool.query(`UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1`, [id]);

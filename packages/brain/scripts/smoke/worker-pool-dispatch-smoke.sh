@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Smoke: worker-pool-dispatch — 并行血管P1 worker池自动派发（任务 873acc6d）
-# 1. job 已挂 scheduler-jobs 注册表
-# 2. slot 白名单铁律：只用 slot7-9，slot1-6（harness/主理人地盘）绝不出现
-# 3. 并发上限/预占/记账三件套在实现里
+# 原实现往宿主 tmux slot7-9 发射交互 claude；Claude 无头通道已退役（任务 76a160b3，决策 067867c8），
+# 本 smoke 改验退役收口：
+# 1. job 仍挂 scheduler-jobs 注册表（调度不崩）
+# 2. runWorkerPoolDispatch 每轮只返回 skipped=claude_channel_retired，不查库、不执行任何命令
+# 3. 实现代码里不再出现 tmux / ssh / claude 启动
 set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/../../../.." && pwd)"
+cd "$ROOT_DIR"
 
 echo "[worker-pool-smoke] 1. scheduler-jobs 挂载"
 node -e "
@@ -13,39 +18,24 @@ if (!sched.includes(\"name: 'worker-pool-dispatch'\")) { console.error('FAIL: sc
 console.log('挂载 ✓');
 "
 
-echo "[worker-pool-smoke] 2. slot 白名单铁律"
-node -e "
-const fs = require('fs');
-const src = fs.readFileSync('packages/brain/src/worker-pool-dispatch.js', 'utf8');
-if (!src.includes(\"['slot7', 'slot8', 'slot9']\")) { console.error('FAIL: WORKER_SLOTS 白名单被改动'); process.exit(1); }
-// 只查代码（剥注释），防注释里提及'slot1-6 禁碰'被误咬
-const code = src.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
-if (/slot[1-6]\b/.test(code)) { console.error('FAIL: 实现代码里出现 slot1-6（harness 地盘）'); process.exit(1); }
-console.log('slot7-9 白名单 ✓');
+echo "[worker-pool-smoke] 2. 退役收口"
+node --input-type=module -e "
+import { runWorkerPoolDispatch } from './packages/brain/src/worker-pool-dispatch.js';
+let queried = false;
+const pool = { query: async () => { queried = true; return { rows: [] }; } };
+const out = await runWorkerPoolDispatch(pool);
+if (out?.skipped !== 'claude_channel_retired' || out?.dispatched !== 0) { console.error('FAIL: 未返回 skipped=claude_channel_retired: ' + JSON.stringify(out)); process.exit(1); }
+if (queried) { console.error('FAIL: 退役后仍查库认领任务'); process.exit(1); }
+console.log('skipped=claude_channel_retired ✓');
 "
 
-echo "[worker-pool-smoke] 3. 并发上限/预占/记账"
+echo "[worker-pool-smoke] 3. 实现不再启动任何进程"
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('packages/brain/src/worker-pool-dispatch.js', 'utf8');
-if (!src.includes('MAX_CONCURRENT = 2')) { console.error('FAIL: 并发上限不是 2'); process.exit(1); }
-if (!src.includes(\"'interactive-dev-skill'\")) { console.error('FAIL: 缺 interactive-dev-skill 预占（/dev 409 约定）'); process.exit(1); }
-if (!src.includes('dispatch_events')) { console.error('FAIL: 缺 dispatch_events 记账'); process.exit(1); }
-if (!src.includes('claimed_by IS NULL')) { console.error('FAIL: 预占缺 CAS 条件'); process.exit(1); }
-console.log('并发2/预占/记账 ✓');
-"
-
-echo "[worker-pool-smoke] 4. 第四病两道闸：发射前僵尸检测 + 发射后探活"
-node -e "
-const fs = require('fs');
-const src = fs.readFileSync('packages/brain/src/worker-pool-dispatch.js', 'utf8');
-// 只查代码（剥注释）：注释里提到 liveness_timeout 不算数,否则删了实现也能假绿
 const code = src.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
-if (!code.includes('kill-session')) { console.error('FAIL: 缺僵尸槽清理（残留 claude 占槽）'); process.exit(1); }
-if (!code.includes('FROM dispatch_events')) { console.error('FAIL: 僵尸判定缺在途任务关联查询（会误杀真在干活的槽）'); process.exit(1); }
-if (!code.includes('liveness_timeout')) { console.error('FAIL: 缺发射后探活（同轮/跨轮重复发射会复发）'); process.exit(1); }
-if (!code.includes('LIVENESS_TIMEOUT_MS')) { console.error('FAIL: 探活窗口常量缺失'); process.exit(1); }
-console.log('僵尸检测 + 探活 ✓');
+if (/child_process|tmux|ssh|execSync|spawn/.test(code)) { console.error('FAIL: 实现代码里仍有进程启动'); process.exit(1); }
+console.log('无进程启动 ✓');
 "
 
 echo "[worker-pool-smoke] ALL PASS"

@@ -22,13 +22,13 @@ describe('resolveBrainBaseUrl', () => {
   });
 });
 
-describe('executor docker 分支不再硬编码 localhost 默认值', () => {
-  it('dockerEnv 构造使用 resolveBrainBaseUrl', () => {
+// 原「executor docker 分支 dockerEnv 使用 resolveBrainBaseUrl」用例测的 HARNESS_DOCKER_ENABLED 起 claude 容器分支
+// 已随 Claude 通道退役删除（任务 76a160b3）；改为钉住该分支不得复活。
+describe('executor docker claude 分支已删除', () => {
+  it('_triggerCeceliaRunInner 不再按 HARNESS_DOCKER_ENABLED 起容器、不再构造 dockerEnv', () => {
     const src = readFileSync(path.join(__dirname, '../executor.js'), 'utf8');
-    // docker 分支（HARNESS_DOCKER_ENABLED）里不允许再出现 localhost:5221 兜底
-    const dockerBranch = src.slice(src.indexOf(`HARNESS_DOCKER_ENABLED === 'true'`));
-    const dockerEnvBlock = dockerBranch.slice(0, dockerBranch.indexOf('spawnDocker'));
-    expect(dockerEnvBlock).toContain('resolveBrainBaseUrl');
-    expect(dockerEnvBlock).not.toContain(`'http://localhost:5221'`);
+    expect(src).not.toContain(`HARNESS_DOCKER_ENABLED === 'true'`);
+    expect(src).not.toContain('const dockerEnv = {');
+    expect(src).not.toMatch(/spawnDocker\(/);
   });
 });

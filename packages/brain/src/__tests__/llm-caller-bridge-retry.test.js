@@ -2,11 +2,11 @@ vi.mock('child_process', async original => ({ ...await original(), spawn: vi.fn(
 // 本文件显式模拟模型网络与凭据，独立测试 provider 行为；真实隔离由 runtime-isolation.test.js 验证。
 vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
 /**
- * Test: callClaudeViaBridge Bridge 500 重试逻辑
- * 验证 Bridge 返回 500 时自动重试，而不是立即抛出错误
+ * Test: Claude 通道退役后 provider=anthropic 不再走 bridge（也就没有 Bridge 500 重试）
+ * 原「Bridge 500 重试 / 500 后第二次成功 / dyld 启动错误跳过重试」三条已随 Claude 通道退役删除（任务 76a160b3）。
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // Mock dependencies
 vi.mock('../account-usage.js', () => ({
@@ -21,7 +21,6 @@ vi.mock('../model-profile.js', () => ({
   }),
 }));
 
-// Mock Anthropic API to succeed immediately (so we test bridge path via provider='anthropic')
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -35,15 +34,8 @@ vi.mock('fs', async (importOriginal) => {
   };
 });
 
-describe('callClaudeViaBridge - Bridge 500 重试', () => {
-  let fetchCallCount = 0;
-
-  beforeEach(() => {
-    fetchCallCount = 0;
-  });
-
-  it('Bridge 500 时重试最多 2 次后最终失败', async () => {
-    // 模拟 Bridge 持续返回 500
+describe('Claude 通道退役 - 不再请求 bridge /llm-call', () => {
+  it('provider=anthropic + 下游一律 500 → 不 fetch 桥接、不重试，抛 claude_channel_retired', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
@@ -54,52 +46,11 @@ describe('callClaudeViaBridge - Bridge 500 重试', () => {
 
     await expect(
       callLLM('thalamus', 'test prompt', { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' })
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'claude_channel_retired' });
 
-    // 第1次调用 + 2次重试 = 3次（仅限 anthropic bridge 路径）
-    // 注意：callLLM 会先尝试 anthropic-api (profile primary)，再 fallback 到 anthropic (bridge)
-    // 此测试 mock 的是 fetch，但 anthropic-api 也走 fetch，需要更精细的 mock
-    // 这里只验证 fetch 被调用过（重试逻辑已存在）
-    expect(global.fetch).toHaveBeenCalled();
-  });
-
-  it('Bridge 500 后第二次成功时返回结果', async () => {
-    let callCount = 0;
-    global.fetch = vi.fn().mockImplementation(async (url) => {
-      if (url.includes('/llm-call')) {
-        callCount++;
-        if (callCount < 2) {
-          return { ok: false, status: 500, text: async () => 'error' };
-        }
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ ok: true, text: 'reviewed content', model: 'haiku' }),
-        };
-      }
-      // anthropic-api 直连 → 模拟失败以触发 fallback 到 bridge
-      return { ok: false, status: 529, text: async () => 'overloaded' };
-    });
-
-    // 这个测试验证 bridge500Retry 逻辑的存在性，而非端到端
-    const code = require('fs').readFileSync(
-      new URL('../llm-caller.js', import.meta.url).pathname,
-      'utf8'
-    );
-    expect(code).toContain('bridge500Retry');
-    expect(code).toContain('BRIDGE_500_MAX_RETRIES');
-  });
-
-  it('Bridge 500 + dyld 错误应跳过重试（isStartupError）', async () => {
-    const code = require('fs').readFileSync(
-      new URL('../llm-caller.js', import.meta.url).pathname,
-      'utf8'
-    );
-    // 验证 dyld 检测逻辑存在
-    expect(code).toContain('isStartupError');
-    expect(code).toContain('dyld');
-    expect(code).toContain('Library not loaded');
-    // 验证跳过重试的条件
-    expect(code).toContain('!isStartupError');
+    const urls = global.fetch.mock.calls.map(([url]) => String(url));
+    expect(urls.some((u) => u.includes('/llm-call'))).toBe(false);
+    // 仅剩一次 anthropic-api 直连兜底（API key 通道保留）
+    expect(urls).toEqual(['https://api.anthropic.com/v1/messages']);
   });
 });

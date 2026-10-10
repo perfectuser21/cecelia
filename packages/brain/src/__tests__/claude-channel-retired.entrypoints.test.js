@@ -3,13 +3,13 @@
  *
  * - cecelia-bridge.cjs / cecelia-bridge.js：/llm-call、/trigger-cecelia 一律 410 claude_channel_retired，
  *   不 spawn、不 exec；/health 与 notebook 端点不变
- * - packages/workflows/gateway/ai-gateway.cjs：claude-code 模式 /execute 410，不 spawn
+ * - packages/workflows/gateway（AI Gateway，无运行进程）：整个目录删除，deploy.sh 不再启动它
  * - server.js：不再自动拉起 cecelia-bridge
  * - cecelia-run.sh：任何动作前以 claude_channel_retired 退出
  */
 import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { readFileSync, mkdtempSync, rmSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, rmSync, writeFileSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -114,31 +114,11 @@ describe.each(['cecelia-bridge.cjs', 'cecelia-bridge.js'])('%s：claude 端点�
   });
 });
 
-describe('ai-gateway.cjs：claude-code 模式下线', () => {
-  const file = path.join(REPO_ROOT, 'packages/workflows/gateway/ai-gateway.cjs');
-
-  it('缺省 claude-code 模式 /execute 返回 410，不 spawn claude', async () => {
-    const g = loadScript(file);
-    const res = g.request('/execute', { prompt: '跑一下' });
-    await flush();
-    expect(res.statusCode).toBe(410);
-    expect(res.body).toEqual(RETIRED);
-    expect(g.child.spawn).not.toHaveBeenCalled();
-  });
-
-  it('minimax 模式行为不变：仍调 MiniMax API', async () => {
-    const g = loadScript(file, { AI_MODE: 'minimax' });
-    const res = g.request('/execute', { prompt: '跑一下' });
-    await flush();
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toMatchObject({ status: 'submitted', mode: 'minimax' });
-    expect(g.https.request).toHaveBeenCalled();
-    expect(g.child.spawn).not.toHaveBeenCalled();
-  });
-
-  it('/health 仍 200', () => {
-    const g = loadScript(file);
-    expect(g.request('/health', {}, 'GET').statusCode).toBe(200);
+describe('AI Gateway：已删除', () => {
+  it('packages/workflows/gateway 不存在，deploy.sh 不再同步/启动 ai-gateway', () => {
+    expect(existsSync(path.join(REPO_ROOT, 'packages/workflows/gateway'))).toBe(false);
+    const deploy = readFileSync(path.join(REPO_ROOT, 'packages/workflows/deploy/deploy.sh'), 'utf8');
+    expect(deploy).not.toMatch(/ai-gateway|\/gateway\//);
   });
 });
 
@@ -157,7 +137,7 @@ describe('cecelia-run.sh：claude 执行器下线', () => {
     const src = readFileSync(script, 'utf8');
     const guard = src.indexOf('claude_channel_retired');
     expect(guard).toBeGreaterThan(-1);
-    for (const marker of ['TASK_ID="${1:?', 'mkdir -p "$LOCK_DIR"', 'send_webhook "', 'setsid bash -c']) {
+    for (const marker of ['mkdir -p "$(dirname "$LOG_FILE")"', 'TASK_ID="${1:?', 'mkdir -p "$LOCK_DIR"', 'send_webhook "', 'setsid bash -c']) {
       const at = src.indexOf(marker);
       if (at > -1) expect(guard).toBeLessThan(at);
     }

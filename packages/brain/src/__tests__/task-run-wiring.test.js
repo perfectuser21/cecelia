@@ -325,8 +325,12 @@ describe('执行路径接线钉子（漏接即红）', () => {
     expect(sh).toMatch(/run_id: \$run_id/);
     expect(sh).toMatch(/exit_code: \$exit_code_val/);
     expect(sh).toMatch(/execution-callback/);
+    // 原「cecelia-bridge.cjs 透传 checkpoint_id / execution-callback」断言随 Claude 通道退役改写（任务 76a160b3）：
+    // bridge 不再拉起 cecelia-run，/trigger-cecelia 一律 410；cecelia-run.sh 开头即以 claude_channel_retired 退出。
     const bridge = read('scripts/cecelia-bridge.cjs');
-    expect(bridge).toMatch(/execution-callback/);
-    expect(bridge).toMatch(/checkpoint_id/);
+    expect(bridge).not.toMatch(/execution-callback/);
+    expect(bridge).not.toMatch(/checkpoint_id/);
+    expect(bridge).toContain('claude_channel_retired');
+    expect(sh).toContain('claude_channel_retired');
   });
 });

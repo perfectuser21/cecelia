@@ -3,7 +3,9 @@
  *
  * 主理人曾因 claude -p / 订阅 OAuth 被自动化调用而封号，通道已彻底下线。
  * 本守卫扫描 packages/brain、packages/workflows 下全部非测试、非文档源码，
- * 任何能重新拉起 claude CLI 的写法出现即红。白名单只有 lib/claude-channel.js 自身。
+ * 任何能重新拉起 claude CLI 的写法出现即红。白名单：lib/claude-channel.js 自身，
+ * 以及整个 scripts/coding-workflow/ 目录（新编码流水线 runClaude/spawnClaude 用机器默认 Claude 登录，
+ * 主理人 2026-10-10 决定保留，见决策 3859041e）。
  *
  * 判据（每条都必须能自证会报警，见末尾 describe）：
  *   R1 进程类调用（spawn/exec/execFile/…，含 doSpawn 之类包装）首参是 claude 命令字面量
@@ -25,6 +27,13 @@ const SCAN_ROOTS = [BRAIN_ROOT, path.join(REPO_ROOT, 'packages/workflows')];
 const SOURCE_EXT = new Set(['.js', '.cjs', '.mjs', '.ts']);
 const SKIP_DIRS = new Set(['node_modules', '__tests__', 'tests', 'test', 'fixtures', '__fixtures__', 'docs', 'coverage', 'dist', '.git']);
 const WHITELIST = new Set([path.join(BRAIN_ROOT, 'src/lib/claude-channel.js')]);
+// 主理人 2026-10-10 决定保留新编码流水线（runClaude/spawnClaude），见决策 3859041e
+const WHITELIST_DIRS = [path.join(BRAIN_ROOT, 'scripts/coding-workflow') + path.sep];
+const CODING_WORKFLOW_CLAUDE = path.join(BRAIN_ROOT, 'scripts/coding-workflow/lib/claude.mjs');
+
+function isWhitelisted(file) {
+  return WHITELIST.has(file) || WHITELIST_DIRS.some((dir) => file.startsWith(dir));
+}
 
 const CMD = String.raw`(?:\S*\/)?claude`;
 const RULES = [
@@ -71,18 +80,32 @@ export function findClaudeInvocations(src) {
   return hits;
 }
 
-describe('Claude 无头通道防复活守卫：源码扫描', () => {
-  it('packages/brain 与 packages/workflows 非测试源码中不存在任何拉起 claude CLI 的写法', () => {
-    const offenders = [];
-    for (const root of SCAN_ROOTS) {
-      for (const file of collectSources(root)) {
-        if (WHITELIST.has(file)) continue;
-        for (const hit of findClaudeInvocations(readFileSync(file, 'utf8'))) {
-          offenders.push(`${path.relative(REPO_ROOT, file)}:${hit.line} [${hit.rule}] ${hit.text}`);
-        }
+function scanOffenders() {
+  const offenders = [];
+  for (const root of SCAN_ROOTS) {
+    for (const file of collectSources(root)) {
+      if (isWhitelisted(file)) continue;
+      for (const hit of findClaudeInvocations(readFileSync(file, 'utf8'))) {
+        offenders.push(`${path.relative(REPO_ROOT, file)}:${hit.line} [${hit.rule}] ${hit.text}`);
       }
     }
+  }
+  return offenders;
+}
+
+describe('Claude 无头通道防复活守卫：源码扫描', () => {
+  it('packages/brain 与 packages/workflows 非测试源码中不存在任何拉起 claude CLI 的写法', () => {
+    const offenders = scanOffenders();
     expect(offenders, `发现 claude 无头调用路径：\n${offenders.join('\n')}`).toEqual([]);
+  });
+
+  it('白名单生效而非守卫失灵：coding-workflow 的 claude 启动写法能被判据识别，但不进 offenders', () => {
+    const src = readFileSync(CODING_WORKFLOW_CLAUDE, 'utf8');
+    expect(findClaudeInvocations(src).length).toBeGreaterThan(0);
+    expect(collectSources(BRAIN_ROOT)).toContain(CODING_WORKFLOW_CLAUDE);
+    expect(isWhitelisted(CODING_WORKFLOW_CLAUDE)).toBe(true);
+    expect(isWhitelisted(path.join(BRAIN_ROOT, 'src/executor.js'))).toBe(false);
+    expect(scanOffenders().filter((o) => o.includes('scripts/coding-workflow/'))).toEqual([]);
   });
 
   it('单一来源常量模块存在且声明通道已退役', async () => {

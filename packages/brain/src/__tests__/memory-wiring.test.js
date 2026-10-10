@@ -3,7 +3,7 @@
  *
  * 验证记忆系统断链修复：
  * 1. tick.js 中 runSuggestionCycle 的接入（通过 AST 分析文件内容）
- * 2. executor.js 中 recordExpectedReward 的接入
+ * 2. executor.js：recordExpectedReward 接入点（claude 派发路径）已随 Claude 通道退役删除（任务 76a160b3）
  */
 
 import { describe, it, expect } from 'vitest';
@@ -33,25 +33,15 @@ describe('tick-runner.js — runSuggestionCycle 接入', () => {
   });
 });
 
-describe('executor.js — recordExpectedReward 接入', () => {
+describe('executor.js — recordExpectedReward 接入（已退役）', () => {
   const execContent = readFileSync(resolve(ROOT, 'src/executor.js'), 'utf8');
 
-  it('import recordExpectedReward from dopamine.js', () => {
-    expect(execContent).toContain('recordExpectedReward');
-    expect(execContent).toContain('dopamine');
-  });
+  // 原「import recordExpectedReward from dopamine.js」用例：唯一调用点随 claude 派发路径删除，import 一并清理（任务 76a160b3）。
 
   it('triggerCeceliaRun 函数签名不变', () => {
     expect(execContent).toContain('async function triggerCeceliaRun');
   });
 
-  it('recordExpectedReward 调用有 catch 错误处理（fire-and-forget）', () => {
-    // 验证 recordExpectedReward 调用存在，且有 catch/warn 保护
-    const idx = execContent.indexOf('recordExpectedReward(');
-    expect(idx).toBeGreaterThan(0);
-    // 取调用周边 300 字符，验证有错误处理
-    const surroundings = execContent.slice(Math.max(0, idx - 50), idx + 300);
-    const hasErrorHandling = surroundings.includes('catch') || surroundings.includes('.catch');
-    expect(hasErrorHandling).toBe(true);
-  });
+  // 原「recordExpectedReward 调用有 catch 错误处理」用例：该调用位于 _triggerCeceliaRunInner 第 3 步（US claude 桥接）之前的
+  // claude 派发路径，已随 Claude 通道退役删除（任务 76a160b3）。
 });

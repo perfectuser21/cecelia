@@ -167,7 +167,7 @@ describe('callLLM — codex provider 失败后的 anthropic-api 兜底（PROBE_F
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('codex 失败 + anthropic-api 余额不足 → 自动 fallback 到 anthropic bridge', async () => {
+  it('codex 失败 + anthropic-api 余额不足 → 不再 fallback 到 anthropic bridge（已退役），抛 codex 原始错误', async () => {
     getActiveProfile.mockReturnValue({
       config: {
         rumination: {
@@ -177,7 +177,7 @@ describe('callLLM — codex provider 失败后的 anthropic-api 兜底（PROBE_F
       },
     });
 
-    // 第一个 fetch：anthropic-api 余额不足（400 credit balance too low）
+    // anthropic-api 余额不足（400 credit balance too low）
     global.fetch.mockResolvedValueOnce({
       ok: false,
       status: 400,
@@ -186,22 +186,25 @@ describe('callLLM — codex provider 失败后的 anthropic-api 兜底（PROBE_F
         error: { type: 'invalid_request_error', message: 'Your credit balance is too low' },
       }),
     });
-
-    // bridge 调用成功（第二个 fetch）
+    // 若仍尝试桥接，会命中这个“成功”响应——断言它不会被消费
     global.fetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
       json: async () => ({ text: 'bridge 兜底成功', degraded: false }),
     });
 
-    const result = await callLLM('rumination', '测试 prompt');
+    const err = await callLLM('rumination', '测试 prompt').catch(e => e);
 
-    expect(result.text).toBe('bridge 兜底成功');
-    expect(result.provider).toBe('anthropic');
-    expect(result.attempted_fallback).toBe(true);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/Codex: 无可用 OAuth team 账号/);
+    expect(err.code).not.toBe('claude_channel_retired');
+    expect(err.llm_provider).toBe('codex');
+    // 只有一次 anthropic-api 兜底请求，没有 bridge /llm-call
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toBe('https://api.anthropic.com/v1/messages');
   });
 
-  it('codex 失败 + anthropic-api 失败 + bridge 失败 → 抛出最终错误', async () => {
+  it('codex 失败 + anthropic-api 失败 → 抛出最终错误（不再尝试 bridge）', async () => {
     getActiveProfile.mockReturnValue({
       config: {
         rumination: {
@@ -212,19 +215,14 @@ describe('callLLM — codex provider 失败后的 anthropic-api 兜底（PROBE_F
     });
 
     // anthropic-api 失败（503）
-    global.fetch.mockResolvedValueOnce({
+    global.fetch.mockResolvedValue({
       ok: false,
       status: 503,
       text: async () => 'Service Unavailable',
     });
 
-    // bridge 也失败（500 after retries exhausted）
-    global.fetch.mockResolvedValue({
-      ok: false,
-      status: 500,
-      text: async () => 'Bridge error',
-    });
-
-    await expect(callLLM('rumination', '测试 prompt')).rejects.toThrow();
+    await expect(callLLM('rumination', '测试 prompt')).rejects.toThrow(/Codex: 无可用 OAuth team 账号/);
+    const urls = global.fetch.mock.calls.map(([u]) => String(u));
+    expect(urls).toEqual(['https://api.anthropic.com/v1/messages']);
   });
 });

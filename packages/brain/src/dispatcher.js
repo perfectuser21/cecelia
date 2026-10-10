@@ -51,6 +51,7 @@ import { routeQiumiTask, persistDecision } from './routing/qiumi-router.js';
 import { qiumiEnv } from './routing/env.js';
 import { routeSerialOf, findSameSerialBusy } from './routing/qiumi-serial-gate.js';
 import { dispatchScriptTask, SCRIPT_BREAKER_KEY } from './script-executor.js';
+import { CLAUDE_CHANNEL_RETIRED_CODE } from './lib/claude-channel.js';
 
 /**
  * openclaw-agent 表面（qiumi_task）由 Brain 经 ssh 直派 MMV，不经 cecelia-bridge：
@@ -1159,8 +1160,9 @@ export async function dispatchNextTask(goalIds) {
     continue dispatchLoop;
   }
 
+  // 按候选任务判定：经桥接拉起 claude 的路径已退役（任务 76a160b3）→ no_executor 跳过
   const ceceliaAvailable = needsBridgeCheck
-    ? await checkCeceliaRunAvailable()
+    ? await checkCeceliaRunAvailable(nextTask)
     : { available: true };
   if (!ceceliaAvailable.available) {
     // Revert task to queued so it can be retried next tick
@@ -1381,6 +1383,16 @@ export async function dispatchNextTask(goalIds) {
     // 执行体已把违规 payload 的任务终态 failed（不重试）：不许再被打回 queued，也不计熔断/autoblock。
     await recordDispatchResult(pool, false, 'script_payload_invalid', undefined, nextTask.id);
     return { dispatched: false, reason: 'script_payload_invalid', task_id: nextTask.id, terminal: true, actions };
+  }
+
+  if (!execResult.success && (execResult.reason === CLAUDE_CHANNEL_RETIRED_CODE || execResult.error === CLAUDE_CHANNEL_RETIRED_CODE)) {
+    // Claude 无头通道已退役（任务 76a160b3）：不是执行故障，与 no_executor 同语义——
+    // 回 queued、释放 claim，不写 failed_dispatch、不计熔断/autoblock
+    await updateTask({ task_id: nextTask.id, status: 'queued' });
+    await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`, [nextTask.id]);
+    await releaseDeviceLockIfHeld(nextTask);
+    await recordDispatchResult(pool, false, 'no_executor', undefined, nextTask.id);
+    return { dispatched: false, reason: 'no_executor', task_id: nextTask.id, error: CLAUDE_CHANNEL_RETIRED_CODE, actions };
   }
 
   if (!execResult.success) {

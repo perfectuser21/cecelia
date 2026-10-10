@@ -2,7 +2,7 @@
 # dispatch-allocation-guide-smoke.sh
 # 验收：dispatcher 前置引导员（allocation guide）三条核心行为
 #   1) tight 预算的 dev 任务 → payload.executor=codex + allocation 账本
-#   2) abundant 预算的 dev 任务 → 不写 executor（默认 claude），仍写 allocation 账本
+#   2) abundant 预算的 dev 任务 → executor=codex（Claude 无头通道已退役，任务 76a160b3），仍写 allocation 账本
 #   3) 显式 payload.executor 永不被覆盖
 set -uo pipefail
 
@@ -27,14 +27,14 @@ const tight = applyDispatchAllocationGuide(
   ? ok('tight 预算 dev → executor=codex + allocation 账本')
   : bad('tight 预算 dev 未按预期写 executor/allocation: ' + JSON.stringify(tight.task.payload));
 
-// 2. abundant → 默认 claude，不写 executor，仍留账本
+// 2. abundant → Claude 通道已退役（76a160b3），同样落 codex，仍留账本
 const abundant = applyDispatchAllocationGuide(
   { id: 't2', task_type: 'dev', payload: {} },
   { budgetState: 'abundant' }
 );
-(abundant.task.payload.executor === undefined
-  && abundant.task.payload.allocation?.selected_executor === 'claude')
-  ? ok('abundant 预算 dev → 保持 claude 默认，allocation 账本在')
+(abundant.task.payload.executor === 'codex'
+  && abundant.task.payload.allocation?.selected_executor === 'codex')
+  ? ok('abundant 预算 dev → executor=codex（不再落 claude），allocation 账本在')
   : bad('abundant 预算 dev 行为异常: ' + JSON.stringify(abundant.task.payload));
 
 // 3. 显式 executor 不被覆盖

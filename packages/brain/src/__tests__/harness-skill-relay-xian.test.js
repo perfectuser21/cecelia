@@ -156,4 +156,27 @@ describe('spawnSkillRelaySession xian 派发路径', () => {
     expect(rollbackCalls.length).toBeGreaterThan(0);
     // 当前 failing：xian 分支尚未实现
   });
+
+  // Claude 通道退役（任务 76a160b3）：xian 路由走 codex bridge，缺省执行体照常派发（上面各例）；显式 executor=claude 仍拒绝
+  it('task.location=xian + 显式 executor=claude → claude_channel_retired，不调 bridgeFn', async () => {
+    const task = {
+      id: 'test-claude-xian',
+      task_type: 'harness_initiative',
+      location: 'xian',
+      payload: { allow_xian: true, sprint_dir: 'sprints/test-sprint', executor: 'claude' },
+    };
+    const result = await spawnSkillRelaySession(task, {
+      pool: mockPool,
+      bridgeFn: mockBridgeFn,
+      spawnFn: mockDockerFn,
+      execFn: mockExecFn,
+      loadSkill: () => 'skill content',
+      ensureWt: async () => '/tmp/wt',
+      tokenFn: async () => 'gh-token',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('claude_channel_retired');
+    expect(mockBridgeFn).not.toHaveBeenCalled();
+    expect(mockDockerFn).not.toHaveBeenCalled();
+  });
 });

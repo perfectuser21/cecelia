@@ -9,8 +9,8 @@ vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {
  *
  * PrepPRD: sprints/07041621-harness-skill-relay-wiring/prep-prd.md
  */
-import { describe, it, expect, vi, beforeAll } from 'vitest';
-import { spawnSkillRelaySession, isSkillRelayTask, controllerSkillFor, deriveGear, GEAR_VALUES } from '../harness-skill-relay.js';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { spawnSkillRelaySession, isSkillRelayTask, controllerSkillFor, deriveGear, GEAR_VALUES, _setActiveCodexRelays } from '../harness-skill-relay.js';
 import { isLaunchDeferredReason } from '../lib/kernel-launch-deferral.js';
 
 const TASK = {
@@ -20,8 +20,14 @@ const TASK = {
     orchestrator: 'skill-relay',
     sprint_dir: 'sprints/07049999-test',
     journey_id: 'j-1',
+    // Claude 无头通道已退役（任务 76a160b3）：缺省执行体=claude 会被拒绝，
+    // 与执行体无关的 relay 机制统一用 codex 执行体覆盖
+    executor: 'codex',
   },
 };
+
+// codex 进程内并发守门计数是模块级状态，每例归零，避免前例 spawn 成功后让后例被 codex_concurrent_limit 挡住
+beforeEach(() => { _setActiveCodexRelays(0); });
 const KERNEL_RUN_ID = '11111111-1111-4111-8111-111111111111';
 
 function makeDeps(overrides = {}) {
@@ -69,26 +75,18 @@ describe('isSkillRelayTask', () => {
 });
 
 describe('spawnSkillRelaySession', () => {
-  it('claude 执行体选号全不可用（env 无 CECELIA_CREDENTIALS）→ defer 不裸 spawn（issue 5167ef48）', async () => {
-    // account-rotation 全号熔断/打满时静默返回（env 不写）——旧行为会继续裸 spawn，
-    // 容器 "Not logged in" exit(1) 三连 → orphan-guard 终态（143f66e1 事故复现面）
-    const deps = makeDeps({ resolveAccountFn: vi.fn().mockResolvedValue(undefined) });
-    const r = await spawnSkillRelaySession(TASK, deps);
-    expect(r.ok).toBe(false);
-    expect(r.deferred).toBe(true);
-    expect(r.reason).toBe('no_available_claude_account');
-    expect(deps.spawnFn).not.toHaveBeenCalled();
-  });
-
-  it('claude 执行体选号成功（env 有 CECELIA_CREDENTIALS）→ 正常 spawn', async () => {
-    const deps = makeDeps({
-      resolveAccountFn: vi.fn().mockImplementation(async (opts) => {
-        opts.env.CECELIA_CREDENTIALS = 'account1';
-      }),
-    });
-    const r = await spawnSkillRelaySession(TASK, deps);
-    expect(r.ok).toBe(true);
-    expect(deps.spawnFn).toHaveBeenCalledOnce();
+  // 原「claude 执行体选号全不可用→defer / 选号成功→spawn」两例已随 Claude 通道退役删除（任务 76a160b3），改为断言拒绝
+  it('executor 缺省 / 显式 claude（无头）→ claude_channel_retired，不选号、不建 worktree、不 spawn', async () => {
+    for (const executor of [undefined, 'claude']) {
+      const deps = makeDeps();
+      const task = { ...TASK, payload: { ...TASK.payload, executor } };
+      const r = await spawnSkillRelaySession(task, deps);
+      expect(r).toMatchObject({ ok: false, mode: 'skill-relay', error: 'claude_channel_retired' });
+      expect(deps.resolveAccountFn).not.toHaveBeenCalled();
+      expect(deps.ensureWt).not.toHaveBeenCalled();
+      expect(deps.spawnFn).not.toHaveBeenCalled();
+      expect(deps.pool.query.mock.calls.some(([sql]) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
+    }
   });
 
   it('kernel-v1 启动确定性 orchestrator，不加载或 spawn harness-controller', async () => {
@@ -344,7 +342,7 @@ describe('spawnSkillRelaySession', () => {
 
   it('sprint_dir 缺省时自动生成（relay-<task8> 规约），并注入 prompt', async () => {
     const deps = makeDeps();
-    const task = { ...TASK, payload: { orchestrator: 'skill-relay' } };
+    const task = { ...TASK, payload: { orchestrator: 'skill-relay', executor: 'codex' } };
     const r = await spawnSkillRelaySession(task, deps);
     expect(r.ok).toBe(true);
     const spawnOpts = deps.spawnFn.mock.calls[0][0];
@@ -434,14 +432,17 @@ describe('codex executor 凭据挂载（extraMounts 接线，demo task a150998c 
     expect(r.ok).toBe(false);
   });
 
-  it('executor 缺省（claude）→ extraMounts 为空/未定义', async () => {
+  // 原「executor 缺省（claude）→ extraMounts 为空」随 Claude 通道退役改为断言拒绝（任务 76a160b3）
+  it('executor 缺省（claude）→ claude_channel_retired，不快照凭据、不 spawn', async () => {
     vi.stubEnv('CODEX_RELAY_HOME', '/tmp/fake-codex-home');
     const deps = makeDeps();
-    const r = await spawnSkillRelaySession(TASK, deps);
+    const task = { ...TASK, payload: { ...TASK.payload, executor: undefined } };
+    const r = await spawnSkillRelaySession(task, deps);
 
-    expect(r.ok).toBe(true);
-    const spawnOpts = deps.spawnFn.mock.calls[0][0];
-    expect(spawnOpts.extraMounts ?? []).toHaveLength(0);
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('claude_channel_retired');
+    expect(deps.snapshotCodexHome).not.toHaveBeenCalled();
+    expect(deps.spawnFn).not.toHaveBeenCalled();
   });
 
   it('executor=codex 且 CODEX_RELAY_HOME 未设 → 不 spawn，ok=false（B4 回滚语义）', async () => {
@@ -522,8 +523,9 @@ describe('deriveReviewRequired(P2-1:新功能人审/非新功能 auto merge)', (
       resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),
       tokenFn: vi.fn().mockResolvedValue('t'),
       now: () => new Date('2026-07-05T12:00:00Z'),
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     };
-    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00001111', title: 'feat: 全新能力', payload: { orchestrator: 'skill-relay', sprint_dir: 's' } };
+    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00001111', title: 'feat: 全新能力', payload: { orchestrator: 'skill-relay', sprint_dir: 's', executor: 'codex' } };
     const r = await spawnSkillRelaySession(task, deps);
     expect(r.ok).toBe(true);
     // payload 持久化
@@ -609,7 +611,7 @@ describe('spawnSkillRelaySession — sprint_dir 持久化 (issue 45dd6925)', () 
 
   it('payload 无 sprint_dir 时 spawn 持久化生成的 sprint_dir（重派漂移回归）', async () => {
     const deps = makeSprintDirDeps();
-    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00002222', title: 'feat: 无 sprint_dir 任务', payload: { orchestrator: 'skill-relay' } };
+    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00002222', title: 'feat: 无 sprint_dir 任务', payload: { orchestrator: 'skill-relay', executor: 'codex' } };
     const r = await spawnSkillRelaySession(task, deps);
     expect(r.ok).toBe(true);
     const upd = findSprintDirUpdate(deps);
@@ -620,7 +622,7 @@ describe('spawnSkillRelaySession — sprint_dir 持久化 (issue 45dd6925)', () 
 
   it('payload 已有 sprint_dir 时不回写（不覆盖 /dev 交接值）', async () => {
     const deps = makeSprintDirDeps();
-    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00003333', title: 'feat: 带 sprint_dir', payload: { orchestrator: 'skill-relay', sprint_dir: 'sprints/x' } };
+    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00003333', title: 'feat: 带 sprint_dir', payload: { orchestrator: 'skill-relay', sprint_dir: 'sprints/x', executor: 'codex' } };
     await spawnSkillRelaySession(task, deps);
     expect(findSprintDirUpdate(deps)).toBeFalsy();
   });
@@ -694,7 +696,9 @@ describe('spawnSkillRelaySession: golden_path_proposal 选中 capability-control
 //  2. packages/quality/hooks/post-pr-create.sh 检测 HARNESS_TASK_ID 非空时跳过 auto-merge
 //
 // headless docker relay 已通过 spawnFn 的 env 参数注入 HARNESS_TASK_ID（原有行为，无需改）。
-describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门）', () => {
+// Claude 通道退役（任务 76a160b3）：headed claude（claude-launch.sh）已删除，HARNESS_TASK_ID/identity 注入机制
+// 与执行体无关，改用 codex headed 覆盖；另加一例断言 headed claude → claude_channel_retired。
+describe('headed relay — HARNESS_TASK_ID 注入（evaluator gate 守门）', () => {
   function makeHeadedTask(overrides = {}) {
     return {
       id: 'bbbbcccc-dddd-eeee-ffff-000011112222',
@@ -702,14 +706,14 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
       payload: {
         orchestrator: 'skill-relay',
         mode: 'headed',
-        executor: 'claude',
+        executor: 'codex',
         sprint_dir: 'sprints/test-headed-gate',
       },
       ...overrides,
     };
   }
 
-  it('headed claude relay tmux innerCmd 包含 HARNESS_TASK_ID——post-pr-create hook 的检测信号', async () => {
+  it('headed codex relay tmux innerCmd 包含 HARNESS_TASK_ID——post-pr-create hook 的检测信号', async () => {
     const execCallArgs = [];
     const execFn = vi.fn((cmd, _opts) => {
       execCallArgs.push(String(cmd));
@@ -730,6 +734,7 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
       now: () => new Date('2026-07-15T07:10:00Z'),
       inDockerFn: () => false,
       sshKeyFn: () => null,
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     };
 
     const r = await spawnSkillRelaySession(task, deps);
@@ -758,7 +763,7 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
         orchestrator: 'skill-relay',
         harness_runtime: 'kernel-v1',
         mode: 'headed',
-        executor: 'claude',
+        executor: 'codex',
         routing_receipt_id: '44444444-4444-4444-8444-444444444444',
         repo: 'cecelia',
         branch: 'cp-headed-kernel',
@@ -780,6 +785,7 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
       now: () => new Date('2026-08-13T00:00:00Z'),
       inDockerFn: () => false,
       sshKeyFn: () => null,
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     };
 
     const result = await spawnSkillRelaySession(task, deps);
@@ -812,7 +818,7 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
         orchestrator: 'skill-relay',
         harness_runtime: 'kernel-v1',
         mode: 'headed',
-        executor: 'claude',
+        executor: 'codex',
         routing_receipt_id: '77777777-7777-4777-8777-777777777777',
         repo: 'cecelia',
         branch: 'cp-headed-kernel-failure',
@@ -836,6 +842,7 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
       now: () => new Date('2026-08-13T00:00:00Z'),
       inDockerFn: () => false,
       sshKeyFn: () => null,
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     };
 
     const result = await spawnSkillRelaySession(task, deps);
@@ -856,6 +863,28 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
       expect.stringContaining("UPDATE tasks SET status='queued'"),
       expect.anything(),
     );
+  });
+  it('headed executor=claude（含 kernel-v1 headed）→ claude_channel_retired，不起 tmux、不建 Kernel run', async () => {
+    for (const extra of [{}, { harness_runtime: 'kernel-v1' }]) {
+      const execFn = vi.fn(() => 'TMUX_DEAD');
+      const deps = {
+        pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+        execFn,
+        loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
+        ensureWt: vi.fn().mockResolvedValue('/tmp/wt/x'),
+        createKernelRun: vi.fn(),
+        sshSpawnFn: vi.fn(),
+        inDockerFn: () => false,
+        sshKeyFn: () => null,
+      };
+      const task = makeHeadedTask({ payload: { orchestrator: 'skill-relay', mode: 'headed', executor: 'claude', sprint_dir: 'sprints/x', ...extra } });
+      const r = await spawnSkillRelaySession(task, deps);
+      expect(r.ok).toBe(false);
+      expect(r.error).toBe('claude_channel_retired');
+      expect(execFn.mock.calls.some(([c]) => String(c).includes('tmux new-session'))).toBe(false);
+      expect(deps.createKernelRun).not.toHaveBeenCalled();
+      expect(deps.ensureWt).not.toHaveBeenCalled();
+    }
   });
 });
 

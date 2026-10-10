@@ -11,6 +11,7 @@
  *   8. SPAWN_V2_ENABLED=false → 跳过所有外层 middleware
  *   9. SPAWN_V2_ENABLED=true → 外层 4 middleware 按 cost-cap → spawn-pre → logging → billing 顺序调用
  *  10. target_environment=mac_web → 路由到 executeOnHost，不走 executeInDocker
+ *  11. CECELIA_EXECUTOR 缺省/claude → 抛 claude_channel_retired，不碰 docker 与 middleware（任务 76a160b3）
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -71,6 +72,8 @@ vi.mock('../middleware/billing.js', async (importOriginal) => {
 });
 
 // Helpers
+// 容器执行体缺省=claude 已退役（任务 76a160b3）：与执行体无关的 attempt-loop/middleware 机制用 codex 执行体覆盖
+const CODEX_ENV = { CECELIA_EXECUTOR: 'codex' };
 function successResult() {
   return { exit_code: 0, stdout: 'ok', stderr: '', duration_ms: 100, timed_out: false };
 }
@@ -116,7 +119,7 @@ describe('spawn() attempt-loop', () => {
   it('case 1: success first try — 调 1 次，返回该 result', async () => {
     const { spawn } = await import('../spawn.js');
     mockExecuteInDocker.mockResolvedValueOnce(successResult());
-    const result = await spawn({ task: { id: 't1' }, prompt: 'hi' });
+    const result = await spawn({ task: { id: 't1' }, prompt: 'hi', env: CODEX_ENV });
     expect(mockExecuteInDocker).toHaveBeenCalledTimes(1);
     expect(result.exit_code).toBe(0);
   });
@@ -126,7 +129,7 @@ describe('spawn() attempt-loop', () => {
     mockExecuteInDocker
       .mockResolvedValueOnce(transientTimeout())
       .mockResolvedValueOnce(successResult());
-    const result = await spawn({ task: { id: 't2' }, prompt: 'x' });
+    const result = await spawn({ task: { id: 't2' }, prompt: 'x', env: CODEX_ENV });
     expect(mockExecuteInDocker).toHaveBeenCalledTimes(2);
     expect(result.exit_code).toBe(0);
   });
@@ -137,7 +140,7 @@ describe('spawn() attempt-loop', () => {
       .mockResolvedValueOnce(transientTimeout())
       .mockResolvedValueOnce(transientTimeout())
       .mockResolvedValueOnce(transientTimeout());
-    const result = await spawn({ task: { id: 't3' }, prompt: 'x' });
+    const result = await spawn({ task: { id: 't3' }, prompt: 'x', env: CODEX_ENV });
     expect(mockExecuteInDocker).toHaveBeenCalledTimes(3);
     expect(result.timed_out).toBe(true);
     expect(result.exit_code).toBe(124);
@@ -146,7 +149,7 @@ describe('spawn() attempt-loop', () => {
   it('case 4: permanent 不重试 — exit_code 137 立即返回', async () => {
     const { spawn } = await import('../spawn.js');
     mockExecuteInDocker.mockResolvedValueOnce(permanentOOM());
-    const result = await spawn({ task: { id: 't4' }, prompt: 'x' });
+    const result = await spawn({ task: { id: 't4' }, prompt: 'x', env: CODEX_ENV });
     expect(mockExecuteInDocker).toHaveBeenCalledTimes(1);
     expect(result.exit_code).toBe(137);
   });
@@ -159,7 +162,7 @@ describe('spawn() attempt-loop', () => {
     const opts = {
       task: { id: 't5' },
       prompt: 'x',
-      env: { CECELIA_CREDENTIALS: 'account1', OTHER: 'keep' },
+      env: { CECELIA_EXECUTOR: 'codex', CECELIA_CREDENTIALS: 'account1', OTHER: 'keep' },
     };
     const result = await spawn(opts);
     expect(mockExecuteInDocker).toHaveBeenCalledTimes(2);
@@ -173,7 +176,7 @@ describe('spawn() attempt-loop', () => {
     const { spawn } = await import('../spawn.js');
     mockShouldRetry.mockReturnValueOnce(false);
     mockExecuteInDocker.mockResolvedValueOnce(transientTimeout());
-    const result = await spawn({ task: { id: 't6' }, prompt: 'x' });
+    const result = await spawn({ task: { id: 't6' }, prompt: 'x', env: CODEX_ENV });
     expect(mockExecuteInDocker).toHaveBeenCalledTimes(1);
     expect(result.timed_out).toBe(true);
     expect(mockShouldRetry).toHaveBeenCalledTimes(1);
@@ -184,7 +187,7 @@ describe('spawn() attempt-loop', () => {
     for (let i = 0; i < 5; i++) {
       mockExecuteInDocker.mockResolvedValueOnce(transientTimeout());
     }
-    await spawn({ task: { id: 't7' }, prompt: 'x' });
+    await spawn({ task: { id: 't7' }, prompt: 'x', env: CODEX_ENV });
     expect(mockExecuteInDocker).toHaveBeenCalledTimes(3);
   });
 
@@ -193,7 +196,7 @@ describe('spawn() attempt-loop', () => {
     try {
       const { spawn } = await import('../spawn.js');
       mockExecuteInDocker.mockResolvedValueOnce(successResult());
-      const result = await spawn({ task: { id: 't8', task_type: 'planner' }, prompt: 'x' });
+      const result = await spawn({ task: { id: 't8', task_type: 'planner' }, prompt: 'x', env: CODEX_ENV });
       expect(result.exit_code).toBe(0);
       // 关键断言：4 个外层 middleware 一个都不许被调
       expect(mockCheckCostCap).not.toHaveBeenCalled();
@@ -245,7 +248,7 @@ describe('spawn() attempt-loop', () => {
     });
 
     const { spawn } = await import('../spawn.js');
-    await spawn({ task: { id: 't9', task_type: 'planner' }, prompt: 'x' });
+    await spawn({ task: { id: 't9', task_type: 'planner' }, prompt: 'x', env: CODEX_ENV });
 
     // 关键断言：
     // 1. cost-cap 第一个被调（pre-flight）
@@ -263,5 +266,21 @@ describe('spawn() attempt-loop', () => {
     ]);
     expect(startSpy).toHaveBeenCalledTimes(1);
     expect(endSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('case 11: CECELIA_EXECUTOR 缺省/claude → 抛 claude_channel_retired，不碰 docker 与 middleware', async () => {
+    const { spawn } = await import('../spawn.js');
+    for (const env of [undefined, {}, { CECELIA_EXECUTOR: '' }, { CECELIA_EXECUTOR: 'claude' }]) {
+      await expect(spawn({ task: { id: 't11' }, prompt: 'x', env })).rejects.toMatchObject({ code: 'claude_channel_retired' });
+    }
+    process.env.SPAWN_V2_ENABLED = 'false';
+    try {
+      await expect(spawn({ task: { id: 't11b' }, prompt: 'x' })).rejects.toMatchObject({ code: 'claude_channel_retired' });
+    } finally {
+      delete process.env.SPAWN_V2_ENABLED;
+    }
+    expect(mockExecuteInDocker).not.toHaveBeenCalled();
+    expect(mockCheckCostCap).not.toHaveBeenCalled();
+    expect(mockPrepare).not.toHaveBeenCalled();
   });
 });

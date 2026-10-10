@@ -17,13 +17,10 @@ vi.mock('../../db.js', () => ({
   default: { query: vi.fn() },
 }));
 
-// ── Mock claude spawn（PR2 conversation-agent 依赖）──────────
+// ── 兜底 mock：Claude 通道已退役（任务 76a160b3），conversation-agent 不再 spawn；
+//    若有人复活 spawn，这里也不会真起进程 ──────────
 vi.mock('node:child_process', () => ({
-  spawnSync: vi.fn(() => ({
-    status: 0,
-    stdout: JSON.stringify({ type: 'result', result: '好的 [TURN: chat]', session_id: 'sess-mock-1' }) + '\n',
-    stderr: '',
-  })),
+  spawnSync: vi.fn(() => { throw new Error('spawnSync 不应被调用'); }),
 }));
 
 import pool from '../../db.js';
@@ -275,35 +272,22 @@ describe('[BEHAVIOR-3] PATCH /api/brain/conversations/:id — status 枚举校�
 describe('[BEHAVIOR-2] POST /api/brain/conversations/:id/messages — turn_count 自增', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('role=user → 201 + turn_count 自增 1 + 触发 agent 调用', async () => {
-    // 检查 conversation 存在（含锚点坐标）
+  // 原「role=user → 201 + turn_count 自增 + 落 assistant 回复 + 写回 current_session_id」：
+  // 已随 Claude 通道退役删除（任务 76a160b3），改为下面的 500 降级断言
+  it('role=user → agent 抛 claude_channel_retired → 500，且不插消息、不自增 turn_count、不写 session', async () => {
+    // 只有 conversation 存在性检查一次查询
     pool.query.mockResolvedValueOnce({ rows: [FAKE_CONVERSATION] });
-    // 插入 user 消息
-    pool.query.mockResolvedValueOnce({ rows: [FAKE_MESSAGE] });
-    // turn_count +1 UPDATE
-    pool.query.mockResolvedValueOnce({ rows: [{ ...FAKE_CONVERSATION, turn_count: 1 }] });
-    // 插入 assistant 回复（agent 调用产出）
-    pool.query.mockResolvedValueOnce({ rows: [] });
-    // 写回 current_session_id
-    pool.query.mockResolvedValueOnce({ rows: [] });
 
     const res = await request(makeApp())
       .post(`/api/brain/conversations/${FAKE_CONV_ID}/messages`)
       .send({ role: 'user', content: '测试消息' });
 
-    expect(res.status).toBe(201);
-    expect(res.body.id).toBeDefined();
-    expect(res.body.role).toBe('user');
-
-    // 第 4 次 query 应为插入 assistant 回复
-    const assistantInsertCall = pool.query.mock.calls[3];
-    expect(assistantInsertCall[0]).toContain("'assistant'");
-    expect(assistantInsertCall[1]).toContain('好的 [TURN: chat]');
-
-    // 第 5 次 query 应为写回 current_session_id
-    const sessionUpdateCall = pool.query.mock.calls[4];
-    expect(sessionUpdateCall[0]).toContain('current_session_id');
-    expect(sessionUpdateCall[1]).toContain('sess-mock-1');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain('claude_channel_retired');
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.query.mock.calls[0][0]).toMatch(/^SELECT/);
+    const writes = pool.query.mock.calls.filter(([sql]) => /INSERT|UPDATE/.test(sql));
+    expect(writes).toEqual([]);
   });
 
   it('role=assistant → 201，turn_count 不自增', async () => {

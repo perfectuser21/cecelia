@@ -3,7 +3,8 @@ vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
 /**
  * llm-caller.js 单元测试
  * 覆盖：callLLM、callLLMStream、_resetMinimaxKey、_resetAnthropicKey
- * 以及内部函数通过公开入口间接测试：callAnthropicAPI、callClaudeViaBridge、callMiniMaxAPI、callMiniMaxAPIStream、stripThinking
+ * 以及内部函数通过公开入口间接测试：callAnthropicAPI、callMiniMaxAPI、callMiniMaxAPIStream、stripThinking
+ * （callClaudeViaBridge 已随 Claude 通道退役删除，任务 76a160b3；provider=anthropic 改断言 claude_channel_retired + anthropic-api 兜底）
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -107,9 +108,9 @@ function makeMinimaxResponse(text = '你好') {
   });
 }
 
-/** 创建 Bridge /llm-call 成功响应 */
-function makeBridgeResponse(text = '你好') {
-  return makeOkResponse({ text });
+/** fetch 过的 URL 中是否有 bridge /llm-call（Claude 通道退役后必须为 false） */
+function hitBridge() {
+  return global.fetch.mock.calls.some(([url]) => String(url).includes('/llm-call'));
 }
 
 /** 创建 MiniMax SSE 流式 response mock */
@@ -235,67 +236,59 @@ describe('llm-caller', () => {
   // callLLM - Bridge 调用
   // ═══════════════════════════════════════════════════════════
 
-  describe('callLLM - Bridge 调用', () => {
-    it('正常通过 bridge 调用返回文本', async () => {
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('bridge回复'));
+  describe('callLLM - anthropic provider（Claude 通道已退役）', () => {
+    it('provider=anthropic 不 fetch bridge，改走 anthropic-api 直连兜底返回文本', async () => {
+      global.fetch.mockResolvedValueOnce(makeAnthropicResponse('直连回复'));
 
       const result = await callLLM('cortex', '测试');
 
-      expect(result.text).toBe('bridge回复');
-      expect(result.provider).toBe('anthropic');
-      // 验证 bridge 调用参数
-      const fetchCall = global.fetch.mock.calls[0];
-      expect(fetchCall[0]).toContain('/llm-call');
-      const body = JSON.parse(fetchCall[1].body);
-      expect(body.model).toBe('sonnet'); // CLAUDE_MODEL_FLAG 映射
-      expect(body.accountId).toBe('account1');
+      expect(result.text).toBe('直连回复');
+      expect(result.provider).toBe('anthropic-api');
+      expect(result.model).toBe('claude-sonnet-4-6');
+      expect(result.attempted_fallback).toBe(true);
+      expect(hitBridge()).toBe(false);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(global.fetch.mock.calls[0][0]).toBe('https://api.anthropic.com/v1/messages');
     });
 
-    it('bridge 返回空 text 时抛出错误', async () => {
-      global.fetch.mockResolvedValueOnce(makeOkResponse({ text: '' }));
+    it('anthropic-api 兜底返回空 content → 抛 claude_channel_retired（不再有 bridge empty text）', async () => {
+      global.fetch.mockResolvedValueOnce(makeOkResponse({ content: [] }));
 
-      await expect(callLLM('cortex', '测试')).rejects.toThrow('empty text');
+      await expect(callLLM('cortex', '测试')).rejects.toMatchObject({ code: 'claude_channel_retired' });
+      expect(hitBridge()).toBe(false);
     });
 
-    it('bridge HTTP 错误时抛出错误', async () => {
-      // 重试逻辑：1 次初始调用 + 最多 2 次重试 = 共 3 次 500 才最终失败
-      global.fetch
-        .mockResolvedValueOnce(makeErrorResponse(500, 'internal error'))
-        .mockResolvedValueOnce(makeErrorResponse(500, 'internal error'))
-        .mockResolvedValueOnce(makeErrorResponse(500, 'internal error'));
+    it('anthropic-api 兜底 HTTP 错误 → 抛 claude_channel_retired，不重试', async () => {
+      global.fetch.mockResolvedValue(makeErrorResponse(500, 'internal error'));
 
-      await expect(callLLM('cortex', '测试')).rejects.toThrow('Bridge /llm-call error: 500');
+      await expect(callLLM('cortex', '测试')).rejects.toThrow('claude_channel_retired');
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(hitBridge()).toBe(false);
     });
 
-    it('selectBestAccount 失败时停止，不猜测默认账号', async () => {
+    it('不再调用 selectBestAccount 选 Claude 账号（账号查询失败也不抛 LLM_ACCOUNT_UNAVAILABLE）', async () => {
       selectBestAccount.mockRejectedValueOnce(new Error('DB down'));
-      await expect(callLLM('cortex', '测试')).rejects.toMatchObject({ code: 'LLM_ACCOUNT_UNAVAILABLE' });
-      expect(global.fetch).not.toHaveBeenCalled();
+      global.fetch.mockResolvedValueOnce(makeAnthropicResponse('ok'));
+
+      await expect(callLLM('cortex', '测试')).resolves.toMatchObject({ provider: 'anthropic-api' });
+      expect(selectBestAccount).not.toHaveBeenCalled();
     });
 
-    it('selectBestAccount 返回 null 时停止，不绕过账号熔断', async () => {
-      selectBestAccount.mockResolvedValueOnce(null);
-      await expect(callLLM('cortex', '测试')).rejects.toMatchObject({ code: 'LLM_ACCOUNT_UNAVAILABLE' });
-      expect(global.fetch).not.toHaveBeenCalled();
-    });
-
-    it('有图片时 provider=anthropic 保持 bridge（P0-5: bridge 现支持图片）', async () => {
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('bridge看图'));
+    it('有图片时 provider=anthropic 不走 bridge，图片随 anthropic-api 兜底透传', async () => {
+      global.fetch.mockResolvedValueOnce(makeAnthropicResponse('直连看图'));
 
       const imageContent = [
         { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'xyz' } },
       ];
       const result = await callLLM('cortex', '看图', { imageContent });
 
-      // P0-5: bridge 现已支持图片，不再升级到 anthropic-api
-      const fetchCall = global.fetch.mock.calls[0];
-      expect(fetchCall[0]).toContain('/llm-call');
-      const body = JSON.parse(fetchCall[1].body);
-      expect(body.image_base64).toBe('xyz');
-      expect(body.image_mime).toBe('image/png');
-      expect(body.prompt).toBe('看图');
-      expect(result.text).toBe('bridge看图');
-      expect(result.provider).toBe('anthropic');
+      expect(hitBridge()).toBe(false);
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      expect(body.image_base64).toBeUndefined();
+      expect(body.messages[0].content[0]).toEqual({ type: 'text', text: '看图' });
+      expect(body.messages[0].content[1]).toEqual(imageContent[0]);
+      expect(result.text).toBe('直连看图');
+      expect(result.provider).toBe('anthropic-api');
     });
   });
 
@@ -360,40 +353,42 @@ describe('llm-caller', () => {
   // ═══════════════════════════════════════════════════════════
 
   describe('callLLM - Fallback 降级链', () => {
-    it('主模型失败后使用 fallback 成功', async () => {
+    // fallback_agent 候选链：anthropic-api → anthropic（已退役，不发请求）→ minimax
+    it('主模型失败后使用 fallback 成功（跳过已退役的 anthropic 候选）', async () => {
       // 第一次（anthropic-api）失败
       global.fetch.mockRejectedValueOnce(new Error('API timeout'));
-      // 第二次（bridge）成功
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('fallback回复'));
+      // anthropic 候选直接按 claude_channel_retired 失败（不 fetch），下一个 minimax 成功
+      global.fetch.mockResolvedValueOnce(makeMinimaxResponse('fallback回复'));
 
       const result = await callLLM('fallback_agent', '测试');
 
       expect(result.text).toBe('fallback回复');
+      expect(result.provider).toBe('minimax');
       expect(result.attempted_fallback).toBe(true);
       expect(global.fetch).toHaveBeenCalledTimes(2);
+      expect(hitBridge()).toBe(false);
     });
 
     it('所有候选模型都失败时抛出最后一个错误', async () => {
-      // 三次都失败
+      // anthropic-api 失败；anthropic 已退役不 fetch；minimax 失败
       global.fetch.mockRejectedValueOnce(new Error('error1'));
-      global.fetch.mockRejectedValueOnce(new Error('error2'));
-
       // 第三个是 minimax，需要先读取 key（已 mock）
       global.fetch.mockRejectedValueOnce(new Error('error3'));
 
       await expect(callLLM('fallback_agent', '测试')).rejects.toThrow('error3');
+      expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
-    it('主模型失败、第一个 fallback 也失败、第二个 fallback 成功', async () => {
+    it('主模型失败、第一个 fallback（anthropic 已退役）失败、第二个 fallback 成功', async () => {
       global.fetch.mockRejectedValueOnce(new Error('api down'));
-      global.fetch.mockRejectedValueOnce(new Error('bridge down'));
       global.fetch.mockResolvedValueOnce(makeMinimaxResponse('minimax兜底'));
 
       const result = await callLLM('fallback_agent', '测试');
 
       expect(result.text).toBe('minimax兜底');
       expect(result.attempted_fallback).toBe(true);
-      expect(global.fetch).toHaveBeenCalledTimes(3);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      expect(hitBridge()).toBe(false);
     });
   });
 
@@ -422,25 +417,27 @@ describe('llm-caller', () => {
   // ═══════════════════════════════════════════════════════════
 
   describe('callLLM - Profile 为空时使用默认值', () => {
-    it('profile 为 null 时使用默认 anthropic + haiku', async () => {
+    it('profile 为 null 时使用默认 anthropic + haiku（通道已退役 → anthropic-api 直连 haiku）', async () => {
       getActiveProfile.mockReturnValueOnce(null);
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('默认回复'));
+      global.fetch.mockResolvedValueOnce(makeAnthropicResponse('默认回复'));
 
       const result = await callLLM('unknown_agent', '测试');
 
       expect(result.text).toBe('默认回复');
-      expect(result.provider).toBe('anthropic');
+      expect(result.provider).toBe('anthropic-api');
       expect(result.model).toBe('claude-haiku-4-5-20251001');
+      expect(hitBridge()).toBe(false);
     });
 
     it('agentConfig 不存在时使用默认值', async () => {
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('ok'));
+      global.fetch.mockResolvedValueOnce(makeAnthropicResponse('ok'));
 
       const result = await callLLM('nonexistent_agent', '测试');
 
       expect(result.text).toBe('ok');
-      // 使用默认 anthropic provider
-      expect(result.provider).toBe('anthropic');
+      // 默认 anthropic provider 已退役，落到 anthropic-api 直连
+      expect(result.provider).toBe('anthropic-api');
+      expect(hitBridge()).toBe(false);
     });
   });
 
@@ -577,7 +574,7 @@ describe('llm-caller', () => {
           cortex: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
         },
       });
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('完整回复'));
+      global.fetch.mockResolvedValueOnce(makeAnthropicResponse('完整回复'));
 
       const chunks = [];
       await callLLMStream('cortex', '测试', {}, (delta, isDone) => {
@@ -588,6 +585,7 @@ describe('llm-caller', () => {
       expect(chunks.length).toBe(2);
       expect(chunks[0]).toEqual({ delta: '完整回复', isDone: false });
       expect(chunks[1]).toEqual({ delta: '', isDone: true });
+      expect(hitBridge()).toBe(false);
     });
   });
 
@@ -642,33 +640,7 @@ describe('llm-caller', () => {
     });
   });
 
-  // ═══════════════════════════════════════════════════════════
-  // Bridge 请求参数验证
-  // ═══════════════════════════════════════════════════════════
-
-  describe('Bridge 请求参数', () => {
-    it('使用 EXECUTOR_BRIDGE_URL 环境变量', async () => {
-      // BRIDGE_URL 在模块加载时读取，此处验证默认值
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('ok'));
-
-      await callLLM('cortex', '测试');
-
-      const url = global.fetch.mock.calls[0][0];
-      // 默认 URL 或环境变量
-      expect(url).toContain('/llm-call');
-    });
-
-    it('bridge 超时比 timeout 多 10 秒缓冲', async () => {
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('ok'));
-
-      await callLLM('cortex', '测试', { timeout: 30000 });
-
-      // signal 是 AbortSignal.timeout(timeout + 10000)
-      // 无法直接验证 signal 的超时值，但确认 signal 存在
-      const signal = global.fetch.mock.calls[0][1].signal;
-      expect(signal).toBeDefined();
-    });
-  });
+  // 「Bridge 请求参数」组（EXECUTOR_BRIDGE_URL / bridge 超时缓冲）已随 Claude 通道退役删除（任务 76a160b3）
 
   // ═══════════════════════════════════════════════════════════
   // 边界场景

@@ -46,7 +46,7 @@ vi.mock('../quarantine.js', () => ({
 }));
 
 const { default: taskTasksRouter } = await import('../routes/task-tasks.js');
-const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
+const { spawnSkillRelaySession, _setActiveCodexRelays } = await import('../harness-skill-relay.js');
 
 function makeApp() {
   const app = express();
@@ -164,6 +164,22 @@ describe('TC-A: POST /tasks status=blocked 注册', () => {
 
 // ─── TC-C：双容器竞态 — initiative_runs 非终态时拒绝二次 spawn ───────────────
 describe('TC-C: 双容器幂等防重 (active_run_guard)', () => {
+  // Claude 无头通道已退役（任务 76a160b3）：active_run_guard 幂等机制与执行体无关，原 executor=claude 改用 codex 覆盖；
+  // codex 进程内并发计数每例归零，避免前例 spawn 成功后让后例被 codex_concurrent_limit 提前挡住
+  beforeEach(() => { _setActiveCodexRelays(0); });
+
+  it('TC-C-0: executor=claude → claude_channel_retired，先于守卫查询拒绝、不 spawn', async () => {
+    const mockPool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const mockSpawnFn = vi.fn();
+    const result = await spawnSkillRelaySession(
+      { id: 'task-claude-001', task_type: 'harness_initiative', location: 'us', payload: { orchestrator: 'skill-relay', executor: 'claude' } },
+      { pool: mockPool, spawnFn: mockSpawnFn, execFn: vi.fn().mockReturnValue(''), loadSkill: () => 'skill content', ensureWt: async () => '/tmp/wt', tokenFn: async () => 'gh-token' },
+    );
+    expect(result).toMatchObject({ ok: false, error: 'claude_channel_retired' });
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(mockSpawnFn).not.toHaveBeenCalled();
+  });
+
   it('TC-C-1: initiative_runs 存在非终态行 → spawn 被拒绝，reason=active_run_guard', async () => {
     // mock dbPool：initiative_runs 查询返回一行（存在活跃 run）
     const mockPool = {
@@ -182,7 +198,7 @@ describe('TC-C: 双容器幂等防重 (active_run_guard)', () => {
       id: 'task-duplicate-001',
       task_type: 'harness_initiative',
       location: 'us',
-      payload: { orchestrator: 'skill-relay', executor: 'claude' },
+      payload: { orchestrator: 'skill-relay', executor: 'codex' },
     };
 
     const result = await spawnSkillRelaySession(task, {
@@ -222,7 +238,7 @@ describe('TC-C: 双容器幂等防重 (active_run_guard)', () => {
       id: 'task-fresh-001',
       task_type: 'harness_initiative',
       location: 'us',
-      payload: { orchestrator: 'skill-relay', executor: 'claude' },
+      payload: { orchestrator: 'skill-relay', executor: 'codex' },
     };
 
     // TC-C-2 只验证：守卫查询本身不误阻（不要求 spawn 完全成功，因为还有其他依赖）
@@ -257,7 +273,7 @@ describe('TC-C: 双容器幂等防重 (active_run_guard)', () => {
       id: 'task-db-error-001',
       task_type: 'harness_initiative',
       location: 'us',
-      payload: { orchestrator: 'skill-relay', executor: 'claude' },
+      payload: { orchestrator: 'skill-relay', executor: 'codex' },
     };
 
     // DB 失败 → 不应因 active_run_guard 拒绝（fail-open）

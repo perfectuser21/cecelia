@@ -41,14 +41,24 @@ describe('spawn env 观测接线（HARNESS_NODE + HARNESS_CALLBACK_URL）', () =
       resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),  // 新契约（5167ef48）：claude 需已解析账号
       tokenFn: vi.fn().mockResolvedValue('t'),
       now: () => new Date('2026-07-04T12:00:00Z'),
+      snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     };
-    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00001111', payload: { orchestrator: 'skill-relay', sprint_dir: 's' } };
+    // Claude 无头通道已退役（任务 76a160b3）：env/callback 接线与执行体无关，用 codex 执行体覆盖
+    const task = { id: 'aaaabbbb-cccc-dddd-eeee-ffff00001111', payload: { orchestrator: 'skill-relay', sprint_dir: 's', executor: 'codex' } };
     const r = await spawnSkillRelaySession(task, deps);
     expect(r.ok).toBe(true);
     const opts = deps.spawnFn.mock.calls[0][0];
     expect(opts.env.HARNESS_NODE).toBe('controller');
     expect(opts.env.HARNESS_CALLBACK_URL).toContain(opts.containerId);
     expect(opts.env.HARNESS_CALLBACK_URL).toMatch(/^http:\/\/host\.docker\.internal:5221\/api\/brain\/harness\/callback\//);
+  });
+
+  it('executor 缺省（claude）→ claude_channel_retired，不 spawn（任务 76a160b3）', async () => {
+    const { spawnSkillRelaySession } = await import('../harness-skill-relay.js');
+    const deps = { pool: { query: vi.fn().mockResolvedValue({ rows: [] }) }, spawnFn: vi.fn(), loadSkill: vi.fn(), ensureWt: vi.fn() };
+    const r = await spawnSkillRelaySession({ id: 'aaaabbbb-cccc-dddd-eeee-ffff00009999', payload: { orchestrator: 'skill-relay', sprint_dir: 's' } }, deps);
+    expect(r).toMatchObject({ ok: false, error: 'claude_channel_retired' });
+    expect(deps.spawnFn).not.toHaveBeenCalled();
   });
 });
 

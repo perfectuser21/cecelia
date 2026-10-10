@@ -134,7 +134,6 @@ describe('派发分配：引导员不再选 claude', () => {
 describe('worker-pool-dispatch：不再往 tmux 槽发射 claude', () => {
   it('runWorkerPoolDispatch 直接返回 claude_channel_retired，不认领任务、不执行任何命令', async () => {
     const mod = await import('../worker-pool-dispatch.js');
-    mod.__resetWorkerPoolDispatchForTest();
     const pool = { query: vi.fn(async () => ({ rows: [], rowCount: 0 })) };
     const execFn = vi.fn(() => '');
     const out = await mod.runWorkerPoolDispatch(pool, { execFn, ssh: { host: null, opts: '' }, sleep: async () => {} });
@@ -175,19 +174,5 @@ describe('harness-skill-relay：claude 执行体下线（codex/grok 不变）', 
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(deps.sshSpawnFn).not.toHaveBeenCalled();
     expect(deps.execFn.mock.calls.some(([cmd]) => /tmux|claude/.test(String(cmd)))).toBe(false);
-  });
-});
-
-describe('coding-workflow runner：claude 二进制拒绝', () => {
-  it.each([[undefined], ['claude'], ['/opt/homebrew/bin/claude']])('CODING_WF_CLAUDE_BIN=%s → 不 spawn，结果带 claude_channel_retired', async (bin) => {
-    if (bin === undefined) vi.stubEnv('CODING_WF_CLAUDE_BIN', '');
-    else vi.stubEnv('CODING_WF_CLAUDE_BIN', bin);
-    try {
-      const { runClaude } = await import('../../scripts/coding-workflow/lib/claude.mjs');
-      const r = await runClaude({ args: ['-p', 'x'], cwd: '/tmp', timeoutMs: 1000, tag: 't' });
-      expect(r.code).toBeNull();
-      expect(r.output).toMatch(RETIRED);
-      expect(nodeChild.spawn).not.toHaveBeenCalled();
-    } finally { vi.unstubAllEnvs(); }
   });
 });
