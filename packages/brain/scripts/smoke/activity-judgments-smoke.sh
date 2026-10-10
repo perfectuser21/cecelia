@@ -77,13 +77,13 @@ NODE
 ) || fail "真函数段失败"
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
-if curl -sf -m 5 "$BRAIN_URL/api/brain/health" >/dev/null 2>&1; then
+if curl -q -sf -m 5 "$BRAIN_URL/api/brain/health" >/dev/null 2>&1; then
   RID="00000000-0000-4000-8000-000000000538"
-  CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$BRAIN_URL/api/brain/activities/$RID/judgments/latest")"
+  CODE="$(curl -q -s -o /dev/null -w '%{http_code}' -m 10 "$BRAIN_URL/api/brain/activities/$RID/judgments/latest")"
   [[ "$CODE" == "404" ]] || fail "GET judgments/latest 期望 404（无裁判），实际 $CODE"
-  CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$BRAIN_URL/api/brain/activities/$RID/judgments")"
+  CODE="$(curl -q -s -o /dev/null -w '%{http_code}' -m 10 "$BRAIN_URL/api/brain/activities/$RID/judgments")"
   [[ "$CODE" == "200" ]] || fail "GET judgments 期望 200，实际 $CODE"
-  CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$BRAIN_URL/api/brain/activities/$RID/version-compare")"
+  CODE="$(curl -q -s -o /dev/null -w '%{http_code}' -m 10 "$BRAIN_URL/api/brain/activities/$RID/version-compare")"
   [[ "$CODE" == "400" ]] || fail "GET version-compare 缺候选期望 400，实际 $CODE"
   pass "真容器：三个裁判查询接口已挂载（latest 404 / 历史 200 / 对比缺参 400）"
 elif [[ "${CI:-}" == "true" ]]; then
