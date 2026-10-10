@@ -1,5 +1,5 @@
 /**
- * 发布线接口（决策 de6dff5d 第 3 步，迁移 540）。读接口不需鉴权（同 GET /spans）；写接口 internalAuthOrLoopback。
+ * 发布线接口（决策 de6dff5d 第 3 步，迁移 541）。读接口不需鉴权（同 GET /spans）；写接口 internalAuthOrLoopback。
  *
  * GET  /api/brain/activities/:id/release              生产版 / 最新 / 候选 / 是否受保护 / 事件 / 各目标机最近 release 的版本
  * GET  /api/brain/activities/:id/release-events?limit=

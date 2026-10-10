@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# release-line-smoke — 发布线（迁移 540，决策 de6dff5d 五块模型第 3 步，任务 37568378）真库真代码火：
+# release-line-smoke — 发布线（迁移 541，决策 de6dff5d 五块模型第 3 步，任务 37568378）真库真代码火：
 # 构建登记到内容版本：同内容新 commit 不出新版本；生产版从未收敛 → 新内容 bootstrap（reason=bootstrap_no_converged_baseline）；
 # 命中已存在旧构建不拨回指针；发布时把关默认关 → 无缺口；版本/事件只追加；真容器里发布线查询接口已挂载。
 # 全程一个事务内跑，结束回滚（版本/事件只追加、定义构建不可变，不能靠 DELETE 清理）。
@@ -28,8 +28,8 @@ await client.connect();
 try {
   await client.query('BEGIN');
   for (const t of ['activity_versions', 'activity_version_builds', 'activity_release_state', 'activity_release_events', 'workflow_production_recipes'])
-    if (!(await client.query(`SELECT to_regclass('public.${t}') IS NOT NULL AS ok`)).rows[0].ok) die(`${t} 不存在（迁移 540 未跑？）`);
-  ok('迁移 540：版本、构建映射、生产指针、事件、流程配方五张表齐全');
+    if (!(await client.query(`SELECT to_regclass('public.${t}') IS NOT NULL AS ok`)).rows[0].ok) die(`${t} 不存在（迁移 541 未跑？）`);
+  ok('迁移 541：版本、构建映射、生产指针、事件、流程配方五张表齐全');
 
   const tag = `rl-smoke-${randomUUID().slice(0, 8)}`;
   const act = (await client.query('INSERT INTO activities(name) VALUES($1) RETURNING id', [tag])).rows[0].id;
@@ -76,7 +76,7 @@ NODE
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 if curl -q -sf -m 5 "$BRAIN_URL/api/brain/health" >/dev/null 2>&1; then
-  RID="00000000-0000-4000-8000-000000000540"
+  RID="00000000-0000-4000-8000-000000000541"
   CODE="$(curl -q -s -o /dev/null -w '%{http_code}' -m 10 "$BRAIN_URL/api/brain/activities/$RID/release")"
   [[ "$CODE" == "404" ]] || fail "GET activities/:id/release 期望 404（不存在的 Activity），实际 $CODE"
   CODE="$(curl -q -s -o /dev/null -w '%{http_code}' -m 10 "$BRAIN_URL/api/brain/activities/$RID/content-versions")"

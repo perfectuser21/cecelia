@@ -1,12 +1,12 @@
-/** 迁移 540（决策 de6dff5d 第 3 步 发布线）：只读 SQL 文本断言形状。 */
+/** 迁移 541（决策 de6dff5d 第 3 步 发布线）：只读 SQL 文本断言形状。 */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const up = readFileSync(fileURLToPath(new URL('../../migrations/540_release_line.sql', import.meta.url)), 'utf8');
-const downPath = fileURLToPath(new URL('../../migrations/rollback/540_release_line.down.sql', import.meta.url));
+const up = readFileSync(fileURLToPath(new URL('../../migrations/541_release_line.sql', import.meta.url)), 'utf8');
+const downPath = fileURLToPath(new URL('../../migrations/rollback/541_release_line.down.sql', import.meta.url));
 
-describe('migration 540 release line', () => {
+describe('migration 541 release line', () => {
   it('版本层按内容去重，构建层不加列（下游 SELECT * 读者零影响）', () => {
     expect(up).toMatch(/CREATE TABLE IF NOT EXISTS activity_versions/);
     expect(up).toMatch(/UNIQUE \(activity_id, content_md5\)/);
@@ -26,13 +26,13 @@ describe('migration 540 release line', () => {
     expect(up).toMatch(/<> 'consumer_evidence'/);
     expect(up).toMatch(/trigger_kind IN \('auto', 'manual', 'promotion_gate'\)/);
   });
-  it('写 schema_version 540，事务包裹，有回滚脚本', () => {
-    expect(up).toMatch(/INSERT INTO schema_version[\s\S]*'540'/);
+  it('写 schema_version 541，事务包裹，有回滚脚本', () => {
+    expect(up).toMatch(/INSERT INTO schema_version[\s\S]*'541'/);
     expect(up).toMatch(/^BEGIN;/m);
     expect(up.trim().endsWith('COMMIT;')).toBe(true);
     expect(existsSync(downPath)).toBe(true);
     const down = readFileSync(downPath, 'utf8');
     expect(down).toMatch(/DROP TABLE IF EXISTS activity_versions/);
-    expect(down).toMatch(/DELETE FROM schema_version WHERE version = '540'/);
+    expect(down).toMatch(/DELETE FROM schema_version WHERE version = '541'/);
   });
 });

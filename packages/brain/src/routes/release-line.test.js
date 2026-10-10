@@ -1,4 +1,4 @@
-/** 发布线接口（迁移 540）：库函数全 mock；锁参数校验、状态码透传、写接口挂内部鉴权。 */
+/** 发布线接口（迁移 541）：库函数全 mock；锁参数校验、状态码透传、写接口挂内部鉴权。 */
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({

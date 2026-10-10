@@ -1,5 +1,5 @@
 /**
- * 发布线真 PG（决策 de6dff5d 第 3 步，迁移 540）：隔离 schema 内建最小表 + 跑真实迁移 538、540。
+ * 发布线真 PG（决策 de6dff5d 第 3 步，迁移 541）：隔离 schema 内建最小表 + 跑真实迁移 538、541。
  * 锁：同内容两个 commit 只出一个版本；迁移后生产版 = current；冷启动 bootstrap；命中旧构建不拨回指针；
  * 受保护时影子模式照常前进 / 保护打开留作候选；晋级门被拒与通过后只换一格；接口变化须成组、成组原子；
  * 自动退回 advisory / on / 无目标去重；发布时把关开关；同步挂钩出错不拖垮同步。
@@ -18,7 +18,7 @@ import { judgeActivity } from '../../lib/activity-judge.js';
 import { compareActivityVersions } from '../../lib/activity-version-compare.js';
 
 const M538 = readFileSync(new URL('../../../migrations/538_activity_judgments.sql', import.meta.url), 'utf8');
-const M540 = readFileSync(new URL('../../../migrations/540_release_line.sql', import.meta.url), 'utf8');
+const M541 = readFileSync(new URL('../../../migrations/541_release_line.sql', import.meta.url), 'utf8');
 let client, schema;
 const SHA = n => String(n).padStart(40, 'a');
 const quiet = { warn: vi.fn(), info: vi.fn() };
@@ -98,13 +98,13 @@ async function markConverged(a, b) {
     VALUES($1,$2,'converged',true,5,5,5,'manual',null,$3::jsonb)`, [a, b, JSON.stringify({ window_version_ids: [b], window_unversioned_run_count: 0, runs: [] })]);
 }
 
-describe('迁移 540：初始生产版 = 今天正在用的版本', () => {
+describe('迁移 541：初始生产版 = 今天正在用的版本', () => {
   it('同内容两个 commit 只出一个版本；指针 = current 的版本；initial 事件；初始配方；只追加', async () => {
     const a = await activity('搜索');
     const b1 = await build(a, 1), b2 = await build(a, 2), b3 = await build(a, 3, { note: 'changed' });
     await setCurrent(a, b2);
     const w = await workflow([{ a, b: b2 }]);
-    await client.query(M540);
+    await client.query(M541);
     expect((await client.query('SELECT version_no, first_build_id FROM activity_versions WHERE activity_id=$1 ORDER BY version_no', [a])).rows)
       .toEqual([{ version_no: 1, first_build_id: b1 }, { version_no: 2, first_build_id: b3 }]);
     expect(await versionOf(b1)).toBe(await versionOf(b2));
@@ -115,7 +115,7 @@ describe('迁移 540：初始生产版 = 今天正在用的版本', () => {
     expect(recipe[0].recipe[0]).toMatchObject({ slot_key: 'slot0', activity_id: a, activity_version_id: await versionOf(b2) });
     await expect(client.query('UPDATE activity_versions SET version_no=9')).rejects.toThrow(/只追加/);
     await expect(client.query('DELETE FROM activity_release_events')).rejects.toThrow(/只追加/);
-    expect((await client.query("SELECT 1 FROM schema_version WHERE version='540'")).rows).toHaveLength(1);
+    expect((await client.query("SELECT 1 FROM schema_version WHERE version='541'")).rows).toHaveLength(1);
     // 晋级门的收敛裁判可落库
     await client.query(`INSERT INTO activity_judgments(activity_id,verdict,converged,consecutive_green,required_green,runs_considered,trigger_kind,report)
       VALUES($1,'no_data',false,0,5,0,'promotion_gate','{}'::jsonb)`, [a]);
@@ -123,7 +123,7 @@ describe('迁移 540：初始生产版 = 今天正在用的版本', () => {
 });
 
 describe('冷启动与同步挂钩', () => {
-  beforeEach(async () => { await client.query(M540); });
+  beforeEach(async () => { await client.query(M541); });
 
   it('从未收敛 → 新内容直接 bootstrap；同内容新 commit 不动；命中已存在旧构建不拨回', async () => {
     const a = await activity('预检');
@@ -188,7 +188,7 @@ describe('冷启动与同步挂钩', () => {
 });
 
 describe('晋级门 / 成组晋级', () => {
-  beforeEach(async () => { await client.query(M540); });
+  beforeEach(async () => { await client.query(M541); });
 
   it('受保护：候选没有样本 → 409 GATE_FAILED + promote_rejected；候选连续 5 绿且不差 → 201，配方只换这一格', async () => {
     const a = await activity('取源'), other = await activity('收尾', iface(['Run']));
@@ -273,7 +273,7 @@ describe('晋级门 / 成组晋级', () => {
 });
 
 describe('自动退回 / 手动退回', () => {
-  beforeEach(async () => { await client.query(M540); });
+  beforeEach(async () => { await client.query(M541); });
 
   async function failingRuns(a, s, b, n) {
     for (let i = 0; i < n; i++) {
@@ -331,7 +331,7 @@ describe('自动退回 / 手动退回', () => {
 });
 
 describe('发布时把关', () => {
-  beforeEach(async () => { await client.query(M540); });
+  beforeEach(async () => { await client.query(M541); });
 
   it('开关默认关 → 零查询无缺口；打开 → 只对受保护的生产版记 activity_version_not_production', async () => {
     const a = await activity('把关'), fresh = await activity('冷启动');

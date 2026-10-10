@@ -44,7 +44,7 @@ describe('同步挂钩 fail-open', () => {
     const out = await runReleaseLineHook(db, 'x', vi.fn(), { env: {}, alert: vi.fn(), log: quiet });
     expect(out.error).toMatch(/transaction blocks/);
   });
-  it('没跑迁移 540 → 跳过；开关 off → 不发任何查询', async () => {
+  it('没跑迁移 541 → 跳过；开关 off → 不发任何查询', async () => {
     const db = { query: vi.fn(async (sql) => (/to_regclass/.test(sql) ? { rows: [{ ok: false }] } : { rows: [] })) };
     const fn = vi.fn();
     expect(await runReleaseLineHook(db, 'x', fn, { env: {} })).toEqual({ skipped: 'not_migrated' });

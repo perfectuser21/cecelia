@@ -1,4 +1,4 @@
--- 540: 发布线（决策 de6dff5d 五块模型：树+仓库+账本+裁判+发布线，第 3 步）
+-- 541: 发布线（决策 de6dff5d 五块模型：树+仓库+账本+裁判+发布线，第 3 步）
 -- 构建层与版本层分开：
 --   构建 = activity_definition_versions（每个 commit 一行，部署证据，不动、不加列，下游 SELECT * 读者零影响）
 --   版本 = activity_versions（按内容去重：payload 去掉 implementation_bindings 后的 md5；内容没变就不出新版本）
@@ -135,7 +135,7 @@ ON CONFLICT (activity_id) DO NOTHING;
 
 -- 3) 每个指针一条 initial 事件
 INSERT INTO activity_release_events (activity_id, kind, actor, reason, to_version_id, gate)
-SELECT s.activity_id, 'initial', 'migration_540', 'initial_migration_current_definition', s.production_version_id,
+SELECT s.activity_id, 'initial', 'migration_541', 'initial_migration_current_definition', s.production_version_id,
        jsonb_build_object('converged', false, 'source', 'current_definition_version_id')
   FROM activity_release_state s;
 
@@ -151,7 +151,7 @@ BEGIN
          LEFT JOIN activity_release_state s ON s.activity_id = (e->>'activity_id')::uuid
    WHERE COALESCE(v.payload->>'definition_scope', '') <> 'consumer_evidence'
      AND s.production_version_id IS DISTINCT FROM m.activity_version_id;
-  IF n > 0 THEN RAISE NOTICE '540: % 个流程格冻结构建内容与生产指针不一致（配方按生产指针填）', n; END IF;
+  IF n > 0 THEN RAISE NOTICE '541: % 个流程格冻结构建内容与生产指针不一致（配方按生产指针填）', n; END IF;
 END $$;
 
 INSERT INTO workflow_production_recipes (workflow_id, recipe, recipe_md5, cause)
@@ -175,7 +175,7 @@ SELECT r.workflow_id, r.recipe, md5(r.recipe::text), 'initial_migration'
   ) r;
 
 INSERT INTO schema_version (version, description)
-VALUES ('540', '发布线：内容版本 activity_versions、构建映射、生产指针、晋级/退回事件、流程生产配方')
+VALUES ('541', '发布线：内容版本 activity_versions、构建映射、生产指针、晋级/退回事件、流程生产配方')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

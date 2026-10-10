@@ -55,7 +55,7 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
       steps:await snapshotSteps(client,a),implementation_bindings:binding,resources:a.contract?.resources||{},verification:{preconditions:a.contract?.preconditions||[],postconditions:a.contract?.postconditions||[],steps:a.contract?.steps||[]}};
     const saved=await saveVersion(client,'activity',a.id,payload,activitySource),versionId=saved.id;
     versions.set(a.id,versionId);
-    // 发布线（迁移 540）：构建登记到内容版本、按冷启动规则动生产指针；SAVEPOINT 内 fail-open，出错不影响同步
+    // 发布线（迁移 541）：构建登记到内容版本、按冷启动规则动生产指针；SAVEPOINT 内 fail-open，出错不影响同步
     await runReleaseLineHook(client,'register_build',db=>registerActivityBuild(db,{activityId:a.id,buildId:versionId,inserted:saved.inserted}));
     await client.query('UPDATE workflow_activity_refs SET activity_definition_version_id=$2 WHERE activity_id=$1 AND workflow_id=ANY($3::uuid[]) AND active AND activity_definition_version_id IS DISTINCT FROM $2',[a.id,versionId,workflowIds]);
   }

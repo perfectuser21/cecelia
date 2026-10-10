@@ -245,7 +245,7 @@ async function compareContentVersions(db, activityId, { candidateVersionId, base
 
 /**
  * 读库对比同一 Activity 的两个版本（晋级门入口）。
- * 发布线迁移（540）后按「内容版本」：id 可以是 activity_versions.id，也可以是构建 id（先解析出它的内容）；
+ * 发布线迁移（541）后按「内容版本」：id 可以是 activity_versions.id，也可以是构建 id（先解析出它的内容）；
  * 样本 = 该内容所有构建下的 span；基线省略取生产版。没有发布线表（旧库/测试库）时按构建 id 对比（旧行为）。
  * @param {object} db  pg Pool/Client
  * @param {string} activityId

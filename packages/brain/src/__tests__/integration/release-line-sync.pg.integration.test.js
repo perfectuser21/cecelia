@@ -1,5 +1,5 @@
 /**
- * 发布线 × 真实合同同步（迁移 513 夹具 + 538 + 540）：
+ * 发布线 × 真实合同同步（迁移 513 夹具 + 538 + 541）：
  * 合同同步写构建的同时登记内容版本、冷启动动生产指针、刷新流程生产配方；
  * 发布线挂钩出错（这里用触发器制造）只回滚到 savepoint，定义同步照常提交，current 照常前进。
  */
@@ -16,7 +16,7 @@ beforeEach(async () => {
   fixture = await versionsDatabase(); db = fixture.db; await seedWorkflows(db);
   await fixture.migrate();
   await fixture.client.query(migrationSql('538_activity_judgments.sql'));
-  await fixture.client.query(migrationSql('540_release_line.sql'));
+  await fixture.client.query(migrationSql('541_release_line.sql'));
 });
 afterEach(async () => { if (fixture) await fixture.close(); });
 

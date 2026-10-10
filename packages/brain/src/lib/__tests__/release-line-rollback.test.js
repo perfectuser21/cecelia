@@ -10,7 +10,7 @@ describe('onJudgmentRecorded fail-safe', () => {
     expect(await onJudgmentRecorded(db, 'a', {}, { env: { RELEASE_LINE_AUTO_ROLLBACK: 'off' } })).toEqual({ action: 'off' });
     expect(db.query).not.toHaveBeenCalled();
   });
-  it('非自动裁判 → 不评估；没跑迁移 540 → 跳过', async () => {
+  it('非自动裁判 → 不评估；没跑迁移 541 → 跳过', async () => {
     expect(await onJudgmentRecorded({ query: vi.fn() }, 'a', { trigger_kind: 'manual' }, { env: {} })).toEqual({ action: 'not_auto' });
     const db = { query: vi.fn(async () => ({ rows: [{ ok: false }] })) };
     expect(await onJudgmentRecorded(db, 'a', {}, { env: {} })).toEqual({ action: 'not_migrated' });
