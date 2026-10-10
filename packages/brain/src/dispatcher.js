@@ -748,7 +748,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
     const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...breakerSkipIds, ...duplicateSkipIds, ...resourceSkipIds];
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, {
       priorityFilter: _quotaPriorityFilter,
-      ...(codeOnly ? {codeOnly:true,onlyTaskTypes:['script_run']} : {}),
+      ...(codeOnly ? {codeOnly:true} : {}),
       ...(qiumiOnlyBypass ? { onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES] } : {}),
     });
     if (!candidate) {
