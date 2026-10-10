@@ -9,17 +9,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
 
-const { default: router, _resetAllowedCategoriesCache, loadMigrationCategories } = await import('../strategic-decisions.js');
+const { default: router, _resetAllowedCategoriesCache } = await import('../strategic-decisions.js');
 
 const DEF_V1 = "CHECK (((category IS NULL) OR ((category)::text = ANY ((ARRAY['decision'::character varying, 'general'::character varying, 'judgment'::character varying])::text[]))))";
 const DEF_V2 = "CHECK (((category IS NULL) OR ((category)::text = ANY ((ARRAY['decision'::character varying, 'general'::character varying, 'judgment'::character varying, 'retro'::character varying])::text[]))))";
 const SQL_LEAK = /decisions_category_chk|check constraint|violates|relation "decisions"/i;
-// 迁移 384 白名单 + 迁移 545 补的 general：约束读不到时允许值退回迁移声明的取值
-const MIGRATION_CATEGORIES = [
-  'architecture', 'bug-fix', 'decision', 'deployment', 'feature', 'general', 'governance',
-  'infra', 'invariant', 'judgment', 'nfr', 'small-change', 'technical', 'testing',
-];
-const MIGRATION_ERROR = `category 非法，合法值：${MIGRATION_CATEGORIES.join('|')}`;
+// 约束读不到（重读也失败、无缓存）时：只认数据库真身，不拿迁移文件等静态来源冒充，返回空列表
+const UNAVAILABLE_ERROR = 'category 非法';
+// 迁移文件里声明过、但不在当前数据库约束里的值，不能出现在允许值里
+const MIGRATION_ONLY = /architecture|bug-fix|nfr|small-change|testing/;
 
 function findHandler(method, path) {
   const layer = router.stack.find(
@@ -135,8 +133,9 @@ describe('POST /strategic-decisions category 校验', () => {
     expect(insertCalls()).toHaveLength(1);
     expect(res.statusCode).toBe(400);
     expect(res.body.success).toBe(false);
-    expect(res.body.error).toBe(MIGRATION_ERROR);
-    expect(res.body.allowed_categories).toEqual(MIGRATION_CATEGORIES);
+    expect(res.body.error).toBe(UNAVAILABLE_ERROR);
+    expect(res.body.allowed_categories).toEqual([]);
+    expect(JSON.stringify(res.body)).not.toMatch(MIGRATION_ONLY);
     expect(JSON.stringify(res.body)).not.toMatch(/decisions_category_chk|check constraint|violates|relation|connection/i);
   });
 
@@ -148,8 +147,9 @@ describe('POST /strategic-decisions category 校验', () => {
     );
     const res = await post({ category: 'x'.repeat(5000), topic: 't', decision: 'd' });
     expect(res.statusCode).toBe(400);
-    expect(res.body.error).toBe(MIGRATION_ERROR);
-    expect(res.body.allowed_categories).toEqual(MIGRATION_CATEGORIES);
+    expect(res.body.error).toBe(UNAVAILABLE_ERROR);
+    expect(res.body.allowed_categories).toEqual([]);
+    expect(JSON.stringify(res.body)).not.toMatch(MIGRATION_ONLY);
     expect(JSON.stringify(res.body)).not.toMatch(/character varying|value too long/i);
   });
 
@@ -158,8 +158,9 @@ describe('POST /strategic-decisions category 校验', () => {
     for (const category of [123, ['decision'], {}, true]) {
       const res = await post({ category, topic: 't', decision: 'd' });
       expect(res.statusCode).toBe(400);
-      expect(res.body.allowed_categories).toEqual(MIGRATION_CATEGORIES);
-      expect(res.body.error).toBe(MIGRATION_ERROR);
+      expect(res.body.allowed_categories).toEqual([]);
+      expect(res.body.error).toBe(UNAVAILABLE_ERROR);
+      expect(JSON.stringify(res.body)).not.toMatch(MIGRATION_ONLY);
     }
     expect(insertCalls()).toHaveLength(0);
     const ok = await post({ category: 'decision', topic: 't', decision: 'd' });
@@ -236,15 +237,11 @@ describe('POST /strategic-decisions category 校验', () => {
     expect(JSON.stringify(res.body)).not.toMatch(SQL_LEAK);
   });
 
-  it('约束读取失败且无缓存：迁移声明的合法值预检直接放行 201', async () => {
+  it('约束读取失败且无缓存：合法字符串 category 预检放行 201', async () => {
     constraintError = new Error('boom');
     const res = await post({ category: 'general', topic: 't', decision: 'd' });
     expect(res.statusCode).toBe(201);
     expect(insertCalls()).toHaveLength(1);
-  });
-
-  it('loadMigrationCategories 从真实迁移文件解析出 category 取值，不混入约束名等其它字面量', () => {
-    expect(loadMigrationCategories()).toEqual(MIGRATION_CATEGORIES);
   });
 
   it('其它数据库错误仍 500', async () => {

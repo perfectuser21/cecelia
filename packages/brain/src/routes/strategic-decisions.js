@@ -10,9 +10,6 @@
  */
 
 import { Router } from 'express';
-import { readdirSync, readFileSync } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import pool from '../db.js';
 
 const router = Router();
@@ -22,8 +19,6 @@ const VALID_STATUSES = ['active', 'executed', 'expired'];
 // category 允许值唯一真身 = 数据库约束 decisions_category_chk（不手抄副本）
 const CATEGORY_CONSTRAINT = 'decisions_category_chk';
 let allowedCategoriesCache = null;
-const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'migrations');
-let migrationCategoriesCache = null;
 
 /**
  * 从 decisions_category_chk 约束定义解析允许的 category 列表。
@@ -52,35 +47,16 @@ export async function loadAllowedCategories({ fresh = false } = {}) {
   }
 }
 
-/**
- * 约束读不到时的允许值来源：迁移文件里给 decisions_category_chk 声明的取值
- * （category IN (...) 列表与 ARRAY[...] 字面量的并集）。迁移只增不减，列出的值数据库必认。
- */
-export function loadMigrationCategories() {
-  if (migrationCategoriesCache) return migrationCategoriesCache;
-  const values = new Set();
-  try {
-    for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql'))) {
-      const sql = readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8').replace(/--.*$/gm, '');
-      if (!sql.includes(CATEGORY_CONSTRAINT)) continue;
-      for (const m of sql.matchAll(/category\s+IN\s*\(([^)]*)\)|ARRAY\[([^\]]*)\]/gi)) {
-        for (const [, v] of (m[1] ?? m[2]).matchAll(/'([^']+)'/g)) values.add(v);
-      }
-    }
-  } catch (err) {
-    console.error('[strategic-decisions] load migration categories error:', err.message);
-    return [];
-  }
-  migrationCategoriesCache = [...values].sort();
-  return migrationCategoriesCache;
-}
-
 export function _resetAllowedCategoriesCache() {
   allowedCategoriesCache = null;
 }
 
+/**
+ * 400 响应体。允许值只认数据库约束（含上次成功读到的缓存）；
+ * 读不到时返回空列表，不用迁移文件等静态来源冒充（线上约束可能已漂移）。
+ */
 function categoryRejection(loaded) {
-  const values = loaded.values?.length ? loaded.values : loadMigrationCategories();
+  const values = loaded.values ?? [];
   return {
     status: 400,
     body: {
@@ -94,8 +70,7 @@ function categoryRejection(loaded) {
 /**
  * 校验 category。返回 null 表示放行，否则返回 { status, body }。
  * 允许值读不到（且无缓存）时：非字符串直接 400；字符串放行进 INSERT，
- * 由数据库约束兜底（23514 / 超长 22001 在 catch 里转译为 400）；
- * 这两种 400 都用迁移声明的取值告知调用方合法值。
+ * 由数据库约束兜底（23514 / 超长 22001 在 catch 里转译为 400）。
  */
 async function checkCategory(category) {
   if (category === undefined || category === null || category === '') return null;
