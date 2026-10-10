@@ -176,6 +176,11 @@
       "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
       "path": ".prd-cp-10101725-patrol-impact-adapter.md",
       "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-patrol-baseline.mjs",
+      "path": "scripts/ci/__tests__/device-patrol-baseline.test.mjs",
+      "role": "verification"
     }
   ]
 }

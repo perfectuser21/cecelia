@@ -23,6 +23,7 @@ on:
       TS_AUTHKEY: {required: true}
       CECELIA_INTERNAL_TOKEN: {required: true}
       BRAIN_DEPLOY_URL: {required: false}
+      CECELIA_ACTIONS_READ_TOKEN: {required: false}
 permissions:
   contents: read
   actions: read
@@ -31,7 +32,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   snapshot-main:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: inputs.scope != 'cecelia-device-patrol' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -80,7 +81,7 @@ jobs:
   gate:
     name: Implementation impact gate
     needs: [snapshot-main]
-    if: always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')
+    if: always() && (inputs.scope == 'cecelia-device-patrol' || github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     services:
@@ -103,6 +104,7 @@ jobs:
       BASE: ${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}
       HEAD: ${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}
       MODE: ${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}
+      TOOLING_REVISION: ${{ inputs.tooling_revision || github.event.pull_request.base.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -129,7 +131,16 @@ jobs:
         working-directory: source
       - name: scratch正式迁移
         run: node tooling/packages/brain/src/migrate.js
+      - name: 巡查独立可信工具main身份baseline
+        if: env.MAP_SCOPE == 'cecelia-device-patrol'
+        env:
+          GH_TOKEN: ${{ secrets.CECELIA_ACTIONS_READ_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          node tooling/scripts/ci/implementation-patrol-baseline.mjs "$TOOLING_REVISION" "$RUNNER_TEMP/implementation-input"
+          printf 'ADMISSION_SCOPES=\n' >> "$GITHUB_ENV"
       - name: 下载固定SHA中央bundle（PR无中央写凭据）
+        if: env.MAP_SCOPE != 'cecelia-device-patrol'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}

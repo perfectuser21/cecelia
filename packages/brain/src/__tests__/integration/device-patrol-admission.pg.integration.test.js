@@ -87,3 +87,14 @@ it('窄CI入口在真实Git+PG登记上运行回归；未登记路径保持fail-
   await expect(runDevicePatrolGate({...options,head:git('rev-parse','HEAD')})).rejects.toThrow('PATROL_CHANGED_FILE_UNCLAIMED');
  }finally{rmSync(outputDir,{recursive:true,force:true});}
 });
+it('真实main推进的新空base逐棵Git树核验，首次冻结登记与后继HEAD不混淆',async()=>{
+ git('checkout','-q','-b','advanced-main',base);writeFileSync(join(dir,'README.md'),'real main advancement\n');git('add','.');git('commit','-q','-m','main advances without phone source');const advanced=git('rev-parse','HEAD');
+ git('checkout','-q','-b','admitted-head',introduced);git('merge','-q','--no-edit','advanced-main');const head=git('rev-parse','HEAD');
+ const out=mkdtempSync(join(tmpdir(),'patrol-advanced-base-'));
+ try{
+  const identity=await exportPatrolAdmissionSnapshot(db,{scope:PATROL_SCOPE,repo:PATROL_REPO,revision:base});for(const side of ['base','head'])writeFileSync(join(out,side+'.json'),JSON.stringify(identity));
+  const result=await runDevicePatrolGate({repoRoot:dir,base:advanced,head,scope:PATROL_SCOPE,mode:'pr',outputDir:out,snapshotBase:join(out,'base.json'),snapshotHead:join(out,'head.json')});
+  expect(result.receipt.verdict).toBe('PASS');expect(result.report.base).toMatchObject({revision:advanced,tree_sha:git('rev-parse',advanced+'^{tree}'),absence_proof:'actual_complete_git_tree'});
+  expect(identity.registration.provenance.base_revision).toBe(base);expect(result.report.head.revision).toBe(head);
+ }finally{rmSync(out,{recursive:true,force:true});}
+});

@@ -13,8 +13,9 @@ const governancePaths=new Set(['.gitleaksignore','.github/workflows/pr-review.ym
 const projectDoc=path=>/^\.(?:prd|dod)-cp-10101635-phone-account-patrol\.md$/.test(path);
 function contractProof(root,revision,registration,{emptyAllowed=false}={}){
  if(!exists(root,revision,PATROL_PATH)){
-  if(!emptyAllowed||revision!==registration.provenance.base_revision||git(root,'rev-parse',`${revision}^{tree}`).toString().trim()!==registration.provenance.base_tree_sha||git(root,'ls-tree','-rz','--name-only',revision).toString().split('\0').some(p=>p.startsWith(PATROL_PREFIX)))fail('PATROL_EMPTY_BASE_UNPROVEN');
-  return {revision,kind:'verified_scope_absent',tree_sha:registration.provenance.base_tree_sha,bindings:[],auxiliary:[]};
+  const treeSha=git(root,'rev-parse',`${revision}^{tree}`).toString().trim();
+  if(!emptyAllowed||revision===registration.provenance.base_revision&&treeSha!==registration.provenance.base_tree_sha||git(root,'ls-tree','-rz','--name-only',revision).toString().split('\0').some(p=>p.startsWith(PATROL_PREFIX)))fail('PATROL_EMPTY_BASE_UNPROVEN');
+  return {revision,kind:'verified_scope_absent',tree_sha:treeSha,absence_proof:'actual_complete_git_tree',bindings:[],auxiliary:[]};
  }
  const contract=validatePatrolContract(JSON.parse(read(root,revision,PATROL_PATH))),registered=registration.source.contract;
  for(const w of contract.workflows){const original=registered.workflows.find(r=>r.id===w.id);if(!original||original.key!==w.key||w.activities.length!==original.activities.length||w.activities.some((a,i)=>a.id!==original.activities[i].id||a.key!==original.activities[i].key))fail('PATROL_REGISTERED_IDENTITY_CHANGED');}
@@ -56,7 +57,7 @@ export async function runDevicePatrolGate(options){
   git(repoRoot,'merge-base','--is-ancestor',base,head);
   const unwrap=path=>{const value=JSON.parse(readFileSync(path));return validatePatrolSnapshot(value.snapshot||value);};
   const baseline=unwrap(snapshotBase),candidate=unwrap(snapshotHead),registration=baseline.registration;
-  if(baseline.revision!==base||baseline.registration_sha256!==candidate.registration_sha256||baseline.registration_sha256!==sha(JSON.stringify(canonical(registration)))||registration.source.source_sha256!==sha(JSON.stringify(canonical((({source_sha256,...body})=>body)(registration.source)))))fail('PATROL_REGISTRATION_CONFLICT');
+  if(![base,registration.provenance.base_revision].includes(baseline.revision)||baseline.registration_sha256!==candidate.registration_sha256||baseline.registration_sha256!==sha(JSON.stringify(canonical(registration)))||registration.source.source_sha256!==sha(JSON.stringify(canonical((({source_sha256,...body})=>body)(registration.source)))))fail('PATROL_REGISTRATION_CONFLICT');
   git(repoRoot,'merge-base','--is-ancestor',registration.provenance.introduced_revision,head);
   const original=contractProof(repoRoot,registration.provenance.introduced_revision,registration);if(original.source_sha256!==registration.source.source_sha256)fail('PATROL_INTRODUCED_BYTES_MISMATCH');
   const before=contractProof(repoRoot,base,registration,{emptyAllowed:true}),after=contractProof(repoRoot,head,registration);
