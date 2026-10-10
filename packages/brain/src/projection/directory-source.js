@@ -273,3 +273,4 @@ export async function loadDirectorySource(pool) {
       WHERE l.archived_at IS NULL),'[]'::jsonb)) AS source`);
   return rows[0].source;
 }
+

@@ -30,6 +30,7 @@ beforeEach(async () => {
     CREATE TABLE activity_cells(step_id uuid,cell_key text,cell_status text,parent_cell_key text);
     CREATE TABLE warehouse_items(id uuid,name text);
     CREATE TABLE activity_uses(activity_id uuid,item_id uuid,role text);
+    CREATE TABLE activity_judgments(id bigint GENERATED ALWAYS AS IDENTITY,activity_id uuid,verdict text,consecutive_green int,required_green int,judged_at timestamptz);
     CREATE TABLE notion_map_node_pages(scope text,node_key text,notion_id text,archived_at timestamptz);
     CREATE TABLE map_projection_runs(id uuid,scope_key text,status text);
     CREATE TABLE map_projection_nodes(run_id uuid,node_key text,node_type text,name text,attributes jsonb);
@@ -48,6 +49,18 @@ describe('六层目录真实PG边界', () => {
     const source=await loadDirectorySource(client);
     expect(source.cells).toEqual([{step_id:activity,cell_key:'promise',cell_status:'green',parent_cell_key:null},{step_id:activity,cell_key:'readback.net',cell_status:'red',parent_cell_key:'readback'}]);
     expect(source.uses).toEqual([{activity_id:activity,item_name:'设备锁',role:'uses'}]);
+  });
+  it('目录源每个 Activity 只带最新一条裁判，Activity 行写出「裁判结论」（任务 f6ad056e）', async () => {
+    const activity=fixtureEntityId(870),workflow=fixtureEntityId(871);
+    await client.query('ALTER TABLE activities ADD COLUMN current_definition_version_id uuid, ADD COLUMN capability_key text, ADD COLUMN activity_key text');
+    await client.query("INSERT INTO activities(id,name,workflow_id,capability_key,activity_key) VALUES($1,'判定',$2,'cap','judge')",[activity,workflow]);
+    await client.query(`INSERT INTO activity_judgments(activity_id,verdict,consecutive_green,required_green,judged_at) VALUES
+      ($1,'diverged',0,3,'2026-10-09T00:00:00Z'),($1,'converging',2,3,'2026-10-10T00:00:00Z')`,[activity]);
+    const source=await loadDirectorySource(client);
+    expect(source.judgments).toHaveLength(1);
+    expect(source.judgments[0]).toMatchObject({activity_id:activity,verdict:'converging',consecutive_green:2,required_green:3});
+    const row=buildDirectoryRows(source).find(r=>r.id===activity);
+    expect(row.properties['裁判结论'].rich_text[0].text.content).toBe('收敛中 · 连续绿 2/3');
   });
   it('真PG精确current Activity/Step登记读取声明；历史、错step、注册漂移拒映射，未登记仅父gap', async () => {
     const activity=fixtureEntityId(850),step=fixtureEntityId(851),version=fixtureEntityId(852),history=fixtureEntityId(853),workflow=fixtureEntityId(854);
