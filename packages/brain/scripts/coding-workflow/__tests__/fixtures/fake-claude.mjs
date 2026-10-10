@@ -239,3 +239,5 @@ else {
   if (mode === 'linger') spawnGrandchild();
 }
 sideEffects();
+// FAKE_CLAUDE_COST：末尾输出一行 result 事件（真 claude --output-format json 的形状），供计费测试
+if (process.env.FAKE_CLAUDE_COST) console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: Number(process.env.FAKE_CLAUDE_COST) }));

@@ -27,6 +27,28 @@ describe('合并门（绑定 head SHA）', () => {
     expect(lastResult()).toMatchObject({ merge: { merged: true, head } });
   });
 
+  // 审计 #35 + #22：合并时汇总全链花费（链路 + QA + CI 修复）写进 Brain，并把这次交付的真实复盘写进 learnings
+  it('合并成功 → result.cost_usd 汇总链路/QA/CI 修复花费；POST learnings-received（带 task_id、合同对抗/QA/CI 修复复盘）', async () => {
+    const head = remoteHead();
+    seedState({ passed: true, approved: { head, round: 2 }, cost_usd: 1.2, rounds: [
+      { round: 1, head: 'a'.repeat(40), verdict: 'FAIL', fails: 2, report: `${SPRINT}/05-qa-report-r1.md` },
+      { round: 2, head, verdict: 'PASS', fails: 0, report: `${SPRINT}/05-qa-report-r2.md` },
+    ] });
+    fs.mkdirSync(sb.logDir, { recursive: true });
+    fs.writeFileSync(path.join(sb.logDir, 'cifix-77.json'), JSON.stringify({ cost_usd: 0.8, attempts: [{ head: 'b'.repeat(40), result: 'pushed', checks: ['brain-unit (3)'] }] }));
+    const task = { id: TASK, status: 'completed', result: {
+      runner: { cost_usd: 3.5 }, coding_workflow: { gan: { verdict: 'APPROVED', rounds: 3, trend: 'converging' } },
+    } };
+    const r = await go(green({ prs: [pr({ headRefOid: head })] }), { tasks: [task] });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(lastResult()).toMatchObject({ merge: { merged: true, head }, cost_usd: { chain: 3.5, qa: 1.2, ci_fix: 0.8, total: 5.5 } });
+    expect(E.brain.learnings).toHaveLength(1);
+    const l = E.brain.learnings[0];
+    expect(l).toMatchObject({ task_id: TASK, branch_name: BRANCH, pr_number: 77, repo: 'cecelia', issues_found: [] });
+    const text = l.next_steps_suggested.join('\n');
+    for (const s of ['合同对抗 3 轮 APPROVED', '真人 QA 2 轮', '第 1 轮 FAIL（2 处失败', 'CI 修复 1 次', 'brain-unit (3)', '$5.5']) expect(text).toContain(s);
+  });
+
   // 审计 #6：合并失败不能静默挂着
   it('合并失败且 PR 冲突 → 升级 merge_conflict（P1 + Brain escalations），不再重试', async () => {
     approve();

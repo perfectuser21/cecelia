@@ -24,7 +24,7 @@ const TRANSITIONS = { queued: ['in_progress'], in_progress: ['completed', 'faile
  * 认领对 coding-workflow-runner 强制写 kind（同真 Brain），legacyClaim=true 模拟旧端点的 COALESCE。
  */
 export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {}, onResultPatch, legacyClaim = false } = {}) {
-  const state = { tasks: structuredClone(tasks), calls: [], patches: [] };
+  const state = { tasks: structuredClone(tasks), calls: [], patches: [], learnings: [] };
   const find = (id) => state.tasks.find((t) => t.id === id);
   const send = (res, code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
   const server = http.createServer((req, res) => {
@@ -42,6 +42,11 @@ export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = 
           .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
           .slice(0, Number(q.get('limit') || 100));
         return send(res, 200, rows);
+      }
+      // learnings 落库（审计 #22）：同真 Brain 的 POST /api/brain/learnings-received
+      if (req.method === 'POST' && url.pathname === '/api/brain/learnings-received') {
+        state.learnings.push(JSON.parse(raw));
+        return send(res, 200, { success: true });
       }
       const one = /^\/api\/brain\/tasks\/([^/]+)$/.exec(url.pathname);
       if (req.method === 'GET' && one) {

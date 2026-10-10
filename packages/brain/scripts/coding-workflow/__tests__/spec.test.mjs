@@ -162,6 +162,13 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(revise).toContain('Brain 任务 ID');
   });
 
+  // 审计 #35：spec 会话的花费进活动 metrics（执行器回执汇总、runner 回写 Brain）
+  it('spec 会话花费写进 metrics.cost_usd', async () => {
+    const r = await run('ok', {}, { FAKE_CLAUDE_COST: '0.31' });
+    expect(r.result.status, r.stderr).toBe('completed');
+    expect(r.result.metrics).toMatchObject({ cost_usd: 0.31 });
+  });
+
   it('uncovered：02 的 upstream 没覆盖全部 I-n -> retryable spec_invalid，evidence 点名未覆盖的 I-n', async () => {
     const r = await run('uncovered');
     expect(r.result.failure_class).toBe('retryable');

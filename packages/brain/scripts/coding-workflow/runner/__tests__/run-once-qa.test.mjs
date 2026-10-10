@@ -304,6 +304,13 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(r.stderr).toContain('[coding-qa][P1]');
   });
 
+  // 审计 #35：QA 门里 evaluate 会话的花费累加进状态（随状态同步进 Brain，合并时汇总）
+  it('每轮 evaluate 的花费累加进状态 cost_usd', async () => {
+    const r = await go(green(), { mode: 'fail' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(state().cost_usd).toBeGreaterThanOrEqual(0.5);
+  });
+
   it('已合并且 QA 通过过的 PR → 停掉它的预览环境释放容量（只停一次）', async () => {
     seedState({ passed: true, rounds: [] });
     const r = await go({ prs: [], mergedPrs: [pr()] });
