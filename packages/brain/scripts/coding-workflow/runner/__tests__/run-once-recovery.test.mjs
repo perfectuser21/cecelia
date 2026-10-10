@@ -45,7 +45,7 @@ describe('coding workflow runner 防重跑与对账', () => {
   });
 
   const statuses = () => brain.patches.map((p) => p.body.status ?? null);
-  const claims = () => brain.calls.filter((c) => c.method === 'POST');
+  const claims = () => brain.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/claim'));
   const writeLocal = (id, ext, body) => {
     fs.mkdirSync(sb.logDir, { recursive: true });
     fs.writeFileSync(path.join(sb.logDir, `${id}.${ext}`), body);

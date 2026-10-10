@@ -59,6 +59,11 @@ export function brainClient(baseUrl, { listLimit = 500, log = () => {} } = {}) {
       return request(`${tasksUrl}/${encodeURIComponent(id)}/claim`, json('POST', { claimer, executor_kind: EXECUTOR_KIND }));
     },
 
+    /** POST /spans（决策 b34e346a：执行记录，单条或数组）；返回 { ok, status, body }。 */
+    postSpans(rows) {
+      return request(`${baseUrl}/api/brain/spans`, json('POST', rows));
+    },
+
     /** POST /learnings-received（审计 #22：交付复盘落库，必须带 task_id）；返回 { ok, status, body }。 */
     postLearnings(body) {
       return request(`${baseUrl}/api/brain/learnings-received`, json('POST', body));

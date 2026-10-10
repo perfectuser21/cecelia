@@ -1,4 +1,5 @@
 // run-once.mjs 端到端：假 Brain、临时 bare origin + 专用 clone、假执行器、假 gh，全程不碰真实服务。
+import { CODING_WORKFLOW_ID, ACTIVITY_IDS } from '../lib/spans.mjs';
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -79,7 +80,7 @@ describe('coding workflow runner run-once', () => {
     });
     const r = await runOnceProcess(runnerEnv(sb, brain.url));
     expect(r.exitCode, r.stderr).toBe(0);
-    const claims = brain.calls.filter((c) => c.method === 'POST');
+    const claims = brain.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/claim'));
     expect(claims.map((c) => c.path)).toEqual(['/api/brain/tasks/ddddddd4-0000-4000-8000-000000000004/claim']);
   }, 30000);
 
@@ -108,7 +109,7 @@ describe('coding workflow runner run-once', () => {
     const limits = brain.calls.filter((c) => c.method === 'GET' && c.path === '/api/brain/tasks'
       && new URLSearchParams(c.query).get('status') === 'queued').map((c) => new URLSearchParams(c.query).get('limit'));
     expect(limits).toEqual(['2', '4']);
-    expect(brain.calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual([`/api/brain/tasks/${T1}/claim`]);
+    expect(brain.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/claim')).map((c) => c.path)).toEqual([`/api/brain/tasks/${T1}/claim`]);
   }, 30000);
 
   it('锁被存活进程持有但已超过最长持锁时长（总超时 + 1h）：视为陈旧并回收', async () => {
@@ -145,7 +146,7 @@ describe('coding workflow runner run-once', () => {
     });
     const r = await runOnceProcess(runnerEnv(sb, brain.url));
     expect(r.exitCode, r.stderr).toBe(0);
-    const claims = brain.calls.filter((c) => c.method === 'POST');
+    const claims = brain.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/claim'));
     expect(claims.map((c) => c.path)).toEqual([`/api/brain/tasks/${T1}/claim`, `/api/brain/tasks/${T2}/claim`]);
     expect(JSON.parse(claims[1].raw)).toEqual({
       claimer: `coding-workflow-runner@${os.hostname()}`,
@@ -254,6 +255,17 @@ describe('coding workflow runner run-once', () => {
     expect(fs.readFileSync(path.join(worktree, `.dev-mode.${branch}`), 'utf8')).toContain('gp_anchor: none(infra)');
     expect(git(worktree, 'status', '--porcelain')).toBe('');
   }, 30000);
+
+  // 决策 b34e346a（审计 #24/#26）：链路跑完，每个活动的每次尝试上报一条 span（run_id coding-workflow:<task>）
+  it('链路跑完 → 每个活动上报 span 到 Brain（登记的 activity id、结论、幂等键）', async () => {
+    brain = await startFakeBrain({ tasks: [codingTask(T1, { payload: { ...SWITCH } })] });
+    const r = await runOnceProcess(runnerEnv(sb, brain.url, { FAKE_EXEC_REPORT: '1' }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    const spans = brain.spans.filter((s) => s.run_id === `coding-workflow:${T1}`);
+    expect(spans.map((s) => s.occurrence_key)).toEqual(['intent:1', 'spec:1', 'build:1', 'verify:1', 'chain_check:1', 'publish:1', 'report:1']);
+    expect(spans.every((s) => s.outcome === 'pass' && s.workflow_id === CODING_WORKFLOW_ID)).toBe(true);
+    expect(spans[1].activity_id).toBe(ACTIVITY_IDS.spec);
+  });
 
   it('CODING_WF_AUTOMERGE=0：成功但不调 gh', async () => {
     brain = await startFakeBrain({ tasks: [codingTask(T1)] });

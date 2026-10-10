@@ -9,6 +9,7 @@ import { findTarget, failureLogs, readState, statePath } from './cifix-scan.mjs'
 import { taskIdOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead } from './pr-branch.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { revokeQaPass } from './qa-gate.mjs';
+import { gateSpan, postSpans } from './spans.mjs';
 
 const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)'];
 const GH_TIMEOUT_MS = 2 * 60 * 1000;
@@ -122,6 +123,8 @@ export async function runCiFix(ctx, signal) {
   if (fs.existsSync(worktree)) await removeWorktree(cfg, worktree, null);
   fs.rmSync(worktree, { recursive: true, force: true });
 
+  const startedAt = Date.now();
+  const attemptNo = readState(cfg, pr.number).attempts.length + 1;
   const entry = { pr: pr.number, head: pr.headRefOid, at: new Date().toISOString(), failed_checks: target.failedRequired };
   try {
     Object.assign(entry, await attempt(ctx, target, worktree, signal));
@@ -131,6 +134,13 @@ export async function runCiFix(ctx, signal) {
   const taskId = fs.existsSync(worktree) ? taskIdOf(worktree, pr.headRefName) : null;
   ctx.log(`CI 修复 PR #${pr.number} 结果：${entry.result}`);
   await record(ctx, pr, taskId, entry);
+  // 执行记录（决策 b34e346a）：每次修复尝试一条
+  if (taskId) {
+    await postSpans(ctx, [gateSpan({
+      taskId, key: 'ci_fix', startedAt, endedAt: Date.now(), ok: entry.result === 'pushed',
+      occurrence: `${pr.number}:${attemptNo}`, evidence: { result: entry.result, failed_checks: target.failedRequired },
+    })]);
+  }
   await removeWorktree(cfg, worktree, pr.headRefName);
   fs.rmSync(worktree, { recursive: true, force: true });
   return true;

@@ -426,3 +426,4 @@ resource-health-smoke.sh
 release-line-smoke.sh
 qiumi-status-map-smoke.sh
 leadgen-notion-registry-smoke.sh
+coding-workflow-spans-smoke.sh

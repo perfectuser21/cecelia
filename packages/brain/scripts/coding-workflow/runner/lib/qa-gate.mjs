@@ -12,6 +12,7 @@ import { ghJson, listOwnPrs, requiredState, CW_BRANCH_RE } from './cifix-scan.mj
 import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from './pr-branch.mjs';
 import { previewOf } from '../../lib/preview.mjs';
 import { buildQaSmoke, registerSmoke } from '../../lib/qa-smoke.mjs';
+import { gateSpan, postSpans } from './spans.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { runJudge } from './judge-gate.mjs';
 
@@ -240,7 +241,14 @@ function stalled(s) {
 
 /** 跑独立裁判，结果记进 entry.judge 与 s.judge_pending/judge_bad；返回 runJudge 结果。 */
 async function judgeStep(ctx, pr, s, worktree, intent, entry) {
+  const startedAt = Date.now();
   const j = await runJudge(ctx.cfg, worktree, intent, { round: entry.round, reportRel: entry.report, log: ctx.log });
+  // 执行记录（决策 b34e346a）：裁判出结论记一条；不可用的每次带计数，避免同一轮重试撞幂等键
+  const bad = j.error && !j.escalate ? `:e${(s.judge_bad ?? 0) + 1}` : '';
+  await postSpans(ctx, [gateSpan({
+    taskId: intent.taskId, key: 'judge', startedAt, endedAt: Date.now(), ok: !j.error && j.verdict === 'PASS',
+    occurrence: `${pr.number}:r${entry.round}${bad}`, evidence: j.error ? { error: j.error } : { verdict: j.verdict, failure_class: j.failure_class ?? null },
+  })]);
   // 需要人处理的（如改动超过裁判上限）：不算裁判坏、不重试，交 afterJudge 升级
   if (j.escalate) {
     entry.judge = { state: 'escalated', reason: j.error };
@@ -321,6 +329,7 @@ async function qaRound(ctx, pr, s, signal) {
     ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮真人 QA 开始`);
     // QA 会话执行记录落在 runner 日志目录（判越界、证据不实时可复核）
     const transcript = path.join(cfg.logDir, `qa-${pr.number}-r${round}.jsonl`);
+    const evalStartedAt = Date.now();
     const result = await evaluate(ctx, worktree, {
       run_tag: `qa-${pr.number}-r${round}`, task_id: intent.taskId, worktree, sprint_dir: intent.sprintDir,
       intent_ids: intent.intentIds, intent_sha256: intent.intentSha256, pr_number: pr.number, round, head_sha: pr.headRefOid,
@@ -331,6 +340,12 @@ async function qaRound(ctx, pr, s, signal) {
       budget: { max_duration_s: Math.round(EVALUATE_TIMEOUT_MS / 1000) },
     }, signal);
     const qa = result?.status === 'completed' ? result.outputs?.qa : null;
+    // 执行记录（决策 b34e346a）：每次评估一条；评估出错按连续次数区分幂等键
+    await postSpans(ctx, [gateSpan({
+      taskId: intent.taskId, key: 'qa', startedAt: evalStartedAt, endedAt: Date.now(), ok: qa?.verdict === 'PASS', costUsd: qa?.cost_usd,
+      occurrence: `${pr.number}:r${round}${qa ? '' : `:e${(s.bad ?? 0) + 1}`}`,
+      evidence: qa ? { verdict: qa.verdict, fails: qa.failed.length + qa.blocking.length } : { reason_code: result?.reason_code ?? 'evaluate_crashed' },
+    })]);
     if (!qa) {
       s.bad = (s.bad ?? 0) + 1;
       const reason = result?.reason_code ?? 'evaluate_crashed';

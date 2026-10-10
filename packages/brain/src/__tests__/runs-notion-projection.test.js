@@ -60,7 +60,14 @@ describe('RUNS_DB_PROPS / IN_WINDOW_SQL', () => {
     expect(Object.keys(RUNS_DB_PROPS).sort()).toEqual([...COLUMNS].sort());
     expect(RUNS_DB_PROPS['任务']).toEqual({ title: {} });
     expect(RUNS_DB_PROPS['结果'].select.options.map((o) => o.name)).toEqual(['成功', '失败', '超时', '运行中', '跳过', '未知']);
-    expect(RUNS_DB_PROPS['来源'].select.options.map((o) => o.name)).toEqual(['OpenClaw', 'Brain', '外部上报']);
+    expect(RUNS_DB_PROPS['来源'].select.options.map((o) => o.name)).toEqual(['OpenClaw', 'Brain', '外部上报', 'Coding Workflow']);
+  });
+  // 决策 b34e346a：coding workflow 的运行（run_id coding-workflow:<task>）7 天内全量可见，不只失败
+  it('coding workflow 的运行 7 天内全部进窗口；来源显示 Coding Workflow', () => {
+    expect(IN_WINDOW_SQL).toMatch(/run_id LIKE 'coding-workflow:%' AND \(started_at >= now\(\) - interval '7 days'/);
+    expect(IN_WINDOW_SQL).toMatch(/run_id NOT LIKE 'coding-workflow:%'/);
+    const p = buildRunProps({ run_id: 'coding-workflow:c954ebfd', started_at: '2026-10-10T05:00:00Z', outcome: 'pass', duration_ms: 60000 });
+    expect(p['来源']).toEqual({ select: { name: 'Coding Workflow' } });
   });
   it('窗口 SQL 含 7 天与 30 天两档', () => {
     expect(IN_WINDOW_SQL).toContain("interval '7 days'");

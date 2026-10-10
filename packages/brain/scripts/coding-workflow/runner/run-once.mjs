@@ -14,6 +14,7 @@ import { isSwitched, hasRunResult, pickCandidates, taskNames, runTimeoutMs } fro
 import { prepareWorktree } from './lib/worktree.mjs';
 import { cleanupRetention } from './lib/retention.mjs';
 import { runExecutor } from './lib/executor.mjs';
+import { chainSpans, postSpans } from './lib/spans.mjs';
 import { readReceipt, summarizeReceipt } from './lib/receipt.mjs';
 import { failTask, finishSuccess, localSummary, lostSummary, settle, settleQueued } from './lib/terminal.mjs';
 import { runCiFix } from './lib/cifix.mjs';
@@ -86,7 +87,8 @@ async function claimFirst(ctx, candidates) {
 }
 
 /** 建 worktree 并跑执行器；返回回执摘要。任一步失败抛 Error(reason_code)。 */
-async function execute(cfg, task, job, signal) {
+async function execute(ctx, task, job, signal) {
+  const { cfg } = ctx;
   const names = taskNames(task.id);
   const worktree = await prepareWorktree(cfg, task, names, job, signal);
   // 判卷代码（契约、执行器、各活动）一律来自 runner 专用 clone（每轮自更新到 main），不来自任务 worktree：
@@ -98,6 +100,7 @@ async function execute(cfg, task, job, signal) {
     input: { run_tag: names.runTag, task_id: task.id, worktree, sprint_dir: names.sprintDir, brain_url: cfg.brainUrl },
   };
   log(`开跑 ${task.id}：worktree=${worktree} branch=${names.branch}`);
+  const startedAt = Date.now();
   const r = await runExecutor({
     executor: cfg.executor ?? path.join(cfg.repo, EXECUTOR_REL),
     cwdDir: trusted,
@@ -113,6 +116,8 @@ async function execute(cfg, task, job, signal) {
   if (r.timedOut) throw new Error('executor_timeout');
   const receipt = readReceipt(r.stdout, job.receiptPath);
   if (!receipt) throw new Error('executor_crashed');
+  // 执行记录（决策 b34e346a）：每个活动的每次尝试一条 span
+  await postSpans(ctx, chainSpans(receipt, { taskId: task.id, startedAt }));
   return summarizeReceipt(receipt);
 }
 
@@ -168,7 +173,7 @@ export async function runOnce(cfg, signal) {
   }
   let summary;
   try {
-    summary = await execute(cfg, task, job, signal);
+    summary = await execute(ctx, task, job, signal);
   } catch (error) {
     summary = { status: 'failed', failed_activity: null, reason_code: error?.message || 'runner_error', pr_url: null };
   }

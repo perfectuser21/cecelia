@@ -326,6 +326,14 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(state()).toMatchObject({ passed: true, approved: { head: git(sb.origin, 'rev-parse', BRANCH).trim() } });
   });
 
+  // 决策 b34e346a：真人 QA 与独立裁判各上报一条 span
+  it('QA 轮次与裁判各上报 span（结论、花费、幂等键带 PR 与轮次）', async () => {
+    const r = await go(green(), { mode: 'pass' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(E.brain.spans).toContainEqual(expect.objectContaining({ run_id: `coding-workflow:${TASK}`, occurrence_key: 'qa:77:r1', outcome: 'pass', cost_usd: 0.5 }));
+    expect(E.brain.spans).toContainEqual(expect.objectContaining({ occurrence_key: 'judge:77:r1', outcome: 'pass' }));
+  });
+
   it('已合并且 QA 通过过的 PR → 停掉它的预览环境释放容量（只停一次）', async () => {
     seedState({ passed: true, rounds: [] });
     const r = await go({ prs: [], mergedPrs: [pr()] });
