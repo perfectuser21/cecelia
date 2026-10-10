@@ -55,6 +55,7 @@ import { runNotionTaskCommandIngest } from './projection/notion.js';
 import { runOpsCollector } from './ops-collector.js';
 import { runOpenclawRunIngest } from './openclaw-run-ingest.js';
 import { runRunsNotionPush } from './runs-notion-projection.js';
+import { runSkillFactoryBoardPush } from './skill-factory-board.js';
 import { runSchedulerLiveness } from './ops-scheduler-liveness.js';
 import { runWorkflowRunLostDeadline } from './workflow-run-lost-deadline.js';
 import { runCommanderWatchdog, runWorkflowTrendBark } from './commander-watchdog.js';
@@ -150,6 +151,7 @@ export const JOBS = [
   { name: 'ops-collector', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsCollector(pool), description: '运行舱采集器（5min自gate，宿主launchctl+HK OpenClaw+GHA cron→ops_*投影，per-source心跳，G1 S1 刀1，task 6fcb5356）' },
   { name: 'openclaw-run-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpenclawRunIngest(pool), description: 'OpenClaw cron 运行记录入 runs 表（决策 c7ff6e02/9ec7a010）：ssh mmv 只读查 task_runs 增量 upsert，连败≥3 发一次 Bark' },
   { name: 'runs-notion-push', cadence: { everySec: 120 }, needsPool: true, timeoutMs: 110_000, handler: (pool) => runRunsNotionPush(pool), description: '运行记录投影 Notion「最近执行」库（决策 9ec7a010）：OpenClaw 7天全量+失败30天，Brain 内部只放失败' },
+  { name: 'skill-factory-board', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 110_000, handler: (pool) => runSkillFactoryBoardPush(pool), description: '技能工厂看板投影 Notion（任务 1b3c0000）：阶段任务→一条流程一行（阶段/skill 版本/连续通过/运行结果/卡点/裁判/生产版本），自 gate 5 分钟，库按注册表 vessel 找，未登记跳过' },
   {
     name: 'ops-model-accounts-collector', cadence: { everySec: 300 },
     needsPool: true,

@@ -30,7 +30,11 @@ beforeEach(async () => {
     CREATE TABLE activity_cells(step_id uuid,cell_key text,cell_status text,parent_cell_key text);
     CREATE TABLE warehouse_items(id uuid,name text);
     CREATE TABLE activity_uses(activity_id uuid,item_id uuid,role text);
-    CREATE TABLE activity_judgments(id bigint GENERATED ALWAYS AS IDENTITY,activity_id uuid,verdict text,consecutive_green int,required_green int,judged_at timestamptz);
+    CREATE TABLE activity_judgments(id bigint GENERATED ALWAYS AS IDENTITY,activity_id uuid,verdict text,consecutive_green int,required_green int,judged_at timestamptz,converged boolean DEFAULT false,report jsonb DEFAULT '{}'::jsonb);
+    CREATE TABLE activity_versions(id uuid PRIMARY KEY,activity_id uuid,version_no int);
+    CREATE TABLE activity_version_builds(build_id uuid,activity_id uuid,activity_version_id uuid);
+    CREATE TABLE activity_release_state(activity_id uuid PRIMARY KEY,production_version_id uuid);
+    CREATE TABLE activity_release_events(id bigint GENERATED ALWAYS AS IDENTITY,activity_id uuid,kind text,to_version_id uuid,gate jsonb);
     CREATE TABLE notion_map_node_pages(scope text,node_key text,notion_id text,archived_at timestamptz);
     CREATE TABLE map_projection_runs(id uuid,scope_key text,status text);
     CREATE TABLE map_projection_nodes(run_id uuid,node_key text,node_type text,name text,attributes jsonb);
@@ -49,6 +53,25 @@ describe('六层目录真实PG边界', () => {
     const source=await loadDirectorySource(client);
     expect(source.cells).toEqual([{step_id:activity,cell_key:'promise',cell_status:'green',parent_cell_key:null},{step_id:activity,cell_key:'readback.net',cell_status:'red',parent_cell_key:'readback'}]);
     expect(source.uses).toEqual([{activity_id:activity,item_name:'设备锁',role:'uses'}]);
+  });
+  it('目录源带出每个 Activity 的生产版本号与是否收敛过；已有目录页但失去引用的 Activity 仍在目录源里，列不冻结（任务 1b3c0000）', async () => {
+    const a1=fixtureEntityId(880),a2=fixtureEntityId(881),orphan=fixtureEntityId(882),v1=fixtureEntityId(883),v2=fixtureEntityId(884),wf=fixtureEntityId(885);
+    await client.query('ALTER TABLE activities ADD COLUMN current_definition_version_id uuid, ADD COLUMN capability_key text, ADD COLUMN activity_key text');
+    await client.query("INSERT INTO activities(id,name,workflow_id,capability_key,activity_key) VALUES($1,'甲',$4,'cap','a1'),($2,'乙',$4,'cap','a2'),($3,'孤儿',NULL,NULL,NULL)",[a1,a2,orphan,wf]);
+    await client.query("INSERT INTO activity_versions VALUES($1,$3,2),($2,$4,4)",[v1,v2,a1,a2]);
+    await client.query("INSERT INTO activity_release_state VALUES($1,$3),($2,$4)",[a1,a2,v1,v2]);
+    await client.query("INSERT INTO activity_release_events(activity_id,kind,to_version_id,gate) VALUES($1,'initial',$2,'{\"converged\":false}'),($3,'promote',$4,'{\"converged\":true}')",[a1,v1,a2,v2]);
+    await client.query("INSERT INTO projection_links(target,entity_type,entity_id,external_id) VALUES('notion-directory','activities',$1,'page-orphan')",[orphan]);
+    const source=await loadDirectorySource(client);
+    const rel=Object.fromEntries(source.releases.map(r=>[r.activity_id,r]));
+    expect(rel[a1]).toMatchObject({version_no:2,ever_converged:false});
+    expect(rel[a2]).toMatchObject({version_no:4,ever_converged:true});
+    expect(source.activities.map(a=>a.id)).toContain(orphan);
+    const rows=buildDirectoryRows(source).filter(r=>r.layer==='activities');
+    const t=id=>rows.find(r=>r.id===id).properties;
+    expect(t(a1)['生产版本'].rich_text[0].text.content).toBe('v2 · 冷启动（未收敛过）');
+    expect(t(a2)['生产版本'].rich_text[0].text.content).toBe('v4 · 收敛过');
+    expect(t(orphan)['裁判结论'].rich_text[0].text.content).toBe('未裁判');
   });
   it('目录源每个 Activity 只带最新一条裁判，Activity 行写出「裁判结论」（任务 f6ad056e）', async () => {
     const activity=fixtureEntityId(870),workflow=fixtureEntityId(871);

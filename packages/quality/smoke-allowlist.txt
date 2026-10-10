@@ -427,3 +427,4 @@ release-line-smoke.sh
 qiumi-status-map-smoke.sh
 leadgen-notion-registry-smoke.sh
 coding-workflow-spans-smoke.sh
+skill-factory-board-smoke.sh

@@ -71,6 +71,11 @@ export function judgmentText(j) {
   if (!j) return '未裁判';
   return `${VERDICTS[j.verdict] ?? j.verdict} · 连续绿 ${j.consecutive_green ?? 0}/${j.required_green ?? '?'}`;
 }
+/** 生产版本（发布线生产指针 activity_release_state）→「v3 · 收敛过」/「v3 · 冷启动（未收敛过）」；没有生产指针给 null（列留空）。 */
+export function releaseText(r) {
+  if (!r) return null;
+  return `v${r.version_no} · ${r.ever_converged ? '收敛过' : '冷启动（未收敛过）'}`;
+}
 
 /** Activity 卡片列：承诺（FR）/输入/输出/谁来执行/还缺什么。 */
 export function buildActivityCardProps(a = {}, cells = [], uses = [], extra = []) {
