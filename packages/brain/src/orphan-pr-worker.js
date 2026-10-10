@@ -68,6 +68,11 @@ const SUPERSEDED_TITLE_THRESHOLD = parseFloat(
 // （否则会合掉还在等裁判的 PR，绕过 evaluate_verdict gate）。普通 /dev 的 cp-<stamp>-<slug> 不撞。
 const HARNESS_SUBTASK_BRANCH_RE = /^cp-\d{8,10}-ws-[0-9a-f]{6,8}/;
 
+// coding workflow runner PR 分支 cp-<stamp>-cw-<task8>（实证 cp-10101755-cw-bd2b1556）。
+// 链跑完任务即 completed、result 无 pr_url，在这里必被当孤儿；但它由 MMV runner 的
+// QA + 独立裁判 + 合并门自管（金丝雀 4 #6232 被误判 superseded 关闭），orphan-worker 绝不合、不关、不 label。
+const CODING_WORKFLOW_BRANCH_RE = /^cp-\d{8,10}-cw-[0-9a-f]{8}$/;
+
 /**
  * 封装 gh CLI 调用。保持 execSync 同步（与现有 brain 脚本一致）。
  * 失败时抛错由外层 try/catch 捕获并转换为日志。
@@ -337,6 +342,17 @@ export async function scanOrphanPrs(pool, opts = {}) {
           branch: pr.headRefName,
           action: 'skipped',
           reason: 'harness_subtask_pr',
+        });
+        continue;
+      }
+      if (CODING_WORKFLOW_BRANCH_RE.test(pr.headRefName)) {
+        result.skipped++;
+        result.details.push({
+          pr: pr.number,
+          url: pr.url,
+          branch: pr.headRefName,
+          action: 'skipped',
+          reason: 'coding_workflow_pr',
         });
         continue;
       }
