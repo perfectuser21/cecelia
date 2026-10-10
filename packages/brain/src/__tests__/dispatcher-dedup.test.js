@@ -139,6 +139,50 @@ describe('dispatcher duplicate-task guard', () => {
   });
 });
 
+describe('正式纯代码 multi-task 的业务身份判重', () => {
+  const batch='7dfd3b5d-bc5a-4d96-b744-10d26bc7eb70';
+  const phone='66fe22f5-1a60-4e23-bcfb-7b4df2f0fbff';
+  const monitor='e4d2030f-129f-4668-95dd-4a6d880493a8';
+  const parent='974f0c4c-7ea3-4b6b-97d3-b1b85e610c6a';
+  const schedule='b1f98b63-989a-40c2-9deb-8880cd07459f';
+  const slot='2026-10-10T15:16:00.000Z';
+  const title='账号巡查 · 小白 · '+parent;
+  const scheduled=(workflow_id=batch)=>({canonical_code:true,multi_task:true,workflow_id,source:'scheduler',source_id:`recurring:${schedule}:${slot}`,recurring_task_id:schedule,recurring_slot:slot,parent_task_id:null,phone_serial:null});
+  const device=(serial='white')=>({canonical_code:true,multi_task:true,workflow_id:phone,source:'api',source_id:`phone-account-patrol:${parent}:${serial}`,parent_task_id:parent,phone_serial:serial,recurring_task_id:null,recurring_slot:null});
+  const candidate={id:parent,task_type:'script_run',title,created_at:slot};
+  const compare=async(left,right,siblingTitle=title)=>{
+    mockQuery.mockResolvedValueOnce({rows:[{id:'sibling',title:siblingTitle,candidate_identity:left,code_identity:right}]});
+    return _internals_findDuplicateTaskSibling(candidate);
+  };
+  beforeEach(()=>{mockQuery.mockReset();mockRecordDispatchResult.mockReset();});
+
+  it('同标题、不同正式Workflow的批次与维护可以分别派发',async()=>{
+    const right={...scheduled(monitor),recurring_task_id:'0287be5a-5ed3-4f9c-83db-d68d70f8f03f',source_id:`recurring:0287be5a-5ed3-4f9c-83db-d68d70f8f03f:${slot}`};
+    expect(await compare(scheduled(),right)).toBeNull();
+  });
+  it.each(['blue','yellow','color'])('同Workflow、同批次的 white 与 %s 手机不会互相阻塞',async serial=>{
+    expect(await compare(device(),device(serial))).toBeNull();
+  });
+  it('同一设备、同一父批次即使改标题或另造source也仍抑制真实重复',async()=>{
+    expect(await compare(device(),device(),'完全不同的标题')).toMatchObject({id:'sibling'});
+  });
+  it('同一Workflow、同一slot另一个定时登记仍是相同业务身份',async()=>{
+    const right={...scheduled(),recurring_task_id:'0287be5a-5ed3-4f9c-83db-d68d70f8f03f',source_id:`recurring:0287be5a-5ed3-4f9c-83db-d68d70f8f03f:${slot}`};
+    expect(await compare(scheduled(),right,'另一种写法')).toMatchObject({id:'sibling'});
+  });
+  it('同设备但不同正式父批次可排队，设备锁仍负责串行',async()=>{
+    const p='4166d87c-d3d4-48c1-b426-ec1477504c42';
+    expect(await compare(device(),{...device(),parent_task_id:p,source_id:`phone-account-patrol:${p}:white`})).toBeNull();
+  });
+  it.each([
+    ['非法Workflow',{canonical_code:false}],['非布尔multi',{multi_task:'true'}],
+    ['普通AI',{canonical_code:false,multi_task:false}],['无真实ledger',{source:null,source_id:null}],
+    ['伪造slot',{recurring_slot:'2026-10-10T15:17:00.000Z'}],
+  ])('%s 保留原来的标题判重',async(_name,patch)=>{
+    expect(await compare({...scheduled(),...patch},scheduled())).toMatchObject({id:'sibling'});
+  });
+});
+
 describe('dispatchNextTask — 判重跳过不消耗 pre-flight attempt 预算（回归 Critical 修复）', () => {
   beforeEach(() => {
     mockQuery.mockReset();
