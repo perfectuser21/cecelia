@@ -72,7 +72,7 @@ describe('spec 活动（子进程 + 假 claude）', () => {
   it('ok：子进程输出转写到 stderr，参数与 cwd 正确', async () => {
     const r = await run('ok');
     expect(r.stderr).toContain('fake claude log line 199');
-    expect(r.stderr).toContain('FAKE_ARGS: -p --permission-mode acceptEdits --disallowedTools Bash --model opus\n');
+    expect(r.stderr).toContain('FAKE_ARGS: -p --permission-mode acceptEdits --disallowedTools Bash --output-format json --model opus\n');
     expect(r.stderr).toContain(`FAKE_CWD: ${fs.realpathSync(worktree)}`);
   });
 

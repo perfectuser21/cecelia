@@ -173,8 +173,13 @@ const qaIssueLines = (qa) => [...qa.failed, ...qa.blocking]
 const judgeIssueLines = (j) => j.blocking
   .map((i) => `- ${i.id}（对应 ${i.covers.join('、')}，${i.severity}，${i.type}）${i.where ? `［${i.where}］` : ''}：${i.detail}`).join('\n');
 
+/** QA 门累计花费（审计 #35）：evaluate 与 qa-fix 会话，随状态同步进 Brain，合并时汇总。 */
+function addCost(s, usd) {
+  if (typeof usd === 'number' && usd > 0) s.cost_usd = Math.round(((s.cost_usd ?? 0) + usd) * 10000) / 10000;
+}
+
 /** 开发按验收记录（QA 报告或裁决）修复（TDD），程序核对后推送；返回 'pushed' 或失败原因。 */
-async function qaFix(ctx, pr, worktree, intent, { recordFile, issues }) {
+async function qaFix(ctx, pr, s, worktree, intent, { recordFile, issues }) {
   const before = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
   const prompt = loadPrompt('qa-fix', {
     BRANCH: pr.headRefName,
@@ -184,6 +189,7 @@ async function qaFix(ctx, pr, worktree, intent, { recordFile, issues }) {
     QA_ISSUES: issues || '（见报告）',
   });
   const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', ...CLAUDE_TOOLS], cwd: worktree, timeoutMs: ctx.cfg.qaFixTimeoutMs, tag: 'qa-fix', isolateRemote: true });
+  addCost(s, run.cost_usd);
   fs.mkdirSync(ctx.cfg.logDir, { recursive: true });
   fs.writeFileSync(path.join(ctx.cfg.logDir, `qa-fix-${pr.number}-${Date.now()}.log`), run.output ?? '');
   if (run.timedOut) return 'claude_timeout';
@@ -249,7 +255,7 @@ async function afterJudge(ctx, pr, s, worktree, intent, entry, j) {
     if (j.failure_class === 'contract_gap') {
       return escalate(ctx, pr, s, intent.taskId, { type: 'judge_contract_gap', issues: j.blocking.map((i) => i.id), file: `${intent.sprintDir}/${j.file}` });
     }
-    if (j.failure_class === 'product_failure') entry.fix = await qaFix(ctx, pr, worktree, intent, { recordFile: j.file, issues: judgeIssueLines(j) });
+    if (j.failure_class === 'product_failure') entry.fix = await qaFix(ctx, pr, s, worktree, intent, { recordFile: j.file, issues: judgeIssueLines(j) });
   }
   writeState(ctx.cfg, pr.number, s);
   return report(ctx, intent.taskId, s);
@@ -319,6 +325,7 @@ async function qaRound(ctx, pr, s, signal) {
     const fails = qa.failed.length + qa.blocking.length;
     const report0 = `${intent.sprintDir}/${result.outputs.qa_report_file}`;
     const entry = { round, head: pr.headRefOid, verdict: qa.verdict, fails, report: report0, cost_usd: qa.cost_usd, at: new Date().toISOString() };
+    addCost(s, qa.cost_usd);
     ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮 ${qa.verdict}（失败 ${fails}）`);
     const records = [report0, `${intent.sprintDir}/qa-r${round}`];
     // 记录提交成功才算这一轮（提交失败下轮同一 head 重验，裁判计数回滚）
@@ -348,7 +355,7 @@ async function qaRound(ctx, pr, s, signal) {
     } else {
       const stall = stalled(s);
       if (stall) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_stalled', fails: stall });
-      entry.fix = await qaFix(ctx, pr, worktree, intent, { recordFile: result.outputs.qa_report_file, issues: qaIssueLines(qa) });
+      entry.fix = await qaFix(ctx, pr, s, worktree, intent, { recordFile: result.outputs.qa_report_file, issues: qaIssueLines(qa) });
     }
     writeState(cfg, pr.number, s);
     return report(ctx, intent.taskId, s);

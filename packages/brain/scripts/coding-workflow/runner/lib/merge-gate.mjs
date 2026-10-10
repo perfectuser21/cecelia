@@ -7,6 +7,7 @@ import { run, git } from './proc.mjs';
 import { listOwnPrs, requiredState } from './cifix-scan.mjs';
 import { readState, writeState, isRecordFile, escalate } from './qa-gate.mjs';
 import { remoteTaskId } from './pr-branch.mjs';
+import { readState as readCiFixState } from './cifix-scan.mjs';
 
 const GH_TIMEOUT_MS = 60 * 1000;
 const MAX_MERGE_FAILURES = 3;
@@ -59,9 +60,50 @@ async function gate(ctx, pr, s) {
     ctx.log(`合并门 PR #${pr.number}：分支上找不到 task_id，合并结果没有回写 Brain`);
     return false;
   }
-  const r = await ctx.brain.patch(taskId, { result: { merge: { merged: true, ...s.merged } } });
+  const task = await ctx.brain.getTask(taskId);
+  const prior = task.ok ? task.body?.result ?? {} : {};
+  const ciFix = readCiFixState(cfg, pr.number);
+  const cost = costSummary(prior, s, ciFix);
+  const r = await ctx.brain.patch(taskId, { result: { merge: { merged: true, ...s.merged }, cost_usd: cost } });
   if (!r.ok) ctx.log(`合并门回写 Brain 任务 ${taskId} 失败（HTTP ${r.status}）`);
+  // 交付复盘落库（审计 #22，旧 report 6.5/6.8）：程序按这次的真实记录拼，不让模型编
+  const learned = await ctx.brain.postLearnings({
+    task_id: taskId, branch_name: pr.headRefName, pr_number: pr.number, repo: 'cecelia', issues_found: [],
+    next_steps_suggested: learningLines(taskId, pr, prior, s, ciFix, cost),
+  });
+  if (!learned.ok) ctx.log(`合并门 PR #${pr.number} 交付复盘写入 learnings 失败（HTTP ${learned.status}）`);
   return false;
+}
+
+const money = (x) => Math.round(x * 10000) / 10000;
+
+/** 全链花费（审计 #35）：链路（runner 回执汇总）+ QA 门（evaluate/qa-fix）+ CI 修复。 */
+function costSummary(prior, qa, ciFix) {
+  const chain = Number(prior.runner?.cost_usd) || 0;
+  const q = Number(qa.cost_usd) || 0;
+  const c = Number(ciFix.cost_usd) || 0;
+  return { chain: money(chain), qa: money(q), ci_fix: money(c), total: money(chain + q + c) };
+}
+
+/** 交付复盘：合同对抗、真人 QA 各轮、CI 修复、撤销批准、花费（每条一行写进 learnings）。 */
+function learningLines(taskId, pr, prior, qa, ciFix, cost) {
+  const gan = prior.coding_workflow?.gan;
+  const rounds = qa.rounds ?? [];
+  const attempts = ciFix.attempts ?? [];
+  const lines = [
+    `coding workflow ${String(taskId).slice(0, 8)} 合并复盘（PR #${pr.number}）：`
+      + `合同对抗 ${gan ? `${gan.rounds} 轮 ${gan.verdict}（走势 ${gan.trend}）` : '无记录'}；`
+      + `真人 QA ${rounds.length} 轮；CI 修复 ${attempts.length} 次；花费 $${cost.total}`,
+  ];
+  for (const r of rounds) {
+    if (r.verdict !== 'PASS') lines.push(`真人 QA 第 ${r.round} 轮 ${r.verdict}（${r.fails ?? 0} 处失败，报告 ${r.report ?? '无'}）${r.fix ? `，修复结果 ${r.fix}` : ''}`);
+  }
+  for (const a of attempts) {
+    lines.push(`CI 修复：${(a.checks ?? a.failed ?? []).join('、') || '失败检查未记录'} → ${a.result ?? a.reason ?? '未知'}`);
+  }
+  for (const v of qa.revoked ?? []) lines.push(`批准后又改了代码被撤销批准（${(v.files ?? []).join('、')}），重新 QA`);
+  if (gan?.verdict === 'FORCED') lines.push(`合同对抗强制通过时仍开着：${(gan.open_issues ?? []).map((i) => i.id).join('、') || '无'}`);
+  return lines;
 }
 
 /**

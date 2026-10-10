@@ -14,6 +14,8 @@ import {
 import { defaultChecks, runPrechecks } from '../lib/ci-precheck.mjs';
 import { intentHeading, prKindOf } from '../lib/pr-kind.mjs';
 
+const spend = { usd: 0 };
+
 const SPEC_FILE = '02-spec.md';
 const BUILD_FILE = '03-build.md';
 const SPEC_ID_RE = /^S-\d+$/;
@@ -89,6 +91,7 @@ async function precheckLoop({ worktree, dir, sprintDir, input, before }) {
     });
     const timeoutMs = posInt(process.env.CODING_WF_PRECHECK_FIX_TIMEOUT_MS, PRECHECK_FIX_TIMEOUT_MS);
     const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', ...CLAUDE_TOOLS], cwd: worktree, timeoutMs, tag: 'ci-precheck-fix', isolateRemote: true });
+    spend.usd += run.cost_usd ?? 0;
     const violation = (await guardFailure({ worktree, dir, sprintDir, input, before })) ?? (await postFailure({ worktree, sprintDir, before }));
     if (violation) return { failure: violation };
     if (claudeFailure(run)) break;
@@ -98,7 +101,7 @@ async function precheckLoop({ worktree, dir, sprintDir, input, before }) {
   return { summary: { passed: failures.length === 0, rounds, failures } };
 }
 
-await runActivity(async (input) => {
+async function main(input) {
   const { worktree, sprint_dir: sprintDir } = input;
   const { dir } = validateBase(input);
 
@@ -132,6 +135,7 @@ await runActivity(async (input) => {
   const args = ['-p', prompt, '--permission-mode', 'acceptEdits', ...CLAUDE_TOOLS];
   const timeoutMs = claudeTimeoutMs(input.budget, TIMEOUT);
   const run = await runClaude({ args, cwd: worktree, timeoutMs, tag: 'build', isolateRemote: true });
+  spend.usd += run.cost_usd ?? 0;
   const failure = claudeFailure(run) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
   if (failure) return failure;
 
@@ -152,4 +156,10 @@ await runActivity(async (input) => {
     outputs: { build_file: BUILD_FILE, build_commits: commits, ci_precheck: precheck.summary },
     evidence: [`${BUILD_FILE} 已生成，${commits.length} 个提交；CI 门禁预检${precheck.summary.passed ? '通过' : `未过：${precheck.summary.failures.join('、')}`}`],
   };
+}
+
+// 会话花费进 metrics（审计 #35）：本活动所有 claude 会话累加，成功失败都计
+await runActivity(async (input) => {
+  const result = await main(input);
+  return { ...result, metrics: { ...(result?.metrics ?? {}), cost_usd: Math.round(spend.usd * 10000) / 10000 } };
 });
