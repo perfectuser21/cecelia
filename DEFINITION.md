@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.417.6
+**Brain 版本**: 1.417.7
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.417.7 — coding workflow runner 上报执行记录带 Brain 内部令牌
+
+- 金丝雀 3（任务 4ea44bcf）实测：链路跑完上报 spans 全部 HTTP 401。原因：`POST /api/brain/spans` 走 internalAuthOrLoopback，生产配了 `CECELIA_INTERNAL_TOKEN`，runner 经 socat 访问不算本机回环，也没带令牌。原测试用的假 Brain 不校验令牌，所以没发现。
+- runner.sh 照 DEPLOY_TOKEN 的做法，运行时从 `~/.credentials/cecelia-internal.env` 读令牌，只取 `CECELIA_INTERNAL_TOKEN` 这一项，不进代码、不进 plist、不导入整份文件。Brain 客户端有令牌就带 `X-Internal-Token`。
+- 测试假 Brain 增加令牌校验（同真 Brain）。修复后用真实生产验证：金丝雀 3 链路的 9 条 span 已补报成功。
 
 ## Brain 1.417.6 — coding harness：规格校验错误带上改法再交给重试
 
