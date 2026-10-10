@@ -228,7 +228,7 @@ describe('spec_review 活动 v2（合同对抗）', () => {
       let r = await run({ reviews: [{ scores: 8 }] }, {}, { brain_url: brainUrl });
       expect(r.result.status, r.stderr).toBe('completed');
       expect(decisions).toEqual([expect.objectContaining({
-        category: 'judgment', topic: '判定点[11111111#1]: 部署成功判定',
+        category: 'judgment', topic: '判定点[11111111#1]: 部署成功判定', made_by: 'system',
         decision: '所选方法: 看 git_sha｜候选: 看 HTTP 200、看 git_sha', reason: '依据: 200 只说明活着｜误判后果: 旧版本被当新版本验收｜来源: coding workflow 合同对抗',
       })]);
       expect(r.result.outputs.gan.judgments_written).toBe(1);

@@ -176,7 +176,7 @@ describe('Brain API — Strategic Decisions CRUD with Auto Cleanup', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        category: 'test',
+        category: 'testing',
         topic: `${TEST_PREFIX} 集成测试决策`,
         decision: '此决策由集成测试自动创建，测试结束后自动置为 expired',
         reason: 'Cross-Package 集成测试验证 afterAll cleanup 机制',

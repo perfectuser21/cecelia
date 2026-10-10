@@ -65,18 +65,31 @@ function DecisionCard({ d, onStatusChange }: { d: Decision; onStatusChange: () =
 }
 
 function NewDecisionModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [form, setForm] = useState({ topic: '', decision: '', reason: '', category: 'general' });
+  const [form, setForm] = useState({ topic: '', decision: '', reason: '', category: '' });
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   async function submit() {
     if (!form.topic.trim() || !form.decision.trim()) return;
     setSaving(true);
-    await fetch('/api/brain/strategic-decisions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    setSaving(false);
+    setError('');
+    try {
+      const res = await fetch('/api/brain/strategic-decisions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error || `记录失败（HTTP ${res.status}）`);
+        return;
+      }
+    } catch (e) {
+      setError(`记录失败：${e instanceof Error ? e.message : String(e)}`);
+      return;
+    } finally {
+      setSaving(false);
+    }
     onCreated();
     onClose();
   }
@@ -107,8 +120,9 @@ function NewDecisionModal({ onClose, onCreated }: { onClose: () => void; onCreat
           <div>
             <label className="text-xs text-gray-500 block mb-1">分类</label>
             <input className="w-full text-sm border border-gray-200 rounded px-3 py-1.5 focus:outline-none focus:border-blue-400"
-              value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} placeholder="如 technical、product、strategy" />
+              value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} placeholder="留空即 decision" />
           </div>
+          {error && <p className="text-xs text-red-500 break-all">{error}</p>}
         </div>
         <div className="flex justify-end gap-2 mt-4">
           <button onClick={onClose} className="text-sm px-4 py-1.5 border border-gray-200 rounded hover:border-gray-400">取消</button>
