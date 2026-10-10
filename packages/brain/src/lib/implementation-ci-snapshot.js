@@ -232,7 +232,7 @@ export async function readImplementationSnapshotInTransaction(db,q){
     candidates=anchor.revision?(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[anchor.repo,anchor.revision])).rows:[];
   }else candidates=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[q.repo,q.revision])).rows;
   candidates=candidates.filter(w=>factory?
-    w.payload.definition_scope==='consumer_evidence'&&w.payload.source_scope===EXISTING_OPS_SCOPE&&EXISTING_OPS_IDENTITIES.some(i=>i.workflow_id===w.workflow_id):w.payload.definition_scope!=='consumer_evidence');
+    w.payload.definition_scope==='consumer_evidence'&&w.payload.source_scope===EXISTING_OPS_SCOPE&&EXISTING_OPS_IDENTITIES.some(i=>i.workflow_id===w.workflow_id):!['consumer_evidence','device_workflow_admission'].includes(w.payload.definition_scope));
   const workflows=factory?(await db.query('SELECT * FROM workflows WHERE id=ANY($1::uuid[]) ORDER BY id',[EXISTING_OPS_IDENTITIES.map(i=>i.workflow_id)])).rows:
     (await db.query('SELECT * FROM workflows WHERE source_repo=$1 ORDER BY id',[anchor.repo])).rows;
   const selected=[];

@@ -1,4 +1,6 @@
 import * as frozenSource from '../../../../../scripts/ci/implementation-snapshot.mjs';
+// 同一来源登记合同同时执行真实版本 gate 行为，避免登记到从未运行的治理测试。
+import '../../../../../tests/regression/version-gate-silent/check-brain-version-bump.test.js';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -137,6 +139,21 @@ it('生产登记拒scratch或复制proof；拒绝后没有任何历史追加',as
   }finally{candidate.close();}
 });
 const options = extra => ({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths, readSource, checkMain: async () => {}, actor: 'test-real-main', ...extra });
+it('真实PG封存毕业池选择与required版本gate来源，未知配置不能追加成功版本', async () => {
+  const before = await registration.readExistingOpsRegistry(fixture.db);
+  const receipt = await registration.registerExistingOpsSources(fixture.db, options({ expectedRegistrySha256: before.registry_sha256 }));
+  const f3 = receipt.definitions.activities.find(a => a.activity_id === EXISTING_OPS_IDENTITIES[1].activity_id);
+  const bindings = f3.payload.implementation_bindings;
+  for (const path of ['tests/regression/version-gate-silent/check-brain-version-bump.test.js', 'scripts/ci/check-brain-version-bump.sh'])
+    expect(bindings).toContainEqual(expect.objectContaining({ path, revision, content_sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }));
+  const persisted = (await fixture.db.query('SELECT payload FROM activity_definition_versions WHERE id=$1', [f3.id])).rows[0].payload;
+  expect(persisted.implementation_bindings).toEqual(bindings);
+  expect(await registration.readExistingOpsRegistry(fixture.db)).toEqual(before);
+  const count = (await fixture.db.query('SELECT count(*)::int n FROM activity_definition_versions')).rows[0].n;
+  await expect(registration.registerExistingOpsSources(fixture.db, options({ expectedRegistrySha256: before.registry_sha256,
+    readSource: async path => path === 'packages/brain/vitest.config.js' ? (await readSource(path)).replace('exclude: [', 'exclude: [...UNKNOWN_TESTS,') : readSource(path) }))).rejects.toThrow();
+  expect((await fixture.db.query('SELECT count(*)::int n FROM activity_definition_versions')).rows[0].n).toBe(count);
+});
 it('真实main消费者只append不可执行历史，保留全部旧登记和六个UNKNOWN', async () => {
   expect(registration.registerExistingOpsSources).toBeTypeOf('function');
   const before = await registration.readExistingOpsRegistry(fixture.db);

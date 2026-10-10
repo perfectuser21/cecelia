@@ -4,9 +4,19 @@ import pool from '../db.js';
 import { bootstrapNotionDatabases, configureNotionProjection } from '../projection/notion.js';
 import { queueLaneSql } from '../task-queue-lanes.js';
 import { configureKrProjection } from '../projection/key-results.js';
+import { configureTaskRunsProjection } from '../projection/task-runs-config.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
 const router = Router();
 router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
+
+// 登记一次真实任务运行的镜子；与历史 n8n Ops Runs 分开保留。
+for (const path of ['/projections/notion/task-runs/configure', '/projections/notion/task-runs/bootstrap']) {
+  router.post(path, internalAuthOrLoopback, async (req, res) => {
+    try { res.json(await configureTaskRunsProjection(pool, req.body)); }
+    catch { res.status(400).json({ error: 'Runs 配置失败；请检查显式启用、身份归属和库字段类型' }); }
+  });
+}
 
 router.get('/projections/status', async (_req, res) => {
   try {

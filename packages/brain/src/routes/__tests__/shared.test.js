@@ -2,7 +2,7 @@
  * routes/shared.js 单元测试
  *
  * 配套 PR 2b-1（shared.js 的 getActiveExecutionPaths 查询 status 改 running）。
- * 测纯导出常量（无 DB、无 mock）：动作白名单与库存阈值是真实业务契约。
+ * 验证常量业务契约与默认活跃任务队列的 SQL 分页边界；数据库调用使用 mock。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

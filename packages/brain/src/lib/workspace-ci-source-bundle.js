@@ -109,6 +109,18 @@ function calleeProof(yaml,spec,admissionScopesRequested=false){
  const runners=[];
  for(const step of job.steps||[]){
   const source=String(step.run||'');let commands=directNodeCommands(source),conditional=false;
+  // callerProof 固定既有 scope=zenithjoy；这个精确预读只在独立巡查 scope 执行。
+  // 它不能替代 required runner，也不能把未执行的 helper 冒记为既有消费者。
+  if(source.includes('tooling/scripts/ci/implementation-patrol-baseline.mjs')){
+   if(spec.name!=='implementation-impact'||step.if!=="env.MAP_SCOPE == 'cecelia-device-patrol'"
+     ||job.env?.MAP_SCOPE!=="${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}"
+     ||job.env?.TOOLING_REVISION!==checkout.with.ref||step['continue-on-error']
+     ||Object.keys(step.env||{}).sort().join(',')!=='GH_TOKEN'
+     ||step.env.GH_TOKEN!=="${{ secrets.CECELIA_ACTIONS_READ_TOKEN || github.token }}"
+     ||sha(Buffer.from(source))!=='c71a8a0bcc037d66a9beb56efa82f91179e09bad262139925cad1e85a05142e8')
+    fail('CALLEE_PATROL_PRELUDE_UNPROVEN',{path:spec.name});
+   continue;
+  }
   // schema-v1的完整已审阅分支字节；复杂或改变后的shell仍UNKNOWN。
   if(spec.name==='implementation-impact'&&optional&&sha(Buffer.from(source))==='8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d'){
    if(job.env?.MODE!=="${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}"||!ADMISSION_SCOPE_ENV.has(job.env?.ADMISSION_SCOPES))fail('CALLEE_INTERFACE_MISMATCH',{path:spec.name});

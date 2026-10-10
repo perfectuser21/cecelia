@@ -55,7 +55,7 @@ async function graphSnapshot(db,repo,revision,gaps) {
 export function selectScopedDefinitionVersions(rows,scope) {
   return rows.filter(w=>scope===EXISTING_OPS_SCOPE?
     w.payload.definition_scope==='consumer_evidence'&&w.payload.source_scope===EXISTING_OPS_SCOPE&&EXISTING_OPS_IDENTITIES.some(i=>i.workflow_id===w.workflow_id):
-    w.payload.definition_scope!=='consumer_evidence');
+    !['consumer_evidence','device_workflow_admission'].includes(w.payload.definition_scope));
 }
 async function definitions(db,q,revision,gaps) {
   const workflows=selectScopedDefinitionVersions((await db.query(`SELECT id,workflow_id,source_repo,source_path,source_commit,payload_sha256,contract_sha256,payload

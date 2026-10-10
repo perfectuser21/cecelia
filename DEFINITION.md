@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.417.11
+**Brain 版本**: 1.418.3
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,33 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.418.3 — coding harness：削弱测试守卫只守 main 上已有的测试
+
+- 主理人决策 b057089b。金丝雀 3、4 都卡在同一处：独立裁判判 PR 超范围，修复会话按裁决删掉超范围代码，连带删了 PR 自己为它加的测试，被「不许削弱测试」拦下（test_weakened），合不进。
+- weakenedTests 改为对照与 origin/main 的合并基点（先拉最新 main）：只对基点上已存在的测试文件判删除、加 skip/only/todo、断言比 main 上的版本少。PR 自己新加的测试允许在修复时随代码改删，行为仍由真人 QA 加独立裁判兜底。取不到合并基点时退回对照修复前的 head（从严）。
+- 测试：CI 修复和 QA 门的测试夹具把被守护的测试放到 main 上，新增「删 PR 自加测试照常推送」用例。
+
+## Brain 1.418.2 — coding harness：判定点写库改用 made_by=system（生产约束不允许 ai）
+
+- #6200 合同对抗把判定点写进 Brain decisions 时用的是 made_by=ai，但生产约束 decisions_made_by_check（迁移 193）只允许 user/cecelia/system，判定点在生产必然写入 500、触发 judgments_write_failed。原测试的假 Brain 不校验这个约束，所以没发现。
+- 金丝雀 4（PR #6232）的 QA 场景照这个真实调用方用了 ai，PR 顺手加迁移放开 ai，被独立裁判判为超范围（J-2）——问题出在调用方，不该改约束。
+- 改为 made_by=system（机器写入）；测试假 Brain 按生产约束校验 made_by。
+
+## Brain 1.418.1 — task_runs 正式 Notion 投影配置
+
+- 新增内部鉴权的 configure/bootstrap 入口，显式 enabled 与 actor 才能登记代码运行记录库。
+- 复用现有 task_runs 推送；补列读回、来源标记及有界分页防重复，不抢占旧 Ops Runs 映射。
+
+## Brain 1.418.0 — coding harness：本地 CI 预检加 smoke 写入守卫
+
+- 金丝雀 4（PR #6232）新增的写入型 smoke 没登记 smoke-write-targets、curl 没带 -q，到 CI Smoke Glob Runner 才红，触发 CI 修复。build 的 ci_precheck 清单里没有这条守卫。
+- 预检加 smoke-write-guard：node --test packages/quality/tests/smoke-production-guard.node-test.mjs（离线可跑，同 Smoke Glob Runner 那条守卫），红了交预检修复会话。
+- 预检「脚本不存在就跳过」改为认参数里的脚本文件（.sh/.js/.mjs/.cjs），node --test <文件> 也能正确跳过，bash -c 内联命令不受影响。
+
+## Brain 1.417.12 — 技能工厂看板「skill@版本」不再塞整份 skill 正文
+
+- 生产实测：抖音·视频发布第 3 次试跑交付的 result.delivery.flow_skill_v1 是整份 skill 正文，看板「skill@版本」单元格被塞进上千字。现在遇到带 frontmatter 的正文只取 `name@version`（如 android-douyin-private-video@1.0.0），没有 frontmatter 的取第一行并截到 80 字。
 
 ## Brain 1.417.11 — coding harness：合同对抗查范围蔓延（规格不许顺手修需求外的事）
 
