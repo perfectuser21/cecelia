@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 假 evaluate 活动：stdin 读输入（追加记到 FAKE_QA_LOG），按 FAKE_QA_MODE 输出结果 JSON：
-// pass / fail（写 05-qa-report-r<round>.md 后 completed，qa.verdict PASS/FAIL，FAIL 带 T-1 失败）
+// pass / fail / cannot（CANNOT_VERIFY，T-2 缺工具）（写 05-qa-report-r<round>.md 后 completed，qa.verdict PASS/FAIL，FAIL 带 T-1 失败）
 // | retry（retryable preview_unavailable）| unverified（retryable qa_evidence_unverified，带 T-5）| fatal（fatal evaluate_touched_production）
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,8 +22,9 @@ if (mode === 'fatal') {
 }
 const file = `05-qa-report-r${input.round}.md`;
 fs.writeFileSync(path.join(input.worktree, input.sprint_dir, file), `# QA 报告 第 ${input.round} 轮 ${mode}\n`);
+const cannot = mode === 'cannot' ? [{ id: 'T-2', covers: ['Q-1'], reason: '工具缺失：预览环境没有 ffprobe' }] : [];
 const failed = mode === 'fail' ? [{ id: 'T-1', covers: ['Q-1'], command: 'curl x', output_tail: '500' }] : [];
 out({
   status: 'completed', failure_class: null,
-  outputs: { qa_report_file: file, qa: { verdict: mode === 'fail' ? 'FAIL' : 'PASS', round: input.round, env: { kind: 'preview', url: 'http://localhost:5302' }, failed, blocking: [], cost_usd: 0.5 } },
+  outputs: { qa_report_file: file, qa: { verdict: mode === 'fail' ? 'FAIL' : mode === 'cannot' ? 'CANNOT_VERIFY' : 'PASS', cannot_verify: cannot, round: input.round, env: { kind: 'preview', url: 'http://localhost:5302' }, failed, blocking: [], cost_usd: 0.5 } },
 });

@@ -294,6 +294,16 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(state().last_eval_error).toBeUndefined();
   });
 
+  // 审计 #38/#19：验不了 ≠ 产品不合格——不进修复环（否则无限修），报告照常提交，升级给 coding commander 带上验不了的条目
+  it('QA 报告 CANNOT_VERIFY → 报告提交、不修代码、不批准，升级 qa_cannot_verify（带条目与原因）', async () => {
+    const r = await go(green(), { mode: 'cannot' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA CANNOT_VERIFY');
+    expect(state()).toMatchObject({ escalated: { type: 'qa_cannot_verify', cannot_verify: [{ id: 'T-2', reason: '工具缺失：预览环境没有 ffprobe' }] } });
+    expect(state().passed).toBeFalsy();
+    expect(r.stderr).toContain('[coding-qa][P1]');
+  });
+
   it('已合并且 QA 通过过的 PR → 停掉它的预览环境释放容量（只停一次）', async () => {
     seedState({ passed: true, rounds: [] });
     const r = await go({ prs: [], mergedPrs: [pr()] });

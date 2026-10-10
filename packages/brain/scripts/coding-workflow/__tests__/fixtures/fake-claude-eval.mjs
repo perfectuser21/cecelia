@@ -2,7 +2,9 @@
 // 假 claude（evaluator 真人 QA）：按 FAKE_EVAL_MODE 在 stdout 输出 stream-json 执行记录并写 REPORT_PATH。
 // pass | fail（最后一条 Q FAIL）| finding（全 PASS + 一条阻断探索发现）| unittest（T-1 用 vitest 当证据）
 // | fabricate（报告写了但没有执行记录）| prod（另外 curl 了生产 5221）| incomplete（只测第一条 Q）
-// | outside（另写越界文件）| badformat（报告没有任何条目）。启动时打印 FAKE_HIDDEN_BUILD / FAKE_HIDDEN_EVIDENCE（03/04 是否被藏起）。
+// | outside（另写越界文件）| badformat（报告没有任何条目）| cannot（最后一条 Q 验不了：工具缺失）
+// | cannot-noreason（验不了但没写原因）| trivial（T-1 命令带 `|| true`）| shot-missing（报告引用的截图不存在）
+// | playwright-noshot（T-1 用 Playwright 但截图目录为空）| playwright-shot（同上但留了截图）。启动时打印 FAKE_HIDDEN_BUILD / FAKE_HIDDEN_EVIDENCE（03/04 是否被藏起）。
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -30,11 +32,22 @@ const F = '```';
 const sections = [];
 const tested = mode === 'incomplete' ? qaIds.slice(0, 1) : qaIds;
 tested.forEach((q, i) => {
-  const command = mode === 'unittest' && i === 0 ? 'npx vitest run scripts/x.test.mjs' : `curl -s ${url}/api/brain/check?q=${q}`;
+  const playwright = (mode === 'playwright-noshot' || mode === 'playwright-shot') && i === 0;
+  const command = mode === 'unittest' && i === 0 ? 'npx vitest run scripts/x.test.mjs'
+    : mode === 'trivial' && i === 0 ? `curl -s ${url}/api/brain/check?q=${q} || true`
+      : playwright ? `node qa-page.mjs ${url}/` : `curl -s ${url}/api/brain/check?q=${q}`;
+  if (playwright) emit('cat > qa-page.mjs <<EOF\nconst { chromium } = require("playwright");\nEOF', '');
+  if (mode === 'playwright-shot' && i === 0) {
+    fs.mkdirSync(field('SHOTS_DIR'), { recursive: true });
+    fs.writeFileSync(path.join(field('SHOTS_DIR'), 'home.png'), 'png');
+  }
   const output = `{"ok":true,"scenario":"${q}"}`;
   emit(command, output);
-  const verdict = mode === 'fail' && i === tested.length - 1 ? 'FAIL' : 'PASS';
-  sections.push(`### T-${i + 1}\n对应: ${q}\nverdict: ${verdict}\n${F}command\n${command}\n${F}\n${F}output\n${output}\n${F}\n`);
+  const last = i === tested.length - 1;
+  const verdict = mode === 'fail' && last ? 'FAIL' : (mode === 'cannot' || mode === 'cannot-noreason') && last ? 'CANNOT_VERIFY' : 'PASS';
+  const reason = mode === 'cannot' && last ? '原因: 工具缺失：预览环境没有 ffprobe，无法验证视频流\n' : '';
+  const shot = mode === 'shot-missing' && i === 0 ? `截图: ${path.basename(field('SHOTS_DIR'))}/missing.png\n` : '';
+  sections.push(`### T-${i + 1}\n对应: ${q}\nverdict: ${verdict}\n${reason}${shot}${F}command\n${command}\n${F}\n${F}output\n${output}\n${F}\n`);
 });
 if (mode === 'finding') {
   const command = `curl -s -X POST ${url}/api/brain/tasks -d '{}'`;

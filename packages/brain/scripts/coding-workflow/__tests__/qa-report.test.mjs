@@ -1,6 +1,10 @@
 // lib/qa-report.mjs：evaluator 的 05-qa-report——按 QA 场景逐条测（T-n 对应 Q-n）+ 探索发现（X-n 带严重度/场景）。
 import { describe, it, expect } from 'vitest';
-import { parseQaReport, judgeQa, unitTestEvidence, productionTouches } from '../lib/qa-report.mjs';
+import { parseQaReport, judgeQa, unitTestEvidence, productionTouches, trivialAssertions, screenshotProblems } from '../lib/qa-report.mjs';
+import { parseEvidence } from '../lib/evidence.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const F = '```';
 const FM = '---\ntask_id: t\nstep: evaluate\nupstream: ["02-spec.md#Q-1","02-spec.md#Q-2"]\n---\n# QA 报告\n';
@@ -88,5 +92,77 @@ describe('unitTestEvidence / productionTouches', () => {
       'nc -z localhost 5221',
       'B=http://localhost:5221; curl -s $B/api/brain/tasks',
     ]);
+  });
+});
+
+// 审计 #38（旧 evaluator T5 unverifiable 第三态）+ #19（缺工具 = 写验不了，禁止降级）
+describe('CANNOT_VERIFY（验不了）', () => {
+  const qaIds = ['Q-1', 'Q-2'];
+  const cannot = (id, q, reason = '工具缺失：预览环境没有 ffprobe') =>
+    `### ${id}\n对应: ${q}\nverdict: CANNOT_VERIFY\n${reason ? `原因: ${reason}\n` : ''}${F}command\nwhich ffprobe\n${F}\n${F}output\n(空)\n${F}\n`;
+
+  it('T-n 可判 CANNOT_VERIFY（带原因）；没有 FAIL 时整份 verdict CANNOT_VERIFY，列出验不了的条目', () => {
+    const r = judgeQa(parseQaReport(`${FM}\n${t('T-1', 'Q-1')}\n${cannot('T-2', 'Q-2')}`), qaIds);
+    expect(r).toMatchObject({ reason: null, verdict: 'CANNOT_VERIFY', failed: [] });
+    expect(r.cannot_verify).toEqual([expect.objectContaining({ id: 'T-2', reason: '工具缺失：预览环境没有 ffprobe' })]);
+  });
+
+  it('有 FAIL 时 FAIL 优先（进修复环），验不了的照样列出', () => {
+    const r = judgeQa(parseQaReport(`${FM}\n${t('T-1', 'Q-1', 'FAIL')}\n${cannot('T-2', 'Q-2')}`), qaIds);
+    expect(r.verdict).toBe('FAIL');
+    expect(r.cannot_verify.map((i) => i.id)).toEqual(['T-2']);
+  });
+
+  it('CANNOT_VERIFY 必须写原因', () => {
+    expect(parseQaReport(`${FM}\n${cannot('T-1', 'Q-1', '')}`).errors).toEqual(['T-1:reason_missing']);
+  });
+
+  it('04 开发自测证据不接受 CANNOT_VERIFY（只有 QA 报告有第三态）', () => {
+    const e = parseEvidence(`### E-1\n对应: I-1\nverdict: CANNOT_VERIFY\n${F}command\nx\n${F}\n${F}output\ny\n${F}\n`);
+    expect(e.errors).toEqual(['E-1:verdict_invalid']);
+  });
+});
+
+// 审计 #36（旧 evaluator 反作弊红线 + proposer 作弊反例清单）：PASS 的命令不许恒真
+describe('trivialAssertions', () => {
+  const item = (id, command, verdict = 'PASS') => ({ id, command, verdict });
+  it('PASS 条目带 `|| true`、`; exit 0`、`--dry-run`、或只有 echo/printf/true → 列出', () => {
+    expect(trivialAssertions([
+      item('T-1', 'curl -s http://p/api/brain/x || true'),
+      item('T-2', 'curl -s http://p/api/brain/x; exit 0'),
+      item('T-3', 'node scripts/publish.mjs --dry-run'),
+      item('T-4', 'echo "PASS: 任务已创建"'),
+      item('T-5', 'printf ok'),
+    ])).toEqual(['T-1', 'T-2', 'T-3', 'T-4', 'T-5']);
+  });
+  it('正常的请求、带 jq -e 的断言、FAIL 条目不算', () => {
+    expect(trivialAssertions([
+      item('T-1', 'curl -s http://p/api/brain/x | jq -e \'.status == "ok"\''),
+      item('T-2', 'curl -s http://p/x && echo done'),
+      item('T-3', 'curl -s http://p/x || true', 'FAIL'),
+    ])).toEqual([]);
+  });
+});
+
+// 审计 #37（旧 evaluator 领域死规则：UI 必须有可见断言/截图）
+describe('screenshotProblems', () => {
+  const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'qa-shots-'));
+  it('报告引用的截图文件不存在 → 列出；存在 → 不列', () => {
+    const sprint = dir();
+    fs.mkdirSync(path.join(sprint, 'qa-r1'));
+    fs.writeFileSync(path.join(sprint, 'qa-r1', 'ok.png'), 'png');
+    const text = '### T-1\n截图: qa-r1/ok.png\n### T-2\n截图: qa-r1/missing.png\n';
+    expect(screenshotProblems({ reportText: text, items: [], sprintDir: sprint, shotsDir: path.join(sprint, 'qa-r1') }))
+      .toEqual(['screenshot_missing:qa-r1/missing.png']);
+  });
+  it('用了 Playwright 的条目但本轮截图目录没有任何图片 → 列出', () => {
+    const sprint = dir();
+    const items = [{ id: 'T-1', command: 'node qa-page.mjs http://p/' }, { id: 'T-2', command: 'npx playwright screenshot http://p/ a.png' }];
+    const executions = [{ command: 'cat > qa-page.mjs <<EOF\nconst { chromium } = require("playwright");\nEOF' }];
+    expect(screenshotProblems({ reportText: '', items, executions, sprintDir: sprint, shotsDir: path.join(sprint, 'qa-r1') }))
+      .toEqual(['screenshot_none:T-1', 'screenshot_none:T-2']);
+    fs.mkdirSync(path.join(sprint, 'qa-r1'));
+    fs.writeFileSync(path.join(sprint, 'qa-r1', 'home.png'), 'png');
+    expect(screenshotProblems({ reportText: '', items, executions, sprintDir: sprint, shotsDir: path.join(sprint, 'qa-r1') })).toEqual([]);
   });
 });
