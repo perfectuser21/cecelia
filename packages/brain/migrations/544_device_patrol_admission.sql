@@ -10,4 +10,4 @@ CREATE TABLE IF NOT EXISTS implementation_scope_bootstraps (
  created_at timestamptz NOT NULL DEFAULT NOW(),
  PRIMARY KEY(scope_key,source_repo)
 );
-INSERT INTO schema_version(version,description) VALUES('543','device patrol fixed Git admission') ON CONFLICT(version) DO NOTHING;
+INSERT INTO schema_version(version,description) VALUES('544','device patrol fixed Git admission') ON CONFLICT(version) DO NOTHING;
