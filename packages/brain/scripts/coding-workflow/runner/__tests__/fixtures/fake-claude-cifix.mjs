@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 假 claude（CI 修复用）：prompt 写进 FAKE_CIFIX_PROMPT；按 FAKE_CIFIX_MODE 在 cwd（PR 分支 worktree）里：
-// fix（改 src/fix.txt 并提交）| fragment（只补 changes/ 碎片并提交）| skiptest / deltest / lessassert（削弱测试）| none（什么都不做）| dirty（只改不提交）| tamper（改 sprint 的 01-intent.md 并提交）| fail（非 0 退出）
+// fix（改 src/fix.txt 并提交）| resolve（解决合并冲突：src/x.txt 写 resolved，提交完成合并）| fragment（只补 changes/ 碎片并提交）| skiptest / deltest / lessassert（削弱测试）| none（什么都不做）| dirty（只改不提交）| tamper（改 sprint 的 01-intent.md 并提交）| fail（非 0 退出）
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -18,6 +18,11 @@ const commit = (file, text, message) => {
 };
 
 if (mode === 'fail') process.exit(1);
+if (mode === 'resolve') {
+  fs.writeFileSync('src/x.txt', 'resolved\n');
+  git('add', '-A');
+  git('-c', 'user.name=fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '--no-edit');
+}
 if (mode === 'fix') commit('src/fix.txt', 'fixed\n', 'fix(ci): 修复 CI 失败');
 if (mode === 'fragment') commit('changes/frag.md', '## Brain {VERSION} — x\n', 'fix(brain): 补 changes/ 版本碎片');
 // 削弱测试的三种手法（审计 #31，修复环节不得删测试/放宽断言来变绿）
