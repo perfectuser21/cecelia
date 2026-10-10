@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { buildQaSmoke, registerSmoke, QA_SMOKE_DIR } from '../lib/qa-smoke.mjs';
 
 const F = '```';
@@ -42,6 +43,48 @@ describe('buildQaSmoke', () => {
     expect(s.writes).toBe(false);
     expect(s.content).not.toContain('smoke-production-guard');
     expect(buildQaSmoke({ taskId: TASK, previewUrl: PREVIEW, reportText: report(t('T-1', 'echo hi')) })).toBeNull();
+  });
+});
+
+// 金丝雀 4 第 3 轮独立裁判 J-4：固化脚本可能假通过——单引号里的预览地址换成的 $BRAIN_URL 不展开；
+// T-n 是 && 断言链，set -e 不因链中途失败退出，最后照样打印 PASS
+describe('生成的 smoke 真跑', () => {
+  const runSmoke = (content) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-smoke-run-'));
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    // 假 curl：把收到的 http 地址回显成 URL=<地址>
+    fs.writeFileSync(path.join(bin, 'curl'), '#!/bin/sh\nfor a in "$@"; do case "$a" in http*) echo "URL=$a";; esac; done\n', { mode: 0o755 });
+    const file = path.join(dir, 'smoke.sh');
+    fs.writeFileSync(file, content);
+    return spawnSync('bash', [file], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, BRAIN_URL: 'http://brain.test:9' } });
+  };
+
+  it('单引号、双引号、不带引号里的预览地址都换成会展开的 $BRAIN_URL', () => {
+    const s = buildQaSmoke({
+      taskId: TASK, previewUrl: PREVIEW, reportText: report(
+        t('T-1', `curl -s '${PREVIEW}/api/brain/x?a=1&b=2' | grep -qF 'URL=http://brain.test:9/api/brain/x?a=1&b=2' && echo Q1_OK`),
+        t('T-2', `curl -s "${PREVIEW}/api/brain/y" | grep -qF URL=http://brain.test:9/api/brain/y && echo Q2_OK`),
+        t('T-3', `curl -s ${PREVIEW}/api/brain/z | grep -qF URL=http://brain.test:9/api/brain/z && echo Q3_OK`),
+      ),
+    });
+    const r = runSmoke(s.content);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    for (const ok of ['Q1_OK', 'Q2_OK', 'Q3_OK', 'PASS: cw-c954ebfd-qa-smoke.sh']) expect(r.stdout).toContain(ok);
+  });
+
+  it('T-n 的 && 断言链中途失败 → 脚本非 0 退出、报出哪条失败、不打印 PASS', () => {
+    const s = buildQaSmoke({
+      taskId: TASK, previewUrl: PREVIEW, reportText: report(
+        t('T-1', `curl -s ${PREVIEW}/api/brain/x | grep -q nope && echo Q1_OK`),
+        t('T-2', `curl -s ${PREVIEW}/api/brain/y`),
+      ),
+    });
+    const r = runSmoke(s.content);
+    expect(r.status).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('FAIL: T-1');
+    expect(r.stdout).not.toContain('Q1_OK');
+    expect(r.stdout).not.toContain('PASS:');
   });
 });
 
