@@ -1,6 +1,6 @@
 /** 六层目录只读源：共享引用为准；不改契约、归属、版本或人工列。 */
 import { isDeepStrictEqual } from 'node:util';
-import { buildActivityCardProps, buildStepCardProps, executorLabel, humanize } from './activity-card.js';
+import { buildActivityCardProps, buildStepCardProps, executorLabel, humanize, judgmentText } from './activity-card.js';
 import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
 // 值是投影身份键（projection_links.entity_type 与 Notion「真身来源」文本），不是 SQL 表名；
 // value_streams / capabilities 仍记作 journeys，改了会让已有目录页被当新页重建。
@@ -172,6 +172,12 @@ export function buildDirectoryRows(data, config = {}) {
     }
   }
   const activityNames = new Map(data.activities.map(a => [a.id, a.name]));
+  // 每个 Activity 最新一条裁判（SQL 已按 activity 取最新；这里再按 judged_at 兜底取最新，防输入乱序）
+  const latestJudgment = new Map();
+  for (const j of data.judgments || []) {
+    const cur = latestJudgment.get(j.activity_id);
+    if (!cur || new Date(j.judged_at) > new Date(cur.judged_at)) latestJudgment.set(j.activity_id, j);
+  }
   for (const w of data.workflows) {
     const usage = refs.filter(r => r.workflow_id === w.id);
     const version = currentDefinition(w, 'workflow'), ctx = capabilityContext(w.capability_id);
@@ -195,6 +201,9 @@ export function buildDirectoryRows(data, config = {}) {
       .map(entry => `Step 登记对不上：${entry.locator?.step_key || entry.contract?.key || 'unknown'}`);
     const row = make('activities', a, { '名称': title(a.name),
       ...buildActivityCardProps(a, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id), unresolved),
+      '裁判结论': rich(judgmentText(latestJudgment.get(a.id))),
+      // 发布线（五块模型第 5 块）的生产版指针还没进 main：列先建出来留空，接线后从这里取
+      '生产版本': rich(null),
       '树位置': treePath(ctx.chain, [ctx.names.vs, ctx.names.cap, ctx.names.wf]) }, {
       '所属流程': unique(usage.map(r => ref('workflows', r.workflow_id))),
       'Step': data.steps.filter(s => s.activity_id === a.id && s.active).sort((a, b) => a.step_order - b.step_order).map(s => ref('steps', s.id)),
@@ -236,6 +245,9 @@ export async function loadDirectorySource(pool) {
       WHERE (to_jsonb(a)->>'capability_key' IS NOT NULL AND to_jsonb(a)->>'activity_key' IS NOT NULL)
       OR EXISTS(SELECT 1 FROM workflow_activity_refs r WHERE r.activity_id=a.id AND r.active)),'[]'::jsonb),
     'steps',COALESCE((SELECT jsonb_agg(to_jsonb(s)) FROM steps s),'[]'::jsonb),
+    'judgments',COALESCE((SELECT jsonb_agg(jsonb_build_object('activity_id',j.activity_id,'verdict',j.verdict,
+      'consecutive_green',j.consecutive_green,'required_green',j.required_green,'judged_at',j.judged_at))
+      FROM (SELECT DISTINCT ON (activity_id) * FROM activity_judgments ORDER BY activity_id, judged_at DESC, id DESC) j),'[]'::jsonb),
     'cells',COALESCE((SELECT jsonb_agg(jsonb_build_object('step_id',c.step_id,'cell_key',c.cell_key,'cell_status',c.cell_status,'parent_cell_key',c.parent_cell_key))
       FROM activity_cells c WHERE c.step_id IS NOT NULL),'[]'::jsonb),
     'uses',COALESCE((SELECT jsonb_agg(jsonb_build_object('activity_id',u.activity_id,'item_name',i.name,'role',u.role) ORDER BY i.name)

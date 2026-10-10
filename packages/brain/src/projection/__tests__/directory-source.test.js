@@ -130,10 +130,19 @@ describe('六层目录源映射', () => {
   it('Activity 只写 名称/承诺（FR）/输入/输出/谁来执行/还缺什么/树位置；不写 Key、正本、格子、9 项正文列', () => {
     const data=sample();Object.assign(data.activities[0],{capability_key:'cap',activity_key:'act',contract_source:'https://github.com/x/y/blob/abc/c.yaml',promise:'承诺一句'});
     const row=api.buildDirectoryRows(data,config).find(r=>r.id===fixtureEntityId(6));
-    expect(Object.keys(row.properties).sort()).toEqual(['Brain ID','承诺（FR）','输入','输出','谁来执行','还缺什么','树位置'].sort());
+    expect(Object.keys(row.properties).sort()).toEqual(['Brain ID','承诺（FR）','输入','输出','谁来执行','还缺什么','裁判结论','生产版本','树位置'].sort());
     expect(text(row.properties['承诺（FR）'])).toBe('承诺一句');
     expect(row.createProperties['名称'].title[0].text.content).toBe('共享活动');
     expect(row.gaps).toEqual([]);
+  });
+  it('Activity「裁判结论」取该 Activity 最新一条裁判（verdict + 连续绿），没裁判过写「未裁判」；「生产版本」发布线未接线时留空', () => {
+    const data=sample();
+    data.judgments=[{activity_id:fixtureEntityId(6),verdict:'converging',consecutive_green:1,required_green:3,judged_at:'2026-10-10T01:00:00Z'}];
+    const row=api.buildDirectoryRows(data,config).find(r=>r.id===fixtureEntityId(6));
+    expect(text(row.properties['裁判结论'])).toBe('收敛中 · 连续绿 1/3');
+    expect(row.properties['生产版本']).toEqual({ rich_text: [] });
+    const none=api.buildDirectoryRows(sample(),config).find(r=>r.id===fixtureEntityId(6));
+    expect(text(none.properties['裁判结论'])).toBe('未裁判');
   });
   it('跨Workflow同sequence和slot的引用输入反序仍有相同 Activity 顺序和属性hash', () => {
     const data = sample();

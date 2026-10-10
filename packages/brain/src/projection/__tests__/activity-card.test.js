@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildDirectoryRows } from '../directory-source.js';
 import { buildDirectorySchemas } from '../directory-schema.js';
-import { buildActivityCardProps, buildStepCardProps, activityMissing, activityBodySections, humanize, executorLabel, BODY_ITEMS } from '../activity-card.js';
+import { buildActivityCardProps, buildStepCardProps, activityMissing, activityBodySections, humanize, executorLabel, judgmentText, BODY_ITEMS } from '../activity-card.js';
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const text = p => p.rich_text.map(t => t.text.content).join('');
@@ -95,5 +95,15 @@ describe('目录库 schema', () => {
     for (const col of ['格·承诺', '格·读回', '前提', '不变量', 'NFR', '失败语义', '读回', '判定点', '对抗', '保质期(天)', '用料']) expect(s.activities, col).not.toHaveProperty(col);
     for (const col of ['做什么', '失败了怎么办']) expect(s.steps[col]).toEqual({ rich_text: {} });
     expect(s.steps).not.toHaveProperty('模式');
+  });
+});
+
+describe('裁判结论一列人话（五块模型第 2 步裁判接线后接进 Activity 页，任务 f6ad056e）', () => {
+  it('四种裁决翻中文并带连续绿/要求绿；没裁判过写「未裁判」', () => {
+    expect(judgmentText({ verdict: 'converged', consecutive_green: 3, required_green: 3 })).toBe('收敛 · 连续绿 3/3');
+    expect(judgmentText({ verdict: 'converging', consecutive_green: 1, required_green: 3 })).toBe('收敛中 · 连续绿 1/3');
+    expect(judgmentText({ verdict: 'diverged', consecutive_green: 0, required_green: 3 })).toBe('发散 · 连续绿 0/3');
+    expect(judgmentText({ verdict: 'no_data', consecutive_green: 0, required_green: 3 })).toBe('无数据 · 连续绿 0/3');
+    expect(judgmentText(null)).toBe('未裁判');
   });
 });

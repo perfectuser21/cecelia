@@ -65,6 +65,13 @@ export function activityMissing(a = {}, cells = [], uses = [], extra = []) {
   return parts.length ? parts.join('\n') : '齐了';
 }
 
+const VERDICTS = Object.freeze({ converged: '收敛', converging: '收敛中', diverged: '发散', no_data: '无数据' });
+/** 裁判结论（activity_judgments 最新一条）→「收敛 · 连续绿 3/3」；没裁判过 =「未裁判」。 */
+export function judgmentText(j) {
+  if (!j) return '未裁判';
+  return `${VERDICTS[j.verdict] ?? j.verdict} · 连续绿 ${j.consecutive_green ?? 0}/${j.required_green ?? '?'}`;
+}
+
 /** Activity 卡片列：承诺（FR）/输入/输出/谁来执行/还缺什么。 */
 export function buildActivityCardProps(a = {}, cells = [], uses = [], extra = []) {
   return {
