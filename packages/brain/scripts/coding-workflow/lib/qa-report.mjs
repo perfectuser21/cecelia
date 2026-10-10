@@ -116,6 +116,7 @@ export function trivialAssertions(items) {
 const SHOT_REF_RE = /^\s*(?:[-*]\s+)?(?:\*\*)?截图(?:\*\*)?\s*[:：]\s*(.+?)\s*$/gm;
 const BROWSER_RE = /\bplaywright\b|\bchromium\b|\bpuppeteer\b/i;
 const IMAGE_RE = /\.(?:png|jpe?g|webp)$/i;
+const IMAGE_PATH_RE = /[\w./-]+\.(?:png|jpe?g|webp)\b/gi;
 
 /** 条目是否用了浏览器：命令里直接出现，或跑的脚本是本次会话写出来、内容引用浏览器库的。 */
 function usesBrowser(command, executions) {
@@ -132,8 +133,9 @@ function usesBrowser(command, executions) {
 export function screenshotProblems({ reportText = '', items = [], executions = [], sprintDir, shotsDir }) {
   const problems = [];
   for (const m of reportText.matchAll(SHOT_REF_RE)) {
-    for (const ref of m[1].split(/[,，、\s]+/).filter(Boolean)) {
-      const file = path.resolve(sprintDir, ref.replace(/^`|`$/g, ''));
+    // 截图行常在路径后写说明（金丝雀 3：「qa-r1/a.png（分类留空：弹窗已关…）、qa-r1/b.png（…）」）：只取图片路径
+    for (const ref of m[1].match(IMAGE_PATH_RE) ?? []) {
+      const file = path.resolve(sprintDir, ref);
       if (!file.startsWith(path.resolve(sprintDir) + path.sep) || !fs.existsSync(file)) problems.push(`screenshot_missing:${ref}`);
     }
   }
