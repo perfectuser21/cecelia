@@ -201,6 +201,36 @@ describe('dispatchNextTask — 资源健康闸（任务 5bf2512a）', () => {
     expect(result.dispatched).toBe(true);
   });
 
+  it('回归：队首 12 张引用同一风控账号的任务不占 HOL 让位名额，后面的普通任务照常派发', async () => {
+    const blocked = Array.from({ length: 12 }, (_, i) => ({
+      ...ACCOUNT_TASK,
+      id: `dddddddd-1111-0000-0000-${String(100 + i).padStart(12, '0')}`,
+    }));
+    candidates = [...blocked, PLAIN_TASK];
+    healthRows = [{ resource_type: 'account', resource_key: 'douyin:a1', status: 'restricted', reason: '切换要人脸', observed_at: new Date().toISOString() }];
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask([]);
+    expect(result.dispatched).toBe(true);
+    expect(result.task_id).toBe(PLAIN_TASK.id);
+    const reasons = mockRecordDispatchResult.mock.calls.map((c) => c[2]);
+    expect(reasons).not.toContain('hol_skip_cap_exceeded');
+    expect(reasons.filter((r) => r === 'resource_unhealthy')).toHaveLength(12);
+  });
+
+  it('健康闸挡单有自己的上限（100），超过才放弃本轮，原因是 resource_skip_cap_exceeded', async () => {
+    candidates = Array.from({ length: 105 }, (_, i) => ({
+      ...ACCOUNT_TASK,
+      id: `dddddddd-1111-0000-0000-${String(1000 + i).padStart(12, '0')}`,
+    }));
+    healthRows = [{ resource_type: 'account', resource_key: 'douyin:a1', status: 'offline', reason: '掉线', observed_at: new Date().toISOString() }];
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask([]);
+    expect(result.dispatched).toBe(false);
+    expect(result.reason).toBe('resource_skip_cap_exceeded');
+    const reasons = mockRecordDispatchResult.mock.calls.map((c) => c[2]);
+    expect(reasons).not.toContain('hol_skip_cap_exceeded');
+  });
+
   it('不引用资源的任务 → 不查健康表', async () => {
     candidates = [PLAIN_TASK];
     const { dispatchNextTask } = await import('../dispatcher.js');
