@@ -16,12 +16,18 @@ PRIOR_OPEN: {{PRIOR_OPEN}}
 PREV_REVIEW_PATH: {{PREV_REVIEW_PATH}}
 PREV_RESPONSE_PATH: {{PREV_RESPONSE_PATH}}
 USED_IDS: {{USED_IDS}}
+SPEC_ERRORS: {{SPEC_ERRORS}}
+PREV_REVIEW_ERRORS: {{PREV_REVIEW_ERRORS}}
+STUCK: {{STUCK}}
 
 步骤：
 1. 读 INTENT_PATH（需求背景与验收条目 `### I-n`）和 SPEC_PATH（规格 `### S-n` 与用户视角 QA 场景 `### Q-n`）。读仓库里相关代码核实规格是否真的可行、会碰到哪些现有功能。
    QA 场景 Q-n 就是验收时你要照着做的测试计划：重点看它是不是真人能在真实环境里操作的步骤、期望是不是用户能看到的结果、有没有漏掉出错和边界路径。
 2. 若 PRIOR_OPEN 不是「无」：读 PREV_REVIEW_PATH（你上一轮的问题）和 PREV_RESPONSE_PATH（开发方逐条的采纳/驳回与理由），再看规格是否真的改了。
 3. 只写 REVIEW_PATH 这一个文件。
+4. SPEC_ERRORS 不是「无」时：当前规格没通过程序校验（错误码列表）。这些必须作为 `阻断` 问题提出，开发方要先改好。
+5. PREV_REVIEW_ERRORS 不是「无」时：你上一次写的评审格式不合格，被程序打回重写，它列出的是格式问题。这次必须按下面的格式写对。
+6. STUCK 为「是」时：最近两轮总分没有上涨，对抗在原地打转。你必须在 `## 评分` 之后写一个 `## 换思路` 小节：指出现在的改法为什么走不通，给出一个不同的方向（换个拆法、先定接口、缩小或改写某个场景等），而不是继续逐条补措辞。没写这一节的评审按格式不合格打回。
 
 ## 只准提这五类问题
 1. **做了也达不到**：严格按规格实现，用户要的结果仍然出不来（验收条目对应的用户可见结果缺失或错误）。

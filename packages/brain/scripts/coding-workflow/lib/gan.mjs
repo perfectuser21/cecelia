@@ -31,6 +31,16 @@ export function detectTrend(history) {
   return 'converging';
 }
 
+/**
+ * 原地打转（审计 #27，旧 reviewer「Pivot vs Refine」）：最近一轮总分没高于上一轮 → true，下一轮要求评审写 `## 换思路`。
+ * 只是加信息、不判结局；结局仍由 detectTrend 的发散/震荡决定。
+ */
+export function stalled(history) {
+  if (!Array.isArray(history) || history.length < 2) return false;
+  const total = (e) => RUBRIC_DIMS.reduce((sum, d) => sum + (Number.isNaN(num(e?.scores?.[d])) ? 0 : e.scores[d]), 0);
+  return total(history.at(-1)) <= total(history.at(-2));
+}
+
 /** 代码判分（不信 AI 自报结论）：5 维全部 ≥ THRESHOLD 且没有仍开着的阻断/重要问题 → approved。 */
 export function decide({ scores, openIssues }) {
   const reasons = [];

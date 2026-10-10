@@ -81,6 +81,17 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     expect(r.result.outputs.qa.env).toMatchObject({ sha: SHA });
   });
 
+  // 审计 #33：上次评估报告不合格（证据查不到等）→ 本次 prompt 带上次的问题，不原样重跑
+  it('prev_errors：上次评估不合格的问题交给 QA；没有时写「无」', async () => {
+    let r = await run('pass', { prev_errors: 'qa_evidence_unverified: T-5 command_not_executed' });
+    expect(r.result.status, r.stderr).toBe('completed');
+    expect(r.stderr).toContain('FAKE_PREV_ERRORS: qa_evidence_unverified: T-5 command_not_executed');
+    r = await run('pass');
+    expect(r.stderr).toContain('FAKE_PREV_ERRORS: 无');
+    const p = fs.readFileSync(path.join(HERE, '../prompts/evaluate.md'), 'utf8');
+    expect(p).toContain('PREV_ERRORS: {{PREV_ERRORS}}');
+  });
+
   it('上一轮独立裁判判 QA 没真验到：judge_feedback 指向的裁决交给 QA 补验；没有时写「无」；指向不存在/sprint 外 → fatal', async () => {
     fs.writeFileSync(path.join(sprint(), '06-judge-r1.md'), '# 独立裁判\n');
     let r = await run('pass', { judge_feedback: 'sprints/s1/06-judge-r1.md', round: 2 });

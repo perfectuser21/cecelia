@@ -280,6 +280,20 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(qaCalls().at(-1).transcript_path).toBe(path.join(sb.logDir, 'qa-77-r1.jsonl'));
   });
 
+  // 审计 #33：评估报告不合格（金丝雀 #6160：T-5 的命令执行记录里查不到）→ 下一次评估带上次的问题；通过后清掉
+  it('评估出错 → 记下原因；下一次 evaluate 拿到 prev_errors；评估成功后清掉', async () => {
+    let r = await go(green(), { mode: 'unverified' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls()[0].prev_errors).toBeUndefined();
+    expect(state().last_eval_error).toMatchObject({ reason_code: 'qa_evidence_unverified' });
+    await E.closeBrain();
+    r = await go(green(), { mode: 'pass' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls().at(-1).prev_errors).toContain('qa_evidence_unverified');
+    expect(qaCalls().at(-1).prev_errors).toContain('T-5');
+    expect(state().last_eval_error).toBeUndefined();
+  });
+
   it('已合并且 QA 通过过的 PR → 停掉它的预览环境释放容量（只停一次）', async () => {
     seedState({ passed: true, rounds: [] });
     const r = await go({ prs: [], mergedPrs: [pr()] });

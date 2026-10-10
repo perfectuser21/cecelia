@@ -140,6 +140,19 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(prompt).toContain('不能写 `localhost:5221`');
   });
 
+  // 审计 #33：重试必须带新信息——上次生成的 02 不合格，重跑时把问题交给 claude，而不是原样再来一遍
+  it('重试：上次的 02 不合格 → prompt 的 PREV_ERRORS 列出上次的问题；首次生成写「无」', async () => {
+    let r = await run('ok');
+    expect(r.stderr).toContain('FAKE_PREV_ERRORS: 无');
+    r = await run('noids');
+    expect(r.result.reason_code).toBe('spec_invalid');
+    r = await run('ok');
+    expect(r.result.status, r.stderr).toBe('completed');
+    expect(r.stderr).toMatch(/FAKE_PREV_ERRORS: .*spec_ids_missing/);
+    const prompt = fs.readFileSync(path.join(HERE, '../prompts/spec.md'), 'utf8');
+    expect(prompt).toContain('PREV_ERRORS: {{PREV_ERRORS}}');
+  });
+
   it('uncovered：02 的 upstream 没覆盖全部 I-n -> retryable spec_invalid，evidence 点名未覆盖的 I-n', async () => {
     const r = await run('uncovered');
     expect(r.result.failure_class).toBe('retryable');
