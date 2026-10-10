@@ -271,7 +271,13 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     fs.rmSync(statePath(), { force: true });
     await E.closeBrain();
     r = await go(green(), { mode: 'fatal' });
-    expect(state().escalated).toMatchObject({ type: 'qa_evaluator_broken', reason_code: 'evaluate_touched_production' });
+    // 升级记录带上触发的证据（金丝雀 3e8414f6：只有原因码、无从判断真越界还是误判）；evaluate 拿到落盘执行记录的路径
+    expect(state().escalated).toMatchObject({
+      type: 'qa_evaluator_broken', reason_code: 'evaluate_touched_production',
+      evidence: [{ commands: ['curl -s http://localhost:5221/api/brain/tasks'] }],
+      transcript: path.join(sb.logDir, 'qa-77-r1.jsonl'),
+    });
+    expect(qaCalls().at(-1).transcript_path).toBe(path.join(sb.logDir, 'qa-77-r1.jsonl'));
   });
 
   it('已合并且 QA 通过过的 PR → 停掉它的预览环境释放容量（只停一次）', async () => {

@@ -125,6 +125,15 @@ await runActivity(async (input) => {
     state.claudeRunning = true;
     const run = await runClaude({ args, cwd: worktree, timeoutMs: claudeTimeoutMs(input.budget, TIMEOUT), tag: 'evaluate', isolateRemote: true });
     state.claudeRunning = false;
+    // 会话执行记录落盘留证（runner 传 transcript_path；判越界/证据不实时可复核）
+    if (input.transcript_path) {
+      try {
+        fs.mkdirSync(path.dirname(input.transcript_path), { recursive: true });
+        fs.writeFileSync(input.transcript_path, run.stdout ?? '');
+      } catch (error) {
+        log(`[evaluate] 执行记录落盘失败：${error?.message || error}`);
+      }
+    }
     result = claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
     result ??= judge({
       reportPath, reportFile, qaIds, stdout: run.stdout, worktree, round,

@@ -112,10 +112,14 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     expect(r.result.reason_code).toBe('qa_evidence_unverified');
   });
 
-  it('碰了生产 Brain → fatal evaluate_touched_production', async () => {
-    const r = await run('prod');
+  it('碰了生产 Brain → fatal evaluate_touched_production，evidence 点名命令；给了 transcript_path 时会话执行记录落盘（留证）', async () => {
+    const transcript = path.join(worktree, '..', `qa-transcript-${process.pid}.jsonl`);
+    const r = await run('prod', { transcript_path: transcript });
     expect(r.result.failure_class).toBe('fatal');
     expect(r.result.reason_code).toBe('evaluate_touched_production');
+    expect(JSON.stringify(r.result.evidence)).toContain('5221');
+    expect(fs.readFileSync(transcript, 'utf8')).toContain('"tool_use"');
+    fs.rmSync(transcript, { force: true });
   });
 
   it('漏测 Q-n → retryable qa_incomplete；报告没条目 → retryable qa_report_invalid', async () => {
@@ -145,5 +149,7 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
   it('prompt：真人 QA、黑盒、用预览环境、禁单元测试、禁碰 5221、探索式测试', () => {
     const p = fs.readFileSync(path.join(HERE, '../prompts/evaluate.md'), 'utf8');
     for (const s of ['真人', '黑盒', 'PREVIEW_URL', '单元测试', '5221', '探索', 'Playwright', '### T-n', '### X-n']) expect(p).toContain(s);
+    // 金丝雀 3e8414f6：规格要求和「改动前」对比，QA 拿生产当了基线 → 只读也不行，基线须在本机从 main 起
+    for (const s of ['哪怕只是只读请求', '绝不能拿生产当基线', 'git worktree add']) expect(p).toContain(s);
   });
 });

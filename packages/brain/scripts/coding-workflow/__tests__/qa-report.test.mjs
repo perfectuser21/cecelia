@@ -65,4 +65,28 @@ describe('unitTestEvidence / productionTouches', () => {
     ];
     expect(productionTouches(runs)).toEqual(['curl -s http://localhost:5221/api/brain/tasks', 'psql -h 100.79.41.61 -c "select 1"']);
   });
+
+  // 金丝雀 3e8414f6（PR #6160）：QA 被判 evaluate_touched_production 致命，但规格的 Q-n 里本就写着 localhost:5221，
+  // 只读文件的命令（grep/cat/sed/rg）出现这个数字不是访问生产；真正发出访问的才算
+  it('只读文件的命令里出现 5221 不算碰生产；网络/数据库/远程访问才算（含管道、&&、node 内 fetch）', () => {
+    const runs = [
+      { command: 'grep -n "5221" sprints/s1/02-spec.md' },
+      { command: 'cat sprints/s1/02-spec.md | grep 100.79.41.61' },
+      { command: 'sed -n 1,40p sprints/s1/02-spec.md; rg 5221 packages/brain/src' },
+      { command: 'P=http://localhost:5301; curl -s $P/api/brain/tasks?limit=5221' },
+      { command: 'echo start && wget -qO- http://127.0.0.1:5221/api/brain/health' },
+      { command: "node -e \"fetch('http://localhost:5221/api/brain/tasks').then(r=>r.text()).then(console.log)\"" },
+      { command: 'ssh us-vps curl -s 100.79.41.61:5221/api/brain/health' },
+      { command: 'nc -z localhost 5221' },
+      // 先把生产地址赋给变量再访问：分段看不出来，按「赋值指向生产 + 有访问动作」判
+      { command: 'B=http://localhost:5221; curl -s $B/api/brain/tasks' },
+    ];
+    expect(productionTouches(runs)).toEqual([
+      'echo start && wget -qO- http://127.0.0.1:5221/api/brain/health',
+      "node -e \"fetch('http://localhost:5221/api/brain/tasks').then(r=>r.text()).then(console.log)\"",
+      'ssh us-vps curl -s 100.79.41.61:5221/api/brain/health',
+      'nc -z localhost 5221',
+      'B=http://localhost:5221; curl -s $B/api/brain/tasks',
+    ]);
+  });
 });
