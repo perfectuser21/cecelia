@@ -296,6 +296,16 @@
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "packages/brain/src/__tests__/integration/code-task-dedup.pg.integration.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": "packages/brain/src/__tests__/dispatcher-dedup.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/code-task-identity.js",
+      "path": "packages/brain/src/lib/__tests__/code-task-identity.test.js",
+      "role": "verification"
     }
   ]
 }
