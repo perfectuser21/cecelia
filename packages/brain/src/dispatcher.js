@@ -779,7 +779,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
       const target = getFleetStatus().find(machine => machine.id === host);
       if (!target?.online || !Number.isFinite(target.pressure) || target.pressure >= 0.9) {
         await recordDispatchResult(pool, false, 'script_host_resource_unavailable', undefined, candidate.id);
-        await recordTaskEventSafe(pool, candidate.id, 'script_host_resource_wait', {host,reason:target?.online?'host_pressure':'host_health_unavailable'});
+        await recordTaskEventSafe(pool, candidate.id, 'script_host_resource_wait', {host,reason:target?.admission_reason ?? (target?.online?'host_pressure':'host_health_unavailable'),pressure:target?.pressure??null,observed_at:target?.observed_at??null});
         resourceSkipIds.push(candidate.id);
         const capped = await resourceSkipCapped();
         if (capped) return capped;
