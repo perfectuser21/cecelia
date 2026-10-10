@@ -21,7 +21,12 @@ if (mode === 'fail') process.exit(1);
 if (mode === 'fix') commit('src/fix.txt', 'fixed\n', 'fix(ci): 修复 CI 失败');
 if (mode === 'fragment') commit('changes/frag.md', '## Brain {VERSION} — x\n', 'fix(brain): 补 changes/ 版本碎片');
 // 削弱测试的三种手法（审计 #31，修复环节不得删测试/放宽断言来变绿）
-if (mode === 'skiptest') commit('src/a.test.mjs', "it.skip('x', () => { expect(1).toBe(2); });\n", 'fix(ci): 跳过不稳定用例');
+if (mode === 'skiptest') commit('src/b.test.mjs', "it.skip('b', () => {\n  expect(1).toBe(1);\n  expect(2).toBe(2);\n});\n", 'fix(ci): 跳过不稳定用例');
+// 删 PR 自己新加、main 上没有的测试（按裁决删超范围代码时连带删，决策 b057089b 允许）
+if (mode === 'del-pr-test') {
+  git('rm', '-q', 'src/pr-only.test.mjs');
+  git('-c', 'user.name=fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '-m', 'fix: 删掉超范围改动及其测试');
+}
 if (mode === 'deltest') {
   git('rm', '-q', 'src/b.test.mjs');
   git('-c', 'user.name=fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '-m', 'fix(ci): 删掉过时测试');

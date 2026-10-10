@@ -56,6 +56,12 @@ export function useQaEnv({ onReady } = {}) {
   beforeEach(async () => {
     const sb = makeSandbox();
     E.sb = sb;
+    // main 上已有的测试（削弱守卫只保护它们，决策 b057089b）
+    fs.mkdirSync(path.join(sb.seed, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(sb.seed, 'src/b.test.mjs'), "it('b', () => {\n  expect(1).toBe(1);\n  expect(2).toBe(2);\n});\n");
+    git(sb.seed, 'add', '.');
+    git(sb.seed, 'commit', '-q', '-m', 'test: main 上已有测试');
+    git(sb.seed, 'push', '-q', 'origin', 'main');
     git(sb.seed, 'checkout', '-q', '-b', BRANCH);
     fs.mkdirSync(path.join(sb.seed, SPRINT), { recursive: true });
     fs.writeFileSync(path.join(sb.seed, SPRINT, '01-intent.md'), INTENT);
