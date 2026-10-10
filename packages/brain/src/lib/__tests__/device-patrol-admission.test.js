@@ -1,9 +1,11 @@
 import {describe,it,expect} from 'vitest';
 import {validatePatrolContract,validatePatrolBootstrap,patrolSourceProof} from '../device-patrol-admission.js';
 import {bootstrapPatrolScope} from '../device-patrol-registration.js';
+import {validateImplementationSnapshot} from '../implementation-ci-snapshot.js';
 const base='a'.repeat(40),introduced='b'.repeat(40);
 const contract={schema_version:1,scope:'cecelia-device-patrol',capability_id:'2173a385-a743-41f3-bb7d-d0e4b1d51d4e',workflows:[{id:'66fe22f5-1a60-4e23-bcfb-7b4df2f0fbff',key:'single-phone-account-patrol',activities:[{id:'d51eefa1-0ffd-43d7-94ba-16ff6b4d3800',key:'device-readiness',bindings:['scripts/phone-account-patrol/preflight.py'],assertion_ref:'node --test scripts/phone-account-patrol/implementation-regression.test.mjs'}]},{id:'7dfd3b5d-bc5a-4d96-b744-10d26bc7eb70',key:'phone-account-patrol-batch',activities:[{id:'b33c9f29-5c5f-4fb1-908c-475bb9566085',key:'enabled-phone-list',bindings:['scripts/phone-account-patrol/runner.py'],assertion_ref:'node --test scripts/phone-account-patrol/implementation-regression.test.mjs'}]}],auxiliary_paths:['scripts/phone-account-patrol/implementation-contract.json'],maintenance_owner:'主理人',schedule:{time:'22:00',timezone:'Asia/Shanghai'}};
 describe('手机巡查独立来源准入',()=>{
+ it('既有snapshot入口正常加载且仍拒绝把窄巡查identity当旧scope合同',()=>expect(()=>validateImplementationSnapshot({scope:'cecelia-device-patrol'})).toThrow());
  it('保持真实系统看护身份与两个已登记Workflow',()=>expect(validatePatrolContract(contract)).toEqual(contract));
  it('后继镜子源码与真实渲染回归允许窄源绑定，未知辅助路径仍拒绝',()=>{const x=structuredClone(contract);x.workflows[0].activities[0].bindings.push('scripts/phone-account-patrol/mirror.mjs');x.auxiliary_paths.push('scripts/phone-account-patrol/test_mirror.mjs');expect(validatePatrolContract(x)).toEqual(x);x.auxiliary_paths.push('scripts/phone-account-patrol/unregistered.test.mjs');expect(()=>validatePatrolContract(x)).toThrow();});
  it('拒绝挂错能力与任意外部代码路径',()=>{expect(()=>validatePatrolContract({...contract,capability_id:'a1000000-0000-4000-8000-000000000001'})).toThrow();const x=structuredClone(contract);x.workflows[0].activities[0].bindings=['packages/brain/src/server.js'];expect(()=>validatePatrolContract(x)).toThrow();});
