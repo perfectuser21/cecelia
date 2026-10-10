@@ -404,6 +404,7 @@ directory-projection-smoke.sh
 definition-versions-smoke.sh
 span-ingestion-smoke.sh
 implementation-impact-smoke.sh
+device-patrol-admission-smoke.sh
 
 release-evidence-smoke.sh
 capability-system-smoke.sh

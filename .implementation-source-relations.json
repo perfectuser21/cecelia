@@ -177,6 +177,56 @@
       "owner_path": "packages/brain/src/routes/projections.js",
       "path": "packages/brain/src/routes/__tests__/task-runs-projection.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/device-patrol-admission.js",
+      "path": "packages/brain/src/lib/__tests__/device-patrol-admission.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/device-patrol-registration.js",
+      "path": "packages/brain/src/__tests__/integration/device-patrol-admission.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/device-patrol-registration.js",
+      "path": "packages/brain/src/lib/__tests__/device-patrol-registration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/device-patrol-registration.js",
+      "path": "packages/brain/scripts/smoke/device-patrol-admission-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
+      "path": "scripts/ci/__tests__/device-patrol-governance.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
+      "path": ".prd-cp-10101725-patrol-impact-adapter.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-patrol-baseline.mjs",
+      "path": "scripts/ci/__tests__/device-patrol-baseline.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
+      "path": "changes/cp-10101725-patrol-impact-adapter.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": ".prd-cp-10101834-f3-test-consumer.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-device-patrol-gate.mjs",
+      "path": "docs/learnings/cp-10101725-patrol-impact-adapter.md",
+      "role": "documentation"
     }
   ]
 }
