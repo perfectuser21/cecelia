@@ -29,7 +29,8 @@ beforeEach(async () => {
     CREATE TABLE activity_definition_versions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), activity_id uuid NOT NULL REFERENCES activities(id),
       payload jsonb NOT NULL, created_at timestamptz DEFAULT now());
     CREATE TABLE spans(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id text, activity_id uuid, step_id uuid, enabler_id uuid, outcome text,
-      evidence jsonb, attempts int DEFAULT 1, started_at timestamptz, activity_definition_version_id uuid, created_at timestamptz DEFAULT now());`);
+      evidence jsonb, attempts int DEFAULT 1, started_at timestamptz, activity_definition_version_id uuid, created_at timestamptz DEFAULT now());
+    CREATE UNIQUE INDEX ON activity_cells(step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL;`);
   await client.query(MIGRATION);
 });
 afterEach(async () => { if (client) { await client.query(`DROP SCHEMA ${schema} CASCADE`); await client.end(); } });
@@ -46,10 +47,10 @@ async function seed() {
     [a, JSON.stringify({ activity_id: a, contract: {} })])).rows[0].id;
   return { a, s1, s2, v1: await ver(), v2: await ver() };
 }
-async function span(run, { a = null, step, observed, outcome = 'pass', version = null }) {
+async function span(run, { a = null, step, observed, outcome = 'pass', version = null, at = null }) {
   return (await client.query(
     'INSERT INTO spans(run_id,activity_id,step_id,outcome,evidence,started_at,activity_definition_version_id) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING id',
-    [run, a, step, outcome, JSON.stringify(observed === undefined ? {} : { observed }), ts(), version])).rows[0].id;
+    [run, a, step, outcome, JSON.stringify(observed === undefined ? {} : { observed }), at ?? ts(), version])).rows[0].id;
 }
 
 describe('自动裁判落库（真 PG）', () => {
@@ -77,6 +78,52 @@ describe('自动裁判落库（真 PG）', () => {
 
   it('没裁判过 → null', async () => {
     expect(await getLatestJudgment(client, randomUUID())).toBeNull();
+  });
+});
+
+describe('运行没跑完不裁判（真 PG，按 Step 逐条上报）', () => {
+  const countJudgments = async a => Number((await client.query('SELECT count(*) FROM activity_judgments WHERE activity_id=$1', [a])).rows[0].count);
+  const readbackCell = async a => (await client.query(
+    "SELECT cell_status FROM activity_cells WHERE step_id=$1 AND cell_key='readback' AND parent_cell_key IS NULL", [a])).rows[0]?.cell_status;
+
+  it('r1/r2 全绿，r3 只报了第 1 步 → 不落库、readback 不翻红；补上第 2 步再处理 → 落一条 converging', async () => {
+    const { a, s1, s2 } = await seed();
+    await client.query("INSERT INTO activity_cells(journey_id,step_id,cell_kind,cell_key) VALUES(gen_random_uuid(),$1,'element','readback')", [a]);
+    let t = Date.now() - 120_000;
+    const at = () => new Date(t += 1000).toISOString();
+    const ids = [];
+    for (const run of ['r1', 'r2']) { ids.push(await span(run, { step: s1, observed: 1, at: at() })); ids.push(await span(run, { step: s2, observed: 3, at: at() })); }
+    await flushJudgments(client, ids);
+    expect(await countJudgments(a)).toBe(1);
+    expect(await readbackCell(a)).toBe('pending');
+
+    const half = await span('r3', { step: s1, observed: 1, at: at() });
+    const out = await flushJudgments(client, [half]);
+    expect(out).toEqual([expect.objectContaining({ activity_id: a, deferred: true, run_id: 'r3' })]);
+    expect(await countJudgments(a)).toBe(1);
+    expect(await readbackCell(a)).not.toBe('red');
+
+    const rest = await span('r3', { step: s2, observed: 3, at: at() });
+    await flushJudgments(client, [rest]);
+    expect(await countJudgments(a)).toBe(2);
+    expect(await getLatestJudgment(client, a)).toMatchObject({ verdict: 'converging', consecutive_green: 3, trigger_ref: 'r3' });
+    expect(await readbackCell(a)).toBe('pending');
+  });
+
+  it('过了静默期仍缺步 → 确实缺步：按真实结果落 diverged 并翻红', async () => {
+    const { a, s1, s2 } = await seed();
+    await client.query("INSERT INTO activity_cells(journey_id,step_id,cell_kind,cell_key) VALUES(gen_random_uuid(),$1,'element','readback')", [a]);
+    let t = Date.now() - 120_000;
+    const at = () => new Date(t += 1000).toISOString();
+    await span('r1', { step: s1, observed: 1, at: at() }); await span('r1', { step: s2, observed: 3, at: at() });
+    await span('r2', { step: s1, observed: 1, at: at() });
+    const early = await judgeActivity(client, a, { trigger: 'auto', triggerRef: 'r2' });
+    expect(early.deferred).toBe(true);
+    const late = await judgeActivity(client, a, { trigger: 'auto', triggerRef: 'r2', runIdleMs: 0 });
+    expect(late).toMatchObject({ verdict: 'diverged' });
+    expect(late.judgment_id).toBeTruthy();
+    expect(await countJudgments(a)).toBe(1);
+    expect(await readbackCell(a)).toBe('red');
   });
 });
 

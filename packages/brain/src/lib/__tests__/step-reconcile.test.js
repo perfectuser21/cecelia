@@ -56,6 +56,12 @@ describe('reconcileSteps：单次运行的逐步判定', () => {
 });
 
 describe('reconcileSteps：跨运行收敛', () => {
+  it('每次运行带最后一条 span 的时间（last_span_at），供自动裁判判断这次运行是否已静默结束', () => {
+    const spans = greenRun('r1');
+    const r = reconcileSteps({ steps, spans, runsWanted: 1, requiredGreen: 1 });
+    expect(r.runs[0].last_span_at).toBe(spans.at(-1).started_at);
+  });
+
   it('取最近 N 次（按运行内最晚 span 排序），连续绿次数从最新往前数', () => {
     const spans = [...greenRun('r1'), ...greenRun('r2'), [span('r3', 's1', 0), span('r3', 's2', 2), span('r3', 's3')].flat(), ...greenRun('r4'), ...greenRun('r5')].flat();
     const r = reconcileSteps({ steps, spans, runsWanted: 5, requiredGreen: 3 });

@@ -1,3 +1,13 @@
+# 自动裁判等运行结束再判（PR #6179 审查阻断项）
+
+任务：2f50cf2a-1cda-41d3-ba81-3c9efd1017c5；父任务：add0acfc-2c79-4e82-b6e8-f3b15a3dfbbd。
+
+- [x] [BEHAVIOR] activityjudgedefer 按 Step 逐条上报的运行跑到一半不裁判：自动触发先 applyCell:false 对账，触发运行有 missing、无 failed、最后一条 span 在静默期内（默认 10 分钟，ACTIVITY_JUDGE_RUN_IDLE_MS）→ 返回 deferred，不写 activity_judgments、readback 不翻红，调度器放回待判队列过了静默期自动重判；补齐后落 converging；过静默期仍缺步按真实结果落 diverged 并翻红；新 span 不跟着等重判定时器；翻色出错只记日志。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/activity-judge.test.js src/lib/__tests__/step-reconcile.test.js src/routes/spans-judge-hook.test.js src/routes/skill-settlement.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] activityjudgedeferpg 真 PG：两 Step 的 Activity，r1/r2 全绿、r3 只报第 1 步处理一次 → activity_judgments 不新增、readback 不是 red；补第 2 步再处理 → 落一条 converging（连续绿 3）；静默期过后仍缺步 → diverged 且翻红。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/activity-judgments.pg.integration.test.js src/__tests__/integration/step-reconcile-settlement.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+
 # Workspace跨仓CI固定来源与真实消费验收
 - [x] [BEHAVIOR] resourcehealthwarehouse 资源健康进仓库（决策 de6dff5d 第 5 步，任务 5bf2512a）：迁移 539 新建 resource_health（一资源一行：account/phone/machine/warehouse_item/service/other × healthy/degraded/offline/restricted/unknown，原因/证据/来源/库时钟观测时间/status_since，可挂 warehouse_items）与 resource_health_events（插入与状态变化由触发器记历史，psql 直改也留痕，同状态不记），视图 v_warehouse_item_health 给每件仓库物件的最差状态；不另造设备表，手机键=serial、账号键=<平台>:<账号id>。账号切换三态判据（列表消失=offline、要身份校验/人脸=restricted 立即退出不验证、切换成功=healthy），POST /resource-health/report 与 /account-switch（内部令牌，不健康必带证据）；POST /resource-health/check 调度前检查；dispatcher 候选循环、秋米新路由、worker 池、两个手动派发入口派前查健康，offline/restricted 不派并给原因（task_events 去重留痕），闸出错一律放行；变成掉线/风控走 Bark（6 小时去重）+ P1，降级 P1，恢复 P2，告警失败不影响写入。scratch 升级→回滚→再升级通过，smoke 在迁移缺失时报红。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/resource-health.test.js src/lib/__tests__/resource-health-alert.test.js src/lib/__tests__/resource-health-gate.test.js src/routes/resource-health.test.js src/__tests__/dispatcher-resource-health.test.js src/__tests__/worker-pool-resource-health.test.js src/lib/__tests__/manual-dispatch-resource-health.test.js src/__tests__/migration-539-resource-health.test.js --maxWorkers=1 --minWorkers=1"
