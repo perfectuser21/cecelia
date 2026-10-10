@@ -17,6 +17,7 @@ console.error(`FAKE_HIDDEN_BUILD: ${!fs.existsSync(path.join(sprint, '03-build.m
 console.error(`FAKE_HIDDEN_EVIDENCE: ${!fs.existsSync(path.join(sprint, '04-evidence.md'))}`);
 console.error(`FAKE_PREVIEW_URL: ${url}`);
 console.error(`FAKE_JUDGE_FEEDBACK: ${field('JUDGE_FEEDBACK')}`);
+console.error(`FAKE_PREV_ERRORS: ${field('PREV_ERRORS')}`);
 
 let n = 0;
 const emit = (command, output) => {

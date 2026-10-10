@@ -73,6 +73,7 @@ console.log(`FAKE_GH_ENV:GH_TOKEN=${unset('GH_TOKEN')} GITHUB_TOKEN=${unset('GIT
 console.log(`FAKE_GH_CONFIG_DIR: ${unset('GH_CONFIG_DIR')}`);
 console.log(`FAKE_GH_CONFIG_EMPTY: ${Boolean(process.env.GH_CONFIG_DIR) && fs.existsSync(process.env.GH_CONFIG_DIR) && fs.readdirSync(process.env.GH_CONFIG_DIR).length === 0}`);
 console.log(`FAKE_INTENT_PATH: ${(prompt.match(/^INTENT_PATH: (.+)$/m) || [])[1]}`);
+console.log(`FAKE_PREV_ERRORS: ${(prompt.match(/^PREV_ERRORS: (.*)$/m) || [])[1]}`);
 console.log(`FAKE_PROMPT_MENTIONS_BUILD: ${prompt.includes('03-build')}`);
 for (let i = 0; i < 200; i += 1) console.log(`fake claude log line ${i}`);
 

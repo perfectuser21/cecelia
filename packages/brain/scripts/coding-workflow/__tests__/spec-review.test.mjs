@@ -142,6 +142,54 @@ describe('spec_review 活动 v2（合同对抗）', () => {
     expect(r.result.reason_code).toBe('review_invalid');
   });
 
+  // 审计 #33：重评时告诉评审上次格式哪里坏了
+  it('评审格式坏了 → 重评的 prompt 带 PREV_REVIEW_ERRORS；首评写「无」', async () => {
+    const r = await run({ reviews: [{ raw: '只有散文' }, { scores: 8 }] });
+    expect(r.result.status).toBe('completed');
+    const lines = seen().trim().split('\n').filter((l) => l.startsWith('spec_review'));
+    expect(lines[0]).toContain('PREV_REVIEW_ERRORS=无');
+    expect(lines[1]).toMatch(/PREV_REVIEW_ERRORS=.*scores_missing|PREV_REVIEW_ERRORS=.*score/);
+  });
+
+  // 审计 #33：活动被重试时（上次改写把规格改坏了），评审与改写都拿到当前 02 的程序校验问题
+  it('当前 02 程序校验不过 → 评审与改写 prompt 的 SPEC_ERRORS 列出问题；合格时写「无」', async () => {
+    let r = await run({ reviews: [{ scores: 8 }] });
+    expect(seen()).toContain('SPEC_ERRORS=无');
+    fs.rmSync(path.join(tmp, 'seen.log'));
+    fs.rmSync(path.join(tmp, 'state.json'));
+    fs.writeFileSync(path.join(sprint(), '02-spec.md'), SPEC_MD.replace(/\n## QA 场景[\s\S]*$/, '\n'));
+    r = await run({ reviews: [{ scores: 6, issues: [blocker('R-1')] }] });
+    expect(seen()).toMatch(/spec_review .*SPEC_ERRORS=.*qa_missing/);
+    expect(seen()).toMatch(/spec_revise .*SPEC_ERRORS=.*qa_missing/);
+  });
+
+  // 审计 #27：总分连续两轮不涨 = 原地打转，要求评审写 `## 换思路`，改写方必须回应
+  it('总分不涨 → 下一轮 STUCK=是，评审必须写 `## 换思路`（没写算格式不合格）', async () => {
+    let r = await run({ reviews: [
+      { scores: 6, issues: [blocker('R-1')] },
+      { scores: 6, prior: [{ id: 'R-1', status: '坚持' }] },
+      { scores: 8, prior: [{ id: 'R-1', status: '关闭' }], pivot: true },
+    ] });
+    expect(r.result.status, r.stderr).toBe('completed');
+    const lines = seen().trim().split('\n');
+    expect(lines.filter((l) => l.startsWith('spec_review')).map((l) => /STUCK=(\S+)/.exec(l)[1])).toEqual(['否', '否', '是']);
+    expect(lines.filter((l) => l.startsWith('spec_revise')).at(-1)).toContain('STUCK=是');
+    fs.rmSync(path.join(tmp, 'state.json'));
+    fs.writeFileSync(path.join(sprint(), '02-spec.md'), SPEC_MD);
+    r = await run({ reviews: [
+      { scores: 6, issues: [blocker('R-1')] },
+      { scores: 6, prior: [{ id: 'R-1', status: '坚持' }] },
+      { scores: 8, prior: [{ id: 'R-1', status: '关闭' }] },
+    ] });
+    expect(r.result).toMatchObject({ failure_class: 'fatal', reason_code: 'review_invalid' });
+    expect(JSON.stringify(r.result.evidence)).toContain('pivot_missing');
+    for (const name of ['spec-review', 'spec-revise']) {
+      const p = fs.readFileSync(path.join(path.dirname(ENTRY), `../prompts/${name}.md`), 'utf8');
+      expect(p).toContain('STUCK: {{STUCK}}');
+      expect(p).toContain('## 换思路');
+    }
+  });
+
   it('累计花费超过上限 → fatal gan_budget_exceeded（带已花费与仍开着的问题），不会无声放行', async () => {
     const r = await run({ reviews: [{ scores: 5, issues: [blocker('R-1')], cost: 15 }], revise: { cost: 15 } }, { CODING_WF_GAN_BUDGET_USD: '20' });
     expect(r.result.failure_class).toBe('fatal');
