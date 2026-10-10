@@ -155,6 +155,17 @@ describe('screenshotProblems', () => {
     expect(screenshotProblems({ reportText: text, items: [], sprintDir: sprint, shotsDir: path.join(sprint, 'qa-r1') }))
       .toEqual(['screenshot_missing:qa-r1/missing.png']);
   });
+  // 金丝雀 3（PR #6220 第 1 轮）：截图行在路径后面跟说明文字（全角括号、顿号分隔多张），说明不是路径，不能误报
+  it('截图行带说明文字：只取图片路径；路径存在 → 不报，说明文字不当路径', () => {
+    const sprint = dir();
+    fs.mkdirSync(path.join(sprint, 'qa-r1'));
+    for (const f of ['q8-a-default-category.png', 'q8-b-bad-category.png']) fs.writeFileSync(path.join(sprint, 'qa-r1', f), 'png');
+    const text = '### T-8\n截图: qa-r1/q8-a-default-category.png（分类留空：弹窗已关，列表首条为 QA-ui-default-qa1791620843608，分类标签 decision）、qa-r1/q8-b-bad-category.png（分类填 product：弹窗仍在）\n';
+    expect(screenshotProblems({ reportText: text, items: [], sprintDir: sprint, shotsDir: path.join(sprint, 'qa-r1') })).toEqual([]);
+    const missing = '截图: `qa-r1/q9.png`（不存在的那张）\n';
+    expect(screenshotProblems({ reportText: missing, items: [], sprintDir: sprint, shotsDir: path.join(sprint, 'qa-r1') })).toEqual(['screenshot_missing:qa-r1/q9.png']);
+  });
+
   it('用了 Playwright 的条目但本轮截图目录没有任何图片 → 列出', () => {
     const sprint = dir();
     const items = [{ id: 'T-1', command: 'node qa-page.mjs http://p/' }, { id: 'T-2', command: 'npx playwright screenshot http://p/ a.png' }];

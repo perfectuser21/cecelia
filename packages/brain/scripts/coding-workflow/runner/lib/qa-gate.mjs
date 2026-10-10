@@ -201,6 +201,14 @@ function addCost(s, usd) {
   if (typeof usd === 'number' && usd > 0) s.cost_usd = Math.round(((s.cost_usd ?? 0) + usd) * 10000) / 10000;
 }
 
+/**
+ * 修复没推上去（削弱测试被拦、没提交、会话失败等）：head 不变，下一轮 QA 门会按「同 head 已验过」跳过——
+ * 必须立刻升级（金丝雀 3 PR #6220 静默挂住），带原因交 coding commander 裁决。
+ */
+function fixFailed(ctx, pr, s, intent, entry) {
+  return escalate(ctx, pr, s, intent.taskId, { type: 'qa_fix_failed', reason: entry.fix, round: entry.round });
+}
+
 /** 开发按验收记录（QA 报告或裁决）修复（TDD），程序核对后推送；返回 'pushed' 或失败原因。 */
 async function qaFix(ctx, pr, s, worktree, intent, { recordFile, issues }) {
   const before = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
@@ -285,7 +293,10 @@ async function afterJudge(ctx, pr, s, worktree, intent, entry, j) {
     if (j.failure_class === 'contract_gap') {
       return escalate(ctx, pr, s, intent.taskId, { type: 'judge_contract_gap', issues: j.blocking.map((i) => i.id), file: `${intent.sprintDir}/${j.file}` });
     }
-    if (j.failure_class === 'product_failure') entry.fix = await qaFix(ctx, pr, s, worktree, intent, { recordFile: j.file, issues: judgeIssueLines(j) });
+    if (j.failure_class === 'product_failure') {
+      entry.fix = await qaFix(ctx, pr, s, worktree, intent, { recordFile: j.file, issues: judgeIssueLines(j) });
+      if (entry.fix !== 'pushed') return fixFailed(ctx, pr, s, intent, entry);
+    }
   }
   writeState(ctx.cfg, pr.number, s);
   return report(ctx, intent.taskId, s);
@@ -394,6 +405,7 @@ async function qaRound(ctx, pr, s, signal) {
       const stall = stalled(s);
       if (stall) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_stalled', fails: stall });
       entry.fix = await qaFix(ctx, pr, s, worktree, intent, { recordFile: result.outputs.qa_report_file, issues: qaIssueLines(qa) });
+      if (entry.fix !== 'pushed') return fixFailed(ctx, pr, s, intent, entry);
     }
     writeState(cfg, pr.number, s);
     return report(ctx, intent.taskId, s);

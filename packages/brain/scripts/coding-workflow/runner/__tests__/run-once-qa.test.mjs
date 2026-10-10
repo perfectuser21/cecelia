@@ -334,6 +334,14 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(E.brain.spans).toContainEqual(expect.objectContaining({ occurrence_key: 'judge:77:r1', outcome: 'pass' }));
   });
 
+  // 金丝雀 3（PR #6220）：修复没推上去（削弱测试被拦 / 会话失败）后 head 不变，QA 门「同 head 已验过」跳过 → 静默挂住。必须升级
+  it.each([['skiptest', 'test_weakened'], ['fail', 'claude_failed']])('QA 修复没推上去（%s → %s）→ 立刻升级 qa_fix_failed（P1，带原因），不静默挂着', async (fixMode, reason) => {
+    const r = await go(green(), { mode: 'fail', extra: { FAKE_CIFIX_MODE: fixMode } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(state().escalated).toMatchObject({ type: 'qa_fix_failed', reason });
+    expect(r.stderr).toContain('[coding-qa][P1]');
+  });
+
   it('已合并且 QA 通过过的 PR → 停掉它的预览环境释放容量（只停一次）', async () => {
     seedState({ passed: true, rounds: [] });
     const r = await go({ prs: [], mergedPrs: [pr()] });

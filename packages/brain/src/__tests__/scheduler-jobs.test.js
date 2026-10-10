@@ -226,6 +226,11 @@ vi.mock('../runs-notion-projection.js', async (importOriginal) => ({
   ...(await importOriginal()),
   runRunsNotionPush: vi.fn().mockResolvedValue({ skipped: 'db_not_registered' }),
 }));
+// skill-factory-board 真实 handler 会读注册表推 Notion——单测绝不打 Notion；投影逻辑由 skill-factory-board.test.js 覆盖。
+vi.mock('../skill-factory-board.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  runSkillFactoryBoardPush: vi.fn().mockResolvedValue({ skipped: 'db_not_registered' }),
+}));
 vi.mock('../openclaw-guards.js', async (importOriginal) => ({
   ...(await importOriginal()),
   runOpenclawGuards: vi.fn().mockResolvedValue({ skipped: true }),
@@ -333,6 +338,20 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool, [j]);
     expect(runOpenclawRunIngest).toHaveBeenCalledWith(pool);
+  });
+
+  // 任务 1b3c0000：技能工厂看板，调度器每 60s 调、handler 自 gate 5 分钟
+  it('JOBS 注册了 skill-factory-board（挨着 runs-notion-push、needsPool、handler 真接线）', async () => {
+    const { runSkillFactoryBoardPush } = await import('../skill-factory-board.js');
+    const names = JOBS.map((j) => j.name);
+    const j = JOBS.find((x) => x.name === 'skill-factory-board');
+    expect(j).toBeTruthy();
+    expect(j.cadence.everySec).toBe(60);
+    expect(j.needsPool).toBe(true);
+    expect(names.indexOf('skill-factory-board')).toBe(names.indexOf('runs-notion-push') + 1);
+    const pool = makePool();
+    await runSchedulerJobsOnce(pool, [j]);
+    expect(runSkillFactoryBoardPush).toHaveBeenCalledWith(pool);
   });
 
   // 决策 9ec7a010：runs 投影到 Notion「最近执行」库，每 2 分钟；库未注册时 handler 安静跳过

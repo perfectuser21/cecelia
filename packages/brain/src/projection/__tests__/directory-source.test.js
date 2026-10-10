@@ -144,6 +144,15 @@ describe('六层目录源映射', () => {
     const none=api.buildDirectoryRows(sample(),config).find(r=>r.id===fixtureEntityId(6));
     expect(text(none.properties['裁判结论'])).toBe('未裁判');
   });
+  it('Activity「生产版本」接发布线生产指针：v<版本号> + 收敛过/冷启动；没有生产指针的留空（任务 1b3c0000）', () => {
+    const data=sample();
+    data.releases=[{activity_id:fixtureEntityId(6),version_no:3,ever_converged:false}];
+    const row=api.buildDirectoryRows(data,config).find(r=>r.id===fixtureEntityId(6));
+    expect(text(row.properties['生产版本'])).toBe('v3 · 冷启动（未收敛过）');
+    data.releases=[{activity_id:fixtureEntityId(6),version_no:5,ever_converged:true}];
+    expect(text(api.buildDirectoryRows(data,config).find(r=>r.id===fixtureEntityId(6)).properties['生产版本'])).toBe('v5 · 收敛过');
+    expect(api.buildDirectoryRows(sample(),config).find(r=>r.id===fixtureEntityId(6)).properties['生产版本']).toEqual({ rich_text: [] });
+  });
   it('跨Workflow同sequence和slot的引用输入反序仍有相同 Activity 顺序和属性hash', () => {
     const data = sample();
     data.refs = [
