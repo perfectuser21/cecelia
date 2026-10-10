@@ -26,8 +26,10 @@ describe('buildQaSmoke', () => {
     expect(s.writes).toBe(true);
     expect(s.items).toEqual(['T-1', 'T-2']);
     expect(s.content).toContain('BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"');
-    expect(s.content).toContain(`curl -s -X POST "$BRAIN_URL"/api/brain/tasks -d '{"title":"x"}' | jq -e '.id'`);
+    expect(s.content).toContain(`curl -q -s -X POST "$BRAIN_URL"/api/brain/tasks -d '{"title":"x"}' | jq -e '.id'`);
     expect(s.content).not.toContain(PREVIEW);
+    // 仓库守卫（smoke-production-guard.node-test）：受保护脚本里的 curl 第一个参数必须是 -q（不读外部默认配置）
+    expect(s.content).not.toMatch(/\bcurl[ \t]+(?!-q(?:[ \t]|$))/);
     expect(s.content).not.toContain('broken');
     expect(s.content).not.toContain('qa-page');
     const commands = s.content.split('\n').filter((l) => l.trim() && !l.startsWith('#'));
@@ -40,6 +42,15 @@ describe('buildQaSmoke', () => {
     expect(s.writes).toBe(false);
     expect(s.content).not.toContain('smoke-production-guard');
     expect(buildQaSmoke({ taskId: TASK, previewUrl: PREVIEW, reportText: report(t('T-1', 'echo hi')) })).toBeNull();
+  });
+});
+
+describe('prompt（决策 c8621227）', () => {
+  it('spec：Q-n 的前提由操作自己造、空库可复现；evaluate：API 命令会固化成回归、必须带断言', () => {
+    const spec = fs.readFileSync(new URL('../prompts/spec.md', import.meta.url), 'utf8');
+    for (const s of ['自己造', '空库']) expect(spec).toContain(s);
+    const evaluate = fs.readFileSync(new URL('../prompts/evaluate.md', import.meta.url), 'utf8');
+    for (const s of ['固化成回归', 'smoke', '断言']) expect(evaluate).toContain(s);
   });
 });
 

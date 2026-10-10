@@ -322,7 +322,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       `${SPRINT}/05-qa-report-r1.md`, `${SPRINT}/06-judge-r1.md`,
     ].sort());
     const script = git(sb.origin, 'show', `${BRANCH}:packages/brain/scripts/smoke/cw-c954ebfd-qa-smoke.sh`);
-    expect(script).toContain('curl -s -X POST "$BRAIN_URL"/api/brain/tasks');
+    expect(script).toContain('curl -q -s -X POST "$BRAIN_URL"/api/brain/tasks');
     expect(state()).toMatchObject({ passed: true, approved: { head: git(sb.origin, 'rev-parse', BRANCH).trim() } });
   });
 
