@@ -97,7 +97,7 @@ describe('看板行', () => {
     expect(text(p['树上坐标'])).toBe('新媒体部 · 内容生产 · 内容生产·多平台发布 · 抖音·视频发布（安卓真机）');
     expect(p['当前阶段'].select.name).toBe('试跑');
     expect(p['最近运行结果'].select.name).toBe('blocked');
-    expect(text(p['卡点'])).toBe('设备与账号预检通过，但现有控制器缺少本次必需的视频素材下发受控入口；修复中：手机控制器补受控命令：素材下发(media-push+媒体扫描)与中文输入(…（进行中）');
+    expect(text(p['卡点'])).toBe('设备与账号预检通过，但现有控制器缺少本次必需的视频素材下发受控入口；修复中：手机控制器补受控命令：素材下发(media-push+媒体扫描)与中文输入(te…（进行中）');
     expect(text(p['连续通过'])).toBe('试跑阶段不计数');
     expect(text(p['skill@版本'])).toBe('整流程 skill 未产出（本阶段用 skill-explore）');
     expect(text(p['裁判结论'])).toBe('还没拆成 Activity，暂无裁判');
