@@ -127,9 +127,10 @@ if [[ "$MODE" == "no-load" ]]; then
   exit 0
 fi
 
-launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-launchctl kickstart -k "gui/$(id -u)/${LABEL}"
+# bootout 是异步的：等卸载完再 bootstrap，失败重试（见 lib/launchd-reload.sh）
+# shellcheck source=lib/launchd-reload.sh
+source "$SCRIPT_DIR/lib/launchd-reload.sh"
+launchd_reload "$LABEL" "$PLIST"
 
 echo "✅ 已装载 ${LABEL}（目录 ${REPO_ROOT}）"
 echo "   验证：curl -s http://100.71.151.105:5241/api/brain/health"

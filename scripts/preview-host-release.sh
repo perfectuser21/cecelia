@@ -139,10 +139,10 @@ if [[ -f "$PLIST" ]]; then cp -p "$PLIST" "$BACKUP/agent.plist"; chmod 600 "$BAC
 if crontab -l > "$BACKUP/crontab.txt" 2>/dev/null; then HAD_CRON=1; else : > "$BACKUP/crontab.txt"; fi
 log "已备份 plist/crontab → ${BACKUP}"
 
-reload_agent() {
-  launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
-  launchctl bootstrap "gui/$(id -u)" "$PLIST" && launchctl kickstart -k "gui/$(id -u)/${LABEL}"
-}
+# bootout 是异步的：等卸载完再 bootstrap，失败重试（见 lib/launchd-reload.sh）
+# shellcheck source=lib/launchd-reload.sh
+source "$SCRIPT_DIR/lib/launchd-reload.sh"
+reload_agent() { launchd_reload "$LABEL" "$PLIST"; }
 rollback() {
   log "⚠️ $1 —— 回滚到发布前的 plist 与 crontab"
   if [[ "$HAD_PLIST" = 1 ]]; then cp -p "$BACKUP/agent.plist" "$PLIST"; reload_agent || log "⚠️ 旧 plist 重载失败，需人工查 launchctl"; fi

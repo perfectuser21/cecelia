@@ -243,7 +243,7 @@ touch "$LC_FAIL_FIRST_BOOTSTRAP"
 set +e; OUT=$(bash "$RELEASE" --apply 2>&1); RC=$?; set -e
 NEW="$PREVIEW_RELEASES_DIR/rel-${TARGET_SHA:0:12}"
 [ "$RC" = 0 ] && pass "竞态下 --apply 仍退出 0" || fail "竞态下 --apply 退出 0" "rc=$RC out=$OUT"
-echo "$OUT" | grep -q "回滚" && fail "未触发回滚" "$OUT" || pass "未触发回滚"
+echo "$OUT" | grep -q "回滚到发布前" && fail "未触发回滚" "$OUT" || pass "未触发回滚"
 grep -q "launchctl print" "$TMP/calls.log" && pass "bootout 后轮询 print 等服务卸载" || fail "bootout 后轮询 print" "$(cat "$TMP/calls.log")"
 [ "$(grep -c 'launchctl bootstrap' "$TMP/calls.log")" -ge 2 ] && pass "bootstrap 失败后重试" || fail "bootstrap 失败后重试" "$(cat "$TMP/calls.log")"
 [ "$(cat "$PREVIEW_RELEASES_DIR/.current" 2>/dev/null)" = "$NEW" ] && pass "记录为当前发布" || fail "记录为当前发布" "$OUT"
