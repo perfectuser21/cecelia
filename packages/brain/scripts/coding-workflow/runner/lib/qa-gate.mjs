@@ -1,7 +1,7 @@
 // QA 门（evaluator 真人 QA，决策 02d8e749）：runner 自己开的 cw PR，必需检查全绿后、合并前，在 PR 预览环境里由
 // evaluate 活动像真人 QA 一样黑盒验收。FAIL → 报告提交、开发按报告修复、推送、CI 再跑、再验（不设轮数上限）。
 // PASS → 独立裁判（judge-gate.mjs，不同模型复核需求+合同+QA 报告+改动）：PASS 才开自动合并；product → 按裁决修复；
-// qa_gap → 下一轮 QA 带着裁决补验；contract_gap → 升级；裁判不可用 → 下轮只重跑裁判。
+// qa_gap → 下一轮 QA 带着裁决补验；contract_gap / 推翻前轮裁决（ruling_conflict）→ 升级；裁判不可用 → 下轮只重跑裁判。
 // 失败数连续 3 轮不降（不收敛）、评估会话/裁判连坏、预览环境长期起不来 → 升级给 coding commander。
 // 状态：<logDir>/qa-<pr>.json；Brain 任务 result.qa（摘要）与 result.escalations。合并后停掉该 PR 的预览环境释放容量。
 import fs from 'node:fs';
@@ -14,7 +14,7 @@ import { previewOf } from '../../lib/preview.mjs';
 import { buildQaSmoke, registerSmoke } from '../../lib/qa-smoke.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
-import { runJudge } from './judge-gate.mjs';
+import { runJudge, priorJudgeFiles } from './judge-gate.mjs';
 
 const EVALUATE_REL = 'packages/brain/scripts/coding-workflow/activities/evaluate.mjs';
 const EVALUATE_TIMEOUT_MS = 55 * 60 * 1000;
@@ -201,16 +201,23 @@ function addCost(s, usd) {
   if (typeof usd === 'number' && usd > 0) s.cost_usd = Math.round(((s.cost_usd ?? 0) + usd) * 10000) / 10000;
 }
 
+const RULING_CONFLICT_RE = /RULING_CONFLICT:\s*([^\n"\\]+)/;
+
 /**
  * 修复没推上去（削弱测试被拦、没提交、会话失败等）：head 不变，下一轮 QA 门会按「同 head 已验过」跳过——
  * 必须立刻升级（金丝雀 3 PR #6220 静默挂住），带原因交 coding commander 裁决。
  */
 function fixFailed(ctx, pr, s, intent, entry) {
-  return escalate(ctx, pr, s, intent.taskId, { type: 'qa_fix_failed', reason: entry.fix, round: entry.round });
+  return escalate(ctx, pr, s, intent.taskId, { type: 'qa_fix_failed', reason: entry.fix, round: entry.round, ...(entry.fix_detail ? { detail: entry.fix_detail } : {}) });
 }
 
-/** 开发按验收记录（QA 报告或裁决）修复（TDD），程序核对后推送；返回 'pushed' 或失败原因。 */
-async function qaFix(ctx, pr, s, worktree, intent, { recordFile, issues }) {
+/**
+ * 开发按验收记录（QA 报告或裁决）修复（TDD），程序核对后推送；返回 'pushed' 或失败原因。
+ * 修复会话判定要修的与规格/前轮裁决矛盾（输出 RULING_CONFLICT 且没提交）→ 'ruling_conflict'，说明记进 entry.fix_detail。
+ */
+async function qaFix(ctx, pr, s, worktree, intent, entry, { recordFile, issues }) {
+  const prior = priorJudgeFiles(worktree, intent.sprintDir, entry.round)
+    .filter((f) => path.basename(f.rel) !== recordFile).map((f) => path.join(worktree, f.rel));
   const before = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
   const prompt = loadPrompt('qa-fix', {
     BRANCH: pr.headRefName,
@@ -218,6 +225,7 @@ async function qaFix(ctx, pr, s, worktree, intent, { recordFile, issues }) {
     INTENT_PATH: path.join(worktree, intent.sprintDir, '01-intent.md'),
     SPEC_PATH: path.join(worktree, intent.sprintDir, '02-spec.md'),
     QA_ISSUES: issues || '（见报告）',
+    PRIOR_RULINGS: prior.length > 0 ? prior.join(', ') : '（无）',
   });
   const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', ...CLAUDE_TOOLS], cwd: worktree, timeoutMs: ctx.cfg.qaFixTimeoutMs, tag: 'qa-fix', isolateRemote: true });
   addCost(s, run.cost_usd);
@@ -225,6 +233,11 @@ async function qaFix(ctx, pr, s, worktree, intent, { recordFile, issues }) {
   fs.writeFileSync(path.join(ctx.cfg.logDir, `qa-fix-${pr.number}-${Date.now()}.log`), run.output ?? '');
   if (run.timedOut) return 'claude_timeout';
   if (run.terminated || run.code !== 0) return 'claude_failed';
+  const conflict = RULING_CONFLICT_RE.exec(run.output ?? '');
+  if (conflict && (await headOf(worktree)) === before) {
+    entry.fix_detail = conflict[1].trim().slice(0, 500);
+    return 'ruling_conflict';
+  }
   try {
     await checkFixCommits(worktree, before);
     await pushPrHead(worktree, pr.headRefName);
@@ -288,13 +301,18 @@ async function afterJudge(ctx, pr, s, worktree, intent, entry, j) {
     await approve(s, entry, worktree);
   } else {
     entry.fails = Math.max(1, j.blocking.length);
+    if (j.failure_class === 'ruling_conflict') {
+      return escalate(ctx, pr, s, intent.taskId, {
+        type: 'judge_ruling_conflict', issues: j.blocking.map((i) => i.id), reverses: j.blocking.flatMap((i) => i.reverses ?? []), file: `${intent.sprintDir}/${j.file}`,
+      });
+    }
     const fails = stalled(s);
     if (fails) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_stalled', fails });
     if (j.failure_class === 'contract_gap') {
       return escalate(ctx, pr, s, intent.taskId, { type: 'judge_contract_gap', issues: j.blocking.map((i) => i.id), file: `${intent.sprintDir}/${j.file}` });
     }
     if (j.failure_class === 'product_failure') {
-      entry.fix = await qaFix(ctx, pr, s, worktree, intent, { recordFile: j.file, issues: judgeIssueLines(j) });
+      entry.fix = await qaFix(ctx, pr, s, worktree, intent, entry, { recordFile: j.file, issues: judgeIssueLines(j) });
       if (entry.fix !== 'pushed') return fixFailed(ctx, pr, s, intent, entry);
     }
   }
@@ -404,7 +422,7 @@ async function qaRound(ctx, pr, s, signal) {
     } else {
       const stall = stalled(s);
       if (stall) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_stalled', fails: stall });
-      entry.fix = await qaFix(ctx, pr, s, worktree, intent, { recordFile: result.outputs.qa_report_file, issues: qaIssueLines(qa) });
+      entry.fix = await qaFix(ctx, pr, s, worktree, intent, entry, { recordFile: result.outputs.qa_report_file, issues: qaIssueLines(qa) });
       if (entry.fix !== 'pushed') return fixFailed(ctx, pr, s, intent, entry);
     }
     writeState(cfg, pr.number, s);

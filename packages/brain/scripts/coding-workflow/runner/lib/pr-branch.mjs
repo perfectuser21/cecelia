@@ -8,7 +8,8 @@ import { writeDevFiles, ensureIgnored, installDeps } from './worktree.mjs';
 const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
 const PUSH_TIMEOUT_MS = 5 * 60 * 1000;
 // 修复提交不许碰：sprint 目录（需求与验收记录）、agent 配置
-const PROTECTED_RE = /^(sprints\/|\.claude\/|CLAUDE\.md$|AGENTS\.md$)/;
+// runner 生成的 QA 回归 smoke 只由 runner 固化（金丝雀 4：修复会话改它，与下次固化互相覆盖）
+const PROTECTED_RE = /^(sprints\/|\.claude\/|CLAUDE\.md$|AGENTS\.md$|packages\/brain\/scripts\/smoke\/cw-[0-9a-f]{8}-qa-smoke\.sh$)/;
 const INTENT_ANCHOR_RE = /^### (I-\d+)(?:[\s:：].*)?$/gm;
 
 const stop = (code) => new Error(code);

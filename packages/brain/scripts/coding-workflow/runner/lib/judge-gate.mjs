@@ -6,6 +6,16 @@ import path from 'node:path';
 import { git } from './proc.mjs';
 import { buildJudgePrompt, parseJudge, decideJudge, renderJudgeReport, callJudge, judgeFileName, JUDGE_DIFF_LIMIT } from '../../lib/judge.mjs';
 
+/** 本轮之前已提交的裁决：[{ round, rel }]（sprint 内 06-judge-r<k>.md，k < round，按轮次升序）。 */
+export function priorJudgeFiles(worktree, sprintDir, round) {
+  const out = [];
+  for (let k = 1; k < round; k += 1) {
+    const rel = `${sprintDir}/${judgeFileName(k)}`;
+    if (fs.existsSync(path.join(worktree, rel))) out.push({ round: k, rel });
+  }
+  return out;
+}
+
 /** PR 相对 main 的代码改动（三点 diff，排除 sprints/ 验收记录）。 */
 async function prDiff(worktree) {
   const r = await git(worktree, ['diff', 'origin/main...HEAD', '--', '.', ':(exclude)sprints']);
@@ -30,7 +40,9 @@ export async function runJudge(cfg, worktree, intent, { round, reportRel, log })
     const diff = await prDiff(worktree);
     // 裁判必须看到完整改动（审计 #43）：超限不截断照判，交 coding commander
     if (diff.length > JUDGE_DIFF_LIMIT) return { error: 'judge_input_truncated', escalate: true, diff_chars: diff.length };
-    const prompt = buildJudgePrompt({ ...texts, diff, qaReportFile: path.basename(reportRel), intentIds: intent.intentIds, round });
+    // 前几轮裁决（金丝雀 4 翻转）：裁判知道开发方已经照哪些结论改过
+    const priorRulings = priorJudgeFiles(worktree, intent.sprintDir, round).map((f) => ({ round: f.round, text: read(f.rel) }));
+    const prompt = buildJudgePrompt({ ...texts, diff, qaReportFile: path.basename(reportRel), intentIds: intent.intentIds, round, priorRulings });
     reply = await callJudge(prompt, { ...cfg.judgeConn, timeoutMs: cfg.judgeTimeoutMs });
   } catch (error) {
     return { error: String(error?.message || error).split(':')[0] };

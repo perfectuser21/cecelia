@@ -1,6 +1,8 @@
 // 独立裁判（决策 02d8e749 的 ②d）：真人 QA PASS 后、合并前，用不同于开发/QA 的模型复核
 // 「需求 01 + 合同 02 + QA 报告 05 + PR 改动」，逐条判 I-n 是否真被满足。
 // 问题三类：product（代码没做到）/ qa_gap（QA 没真验到）/ contract_gap（合同没覆盖需求）。
+// 规格条款对裁判有约束力，裁判看得到前几轮裁决；推翻前轮结论的问题（reverses）判 ruling_conflict 交 coding commander，
+// 不让开发跟着来回改（金丝雀 4 PR #6232 第 8/9 轮翻转，跑了 10 轮）。
 // 裁决由程序判（不信模型自报 verdict）：每条 I-n 都满足且没有阻断/重要问题才 PASS。
 import fs from 'node:fs';
 import os from 'node:os';
@@ -15,10 +17,11 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const SEVERITIES = new Set(['阻断', '重要', '建议']);
 // 问题类型 → 失败类别；顺序即优先级（产品问题先修，其次补验，最后回到需求层面）
 const TYPE_CLASS = [['product', 'product_failure'], ['qa_gap', 'qa_insufficient'], ['contract_gap', 'contract_gap']];
+const REVERSES_RE = /^r\d+:J-\d+$/;
 const TYPES = new Set(TYPE_CLASS.map(([t]) => t));
 // 裁判必须看到完整改动（审计 #43）：超过 JUDGE_DIFF_LIMIT 由调用方升级（runner/lib/judge-gate.mjs），这里的截断只是兜底
 export const JUDGE_DIFF_LIMIT = 150000;
-const CAPS = { intent: 20000, spec: 40000, qaReport: 40000, diff: JUDGE_DIFF_LIMIT };
+const CAPS = { intent: 20000, spec: 40000, qaReport: 40000, diff: JUDGE_DIFF_LIMIT, ruling: 12000, rulings: 30000 };
 const I_RE = /^I-\d+$/;
 
 export const judgeFileName = (round) => `06-judge-r${round}.md`;
@@ -28,8 +31,23 @@ const cap = (text, n) => {
   return s.length > n ? `${s.slice(0, n)}\n…（已截断，原文 ${s.length} 字符）` : s;
 };
 
-/** → { system, user } */
-export function buildJudgePrompt({ intent, spec, qaReport, qaReportFile = '05-qa-report.md', diff, intentIds, round = 1 }) {
+/** 前几轮裁决原文：从最近的往前收，单份与总量封顶；更早的注明略去。 */
+function priorRulingsText(rulings = []) {
+  const kept = [];
+  let total = 0;
+  for (const r of [...rulings].sort((a, b) => b.round - a.round)) {
+    const text = cap(r.text, CAPS.ruling);
+    if (kept.length > 0 && total + text.length > CAPS.rulings) break;
+    kept.unshift(`### 第 ${r.round} 轮\n${text}`);
+    total += text.length;
+  }
+  if (kept.length === 0) return '（无，本轮是首次裁决）';
+  const dropped = rulings.length - kept.length;
+  return `${dropped > 0 ? `（更早的 ${dropped} 轮裁决略）\n\n` : ''}${kept.join('\n\n')}`;
+}
+
+/** → { system, user }；priorRulings：[{ round, text }] 前几轮裁决原文。 */
+export function buildJudgePrompt({ intent, spec, qaReport, qaReportFile = '05-qa-report.md', diff, intentIds, round = 1, priorRulings = [] }) {
   return {
     system: '你是严格的独立验收裁判，只输出合法 JSON。输出使用简体中文。',
     user: loadPrompt('judge', {
@@ -39,6 +57,7 @@ export function buildJudgePrompt({ intent, spec, qaReport, qaReportFile = '05-qa
       INTENT: cap(intent, CAPS.intent),
       SPEC: cap(spec, CAPS.spec),
       QA_REPORT: cap(qaReport, CAPS.qaReport),
+      PRIOR_RULINGS: priorRulingsText(priorRulings),
       DIFF: cap(diff, CAPS.diff) || '（无代码改动）',
     }),
   };
@@ -51,7 +70,9 @@ function checkIssue(raw, intentIds, errors) {
   if (!SEVERITIES.has(raw?.severity)) errors.push(`${id}:severity_invalid`);
   if (covers.length === 0 || covers.some((c) => !intentIds.includes(c))) errors.push(`${id}:covers_invalid`);
   if (!String(raw?.detail ?? '').trim()) errors.push(`${id}:detail_missing`);
-  return { id, type: raw?.type, severity: raw?.severity, covers, detail: String(raw?.detail ?? ''), where: String(raw?.where ?? '') };
+  const reverses = Array.isArray(raw?.reverses) ? raw.reverses.map(String) : [];
+  if (reverses.some((r) => !REVERSES_RE.test(r))) errors.push(`${id}:reverses_invalid`);
+  return { id, type: raw?.type, severity: raw?.severity, covers, detail: String(raw?.detail ?? ''), where: String(raw?.where ?? ''), reverses };
 }
 
 /** 解析模型输出 → { coverage, issues, summary, errors }。 */
@@ -91,6 +112,8 @@ export function decideJudge({ coverage, issues }) {
   const blocking = issues.filter((i) => BLOCKING.has(i.severity));
   const unsatisfied = coverage.filter((c) => !c.satisfied).map((c) => c.intent);
   if (blocking.length === 0 && unsatisfied.length === 0) return { verdict: 'PASS', failure_class: null, blocking: [], unsatisfied: [] };
+  // 推翻前轮裁决：开发照哪轮改都是错，交 coding commander 按规格裁（优先于其他类别）
+  if (blocking.some((i) => i.reverses?.length > 0)) return { verdict: 'FAIL', failure_class: 'ruling_conflict', blocking, unsatisfied };
   const failureClass = TYPE_CLASS.find(([t]) => blocking.some((i) => i.type === t))?.[1] ?? 'product_failure';
   return { verdict: 'FAIL', failure_class: failureClass, blocking, unsatisfied };
 }
@@ -112,6 +135,7 @@ export function renderJudgeReport({ round, model, parsed, decision, qaReport }) 
   if (parsed.issues.length === 0) lines.push('', '（无）');
   for (const i of parsed.issues) {
     lines.push('', `### ${i.id}`, `- 类型：${i.type}`, `- 严重度：${i.severity}`, `- 对应：${i.covers.join('、')}`, `- 位置：${i.where || '（未给）'}`, `- 说明：${i.detail}`);
+    if (i.reverses?.length > 0) lines.push(`- 推翻前轮：${i.reverses.join('、')}`);
   }
   return `${lines.join('\n')}\n`;
 }
