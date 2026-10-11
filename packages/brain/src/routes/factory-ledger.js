@@ -1,5 +1,5 @@
 /**
- * 技能工厂台账接口（迁移 547；任务 1c589b13；决策 cc008b7e / 2bb08a99）。读接口不需鉴权；写接口 internalAuthOrLoopback。
+ * 技能工厂台账接口（迁移 548；任务 1c589b13；决策 cc008b7e / 2bb08a99）。读接口不需鉴权；写接口 internalAuthOrLoopback。
  *
  * GET   /api/brain/factory/ledger?stage=&workflow_id=&limit=   列表（带 workflow key/name、阶段中文名）
  * GET   /api/brain/factory/ledger/:id                         单行 + 阶段事件（最近 50 条，时间正序）

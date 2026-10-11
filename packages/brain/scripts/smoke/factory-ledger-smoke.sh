@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# factory-ledger-smoke — 技能工厂台账（迁移 547，任务 1c589b13，决策 cc008b7e / 2bb08a99）真库真代码火：
+# factory-ledger-smoke — 技能工厂台账（迁移 548，任务 1c589b13，决策 cc008b7e / 2bb08a99）真库真代码火：
 # 两张表与只追加触发器齐全；新业务进厂默认阶段 1 并记进厂事件；rule 跳级被拒、相邻推进落事件；
 # human 任意跳留痕；人工关口卡住时 rule 不能动；滑窗计数按 window_k 截尾；真容器里台账接口已挂载。
 # 全程一个事务内跑，结束回滚（阶段事件只追加，不能靠 DELETE 清理）。
@@ -29,8 +29,8 @@ await client.connect();
 try {
   await client.query('BEGIN');
   for (const t of ['factory_ledger', 'factory_stage_events'])
-    if (!(await client.query(`SELECT to_regclass('public.${t}') IS NOT NULL AS ok`)).rows[0].ok) die(`${t} 不存在（迁移 547 未跑？）`);
-  ok('迁移 547：台账与阶段事件两张表齐全');
+    if (!(await client.query(`SELECT to_regclass('public.${t}') IS NOT NULL AS ok`)).rows[0].ok) die(`${t} 不存在（迁移 548 未跑？）`);
+  ok('迁移 548：台账与阶段事件两张表齐全');
 
   const tag = `fl-smoke-${randomUUID().slice(0, 8)}`;
   const vs = randomUUID(), cap = randomUUID(), wf = randomUUID();
@@ -74,7 +74,7 @@ NODE
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 if curl -q -sf -m 5 "$BRAIN_URL/api/brain/health" >/dev/null 2>&1; then
-  RID="00000000-0000-4000-8000-000000000547"
+  RID="00000000-0000-4000-8000-000000000548"
   CODE="$(curl -q -s -o /dev/null -w '%{http_code}' -m 10 "$BRAIN_URL/api/brain/factory/ledger")"
   [[ "$CODE" == "200" ]] || fail "GET factory/ledger 期望 200，实际 $CODE"
   CODE="$(curl -q -s -o /dev/null -w '%{http_code}' -m 10 "$BRAIN_URL/api/brain/factory/ledger/$RID")"

@@ -1,8 +1,8 @@
-# 技能工厂台账（迁移 547，任务 1c589b13）
+# 技能工厂台账（迁移 548，任务 1c589b13）
 
-- [x] [BEHAVIOR] factoryledger 技能工厂台账（决策 cc008b7e / 2bb08a99）：迁移 547 新建 factory_ledger（workflow_id 唯一、stage 1..7、validation_mode 两档、blocked_kind 四种、滑窗计数约束）与只追加的 factory_stage_events；转换规则 human 任意跳退、rule/agent 只许相邻推进或登记退回（3→2/5→3/6→5/7→6），人工关口/安全红线下 rule/agent 409、跳级 400、原地 400；滑窗按 window_k 截尾、同 run_id 窗内去重、降级累计；接口参数错 400 不进库、重复进厂 409、写接口挂内部鉴权；连接池事务成功 COMMIT 失败 ROLLBACK 且归还连接。
-  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/factory-ledger.test.js src/routes/factory-ledger.test.js src/__tests__/migration-547-factory-ledger.test.js --maxWorkers=1 --minWorkers=1"
-- [x] [BEHAVIOR] factoryledgerpg 真 PG：事务内跑迁移 547 两遍幂等，进厂默认阶段 1 带进厂事件、workflow 不存在 404、rule 推进带证据并清滑窗、expected_from_stage 不符 409、人工关口下 human 跳级留痕、守护劣化 7→6、事件 UPDATE 被拒。
+- [x] [BEHAVIOR] factoryledger 技能工厂台账（决策 cc008b7e / 2bb08a99）：迁移 548 新建 factory_ledger（workflow_id 唯一、stage 1..7、validation_mode 两档、blocked_kind 四种、滑窗计数约束）与只追加的 factory_stage_events；转换规则 human 任意跳退、rule/agent 只许相邻推进或登记退回（3→2/5→3/6→5/7→6），人工关口/安全红线下 rule/agent 409、跳级 400、原地 400；滑窗按 window_k 截尾、同 run_id 窗内去重、降级累计；接口参数错 400 不进库、重复进厂 409、写接口挂内部鉴权；连接池事务成功 COMMIT 失败 ROLLBACK 且归还连接。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/factory-ledger.test.js src/routes/factory-ledger.test.js src/__tests__/migration-548-factory-ledger.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] factoryledgerpg 真 PG：事务内跑迁移 548 两遍幂等，进厂默认阶段 1 带进厂事件、workflow 不存在 404、rule 推进带证据并清滑窗、expected_from_stage 不符 409、人工关口下 human 跳级留痕、守护劣化 7→6、事件 UPDATE 被拒。
   Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/factory-ledger.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] factoryledgersmoke 真库真代码 smoke：进厂/跳级被拒/人工关口/滑窗/只追加，真容器台账接口已挂载（列表 200 / 单行 404 / 越界 400）。
   Test: manual:bash packages/brain/scripts/smoke/factory-ledger-smoke.sh

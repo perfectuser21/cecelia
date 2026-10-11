@@ -1,4 +1,4 @@
--- 547: 技能工厂台账（任务 1c589b13；决策 cc008b7e / 2bb08a99 / 7c6f7ae2 / 2aceef75）
+-- 548: 技能工厂台账（任务 1c589b13；决策 cc008b7e / 2bb08a99 / 7c6f7ae2 / 2aceef75）
 --
 -- 技能工厂把一条业务 workflow 从 AI 版逐步打磨到脚本版，7 阶段：
 --   1 试跑 / 2 摸边界 / 3 验证 / 4 沉淀(skill→契约) / 5 上线跑(workflow+Commander) / 6 蒸馏(Step→脚本) / 7 晋级·守护
@@ -64,7 +64,7 @@ CREATE TRIGGER factory_stage_events_append_only BEFORE UPDATE OR DELETE ON facto
   FOR EACH ROW EXECUTE FUNCTION factory_stage_events_append_only();
 
 INSERT INTO schema_version (version, description)
-VALUES ('547', '技能工厂台账 factory_ledger + 阶段事件 factory_stage_events（只追加）')
+VALUES ('548', '技能工厂台账 factory_ledger + 阶段事件 factory_stage_events（只追加）')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

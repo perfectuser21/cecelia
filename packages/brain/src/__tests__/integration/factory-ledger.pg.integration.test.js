@@ -1,5 +1,5 @@
 /**
- * 迁移 547 技能工厂台账（决策 cc008b7e / 2bb08a99）：真 PG 跑迁移（两遍幂等）+ 真库函数。
+ * 迁移 548 技能工厂台账（决策 cc008b7e / 2bb08a99）：真 PG 跑迁移（两遍幂等）+ 真库函数。
  * 一条业务 workflow 一行；进厂默认阶段 1 并记事件；rule 只能相邻推进/规定退回，human 任意跳且留痕；
  * 人工关口卡住时 rule 不能动；expected_from_stage 不符 409；滑窗计数与降级计数；事件只追加。
  * 一个事务里铺夹具 → 断言 → 整体 ROLLBACK。
@@ -12,11 +12,11 @@ import { createLedger, getLedger, listLedger, transitionLedger, recordRun, patch
 
 const body = (file) => readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8')
   .split('\n').filter((line) => !/^\s*(BEGIN|COMMIT);\s*$/.test(line)).join('\n');
-const UP = body('547_factory_ledger.sql');
-const VS = 'aaaaaaaa-f0f0-4000-8000-000000000547';
-const CAP = 'aaaaaaaa-f0f0-4000-8000-000000005471';
-const WF = 'aaaaaaaa-f0f0-4000-8000-000000005472';
-const WF2 = 'aaaaaaaa-f0f0-4000-8000-000000005473';
+const UP = body('548_factory_ledger.sql');
+const VS = 'aaaaaaaa-f0f0-4000-8000-000000000548';
+const CAP = 'aaaaaaaa-f0f0-4000-8000-000000005481';
+const WF = 'aaaaaaaa-f0f0-4000-8000-000000005482';
+const WF2 = 'aaaaaaaa-f0f0-4000-8000-000000005483';
 
 let client;
 beforeAll(async () => {
@@ -26,9 +26,9 @@ beforeAll(async () => {
   await client.query('BEGIN');
   await client.query(UP);
   await client.query(UP);
-  await client.query("INSERT INTO value_streams (id, name) VALUES ($1, 'Cecelia 工厂 t547') ON CONFLICT (id) DO NOTHING", [VS]);
-  await client.query("INSERT INTO capabilities (id, name, status, parent_journey_id) VALUES ($1, '工厂台账 t547', 'active', $2) ON CONFLICT (id) DO NOTHING", [CAP, VS]);
-  for (const [id, key] of [[WF, 't547.douyin_publish'], [WF2, 't547.other']])
+  await client.query("INSERT INTO value_streams (id, name) VALUES ($1, 'Cecelia 工厂 t548') ON CONFLICT (id) DO NOTHING", [VS]);
+  await client.query("INSERT INTO capabilities (id, name, status, parent_journey_id) VALUES ($1, '工厂台账 t548', 'active', $2) ON CONFLICT (id) DO NOTHING", [CAP, VS]);
+  for (const [id, key] of [[WF, 't548.douyin_publish'], [WF2, 't548.other']])
     await client.query("INSERT INTO workflows (id, capability_id, key, name, channel) VALUES ($1, $2, $3, $3, 'douyin')", [id, CAP, key]);
 });
 afterAll(async () => {
@@ -44,7 +44,7 @@ const expectHttp = async (p, status, code) => {
   expect({ status: e.status, code: e.code }).toEqual({ status, code });
 };
 
-describe('迁移 547：技能工厂台账', () => {
+describe('迁移 548：技能工厂台账', () => {
   let id;
   it('进厂：默认阶段 1、边用边验，记一条进厂事件；同一 workflow 重复进厂 409；workflow 不存在 404', async () => {
     const out = await createLedger(client, { workflow_id: WF, next_action: '试跑第 1 次' });
@@ -90,8 +90,8 @@ describe('迁移 547：技能工厂台账', () => {
   it('列表按阶段过滤带 workflow 名；事件只追加', async () => {
     await createLedger(client, { workflow_id: WF2, stage: 3, validation_mode: 'validate_before_release', reason: '补登记' });
     const rows = await listLedger(client, { stage: 6 });
-    expect(rows.map(r => r.workflow_key)).toContain('t547.douyin_publish');
-    expect(rows.map(r => r.workflow_key)).not.toContain('t547.other');
+    expect(rows.map(r => r.workflow_key)).toContain('t548.douyin_publish');
+    expect(rows.map(r => r.workflow_key)).not.toContain('t548.other');
     await client.query('SAVEPOINT ap');
     const e = await client.query('UPDATE factory_stage_events SET reason = $1 WHERE ledger_id = $2', ['改写', id]).then(() => null, (err) => err);
     await client.query('ROLLBACK TO SAVEPOINT ap');

@@ -1,4 +1,4 @@
-/** 技能工厂台账纯规则（迁移 547）：阶段转换规则、滑窗计数、入参校验。 */
+/** 技能工厂台账纯规则（迁移 548）：阶段转换规则、滑窗计数、入参校验。 */
 import { describe, it, expect, vi } from 'vitest';
 import {
   STAGE_NAMES, RULE_RETREATS, checkTransition, applyRunOutcome, validateCreate, validatePatch, validateTransition, validateRun, createLedger,

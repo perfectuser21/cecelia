@@ -1,4 +1,4 @@
-/** 技能工厂台账接口（迁移 547）：库函数全 mock；锁参数校验、状态码透传、写接口挂内部鉴权。 */
+/** 技能工厂台账接口（迁移 548）：库函数全 mock；锁参数校验、状态码透传、写接口挂内部鉴权。 */
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -8,7 +8,7 @@ vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../lib/factory-ledger.js', async (orig) => ({ ...(await orig()), ...mocks }));
 
 let routes;
-const ID = 'c1000000-0000-4000-8000-000000000547';
+const ID = 'c1000000-0000-4000-8000-000000000548';
 const reqRes = (params = {}, query = {}, body = {}) => ({
   req: { body, params, query, headers: {}, ip: '127.0.0.1' },
   res: { _status: 200, _data: null, status(c) { this._status = c; return this; }, json(d) { this._data = d; return this; } },
