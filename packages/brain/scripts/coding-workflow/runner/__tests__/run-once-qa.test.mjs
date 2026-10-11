@@ -312,6 +312,33 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(r.stderr).toContain('[coding-qa][P1]');
   });
 
+  // 金丝雀 6 #6291：commander 已裁「维持规格」的验不了项，下一轮 QA 又报同一项 → 不能再升级（否则循环到介入上限上交人）
+  const seedCommander = (covers, verdict) => fs.mkdirSync(sb.logDir, { recursive: true }) ?? fs.writeFileSync(path.join(sb.logDir, 'commander-77.json'), JSON.stringify({ interventions: [{
+    n: 1, kind: 'qa', action: 'resume',
+    escalation: { type: 'qa_cannot_verify', round: 1, cannot_verify: [{ id: 'T-2', covers, reason: '环境没配 token' }] },
+    rulings: [{ issue: 'T-2', verdict, reason: '规格允许跳过，单测兜底' }],
+  }] }));
+
+  it('验不了的项 commander 已裁过（同一 Q 项，维持规格）→ 不再升级，按 PASS 交独立裁判并批准', async () => {
+    seedCommander(['Q-1'], '维持规格');
+    const r = await go(green(), { mode: 'cannot' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain('[coding-qa][P1]');
+    expect(judge.calls).toHaveLength(1);
+    expect(state().escalated).toBeUndefined();
+    expect(state()).toMatchObject({ passed: true, rounds: [{ round: 1, verdict: 'PASS', qa_verdict: 'CANNOT_VERIFY', cv_accepted: ['T-2'], judge: { verdict: 'PASS' } }] });
+  });
+
+  for (const [label, covers, verdict] of [['没被裁过的 Q 项', ['Q-9'], '维持规格'], ['裁决是上交', ['Q-1'], '上交']]) {
+    it(`验不了的项${label} → 照旧升级 qa_cannot_verify`, async () => {
+      seedCommander(covers, verdict);
+      const r = await go(green(), { mode: 'cannot' });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(judge.calls).toEqual([]);
+      expect(state().escalated).toMatchObject({ type: 'qa_cannot_verify' });
+    });
+  }
+
   // 审计 #35：QA 门里 evaluate 会话的花费累加进状态（随状态同步进 Brain，合并时汇总）
   it('每轮 evaluate 的花费累加进状态 cost_usd', async () => {
     const r = await go(green(), { mode: 'fail' });
