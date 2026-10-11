@@ -100,10 +100,54 @@ test('reconcile：pending目标已在跑且健康（陈旧pending）→ 复用fi
  const state=await x.store.read('ledger.json');assert.equal(state.pending,null);assert.equal(state.successes.length,1);
  await x.ledger.begin({...x.request,deployment_id:randomUUID()});
 });
-test('reconcile：运行中仍是旧镜像（核验不过）→ 抛错且pending原样保留，不登记成功',async t=>{
- const x=await reconcileSetup(t,{ageMs:60*60*1000});
- await assert.rejects(x.ledger.reconcile(),/DEPLOY_IMAGE_MISMATCH|DEPLOY_HEALTH_MISMATCH/);
+test('reconcile：运行中既不是pending目标也不是previous（未知镜像）→ 抛错且pending原样保留，不登记成功',async t=>{
+ const x=await reconcileSetup(t,{ageMs:60*60*1000});x.state.current=x.state.health=3;
+ await assert.rejects(x.ledger.reconcile(),/DEPLOYMENT_RECONCILE_UNKNOWN/);
  const state=await x.store.read('ledger.json');assert.equal(state.pending.deployment_id,x.request.deployment_id);assert.equal(state.successes.length,0);
+ assert.equal((await x.store.read(`deployment-${x.request.deployment_id}.json`)).receipt,null);
+});
+// 任务 B3（e2fc7076/a80485b3）：部署进程在 Brain 容器内被 SIGKILL，trap EXIT 不执行，容器仍停在 previous。
+// 带外 reconcile 必须能把这种孤儿 pending 结算为 recovered（清 pending、不写成功史），否则之后每次部署都撞 DEPLOYMENT_PENDING。
+test('reconcile：部署中途被杀、容器仍为previous且健康 → 结算recovered并清pending，不写成功史',async t=>{
+ const x=await reconcileSetup(t,{ageMs:60*60*1000});
+ const receipt=await x.ledger.reconcile();
+ assert.equal(receipt.deployment_id,x.request.deployment_id);assert.equal(receipt.outcome,'recovered');assert.equal(receipt.image_id,image(1));
+ const state=await x.store.read('ledger.json');assert.equal(state.pending,null);assert.equal(state.successes.length,0);
+ await x.ledger.begin({...x.request,deployment_id:randomUUID()});
+});
+// a80485b3 原样复现：同版本号（1.0.2）不同 SHA 重建，新镜像抢走了 cecelia-brain:1.0.2/latest，旧镜像 previous 实时 tag 已空。
+async function overwrittenTagSetup(t){
+ const root=await realpath(await mkdtemp(join(tmpdir(),'image-ledger-')));t.after(()=>rm(root,{recursive:true,force:true}));
+ const store=createStore(root),live={overwritten:false};let clock=Date.parse('2026-10-10T06:22:13Z');
+ const docker={snapshot:async()=>({containers:[{id:'a'.repeat(64),name:'/cecelia-node-brain',running:true,image_id:image(2)}],
+  images:[{id:image(2),tags:live.overwritten?[]:['cecelia-brain:1.0.2','latest'],git_sha:sha(2)},
+   ...(live.overwritten?[{id:image(3),tags:['cecelia-brain:1.0.2','latest'],git_sha:sha(3)}]:[])]})};
+ const health=async()=>({status:'healthy',version:'1.0.2',git_sha:sha(2)});
+ const ledger=createDeploymentLedger({store,docker,health,now:()=>clock});
+ const request={deployment_id:randomUUID(),version:'1.0.2',git_sha:sha(3)};
+ await ledger.begin(request);live.overwritten=true;clock+=60*60*1000;
+ return {store,ledger,request};
+}
+test('同版本重建覆盖previous的tag后，reconcile仍能结算recovered（a80485b3）',async t=>{
+ const x=await overwrittenTagSetup(t);
+ const receipt=await x.ledger.reconcile();
+ assert.equal(receipt.outcome,'recovered');assert.equal(receipt.image_id,image(2));assert.equal(receipt.version,'1.0.2');
+ const state=await x.store.read('ledger.json');assert.equal(state.pending,null);assert.equal(state.successes.length,0);
+});
+test('同版本重建覆盖previous的tag后，finish recovered按begin时快照tag核验通过（a80485b3）',async t=>{
+ const x=await overwrittenTagSetup(t);
+ assert.equal((await x.ledger.finish(x.request.deployment_id,'recovered')).outcome,'recovered');
+ assert.equal((await x.store.read('ledger.json')).pending,null);
+});
+test('reconcile负例：容器仍是previous镜像但健康git_sha不是previous → 拒绝且不改状态',async t=>{
+ const x=await reconcileSetup(t,{ageMs:60*60*1000});x.state.health=3;
+ await assert.rejects(x.ledger.reconcile(),/DEPLOY_HEALTH_MISMATCH/);
+ const state=await x.store.read('ledger.json');assert.equal(state.pending.deployment_id,x.request.deployment_id);assert.equal(state.successes.length,0);
+});
+test('reconcile负例：容器仍是previous但pending在新鲜期 → DEPLOYMENT_PENDING_FRESH，不结算recovered',async t=>{
+ const x=await reconcileSetup(t,{ageMs:60*1000});
+ await assert.rejects(x.ledger.reconcile(),/DEPLOYMENT_PENDING_FRESH/);
+ assert.equal((await x.store.read('ledger.json')).pending.deployment_id,x.request.deployment_id);
 });
 test('reconcile：pending仍在新鲜期（部署可能在途）→ 拒绝且不改状态',async t=>{
  const x=await reconcileSetup(t,{ageMs:60*1000});x.state.current=x.state.health=2;

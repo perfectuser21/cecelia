@@ -15,7 +15,7 @@ async function fixture(t){
  if(process.env.FIXTURE_FAIL==='1')process.exit(1);
  const marker=process.env.FIXTURE_LOG+'.pending-once';
  if(process.env.FIXTURE_PENDING==='1'&&process.argv[2]==='begin'&&!fs.existsSync(marker)){fs.writeFileSync(marker,'');process.stderr.write('DEPLOYMENT_PENDING\\n');process.exit(1);}
- if(process.argv[2]==='reconcile'){if(process.env.FIXTURE_RECONCILE_FAIL==='1'){process.stderr.write('DEPLOY_IMAGE_MISMATCH\\n');process.exit(1);}process.stdout.write('11111111-1111-4111-8111-111111111111 success\\n');process.exit(0);}
+ if(process.argv[2]==='reconcile'){if(process.env.FIXTURE_RECONCILE_FAIL==='1'){process.stderr.write('DEPLOY_IMAGE_MISMATCH\\n');process.exit(1);}process.stdout.write('11111111-1111-4111-8111-111111111111 '+(process.env.FIXTURE_RECONCILE_OUTCOME||'success')+'\\n');process.exit(0);}
  process.stdout.write(process.env.FIXTURE_DISABLED==='1'?'disabled':process.argv[2]==='begin'?process.argv[3]:'success');`);
  return {root,log:join(root,'calls'),helper:join(root,'scripts','lib','brain-image-retention.sh')};
 }
@@ -63,6 +63,21 @@ test('begin撞DEPLOYMENT_PENDING：reconcile核验通过后自动重试begin继�
  const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
  assert.deepEqual(calls.map(x=>x[0]),['begin','reconcile','begin']);
  assert.match(r.stdout,new RegExp('id='+calls[2][1]));
+});
+// 任务 B3（a80485b3）：上次部署中途死亡、容器仍为旧版时 reconcile 输出 "<id> recovered"，shell 必须接受并重试 begin。
+test('begin撞DEPLOYMENT_PENDING：reconcile结算recovered后同样重试begin继续部署',async t=>{
+ const f=await fixture(t),env={...process.env,FIXTURE_LOG:f.log,FIXTURE_PENDING:'1',FIXTURE_RECONCILE_OUTCOME:'recovered'};
+ const r=await run('bash',['-ec','source "$1"; retention_begin 1.0.2 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; echo "id=$CECELIA_IMAGE_DEPLOYMENT_ID"','_',f.helper],{env});
+ const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
+ assert.deepEqual(calls.map(x=>x[0]),['begin','reconcile','begin']);
+ assert.match(r.stdout,new RegExp('id='+calls[2][1]));
+ assert.match(r.stderr,/recovered/);
+});
+test('begin撞DEPLOYMENT_PENDING：reconcile输出未知结果 → 不重试begin',async t=>{
+ const f=await fixture(t),env={...process.env,FIXTURE_LOG:f.log,FIXTURE_PENDING:'1',FIXTURE_RECONCILE_OUTCOME:'unknown'};
+ await assert.rejects(run('bash',['-ec','source "$1"; retention_begin 1.0.2 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','_',f.helper],{env}));
+ const calls=(await readFile(f.log,'utf8')).trim().split('\n').map(JSON.parse);
+ assert.deepEqual(calls.map(x=>x[0]),['begin','reconcile']);
 });
 test('begin撞DEPLOYMENT_PENDING且reconcile核验不过：保持失败、不重试begin、告警并输出原因',async t=>{
  const f=await fixture(t),env={...process.env,FIXTURE_LOG:f.log,FIXTURE_PENDING:'1',FIXTURE_RECONCILE_FAIL:'1'};

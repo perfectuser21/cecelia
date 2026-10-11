@@ -8,16 +8,21 @@ retention_compose_args() {
   fi
 }
 retention_compose_args
-# 台账卡在上一次部署的 pending（sidecar 收账失败遗留）时，交给 CLI reconcile 用 finish 的完整核验补收账：
-# 仅当运行容器已是 pending 目标且健康才清 pending；核验不过/新鲜期/恢复中都不改状态，begin 照旧失败并告警（fail-safe）。
+# 台账卡在上一次部署的 pending 时，交给 CLI reconcile 用 finish 的完整核验补收账（两个出口）：
+# 运行容器已是 pending 目标且健康 → success（sidecar 收账失败遗留）；仍是 previous 镜像且健康 → recovered
+# （上次部署进程中途被杀，trap 没跑）。核验不过/未知镜像/新鲜期/恢复中都不改状态，begin 照旧失败并告警（fail-safe）。
 _retention_reconcile_pending() {
   local err="$1" out rerr
   [[ "$err" == *DEPLOYMENT_PENDING* ]] || return 1
   rerr=$(mktemp) || return 1
   if out=$(node "$_RETENTION_REPO_ROOT/scripts/brain-image-retention/cli.mjs" reconcile 2>"$rerr") \
-      && [[ "$out" =~ ^[a-f0-9-]{36}\ success$ ]]; then
+      && [[ "$out" =~ ^[a-f0-9-]{36}\ (success|recovered)$ ]]; then
     rm -f "$rerr"
-    echo "[retention] 陈旧 pending 已核验补收账：$out" >&2
+    if [[ "${BASH_REMATCH[1]}" == recovered ]]; then
+      echo "[retention] 陈旧 pending 已核验补收账：${out}（上次部署中途死亡，容器仍为旧版）" >&2
+    else
+      echo "[retention] 陈旧 pending 已核验补收账：$out" >&2
+    fi
     return 0
   fi
   echo "[retention] DEPLOYMENT_PENDING 自动补收账未通过核验：$(tr '\n' ' ' < "$rerr" | head -c 300)" >&2

@@ -84,7 +84,7 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
         if (before.id !== after.id || (outcome === 'success' && row.target_image_id && after.id !== row.target_image_id) || after.git_sha !== expectedSha || (outcome === 'recovered' && after.id !== row.previous.id)
             || (outcome === 'success' && !after.tags.includes(`cecelia-brain:${row.request.version}`))) throw fail('DEPLOY_IMAGE_MISMATCH');
         if (observed?.status !== 'healthy' || observed.git_sha !== expectedSha || !VERSION.test(observed.version ?? '')
-            || !after.tags.includes(`cecelia-brain:${observed.version}`)
+            || !(outcome === 'recovered' ? row.previous.tags ?? [] : after.tags).includes(`cecelia-brain:${observed.version}`)
             || (outcome === 'success' && observed.version !== row.request.version)) throw fail('DEPLOY_HEALTH_MISMATCH');
         receipt = { deployment_id: id, outcome, image_id: after.id, version: observed.version, git_sha: expectedSha,
           confirmed_at: new Date(now()).toISOString(), actor: 'brain-deploy:us-vps' };
@@ -95,8 +95,11 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
       return receipt;
     });
   }
-  // 陈旧 pending 自动补收账（任务 502f2852）：sidecar 收账失败留下的 pending 会让下一次 begin 抛 DEPLOYMENT_PENDING。
-  // 只走 success 一条路，且全部核验交给 finish（运行容器镜像/tag/git_sha 与 pending 目标一致且健康），核验不过即抛错、不改状态。
+  // 陈旧 pending 带外补收账（任务 502f2852 / B3）：结算方（部署进程 trap EXIT、sidecar）没跑到时，下一次 begin 抛 DEPLOYMENT_PENDING。
+  // 按运行容器镜像分流两个出口，全部核验仍交给 finish，核验不过即抛错、不改状态：
+  //   - 容器已是 pending 目标 → success（sidecar 收账失败遗留，任务 502f2852）；
+  //   - 容器仍是 previous 镜像（id + git_sha）→ recovered（部署进程在 Brain 容器内被 SIGKILL，a80485b3），只清 pending、不写成功史；
+  //   - 其余（未知镜像）→ DEPLOYMENT_RECONCILE_UNKNOWN。
   // 新鲜期内（部署可能在途）与恢复中（rollback 在途）一律拒绝；无 begun_at 的旧格式 pending 视为陈旧。
   async function reconcile() {
     const ledger = await state();
@@ -104,7 +107,11 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
     const pending = ledger.pending, begunAt = Date.parse(pending.begun_at);
     if (pending.recovering) throw fail('DEPLOYMENT_RECOVERING');
     if (pending.begun_at !== undefined && (!Number.isFinite(begunAt) || now() - begunAt < RECONCILE_MIN_AGE_MS)) throw fail('DEPLOYMENT_PENDING_FRESH');
-    return finish(pending.deployment_id, 'success');
+    const running = await store.withLock(async lease => current(await docker.snapshot(lease)));
+    const atTarget = pending.target_image_id ? running.id === pending.target_image_id : running.git_sha === pending.request.git_sha;
+    const atPrevious = running.id === pending.previous.id && running.git_sha === pending.previous.git_sha;
+    if (!atTarget && !atPrevious) throw fail('DEPLOYMENT_RECONCILE_UNKNOWN');
+    return finish(pending.deployment_id, atTarget ? 'success' : 'recovered');
   }
   return Object.freeze({ begin, rollback, finish, reconcile });
 }

@@ -61,8 +61,15 @@ ensure_cecelia_internal_token() {
 
   if existing=$(_cecelia_internal_token_from_file "$env_file"); then
     local current_mode
-    current_mode=$(stat -f '%Lp' "$env_file" 2>/dev/null || stat -c '%a' "$env_file" 2>/dev/null || true)
-    [[ "$current_mode" == "600" ]] || chmod 600 "$env_file"
+    # 先 GNU（-c），再 BSD（-f）：GNU 下 -f 是"查文件系统"，会把格式串当文件名并输出一堆无关信息，权限永远读不成 600
+    current_mode=$(stat -c '%a' "$env_file" 2>/dev/null || stat -f '%Lp' "$env_file" 2>/dev/null || true)
+    if [[ "$current_mode" != "600" ]]; then
+      if [[ -w "$env_file" ]]; then
+        chmod 600 "$env_file" || echo "WARN: 内部鉴权 env 文件权限收紧失败: $env_file" >&2
+      else
+        echo "WARN: 内部鉴权 env 文件只读（${env_file}，权限 ${current_mode:-未知}），跳过权限收紧" >&2
+      fi
+    fi
     CECELIA_INTERNAL_TOKEN="$existing"
     export CECELIA_INTERNAL_TOKEN
     return 0
