@@ -1,0 +1,12 @@
+A	sprints/10101755-cw-bd2b1556/01-intent.md
+A	sprints/10101755-cw-bd2b1556/01-invariants.md
+A	sprints/10101755-cw-bd2b1556/02-spec.md
+A	sprints/10101755-cw-bd2b1556/02-review-r1.md
+A	sprints/10101755-cw-bd2b1556/02-response-r1.md
+A	sprints/10101755-cw-bd2b1556/02-review.md
+A	sprints/10101755-cw-bd2b1556/03-build.md
+A	sprints/10101755-cw-bd2b1556/04-evidence.md
+A	sprints/10101755-cw-bd2b1556/05-qa-report-r1.md
+A	sprints/10101755-cw-bd2b1556/06-judge-r1.md
+A	sprints/10101755-cw-bd2b1556/qa-r1/screen-1.png
+A	packages/brain/src/routes/strategic-decisions.js

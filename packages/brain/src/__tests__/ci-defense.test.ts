@@ -67,6 +67,19 @@ describe('CI 防线三件套 [BEHAVIOR]', () => {
     expect(code).toBe(0);
   });
 
+  // 金丝雀 4（#6232）：cw PR 的合同对抗/QA/裁判记录（01-invariants、02-review-rN、02-response-rN、05-qa-report-rN、
+  // 06-judge-rN、qa-rN/ 截图）被当 harness PR 要 contract-draft.md，Skill Contract Guard 红并把 CI 修复会话带偏
+  it('Step4 coding workflow: cw sprint 目录（<8位>-cw-<8hex>）下全部产物都不被当 harness PR 拦', () => {
+    const { code, out } = runNode(EXISTS, ['--fixture', join(FIXTURES, 'diff-coding-workflow-full.txt')]);
+    expect(code, out).toBe(0);
+  });
+
+  it('Step4 非 cw 目录里同名的 02-review/05-qa-report 仍按 harness PR 要合同', () => {
+    const { code, out } = runNode(EXISTS, ['--fixture', join(FIXTURES, 'diff-harness-review-lookalike.txt')]);
+    expect(code).not.toBe(0);
+    expect(out).toMatch(/contract-draft\.md/);
+  });
+
   it('Step4 harness 残留: 仅含 sprint-prd.md 的 diff 仍被拦并点名 contract-draft.md', () => {
     expect(existsSync(EXISTS)).toBe(true);
     const { code, out } = runNode(EXISTS, ['--fixture', join(FIXTURES, 'diff-harness-prd-only.txt')]);
