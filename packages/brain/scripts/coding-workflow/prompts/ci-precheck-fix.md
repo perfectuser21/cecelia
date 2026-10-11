@@ -22,7 +22,7 @@ SPEC_PATH: {{SPEC_PATH}}
 3. 修完后自己再跑一次对应的门禁脚本确认通过（例如 `bash .github/workflows/scripts/lint-test-pairing.sh origin/main`）。
 
 禁止：
-- 不修改 SPRINT_DIR 下任何文件，不修改 .claude/、CLAUDE.md、AGENTS.md。
+- 不修改 SPRINT_DIR 下任何文件，不修改 .claude/、CLAUDE.md、AGENTS.md，不修改 runner 生成的 QA 回归 smoke（packages/brain/scripts/smoke/cw-*-qa-smoke.sh，由 runner 按 QA 报告固化，勿手改）。
 - 不删除或放宽已有测试的断言来"让它通过"。
 - 不 push、不调用 gh、不改写已有提交（不 amend、不 rebase、不 reset）。
 - 结束时工作区必须干净（没有未提交改动）。

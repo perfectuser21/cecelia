@@ -171,6 +171,8 @@ describe('runner CI 红自动修复（ci_fix）', () => {
     ['none', 'no_commit'],
     ['dirty', 'uncommitted'],
     ['tamper', 'protected_path'],
+    // 金丝雀 4：runner 生成的 QA 回归 smoke 只由 runner 固化，修复会话不得改
+    ['tamper-smoke', 'protected_path'],
     ['fail', 'claude_failed'],
     // 审计 #31：修复环节不得靠削弱测试变绿
     ['skiptest', 'test_weakened'],

@@ -342,6 +342,51 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(r.stderr).toContain('[coding-qa][P1]');
   });
 
+  // 金丝雀 4（PR #6232）：裁判第 8/9 轮结论翻转、修复会话跟着来回改，跑了 10 轮
+  describe('裁判与修复会话看到前轮裁决（金丝雀 4）', () => {
+    const seedPriorRound = () => {
+      E.addToBranch(`${SPRINT}/06-judge-r1.md`, '# 独立裁判（第 1 轮）\nPRIOR_RULING_MARKER\n');
+      seedState({ rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'PASS', fails: 1, fix: 'pushed', report: `${SPRINT}/05-qa-report-r1.md`,
+        judge: { verdict: 'FAIL', failure_class: 'product_failure', file: '06-judge-r1.md' } }] });
+      return green({ prs: [pr({ headRefOid: E.remoteHead() })] });
+    };
+
+    it('第 2 轮：裁判提示词带第 1 轮裁决原文；按裁决修复的 prompt 列出前轮裁决路径与规格约束力', async () => {
+      judge.mode = 'product';
+      const r = await go(seedPriorRound());
+      expect(r.exitCode, r.stderr).toBe(0);
+      const user = judge.calls[0].body.messages.find((m) => m.role === 'user').content;
+      expect(user).toContain('PRIOR_RULING_MARKER');
+      const prompt = fs.readFileSync(files.prompt, 'utf8');
+      expect(prompt).toContain(`${SPRINT}/06-judge-r2.md`);
+      expect(prompt).toMatch(new RegExp(`PRIOR_RULINGS: \\S*${SPRINT}/06-judge-r1\\.md`));
+      expect(prompt).toContain('规格');
+    });
+
+    it('裁判推翻前轮裁决（ruling_conflict）→ 不修代码，升级 judge_ruling_conflict 交 coding commander', async () => {
+      judge.mode = 'reverse';
+      const r = await go(seedPriorRound());
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(fs.existsSync(files.prompt)).toBe(false);
+      expect(r.stderr).toContain('[coding-qa][P1]');
+      expect(state().escalated).toMatchObject({ type: 'judge_ruling_conflict', issues: ['J-1'], reverses: ['r1:J-1'], file: `${SPRINT}/06-judge-r2.md` });
+      expect(originLog()[0]).toBe('docs(qa): 第 2 轮真人 QA PASS，独立裁判 FAIL');
+    });
+
+    it('修复会话判定裁决与规格/前轮矛盾（输出 RULING_CONFLICT）→ 不推送，升级 qa_fix_failed（ruling_conflict，带说明）', async () => {
+      judge.mode = 'product';
+      const r = await go(seedPriorRound(), { extra: { FAKE_CIFIX_MODE: 'ruling-conflict' } });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(state().escalated).toMatchObject({ type: 'qa_fix_failed', reason: 'ruling_conflict', detail: expect.stringContaining('S-1') });
+    });
+
+    it('修复会话改了 runner 生成的 QA 回归 smoke → 不推送，升级 qa_fix_failed（protected_path）', async () => {
+      const r = await go(green(), { mode: 'fail', extra: { FAKE_CIFIX_MODE: 'tamper-smoke' } });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(state().escalated).toMatchObject({ type: 'qa_fix_failed', reason: 'protected_path' });
+    });
+  });
+
   it('已合并且 QA 通过过的 PR → 停掉它的预览环境释放容量（只停一次）', async () => {
     seedState({ passed: true, rounds: [] });
     const r = await go({ prs: [], mergedPrs: [pr()] });

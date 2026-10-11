@@ -29,6 +29,10 @@ const JUDGE_REPLY = {
   ...Object.fromEntries([['product', 'product'], ['qa_gap', 'qa_gap'], ['contract', 'contract_gap']].map(([mode, type]) => [mode, {
     coverage: [{ intent: 'I-1', satisfied: false, evidence: '见 J-1' }], issues: [JUDGE_ISSUE(type)], summary: 'no',
   }])),
+  // 推翻前轮裁决（金丝雀 4 第 8/9 轮翻转）
+  reverse: {
+    coverage: [{ intent: 'I-1', satisfied: false, evidence: '见 J-1' }], issues: [{ ...JUDGE_ISSUE('product'), reverses: ['r1:J-1'] }], summary: 'no',
+  },
 };
 
 /** 起一个 JSON 小服务：handler(req, raw, res) 返回要写的对象或自己 end。 */

@@ -24,8 +24,12 @@
 
 某条 I-n 判 `satisfied: false` 时，必须有至少一个对应它的阻断/重要问题说明原因。
 
+## 规格的约束力与前几轮裁决
+规格（02）的条款对你有约束力：它是开发方与评审对抗定下的合同，开发方照规格做的行为不算产品问题。你认为规格本身错了（与需求冲突、漏了需求），提 `contract_gap`，不要提 `product` 让开发方违背规格去改。
+下面附了前几轮裁判的裁决，开发方已经照它们改过代码。你的问题如果要求的行为与前轮某条问题的要求相反（例如前轮要求「读不到时报错」、你要求「读不到时返回空」），必须在该问题里写 `reverses`（如 `["r8:J-2"]`，r 后是轮次），并在 `detail` 里说清依据哪条规格/需求推翻——这种分歧交 coding commander 按规格裁，不会直接让开发方改。不推翻前轮的问题不写 `reverses`。
+
 ## 只输出 JSON（不要其他文字）
-{"coverage":[{"intent":"I-1","satisfied":true,"evidence":"<引用 QA 报告条目与输出、代码位置>"}],"issues":[{"id":"J-1","type":"product|qa_gap|contract_gap","severity":"阻断|重要|建议","covers":["I-1"],"detail":"...","where":"..."}],"summary":"<一两句话总评>"}
+{"coverage":[{"intent":"I-1","satisfied":true,"evidence":"<引用 QA 报告条目与输出、代码位置>"}],"issues":[{"id":"J-1","type":"product|qa_gap|contract_gap","severity":"阻断|重要|建议","covers":["I-1"],"detail":"...","where":"...","reverses":[]}],"summary":"<一两句话总评>"}
 
 ---
 
@@ -37,6 +41,9 @@
 
 ## 真人 QA 报告（{{QA_REPORT_FILE}}）
 {{QA_REPORT}}
+
+## 前几轮裁决
+{{PRIOR_RULINGS}}
 
 ## PR 代码改动（相对 main，不含 sprints/）
 {{DIFF}}

@@ -13,5 +13,5 @@
 4. 解决完运行与冲突文件相关的测试，确认通过。注意 CI 跑在 Linux，本机是 macOS。
 5. 用 `git add` 加入解决后的文件，再 `git commit --no-edit` 完成这次合并；第 3 条的迁移顺延可以在合并完成后单独提交，提交信息用 `fix(...): ` 开头的中文说明。
 6. 不 push、不调用 gh、不改写已有提交（不 amend、不 rebase、不 reset、不 `git merge --abort`）。
-7. 不修改 sprints/ 下任何文件（那是本 PR 的需求与验收记录），不修改 .claude/、CLAUDE.md、AGENTS.md，不删除或放宽 main 上已有测试的断言。
+7. 不修改 sprints/ 下任何文件（那是本 PR 的需求与验收记录），不修改 .claude/、CLAUDE.md、AGENTS.md，不修改 runner 生成的 QA 回归 smoke（packages/brain/scripts/smoke/cw-*-qa-smoke.sh，由 runner 按 QA 报告固化，勿手改），不删除或放宽 main 上已有测试的断言。
 8. 结束时合并必须已经完成（没有 MERGE_HEAD），工作区干净（没有未提交的改动）。
