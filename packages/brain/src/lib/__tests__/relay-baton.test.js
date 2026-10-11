@@ -1,6 +1,6 @@
 /**
  * 接力棒 PR2 接棒 — 失败复现
- *  1. normalizeNextSteps：字符串→note；对象保留 kind/title/detail；非法丢弃；未知 kind→note
+ *  1. normalizeNextSteps：字符串→note；对象保留 kind/title/detail；非法丢弃；未知 kind→note；旧值 task 规范为 dispatch_headless（10-11）
  *  2. materializeNextSteps：task→createRoutedTask（source child、source_id 幂等、挂根）；decision→decisions pending（去重）；note→skipped
  *  3. ensureHandoffOnComplete：有 handoff 原样返回；没有→合成 synthesized 并 saveHandoff
  *  4. relayOnComplete：非 completed 不动；异常吞成 null；handoff.brief_delta → applyHandoffBriefDelta（棒2）
@@ -30,7 +30,7 @@ describe('normalizeNextSteps', () => {
     ]);
     expect(out).toEqual([
       { kind: 'note', title: '先补文档' },
-      { kind: 'task', title: '做 B', detail: 'x', task_type: 'data' },
+      { kind: 'dispatch_headless', title: '做 B', detail: 'x', task_type: 'data' },
       { kind: 'decision', title: '要不要删列' },
       { kind: 'note', title: 'z' },
     ]);
@@ -113,7 +113,7 @@ describe('materializeNextSteps', () => {
   it('createRoutedTask 抛错 → 进 skipped，不中断其余步骤', async () => {
     const create = vi.fn(async (_p, req) => { if (req.title === 'bad') { const e = new Error('x'); e.code = 'routing_map_scope_unresolved'; throw e; } return { task: { id: 'ok', title: req.title } }; });
     const out = await materializeNextSteps({ query: vi.fn() }, task, { next_steps: [{ kind: 'task', title: 'bad' }, { kind: 'task', title: 'good' }] }, { createRoutedTask: create });
-    expect(out.skipped[0]).toMatchObject({ kind: 'task', title: 'bad', error: 'routing_map_scope_unresolved' });
+    expect(out.skipped[0]).toMatchObject({ kind: 'dispatch_headless', title: 'bad', error: 'routing_map_scope_unresolved' });
     expect(out.tasks.map((t) => t.title)).toEqual(['good']);
   });
 });

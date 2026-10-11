@@ -99,8 +99,15 @@ export function buildHandoff(input = {}) {
   };
 }
 
+/** next_steps 条目 → 一行文字（对象带 kind 前缀）；字符串原样。 */
+export function formatNextStepLine(s) {
+  if (typeof s === 'string') return s;
+  if (s && typeof s === 'object') return `[${s.kind || 'note'}] ${s.title || ''}`;
+  return String(s);
+}
+
 export function renderHandoffMarkdown(h) {
-  const list = (arr, empty) => (arr.length ? arr.map((x) => `- ${x}`).join('\n') : `- （${empty}）`);
+  const list = (arr, empty) => (arr.length ? arr.map((x) => `- ${formatNextStepLine(x)}`).join('\n') : `- （${empty}）`);
   return [
     `# Handoff：${h.title || h.task_id}`,
     '',
@@ -146,9 +153,11 @@ export async function pushHandoffAtom(pool, taskId, handoff) {
   const asList = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()) : []);
   const done = asList(handoff.done);
   const notDone = asList(handoff.not_done);
-  const nextSteps = asList(handoff.next_steps);
+  const nextSteps = (Array.isArray(handoff.next_steps) ? handoff.next_steps : [])
+    .filter((x) => (typeof x === 'string' && x.trim()) || (x && typeof x === 'object' && String(x.title ?? '').trim()))
+    .map(formatNextStepLine);
   const hasRealNextSteps =
-    nextSteps.length > 0 && !(nextSteps.length === 1 && nextSteps[0] === '完成，无下一步');
+    nextSteps.length > 0 && !(nextSteps.length === 1 && /完成，无下一步$/.test(nextSteps[0]));
   const subtype =
     handoff.verdict === 'PASS' && hasRealNextSteps ? 'PASS+NEXT' : (handoff.verdict ?? 'UNKNOWN');
   return pushCaptureAtom(pool, {
@@ -197,7 +206,7 @@ export async function saveHandoff({ pool }, handoff) {
   // 接力棒：已 completed 的任务补写 handoff → 立刻落下一棒（幂等；synthesized 的不再递归）
   if (!handoff.synthesized) {
     try {
-      const { rows: st } = await pool.query('SELECT id, title, status, priority, task_type, payload, parent_task_id, project_id FROM tasks WHERE id = $1::uuid', [handoff.task_id]);
+      const { rows: st } = await pool.query('SELECT id, title, status, priority, task_type, executor_kind, payload, parent_task_id, project_id FROM tasks WHERE id = $1::uuid', [handoff.task_id]);
       if (st[0]?.status === 'completed') {
         const { materializeNextSteps } = await import('./lib/relay-baton.js');
         await materializeNextSteps(pool, st[0], handoff);
@@ -361,7 +370,7 @@ export function formatChainForPrompt(ctx) {
   if (ctx.position?.total) {
     lines.push(`本任务是第 ${ctx.position.sequence_no ?? '?'} / ${ctx.position.total} 棒`);
   }
-  lines.push('规矩：做完必须写 handoff（done / not_done / next_steps），next_steps 每条标 kind=task|decision|done；项目有变化（目标/现状/新事实/未决问题/增删棒）顺手带 brief_delta。');
+  lines.push('规矩：做完必须写 handoff（done / not_done / next_steps），next_steps 每条标 kind=resume_headed（有头续接）|dispatch_headless（无头派发）|decision（待拍板）|note（备注）；项目有变化（目标/现状/新事实/未决问题/增删棒）顺手带 brief_delta。');
   const text = `${lines.join('\n')}${formatHandoffsForPrompt(ctx.recent)}`;
   return text.length > PROMPT_MAX_LEN * 2 ? `${text.slice(0, PROMPT_MAX_LEN * 2)}…` : text;
 }
@@ -384,7 +393,7 @@ export function formatHandoffsForPrompt(rows) {
     const lines = [`### Handoff ${i + 1}: ${h.title || r.title || r.id}（verdict=${h.verdict ?? 'N/A'}）`];
     for (const d of (h.done || []).slice(0, 3)) lines.push(`- ✅ ${d}`);
     for (const n of (h.not_done || []).slice(0, 2)) lines.push(`- ❌ ${n}`);
-    for (const s of (h.next_steps || []).slice(0, 2)) lines.push(`- ➡️ ${typeof s === 'string' ? s : `[${s.kind || 'note'}] ${s.title || ''}`}`);
+    for (const s of (h.next_steps || []).slice(0, 2)) lines.push(`- ➡️ ${formatNextStepLine(s)}`);
     return lines.join('\n');
   });
   let text = `\n\n## 最近 Handoff（本 line 交接，规划时不得与已完成项重复、优先响应 next_steps）\n${blocks.join('\n')}`;

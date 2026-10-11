@@ -1,5 +1,5 @@
 /**
- * routes/handoffs.js — 交接单只读流（relay-baton4 item1）
+ * routes/handoffs.js — 交接单只读流（relay-baton4 item1）+ 有头续接待续（2026-10-11）
  *
  * GET /api/brain/handoffs?limit=20&journey_id=
  *   从 tasks.result.handoff（saveHandoff 写入的 SSOT，见 src/handoff.js）捞摘要，
@@ -12,11 +12,85 @@ const router = Router();
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseLimit(raw) {
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, MAX_LIMIT) : DEFAULT_LIMIT;
+}
+
+/**
+ * GET /api/brain/handoffs/pending-resume?limit=20
+ *   有头续接「待续」列表（主理人 2026-10-11 决策）：handoff.next_steps 里 kind=resume_headed 的条目
+ *   不派发，由 relay-baton 在原任务 result.pending_resume 挂 status=pending。这里列出谁的任务、
+ *   下一步是什么、交接全文，供新的有头会话开场接上。
+ */
+router.get('/pending-resume', async (req, res) => {
+  try {
+    const limit = parseLimit(req.query.limit);
+    const { rows } = await pool.query(
+      `SELECT id, title, status, task_type, executor_kind, payload, claimed_by,
+              result->'pending_resume' AS pending_resume, result->'handoff' AS handoff
+         FROM tasks
+        WHERE result->'pending_resume'->>'status' = 'pending'
+        ORDER BY (result->'pending_resume'->>'created_at') DESC NULLS LAST
+        LIMIT $1`,
+      [limit]
+    );
+    const pending = rows.map((r) => {
+      const pr = r.pending_resume || {};
+      const h = r.handoff || {};
+      const p = r.payload || {};
+      return {
+        task_id: r.id,
+        title: r.title || h.title || '',
+        status: r.status,
+        task_type: r.task_type,
+        executor_kind: r.executor_kind ?? null,
+        repo: p.repo || p.base_repo || null,
+        session_id: pr.session_id ?? h.session_id ?? null,
+        items: Array.isArray(pr.items) ? pr.items : [],
+        created_at: pr.created_at ?? null,
+        handoff: h,
+      };
+    });
+    res.json({ pending, total: pending.length });
+  } catch (err) {
+    console.error('[handoffs] GET pending-resume error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/handoffs/pending-resume/:taskId/ack  { resumed_by?, resumed_task_id? }
+ *   新的有头会话接上后销「待续」：pending → resumed。只改 pending 的，重复 ack → 404。
+ */
+router.post('/pending-resume/:taskId/ack', async (req, res) => {
+  const { taskId } = req.params;
+  if (!UUID_RE.test(taskId)) return res.status(400).json({ error: 'invalid task id' });
+  try {
+    const resumedBy = String(req.body?.resumed_by || req.headers['x-session-id'] || 'headed-session').slice(0, 200);
+    const resumedTaskId = req.body?.resumed_task_id && UUID_RE.test(String(req.body.resumed_task_id)) ? String(req.body.resumed_task_id) : null;
+    const { rows, rowCount } = await pool.query(
+      `UPDATE tasks
+          SET result = jsonb_set(result, '{pending_resume}',
+                (result->'pending_resume') || jsonb_build_object('status', 'resumed', 'resumed_at', NOW(), 'resumed_by', $2::text, 'resumed_task_id', $3::text)),
+              updated_at = NOW()
+        WHERE id = $1::uuid AND result->'pending_resume'->>'status' = 'pending'
+        RETURNING id, result->'pending_resume' AS pending_resume`,
+      [taskId, resumedBy, resumedTaskId]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'no pending resume for task', task_id: taskId });
+    res.json({ success: true, task_id: rows[0].id, pending_resume: rows[0].pending_resume });
+  } catch (err) {
+    console.error('[handoffs] POST ack error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/', async (req, res) => {
   try {
-    const parsed = parseInt(req.query.limit, 10);
-    const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, MAX_LIMIT) : DEFAULT_LIMIT;
+    const limit = parseLimit(req.query.limit);
     const params = [];
     const conditions = [`result ? 'handoff'`];
     if (req.query.journey_id) {
