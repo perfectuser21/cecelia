@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.424.0
+**Brain 版本**: 1.424.1
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -78,6 +78,15 @@ summary: 版本、实现影响、地图及发布证据测试改用精确scratch�
 
 - 官方 ZenithJoy 试点映射将真实内容生产价值流与安卓多平台发布能力纳入固定源配置；只从完整旧集合升级，保旧身份、父级、来源与激活 CAS。
 - 当前 Workflow 定义使用唯一当前同来源清单，避免同一 SHA 旧清单造成歧义；非当前历史多清单仍明确拒绝。
+
+## Brain 1.424.1 — 部署台账孤儿 pending 带外结算为 recovered（修部署进程被 SIGKILL 后 DEPLOYMENT_PENDING 永久卡死）
+
+任务 B3（根因单 e2fc7076 / d1ec834d，事故 a80485b3）。部署进程跑在它要替换的 Brain 容器里，容器重启时被 SIGKILL，`trap EXIT` 不执行，pending 留在 ledger；原 reconcile 只会结算 success，容器仍是旧镜像时必然核验失败，之后每次部署都撞 DEPLOYMENT_PENDING。
+
+- `scripts/brain-image-retention/ledger.mjs`：`reconcile()` 按运行容器镜像分流——已是 pending 目标 → `success`；仍是 previous（镜像 id + git_sha 一致）→ `recovered`（只清 pending、不写成功史）；其余抛 `DEPLOYMENT_RECONCILE_UNKNOWN` 不改状态。新鲜期（15 分钟）与恢复中拒绝不变。
+- 同文件 `finish(recovered)`：版本 tag 核验改用 begin 时记下的 previous 快照 tags（身份仍由镜像 id + git_sha + 健康确定），同版本号重建把 tag 抢走后也能结算（a80485b3 当时只能人工挪 tag）。
+- `scripts/lib/brain-image-retention.sh`：自动补收账接受 `<id> recovered`，日志注明“上次部署中途死亡，容器仍为旧版”。
+- `scripts/lib/internal-auth-token.sh`：先 `stat -c`（GNU）再 `stat -f`（BSD），GNU 下不再每次误判权限去 chmod；文件只读时跳过 chmod 并提示。
 
 ## Brain 1.424.0 — 派发只认路由表：无执行者建单即拒 + 工厂/编码独立 task_type + 清卡死单（派发总闸 F）
 
