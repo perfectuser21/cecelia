@@ -359,7 +359,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       expect(user).toContain('PRIOR_RULING_MARKER');
       const prompt = fs.readFileSync(files.prompt, 'utf8');
       expect(prompt).toContain(`${SPRINT}/06-judge-r2.md`);
-      expect(prompt).toContain(`PRIOR_RULINGS: ${SPRINT}/06-judge-r1.md`);
+      expect(prompt).toMatch(new RegExp(`PRIOR_RULINGS: \\S*${SPRINT}/06-judge-r1\\.md`));
       expect(prompt).toContain('规格');
     });
 
@@ -371,6 +371,13 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       expect(r.stderr).toContain('[coding-qa][P1]');
       expect(state().escalated).toMatchObject({ type: 'judge_ruling_conflict', issues: ['J-1'], reverses: ['r1:J-1'], file: `${SPRINT}/06-judge-r2.md` });
       expect(originLog()[0]).toBe('docs(qa): 第 2 轮真人 QA PASS，独立裁判 FAIL');
+    });
+
+    it('修复会话判定裁决与规格/前轮矛盾（输出 RULING_CONFLICT）→ 不推送，升级 qa_fix_failed（ruling_conflict，带说明）', async () => {
+      judge.mode = 'product';
+      const r = await go(seedPriorRound(), { extra: { FAKE_CIFIX_MODE: 'ruling-conflict' } });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(state().escalated).toMatchObject({ type: 'qa_fix_failed', reason: 'ruling_conflict', detail: expect.stringContaining('S-1') });
     });
 
     it('修复会话改了 runner 生成的 QA 回归 smoke → 不推送，升级 qa_fix_failed（protected_path）', async () => {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 假 claude（CI 修复用）：prompt 写进 FAKE_CIFIX_PROMPT；按 FAKE_CIFIX_MODE 在 cwd（PR 分支 worktree）里：
-// fix（改 src/fix.txt 并提交）| resolve（解决合并冲突：src/x.txt 写 resolved，提交完成合并）| fragment（只补 changes/ 碎片并提交）| skiptest / deltest / lessassert（削弱测试）| none（什么都不做）| dirty（只改不提交）| tamper（改 sprint 的 01-intent.md 并提交）| tamper-smoke（改 runner 生成的 cw-*-qa-smoke.sh 并提交）| fail（非 0 退出）
+// fix（改 src/fix.txt 并提交）| resolve（解决合并冲突：src/x.txt 写 resolved，提交完成合并）| fragment（只补 changes/ 碎片并提交）| skiptest / deltest / lessassert（削弱测试）| none（什么都不做）| dirty（只改不提交）| tamper（改 sprint 的 01-intent.md 并提交）| tamper-smoke（改 runner 生成的 cw-*-qa-smoke.sh 并提交）| ruling-conflict（不改，输出 RULING_CONFLICT 行）| fail（非 0 退出）
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -48,4 +48,5 @@ if (mode === 'tamper') {
 }
 // 金丝雀 4：修复会话改了 runner 生成的 QA 回归 smoke（与下次固化互相覆盖）
 if (mode === 'tamper-smoke') commit('packages/brain/scripts/smoke/cw-c954ebfd-qa-smoke.sh', 'echo Q1_OK\n', 'fix: smoke 加标记');
+if (mode === 'ruling-conflict') console.log('RULING_CONFLICT: J-1 要求报错，与规格 S-1 第 3 点（约束读不到返回空数组）矛盾');
 console.log(`fake claude ci-fix mode=${mode}`);
