@@ -18,17 +18,21 @@ function validate(input) {
 }
 async function readFixedContract(input,{fetchFn=globalThis.fetch,resolveToken=resolveGitHubToken}={}) {
  const token=await resolveToken();
- const get=async path=>{
-  const r=await fetchFn(`https://api.github.com/repos/${REPO}/${path}`,{redirect:'error',headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
+ const get=async(kind,sha)=>{
+  if(!['commits','trees','blobs'].includes(kind)||!SHA.test(sha||''))fail('WORKFLOW_SOURCE_GIT_REFERENCE_INVALID');
+  const url=new URL('https://api.github.com');
+  url.pathname=`/repos/${REPO}/git/${encodeURIComponent(kind)}/${encodeURIComponent(sha)}`;
+  if(kind==='trees')url.search='recursive=1';
+  const r=await fetchFn(url.href,{redirect:'error',headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
   if(!r.ok)fail('WORKFLOW_SOURCE_GIT_UNAVAILABLE',503);return r.json();
  };
- const commit=await get(`git/commits/${input.revision}`);
+ const commit=await get('commits',input.revision);
  if(commit.sha!==input.revision||!SHA.test(commit.tree?.sha||''))fail('WORKFLOW_SOURCE_COMMIT_MISMATCH');
- const tree=await get(`git/trees/${commit.tree.sha}?recursive=1`);
+ const tree=await get('trees',commit.tree.sha);
  if(tree.sha!==commit.tree.sha||tree.truncated||!Array.isArray(tree.tree))fail('WORKFLOW_SOURCE_TREE_INCOMPLETE');
  const entries=tree.tree.filter(e=>e.path===input.source_path);
  if(entries.length!==1||entries[0].type!=='blob'||!['100644','100755'].includes(entries[0].mode))fail('WORKFLOW_SOURCE_FILE_INVALID');
- const blob=await get(`git/blobs/${entries[0].sha}`);
+ const blob=await get('blobs',entries[0].sha);
  if(blob.sha!==entries[0].sha||blob.encoding!=='base64'||!Number.isSafeInteger(blob.size)||blob.size<1||blob.size>1024*1024)fail('WORKFLOW_SOURCE_BLOB_INVALID');
  const bytes=Buffer.from(blob.content,'base64');
  if(bytes.length!==blob.size||createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`),bytes])).digest('hex')!==blob.sha)fail('WORKFLOW_SOURCE_BLOB_MISMATCH');
