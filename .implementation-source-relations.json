@@ -306,6 +306,16 @@
       "owner_path": "packages/brain/src/lib/implementation-bindings.js",
       "path": "packages/brain/src/lib/__tests__/implementation-bindings.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/scheduler-jobs.js",
+      "path": "packages/brain/src/__tests__/scheduler-jobs-recurring-independent-loop.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/scheduler-jobs.js",
+      "path": "changes/cp-1012003605-openclaw-cron-to-brain.md",
+      "role": "release"
     }
   ]
 }
