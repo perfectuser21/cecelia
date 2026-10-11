@@ -13,6 +13,8 @@ import {
   shanghaiDay,
   runBypassDailyRollup,
   summarizeBypass,
+  noteDeviceLockAcquire,
+  runBypassAudit,
   BYPASS_EVENT_TYPE,
   _resetBypassAuditGates,
 } from '../bypass-audit.js';
@@ -227,5 +229,24 @@ describe('summarizeBypass（运维视图）', () => {
     expect(r.rows[0]).toMatchObject({ day: '2026-10-12', kind: 'phone_lock', n: 2 });
     expect(pool.calls[0].params[0]).toBe(BYPASS_EVENT_TYPE);
     expect(pool.calls[0].params[1]).toBe(30);
+  });
+});
+
+describe('接线入口', () => {
+  it('noteDeviceLockAcquire：按 设备+持有者 去重、来源 device-lock-api', async () => {
+    const pool = makePool({ 'INSERT INTO cecelia_events': { rows: [{ id: 5 }], rowCount: 1 } });
+    const r = await noteDeviceLockAcquire(pool, { device: 'S9', owner: 'harvest-fallback:xian-m4:1:2', host: 'xian-m4' });
+    expect(r.recorded).toBe(true);
+    const payload = JSON.parse(pool.calls.find((c) => c.sql.includes('INSERT INTO cecelia_events')).params[2]);
+    expect(payload).toMatchObject({ kind: 'phone_lock', source: 'device-lock-api', action: 'lock-acquire', dedupe_key: 'lock:S9:harvest-fallback:xian-m4:1:2' });
+  });
+
+  it('runBypassAudit：扫描失败不挡汇总，本轮 ok:false 让调度器记 fail', async () => {
+    const pool = makePool({ 'INSERT INTO runs': { rows: [], rowCount: 1 } });
+    const exec = vi.fn().mockRejectedValue(new Error('ssh: connect timeout'));
+    const r = await runBypassAudit(pool, { exec, inContainer: false, now: () => Date.parse('2026-10-12T04:00:00Z'), sendBark: vi.fn() });
+    expect(r.ok).toBe(false);
+    expect(r.scan.error).toMatch(/ssh/);
+    expect(r.rollup.day).toBe('2026-10-12');
   });
 });

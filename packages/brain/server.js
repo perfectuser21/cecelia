@@ -61,6 +61,7 @@ import capturesRoutes from './src/routes/captures.js';
 import projectionsRoutes from './src/routes/projections.js';
 import contentPipelineRoutes from './src/routes/content-pipeline.js';
 import canRunRoutes from './src/routes/can-run.js';
+import bypassActionsRoutes from './src/routes/bypass-actions.js';
 import okrHierarchyRoutes from './src/routes/okr-hierarchy.js';
 import strategyTreeRoutes from './src/routes/strategy-tree.js';
 import krConvergenceRoutes from './src/routes/kr-convergence.js';
@@ -427,6 +428,7 @@ app.use('/api/brain', notesRoutes);
 app.use('/api/brain', brainRoutes);
 
 app.use('/api/brain', canRunRoutes);
+app.use('/api/brain', bypassActionsRoutes); // 旁路报警：执行机上报 + 运维视图（派发总闸 H，任务 865b502c）
 app.use('/api/brain/pipelines', contentPipelineRoutes);
 app.use('/api/brain', contentPipelineRoutes); // /api/brain/content-types
 app.use('/api/brain/publish', publishJobsRoutes);
