@@ -1,0 +1,42 @@
+{
+  "_comment": "技能工厂推进器 / 自动裁判的 workflow 配置（任务 a5f42455 / 2231ecc0，决策 cc008b7e）。按 workflows.key 取；取不到设备/agent/技能时推进器把台账行标 blocked_kind=resource，不猜。",
+  "defaults": {
+    "agent": "skill-factory",
+    "publish_hours": [9, 23],
+    "retreat_fail_threshold": 3,
+    "guard_fail_threshold": 3,
+    "visual_verify": true,
+    "outward_external": false,
+    "stage_skills": { "1": "skill-explore", "2": "skill-boundary" },
+    "anchor": { "gp_id": "factory/skill-factory-pilot", "step_id": "keep-green", "journey_id": "a1000000-0000-4000-8000-000000000001" },
+    "dev": { "repo_hint": "https://github.com/perfectuser21/cecelia", "map_scope_hint": ["factory"], "change_kind": "capability_change" }
+  },
+  "workflows": {
+    "douyin_video_publish.android": {
+      "device": { "node": "XIAN-M4-PHONE", "profile": "xiaolongxia", "serial": "ANGYVB4311010223", "ssh_host": "xian-m4" },
+      "expected_outward": 1,
+      "candidate_sources": {
+        "android-douyin-private-video@1.0.8": "Brain 任务 5f00cf51-c625-4b5c-ac53-b2a96a957058 的 result.delivery.flow_skill"
+      },
+      "acceptance": "抖音「我」页私密作品数比本次开工时核对到的数 +1，私密列表第一格为本次新视频（标题为本次自拟标题）、日期为今天；可见范围为「私密·仅自己可见」；对外动作账显示本 run「publish」恰好 1 次；锁拿/放回执证据齐全且释放后回读 free",
+      "brief": [
+        "流程：抖音·视频发布（安卓真机，私密）；树上坐标：新媒体部 · 内容生产 · 内容生产·多平台发布 · 抖音·视频发布（安卓真机）",
+        "账号：抖音当前登录号「Ai办公室」（抖音号 90915521618）；不切换账号，「我」页昵称不符即 blocked",
+        "只私密发布：可见范围必须选「私密 · 仅自己可见」，禁止公开 / 好友可见",
+        "单次点发布：整个 run 只点一次「发作品」；退出码 3 表示已点击但取证超时，不得重试；发布前任何不确定都安全停止（claimed_result=blocked）",
+        "对外动作写法：`douyin-phone-adb --profile xiaolongxia --lock-owner <run_id> tap-evidence <X> <Y> <证据ID> <WAIT> --outward publish`（或 locate-tap … --outward publish）——`--outward publish` 必须放在子命令及其参数（COMMAND）之后；第18轮（5f00cf51）把 --outward publish 放到 COMMAND 前被控制器参数入口拒绝",
+        "发布时段：北京时间 09:00–23:00；时段外不点发布，安全停止",
+        "锁：设备锁由派发器代领（owner=本 run_id），开工 lock-status 核对 owner，不要再 lock-acquire；结束必须 lock-release 并回读 free",
+        "素材：在执行机本地按 android-publish 内容安全铁律自造 8~12 秒生活化相机风格视频（禁测试/自动化/test 字样），文件名带当天日期，经 media-push 下发；标题自拟 ≤20 字生活化短句，写进交付 input",
+        "内容规矩：私密发布不受单日条数限制（决策 b3a241f6）；其余内容安全铁律照旧",
+        "超时：40 分钟"
+      ],
+      "delivery_contract": "交付写入 result.delivery，必须含：run_id、claimed_result（success|failed|blocked）、lock_released、side_effects（每个对外动作一条，reversible=false；未发布则为空数组）、readback{private_before, private_after, publish_attempts, visibility, first_title, first_date, lock_status}、acceptance、final_evidence（必须含 <run_id>-outward-ledger、<run_id>-lock-acquire、<run_id>-lock-release）、evidence_locations、fail_reason",
+      "verify_material": [
+        "材料：只读被核验执行单的 result.delivery 里的 run_id / final_evidence / 各步证据 ID / claimed_result / readback，与候选版 skill 的「成功判定」节；证据原图在节点 XIAN-M4-PHONE 的 /private/tmp/openclaw-phone/evidence/xiaolongxia/（文件名=证据ID.jpg/.xml/.json/.jsonl），用 file_fetch 亲自取回看；禁止读执行会话",
+        "可选只读复核：锁由派发器代领（owner=本核验 run_id），可经控制器 account-current / ui-evidence 只读查看当前私密作品数；禁止任何对外动作",
+        "账号基准以设备登记为准：xiaolongxia 对应 ANGYVB4311010223、抖音号 90915521618 / Ai办公室"
+      ]
+    }
+  }
+}

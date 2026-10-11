@@ -47,7 +47,13 @@ export function applyRunOutcome(runs, outcome, windowK) {
   let duplicate = false;
   if (outcome) {
     duplicate = next.some((r) => r.run_id === outcome.runId);
-    if (!duplicate) next.push({ run_id: outcome.runId, pass: outcome.pass, ...(outcome.degraded ? { degraded: true } : {}), at: outcome.at });
+    if (!duplicate) next.push({
+      run_id: outcome.runId, pass: outcome.pass,
+      ...(outcome.degraded ? { degraded: true } : {}),
+      ...(outcome.safeStop ? { safe_stop: true } : {}),
+      ...(outcome.sourceTaskId ? { source_task_id: outcome.sourceTaskId } : {}),
+      at: outcome.at,
+    });
   }
   next = next.slice(-windowK);
   return { runs: duplicate ? runs : next, duplicate, recentPass: next.filter((r) => r.pass === true).length, recentTotal: next.length };
@@ -119,7 +125,13 @@ export function validateRun(body = {}) {
   if (typeof body.run_id !== 'string' || !body.run_id.trim()) throw bad('run_id is required');
   if (typeof body.pass !== 'boolean') throw bad('pass must be a boolean');
   if (body.degraded !== undefined && typeof body.degraded !== 'boolean') throw bad('degraded must be a boolean');
-  return { runId: body.run_id.trim(), pass: body.pass, degraded: body.degraded === true };
+  if (body.safe_stop !== undefined && typeof body.safe_stop !== 'boolean') throw bad('safe_stop must be a boolean');
+  if (body.source_task_id !== undefined && body.source_task_id !== null && !isUuid(body.source_task_id)) throw bad('source_task_id must be a uuid');
+  return {
+    runId: body.run_id.trim(), pass: body.pass, degraded: body.degraded === true,
+    ...(body.safe_stop === true ? { safeStop: true } : {}),
+    ...(body.source_task_id ? { sourceTaskId: body.source_task_id } : {}),
+  };
 }
 
 async function withTx(db, fn) {
@@ -238,5 +250,25 @@ export async function recordRun(db, id, body) {
         [id, JSON.stringify(w.runs), w.recentPass, w.recentTotal, v.degraded ? 1 : 0]);
     }
     return { ledger: await readLedger(client, id), duplicate: w.duplicate };
+  });
+}
+
+/**
+ * 滑窗清零（推进器：滑窗里出现 fail 时清零重来）。阶段不变，但落一条 from=to 的阶段事件留痕。
+ * expectedStage 防并发：阶段已被别人改过则 409，不清。
+ */
+export async function resetLedgerWindow(db, id, { reason, actor = 'rule', actorName = null, expectedStage = null, evidenceRunIds = [] } = {}) {
+  if (typeof reason !== 'string' || !reason.trim()) throw bad('reason is required');
+  if (!ACTORS.includes(actor)) throw bad(`actor must be one of ${ACTORS.join('|')}`);
+  return withTx(db, async (client) => {
+    const row = await lockLedger(client, id);
+    if (expectedStage !== null && expectedStage !== row.stage)
+      throw httpError(409, 'STAGE_CONFLICT', `expected_stage=${expectedStage}，当前阶段=${row.stage}`);
+    await client.query(
+      `UPDATE factory_ledger SET recent_runs = '[]'::jsonb, recent_pass = 0, recent_total = 0, updated_at = now() WHERE id = $1`, [id]);
+    const event = await insertEvent(client, {
+      ledgerId: id, fromStage: row.stage, toStage: row.stage, reason: reason.trim(), evidenceRunIds, actor, actorName,
+    });
+    return { ledger: await readLedger(client, id), event };
   });
 }
