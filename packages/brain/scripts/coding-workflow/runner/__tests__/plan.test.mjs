@@ -33,6 +33,16 @@ describe('pickCandidates', () => {
     expect(pickCandidates(tasks).map((x) => x.id)).toEqual(['b', 'g', 'a']);
   });
 
+  it('独立类型 coding_workflow（派发总闸 F，任务 0a70684f）：类型本身即开关，不靠 headed_manual', () => {
+    expect(isSwitched({ task_type: 'coding_workflow', payload: { coding_workflow: true } })).toBe(true);
+    expect(isSwitched({ task_type: 'coding_workflow', payload: {} })).toBe(true);
+    const picked = pickCandidates([
+      { id: 'n1', created_at: '2026-10-08T00:00:00Z', task_type: 'coding_workflow', claimed_by: null, payload: { repo: 'cecelia' } },
+      { id: 'n2', created_at: '2026-10-08T00:00:00Z', task_type: 'coding_workflow', claimed_by: null, payload: { repo: 'zenithjoy' } },
+    ]);
+    expect(picked.map((x) => x.id)).toEqual(['n1']);
+  });
+
   it('isSwitched 只看开关三件套', () => {
     expect(isSwitched({ task_type: 'data', payload: SW })).toBe(true);
     expect(isSwitched({ task_type: 'data', payload: { coding_workflow: true } })).toBe(false);

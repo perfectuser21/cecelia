@@ -78,7 +78,9 @@ describe('与 run-verify 合并', () => {
     expect(spec.description).toContain('使用 skill：run-verify');
     expect(spec.description).toContain(t.id);
     expect(spec.description).toContain('sf3-aaaaaaaa-20261011-r1');
-    expect(spec.payload.headed_manual).toBe('true');
+    // 派发总闸 F（任务 0a70684f）：核验单与执行单同为 skill_factory_run，tick 按类型排除
+    expect(spec.task_type).toBe('skill_factory_run');
+    expect(spec.payload.headed_manual).toBeUndefined();
     expect(spec.source_id).toBe(`factory-judge:verify:${t.id}`);
   });
 });

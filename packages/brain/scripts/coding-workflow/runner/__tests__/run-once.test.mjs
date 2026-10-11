@@ -69,6 +69,19 @@ describe('coding workflow runner run-once', () => {
     expect(fs.existsSync(path.join(sb.lockDir, 'coding-workflow-runner.lock'))).toBe(false);
   }, 30000);
 
+  it('独立类型 coding_workflow（无 headed_manual）同样被列出并认领（派发总闸 F，任务 0a70684f）', async () => {
+    brain = await startFakeBrain({
+      tasks: [codingTask(T1, { task_type: 'coding_workflow', payload: { coding_workflow: true, repo: 'cecelia' } })],
+    });
+    const r = await runOnceProcess(runnerEnv(sb, brain.url));
+    expect(r.exitCode, r.stderr).toBe(0);
+    const types = brain.calls.filter((c) => c.method === 'GET' && new URLSearchParams(c.query).get('status') === 'queued')
+      .map((c) => new URLSearchParams(c.query).get('task_type'));
+    expect(types).toEqual(expect.arrayContaining(['data', 'coding_workflow']));
+    const claims = brain.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/claim'));
+    expect(claims.map((c) => c.path)).toEqual([`/api/brain/tasks/${T1}/claim`]);
+  }, 30000);
+
   it('已被认领 / 非 cecelia 仓的任务不参与；多条候选取最早创建的', async () => {
     brain = await startFakeBrain({
       tasks: [
@@ -107,7 +120,8 @@ describe('coding workflow runner run-once', () => {
     const r = await runOnceProcess(runnerEnv(sb, brain.url, { CODING_WF_LIST_LIMIT: '2' }));
     expect(r.exitCode, r.stderr).toBe(0);
     const limits = brain.calls.filter((c) => c.method === 'GET' && c.path === '/api/brain/tasks'
-      && new URLSearchParams(c.query).get('status') === 'queued').map((c) => new URLSearchParams(c.query).get('limit'));
+      && new URLSearchParams(c.query).get('status') === 'queued'
+      && new URLSearchParams(c.query).get('task_type') === 'data').map((c) => new URLSearchParams(c.query).get('limit'));
     expect(limits).toEqual(['2', '4']);
     expect(brain.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/claim')).map((c) => c.path)).toEqual([`/api/brain/tasks/${T1}/claim`]);
   }, 30000);
