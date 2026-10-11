@@ -84,7 +84,7 @@ export async function escalate(ctx, pr, s, taskId, detail) {
 export function isRecordFile(file, branch) {
   if (/^changes\/[^/]+\.md$/.test(file)) return true;
   const id8 = branch.slice(-8);
-  return new RegExp(`^sprints/[^/]+-cw-${id8}/(05-qa-report-r\\d+\\.md|06-judge-r\\d+\\.md|qa-r\\d+/.+)$`).test(file);
+  return new RegExp(`^sprints/[^/]+-cw-${id8}/(05-qa-report-r\\d+\\.md|06-judge-r\\d+\\.md|07-commander-r\\d+\\.md|qa-r\\d+/.+)$`).test(file);
 }
 
 /**
@@ -265,9 +265,9 @@ async function approve(s, entry, worktree) {
   s.approved = { head: await headOf(worktree), round: entry.round, at: new Date().toISOString() };
 }
 
-/** 最近 3 轮失败数不降 → 不收敛。 */
+/** 最近 3 轮失败数不降 → 不收敛（coding commander 解除 qa_stalled 后从 stall_floor 之后重新计）。 */
 function stalled(s) {
-  const last = s.rounds.slice(-STALL_ROUNDS);
+  const last = s.rounds.slice(s.stall_floor ?? 0).slice(-STALL_ROUNDS);
   return last.length === STALL_ROUNDS && last.every((r, i) => i === 0 || r.fails >= last[i - 1].fails) ? last.map((r) => r.fails) : null;
 }
 

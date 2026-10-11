@@ -41,8 +41,10 @@ describe('迁移 542：coding workflow 登记为流程 + 12 个 Activity', () =>
     const [wf] = await all('SELECT id, capability_id, key, channel, form, status, source_repo FROM workflows WHERE key = $1', ['coding_workflow']);
     expect(wf).toMatchObject({ id: CODING_WORKFLOW_ID, capability_id: F1, channel: 'internal', form: 'pipeline', status: 'active', source_repo: null });
     const refs = await all('SELECT r.slot_key, r.activity_id FROM workflow_activity_refs r WHERE r.workflow_id = $1 AND r.active ORDER BY r.sequence_no', [CODING_WORKFLOW_ID]);
-    expect(refs.map((r) => r.slot_key)).toEqual(Object.keys(ACTIVITY_IDS));
-    expect(refs.map((r) => r.activity_id)).toEqual(Object.values(ACTIVITY_IDS));
+    // 542 登记前 12 个；commander 由迁移 547 追加（见 migration-547 测试）
+    const first12 = Object.entries(ACTIVITY_IDS).filter(([k]) => k !== 'commander');
+    expect(refs.map((r) => r.slot_key)).toEqual(first12.map(([k]) => k));
+    expect(refs.map((r) => r.activity_id)).toEqual(first12.map(([, id]) => id));
   });
 
   it('runner 上报的 span（activity_id = 登记的 Activity）能写进 spans，runs 触发器建出总记录', async () => {

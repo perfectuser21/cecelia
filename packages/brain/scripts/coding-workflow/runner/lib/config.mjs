@@ -1,10 +1,23 @@
 // runner 配置：所有外部可替换点都从环境变量注入（测试用沙箱路径与假件覆盖）。
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_PREVIEW_API } from '../../lib/preview.mjs';
 import { resolveJudgeConfig } from '../../lib/judge.mjs';
 
 const DEFAULT_KILL_GRACE_MS = 30000;
+
+/** Bark 推送地址：CODING_WF_BARK_URL 优先，否则 BARK_TOKEN 环境变量或 ~/.credentials/bark.env（运行时读，不进代码/plist）。 */
+function resolveBarkUrl(env, home) {
+  if (env.CODING_WF_BARK_URL) return env.CODING_WF_BARK_URL;
+  let token = env.BARK_TOKEN || '';
+  if (!token) {
+    try {
+      token = /^\s*(?:export\s+)?BARK_TOKEN\s*=\s*['"]?([^'"\s]+)/m.exec(fs.readFileSync(path.join(home, '.credentials/bark.env'), 'utf8'))?.[1] ?? '';
+    } catch { /* 没配置就不推送 */ }
+  }
+  return token ? `https://api.day.app/${token}` : null;
+}
 
 /** 正整数环境变量；缺失或非法返回 null。 */
 function positiveInt(value) {
@@ -53,6 +66,11 @@ export function loadConfig(env = process.env) {
     judgeConn: resolveJudgeConfig(env),
     judgeTimeoutMs: positiveInt(env.CODING_WF_JUDGE_TIMEOUT_MS) ?? 10 * 60 * 1000,
     qaMaxJudgeBad: positiveInt(env.CODING_WF_QA_MAX_JUDGE_BAD) ?? 3,
+    // coding commander（决策 c167d6e3）：升级后起 Opus 会话裁决，每 PR 至多 commanderMax 次；上交主理人走 Bark
+    commander: env.CODING_WF_COMMANDER !== '0',
+    commanderMax: positiveInt(env.CODING_WF_COMMANDER_MAX) ?? 3,
+    commanderTimeoutMs: positiveInt(env.CODING_WF_COMMANDER_TIMEOUT_MS) ?? 40 * 60 * 1000,
+    barkUrl: resolveBarkUrl(env, home),
     // null = 按契约 budget 计算
     runTimeoutMs: positiveInt(env.CODING_WF_RUN_TIMEOUT_MS),
     killGraceMs: positiveInt(env.CODING_WF_KILL_GRACE_MS) ?? DEFAULT_KILL_GRACE_MS,
