@@ -51,6 +51,7 @@ describe('迁移 547：coding commander Activity', () => {
     await client.query(DOWN);
     expect(await all('SELECT 1 FROM activities WHERE id = $1', [ACTIVITY_IDS.commander])).toEqual([]);
     const refs = await all('SELECT slot_key FROM workflow_activity_refs WHERE workflow_id = $1 AND active', [CODING_WORKFLOW_ID]);
+    expect(refs.map((r) => r.slot_key)).not.toContain('commander');
     expect(refs).toHaveLength(12);
   });
 });
