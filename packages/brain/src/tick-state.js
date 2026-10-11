@@ -34,6 +34,7 @@ export const tickState = {
   lastLineStrategistDispatchTime: 0, // line-strategist 终态派发扫描
   lastHarnessWatchdogTime: 0,   // W3 — harness initiative deadline_at watchdog
   lastDriftSentinelTime: 0,     // G2 — deploy drift sentinel（每 30min）
+  lastFactoryCycleTime: 0,      // 技能工厂裁判+推进器（每 5min，任务 a5f42455 / 2231ecc0）
 
   // === 5 个 loop / consciousness 控制态 ===
   loopTimer: null,              // setInterval 主循环句柄
@@ -66,6 +67,7 @@ export function resetTickStateForTests() {
   tickState.lastLineStrategistDispatchTime = 0;
   tickState.lastHarnessWatchdogTime = 0;
   tickState.lastDriftSentinelTime = 0;
+  tickState.lastFactoryCycleTime = 0;
   tickState.loopTimer = null;
   tickState.recoveryTimer = null;
   tickState.tickRunning = false;

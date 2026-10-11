@@ -434,3 +434,4 @@ cw-bd2b1556-qa-smoke.sh
 task-runs-projection-smoke.sh
 runs-read-smoke.sh
 factory-ledger-smoke.sh
+factory-pusher-smoke.sh

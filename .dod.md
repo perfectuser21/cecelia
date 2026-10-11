@@ -1,3 +1,12 @@
+# 技能工厂推进器 + 自动裁判（任务 a5f42455 / 2231ecc0）
+
+- [x] [BEHAVIOR] factorypusher 推进器规则（决策 cc008b7e / 2bb08a99）：1/2/3 跑验类无在途且不卡、发布时段内建 factory_dispatch 执行单（1=skill-explore / 2=skill-boundary / 3=候选版本），滑窗满且全过 rule 推进，滑窗出现 fail 清零重来，stage 3 连续失败（safe_stop 不计）达阈值（默认 3）退回 2；人工关口/安全红线不动；同行最多 1 张在途；时段外不建单；取不到配置标 resource 卡点不猜；4/6 建 /dev 工单（建单五坑）完成后推进；5 建 Commander 工单、对外首次上生产标 human_gate；7 守护尾部连续 fail 达阈值退回 6 并告警；开关 FACTORY_PUSHER_ENABLED / brain_config factory_pusher_enabled；tick 每 5 分钟节流调用。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/factory-pusher.test.js src/lib/__tests__/factory-cycle.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] factoryjudge 自动裁判：执行单终态带 delivery 时代码裁判（claimed_result / lock_released / 对外动作次数 / 读回锁 / 自带验收项），pass 且需看图自动建 run-verify 核验单（派发器契约可解析、正文含被核验任务 id 与 run_id），与 verification.verdict 合并两者都 pass 才 pass；记进台账滑窗同 run_id 去重；发布前安全停止记 fail 标 safe_stop；核验无结论不计入。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/factory-judge.test.js src/lib/__tests__/factory-ledger.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] factorypushersmoke 真库真代码 smoke：真 createTask 建执行单、在途不重复、裁判建核验单、核验 pass 入窗、2/2 全过 rule 推进 3→4 留痕、同 run_id 去重、开关关闭整轮跳过。
+  Test: manual:bash packages/brain/scripts/smoke/factory-pusher-smoke.sh
+
 # 技能工厂台账（迁移 548，任务 1c589b13）
 
 - [x] [BEHAVIOR] factoryledger 技能工厂台账（决策 cc008b7e / 2bb08a99）：迁移 548 新建 factory_ledger（workflow_id 唯一、stage 1..7、validation_mode 两档、blocked_kind 四种、滑窗计数约束）与只追加的 factory_stage_events；转换规则 human 任意跳退、rule/agent 只许相邻推进或登记退回（3→2/5→3/6→5/7→6），人工关口/安全红线下 rule/agent 409、跳级 400、原地 400；滑窗按 window_k 截尾、同 run_id 窗内去重、降级累计；接口参数错 400 不进库、重复进厂 409、写接口挂内部鉴权；连接池事务成功 COMMIT 失败 ROLLBACK 且归还连接。
