@@ -27,6 +27,8 @@
  *   - 不绑 0.0.0.0。只监听内网地址，CI 经 Tailscale 进来。
  *   - 缺 DEPLOY_TOKEN 直接拒绝启动，而不是"先跑起来再说"——没有鉴权的执行入口
  *     等于在内网裸奔，宁可起不来也不能默默敞着。
+ *   - 不把令牌放进 launchd plist（任务 6f937566）：令牌来自环境变量，或凭据文件
+ *     DEPLOY_TOKEN_FILE（默认 ~/.credentials/cecelia-deploy-token.env，与 runner 同一个文件）。
  */
 import express from 'express';
 import { execFile } from 'node:child_process';
@@ -34,6 +36,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import previewRoutes from '../packages/brain/src/routes/preview.js';
 import { createCacheRouter } from './preview-cache/router.mjs';
+import { loadDeployToken, describeTokenSource, resolveReleaseSha } from './preview-agent/deploy-token.mjs';
 
 // 端口选 5241 而非邻近号段：5221 是 socat（转发 us-vps），5231 已被 fleet-node-health
 // 占用（2026-09-17 实测返回 {"error":"not_found"}，且 lsof 在普通权限下看不到它）。
@@ -42,12 +45,18 @@ const PORT = Number(process.env.PREVIEW_AGENT_PORT || 5241);
 // 默认只听回环；生产由 launchd 传 Tailscale 地址进来。绝不默认 0.0.0.0。
 const HOST = process.env.PREVIEW_AGENT_HOST || '127.0.0.1';
 
-if (!process.env.DEPLOY_TOKEN) {
-  console.error('[preview-agent] 缺 DEPLOY_TOKEN —— 拒绝启动。');
+const deployToken = loadDeployToken();
+if (!deployToken.token) {
+  console.error(`[preview-agent] 缺 DEPLOY_TOKEN（${describeTokenSource(deployToken)}）—— 拒绝启动。`);
   console.error('  预览接口能起 Brain 实例、克隆数据库，没有鉴权就是内网裸奔。');
-  console.error('  修法：launchd plist 里注入 DEPLOY_TOKEN（与 GitHub secret 同值）。');
+  console.error('  修法：凭据文件（DEPLOY_TOKEN_FILE，默认 ~/.credentials/cecelia-deploy-token.env）写一行');
+  console.error('  DEPLOY_TOKEN=<与 GitHub secret 同值>，权限 600；不要再写进 plist。');
   process.exit(1);
 }
+// routes/preview.js 的 checkDeployToken 在每次请求时读 process.env.DEPLOY_TOKEN（缺失=放行），
+// 所以必须在开始监听前把文件里的令牌放进本进程环境——否则等于关了鉴权。
+process.env.DEPLOY_TOKEN = deployToken.token;
+console.log(`[preview-agent] 部署令牌来源：${describeTokenSource(deployToken)}`);
 
 // ── 磁盘采样：代理自己定时跑，不外包给 cron ──────────────────────────────
 // capacity-gate 要求样本不超过 SAMPLE_STALE_SECONDS(180s)，否则判 sample_stale 拒绝准入。
@@ -56,6 +65,8 @@ if (!process.env.DEPLOY_TOKEN) {
 // 放进代理而不是另装一个 launchd：能不能起预览本就是代理的职责，一个服务负责到底，
 // 少一个会悄悄死掉又没人发现的独立组件。
 const AGENT_DIR = dirname(fileURLToPath(import.meta.url));
+// 发布后验活用：preview-host-release.sh 轮询 health，git_sha 等于目标才算切换成功
+const GIT_SHA = resolveReleaseSha({ root: join(AGENT_DIR, '..') });
 const SAMPLER = join(AGENT_DIR, 'host-disk-sampler.sh');
 const SAMPLE_INTERVAL_MS = 60_000; // 远小于 180s 过期线，留足重试余量
 
@@ -82,6 +93,7 @@ app.get('/api/brain/health', (_req, res) => {
     role: 'preview-agent',
     host: 'mmv',
     uptime_seconds: Math.floor((Date.now() - startedAt) / 1000),
+    git_sha: GIT_SHA,
   });
 });
 
