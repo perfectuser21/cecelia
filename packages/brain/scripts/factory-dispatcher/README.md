@@ -30,7 +30,7 @@ us-vps 零执行铁律：linux / 容器内启动自检直接拒绝运行（退�
 ## 流程
 
 1. 上海时间 09:00–23:00 之外不认领。
-2. 筛 queued 且 `factory_dispatch=true` → `POST /tasks/:id/claim`（409 跳过）→ `PATCH in_progress`。
+2. 筛 queued 且 `factory_dispatch=true` → `POST /tasks/:id/claim`（executor_kind=openclaw-agent；409 跳过）→ `PATCH in_progress`。
 3. 等锁：`ssh <host> 'export PATH=$HOME/.local/bin:$PATH; douyin-phone-adb --profile <p> lock-status'`；
    free 时 `lock-acquire <run_id>` 并校验回执 `lock=acquired owner=<run_id>`；他人占用（含 stale）只等不接管，
    每轮 PATCH in_progress；等超时（默认 30 分钟）落 failed，不释放任何锁。

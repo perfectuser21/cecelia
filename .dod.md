@@ -1,3 +1,8 @@
+# 技能工厂派发器 claim executor_kind 修正（任务 a5f42455 上产实测）
+
+- [x] [BEHAVIOR] factorydispatcherek 派发器 claim 请求体 executor_kind=openclaw-agent（tasks_executor_kind_check 允许值）；原 factory-dispatcher 值让 Brain 回 500，执行单永远认领不了。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run scripts/factory-dispatcher --maxWorkers=1 --minWorkers=1"
+
 # 技能工厂一轮改挂 scheduler-jobs（任务 a5f42455 回归修复）
 
 - [x] [BEHAVIOR] factorycyclejob runFactoryCycle 登记为 scheduler-jobs 的 factory-cycle job（executeTick 自 Wave 2 起不被调用，原挂点是死路径），5 分钟自 gate（调度器 60s 全调），force 可越过；tick-runner 不再挂，避免双跑。
