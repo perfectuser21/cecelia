@@ -362,7 +362,10 @@ export async function pollOnce(deps, userOpts = {}) {
 }
 
 // ── 真实依赖 ─────────────────────────────────────────────────────────────
-function makeBrainClient(baseUrl) {
+/** claim 用的 executor_kind：必须在 tasks_executor_kind_check 允许值里（派给 OpenClaw skill-factory agent 执行 = openclaw-agent）。 */
+export const CLAIM_EXECUTOR_KIND = 'openclaw-agent';
+
+export function makeBrainClient(baseUrl) {
   const call = async (method, path, body) => {
     const res = await fetch(`${baseUrl}${path}`, {
       method,
@@ -382,7 +385,7 @@ function makeBrainClient(baseUrl) {
   return {
     listQueued: async () => must(await call('GET', '/api/brain/tasks?status=queued&limit=500'), 'list queued'),
     getTask: async (id) => must(await call('GET', `/api/brain/tasks/${id}`), 'get task'),
-    claim: async (id, claimer) => call('POST', `/api/brain/tasks/${id}/claim`, { claimer, executor_kind: 'factory-dispatcher' }),
+    claim: async (id, claimer) => call('POST', `/api/brain/tasks/${id}/claim`, { claimer, executor_kind: CLAIM_EXECUTOR_KIND }),
     patch: async (id, body) => must(await call('PATCH', `/api/brain/tasks/${id}`, body), 'patch task'),
   };
 }

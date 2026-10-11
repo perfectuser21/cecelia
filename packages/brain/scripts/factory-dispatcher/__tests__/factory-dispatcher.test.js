@@ -429,3 +429,19 @@ describe('派发流程', () => {
     expect(lastFailed(w).result.fail_reason).toMatch(/invalid_contract/);
   });
 });
+
+// 回归（上产实测 2026-10-11）：claim 带 executor_kind='factory-dispatcher' 违反 tasks_executor_kind_check，Brain 回 500，
+// 推进器建出的执行单永远认领不了。必须用已登记的 openclaw-agent（派给 OpenClaw skill-factory agent 执行）。
+describe('Brain 客户端 claim 的 executor_kind', () => {
+  it('claim 请求体 executor_kind=openclaw-agent（tasks_executor_kind_check 允许值）', async () => {
+    const mod = await import('../factory-dispatcher.js');
+    const calls = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => { calls.push({ url, init }); return { status: 200, text: async () => '{}' }; };
+    try {
+      await mod.makeBrainClient('http://brain').claim('t1', 'factory-dispatcher@mmv');
+    } finally { globalThis.fetch = realFetch; }
+    expect(calls[0].url).toBe('http://brain/api/brain/tasks/t1/claim');
+    expect(JSON.parse(calls[0].init.body)).toEqual({ claimer: 'factory-dispatcher@mmv', executor_kind: 'openclaw-agent' });
+  });
+});
