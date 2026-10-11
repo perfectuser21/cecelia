@@ -118,3 +118,22 @@ it('真实SQL拒绝终态时不能以dispatch正常返回冒成功：任务仍qu
  try{const r=await dispatchNextTask([]);expect(r.actions.some(a=>a.task_id===id)).toBe(false);expect((await readTask(id)).status).toBe('queued');expect((await readTask(id)).completed_at).toBeNull();}
  finally{await pool.query('DROP TRIGGER reject_retirement ON tasks; DROP FUNCTION reject_retirement()');}
 });
+// harness_initiative 无头 kernel 入口退役：存量 queued 无头单（如 relay-baton 子单 37ac8cd1/edff1622 形状）
+// 在 dispatcher drain 段被标 failed + error_message=retired_harness_kernel，绝不进 kernel 派发；
+// 有头（headed_manual 字符串/布尔）与已认领的账本行原样不动。
+it('存量 queued 无头 harness_initiative → drain 标 failed(retired_harness_kernel)；有头/已认领不动，零 spawn',async()=>{
+ const preserve=await neighbors();
+ const ins=async(payload,claimed=null)=>{const id=randomUUID();await pool.query("INSERT INTO tasks(id,title,task_type,status,priority,payload,claimed_by,trigger_source) VALUES($1,$2,'harness_initiative','queued','P1',$3,$4,'child')",[id,`[smoke] hi-${id}`,payload,claimed]);return id;};
+ const kernel={orchestrator:'skill-relay',harness_runtime:'kernel-v1',repo:'cecelia'};
+ const headless=await ins(kernel),headedStr=await ins({...kernel,headed_manual:'true'}),headedBool=await ins({...kernel,headed_manual:true}),claimed=await ins(kernel,'interactive-dev-skill');
+ const snap=async id=>(await pool.query('SELECT to_jsonb(t) AS row FROM tasks t WHERE id=$1',[id])).rows[0].row;
+ const before={headedStr:await snap(headedStr),headedBool:await snap(headedBool),claimed:await snap(claimed)};
+ const r=await dispatchNextTask([]);
+ expect(r.actions).toContainEqual({action:'retire-task',task_id:headless,task_type:'harness_initiative'});
+ expect(r.dispatched).toBeFalsy();
+ const row=(await pool.query('SELECT status,error_message,payload,completed_at FROM tasks WHERE id=$1',[headless])).rows[0];
+ expect(row.status).toBe('failed');expect(row.error_message).toBe('retired_harness_kernel');
+ expect(row.payload.failure_class).toBe('pipeline_terminal_failure');expect(row.completed_at).toBeInstanceOf(Date);
+ expect(await snap(headedStr)).toEqual(before.headedStr);expect(await snap(headedBool)).toEqual(before.headedBool);expect(await snap(claimed)).toEqual(before.claimed);
+ await preserve();
+});

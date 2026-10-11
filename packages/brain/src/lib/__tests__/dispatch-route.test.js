@@ -18,7 +18,7 @@ import {
   INTERNAL_HANDLER_TASK_TYPES,
   NO_EXECUTOR_FOR_TASK_TYPE,
 } from '../dispatch-route.js';
-import { TASK_TYPE_REGISTRY, TICK_DISPATCH_EXCLUDED, getTaskType } from '../task-type-registry.js';
+import { TASK_TYPE_REGISTRY, TICK_DISPATCH_EXCLUDED, HEADLESS_KERNEL_RETIRED_TASK_TYPES, getTaskType } from '../task-type-registry.js';
 
 const route = (task_type, payload = {}, opts) => resolveDispatchRoute({ task_type, payload }, opts);
 
@@ -46,7 +46,7 @@ describe('resolveDispatchRoute：按 executor 分支顺序判真实路由', () =
   });
 
   it('有执行者的专用路由：kernel / openclaw / script / 审查池 / 内联 handler', () => {
-    expect(route('harness_initiative')).toMatchObject({ route: 'kernel', available: true });
+    expect(route('golden_path_proposal')).toMatchObject({ route: 'kernel', available: true });
     expect(route('qiumi_task')).toMatchObject({ route: 'openclaw-agent', available: true });
     expect(route('script_run')).toMatchObject({ route: 'script', available: true });
     expect(route('code_review')).toMatchObject({ route: 'codex-review', available: true });
@@ -76,6 +76,43 @@ describe('resolveDispatchRoute：按 executor 分支顺序判真实路由', () =
 
   it('未登记类型不抢 DB CHECK 的错误语义', () => {
     expect(route('no_such_type').available).toBe(true);
+  });
+});
+
+describe('harness_initiative 无头 kernel 入口退役（kernel 自 09-30 起派发全败 kernel_authority_not_created）', () => {
+  const kernelPayload = { orchestrator: 'skill-relay', harness_runtime: 'kernel-v1' };
+
+  it('无头 harness_initiative（含 relay-baton 子单形状）→ retired-harness-kernel 无执行者', () => {
+    expect(route('harness_initiative', kernelPayload)).toMatchObject({ route: 'retired-harness-kernel', available: false });
+    expect(route('harness_initiative')).toMatchObject({ route: 'retired-harness-kernel', available: false });
+    expect(route('harness_initiative').reason).toMatch(/coding_workflow/);
+  });
+
+  it('有头（headed_manual 字符串 \'true\' 或布尔 true）不受影响 → headed', () => {
+    expect(route('harness_initiative', { ...kernelPayload, headed_manual: 'true' })).toMatchObject({ route: 'headed', available: true });
+    expect(route('harness_initiative', { ...kernelPayload, headed_manual: true })).toMatchObject({ route: 'headed', available: true });
+  });
+
+  it('动态配置 / 显式 override 不能把无头 harness_initiative 绕回其它执行面', () => {
+    expect(route('harness_initiative', {}, { dynamic: { location: 'xian' } })).toMatchObject({ route: 'retired-harness-kernel', available: false });
+    expect(route('harness_initiative', { executor: 'codex' })).toMatchObject({ route: 'retired-harness-kernel', available: false });
+  });
+
+  it('建单闸：queued 无头拒（no_executor_for_task_type）；有头 / 非 queued 账本行放行', () => {
+    let err;
+    try { assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: kernelPayload }); } catch (e) { err = e; }
+    expect(err?.code).toBe(NO_EXECUTOR_FOR_TASK_TYPE);
+    expect(err.route).toBe('retired-harness-kernel');
+    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: { headed_manual: 'true' } })).not.toThrow();
+    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: { headed_manual: true } })).not.toThrow();
+    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'in_progress', payload: {} })).not.toThrow();
+  });
+
+  it('注册表：harness_initiative surface=none 且打 headless_kernel_retired 标签；golden_path_proposal 不动', () => {
+    expect(getTaskType('harness_initiative').surface).toBe('none');
+    expect(HEADLESS_KERNEL_RETIRED_TASK_TYPES).toEqual(['harness_initiative']);
+    expect(getTaskType('golden_path_proposal').surface).toBe('kernel');
+    expect(SURFACE_FOR_ROUTE['retired-harness-kernel']).toBe('none');
   });
 });
 
