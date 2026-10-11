@@ -350,11 +350,7 @@
       "path": "packages/brain/src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js",
       "role": "verification"
     },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": "changes/cp-10120425-retire-headless-kernel.md",
-      "role": "release"
-    },
+    
     {
       "owner_path": "packages/brain/src/lib/dispatch-route.js",
       "path": "packages/brain/src/lib/__tests__/dispatch-route.test.js",

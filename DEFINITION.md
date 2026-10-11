@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.424.0
+**Brain 版本**: 1.424.5
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -78,6 +78,39 @@ summary: 版本、实现影响、地图及发布证据测试改用精确scratch�
 
 - 官方 ZenithJoy 试点映射将真实内容生产价值流与安卓多平台发布能力纳入固定源配置；只从完整旧集合升级，保旧身份、父级、来源与激活 CAS。
 - 当前 Workflow 定义使用唯一当前同来源清单，避免同一 SHA 旧清单造成歧义；非当前历史多清单仍明确拒绝。
+
+## Brain 1.424.5 — coding workflow 回归 smoke 生成器识别「预览地址先赋给变量」写法
+
+- `lib/qa-smoke.mjs` 新增 `targetsPreviewApi` / `previewApiSkipReason` / `selectQaSmokeItems`：收字面量 `<预览地址>/api/`，也收 `B=<预览地址>; curl "$B/api/…"`（`export B='…'`、`${B}` 同样认）
+- 剔除并写明原因：`browser`（开浏览器）、`production`（复用 qa-report 导出的 `PRODUCTION_TARGET_RE` / `PRODUCTION_ASSIGN_RE`）、`other_port`（打本机其他端口）、`local_path`（依赖 /Users、/tmp、cd / 等本机路径）、`not_preview`
+- `buildQaSmoke` 返回值加 `skipped: [{id, reason}]`；runner QA 门的 `smoke_note` 追加「剔除 T-n(原因)」
+- 运行时口径：runner 每 tick 自更新到 origin/main，合并后下一轮 QA 通过的 PR 即按新口径固化（未含预跑与 smoke_missing 升级，另见 C2b）
+
+## Brain 1.424.4 — 同版本号不同 SHA 重建时保留旧镜像 tag（修旧镜像丢 tag 被 prune、recovered 结算无据）
+
+任务 B4（根因单 e2fc7076 / d1ec834d，事故 a80485b3，方案 A 已定）。auto-version bump 前的合并提交与上一次 bump 提交版本号相同（09167e2 与 86b5389 同为 1.417.0），`brain-build.sh` 无条件把 `cecelia-brain:$1.424.4` 与 `latest` 打到新镜像上，旧镜像丢光 tag：容器一换走就成 dangling 被构建末尾 prune 删掉；部署中途死亡时只能人工把 tag 挪回旧镜像才能结算 recovered（决策 a9add058）。
+
+- `scripts/brain-build.sh`：构建前检测 `cecelia-brain:$1.424.4` 已指向 GIT_SHA 不同的镜像时，旧镜像补 `cecelia-brain:prev-$1.424.4-${oldsha12}` 保活，新镜像额外打 `cecelia-brain:$1.424.4-${sha12}`；同 SHA 重建、无旧镜像、换新版本时行为不变。构建后收敛：被顶替的镜像摘掉 `$1.424.4-${sha12}` 别名，只留一个 tag。
+- `scripts/brain-image-retention/policy.mjs`：janitor 候选除单一版本 tag 外，也认单一 `prev-$1.424.4-${sha12}` tag，保活镜像过回滚保护期后照常按容量回收（同仓库多 tag 镜像 docker 拒绝按 id 删除，所以必须收敛成单 tag）。
+
+## Brain 1.424.3 — coding runner 主日志降噪：会话输出只落按 PR 会话文件
+
+- runner 进程内的 claude 会话（ci-fix / qa-fix / commander）输出边跑边写 `<logDir>/<kind>-<pr>-<后缀>.log`，不再转写进主日志；主日志只留一行「会话 <tag> PR #<pr> 结束：exit/轮数/时长/花费/结论摘录 → 会话文件」
+- runner.sh 自更新日志只在 HEAD 变了时打；空闲「没有可新跑的开关任务」默认每小时最多一行（`CODING_WF_IDLE_LOG_INTERVAL_MS`，0 = 每轮都打）
+- activity（spec/build/verify/evaluate）不给 transcriptPath，claude 输出照旧进 stderr → 执行器重定向的 `<task>.log`，行为不变
+
+## Brain 1.424.2 — 关闭 harness_initiative 无头 kernel 派发入口
+
+- 无头 kernel 自 09-30 起派发全败（30 天 372 次 / 112 单 kernel_authority_not_created，最后一次成功派发 09-30）。dispatch-route 对无头 harness_initiative 判 retired-harness-kernel（注册表 surface=none，新标签 headless_kernel_retired），dispatcher drain 段把 queued、未认领、非有头的 harness_initiative 终态 failed（error_message=retired_harness_kernel），不再进 kernel 派发。有头账本行（headed_manual 字符串或布尔）不受影响；golden_path_proposal 不动；建单入口本步不收紧（编码建单方改投 coding_workflow 之后再收）。任务 dacd75f3。
+
+## Brain 1.424.1 — 部署台账孤儿 pending 带外结算为 recovered（修部署进程被 SIGKILL 后 DEPLOYMENT_PENDING 永久卡死）
+
+任务 B3（根因单 e2fc7076 / d1ec834d，事故 a80485b3）。部署进程跑在它要替换的 Brain 容器里，容器重启时被 SIGKILL，`trap EXIT` 不执行，pending 留在 ledger；原 reconcile 只会结算 success，容器仍是旧镜像时必然核验失败，之后每次部署都撞 DEPLOYMENT_PENDING。
+
+- `scripts/brain-image-retention/ledger.mjs`：`reconcile()` 按运行容器镜像分流——已是 pending 目标 → `success`；仍是 previous（镜像 id + git_sha 一致）→ `recovered`（只清 pending、不写成功史）；其余抛 `DEPLOYMENT_RECONCILE_UNKNOWN` 不改状态。新鲜期（15 分钟）与恢复中拒绝不变。
+- 同文件 `finish(recovered)`：版本 tag 核验改用 begin 时记下的 previous 快照 tags（身份仍由镜像 id + git_sha + 健康确定），同版本号重建把 tag 抢走后也能结算（a80485b3 当时只能人工挪 tag）。
+- `scripts/lib/brain-image-retention.sh`：自动补收账接受 `<id> recovered`，日志注明“上次部署中途死亡，容器仍为旧版”。
+- `scripts/lib/internal-auth-token.sh`：先 `stat -c`（GNU）再 `stat -f`（BSD），GNU 下不再每次误判权限去 chmod；文件只读时跳过 chmod 并提示。
 
 ## Brain 1.424.0 — 派发只认路由表：无执行者建单即拒 + 工厂/编码独立 task_type + 清卡死单（派发总闸 F）
 
