@@ -154,3 +154,22 @@ upstream: ["01-intent.md#I-1", "01-intent.md#I-2"]
 - 测试替身 `packages/brain/scripts/coding-workflow/__tests__/spec-review.test.mjs:210-213` 仍按三值模拟约束、`packages/workflows/skills/harness-contract-reviewer/SKILL.md:468` 仍写「'ai' 会被 DB 拒」：与迁移后真身不一致，属需求外存量描述，建议另立任务同步。
 - POST 遇非法 made_by 仍返回 500 并透出约束原文（未转 400）：需求外存量行为，建议另立任务。
 - 预览环境库为克隆库，是否「从零迁移建出」取决于预览部署实现；「空库从零 migrate」由 CI real-env-smoke（`cecelia_test`）覆盖，QA 在预览环境/本机 scratch 只验到接口层；生产真实形态由 Q-7 只读前后对比覆盖。
+
+## commander 裁决（第 1 次）
+
+### 裁决 T-7（覆盖 Q-7，qa_cannot_verify）：采纳——Q-7 原写法 QA 不可执行，改为可验做法
+- 理由：Q-7 要求 QA 连 us-vps 生产库（pg-tunnel `localhost:15432`），与 QA 禁令「只能访问 PREVIEW_URL，绝不访问生产地址，只读也不行」直接冲突；且「部署后 D1」在合并前的 QA 门里按定义取不到。这是 Q-7 写法问题，不是环境缺工具。
+- I-2 的「真库验收」由下列三者共同兜住，不依赖 QA 直连生产：
+  1. S-1 的失败语义：生产若存在多列 / 无法解析的 made_by CHECK，迁移 552 `RAISE EXCEPTION` 整体回滚、不写 schema_version——不会静默留下拒 ai 的约束，也不会丢迁移外取值（S-2 断言 1/4/5 + Q-5 已在本机证实）。
+  2. 预览库是生产克隆，跑过 552 后的约束形态即「生产数据形态 + 本迁移」的真实结果。
+  3. 部署后生产核对归部署后流程（Brain 启动 migrate 失败即报错重试 + selfcheck），不属于合并前 QA 门。
+
+补充 Q-7'（替代 Q-7 作为 QA 门判定依据；Q-7 原文保留为部署后人工/流程参考，不计入 QA verdict）：
+- 对应: I-2
+- 前提: 本 PR 预览环境（生产克隆库，已跑迁移 552）；只发 SELECT；禁止连 `localhost:15432` / `localhost:5221` 或任何生产地址。
+- 操作:
+  1. 对预览环境 Brain 所连的库执行 Q-7 中的 `$Q` 查询（同一 SQL，`pg_constraint` 按列查 made_by 的全部 CHECK，含 `array_length(c.conkey,1)`），记为 DP。
+  2. 同库执行 `SELECT count(*) FROM schema_version WHERE version='552'`。
+  3. 同库执行 `SELECT DISTINCT made_by FROM decisions`，记为 V（克隆自生产的存量取值）。
+- 期望: 第 2 步为 1；DP 恰 1 行、名为 `decisions_made_by_check`、`array_length=1`，定义同时含 `'user'`、`'cecelia'`、`'system'`、`'ai'`，且 V 中每个非空取值都出现在定义里（存量取值无一被新约束排除——只增不减）。
+- 若 QA 无法取得预览库的只读连接：以预览 Brain 对 Q-1~Q-3 的接口结果 + Q-5 本机结果判 PASS，并在报告中注明 DP 未取得，不判 CANNOT_VERIFY。
