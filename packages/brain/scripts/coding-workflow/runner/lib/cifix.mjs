@@ -171,13 +171,15 @@ export async function runCiFix(ctx, signal) {
   if (!target) return false;
 
   const { pr } = target;
-  const worktree = path.join(cfg.worktreeBase, `cifix-${pr.number}-${readState(cfg, pr.number).attempts.length + 1}`);
+  // 尝试编号连同 commander 归档的旧尝试一起往后数（金丝雀 4：归档后从 1 重来 → span 幂等键撞旧记录 409）
+  const prior = readState(cfg, pr.number);
+  const attemptNo = prior.attempts.length + (Array.isArray(prior.archived_attempts) ? prior.archived_attempts.length : 0) + 1;
+  const worktree = path.join(cfg.worktreeBase, `cifix-${pr.number}-${attemptNo}`);
   fs.mkdirSync(cfg.worktreeBase, { recursive: true });
   if (fs.existsSync(worktree)) await removeWorktree(cfg, worktree, null);
   fs.rmSync(worktree, { recursive: true, force: true });
 
   const startedAt = Date.now();
-  const attemptNo = readState(cfg, pr.number).attempts.length + 1;
   const entry = { pr: pr.number, head: pr.headRefOid, at: new Date().toISOString(), failed_checks: target.failedRequired, ...(target.kind ? { kind: target.kind } : {}) };
   try {
     Object.assign(entry, await attempt(ctx, target, worktree, signal));

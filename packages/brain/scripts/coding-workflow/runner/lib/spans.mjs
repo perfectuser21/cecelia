@@ -57,9 +57,13 @@ export function chainSpans(receipt, { taskId, startedAt }) {
   return out;
 }
 
-/** runner 侧环节（ci_fix/qa/judge/merge）一条 span；occurrence 由调用方给（PR 号 + 轮次/尝试次数）。 */
-export function gateSpan({ taskId, key, startedAt, endedAt, ok, costUsd, occurrence, evidence }) {
+/**
+ * runner 侧环节（ci_fix/qa/judge/merge）一条 span；occurrence 由调用方给（PR 号 + 轮次/尝试次数）。
+ * terminal：本次运行的终态（合并）——evidence.run_terminal，runs 结果以它为准（迁移 546），GAN 中途的 FAIL 轮不决定终态。
+ */
+export function gateSpan({ taskId, key, startedAt, endedAt, ok, costUsd, occurrence, evidence, terminal = false }) {
   if (!ACTIVITY_IDS[key]) return null;
+  if (terminal) evidence = { ...evidence, run_terminal: true };
   return {
     ...base(taskId, key), started_at: iso(startedAt), ended_at: iso(endedAt), outcome: ok ? 'pass' : 'fail',
     ...(typeof costUsd === 'number' ? { cost_usd: costUsd } : {}),
