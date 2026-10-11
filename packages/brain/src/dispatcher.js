@@ -241,12 +241,23 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
            AND candidate_receipt.canonical_task_type = code_candidate.task_type
           WHERE code_candidate.id = $2
         ) candidate_context ON TRUE` : '';
+    // 定时实例身份（任务 c8320370）：只认路由收据——source=scheduler 且 source_id=recurring:<模板>:<时间点>
+    // 与 payload 一致才算「已验证的定时实例」；payload 自报的 recurring_task_id 可伪造，不作数。
+    // script_run 走上面的正式代码身份规则，不在此豁免。
+    const recurringCheck = candidate.task_type !== 'script_run';
+    const recurringIdentitySql = (alias) => `(SELECT r.source_id FROM work_routing_receipts r
+            WHERE r.id::text = ${alias}.payload->>'routing_receipt_id' AND r.task_id = ${alias}.id
+              AND r.source = 'scheduler'
+              AND r.source_id = 'recurring:' || (${alias}.payload->>'recurring_task_id') || ':' || (${alias}.payload->>'recurring_slot')
+            LIMIT 1)`;
+    const recurringColumns = recurringCheck ? `,
+              ${recurringIdentitySql('tasks')} AS recurring_identity,
+              (SELECT ${recurringIdentitySql('rc')} FROM tasks rc WHERE rc.id = $2) AS candidate_recurring_identity` : '';
     // SELECT 列顺序/别名与下方 initiative-lock 查询（"SELECT id, title FROM tasks"）刻意区分，
     // 避免两条查询的 SQL 指纹在测试里按字符串前缀匹配时被混淆（同一 dispatchNextTask 内两条
     // 语义不同的查询都含 "task_type" + "SELECT ... FROM tasks"，纯前缀匹配无法区分）。
     const { rows } = await pool.query(
-      `SELECT tasks.id AS id, tasks.title AS title,
-              tasks.payload->>'recurring_task_id' AS recurring_task_id${identityColumns}
+      `SELECT tasks.id AS id, tasks.title AS title${recurringColumns}${identityColumns}
         FROM tasks${identityJoins}
         WHERE tasks.task_type = $1
           AND tasks.status IN ('queued', 'in_progress')
@@ -256,15 +267,18 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
         LIMIT 20`,
       [candidate.task_type, candidate.id, candidate.created_at]
     );
-    // 定时实例的身份 = 模板 + 时间点（source_id=recurring:<id>:<slot>，同模板叠单由定时引擎挡）：
-    // 候选与 sibling 都是定时实例时一律不算重复——同批不同模板标题只差几个字，按标题判会两两互锁（任务 c8320370）。
-    const candidateRecurring = Boolean(candidate.payload?.recurring_task_id);
     const comparable = [];
     for (const row of rows) {
-      if (candidateRecurring && row.recurring_task_id) continue;
       const identity = compareCodeTaskIdentity(row.candidate_identity, row.code_identity);
       if (identity === 'same') return { ...row, duplicate_reason: 'duplicate_code_task_business_identity_match' };
-      if (identity === 'unknown') comparable.push(row);
+      if (identity !== 'unknown') continue;
+      // 双方都是已验证的定时实例：身份 = 模板 + 时间点，不同即不重复——同批不同模板标题只差几个字，
+      // 按标题判会两两互锁、都 queued 谁也派不出去（生产 10-12 00:52）。同模板叠单由定时引擎挡。
+      if (row.candidate_recurring_identity && row.recurring_identity) {
+        if (row.candidate_recurring_identity === row.recurring_identity) return { ...row, duplicate_reason: 'duplicate_recurring_identity_match' };
+        continue;
+      }
+      comparable.push(row);
     }
     return findDuplicateSibling(candidate.title || '', comparable, {
       threshold: DUPLICATE_TASK_TITLE_THRESHOLD,

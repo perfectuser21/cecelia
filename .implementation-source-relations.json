@@ -351,6 +351,11 @@
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "changes/cp-1012010340-recurring-dedup-identity.md",
       "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": "packages/brain/src/__tests__/integration/recurring-dedup-identity.pg.integration.test.js",
+      "role": "verification"
     }
   ]
 }
