@@ -3,7 +3,7 @@
 - [x] [BEHAVIOR] handoffkinds next_steps 四类 resume_headed/dispatch_headless/decision/note（task≡dispatch_headless、done≡note）；有头任务（headed_manual / executor_kind=headed-session / headed_takeover）未标或认不出 → resume_headed，无头 → note；resume_headed 不派单、原任务挂 result.pending_resume；PATCH 写 handoff 响应带 handoff_next_steps 反馈。
   Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/relay-baton-kinds.test.js src/lib/__tests__/relay-baton.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] pendingresume GET /api/brain/handoffs/pending-resume 列出待续有头续接（任务/下一步/交接全文），POST /pending-resume/:id/ack 销待续。
-  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/routes/__tests__/handoffs-pending-resume.test.js --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/routes/__tests__/handoffs-pending-resume.test.js src/routes/__tests__/handoff-resume-ack.test.js --maxWorkers=1 --minWorkers=1"
 
 # 对话捕获只收真人原话 + 长寿会话近 24h 关联（任务 c8b27bc5 生产首轮回归）
 
