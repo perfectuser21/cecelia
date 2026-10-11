@@ -9,7 +9,7 @@ export function buildPilotManifest(pilot,{revision,decision,baseManifest}={}){
   if(spec.mode==='patch'&&baseManifest?.scope_key!==spec.scope_key)throw Error('必须提供该scope完整当前manifest，不能覆盖旧地图');
   const manifest=spec.mode==='patch'?structuredClone(baseManifest):{scope_key:spec.scope_key,schema_version:1,value_streams:[],capabilities:[],boundaries:[],crosscut_pool:[],shared_prerequisites:{applicable:false,items:[],reason:'试点未登记共享前置项'}};
   manifest.source_decision_id=decision;
-  for(const [field,type] of [['value_streams','value_stream'],['capabilities','capability']])for(const {entity_id,...item} of spec[field]){
+  for(const [field,type] of [['value_streams','value_stream'],['capabilities','capability']])for(const {entity_id,canonical_code:_code,...item} of spec[field]){
     let node=manifest[field].find(n=>n.key===item.key);
     if(!node){if(spec.mode==='patch')throw Error(`既有节点不存在: ${item.key}`);node={...item};manifest[field].push(node);}
     if(node.brain_binding&&node.brain_binding.entity_id!==entity_id)throw Error(`既有规范绑定冲突: ${item.key}`);

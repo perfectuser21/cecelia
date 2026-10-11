@@ -11,6 +11,13 @@
         "perceiver": "业务负责人",
         "order": 1,
         "entity_id": "afa6abca-53c0-4815-8594-b7fb81ca547f"
+      },
+      {
+        "key": "content_production",
+        "name": "内容生产",
+        "perceiver": "业务负责人",
+        "order": 2,
+        "entity_id": "1489c4e5-7806-4152-a091-b7d32e202ce7"
       }
     ],
     "capabilities": [
@@ -27,8 +34,25 @@
         "value_stream_key": "acquisition",
         "order": 2,
         "entity_id": "a1000000-0000-4000-8000-000000000002"
+      },
+      {
+        "key": "android_worker_publish",
+        "name": "内容生产 · 多平台发布",
+        "value_stream_key": "content_production",
+        "order": 1,
+        "entity_id": "24987ee5-53a0-4c37-946f-1b749954cac7",
+        "canonical_code": "android_worker_publish"
       }
-    ]
+    ],
+    "upgrade_from": {
+      "value_streams": [
+        "acquisition"
+      ],
+      "capabilities": [
+        "keyword_acquisition",
+        "benchmark_link_acquisition"
+      ]
+    }
   },
   "company-kr": {
     "scope_key": "cecelia-kr",

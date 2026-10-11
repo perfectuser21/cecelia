@@ -282,12 +282,15 @@ export async function readImplementationSnapshotInTransaction(db,q){
   if(repositories.length===1){
     const historical=(await db.query(`SELECT DISTINCT m.* FROM map_manifest_versions m JOIN map_projection_runs p ON p.manifest_version_id=m.id
       WHERE m.scope_key=$1 AND p.scope_key=$1 AND p.fact_revisions->>$2=$3 AND p.status IN ('active','superseded') ORDER BY m.version DESC`,[q.scope,repositories[0].repo,anchor.revision])).rows.filter(r=>manifestMatchesImplementationSource(r.manifest,anchor.repo,anchor.revision));
-    if(historical.length===1){manifest=historical[0];manifestBasis='historical_projection';}
+    const current=(factory&&selected.length===EXISTING_OPS_IDENTITIES.length)||(selected.length&&selected.every(w=>{const c=workflows.find(c=>c.id===w.workflow_id);return c?.status!=='retired'&&c?.current_definition_version_id===w.id;}));
+    if(current){
+      const active=(await db.query("SELECT * FROM map_manifest_versions WHERE scope_key=$1 AND status='active'",[q.scope])).rows;
+      // 当前定义须绑定唯一当前完整地图；旧同SHA历史不以version排序替代显式active。
+      if(active.length===1&&(!historical.length||historical.some(m=>m.id===active[0].id&&m.digest===active[0].digest))){
+        manifest=active[0];manifestBasis=factory?'consumer_registry':'current_registration';
+      }else if(active.length>1||historical.length)gap('manifest_snapshot_ambiguous',{revision:q.revision});
+    }else if(historical.length===1){manifest=historical[0];manifestBasis='historical_projection';}
     else if(historical.length>1)gap('manifest_snapshot_ambiguous',{revision:q.revision});
-    else if((factory&&selected.length===EXISTING_OPS_IDENTITIES.length)||(selected.length&&selected.every(w=>workflows.find(c=>c.id===w.workflow_id)?.current_definition_version_id===w.id))){
-      manifest=(await db.query("SELECT * FROM map_manifest_versions WHERE scope_key=$1 AND status='active'",[q.scope])).rows[0]||null;
-      manifestBasis=factory?'consumer_registry':'current_registration';
-    }
   }
   if(manifest&&!manifestMatchesImplementationSource(manifest.manifest,anchor.repo,anchor.revision))gap('manifest_source_mismatch',{revision:anchor.revision});
   if(!manifest)gap('scope_manifest_missing',{scope:q.scope,revision:q.revision});
