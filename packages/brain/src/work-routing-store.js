@@ -15,6 +15,8 @@ import {
 import { REANCHOR_EVIDENCE_KEYS } from './orchestrator/preflight/base-sha-reanchor.js';
 import { assertTaskKind, deriveTaskKind } from './lib/task-kind.js';
 import { assertScriptPayloadForType } from './lib/script-task-spec.js';
+import { assertTaskTypeHasExecutor, normalizeBorrowedTaskType } from './lib/dispatch-route.js';
+import { getCachedConfig } from './task-type-config-cache.js';
 import { assertGoalIsKeyResult } from './lib/goal-guard.js';
 import {
   assertOwnerDecisionProtocol, openOwnerDecisionPendingAction, OWNER_DECISION_REASON,
@@ -201,7 +203,13 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
   try {
     if (ownsTransaction) await client.query('BEGIN');
     const facts = repositoryFacts ?? await loadRepositoryFacts(client);
-    let routedRequest = request;
+    // 借壳老形状归一（任务 0a70684f）：research+factory_dispatch → skill_factory_run，data+coding_workflow → coding_workflow。
+    // payload.requested_task_type 仍记调用方原值（下方取 request.requested_task_type），便于追溯。
+    const borrowedPayload = { ...(request.metadata || {}), ...(request.task?.payload || {}) };
+    const normalizedType = normalizeBorrowedTaskType(request.requested_task_type, borrowedPayload);
+    let routedRequest = normalizedType === request.requested_task_type
+      ? request
+      : { ...request, requested_task_type: normalizedType };
     let decision = routeWork(routedRequest, facts, options);
     await client.query(
       'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
@@ -293,7 +301,12 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       const sameRoute = persisted.work_kind === decision.work_kind
         && persisted.change_kind === decision.change_kind
         && persisted.pipeline === decision.pipeline
-        && persisted.canonical_task_type === decision.canonical_task_type
+        && (
+          persisted.canonical_task_type === decision.canonical_task_type
+          // 归一前已按借壳老类型入账的同一来源（重放/重试）仍算同一路由，返回已有单，不报幂等冲突
+          || (normalizedType !== request.requested_task_type
+            && persisted.canonical_task_type === request.requested_task_type)
+        )
         && persisted.default_execution_profile === decision.default_execution_profile
         && (persisted.execution_profile_override ?? null)
           === (decision.execution_profile_override ?? null)
@@ -355,6 +368,12 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
     // executor=script 一等类型（棒 3）：script_run 的 payload 契约（host 只认跑场机 / cmd 无控制字符 / env 白名单 / timeout 必填）
     // 在物化 task 前必过，违规抛 script_payload_invalid，事务 ROLLBACK，不留半截任务。
     assertScriptPayloadForType(decision.canonical_task_type, payload);
+    // 派发只认路由表（任务 0a70684f）：要以 queued 进队却解析不到执行者的单建单即拒（code=no_executor_for_task_type），
+    // 事务 ROLLBACK，不再进队后被 tick 反复 claim→退役通道→回 queued 静默卡死。动态配置（task_type_configs）同 executor 口径优先。
+    assertTaskTypeHasExecutor(
+      { task_type: decision.canonical_task_type, status: task.status ?? 'queued', payload },
+      { dynamic: getCachedConfig(decision.canonical_task_type) },
+    );
     // 三镜头能力级前置门禁：new_capability 在选 pipeline 后、物化 task 前必经三镜头对抗，
     // 判决 + postcondition + NFR 三数落 decisions（同事务，reject/落库失败 → ROLLBACK 不建 task）。
     // adjudicate 由生产接线（harness-skill-relay 的 capability-controller relay）注入；

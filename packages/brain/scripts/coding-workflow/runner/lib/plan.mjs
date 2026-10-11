@@ -14,8 +14,15 @@ const SHANGHAI_PARTS = new Intl.DateTimeFormat('en-US', {
 
 const RUN_RESULT_KEYS = ['coding_workflow', 'runner', 'coding_workflow_runner'];
 
-/** 开关三件套：task_type=data（不被 tick 派发、不被改道）+ headed_manual="true" + coding_workflow===true。 */
+/** 编码 workflow 独立类型（派发总闸 F，任务 0a70684f）：类型本身即开关，tick 按类型排除。 */
+export const CODING_WORKFLOW_TASK_TYPE = 'coding_workflow';
+
+/**
+ * 是否本 runner 的任务：独立类型 coding_workflow；或迁移窗口内的旧开关三件套
+ * （task_type=data + headed_manual="true" + coding_workflow===true）。
+ */
 export function isSwitched(task) {
+  if (task?.task_type === CODING_WORKFLOW_TASK_TYPE) return true;
   return task?.task_type === 'data'
     && task.payload?.headed_manual === 'true'
     && task.payload?.coding_workflow === true;

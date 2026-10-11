@@ -32,6 +32,7 @@ function makeTask(overrides = {}) {
   return {
     id: TASK_ID,
     status: 'queued',
+    task_type: 'skill_factory_run',
     payload: {
       factory_dispatch: true,
       factory: {
@@ -283,6 +284,24 @@ describe('派发流程', () => {
     const r = await pollOnce(deps, opts);
     expect(r.skipped).toBe('no_task');
     expect(w.claims).toHaveLength(0);
+  });
+
+  it('只认技能工厂执行单类型：skill_factory_run 或旧借壳 research；其他类型带开关也不派（派发总闸 F）', async () => {
+    for (const task_type of ['data', 'qiumi_task', 'dev']) {
+      const t = makeTask();
+      t.task_type = task_type;
+      const { w, deps, opts } = makeWorld({ task: t });
+      const r = await pollOnce(deps, opts);
+      expect(r.skipped, task_type).toBe('no_task');
+      expect(w.claims, task_type).toHaveLength(0);
+    }
+    const legacy = makeTask();
+    legacy.task_type = 'research';
+    const { w, deps, opts } = makeWorld({ task: legacy });
+    w.onTick = (ww) => { if (ww.spawned.length) ww.task.status = 'completed'; };
+    const r = await pollOnce(deps, opts);
+    expect(r.outcome).toBe('session_terminal');
+    expect(w.claims).toEqual([TASK_ID]);
   });
 
   it('正常路径：代领锁→启动会话（UTF-8 环境）→会话自己 completed 后派发器放锁', async () => {

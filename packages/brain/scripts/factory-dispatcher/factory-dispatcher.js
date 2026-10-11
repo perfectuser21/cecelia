@@ -351,12 +351,22 @@ export async function dispatchTask(task, deps, userOpts = {}) {
   return { outcome: 'session_terminal', status: end.status, lock_released: release.released };
 }
 
-/** 一轮：时段外不认领；时段内挑第一个 queued + factory_dispatch=true 的任务派发。 */
+/**
+ * 技能工厂执行单 / 核验单判定（派发总闸 F，任务 0a70684f）：独立类型 skill_factory_run；
+ * 迁移窗口内仍认旧借壳形状 research + factory_dispatch。其他类型即使带开关也不领（防误领别家的单）。
+ */
+export const FACTORY_TASK_TYPE = 'skill_factory_run';
+export function isFactoryTask(t) {
+  if (t?.payload?.factory_dispatch !== true) return false;
+  return t.task_type === FACTORY_TASK_TYPE || t.task_type === 'research';
+}
+
+/** 一轮：时段外不认领；时段内挑第一个 queued 的技能工厂单派发。 */
 export async function pollOnce(deps, userOpts = {}) {
   const opts = { ...DEFAULT_OPTS, ...userOpts };
   if (!isWithinWorkHours(deps.now(), opts)) return { skipped: 'off_hours' };
   const queued = await deps.brain.listQueued();
-  const task = (queued || []).find((t) => t?.status === 'queued' && t?.payload?.factory_dispatch === true);
+  const task = (queued || []).find((t) => t?.status === 'queued' && isFactoryTask(t));
   if (!task) return { skipped: 'no_task' };
   return dispatchTask(task, deps, opts);
 }

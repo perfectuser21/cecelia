@@ -3,6 +3,8 @@ const REQUEST_TIMEOUT_MS = 20000;
 const MAX_LIST_GROWTH = 16;
 export const EXECUTOR_KIND = 'coding-workflow-runner';
 const RETRY_DELAYS_MS = [1000, 3000];
+/** 候选类型：旧借壳 data 在前（迁移窗口），独立类型 coding_workflow 在后（任务 0a70684f）。 */
+const LIST_TASK_TYPES = ['data', 'coding_workflow'];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -33,22 +35,36 @@ export function brainClient(baseUrl, { listLimit = 500, log = () => {} } = {}) {
     body: JSON.stringify(body),
   });
 
+  async function listByType(status, taskType) {
+    for (let limit = listLimit; ; limit *= 2) {
+      const r = await request(`${tasksUrl}?status=${status}&task_type=${taskType}&limit=${limit}`, { method: 'GET' });
+      if (!r.ok) throw new Error(`brain_list_failed:${r.status}${r.error ? `:${r.error}` : ''}`);
+      const rows = Array.isArray(r.body) ? r.body : (Array.isArray(r.body?.tasks) ? r.body.tasks : []);
+      if (rows.length < limit) return rows;
+      if (limit >= listLimit * MAX_LIST_GROWTH) {
+        log(`${status} ${taskType} 任务超过 ${limit} 条，最早的任务可能未列出`);
+        return rows;
+      }
+    }
+  }
+
   return {
     /**
-     * GET 某状态的 data 任务（含 payload/result）。Brain 按 created_at 降序 + limit 截断、不支持翻页，
-     * 满页说明可能截掉了最早的任务：加倍 limit 重查，直到不满页（上限 16 倍，仍满则记日志）。失败抛错。
+     * GET 某状态的候选任务（含 payload/result）：旧借壳 data + 独立类型 coding_workflow（派发总闸 F，任务 0a70684f）
+     * 两类各查一遍按 id 去重合并。Brain 按 created_at 降序 + limit 截断、不支持翻页，满页说明可能截掉了最早的任务：
+     * 加倍 limit 重查，直到不满页（上限 16 倍，仍满则记日志）。失败抛错。
      */
     async listTasks(status) {
-      for (let limit = listLimit; ; limit *= 2) {
-        const r = await request(`${tasksUrl}?status=${status}&task_type=data&limit=${limit}`, { method: 'GET' });
-        if (!r.ok) throw new Error(`brain_list_failed:${r.status}${r.error ? `:${r.error}` : ''}`);
-        const rows = Array.isArray(r.body) ? r.body : (Array.isArray(r.body?.tasks) ? r.body.tasks : []);
-        if (rows.length < limit) return rows;
-        if (limit >= listLimit * MAX_LIST_GROWTH) {
-          log(`${status} 任务超过 ${limit} 条，最早的任务可能未列出`);
-          return rows;
+      const seen = new Set();
+      const merged = [];
+      for (const taskType of LIST_TASK_TYPES) {
+        for (const row of await listByType(status, taskType)) {
+          if (row?.id && seen.has(row.id)) continue;
+          if (row?.id) seen.add(row.id);
+          merged.push(row);
         }
       }
+      return merged;
     },
 
     /** GET 单个任务；返回 { ok, status, body }。 */

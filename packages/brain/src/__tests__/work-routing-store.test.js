@@ -50,7 +50,8 @@ const nonCoding = (over = {}) => ({
 describe('createRoutedTask 写 tasks.kind', () => {
   it('不传 kind → 按 canonical_task_type 派生（workflow_run → workflow；research → agent）', async () => {
     const pool = makePool();
-    await createRoutedTask(pool, nonCoding());
+    // workflow_run 是外部起跑的账本镜像，只以 in_progress 入账（queued 无执行者建单即拒，任务 0a70684f）
+    await createRoutedTask(pool, nonCoding({ task: { priority: 'P2', status: 'in_progress' } }));
     expect(insertedValue(pool, 'kind')).toBe('workflow');
 
     const pool2 = makePool();
@@ -60,7 +61,7 @@ describe('createRoutedTask 写 tasks.kind', () => {
 
   it('传合法 kind → 原样写入，压过类型缺省', async () => {
     const pool = makePool();
-    await createRoutedTask(pool, nonCoding({ task: { priority: 'P2', kind: 'agent' } }));
+    await createRoutedTask(pool, nonCoding({ task: { priority: 'P2', kind: 'agent', status: 'in_progress' } }));
     expect(insertedValue(pool, 'kind')).toBe('agent');
   });
 

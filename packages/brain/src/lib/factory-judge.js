@@ -89,7 +89,8 @@ export function buildVerifySpec({ execTask, delivery, ledgerId, cfg }) {
   return {
     title: `核验 ${STAGE_NAMES[Number(f.stage)] || f.stage} ${f.workflow_key || ''} run ${runId}（自动裁判）`,
     description: lines.join('\n'),
-    task_type: 'research',
+    // 独立类型（派发总闸 F，任务 0a70684f）：核验单与执行单同走 factory-dispatcher，tick 按类型排除
+    task_type: 'skill_factory_run',
     priority: 'P1',
     trigger_source: 'manual',
     allow_unscoped: true,
@@ -98,7 +99,6 @@ export function buildVerifySpec({ execTask, delivery, ledgerId, cfg }) {
     created_by: 'factory-judge',
     payload: {
       factory_dispatch: true,
-      headed_manual: 'true',
       factory_ledger_id: ledgerId || null,
       factory_verify_of: execTask.id,
       factory_verify_run_id: runId,

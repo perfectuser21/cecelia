@@ -1,3 +1,12 @@
+# 派发只认路由表：无执行者建单即拒 + 工厂/编码独立 task_type + 清卡死单（任务 0a70684f，派发总闸 F）
+
+- [x] [BEHAVIOR] dispatchroutegate lib/dispatch-route.js 按 executor 分支顺序判真实路由；注册表 surface 与真实路由一致（talk/research/data → codex-bridge，dev/trigger_backup 等 → none）；createRoutedTask 对 queued + 无执行者（退役 Claude 桥接 / 退役 harness / workflow_run 镜像）建单即拒 code=no_executor_for_task_type，事务回滚不 INSERT，POST /tasks 返回 422 带 reason_code；headed_manual 与非 queued 不拦。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/dispatch-route.test.js src/__tests__/work-routing-store-dispatch-gate.test.js src/__tests__/work-routing-store.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] factorycodingtypes 技能工厂执行单/核验单立 skill_factory_run、编码 workflow 立 coding_workflow（迁移 550 进 tasks_task_type_check），tick 按类型排除不再靠 headed_manual；推进器/裁判建新类型，factory-dispatcher 只领该类型（兼容旧借壳 research），coding-workflow-runner 列 data+coding_workflow 两类、new-task 建新类型；建单时旧借壳形状自动归一新类型。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/factory-pusher.test.js src/lib/__tests__/factory-judge.test.js scripts/factory-dispatcher/__tests__/factory-dispatcher.test.js scripts/coding-workflow/runner/__tests__/plan.test.mjs scripts/coding-workflow/runner/__tests__/run-once.test.mjs scripts/coding-workflow/__tests__/new-task.test.mjs src/lib/__tests__/task-type-registry.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] stuckqueuecleanup 迁移 550 把在途借壳单迁新类型（插接班路由收据，逐条写 task_events task_type_migrated）；迁移 551 按清单处置卡死单（a55c7664 trigger_backup → cancelled，02383d3f 守望中断工厂执行单 → failed），id+状态守卫幂等，逐条写 task_events dispatch_gate_cleanup。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/migration-550-551-dispatch-gate.test.js --maxWorkers=1 --minWorkers=1"
+
 # 旁路报警：动手机/对外推送无 Brain 任务号即告警（派发总闸 H，任务 865b502c）
 
 - [x] [BEHAVIOR] bypassaudit 领锁/手机对外动作/OpenClaw message 调用按持有者·run_id·任务号在 Brain 侧判关联：追得到 Brain 任务（uuid / payload.run_id / qiumi|wfd-<任务号前8位>）不记，追不到写 cecelia_events(event_type=bypass_action)，dedupe_key 去重；按上海日汇总写 runs bypass-audit:<日期>（有旁路=fail，经现有「最近执行」投影），对外类达阈值才 Bark（手机对外≥1、OpenClaw 推送≥5，每天每类一次），领锁类不推主理人。

@@ -117,7 +117,10 @@ describe('时段与建单契约', () => {
     expect(parsed.contract.device).toEqual({ node: 'XIAN-M4-PHONE', profile: 'xiaolongxia', serial: 'ANGYVB4311010223', ssh_host: 'xian-m4' });
     for (const s of ['只私密发布', '单次点发布', '--outward publish` 必须放在子命令及其参数（COMMAND）之后', '第18轮', '09:00–23:00', '派发器代领', '5f00cf51'])
       expect(spec.description).toContain(s);
-    expect(spec.payload).toMatchObject({ factory_dispatch: true, headed_manual: 'true', factory_ledger_id: L().id });
+    expect(spec.payload).toMatchObject({ factory_dispatch: true, factory_ledger_id: L().id });
+    // 派发总闸 F（任务 0a70684f）：执行单独立 task_type，tick 排除按类型，不再靠 headed_manual 一个字段挡
+    expect(spec.task_type).toBe('skill_factory_run');
+    expect(spec.payload.headed_manual).toBeUndefined();
     expect(spec.source_id).toBe(`factory-pusher:${L().id}:s3:r1`);
   });
   it('/dev 工单照建单五坑：change_kind / repo_hint 完整 URL / map_scope_hint / manual + headed_manual', () => {

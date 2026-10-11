@@ -51,7 +51,10 @@ describe('迁移 471：登记 script 与 script_run', () => {
       .toContain("('tasks_task_type_check','task_type','janitor')");
     expect(readFileSync(join(MIG,'504_app_server_generations.sql'),'utf8')).toContain("('tasks_task_type_check','task_type','app_server_run')");
     expect(readFileSync(join(MIG,'549_workflow_dispatch_task_type.sql'),'utf8')).toContain("'workflow_dispatch'");
-    expect([...list, 'janitor','app_server_run','workflow_dispatch'].sort()).toEqual([...DB_WHITELISTED_TASK_TYPES].sort());
+    const m550 = readFileSync(join(MIG,'550_skill_factory_coding_workflow_task_types.sql'),'utf8');
+    expect(m550).toContain("'skill_factory_run'");
+    expect(m550).toContain("'coding_workflow'");
+    expect([...list, 'janitor','app_server_run','workflow_dispatch','skill_factory_run','coding_workflow'].sort()).toEqual([...DB_WHITELISTED_TASK_TYPES].sort());
   });
 
   it('写 schema_version 471', () => {

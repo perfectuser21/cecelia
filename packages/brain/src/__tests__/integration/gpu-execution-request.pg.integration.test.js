@@ -5,7 +5,7 @@ import {createRoutedTask} from '../../work-routing-store.js';
 let database;
 beforeAll(async()=>{database=await createIntakeTestDatabase();});
 afterAll(async()=>{await database?.close();});
-const input=(extra={})=>({source:'api',source_id:randomUUID(),title:`GPU 结构化执行声明验真 ${randomUUID()}`,requested_task_type:'workflow_run',mutation_intent:'none',declared_domain:'operations',metadata:{},task:{priority:'P2'},...extra});
+const input=(extra={})=>({source:'api',source_id:randomUUID(),title:`GPU 结构化执行声明验真 ${randomUUID()}`,requested_task_type:'data',mutation_intent:'none',declared_domain:'operations',metadata:{},task:{priority:'P2'},...extra});
 describe('真实建单入口 GPU 请求边界',()=>{
  it.each([{metadata:{gpu:true}},{metadata:{runtime_resources:{gpu:{count:1}}}},{task:{priority:'P2',payload:{gpu:{count:1}}}}])('拒绝显式声明，tasks 和收据均零新增 %j',async extra=>{
   const sql='SELECT (SELECT count(*) FROM tasks)::int AS tasks,(SELECT count(*) FROM work_routing_receipts)::int AS receipts';

@@ -66,10 +66,13 @@ beforeEach(async()=>{
  for(const db of pools)await db.query('TRUNCATE tasks,work_routing_receipts,cecelia_events,dispatch_events,working_memory');
 });
 afterEach(()=>{expect(fixture.spawns).toEqual([]);expect(fixture.kills).toEqual([]);expect(fixture.network).toEqual([]);});
+// 派发总闸 F（任务 0a70684f）起，无执行者的退役类型以 queued 建单即被 422 拒；本 fixture 验的是「存量 queued 退役单」
+// 到 dispatcher 被持久退役：经真实 API 以 pending_postdeploy 建（真路由收据），再按存量形状改回 queued。
 async function createRetired(payload={}){
- const response=await fetch(`${origin}/api/brain/tasks`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:`[smoke] isolated-retirement-${randomUUID()}`,description:'retired harness planner fixture',task_type:'harness_planner',priority:'P2',trigger_source:'manual',payload})});
+ const response=await fetch(`${origin}/api/brain/tasks`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:`[smoke] isolated-retirement-${randomUUID()}`,description:'retired harness planner fixture',task_type:'harness_planner',priority:'P2',trigger_source:'manual',status:'pending_postdeploy',payload})});
  const body=await response.json();expect(response.status,JSON.stringify(body)).toBe(201);
- expect(body.task_type).toBe('harness_planner');expect(body.status).toBe('queued');
+ expect(body.task_type).toBe('harness_planner');expect(body.status).toBe('pending_postdeploy');
+ await pool.query("UPDATE tasks SET status='queued' WHERE id=$1",[body.id]);
  const receipt=(await pool.query('SELECT task_id,canonical_task_type FROM work_routing_receipts WHERE id=$1',[body.payload.routing_receipt_id])).rows[0];
  expect(receipt).toEqual({task_id:body.id,canonical_task_type:'harness_planner'});
  return body.id;
@@ -84,6 +87,12 @@ async function neighbors(){
  }
  return async()=>{for(const {db,id,before} of ids)expect((await db.query('SELECT to_jsonb(t) AS row FROM tasks t WHERE id=$1',[id])).rows[0].row).toEqual(before);};
 }
+it('退役类型以 queued 经真实 API 建单 → 422 no_executor_for_task_type，不落行（派发总闸 F）',async()=>{
+ const response=await fetch(`${origin}/api/brain/tasks`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:`[smoke] retired-gate-${randomUUID()}`,description:'retired gate',task_type:'harness_planner',priority:'P2',trigger_source:'manual'})});
+ const body=await response.json();
+ expect(response.status,JSON.stringify(body)).toBe(422);expect(body.reason_code).toBe('no_executor_for_task_type');expect(body.route).toBe('retired-harness');
+ expect((await pool.query("SELECT count(*)::int AS n FROM tasks WHERE task_type='harness_planner'")).rows[0].n).toBe(0);
+});
 it('实际migration ledger独立、当前库/schema与无public fallback已核',async()=>{
  expect((await pool.query('SELECT version FROM schema_version ORDER BY version')).rows.map(r=>r.version)).toEqual(['413','426','427','465']);
 });

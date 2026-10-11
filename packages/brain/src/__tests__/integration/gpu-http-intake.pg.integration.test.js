@@ -8,7 +8,7 @@ vi.mock('../../db.js',()=>({default:{query:(...args)=>shared.db.pool.query(...ar
 let app;
 beforeAll(async()=>{shared.db=await createIntakeTestDatabase();const router=(await import('../../routes/task-tasks.js')).default;app=express().use(express.json()).use('/tasks',router);});
 afterAll(async()=>{await shared.db?.close();});
-const input=()=>({title:'gpu-http-'+randomUUID(),task_type:'workflow_run',mutation_intent:'read_only',domain:'operations'});
+const input=()=>({title:'gpu-http-'+randomUUID(),task_type:'data',mutation_intent:'read_only',domain:'operations'});
 it('公共HTTP去重前拒绝GPU声明，不改已有CPU任务',async()=>{
  const base=input();const first=await request(app).post('/tasks').send(base);expect(first.status).toBe(201);
  const before=await shared.db.pool.query('SELECT to_jsonb(t) AS task FROM tasks t WHERE title=$1',[base.title]);

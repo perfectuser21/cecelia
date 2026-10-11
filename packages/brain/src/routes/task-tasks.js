@@ -364,6 +364,10 @@ router.post('/', async (req, res) => {
     if (err.code === 'gpu_execution_unsupported') {
       return res.status(400).json({error: err.message, reason_code: err.code});
     }
+    if (err.code === 'no_executor_for_task_type') {
+      // 派发只认路由表（任务 0a70684f）：无执行者的类型建单即拒，返回明确原因而不是进队静默卡死
+      return res.status(422).json({ error: err.message, reason_code: err.code, task_type: err.task_type, route: err.route });
+    }
     if (err.code === 'script_payload_invalid') {
       return res.status(400).json({ error: err.message, code: 'INVALID_SCRIPT_PAYLOAD', reason_code: err.reason, field: err.field });
     }

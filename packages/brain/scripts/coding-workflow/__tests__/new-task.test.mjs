@@ -71,18 +71,19 @@ describe('new-task.mjs', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('单条：建成带开关的 data 任务（coding_workflow / headed_manual / repo / acceptance），输出 id', async () => {
+  it('单条：建成独立类型 coding_workflow 任务（coding_workflow / repo / acceptance，不再借 data + headed_manual），输出 id', async () => {
     brain = await startBrain();
     const r = await runScript([plan({ title: '改 X', description: '为什么', acceptance: ['命令 A 输出 B'] })], { BRAIN_URL: brain.url });
     expect(r.code, r.stderr).toBe(0);
     expect(brain.posts).toHaveLength(1);
     expect(brain.posts[0]).toMatchObject({
-      task_type: 'data',
+      task_type: 'coding_workflow',
       title: '改 X',
       description: '为什么',
       trigger_source: 'manual',
-      payload: { coding_workflow: true, headed_manual: 'true', repo: 'cecelia', acceptance: ['命令 A 输出 B'], gp_anchor: 'none(infra)' },
+      payload: { coding_workflow: true, repo: 'cecelia', acceptance: ['命令 A 输出 B'], gp_anchor: 'none(infra)' },
     });
+    expect(brain.posts[0].payload.headed_manual).toBeUndefined();
     expect(brain.posts[0].payload.depends_on).toBeUndefined();
     expect(brain.posts[0].project_id).toBeUndefined();
     expect(JSON.parse(r.stdout)).toEqual([{ key: null, id: '00000000-0000-4000-8000-000000000001', title: '改 X' }]);

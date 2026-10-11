@@ -57,11 +57,12 @@ try {
   const a1 = mine(r1)?.actions?.find((a) => a.type === 'dispatch');
   if (!a1?.task_id) die(`推进器没建执行单: ${JSON.stringify(mine(r1))}`);
   const t1 = await task(a1.task_id);
-  if (t1.status !== 'queued' || t1.payload.factory_dispatch !== true || t1.payload.headed_manual !== 'true') die(`执行单形状不对: ${JSON.stringify({ s: t1.status, p: t1.payload })}`);
+  // 派发总闸 F（任务 0a70684f）：执行单独立类型 skill_factory_run，tick 按类型排除，不再带 headed_manual
+  if (t1.status !== 'queued' || t1.task_type !== 'skill_factory_run' || t1.payload.factory_dispatch !== true || t1.payload.headed_manual !== undefined) die(`执行单形状不对: ${JSON.stringify({ s: t1.status, t: t1.task_type, p: t1.payload })}`);
   const parsed = parseFactoryContract(t1);
   if (!parsed.ok || parsed.contract.stage !== '3' || parsed.contract.device.serial !== 'ANGYVB4311010223') die(`派发器解析不了: ${JSON.stringify(parsed)}`);
   if (!/--outward publish` 必须放在子命令及其参数（COMMAND）之后/.test(t1.description)) die('正文缺 --outward 位置纪律');
-  ok(`推进器经真 createTask 建 stage 3 执行单（queued、headed_manual、派发器契约可解析）`);
+  ok(`推进器经真 createTask 建 stage 3 执行单（queued、task_type=skill_factory_run、派发器契约可解析）`);
 
   // 2) 在途不重复建单
   const r2 = await cycle();
@@ -76,6 +77,7 @@ try {
   const v1 = await task(j1.verify_task_id);
   const vp = parseFactoryContract(v1);
   if (!vp.ok || vp.contract.skill !== 'run-verify' || vp.contract.stage !== 'verify' || !v1.description.includes(t1.id)) die(`核验单不对: ${JSON.stringify(vp)}`);
+  if (v1.task_type !== 'skill_factory_run') die(`核验单类型不对（应为 skill_factory_run）: ${v1.task_type}`);
   ok('代码裁判 pass → 自动建 run-verify 核验单（stage=verify，正文含被核验任务 id）');
   await verifyPass(v1.id, 'sf3-run-1');
   const r4 = await cycle();
