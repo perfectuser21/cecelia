@@ -2,6 +2,13 @@ import { it,expect } from 'vitest';
 import { loadActivityContracts } from '../activity-contract-loader.js';
 import { contractsFixture,hash } from '../../__tests__/fixtures/shared-activity-contracts.js';
 import yaml from 'js-yaml';
+it('contract_key区分合同，capability仍绑定真实能力；旧capability格式兼容',async()=>{
+ const f=contractsFixture(),cap='keyword_acquisition';f.docs[cap].contract_key=cap;f.docs[cap].capability='android_worker_publish';f.refresh();
+ const w={key:'real.android',capability_code:'android_worker_publish',source_capability:cap,source_path:`product-map/contracts/${cap}.yaml`,source_workflow:'social-keyword-leadgen'};
+ expect((await loadActivityContracts([w],f.digest,async()=>yaml.dump(f.docs[cap])))[0].contract.capability).toBe('android_worker_publish');
+ await expect(loadActivityContracts([{...w,capability_code:'wrong'}],f.digest,async()=>yaml.dump(f.docs[cap]))).rejects.toThrow(/能力|身份/);
+ await expect(loadActivityContracts([{...w,capability_code:null}],f.digest,async()=>yaml.dump(f.docs[cap]))).rejects.toThrow(/能力|身份/);
+});
 it('已登记但无活动的契约仍验证digest并产生空计划',async()=>{
   const f=contractsFixture(),cap='keyword_acquisition';
   f.docs[cap].activities=[];
