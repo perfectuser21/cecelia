@@ -699,6 +699,8 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
       wfRow: { wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: { webhook_url: 'https://hk.example:8444/webhook/agentic-workflow-runner-v4/run' } },
       agentRow: { name: 'affine-yuesheng', dispatch: { template: 'yueshengyun-daily.json' } },
     });
+    // 先建单再派（任务 f38e7cc2）：建单拿到 task id 才派
+    mockCreateRoutedTask.mockResolvedValue({ task_id: 'wf-1', task: { id: 'wf-1' } });
     const readCalls = [];
     mockNotionReq.mockImplementation(async (t, path) => (
       String(path).includes('/query') ? { results: [relationPage()] } : {}
@@ -851,6 +853,90 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     const pj = JSON.stringify(patch[3]);
     expect(pj).toContain('已派发');
     expect(pj).toContain('In Progress');
+  });
+
+  // ── 先建单再派（任务 f38e7cc2）：建单失败不派；派发失败把已建的单收成 failed ──
+  it('ssh 直派：先建单再派——建单在 ssh 之前；建单失败 → 不 ssh、⚠ 回执', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    stubOpsLookup({ wfRow: { wf_id: 'JinoHarvestDirect', name: '金诺采收·直驾', dispatch: {
+      channel: 'ssh', machine: 'xian-mac-m4', command: 'zsh ~/bin-harvest/batch-harvest.sh a b c' } } });
+    const order = [];
+    mockCreateRoutedTask.mockImplementation(async () => { order.push('create'); return { task_id: 't1', task: { id: 't1' } }; });
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage({ withAgent: false })] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}), execFn: () => { order.push('ssh'); return 'DISPATCHED'; },
+    });
+    expect(order).toEqual(['create', 'ssh']);
+
+    mockNotionReq.mockClear();
+    mockCreateRoutedTask.mockReset();
+    mockCreateRoutedTask.mockRejectedValue(new Error('route down'));
+    const execCalls = [];
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}), execFn: (a) => { execCalls.push(a); return 'DISPATCHED'; },
+    });
+    expect(execCalls).toHaveLength(0);
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    expect(JSON.stringify(patch[3])).toContain('建单失败');
+    expect(JSON.stringify(patch[3])).not.toContain('In Progress');
+  });
+
+  it('ssh 直派：已建单但 ssh 失败 → 把单收成 failed（不留无主 in_progress）', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    stubOpsLookup({ wfRow: { wf_id: 'JinoHarvestDirect', name: '金诺采收·直驾', dispatch: {
+      channel: 'ssh', machine: 'xian-mac-m4', command: 'zsh ~/bin-harvest/batch-harvest.sh a b c' } } });
+    mockCreateRoutedTask.mockResolvedValue({ task_id: 't-ssh-fail', task: { id: 't-ssh-fail' } });
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage({ withAgent: false })] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}), execFn: () => { throw new Error('ssh refused'); },
+    });
+    const fail = mockQuery.mock.calls.find(([sql, params]) => /UPDATE tasks/.test(String(sql)) && /status = 'failed'/.test(String(sql)) && (params || []).includes('t-ssh-fail'));
+    expect(fail).toBeTruthy();
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    expect(JSON.stringify(patch[3])).toContain('ssh_dispatch_failed');
+  });
+
+  it('webhook 派发：建单失败 → 不 POST webhook、⚠ 回执', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200 })));
+    stubOpsLookup({
+      wfRow: { wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: { webhook_url: 'https://x/run' } },
+      agentRow: { name: 'affine-yuesheng', dispatch: { template: 'yueshengyun-daily.json' } },
+    });
+    mockCreateRoutedTask.mockRejectedValue(new Error('route down'));
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage()] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({ tenant_id: 'yueshengyun' }),
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    expect(JSON.stringify(patch[3])).toContain('建单失败');
+  });
+
+  it('webhook 派发：已建单但 webhook 失败 → 把单收成 failed', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 502 })));
+    stubOpsLookup({
+      wfRow: { wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: { webhook_url: 'https://x/run' } },
+      agentRow: { name: 'affine-yuesheng', dispatch: { template: 'yueshengyun-daily.json' } },
+    });
+    mockCreateRoutedTask.mockResolvedValue({ task_id: 't-wh-fail', task: { id: 't-wh-fail' } });
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage()] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({ tenant_id: 'yueshengyun' }),
+    });
+    const fail = mockQuery.mock.calls.find(([sql, params]) => /UPDATE tasks/.test(String(sql)) && /status = 'failed'/.test(String(sql)) && (params || []).includes('t-wh-fail'));
+    expect(fail).toBeTruthy();
   });
 
   it('ssh 直派缺 command → ⚠ 回执提示配置缺口，不执行', async () => {

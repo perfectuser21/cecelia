@@ -142,6 +142,12 @@ vi.mock('../openclaw-agent-executor.js', () => ({
   reapOpenclawAgentRuns: vi.fn().mockResolvedValue({ reaped: 0, completed: 0, failed: 0 }),
 }));
 
+// Brain 主动派 workflow 给 Commander（任务 f38e7cc2）同理：真实 handler 会 ssh MMV 起/收 work-commander，纯路由单测绝不碰真机；
+// 派发/收割逻辑由 lib/__tests__/workflow-commander-dispatch.test.js 覆盖。
+vi.mock('../lib/workflow-commander-dispatch.js', () => ({
+  runWorkflowCommanderDispatch: vi.fn().mockResolvedValue({ reaped: { completed: 0, failed: 0 }, dispatched: { dispatched: 0, waiting: 0, failed: 0, skipped: 0 } }),
+}));
+
 // script 收割（棒 3）同理：真实 handler 会 ssh 到跑场机读 .exit，纯路由单测绝不碰真机；
 // 收割逻辑由 script-executor.test.js / integration/script-executor-chain.pg.integration.test.js 覆盖。
 vi.mock('../script-executor.js', () => ({

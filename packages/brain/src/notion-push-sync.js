@@ -772,6 +772,24 @@ async function dispatchOpenClawFromNotion({
     await writeStatusReceipt(token, page, desc, `⚠ 派发未成(${String(why).slice(0, 80)})`);
     console.warn(`[notion-pull] OpenClaw 派发未成 page=${page.id}: ${why}`);
   };
+  // 先建单再派（任务 f38e7cc2）：账先落、再动手——建单失败就不派（否则执行机在跑、Brain 无账）；
+  // 派发失败把刚建的单收成 failed（不留无主 in_progress 镜像，lost-deadline 要 4.5h 才判）。
+  const createRunTask = async (spec) => {
+    try {
+      const created = await createRoutedTask(pool, spec);
+      const id = created?.task_id ?? created?.task?.id ?? null;
+      return id ? { id } : { error: 'no_task_id' };
+    } catch (err) {
+      return { error: err.message };
+    }
+  };
+  const failRunTask = async (taskId, reason) => {
+    try {
+      await finalizeTask(pool, taskId, 'failed', { set: { error_message: reason }, onlyIfStatus: 'in_progress' });
+    } catch (err) {
+      console.warn(`[notion-pull] 派发失败收单异常 task=${taskId}: ${err.message}`);
+    }
+  };
   // 只认 n8n 业务流程：09-24 起 ops_workflows 也装 Brain 调度 job（source='scheduler'），人在
   // relation 里误选 ci-patrol 之类不能回退到默认 webhook 真派出去，查不到即走 workflow 不在 ops 的回执
   const { rows: wfRows } = await pool.query(
@@ -833,37 +851,36 @@ async function dispatchOpenClawFromNotion({
     // （dispatch.command 本就是"要执行的命令"数据行，写入权=运维权；这里只堵本地注入面）
     const sshArgs = [...SSH_BASE_ARGS, target, remote];
     const execFn = execFnIn ?? defaultSshExec;
+    const runTask = await createRunTask({
+      source: 'inbox',
+      source_id: runIdSsh,
+      title: `[run] ${wf.name}@${machine}`,
+      description: '来自 Notion 排单的直驾 run（ssh 直派）',
+      mutation_intent: 'none',
+      declared_domain: 'operations',
+      requested_task_type: 'workflow_run',
+      metadata: {
+        run_id: runIdSsh, wf_id: wf.wf_id, channel: 'ssh', machine,
+        notion_page_id: page.id, exit_path: `brain-runs/${runIdSsh}.exit`,
+        ...(pageContent ? { prompt_preview: pageContent.slice(0, 500), prompt_file: promptFile } : {}),
+      },
+      task: { status: 'in_progress', priority: 'P2' },
+    });
+    if (!runTask.id) return failReceipt(`建单失败，未派发: ${String(runTask.error).slice(0, 60)}`);
     try {
       execFn(sshArgs);
     } catch (err) {
-      return failReceipt(`ssh_dispatch_failed(${machine}): ${String(err.message).slice(0, 60)}`);
+      const why = `ssh_dispatch_failed(${machine}): ${String(err.message).slice(0, 60)}`;
+      await failRunTask(runTask.id, why);
+      return failReceipt(why);
     }
-    try {
-      const created = await createRoutedTask(pool, {
-        source: 'inbox',
-        source_id: runIdSsh,
-        title: `[run] ${wf.name}@${machine}`,
-        description: '来自 Notion 排单的直驾 run（ssh 直派）',
-        mutation_intent: 'none',
-        declared_domain: 'operations',
-        requested_task_type: 'workflow_run',
-        metadata: {
-          run_id: runIdSsh, wf_id: wf.wf_id, channel: 'ssh', machine,
-          notion_page_id: page.id, exit_path: `brain-runs/${runIdSsh}.exit`,
-          ...(pageContent ? { prompt_preview: pageContent.slice(0, 500), prompt_file: promptFile } : {}),
-        },
-        task: { status: 'in_progress', priority: 'P2' },
-      });
-      // 脚本步 run 原语：一次执行 = 一行 task_runs（fail-open）。终态由 reapSshWorkflowRuns 读 .exit 补齐。
-      await startRun({
-        taskId: created?.task_id ?? created?.task?.id,
-        runId: runIdSsh,
-        source: 'ssh-workflow',
-        context: { wf_id: wf.wf_id, machine },
-      }, { pool });
-    } catch (err) {
-      console.warn(`[notion-pull] ssh 直派入账失败（不阻塞）: ${err.message}`);
-    }
+    // 脚本步 run 原语：一次执行 = 一行 task_runs（fail-open）。终态由 reapSshWorkflowRuns 读 .exit 补齐。
+    await startRun({
+      taskId: runTask.id,
+      runId: runIdSsh,
+      source: 'ssh-workflow',
+      context: { wf_id: wf.wf_id, machine },
+    }, { pool });
     const baseSsh = stripStatusTail(desc);
     await notionReq(token, `/pages/${page.id}`, 'PATCH', {
       properties: {
@@ -889,6 +906,21 @@ async function dispatchOpenClawFromNotion({
   const runId = `notion-${pageId32}-${Date.now()}`;
   payload = { ...payload, run_id: runId, attempt_id: 'a1' };
   if (pageContent) payload.prompt = pageContent.slice(0, 4000); // 页面正文=执行 prompt 随 webhook 送达
+  const runTask = await createRunTask({
+    source: 'inbox',
+    source_id: runId,
+    title: `[run] ${executorLabel}`,
+    description: '来自 Notion 排单的业务流程 run',
+    mutation_intent: 'none',
+    declared_domain: 'operations',
+    requested_task_type: 'workflow_run',
+    metadata: {
+      run_id: runId, wf_id: wf.wf_id, agent_name: agent?.name ?? null,
+      notion_page_id: page.id,
+    },
+    task: { status: 'in_progress', priority: 'P2' },
+  });
+  if (!runTask.id) return failReceipt(`建单失败，未派发: ${String(runTask.error).slice(0, 60)}`);
   let ok = false;
   let detail = '';
   try {
@@ -904,33 +936,16 @@ async function dispatchOpenClawFromNotion({
     detail = err.message;
   }
   if (ok) {
-    // 一切执行进 tasks 账（决策 2dbabb48）：run 入账 workflow_run（operations 路线，
-    // 不解析 repo/branch），source_id=run_id 天然幂等；终态由 syncOpenClawRuns 回写。
-    try {
-      const created = await createRoutedTask(pool, {
-        source: 'inbox',
-        source_id: runId,
-        title: `[run] ${executorLabel}`,
-        description: '来自 Notion 排单的业务流程 run',
-        mutation_intent: 'none',
-        declared_domain: 'operations',
-        requested_task_type: 'workflow_run',
-        metadata: {
-          run_id: runId, wf_id: wf.wf_id, agent_name: agent?.name ?? null,
-          notion_page_id: page.id,
-        },
-        task: { status: 'in_progress', priority: 'P2' },
-      });
-      // 脚本步 run 原语（fail-open）：终态由 syncOpenClawRuns 依 ops_runs 回写时补齐。
-      await startRun({
-        taskId: created?.task_id ?? created?.task?.id,
-        runId,
-        source: 'openclaw-webhook',
-        context: { wf_id: wf.wf_id, agent: agent?.name ?? null },
-      }, { pool });
-    } catch (err) {
-      console.warn(`[notion-pull] workflow_run 入账失败（不阻塞派发）: ${err.message}`);
-    }
+    // 一切执行进 tasks 账（决策 2dbabb48）：run 已先入账 workflow_run；终态由 syncOpenClawRuns 回写。
+    // 脚本步 run 原语（fail-open）：终态由 syncOpenClawRuns 依 ops_runs 回写时补齐。
+    await startRun({
+      taskId: runTask.id,
+      runId,
+      source: 'openclaw-webhook',
+      context: { wf_id: wf.wf_id, agent: agent?.name ?? null },
+    }, { pool });
+  } else {
+    await failRunTask(runTask.id, `webhook_dispatch_failed: ${String(detail).slice(0, 60)}`);
   }
   const base = stripStatusTail(desc);
   const receipt = ok

@@ -10,6 +10,13 @@
 - [x] [BEHAVIOR] convcapturefilter Claude transcript 里 isMeta、origin.kind≠human（任务通知）、命令回显/本地命令输出/中断提示/压缩续接摘要不算真人文本；关联任务只认会话最后活动前 24h 内提到的 --task-id/claim。
   Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/conversation-capture-claude.test.js src/__tests__/conversation-capture-remote.test.js --maxWorkers=1 --minWorkers=1"
 
+# Brain 主动派 workflow 给 Commander + 派 workflow 先建单再派（任务 f38e7cc2）
+
+- [x] [BEHAVIOR] wfcommanderdispatch 新 task_type workflow_dispatch（迁移 549）：scheduler job workflow-commander-dispatch 认领 → 按 config/factory-workflows.json commander 登记解析调度单（缺项 failed 不猜）→ 发布时段内领 Brain 设备锁（被占只等不接管）→ ssh MMV 起 openclaw agent --agent work-commander（调度单经 stdin）→ 收割 COMMANDER_RESULT → completed/failed + 放锁；不进外部 run 镜像集合、不进 tick 主派发。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/workflow-commander-dispatch.test.js src/__tests__/migration-549-workflow-dispatch.test.js src/lib/__tests__/task-type-registry.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] notionbuilddispatchorder notion-push-sync 派 workflow（ssh 直派 / webhook）改先建 workflow_run 单再派：建单失败不派写 ⚠ 回执；派发失败把已建单收成 failed。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/notion-push-sync.test.js --maxWorkers=1 --minWorkers=1"
+
 # 修对话自动捕获 + 有头会话收尾自动 handoff（任务 c8b27bc5）
 
 - [x] [BEHAVIOR] convcaptureremote 容器内对话捕获走 ssh mmv 只读跑同一份三适配器（远端脚本 fixture 真跑出会话、带 entrypoint/linkedTaskIds、turns 截尾 ≤4000 字）；远端 ~/.claude/projects 缺失、ssh 失败、本地模式目录缺失均计 adapter_failures 使 errors>0（回归：09-10 起容器内静默 0 全绿）；未登记出处且 entrypoint=cli 判为有头真人会话，sdk-cli 照旧跳过。

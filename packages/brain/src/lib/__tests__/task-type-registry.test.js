@@ -409,6 +409,8 @@ const FIX_EXECUTOR_KIND = {
 // 本刀唯一允许"新增"的类型：它不在任何替换前名单里（VALID_TASK_TYPES 例外，见下方
 // 专属断言——PR2 明确混入），比较时剔除，其余必须逐一相等
 const NEW_TYPE = 'qiumi_task';
+// 任务 f38e7cc2：Brain 主动派 workflow 给 Commander 的新类型（push=false 进 PUSH_EXCLUDED、ANC 免锚），各集合比较时与 qiumi 同法剔除后单独断言。
+const NEW_TYPE_WFD = 'workflow_dispatch';
 // 棒 3（executor=script）新增的类型，同样不在任何替换前名单里；比较通用 FIX 时一并剔除，
 // 它自己的名单归属由下面的专属断言严格钉死。
 const NEW_TYPE_SCRIPT = 'script_run';
@@ -427,7 +429,7 @@ describe('task-type-registry：零行为变化', () => {
   for (const [name, expected] of Object.entries(FIX)) {
     it(`${name} 派生集合保持原类型并显式保护Janitor`, () => {
       const added = ['CANCEL_EXEMPT_TYPES', 'PROTECTED_TASK_TYPES', 'ESCALATION_EXEMPT_TASK_TYPES'].includes(name) ? ['janitor','app_server_run'] : name==='ANCHOR_EXEMPT_TASK_TYPES'?['app_server_run']:[];
-      same(R[name].filter((t) => t !== NEW_TYPE && t !== NEW_TYPE_SCRIPT), [...expected, ...added]);
+      same(R[name].filter((t) => t !== NEW_TYPE && t !== NEW_TYPE_SCRIPT && t !== NEW_TYPE_WFD), [...expected, ...added]);
     });
   }
 
@@ -436,7 +438,7 @@ describe('task-type-registry：零行为变化', () => {
   }
 
   it('VALID_TASK_TYPES 派生集合 == 替换前字面量 + qiumi_task（PR2 入口刀开启，其余零变化）', () => {
-    same(R.VALID_TASK_TYPES, [...VALID_TASK_TYPES_FIX, 'qiumi_task', 'script_run']);
+    same(R.VALID_TASK_TYPES, [...VALID_TASK_TYPES_FIX, 'qiumi_task', 'script_run', 'workflow_dispatch']);
     expect(R.VALID_TASK_TYPES).toContain('qiumi_task');
     expect(R.VALID_TASK_TYPES).toContain('script_run');
   });
@@ -444,7 +446,7 @@ describe('task-type-registry：零行为变化', () => {
   it('TICK_DISPATCH_EXCLUDED 派生集合 == 替换前字面量 + project（PR3 放开第二道闸：qiumi_task 移出，project 留下）', () => {
     // script_run（棒 3）：PR A 期间在此名单里（执行体接线前不许被 tick 当普通任务派给 claude），
     // PR B 接线 script-executor 后移出——必须用不做剔除的严格相等钉住。
-    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'project', 'janitor','app_server_run']);
+    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'project', 'janitor','app_server_run', 'workflow_dispatch']);
     expect(R.TICK_DISPATCH_EXCLUDED).not.toContain('script_run');
     expect(
       R.TICK_DISPATCH_EXCLUDED,
@@ -457,7 +459,7 @@ describe('task-type-registry：零行为变化', () => {
   });
 
   it('EXECUTOR_KIND_FOR_TASK_TYPE == 替换前 EXECUTOR_KIND_FOR 的 task_type 部分 + qiumi_task', () => {
-    expect(R.EXECUTOR_KIND_FOR_TASK_TYPE).toEqual({ ...FIX_EXECUTOR_KIND, qiumi_task: 'openclaw-agent', script_run: 'script', janitor: 'preview-janitor', app_server_run:'app-server-controller' });
+    expect(R.EXECUTOR_KIND_FOR_TASK_TYPE).toEqual({ ...FIX_EXECUTOR_KIND, qiumi_task: 'openclaw-agent', script_run: 'script', janitor: 'preview-janitor', app_server_run:'app-server-controller', workflow_dispatch: 'openclaw-agent' });
   });
 
   it('qiumi_task 声明符合 spec 1.1（PR3：V 标签已开 + tick_dispatchable=true，第一道闸改由 QIUMI_DISPATCH_ENABLED 门控 headed_manual）', () => {
@@ -551,7 +553,7 @@ describe('task-type-registry：零行为变化', () => {
     const dbList = [...m[1].matchAll(/'([a-z0-9_-]+)'/g)].map((x) => x[1]);
     const added = readFileSync(join(HERE, '..', '..', '..', 'migrations', '502_preview_owned_cache_janitor.sql'), 'utf8');
     expect(added).toContain("('tasks_task_type_check','task_type','janitor')");
-    same(R.DB_WHITELISTED_TASK_TYPES, [...dbList, 'janitor','app_server_run']);
+    same(R.DB_WHITELISTED_TASK_TYPES, [...dbList, 'janitor','app_server_run', 'workflow_dispatch']);
     expect(dbList).toContain('qiumi_task');
     expect(dbList).toContain('script_run');
   });

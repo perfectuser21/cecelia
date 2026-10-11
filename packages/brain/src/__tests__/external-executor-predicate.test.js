@@ -58,8 +58,9 @@ describe('isExternallyExecuted —— 外部执行体统一谓词', () => {
 });
 
 describe('外部执行体集合从注册表派生，不手抄', () => {
-  it('EXTERNALLY_EXECUTED_TASK_TYPES 恰为 device_job / janitor / qiumi_task / script_run', () => {
-    expect([...EXTERNALLY_EXECUTED_TASK_TYPES].sort()).toEqual(['app_server_run','device_job', 'janitor', 'qiumi_task', 'script_run']);
+  it('EXTERNALLY_EXECUTED_TASK_TYPES 恰为 device_job / janitor / qiumi_task / script_run / workflow_dispatch', () => {
+    // workflow_dispatch（任务 f38e7cc2）：Brain 经 ssh 在 MMV 起 work-commander，进程不在 Brain 本机，活性走 openclaw-agent 合同
+    expect([...EXTERNALLY_EXECUTED_TASK_TYPES].sort()).toEqual(['app_server_run','device_job', 'janitor', 'qiumi_task', 'script_run', 'workflow_dispatch']);
   });
 
   it('EXTERNALLY_EXECUTED_KINDS = 上述类型在注册表里声明的 executor（去 null 去重）', () => {

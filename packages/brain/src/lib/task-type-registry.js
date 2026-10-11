@@ -194,6 +194,11 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // push_to_notion=false：秋米状态走 pushQiumiStatus 专线回写原中英文行；进旧 pushTasks 会与
   // projection/notion.js 抢同一个 notion_id，推错库 400 后清 id 再重建，来回乒乓（任务 7951bd36）。
   qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', false, true, 'none', true, [V, ANC, OCPASS]),
+  // Brain 主动派 workflow 给 work-commander（任务 f38e7cc2，决策 23cc0951/3c98fb36）：与 workflow_run（外部起跑的账本镜像）
+  // 分开立类型——镜像判据/commander-watchdog/lost-deadline 都按 workflow_run 全量收，混进去要处处开例外。
+  // tick_dispatchable=false：不进 tick 主派发（主派发对 openclaw-agent 只认 qiumi 路由），由 scheduler job
+  // workflow-commander-dispatch 认领 → 设备锁 → ssh MMV 起 openclaw agent --agent work-commander → 收割放锁。
+  workflow_dispatch:        workflow(T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', false, false, 'none', true, [V, ANC])),
   // ── executor=script 一等任务类型（链 bf5088a3 棒 3，任务 5cdbd52a）──
   // 确定性脚本步：Brain 经 ssh 在跑场机执行 payload.cmd（{host,cmd,cwd,env,timeout_sec}），与 AI 步同一条 DAG。
   // kind=agent：脚本也是「一步交付」（df67a9d6 判据）。pr=false 但成功终态写 completed 而非 completed_no_pr——

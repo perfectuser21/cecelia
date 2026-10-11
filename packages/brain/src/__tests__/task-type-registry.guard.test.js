@@ -98,10 +98,10 @@ export const REMAINING_LEGACY_SITES = {
   // harness_initiative 这里写 'harness(skill-relay)'，两处已有映射表都是别的值）——是运行舱只读
   // 展示端点自己的第三份独立"推不出=null"降级展示文案，不是"哪类"的分类标签，无匹配注册表字段
   'routes/agent-ops.js': ['22:SKILL_BY_TASK_TYPE'],
-  // kind: map（long-lived）— Task 6 评估：:101 STEP_SYSTEM_PROMPTS 是
+  // kind: map（long-lived）— Task 6 评估：:111（#6291 前为 :101）STEP_SYSTEM_PROMPTS 是
   // 6 个 content-* task_type 各自专属的完整 LLM system prompt 长文本（调 LLM 用），不是分类标签，
   // 无法也不应该折进注册表的 T() 字段
-  'routes/content-pipeline.js': ['101:STEP_SYSTEM_PROMPTS'],
+  'routes/content-pipeline.js': ['111:STEP_SYSTEM_PROMPTS'],
   // kind: map（long-lived）— enum 部分（STAGE_ORDER/STAGE_LABELS）已搬进注册表 HARNESS_BUILD_STAGE_ORDER/LABELS；
   // 剩 TASK_TYPE_TO_SKILL（:933，task_type→skill目录名，与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP
   // 语义相近但值不同——第3份独立维护，PR1 只搬家不合并）+ BASE_LABELS（:1021，task_type→短展示
