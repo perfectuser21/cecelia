@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.420.0
+**Brain 版本**: 1.422.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,17 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.422.0 — 技能工厂派发器：MMV 常驻把工厂任务派给 OpenClaw skill-factory 真机执行
+
+- 新增 `packages/brain/scripts/factory-dispatcher/`（ESM 零依赖 + launchd LaunchAgent 模板 + README）：上海 09–23 时段闸、claim 409 跳过、代领设备锁（他人占锁只等不接管、等超时落 failed 不放锁）、UTF-8 消息文件读回校验、`openclaw agent --agent skill-factory` 启动与守望（ok:false / 超时 / 会话退出宽限期 → 杀会话、只放自己的锁、落 failed）、打回 queued 时 PATCH 回、终态不覆盖、自持锁周期 lock-refresh；linux/容器内拒绝运行（us-vps 零执行）
+- 任务 f807bbb3；本期不做：崩溃恢复、按设备并发
+
+## Brain 1.421.0 — 技能工厂台账：一条业务 workflow 一行，阶段 1..7 按规则推进、人工优先留痕（迁移 548）
+
+- 迁移 548：`factory_ledger`（workflow_id 唯一关联 workflows；stage 1 试跑 / 2 摸边界 / 3 验证 / 4 沉淀 / 5 上线跑 / 6 蒸馏 / 7 晋级·守护；validation_mode `use_while_validate` 边用边验 | `validate_before_release` 先验后上；production_version / candidate_version；window_k + recent_runs 滑窗 + recent_pass / recent_total；total_runs；degrade_count；next_action；blocked_reason / blocked_kind none|human_gate|resource|safety）+ `factory_stage_events`（只追加：from_stage 空 = 进厂，evidence_run_ids jsonb，actor rule|human|agent）
+- 接口：`GET /api/brain/factory/ledger`（?stage=&workflow_id=）、`GET /api/brain/factory/ledger/:id`（含阶段事件）、`POST /api/brain/factory/ledger`（进厂，默认 stage=1）、`PATCH /api/brain/factory/ledger/:id`（非阶段字段）、`POST /api/brain/factory/ledger/:id/transition`（human 任意跳退；rule/agent 只许相邻推进或规定退回 3→2 / 5→3 / 6→5 / 7→6，非法 400；human_gate / safety 卡住时 409；expected_from_stage 不符 409；默认清空滑窗）、`POST /api/brain/factory/ledger/:id/runs`（记一次运行 {run_id, pass, degraded?}，同 run_id 窗内去重）；写接口内部鉴权
+- 决策 cc008b7e / 2bb08a99 / 7c6f7ae2 / 2aceef75；推进器（任务 a5f42455）与 Notion 投影不在本次
 
 ## Brain 1.420.0 — QA 门回归 smoke 固化说明进 Brain（决策 b8030661）
 
