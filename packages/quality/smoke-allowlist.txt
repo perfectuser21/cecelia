@@ -438,3 +438,4 @@ factory-ledger-smoke.sh
 factory-pusher-smoke.sh
 workflow-commander-dispatch-smoke.sh
 content-pipeline-runs-shadow-smoke.sh
+bypass-audit-smoke.sh

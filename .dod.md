@@ -1,3 +1,10 @@
+# 旁路报警：动手机/对外推送无 Brain 任务号即告警（派发总闸 H，任务 865b502c）
+
+- [x] [BEHAVIOR] bypassaudit 领锁/手机对外动作/OpenClaw message 调用按持有者·run_id·任务号在 Brain 侧判关联：追得到 Brain 任务（uuid / payload.run_id / qiumi|wfd-<任务号前8位>）不记，追不到写 cecelia_events(event_type=bypass_action)，dedupe_key 去重；按上海日汇总写 runs bypass-audit:<日期>（有旁路=fail，经现有「最近执行」投影），对外类达阈值才 Bark（手机对外≥1、OpenClaw 推送≥5，每天每类一次），领锁类不推主理人。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/bypass-audit.test.js src/__tests__/scheduler-jobs.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] bypassroutes POST /api/brain/bypass-actions/report 执行机上报（kind 非法 400）、GET /bypass-actions/summary 运维视图；POST /device-locks/acquire 抢锁成功把 owner/task_id/run_id/host 交旁路审计（被占不记）。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/routes/__tests__/bypass-actions.test.js src/routes/__tests__/brain-meta.test.js --maxWorkers=1 --minWorkers=1"
+
 # handoff 下一步四类 + 有头续接待续（任务 db556cfa，主理人 2026-10-11 决策）
 
 - [x] [BEHAVIOR] handoffkinds next_steps 四类 resume_headed/dispatch_headless/decision/note（task≡dispatch_headless、done≡note）；有头任务（headed_manual / executor_kind=headed-session / headed_takeover）未标或认不出 → resume_headed，无头 → note；resume_headed 不派单、原任务挂 result.pending_resume；PATCH 写 handoff 响应带 handoff_next_steps 反馈。

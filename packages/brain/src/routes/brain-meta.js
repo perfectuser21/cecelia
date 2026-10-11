@@ -9,6 +9,7 @@ import { getAccountUsage, selectBestAccount } from '../account-usage.js';
 import websocketService, { WS_EVENTS as _WS_EVENTS } from '../websocket.js';
 import { handleChat, handleChatStream } from '../orchestrator-chat.js';
 import { acquireDeviceLock } from '../device-lock-helpers.js';
+import { noteDeviceLockAcquire } from '../bypass-audit.js';
 import { rateLimit } from 'express-rate-limit';
 
 const router = Router();
@@ -1700,7 +1701,7 @@ router.get('/device-locks', async (_req, res) => {
  * 申请设备锁（单条原子 UPDATE 抢锁，无 check-then-act 竞态；语义见 device-lock-helpers.js）
  * 契约：locked_by 传 tasks 表 uuid 会参与派发对账（sweeper 按任务活跃度回收）；
  * 非 uuid 身份（手工占用如 'manual-alex'）只受 TTL 管理，不被对账秒扫。
- * body: { device_name, locked_by, ttl_minutes? }
+ * body: { device_name, locked_by, ttl_minutes?, task_id?, run_id?, host? }（后三项只供旁路审计留痕，关联判定在 Brain 侧做）
  * 返回: { acquired: true, lock } 或 { acquired: false, locked_by, expires_at }
  */
 router.post('/device-locks/acquire', async (req, res) => {
@@ -1711,6 +1712,13 @@ router.post('/device-locks/acquire', async (req, res) => {
     }
 
     const r = await acquireDeviceLock(locked_by, device_name, ttl_minutes);
+    if (r.result === 'acquired') {
+      // 旁路报警（派发总闸 H，任务 865b502c）：持有者追不到 Brain 任务（执行机 crontab 经 brain-lock.sh 领锁等）
+      // → 记 phone_lock 旁路事件。只告警不拦截，异步不挡抢锁回执，失败只打日志。
+      const { task_id = null, run_id = null, host = null } = req.body;
+      noteDeviceLockAcquire(pool, { device: device_name, owner: locked_by, taskId: task_id, runId: run_id, host })
+        .catch((e) => console.warn('[API] device-locks/acquire 旁路审计失败（不影响抢锁）:', e.message));
+    }
     if (r.result === 'unknown_device') {
       return res.status(404).json({ success: false, error: `Unknown device: ${device_name}` });
     }
