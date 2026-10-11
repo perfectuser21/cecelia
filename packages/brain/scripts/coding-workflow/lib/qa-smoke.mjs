@@ -4,7 +4,7 @@
 // 前提是 spec 要求每个 Q-n 自己造数据（空库可复现），见 prompts/spec.md。
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseQaReport } from './qa-report.mjs';
+import { parseQaReport, PRODUCTION_TARGET_RE, PRODUCTION_ASSIGN_RE } from './qa-report.mjs';
 
 export const QA_SMOKE_DIR = 'packages/brain/scripts/smoke';
 const ALLOWLIST = 'packages/quality/smoke-allowlist.txt';
@@ -39,6 +39,55 @@ export function replaceOrigin(command, origin) {
   return out;
 }
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '[::1]']);
+const LOCAL_HOST_PORT_RE = /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0)\s*:\s*(\d+)|\[::1\]:(\d+)/g;
+// 依赖本机文件/目录：CI 里没有（QA 会话的 worktree、/tmp 下自己写的脚本、家目录）
+const LOCAL_PATH_RE = /(?:^|[\s'"=(<>])(?:\/(?:Users|home|private|tmp)\/|~\/)|\bcd\s+\//;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * 命令是否请求预览环境 API：字面量「<预览地址>/api/」，或先把预览地址赋给变量（B=<预览地址>、export B='<预览地址>'）
+ * 再用 $B/api/、${B}/api/（金丝雀 4 r10/5 r3/6 r3 的写法）。地址后面紧跟数字的不算（5301 ≠ 53010）。
+ */
+function hitsPreview(command, origin) {
+  const o = escapeRe(origin);
+  if (new RegExp(`${o}/api/`).test(command)) return true;
+  const assign = new RegExp(`\\b([A-Za-z_][A-Za-z0-9_]*)=(['"]?)${o}\\2(?![\\w.:/-])`, 'g');
+  return [...command.matchAll(assign)].some(([, v]) => new RegExp(`\\$(?:${v}|\\{${v}\\})/api/`).test(command));
+}
+
+/** 预览端口（预览地址是本机时）；预览不在本机时为 null（此时命令里任何本机端口都算别的端口）。 */
+function previewPort(origin) {
+  try {
+    const u = new URL(origin);
+    return LOCAL_HOSTS.has(u.hostname) ? (u.port || (u.protocol === 'https:' ? '443' : '80')) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 不能固化的原因；能固化返回 null。依次判：browser（开浏览器）、production（打生产，复用 qa-report 的生产判定）、
+ * other_port（打本机其他端口，如金丝雀 5 T-4/T-10 打分支/main 对照 Brain）、local_path（依赖本机路径）、
+ * not_preview（没请求预览环境 API）。
+ */
+export function previewApiSkipReason(command, origin) {
+  const cmd = String(command ?? '');
+  if (BROWSER_RE.test(cmd)) return 'browser';
+  if (PRODUCTION_TARGET_RE.test(cmd) || PRODUCTION_ASSIGN_RE.test(cmd)) return 'production';
+  const port = previewPort(origin);
+  if ([...cmd.matchAll(LOCAL_HOST_PORT_RE)].some((m) => (m[1] ?? m[2]) !== port)) return 'other_port';
+  if (LOCAL_PATH_RE.test(cmd)) return 'local_path';
+  if (!hitsPreview(cmd, origin)) return 'not_preview';
+  return null;
+}
+
+/** 命令是否可固化成回归 smoke（请求预览 API，且不碰生产/本机其他端口/本机路径/浏览器）。 */
+export function targetsPreviewApi(command, previewUrl) {
+  const origin = String(previewUrl ?? '').replace(/\/+$/, '');
+  return origin !== '' && previewApiSkipReason(command, origin) === null;
+}
+
 /** 一个 T-n 包进子 shell：退出码非 0 即判失败退出（&& 断言链中途失败时 set -e 不会退出，J-4）。 */
 const block = (t, command) => [
   `echo "== ${t.id}（对应 ${t.covers.join('、')}）"`,
@@ -48,14 +97,28 @@ const block = (t, command) => [
 ].join('\n');
 
 /**
- * 由 QA 报告生成 smoke：{ name, content, writes, items }；没有可固化的条目返回 null。
- * 只收 PASS、请求预览环境 API（命令里出现 previewUrl/api/）、不开浏览器的 T-n。
+ * 挑 QA 报告里可固化的 T-n：只看 PASS 的；→ { picked: [T-n], skipped: [{ id, reason }] }（原因见 previewApiSkipReason）。
+ */
+export function selectQaSmokeItems({ previewUrl, reportText }) {
+  const origin = String(previewUrl ?? '').replace(/\/+$/, '');
+  const picked = [];
+  const skipped = [];
+  for (const t of parseQaReport(reportText).tests.filter((x) => x.verdict === 'PASS')) {
+    const reason = origin ? previewApiSkipReason(t.command, origin) : 'not_preview';
+    if (reason) skipped.push({ id: t.id, reason });
+    else picked.push(t);
+  }
+  return { picked, skipped };
+}
+
+/**
+ * 由 QA 报告生成 smoke：{ name, content, writes, items, skipped }；没有可固化的条目返回 null。
+ * 只收 PASS、请求预览环境 API（字面量或先赋给变量）、不碰生产/本机其他端口/本机路径/浏览器的 T-n。
  */
 export function buildQaSmoke({ taskId, previewUrl, reportText }) {
   const origin = String(previewUrl ?? '').replace(/\/+$/, '');
   if (!origin) return null;
-  const picked = parseQaReport(reportText).tests.filter((t) => t.verdict === 'PASS'
-    && t.command.includes(`${origin}/api/`) && !BROWSER_RE.test(t.command));
+  const { picked, skipped } = selectQaSmokeItems({ previewUrl: origin, reportText });
   if (picked.length === 0) return null;
   // curl 第一个参数统一 -q（不读外部 ~/.curlrc；仓库 smoke 守卫的硬要求）
   const fixCurl = (cmd) => cmd.replace(/\bcurl[ \t]+(?!-q(?:[ \t]|$))/g, 'curl -q ');
@@ -79,7 +142,7 @@ export function buildQaSmoke({ taskId, previewUrl, reportText }) {
     `echo "PASS: ${name}"`,
     '',
   ].join('\n');
-  return { name, content, writes, items: picked.map((t) => t.id) };
+  return { name, content, writes, items: picked.map((t) => t.id), skipped };
 }
 
 /** 追加一行（已有则不动）；文件不存在时新建。 */

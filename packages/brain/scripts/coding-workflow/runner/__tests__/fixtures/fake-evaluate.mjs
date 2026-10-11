@@ -24,7 +24,11 @@ const file = `05-qa-report-r${input.round}.md`;
 const F = '```';
 const body = mode === 'pass-api'
   ? `### T-1\n对应: Q-1\nverdict: PASS\n${F}command\ncurl -s -X POST http://localhost:5302/api/brain/tasks -d '{"title":"qa"}' | jq -e '.id'\n${F}\n${F}output\ntrue\n${F}\n`
-  : '';
+  // 金丝雀 4 r10/5/6 写法：预览地址先赋给变量；T-2 打本机别的端口（不该固化）
+  : mode === 'pass-api-var'
+    ? `### T-1\n对应: Q-1\nverdict: PASS\n${F}command\nB=http://localhost:5302; curl -s -X POST "$B/api/brain/tasks" -d '{"title":"qa"}' | jq -e '.id'\n${F}\n${F}output\ntrue\n${F}\n`
+      + `### T-2\n对应: Q-1\nverdict: PASS\n${F}command\ncurl -s http://127.0.0.1:5299/api/brain/tasks | jq -e 'length'\n${F}\n${F}output\n1\n${F}\n`
+    : '';
 fs.writeFileSync(path.join(input.worktree, input.sprint_dir, file), `# QA 报告 第 ${input.round} 轮 ${mode}\n\n${body}`);
 const cannot = mode === 'cannot' ? [{ id: 'T-2', covers: ['Q-1'], reason: '工具缺失：预览环境没有 ffprobe' }] : [];
 const failed = mode === 'fail' ? [{ id: 'T-1', covers: ['Q-1'], command: 'curl x', output_tail: '500' }] : [];
