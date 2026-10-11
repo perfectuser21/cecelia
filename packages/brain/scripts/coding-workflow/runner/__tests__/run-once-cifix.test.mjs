@@ -151,6 +151,19 @@ describe('runner CI 红自动修复（ci_fix）', () => {
     expect(ghCalls().some((a) => a.includes('--disable-auto'))).toBe(false);
   });
 
+  // 金丝雀 4：commander 把旧尝试归档进 archived_attempts 解升级后，新尝试编号从 1 重来 → span 幂等键 ci_fix:<pr>:<n> 撞上
+  // 旧记录（内容不同 → 409，整批丢失）。编号必须连同归档的一起往后数
+  it('有 commander 归档的旧尝试 → 新尝试的 span 编号接着归档数往后（不复用 ci_fix:<pr>:1）', async () => {
+    fs.mkdirSync(sb.logDir, { recursive: true });
+    fs.writeFileSync(path.join(sb.logDir, 'cifix-77.json'), JSON.stringify({ attempts: [], archived_attempts: [
+      { head: 'a'.repeat(40), result: 'pushed' }, { head: 'b'.repeat(40), result: 'pushed' },
+    ] }));
+    const r = await go(red());
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(state().attempts).toMatchObject([{ head, result: 'pushed' }]);
+    expect(brain.spans.map((s) => s.occurrence_key)).toEqual(['ci_fix:77:3']);
+  });
+
   it('同一 head 只修一次；累计 2 次后不再修', async () => {
     fs.mkdirSync(sb.logDir, { recursive: true });
     fs.writeFileSync(path.join(sb.logDir, 'cifix-77.json'), JSON.stringify({ attempts: [{ head, result: 'no_commit' }] }));

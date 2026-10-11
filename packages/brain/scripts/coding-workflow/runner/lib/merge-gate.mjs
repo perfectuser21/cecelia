@@ -53,7 +53,7 @@ async function gate(ctx, pr, s) {
   // 执行记录（决策 b34e346a）：合并成功/失败各一条，失败按累计次数区分幂等键
   if (taskId) {
     await postSpans(ctx, [gateSpan({
-      taskId, key: 'merge', startedAt, endedAt: Date.now(), ok: merge.code === 0,
+      taskId, key: 'merge', startedAt, endedAt: Date.now(), ok: merge.code === 0, terminal: merge.code === 0,
       occurrence: merge.code === 0 ? `${pr.number}` : `${pr.number}:f${(s.merge_failures ?? 0) + 1}`,
       evidence: { head: s.approved.head, ...(merge.code === 0 ? {} : { error: merge.stderr.trim().split('\n').pop() || String(merge.code) }) },
     })]);
@@ -74,7 +74,12 @@ async function gate(ctx, pr, s) {
   const prior = task.ok ? task.body?.result ?? {} : {};
   const ciFix = readCiFixState(cfg, pr.number);
   const cost = costSummary(prior, s, ciFix);
-  const r = await ctx.brain.patch(taskId, { result: { merge: { merged: true, ...s.merged }, cost_usd: cost } });
+  const r = await ctx.brain.patch(taskId, { result: {
+    merge: { merged: true, ...s.merged }, cost_usd: cost,
+    // result 顶层合并：runner 带上原字段整体回写，只改阶段
+    runner: { ...prior.runner, phase: 'merged', ...(prior.runner?.automerge ? { automerge: { ...prior.runner.automerge, merge: 'merged' } } : {}) },
+    handoff: mergedHandoff(taskId, pr, prior, s, cost),
+  } });
   if (!r.ok) ctx.log(`合并门回写 Brain 任务 ${taskId} 失败（HTTP ${r.status}）`);
   // 交付复盘落库（审计 #22，旧 report 6.5/6.8）：程序按这次的真实记录拼，不让模型编
   const learned = await ctx.brain.postLearnings({
@@ -86,6 +91,27 @@ async function gate(ctx, pr, s) {
 }
 
 const money = (x) => Math.round(x * 10000) / 10000;
+
+/**
+ * 合并交接单（金丝雀 4：派发收口时合成的初版 pr_urls 为空、合并后没人刷新）：沿用初版的标题/数据源等，
+ * 写上 PR、分支、合并 head、QA 轮次与花费；下一步固定「完成，无下一步」（不触发接力棒建子任务）。
+ */
+function mergedHandoff(taskId, pr, prior, qa, cost) {
+  const h = prior.handoff && typeof prior.handoff === 'object' ? prior.handoff : {};
+  const rounds = qa.rounds?.length ?? 0;
+  return {
+    schema_version: 1, initiative_id: null, journey_id: null, decision_refs: [], data_sources: [], not_done: [], ...h,
+    task_id: taskId, title: h.title || pr.headRefName, verdict: 'PASS', synthesized: false, session_id: 'coding-workflow-runner',
+    done: [
+      ...(Array.isArray(h.done) ? h.done : []),
+      `PR #${pr.number} 已合并（head ${qa.merged.head.slice(0, 9)}）`,
+      `真人 QA ${rounds} 轮 + 独立裁判通过；全链花费 $${cost.total}`,
+    ],
+    next_steps: ['完成，无下一步'],
+    artifacts: { docs: [], sprint_dir: null, ...h.artifacts, branch: pr.headRefName, pr_urls: [pr.url] },
+    created_at: new Date().toISOString(),
+  };
+}
 
 /** 全链花费（审计 #35）：链路（runner 回执汇总）+ QA 门（evaluate/qa-fix）+ CI 修复。 */
 function costSummary(prior, qa, ciFix) {

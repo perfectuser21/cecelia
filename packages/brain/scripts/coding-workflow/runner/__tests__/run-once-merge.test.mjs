@@ -58,6 +58,36 @@ describe('合并门（绑定 head SHA）', () => {
     expect(E.brain.spans).toContainEqual(expect.objectContaining({ run_id: `coding-workflow:${TASK}`, occurrence_key: 'merge:77', outcome: 'pass' }));
   });
 
+  // 金丝雀 4：合并后 result.handoff 还是派发时合成的初版（pr_urls 空），runner.phase 停在 awaiting_qa；
+  // Notion「最近执行」按最差 span 显示失败。合并即终态：刷新交接单与阶段，合并 span 标 run_terminal
+  it('合并成功 → runner.phase=merged（保留原字段）；handoff 刷新为合并交接单（PR 链接、分支、无下一步，非合成）', async () => {
+    const head = remoteHead();
+    approve(head);
+    const task = { id: TASK, status: 'completed', result: {
+      runner: { host: 'mmv', phase: 'awaiting_qa', cost_usd: 3.5, automerge: { merge: 'awaiting_qa', ready: true } },
+      handoff: { schema_version: 1, task_id: TASK, title: '修个 bug', verdict: 'PASS', done: ['完成：修个 bug'], not_done: [], next_steps: [], synthesized: true,
+        artifacts: { docs: [], branch: null, pr_urls: [], sprint_dir: null }, created_at: '2026-10-10T10:05:49.999Z' },
+    } };
+    const r = await go(green({ prs: [pr({ headRefOid: head })] }), { tasks: [task] });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const res = lastResult();
+    expect(res.runner).toMatchObject({ host: 'mmv', phase: 'merged', cost_usd: 3.5, automerge: { merge: 'merged', ready: true } });
+    expect(res.handoff).toMatchObject({
+      task_id: TASK, title: '修个 bug', verdict: 'PASS', synthesized: false, next_steps: ['完成，无下一步'],
+      artifacts: { branch: BRANCH, pr_urls: ['https://github.com/x/y/pull/77'] },
+    });
+    expect(res.handoff.done.join('\n')).toContain(`PR #77 已合并（head ${head.slice(0, 9)}）`);
+    expect(Date.parse(res.handoff.created_at)).toBeGreaterThan(Date.parse('2026-10-10T10:05:49.999Z'));
+  });
+
+  it('合并 span 标 run_terminal（运行结果以合并为准，不被 GAN 中途的 FAIL 轮决定）', async () => {
+    const head = remoteHead();
+    approve(head);
+    const r = await go(green({ prs: [pr({ headRefOid: head })] }), { tasks: [{ id: TASK, status: 'completed' }] });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(E.brain.spans.find((s) => s.occurrence_key === 'merge:77').evidence).toMatchObject({ run_terminal: true });
+  });
+
   // 审计 #6：合并失败不能静默挂着
   it('合并失败且 PR 冲突 → 升级 merge_conflict（P1 + Brain escalations），不再重试', async () => {
     approve();
