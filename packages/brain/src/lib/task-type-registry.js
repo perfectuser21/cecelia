@@ -9,7 +9,9 @@
  * 守卫：__tests__/task-type-registry.guard.test.js（grep 字面量名单必红）。
  *
  * 字段：
- *   surface   执行面：kernel | openclaw-agent | script | device | brain-internal | external | none
+ *   surface   执行面：kernel | codex-bridge | codex-review | openclaw-agent | script | device | brain-internal | external | none
+ *             会被 tick 派发的类型，surface 必须等于真实路由（lib/dispatch-route.js resolveDispatchRoute，
+ *             守卫 lib/__tests__/dispatch-route.test.js）；none = 无头无可用执行者，queued 建单即拒（任务 0a70684f）
  *   coding    是否编码变更（走 change_kind/map_scope 校验）
  *   pr        完成是否要求 PR（false → 完成态写 completed_no_pr）
  *   executor  派发时写进 tasks.executor_kind 的值（null = 由派发路径自决）
@@ -85,91 +87,95 @@ const RECMUT = 'recurring_coding_mutation';
 
 export const TASK_TYPE_REGISTRY = Object.freeze({
   // ── 通用 ──
-  dev:                 T('kernel', true,  true,  'brain-local', 'kernel', true, true, 'none', true, [V, BP, GUIDE, CM, FK, RECMUT, NKR, GPSCOPE, DEVDASH, WARROOM]),
-  review:              T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, FV, NKR, DEVDASH]),
-  talk:                T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR]),
-  data:                T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, ANC]),
-  research:            T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR, CX, NOGOAL, ASYNCCB]),
-  exploratory:         T('brain-internal', false, false, null, 'none', true, true, 'none', true, []),
-  explore:             T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR, ASYNCCB]),
-  knowledge:           T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, FR]),
-  qa:                  T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, FV, NKR]),
-  audit:               T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, FV]),
-  decomp_review:       T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, FV, REVIEWISO]),
-  codex_qa:            T('kernel', false, false, null, 'kernel', true, true, 'recurring', true, [V, SYS, ANC, CODEX, FV, RECUR]),
-  codex_dev:           T('kernel', true,  true,  null, 'kernel', true, true, 'none', true, [V, ANC, CODEX, CM, FK, RECMUT]),
-  codex_test_gen:      T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, ANC, CODEX, FV]),
-  pr_review:           T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, FV]),
-  code_review:         T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO, NKR]),
-  initiative_plan:     T('brain-internal', false, false, null, 'none', true, true, 'protected', true, [V, SYS, ANC, FR, PROT, REVIEWISO]),
-  initiative_verify:   T('brain-internal', false, false, null, 'none', true, true, 'protected', true, [V, SYS, ANC, FV, PROT, REVIEWISO]),
-  initiative_execute:  T('kernel', true,  true,  null, 'kernel', true, true, 'none', true, [V, CM, FK, RECMUT]),
-  dept_heartbeat:      T('brain-internal', false, false, null, 'none', true, true, 'recurring', true, [V, SYS, ANC, FR, RECUR]),
-  suggestion_plan:     T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, FR, CX]),
-  notion_synced:       T('brain-internal', false, false, null, 'none', true, true, 'none', true, []),
-  architecture_design: T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, FV, REVIEWISO]),
-  architecture_scan:   T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, FV, REVIEWISO]),
-  arch_review:         T('kernel', false, false, null, 'kernel', true, true, 'protected', true, [V, ANC, ESC, MON, FV, PROT, CX, REVIEWISO]),
-  strategy_session:    T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, FR]),
-  intent_expand:       T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, FR, NOGOAL]),
-  cto_review:          T('kernel', false, false, null, 'kernel', true, true, 'none', true, []),
-  spec_review:         T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO]),
-  code_review_gate:    T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO]),
-  prd_review:          T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO]),
-  initiative_review:   T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO]),
-  scope_plan:          T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, FR]),
-  project_plan:        T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, FR]),
-  okr_initiative_plan: T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, FR]),
-  okr_scope_plan:      T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, FR]),
-  okr_project_plan:    T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, FR]),
+  dev:                 T('none', true,  true,  'brain-local', 'kernel', true, true, 'none', true, [V, BP, GUIDE, CM, FK, RECMUT, NKR, GPSCOPE, DEVDASH, WARROOM]),
+  review:              T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, NKR, DEVDASH]),
+  talk:                T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR]),
+  data:                T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, ANC]),
+  research:            T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR, CX, NOGOAL, ASYNCCB]),
+  // exploratory = work-router 画布线落点（execution 类 coding_mutation，「停在 queued 供画布线/人工 claim」）：
+  // 没有无头执行者，tick 派到只会落退役 Claude 桥接回 queued 空转（派发总闸 F，任务 0a70684f）。
+  exploratory:         T('none', false, false, null, 'none', true, false, 'none', true, []),
+  explore:             T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR, ASYNCCB]),
+  knowledge:           T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
+  qa:                  T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, NKR]),
+  audit:               T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV]),
+  decomp_review:       T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, REVIEWISO]),
+  codex_qa:            T('codex-review', false, false, null, 'kernel', true, true, 'recurring', true, [V, SYS, ANC, CODEX, FV, RECUR]),
+  codex_dev:           T('codex-bridge', true,  true,  null, 'kernel', true, true, 'none', true, [V, ANC, CODEX, CM, FK, RECMUT]),
+  codex_test_gen:      T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, ANC, CODEX, FV]),
+  pr_review:           T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV]),
+  code_review:         T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO, NKR]),
+  initiative_plan:     T('none', false, false, null, 'none', true, true, 'protected', true, [V, SYS, ANC, FR, PROT, REVIEWISO]),
+  initiative_verify:   T('codex-review', false, false, null, 'none', true, true, 'protected', true, [V, SYS, ANC, FV, PROT, REVIEWISO]),
+  initiative_execute:  T('none', true,  true,  null, 'kernel', true, true, 'none', true, [V, CM, FK, RECMUT]),
+  dept_heartbeat:      T('none', false, false, null, 'none', true, true, 'recurring', true, [V, SYS, ANC, FR, RECUR]),
+  suggestion_plan:     T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR, CX]),
+  notion_synced:       T('none', false, false, null, 'none', true, true, 'none', true, []),
+  architecture_design: T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, REVIEWISO]),
+  architecture_scan:   T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, REVIEWISO]),
+  arch_review:         T('codex-review', false, false, null, 'kernel', true, true, 'protected', true, [V, ANC, ESC, MON, FV, PROT, CX, REVIEWISO]),
+  strategy_session:    T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
+  intent_expand:       T('none', false, false, null, 'none', true, true, 'none', true, [V, FR, NOGOAL]),
+  cto_review:          T('none', false, false, null, 'kernel', true, true, 'none', true, []),
+  spec_review:         T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO]),
+  code_review_gate:    T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO]),
+  prd_review:          T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO]),
+  initiative_review:   T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO]),
+  scope_plan:          T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
+  project_plan:        T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
+  okr_initiative_plan: T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
+  okr_scope_plan:      T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
+  okr_project_plan:    T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
   // ── 内容工厂（外部 pipeline-worker 执行，不进 tick 派发）──
   'content-pipeline':     workflow(T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC, WARROOM])),
   'content-research':     T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
   'content-generate':     T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
-  'content-review':       T('external', false, false, null, 'none', true, true, 'none', true, [PIPELN]),
+  'content-review':       T('none', false, false, null, 'none', true, true, 'none', true, [PIPELN]),
   'content-export':       T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
-  content_publish:        T('external', false, false, null, 'none', true, true, 'none', true, [V, SYS, BP, FC, CX, PIPELN, ANC]),
+  content_publish:        T('none', false, false, null, 'none', true, true, 'none', true, [V, SYS, BP, FC, CX, PIPELN, ANC]),
   'content-copywriting':  T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
   'content-copy-review':  T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
   'content-image-review': T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
-  pipeline_rescue:        T('kernel', true, true, null, 'kernel', true, true, 'none', true, [CM, FK, AUTHSKIP, RECMUT]),
+  pipeline_rescue:        T('none', true, true, null, 'kernel', true, true, 'none', true, [CM, FK, AUTHSKIP, RECMUT]),
   // ── crystallize ──
-  crystallize:          workflow(T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX])),
-  crystallize_scope:    T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
-  crystallize_forge:    T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
-  crystallize_verify:   T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
-  crystallize_register: T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
+  crystallize:          workflow(T('codex-bridge', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX])),
+  crystallize_scope:    T('codex-bridge', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
+  crystallize_forge:    T('codex-bridge', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
+  crystallize_verify:   T('codex-bridge', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
+  crystallize_register: T('codex-bridge', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
   // ── sprint（v3.x 旧）──
-  sprint_planner:          T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, ESC, NIT, CX, HC]),
-  sprint_contract_propose: T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, ESC, CX, HC]),
-  sprint_contract_review:  T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, ESC, CX, HC]),
-  sprint_generate:         T('kernel', true,  true,  null, 'kernel', true, true, 'none', true, [V, ESC, NIT, CM, FK, CX, SPRINTDEV, RECMUT, ANC, HC]),
-  sprint_evaluate:         T('kernel', false, false, null, 'kernel', true, true, 'none', true, [ESC, NIT, CX, ANC]),
-  sprint_fix:              T('kernel', true,  true,  null, 'kernel', true, true, 'none', true, [V, ESC, CM, FK, CX, SPRINTDEV, FIXMD, RECMUT, ANC, HC]),
-  sprint_report:           T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, ANC, HC]),
-  cecelia_event:           T('brain-internal', false, false, null, 'none', true, true, 'none', true, []),
+  sprint_planner:          T('none', false, false, null, 'kernel', true, true, 'none', true, [V, ESC, NIT, CX, HC]),
+  sprint_contract_propose: T('none', false, false, null, 'kernel', true, true, 'none', true, [V, ESC, CX, HC]),
+  sprint_contract_review:  T('none', false, false, null, 'kernel', true, true, 'none', true, [V, ESC, CX, HC]),
+  sprint_generate:         T('none', true,  true,  null, 'kernel', true, true, 'none', true, [V, ESC, NIT, CM, FK, CX, SPRINTDEV, RECMUT, ANC, HC]),
+  sprint_evaluate:         T('none', false, false, null, 'kernel', true, true, 'none', true, [ESC, NIT, CX, ANC]),
+  sprint_fix:              T('none', true,  true,  null, 'kernel', true, true, 'none', true, [V, ESC, CM, FK, CX, SPRINTDEV, FIXMD, RECMUT, ANC, HC]),
+  sprint_report:           T('none', false, false, null, 'kernel', true, true, 'none', true, [V, ANC, HC]),
+  cecelia_event:           T('none', false, false, null, 'none', true, true, 'none', true, []),
   // ── harness ──
-  harness_planner:          T('kernel', false, false, null, 'kernel', true, true, 'protected', true, [SYS, ANC, ESC, NIT, PW, MON, REC, LOCK, RET, BP, PROT, CX, HC]),
-  harness_contract_propose: T('kernel', false, false, null, 'kernel', true, true, 'protected', true, [V, SYS, ANC, ESC, NIT, PW, MON, REC, LOCK, BP, PROT, CX, HC, VERDICT]),
-  harness_contract_review:  T('kernel', false, false, null, 'kernel', true, true, 'protected', true, [V, SYS, ANC, ESC, NIT, PW, MON, REC, LOCK, BP, PROT, CX, HC, VERDICT]),
-  harness_generate:         T('kernel', true,  true,  null, 'kernel', true, true, 'protected', true, [V, SYS, ANC, ESC, NIT, PW, MON, REC, FK, PROT, CM, CX, HV4, RECMUT, HC]),
-  harness_generator:        T('kernel', true,  true,  null, 'kernel', true, true, 'none', true, [REC]),
+  harness_planner:          T('none', false, false, null, 'kernel', true, true, 'protected', true, [SYS, ANC, ESC, NIT, PW, MON, REC, LOCK, RET, BP, PROT, CX, HC]),
+  harness_contract_propose: T('none', false, false, null, 'kernel', true, true, 'protected', true, [V, SYS, ANC, ESC, NIT, PW, MON, REC, LOCK, BP, PROT, CX, HC, VERDICT]),
+  harness_contract_review:  T('none', false, false, null, 'kernel', true, true, 'protected', true, [V, SYS, ANC, ESC, NIT, PW, MON, REC, LOCK, BP, PROT, CX, HC, VERDICT]),
+  harness_generate:         T('none', true,  true,  null, 'kernel', true, true, 'protected', true, [V, SYS, ANC, ESC, NIT, PW, MON, REC, FK, PROT, CM, CX, HV4, RECMUT, HC]),
+  harness_generator:        T('none', true,  true,  null, 'kernel', true, true, 'none', true, [REC]),
   harness_ci_watch:         T('brain-internal', false, false, null, 'none', true, false, 'protected', true, [V, ESC, PW, RET, BP, PROT, CX, PIPELN]),
-  harness_evaluate:         T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, NIT, PW, REC, FV, CX, VERDICT]),
-  harness_fix:              T('kernel', true,  true,  null, 'kernel', true, true, 'protected', true, [V, SYS, ANC, ESC, NIT, PW, MON, REC, LOCK, RET, BP, FK, PROT, CM, CX, FIXMD, HV4, RECMUT, HC]),
+  harness_evaluate:         T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, NIT, PW, REC, FV, CX, VERDICT]),
+  harness_fix:              T('none', true,  true,  null, 'kernel', true, true, 'protected', true, [V, SYS, ANC, ESC, NIT, PW, MON, REC, LOCK, RET, BP, FK, PROT, CM, CX, FIXMD, HV4, RECMUT, HC]),
   harness_deploy_watch:     T('brain-internal', false, false, null, 'none', true, false, 'protected', true, [V, ESC, PW, BP, PROT, CX, PIPELN]),
-  harness_report:           T('kernel', false, false, null, 'kernel', true, true, 'protected', true, [V, SYS, ANC, ESC, NIT, PW, PROT, CX, HC]),
-  platform_scraper:         T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, WARROOM]),
+  harness_report:           T('none', false, false, null, 'kernel', true, true, 'protected', true, [V, SYS, ANC, ESC, NIT, PW, PROT, CX, HC]),
+  // platform_scraper 由 Brain 内部采集器（post-publish-data-collector.processPendingScraperTasks）自领 queued 行；
+  // tick 再派只会落退役 Claude 桥接回 queued，和内部采集器抢同一行（派发总闸 F，任务 0a70684f）。
+  platform_scraper:         T('brain-internal', false, false, null, 'none', true, false, 'none', true, [V, WARROOM]),
   harness_initiative:       workflow(T('kernel', true,  true,  'relay-container', 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, INF, BP, GUIDE, KR, CM, FK, GPSCOPE, WARROOM])),
-  harness_task:             workflow(T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, RET, BP])),
-  harness_final_e2e:        T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, RET, FV]),
-  trigger_backup:           T('brain-internal', false, false, null, 'none', true, true, 'none', true, []),
+  harness_task:             workflow(T('none', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, RET, BP])),
+  harness_final_e2e:        T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, RET, FV]),
+  trigger_backup:           T('none', false, false, null, 'none', true, true, 'none', true, []),
   harness_intervention:     T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V]),
-  staging_e2e:              T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, ANC, FV]),
-  skill_eval:               T('brain-internal', false, false, null, 'none', true, true, 'none', true, []),
-  ci_patrol:                T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, ANC, FV]),
+  staging_e2e:              T('codex-review', false, false, null, 'none', true, true, 'none', true, [V, ANC, FV]),
+  skill_eval:               T('none', false, false, null, 'none', true, true, 'none', true, []),
+  ci_patrol:                T('codex-review', false, false, null, 'none', true, true, 'none', true, [V, ANC, FV]),
   golden_path_proposal:     workflow(T('kernel', false, false, 'relay-container', 'kernel', true, true, 'none', true, [V, LOCK, INF, KR, ANC])),
-  strategist_decision:      T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR]),
+  strategist_decision:      T('none', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR]),
   workflow_run:             workflow(T('external', false, false, null, 'none', true, true, 'none', true, [])),
   device_job:               T('device', false, false, null, 'external-worker', false, false, 'none', true, []),
   // project = 接力棒 PR1/PR2（#5486/#5491）新增的「项目根」容器行，迁移 458 已把它追进
@@ -199,6 +205,17 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // tick_dispatchable=false：不进 tick 主派发（主派发对 openclaw-agent 只认 qiumi 路由），由 scheduler job
   // workflow-commander-dispatch 认领 → 设备锁 → ssh MMV 起 openclaw agent --agent work-commander → 收割放锁。
   workflow_dispatch:        workflow(T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', false, false, 'none', true, [V, ANC])),
+  // 技能工厂执行单 / 核验单（派发总闸 F，任务 0a70684f）：原借 research + payload.factory_dispatch，靠 headed_manual
+  // 一个字段挡 tick（c8fab3c8 同病：漏写就被 tick 派去西安 bridge）。独立类型后 tick 按类型排除（tick_dispatchable=false），
+  // 由 MMV 常驻 factory-dispatcher 领单（claim 写 executor_kind=openclaw-agent）→ 代领设备锁 → openclaw skill-factory。
+  // surface='external' 而非 openclaw-agent：openclaw-agent 面 PATCH completed 会被 409 改道 completed_no_pr，
+  // 执行单/裁判沿用 completed 语义（factory-judge / factory-cycle 只认 completed|failed）。
+  // watchdog=external-worker：生死由派发器守望，Brain 本机零进程证据不判死回队。ANC/NOGOAL：工厂单不走承诺地图、不挂 KR。
+  skill_factory_run:        T('external', false, false, 'openclaw-agent', 'external-worker', true, false, 'none', true, [V, ANC, CX, NOGOAL]),
+  // 编码 workflow（派发总闸 F，任务 0a70684f）：原借 data + payload.coding_workflow + headed_manual 三件套。独立类型后
+  // tick 按类型排除，由 coding-workflow-runner（MMV LaunchDaemon，每 5 分钟）领单跑 coding 链（spec→GAN→实现→QA→合并），
+  // kind=workflow（编排多阶段）。runner 自带收尾对账，watchdog=external-worker。
+  coding_workflow:          workflow(T('external', false, false, 'coding-workflow-runner', 'external-worker', true, false, 'none', true, [V, ANC])),
   // ── executor=script 一等任务类型（链 bf5088a3 棒 3，任务 5cdbd52a）──
   // 确定性脚本步：Brain 经 ssh 在跑场机执行 payload.cmd（{host,cmd,cwd,env,timeout_sec}），与 AI 步同一条 DAG。
   // kind=agent：脚本也是「一步交付」（df67a9d6 判据）。pr=false 但成功终态写 completed 而非 completed_no_pr——

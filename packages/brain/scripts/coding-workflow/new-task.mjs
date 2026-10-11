@@ -3,7 +3,7 @@
 // plan 两种形状：
 //   单条 { title, description?, acceptance: [..], priority?, gp_anchor? }
 //   一批 { batch?, tasks: [{ key, title, acceptance, depends_on?: [前面任务的 key], ... }] }（大改拆成有序小任务）
-// 每条建成带开关的 data 任务（runner 自动认领跑七步链）；depends_on 的 key 换成前面已建任务的真实 id。
+// 每条建成 coding_workflow 任务（runner 自动认领跑七步链）；depends_on 的 key 换成前面已建任务的真实 id。
 // plan 顶层可写 project_id（已有 project 根）或 project: { name, description? }（先建再挂），整批都挂上；
 // 有 depends_on 时必须二选一（Brain 要求带依赖的任务挂 project 根），两者不能同时给。
 // 先整体校验再逐条创建；中途失败退出 1 并列出已建的任务。输出 [{key,id,title}]。
@@ -41,7 +41,6 @@ export function validatePlan(plan) {
 function body(t, batch, ids, projectId) {
   const payload = {
     coding_workflow: true,
-    headed_manual: 'true',
     repo: 'cecelia',
     gp_anchor: nonEmpty(t.gp_anchor) ? t.gp_anchor : 'none(infra)',
     acceptance: t.acceptance,
@@ -50,7 +49,8 @@ function body(t, batch, ids, projectId) {
   if (batch) payload.batch = batch;
   if (t.key !== undefined) payload.plan_key = t.key;
   const req = {
-    task_type: 'data',
+    // 独立类型（派发总闸 F，任务 0a70684f）：tick 按类型排除，不再借 data + headed_manual
+    task_type: 'coding_workflow',
     title: t.title,
     description: t.description ?? '',
     priority: t.priority ?? 'P2',

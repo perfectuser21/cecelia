@@ -30,11 +30,15 @@ describe('resolveDispatchRoute：按 executor 分支顺序判真实路由', () =
   });
 
   it('dev / trigger_backup / content_publish / workflow_run 以 queued 无头派发落已退役 Claude 桥接 → 无执行者', () => {
-    for (const t of ['dev', 'trigger_backup', 'content_publish', 'workflow_run', 'dept_heartbeat', 'strategist_decision']) {
+    for (const t of ['dev', 'trigger_backup', 'content_publish', 'dept_heartbeat', 'strategist_decision']) {
       const r = route(t);
       expect(r.available, t).toBe(false);
       expect(r.route, t).toBe('claude-retired');
     }
+  });
+
+  it('workflow_run（外部起跑账本镜像）以 queued 建 → external-mirror 无执行者', () => {
+    expect(route('workflow_run')).toMatchObject({ route: 'external-mirror', available: false });
   });
 
   it('退役 harness 子类型 → retired-harness 无执行者', () => {

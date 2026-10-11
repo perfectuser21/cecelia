@@ -145,8 +145,9 @@ describe('coding workflow runner run-once', () => {
     fs.writeFileSync(path.join(lock, 'pid'), String(deadPid()));
     const r = await runOnceProcess(runnerEnv(sb, brain.url));
     expect(r.exitCode, r.stderr).toBe(0);
+    // 每个状态各查旧借壳 data 与独立类型 coding_workflow 两次（派发总闸 F，任务 0a70684f）
     expect(brain.calls.filter((c) => c.method === 'GET').map((c) => new URLSearchParams(c.query).get('status')))
-      .toEqual(['in_progress', 'queued']);
+      .toEqual(['in_progress', 'in_progress', 'queued', 'queued']);
     expect(fs.existsSync(lock)).toBe(false);
   }, 30000);
 

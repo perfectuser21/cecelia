@@ -53,7 +53,8 @@ describe('migration 466 — tasks.kind 真列 + CHECK + 回填', () => {
     expect(listed, '找不到 WHEN task_type IN (...) THEN \'workflow\'').toBeTruthy();
     // 466 之后新增的 workflow 型类型随自己的迁移进 CHECK（不改历史迁移），新行由 createRoutedTask 按注册表写 kind，不靠 466 回填：
     //   workflow_dispatch —— 迁移 549（任务 f38e7cc2）
-    const ADDED_AFTER_466 = ['workflow_dispatch'];
+    //   coding_workflow —— 迁移 550（任务 0a70684f）
+    const ADDED_AFTER_466 = ['workflow_dispatch', 'coding_workflow'];
     const expectedList = WORKFLOW_KIND_TASK_TYPES.filter((t) => !ADDED_AFTER_466.includes(t));
     expect(listed.length).toBe(expectedList.length);
     expect(new Set(listed)).toEqual(new Set(expectedList));

@@ -437,5 +437,6 @@ runs-read-smoke.sh
 factory-ledger-smoke.sh
 factory-pusher-smoke.sh
 workflow-commander-dispatch-smoke.sh
+dispatch-route-gate-smoke.sh
 content-pipeline-runs-shadow-smoke.sh
 bypass-audit-smoke.sh

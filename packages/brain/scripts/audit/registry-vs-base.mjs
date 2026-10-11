@@ -128,6 +128,14 @@ function extractNeqLiteral(rawSrc, anchorRegex) {
 // current() 拿到的是「当前 lib/task-type-registry.js 派生导出的值」。
 // compare='set'（默认，分类名单顺序不是行为）/ 'array'（顺序敏感，展示序）/ 'object'（映射表）。
 const SITES = [];
+// 基线之后新增/改判的类型（各自 PR 的专属测试钉住，本审计比较前剔除，其余项仍须相对基线零漂移）：
+//   workflow_dispatch —— 迁移 549（任务 f38e7cc2）Brain 主动派 workflow 给 Commander
+//   skill_factory_run / coding_workflow —— 迁移 550（任务 0a70684f）技能工厂执行单 / 编码 workflow 独立类型
+//   exploratory / platform_scraper —— 任务 0a70684f 改 tick_dispatchable=false（无头无执行者 / 内部采集器自领）
+const POST_BASE_TYPES = new Set(['workflow_dispatch', 'skill_factory_run', 'coding_workflow']);
+const POST_BASE_TICK_EXCLUDED = new Set([...POST_BASE_TYPES, 'exploratory', 'platform_scraper']);
+const notPostBase = (t) => !POST_BASE_TYPES.has(t);
+
 function site(desc) { SITES.push(desc); }
 
 // app_server_run 的六处受保护集合/执行器增量由 task-type-registry.test.js 精确断言，
@@ -143,7 +151,7 @@ site({ label: 'dispatch-helpers.js:89 (SQL NOT IN)', file: 'dispatch-helpers.js'
   //   qiumi_task —— PR2 曾打上第二道闸（tick_dispatchable=false），PR3 接线后已放开，
   //                 它现在不在集合里、这半条剔除是空转的；留着是因为它终归是基线里不存在的
   //                 新类型，哪天第二道闸又被关上，审计不该跟着变红。
-  current: () => R.TICK_DISPATCH_EXCLUDED.filter((t) => t !== 'qiumi_task' && t !== 'project' && t !== 'janitor' && t !== 'app_server_run'), compare: 'set',
+  current: () => R.TICK_DISPATCH_EXCLUDED.filter((t) => t !== 'qiumi_task' && t !== 'project' && t !== 'janitor' && t !== 'app_server_run' && !POST_BASE_TICK_EXCLUDED.has(t)), compare: 'set',
   note: '「project 在、qiumi_task 此刻不在 TICK_DISPATCH_EXCLUDED 里」由 lib/__tests__/task-type-registry.test.js 的专属严格相等断言钉住（PR3 起 qiumi_task 那条是 not.toContain），本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'dispatcher.js:89 INITIATIVE_LOCK_TASK_TYPES', file: 'dispatcher.js',
   extract: (s) => extractNamedLiteral(s, 'INITIATIVE_LOCK_TASK_TYPES'),
@@ -182,7 +190,7 @@ site({ label: 'task-router.js:16 VALID_TASK_TYPES', file: 'task-router.js',
   // PR2 入口刀开启了 qiumi_task 的 V（router_valid）标签——notion-gtd-sync 入账要过
   // task-router 的类型校验；script_run 是链 bf5088a3 棒3 新增（executor=script 一等任务
   // 类型，PR #5574/#5577）。两者基线里都不存在，比较前剔除，其余项必须等于基线。
-  current: () => R.VALID_TASK_TYPES.filter((t) => t !== 'qiumi_task' && t !== 'script_run'), compare: 'set',
+  current: () => R.VALID_TASK_TYPES.filter((t) => t !== 'qiumi_task' && t !== 'script_run' && notPostBase(t)), compare: 'set',
   note: 'PR1 决策（task-3-report.md 裁决后 Important#2）把 V 标签留给 PR2；PR2 已开启，「qiumi_task ∈ VALID_TASK_TYPES」由 lib/__tests__/task-type-registry.test.js 的专属严格相等断言钉住，本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'actions.js:27 CONTENT_TASK_TYPES', file: 'actions.js',
   extract: (s) => extractNamedLiteral(s, 'CONTENT_TASK_TYPES'), current: () => R.CONTENT_TASK_TYPES, compare: 'set' });
@@ -193,7 +201,7 @@ site({ label: 'actions.js:37 REVIEW_TASK_TYPES', file: 'actions.js',
 site({ label: 'actions.js:43 CODING_TASK_TYPES', file: 'actions.js',
   extract: (s) => extractNamedLiteral(s, 'CODING_TASK_TYPES'), current: () => R.CODING_TASK_TYPES, compare: 'set' });
 site({ label: 'actions.js:19 systemTypes（裁决后→NO_GOAL_TASK_TYPES）', file: 'actions.js',
-  extract: (s) => extractNamedLiteral(s, 'systemTypes'), current: () => R.NO_GOAL_TASK_TYPES, compare: 'set' });
+  extract: (s) => extractNamedLiteral(s, 'systemTypes'), current: () => R.NO_GOAL_TASK_TYPES.filter(notPostBase), compare: 'set' });
 site({ label: 'routes/task-tasks.js:27 CODING_MUTATION_TASK_TYPES', file: 'routes/task-tasks.js',
   extract: (s) => extractNamedLiteral(s, 'CODING_MUTATION_TASK_TYPES'), current: () => R.CODING_MUTATION_TASK_TYPES, compare: 'set' });
 site({ label: 'orchestrator/kernel-run-store.js:23 ELIGIBLE_TASK_TYPES', file: 'orchestrator/kernel-run-store.js',
@@ -240,7 +248,7 @@ site({ label: 'anchor-check.js:14 ANCHOR_EXEMPT_TASK_TYPES', file: 'anchor-check
   // 不免锚的话每条秋米任务都会在路由之前被锚点闸终态 failed。script_run 是链 bf5088a3
   // 棒3 新增（executor=script 一等任务类型，PR #5574/#5577）。两者都是基线里不存在的
   // 新类型——比较前剔除，其余项必须逐一等于基线原文。
-  current: () => R.ANCHOR_EXEMPT_TASK_TYPES.filter((t) => t !== 'qiumi_task' && t !== 'script_run' && t !== 'app_server_run'), compare: 'set',
+  current: () => R.ANCHOR_EXEMPT_TASK_TYPES.filter((t) => t !== 'qiumi_task' && t !== 'script_run' && t !== 'app_server_run' && notPostBase(t)), compare: 'set',
   note: '本站点是补充六的直接起因——Task 1 fixture 原是抄简报（38项）不是抄本文件（51项），Task 4 才发现改用本文件补全；此处必须用本审计脚本精确核对，不再信任何转述。「qiumi_task/script_run ∈ ANCHOR_EXEMPT_TASK_TYPES」由 lib/__tests__/task-type-registry.test.js 的专属断言钉住，本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'monitor-loop.js:37 HARNESS_TASK_TYPES', file: 'monitor-loop.js',
   extract: (s) => extractNamedLiteral(s, 'HARNESS_TASK_TYPES'), current: () => R.MONITOR_LONG_RUNNING_TASK_TYPES, compare: 'set' });
@@ -255,7 +263,7 @@ site({ label: 'task-cleanup.js:23 RECURRING_TASK_TYPES', file: 'task-cleanup.js'
 site({ label: 'task-cleanup.js:30 PROTECTED_TASK_TYPES', file: 'task-cleanup.js',
   extract: (s) => extractNamedLiteral(s, 'PROTECTED_TASK_TYPES'), current: () => R.PROTECTED_TASK_TYPES.filter((t) => t !== 'janitor' && t !== 'app_server_run'), compare: 'set' });
 site({ label: 'alertness/escalation.js:73 CANCEL_EXEMPT_TYPES', file: 'alertness/escalation.js',
-  extract: (s) => extractNamedLiteral(s, 'CANCEL_EXEMPT_TYPES'), current: () => R.CANCEL_EXEMPT_TYPES.filter((t) => t !== 'janitor' && t !== 'app_server_run'), compare: 'set' });
+  extract: (s) => extractNamedLiteral(s, 'CANCEL_EXEMPT_TYPES'), current: () => R.CANCEL_EXEMPT_TYPES.filter((t) => t !== 'janitor' && t !== 'app_server_run' && notPostBase(t)), compare: 'set' });
 site({ label: 'alertness/escalation.js:364 buildPauseLowPriorityQuery（内联 SQL）', file: 'alertness/escalation.js',
   extract: (s) => extractInlineArray(s, /WHERE status IN \('queued', 'pending'\)[\s\S]*?task_type NOT IN \(([^)]*)\)/),
   current: () => R.ESCALATION_EXEMPT_TASK_TYPES.filter((t) => t !== 'janitor' && t !== 'app_server_run'), compare: 'set' });
@@ -268,7 +276,7 @@ site({ label: 'nightly-orchestrator.js:122 scoreTask typeScore（内联数组，
   current: () => R.NIGHTLY_KR_BONUS_TASK_TYPES, compare: 'set' });
 site({ label: "notion-push-sync.js:240 PUSH_TASKS_QUERY task_type<>'device_job'（原单值排除，终审 I5 补漏）", file: 'notion-push-sync.js',
   extract: (s) => extractNeqLiteral(s, /task_type\s*<>\s*'([^']+)'/),
-  current: () => R.PUSH_EXCLUDED_TASK_TYPES.filter((t) => t !== 'qiumi_task'), compare: 'set',
+  current: () => R.PUSH_EXCLUDED_TASK_TYPES.filter((t) => t !== 'qiumi_task' && notPostBase(t)), compare: 'set',
   note: '基线只排除单值 device_job（不是数组），当前 PUSH_EXCLUDED_TASK_TYPES 由注册表 db && !push_to_notion 派生——若未来注册表标记更多类型 db&&!push_to_notion，这条会精确报 FAIL，逼着显式过一遍是否该推送。已显式过审的有意排除：qiumi_task（#5636 任务 7951bd36：它走 pushQiumiStatus 专线回写，进旧 pushTasks 会与 projection/notion.js 抢 notion_id 致 400 乒乓），由 __tests__/device-job-foundation.test.js 的专属断言（toContain qiumi_task）钉住，本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'routes/execution.js:1659 VERDICT_HARNESS_TYPES', file: 'routes/execution.js',
   extract: (s) => extractNamedLiteral(s, 'VERDICT_HARNESS_TYPES'), current: () => R.VERDICT_HARNESS_TASK_TYPES, compare: 'set' });
@@ -328,6 +336,7 @@ site({
     delete rest.script_run;
     delete rest.janitor;
     delete rest.app_server_run;
+    for (const t of POST_BASE_TYPES) delete rest[t];
     return rest;
   },
   compare: 'object',

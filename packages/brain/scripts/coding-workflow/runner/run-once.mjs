@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// coding workflow runner：每次调用至多新跑一条开关任务（task_type=data + payload.headed_manual="true"
-// + payload.coding_workflow===true）：保留期清理 → 对账（本机丢失的 in_progress、带本机痕迹的 queued）
+// coding workflow runner：每次调用至多新跑一条开关任务（task_type=coding_workflow；迁移窗口内兼容旧三件套
+// task_type=data + payload.headed_manual="true" + payload.coding_workflow===true）：保留期清理 → 对账（本机丢失的 in_progress、带本机痕迹的 queued）
 // → 自己开的 cw PR 有 CI 红则本轮只修它（lib/cifix.mjs）→ CI 绿的过真人 QA 门（lib/qa-gate.mjs，PASS 才开自动合并）
 // → 认领 → 建 worktree → 跑 coding 链 → 回写 Brain。
 // 退出码：0 = 无新任务 / 上一轮仍在跑 / 新任务完成；1 = 新任务失败或 runner 自身出错。

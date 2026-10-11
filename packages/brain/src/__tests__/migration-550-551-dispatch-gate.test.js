@@ -20,13 +20,22 @@ describe('migration 550 skill_factory_run / coding_workflow', () => {
   });
 
   it('在途借壳单迁新类型：只动 queued/in_progress，工厂按 factory_dispatch、编码按 coding_workflow 开关', () => {
-    expect(up550).toMatch(/SET task_type\s*=\s*'skill_factory_run'[\s\S]*task_type\s*=\s*'research'[\s\S]*factory_dispatch[\s\S]*status IN \('queued',\s*'in_progress'\)/);
-    expect(up550).toMatch(/SET task_type\s*=\s*'coding_workflow'[\s\S]*task_type\s*=\s*'data'[\s\S]*coding_workflow[\s\S]*status IN \('queued',\s*'in_progress'\)/);
-    expect(up550).toMatch(/kind\s*=\s*'workflow'/);
+    expect(up550).toMatch(/status IN \('queued',\s*'in_progress'\)/);
+    expect(up550).toMatch(/task_type = 'research' AND payload->>'factory_dispatch' = 'true'/);
+    expect(up550).toMatch(/task_type = 'data' AND payload->>'coding_workflow' = 'true'/);
+    expect(up550).toMatch(/THEN 'skill_factory_run' ELSE 'coding_workflow'/);
+    expect(up550).toMatch(/THEN 'workflow' ELSE kind/);
+  });
+
+  it('改 task_type 前插接班路由收据（421 投影守卫 + 413 append-only），payload.routing_receipt_id 指向新收据', () => {
+    expect(up550).toMatch(/INSERT INTO work_routing_receipts/);
+    expect(up550).toMatch(/'supersedes_receipt_id', old_receipt\.id/);
+    expect(up550).toMatch(/'anchor_generation', old_receipt\.anchor_generation \+ 1/);
+    expect(up550).toMatch(/'routing_receipt_id', new_receipt_id/);
   });
 
   it('每条迁移都写 task_events（task_type_migrated）', () => {
-    expect((up550.match(/INSERT INTO task_events/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(up550).toMatch(/LOOP[\s\S]*INSERT INTO task_events[\s\S]*END LOOP/);
     expect(up550).toMatch(/task_type_migrated/);
   });
 

@@ -164,7 +164,8 @@ export function buildExecSpec({ ledger: l, cfg, stage, skill, round }) {
   return {
     title: `技能工厂 ${STAGE_NAMES[stage]} ${l.workflow_name || l.workflow_key} 第${round}轮（推进器）`,
     description: lines.join('\n'),
-    task_type: 'research',
+    // 独立类型（派发总闸 F，任务 0a70684f）：tick 按类型排除，不再借 research + headed_manual 挡
+    task_type: 'skill_factory_run',
     priority: 'P1',
     trigger_source: 'manual',
     allow_unscoped: true,
@@ -173,7 +174,6 @@ export function buildExecSpec({ ledger: l, cfg, stage, skill, round }) {
     created_by: 'factory-pusher',
     payload: {
       factory_dispatch: true,
-      headed_manual: 'true',
       factory_ledger_id: l.id,
       agent: cfg.agent,
       skill,

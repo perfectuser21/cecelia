@@ -1,6 +1,7 @@
 # 技能工厂派发器（factory-dispatcher）
 
-在 MMV（本机 macOS）常驻，把 Brain 里 `payload.factory_dispatch=true` 的 queued 任务，
+在 MMV（本机 macOS）常驻，把 Brain 里 `task_type=skill_factory_run`（独立类型，任务 0a70684f；迁移窗口内兼容旧借壳
+`research`）且 `payload.factory_dispatch=true` 的 queued 任务，
 代领设备锁后派给 OpenClaw 的 `skill-factory` agent 真机执行，并守望到终态。
 us-vps 零执行铁律：linux / 容器内启动自检直接拒绝运行（退出码 78）。
 
@@ -30,7 +31,7 @@ us-vps 零执行铁律：linux / 容器内启动自检直接拒绝运行（退�
 ## 流程
 
 1. 上海时间 09:00–23:00 之外不认领。
-2. 筛 queued 且 `factory_dispatch=true` → `POST /tasks/:id/claim`（executor_kind=openclaw-agent；409 跳过）→ `PATCH in_progress`。
+2. 筛 queued、`task_type=skill_factory_run`（或旧 `research`）且 `factory_dispatch=true` → `POST /tasks/:id/claim`（executor_kind=openclaw-agent；409 跳过）→ `PATCH in_progress`。
 3. 等锁：`ssh <host> 'export PATH=$HOME/.local/bin:$PATH; douyin-phone-adb --profile <p> lock-status'`；
    free 时 `lock-acquire <run_id>` 并校验回执 `lock=acquired owner=<run_id>`；他人占用（含 stale）只等不接管，
    每轮 PATCH in_progress；等超时（默认 30 分钟）落 failed，不释放任何锁。

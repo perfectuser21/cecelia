@@ -321,7 +321,7 @@
     "kind": "readonly",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "ALTER仅readFile源码断言；TASK_KIND_SMOKE_DB_URL所有psql实际均SELECT列/约束/NULL行数。",
-    "sha256": "0468d8158cfbe0967563f1f9a25deaecfe9a80ce1269ae46e7f8cfd38b1dc521",
+    "sha256": "655649c9bb752fa5ae45e2b72e308fe0ba751fee1c19597ba5f2634b2935eff8",
     "source_commit": "d664db65c9"
   },
   "task-run-outlets-smoke.sh": {
