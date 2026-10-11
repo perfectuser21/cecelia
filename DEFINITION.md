@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.423.4
+**Brain 版本**: 1.423.8
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,29 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.423.8 — 对话捕获只收真人原话 + 长寿会话只挂近 24h 提到的任务
+
+- 生产首轮实测（任务 c8b27bc5）：Claude Code 以 role=user 写进 transcript 的任务通知（`origin.kind=task-notification`）、技能正文（`isMeta`）、本地命令回显、压缩续接摘要被当成真人原话入库，摘要兜底摘录也全是噪声；新增 `isMeta` / `origin.kind` 判定，老格式按前缀排除
+- 一个 tmux 会话连做几天：关联任务只认最近 24h 内提到的 `--task-id` / claim，不再把今天的摘要挂到几天前已完成的任务上
+
+## Brain 1.423.7 — 修对话自动捕获（09-10 迁 us-vps 后静默归零）+ 有头会话收尾自动 handoff
+
+- 根因：Brain 容器里没有 `~/.claude/projects`，适配器静默返回空，`conversation-capture` 每 10 分钟报 pushed=0/errors=0 全绿，`captures(source=conversation-claude)` 最后一条停在 2026-09-09；出处登记写本机已不存在的 `cecelia` 库，且主理人直接跑 `claude` 不经 launcher，`session_provenance` human 也停在 09-09
+- 修法：容器内默认远端模式——`ssh mmv` 只读跑同一份三适配器源码（data: URL 动态 import，mmv 不落文件，openclaw-run-ingest 同款），回传尾部 turns；本地模式 claude 目录缺失、远端 ssh/解析失败一律计 `adapter_failures`，job 变红不再静默 0；未登记出处的会话以 transcript `entrypoint=cli`（交互 TTY）判为有头真人会话（无头 `claude -p` 为 `sdk-cli`，照旧跳过）
+- 有头收尾（新模块 `headed-session-handoff.js`）：会话结束（闲置≥15min）且有摘要后，按 transcript 里真人/Skill 的 `--task-id`、Bash claim（≤3）或 `session_provenance.task_id` 认关联任务 → 摘要并入 handoff（已有真 handoff 只追加不覆盖，`headed_sessions` 按会话幂等；未终态任务加「有头续接」下一步，kind 走 `resume_headed` 适配点，接力棒未认该类型时按 note 写）；无关联 → 经 `createRoutedTask` 补建 completed 账本任务（`source=conversation`、`source_id=headed-session:<sid>`、只记账不派发）挂摘要；Notion 走任务既有投影通道
+- 环境变量：`CECELIA_CONVERSATION_CAPTURE_MODE=local|remote`（默认容器 remote）、`CECELIA_CONVERSATION_CAPTURE_HOST`（默认 mmv）
+- 回归测试：远端脚本真跑 fixture、目录缺失/ssh 失败必红、entrypoint 判定、关联任务分档、handoff 合并幂等、真库账本建单集成测试；任务 c8b27bc5，决策 c4fba481
+
+## Brain 1.423.6 — 既有发布工作流来源 CAS 登记与真实能力核验
+
+- 内部鉴权 `/workflow-authoring/sources/register` 只给精确 UUID 的现有工作流登记固定 Git 来源，核 commit/tree/blob 字节、合同身份、真实能力、旧来源和同步 revision；并发冲突或回读失败整体回滚，不创建活动、不激活执行。
+- 合同 `contract_key` 与能力 `capability` 分开核验：有真实 `capability_code` 时直接对照规范能力，旧注册仍保留原 owner 协议；不要求创建虚构的共同 owner 流程。
+- 快照来源消费者保留 v1 格式；显式合同使用实际工作流身份和规范能力校验， loader 使用已校验 owner 的真实能力，不制造共同 owner。
+
+## Brain 1.423.5 — 金丝雀6：Brain 修复 /api/brain/runs/<stats|stages|output|publish-status> 被内容流水线通配路由接走返回 500
+
+- coding workflow 任务 142c9ad0：需求、合同与验收记录见 sprints/10111939-cw-142c9ad0/。
 
 ## Brain 1.423.4 — 技能工厂派发器 claim 的 executor_kind 改 openclaw-agent
 
