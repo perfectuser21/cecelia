@@ -126,3 +126,19 @@ describe('连接池事务（生产路径）', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 });
+
+describe('裁判结果入窗（任务 2231ecc0）', () => {
+  it('safe_stop / source_task_id 随运行写进滑窗，同 run_id 只计一次', () => {
+    const a = applyRunOutcome([], { runId: 'r1', pass: false, safeStop: true, sourceTaskId: 't1', at: 'x' }, 3);
+    expect(a.runs[0]).toMatchObject({ run_id: 'r1', pass: false, safe_stop: true, source_task_id: 't1' });
+    const b = applyRunOutcome(a.runs, { runId: 'r1', pass: true, at: 'y' }, 3);
+    expect(b.duplicate).toBe(true);
+    expect(b.recentTotal).toBe(1);
+  });
+  it('validateRun 接受 safe_stop 布尔与 source_task_id uuid，类型错 400', () => {
+    expect(validateRun({ run_id: 'r', pass: false, safe_stop: true, source_task_id: '1b5a0be0-f0b2-4960-af44-f09790a039c1' }))
+      .toMatchObject({ safeStop: true, sourceTaskId: '1b5a0be0-f0b2-4960-af44-f09790a039c1' });
+    expect(() => validateRun({ run_id: 'r', pass: false, safe_stop: 'yes' })).toThrow(/safe_stop/);
+    expect(() => validateRun({ run_id: 'r', pass: false, source_task_id: 'nope' })).toThrow(/source_task_id/);
+  });
+});
