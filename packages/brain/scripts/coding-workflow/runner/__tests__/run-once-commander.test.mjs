@@ -48,6 +48,17 @@ describe('coding commander（升级后自动裁决）', () => {
     expect(bark.calls).toEqual([]);
   });
 
+  // 真实 Opus 演练（金丝雀 5 r2 重放）：裁决文件在 logDir（worktree 外），Write 工具被 permission_denials 拒，会话碰巧改用 Bash 写成
+  it('commander 会话授权写日志目录（--add-dir <logDir>），裁决文件在那里', async () => {
+    qaEscalated('judge_contract_gap', { issues: ['J-1'] });
+    const argsFile = path.join(sb.root, 'claude-args.json');
+    const r = await go(green(), { mode: 'cmd-resume', extra: { FAKE_CIFIX_ARGS: argsFile } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
+    expect(args[args.indexOf('--add-dir') + 1]).toBe(sb.logDir);
+    expect(fs.readFileSync(files.prompt, 'utf8')).toContain(`RULING_PATH: ${sb.logDir}/`);
+  });
+
   it('commander 自己修代码（提交在 PR 分支上）→ 与裁决记录一起推送', async () => {
     qaEscalated('qa_fix_failed', { reason: 'ruling_conflict' });
     const r = await go(green(), { mode: 'cmd-fix' });
