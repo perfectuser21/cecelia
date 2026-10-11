@@ -100,6 +100,38 @@ describe('coding commander（升级后自动裁决）', () => {
     expect(s.archived_attempts).toHaveLength(2);
   });
 
+  // 决策 4fe863c3：API 类 PR 一条回归 smoke 都没固化 → commander 裁决放行（必须写理由）或要求 QA 重跑
+  describe('qa_smoke_missing', () => {
+    const seedSmokeMissing = () => seedState({
+      rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'PASS', fails: 0, judge: { verdict: 'PASS' } }], smoke_missing: true,
+      smoke_note: '本任务无回归 smoke（第 1 轮）；剔除 T-1(preflight_failed:22)',
+      escalated: { type: 'qa_smoke_missing', round: 1, api_items: ['T-1'], skipped: [{ id: 'T-1', reason: 'preflight_failed:22' }], pr: 77, at: '2026-10-11T00:00:00.000Z' },
+    });
+
+    it('commander 裁决「放行」（带理由、不改代码）→ 批准绑定裁决记录推送后的 head，记 smoke_waived；提示词说明该类型怎么裁', async () => {
+      seedSmokeMissing();
+      const ruling = { action: 'resume', rulings: [{ issue: 'T-1', verdict: '放行', reason: '只依赖预览库已有数据，已由单测覆盖' }], summary: '放行合并' };
+      const r = await go(green(), { mode: 'cmd-resume', extra: { FAKE_CMD_RULING: JSON.stringify(ruling) } });
+      expect(r.exitCode, r.stderr).toBe(0);
+      const prompt = fs.readFileSync(files.prompt, 'utf8');
+      expect(prompt).toContain('qa_smoke_missing：');
+      expect(state().escalated).toBeUndefined();
+      expect(state()).toMatchObject({ passed: true, approved: { head: remoteHead(), round: 1 }, smoke_waived: { n: 1, reason: expect.stringContaining('单测覆盖') } });
+      expect(state().smoke_note).toContain('commander 第 1 次裁决放行');
+      expect(bark.calls).toEqual([]);
+    });
+
+    it('commander 没有放行（维持规格，要求 QA 重跑）→ 只解除升级，不批准（裁决记录推送后 head 变了，QA 下一轮重跑）', async () => {
+      seedSmokeMissing();
+      const ruling = { action: 'resume', rulings: [{ issue: 'T-1', verdict: '维持规格', reason: 'Q-1 要求自己造数据，QA 应重写命令' }], summary: '要求 QA 重跑' };
+      const r = await go(green(), { mode: 'cmd-resume', extra: { FAKE_CMD_RULING: JSON.stringify(ruling) } });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(state().escalated).toBeUndefined();
+      expect(state().passed).toBeFalsy();
+      expect(state().smoke_waived).toBeUndefined();
+    });
+  });
+
   it('qa_stalled 解除后从当前轮次重新计不收敛（stall_floor）', async () => {
     seedState({ rounds: [1, 2, 3].map((n) => ({ round: n, head: `${n}`.repeat(40), verdict: 'FAIL', fails: 1 })), escalated: { type: 'qa_stalled', fails: [1, 1, 1], pr: 77 } });
     const r = await go(green());
