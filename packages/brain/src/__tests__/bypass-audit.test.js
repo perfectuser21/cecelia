@@ -44,6 +44,14 @@ describe('normalizeRunId（与执行机 douyin-phone-adb normalize_run_id 同口
     expect(normalizeRunId('  ')).toBe('');
     expect(normalizeRunId(null)).toBe('');
   });
+
+  it('超长/重复 -a0- 的恶意串线性处理且截到 200 字符（CodeQL polynomial-redos 回归）', () => {
+    const evil = `x${'-a0-'.repeat(50000)}`;
+    const t0 = Date.now();
+    expect(normalizeRunId(evil)).toBe('x');
+    expect(Date.now() - t0).toBeLessThan(200);
+    expect(normalizeRunId('qiumi-865b502c-1791400000000-a2-retry-1')).toBe('qiumi-865b502c-1791400000000');
+  });
 });
 
 describe('findLinkedTask：持有者/run 能否追到 Brain 任务', () => {

@@ -29,7 +29,9 @@ const BARK_THRESHOLD_ENV = { phone_outward: ['BYPASS_BARK_PHONE_OUTWARD', 1], op
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BRAIN_RUN_RE = /^(?:qiumi|wfd)-([0-9a-f]{8})-\d{13}$/i;
-const QIUMI_ROOT_RE = /^(qiumi-[0-9a-f]{8}-\d{13})(?:[-_]a\d+[-_].*)?$/i;
+const QIUMI_ROOT_RE = /^qiumi-[0-9a-f]{8}-\d{13}/i;
+const ATTEMPT_SUFFIX_RE = /[-_]a\d+[-_]/;
+const RUN_ID_MAX = 200;
 const FIELD_MAX = 300;
 const GATE_INTERVAL_MS = 300_000;
 const SCAN_LOOKBACK_MS = 2 * 3600_000;
@@ -55,11 +57,16 @@ const clip = (v) => (v === null || v === undefined || v === '' ? null : String(v
 
 /** 与执行机 douyin-phone-adb 的 normalize_run_id 同口径：剥 :aN、-aN-<阶段>-<次数>、批次词序 -wN */
 export function normalizeRunId(value) {
-  let v = String(value ?? '').trim().split(':')[0];
+  // 先截长度、正则不带 .*$ 回溯（CodeQL js/polynomial-redos）：只找第一个 -aN- 的位置再切
+  let v = String(value ?? '').trim().slice(0, RUN_ID_MAX).split(':')[0];
   if (!v) return '';
   const q = QIUMI_ROOT_RE.exec(v);
-  if (q) return q[1];
-  v = v.replace(/[-_]a\d+[-_].*$/, '');
+  if (q) {
+    const rest = v.slice(q[0].length);
+    if (rest === '' || ATTEMPT_SUFFIX_RE.exec(rest)?.index === 0) return q[0];
+  }
+  const m = ATTEMPT_SUFFIX_RE.exec(v);
+  if (m) v = v.slice(0, m.index);
   return v.replace(/-w\d+$/, '');
 }
 
