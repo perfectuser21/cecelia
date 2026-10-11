@@ -18,6 +18,54 @@ function isRealUserText(entry) {
   return false;
 }
 
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const TASK_LINK_PATTERNS = [
+  new RegExp(`--task-id[=\\s]+(${UUID})`, 'gi'),
+  new RegExp(`/api/brain/tasks/(${UUID})/claim`, 'gi'),
+];
+
+function collectTaskIds(text, into) {
+  if (typeof text !== 'string' || !text) return;
+  for (const re of TASK_LINK_PATTERNS) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) into.add(m[1].toLowerCase());
+  }
+}
+
+/** Bash 里 claim 过的任务超过这个数 → 视为编排会话（替别人认领派发），不当本会话的任务 */
+export const MAX_BASH_CLAIM_LINKS = 3;
+
+/**
+ * 会话关联的 Brain 任务，分两档：
+ *   primary   = 真人打的字 + Skill 调用参数里的 `--task-id <uuid>`（如 `/dev --task-id X`）——本会话就是在做它
+ *   secondary = Bash 工具调用里的 `tasks/<uuid>/claim` / `--task-id`（无 primary 时才用，且 ≤3 个）
+ * 不认：tool_result 回显（grep/日志里常混着别的任务 id）、Agent/Task 等派给子代理的 prompt
+ * （那是别的执行体在做的任务，各自收尾）。认错的代价是把摘要并进无关任务，宁缺毋滥。
+ */
+function collectEntryTaskIds(entry, links) {
+  const role = entry?.message?.role;
+  const content = entry?.message?.content;
+  if (role === 'user') {
+    if (isRealUserText(entry)) collectTaskIds(extractText(entry), links.primary);
+    return;
+  }
+  if (role === 'assistant' && Array.isArray(content)) {
+    for (const block of content) {
+      if (block?.type !== 'tool_use' || !block.input || typeof block.input !== 'object') continue;
+      const target = block.name === 'Skill' ? links.primary : block.name === 'Bash' ? links.secondary : null;
+      if (!target) continue;
+      for (const v of Object.values(block.input)) collectTaskIds(typeof v === 'string' ? v : '', target);
+    }
+  }
+}
+
+function resolveLinkedTaskIds(links) {
+  if (links.primary.size > 0) return [...links.primary];
+  if (links.secondary.size > 0 && links.secondary.size <= MAX_BASH_CLAIM_LINKS) return [...links.secondary];
+  return [];
+}
+
 function extractText(entry) {
   const content = entry.message.content;
   if (typeof content === 'string') return content.trim();
@@ -73,6 +121,9 @@ export function extractClaudeSessions(sinceMs, projectsDir = CLAUDE_PROJECTS_DIR
       const turns = [];
       let lastActivityMs = 0;
       let lastEntryId = null;
+      // entrypoint：cli = 交互式有头会话（TTY），sdk-cli = 无头 claude -p；未登记出处时据此判真人
+      let entrypoint = null;
+      const links = { primary: new Set(), secondary: new Set() };
 
       lines.forEach((line, lineIndex) => {
         let entry;
@@ -81,6 +132,8 @@ export function extractClaudeSessions(sinceMs, projectsDir = CLAUDE_PROJECTS_DIR
         } catch {
           return;
         }
+        if (!entrypoint && typeof entry.entrypoint === 'string') entrypoint = entry.entrypoint;
+        collectEntryTaskIds(entry, links);
         if (!isRealUserText(entry)) return;
         const ts = entry.timestamp ? new Date(entry.timestamp).getTime() : null;
         if (ts && ts > lastActivityMs) {
@@ -98,6 +151,8 @@ export function extractClaudeSessions(sinceMs, projectsDir = CLAUDE_PROJECTS_DIR
         turns,
         lastActivityMs,
         lastEntryId,
+        entrypoint,
+        linkedTaskIds: resolveLinkedTaskIds(links),
       });
     }
   }

@@ -64,6 +64,8 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // 2026-09-16 飞书群交办入账（决策 1c6679cd）：群里派给秋米的活 → tasks 账本留痕，
   // 状态只写 completed/blocked，不产可执行任务
   { module: 'feishu-task-ledger.js', source: 'inbox', creates_executable_task: false, migration_status: 'routed' },
+  // 2026-10-11 有头会话收尾（任务 c8b27bc5）：结束的有头会话没关联任何任务 → 补建 completed 账本任务挂摘要（只记账不派发，source_id 幂等）
+  { module: 'headed-session-handoff.js', source: 'conversation', creates_executable_task: false, migration_status: 'routed' },
   { module: 'recurring.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'review-gate.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/capture-atoms.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },

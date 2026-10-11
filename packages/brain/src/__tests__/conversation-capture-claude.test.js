@@ -111,6 +111,26 @@ describe('extractClaudeSessions', () => {
       ],
     });
     const [session] = extractClaudeSessions(0, root);
-    expect(session.linkedTaskIds.sort()).toEqual([A, B].sort());
+    // 有真人/Skill 的 --task-id（primary）时只认 primary，Bash claim 不再追加
+    expect(session.linkedTaskIds).toEqual([A]);
+  });
+
+  it('linkedTaskIds：无 primary 时认 Bash claim（≤3）；派给子代理的 Agent prompt 不认；Bash claim 过多视为编排会话不认', () => {
+    const ids = ['a', 'b', 'c', 'd'].map((x) => `${x.repeat(8)}-1111-4111-8111-111111111111`);
+    const claim = (id) => ({ type: 'tool_use', name: 'Bash', input: { command: `curl -X POST localhost:5221/api/brain/tasks/${id}/claim` } });
+    const agent = { type: 'tool_use', name: 'Agent', input: { prompt: `去做 /dev --task-id ${ids[3]}` } };
+    const root = makeProjectsDir({
+      'proj-g/019one.jsonl': [
+        { type: 'user', uuid: 'u1', timestamp: '2026-07-20T01:00:00.000Z', message: { role: 'user', content: '开工' } },
+        { type: 'assistant', uuid: 'a1', timestamp: '2026-07-20T01:00:01.000Z', message: { role: 'assistant', content: [claim(ids[0]), agent] } },
+      ],
+      'proj-g/019many.jsonl': [
+        { type: 'user', uuid: 'u1', timestamp: '2026-07-20T01:00:00.000Z', message: { role: 'user', content: '批量派' } },
+        { type: 'assistant', uuid: 'a1', timestamp: '2026-07-20T01:00:01.000Z', message: { role: 'assistant', content: ids.map(claim) } },
+      ],
+    });
+    const byId = Object.fromEntries(extractClaudeSessions(0, root).map((s) => [s.sessionId, s]));
+    expect(byId['019one'].linkedTaskIds).toEqual([ids[0]]);
+    expect(byId['019many'].linkedTaskIds).toEqual([]);
   });
 });
