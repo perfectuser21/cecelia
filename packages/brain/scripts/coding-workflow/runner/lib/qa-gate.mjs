@@ -16,6 +16,7 @@ import { gateSpan, postSpans } from './spans.mjs';
 import { cannotVerifyAccepted } from './cv-accepted.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { runJudge, priorJudgeFiles } from './judge-gate.mjs';
+import { sessionLogPath, sessionSummary } from './session-log.mjs';
 
 const EVALUATE_REL = 'packages/brain/scripts/coding-workflow/activities/evaluate.mjs';
 const EVALUATE_TIMEOUT_MS = 55 * 60 * 1000;
@@ -239,10 +240,10 @@ async function qaFix(ctx, pr, s, worktree, intent, entry, { recordFile, issues }
     QA_ISSUES: issues || '（见报告）',
     PRIOR_RULINGS: prior.length > 0 ? prior.join(', ') : '（无）',
   });
-  const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', ...CLAUDE_TOOLS], cwd: worktree, timeoutMs: ctx.cfg.qaFixTimeoutMs, tag: 'qa-fix', isolateRemote: true });
+  const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', ...CLAUDE_TOOLS], cwd: worktree, timeoutMs: ctx.cfg.qaFixTimeoutMs, tag: 'qa-fix', isolateRemote: true,
+    transcriptPath: sessionLogPath(ctx.cfg, 'qa-fix', pr.number, Date.now()) });
   addCost(s, run.cost_usd);
-  fs.mkdirSync(ctx.cfg.logDir, { recursive: true });
-  fs.writeFileSync(path.join(ctx.cfg.logDir, `qa-fix-${pr.number}-${Date.now()}.log`), run.output ?? '');
+  ctx.log(sessionSummary('qa-fix', pr.number, run));
   if (run.timedOut) return 'claude_timeout';
   if (run.terminated || run.code !== 0) return 'claude_failed';
   const conflict = RULING_CONFLICT_RE.exec(run.output ?? '');

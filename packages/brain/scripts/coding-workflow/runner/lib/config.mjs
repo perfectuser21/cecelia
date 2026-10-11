@@ -79,6 +79,8 @@ export function loadConfig(env = process.env) {
     // 失败任务 worktree 保留天数；每任务回执/日志保留天数
     failedRetentionDays: positiveInt(env.CODING_WF_FAILED_RETENTION_DAYS) ?? 7,
     logRetentionDays: positiveInt(env.CODING_WF_LOG_RETENTION_DAYS) ?? 30,
+    // 空闲日志「没有可新跑的开关任务」最短间隔（默认 1 小时一行；0 = 每轮都打）
+    idleLogIntervalMs: nonNegativeInt(env.CODING_WF_IDLE_LOG_INTERVAL_MS) ?? 60 * 60 * 1000,
     host,
     claimer: `coding-workflow-runner@${host}`,
   };

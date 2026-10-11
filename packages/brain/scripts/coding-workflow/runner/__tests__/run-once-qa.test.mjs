@@ -8,6 +8,7 @@ import { git } from '../../__tests__/helpers/git.mjs';
 import { codingTask } from './helpers/sandbox.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { useQaEnv, FAKE_EVALUATE, TASK, BRANCH, SPRINT, INTENT } from './helpers/qa-env.mjs';
+import { expectSessionOnlyInFile } from './helpers/session-quiet.mjs';
 
 describe('runner QA 门（evaluator 真人 QA）', () => {
   let sb;
@@ -183,6 +184,13 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     const prompt = fs.readFileSync(files.prompt, 'utf8');
     expect(prompt).toContain(`${SPRINT}/05-qa-report-r1.md`);
     expect(prompt).toContain('T-1');
+  });
+
+  it('QA 修复会话输出只落 qa-fix-<pr>-<ts>.log，主日志只一行摘要', async () => {
+    const r = await go(green(), { mode: 'fail', extra: { FAKE_CIFIX_COST: '0.5' } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(state().rounds).toEqual([expect.objectContaining({ round: 1, verdict: 'FAIL', fix: 'pushed' })]);
+    expectSessionOnlyInFile(r.stderr, sb.logDir, { tag: 'qa-fix', kind: 'qa-fix', pr: 77, cost: 0.5 });
   });
 
   it('必需检查还没出结果 / 有失败 / 已 passed / 同一 head 已验过 FAIL：不跑 QA', async () => {

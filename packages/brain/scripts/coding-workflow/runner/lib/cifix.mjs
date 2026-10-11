@@ -11,6 +11,7 @@ import { taskIdOf, remoteTaskId, preparePrWorktree, checkFixCommits, ownChangedF
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { revokeQaPass } from './qa-gate.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
+import { sessionLogPath, sessionSummary } from './session-log.mjs';
 
 const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)'];
 const GH_TIMEOUT_MS = 2 * 60 * 1000;
@@ -21,7 +22,7 @@ const RUNNER_ID = ['-c', 'user.name=coding-workflow-runner', '-c', 'user.email=c
 // 每个 PR 都往末尾追加的登记表：与 main 冲突时按并集合并（程序做，不派 claude，也不算改了 PR 的代码）
 const UNION_FILES = ['packages/quality/smoke-allowlist.txt', 'packages/quality/smoke-write-targets.txt'];
 
-/** 跑一次修复会话：记会话日志与花费；终止/超时/非 0 退出抛 Error(reason_code)。 */
+/** 跑一次修复会话：会话输出边跑边写 cifix-<pr>-<ts>.log，主日志只记一行摘要；记花费；终止/超时/非 0 退出抛 Error(reason_code)。 */
 async function runFixSession(ctx, pr, prompt, worktree, tag) {
   const { cfg } = ctx;
   const run = await runClaude({
@@ -30,9 +31,9 @@ async function runFixSession(ctx, pr, prompt, worktree, tag) {
     timeoutMs: cfg.ciFixTimeoutMs,
     tag,
     isolateRemote: true,
+    transcriptPath: sessionLogPath(cfg, 'cifix', pr.number, Date.now()),
   });
-  fs.mkdirSync(cfg.logDir, { recursive: true });
-  fs.writeFileSync(path.join(cfg.logDir, `cifix-${pr.number}-${Date.now()}.log`), run.output ?? '');
+  ctx.log(sessionSummary(tag, pr.number, run));
   // 会话一结束就记花费（审计 #35），后面抛错的路径也不漏
   if (typeof run.cost_usd === 'number' && run.cost_usd > 0) {
     const state = readState(cfg, pr.number);

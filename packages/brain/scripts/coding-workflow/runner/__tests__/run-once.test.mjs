@@ -69,6 +69,25 @@ describe('coding workflow runner run-once', () => {
     expect(fs.existsSync(path.join(sb.lockDir, 'coding-workflow-runner.lock'))).toBe(false);
   }, 30000);
 
+  // C1 runner-log-noise：空闲 tick 每 5 分钟一行「没有可新跑的开关任务」曾占主日志 40% 行数
+  it('空闲日志「没有可新跑的开关任务」按 CODING_WF_IDLE_LOG_INTERVAL_MS 限频（默认每小时最多一行）', async () => {
+    brain = await startFakeBrain({ tasks: [] });
+    const idle = (interval) => runOnceProcess(runnerEnv(sb, brain.url, interval === undefined ? {} : { CODING_WF_IDLE_LOG_INTERVAL_MS: interval }));
+    const env = runnerEnv(sb, brain.url);
+    delete env.CODING_WF_IDLE_LOG_INTERVAL_MS;
+    let r = await runOnceProcess(env);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stderr).toContain('没有可新跑的开关任务');
+    r = await runOnceProcess(env);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain('没有可新跑的开关任务');
+    // 间隔已过（这里用 1ms 模拟一小时后）：再打一行
+    r = await idle('1');
+    expect(r.stderr).toContain('没有可新跑的开关任务');
+    // 测试沙箱默认 0 = 每次都打（既有用例按此断言）
+    expect(runnerEnv(sb, brain.url).CODING_WF_IDLE_LOG_INTERVAL_MS).toBe('0');
+  });
+
   it('独立类型 coding_workflow（无 headed_manual）同样被列出并认领（派发总闸 F，任务 0a70684f）', async () => {
     brain = await startFakeBrain({
       tasks: [codingTask(T1, { task_type: 'coding_workflow', payload: { coding_workflow: true, repo: 'cecelia' } })],

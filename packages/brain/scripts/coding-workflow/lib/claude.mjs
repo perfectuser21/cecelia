@@ -101,7 +101,8 @@ function signalGroup(child, signal, tag) {
 }
 
 /**
- * 运行 claude（CODING_WF_CLAUDE_BIN 覆盖可执行文件），输出全部转写到本进程 stderr；
+ * 运行 claude（CODING_WF_CLAUDE_BIN 覆盖可执行文件），输出全部转写到本进程 stderr——给了 transcriptPath 时改为边跑边追加进该文件、
+ * 不进 stderr（runner 进程内的 ci-fix/qa-fix/commander 会话：stderr 就是 runner 主日志）；activity 不给，stderr 由执行器重定向进 <task>.log；
  * 返回 { code, output, stdout, stderr, timedOut, terminated }（output 为两者合并，stdout/stderr 各一份供解析与判定），
  * spawn 失败时 code 为 null。isolateRemote 时套 remoteIsolatedEnv，临时 GH_CONFIG_DIR 结束后删除。
  * - claude 自成进程组（detached，但仍等待它、不 unref），结束时整组收掉，不留孙进程。
@@ -113,20 +114,39 @@ function signalGroup(child, signal, tag) {
 const withCostOutput = (args) => (args.includes('--output-format') ? args : [...args, '--output-format', 'json']);
 
 /** 起 claude 会话；返回值另带 cost_usd（result 事件的 total_cost_usd，取不到为 0）。 */
-export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolateRemote = false }) {
+export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolateRemote = false, transcriptPath }) {
   const args = withModel(withCostOutput(callerArgs));
-  const priced = (run) => ({ ...run, cost_usd: sessionCostUsd(run.stdout ?? '') });
-  if (!isolateRemote) return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv() }));
+  const priced = (run) => ({ ...run, cost_usd: sessionCostUsd(run.stdout ?? ''), ...(transcriptPath ? { transcriptPath } : {}) });
+  if (!isolateRemote) return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv(), transcriptPath }));
   const ghConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-wf-gh-'));
   try {
-    return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: remoteIsolatedEnv(ghConfigDir) }));
+    return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: remoteIsolatedEnv(ghConfigDir), transcriptPath }));
   } finally {
     fs.rmSync(ghConfigDir, { recursive: true, force: true });
   }
 }
 
-function spawnClaude({ args, cwd, timeoutMs, tag, env }) {
+/** 会话输出去向：给了 transcriptPath 就追加进该文件（目录自动建）；打不开退回 stderr 并记一行。 */
+function openSink(transcriptPath, tag) {
+  const toStderr = { write: (chunk) => process.stderr.write(chunk), close: () => {} };
+  if (!transcriptPath) return toStderr;
+  try {
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    let fd = fs.openSync(transcriptPath, 'a');
+    // 收尾后管道里迟到的数据直接丢（fd 已关，写会 EBADF）
+    return {
+      write: (chunk) => { if (fd !== null) fs.writeSync(fd, chunk); },
+      close: () => { if (fd !== null) fs.closeSync(fd); fd = null; },
+    };
+  } catch (error) {
+    log(`[${tag}] 会话文件 ${transcriptPath} 打不开（${error?.message || error}），会话输出改写 stderr`);
+    return toStderr;
+  }
+}
+
+function spawnClaude({ args, cwd, timeoutMs, tag, env, transcriptPath }) {
   const bin = process.env.CODING_WF_CLAUDE_BIN || 'claude';
+  const sink = openSink(transcriptPath, tag);
   return new Promise((resolve) => {
     let output = '';
     let stdout = '';
@@ -141,12 +161,14 @@ function spawnClaude({ args, cwd, timeoutMs, tag, env }) {
       child = spawn(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: GROUP_KILL });
     } catch (error) {
       const message = String(error?.message || error);
+      sink.write(`${message}\n`);
+      sink.close();
       resolve({ code: null, output: message, stdout: '', stderr: message, timedOut: false, terminated: false });
       return;
     }
     const forward = (chunk) => {
       output += chunk;
-      process.stderr.write(chunk);
+      sink.write(chunk);
     };
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -186,6 +208,7 @@ function spawnClaude({ args, cwd, timeoutMs, tag, env }) {
       signalGroup(child, 'SIGKILL', tag);
       child.stdout.destroy();
       child.stderr.destroy();
+      sink.close();
       resolve({ output, stdout, stderr, timedOut, terminated, ...result });
       // 取消路径要保证本进程能在执行器的 SIGKILL 之前自行收尾
       if (terminated) setTimeout(() => process.exit(2), 1000).unref();

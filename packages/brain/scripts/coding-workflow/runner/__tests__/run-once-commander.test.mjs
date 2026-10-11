@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { git } from '../../__tests__/helpers/git.mjs';
 import { useQaEnv, TASK, BRANCH, SPRINT } from './helpers/qa-env.mjs';
+import { expectSessionOnlyInFile } from './helpers/session-quiet.mjs';
 
 describe('coding commander（升级后自动裁决）', () => {
   let sb;
@@ -57,6 +58,15 @@ describe('coding commander（升级后自动裁决）', () => {
     const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
     expect(args[args.indexOf('--add-dir') + 1]).toBe(sb.logDir);
     expect(fs.readFileSync(files.prompt, 'utf8')).toContain(`RULING_PATH: ${sb.logDir}/`);
+  });
+
+  it('commander 会话输出只落 commander-<pr>-<n>.log，主日志只一行摘要', async () => {
+    qaEscalated('judge_contract_gap', { issues: ['J-1'] });
+    const r = await go(green(), { mode: 'cmd-resume', extra: { FAKE_CIFIX_COST: '0.5' } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(cmdState().interventions).toMatchObject([{ n: 1, action: 'resume' }]);
+    const file = expectSessionOnlyInFile(r.stderr, sb.logDir, { tag: 'commander', kind: 'commander', pr: 77, cost: 0.5 });
+    expect(path.basename(file)).toBe('commander-77-1.log');
   });
 
   it('commander 自己修代码（提交在 PR 分支上）→ 与裁决记录一起推送', async () => {

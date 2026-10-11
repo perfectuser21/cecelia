@@ -183,6 +183,8 @@ export function runnerEnv(sb, brainUrl, extra = {}) {
     CODING_WF_QA_GATE: '0',
     // coding commander 默认关：既有用例断言升级后不再处理；commander 用例显式打开
     CODING_WF_COMMANDER: '0',
+    // 空闲日志限频关闭（0 = 每轮都打）：既有用例断言「没有可新跑的开关任务」；限频用例显式设置
+    CODING_WF_IDLE_LOG_INTERVAL_MS: '0',
     FAKE_EXEC_LOG: sb.execLog,
     FAKE_GH_LOG: sb.ghLog,
     ...extra,

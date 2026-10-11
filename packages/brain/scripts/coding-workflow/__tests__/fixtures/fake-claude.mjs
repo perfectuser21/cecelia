@@ -63,6 +63,11 @@ if (mode === 'fail') {
   process.exit(1);
 }
 
+// FAKE_CLAUDE_MARKER：stdout 与 stderr 各输出一行带标记的文字（会话输出去向测试用）
+if (process.env.FAKE_CLAUDE_MARKER) {
+  console.log(`STDOUT ${process.env.FAKE_CLAUDE_MARKER}`);
+  process.stderr.write(`STDERR ${process.env.FAKE_CLAUDE_MARKER}\n`);
+}
 const unset = (k) => process.env[k] ?? '<unset>';
 if (role) console.log(`FAKE_ROLE: ${role}`);
 console.log(`FAKE_ARGS: ${argv.filter((a) => a !== prompt).join(' ')}`);
