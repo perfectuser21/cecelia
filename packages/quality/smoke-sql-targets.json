@@ -233,6 +233,12 @@
     "evidence": "实际SQL/写调用源码行 39,42；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
+  "handoff-kinds-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 18,19,25,27,29；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
   "relay-baton-smoke.sh": {
     "kind": "write",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",

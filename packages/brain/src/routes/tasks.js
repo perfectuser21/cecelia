@@ -17,6 +17,7 @@ import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
 import { emit as emitEvent } from '../event-bus.js';
 import { pushCaptureAtom } from '../capture-inbox.js';
 import { pushHandoffAtom } from '../handoff.js';
+import { prepareHandoffForWrite } from '../lib/relay-baton.js';
 import { checkAnchor } from '../anchor-check.js';
 import { blockTask } from '../task-updater.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
@@ -433,6 +434,15 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
     if (authoringError) return res.status(409).json(authoringError);
     const currentStatus = task.status;
 
+    // handoff 下一步四类（主理人 2026-10-11 决策）：写入前把 next_steps 规范成带 kind 的对象，
+    // 未标/认不出/旧值条目按有头/无头默认归类，响应里回报每条被当成了什么（handoff_next_steps）。
+    let handoffFeedback = null;
+    if (result && result.handoff && typeof result.handoff === 'object' && !Array.isArray(result.handoff)) {
+      const prepared = prepareHandoffForWrite(task, result.handoff);
+      result.handoff = prepared.handoff;
+      handoffFeedback = prepared.feedback;
+    }
+
     // status === currentStatus → 幂等 no-op：跳过 transition 校验与事件，仅应用 result 等字段
     // no-op 不重触发 promoteRegression/KR 重算——补写场景 promote 已由 callback 4 终态路径承接（spec 有意设计，非遗漏）
     const isStatusNoop = Boolean(status) && status === currentStatus;
@@ -709,6 +719,7 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
       success: !harnessDemoted,
       ...(harnessDemoted ? { accepted: false, reason: harnessDemoteReason } : {}),
       ...(relay ? { relay } : {}),
+      ...(handoffFeedback ? { handoff_next_steps: handoffFeedback } : {}),
       ...(harnessUngated ? { ungated_merge: true, failure_reason: harnessUngatedReason } : {}),
       task_id,
       status: updatedTask.status,

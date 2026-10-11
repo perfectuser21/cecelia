@@ -261,6 +261,7 @@ radius-rerun-gate-smoke.sh
 ratchet-registry-smoke.sh
 registry-photo-layer-smoke.sh
 relay-baton-smoke.sh
+handoff-kinds-smoke.sh
 relay-mirror-smoke.sh
 relay-runs-filter-smoke.sh
 relay-runs-patch-shortid-smoke.sh
