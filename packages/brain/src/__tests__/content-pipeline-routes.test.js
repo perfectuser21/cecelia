@@ -38,6 +38,8 @@ function resetTaskCreator() {
   }));
 }
 
+const PIPE_UUID = '11111111-1111-4111-8111-111111111111';
+
 function makeApp() {
   const app = express();
   app.use(express.json());
@@ -246,7 +248,7 @@ describe('GET /api/brain/pipelines/:id/stages — rule_scores & llm_reviewed', (
         },
       ],
     });
-    const res = await request(makeApp()).get('/api/brain/pipelines/pipe-1/stages');
+    const res = await request(makeApp()).get(`/api/brain/pipelines/${PIPE_UUID}/stages`);
     expect(res.status).toBe(200);
     expect(res.body.stages['content-copy-review'].review_passed).toBe(true);
   });
@@ -267,7 +269,7 @@ describe('GET /api/brain/pipelines/:id/stages — rule_scores & llm_reviewed', (
         },
       ],
     });
-    const res = await request(makeApp()).get('/api/brain/pipelines/pipe-1/stages');
+    const res = await request(makeApp()).get(`/api/brain/pipelines/${PIPE_UUID}/stages`);
     expect(res.status).toBe(200);
     const stage = res.body.stages['content-copy-review'];
     expect(stage.rule_scores).toEqual(scores);
@@ -289,7 +291,7 @@ describe('GET /api/brain/pipelines/:id/stages — rule_scores & llm_reviewed', (
         },
       ],
     });
-    const res = await request(makeApp()).get('/api/brain/pipelines/pipe-1/stages');
+    const res = await request(makeApp()).get(`/api/brain/pipelines/${PIPE_UUID}/stages`);
     expect(res.status).toBe(200);
     const stage = res.body.stages['content-copy-review'];
     expect(stage).not.toHaveProperty('rule_scores');

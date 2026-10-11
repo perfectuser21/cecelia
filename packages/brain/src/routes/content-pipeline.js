@@ -39,6 +39,16 @@ import { createTask } from '../actions.js';
 
 const router = express.Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// 别名挂载 /api/brain 下 /:id/<后缀> 会接走 /api/brain/runs/stats 等，非 UUID 时放行给后续路由；/pipelines 下判 400
+function guardPipelineId(req, res, next) {
+  if (UUID_RE.test(req.params.id)) return true;
+  if (req.baseUrl === '/api/brain') next('router');
+  else res.status(400).json({ error: 'invalid pipeline id: must be a UUID' });
+  return false;
+}
+
 /**
  * GET /content-types
  * 返回所有已注册内容类型名称数组
@@ -543,7 +553,8 @@ router.post('/:id/run', async (req, res) => {
  * GET /:id/stages
  * 查询 pipeline 子任务进度
  */
-router.get('/:id/stages', async (req, res) => {
+router.get('/:id/stages', async (req, res, next) => {
+  if (!guardPipelineId(req, res, next)) return;
   const { id } = req.params;
   try {
     const result = await pool.query(`
@@ -581,7 +592,8 @@ router.get('/:id/stages', async (req, res) => {
  * GET /:id/output
  * 查询 pipeline 产出物
  */
-router.get('/:id/output', async (req, res) => {
+router.get('/:id/output', async (req, res, next) => {
+  if (!guardPipelineId(req, res, next)) return;
   const { id } = req.params;
   try {
     const pipelineResult = await pool.query(
@@ -683,7 +695,8 @@ router.get('/:id/output', async (req, res) => {
  *
  * 返回：{ pipeline_id, platforms: [{ platform, status, url?, error?, published_at? }] }
  */
-router.get('/:id/publish-status', async (req, res) => {
+router.get('/:id/publish-status', async (req, res, next) => {
+  if (!guardPipelineId(req, res, next)) return;
   const { id } = req.params;
   try {
     // publish_results：每平台最新一条
@@ -919,7 +932,8 @@ async function enqueueApprovedPipeline(pipelineId, payload) {
  * GET /pipelines/:id/stats
  * 查询 pipeline 各平台发布后数据汇总（来自 pipeline_publish_stats 表）
  */
-router.get('/:id/stats', async (req, res) => {
+router.get('/:id/stats', async (req, res, next) => {
+  if (!guardPipelineId(req, res, next)) return;
   const { id } = req.params;
   try {
     const result = await pool.query(
