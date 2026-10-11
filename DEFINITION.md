@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.423.8
+**Brain 版本**: 1.424.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,13 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.424.0 — handoff 下一步四类 + 有头续接待续
+
+- next_steps 四类：resume_headed（有头续接，不派发，原任务 result.pending_resume 挂待续）/ dispatch_headless（无头派发，≡旧 task）/ decision / note（≡旧 done）
+- 默认：有头任务未标/认不出 → resume_headed；无头 → note（存量字符串建议不误派）；「完成，无下一步」恒为 note
+- PATCH /api/brain/tasks/:id 写 result.handoff 时规范 next_steps 并回 handoff_next_steps（每条被当成什么）
+- 新接口：GET /api/brain/handoffs/pending-resume、POST /api/brain/handoffs/pending-resume/:taskId/ack
 
 ## Brain 1.423.8 — 对话捕获只收真人原话 + 长寿会话只挂近 24h 提到的任务
 
