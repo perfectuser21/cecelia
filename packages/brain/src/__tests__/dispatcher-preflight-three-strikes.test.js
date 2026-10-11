@@ -105,12 +105,14 @@ vi.mock('../account-usage.js', () => ({
 // Helper: 构造 queryMock 序列，供"单 tick 派发"调用
 // 每次 dispatchNextTask 调用需要:
 //   [0] drain retired harness types
+//   [0'] drain 无头 kernel harness_initiative
 //   [1] selectNextDispatchableTask → [task]
 //   [2] UPDATE metadata (三振相关)
 //   [3] selectNextDispatchableTask → [] (no more candidates)
 // ──────────────────────────────────────────────────────────
 function setupSingleTickReject(task) {
   mockQuery.mockResolvedValueOnce({ rows: [] });           // [0] drain retired
+  mockQuery.mockResolvedValueOnce({ rows: [] });           // [0'] 无头 kernel drain（harness_initiative 无头入口退役）
   mockQuery.mockResolvedValueOnce({ rows: [task] });       // [1] select → task
   mockQuery.mockResolvedValueOnce({ rowCount: 1 });        // [2] UPDATE metadata/blocked
   mockQuery.mockResolvedValueOnce({ rows: [] });           // [3] select → empty

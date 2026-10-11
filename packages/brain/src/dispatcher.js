@@ -28,7 +28,7 @@ import {
   getBillingPause,
 } from './executor.js';
 import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
-import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES, OPENCLAW_PASSTHROUGH_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
+import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HEADLESS_KERNEL_RETIRED_TASK_TYPES, HARNESS_INFLIGHT_TASK_TYPES, OPENCLAW_PASSTHROUGH_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
@@ -119,6 +119,8 @@ export function shouldApplyHarnessCap(candidate) {
 // executor.js 内 `triggerCeceliaRun` 也保留同款拦截作 defense-in-depth（老 caller 直
 // 调 executor 时仍然有效）。名单见 lib/task-type-registry.js（RETIRED_HARNESS_TYPES_DISPATCH）。
 const _RETIRED_HARNESS_TYPES_DISPATCH = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
+// 无头 kernel 入口退役（任务 dacd75f3）：drain 段把存量无头 queued 单标这个 error_message。
+export const RETIRED_HARNESS_KERNEL_ERROR = 'retired_harness_kernel';
 
 // 私有计时器（旧只写不读，保留 hook 给未来 telemetry）
 let _lastDispatchTime = 0;
@@ -728,6 +730,29 @@ export async function dispatchNextTask(goalIds, options = {}) {
     }
   } catch (drainErr) {
     console.error(`[dispatch] retired task drain failed (non-fatal): ${drainErr.message}`);
+  }
+  // 2.5' 无头 kernel 入口退役（任务 dacd75f3）：存量 queued、未认领、非有头的 harness_initiative
+  //      （如 relay-baton 子单）一律终态 failed，不再进已死的 kernel 派发（09-30 起全败 kernel_authority_not_created）。
+  //      有头账本行（headed_manual 字符串/布尔，payload->> 两种都给 'true'）与已认领行不碰。
+  if (!codeOnly) try {
+    const drained = await finalizeTask(pool, null, 'failed', {
+      set: { completed_at: 'now', error_message: RETIRED_HARNESS_KERNEL_ERROR },
+      mergePayload: { failure_class: 'pipeline_terminal_failure' },
+      onlyIfStatus: 'queued',
+      where: {
+        sql: "task_type = ANY($1::text[]) AND claimed_by IS NULL AND COALESCE(payload->>'headed_manual', 'false') <> 'true'",
+        params: [[...HEADLESS_KERNEL_RETIRED_TASK_TYPES]],
+      },
+      returning: ['task_type'],
+    });
+    if (drained.rowCount > 0) {
+      tickLog(`[dispatch] drained ${drained.rowCount} queued headless harness kernel task(s) → ${RETIRED_HARNESS_KERNEL_ERROR}`);
+      for (const row of drained.tasks) {
+        actions.push({ action: 'retire-task', task_id: row.id, task_type: row.task_type });
+      }
+    }
+  } catch (drainErr) {
+    console.error(`[dispatch] headless kernel drain failed (non-fatal): ${drainErr.message}`);
   }
 
   // 3. Select next task (with dependency check + pre-flight validation)

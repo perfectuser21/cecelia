@@ -98,14 +98,14 @@ describe('harness_initiative 无头 kernel 入口退役（kernel 自 09-30 起�
     expect(route('harness_initiative', { executor: 'codex' })).toMatchObject({ route: 'retired-harness-kernel', available: false });
   });
 
-  it('建单闸：queued 无头拒（no_executor_for_task_type）；有头 / 非 queued 账本行放行', () => {
-    let err;
-    try { assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: kernelPayload }); } catch (e) { err = e; }
-    expect(err?.code).toBe(NO_EXECUTOR_FOR_TASK_TYPE);
-    expect(err.route).toBe('retired-harness-kernel');
+  it('建单闸本步不拒（只关派发，存量与新建无头单由 dispatcher drain 收口）；有头 / 非 queued 照常放行', () => {
+    // 编码建单方（work-router / relay-baton / GP 签字实现单）改投 coding_workflow 之前在建单处拒会回滚上游事务，
+    // 收紧建单入口留到改投之后；这里钉住「路由判退役 + 建单不抛」的组合，防误把它当普通无执行者类型拒掉。
+    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: kernelPayload })).not.toThrow();
     expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: { headed_manual: 'true' } })).not.toThrow();
-    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: { headed_manual: true } })).not.toThrow();
     expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'in_progress', payload: {} })).not.toThrow();
+    // 其它无执行者类型照旧拒
+    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_planner', status: 'queued', payload: {} })).toThrow(/no_executor_for_task_type/);
   });
 
   it('注册表：harness_initiative surface=none 且打 headless_kernel_retired 标签；golden_path_proposal 不动', () => {

@@ -143,6 +143,8 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
     // pool.query 调用顺序：
     // 0. Phase 2.5: drain retired harness types（0 retired，本 PR 加）
     mockQuery.mockResolvedValueOnce({ rows: [] });
+    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. selectNextDispatchableTask 主查询 → 返回候选
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
     // 1.5 派发前语义查重（本 PR 加）→ 无 sibling
@@ -178,6 +180,8 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
 
     // pool.query 调用顺序：
     // 0. Phase 2.5: drain retired harness types（0 retired，本 PR 加）
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. 主查询 → 候选（无 initiative 锁检查，project_id 为 null）
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });
@@ -216,6 +220,8 @@ describe('dispatchNextTask: Initiative 二次锁检查', () => {
 
     // pool.query 调用顺序：
     // 0. Phase 2.5: drain retired harness types（0 retired，本 PR 加）
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. 主查询 → 候选
     mockQuery.mockResolvedValueOnce({ rows: [candidateTask] });

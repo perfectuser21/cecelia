@@ -269,6 +269,8 @@ function setupQuerySequence(task, prevFailCount = 0, reachedThreshold = false) {
   mockQuery
     // 0. drain retired
     .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
+    .mockResolvedValueOnce({ rows: [], rowCount: 0 })
     // 2. duplicate check
     .mockResolvedValueOnce({ rows: [] })
     // 3. atomic claim
@@ -296,6 +298,8 @@ function setupQuerySequence(task, prevFailCount = 0, reachedThreshold = false) {
 function setupSuccessQuerySequence(task, prevFailCount = 0) {
   mockQuery
     // 0. drain retired
+    .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
     .mockResolvedValueOnce({ rows: [], rowCount: 0 })
     // 2. duplicate check
     .mockResolvedValueOnce({ rows: [] })
@@ -559,6 +563,7 @@ describe('GP-5 [BEHAVIOR-5]: configError 失败不计入计数', () => {
     for (let i = 0; i < 3; i++) {
       mockQuery
         .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // drain retired
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // 无头 kernel drain
         .mockResolvedValueOnce({ rows: [] })               // duplicate check
         .mockResolvedValueOnce({ rows: [{ id: task.id }] }) // claim
         .mockResolvedValueOnce({ rows: [task] })           // full SELECT
