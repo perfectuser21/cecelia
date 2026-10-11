@@ -95,6 +95,7 @@ import spansRouter from './src/routes/spans.js';
 import skillSettlementRouter from './src/routes/skill-settlement.js';
 import activityJudgmentsRouter from './src/routes/activity-judgments.js';
 import releaseLineRouter from './src/routes/release-line.js';
+import factoryLedgerRouter from './src/routes/factory-ledger.js';
 import { createReleasesRouter } from './src/routes/releases.js';
 import { createRunsReadRouter } from './src/routes/runs-read.js';
 import { createRunDefinitionsRouter } from './src/routes/run-definitions.js';
@@ -471,6 +472,7 @@ app.use('/api/brain', spansRouter); // 执行段上报 POST/GET /spans（价值�
 app.use('/api/brain', skillSettlementRouter); // 路 B：收敛对账 + 沉淀技能候选（v3.0 第 4 刀，任务 3590ec8f）
 app.use('/api/brain', activityJudgmentsRouter); // 裁判：Activity 最新裁判 / 裁判史 / 新旧版本对比（五块模型，决策 de6dff5d）
 app.use('/api/brain', releaseLineRouter); // 发布线：内容版本 / 生产指针 / 晋级 / 退回 / 流程生产配方（迁移 541，决策 de6dff5d 第 3 步）
+app.use('/api/brain', factoryLedgerRouter); // 技能工厂台账 /factory/ledger：阶段 1..7 / 转换规则 / 滑窗计数（迁移 547，决策 cc008b7e）
 app.use('/api/brain/releases', createReleasesRouter());
 app.use('/api/brain/runs', createRunsReadRouter()); // 执行记录总记录 GET /runs/:run_id（任务 05cfbcde），须在 run-definitions 之前
 app.use('/api/brain/runs', createRunDefinitionsRouter());

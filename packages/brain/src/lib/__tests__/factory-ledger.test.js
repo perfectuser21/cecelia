@@ -1,7 +1,7 @@
 /** 技能工厂台账纯规则（迁移 547）：阶段转换规则、滑窗计数、入参校验。 */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
-  STAGE_NAMES, RULE_RETREATS, checkTransition, applyRunOutcome, validateCreate, validatePatch, validateTransition, validateRun,
+  STAGE_NAMES, RULE_RETREATS, checkTransition, applyRunOutcome, validateCreate, validatePatch, validateTransition, validateRun, createLedger,
 } from '../factory-ledger.js';
 
 describe('阶段转换规则 checkTransition', () => {
@@ -93,5 +93,36 @@ describe('入参校验', () => {
     expect(() => validateRun({ pass: true })).toThrow(/run_id/);
     expect(() => validateRun({ run_id: 'r1', pass: 'yes' })).toThrow(/pass/);
     expect(validateRun({ run_id: 'r1', pass: false, degraded: true })).toEqual({ runId: 'r1', pass: false, degraded: true });
+  });
+});
+
+describe('连接池事务（生产路径）', () => {
+  const W = 'c1000000-0000-4000-8000-000000000001';
+  const fakePool = (answers) => {
+    const sql = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (q) => { sql.push(q.trim().split(/\s+/)[0]); return answers(q); }),
+    };
+    return { pool: { totalCount: 0, connect: vi.fn(async () => client) }, client, sql };
+  };
+  it('成功：BEGIN → 写 → COMMIT，连接归还', async () => {
+    const { pool, client, sql } = fakePool((q) => {
+      if (/FROM workflows WHERE id/.test(q)) return { rows: [{ '?column?': 1 }] };
+      if (/INSERT INTO factory_ledger/.test(q)) return { rows: [{ id: 'L1' }] };
+      if (/INSERT INTO factory_stage_events/.test(q)) return { rows: [{ id: 1, to_stage: 1 }] };
+      if (/FROM factory_ledger l JOIN workflows/.test(q)) return { rows: [{ id: 'L1', stage: 1 }] };
+      return { rows: [] };
+    });
+    const out = await createLedger(pool, { workflow_id: W });
+    expect(out.ledger).toMatchObject({ id: 'L1', stage_name: '试跑' });
+    expect(sql[0]).toBe('BEGIN'); expect(sql.at(-1)).toBe('COMMIT');
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+  it('失败：ROLLBACK 并抛 404，连接归还', async () => {
+    const { pool, client, sql } = fakePool(() => ({ rows: [] }));
+    await expect(createLedger(pool, { workflow_id: W })).rejects.toMatchObject({ status: 404, code: 'WORKFLOW_NOT_FOUND' });
+    expect(sql.at(-1)).toBe('ROLLBACK');
+    expect(client.release).toHaveBeenCalledOnce();
   });
 });
