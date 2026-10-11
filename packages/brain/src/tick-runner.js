@@ -105,7 +105,6 @@ import { scheduleKR3ProgressReport } from './kr3-progress-scheduler.js';
 import { calculateAndWrite as calculateKR3Progress } from './kr3-progress-calculator.js';
 import { runDailySmoke } from './cron/daily-real-business-smoke.js';
 import { runDriftSentinel, DRIFT_SENTINEL_INTERVAL_MS } from './cron/drift-sentinel.js';
-import { runFactoryCycle, FACTORY_CYCLE_INTERVAL_MS } from './lib/factory-cycle.js';
 import { runSkillDriftPatrol, isInPatrolWindow } from './cron/skill-drift-patrol.js';
 import { runTestLifecyclePatrol, isInPatrolWindow as isInTestLifecyclePatrolWindow } from './test-lifecycle-patrol.js';
 import { runCredentialsHealthCheck } from './credentials-health-scheduler.js';
@@ -1736,13 +1735,6 @@ async function executeTick() {
     tickState.lastDriftSentinelTime = Date.now();
     Promise.resolve().then(() => runDriftSentinel(pool))
       .catch(e => console.warn('[tick] drift-sentinel 失败:', e.message));
-  }
-
-  // 10.26 技能工厂：自动裁判 + 推进器（每 5min，开关 FACTORY_PUSHER_ENABLED / brain_config factory_pusher_enabled，fire-and-forget）
-  if ((Date.now() - (tickState.lastFactoryCycleTime || 0)) >= FACTORY_CYCLE_INTERVAL_MS) {
-    tickState.lastFactoryCycleTime = Date.now();
-    Promise.resolve().then(() => runFactoryCycle(pool))
-      .catch(e => console.warn('[tick] factory-cycle 失败:', e.message));
   }
 
   // 10.24 test 生命周期巡检（每天 UTC 02:00 = 北京时间 10:00，孤儿 test → orphan + 告警，fire-and-forget）

@@ -34,6 +34,7 @@ import { runSevenRingAuditJob } from './seven-ring-audit.js';
 import { runGuardDrill } from './guard-drill.js';
 import { runMorningCockpitBark } from './morning-cockpit-bark.js';
 import { runDriftSentinel } from './cron/drift-sentinel.js';
+import { runFactoryCycle } from './lib/factory-cycle.js';
 import { runDiskGuard } from './cron/disk-guard.js';
 import { runPromiseMapNightly } from './promise-map-nightly.js';
 import { runRescanStalenessPatrol } from './cron/rescan-staleness-patrol.js';
@@ -194,6 +195,7 @@ export const JOBS = [
     return summary;
   }, description: 'recurring_tasks 定时引擎（任务 3d0db274，5 月起停摆复活：原只挂在废弃 executeTick）：每轮扫活模板，北京时区（template.timezone 可覆盖）、next_run_at 到点即建单；首次启用只写基线不补跑；迟到超 catchup_minutes(默认30) 记 missed+P2；CAS 占位防重、source_id=recurring:<id>:<时间点>；同模板有未完结实例跳过、连续3次告警；透传 assigned_to/due_at/过期，过期未认领取消；落后>10min 告警' },
   { name: 'alerting-flush', cadence: { everySec: 60 }, needsPool: false, timeoutMs: 120_000, handler: () => flushAlertsIfNeeded(), description: 'P1 每小时/P2 每日告警汇总推飞书（任务 309d864c：原只挂在废弃 executeTick，5 月起从未 flush；缓冲与上次刷新时间落 working_memory.alerting_buffers，部署重启不丢）' },
+  { name: 'factory-cycle', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runFactoryCycle(pool), description: '技能工厂自动裁判+推进器（任务 2231ecc0 / a5f42455，决策 cc008b7e）：5min 自 gate；执行单终态代码裁判→run-verify 核验→入台账滑窗；逐行按规则推进/清零/退回/建 factory_dispatch 执行单；开关 FACTORY_PUSHER_ENABLED / brain_config factory_pusher_enabled' },
   // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——
   // 本模块已 import ops-collector/notion-push-sync，反向 import 会成环（routes/sentinel.js 同款避坑）。
   // scheduler 行推 Notion 滞后一轮 60s，设计 §3.2 接受。

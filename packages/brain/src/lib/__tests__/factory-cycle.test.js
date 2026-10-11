@@ -83,11 +83,22 @@ describe('runFactoryPusher 动作落库', () => {
   });
 });
 
-describe('tick 接线', () => {
-  it('tick-runner 按 FACTORY_CYCLE_INTERVAL_MS 节流调用 runFactoryCycle', () => {
+describe('调度接线（executeTick 自 Wave 2 起不被调用，必须挂 scheduler-jobs）', () => {
+  it('scheduler-jobs 登记 factory-cycle job（5 分钟声明间隔）并调用 runFactoryCycle(pool)', () => {
+    const src = readFileSync(fileURLToPath(new URL('../../scheduler-jobs.js', import.meta.url)), 'utf8');
+    expect(src).toMatch(/import \{ runFactoryCycle \} from '\.\/lib\/factory-cycle\.js'/);
+    expect(src).toMatch(/name: 'factory-cycle', cadence: \{ everySec: 300 \}[^\n]*runFactoryCycle\(pool\)/);
+  });
+  it('tick-runner 不再挂 factory-cycle（死路径，避免双跑）', () => {
     const src = readFileSync(fileURLToPath(new URL('../../tick-runner.js', import.meta.url)), 'utf8');
-    expect(src).toMatch(/import \{ runFactoryCycle, FACTORY_CYCLE_INTERVAL_MS \} from '\.\/lib\/factory-cycle\.js'/);
-    expect(src).toMatch(/tickState\.lastFactoryCycleTime[\s\S]{0,200}>= FACTORY_CYCLE_INTERVAL_MS/);
-    expect(src).toMatch(/runFactoryCycle\(pool\)/);
+    expect(src).not.toMatch(/runFactoryCycle/);
+  });
+  it('调度器每 60s 全调：runFactoryCycle 自 gate，间隔内第二次返回 throttled，force 可越过', async () => {
+    const t0 = Date.now() + 10 * 3600 * 1000;
+    const env = { FACTORY_PUSHER_ENABLED: 'false' };
+    expect(await runFactoryCycle(db(), { env, now: () => new Date(t0) })).toEqual({ skipped: 'disabled' });
+    expect(await runFactoryCycle(db(), { env, now: () => new Date(t0 + 60_000) })).toEqual({ skipped: 'throttled' });
+    expect(await runFactoryCycle(db(), { env, now: () => new Date(t0 + 60_000), force: true })).toEqual({ skipped: 'disabled' });
+    expect(await runFactoryCycle(db(), { env, now: () => new Date(t0 + 60_000 + 301_000) })).toEqual({ skipped: 'disabled' });
   });
 });

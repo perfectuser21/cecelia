@@ -1,3 +1,8 @@
+# 技能工厂一轮改挂 scheduler-jobs（任务 a5f42455 回归修复）
+
+- [x] [BEHAVIOR] factorycyclejob runFactoryCycle 登记为 scheduler-jobs 的 factory-cycle job（executeTick 自 Wave 2 起不被调用，原挂点是死路径），5 分钟自 gate（调度器 60s 全调），force 可越过；tick-runner 不再挂，避免双跑。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/factory-cycle.test.js src/__tests__/scheduler-jobs.test.js --maxWorkers=1 --minWorkers=1"
+
 # 技能工厂推进器 + 自动裁判（任务 a5f42455 / 2231ecc0）
 
 - [x] [BEHAVIOR] factorypusher 推进器规则（决策 cc008b7e / 2bb08a99）：1/2/3 跑验类无在途且不卡、发布时段内建 factory_dispatch 执行单（1=skill-explore / 2=skill-boundary / 3=候选版本），滑窗满且全过 rule 推进，滑窗出现 fail 清零重来，stage 3 连续失败（safe_stop 不计）达阈值（默认 3）退回 2；人工关口/安全红线不动；同行最多 1 张在途；时段外不建单；取不到配置标 resource 卡点不猜；4/6 建 /dev 工单（建单五坑）完成后推进；5 建 Commander 工单、对外首次上生产标 human_gate；7 守护尾部连续 fail 达阈值退回 6 并告警；开关 FACTORY_PUSHER_ENABLED / brain_config factory_pusher_enabled；tick 每 5 分钟节流调用。

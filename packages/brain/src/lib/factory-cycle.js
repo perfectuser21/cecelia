@@ -1,5 +1,5 @@
 /**
- * 技能工厂一轮：先自动裁判（任务 2231ecc0），再推进器（任务 a5f42455）。Brain tick 按 FACTORY_CYCLE_INTERVAL_MS 节流调用。
+ * 技能工厂一轮：先自动裁判（任务 2231ecc0），再推进器（任务 a5f42455）。挂 scheduler-jobs（factory-cycle），按 FACTORY_CYCLE_INTERVAL_MS 自 gate。
  *
  * 开关（默认开）：环境变量 FACTORY_PUSHER_ENABLED=false，或 brain_config key=factory_pusher_enabled value=false（不重启即生效）。
  */
@@ -135,8 +135,13 @@ export async function runFactoryPusher(db, deps) {
 
 /** tick 入口：开关 → 裁判 → 推进器（进程内互斥，上一轮没跑完跳过）。deps 可注入（测试）。 */
 let cycleRunning = false;
+let lastRunAt = 0;
+/** 调度器每 60s 全调所有 job（cadence 只是声明），这里按 FACTORY_CYCLE_INTERVAL_MS 自 gate；deps.force 越过（smoke 用）。 */
 export async function runFactoryCycle(db, deps = {}) {
+  const nowMs = (deps.now ? deps.now() : new Date()).getTime();
+  if (!deps.force && nowMs - lastRunAt < FACTORY_CYCLE_INTERVAL_MS) return { skipped: 'throttled' };
   if (cycleRunning) return { skipped: 'running' };
+  lastRunAt = nowMs;
   cycleRunning = true;
   try { return await runCycleOnce(db, deps); } finally { cycleRunning = false; }
 }
