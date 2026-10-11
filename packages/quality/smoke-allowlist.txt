@@ -435,3 +435,4 @@ task-runs-projection-smoke.sh
 runs-read-smoke.sh
 factory-ledger-smoke.sh
 factory-pusher-smoke.sh
+content-pipeline-runs-shadow-smoke.sh

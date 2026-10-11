@@ -26,7 +26,7 @@ function getHandler(method, path) {
 }
 
 function mockReqRes(params = {}) {
-  const req = { params };
+  const req = { params, baseUrl: '/api/brain/pipelines' };
   const res = {
     _data: null,
     _status: 200,
@@ -53,10 +53,10 @@ describe('GET /pipelines/:id/publish-status', () => {
       })
       .mockResolvedValueOnce({ rows: [] });
 
-    const { req, res } = mockReqRes({ id: 'pipe-1' });
-    await handler(req, res);
+    const { req, res } = mockReqRes({ id: '11111111-1111-4111-8111-111111111111' });
+    await handler(req, res, vi.fn());
 
-    expect(res._data.pipeline_id).toBe('pipe-1');
+    expect(res._data.pipeline_id).toBe('11111111-1111-4111-8111-111111111111');
     expect(res._data.platforms).toHaveLength(1);
     expect(res._data.platforms[0]).toMatchObject({
       platform: 'douyin',
@@ -76,8 +76,8 @@ describe('GET /pipelines/:id/publish-status', () => {
       })
       .mockResolvedValueOnce({ rows: [] });
 
-    const { req, res } = mockReqRes({ id: 'pipe-2' });
-    await handler(req, res);
+    const { req, res } = mockReqRes({ id: '11111112-1111-4111-8111-111111111111' });
+    await handler(req, res, vi.fn());
 
     expect(res._data.platforms[0]).toMatchObject({
       platform: 'kuaishou',
@@ -102,8 +102,8 @@ describe('GET /pipelines/:id/publish-status', () => {
         ],
       });
 
-    const { req, res } = mockReqRes({ id: 'pipe-3' });
-    await handler(req, res);
+    const { req, res } = mockReqRes({ id: '11111113-1111-4111-8111-111111111111' });
+    await handler(req, res, vi.fn());
 
     const map = Object.fromEntries(res._data.platforms.map((p) => [p.platform, p]));
     expect(map.xiaohongshu.status).toBe('pending');
@@ -129,8 +129,8 @@ describe('GET /pipelines/:id/publish-status', () => {
         ],
       });
 
-    const { req, res } = mockReqRes({ id: 'pipe-4' });
-    await handler(req, res);
+    const { req, res } = mockReqRes({ id: '11111114-1111-4111-8111-111111111111' });
+    await handler(req, res, vi.fn());
 
     expect(res._data.platforms).toHaveLength(1);
     expect(res._data.platforms[0]).toMatchObject({
@@ -146,18 +146,18 @@ describe('GET /pipelines/:id/publish-status', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
-    const { req, res } = mockReqRes({ id: 'pipe-empty' });
-    await handler(req, res);
+    const { req, res } = mockReqRes({ id: '11111115-1111-4111-8111-111111111111' });
+    await handler(req, res, vi.fn());
 
-    expect(res._data.pipeline_id).toBe('pipe-empty');
+    expect(res._data.pipeline_id).toBe('11111115-1111-4111-8111-111111111111');
     expect(res._data.platforms).toEqual([]);
   });
 
   it('handles pool error with 500', async () => {
     pool.query.mockRejectedValueOnce(new Error('db down'));
 
-    const { req, res } = mockReqRes({ id: 'pipe-err' });
-    await handler(req, res);
+    const { req, res } = mockReqRes({ id: '11111116-1111-4111-8111-111111111111' });
+    await handler(req, res, vi.fn());
 
     expect(res._status).toBe(500);
     expect(res._data.error).toBe('db down');
@@ -174,8 +174,8 @@ describe('GET /pipelines/:id/publish-status', () => {
       })
       .mockResolvedValueOnce({ rows: [] });
 
-    const { req, res } = mockReqRes({ id: 'pipe-sort' });
-    await handler(req, res);
+    const { req, res } = mockReqRes({ id: '11111117-1111-4111-8111-111111111111' });
+    await handler(req, res, vi.fn());
 
     const platforms = res._data.platforms.map((p) => p.platform);
     expect(platforms).toEqual(['douyin', 'kuaishou', 'weibo']);
