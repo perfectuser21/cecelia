@@ -225,3 +225,19 @@ it('真实固定Git与scratch导入重放新契约，退役来源owner没有curr
     expect((await target.db.query('SELECT id,status,current_definition_version_id FROM workflows ORDER BY id')).rows).toEqual(before);
   }finally{await target?.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+it('同SHA多清单当前定义只用精确当前active；非current历史仍歧义',async()=>{
+ fixture=await implementationImpactDatabase({completeManifest:true});const {db}=fixture;
+ const old=(await db.query("SELECT * FROM map_manifest_versions WHERE scope_key='phones' AND status='active'")).rows[0];
+ const active={...old,id:randomUUID(),version:old.version+1,manifest:structuredClone(old.manifest)};
+ active.manifest.capabilities[0].name='当前批准名称';active.digest=stepSha256(active.manifest);
+ await db.query("UPDATE map_manifest_versions SET status='superseded' WHERE id=$1",[old.id]);
+ await db.query("UPDATE map_projection_runs SET status='superseded' WHERE manifest_version_id=$1",[old.id]);
+ await db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,'phones',$2,$3,$4,$5,'active',NOW())",[active.id,active.version,active.source_decision_id,active.manifest,active.digest]);
+ await db.query("INSERT INTO map_projection_runs(id,scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES($1,'phones',$2,$3,$4,'binding-v2',$3,'active',NOW())",[randomUUID(),active.id,active.digest,{'phone-source':query.revision}]);
+ const current=await exportImplementationSnapshot(db,query);
+ expect(current.status,JSON.stringify(current.gaps)).toBe('verified');expect(current.map.manifest.id).toBe(active.id);expect(current.map.source_basis).toBe('current_registration');
+ await fixture.advance();
+ const historical=await exportImplementationSnapshot(db,query);
+ expect(historical.status).toBe('unknown');expect(historical.gaps).toContainEqual(expect.objectContaining({code:'manifest_snapshot_ambiguous'}));
+});
