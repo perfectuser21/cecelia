@@ -3,12 +3,12 @@
 // PASS → 独立裁判（judge-gate.mjs，不同模型复核需求+合同+QA 报告+改动）：PASS 才开自动合并；product → 按裁决修复；
 // qa_gap → 下一轮 QA 带着裁决补验；contract_gap / 推翻前轮裁决（ruling_conflict）→ 升级；裁判不可用 → 下轮只重跑裁判。
 // 失败数连续 3 轮不降（不收敛）、评估会话/裁判连坏、预览环境长期起不来 → 升级给 coding commander。
-// 状态：<logDir>/qa-<pr>.json；Brain 任务 result.qa（摘要）与 result.escalations。合并后停掉该 PR 的预览环境释放容量。
+// 状态：<logDir>/qa-<pr>.json；Brain 任务 result.qa（摘要）与 result.escalations。PR 结束（合并/外部关闭）后停预览见 pr-closure.mjs。
 import fs from 'node:fs';
 import path from 'node:path';
 import { run, git } from './proc.mjs';
 import { removeWorktree } from './worktree.mjs';
-import { ghJson, listOwnPrs, requiredState, CW_BRANCH_RE } from './cifix-scan.mjs';
+import { listOwnPrs, requiredState } from './cifix-scan.mjs';
 import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from './pr-branch.mjs';
 import { previewOf } from '../../lib/preview.mjs';
 import { buildQaSmoke, selectQaSmokeItems, registerSmoke, QA_SMOKE_DIR } from '../../lib/qa-smoke.mjs';
@@ -41,7 +41,7 @@ export function writeState(cfg, pr, s) {
   fs.writeFileSync(statePath(cfg, pr), `${JSON.stringify(s, null, 2)}\n`);
 }
 
-async function previewCall(cfg, route, body) {
+export async function previewCall(cfg, route, body) {
   try {
     const res = await fetch(`${cfg.previewApi.replace(/\/+$/, '')}/api/brain/preview/${route}`, {
       method: 'POST',
@@ -105,18 +105,6 @@ export async function revokeQaPass(ctx, pr, files, reason) {
   return true;
 }
 
-/** 已合并且 QA 通过过的 PR：停掉预览环境释放容量（只停一次）。 */
-async function stopMergedPreviews(ctx) {
-  const merged = await ghJson(ctx.cfg, ['pr', 'list', '--state', 'merged', '--limit', '30', '--json', 'number,headRefName']);
-  for (const pr of (Array.isArray(merged) ? merged : []).filter((p) => CW_BRANCH_RE.test(p.headRefName ?? ''))) {
-    const s = readState(ctx.cfg, pr.number);
-    if (!s.passed || s.preview_stopped) continue;
-    const r = await previewCall(ctx.cfg, `stop/${pr.number}`);
-    ctx.log(`停 PR #${pr.number} 预览环境：HTTP ${r.status}`);
-    if (r.ok) writeState(ctx.cfg, pr.number, { ...s, preview_stopped: true });
-  }
-}
-
 /** 预览环境没就绪：不存在/已停 → 请求启动；容量拒绝超过时限 → 升级。 */
 async function ensurePreview(ctx, pr, s, p) {
   if (p.state === 'pending' || p.state === 'error') {
@@ -167,11 +155,11 @@ async function evaluate(ctx, worktree, input, signal) {
 }
 
 /** 把本轮验收记录（QA 报告、截图目录、裁决）提交并推到 PR 分支。 */
-async function commitRecords(worktree, pr, paths, message) {
+async function commitRecords(cfg, worktree, pr, paths, message) {
   const present = paths.filter((p) => fs.existsSync(path.join(worktree, p)));
   if ((await git(worktree, ['add', '--', ...present])).code !== 0) throw new Error('qa_report_add_failed');
   if ((await git(worktree, [...RUNNER_ID, 'commit', '-q', '-m', message])).code !== 0) throw new Error('qa_report_commit_failed');
-  await pushPrHead(worktree, pr.headRefName);
+  await pushPrHead(cfg, worktree, pr);
 }
 
 const qaIssueLines = (qa) => [...qa.failed, ...qa.blocking]
@@ -225,6 +213,11 @@ const RULING_CONFLICT_RE = /RULING_CONFLICT:\s*([^\n"\\]+)/;
  * 必须立刻升级（金丝雀 3 PR #6220 静默挂住），带原因交 coding commander 裁决。
  */
 function fixFailed(ctx, pr, s, intent, entry) {
+  // 修复期间 PR 被关：不升级（不花 commander 的钱、不 Bark），交给外部关闭收尾（pr-closure.mjs）
+  if (entry.fix === 'pr_closed') {
+    ctx.log(`QA 门 PR #${pr.number} 已关闭，修复不推送，交给关闭收尾`);
+    return writeState(ctx.cfg, pr.number, s);
+  }
   return escalate(ctx, pr, s, intent.taskId, { type: 'qa_fix_failed', reason: entry.fix, round: entry.round, ...(entry.fix_detail ? { detail: entry.fix_detail } : {}) });
 }
 
@@ -257,7 +250,7 @@ async function qaFix(ctx, pr, s, worktree, intent, entry, { recordFile, issues }
   }
   try {
     await checkFixCommits(worktree, before);
-    await pushPrHead(worktree, pr.headRefName);
+    await pushPrHead(ctx.cfg, worktree, pr);
     return 'pushed';
   } catch (error) {
     return error?.message || 'qa_fix_error';
@@ -350,6 +343,10 @@ async function inPrWorktree(ctx, pr, s, name, signal, fn) {
     if (!intent?.taskId) return await escalate(ctx, pr, s, null, { type: 'qa_sprint_missing' });
     return await fn(worktree, intent);
   } catch (error) {
+    if (error?.message === 'pr_closed') {
+      ctx.log(`QA 门 PR #${pr.number} 已关闭，验收记录不推送，交给关闭收尾`);
+      return undefined;
+    }
     s.bad = (s.bad ?? 0) + 1;
     ctx.log(`QA 门 PR #${pr.number} 出错：${error?.message || error}`);
     writeState(cfg, pr.number, s);
@@ -420,7 +417,7 @@ async function qaRound(ctx, pr, s, signal) {
     const commit = async (message) => {
       const snapshot = { judge_bad: s.judge_bad, judge_pending: s.judge_pending };
       try {
-        await commitRecords(worktree, pr, records, message);
+        await commitRecords(cfg, worktree, pr, records, message);
       } catch (error) {
         Object.assign(s, snapshot);
         throw error;
@@ -459,7 +456,7 @@ async function judgeRound(ctx, pr, s, signal) {
     const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
     const smoke = !j.error && j.verdict === 'PASS' && entry.report
       ? solidifyQa(ctx, pr, s, entry.round, worktree, intent, path.basename(entry.report), entry.env_url) : [];
-    if (j.file) await commitRecords(worktree, pr, [`${intent.sprintDir}/${j.file}`, ...smoke], `docs(qa): 第 ${entry.round} 轮独立裁判 ${j.verdict}`);
+    if (j.file) await commitRecords(ctx.cfg, worktree, pr, [`${intent.sprintDir}/${j.file}`, ...smoke], `docs(qa): 第 ${entry.round} 轮独立裁判 ${j.verdict}`);
     return afterJudge(ctx, pr, s, worktree, intent, entry, j);
   });
 }
@@ -468,7 +465,6 @@ async function judgeRound(ctx, pr, s, signal) {
 export async function runQaGate(ctx, signal) {
   const { cfg } = ctx;
   try {
-    await stopMergedPreviews(ctx);
     const prs = await listOwnPrs(cfg);
     if (!prs) return false;
     for (const pr of prs) {
@@ -479,7 +475,8 @@ export async function runQaGate(ctx, signal) {
         await judgeRound(ctx, pr, s, signal);
         return true;
       }
-      if (s.rounds.at(-1)?.head === pr.headRefOid) continue;
+      // 同 head 验过就不重验；上一轮修复因 PR 被关没推上去（之后重开）的除外
+      if (s.rounds.at(-1)?.head === pr.headRefOid && s.rounds.at(-1)?.fix !== 'pr_closed') continue;
       if ((await requiredState(cfg, pr.number)).state !== 'pass') continue;
       // 预览部署的必须正是这个 head（审计 P0 #2）：推送后还没重新部署就等
       const p = await previewOf(pr.number, { api: cfg.previewApi, host: cfg.previewHost, expectSha: pr.headRefOid });

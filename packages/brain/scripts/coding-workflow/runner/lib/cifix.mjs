@@ -61,7 +61,7 @@ async function attemptCi(ctx, target, worktree, signal) {
   await runFixSession(ctx, pr, prompt, worktree, 'ci-fix');
   const { commits } = await checkFixCommits(worktree, before);
   const files = (await git(worktree, ['diff', '--name-only', `${before}..HEAD`])).stdout.split('\n').filter(Boolean);
-  await pushPrHead(worktree, pr.headRefName);
+  await pushPrHead(cfg, worktree, pr);
   const revoked = await revokeQaPass(ctx, pr, files, 'ci_fix_changed_code');
   return { result: 'pushed', commits, ...(revoked ? { qa_revoked: true } : {}) };
 }
@@ -100,7 +100,7 @@ async function attemptConflict(ctx, target, worktree, signal) {
   if ((await git(worktree, ['merge-base', '--is-ancestor', 'origin/main', 'HEAD'])).code !== 0) throw stop('merge_unfinished');
   const { commits } = await checkFixCommits(worktree, before, { mainRef: 'origin/main' });
   const own = (await ownChangedFiles(worktree, before, 'origin/main')).filter((f) => !UNION_FILES.includes(f));
-  await pushPrHead(worktree, pr.headRefName);
+  await pushPrHead(cfg, worktree, pr);
   const revoked = await revokeQaPass(ctx, pr, own, 'conflict_fix_changed_code');
   return { result: 'pushed', resolved_by: resolvedBy, commits, ...(revoked ? { qa_revoked: true } : {}) };
 }
@@ -189,6 +189,13 @@ export async function runCiFix(ctx, signal) {
   }
   const taskId = fs.existsSync(worktree) ? taskIdOf(worktree, pr.headRefName) : null;
   ctx.log(`CI 修复 PR #${pr.number} 结果：${entry.result}`);
+  // 修复期间 PR 被关：不推送、不计尝试、不上报，交给外部关闭收尾（pr-closure.mjs）
+  if (entry.result === 'pr_closed') {
+    ctx.log(`CI 修复 PR #${pr.number} 已关闭，修复不推送，交给关闭收尾`);
+    await removeWorktree(cfg, worktree, pr.headRefName);
+    fs.rmSync(worktree, { recursive: true, force: true });
+    return true;
+  }
   await record(ctx, pr, taskId, entry);
   // 执行记录（决策 b34e346a）：每次修复尝试一条
   if (taskId) {
