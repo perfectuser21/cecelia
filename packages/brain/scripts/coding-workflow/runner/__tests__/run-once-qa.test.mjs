@@ -326,6 +326,35 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(state()).toMatchObject({ passed: true, approved: { head: git(sb.origin, 'rev-parse', BRANCH).trim() } });
   });
 
+  // 决策 b8030661（金丝雀 4 r10、金丝雀 5 r3）：QA 报告没有可固化的 API 命令时，保留已有回归 smoke，并在 Brain 记 smoke_note
+  describe('回归 smoke 固化说明（决策 b8030661）', () => {
+    const SMOKE = 'packages/brain/scripts/smoke/cw-c954ebfd-qa-smoke.sh';
+    it('固化成功 → 状态记 smoke（轮次、文件），Brain result.qa.smoke_note 写明第几轮固化', async () => {
+      const r = await go(green(), { mode: 'pass-api' });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(state().smoke).toMatchObject({ round: 1, file: SMOKE });
+      expect(brainQa().at(-1).qa.smoke_note).toContain('第 1 轮固化');
+    });
+
+    it('没有可固化命令、也从未固化过 → smoke_note 记「本任务无回归 smoke」', async () => {
+      const r = await go(green(), { mode: 'pass' });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(state().passed).toBe(true);
+      expect(brainQa().at(-1).qa.smoke_note).toContain('本任务无回归 smoke');
+    });
+
+    it('没有可固化命令、分支上已有前轮固化的 smoke → 保留不动，smoke_note 写明本轮未固化、保留第几轮版本', async () => {
+      E.addToBranch(SMOKE, '#!/usr/bin/env bash\necho PASS\n');
+      seedState({ rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'FAIL', fails: 1, fix: 'pushed' }], smoke: { round: 1, file: SMOKE } });
+      const r = await go(green({ prs: [pr({ headRefOid: E.remoteHead() })] }), { mode: 'pass' });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(git(sb.origin, 'show', `${BRANCH}:${SMOKE}`)).toBe('#!/usr/bin/env bash\necho PASS\n');
+      const note = brainQa().at(-1).qa.smoke_note;
+      expect(note).toContain('第 2 轮');
+      expect(note).toContain('保留第 1 轮');
+    });
+  });
+
   // 决策 b34e346a：真人 QA 与独立裁判各上报一条 span
   it('QA 轮次与裁判各上报 span（结论、花费、幂等键带 PR 与轮次）', async () => {
     const r = await go(green(), { mode: 'pass' });
