@@ -39,7 +39,9 @@ const missing = must.filter(([p]) => !up.includes(p));
 if (missing.length) { missing.forEach(([, d]) => console.error('FAIL 466 缺少: ' + d)); process.exit(1); }
 const m = up.match(/WHEN task_type IN \(([^)]*)\) THEN 'workflow'/);
 const listed = m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort() : [];
-const expected = [...R.WORKFLOW_KIND_TASK_TYPES].sort();
+// 466 之后新增的 workflow 型类型随自己的迁移进 CHECK（不改历史迁移；新行由 createRoutedTask 按注册表写 kind）：workflow_dispatch —— 迁移 549
+const ADDED_AFTER_466 = ['workflow_dispatch'];
+const expected = R.WORKFLOW_KIND_TASK_TYPES.filter((t) => !ADDED_AFTER_466.includes(t)).sort();
 if (JSON.stringify(listed) !== JSON.stringify(expected)) { console.error('FAIL 466 名单 ' + listed + ' != 注册表 ' + expected); process.exit(1); }
 const v = readFileSync('migrations/467_validate_tasks_kind_check.sql', 'utf8');
 if (!v.includes('ALTER TABLE tasks VALIDATE CONSTRAINT tasks_kind_check;')) { console.error('FAIL 467 缺 VALIDATE'); process.exit(1); }
