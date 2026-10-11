@@ -609,6 +609,12 @@ jobs:
         run: bash scripts/__tests__/preview-reaper.test.sh
       - name: preview start 重试与 503 拒绝原因自测
         run: bash scripts/__tests__/preview-start-request-retry.test.sh
+      - name: 预览代理部署令牌从凭据文件读取（不进 plist）自测
+        run: node --test scripts/preview-agent/__tests__/deploy-token.test.mjs
+      - name: preview-agent 安装脚本 plist 无明文令牌自测
+        run: bash scripts/__tests__/preview-agent-install.test.sh
+      - name: 预览主机发布脚本（dry-run/发布/回滚/清理）自测
+        run: bash scripts/__tests__/preview-host-release.test.sh
 
   # ─── codex-remote-launch 跨机 token launcher 自测 ────────────────
   # 白名单(ALLOWED_TEAMS team1~5)+核心流程单元自测，mock ssh/scp，不依赖真实远端
