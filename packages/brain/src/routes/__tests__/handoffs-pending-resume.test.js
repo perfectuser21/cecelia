@@ -10,10 +10,12 @@ vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
 
 async function makeApp() {
   const { default: router } = await import('../handoffs.js');
+  const { default: ackRouter } = await import('../handoff-resume-ack.js');
   const express = (await import('express')).default;
   const app = express();
   app.use(express.json());
   app.use('/api/brain/handoffs', router);
+  app.use('/api/brain/handoffs/pending-resume', ackRouter);
   return app;
 }
 const req = async () => (await import('supertest')).default;

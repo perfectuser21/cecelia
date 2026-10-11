@@ -24,6 +24,7 @@ import harnessSelftestRouter from './routes/harness-selftest.js';
 import warroomRouter from './routes/warroom.js';
 import kr3Router from './routes/kr3.js';
 import handoffsRouter from './routes/handoffs.js';
+import handoffResumeAckRouter from './routes/handoff-resume-ack.js';
 import sentinelRouter from './routes/sentinel.js';
 import dispatchRouter from './routes/dispatch.js';
 import previewRouter from './routes/preview.js';
@@ -80,6 +81,8 @@ router.use('/kr3', kr3Router);
 
 // 交接单只读流 — GET /handoffs（warroom 接力史，relay-baton4 item1）
 router.use('/handoffs', handoffsRouter);
+// 有头续接待续销账 — POST /handoffs/pending-resume/:taskId/ack（写操作，与只读 handoffs 分开）
+router.use('/handoffs/pending-resume', handoffResumeAckRouter);
 
 // 调度哨兵健康 — GET /sentinel/health（warroom 哨兵灯，relay-baton4 item1）
 router.use('/sentinel', sentinelRouter);
