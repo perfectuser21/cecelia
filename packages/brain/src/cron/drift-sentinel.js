@@ -6,7 +6,9 @@
  *   2. fetchProdSha: 调 /health 端点获取 git_sha（不可达→保守跳过）
  *   3. SHA 一致 → verdict=ok，清除 driftFirstSeenAt
  *   4. SHA 不一致，首次记录 driftFirstSeenAt，< 30min → verdict=drifting
- *   5. SHA 不一致，≥ 30min → SHA 二次核验，通过后调 brain-deploy.sh → verdict=redeploying，redeployCount++
+ *   5. SHA 不一致，≥ 30min → SHA 二次核验，通过后 detached 拉起 brain-deploy.sh → verdict=redeploying，redeployCount++
+ *      （B5：不设硬超时、不等部署结束；超过 DRIFT_DEPLOY_WARN_MS 只告警。被杀/中断留下的台账 pending
+ *       由 brain-deploy.sh 自身 trap 或下一次 begin 的带外 reconcile 结算，见 scripts/lib/brain-image-retention.sh）
  *   6. redeployCount ≥ 2 且仍漂移 → 停止重试，sendBark P1，写 issue → verdict=escalated
  *   7. 连续 3 次 network_error → sendBark P2 告警
  *
@@ -17,7 +19,9 @@
  *   - INV-02: 补部署必须走 brain-deploy.sh 全闸，不得绕过
  */
 
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
+import { closeSync, mkdirSync, openSync, writeSync } from 'fs';
+import { join as pathJoin } from 'path';
 import { promisify } from 'util';
 import pool from '../db.js';
 import { raise } from '../alerting.js';
@@ -34,6 +38,15 @@ export const DRIFT_SENTINEL_INTERVAL_MS = parseInt(
 /** 防抖窗口：SHA 首次不一致后，等待 30min 再触发部署 */
 export const DRIFT_WINDOW_MS = parseInt(
   process.env.DRIFT_WINDOW_MS || String(30 * 60 * 1000),
+  10
+);
+
+/**
+ * 补部署"跑得久"的告警阈值（B5）：只告警，绝不杀部署进程。
+ * 旧实现 exec timeout=300s 会在构建超过 5 分钟时 SIGTERM brain-deploy.sh，留下孤儿台账 pending。
+ */
+export const DRIFT_DEPLOY_WARN_MS = parseInt(
+  process.env.DRIFT_DEPLOY_WARN_MS || String(20 * 60 * 1000),
   10
 );
 
@@ -279,14 +292,76 @@ export async function runDriftCheck({
   console.log(`[drift_check] sha_main=${shaMain} sha_prod=${shaProd2} verdict=redeploying`);
 
   // 执行 brain-deploy.sh（INV-02: 不得绕过，必须是这个脚本）
-  await new Promise((resolve, reject) => {
-    exec('bash scripts/brain-deploy.sh', { timeout: 300000 }, (err, stdout, stderr) => {
-      if (err) reject(err);
-      else resolve({ stdout, stderr });
-    });
+  const { pid, logPath } = launchRedeploy();
+
+  return {
+    verdict: 'redeploying',
+    sha_main: shaMain,
+    sha_prod: shaProd2,
+    redeployCount: newRedeployCount,
+    deploy_pid: pid,
+    deploy_log_path: logPath,
+  };
+}
+
+/**
+ * B5：detached 拉起 brain-deploy.sh，不等结束、不设超时。
+ * - cwd/脚本路径取 REPO_ROOT（与 POST /api/brain/deploy 同口径），输出落 REPO_ROOT/logs，容器死亡后可查
+ * - 超过 DRIFT_DEPLOY_WARN_MS 仍未结束 → 只 raise P2，不 kill
+ * - 非 0 退出 → raise P2；台账 pending 由部署脚本 trap 或下一次 begin 的 reconcile 结算
+ */
+function launchRedeploy() {
+  const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
+  const script = pathJoin(repoRoot, 'scripts', 'brain-deploy.sh');
+  const logsDir = pathJoin(repoRoot, 'logs');
+  const logPath = pathJoin(logsDir, `cecelia-drift-redeploy-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
+  let logFd = 'ignore';
+  try {
+    mkdirSync(logsDir, { recursive: true });
+    logFd = openSync(logPath, 'a');
+    writeSync(logFd, `[drift-sentinel] redeploy starting at ${new Date().toISOString()}: bash ${script}\n`);
+  } catch (err) {
+    console.error(`[drift-sentinel] 创建补部署日志失败 ${logPath}: ${err.message}，输出丢弃`);
+    logFd = 'ignore';
+  }
+
+  const child = spawn('bash', [script], {
+    detached: true,
+    cwd: repoRoot,
+    stdio: logFd === 'ignore' ? 'ignore' : ['ignore', logFd, logFd],
+  });
+  if (typeof logFd === 'number') {
+    try { closeSync(logFd); } catch { /* noop */ }
+  }
+  child.unref();
+
+  const startedAt = Date.now();
+  const slowTimer = setTimeout(() => {
+    raise('P2', 'drift_redeploy_slow',
+      `drift-sentinel 补部署已运行超过 ${Math.round(DRIFT_DEPLOY_WARN_MS / 60000)} 分钟仍未结束（pid=${child.pid}，不杀进程），log: ${logPath}`)
+      .catch(() => {});
+  }, DRIFT_DEPLOY_WARN_MS);
+  slowTimer.unref?.();
+
+  child.on('error', (err) => {
+    clearTimeout(slowTimer);
+    raise('P2', 'drift_redeploy_failed', `drift-sentinel 补部署拉起失败: ${err.message}，log: ${logPath}`).catch(() => {});
+  });
+  child.on('close', (code, signal) => {
+    clearTimeout(slowTimer);
+    const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+    if (code === 0) {
+      console.log(`[drift-sentinel] 补部署完成 (${elapsedSec}s)`);
+      return;
+    }
+    console.error(`[drift-sentinel] 补部署失败 code=${code} signal=${signal} (${elapsedSec}s)，log: ${logPath}`);
+    raise('P2', 'drift_redeploy_failed',
+      `drift-sentinel 补部署失败 code=${code} signal=${signal}（台账 pending 由下一次部署 reconcile 结算），log: ${logPath}`)
+      .catch(() => {});
   });
 
-  return { verdict: 'redeploying', sha_main: shaMain, sha_prod: shaProd2, redeployCount: newRedeployCount };
+  console.log(`[drift-sentinel] 补部署已 detached 拉起 pid=${child.pid} log=${logPath}`);
+  return { pid: child.pid, logPath };
 }
 
 /** 模块自 gate（同 launchd-patrol.js 模式）：scheduler-jobs 60s 轮询下保证每 30min 才真跑 */

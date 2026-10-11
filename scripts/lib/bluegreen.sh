@@ -10,17 +10,9 @@
 # 2026-07-10 追加：自杀竞态修法（sidecar）+ blue 存活守卫（bluegreen_guard_blue）
 set -uo pipefail
 
-# _url_encode <str>：URL 百分比编码。优先 jq，兜底 python3，均无则原样返回（ASCII 正常，不 fatal）。
-_url_encode() {
-  local str="$1"
-  if command -v jq >/dev/null 2>&1; then
-    printf '%s' "$str" | jq -sRr @uri
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.stdin.read()),end='')" <<<"$str"
-  else
-    printf '%s' "$str"
-  fi
-}
+# _url_encode：纯 bash 百分号编码（容器内无 jq/python3，见 url-encode.sh 注释）
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/url-encode.sh"
 
 # send_bark <msg>：紧急部署告警走 Bark（不走飞书）。未配 token 静默跳过。
 # 整个函数 non-fatal：通知失败不阻塞部署（避免容器内无 jq 等依赖缺失致 exit 127）。
