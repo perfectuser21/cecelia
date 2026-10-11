@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.423.11
+**Brain 版本**: 1.423.12
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,10 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.423.12 — 定时引擎走独立循环（定时精度 3-9 分钟 → ≤30 秒）
+
+- recurring-tasks 从 SERIAL_JOBS 串行轮移入独立 completion 循环（completionCadenceMs=30s，按 job 防重入）。生产实证 10-11 定时实例建单比时间点晚 58s~517s（串行轮长）。为 OpenClaw 业务定时搬进 Brain（任务 c8320370，续 0026dfe2/942491c2）铺路：晨会/班会等业务定时到点准时建单。
 
 ## Brain 1.423.11 — Codex 合法技能版本身份兼容
 
