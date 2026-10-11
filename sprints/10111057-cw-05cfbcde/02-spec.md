@@ -25,6 +25,7 @@ upstream: ["01-intent.md#I-1", "01-intent.md#I-2", "01-intent.md#I-3", "01-inten
 - 入参校验（与 `GET /spans` 一致先 `trim()`）：
   - trim 后为空串 → 400 `{ "error": "run_id is required" }`；
   - 长度 > 200 字符（按 trim 后的 JS 字符串 `.length` 计）→ 400 `{ "error": "run_id must be at most 200 characters" }`；恰好 200 字符照常查库。
+  - 含控制字符（`\u0000`–`\u001f`、`\u007f`，如 `a%00b`）→ 400 `{ "error": "run_id must not contain control characters" }`（coding commander 裁决补入，见文末「commander 裁决」）。
   - 非法百分号编码（`URIError`）→ 400 `{ "error": "run_id is not valid URL encoding" }`：在本路由器末尾挂一个**只处理 `URIError`** 的错误中间件，其它错误 `next(err)` 交还全局，不改全局错误处理。
 - 查询：`SELECT * FROM runs WHERE run_id = $1`（参数化，不拼 SQL），每次请求直接读库，不加任何缓存。
   - 无行 → 404 `{ "error": "run not found: <run_id>" }`（run_id 回显前截到 200 字符以内，已由上面校验保证）。
@@ -193,3 +194,8 @@ upstream: ["01-intent.md#I-1", "01-intent.md#I-2", "01-intent.md#I-3", "01-inten
 ## 判定点
 
 无：本接口只读库内已有记录，不推断任何外部真实状态。
+
+## commander 裁决（第 2 轮裁判 06-judge-r2.md 之后）
+- J-1（`/api/brain/runs/stats` 等被 `server.js:429` contentPipelineRoutes 先接走）：**维持本规格「未覆盖真实链路」的登记，不在本任务处理**。需求方确认：run_id 一律由系统生成且带前缀（`coding-workflow:<uuid>`、定时任务 `<job>:<时间>` 等），不会是裸的 `stats`/`stages`/`output`/`publish-status`；I-3 的「不返回 500」指本接口自己的入参与查库路径。contentPipelineRoutes 对非 uuid 的 500 是存量问题，另立任务。
+- J-2（`a%00b` 返回 500 并回显 PostgreSQL 原始错误）：成立，规格补入「含控制字符 → 400」（见 S-1 入参校验），代码与集成测试同步修。
+
