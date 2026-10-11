@@ -432,3 +432,4 @@ skill-factory-board-smoke.sh
 strategic-decisions-category-smoke.sh
 cw-bd2b1556-qa-smoke.sh
 task-runs-projection-smoke.sh
+runs-read-smoke.sh

@@ -96,6 +96,7 @@ import skillSettlementRouter from './src/routes/skill-settlement.js';
 import activityJudgmentsRouter from './src/routes/activity-judgments.js';
 import releaseLineRouter from './src/routes/release-line.js';
 import { createReleasesRouter } from './src/routes/releases.js';
+import { createRunsReadRouter } from './src/routes/runs-read.js';
 import { createRunDefinitionsRouter } from './src/routes/run-definitions.js';
 import { createRunReconciliationRouter } from './src/routes/run-reconciliation.js';
 import phoneRegistryRouter from './src/routes/phone-registry.js';
@@ -471,6 +472,7 @@ app.use('/api/brain', skillSettlementRouter); // 路 B：收敛对账 + 沉淀�
 app.use('/api/brain', activityJudgmentsRouter); // 裁判：Activity 最新裁判 / 裁判史 / 新旧版本对比（五块模型，决策 de6dff5d）
 app.use('/api/brain', releaseLineRouter); // 发布线：内容版本 / 生产指针 / 晋级 / 退回 / 流程生产配方（迁移 541，决策 de6dff5d 第 3 步）
 app.use('/api/brain/releases', createReleasesRouter());
+app.use('/api/brain/runs', createRunsReadRouter()); // 执行记录总记录 GET /runs/:run_id（任务 05cfbcde），须在 run-definitions 之前
 app.use('/api/brain/runs', createRunDefinitionsRouter());
 app.use('/api/brain/runs', createRunReconciliationRouter());
 app.use('/api/brain', phoneRegistryRouter); // 手机台账 GET/PUT /phone-registry（任务 b923b1f7，决策 432172f7）
