@@ -198,3 +198,12 @@ describe('规格约束力与前轮裁决（金丝雀 4 裁判翻转）', () => {
     expect(md).toContain('- 推翻前轮：r1:J-2');
   });
 });
+
+// 决策 45cd3ec2（撤销 ff177feb）：金丝雀 5 r1 裁判把 smoke「未授权 exit 0」判成产品问题——那是仓库约定
+describe('仓库约定不算产品问题', () => {
+  it('提示词说明 smoke 生产保护未授权（SMOKE_ALLOW_WRITE≠1）exit 0 且不发请求是仓库约定', () => {
+    const p = buildJudgePrompt({ intent: 'i', spec: 's', qaReport: 'q', diff: 'd', intentIds: ['I-1'] }).user;
+    expect(p).toContain('SMOKE_ALLOW_WRITE');
+    expect(p).toContain('仓库约定');
+  });
+});

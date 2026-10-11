@@ -20,6 +20,7 @@ import { failTask, finishSuccess, localSummary, lostSummary, settle, settleQueue
 import { runCiFix } from './lib/cifix.mjs';
 import { runQaGate } from './lib/qa-gate.mjs';
 import { runMergeGate } from './lib/merge-gate.mjs';
+import { runCommander } from './lib/commander.mjs';
 import { listOwnPrs } from './lib/cifix-scan.mjs';
 import { restoreStates, mirrorStates } from './lib/state-store.mjs';
 import { readyCandidates } from './lib/deps.mjs';
@@ -127,12 +128,14 @@ async function execute(ctx, task, job, signal) {
  */
 async function runGates(ctx, signal) {
   const { cfg } = ctx;
-  if (!cfg.qaGate && !cfg.ciFix) return false;
+  if (!cfg.qaGate && !cfg.ciFix && !cfg.commander) return false;
   const prs = await listOwnPrs(cfg).catch(() => null);
   await restoreStates(ctx, prs);
   try {
     // 已批准的 PR：只合并被批准的 head（批准后又改了代码则撤销批准，本轮到此）
     if (cfg.qaGate && await runMergeGate(ctx)) return true;
+    // 升级了的 PR：coding commander 裁决并解除（或上交主理人），本轮到此（决策 c167d6e3）
+    if (cfg.commander && await runCommander(ctx, signal)) return true;
     // 先收尾再开新：自己开的 PR CI 红了，本轮只修它
     if (cfg.ciFix && await runCiFix(ctx, signal)) return true;
     // CI 绿了：真人 QA 门（PASS 才开自动合并，FAIL 进修复环）

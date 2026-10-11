@@ -263,6 +263,14 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(originLog()[0]).toBe('docs(qa): 第 3 轮真人 QA FAIL');
   });
 
+  it('commander 解除 qa_stalled 后（stall_floor）只看之后的轮次判不收敛', async () => {
+    seedState({ rounds: [1, 2].map((n) => ({ round: n, head: `${n}`.repeat(40), verdict: 'FAIL', fails: 1 })), stall_floor: 2 });
+    const r = await go(green(), { mode: 'fail' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(state().escalated).toBeUndefined();
+    expect(state().rounds.at(-1)).toMatchObject({ round: 3, fix: 'pushed' });
+  });
+
   it('评估会话连续 3 次出错 → 升级；致命错误立刻升级', async () => {
     seedState({ rounds: [], bad: 2 });
     let r = await go(green(), { mode: 'retry' });

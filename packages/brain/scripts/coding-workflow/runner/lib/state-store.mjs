@@ -8,8 +8,9 @@ import path from 'node:path';
 import { remoteTaskId } from './pr-branch.mjs';
 
 const KINDS = {
-  qa: { file: (pr) => `qa-${pr}.json`, key: 'qa_state', fields: ['passed', 'approved', 'escalated', 'merged', 'revoked', 'bad', 'judge_bad', 'judge_pending', 'merge_failures', 'rounds', 'preview_stopped', 'last_eval_error', 'cost_usd'] },
-  cifix: { file: (pr) => `cifix-${pr}.json`, key: 'ci_fix_state', fields: ['attempts', 'reruns', 'escalated', 'update_branch', 'cost_usd'] },
+  qa: { file: (pr) => `qa-${pr}.json`, key: 'qa_state', fields: ['passed', 'approved', 'escalated', 'merged', 'revoked', 'bad', 'judge_bad', 'judge_pending', 'merge_failures', 'rounds', 'preview_stopped', 'last_eval_error', 'cost_usd', 'stall_floor', 'smoke', 'smoke_note'] },
+  cifix: { file: (pr) => `cifix-${pr}.json`, key: 'ci_fix_state', fields: ['attempts', 'archived_attempts', 'reruns', 'escalated', 'update_branch', 'cost_usd'] },
+  commander: { file: (pr) => `commander-${pr}.json`, key: 'commander_state', fields: ['interventions', 'human'] },
 };
 const MIRRORED = 'mirrored';
 

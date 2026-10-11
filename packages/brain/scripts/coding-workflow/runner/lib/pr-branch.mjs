@@ -117,13 +117,14 @@ export async function ownChangedFiles(worktree, before, mainRef = null) {
  * claude 修复后的核对：工作区干净、有新提交、只追加不改写、不碰受保护路径、不削弱测试。通过返回 { commits }，否则抛 Error(reason_code)。
  * mainRef：本次合进了 main（冲突修复），受保护路径与削弱测试只核对 PR 自身的改动。
  */
-export async function checkFixCommits(worktree, before, { mainRef = null } = {}) {
+export async function checkFixCommits(worktree, before, { mainRef = null, allow = [] } = {}) {
   if ((await git(worktree, ['status', '--porcelain'])).stdout.trim()) throw stop('uncommitted');
   const head = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
   if (!head || head === before) throw stop('no_commit');
   if ((await git(worktree, ['merge-base', '--is-ancestor', before, head])).code !== 0) throw stop('history_rewritten');
   const changed = await ownChangedFiles(worktree, before, mainRef);
-  if (changed.some((f) => PROTECTED_RE.test(f))) throw stop('protected_path');
+  // allow：调用方单独核对的受保护文件（coding commander 只许纯追加的规格）
+  if (changed.some((f) => PROTECTED_RE.test(f) && !allow.includes(f))) throw stop('protected_path');
   if (await weakenedTests(worktree, before, head, mainRef ? changed : null)) throw stop('test_weakened');
   const log = await git(worktree, ['rev-list', '--reverse', `${before}..${head}`]);
   return { commits: log.stdout.split('\n').filter(Boolean) };

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke: coding workflow 执行记录接入 runs/spans（迁移 542，决策 b34e346a，任务 eb831e90）
 # 不发网络写，验证：
-#   1. 迁移 542 / 回滚结构：F1 能力下 coding_workflow 流程 + 12 个 Activity + 引用，固定 id 与 runner 上报一致
+#   1. 迁移 542/547 / 回滚结构：F1 能力下 coding_workflow 流程 + 13 个 Activity（547 加 commander）+ 引用，固定 id 与 runner 上报一致
 #   2. 接线：runner 执行器跑完、QA/裁判/合并/CI 修复都调用 postSpans；Brain 客户端 POST /api/brain/spans
 #   3. Notion 最近执行：coding-workflow 运行 7 天全量进窗口，来源 Coding Workflow
 #   4. 真库（可选）：DB_NAME 指向 *_test / *_scratch 且 PG 可达时，跑迁移 542 集成测试
@@ -16,10 +16,12 @@ const up = readFileSync('migrations/542_coding_workflow_activities.sql', 'utf8')
 const down = readFileSync('migrations/rollback/542_coding_workflow_activities.down.sql', 'utf8');
 if (!up.includes(\"'e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29'\")) { console.error('FAIL 未挂 F1 开发闭环能力'); process.exit(1); }
 if (!up.includes(\"'\" + CODING_WORKFLOW_ID + \"'\")) { console.error('FAIL 流程 id 与 runner 不一致'); process.exit(1); }
-for (const [key, id] of Object.entries(ACTIVITY_IDS)) {
+for (const [key, id] of Object.entries(ACTIVITY_IDS).filter(([k]) => k !== 'commander')) {
   if (!new RegExp(\"\\\\('\" + key + \"',\\\\s+'\" + id + \"'\").test(up)) { console.error('FAIL 引用缺 ' + key); process.exit(1); }
 }
-if (Object.keys(ACTIVITY_IDS).length !== 12) { console.error('FAIL Activity 数不是 12'); process.exit(1); }
+if (Object.keys(ACTIVITY_IDS).length !== 13) { console.error('FAIL Activity 数不是 13（542 的 12 个 + 547 的 commander）'); process.exit(1); }
+const up547 = readFileSync('migrations/547_coding_workflow_commander_activity.sql', 'utf8');
+if (!up547.includes(\"'commander', '\" + ACTIVITY_IDS.commander + \"'::uuid, 13\")) { console.error('FAIL 547 引用缺 commander'); process.exit(1); }
 if (!/ON CONFLICT \(id\) DO NOTHING/.test(up)) { console.error('FAIL 迁移不幂等'); process.exit(1); }
 for (const re of [/DELETE FROM spans/, /DELETE FROM workflow_activity_refs/, /DELETE FROM activities/, /DELETE FROM workflows/]) {
   if (!re.test(down)) { console.error('FAIL 回滚缺 ' + re); process.exit(1); }

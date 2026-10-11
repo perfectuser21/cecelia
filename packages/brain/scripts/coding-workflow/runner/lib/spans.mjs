@@ -16,9 +16,11 @@ export const ACTIVITY_IDS = {
   qa: 'c0de0000-0000-4000-8000-00000000010a',
   judge: 'c0de0000-0000-4000-8000-00000000010b',
   merge: 'c0de0000-0000-4000-8000-00000000010c',
+  // 迁移 547
+  commander: 'c0de0000-0000-4000-8000-00000000010d',
 };
 // 起 claude / 调模型的环节记 agent，纯程序记 code（spans.executor_kind 只认 code/agent/human）
-const AGENT = new Set(['spec', 'spec_review', 'build', 'verify', 'ci_fix', 'qa', 'judge']);
+const AGENT = new Set(['spec', 'spec_review', 'build', 'verify', 'ci_fix', 'qa', 'judge', 'commander']);
 const OUTCOME = { completed: 'pass', skipped: 'skipped', failed: 'fail', partial: 'fail' };
 
 const runId = (taskId) => `coding-workflow:${taskId}`;
