@@ -77,6 +77,18 @@ describe('coding commander（升级后自动裁决）', () => {
     expect(state().escalated).toBeUndefined();
   });
 
+  // C3：commander 会话跑到一半 PR 被关 → 不推送裁决、不解除升级、不 Bark 主理人（交给外部关闭收尾）
+  it('commander 会话跑到一半 PR 被关 → 不推送、升级保留、不 Bark', async () => {
+    qaEscalated('qa_fix_failed', { reason: 'ruling_conflict' });
+    const before = remoteHead();
+    const r = await go(green({ prStates: { 77: 'CLOSED' } }), { mode: 'cmd-fix' });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(remoteHead()).toBe(before);
+    expect(state().escalated).toMatchObject({ type: 'qa_fix_failed' });
+    expect(bark.calls).toEqual([]);
+    expect(r.stderr).not.toContain('[coding-commander][P1]');
+  });
+
   it('CI 修复升级 ci_fix_exhausted + 裁决 reset_ci_budget → 旧尝试归档进 archived_attempts、解除升级', async () => {
     seedCi({ attempts: [{ head: 'a'.repeat(40), result: 'pushed' }, { head: 'b'.repeat(40), result: 'pushed' }], escalated: { type: 'ci_fix_exhausted', reason: 'attempts_exhausted', pr: 77 } });
     const ruling = { action: 'resume', rulings: [{ issue: 'brain-unit (3)', verdict: '追加额度', reason: '普通测试失败，可修' }], reset_ci_budget: true, summary: '再给一轮' };

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // 假 gh（CI 修复用）：argv 追加到 FAKE_GH_LOG；按 FAKE_GH_CI 指向的 JSON 回放：
 // { prs: [...], required: { <pr>: [{name,bucket}] }, checks: { <pr>: [{name,bucket,link}] }, logs: { <jobId>: "..." },
-//   prStates: { <pr_url>: "MERGED"|"OPEN"|"CLOSED" } }
+//   prStates: { <pr_url 或 PR 号>: "MERGED"|"OPEN"|"CLOSED" }, prStateSeq: { <PR 号>: ["OPEN","CLOSED",...] }（逐次消费，用完停在最后一个）,
+//   mergedPrs: [...], closedPrs: [...]（`pr list --state closed` 回放，外部关闭未合并）, events: { <PR 号>: [{event, actor:{login}}] } }
 // `pr checks --required` 有 pending 时退出 8、有 fail 时退出 1（同真 gh），JSON 照常输出。
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -14,7 +15,14 @@ const out = (value, code = 0) => {
   process.exit(code);
 };
 
-if (argv[0] === 'pr' && argv[1] === 'list') out(argv.includes('merged') ? (state.mergedPrs ?? []) : (state.prs ?? []));
+if (argv[0] === 'pr' && argv[1] === 'list') {
+  if (argv.includes('merged')) out(state.mergedPrs ?? []);
+  if (argv.includes('closed')) out(state.closedPrs ?? []);
+  out(state.prs ?? []);
+}
+// issues/<n>/events：PR 时间线（取关闭人）
+const events = argv[0] === 'api' ? /\/issues\/(\d+)\/events/.exec(argv[1] ?? '') : null;
+if (events) out(state.events?.[events[1]] ?? []);
 // pr view <url> --json state：按 prStates[url] 回放，未登记的 PR 报错退出 1
 // pr view <n> --json mergeable,mergeStateStatus：合并门判冲突/落后
 if (argv[0] === 'pr' && argv[1] === 'view' && argv.join(' ').includes('mergeable')) {
@@ -30,8 +38,16 @@ if (argv[0] === 'pr' && argv[1] === 'merge' && argv.includes('--delete-branch'))
   const branch = (state.prs ?? []).find((p) => String(p.number) === argv[2])?.headRefName;
   if (branch) execFileSync('git', ['push', '-q', 'origin', '--delete', branch], { stdio: 'ignore' });
 }
+// pr view <n> --json state：prStateSeq 逐次消费 > prStates > 在 prs（open 列表）里即 OPEN
 if (argv[0] === 'pr' && argv[1] === 'view') {
-  const s = state.prStates?.[argv[2]];
+  const seq = state.prStateSeq?.[argv[2]];
+  if (Array.isArray(seq) && seq.length > 0 && process.env.FAKE_GH_CI) {
+    const counter = `${process.env.FAKE_GH_CI}.seq-${argv[2]}`;
+    const i = fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0;
+    fs.writeFileSync(counter, String(i + 1));
+    out({ state: seq[Math.min(i, seq.length - 1)] });
+  }
+  const s = state.prStates?.[argv[2]] ?? ((state.prs ?? []).some((p) => String(p.number) === argv[2]) ? 'OPEN' : null);
   if (!s) process.exit(1);
   out({ state: s });
 }

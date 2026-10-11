@@ -109,6 +109,20 @@ describe('runner CI 红自动修复（ci_fix）', () => {
     expect(fs.readdirSync(sb.worktreeBase).filter((n) => n.startsWith('cifix-'))).toEqual([]);
   });
 
+  // C3：修复会话跑了几分钟到几十分钟，期间 PR 被人关掉 → 推送前再确认 PR 仍开着；关了就不推、不计尝试、不升级
+  it('CI 修复会话跑到一半 PR 被关 → 不推送、不计入尝试次数、不升级、不上报修复 span', async () => {
+    const r = await go({ ...red(), prStates: { 77: 'CLOSED' } }, { tasks: [{ id: TASK, status: 'completed', result: {} }] });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(remoteHead()).toBe(head);
+    const s = fs.existsSync(path.join(sb.logDir, 'cifix-77.json')) ? state() : { attempts: [] };
+    expect(s.attempts.some((a) => a.result === 'pushed')).toBe(false);
+    expect(s.attempts).toEqual([]);
+    expect(s.escalated).toBeUndefined();
+    expect(brain.patches.filter((p) => p.body.result?.escalations)).toEqual([]);
+    expect(brain.spans.filter((x) => x.occurrence_key.startsWith('ci_fix:'))).toEqual([]);
+    expect(r.stderr).toContain('PR #77 已关闭');
+  });
+
   // C1 runner-log-noise：会话整段 markdown / 单行巨型 JSON result 曾原样进主日志（占 29% 字节）
   it('CI 修复会话输出只落 cifix-<pr>-<ts>.log，主日志只一行摘要（exit/花费/会话文件路径）', async () => {
     const r = await go(red(), { extra: { FAKE_CIFIX_COST: '0.5' } });
