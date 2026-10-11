@@ -3,6 +3,8 @@ export const US_MACHINE_ID = '1a379d80-ad36-47d3-88ba-e545ab299a54';
 export const IMAGE = /^sha256:[a-f0-9]{64}$/;
 export const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
 export const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+// brain-build.sh 同版本号不同 SHA 重建时给被顶替旧镜像打的单一保活 tag（B4）：prev-${VERSION}-${oldsha12}
+const PREV = /^prev-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-[a-f0-9]{12}$/;
 const GiB = 2 ** 30;
 export function fail(code) { return Object.assign(new Error(code), { code }); }
 /**
@@ -70,7 +72,7 @@ export function selectImages(snapshot, ledger, now = Date.now(), { continuing = 
   const keep = protectedImages(snapshot, ledger, now);
   if (continuing ? recovered(snapshot.disk) : !canStart(snapshot.disk)) return [];
   return snapshot.images.filter(image => !keep.has(image.id) && image.tags.length === 1 && (image.digests.length === 0 || (image.digests.length === 1 && image.digests[0] === `cecelia-brain@${image.id}`))
-    && image.tags[0].startsWith('cecelia-brain:') && VERSION.test(image.tags[0].slice('cecelia-brain:'.length))
+    && image.tags[0].startsWith('cecelia-brain:') && (VERSION.test(image.tags[0].slice('cecelia-brain:'.length)) || PREV.test(image.tags[0].slice('cecelia-brain:'.length)))
     && Date.parse(image.created_at) <= now - 86400000)
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id.localeCompare(b.id)).slice(0, 2);
 }

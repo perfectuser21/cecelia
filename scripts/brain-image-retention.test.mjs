@@ -38,6 +38,14 @@ for(const kind of ['stopped-reference','extra-tag','other-repo','digest','latest
  if(kind==='young')target.created_at=new Date(now-86399000).toISOString();
  assert.equal(selectImages(snapshot,ledger,now).some(x=>x.id===target.id),false);
 });
+test('同版本不同 SHA 重建留下的单 tag prev-${VERSION}-${sha12} 旧镜像可被回收（B4，防保活 tag 永久泄漏）',()=>{
+ const {snapshot,ledger}=fixture();snapshot.images[3].tags=['cecelia-brain:prev-1.0.4-0123456789ab'];
+ assert.deepEqual(selectImages(snapshot,ledger,now).map(x=>x.id),[image(4).id,image(5).id]);
+});
+for(const tag of ['cecelia-brain:prev-latest','cecelia-brain:prev-1.0.4','cecelia-brain:prev-1.0.4-XYZ','cecelia-brain:1.0.4-0123456789ab'])test(`候选排除非保活形态 ${tag}`,()=>{
+ const {snapshot,ledger}=fixture();snapshot.images[3].tags=[tag];
+ assert.equal(selectImages(snapshot,ledger,now).some(x=>x.id===image(4).id),false);
+});
 for(const kind of ['one-rollback','missing-rollback','pending-deploy','no-current','wrong-machine','bad-image','stale','unknown-disk'])test(`未知拒绝 ${kind}`,()=>{
  const {snapshot,ledger}=fixture();
  if(kind==='one-rollback')ledger.successes=ledger.successes.slice(0,2);
