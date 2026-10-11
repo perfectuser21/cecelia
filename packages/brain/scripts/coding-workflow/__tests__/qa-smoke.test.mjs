@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { buildQaSmoke, registerSmoke, QA_SMOKE_DIR } from '../lib/qa-smoke.mjs';
+import { buildQaSmoke, registerSmoke, targetsPreviewApi, QA_SMOKE_DIR } from '../lib/qa-smoke.mjs';
+import { PRODUCTION_TARGET_RE, PRODUCTION_ASSIGN_RE } from '../lib/qa-report.mjs';
 
 const F = '```';
 const PREVIEW = 'http://localhost:5302';
@@ -111,5 +112,82 @@ describe('registerSmoke', () => {
     expect(allow.split('\n').filter((l) => l === 'cw-c954ebfd-qa-smoke.sh')).toHaveLength(1);
     expect(fs.readFileSync(path.join(root, 'packages/quality/smoke-write-targets.txt'), 'utf8')).toContain('cw-c954ebfd-qa-smoke.sh\n');
     expect(fs.statSync(path.join(root, QA_SMOKE_DIR, 'cw-c954ebfd-qa-smoke.sh')).mode & 0o111).toBeTruthy();
+  });
+});
+
+// 金丝雀 4 r10 / 5 r3 / 6 r3：QA 把预览地址先赋给变量再拼 /api（B=http://localhost:530x; curl "$B/api/..."），
+// 旧筛选只认字面量「<预览地址>/api/」，三只金丝雀一条都没固化（smoke=null、只记 smoke_note）
+describe('预览地址赋给变量（金丝雀 4 r10/5/6）', () => {
+  const P = 'http://localhost:5305';
+  const VAR_CMD = `B=${P}; R=$(curl -s -X POST "$B/api/brain/strategic-decisions" -H 'Content-Type: application/json' -d '{"category":"decision"}'); echo "$R" | jq -e '.success'`;
+
+  it('B=<预览地址>; curl "$B/api/…" → 收；预览地址换成 $BRAIN_URL、无端口残留', () => {
+    const s = buildQaSmoke({ taskId: TASK, previewUrl: P, reportText: report(t('T-1', VAR_CMD)) });
+    expect(s).not.toBeNull();
+    expect(s.items).toEqual(['T-1']);
+    expect(s.content).toContain('B="$BRAIN_URL";');
+    expect(s.content).not.toContain('5305');
+    expect(s.skipped).toEqual([]);
+  });
+
+  it('打其他本机端口 / 依赖本机路径 / 打生产 / 开浏览器 / 不打预览 → 剔除并写明原因', () => {
+    const s = buildQaSmoke({
+      taskId: TASK, previewUrl: P, reportText: report(
+        t('T-1', VAR_CMD),
+        t('T-2', `B=${P}; curl -s "http://127.0.0.1:5299/api/brain/runs/x" | jq -e .`),
+        t('T-3', `B=${P}; cd /Users/x/worktree && node /tmp/a.mjs "$B/api/brain/x"`),
+        t('T-4', `B=http://localhost:5221; curl -s "$B/api/brain/tasks" | jq -e .`),
+        t('T-5', `B=${P}; node qa-page.mjs "$B/api/x" # playwright`),
+        t('T-6', 'cat packages/brain/src/x.js'),
+        t('T-7', `B=${P}; curl -s "$B/api/brain/broken"`, 'FAIL'),
+      ),
+    });
+    expect(s.items).toEqual(['T-1']);
+    expect(s.skipped).toEqual([
+      { id: 'T-2', reason: 'other_port' },
+      { id: 'T-3', reason: 'local_path' },
+      { id: 'T-4', reason: 'production' },
+      { id: 'T-5', reason: 'browser' },
+      { id: 'T-6', reason: 'not_preview' },
+    ]);
+  });
+
+  it('targetsPreviewApi：变量赋值或字面量才算；端口前缀相同的别的端口不算', () => {
+    expect(targetsPreviewApi(VAR_CMD, P)).toBe(true);
+    expect(targetsPreviewApi(`curl -s ${P}/api/brain/x`, P)).toBe(true);
+    expect(targetsPreviewApi(`export B='${P}'; curl -s "\${B}/api/brain/x"`, P)).toBe(true);
+    expect(targetsPreviewApi(`B=${P}0; curl -s "$B/api/brain/x"`, P)).toBe(false);
+    expect(targetsPreviewApi(`B=${P}; curl -s "$C/api/brain/x"`, P)).toBe(false);
+    expect(targetsPreviewApi(`B=${P}; curl -s "$B/health"`, P)).toBe(false);
+  });
+
+  it('生产判定正则从 qa-report 导出，供固化筛选复用', () => {
+    expect(PRODUCTION_TARGET_RE.test('curl localhost:5221/api')).toBe(true);
+    expect(PRODUCTION_ASSIGN_RE.test('B=http://localhost:5221; curl $B')).toBe(true);
+  });
+
+  it('真实样本回放：金丝雀 6 r3 T-1 原文被收，生成的 smoke 在假 Brain 下跑到 PASS', () => {
+    const reportText = fs.readFileSync(new URL('./fixtures/canary6-r3-qa-report-t1.md', import.meta.url), 'utf8');
+    const s = buildQaSmoke({ taskId: '142c9ad0-2150-4f03-978c-3dd30ab32ed1', previewUrl: 'http://localhost:5301', reportText });
+    expect(s).not.toBeNull();
+    expect(s.items).toEqual(['T-1']);
+    expect(s.content).not.toContain('5301');
+    expect(s.content).not.toContain('playwright');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-smoke-c6-'));
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    // 假 Brain：只认 $BRAIN_URL/api/brain/runs/<s>，回 404 + run not found；地址没展开就回 500
+    fs.writeFileSync(path.join(bin, 'curl'), [
+      '#!/bin/sh',
+      'for a in "$@"; do case "$a" in http*) u="$a";; esac; done',
+      'case "$u" in "$BRAIN_URL"/api/brain/runs/*) printf \'{"error":"run not found: %s"}\\n404\' "${u##*/}";; *) printf \'{}\\n500\';; esac',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    const file = path.join(dir, 'smoke.sh');
+    fs.writeFileSync(file, s.content);
+    const r = spawnSync('bash', [file], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, BRAIN_URL: 'http://brain.test:9' } });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).toContain('ALL_OK');
+    expect(r.stdout).toContain('PASS: cw-142c9ad0-qa-smoke.sh');
   });
 });
