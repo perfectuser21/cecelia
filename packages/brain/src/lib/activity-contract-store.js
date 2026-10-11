@@ -3,7 +3,8 @@ import { snapshotDefinitions } from './definition-versions.js';
 import { canonicalJson,syncSteps } from '../../scripts/sync-steps-from-workspace.mjs';
 import { contractPath } from './activity-contract-loader.js';
 import { declareStepsFromContract, assertStepsHaveReadback } from './contract-steps.js';
-export const REGISTRATIONS_SQL = `SELECT id,key,capability_id,source_repo,source_path,source_workflow,source_capability,status,contract_sync_revision
+export const REGISTRATIONS_SQL = `SELECT id,key,capability_id,source_repo,source_path,source_workflow,source_capability,status,contract_sync_revision,
+  (SELECT capability_code FROM capabilities WHERE id=workflows.capability_id) AS capability_code
   FROM workflows WHERE source_repo=$1 ORDER BY key`;
 export async function storeActivityContracts(pool, plans, head, repo, registrations = plans.map(p=>p.workflow), {beforeCommit,synchronizeSteps=false} = {}) {
   const out = {head_sha:head,updated:[],inserted:[],deprecated:[],unmapped:[]};

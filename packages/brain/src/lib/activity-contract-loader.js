@@ -27,7 +27,14 @@ export async function loadActivityContracts(registrations, digest, fetchFile, re
     await load(w.source_capability,w.source_path);
     if (docs.get(w.source_capability).workflow !== w.source_workflow) throw new Error(`来源工作流映射无效: ${w.key}`);
     const doc = docs.get(w.source_capability);
-    if (doc.contract_key) {
+    const actualOwners=registeredOwners.filter(row=>row.id===w.id&&row.key===w.key&&row.capability_id===w.capability_id
+      &&row.source_repo===w.source_repo&&row.source_capability===w.source_capability&&row.source_path===w.source_path&&row.source_workflow===w.source_workflow);
+    const actual=Object.hasOwn(w,'capability_code')?w:actualOwners.length===1?actualOwners[0]:null;
+    if (actual && Object.hasOwn(actual, 'capability_code')) {
+      if (!w.capability_id || !actual.capability_code || doc.capability !== actual.capability_code) {
+        throw new Error(`流程契约能力归属无效: ${w.key}`);
+      }
+    } else if (doc.contract_key) {
       const owners = registeredOwners.filter(row => row.source_capability === doc.capability);
       const owner = owners.length === 1 ? owners[0] : null;
       if (!owner?.capability_id || owner.source_repo !== w.source_repo || owner.capability_id !== w.capability_id) {

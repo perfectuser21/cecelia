@@ -18,6 +18,15 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('workflow-authoring HTTP鉴权与业务错误', () => {
+  it.each([undefined, 'wrong-token'])('来源登记也必须通过内部鉴权', async value => {
+    const req=request(app).post('/api/brain/workflow-authoring/sources/register').send({});
+    if(value)req.set('Authorization',`Bearer ${value}`);
+    const res=await req;expect(res.status).toBe(401);expect(db.query).not.toHaveBeenCalled();
+  });
+  it('来源登记已认证但缺合同/CAS字段返回400，不访问数据库',async()=>{
+    const res=await request(app).post('/api/brain/workflow-authoring/sources/register').set('Authorization',`Bearer ${token}`).send({});
+    expect(res.status).toBe(400);expect(res.body.error).toBe('WORKFLOW_SOURCE_INPUT_INVALID');expect(db.query).not.toHaveBeenCalled();
+  });
   it('生产未配置token返回503，即使来自loopback也不接触数据库', async () => {
     vi.stubEnv('CECELIA_INTERNAL_TOKEN', '');
     const res = await request(app).get(`/api/brain/workflow-authoring/runs/${id}`);

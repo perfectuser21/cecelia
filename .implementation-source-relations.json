@@ -262,19 +262,16 @@
       "path": "packages/brain/src/routes/__tests__/shared.test.js",
       "role": "verification"
     },
-    
     {
       "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
       "path": "docs/learnings/cp-route-api-f5dc89cf.md",
       "role": "documentation"
     },
-    
     {
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "docs/learnings/cp-route-api-92f06f77.md",
       "role": "documentation"
     },
-    
     {
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "packages/brain/src/__tests__/integration/code-task-dedup.pg.integration.test.js",
@@ -289,6 +286,26 @@
       "owner_path": "packages/brain/src/lib/code-task-identity.js",
       "path": "packages/brain/src/lib/__tests__/code-task-identity.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/implementation-ci-snapshot.js",
+      "path": "packages/brain/src/lib/__tests__/implementation-publish-source-owners.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-source-registration.js",
+      "path": "packages/brain/src/lib/__tests__/workflow-source-registration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/workflow-authoring.js",
+      "path": "packages/brain/src/routes/workflow-authoring.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-source-registration.js",
+      "path": "changes/cp-1011205228-brain-publish-source-registration-cas.md",
+      "role": "release"
     }
   ]
 }

@@ -29,7 +29,7 @@ beforeEach(async () => {
   await useStandardNames(client);
   db = { query: client.query.bind(client), connect: async () => ({ query: client.query.bind(client), release() {} }) }; holder.db = db;
   const parent = randomUUID(), capKeyword = randomUUID(); capBenchmark = randomUUID();
-  await client.query(`WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES($1,'价值流',NULL)) INSERT INTO capabilities(id,name,parent_journey_id) VALUES($2,'关键词',$1),($3,'对标',$1)`, [parent,capKeyword,capBenchmark]);
+  await client.query(`WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES($1,'价值流',NULL)) INSERT INTO capabilities(id,name,parent_journey_id,capability_code) VALUES($2,'关键词',$1,'keyword_acquisition'),($3,'对标',$1,'benchmark_link_acquisition')`, [parent,capKeyword,capBenchmark]);
   keyword = randomUUID(); benchmark = randomUUID();
   await client.query(`INSERT INTO workflows(id,capability_id,key,name,channel) VALUES($1,$3,'douyin_keyword_leadgen','关键词','douyin'),($2,$4,'douyin_benchmark_leadgen','对标','douyin')`, [keyword,benchmark,capKeyword,capBenchmark]);
   legacy = [];
