@@ -306,6 +306,16 @@
       "owner_path": "packages/brain/src/lib/workflow-source-registration.js",
       "path": "changes/cp-1011205228-brain-publish-source-registration-cas.md",
       "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/implementation-bindings.js",
+      "path": "packages/brain/src/lib/__tests__/implementation-bindings.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/implementation-bindings.js",
+      "path": "changes/cp-1011230600-brain-codex-skill-version-compatibility.md",
+      "role": "release"
     }
   ]
 }
