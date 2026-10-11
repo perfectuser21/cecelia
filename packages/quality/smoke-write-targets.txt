@@ -137,3 +137,4 @@ release-line-smoke.sh
 strategic-decisions-category-smoke.sh
 cw-bd2b1556-qa-smoke.sh
 runs-read-smoke.sh
+factory-ledger-smoke.sh
