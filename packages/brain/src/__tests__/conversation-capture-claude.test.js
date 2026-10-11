@@ -133,4 +133,36 @@ describe('extractClaudeSessions', () => {
     expect(byId['019one'].linkedTaskIds).toEqual([ids[0]]);
     expect(byId['019many'].linkedTaskIds).toEqual([]);
   });
+
+  it('生产回归：注入的非真人 user 条目（任务通知/技能正文 isMeta/本地命令/压缩续接）不算真人文本', () => {
+    const ts = '2026-10-11T14:00:00.000Z';
+    const root = makeProjectsDir({
+      'proj-h/019noise.jsonl': [
+        { type: 'user', uuid: 'n1', timestamp: ts, origin: { kind: 'task-notification', producer: 'monitor' }, message: { role: 'user', content: '<task-notification>\n<task-id>x</task-id></task-notification>' } },
+        { type: 'user', uuid: 'n2', timestamp: ts, isMeta: true, message: { role: 'user', content: [{ type: 'text', text: 'Base directory for this skill: /x' }] } },
+        { type: 'user', uuid: 'n3', timestamp: ts, message: { role: 'user', content: '<command-name>/model</command-name>' } },
+        { type: 'user', uuid: 'n4', timestamp: ts, message: { role: 'user', content: '<local-command-stdout>ok</local-command-stdout>' } },
+        { type: 'user', uuid: 'n5', timestamp: ts, message: { role: 'user', content: 'This session is being continued from a previous conversation that ran out of context.' } },
+        { type: 'user', uuid: 'n6', timestamp: ts, message: { role: 'user', content: '[Request interrupted by user]' } },
+        { type: 'user', uuid: 'h1', timestamp: ts, origin: { kind: 'human' }, message: { role: 'user', content: '现在咋样了' } },
+        { type: 'user', uuid: 'h2', timestamp: ts, message: { role: 'user', content: '老格式真人话' } },
+      ],
+    });
+    const [session] = extractClaudeSessions(0, root);
+    expect(session.turns.map((t) => t.text)).toEqual(['现在咋样了', '老格式真人话']);
+  });
+
+  it('长寿会话：只认最近 24h 内提到的 --task-id（几天前做完的任务不再挂今天的摘要）', () => {
+    const OLD = 'aaaaaaaa-1111-4111-8111-111111111111';
+    const NEW = 'bbbbbbbb-2222-4222-8222-222222222222';
+    const root = makeProjectsDir({
+      'proj-i/019long.jsonl': [
+        { type: 'user', uuid: 'u1', entrypoint: 'cli', timestamp: '2026-10-07T01:00:00.000Z', message: { role: 'user', content: `/dev --task-id ${OLD}` } },
+        { type: 'user', uuid: 'u2', timestamp: '2026-10-11T10:00:00.000Z', message: { role: 'user', content: `/dev --task-id ${NEW}` } },
+        { type: 'user', uuid: 'u3', timestamp: '2026-10-11T14:00:00.000Z', message: { role: 'user', content: '收尾' } },
+      ],
+    });
+    const [session] = extractClaudeSessions(0, root);
+    expect(session.linkedTaskIds).toEqual([NEW]);
+  });
 });
