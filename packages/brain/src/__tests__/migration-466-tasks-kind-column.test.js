@@ -51,8 +51,12 @@ describe('migration 466 — tasks.kind 真列 + CHECK + 回填', () => {
     expect(sql).toMatch(/DO \$\$[\s\S]*LOOP[\s\S]*UPDATE tasks SET kind = CASE[\s\S]*ELSE 'agent' END[\s\S]*WHERE kind IS NULL[\s\S]*LIMIT 5000[\s\S]*EXIT WHEN updated_count = 0[\s\S]*END\s*\$\$;/);
     const listed = workflowListFromSql(sql);
     expect(listed, '找不到 WHEN task_type IN (...) THEN \'workflow\'').toBeTruthy();
-    expect(listed.length).toBe(WORKFLOW_KIND_TASK_TYPES.length);
-    expect(new Set(listed)).toEqual(new Set(WORKFLOW_KIND_TASK_TYPES));
+    // 466 之后新增的 workflow 型类型随自己的迁移进 CHECK（不改历史迁移），新行由 createRoutedTask 按注册表写 kind，不靠 466 回填：
+    //   workflow_dispatch —— 迁移 549（任务 f38e7cc2）
+    const ADDED_AFTER_466 = ['workflow_dispatch'];
+    const expectedList = WORKFLOW_KIND_TASK_TYPES.filter((t) => !ADDED_AFTER_466.includes(t));
+    expect(listed.length).toBe(expectedList.length);
+    expect(new Set(listed)).toEqual(new Set(expectedList));
     // 变异：名单少一项 / 多一项都必须被上面两条抓住
     expect(new Set(listed.slice(1))).not.toEqual(new Set(WORKFLOW_KIND_TASK_TYPES));
   });

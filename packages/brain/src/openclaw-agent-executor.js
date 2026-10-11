@@ -299,7 +299,7 @@ export async function triggerOpenclawAgent(task, deps = {}) {
  * `--json` 输出是多行的，最后一行才是总结；正文里也常有带大括号的文字。所以从末尾逐行往上找
  * 第一行「以 { 开头且整行能 JSON.parse」的——按整块尾巴去匹配大括号会被正文里的括号骗走。
  */
-function parseReceipt(exit, tail) {
+export function parseReceipt(exit, tail) {
   let text = null;
   const lines = tail.split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {

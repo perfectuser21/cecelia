@@ -139,7 +139,8 @@ describe('SKILL_WHITELIST', () => {
     // 会出现在 VALID_TASK_TYPES 里，但 SKILL_WHITELIST 接线仍属 PR3——显式豁免，不代表遗漏。
     // script_run（surface='script'，executor=script，棒 3）同理：确定性脚本步由 Brain 经 ssh 在跑场机执行
     // payload.cmd，根本不是 LLM skill 调用，没有 skill 可映射。
-    const SKILL_WHITELIST_EXEMPT = ['qiumi_task', 'script_run'];
+    // workflow_dispatch（任务 f38e7cc2）同理：Brain 经 ssh 起 work-commander，由专属 scheduler job 派发，不走 skill 通道。
+    const SKILL_WHITELIST_EXEMPT = ['qiumi_task', 'script_run', 'workflow_dispatch'];
     for (const taskType of VALID_TASK_TYPES) {
       if (SKILL_WHITELIST_EXEMPT.includes(taskType)) continue;
       expect(SKILL_WHITELIST[taskType]).toBeDefined();

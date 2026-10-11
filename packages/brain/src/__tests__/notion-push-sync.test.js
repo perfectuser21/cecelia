@@ -699,6 +699,8 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
       wfRow: { wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: { webhook_url: 'https://hk.example:8444/webhook/agentic-workflow-runner-v4/run' } },
       agentRow: { name: 'affine-yuesheng', dispatch: { template: 'yueshengyun-daily.json' } },
     });
+    // 先建单再派（任务 f38e7cc2）：建单拿到 task id 才派
+    mockCreateRoutedTask.mockResolvedValue({ task_id: 'wf-1', task: { id: 'wf-1' } });
     const readCalls = [];
     mockNotionReq.mockImplementation(async (t, path) => (
       String(path).includes('/query') ? { results: [relationPage()] } : {}
