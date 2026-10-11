@@ -26,6 +26,8 @@ fi
 CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:?CECELIA_INTERNAL_ENV_FILE 必填}"
 BARK_TOKEN="${BARK_TOKEN:-}"
 source "$DEPLOY_ROOT/scripts/lib/brain-image-retention.sh"
+# 告警 URL 编码：纯 bash（sidecar 跑在 Brain 镜像里，无 jq/python3）
+source "$DEPLOY_ROOT/scripts/lib/url-encode.sh"
 # 收尾使用既有 Docker socket 进入固定 Brain 容器；不依赖 bridge→宿主端口。
 EXPECTED_SHA="${EXPECTED_SHA:?EXPECTED_SHA 必填}"
 [[ "$BRAIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
@@ -34,10 +36,10 @@ EXPECTED_SHA="${EXPECTED_SHA:?EXPECTED_SHA 必填}"
 _sidecar_bark() {
   local msg="$1"
   [ -z "$BARK_TOKEN" ] && return 0
-  local body
-  body=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$msg" 2>/dev/null \
-         || printf '%s' "$msg")
-  curl -sf --max-time 10 "https://api.day.app/$BARK_TOKEN/Brain部署/$body?group=brain-deploy" \
+  local title body
+  title=$(_url_encode "Brain部署")
+  body=$(_url_encode "$msg")
+  curl -sf --max-time 10 "https://api.day.app/$BARK_TOKEN/$title/$body?group=brain-deploy" \
     >/dev/null 2>&1 || true
 }
 
