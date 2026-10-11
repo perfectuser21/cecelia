@@ -16,7 +16,7 @@ const SCENE_RE = FIELD('场景');
 // 单元测试当证据（那是 CI 的事，不是真人 QA）
 const UNIT_TEST_RE = /\b(?:vitest|jest|mocha)\b|\bnpm\s+(?:run\s+)?test\b|\bnode\s+--test\b|\bnpx\s+playwright\s+test\b/;
 // 生产 Brain：本机 5221 是 socat 代理到 us-vps 生产；us-vps tailscale IP / 主机别名
-const PRODUCTION_TARGET_RE = /:5221\b|\b(?:localhost|127\.0\.0\.1)\s+5221\b|100\.79\.41\.61|\bus-vps\b/;
+export const PRODUCTION_TARGET_RE = /:5221\b|\b(?:localhost|127\.0\.0\.1)\s+5221\b|100\.79\.41\.61|\bus-vps\b/;
 // 真正发出访问的命令（网络请求 / 数据库 / 远程登录 / 脚本里的 fetch）；grep/cat/sed 读到这些字样不算碰生产
 // （金丝雀 3e8414f6：规格 Q-n 本就写着 localhost:5221，只读命令被误判 evaluate_touched_production）
 const NETWORK_RE = /\b(?:curl|wget|nc|ncat|telnet|psql|pg_dump|ssh|scp|rsync|fetch|axios|requests|http\.get|https\.get)\b/;
@@ -86,7 +86,7 @@ export function unitTestEvidence(items) {
 }
 
 // 变量赋值指向生产（B=http://localhost:5221 之后 curl $B）
-const PRODUCTION_ASSIGN_RE = /\b[A-Za-z_][A-Za-z0-9_]*=['"]?\S*(?::5221\b|100\.79\.41\.61|\bus-vps\b)/;
+export const PRODUCTION_ASSIGN_RE = /\b[A-Za-z_][A-Za-z0-9_]*=['"]?\S*(?::5221\b|100\.79\.41\.61|\bus-vps\b)/;
 
 /**
  * 执行记录里访问过生产 Brain 的命令：按 ; && || | 切成片段，同一片段里既有访问动作又指向生产；

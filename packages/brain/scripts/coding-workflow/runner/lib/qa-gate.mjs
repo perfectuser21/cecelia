@@ -11,7 +11,7 @@ import { removeWorktree } from './worktree.mjs';
 import { ghJson, listOwnPrs, requiredState, CW_BRANCH_RE } from './cifix-scan.mjs';
 import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from './pr-branch.mjs';
 import { previewOf } from '../../lib/preview.mjs';
-import { buildQaSmoke, registerSmoke, QA_SMOKE_DIR } from '../../lib/qa-smoke.mjs';
+import { buildQaSmoke, selectQaSmokeItems, registerSmoke, QA_SMOKE_DIR } from '../../lib/qa-smoke.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { cannotVerifyAccepted } from './cv-accepted.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
@@ -179,6 +179,9 @@ const qaIssueLines = (qa) => [...qa.failed, ...qa.blocking]
 const judgeIssueLines = (j) => j.blocking
   .map((i) => `- ${i.id}（对应 ${i.covers.join('、')}，${i.severity}，${i.type}）${i.where ? `［${i.where}］` : ''}：${i.detail}`).join('\n');
 
+/** 未固化的 PASS 条目及原因（other_port / local_path / production / browser / not_preview），拼进 smoke_note。 */
+const skippedNote = (skipped = []) => (skipped.length ? `；剔除 ${skipped.map((x) => `${x.id}(${x.reason})`).join(',')}` : '');
+
 /**
  * QA 与裁判都通过：把 PASS 的 T-n API 命令固化成回归 smoke 并登记（审计 #9，决策 c8621227），
  * 返回要随 QA 记录一并提交的路径；没有可固化的条目返回 []。
@@ -190,16 +193,17 @@ function solidifyQa(ctx, pr, s, round, worktree, intent, reportFile, previewUrl)
     const reportText = fs.readFileSync(path.join(worktree, intent.sprintDir, reportFile), 'utf8');
     const smoke = buildQaSmoke({ taskId: intent.taskId, previewUrl, reportText });
     if (!smoke) {
-      ctx.log(`QA 门 PR #${pr.number}：QA 报告里没有可固化的 API 验收命令，不生成回归 smoke`);
+      const why = skippedNote(selectQaSmokeItems({ previewUrl, reportText }).skipped);
+      ctx.log(`QA 门 PR #${pr.number}：QA 报告里没有可固化的 API 验收命令，不生成回归 smoke${why}`);
       const kept = fs.existsSync(path.join(worktree, file));
-      s.smoke_note = kept
+      s.smoke_note = (kept
         ? `第 ${round} 轮 QA 报告无可固化的 API 验收命令，保留第 ${s.smoke?.round ?? '?'} 轮版本 ${file}`
-        : `本任务无回归 smoke（第 ${round} 轮 QA 报告无可固化的 API 验收命令）`;
+        : `本任务无回归 smoke（第 ${round} 轮 QA 报告无可固化的 API 验收命令）`) + why;
       return [];
     }
     const changed = registerSmoke(worktree, smoke);
     s.smoke = { round, file, items: smoke.items, at: new Date().toISOString() };
-    s.smoke_note = `第 ${round} 轮固化 ${file}（${smoke.items.join(',')}）`;
+    s.smoke_note = `第 ${round} 轮固化 ${file}（${smoke.items.join(',')}）${skippedNote(smoke.skipped)}`;
     ctx.log(`QA 门 PR #${pr.number}：验收命令 ${smoke.items.join(',')} 固化为 ${smoke.name}（登记 allowlist${smoke.writes ? ' + write-targets' : ''}）`);
     return changed;
   } catch (error) {

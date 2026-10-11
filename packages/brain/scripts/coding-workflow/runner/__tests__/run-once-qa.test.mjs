@@ -382,6 +382,20 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       expect(brainQa().at(-1).qa.smoke_note).toContain('第 1 轮固化');
     });
 
+    // 金丝雀 4 r10/5 r3/6 r3：QA 先写 B=<预览地址> 再 curl "$B/api/…"，旧筛选一条都没收
+    it('预览地址先赋给变量的写法也固化；打本机其他端口的条目剔除并写进 smoke_note', async () => {
+      const r = await go(green(), { mode: 'pass-api-var' });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(state().smoke).toMatchObject({ round: 1, file: SMOKE, items: ['T-1'] });
+      const note = brainQa().at(-1).qa.smoke_note;
+      expect(note).toContain('第 1 轮固化');
+      expect(note).toContain('剔除 T-2(other_port)');
+      const content = git(sb.origin, 'show', `${BRANCH}:${SMOKE}`);
+      expect(content).toContain('B="$BRAIN_URL";');
+      expect(content).not.toContain('5302');
+      expect(content).not.toContain('5299');
+    });
+
     it('没有可固化命令、也从未固化过 → smoke_note 记「本任务无回归 smoke」', async () => {
       const r = await go(green(), { mode: 'pass' });
       expect(r.exitCode, r.stderr).toBe(0);
