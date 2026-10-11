@@ -101,7 +101,9 @@ it('不存在 404（含 include=spans 与 SQL 注入式输入），非法入参 
     expect(r.body.error).toMatch(/not found/); expect('spans' in r.body).toBe(false);
   }
   const cases = [['/api/brain/runs/%20%20', 'run_id is required'], ['/api/brain/runs/', 'run_id is required'], ['/api/brain/runs', 'run_id is required'],
-    [`/api/brain/runs/${'a'.repeat(201)}`, 'run_id must be at most 200 characters'], ['/api/brain/runs/%E0%A4%A', 'run_id is not valid URL encoding']];
+    [`/api/brain/runs/${'a'.repeat(201)}`, 'run_id must be at most 200 characters'], ['/api/brain/runs/%E0%A4%A', 'run_id is not valid URL encoding'],
+    // 裁判 r2 J-2 + commander 裁决：NUL 等控制字符 PostgreSQL text 收不了，曾 500 并回显 PG 原始错误
+    ['/api/brain/runs/a%00b', 'run_id must not contain control characters'], ['/api/brain/runs/a%1Fb', 'run_id must not contain control characters']];
   for (const [path, error] of cases) { const r = await get(path); expect(r.status, path).toBe(400); expect(r.body).toEqual({ error }); }
 });
 
