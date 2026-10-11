@@ -74,6 +74,38 @@ RC4=$?
 set -e
 [ "$RC4" != 0 ] && pass "非发布目录拒绝安装" || fail "非发布目录拒绝安装" "rc=0 out=$OUT4"
 
+echo "── T5 装载模式：bootout 异步（print 仍见服务数次）+ 首次 bootstrap 返回 5 → 等卸载、重试后装载成功 ──"
+# 现场（MMV 10-12）：bootout 立即返回但服务还在卸载，紧接着 bootstrap 报 "Bootstrap failed: 5: Input/output error"
+LC="$TMP/lc5"; mkdir -p "$LC/bin" "$LC/state"; touch "$LC/state/loaded"
+cat > "$LC/bin/launchctl" <<SH
+#!/bin/bash
+echo "\$*" >> "$LC/calls.log"
+S="$LC/state"
+ghost=\$(cat "\$S/ghost" 2>/dev/null || echo 0)
+case "\$1" in
+  bootout) if [ -e "\$S/loaded" ]; then rm -f "\$S/loaded"; echo 4 > "\$S/ghost"; exit 0; fi; exit 3 ;;
+  print) [ -e "\$S/loaded" ] && exit 0; if [ "\$ghost" -gt 0 ]; then echo \$((ghost - 1)) > "\$S/ghost"; exit 0; fi; exit 113 ;;
+  bootstrap)
+    if [ ! -e "\$S/failed-once" ]; then touch "\$S/failed-once"; echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; fi
+    if [ -e "\$S/loaded" ] || [ "\$ghost" -gt 0 ]; then echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; fi
+    touch "\$S/loaded"; exit 0 ;;
+  kickstart) [ -e "\$S/loaded" ] && exit 0; exit 113 ;;
+esac
+exit 0
+SH
+chmod +x "$LC/bin/launchctl"
+set +e
+OUT5=$(PATH="$LC/bin:$PATH" HOME="$TMP/home" DEPLOY_TOKEN_FILE="$TOKEN_FILE" \
+  PREVIEW_LAUNCHD_POLL_INTERVAL=0.05 PREVIEW_LAUNCHD_RETRY_SLEEP=0.05 \
+  PREVIEW_RELEASES_DIR="$TMP/rel" PREVIEW_AGENT_ROOT="$REL" bash "$INSTALL" 2>&1)
+RC5=$?
+set -e
+[ "$RC5" = 0 ] && pass "竞态下装载退出 0" || fail "竞态下装载退出 0" "rc=$RC5 out=$OUT5 calls=$(cat "$LC/calls.log" 2>/dev/null)"
+grep -q '^print ' "$LC/calls.log" 2>/dev/null && pass "bootout 后轮询 print" || fail "bootout 后轮询 print" "$(cat "$LC/calls.log" 2>/dev/null)"
+[ "$(grep -c '^bootstrap ' "$LC/calls.log" 2>/dev/null)" -ge 2 ] && pass "bootstrap 失败后重试" || fail "bootstrap 失败后重试" "$(cat "$LC/calls.log" 2>/dev/null)"
+[ -e "$LC/state/loaded" ] && pass "最终服务已装载" || fail "最终服务已装载" "$(cat "$LC/calls.log" 2>/dev/null)"
+grep -q '^kickstart ' "$LC/calls.log" 2>/dev/null && pass "装载后 kickstart" || fail "装载后 kickstart" "$(cat "$LC/calls.log" 2>/dev/null)"
+
 echo ""
 echo "preview-agent-install.test.sh: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]

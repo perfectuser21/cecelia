@@ -35,8 +35,8 @@ setup() {
   # 源仓库：origin（bare）+ 本地 clone，main 上有发布需要的脚本
   git init -q --bare "$TMP/origin.git"
   git init -q -b main "$TMP/seed"
-  mkdir -p "$TMP/seed/scripts/preview-agent" "$TMP/seed/packages/brain"
-  for f in preview-agent-install.sh preview-agent.mjs preview-reaper.sh preview-agent/deploy-token.mjs; do
+  mkdir -p "$TMP/seed/scripts/preview-agent" "$TMP/seed/scripts/lib" "$TMP/seed/packages/brain"
+  for f in preview-agent-install.sh preview-agent.mjs preview-reaper.sh preview-agent/deploy-token.mjs lib/launchd-reload.sh; do
     [ -f "$SRC_SCRIPTS/$f" ] && cp "$SRC_SCRIPTS/$f" "$TMP/seed/scripts/$f"
   done
   echo '{"name":"seed","private":true}' > "$TMP/seed/package.json"
@@ -85,12 +85,38 @@ if [ "\$1" = "-l" ]; then [ -f "$TMP/crontab.txt" ] && cat "$TMP/crontab.txt" &&
 if [ "\$1" = "-" ]; then cat > "$TMP/crontab.txt"; else cp "\$1" "$TMP/crontab.txt"; fi
 echo "crontab-write" >> "$TMP/calls.log"
 SH
-  # mock：launchctl（bootstrap/kickstart 时按 plist 的 WorkingDirectory 生成磁盘样本，模拟代理起来后采样）
+  # mock：launchctl（有状态，复刻真实 launchd 的异步卸载）
+  #   bootout 立即返回，但之后 print 仍能看到服务 $LC_GHOST_PRINTS 次（"卸载中"）；
+  #   服务仍在（已装载或卸载中）时 bootstrap 返回 5: Input/output error；
+  #   $LC_FAIL_FIRST_BOOTSTRAP 存在时第一次 bootstrap 无条件返回 5。
+  #   bootstrap/kickstart 成功时按 plist 的 WorkingDirectory 生成磁盘样本，模拟代理起来后采样
+  LC_STATE="$TMP/launchd"; mkdir -p "$LC_STATE"; touch "$LC_STATE/loaded"   # 发布前旧代理在跑
+  export LC_GHOST_PRINTS=0
+  export LC_FAIL_FIRST_BOOTSTRAP="$TMP/lc-fail-first-bootstrap"
+  export PREVIEW_LAUNCHD_POLL_INTERVAL=0.05
+  export PREVIEW_LAUNCHD_RETRY_SLEEP=0.05
   cat > "$BIN/launchctl" <<SH
 #!/bin/bash
 echo "launchctl \$*" >> "$TMP/calls.log"
+S="$LC_STATE"
+ghost=\$(cat "\$S/ghost" 2>/dev/null || echo 0)
 wd=\$(awk '/<key>WorkingDirectory<\/key>/{f=1} f&&/<string>/{gsub(/.*<string>|<\/string>.*/,"");print;exit}' "$PREVIEW_AGENT_PLIST")
-if [ "\$1" = "bootstrap" ] || [ "\$1" = "kickstart" ]; then mkdir -p "\$wd/.runtime" && touch "\$wd/.runtime/host-disk.json"; fi
+case "\$1" in
+  bootout)
+    if [ -e "\$S/loaded" ]; then rm -f "\$S/loaded"; echo "\${LC_GHOST_PRINTS:-0}" > "\$S/ghost"; exit 0; fi
+    echo "Boot-out failed: 3: No such process" >&2; exit 3 ;;
+  print)
+    [ -e "\$S/loaded" ] && exit 0
+    if [ "\$ghost" -gt 0 ]; then echo \$((ghost - 1)) > "\$S/ghost"; exit 0; fi
+    echo "Could not find service" >&2; exit 113 ;;
+  bootstrap)
+    if [ -e "\$LC_FAIL_FIRST_BOOTSTRAP" ] && [ ! -e "\$S/failed-once" ]; then touch "\$S/failed-once"; echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; fi
+    if [ -e "\$S/loaded" ] || [ "\$ghost" -gt 0 ]; then echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; fi
+    touch "\$S/loaded"; mkdir -p "\$wd/.runtime" && touch "\$wd/.runtime/host-disk.json"; exit 0 ;;
+  kickstart)
+    [ -e "\$S/loaded" ] || { echo "Could not find service" >&2; exit 113; }
+    mkdir -p "\$wd/.runtime" && touch "\$wd/.runtime/host-disk.json"; exit 0 ;;
+esac
 exit 0
 SH
   # mock：npm（只建目录、记账）
@@ -206,6 +232,23 @@ set +e; OUT=$(PREVIEW_RELEASE_KEEP=3 bash "$RELEASE" --apply 2>&1); RC=$?; set -
 [ -d "$PREVIEW_RELEASES_DIR/rel-bbbbbbbbbbbb" ] && pass "仍有预览 worktree 的发布保留" || fail "在用发布保留" ""
 [ -d "$PREVIEW_RELEASES_DIR/rel-cccccccccccc" ] && pass "KEEP 范围内的发布保留" || fail "KEEP 范围内保留" ""
 [ -d "$PREVIEW_RELEASES_DIR/fleet-old" ] && pass "上一版保留" || fail "上一版保留" ""
+teardown
+
+# ── T6 launchctl 竞态：bootout 后服务还在卸载中 + 首次 bootstrap 返回 5 → 等卸载完并重试，发布成功不回滚 ──
+# 现场（MMV 10-12）：bootout 是异步的，紧接着 bootstrap 报 "Bootstrap failed: 5: Input/output error" → 整次发布回滚
+echo "── T6 launchctl bootout 异步 + bootstrap 5 重试 ──"
+setup
+export LC_GHOST_PRINTS=4
+touch "$LC_FAIL_FIRST_BOOTSTRAP"
+set +e; OUT=$(bash "$RELEASE" --apply 2>&1); RC=$?; set -e
+NEW="$PREVIEW_RELEASES_DIR/rel-${TARGET_SHA:0:12}"
+[ "$RC" = 0 ] && pass "竞态下 --apply 仍退出 0" || fail "竞态下 --apply 退出 0" "rc=$RC out=$OUT"
+echo "$OUT" | grep -q "回滚" && fail "未触发回滚" "$OUT" || pass "未触发回滚"
+grep -q "launchctl print" "$TMP/calls.log" && pass "bootout 后轮询 print 等服务卸载" || fail "bootout 后轮询 print" "$(cat "$TMP/calls.log")"
+[ "$(grep -c 'launchctl bootstrap' "$TMP/calls.log")" -ge 2 ] && pass "bootstrap 失败后重试" || fail "bootstrap 失败后重试" "$(cat "$TMP/calls.log")"
+[ "$(cat "$PREVIEW_RELEASES_DIR/.current" 2>/dev/null)" = "$NEW" ] && pass "记录为当前发布" || fail "记录为当前发布" "$OUT"
+grep -qF "<string>${NEW}</string>" "$PREVIEW_AGENT_PLIST" && pass "plist 指向新目录（未被回滚）" || fail "plist 指向新目录" "$(cat "$PREVIEW_AGENT_PLIST")"
+export LC_GHOST_PRINTS=0
 teardown
 
 echo ""
