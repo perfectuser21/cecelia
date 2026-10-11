@@ -16,7 +16,10 @@
  *   FR-15-network-skip-x3  : 连续 3 次 network_error → sendBark P2 告警被调（B8）
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock 外部依赖（允许 mock 的边：对外部 I/O，不 mock 内部判定逻辑）
@@ -53,9 +56,11 @@ vi.mock('../../alerting.js', () => ({
 }));
 
 // mock notifier.js（sendBark）— vi.hoisted 确保 factory 引用时已初始化
-const { mockSendBark, mockExecDeploy: _hoistedExecDeploy } = vi.hoisted(() => ({
+const { mockSendBark, mockExecDeploy: _hoistedExecDeploy, spawnState } = vi.hoisted(() => ({
   mockSendBark: vi.fn().mockResolvedValue(undefined),
   mockExecDeploy: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
+  // B5：spawn 调用与假子进程记录（补部署改 detached spawn 后断言用）
+  spawnState: { calls: [], children: [], execCmds: [] },
 }));
 vi.mock('../../notifier.js', () => ({
   sendBark: mockSendBark,
@@ -65,14 +70,27 @@ vi.mock('../../notifier.js', () => ({
 const mockExecDeploy = _hoistedExecDeploy;
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal();
+  const { EventEmitter } = await import('node:events');
   return {
     ...actual,
     exec: vi.fn((cmd, opts, cb) => {
       if (typeof opts === 'function') { cb = opts; }
+      spawnState.execCmds.push(cmd);
       mockExecDeploy(cmd).then(
         (res) => cb && cb(null, res.stdout, res.stderr),
         (err) => cb && cb(err)
       );
+    }),
+    // B5：补部署走 detached spawn——返回不会自己退出的假子进程（真实部署可能跑很久）
+    spawn: vi.fn((cmd, args = [], opts = {}) => {
+      mockExecDeploy([cmd, ...args].join(' '));
+      const child = new EventEmitter();
+      child.pid = 4242;
+      child.unref = vi.fn();
+      child.kill = vi.fn();
+      spawnState.calls.push({ cmd, args, opts });
+      spawnState.children.push(child);
+      return child;
     }),
   };
 });
@@ -84,6 +102,7 @@ import {
   runDriftCheck,
   DRIFT_SENTINEL_INTERVAL_MS,
   DRIFT_WINDOW_MS,
+  DRIFT_DEPLOY_WARN_MS,
 } from '../drift-sentinel.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -307,5 +326,98 @@ describe('drift-sentinel — FR-15 contract tests', () => {
   // 常量校验：DRIFT_WINDOW_MS 应为 30min
   it('DRIFT_WINDOW_MS 防抖窗口为 30min（1800000ms）', () => {
     expect(DRIFT_WINDOW_MS).toBe(30 * 60 * 1000);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// B5：补部署不得被硬超时杀掉（同类孤儿 pending 第二来源）
+// 旧实现 exec('bash scripts/brain-deploy.sh', { timeout: 300000 })：构建超过 5 分钟即 SIGTERM，
+// brain-deploy.sh 在 begin 之后、finish 之前被杀 → 台账留孤儿 pending。
+// 新口径：detached spawn、不设 timeout、不等部署结束；超时只告警，结算交给部署脚本自身 trap
+// 与下一次 begin 的带外 reconcile（#6321）。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('drift-sentinel — B5 补部署 detached，超时只告警不杀进程', () => {
+  let tmpRoot;
+  let raiseMock;
+
+  beforeEach(async () => {
+    mockKvStore.clear();
+    mockExecDeploy.mockClear();
+    mockSendBark.mockClear();
+    spawnState.calls.length = 0;
+    spawnState.children.length = 0;
+    spawnState.execCmds.length = 0;
+    raiseMock = vi.mocked(await import('../../alerting.js')).raise;
+    raiseMock.mockClear();
+    tmpRoot = mkdtempSync(join(tmpdir(), 'drift-b5-'));
+    process.env.REPO_ROOT = tmpRoot;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete process.env.REPO_ROOT;
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function redeployOptions() {
+    const now = new Date('2026-07-16T10:00:00Z');
+    return makeOptions({
+      mainSha: SHA_MAIN,
+      prodSha: SHA_PROD,
+      now,
+      driftFirstSeenAt: new Date(now.getTime() - (30 * 60 * 1000 + 1000)).toISOString(),
+      redeployCount: 0,
+    });
+  }
+
+  it('B5-detached: 补部署用 detached spawn 跑 REPO_ROOT 下的 brain-deploy.sh，不带 timeout，不走 exec', async () => {
+    const result = await runDriftCheck(redeployOptions());
+
+    expect(result.verdict).toBe('redeploying');
+    expect(spawnState.calls).toHaveLength(1);
+    const { cmd, args, opts } = spawnState.calls[0];
+    expect(cmd).toBe('bash');
+    expect(args[0]).toBe(join(tmpRoot, 'scripts', 'brain-deploy.sh'));
+    expect(opts.detached).toBe(true);
+    expect(opts.cwd).toBe(tmpRoot);
+    expect(opts).not.toHaveProperty('timeout');
+    expect(spawnState.children[0].unref).toHaveBeenCalledTimes(1);
+    expect(spawnState.execCmds.filter((c) => c.includes('brain-deploy'))).toHaveLength(0);
+    // 部署输出落宿主挂载目录，Brain 重启后仍可查
+    expect(result.deploy_log_path).toContain(join(tmpRoot, 'logs'));
+  });
+
+  it('B5-slow: 部署超过 DRIFT_DEPLOY_WARN_MS 仍未结束 → 只 raise P2 告警，不杀部署进程', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const result = await runDriftCheck(redeployOptions());
+    expect(result.verdict).toBe('redeploying');
+    const child = spawnState.children[0];
+
+    expect(DRIFT_DEPLOY_WARN_MS).toBeGreaterThan(5 * 60 * 1000);
+    vi.advanceTimersByTime(DRIFT_DEPLOY_WARN_MS + 1);
+
+    expect(raiseMock).toHaveBeenCalledWith('P2', 'drift_redeploy_slow', expect.any(String));
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it('B5-failed: 部署进程非 0 退出 → raise P2 drift_redeploy_failed，且不再发超时告警', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await runDriftCheck(redeployOptions());
+    const child = spawnState.children[0];
+
+    child.emit('close', 1, null);
+    vi.advanceTimersByTime(DRIFT_DEPLOY_WARN_MS + 1);
+
+    expect(raiseMock).toHaveBeenCalledWith('P2', 'drift_redeploy_failed', expect.stringContaining('code=1'));
+    expect(raiseMock).not.toHaveBeenCalledWith('P2', 'drift_redeploy_slow', expect.any(String));
+  });
+
+  it('B5-ok: 部署进程 0 退出 → 不告警', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await runDriftCheck(redeployOptions());
+    spawnState.children[0].emit('close', 0, null);
+    vi.advanceTimersByTime(DRIFT_DEPLOY_WARN_MS + 1);
+
+    expect(raiseMock).not.toHaveBeenCalled();
   });
 });

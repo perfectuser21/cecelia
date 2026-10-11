@@ -66,6 +66,7 @@ vi.mock('../../../packages/brain/src/notifier.js', () => ({
 const mockExecDeploy = _hoistedExecDeploy;
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal();
+  const { EventEmitter } = await import('node:events');
   return {
     ...actual,
     exec: vi.fn((cmd, opts, cb) => {
@@ -74,6 +75,15 @@ vi.mock('child_process', async (importOriginal) => {
         (res) => cb && cb(null, res.stdout, res.stderr),
         (err) => cb && cb(err)
       );
+    }),
+    // B5：补部署走 detached spawn——只 mock I/O 边界，绝不真跑 brain-deploy.sh
+    spawn: vi.fn((cmd, args = [], opts = {}) => {
+      mockExecDeploy([cmd, ...args].join(' '));
+      const child = new EventEmitter();
+      child.pid = 4242;
+      child.unref = vi.fn();
+      child.kill = vi.fn();
+      return child;
     }),
   };
 });
