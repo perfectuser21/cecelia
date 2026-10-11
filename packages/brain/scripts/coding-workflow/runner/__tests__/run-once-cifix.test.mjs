@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { git } from '../../__tests__/helpers/git.mjs';
 import { startFakeBrain, codingTask, makeSandbox, runnerEnv, runOnceProcess, readJsonLines } from './helpers/sandbox.mjs';
 import { loadConfig } from '../lib/config.mjs';
+import { expectSessionOnlyInFile } from './helpers/session-quiet.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FAKE_GH_CI = path.join(HERE, 'fixtures/fake-gh-ci.mjs');
@@ -106,6 +107,14 @@ describe('runner CI 红自动修复（ci_fix）', () => {
     expect(brain.patches.some((p) => p.id.startsWith('dddddddd'))).toBe(false);
     // 修复 worktree 用完即删
     expect(fs.readdirSync(sb.worktreeBase).filter((n) => n.startsWith('cifix-'))).toEqual([]);
+  });
+
+  // C1 runner-log-noise：会话整段 markdown / 单行巨型 JSON result 曾原样进主日志（占 29% 字节）
+  it('CI 修复会话输出只落 cifix-<pr>-<ts>.log，主日志只一行摘要（exit/花费/会话文件路径）', async () => {
+    const r = await go(red(), { extra: { FAKE_CIFIX_COST: '0.5' } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(state().attempts).toMatchObject([{ head, result: 'pushed' }]);
+    expectSessionOnlyInFile(r.stderr, sb.logDir, { tag: 'ci-fix', kind: 'cifix', pr: 77, cost: 0.5 });
   });
 
   it('必需检查还有 pending / 全部通过 / 无必需检查 / 非 cw 分支：不修，照常进入认领新任务', async () => {

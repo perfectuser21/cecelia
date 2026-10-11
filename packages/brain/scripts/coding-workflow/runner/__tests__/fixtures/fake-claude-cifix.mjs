@@ -70,3 +70,11 @@ if (mode.startsWith('cmd-')) {
   if (rulingPath && mode !== 'cmd-garbage') fs.writeFileSync(rulingPath, JSON.stringify(ruling));
 }
 console.log(`fake claude ci-fix mode=${mode}`);
+// 会话正文（真 claude 收尾时的 markdown 总结 + 一行 stderr）：只该落进按 PR 分开的会话文件，不该进 runner 主日志
+console.log(`## FAKE_SESSION_BODY mode=${mode}\n\n| 项 | 结论 |\n|---|---|\n| J-1 | 已修 |`);
+process.stderr.write(`FAKE_SESSION_STDERR mode=${mode}\n`);
+// FAKE_CIFIX_COST：末尾输出一行 result 事件（真 claude --output-format json 的形状），供计费与摘要测试
+if (process.env.FAKE_CIFIX_COST) {
+  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 3, duration_ms: 1000,
+    total_cost_usd: Number(process.env.FAKE_CIFIX_COST), result: 'FAKE_SESSION_BODY 修完了\n第二行' }));
+}

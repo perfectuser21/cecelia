@@ -94,10 +94,15 @@ describe('coding workflow runner 保留期清理', () => {
     const qa = file('qa-77.json', 90);
     const cifix = file('cifix-77.json', 90);
     const transcript = file('cifix-77-1791574642348.log', 90);
+    // 三类 runner 会话文件（C1：会话输出边跑边写进这里、不再进主日志）都留在 logDir 顶层，照常按期清
+    const qaFixTranscript = file('qa-fix-77-1791574642348.log', 90);
+    const commanderTranscript = file('commander-77-1.log', 90);
     const r = await runOnceProcess(runnerEnv(sb, brain.url));
     expect(r.exitCode, r.stderr).toBe(0);
     expect(fs.existsSync(qa)).toBe(true);
     expect(fs.existsSync(cifix)).toBe(true);
     expect(fs.existsSync(transcript)).toBe(false);
+    expect(fs.existsSync(qaFixTranscript)).toBe(false);
+    expect(fs.existsSync(commanderTranscript)).toBe(false);
   }, 30000);
 });

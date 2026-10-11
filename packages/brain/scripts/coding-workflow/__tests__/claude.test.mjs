@@ -1,6 +1,6 @@
 // lib/claude.mjs 单测：超时计算、失败映射、进程组收割、越界写快照（spec/build/verify 共用）。
 // 取消路径（执行器 SIGTERM）会让活动进程 process.exit，不在本进程内测，由 spec.test 经 callActivityProcess 覆盖。
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -155,6 +155,53 @@ describe('runClaude（进程内 + 假 claude）', () => {
     expect(r.output).toContain(`FAKE_CWD: ${fs.realpathSync(tmp)}`);
     expect(r.output).toContain('FAKE_ENV: CLAUDECODE=<unset> CLAUDE_CODE_ENTRYPOINT=<unset> GIT_DIR=<unset>');
     expect(r.output).toContain('fake claude log line 199');
+  });
+
+  // runner 主日志噪音（C1 runner-log-noise）：runner 进程内的 ci-fix/qa-fix/commander 会话给 transcriptPath，
+  // 输出只落该文件；activity（spec/build/verify）不给，照旧转写到 stderr（executor 已把它重定向进 <task>.log）
+  const captureStderr = async (fn) => {
+    const seen = [];
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk, ...rest) => {
+      seen.push(String(chunk));
+      const cb = rest.find((x) => typeof x === 'function');
+      if (cb) cb();
+      return true;
+    });
+    try {
+      return { result: await fn(), seen: seen.join('') };
+    } finally {
+      spy.mockRestore();
+    }
+  };
+
+  it('给 transcriptPath：会话 stdout/stderr 只写进该文件（目录自动建），不写本进程 stderr；返回值照常完整', async () => {
+    const marker = `SESSION_MARKER_${Math.random().toString(36).slice(2)}`;
+    setEnv({ CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'ok', FAKE_CLAUDE_MARKER: marker, FAKE_CLAUDE_COST: '0.42' });
+    const transcriptPath = path.join(tmp, 'logs/sub/qa-fix-1-1.log');
+    const { result: r, seen } = await captureStderr(() => runClaude({ args: ['-p', prompt()], cwd: tmp, timeoutMs: 20000, tag: 'test', transcriptPath }));
+    expect(r.code).toBe(0);
+    expect(seen).not.toContain(marker);
+    expect(seen).not.toContain('fake claude log line');
+    const text = fs.readFileSync(transcriptPath, 'utf8');
+    expect(text).toContain(`STDOUT ${marker}`);
+    expect(text).toContain(`STDERR ${marker}`);
+    expect(text).toContain('fake claude log line 199');
+    expect(r.output).toContain(`STDOUT ${marker}`);
+    expect(r.output).toContain(`STDERR ${marker}`);
+    expect(r.stdout).toContain(`STDOUT ${marker}`);
+    expect(r.stdout).not.toContain(`STDERR ${marker}`);
+    expect(r.cost_usd).toBe(0.42);
+    expect(r.transcriptPath).toBe(transcriptPath);
+  });
+
+  it('不给 transcriptPath（activity 路径）：照旧转写到本进程 stderr', async () => {
+    const marker = `SESSION_MARKER_${Math.random().toString(36).slice(2)}`;
+    setEnv({ CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: 'ok', FAKE_CLAUDE_MARKER: marker });
+    const { result: r, seen } = await captureStderr(() => runClaude({ args: ['-p', prompt()], cwd: tmp, timeoutMs: 20000, tag: 'test' }));
+    expect(r.code).toBe(0);
+    expect(seen).toContain(`STDOUT ${marker}`);
+    expect(seen).toContain(`STDERR ${marker}`);
+    expect(r.transcriptPath).toBeUndefined();
   });
 
   it('非 0 退出：code 与输出返回给调用方', async () => {

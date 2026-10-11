@@ -98,6 +98,24 @@ describe('runner.sh 启动器', () => {
     expect(git(clone, 'rev-parse', 'HEAD')).toBe(git(origin, 'rev-parse', 'main'));
   });
 
+  // C1 runner-log-noise：每 5 分钟一行「已自更新到 origin/main <同一个 sha>」曾占主日志 43% 行数
+  it('自更新日志只在 HEAD 变了时打一行；没变不打', () => {
+    gitPlain('clone', '-q', origin, clone);
+    commitSeed('v2');
+    let r = runRunner(env);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr.match(/已自更新到 origin\/main/g)).toHaveLength(1);
+    expect(r.stderr).toContain(git(origin, 'rev-parse', '--short', 'main').trim());
+    r = runRunner(env);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain('已自更新');
+    expect(stubOut(r).head).toBe('v2');
+    commitSeed('v3');
+    r = runRunner(env);
+    expect(r.stderr.match(/已自更新到 origin\/main/g)).toHaveLength(1);
+    expect(stubOut(r).head).toBe('v3');
+  });
+
   it('工作区不干净：记日志、不更新、不动现场，照常 exec', () => {
     gitPlain('clone', '-q', origin, clone);
     commitSeed('v2');
