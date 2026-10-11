@@ -1,4 +1,5 @@
 import { it, expect, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { registerWorkflowSource } from '../workflow-source-registration.js';
 const id='11111111-1111-4111-8111-111111111111', capability='22222222-2222-4222-8222-222222222222';
 const input=()=>({workflow_id:id,capability_id:capability,revision:'a'.repeat(40),actor:'Codex',
@@ -19,7 +20,7 @@ it('固定Git合同身份与CAS旧来源核准后只绑定现有流程，回读�
  expect(f.client.query.mock.calls.filter(([s])=>s.startsWith('UPDATE'))).toHaveLength(1);
  expect(f.client.query.mock.calls.some(([s])=>/INSERT|activities|steps/.test(s))).toBe(false);
 });
-it.each([{contract_sync_revision:1},{source_repo:'wrong/repo'},{capability_id:'33333333-3333-4333-8333-333333333333'}])('旧来源/revision/真实能力变化拒绝且回滚',async change=>{
+it.each([{contract_sync_revision:1},{source_repo:'wrong/repo'},{capability_id:'33333333-3333-4333-8333-333333333333'},{capability_code:'wrong'},{capability_code:null},{status:'retired'}])('旧来源/revision/真实能力变化拒绝且回滚',async change=>{
  const f=fixture(change);await expect(registerWorkflowSource(f.pool,input(),{readContract:async()=>({document:doc(),sha256:'f'.repeat(64)})})).rejects.toMatchObject({status:409});
  expect(f.client.query.mock.calls.some(([s])=>s.startsWith('UPDATE'))).toBe(false);expect(f.client.query).toHaveBeenCalledWith('ROLLBACK');
 });
@@ -32,4 +33,12 @@ it('缺CAS字段或可变revision在网络和事务前拒绝',async()=>{
  await expect(registerWorkflowSource(f.pool,p,{readContract})).rejects.toMatchObject({status:400});
  await expect(registerWorkflowSource(f.pool,{...input(),revision:'main'},{readContract})).rejects.toMatchObject({status:400});
  expect(readContract).not.toHaveBeenCalled();expect(f.pool.connect).not.toHaveBeenCalled();
+});
+it('真实Git固定commit/tree/blob字节核验，污染blob在事务前拒绝',async()=>{
+ const f=fixture(),bytes=Buffer.from(JSON.stringify(doc())),blobSha=createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`),bytes])).digest('hex');
+ const fetchFn=vi.fn(async url=>({ok:true,json:async()=>url.includes('/git/commits/')?{sha:'a'.repeat(40),tree:{sha:'b'.repeat(40)}}:url.includes('/git/trees/')?{sha:'b'.repeat(40),truncated:false,tree:[{path:input().source_path,type:'blob',mode:'100644',sha:blobSha}]}:{sha:blobSha,encoding:'base64',size:bytes.length,content:bytes.toString('base64')}}));
+ expect((await registerWorkflowSource(f.pool,input(),{fetchFn,resolveToken:async()=> 'test-only'})).readback_verified).toBe(true);
+ expect(fetchFn.mock.calls.every(([u])=>u.startsWith('https://api.github.com/repos/perfectuser21/zenithjoy-workspace/git/'))).toBe(true);
+ const bad=fixture();await expect(registerWorkflowSource(bad.pool,input(),{fetchFn:async u=>{const r=await fetchFn(u);return {ok:true,json:async()=>({...await r.json(),...(u.includes('/git/blobs/')?{content:Buffer.alloc(bytes.length).toString('base64')}:{})})};},resolveToken:async()=> 'test-only'})).rejects.toMatchObject({code:'WORKFLOW_SOURCE_BLOB_MISMATCH'});
+ expect(bad.pool.connect).not.toHaveBeenCalled();
 });
