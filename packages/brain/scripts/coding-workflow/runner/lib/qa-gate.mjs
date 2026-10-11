@@ -11,7 +11,7 @@ import { removeWorktree } from './worktree.mjs';
 import { ghJson, listOwnPrs, requiredState, CW_BRANCH_RE } from './cifix-scan.mjs';
 import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from './pr-branch.mjs';
 import { previewOf } from '../../lib/preview.mjs';
-import { buildQaSmoke, registerSmoke } from '../../lib/qa-smoke.mjs';
+import { buildQaSmoke, registerSmoke, QA_SMOKE_DIR } from '../../lib/qa-smoke.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { runJudge, priorJudgeFiles } from './judge-gate.mjs';
@@ -61,6 +61,8 @@ async function report(ctx, taskId, s) {
     verdict: last?.verdict ?? null, judge: last?.judge?.verdict ?? null, rounds: s.rounds.length, passed: Boolean(s.passed), last_report: last?.report ?? null,
     // 「完成但有疑虑」可见（审计 #41）：裁判的建议级问题
     concerns: last?.judge?.concerns ?? [],
+    // 回归 smoke 固化说明（决策 b8030661）：哪轮固化 / 本轮为何没固化、保留哪轮版本
+    smoke_note: s.smoke_note ?? null,
   } };
   if (s.escalated) result.escalations = [s.escalated];
   const r = await ctx.brain.patch(taskId, { result });
@@ -178,19 +180,28 @@ const judgeIssueLines = (j) => j.blocking
 /**
  * QA 与裁判都通过：把 PASS 的 T-n API 命令固化成回归 smoke 并登记（审计 #9，决策 c8621227），
  * 返回要随 QA 记录一并提交的路径；没有可固化的条目返回 []。
+ * 结果写进 s.smoke / s.smoke_note（决策 b8030661）：没有可固化命令时保留分支上已有版本（不删不改），说明哪轮保留哪版。
  */
-function solidifyQa(ctx, pr, worktree, intent, reportFile, previewUrl) {
+function solidifyQa(ctx, pr, s, round, worktree, intent, reportFile, previewUrl) {
+  const file = `${QA_SMOKE_DIR}/cw-${String(intent.taskId).slice(0, 8)}-qa-smoke.sh`;
   try {
     const reportText = fs.readFileSync(path.join(worktree, intent.sprintDir, reportFile), 'utf8');
     const smoke = buildQaSmoke({ taskId: intent.taskId, previewUrl, reportText });
     if (!smoke) {
       ctx.log(`QA 门 PR #${pr.number}：QA 报告里没有可固化的 API 验收命令，不生成回归 smoke`);
+      const kept = fs.existsSync(path.join(worktree, file));
+      s.smoke_note = kept
+        ? `第 ${round} 轮 QA 报告无可固化的 API 验收命令，保留第 ${s.smoke?.round ?? '?'} 轮版本 ${file}`
+        : `本任务无回归 smoke（第 ${round} 轮 QA 报告无可固化的 API 验收命令）`;
       return [];
     }
     const changed = registerSmoke(worktree, smoke);
+    s.smoke = { round, file, items: smoke.items, at: new Date().toISOString() };
+    s.smoke_note = `第 ${round} 轮固化 ${file}（${smoke.items.join(',')}）`;
     ctx.log(`QA 门 PR #${pr.number}：验收命令 ${smoke.items.join(',')} 固化为 ${smoke.name}（登记 allowlist${smoke.writes ? ' + write-targets' : ''}）`);
     return changed;
   } catch (error) {
+    s.smoke_note = `第 ${round} 轮固化回归 smoke 失败：${error?.message || error}`;
     ctx.log(`QA 门 PR #${pr.number}：固化回归 smoke 失败：${error?.message || error}`);
     return [];
   }
@@ -408,7 +419,7 @@ async function qaRound(ctx, pr, s, signal) {
     if (qa.verdict === 'PASS' && cfg.judge) {
       const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
       if (j.file) records.push(`${intent.sprintDir}/${j.file}`);
-      if (!j.error && j.verdict === 'PASS') records.push(...solidifyQa(ctx, pr, worktree, intent, result.outputs.qa_report_file, qa.env?.url));
+      if (!j.error && j.verdict === 'PASS') records.push(...solidifyQa(ctx, pr, s, round, worktree, intent, result.outputs.qa_report_file, qa.env?.url));
       await commit(`docs(qa): 第 ${round} 轮真人 QA PASS，${j.error ? '独立裁判待定' : `独立裁判 ${j.verdict}`}`);
       return afterJudge(ctx, pr, s, worktree, intent, entry, j);
     }
@@ -436,7 +447,7 @@ async function judgeRound(ctx, pr, s, signal) {
   return inPrWorktree(ctx, pr, s, `qa-${pr.number}-j${entry.round}`, signal, async (worktree, intent) => {
     const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
     const smoke = !j.error && j.verdict === 'PASS' && entry.report
-      ? solidifyQa(ctx, pr, worktree, intent, path.basename(entry.report), entry.env_url) : [];
+      ? solidifyQa(ctx, pr, s, entry.round, worktree, intent, path.basename(entry.report), entry.env_url) : [];
     if (j.file) await commitRecords(worktree, pr, [`${intent.sprintDir}/${j.file}`, ...smoke], `docs(qa): 第 ${entry.round} 轮独立裁判 ${j.verdict}`);
     return afterJudge(ctx, pr, s, worktree, intent, entry, j);
   });
