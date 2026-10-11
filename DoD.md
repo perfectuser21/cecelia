@@ -1,3 +1,8 @@
+# 对话捕获只收真人原话 + 长寿会话近 24h 关联（任务 c8b27bc5 生产首轮回归）
+
+- [x] [BEHAVIOR] convcapturefilter Claude transcript 里 isMeta、origin.kind≠human（任务通知）、命令回显/本地命令输出/中断提示/压缩续接摘要不算真人文本；关联任务只认会话最后活动前 24h 内提到的 --task-id/claim。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/conversation-capture-claude.test.js src/__tests__/conversation-capture-remote.test.js --maxWorkers=1 --minWorkers=1"
+
 # 修对话自动捕获 + 有头会话收尾自动 handoff（任务 c8b27bc5）
 
 - [x] [BEHAVIOR] convcaptureremote 容器内对话捕获走 ssh mmv 只读跑同一份三适配器（远端脚本 fixture 真跑出会话、带 entrypoint/linkedTaskIds、turns 截尾 ≤4000 字）；远端 ~/.claude/projects 缺失、ssh 失败、本地模式目录缺失均计 adapter_failures 使 errors>0（回归：09-10 起容器内静默 0 全绿）；未登记出处且 entrypoint=cli 判为有头真人会话，sdk-cli 照旧跳过。

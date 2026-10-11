@@ -5,17 +5,36 @@ import os from 'os';
 export const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR
   || path.join(os.homedir(), '.claude', 'projects');
 
+// Claude Code 以 role=user 写进 transcript、但不是真人打的字：命令回显、本地命令输出、
+// 中断提示、上下文压缩后的续接摘要。新格式另有 isMeta / origin.kind 标记，老格式只能认前缀。
+const INJECTED_PREFIXES = [
+  '<task-notification>',
+  '<command-name>',
+  '<command-message>',
+  '<local-command-',
+  '<system-reminder>',
+  '[Request interrupted',
+  'This session is being continued from a previous conversation',
+  'Base directory for this skill:',
+];
+
+function rawUserText(content) {
+  if (typeof content === 'string') return content.trim();
+  return content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
+}
+
 function isRealUserText(entry) {
   if (entry?.message?.role !== 'user') return false;
+  if (entry.isMeta === true) return false;
+  const originKind = entry.origin && typeof entry.origin === 'object' ? entry.origin.kind : null;
+  if (originKind && originKind !== 'human') return false;
   const content = entry.message.content;
-  if (typeof content === 'string') return content.trim().length > 0;
-  if (Array.isArray(content)) {
-    const hasToolResult = content.some((b) => b?.type === 'tool_result');
-    if (hasToolResult) return false;
-    const textBlocks = content.filter((b) => b?.type === 'text' && b.text?.trim());
-    return textBlocks.length > 0;
-  }
-  return false;
+  if (Array.isArray(content) && content.some((b) => b?.type === 'tool_result')) return false;
+  if (typeof content !== 'string' && !Array.isArray(content)) return false;
+  const text = rawUserText(content);
+  if (!text) return false;
+  if (originKind === 'human') return true;
+  return !INJECTED_PREFIXES.some((p) => text.startsWith(p));
 }
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
@@ -24,12 +43,19 @@ const TASK_LINK_PATTERNS = [
   new RegExp(`/api/brain/tasks/(${UUID})/claim`, 'gi'),
 ];
 
-function collectTaskIds(text, into) {
+/** 长寿会话（同一个 tmux 会话连着做好几天）只认最近这段时间内提到的任务 */
+export const LINK_RECENCY_MS = 24 * 60 * 60 * 1000;
+
+/** into: Map<taskId, 最近一次提到的时间 ms（无时间戳记 0）> */
+function collectTaskIds(text, into, tsMs) {
   if (typeof text !== 'string' || !text) return;
   for (const re of TASK_LINK_PATTERNS) {
     re.lastIndex = 0;
     let m;
-    while ((m = re.exec(text)) !== null) into.add(m[1].toLowerCase());
+    while ((m = re.exec(text)) !== null) {
+      const id = m[1].toLowerCase();
+      into.set(id, Math.max(into.get(id) ?? 0, tsMs || 0));
+    }
   }
 }
 
@@ -46,8 +72,9 @@ export const MAX_BASH_CLAIM_LINKS = 3;
 function collectEntryTaskIds(entry, links) {
   const role = entry?.message?.role;
   const content = entry?.message?.content;
+  const tsMs = entry?.timestamp ? new Date(entry.timestamp).getTime() : 0;
   if (role === 'user') {
-    if (isRealUserText(entry)) collectTaskIds(extractText(entry), links.primary);
+    if (isRealUserText(entry)) collectTaskIds(extractText(entry), links.primary, tsMs);
     return;
   }
   if (role === 'assistant' && Array.isArray(content)) {
@@ -55,21 +82,26 @@ function collectEntryTaskIds(entry, links) {
       if (block?.type !== 'tool_use' || !block.input || typeof block.input !== 'object') continue;
       const target = block.name === 'Skill' ? links.primary : block.name === 'Bash' ? links.secondary : null;
       if (!target) continue;
-      for (const v of Object.values(block.input)) collectTaskIds(typeof v === 'string' ? v : '', target);
+      for (const v of Object.values(block.input)) collectTaskIds(typeof v === 'string' ? v : '', target, tsMs);
     }
   }
 }
 
-function resolveLinkedTaskIds(links) {
-  if (links.primary.size > 0) return [...links.primary];
-  if (links.secondary.size > 0 && links.secondary.size <= MAX_BASH_CLAIM_LINKS) return [...links.secondary];
+function recentIds(map, lastActivityMs) {
+  const floor = lastActivityMs ? lastActivityMs - LINK_RECENCY_MS : -Infinity;
+  return [...map].filter(([, ts]) => !ts || ts >= floor).map(([id]) => id);
+}
+
+function resolveLinkedTaskIds(links, lastActivityMs) {
+  const primary = recentIds(links.primary, lastActivityMs);
+  if (primary.length > 0) return primary;
+  const secondary = recentIds(links.secondary, lastActivityMs);
+  if (secondary.length > 0 && secondary.length <= MAX_BASH_CLAIM_LINKS) return secondary;
   return [];
 }
 
 function extractText(entry) {
-  const content = entry.message.content;
-  if (typeof content === 'string') return content.trim();
-  return content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
+  return rawUserText(entry.message.content);
 }
 
 /**
@@ -123,7 +155,7 @@ export function extractClaudeSessions(sinceMs, projectsDir = CLAUDE_PROJECTS_DIR
       let lastEntryId = null;
       // entrypoint：cli = 交互式有头会话（TTY），sdk-cli = 无头 claude -p；未登记出处时据此判真人
       let entrypoint = null;
-      const links = { primary: new Set(), secondary: new Set() };
+      const links = { primary: new Map(), secondary: new Map() };
 
       lines.forEach((line, lineIndex) => {
         let entry;
@@ -152,7 +184,7 @@ export function extractClaudeSessions(sinceMs, projectsDir = CLAUDE_PROJECTS_DIR
         lastActivityMs,
         lastEntryId,
         entrypoint,
-        linkedTaskIds: resolveLinkedTaskIds(links),
+        linkedTaskIds: resolveLinkedTaskIds(links, lastActivityMs),
       });
     }
   }
