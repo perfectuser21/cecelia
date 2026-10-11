@@ -42,3 +42,10 @@ it('真实Git固定commit/tree/blob字节核验，污染blob在事务前拒绝',
  const bad=fixture();await expect(registerWorkflowSource(bad.pool,input(),{fetchFn:async u=>{const r=await fetchFn(u);return {ok:true,json:async()=>({...await r.json(),...(u.includes('/git/blobs/')?{content:Buffer.alloc(bytes.length).toString('base64')}:{})})};},resolveToken:async()=> 'test-only'})).rejects.toMatchObject({code:'WORKFLOW_SOURCE_BLOB_MISMATCH'});
  expect(bad.pool.connect).not.toHaveBeenCalled();
 });
+it('Git树内blob引用必须是固定SHA，路径或查询污染在第三次网络请求前拒绝',async()=>{
+ for(const sha of ['../../outside','abc?redirect=https://example.com','https://example.com']){
+  const f=fixture();const fetchFn=vi.fn(async url=>({ok:true,json:async()=>String(url).includes('/git/commits/')?{sha:'a'.repeat(40),tree:{sha:'b'.repeat(40)}}:{sha:'b'.repeat(40),truncated:false,tree:[{path:input().source_path,type:'blob',mode:'100644',sha}]}}));
+  await expect(registerWorkflowSource(f.pool,input(),{fetchFn,resolveToken:async()=> 'test-only'})).rejects.toMatchObject({code:'WORKFLOW_SOURCE_GIT_REFERENCE_INVALID'});
+  expect(fetchFn).toHaveBeenCalledTimes(2);expect(f.pool.connect).not.toHaveBeenCalled();
+ }
+});
