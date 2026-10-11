@@ -326,6 +326,16 @@
       "owner_path": "scripts/map/register-capability-pilots.mjs",
       "path": "packages/brain/src/lib/__tests__/implementation-ci-pilots.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/implementation-ci-pilot-manifest.js",
+      "path": "packages/brain/src/__tests__/fixtures/implementation-refresh-db.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/capacity-gate.js",
+      "path": "packages/brain/src/__tests__/integration/capacity-gate.test.js",
+      "role": "verification"
     }
   ]
 }

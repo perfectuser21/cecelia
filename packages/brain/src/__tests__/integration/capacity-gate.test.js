@@ -15,8 +15,10 @@ let admitPreview;
 let isTcpPortAvailable;
 const seededPrs = [];
 
+// Choose the suite namespace once; every seed and candidate then receives a distinct PR.
+let nextTestPr = 910000 + Math.floor(Math.random() * 9000);
 function testPr() {
-  return 910000 + Math.floor(Math.random() * 9000);
+  return nextTestPr++;
 }
 
 beforeAll(async () => {
