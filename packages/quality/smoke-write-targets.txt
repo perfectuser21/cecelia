@@ -110,6 +110,7 @@ project-brief-smoke.sh
 qiumi-foundation-smoke.sh
 qiumi-schedule-smoke.sh
 relay-baton-smoke.sh
+handoff-kinds-smoke.sh
 relay-mirror-smoke.sh
 relay-spine-smoke.sh
 report-postpromote-smoke.sh
