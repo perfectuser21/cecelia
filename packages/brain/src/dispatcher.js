@@ -245,7 +245,8 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
     // 避免两条查询的 SQL 指纹在测试里按字符串前缀匹配时被混淆（同一 dispatchNextTask 内两条
     // 语义不同的查询都含 "task_type" + "SELECT ... FROM tasks"，纯前缀匹配无法区分）。
     const { rows } = await pool.query(
-      `SELECT tasks.id AS id, tasks.title AS title${identityColumns}
+      `SELECT tasks.id AS id, tasks.title AS title,
+              tasks.payload->>'recurring_task_id' AS recurring_task_id${identityColumns}
         FROM tasks${identityJoins}
         WHERE tasks.task_type = $1
           AND tasks.status IN ('queued', 'in_progress')
@@ -255,8 +256,12 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
         LIMIT 20`,
       [candidate.task_type, candidate.id, candidate.created_at]
     );
+    // 定时实例的身份 = 模板 + 时间点（source_id=recurring:<id>:<slot>，同模板叠单由定时引擎挡）：
+    // 候选与 sibling 都是定时实例时一律不算重复——同批不同模板标题只差几个字，按标题判会两两互锁（任务 c8320370）。
+    const candidateRecurring = Boolean(candidate.payload?.recurring_task_id);
     const comparable = [];
     for (const row of rows) {
+      if (candidateRecurring && row.recurring_task_id) continue;
       const identity = compareCodeTaskIdentity(row.candidate_identity, row.code_identity);
       if (identity === 'same') return { ...row, duplicate_reason: 'duplicate_code_task_business_identity_match' };
       if (identity === 'unknown') comparable.push(row);
