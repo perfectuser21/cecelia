@@ -57,7 +57,7 @@ describe('materializeNextSteps', () => {
     expect(out.tasks.map((t) => t.title)).toEqual(['做 B', '改代码 C']);
     expect(created[0]).toMatchObject({ source: 'child', source_id: `handoff:${SELF}:0`, parent_task_id: ROOT, requested_task_type: 'data', mutation_intent: 'none' });
     expect(created[0].metadata).toMatchObject({ lane: 'AI', from_handoff: SELF });
-    expect(created[1]).toMatchObject({ requested_task_type: 'dev', mutation_intent: 'write', declared_change_kind: 'bug_fix', repo_hint: 'cecelia', map_scope_hint: ['database_foundation'] });
+    expect(created[1]).toMatchObject({ requested_task_type: 'coding_workflow', mutation_intent: 'write', declared_change_kind: 'bug_fix', repo_hint: 'cecelia', map_scope_hint: ['database_foundation'] });
     expect(out.decisions).toEqual([{ id: 'd-1', topic: '要不要删列', reused: false }]);
     expect(inserted[0][0]).toBe('要不要删列');
     expect(JSON.parse(inserted[0][3])).toMatchObject({ kind: 'relay_pending', task_id: SELF, root_task_id: ROOT });

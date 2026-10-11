@@ -5,7 +5,11 @@ describe('unified work router', () => {
   it('maps all four change kinds forward', () => {
     expect(CHANGE_KINDS).toEqual(['new_capability', 'capability_change', 'bugfix', 'parameter_only']);
     for (const change_kind of CHANGE_KINDS) {
+      // A2：无头编码单改投 coding_workflow runner；有头账本行仍是 harness_initiative
       expect(selectPipeline({ work_kind: 'coding_mutation', change_kind })).toMatchObject({
+        pipeline: 'coding_workflow', canonical_task_type: 'coding_workflow', change_kind,
+      });
+      expect(selectPipeline({ work_kind: 'coding_mutation', change_kind, headed: true })).toMatchObject({
         pipeline: 'harness', canonical_task_type: 'harness_initiative', change_kind,
       });
     }
@@ -94,7 +98,7 @@ describe('unified work router', () => {
       repo_hint: 'cecelia', map_scope_hint: ['F4'],
       decided_at: '2026-08-13T00:00:00.000Z',
     }, [{ repo: 'cecelia' }])).toMatchObject({
-      work_kind: 'coding_mutation', canonical_task_type: 'harness_initiative',
+      work_kind: 'coding_mutation', canonical_task_type: 'coding_workflow',
     });
   });
 });

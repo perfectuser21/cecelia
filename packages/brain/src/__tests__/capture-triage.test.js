@@ -130,6 +130,9 @@ describe('runCaptureTriage 四路落地', () => {
       map_scope_hint: ['F1'],
       base_sha: expect.stringMatching(/^[a-f0-9]{40}$/),
     }));
+    // A2：紧急收件建的是有头待办（mode=headed），必须带 headed_manual 字符串 "true" 才落有头账本行，
+    // 否则路由按无头编码改投 coding_workflow，被 runner 无人值守认领
+    expect(createTask.mock.calls[0][0].payload).toMatchObject({ headed_manual: 'true', mode: 'headed' });
     const upd = pool.updates[0];
     expect(upd.sql).toMatch(/status = 'confirmed'/);
     expect(upd.params.join(' ')).toContain('[triage:urgent]');
@@ -157,6 +160,7 @@ describe('runCaptureTriage 四路落地', () => {
       orchestrator: 'skill-relay',
       executor: 'claude',
       mode: 'headed',
+      headed_manual: 'true',
       journey_id: 'jrn-1',
     });
     expect(callArg).toMatchObject({

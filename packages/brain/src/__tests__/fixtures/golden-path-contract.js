@@ -49,8 +49,10 @@ export class StatefulContractDb {
     gp = { id: 'gp-1', journey_id: 'journey-1' },
     contracts = [],
     tasks = [],
+    mapRepo = 'cecelia',
   } = {}) {
     this.gp = gp;
+    this.mapRepo = mapRepo;
     this.contracts = structuredClone(contracts);
     this.tasks = structuredClone(tasks);
     this.actions = [];
@@ -68,14 +70,14 @@ export class StatefulContractDb {
     }
     if (/FROM map_scope_repositories AS repositories/i.test(compact)) {
       return {
-        rows: [{ repo: 'cecelia', source_revision: 'a'.repeat(40) }],
+        rows: [{ repo: this.mapRepo, source_revision: 'a'.repeat(40) }],
       };
     }
     if (/SELECT scope_key, repo, adapter_config FROM map_scope_repositories/i.test(compact)) {
       return {
         rows: [{
-          scope_key: 'cecelia',
-          repo: 'cecelia',
+          scope_key: this.mapRepo,
+          repo: this.mapRepo,
           adapter_config: {
             aliases: [
               'perfectuser21/cecelia',
@@ -129,10 +131,12 @@ export class StatefulContractDb {
       };
     }
     if (/FROM tasks/i.test(compact) && /harness_initiative/i.test(compact)) {
+      // 按 SQL 里真实列出的类型过滤：签字实现单改投 coding_workflow 后，查询漏列类型即漏单
+      const types = ['harness_initiative', 'coding_workflow'].filter((type) => compact.includes(`'${type}'`));
       return {
         rows: this.tasks
           .filter((task) => (
-            task.task_type === 'harness_initiative'
+            types.includes(task.task_type)
             && task.payload?.golden_path_id === params[0]
             && ['queued', 'blocked', 'dispatched', 'in_progress'].includes(task.status)
           ))
@@ -228,7 +232,7 @@ export class StatefulContractDb {
         id: `task-${this.tasks.length + 1}`,
         title: params[0],
         description: params[1],
-        task_type: 'harness_initiative',
+        task_type: routedInsert ? params[3] : 'harness_initiative',
         status: 'queued',
         payload: JSON.parse(routedInsert ? params[9] : params[2]),
       };
