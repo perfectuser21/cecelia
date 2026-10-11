@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.418.14
+**Brain 版本**: 1.418.15
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,10 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.418.15 — Skill Contract Guard 认 coding workflow sprint 全部产物
+
+- contract-exists.mjs：sprints/<8位>-cw-<task8>/ 目录下全部文件（01-invariants、02-review/response、05-qa-report、06-judge、qa-rN/ 截图）不再被当 harness PR 要 contract-draft.md；非 cw 目录同名文件照旧要合同（金丝雀 4 #6232）
 
 ## Brain 1.418.14 — coding workflow 记账修正：运行结果以合并为准、合并刷新交接单、CI 修复尝试编号不复用
 
