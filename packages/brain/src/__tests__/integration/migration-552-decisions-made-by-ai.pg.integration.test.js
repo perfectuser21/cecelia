@@ -40,7 +40,7 @@ describe('迁移 552：decisions_made_by_check 补 ai（只增不减）', () => 
 
   it('迁移外加宽过的取值全部保留，并补上 ai', async () => {
     await dropAllMadeByChecks();
-    await client.query("ALTER TABLE decisions ADD CONSTRAINT decisions_made_by_check CHECK (made_by IN ('user','cecelia','system','owner_x'))");
+    await client.query("ALTER TABLE decisions ADD CONSTRAINT decisions_made_by_check CHECK (made_by IN ('user','cecelia','system','owner_x')) NOT VALID");
     await client.query(UP);
     const checks = await madeByChecks();
     expect(checks.map((c) => c.conname)).toEqual(['decisions_made_by_check']);
@@ -65,12 +65,38 @@ describe('迁移 552：decisions_made_by_check 补 ai（只增不减）', () => 
 
   it('约束改过名 / 另有同列约束：全部并入后收敛为唯一的 decisions_made_by_check', async () => {
     await dropAllMadeByChecks();
-    await client.query("ALTER TABLE decisions ADD CONSTRAINT decisions_made_by_legacy_chk CHECK (made_by IN ('user','cecelia','system','owner_y'))");
-    await client.query("ALTER TABLE decisions ADD CONSTRAINT decisions_made_by_extra_chk CHECK (made_by IN ('user','owner_z'))");
+    await client.query("ALTER TABLE decisions ADD CONSTRAINT decisions_made_by_legacy_chk CHECK (made_by IN ('user','cecelia','system','owner_y')) NOT VALID");
+    await client.query("ALTER TABLE decisions ADD CONSTRAINT decisions_made_by_extra_chk CHECK (made_by IN ('user','owner_z')) NOT VALID");
     await client.query(UP);
     const checks = await madeByChecks();
     expect(checks.map((c) => c.conname)).toEqual(['decisions_made_by_check']);
     expectValues(checks[0].def, ['user', 'cecelia', 'system', 'owner_y', 'owner_z', 'ai']);
+  });
+
+  it('迁移外取值含空串与单引号转义时原样保留（commander 裁决 2：J-1）', async () => {
+    await client.query('SAVEPOINT special_vals');
+    await dropAllMadeByChecks();
+    await client.query("ALTER TABLE decisions ADD CONSTRAINT decisions_made_by_check CHECK (made_by IN ('user','cecelia','system','','owner''x')) NOT VALID");
+    await client.query(UP);
+    const checks = await madeByChecks();
+    expect(checks.map((c) => c.conname)).toEqual(['decisions_made_by_check']);
+    expectValues(checks[0].def, ['user', 'cecelia', 'system', "owner''x", 'ai']);
+    expect(checks[0].def).toMatch(/[[ ]''::/);
+    const rows = await all(`INSERT INTO decisions (topic, decision, category, made_by)
+      VALUES ('t552-empty', 'x', 'judgment', ''), ('t552-quote', 'x', 'judgment', 'owner''x') RETURNING made_by`);
+    expect(rows.map((r) => r.made_by)).toEqual(['', "owner'x"]);
+    const def = checks[0].def;
+    await client.query(UP);
+    expect(await madeByChecks()).toEqual([{ conname: 'decisions_made_by_check', def }]);
+    await client.query('ROLLBACK TO SAVEPOINT special_vals');
+  });
+
+  it('取值列表含 NULL 等抽不全的形态时报错，不静默收窄（commander 裁决 2：J-1）', async () => {
+    await client.query('SAVEPOINT null_item');
+    await dropAllMadeByChecks();
+    await client.query("ALTER TABLE decisions ADD CONSTRAINT decisions_made_by_check CHECK (made_by IN ('user','cecelia','system', NULL)) NOT VALID");
+    await expect(client.query(UP)).rejects.toThrow(/无法解析/);
+    await client.query('ROLLBACK TO SAVEPOINT null_item');
   });
 
   it('存在涉及 made_by 的多列 CHECK 时报错，不静默留一个照样拒 ai 的约束', async () => {

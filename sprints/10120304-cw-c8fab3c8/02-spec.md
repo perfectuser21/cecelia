@@ -173,3 +173,21 @@ upstream: ["01-intent.md#I-1", "01-intent.md#I-2"]
   3. 同库执行 `SELECT DISTINCT made_by FROM decisions`，记为 V（克隆自生产的存量取值）。
 - 期望: 第 2 步为 1；DP 恰 1 行、名为 `decisions_made_by_check`、`array_length=1`，定义同时含 `'user'`、`'cecelia'`、`'system'`、`'ai'`，且 V 中每个非空取值都出现在定义里（存量取值无一被新约束排除——只增不减）。
 - 若 QA 无法取得预览库的只读连接：以预览 Brain 对 Q-1~Q-3 的接口结果 + Q-5 本机结果判 PASS，并在报告中注明 DP 未取得，不判 CANNOT_VERIFY。
+
+## commander 裁决（第 2 次）
+
+### 裁决 J-1（contract_gap，对应 I-2）：采纳——S-1 指定的取值抽取正则会静默漏掉合法扩展值，补条款并已修代码
+- 理由：I-2 要求「迁移外加宽的取值全部保留」。S-1 原定 `regexp_matches(def, '''([^'']+)''::', 'g')`：`+` 不匹配空串 `''`；不解码 SQL 双单引号转义（`'owner''x'` 被抽成 `x`）；`IN (..., NULL)` 的 NULL 项也无引号、被静默丢弃。因原三值仍能抽出，迁移不会报错，而是建出漏值的新约束并记录 552——与 I-2 直接冲突。本地已用失败测试复现（修复前 2 条新断言失败）。裁判结论成立，属合同缺口。
+- 补充 S-1a（覆盖 S-1 中的抽取写法，其余 S-1 条款不变）：
+  1. 抽取改为对 `pg_get_expr(conbin, conrelid)` 用 `'((?:[^']|'')*)'::` 逐个抽字面量（允许空串），按出现顺序（`WITH ORDINALITY`）聚合，并把 `''` 还原成 `'`。
+  2. 回放校验：用抽出的取值在与 `made_by` 同类型（`format_type(atttypid, atttypmod)`）的临时探针表上重建 `CHECK (made_by IN (...))`，其 `pg_get_expr` 必须与原约束表达式逐字一致；不一致（NULL 项、非标准类型转换、混入其他条件等任何「抽不全」形态）→ `RAISE EXCEPTION`（文案含「无法解析」），事务回滚、552 不落 schema_version。即：要么原约束的全部取值被一字不差地保留，要么迁移失败，不存在静默丢值的第三种结果。
+  3. 抽不出任何字面量的单列 CHECK 仍按原 S-1 报错。
+- 补充 S-2 断言 8：预置 `CHECK (made_by IN ('user','cecelia','system','','owner''x'))` → 跑迁移正文 → 唯一约束 `decisions_made_by_check` 含 `'owner''x'`、空串字面量 `''::` 与 `'ai'`；`made_by=''` 与 `made_by='owner''x'` 均可 INSERT 且读回原值；再跑一遍定义不变。（包在 SAVEPOINT 内，结束回滚。）
+- 补充 S-2 断言 9：预置 `CHECK (made_by IN ('user','cecelia','system', NULL))` → 跑迁移正文抛异常、匹配「无法解析」（SAVEPOINT 内）。
+- 补充 S-2 测试前置：预置约束一律带 `NOT VALID`，使测试不依赖 scratch 库存量行（scratch 已有 QA 写入的 `made_by='ai'` 行，校验式预置会被 23514 拦下）；不改任何既有断言。
+- 补充 Q-8（QA 门判定项，对应 I-2）：
+  - 前提: 同 Q-5（本机 `cecelia_scratch`，禁止生产地址）。
+  - 操作: 按 Q-5 步骤 1~4 执行，但步骤 1 的预置约束改为 `CHECK (made_by IN ('user','cecelia','system','qa_extra','','owner''x')) NOT VALID`；D1 后追加 `psql cecelia_scratch -c "BEGIN; INSERT INTO decisions (topic, decision, category, made_by) VALUES ('qa8-empty','x','judgment',''), ('qa8-quote','x','judgment','owner''x') RETURNING made_by; ROLLBACK;"`。
+  - 期望: 两次 migrate 退出码 0；D1 恰 1 行、名为 `decisions_made_by_check`，定义含 `'owner''x'`、`''::character varying`、`'qa_extra'`、`'user'`、`'cecelia'`、`'system'`、`'ai'`；两条 INSERT 均成功并返回 `''` 与 `owner'x`；D2 与 D1 完全相同；schema_version 中 552 恰 1 行。
+  - 收尾: 把 scratch 的约束恢复为不含 `''`/`owner'x` 的形态（如 `('ai','cecelia','qa_extra','system','user')`），避免影响后续场景。
+- 代码已按 S-1a 修订 `packages/brain/migrations/552_decisions_made_by_allow_ai.sql`，测试按断言 8/9 补入 `migration-552-decisions-made-by-ai.pg.integration.test.js`；本地 `DB_NAME=cecelia_scratch` 集成测试 10/10 通过；本机按 Q-8 真跑 `node src/migrate.js` 两遍：退出码 0，约束含 `''`、`owner''x`、`qa_extra` 与 `ai`，两次定义一致，552 恰 1 行。
