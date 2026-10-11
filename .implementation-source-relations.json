@@ -312,7 +312,6 @@
       "path": "packages/brain/src/__tests__/scheduler-jobs-recurring-independent-loop.test.js",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/src/lib/implementation-ci-pilot-manifest.js",
       "path": "packages/brain/src/lib/__tests__/integration/implementation-ci-pilot-manifest.test.js",
@@ -323,7 +322,6 @@
       "path": "packages/brain/src/lib/__tests__/integration/implementation-ci-pilots.test.js",
       "role": "verification"
     },
-    
     {
       "owner_path": "scripts/map/register-capability-pilots.mjs",
       "path": "packages/brain/src/lib/__tests__/implementation-ci-pilots.test.js",
@@ -339,7 +337,6 @@
       "path": "packages/brain/src/__tests__/dispatcher-dedup-recurring-identity.test.js",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "packages/brain/src/__tests__/integration/recurring-dedup-identity.pg.integration.test.js",
@@ -350,7 +347,6 @@
       "path": "packages/brain/src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/src/lib/dispatch-route.js",
       "path": "packages/brain/src/lib/__tests__/dispatch-route.test.js",
@@ -370,6 +366,21 @@
       "owner_path": "packages/brain/src/cron/drift-sentinel.js",
       "path": "docs/learnings/cp-10120706-drift-deploy-detached.md",
       "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": "packages/brain/src/__tests__/dispatcher-dedup-queued-mutual-lock.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": "packages/brain/src/__tests__/integration/dedup-queued-mutual-lock.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/dispatcher.js",
+      "path": "changes/cp-1012073925-dedup-queued-mutual-lock.md",
+      "role": "release"
     }
   ]
 }
