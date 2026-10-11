@@ -607,6 +607,8 @@ jobs:
         run: bash scripts/__tests__/preview-deploy-harness-gate.test.sh
       - name: reaper 单元自测
         run: bash scripts/__tests__/preview-reaper.test.sh
+      - name: preview start 重试与 503 拒绝原因自测
+        run: bash scripts/__tests__/preview-start-request-retry.test.sh
 
   # ─── codex-remote-launch 跨机 token launcher 自测 ────────────────
   # 白名单(ALLOWED_TEAMS team1~5)+核心流程单元自测，mock ssh/scp，不依赖真实远端
