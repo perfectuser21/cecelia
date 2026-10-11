@@ -4,7 +4,7 @@
  * 修复后：别名挂载下非 UUID 放行给后续 runs 读路由；/pipelines 下非 UUID 返回 400。
  * 挂载顺序与 server.js 一致：pipelines → 别名 /api/brain → /api/brain/runs。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -79,6 +79,37 @@ describe('别名挂载不再吞掉 /api/brain/runs/<段>', () => {
     expect(res.status).toBe(200);
     expect(res.body.spans.map(s => s.occurrence_key)).toEqual(['qa/a', 'qa/b']);
     expect(client.release).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Q-2 鉴权分支：配了 token 时 /api/brain/runs/<段> 必须先过 runs 读路由的鉴权，
+// 不带 token → 401，证明没被不鉴权的内容流水线接走（预览环境未配 token 时由此兜底）。
+describe('配置 CECELIA_INTERNAL_TOKEN 时 /api/brain/runs/<段> 先过鉴权', () => {
+  const TOKEN = 'test-internal-token';
+
+  beforeEach(() => {
+    mockPool.query.mockReset();
+    mockPool.connect.mockReset();
+    process.env.CECELIA_INTERNAL_TOKEN = TOKEN;
+  });
+
+  afterEach(() => {
+    delete process.env.CECELIA_INTERNAL_TOKEN;
+  });
+
+  it.each(SUFFIXES)('不带 token GET /api/brain/runs/%s → 401 UNAUTHORIZED，不查库', async (seg) => {
+    const res = await request(makeApp()).get(`/api/brain/runs/${seg}`);
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('UNAUTHORIZED');
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('带正确 token GET /api/brain/runs/stats → runs 读路由 404', async () => {
+    mockPool.query.mockResolvedValue({ rows: [] });
+    const res = await request(makeApp()).get('/api/brain/runs/stats').set('x-internal-token', TOKEN);
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('run not found: stats');
+    expect(pipelineSqlCalls()).toHaveLength(0);
   });
 });
 

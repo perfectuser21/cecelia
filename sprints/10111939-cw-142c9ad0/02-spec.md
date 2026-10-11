@@ -151,3 +151,9 @@ upstream: ["01-intent.md#I-1","01-intent.md#I-2","01-intent.md#I-3","01-intent.m
 ## 判定点
 
 无：本改动只是确定性的路由匹配和 UUID 格式判定，不推断外部真实状态
+
+## commander 裁决（第 1 次）
+
+- T-2 / Q-2（qa_cannot_verify）：维持规格。Q-2 原文已写明「预览环境没配 `CECELIA_INTERNAL_TOKEN` 就跳过，注明鉴权分支不可测」，QA 按此执行，不算产品失败；本 PR 也没有改 `internal-auth.js` 和 runs 读路由的鉴权。QA 同一请求已经确认：落到了 runs 读路由（返回 `run not found: stats`），没有返回 500。
+- 补充 S-4：Q-2 的 401 鉴权分支由单元测试确定性兜底，不依赖预览环境有没有配 token。`packages/brain/src/__tests__/content-pipeline-runs-shadow.test.js` 新增一组用例：测试内设 `CECELIA_INTERNAL_TOKEN`，按 server.js 的挂载顺序拼 app，不带 token 请求 `GET /api/brain/runs/{stats|stages|output|publish-status}`，四条都必须是 401、`.error.code == "UNAUTHORIZED"`，且 `pool.query` 一次都没调用；带正确 `x-internal-token` 请求 `/runs/stats`，必须是 404 `run not found: stats`，内容流水线的 SQL 一次都没调用。修复前这几条会被不鉴权的内容流水线接走、返回 500，所以这组用例能抓到回退。
+- 补充 Q-2 判定：预览环境未配 token 时，T-2 记 CANNOT_VERIFY（环境原因），不阻塞合并；只要 S-4 用例在 CI 中通过，就视为 Q-2 的意图已满足。
