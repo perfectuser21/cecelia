@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.423.11
+**Brain 版本**: 1.423.14
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,25 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## 1.423.12
+
+### 修复
+
+- 官方 ZenithJoy 试点映射将真实内容生产价值流与安卓多平台发布能力纳入固定源配置；只从完整旧集合升级，保旧身份、父级、来源与激活 CAS。
+- 当前 Workflow 定义使用唯一当前同来源清单，避免同一 SHA 旧清单造成歧义；非当前历史多清单仍明确拒绝。
+
+## Brain 1.423.14 — 定时引擎走独立循环（定时精度 3-9 分钟 → ≤30 秒）
+
+- recurring-tasks 从 SERIAL_JOBS 串行轮移入独立 completion 循环（completionCadenceMs=30s，按 job 防重入）。生产实证 10-11 定时实例建单比时间点晚 58s~517s（串行轮长）。为 OpenClaw 业务定时搬进 Brain（任务 c8320370，续 0026dfe2/942491c2）铺路：晨会/班会等业务定时到点准时建单。
+
+## Brain 1.423.13 — 旁路报警：动手机/对外推送无 Brain 任务号即告警（派发总闸 H，任务 865b502c）
+
+- 新 `bypass-audit.js`：关联判定一律在 Brain 侧（tasks.id / payload.run_id / qiumi|wfd-<任务号前8位> 前缀），追不到才写 `cecelia_events(event_type='bypass_action', source=phone_lock|phone_outward|openclaw_push)`，dedupe_key 2 天内去重；先只告警不拦截
+- `POST /api/brain/device-locks/acquire` 抢锁成功后异步交旁路审计（body 可带 task_id/run_id/host 留痕）：执行机 crontab 经 brain-lock.sh 领锁、持有者非 Brain 任务 → 记 phone_lock
+- 新路由 `POST /api/brain/bypass-actions/report`（执行机控制器上报手机对外动作/本地领锁）与 `GET /api/brain/bypass-actions/summary`（运维视图：近 N 天按日×类别+最近 20 条）
+- 新 scheduler job `bypass-audit`（自 gate 5 分钟）：ssh mmv 只读扫 OpenClaw 审计库 message 调用（Brain 派发会话 agent:<dept>:<run_id> 不记、主会话与主理人对话不记）；按上海日汇总 runs `bypass-audit:<日期>`（有旁路 outcome=fail → 现有「最近执行」投影可见）；手机对外动作 ≥1 / OpenClaw 推送 ≥5 才 Bark（`BYPASS_BARK_PHONE_OUTWARD` / `BYPASS_BARK_OPENCLAW_PUSH` 可调），领锁类不推主理人（决策 d3e7746c）
+- smoke `bypass-audit-smoke` 登记 allowlist / write-targets
 
 ## Brain 1.423.11 — Codex 合法技能版本身份兼容
 

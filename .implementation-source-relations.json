@@ -312,11 +312,7 @@
       "path": "packages/brain/src/__tests__/scheduler-jobs-recurring-independent-loop.test.js",
       "role": "verification"
     },
-    {
-      "owner_path": "packages/brain/src/scheduler-jobs.js",
-      "path": "changes/cp-1012003605-openclaw-cron-to-brain.md",
-      "role": "release"
-    },
+    
     {
       "owner_path": "packages/brain/src/lib/implementation-ci-pilot-manifest.js",
       "path": "packages/brain/src/lib/__tests__/integration/implementation-ci-pilot-manifest.test.js",
@@ -327,11 +323,7 @@
       "path": "packages/brain/src/lib/__tests__/integration/implementation-ci-pilots.test.js",
       "role": "verification"
     },
-    {
-      "owner_path": "packages/brain/src/lib/implementation-ci-pilot-manifest.js",
-      "path": "changes/cp-1012001800-brain-publishing-pilot-map-binding.md",
-      "role": "release"
-    },
+    
     {
       "owner_path": "scripts/map/register-capability-pilots.mjs",
       "path": "packages/brain/src/lib/__tests__/implementation-ci-pilots.test.js",
