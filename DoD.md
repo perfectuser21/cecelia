@@ -5,8 +5,6 @@
 - [x] [BEHAVIOR] pendingresume GET /api/brain/handoffs/pending-resume 列出待续有头续接（任务/下一步/交接全文），POST /pending-resume/:id/ack 销待续。
   Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/routes/__tests__/handoffs-pending-resume.test.js --maxWorkers=1 --minWorkers=1"
 
-
-
 # 对话捕获只收真人原话 + 长寿会话近 24h 关联（任务 c8b27bc5 生产首轮回归）
 
 - [x] [BEHAVIOR] convcapturefilter Claude transcript 里 isMeta、origin.kind≠human（任务通知）、命令回显/本地命令输出/中断提示/压缩续接摘要不算真人文本；关联任务只认会话最后活动前 24h 内提到的 --task-id/claim。
