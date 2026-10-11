@@ -25,9 +25,12 @@ export async function validateImplementationBindings(contract,readBinding,source
     if(binding.kind==='skill') {
       const frontmatter=content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
       const metadata=frontmatter?yaml.load(frontmatter[1]):null;
-      if(!metadata?.name||!metadata?.version) throw Error('Skill缺少name/version元数据');
-      for(const field of ['name','version']) if(binding[field]!==undefined&&String(binding[field])!==String(metadata[field])) throw Error(`Skill ${field}不匹配`);
-      result.name=String(metadata.name);result.version=String(metadata.version);
+      const version=Object.hasOwn(metadata??{},'version')?metadata.version:metadata?.metadata?.version;
+      const validVersion=(typeof version==='string'&&version.trim())||(typeof version==='number'&&Number.isFinite(version)&&version!==0);
+      if(typeof metadata?.name!=='string'||!metadata.name.trim()||!validVersion) throw Error('Skill缺少name/version元数据');
+      const identity={name:metadata.name,version};
+      for(const field of ['name','version']) if(binding[field]!==undefined&&String(binding[field])!==String(identity[field])) throw Error(`Skill ${field}不匹配`);
+      result.name=identity.name;result.version=String(identity.version);
     }
     if(binding.symbol){result.status='unresolved';result.reason='symbol_unverified';}
     bindings.push(result);

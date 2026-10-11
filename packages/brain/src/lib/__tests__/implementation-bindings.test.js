@@ -34,3 +34,41 @@ it('本仓contract版本仅从已经固定的契约来源解析，读文件和�
   await expect(validateImplementationBindings({ implementation_bindings: [declared] }, read)).rejects.toThrow();
   await expect(validateImplementationBindings({ implementation_bindings: [declared] }, read, { repo: 'another/repo', commit: revision })).rejects.toThrow();
 });
+
+const verifySkill = (frontmatter, patch = {}) => validateImplementationBindings(
+  { implementation_bindings: [{ ...binding, ...patch }] },
+  async () => `---\n${frontmatter}\n---\n# 固定来源`,
+);
+it('Codex合法metadata.version作为版本来源，名称/声明/digest仍核真实SKILL.md', async () => {
+  const [result] = await verifySkill('name: check\nmetadata:\n  version: 1.0.0');
+  expect(result).toMatchObject({ name: 'check', version: '1.0.0', status: 'verified', validation_scope: 'reference_only' });
+  expect(result.content_sha256).toMatch(/^[0-9a-f]{64}$/);
+  await expect(verifySkill('name: check\nmetadata:\n  version: 2.0.0')).rejects.toThrow('version不匹配');
+});
+it('顶层版本明确存在时优先，不被metadata覆盖', async () => {
+  const frontmatter = 'name: check\nversion: 2.0.0\nmetadata:\n  version: 1.0.0';
+  const [result] = await verifySkill(frontmatter, { version: '2.0.0' });
+  expect(result.version).toBe('2.0.0');
+  await expect(verifySkill(frontmatter)).rejects.toThrow('version不匹配');
+});
+it.each(['null', '""', '0', 'true', '{}', '[]', '.nan', '.inf'])('无效顶层版本%s不能静默降级到合法metadata.version', async version => {
+  await expect(verifySkill(`name: check\nversion: ${version}\nmetadata:\n  version: 1.0.0`, { version: undefined })).rejects.toThrow('name/version');
+});
+it.each(['null', '""', '0', 'true', '{}', '[]', '.nan', '.inf'])('metadata版本%s遵守同一类型规则', async version => {
+  await expect(verifySkill(`name: check\nmetadata:\n  version: ${version}`, { version: undefined })).rejects.toThrow('name/version');
+});
+it.each(['null', '""', '0', 'true', '{}', '[]'])('name必须非空字符串，拒绝%s', async name => {
+  await expect(verifySkill(`name: ${name}\nversion: 1.0.0`, { name: undefined })).rejects.toThrow('name/version');
+});
+it.each(['name: check', 'version: 1.0.0', 'name: check\nmetadata: {}'])('名称或版本缺失仍拒绝：%s', async frontmatter => {
+  await expect(verifySkill(frontmatter, { name: undefined, version: undefined })).rejects.toThrow('name/version');
+});
+it.each(['version: 2', 'metadata:\n  version: 2'])('正常旧数值版本与metadata数值版本均保留：%s', async version => {
+  const [result] = await verifySkill(`name: check\n${version}`, { version: 2 });
+  expect(result.version).toBe('2');
+});
+it.each(['skills/check/guide.md', 'skills/check/agents/openai.yaml', 'skills/check/catalog.json'])('metadata兼容不放宽真正Skill路径：%s', async path => {
+  const read = vi.fn();
+  await expect(validateImplementationBindings({ implementation_bindings: [{ ...binding, path }] }, read)).rejects.toThrow('Skill绑定必须指向SKILL.md');
+  expect(read).not.toHaveBeenCalled();
+});
