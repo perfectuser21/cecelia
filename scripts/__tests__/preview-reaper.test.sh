@@ -444,6 +444,110 @@ else
 fi
 teardown
 
+# ── 台账库（2026-10-12，B1）：MMV 上的预览 agent 用 DB_NAME=cecelia_staging，根本没有 cecelia 库。
+#    旧 reaper 写死 -d cecelia（或不带 -d 连同名库），源 C/源 D/闲置查询/UPDATE/DB_EXISTS 全部失败，
+#    已关闭的 6220 只被删了目录、台账行和预览库永久占名额 → 新 PR 预览 503 too_many_active。
+#    这里的 psql mock 严格检查 -d：只认台账库 cecelia_staging 与维护库 postgres，其余一律 FATAL。
+strict_psql() {
+  # $1 = 闲置行「pr|branch|秒数」；$2 = 预览库名（源 C）
+  cat >"$BIN/psql" <<SH
+#!/bin/bash
+db=""
+args=("\$@")
+for ((i = 0; i < \${#args[@]}; i++)); do
+  case "\${args[\$i]}" in
+    -d) db="\${args[\$((i + 1))]}" ;;
+    -d*) db="\${args[\$i]#-d}" ;;
+  esac
+done
+echo "\$db|\$*" >>"$TMP/psql.calls"
+sql="\$*"
+if [ "\$db" = "cecelia_staging" ] && [[ "\$sql" == *preview_environments* ]]; then
+  if [[ "\$sql" == *"EXTRACT(EPOCH"* ]]; then echo "$1"
+  elif [[ "\$sql" == *"DISTINCT pr_number"* ]]; then echo "${1%%|*}"
+  fi
+  exit 0
+fi
+if [ "\$db" = "postgres" ] && [[ "\$sql" == *pg_database* ]]; then
+  if [[ "\$sql" == *"SELECT 1 FROM pg_database"* ]]; then echo 1; else echo "$2"; fi
+  exit 0
+fi
+echo "psql: error: FATAL:  database \"\${db:-testuser}\" does not exist" >&2
+exit 2
+SH
+  chmod +x "$BIN/psql"
+  cat >"$BIN/dropdb" <<SH
+#!/bin/bash
+echo "\$*" >>"$TMP/dropdb.calls"
+exit 0
+SH
+  chmod +x "$BIN/dropdb"
+}
+
+echo ""
+echo "── 测试 15（台账库）：CLOSED 的 6220 只在台账/预览库里（目录已删）→ 走 cecelia_staging 发现并完整回收 ──"
+setup
+strict_psql "6220|cp-x-cw-4ea44bcf|90000" "cecelia_preview_6220"
+printf '#!/bin/bash\necho "CLOSED"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
+OUT=$(DB_NAME=cecelia_staging bash "$REAPER" 2>&1) && RC=0 || RC=$?
+if echo "$OUT" | grep -q "检查 PR#6220" \
+  && grep -q "cecelia_preview_6220" "$TMP/dropdb.calls" 2>/dev/null \
+  && grep -q "^cecelia_staging|.*UPDATE preview_environments" "$TMP/psql.calls" \
+  && ! echo "$OUT" | grep -q "表状态更新失败" \
+  && [ "$RC" -eq 0 ]; then
+  pass "台账库 cecelia_staging：发现 6220 → dropdb + 台账行置 inactive"
+else
+  fail "reaper 没连 agent 实际使用的台账库" "rc=$RC dropdb=$(cat "$TMP/dropdb.calls" 2>/dev/null) out=$OUT"
+fi
+teardown
+
+echo ""
+echo "── 测试 16（台账库）：台账库不可达 → P1 告警 + 非零退出，不再静默打印回收完成 ──"
+setup
+mkdir -p "$PREVIEW_BASE_DIR/preview-6221"
+printf '#!/bin/bash\necho "psql: error: FATAL:  database does not exist" >&2\nexit 2\n' >"$BIN/psql"; chmod +x "$BIN/psql"
+printf '#!/bin/bash\necho "CLOSED"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
+OUT=$(DB_NAME=cecelia_staging bash "$REAPER" 2>&1) && RC=0 || RC=$?
+if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "台账库 cecelia_staging 不可达" \
+  && ! echo "$OUT" | grep -q "回收完成"; then
+  pass "台账库不可达 → 非零退出 + P1 告警"
+else
+  fail "台账库不可达仍静默空转" "rc=$RC out=$OUT"
+fi
+teardown
+
+echo ""
+echo "── 测试 17（台账库）：OPEN 的 PR 只在台账里、闲置 25h → 在正确的库上闲置回收（#6155 生效）──"
+setup
+strict_psql "6117|cp-10080000-old-feature|90000" ""
+printf '#!/bin/bash\necho "OPEN"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
+OUT=$(DB_NAME=cecelia_staging bash "$REAPER" 2>&1) && RC=0 || RC=$?
+if echo "$OUT" | grep -q "回收 1" && echo "$OUT" | grep -q "闲置" && [ "$RC" -eq 0 ]; then
+  pass "台账库上的闲置查询生效 → OPEN 闲置预览被回收"
+else
+  fail "闲置查询没走台账库" "rc=$RC out=$OUT"
+fi
+teardown
+
+echo ""
+echo "── 测试 18：台账 UPDATE 失败 → 不打印回收完成，计入失败并非零退出 ──"
+setup
+mkdir -p "$PREVIEW_BASE_DIR/preview-6222"
+cat >"$BIN/psql" <<'SH'
+#!/bin/bash
+if [[ "$*" == *"UPDATE preview_environments"* ]]; then exit 1; fi
+echo ""
+SH
+chmod +x "$BIN/psql"
+printf '#!/bin/bash\necho "MERGED"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
+OUT=$(bash "$REAPER" 2>&1) && RC=0 || RC=$?
+if [ "$RC" -ne 0 ] && ! echo "$OUT" | grep -q "PR#6222 回收完成" && echo "$OUT" | grep -q "失败 1"; then
+  pass "UPDATE 失败 → 计入失败 + 非零退出"
+else
+  fail "UPDATE 失败仍报回收完成" "rc=$RC out=$OUT"
+fi
+teardown
+
 # ── 总结 ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "结果: PASS=${PASS}, FAIL=${FAIL}"

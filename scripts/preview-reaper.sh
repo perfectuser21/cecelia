@@ -13,6 +13,8 @@
 #   PREVIEW_BASE_DIR  (默认 /Users/administrator/worktrees/cecelia-previews)
 #   REPO_ROOT         (默认 /Users/administrator/perfect21/cecelia)
 #   DB_HOST / DB_USER / DB_PASSWORD
+#   PREVIEW_LEDGER_DB (台账库，默认 ${DB_NAME:-cecelia}；MMV 上 preview-agent 用 DB_NAME=cecelia_staging)
+#   PREVIEW_MAINT_DB  (维护库，查 pg_database / dropdb 用，默认 postgres)
 #   GH_REPO           (默认自动从 git remote 推断，例如 owner/repo)
 
 set -uo pipefail
@@ -28,6 +30,10 @@ REPO_ROOT="${REPO_ROOT:-/Users/administrator/perfect21/cecelia}"
 DB_HOST="${DB_HOST:-localhost}"
 DB_USER="${DB_USER:-cecelia}"
 DB_PASSWORD="${DB_PASSWORD:-cecelia}"
+# 台账库必须与 preview-agent 同一个（preview-env-start.sh 同口径）。旧版写死 -d cecelia，
+# 而 MMV 上根本没有 cecelia 库 → 台账读写全失败、僵尸行永久占满 6 个名额（2026-10-12）。
+LEDGER_DB="${PREVIEW_LEDGER_DB:-${DB_NAME:-cecelia}}"
+MAINT_DB="${PREVIEW_MAINT_DB:-postgres}"
 GH_REPO="${GH_REPO:-}"
 # 开着的 PR 预览闲置上限（小时）：上限 6 个预览被长期挂着的旧 PR 占满会让新 PR 预览全部 503
 #（2026-10-10 金丝雀 05ae922c 实证，coding harness 真人 QA 门因此卡死）。再推送会重新部署。
@@ -79,6 +85,13 @@ is_preview_process() {
   return 1
 }
 
+# ── 0. 台账库探测：连不上就 P1 告警 + 非零退出，不再静默空转 ─────────────────────
+if ! psql -h "$DB_HOST" -U "$DB_USER" -d "$LEDGER_DB" -t -A \
+  -c "SELECT 1 FROM preview_environments LIMIT 1;" >/dev/null 2>&1; then
+  log "[P1] 台账库 ${LEDGER_DB} 不可达（host=${DB_HOST} user=${DB_USER}），preview_environments 无法读写，退出"
+  exit 2
+fi
+
 # ── 1. 推断 GH_REPO ──────────────────────────────────────────────────────────
 if [ -z "$GH_REPO" ] && [ -d "$REPO_ROOT" ]; then
   GH_REPO=$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null \
@@ -110,20 +123,20 @@ if [ -d "$PREVIEW_BASE_DIR" ]; then
 fi
 
 # 源 C：cecelia_preview_* 数据库
-psql -h "$DB_HOST" -U "$DB_USER" -t -A \
+psql -h "$DB_HOST" -U "$DB_USER" -d "$MAINT_DB" -t -A \
   -c "SELECT datname FROM pg_database WHERE datname LIKE 'cecelia_preview_%';" 2>/dev/null \
   | grep -E '^cecelia_preview_[0-9]+$' \
   | sed 's/^cecelia_preview_//' >>"$PR_LIST_FILE" || true
 
 # 源 D：preview_environments 表（非 inactive）
-psql -h "$DB_HOST" -U "$DB_USER" -d cecelia -t -A \
+psql -h "$DB_HOST" -U "$DB_USER" -d "$LEDGER_DB" -t -A \
   -c "SELECT DISTINCT pr_number FROM preview_environments WHERE status != 'inactive';" 2>/dev/null \
   | grep -E '^[0-9]+$' >>"$PR_LIST_FILE" || true
 
 # 闲置信息：「pr|branch|距最后一次部署的秒数」（preview_environments.updated_at 在 start/重新部署时刷新）
 IDLE_FILE=$(mktemp)
 trap 'rm -f "$PR_LIST_FILE" "$IDLE_FILE"' EXIT
-psql -h "$DB_HOST" -U "$DB_USER" -d cecelia -t -A \
+psql -h "$DB_HOST" -U "$DB_USER" -d "$LEDGER_DB" -t -A \
   -c "SELECT pr_number || '|' || branch_name || '|' || EXTRACT(EPOCH FROM (NOW() - updated_at))::bigint FROM preview_environments WHERE status != 'inactive';" \
   2>/dev/null >"$IDLE_FILE" || true
 
@@ -142,6 +155,7 @@ $DRY_RUN && log "[dry-run 模式] 只打印，不实际回收"
 # ── 3. 逐 PR 判断并回收 ──────────────────────────────────────────────────────
 CLEANED=0
 SKIPPED=0
+FAILED=0
 
 for pr in $UNIQUE_PRS; do
   log "检查 PR#${pr}..."
@@ -217,14 +231,14 @@ for pr in $UNIQUE_PRS; do
   rm -f "$PID_FILE" "/tmp/preview-${pr}.branch" "/tmp/preview-${pr}.log" 2>/dev/null || true
 
   # 3c. Drop 数据库
-  DB_NAME="cecelia_preview_${pr}"
-  DB_EXISTS=$(psql -h "$DB_HOST" -U "$DB_USER" -t -A \
-    -c "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}';" 2>/dev/null | head -1 | tr -d '[:space:]' || echo "")
+  PREVIEW_DB="cecelia_preview_${pr}"
+  DB_EXISTS=$(psql -h "$DB_HOST" -U "$DB_USER" -d "$MAINT_DB" -t -A \
+    -c "SELECT 1 FROM pg_database WHERE datname='${PREVIEW_DB}';" 2>/dev/null | head -1 | tr -d '[:space:]' || echo "")
   if [ "$DB_EXISTS" = "1" ]; then
-    if dropdb -h "$DB_HOST" -U "$DB_USER" --if-exists "$DB_NAME" 2>/dev/null; then
-      log "  ✓ 数据库 ${DB_NAME} 已删除"
+    if dropdb -h "$DB_HOST" -U "$DB_USER" --maintenance-db="$MAINT_DB" --if-exists "$PREVIEW_DB" 2>/dev/null; then
+      log "  ✓ 数据库 ${PREVIEW_DB} 已删除"
     else
-      log "  ⚠ 数据库 ${DB_NAME} 删除失败"
+      log "  ⚠ 数据库 ${PREVIEW_DB} 删除失败"
     fi
   fi
 
@@ -247,13 +261,23 @@ for pr in $UNIQUE_PRS; do
   fi
 
   # 3f. 标记表为 inactive
-  psql -h "$DB_HOST" -U "$DB_USER" -d cecelia \
+  # 台账行没置 inactive 就还占着名额：不算回收完成，计入失败并让本轮非零退出
+  if psql -h "$DB_HOST" -U "$DB_USER" -d "$LEDGER_DB" \
     -c "UPDATE preview_environments SET status='inactive', updated_at=NOW() WHERE pr_number=${pr};" \
-    2>/dev/null && log "  ✓ 表状态已更新为 inactive" || \
-    log "  ⚠ 表状态更新失败（Brain DB 可能未运行）"
+    >/dev/null 2>&1; then
+    log "  ✓ 表状态已更新为 inactive"
+  else
+    log "  ⚠ 台账库 ${LEDGER_DB} 表状态更新失败，PR#${pr} 仍占预览名额"
+    FAILED=$((FAILED + 1))
+    continue
+  fi
 
   log "  ✅ PR#${pr} 回收完成"
   CLEANED=$((CLEANED + 1))
 done
 
+if [ "$FAILED" -gt 0 ]; then
+  log "完成：回收 ${CLEANED}，跳过 ${SKIPPED}，失败 ${FAILED}"
+  exit 1
+fi
 log "完成：回收 ${CLEANED}，跳过 ${SKIPPED}"
