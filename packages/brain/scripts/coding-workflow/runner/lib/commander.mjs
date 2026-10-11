@@ -149,7 +149,8 @@ async function intervene(ctx, pr, esc, cs, signal) {
       SPEC_PATH: path.join(worktree, specRel), RULING_PATH: rulingPath,
     });
     ctx.log(`coding commander PR #${pr.number} 第 ${n} 次介入（${esc.detail.type}）`);
-    const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', ...CLAUDE_TOOLS], cwd: worktree, timeoutMs: cfg.commanderTimeoutMs, tag: 'commander', isolateRemote: true });
+    // 裁决文件写在 logDir（worktree 外）：显式授权该目录，否则 Write 被拒（真实 Opus 演练实证）
+    const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', '--add-dir', cfg.logDir, ...CLAUDE_TOOLS], cwd: worktree, timeoutMs: cfg.commanderTimeoutMs, tag: 'commander', isolateRemote: true });
     costUsd = run.cost_usd;
     fs.writeFileSync(file(cfg, `commander-${pr.number}-${n}.log`), run.output ?? '');
     if (run.timedOut || run.terminated || run.code !== 0) return await fail('commander_session_failed', run.timedOut ? 'timeout' : `exit ${run.code}`);
