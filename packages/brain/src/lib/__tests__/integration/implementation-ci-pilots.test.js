@@ -35,8 +35,8 @@ it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真
   try{
     const {db}=fixture;
     await preparePilotSchema(db);
-    await db.query(`WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES('afa6abca-53c0-4815-8594-b7fb81ca547f','获客',NULL)) INSERT INTO capabilities(id,name,parent_journey_id) VALUES
-      ('a1000000-0000-4000-8000-000000000001','关键词','afa6abca-53c0-4815-8594-b7fb81ca547f'),('a1000000-0000-4000-8000-000000000002','对标','afa6abca-53c0-4815-8594-b7fb81ca547f')`);
+    await db.query(`WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES('afa6abca-53c0-4815-8594-b7fb81ca547f','获客',NULL)) INSERT INTO capabilities(id,name,parent_journey_id,capability_code) VALUES
+      ('a1000000-0000-4000-8000-000000000001','关键词','afa6abca-53c0-4815-8594-b7fb81ca547f','keyword_acquisition'),('a1000000-0000-4000-8000-000000000002','对标','afa6abca-53c0-4815-8594-b7fb81ca547f','benchmark_link_acquisition')`);
     mkdirSync(join(dir,'src'));writeFileSync(join(dir,'src/controller.js'),"import './shared.js';\n");writeFileSync(join(dir,'src/shared.js'),'export const shared=true;\n');
     const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
     git('init','-b','main');git('config','user.name','fixture');git('config','user.email','fixture@example.test');git('add','.');git('-c','core.hooksPath=/dev/null','commit','-m','fixture');git('remote','add','origin','https://github.com/perfectuser21/zenithjoy-workspace.git');
