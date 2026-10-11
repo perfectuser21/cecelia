@@ -132,7 +132,7 @@ describe('formatChainForPrompt / buildChainPromptSafe', () => {
     expect(txt).toContain('接力棒项目');
     expect(txt).toContain('目标：打通留痕');
     expect(txt).toContain('第 2 / 3 棒');
-    expect(txt).toContain('kind=task|decision|done');
+    expect(txt).toContain('kind=resume_headed（有头续接）|dispatch_headless（无头派发）|decision（待拍板）|note（备注）');
     expect(txt).toContain('写了 458');
   });
   it('buildChainPromptSafe：查询抛错 → 空串不抛', async () => {

@@ -35,7 +35,7 @@ const ctx = await getChainContext({ pool }, '$CHILD');
 await pool.end();
 if (!ctx || ctx.root.id !== '$ROOT' || !ctx.is_chained) { console.error('链上下文找不到根', ctx); process.exit(1); }
 const txt = formatChainForPrompt(ctx);
-if (!txt.includes('smoke 接力棒根') || !txt.includes('目标：smoke') || !txt.includes('kind=task|decision|done')) { console.error('prompt 段缺关键内容', txt); process.exit(1); }
+if (!txt.includes('smoke 接力棒根') || !txt.includes('目标：smoke') || !txt.includes('kind=resume_headed（有头续接）|dispatch_headless（无头派发）')) { console.error('prompt 段缺关键内容', txt); process.exit(1); }
 " || fail "链上下文拼装失败"
 pass "getChainContext 沿真列找到根，formatChainForPrompt 含根/目标/规矩"
 

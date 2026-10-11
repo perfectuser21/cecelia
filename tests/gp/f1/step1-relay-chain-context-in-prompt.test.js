@@ -58,7 +58,7 @@ describe('F1 step1 · 接单进车间：派发 prompt 带项目链上下文', ()
     expect(prompt).toContain('目标：主理人不说也有人动');
     expect(prompt).toContain('第 2 / 3 棒');
     expect(prompt).toContain('458 真列落地');
-    expect(prompt).toContain('kind=task|decision|done');
+    expect(prompt).toContain('kind=resume_headed（有头续接）|dispatch_headless（无头派发）|decision（待拍板）|note（备注）');
     // 原有上下文头一个不少
     expect(prompt).toContain(`HARNESS_TASK_ID=${SELF}`);
     expect(prompt).toContain('REVIEW_REQUIRED=false');
