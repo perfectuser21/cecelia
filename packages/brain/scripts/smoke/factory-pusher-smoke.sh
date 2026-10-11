@@ -41,7 +41,7 @@ try {
   const base = resolveWorkflowConfig('douyin_video_publish.android');
   const cfg = { ...base, workflow_key: tag, publish_hours: [0, 24] };
   const deps = {
-    env: {}, now: () => new Date(), log: () => {}, raise: async () => {},
+    env: {}, force: true, now: () => new Date(), log: () => {}, raise: async () => {},
     resolveConfig: (key) => (key === tag ? cfg : null),
     createTask: (args) => createTask({ ...args, db: client }),
   };
