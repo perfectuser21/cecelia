@@ -3,6 +3,8 @@
 # 验证 mode=headed 白名单校验接口行为（Brain API smoke）
 # Sprint: sprints/07071654-codex-headed-dispatch
 set -euo pipefail
+# 派发总闸 F（任务 0a70684f）：executor=claude 的无头通道已退役，queued 建单会被 no_executor_for_task_type 拒；
+# 本 smoke 只验 mode/executor 白名单校验，claude 用例带 headed_manual=true（人接手）通过建单闸。
 
 # 真 Brain 写入必须显式授权，并核对本机测试容器。
 if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
@@ -35,7 +37,7 @@ echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);exit(0 if isin
 # 2. POST tasks(mode=headed, executor=claude) → 200/201（T6 88e0b448 解锁后，原 400 拒绝已反转）
 CODE=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
-  -d "{\"task_type\":\"talk\",\"title\":\"claude-headed-smoke-$SMOKE_TAG\",\"payload\":{\"executor\":\"claude\",\"mode\":\"headed\",\"journey_id\":\"bb8cc561-b3ee-4fec-b74d-2255694bd963\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null || echo "000")
+  -d "{\"task_type\":\"talk\",\"title\":\"claude-headed-smoke-$SMOKE_TAG\",\"payload\":{\"executor\":\"claude\",\"mode\":\"headed\",\"headed_manual\":\"true\",\"journey_id\":\"bb8cc561-b3ee-4fec-b74d-2255694bd963\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null || echo "000")
 [ "$CODE" = "200" ] || [ "$CODE" = "201" ] \
   && ok "POST tasks(executor=claude, mode=headed) → 200/201 放行" \
   || fail "POST tasks(executor=claude, mode=headed) 应返 200/201，实际 $CODE"

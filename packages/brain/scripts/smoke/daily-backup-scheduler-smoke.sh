@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke: daily-backup-scheduler — 每日 02:00 自动 DB 备份调度
-# 验证：Brain 运行中时调用 /api/brain/backup/trigger-now 能创建 trigger_backup 任务
-# CI 新 DB 无历史任务，故 force 模式一定可以触发（幂等：再次调用返回 alreadyDone=true）
+# 验证：调度器接线在；trigger_backup 无可用执行者（location=us 落已退役 Claude 桥接），
+# 自派发总闸 F（任务 0a70684f）起 /api/brain/backup/trigger-now 建单被明确拒绝，不再进队无人领
 set -euo pipefail
 
 # 真 Brain 写入必须显式授权，并核对本机测试容器。
@@ -61,48 +61,27 @@ if (!content.includes('scheduleDailyBackup')) {
 console.log('tick-runner.js 接入验证通过 ✓');
 "
 
-echo "[daily-backup-smoke] 4. 触发强制备份（force=true），验证能创建 trigger_backup 任务"
+echo "[daily-backup-smoke] 4. 触发强制备份（force=true）：trigger_backup 无可用执行者，建单闸必须明确拒绝（派发总闸 F，任务 0a70684f）"
 RESULT=$(curl -q -sf -X POST "${BRAIN_URL}/api/brain/backup/trigger-now" \
   -H "Content-Type: application/json" \
   -d '{"force":true}' 2>/dev/null || echo '{"error":"curl_failed"}')
 echo "[daily-backup-smoke] trigger-now result: ${RESULT}"
 
-ERROR=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error',''))" 2>/dev/null || echo "parse_error")
-if [[ -n "$ERROR" && "$ERROR" != "None" && "$ERROR" != "" ]]; then
-  echo "[daily-backup-smoke] FAIL: trigger-now error=${ERROR}"
+ERROR=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error') or d.get('result',{}).get('error') or '')" 2>/dev/null || echo "parse_error")
+TRIGGERED=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); r=d.get('result',d); print(r.get('triggered',''))" 2>/dev/null || echo "")
+if [[ "$ERROR" != *no_executor_for_task_type* ]]; then
+  echo "[daily-backup-smoke] FAIL: 期望 no_executor_for_task_type 明确拒绝，实际 error=${ERROR} triggered=${TRIGGERED}"
   exit 1
 fi
+echo "[daily-backup-smoke] trigger_backup 建单被明确拒绝（no_executor_for_task_type），不再进队无人领 ✓"
 
-echo "[daily-backup-smoke] 5. 验证 API 返回了有效的 taskId 或幂等 alreadyDone"
-TASK_ID=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('taskId',''))" 2>/dev/null || echo "")
-TRIGGERED=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('triggered',''))" 2>/dev/null || echo "")
-ALREADY_DONE=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('alreadyDone',''))" 2>/dev/null || echo "")
-if [[ "$TRIGGERED" == "True" || "$TRIGGERED" == "true" ]]; then
-  # 正常触发：taskId 必须有效
-  if [[ -z "$TASK_ID" || "$TASK_ID" == "None" ]]; then
-    echo "[daily-backup-smoke] FAIL: triggered=true 但 taskId 为空"
-    exit 1
-  fi
-  echo "[daily-backup-smoke] trigger_backup 任务已创建 taskId=${TASK_ID} ✓"
-elif [[ "$ALREADY_DONE" == "True" || "$ALREADY_DONE" == "true" ]]; then
-  # 幂等：Brain tick 已在同一时间窗口内自动创建过备份任务，调度器正确返回 alreadyDone=true
-  echo "[daily-backup-smoke] alreadyDone=true（Brain tick 已在窗口内自动触发），幂等验证通过 ✓"
-else
-  echo "[daily-backup-smoke] FAIL: triggered=${TRIGGERED} alreadyDone=${ALREADY_DONE}，期望其一为 true"
+echo "[daily-backup-smoke] 5. 验证没有 queued trigger_backup 卡在队里"
+QUEUED=$(curl -q -sf "${BRAIN_URL}/api/brain/tasks?status=queued&task_type=trigger_backup&limit=5" 2>/dev/null \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); r=d if isinstance(d,list) else d.get('tasks',[]); print(len(r))" 2>/dev/null || echo "err")
+if [[ "$QUEUED" != "0" ]]; then
+  echo "[daily-backup-smoke] FAIL: 仍有 queued trigger_backup（${QUEUED}）"
   exit 1
 fi
-
-if [[ -n "$TASK_ID" && "$TASK_ID" != "None" ]]; then
-  echo "[daily-backup-smoke] 6. 通过 Brain API 验证任务存在"
-  TASK_RESULT=$(curl -q -sf "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo '{}')
-  TASK_TYPE=$(echo "$TASK_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('task_type','unknown'))" 2>/dev/null || echo "unknown")
-  if [[ "$TASK_TYPE" != "trigger_backup" ]]; then
-    echo "[daily-backup-smoke] FAIL: 任务 task_type=${TASK_TYPE}，期望 trigger_backup"
-    exit 1
-  fi
-  echo "[daily-backup-smoke] Brain API 任务验证通过 task_type=${TASK_TYPE} ✓"
-else
-  echo "[daily-backup-smoke] 6. 跳过任务验证（alreadyDone 路径，无新 taskId）✓"
-fi
+echo "[daily-backup-smoke] 无 queued trigger_backup ✓"
 
 echo "[daily-backup-smoke] PASS ✓"
