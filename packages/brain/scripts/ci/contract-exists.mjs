@@ -9,6 +9,8 @@
 //   - sprints/archive/ 下的归档老 sprint 不算 harness PR（不强制合同）
 //   - coding workflow 的 01~04 产物文件（sprints/<目录>/01-intent.md、02-spec.md、03-build.md、
 //     04-evidence.md）不算 harness PR（不强制合同）
+//   - coding workflow 的 sprint 目录（sprints/<8位>-cw-<task_id 前 8 位>/）下全部文件不算 harness PR：
+//     合同对抗、QA 报告、裁决、截图都是它自己的验收记录（02-spec + 02-review 即合同；金丝雀 4 #6232）
 //
 // diff 清单格式：兼容 `git diff --name-status`（status<TAB>path）与纯路径，每行一个文件。
 
@@ -16,6 +18,7 @@ import { readFileSync } from 'fs';
 
 // coding workflow 的四个固定产物，直接位于 sprints/<目录>/ 下一层
 const CODING_WORKFLOW_FILE = /(^|\/)sprints\/[^/]+\/0[1-4]-(intent|spec|build|evidence)\.md$/;
+const CODING_WORKFLOW_DIR = /(^|\/)sprints\/\d{8}-cw-[0-9a-f]{8}\//;
 
 function parseArgs(argv) {
   const out = { fixture: null };
@@ -52,7 +55,8 @@ const touchesSprints = files.some(
   (f) =>
     /(^|\/)sprints\//.test(f) &&
     !f.includes('sprints/archive/') &&
-    !CODING_WORKFLOW_FILE.test(f),
+    !CODING_WORKFLOW_FILE.test(f) &&
+    !CODING_WORKFLOW_DIR.test(f),
 );
 
 if (!touchesSprints) {
