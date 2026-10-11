@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.424.6
+**Brain 版本**: 1.426.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -78,6 +78,23 @@ summary: 版本、实现影响、地图及发布证据测试改用精确scratch�
 
 - 官方 ZenithJoy 试点映射将真实内容生产价值流与安卓多平台发布能力纳入固定源配置；只从完整旧集合升级，保旧身份、父级、来源与激活 CAS。
 - 当前 Workflow 定义使用唯一当前同来源清单，避免同一 SHA 旧清单造成歧义；非当前历史多清单仍明确拒绝。
+
+## Brain 1.426.0 — drift-sentinel 补部署改 detached、超时只告警不杀进程；部署 Bark 告警在容器内真能推出去
+
+任务 B5（根因单 e2fc7076 / d1ec834d 剩余项，同类孤儿 pending 第二来源）。
+
+- `packages/brain/src/cron/drift-sentinel.js`：补部署由 `exec('bash scripts/brain-deploy.sh', { timeout: 300000 })` 改为 detached `spawn` 拉起 `REPO_ROOT/scripts/brain-deploy.sh`（与 POST /api/brain/deploy 同口径，输出落 `REPO_ROOT/logs/cecelia-drift-redeploy-*.log`），不设硬超时、不等部署结束。旧写法构建超过 5 分钟即 SIGTERM，brain-deploy.sh 在 begin 后被杀留孤儿 pending；旧写法还以 Brain 进程 cwd（容器内 /app）找相对路径脚本，路径本就不存在。运行超过 `DRIFT_DEPLOY_WARN_MS`（默认 20 分钟）只 raise P2 `drift_redeploy_slow`，非 0 退出 raise P2 `drift_redeploy_failed`；被杀/中断的台账 pending 由部署脚本 trap 或下一次 begin 的带外 reconcile（#6321）结算。
+- `scripts/lib/url-encode.sh`（新）：纯 bash 百分号编码。Brain 镜像（alpine）没有 jq 也没有 python3，旧 `_url_encode` 原样返回中文+空格，send_bark / sidecar 告警 URL 被 curl 拒收，部署日志只剩"[bark] 推送失败(不阻塞)"。`bluegreen.sh` 与 `bluegreen-sidecar.sh` 改用同一编码器。
+
+## Brain 1.425.0 — coding workflow 固化前逐条预跑回归 smoke，API 类 PR 零固化拦合并
+
+- `runner/lib/qa-gate.mjs` 新增 `preflightSmoke`：裁判 PASS 后，每条可固化的 T-n 用 `bash -c` 单独在预览上跑一遍（`BRAIN_URL=预览地址`、`SMOKE_ALLOW_WRITE=1`、60s 超时），失败的剔除并记 `preflight_failed:<退出码|timeout>`，剩下的重新组装再登记；预览地址命中生产判定时一条都不跑、全部剔除
+- smoke_note 带上「预跑 N 条通过 M 条」与每条被剔除的原因
+- 新规则（决策 4fe863c3，推翻 b8030661）：PR 改了 API 面（`lib/pr-kind.mjs` 新增 `touchesApiSurface`：Brain `src/routes/`、`routes.js`/`*-routes.js`/`*-route.js`、`server.js`、`apps/api/src/`，不含测试）且 QA 有 PASS 的 API 条目、但最终一条都没固化（分支上也没有前轮版本）→ 记 `smoke_missing`，不批准，升级 `qa_smoke_missing` 交 coding commander
+- commander 处理 `qa_smoke_missing`：裁决「放行」（必须写理由、不改代码）→ 批准裁决记录推送后的 head，理由记 `smoke_waived` 与 smoke_note；否则只解除升级，head 已变，QA 门按新 head 重跑
+- `prompts/evaluate.md` 补地址变量写法约定（同一条命令里赋值、T-n 不打本机其他端口、对比基线写 X-n）；`prompts/commander.md` 补 qa_smoke_missing 裁法
+- 修 `qa-gate.mjs` readState 的重复 `rounds` 键（eslint no-dupe-keys）；`proc.mjs` 的 `run` 支持 `env`
+- 运行时口径：runner 每 300s 自更新到 origin/main，合并后下一轮起生效；在途 #6319 只改迁移，不触发零固化拦截
 
 ## Brain 1.424.6 — coding workflow runner 收尾被外部关闭（未合并）的 PR
 
