@@ -20,6 +20,9 @@ export async function implementationRefreshDatabase({manifestRevision='a'.repeat
   await withLegacyNames(pool,()=>pool.query(migrationTable('334_golden_paths.sql','golden_paths')));
   await pool.query(migrationSlice('372_golden_path_contract_versions.sql','CREATE TABLE IF NOT EXISTS golden_path_contract_versions','INSERT INTO schema_version'));
   await withLegacyNames(pool,()=>pool.query(migrationSlice('374_gp_assertion_receipts.sql','CREATE TABLE IF NOT EXISTS journey_assertion_receipts','INSERT INTO schema_version')));
+  // The official phones manifest now also binds the existing content/publishing identities.
+  await pool.query("INSERT INTO value_streams(id,name) VALUES('1489c4e5-7806-4152-a091-b7d32e202ce7','内容生产')");
+  await pool.query("INSERT INTO capabilities(id,name,parent_journey_id,capability_code) VALUES('24987ee5-53a0-4c37-946f-1b749954cac7','多平台发布','1489c4e5-7806-4152-a091-b7d32e202ce7','android_worker_publish')");
   const decision=randomUUID();
   await pool.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','并发契约设置','active')",[decision]);
   const manifest=buildPilotManifest('phones',{revision:manifestRevision,decision});

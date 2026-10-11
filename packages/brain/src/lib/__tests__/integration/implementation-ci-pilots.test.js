@@ -26,6 +26,10 @@ import { readImplementationImpact } from '../../implementation-impact.js';
 import { createImplementationScratch as originalImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot } from '../../../../../../scripts/ci/implementation-snapshot.mjs';
 import { runProjection } from '../../../map/projector.js';
 const implementationFixture={create:originalImplementationScratch};
+async function seedPublishingTree(db){
+ await db.query("INSERT INTO value_streams(id,name) VALUES('1489c4e5-7806-4152-a091-b7d32e202ce7','内容生产')");
+ await db.query("INSERT INTO capabilities(id,name,parent_journey_id,capability_code) VALUES('24987ee5-53a0-4c37-946f-1b749954cac7','多平台发布','1489c4e5-7806-4152-a091-b7d32e202ce7','android_worker_publish')");
+}
 function createImplementationScratch(){
  if(process.env.CI!=='true'||process.env.GITHUB_ACTIONS!=='true'||DB_DEFAULTS.database!=='cecelia_test')throw Object.assign(Error('完整试点仅允许真实CI测试库'),{code:'IMPLEMENTATION_FIXTURE_CI_REQUIRED'});
  return implementationFixture.create();
@@ -37,6 +41,7 @@ it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真
     await preparePilotSchema(db);
     await db.query(`WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES('afa6abca-53c0-4815-8594-b7fb81ca547f','获客',NULL)) INSERT INTO capabilities(id,name,parent_journey_id,capability_code) VALUES
       ('a1000000-0000-4000-8000-000000000001','关键词','afa6abca-53c0-4815-8594-b7fb81ca547f','keyword_acquisition'),('a1000000-0000-4000-8000-000000000002','对标','afa6abca-53c0-4815-8594-b7fb81ca547f','benchmark_link_acquisition')`);
+    await seedPublishingTree(db);
     mkdirSync(join(dir,'src'));writeFileSync(join(dir,'src/controller.js'),"import './shared.js';\n");writeFileSync(join(dir,'src/shared.js'),'export const shared=true;\n');
     const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
     git('init','-b','main');git('config','user.name','fixture');git('config','user.email','fixture@example.test');git('add','.');git('-c','core.hooksPath=/dev/null','commit','-m','fixture');git('remote','add','origin','https://github.com/perfectuser21/zenithjoy-workspace.git');
@@ -62,7 +67,7 @@ it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真
     expect((await db.query("SELECT count(*)::int n FROM map_manifest_versions WHERE status='active'")).rows[0].n).toBe(2);
     expect((await db.query("SELECT count(*)::int n FROM map_projection_nodes WHERE attributes->>'mapping_status'='verified'")).rows[0].n).toBe(0);
     expect((await db.query("SELECT fact_revisions FROM map_projection_runs WHERE scope_key='zenithjoy' AND status='active'")).rows[0].fact_revisions).toEqual({});
-    expect((await db.query("SELECT count(*)::int n FROM map_projection_nodes n JOIN map_projection_runs r ON r.id=n.run_id WHERE r.scope_key='zenithjoy' AND n.attributes->>'mapping_status'='unknown'")).rows[0].n).toBe(3);
+    expect((await db.query("SELECT count(*)::int n FROM map_projection_nodes n JOIN map_projection_runs r ON r.id=n.run_id WHERE r.scope_key='zenithjoy' AND n.attributes->>'mapping_status'='unknown'")).rows[0].n).toBe(5);
     expect(await preserved()).toEqual(before);
     const targets=await pilotGraphTargets(db,{repo:'zenithjoy-workspace',root:dir});
     expect(targets).toEqual([{repo:'zenithjoy-pilot-source',root:dir,scope:'zenithjoy'}]);
@@ -70,7 +75,7 @@ it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真
     const rebuilt=await fetch(`http://127.0.0.1:${server.address().port}/api/brain/map/rebuild`,{method:'POST',headers:{'Content-Type':'application/json','X-Internal-Token':'fixture-internal-token'},body:JSON.stringify({scope_key:'zenithjoy'})});
     expect(rebuilt.status,JSON.stringify(await rebuilt.json())).toBe(200);
     expect((await db.query("SELECT fact_revisions FROM map_projection_runs WHERE scope_key='zenithjoy' AND status='active'")).rows[0].fact_revisions).toEqual({'zenithjoy-pilot-source':revision});
-    expect((await db.query("SELECT count(*)::int n FROM map_projection_nodes n JOIN map_projection_runs r ON r.id=n.run_id WHERE r.scope_key='zenithjoy' AND r.status='active' AND n.attributes->>'mapping_status'='verified'")).rows[0].n).toBe(3);
+    expect((await db.query("SELECT count(*)::int n FROM map_projection_nodes n JOIN map_projection_runs r ON r.id=n.run_id WHERE r.scope_key='zenithjoy' AND r.status='active' AND n.attributes->>'mapping_status'='verified'")).rows[0].n).toBe(5);
     expect(await preserved()).toEqual(before);
     await db.query(`INSERT INTO workflows(id,capability_id,key,name,channel) VALUES
       ('b1000000-0000-4000-8000-000000000001','a1000000-0000-4000-8000-000000000001','douyin_keyword_leadgen','关键词','douyin'),
@@ -175,6 +180,7 @@ it.each(['coverage','pilot','graph'])('seedonly %s调用真实设置链，query�
    expect(triggers).toContainEqual({tgname:'trg_journey_assertion_receipts_append_only'});
    const decision=randomUUID();await f.db.query('INSERT INTO decisions(id) VALUES($1)',[decision]);
    await f.db.query("WITH vs AS (INSERT INTO value_streams(id,name,parent_journey_id) VALUES('afa6abca-53c0-4815-8594-b7fb81ca547f','获客',NULL)) INSERT INTO capabilities(id,name,parent_journey_id) VALUES('a1000000-0000-4000-8000-000000000001','关键词','afa6abca-53c0-4815-8594-b7fb81ca547f'),('a1000000-0000-4000-8000-000000000002','对标','afa6abca-53c0-4815-8594-b7fb81ca547f')");
+   await seedPublishingTree(f.db);
    const manifest=buildPilotManifest('phones',{revision:'a'.repeat(40),decision});
    await f.db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('zenithjoy','zenithjoy-pilot-source','legacy-ledger-v1',$1)",[{source_repo:manifest.capabilities[0].brain_binding.source_repo}]);
    const draft=await submitMapManifest(f.db,manifest);

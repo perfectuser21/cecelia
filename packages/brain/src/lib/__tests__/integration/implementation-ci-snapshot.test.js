@@ -225,3 +225,40 @@ it('真实固定Git与scratch导入重放新契约，退役来源owner没有curr
     expect((await target.db.query('SELECT id,status,current_definition_version_id FROM workflows ORDER BY id')).rows).toEqual(before);
   }finally{await target?.close();rmSync(dir,{recursive:true,force:true});}
 });
+
+it('同SHA多清单当前定义只用精确当前active；非current历史仍歧义',async()=>{
+ fixture=await implementationImpactDatabase({completeManifest:true});const {db}=fixture;
+ const old=(await db.query("SELECT * FROM map_manifest_versions WHERE scope_key='phones' AND status='active'")).rows[0];
+ const active={...old,id:randomUUID(),version:old.version+1,manifest:structuredClone(old.manifest)};
+ active.manifest.capabilities[0].name='当前批准名称';active.digest=stepSha256(active.manifest);
+ await db.query("UPDATE map_manifest_versions SET status='superseded' WHERE id=$1",[old.id]);
+ await db.query("UPDATE map_projection_runs SET status='superseded' WHERE manifest_version_id=$1",[old.id]);
+ await db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,'phones',$2,$3,$4,$5,'active',NOW())",[active.id,active.version,active.source_decision_id,active.manifest,active.digest]);
+ await db.query("INSERT INTO map_projection_runs(id,scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES($1,'phones',$2,$3,$4,'binding-v2',$3,'active',NOW())",[randomUUID(),active.id,active.digest,{'phone-source':query.revision}]);
+ const current=await exportImplementationSnapshot(db,query);
+ expect(current.status,JSON.stringify(current.gaps)).toBe('verified');expect(current.map.manifest.id).toBe(active.id);expect(current.map.source_basis).toBe('current_registration');
+ // unique-active DB约束本身阻止第二active；移除此唯一索引仅在私有schema测读者仍不任选。
+ const uniqueIndexes=(await db.query("SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() AND tablename='map_manifest_versions' AND indexdef LIKE '%UNIQUE%' AND indexdef LIKE '%status%'")).rows;
+ for(const i of uniqueIndexes)await db.query(`DROP INDEX ${i.indexname}`);
+ await db.query("UPDATE map_manifest_versions SET status='active' WHERE id=$1",[old.id]);
+ expect((await exportImplementationSnapshot(db,query)).gaps).toContainEqual(expect.objectContaining({code:'manifest_snapshot_ambiguous'}));
+ await db.query("UPDATE map_manifest_versions SET status='superseded' WHERE id=$1",[old.id]);
+ await fixture.advance();
+ const historical=await exportImplementationSnapshot(db,query);
+ expect(historical.status).toBe('unknown');expect(historical.gaps).toContainEqual(expect.objectContaining({code:'manifest_snapshot_ambiguous'}));
+});
+
+it.each(['wrong_repo','wrong_revision','missing_capability'])('同SHA current错误active %s不选择其它历史清单',async(kind)=>{
+ fixture=await implementationImpactDatabase({completeManifest:true});const {db}=fixture;
+ const old=(await db.query("SELECT * FROM map_manifest_versions WHERE scope_key='phones' AND status='active'")).rows[0];
+ const bad=structuredClone(old.manifest),id=randomUUID();
+ if(kind==='wrong_repo')bad.capabilities[0].brain_binding.source_repo='wrong/repo';
+ else if(kind==='wrong_revision')bad.capabilities[0].brain_binding.source_revision='c'.repeat(40);
+ else bad.capabilities.pop();
+ const digest=stepSha256(bad);
+ await db.query("UPDATE map_manifest_versions SET status='superseded' WHERE id=$1",[old.id]);
+ await db.query("UPDATE map_projection_runs SET status='superseded' WHERE manifest_version_id=$1",[old.id]);
+ await db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,'phones',$2,$3,$4,$5,'active',NOW())",[id,old.version+1,old.source_decision_id,bad,digest]);
+ await db.query("INSERT INTO map_projection_runs(id,scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES($1,'phones',$2,$3,$4,'binding-v2',$3,'active',NOW())",[randomUUID(),id,digest,{'phone-source':query.revision}]);
+ expect((await exportImplementationSnapshot(db,query)).status).toBe('unknown');
+});
