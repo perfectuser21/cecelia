@@ -28,6 +28,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/routes/__tests__/integration/releases.test.js',
   'src/routes/__tests__/integration/run-definitions.test.js',
   'src/routes/__tests__/integration/run-reconciliation.test.js',
+  'src/routes/__tests__/integration/runs-read.test.js',
   'src/__tests__/integration/span-provenance.pg.integration.test.js',
 
   'src/lib/__tests__/integration/implementation-context.test.js',
