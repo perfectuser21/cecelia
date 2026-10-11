@@ -12,6 +12,7 @@ import { listOwnPrs } from './cifix-scan.mjs';
 import { intentOf, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from './pr-branch.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
+import { sessionLogPath, sessionSummary } from './session-log.mjs';
 
 // commander 能处理的升级；其余（预览环境、裁判不可用/关闭、改动超限、评估会话坏、sprint 丢失……）是基础设施或要人定，直接通知主理人
 export const HANDLED = new Set(['judge_contract_gap', 'judge_ruling_conflict', 'qa_fix_failed', 'qa_stalled', 'qa_cannot_verify', 'ci_fix_exhausted']);
@@ -150,9 +151,10 @@ async function intervene(ctx, pr, esc, cs, signal) {
     });
     ctx.log(`coding commander PR #${pr.number} 第 ${n} 次介入（${esc.detail.type}）`);
     // 裁决文件写在 logDir（worktree 外）：显式授权该目录，否则 Write 被拒（真实 Opus 演练实证）
-    const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', '--add-dir', cfg.logDir, ...CLAUDE_TOOLS], cwd: worktree, timeoutMs: cfg.commanderTimeoutMs, tag: 'commander', isolateRemote: true });
+    const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', '--add-dir', cfg.logDir, ...CLAUDE_TOOLS], cwd: worktree, timeoutMs: cfg.commanderTimeoutMs, tag: 'commander', isolateRemote: true,
+      transcriptPath: sessionLogPath(cfg, 'commander', pr.number, n) });
     costUsd = run.cost_usd;
-    fs.writeFileSync(file(cfg, `commander-${pr.number}-${n}.log`), run.output ?? '');
+    ctx.log(sessionSummary('commander', pr.number, run));
     if (run.timedOut || run.terminated || run.code !== 0) return await fail('commander_session_failed', run.timedOut ? 'timeout' : `exit ${run.code}`);
     const parsed = parseRuling(fs.existsSync(rulingPath) ? fs.readFileSync(rulingPath, 'utf8') : '');
     if (parsed.error) return await fail('commander_output_invalid', parsed.error);

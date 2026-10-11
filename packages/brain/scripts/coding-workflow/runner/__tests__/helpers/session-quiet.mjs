@@ -22,5 +22,7 @@ export function expectSessionOnlyInFile(stderr, logDir, { tag, kind, pr, cost })
   expect(text).toContain('FAKE_SESSION_BODY');
   expect(text).toContain('FAKE_SESSION_STDERR');
   expect(text).toContain('"type":"result"');
+  // 结论摘录压成一行进摘要
+  expect(summary[0]).toContain('「修完了 第二行」');
   return path.join(logDir, files[0]);
 }

@@ -76,5 +76,5 @@ process.stderr.write(`FAKE_SESSION_STDERR mode=${mode}\n`);
 // FAKE_CIFIX_COST：末尾输出一行 result 事件（真 claude --output-format json 的形状），供计费与摘要测试
 if (process.env.FAKE_CIFIX_COST) {
   console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 3, duration_ms: 1000,
-    total_cost_usd: Number(process.env.FAKE_CIFIX_COST), result: 'FAKE_SESSION_BODY 修完了\n第二行' }));
+    total_cost_usd: Number(process.env.FAKE_CIFIX_COST), result: '修完了\n第二行' }));
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # coding workflow runner 启动器（LaunchDaemon 每 5 分钟调一次）。
-# 使用专用 clone（不碰主仓 checkout）：clone 不存在则 clone；工作区干净才自更新到 origin/main，
+# 使用专用 clone（不碰主仓 checkout）：clone 不存在则 clone；工作区干净才自更新到 origin/main（HEAD 变了才记一行），
 # 不干净只记日志、不破坏现场；然后 exec clone 里的 run-once.mjs（worktree prune 与保留期清理由它负责）。
 # 主日志（CODING_WF_MAIN_LOG，launchd 的 StandardOutPath）超过 10MB 时 copy+truncate 滚动，保留 3 份。
 set -uo pipefail
@@ -38,8 +38,12 @@ if [ ! -d "$REPO/.git" ]; then
 fi
 
 if [ -z "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
+  BEFORE_SHA="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)"
   if git -C "$REPO" fetch -q origin main && git -C "$REPO" reset -q --hard origin/main; then
-    log "已自更新到 origin/main $(git -C "$REPO" rev-parse --short HEAD)"
+    # 每 5 分钟一轮：HEAD 没变就不打（否则同一 sha 每轮一行，占满主日志）
+    if [ "$(git -C "$REPO" rev-parse HEAD)" != "$BEFORE_SHA" ]; then
+      log "已自更新到 origin/main $(git -C "$REPO" rev-parse --short HEAD)"
+    fi
   else
     log "自更新失败，沿用当前版本 $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null)"
   fi

@@ -22,6 +22,7 @@ import { runQaGate } from './lib/qa-gate.mjs';
 import { runMergeGate } from './lib/merge-gate.mjs';
 import { runCommander } from './lib/commander.mjs';
 import { listOwnPrs } from './lib/cifix-scan.mjs';
+import { idleLogDue } from './lib/session-log.mjs';
 import { restoreStates, mirrorStates } from './lib/state-store.mjs';
 import { readyCandidates } from './lib/deps.mjs';
 
@@ -76,7 +77,8 @@ async function pickNew(ctx, queued) {
 
 async function claimFirst(ctx, candidates) {
   if (candidates.length === 0) {
-    log('没有可新跑的开关任务');
+    // 空闲 tick 每 5 分钟一次：限频（默认每小时最多一行），免得刷满主日志
+    if (idleLogDue(ctx.cfg)) log('没有可新跑的开关任务');
     return null;
   }
   for (const task of candidates) {
