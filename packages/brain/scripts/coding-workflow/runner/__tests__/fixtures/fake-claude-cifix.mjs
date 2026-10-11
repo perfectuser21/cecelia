@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 const argv = process.argv.slice(2);
 const prompt = argv[argv.indexOf('-p') + 1] || '';
 if (process.env.FAKE_CIFIX_PROMPT) fs.writeFileSync(process.env.FAKE_CIFIX_PROMPT, prompt);
+if (process.env.FAKE_CIFIX_ARGS) fs.writeFileSync(process.env.FAKE_CIFIX_ARGS, JSON.stringify(argv));
 const mode = process.env.FAKE_CIFIX_MODE || 'fix';
 const git = (...args) => execFileSync('git', args, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
 const commit = (file, text, message) => {
