@@ -13,6 +13,7 @@ import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead,
 import { previewOf } from '../../lib/preview.mjs';
 import { buildQaSmoke, registerSmoke, QA_SMOKE_DIR } from '../../lib/qa-smoke.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
+import { cannotVerifyAccepted } from './cv-accepted.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { runJudge, priorJudgeFiles } from './judge-gate.mjs';
 
@@ -401,9 +402,14 @@ async function qaRound(ctx, pr, s, signal) {
     delete s.last_eval_error;
     const fails = qa.failed.length + qa.blocking.length;
     const report0 = `${intent.sprintDir}/${result.outputs.qa_report_file}`;
-    const entry = { round, head: pr.headRefOid, verdict: qa.verdict, fails, report: report0, env_url: qa.env?.url, cost_usd: qa.cost_usd, at: new Date().toISOString() };
+    // 验不了的项全部已被 commander 裁过接受且无失败 → 按 PASS 交独立裁判，不再重复升级
+    const cvAccepted = qa.verdict === 'CANNOT_VERIFY' && fails === 0 ? cannotVerifyAccepted(cfg, pr.number, qa.cannot_verify) : null;
+    const verdict = cvAccepted ? 'PASS' : qa.verdict;
+    const label = cvAccepted ? 'CANNOT_VERIFY（commander 已裁接受）' : qa.verdict;
+    const entry = { round, head: pr.headRefOid, verdict, fails, report: report0, env_url: qa.env?.url, cost_usd: qa.cost_usd, at: new Date().toISOString(),
+      ...(cvAccepted ? { qa_verdict: qa.verdict, cv_accepted: cvAccepted } : {}) };
     addCost(s, qa.cost_usd);
-    ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮 ${qa.verdict}（失败 ${fails}）`);
+    ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮 ${label}（失败 ${fails}）`);
     const records = [report0, `${intent.sprintDir}/qa-r${round}`];
     // 记录提交成功才算这一轮（提交失败下轮同一 head 重验，裁判计数回滚）
     const commit = async (message) => {
@@ -416,15 +422,15 @@ async function qaRound(ctx, pr, s, signal) {
       }
       s.rounds.push(entry);
     };
-    if (qa.verdict === 'PASS' && cfg.judge) {
+    if (verdict === 'PASS' && cfg.judge) {
       const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
       if (j.file) records.push(`${intent.sprintDir}/${j.file}`);
       if (!j.error && j.verdict === 'PASS') records.push(...solidifyQa(ctx, pr, s, round, worktree, intent, result.outputs.qa_report_file, qa.env?.url));
-      await commit(`docs(qa): 第 ${round} 轮真人 QA PASS，${j.error ? '独立裁判待定' : `独立裁判 ${j.verdict}`}`);
+      await commit(`docs(qa): 第 ${round} 轮真人 QA ${label}，${j.error ? '独立裁判待定' : `独立裁判 ${j.verdict}`}`);
       return afterJudge(ctx, pr, s, worktree, intent, entry, j);
     }
-    await commit(`docs(qa): 第 ${round} 轮真人 QA ${qa.verdict}`);
-    if (qa.verdict === 'PASS') {
+    await commit(`docs(qa): 第 ${round} 轮真人 QA ${label}`);
+    if (verdict === 'PASS') {
       // 裁判是合并的必要条件（审计 #32）：关掉裁判时不批准，交人审
       return escalate(ctx, pr, s, intent.taskId, { type: 'judge_disabled', round });
     } else if (qa.verdict === 'CANNOT_VERIFY') {
