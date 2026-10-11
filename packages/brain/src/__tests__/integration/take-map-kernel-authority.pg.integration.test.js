@@ -264,7 +264,10 @@ describe.sequential('Take → Map → Kernel authority on PostgreSQL', () => {
     expect(partial.rows[0]).toEqual({ tasks: 0, receipts: 0 });
   });
 
-  it('valid F1 routes atomically, then no-runId false success releases claim and records failure', async () => {
+  // 无头 kernel 入口退役（任务 dacd75f3）：harness_initiative 无头单不再进 kernel 派发；
+  // kernel 执行回执的收口语义（no-runId / terminal authority）仍由 dispatch-executor-fail 单测覆盖（golden_path_proposal 仍走 kernel）；
+  // 有头行不被 drain 由 retired-harness-dispatch.pg.integration（真实选单 SQL）覆盖——本文件的选单是 mock。
+  it('valid F1 routes atomically; queued headless harness_initiative is drained retired_harness_kernel without touching the executor', async () => {
     const sourceId = `valid-${randomUUID()}`;
     const created = await createRoutedTask(testPool, {
       source: 'api',
@@ -279,94 +282,18 @@ describe.sequential('Take → Map → Kernel authority on PostgreSQL', () => {
       task: { priority: 'P0' },
     });
     state.taskId = created.task_id;
-    state.trigger.mockResolvedValueOnce({ success: true, taskId: created.task_id });
+    state.trigger.mockClear();
 
     const result = await dispatchNextTask(null);
 
-    expect(result).toMatchObject({
-      dispatched: false,
-      reason: 'executor_failed',
-      task_id: created.task_id,
-      error: 'kernel_authority_not_created',
-    });
+    expect(result.actions).toContainEqual({ action: 'retire-task', task_id: created.task_id, task_type: 'harness_initiative' });
+    expect(state.trigger).not.toHaveBeenCalled();
     const persisted = await testPool.query(
-      `SELECT task.status,task.claimed_by,task.claimed_at,
+      `SELECT task.status,task.claimed_by,task.error_message,
               MAX(receipt.map_scope_validation_version) AS map_scope_validation_version,
-              COUNT(receipt.id)::int AS receipts,
-              COUNT(event.id) FILTER (WHERE event.event_type='failed_dispatch')::int AS failures
+              COUNT(receipt.id)::int AS receipts
          FROM tasks task
          LEFT JOIN work_routing_receipts receipt ON receipt.task_id=task.id
-         LEFT JOIN task_events event ON event.task_id=task.id
-        WHERE task.id=$1
-        GROUP BY task.id`,
-      [created.task_id],
-    );
-    expect(persisted.rows[0]).toMatchObject({
-      status: 'queued',
-      claimed_by: null,
-      claimed_at: null,
-      map_scope_validation_version: 'active-business-node-v1',
-      receipts: 1,
-      failures: 1,
-    });
-    expect(state.emit).not.toHaveBeenCalledWith('task_dispatched', expect.anything(), expect.anything());
-  });
-
-  it('terminal Kernel authority keeps terminal task and only clears the stale dispatcher claim', async () => {
-    const sourceId = `terminal-${randomUUID()}`;
-    const created = await createRoutedTask(testPool, {
-      source: 'api',
-      source_id: sourceId,
-      title: `terminal authority fixture ${sourceId}`,
-      mutation_intent: 'write',
-      declared_change_kind: 'bugfix',
-      repo_hint: 'cecelia',
-      map_scope_hint: ['F1'],
-      branch: 'cp-terminal-authority',
-      base_sha: 'e'.repeat(40),
-      task: { priority: 'P0' },
-    });
-    const runId = randomUUID();
-    state.taskId = created.task_id;
-    state.trigger.mockImplementationOnce(async () => {
-      await testPool.query(
-        `INSERT INTO initiative_runs(
-           id,initiative_id,phase,current_task_id,orchestrator_version,created_source,
-           record_trust_status,impact_contract_policy,impact_contract_policy_reason
-         ) VALUES($1,$2,'failed',$3,'v2','kernel_dispatch','trusted',
-           'legacy_exempt','terminal dispatcher reconciliation fixture')`,
-        [runId, randomUUID(), created.task_id],
-      );
-      await testPool.query(
-        `UPDATE tasks SET status='failed',error_message='authoritative failure',updated_at=NOW()
-          WHERE id=$1`,
-        [created.task_id],
-      );
-      return {
-        success: false,
-        taskId: created.task_id,
-        runId,
-        authorityExists: true,
-        kernelAuthority: 'terminal',
-        terminal: true,
-        reason: 'kernel_terminal_authority',
-      };
-    });
-
-    const result = await dispatchNextTask(null);
-
-    expect(result).toMatchObject({
-      dispatched: false,
-      reason: 'kernel_terminal_authority',
-      task_id: created.task_id,
-      run_id: runId,
-      terminal: true,
-    });
-    const persisted = await testPool.query(
-      `SELECT task.status,task.claimed_by,task.claimed_at,
-              COUNT(event.id) FILTER (WHERE event.event_type='failed_dispatch')::int AS failures
-         FROM tasks task
-         LEFT JOIN task_events event ON event.task_id=task.id
         WHERE task.id=$1
         GROUP BY task.id`,
       [created.task_id],
@@ -374,8 +301,9 @@ describe.sequential('Take → Map → Kernel authority on PostgreSQL', () => {
     expect(persisted.rows[0]).toMatchObject({
       status: 'failed',
       claimed_by: null,
-      claimed_at: null,
-      failures: 0,
+      error_message: 'retired_harness_kernel',
+      map_scope_validation_version: 'active-business-node-v1',
+      receipts: 1,
     });
     expect(state.emit).not.toHaveBeenCalledWith('task_dispatched', expect.anything(), expect.anything());
   });

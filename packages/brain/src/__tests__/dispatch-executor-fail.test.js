@@ -145,7 +145,8 @@ function kernelDispatchTask(id, description) {
 
 function setupKernelDispatch(task, result) {
   mockTriggerCeceliaRun.mockResolvedValueOnce(result);
-  for (const rows of [[], [task], [], [{ n: 0 }], [{ id: task.id }], [task], []]) {
+  // 首项 retired drain、次项无头 kernel drain（harness_initiative 无头入口退役），之后是候选/查重/并发/claim/取全量/分配落盘
+  for (const rows of [[], [], [task], [], [{ n: 0 }], [{ id: task.id }], [task], []]) {
     mockQuery.mockResolvedValueOnce({ rows, rowCount: rows.length });
   }
   mockQuery.mockResolvedValueOnce({ rows: [canonicalRoutingReceipt(task)] });
@@ -175,6 +176,8 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
 
     // Mock pool.query calls:
     // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. selectNextDispatchableTask → returns task
     mockQuery.mockResolvedValueOnce({ rows: [task] });
@@ -225,6 +228,8 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
     });
 
     // 0. Phase 2.5: drain retired harness types (本 PR 加, 0 retired drained)
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    // 0'. 无头 kernel drain（harness_initiative 无头入口退役）
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // 1. selectNextDispatchableTask
     mockQuery.mockResolvedValueOnce({ rows: [task] });
@@ -466,6 +471,7 @@ describe('Bug 回归: harness_initiative bridge guard bypass', () => {
     };
 
     mockQuery.mockResolvedValueOnce({ rows: [] });                    // retired drain
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // 无头 kernel drain
     mockQuery.mockResolvedValueOnce({ rows: [harnessTask] });        // candidate tasks
     mockQuery.mockResolvedValueOnce({ rows: [] });                    // 派发前语义查重（本 PR 加）→ 无 sibling
     mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });           // 全局 harness 并发计数（本 PR 加）→ 0 < cap
@@ -506,6 +512,7 @@ describe('Bug 回归: harness_initiative bridge guard bypass', () => {
     };
 
     mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // 无头 kernel drain
     mockQuery.mockResolvedValueOnce({ rows: [devTask] });
     mockQuery.mockResolvedValueOnce({ rows: [] });                    // 派发前语义查重（本 PR 加）→ 无 sibling
     mockQuery.mockResolvedValueOnce({ rows: [{ id: devTask.id }] });

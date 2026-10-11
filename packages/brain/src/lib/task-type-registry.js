@@ -62,6 +62,7 @@ const OCPASS = 'openclaw_passthrough'; // dispatcher 任务池总闸关着时仍
 const INF = 'harness_inflight';      // slot-allocator inflight 计数
 const GUIDE = 'allocation_guided';   // dispatch-allocation-guide GUIDED_TASK_TYPES
 const KR = 'kernel_run_eligible';    // kernel-run-store ELIGIBLE_TASK_TYPES
+const HKR = 'headless_kernel_retired'; // 无头 kernel 入口已关：只认有头（headed_manual）账本行，queued 无头建单即拒、存量被 dispatcher drain
 const CM = 'coding_mutation';        // routes/task-tasks CODING_MUTATION_TASK_TYPES
 const FC = 'family:content';         // actions.js CONTENT_TASK_TYPES
 const FR = 'family:research';        // actions.js RESEARCH_TASK_TYPES
@@ -166,7 +167,10 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // platform_scraper 由 Brain 内部采集器（post-publish-data-collector.processPendingScraperTasks）自领 queued 行；
   // tick 再派只会落退役 Claude 桥接回 queued，和内部采集器抢同一行（派发总闸 F，任务 0a70684f）。
   platform_scraper:         T('brain-internal', false, false, null, 'none', true, false, 'none', true, [V, WARROOM]),
-  harness_initiative:       workflow(T('kernel', true,  true,  'relay-container', 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, INF, BP, GUIDE, KR, CM, FK, GPSCOPE, WARROOM])),
+  // 无头 kernel 入口退役（任务 dacd75f3）：kernel 派发自 09-30 起全败 kernel_authority_not_created（30 天 372 次 / 112 单），
+  // 无头编码改走 coding_workflow。surface=none → 无头 queued 建单即拒；HKR → dispatcher drain 存量无头 queued 单。
+  // 有头 /dev 会话仍拿它当账本行（headed_manual 字符串/布尔），不受影响。KR 暂留（kernel-run-store 存量收账），删代码阶段再摘。
+  harness_initiative:       workflow(T('none', true,  true,  'relay-container', 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, INF, BP, GUIDE, KR, CM, FK, GPSCOPE, WARROOM, HKR])),
   harness_task:             workflow(T('none', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, RET, BP])),
   harness_final_e2e:        T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, RET, FV]),
   trigger_backup:           T('none', false, false, null, 'none', true, true, 'none', true, []),
@@ -288,6 +292,8 @@ export const PUSH_EXCLUDED_TASK_TYPES = Object.freeze(
   Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.db && !e.push_to_notion).map(([k]) => k),
 );
 export const KERNEL_RUN_ELIGIBLE_TASK_TYPES = tagged(KR);
+/** 无头 kernel 入口已退役的类型：dispatch-route 判 retired-harness-kernel，dispatcher drain 存量无头 queued 单。 */
+export const HEADLESS_KERNEL_RETIRED_TASK_TYPES = tagged(HKR);
 export const ANCHOR_EXEMPT_TASK_TYPES = tagged(ANC);
 export const MONITOR_LONG_RUNNING_TASK_TYPES = tagged(MON);
 /** monitor-loop.js:200 原内联 HARNESS_CHAIN_TYPES（harness/sprint 链式任务感知，检查下游任务是否已派生）。 */

@@ -142,6 +142,7 @@ const TASK = {
 
 function queueOneCandidate() {
   mockQuery.mockResolvedValueOnce({ rows: [] });        // drain retired harness types
+  mockQuery.mockResolvedValueOnce({ rows: [] });        // 无头 kernel drain（harness_initiative 无头入口退役）
   mockQuery.mockResolvedValueOnce({ rows: [TASK] });    // selectNextDispatchableTask
   mockQuery.mockResolvedValueOnce({ rows: [] });        // 派发前语义查重
   mockQuery.mockResolvedValueOnce({ rows: [{ id: TASK.id }] }); // atomic claim

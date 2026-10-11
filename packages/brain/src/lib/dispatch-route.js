@@ -14,8 +14,9 @@
  *   openclaw-agent → surface 'openclaw-agent' （ssh MMV 起 openclaw agent）
  *   script         → surface 'script'         （ssh 跑场机执行确定性脚本）
  *   codex-bridge   → surface 'codex-bridge'   （location=xian / xian_m1 → 西安 Codex Bridge）
- *   kernel         → surface 'kernel'         （harness_initiative / golden_path_proposal → Kernel Harness）
- *   claude-retired / retired-harness → surface 'none'（无可用执行者，建单即拒）
+ *   kernel         → surface 'kernel'         （golden_path_proposal → Kernel Harness）
+ *   claude-retired / retired-harness / retired-harness-kernel → surface 'none'（无可用执行者，建单即拒）
+ *     retired-harness-kernel = 无头 harness_initiative（kernel 入口已退役，无头编码改走 coding_workflow）
  *   external-mirror → surface 'external'（workflow_run 外部起跑账本镜像，只以 in_progress/终态入账，queued 建单即拒）
  *   own-consumer   → tick 不派（tick_dispatchable=false），由该类型专属消费方领单，surface 不受约束
  *   headed         → payload.headed_manual=true，执行者是有头会话（人），不进 tick
@@ -26,6 +27,7 @@ import {
   REVIEW_TASK_TYPES,
   RETIRED_HARNESS_TYPES_DISPATCH,
   KERNEL_RUN_ELIGIBLE_TASK_TYPES,
+  HEADLESS_KERNEL_RETIRED_TASK_TYPES,
 } from './task-type-registry.js';
 
 export const NO_EXECUTOR_FOR_TASK_TYPE = 'no_executor_for_task_type';
@@ -44,18 +46,21 @@ export const SURFACE_FOR_ROUTE = Object.freeze({
   kernel: 'kernel',
   'claude-retired': 'none',
   'retired-harness': 'none',
+  'retired-harness-kernel': 'none',
   'external-mirror': 'external',
 });
 
 // executor 2.85 分支（harness_initiative / golden_path_proposal → Kernel Harness）= 注册表 kernel_run_eligible 标签
 const KERNEL_HARNESS_TYPES = new Set(KERNEL_RUN_ELIGIBLE_TASK_TYPES);
 const RETIRED = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
+const HEADLESS_KERNEL_RETIRED = new Set(HEADLESS_KERNEL_RETIRED_TASK_TYPES);
 const REVIEW = new Set(REVIEW_TASK_TYPES);
 const INTERNAL = new Set(INTERNAL_HANDLER_TASK_TYPES);
 
 const ROUTE_REASON = Object.freeze({
   'claude-retired': 'location=us 落在已退役的 US Claude 桥接路径（任务 76a160b3），无执行者',
   'retired-harness': '已退役的 harness 子类型（归入 harness_initiative 全图），派到即终态失败',
+  'retired-harness-kernel': '无头 kernel 入口已退役（kernel 派发自 09-30 起全败 kernel_authority_not_created），无头编码改建 coding_workflow；有头 /dev 账本行带 payload.headed_manual=true',
   'external-mirror': '外部起跑的账本镜像（执行机自己起跑，Brain 只记账），只以 in_progress/终态入账，queued 无人领',
 });
 
@@ -82,6 +87,8 @@ export function resolveDispatchRoute(task, { dynamic = null } = {}) {
   const payload = task?.payload || {};
   if (isHeadedManual(payload)) return ok('headed', 'human');
   if (!entry.tick_dispatchable) return ok('own-consumer', entry.executor ?? entry.surface);
+  // 先于动态配置 / 显式 override：无头单不能被 location/executor 绕回别的执行面。
+  if (HEADLESS_KERNEL_RETIRED.has(type)) return none('retired-harness-kernel');
   // 外部 run 镜像（判据同 external-mirror-liveness：kind=workflow + surface=external + watchdog=none，即 workflow_run）
   if (entry.kind === 'workflow' && entry.surface === 'external' && entry.watchdog === 'none') return none('external-mirror');
   if (REVIEW.has(type)) return ok('codex-review', 'codex-review-local');
@@ -113,6 +120,10 @@ export function assertTaskTypeHasExecutor({ task_type, status = 'queued', payloa
   if (status !== 'queued') return;
   const route = resolveDispatchRoute({ task_type, payload }, opts);
   if (route.available) return;
+  // 无头 kernel 退役第一步只关派发（dispatcher drain 终态 failed=retired_harness_kernel），建单暂不拒：
+  // 编码建单方（work-router coding_mutation / relay-baton 子单 / GP 签字实现单）改投 coding_workflow 之前
+  // 在建单处拒会连带回滚签字等上游事务；改投之后再在建单入口收紧（车道 A 后续 A2/A4）。
+  if (route.route === 'retired-harness-kernel') return;
   const error = new Error(
     `${NO_EXECUTOR_FOR_TASK_TYPE}: task_type="${task_type}" 没有可用执行者（route=${route.route}：${route.reason}）。`
     + '改用有执行者的类型；确需人工接手请带 payload.headed_manual=true',
