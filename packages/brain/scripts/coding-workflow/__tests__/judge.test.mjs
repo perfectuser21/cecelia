@@ -148,3 +148,53 @@ describe('callJudge', () => {
     await expect(callJudge({ system: 's', user: 'u' }, { api: 'a', key: 'k', model: 'm', fetchFn: empty })).rejects.toThrow('judge_empty');
   });
 });
+
+// 金丝雀 4（PR #6232）：第 8 轮裁判要求约束读不到时报错、第 9 轮又要求返回空数组，修复会话跟着来回改，跑了 10 轮。
+// 裁判必须看到规格的约束力和前几轮裁决；推翻前轮结论不能直接判 product 让开发改，要交 coding commander 裁。
+describe('规格约束力与前轮裁决（金丝雀 4 裁判翻转）', () => {
+  it('提示词声明规格条款有约束力，并带上前几轮裁决原文', () => {
+    const p = buildJudgePrompt({ intent: 'i', spec: 's', qaReport: 'q', diff: 'd', intentIds: ['I-1'], round: 3,
+      priorRulings: [{ round: 1, text: 'PRIOR-R1-TEXT' }, { round: 2, text: 'PRIOR-R2-TEXT' }] }).user;
+    expect(p).toContain('规格（02）的条款对你有约束力');
+    expect(p).toContain('### 第 1 轮');
+    expect(p).toContain('PRIOR-R1-TEXT');
+    expect(p).toContain('PRIOR-R2-TEXT');
+    expect(p).toContain('reverses');
+  });
+
+  it('首轮没有前轮裁决 → 写明无', () => {
+    const p = buildJudgePrompt({ intent: 'i', spec: 's', qaReport: 'q', diff: 'd', intentIds: ['I-1'] }).user;
+    expect(p).toContain('（无，本轮是首次裁决）');
+  });
+
+  it('前轮裁决过长 → 只保留最近的、总量封顶', () => {
+    const big = Array.from({ length: 6 }, (_, i) => ({ round: i + 1, text: `R${i + 1}-${'x'.repeat(20000)}` }));
+    const p = buildJudgePrompt({ intent: 'i', spec: 's', qaReport: 'q', diff: 'd', intentIds: ['I-1'], round: 7, priorRulings: big }).user;
+    expect(p).toContain('R6-');
+    expect(p).not.toContain('R1-');
+    expect(p.length).toBeLessThan(80000);
+  });
+
+  it('parseJudge 保留问题的 reverses（推翻的前轮条目）', () => {
+    const r = parseJudge(JSON.stringify(ok({ coverage: [{ intent: 'I-1', satisfied: true, evidence: 'e' }, { intent: 'I-2', satisfied: false, evidence: 'e' }],
+      issues: [issue({ reverses: ['r1:J-2'] })] })), ids);
+    expect(r.errors).toEqual([]);
+    expect(r.issues[0].reverses).toEqual(['r1:J-2']);
+  });
+
+  it('阻断/重要问题推翻前轮裁决 → ruling_conflict（优先于 product，交 coding commander）', () => {
+    const d = decideJudge({ coverage: [{ intent: 'I-2', satisfied: false }], issues: [issue(), issue({ id: 'J-2', reverses: ['r1:J-2'] })] });
+    expect(d).toMatchObject({ verdict: 'FAIL', failure_class: 'ruling_conflict' });
+  });
+
+  it('只有建议级问题带 reverses → 不影响裁决', () => {
+    const d = decideJudge({ coverage: [{ intent: 'I-1', satisfied: true }], issues: [issue({ severity: '建议', reverses: ['r1:J-1'] })] });
+    expect(d).toMatchObject({ verdict: 'PASS' });
+  });
+
+  it('裁决报告列出推翻的前轮条目', () => {
+    const parsed = { coverage: [{ intent: 'I-2', satisfied: false, evidence: 'e' }], issues: [issue({ reverses: ['r1:J-2'] })], summary: 's' };
+    const md = renderJudgeReport({ round: 2, model: 'm', parsed, decision: decideJudge(parsed), qaReport: '05-qa-report-r2.md' });
+    expect(md).toContain('- 推翻前轮：r1:J-2');
+  });
+});
