@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.418.12
+**Brain 版本**: 1.418.13
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -71,6 +71,13 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.418.13 — coding workflow：裁判看到规格约束力与前轮裁决，翻转交 commander；生成 smoke 设保护路径
+
+- 独立裁判提示词声明规格（02）条款有约束力（认为规格错 → contract_gap），并附前几轮裁决原文（最近优先，单份 1.2 万字、总量 3 万字封顶）
+- 裁判问题新增 `reverses`（如 `r8:J-2`）：阻断/重要问题推翻前轮裁决 → failure_class `ruling_conflict`，QA 门升级 `judge_ruling_conflict`，不让开发来回改（金丝雀 4 #6232 第 8/9 轮翻转跑了 10 轮）
+- qa-fix 会话拿到 PRIOR_RULINGS 与规格约束说明；判定要修的与规格/前轮矛盾时不提交、输出 `RULING_CONFLICT:` → 升级 `qa_fix_failed`（reason `ruling_conflict`，带说明）
+- runner 生成的 `packages/brain/scripts/smoke/cw-<8位>-qa-smoke.sh` 列入修复会话保护路径（CI 修复 / QA 修复 / 冲突修复改了即 protected_path，不推送）
 
 ## Brain 1.418.12 — 修复 POST /api/brain/strategic-decisions 非法 category 返回 500 并透出数据库约束报错
 
