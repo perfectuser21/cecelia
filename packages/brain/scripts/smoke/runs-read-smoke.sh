@@ -4,9 +4,10 @@
 # 写入与读取同一个 BRAIN_URL；任何断言失败或 Brain 不可达都 exit 1。
 set -euo pipefail
 : "${BRAIN_URL:?BRAIN_URL is required（真起的 Brain 地址，不写死）}"
-# 真 Brain 写入必须显式授权，并核对本机测试容器。
+# 真 Brain 写入必须显式授权，并核对本机测试容器；守卫拒绝即未验证，exit 1 不冒充通过。
 if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "$BRAIN_URL"; then
-  exit 0
+  printf 'FAIL: 写入守卫拒绝，接口断言未执行（需 SMOKE_ALLOW_WRITE=1 + BRAIN_CONTAINER 指向本机测试容器）\n' >&2
+  exit 1
 fi
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
