@@ -69,6 +69,32 @@ it.each(['missing','ambiguous','active'])('真实取源owner %s时保准确UNKNO
 });
 afterEach(async()=>{await fixture?.close();fixture=null;});
 const query={scope:'phones',repo:IMPACT_REPO,revision:'a'.repeat(40)};
+it('真实同能力多流程显式contract_key来源各归本人；导出与固定loader往返无虚构owner',async()=>{
+  fixture=await implementationImpactDatabase({completeManifest:true});const {db,contracts}=fixture,cap=randomUUID();
+  await db.query("UPDATE workflows SET status='retired'");
+  await db.query("INSERT INTO capabilities(id,name,parent_journey_id,capability_code) VALUES($1,'安卓发布',$2,'android_worker_publish')",[cap,fixture.ids.valueStream]);
+  const ids=[];
+  for(const key of ['douyin_video_publish','bilibili_video_publish']){
+    const id=randomUUID();ids.push(id);
+    await db.query(`INSERT INTO workflows(id,capability_id,key,name,channel,status,source_repo,source_path,source_capability,source_workflow) VALUES($1,$2,$3,$3,'android','paused',$4,$5,$6,$7)`,[id,cap,`${key}.android`,IMPACT_REPO,`product-map/contracts/${key}.yaml`,key,key.replaceAll('_','-')]);
+    contracts.docs[key]={contract_key:key,capability:'android_worker_publish',workflow:key.replaceAll('_','-'),brain_workflow_key:`${key}.android`,source_repo:IMPACT_REPO,
+      activities:key==='douyin_video_publish'?structuredClone(contracts.docs.keyword_acquisition.activities):contracts.docs.keyword_acquisition.activities.map(a=>({ref:`douyin_video_publish.${a.key}`}))};
+  }
+  await fixture.sync('b'.repeat(40));
+  await syncActivityContracts(db,{...contracts,synchronizeSteps:true,readBinding:async()=> 'export const controller=true;\n',
+    fetchFn:async(...args)=>String(args[0]).includes('/commits/main')?{ok:true,text:async()=> 'b'.repeat(40)}:contracts.fetchFn(...args)});
+  await fixture.graph('b'.repeat(40));await fixture.map('b'.repeat(40),[...fixture.capabilities,cap]);
+  const s=await exportImplementationSnapshot(db,{...query,revision:'b'.repeat(40)});
+  expect(s.status,JSON.stringify(s.gaps)).toBe('verified');expect(s.source_registry.schema_version).toBe(1);
+  expect(s.source_registry.workflows.map(w=>w.id).sort()).toEqual(ids.sort());expect(validateImplementationSnapshot(s)).toBe(s);
+  const owners=implementationSourceOwners(s);expect(owners.every(w=>w.capability_code==='android_worker_publish')).toBe(true);
+  const plans=await loadActivityContracts(s.canonical.workflows,contracts.digest,async path=>yaml.dump(contracts.docs[path.match(/contracts\/(\w+)\.yaml/)[1]]),owners);
+  expect(plans).toHaveLength(2);expect(lintImplementationRegistry(s,plans,contracts.digest).gaps).toEqual([]);
+  for(const field of ['capability_code','parent_journey_id']){
+    const bad=structuredClone(s);bad.canonical.journeys.find(j=>j.id===cap)[field]=null;
+    const {snapshot_sha256:_sha,...body}=bad;bad.snapshot_sha256=stepSha256(body);expect(()=>validateImplementationSnapshot(bad)).toThrow();
+  }
+});
 it('导出精确版本与规范身份，不把后来current版本冒作base，断言明确current_registration',async()=>{
   fixture=await implementationImpactDatabase();const {db}=fixture;
   const ids=(await db.query('SELECT id FROM workflow_definition_versions ORDER BY id')).rows.map(r=>r.id);
