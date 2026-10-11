@@ -7,6 +7,11 @@
  *   ② 调 Haiku 生成 2-4 条 topic 摘要，写另一条 capture（nature='session_summary'）
  * 10 分钟自 gate（接 scheduler-jobs.js），零静默失败——失败必计入 errors。
  *
+ * 2026-10-11（任务 c8b27bc5）：Brain 已迁 us-vps 容器，会话文件只在 MMV 上——容器内默认走
+ * 远端模式（ssh mmv 只读跑同一份适配器，conversation-capture-remote.js）；本地模式 claude
+ * 目录缺失计失败，杜绝"目录不在 → 静默 0 → 全绿"。未登记出处的会话以 transcript
+ * entrypoint=cli（交互 TTY）判为有头真人会话。摘要入库后交 headed-session-handoff 收尾。
+ *
  * 与 PR#4135 版本的区别：从"逐条消息 + 只支持 Claude Code"改为"按 session 分组 +
  * 15 分钟闲置判定 + 三工具"。
  *
@@ -16,12 +21,15 @@
  * 丢内容，也不会一个 session 产生多条记录。
  */
 import crypto from 'crypto';
+import fs from 'fs';
 import { pushCapture } from './capture-inbox.js';
 import { callLLM } from './llm-caller.js';
 import { extractJsonObject } from './json-utils.js';
-import { extractClaudeSessions } from './conversation-capture-claude.js';
+import { extractClaudeSessions, CLAUDE_PROJECTS_DIR } from './conversation-capture-claude.js';
 import { extractCodexSessions } from './conversation-capture-codex.js';
 import { extractGrokSessions } from './conversation-capture-grok.js';
+import { fetchRemoteSessions } from './conversation-capture-remote.js';
+import { attachHeadedSession } from './headed-session-handoff.js';
 
 const SCAN_INTERVAL_MS = parseInt(process.env.CECELIA_CONVERSATION_CAPTURE_INTERVAL_MS || String(10 * 60 * 1000), 10);
 const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000;
@@ -74,7 +82,55 @@ export async function summarizeSession(rawText, llm) {
 /**
  * 主入口：扫三工具 + 过滤已闲置 session + 写 captures（原始+摘要）+ 维护扫描哨兵。
  */
-export async function runConversationCapture(pool, { llm = callLLM } = {}) {
+function resolveMode(mode, inContainer) {
+  const m = mode || process.env.CECELIA_CONVERSATION_CAPTURE_MODE;
+  if (m === 'local' || m === 'remote') return m;
+  return inContainer ? 'remote' : 'local';
+}
+
+async function collectSessions(sinceMs, { mode, exec, inContainer }) {
+  const failures = [];
+  let sessions = [];
+  if (mode === 'remote') {
+    try {
+      const r = await fetchRemoteSessions(sinceMs, { exec, inContainer });
+      sessions = r.sessions;
+      for (const name of r.failures) {
+        failures.push(name);
+        console.warn(`[conversation-capture] remote ${name} adapter failed: ${r.errors[name] ?? 'unknown'}`);
+      }
+    } catch (e) {
+      failures.push('remote');
+      console.warn(`[conversation-capture] remote fetch failed: ${e.message}`);
+    }
+    return { sessions, failures };
+  }
+  const adapters = [
+    ['claude', (since) => {
+      if (!fs.existsSync(CLAUDE_PROJECTS_DIR)) throw new Error(`projects_dir_missing: ${CLAUDE_PROJECTS_DIR}`);
+      return extractClaudeSessions(since);
+    }],
+    ['codex', extractCodexSessions],
+    ['grok', extractGrokSessions],
+  ];
+  for (const [name, fn] of adapters) {
+    try {
+      sessions = sessions.concat(fn(sinceMs));
+    } catch (e) {
+      failures.push(name);
+      console.warn(`[conversation-capture] ${name} adapter failed: ${e.message}`);
+    }
+  }
+  return { sessions, failures };
+}
+
+export async function runConversationCapture(pool, {
+  llm = callLLM,
+  mode,
+  exec,
+  inContainer = fs.existsSync('/.dockerenv'),
+  attachHeaded = attachHeadedSession,
+} = {}) {
   const now = Date.now();
   if (now - lastRunAt < SCAN_INTERVAL_MS) return { skipped: true };
   lastRunAt = now;
@@ -90,23 +146,10 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
   }
   const sinceMs = hasSentinel ? (now - LOOKBACK_WINDOW_MS) : (now - FIRST_RUN_LOOKBACK_MS);
 
-  let errors = 0;
-  const adapterFailures = [];
-  let allSessions = [];
-  const adapters = [
-    ['claude', extractClaudeSessions],
-    ['codex', extractCodexSessions],
-    ['grok', extractGrokSessions],
-  ];
-  for (const [name, fn] of adapters) {
-    try {
-      allSessions = allSessions.concat(fn(sinceMs));
-    } catch (e) {
-      errors++;
-      adapterFailures.push(name);
-      console.warn(`[conversation-capture] ${name} adapter failed: ${e.message}`);
-    }
-  }
+  const { sessions: allSessions, failures: adapterFailures } = await collectSessions(sinceMs, {
+    mode: resolveMode(mode, inContainer), exec, inContainer,
+  });
+  let errors = adapterFailures.length;
 
   const idleSessions = allSessions.filter(
     (s) => s.turns.length > 0 && (now - s.lastActivityMs) >= IDLE_THRESHOLD_MS
@@ -115,24 +158,33 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
   let pushed = 0;
   let skippedMachine = 0;
   let skippedUnregistered = 0;
+  let inferredHuman = 0;
+  let headedErrors = 0;
+  let headedLinked = 0;
+  let headedCreated = 0;
   let provenanceLookupFailed = false;
+  const provenanceTask = new Map();
   let humanSessions = [];
 
   if (idleSessions.length > 0) {
     const sessionIds = [...new Set(idleSessions.map((session) => session.sessionId))];
     try {
       const { rows } = await pool.query(
-        `SELECT session_id, kind
+        `SELECT session_id, kind, task_id
          FROM session_provenance
          WHERE session_id = ANY($1::text[])`,
         [sessionIds]
       );
       const provenance = new Map(rows.map((row) => [row.session_id, row.kind]));
+      for (const row of rows) if (row.task_id) provenanceTask.set(row.session_id, String(row.task_id));
       humanSessions = idleSessions.filter((session) => {
         const kind = provenance.get(session.sessionId);
         if (kind === 'human') return true;
-        if (kind === 'machine') skippedMachine++;
-        else skippedUnregistered++;
+        if (kind === 'machine') { skippedMachine++; return false; }
+        // 未登记：launcher 登记已不可靠（主理人直接跑 claude；launcher 写的本机库 09-10 后已不存在）。
+        // Claude transcript 的 entrypoint=cli 只在交互 TTY 会话出现，无头 claude -p 是 sdk-cli。
+        if (session.entrypoint === 'cli') { inferredHuman++; return true; }
+        skippedUnregistered++;
         return false;
       });
     } catch (e) {
@@ -200,6 +252,22 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
         console.warn(`[conversation-capture] summary push failed for session=${session.sessionId}: ${e.message}`);
       }
     }
+
+    // 有头收尾：会话已结束（闲置≥15min）→ 摘要并入关联任务 handoff / 无关联补建账本任务。
+    // 摘要失败（null）时 attachHeaded 用原文摘录兜底，不挡收尾。失败计 errors，不吞。
+    try {
+      const r = await attachHeaded(pool, {
+        session,
+        summary,
+        provenanceTaskId: provenanceTask.get(session.sessionId) ?? null,
+      });
+      headedLinked += r?.linked?.length ?? 0;
+      if (r?.created) headedCreated++;
+    } catch (e) {
+      errors++;
+      headedErrors++;
+      console.warn(`[conversation-capture] headed handoff failed for session=${session.sessionId}: ${e.message}`);
+    }
   }
 
   const record = {
@@ -210,6 +278,10 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
     sessions_processed: humanSessions.length,
     skipped_machine: skippedMachine,
     skipped_unregistered: skippedUnregistered,
+    inferred_human: inferredHuman,
+    headed_linked: headedLinked,
+    headed_created: headedCreated,
+    headed_errors: headedErrors,
     provenance_lookup_failed: provenanceLookupFailed,
     adapter_failures: adapterFailures,
   };
@@ -232,6 +304,11 @@ export async function runConversationCapture(pool, { llm = callLLM } = {}) {
     sessions_processed: humanSessions.length,
     skipped_machine: skippedMachine,
     skipped_unregistered: skippedUnregistered,
+    inferred_human: inferredHuman,
+    headed_linked: headedLinked,
+    headed_created: headedCreated,
+    headed_errors: headedErrors,
     provenance_lookup_failed: provenanceLookupFailed,
+    adapter_failures: adapterFailures,
   };
 }

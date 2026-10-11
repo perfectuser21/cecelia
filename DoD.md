@@ -1,3 +1,10 @@
+# 修对话自动捕获 + 有头会话收尾自动 handoff（任务 c8b27bc5）
+
+- [x] [BEHAVIOR] convcaptureremote 容器内对话捕获走 ssh mmv 只读跑同一份三适配器（远端脚本 fixture 真跑出会话、带 entrypoint/linkedTaskIds、turns 截尾 ≤4000 字）；远端 ~/.claude/projects 缺失、ssh 失败、本地模式目录缺失均计 adapter_failures 使 errors>0（回归：09-10 起容器内静默 0 全绿）；未登记出处且 entrypoint=cli 判为有头真人会话，sdk-cli 照旧跳过。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/conversation-capture-remote.test.js src/__tests__/conversation-capture-claude.test.js src/__tests__/conversation-capture-human-gate.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] headedsessionhandoff 结束的有头会话摘要并入关联任务 handoff（已有真 handoff 只追加不覆盖、headed_sessions 按会话幂等、未终态任务加有头续接下一步，kind 经 resume_headed 适配点、未支持时为 note）；无关联补建 completed 账本任务（source=conversation、source_id=headed-session:<sid>）并写 handoff，登记 task-creation-inventory。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/headed-session-handoff.test.js src/__tests__/task-creation-inventory.test.js --maxWorkers=1 --minWorkers=1"
+
 # 技能工厂派发器 claim executor_kind 修正（任务 a5f42455 上产实测）
 
 - [x] [BEHAVIOR] factorydispatcherek 派发器 claim 请求体 executor_kind=openclaw-agent（tasks_executor_kind_check 允许值）；原 factory-dispatcher 值让 Brain 回 500，执行单永远认领不了。
