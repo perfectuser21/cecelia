@@ -1,8 +1,7 @@
 /** 既有试点来源接力及显式旧集合升级；保业务字段，经正式store CAS激活。 */
-import {readFileSync} from 'node:fs';
+import pilots from '../../config/map-manifests/brain-pilot-bindings.json' with {type:'json'};
 import {submitMapManifest,activateMapManifest} from './map-manifest-store.js';
 import { TREE_NODES_SQL } from './tree-nodes-sql.js';
-const pilots=JSON.parse(readFileSync(new URL('../../config/map-manifests/brain-pilot-bindings.json',import.meta.url),'utf8'));
 const conflict=()=>Object.assign(Error('试点规范映射或层级已变化，不能自动推进来源'),{code:'IMPLEMENTATION_CI_PILOT_MAPPING_CHANGED',status:409});
 export async function preparePilotManifestAdvance(db,q){
   const spec=Object.values(pilots).find(p=>p.scope_key===q.scope);if(!spec)return null;

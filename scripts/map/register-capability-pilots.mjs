@@ -3,7 +3,7 @@
 import { readFileSync,writeFileSync,realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { validateMapManifest,digestMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
-const pilots=JSON.parse(readFileSync(new URL('../../packages/brain/config/map-manifests/brain-pilot-bindings.json',import.meta.url),'utf8'));
+import pilots from '../../packages/brain/config/map-manifests/brain-pilot-bindings.json' with {type:'json'};
 export function buildPilotManifest(pilot,{revision,decision,baseManifest}={}){
   const spec=pilots[pilot];if(!spec||typeof revision!=='string'||!/^[0-9a-f]{40}$/.test(revision))throw Error('pilot与固定revision必填');
   if(spec.mode==='patch'&&baseManifest?.scope_key!==spec.scope_key)throw Error('必须提供该scope完整当前manifest，不能覆盖旧地图');
