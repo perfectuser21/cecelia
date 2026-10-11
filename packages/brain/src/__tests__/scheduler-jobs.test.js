@@ -237,6 +237,11 @@ vi.mock('../skill-factory-board.js', async (importOriginal) => ({
   ...(await importOriginal()),
   runSkillFactoryBoardPush: vi.fn().mockResolvedValue({ skipped: 'db_not_registered' }),
 }));
+// bypass-audit 真实 handler 会 ssh mmv 读 OpenClaw 审计库并可能发 Bark——单测绝不碰真机；逻辑由 bypass-audit.test.js 覆盖。
+vi.mock('../bypass-audit.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  runBypassAudit: vi.fn().mockResolvedValue({ scan: { skipped: true }, rollup: { skipped: true } }),
+}));
 vi.mock('../openclaw-guards.js', async (importOriginal) => ({
   ...(await importOriginal()),
   runOpenclawGuards: vi.fn().mockResolvedValue({ skipped: true }),
@@ -373,6 +378,20 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool, [j]);
     expect(runRunsNotionPush).toHaveBeenCalledWith(pool);
+  });
+
+  // 派发总闸 H（任务 865b502c）：旁路动作扫描 + 按天汇总，调度器每 60s 调、handler 自 gate 5 分钟
+  it('JOBS 注册了 bypass-audit（挨着 skill-factory-board、needsPool、handler 真接线）', async () => {
+    const { runBypassAudit } = await import('../bypass-audit.js');
+    const names = JOBS.map((j) => j.name);
+    const j = JOBS.find((x) => x.name === 'bypass-audit');
+    expect(j).toBeTruthy();
+    expect(j.cadence.everySec).toBe(300);
+    expect(j.needsPool).toBe(true);
+    expect(names.indexOf('bypass-audit')).toBe(names.indexOf('skill-factory-board') + 1);
+    const pool = makePool();
+    await runSchedulerJobsOnce(pool, [j]);
+    expect(runBypassAudit).toHaveBeenCalledWith(pool);
   });
 
   // PR3 补充五：秋米设备任务改成派生子任务后，父 qiumi_task 挂在 blocked 且 blocked_until 为 NULL——

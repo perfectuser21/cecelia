@@ -46,6 +46,10 @@ vi.mock('../../orchestrator-chat.js', () => ({
   handleChat: vi.fn(),
   handleChatStream: vi.fn(),
 }));
+// 旁路报警（任务 865b502c）：acquire 成功后异步记持有者；这里替成假函数，不占 pool.query 计数。
+vi.mock('../../bypass-audit.js', () => ({
+  noteDeviceLockAcquire: vi.fn().mockResolvedValue({ bypass: false }),
+}));
 
 let app;
 let pool;
@@ -60,6 +64,28 @@ beforeEach(async () => {
 });
 
 describe('POST /api/brain/device-locks/acquire', () => {
+  it('抢锁成功 → 把 owner/task_id/run_id/host 交给旁路审计（持有者追不到 Brain 任务即记旁路事件）', async () => {
+    const { noteDeviceLockAcquire } = await import('../../bypass-audit.js');
+    pool.query.mockResolvedValueOnce({ rows: [{ device_name: 'S1', locked_by: 'outreach-tick:xian-m4:1:2' }], rowCount: 1 });
+    const res = await request(app)
+      .post('/api/brain/device-locks/acquire')
+      .send({ device_name: 'S1', locked_by: 'outreach-tick:xian-m4:1:2', task_id: 't-1', run_id: 'r-1', host: 'xian-m4' });
+    expect(res.status).toBe(200);
+    expect(noteDeviceLockAcquire).toHaveBeenCalledTimes(1);
+    expect(noteDeviceLockAcquire.mock.calls[0][1]).toEqual({
+      device: 'S1', owner: 'outreach-tick:xian-m4:1:2', taskId: 't-1', runId: 'r-1', host: 'xian-m4',
+    });
+  });
+
+  it('被占用 → 不记旁路（没动到手机）', async () => {
+    const { noteDeviceLockAcquire } = await import('../../bypass-audit.js');
+    pool.query
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [{ device_name: 'S1', locked_by: 'x', expires_at: null }], rowCount: 1 });
+    await request(app).post('/api/brain/device-locks/acquire').send({ device_name: 'S1', locked_by: 'y' });
+    expect(noteDeviceLockAcquire).not.toHaveBeenCalled();
+  });
+
   it('第一条 SQL 是单条 UPDATE device_locks ... RETURNING（禁止先 SELECT 判定）', async () => {
     const lockRow = {
       device_name: 'ANGYVB4311010223',
