@@ -29,7 +29,7 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run) MODE="dry-run" ;;
     --no-load) MODE="no-load" ;;
-    *) echo "未知参数：$arg（可用 --dry-run / --no-load）" >&2; exit 2 ;;
+    *) echo "未知参数：${arg}（可用 --dry-run / --no-load）" >&2; exit 2 ;;
   esac
 done
 
