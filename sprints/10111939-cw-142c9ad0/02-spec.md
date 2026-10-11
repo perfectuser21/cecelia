@@ -157,3 +157,14 @@ upstream: ["01-intent.md#I-1","01-intent.md#I-2","01-intent.md#I-3","01-intent.m
 - T-2 / Q-2（qa_cannot_verify）：维持规格。Q-2 原文已写明「预览环境没配 `CECELIA_INTERNAL_TOKEN` 就跳过，注明鉴权分支不可测」，QA 按此执行，不算产品失败；本 PR 也没有改 `internal-auth.js` 和 runs 读路由的鉴权。QA 同一请求已经确认：落到了 runs 读路由（返回 `run not found: stats`），没有返回 500。
 - 补充 S-4：Q-2 的 401 鉴权分支由单元测试确定性兜底，不依赖预览环境有没有配 token。`packages/brain/src/__tests__/content-pipeline-runs-shadow.test.js` 新增一组用例：测试内设 `CECELIA_INTERNAL_TOKEN`，按 server.js 的挂载顺序拼 app，不带 token 请求 `GET /api/brain/runs/{stats|stages|output|publish-status}`，四条都必须是 401、`.error.code == "UNAUTHORIZED"`，且 `pool.query` 一次都没调用；带正确 `x-internal-token` 请求 `/runs/stats`，必须是 404 `run not found: stats`，内容流水线的 SQL 一次都没调用。修复前这几条会被不鉴权的内容流水线接走、返回 500，所以这组用例能抓到回退。
 - 补充 Q-2 判定：预览环境未配 token 时，T-2 记 CANNOT_VERIFY（环境原因），不阻塞合并；只要 S-4 用例在 CI 中通过，就视为 Q-2 的意图已满足。
+
+## commander 裁决（第 2 次）
+
+- T-2 / Q-2（qa_cannot_verify，第 2 轮）：采纳，把 Q-2 改成预览环境里能验的做法。第 1 次裁决只说了「记 CANNOT_VERIFY、不阻塞」，但自动流程碰到 CANNOT_VERIFY 仍会升级，两轮卡在同一处。根因在 Q-2 写成了依赖「预览 Brain 配了 token」这个环境前提；预览 Brain 是共享进程，不该为一条场景去改它的凭据配置。Q-2 要证明的是「`/api/brain/runs/stats` 落到 runs 读路由（含其鉴权中间件），不被内容流水线接走、不是 500」，这个意图不依赖 token 也能验。
+- 补充 Q-2（取代 Q-2 原有的前提、操作、期望；之后各轮 QA 一律按这条执行，不再因为没配 token 记 CANNOT_VERIFY）：
+  - 前提：预览环境 Brain 已启动；QA 所在工作区已检出本 PR 分支。不要求预览环境配 `CECELIA_INTERNAL_TOKEN`。
+  - 操作 1（真实链路）：不带 token 请求 `curl -sS -w '\n%{http_code}' "$B/api/brain/runs/stats"`。
+  - 期望 1：按预览 Brain 的鉴权配置二选一，都算通过——配了 token：HTTP 401 且 `.error.code == "UNAUTHORIZED"`；没配 token（loopback 放行）：HTTP 404 且 `.error == "run not found: stats"`。两种结果都只有 runs 读路由会给，证明请求经过了它的 `internalAuthOrLoopback` 中间件。出现 500、400，或返回内容流水线的字段（`stages`/`publish_results`/`pipeline_id` 等）都判 FAIL。
+  - 操作 2（401 分支）：在本 PR 工作区跑 `cd packages/brain && npx vitest run src/__tests__/content-pipeline-runs-shadow.test.js`。
+  - 期望 2：退出码 0；输出里 S-4 那组用例（测试内配 token：不带 token 请求 `/api/brain/runs/{stats|stages|output|publish-status}` 四条都是 401 `UNAUTHORIZED` 且不查库；带正确 token 请求 `/runs/stats` 是 404 `run not found: stats`）全部通过。
+  - 判定：期望 1 和期望 2 都满足，T-2 记 PASS；报告里注明预览 Brain 是否配了 token、走的是哪一支。
