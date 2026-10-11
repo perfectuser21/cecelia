@@ -2,11 +2,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { git } from './proc.mjs';
+import { git, run } from './proc.mjs';
 import { writeDevFiles, ensureIgnored, installDeps } from './worktree.mjs';
 
 const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
 const PUSH_TIMEOUT_MS = 5 * 60 * 1000;
+const GH_TIMEOUT_MS = 60 * 1000;
 // 修复提交不许碰：sprint 目录（需求与验收记录）、agent 配置
 // runner 生成的 QA 回归 smoke 只由 runner 固化（金丝雀 4：修复会话改它，与下次固化互相覆盖）
 const PROTECTED_RE = /^(sprints\/|\.claude\/|CLAUDE\.md$|AGENTS\.md$|packages\/brain\/scripts\/smoke\/cw-[0-9a-f]{8}-qa-smoke\.sh$)/;
@@ -43,15 +44,28 @@ export function taskIdOf(worktree, branch) {
   return intentOf(worktree, branch)?.taskId ?? null;
 }
 
+/** ref 上 sprints/<stamp>-cw-<id8>/01-intent.md 的 task_id；拿不到返回 null。 */
+async function taskIdAtRef(cfg, ref, id8) {
+  const ls = await git(cfg.repo, ['ls-tree', '--name-only', ref, 'sprints/']);
+  const dir = ls.stdout.split('\n').find((d) => d.endsWith(`-cw-${id8}`));
+  if (!dir) return null;
+  const show = await git(cfg.repo, ['show', `${ref}:${dir}/01-intent.md`]);
+  return show.code === 0 ? /^task_id:\s*(\S+)/m.exec(show.stdout)?.[1] ?? null : null;
+}
+
 /** 不检出 worktree，直接从远端 PR 分支读 sprint 01-intent.md 的 task_id；拿不到返回 null。 */
 export async function remoteTaskId(cfg, branch) {
   const fetch = await git(cfg.repo, ['fetch', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeoutMs: FETCH_TIMEOUT_MS });
   if (fetch.code !== 0) return null;
-  const ls = await git(cfg.repo, ['ls-tree', '--name-only', `origin/${branch}`, 'sprints/']);
-  const dir = ls.stdout.split('\n').find((d) => d.endsWith(`-cw-${branch.slice(-8)}`));
-  if (!dir) return null;
-  const show = await git(cfg.repo, ['show', `origin/${branch}:${dir}/01-intent.md`]);
-  return show.code === 0 ? /^task_id:\s*(\S+)/m.exec(show.stdout)?.[1] ?? null : null;
+  return taskIdAtRef(cfg, `origin/${branch}`, branch.slice(-8));
+}
+
+/** 分支已删（关 PR 时连带删分支）：从 GitHub 保留的 refs/pull/<n>/head 读 task_id；拿不到返回 null。 */
+export async function remoteTaskIdByPr(cfg, number, branch) {
+  const ref = `refs/remotes/origin/pr-${number}`;
+  const fetch = await git(cfg.repo, ['fetch', 'origin', `+refs/pull/${number}/head:${ref}`], { timeoutMs: FETCH_TIMEOUT_MS });
+  if (fetch.code !== 0) return null;
+  return taskIdAtRef(cfg, ref, branch.slice(-8));
 }
 
 /** 建 PR 分支的 worktree（本地分支同名，提交钩子按 .dev-mode.<branch> 认会话）。失败抛 Error(reason_code)。 */
@@ -130,9 +144,27 @@ export async function checkFixCommits(worktree, before, { mainRef = null, allow 
   return { commits: log.stdout.split('\n').filter(Boolean) };
 }
 
-/** 把 worktree 的 HEAD 推到 PR 分支（快进）。失败抛 Error('push_failed')。 */
-export async function pushPrHead(worktree, branch) {
-  const push = await git(worktree, ['push', 'origin', `HEAD:refs/heads/${branch}`], { timeoutMs: PUSH_TIMEOUT_MS });
+/** PR 当前状态（OPEN/CLOSED/MERGED）；查不到（gh 出错）重试一次，仍查不到返回 null。 */
+export async function prState(cfg, number) {
+  for (let i = 0; i < 2; i += 1) {
+    const r = await run(cfg.ghBin, ['pr', 'view', String(number), '--json', 'state'], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+    try {
+      const state = JSON.parse(r.stdout)?.state;
+      if (state) return state;
+    } catch { /* 再试一次 */ }
+  }
+  return null;
+}
+
+/**
+ * 把 worktree 的 HEAD 推到 PR 分支（快进）。修复会话动辄几十分钟，推送前再确认 PR 仍开着：
+ * 已关闭/已合并抛 Error('pr_closed')（调用方不升级，交给外部关闭收尾 pr-closure.mjs）；查不到状态抛 'pr_state_unknown'；推送失败抛 'push_failed'。
+ */
+export async function pushPrHead(cfg, worktree, pr) {
+  const state = await prState(cfg, pr.number);
+  if (!state) throw stop('pr_state_unknown');
+  if (state !== 'OPEN') throw stop('pr_closed');
+  const push = await git(worktree, ['push', 'origin', `HEAD:refs/heads/${pr.headRefName}`], { timeoutMs: PUSH_TIMEOUT_MS });
   if (push.code !== 0) throw stop('push_failed');
 }
 

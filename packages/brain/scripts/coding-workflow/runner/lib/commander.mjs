@@ -176,7 +176,7 @@ async function intervene(ctx, pr, esc, cs, signal) {
       || (await git(worktree, [...RUNNER_ID, 'commit', '-q', '-m', `docs(commander): 第 ${n} 次 coding commander 裁决（${esc.detail.type}）`])).code !== 0) {
       return await fail('commander_record_commit_failed');
     }
-    await pushPrHead(worktree, pr.headRefName);
+    await pushPrHead(cfg, worktree, pr);
     release(cfg, pr.number, esc, ruling);
     const entry = { n, at: new Date().toISOString(), kind: esc.kind, escalation: esc.detail, action: 'resume', rulings: ruling.rulings, summary: ruling.summary,
       reset_ci_budget: ruling.reset_ci_budget, commits, record, head: await headOf(worktree), cost_usd: costUsd ?? null };
@@ -190,6 +190,11 @@ async function intervene(ctx, pr, esc, cs, signal) {
     ctx.log(`coding commander PR #${pr.number} 第 ${n} 次裁决：${ruling.summary}（解除 ${esc.detail.type}）`);
     return true;
   } catch (error) {
+    // 会话期间 PR 被关：不推送、不 Bark，升级原样保留，交给外部关闭收尾（pr-closure.mjs）
+    if (error?.message === 'pr_closed') {
+      ctx.log(`coding commander PR #${pr.number} 已关闭，裁决不推送，交给关闭收尾`);
+      return true;
+    }
     return await fail('commander_error', String(error?.message || error).slice(0, 300));
   } finally {
     await removeWorktree(cfg, worktree, pr.headRefName);

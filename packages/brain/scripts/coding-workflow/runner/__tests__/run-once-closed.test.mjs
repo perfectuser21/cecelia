@@ -16,9 +16,9 @@ describe('runner 收尾外部关闭的 PR', () => {
   const { pr, green, go, remoteHead, state, seedState, ghCalls, originLog } = E;
   const lastResult = () => E.brainResults().at(-1);
   const stopCalls = () => E.preview.calls.filter((c) => c.url === '/api/brain/preview/stop/77');
-  const closedPr = (extra = {}) => ({ ...pr({ headRefOid: remoteHead() }), state: 'CLOSED', closedAt: CLOSED_AT, mergedAt: null, ...extra });
+  const closedPr = (extra = {}) => ({ ...pr({ headRefOid: extra.headRefOid ?? remoteHead() }), state: 'CLOSED', closedAt: CLOSED_AT, mergedAt: null, ...extra });
   const closedGh = (extra = {}) => ({
-    prs: [], closedPrs: [closedPr()],
+    prs: [], closedPrs: extra.closedPrs ?? [closedPr()],
     events: { 77: [{ event: 'ready_for_review', actor: { login: 'bot' } }, { event: 'closed', actor: { login: 'someone' } }] },
     ...extra,
   });
@@ -131,7 +131,9 @@ describe('runner 收尾外部关闭的 PR', () => {
     const r = await go(green({ prStates: { 77: 'CLOSED' } }), { mode: 'fail' });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(remoteHead()).toBe(before);
-    expect(state().escalated).toBeUndefined();
-    expect(state().bad ?? 0).toBe(0);
+    const s = fs.existsSync(E.statePath()) ? state() : {};
+    expect(s.escalated).toBeUndefined();
+    expect(s.bad ?? 0).toBe(0);
+    expect(r.stderr).toContain('PR #77 已关闭');
   });
 });

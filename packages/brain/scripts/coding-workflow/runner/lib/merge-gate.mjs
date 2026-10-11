@@ -93,24 +93,28 @@ async function gate(ctx, pr, s) {
 const money = (x) => Math.round(x * 10000) / 10000;
 
 /**
- * 合并交接单（金丝雀 4：派发收口时合成的初版 pr_urls 为空、合并后没人刷新）：沿用初版的标题/数据源等，
- * 写上 PR、分支、合并 head、QA 轮次与花费；下一步固定「完成，无下一步」（不触发接力棒建子任务）。
+ * runner 终态交接单（合并 / 外部关闭共用）：沿用派发收口时合成的初版的标题/数据源等（金丝雀 4：初版 pr_urls 为空、
+ * 终态后没人刷新），追加 done 行，写上 PR 与分支；下一步固定「完成，无下一步」（不触发接力棒建子任务）。
  */
-function mergedHandoff(taskId, pr, prior, qa, cost) {
+export function finalHandoff(taskId, pr, prior, { verdict, done, notDone = [] }) {
   const h = prior.handoff && typeof prior.handoff === 'object' ? prior.handoff : {};
-  const rounds = qa.rounds?.length ?? 0;
   return {
     schema_version: 1, initiative_id: null, journey_id: null, decision_refs: [], data_sources: [], not_done: [], ...h,
-    task_id: taskId, title: h.title || pr.headRefName, verdict: 'PASS', synthesized: false, session_id: 'coding-workflow-runner',
-    done: [
-      ...(Array.isArray(h.done) ? h.done : []),
-      `PR #${pr.number} 已合并（head ${qa.merged.head.slice(0, 9)}）`,
-      `真人 QA ${rounds} 轮 + 独立裁判通过；全链花费 $${cost.total}`,
-    ],
+    task_id: taskId, title: h.title || pr.headRefName, verdict, synthesized: false, session_id: 'coding-workflow-runner',
+    done: [...(Array.isArray(h.done) ? h.done : []), ...done],
+    ...(notDone.length > 0 ? { not_done: [...(Array.isArray(h.not_done) ? h.not_done : []), ...notDone] } : {}),
     next_steps: ['完成，无下一步'],
     artifacts: { docs: [], sprint_dir: null, ...h.artifacts, branch: pr.headRefName, pr_urls: [pr.url] },
     created_at: new Date().toISOString(),
   };
+}
+
+/** 合并交接单：PR、合并 head、QA 轮次与花费。 */
+function mergedHandoff(taskId, pr, prior, qa, cost) {
+  return finalHandoff(taskId, pr, prior, { verdict: 'PASS', done: [
+    `PR #${pr.number} 已合并（head ${qa.merged.head.slice(0, 9)}）`,
+    `真人 QA ${qa.rounds?.length ?? 0} 轮 + 独立裁判通过；全链花费 $${cost.total}`,
+  ] });
 }
 
 /** 全链花费（审计 #35）：链路（runner 回执汇总）+ QA 门（evaluate/qa-fix）+ CI 修复。 */
