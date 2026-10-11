@@ -9,6 +9,7 @@
   Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/workflow-commander-dispatch.test.js src/__tests__/migration-549-workflow-dispatch.test.js src/lib/__tests__/task-type-registry.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] notionbuilddispatchorder notion-push-sync 派 workflow（ssh 直派 / webhook）改先建 workflow_run 单再派：建单失败不派写 ⚠ 回执；派发失败把已建单收成 failed。
   Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/notion-push-sync.test.js --maxWorkers=1 --minWorkers=1"
+
 # 修对话自动捕获 + 有头会话收尾自动 handoff（任务 c8b27bc5）
 
 - [x] [BEHAVIOR] convcaptureremote 容器内对话捕获走 ssh mmv 只读跑同一份三适配器（远端脚本 fixture 真跑出会话、带 entrypoint/linkedTaskIds、turns 截尾 ≤4000 字）；远端 ~/.claude/projects 缺失、ssh 失败、本地模式目录缺失均计 adapter_failures 使 errors>0（回归：09-10 起容器内静默 0 全绿）；未登记出处且 entrypoint=cli 判为有头真人会话，sdk-cli 照旧跳过。
