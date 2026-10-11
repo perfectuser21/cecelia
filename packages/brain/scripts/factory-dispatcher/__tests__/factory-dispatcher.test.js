@@ -358,6 +358,8 @@ describe('派发流程', () => {
     const r = await dispatchTask(w.task, deps, opts);
     expect(r.outcome).toBe('failed');
     expect(w.lockOwner).toBe('intruder-run');
+    expect(w.sshCalls.some((c) => /lock-release/.test(c.cmd))).toBe(false);
+    expect(w.sshCalls.some((c) => /lock-refresh/.test(c.cmd))).toBe(false);
   });
 
   it('会话期间对自己的锁周期 lock-refresh（防 30 分钟 TTL 被回收）', async () => {
