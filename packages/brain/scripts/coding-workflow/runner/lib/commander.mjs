@@ -3,6 +3,8 @@
 // TDD 修代码、给 CI 修复追加额度——程序核对后推送，写 07-commander-rN.md 裁决记录，解除升级，记 Brain
 // result.commander_overrides 与 commander span。改需求/改写规格/削弱测试/输出不合格/会话失败/裁决上交/
 // 本 PR 介入满 cfg.commanderMax 次/基础设施类升级 → Bark 主理人（同一个升级只通知一次）。
+// qa_smoke_missing（API 类 PR 一条回归 smoke 都没固化，决策 4fe863c3）：裁决「放行」（必须写理由）且没改代码 → 直接批准
+// 裁决记录推送后的 head；否则只解除升级，head 已变，QA 门下一轮按新 head 重跑。
 // 状态：<logDir>/commander-<pr>.json { interventions: [...], human }。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,10 +17,10 @@ import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
 
 // commander 能处理的升级；其余（预览环境、裁判不可用/关闭、改动超限、评估会话坏、sprint 丢失……）是基础设施或要人定，直接通知主理人
-export const HANDLED = new Set(['judge_contract_gap', 'judge_ruling_conflict', 'qa_fix_failed', 'qa_stalled', 'qa_cannot_verify', 'ci_fix_exhausted']);
+export const HANDLED = new Set(['judge_contract_gap', 'judge_ruling_conflict', 'qa_fix_failed', 'qa_stalled', 'qa_cannot_verify', 'qa_smoke_missing', 'ci_fix_exhausted']);
 const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)'];
 const RUNNER_ID = ['-c', 'user.name=coding-workflow-runner', '-c', 'user.email=coding-workflow-runner@cecelia.local'];
-const VERDICTS = new Set(['维持规格', '采纳', '追加额度', '上交']);
+const VERDICTS = new Set(['维持规格', '采纳', '追加额度', '放行', '上交']);
 
 const file = (cfg, name) => path.join(cfg.logDir, name);
 const readJson = (p, fallback) => {
@@ -86,13 +88,27 @@ async function toHuman(ctx, pr, cs, esc, reason, detail, taskId = null) {
   if (taskId) await ctx.brain.patch(taskId, { result: { commander_human: cs.human } });
 }
 
+/** qa_smoke_missing 裁决放行（且没改代码）：批准裁决记录推送后的 head，理由记进 smoke_waived 与 smoke_note。 */
+function waiveSmoke(s, esc, ruling, { n, head, commits }) {
+  const waived = ruling.rulings.filter((x) => x.verdict === '放行');
+  if (esc.detail.type !== 'qa_smoke_missing' || waived.length === 0 || commits.length > 0) return;
+  const reason = waived.map((x) => `${x.issue}：${x.reason}`).join('；');
+  const at = new Date().toISOString();
+  s.passed = true;
+  s.approved = { head, round: s.rounds?.at(-1)?.round ?? esc.detail.round ?? null, at, by: 'coding-commander' };
+  s.smoke_waived = { n, reason, at };
+  delete s.smoke_missing;
+  s.smoke_note = `${s.smoke_note ? `${s.smoke_note}；` : ''}commander 第 ${n} 次裁决放行：${reason}`;
+}
+
 /** 解除升级：QA 门 / CI 修复状态。 */
-function release(cfg, pr, esc, ruling) {
+function release(cfg, pr, esc, ruling, done) {
   if (esc.kind === 'qa') {
     const s = readJson(file(cfg, `qa-${pr}.json`), {});
     delete s.escalated;
     delete s.mirrored;
     if (esc.detail.type === 'qa_stalled') s.stall_floor = (s.rounds ?? []).length;
+    waiveSmoke(s, esc, ruling, done);
     writeJson(file(cfg, `qa-${pr}.json`), s);
     return;
   }
@@ -177,9 +193,10 @@ async function intervene(ctx, pr, esc, cs, signal) {
       return await fail('commander_record_commit_failed');
     }
     await pushPrHead(cfg, worktree, pr);
-    release(cfg, pr.number, esc, ruling);
+    const head = await headOf(worktree);
+    release(cfg, pr.number, esc, ruling, { n, head, commits });
     const entry = { n, at: new Date().toISOString(), kind: esc.kind, escalation: esc.detail, action: 'resume', rulings: ruling.rulings, summary: ruling.summary,
-      reset_ci_budget: ruling.reset_ci_budget, commits, record, head: await headOf(worktree), cost_usd: costUsd ?? null };
+      reset_ci_budget: ruling.reset_ci_budget, commits, record, head, cost_usd: costUsd ?? null };
     cs.interventions.push(entry);
     writeJson(file(cfg, `commander-${pr.number}.json`), cs);
     const task = await ctx.brain.getTask(taskId);

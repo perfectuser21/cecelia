@@ -20,3 +20,13 @@ export function intentHeading(dir) {
 
 /** 'fix' | 'feat' */
 export const prKindOf = (heading) => (FIX_RE.test(String(heading ?? '').trim()) ? 'fix' : 'feat');
+
+// API 面（决策 4fe863c3：改了它的 PR 一条回归 smoke 都没固化就拦合并）：Brain 路由目录、routes.js / *-routes.js / *-route.js、
+// Brain 入口 server.js、apps/api 源码。测试文件不算；runner 脚本、纯 UI、其他 Brain 模块不算。
+const API_SURFACE_RE = /^(?:packages\/brain\/(?:src\/routes\/|src\/(?:[\w-]+-)?routes?\.js$|server\.js$)|apps\/api\/src\/)/;
+const TEST_FILE_RE = /(?:^|\/)__tests__\/|\.test\.[cm]?[jt]sx?$/;
+
+/** PR 改动的文件里有没有 API 面。 */
+export function touchesApiSurface(files) {
+  return Array.isArray(files) && files.some((f) => API_SURFACE_RE.test(f) && !TEST_FILE_RE.test(f));
+}

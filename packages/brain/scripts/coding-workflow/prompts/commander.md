@@ -29,10 +29,15 @@ RULING_PATH: {{RULING_PATH}}
    - qa_stalled：连续几轮失败数不降。找出反复失败的真正原因（常见：裁判与修复会话来回改、QA 场景本身有问题、根因没修到），给出决定性的修法。
    - qa_cannot_verify：QA 验不了。判断是规格里的 Q-n 写得验不了（追加裁决节改成能验的做法）还是环境缺工具（上交）。
    - ci_fix_exhausted：自动修了两次 CI 仍红。看失败的检查与日志线索，本地复现，自己修或给额度。
+   - qa_smoke_missing：PR 改了 API 面、QA 有 PASS 的 API 条目（ESCALATION 的 api_items），但一条都没固化成回归 smoke（skipped 列出每条被剔除的原因：preflight_failed:退出码 = 在预览上预跑失败，other_port / local_path / production = 命令打了别处或依赖本机路径，not_preview = 没打预览 API）。合并后这个 API 就没有回归守卫，所以默认不放行。两种裁法，二选一：
+     - 放行：确认这个改动确实不需要/做不出 API 回归（例如命令只能依赖预览库已有数据、已有等价的单测或别的 smoke 覆盖），对每个 T-n 写 `"verdict":"放行"` 并把理由写具体（放行理由会记进 Brain，主理人会看）。放行时不要提交任何代码，否则不算放行。
+     - 要求 QA 重跑：根因是 QA 的命令写法（依赖会话变量、打了别的端口、依赖已有数据等）→ 在 SPEC_PATH 末尾追加裁决节，写清对应 Q-n 的命令必须怎么写（自己造数据、地址变量在同一条命令里赋值），verdict 用「采纳」或「维持规格」。你的裁决记录推送后 head 会变，QA 门会在 CI 绿后按新 head 重跑一轮。
+     不能自己写或改 `cw-*-qa-smoke.sh`（那只由 runner 固化）。
 3. 需求本身要改、要主理人拍板的取舍、你没把握的高风险改动、基础设施问题（预览环境、凭据、外部服务）→ 不要硬做，`action: "human"` 上交。
 
 ## 最后：把裁决写成 JSON 到 RULING_PATH（只写这一个文件到 RULING_PATH，内容必须是合法 JSON）
-{"action":"resume","rulings":[{"issue":"J-1","verdict":"维持规格|采纳|追加额度|上交","reason":"依据哪条需求/规格/证据"}],"reset_ci_budget":false,"summary":"一两句话：裁决了什么、做了什么"}
+{"action":"resume","rulings":[{"issue":"J-1","verdict":"维持规格|采纳|追加额度|放行|上交","reason":"依据哪条需求/规格/证据"}],"reset_ci_budget":false,"summary":"一两句话：裁决了什么、做了什么"}
+- `放行` 只用于 qa_smoke_missing（理由必须写清为什么没有回归 smoke 也能合并）。
 - `rulings` 必须逐条覆盖升级里的每个问题（J-n、失败的检查名或原因码）。
 - 上交时 `action` 写 `"human"`，并加 `"human_reason"`：主理人需要定什么。
 - 程序会核对你的提交：改了禁止的文件、规格不是纯追加、削弱测试 → 你的改动不会推送，直接上交主理人。

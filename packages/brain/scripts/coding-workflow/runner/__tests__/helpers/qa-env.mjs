@@ -95,6 +95,9 @@ export function useQaEnv({ onReady } = {}) {
       }
       if (req.url === '/api/brain/preview/start') { res.statusCode = preview.start; return res.end(JSON.stringify({ port: 5309, reason: 'disk' })); }
       if (/\/api\/brain\/preview\/stop\/\d+$/.test(req.url)) return res.end('{"ok":true}');
+      // 预览 Brain 的业务 API（固化前预跑打这里）：建任务回 id；qa-broken 固定 500
+      if (req.url === '/api/brain/tasks' && req.method === 'POST') return res.end('{"id":"qa-1"}');
+      if (req.url === '/api/brain/qa-broken') { res.statusCode = 500; return res.end('{"error":"boom"}'); }
       res.statusCode = 404;
       return res.end('{}');
     });
@@ -139,6 +142,7 @@ export function useQaEnv({ onReady } = {}) {
       CODING_WF_EVALUATE: FAKE_EVALUATE,
       FAKE_QA_MODE: mode,
       FAKE_QA_LOG: E.files.qaLog,
+      FAKE_QA_PREVIEW_URL: `http://127.0.0.1:${E.preview.server.address().port}`,
       CODING_WF_PREVIEW_API: E.preview.api,
       CODING_WF_PREVIEW_HOST: '127.0.0.1',
       DEPLOY_TOKEN: 'tok-1',

@@ -97,32 +97,40 @@ const block = (t, command) => [
 ].join('\n');
 
 /**
- * 挑 QA 报告里可固化的 T-n：只看 PASS 的；→ { picked: [T-n], skipped: [{ id, reason }] }（原因见 previewApiSkipReason）。
+ * 挑 QA 报告里可固化的 T-n：只看 PASS 的；→ { picked: [T-n], skipped: [{ id, reason }], api: [id] }（原因见 previewApiSkipReason）。
+ * exclude：[{ id, reason }] 额外剔除的条目（固化前预跑失败的，reason 形如 preflight_failed:22）。
+ * api：PASS 的 API 类条目（命令请求了 /api/，不是浏览器操作）——无论最后能否固化，用来判「API 类 PR 零固化」。
  */
-export function selectQaSmokeItems({ previewUrl, reportText }) {
+export function selectQaSmokeItems({ previewUrl, reportText, exclude = [] }) {
   const origin = String(previewUrl ?? '').replace(/\/+$/, '');
+  const excluded = new Map(exclude.map((x) => [x.id, x.reason]));
   const picked = [];
   const skipped = [];
+  const api = [];
   for (const t of parseQaReport(reportText).tests.filter((x) => x.verdict === 'PASS')) {
     const reason = origin ? previewApiSkipReason(t.command, origin) : 'not_preview';
-    if (reason) skipped.push({ id: t.id, reason });
+    if (reason !== 'browser' && /\/api\//.test(String(t.command ?? ''))) api.push(t.id);
+    const why = reason ?? excluded.get(t.id);
+    if (why) skipped.push({ id: t.id, reason: why });
     else picked.push(t);
   }
-  return { picked, skipped };
+  return { picked, skipped, api };
 }
 
 /**
- * 由 QA 报告生成 smoke：{ name, content, writes, items, skipped }；没有可固化的条目返回 null。
- * 只收 PASS、请求预览环境 API（字面量或先赋给变量）、不碰生产/本机其他端口/本机路径/浏览器的 T-n。
+ * 由 QA 报告生成 smoke：{ name, content, writes, items, skipped, commands }；没有可固化的条目返回 null。
+ * 只收 PASS、请求预览环境 API（字面量或先赋给变量）、不碰生产/本机其他端口/本机路径/浏览器的 T-n；exclude 见 selectQaSmokeItems。
+ * commands：每条 T-n 换好 $BRAIN_URL 后的命令（固化前在预览上逐条预跑用）。
  */
-export function buildQaSmoke({ taskId, previewUrl, reportText }) {
+export function buildQaSmoke({ taskId, previewUrl, reportText, exclude = [] }) {
   const origin = String(previewUrl ?? '').replace(/\/+$/, '');
   if (!origin) return null;
-  const { picked, skipped } = selectQaSmokeItems({ previewUrl: origin, reportText });
+  const { picked, skipped } = selectQaSmokeItems({ previewUrl: origin, reportText, exclude });
   if (picked.length === 0) return null;
   // curl 第一个参数统一 -q（不读外部 ~/.curlrc；仓库 smoke 守卫的硬要求）
   const fixCurl = (cmd) => cmd.replace(/\bcurl[ \t]+(?!-q(?:[ \t]|$))/g, 'curl -q ');
-  const blocks = picked.map((t) => block(t, fixCurl(replaceOrigin(t.command, origin))));
+  const commands = picked.map((t) => ({ id: t.id, command: fixCurl(replaceOrigin(t.command, origin)) }));
+  const blocks = picked.map((t, i) => block(t, commands[i].command));
   const writes = picked.some((t) => HTTP_WRITE_RE.test(t.command.replace(/\\\r?\n/g, ' ')));
   const name = `cw-${String(taskId).slice(0, 8)}-qa-smoke.sh`;
   const content = [
@@ -142,7 +150,7 @@ export function buildQaSmoke({ taskId, previewUrl, reportText }) {
     `echo "PASS: ${name}"`,
     '',
   ].join('\n');
-  return { name, content, writes, items: picked.map((t) => t.id), skipped };
+  return { name, content, writes, items: picked.map((t) => t.id), skipped, commands };
 }
 
 /** 追加一行（已有则不动）；文件不存在时新建。 */

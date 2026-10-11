@@ -3,6 +3,8 @@
 // PASS → 独立裁判（judge-gate.mjs，不同模型复核需求+合同+QA 报告+改动）：PASS 才开自动合并；product → 按裁决修复；
 // qa_gap → 下一轮 QA 带着裁决补验；contract_gap / 推翻前轮裁决（ruling_conflict）→ 升级；裁判不可用 → 下轮只重跑裁判。
 // 失败数连续 3 轮不降（不收敛）、评估会话/裁判连坏、预览环境长期起不来 → 升级给 coding commander。
+// 回归 smoke：裁判 PASS 后把 PASS 的 API 命令逐条在预览上预跑，跑通的才固化；改了 API 面的 PR 有 PASS 的 API 条目却一条都没
+// 固化 → 不批准，升级 qa_smoke_missing 交 commander（放行写理由，或要求 QA 重跑；决策 4fe863c3）。
 // 状态：<logDir>/qa-<pr>.json；Brain 任务 result.qa（摘要）与 result.escalations。PR 结束（合并/外部关闭）后停预览见 pr-closure.mjs。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,6 +14,8 @@ import { listOwnPrs, requiredState } from './cifix-scan.mjs';
 import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from './pr-branch.mjs';
 import { previewOf } from '../../lib/preview.mjs';
 import { buildQaSmoke, selectQaSmokeItems, registerSmoke, QA_SMOKE_DIR } from '../../lib/qa-smoke.mjs';
+import { PRODUCTION_TARGET_RE } from '../../lib/qa-report.mjs';
+import { touchesApiSurface } from '../../lib/pr-kind.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { cannotVerifyAccepted } from './cv-accepted.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
@@ -22,6 +26,7 @@ const EVALUATE_REL = 'packages/brain/scripts/coding-workflow/activities/evaluate
 const EVALUATE_TIMEOUT_MS = 55 * 60 * 1000;
 const GH_TIMEOUT_MS = 60 * 1000;
 const STALL_ROUNDS = 3;
+const PREFLIGHT_TIMEOUT_MS = 60 * 1000;
 const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)'];
 const RUNNER_ID = ['-c', 'user.name=coding-workflow-runner', '-c', 'user.email=coding-workflow-runner@cecelia.local'];
 
@@ -30,7 +35,7 @@ const statePath = (cfg, pr) => path.join(cfg.logDir, `qa-${pr}.json`);
 export function readState(cfg, pr) {
   try {
     const s = JSON.parse(fs.readFileSync(statePath(cfg, pr), 'utf8'));
-    return { rounds: [], bad: 0, ...s, rounds: Array.isArray(s?.rounds) ? s.rounds : [] };
+    return { bad: 0, ...s, rounds: Array.isArray(s?.rounds) ? s.rounds : [] };
   } catch {
     return { rounds: [], bad: 0 };
   }
@@ -167,31 +172,66 @@ const qaIssueLines = (qa) => [...qa.failed, ...qa.blocking]
 const judgeIssueLines = (j) => j.blocking
   .map((i) => `- ${i.id}（对应 ${i.covers.join('、')}，${i.severity}，${i.type}）${i.where ? `［${i.where}］` : ''}：${i.detail}`).join('\n');
 
-/** 未固化的 PASS 条目及原因（other_port / local_path / production / browser / not_preview），拼进 smoke_note。 */
+/** 未固化的 PASS 条目及原因（other_port / local_path / production / browser / not_preview / preflight_failed:退出码），拼进 smoke_note。 */
 const skippedNote = (skipped = []) => (skipped.length ? `；剔除 ${skipped.map((x) => `${x.id}(${x.reason})`).join(',')}` : '');
 
 /**
- * QA 与裁判都通过：把 PASS 的 T-n API 命令固化成回归 smoke 并登记（审计 #9，决策 c8621227），
+ * 固化前逐条预跑（C2b）：每个 T-n 单独用 bash 跑一遍（BRAIN_URL=预览地址、SMOKE_ALLOW_WRITE=1，60s 超时），
+ * 返回跑不通的 [{ id, reason: 'preflight_failed:<退出码|timeout>' }]。预览地址指向生产 → 一条都不跑，全部剔除。
+ */
+export async function preflightSmoke(worktree, smoke, previewUrl) {
+  const origin = String(previewUrl ?? '').replace(/\/+$/, '');
+  if (PRODUCTION_TARGET_RE.test(origin)) return smoke.commands.map((c) => ({ id: c.id, reason: 'preflight_failed:production_target' }));
+  const failed = [];
+  for (const c of smoke.commands) {
+    const r = await run('bash', ['-c', `set -euo pipefail\n${c.command}`], {
+      cwd: worktree, env: { BRAIN_URL: origin, SMOKE_ALLOW_WRITE: '1' }, timeoutMs: PREFLIGHT_TIMEOUT_MS,
+    });
+    if (r.code !== 0) failed.push({ id: c.id, reason: `preflight_failed:${r.timedOut ? 'timeout' : r.code ?? 'spawn'}` });
+  }
+  return failed;
+}
+
+/** PR 相对 main 改了 API 面没有；diff 取不到按「改了」算（不默认放行）。 */
+async function prTouchesApi(worktree) {
+  const r = await git(worktree, ['diff', '--name-only', 'origin/main...HEAD']);
+  return r.code !== 0 || touchesApiSurface(r.stdout.split('\n').filter(Boolean));
+}
+
+/**
+ * QA 与裁判都通过：把 PASS 的 T-n API 命令逐条在预览上预跑，跑通的固化成回归 smoke 并登记（审计 #9，决策 c8621227），
  * 返回要随 QA 记录一并提交的路径；没有可固化的条目返回 []。
  * 结果写进 s.smoke / s.smoke_note（决策 b8030661）：没有可固化命令时保留分支上已有版本（不删不改），说明哪轮保留哪版。
+ * 一条都没固化、分支上也没有前轮版本、QA 有 PASS 的 API 条目且 PR 改了 API 面 → s.smoke_missing（afterJudge 据此升级，决策 4fe863c3）。
  */
-function solidifyQa(ctx, pr, s, round, worktree, intent, reportFile, previewUrl) {
+async function solidifyQa(ctx, pr, s, round, worktree, intent, reportFile, previewUrl) {
   const file = `${QA_SMOKE_DIR}/cw-${String(intent.taskId).slice(0, 8)}-qa-smoke.sh`;
+  delete s.smoke_missing;
+  delete s.smoke_gap;
   try {
-    const reportText = fs.readFileSync(path.join(worktree, intent.sprintDir, reportFile), 'utf8');
-    const smoke = buildQaSmoke({ taskId: intent.taskId, previewUrl, reportText });
+    const args = { taskId: intent.taskId, previewUrl, reportText: fs.readFileSync(path.join(worktree, intent.sprintDir, reportFile), 'utf8') };
+    const first = buildQaSmoke(args);
+    const failed = first ? await preflightSmoke(worktree, first, previewUrl) : [];
+    if (failed.length) ctx.log(`QA 门 PR #${pr.number}：预跑失败剔除 ${failed.map((x) => `${x.id}(${x.reason})`).join(',')}`);
+    const preflight = first ? `；预跑 ${first.items.length} 条通过 ${first.items.length - failed.length} 条` : '';
+    const smoke = failed.length ? buildQaSmoke({ ...args, exclude: failed }) : first;
     if (!smoke) {
-      const why = skippedNote(selectQaSmokeItems({ previewUrl, reportText }).skipped);
-      ctx.log(`QA 门 PR #${pr.number}：QA 报告里没有可固化的 API 验收命令，不生成回归 smoke${why}`);
+      const { skipped, api } = selectQaSmokeItems({ ...args, exclude: failed });
+      const why = `${preflight}${skippedNote(skipped)}`;
+      ctx.log(`QA 门 PR #${pr.number}：QA 报告里没有可固化（预跑通过）的 API 验收命令，不生成回归 smoke${why}`);
       const kept = fs.existsSync(path.join(worktree, file));
       s.smoke_note = (kept
         ? `第 ${round} 轮 QA 报告无可固化的 API 验收命令，保留第 ${s.smoke?.round ?? '?'} 轮版本 ${file}`
         : `本任务无回归 smoke（第 ${round} 轮 QA 报告无可固化的 API 验收命令）`) + why;
+      if (!kept && api.length > 0 && await prTouchesApi(worktree)) {
+        s.smoke_missing = true;
+        s.smoke_gap = { round, api_items: api, skipped };
+      }
       return [];
     }
     const changed = registerSmoke(worktree, smoke);
     s.smoke = { round, file, items: smoke.items, at: new Date().toISOString() };
-    s.smoke_note = `第 ${round} 轮固化 ${file}（${smoke.items.join(',')}）${skippedNote(smoke.skipped)}`;
+    s.smoke_note = `第 ${round} 轮固化 ${file}（${smoke.items.join(',')}）${preflight}${skippedNote(smoke.skipped)}`;
     ctx.log(`QA 门 PR #${pr.number}：验收命令 ${smoke.items.join(',')} 固化为 ${smoke.name}（登记 allowlist${smoke.writes ? ' + write-targets' : ''}）`);
     return changed;
   } catch (error) {
@@ -308,6 +348,8 @@ async function afterJudge(ctx, pr, s, worktree, intent, entry, j) {
   if (j.error) {
     if (s.judge_bad >= ctx.cfg.qaMaxJudgeBad) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_judge_unavailable', reason: j.error });
   } else if (j.verdict === 'PASS') {
+    // API 类 PR 一条回归 smoke 都没固化：不批准，交 commander 裁决（决策 4fe863c3；commander 已放行过的不再拦）
+    if (s.smoke_missing && !s.smoke_waived) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_smoke_missing', ...s.smoke_gap, round: entry.round });
     await approve(s, entry, worktree);
   } else {
     entry.fails = Math.max(1, j.blocking.length);
@@ -427,7 +469,7 @@ async function qaRound(ctx, pr, s, signal) {
     if (verdict === 'PASS' && cfg.judge) {
       const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
       if (j.file) records.push(`${intent.sprintDir}/${j.file}`);
-      if (!j.error && j.verdict === 'PASS') records.push(...solidifyQa(ctx, pr, s, round, worktree, intent, result.outputs.qa_report_file, qa.env?.url));
+      if (!j.error && j.verdict === 'PASS') records.push(...await solidifyQa(ctx, pr, s, round, worktree, intent, result.outputs.qa_report_file, qa.env?.url));
       await commit(`docs(qa): 第 ${round} 轮真人 QA ${label}，${j.error ? '独立裁判待定' : `独立裁判 ${j.verdict}`}`);
       return afterJudge(ctx, pr, s, worktree, intent, entry, j);
     }
@@ -455,7 +497,7 @@ async function judgeRound(ctx, pr, s, signal) {
   return inPrWorktree(ctx, pr, s, `qa-${pr.number}-j${entry.round}`, signal, async (worktree, intent) => {
     const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
     const smoke = !j.error && j.verdict === 'PASS' && entry.report
-      ? solidifyQa(ctx, pr, s, entry.round, worktree, intent, path.basename(entry.report), entry.env_url) : [];
+      ? await solidifyQa(ctx, pr, s, entry.round, worktree, intent, path.basename(entry.report), entry.env_url) : [];
     if (j.file) await commitRecords(ctx.cfg, worktree, pr, [`${intent.sprintDir}/${j.file}`, ...smoke], `docs(qa): 第 ${entry.round} 轮独立裁判 ${j.verdict}`);
     return afterJudge(ctx, pr, s, worktree, intent, entry, j);
   });

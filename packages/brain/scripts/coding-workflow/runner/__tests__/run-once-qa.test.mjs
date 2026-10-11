@@ -392,8 +392,50 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       expect(note).toContain('剔除 T-2(other_port)');
       const content = git(sb.origin, 'show', `${BRANCH}:${SMOKE}`);
       expect(content).toContain('B="$BRAIN_URL";');
-      expect(content).not.toContain('5302');
+      expect(content).not.toContain(`:${preview.server.address().port}`);
       expect(content).not.toContain('5299');
+    });
+
+    // C2b：固化前每个 T-n 在预览上单独预跑（BRAIN_URL=预览地址），跑不通的剔除，不让它进 allowlist 卡合并
+    it('固化前逐条在预览上预跑：变量写法的 T-1 真打到预览后固化，smoke_note 写明预跑', async () => {
+      const r = await go(green(), { mode: 'pass-api-var' });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(preview.calls).toContainEqual(expect.objectContaining({ method: 'POST', url: '/api/brain/tasks' }));
+      expect(state().smoke).toMatchObject({ items: ['T-1'] });
+      expect(brainQa().at(-1).qa.smoke_note).toContain('预跑');
+    });
+
+    it('预跑失败的 T-2 剔除（preflight_failed:退出码），只固化 T-1', async () => {
+      const r = await go(green(), { mode: 'pass-api-flaky' });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(preview.calls).toContainEqual(expect.objectContaining({ url: '/api/brain/qa-broken' }));
+      expect(state().smoke).toMatchObject({ round: 1, file: SMOKE, items: ['T-1'] });
+      expect(brainQa().at(-1).qa.smoke_note).toContain('剔除 T-2(preflight_failed:22)');
+      const content = git(sb.origin, 'show', `${BRANCH}:${SMOKE}`);
+      expect(content).toContain('== T-1');
+      expect(content).not.toContain('qa-broken');
+      expect(state().passed).toBe(true);
+    });
+
+    // 决策 4fe863c3（推翻 b8030661）：改了 API 面的 PR，QA 有 PASS 的 API 条目却一条都没固化 → 拦合并交 commander
+    it('改了 API 面的 PR，PASS 的 API 条目全部被剔除 → 不批准，升级 qa_smoke_missing（P1，回写 Brain）', async () => {
+      E.addToBranch('packages/brain/src/routes/qa-demo.js', 'export default 1;\n');
+      const r = await go(green({ prs: [pr({ headRefOid: E.remoteHead() })] }), { mode: 'pass-api-broken' });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(state().passed).toBeFalsy();
+      expect(state().smoke_missing).toBe(true);
+      expect(state().escalated).toMatchObject({ type: 'qa_smoke_missing', round: 1, api_items: ['T-1'], skipped: [{ id: 'T-1', reason: 'preflight_failed:22' }] });
+      expect(r.stderr).toContain('[coding-qa][P1]');
+      expect(brainQa().at(-1).escalations).toEqual([expect.objectContaining({ type: 'qa_smoke_missing', pr: 77 })]);
+      expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判 PASS');
+    });
+
+    it('没改 API 面的 PR，API 条目全部被剔除 → 照常批准，只记 smoke_note', async () => {
+      const r = await go(green(), { mode: 'pass-api-broken' });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(state().passed).toBe(true);
+      expect(state().escalated).toBeUndefined();
+      expect(brainQa().at(-1).qa.smoke_note).toContain('T-1(preflight_failed:22)');
     });
 
     it('没有可固化命令、也从未固化过 → smoke_note 记「本任务无回归 smoke」', async () => {
