@@ -75,7 +75,7 @@ const REPORTED = {
   publish: {
     retryable: ['push_failed', 'gh_failed'],
     needs_human: ['gh_auth'],
-    fatal: ['sprint_dir_invalid', 'task_id_missing', 'chain_files_missing', 'branch_invalid', 'git_add_failed', 'git_commit_failed', 'git_diff_failed'],
+    fatal: ['sprint_dir_invalid', 'task_id_missing', 'chain_files_missing', 'gp_anchor_invalid', 'branch_invalid', 'git_add_failed', 'git_commit_failed', 'git_diff_failed'],
   },
   report: {
     retryable: ['brain_unavailable'],

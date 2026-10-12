@@ -149,6 +149,13 @@ await runActivity(async (input) => {
   const { worktree, sprint_dir: sprintDir, chain_files: chainFiles } = input;
   const { dir } = validateBase(input);
   const taskId = input.task_id;
+  const gpAnchor = input.gp_anchor;
+  // 缺失沿用旧行为，交仓库 CI 判定；有值必须是一行，不能借锚点注入额外声明。
+  // 格式及业务归属由目标仓库的 GP lint 校验，publish 不替任务造豁免。
+  if (gpAnchor !== undefined && (typeof gpAnchor !== 'string' || !gpAnchor.trim()
+      || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(gpAnchor))) {
+    return fail('fatal', 'gp_anchor_invalid');
+  }
   if (!Array.isArray(chainFiles) || chainFiles.length === 0) return fail('fatal', 'chain_files_missing');
 
   const branchRes = await runCmd('git', ['-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD']);
@@ -187,6 +194,7 @@ await runActivity(async (input) => {
 
   if (!prUrl) {
     const body = [
+      gpAnchor === undefined ? '' : `GP-Anchor: ${gpAnchor}`,
       chainFiles.map((f) => `- ${sprintRel}/${f}`).join('\n'),
       reviewSummary(input, dir, sprintRel),
       uncoveredSummary(dir, sprintRel),
