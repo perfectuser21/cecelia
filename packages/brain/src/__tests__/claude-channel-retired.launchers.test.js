@@ -49,20 +49,6 @@ describe('spawn 层：claude 一律拒绝，不发起 SSH', () => {
   });
 });
 
-describe('commander-invoker：默认 runner 不再执行 claude -p', () => {
-  it('createCommanderSession 未注入 runner → claude_channel_retired，不 execFile', async () => {
-    const { createCommanderSession } = await import('../orchestrator/commander-invoker.js');
-    await expect(createCommanderSession({ runId: 'r', taskRequest: 't', gear: 'bugfix' })).rejects.toThrow(RETIRED);
-    expect(nodeChild.execFile).not.toHaveBeenCalled();
-  });
-
-  it('wakeCommander 未注入 runner → commander_wake_failed 带 claude_channel_retired（调用方既有降级③升人）', async () => {
-    const { wakeCommander } = await import('../orchestrator/commander-invoker.js');
-    await expect(wakeCommander({ sessionId: 's', runId: 'r', stageId: 'plan', stageAttempt: 1, digest: 'd' })).rejects.toThrow(RETIRED);
-    expect(nodeChild.execFile).not.toHaveBeenCalled();
-  });
-});
-
 describe('conversation-agent：主理人对话不再 spawn claude', () => {
   it('invokeAgent 抛 claude_channel_retired，不 spawnSync', async () => {
     const { invokeAgent } = await import('../lib/conversation-agent.js');

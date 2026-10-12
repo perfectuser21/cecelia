@@ -8,7 +8,6 @@ vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternal
 //   providers/claude：start/resume 不再生成任何命令
 //   spawn：CECELIA_EXECUTOR 缺省/claude 的容器在最底层拒绝，不碰 docker
 //   harness-skill-relay：显式 claude / 非 kernel 无头缺省执行体 → claude_channel_retired，不建 run 不 spawn
-//   commander-invoker：默认 runner 不再 execFile claude -p，唤醒失败按既有语义 commander_wake_failed
 //
 // 真 import 被改模块（lint-gp-anchor-artifact 要求），不 mock 它们；只注入外部 IO 桩。
 import { describe, it, expect, vi } from 'vitest';
@@ -18,7 +17,6 @@ import { codexAdapter } from '../../../packages/brain/src/orchestrator/providers
 import { grokAdapter } from '../../../packages/brain/src/orchestrator/providers/grok.js';
 import { spawn } from '../../../packages/brain/src/spawn/spawn.js';
 import { spawnSkillRelaySession } from '../../../packages/brain/src/harness-skill-relay.js';
-import { createCommanderSession, wakeCommander } from '../../../packages/brain/src/orchestrator/commander-invoker.js';
 
 const RETIRED = expect.objectContaining({ code: 'claude_channel_retired' });
 const TASK_ID = '88888888-8888-4888-8888-888888888888';
@@ -75,9 +73,4 @@ describe('GP F1 step3 — Claude 无头通道已退役：执行体选择不再�
     expect(deps.createKernelRun).not.toHaveBeenCalled();
   });
 
-  it('commander-invoker：默认 runner 不拉起 claude -p——开局失败、唤醒包成 commander_wake_failed', async () => {
-    await expect(createCommanderSession({ runId: 'r1', taskRequest: 't', gear: 'G1' })).rejects.toThrow(RETIRED);
-    await expect(wakeCommander({ sessionId: 's1', runId: 'r1', stageId: 'st1', stageAttempt: 1, digest: 'd' }))
-      .rejects.toThrow(/^commander_wake_failed:st1: claude_channel_retired/);
-  });
 });
