@@ -2,7 +2,36 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
-    
+    {
+      "owner_path": "packages/brain/src/skill-registry-projection.js",
+      "path": "packages/brain/src/__tests__/skill-registry-projection.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-registry-notion-props.js",
+      "path": "packages/brain/src/lib/__tests__/skill-registry-notion-props.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-business-ownership.js",
+      "path": "packages/brain/src/lib/__tests__/skill-business-ownership.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-business-ownership.js",
+      "path": "packages/brain/src/lib/__tests__/integration/skill-business-ownership.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/skill-registry-projection.js",
+      "path": "changes/cp-1012014500-skill-business-grouping.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-business-ownership.js",
+      "path": "packages/brain/scripts/smoke/skill-business-grouping-smoke.sh",
+      "role": "verification"
+    },
     {
       "owner_path": "packages/brain/src/lib/activity-contract-loader.js",
       "path": "docs/learnings/cp-10082313-leadgen-contract-identity.md",
@@ -378,7 +407,6 @@
       "path": "packages/brain/src/__tests__/coding-workflow-routing.test.js",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/src/golden-path-contracts.js",
       "path": "packages/brain/src/__tests__/golden-path-contracts.test.js",
@@ -394,13 +422,11 @@
       "path": "docs/learnings/cp-10120930-workflow-dispatch-codex-agent.md",
       "role": "documentation"
     },
-    
     {
       "owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js",
       "path": "packages/brain/scripts/smoke/factory-commander-route-smoke.sh",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/src/orchestrator/planner-recovery-consumption-store.js",
       "path": "packages/brain/src/orchestrator/__tests__/planner-recovery-consumption-store.test.js",

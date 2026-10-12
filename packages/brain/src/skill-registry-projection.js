@@ -13,8 +13,9 @@ import { notionReq as defaultNotionReq } from './recurring-notion-sync.js';
 import { isPageGoneError } from './lib/notion-projection-engine.js';
 import {
   SKILL_REGISTRY_DB, COLUMNS, HUMAN_KEYS, machineValues, humanValues, machineDigest,
-  fromNotionProp, sameValue, buildProps,
+  fromNotionProp, sameValue, buildProps, buildBusinessLabels,
 } from './lib/skill-registry-notion-props.js';
+import { readSkillBusinessOwnership } from './lib/skill-business-ownership.js';
 
 export const COLUMNS_KEY = 'skill_registry_notion_columns';
 export const STATE_KEY = 'skill_registry_projection_state';
@@ -102,7 +103,7 @@ async function resolveColumns(client, token, notionReq) {
 
 const ROW_SQL = `SELECT id, name, description, location, status, metadata, notion_id, platforms_installed, presence,
   last_seen_at, source_path, source_kind, assigned_agents, drift_copies, platforms_target, openclaw_tier, tier_suggested,
-  business_line, category, note, notion_baseline, notion_push_attempts, notion_next_retry_at, updated_at
+  business_line, category, note, notion_baseline, notion_push_attempts, notion_next_retry_at, updated_at, content_digest
   FROM skill_registry`;
 
 function baselineOf(row) {
@@ -234,8 +235,15 @@ export async function runSkillRegistryProjection(pool, opts = {}) {
     const last = Date.parse(state.last_run_at);
     if (!force && Number.isFinite(last) && now - last < GATE_MS) return { skipped: true, reason: 'interval_gate' };
 
-    const colMap = await resolveColumns(client, token, notionReq);
     const { rows } = await client.query(ROW_SQL);
+    // 归属读取失败则本轮停止，不用空分组覆盖上次的正确投影。
+    const ownerships = await (opts.readBusinessOwnership || readSkillBusinessOwnership)(client, rows);
+    const businessLabels = buildBusinessLabels(ownerships);
+    for (const row of rows) {
+      row.business_ownership = ownerships.get(row.id);
+      row.business_labels = businessLabels;
+    }
+    const colMap = await resolveColumns(client, token, notionReq);
     const boundIds = new Set(rows.filter((r) => r.notion_id).map((r) => r.notion_id));
     const botUserId = opts.botUserId || (await notionReq(token, '/users/me', 'GET')).id;
     const scoped = Array.isArray(opts.names) ? rows.filter((r) => opts.names.includes(r.name)) : rows;

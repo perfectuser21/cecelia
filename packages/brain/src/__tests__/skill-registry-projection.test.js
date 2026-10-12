@@ -115,7 +115,10 @@ const skill = (over = {}) => ({
   notion_push_attempts: 0, notion_next_retry_at: null, updated_at: new Date(), ...over,
 });
 
-const run = (pool, notion, extra = {}) => runSkillRegistryProjection(pool, { token: 't', notionReq: notion.req, force: true, botUserId: BOT, ...extra });
+const run = (pool, notion, extra = {}) => runSkillRegistryProjection(pool, {
+  token: 't', notionReq: notion.req, force: true, botUserId: BOT,
+  readBusinessOwnership: async () => new Map(), ...extra,
+});
 const pagePatches = (n) => n.state.calls.filter((c) => c.method === 'PATCH' && c.path.startsWith('/pages/') && !c.body.archived);
 
 describe('runSkillRegistryProjection', () => {
@@ -160,6 +163,31 @@ describe('runSkillRegistryProjection', () => {
     await run(pool, notion);
     const last = pagePatches(notion).at(-1);
     expect(last.body.properties.Description.rich_text[0].text.content).toBe('改过的描述');
+  });
+
+  it('正式业务链变化或引用撤销，即使原件未变也更新分组，不覆盖人工旧Area', async () => {
+    const rows = [skill()];
+    const { pool } = fakePool(rows);
+    const node = { id: 'canonical-capability', name: '多平台发布' };
+    let ownership = { capabilities: [node], status: 'mapped', paths: [] };
+    const extra = { readBusinessOwnership: async () => new Map([['r1', ownership]]) };
+    await run(pool, notion, extra);
+    const page = notion.state.pages.get('page-1');
+    page.properties.Area = { type: 'relation', relation: [{ id: 'human-existing-area' }] };
+    expect(page.properties['能力（Capability）'].multi_select).toEqual([{ name: '多平台发布' }]);
+    ownership = { capabilities: [], status: 'unknown', paths: [] };
+    await run(pool, notion, extra);
+    expect(page.properties['能力（Capability）'].multi_select).toEqual([]);
+    expect(page.properties['归属状态'].select.name).toBe('待归属');
+    expect(page.properties.Area.relation).toEqual([{ id: 'human-existing-area' }]);
+  });
+
+  it('业务树读取失败时停止该轮，不用空归属覆盖已有分组', async () => {
+    const { pool } = fakePool([skill()]);
+    await expect(run(pool, notion, {
+      readBusinessOwnership: async () => { throw new Error('tree_read_failed'); },
+    })).rejects.toThrow('tree_read_failed');
+    expect(notion.state.calls).toEqual([]);
   });
 
   it('人管列：Notion 被人改过（≠基线）→ Brain 改了也不覆盖，基线跟上 Brain', async () => {
