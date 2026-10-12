@@ -38,6 +38,27 @@ const expectValues = (def, values) => {
 describe('迁移 552：decisions_made_by_check 补 ai（只增不减）', () => {
   let firstDef;
 
+  it('预览库已有显式 varchar→text ARRAY 约束可回放，保留取值并补 ai', async () => {
+    await client.query('SAVEPOINT preview_cast');
+    try {
+      await dropAllMadeByChecks();
+      await client.query(`ALTER TABLE decisions ADD CONSTRAINT decisions_made_by_check
+        CHECK (made_by::text = ANY (ARRAY[('user'::character varying)::text,
+          ('cecelia'::character varying)::text, ('system'::character varying)::text,
+          ('owner''x'::character varying)::text])) NOT VALID`);
+      await client.query(UP);
+      const checks = await madeByChecks();
+      expectValues(checks[0].def, ['user', 'cecelia', 'system', "owner''x", 'ai']);
+      const rows = await all(`INSERT INTO decisions (topic, decision, category, made_by)
+        VALUES ('t552-preview-ai', 'x', 'judgment', 'ai'), ('t552-preview-owner', 'x', 'judgment', 'owner''x') RETURNING made_by`);
+      expect(rows.map((r) => r.made_by)).toEqual(['ai', "owner'x"]);
+      await client.query(UP);
+      expect(await madeByChecks()).toEqual(checks);
+    } finally {
+      await client.query('ROLLBACK TO SAVEPOINT preview_cast');
+    }
+  });
+
   it('迁移外加宽过的取值全部保留，并补上 ai', async () => {
     await dropAllMadeByChecks();
     await client.query("ALTER TABLE decisions ADD CONSTRAINT decisions_made_by_check CHECK (made_by IN ('user','cecelia','system','owner_x')) NOT VALID");
