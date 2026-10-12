@@ -1,8 +1,8 @@
 // CI 修复的找目标与取日志：runner 自己开的 cw PR（分支 cp-<stamp>-cw-<id8>）里，
 // 必需检查全部出结果且至少一个失败、本 head 没修过、累计次数未用尽的第一个。
 import fs from 'node:fs';
-import path from 'node:path';
 import { run } from './proc.mjs';
+import { prFile } from './repos.mjs';
 
 export const CW_BRANCH_RE = /^cp-\d{8,10}-cw-[0-9a-f]{8}$/;
 const GH_TIMEOUT_MS = 60 * 1000;
@@ -22,7 +22,7 @@ export async function ghJson(cfg, args) {
 }
 
 export function statePath(cfg, prNumber) {
-  return path.join(cfg.logDir, `cifix-${prNumber}.json`);
+  return prFile(cfg, `cifix-${prNumber}.json`);
 }
 
 export function readState(cfg, prNumber) {
@@ -34,20 +34,22 @@ export function readState(cfg, prNumber) {
   }
 }
 
-let expectedCache = null;
+// 按仓库缓存（键 = gh 推断仓库所用的 clone 路径）：进程级单例会把先查到的仓库的检查名用到另一个仓库（C4）
+const expectedCache = new Map();
 
 /**
- * 仓库规定的必需检查名（main 的分支保护 + 规则集，本进程内缓存）；分支保护查不到返回 null。
+ * 仓库规定的必需检查名（main 的分支保护 + 规则集，本进程内按仓库缓存）；分支保护查不到返回 null。
  * `pr checks --required` 只列已经登记出来的检查——还没开跑的必需检查不在里面，不能据此判「全绿」。
  */
 async function expectedRequired(cfg) {
-  if (expectedCache) return expectedCache;
+  if (expectedCache.has(cfg.repo)) return expectedCache.get(cfg.repo);
   const protection = await ghJson(cfg, ['api', 'repos/{owner}/{repo}/branches/main/protection/required_status_checks', '--jq', '.contexts']);
   if (!Array.isArray(protection)) return null;
   const rules = await ghJson(cfg, ['api', 'repos/{owner}/{repo}/rules/branches/main', '--jq',
     '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context]']);
-  expectedCache = [...new Set([...protection, ...(Array.isArray(rules) ? rules : [])].map(String))];
-  return expectedCache;
+  const expected = [...new Set([...protection, ...(Array.isArray(rules) ? rules : [])].map(String))];
+  expectedCache.set(cfg.repo, expected);
+  return expected;
 }
 
 /** 必需检查的整体状态：{ state: 'none'|'pending'|'fail'|'pass', failed: [检查名] }。规定的必需检查没全部登记出来算 pending。 */

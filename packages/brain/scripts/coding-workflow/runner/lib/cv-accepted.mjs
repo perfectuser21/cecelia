@@ -1,7 +1,7 @@
 // QA 验不了（CANNOT_VERIFY）的项是否已被 coding commander 裁过接受（金丝雀 6 #6291：
 // 已裁「维持规格」的项下一轮 QA 又报同一项，不认前裁就会循环升级到介入上限上交人）。
 import fs from 'node:fs';
-import path from 'node:path';
+import { prFile } from './repos.mjs';
 
 const ACCEPT = new Set(['维持规格', '采纳']);
 
@@ -9,7 +9,7 @@ const ACCEPT = new Set(['维持规格', '采纳']);
 export function acceptedKeys(cfg, prNumber) {
   let cs;
   try {
-    cs = JSON.parse(fs.readFileSync(path.join(cfg.logDir, `commander-${prNumber}.json`), 'utf8'));
+    cs = JSON.parse(fs.readFileSync(prFile(cfg, `commander-${prNumber}.json`), 'utf8'));
   } catch {
     return new Set();
   }

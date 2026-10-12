@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_PREVIEW_API } from '../../lib/preview.mjs';
 import { resolveJudgeConfig } from '../../lib/judge.mjs';
+import { loadRepos, enabledRepos, resolveEntry } from './repos.mjs';
 
 const DEFAULT_KILL_GRACE_MS = 30000;
 
@@ -35,10 +36,17 @@ function nonNegativeInt(value) {
 export function loadConfig(env = process.env) {
   const home = env.HOME || os.homedir();
   const host = os.hostname();
+  // 仓库配置表（C4）：cfg 自身是默认仓（cecelia）视图——判卷代码 clone、旧调用方全部照旧；cfg.repos 是已启用仓库
+  const repos = loadRepos();
+  const primary = resolveEntry(repos.find((r) => r.default), { ...env, HOME: home });
   return {
     brainUrl: String(env.BRAIN_URL || 'http://localhost:5221').replace(/\/+$/, ''),
-    repo: env.CODING_WF_REPO || path.join(home, 'perfect21/cecelia-cw-runner'),
-    worktreeBase: env.CODING_WF_WORKTREE_BASE || path.join(home, 'worktrees/cecelia-cw'),
+    repo: primary.clone,
+    worktreeBase: primary.worktreeBase,
+    repoKey: primary.key,
+    repoSlug: primary.slug,
+    stateNs: primary.stateNs,
+    repos: enabledRepos(env, repos).map((r) => resolveEntry(r, { ...env, HOME: home })),
     logDir: env.CODING_WF_LOG_DIR || path.join(home, '.cecelia/coding-workflow-runner'),
     lockDir: env.CODING_WF_LOCK_DIR || path.join(home, '.cecelia'),
     // null = 用 worktree 自己的 packages/brain/scripts/activity-contract-run.js

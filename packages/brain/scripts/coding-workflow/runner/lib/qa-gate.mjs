@@ -5,7 +5,7 @@
 // 失败数连续 3 轮不降（不收敛）、评估会话/裁判连坏、预览环境长期起不来 → 升级给 coding commander。
 // 回归 smoke：裁判 PASS 后把 PASS 的 API 命令逐条在预览上预跑，跑通的才固化；改了 API 面的 PR 有 PASS 的 API 条目却一条都没
 // 固化 → 不批准，升级 qa_smoke_missing 交 commander（放行写理由，或要求 QA 重跑；决策 4fe863c3）。
-// 状态：<logDir>/qa-<pr>.json；Brain 任务 result.qa（摘要）与 result.escalations。PR 结束（合并/外部关闭）后停预览见 pr-closure.mjs。
+// 状态：<logDir>[/<仓库命名空间>]/qa-<pr>.json（cecelia 命名空间为空）；Brain 任务 result.qa（摘要）与 result.escalations。PR 结束（合并/外部关闭）后停预览见 pr-closure.mjs。
 import fs from 'node:fs';
 import path from 'node:path';
 import { run, git } from './proc.mjs';
@@ -21,6 +21,7 @@ import { cannotVerifyAccepted } from './cv-accepted.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { runJudge, priorJudgeFiles } from './judge-gate.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
+import { prFile, stateDir } from './repos.mjs';
 
 const EVALUATE_REL = 'packages/brain/scripts/coding-workflow/activities/evaluate.mjs';
 const EVALUATE_TIMEOUT_MS = 55 * 60 * 1000;
@@ -30,7 +31,7 @@ const PREFLIGHT_TIMEOUT_MS = 60 * 1000;
 const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)'];
 const RUNNER_ID = ['-c', 'user.name=coding-workflow-runner', '-c', 'user.email=coding-workflow-runner@cecelia.local'];
 
-const statePath = (cfg, pr) => path.join(cfg.logDir, `qa-${pr}.json`);
+const statePath = (cfg, pr) => prFile(cfg, `qa-${pr}.json`);
 
 export function readState(cfg, pr) {
   try {
@@ -42,7 +43,7 @@ export function readState(cfg, pr) {
 }
 
 export function writeState(cfg, pr, s) {
-  fs.mkdirSync(cfg.logDir, { recursive: true });
+  fs.mkdirSync(stateDir(cfg), { recursive: true });
   fs.writeFileSync(statePath(cfg, pr), `${JSON.stringify(s, null, 2)}\n`);
 }
 
@@ -413,7 +414,7 @@ async function qaRound(ctx, pr, s, signal) {
     }
     ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮真人 QA 开始`);
     // QA 会话执行记录落在 runner 日志目录（判越界、证据不实时可复核）
-    const transcript = path.join(cfg.logDir, `qa-${pr.number}-r${round}.jsonl`);
+    const transcript = prFile(cfg, `qa-${pr.number}-r${round}.jsonl`);
     const evalStartedAt = Date.now();
     const result = await evaluate(ctx, worktree, {
       run_tag: `qa-${pr.number}-r${round}`, task_id: intent.taskId, worktree, sprint_dir: intent.sprintDir,

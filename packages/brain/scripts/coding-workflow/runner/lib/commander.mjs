@@ -5,7 +5,7 @@
 // 本 PR 介入满 cfg.commanderMax 次/基础设施类升级 → Bark 主理人（同一个升级只通知一次）。
 // qa_smoke_missing（API 类 PR 一条回归 smoke 都没固化，决策 4fe863c3）：裁决「放行」（必须写理由）且没改代码 → 直接批准
 // 裁决记录推送后的 head；否则只解除升级，head 已变，QA 门下一轮按新 head 重跑。
-// 状态：<logDir>/commander-<pr>.json { interventions: [...], human }。
+// 状态：<logDir>[/<仓库命名空间>]/commander-<pr>.json { interventions: [...], human }。
 import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './proc.mjs';
@@ -15,6 +15,7 @@ import { intentOf, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from
 import { gateSpan, postSpans } from './spans.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
+import { prFile } from './repos.mjs';
 
 // commander 能处理的升级；其余（预览环境、裁判不可用/关闭、改动超限、评估会话坏、sprint 丢失……）是基础设施或要人定，直接通知主理人
 export const HANDLED = new Set(['judge_contract_gap', 'judge_ruling_conflict', 'qa_fix_failed', 'qa_stalled', 'qa_cannot_verify', 'qa_smoke_missing', 'ci_fix_exhausted']);
@@ -22,7 +23,7 @@ const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git p
 const RUNNER_ID = ['-c', 'user.name=coding-workflow-runner', '-c', 'user.email=coding-workflow-runner@cecelia.local'];
 const VERDICTS = new Set(['维持规格', '采纳', '追加额度', '放行', '上交']);
 
-const file = (cfg, name) => path.join(cfg.logDir, name);
+const file = (cfg, name) => prFile(cfg, name);
 const readJson = (p, fallback) => {
   try {
     return JSON.parse(fs.readFileSync(p, 'utf8'));

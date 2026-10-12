@@ -4,8 +4,8 @@
 // 不会把已升级、已批准的 PR 当新的重新处理。
 // 人工重置一个 PR（例如清掉升级重跑）必须两边一起清：删本机文件，并把 Brain 的 result.<kind>_state 置 null。
 import fs from 'node:fs';
-import path from 'node:path';
 import { remoteTaskId } from './pr-branch.mjs';
+import { prFile, stateDir } from './repos.mjs';
 
 const KINDS = {
   qa: { file: (pr) => `qa-${pr}.json`, key: 'qa_state', fields: ['passed', 'approved', 'escalated', 'merged', 'revoked', 'bad', 'judge_bad', 'judge_pending', 'merge_failures', 'rounds', 'preview_stopped', 'last_eval_error', 'cost_usd', 'stall_floor', 'smoke', 'smoke_note', 'smoke_missing', 'smoke_waived', 'smoke_refit', 'closed', 'reopened'] },
@@ -14,7 +14,7 @@ const KINDS = {
 };
 const MIRRORED = 'mirrored';
 
-const filePath = (cfg, kind, pr) => path.join(cfg.logDir, KINDS[kind].file(pr));
+const filePath = (cfg, kind, pr) => prFile(cfg, KINDS[kind].file(pr));
 
 function readJson(file) {
   try {
@@ -40,7 +40,7 @@ export async function restoreStates(ctx, prs) {
         const r = await ctx.brain.getTask(taskId);
         const saved = r.ok ? r.body?.result?.[KINDS[kind].key] : null;
         if (!saved || typeof saved !== 'object') continue;
-        fs.mkdirSync(ctx.cfg.logDir, { recursive: true });
+        fs.mkdirSync(stateDir(ctx.cfg), { recursive: true });
         fs.writeFileSync(file, `${JSON.stringify({ ...saved, [MIRRORED]: JSON.stringify(pick(kind, saved)) }, null, 2)}\n`);
         ctx.log(`PR #${pr.number} 本机没有 ${KINDS[kind].file(pr.number)}，已从 Brain 任务 ${taskId} 恢复`);
       } catch (error) {

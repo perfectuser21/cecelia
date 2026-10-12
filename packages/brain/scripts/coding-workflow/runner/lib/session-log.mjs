@@ -1,13 +1,14 @@
 // runner 主日志降噪（C1 runner-log-noise）：runner 进程内的 claude 会话（ci-fix/qa-fix/commander）输出只落
-// <logDir>/<kind>-<pr>-<后缀>.log（顶层，保留期清理照常覆盖），主日志只留一行摘要；空闲日志限频。
+// <logDir>[/<仓库命名空间>]/<kind>-<pr>-<后缀>.log（保留期清理照常覆盖），主日志只留一行摘要；空闲日志限频。
 import fs from 'node:fs';
 import path from 'node:path';
+import { prFile } from './repos.mjs';
 
 const EXCERPT_MAX = 80;
 
 /** 会话文件路径：沿用既有命名 cifix-<pr>-<ts>.log / qa-fix-<pr>-<ts>.log / commander-<pr>-<n>.log。 */
 export function sessionLogPath(cfg, kind, pr, suffix) {
-  return path.join(cfg.logDir, `${kind}-${pr}-${suffix}.log`);
+  return prFile(cfg, `${kind}-${pr}-${suffix}.log`);
 }
 
 /** stdout 里最后一个 result 事件（--output-format json/stream-json）；没有或解析失败返回 null。 */

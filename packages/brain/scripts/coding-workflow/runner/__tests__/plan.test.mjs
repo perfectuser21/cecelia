@@ -205,3 +205,57 @@ describe('runner 分支与 CI auto-merge 判据一致', () => {
     }
   });
 });
+
+// 仓库配置表（C4）：认领按 repos.json 别名归一 + CODING_WF_REPOS 开关；不支持的仓库不再静默过滤，打日志说明原因。
+describe('pickCandidates 多仓库口径', () => {
+  const t = (id, repo) => ({ id, created_at: `2026-10-08T0${id.length}:00:00Z`, task_type: 'coding_workflow', claimed_by: null, payload: repo === undefined ? {} : { repo } });
+  const tasks = () => [
+    t('z1', 'zenithjoy'),
+    t('z22', 'zenithjoy-workspace'),
+    t('z333', 'https://github.com/perfectuser21/zenithjoy-workspace.git'),
+    t('c4444', null),
+    t('u55555', 'unknown'),
+    t('c666666', undefined),
+  ];
+
+  it('启用 cecelia + zenithjoy：别名/URL 归一成 repoKey，缺省归 cecelia，未登记的排除并留日志', () => {
+    const logs = [];
+    const picked = pickCandidates(tasks(), { enabled: ['cecelia', 'zenithjoy-workspace'], log: (m) => logs.push(m) });
+    expect(picked.map((x) => [x.id, x.repoKey])).toEqual([
+      ['z1', 'zenithjoy-workspace'], ['z22', 'zenithjoy-workspace'], ['z333', 'zenithjoy-workspace'], ['c4444', 'cecelia'], ['c666666', 'cecelia'],
+    ]);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain('u55555');
+    expect(logs[0]).toContain('unknown');
+  });
+
+  it('默认开关（只启用 cecelia）：zenithjoy 任务不认领，但每条都有日志（不再静默挂在 queued）', () => {
+    const logs = [];
+    const picked = pickCandidates(tasks(), { log: (m) => logs.push(m) });
+    expect(picked.map((x) => x.id)).toEqual(['c4444', 'c666666']);
+    expect(picked.every((x) => x.repoKey === 'cecelia')).toBe(true);
+    expect(logs.filter((m) => m.includes('未启用'))).toHaveLength(3);
+    expect(logs.some((m) => m.includes('z333') && m.includes('zenithjoy-workspace'))).toBe(true);
+    expect(logs.filter((m) => m.includes('未登记'))).toHaveLength(1);
+  });
+
+  it('不传 log 也不抛错（纯函数调用方兼容）', () => {
+    expect(pickCandidates(tasks()).map((x) => x.id)).toEqual(['c4444', 'c666666']);
+  });
+});
+
+describe('loadConfig 多仓库', () => {
+  it('默认只启用 cecelia：cfg.repos 一项，cfg 自身即 cecelia 视图（状态命名空间为空）', () => {
+    const c = loadConfig({ HOME: '/h' });
+    expect(c.repos.map((r) => r.key)).toEqual(['cecelia']);
+    expect(c.repos[0]).toMatchObject({ clone: '/h/perfect21/cecelia-cw-runner', worktreeBase: '/h/worktrees/cecelia-cw', stateNs: '' });
+    expect(c).toMatchObject({ repoKey: 'cecelia', repoSlug: 'perfectuser21/cecelia', stateNs: '' });
+  });
+
+  it('CODING_WF_REPO 覆盖同样作用到 cfg.repos 里的 cecelia；zenithjoy 在 repos.json 未开闸，列进 CODING_WF_REPOS 也不启用', () => {
+    const c = loadConfig({ HOME: '/h', CODING_WF_REPO: '/r', CODING_WF_REPOS: 'cecelia,zenithjoy' });
+    expect(c.repos.map((r) => r.key)).toEqual(['cecelia']);
+    expect(c.repos[0].clone).toBe('/r');
+    expect(c.repo).toBe('/r');
+  });
+});

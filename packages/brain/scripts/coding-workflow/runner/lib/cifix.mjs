@@ -2,7 +2,7 @@
 // 程序核对（有新提交、工作区干净、只追加不改写、不碰 sprints/ 与 agent 配置）后由 runner 推送。
 // runner 固化的 QA 回归 smoke 在 CI 红：不派修复会话，由 smoke-refit.mjs 剔除失败条目重新固化一次（C2c）。
 // 与 main 冲突的 PR（kind=conflict）：程序合并 origin/main（只追加的登记表取并集），剩余冲突才派 claude 解决。
-// 每次尝试都记进 <logDir>/cifix-<pr>.json 并回写 Brain 任务 result.ci_fix；worktree 用完即删。
+// 每次尝试都记进 <logDir>[/<仓库命名空间>]/cifix-<pr>.json 并回写 Brain 任务 result.ci_fix；worktree 用完即删。
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, run } from './proc.mjs';
@@ -14,6 +14,7 @@ import { revokeQaPass } from './qa-gate.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
 import { smokeRefitDecision, refitSmoke } from './smoke-refit.mjs';
+import { stateDir } from './repos.mjs';
 
 const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)'];
 const GH_TIMEOUT_MS = 2 * 60 * 1000;
@@ -114,7 +115,7 @@ const attempt = (ctx, target, worktree, signal) =>
 async function record(ctx, pr, taskId, entry) {
   const state = readState(ctx.cfg, pr.number);
   state.attempts.push(entry);
-  fs.mkdirSync(ctx.cfg.logDir, { recursive: true });
+  fs.mkdirSync(stateDir(ctx.cfg), { recursive: true });
   fs.writeFileSync(statePath(ctx.cfg, pr.number), `${JSON.stringify(state, null, 2)}\n`);
   if (!taskId) return;
   const r = await ctx.brain.patch(taskId, { result: { ci_fix: { attempts: state.attempts } } });
@@ -122,7 +123,7 @@ async function record(ctx, pr, taskId, entry) {
 }
 
 function saveState(cfg, prNumber, state) {
-  fs.mkdirSync(cfg.logDir, { recursive: true });
+  fs.mkdirSync(stateDir(cfg), { recursive: true });
   fs.writeFileSync(statePath(cfg, prNumber), `${JSON.stringify(state, null, 2)}\n`);
 }
 

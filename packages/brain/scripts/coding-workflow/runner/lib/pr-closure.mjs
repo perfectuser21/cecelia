@@ -7,12 +7,12 @@
 //   已结束的 PR 停预览释放容量（只停一次）：合并的要求 QA 通过过；外部关闭的不论 QA 结果一律停。
 // 修复会话中途被关的 PR 由 pushPrHead 推送前拦下（pr_closed），留给这里收尾。
 import fs from 'node:fs';
-import path from 'node:path';
 import { ghJson, CW_BRANCH_RE } from './cifix-scan.mjs';
 import { readState, writeState, previewCall } from './qa-gate.mjs';
 import { remoteTaskId, remoteTaskIdByPr } from './pr-branch.mjs';
 import { finalHandoff } from './merge-gate.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
+import { prFile } from './repos.mjs';
 
 const CLOSED_PHASE = 'closed_unmerged';
 const REASON = 'pr_closed_externally';
@@ -34,7 +34,7 @@ async function closedBy(cfg, number) {
 
 function commanderHuman(cfg, number) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(cfg.logDir, `commander-${number}.json`), 'utf8'))?.human ?? null;
+    return JSON.parse(fs.readFileSync(prFile(cfg, `commander-${number}.json`), 'utf8'))?.human ?? null;
   } catch {
     return null;
   }

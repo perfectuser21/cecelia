@@ -1,0 +1,61 @@
+{
+  "_doc": "coding workflow runner 仓库配置表（C4）：一行一个仓库。runner 判卷代码只从默认仓（cecelia）clone 读。enabled=false 的仓库即使列进 CODING_WF_REPOS 也不启用。required_checks 是登记口径（gh api .../branches/main/protection 只读核实），运行时仍以 GitHub 分支保护+规则集为准。production_re 是正则片段，按 | 拼接。",
+  "repos": [
+    {
+      "key": "cecelia",
+      "default": true,
+      "enabled": true,
+      "slug": "perfectuser21/cecelia",
+      "origin": "https://github.com/perfectuser21/cecelia.git",
+      "aliases": ["cecelia"],
+      "clone": "~/perfect21/cecelia-cw-runner",
+      "worktree_base": "~/worktrees/cecelia-cw",
+      "state_ns": "",
+      "required_checks": ["ci-passed", "Harness V5 Gate Passed", "Smoke Glob Runner Passed"],
+      "base_fresh_check": "lint-base-fresh",
+      "install": ["npm", "ci", "--legacy-peer-deps", "--ignore-scripts"],
+      "qa_smoke": {
+        "dir": "packages/brain/scripts/smoke",
+        "allowlist": "packages/quality/smoke-allowlist.txt",
+        "write_targets": "packages/quality/smoke-write-targets.txt"
+      },
+      "version_fragment": { "src_re": "^packages/brain/src/", "dir": "changes" },
+      "preview": { "type": "brain_preview", "base_repo": "cecelia" },
+      "production_re": [":5221\\b", "\\b(?:localhost|127\\.0\\.0\\.1)\\s+5221\\b", "100\\.79\\.41\\.61", "\\bus-vps\\b"],
+      "automerge": true
+    },
+    {
+      "key": "zenithjoy-workspace",
+      "default": false,
+      "enabled": false,
+      "_note": "第一阶段：未开闸（C5 门禁按仓库遍历、C6 活动层参数化、C7 金丝雀 Z0 之后才开）；合入 main 会经 pilot-release-verification → deploy-phone-adb-controller 自动部署生产 mmv/xian-m4 手机控制器，所以 automerge=false（已批准→Bark→人工合并）。38.23.47.81 是 MMV（US Mac M4）公网 IP，不是 zenithjoy 生产，不进 production_re。",
+      "slug": "perfectuser21/zenithjoy-workspace",
+      "origin": "https://github.com/perfectuser21/zenithjoy-workspace.git",
+      "aliases": ["zenithjoy", "zenithjoy-workspace"],
+      "clone": "~/perfect21/zenithjoy-cw-runner",
+      "worktree_base": "~/worktrees/zenithjoy-cw",
+      "state_ns": "zenithjoy-workspace",
+      "required_checks": [
+        "L4 E2E Gate Passed",
+        "L4 Runtime Gate Passed",
+        "Integration Gate Passed",
+        "L2 Consistency Gate Passed",
+        "WeChat CS Gate Passed",
+        "Smoke Glob Runner",
+        "Smoke Glob Gate Passed",
+        "Core Regression Gate Passed",
+        "Line02 Lead Gate Passed",
+        "Orphan E2E Gate Passed",
+        "L3 Code Gate Passed",
+        "Android CI Gate Passed"
+      ],
+      "base_fresh_check": null,
+      "install": ["npm", "ci", "--ignore-scripts"],
+      "qa_smoke": null,
+      "version_fragment": null,
+      "preview": { "type": "local" },
+      "production_re": [":5200\\b", "100\\.86\\.118\\.99", "\\bhk-vps\\b"],
+      "automerge": false
+    }
+  ]
+}
