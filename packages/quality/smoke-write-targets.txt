@@ -141,6 +141,7 @@ runs-read-smoke.sh
 factory-ledger-smoke.sh
 factory-pusher-smoke.sh
 workflow-commander-dispatch-smoke.sh
+factory-commander-route-smoke.sh
 bypass-audit-smoke.sh
 dispatch-route-gate-smoke.sh
 coding-workflow-route-smoke.sh

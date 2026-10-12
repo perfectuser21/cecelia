@@ -21,6 +21,19 @@ export async function isFactoryPusherEnabled(db, env = process.env) {
   return true;
 }
 
+/**
+ * 工厂执行单改走 Commander+外壳的开关（任务 c0fe7e30）：brain_config key=factory_commander_route_enabled value=true 才开，
+ * 默认关、读不到按关（zenithjoy 侧 Commander/外壳没部署前开了会让执行单全部 exit 4 污染台账）。
+ */
+export async function isFactoryCommanderRouteEnabled(db) {
+  try {
+    const { rows } = await db.query("SELECT value FROM brain_config WHERE key = 'factory_commander_route_enabled'");
+    return rows.length > 0 && ['true', '"true"', '1', 'on'].includes(String(rows[0].value).trim().toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 /** 推进器真库查询。 */
 export function makePusherStore(db) {
   return {
@@ -92,7 +105,7 @@ async function applyActions(db, ledger, cfg, decision, deps) {
       await patchLedger(db, ledger.id, { blocked_kind: 'none', blocked_reason: null });
     } else if (a.type === 'dispatch') {
       const round = (await deps.store.countRounds(ledger.id, a.stage)) + 1;
-      const out = await deps.createTask(buildExecSpec({ ledger, cfg, stage: a.stage, skill: a.skill, round }));
+      const out = await deps.createTask(buildExecSpec({ ledger, cfg, stage: a.stage, skill: a.skill, round, commanderRoute: deps.commanderRoute === true }));
       const id = out?.task?.id;
       if (!id) throw new Error(`执行单建单失败：${JSON.stringify(out).slice(0, 200)}`);
       summary = `已建 ${a.stage} ${STAGE_NAMES[a.stage]} 执行单 ${id}（第 ${round} 轮，技能 ${a.skill}，滑窗 ${ledger.recent_pass}/${ledger.window_k}），等派发器认领`;
@@ -156,6 +169,7 @@ async function runCycleOnce(db, deps) {
     store: deps.judgeStore || makeJudgeStore(db), createTask, resolveConfig, log, now: deps.now,
     recordRun: deps.recordRun || ((id, body) => recordRun(db, id, body)),
   });
-  const push = await runFactoryPusher(db, { store: deps.pusherStore || makePusherStore(db), createTask, raise, log, resolveConfig, now: deps.now });
+  const commanderRoute = deps.commanderRoute ?? (await isFactoryCommanderRouteEnabled(db));
+  const push = await runFactoryPusher(db, { store: deps.pusherStore || makePusherStore(db), createTask, raise, log, resolveConfig, now: deps.now, commanderRoute });
   return { judge, push };
 }

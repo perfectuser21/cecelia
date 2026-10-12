@@ -1,0 +1,7 @@
+## Brain {VERSION} — 工厂执行单可改走 Brain→Commander→外壳→Codex（熟化即 workflow，任务 c0fe7e30）
+
+- `workflow_dispatch` 调度单带 `--run-id <run_id> --task-id <任务id>`（`orderWithRun`，payload.commander_order 记完整单）；Commander 消息要求按 workflow-commander 第〇节读合同 `commander_skill` 自加载陪跑 skill，`COMMANDER_RESULT` 加 `commander_skill`（名+版本，没有写 null）（决策 2186700a / 26df670a）
+- 收割同一次 ssh 顺带读 MMV `~/wf-agent-runs/<run_id>/delivery.json`（外壳 runner 系统产出，分隔标记 `===WFD_DELIVERY_BEGIN/END===`，run_id 不符按没有）→ `result.delivery`；`result.commander_skill` 取 COMMANDER_RESULT 优先、其次 delivery，同时写进 task_runs.result 与 reaped 事件；工厂单（payload.factory_dispatch）没有交付文件 → 补一份 `source=reaper_synthesized` 的失败交付，裁判能计、推进器不空转；非工厂单照旧
+- 自动裁判按合同活动读回：`delivery.activities[].readback`（type=evidence，glob + expect op/value）对 `evidence_files` 逐活动出 `readback:<key>` check（只认 `*`/`?` 整串匹配）；`workflow_dispatch` 执行单且 workflow 登记 `dispatch_via=commander` 时缺 activities → `contract_readback` 失败。Commander 不判
+- 推进器经 brain_config 开关 `factory_commander_route_enabled`（默认关、读不到按关）改建 `workflow_dispatch`：payload 保留 factory_dispatch/factory/factory_ledger_id（在途/轮次/裁判复用）并加 workflow_key；正文锁那行换 `commander.lock_brief`（Brain 设备锁 Brain 代领、控制器锁外壳代领，执行会话不拿不放）、交付补 `commander.delivery_note`；开关关时建单逐字不变。factory-dispatcher 只领 skill_factory_run/research，不领 workflow_dispatch；run-verify 核验单仍走它
+- `config/factory-workflows.json` 抖音·视频发布（安卓真机）：`dispatch_via=commander`、commander.timeout_min 40→55、新增 lock_brief / delivery_note

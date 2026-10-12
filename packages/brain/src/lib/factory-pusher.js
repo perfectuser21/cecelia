@@ -144,7 +144,23 @@ function deviceLine(d) {
   return `设备：node=${d.node} profile=${d.profile} serial=${d.serial}${d.ssh_host ? ` ssh_host=${d.ssh_host}` : ''}`;
 }
 
-export function buildExecSpec({ ledger: l, cfg, stage, skill, round }) {
+/**
+ * 走 Commander+外壳（任务 c0fe7e30，决策 2186700a）：开关开、workflow 登记 dispatch_via=commander 且有 commander 调度单。
+ * 开关（brain_config factory_commander_route_enabled）默认关，关着时建单与改造前逐字一致。
+ */
+export function usesCommanderRoute(cfg, commanderRoute) {
+  return commanderRoute === true && cfg?.dispatch_via === 'commander' && Boolean(cfg?.commander);
+}
+
+/** Commander 路径下的正文纪律：锁那行换成外壳代领（旧路径仍是派发器代领），交付补外壳落盘说明。 */
+function commanderBrief(cfg) {
+  const brief = Array.isArray(cfg.brief) ? cfg.brief : [];
+  const lock = cfg.commander?.lock_brief;
+  return lock ? brief.map((line) => (String(line).startsWith('锁：') ? lock : line)) : brief;
+}
+
+export function buildExecSpec({ ledger: l, cfg, stage, skill, round, commanderRoute = false }) {
+  const viaCommander = usesCommanderRoute(cfg, commanderRoute);
   const candidate = l.candidate_version;
   const src = candidate && cfg.candidate_sources?.[candidate];
   const skillLines = stage === 3 || stage === 5
@@ -156,12 +172,15 @@ export function buildExecSpec({ ledger: l, cfg, stage, skill, round }) {
     ...skillLines,
     `台账：factory_ledger ${l.id}（workflow ${l.workflow_key}，验证口径 ${l.validation_mode}，滑窗 ${l.recent_pass}/${l.window_k}）`,
     deviceLine(cfg.device),
-    ...(Array.isArray(cfg.brief) ? cfg.brief : []),
+    ...(viaCommander ? commanderBrief(cfg) : (Array.isArray(cfg.brief) ? cfg.brief : [])),
     ...(cfg.acceptance ? [`验收：${cfg.acceptance}`] : []),
     ...(cfg.delivery_contract ? [`交付：${cfg.delivery_contract}`] : ['交付：写入 result.delivery，含 run_id、claimed_result、lock_released、side_effects、final_evidence、fail_reason']),
-    'run_id：由派发器生成并写进派发消息（<run_prefix>-<任务id前8位>-<上海日期>-r<轮次>），全程 --lock-owner 用它',
+    ...(viaCommander && cfg.commander?.delivery_note ? [`交付落盘：${cfg.commander.delivery_note}`] : []),
+    viaCommander
+      ? 'run_id：run_id 由 workflow-commander-dispatch 生成（wfd-<任务id前8位>-<毫秒>），经调度单 --run-id 传给外壳，全程 --lock-owner 用它'
+      : 'run_id：由派发器生成并写进派发消息（<run_prefix>-<任务id前8位>-<上海日期>-r<轮次>），全程 --lock-owner 用它',
   ];
-  return {
+  const spec = {
     title: `技能工厂 ${STAGE_NAMES[stage]} ${l.workflow_name || l.workflow_key} 第${round}轮（推进器）`,
     description: lines.join('\n'),
     // 独立类型（派发总闸 F，任务 0a70684f）：tick 按类型排除，不再借 research + headed_manual 挡
@@ -193,6 +212,9 @@ export function buildExecSpec({ ledger: l, cfg, stage, skill, round }) {
       },
     },
   };
+  if (!viaCommander) return spec;
+  // 经 Commander+外壳：workflow_dispatch 由 workflow-commander-dispatch 认领；工厂字段原样保留供在途/轮次/裁判复用
+  return { ...spec, task_type: 'workflow_dispatch', payload: { ...spec.payload, workflow_key: l.workflow_key } };
 }
 
 export function buildTicketSpec({ ledger: l, cfg, stage, kind }) {
