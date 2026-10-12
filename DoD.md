@@ -59,7 +59,7 @@
 ## Launcher 会话出处 API（f9834457）
 
 - [x] [BEHAVIOR] launcherprovenancepg 真实 launcher 经本地 HTTP Brain 路由写 cecelia_scratch，SQL 与 GET 双读回，并验证重复 human 请求不能覆盖 machine 来源。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/session-provenance.integration.test.js --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/session-provenance.integration.test.js --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] launcherprovenanceapi 人类 PTY / 机器派发经 Brain HTTP API 登记来源；未知来源、dry-run 不登记，网络无响应最多 2 秒后继续启动。API 拒绝非法字段，同 session 幂等保留原出处，GET 读回且数据库异常不暴露内部信息。
   Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/routes/__tests__/session-provenance.test.js src/__tests__/claude-launch.test.js --maxWorkers=1 --minWorkers=1"
