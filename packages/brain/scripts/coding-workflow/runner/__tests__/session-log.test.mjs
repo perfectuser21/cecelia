@@ -13,6 +13,13 @@ describe('sessionLogPath', () => {
 });
 
 describe('sessionSummary', () => {
+  it('Codex 原生末条 agent_message 摘录与未知美元费用，不能显示 $0', () => {
+    const stdout = [JSON.stringify({ type: 'item.completed', item: { id: 'm', type: 'agent_message', text: '校验通过' } }), JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 2 } })].join('\n');
+    const text = sessionSummary('qa-fix', 77, run({ stdout, cost_usd: null }));
+    expect(text).toContain('美元费用未知');
+    expect(text).toContain('「校验通过」');
+    expect(text).not.toContain('$0');
+  });
   it('正常 result 行：exit、轮数、时长、花费、结论摘录、会话文件路径，单行', () => {
     const s = sessionSummary('qa-fix', 6232, run());
     expect(s).toBe('会话 qa-fix PR #6232 结束：exit 0，9 轮，91s，$0.7，「J-1 已按裁判意见修完」→ /l/qa-fix-6232-1.log');

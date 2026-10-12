@@ -1,6 +1,6 @@
 // lib/transcript.mjs：从 claude stream-json 对话记录提取实际执行的 Bash 命令，并核对 04 证据。
 import { describe, it, expect } from 'vitest';
-import { bashExecutions, unverifiedItems, claudeOwnErrorText } from '../lib/transcript.mjs';
+import { bashExecutions, unverifiedItems, claudeOwnErrorText, sessionCostUsd, sumCostUsd } from '../lib/transcript.mjs';
 
 const toolUse = (id, command, name = 'Bash') => JSON.stringify({
   type: 'assistant',
@@ -145,5 +145,43 @@ describe('claudeOwnErrorText', () => {
   it('成功的 result 事件不计入', () => {
     const stdout = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '已完成：quota 统计功能' });
     expect(claudeOwnErrorText(stdout)).toBe('');
+  });
+});
+
+
+describe('Codex 原生 JSONL', () => {
+  const event = (type, item) => JSON.stringify({ type, item });
+  it('command_execution started/completed 配对，不把 agent_message 当执行证据', () => {
+    const stdout = [
+      JSON.stringify({ type: 'thread.started', thread_id: 't' }),
+      event('item.started', { id: 'c1', type: 'command_execution', command: 'npm test', status: 'in_progress', aggregated_output: '' }),
+      event('item.completed', { id: 'c1', type: 'command_execution', command: 'npm test', status: 'completed', aggregated_output: 'Tests 3 passed', exit_code: 0 }),
+      event('item.completed', { id: 'm1', type: 'agent_message', text: 'curl /health: ok' }),
+      event('item.completed', { id: 'c2', type: 'command_execution', command: 'false', status: 'failed', aggregated_output: 'failed', exit_code: 1 }),
+    ].join('\n');
+    const runs = bashExecutions(stdout);
+    expect(runs).toEqual([{ command: 'npm test', result: 'Tests 3 passed' }, { command: 'false', result: 'failed' }]);
+    expect(unverifiedItems([{ id: 'E1', command: 'npm test', output: 'Tests 3 passed' }], runs)).toEqual([]);
+    expect(unverifiedItems([{ id: 'E2', command: 'curl /health', output: 'ok' }], runs)).toEqual([{ id: 'E2', reason: 'command_not_executed' }]);
+  });
+  it('turn.failed 为会话错误；工具 stderr 不冒充会话鉴权错误', () => {
+    const stdout = [event('item.completed', { id: 'c', type: 'command_execution', command: 'npm test', aggregated_output: 'authentication failed for user admin' }),
+      JSON.stringify({ type: 'turn.failed', error: { message: 'usage limit reached' } })].join('\n');
+    expect(claudeOwnErrorText(stdout)).toBe('usage limit reached');
+  });
+  it('Codex token usage 不是美元价格；中断/完成会话未知费用不冒充0', () => {
+    expect(sessionCostUsd(JSON.stringify({ type: 'thread.started', thread_id: 't' }))).toBeNull();
+    expect(sessionCostUsd(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 100, output_tokens: 20 } }))).toBeNull();
+    expect(sessionCostUsd(JSON.stringify({ type: 'result', total_cost_usd: 0.7 }))).toBe(0.7);
+    expect(sessionCostUsd(JSON.stringify({ type: 'result', total_cost_usd: 0 }))).toBe(0);
+  });
+});
+
+describe('sumCostUsd', () => {
+  it('null 在后续已知费用累加时保持未知；没发生的环节与真实0单独处理', () => {
+    expect(sumCostUsd(null, 0.3)).toBeNull();
+    expect(sumCostUsd(0.3, null)).toBeNull();
+    expect(sumCostUsd(undefined, 0)).toBe(0);
+    expect(sumCostUsd(0.1, 0.2)).toBe(0.3);
   });
 });

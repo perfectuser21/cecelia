@@ -1,3 +1,4 @@
+import { sumCostUsd } from '../../lib/transcript.mjs';
 // CI 红自动修复：对 findTarget 找到的 cw PR，在 PR 分支 worktree 里让 claude 按失败日志修复并提交，
 // 程序核对（有新提交、工作区干净、只追加不改写、不碰 sprints/ 与 agent 配置）后由 runner 推送。
 // runner 固化的 QA 回归 smoke 在 CI 红：不派修复会话，由 smoke-refit.mjs 剔除失败条目重新固化一次（C2c）。
@@ -39,9 +40,9 @@ async function runFixSession(ctx, pr, prompt, worktree, tag) {
   });
   ctx.log(sessionSummary(tag, pr.number, run));
   // 会话一结束就记花费（审计 #35），后面抛错的路径也不漏
-  if (typeof run.cost_usd === 'number' && run.cost_usd > 0) {
+  if (run.cost_usd === null || (typeof run.cost_usd === 'number' && run.cost_usd >= 0)) {
     const state = readState(cfg, pr.number);
-    state.cost_usd = Math.round(((state.cost_usd ?? 0) + run.cost_usd) * 10000) / 10000;
+    state.cost_usd = sumCostUsd(state.cost_usd, run.cost_usd);
     saveState(cfg, pr.number, state);
   }
   if (run.terminated) throw stop('runner_terminated');
@@ -89,7 +90,7 @@ async function attemptConflict(ctx, target, worktree, signal) {
   if (merge.code !== 0) {
     const conflicts = (await git(worktree, ['diff', '--name-only', '--diff-filter=U'])).stdout.split('\n').filter(Boolean);
     if (conflicts.length === 0) throw stop('merge_failed');
-    ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：与 main 冲突 ${conflicts.join('、')}，派 claude 解决`);
+    ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：与 main 冲突 ${conflicts.join('、')}，派 ${process.env.CODING_WF_PROVIDER || 'claude'} 解决`);
     const prompt = loadPrompt('conflict-fix', {
       BRANCH: pr.headRefName,
       PR_URL: pr.url ?? '',
@@ -99,7 +100,7 @@ async function attemptConflict(ctx, target, worktree, signal) {
     });
     await runFixSession(ctx, pr, prompt, worktree, 'conflict-fix');
     if ((await git(worktree, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])).code === 0) throw stop('merge_unfinished');
-    resolvedBy = 'claude';
+    resolvedBy = process.env.CODING_WF_PROVIDER || 'claude';
   } else {
     ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：与 main 冲突，程序合并 origin/main 完成`);
   }

@@ -1,3 +1,4 @@
+import { sumCostUsd } from '../../lib/transcript.mjs';
 // QA 门（evaluator 真人 QA，决策 02d8e749）：runner 自己开的 cw PR，必需检查全绿后、合并前，在 PR 预览环境（local 仓库：PR worktree，C6）里由
 // evaluate 活动像真人 QA 一样黑盒验收。FAIL → 报告提交、开发按报告修复、推送、CI 再跑、再验（不设轮数上限）。
 // PASS → 独立裁判（judge-gate.mjs，不同模型复核需求+合同+QA 报告+改动）：PASS 才开自动合并；product → 按裁决修复；
@@ -177,7 +178,7 @@ const judgeIssueLines = (j) => j.blocking
 
 /** QA 门累计花费（审计 #35）：evaluate 与 qa-fix 会话，随状态同步进 Brain，合并时汇总。 */
 function addCost(s, usd) {
-  if (typeof usd === 'number' && usd > 0) s.cost_usd = Math.round(((s.cost_usd ?? 0) + usd) * 10000) / 10000;
+  if (usd === null || (typeof usd === 'number' && usd >= 0)) s.cost_usd = sumCostUsd(s.cost_usd, usd);
 }
 
 const RULING_CONFLICT_RE = /RULING_CONFLICT:\s*([^\n"\\]+)/;

@@ -1,5 +1,6 @@
 // 执行器回执解读：读终态回执、提炼失败活动与原因。
 import fs from 'node:fs';
+import { sumCostUsd } from '../../lib/transcript.mjs';
 
 const FINAL_STATUSES = new Set(['completed', 'partial', 'failed']);
 
@@ -37,8 +38,8 @@ export function readReceipt(stdout, receiptPath) {
  */
 export function summarizeReceipt(receipt) {
   // 链路总花费（审计 #35）：各活动 metrics.cost_usd 之和，有才带
-  const costs = Object.values(receipt?.metrics ?? {}).map((m) => m?.cost_usd).filter((v) => typeof v === 'number');
-  const cost = costs.length > 0 ? { cost_usd: Math.round(costs.reduce((a, b) => a + b, 0) * 10000) / 10000 } : {};
+  const costs = Object.values(receipt?.metrics ?? {}).map((m) => m?.cost_usd).filter((v) => v !== undefined);
+  const cost = costs.length > 0 ? { cost_usd: sumCostUsd(...costs) } : {};
   const prUrl = typeof receipt?.outputs?.pr_url === 'string' && receipt.outputs.pr_url !== ''
     ? receipt.outputs.pr_url
     : null;

@@ -53,6 +53,16 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     intent_sha256: sha256(INTENT_MD), pr_number: 77, round: 1, ...patch,
   }, { CODING_WF_CLAUDE_BIN: FAKE, FAKE_EVAL_MODE: mode, CODING_WF_PREVIEW_API: api, CODING_WF_PREVIEW_WAIT_MS: '200', CODING_WF_PREVIEW_INTERVAL_MS: '20', ...env });
 
+  it('Codex 原生执行记录可核实 QA 证据，费用未知保留 null，捏造记录仍失败', async () => {
+    const r = await run('pass', {}, { FAKE_EVAL_NATIVE: 'codex' });
+    expect(r.result.status, r.stderr).toBe('completed');
+    expect(r.result.outputs.qa).toMatchObject({ verdict: 'PASS', cost_usd: null });
+    const bad = await run('fabricate', {}, { FAKE_EVAL_NATIVE: 'codex' });
+    expect(bad.result.status).toBe('failed');
+    const prod = await run('prod', {}, { FAKE_EVAL_NATIVE: 'codex' });
+    expect(prod.result).toMatchObject({ status: 'failed', reason_code: 'evaluate_touched_production' });
+  });
+
   it('全部 Q-n PASS → completed，qa.verdict PASS；用预览环境 URL；03/04 运行时被藏起、结束后放回', async () => {
     const r = await run('pass');
     expect(r.result.status, r.stderr).toBe('completed');
