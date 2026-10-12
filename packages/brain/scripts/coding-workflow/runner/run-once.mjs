@@ -66,7 +66,7 @@ async function pickNew(ctx, queued) {
     log(`对账 queued 任务 ${task.id}（本机${local ? '有运行痕迹' : ' claim 残留'}），不重跑`);
     await settleQueued(ctx, task, local ?? lostSummary('任务挂着本机 claim 但本机没有运行痕迹'));
   }
-  return pickCandidates(queued).filter((task) => {
+  return pickCandidates(queued, { enabled: cfg.repos.map((r) => r.key), log }).filter((task) => {
     if (traced.has(task.id)) return false;
     if (hasRunResult(task)) {
       log(`任务 ${task.id} 已有运行结果（result.coding_workflow/runner/coding_workflow_runner），不认领`);

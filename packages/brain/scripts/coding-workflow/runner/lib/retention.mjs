@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './proc.mjs';
 import { removeWorktree, pruneWorktrees } from './worktree.mjs';
+import { stateDir } from './repos.mjs';
 
 const DAY_MS = 24 * 3600 * 1000;
 const WORKTREE_RE = /^cw-[0-9a-f]{8}/;
@@ -34,14 +35,21 @@ async function cleanWorktrees(cfg, cutoff) {
   }
 }
 
-function cleanLogs(cfg, cutoff) {
-  if (!fs.existsSync(cfg.logDir)) return;
-  for (const name of fs.readdirSync(cfg.logDir)) {
+/** 清一个目录（不递归）里超期的日志/回执；状态台账不删。 */
+function cleanLogDir(dir, cutoff) {
+  if (!fs.existsSync(dir)) return;
+  for (const name of fs.readdirSync(dir)) {
     if (!LOG_RE.test(name) || STATE_RE.test(name)) continue;
-    const file = path.join(cfg.logDir, name);
+    const file = path.join(dir, name);
     const mtime = mtimeMs(file);
     if (mtime !== null && mtime < cutoff) fs.rmSync(file, { force: true });
   }
+}
+
+/** logDir 顶层 + 各已启用仓库的状态命名空间目录（C4：非默认仓的 qa/cifix/commander 状态与会话日志在 <logDir>/<ns>/）。 */
+function cleanLogs(cfg, cutoff) {
+  const dirs = new Set([cfg.logDir, ...(cfg.repos ?? []).map((rc) => stateDir({ logDir: cfg.logDir, stateNs: rc.stateNs }))]);
+  for (const dir of dirs) cleanLogDir(dir, cutoff);
 }
 
 /** 尽力而为：任何一步失败只返回，不影响本轮。 */

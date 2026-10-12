@@ -1,6 +1,7 @@
 // runner 纯函数：挑任务、起名、算总超时。
+import { enabledRepos, resolveRepo } from './repos.mjs';
+
 const EXTRA_TIMEOUT_MS = 10 * 60 * 1000;
-const SUPPORTED_REPOS = new Set(['cecelia']);
 
 // hourCycle h23：午夜是 00 而不是 24。
 const SHANGHAI_PARTS = new Intl.DateTimeFormat('en-US', {
@@ -37,15 +38,25 @@ export function hasRunResult(task) {
 }
 
 /**
- * 候选任务：开关三件套、未被认领、repo 缺省或 cecelia；
- * 按 created_at 升序（最早的先做）。非数组输入返回 []。
+ * 候选任务：开关三件套、未被认领、payload.repo 归一后（repos.json 别名，缺省归 cecelia）是已启用的仓库；
+ * 返回的任务带 repoKey，按 created_at 升序（最早的先做）。非数组输入返回 []。
+ * 未登记 / 未启用的仓库不认领，但每条打一行日志（不再静默挂在 queued）。
+ * opts.enabled：已启用仓库 key 列表，缺省 = repos.json 默认开关。
  */
-export function pickCandidates(tasks) {
+export function pickCandidates(tasks, { enabled = enabledRepos({}).map((r) => r.key), log = null } = {}) {
   if (!Array.isArray(tasks)) return [];
+  const on = new Set(enabled);
   return tasks
     .filter(isSwitched)
     .filter((t) => !t.claimed_by)
-    .filter((t) => SUPPORTED_REPOS.has(t.payload.repo ?? 'cecelia'))
+    .map((t) => {
+      const repo = t.payload?.repo ?? null;
+      const repoKey = resolveRepo(repo);
+      if (!repoKey) log?.(`任务 ${t.id} repo=${repo} 未登记在 repos.json，不认领`);
+      else if (!on.has(repoKey)) log?.(`任务 ${t.id} repo=${repo}（${repoKey}）未启用，不认领`);
+      return repoKey && on.has(repoKey) ? { ...t, repoKey } : null;
+    })
+    .filter(Boolean)
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
 }
 
