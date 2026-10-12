@@ -51,12 +51,9 @@ executor-pure-functions.sh
 failure-type-deny-payload-smoke.sh
 fleet-heartbeat-smoke.sh
 forensics-no-overwrite-smoke.sh
-gan-base-repo-smoke.sh
-gan-no-push-abort-smoke.sh
 gate3-gate2-smoke.sh
 gate5-a1-otel-smoke.sh
 gate5-b1-b2-smoke.sh
-git-fence-smoke.sh
 goal-condition-smoke.sh
 golden-path-step-nfr-smoke.sh
 handoff-smoke.sh
@@ -65,8 +62,6 @@ harness-callback-smoke.sh
 harness-detail-report-content-smoke.sh
 harness-evaluate-coverage-smoke.sh
 harness-executor-reliability-smoke.sh
-harness-gan-async-smoke.sh
-harness-gan-convergence-smoke.sh
 harness-initiative-migrate-smoke.sh
 harness-intervention-routing-smoke.sh
 harness-intervention-smoke.sh
@@ -81,9 +76,7 @@ harness-pending-reviews-smoke.sh
 harness-phase-event-smoke.sh
 harness-pipeline-task-type-smoke.sh
 harness-promote-regression-smoke.sh
-harness-retry-interrupt-smoke.sh
 harness-selftest-smoke.sh
-harness-session-bridge-smoke.sh
 harness-shared-skill-search-smoke.sh
 harness-step-context-smoke.sh
 harness-ws-progress-smoke.sh
@@ -117,7 +110,6 @@ smoke-runtime.sh
 smoke-task-planning.sh
 sprint-d-7table-smoke.sh
 sprint-docs-smoke.sh
-sprint-result-contract-smoke.sh
 sse-stream-smoke.sh
 tenant-isolation-rule-smoke.sh
 test-lifecycle-patrol-smoke.sh

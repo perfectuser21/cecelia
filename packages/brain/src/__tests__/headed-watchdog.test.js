@@ -74,7 +74,7 @@ function makeWatchdogDeps(overrides = {}) {
 
 describe('watchdog headed 分支', () => {
 
-  it('kernel-v1 headed tmux 存活时以原 Controller generation 续租而不转成 headless',async()=>{
+  it('kernel-v1 headed 退役后不探活、不续租、不转成 headless',async()=>{
     const controllerSessionId='99999999-9999-4999-8999-999999999999';
     const run=makeHeadedRun({
       phase:'planning',
@@ -108,12 +108,8 @@ describe('watchdog headed 分支', () => {
       hostname:()=> 'watchdog-host',watchdogPid:4321,
     });
 
-    expect(execFn).toHaveBeenCalledWith(expect.stringContaining('tmux has-session'));
-    expect(writeControllerHeartbeat).toHaveBeenCalledWith(pool,expect.objectContaining({
-      runId:run.id,controllerSessionId,controllerGeneration:4,
-      host:'skill-relay-codex-headed',pid:4321,
-    }));
-    expect(writeControllerHeartbeat).toHaveBeenCalledTimes(2);
+    expect(execFn).not.toHaveBeenCalled();
+    expect(writeControllerHeartbeat).not.toHaveBeenCalled();
     expect(launchKernel).not.toHaveBeenCalled();
   });
 

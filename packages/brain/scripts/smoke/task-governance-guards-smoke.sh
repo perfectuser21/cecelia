@@ -4,7 +4,7 @@
 #   1. 守卫 1 纯逻辑：非 uuid goal_id 被拒（goal_id_not_key_result），不给 goal_id 直通
 #   2. 守卫 2 纯逻辑：owner_decision 缺协议被拒并列全缺项；完整协议放行；machine 不进待办、human 进待办
 #   3. 迁移 469：触发器 WHEN 只对 owner_decision、只拦新写入、抛 23514；回滚脚本在
-#   4. 接线：建单入口 / createRoutedTask / blockTask / unblockTask / harness-dag / proposal 全部走守卫与单一写口
+#   4. 接线：建单入口 / createRoutedTask / blockTask / unblockTask / proposal 全部走守卫与单一写口
 #   5. 单一写口：src 内仅 lib/task-dependencies.js（与 gap-dependencies 白名单）含边 INSERT
 #   6. （可选）GOV_GUARD_SMOKE_DB_URL 指向已跑完迁移的库：触发器存在且 proven-to-fire（事务内违规插入被拒并回滚）
 set -euo pipefail
@@ -58,7 +58,6 @@ const checks = [
   ['src/work-routing-store.js', ['assertGoalIsKeyResult(client', 'assertOwnerDecisionProtocol(', 'openOwnerDecisionPendingAction(', 'addTaskDependencies(client']],
   ['src/task-updater.js', ['assertOwnerDecisionProtocol({ reason, detail })', 'closeOwnerDecisionPendingAction(']],
   ['src/routes/tasks.js', [\"result.code === 'owner_decision_protocol_violation'\"]],
-  ['src/harness-dag.js', ['insertEdgeRow(client, from, to']],
   ['src/proposal.js', ['addTaskDependency(pool', 'removeTaskDependency(pool']],
 ];
 let fail = false;
@@ -67,7 +66,7 @@ for (const [file, needles] of checks) {
   for (const n of needles) if (!src.includes(n)) { console.error('FAIL ' + file + ' 缺少: ' + n); fail = true; }
 }
 if (fail) process.exit(1);
-console.log('建单入口 / createRoutedTask / blockTask / harness-dag / proposal 全部接线 ✓');
+console.log('建单入口 / createRoutedTask / blockTask / proposal 全部接线 ✓');
 "
 
 echo "[task-governance-guards-smoke] 5. 单一写口：边 INSERT 只在写口模块"

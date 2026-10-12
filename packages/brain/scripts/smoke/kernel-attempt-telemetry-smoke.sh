@@ -8,7 +8,6 @@ test -f packages/brain/migrations/361_kernel_attempt_telemetry.sql
 test -f packages/brain/src/orchestrator/attempt-telemetry.js
 grep -q "attempt-telemetry" packages/brain/src/routes/harness.routes.js
 grep -q "logical_cycle_id" packages/brain/src/orchestrator/attempt-store.js
-grep -q "reconcileExpiredKernelAttempt" packages/brain/src/harness-relay-watchdog.js
 
 node --input-type=module - <<'NODE'
 import {

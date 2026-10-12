@@ -94,13 +94,6 @@
     "evidence": "实际SQL/写调用源码行 42,48,50,51,72；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
-  "kernel-controller-lease-renewal-smoke.sh": {
-    "kind": "readonly",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "UPDATE仅说明和readFile源码断言；实际psql仅information_schema SELECT，HTTP GET tick/status。",
-    "sha256": "047d29a54e172af99dcc4cd5d7673b2236ff2c3a041235d95aecbadacb08b8bf",
-    "source_commit": "d664db65c9"
-  },
   "line-context-smoke.sh": {
     "kind": "write",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",

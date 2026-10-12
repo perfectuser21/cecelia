@@ -55,10 +55,10 @@ describe('task_dependencies / payload.depends_on 单一写口', () => {
     expect(w.text.match(/INSERT\s+INTO\s+task_dependencies/gi)).toHaveLength(1);
   });
 
-  it('变异：把 harness-dag 改回直写边 → 守卫必红', () => {
-    const dag = realFiles.find((f) => f.rel === 'harness-dag.js');
-    const mutated = { rel: dag.rel, text: `${dag.text}\n// INSERT INTO task_dependencies (from_task_id, to_task_id) VALUES ($1,$2)` };
-    expect(findViolations([mutated])).toEqual([{ rel: 'harness-dag.js', kind: 'edge_insert' }]);
+  it('变异：proposal.js 直写边 → 守卫必红（harness-dag 已随 A5 删除，改用仍在役的 proposal.js）', () => {
+    const p = realFiles.find((f) => f.rel === 'proposal.js');
+    const mutated = { rel: p.rel, text: `${p.text}\n// INSERT INTO task_dependencies (from_task_id, to_task_id) VALUES ($1,$2)` };
+    expect(findViolations([mutated])).toEqual([{ rel: 'proposal.js', kind: 'edge_insert' }]);
   });
 
   it('变异：proposal.js 直写 payload.depends_on → 守卫必红', () => {

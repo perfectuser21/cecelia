@@ -46,7 +46,6 @@ codex-grok-launcher-supervisor-smoke.sh
 codex-headed-dispatch-smoke.sh
 codex-test-gen-smoke.sh
 coding-workflow-runner-smoke.sh
-commander-invoker-smoke.sh
 company-key-results-smoke.sh
 compute-ssh-reachability-smoke.sh
 contract-seal-smoke.sh
@@ -72,7 +71,6 @@ device-locks-smoke.sh
 direction-proposer-t4-smoke.sh
 disk-guard-smoke.sh
 dispatch-allocation-guide-smoke.sh
-dispatch-code-routing-smoke.sh
 dispatch-fail-autoblock-smoke.sh
 doc-zombie-retire-smoke.sh
 drift-sentinel-smoke.sh
@@ -159,7 +157,6 @@ kernel-bounded-run-smoke.sh
 kernel-capability-gate-smoke.sh
 kernel-context-resume-action-smoke.sh
 kernel-contract-artifacts-smoke.sh
-kernel-controller-lease-renewal-smoke.sh
 kernel-controller-ownership-smoke.sh
 kernel-existing-pr-validation-clock-smoke.sh
 kernel-fleet-bridge-smoke.sh
@@ -175,7 +172,6 @@ kernel-run-exact-api-smoke.sh
 kernel-run-identity-terminalization-smoke.sh
 kernel-runtime-resource-smoke.sh
 kernel-shared-validation-clock-smoke.sh
-kernel-stdio-capture-smoke.sh
 kernel-two-phase-launch-smoke.sh
 kv-route-smoke.sh
 launchd-patrol-smoke.sh
