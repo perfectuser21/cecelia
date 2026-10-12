@@ -1,5 +1,5 @@
 {
-  "_doc": "coding workflow runner 仓库配置表（C4）：一行一个仓库。runner 判卷代码只从默认仓（cecelia）clone 读。enabled=false 的仓库即使列进 CODING_WF_REPOS 也不启用。required_checks 是登记口径（gh api .../branches/main/protection 只读核实），运行时仍以 GitHub 分支保护+规则集为准。production_re 是正则片段，按 | 拼接。",
+  "_doc": "coding workflow runner 仓库配置表（C4）：一行一个仓库。runner 判卷代码只从默认仓（cecelia）clone 读。enabled=false 的仓库即使列进 CODING_WF_REPOS 也不启用。required_checks 是登记口径（gh api .../branches/main/protection 只读核实），运行时仍以 GitHub 分支保护+规则集为准。production_re 是正则片段，按 | 拼接（活动层判碰生产用 本仓 ∪ 默认仓）。prechecks 是 lib/ci-precheck.mjs 的预检清单名；rules_prompt 是注入各提示词 {{REPO_RULES}} 的本仓规矩（C6）。",
   "repos": [
     {
       "key": "cecelia",
@@ -22,7 +22,9 @@
       "version_fragment": { "src_re": "^packages/brain/src/", "dir": "changes" },
       "preview": { "type": "brain_preview", "base_repo": "cecelia" },
       "production_re": [":5221\\b", "\\b(?:localhost|127\\.0\\.0\\.1)\\s+5221\\b", "100\\.79\\.41\\.61", "\\bus-vps\\b"],
-      "automerge": true
+      "automerge": true,
+      "prechecks": "cecelia",
+      "rules_prompt": "prompts/repo-rules/cecelia.md"
     },
     {
       "key": "zenithjoy-workspace",
@@ -55,7 +57,9 @@
       "version_fragment": null,
       "preview": { "type": "local" },
       "production_re": [":5200\\b", "100\\.86\\.118\\.99", "\\bhk-vps\\b"],
-      "automerge": false
+      "automerge": false,
+      "prechecks": "zenithjoy",
+      "rules_prompt": "prompts/repo-rules/zenithjoy.md"
     }
   ]
 }

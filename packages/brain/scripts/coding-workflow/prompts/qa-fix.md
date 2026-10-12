@@ -1,4 +1,4 @@
-你是开发方。真人 QA 在 PR 预览环境里黑盒验收了你的改动，没有通过。当前目录就是仓库，已检出 PR 分支 {{BRANCH}}。输出必须使用简体中文。
+你是开发方。真人 QA 在验收环境里（预览环境或 PR worktree，见下方本仓库规矩）黑盒验收了你的改动，没有通过。当前目录就是仓库，已检出 PR 分支 {{BRANCH}}。输出必须使用简体中文。
 
 输入信息（以下各行为机器可读，原样保留）：
 ROLE: qa_fix
@@ -20,7 +20,9 @@ QA 判定未通过的条目：
 6. 提交到当前分支（可以多个提交），提交信息用 `fix(...): ` 开头的中文说明，写清 QA 看到的现象和根因。
 
 禁止：
-- 不修改 sprints/ 下任何文件（需求、规格、QA 报告是验收记录），不修改 .claude/、CLAUDE.md、AGENTS.md，不修改 runner 生成的 QA 回归 smoke（packages/brain/scripts/smoke/cw-*-qa-smoke.sh，由 runner 按 QA 报告固化，勿手改）。
+- 不修改 sprints/ 下任何文件（需求、规格、QA 报告是验收记录），不修改 .claude/、CLAUDE.md、AGENTS.md，不修改 runner 生成的 QA 回归 smoke（cw-*-qa-smoke.sh，在哪见下方本仓库规矩；由 runner 按 QA 报告固化，勿手改）。
 - 不删除或放宽已有测试的断言来"让它通过"。
 - 不 push、不调用 gh、不改写已有提交（不 amend、不 rebase、不 reset）。
 - 结束时工作区必须干净（没有未提交改动）。
+
+{{REPO_RULES}}

@@ -10,9 +10,12 @@ import {
 import { sha256File, chainTamperFailure } from '../lib/guards.mjs';
 import { SPEC_FILE, INTENT_FILE, specErrors, explainSpecErrors } from '../lib/spec-check.mjs';
 import { INVARIANTS_FILE, loadInvariantIds } from '../lib/invariants.mjs';
+import { qaMode, repoRules } from '../lib/repo-profile.mjs';
 
 // 默认低于契约 budget（900s），这样超时由本活动先报明确的 claude_timeout，而不是执行器笼统的 activity_timeout
 const TIMEOUT = { envVar: 'CODING_WF_SPEC_TIMEOUT_MS', defaultMs: 870000 };
+// QA 模式 local 的仓库（zenithjoy 第一阶段）验不了 UI / 真机：spec 判不支持就写这一行，本活动上交（C6）
+const QA_UNSUPPORTED_RE = /^QA_UNSUPPORTED:\s*(.+)$/m;
 
 await runActivity(async (input) => {
   const { worktree, sprint_dir: sprintDir, intent_ids: intentIds } = input;
@@ -34,6 +37,7 @@ await runActivity(async (input) => {
     INTENT_IDS: intentIds.join(','),
     INVARIANTS_PATH: path.join(dir, INVARIANTS_FILE),
     PREV_ERRORS: explainSpecErrors(prevErrors),
+    REPO_RULES: repoRules(input.repo_profile),
   });
 
   // 重试/重跑时旧产物会被当成新产物，先删
@@ -55,6 +59,10 @@ await runActivity(async (input) => {
   const tampered = chainTamperFailure(dir, { intent_sha256: input.intent_sha256 });
   if (tampered) return priced(tampered);
   if (!fs.existsSync(specPath)) return priced(fail('fatal', 'spec_missing'));
+
+  // 本仓 QA 模式验不了这个任务（UI / 真机）：不进 build，上交主理人（不是规格不合格，不重试）
+  const unsupported = qaMode(input.repo_profile) === 'local' ? QA_UNSUPPORTED_RE.exec(fs.readFileSync(specPath, 'utf8')) : null;
+  if (unsupported) return priced(fail('needs_human', 'qa_mode_unsupported', { evidence: [{ qa_mode: 'local', reason: unsupported[1].trim() }] }));
 
   // 02 不合格当场拦（重试一次让 claude 重写），不留给 build 报 spec_ids_missing（c2afa8ba 实测）
   const errors = specErrors(fs.readFileSync(specPath, 'utf8'), input.task_id, intentIds, { invariantIds });

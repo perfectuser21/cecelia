@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFrontmatter } from '../lib/md-chain.mjs';
+import { loadPrompt } from '../lib/claude.mjs';
+import { repoRules } from '../lib/repo-profile.mjs';
 import { runActivityProcess } from './helpers/run-activity.mjs';
 import { gitPlain } from './helpers/git.mjs';
 import { expectGone, readPid } from './helpers/procs.mjs';
@@ -135,9 +137,10 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(JSON.stringify(r.result.evidence)).toContain('qa_missing');
     const prompt = fs.readFileSync(path.join(HERE, '../prompts/spec.md'), 'utf8');
     for (const s of ['## QA 场景', '### Q-n', '对应:', '前提:', '操作:', '期望:', '不能是单元测试']) expect(prompt).toContain(s);
-    // QA 场景不写死生产地址（金丝雀 3e8414f6：Q-n 写着 localhost:5221，诱发 QA 越界/误判）
-    expect(prompt).toContain('<预览环境>/api/brain/');
-    expect(prompt).toContain('不能写 `localhost:5221`');
+    // QA 场景不写死生产地址（金丝雀 3e8414f6：Q-n 写着 localhost:5221，诱发 QA 越界/误判）；C6 起这是 cecelia 的本仓规矩，注入后可见
+    const rendered = loadPrompt('spec', { REPO_RULES: repoRules(undefined) });
+    expect(rendered).toContain('<预览环境>/api/brain/');
+    expect(rendered).toContain('不能写 `localhost:5221`');
   });
 
   // 审计 #33：重试必须带新信息——上次生成的 02 不合格，重跑时把问题交给 claude，而不是原样再来一遍
@@ -411,4 +414,27 @@ describe('spec 活动（子进程 + 假 claude）', () => {
       expect(r.result.failure_class).toBeNull();
     },
   );
+
+  // C6：QA 模式按仓库。local（zenithjoy 第一阶段：PR worktree 内黑盒）验不了 UI / 真机，spec 阶段就判不支持并上交，不进 build
+  describe('按仓库的 QA 模式与规矩', () => {
+    const REPOS = JSON.parse(fs.readFileSync(path.join(HERE, '../repos.json'), 'utf8')).repos;
+    const ZJ = REPOS.find((r) => r.key === 'zenithjoy-workspace');
+    const CECELIA = REPOS.find((r) => r.key === 'cecelia');
+
+    it('local 仓库的 02 写了 QA_UNSUPPORTED → needs_human qa_mode_unsupported，原因进 evidence', async () => {
+      const r = await run('qa-unsupported', { repo_profile: ZJ });
+      expect(r.result).toMatchObject({ status: 'failed', failure_class: 'needs_human', reason_code: 'qa_mode_unsupported' });
+      expect(JSON.stringify(r.result.evidence)).toContain('真机点按抖音发布页');
+    });
+
+    it('brain_preview 仓库（cecelia）不认这一行，照常校验', async () => {
+      const r = await run('qa-unsupported', { repo_profile: CECELIA });
+      expect(r.result.status, r.stderr).toBe('completed');
+    });
+
+    it('prompt 注入本仓规矩：没传 profile = cecelia，传 zenithjoy 用 zenithjoy 的', async () => {
+      expect((await run('ok')).stderr).toContain('FAKE_REPO_RULES: cecelia');
+      expect((await run('ok', { repo_profile: ZJ })).stderr).toContain('FAKE_REPO_RULES: zenithjoy-workspace');
+    });
+  });
 });

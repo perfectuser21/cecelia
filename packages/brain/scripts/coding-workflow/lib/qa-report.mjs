@@ -89,14 +89,25 @@ export function unitTestEvidence(items) {
 export const PRODUCTION_ASSIGN_RE = /\b[A-Za-z_][A-Za-z0-9_]*=['"]?\S*(?::5221\b|100\.79\.41\.61|\bus-vps\b)/;
 
 /**
- * 执行记录里访问过生产 Brain 的命令：按 ; && || | 切成片段，同一片段里既有访问动作又指向生产；
- * 或整条命令里有变量被赋成生产地址、同时有访问动作。
+ * 按仓库的生产口径（repos.json production_re 片段，C6）拼出 { target, assign }：target 判命令指向生产，
+ * assign 判变量被赋成生产地址。不传片段 = 默认仓（cecelia）的 PRODUCTION_TARGET_RE / PRODUCTION_ASSIGN_RE。
  */
-export function productionTouches(executions) {
+export function productionMatchers(patterns = null) {
+  if (!Array.isArray(patterns) || patterns.length === 0) return { target: PRODUCTION_TARGET_RE, assign: PRODUCTION_ASSIGN_RE };
+  const alt = patterns.join('|');
+  return { target: new RegExp(alt), assign: new RegExp(`\\b[A-Za-z_][A-Za-z0-9_]*=['"]?\\S*(?:${alt})`) };
+}
+
+/**
+ * 执行记录里访问过生产的命令：按 ; && || | 切成片段，同一片段里既有访问动作又指向生产；
+ * 或整条命令里有变量被赋成生产地址、同时有访问动作。patterns 见 productionMatchers。
+ */
+export function productionTouches(executions, patterns = null) {
+  const { target, assign } = productionMatchers(patterns);
   return executions.map((e) => e.command).filter((c) => {
     const cmd = String(c);
-    if (PRODUCTION_ASSIGN_RE.test(cmd) && NETWORK_RE.test(cmd)) return true;
-    return cmd.split(/;|&&|\|\||\|/).some((part) => NETWORK_RE.test(part) && PRODUCTION_TARGET_RE.test(part));
+    if (assign.test(cmd) && NETWORK_RE.test(cmd)) return true;
+    return cmd.split(/;|&&|\|\||\|/).some((part) => NETWORK_RE.test(part) && target.test(part));
   });
 }
 

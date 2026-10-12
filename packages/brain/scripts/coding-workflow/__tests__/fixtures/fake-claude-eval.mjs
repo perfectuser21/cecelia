@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 假 claude（evaluator 真人 QA）：按 FAKE_EVAL_MODE 在 stdout 输出 stream-json 执行记录并写 REPORT_PATH。
 // pass | fail（最后一条 Q FAIL）| finding（全 PASS + 一条阻断探索发现）| unittest（T-1 用 vitest 当证据）
-// | fabricate（报告写了但没有执行记录）| prod（另外 curl 了生产 5221）| incomplete（只测第一条 Q）
+// | fabricate（报告写了但没有执行记录）| prod（另外 curl 了生产 5221）| prod-hk（另外 curl 了 zenithjoy 生产 hk-vps）| incomplete（只测第一条 Q）
 // | outside（另写越界文件）| badformat（报告没有任何条目）| cannot（最后一条 Q 验不了：工具缺失）
 // | cannot-noreason（验不了但没写原因）| trivial（T-1 命令带 `|| true`）| shot-missing（报告引用的截图不存在）
 // | playwright-noshot（T-1 用 Playwright 但截图目录为空）| playwright-shot（同上但留了截图）。启动时打印 FAKE_HIDDEN_BUILD / FAKE_HIDDEN_EVIDENCE（03/04 是否被藏起）。
@@ -18,6 +18,8 @@ const qaIds = field('QA_IDS').split(',').filter(Boolean);
 console.error(`FAKE_HIDDEN_BUILD: ${!fs.existsSync(path.join(sprint, '03-build.md'))}`);
 console.error(`FAKE_HIDDEN_EVIDENCE: ${!fs.existsSync(path.join(sprint, '04-evidence.md'))}`);
 console.error(`FAKE_PREVIEW_URL: ${url}`);
+console.error(`FAKE_WORKTREE: ${field('WORKTREE')}`);
+console.error(`FAKE_PRODUCTION: ${field('PRODUCTION')}`);
 console.error(`FAKE_JUDGE_FEEDBACK: ${field('JUDGE_FEEDBACK')}`);
 console.error(`FAKE_PREV_ERRORS: ${field('PREV_ERRORS')}`);
 
@@ -55,6 +57,7 @@ if (mode === 'finding') {
   sections.push(`### X-1\n对应: ${qaIds[0]}\n严重度: 阻断\n场景: 用户提交空 body 拿到 500\nverdict: FAIL\n${F}command\n${command}\n${F}\n${F}output\n{"error":"internal"} 500\n${F}\n`);
 }
 if (mode === 'prod') emit('curl -s http://localhost:5221/api/brain/tasks', '[]');
+if (mode === 'prod-hk') emit('curl -s http://100.86.118.99:5200/api/health', '{}');
 const upstream = qaIds.map((q) => `"02-spec.md#${q}"`).join(', ');
 const body = mode === 'badformat' ? '看起来都好。\n' : sections.join('\n');
 fs.writeFileSync(field('REPORT_PATH'), `---\ntask_id: ${field('TASK_ID')}\nstep: evaluate\nupstream: [${upstream}]\n---\n# QA 报告\n\n${body}`);

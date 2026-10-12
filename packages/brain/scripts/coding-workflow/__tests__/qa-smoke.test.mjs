@@ -4,8 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { buildQaSmoke, registerSmoke, targetsPreviewApi, QA_SMOKE_DIR } from '../lib/qa-smoke.mjs';
+import { buildQaSmoke, registerSmoke, unregisterSmoke, targetsPreviewApi, QA_SMOKE_DIR } from '../lib/qa-smoke.mjs';
 import { PRODUCTION_TARGET_RE, PRODUCTION_ASSIGN_RE } from '../lib/qa-report.mjs';
+import { loadPrompt } from '../lib/claude.mjs';
+import { repoRules } from '../lib/repo-profile.mjs';
 
 const F = '```';
 const PREVIEW = 'http://localhost:5302';
@@ -91,7 +93,8 @@ describe('生成的 smoke 真跑', () => {
 
 describe('prompt（决策 c8621227）', () => {
   it('spec：Q-n 的前提由操作自己造、空库可复现；evaluate：API 命令会固化成回归、必须带断言', () => {
-    const spec = fs.readFileSync(new URL('../prompts/spec.md', import.meta.url), 'utf8');
+    // C6：「空库可复现」是 cecelia（brain_preview + 固化 smoke）的 QA 环境规矩，随本仓规矩注入 spec 提示词
+    const spec = loadPrompt('spec', { REPO_RULES: repoRules(undefined) });
     for (const s of ['自己造', '空库']) expect(spec).toContain(s);
     const evaluate = fs.readFileSync(new URL('../prompts/evaluate.md', import.meta.url), 'utf8');
     for (const s of ['固化成回归', 'smoke', '断言']) expect(evaluate).toContain(s);
@@ -112,6 +115,23 @@ describe('registerSmoke', () => {
     expect(allow.split('\n').filter((l) => l === 'cw-c954ebfd-qa-smoke.sh')).toHaveLength(1);
     expect(fs.readFileSync(path.join(root, 'packages/quality/smoke-write-targets.txt'), 'utf8')).toContain('cw-c954ebfd-qa-smoke.sh\n');
     expect(fs.statSync(path.join(root, QA_SMOKE_DIR, 'cw-c954ebfd-qa-smoke.sh')).mode & 0o111).toBeTruthy();
+  });
+});
+
+// C6：回归 smoke 的目录与登记文件按仓库（repos.json qa_smoke）；不传 = cecelia 的目录（旧调用方不变）
+describe('registerSmoke / unregisterSmoke：按仓库的目录与登记文件', () => {
+  it('传了 qa_smoke 路径就写到那里、登记到它的 allowlist / write-targets；撤下也按它', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-smoke-repo-'));
+    const paths = { dir: '.github/workflows/scripts/smoke', allowlist: '.github/workflows/scripts/smoke-baseline.txt', write_targets: 'ops/write-targets.txt' };
+    const smoke = { name: 'cw-aaaaaaaa-qa-smoke.sh', content: '#!/usr/bin/env bash\n', writes: true };
+    const changed = registerSmoke(root, smoke, paths);
+    expect(changed).toEqual(['.github/workflows/scripts/smoke/cw-aaaaaaaa-qa-smoke.sh', paths.allowlist, paths.write_targets]);
+    expect(fs.existsSync(path.join(root, QA_SMOKE_DIR))).toBe(false);
+    expect(fs.readFileSync(path.join(root, paths.allowlist), 'utf8')).toBe('cw-aaaaaaaa-qa-smoke.sh\n');
+    const removed = unregisterSmoke(root, smoke.name, paths);
+    expect(removed).toEqual(['.github/workflows/scripts/smoke/cw-aaaaaaaa-qa-smoke.sh', paths.allowlist, paths.write_targets]);
+    expect(fs.existsSync(path.join(root, paths.dir, smoke.name))).toBe(false);
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });
 

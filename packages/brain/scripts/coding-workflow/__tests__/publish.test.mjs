@@ -362,6 +362,29 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(branchFiles()).toContain('changes/own.md');
   });
 
+  // C6：版本碎片规则按仓库（repos.json version_fragment）。zenithjoy 没有 changes/，auto-version 按提交标题 bump，规则为 null
+  it('repo_profile 的 version_fragment 为 null（zenithjoy）→ 即使改了 packages/brain/src 也不写 changes/', async () => {
+    commitSrc();
+    const zj = JSON.parse(fs.readFileSync(path.join(HERE, '../repos.json'), 'utf8')).repos.find((x) => x.key === 'zenithjoy-workspace');
+    const r = await run('new', { ...BUILD_CHAIN, repo_profile: zj });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(branchFiles().some((f) => f.startsWith('changes/'))).toBe(false);
+    expect(fs.existsSync(path.join(worktree, 'changes'))).toBe(false);
+  });
+
+  it('repo_profile 带别的碎片规则（src_re / dir）→ 按它写', async () => {
+    fs.mkdirSync(path.join(worktree, 'apps/api/src'), { recursive: true });
+    fs.writeFileSync(path.join(worktree, 'apps/api/src/y.ts'), 'export const y = 1;\n');
+    git(worktree, 'add', '--', 'apps');
+    git(worktree, 'commit', '-m', 'fix(api): y');
+    fs.writeFileSync(path.join(worktree, 'sprints/s1/03-build.md'), '# build\n');
+    const profile = { key: 'x', version_fragment: { src_re: '^apps/api/src/', dir: 'frags' } };
+    const r = await run('new', { ...BUILD_CHAIN, repo_profile: profile });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(branchFiles()).toContain('frags/cp-1007000000-test.md');
+    expect(branchFiles()).not.toContain(FRAG);
+  });
+
   it('没改 packages/brain/src → 不写碎片', async () => {
     const r = await run('new');
     expect(r.exitCode, r.stderr).toBe(0);

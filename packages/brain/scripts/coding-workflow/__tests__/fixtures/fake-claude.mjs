@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 假 claude：按 FAKE_CLAUDE_MODE 模拟 `claude -p <prompt> ...`。
-// spec 用：ok | nofile | auth | fail | outside | sleep | linger | titled | noids | uncovered | noqa；
+// spec 用：ok | nofile | auth | fail | outside | sleep | linger | titled | noids | uncovered | noqa | qa-unsupported；
 // build 用：build-ok（真实 git commit 并写 03-build.md）| build-nocommit | build-dirty（另留未提交改动）| build-noreport
 // | build-amend（把改动 amend 进运行前的 HEAD）| build-badreport（03 的 upstream 只覆盖第一条 S-n）；
 // verify 用：verify-pass | verify-fail（最后一条 FAIL）| verify-badformat（第一条缺 output）| verify-uncovered（只覆盖第一条 I-n）
@@ -230,6 +230,9 @@ else {
   // QA 场景：每个 I-n 一条（noqa 模式不写，模拟漏写）
   // 审计 #10：02 必须登记未覆盖的真实链路（可写「无：理由」）
   if (mode !== 'nouncovered') sections.push('## 未覆盖真实链路\n\n无：测试替身，没有外部调用方');
+  // qa-unsupported：本仓 QA 模式（local）验不了的任务（UI / 真机），spec 写 QA_UNSUPPORTED 上交（C6）
+  if (mode === 'qa-unsupported') sections.push('QA_UNSUPPORTED: 需要真机点按抖音发布页，local 黑盒验不了\n');
+  console.error(`FAKE_REPO_RULES: ${/本仓库规矩（([^）]+)）/.exec(prompt)?.[1] ?? '无'}`);
   if (mode !== 'noqa') sections.push(`## QA 场景\n\n${ids.map((id, i) => `### Q-${i + 1}\n对应: ${id}\n操作: 用户按 ${id} 操作\n期望: 看到 ${id} 的结果\n`).join('\n')}`);
   // 铁律对照：prompt 给了 INVARIANTS_PATH 且清单里有 INV-n 时逐条写不适用（noinv 模式不写，模拟漏写）
   const invPath = field('INVARIANTS_PATH');

@@ -119,7 +119,8 @@ describe('runner 处理与 main 冲突的 cw PR', () => {
     expect(r.exitCode, r.stderr).toBe(0);
     const prompt = fs.readFileSync(files.prompt, 'utf8');
     expect(prompt).toContain('src/x.txt');
-    expect(prompt).not.toContain(ALLOW);
+    // 冲突文件清单（`- <文件>` 行）里没有 runner 已自动合好的 allowlist（C6 起本仓规矩会提到 allowlist 文件名，只看清单行）
+    expect(prompt).not.toContain(`- ${ALLOW}`);
     expect(git(sb.origin, 'merge-base', '--is-ancestor', 'main', BRANCH)).toBe('');
     expect(remoteFile('src/x.txt')).toBe('resolved\n');
     expect(state().attempts).toMatchObject([{ kind: 'conflict', head, result: 'pushed' }]);

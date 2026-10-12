@@ -11,7 +11,8 @@ import {
 import {
   chainTamperFailure, remoteChangeFailure, remoteSnapshot, currentBranch, isAncestor, changedFilesSince, agentConfigFiles,
 } from '../lib/guards.mjs';
-import { defaultChecks, runPrechecks } from '../lib/ci-precheck.mjs';
+import { checksFor, runPrechecks } from '../lib/ci-precheck.mjs';
+import { repoRules } from '../lib/repo-profile.mjs';
 import { intentHeading, prKindOf } from '../lib/pr-kind.mjs';
 
 const spend = { usd: 0 };
@@ -79,7 +80,8 @@ const failedNames = (results) => results.filter((r) => !r.ok).map((r) => r.name)
  */
 async function precheckLoop({ worktree, dir, sprintDir, input, before }) {
   const feature = prKindOf(intentHeading(dir)) === 'feat';
-  const checks = process.env.CODING_WF_PRECHECKS ? JSON.parse(process.env.CODING_WF_PRECHECKS) : defaultChecks({ branch: before.branch, feature });
+  // 预检清单按仓库（repos.json prechecks，C6）
+  const checks = process.env.CODING_WF_PRECHECKS ? JSON.parse(process.env.CODING_WF_PRECHECKS) : checksFor(input.repo_profile, { branch: before.branch, feature });
   const env = { PR_LABELS: feature ? 'feature' : '' };
   let results = await runPrechecks(worktree, { checks, env });
   let rounds = 0;
@@ -88,6 +90,7 @@ async function precheckLoop({ worktree, dir, sprintDir, input, before }) {
     const failures = results.filter((r) => !r.ok).map((r) => `### ${r.name}\n\`\`\`\n${r.output_tail}\n\`\`\``).join('\n\n');
     const prompt = loadPrompt('ci-precheck-fix', {
       BRANCH: before.branch, SPRINT_DIR: dir, INTENT_PATH: path.join(dir, '01-intent.md'), SPEC_PATH: path.join(dir, SPEC_FILE), FAILURES: failures,
+      REPO_RULES: repoRules(input.repo_profile),
     });
     const timeoutMs = posInt(process.env.CODING_WF_PRECHECK_FIX_TIMEOUT_MS, PRECHECK_FIX_TIMEOUT_MS);
     const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', ...CLAUDE_TOOLS], cwd: worktree, timeoutMs, tag: 'ci-precheck-fix', isolateRemote: true });
@@ -119,6 +122,7 @@ async function main(input) {
     BUILD_PATH: buildPath,
     SPEC_IDS: ids.join(','),
     SPRINT_DIR: dir,
+    REPO_RULES: repoRules(input.repo_profile),
   });
 
   // 旧产物会被当成新产物，先删
