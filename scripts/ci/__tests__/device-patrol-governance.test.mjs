@@ -40,3 +40,22 @@ test('真实Git交付Learning归开发治理，不作为手机Activity或扩大a
 test('其它Learning不能借巡查交付治理认领',async()=>{
  for(const path of ['docs/learnings/cp-other-phone-account-patrol.md','docs/learnings/cp-10101635-phone-account-patrol.md.extra']){const fixture=documentFixture(path);try{await assert.rejects(runDevicePatrolGate(fixture.options),new RegExp(`PATROL_CHANGED_FILE_UNCLAIMED:${path}`));}finally{rmSync(fixture.root,{recursive:true,force:true});}}
 });
+
+test('本次infra领跑PRD与DoD真实Git准入归开发治理，手机身份不变',async()=>{
+ for(const path of ['.prd-cp-10121630-phone-patrol-openclaw.md','.dod-cp-10121630-phone-patrol-openclaw.md']){
+  const fixture=documentFixture(path);
+  try{
+   const {report,receipt}=await runDevicePatrolGate(fixture.options),row=report.file_coverage.find(row=>row.path===path);
+   assert.equal(receipt.verdict,'PASS');assert.equal(row.kind,'project_document');assert.equal(row.owner,'开发交付治理');
+   assert.equal(row.head_sha256,sha(readFileSync(join(fixture.repo,path))));
+   assert.equal(report.head.auxiliary.some(row=>row.path===path),false);assert.equal(report.head.bindings.some(row=>row.path===path),false);
+  }finally{rmSync(fixture.root,{recursive:true,force:true});}
+ }
+});
+test('近似infra项目文档仍由真实Git门禁拒绝，不扩大文档匹配',async()=>{
+ for(const path of ['.prd-cp-10121630-phone-patrol-openclaw.md.extra','.dod-cp-10121631-phone-patrol-openclaw.md','.prd-cp-other-phone-patrol-openclaw.md']){
+  const fixture=documentFixture(path);
+  try{await assert.rejects(runDevicePatrolGate(fixture.options),error=>error.code===`PATROL_CHANGED_FILE_UNCLAIMED:${path}`);}
+  finally{rmSync(fixture.root,{recursive:true,force:true});}
+ }
+});
