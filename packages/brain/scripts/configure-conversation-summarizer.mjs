@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // 在 MMV 执行：--apply 安装；默认只检查现场，无凭据输出。
-import { readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export function summaryAgentConfig(home) {
@@ -49,6 +49,6 @@ function main() {
   process.stdout.write('conversation-summarizer: Codex，全部工具拒绝，现场配置一致\n');
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   try { main(); } catch { console.error('conversation-summarizer 配置检查失败'); process.exitCode = 1; }
 }
