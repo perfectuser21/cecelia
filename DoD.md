@@ -1,7 +1,7 @@
 # 统一领单租约 + 心跳 + 设备锁跟租约走 + 设备池（任务 c5f6e683，派发总闸 G）
 
 - [x] [BEHAVIOR] taskleaseclaim POST /tasks/:id/claim 带 lease_seconds 落 task_leases 并返回 lease_until（on_lease_expire 非法 400、不带租约行为不变）；POST /tasks/:id/heartbeat 同领单方续约并把持有的设备锁 expires_at 拉到租约，认领换人/任务终态/租约已回收 → 409 lease_lost；/lease/release 主动关租约。
-  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/routes/__tests__/claim-protocol.test.js src/routes/__tests__/task-lease-routes.test.js --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/routes/__tests__/claim-protocol.test.js src/routes/__tests__/task-lease.test.js src/lib/__tests__/task-lease.test.js src/lib/__tests__/device-pool.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] taskleasereaper task-lease-reaper 收过期租约：onStale=requeue/release-claim-and-alert 回队（满 3 次判 failed）、外部执行体判 lost（lease_expired）并放设备锁；任务终态/认领换人只关租约；Brain 租约过期先探活（alive 续、dead 宽限、unknown 判 lost）；设备锁占用判据改为 in_progress 且租约未过期，无租约旧持有者最多保护 240 分钟；设备池按 priority 试锁、被占/不健康换下一台、全被占 all_busy。
   Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/task-lease-device-pool.pg.integration.test.js src/__tests__/integration/device-lock-helpers.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] douyinpooldispatch 抖音视频发布 workflow_dispatch 登记 device.pool=douyin.internal，派发从池里选机、调度单写选中那台（留痕 device_pool_selected），全被占只等不接管、池空 failed；workflow_dispatch 与 openclaw-agent 起跑后落 Brain 租约（超时+15 分钟）。
