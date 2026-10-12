@@ -1,6 +1,6 @@
 // lib/transcript.mjs：从 claude stream-json 对话记录提取实际执行的 Bash 命令，并核对 04 证据。
 import { describe, it, expect } from 'vitest';
-import { bashExecutions, unverifiedItems, claudeOwnErrorText, sessionCostUsd } from '../lib/transcript.mjs';
+import { bashExecutions, unverifiedItems, claudeOwnErrorText, sessionCostUsd, sumCostUsd } from '../lib/transcript.mjs';
 
 const toolUse = (id, command, name = 'Bash') => JSON.stringify({
   type: 'assistant',
@@ -174,5 +174,14 @@ describe('Codex 原生 JSONL', () => {
     expect(sessionCostUsd(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 100, output_tokens: 20 } }))).toBeNull();
     expect(sessionCostUsd(JSON.stringify({ type: 'result', total_cost_usd: 0.7 }))).toBe(0.7);
     expect(sessionCostUsd(JSON.stringify({ type: 'result', total_cost_usd: 0 }))).toBe(0);
+  });
+});
+
+describe('sumCostUsd', () => {
+  it('null 在后续已知费用累加时保持未知；没发生的环节与真实0单独处理', () => {
+    expect(sumCostUsd(null, 0.3)).toBeNull();
+    expect(sumCostUsd(0.3, null)).toBeNull();
+    expect(sumCostUsd(undefined, 0)).toBe(0);
+    expect(sumCostUsd(0.1, 0.2)).toBe(0.3);
   });
 });

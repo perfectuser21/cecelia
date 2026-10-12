@@ -19,7 +19,8 @@ function lastResultEvent(stdout) {
     if (!line.startsWith('{')) continue;
     try {
       const event = JSON.parse(line);
-      if (event?.type === 'result') return event;
+      if (event?.type === 'result' || event?.type === 'turn.failed'
+        || (event?.type === 'item.completed' && event.item?.type === 'agent_message')) return event;
     } catch { /* 不是完整 JSON，继续往前找 */ }
   }
   return null;
@@ -36,11 +37,13 @@ export function sessionSummary(tag, pr, run) {
   if (run.timedOut) parts.push('超时');
   if (run.terminated) parts.push('被终止');
   const event = lastResultEvent(run.stdout);
-  if (event?.is_error) parts.push(`会话报错 ${event.subtype ?? ''}`.trim());
+  if (event?.is_error || event?.type === 'turn.failed') parts.push(`会话报错 ${event.subtype ?? event.error?.message ?? ''}`.trim());
   if (Number.isFinite(event?.num_turns)) parts.push(`${event.num_turns} 轮`);
   if (Number.isFinite(event?.duration_ms)) parts.push(`${Math.round(event.duration_ms / 1000)}s`);
   if (typeof run.cost_usd === 'number') parts.push(`$${run.cost_usd}`);
-  const excerpt = typeof event?.result === 'string' && event.result.trim() ? `，「${excerptOf(event.result)}」` : '';
+  else if (run.cost_usd === null) parts.push('美元费用未知');
+  const message = event?.result ?? event?.item?.text;
+  const excerpt = typeof message === 'string' && message.trim() ? `，「${excerptOf(message)}」` : '';
   const target = run.transcriptPath ? `${excerpt ? '' : ' '}→ ${run.transcriptPath}` : '';
   return `会话 ${tag} PR #${pr} 结束：${parts.join('，')}${excerpt}${target}`;
 }

@@ -1,3 +1,4 @@
+import { sumCostUsd } from '../lib/transcript.mjs';
 // verify 活动：全新 claude 会话只拿 01-intent.md 与 worktree，对每条 I-n 真实运行命令取证，写 <sprint_dir>/04-evidence.md。
 // 判分由程序做：04 的格式与覆盖（lib/evidence）、每条证据须在 stream-json 执行记录里有据（lib/transcript）、再看 verdict。
 // 运行期间 03-build.md 暂移出 sprint 目录（不受干活方自述影响），结束后无论成败都放回。
@@ -113,7 +114,7 @@ async function main(input) {
     const timeoutMs = claudeTimeoutMs(input.budget, TIMEOUT);
     state.claudeRunning = true;
     const run = await runClaude({ args, cwd: worktree, timeoutMs, tag: 'verify', isolateRemote: true });
-    spend.usd += run.cost_usd ?? 0;
+    spend.usd = sumCostUsd(spend.usd, run.cost_usd);
     state.claudeRunning = false;
     result = claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
     if (!result && !fs.existsSync(evidencePath)) result = fail('fatal', 'evidence_missing');
@@ -130,5 +131,5 @@ async function main(input) {
 // 会话花费进 metrics（审计 #35）：本活动所有 claude 会话累加，成功失败都计
 await runActivity(async (input) => {
   const result = await main(input);
-  return { ...result, metrics: { ...(result?.metrics ?? {}), cost_usd: Math.round(spend.usd * 10000) / 10000 } };
+  return { ...result, metrics: { ...(result?.metrics ?? {}), cost_usd: spend.usd } };
 });

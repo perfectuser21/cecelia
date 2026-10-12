@@ -1,3 +1,4 @@
+import { sumCostUsd, costText } from '../../lib/transcript.mjs';
 // 合并门（决策 a1fdbc51，对应旧 harness「merge 前 head == 锚定 SHA」硬检查）：runner 亲自合并，且只合并被批准的那个 head。
 // 批准 = QA 与独立裁判在该 head 上通过（qa-gate.mjs 记 s.approved.head）。合并条件：当前 head 就是批准的 head、
 // 该 head 上规定的必需检查全部登记且全绿 → gh pr merge --squash --match-head-commit <head>（GitHub 侧再校验一次 head）。
@@ -102,7 +103,7 @@ async function recordMerged(ctx, pr, s, taskId) {
   return false;
 }
 
-const money = (x) => Math.round(x * 10000) / 10000;
+const money = (x) => x === null ? null : Math.round(x * 10000) / 10000;
 
 /**
  * runner 终态交接单（合并 / 外部关闭共用）：沿用派发收口时合成的初版的标题/数据源等（金丝雀 4：初版 pr_urls 为空、
@@ -125,16 +126,16 @@ export function finalHandoff(taskId, pr, prior, { verdict, done, notDone = [] })
 function mergedHandoff(taskId, pr, prior, qa, cost) {
   return finalHandoff(taskId, pr, prior, { verdict: 'PASS', done: [
     `PR #${pr.number} 已${qa.merged.by === 'human' ? '由主理人人工' : ''}合并（head ${qa.merged.head.slice(0, 9)}）`,
-    `真人 QA ${qa.rounds?.length ?? 0} 轮 + 独立裁判通过；全链花费 $${cost.total}`,
+    `真人 QA ${qa.rounds?.length ?? 0} 轮 + 独立裁判通过；全链花费 ${costText(cost.total)}`,
   ] });
 }
 
 /** 全链花费（审计 #35）：链路（runner 回执汇总）+ QA 门（evaluate/qa-fix）+ CI 修复。 */
 function costSummary(prior, qa, ciFix) {
-  const chain = Number(prior.runner?.cost_usd) || 0;
-  const q = Number(qa.cost_usd) || 0;
-  const c = Number(ciFix.cost_usd) || 0;
-  return { chain: money(chain), qa: money(q), ci_fix: money(c), total: money(chain + q + c) };
+  const chain = prior.runner?.cost_usd === undefined ? 0 : prior.runner.cost_usd;
+  const q = qa.cost_usd === undefined ? 0 : qa.cost_usd;
+  const c = ciFix.cost_usd === undefined ? 0 : ciFix.cost_usd;
+  return { chain: money(chain), qa: money(q), ci_fix: money(c), total: sumCostUsd(chain, q, c) };
 }
 
 /** 交付复盘：合同对抗、真人 QA 各轮、CI 修复、撤销批准、花费（每条一行写进 learnings）。 */
@@ -145,7 +146,7 @@ function learningLines(taskId, pr, prior, qa, ciFix, cost) {
   const lines = [
     `coding workflow ${String(taskId).slice(0, 8)} 合并复盘（PR #${pr.number}）：`
       + `合同对抗 ${gan ? `${gan.rounds} 轮 ${gan.verdict}（走势 ${gan.trend}）` : '无记录'}；`
-      + `真人 QA ${rounds.length} 轮；CI 修复 ${attempts.length} 次；花费 $${cost.total}`,
+      + `真人 QA ${rounds.length} 轮；CI 修复 ${attempts.length} 次；花费 ${costText(cost.total)}`,
   ];
   for (const r of rounds) {
     if (r.verdict !== 'PASS') lines.push(`真人 QA 第 ${r.round} 轮 ${r.verdict}（${r.fails ?? 0} 处失败，报告 ${r.report ?? '无'}）${r.fix ? `，修复结果 ${r.fix}` : ''}`);

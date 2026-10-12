@@ -1,3 +1,4 @@
+import { sumCostUsd } from '../lib/transcript.mjs';
 // build 活动：用 claude CLI 按 02-spec.md 的每条 S-n 以 TDD 写代码并在当前分支提交，写 <sprint_dir>/03-build.md。
 // 程序做后置检查：远端未变、历史未改写、md 链未被改/未被提交、03 合规、HEAD 前进、无新的未提交改动、未碰 agent 配置；
 // 再跑 CI 门禁本地预检（lib/ci-precheck.mjs），红了起修复会话至多 2 轮，每轮修完重新过全部后置检查。
@@ -94,7 +95,7 @@ async function precheckLoop({ worktree, dir, sprintDir, input, before }) {
     });
     const timeoutMs = posInt(process.env.CODING_WF_PRECHECK_FIX_TIMEOUT_MS, PRECHECK_FIX_TIMEOUT_MS);
     const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', ...CLAUDE_TOOLS], cwd: worktree, timeoutMs, tag: 'ci-precheck-fix', isolateRemote: true });
-    spend.usd += run.cost_usd ?? 0;
+    spend.usd = sumCostUsd(spend.usd, run.cost_usd);
     const violation = (await guardFailure({ worktree, dir, sprintDir, input, before })) ?? (await postFailure({ worktree, sprintDir, before }));
     if (violation) return { failure: violation };
     if (claudeFailure(run)) break;
@@ -139,7 +140,7 @@ async function main(input) {
   const args = ['-p', prompt, '--permission-mode', 'acceptEdits', ...CLAUDE_TOOLS];
   const timeoutMs = claudeTimeoutMs(input.budget, TIMEOUT);
   const run = await runClaude({ args, cwd: worktree, timeoutMs, tag: 'build', isolateRemote: true });
-  spend.usd += run.cost_usd ?? 0;
+  spend.usd = sumCostUsd(spend.usd, run.cost_usd);
   const failure = claudeFailure(run) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
   if (failure) return failure;
 
@@ -165,5 +166,5 @@ async function main(input) {
 // 会话花费进 metrics（审计 #35）：本活动所有 claude 会话累加，成功失败都计
 await runActivity(async (input) => {
   const result = await main(input);
-  return { ...result, metrics: { ...(result?.metrics ?? {}), cost_usd: Math.round(spend.usd * 10000) / 10000 } };
+  return { ...result, metrics: { ...(result?.metrics ?? {}), cost_usd: spend.usd } };
 });

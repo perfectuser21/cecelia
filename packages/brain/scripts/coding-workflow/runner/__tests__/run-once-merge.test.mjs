@@ -27,6 +27,17 @@ describe('合并门（绑定 head SHA）', () => {
     expect(lastResult()).toMatchObject({ merge: { merged: true, head } });
   });
 
+  it('Codex 未知费用跨 QA / 合并回写保留 null，交接不显示 $0', async () => {
+    const head = remoteHead();
+    seedState({ passed: true, approved: { head, round: 1 }, cost_usd: null, rounds: [] });
+    const task = { id: TASK, status: 'completed', result: { runner: { cost_usd: null } } };
+    const r = await go(green({ prs: [pr({ headRefOid: head })] }), { tasks: [task] });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(lastResult().cost_usd).toEqual({ chain: null, qa: null, ci_fix: 0, total: null });
+    expect(lastResult().handoff.done.join(' ')).toContain('花费 未知');
+    expect(lastResult().handoff.done.join(' ')).not.toContain('$0');
+  });
+
   // 审计 #35 + #22：合并时汇总全链花费（链路 + QA + CI 修复）写进 Brain，并把这次交付的真实复盘写进 learnings
   it('合并成功 → result.cost_usd 汇总链路/QA/CI 修复花费；POST learnings-received（带 task_id、合同对抗/QA/CI 修复复盘）', async () => {
     const head = remoteHead();

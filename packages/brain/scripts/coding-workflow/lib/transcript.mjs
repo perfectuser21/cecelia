@@ -1,4 +1,4 @@
-// claude `--output-format stream-json --verbose` 对话记录：提取实际执行过的 Bash 命令及其结果，核对 04-evidence 是否有据。
+// Claude stream-json / Codex exec --json 原生对话记录：提取实际执行过的 Bash 命令及其结果，核对 04-evidence 是否有据。
 import path from 'node:path';
 
 const OUTPUT_LINES_CHECKED = 5;
@@ -25,35 +25,58 @@ function events(stdout) {
 }
 
 /**
- * claude 自身的错误文本：出错的 `type:"result"` 事件（is_error 或 subtype 非 success）的 subtype 与 result，
- * 以及 `type:"error"` 事件的消息。不含 tool_result 里的业务输出，供鉴权判定使用。
+ * 会话自身的错误文本：出错的 `type:"result"` 事件（is_error 或 subtype 非 success）的 subtype 与 result，
+ * 以及 `type:"error"` / Codex `type:"turn.failed"` 事件的消息。不含 tool_result 里的业务输出，供鉴权判定使用。
  */
 export function claudeOwnErrorText(stdout) {
   const parts = [];
   for (const event of events(stdout)) {
     if (event?.type === 'result' && (event.is_error === true || (event.subtype && event.subtype !== 'success'))) {
       parts.push(String(event.subtype ?? ''), typeof event.result === 'string' ? event.result : '');
-    } else if (event?.type === 'error') {
+    } else if (event?.type === 'error' || event?.type === 'turn.failed') {
       parts.push(String(event.error?.message ?? event.message ?? ''));
     }
   }
   return parts.filter(Boolean).join('\n');
 }
 
-/** 一次 claude 会话的花费（stream-json 最后一个 result 事件的 total_cost_usd）；拿不到为 0。 */
+/** 原生会话费用；Codex JSONL 只给 token usage，美元费用未知，不估价。 */
 export function sessionCostUsd(stdout) {
-  let cost = 0;
-  for (const event of events(stdout)) {
-    if (event?.type === 'result' && typeof event.total_cost_usd === 'number') cost = event.total_cost_usd;
+  const rows = events(stdout);
+  if (rows.some((event) => /^(thread|turn|item)\./.test(event?.type ?? ''))) return null;
+  let cost = 0; // 保留旧 Claude 缺计费事件的兼容口径；Codex 空输出由 provider 显式给 null。
+  for (const event of rows) {
+    if (event?.type === 'result' && Number.isFinite(event.total_cost_usd)) cost = event.total_cost_usd;
   }
   return cost;
 }
+
+/** null 表示有会话但美元费用未知；不能将已知小计冒充全链总额。undefined 表示没有该项。 */
+export function sumCostUsd(...costs) {
+  if (costs.some((cost) => cost === null || (cost !== undefined && !Number.isFinite(cost)))) return null;
+  return Math.round(costs.reduce((total, cost) => total + (cost ?? 0), 0) * 10000) / 10000;
+}
+
+export const costText = (cost) => cost === null ? '未知（未提供美元计费）' : `$${cost}`;
 
 /** stdout（每行一个 JSON 事件，非 JSON 行忽略）→ 按出现顺序的 [{ command, result }]；没有结果的命令 result 为 ''。 */
 export function bashExecutions(stdout) {
   const runs = [];
   const byId = new Map();
   for (const event of events(stdout)) {
+    const item = event?.item;
+    if (['item.started', 'item.completed'].includes(event?.type)
+      && item?.type === 'command_execution' && typeof item.command === 'string') {
+      const key = `codex:${item.id}`;
+      let run = item.id ? byId.get(key) : null;
+      if (!run) {
+        run = { command: item.command, result: '' };
+        runs.push(run);
+        if (item.id) byId.set(key, run);
+      }
+      if (event.type === 'item.completed') run.result = typeof item.aggregated_output === 'string' ? item.aggregated_output : '';
+      continue;
+    }
     const content = event?.message?.content;
     if (!Array.isArray(content)) continue;
     for (const block of content) {
