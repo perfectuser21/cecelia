@@ -8,7 +8,8 @@
 // 真身：cecelia/scripts/ops/opc-objects.mjs；部署副本：~/.openclaw/opc-objects.mjs。
 // 用法（在当前 Gateway 主机执行；OPENCLAW_CONFIG_PATH 可显式选择配置）：
 //   node /root/.openclaw/opc-objects.mjs list [--due]
-//   node /root/.openclaw/opc-objects.mjs list --inspection-summary
+//   node ~/.openclaw/opc-objects.mjs list --inspection-summary
+//   node ~/.openclaw/opc-objects.mjs list --inspection-batches
 //   node /root/.openclaw/opc-objects.mjs update <record_id> 状态=进行中 结果记录=...
 //   node /root/.openclaw/opc-objects.mjs create 标题=维修：xxx 状态=待办 负责Agent=infra
 import fs from "node:fs";
@@ -132,7 +133,7 @@ async function fetchAll(T) {
   return items;
 }
 
-async function cmdInspectionSummary() {
+async function cmdInspectionSummary(batched = false) {
   const items = await fetchAll(await token());
   const now = Date.now();
   const today = startOfTodayShanghai(now);
@@ -184,19 +185,27 @@ async function cmdInspectionSummary() {
     });
   }
 
-  if (records.length > INSPECTION_LIMIT) {
+  if (!batched && records.length > INSPECTION_LIMIT) {
     die(`巡检摘要命中 ${records.length} 条，超过安全上限 ${INSPECTION_LIMIT}，拒绝输出不完整 records`);
+  }
+  // 单次完整读取、同一个 now；分批只改变输出装箱，不重查或截断尾页。
+  const batches = [];
+  if (batched) {
+    for (let i = 0; i < records.length; i += INSPECTION_LIMIT) {
+      const part = records.slice(i, i + INSPECTION_LIMIT);
+      batches.push({ index: batches.length, count: part.length, records: part });
+    }
   }
   console.log(JSON.stringify({
     ok: true,
-    mode: "inspection-summary",
+    mode: batched ? "inspection-batches" : "inspection-summary",
     source_count: items.length,
     count: records.length,
     limit: INSPECTION_LIMIT,
     truncated: false,
     now_ms: now,
     timezone: "Asia/Shanghai",
-    records,
+    ...(batched ? { batch_count: batches.length, batches } : { records }),
   }));
 }
 
@@ -275,9 +284,10 @@ async function main() {
   if (cmd === "list" && rest.length === 0) await cmdList(false);
   else if (cmd === "list" && rest.length === 1 && rest[0] === "--due") await cmdList(true);
   else if (cmd === "list" && rest.length === 1 && rest[0] === "--inspection-summary") await cmdInspectionSummary();
+  else if (cmd === "list" && rest.length === 1 && rest[0] === "--inspection-batches") await cmdInspectionSummary(true);
   else if (cmd === "update" && rest.length >= 2) await cmdUpdate(rest[0], rest.slice(1));
   else if (cmd === "create" && rest.length >= 1) await cmdCreate(rest);
-  else die("用法: list [--due|--inspection-summary] | update <record_id> k=v ... | create 标题=... k=v ...");
+  else die("用法: list [--due|--inspection-summary|--inspection-batches] | update <record_id> k=v ... | create 标题=... k=v ...");
 }
 
 try {
