@@ -222,3 +222,8 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] 无 run 的有头会话在同 owner 有效租约期间不被 stale 清理；过期/已释放/异主租约无豁免，事务内重查续租
   Test: manual: bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_USER=administrator ../../node_modules/.bin/vitest run src/__tests__/integration/harness-watchdog-active-lease.pg.integration.test.js --config vitest.integration.config.js"
+
+- [x] [BEHAVIOR] factorycommanderrouteapi 固定工厂Commander开关只接严格boolean及actor/reason；启用核真实外壳收割和正式同run独立核验，事务并发幂等、审计回滚、真实回读，缺证据不启用。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator npx vitest run --config vitest.integration.config.js src/__tests__/integration/factory-commander-route.pg.integration.test.js"
+- [x] [BEHAVIOR] factoryroutehttp 内部认证、输入校验、证据拒绝、数据库错误回滚与连接释放均经过真实HTTP入口。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/routes/__tests__/factory-commander-route.test.js"
