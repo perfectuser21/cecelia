@@ -7,6 +7,7 @@ import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fail, childEnv, log } from './protocol.mjs';
 import { claudeOwnErrorText, sessionCostUsd } from './transcript.mjs';
+import { prepareCodexSession } from './codex-session.mjs';
 
 const PROMPTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../prompts');
 // 只认 claude CLI 自身的鉴权/额度报错措辞；裸 login、/login 路由等业务输出不算
@@ -81,13 +82,14 @@ export function claudeTimeoutMs(budget, { envVar, defaultMs, reserveMs = 0, env 
  * streamJson（stdout 是 stream-json 对话记录，含工具输出）时只看 claude 自身的错误事件与 stderr，
  * 不扫描 tool_result 里的业务输出；否则扫描全部输出。
  */
-export function claudeFailure({ code, output, stdout = '', stderr = '', timedOut, terminated }, { streamJson = false } = {}) {
-  if (timedOut) return fail('retryable', 'claude_timeout');
-  if (terminated) return fail('retryable', 'claude_failed', { evidence: [{ terminated: true }] });
+export function claudeFailure({ code, output, stdout = '', stderr = '', timedOut, terminated, provider }, { streamJson = false } = {}) {
+  const detail = provider ? { evidence: [{ provider }] } : {};
+  if (timedOut) return fail('retryable', 'claude_timeout', detail);
+  if (terminated) return fail('retryable', 'claude_failed', { evidence: [{ terminated: true, ...(provider ? { provider } : {}) }] });
   if (code === 0) return null;
-  const authText = streamJson ? `${claudeOwnErrorText(stdout)}\n${stderr}` : output;
-  if (AUTH_RE.test(authText)) return fail('needs_human', 'claude_auth');
-  return fail('retryable', 'claude_failed');
+  const authText = streamJson || provider === 'codex' ? `${claudeOwnErrorText(stdout)}\n${stderr}` : output;
+  if (AUTH_RE.test(authText)) return fail('needs_human', 'claude_auth', detail);
+  return fail('retryable', 'claude_failed', detail);
 }
 
 /** 向 claude 所在进程组发信号（Windows 退化为只杀直接子进程）；进程已不存在（ESRCH）忽略。 */
@@ -113,14 +115,19 @@ function signalGroup(child, signal, tag) {
 // 每个会话都要能计费（审计 #35）：没指定输出格式就用 json（末尾一个 result 事件带 total_cost_usd，与 stream-json 同形）
 const withCostOutput = (args) => (args.includes('--output-format') ? args : [...args, '--output-format', 'json']);
 
-/** 起 claude 会话；返回值另带 cost_usd（result 事件的 total_cost_usd，取不到为 0）。 */
+/** 起 claude 会话；返回值另带 cost_usd（result 事件的 total_cost_usd，Claude 兼容缺失值 0；Codex 订阅美元未知为 null）。 */
 export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolateRemote = false, transcriptPath }) {
-  const args = withModel(withCostOutput(callerArgs));
-  const priced = (run) => ({ ...run, cost_usd: sessionCostUsd(run.stdout ?? ''), ...(transcriptPath ? { transcriptPath } : {}) });
-  if (!isolateRemote) return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv(), transcriptPath }));
+  const provider = process.env.CODING_WF_PROVIDER || 'claude';
+  if (!['claude', 'codex'].includes(provider)) return { code: null, stdout: '', stderr: '', output: `provider_unsupported:${provider}`, provider, cost_usd: null };
+  let native;
+  try { if (provider === 'codex') native = prepareCodexSession({ args: callerArgs, cwd }); }
+  catch (error) { return { code: null, stdout: '', stderr: '', output: error.message, provider, cost_usd: null }; }
+  const args = native?.args ?? withModel(withCostOutput(callerArgs));
+  const priced = (run) => ({ ...run, provider, cost_usd: provider === 'codex' ? null : sessionCostUsd(run.stdout ?? ''), ...(transcriptPath ? { transcriptPath } : {}) });
+  if (!isolateRemote && provider === 'claude') return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv(), transcriptPath }));
   const ghConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-wf-gh-'));
   try {
-    return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: remoteIsolatedEnv(ghConfigDir), transcriptPath }));
+    return priced(await spawnClaude({ args, bin: native?.bin, cwd, timeoutMs, tag, env: { ...remoteIsolatedEnv(ghConfigDir), ...native?.env }, transcriptPath }));
   } finally {
     fs.rmSync(ghConfigDir, { recursive: true, force: true });
   }
@@ -144,8 +151,7 @@ function openSink(transcriptPath, tag) {
   }
 }
 
-function spawnClaude({ args, cwd, timeoutMs, tag, env, transcriptPath }) {
-  const bin = process.env.CODING_WF_CLAUDE_BIN || 'claude';
+function spawnClaude({ args, cwd, timeoutMs, tag, env, transcriptPath, bin = process.env.CODING_WF_CLAUDE_BIN || 'claude' }) {
   const sink = openSink(transcriptPath, tag);
   return new Promise((resolve) => {
     let output = '';
