@@ -70,7 +70,9 @@ def feishu_records():
         if err or d.get("code") != 0 or not isinstance(d.get("data"), dict):
             raise RuntimeError("飞书读表失败")
         d = d["data"]
-        items += d.get("items", [])
+        if not isinstance(d.get("items"), list) or not isinstance(d.get("has_more"), bool):
+            raise RuntimeError("飞书分页响应不完整")
+        items += d["items"]
         if not d.get("has_more"):
             break
         pt = d.get("page_token")
@@ -90,6 +92,8 @@ def notion_existing():
         d, err = http("https://api.notion.com/v1/databases/%s/query" % NOTION_DB, p, NH)
         if err:
             sys.exit("查 Notion 失败: %s" % err)
+        if not isinstance(d.get("results"), list) or not isinstance(d.get("has_more"), bool):
+            raise RuntimeError("Notion分页响应不完整")
         for r in d["results"]:
             rt = r["properties"].get("RecordId", {}).get("rich_text", [])
             if rt:
