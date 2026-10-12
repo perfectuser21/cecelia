@@ -13,7 +13,6 @@ const fs = require('fs');
 const [root, repo] = process.argv.slice(2);
 const migration = fs.readFileSync(`${root}/migrations/360_session_provenance.sql`, 'utf8');
 const capture = fs.readFileSync(`${root}/src/conversation-capture.js`, 'utf8');
-const launcher = fs.readFileSync(`${repo}/scripts/claude-launch.sh`, 'utf8');
 const runner = fs.readFileSync(`${root}/scripts/cecelia-run.sh`, 'utf8');
 const relay = fs.readFileSync(`${root}/src/harness-skill-relay.js`, 'utf8');
 
@@ -27,9 +26,6 @@ for (const token of [
   'provenance_lookup_failed',
 ]) {
   if (!capture.includes(token)) throw new Error(`capture gate missing ${token}`);
-}
-for (const token of ['PGCONNECT_TIMEOUT=2', 'session_provenance', 'CECELIA_DISPATCH']) {
-  if (!launcher.includes(token)) throw new Error(`launcher missing ${token}`);
 }
 // cecelia-run.sh 的 --dry-run 仍渲染机器派发命令行（契约测试用），机器身份标记不能丢。
 for (const token of ['CECELIA_DISPATCH=1', 'HARNESS_TASK_ID=', 'claude-launch.sh']) {
@@ -62,5 +58,10 @@ if (!cleanup.includes('--confirm') || !cleanup.includes("DELETE FROM captures WH
   throw new Error('cleanup SOP guard/scope missing');
 }
 NODE
+
+# 启动器已迁移 Brain HTTP API：运行真实 shell/PTY/HTTP 行为，不再镜像旧 psql 字符串。
+(cd "$ROOT" && NODE_ENV=test npx vitest run \
+  src/__tests__/claude-launch.test.js src/routes/__tests__/session-provenance.test.js \
+  --maxWorkers=1 --minWorkers=1)
 
 echo "OK: conversation capture human gate smoke passed"
