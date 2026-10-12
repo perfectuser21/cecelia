@@ -23,7 +23,7 @@ describe('Codex native shell 包装证据精确核对', () => {
     'echo "npm test"', 'printf "%s" "npm test"', 'true # npm test',
     'true && npm test', 'npm test; echo extra',
     '/tmp/bash -lc "npm test"', 'env bash -lc "npm test"',
-    'bash -ic "npm test"', 'bash -lc "npm test" extra',
+    'bash\r-lc "npm test"', 'bash -lc\r"npm test"', 'bash\n-lc "npm test"', 'bash -lc\n"npm test"', 'bash -ic "npm test"', 'bash -lc "npm test" extra',
     'bash -lc "npm test"; echo extra', 'bash -lc "npm test" && true',
     'bash -lc "npm test $DYNAMIC"', 'bash -lc "npm test $(echo extra)"',
     'bash -lc "npm test `echo extra`"', 'bash -lc "npm test',
