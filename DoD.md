@@ -227,6 +227,9 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 
 ## 比价领单租约守卫（任务 c5f6e683）
+- [x] [BEHAVIOR] registrycodingdelta 固定历史审计仅扣除 #6371 显式新增 coding_workflow，旧成员仍逐项比较且新增成员必须存在。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/registry-vs-base.audit.test.js scripts/coding-workflow/__tests__/new-task.test.mjs src/lib/__tests__/task-type-registry.test.js"
+
 - [x] [BEHAVIOR] priceleaseguard 租约409永久停止新业务和迟到结果；网络不明拒绝新动作；过期执行精确owner清理，清理失败显式返回。
   Test: manual:node --test scripts/phone-rpa/us-price-lease.test.mjs
 - [x] [BEHAVIOR] priceleasecleanup 手机停止标记拦后续业务但放行finally清理，并拒绝越界owner。
