@@ -107,10 +107,10 @@ def main():
     }, "POST")
     task_id = task["id"]
     written = []
+    claimed = call(BRAIN + "/tasks/" + task_id + "/claim", {"claimer": ACTOR, "executor_kind": "external-worker", "lease_seconds": 900}, "POST")
+    if claimed.get("success") is False or claimed.get("accepted") is False or not (claimed.get("id") == task_id or claimed.get("success") is True):
+        raise RuntimeError("批处理任务认领未通过")
     try:
-        claimed = call(BRAIN + "/tasks/" + task_id + "/claim", {"claimer": ACTOR, "executor_kind": "external-worker"}, "POST")
-        if claimed.get("success") is False or claimed.get("accepted") is False or not (claimed.get("id") == task_id or claimed.get("success") is True):
-            raise RuntimeError("批处理任务认领未通过")
         started = call(BRAIN + "/tasks/" + task_id, {"status": "in_progress"}, "PATCH")
         if started.get("success") is not True or started.get("status") != "in_progress":
             raise RuntimeError("批处理任务启动未通过")
@@ -131,22 +131,22 @@ def main():
             destination = workspace + "/OKR.md"
             write_site(destination, body)
             written.append(destination)
-        completed = call(BRAIN + "/tasks/" + task_id, {"status": "completed", "result": {
-            "actor": ACTOR, "facts": {"company_krs": len(rows), "site_files": written},
-            "evidence": {"source": BRAIN + "/okr/company-key-results", "run_id": run_id},
-            "handoff": {"schema_version": 1, "task_id": task_id, "title": "公司 OKR 执行现场同步",
-                        "verdict": "PASS", "done": ["Brain 公司原指标快照已同步执行现场"],
-                        "not_done": [], "next_steps": [], "data_sources": [BRAIN + "/okr/company-key-results"],
-                        "created_at": datetime.now(timezone.utc).isoformat()},
-        }}, "PATCH")
-        if completed.get("success") is not True or completed.get("status") != "completed":
-            raise RuntimeError("现场同步任务完成回执未通过")
-        print(json.dumps({"task_id": task_id, "child_task_id": task_id, "run_uuid": run_id, "company_krs": len(rows), "site_files": len(written)}, ensure_ascii=False))
     except (Exception, SystemExit):
         call(BRAIN + "/tasks/" + task_id, {"status": "failed", "result": {
             "actor": ACTOR, "facts": {"site_files_written": written}, "evidence": {"run_id": run_id},
         }}, "PATCH")
         raise
+    completed = call(BRAIN + "/tasks/" + task_id, {"status": "completed", "result": {
+        "actor": ACTOR, "facts": {"company_krs": len(rows), "site_files": written},
+        "evidence": {"source": BRAIN + "/okr/company-key-results", "run_id": run_id},
+        "handoff": {"schema_version": 1, "task_id": task_id, "title": "公司 OKR 执行现场同步",
+                    "verdict": "PASS", "done": ["Brain 公司原指标快照已同步执行现场"],
+                    "not_done": [], "next_steps": [], "data_sources": [BRAIN + "/okr/company-key-results"],
+                    "created_at": datetime.now(timezone.utc).isoformat()},
+    }}, "PATCH")
+    if completed.get("success") is not True or completed.get("status") != "completed":
+        raise RuntimeError("现场同步任务完成回执未通过")
+    print(json.dumps({"task_id": task_id, "child_task_id": task_id, "run_uuid": run_id, "company_krs": len(rows), "site_files": len(written)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
