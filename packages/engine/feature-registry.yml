@@ -148,6 +148,14 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.7.5"
+    date: "2026-10-12"
+    change: '/dev 路径 C 改建 coding_workflow 单，旧 harness skill 标注已废弃'
+    description: "无头 harness_initiative 的 kernel 派发已关（#6324）、编码单改投 coding_workflow runner（#6346）、建单入口拒无头 harness_initiative（A4 同 PR），但 skills/dev/SKILL.md 路径 C 仍教 POST task_type=harness_initiative 点火（照做 422 no_executor_for_task_type）。路径 C 改为用 packages/brain/scripts/coding-workflow/new-task.mjs（或等价 curl，task_type=coding_workflow + payload.coding_workflow=true + repo + acceptance）建单，runner 不支持的仓库走有头账本行（headed_manual 字符串 \"true\" + 立即 claim）；旧 Harness Pipeline 定义段标注已废弃。workflows 侧 line-strategist 路径C 同步改建 coding_workflow，7 个 harness-* skill 头部标注已废弃。回归测试：packages/engine/tests/skills/coding-workflow-entry-docs.test.ts（任务 3e82f891）。"
+    files:
+      - packages/engine/skills/dev/SKILL.md
+      - packages/workflows/skills/line-strategist/SKILL.md
+      - packages/engine/tests/skills/coding-workflow-entry-docs.test.ts
   - version: "19.7.4"
     date: "2026-10-08"
     change: 'pre-push quickcheck 找不到 vitest / 拿不到锁时不再静默放行'

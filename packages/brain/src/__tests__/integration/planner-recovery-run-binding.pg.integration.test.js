@@ -16,6 +16,16 @@ import {
   seedPlannerRecoveryCallback,
 } from './helpers/planner-recovery-receipt-fixture.js';
 import { seedActiveF1 } from './helpers/take-map-authority-fixture.js';
+import { createRoutedTask } from '../../work-routing-store.js';
+
+// A4：harness_initiative 只当有头账本类型，无头 kernel 续跑后继建单即拒（410 planner_recovery_kernel_retired，
+// 见 planner-recovery-consumption 集成测试）。本文件验 kernel run 绑定机制，后继改以有头账本行入账；
+// 机制本身随 A5 删 kernel 代码一并移除。
+const headedLedger = (client, request, ...rest) => createRoutedTask(
+  client,
+  { ...request, metadata: { ...(request.metadata || {}), headed_manual: 'true' } },
+  ...rest,
+);
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -172,7 +182,7 @@ describe.sequential('Planner recovery Kernel run binding [real PostgreSQL]', () 
 
     const consumed = await consumePlannerRecoveryReceipt(pool, {
       predecessorRunId: fixture.runId,
-    });
+    }, { createRoutedTaskFn: headedLedger });
     const successor = (await pool.query(
       'SELECT id,payload FROM tasks WHERE id=$1',
       [consumed.successor_task_id],

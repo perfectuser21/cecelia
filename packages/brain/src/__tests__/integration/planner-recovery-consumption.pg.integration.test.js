@@ -11,6 +11,15 @@ import { createRoutedTask } from '../../work-routing-store.js';
 import { seedPlannerRecoveryCallback } from './helpers/planner-recovery-receipt-fixture.js';
 
 const { Pool } = pg;
+
+// A4：harness_initiative 只当有头账本类型，无头 kernel 续跑后继建单即拒（→ 410 planner_recovery_kernel_retired，
+// 见末尾用例）。本文件其余用例验的是消费台账（串行化 / 回滚 / 不可变触发器），后继改以有头账本行入账；
+// kernel 恢复机制本身随 A5 删 kernel 代码一并移除。
+const headedLedger = (client, request, ...rest) => createRoutedTask(
+  client,
+  { ...request, metadata: { ...(request.metadata || {}), headed_manual: 'true' } },
+  ...rest,
+);
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 let adminPool;
 let pool;
@@ -175,7 +184,7 @@ describe.sequential('planner recovery consumption PostgreSQL ledger', () => {
       consumePlannerRecoveryReceipt(pool, {
         predecessorRunId: fixture.runId,
         idempotencyKey: `retry-${index}`,
-      })
+      }, { createRoutedTaskFn: headedLedger })
     )));
 
     expect(new Set(results.map((result) => result.successor_task_id)).size).toBe(1);
@@ -219,6 +228,7 @@ describe.sequential('planner recovery consumption PostgreSQL ledger', () => {
       'default_execution_profile',
       'execution_profile_override',
       'harness_runtime',
+      'headed_manual',
       'impact_contract_required',
       'initiative_id',
       'map_scope',
@@ -241,7 +251,7 @@ describe.sequential('planner recovery consumption PostgreSQL ledger', () => {
       [fixture.attemptId],
     );
     const createThenFail = async (...args) => {
-      await createRoutedTask(...args);
+      await headedLedger(...args);
       throw new Error('injected planner consumption failure');
     };
 
@@ -278,7 +288,7 @@ describe.sequential('planner recovery consumption PostgreSQL ledger', () => {
     const fixture = await seedRecoverablePlannerSource();
     const consumed = await consumePlannerRecoveryReceipt(pool, {
       predecessorRunId: fixture.runId,
-    });
+    }, { createRoutedTaskFn: headedLedger });
     await expect(pool.query(
       'UPDATE planner_recovery_consumptions SET idempotency_key=idempotency_key WHERE receipt_id=$1',
       [consumed.receipt_id],
@@ -287,6 +297,28 @@ describe.sequential('planner recovery consumption PostgreSQL ledger', () => {
       'DELETE FROM planner_recovery_consumptions WHERE receipt_id=$1',
       [consumed.receipt_id],
     )).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('A4：默认（无头 kernel 续跑后继）建单闸拒 → 410 planner_recovery_kernel_retired，后继/路由/消费零落行', async () => {
+    const fixture = await seedRecoverablePlannerSource();
+    const receipt = await pool.query(
+      'SELECT id FROM planner_recovery_receipts WHERE planner_attempt_id=$1',
+      [fixture.attemptId],
+    );
+    await expect(consumePlannerRecoveryReceipt(pool, {
+      predecessorRunId: fixture.runId,
+    })).rejects.toMatchObject({ code: 'planner_recovery_kernel_retired', httpStatus: 410 });
+    const counts = await pool.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM planner_recovery_consumptions
+           WHERE receipt_id=$1) AS consumptions,
+         (SELECT COUNT(*)::int FROM tasks
+           WHERE payload->>'planner_recovery_receipt_id'=$1::text) AS successors,
+         (SELECT COUNT(*)::int FROM work_routing_receipts
+           WHERE source='child' AND source_id=$2) AS routes`,
+      [receipt.rows[0].id, `planner-recovery:${receipt.rows[0].id}`],
+    );
+    expect(counts.rows[0]).toEqual({ consumptions: 0, successors: 0, routes: 0 });
   });
 
   it('fails closed when rollback would drop a non-empty consumption ledger', async () => {

@@ -1,7 +1,7 @@
 ---
 id: harness-evaluator-skill
 description: |
-  Harness Evaluator — 阶段 B **pre-merge gate**（不是 merge 后）：
+  【已废弃（2026-10-12）：旧 harness 编排不再派发，编码改建 coding_workflow 单】Harness Evaluator — 阶段 B **pre-merge gate**（不是 merge 后）：
   Generator 写完代码 push PR 后，CI 跑过基础卫生（lint/type/vitest mock/build），
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
@@ -57,6 +57,7 @@ changelog:
   - 1.1.0: 加反作弊 reflexive check — 禁止把 vitest "passed" 当 PASS 替代物（W19/W20 实证 sub-evaluator 漏判 schema drift 的根因）。强制每条 [BEHAVIOR] Test: 命令必须真执行；命令缺 jq -e 或自然语言期望直接 FAIL；vitest 输出存在但合同 [BEHAVIOR] 未真跑 → FAIL。对齐 Anthropic harness-design "evaluator 默认会过度通过，必须 prompt 工程严格化"
   - 1.0.0: 初版 — Step A 模式 (DoD 验证) + Step B 模式 (E2E)，按 journey_type 选验证工具
 ---
+> **已废弃（2026-10-12）**：旧 harness 链（task_type=harness_initiative / orchestrator=skill-relay / kernel-v1）无头派发已关闭、建单入口拒无头 harness_initiative；编码工作改建 coding_workflow 单（`packages/brain/scripts/coding-workflow/new-task.mjs`），由 coding-workflow-runner 跑 spec→GAN→实现→QA→合并。本 skill 仅留作历史参考，随旧 harness 代码删除（车道 A5）一并下线，勿再点火。
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，直接按本文档流程操作。**
