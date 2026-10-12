@@ -96,9 +96,9 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 # 启动端是唯一知道 session 出处的地方。派发标记优先于 TTY；无法确定出处时不登记，
-# 让采集端按未登记 session 失败关闭。登记失败不能阻塞 Claude，但连接等待最多 2 秒。
+# 让采集端按未登记 session 失败关闭。登记失败不能阻塞 Claude，HTTP 总等待最多 2 秒。
 _register_session_provenance() {
-    local kind launched_by task_id
+    local kind launched_by task_id body brain_url
     if [[ "${CECELIA_DISPATCH:-0}" == "1" ]]; then
         kind="machine"
         launched_by="${CECELIA_LAUNCHED_BY:-cecelia-dispatch}"
@@ -110,17 +110,16 @@ _register_session_provenance() {
     fi
 
     task_id="${HARNESS_TASK_ID:-}"
-    # psql does not perform variable interpolation inside a -c argument. Feed the
-    # statement over stdin so :'name' is resolved client-side before PostgreSQL
-    # sees it; otherwise registration silently fails (failure is intentionally
-    # non-blocking for Claude startup).
-    PGCONNECT_TIMEOUT=2 psql cecelia -X -v ON_ERROR_STOP=1 \
-        -v sid="$SID" -v kind="$kind" -v launched_by="$launched_by" -v task_id="$task_id" \
-        >/dev/null 2>&1 <<'PROVENANCE_SQL' || true
-INSERT INTO session_provenance(session_id,kind,launched_by,task_id)
-VALUES (:'sid', :'kind', :'launched_by', NULLIF(:'task_id','')::uuid)
-ON CONFLICT (session_id) DO NOTHING;
-PROVENANCE_SQL
+    # 核心库已迁到 us-vps，启动器经 Brain API 写真身，不依赖执行机本地数据库。
+    # JSON 编码避免 shell 插值破坏字段；正文、路径、凭据都不进入登记请求。
+    body="$(python3 -c 'import json,sys; print(json.dumps(dict(zip(
+        ["session_id", "kind", "launched_by", "task_id"],
+        sys.argv[1:4] + [sys.argv[4] or None]))))' \
+        "$SID" "$kind" "$launched_by" "$task_id" 2>/dev/null)" || return 0
+    brain_url="${BRAIN_URL:-http://100.79.41.61:5221}"
+    curl -fsS --connect-timeout 2 --max-time 2 \
+        -H 'Content-Type: application/json' --data-binary "$body" \
+        "${brain_url%/}/api/brain/session-provenance" >/dev/null 2>&1 || true
 }
 
 _register_session_provenance

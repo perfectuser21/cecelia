@@ -56,6 +56,14 @@
 - [x] [BEHAVIOR] headedsessionhandoff 结束的有头会话摘要并入关联任务 handoff（已有真 handoff 只追加不覆盖、headed_sessions 按会话幂等、未终态任务加有头续接下一步，kind 经 resume_headed 适配点、未支持时为 note）；无关联补建 completed 账本任务（source=conversation、source_id=headed-session:<sid>）并写 handoff，登记 task-creation-inventory。
   Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/headed-session-handoff.test.js src/__tests__/task-creation-inventory.test.js --maxWorkers=1 --minWorkers=1"
 
+## Launcher 会话出处 API（f9834457）
+
+- [x] [BEHAVIOR] launcherprovenancepg 真实 launcher 经本地 HTTP Brain 路由写 cecelia_scratch，SQL 与 GET 双读回，并验证重复 human 请求不能覆盖 machine 来源。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_HOST=/tmp DB_USER=administrator NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/session-provenance.integration.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] launcherprovenanceapi 人类 PTY / 机器派发经 Brain HTTP API 登记来源；未知来源、dry-run 不登记，网络无响应最多 2 秒后继续启动。API 拒绝非法字段，同 session 幂等保留原出处，GET 读回且数据库异常不暴露内部信息。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/routes/__tests__/session-provenance.test.js src/__tests__/claude-launch-provenance-api.test.js --maxWorkers=1 --minWorkers=1"
+
 # 技能工厂派发器 claim executor_kind 修正（任务 a5f42455 上产实测）
 
 - [x] [BEHAVIOR] factorydispatcherek 派发器 claim 请求体 executor_kind=openclaw-agent（tasks_executor_kind_check 允许值）；原 factory-dispatcher 值让 Brain 回 500，执行单永远认领不了。
