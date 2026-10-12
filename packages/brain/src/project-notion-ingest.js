@@ -40,7 +40,7 @@ async function mergePage(client, root, page, dbId) {
   if (!shouldWrite) return outcome(root, false, false);
   const { rows } = await client.query(
     `UPDATE projects SET status = $2, custom_props = $3::jsonb, end_date = $4, ai_tier = $5,
-       metadata = $6::jsonb, notion_props = $7::jsonb, updated_at = NOW()
+       metadata = $6::jsonb, notion_props = $7::jsonb, updated_at = ${merged.changed ? 'NOW()' : 'updated_at'}
      WHERE id = $1 RETURNING *`,
     [root.id, merged.root.status, JSON.stringify(merged.root.custom_props || {}), merged.root.end_date,
       merged.root.ai_tier, JSON.stringify(metadata), JSON.stringify(props)],
@@ -66,7 +66,8 @@ export async function ingestProjectPage(client, token, page, {
       if (match) {
         root = (await client.query('SELECT * FROM projects WHERE id = $1 FOR UPDATE', [match[1]])).rows[0];
         if (root?.notion_props?.notion_id && root.notion_props.notion_id !== page.id) {
-          throw new Error(`Projects 页面 ${page.id} 的 Run ID 已关联其他页面`);
+          if (isArchived) root = null; // 历史副本留档，不重新认领或阻断活跃页。
+          else throw new Error(`Projects 页面 ${page.id} 的 Run ID 已关联其他页面`);
         }
       }
     }
