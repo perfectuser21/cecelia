@@ -1,3 +1,8 @@
+# OPC 巡检配置迁移修复（任务 de5194d0）
+
+- [x] [BEHAVIOR] opcconfiglookup OPC CLI 在 MMV 读取当前用户的 openclaw.json，显式 OPENCLAW_CONFIG_PATH 优先且配置不存在、无权限、坏 JSON、账号字段缺失均失败关闭；旧 Linux 路径保留，错误不泄露凭据；真实只读查询返回经营对象。
+  Test: manual:bash scripts/ops/__tests__/opc_objects_config.test.sh
+
 # 统一领单租约 + 心跳 + 设备锁跟租约走 + 设备池（任务 c5f6e683，派发总闸 G）
 
 - [x] [BEHAVIOR] taskleaseclaim POST /tasks/:id/claim 带 lease_seconds 落 task_leases 并返回 lease_until（on_lease_expire 非法 400、不带租约行为不变）；POST /tasks/:id/heartbeat 同领单方续约并把持有的设备锁 expires_at 拉到租约，认领换人/任务终态/租约已回收 → 409 lease_lost；/lease/release 主动关租约。
