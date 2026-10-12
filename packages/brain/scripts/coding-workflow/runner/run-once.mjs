@@ -27,6 +27,7 @@ import { restoreStates, mirrorStates } from './lib/state-store.mjs';
 import { settleClosedPrs } from './lib/pr-closure.mjs';
 import { readyCandidates } from './lib/deps.mjs';
 import { repoViews, taskView } from './lib/repos.mjs';
+import { startLeaseHeartbeat } from './lib/lease.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_REL = 'packages/brain/scripts/coding-workflow';
@@ -84,7 +85,7 @@ async function claimFirst(ctx, candidates) {
     return null;
   }
   for (const task of candidates) {
-    const r = await ctx.brain.claim(task.id, ctx.cfg.claimer);
+    const r = await ctx.brain.claim(task.id, ctx.cfg.claimer, ctx.cfg.leaseSeconds);
     if (r.ok) return { ...task, claimed_kind: r.body?.executor_kind ?? null };
     log(`认领 ${task.id} 失败（HTTP ${r.status}），换下一条`);
   }
@@ -207,10 +208,25 @@ export async function runOnce(cfg, signal) {
     return failTask(tctx, task, job, { status: 'failed', failed_activity: null, reason_code: 'executor_kind_mismatch', pr_url: null, detail });
   }
   let summary;
+  // 统一领单租约：执行期间心跳续约；409 lease_lost → 中止执行器，Brain 已按租约语义处置，不再回写终态
+  const leaseAbort = new AbortController();
+  const onOuterAbort = () => leaseAbort.abort();
+  signal?.addEventListener('abort', onOuterAbort, { once: true });
+  const beat = startLeaseHeartbeat({
+    brain: ctx.brain, taskId: task.id, claimer: cfg.claimer, leaseSeconds: cfg.leaseSeconds, intervalMs: cfg.heartbeatMs, log,
+    onLost: () => leaseAbort.abort(),
+  });
   try {
-    summary = await execute(tctx, task, job, signal);
+    summary = await execute(tctx, task, job, leaseAbort.signal);
   } catch (error) {
     summary = { status: 'failed', failed_activity: null, reason_code: error?.message || 'runner_error', pr_url: null };
+  } finally {
+    beat.stop();
+    signal?.removeEventListener('abort', onOuterAbort);
+  }
+  if (beat.lost()) {
+    log(`任务 ${task.id} 租约已被 Brain 回收（lease_lost）：执行器已中止，不回写终态；现场 ${job.worktree ?? '无'}`);
+    return 1;
   }
   try {
     if (summary.status === 'completed' && !summary.reason_code) {

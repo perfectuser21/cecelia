@@ -13,7 +13,7 @@
   },
   "workflows": {
     "douyin_video_publish.android": {
-      "device": { "node": "XIAN-M4-PHONE", "profile": "xiaolongxia", "serial": "ANGYVB4311010223", "ssh_host": "xian-m4" },
+      "device": { "node": "XIAN-M4-PHONE", "profile": "xiaolongxia", "serial": "ANGYVB4311010223", "ssh_host": "xian-m4", "pool": "douyin.internal", "_pool_comment": "Brain 主动派 workflow_dispatch 时从设备池 douyin.internal（抖音·内部号）按 priority 选可用的一台（任务 c5f6e683）；serial 仍是技能工厂推进器/派发器的固定机" },
       "dispatch_via": "commander",
       "commander": { "capability": "douyin_video_publish", "machine": "xian-m4", "biz": "Ai办公室", "timeout_min": 55, "_comment": "Brain 主动派 workflow_dispatch 给 work-commander 的调度单（任务 f38e7cc2）：<capability> <machine> <profile> <serial> <biz>；capability 对应 zenithjoy-workspace product-map/contracts/douyin_video_publish.yaml。dispatch_via=commander 且 brain_config factory_commander_route_enabled=true 时推进器改建 workflow_dispatch（Brain→Commander→外壳→Codex），正文锁那行换 lock_brief、交付补 delivery_note（任务 c0fe7e30）",
         "lock_brief": "锁：Brain 设备锁由 Brain 代领、手机控制器锁由外壳（wf-agent-run 准备活动）代领，owner=本 run_id；开工 lock-status 核对 owner，不要 lock-acquire / lock-release，收尾由外壳释放并回读 free",

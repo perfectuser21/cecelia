@@ -20,11 +20,17 @@ function clampTtl(ttlMinutes) {
   return Math.min(TTL_MAX, Math.max(TTL_MIN, Math.round(n)));
 }
 
+/** 无租约的旧持有者：in_progress 最多再保护到 locked_at + 此分钟数（= TTL 上限），不再无限压住。 */
+export const LEGACY_HOLDER_PROTECT_MIN = TTL_MAX;
+
 /**
  * 原子抢锁。占用判定：locked_by 非空 且（expires_at NULL=永久锁 或 未过期 或
- * 过期但持有任务仍 in_progress——双重判据，防长任务锁被抢导致双 RPA 同机）。
+ * 过期但持有任务仍 in_progress 且「租约未过期」——锁跟租约走（派发总闸 G，任务 c5f6e683））。
+ * 持有任务没有活跃租约（旧执行者）时，in_progress 只保护到 locked_at + 240 分钟。
+ * 只回收已过期的锁：未过期的锁无论持有者租约如何都不可抢（never take over another run）。
  * @returns {{result:'acquired',lock:object}|{result:'locked',holder:object}|{result:'unknown_device'}}
  */
+
 export async function acquireDeviceLock(taskId, deviceName, ttlMinutes = TTL_DEFAULT, pool = defaultPool) {
   const ttl = clampTtl(ttlMinutes);
   const { rows } = await pool.query(
@@ -40,7 +46,16 @@ export async function acquireDeviceLock(taskId, deviceName, ttlMinutes = TTL_DEF
             AND NOT EXISTS (
               SELECT 1 FROM tasks t
                WHERE t.id::text = device_locks.locked_by AND t.status = 'in_progress'
+                 AND (
+                   EXISTS (SELECT 1 FROM task_leases l
+                            WHERE l.task_id = t.id AND l.released_at IS NULL AND l.lease_until > NOW())
+                   OR (
+                     NOT EXISTS (SELECT 1 FROM task_leases l WHERE l.task_id = t.id AND l.released_at IS NULL)
+                     AND device_locks.locked_at > NOW() - make_interval(mins => ${LEGACY_HOLDER_PROTECT_MIN})
+                   )
+                 )
             )
+
           )
         )
       RETURNING *`,

@@ -27,6 +27,7 @@ import { sshWithStdin, sshRun } from './lib/ssh-exec.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRun, finishRun } from './lib/task-run.js';
 import { finalizeTask } from './lib/task-terminal.js';
+import { setBrainLease, BRAIN_LEASE_MARGIN_SECONDS } from './lib/task-lease.js';
 import { rpaExploreFailure } from './lib/rpa-explore-receipt.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
 import { splitExecParamsBlock } from './routing/exec-params.js';
@@ -280,9 +281,17 @@ export async function triggerOpenclawAgent(task, deps = {}) {
       WHERE id = $1 AND status IN ('queued', 'in_progress')`,
     [task.id],
   );
+  // Brain 租约（派发总闸 G，任务 c5f6e683）：超时 + 15 分钟，过期由 task-lease-reaper 先探活再判 lost，
+  // 不再「生死未知不处置」。落租约失败不影响派发（fail-open）。
+  try {
+    await (deps.setLease ?? setBrainLease)(pool, task.id, effectiveTimeoutSec(task.payload?.timeout_sec ?? AGENT_TIMEOUT_SEC) + BRAIN_LEASE_MARGIN_SECONDS);
+  } catch (err) {
+    console.warn(`[openclaw-agent] 落 Brain 租约失败（不影响派发） task=${task.id}: ${err.message}`);
+  }
   await recordTaskEventSafe(pool, task.id, 'openclaw_agent_spawned', {
     run_id: runId, department, model, machine, already_running: spawnOutcome === 'already',
   });
+
   // 一次执行 = 一行 task_runs（run 原语，fail-open）：ssh 已把 agent 起到执行机，此刻起算开始。
   await startRun({
     taskId: task.id,

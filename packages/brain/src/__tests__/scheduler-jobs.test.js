@@ -162,7 +162,14 @@ vi.mock('../routing/device-delegation.js', () => ({
   reconcileDelegatedDeviceJobs: vi.fn().mockResolvedValue({ checked: 0, completed: 0, failed: 0 }),
 }));
 
+// task-lease-reaper 真实 handler 会扫 task_leases 并 ssh 探活；行为由 integration/task-lease-device-pool.pg.integration.test.js 覆盖。
+vi.mock('../lib/task-lease.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  reapExpiredLeases: vi.fn().mockResolvedValue({ requeued: 0, failed: 0, extended: 0, released: 0, skipped: 0 }),
+}));
+
 // owner-decision-deadline 真实 handler 会查 tasks/开事务；行为由 integration/owner-decision-approval.pg.integration.test.js 覆盖，
+
 // 这里只验注册（顺序/声明的活性尺子/needsPool）。
 vi.mock('../owner-decision-deadline.js', () => ({
   runOwnerDecisionDeadline: vi.fn().mockResolvedValue({ skipped: true }),

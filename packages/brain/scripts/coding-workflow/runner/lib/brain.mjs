@@ -73,8 +73,14 @@ export function brainClient(baseUrl, { listLimit = 500, log = () => {} } = {}) {
     },
 
     /** POST /tasks/:id/claim，显式 executor_kind（Brain 视为外部执行体，不打回不清 claim）；409 = 已被别人认领。 */
-    claim(id, claimer) {
-      return request(`${tasksUrl}/${encodeURIComponent(id)}/claim`, json('POST', { claimer, executor_kind: EXECUTOR_KIND }));
+    claim(id, claimer, leaseSeconds) {
+      const lease = leaseSeconds ? { lease_seconds: leaseSeconds } : {};
+      return request(`${tasksUrl}/${encodeURIComponent(id)}/claim`, json('POST', { claimer, executor_kind: EXECUTOR_KIND, ...lease }));
+    },
+
+    /** POST /tasks/:id/heartbeat（统一领单租约续约）；409 = 租约已被 Brain 回收，404 = 旧 Brain 无此端点。 */
+    heartbeat(id, claimer, leaseSeconds) {
+      return request(`${tasksUrl}/${encodeURIComponent(id)}/heartbeat`, json('POST', { claimer, lease_seconds: leaseSeconds }));
     },
 
     /** POST /spans（决策 b34e346a：执行记录，单条或数组）；返回 { ok, status, body }。 */

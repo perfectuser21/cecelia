@@ -81,6 +81,8 @@ describe('调度单带 run_id / task_id', () => {
     let input = '';
     await dispatchWorkflowCommanderTasks(pool, {
       resolveConfig: resolveWorkflowConfig, now: IN_HOURS, lockGate: async () => ({ pass: true }), target: 'mmv',
+      // 真配置登记了设备池 douyin.internal（任务 c5f6e683）：假池选中原固定机
+      selectFromPool: async () => ({ ok: true, member: { serial: 'ANGYVB4311010223', machine: 'xian-m4', profile: 'xiaolongxia', account_ref: 'Ai办公室' }, tried: [] }),
       sshDispatch: async (_a, i) => { input = i; return 'DISPATCHED'; },
     });
     const pay = pool.calls.find((c) => /jsonb_build_object\('run_id'/.test(c.sql));
