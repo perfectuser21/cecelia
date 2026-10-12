@@ -23,8 +23,9 @@ const TRANSITIONS = { queued: ['in_progress'], in_progress: ['completed', 'faile
  * onResultPatch(task) 在只带 result 的 PATCH 后调用（模拟 Brain 重启把任务打回 queued 等）；
  * 认领对 coding-workflow-runner 强制写 kind（同真 Brain），legacyClaim=true 模拟旧端点的 COALESCE。
  */
-export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {}, onResultPatch, legacyClaim = false, internalToken = null } = {}) {
-  const state = { tasks: structuredClone(tasks), calls: [], patches: [], learnings: [], spans: [] };
+export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {}, onResultPatch, legacyClaim = false, internalToken = null, heartbeatStatus = null } = {}) {
+  const state = { tasks: structuredClone(tasks), calls: [], patches: [], learnings: [], spans: [], heartbeats: [] };
+
   const find = (id) => state.tasks.find((t) => t.id === id);
   const send = (res, code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
   const server = http.createServer((req, res) => {
@@ -73,7 +74,15 @@ export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = 
         task.executor_kind = force ? body.executor_kind : (task.executor_kind ?? body.executor_kind ?? 'headed-session');
         return send(res, 200, { id: task.id, claimed_by: task.claimed_by, executor_kind: task.executor_kind });
       }
+      // 统一领单租约心跳（任务 c5f6e683）：heartbeatStatus(n) 决定第 n 次心跳的 HTTP；未配置 = 旧 Brain 没有该端点（404）
+      const hb = /^\/api\/brain\/tasks\/([^/]+)\/heartbeat$/.exec(url.pathname);
+      if (req.method === 'POST' && hb && heartbeatStatus) {
+        state.heartbeats.push(JSON.parse(raw));
+        const code = heartbeatStatus(state.heartbeats.length);
+        return send(res, code, code === 200 ? { ok: true } : { error: 'lease_lost' });
+      }
       if (req.method === 'PATCH' && one) {
+
         const body = JSON.parse(raw);
         state.patches.push({ id: one[1], body });
         const forced = body.status ? patchStatus[body.status] : undefined;
