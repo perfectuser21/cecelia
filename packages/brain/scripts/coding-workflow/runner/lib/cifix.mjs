@@ -90,7 +90,7 @@ async function attemptConflict(ctx, target, worktree, signal) {
   if (merge.code !== 0) {
     const conflicts = (await git(worktree, ['diff', '--name-only', '--diff-filter=U'])).stdout.split('\n').filter(Boolean);
     if (conflicts.length === 0) throw stop('merge_failed');
-    ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：与 main 冲突 ${conflicts.join('、')}，派 claude 解决`);
+    ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：与 main 冲突 ${conflicts.join('、')}，派 ${process.env.CODING_WF_PROVIDER || 'claude'} 解决`);
     const prompt = loadPrompt('conflict-fix', {
       BRANCH: pr.headRefName,
       PR_URL: pr.url ?? '',
@@ -100,7 +100,7 @@ async function attemptConflict(ctx, target, worktree, signal) {
     });
     await runFixSession(ctx, pr, prompt, worktree, 'conflict-fix');
     if ((await git(worktree, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])).code === 0) throw stop('merge_unfinished');
-    resolvedBy = 'claude';
+    resolvedBy = process.env.CODING_WF_PROVIDER || 'claude';
   } else {
     ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：与 main 冲突，程序合并 origin/main 完成`);
   }
