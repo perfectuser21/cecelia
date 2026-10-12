@@ -47,6 +47,10 @@ describe('Codex native shell 包装证据精确核对', () => {
     expect(unverifiedItems([ev('npm test', 'failed')], runs)).toEqual([]);
     expect(unverifiedItems([ev('npm test', 'failed\nok')], runs)).toEqual([{ id: 'E-1', reason: 'output_not_in_result' }]);
   });
+  it('缺失退出码或动态cd前缀不能补成已执行证据', () => {
+    expect(unverifiedItems([ev('npm test')], bashExecutions(native('npm test', 'ok', null)))).toEqual(denied);
+    expect(unverifiedItems([ev('cd \"$OUTSIDE\" && npm test')], bashExecutions(native('npm test')), { worktree: '/wt' })).toEqual(denied);
+  });
   it('agent_message里即便完整声称命令与输出也不作证', () => {
     const text = JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'npm test\nok' } });
     expect(unverifiedItems([ev('npm test')], bashExecutions(text))).toEqual(denied);
