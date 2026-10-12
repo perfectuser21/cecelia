@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readHuman, brainHuman, mergeHuman, humanProps } from '../lib/project-notion-human.js';
+import { readHuman, brainHuman, mergeHuman, humanProps } from '../project-notion-human.js';
 
 const base = { status: 'In Progress', priority: null, remark: '', due: null, ai_tier: '知情' };
 const row = (extra = {}) => ({ id: 'p', status: 'active', ai_tier: '知情', custom_props: {},

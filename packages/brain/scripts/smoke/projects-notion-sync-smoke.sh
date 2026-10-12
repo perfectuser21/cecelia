@@ -25,9 +25,9 @@ esac
 export NODE_ENV=test
 cd "$BRAIN_DIR"
 node ../../node_modules/vitest/vitest.mjs run \
-  src/__tests__/project-notion-human.test.js \
+  src/lib/__tests__/project-notion-human.test.js \
   src/__tests__/project-notion-ingest.test.js \
-  src/__tests__/projects-notion-sync.test.js \
+  src/__tests__/notion-relay-projection.projects.test.js \
   src/routes/__tests__/task-projects-ai-tier.test.js \
   --maxWorkers=1 --minWorkers=1
 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js \
