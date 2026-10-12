@@ -8,7 +8,7 @@ import { remoteTaskId } from './pr-branch.mjs';
 import { prFile, stateDir } from './repos.mjs';
 
 const KINDS = {
-  qa: { file: (pr) => `qa-${pr}.json`, key: 'qa_state', fields: ['passed', 'approved', 'escalated', 'merged', 'revoked', 'bad', 'judge_bad', 'judge_pending', 'merge_failures', 'rounds', 'preview_stopped', 'last_eval_error', 'cost_usd', 'stall_floor', 'smoke', 'smoke_note', 'smoke_missing', 'smoke_waived', 'smoke_refit', 'closed', 'reopened', 'awaiting_human'] },
+  qa: { file: (pr) => `qa-${pr}.json`, key: 'qa_state', fields: ['passed', 'approved', 'escalated', 'merged', 'revoked', 'bad', 'judge_bad', 'judge_pending', 'merge_failures', 'rounds', 'preview', 'preview_stopped', 'last_eval_error', 'cost_usd', 'stall_floor', 'smoke', 'smoke_note', 'smoke_missing', 'smoke_waived', 'smoke_refit', 'closed', 'reopened', 'awaiting_human'] },
   cifix: { file: (pr) => `cifix-${pr}.json`, key: 'ci_fix_state', fields: ['attempts', 'archived_attempts', 'reruns', 'escalated', 'update_branch', 'cost_usd'] },
   commander: { file: (pr) => `commander-${pr}.json`, key: 'commander_state', fields: ['interventions', 'human'] },
 };

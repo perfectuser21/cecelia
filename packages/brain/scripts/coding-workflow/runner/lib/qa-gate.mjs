@@ -21,6 +21,7 @@ import { runJudge, priorJudgeFiles } from './judge-gate.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
 import { prFile, stateDir, prLabel } from './repos.mjs';
 import { solidifyQa } from './qa-solidify.mjs';
+import { waitForPreview, clearPreviewWait } from './preview-wait.mjs';
 
 export { preflightSmoke, prTouchesApi } from './qa-solidify.mjs';
 
@@ -117,8 +118,7 @@ export async function revokeQaPass(ctx, pr, files, reason) {
 /** 预览环境没就绪：不存在/已停 → 请求启动；容量拒绝超过时限 → 升级。 */
 async function ensurePreview(ctx, pr, s, p) {
   if (p.state === 'pending' || p.state === 'error') {
-    ctx.log(`PR #${pr.number} 预览环境 ${p.state}，下轮再验`);
-    return;
+    return waitForPreview(ctx, pr, s, p, { writeState, escalate });
   }
   const r = await previewCall(ctx.cfg, 'start', { pr_number: pr.number, branch_name: pr.headRefName, base_repo: ctx.cfg.previewBaseRepo ?? 'cecelia' });
   const now = Date.now();
@@ -472,6 +472,7 @@ export async function runQaGate(ctx, signal) {
       }
       // 预览部署的必须正是这个 head（审计 P0 #2）：推送后还没重新部署就等
       const p = await previewOf(pr.number, { api: cfg.previewApi, host: cfg.previewHost, expectSha: pr.headRefOid });
+      if (p.state !== 'pending' && p.state !== 'error') clearPreviewWait(ctx, pr, s, writeState);
       if (p.state === 'stale') {
         await previewStale(ctx, pr, s, p);
         continue;
