@@ -141,6 +141,40 @@ describe('install.sh', () => {
     expect(plist).not.toContain('__');
   });
 
+  // C5：多仓库——CODING_WF_REPOS 透传进 plist；已启用的其他仓库 clone 不存在时以运行用户身份 clone（clone 路径与 origin 取自 repos.json）
+  it('CODING_WF_REPOS=cecelia,zj：写进 plist（合法），并为 zj 打印 sudo -u <用户> git clone；未设置时 plist 不出现该键', () => {
+    // list-clones 要真 node 跑：把 node 桩换成真 node
+    const nodeStub = path.join(toolDirs[0], 'node');
+    fs.rmSync(nodeStub);
+    fs.symlinkSync(process.execPath, nodeStub);
+    const real = JSON.parse(fs.readFileSync(path.join(HERE, '../../repos.json'), 'utf8')).repos;
+    const z = real.find((x) => x.key === 'zenithjoy-workspace');
+    const reposFile = path.join(root, 'repos.json');
+    const zjOrigin = path.join(root, 'zj.git');
+    const zjClone = path.join(root, 'zj-clone');
+    fs.writeFileSync(reposFile, JSON.stringify({ repos: [...real.filter((x) => x.key !== z.key),
+      { ...z, key: 'zj', aliases: ['zj'], slug: 'acme/zj', origin: zjOrigin, clone: zjClone, worktree_base: path.join(root, 'wt-zj'), state_ns: 'zj', enabled: true }] }));
+    const r = runInstall(['--dry-run'], { ...env, CODING_WF_REPOS: 'cecelia,zj', CODING_WF_REPOS_FILE: reposFile });
+    expect(r.status, r.stderr).toBe(0);
+    const plist = plistOf(r.stdout);
+    expect(plist).toContain('<key>CODING_WF_REPOS</key>\n    <string>cecelia,zj</string>');
+    expect(plist).not.toContain('__');
+    expect(r.stdout).toContain(`sudo -u administrator git clone -q ${zjOrigin} ${zjClone}`);
+    const plutil = spawnSync('sh', ['-c', 'command -v plutil'], { encoding: 'utf8' }).stdout.trim();
+    if (plutil) {
+      const file = path.join(root, 'repos.plist');
+      fs.writeFileSync(file, plist);
+      const lint = spawnSync(plutil, ['-lint', file], { encoding: 'utf8' });
+      expect(lint.status, lint.stdout + lint.stderr).toBe(0);
+    }
+    // 只开 cecelia：不 clone zj
+    const only = runInstall(['--dry-run'], { ...env, CODING_WF_REPOS: 'cecelia', CODING_WF_REPOS_FILE: reposFile });
+    expect(only.status, only.stderr).toBe(0);
+    expect(only.stdout).not.toContain(zjClone);
+    const none = runInstall(['--dry-run'], env);
+    expect(plistOf(none.stdout)).not.toContain('CODING_WF_REPOS');
+  });
+
   it('缺工具（claude 不在 PATH）：报错退出，不输出 plist', () => {
     const r = runInstall(['--dry-run'], { ...env, PATH: `${toolDirs.slice(0, 3).join(':')}:/usr/bin:/bin` });
     expect(r.status).not.toBe(0);

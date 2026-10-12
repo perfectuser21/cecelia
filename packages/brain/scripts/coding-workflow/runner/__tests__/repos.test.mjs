@@ -1,6 +1,6 @@
 // 仓库配置表（C4）：repos.json 是 runner 多仓库口径的唯一来源；cecelia 行为不变，zenithjoy 先登记不启用。
 import { describe, it, expect } from 'vitest';
-import { loadRepos, resolveRepo, enabledRepos, resolveEntry, repoView, normalizeRepoName, REQUIRED_FIELDS } from '../lib/repos.mjs';
+import { loadRepos, resolveRepo, enabledRepos, resolveEntry, repoView, repoViews, reposFile, REPOS_FILE, normalizeRepoName, REQUIRED_FIELDS } from '../lib/repos.mjs';
 import { PRODUCTION_TARGET_RE } from '../../lib/qa-report.mjs';
 import { QA_SMOKE_DIR } from '../../lib/qa-smoke.mjs';
 
@@ -93,5 +93,28 @@ describe('resolveEntry / repoView：每仓库的运行时视图', () => {
     const z = resolveEntry(byKey('zenithjoy-workspace'), { HOME: '/h' });
     expect(repoView(cfg, z)).toMatchObject({ logDir: '/l', ghBin: 'gh', repo: '/h/perfect21/zenithjoy-cw-runner', worktreeBase: '/h/worktrees/zenithjoy-cw',
       repoKey: 'zenithjoy-workspace', repoSlug: 'perfectuser21/zenithjoy-workspace', stateNs: 'zenithjoy-workspace' });
+  });
+
+  // C5：门禁按仓库遍历时，判卷代码 clone 不跟着换；合并开关 / 落后 main 检查 / 安装命令 / 预览类型取该仓库的
+  it('repoView 带上该仓库的 automerge、base_fresh_check、install、preview；trustedRepo 保持默认仓 clone', () => {
+    const cfg = { logDir: '/l', repo: '/a', trustedRepo: '/a', worktreeBase: '/aw' };
+    const z = resolveEntry(byKey('zenithjoy-workspace'), { HOME: '/h' });
+    expect(repoView(cfg, z)).toMatchObject({ trustedRepo: '/a', repoAutomerge: false, baseFreshCheck: null,
+      install: ['npm', 'ci', '--ignore-scripts'], previewType: 'local' });
+    const c = resolveEntry(byKey('cecelia'), { HOME: '/h' });
+    expect(repoView(cfg, c)).toMatchObject({ trustedRepo: '/a', repoAutomerge: true, baseFreshCheck: 'lint-base-fresh',
+      install: ['npm', 'ci', '--legacy-peer-deps', '--ignore-scripts'], previewType: 'brain_preview', previewBaseRepo: 'cecelia' });
+  });
+
+  it('repoViews：cfg.repos 逐个出视图（repos.json 顺序）；没有 cfg.repos 时就是 cfg 本身', () => {
+    const cfg = { logDir: '/l', repo: '/a', trustedRepo: '/a', repos: [resolveEntry(byKey('cecelia'), { HOME: '/h' }), resolveEntry(byKey('zenithjoy-workspace'), { HOME: '/h' })] };
+    expect(repoViews(cfg).map((v) => v.repoKey)).toEqual(['cecelia', 'zenithjoy-workspace']);
+    const bare = { logDir: '/l', repo: '/a' };
+    expect(repoViews(bare)).toEqual([bare]);
+  });
+
+  it('CODING_WF_REPOS_FILE 覆盖配置表路径（测试 / 演练用）', () => {
+    expect(reposFile({ CODING_WF_REPOS_FILE: '/x/repos.json' })).toBe('/x/repos.json');
+    expect(reposFile({})).toBe(REPOS_FILE);
   });
 });
