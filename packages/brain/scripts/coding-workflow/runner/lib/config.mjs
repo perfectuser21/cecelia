@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_PREVIEW_API } from '../../lib/preview.mjs';
 import { resolveJudgeConfig } from '../../lib/judge.mjs';
-import { loadRepos, enabledRepos, resolveEntry } from './repos.mjs';
+import { loadRepos, enabledRepos, resolveEntry, repoFields, reposFile } from './repos.mjs';
 
 const DEFAULT_KILL_GRACE_MS = 30000;
 
@@ -37,15 +37,13 @@ export function loadConfig(env = process.env) {
   const home = env.HOME || os.homedir();
   const host = os.hostname();
   // 仓库配置表（C4）：cfg 自身是默认仓（cecelia）视图——判卷代码 clone、旧调用方全部照旧；cfg.repos 是已启用仓库
-  const repos = loadRepos();
+  const repos = loadRepos(reposFile(env));
   const primary = resolveEntry(repos.find((r) => r.default), { ...env, HOME: home });
   return {
     brainUrl: String(env.BRAIN_URL || 'http://localhost:5221').replace(/\/+$/, ''),
-    repo: primary.clone,
-    worktreeBase: primary.worktreeBase,
-    repoKey: primary.key,
-    repoSlug: primary.slug,
-    stateNs: primary.stateNs,
+    ...repoFields(primary),
+    // 判卷代码（契约、执行器、evaluate）只从默认仓 clone 读（每轮自更新到 main）；repoView 不换它
+    trustedRepo: primary.clone,
     repos: enabledRepos(env, repos).map((r) => resolveEntry(r, { ...env, HOME: home })),
     logDir: env.CODING_WF_LOG_DIR || path.join(home, '.cecelia/coding-workflow-runner'),
     lockDir: env.CODING_WF_LOCK_DIR || path.join(home, '.cecelia'),

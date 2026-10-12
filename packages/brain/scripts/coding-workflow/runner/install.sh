@@ -9,6 +9,8 @@
 # 可覆盖：CODING_WF_RUN_USER（默认 administrator）、CODING_WF_USER_HOME（默认 /Users/<user>）、
 #         CODING_WF_REPO（默认 <home>/perfect21/cecelia-cw-runner）、CODING_WF_ORIGIN_URL、BRAIN_URL。
 #         CODING_WF_AUTOMERGE（设置后写入 plist 的 EnvironmentVariables，如 0=关闭自动合并；未设置/为空则不写）。
+#         CODING_WF_REPOS（启用的仓库，逗号分隔，如 cecelia,zenithjoy-workspace；设置后写入 plist，并以运行用户身份预先
+#         clone 其中缺 clone 的非默认仓库——路径与 origin 取自 repos.json；未设置/为空则不写，runner 按 repos.json enabled 判定）。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,17 +63,17 @@ done
 # sed 替换值转义：\ & 和分隔符 |
 esc() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
 
-# 把 __AUTOMERGE_ENV__ 占位行换成 CODING_WF_AUTOMERGE 的 key/string 两行；未设置/为空则整行删除。
+# 把 __<占位>__ 占位行换成环境变量 <名> 的 key/string 两行；未设置/为空则整行删除。用法：fill_env <占位> <变量名>
 # 值经环境变量传入 awk（避免转义被 awk 解释），并先做 XML 转义（& 须最先转）。
-fill_automerge() {
-  local val="${CODING_WF_AUTOMERGE:-}"
+fill_env() {
+  local placeholder="$1" name="$2" val="${!2:-}"
   # 不用 ${val//</&lt;}：bash 5.2 起替换串里的 & 代表匹配文本（patsub_replacement），Linux 上会得到 <lt;
   val="$(printf '%s' "$val" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')"
-  AUTOMERGE_XML="$val" awk '
-    /^[[:space:]]*__AUTOMERGE_ENV__[[:space:]]*$/ {
-      if (ENVIRON["AUTOMERGE_XML"] != "") {
-        print "    <key>CODING_WF_AUTOMERGE</key>"
-        print "    <string>" ENVIRON["AUTOMERGE_XML"] "</string>"
+  ENV_XML="$val" ENV_NAME="$name" PLACEHOLDER="$placeholder" awk '
+    $0 ~ "^[[:space:]]*" ENVIRON["PLACEHOLDER"] "[[:space:]]*$" {
+      if (ENVIRON["ENV_XML"] != "") {
+        print "    <key>" ENVIRON["ENV_NAME"] "</key>"
+        print "    <string>" ENVIRON["ENV_XML"] "</string>"
       }
       next
     }
@@ -88,7 +90,7 @@ render_plist() {
       -e "s|__BRAIN_URL__|$(esc "$BRAIN")|g" \
       -e "s|__REPO__|$(esc "$REPO")|g" \
       -e "s|__LOG__|$(esc "$LOG_FILE")|g" \
-      "$TEMPLATE" | fill_automerge
+      "$TEMPLATE" | fill_env __AUTOMERGE_ENV__ CODING_WF_AUTOMERGE | fill_env __REPOS_ENV__ CODING_WF_REPOS
 }
 
 # dry-run 只打印；否则执行
@@ -116,6 +118,16 @@ fi
 # 专用 clone：以运行用户身份准备（runner.sh 之后每轮自更新）
 if [ ! -d "$REPO/.git" ]; then
   do_cmd sudo -u "$RUN_USER" git clone -q "$ORIGIN_URL" "$REPO"
+fi
+# 其他已启用仓库的专用 clone（repos.json 的路径与 origin）：缺的以运行用户身份 clone；已存在的不动
+CLONES_SH="$HERE/list-clones.mjs"
+if [ -f "$CLONES_SH" ]; then
+  CLONE_LIST="$(HOME="$USER_HOME" node "$CLONES_SH")" || { echo "读 repos.json 失败，不能列仓库 clone" >&2; exit 1; }
+  while IFS=$'\t' read -r EXTRA_CLONE EXTRA_ORIGIN; do
+    [ -n "$EXTRA_CLONE" ] || continue
+    [ -e "$EXTRA_CLONE/.git" ] && continue
+    do_cmd sudo -u "$RUN_USER" git clone -q "$EXTRA_ORIGIN" "$EXTRA_CLONE"
+  done <<< "$CLONE_LIST"
 fi
 # 日志文件预建并归运行用户
 do_cmd mkdir -p "$(dirname "$LOG_FILE")"

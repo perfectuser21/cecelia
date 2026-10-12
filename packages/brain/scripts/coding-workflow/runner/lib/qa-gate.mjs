@@ -8,7 +8,7 @@
 // 状态：<logDir>[/<仓库命名空间>]/qa-<pr>.json（cecelia 命名空间为空）；Brain 任务 result.qa（摘要）与 result.escalations。PR 结束（合并/外部关闭）后停预览见 pr-closure.mjs。
 import fs from 'node:fs';
 import path from 'node:path';
-import { run, git } from './proc.mjs';
+import { run, git, gh } from './proc.mjs';
 import { removeWorktree } from './worktree.mjs';
 import { listOwnPrs, requiredState } from './cifix-scan.mjs';
 import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from './pr-branch.mjs';
@@ -21,7 +21,7 @@ import { cannotVerifyAccepted } from './cv-accepted.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { runJudge, priorJudgeFiles } from './judge-gate.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
-import { prFile, stateDir } from './repos.mjs';
+import { prFile, stateDir, prLabel } from './repos.mjs';
 
 const EVALUATE_REL = 'packages/brain/scripts/coding-workflow/activities/evaluate.mjs';
 const EVALUATE_TIMEOUT_MS = 55 * 60 * 1000;
@@ -32,6 +32,9 @@ const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git p
 const RUNNER_ID = ['-c', 'user.name=coding-workflow-runner', '-c', 'user.email=coding-workflow-runner@cecelia.local'];
 
 const statePath = (cfg, pr) => prFile(cfg, `qa-${pr}.json`);
+
+/** 该仓库是否走 Brain PR 预览（repos.json preview.type；cfg 没带时按默认仓 brain_preview）。 */
+export const usesBrainPreview = (cfg) => (cfg.previewType ?? 'brain_preview') === 'brain_preview';
 
 export function readState(cfg, pr) {
   try {
@@ -103,7 +106,7 @@ export async function revokeQaPass(ctx, pr, files, reason) {
   const s = readState(ctx.cfg, pr.number);
   const changed = files.filter((f) => !isRecordFile(f, pr.headRefName));
   if (!s.passed || changed.length === 0) return false;
-  const off = await run(ctx.cfg.ghBin, ['pr', 'merge', String(pr.number), '--disable-auto'], { cwd: ctx.cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+  const off = await gh(ctx.cfg, ['pr', 'merge', String(pr.number), '--disable-auto'], { timeoutMs: GH_TIMEOUT_MS });
   s.passed = false;
   s.revoked = [...(s.revoked ?? []), { at: new Date().toISOString(), reason, files: changed, automerge_disabled: off.code === 0 }];
   writeState(ctx.cfg, pr.number, s);
@@ -117,7 +120,7 @@ async function ensurePreview(ctx, pr, s, p) {
     ctx.log(`PR #${pr.number} 预览环境 ${p.state}，下轮再验`);
     return;
   }
-  const r = await previewCall(ctx.cfg, 'start', { pr_number: pr.number, branch_name: pr.headRefName, base_repo: 'cecelia' });
+  const r = await previewCall(ctx.cfg, 'start', { pr_number: pr.number, branch_name: pr.headRefName, base_repo: ctx.cfg.previewBaseRepo ?? 'cecelia' });
   const now = Date.now();
   if (r.ok) {
     s.preview = { requested_at: new Date(now).toISOString() };
@@ -150,7 +153,7 @@ async function previewStale(ctx, pr, s, p) {
 /** 跑 evaluate 活动（json-stdio），返回解析后的结果对象或 null。 */
 async function evaluate(ctx, worktree, input, signal) {
   // evaluate 来自 runner 专用 clone（main），不用 PR 分支里可能被改过的版本（审计 P0 #1）
-  const entry = ctx.cfg.evaluateEntry || path.join(ctx.cfg.repo, EVALUATE_REL);
+  const entry = ctx.cfg.evaluateEntry || path.join(ctx.cfg.trustedRepo ?? ctx.cfg.repo, EVALUATE_REL);
   const r = await run(process.execPath, [entry], { cwd: worktree, input: JSON.stringify(input), timeoutMs: EVALUATE_TIMEOUT_MS, signal });
   const line = r.stdout.trim().split('\n').reverse().find((l) => l.startsWith('{'));
   try {
@@ -521,6 +524,14 @@ export async function runQaGate(ctx, signal) {
       // 同 head 验过就不重验；上一轮修复因 PR 被关没推上去（之后重开）的除外
       if (s.rounds.at(-1)?.head === pr.headRefOid && s.rounds.at(-1)?.fix !== 'pr_closed') continue;
       if ((await requiredState(cfg, pr.number)).state !== 'pass') continue;
+      // 只有 brain_preview 类仓库能起 PR 预览；其他 QA 模式（zenithjoy 的 local）待活动层参数化接入前不验，同一 head 只记一行
+      if (!usesBrainPreview(cfg)) {
+        if (s.qa_unsupported !== pr.headRefOid) {
+          ctx.log(`QA 门 ${prLabel(cfg, pr.number)}：本仓 QA 模式 ${cfg.previewType} 尚未接入，不验（不批准、不合并）`);
+          writeState(cfg, pr.number, { ...s, qa_unsupported: pr.headRefOid });
+        }
+        continue;
+      }
       // 预览部署的必须正是这个 head（审计 P0 #2）：推送后还没重新部署就等
       const p = await previewOf(pr.number, { api: cfg.previewApi, host: cfg.previewHost, expectSha: pr.headRefOid });
       if (p.state === 'stale') {

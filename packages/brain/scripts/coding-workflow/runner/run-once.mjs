@@ -19,13 +19,14 @@ import { readReceipt, summarizeReceipt } from './lib/receipt.mjs';
 import { failTask, finishSuccess, localSummary, lostSummary, settle, settleQueued } from './lib/terminal.mjs';
 import { runCiFix } from './lib/cifix.mjs';
 import { runQaGate } from './lib/qa-gate.mjs';
-import { runMergeGate } from './lib/merge-gate.mjs';
+import { runMergeGate, settleHumanMerges } from './lib/merge-gate.mjs';
 import { runCommander } from './lib/commander.mjs';
 import { listOwnPrs } from './lib/cifix-scan.mjs';
 import { idleLogDue } from './lib/session-log.mjs';
 import { restoreStates, mirrorStates } from './lib/state-store.mjs';
 import { settleClosedPrs } from './lib/pr-closure.mjs';
 import { readyCandidates } from './lib/deps.mjs';
+import { repoViews, taskView } from './lib/repos.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_REL = 'packages/brain/scripts/coding-workflow';
@@ -90,14 +91,16 @@ async function claimFirst(ctx, candidates) {
   return null;
 }
 
-/** 建 worktree 并跑执行器；返回回执摘要。任一步失败抛 Error(reason_code)。 */
+/** 建 worktree 并跑执行器；返回回执摘要。任一步失败抛 Error(reason_code)。ctx.cfg 是任务所在仓库的视图。 */
 async function execute(ctx, task, job, signal) {
   const { cfg } = ctx;
   const names = taskNames(task.id);
+  // worktree 来自任务所在仓库的 clone（cfg.repo）、建在它的 worktree 根
   const worktree = await prepareWorktree(cfg, task, names, job, signal);
-  // 判卷代码（契约、执行器、各活动）一律来自 runner 专用 clone（每轮自更新到 main），不来自任务 worktree：
+  // 判卷代码（契约、执行器、各活动）一律来自默认仓 runner 专用 clone（每轮自更新到 main），不来自任务 worktree / 任务仓库：
   // build 改过的 verify/chain_check 不能拿来判它自己（审计 P0 #1，对应旧 harness「judge 不在被评 worktree 跑」）
-  const trusted = path.join(cfg.repo, WORKFLOW_REL);
+  const judgeRepo = cfg.trustedRepo ?? cfg.repo;
+  const trusted = path.join(judgeRepo, WORKFLOW_REL);
   const contract = readContract(path.join(trusted, 'contract.json'));
   const envelope = {
     contract,
@@ -106,7 +109,7 @@ async function execute(ctx, task, job, signal) {
   log(`开跑 ${task.id}：worktree=${worktree} branch=${names.branch}`);
   const startedAt = Date.now();
   const r = await runExecutor({
-    executor: cfg.executor ?? path.join(cfg.repo, EXECUTOR_REL),
+    executor: cfg.executor ?? path.join(judgeRepo, EXECUTOR_REL),
     cwdDir: trusted,
     worktree,
     envelope,
@@ -126,17 +129,35 @@ async function execute(ctx, task, job, signal) {
 }
 
 /**
- * 合并门 → CI 修复 → QA 门；有一个做了事返回 true（本轮到此）。
- * 状态外部真相（审计 #34）：跑之前本机缺状态文件的 PR 从 Brain 恢复，跑完把有变化的关键字段写回 Brain。
+ * 门禁按仓库遍历（repos.json 顺序，C5）：每个已启用仓库用自己的视图（clone / worktree 根 / 状态命名空间 / GH_REPO）
+ * 跑一遍各道门；任一仓库做了事返回 true（本轮到此，保持「一轮只做一件事」）。clone 不存在（runner.sh 没 clone 成）的仓库跳过。
  */
 async function runGates(ctx, signal) {
   const { cfg } = ctx;
   if (!cfg.qaGate && !cfg.ciFix && !cfg.commander) return false;
+  for (const view of repoViews(cfg)) {
+    if (!fs.existsSync(view.repo)) {
+      log(`仓库 ${view.repoKey} 的 clone ${view.repo} 不存在，本轮跳过它的门禁`);
+      continue;
+    }
+    if (await runRepoGates({ ...ctx, cfg: view }, signal)) return true;
+  }
+  return false;
+}
+
+/**
+ * 一个仓库的门：合并门 → commander → CI 修复 → QA 门；有一个做了事返回 true。
+ * 状态外部真相（审计 #34）：跑之前本机缺状态文件的 PR 从 Brain 恢复，跑完把有变化的关键字段写回 Brain。
+ */
+async function runRepoGates(ctx, signal) {
+  const { cfg } = ctx;
   const prs = await listOwnPrs(cfg).catch(() => null);
   await restoreStates(ctx, prs);
   try {
     // 外部关闭（未合并）的 PR 收尾、重开恢复、已结束的停预览：不算本轮动作，不挡后面的门
     await settleClosedPrs(ctx, prs);
+    // 不自动合并的仓库：等人合并的 PR 被人合并了 → 收账（不算本轮动作）
+    if (cfg.qaGate) await settleHumanMerges(ctx);
     // 已批准的 PR：只合并被批准的 head（批准后又改了代码则撤销批准，本轮到此）
     if (cfg.qaGate && await runMergeGate(ctx)) return true;
     // 升级了的 PR：coding commander 裁决并解除（或上交主理人），本轮到此（决策 c167d6e3）
@@ -173,27 +194,29 @@ export async function runOnce(cfg, signal) {
 
   const startedAt = Date.now();
   const job = { worktree: null, branch: null, receiptPath: path.join(cfg.logDir, `${task.id}.json`) };
+  // 任务所在仓库的视图：worktree 建在该仓库 clone，收尾删 worktree 也用它（日志目录 / 回执路径不变）
+  const tctx = { ...ctx, cfg: taskView(cfg, task) };
   // Brain 没把 kind 记成 coding-workflow-runner（旧端点保留历史残留）：重启会被当本机执行体打回重跑，不跑链
   if (task.claimed_kind !== EXECUTOR_KIND) {
     const detail = `认领响应 executor_kind=${task.claimed_kind ?? '空'}，不是 ${EXECUTOR_KIND}`;
     log(`任务 ${task.id} ${detail}，不跑链`);
-    return failTask(ctx, task, job, { status: 'failed', failed_activity: null, reason_code: 'executor_kind_mismatch', pr_url: null, detail });
+    return failTask(tctx, task, job, { status: 'failed', failed_activity: null, reason_code: 'executor_kind_mismatch', pr_url: null, detail });
   }
   let summary;
   try {
-    summary = await execute(ctx, task, job, signal);
+    summary = await execute(tctx, task, job, signal);
   } catch (error) {
     summary = { status: 'failed', failed_activity: null, reason_code: error?.message || 'runner_error', pr_url: null };
   }
   try {
     if (summary.status === 'completed' && !summary.reason_code) {
-      return await finishSuccess(ctx, task, job, summary, { duration_s: Math.round((Date.now() - startedAt) / 1000) });
+      return await finishSuccess(tctx, task, job, summary, { duration_s: Math.round((Date.now() - startedAt) / 1000) });
     }
-    return await failTask(ctx, task, job, summary);
+    return await failTask(tctx, task, job, summary);
   } catch (error) {
     // 收尾本身出错也要尽力回写，不留 in_progress 孤儿
     log(`收尾异常：${error?.stack || error}`);
-    return failTask(ctx, task, job, { ...summary, reason_code: 'runner_finalize_error' });
+    return failTask(tctx, task, job, { ...summary, reason_code: 'runner_finalize_error' });
   }
 }
 

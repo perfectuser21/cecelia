@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { git } from './proc.mjs';
 import { removeWorktree, pruneWorktrees } from './worktree.mjs';
-import { stateDir } from './repos.mjs';
+import { stateDir, repoViews } from './repos.mjs';
 
 const DAY_MS = 24 * 3600 * 1000;
 const WORKTREE_RE = /^cw-[0-9a-f]{8}/;
@@ -52,9 +52,11 @@ function cleanLogs(cfg, cutoff) {
   for (const dir of dirs) cleanLogDir(dir, cutoff);
 }
 
-/** 尽力而为：任何一步失败只返回，不影响本轮。 */
+/** 尽力而为：任何一步失败只返回，不影响本轮。worktree 按仓库清（各自 worktree 根，用各自 clone remove / prune）。 */
 export async function cleanupRetention(cfg, now = Date.now()) {
-  await cleanWorktrees(cfg, now - cfg.failedRetentionDays * DAY_MS);
-  await pruneWorktrees(cfg);
+  for (const view of repoViews(cfg)) {
+    await cleanWorktrees(view, now - cfg.failedRetentionDays * DAY_MS);
+    await pruneWorktrees(view);
+  }
   cleanLogs(cfg, now - cfg.logRetentionDays * DAY_MS);
 }

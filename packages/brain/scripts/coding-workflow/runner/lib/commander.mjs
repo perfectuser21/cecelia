@@ -15,7 +15,8 @@ import { intentOf, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from
 import { gateSpan, postSpans } from './spans.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
-import { prFile } from './repos.mjs';
+import { prFile, prLabel } from './repos.mjs';
+import { notifyBark } from './bark.mjs';
 
 // commander 能处理的升级；其余（预览环境、裁判不可用/关闭、改动超限、评估会话坏、sprint 丢失……）是基础设施或要人定，直接通知主理人
 export const HANDLED = new Set(['judge_contract_gap', 'judge_ruling_conflict', 'qa_fix_failed', 'qa_stalled', 'qa_cannot_verify', 'qa_smoke_missing', 'ci_fix_exhausted']);
@@ -74,15 +75,9 @@ export function renderRuling({ n, escalation, ruling, commits }) {
 
 /** 通知主理人（Bark）；记 commander 状态与 Brain，同一个升级只通知一次。 */
 async function toHuman(ctx, pr, cs, esc, reason, detail, taskId = null) {
-  const title = `coding commander 上交：PR #${pr.number}`;
+  const title = `coding commander 上交：${prLabel(ctx.cfg, pr.number)}`;
   const body = `${esc?.detail?.type ?? '未知升级'}｜${reason}${detail ? `：${detail}` : ''}`;
-  let notified = false;
-  if (ctx.cfg.barkUrl) {
-    try {
-      const res = await fetch(`${ctx.cfg.barkUrl.replace(/\/+$/, '')}/${encodeURIComponent(title)}/${encodeURIComponent(body)}`, { signal: AbortSignal.timeout(15000) });
-      notified = res.ok;
-    } catch { /* 记日志即可 */ }
-  }
+  const notified = await notifyBark(ctx.cfg, title, body);
   cs.human = { reason, detail: detail ?? null, escalation_at: esc?.detail?.at ?? null, at: new Date().toISOString(), notified };
   writeJson(file(ctx.cfg, `commander-${pr.number}.json`), cs);
   ctx.log(`[coding-commander][P1] PR #${pr.number} 上交主理人：${body}${notified ? '' : '（Bark 未送达）'}`);

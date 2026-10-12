@@ -1,7 +1,7 @@
 // CI 修复的找目标与取日志：runner 自己开的 cw PR（分支 cp-<stamp>-cw-<id8>）里，
 // 必需检查全部出结果且至少一个失败、本 head 没修过、累计次数未用尽的第一个。
 import fs from 'node:fs';
-import { run } from './proc.mjs';
+import { gh } from './proc.mjs';
 import { prFile } from './repos.mjs';
 
 export const CW_BRANCH_RE = /^cp-\d{8,10}-cw-[0-9a-f]{8}$/;
@@ -13,7 +13,7 @@ const ACTIONS_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/;
 
 /** gh 子命令 → 解析后的 JSON；输出不是 JSON 返回 null。`pr checks` 有失败/pending 时非 0 退出但照常输出 JSON。 */
 export async function ghJson(cfg, args) {
-  const r = await run(cfg.ghBin, args, { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+  const r = await gh(cfg, args, { timeoutMs: GH_TIMEOUT_MS });
   try {
     return JSON.parse(r.stdout);
   } catch {
@@ -78,7 +78,8 @@ export async function listOwnPrs(cfg) {
 
 const MAX_UPDATE_BRANCH = 3;
 const MAX_CONFLICT_FIXES = 3;
-const BASE_FRESH_CHECK = 'lint-base-fresh';
+// 落后 main 的检查名按仓库（repos.json base_fresh_check；null = 该仓库没有这道检查，不走 update_branch）
+const DEFAULT_BASE_FRESH_CHECK = 'lint-base-fresh';
 const RUN_LINK_RE = /\/actions\/runs\/(\d+)\//;
 
 /** 失败的检查：[{ name, runId, link }]（runId 取自检查链接，取不到为 null）。 */
@@ -95,8 +96,8 @@ export async function failingChecks(cfg, prNumber) {
  *   本 head 修过没改动（判定与本 PR 无关）→ 先 rerun 失败 job 一次；重跑过仍红 → escalate rerun_still_failing
  *   否则 → fix（派 claude）
  */
-function decide(state, pr, checks, maxAttempts) {
-  if (checks.some((c) => c.name === BASE_FRESH_CHECK)) {
+function decide(state, pr, checks, maxAttempts, baseFresh) {
+  if (baseFresh && checks.some((c) => c.name === baseFresh)) {
     return (state.update_branch?.length ?? 0) >= MAX_UPDATE_BRANCH ? { action: 'escalate', reason: 'update_branch_exhausted' } : { action: 'update_branch' };
   }
   const ciAttempts = state.attempts.filter((a) => a.kind !== 'conflict');
@@ -133,7 +134,7 @@ export async function findTarget(cfg, log) {
     const failed = await failedRequired(cfg, pr.number);
     if (!failed) continue;
     const checks = await failingChecks(cfg, pr.number);
-    return { pr, failedRequired: failed, checks, ...decide(state, pr, checks, cfg.ciFixMaxAttempts) };
+    return { pr, failedRequired: failed, checks, ...decide(state, pr, checks, cfg.ciFixMaxAttempts, cfg.baseFreshCheck === undefined ? DEFAULT_BASE_FRESH_CHECK : cfg.baseFreshCheck) };
   }
   return null;
 }
@@ -142,7 +143,7 @@ export async function findTarget(cfg, log) {
 export async function checkLog(cfg, check) {
   const m = JOB_LINK_RE.exec(check?.link ?? '');
   if (!m) return null;
-  const r = await run(cfg.ghBin, ['api', `repos/${m[1]}/actions/jobs/${m[2]}/logs`], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+  const r = await gh(cfg, ['api', `repos/${m[1]}/actions/jobs/${m[2]}/logs`], { timeoutMs: GH_TIMEOUT_MS });
   return r.stdout.split('\n').map((l) => l.replace(ACTIONS_TS_RE, '')).join('\n');
 }
 

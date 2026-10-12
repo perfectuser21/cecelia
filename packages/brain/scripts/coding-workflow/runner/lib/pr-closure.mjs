@@ -8,7 +8,7 @@
 // 修复会话中途被关的 PR 由 pushPrHead 推送前拦下（pr_closed），留给这里收尾。
 import fs from 'node:fs';
 import { ghJson, CW_BRANCH_RE } from './cifix-scan.mjs';
-import { readState, writeState, previewCall } from './qa-gate.mjs';
+import { readState, writeState, previewCall, usesBrainPreview } from './qa-gate.mjs';
 import { remoteTaskId, remoteTaskIdByPr } from './pr-branch.mjs';
 import { finalHandoff } from './merge-gate.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
@@ -137,5 +137,5 @@ export async function settleClosedPrs(ctx, openPrs) {
     const s = readState(ctx.cfg, pr.number);
     if (s.closed) await reopen(ctx, pr, s).catch(warn(`PR #${pr.number} 重开恢复`));
   }
-  if (ctx.cfg.qaGate) await stopFinishedPreviews(ctx, closed).catch(warn('停预览'));
+  if (ctx.cfg.qaGate && usesBrainPreview(ctx.cfg)) await stopFinishedPreviews(ctx, closed).catch(warn('停预览'));
 }

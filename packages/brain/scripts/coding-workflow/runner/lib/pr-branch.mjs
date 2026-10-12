@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { git, run } from './proc.mjs';
+import { git, gh } from './proc.mjs';
 import { writeDevFiles, ensureIgnored, installDeps } from './worktree.mjs';
 
 const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -75,7 +75,7 @@ export async function preparePrWorktree(cfg, pr, worktree, signal) {
   if (fetch.code !== 0) throw stop('git_fetch_failed');
   const add = await git(cfg.repo, ['worktree', 'add', '-B', branch, worktree, `origin/${branch}`]);
   if (add.code !== 0) throw stop('worktree_add_failed');
-  writeDevFiles(worktree, branch, { id: taskIdOf(worktree, branch) ?? 'unknown', payload: {} });
+  writeDevFiles(worktree, branch, { id: taskIdOf(worktree, branch) ?? 'unknown', payload: {} }, cfg.repoKey ?? 'cecelia');
   await ensureIgnored(worktree, branch);
   await installDeps(cfg, worktree, signal);
 }
@@ -147,7 +147,7 @@ export async function checkFixCommits(worktree, before, { mainRef = null, allow 
 /** PR 当前状态（OPEN/CLOSED/MERGED）；查不到（gh 出错）重试一次，仍查不到返回 null。 */
 export async function prState(cfg, number) {
   for (let i = 0; i < 2; i += 1) {
-    const r = await run(cfg.ghBin, ['pr', 'view', String(number), '--json', 'state'], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+    const r = await gh(cfg, ['pr', 'view', String(number), '--json', 'state'], { timeoutMs: GH_TIMEOUT_MS });
     try {
       const state = JSON.parse(r.stdout)?.state;
       if (state) return state;

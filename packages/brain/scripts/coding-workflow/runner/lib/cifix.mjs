@@ -5,7 +5,7 @@
 // 每次尝试都记进 <logDir>[/<仓库命名空间>]/cifix-<pr>.json 并回写 Brain 任务 result.ci_fix；worktree 用完即删。
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, run } from './proc.mjs';
+import { git, gh } from './proc.mjs';
 import { removeWorktree } from './worktree.mjs';
 import { findTarget, failureLogs, readState, statePath } from './cifix-scan.mjs';
 import { taskIdOf, remoteTaskId, preparePrWorktree, checkFixCommits, ownChangedFiles, pushPrHead } from './pr-branch.mjs';
@@ -140,7 +140,7 @@ async function escalateCi(ctx, pr, state, reason) {
 
 /** 落后 main：程序 gh pr update-branch（不派 claude、不占修复次数）。 */
 async function updateBranch(ctx, pr, state) {
-  const r = await run(ctx.cfg.ghBin, ['pr', 'update-branch', String(pr.number)], { cwd: ctx.cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+  const r = await gh(ctx.cfg, ['pr', 'update-branch', String(pr.number)], { timeoutMs: GH_TIMEOUT_MS });
   state.update_branch = [...(state.update_branch ?? []), { head: pr.headRefOid, at: new Date().toISOString(), ok: r.code === 0 }];
   saveState(ctx.cfg, pr.number, state);
   ctx.log(`CI 修复 PR #${pr.number}：落后 main，update-branch ${r.code === 0 ? '成功' : '失败'}`);
@@ -149,7 +149,7 @@ async function updateBranch(ctx, pr, state) {
 /** 本 head 修过但没改（claude 判定失败与本 PR 无关）：重跑失败 job 一次再看。 */
 async function rerunFailed(ctx, pr, state, checks) {
   const runIds = [...new Set(checks.map((c) => c.runId).filter(Boolean))];
-  for (const id of runIds) await run(ctx.cfg.ghBin, ['run', 'rerun', id, '--failed'], { cwd: ctx.cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+  for (const id of runIds) await gh(ctx.cfg, ['run', 'rerun', id, '--failed'], { timeoutMs: GH_TIMEOUT_MS });
   state.reruns = { ...state.reruns, [pr.headRefOid]: new Date().toISOString() };
   saveState(ctx.cfg, pr.number, state);
   ctx.log(`CI 修复 PR #${pr.number}：本 head 修过无改动，重跑失败 job（${runIds.join('、') || '无'}）`);

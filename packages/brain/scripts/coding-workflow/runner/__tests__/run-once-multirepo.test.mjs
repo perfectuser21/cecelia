@@ -100,8 +100,9 @@ describe('门禁按仓库遍历 + automerge=false 等人合并', () => {
     expect(read(zjLogDir())).toMatchObject({ merged: { head } });
     expect(fs.existsSync(path.join(sb.logDir, 'qa-77.json'))).toBe(false);
     expect(E.brain.learnings).toEqual([expect.objectContaining({ task_id: TASK, repo: 'zj' })]);
-    // task_id 从 zj 的 clone 读远端分支：zj clone 拿到了分支，默认仓 clone 没碰
-    expect(git(zjClone(), 'branch', '-r')).toContain(`origin/${BRANCH}`);
+    // task_id 从 zj 的 clone 读远端分支：PR 的提交只被取进 zj 的 clone，默认仓 clone 没碰（合并后分支已删，按对象查）
+    expect(() => git(zjClone(), 'cat-file', '-e', head)).not.toThrow();
+    expect(() => git(sb.clone, 'cat-file', '-e', head)).toThrow();
     expect(git(sb.clone, 'branch', '-r')).not.toContain(`origin/${BRANCH}`);
   });
 
@@ -133,12 +134,13 @@ describe('任务按仓库执行', () => {
     E.brain = await startFakeBrain({ tasks: [codingTask(T, { payload: { ...SWITCH, repo: 'zj' } })] });
     const r = await runOnceProcess(runnerEnv(sb, E.brain.url, { FAKE_EXEC_MODE: 'failed', CODING_WF_REPOS_FILE: path.join(sb.root, 'repos.json') }));
     expect(r.exitCode, r.stderr).toBe(1);
-    const [{ cwd, envelope: { input: { worktree } } }] = readJsonLines(sb.execLog);
+    const [{ argv, envelope: { input: { worktree } } }] = readJsonLines(sb.execLog);
     expect(path.dirname(worktree)).toBe(path.join(sb.root, 'wt-zj'));
     expect(git(zjClone, 'worktree', 'list')).toContain(worktree);
     expect(git(sb.clone, 'worktree', 'list')).not.toContain(worktree);
     const branch = git(worktree, 'rev-parse', '--abbrev-ref', 'HEAD').trim();
     expect(JSON.parse(fs.readFileSync(path.join(worktree, `.dev-lock.${branch}`), 'utf8')).repo).toBe('zj');
-    expect(cwd.startsWith(sb.clone)).toBe(true);
+    // 执行器的 --cwd（判卷代码目录）在默认仓 clone 里
+    expect(argv[argv.indexOf('--cwd') + 1].startsWith(`${sb.clone}/`)).toBe(true);
   }, 30000);
 });
