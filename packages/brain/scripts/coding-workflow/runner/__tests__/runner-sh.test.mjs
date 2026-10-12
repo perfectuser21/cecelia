@@ -153,6 +153,78 @@ describe('runner.sh 启动器', () => {
     expect(fs.existsSync(`${main}.1`)).toBe(false);
   });
 
+  // C5：已启用的其他仓库（repos.json + CODING_WF_REPOS）clone 不存在时 clone；已存在的不 fetch / 不 reset（不动现场）
+  describe('多仓库 clone', () => {
+    let zjOrigin;
+    let zjSeed;
+    let zjClone;
+    let reposFile;
+
+    const commitZj = (msg) => {
+      fs.writeFileSync(path.join(zjSeed, 'zj.txt'), `${msg}\n`);
+      git(zjSeed, 'add', '.');
+      git(zjSeed, 'commit', '-q', '-m', msg);
+      git(zjSeed, 'push', '-q', 'origin', 'main');
+    };
+
+    beforeEach(() => {
+      // seed 带上真实的 repos.mjs 与 list-clones.mjs（runner.sh 用 clone 里的这两份列出要补的 clone）
+      for (const rel of ['lib/repos.mjs', 'list-clones.mjs']) {
+        const dest = path.join(seed, path.dirname(STUB_REL), rel);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(path.join(HERE, '..', rel), dest);
+      }
+      commitSeed('v1-repos');
+      zjOrigin = path.join(root, 'zj.git');
+      zjSeed = path.join(root, 'zj-seed');
+      zjClone = path.join(root, 'zj-clone');
+      gitPlain('init', '--bare', '-q', '-b', 'main', zjOrigin);
+      gitPlain('init', '-q', '-b', 'main', zjSeed);
+      git(zjSeed, 'config', 'user.name', 'seed');
+      git(zjSeed, 'config', 'user.email', 'seed@example.com');
+      git(zjSeed, 'config', 'core.hooksPath', path.join(root, 'no-hooks'));
+      git(zjSeed, 'remote', 'add', 'origin', zjOrigin);
+      commitZj('z1');
+      const real = JSON.parse(fs.readFileSync(path.join(HERE, '../../repos.json'), 'utf8')).repos;
+      const z = real.find((r) => r.key === 'zenithjoy-workspace');
+      reposFile = path.join(root, 'repos.json');
+      fs.writeFileSync(reposFile, JSON.stringify({ repos: [...real.filter((r) => r.key !== z.key),
+        { ...z, key: 'zj', aliases: ['zj'], slug: 'acme/zj', origin: zjOrigin, clone: zjClone, worktree_base: path.join(root, 'wt-zj'), state_ns: 'zj', enabled: true }] }));
+    });
+
+    it('zj 已启用且 clone 不存在 → clone 到 repos.json 的路径，照常 exec', () => {
+      const r = runRunner({ ...env, CODING_WF_REPOS_FILE: reposFile });
+      expect(r.status, r.stderr).toBe(0);
+      expect(git(zjClone, 'rev-parse', 'HEAD')).toBe(git(zjOrigin, 'rev-parse', 'main'));
+      expect(stubOut(r).marker).toBe('RUN_ONCE_STUB');
+    });
+
+    it('CODING_WF_REPOS 只开 cecelia → 不 clone zj', () => {
+      const r = runRunner({ ...env, CODING_WF_REPOS_FILE: reposFile, CODING_WF_REPOS: 'cecelia' });
+      expect(r.status, r.stderr).toBe(0);
+      expect(fs.existsSync(zjClone)).toBe(false);
+    });
+
+    it('zj clone 已存在：不 fetch、不 reset --hard（本地改动和落后的 HEAD 原样保留）', () => {
+      gitPlain('clone', '-q', zjOrigin, zjClone);
+      const before = git(zjClone, 'rev-parse', 'HEAD');
+      commitZj('z2');
+      fs.writeFileSync(path.join(zjClone, 'zj.txt'), 'local edit\n');
+      const r = runRunner({ ...env, CODING_WF_REPOS_FILE: reposFile });
+      expect(r.status, r.stderr).toBe(0);
+      expect(git(zjClone, 'rev-parse', 'HEAD')).toBe(before);
+      expect(fs.readFileSync(path.join(zjClone, 'zj.txt'), 'utf8')).toBe('local edit\n');
+    });
+
+    it('zj clone 失败：记日志，不影响默认仓照常 exec', () => {
+      fs.writeFileSync(reposFile, fs.readFileSync(reposFile, 'utf8').replace(JSON.stringify(zjOrigin), JSON.stringify(path.join(root, 'missing-zj.git'))));
+      const r = runRunner({ ...env, CODING_WF_REPOS_FILE: reposFile });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stderr).toContain('clone');
+      expect(stubOut(r).marker).toBe('RUN_ONCE_STUB');
+    });
+  });
+
   it('clone 失败：非零退出且不 exec', () => {
     const r = runRunner({ ...env, CODING_WF_ORIGIN_URL: path.join(root, 'missing.git') });
     expect(r.status).not.toBe(0);

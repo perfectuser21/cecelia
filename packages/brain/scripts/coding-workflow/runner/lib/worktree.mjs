@@ -10,7 +10,7 @@ const IGNORE_PATTERNS = ['.dev-mode*', '.dev-lock*'];
 const fail = (code) => new Error(code);
 
 /** 本机全局 pre-commit 钩子要求 .dev-mode.<branch>；.dev-lock.<branch> 供会话/收割工具识别归属。 */
-export function writeDevFiles(worktree, branch, task) {
+export function writeDevFiles(worktree, branch, task, repoKey = 'cecelia') {
   const now = new Date().toISOString();
   const gpAnchor = typeof task.payload?.gp_anchor === 'string' && task.payload.gp_anchor
     ? task.payload.gp_anchor
@@ -28,7 +28,7 @@ export function writeDevFiles(worktree, branch, task) {
   ].join('\n'));
   fs.writeFileSync(path.join(worktree, `.dev-lock.${branch}`), `${JSON.stringify({
     task_id: task.id,
-    repo: 'cecelia',
+    repo: repoKey,
     branch,
     owner_session: 'coding-workflow-runner',
     session_id: `coding-workflow-runner-${task.id}`,
@@ -65,18 +65,21 @@ export async function prepareWorktree(cfg, task, names, ctx, signal) {
   ctx.worktree = worktree;
   ctx.branch = names.branch;
 
-  writeDevFiles(worktree, names.branch, task);
+  writeDevFiles(worktree, names.branch, task, cfg.repoKey ?? 'cecelia');
   await ensureIgnored(worktree, names.branch);
   await installDeps(cfg, worktree, signal);
   return worktree;
 }
 
-/** 在 worktree 根目录 npm ci（cfg.skipNpmCi 时跳过）。失败抛 Error：runner_terminated / npm_ci_failed。 */
+const DEFAULT_INSTALL = ['npm', 'ci', '--legacy-peer-deps', '--ignore-scripts'];
+
+/** 在 worktree 根目录装依赖（该仓库 repos.json 的 install，缺省 cecelia 的 npm ci；cfg.skipNpmCi 时跳过）。失败抛 Error：runner_terminated / npm_ci_failed。 */
 export async function installDeps(cfg, worktree, signal) {
   if (cfg.skipNpmCi) return;
   if (signal?.aborted) throw fail('runner_terminated');
   // npm workspaces：只能在 worktree 根目录跑，单包目录里跑会清掉其他包的依赖
-  const ci = await run('npm', ['ci', '--legacy-peer-deps', '--ignore-scripts'], { cwd: worktree, timeoutMs: NPM_CI_TIMEOUT_MS, signal });
+  const [bin, ...args] = Array.isArray(cfg.install) && cfg.install.length > 0 ? cfg.install : DEFAULT_INSTALL;
+  const ci = await run(bin, args, { cwd: worktree, timeoutMs: NPM_CI_TIMEOUT_MS, signal });
   if (signal?.aborted) throw fail('runner_terminated');
   if (ci.code !== 0) throw fail('npm_ci_failed');
 }

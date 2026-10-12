@@ -8,6 +8,11 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPOS_FILE = path.join(HERE, '../../repos.json');
+
+/** 配置表路径：CODING_WF_REPOS_FILE 覆盖（测试 / 演练用；生产不设）。 */
+export function reposFile(env = process.env) {
+  return env.CODING_WF_REPOS_FILE || REPOS_FILE;
+}
 export const REQUIRED_FIELDS = ['key', 'default', 'enabled', 'slug', 'origin', 'aliases', 'clone', 'worktree_base', 'state_ns',
   'required_checks', 'base_fresh_check', 'install', 'qa_smoke', 'version_fragment', 'preview', 'production_re', 'automerge'];
 
@@ -22,7 +27,7 @@ export function normalizeRepoName(value) {
 }
 
 /** 读并校验 repos.json：缺字段、key/slug/clone/worktree_base/state_ns 重复、默认仓不是恰好一个 → 抛错（配置错不能带病跑）。 */
-export function loadRepos(file = REPOS_FILE) {
+export function loadRepos(file = reposFile()) {
   const repos = JSON.parse(fs.readFileSync(file, 'utf8'))?.repos;
   if (!Array.isArray(repos) || repos.length === 0) throw new Error(`repos_config_invalid: ${file} 没有 repos`);
   for (const r of repos) {
@@ -73,13 +78,41 @@ export function resolveEntry(entry, env = process.env) {
     automerge: entry.automerge === true,
     baseFreshCheck: entry.base_fresh_check ?? null,
     requiredChecks: entry.required_checks,
+    install: entry.install,
+    previewType: entry.preview?.type ?? null,
+    previewBaseRepo: entry.preview?.base_repo ?? null,
     profile: entry,
   };
 }
 
-/** 某仓库的 cfg 视图：所有按 cfg.repo / cfg.worktreeBase / 状态目录工作的函数拿它即作用到该仓库。 */
+/** 仓库相关的 cfg 字段（loadConfig 的默认仓视图与 repoView 共用）。trustedRepo（判卷代码 clone）不在其中，永远是默认仓。 */
+export function repoFields(rc) {
+  return {
+    repo: rc.clone, worktreeBase: rc.worktreeBase, repoKey: rc.key, repoSlug: rc.slug, stateNs: rc.stateNs,
+    repoAutomerge: rc.automerge, baseFreshCheck: rc.baseFreshCheck, install: rc.install,
+    previewType: rc.previewType, previewBaseRepo: rc.previewBaseRepo,
+  };
+}
+
+/** 某仓库的 cfg 视图：所有按 cfg.repo / cfg.worktreeBase / 状态目录 / gh 仓库工作的函数拿它即作用到该仓库。 */
 export function repoView(cfg, rc) {
-  return { ...cfg, repo: rc.clone, worktreeBase: rc.worktreeBase, repoKey: rc.key, repoSlug: rc.slug, stateNs: rc.stateNs };
+  return { ...cfg, ...repoFields(rc), trustedRepo: cfg.trustedRepo ?? cfg.repo };
+}
+
+/** 门禁按仓库遍历的视图（cfg.repos 顺序）；cfg 没带 repos（旧调用方 / 单测）时就是 cfg 本身。 */
+export function repoViews(cfg) {
+  return Array.isArray(cfg.repos) ? cfg.repos.map((rc) => repoView(cfg, rc)) : [cfg];
+}
+
+/** 任务所在仓库的视图（task.repoKey，缺省或不在已启用列表 → 默认仓 cfg 本身）。 */
+export function taskView(cfg, task) {
+  const rc = (cfg.repos ?? []).find((r) => r.key === task?.repoKey);
+  return rc ? repoView(cfg, rc) : cfg;
+}
+
+/** 日志/通知里的 PR 称呼：默认仓（命名空间为空）只写 PR #n，其他仓库带仓库名。 */
+export function prLabel(cfg, number) {
+  return cfg.stateNs ? `${cfg.repoKey} PR #${number}` : `PR #${number}`;
 }
 
 /** 状态目录：命名空间为空（cecelia）= logDir 本身（沿用旧路径，零迁移）；否则 <logDir>/<ns>/。 */

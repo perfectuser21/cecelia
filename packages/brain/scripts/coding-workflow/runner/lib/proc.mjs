@@ -49,6 +49,14 @@ export function run(bin, args, { cwd, timeoutMs = 10 * 60 * 1000, signal, input,
   });
 }
 
+/**
+ * gh 子命令，作用于 cfg 视图的仓库：cwd = 该仓库 clone，并设 GH_REPO=<owner/repo>（等同 gh -R；gh api 的 {owner}/{repo}
+ * 占位符也按它解析），不靠 cwd 推断——多仓库时一个调用不会落到别的仓库。输出同 run。
+ */
+export function gh(cfg, args, opts = {}) {
+  return run(cfg.ghBin, args, { cwd: cfg.repo, ...opts, env: { ...(cfg.repoSlug ? { GH_REPO: cfg.repoSlug } : {}), ...opts.env } });
+}
+
 /** git -C <dir> ...；输出同 run。 */
 export function git(dir, args, opts = {}) {
   return run('git', ['-C', dir, ...args], opts);
