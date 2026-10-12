@@ -282,6 +282,9 @@ describe('coding workflow runner run-once', () => {
 
   it.each(['none(infra)', 'line02/benchmark_link_acquisition#step1', undefined])(
     '真实 runner payload→publish→GH body 保留 gp_anchor=%s（缺失不造值）', async (gp_anchor) => {
+      // publish 会真实 commit，沙箱不能依赖开发机的全局或自动推断 Git 身份。
+      git(sb.clone, 'config', 'user.name', 'Publish Test');
+      git(sb.clone, 'config', 'user.email', 'publish-test@example.com');
       brain = await startFakeBrain({ tasks: [codingTask(T1, { payload: { ...SWITCH, ...(gp_anchor === undefined ? {} : { gp_anchor }) } })] });
       const r = await runOnceProcess(runnerEnv(sb, brain.url, {
         FAKE_EXEC_MODE: 'real-publish',
@@ -289,7 +292,8 @@ describe('coding workflow runner run-once', () => {
         CODING_WF_GH_BIN: path.resolve('scripts/coding-workflow/__tests__/fixtures/fake-gh.mjs'),
         FAKE_GH_MODE: 'new', CODING_WF_AUTOMERGE: '0',
       }));
-      expect(r.exitCode, r.stderr).toBe(0);
+      const executorLog = path.join(sb.logDir, `${T1}.log`);
+      expect(r.exitCode, r.stderr + (fs.existsSync(executorLog) ? fs.readFileSync(executorLog, 'utf8') : '')).toBe(0);
       const [{ envelope: { input } }] = readJsonLines(sb.execLog);
       const create = readJsonLines(sb.ghLog).find((args) => args[0] === 'pr' && args[1] === 'create');
       expect(create).toBeDefined();
