@@ -15,7 +15,7 @@ const SCRIPT = path.join(HERE, '../new-task.mjs');
 const PROJECT_ID = 'p0000000-0000-4000-8000-000000000001';
 const ROOT_ID = '11111111-1111-4111-8111-111111111111';
 
-function startBrain({ failAt = null, projectFail = false, wrongRoute = false } = {}) {
+function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false } = {}) {
   const state = { posts: [], projectPosts: [], order: [] };
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -36,7 +36,7 @@ function startBrain({ failAt = null, projectFail = false, wrongRoute = false } =
       state.order.push('task');
       if (failAt === state.posts.length) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'change_kind_required' })); }
       res.statusCode = 201;
-      return res.end(JSON.stringify({ id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, change_kind: body.change_kind, map_scope: body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } }));
+      return res.end(JSON.stringify({ id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, change_kind: body.change_kind, map_scope: malformedScope ? {} : body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } }));
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
@@ -105,8 +105,8 @@ describe('new-task.mjs', () => {
     expect(brain.posts).toEqual([]);
   });
 
-  it('服务端误分类或清空仓库：保留已建 id，停止依赖批次，不报告成功', async () => {
-    brain = await startBrain({ wrongRoute: true });
+  it.each([{ wrongRoute: true }, { malformedScope: true }])('服务端路由不匹配 %j：保留已建 id，停止依赖批次', async (options) => {
+    brain = await startBrain(options);
     const r = await runScript([plan({ project_id: ROOT_ID, tasks: [
       { key: 'a', title: '一', acceptance: ['x'] },
       { key: 'b', title: '二', acceptance: ['x'], depends_on: ['a'] },

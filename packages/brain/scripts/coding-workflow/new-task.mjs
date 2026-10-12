@@ -163,7 +163,8 @@ async function main(argv, env) {
     if (reply.task_type !== 'coding_workflow' || actual?.coding_workflow !== true
       || actual?.work_kind !== 'coding_mutation' || actual?.orchestrator !== 'coding-workflow-runner'
       || actual?.repo !== t.repoKey || actual?.change_kind !== t.changeKind
-      || JSON.stringify([...(actual?.map_scope ?? [])].sort()) !== JSON.stringify([...t.mapScope].sort())) {
+      || !Array.isArray(actual?.map_scope)
+      || JSON.stringify([...actual.map_scope].sort()) !== JSON.stringify([...t.mapScope].sort())) {
       console.error(`task_route_mismatch：${JSON.stringify({ id: reply.id, task_type: reply.task_type,
         repo: actual?.repo, work_kind: actual?.work_kind, change_kind: actual?.change_kind,
         orchestrator: actual?.orchestrator })}；已建：${JSON.stringify(created)}；停止后续建单，先核查此任务`);
