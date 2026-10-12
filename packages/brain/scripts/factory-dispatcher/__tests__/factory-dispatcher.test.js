@@ -464,3 +464,79 @@ describe('Brain 客户端 claim 的 executor_kind', () => {
     expect(JSON.parse(calls[0].init.body)).toEqual({ claimer: 'factory-dispatcher@mmv', executor_kind: 'openclaw-agent' });
   });
 });
+
+// 统一领单租约（派发总闸 G，任务 c5f6e683）：claim 带 lease_seconds，守望每轮心跳续约；
+// 心跳 409 lease_lost = Brain 已按租约回收（回队或判 lost）→ 派发器停手：杀会话、放自己的锁、不再回写任务。
+describe('统一领单租约 + 心跳', () => {
+  function withLease(world, { lostAfterMs = null } = {}) {
+    const { w, deps } = world;
+    w.claimArgs = [];
+    w.heartbeats = 0;
+    deps.brain.claim = async (id, claimer, leaseSeconds) => {
+      w.claims.push(id);
+      w.claimArgs.push({ claimer, leaseSeconds });
+      return { status: 200 };
+    };
+    deps.brain.heartbeat = async () => {
+      w.heartbeats += 1;
+      return { status: lostAfterMs !== null && w.t - DAYTIME >= lostAfterMs ? 409 : 200 };
+    };
+    return world;
+  }
+
+  it('claim 带 opts.leaseSeconds；守望期间每轮心跳', async () => {
+    const { w, deps, opts } = withLease(makeWorld());
+    w.onTick = (ww) => { if (ww.spawned.length && ww.t - DAYTIME > 5 * 60_000) ww.task.status = 'completed'; };
+    const r = await dispatchTask(w.task, deps, { ...opts, leaseSeconds: 600 });
+    expect(r.outcome).toBe('session_terminal');
+    expect(w.claimArgs[0]).toEqual({ claimer: 'factory-dispatcher@test', leaseSeconds: 600 });
+    expect(w.heartbeats).toBeGreaterThanOrEqual(5);
+  });
+
+  it('会话中心跳 409 → 杀会话、放自己的锁、不落 failed（Brain 已按租约语义处置）', async () => {
+    const { w, deps, opts } = withLease(makeWorld(), { lostAfterMs: 3 * 60_000 });
+    const r = await dispatchTask(w.task, deps, { ...opts, leaseSeconds: 600 });
+    expect(r.outcome).toBe('lease_lost');
+    expect(w.killed).toBe(true);
+    expect(w.lockOwner).toBeNull();
+    expect(w.patches.some((p) => p.status === 'failed')).toBe(false);
+  });
+
+  it('等锁期间心跳 409 → 停止等锁，不领锁、不落 failed', async () => {
+    const { w, deps, opts } = withLease(makeWorld({ lockOwner: 'someone-else' }), { lostAfterMs: 60_000 });
+    const r = await dispatchTask(w.task, deps, { ...opts, leaseSeconds: 600 });
+    expect(r.outcome).toBe('lease_lost');
+    expect(w.lockOwner).toBe('someone-else');
+    expect(w.spawned).toHaveLength(0);
+    expect(w.patches.some((p) => p.status === 'failed')).toBe(false);
+  });
+
+  it('旧 Brain 没有心跳端点（404）→ 视为无租约，照旧守望不中断', async () => {
+    const world = makeWorld();
+    const { w, deps, opts } = world;
+    deps.brain.heartbeat = async () => ({ status: 404 });
+    w.onTick = (ww) => { if (ww.spawned.length && ww.t - DAYTIME > 5 * 60_000) ww.task.status = 'completed'; };
+    const r = await dispatchTask(w.task, deps, { ...opts, leaseSeconds: 600 });
+    expect(r.outcome).toBe('session_terminal');
+  });
+
+  it('Brain 客户端：claim 带 lease_seconds，heartbeat POST /tasks/:id/heartbeat', async () => {
+    const mod = await import('../factory-dispatcher.js');
+    const calls = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => { calls.push({ url, init }); return { status: 200, text: async () => '{}' }; };
+    try {
+      const c = mod.makeBrainClient('http://brain');
+      await c.claim('t1', 'fd@mmv', 600);
+      await c.heartbeat('t1', 'fd@mmv', 600);
+    } finally { globalThis.fetch = realFetch; }
+    expect(JSON.parse(calls[0].init.body)).toEqual({ claimer: 'fd@mmv', executor_kind: 'openclaw-agent', lease_seconds: 600 });
+    expect(calls[1].url).toBe('http://brain/api/brain/tasks/t1/heartbeat');
+    expect(JSON.parse(calls[1].init.body)).toEqual({ claimer: 'fd@mmv', lease_seconds: 600 });
+  });
+
+  it('默认租约 600 秒', async () => {
+    const mod = await import('../factory-dispatcher.js');
+    expect(mod.DEFAULT_OPTS.leaseSeconds).toBe(600);
+  });
+});

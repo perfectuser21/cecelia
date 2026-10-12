@@ -288,6 +288,7 @@ skill-eval-report-smoke.sh
 skill-eval-smoke.sh
 skill-inventory-smoke.sh
 skill-registry-projection-smoke.sh
+skill-business-grouping-smoke.sh
 skill-ledger-reconcile-smoke.sh
 skill-relay-smoke.sh
 slot-accounting-smoke.sh
@@ -442,5 +443,4 @@ dispatch-route-gate-smoke.sh
 coding-workflow-route-smoke.sh
 content-pipeline-runs-shadow-smoke.sh
 bypass-audit-smoke.sh
-
-skill-business-grouping-smoke.sh
+task-lease-device-pool-smoke.sh

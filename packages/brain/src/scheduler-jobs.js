@@ -74,6 +74,7 @@ import { defaultExec } from './host-exec.js';
 import { maybeRunCrystalJudge } from './crystal-judge.js';
 import { reapOpenclawAgentRuns } from './openclaw-agent-executor.js';
 import { runWorkflowCommanderDispatch } from './lib/workflow-commander-dispatch.js';
+import { reapExpiredLeases } from './lib/task-lease.js';
 import { runNodeOnboardingJob, runNodeExecutionOnboardingJob } from './node-onboarding/service.js';
 import { reapLegacyScriptRuns, reapManagedScriptRuns } from './script-executor.js';
 import { reconcileDelegatedDeviceJobs } from './routing/device-delegation.js';
@@ -182,6 +183,7 @@ export const JOBS = [
   { name: 'crystal-coding-evidence', cadence: { everySec: 600 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => syncCodingEvidence({ dbPool: pool }), description: '编码线九格证据同步（10min自gate，harness_attempts+sequencer_ledger→crystal_run_evidence，只补账不代判，判官口粮第二铲）' },
   { name: 'crystal-judge', cadence: { cron: '0 5 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => maybeRunCrystalJudge(pool), description: '每日结晶判官（北京05:00窗口+当日去重，OpenClaw 八格六指标聚合→三态判决→每日结晶报告落库，Crystal 第4件）' },
   { name: 'openclaw-agent-reaper', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, completionCadenceMs: 60_000, handler: (pool) => reapOpenclawAgentRuns(pool), description: '秋米 openclaw-agent 收割（60s，读 MMV ~/brain-runs/<run_id>.exit → completed_no_pr/failed，PR3）' },
+  { name: 'task-lease-reaper', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reapExpiredLeases(pool), description: '统一领单租约回收（派发总闸 G，任务 c5f6e683）：60s 收 task_leases 过期行——领单租约按任务类型现有语义回队（合同 onStale=requeue/release-claim-and-alert，到 max_retries 判 failed）或判 lost（外部执行体）；Brain 租约（openclaw-agent 自派，超时+15min）先探活 alive 续 15min、dead 宽限 10min 留专属收割、unknown 判 lost；回队/判 lost 同时释放该任务持有的设备锁' },
   { name: 'workflow-commander-dispatch', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => runWorkflowCommanderDispatch(pool), description: 'Brain 主动派 workflow 给 work-commander（任务 f38e7cc2，决策 23cc0951/3c98fb36）：60s 一轮先收后派；queued 的 workflow_dispatch 按 config/factory-workflows.json commander 登记解析调度单（缺项 failed 不猜）→ 发布时段内 CAS 认领 → 领 Brain 设备锁（被占只等不接管）→ ssh MMV 起 openclaw agent --agent work-commander（调度单经 stdin）→ 收割读 ~/brain-runs/<run_id>.exit + COMMANDER_RESULT → completed/failed + 放锁' },
   { name: 'script-reaper', cadence: { everySec: 10 }, needsPool: true, timeoutMs: 70_000, livenessIntervalSec: 10, handler: (pool) => reapLegacyScriptRuns(pool), description: 'SSH脚本独立10秒收割；每轮10项、4并发、稳定游标轮转，未知不结算' },
   { name: 'managed-script-reaper', cadence: { everySec: 10 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, livenessIntervalSec: 10, handler: (pool) => reapManagedScriptRuns(pool), description: '受管脚本独立收尾；真实回执、精确清理和原预约合同保持' },

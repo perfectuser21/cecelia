@@ -736,3 +736,23 @@ describe('收割器：agent 以 yield 收尾、没有最终结果 → 不判完�
     expect(query.mock.calls.some(([sql]) => /completed_no_pr/.test(sql))).toBe(true);
   });
 });
+
+describe('Brain 租约（派发总闸 G，任务 c5f6e683）：openclaw-agent 不再「生死未知不处置」', () => {
+  it('派发成功后按「超时 + 15 分钟」落 Brain 租约，过期由 task-lease-reaper 探活后判 lost', async () => {
+    const setLease = vi.fn(async () => ({}));
+    const t = { ...task, payload: { ...task.payload, timeout_sec: 1200 } };
+    const r = await triggerOpenclawAgent(t, { spawnFn: spawnMock(), pool: { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }) }, setLease });
+    expect(r.success).toBe(true);
+    expect(setLease).toHaveBeenCalledWith(expect.anything(), t.id, 1200 + 900);
+  });
+  it('落租约失败不影响派发结果（fail-open，靠下一轮补）', async () => {
+    const r = await triggerOpenclawAgent(task, { spawnFn: spawnMock(), pool: { query: vi.fn() }, setLease: async () => { throw new Error('db down'); } });
+    expect(r.success).toBe(true);
+  });
+  it('ssh 派发失败不落租约', async () => {
+    const setLease = vi.fn();
+    const r = await triggerOpenclawAgent(task, { spawnFn: spawnMock({ code: 255, stdout: '' }), pool: { query: vi.fn() }, setLease });
+    expect(r.success).toBe(false);
+    expect(setLease).not.toHaveBeenCalled();
+  });
+});

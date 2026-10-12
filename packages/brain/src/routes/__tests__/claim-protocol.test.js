@@ -209,7 +209,40 @@ describe('B. task-tasks.js POST /:id/claim: executor_kind 写入', () => {
   });
 });
 
+describe('B2. POST /:id/claim 带 lease_seconds（统一领单租约，任务 c5f6e683）', () => {
+  let app;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    app = makeTaskTasksApp();
+  });
+
+  it('lease_seconds → 认领后落租约行，响应带 lease_until', async () => {
+    const until = new Date(Date.now() + 120_000).toISOString();
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'task-9', claimed_by: 'fd', claimed_at: new Date().toISOString(), executor_kind: 'openclaw-agent' }] })
+      .mockResolvedValueOnce({ rows: [{ lease_until: until, lease_seconds: 120, on_expire: 'auto' }] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const res = await request(app)
+      .post('/tasks/task-9/claim')
+      .send({ claimer: 'fd', executor_kind: 'openclaw-agent', lease_seconds: 120 });
+    expect(res.status).toBe(200);
+    expect(res.body.lease_until).toBe(until);
+    const lease = mockPool.query.mock.calls.find(([sql]) => /INSERT INTO task_leases/.test(sql));
+    expect(lease).toBeTruthy();
+    expect(lease[1]).toContain(120);
+  });
+
+  it('非法 on_lease_expire → 400，不认领', async () => {
+    const res = await request(app)
+      .post('/tasks/task-9/claim')
+      .send({ claimer: 'fd', lease_seconds: 120, on_lease_expire: 'boom' });
+    expect(res.status).toBe(400);
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+});
+
 // ─── C. task-tasks.js PATCH /:id → in_progress ──────────────────────────────
+
 
 describe('C. task-tasks.js PATCH /:id → in_progress: 补写 claimed_by + executor_kind', () => {
   let app;

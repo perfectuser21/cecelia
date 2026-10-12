@@ -25,7 +25,7 @@ export async function deviceLockFixture({seedBeforeGuard}={}){
    CREATE TABLE task_events(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID,event_type TEXT,payload JSONB);
    CREATE TABLE harness_gaps(source_task_id UUID REFERENCES tasks(id),status TEXT);CREATE TABLE harness_gap_dependencies(source_task_id UUID REFERENCES tasks(id),status TEXT);
    CREATE TABLE task_dependencies(from_task_id UUID,edge_type TEXT,status TEXT);`);
-  for(const name of ['065_device_locks.sql','448_device_locks_phones.sql'])await pool.query(readFileSync(new URL('../../../migrations/'+name,import.meta.url),'utf8'));
+  for(const name of ['065_device_locks.sql','448_device_locks_phones.sql','553_task_leases_device_pools.sql'])await pool.query(readFileSync(new URL('../../../migrations/'+name,import.meta.url),'utf8'));
   if(seedBeforeGuard)await seedBeforeGuard(pool);
   await pool.query(readFileSync(new URL('../../../migrations/509_headed_task_takeover.sql',import.meta.url),'utf8'));
   return {pool,schema,close};

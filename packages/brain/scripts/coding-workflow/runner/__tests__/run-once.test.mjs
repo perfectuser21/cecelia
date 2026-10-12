@@ -185,6 +185,8 @@ describe('coding workflow runner run-once', () => {
     expect(JSON.parse(claims[1].raw)).toEqual({
       claimer: `coding-workflow-runner@${os.hostname()}`,
       executor_kind: 'coding-workflow-runner',
+      // 统一领单租约（任务 c5f6e683）：认领默认带 900 秒租约
+      lease_seconds: 900,
     });
     expect(brain.patches.map((p) => [p.id, p.body.status ?? null])).toEqual([[T2, 'in_progress'], [T2, 'completed'], [T2, null]]);
   }, 30000);

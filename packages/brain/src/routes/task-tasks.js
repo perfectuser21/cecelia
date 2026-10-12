@@ -15,6 +15,8 @@ import { randomUUID } from 'node:crypto';
 import pool from '../db.js';
 import { detectDomain } from '../domain-detector.js';
 import taskErrorReportRoutes from './task-error-report.js';
+import taskLeaseRoutes from './task-lease.js';
+import { claimTaskWithLease } from '../lib/task-lease.js';
 import { queueLaneSql } from '../task-queue-lanes.js';
 import { normalizeChangeKind, CHANGE_KINDS } from '../impact-contract/change-kind.js';
 import { registerTaskPatchRoute } from './task-task-patch.js';
@@ -563,51 +565,21 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// POST /tasks/:id/claim — C1 atomic claim，防止并行 dispatch 重复派发
-// 使用场景：外部 agent（如 autonomous pipeline）在开始处理前主动 claim。
-// 返回 200 表示 claim 成功；返回 409 表示已被其他 runner claim。
+// POST /tasks/:id/claim — C1 atomic claim，防止并行 dispatch 重复派发。
+// 统一领单（派发总闸 G，任务 c5f6e683）：外部执行者带 lease_seconds（30~14400）即落租约，
+// 之后 POST /tasks/:id/heartbeat 续约；on_lease_expire=auto|requeue|fail 指定过期处置（默认按任务类型语义）。
+// 返回 200 表示 claim 成功（带租约时含 lease_until）；返回 409 表示已被其他 runner claim。
 router.post('/:id/claim', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { claimer, executor_kind: rawExecutorKind } = req.body || {};
-    if (!claimer) {
-      return res.status(400).json({ error: 'claimer is required' });
-    }
-    const executorKind = rawExecutorKind || 'headed-session';
-    // 执行机 coding workflow runner 认领必须落下自己的 kind（executor-contracts 据此当外部执行体，
-    // 启动同步不打回）：任务上历史认领残留的 headed-session 等要被覆盖。其他 kind 保持 COALESCE。
-    const forceKind = executorKind === 'coding-workflow-runner';
-
-    const result = await pool.query(
-      `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
-              executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END
-       WHERE id = $2 AND claimed_by IS NULL
-       RETURNING id, claimed_by, claimed_at, executor_kind`,
-      [claimer, id, executorKind, forceKind]
-    );
-
-    if (result.rows.length === 0) {
-      // 已被其他 runner claim（或任务不存在）
-      const existing = await pool.query(
-        'SELECT claimed_by, claimed_at FROM tasks WHERE id = $1',
-        [id]
-      );
-      if (existing.rows.length === 0) {
-        return res.status(404).json({ error: 'Task not found', id });
-      }
-      return res.status(409).json({
-        error: 'Task already claimed',
-        claimed_by: existing.rows[0].claimed_by,
-        claimed_at: existing.rows[0].claimed_at,
-      });
-    }
-
-    res.json(result.rows[0]);
+    const { claimer, executor_kind: executorKind, lease_seconds: leaseSeconds, on_lease_expire: onExpire } = req.body || {};
+    const r = await claimTaskWithLease(pool, { taskId: req.params.id, claimer, executorKind, leaseSeconds, onExpire });
+    res.status(r.status).json(r.body);
   } catch (err) {
     res.status(500).json({ error: 'Failed to claim task', details: err.message });
   }
 });
 
+router.use('/', taskLeaseRoutes);
 router.use('/', taskErrorReportRoutes);
 
 export default router;
