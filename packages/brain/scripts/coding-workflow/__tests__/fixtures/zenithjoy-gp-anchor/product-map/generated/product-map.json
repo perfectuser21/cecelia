@@ -1,0 +1,25 @@
+{
+  "golden_paths": [
+    {
+      "id": "benchmark_link_acquisition",
+      "app_id": "customer_app",
+      "line_id": "line02",
+      "name": "对标链接获客",
+      "status": "proposed",
+      "steps": [
+        {
+          "id": "step1",
+          "name": "客户手填对标账号链接"
+        },
+        {
+          "id": "step2",
+          "name": "读对标账号视频→抓评论区"
+        },
+        {
+          "id": "step3",
+          "name": "触达带企微号→收好友→AI首答→写Lead表"
+        }
+      ]
+    }
+  ]
+}

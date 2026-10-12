@@ -210,6 +210,7 @@ describe('coding workflow runner run-once', () => {
     expect(path.dirname(worktree)).toBe(sb.worktreeBase);
     expect(path.basename(worktree)).toBe('cw-aaaaaaa1');
     expect(input.task_id).toBe(T1);
+    expect(input.gp_anchor).toBe('f1/step3');
     expect(input.brain_url).toBe(brain.url);
     expect(input.sprint_dir).toMatch(/^sprints\/[0-9]{8}-cw-aaaaaaa1$/);
     expect(input.run_tag).toMatch(/^[A-Za-z0-9_.:/-]{1,128}$/);
@@ -278,6 +279,26 @@ describe('coding workflow runner run-once', () => {
     expect(devLock.worktree_path).toBe(worktree);
     expect(git(worktree, 'status', '--porcelain')).toBe('');
   }, 30000);
+
+  it.each(['none(infra)', 'line02/benchmark_link_acquisition#step1', undefined])(
+    '真实 runner payload→publish→GH body 保留 gp_anchor=%s（缺失不造值）', async (gp_anchor) => {
+      brain = await startFakeBrain({ tasks: [codingTask(T1, { payload: { ...SWITCH, ...(gp_anchor === undefined ? {} : { gp_anchor }) } })] });
+      const r = await runOnceProcess(runnerEnv(sb, brain.url, {
+        FAKE_EXEC_MODE: 'real-publish',
+        FAKE_PUBLISH_ENTRY: path.resolve('scripts/coding-workflow/activities/publish.mjs'),
+        CODING_WF_GH_BIN: path.resolve('scripts/coding-workflow/__tests__/fixtures/fake-gh.mjs'),
+        FAKE_GH_MODE: 'new', CODING_WF_AUTOMERGE: '0',
+      }));
+      expect(r.exitCode, r.stderr).toBe(0);
+      const [{ envelope: { input } }] = readJsonLines(sb.execLog);
+      const create = readJsonLines(sb.ghLog).find((args) => args[0] === 'pr' && args[1] === 'create');
+      expect(create).toBeDefined();
+      const body = create[create.indexOf('--body') + 1];
+      expect(input.gp_anchor).toBe(gp_anchor);
+      expect(body.split('\n').filter((line) => line.startsWith('GP-Anchor:')))
+        .toEqual(gp_anchor === undefined ? [] : [`GP-Anchor: ${gp_anchor}`]);
+    }, 30000,
+  );
 
   it('.gitignore 未忽略 .dev-* 时写进 worktree 的 info/exclude；gp_anchor 缺省 none(infra)', async () => {
     fs.writeFileSync(path.join(sb.seed, '.gitignore'), 'node_modules\n');
