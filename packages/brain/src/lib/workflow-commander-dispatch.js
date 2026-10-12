@@ -14,6 +14,9 @@
  *        ssh MMV 起 `openclaw agent --agent work-commander`，调度单与纪律经 stdin 作为消息（不进命令行）→ in_progress
  *   收割：读 MMV ~/brain-runs/<run_id>.exit + 日志尾，取 Commander 最后输出的 `COMMANDER_RESULT {json}` →
  *        completed（带证据）/ failed（原因）→ 释放设备锁 → task_runs 补终态
+ *   熟化即 workflow（任务 c0fe7e30，决策 2186700a / 26df670a）：调度单带 --run-id / --task-id；codex_agent 合同由外壳
+ *        runner 落盘 ~/wf-agent-runs/<run_id>/delivery.json（系统产出），收割同一次 ssh 顺带读回 → result.delivery 供自动裁判按
+ *        合同 readback 判；陪跑 skill（commander_skill 名+版本）记进 result 与 task_runs。工厂单没交付文件 → 补标明来源的失败交付。
  * us-vps 零执行：本文件只 ssh 推活与收尸，不跑推理。
  */
 import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process';
@@ -59,9 +62,18 @@ export function resolveCommanderOrder(task, deps = {}) {
   if (!Array.isArray(extra) || extra.some((a) => typeof a !== 'string' || !ARG_TOKEN.test(a))) {
     return fail('payload.commander_args 只许旗标与无空白无引号的值');
   }
-  const order = [fields.capability, fields.machine, fields.profile, fields.serial, fields.biz, ...extra].join(' ');
+  const base = [fields.capability, fields.machine, fields.profile, fields.serial, fields.biz].join(' ');
+  const order = [base, ...extra].join(' ');
   const minutes = Number(c.timeout_min) > 0 ? Number(c.timeout_min) : DEFAULT_TIMEOUT_MIN;
-  return { ok: true, key, cfg, order, serial: fields.serial, machine: fields.machine, timeoutSec: Math.round(minutes * 60) };
+  return { ok: true, key, cfg, base, extra, order, serial: fields.serial, machine: fields.machine, timeoutSec: Math.round(minutes * 60) };
+}
+
+/**
+ * 实发调度单：<五项> --run-id <run> --task-id <task> [commander_args]（任务 c0fe7e30）。
+ * 外壳 runner 按 run_id 落盘 ~/wf-agent-runs/<run_id>/delivery.json，收割凭它取系统产出的交付。
+ */
+export function orderWithRun(r, runId, taskId) {
+  return [r.base, '--run-id', runId, '--task-id', taskId, ...(r.extra || [])].join(' ');
 }
 
 /** 给 Commander 的消息：调度单 + Brain 任务号/run_id + 纪律 + 回写约定。 */
@@ -69,14 +81,14 @@ export function buildCommanderMessage(task, r, runId) {
   const minutes = Math.round(r.timeoutSec / 60);
   return [
     `本次由 Brain 主动派发（决策 23cc0951：机器/手机/账号已由 Brain 选定）。Brain 任务 ${task.id}；run_id=${runId}；workflow=${r.key}。`,
-    `调度单：${r.order}`,
+    `调度单：${orderWithRun(r, runId, task.id)}`,
     '照做：',
-    '1. 先加载 $workflow-commander，照第二节用 wf-launch.sh 按上面调度单原样发起；不换机器、不换手机、不补参数。退出码按表处理（3=手机忙不叠跑、4=能力未部署如实报）。',
+    '1. 先加载 $workflow-commander，照第〇节读该 workflow 合同的 commander_skill（名+版本）自加载陪跑 skill（空则只按通用规矩），再照第二节用 wf-launch.sh 按上面调度单原样发起；不换机器、不换手机、不补参数。退出码按表处理（3=手机忙不叠跑、4=能力未部署如实报）。',
     `2. 陪跑到该 run 终态（wf-status.sh 读到 state=finished），总时限 ${minutes} 分钟内；读不到就说读不到，不编结论。`,
     '3. Brain 已代领本手机的 Brain 设备锁（owner=本任务），收尾由 Brain 释放；执行机侧手机锁由 wf-run 自己拿放。',
     '4. 最后一行只输出一行（单行 JSON，别加代码块）：',
-    'COMMANDER_RESULT {"status":"completed|failed|blocked","tag":"<run TAG>","launch_exit":<wf-launch 退出码>,"evidence":["证据ID或作品页读回"],"summary":"一句话结论"}',
-    '   completed 只在 run 终态 completed 且验收读回成立时写；其余写 failed/blocked 并说明原因。',
+    'COMMANDER_RESULT {"status":"completed|failed|blocked","tag":"<run TAG>","launch_exit":<wf-launch 退出码>,"evidence":["证据ID或作品页读回"],"commander_skill":{"name":"<陪跑 skill 名>","version":"<版本>"},"summary":"一句话结论"}',
+    '   completed 只在 run 终态 completed 且验收读回成立时写；其余写 failed/blocked 并说明原因。commander_skill 写本次实际装上的陪跑 skill，没有写 null。',
     task.title ? `任务标题：${task.title}` : null,
     task.description ? `任务说明：${task.description}` : null,
     ...(Array.isArray(r.cfg.brief) && r.cfg.brief.length ? ['正文纪律：', ...r.cfg.brief.map((l) => `- ${l}`)] : []),
@@ -95,6 +107,40 @@ export function parseCommanderResult(text) {
   } catch {
     return null;
   }
+}
+
+export const DELIVERY_BEGIN = '===WFD_DELIVERY_BEGIN===';
+export const DELIVERY_END = '===WFD_DELIVERY_END===';
+
+/** 从收割输出里抽外壳 delivery.json 分隔块：{ delivery: 对象|null, rest: 剥掉分隔块后的文本 }；run_id 不符按没有。 */
+export function parseDeliveryBlock(text, runId) {
+  const s = typeof text === 'string' ? text : '';
+  const i = s.indexOf(DELIVERY_BEGIN);
+  const j = i >= 0 ? s.indexOf(DELIVERY_END, i) : -1;
+  if (i < 0 || j < 0) return { delivery: null, rest: s };
+  const rest = s.slice(0, i) + s.slice(j + DELIVERY_END.length).replace(/^\n/, '');
+  try {
+    const v = JSON.parse(s.slice(i + DELIVERY_BEGIN.length, j).trim());
+    const ok = v && typeof v === 'object' && !Array.isArray(v) && v.run_id === runId;
+    return { delivery: ok ? v : null, rest };
+  } catch {
+    return { delivery: null, rest };
+  }
+}
+
+/** 工厂单没拿到外壳交付（起跑前失败 / 文件缺）：收割补一份标明来源的失败交付，让裁判能计、推进器不空转。 */
+function synthesizedDelivery(runId, reason, result) {
+  return {
+    source: 'reaper_synthesized',
+    run_id: runId,
+    claimed_result: 'failed',
+    lock_released: null,
+    side_effects: [],
+    readback: { publish_attempts: null },
+    final_evidence: [],
+    fail_reason: reason || `commander_${result?.status || 'unknown'}`,
+    commander_skill: null,
+  };
 }
 
 const defaultSshDispatch = (args, input) => sshWithStdin(nodeSpawn, args, input);
@@ -157,7 +203,7 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
     await pool.query(
       `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('run_id', $2::text, 'commander_order', $3::text, 'device_serial', $4::text, 'timeout_sec', $5::int), updated_at = NOW()
         WHERE id = $1`,
-      [t.id, runId, r.order, r.serial, r.timeoutSec],
+      [t.id, runId, orderWithRun(r, runId, t.id), r.serial, r.timeoutSec],
     );
     let spawned = null;
     let lastErr = null;
@@ -185,7 +231,7 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
       [t.id],
     );
     await recordTaskEventSafe(pool, t.id, 'workflow_dispatch_spawned', { run_id: runId, order: r.order, serial: r.serial, already_running: spawned === 'already' });
-    await startRun({ taskId: t.id, runId, source: 'workflow-commander', context: { workflow_key: r.key, order: r.order, agent: COMMANDER_AGENT } }, { pool });
+    await startRun({ taskId: t.id, runId, source: 'workflow-commander', context: { workflow_key: r.key, order: orderWithRun(r, runId, t.id), agent: COMMANDER_AGENT } }, { pool });
     out.dispatched++;
   }
   return out;
@@ -207,7 +253,9 @@ export async function reapWorkflowCommanderRuns(pool, deps = {}) {
     try {
       const target = deps.target ?? sshTargetFor(resolvePrimaryWorkerId());
       stdout = await sshProbe([...SSH_BASE_ARGS, target,
-        `if [ -f ~/brain-runs/${row.run_id}.exit ]; then echo EXIT=$(cat ~/brain-runs/${row.run_id}.exit); tail -c 40000 ~/brain-runs/${row.run_id}.log 2>/dev/null; else echo NO_EXIT; fi`]);
+        `if [ -f ~/brain-runs/${row.run_id}.exit ]; then echo EXIT=$(cat ~/brain-runs/${row.run_id}.exit); `
+        + `if [ -f ~/wf-agent-runs/${row.run_id}/delivery.json ]; then echo '${DELIVERY_BEGIN}'; head -c 200000 ~/wf-agent-runs/${row.run_id}/delivery.json; echo; echo '${DELIVERY_END}'; fi; `
+        + `tail -c 40000 ~/brain-runs/${row.run_id}.log 2>/dev/null; else echo NO_EXIT; fi`]);
     } catch (err) {
       console.warn(`[workflow-dispatch] 收割 ${row.run_id} 探测失败: ${err.message}`);
       continue;
@@ -215,7 +263,8 @@ export async function reapWorkflowCommanderRuns(pool, deps = {}) {
     const m = String(stdout).match(/^EXIT=(\d+)/m);
     if (!m) continue;
     const exit = parseInt(m[1], 10);
-    const tail = String(stdout).replace(/^EXIT=\d+\n?/m, '');
+    const { delivery: shellDelivery, rest } = parseDeliveryBlock(String(stdout).replace(/^EXIT=\d+\n?/m, ''), row.run_id);
+    const tail = rest;
     const receipt = parseReceipt(exit, tail);
     const result = parseCommanderResult(receipt.text) ?? parseCommanderResult(tail);
     let status = 'failed';
@@ -224,14 +273,17 @@ export async function reapWorkflowCommanderRuns(pool, deps = {}) {
     else if (!result) reason = 'commander_result_missing';
     else if (result.status === 'completed') status = 'completed';
     else reason = `commander_${String(result.status || 'unknown').replace(/[^a-z_]/gi, '')}`;
+    const isFactory = row.payload?.factory_dispatch === true;
+    const delivery = shellDelivery ?? (isFactory ? synthesizedDelivery(row.run_id, reason, result) : null);
+    const commanderSkill = result?.commander_skill ?? shellDelivery?.commander_skill ?? null;
     await finalizeTask(pool, row.id, status, {
       ...(reason ? { set: { error_message: reason } } : {}),
-      mergeResult: { receipt, commander_result: result, evidence: result?.evidence ?? [] },
+      mergeResult: { receipt, commander_result: result, evidence: result?.evidence ?? [], commander_skill: commanderSkill, ...(delivery ? { delivery } : {}) },
       onlyIfStatus: 'in_progress',
     });
     await releaseLock(row.id);
-    await finishRun({ runId: row.run_id, status: status === 'completed' ? 'completed' : 'failed', exitCode: exit, error: reason ?? undefined }, { pool });
-    await recordTaskEventSafe(pool, row.id, 'workflow_dispatch_reaped', { run_id: row.run_id, exit, status, reason, tag: result?.tag ?? null });
+    await finishRun({ runId: row.run_id, status: status === 'completed' ? 'completed' : 'failed', exitCode: exit, error: reason ?? undefined, result: { commander_skill: commanderSkill } }, { pool });
+    await recordTaskEventSafe(pool, row.id, 'workflow_dispatch_reaped', { run_id: row.run_id, exit, status, reason, tag: result?.tag ?? null, commander_skill: commanderSkill, delivery: shellDelivery ? 'shell' : (delivery ? 'synthesized' : 'none') });
     out[status === 'completed' ? 'completed' : 'failed']++;
   }
   return out;
