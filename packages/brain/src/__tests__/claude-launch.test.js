@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,12 +10,14 @@ const root = resolve(fileURLToPath(new URL('../../../..', import.meta.url)));
 const launcher = join(root, 'scripts/claude-launch.sh');
 const temp = mkdtempSync(join(tmpdir(), 'launcher-provenance-'));
 const requests = [];
+const transport = [];
+const serviceToken = 'launcher-auth-fixture-token';
 let server, url;
 
 function run(extra = {}, args = ['-p', 'probe'], tty = false) {
   const env = { ...process.env, CLAUDE_CODE_EXECPATH: join(temp, 'claude'),
     CLAUDE_SESSION_ID: 'launcher-session', CECELIA_NO_AUTO_WORKTREE: '1',
-    CECELIA_DISPATCH: '0', HARNESS_TASK_ID: '', BRAIN_URL: url, ...extra };
+    HOME: temp, CECELIA_INTERNAL_TOKEN: serviceToken, CECELIA_DISPATCH: '0', HARNESS_TASK_ID: '', BRAIN_URL: url, ...extra };
   const command = tty ? 'python3' : 'bash';
   const parameters = tty ? ['-c',
     'import os,pty,sys; pid,fd=pty.fork();\nif pid==0: os.execvp("bash",["bash"]+sys.argv[1:])\nelse:\n try:\n  while True:\n   data=os.read(fd,65536)\n   if not data: break\n   os.write(1,data)\n except OSError: pass\n _,s=os.waitpid(pid,0);sys.exit(os.waitstatus_to_exitcode(s))',
@@ -36,7 +38,12 @@ beforeAll(async () => {
   server = createServer((req, res) => {
     let body = '';
     req.on('data', data => { body += data; });
-    req.on('end', () => { requests.push({ path: req.url, body: JSON.parse(body) }); res.end('{}'); });
+    req.on('end', () => {
+      requests.push({ path: req.url, body: JSON.parse(body) });
+      transport.push({ auth: req.headers.authorization, argv: execFileSync('ps', ['-axo', 'command='], { encoding: 'utf8' }) });
+      res.statusCode = req.headers.authorization === `Bearer ${serviceToken}` ? 201 : 401;
+      res.end('{}');
+    });
   });
   await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
   url = `http://127.0.0.1:${server.address().port}`;
@@ -44,6 +51,46 @@ beforeAll(async () => {
 afterAll(async () => { await new Promise(resolveClose => server.close(resolveClose)); rmSync(temp, { recursive: true, force: true }); });
 
 describe('launcher 经 HTTP 登记出处', () => {
+  it('服务凭据经stdin header发送，实际curl argv、正文和输出均不含token', async () => {
+    const result = await run({ CECELIA_DISPATCH: '1' });
+    expect(result.code).toBe(0);
+    expect(transport.at(-1).auth).toBe(`Bearer ${serviceToken}`);
+    expect(transport.at(-1).argv).not.toContain(serviceToken);
+    expect(JSON.stringify(requests.at(-1))).not.toContain(serviceToken);
+    expect(result.output).not.toContain(serviceToken);
+  });
+  it('缺凭据或header注入时跳过登记，仍启动Claude', async () => {
+    for (const token of ['', 'bad\nInjected: header']) {
+      const before = requests.length;
+      const result = await run({ CECELIA_DISPATCH: '1', CECELIA_INTERNAL_TOKEN: token });
+      expect(result.code).toBe(0);
+      expect(result.output).toContain('CLAUDE_STARTED');
+      expect(requests.length).toBe(before);
+    }
+  });
+  it('只读取本人600缓存；不执行缓存内容、不使用开放权限文件', async () => {
+    const dir = join(temp, '.credentials'); mkdirSync(dir, { recursive: true });
+    const cache = join(dir, 'cecelia-internal.env');
+    writeFileSync(cache, `CECELIA_INTERNAL_TOKEN=${serviceToken}\n`, { mode: 0o600 });
+    try {
+      const before = requests.length;
+      expect((await run({ CECELIA_DISPATCH: '1', CECELIA_INTERNAL_TOKEN: '' })).code).toBe(0);
+      expect(requests.length).toBe(before + 1);
+      expect(transport.at(-1).auth).toBe(`Bearer ${serviceToken}`);
+      chmodSync(cache, 0o644);
+      expect((await run({ CECELIA_DISPATCH: '1', CECELIA_INTERNAL_TOKEN: '' })).code).toBe(0);
+      expect(requests.length).toBe(before + 1);
+    } finally { rmSync(cache, { force: true }); }
+  });
+  it('认证401仍有限时启动，不泄露错误凭据', async () => {
+    const start = Date.now();
+    const result = await run({ CECELIA_DISPATCH: '1', CECELIA_INTERNAL_TOKEN: 'invalid-auth-fixture' });
+    expect(result.code).toBe(0);
+    expect(result.output).toContain('CLAUDE_STARTED');
+    expect(result.output).not.toContain('invalid-auth-fixture');
+    expect(Date.now() - start).toBeLessThan(3500);
+  });
+
   it('无本地 PostgreSQL 时 machine 登记仍到 Brain，JSON 保留特殊字符', async () => {
     const before = requests.length;
     const result = await run({ CECELIA_DISPATCH: '1', CECELIA_LAUNCHED_BY: 'quote"name',

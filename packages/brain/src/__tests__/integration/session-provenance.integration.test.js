@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -63,6 +63,8 @@ describe('session_provenance migration（真 PostgreSQL）', () => {
 
   it('launcher → 真实 HTTP 路由 → PostgreSQL → GET 读回，重复请求不改出处', async () => {
     pool = (await import('../../db.js')).default;
+    const token = 'postgres-provenance-auth-fixture';
+    vi.stubEnv('CECELIA_INTERNAL_TOKEN', token);
     const router = (await import('../../routes/session-provenance.js')).default;
     const app = express();
     app.use(express.json());
@@ -76,6 +78,11 @@ describe('session_provenance migration（真 PostgreSQL）', () => {
     const fakeClaude = path.join(temp, 'claude');
     fs.writeFileSync(fakeClaude, '#!/bin/bash\nexit 0\n', { mode: 0o755 });
     try {
+      const denied = await fetch(`${base}/api/brain/session-provenance`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sid, kind: 'human', launched_by: 'untrusted' }) });
+      expect(denied.status).toBe(401);
+      expect((await pool.query('SELECT 1 FROM session_provenance WHERE session_id=$1', [sid])).rows).toEqual([]);
       const launcher = path.resolve(__dirname, '../../../../../scripts/claude-launch.sh');
       const exit = await new Promise((resolve, reject) => {
         const child = spawn('bash', [launcher, '-p', 'provenance check'], { cwd: temp,
@@ -90,13 +97,14 @@ describe('session_provenance migration（真 PostgreSQL）', () => {
       const { rows } = await pool.query('SELECT kind FROM session_provenance WHERE session_id=$1', [sid]);
       expect(rows).toEqual([{ kind: 'machine' }]);
       const replay = await fetch(`${base}/api/brain/session-provenance`, { method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ session_id: sid, kind: 'human', launched_by: 'changed' }) });
       expect(replay.status).toBe(200);
       expect((await replay.json()).kind).toBe('machine');
       const readback = await fetch(`${base}/api/brain/session-provenance/${sid}`);
       expect((await readback.json()).launched_by).toBe('session-provenance-integration');
     } finally {
+      vi.unstubAllEnvs();
       await new Promise(resolve => server.close(resolve));
       fs.rmSync(temp, { recursive: true, force: true });
     }
