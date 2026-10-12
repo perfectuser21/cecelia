@@ -11,8 +11,8 @@ export function validatePatrolBaselineRun(run,tooling){
  if(!/^[a-f0-9]{40}$/.test(tooling)||run.head_sha!==tooling||run.head_branch!=='main'||run.event!=='workflow_dispatch'||run.path!=='.github/workflows/implementation-impact.yml'||run.conclusion!=='success'||run.repository?.full_name!==REPO||run.head_repository?.full_name!==REPO)fail();return run;
 }
 export function downloadPatrolBaseline(tooling,output,{execute=execFileSync}={}){
- const json=path=>JSON.parse(execute('gh',['api',`repos/${REPO}/${path}`],{encoding:'utf8'}));
- const current=json('git/ref/heads/main').object.sha,compare=json(`compare/${tooling}...${current}`);
+ const json=(path,args=[])=>JSON.parse(execute('gh',['api',`repos/${REPO}/${path}`,...args],{encoding:'utf8',maxBuffer:32*1024*1024}));
+ const current=json('git/ref/heads/main').object.sha,compare=json(`compare/${tooling}...${current}`,['--jq','{status,merge_base_commit:{sha:.merge_base_commit.sha}}']);
  if(!['ahead','identical'].includes(compare.status)||compare.merge_base_commit?.sha!==tooling)fail();
  const artifact=json(`actions/artifacts?name=device-patrol-admission-${BASE}&per_page=100`).artifacts.filter(a=>!a.expired&&a.workflow_run?.head_sha===tooling&&a.workflow_run?.head_branch==='main').sort((a,b)=>b.id-a.id)[0];
  if(!artifact)throw Error('PATROL_BASELINE_ARTIFACT_MISSING');

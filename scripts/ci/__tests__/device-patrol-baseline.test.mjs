@@ -32,3 +32,28 @@ test('真实zip下载消费固定身份而不解包代码；摘要篡改拒绝',
   artifact.digest='sha256:'+'0'.repeat(64);assert.throws(()=>downloadPatrolBaseline(sha,out,{execute}),/DIGEST_MISMATCH/);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
+test('真实gh进程的大compare响应不溢出；仍拒绝非祖先与错误merge-base',()=>{
+ const root=mkdtempSync(join(tmpdir(),'patrol-large-compare-'));
+ try{
+  const executable=join(root,'gh');
+  writeFileSync(executable,`#!/usr/bin/env node
+const path=process.argv[3],padding='x'.repeat(2*1024*1024);
+let value;
+if(path.includes('/compare/')){
+ value={status:process.env.PATROL_TEST_STATUS,merge_base_commit:{sha:process.env.PATROL_TEST_MERGE_BASE},files:[{patch:padding}]};
+ if(process.argv.includes('--jq'))value={status:value.status,merge_base_commit:{sha:value.merge_base_commit.sha}};
+}else if(path.includes('/git/ref/'))value={object:{sha:'b'.repeat(40)},padding:process.env.PATROL_TEST_LARGE_REF==='true'?padding:''};
+else if(path.includes('/actions/artifacts?'))value={artifacts:[]};
+else process.exit(2);
+process.stdout.write(JSON.stringify(value));
+`,{mode:0o700});
+  for(const [status,mergeBase,error,largeRef=false] of [['ahead',sha,/PATROL_BASELINE_ARTIFACT_MISSING/],['identical',sha,/PATROL_BASELINE_ARTIFACT_MISSING/],['diverged',sha,/PATROL_BASELINE_ORIGIN_INVALID/],['ahead','c'.repeat(40),/PATROL_BASELINE_ORIGIN_INVALID/],['ahead',sha,/PATROL_BASELINE_ARTIFACT_MISSING/,true]]){
+   const calls=[];
+   const execute=(bin,args,opts)=>{calls.push({args,opts});return execFileSync(bin,args,{...opts,env:{...process.env,PATH:root+':'+process.env.PATH,PATROL_TEST_STATUS:status,PATROL_TEST_MERGE_BASE:mergeBase,PATROL_TEST_LARGE_REF:String(largeRef)}});};
+   assert.throws(()=>downloadPatrolBaseline(sha,join(root,'out'),{execute}),error);
+   const compare=calls.find(call=>call.args[1].includes('/compare/'));
+   assert.equal(compare.args[compare.args.indexOf('--jq')+1],'{status,merge_base_commit:{sha:.merge_base_commit.sha}}');
+   if(largeRef)assert.equal(calls[0].opts.maxBuffer,32*1024*1024);
+  }
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
