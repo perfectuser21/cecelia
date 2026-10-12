@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.430.0
+**Brain 版本**: 1.430.2
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -82,6 +82,24 @@ summary: 版本、实现影响、地图及发布证据测试改用精确scratch�
 fix: Codex 原生 command_execution 的已知 shell -lc/-c 外层字面量只解一层，命令全文精确匹配；保留完成状态和退出码，阻止 echo、注释、复合子串或未完成事件冒认执行。真实 Z0 here-doc/引号证据可回放，不改证据原判分。
 
 fix: local QA 基线从合同指定的固定 commit 只读提取到独享临时目录，不再要求 git worktree add；缺少历史起点仍 CANNOT_VERIFY，保留黑盒和 Git 元数据只读边界。 QA 记录只对当前任务/轮次报告和截图 force-add，兼容目标仓忽略规则；smoke 保持普通 add，空记录、预暂存、越界和链接拒绝。
+
+## Brain 1.430.2 — 工厂旧派发器仅保留独立核验消费
+
+新增显式 verify-only 模式，旧执行不再被恢复；两层筛选及 claim 前真实回读只允许完整 run-verify 核验单，默认兼容且模式错拼拒启动。独立核验消费与 Commander 执行分开，16 项新回归与原 38 项共同进入专属 smoke。
+
+## Brain 1.430.1 — 有效租约保护、比价失主停手及工厂改线门禁
+
+比价领单器统一租约守卫：409后停止业务、抑制迟到结果，精确owner停止标记保留设备finally清理；永久Node/Python回归纳入CI。
+
+消费者四文件由 lease-migration 中的固定 SHA256 文本 patch 发布；apply.py 在任何现场写入前核完整基线及产物哈希，保留备份并回滚写入失败。以实际部署副本为基线隔离应用，执行已有 Node/Python 回归；不引入旧 Draft PR #6117 的其他改动。
+
+Brain watchdog 的 never-started 扫描及锁后复核排除有效同 owner task_leases；修复 G/摘要两个有头会话在 4h 租期内仍被旧 20min stale 扫描清 claim 的真实复现。5 项真 PostgreSQL 回归覆盖有效、过期、释放、异主及续租竞争。
+
+新增固定工厂 Commander 开关 GET/PUT API：内部认证、严格输入、同 run 真实外壳收割及正式独立核验门禁；事务串行、幂等、actor/前后值审计、回读。默认关闭，不凭执行者 success 自述开启。
+
+专属 API smoke 进入棘轮 allowlist，真 HTTP 与私有 PG schema 验证；F1 step1 租约跨扫描器回归由 required integration CI 显式执行。
+
+修复合入 main #6371 后的固定基线审计回归：仅对 CODING_MUTATION_TASK_TYPES 扣除显式新增 coding_workflow，保留旧成员精确比较并独立断言新增成员必须存在。
 
 ## Brain 1.429.0 — Projects 双向同步与 AI 参与三档
 
