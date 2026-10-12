@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 // 建 coding workflow 任务（Commander 与 /dev 小改动的入口）：node new-task.mjs <plan.json> [--dry-run] [--repo <仓库>]
 // plan 两种形状：
-//   单条 { title, description?, acceptance: [..], priority?, gp_anchor? }
+//   单条 { title, change_kind, map_scope_hint: [..], description?, acceptance: [..], priority?, gp_anchor?, base_sha? }
 //   一批 { batch?, tasks: [{ key, title, acceptance, depends_on?: [前面任务的 key], ... }] }（大改拆成有序小任务）
 // 每条建成 coding_workflow 任务（runner 自动认领跑七步链）；depends_on 的 key 换成前面已建任务的真实 id。
 // plan 顶层可写 project_id（已有 project 根）或 project: { name, description? }（先建再挂），整批都挂上；
 // 有 depends_on 时必须二选一（Brain 要求带依赖的任务挂 project 根），两者不能同时给。
 // 仓库（C6）：单条 t.repo > 计划顶层 repo > --repo > 默认仓 cecelia；别名 / owner/repo / URL 经 repos.json 归一成规范 key 写进 payload.repo，
-// 未登记的拒绝（不猜）；登记了但未启用（enabled=false）的照建，stderr 提示 runner 暂不认领。
+// 未登记的拒绝（不猜）；未启用仓库最终由 Brain 拒绝。change_kind/map_scope_hint/base_sha 可从批次顶层继承。base_sha 如提供，须为计划选定的目标仓库真实commit（通常来自origin/main），格式为40位小写hex。
 // 先整体校验再逐条创建；中途失败退出 1 并列出已建的任务。输出 [{key,id,title}]。
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadRepos, resolveRepo, reposFile } from './runner/lib/repos.mjs';
+import { normalizeChangeKind } from '../../src/impact-contract/change-kind.js';
 
 const nonEmpty = (s) => typeof s === 'string' && s.trim() !== '';
 
@@ -24,7 +25,21 @@ export function validatePlan(plan, { repo = null, repos = loadRepos(reposFile())
     const wanted = [t?.repo, plan?.repo, repo].find((v) => nonEmpty(v)) ?? null;
     const repoKey = resolveRepo(wanted, repos);
     if (!repoKey) errors.push(`#${i + 1}:repo_unknown:${wanted}`);
-    return { ...t, repoKey };
+    const inherit = (key) => Object.hasOwn(t ?? {}, key) ? t[key] : plan?.[key];
+    let changeKind;
+    try {
+      changeKind = normalizeChangeKind(inherit('change_kind'));
+      if (!changeKind) errors.push(`#${i + 1}:change_kind_required`);
+    } catch { errors.push(`#${i + 1}:invalid_change_kind`); }
+    const baseSha = inherit('base_sha');
+    if (baseSha !== undefined && (typeof baseSha !== 'string' || !/^[a-f0-9]{40}$/.test(baseSha))) {
+      errors.push(`#${i + 1}:invalid_base_sha`);
+    }
+    const scope = inherit('map_scope_hint');
+    if (!Array.isArray(scope) || scope.length === 0) errors.push(`#${i + 1}:map_scope_required`);
+    else if (!scope.every(nonEmpty)) errors.push(`#${i + 1}:invalid_map_scope`);
+    const mapScope = Array.isArray(scope) && scope.every(nonEmpty) ? [...new Set(scope.map((v) => v.trim()))] : [];
+    return { ...t, repoKey, changeKind, mapScope, baseSha };
   });
   tasks.forEach((t, i) => {
     const at = `#${i + 1}`;
@@ -60,12 +75,17 @@ function body(t, batch, ids, projectId) {
   const req = {
     // 独立类型（派发总闸 F，任务 0a70684f）：tick 按类型排除，不再借 data + headed_manual
     task_type: 'coding_workflow',
+    mutation_intent: 'write',
+    change_kind: t.changeKind,
+    repo_hint: t.repoKey,
+    map_scope_hint: t.mapScope,
     title: t.title,
     description: t.description ?? '',
     priority: t.priority ?? 'P2',
     trigger_source: 'manual',
     payload,
   };
+  if (t.baseSha !== undefined) req.base_sha = t.baseSha;
   if (projectId) req.project_id = projectId;
   return req;
 }
@@ -125,7 +145,7 @@ async function main(argv, env) {
     return 0;
   }
   for (const key of new Set(tasks.map((t) => t.repoKey))) {
-    if (!repos.find((r) => r.key === key)?.enabled) console.error(`注意：仓库 ${key} 在 repos.json 未启用（enabled=false），runner 暂不认领，任务会停在 queued`);
+    if (!repos.find((r) => r.key === key)?.enabled) console.error(`注意：仓库 ${key} 在 repos.json 未启用（enabled=false），Brain 会拒绝无头建单；请先确认开闸部署`);
   }
   const base = `${String(env.BRAIN_URL || 'http://localhost:5221').replace(/\/+$/, '')}/api/brain`;
   if (project) {
@@ -142,6 +162,18 @@ async function main(argv, env) {
     const { ok, reply } = await postJson(`${base}/tasks`, body(t, batch, ids, projectId));
     if (!ok) {
       console.error(`建任务「${t.title}」失败：${JSON.stringify(reply)}；已建：${JSON.stringify(created)}`);
+      return 1;
+    }
+    const actual = reply.payload;
+    if (reply.task_type !== 'coding_workflow' || actual?.coding_workflow !== true
+      || actual?.work_kind !== 'coding_mutation' || actual?.orchestrator !== 'coding-workflow-runner'
+      || actual?.repo !== t.repoKey || actual?.change_kind !== t.changeKind
+      || (t.baseSha !== undefined && actual?.base_sha !== t.baseSha)
+      || !Array.isArray(actual?.map_scope)
+      || JSON.stringify([...actual.map_scope].sort()) !== JSON.stringify([...t.mapScope].sort())) {
+      console.error(`task_route_mismatch：${JSON.stringify({ id: reply.id, task_type: reply.task_type,
+        repo: actual?.repo, work_kind: actual?.work_kind, change_kind: actual?.change_kind,
+        orchestrator: actual?.orchestrator, expected_base_sha: t.baseSha, base_sha: actual?.base_sha })}；已建：${JSON.stringify(created)}；停止后续建单，先核查此任务`);
       return 1;
     }
     if (t.key !== undefined) ids.set(t.key, reply.id);

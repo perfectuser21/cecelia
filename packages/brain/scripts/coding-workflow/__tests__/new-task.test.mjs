@@ -6,14 +6,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { validatePlan } from '../new-task.mjs';
+import { validatePlan as validateRawPlan } from '../new-task.mjs';
+const routing = { change_kind: 'bugfix', map_scope_hint: ['F1'] };
+const validatePlan = (plan, opts) => validateRawPlan({ ...routing, ...plan }, opts);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, '../new-task.mjs');
 const PROJECT_ID = 'p0000000-0000-4000-8000-000000000001';
 const ROOT_ID = '11111111-1111-4111-8111-111111111111';
 
-function startBrain({ failAt = null, projectFail = false } = {}) {
+function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false, wrongBaseSha = false, missingBaseSha = false } = {}) {
   const state = { posts: [], projectPosts: [], order: [] };
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -34,7 +36,7 @@ function startBrain({ failAt = null, projectFail = false } = {}) {
       state.order.push('task');
       if (failAt === state.posts.length) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'change_kind_required' })); }
       res.statusCode = 201;
-      return res.end(JSON.stringify({ id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body }));
+      return res.end(JSON.stringify({ id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, change_kind: body.change_kind, base_sha: missingBaseSha ? undefined : wrongBaseSha ? 'f'.repeat(40) : body.base_sha, map_scope: malformedScope ? {} : body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } }));
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
@@ -60,7 +62,7 @@ describe('new-task.mjs', () => {
   let brain;
   const plan = (obj) => {
     const file = path.join(dir, 'plan.json');
-    fs.writeFileSync(file, JSON.stringify(obj));
+    fs.writeFileSync(file, JSON.stringify({ ...routing, ...obj }));
     return file;
   };
 
@@ -77,7 +79,8 @@ describe('new-task.mjs', () => {
     expect(r.code, r.stderr).toBe(0);
     expect(brain.posts).toHaveLength(1);
     expect(brain.posts[0]).toMatchObject({
-      task_type: 'coding_workflow',
+      task_type: 'coding_workflow', mutation_intent: 'write', change_kind: 'bugfix',
+      repo_hint: 'cecelia', map_scope_hint: ['F1'],
       title: '改 X',
       description: '为什么',
       trigger_source: 'manual',
@@ -86,7 +89,71 @@ describe('new-task.mjs', () => {
     expect(brain.posts[0].payload.headed_manual).toBeUndefined();
     expect(brain.posts[0].payload.depends_on).toBeUndefined();
     expect(brain.posts[0].project_id).toBeUndefined();
+    expect(brain.posts[0]).not.toHaveProperty('base_sha');
     expect(JSON.parse(r.stdout)).toEqual([{ key: null, id: '00000000-0000-4000-8000-000000000001', title: '改 X' }]);
+  });
+
+  it('显式 base_sha 顶层发送，批次继承且逐条覆盖', async () => {
+    brain = await startBrain();
+    const first = 'a'.repeat(40), second = 'b'.repeat(40);
+    const r = await runScript([plan({ project_id: ROOT_ID, base_sha: first, tasks: [
+      { key: 'a', title: '一', acceptance: ['x'] },
+      { key: 'b', title: '二', acceptance: ['x'], base_sha: second, depends_on: ['a'] },
+    ] })], { BRAIN_URL: brain.url });
+    expect(r.code, r.stderr).toBe(0);
+    expect(brain.posts.map((p) => p.base_sha)).toEqual([first, second]);
+    expect(brain.posts.every((p) => !Object.hasOwn(p.payload, 'base_sha'))).toBe(true);
+  });
+
+  it.each(['abc', 'g'.repeat(40), 'A'.repeat(40), '', null, 42, ['a'.repeat(40)]])('base_sha 非40位小写hex时整批建单前拒绝 %j', async (base_sha) => {
+    brain = await startBrain();
+    const r = await runScript([plan({ project: { name: '不得创建' }, tasks: [
+      { key: 'a', title: '一', acceptance: ['x'] },
+      { key: 'b', title: '二', acceptance: ['x'], base_sha },
+    ] })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('invalid_base_sha');
+    expect(brain.posts).toEqual([]);
+    expect(brain.projectPosts).toEqual([]);
+  });
+
+  it.each([{ wrongBaseSha: true }, { missingBaseSha: true }])('显式 base_sha 回执不一致 %j：保留已建ID并停后续', async (options) => {
+    brain = await startBrain(options);
+    const r = await runScript([plan({ base_sha: 'a'.repeat(40), project_id: ROOT_ID, tasks: [
+      { key: 'a', title: '一', acceptance: ['x'] },
+      { key: 'b', title: '二', acceptance: ['x'], depends_on: ['a'] },
+    ] })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(1);
+    expect(brain.posts).toHaveLength(1);
+    expect(r.stderr).toContain('task_route_mismatch');
+    expect(r.stderr).toContain('00000000-0000-4000-8000-000000000001');
+    expect(r.stdout).toBe('');
+  });
+
+  it.each([
+    [{ change_kind: null }, 'change_kind_required'],
+    [{ change_kind: 'wrong' }, 'invalid_change_kind'],
+    [{ map_scope_hint: [] }, 'map_scope_required'],
+    [{ map_scope_hint: [''] }, 'invalid_map_scope'],
+  ])('编码语义不完整时建单前拒绝 %j', async (invalid, error) => {
+    brain = await startBrain();
+    const r = await runScript([plan({ title: '修路由', acceptance: ['x'], ...invalid })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain(error);
+    expect(brain.posts).toEqual([]);
+  });
+
+  it.each([{ wrongRoute: true }, { malformedScope: true }])('服务端路由不匹配 %j：保留已建 id，停止依赖批次', async (options) => {
+    brain = await startBrain(options);
+    const r = await runScript([plan({ project_id: ROOT_ID, tasks: [
+      { key: 'a', title: '一', acceptance: ['x'] },
+      { key: 'b', title: '二', acceptance: ['x'], depends_on: ['a'] },
+    ] })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(1);
+    expect(brain.posts).toHaveLength(1);
+    expect(r.stderr).toContain('task_route_mismatch');
+    expect(r.stderr).toContain('00000000-0000-4000-8000-000000000001');
+    expect(r.stdout).toBe('');
   });
 
   it('批次：按顺序创建，depends_on 的 key 换成前面任务的真实 id，带 batch 名', async () => {
