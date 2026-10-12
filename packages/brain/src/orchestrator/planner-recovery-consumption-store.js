@@ -150,6 +150,8 @@ export async function consumePlannerRecoveryReceipt(
       title: `Recover Planner receipt ${receipt.id}`,
       description: `Resume initiative ${run.initiative_id} from immutable Planner receipt ${receipt.id}.`,
       mutation_intent: 'write',
+      // kernel 续跑单：后继要绑定 kernel run 收据，不改投 coding_workflow runner（A2）
+      kernel_continuation: true,
       declared_change_kind: receipt.change_kind,
       execution_profile_override_request: receipt.execution_profile_override ?? null,
       repo_hint: receipt.repo,

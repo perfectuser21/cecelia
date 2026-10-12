@@ -49,8 +49,10 @@ export class StatefulContractDb {
     gp = { id: 'gp-1', journey_id: 'journey-1' },
     contracts = [],
     tasks = [],
+    mapRepo = 'cecelia',
   } = {}) {
     this.gp = gp;
+    this.mapRepo = mapRepo;
     this.contracts = structuredClone(contracts);
     this.tasks = structuredClone(tasks);
     this.actions = [];
@@ -68,14 +70,14 @@ export class StatefulContractDb {
     }
     if (/FROM map_scope_repositories AS repositories/i.test(compact)) {
       return {
-        rows: [{ repo: 'cecelia', source_revision: 'a'.repeat(40) }],
+        rows: [{ repo: this.mapRepo, source_revision: 'a'.repeat(40) }],
       };
     }
     if (/SELECT scope_key, repo, adapter_config FROM map_scope_repositories/i.test(compact)) {
       return {
         rows: [{
-          scope_key: 'cecelia',
-          repo: 'cecelia',
+          scope_key: this.mapRepo,
+          repo: this.mapRepo,
           adapter_config: {
             aliases: [
               'perfectuser21/cecelia',
@@ -122,17 +124,20 @@ export class StatefulContractDb {
       /FROM tasks/i.test(compact)
       && /payload->>'gp_contract_id'/i.test(compact)
     ) {
+      // 按调用方真实传入的类型清单过滤：签字实现单改投 coding_workflow 后，清单漏类型即漏单
+      const types = Array.isArray(params[1]) ? params[1] : ['harness_initiative'];
       return {
         rows: this.tasks
-          .filter((task) => task.payload?.gp_contract_id === params[0])
+          .filter((task) => task.payload?.gp_contract_id === params[0] && types.includes(task.task_type))
           .map((task) => structuredClone(task)),
       };
     }
-    if (/FROM tasks/i.test(compact) && /harness_initiative/i.test(compact)) {
+    if (/FROM tasks/i.test(compact) && /payload->>'golden_path_id'/i.test(compact)) {
+      const types = Array.isArray(params[1]) ? params[1] : ['harness_initiative'];
       return {
         rows: this.tasks
           .filter((task) => (
-            task.task_type === 'harness_initiative'
+            types.includes(task.task_type)
             && task.payload?.golden_path_id === params[0]
             && ['queued', 'blocked', 'dispatched', 'in_progress'].includes(task.status)
           ))
@@ -228,7 +233,7 @@ export class StatefulContractDb {
         id: `task-${this.tasks.length + 1}`,
         title: params[0],
         description: params[1],
-        task_type: 'harness_initiative',
+        task_type: routedInsert ? params[3] : 'harness_initiative',
         status: 'queued',
         payload: JSON.parse(routedInsert ? params[9] : params[2]),
       };

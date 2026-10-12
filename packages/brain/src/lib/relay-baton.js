@@ -187,7 +187,8 @@ export async function materializeNextSteps(pool, task, handoff, deps = {}) {
           source_id: `handoff:${task.id}:${i}`,
           title: step.title,
           description: step.detail || `来自上一棒「${task.title || task.id}」的 handoff.next_steps[${i}]`,
-          requested_task_type: step.task_type || (coding ? 'dev' : 'data'),
+          // 编码步默认 coding_workflow（A2）：路由按 mutation_intent=write 改投 runner；非 runner 仓库抛 runner_repo_unsupported 进 skipped
+          requested_task_type: step.task_type || (coding ? 'coding_workflow' : 'data'),
           declared_domain: step.domain || (coding ? 'coding' : 'operations'),
           mutation_intent: coding ? 'write' : 'none',
           declared_change_kind: coding ? step.change_kind : null,

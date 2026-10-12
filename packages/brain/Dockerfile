@@ -81,6 +81,10 @@ COPY --from=deps /repo/package-lock.json /repo/package-lock.json
 COPY packages/brain/server.js ./
 COPY packages/brain/src/ ./src/
 COPY packages/brain/scripts/fleet-worker/ ./scripts/fleet-worker/
+# work-router 判定无头编码单能否交给 coding-workflow-runner，与 runner 同读仓库配置表 repos.json
+# （经 runner 的读表模块 runner/lib/repos.mjs，只依赖 node 内置模块；A2）。
+COPY packages/brain/scripts/coding-workflow/repos.json ./scripts/coding-workflow/
+COPY packages/brain/scripts/coding-workflow/runner/lib/repos.mjs ./scripts/coding-workflow/runner/lib/
 # 封印闸 contract-test-paths-seal.js 与 CI 共用同一条 Test Contract 解析链（同一把尺子）。
 # 库 SSOT 在 repo 根 scripts/lib（engine devgate / pyramid-guard 同用），容器内镜像到
 # /app/scripts/ 供 src 内相对 require（缺失时 Brain 启动即死 fail-closed，smoke 把关）。
@@ -100,6 +104,7 @@ COPY packages/brain/package.json ./
 
 # 构建期启动导入守卫：新增 workspace-local runtime 依赖时，镜像必须当场失败而非部署后秒死。
 RUN node --input-type=module -e "await import('./src/lib/map-manifest-schema.js')"
+RUN node --input-type=module -e "await import('./src/work-router.js')"
 RUN node --input-type=module -e "const {legacyRecords}=await import('./src/execution-directory/legacy-policy.js'); legacyRecords({env:{}})"
 
 # Root user: 容器内需要访问 /var/run/docker.sock 调 dockerd spawn 兄弟容器。

@@ -11,6 +11,7 @@ import {
   GP_HARNESS_TARGET_ENVIRONMENTS,
 } from './golden-path-contract-task.js';
 import { createRoutedTask } from './work-routing-store.js';
+import { GP_IMPLEMENTATION_TASK_TYPES } from './lib/task-type-registry.js';
 import { CHANGE_KINDS, normalizeRepoHint } from './work-router.js';
 import { PHOTO_STALE_THRESHOLD_SECONDS } from './lib/registry-freshness.js';
 
@@ -154,11 +155,11 @@ export async function createGoldenPathContractVersion(db, {
   const { rows: activeTasks } = await db.query(
     `SELECT id, status, payload
        FROM tasks
-      WHERE task_type = 'harness_initiative'
+      WHERE task_type = ANY($2::text[])
         AND payload->>'golden_path_id' = $1
         AND status IN ('queued', 'blocked', 'dispatched', 'in_progress')
       FOR UPDATE`,
-    [goldenPathId],
+    [goldenPathId, GP_IMPLEMENTATION_TASK_TYPES],
   );
   const runningTasks = activeTasks.filter(
     (task) => task.status === 'dispatched' || task.status === 'in_progress',
@@ -319,12 +320,12 @@ async function findHarnessTaskForContract(db, contractId) {
   const { rows } = await db.query(
     `SELECT *
        FROM tasks
-      WHERE task_type = 'harness_initiative'
+      WHERE task_type = ANY($2::text[])
         AND payload->>'gp_contract_id' = $1
       ORDER BY created_at ASC
       LIMIT 1
       FOR UPDATE`,
-    [contractId],
+    [contractId, GP_IMPLEMENTATION_TASK_TYPES],
   );
   return rows[0] || null;
 }
@@ -488,7 +489,7 @@ export async function signAndLaunchGoldenPathContract(db, {
     // 而不是编造一个不存在的锚点。对非 zenithjoy-workspace 的 base_repo 无害（字段被忽略）。
     gp_anchor: 'none(backlog)',
   };
-  const routed = await createRoutedTask(db, {
+  const routeRequest = (metadata) => ({
     source: 'discovery',
     source_id: `golden-path-contract:${signedVersion.id}`,
     title: `[GP harness] ${goldenPath.title}`,
@@ -500,7 +501,7 @@ export async function signAndLaunchGoldenPathContract(db, {
     repo_hint: mapBaseline.repo,
     map_scope_hint: harnessGlue.mapScope,
     base_sha: mapBaseline.source_revision,
-    metadata: taskPayload,
+    metadata,
     task: {
       priority: 'P1',
       status: 'queued',
@@ -508,7 +509,21 @@ export async function signAndLaunchGoldenPathContract(db, {
       domain: 'coding',
       phase: 'dev',
     },
-  }, null, { transaction: 'existing' });
+  });
+  // 实现单默认无头 → coding_workflow runner（A2）。runner 不支持的仓库不建无头单：
+  // 降为有头待办（headed_manual），签字事务照常提交，不因执行面缺口回滚主理人签字。
+  let routed;
+  try {
+    routed = await createRoutedTask(db, routeRequest(taskPayload), null, { transaction: 'existing' });
+  } catch (error) {
+    if (error?.code !== 'runner_repo_unsupported') throw error;
+    routed = await createRoutedTask(
+      db,
+      routeRequest({ ...taskPayload, headed_manual: 'true' }),
+      null,
+      { transaction: 'existing' },
+    );
+  }
   const task = routed.task;
 
   const { rows: approvedPaths } = await db.query(

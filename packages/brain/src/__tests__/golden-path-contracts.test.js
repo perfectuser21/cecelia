@@ -274,8 +274,10 @@ describe('Golden Path contract signature and Harness launch', () => {
     tasks = [],
     gpStatus = 'converged',
     gp = {},
+    mapRepo = 'cecelia',
   } = {}) {
     return new StatefulContractDb({
+      mapRepo,
       gp: {
         id: 'gp-1',
         title: '朋友圈 GP',
@@ -381,6 +383,76 @@ describe('Golden Path contract signature and Harness launch', () => {
     });
     expect(db.decisions).toEqual([]);
     expect(db.tasks).toHaveLength(1);
+  });
+
+  // ── A2：签字实现单改投 coding_workflow runner（任务 eb9094ee）──────────────────
+  it('A2：签字后的实现单是 coding_workflow（runner 认领），不再落无头 harness_initiative', async () => {
+    const db = signingDb();
+
+    await signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-1',
+      version: 1,
+      contentHash: db.contracts[0].content_hash,
+      reviewer: 'owner',
+    });
+
+    expect(db.tasks).toHaveLength(1);
+    expect(db.tasks[0].task_type).toBe('coding_workflow');
+    expect(db.tasks[0].payload).toMatchObject({ coding_workflow: true, repo: 'cecelia', gp_contract_id: 'contract-1' });
+    expect(db.tasks[0].payload.headed_manual).toBeUndefined();
+  });
+
+  it('A2：runner 不支持的仓库 → 签字照常成功，实现单降为有头待办（harness_initiative + headed_manual）', async () => {
+    const db = signingDb({ mapRepo: 'zenithjoy-workspace' });
+
+    await signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-1',
+      version: 1,
+      contentHash: db.contracts[0].content_hash,
+      reviewer: 'owner',
+    });
+
+    expect(db.contracts[0].status).toBe('signed');
+    expect(db.tasks).toHaveLength(1);
+    expect(db.tasks[0].task_type).toBe('harness_initiative');
+    expect(db.tasks[0].payload).toMatchObject({ headed_manual: 'true', repo: 'zenithjoy-workspace' });
+  });
+
+  it('A2：重试签字时已有 coding_workflow 实现单 → 幂等返回同一单', async () => {
+    const signed = contractRow({ status: 'signed' });
+    signed.signature_decision_id = 'decision-existing';
+    const existingTask = {
+      id: 'task-existing-cw',
+      task_type: 'coding_workflow',
+      status: 'queued',
+      payload: { golden_path_id: 'gp-1', gp_contract_id: signed.id },
+    };
+    const db = signingDb({ contracts: [signed], tasks: [existingTask] });
+
+    const result = await signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: signed.id,
+      version: 1,
+      contentHash: signed.content_hash,
+      reviewer: 'owner',
+    });
+
+    expect(result).toMatchObject({ task: { id: 'task-existing-cw' }, idempotent: true });
+  });
+
+  it('A2：合同换版时排队中的 coding_workflow 实现单同样被取消', async () => {
+    const changed = cloneContract();
+    changed.fr_summary.statements = ['换版'];
+    const db = new StatefulContractDb({
+      contracts: [contractRow({ status: 'signed' })],
+      tasks: [{ id: 'task-cw', task_type: 'coding_workflow', status: 'queued', payload: { golden_path_id: 'gp-1' } }],
+    });
+
+    await createGoldenPathContractVersion(db, { goldenPathId: 'gp-1', contract: changed });
+
+    expect(db.tasks[0].status).toBe('cancelled');
   });
 
   it('rejects a pending action whose contract id or hash no longer matches', async () => {

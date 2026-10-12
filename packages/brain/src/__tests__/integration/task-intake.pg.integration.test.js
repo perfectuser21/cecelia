@@ -65,7 +65,7 @@ describe('真实HTTP与PostgreSQL收据', () => {
       [results[0].body.task_id])).rows[0].count)).toBe(1);
   });
 
-  it('明确代码修改经过真实active地图门禁落harness任务及完整收据', async () => {
+  it('明确代码修改经过真实active地图门禁落coding_workflow任务（runner认领）及完整收据', async () => {
     const text = '修复 Cecelia 接单重复创建任务的问题';
     const f = fixture(baseCandidate(text, { intent: 'coding_change', mutation_intent: 'write',
       change_kind: 'bugfix', repo: 'cecelia', map_scope: ['F1'] }));
@@ -74,9 +74,11 @@ describe('真实HTTP与PostgreSQL收据', () => {
     expect(response.status).toBe(201);
     const row = (await pool.query(`SELECT t.task_type,t.payload,r.* FROM tasks t
       JOIN work_routing_receipts r ON r.task_id=t.id WHERE t.id=$1`, [response.body.task_id])).rows[0];
-    expect(row.task_type).toBe('harness_initiative');
+    // A2：无头编码单改投 coding_workflow runner
+    expect(row.task_type).toBe('coding_workflow');
+    expect(row.payload.coding_workflow).toBe(true);
     expect(row).toMatchObject({ repo: 'cecelia', map_scope: ['F1'], change_kind: 'bugfix',
-      pipeline: 'harness', work_kind: 'coding_mutation', default_execution_profile: 'hotfix-v1' });
+      pipeline: 'coding_workflow', work_kind: 'coding_mutation', default_execution_profile: 'hotfix-v1' });
     expect(row.payload.routing_receipt_id).toBe(row.id);
     expect(row.evidence.base_sha).toMatch(/^[a-f0-9]{40}$/);
     expect(row.map_scope_validation_version).toBeTruthy();

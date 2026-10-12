@@ -176,7 +176,9 @@ async function seedRaceFixture({ routedBaseSha = null } = {}) {
     branch: `cp-projection-race-${suffix}`,
     // 默认与地图 fact revision 同锚；传 routedBaseSha 则种一个陈旧锚，走派发时重锚定。
     base_sha: routedBaseSha ?? baseSha,
-    task: { priority: 'P0', payload: { initiative_id: initiativeId } },
+    // A2：无头编码单改投 coding_workflow runner，只有有头账本行还落 harness_initiative；
+    // 本组测的是 kernel 地图预检/改锚机制（A5 删代码前仍在），故以有头账本行入账。
+    task: { priority: 'P0', payload: { initiative_id: initiativeId, headed_manual: 'true' } },
   });
   return {
     baseSha,

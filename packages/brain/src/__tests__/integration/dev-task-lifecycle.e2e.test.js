@@ -44,6 +44,9 @@ const codingRoute = {
   map_scope_hint: ['F1'],
   branch: `cp-e2e-${runKey}`,
   base_sha: 'a'.repeat(40),
+  // A2：夹具仓库不是 runner 支持的仓库，无头编码单会被拒（runner_repo_unsupported）；
+  // 本组测的是 dev 账本行的回调收账链，以有头账本行（harness_initiative）入账。
+  payload: { headed_manual: 'true' },
 };
 
 // ─── Express App 工厂 ────────────────────────────────────────────────────────

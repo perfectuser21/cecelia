@@ -87,13 +87,17 @@ describe('selectPipeline 四格路由', () => {
     expect(d.pipeline).toBe('canvas');
     expect(d.answer_known).toBe(true);
   });
-  it('code 类走原线不变(harness/kernel),四格字段随行留痕', () => {
+  it('code 类无头走 coding_workflow runner(A2,无头 kernel 已退役),有头仍记 harness 账本,四格字段随行留痕', () => {
     const d = selectPipeline({
       work_kind: 'coding_mutation', change_kind: 'bugfix',
       artifact_kind: 'code', answer_known: true,
     });
-    expect(d.pipeline).toBe('harness');
-    expect(d.orchestrator).toBe('kernel-harness-v2');
+    expect(d.pipeline).toBe('coding_workflow');
+    expect(d.orchestrator).toBe('coding-workflow-runner');
+    expect(selectPipeline({
+      work_kind: 'coding_mutation', change_kind: 'bugfix',
+      artifact_kind: 'code', answer_known: true, headed: true,
+    })).toMatchObject({ pipeline: 'harness', orchestrator: 'kernel-harness-v2' });
     expect(d.artifact_kind).toBe('code');
     expect(d.answer_known).toBe(true);
   });
@@ -117,7 +121,7 @@ describe('routeWork 端到端携带四格', () => {
     const d = routeWork({ ...base, map_scope_hint: ['F1'] }, FACTS);
     expect(d.artifact_kind).toBe('code');
     expect(d.answer_known).toBe(true);
-    expect(d.pipeline).toBe('harness');
+    expect(d.pipeline).toBe('coding_workflow');
     expect(d.repo).toBe('cecelia');
   });
 });

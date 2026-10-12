@@ -30,7 +30,9 @@ try {
   const persisted = (await fixture.pool.query(`SELECT t.id,t.task_type,t.payload,r.id AS receipt_id,
     r.map_scope,r.work_kind FROM tasks t JOIN work_routing_receipts r ON r.task_id=t.id WHERE t.id=$1`,
   [created.task_id])).rows[0];
-  assert.equal(persisted.task_type, 'harness_initiative');
+  // A2：无头编码单改投 coding_workflow runner
+  assert.equal(persisted.task_type, 'coding_workflow');
+  assert.equal(persisted.payload.coding_workflow, true);
   assert.equal(persisted.payload.routing_receipt_id, persisted.receipt_id);
   assert.deepEqual(persisted.map_scope, ['F1']);
   const second = await post();

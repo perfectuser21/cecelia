@@ -1,6 +1,9 @@
 import {assertLinuxPoolAuthority} from './linux-pool/task-authority.js';
 import {assertAppServerAuthority} from './app-server/task-authority.js';
 import { assertJanitorAuthority } from './janitor-authority.js';
+import { isHeadedManual } from './lib/dispatch-route.js';
+// runner 多仓库口径的唯一来源 repos.json（经 runner 自己的读表函数，与 plan.mjs pickCandidates 同读；Dockerfile 单独 COPY 进镜像）
+import { enabledRepos, resolveRepo as resolveRunnerRepo } from '../scripts/coding-workflow/runner/lib/repos.mjs';
 export const CHANGE_KINDS = Object.freeze(['new_capability', 'capability_change', 'bugfix', 'parameter_only']);
 export const ROUTER_VERSION = 'work-router-v1';
 const SOURCES = new Set(['inbox', 'conversation', 'api', 'thalamus', 'discovery', 'scheduler', 'child']);
@@ -106,6 +109,34 @@ export function resolveRepo(request, repositoryFacts = []) {
   return matches[0].repo;
 }
 
+// 有头账本行（A2，任务 eb9094ee）：有头 /dev / Codex 会话拿 harness_initiative 记账——带 headed_manual、
+// 直接以非 queued|blocked 入账，或声明 executor_kind=headed-session。其余编码单是无头的，改投 coding_workflow runner。
+const HEADLESS_ENTRY_STATUSES = new Set(['queued', 'blocked']);
+
+export function isHeadedLedgerRequest(request = {}) {
+  const payload = { ...(request.metadata || {}), ...(request.task?.payload || {}) };
+  if (isHeadedManual(payload)) return true;
+  if (!HEADLESS_ENTRY_STATUSES.has(request.task?.status ?? 'queued')) return true;
+  return request.task?.executor_kind === 'headed-session';
+}
+
+/**
+ * runner 会认领这个仓库吗：repos.json 登记且 enabled（Brain 侧不读 MMV 的 CODING_WF_REPOS 环境开关，只认表里的总闸）。
+ * 返回仓库 key；未登记 / 未启用返回 null。
+ */
+export function runnerRepoOf(repo) {
+  if (repo == null || repo === '') return null;
+  const key = resolveRunnerRepo(repo);
+  return key && enabledRepos({}).some((r) => r.key === key) ? key : null;
+}
+
+function runnerRepoUnsupported(repo) {
+  const error = new Error('runner_repo_unsupported');
+  error.code = 'runner_repo_unsupported';
+  error.repo = repo;
+  return error;
+}
+
 export function selectPipeline(input) {
   const axes = {
     artifact_kind: input.artifact_kind ?? 'code',
@@ -142,7 +173,12 @@ export function selectPipeline(input) {
         throw new Error('execution_profile_downgrade_forbidden');
       }
     }
-    return { work_kind: input.work_kind, change_kind: input.change_kind, pipeline: 'harness', canonical_task_type: 'harness_initiative', default_execution_profile: defaultProfile, execution_profile_override: override, impact_contract_required: true, orchestrator: 'kernel-harness-v2', ...axes };
+    if (input.headed === true) {
+      // 有头账本行：执行者是会话里的人，类型沿用 harness_initiative（finalizeHarnessTask 收账 / shepherd / warroom 按它判）
+      return { work_kind: input.work_kind, change_kind: input.change_kind, pipeline: 'harness', canonical_task_type: 'harness_initiative', default_execution_profile: defaultProfile, execution_profile_override: override, impact_contract_required: true, orchestrator: 'kernel-harness-v2', ...axes };
+    }
+    // 无头编码单：无头 kernel 已退役（A1），由 coding-workflow-runner 认领跑 spec→GAN→实现→QA→合并
+    return { work_kind: input.work_kind, change_kind: input.change_kind, pipeline: 'coding_workflow', canonical_task_type: 'coding_workflow', default_execution_profile: defaultProfile, execution_profile_override: override, impact_contract_required: false, orchestrator: 'coding-workflow-runner', ...axes };
   }
   const nonCoding = {
     content_creation: ['content', 'content-pipeline'],
@@ -165,13 +201,19 @@ export function routeWork(input, repositoryFacts = [], context = {}) {
   const artifact_kind = previewCache ? 'execution' : classifyArtifactKind(request);
   const answer_known = classifyAnswerKnown(request);
   // execution 类交付物是 run,不强制解析 repo(map/impact 尺子不适用)
-  const repo = (work_kind === 'coding_mutation' && artifact_kind === 'code')
-    ? resolveRepo(request, repositoryFacts) : null;
+  const codingCode = work_kind === 'coding_mutation' && artifact_kind === 'code';
+  const repo = codingCode ? resolveRepo(request, repositoryFacts) : null;
+  // kernel_continuation：kernel 自身的续跑单（planner recovery 后继，绑定 initiative_runs 收据）只能是 harness_initiative，
+  // runner 不认 kernel 收据；随 A5 删 kernel 代码一并移除。
+  const headed = codingCode && (isHeadedLedgerRequest(input) || input.kernel_continuation === true);
+  // 无头编码单只能交给 runner；runner 不支持的仓库不建无头单（有头带 headed_manual 照建）
+  if (codingCode && !headed && runnerRepoOf(repo) === null) throw runnerRepoUnsupported(repo);
   return {
     ...selectPipeline({
       work_kind,
       artifact_kind,
       answer_known,
+      headed,
       change_kind: request.declared_change_kind,
       requested_task_type: request.requested_task_type,
       execution_profile_override_request: request.execution_profile_override_request,

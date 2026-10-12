@@ -34,9 +34,12 @@ function initialObserved(profile, overrides = {}) {
 describe('four-form profiles', () => {
   it('keeps evaluator and judge in every coding profile', () => {
     for (const change_kind of ['new_capability','capability_change','bugfix','parameter_only']) {
-      const route = selectPipeline({ work_kind: 'coding_mutation', change_kind });
+      // A2：kernel 画像只剩有头账本行（headed）这条 harness 路由；无头编码单交 coding-workflow-runner
+      // （runner 自带 spec-review GAN / QA 门 / judge-gate，不读 kernel 画像）
+      const route = selectPipeline({ work_kind: 'coding_mutation', change_kind, headed: true });
       expect(route.impact_contract_required).toBe(true);
       expect(route.orchestrator).toBe('kernel-harness-v2');
+      expect(selectPipeline({ work_kind: 'coding_mutation', change_kind }).orchestrator).toBe('coding-workflow-runner');
     }
   });
 

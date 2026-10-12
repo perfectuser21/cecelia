@@ -368,6 +368,14 @@ router.post('/', async (req, res) => {
       // 派发只认路由表（任务 0a70684f）：无执行者的类型建单即拒，返回明确原因而不是进队静默卡死
       return res.status(422).json({ error: err.message, reason_code: err.code, task_type: err.task_type, route: err.route });
     }
+    if (err.code === 'runner_repo_unsupported') {
+      // 无头编码单只能交给 coding-workflow-runner；runner 不支持该仓库时不建无头单（A2）
+      return res.status(422).json({
+        error: `${err.code}: 无头编码执行者 coding-workflow-runner 不支持仓库 ${err.repo}；确需人工接手请带 payload.headed_manual="true"`,
+        reason_code: err.code,
+        repo: err.repo,
+      });
+    }
     if (err.code === 'script_payload_invalid') {
       return res.status(400).json({ error: err.message, code: 'INVALID_SCRIPT_PAYLOAD', reason_code: err.reason, field: err.field });
     }

@@ -97,7 +97,6 @@ vi.mock('../../dispatch-allocation-guide.js', () => ({
 vi.mock('../../llm-capacity.js', () => ({ getLlmCapacitySnapshot: vi.fn(async () => ({})) }));
 
 import { DB_DEFAULTS } from '../../db-config.js';
-import { dispatchNextTask } from '../../dispatcher.js';
 import { createRoutedTask } from '../../work-routing-store.js';
 import {
   deferred,
@@ -264,10 +263,10 @@ describe.sequential('Take → Map → Kernel authority on PostgreSQL', () => {
     expect(partial.rows[0]).toEqual({ tasks: 0, receipts: 0 });
   });
 
-  // 无头 kernel 入口退役（任务 dacd75f3）：harness_initiative 无头单不再进 kernel 派发；
-  // kernel 执行回执的收口语义（no-runId / terminal authority）仍由 dispatch-executor-fail 单测覆盖（golden_path_proposal 仍走 kernel）；
-  // 有头行不被 drain 由 retired-harness-dispatch.pg.integration（真实选单 SQL）覆盖——本文件的选单是 mock。
-  it('valid F1 routes atomically; queued headless harness_initiative is drained retired_harness_kernel without touching the executor', async () => {
+  // 无头 kernel 入口退役（任务 dacd75f3）+ 编码单改投 runner（A2，任务 eb9094ee）：合法 F1 无头编码单
+  // 原子落 coding_workflow（runner 认领，tick 不派）；存量无头 harness_initiative 的 drain 收口由
+  // retired-harness-dispatch.pg.integration（真实选单 SQL）覆盖——本文件的选单是 mock。
+  it('valid F1 routes atomically to coding_workflow for the runner with a validated receipt', async () => {
     const sourceId = `valid-${randomUUID()}`;
     const created = await createRoutedTask(testPool, {
       source: 'api',
@@ -281,16 +280,11 @@ describe.sequential('Take → Map → Kernel authority on PostgreSQL', () => {
       base_sha: 'b'.repeat(40),
       task: { priority: 'P0' },
     });
-    state.taskId = created.task_id;
-    state.trigger.mockClear();
-
-    const result = await dispatchNextTask(null);
-
-    expect(result.actions).toContainEqual({ action: 'retire-task', task_id: created.task_id, task_type: 'harness_initiative' });
-    expect(state.trigger).not.toHaveBeenCalled();
     const persisted = await testPool.query(
-      `SELECT task.status,task.claimed_by,task.error_message,
+      `SELECT task.task_type,task.status,task.claimed_by,
+              task.payload->>'coding_workflow' AS coding_workflow,
               MAX(receipt.map_scope_validation_version) AS map_scope_validation_version,
+              MAX(receipt.canonical_task_type) AS canonical_task_type,
               COUNT(receipt.id)::int AS receipts
          FROM tasks task
          LEFT JOIN work_routing_receipts receipt ON receipt.task_id=task.id
@@ -299,13 +293,14 @@ describe.sequential('Take → Map → Kernel authority on PostgreSQL', () => {
       [created.task_id],
     );
     expect(persisted.rows[0]).toMatchObject({
-      status: 'failed',
+      task_type: 'coding_workflow',
+      status: 'queued',
       claimed_by: null,
-      error_message: 'retired_harness_kernel',
+      coding_workflow: 'true',
       map_scope_validation_version: 'active-business-node-v1',
+      canonical_task_type: 'coding_workflow',
       receipts: 1,
     });
-    expect(state.emit).not.toHaveBeenCalledWith('task_dispatched', expect.anything(), expect.anything());
   });
 
   it('holds the validated active projection through task and receipt commit', async () => {

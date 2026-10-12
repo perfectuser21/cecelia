@@ -301,15 +301,16 @@ describe('routing store transaction contract', () => {
           WHERE task.id = $1`,
         [created.task_id],
       );
+      // A2：无头编码单改投 coding_workflow runner（不再带 kernel-v1 运行时投影）
       expect(persisted.rows[0]).toMatchObject({
-        task_type: 'harness_initiative',
+        task_type: 'coding_workflow',
         projected_receipt_id: created.routing_receipt_id,
-        runtime_orchestrator: 'skill-relay',
-        harness_runtime: 'kernel-v1',
-        pipeline: 'harness',
+        runtime_orchestrator: 'coding-workflow-runner',
+        harness_runtime: null,
+        pipeline: 'coding_workflow',
         change_kind: 'bugfix',
         repo: 'cecelia',
-        receipt_orchestrator: 'kernel-harness-v2',
+        receipt_orchestrator: 'coding-workflow-runner',
       });
 
       await client.query('SAVEPOINT immutable_probe');
