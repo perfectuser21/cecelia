@@ -219,3 +219,6 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] 消费者迁移 artifact 固定现场与目标哈希，拒绝漂移并保留原文件备份
   Test: manual: bash -c "python3 scripts/phone-rpa/test_lease_migration.py"
+
+- [x] 无 run 的有头会话在同 owner 有效租约期间不被 stale 清理；过期/已释放/异主租约无豁免，事务内重查续租
+  Test: manual: bash -c "cd packages/brain && DB_NAME=cecelia_scratch DB_USER=administrator ../../node_modules/.bin/vitest run src/__tests__/integration/harness-watchdog-active-lease.pg.integration.test.js --config vitest.integration.config.js"
