@@ -446,11 +446,6 @@
       "owner_path": "packages/brain/src/harness-skill-relay.js",
       "path": "packages/brain/src/__tests__/kernel-runtime-retired.test.js",
       "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/harness-relay-watchdog.js",
-      "path": "packages/brain/src/__tests__/kernel-runtime-retired.test.js",
-      "role": "verification"
     }
   ]
 }
