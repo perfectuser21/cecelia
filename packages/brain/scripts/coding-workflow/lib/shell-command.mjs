@@ -1,6 +1,6 @@
 // 仅静态解码 Codex command_execution 中的一层已知 shell -c/-lc argv 展示。
 // 不运行 shell、不展开变量；不解析内层脚本，不从复合命令中截取子串。
-const SHELL_PREFIX = /^(?:(?:\/bin\/|\/usr\/bin\/|\/usr\/local\/bin\/|\/opt\/homebrew\/bin\/)?(?:bash|sh|zsh))\s+-(?:lc|c)\s+/;
+const SHELL_PREFIX = /^(?:(?:\/bin\/|\/usr\/bin\/|\/usr\/local\/bin\/|\/opt\/homebrew\/bin\/)?(?:bash|sh|zsh))[ \t]+-(?:lc|c)[ \t]+/;
 
 /** 一个静态 shell word，可由相邻单/双引号片段拼接；动态扩展或额外参数返回 null。 */
 function literalWord(text) {
