@@ -2,17 +2,42 @@
 """公司 KR 原口径机算：当前快照不代表连续七天，先登记再写 Brain。"""
 import json
 import os
-import sqlite3
+import shutil
 import subprocess
-import time
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
 from uuid import UUID, uuid4
 
 BRAIN = os.environ.get("CECELIA_BRAIN_API", "http://localhost:5221/api/brain").rstrip("/")
 SOURCE_DOD = "3dbc40c2-ba63-8158-808a-e81bd769eb6b"
 SOURCE_COST = "3dbc40c2-ba63-812c-a185-e8eab139502a"
 ACTOR = "opc-kr-current"
+ROOT = os.environ.get("OPC_WORKSPACES_ROOT", str(Path.home() / "openclaw-root/workspaces-root"))
+NODE = os.environ.get("OPC_NODE", "/opt/homebrew/bin/node")
+OPENCLAW = os.environ.get("OPC_OPENCLAW", "/opt/homebrew/bin/openclaw")
+OBJECTS_HELPER = os.environ.get("OPC_OBJECTS_HELPER", str(Path.home() / ".openclaw/opc-objects.mjs"))
+REPORT_CRON_IDS = ["eaedbefe-0c7c-49b0-afbc-3bb86d0f1d47", "dd2d4288-a5f5-40d7-bc62-92fbea85fa5a",
+                   "6089b68c-65bb-458d-80c5-4742b45709b3"]
+
+
+def business_now():
+    return datetime.now(ZoneInfo("Asia/Shanghai"))
+
+
+def cron_states():
+    out = subprocess.run([OPENCLAW, "cron", "list", "--all", "--json"],
+                         capture_output=True, text=True, timeout=90)
+    if out.returncode:
+        raise RuntimeError("MMV 定时状态读取失败（退出码 %s）" % out.returncode)
+    data = json.loads(out.stdout)
+    if not isinstance(data.get("jobs"), list) or data.get("hasMore") is not False:
+        raise RuntimeError("MMV 定时快照不完整")
+    states = {j["id"]: j.get("state", {}) for j in data["jobs"]}
+    if not all(i in states for i in REPORT_CRON_IDS):
+        raise RuntimeError("MMV 三报定时来源缺失")
+    return {i: states[i] for i in REPORT_CRON_IDS}
 
 
 def call(url, body=None, method=None):
@@ -23,7 +48,7 @@ def call(url, body=None, method=None):
 
 
 def objects():
-    out = subprocess.run(["/usr/bin/node", "/opt/openclaw/state/opc-objects.mjs", "list"],
+    out = subprocess.run([NODE, OBJECTS_HELPER, "list"],
                          capture_output=True, text=True, timeout=90)
     if out.returncode:
         raise RuntimeError("经营对象读取失败（退出码 %s）：%s" % (out.returncode, out.stderr.strip()))
@@ -34,16 +59,8 @@ def objects():
 def dod_count():
     recs, now = objects()
     passed = []
-    # F1 三报 cron 最近状态 ok
-    c = sqlite3.connect("file:/opt/openclaw/state/state/openclaw.sqlite?mode=ro", uri=True)
-    ids = ["f5e9d665-adeb-4a74-8c25-fc9e26c91cf7", "e7068db0-0bf4-45af-92ec-0ab6f77796a9",
-           "583287e7-3446-4fab-bcc2-c3b80276a4d7"]
-    ok = 0
-    for jid in ids:
-        r = c.execute("select state_json from cron_jobs where job_id=?", (jid,)).fetchone()
-        if r and json.loads(r[0] or "{}").get("lastRunStatus") == "ok":
-            ok += 1
-    if ok == 3:
+    # 原口径仍为三报最近一次状态；读取现行 MMV cron，而非旧机 SQLite。
+    if all(state.get("lastRunStatus") == "ok" for state in cron_states().values()):
         passed.append("F1")
     # F3 零开环
     live = [r for r in recs if r["状态"] in ("待办", "进行中", "阻塞", "等审批")]
@@ -55,15 +72,15 @@ def dod_count():
     if fix and len(done) / len(fix) >= 0.5:
         passed.append("F4")
     # N1 磁盘 <85%
-    use = int(subprocess.run(["df", "--output=pcent", "/"], capture_output=True,
-                             text=True).stdout.split("\n")[1].strip().rstrip("%"))
+    disk = shutil.disk_usage(ROOT)
+    use = 100 * disk.used / disk.total
     if use < 85:
         passed.append("N1")
     return passed
 
 def cost_line_up():
-    day = time.strftime("%Y-%m-%d", time.localtime(time.time() + 8 * 3600))
-    p = "/opt/openclaw/workspaces-root/clawd/reports/morning/%s/company.md" % day
+    day = business_now().strftime("%Y-%m-%d")
+    p = str(Path(ROOT) / "clawd/reports/morning" / day / "company.md")
     if not os.path.exists(p):
         return 0
     for ln in open(p, encoding="utf-8"):
@@ -120,16 +137,20 @@ def main():
     task = call(BRAIN + "/tasks", {
         "title": "公司 KR 机算观察 " + run_id,
         "description": "保留 F1/F3/F4/N1 当前快照和当日晨报成本行口径，写 Brain 观察与证据。",
-        "task_type": "workflow_run", "kind": "workflow", "trigger_source": "opc-cron",
-        "payload": {"source": ACTOR, "run_id": run_id, "stages": ["snapshot", "observations"]},
+        "task_type": "data", "kind": "workflow", "trigger_source": "opc-cron",
+        "payload": {"headed_manual": True, "source": ACTOR, "run_id": run_id, "stages": ["snapshot", "observations"]},
     }, "POST")
     task_id = task["id"]
+    receipts, evidence, skipped = [], [], []
     try:
-        call(BRAIN + "/tasks/" + task_id + "/claim", {"claimer": ACTOR, "executor_kind": "external-worker"}, "POST")
-        call(BRAIN + "/tasks/" + task_id, {"status": "in_progress"}, "PATCH")
+        claimed = call(BRAIN + "/tasks/" + task_id + "/claim", {"claimer": ACTOR, "executor_kind": "external-worker"}, "POST")
+        if claimed.get("success") is False or claimed.get("accepted") is False or not (claimed.get("id") == task_id or claimed.get("success") is True):
+            raise RuntimeError("批处理任务认领未通过")
+        started = call(BRAIN + "/tasks/" + task_id, {"status": "in_progress"}, "PATCH")
+        if started.get("success") is not True or started.get("status") != "in_progress":
+            raise RuntimeError("批处理任务启动未通过")
         active = company_items()
         observed_at = datetime.now(timezone.utc).isoformat()
-        receipts, evidence, skipped = [], [], []
         for source in (SOURCE_DOD, SOURCE_COST):
             if source not in active:
                 skipped.append({"source_page_id": source, "reason": "来源缺失或已停止分析"})
@@ -138,11 +159,11 @@ def main():
                 passed = dod_count()
                 value = len(passed)
                 proof = {"fact": "当前快照检查通过：" + ",".join(passed), "source": "opc-kr-current.py:dod_count",
-                         "passed_checks": passed, "maximum_checked": 4, "window": "snapshot", "continuous_seven_days_verified": False}
+                         "passed_checks": passed, "host": "mmv", "report_cron_ids": REPORT_CRON_IDS, "workspace": ROOT, "maximum_checked": 4, "window": "snapshot", "continuous_seven_days_verified": False}
             else:
                 value = cost_line_up()
                 proof = {"fact": "当日晨报存在非 GREY 成本行" if value else "当日晨报未发现非 GREY 成本行",
-                         "source": "opc-kr-current.py:cost_line_up", "business_day": time.strftime("%Y-%m-%d", time.localtime(time.time() + 8 * 3600))}
+                         "source": "opc-kr-current.py:cost_line_up", "business_day": business_now().strftime("%Y-%m-%d")}
             receipt = set_current(source, value, proof, task_id, run_id, observed_at)
             if receipt.get("skipped"):
                 skipped.append(receipt)
@@ -158,10 +179,10 @@ def main():
         }}, "PATCH")
         if completed.get("success") is not True or completed.get("status") != "completed":
             raise RuntimeError("采集任务完成回执未通过")
-        print(json.dumps({"task_id": task_id, "observations": len(receipts)}, ensure_ascii=False))
+        print(json.dumps({"task_id": task_id, "child_task_id": task_id, "run_uuid": run_id, "observations": len(receipts), "receipts": receipts}, ensure_ascii=False))
     except Exception:
         call(BRAIN + "/tasks/" + task_id, {"status": "failed", "result": {
-            "actor": ACTOR, "facts": "观察未完整入账，未声称完成", "evidence": {"run_id": run_id},
+            "actor": ACTOR, "facts": receipts, "partial": True, "evidence": {"run_id": run_id},
         }}, "PATCH")
         raise
 
