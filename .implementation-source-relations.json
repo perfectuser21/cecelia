@@ -33,11 +33,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/brain/src/lib/pilot-release-verification.js",
-      "path": "changes/cp-10120805-release-subset.md",
-      "role": "release"
-    },
-    {
       "owner_path": "packages/brain/src/lib/activity-contract-loader.js",
       "path": "docs/learnings/cp-10082313-leadgen-contract-identity.md",
       "role": "documentation"
@@ -413,11 +408,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/brain/src/work-router.js",
-      "path": "changes/cp-10120705-coding-route-runner.md",
-      "role": "release"
-    },
-    {
       "owner_path": "packages/brain/src/golden-path-contracts.js",
       "path": "packages/brain/src/__tests__/golden-path-contracts.test.js",
       "role": "verification"
@@ -434,18 +424,8 @@
     },
     {
       "owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js",
-      "path": "changes/cp-10120930-workflow-dispatch-codex-agent.md",
-      "role": "release"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js",
       "path": "packages/brain/scripts/smoke/factory-commander-route-smoke.sh",
       "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/dispatch-route.js",
-      "path": "changes/cp-10121022-harness-headed-ledger.md",
-      "role": "release"
     },
     {
       "owner_path": "packages/brain/src/orchestrator/planner-recovery-consumption-store.js",
