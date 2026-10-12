@@ -12,7 +12,17 @@ export const NOTION_TO_PROJECT_STATUS = Object.freeze({
 export const HUMAN_FIELDS = ['status', 'priority', 'remark', 'due', 'ai_tier'];
 export const HUMAN_COLUMNS = ['Status', 'Priority', 'Remark', 'Due Date', 'AI 参与'];
 export const notionText = (parts) => (parts || []).map(p => p.plain_text ?? p.text?.content ?? '').join('');
-const dateOnly = (d) => d ? (d instanceof Date ? d.toISOString() : String(d)).slice(0, 10) : null;
+const dateOnly = (d) => d ? (d instanceof Date
+  ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  : String(d).slice(0, 10)) : null;
+
+function remarkText(value) {
+  const text = String(value || '');
+  if (text.length > 190000) throw new Error('备注超出 Notion 100 个文本块限制');
+  const parts = [];
+  for (let i = 0; i < text.length; i += 1900) parts.push({ type: 'text', text: { content: text.slice(i, i + 1900) } });
+  return parts;
+}
 
 export function projectStatus(status) {
   if (PROJECT_STATUS_TO_NOTION[status]) return PROJECT_STATUS_TO_NOTION[status];
@@ -46,7 +56,7 @@ export function humanProps(v) {
   return {
     Status: { status: { name: v.status } },
     Priority: { select: v.priority ? { name: v.priority } : null },
-    Remark: { rich_text: v.remark ? [{ type: 'text', text: { content: v.remark.slice(0, 1900) } }] : [] },
+    Remark: { rich_text: remarkText(v.remark) },
     'Due Date': { date: v.due ? { start: v.due } : null },
     'AI 参与': { select: { name: v.ai_tier } },
   };
