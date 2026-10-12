@@ -215,4 +215,4 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 - [x] [BEHAVIOR] priceleaseguard 租约409永久停止新业务和迟到结果；网络不明拒绝新动作；过期执行精确owner清理，清理失败显式返回。
   Test: manual:node --test scripts/phone-rpa/us-price-lease.test.mjs
 - [x] [BEHAVIOR] priceleasecleanup 手机停止标记拦后续业务但放行finally清理，并拒绝越界owner。
-  Test: manual:python3 -m unittest discover -s scripts/phone-rpa -p test_us_price_lease.py
+  Test: manual:bash -c "python3 -m unittest discover -s scripts/phone-rpa -p test_us_price_lease.py"
