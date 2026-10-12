@@ -1,0 +1,28 @@
+name: Phone lease guard
+on:
+  pull_request:
+    paths:
+      - 'scripts/phone-rpa/**'
+      - '.github/workflows/us-price-lease.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/phone-rpa/**'
+      - '.github/workflows/us-price-lease.yml'
+permissions:
+  contents: read
+jobs:
+  lease-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: node --test scripts/phone-rpa/us-price-lease.test.mjs
+      - run: python -m unittest discover -s scripts/phone-rpa -p test_us_price_lease.py
+      - run: python -m unittest discover -s scripts/phone-rpa -p test_lease_migration.py

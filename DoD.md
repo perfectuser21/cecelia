@@ -235,3 +235,27 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] stophandoffkinds 真实 stop hook 拦截未交接任务时，输出的 handoff 示例列出 resume_headed、dispatch_headless、decision、note 四类；退出码仍为 2。
   Test: manual:bash -c "cd packages/engine && npx vitest run tests/hooks/stop-handoff-example.test.ts --maxWorkers=1 --minWorkers=1"
+
+
+## 比价领单租约守卫（任务 c5f6e683）
+- [x] [BEHAVIOR] registrycodingdelta 固定历史审计仅扣除 #6371 显式新增 coding_workflow，旧成员仍逐项比较且新增成员必须存在。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/registry-vs-base.audit.test.js scripts/coding-workflow/__tests__/new-task.test.mjs src/lib/__tests__/task-type-registry.test.js"
+
+- [x] [BEHAVIOR] priceleaseguard 租约409永久停止新业务和迟到结果；网络不明拒绝新动作；过期执行精确owner清理，清理失败显式返回。
+  Test: manual:node --test scripts/phone-rpa/us-price-lease.test.mjs
+- [x] [BEHAVIOR] priceleasecleanup 手机停止标记拦后续业务但放行finally清理，并拒绝越界owner。
+  Test: manual:bash -c "python3 -m unittest discover -s scripts/phone-rpa -p test_us_price_lease.py"
+
+- [x] 消费者迁移 artifact 固定现场与目标哈希，拒绝漂移并保留原文件备份
+  Test: manual: bash -c "python3 scripts/phone-rpa/test_lease_migration.py"
+
+- [x] 无 run 的有头会话在同 owner 有效租约期间不被 stale 清理；过期/已释放/异主租约无豁免，事务内重查续租
+  Test: manual: bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} ../../node_modules/.bin/vitest run ../../tests/gp/f1/step1-headed-lease.test.js --config vitest.integration.config.js"
+
+- [x] [BEHAVIOR] factorycommanderrouteapi 固定工厂Commander开关只接严格boolean及actor/reason；启用核真实外壳收割和正式同run独立核验，事务并发幂等、审计回滚、真实回读，缺证据不启用。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/__tests__/integration/factory-commander-route.pg.integration.test.js"
+- [x] [BEHAVIOR] factoryroutehttp 内部认证、输入校验、证据拒绝、数据库错误回滚与连接释放均经过真实HTTP入口。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/factory-commander-route.test.js"
+
+- [x] [BEHAVIOR] factoryrouteapis smoke真调HTTP与scratch私有schema，覆盖固定开关证据门禁及F1领单租约跨watchdog边界；required CI显式选中同一5项PG回归。
+  Test: manual:bash packages/brain/scripts/smoke/factory-commander-route-api-smoke.sh

@@ -308,6 +308,14 @@ export async function resumeStalledHarnessDrivers({
           ${alias}.claimed_by LIKE '%interactive-dev-skill%'
           AND ${alias}.claimed_at >= NOW() - INTERVAL '${HEADED_CLAIM_GRACE_MINUTES} minutes'
         )`;
+  // 有效同 owner 租约是显式活性证据；候选和事务内均复核，避免与续租竞争。
+  const noActiveLeasePredicate = (alias) => `NOT EXISTS (
+          SELECT 1 FROM task_leases lease
+           WHERE lease.task_id = ${alias}.id
+             AND lease.claimer = ${alias}.claimed_by
+             AND lease.released_at IS NULL
+             AND lease.lease_until > NOW()
+        )`;
   const neverStarted = await dbPool.query(
     `SELECT t.id
        FROM tasks t
@@ -319,6 +327,7 @@ export async function resumeStalledHarnessDrivers({
         AND t.claimed_at IS NOT NULL
         AND t.claimed_at < NOW() - ($1 || ' minutes')::interval
         AND ${headedExemptPredicate('t')}
+        AND ${noActiveLeasePredicate('t')}
       ORDER BY t.claimed_at ASC
       LIMIT 20`,
     [String(neverStartedThresholdMin)]
@@ -360,6 +369,7 @@ export async function resumeStalledHarnessDrivers({
               AND claimed_at IS NOT NULL
               AND claimed_at < NOW() - ($2 || ' minutes')::interval
               AND ${headedExemptPredicate('tasks')}
+              AND ${noActiveLeasePredicate('tasks')}
             FOR UPDATE`,
           [row.id, String(neverStartedThresholdMin)]
         );

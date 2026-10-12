@@ -7,10 +7,12 @@
  * PATCH /api/brain/factory/ledger/:id                         改非阶段字段 {validation_mode, production_version, candidate_version, window_k, next_action, blocked_reason, blocked_kind}
  * POST  /api/brain/factory/ledger/:id/transition              改阶段 {to_stage, actor: rule|human|agent, reason, evidence_run_ids?, expected_from_stage?, actor_name?, reset_window?}
  * POST  /api/brain/factory/ledger/:id/runs                    记一次运行结果 {run_id, pass, degraded?}（滑窗 window_k，同 run_id 窗内去重）
+ * GET/PUT /api/brain/factory/commander-route                 固定路由开关；启用必须通过系统交付与独立核验
  */
 import { Router } from 'express';
 import pool from '../db.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { readFactoryCommanderRoute, updateFactoryCommanderRoute } from '../lib/factory-commander-route.js';
 import {
   isUuid, isStage, listLedger, getLedger, createLedger, patchLedger, transitionLedger, recordRun,
   validateCreate, validatePatch, validateTransition, validateRun,
@@ -28,6 +30,9 @@ const run = (res, fn, okStatus = 200) => fn().then((out) => res.status(okStatus)
 const precheck = (res, validate, body) => {
   try { validate(body || {}); return true; } catch (e) { sendError(res, e); return false; }
 };
+
+router.get('/factory/commander-route', (_req, res) => run(res, () => readFactoryCommanderRoute(pool)));
+router.put('/factory/commander-route', internalAuthOrLoopback, (req, res) => run(res, () => updateFactoryCommanderRoute(pool, req.body)));
 
 router.get('/factory/ledger', async (req, res) => {
   const { stage, workflow_id: workflowId, limit } = req.query;
