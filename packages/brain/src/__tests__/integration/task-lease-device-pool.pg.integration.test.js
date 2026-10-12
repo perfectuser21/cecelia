@@ -277,9 +277,9 @@ describe.sequential('设备池：同平台同账号类型一池，派发从池�
     );
   }
 
-  it('迁移种子：douyin.internal 池里是小彩（Ai办公室），机器/profile 取手机台账', async () => {
+  it('迁移种子：douyin.internal 池里是小彩（Ai办公室），机器/profile 取手机台账（553 把台账 host 对齐生产 xian-m4）', async () => {
     const c = await listPoolCandidates(pool, 'douyin.internal');
-    expect(c).toEqual([expect.objectContaining({ serial: PHONE, account_ref: 'Ai办公室', machine: 'xian-m1', profile: 'xiaolongxia' })]);
+    expect(c).toEqual([expect.objectContaining({ serial: PHONE, account_ref: 'Ai办公室', machine: 'xian-m4', profile: 'xiaolongxia' })]);
   });
 
   it('首选空闲 → 选它并持锁；payload 里写的是选中的 serial', async () => {

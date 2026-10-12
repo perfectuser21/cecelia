@@ -75,6 +75,16 @@ INSERT INTO device_pool_members (pool_key, serial, account_ref, priority, note)
 VALUES ('douyin.internal', 'ANGYVB4311010223', 'Ai办公室', 10, '小彩 / 抖音号 90915521618；原 factory-workflows.json 抖音发布固定机')
 ON CONFLICT (pool_key, serial) DO NOTHING;
 
+-- 手机台账 host 对齐生产现状：四台手机已全部挂 xian-m4（生产 phone_registry 早已是 xian-m4，本句在生产为空操作）；
+-- 迁移 490 的种子还写着 xian-m1，迁移建出的库（CI/scratch）会让池里选出的调度单机器跑偏。
+DO $$
+BEGIN
+  IF to_regclass('phone_registry') IS NOT NULL THEN
+    UPDATE phone_registry SET host = 'xian-m4', updated_at = NOW(), updated_by = 'migration-553'
+     WHERE serial IN ('ANGYVB4311010223', 'e6c7ef34', 'ANGYVB4402004137', 'ANGYVB4227006983') AND host = 'xian-m1';
+  END IF;
+END $$;
+
 INSERT INTO schema_version (version, description)
 VALUES ('553', '统一领单租约 task_leases + 设备池 device_pools/device_pool_members（派发总闸 G，任务 c5f6e683）')
 ON CONFLICT (version) DO NOTHING;

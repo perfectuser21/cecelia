@@ -31,6 +31,9 @@ try {
   const serial = 'ANGYVB4311010223';
   await client.query(`INSERT INTO device_locks (device_name) VALUES ($1) ON CONFLICT (device_name) DO NOTHING`, [serial]);
   await client.query(`UPDATE device_locks SET locked_by = NULL, locked_at = NULL, expires_at = NULL WHERE device_name = $1`, [serial]);
+  // 抖音发布从设备池 douyin.internal 选机（任务 c5f6e683）：机器/profile 取手机台账（唯一真身），
+  // 迁移 490 种子写的是旧落点 xian-m1，生产台账已是 xian-m4——事务内对齐成生产真值
+  await client.query(`UPDATE phone_registry SET host = 'xian-m4', profile = 'xiaolongxia', enabled = true WHERE serial = $1`, [serial]);
   const mk = async (title) => (await client.query(
     `INSERT INTO tasks (title, description, task_type, status, priority, payload) VALUES ($1, '小彩 Ai办公室账号，仅私密', $2, 'queued', 'P1', $3::jsonb) RETURNING id`,
     [title, WORKFLOW_DISPATCH_TASK_TYPE, JSON.stringify({ workflow_key: 'douyin_video_publish.android' })])).rows[0].id;
