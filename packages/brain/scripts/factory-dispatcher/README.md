@@ -46,7 +46,9 @@ us-vps 零执行铁律：linux / 容器内启动自检直接拒绝运行（退�
 运行文件：`~/.factory-dispatcher/runs/<run_id>.msg.txt`（消息）、`<run_id>.agent.log`（会话输出）。
 派发器日志：`~/Library/Logs/factory-dispatcher.log`。
 
-可调环境变量：`BRAIN_URL`（默认 `http://localhost:5221`）、`FACTORY_DISPATCHER_STATE_DIR`、`OPENCLAW_BIN`、
+Commander 改线后以 `FACTORY_DISPATCHER_MODE=verify-only` 运行：只消费独立类型、完整来源关系的 run-verify 核验单；轮询及直接派发均拦旧执行，claim 前读回核验契约。模式未设置默认 `all` 兼容旧部署，未知模式拒启动。
+
+可调环境变量：`FACTORY_DISPATCHER_MODE`、`BRAIN_URL`（默认 `http://localhost:5221`）、`FACTORY_DISPATCHER_STATE_DIR`、`OPENCLAW_BIN`、
 `FACTORY_LOCK_WAIT_MIN`（默认 30）、`FACTORY_SESSION_TIMEOUT_MIN`（默认 60）。
 
 ## 安装（MMV，用户级 LaunchAgent）
@@ -59,6 +61,7 @@ SRC=packages/brain/scripts/factory-dispatcher
 PLIST=~/Library/LaunchAgents/com.perfect21.factory-dispatcher.plist
 git -C "$REPO" fetch origin main
 mkdir -p ~/.factory-dispatcher/bin ~/Library/Logs ~/Library/LaunchAgents
+git -C "$REPO" show "origin/main:$SRC/factory-dispatcher-config.js" > ~/.factory-dispatcher/bin/factory-dispatcher-config.js
 git -C "$REPO" show "origin/main:$SRC/factory-dispatcher.js" > ~/.factory-dispatcher/bin/factory-dispatcher.js
 git -C "$REPO" show "origin/main:$SRC/com.perfect21.factory-dispatcher.plist.template" \
   | sed -e "s#@@NODE@@#$(command -v node)#" \
@@ -73,7 +76,7 @@ tail -f ~/Library/Logs/factory-dispatcher.log
 前提：Node ≥ 18；`openclaw` 在 `/opt/homebrew/bin`；本用户能免密 `ssh xian-m4`；
 LaunchAgent 需要该用户 GUI 会话已登录。
 
-升级：重跑上面 `git show ... > factory-dispatcher.js` 一行，再 `launchctl kickstart -k gui/$(id -u)/com.perfect21.factory-dispatcher`。
+升级：停进程后重跑上面两个 JS 文件的 `git show`（先配置模块、后主入口），再 `launchctl kickstart -k gui/$(id -u)/com.perfect21.factory-dispatcher`。
 
 卸载：`launchctl bootout gui/$(id -u)/com.perfect21.factory-dispatcher && rm "$PLIST"`。
 
