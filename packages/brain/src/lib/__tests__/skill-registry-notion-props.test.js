@@ -91,3 +91,53 @@ describe('buildProps', () => {
     expect(props['状态（机器）']).toEqual({ select: { name: '在用' } });
   });
 });
+
+describe('规范业务归属投影', () => {
+  const ownership = {
+    areas: [{ id: 'area-1', name: '新媒体部' }],
+    value_streams: [{ id: 'stream-1', name: '内容生产' }],
+    capabilities: [{ id: 'cap-1', name: '多平台发布' }],
+    workflows: [{ id: 'wf-1', name: '抖音 · 视频发布' }],
+    paths: [{
+      area: { id: 'area-1', name: '新媒体部' },
+      value_stream: { id: 'stream-1', name: '内容生产' },
+      capability: { id: 'cap-1', name: '多平台发布' },
+      workflow: { id: 'wf-1', name: '抖音 · 视频发布' },
+    }],
+    status: 'mapped', gaps: [],
+  };
+
+  it('业务归属是独立机器列，保留旧人工分类和 Area 关系', () => {
+    for (const key of ['businessAreas', 'valueStreams', 'capabilities', 'businessWorkflows', 'ownershipPaths', 'ownershipStatus', 'agentAssignmentStatus']) {
+      expect(COLUMNS.find(c => c.key === key)?.owner).toBe('machine');
+    }
+    expect(COLUMNS.some(c => ['Area', 'Journeys', 'Features'].includes(c.name))).toBe(false);
+    expect(humanValues({ ...row, business_ownership: ownership }).category).toBe('运维');
+  });
+
+  it('部门、价值流、能力、流程保持完整对应路径，Agent 使用明确分配', () => {
+    const values = machineValues({ ...row, assigned_agents: ['media'], business_ownership: ownership });
+    expect(values.businessAreas).toEqual(['新媒体部']);
+    expect(values.valueStreams).toEqual(['内容生产']);
+    expect(values.capabilities).toEqual(['多平台发布']);
+    expect(values.businessWorkflows).toEqual(['抖音 · 视频发布']);
+    expect(values.ownershipPaths).toContain('新媒体部 → 内容生产 → 多平台发布 → 抖音 · 视频发布');
+    expect(values.ownershipStatus).toBe('已归属');
+    expect(values.agentAssignmentStatus).toBe('已分配');
+  });
+
+  it('没有规范绑定或明确 Agent 时，不借安装平台猜归属', () => {
+    const values = machineValues({ ...row, platforms_installed: ['openclaw'], assigned_agents: [] });
+    expect(values.businessAreas).toEqual([]);
+    expect(values.capabilities).toEqual([]);
+    expect(values.ownershipStatus).toBe('待归属');
+    expect(values.agentAssignmentStatus).toBe('待分配');
+  });
+
+  it('树归属或名字改变，即使 Skill 原文没变，也必须触发新的推送指纹', () => {
+    const first = machineDigest(machineValues({ ...row, business_ownership: ownership }));
+    const renamed = { ...ownership, capabilities: [{ id: 'cap-1', name: '正式多平台发布' }] };
+    expect(machineDigest(machineValues({ ...row, business_ownership: renamed }))).not.toBe(first);
+    expect(machineDigest(machineValues(row))).not.toBe(first);
+  });
+});
