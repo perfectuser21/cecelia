@@ -1,0 +1,344 @@
+{
+  "started_at": "2026-10-12T05:34:13Z",
+  "base": "http://localhost:5301/api/brain",
+  "tests": [
+    {
+      "q": "Q-1",
+      "made_by": "ai",
+      "request": {
+        "category": "judgment",
+        "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-1-ai#1]: 部署判定",
+        "decision": "所选: 健康检查｜候选: 健康检查/日志",
+        "reason": "依据: 双信号",
+        "made_by": "ai",
+        "author": "coding-workflow",
+        "source_ref": "coding-workflow:qa-c8fab3c8-r3-1791783253984290000"
+      },
+      "post_responses": [
+        [
+          201,
+          {
+            "success": true,
+            "data": {
+              "id": "266c4e21-aafe-443b-a2c3-f38379d4ecff",
+              "category": "judgment",
+              "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-1-ai#1]: 部署判定",
+              "decision": "所选: 健康检查｜候选: 健康检查/日志",
+              "reason": "依据: 双信号",
+              "status": "active",
+              "author": "coding-workflow",
+              "made_by": "ai",
+              "priority": "P2",
+              "created_at": "2026-10-12T00:34:13.985Z"
+            }
+          }
+        ]
+      ],
+      "get_matches": [
+        {
+          "id": "266c4e21-aafe-443b-a2c3-f38379d4ecff",
+          "category": "judgment",
+          "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-1-ai#1]: 部署判定",
+          "decision": "所选: 健康检查｜候选: 健康检查/日志",
+          "reason": "依据: 双信号",
+          "status": "active",
+          "confidence": null,
+          "author": "coding-workflow",
+          "made_by": "ai",
+          "priority": "P2",
+          "area": null,
+          "alternatives": null,
+          "decided_at": null,
+          "executed_at": null,
+          "created_at": "2026-10-12T00:34:13.985Z",
+          "updated_at": "2026-10-12T00:34:13.985Z"
+        }
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "q": "Q-2",
+      "made_by": "system",
+      "request": {
+        "category": "judgment",
+        "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-2-system#1]: 部署判定",
+        "decision": "所选: 健康检查｜候选: 健康检查/日志",
+        "reason": "依据: 双信号",
+        "made_by": "system",
+        "author": "coding-workflow",
+        "source_ref": "coding-workflow:qa-c8fab3c8-r3-1791783253984290000"
+      },
+      "post_responses": [
+        [
+          201,
+          {
+            "success": true,
+            "data": {
+              "id": "d041a3ea-4360-436c-961e-e2d8eb3c4448",
+              "category": "judgment",
+              "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-2-system#1]: 部署判定",
+              "decision": "所选: 健康检查｜候选: 健康检查/日志",
+              "reason": "依据: 双信号",
+              "status": "active",
+              "author": "coding-workflow",
+              "made_by": "system",
+              "priority": "P2",
+              "created_at": "2026-10-12T00:34:13.990Z"
+            }
+          }
+        ]
+      ],
+      "get_matches": [
+        {
+          "id": "d041a3ea-4360-436c-961e-e2d8eb3c4448",
+          "category": "judgment",
+          "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-2-system#1]: 部署判定",
+          "decision": "所选: 健康检查｜候选: 健康检查/日志",
+          "reason": "依据: 双信号",
+          "status": "active",
+          "confidence": null,
+          "author": "coding-workflow",
+          "made_by": "system",
+          "priority": "P2",
+          "area": null,
+          "alternatives": null,
+          "decided_at": null,
+          "executed_at": null,
+          "created_at": "2026-10-12T00:34:13.990Z",
+          "updated_at": "2026-10-12T00:34:13.990Z"
+        }
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "q": "Q-2",
+      "made_by": "user",
+      "request": {
+        "category": "judgment",
+        "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-2-user#1]: 部署判定",
+        "decision": "所选: 健康检查｜候选: 健康检查/日志",
+        "reason": "依据: 双信号",
+        "made_by": "user",
+        "author": "coding-workflow",
+        "source_ref": "coding-workflow:qa-c8fab3c8-r3-1791783253984290000"
+      },
+      "post_responses": [
+        [
+          201,
+          {
+            "success": true,
+            "data": {
+              "id": "9ed7ffd4-6db6-4f4f-afd0-cf96480616fd",
+              "category": "judgment",
+              "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-2-user#1]: 部署判定",
+              "decision": "所选: 健康检查｜候选: 健康检查/日志",
+              "reason": "依据: 双信号",
+              "status": "active",
+              "author": "coding-workflow",
+              "made_by": "user",
+              "priority": "P2",
+              "created_at": "2026-10-12T00:34:13.992Z"
+            }
+          }
+        ]
+      ],
+      "get_matches": [
+        {
+          "id": "9ed7ffd4-6db6-4f4f-afd0-cf96480616fd",
+          "category": "judgment",
+          "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-2-user#1]: 部署判定",
+          "decision": "所选: 健康检查｜候选: 健康检查/日志",
+          "reason": "依据: 双信号",
+          "status": "active",
+          "confidence": null,
+          "author": "coding-workflow",
+          "made_by": "user",
+          "priority": "P2",
+          "area": null,
+          "alternatives": null,
+          "decided_at": null,
+          "executed_at": null,
+          "created_at": "2026-10-12T00:34:13.992Z",
+          "updated_at": "2026-10-12T00:34:13.992Z"
+        }
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "q": "Q-2",
+      "made_by": "cecelia",
+      "request": {
+        "category": "judgment",
+        "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-2-cecelia#1]: 部署判定",
+        "decision": "所选: 健康检查｜候选: 健康检查/日志",
+        "reason": "依据: 双信号",
+        "made_by": "cecelia",
+        "author": "coding-workflow",
+        "source_ref": "coding-workflow:qa-c8fab3c8-r3-1791783253984290000"
+      },
+      "post_responses": [
+        [
+          201,
+          {
+            "success": true,
+            "data": {
+              "id": "b6540b3b-d43e-4cc4-8700-9faff2bf302c",
+              "category": "judgment",
+              "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-2-cecelia#1]: 部署判定",
+              "decision": "所选: 健康检查｜候选: 健康检查/日志",
+              "reason": "依据: 双信号",
+              "status": "active",
+              "author": "coding-workflow",
+              "made_by": "cecelia",
+              "priority": "P2",
+              "created_at": "2026-10-12T00:34:13.994Z"
+            }
+          }
+        ]
+      ],
+      "get_matches": [
+        {
+          "id": "b6540b3b-d43e-4cc4-8700-9faff2bf302c",
+          "category": "judgment",
+          "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-2-cecelia#1]: 部署判定",
+          "decision": "所选: 健康检查｜候选: 健康检查/日志",
+          "reason": "依据: 双信号",
+          "status": "active",
+          "confidence": null,
+          "author": "coding-workflow",
+          "made_by": "cecelia",
+          "priority": "P2",
+          "area": null,
+          "alternatives": null,
+          "decided_at": null,
+          "executed_at": null,
+          "created_at": "2026-10-12T00:34:13.994Z",
+          "updated_at": "2026-10-12T00:34:13.994Z"
+        }
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "q": "Q-3",
+      "made_by": "bogus_maker",
+      "request": {
+        "category": "judgment",
+        "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-3-bogus_maker#1]: 部署判定",
+        "decision": "所选: 健康检查｜候选: 健康检查/日志",
+        "reason": "依据: 双信号",
+        "made_by": "bogus_maker",
+        "author": "coding-workflow",
+        "source_ref": "coding-workflow:qa-c8fab3c8-r3-1791783253984290000"
+      },
+      "post_responses": [
+        [
+          500,
+          {
+            "success": false,
+            "error": "new row for relation \"decisions\" violates check constraint \"decisions_made_by_check\""
+          }
+        ]
+      ],
+      "get_matches": [],
+      "verdict": "PASS"
+    },
+    {
+      "q": "Q-4",
+      "made_by": "ai",
+      "request": {
+        "category": "judgment",
+        "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-4-ai#1]: 部署判定",
+        "decision": "所选: 健康检查｜候选: 健康检查/日志",
+        "reason": "依据: 双信号",
+        "made_by": "ai",
+        "author": "coding-workflow",
+        "source_ref": "coding-workflow:qa-c8fab3c8-r3-1791783253984290000"
+      },
+      "post_responses": [
+        [
+          201,
+          {
+            "success": true,
+            "data": {
+              "id": "28e57931-4660-475b-abe8-a2cd945da429",
+              "category": "judgment",
+              "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-4-ai#1]: 部署判定",
+              "decision": "所选: 健康检查｜候选: 健康检查/日志",
+              "reason": "依据: 双信号",
+              "status": "active",
+              "author": "coding-workflow",
+              "made_by": "ai",
+              "priority": "P2",
+              "created_at": "2026-10-12T00:34:14.001Z"
+            }
+          }
+        ],
+        [
+          201,
+          {
+            "success": true,
+            "data": {
+              "id": "ead5acad-7a35-4996-8beb-9a9342e20d6a",
+              "category": "judgment",
+              "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-4-ai#1]: 部署判定",
+              "decision": "所选: 健康检查｜候选: 健康检查/日志",
+              "reason": "依据: 双信号",
+              "status": "active",
+              "author": "coding-workflow",
+              "made_by": "ai",
+              "priority": "P2",
+              "created_at": "2026-10-12T00:34:14.003Z"
+            }
+          }
+        ]
+      ],
+      "get_matches": [
+        {
+          "id": "ead5acad-7a35-4996-8beb-9a9342e20d6a",
+          "category": "judgment",
+          "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-4-ai#1]: 部署判定",
+          "decision": "所选: 健康检查｜候选: 健康检查/日志",
+          "reason": "依据: 双信号",
+          "status": "active",
+          "confidence": null,
+          "author": "coding-workflow",
+          "made_by": "ai",
+          "priority": "P2",
+          "area": null,
+          "alternatives": null,
+          "decided_at": null,
+          "executed_at": null,
+          "created_at": "2026-10-12T00:34:14.003Z",
+          "updated_at": "2026-10-12T00:34:14.003Z"
+        },
+        {
+          "id": "28e57931-4660-475b-abe8-a2cd945da429",
+          "category": "judgment",
+          "topic": "判定点[qa-c8fab3c8-r3-1791783253984290000-Q-4-ai#1]: 部署判定",
+          "decision": "所选: 健康检查｜候选: 健康检查/日志",
+          "reason": "依据: 双信号",
+          "status": "active",
+          "confidence": null,
+          "author": "coding-workflow",
+          "made_by": "ai",
+          "priority": "P2",
+          "area": null,
+          "alternatives": null,
+          "decided_at": null,
+          "executed_at": null,
+          "created_at": "2026-10-12T00:34:14.001Z",
+          "updated_at": "2026-10-12T00:34:14.001Z"
+        }
+      ],
+      "verdict": "PASS"
+    }
+  ],
+  "health": {
+    "status": 200,
+    "git_sha": "23edec0ac97bdd5641c9f3a5ebf80cc9fed3746d",
+    "runtime": {
+      "isolated": true,
+      "background_automation": false
+    }
+  }
+}

@@ -1,4 +1,3 @@
-import { reserveExpiredAttemptReplacement } from '../../orchestrator/attempt-resource-replacement.js';
 import { createScriptWorkerClient } from '../../script-worker-client.js';
 import { createHmac, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -125,7 +124,7 @@ it('普通执行仅保留明确旧授权；撤销后实际HTTP启动边界拒绝
  expect(launches).toBe(1);
 });
 
-it('实际恢复默认child store重新核验并持久化授权，prepare接受新身份',async()=>{
+it('新子预约重新核验并持久化授权，prepare接受新身份',async()=>{
  const runId=randomUUID();await pool.query('INSERT INTO initiative_runs(id) VALUES($1)',[runId]);
  const capacity={...capacitySnapshot(),machine:'xian-mac-m4'};
  const input={id:randomUUID(),runId,hop:1,phase:'planning',role:'reporter',provider:'codex',accountId:'team4',machineId:'xian-mac-m4',callbackSecretHash:'a'.repeat(64),capacitySnapshot:capacity,
@@ -133,8 +132,7 @@ it('实际恢复默认child store重新核验并持久化授权，prepare接受�
  const parent=await createAttemptStore(pool,{executionDirectory:true}).createAttempt(input);
  await pool.query("UPDATE harness_attempts SET status='running',lease_owner='old',lease_expires_at=now()-interval '1 minute' WHERE id=$1",[parent.id]);
  const old=(await pool.query('SELECT * FROM harness_attempts WHERE id=$1',[parent.id])).rows[0];
- const result=await reserveExpiredAttemptReplacement({pool,parentAttempt:old,childInput:{...input,id:randomUUID(),hop:2,bundle:old.task_bundle},collectSnapshot:async()=>capacity,
- confirmCleanup:async row=>({status:'cleaned',attempt_id:row.id})});
+ const result={child:await createAttemptStore(pool,{executionDirectory:true}).createAttempt({...input,id:randomUUID(),hop:2,bundle:old.task_bundle})};
  expect(result.child.task_bundle.inputs._server_execution).toEqual(parent.task_bundle.inputs._server_execution);
  let prepared=false;await createTransportAuthority({pool})('prepare',{attempt:result.child,target:{machine:input.machineId}},()=>{prepared=true;});
  expect(prepared).toBe(true);
@@ -155,15 +153,14 @@ it('升级前script预约无需新profile grant也能通过真实client按原身
  await expect(client.start('xian-mac-m1',{...body,job:{profile:'unknown'}})).rejects.toThrow('execution_reservation_authority_missing');
 });
 
-it('撤销后真实恢复事务不能创建child或释放父预约',async()=>{
+it('撤销后新子预约被拒，父预约保持',async()=>{
  const runId=randomUUID();await pool.query('INSERT INTO initiative_runs(id) VALUES($1)',[runId]);
  const capacity={...capacitySnapshot(),machine:'xian-mac-m4'};
  const input={id:randomUUID(),runId,hop:1,phase:'planning',role:'reporter',provider:'codex',accountId:'team5',machineId:'xian-mac-m4',callbackSecretHash:'a'.repeat(64),capacitySnapshot:capacity,bundle:{inputs:{workspace_spec:{repo:'perfectuser21/cecelia'}}}};
  const parent=await createAttemptStore(pool,{executionDirectory:true}).createAttempt(input);
  await pool.query("UPDATE harness_attempts SET status='running',lease_owner='old',lease_expires_at=now()-interval '1 minute' WHERE id=$1",[parent.id]);
- const old=(await pool.query('SELECT * FROM harness_attempts WHERE id=$1',[parent.id])).rows[0];
  await revokeGrant({pool,grantId:parent.task_bundle.inputs._server_execution.grantId});
- await expect(reserveExpiredAttemptReplacement({pool,parentAttempt:old,childInput:{...input,id:randomUUID(),hop:2},collectSnapshot:async()=>capacity,confirmCleanup:async row=>({status:'cleaned',attempt_id:row.id})})).rejects.toThrow('execution_grant_denied');
+ await expect(createAttemptStore(pool,{executionDirectory:true}).createAttempt({...input,id:randomUUID(),hop:2})).rejects.toThrow('execution_grant_denied');
  expect((await pool.query('SELECT status FROM harness_attempts WHERE run_id=$1',[runId])).rows).toEqual([{status:'running'}]);
 });
 

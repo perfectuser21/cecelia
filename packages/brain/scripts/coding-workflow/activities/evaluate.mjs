@@ -157,7 +157,7 @@ await runActivity(async (input) => {
     result ??= judge({
       reportPath, reportFile, qaIds, stdout: run.stdout, worktree, dir, shotsDir: path.join(dir, `qa-r${round}`), round,
       env: local ? { kind: 'local', worktree } : { kind: 'preview', url: preview.url, ...(preview.sha ? { sha: preview.sha } : {}) },
-      cost: Math.round(sessionCostUsd(run.stdout) * 10000) / 10000, production,
+      cost: run.cost_usd === undefined ? sessionCostUsd(run.stdout) : run.cost_usd, production,
     });
   } finally {
     process.off('SIGTERM', onSigterm);

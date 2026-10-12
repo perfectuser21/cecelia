@@ -47,7 +47,7 @@ await runActivity(async (input) => {
   const args = ['-p', prompt, '--permission-mode', 'acceptEdits', '--disallowedTools', 'Bash'];
   const run = await runClaude({ args, cwd: worktree, timeoutMs: claudeTimeoutMs(input.budget, TIMEOUT), tag: 'spec' });
   // 会话花费进 metrics（审计 #35），失败也计——重试同样花钱
-  const priced = (r) => ({ ...r, metrics: { ...(r.metrics ?? {}), cost_usd: run.cost_usd ?? 0 } });
+  const priced = (r) => ({ ...r, metrics: { ...(r.metrics ?? {}), cost_usd: run.cost_usd === undefined ? 0 : run.cost_usd } });
   // 超时/被取消/非 0 直接返回：产物可能写了一半，不检查、不做越界检查
   const failure = claudeFailure(run);
   if (failure) return priced(failure);

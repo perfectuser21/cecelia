@@ -14,8 +14,8 @@
  * 守卫落点：
  *  - packages/brain/src/orchestrator/constants.js（零依赖，直接 import 断言值）
  *  - packages/brain/src/orchestrator/gates.js caps.*（判定逻辑）
- *  - packages/brain/src/workflows/harness-gan.graph.js（旧图同名常量 + budgetCap 熔断，
- *    该文件有外部依赖 → readFile 正则断言，不 import）
+ *  - packages/brain/scripts/coding-workflow/lib/gan.mjs（现役 runner 合同对抗，只守「无硬轮数上限」）
+ *  （旧 LangGraph 图 workflows/harness-gan.graph.js 已随 A5 删除，决策 b4adf807）
  *
  * CI 干净环境兼容：node 内建 + 零依赖源文件。
  */
@@ -61,21 +61,9 @@ check('caps.budgetExceeded(BUDGET_CAP_USD) === true',
   caps.budgetExceeded(BUDGET_CAP_USD) === true);
 check('caps.budgetExceeded(0) === false', caps.budgetExceeded(0) === false);
 
-// A3) harness-gan.graph.js（旧图，有外部依赖 → 文本断言）：同名常量 + budgetCap 熔断存在
-const ganPath = path.join(ROOT, 'packages/brain/src/workflows/harness-gan.graph.js');
-const gan = fs.readFileSync(ganPath, 'utf8');
-const pushM = gan.match(/MAX_NO_PUSH_STREAK\s*=\s*(\d+)/);
-check('harness-gan.graph.js MAX_NO_PUSH_STREAK 存在且 ≤ 2',
-  pushM !== null && Number(pushM[1]) <= 2, `got ${pushM && pushM[1]}`);
-const verdictM = gan.match(/MAX_NO_VERDICT_STREAK\s*=\s*(\d+)/);
-check('harness-gan.graph.js MAX_NO_VERDICT_STREAK 存在且 ≤ 3',
-  verdictM !== null && Number(verdictM[1]) <= 3, `got ${verdictM && verdictM[1]}`);
-check('harness-gan.graph.js budgetCap 熔断逻辑存在（gan_budget_exceeded）',
-  /budgetCap/i.test(gan) && /gan_budget_exceeded/.test(gan));
-
 // B) 禁止硬轮数上限复活：MAX_GAN_ROUNDS（GAN 轮次无上限是刻意设计，加了=违反决策）
 const guardedFiles = [
-  'packages/brain/src/workflows/harness-gan.graph.js',
+  'packages/brain/scripts/coding-workflow/lib/gan.mjs',
   'packages/brain/src/orchestrator/constants.js',
   'packages/brain/src/orchestrator/gates.js',
 ];

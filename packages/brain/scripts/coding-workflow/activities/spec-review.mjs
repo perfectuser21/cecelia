@@ -13,7 +13,7 @@ import { sha256File, chainTamperFailure } from '../lib/guards.mjs';
 import { reportErrors } from '../lib/md-chain.mjs';
 import { parseReview, openIssuesAfter } from '../lib/review.mjs';
 import { decide, detectTrend, stalled } from '../lib/gan.mjs';
-import { sessionCostUsd } from '../lib/transcript.mjs';
+import { sessionCostUsd, sumCostUsd, costText } from '../lib/transcript.mjs';
 import { SPEC_FILE, INTENT_FILE, specErrors, specIds, qaScenarios, judgmentPoints, untrackedDeferrals, explainSpecErrors } from '../lib/spec-check.mjs';
 import { INVARIANTS_FILE, loadInvariantIds } from '../lib/invariants.mjs';
 
@@ -27,7 +27,7 @@ const ARGS = ['--permission-mode', 'acceptEdits', '--disallowedTools', 'Bash', '
 
 const reviewName = (n) => `02-review-r${n}.md`;
 const responseName = (n) => `02-response-r${n}.md`;
-const money = (x) => Math.round(x * 10000) / 10000;
+const money = (x) => x === null ? null : Math.round(x * 10000) / 10000;
 const brief = (issues) => issues.map(({ id, severity, targets }) => ({ id, severity, targets }));
 
 function budgetUsd() {
@@ -91,7 +91,7 @@ async function runSession(ctx, role, vars) {
   if (stray.length > 0) return { failure: fail('fatal', 'spec_review_out_of_scope_write', { evidence: [{ out_of_scope_changes: stray }] }) };
   const tampered = chainTamperFailure(dir, { intent_sha256: input.intent_sha256 });
   if (tampered) return { failure: tampered };
-  return { cost: sessionCostUsd(run.stdout) };
+  return { cost: run.cost_usd === undefined ? sessionCostUsd(run.stdout) : run.cost_usd };
 }
 
 /** 读并解析本轮评审；格式问题返回 { errors }，否则 { review }。 */
@@ -159,7 +159,7 @@ await runActivity(async (input) => {
       }
     }
     if (escalations.length > 0) outputs.escalations = escalations;
-    return { status: 'completed', outputs, metrics: { cost_usd: money(cost) }, evidence: [`合同对抗 ${verdict}：${round} 轮，走势 ${trend}，花费 $${money(cost)}`] };
+    return { status: 'completed', outputs, metrics: { cost_usd: money(cost) }, evidence: [`合同对抗 ${verdict}：${round} 轮，走势 ${trend}，花费 ${costText(money(cost))}`] };
   };
 
   for (;;) {
@@ -183,7 +183,7 @@ await runActivity(async (input) => {
       UNTRACKED_DEFERRALS: untracked.join(',') || '无',
     });
     if (reviewed.failure) return reviewed.failure;
-    cost += reviewed.cost;
+    cost = sumCostUsd(cost, reviewed.cost);
     const blown = overBudget();
     if (blown) return blown;
 
@@ -214,7 +214,7 @@ await runActivity(async (input) => {
       SPEC_ERRORS: specErrorsNow(), STUCK: stalled(history) ? '是' : '否',
     });
     if (revised.failure) return revised.failure;
-    cost += revised.cost;
+    cost = sumCostUsd(cost, revised.cost);
     prevOpen = open;
     const blownAfterRevise = overBudget();
     if (blownAfterRevise) return blownAfterRevise;

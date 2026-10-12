@@ -33,7 +33,6 @@ harness-callback-smoke.sh
 harness-notify-complete-smoke.sh
 harness-phase-event-smoke.sh
 harness-pipeline-lifecycle-smoke.sh
-harness-retry-interrupt-smoke.sh
 impact-contract-smoke.sh
 inbox-p1-smoke.sh
 journey-goldenpaths-invariants-smoke.sh

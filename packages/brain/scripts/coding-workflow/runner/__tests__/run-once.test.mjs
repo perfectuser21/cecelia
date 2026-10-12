@@ -101,12 +101,12 @@ describe('coding workflow runner run-once', () => {
     expect(claims.map((c) => c.path)).toEqual([`/api/brain/tasks/${T1}/claim`]);
   }, 30000);
 
-  it('已被认领 / 非 cecelia 仓的任务不参与；多条候选取最早创建的', async () => {
+  it('已被认领 / 未登记仓库的任务不参与；多条候选取最早创建的', async () => {
     brain = await startFakeBrain({
       tasks: [
         codingTask(T1, { created_at: '2026-10-08T02:00:00.000Z' }),
         codingTask(T2, { created_at: '2026-10-08T01:00:00.000Z', claimed_by: 'someone' }),
-        codingTask('ccccccc3-0000-4000-8000-000000000003', { created_at: '2026-10-08T00:00:00.000Z', payload: { ...SWITCH, repo: 'zenithjoy' } }),
+        codingTask('ccccccc3-0000-4000-8000-000000000003', { created_at: '2026-10-08T00:00:00.000Z', payload: { ...SWITCH, repo: 'not-registered-repo' } }),
         codingTask('ddddddd4-0000-4000-8000-000000000004', { created_at: '2026-10-08T01:30:00.000Z' }),
       ],
     });

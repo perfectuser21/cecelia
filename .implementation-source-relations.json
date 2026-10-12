@@ -432,6 +432,16 @@
       "owner_path": "packages/brain/src/orchestrator/planner-recovery-consumption-store.js",
       "path": "packages/brain/src/__tests__/integration/planner-recovery-consumption.pg.integration.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/harness-skill-relay.js",
+      "path": "changes/cp-10121121-retire-kernel-1.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/harness-skill-relay.js",
+      "path": "packages/brain/src/__tests__/kernel-runtime-retired.test.js",
+      "role": "verification"
     }
   ]
 }

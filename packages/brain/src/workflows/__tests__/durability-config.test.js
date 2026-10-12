@@ -4,8 +4,7 @@
  * 强校验所有顶层 graph .compile({ checkpointer ... }) 显式指定 durability:'sync'。
  * 默认 'async' 在 brain 进程崩溃时小概率丢最近 checkpoint，生产必须 'sync'。
  *
- * 同时守门 harness-gan.graph.js 不再有 `|| new MemorySaver()` 静默 fallback：
- * PostgresSaver 缺失必须 fail-fast，否则 brain 重启后 state 全丢 → ghost task。
+ * （harness-gan.graph.js 已随 A5 删除，其 MemorySaver fallback 守门一并移除。）
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -19,7 +18,6 @@ describe('durability config [BEHAVIOR]', () => {
   // dev-task.graph.js 已于 T6 物理删除（迁离 LangGraph，走 triggerCeceliaRun）
   const FILES = [
     'consciousness.graph.js',
-    'harness-gan.graph.js',
   ];
 
   for (const file of FILES) {
@@ -37,37 +35,4 @@ describe('durability config [BEHAVIOR]', () => {
       }
     });
   }
-
-  it("harness-gan.graph.js 不含 MemorySaver fallback (`|| new MemorySaver()`)", () => {
-    const src = readFileSync(resolve(WORKFLOW_DIR, 'harness-gan.graph.js'), 'utf8');
-    expect(src).not.toMatch(/\|\|\s*new\s+MemorySaver/);
-  });
-
-  it('harness-gan.graph.js 不再 import MemorySaver（生产代码不该用）', () => {
-    const src = readFileSync(resolve(WORKFLOW_DIR, 'harness-gan.graph.js'), 'utf8');
-    // 抓 import 块里的 MemorySaver 标识符（包括 multi-line named import）
-    const importBlocks = src.match(/import\s*\{[\s\S]*?\}\s*from\s*['"]@langchain\/langgraph['"]/g) || [];
-    for (const blk of importBlocks) {
-      expect(blk, `不应 import MemorySaver:\n${blk}`).not.toMatch(/\bMemorySaver\b/);
-    }
-  });
-
-  it('runGanContractGraph 在 checkpointer 缺失时必须 throw（fail-fast，不 fallback）', async () => {
-    const mod = await import('../harness-gan.graph.js');
-    expect(typeof mod.runGanContractGraph).toBe('function');
-    // 必填 taskId/executor 已经会先 throw；要专门测 checkpointer 校验，
-    // 必须传齐前置必填项。错误消息应含 'checkpointer'。
-    await expect(
-      mod.runGanContractGraph({
-        taskId: 'test-task-1',
-        initiativeId: 'init-1',
-        sprintDir: '/tmp/x',
-        prdContent: 'prd',
-        executor: async () => ({ stdout: '', stderr: '' }),
-        worktreePath: '/tmp/x',
-        githubToken: 'x',
-        // checkpointer 故意不传
-      })
-    ).rejects.toThrow(/checkpointer/i);
-  });
 });

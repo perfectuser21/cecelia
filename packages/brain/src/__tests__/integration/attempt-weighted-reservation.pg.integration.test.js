@@ -1,9 +1,6 @@
 import { importLegacyPolicy } from '../../execution-directory/store.js';
 import { directory } from '../../execution-directory/directory.js';
 import { LEGACY_BINDINGS } from '../../execution-directory/legacy-policy.js';
-import { confirmExpiredParentCleanup } from '../../orchestrator/attempt-resource-cleanup.js';
-import { reserveExpiredAttemptReplacement } from '../../orchestrator/attempt-resource-replacement.js';
-import { reconcileExpiredKernelAttempt } from '../../harness-relay-watchdog.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
@@ -158,46 +155,6 @@ describe('真实 PG 加权预约与未确认取消', () => {
     expect((await pool.query('SELECT id FROM harness_attempt_cleanup_outbox')).rows).toHaveLength(0);
     await expect(store.createAttempt(await input('reporter', 4))).rejects.toThrow('capacity_contended');
   });
-  it('确认旧进程退出后原子替换4槽父为4槽子，不产生8槽窗口', async () => {
-    const parent = await store.createAttempt(await input('generator', 4));
-    await pool.query("UPDATE harness_attempts SET status='running',lease_owner='old',lease_expires_at=NOW()-interval '1 minute' WHERE id=$1", [parent.id]);
-    const old = (await pool.query('SELECT * FROM harness_attempts WHERE id=$1', [parent.id])).rows[0];
-    const childInput = { ...await input('generator', 4), runId: parent.run_id, hop: 2 };
-    const replacement = await reserveExpiredAttemptReplacement({ pool, parentAttempt: old, childInput,
-      collectSnapshot: async () => snapshot(4),
-      confirmCleanup: async (locked) => ({ status: 'cleaned', attempt_id: locked.id }),
-    });
-    expect(replacement.child.status).toBe('queued');
-    expect((await pool.query('SELECT status FROM harness_attempts WHERE id=$1', [parent.id])).rows[0].status).toBe('failed');
-    expect((await pool.query("SELECT id FROM harness_attempts WHERE status IN ('queued','running','starting')")).rows).toHaveLength(1);
-  });
-  it.each(['unknown', 'wrong_identity', 'rollback_after_clean'])('恢复%s保留父预算和原generation', async (scenario) => {
-    const parent = await store.createAttempt(await input('generator', 4));
-    await pool.query("UPDATE harness_attempts SET status='running',lease_owner='old',lease_expires_at=NOW()-interval '1 minute' WHERE id=$1", [parent.id]);
-    const old = (await pool.query('SELECT * FROM harness_attempts WHERE id=$1', [parent.id])).rows[0];
-    const childInput = { ...await input('generator', 4), runId: parent.run_id, hop: 2,
-      ...(scenario === 'rollback_after_clean' ? { id: parent.id } : {}) };
-    await expect(reserveExpiredAttemptReplacement({ pool, parentAttempt: old, childInput,
-      collectSnapshot: async () => snapshot(4),
-      confirmCleanup: async () => ({ status: scenario === 'unknown' ? 'missing' : 'cleaned',
-        attempt_id: scenario === 'wrong_identity' ? randomUUID() : old.id }),
-    })).rejects.toThrow();
-    expect((await pool.query('SELECT status,lease_generation FROM harness_attempts WHERE id=$1', [parent.id])).rows[0])
-      .toEqual({ status: 'running', lease_generation: old.lease_generation });
-    await expect(store.createAttempt(await input('reporter', 4))).rejects.toThrow('capacity_contended');
-  });
-  it('已续租父不会被取消或替换', async () => {
-    const parent = await store.createAttempt(await input('generator', 4));
-    await pool.query("UPDATE harness_attempts SET status='running',lease_owner='old',lease_expires_at=NOW()+interval '1 minute' WHERE id=$1", [parent.id]);
-    const old = (await pool.query('SELECT * FROM harness_attempts WHERE id=$1', [parent.id])).rows[0];
-    let cancelled = false;
-    expect(await reserveExpiredAttemptReplacement({ pool, parentAttempt: old,
-      childInput: { ...await input('generator', 4), runId: parent.run_id, hop: 2 },
-      collectSnapshot: async () => snapshot(4), confirmCleanup: async () => { cancelled = true; },
-    })).toBeNull();
-    expect(cancelled).toBe(false);
-  });
-
   it('活动和多代cleanup交集只计一个attempt，不重复扣权重', async () => {
     const first = await store.createAttempt(await input('proposer', 4));
     for (const generation of [0, 1]) {
@@ -226,69 +183,6 @@ describe('真实 PG 加权预约与未确认取消', () => {
     await store.fail(first.id, { code: 'bundle_invalid' });
     expect((await pool.query('SELECT id FROM harness_attempt_cleanup_outbox')).rows).toHaveLength(0);
     await expect(store.createAttempt(await input('generator', 4))).resolves.toMatchObject({ status: 'queued' });
-  });
-
-  it('精确legacy清理成功后DB回滚，真实helper重试不存在容器并完成预算转移', async () => {
-    const parent = await store.createAttempt(await input('generator', 4));
-    await pool.query(`UPDATE harness_attempts SET status='running',lease_owner='old',lease_expires_at=NOW()-interval '1 minute',
-      execution_transport='local-docker',local_container_naming='legacy-unsuffixed' WHERE id=$1`, [parent.id]);
-    const old = (await pool.query('SELECT * FROM harness_attempts WHERE id=$1', [parent.id])).rows[0];
-    const childInput = { ...await input('generator', 4), runId: parent.run_id, hop: 2 };
-    let exists = true;
-    const receipts = [];
-    const confirmCleanup = async (locked) => {
-      const receipt = await confirmExpiredParentCleanup(locked, {
-        env: { CECELIA_MACHINE_ID: machine },
-        removeContainer: async () => { const removed = exists; exists = false; return removed; },
-        inspectContainer: async () => exists,
-      });
-      receipts.push(receipt.status);
-      return receipt;
-    };
-    await expect(reserveExpiredAttemptReplacement({ pool, parentAttempt: old,
-      childInput: { ...childInput, id: parent.id }, collectSnapshot: async () => snapshot(4), confirmCleanup }))
-      .rejects.toThrow();
-    expect((await pool.query('SELECT status FROM harness_attempts WHERE id=$1', [parent.id])).rows[0].status).toBe('running');
-    const replacement = await reserveExpiredAttemptReplacement({ pool, parentAttempt: old, childInput,
-      collectSnapshot: async () => snapshot(4), confirmCleanup });
-    expect(receipts).toEqual(['cleaned', 'already_clean']);
-    expect(replacement.child).toMatchObject({ id: childInput.id, status: 'queued' });
-    expect((await pool.query('SELECT status FROM harness_attempts WHERE id=$1', [parent.id])).rows[0].status).toBe('failed');
-  });
-
-  it.each([true, false])('真实恢复编排保留父清理身份，子启动结果=%s', async (ok) => {
-    const first = await store.createAttempt(await input('generator', 4));
-    await pool.query(`UPDATE harness_attempts SET status='running',lease_owner='old-owner',lease_generation=3,
-      lease_expires_at=NOW()-interval '1 minute',provider_session_id='thread-old',execution_transport='local-docker',
-      local_container_naming='legacy-unsuffixed' WHERE id=$1`, [first.id]);
-    const childId = randomUUID();
-    const removed = [];
-    let resumed = 0;
-    const result = await reconcileExpiredKernelAttempt({
-      db: pool, attemptId: first.id, leaseOwner: 'watchdog:fixture', reservedChildHop: 2,
-      randomUUIDFn: () => childId, collectSnapshot: async () => snapshot(4),
-      confirmCleanup: (parent) => confirmExpiredParentCleanup(parent, {
-        env: { CECELIA_MACHINE_ID: machine },
-        removeContainer: async (id) => { removed.push(id); return true; }, inspectContainer: async () => false,
-      }),
-      resumeAttempt: async (child, context) => {
-        resumed++;
-        expect(child).toMatchObject({ id: childId, retry_of_attempt_id: first.id, lease_owner: 'watchdog:fixture' });
-        expect(context.parentAttempt).toMatchObject({ id: first.id, lease_owner: 'old-owner', lease_generation: 3 });
-        expect(context.parentCleanupConfirmed).toBe(true);
-        expect(removed).toEqual([`cecelia-harness-${first.id.replaceAll('-', '').slice(0, 8)}`]);
-        return ok ? { ok: true } : false;
-      },
-    });
-    expect(resumed).toBe(1);
-    expect(result.ok).toBe(ok);
-    expect((await pool.query('SELECT status,error_code,lease_generation FROM harness_attempts WHERE id=$1', [first.id])).rows)
-      .toEqual([{ status: 'failed', error_code: 'resumed_as_child', lease_generation: 3 }]);
-    expect((await pool.query('SELECT status,error_code FROM harness_attempts WHERE id=$1', [childId])).rows)
-      .toEqual([{ status: ok ? 'starting' : 'failed', error_code: ok ? null : 'resume_returned_false' }]);
-    const pending = (await pool.query('SELECT target_machine_id,status FROM harness_attempt_cleanup_outbox WHERE attempt_id=$1', [childId])).rows;
-    expect(pending).toEqual(ok ? [] : [{ target_machine_id: machine, status: 'pending' }]);
-    await expect(store.createAttempt(await input('reporter', 4))).rejects.toThrow('capacity_contended');
   });
 
   it('terminal-first并发保持真实425 trigger的23514拒绝，不被无效容量fixture提前截断', async () => {

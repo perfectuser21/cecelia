@@ -49,7 +49,7 @@ export function chainSpans(receipt, { taskId, startedAt }) {
       const cost = t?.metrics?.cost_usd;
       out.push({
         ...base(taskId, a.key), started_at: iso(cursor), ended_at: iso(end), outcome: OUTCOME[t?.status] ?? 'unknown',
-        ...(typeof cost === 'number' ? { cost_usd: cost } : {}),
+        ...(cost === null || typeof cost === 'number' ? { cost_usd: cost } : {}),
         occurrence_key: `${a.key}:${t?.attempt ?? 0}`,
         ...(t?.reason_code ? { evidence: { reason_code: t.reason_code } } : {}),
       });
@@ -68,7 +68,7 @@ export function gateSpan({ taskId, key, startedAt, endedAt, ok, costUsd, occurre
   if (terminal) evidence = { ...evidence, run_terminal: true };
   return {
     ...base(taskId, key), started_at: iso(startedAt), ended_at: iso(endedAt), outcome: ok ? 'pass' : 'fail',
-    ...(typeof costUsd === 'number' ? { cost_usd: costUsd } : {}),
+    ...(costUsd === null || typeof costUsd === 'number' ? { cost_usd: costUsd } : {}),
     occurrence_key: `${key}:${occurrence}`,
     ...(evidence ? { evidence } : {}),
   };
