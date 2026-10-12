@@ -13,6 +13,12 @@
   Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/lib/__tests__/workflow-commander-device-pool.test.js src/lib/__tests__/workflow-commander-dispatch.test.js src/__tests__/openclaw-agent-executor.test.js src/__tests__/scheduler-jobs.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] executorlease factory-dispatcher 认领带 600s 租约、等锁/守望每轮心跳，409 停手（杀会话、放自己的锁、不回写）；coding-workflow-runner 认领带 900s 租约、执行期心跳，409 中止执行器不回写终态；旧 Brain 无心跳端点（404）不中断。
   Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run scripts/factory-dispatcher/__tests__/factory-dispatcher.test.js scripts/coding-workflow/runner/__tests__/run-once-lease.test.mjs scripts/coding-workflow/runner/__tests__/run-once.test.mjs --maxWorkers=1 --minWorkers=1"
+# Projects 双向同步与 AI 参与（任务 97024a3b）
+
+- [x] [BEHAVIOR] projectsnotionsync 全量推送并修正规划/归档状态；Notion 新项目幂等导入和 Run ID 失败重试；人工列三方合并与冲突审计；保留人工正文；分页失败不推进游标。
+  Test: manual:bash packages/brain/scripts/smoke/projects-notion-sync-smoke.sh
+- [x] [BEHAVIOR] projectaitier POST/PATCH 档位校验；迁移默认知情、三个档位约束和 Notion 关联唯一，隔离 PostgreSQL 真实验证。
+  Test: manual:bash packages/brain/scripts/smoke/projects-notion-sync-smoke.sh
 
 # 派发只认路由表：无执行者建单即拒 + 工厂/编码独立 task_type + 清卡死单（任务 0a70684f，派发总闸 F）
 

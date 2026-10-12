@@ -6,6 +6,7 @@
  * 期望：与 notion-push-sync 的 isWrongDatabaseError 同款判据 → 放弃旧页，在正确的 Projects 库 POST 重建，回存新 notion_id 与指纹。
  */
 import { describe, it, expect, vi } from 'vitest';
+vi.mock('../project-notion-ingest.js', () => ({ ingestProjectPage: vi.fn(async () => null), pullProjects: vi.fn() }));
 
 vi.mock('../recurring-notion-sync.js', () => ({ notionReq: vi.fn(), getToken: () => 'tok' }));
 
@@ -16,7 +17,7 @@ const WRONG_DB_MSG = 'Notion PATCH /pages/legacy → 400: Status is expected to 
 
 function poolFor(root, updates) {
   return { query: vi.fn(async (sql, params) => {
-    if (/FROM projects\s+WHERE status NOT IN/.test(sql)) return { rows: [root] };
+    if (/FROM projects ORDER BY/.test(sql)) return { rows: [root] };
     if (/UPDATE projects SET/.test(sql)) { updates.push(params); return { rows: [] }; }
     return { rows: [] };
   }) };
@@ -40,9 +41,9 @@ describe('relay project 错库 400 自愈', () => {
     });
     const s = await pushProjectRoots(poolFor(root, updates), 'tok', { notionReq: req, log: { warn: () => {} } });
     expect(s).toEqual({ pushed: 1, skipped: 0, failed: 0 });
-    expect(updates[0][1]).toBe('new-proj-page');
-    expect(updates[0][2]).toHaveLength(40);
-    expect(updates[0][3]).toBe(PROJECTS_DB);
+    expect(updates.find(p => typeof p[2] === 'string' && p[2].length === 40)[1]).toBe('new-proj-page');
+    expect(updates.find(p => typeof p[2] === 'string' && p[2].length === 40)[2]).toHaveLength(40);
+    expect(updates.find(p => typeof p[2] === 'string' && p[2].length === 40)[3]).toBe(PROJECTS_DB);
   });
 
   it('其他 400（非错库、非回收站）仍按失败计，不重建', async () => {
@@ -57,6 +58,6 @@ describe('relay project 错库 400 自愈', () => {
     const s = await pushProjectRoots(poolFor(root, updates), 'tok', { notionReq: req, log: { warn: () => {} } });
     expect(s.failed).toBe(1);
     expect(req.mock.calls.some((c) => c[2] === 'POST')).toBe(false);
-    expect(updates).toHaveLength(0);
+    expect(updates.some(p => typeof p?.[2] === 'string' && p[2].length === 40)).toBe(false);
   });
 });

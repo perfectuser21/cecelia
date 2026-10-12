@@ -8,7 +8,8 @@
 //   partial-pr：publish 已开 PR，report 失败，整体 partial
 // FAKE_EXEC_LOG 指向文件时，写入一行 JSON：argv、cwd、stdin 信封、关心的 env 是否存在。
 import fs from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import path from 'node:path';
 
 const argv = process.argv.slice(2);
 const opt = (name) => {
@@ -66,6 +67,18 @@ if (mode === 'hang') {
     env: { ...process.env, FAKE_SLEEPER: SLEEPER },
   }).unref();
   setInterval(() => {}, 1000);
+} else if (mode === 'real-publish') {
+  // 仅替身构建环节；真实 runner 输入直接交真实 publish 子进程，捕获实际 GH 参数。
+  const dir = path.join(input.worktree, input.sprint_dir);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const file of ['01-intent.md', '02-spec.md']) fs.writeFileSync(path.join(dir, file), '# test\n');
+  const r = spawnSync(process.execPath, [process.env.FAKE_PUBLISH_ENTRY], {
+    input: JSON.stringify({ ...input, chain_files: ['01-intent.md', '02-spec.md'] }), encoding: 'utf8', env: process.env,
+  });
+  if (r.status !== 0) process.stderr.write(r.stderr + r.stdout);
+  const result = JSON.parse(r.stdout);
+  finish({ schema_version: 1, run_tag: input.run_tag, status: result.status,
+    outputs: result.outputs ?? {}, activities: KEYS.map(done) }, r.status);
 } else if (mode === 'partial-pr') {
   finish({
     schema_version: 1,

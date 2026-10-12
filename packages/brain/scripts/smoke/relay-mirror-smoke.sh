@@ -27,29 +27,98 @@ trap 'q "DELETE FROM decisions WHERE id=$$'"$DEC"'$$; DELETE FROM tasks WHERE id
 
 "$NODE" --input-type=module -e "
 import pg from 'pg';
-import { buildProjectSnapshot, buildProjectProps, buildProjectBody, pushProjectRoots, pushPendingDecisions } from '$BRAIN_DIR/src/notion-relay-projection.js';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { buildProjectSnapshot, buildProjectProps, buildProjectBody, pushProjectRoots, pushPendingDecisions, PROJECTS_DB } from '$BRAIN_DIR/src/notion-relay-projection.js';
+import { notionText } from '$BRAIN_DIR/src/lib/project-notion-human.js';
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-const root = (await pool.query('SELECT id, name AS title, description, status, notion_props FROM projects WHERE id=\$1', ['$ROOT'])).rows[0];
-const snap = await buildProjectSnapshot(pool, root);
-if (snap.children.length !== 1 || snap.pending.length !== 1 || snap.log.length !== 1) { console.error('快照不对', snap); process.exit(1); }
+const client = await pool.connect();
+try {
+// 新推送遍历全量项目；smoke 只允许修改自己创建的项目和决策记账。
+const db = { query(sql, args) {
+  if (sql === 'SELECT *, name AS title FROM projects ORDER BY updated_at DESC, id') {
+    return client.query('SELECT *, name AS title FROM projects WHERE id=\$1', ['$ROOT']);
+  }
+  if (sql.includes('FROM decisions d') && sql.includes('ORDER BY d.created_at LIMIT 20')) {
+    return client.query(sql.replace('ORDER BY d.created_at LIMIT 20', 'AND d.id = \$1 ORDER BY d.created_at LIMIT 20'), ['$DEC']);
+  }
+  return client.query(sql, args);
+} };
+const root = (await client.query('SELECT *, name AS title FROM projects WHERE id=\$1', ['$ROOT'])).rows[0];
+const snap = await buildProjectSnapshot(db, root);
+assert.equal(snap.children.length, 1); assert.equal(snap.pending.length, 1); assert.equal(snap.log.length, 1);
 const props = buildProjectProps(root, snap);
-if (props.Status.status.name !== 'In Progress' || !props.Remark.rich_text[0].text.content.includes('1/1 棒完成') || !props.Remark.rich_text[0].text.content.includes('待拍板 1')) { console.error('属性不对', props); process.exit(1); }
+assert.equal(props.Status.status.name, 'In Progress');
+assert.ok(notionText(props['AI 进展'].rich_text).includes('1/1 棒完成'));
+assert.ok(notionText(props['AI 进展'].rich_text).includes('待拍板 1'));
+assert.equal(notionText(props.Remark.rich_text), '');
 const body = buildProjectBody(root, snap);
 const txt = JSON.stringify(body);
-if (!txt.includes('目标：看得见') || !txt.includes('smoke 第一棒') || !txt.includes('smoke 拍板') || !txt.includes('铺了脊柱')) { console.error('正文缺段', txt.slice(0,400)); process.exit(1); }
-// 假 Notion：POST 建页 → 存 notion_id + 指纹（projects.notion_props）；再推一次 → 指纹相同跳过
-const calls = [];
-const fakeReq = async (t, path, method, bodyx) => { calls.push([method, path]); if (method==='POST' && path==='/pages') return { id: 'page-$TAG-' + calls.length + '-' + Math.random().toString(16).slice(2, 8) }; if (method==='GET') return { results: [] }; return {}; };
-const s1 = await pushProjectRoots(pool, 'tok', { notionReq: fakeReq, log: { warn: (m) => { console.error(m); process.exit(1); } } });
-const s2 = await pushProjectRoots(pool, 'tok', { notionReq: fakeReq });
-const after = (await pool.query('SELECT notion_props->>\'notion_id\' AS notion_id, notion_props->>\'project_digest\' AS d FROM projects WHERE id=\$1', ['$ROOT'])).rows[0];
-if (!after.notion_id || !after.d || s1.pushed < 1 || s2.skipped < 1) { console.error('指纹/建页不对', s1, s2, after); process.exit(1); }
-const d1 = await pushPendingDecisions(pool, 'tok', { notionReq: fakeReq });
-const dec = (await pool.query('SELECT notion_id FROM decisions WHERE id=\$1', ['$DEC'])).rows[0];
-if (d1.pushed < 1 || !dec.notion_id) { console.error('待拍板未推', d1, dec); process.exit(1); }
+for (const expected of ['目标：看得见', 'smoke 第一棒', 'smoke 拍板', '铺了脊柱']) assert.ok(txt.includes(expected));
+// 有状态 Notion 边界：页面读取保留完整属性，PATCH 合并，正文读/删/追加真实作用在同一页。
+const calls = [], pages = new Map();
+const fakeReq = async (_token, path, method, request) => {
+  calls.push([method, path]);
+  if (method === 'POST' && path.endsWith('/query')) {
+    const matched = [...pages.values()].filter(page => page.parent.database_id === PROJECTS_DB &&
+      notionText(page.properties['Run ID']?.rich_text) === request.filter.rich_text.equals);
+    return structuredClone({ results: matched, has_more: false, next_cursor: null });
+  }
+  if (method === 'POST' && path === '/pages') {
+    const page = { id: randomUUID(), archived: false, parent: structuredClone(request.parent),
+      properties: structuredClone(request.properties),
+      children: (request.children || []).map(block => ({ ...structuredClone(block), id: randomUUID() })) };
+    pages.set(page.id, page); return structuredClone(page);
+  }
+  if (path.startsWith('/pages/')) {
+    const page = pages.get(path.slice('/pages/'.length));
+    if (!page) throw new Error('Notion 404: page not found');
+    if (method === 'PATCH') Object.assign(page.properties, structuredClone(request.properties));
+    else assert.equal(method, 'GET');
+    return structuredClone(page);
+  }
+  if (path.startsWith('/blocks/') && path.includes('/children')) {
+    const page = pages.get(path.split('/')[2]);
+    assert.ok(page, '正文所属页面必须存在');
+    if (method === 'GET') return structuredClone({ results: page.children, has_more: false });
+    assert.equal(method, 'PATCH');
+    page.children.push(...request.children.map(block => ({ ...structuredClone(block), id: randomUUID() })));
+    return { results: [] };
+  }
+  if (method === 'DELETE' && path.startsWith('/blocks/')) {
+    const id = path.split('/')[2];
+    for (const page of pages.values()) page.children = page.children.filter(block => block.id !== id);
+    return {};
+  }
+  throw new Error('未定义的 Notion 调用: ' + method + ' ' + path);
+};
+const opts = { notionReq: fakeReq };
+const s1 = await pushProjectRoots(db, 'tok', opts);
+const s2 = await pushProjectRoots(db, 'tok', opts);
+const after = (await client.query('SELECT notion_props FROM projects WHERE id=\$1', ['$ROOT'])).rows[0].notion_props;
+assert.ok(after.notion_id); assert.ok(after.project_digest);
+assert.equal(s1.pushed, 1); assert.equal(s1.failed, 0); assert.equal(s2.skipped, 1); assert.equal(s2.failed, 0);
+const page = pages.get(after.notion_id), originalBlocks = page.children.map(block => block.id);
+// 人改与 Brain 改冲突：读取既有页、事务回灌、摘要独立、正文更新后再次幂等。
+page.properties.Status = { status: { name: 'Completed' } };
+page.properties.Remark = { rich_text: [{ type: 'text', text: { content: '人工 smoke 备注' } }] };
+await client.query('UPDATE projects SET status=\$2,description=\$3 WHERE id=\$1', ['$ROOT', 'paused', '目标：更新后可见']);
+const s3 = await pushProjectRoots(db, 'tok', opts);
+assert.equal(s3.pushed, 1); assert.equal(s3.failed, 0);
+const merged = (await client.query('SELECT * FROM projects WHERE id=\$1', ['$ROOT'])).rows[0];
+assert.equal(merged.status, 'completed'); assert.equal(merged.custom_props.remark, '人工 smoke 备注');
+assert.equal(notionText(page.properties.Remark.rich_text), '人工 smoke 备注');
+assert.ok(notionText(page.properties['AI 进展'].rich_text).includes('1/1 棒完成'));
+assert.ok(JSON.stringify(page.children).includes('目标：更新后可见'));
+assert.ok(page.children.every(block => !originalBlocks.includes(block.id)), '旧机器正文必须真正删除');
+assert.equal((await pushProjectRoots(db, 'tok', opts)).skipped, 1);
+const d1 = await pushPendingDecisions(db, 'tok', opts);
+const dec = (await client.query('SELECT notion_id FROM decisions WHERE id=\$1', ['$DEC'])).rows[0];
+assert.equal(d1.pushed, 1); assert.equal(d1.failed, 0); assert.ok(dec.notion_id);
 const postDec = calls.filter(([m,p]) => m==='POST' && p==='/pages').length;
-if (postDec < 2) { console.error('应各建一页', calls); process.exit(1); }
-await pool.end();
+assert.equal(postDec, 2); assert.equal(pages.size, 2);
+console.log('RELAY_MIRROR_PROJECTION_PASS');
+} finally { client.release(); await pool.end(); }
 " || fail "投影链路失败"
 pass "根一页：快照/属性/正文齐；建页存指纹，重推跳过；待拍板推草案并回存 notion_id"
 

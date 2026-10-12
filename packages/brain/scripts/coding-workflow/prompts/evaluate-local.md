@@ -38,9 +38,10 @@ PREV_ERRORS: {{PREV_ERRORS}}
 - **不能拿单元测试当证据**：vitest / jest / mocha / npm test / node --test / playwright test 一律不算（那是 CI 的事）。你要的是真实运行的结果。
 - **不许碰生产**：命令里不许出现 PRODUCTION 里的任何地址/主机（例如 hk-vps、生产 API 端口），也不许访问本机 localhost:5221（那是 Cecelia 生产 Brain）；不 ssh 到任何服务器，不连生产数据库。哪怕只是只读请求、哪怕是拿来当「改动前」基线，也不行——碰了就判违规，整轮作废。
 - **不许碰真机、不许发真实内容**：不跑 adb / 真机 RPA / 真实发布与推送，不调用真实第三方平台账号。需要它们才能验的，判 CANNOT_VERIFY 并写原因。
-- 场景要求和「改动前的行为」对比时：用 `git worktree add <临时目录> origin/main` 另检出一份 main 自己跑对照，绝不能拿生产当基线。做不到就在报告里如实写「无法建立基线」并说明原因。
+- 场景要求和「改动前的行为」对比时：优先使用 01/02 合同中任务固定 base SHA；只有场景明确指定的本机 ref 才可作为替代，用 `git rev-parse --verify '<指定值>^{commit}'` 只读解析一次，记录完整 SHA，后续提取与对照均使用该完整 SHA。不能自行选择 origin/main 或当前 HEAD 冒充任务起点，也不能因 ref 已前进就替换合同指定的历史起点；缺少起点信息、本机没有该 commit 或无法证明与合同一致时，报告 `CANNOT_VERIFY` 并说明原因。
+- 基线提取保持 **Git 元数据只读**：用 `mktemp -d` 建独享临时目录，再用 `git archive <完整 SHA> | tar -x -C <临时目录>` 提取副本，或用 `git show <完整 SHA>:<路径>` 提取场景所需文件到该目录；从副本运行真实用户入口，与 PR 版本做黑盒比较，记录 SHA、命令、输出与退出码。禁止 fetch、切分支、增加 worktree、修改任何 gitdir/refs/index 或 PR 的已跟踪文件；绝不能拿生产当基线。只读提取能力不等于场景已经通过，历史行为证据不足仍按原场景报告 `CANNOT_VERIFY`。
 - 不修改 WORKTREE 里任何已跟踪的代码文件，不 commit、不 push、不切分支、不调用 gh。你造的临时文件放到系统临时目录（mktemp -d），只写 REPORT_PATH 和 SHOTS_DIR。
-- 不读 SPRINT_DIR 里除 01、02（以及 JUDGE_FEEDBACK 指向的裁决）以外的开发方文件。
+- 不读 SPRINT_DIR 里除 01、02（以及 JUDGE_FEEDBACK 指向的裁决）以外的开发方文件（包括 03/04）；基线副本也遵守这一限制。
 - **判 PASS 的命令不许恒真**：不许用 `|| true`、`; exit 0` 吞掉失败，不许用 `--dry-run` 假执行，不许只 `echo` 一句自己的结论当证据。
 - **验不了就写验不了，不许换一种更弱的测法**：缺工具、需要页面 UI / 真机 / 外部账号才能验时，该 T-n 写 `verdict: CANNOT_VERIFY` 并写 `原因:`，command/output 贴你尝试的命令与真实输出。
 
