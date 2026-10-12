@@ -1,0 +1,231 @@
+{
+  "started_at": "2026-10-12T05:34:48.192Z",
+  "tests": [
+    {
+      "name": "Q-5 迁移外加宽/幂等",
+      "verdict": "PASS",
+      "before": [
+        {
+          "conname": "qa_old_0",
+          "def": "CHECK (((made_by)::text = ANY ((ARRAY['user'::character varying, 'cecelia'::character varying, 'system'::character varying, 'qa_extra'::character varying])::text[]))) NOT VALID",
+          "convalidated": false
+        }
+      ],
+      "after": [
+        {
+          "conname": "decisions_made_by_check",
+          "def": "CHECK (((made_by)::text = ANY ((ARRAY['ai'::character varying, 'cecelia'::character varying, 'qa_extra'::character varying, 'system'::character varying, 'user'::character varying])::text[]))) NOT VALID",
+          "convalidated": false
+        }
+      ],
+      "inserted_values": [
+        "user",
+        "cecelia",
+        "system",
+        "qa_extra",
+        "ai"
+      ],
+      "rerun_identical": true,
+      "schema_552_count": 1,
+      "existing_rows_unchanged": true,
+      "bogus_sqlstate": "23514"
+    },
+    {
+      "name": "Q-8 空串及单引号",
+      "verdict": "PASS",
+      "before": [
+        {
+          "conname": "qa_old_0",
+          "def": "CHECK (((made_by)::text = ANY ((ARRAY['user'::character varying, 'cecelia'::character varying, 'system'::character varying, 'qa_extra'::character varying, ''::character varying, 'owner''x'::character varying])::text[]))) NOT VALID",
+          "convalidated": false
+        }
+      ],
+      "after": [
+        {
+          "conname": "decisions_made_by_check",
+          "def": "CHECK (((made_by)::text = ANY ((ARRAY[''::character varying, 'ai'::character varying, 'cecelia'::character varying, 'owner''x'::character varying, 'qa_extra'::character varying, 'system'::character varying, 'user'::character varying])::text[]))) NOT VALID",
+          "convalidated": false
+        }
+      ],
+      "inserted_values": [
+        "user",
+        "cecelia",
+        "system",
+        "qa_extra",
+        "",
+        "owner'x",
+        "ai"
+      ],
+      "rerun_identical": true,
+      "schema_552_count": 1,
+      "existing_rows_unchanged": true,
+      "bogus_sqlstate": "23514"
+    },
+    {
+      "name": "无 CHECK 恢复旧三值",
+      "verdict": "PASS",
+      "before": [],
+      "after": [
+        {
+          "conname": "decisions_made_by_check",
+          "def": "CHECK (((made_by)::text = ANY ((ARRAY['ai'::character varying, 'cecelia'::character varying, 'system'::character varying, 'user'::character varying])::text[]))) NOT VALID",
+          "convalidated": false
+        }
+      ],
+      "inserted_values": [
+        "user",
+        "cecelia",
+        "system",
+        "ai"
+      ],
+      "rerun_identical": true,
+      "schema_552_count": 1,
+      "existing_rows_unchanged": true,
+      "bogus_sqlstate": "23514"
+    },
+    {
+      "name": "改名及多 CHECK 并集",
+      "verdict": "PASS",
+      "before": [
+        {
+          "conname": "qa_old_0",
+          "def": "CHECK (((made_by)::text = ANY ((ARRAY['user'::character varying, 'cecelia'::character varying, 'system'::character varying, 'owner_y'::character varying])::text[]))) NOT VALID",
+          "convalidated": false
+        },
+        {
+          "conname": "qa_old_1",
+          "def": "CHECK (((made_by)::text = ANY ((ARRAY['user'::character varying, 'owner_z'::character varying])::text[]))) NOT VALID",
+          "convalidated": false
+        }
+      ],
+      "after": [
+        {
+          "conname": "decisions_made_by_check",
+          "def": "CHECK (((made_by)::text = ANY ((ARRAY['ai'::character varying, 'cecelia'::character varying, 'owner_y'::character varying, 'owner_z'::character varying, 'system'::character varying, 'user'::character varying])::text[]))) NOT VALID",
+          "convalidated": false
+        }
+      ],
+      "inserted_values": [
+        "user",
+        "cecelia",
+        "system",
+        "owner_y",
+        "owner_z",
+        "ai"
+      ],
+      "rerun_identical": true,
+      "schema_552_count": 1,
+      "existing_rows_unchanged": true,
+      "bogus_sqlstate": "23514"
+    },
+    {
+      "name": "cast 显式 varchar→text 克隆原三值",
+      "verdict": "PASS",
+      "before": [
+        {
+          "conname": "qa_old_0",
+          "def": "CHECK (((made_by)::text = ANY (ARRAY[('user'::character varying)::text, ('cecelia'::character varying)::text, ('system'::character varying)::text]))) NOT VALID",
+          "convalidated": false
+        }
+      ],
+      "after": [
+        {
+          "conname": "decisions_made_by_check",
+          "def": "CHECK (((made_by)::text = ANY ((ARRAY['ai'::character varying, 'cecelia'::character varying, 'system'::character varying, 'user'::character varying])::text[]))) NOT VALID",
+          "convalidated": false
+        }
+      ],
+      "inserted_values": [
+        "user",
+        "cecelia",
+        "system",
+        "ai"
+      ],
+      "rerun_identical": true,
+      "schema_552_count": 1,
+      "existing_rows_unchanged": true,
+      "bogus_sqlstate": "23514"
+    },
+    {
+      "name": "cast 显式 varchar→text 含转义",
+      "verdict": "PASS",
+      "before": [
+        {
+          "conname": "qa_old_0",
+          "def": "CHECK (((made_by)::text = ANY (ARRAY[('user'::character varying)::text, ('cecelia'::character varying)::text, ('system'::character varying)::text, ('owner''x'::character varying)::text]))) NOT VALID",
+          "convalidated": false
+        }
+      ],
+      "after": [
+        {
+          "conname": "decisions_made_by_check",
+          "def": "CHECK (((made_by)::text = ANY ((ARRAY['ai'::character varying, 'cecelia'::character varying, 'owner''x'::character varying, 'system'::character varying, 'user'::character varying])::text[]))) NOT VALID",
+          "convalidated": false
+        }
+      ],
+      "inserted_values": [
+        "user",
+        "cecelia",
+        "system",
+        "owner'x",
+        "ai"
+      ],
+      "rerun_identical": true,
+      "schema_552_count": 1,
+      "existing_rows_unchanged": true,
+      "bogus_sqlstate": "23514"
+    },
+    {
+      "name": "NULL 不静默收窄",
+      "verdict": "PASS",
+      "input": "made_by IN ('user','cecelia','system',NULL)",
+      "error": {
+        "code": "P0001",
+        "message": "decisions 上约束 qa_old 无法解析出完整的 made_by 取值（回放不一致）：CHECK (((made_by)::text = ANY ((ARRAY['user'::character varying, 'cecelia'::character varying, 'system'::character varying, NULL::character varying])::text[]))) NOT VALID"
+      },
+      "unchanged_after_failed_migration": true,
+      "schema_552_count": 0
+    },
+    {
+      "name": "多列 CHECK 拒绝",
+      "verdict": "PASS",
+      "input": "made_by <> 'ai' OR category IS NOT NULL",
+      "error": {
+        "code": "P0001",
+        "message": "decisions 上约束 qa_old 是涉及 made_by 的多列 CHECK，无法安全补 ai：CHECK ((((made_by)::text <> 'ai'::text) OR (category IS NOT NULL))) NOT VALID"
+      },
+      "unchanged_after_failed_migration": true,
+      "schema_552_count": 0
+    },
+    {
+      "name": "非白名单 CHECK 拒绝",
+      "verdict": "PASS",
+      "input": "length(made_by)>0",
+      "error": {
+        "code": "P0001",
+        "message": "decisions 上约束 qa_old 无法解析出 made_by 取值：CHECK ((length((made_by)::text) > 0)) NOT VALID"
+      },
+      "unchanged_after_failed_migration": true,
+      "schema_552_count": 0
+    },
+    {
+      "name": "Q-6 类型和默认值",
+      "verdict": "PASS",
+      "column": {
+        "data_type": "character varying",
+        "character_maximum_length": 20,
+        "column_default": "'system'::character varying"
+      },
+      "default_insert": [
+        {
+          "made_by": "system"
+        }
+      ]
+    }
+  ],
+  "identity": {
+    "db": "cecelia_scratch",
+    "actor": "administrator"
+  },
+  "rollback_verified": true
+}

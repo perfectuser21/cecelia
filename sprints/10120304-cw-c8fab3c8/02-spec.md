@@ -191,3 +191,10 @@ upstream: ["01-intent.md#I-1", "01-intent.md#I-2"]
   - 期望: 两次 migrate 退出码 0；D1 恰 1 行、名为 `decisions_made_by_check`，定义含 `'owner''x'`、`''::character varying`、`'qa_extra'`、`'user'`、`'cecelia'`、`'system'`、`'ai'`；两条 INSERT 均成功并返回 `''` 与 `owner'x`；D2 与 D1 完全相同；schema_version 中 552 恰 1 行。
   - 收尾: 把 scratch 的约束恢复为不含 `''`/`owner'x` 的形态（如 `('ai','cecelia','qa_extra','system','user')`），避免影响后续场景。
 - 代码已按 S-1a 修订 `packages/brain/migrations/552_decisions_made_by_allow_ai.sql`，测试按断言 8/9 补入 `migration-552-decisions-made-by-ai.pg.integration.test.js`；本地 `DB_NAME=cecelia_scratch` 集成测试 10/10 通过；本机按 Q-8 真跑 `node src/migrate.js` 两遍：退出码 0，约束含 `''`、`owner''x`、`qa_extra` 与 `ai`，两次定义一致，552 恰 1 行。
+
+## 有头接续验收补充（2026-10-12，跟进任务 90973445）
+
+- S-1b：克隆预览暴露的既有合法形态为 `made_by::text = ANY (ARRAY[('user'::character varying)::text, ...])`。S-1a 的普通 IN 回放不一致时，只允许再按此显式 varchar→text ARRAY 形态回放；仍须与原 `pg_get_expr` 逐字相同。禁止通过去括号、去 cast 或任意表达式归一化放松验证；NULL、多列、混合其他条件与无法完整回放的形态仍报错且不记 552。此条限定既有等价表达式的兼容，不允许丢值。
+- Q-9：scratch 分别预置上述三旧值形态、以及再加 `('owner''x'::character varying)::text` 的形态；执行迁移两遍，保留每个旧值且可实际 INSERT，补 ai，约束唯一且定义幂等，552 恰一行，非法值仍 23514。
+- 本轮安全执行：Q-5/Q-6/Q-8/Q-9 及负例仅在 `cecelia_scratch` 的显式事务中执行 migration 552 原文正文（仅去掉最外 BEGIN/COMMIT），以 SAVEPOINT 隔离场景并最终 ROLLBACK；验证回滚前后约束、552 版本记录及存量行摘要相同。此做法覆盖迁移正文的真实 PG 行为，不宣称本轮重新执行了完整 migrate 启动器或空库从零升级。
+- 本轮为 Codex 有头接续 QA + 真实独立模型 runJudge；不改写旧自动 runner 的状态或把本轮宣称为自动 runner 完整重跑。
