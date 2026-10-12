@@ -87,6 +87,16 @@ class Migration(unittest.TestCase):
                 with self.assertRaises(RuntimeError) as error:m.feishu_records()
                 self.assertNotIn('private-token', str(error.exception))
 
+    def test_pagination_requires_explicit_completion_and_rejects_repeats(self):
+        m = load('opc-objects-sync')
+        auth = ({'code': 0, 'tenant_access_token': 'token'}, None)
+        incomplete = ({'code': 0, 'data': {'items': [{'record_id': 'a'}]}}, None)
+        repeated = ({'code': 0, 'data': {'items': [], 'has_more': True, 'page_token': 'same'}}, None)
+        with patch.dict(os.environ, {'FEISHU_APP_ID': 'id', 'FEISHU_APP_SECRET': 'secret'}):
+            for responses in [[auth, incomplete], [auth, repeated, repeated]]:
+                with patch.object(m, 'http', side_effect=responses), self.assertRaises(RuntimeError): m.feishu_records()
+        with patch.object(m, 'http', return_value=({'results': []}, None)), self.assertRaises(RuntimeError): m.notion_existing()
+
     def test_objects_partial_writes_are_not_success(self):
         m = load('opc-objects-sync')
         with patch.dict(os.environ, {'NOTION_API_KEY': 'secret'}), patch.object(m, 'feishu_records', return_value=[{'record_id': 'a', 'fields': {}}]), patch.object(m, 'notion_existing', return_value={'a': 'page'}), patch.object(m, 'http', return_value=(None, 'HTTP 500')), patch.object(m.time, 'sleep'):
