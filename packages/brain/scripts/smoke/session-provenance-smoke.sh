@@ -3,8 +3,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export DB_NAME="${DB_NAME:-cecelia_scratch}"
-if [[ "$DB_NAME" != cecelia_scratch ]]; then
-  echo "session-provenance smoke requires DB_NAME=cecelia_scratch" >&2
+if [[ "$DB_NAME" != cecelia_scratch ]] && ! [[ "${GITHUB_ACTIONS:-}" == true && "$DB_NAME" == cecelia_test ]]; then
+  echo "session-provenance smoke requires local scratch or GitHub Actions test database" >&2
   exit 2
 fi
 cd "$ROOT"
