@@ -442,3 +442,5 @@ dispatch-route-gate-smoke.sh
 coding-workflow-route-smoke.sh
 content-pipeline-runs-shadow-smoke.sh
 bypass-audit-smoke.sh
+
+skill-business-grouping-smoke.sh
