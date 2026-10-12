@@ -59,6 +59,8 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     expect(r.result.outputs.qa).toMatchObject({ verdict: 'PASS', cost_usd: null });
     const bad = await run('fabricate', {}, { FAKE_EVAL_NATIVE: 'codex' });
     expect(bad.result.status).toBe('failed');
+    const prod = await run('prod', {}, { FAKE_EVAL_NATIVE: 'codex' });
+    expect(prod.result).toMatchObject({ status: 'failed', reason_code: 'evaluate_touched_production' });
   });
 
   it('全部 Q-n PASS → completed，qa.verdict PASS；用预览环境 URL；03/04 运行时被藏起、结束后放回', async () => {
