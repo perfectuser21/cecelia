@@ -413,6 +413,21 @@
       "role": "verification"
     },
     {
+      "owner_path": "packages/brain/src/lib/dispatch-route.js",
+      "path": "changes/cp-10121022-harness-headed-ledger.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/orchestrator/planner-recovery-consumption-store.js",
+      "path": "packages/brain/src/orchestrator/__tests__/planner-recovery-consumption-store.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/orchestrator/planner-recovery-consumption-store.js",
+      "path": "packages/brain/src/__tests__/integration/planner-recovery-consumption.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
       "owner_path": "packages/brain/src/lib/skill-business-ownership.js",
       "path": "packages/brain/src/lib/__tests__/skill-business-ownership.test.js",
       "role": "verification"

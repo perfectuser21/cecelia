@@ -98,12 +98,26 @@ describe('harness_initiative 无头 kernel 入口退役（kernel 自 09-30 起�
     expect(route('harness_initiative', { executor: 'codex' })).toMatchObject({ route: 'retired-harness-kernel', available: false });
   });
 
-  it('建单闸本步不拒（只关派发，存量与新建无头单由 dispatcher drain 收口）；有头 / 非 queued 照常放行', () => {
-    // 编码建单方（work-router / relay-baton / GP 签字实现单）改投 coding_workflow 之前在建单处拒会回滚上游事务，
-    // 收紧建单入口留到改投之后；这里钉住「路由判退役 + 建单不抛」的组合，防误把它当普通无执行者类型拒掉。
-    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: kernelPayload })).not.toThrow();
+  it('建单闸（A4）：harness_initiative 只当有头账本类型——无头 queued 建单即拒 no_executor_for_task_type', () => {
+    // A2 已把无头编码建单方（work-router / relay-baton / GP 签字实现单）改投 coding_workflow，建单入口收紧：
+    // 无头 queued harness_initiative 不再进队等 drain，直接拒（含 kernel-v1 子单形状与空 payload）。
+    let err;
+    try { assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: kernelPayload }); } catch (e) { err = e; }
+    expect(err?.code).toBe('no_executor_for_task_type');
+    expect(err?.route).toBe('retired-harness-kernel');
+    expect(err?.message).toMatch(/coding_workflow/);
+    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: {} })).toThrow(/no_executor_for_task_type/);
+    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative' })).toThrow(/no_executor_for_task_type/);
+  });
+
+  it('建单闸（A4）：有头账本行照常——headed_manual 字符串 \'true\' / 布尔 true；非 queued（in_progress / blocked / completed）入账不拦', () => {
     expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: { headed_manual: 'true' } })).not.toThrow();
+    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: { ...kernelPayload, headed_manual: true } })).not.toThrow();
     expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'in_progress', payload: {} })).not.toThrow();
+    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'blocked', payload: {} })).not.toThrow();
+    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'completed', payload: {} })).not.toThrow();
+    // headed_manual 只认字符串 'true' / 布尔 true，'false' 等不算有头
+    expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_initiative', status: 'queued', payload: { headed_manual: 'false' } })).toThrow(/no_executor_for_task_type/);
     // 其它无执行者类型照旧拒
     expect(() => assertTaskTypeHasExecutor({ task_type: 'harness_planner', status: 'queued', payload: {} })).toThrow(/no_executor_for_task_type/);
   });

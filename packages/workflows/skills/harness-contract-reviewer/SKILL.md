@@ -1,7 +1,7 @@
 ---
 id: harness-contract-reviewer-skill
 description: |
-  Harness Contract Reviewer — Harness GAN Reviewer Layer 2b：
+  【已废弃（2026-10-12）：旧 harness 编排不再派发，编码改建 coding_workflow 单】Harness Contract Reviewer — Harness GAN Reviewer Layer 2b：
   Evaluator 角色，对抗性审查 Proposer 提出的 sprint contract，聚焦 **产品/spec 质量**
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
@@ -46,6 +46,7 @@ changelog:
   - 4.0.0: 错误版本 — 审查维度改为"行为描述是否清晰"
   - 3.0.0: Harness v4.0 Contract Reviewer（GAN Layer 2b，独立 skill）
 ---
+> **已废弃（2026-10-12）**：旧 harness 链（task_type=harness_initiative / orchestrator=skill-relay / kernel-v1）无头派发已关闭、建单入口拒无头 harness_initiative；编码工作改建 coding_workflow 单（`packages/brain/scripts/coding-workflow/new-task.mjs`），由 coding-workflow-runner 跑 spec→GAN→实现→QA→合并。本 skill 仅留作历史参考，随旧 harness 代码删除（车道 A5）一并下线，勿再点火。
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件。**

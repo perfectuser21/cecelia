@@ -3,12 +3,12 @@ name: line-strategist
 description: >
   Line 军师 — 每条 Line(Journey)一个的原子级决策者。事件驱动:本 line 一个 run 落终态(PR merged 或 failed)、
   新登记 P0/P1 issue、或产能空闲且推进项 todo 非空时被唤醒;读本 line 状态快照,做一次"下一步干什么"的决策:
-  修 bug(/dev 路径A)/ 小改动(路径B)/ 挑下一个推进项进 harness(路径C)/ 调 decomp 补货拆推进项 / 停线 Bark 上报主理人。
+  修 bug(/dev 路径A)/ 小改动(路径B)/ 挑下一个推进项建 coding_workflow 单(路径C)/ 调 decomp 补货拆推进项 / 停线 Bark 上报主理人。
   每次决策必须自审打分并留痕落 DB,晨报聚合给主理人审。
   触发场景:Brain 派发 task_type=strategist_decision 的任务;用户说"军师"、"这条线下一步做什么"、
   "帮 Line XX 决定下一个任务"、"line-strategist"、"替我判断这条线该修 bug 还是继续推进"。
   只针对单条 line 决策,不做全局分配,不做产能仲裁,不写代码。
-version: 1.1.0
+version: 1.2.0
 ---
 
 > **语言规则:所有输出必须使用简体中文。**
@@ -88,7 +88,7 @@ curl -s "localhost:5221/api/brain/harness/initiative-runs/$TRIGGER_TASK_ID"
 5. **补货**:本 line 所有 ability 的 todo 全空(或仅剩 blocked)→ **决策=调 decomp 补货**,选一个 status=building 且推进项耗尽的 ability 作为拆解对象。
 6. **无事可做**:没有 issue、没有 todo、没有 building ability → 输出"本 line 无待决策事项",留痕后结束(不要为了派活而派活)。
 
-**小改动(路径B)什么时候出现**:第 3/4 步里如果该活明显是单 PR 小改(工作量 < 半天、无新能力、无 spec 争议),用路径B 而不是塞进 harness——harness 的 GAN+TDD 开销对小活是浪费。
+**小改动(路径B)什么时候出现**:第 3/4 步里如果该活明显是单 PR 小改(工作量 < 半天、无新能力、无 spec 争议),用路径B 而不是建 coding_workflow 单——runner 的 spec+GAN+QA 开销对小活是浪费。
 
 ### 跨界规则(职权边界)
 
@@ -127,22 +127,30 @@ curl -s -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/jso
 
 **路径B(小改动)**:同上,title 前缀去掉 fix、payload 不带 issue_id,description 里写清单 PR scope。
 
-**路径C(推进项进 harness)**:
+**路径C(推进项建 coding_workflow 单)**:
+> 2026-10-12 起旧 `harness_initiative`(orchestrator=skill-relay)无头 kernel 已退役:派发关闭,建单入口拒无头 harness_initiative(422 `no_executor_for_task_type`)。
+> 推进项改建 **coding_workflow** 单,由 MMV 上的 coding-workflow-runner 认领跑 spec→GAN→实现→QA→合并。字段口径照 runner(`packages/brain/scripts/coding-workflow/new-task.mjs`)。
+> runner 只认领 repos.json 里 enabled 的仓库(当前只有 cecelia);本 line 仓库不支持时不建无头单,登记留痕「需有头 /dev」浮给主理人。
 ```bash
 # 1. 认领推进项 todo→doing
 curl -s -X PATCH "localhost:5221/api/brain/abilities/<ability_id>/advancements/<item_id>" \
   -H "Content-Type: application/json" -d '{"status":"doing"}'
-# 2. 建 harness 任务
+# 2. 建 coding_workflow 任务
 curl -s -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d '{
   "title": "<推进项标题>",
-  "task_type": "harness_initiative",
+  "task_type": "coding_workflow",
   "priority": "P1",
-  "payload": {"journey_id": "<LINE_ID>", "ability_id": "<ability uuid>",
-               "advancement_item_id": "<item uuid>", "orchestrator": "skill-relay",
-               "thin_prd": "<从推进项+ability 上下文写 3-5 句>",
+  "trigger_source": "manual",
+  "description": "<从推进项+ability 上下文写 3-5 句>",
+  "payload": {"coding_workflow": true, "repo": "cecelia",
+               "acceptance": ["<可验证断言:查库/接口/页面能看到什么>"],
+               "gp_anchor": "none(infra)",
+               "journey_id": "<LINE_ID>", "ability_id": "<ability uuid>",
+               "advancement_item_id": "<item uuid>",
                "dispatched_by": "line-strategist", "strategist_decision_id": "<留痕 note id>"}
 }'
 ```
+> 旧借壳形状 `task_type=data` + `coding_workflow:true` + `headed_manual:"true"`(字符串)runner 仍认,Brain 建单时归一成 coding_workflow;新建直接用 coding_workflow。
 
 **补货(调 decomp)**:建一个 decomp 拆解任务(不是自己拆——拆解引擎有自己的对抗质检):
 ```bash
@@ -201,6 +209,6 @@ curl -s -X POST localhost:5221/api/brain/notes -H "Content-Type: application/jso
 
 - 不做全局产能分配(那是脑干代码的仲裁),一次只建 1 个任务(补货时可另加 1 个 decomp 任务)。
 - 不跨 line 建任务(登记浮晨报)。
-- 不自己写代码、不自己拆推进项(拆解归 decomp,执行归 /dev 与 harness)。
+- 不自己写代码、不自己拆推进项(拆解归 decomp,执行归 /dev 与 coding_workflow runner)。
 - 不引入多轮 AI 对抗(低置信=找人,不是找另一个 AI)。
 - 不在 DRY_RUN 下产生任何副作用。

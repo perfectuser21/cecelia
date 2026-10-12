@@ -144,31 +144,41 @@ export async function consumePlannerRecoveryReceipt(
     ) {
       throw recoveryError('planner_recovery_route_invalid', 409);
     }
-    const routed = await createRoutedTaskFn(client, {
-      source: 'child',
-      source_id: `planner-recovery:${receipt.id}`,
-      title: `Recover Planner receipt ${receipt.id}`,
-      description: `Resume initiative ${run.initiative_id} from immutable Planner receipt ${receipt.id}.`,
-      mutation_intent: 'write',
-      // kernel 续跑单：后继要绑定 kernel run 收据，不改投 coding_workflow runner（A2）
-      kernel_continuation: true,
-      declared_change_kind: receipt.change_kind,
-      execution_profile_override_request: receipt.execution_profile_override ?? null,
-      repo_hint: receipt.repo,
-      map_scope_hint: receipt.map_scope,
-      branch: recoveryBranch(receipt.id),
-      base_sha: receipt.head_sha,
-      metadata: {
-        planner_recovery_receipt_id: receipt.id,
-        predecessor_run_id: run.id,
-        initiative_id: run.initiative_id,
-      },
-      task: {
-        status: 'queued',
-        okr_initiative_id: run.okr_initiative_id ?? sourceTask.okr_initiative_id ?? null,
-        trigger_source: 'planner_recovery',
-      },
-    }, null, { transaction: 'existing' });
+    // kernel 续跑后继是无头 harness_initiative：A4 起建单入口只收有头账本行，无头建单即拒（no_executor_for_task_type）。
+    // 无头 kernel 已退役，给调用方明确的 410，而不是落到 500 planner_recovery_internal_error。
+    let routed;
+    try {
+      routed = await createRoutedTaskFn(client, {
+        source: 'child',
+        source_id: `planner-recovery:${receipt.id}`,
+        title: `Recover Planner receipt ${receipt.id}`,
+        description: `Resume initiative ${run.initiative_id} from immutable Planner receipt ${receipt.id}.`,
+        mutation_intent: 'write',
+        // kernel 续跑单：后继要绑定 kernel run 收据，不改投 coding_workflow runner（A2）
+        kernel_continuation: true,
+        declared_change_kind: receipt.change_kind,
+        execution_profile_override_request: receipt.execution_profile_override ?? null,
+        repo_hint: receipt.repo,
+        map_scope_hint: receipt.map_scope,
+        branch: recoveryBranch(receipt.id),
+        base_sha: receipt.head_sha,
+        metadata: {
+          planner_recovery_receipt_id: receipt.id,
+          predecessor_run_id: run.id,
+          initiative_id: run.initiative_id,
+        },
+        task: {
+          status: 'queued',
+          okr_initiative_id: run.okr_initiative_id ?? sourceTask.okr_initiative_id ?? null,
+          trigger_source: 'planner_recovery',
+        },
+      }, null, { transaction: 'existing' });
+    } catch (error) {
+      if (error?.code === 'no_executor_for_task_type') {
+        throw recoveryError('planner_recovery_kernel_retired', 410);
+      }
+      throw error;
+    }
     const inserted = await client.query(
       `INSERT INTO planner_recovery_consumptions(
          receipt_id,successor_task_id,routing_receipt_id,idempotency_key

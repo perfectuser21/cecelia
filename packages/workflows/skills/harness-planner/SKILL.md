@@ -1,7 +1,7 @@
 ---
 id: harness-planner-skill
 description: |
-  【Harness 内部节点，禁止人类直接调用】
+  【已废弃（2026-10-12）：旧 harness 编排不再派发，编码改建 coding_workflow 单】【Harness 内部节点，禁止人类直接调用】
   Harness Planner — skill-relay 接力链第一棒：Brain 派发 harness_initiative（payload.orchestrator=skill-relay）后
   spawn 单 session harness-controller，由 controller Step 1 调用本 skill 产出 sprint-prd.md。
   人类启动 harness/sprint 通过 /dev 路径C（POST localhost:5221/api/brain/tasks，payload 必须带 orchestrator=skill-relay）。
@@ -35,6 +35,7 @@ changelog:
   - 6.0.0: Harness v2 M2 — 强制 4-5 Task
   - 5.0.0: Step 0 升级 Brain API 上下文采集 + 歧义自检（9类）
 ---
+> **已废弃（2026-10-12）**：旧 harness 链（task_type=harness_initiative / orchestrator=skill-relay / kernel-v1）无头派发已关闭、建单入口拒无头 harness_initiative；编码工作改建 coding_workflow 单（`packages/brain/scripts/coding-workflow/new-task.mjs`），由 coding-workflow-runner 跑 spec→GAN→实现→QA→合并。本 skill 仅留作历史参考，随旧 harness 代码删除（车道 A5）一并下线，勿再点火。
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，直接按本文档流程操作。**
