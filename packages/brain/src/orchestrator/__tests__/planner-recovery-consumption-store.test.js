@@ -219,4 +219,26 @@ describe('planner recovery consumption store', () => {
     expect(harness.calls).toContain('ROLLBACK');
     expect(harness.calls).not.toContain('COMMIT');
   });
+  it('A4：后继无头 harness_initiative 被建单闸拒（no_executor_for_task_type）→ 410 planner_recovery_kernel_retired 且回滚', async () => {
+    // 无头 kernel 已退役（A1 关派发、A4 建单入口拒无头 harness_initiative），planner recovery 的
+    // kernel 续跑后继建不出来：要给调用方明确的 4xx，而不是 500 planner_recovery_internal_error。
+    const { consumePlannerRecoveryReceipt } = await import(
+      '../planner-recovery-consumption-store.js'
+    );
+    const harness = authorityRows();
+    const gateError = Object.assign(new Error('no_executor_for_task_type: harness_initiative'), {
+      code: 'no_executor_for_task_type',
+      route: 'retired-harness-kernel',
+    });
+
+    const err = await consumePlannerRecoveryReceipt(harness.pool, {
+      predecessorRunId: RUN_ID,
+    }, {
+      createRoutedTaskFn: vi.fn(async () => { throw gateError; }),
+    }).catch((e) => e);
+    expect(err).toMatchObject({ code: 'planner_recovery_kernel_retired', httpStatus: 410 });
+    expect(harness.calls).toContain('ROLLBACK');
+    expect(harness.calls).not.toContain('COMMIT');
+    expect(harness.calls.some((sql) => /INSERT INTO planner_recovery_consumptions/.test(sql))).toBe(false);
+  });
 });
