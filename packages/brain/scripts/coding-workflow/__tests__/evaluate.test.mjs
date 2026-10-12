@@ -221,6 +221,16 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
       expect(fs.existsSync(path.join(sprint(), '03-build.md'))).toBe(true);
     });
 
+    it('local 基线只读提取固定 commit，不要求写 Git 元数据，也不放宽黑盒合同', () => {
+      const p = fs.readFileSync(path.join(HERE, '../prompts/evaluate-local.md'), 'utf8');
+      expect(p).not.toContain('git worktree add');
+      for (const rule of ['固定 base SHA', '场景明确指定的本机 ref', '完整 SHA', 'git rev-parse --verify',
+        'git archive', 'git show', 'mktemp -d', '禁止 fetch', 'Git 元数据只读',
+        'CANNOT_VERIFY', '不能自行选择 origin/main', '黑盒', '单元测试', '03/04', '绝不能拿生产当基线']) {
+        expect(p).toContain(rule);
+      }
+    });
+
     it('碰了 zenithjoy 生产（hk-vps 100.86.118.99:5200）→ fatal evaluate_touched_production', async () => {
       const r = await run('prod-hk', { repo_profile: ZJ });
       expect(r.result).toMatchObject({ status: 'failed', failure_class: 'fatal', reason_code: 'evaluate_touched_production' });
