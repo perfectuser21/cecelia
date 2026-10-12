@@ -4,8 +4,16 @@ vi.mock('../machine-registry.js', () => ({ resolvePrimaryWorkerId: () => 'mmv', 
 import { sshWithStdin } from '../lib/ssh-exec.js';
 import { callConversationSummary } from '../conversation-summary-openclaw.js';
 import { summarizeSession } from '../conversation-capture.js';
+import { summaryAgentConfig } from '../../scripts/configure-conversation-summarizer.mjs';
 
 describe('会话摘要 OpenClaw Codex 通道', () => {
+  it('部署合同固定 Codex、空技能与全部工具拒绝，不沿用有行动权限的 agent', () => {
+    expect(summaryAgentConfig('/home/runner')).toMatchObject({
+      model: { primary: 'openai/gpt-6.1-sol', fallbacks: [] },
+      skills: [], tools: { profile: 'minimal', deny: ['*'], elevated: { enabled: false } },
+      workspace: '/home/runner/openclaw-root/workspaces-root/clawd-conversation-summarizer',
+    });
+  });
   it('默认摘要通过远端无工具专用 agent，正文只经 stdin，独立 session', async () => {
     sshWithStdin.mockResolvedValue(JSON.stringify({ result: { payloads: [{ text: '{"topics":["恢复工作流部署","核验私密发布"]}' }] } }));
     expect(await summarizeSession('用户原文 `不可执行` $(不可执行)')).toBe('1. 恢复工作流部署\n2. 核验私密发布');
