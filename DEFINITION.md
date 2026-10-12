@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.428.0
+**Brain 版本**: 1.428.8
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -78,6 +78,55 @@ summary: 版本、实现影响、地图及发布证据测试改用精确scratch�
 
 - 官方 ZenithJoy 试点映射将真实内容生产价值流与安卓多平台发布能力纳入固定源配置；只从完整旧集合升级，保旧身份、父级、来源与激活 CAS。
 - 当前 Workflow 定义使用唯一当前同来源清单，避免同一 SHA 旧清单造成歧义；非当前历史多清单仍明确拒绝。
+
+## Brain 1.428.8 — coding workflow 固定任务登记的基线提交
+
+- 带 base_sha 的任务从对应真实 commit 创建独立工作树；远端 main 后续前进不会悄悄替换基线。
+- 非法 SHA、缺失对象或非 commit 对象明确失败；旧任务没有 base_sha 时保持 origin/main 行为。
+
+## Brain 1.428.7 — coding workflow 建单保留编码语义与仓库
+
+- 建单计划必填 change_kind 和 map_scope_hint，支持批次顶层继承；显式传 write 与规范仓库，服务端按编码变更校验。
+- 核对建单回执的类型、仓库、地图、变更类型和执行者；不匹配停止批次并保留任务 ID，缺字段旧请求直接 400。
+- 增加 CLI→HTTP→Work Router→真实 PG→GET 的回归，隔离事务整体回滚。
+
+- 支持显式目标仓库 base_sha（40位小写hex），批次继承及逐条覆盖，提交和回执SHA一致性校验；避免跨仓建单误用服务端cwd的基线。
+
+## Brain 1.428.6 — coding workflow 支持 Codex 原生执行
+
+- 显式 CODING_WF_PROVIDER=codex 选择原生 CLI，保留默认 Claude；规格禁 shell 且只读文件工具限定工作树，命令网络关闭、QA gitdir 只读。
+- Codex 原生命令事件作为验证证据；仅有模型自述不算执行；订阅美元费用未知为 null，贯穿活动和任务回执。
+- 初期限定 local QA；需要预览网络或无法映射的工具限制明确拒绝，不扩全局 runner 权限。
+
+## Brain 1.428.5 — 删除失去消费者的 kernel 恢复与执行辅助模块（A5-2）
+
+- A5-1 撤掉启动与恢复分支后，删除无生产引用的 attempt-resource-cleanup / attempt-resource-replacement、commander-invoker、旧 execution-transport router、git-branch-head-resolver 及专属测试和 smoke。
+- 共享 PG 回归保留现役 createAttemptStore 的授权重验、撤销拒绝、父预约保持与加权容量合同；清除已退役恢复 helper 的 mock。
+- Fleet、attempt-run、one-session-merge 仍引用 run.js/buildRealDeps，继续保留这些共享模块、activity-runtime、consciousness、golden_path_proposal 及有头收账。不更改 DB schema。任务 15fd4896-9b3a-4854-8631-811c3e24023f。
+
+## Brain 1.428.4 — coding workflow 预览等待有界
+
+- pending/error 按 PR head 跨 tick 持久计时，超过现有预览等待阈值交 commander；预览恢复或 head 更新后重新计时。
+- 永久回归覆盖 pending、网络错误、恢复和 head 更换；不绕过 QA。
+
+## Brain 1.428.3 — 删除 kernel-v1 无头派发路径与已孤立的 harness 模块（A5-1）
+
+- 决策 b4adf807（先删后补）第一批：harness-skill-relay 删除 kernel-v1 本机启动 / 远程桥 / 有头 kernel 三条启动分支，存量 `payload.harness_runtime='kernel-v1'` 的单派到 relay 咽喉直接拒 `kernel_runtime_retired`（不建 run、不碰 worktree）；relay watchdog 删除 kernel run 的 attempt 恢复、本机重启、远程 requeue、needs_context 续跑与有头心跳续写，kernel-v1 run 只走 house-keeping 与 deadline 收口。删除已无运行时引用的模块：orchestrator-remote-bridge、orchestrator/headed-kernel-runtime、harness-ci-gate、harness-dag、harness-gan-graph、harness-heartbeat、harness-session-bridge、sprint-result-contract、dispatch-code-routing、workflows/harness-gan.graph（LangGraph 旧 GAN 图）、workflows/retry-policies、lib/contract-verify、lib/git-fence。golden_path_proposal 的非 kernel relay 路径（决策 0d4519b7）、consciousness.graph、有头收账不变。CORE-INV-05 守卫改守现役 runner `coding-workflow/lib/gan.mjs` 无硬轮数上限。任务 2e97adab（车道 A5-1）。
+
+## Brain 1.428.2 — coding workflow 开闸 zenithjoy-workspace（C7）
+
+- `repos.json`：`zenithjoy-workspace` 改 `enabled=true`。runner 默认启用 cecelia + zenithjoy（按表顺序）；Brain `work-router`（同读 repos.json）对 zenithjoy 的无头编码单改投 `coding_workflow`，不再抛 `runner_repo_unsupported`（未登记仓库仍抛）
+- zenithjoy 第一阶段口径不变：`automerge=false`（QA + 裁判通过、必需检查全绿后停在 awaiting_human，Bark 主理人人工合并）、QA 走 local（不起预览）、回归 smoke 不固化
+- 紧急关闸：plist 设 `CODING_WF_REPOS=cecelia`（不用改表），或把本行改回 `enabled=false`
+- 运行时口径：runner 每 300s 自更新到 origin/main，合并后下一轮起认领 zenithjoy 任务，`runner.sh` 自动 clone `~/perfect21/zenithjoy-cw-runner`（不碰主理人的 zenithjoy checkout）；Brain 侧路由在 Brain 镜像重新部署后生效
+
+## Brain 1.428.1 — decisions_made_by_check 补 ai（只增不减）
+
+- 迁移 552：按列（非按约束名）找出 decisions 上所有涉及 made_by 的单列 CHECK，取值并集补 `ai` 后收敛重建为唯一的 `decisions_made_by_check`；多列或无法解析的 made_by 约束直接报错回滚
+- 保留迁移外加宽过的取值（约束被删时以 193 的 user/cecelia/system 为底），只增不减，重跑幂等
+- 新约束 NOT VALID，不扫存量行；列类型 varchar(20) 与默认值 'system' 不变
+
+- Codex 续接修复：允许对预览已有 varchar→text ARRAY 约束进行第二种严格回放，仍拒绝抽值不完整/多列/非枚举表达式；真实 scratch PG 11 条通过。
 
 ## Brain 1.428.0 — Skill Registry 按规范业务关联持续分组
 
