@@ -15,7 +15,7 @@ const SCRIPT = path.join(HERE, '../new-task.mjs');
 const PROJECT_ID = 'p0000000-0000-4000-8000-000000000001';
 const ROOT_ID = '11111111-1111-4111-8111-111111111111';
 
-function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false } = {}) {
+function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false, wrongBaseSha = false, missingBaseSha = false } = {}) {
   const state = { posts: [], projectPosts: [], order: [] };
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -36,7 +36,7 @@ function startBrain({ failAt = null, projectFail = false, wrongRoute = false, ma
       state.order.push('task');
       if (failAt === state.posts.length) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'change_kind_required' })); }
       res.statusCode = 201;
-      return res.end(JSON.stringify({ id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, change_kind: body.change_kind, map_scope: malformedScope ? {} : body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } }));
+      return res.end(JSON.stringify({ id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, change_kind: body.change_kind, base_sha: missingBaseSha ? undefined : wrongBaseSha ? 'f'.repeat(40) : body.base_sha, map_scope: malformedScope ? {} : body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } }));
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
@@ -89,7 +89,45 @@ describe('new-task.mjs', () => {
     expect(brain.posts[0].payload.headed_manual).toBeUndefined();
     expect(brain.posts[0].payload.depends_on).toBeUndefined();
     expect(brain.posts[0].project_id).toBeUndefined();
+    expect(brain.posts[0]).not.toHaveProperty('base_sha');
     expect(JSON.parse(r.stdout)).toEqual([{ key: null, id: '00000000-0000-4000-8000-000000000001', title: '改 X' }]);
+  });
+
+  it('显式 base_sha 顶层发送，批次继承且逐条覆盖', async () => {
+    brain = await startBrain();
+    const first = 'a'.repeat(40), second = 'b'.repeat(40);
+    const r = await runScript([plan({ project_id: ROOT_ID, base_sha: first, tasks: [
+      { key: 'a', title: '一', acceptance: ['x'] },
+      { key: 'b', title: '二', acceptance: ['x'], base_sha: second, depends_on: ['a'] },
+    ] })], { BRAIN_URL: brain.url });
+    expect(r.code, r.stderr).toBe(0);
+    expect(brain.posts.map((p) => p.base_sha)).toEqual([first, second]);
+    expect(brain.posts.every((p) => !Object.hasOwn(p.payload, 'base_sha'))).toBe(true);
+  });
+
+  it.each(['abc', 'g'.repeat(40), 'A'.repeat(40), '', null, 42, ['a'.repeat(40)]])('base_sha 非40位小写hex时整批建单前拒绝 %j', async (base_sha) => {
+    brain = await startBrain();
+    const r = await runScript([plan({ project: { name: '不得创建' }, tasks: [
+      { key: 'a', title: '一', acceptance: ['x'] },
+      { key: 'b', title: '二', acceptance: ['x'], base_sha },
+    ] })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('invalid_base_sha');
+    expect(brain.posts).toEqual([]);
+    expect(brain.projectPosts).toEqual([]);
+  });
+
+  it.each([{ wrongBaseSha: true }, { missingBaseSha: true }])('显式 base_sha 回执不一致 %j：保留已建ID并停后续', async (options) => {
+    brain = await startBrain(options);
+    const r = await runScript([plan({ base_sha: 'a'.repeat(40), project_id: ROOT_ID, tasks: [
+      { key: 'a', title: '一', acceptance: ['x'] },
+      { key: 'b', title: '二', acceptance: ['x'], depends_on: ['a'] },
+    ] })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(1);
+    expect(brain.posts).toHaveLength(1);
+    expect(r.stderr).toContain('task_route_mismatch');
+    expect(r.stderr).toContain('00000000-0000-4000-8000-000000000001');
+    expect(r.stdout).toBe('');
   });
 
   it.each([

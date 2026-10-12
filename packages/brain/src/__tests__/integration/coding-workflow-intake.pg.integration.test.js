@@ -82,24 +82,34 @@ describe('coding workflow 真实建单闭环', () => {
         release: () => {},
       };
       pool.query = tx.query; pool.connect = async () => tx;
-      const app = express(); app.use(express.json()); app.use('/api/brain/tasks', router);
+      const postedBodies = [];
+      const app = express(); app.use(express.json());
+      app.use('/api/brain/tasks', (req, _res, next) => {
+        if (req.method === 'POST') postedBodies.push(req.body);
+        next();
+      }, router);
       server = app.listen(0, '127.0.0.1');
       await new Promise((r) => server.once('listening', r));
       const base = `http://127.0.0.1:${server.address().port}`;
       const title = `cw-intake-pg-${crypto.randomUUID()}`;
       const file = path.join(dir, 'plan.json');
-      fs.writeFileSync(file, JSON.stringify({ title, change_kind: 'bugfix', map_scope_hint: ['F1'], acceptance: ['路由正确入账'] }));
+      const baseSha = (await promisify(execFile)('git', ['rev-parse', '--verify', 'origin/main^{commit}'], {
+        cwd: fileURLToPath(new URL('../../../', import.meta.url)),
+      })).stdout.trim();
+      expect(baseSha).toMatch(/^[a-f0-9]{40}$/);
+      fs.writeFileSync(file, JSON.stringify({ title, base_sha: baseSha, change_kind: 'bugfix', map_scope_hint: ['F1'], acceptance: ['路由正确入账'] }));
       const out = await promisify(execFile)(process.execPath, ['scripts/coding-workflow/new-task.mjs', file], {
         cwd: fileURLToPath(new URL('../../../', import.meta.url)), env: { ...process.env, BRAIN_URL: base },
       });
+      expect(postedBodies[0].base_sha).toBe(baseSha);
       const id = JSON.parse(out.stdout)[0].id;
       const got = await (await fetch(`${base}/api/brain/tasks/${id}`)).json();
       const task = got.task ?? got;
       expect(task.task_type).toBe('coding_workflow');
       expect(task.payload).toMatchObject({ repo: 'cecelia', work_kind: 'coding_mutation', change_kind: 'bugfix',
-        orchestrator: 'coding-workflow-runner', map_scope: ['F1'] });
-      const receipt = (await client.query('SELECT work_kind,repo,pipeline FROM work_routing_receipts WHERE task_id=$1', [id])).rows;
-      expect(receipt).toEqual([{ work_kind: 'coding_mutation', repo: 'cecelia', pipeline: 'coding_workflow' }]);
+        orchestrator: 'coding-workflow-runner', map_scope: ['F1'], base_sha: baseSha });
+      const receipt = (await client.query(`SELECT work_kind,repo,pipeline,evidence->>'base_sha' AS base_sha FROM work_routing_receipts WHERE task_id=$1`, [id])).rows;
+      expect(receipt).toEqual([{ work_kind: 'coding_mutation', repo: 'cecelia', pipeline: 'coding_workflow', base_sha: baseSha }]);
       const bad = await fetch(`${base}/api/brain/tasks`, { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ title: title + '-missing', task_type: 'coding_workflow', payload: { coding_workflow: true, repo: 'cecelia' } }) });
       expect(bad.status).toBe(400);
