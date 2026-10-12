@@ -5,6 +5,8 @@ import os
 import subprocess
 import tempfile
 import unittest
+from io import StringIO
+from urllib.error import HTTPError
 from pathlib import Path
 from unittest.mock import patch
 
@@ -71,26 +73,28 @@ class Migration(unittest.TestCase):
             with patch.object(m, 'call', side_effect=call), self.assertRaises(RuntimeError):m.main()
             self.assertFalse(any(method == 'PATCH' for _, _, method in calls))
 
-    def test_lost_completion_response_does_not_write_failed(self):
+    def test_completion_rejection_or_lost_response_does_not_write_failed(self):
         for name in ['opc-kr-current', 'opc-okr-sync']:
-            m = load(name); statuses = []
-            def call(url, body=None, method=None):
-                if url.endswith('/tasks'):return {'id': 'fixture'}
-                if url.endswith('/claim'):
-                    self.assertEqual(body['lease_seconds'], 900)
-                    return {'id': 'fixture'}
-                if body and body.get('status'):
-                    statuses.append(body['status'])
-                    if body['status'] == 'completed':raise OSError('response lost after commit')
-                return {'success': True, 'status': (body or {}).get('status')}
-            with tempfile.TemporaryDirectory() as d:
-                for a in ['clawd','clawd-media','clawd-fde','clawd-dev','clawd-people','clawd-infra']:Path(d,a).mkdir()
-                with patch.object(m, 'ROOT', d), patch.object(m, 'call', side_effect=call):
-                    if name == 'opc-kr-current':
-                        with patch.object(m, 'company_items', return_value={}), self.assertRaises(OSError):m.main()
-                    else:
-                        with patch.object(m, 'fetch', return_value=[]), self.assertRaises(OSError):m.main()
-            self.assertEqual(statuses, ['in_progress','completed'])
+            for error in [HTTPError('http://fixture/tasks/fixture', 409, 'rejected', {}, None),
+                          OSError('response lost after commit')]:
+                with self.subTest(script=name, error=type(error).__name__):
+                    m = load(name); statuses = []
+                    def call(url, body=None, method=None):
+                        if url.endswith('/tasks'):return {'id': 'fixture'}
+                        if url.endswith('/claim'):
+                            self.assertEqual(body['lease_seconds'], 900)
+                            return {'id': 'fixture'}
+                        if body and body.get('status'):
+                            statuses.append(body['status'])
+                            if body['status'] == 'completed':raise error
+                        return {'success': True, 'status': (body or {}).get('status')}
+                    with tempfile.TemporaryDirectory() as d:
+                        for a in ['clawd','clawd-media','clawd-fde','clawd-dev','clawd-people','clawd-infra']:Path(d,a).mkdir()
+                        with patch.object(m, 'ROOT', d), patch.object(m, 'call', side_effect=call), patch('sys.stdout', new_callable=StringIO) as stdout:
+                            target = 'company_items' if name == 'opc-kr-current' else 'fetch'
+                            with patch.object(m, target, return_value={} if name == 'opc-kr-current' else []), self.assertRaises(type(error)):m.main()
+                        self.assertEqual(stdout.getvalue(), '')
+                    self.assertEqual(statuses, ['in_progress','completed'])
 
     def test_business_date_uses_shanghai_once(self):
         m = load('opc-kr-current')
