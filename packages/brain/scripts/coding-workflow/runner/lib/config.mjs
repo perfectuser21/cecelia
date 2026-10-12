@@ -82,6 +82,10 @@ export function loadConfig(env = process.env) {
     killGraceMs: positiveInt(env.CODING_WF_KILL_GRACE_MS) ?? DEFAULT_KILL_GRACE_MS,
     // 列 queued/in_progress 的起始页大小（Brain 只支持 limit，满页则加倍重查）
     listLimit: positiveInt(env.CODING_WF_LIST_LIMIT) ?? 500,
+    // 统一领单租约（派发总闸 G，任务 c5f6e683）：认领带 lease_seconds，执行期间每 heartbeatMs 续约；
+    // runner 死了租约过期由 Brain 判 lost；心跳 409 = Brain 已回收 → 中止执行器、不回写
+    leaseSeconds: positiveInt(env.CODING_WF_LEASE_SECONDS) ?? 900,
+    heartbeatMs: positiveInt(env.CODING_WF_HEARTBEAT_MS) ?? 3 * 60 * 1000,
     // 失败任务 worktree 保留天数；每任务回执/日志保留天数
     failedRetentionDays: positiveInt(env.CODING_WF_FAILED_RETENTION_DAYS) ?? 7,
     logRetentionDays: positiveInt(env.CODING_WF_LOG_RETENTION_DAYS) ?? 30,

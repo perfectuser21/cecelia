@@ -28,6 +28,8 @@ import { resolveWorkflowConfig } from './factory-workflow-config.js';
 import { withinPublishHours } from './factory-pusher.js';
 import { checkDeviceLockForManualDispatch } from './manual-dispatch-device-gate.js';
 import { releaseDeviceLocksHeldBy } from '../device-lock-helpers.js';
+import { selectDeviceFromPool } from './device-pool.js';
+import { setBrainLease, BRAIN_LEASE_MARGIN_SECONDS } from './task-lease.js';
 import { finalizeTask } from './task-terminal.js';
 import { recordTaskEventSafe } from './task-event-log.js';
 import { startRun, finishRun } from './task-run.js';
@@ -65,7 +67,10 @@ export function resolveCommanderOrder(task, deps = {}) {
   const base = [fields.capability, fields.machine, fields.profile, fields.serial, fields.biz].join(' ');
   const order = [base, ...extra].join(' ');
   const minutes = Number(c.timeout_min) > 0 ? Number(c.timeout_min) : DEFAULT_TIMEOUT_MIN;
-  return { ok: true, key, cfg, base, extra, order, serial: fields.serial, machine: fields.machine, timeoutSec: Math.round(minutes * 60) };
+  return {
+    ok: true, key, cfg, base, extra, order, serial: fields.serial, machine: fields.machine, timeoutSec: Math.round(minutes * 60),
+    capability: fields.capability, poolKey: typeof d.pool === 'string' && d.pool ? d.pool : null,
+  };
 }
 
 /**
@@ -74,6 +79,19 @@ export function resolveCommanderOrder(task, deps = {}) {
  */
 export function orderWithRun(r, runId, taskId) {
   return [r.base, '--run-id', runId, '--task-id', taskId, ...(r.extra || [])].join(' ');
+}
+
+/**
+ * 设备池选中的那台改写调度单（派发总闸 G，任务 c5f6e683）：机器/profile/serial 取手机台账，biz 取池成员账号。
+ * 任何字段不合调度单字符集 → 返回 error（不拼进 shell）。
+ */
+export function applyPoolMember(r, member) {
+  const fields = { machine: member?.machine, profile: member?.profile, serial: member?.serial, biz: member?.account_ref };
+  const bad = Object.entries(fields).filter(([, v]) => typeof v !== 'string' || !ORDER_TOKEN.test(v)).map(([k]) => k);
+  if (bad.length) return fail(`设备池成员 ${member?.serial ?? '?'} 字段缺失或含非法字符：${bad.join('/')}`);
+  const base = [r.capability, fields.machine, fields.profile, fields.serial, fields.biz].join(' ');
+  const order = [base, ...(r.extra || [])].join(' ');
+  return { ...r, base, order, serial: fields.serial, machine: fields.machine };
 }
 
 /** 给 Commander 的消息：调度单 + Brain 任务号/run_id + 纪律 + 回写约定。 */
@@ -147,6 +165,7 @@ const defaultSshDispatch = (args, input) => sshWithStdin(nodeSpawn, args, input)
 const defaultSshProbe = (args) => sshRun(nodeExecFile, args, { timeout: REAP_SSH_TIMEOUT_MS, encoding: 'utf8' });
 const defaultLockGate = (task) => checkDeviceLockForManualDispatch(task, CLAIMER);
 const defaultReleaseLock = (taskId) => releaseDeviceLocksHeldBy(taskId);
+const defaultSetLease = (pool, taskId, seconds) => setBrainLease(pool, taskId, seconds);
 
 async function releaseClaim(pool, id) {
   await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = $2 AND status = 'queued'`, [id, CLAIMER]);
@@ -166,6 +185,10 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
   const sshDispatch = deps.sshDispatch ?? defaultSshDispatch;
   const lockGate = deps.lockGate ?? defaultLockGate;
   const releaseLock = deps.releaseLock ?? defaultReleaseLock;
+  const setLease = deps.setLease ?? defaultSetLease;
+  const recordEvent = deps.recordEvent ?? recordTaskEventSafe;
+  const selectFromPool = deps.selectFromPool
+    ?? ((p, key, task, opts) => selectDeviceFromPool(p, key, task, { ...opts, lockGate }));
   const out = { dispatched: 0, waiting: 0, failed: 0, skipped: 0 };
   const { rows } = await pool.query(
     `SELECT * FROM tasks
@@ -174,7 +197,7 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
       LIMIT ${BATCH}`,
   );
   for (const t of rows ?? []) {
-    const r = resolveCommanderOrder(t, deps);
+    let r = resolveCommanderOrder(t, deps);
     if (r.ok && !withinPublishHours(now(), r.cfg.publish_hours)) { out.skipped++; continue; }
     const claim = await pool.query(
       `UPDATE tasks SET claimed_by = $2, claimed_at = NOW() WHERE id = $1 AND status = 'queued' AND claimed_by IS NULL RETURNING *`,
@@ -187,7 +210,34 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
       continue;
     }
     const ttl = Math.min(240, Math.round(r.timeoutSec / 60) + 20);
-    const gate = await lockGate({ ...t, payload: { ...(t.payload || {}), device_serial: r.serial, device_ttl_minutes: ttl } });
+    if (r.poolKey) {
+      // 设备池（派发总闸 G）：按 priority 试锁，选中哪台调度单就写哪台；全被占只等不接管
+      const picked = await selectFromPool(pool, r.poolKey, t, { ttlMinutes: ttl });
+      if (!picked.ok) {
+        if (picked.reason === 'all_busy') {
+          await releaseClaim(pool, t.id);
+          await recordEvent(pool, t.id, 'workflow_dispatch_waiting', { pool: r.poolKey, tried: picked.tried });
+          out.waiting++;
+        } else {
+          await failQueued(pool, t.id, `workflow_dispatch_${picked.reason}: ${r.poolKey}`, { tried: picked.tried });
+          out.failed++;
+        }
+        continue;
+      }
+      const applied = applyPoolMember(r, picked.member);
+      if (!applied.ok) {
+        await releaseLock(t.id);
+        await failQueued(pool, t.id, `workflow_dispatch_pool_member_invalid: ${applied.error}`);
+        out.failed++;
+        continue;
+      }
+      r = applied;
+      await recordEvent(pool, t.id, 'device_pool_selected', {
+        pool: r.poolKey, serial: picked.member.serial, account_ref: picked.member.account_ref,
+        machine: picked.member.machine, tried: picked.tried,
+      });
+    }
+    const gate = r.poolKey ? { pass: true } : await lockGate({ ...t, payload: { ...(t.payload || {}), device_serial: r.serial, device_ttl_minutes: ttl } });
     if (!gate.pass) {
       if (gate.status === 422) {
         await failQueued(pool, t.id, `workflow_dispatch_device_unknown: ${r.serial}`, { gate: gate.body });
@@ -230,6 +280,11 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
       `UPDATE tasks SET status = 'in_progress', started_at = COALESCE(started_at, NOW()), updated_at = NOW() WHERE id = $1 AND status = 'queued'`,
       [t.id],
     );
+    try {
+      await setLease(pool, t.id, r.timeoutSec + BRAIN_LEASE_MARGIN_SECONDS);
+    } catch (err) {
+      console.warn(`[workflow-dispatch] 落 Brain 租约失败（不影响派发） task=${t.id}: ${err.message}`);
+    }
     await recordTaskEventSafe(pool, t.id, 'workflow_dispatch_spawned', { run_id: runId, order: r.order, serial: r.serial, already_running: spawned === 'already' });
     await startRun({ taskId: t.id, runId, source: 'workflow-commander', context: { workflow_key: r.key, order: orderWithRun(r, runId, t.id), agent: COMMANDER_AGENT } }, { pool });
     out.dispatched++;

@@ -442,3 +442,4 @@ dispatch-route-gate-smoke.sh
 coding-workflow-route-smoke.sh
 content-pipeline-runs-shadow-smoke.sh
 bypass-audit-smoke.sh
+task-lease-device-pool-smoke.sh

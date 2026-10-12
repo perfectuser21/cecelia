@@ -94,7 +94,7 @@ describe.sequential('统一领单 claim + lease', () => {
 });
 
 describe.sequential('task-lease-reaper：过期租约按任务类型语义回收', () => {
-  it('bridge 类（合同 onStale=requeue）：回队、清认领、retry_count+1、放设备锁', async () => {
+  it('bridge 类（合同 onStale=requeue）：回队、清认领、租约 requeue_count+1、放设备锁', async () => {
     const id = await seedTask(pool, { status: 'in_progress', executor_kind: 'bridge' });
     await claimTaskWithLease(pool, { taskId: id, claimer: 'w', executorKind: 'bridge', leaseSeconds: 60 });
     await pool.query(`UPDATE tasks SET status = 'in_progress' WHERE id = $1`, [id]);
@@ -105,11 +105,11 @@ describe.sequential('task-lease-reaper：过期租约按任务类型语义回收
     const t = await taskRow(id);
     expect(t.status).toBe('queued');
     expect(t.claimed_by).toBeNull();
-    expect(t.retry_count).toBe(1);
     expect((await lockRow(PHONE)).locked_by).toBeNull();
     const l = await leaseRow(id);
     expect(l.released_at).not.toBeNull();
     expect(l.release_reason).toBe('expired_requeued');
+    expect(l.requeue_count).toBe(1);
     const ev = await pool.query(`SELECT event_type FROM task_events WHERE task_id = $1`, [id]);
     expect(ev.rows.map((r) => r.event_type)).toContain('lease_expired');
   });
@@ -138,8 +138,9 @@ describe.sequential('task-lease-reaper：过期租约按任务类型语义回收
   });
 
   it('回队次数到上限 → failed（不无限回队）', async () => {
-    const id = await seedTask(pool, { retry_count: 2, max_retries: 3 });
+    const id = await seedTask(pool);
     await claimTaskWithLease(pool, { taskId: id, claimer: 'c', executorKind: 'bridge', leaseSeconds: 60 });
+    await pool.query('UPDATE task_leases SET requeue_count = 2 WHERE task_id = $1', [id]);
     await expireLease(id);
     const out = await reapExpiredLeases(pool, { probe: noProbe });
     expect(out.failed).toBe(1);

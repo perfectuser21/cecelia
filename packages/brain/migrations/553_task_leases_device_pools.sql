@@ -2,7 +2,8 @@
 --
 -- 1) task_leases：外部执行者经 POST /api/brain/tasks/:id/claim 带 lease_seconds 领单时落一行，
 --    POST /tasks/:id/heartbeat 续约；Brain 自派 openclaw-agent 时按「超时 + 余量」落 Brain 租约（claimer 为空）。
---    scheduler job task-lease-reaper 每 60s 收过期租约：按任务类型的现有语义回队（requeue）或判 lost（failed），
+--    scheduler job task-lease-reaper 每 60s 收过期租约：按任务类型的现有语义回队（requeue，同一任务最多 3 次，
+--    计数 requeue_count 存本表——tasks.retry_count 不是所有库都有）或判 lost（failed），
 --    并释放该任务持有的设备锁。单独成表不给 tasks 加列（tasks 是宽表，投影/同步面多）。
 -- 2) 设备锁跟租约走：device-lock-helpers 的占用判据改为「持有任务 in_progress 且租约未过期」，
 --    无租约的旧持有者最多保护到 locked_at + 240 分钟（TTL 上限），不再被 in_progress 无限压住。
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS task_leases (
   heartbeat_at     TIMESTAMPTZ,
   heartbeat_count  INTEGER     NOT NULL DEFAULT 0,
   extend_count     INTEGER     NOT NULL DEFAULT 0,
+  requeue_count    INTEGER     NOT NULL DEFAULT 0,
   released_at      TIMESTAMPTZ,
   release_reason   TEXT,
   CONSTRAINT task_leases_on_expire_check CHECK (on_expire IN ('auto', 'requeue', 'fail')),

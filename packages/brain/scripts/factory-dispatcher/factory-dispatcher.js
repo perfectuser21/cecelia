@@ -33,6 +33,8 @@ export const DEFAULT_OPTS = {
   sessionTimeoutMs: 60 * 60_000,
   exitGraceMs: 3 * 60_000,
   lockRefreshMs: 10 * 60_000,
+  // 统一领单租约（派发总闸 G，任务 c5f6e683）：claim 带 lease_seconds，守望每轮心跳续约；派发器死了租约过期由 Brain 回收
+  leaseSeconds: 600,
   workStartHour: 9,
   workEndHour: 23,
 };
@@ -214,9 +216,24 @@ export function detectOkFalse(text) {
 // ── 主流程 ───────────────────────────────────────────────────────────────
 const isTerminal = (status) => TERMINAL_STATUSES.has(status);
 
-function makeTaskOps(deps, taskId, meta) {
+/**
+ * 租约心跳：409 = Brain 已按租约回收（回队或判 lost）→ 'lease_lost'，派发器必须停手且不再回写；
+ * 旧 Brain 没有心跳端点（404）或客户端不支持 → 视为无租约，照旧。网络错误不判丢（下一轮再续）。
+ */
+async function leaseBeat(deps, opts, taskId) {
+  if (typeof deps.brain.heartbeat !== 'function' || !opts.leaseSeconds) return 'ok';
+  try {
+    const r = await deps.brain.heartbeat(taskId, opts.claimer, opts.leaseSeconds);
+    return r?.status === 409 ? 'lease_lost' : 'ok';
+  } catch {
+    return 'ok';
+  }
+}
+
+function makeTaskOps(deps, taskId, meta, opts = {}) {
   return {
     async heartbeat() {
+      if ((await leaseBeat(deps, opts, taskId)) === 'lease_lost') return 'lease_lost';
       const t = await deps.brain.getTask(taskId);
       if (isTerminal(t?.status)) return t.status;
       await deps.brain.patch(taskId, { status: 'in_progress' });
@@ -254,7 +271,9 @@ async function waitForLock(deps, opts, lock, runId, ops) {
       lastHolder = st.owner ? `owner=${st.owner} state=${st.state}` : `state=${st.state}${st.error ? ` ${st.error}` : ''}`;
     }
     if (deps.now().getTime() >= deadline) return { acquired: false, lastHolder };
-    if (isTerminal(await ops.heartbeat())) return { acquired: false, terminal: true };
+    const beat = await ops.heartbeat();
+    if (beat === 'lease_lost') return { acquired: false, leaseLost: true };
+    if (isTerminal(beat)) return { acquired: false, terminal: true };
     await deps.sleep(opts.lockPollMs);
   }
 }
@@ -267,6 +286,7 @@ async function superviseSession(deps, opts, ctx) {
   for (;;) {
     await deps.sleep(opts.sessionPollMs);
     const now = deps.now().getTime();
+    if ((await leaseBeat(deps, opts, taskId)) === 'lease_lost') return { kind: 'lease_lost' };
     const task = await deps.brain.getTask(taskId);
     if (isTerminal(task?.status)) return { kind: 'terminal', status: task.status };
     if (task?.status === 'queued') {
@@ -295,7 +315,7 @@ async function superviseSession(deps, opts, ctx) {
 export async function dispatchTask(task, deps, userOpts = {}) {
   const opts = { ...DEFAULT_OPTS, ...userOpts };
   const taskId = task.id;
-  const claim = await deps.brain.claim(taskId, opts.claimer);
+  const claim = await deps.brain.claim(taskId, opts.claimer, opts.leaseSeconds);
   if (claim.status === 409) {
     deps.log(`任务 ${taskId} 已被他人 claim，跳过`);
     return { outcome: 'claim_conflict' };
@@ -309,10 +329,14 @@ export async function dispatchTask(task, deps, userOpts = {}) {
   const runId = buildRunId({ runPrefix: contract.run_prefix, taskId, date: deps.now(), round: contract.round });
   const sessionId = buildSessionId(contract.stage, taskId);
   const meta = { run_id: runId, session_id: sessionId, ssh_host: contract.device.ssh_host, profile: contract.device.profile };
-  const ops = makeTaskOps(deps, taskId, meta);
+  const ops = makeTaskOps(deps, taskId, meta, opts);
   const lock = makeLockClient(deps, contract.device.ssh_host, contract.device.profile);
 
   const waited = await waitForLock(deps, opts, lock, runId, ops);
+  if (waited.leaseLost) {
+    deps.log(`任务 ${taskId} 租约已被 Brain 回收（lease_lost），停止等锁，不回写`);
+    return { outcome: 'lease_lost' };
+  }
   if (waited.terminal) return { outcome: 'session_terminal' };
   if (!waited.acquired) {
     // 等超时：不释放任何锁（锁不是自己的）
@@ -346,6 +370,13 @@ export async function dispatchTask(task, deps, userOpts = {}) {
   deps.log(`会话 ${sessionId} 已启动（run_id=${runId}）`);
 
   const end = await superviseSession(deps, opts, { taskId, runId, lock, handle, logFile, ops });
+  if (end.kind === 'lease_lost') {
+    // Brain 已按租约语义处置任务（回队或判 lost）：杀会话、放自己的锁，不再回写任务
+    deps.log(`任务 ${taskId} 租约已被 Brain 回收（lease_lost），停手：杀会话、放锁、不回写`);
+    await handle.kill();
+    const release = await releaseOwnLock(lock, runId, deps.log);
+    return { outcome: 'lease_lost', lock_released: release.released };
+  }
   if (end.kind === 'abort') return abort(end.reason, handle);
   const release = await releaseOwnLock(lock, runId, deps.log);
   return { outcome: 'session_terminal', status: end.status, lock_released: release.released };
@@ -395,7 +426,10 @@ export function makeBrainClient(baseUrl) {
   return {
     listQueued: async () => must(await call('GET', '/api/brain/tasks?status=queued&limit=500'), 'list queued'),
     getTask: async (id) => must(await call('GET', `/api/brain/tasks/${id}`), 'get task'),
-    claim: async (id, claimer) => call('POST', `/api/brain/tasks/${id}/claim`, { claimer, executor_kind: CLAIM_EXECUTOR_KIND }),
+    claim: async (id, claimer, leaseSeconds) => call('POST', `/api/brain/tasks/${id}/claim`, {
+      claimer, executor_kind: CLAIM_EXECUTOR_KIND, ...(leaseSeconds ? { lease_seconds: leaseSeconds } : {}),
+    }),
+    heartbeat: async (id, claimer, leaseSeconds) => call('POST', `/api/brain/tasks/${id}/heartbeat`, { claimer, lease_seconds: leaseSeconds }),
     patch: async (id, body) => must(await call('PATCH', `/api/brain/tasks/${id}`, body), 'patch task'),
   };
 }
