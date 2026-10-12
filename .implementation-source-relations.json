@@ -372,14 +372,6 @@
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "packages/brain/src/__tests__/integration/dedup-queued-mutual-lock.pg.integration.test.js",
       "role": "verification"
-
-    },
-    {
-    },
-    {
-      "owner_path": "packages/brain/src/dispatcher.js",
-      "path": "changes/cp-1012073925-dedup-queued-mutual-lock.md",
-      "role": "release"
     },
     {
       "owner_path": "packages/brain/src/work-router.js",
