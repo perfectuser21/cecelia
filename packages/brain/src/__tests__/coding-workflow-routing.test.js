@@ -177,6 +177,35 @@ describe('createRoutedTask：建出的编码单能被 runner 认领', () => {
   });
 });
 
+describe('A4：harness_initiative 只当有头账本类型——建单入口拒无头', () => {
+  it('kernel 续跑单（无头 queued harness_initiative）经 createRoutedTask 建单即拒 no_executor_for_task_type，不落行', async () => {
+    const db = fakeDb();
+    let caught = null;
+    try {
+      await createRoutedTask(db, {
+        ...codingRequest({ source_id: 'kc-1', kernel_continuation: true }),
+        requested_task_type: 'dev',
+        task: { status: 'queued' },
+      }, FACTS);
+    } catch (error) { caught = error; }
+    expect(caught?.code).toBe('no_executor_for_task_type');
+    expect(caught?.route).toBe('retired-harness-kernel');
+    expect(db.tasks).toEqual([]);
+  });
+
+  it('有头账本行（headed_manual 字符串 / 布尔、以 in_progress 入账）照常建 harness_initiative', async () => {
+    for (const [i, extra] of [
+      { metadata: { headed_manual: 'true' }, task: { status: 'queued' } },
+      { task: { status: 'queued', payload: { headed_manual: true } } },
+      { task: { status: 'in_progress' } },
+    ].entries()) {
+      const db = fakeDb();
+      await createRoutedTask(db, { ...codingRequest({ source_id: `headed-a4-${i}` }), requested_task_type: 'dev', ...extra }, FACTS);
+      expect(db.tasks[0]).toMatchObject({ task_type: 'harness_initiative' });
+    }
+  });
+});
+
 describe('relay-baton：handoff 编码子单改投 coding_workflow', () => {
   it('dispatch_headless 编码步 → 子单 coding_workflow 且 runner 可认领；非支持仓库进 skipped', async () => {
     const db = fakeDb();
