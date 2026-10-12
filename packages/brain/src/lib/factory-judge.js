@@ -22,16 +22,42 @@ export function outwardCount(delivery = {}) {
   return se.filter((x) => !(isObj(x) && x.reversible === true)).length;
 }
 
+/** 合同 readback glob → 整串匹配正则（只认 * 与 ?，其余字符按字面）。 */
+export function globToRegExp(glob) {
+  const body = String(glob).split('').map((ch) => (ch === '*' ? '.*' : ch === '?' ? '.' : ch.replace(/[.+^${}()|[\]\\]/g, '\\$&'))).join('');
+  return new RegExp(`^${body}$`);
+}
+
+const EXPECT_OPS = { '>=': (n, v) => n >= v, '>': (n, v) => n > v, '==': (n, v) => n === v, '=': (n, v) => n === v, '<=': (n, v) => n <= v };
+
+/**
+ * 合同活动读回（任务 c0fe7e30，决策 2186700a：验证归活动自带读回 + Brain 裁判，Commander 不判）。
+ * delivery.activities 由外壳 runner 按合同 steps.dod.readback 汇总（系统产出）；每个 evidence 型活动一条 check。
+ */
+function activityReadbackChecks(activities, add) {
+  for (const a of activities) {
+    const rb = isObj(a?.readback) ? a.readback : null;
+    if (!rb || rb.type !== 'evidence' || typeof rb.glob !== 'string') continue;
+    const files = Array.isArray(a.evidence_files) ? a.evidence_files.filter((f) => typeof f === 'string') : [];
+    const re = globToRegExp(rb.glob);
+    const n = files.filter((f) => re.test(f.split('/').pop())).length;
+    const op = rb.expect?.op ?? '>=';
+    const want = Number(rb.expect?.value ?? 1);
+    const cmp = EXPECT_OPS[op];
+    add(`readback:${a.key}`, Boolean(cmp) && cmp(n, want), `${rb.glob} 命中 ${n} 个（期望 ${op} ${want}）`);
+  }
+}
+
 function acceptanceItemsPass(items) {
   return items.every((it) => it === true || (isObj(it) && (it.pass === true || it.result === 'pass')));
 }
 
 /**
  * 代码裁判（纯函数）。
- * @param {{taskStatus:string, delivery:object, expectedOutward?:number, requireEvidence?:boolean}} p
+ * @param {{taskStatus:string, delivery:object, expectedOutward?:number, requireEvidence?:boolean, requireActivities?:boolean}} p
  * @returns {{verdict:'pass'|'fail', checks:Array<{name,pass,detail}>, outward_count:number, safe_stop:boolean}}
  */
-export function computeCodeVerdict({ taskStatus, delivery, expectedOutward, requireEvidence = false }) {
+export function computeCodeVerdict({ taskStatus, delivery, expectedOutward, requireEvidence = false, requireActivities = false }) {
   const d = isObj(delivery) ? delivery : {};
   const checks = [];
   const add = (name, pass, detail) => checks.push({ name, pass: Boolean(pass), detail });
@@ -46,6 +72,8 @@ export function computeCodeVerdict({ taskStatus, delivery, expectedOutward, requ
   for (const key of ['acceptance_checks', 'readback_checks']) {
     if (Array.isArray(d[key]) && d[key].length) add(key, acceptanceItemsPass(d[key]), `${key} ${d[key].length} 项`);
   }
+  if (Array.isArray(d.activities) && d.activities.length) activityReadbackChecks(d.activities, add);
+  else if (requireActivities) add('contract_readback', false, '交付缺 activities（合同活动读回）');
   if (requireEvidence) add('final_evidence', Array.isArray(d.final_evidence) && d.final_evidence.length > 0, `final_evidence ${Array.isArray(d.final_evidence) ? d.final_evidence.length : 0} 项`);
   const verdict = checks.every((c) => c.pass) ? 'pass' : 'fail';
   return { verdict, checks, outward_count: outward, safe_stop: verdict === 'fail' && outward === 0 };
@@ -126,7 +154,7 @@ export function makeJudgeStore(db) {
   return {
     async listCandidates(limit = 20) {
       const { rows } = await db.query(
-        `SELECT id, title, status, payload, result, completed_at, updated_at FROM tasks
+        `SELECT id, task_type, title, status, payload, result, completed_at, updated_at FROM tasks
           WHERE payload->>'factory_dispatch' = 'true'
             AND COALESCE(payload->'factory'->>'stage', '') <> 'verify'
             AND status IN ('completed', 'failed')
@@ -170,6 +198,8 @@ export async function judgeTask(task, deps) {
     taskStatus: task.status, delivery,
     expectedOutward: Number.isInteger(cfg?.expected_outward) ? cfg.expected_outward : undefined,
     requireEvidence: cfg ? cfg.visual_verify !== false : false,
+    // 经 Commander+外壳跑的执行单（workflow_dispatch）必须带合同活动读回
+    requireActivities: task.task_type === 'workflow_dispatch' && cfg?.dispatch_via === 'commander',
   });
   const base = { run_id: runId, ledger_id: ledger?.id ?? null, stage: f.stage ?? null, code };
 
