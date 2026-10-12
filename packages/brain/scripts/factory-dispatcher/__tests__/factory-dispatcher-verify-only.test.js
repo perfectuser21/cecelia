@@ -20,6 +20,11 @@ describe('仅核验消费：旧业务执行持续关闭', () => {
     expect(dispatcher.readDispatchMode('verify-only')).toBe('verify-only');
     for (const mode of ['verify', '', 'true', null]) expect(() => dispatcher.readDispatchMode(mode)).toThrow('dispatch mode');
   });
+  it('核验消息要求独立读证据，禁止读执行会话及对外动作', () => {
+    const text = dispatcher.buildAgentMessage({ runId: 'sfv-test', taskId, contract: verification().payload.factory });
+    expect(text).toContain('禁止读取执行会话');
+    expect(text).toContain('禁止对外动作');
+  });
   it('旧执行默认仍能领，verify-only 下 poll 与直接派发均不 claim', async () => {
     const old = verification(); old.payload.factory.stage = '3'; old.payload.skill = old.payload.factory.skill = 'android-douyin-publish';
     const normal = world(old); await dispatcher.pollOnce(normal.deps); expect(normal.claims).toEqual([taskId]);
