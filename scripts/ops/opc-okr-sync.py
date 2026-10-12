@@ -2,14 +2,14 @@
 """公司 OKR 下行同步：Brain 原指标快照 → 六个既有执行现场。"""
 import json
 import os
-import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from uuid import UUID, uuid4
 
 BRAIN = os.environ.get("CECELIA_BRAIN_API", "http://localhost:5221/api/brain").rstrip("/")
-ROOT = "/opt/openclaw/workspaces-root"
+ROOT = os.environ.get("OPC_WORKSPACES_ROOT", str(Path.home() / "openclaw-root/workspaces-root"))
 ACTOR = "opc-okr-sync"
 AREA2AGENT = {"智能获客": ["media"], "新媒体": ["media"], "AI交付FDE": ["fde"],
               "研发部": ["dev"], "人事运营": ["people"], "基础设施": ["infra"],
@@ -59,7 +59,7 @@ def fetch():
 
 
 def fmt(rows, title):
-    now = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time() + 8 * 3600))
+    now = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M")
     lines = ["# %s" % title, "",
              "> 快照 %s ｜ 真身在 Brain；公司 KR 保留原 Start/Current/Target 与公式口径。本文件自动重写勿手改。" % now, "",
              "> 正式数字由主理人在 Notion 填写；AI观察和建议单独列示，尚未经主理人确认。", "",
@@ -102,22 +102,28 @@ def main():
     task = call(BRAIN + "/tasks", {
         "title": "公司 OKR 执行现场同步 " + run_id,
         "description": "从 Brain 原指标快照更新 Director 与五部门执行现场。",
-        "task_type": "workflow_run", "kind": "workflow", "trigger_source": "opc-cron",
-        "payload": {"source": ACTOR, "run_id": run_id, "stages": ["snapshot", "site-projection"]},
+        "task_type": "data", "kind": "workflow", "trigger_source": "opc-cron",
+        "payload": {"headed_manual": True, "source": ACTOR, "run_id": run_id, "stages": ["snapshot", "site-projection"]},
     }, "POST")
     task_id = task["id"]
     written = []
+    claimed = call(BRAIN + "/tasks/" + task_id + "/claim", {"claimer": ACTOR, "executor_kind": "external-worker", "lease_seconds": 900}, "POST")
+    if claimed.get("success") is False or claimed.get("accepted") is False or not (claimed.get("id") == task_id or claimed.get("success") is True):
+        raise RuntimeError("批处理任务认领未通过")
     try:
-        call(BRAIN + "/tasks/" + task_id + "/claim", {"claimer": ACTOR, "executor_kind": "external-worker"}, "POST")
-        call(BRAIN + "/tasks/" + task_id, {"status": "in_progress"}, "PATCH")
+        started = call(BRAIN + "/tasks/" + task_id, {"status": "in_progress"}, "PATCH")
+        if started.get("success") is not True or started.get("status") != "in_progress":
+            raise RuntimeError("批处理任务启动未通过")
+        workspaces = [Path(ROOT) / ("clawd" if a == "main" else "clawd-" + a)
+                      for a in ["main", "media", "fde", "dev", "people", "infra"]]
+        if not all(p.is_dir() for p in workspaces):
+            raise RuntimeError("六个执行现场目录不齐，拒绝部分重写")
         rows = fetch()
         director = ROOT + "/clawd/OKR-CURRENT.md"
         write_site(director, fmt(rows, "ZenithJoy 公司 OKR（全量·Director 视图）"))
         written.append(director)
         for agent in ["media", "fde", "dev", "people", "infra"]:
             workspace = "%s/clawd-%s" % (ROOT, agent)
-            if not os.path.isdir(workspace):
-                continue
             own = [row for row in rows if any(agent in AREA2AGENT.get(area, []) for area in row["areas"])]
             body = fmt(own, "本部门 KR（%s）" % agent) if own else (
                 "# 本部门 KR（%s）\n\n> 暂无直接挂钩的公司 KR。会议上报告支撑性进展："
@@ -125,22 +131,22 @@ def main():
             destination = workspace + "/OKR.md"
             write_site(destination, body)
             written.append(destination)
-        completed = call(BRAIN + "/tasks/" + task_id, {"status": "completed", "result": {
-            "actor": ACTOR, "facts": {"company_krs": len(rows), "site_files": written},
-            "evidence": {"source": BRAIN + "/okr/company-key-results", "run_id": run_id},
-            "handoff": {"schema_version": 1, "task_id": task_id, "title": "公司 OKR 执行现场同步",
-                        "verdict": "PASS", "done": ["Brain 公司原指标快照已同步执行现场"],
-                        "not_done": [], "next_steps": [], "data_sources": [BRAIN + "/okr/company-key-results"],
-                        "created_at": datetime.now(timezone.utc).isoformat()},
-        }}, "PATCH")
-        if completed.get("success") is not True or completed.get("status") != "completed":
-            raise RuntimeError("现场同步任务完成回执未通过")
-        print(json.dumps({"task_id": task_id, "company_krs": len(rows), "site_files": len(written)}, ensure_ascii=False))
     except (Exception, SystemExit):
         call(BRAIN + "/tasks/" + task_id, {"status": "failed", "result": {
             "actor": ACTOR, "facts": {"site_files_written": written}, "evidence": {"run_id": run_id},
         }}, "PATCH")
         raise
+    completed = call(BRAIN + "/tasks/" + task_id, {"status": "completed", "result": {
+        "actor": ACTOR, "facts": {"company_krs": len(rows), "site_files": written},
+        "evidence": {"source": BRAIN + "/okr/company-key-results", "run_id": run_id},
+        "handoff": {"schema_version": 1, "task_id": task_id, "title": "公司 OKR 执行现场同步",
+                    "verdict": "PASS", "done": ["Brain 公司原指标快照已同步执行现场"],
+                    "not_done": [], "next_steps": [], "data_sources": [BRAIN + "/okr/company-key-results"],
+                    "created_at": datetime.now(timezone.utc).isoformat()},
+    }}, "PATCH")
+    if completed.get("success") is not True or completed.get("status") != "completed":
+        raise RuntimeError("现场同步任务完成回执未通过")
+    print(json.dumps({"task_id": task_id, "child_task_id": task_id, "run_uuid": run_id, "company_krs": len(rows), "site_files": len(written)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

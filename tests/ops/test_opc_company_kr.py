@@ -51,7 +51,7 @@ class Pipeline(unittest.TestCase):
         with patch.object(module.subprocess, "run", return_value=output) as run:
             self.assertEqual(module.objects(), (records, 10_000_000))
         self.assertEqual(run.call_args.args[0],
-                         ["/usr/bin/node", "/opt/openclaw/state/opc-objects.mjs", "list"])
+                         [module.NODE, module.OBJECTS_HELPER, "list"])
         self.assertEqual(run.call_args.kwargs["timeout"], 90)
 
     def test_objects_reports_reader_failure_before_decoding(self):
@@ -99,7 +99,7 @@ class Pipeline(unittest.TestCase):
 
         def run(command, **_):
             commands.append(command)
-            if command == ["/usr/bin/node", "/opt/openclaw/state/opc-objects.mjs", "list"]:
+            if command == [module.NODE, module.OBJECTS_HELPER, "list"]:
                 return subprocess.CompletedProcess(command, 0, json.dumps(
                     {"ok": True, "records": records, "now_ms": 10_000_000}), "")
             if command == ["df", "--output=pcent", "/"]:
@@ -124,16 +124,15 @@ class Pipeline(unittest.TestCase):
 
         with patch.object(module, "call", side_effect=call), \
                 patch.object(module.subprocess, "run", side_effect=run), \
-                patch.object(module.sqlite3, "connect", return_value=Database()) as connect, \
+                patch.object(module, "cron_states", return_value={i: {"lastRunStatus": "ok"} for i in module.REPORT_CRON_IDS}), \
+                patch.object(module.shutil, "disk_usage", return_value=type("Disk", (), {"used": 84, "total": 100})()), \
                 patch.object(module.os.path, "exists", return_value=True), \
                 patch("builtins.open", return_value=StringIO("成本 GREEN\n")):
             try:
                 module.main()
             except Exception as error:
                 self.fail("宿主原 helper 可读时采集应完成：" + str(error))
-        self.assertEqual(commands[0], ["/usr/bin/node", "/opt/openclaw/state/opc-objects.mjs", "list"])
-        self.assertTrue(connect.call_args.args[0].endswith("openclaw.sqlite?mode=ro"))
-        self.assertTrue(connect.call_args.kwargs["uri"])
+        self.assertEqual(commands[0], [module.NODE, module.OBJECTS_HELPER, "list"])
         observations = [body for url, _, body in calls if url.endswith("/observations")]
         self.assertEqual([body["current_value"] for body in observations], [4, 1])
         self.assertEqual(observations[0]["evidence"][0]["passed_checks"], ["F1", "F3", "F4", "N1"])
@@ -214,9 +213,12 @@ class Pipeline(unittest.TestCase):
         self.assertFalse(any(method == "PATCH" and body.get("status") == "completed" for _, method, body in calls))
         self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
 
-    def test_refused_completion_is_recorded_as_failure(self):
-        calls = self.collector(completion_state="in_progress")
-        self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
+    def test_refused_completion_raises_without_overwriting_terminal_state(self):
+        with patch("sys.stdout", new_callable=StringIO) as stdout:
+            calls = self.collector(completion_state="in_progress")
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual([body["status"] for _, method, body in calls if method == "PATCH"],
+                         ["in_progress", "completed"])
 
     def test_renderer_uses_raw_values_and_original_ratio(self):
         module = load("opc-okr-sync")
@@ -268,6 +270,8 @@ class Pipeline(unittest.TestCase):
             target = Path(directory) / "clawd/OKR-CURRENT.md"
             target.parent.mkdir()
             target.write_text("旧的已归档KR")
+            for a in ["media", "fde", "dev", "people", "infra"]:
+                (Path(directory) / ("clawd-" + a)).mkdir()
             with patch.object(module, "ROOT", directory), patch.object(module, "call", side_effect=call):
                 module.main()
             self.assertNotIn("旧的已归档KR", target.read_text())
@@ -447,11 +451,11 @@ class Pipeline(unittest.TestCase):
             stdout = "Use%\n84%\n"
 
         with patch.object(module, "objects", return_value=(records, 10_000_000)), \
-                patch.object(module.sqlite3, "connect", return_value=Database()), \
-                patch.object(module.subprocess, "run", return_value=Process()):
+                patch.object(module, "cron_states", return_value={i: {"lastRunStatus": "ok"} for i in module.REPORT_CRON_IDS}), \
+                patch.object(module.shutil, "disk_usage", return_value=type("Disk", (), {"used": 84, "total": 100})()) as disk:
             self.assertEqual(module.dod_count(), ["F1", "F3", "F4", "N1"])
             records[0]["下次检查时间"] = 10_000_000 - 3_600_000
-            Process.stdout = "Use%\n85%\n"
+            disk.return_value.used = 85
             self.assertEqual(module.dod_count(), ["F1", "F4"])
 
     def test_original_cost_line_requires_non_grey_cost(self):
