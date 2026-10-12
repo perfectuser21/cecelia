@@ -220,7 +220,7 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // 编码 workflow（派发总闸 F，任务 0a70684f）：原借 data + payload.coding_workflow + headed_manual 三件套。独立类型后
   // tick 按类型排除，由 coding-workflow-runner（MMV LaunchDaemon，每 5 分钟）领单跑 coding 链（spec→GAN→实现→QA→合并），
   // kind=workflow（编排多阶段）。runner 自带收尾对账，watchdog=external-worker。
-  coding_workflow:          workflow(T('external', false, false, 'coding-workflow-runner', 'external-worker', true, false, 'none', true, [V, ANC, GPIMPL])),
+  coding_workflow:          workflow(T('external', false, false, 'coding-workflow-runner', 'external-worker', true, false, 'none', true, [V, CM, ANC, GPIMPL])),
   // ── executor=script 一等任务类型（链 bf5088a3 棒 3，任务 5cdbd52a）──
   // 确定性脚本步：Brain 经 ssh 在跑场机执行 payload.cmd（{host,cmd,cwd,env,timeout_sec}），与 AI 步同一条 DAG。
   // kind=agent：脚本也是「一步交付」（df67a9d6 判据）。pr=false 但成功终态写 completed 而非 completed_no_pr——
