@@ -21,7 +21,12 @@ VERSION=$(git -C "$ROOT_DIR" show "origin/$DEPLOY_BRANCH:packages/brain/package.
 
 echo "=== Building cecelia-brain:${VERSION} (from origin/${DEPLOY_BRANCH}) ==="
 
-TEMP_BUILD=$(mktemp -d -t cecelia-brain-build-XXXXXX)
+# v1.4.0 (2026-10-12, 任务 c8320370): 构建上下文不放 /tmp。部署由 Brain 容器内 webhook 拉起，容器 /tmp 是 100M tmpfs，
+# 整仓导出（约 91MB，解开后按页计占用更大）写爆 → "tar: write error: No space left on device"，部署全部挂在 Building image。
+# 改放仓库根下 .brain-build-tmp/（宿主磁盘，已 gitignore），可用 BRAIN_BUILD_TMPDIR 覆盖。
+BUILD_TMP_ROOT="${BRAIN_BUILD_TMPDIR:-$ROOT_DIR/.brain-build-tmp}"
+mkdir -p "$BUILD_TMP_ROOT"
+TEMP_BUILD=$(mktemp -d "$BUILD_TMP_ROOT/cecelia-brain-build-XXXXXX")
 # shellcheck disable=SC2064
 trap "rm -rf '$TEMP_BUILD'" EXIT
 
