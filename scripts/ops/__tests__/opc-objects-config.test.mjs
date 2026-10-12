@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 const script = process.env.OPC_OBJECTS_TEST_SCRIPT || fileURLToPath(new URL('../opc-objects.mjs', import.meta.url));
 const current = join(homedir(), '.openclaw/openclaw.json');
 const account = { channels: { feishu: { accounts: { main: { appId: 'fixture-app', appSecret: 'SECRET_MUST_NOT_LEAK' } } } } };
-function run(configs, override, apiFailure = false) {
+function run(configs, override, apiFailure = false, options = {}) {
+  const items = options.items || [{record_id:'fixture-record',fields:{标题:'fixture',状态:'进行中'}}];
   const dir = mkdtempSync(join(tmpdir(), 'opc-config-test-'));
   const preload = join(dir, 'fake-io.mjs');
   writeFileSync(preload, `import fs from 'node:fs';
@@ -32,13 +33,13 @@ globalThis.fetch = async (url, options) => {
     if (body.app_id !== 'fixture-app' || body.app_secret !== 'SECRET_MUST_NOT_LEAK') throw new Error('wrong account selected');
     return {ok:true, json:async()=>({code:0,tenant_access_token:'fixture-token'})};
   }
-  return {ok:true, json:async()=>({code:0,data:{has_more:false,items:[{record_id:'fixture-record',fields:{标题:'fixture',状态:'进行中'}}]}})};
+  return {ok:true, json:async()=>({code:0,data:{has_more:false,items:${JSON.stringify(items)}}})};
 };`);
   const env = { ...process.env };
   delete env.OPENCLAW_CONFIG_PATH;
   if (override !== undefined) env.OPENCLAW_CONFIG_PATH = override;
   try {
-    const r = spawnSync(process.execPath, ['--import', preload, script, 'list', '--inspection-summary'], { env, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, ['--import', preload, script, ...(options.args || ['list', '--inspection-summary'])], { env, encoding: 'utf8' });
     assert.doesNotMatch(r.stdout + r.stderr, /SECRET_MUST_NOT_LEAK/);
     return { status: r.status, body: JSON.parse(r.stdout) };
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -87,4 +88,33 @@ test('failed API call never reports a successful inspection', () => {
   const r = run({ [current]: account }, undefined, true);
   assert.notEqual(r.status, 0);
   assert.equal(r.body.ok, false);
+});
+
+const overdue = Array.from({ length: 185 }, (_, i) => ({ record_id: `overdue-${i}`, fields: {标题:`对象${i}`,状态:'待办',下次检查时间:1} }));
+test('batch inspection includes every matched record exactly once in batches of at most 50', () => {
+  const r = run({ [current]: account }, undefined, false, { items: overdue, args:['list','--inspection-batches'] });
+  assert.equal(r.status, 0);
+  assert.equal(r.body.ok, true);
+  assert.equal(r.body.mode, 'inspection-batches');
+  assert.equal(r.body.source_count, 185);
+  assert.equal(r.body.count, 185);
+  assert.equal(r.body.batch_count, 4);
+  assert.equal(r.body.truncated, false);
+  assert.deepEqual(r.body.batches.map(b => b.count), [50,50,50,35]);
+  const records = r.body.batches.flatMap(b => b.records);
+  assert.deepEqual(records.map(r => r.record_id), overdue.map(r => r.record_id));
+  assert.equal(new Set(records.map(r => r.record_id)).size, 185);
+});
+test('legacy summary still fails instead of truncating over 50 matches', () => {
+  const r = run({ [current]: account }, undefined, false, { items: overdue });
+  assert.notEqual(r.status, 0);
+  assert.equal(r.body.ok, false);
+  assert.match(r.body.error, /185.*50/);
+});
+test('empty batch inspection explicitly reports zero complete batches', () => {
+  const r = run({ [current]: account }, undefined, false, { items: [], args:['list','--inspection-batches'] });
+  assert.equal(r.status, 0);
+  assert.equal(r.body.count, 0);
+  assert.equal(r.body.batch_count, 0);
+  assert.deepEqual(r.body.batches, []);
 });
