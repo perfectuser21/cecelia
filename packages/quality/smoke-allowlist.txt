@@ -77,6 +77,7 @@ drift-sentinel-smoke.sh
 evaluator-evidence-bridge-smoke.sh
 evaluator-no-push-smoke.sh
 executor-liveness-t1-smoke.sh
+factory-commander-route-api-smoke.sh
 factory-f0-proposal-smoke.sh
 factory-f1-devloop-smoke.sh
 factory-f2-deploy-smoke.sh
@@ -443,4 +444,5 @@ task-lease-device-pool-smoke.sh
 
 coding-workflow-codex-smoke.sh
 
-factory-commander-route-api-smoke.sh
+
+coding-workflow-base-smoke.sh

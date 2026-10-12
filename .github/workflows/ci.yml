@@ -958,6 +958,9 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Work Router resolves the real origin/main SHA for intake receipts.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

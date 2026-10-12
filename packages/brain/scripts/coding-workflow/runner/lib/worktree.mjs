@@ -1,4 +1,4 @@
-// 任务 worktree：从专用 clone 的 origin/main 建分支 worktree，写 /dev 会话文件，根目录 npm ci；成功后删除。
+// 任务 worktree：从登记的 base_sha（旧任务缺省 origin/main）建独立分支，写 /dev 会话文件并安装依赖。
 import fs from 'node:fs';
 import path from 'node:path';
 import { run, git } from './proc.mjs';
@@ -53,14 +53,23 @@ export async function ensureIgnored(worktree, branch) {
  * 失败抛 Error(reason_code)：git_fetch_failed / worktree_add_failed / git_exclude_failed / npm_ci_failed。
  */
 export async function prepareWorktree(cfg, task, names, ctx, signal) {
+  const hasBase = Object.hasOwn(task.payload ?? {}, 'base_sha');
+  const base = hasBase ? task.payload.base_sha : 'origin/main';
+  if (hasBase && (typeof base !== 'string' || !/^[a-f0-9]{40}$/.test(base))) {
+    throw fail('task_base_sha_invalid');
+  }
   const fetch = await git(cfg.repo, ['fetch', 'origin', 'main'], { timeoutMs: FETCH_TIMEOUT_MS });
   if (fetch.code !== 0) throw fail('git_fetch_failed');
+  if (hasBase) {
+    const commit = await git(cfg.repo, ['cat-file', '-t', base]);
+    if (commit.code !== 0 || commit.stdout.trim() !== 'commit') throw fail('task_base_commit_missing');
+  }
 
   fs.mkdirSync(cfg.worktreeBase, { recursive: true });
   let worktree = path.join(cfg.worktreeBase, `cw-${names.short}`);
   // 同一任务上次失败保留的现场不覆盖
   if (fs.existsSync(worktree)) worktree = `${worktree}-${names.stamp}`;
-  const add = await git(cfg.repo, ['worktree', 'add', '-b', names.branch, worktree, 'origin/main']);
+  const add = await git(cfg.repo, ['worktree', 'add', '-b', names.branch, worktree, base]);
   if (add.code !== 0) throw fail('worktree_add_failed');
   ctx.worktree = worktree;
   ctx.branch = names.branch;

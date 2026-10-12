@@ -1,5 +1,6 @@
 // Claude stream-json / Codex exec --json 原生对话记录：提取实际执行过的 Bash 命令及其结果，核对 04-evidence 是否有据。
 import path from 'node:path';
+import { unwrapShellCommand } from './shell-command.mjs';
 
 const OUTPUT_LINES_CHECKED = 5;
 
@@ -70,11 +71,17 @@ export function bashExecutions(stdout) {
       const key = `codex:${item.id}`;
       let run = item.id ? byId.get(key) : null;
       if (!run) {
-        run = { command: item.command, result: '' };
+        run = { command: item.command, result: '', provider: 'codex', completed: false, exitCode: null };
         runs.push(run);
         if (item.id) byId.set(key, run);
       }
-      if (event.type === 'item.completed') run.result = typeof item.aggregated_output === 'string' ? item.aggregated_output : '';
+      if (event.type === 'item.completed') {
+        // 完成事件的命令、输出和退出码必须一起采信，不能嫁接 started 的命令。
+        run.command = item.command;
+        run.result = typeof item.aggregated_output === 'string' ? item.aggregated_output : '';
+        run.completed = true;
+        run.exitCode = Number.isInteger(item.exit_code) ? item.exit_code : null;
+      }
       continue;
     }
     const content = event?.message?.content;
@@ -111,7 +118,7 @@ function stripWorktreeCd(command, worktree) {
   const m = roots.length > 0 ? CD_PREFIX_RE.exec(command) : null;
   if (!m) return command;
   const dir = m[1].replace(/^["']|["']$/g, '');
-  return insideWorktree(dir, roots) ? command.slice(m[0].length) : command;
+  return !/[\\$`]/.test(dir) && insideWorktree(dir, roots) ? command.slice(m[0].length) : command;
 }
 
 const ELLIPSIS_RE = /\.{3,}|…+/;
@@ -134,7 +141,8 @@ function lineInResult(line, result) {
 }
 
 /**
- * 核对每条证据：command（规范化空白、去掉 worktree 内 cd 前缀后）必须被某次实际执行的命令包含；
+ * 核对每条证据：Codex 必须来自有退出码的完成事件，安全解一层 shell 包装后全文匹配；
+ * Claude 保留原有空白规范化/包含口径。证据允许去掉字面量 worktree 内 cd 前缀；
  * 且 output 的前 OUTPUT_LINES_CHECKED 个非空行（去首尾空白）都是该次执行结果的子串。
  * 返回不通过的 [{ id, reason: 'command_not_executed' | 'output_not_in_result' }]。
  */
@@ -142,7 +150,10 @@ export function unverifiedItems(items, executions, { worktree } = {}) {
   const bad = [];
   for (const item of items) {
     const command = stripWorktreeCd(squashSpace(item.command), worktree);
-    const matches = executions.filter((run) => squashSpace(run.command).includes(command));
+    const exact = stripWorktreeCd(String(item.command).trim(), worktree);
+    const matches = executions.filter((run) => run.provider === 'codex'
+      ? run.completed && Number.isInteger(run.exitCode) && unwrapShellCommand(run.command) === exact
+      : squashSpace(run.command).includes(command));
     if (matches.length === 0) {
       bad.push({ id: item.id, reason: 'command_not_executed' });
       continue;

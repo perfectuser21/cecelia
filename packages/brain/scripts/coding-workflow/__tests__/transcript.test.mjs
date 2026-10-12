@@ -160,7 +160,7 @@ describe('Codex 原生 JSONL', () => {
       event('item.completed', { id: 'c2', type: 'command_execution', command: 'false', status: 'failed', aggregated_output: 'failed', exit_code: 1 }),
     ].join('\n');
     const runs = bashExecutions(stdout);
-    expect(runs).toEqual([{ command: 'npm test', result: 'Tests 3 passed' }, { command: 'false', result: 'failed' }]);
+    expect(runs).toEqual([{ command: 'npm test', result: 'Tests 3 passed', provider: 'codex', completed: true, exitCode: 0 }, { command: 'false', result: 'failed', provider: 'codex', completed: true, exitCode: 1 }]);
     expect(unverifiedItems([{ id: 'E1', command: 'npm test', output: 'Tests 3 passed' }], runs)).toEqual([]);
     expect(unverifiedItems([{ id: 'E2', command: 'curl /health', output: 'ok' }], runs)).toEqual([{ id: 'E2', reason: 'command_not_executed' }]);
   });

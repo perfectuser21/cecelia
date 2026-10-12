@@ -215,6 +215,11 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 - [x] [BEHAVIOR] codeidentitysql 实际scratch私有schema执行原生产判重SQL，inactive/非法Workflow、字符串布尔、伪造slot、盗用另一任务receipt和候选对象冒充均不能取得标题豁免；真ledger唯一键保留。
   Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/__tests__/integration/code-task-dedup.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
 
+## 会话摘要 OpenClaw Codex（任务 910d6889）
+
+- [x] [BEHAVIOR] summaryopenclaw 会话默认摘要经 SSH stdin 交给 MMV 独立无工具 Codex agent；每次新 session，失败或空回执仍返回原文摘录；不再依赖失效 thalamus 通道。
+  Test: manual:bash -c "cd packages/brain && NODE_ENV=test npx vitest run src/__tests__/conversation-summary-openclaw.test.js src/__tests__/conversation-capture.test.js src/__tests__/conversation-capture-human-gate.test.js --maxWorkers=1 --minWorkers=1"
+
 # Stop hook 交接示例（续接 d0463902）
 
 - [x] [BEHAVIOR] stophandoffkinds 真实 stop hook 拦截未交接任务时，输出的 handoff 示例列出 resume_headed、dispatch_headless、decision、note 四类；退出码仍为 2。

@@ -1,0 +1,40 @@
+[
+  {
+    "source": "Z0 387cb817 verify item_8；仅command_execution完成事件，输出摘首行，临时目录脱敏",
+    "event": {
+      "type": "item.completed",
+      "item": {
+        "id": "item_8",
+        "type": "command_execution",
+        "command": "/opt/homebrew/bin/bash -lc \"node --input-type=module <<'NODE'\nimport assert from 'node:assert/strict';\nimport fs from 'node:fs';\nimport os from 'node:os';\nimport path from 'node:path';\nimport {spawnSync} from 'node:child_process';\nconst cli=path.resolve('scripts/check-staff-hub-llm-imports.mjs');\nconst root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'independent-verify-')));\nfunction check(files,status,offenders=[]){\n  const app=path.join(root,'apps/staff-hub');\n  fs.rmSync(app,{recursive:true,force:true}); fs.mkdirSync(app,{recursive:true});\n  for(const [name,source] of Object.entries(files)){const p=path.join(app,name);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,source);}\n  const r=spawnSync(process.execPath,[cli],{cwd:root,encoding:'utf8',timeout:10000});\n  assert.ifError(r.error);assert.equal(r.signal,null);assert.equal(r.status,status);\n  if(status===0){assert.equal(r.stdout,'OK\\\\n');assert.equal(r.stderr,'');}\n  else {assert.equal(r.stdout,'');assert.deepEqual(r.stderr.trim().split('\\\\n').sort(),offenders.map(([f,m])=>path.join(app,f)+': '+m).sort());}\n  console.log(JSON.stringify({files:Object.keys(files),exit:r.status,stdout:r.stdout,stderr:r.stderr}));\n}\ntry {\ncheck({'sample.mjs':\\\"import SDK from 'openai';\\\"},1,[['sample.mjs','openai']]);\ncheck({'sample.cjs':\\\"const sdk = require('anthropic');\\\"},1,[['sample.cjs','anthropic']]);\n} finally {fs.rmSync(root,{recursive:true,force:true});}\nNODE\"",
+        "exit_code": 0,
+        "status": "completed",
+        "aggregated_output": "{\"files\":[\"sample.mjs\"],\"exit\":1,\"stdout\":\"\",\"stderr\":\"<TMP>/apps/staff-hub/sample.mjs: openai\\n\"}"
+      }
+    },
+    "evidence": {
+      "id": "E-1",
+      "command": "node --input-type=module <<'NODE'\nimport assert from 'node:assert/strict';\nimport fs from 'node:fs';\nimport os from 'node:os';\nimport path from 'node:path';\nimport {spawnSync} from 'node:child_process';\nconst cli=path.resolve('scripts/check-staff-hub-llm-imports.mjs');\nconst root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'independent-verify-')));\nfunction check(files,status,offenders=[]){\n  const app=path.join(root,'apps/staff-hub');\n  fs.rmSync(app,{recursive:true,force:true}); fs.mkdirSync(app,{recursive:true});\n  for(const [name,source] of Object.entries(files)){const p=path.join(app,name);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,source);}\n  const r=spawnSync(process.execPath,[cli],{cwd:root,encoding:'utf8',timeout:10000});\n  assert.ifError(r.error);assert.equal(r.signal,null);assert.equal(r.status,status);\n  if(status===0){assert.equal(r.stdout,'OK\\n');assert.equal(r.stderr,'');}\n  else {assert.equal(r.stdout,'');assert.deepEqual(r.stderr.trim().split('\\n').sort(),offenders.map(([f,m])=>path.join(app,f)+': '+m).sort());}\n  console.log(JSON.stringify({files:Object.keys(files),exit:r.status,stdout:r.stdout,stderr:r.stderr}));\n}\ntry {\ncheck({'sample.mjs':\"import SDK from 'openai';\"},1,[['sample.mjs','openai']]);\ncheck({'sample.cjs':\"const sdk = require('anthropic');\"},1,[['sample.cjs','anthropic']]);\n} finally {fs.rmSync(root,{recursive:true,force:true});}\nNODE",
+      "output": "{\"files\":[\"sample.mjs\"],\"exit\":1,\"stdout\":\"\",\"stderr\":\"<TMP>/apps/staff-hub/sample.mjs: openai\\n\"}"
+    }
+  },
+  {
+    "source": "Z0 387cb817 verify item_12；仅command_execution完成事件，输出摘首行，临时目录脱敏",
+    "event": {
+      "type": "item.completed",
+      "item": {
+        "id": "item_12",
+        "type": "command_execution",
+        "command": "/opt/homebrew/bin/bash -lc \"git log -2 --format='%h %s'\ngit branch --show-current\ngit config --get-regexp '\"'^branch'\"\\\\..*\\\\.(remote|merge)\"'$'\"'\ngit show --format=fuller --stat HEAD\"",
+        "exit_code": 0,
+        "status": "completed",
+        "aggregated_output": "18a5a257 fix: 补齐 staff-hub 对 mjs 和 cjs 模型导入的检查"
+      }
+    },
+    "evidence": {
+      "id": "E-5",
+      "command": "git log -2 --format='%h %s'\ngit branch --show-current\ngit config --get-regexp '^branch\\..*\\.(remote|merge)$'\ngit show --format=fuller --stat HEAD",
+      "output": "18a5a257 fix: 补齐 staff-hub 对 mjs 和 cjs 模型导入的检查"
+    }
+  }
+]
