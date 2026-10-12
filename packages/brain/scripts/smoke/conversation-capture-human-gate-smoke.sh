@@ -59,7 +59,7 @@ if (!cleanup.includes('--confirm') || !cleanup.includes("DELETE FROM captures WH
 }
 NODE
 
-# 启动器已迁移 Brain HTTP API：运行真实 shell/PTY/HTTP 行为，不再镜像旧 psql 字符串。
+# 启动器已迁移 Brain HTTP API：运行真实 shell/PTY/HTTP 行为，不再镜像旧数据库命令字符串。
 (cd "$ROOT" && NODE_ENV=test npx vitest run \
   src/__tests__/claude-launch.test.js src/routes/__tests__/session-provenance.test.js \
   --maxWorkers=1 --minWorkers=1)
