@@ -13,22 +13,13 @@ import { createHash } from 'node:crypto';
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
 import { isWrongDatabaseError } from './lib/notion-projection-engine.js';
 import { normalizeBrief } from './lib/project-brief.js';
+import { PROJECTS_DB, PROJECT_STATUS_TO_NOTION, brainHuman, humanProps, HUMAN_COLUMNS } from './lib/project-notion-human.js';
+import { pullProjects, ingestProjectPage } from './project-notion-ingest.js';
+export { PROJECTS_DB, PROJECT_STATUS_TO_NOTION };
 
-export const PROJECTS_DB = 'd83c40c2-ba63-8323-8dc7-01cc291c4d9b';
+
 export const DECISIONS_INLET_DB = 'f93e1918-56c1-4f31-9a41-36aa76a1c9c2';
 export const BRAIN_PUBLIC_URL = process.env.BRAIN_PUBLIC_URL || 'http://100.79.41.61:5221';
-
-export const PROJECT_STATUS_TO_NOTION = Object.freeze({
-  queued: 'Not Started',
-  pending: 'Not Started',
-  in_progress: 'In Progress',
-  blocked: 'On Hold',
-  paused: 'On Hold',
-  failed: 'On Hold',
-  completed: 'Completed',
-  cancelled: 'Discard',
-  canceled: 'Discard',
-});
 
 const STATUS_GLYPH = Object.freeze({ completed: '✅', in_progress: '🔄', queued: '⏳', blocked: '⛔', failed: '❌', cancelled: '🚫', canceled: '🚫' });
 const MAX_BLOCKS = 60;
@@ -85,11 +76,11 @@ export function buildProjectProps(root, snap) {
     latest ? `最近：${String(latest.done?.[0] || latest.title || '').slice(0, 80)}` : null,
   ].filter(Boolean).join(' · ');
   return {
-    Name: { title: rt(String(root.title || root.id).slice(0, 180)) },
-    Status: { status: { name: PROJECT_STATUS_TO_NOTION[root.status] || 'In Progress' } },
+    Name: { title: rt(String(root.title || root.name || root.id).slice(0, 180)) },
+    ...humanProps(brainHuman(root, root.notion_props?.human_baseline)),
     'AI Project': { checkbox: true },
     'Run ID': { rich_text: rt(`brain:${root.id}`) },
-    Remark: { rich_text: rt(remark) },
+    'AI 进展': { rich_text: rt(remark) },
   };
 }
 
@@ -141,7 +132,7 @@ export function buildProjectBody(root, snap) {
     const first = e.done?.[0] ? `：${String(e.done[0]).slice(0, 100)}` : '';
     blocks.push(bullet(`${when} · ${e.title || e.task_id} · ${e.verdict || '-'}${first}`));
   }
-  blocks.push(para(`镜子 🔒 由 Brain 每 5 分钟刷新；改这页不会改真身。真身：${BRAIN_PUBLIC_URL}/api/brain/projects/${root.id}`));
+  blocks.push(para(`状态、优先级、备注、截止日期和 AI 参与可编辑，每 5 分钟与 Brain 同步。项目记录：${BRAIN_PUBLIC_URL}/api/brain/projects/${root.id}`));
   return blocks.slice(0, MAX_BLOCKS);
 }
 
@@ -167,41 +158,71 @@ function isGone(err) {
  */
 export async function pushProjectRoots(pool, token, { notionReq = defaultNotionReq, dbId = PROJECTS_DB, log = console } = {}) {
   const stat = { pushed: 0, skipped: 0, failed: 0 };
-  const { rows: rawRoots } = await pool.query(
-    `SELECT id, name AS title, description, status, brief, notion_props
-       FROM projects
-      WHERE status NOT IN ('cancelled','canceled','archived')
-         OR updated_at > NOW() - INTERVAL '7 days'
-      ORDER BY updated_at DESC LIMIT 30`
-  );
-  for (const raw of rawRoots) {
-    const root = { ...raw, notion_id: raw.notion_props?.notion_id ?? null };
+  const { rows: roots } = await pool.query('SELECT *, name AS title FROM projects ORDER BY updated_at DESC, id');
+  for (let root of roots) {
     try {
       const snap = await buildProjectSnapshot(pool, root);
-      const props = buildProjectProps(root, snap);
-      const body = buildProjectBody(root, snap);
-      const digest = digestOf(props, body);
-      if (root.notion_id && root.notion_props?.project_digest === digest) { stat.skipped++; continue; }
-      let pageId = root.notion_id;
+      let props = buildProjectProps(root, snap);
+      const body = root.metadata?.source === 'notion' ? [] : buildProjectBody(root, snap);
+      let digest = digestOf(props, body);
+      let pageId = root.notion_props?.notion_id;
+      if (pageId && root.notion_props?.project_digest === digest) { stat.skipped++; continue; }
+      let page;
       if (pageId) {
         try {
-          await notionReq(token, `/pages/${pageId}`, 'PATCH', { properties: props });
-          await replacePageBody(notionReq, token, pageId, body);
+          page = await notionReq(token, `/pages/${pageId}`, 'GET');
+          if (page.archived || page.in_trash ||
+              (page.parent?.database_id && page.parent.database_id.replaceAll('-', '') !== dbId.replaceAll('-', ''))) {
+            pageId = null;
+            page = null;
+          }
         } catch (err) {
           if (!isGone(err)) throw err;
-          pageId = null; // 页被删 → 重建
+          pageId = null;
         }
       }
       if (!pageId) {
-        const page = await notionReq(token, '/pages', 'POST', { parent: { database_id: dbId }, properties: props, children: body });
-        pageId = page.id;
+        // 上轮建页成功但保存 notion_id 失败，按稳定 Run ID 找回，禁止再次建页。
+        const found = await notionReq(token, `/databases/${dbId}/query`, 'POST', {
+          filter: { property: 'Run ID', rich_text: { equals: `brain:${root.id}` } }, page_size: 100,
+        });
+        page = (found.results || []).find(p => !p.archived && !p.in_trash);
+        pageId = page?.id;
       }
-      await pool.query(
-        `UPDATE projects SET
-                notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('notion_id', $2::text, 'project_digest', $3::text, 'project_db', $4::text)
-          WHERE id = $1::uuid`,
-        [root.id, pageId, digest, dbId]
-      );
+      if (pageId) {
+        // 在覆盖任何人工列前重读并落库；行锁避免覆盖同时发生的 API 编辑。
+        root = await ingestProjectPage(pool, token, page, { notionReq, dbId, log }) || root;
+        props = buildProjectProps(root, snap);
+        digest = digestOf(props, body);
+      }
+      const values = brainHuman(root, root.notion_props?.human_baseline);
+      await pool.query(`UPDATE projects SET notion_props = notion_props || jsonb_build_object('pending_human_push', $2::jsonb) WHERE id = $1`,
+        [root.id, JSON.stringify(values)]);
+      const outgoing = { ...props };
+      if (pageId) {
+        const baselineProps = humanProps(root.notion_props?.human_baseline || values);
+        for (const col of HUMAN_COLUMNS) {
+          if (JSON.stringify(outgoing[col]) === JSON.stringify(baselineProps[col])) delete outgoing[col];
+        }
+        try { await notionReq(token, `/pages/${pageId}`, 'PATCH', { properties: outgoing }); }
+        catch (err) {
+          if (!isGone(err)) throw err;
+          pageId = null;
+          page = null;
+        }
+      }
+      if (!pageId) {
+        const created = await notionReq(token, '/pages', 'POST', { parent: { database_id: dbId }, properties: props, children: body });
+        pageId = created.id;
+      }
+      // 属性一成功就落基线，正文失败不得把自写回声当成人工编辑。
+      await pool.query(`UPDATE projects SET notion_props = (notion_props - 'pending_human_push') ||
+        jsonb_build_object('human_baseline', $2::jsonb, 'notion_id', $3::text, 'project_db', $4::text) WHERE id = $1`,
+        [root.id, JSON.stringify(values), pageId, dbId]);
+      if (page && body.length) await replacePageBody(notionReq, token, pageId, body);
+      await pool.query(`UPDATE projects SET notion_props = notion_props ||
+        jsonb_build_object('notion_id', $2::text, 'project_digest', $3::text, 'project_db', $4::text) WHERE id = $1`,
+        [root.id, pageId, digest, dbId]);
       stat.pushed++;
     } catch (err) {
       stat.failed++;
@@ -257,11 +278,38 @@ export async function pushPendingDecisions(pool, token, { notionReq = defaultNot
   return stat;
 }
 
-/** 调度入口：挂在 legacy 推送之后。token 缺失静默返回。 */
+/** 调度入口：先拉后推；专用连接锁防多调度器同时导入。 */
 export async function runRelayProjection(pool, deps = {}) {
   let token;
   try { token = deps.token || getToken(); } catch { return { ok: false, reason: 'no_token' }; }
-  const projects = await pushProjectRoots(pool, token, deps);
-  const decisions = await pushPendingDecisions(pool, token, deps);
-  return { ok: true, projects, decisions };
+  const notionReq = deps.notionReq || defaultNotionReq;
+  const dbId = deps.dbId || PROJECTS_DB;
+  const client = await pool.connect();
+  let locked = false;
+  try {
+    const lock = await client.query("SELECT pg_try_advisory_lock(hashtext('projects-notion-sync')) AS locked");
+    locked = lock.rows[0]?.locked === true;
+    if (!locked) return { ok: false, reason: 'busy' };
+    await ensureProjectColumns(token, notionReq, dbId);
+    const pulled = await pullProjects(client, token, { ...deps, notionReq, dbId });
+    if (pulled.failed) return { ok: false, reason: 'pull_failed', pulled };
+    const projects = await pushProjectRoots(client, token, { ...deps, notionReq, dbId });
+    const decisions = await pushPendingDecisions(client, token, { ...deps, notionReq, dbId: DECISIONS_INLET_DB });
+    return { ok: projects.failed === 0 && decisions.failed === 0, pulled, projects, decisions };
+  } finally {
+    try { if (locked) await client.query("SELECT pg_advisory_unlock(hashtext('projects-notion-sync'))"); }
+    finally { client.release(); }
+  }
+}
+
+export async function ensureProjectColumns(token, notionReq, dbId = PROJECTS_DB) {
+  const db = await notionReq(token, `/databases/${dbId}`, 'GET');
+  const required = { 'AI 参与': { select: { options: ['知情', '盯着', '介入'].map(name => ({ name })) } },
+    'AI 进展': { rich_text: {} } };
+  const missing = {};
+  for (const [key, value] of Object.entries(required)) {
+    if (!db.properties?.[key]) missing[key] = value;
+    else if (db.properties[key].type !== Object.keys(value)[0]) throw new Error(`项目列 ${key} 类型不符`);
+  }
+  if (Object.keys(missing).length) await notionReq(token, `/databases/${dbId}`, 'PATCH', { properties: missing });
 }

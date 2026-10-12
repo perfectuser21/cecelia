@@ -6,6 +6,7 @@
  *  4. pushPendingDecisions：草案属性 + 项目关系；回存 notion_id
  */
 import { describe, it, expect, vi } from 'vitest';
+vi.mock('../project-notion-ingest.js', () => ({ ingestProjectPage: vi.fn(async () => null), pullProjects: vi.fn() }));
 
 vi.mock('../recurring-notion-sync.js', () => ({ notionReq: vi.fn(), getToken: () => 'tok' }));
 
@@ -43,8 +44,8 @@ describe('buildProjectProps / Body', () => {
     expect(p.Status.status.name).toBe('In Progress');
     expect(p['AI Project'].checkbox).toBe(true);
     expect(p['Run ID'].rich_text[0].text.content).toBe(`brain:${ROOT.id}`);
-    expect(p.Remark.rich_text[0].text.content).toContain('1/2 棒完成');
-    expect(p.Remark.rich_text[0].text.content).toContain('待拍板 1');
+    expect(p['AI 进展'].rich_text[0].text.content).toContain('1/2 棒完成');
+    expect(p['AI 进展'].rich_text[0].text.content).toContain('待拍板 1');
     expect(PROJECT_STATUS_TO_NOTION.blocked).toBe('On Hold');
     expect(PROJECT_STATUS_TO_NOTION.completed).toBe('Completed');
   });
@@ -93,7 +94,7 @@ describe('buildProjectProps / Body', () => {
 
 function poolWith({ roots, snap = SNAP, updates = [] }) {
   return { query: vi.fn(async (sql, params) => {
-    if (/FROM projects\s+WHERE status NOT IN/.test(sql)) return { rows: roots };
+    if (/FROM projects ORDER BY/.test(sql)) return { rows: roots };
     if (/FROM tasks WHERE project_id = \$1::uuid AND task_type <> 'project'/.test(sql)) return { rows: snap.children };
     if (/FROM decisions\s+WHERE status = 'pending'/.test(sql)) return { rows: snap.pending };
     if (/handoff_log/.test(sql)) return { rows: snap.log.map((e) => ({ entry: e })) };
@@ -113,8 +114,8 @@ describe('pushProjectRoots', () => {
     const s = await pushProjectRoots(pool, 'tok', { notionReq: req });
     expect(s).toEqual({ pushed: 1, skipped: 0, failed: 0 });
     expect(updates[0][0]).toBe(ROOT.id);
-    expect(updates[0][1]).toBe('page-1');
-    expect(updates[0][2]).toHaveLength(40);
+    expect(updates.find(p => typeof p[2] === 'string' && p[2].length === 40)[1]).toBe('page-1');
+    expect(updates.find(p => typeof p[2] === 'string' && p[2].length === 40)[2]).toHaveLength(40);
   });
   it('指纹相同 → 跳过，不碰 Notion', async () => {
     const digest = digestOf(buildProjectProps(ROOT, SNAP), buildProjectBody(ROOT, SNAP));
@@ -129,7 +130,7 @@ describe('pushProjectRoots', () => {
     const calls = [];
     const req = vi.fn(async (t, path, method) => { calls.push(`${method} ${path}`); if (method === 'GET') return { results: [{ id: 'b1' }, { id: 'b2' }] }; return {}; });
     await pushProjectRoots(pool, 'tok', { notionReq: req });
-    expect(calls).toEqual(['PATCH /pages/page-1', 'GET /blocks/page-1/children?page_size=100', 'DELETE /blocks/b1', 'DELETE /blocks/b2', 'PATCH /blocks/page-1/children']);
+    expect(calls).toEqual(['GET /pages/page-1', 'PATCH /pages/page-1', 'GET /blocks/page-1/children?page_size=100', 'DELETE /blocks/b1', 'DELETE /blocks/b2', 'PATCH /blocks/page-1/children']);
   });
   it('页被删（404）→ 重建新页', async () => {
     const updates = [];
@@ -141,7 +142,7 @@ describe('pushProjectRoots', () => {
     });
     const s = await pushProjectRoots(pool, 'tok', { notionReq: req });
     expect(s.pushed).toBe(1);
-    expect(updates[0][1]).toBe('page-new');
+    expect(updates.find(p => typeof p[2] === 'string' && p[2].length === 40)[1]).toBe('page-new');
   });
 });
 

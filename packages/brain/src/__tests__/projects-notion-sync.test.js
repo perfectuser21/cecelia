@@ -8,6 +8,7 @@ function fixture(row = root) {
   const saved = { ...row, notion_props: { ...row.notion_props } };
   const pool = { query: vi.fn(async (sql, values) => {
     if (/FROM projects/.test(sql)) return { rows: [saved] };
+    if (/UPDATE projects SET status/.test(sql)) { saved.notion_props = JSON.parse(values[6]); return { rows: [saved] }; }
     if (/UPDATE projects/.test(sql) && /pending_human_push/.test(sql)) saved.notion_props.pending_human_push = JSON.parse(values[1]);
     if (/UPDATE projects/.test(sql) && /human_baseline/.test(sql)) saved.notion_props.human_baseline = JSON.parse(values[1]);
     return { rows: [] };
@@ -36,7 +37,7 @@ describe('项目同步推送回归', () => {
   });
   it('Notion 人建项目只改属性，人工正文不删不追加', async () => {
     const f = fixture({ ...root, metadata: { source: 'notion' }, notion_props: { notion_id: 'page', human_baseline: brainHuman(root) } });
-    await pushProjectRoots(f.pool, 'tok', { notionReq: f.req });
+    expect((await pushProjectRoots(f.pool, 'tok', { notionReq: f.req })).failed).toBe(0);
     expect(f.req.mock.calls.some(([, p]) => p.startsWith('/blocks/'))).toBe(false);
   });
   it('建页前按 Run ID 找回上轮已创建但未落库的页', async () => {
