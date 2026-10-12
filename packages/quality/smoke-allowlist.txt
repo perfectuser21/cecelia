@@ -446,3 +446,4 @@ bypass-audit-smoke.sh
 task-lease-device-pool-smoke.sh
 
 coding-workflow-codex-smoke.sh
+coding-workflow-base-smoke.sh

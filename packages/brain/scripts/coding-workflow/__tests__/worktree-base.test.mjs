@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,10 +7,12 @@ import { execFileSync } from 'node:child_process';
 import { prepareWorktree } from '../runner/lib/worktree.mjs';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const roots = [];
+afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 
-function fixture(t) {
+function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-base-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  roots.push(root);
   const origin = path.join(root, 'origin');
   fs.mkdirSync(origin);
   git(origin, 'init', '-b', 'main');
