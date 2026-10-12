@@ -148,6 +148,13 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.7.6"
+    date: "2026-10-12"
+    change: "stop hook 交接提示使用当前四类 next_steps"
+    description: "仅修复会话 handoff 示例为 resume_headed|dispatch_headless|decision|note；真实 hook 输出回归验证，不改变闸门行为。续接 edff1622，任务 d0463902。"
+    files:
+      - packages/engine/hooks/stop.sh
+      - packages/engine/tests/hooks/stop-handoff-example.test.ts
   - version: "19.7.5"
     date: "2026-10-12"
     change: '/dev 路径 C 改建 coding_workflow 单，旧 harness skill 标注已废弃'
