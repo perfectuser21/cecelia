@@ -5,6 +5,15 @@ const base = { status: 'In Progress', priority: null, remark: '', due: null, ai_
 const row = (extra = {}) => ({ id: 'p', status: 'active', ai_tier: '知情', custom_props: {},
   notion_props: { human_baseline: base }, ...extra });
 describe('项目人工列三方合并', () => {
+  it('完整发送长备注，不把自己截断的内容回灌丢失', () => {
+    const remark = '人的内容'.repeat(700);
+    const props = humanProps({ ...base, remark });
+    expect(props.Remark.rich_text.map(p => p.text.content).join('')).toBe(remark);
+    expect(props.Remark.rich_text.every(p => p.text.content.length <= 2000)).toBe(true);
+  });
+  it('PostgreSQL DATE 的本地午夜不因时区转成前一天', () => {
+    expect(brainHuman(row({ end_date: new Date(2026, 9, 12) })).due).toBe('2026-10-12');
+  });
   it('推送回声不改变 active 或写重复审计', () => {
     const merged = mergeHuman(row(), base);
     expect(merged.changed).toBe(false);
