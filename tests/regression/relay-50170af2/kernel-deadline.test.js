@@ -14,7 +14,6 @@ vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternal
 
 import { runLoop } from '../../../packages/brain/src/orchestrator/loop.js';
 import * as constants from '../../../packages/brain/src/orchestrator/constants.js';
-import { spawnSkillRelaySession } from '../../../packages/brain/src/harness-skill-relay.js';
 
 // ---- T-05/T-06：deadline fence ----
 
@@ -268,47 +267,5 @@ describe('[BEHAVIOR] B-07 固定 fix cap 删除，MAX_HOPS=4096', () => {
 
   test('MAX_HOPS 应为 4096 宽兜底', () => {
     expect(constants.MAX_HOPS).toBe(4096);
-  });
-});
-
-// ---- harness-skill-relay deadline 断言 ----
-
-describe('[BEHAVIOR] B-03 kernel-v1 deadline_at = 8h', () => {
-  /**
-   * 验证 _spawnKernelRuntime 把 8h 合同交给唯一 run store。
-   */
-  test('kernel-v1 创建合同使用 8 hours', async () => {
-    let createInput = null;
-    const task = {
-      id: 'task-1',
-      task_type: 'harness_initiative',
-      ability_id: null,
-      title: 'deadline contract',
-      payload: {
-        harness_runtime: 'kernel-v1',
-        orchestrator: 'skill-relay',
-      },
-    };
-    const deps = {
-      pool: { query: async () => ({ rows: [] }) },
-      ensureWt: async () => '/tmp/kernel-deadline-contract',
-      createKernelRun: async (_pool, input) => {
-        createInput = input;
-        return { created: true, run: { id: 'run-1' } };
-      },
-      launchKernel: async () => ({ pid: 1234 }),
-      now: () => new Date('2026-07-23T00:00:00.000Z'),
-    };
-
-    const result = await spawnSkillRelaySession(task, deps);
-
-    expect(result.ok).toBe(true);
-    expect(createInput).toMatchObject({
-      taskId: 'task-1',
-      phase: 'planning',
-      host: 'kernel-v1',
-      deadlineHours: 8,
-      createdSource: 'kernel_dispatch',
-    });
   });
 });

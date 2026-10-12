@@ -31,17 +31,11 @@ describe('Controller lease sprint 测试资产单文件行数门禁', () => {
   it('actual CLI 真 PG 不超过 500 行', () => {
     expectAssetWithinLimit('./integration/kernel-cli-ownership-preaction.pg.integration.test.js');
   });
-  it('永久 session 透传测试不超过 500 行', () => {
-    expectAssetWithinLimit('./controller-session-passthrough.test.js');
-  });
   it('永久 E2E oracle 测试不超过 500 行', () => {
     expectAssetWithinLimit('./kernel-controller-lease-renewal-e2e-oracle.test.js');
   });
   it('行数门禁自身不超过 500 行', () => {
     expectAssetWithinLimit('./kernel-controller-lease-renewal-file-size.test.js');
-  });
-  it('冻结 session 透传测试不超过 500 行', () => {
-    expectAssetWithinLimit('../../../../sprints/08132021-controller-lease-renewal-r2/tests/controller-session-passthrough.test.js');
   });
   it('冻结 lease 真 PG 测试不超过 500 行', () => {
     expectAssetWithinLimit('../../../../sprints/08132021-controller-lease-renewal-r2/tests/kernel-controller-lease-renewal.pg.integration.test.js');

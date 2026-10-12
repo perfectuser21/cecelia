@@ -20,24 +20,16 @@ import { CLAUDE_CHANNEL_RETIRED_CODE, isClaudeExecutor } from './lib/claude-chan
  */
 import pool from './db.js';
 import { findActiveRunBlockingSpawn } from './lib/harness-run-guard.js';
-import { KERNEL_LAUNCH_DEFERRED_REASON_PREFIX } from './lib/kernel-launch-deferral.js';
 import { buildChainPromptSafe } from './handoff.js';
 import { normalizeChangeKind } from './impact-contract/change-kind.js';
-import { execSync, spawn as nodeSpawn } from 'node:child_process';
-import { existsSync, mkdirSync, copyFileSync, openSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import {
-  createKernelRun,
-  finalizeKernelRun,
-  requeueKernelRunLaunchDeferred,
-  syncTaskPayloadFromKernelRun,
-} from './orchestrator/kernel-run-store.js';
-import { spawnHeadedKernelRuntime } from './orchestrator/headed-kernel-runtime.js';
-import { createOrchestratorBridge } from './orchestrator-remote-bridge.js';
 
 const RELAY_FLAG = 'skill-relay';
+/** kernel-v1 运行时退役后的拒绝码（A5，决策 b4adf807）。 */
+export const KERNEL_RUNTIME_RETIRED_CODE = 'kernel_runtime_retired';
 const RELAY_DEADLINE_HOURS = 6;
 const CODEX_RELAY_DEADLINE_HOURS = 8; // B5: codex 路径用 8h
 const GROK_RELAY_DEADLINE_HOURS = 8;  // grok 路径对齐 codex 等级
@@ -133,305 +125,6 @@ export function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
 
-export function buildKernelLaunchArgs({
-  runner,
-  taskId,
-  runId,
-  controllerSessionId,
-  controllerGeneration,
-  resumeToken = null,
-}) {
-  const expectedGeneration = Number(controllerGeneration);
-  if (!controllerSessionId || !Number.isSafeInteger(expectedGeneration) || expectedGeneration < 1) {
-    throw new Error('controller_lease_identity_missing');
-  }
-  const args = [
-    runner,
-    '--task-id', taskId,
-    '--run-id', runId,
-    '--controller-session-id', controllerSessionId,
-    '--controller-generation', String(expectedGeneration),
-  ];
-  if (resumeToken) args.push('--resume-token', resumeToken);
-  return args;
-}
-
-export async function launchKernelProcess({
-  taskId,
-  runId,
-  controllerSessionId,
-  controllerGeneration,
-  worktreePath,
-  resumeToken = null,
-}) {
-  const runner = fileURLToPath(new URL('./orchestrator/run.js', import.meta.url));
-  const args = buildKernelLaunchArgs({
-    runner,
-    taskId,
-    runId,
-    controllerSessionId,
-    controllerGeneration,
-    resumeToken,
-  });
-  // 刀0：detached kernel 的 stdout/stderr 落盘到宿主可见目录，替代 stdio:'ignore'。
-  // 原先零遗言——kernel 卡死/崩溃时看不到任何栈（planner 停摆 debug 不能）。
-  // 落 CECELIA_KERNEL_LOG_DIR，未设置时落 REPO_ROOT/logs/kernel/（bind-mount 持久路径，
-  // 复用 ops.js:2857 deploy-webhook 同款已验证模式；原先默认 /tmp/cecelia-kernel-logs 落
-  // 容器 tmpfs，Brain 每次部署重建容器即清空——诊断 planner 停摆恰好必然伴随一次部署，
-  // 缺口和原问题同形状，2026-08-13 生产实测确认。相对路径层级注意：本文件比 ops.js 浅
-  // 一层（无 routes/ 子目录），用 3 级 ../../.. 不是 4 级，已用 node 脚本验证过）。
-  // 文件名带 runId 便于按 run 定位；打不开日志不阻断 spawn。
-  const logDir = process.env.CECELIA_KERNEL_LOG_DIR
-    || join(process.env.REPO_ROOT || fileURLToPath(new URL('../../..', import.meta.url)), 'logs', 'kernel');
-  let stdioSpec = 'ignore';
-  let logPath = null;
-  try {
-    mkdirSync(logDir, { recursive: true });
-    logPath = join(logDir, `kernel-${runId}.log`);
-    const logFd = openSync(logPath, 'a');
-    stdioSpec = ['ignore', logFd, logFd];
-  } catch (logErr) {
-    console.warn(
-      `[harness-skill-relay] kernel 日志落盘不可用 run=${runId}，回落 stdio:ignore: ${logErr.message}`,
-    );
-  }
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const child = nodeSpawn(
-      process.execPath,
-      args,
-      {
-        cwd: worktreePath,
-        detached: true,
-        stdio: stdioSpec,
-        env: {
-          ...process.env,
-          CECELIA_HARNESS_RUNTIME: 'kernel-v1',
-          ...(logPath ? { CECELIA_KERNEL_LOG_PATH: logPath } : {}),
-        },
-      },
-    );
-    const onSpawnError = (error) => {
-      if (settled) return;
-      settled = true;
-      child.removeListener('spawn', onSpawn);
-      reject(error);
-    };
-    const onSpawn = () => {
-      if (settled) return;
-      if (!Number.isInteger(child.pid) || child.pid <= 0) {
-        settled = true;
-        child.removeListener('error', onSpawnError);
-        child.on('error', () => {});
-        reject(new Error(`kernel child spawn returned invalid pid for run ${runId}`));
-        return;
-      }
-      settled = true;
-      child.removeListener('error', onSpawnError);
-      // A detached child can still emit a later process-level error. Keep a
-      // listener so it cannot become an uncaught EventEmitter error in Brain.
-      child.on('error', (error) => {
-        console.error(
-          `[harness-skill-relay] detached kernel child error `
-          + `run=${runId} pid=${child.pid}: ${error.message}`,
-        );
-      });
-      child.unref();
-      resolve({ pid: child.pid });
-    };
-    child.once('error', onSpawnError);
-    child.once('spawn', onSpawn);
-  });
-}
-
-async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
-  const ensureWt = deps.ensureWt
-    || (await import('./harness-worktree.js')).ensureHarnessWorktree;
-  const worktreePath = await ensureWt({
-    taskId: task.id,
-    initiativeId,
-    baseRepo: task.payload?.base_repo,
-  });
-  const sprintDir = task.payload?.sprint_dir
-    || `sprints/${stampMMDDHHNN(now())}-kernel-${shortId(task.id)}`;
-  const reviewRequired = deriveReviewRequired(task);
-
-  await dbPool.query(
-    `UPDATE tasks
-        SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
-            updated_at=NOW()
-      WHERE id=$1`,
-    [task.id, JSON.stringify({
-      harness_runtime: 'kernel-v1',
-      sprint_dir: sprintDir,
-      worktree_path: worktreePath,
-      review_required: reviewRequired,
-    })],
-  );
-
-  // harness gear 档位（sprint 08091640）：kernel 真读 payload.gear，建 run 时读档并持久化到
-  // initiative_runs.gear，供 derive 状态机每跳分叉。deriveGear 缺省/undefined/null→'default'。
-  // 非法值：executor.js 点火前已 deriveGear 校验并 terminal failed（invalid_gear），到这里 gear
-  // 必为合法枚举；此调用是二次确认（defense-in-depth）。若真抛出，发生在 createRun 之前、
-  // 无半态 run，作为 spawn 失败向上抛给调用方，仍是 fail-closed。
-  const gear = deriveGear(task);
-  // 启动链收敛：Dispatcher→Controller→Kernel。createKernelRun 在同一事务内
-  // 由服务端签发 durable Controller authority，然后才返回可执行 run。
-  // 由此 payload.harness_runtime=kernel-v1 直打也不会产生 detached 无主 Kernel（issue 962d399c）。
-  const createRun = deps.createKernelRun ?? createKernelRun;
-  const created = await createRun(dbPool, {
-    taskId: task.id,
-    initiativeId,
-    phase: 'planning',
-    journeyId: task.payload?.journey_id || null,
-    abilityId: task.ability_id || task.payload?.ability_id || null,
-    host: 'kernel-v1',
-    deadlineHours: 8,
-    createdSource: 'kernel_dispatch',
-    gear,
-  });
-  // 预检可能已重锚定到新 base_sha（DB 已改）；内存 task 必须同步，否则跑场用旧 sha。
-  syncTaskPayloadFromKernelRun(task, created);
-  const runId = created.run?.id;
-  if (!runId) throw new Error('kernel-v1 run authority returned no id');
-  if (!created.created) {
-    return {
-      ok: false,
-      mode: 'kernel-v1',
-      deferred: true,
-      reason: 'kernel_run_exists',
-      runId,
-    };
-  }
-
-  const launchKernel = deps.launchKernel || launchKernelProcess;
-  try {
-    const launched = await launchKernel({
-      taskId:task.id,runId,worktreePath,
-      controllerSessionId:created.run.controller_session_id,
-      controllerGeneration:Number(created.run.controller_generation),
-    });
-    console.log(`[skill-relay][kernel-v1] launched run=${runId} pid=${launched.pid ?? '?'}`);
-    return { ok: true, mode: 'kernel-v1', runId, ...launched, sprintDir, worktreePath };
-  } catch (error) {
-    const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
-    await finalizeRun(dbPool, {
-      runId,
-      expectedTaskId: task.id,
-      outcome: 'failed',
-      reason: `kernel_launch_failed:${error.message}`,
-    });
-    return {
-      ok: false,
-      mode: 'kernel-v1',
-      runId,
-      error: error.message,
-      terminalized: true,
-    };
-  }
-}
-
-/**
- * _spawnKernelRuntimeRemote — us-vps 纯调度器化闸开着时的 kernel-v1 headless 路径
- * （决策 e3a41ecc）。与 _spawnKernelRuntime 结构刻意同构：同样先 createKernelRun
- * 拿 durable authority，唯一区别是不在本机 ensureHarnessWorktree/launchKernelProcess，
- * 改经 orchestrator-remote-bridge 把 prepare（建远端 worktree）+ start（远端起
- * kernel 进程）都交给 primary worker。
- */
-async function _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps }) {
-  const bridge = deps.orchestratorBridge
-    ?? createOrchestratorBridge({ env: deps.env ?? process.env });
-  const sprintDir = task.payload?.sprint_dir
-    || `sprints/${stampMMDDHHNN(now())}-kernel-${shortId(task.id)}`;
-  const reviewRequired = deriveReviewRequired(task);
-  const gear = deriveGear(task);
-  const createRun = deps.createKernelRun ?? createKernelRun;
-  const created = await createRun(dbPool, {
-    taskId: task.id,
-    initiativeId,
-    phase: 'planning',
-    journeyId: task.payload?.journey_id || null,
-    abilityId: task.ability_id || task.payload?.ability_id || null,
-    host: 'kernel-v1',
-    deadlineHours: 8,
-    // created_source 用既有枚举 kernel_dispatch（枚举语义常量只许一份，铁律 76cb816c；
-    // DB CHECK 约束 migration 430 同为该集合）。远程与否由 task.payload.execution_location
-    // 与 initiative_runs.orchestrator_host 表达，不新增枚举值。
-    // 2026-09-13 生产实锤：kernel_dispatch_remote 不在两层白名单 → createKernelRun 抛
-    // invalid created source → dispatch_fail_autoblock 3 连击把任务打 blocked。
-    createdSource: 'kernel_dispatch',
-    gear,
-  });
-  // 同上：bridge.prepare 读 task.payload.base_sha，重锚定后必须先回流再远程建 worktree。
-  syncTaskPayloadFromKernelRun(task, created);
-  const runId = created.run?.id;
-  if (!runId) throw new Error('kernel-v1 run authority returned no id');
-  if (!created.created) {
-    return { ok: false, mode: 'kernel-v1', deferred: true, reason: 'kernel_run_exists', runId };
-  }
-  try {
-    const prep = await bridge.prepare({
-      run_id: runId,
-      task_id: task.id,
-      repo: parseBaseRepoOrDefault(task.payload?.base_repo),
-      ...(task.payload?.base_sha ? { base_sha: task.payload.base_sha } : {}),
-    });
-    const started = await bridge.start({
-      run_id: runId,
-      controller_session_id: created.run.controller_session_id,
-      controller_generation: Number(created.run.controller_generation),
-    });
-    await dbPool.query(
-      `UPDATE tasks SET payload = COALESCE(payload,'{}'::jsonb) || $2::jsonb, updated_at=NOW() WHERE id=$1`,
-      [task.id, JSON.stringify({
-        harness_runtime: 'kernel-v1',
-        sprint_dir: sprintDir,
-        worktree_path: prep.worktree_path,
-        execution_location: `remote:${bridge.targetMachineId}`,
-        review_required: reviewRequired,
-      })],
-    );
-    console.log(`[skill-relay][kernel-v1] remote-launched run=${runId} machine=${bridge.targetMachineId} pid=${started.pid ?? '?'}`);
-    return { ok: true, mode: 'kernel-v1', runId, remote: true, pid: started.pid, host: started.host, sprintDir, worktreePath: prep.worktree_path };
-  } catch (error) {
-    const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
-    // 跑场机忙/抖（429 槽位满、5xx、请求超时）是瞬时状态：run 记失败留痕，任务回 queued 等下个
-    // tick 重派，不 terminalized（任务 281aa798，2026-09-24 实证一天 6 条刀被 429 判死）。
-    // 延后次数用尽（requeue 返回 exhausted）或任务已终态 → 回落原终态路径。
-    if (isTransientRemoteLaunchError(error)) {
-      const requeueDeferred = deps.requeueKernelRunDeferred ?? requeueKernelRunLaunchDeferred;
-      const requeued = await requeueDeferred(dbPool, {
-        runId, expectedTaskId: task.id,
-        reason: `${KERNEL_LAUNCH_DEFERRED_REASON_PREFIX}${error.message}`,
-      });
-      if (requeued?.changed) {
-        console.warn(
-          `[skill-relay][kernel-v1] remote launch deferred run=${runId} task=${task.id} `
-          + `defers=${requeued.deferCount}: ${error.message}`,
-        );
-        return {
-          ok: false, mode: 'kernel-v1', runId, deferred: true, reason: 'orchestrator_busy',
-          error: error.message, deferCount: requeued.deferCount,
-        };
-      }
-    }
-    await finalizeRun(dbPool, {
-      runId, expectedTaskId: task.id, outcome: 'failed',
-      reason: `kernel_remote_launch_failed:${error.message}`,
-    });
-    return { ok: false, mode: 'kernel-v1', runId, error: error.message, terminalized: true };
-  }
-}
-
-/**
- * 远程点火的瞬时故障判定：bridge 对 prepare/start 抛的 429（槽位满）、502/503/504、
- * request_failed（含 AbortSignal 超时）。400/401/404/409/500 等视为永久错误走终态。
- */
-export function isTransientRemoteLaunchError(error) {
-  const message = String(error?.message ?? '');
-  return /^orchestrator_bridge_(prepare|start)_(http_(429|502|503|504)|request_failed)(:|$)/.test(message);
-}
-
 /** base_repo（URL 或 owner/name）→ worker repoAllowlist 键；解析不出回落 cecelia。 */
 function parseBaseRepoOrDefault(baseRepo) {
   if (typeof baseRepo === 'string') {
@@ -439,25 +132,6 @@ function parseBaseRepoOrDefault(baseRepo) {
     if (m) return m[1];
   }
   return 'perfectuser21/cecelia';
-}
-
-async function _spawnHeadedKernelRuntime(task, context) {
-  const { dbPool, now, initiativeId, short, deps } = context;
-  return spawnHeadedKernelRuntime({
-    task,
-    dbPool,
-    initiativeId,
-    deps,
-    gear: deriveGear(task),
-    spawnSession: ({ runId,controllerSessionId,controllerGeneration,createAttempt }) => _spawnHeadedSession(task, {
-      dbPool,
-      now,
-      short,
-      initiativeId,
-      deps: { ...deps, createHeadedAttempt: createAttempt },
-      kernelAuthority: { runId,controllerSessionId,controllerGeneration },
-    }),
-  });
 }
 
 /** 上海时区 MMDDHHNN（sprint_dir 缺省生成用；now 注入保持可测确定性） */
@@ -555,30 +229,17 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     console.warn(`[skill-relay][preview-guard] BRAIN_PREVIEW=${previewFlag} — refusing harness spawn task=${task?.id}`);
     return { ok: false, mode: RELAY_FLAG, error: 'preview_brain_harness_spawn_forbidden' };
   }
-  // 本机执行闸（us-vps 纯调度器化第一刀，方案 A —— 主理人 2026-09-13 拍板，
-  // 纠正决策 26c1e763 supersede 962281b2）。铁律 96054a8b：us-vps 上的 Brain 只当
-  // 任务调度器/分发器，真实执行负载全部下放 Mac worker。
-  //
-  // 为什么另开变量而不是用 CECELIA_MACHINE_ID 表达「我是调度器」：
-  //  · 它的语义是「fleet 可调度节点身份 + 凭据签发权」，不是宿主物理机标识
-  //    （canonical-machine-id.js 注释明示 hostname 被刻意忽略）；
-  //  · credential-broker.js:144 与 github-credential-broker.js:36 硬编码要求
-  //    controllerMachineId === 'us-mac-m4'——这台 Brain 必须自称 us-mac-m4 因为它是
-  //    凭据权威，改身份会让远程派发到 MMV 也签不出凭据，全面 fail-closed；
-  //  · 另有六处 allowlist（kernel 启动校验/canonical id/preflight 探针/两个 broker/
-  //    派发目标表）都假设它恒等于 us-mac-m4。
-  // 故用独立变量表达宿主角色，那六处一处都不碰。
-  //
-  // 拦在这里而不是 launchKernelProcess 内部：此处是所有 harness 派发路径的唯一咽喉
-  // （与上面 preview-guard 同位），拒绝时既不建 run 也不碰 worktree，不留半态——
-  // 避免「建了 run 再失败 → spawn 返回 pid 算 ok → 静默卡到租约过期」那条死法。
-  // 缺省或 'true' 一律放行 = 行为零变化；只有显式 'false' 才拦。
-  //
-  // 闸语义反转（决策 e3a41ecc，2026-09-13）：闸的原意是「禁止调度器自己本机起活，
-  // 放行远程」，不是「禁止一切执行」。kernel-v1 headless 路径可以经
-  // orchestrator-remote-bridge 把执行权交给远端 primary worker（Task 6 交付），
-  // 因此这里只计算标志、不再提前 return；headed kernel（尚无远程头模式）与所有
-  // 非 kernel 路径在闸=true 时维持一刀切拒绝，错误码不变。
+  // kernel-v1 运行时已退役（决策 b4adf807 先删后补，A5）：Brain 侧 kernel 启动 / 远程桥 / 有头 kernel
+  // 代码已删除，存量 payload.harness_runtime='kernel-v1' 的单派到这里直接拒（不建 run、不碰 worktree）。
+  // 无头编码改走 coding_workflow runner；有头 /dev 账本行带 headed_manual 不进 tick。
+  if (task?.payload?.harness_runtime === 'kernel-v1') {
+    console.warn(`[skill-relay][kernel-retired] task=${task?.id} harness_runtime=kernel-v1 → ${KERNEL_RUNTIME_RETIRED_CODE}`);
+    return { ok: false, mode: RELAY_FLAG, error: KERNEL_RUNTIME_RETIRED_CODE };
+  }
+  // 本机执行闸（铁律 96054a8b：us-vps 上的 Brain 只当调度器）：CECELIA_LOCAL_EXECUTION_ENABLED='false'
+  // 时拒绝本机起 relay（headed tmux / headless docker），错误码 local_execution_disabled_on_scheduler。
+  // 拦在所有派发路径的唯一咽喉（与 preview-guard 同位），拒绝时不建 run、不碰 worktree。
+  // 缺省或 'true' 一律放行。
   const localExecutionDisabled =
     (deps.env ?? process.env).CECELIA_LOCAL_EXECUTION_ENABLED === 'false';
   const dbPool = deps.pool || pool;
@@ -589,49 +250,25 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const isGrok = task.payload?.executor === 'grok';
   const isHeaded = task.payload?.mode === 'headed';
 
-  const isKernelRuntime = task.payload?.harness_runtime === 'kernel-v1';
-
-  // 本机执行闸先于 Claude 退役检查（任务 76a160b3）：闸=false 时 headed kernel 与非 kernel 路径
-  // 维持原错误码 local_execution_disabled_on_scheduler 不变；kernel-v1 headless 走远程（下方）。
-  if (localExecutionDisabled && (isHeaded || !isKernelRuntime)) {
-    if (isKernelRuntime) {
-      console.warn(`[skill-relay][local-exec-guard] headed kernel 无法远程化 task=${task?.id}`);
-    } else {
-      console.warn(`[skill-relay][local-exec-guard] CECELIA_LOCAL_EXECUTION_ENABLED=false — refusing local harness spawn task=${task?.id}（执行须下放 Mac worker，见决策 96054a8b）`);
-    }
+  // 本机执行闸先于 Claude 退役检查（任务 76a160b3），错误码不变。
+  if (localExecutionDisabled) {
+    console.warn(`[skill-relay][local-exec-guard] CECELIA_LOCAL_EXECUTION_ENABLED=false — refusing local harness spawn task=${task?.id}（执行须下放 Mac worker，见决策 96054a8b）`);
     return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
   }
 
   // Claude Code 无头通道已退役（任务 76a160b3，决策 067867c8）：显式 executor=claude 一律拒绝；
-  // 非 kernel 无头路径缺省执行体即 claude，同样拒绝。不建 run、不碰 worktree、不起容器/tmux。
-  // kernel-v1 缺省 executor 走 orchestrator provider registry（已不含 claude）；
+  // 无头路径缺省执行体即 claude，同样拒绝。不建 run、不碰 worktree、不起容器/tmux。
   // task.location='xian' 走西安 codex bridge（从不拉起 claude），缺省执行体不拦。
   const relayExecutor = task.payload?.executor;
   if (relayExecutor === 'claude'
-    || (!isHeaded && !isKernelRuntime && task.location !== 'xian'
+    || (!isHeaded && task.location !== 'xian'
       && isClaudeExecutor(relayExecutor))) {
     console.warn(`[skill-relay][claude-retired] task=${task?.id} executor=${relayExecutor ?? 'claude(default)'} → ${CLAUDE_CHANNEL_RETIRED_CODE}`);
     return { ok: false, mode: RELAY_FLAG, error: CLAUDE_CHANNEL_RETIRED_CODE };
   }
 
-  // kernel-v1 路径与 executor 无关（使用 launchKernelProcess，不走头/无头路由），
-  // 必须在 executor 白名单校验之前处理，避免 executor='auto' 被误拦截。
-  if (isKernelRuntime && isHeaded) {
-    return _spawnHeadedKernelRuntime(task, {
-      dbPool, now, short, initiativeId, deps,
-    });
-  }
-  if (isKernelRuntime) {
-    if (localExecutionDisabled) {
-      // 判定点 e3a41ecc：闸语义=「禁本机起，放行远程」——这是闸 reason 文案的原意
-      return _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps });
-    }
-    return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
-  }
-
   // INV-8: unsupported executor loud-fail（三处文件 —— harness-skill-relay.js 这处）
   // 白名单：claude / codex / grok / undefined（缺省 claude）；其余显式 loud-fail。
-  // kernel-v1 路径已提前处理，此处只校验 headed/headless 路由所需的 executor 值。
   const executorValue = task.payload?.executor;
   const SUPPORTED_EXECUTORS = ['claude', 'codex', 'grok', undefined, null];
   if (!SUPPORTED_EXECUTORS.includes(executorValue)) {
@@ -1114,7 +751,6 @@ async function _spawnHeadedSession(task, {
   short,
   initiativeId,
   deps,
-  kernelAuthority = null,
 }) {
   // Claude Code 通道已退役（任务 76a160b3）：headed kernel 等经此直达的路径同样拒绝 claude
   if (task.payload?.executor === 'claude') {
@@ -1265,30 +901,6 @@ async function _spawnHeadedSession(task, {
     initiativeId,
     baseRepo: task.payload?.base_repo,
   });
-  let kernelAttempt = null;
-  if (kernelAuthority) {
-    const branch = task.payload?.branch;
-    const baseSha = task.payload?.base_sha;
-    if (!task.payload?.routing_receipt_id || !task.payload?.repo
-        || !/^cp-[a-z0-9][a-z0-9._-]{0,126}$/.test(branch ?? '')
-        || !/^[a-f0-9]{40}$/.test(baseSha ?? '')) {
-      throw new Error('headed_kernel_identity_incomplete');
-    }
-    const createAttempt = deps.createHeadedAttempt;
-    if (typeof createAttempt !== 'function') {
-      throw new Error('headed_kernel_attempt_factory_missing');
-    }
-    kernelAttempt = await createAttempt({
-      runId: kernelAuthority.runId,
-      task,
-      worktreePath,
-      branch,
-      baseSha,
-      provider: headedExecutor,
-    });
-    if (!kernelAttempt?.id) throw new Error('headed_kernel_attempt_missing');
-  }
-
   const brainUrl = 'http://host.docker.internal:5221';
   const chainContext = await buildChainPromptSafe({ pool }, task.id);
   const prompt = buildRelayPrompt({ kind: 'headed', skillContent, task, sprintDir, brainUrl, chainContext });
@@ -1323,12 +935,10 @@ async function _spawnHeadedSession(task, {
       );
     } catch (err) {
       console.error(`[skill-relay][headed] prompt 文件写入失败: ${err.message}`);
-      if (!kernelAuthority) {
-        await dbPool.query(
-          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
-          [task.id]
-        );
-      }
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
       return { ok: false, mode: headedHost, error: `prompt write failed: ${err.message}` };
     }
     // tmux new-session：cd 进 worktree + 注入 CODEX_HOME（不注入=烧宿主默认账号）+
@@ -1347,21 +957,11 @@ async function _spawnHeadedSession(task, {
     // (P0 a638f840 根治：PR 在 evaluator 运行前被 GitHub 自动合并)。
     // headless docker relay 已通过 spawnFn env 参数注入，此处仅补 headed 路径。
     // 两分支路由（INV-1 + FR-R3/R4）：grok / codex 各占一条独立分支
-    const identityEnv = kernelAuthority
-      ? ` CECELIA_TASK_ID=${task.id}`
-        + ` CECELIA_ROUTING_RECEIPT_ID=${task.payload.routing_receipt_id}`
-        + ` CECELIA_RUN_ID=${kernelAuthority.runId}`
-        + ` CECELIA_CONTROLLER_SESSION_ID=${kernelAuthority.controllerSessionId}`
-        + ` CECELIA_CONTROLLER_GENERATION=${kernelAuthority.controllerGeneration}`
-        + ` CECELIA_REPO=${task.payload.repo}`
-        + ` CECELIA_BRANCH=${task.payload.branch}`
-        + ` CECELIA_BASE_SHA=${task.payload.base_sha}`
-      : '';
     let innerCmd;
     if (isGrokHeaded) {
-      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller${identityEnv} && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`;
+      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`;
     } else {
-      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id}${identityEnv} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
+      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
     }
     try {
       await authorizeRelay(()=>execFn(
@@ -1369,12 +969,10 @@ async function _spawnHeadedSession(task, {
       ));
     } catch (spawnErr) {
       console.error(`[skill-relay][headed][ALERT] ssh tmux spawn failed: ${spawnErr.message}`);
-      if (!kernelAuthority) {
-        await dbPool.query(
-          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
-          [task.id]
-        );
-      }
+      await dbPool.query(
+        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+        [task.id]
+      );
       return { ok: false, mode: headedHost, error: `ssh spawn failed: ${spawnErr.message}` };
     }
   } else {
@@ -1401,7 +999,7 @@ async function _spawnHeadedSession(task, {
   // initiative_runs 落行（orchestrator_host 按 executor 映射内联，便于测试断言；
   // headedHost 来自 HEADED_HOSTS 固定映射，无注入面）
   const headedAbilityId = task.ability_id || task.payload?.ability_id || null;
-  if (!kernelAuthority) await dbPool.query(
+  await dbPool.query(
     `INSERT INTO initiative_runs
        (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
         deadline_at, ability_id, current_task_id, created_source)
@@ -1428,11 +1026,7 @@ async function _spawnHeadedSession(task, {
   console.log(`[skill-relay][headed] session spawned: tmux=${tmuxSession} sprint=${sprintDir} host=${sshHost}`);
   return {
     ok: true,
-    mode: kernelAuthority ? 'kernel-v1-headed' : headedHost,
-    ...(kernelAuthority ? {
-      runId: kernelAuthority.runId,
-      attemptId: kernelAttempt.id,
-    } : {}),
+    mode: headedHost,
     tmuxSession,
     sprintDir,
     extraMounts: undefined,

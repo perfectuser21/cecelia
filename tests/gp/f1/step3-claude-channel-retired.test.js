@@ -71,7 +71,7 @@ describe('GP F1 step3 — Claude 无头通道已退役：执行体选择不再�
       { id: TASK_ID, payload: { harness_runtime: 'kernel-v1', executor: 'claude' } },
       deps,
     );
-    expect(result).toMatchObject({ ok: false, error: 'claude_channel_retired' });
+    expect(result).toMatchObject({ ok: false, error: 'kernel_runtime_retired' });
     expect(deps.createKernelRun).not.toHaveBeenCalled();
   });
 

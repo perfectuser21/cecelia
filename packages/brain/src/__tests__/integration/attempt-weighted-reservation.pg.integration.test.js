@@ -3,7 +3,6 @@ import { directory } from '../../execution-directory/directory.js';
 import { LEGACY_BINDINGS } from '../../execution-directory/legacy-policy.js';
 import { confirmExpiredParentCleanup } from '../../orchestrator/attempt-resource-cleanup.js';
 import { reserveExpiredAttemptReplacement } from '../../orchestrator/attempt-resource-replacement.js';
-import { reconcileExpiredKernelAttempt } from '../../harness-relay-watchdog.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
@@ -254,41 +253,6 @@ describe('真实 PG 加权预约与未确认取消', () => {
     expect(receipts).toEqual(['cleaned', 'already_clean']);
     expect(replacement.child).toMatchObject({ id: childInput.id, status: 'queued' });
     expect((await pool.query('SELECT status FROM harness_attempts WHERE id=$1', [parent.id])).rows[0].status).toBe('failed');
-  });
-
-  it.each([true, false])('真实恢复编排保留父清理身份，子启动结果=%s', async (ok) => {
-    const first = await store.createAttempt(await input('generator', 4));
-    await pool.query(`UPDATE harness_attempts SET status='running',lease_owner='old-owner',lease_generation=3,
-      lease_expires_at=NOW()-interval '1 minute',provider_session_id='thread-old',execution_transport='local-docker',
-      local_container_naming='legacy-unsuffixed' WHERE id=$1`, [first.id]);
-    const childId = randomUUID();
-    const removed = [];
-    let resumed = 0;
-    const result = await reconcileExpiredKernelAttempt({
-      db: pool, attemptId: first.id, leaseOwner: 'watchdog:fixture', reservedChildHop: 2,
-      randomUUIDFn: () => childId, collectSnapshot: async () => snapshot(4),
-      confirmCleanup: (parent) => confirmExpiredParentCleanup(parent, {
-        env: { CECELIA_MACHINE_ID: machine },
-        removeContainer: async (id) => { removed.push(id); return true; }, inspectContainer: async () => false,
-      }),
-      resumeAttempt: async (child, context) => {
-        resumed++;
-        expect(child).toMatchObject({ id: childId, retry_of_attempt_id: first.id, lease_owner: 'watchdog:fixture' });
-        expect(context.parentAttempt).toMatchObject({ id: first.id, lease_owner: 'old-owner', lease_generation: 3 });
-        expect(context.parentCleanupConfirmed).toBe(true);
-        expect(removed).toEqual([`cecelia-harness-${first.id.replaceAll('-', '').slice(0, 8)}`]);
-        return ok ? { ok: true } : false;
-      },
-    });
-    expect(resumed).toBe(1);
-    expect(result.ok).toBe(ok);
-    expect((await pool.query('SELECT status,error_code,lease_generation FROM harness_attempts WHERE id=$1', [first.id])).rows)
-      .toEqual([{ status: 'failed', error_code: 'resumed_as_child', lease_generation: 3 }]);
-    expect((await pool.query('SELECT status,error_code FROM harness_attempts WHERE id=$1', [childId])).rows)
-      .toEqual([{ status: ok ? 'starting' : 'failed', error_code: ok ? null : 'resume_returned_false' }]);
-    const pending = (await pool.query('SELECT target_machine_id,status FROM harness_attempt_cleanup_outbox WHERE attempt_id=$1', [childId])).rows;
-    expect(pending).toEqual(ok ? [] : [{ target_machine_id: machine, status: 'pending' }]);
-    await expect(store.createAttempt(await input('reporter', 4))).rejects.toThrow('capacity_contended');
   });
 
   it('terminal-first并发保持真实425 trigger的23514拒绝，不被无效容量fixture提前截断', async () => {

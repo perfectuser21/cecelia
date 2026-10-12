@@ -15,11 +15,9 @@ vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternal
 // xian）的唯一咽喉，与既有 preview-guard 同位。拦在这儿的好处是拒绝时**既不建
 // run 也不碰 worktree**，不留半态。
 //
-// 拦晚了会变成另一种死法：_spawnKernelRuntime 里先 createKernelRun 建了 run，
-// 再 launchKernelProcess 本机 spawn；而 spawn 只要返回了 pid 就走 ok:true 分支
-// （harness-skill-relay.js 内 `return { ok: true, mode: 'kernel-v1' ... }`），
-// 子进程随后因别的原因秒死也不会 finalize —— 结果是 run 记录建了、进程没了、
-// 错误只落在 kernel-<runId>.log、任务静默卡到租约过期。这正是要避免的形状。
+// 拦晚了会变成另一种死法：先建了 run 再本机 spawn，spawn 只要返回了 pid 就算 ok，
+// 子进程随后秒死也不会 finalize —— run 记录建了、进程没了、任务静默卡到租约过期。
+// （kernel-v1 启动路径已随 A5 删除，该形状的原始出处不复存在，闸语义不变。）
 //
 // ── 为什么用独立变量而不是改 CECELIA_MACHINE_ID（纠正决策 26c1e763）──
 //
@@ -28,8 +26,7 @@ vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternal
 //   1. production-transport.js 那道 localMachineId 守卫是死代码 —— 判据是入参且
 //      默认值即 DEFAULT_LOCAL_MACHINE_ID，而 server.js、attempt-cleanup-worker.js
 //      等四个生产调用方全不传它，if 恒为假；
-//   2. harness-skill-relay.js 对 machineId 的引用数为 0，本机 spawn 判据只有
-//      payload.harness_runtime === 'kernel-v1'，改身份拦不住、不减一丝 CPU；
+//   2. harness-skill-relay.js 对 machineId 的引用数为 0，改身份拦不住、不减一丝 CPU；
 //   3. credential-broker.js 与 github-credential-broker.js 硬编码要求
 //      controllerMachineId === 'us-mac-m4' —— 这台 Brain 必须自称 us-mac-m4 因为
 //      它是凭据权威，改身份会让远程派发到 MMV 也签不出凭据，全面 fail-closed。
@@ -79,37 +76,20 @@ function deps(env) {
 }
 
 describe('F1 step1 · 调度器机器不许自己接活干', () => {
-  // 决策 e3a41ecc（09-13 追加）：闸语义反转——kernel-v1 headless 不再一刀切拒绝，
-  // 改道 orchestrator-remote-bridge 把执行权交给远端 primary worker；本机
-  // ensureWt/launchKernel/spawnFn 仍然一次都不能碰（不留半态、不本机 spawn）。
-  it('CECELIA_LOCAL_EXECUTION_ENABLED=false + kernel-v1 headless → 经桥远程派发，不本机 spawn', async () => {
-    const bridgeCalls = [];
-    const d = {
-      ...deps({ CECELIA_LOCAL_EXECUTION_ENABLED: 'false' }),
-      createKernelRun: vi.fn(async () => ({
-        created: true,
-        run: { id: 'bbbbbbbb-cccc-4ddd-8eee-ffff11112222', controller_session_id: 'cccccccc-dddd-4eee-8fff-000011112222', controller_generation: 1 },
-      })),
-      orchestratorBridge: {
-        targetMachineId: 'primary-under-test',
-        prepare: vi.fn(async (input) => { bridgeCalls.push(['prepare', input]); return { worktree_path: '/ws/r', status: 'prepared' }; }),
-        start: vi.fn(async (input) => { bridgeCalls.push(['start', input]); return { pid: 4242, host: 'primary-under-test', status: 'running' }; }),
-      },
-    };
+  // kernel-v1 运行时已退役（A5，决策 b4adf807）：原「闸=false 时 kernel-v1 经远程桥派发」路径已删，
+  // kernel-v1 单在咽喉直接拒 kernel_runtime_retired，本机 / 远程都不再起 kernel。
+  it('CECELIA_LOCAL_EXECUTION_ENABLED=false + kernel-v1 → 直接拒 kernel_runtime_retired，不建 run、不 spawn', async () => {
+    const d = deps({ CECELIA_LOCAL_EXECUTION_ENABLED: 'false' });
     const r = await spawnSkillRelaySession(
       { ...TASK, payload: { ...TASK.payload, harness_runtime: 'kernel-v1' } },
       d,
     );
-    expect(r.ok).toBe(true);
-    expect(r.remote).toBe(true);
-    expect(r.pid).toBe(4242);
-    // 关键断言：远程路径不碰本机执行原语
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('kernel_runtime_retired');
+    expect(d.createKernelRun).not.toHaveBeenCalled();
     expect(d.ensureWt).not.toHaveBeenCalled();
     expect(d.launchKernel).not.toHaveBeenCalled();
     expect(d.spawnFn).not.toHaveBeenCalled();
-    // 远程 run 仍要建（供 controller/worker 侧认领），但走的是桥而不是本机 launchKernel
-    expect(d.createKernelRun).toHaveBeenCalled();
-    expect(bridgeCalls.map(([op]) => op)).toEqual(['prepare', 'start']);
   });
 
   it('闸拦所有派发路径，不只 kernel-v1（咽喉语义）', async () => {
