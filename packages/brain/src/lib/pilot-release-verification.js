@@ -66,12 +66,30 @@ export function assertPilotReleaseReport(report){
  for(const u of report.expected_usages)if(!report.required_assertions.some(a=>a.source_repo===report.source.repo&&a.source_bindings?.some(b=>b.capability_id===u.capability_id&&b.activity_id===u.activity_id&&(b.step_id||null)===u.step_id)))fail();
  return report;
 }
+export function assertPilotDefinitionSubset(full,subset){
+ const fail=()=>{throw Object.assign(Error('部署定义不是完整已验证计划的依赖闭包'),{code:'PILOT_RELEASE_PLAN_MISMATCH'});};
+ if(!Array.isArray(subset?.workflows)||!subset.workflows.length||!Array.isArray(subset.activities))fail();
+ for(const kind of ['workflows','activities']){
+  if(!Array.isArray(full?.[kind])||new Set(full[kind].map(r=>r.id)).size!==full[kind].length||new Set(subset[kind].map(r=>r.id)).size!==subset[kind].length)fail();
+  for(const row of subset[kind]){
+   const original=full[kind].find(r=>r.id===row.id);
+   if(!original||!same(Object.fromEntries(['id','payload_sha256','source_repo','source_commit','source_path','payload'].map(k=>[k,row[k]])),Object.fromEntries(['id','payload_sha256','source_repo','source_commit','source_path','payload'].map(k=>[k,original[k]]))))fail();
+  }
+ }
+ const refs=[];
+ for(const w of subset.workflows){if(!Array.isArray(w.payload?.activities)||!w.payload.activities.length)fail();refs.push(...w.payload.activities);}
+ const required=new Set(refs.map(r=>r.activity_version_id));
+ if(required.size!==subset.activities.length||subset.activities.some(a=>!required.has(a.id)))fail();
+ for(const r of refs)if(!subset.activities.some(a=>a.id===r.activity_version_id&&a.activity_id===r.activity_id&&a.payload?.activity_id===r.activity_id))fail();
+ return true;
+}
 export async function validatePilotReleaseEvidence(db,report,receipt,definitions){
  assertPilotReleaseReport(report);
  const snapshot=await readImplementationSnapshotInTransaction(db,{scope:report.scope,repo:report.source.repo,revision:report.source.head_revision});
  const expected=buildPilotReleasePlan({scope:report.scope,repo:report.source.repo,revision:report.source.head_revision,definitions:snapshot.definitions,assertions:snapshot.assertions});
  const fail=()=>{throw Object.assign(Error('固定完整计划与当前登记或执行收据不符'),{code:'PILOT_RELEASE_PLAN_MISMATCH'});};
- if(snapshot.status!=='verified'||expected.verification_status!=='verified'||!same(pilotPlanBody(expected),pilotPlanBody(report))||!same(expected.definition_versions,buildPilotReleasePlan({scope:report.scope,repo:report.source.repo,revision:report.source.head_revision,definitions,assertions:snapshot.assertions}).definition_versions))fail();
+ if(snapshot.status!=='verified'||expected.verification_status!=='verified'||!same(pilotPlanBody(expected),pilotPlanBody(report)))fail();
+ assertPilotDefinitionSubset(snapshot.definitions,definitions);
  if(receipt?.purpose!=='release_verification'||receipt.actor!=='pilot_release_verification'||receipt.scope!=='declared_pilot_regressions'||receipt.verdict!=='PASS'||receipt.business_runtime_status!=='not_evaluated'||!same(receipt.source,report.source)||receipt.snapshot_sha256!==report.snapshot_sha256||receipt.assertion_plan_sha256!==report.assertion_plan_sha256||receipt.report_sha256!==createHash('sha256').update(JSON.stringify(report)).digest('hex'))fail();
  if(!Array.isArray(receipt.assertions)||receipt.assertions.length!==report.required_assertions.length||new Set(receipt.assertions.map(a=>a.assertion_ref)).size!==receipt.assertions.length)fail();
  for(const a of report.required_assertions)if(!receipt.assertions.some(r=>r.assertion_ref===a.assertion_ref&&r.source_repo===report.source.repo&&r.source_revision===report.source.head_revision&&same(r.source_bindings,a.source_bindings)&&r.exit_code===0&&!r.error&&!r.signal&&hash(r.test_sha256)))fail();
