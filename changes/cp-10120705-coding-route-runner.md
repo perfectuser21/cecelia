@@ -1,3 +1,0 @@
-## Brain {VERSION} — 编码单改投 coding_workflow runner
-
-- 无头编码单（work-router 的 coding_mutation、relay-baton handoff 编码子单、GP 签字实现单）不再落 harness_initiative（A1 起会被 dispatcher drain 成 failed），改建 coding_workflow（payload.coding_workflow=true、orchestrator=coding-workflow-runner），由 MMV coding-workflow-runner 认领。有头账本行（headed_manual 字符串/布尔、非 queued|blocked 入账、executor_kind=headed-session）与 kernel 续跑单（planner recovery）仍是 harness_initiative。runner 支持仓库的判定只有一份 `packages/brain/scripts/coding-workflow/repos.json`（经 runner/lib/repos.mjs 读，登记且 enabled；runner plan.mjs 与 Brain 同读，Brain 镜像单独带上）；不支持的仓库无头建单返回 422 `runner_repo_unsupported`，GP 签字遇此降为有头待办（签字照常提交）。capture-triage 紧急/补线建单补 headed_manual。任务 eb9094ee。
