@@ -9,3 +9,5 @@
 - [x] 清理异步失败必须被close显式返回；Node/Python回归在Phone lease guard CI持续运行。
 
 GP-Anchor: none(infra)
+
+消费者现有源码仍在 Draft 时，运行修复必须以最窄可审查 patch artifact 入 main：固定原/目标哈希、安装前确认运行体为空、备份原文件；实际测试与部署使用同一 artifact，不用未合并本地文件代替生产真身。

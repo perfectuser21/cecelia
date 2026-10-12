@@ -25,3 +25,4 @@ jobs:
           python-version: '3.12'
       - run: node --test scripts/phone-rpa/us-price-lease.test.mjs
       - run: python -m unittest discover -s scripts/phone-rpa -p test_us_price_lease.py
+      - run: python -m unittest discover -s scripts/phone-rpa -p test_lease_migration.py

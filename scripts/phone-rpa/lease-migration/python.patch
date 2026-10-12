@@ -1,0 +1,41 @@
+--- a/native_price_phone.py
++++ b/native_price_phone.py
+@@ -1,3 +1,4 @@
++from us_price_lease import assert_business_allowed
+ """小黄原生查价的持锁原语。导入不执行设备动作。"""
+ import datetime
+ import json
+@@ -93,10 +94,13 @@
+         self.expected_package = None
+         self.launch_receipts = []
+     def ctl(self, *args, timeout=40):
++        assert_business_allowed(self.owner, CACHE, cleanup=self.cleanup)
+         return self.runner([CTL,'--profile',PROFILE,*args],timeout=timeout)
+     def raw_adb(self, *args, timeout=40):
++        assert_business_allowed(self.owner, CACHE, cleanup=self.cleanup)
+         return self.runner([ADB,'-s',SERIAL,*args],timeout=timeout)
+     def check(self):
++        assert_business_allowed(self.owner, CACHE, cleanup=self.cleanup)
+         if not self.cleanup and time.monotonic()>self.deadline: raise RuntimeError('任务达到时间上限')
+         status=self.ctl('preflight'); lock=self.ctl('lock-status')
+         owner=re.search(r'owner=(\S+)',lock)
+--- a/us_price_native_worker.py
++++ b/us_price_native_worker.py
+@@ -9,7 +9,8 @@
+ import sys
+ import time
+ from urllib.parse import quote as urlquote
+-from native_price_phone import CTL, PROFILE, AMAZON, HD, PhoneSession, command, validate_request, text_values, bounds, parse_hd_detail, price_candidates, extract_asin, assert_app_nodes, foreground_package
++from us_price_lease import assert_business_allowed
++from native_price_phone import CACHE, CTL, PROFILE, AMAZON, HD, PhoneSession, command, validate_request, text_values, bounds, parse_hd_detail, price_candidates, extract_asin, assert_app_nodes, foreground_package
+ 
+ def amazon_seller(values):
+     return next((v for v in values if re.fullmatch(r'Sold by\s+[^\n]{1,100}',v,re.I)), '未显示（需核对）')
+@@ -18,6 +19,7 @@
+ 
+ def dispatch(request, runner=command):
+     validate_request(request)
++    assert_business_allowed(request['owner'], CACHE)
+     prefix=[CTL,'--profile',PROFILE]
+     preflight=runner(prefix+['preflight'])
+     if 'state=device' not in preflight or 'call_state=idle' not in preflight:raise RuntimeError('手机不在线或通话中')

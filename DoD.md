@@ -216,3 +216,6 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
   Test: manual:node --test scripts/phone-rpa/us-price-lease.test.mjs
 - [x] [BEHAVIOR] priceleasecleanup 手机停止标记拦后续业务但放行finally清理，并拒绝越界owner。
   Test: manual:bash -c "python3 -m unittest discover -s scripts/phone-rpa -p test_us_price_lease.py"
+
+- [x] 消费者迁移 artifact 固定现场与目标哈希，拒绝漂移并保留原文件备份
+  Test: manual: bash -c "python3 scripts/phone-rpa/test_lease_migration.py"

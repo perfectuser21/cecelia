@@ -1,0 +1,39 @@
+{
+  "task_id": "c5f6e683-ce47-40dc-89e6-1ccbf6e8c46e",
+  "groups": {
+    "node": {
+      "patch": "node.patch",
+      "patch_sha256": "0a605378109ddce5bf54ddc6814c6a53861178b72620a4c22ad96dc06ad9d954",
+      "files": {
+        "us-price-keyword.mjs": {
+          "before": "bc4889215009ac43edbebfc30878c294563cb3da5be5ec5a4ce20b0b597089b3",
+          "after": "752c50e967c7c6bef12fdfa1217cd4af3c84a6e32ae942bf535f27968e44f876"
+        },
+        "us-price-keyword-core.mjs": {
+          "before": "8d710b4365683ab502ec5f588746501a542319d6670d93a56413368d7781fb91",
+          "after": "3e70ceb16e8bfb6b331409472da2de5e0bdf857175d2d20a28c78b393522c1e4"
+        }
+      },
+      "guards": {
+        "us-price-lease.mjs": "7718b3484de2a26b3f05ec376be4f5ca81eb164ed281d47e5c901b008cf58611"
+      }
+    },
+    "python": {
+      "patch": "python.patch",
+      "patch_sha256": "fe228429a5b12f532e668ff3230efdfaef779e61254f0619660abda8994271b8",
+      "files": {
+        "native_price_phone.py": {
+          "before": "f0768a5a8a467a3b7560c8273e45a341d9dd674e7ed80bcb3d3ee6a94a0cc811",
+          "after": "1e9814d5099d14c94a98f96a28010750d9f15497d496e10456c6f41c664c49d5"
+        },
+        "us_price_native_worker.py": {
+          "before": "370876faf8b729b93bd617051200fc117352e2c40e08917311e96b863ba3ac32",
+          "after": "a9857f5246e8e9f384b457b08cb0dead1edd7599cfaca4eb242b5e80c48cef00"
+        }
+      },
+      "guards": {
+        "us_price_lease.py": "aab07b781f84ebb647455a41b1079629d2ef82de7a0de5ca0be9eaa0926fe1c8"
+      }
+    }
+  }
+}
