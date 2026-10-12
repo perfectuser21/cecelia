@@ -60,6 +60,38 @@ class Migration(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, '认领'): m.main()
                 business.assert_not_called()
 
+    def test_rejected_claim_never_overwrites_another_owner(self):
+        for name in ['opc-kr-current', 'opc-okr-sync']:
+            m = load(name); calls = []
+            def call(url, body=None, method=None):
+                calls.append((url, body, method))
+                if url.endswith('/tasks'):return {'id': 'fixture'}
+                if url.endswith('/claim'):return {'success': False, 'accepted': False}
+                return {'success': True, 'status': (body or {}).get('status')}
+            with patch.object(m, 'call', side_effect=call), self.assertRaises(RuntimeError):m.main()
+            self.assertFalse(any(method == 'PATCH' for _, _, method in calls))
+
+    def test_lost_completion_response_does_not_write_failed(self):
+        for name in ['opc-kr-current', 'opc-okr-sync']:
+            m = load(name); statuses = []
+            def call(url, body=None, method=None):
+                if url.endswith('/tasks'):return {'id': 'fixture'}
+                if url.endswith('/claim'):
+                    self.assertEqual(body['lease_seconds'], 900)
+                    return {'id': 'fixture'}
+                if body and body.get('status'):
+                    statuses.append(body['status'])
+                    if body['status'] == 'completed':raise OSError('response lost after commit')
+                return {'success': True, 'status': (body or {}).get('status')}
+            with tempfile.TemporaryDirectory() as d:
+                for a in ['clawd','clawd-media','clawd-fde','clawd-dev','clawd-people','clawd-infra']:Path(d,a).mkdir()
+                with patch.object(m, 'ROOT', d), patch.object(m, 'call', side_effect=call):
+                    if name == 'opc-kr-current':
+                        with patch.object(m, 'company_items', return_value={}), self.assertRaises(OSError):m.main()
+                    else:
+                        with patch.object(m, 'fetch', return_value=[]), self.assertRaises(OSError):m.main()
+            self.assertEqual(statuses, ['in_progress','completed'])
+
     def test_business_date_uses_shanghai_once(self):
         m = load('opc-kr-current')
         source = Path(m.__file__).read_text()
