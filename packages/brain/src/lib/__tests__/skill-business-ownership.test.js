@@ -78,6 +78,11 @@ async function read(rows, skills = [registry]) {
   return { out: await readSkillBusinessOwnership(db, skills), db };
 }
 describe("业务归属来自规范身份", () => {
+  it("重复固定引用身份拒绝继承", async () => {
+    const w = workflow();
+    w.definition.payload.activities.push({ ...w.definition.payload.activities[0] });
+    expect((await read([w])).out.get(skill).status).toBe("unknown");
+  });
   it("单次只读查询，继承完整业务链", async () => {
     const { out, db } = await read([workflow()]);
     expect(db.query).toHaveBeenCalledTimes(1);
@@ -130,10 +135,10 @@ describe("业务归属来自规范身份", () => {
     ];
     expect((await read([w], [r])).out.get(skill).paths).toEqual([]);
   });
-  it("旧活动版本不能继承", async () => {
+  it("当前流程合法固定历史活动版本仍继承", async () => {
     const w = workflow();
     w.activities[0].current_definition_version_id = "new";
-    expect((await read([w])).out.get(skill).paths).toEqual([]);
+    expect((await read([w])).out.get(skill).status).toBe("mapped");
   });
   it("引用版本不一致不能继承", async () => {
     const w = workflow();
@@ -152,10 +157,11 @@ describe("业务归属来自规范身份", () => {
       expect((await read([w])).out.get(skill).paths).toEqual([]);
     }
   });
-  it("来源提交与AV不一致不能继承", async () => {
+  it("技能独立固定提交不要求等于AV提交", async () => {
     const w = workflow();
     w.activities[0].version.source_commit = "c".repeat(40);
-    expect((await read([w])).out.get(skill).paths).toEqual([]);
+    w.activities[0].version.source_repo = "other/contracts";
+    expect((await read([w])).out.get(skill).status).toBe("mapped");
   });
   it("显式UUID可继承，不要求名字匹配", async () => {
     const w = workflow();

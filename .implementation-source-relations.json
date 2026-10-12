@@ -391,6 +391,21 @@
       "owner_path": "packages/brain/src/golden-path-contracts.js",
       "path": "packages/brain/src/__tests__/golden-path-contracts.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-business-ownership.js",
+      "path": "packages/brain/src/lib/__tests__/skill-business-ownership.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-business-ownership.js",
+      "path": "packages/brain/src/lib/__tests__/integration/skill-business-ownership.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/skill-registry-projection.js",
+      "path": "changes/cp-1012014500-skill-business-grouping.md",
+      "role": "release"
     }
   ]
 }

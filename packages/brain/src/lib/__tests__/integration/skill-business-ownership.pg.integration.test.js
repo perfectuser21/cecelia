@@ -2,7 +2,7 @@ import { it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { privateFixtureDatabase } from "../../../__tests__/fixtures/private-fixture-db.js";
 import { readSkillBusinessOwnership } from "../../skill-business-ownership.js";
-it("真PG只读快照继承共享绑定，退役引用和旧版本不污染当前归属", async () => {
+it("真PG只读快照继承planned节点固定共享绑定，引用撤销和版本错配不污染归属", async () => {
   const f = await privateFixtureDatabase("skillownership", async (db) => {
     await db.query(`CREATE TABLE areas(id uuid PRIMARY KEY,name text,parent_area_id uuid);
    CREATE TABLE value_streams(id uuid PRIMARY KEY,name text,parent_journey_id uuid,area_id uuid,capability_code text,status text);
@@ -30,10 +30,10 @@ it("真PG只读快照继承共享绑定，退役引用和旧版本不污染当�
       [vs, area],
     );
     await f.db.query(
-      "INSERT INTO capabilities VALUES($1,'发布',$2,NULL,'publish','active')",
+      "INSERT INTO capabilities VALUES($1,'发布',$2,NULL,'publish','planned')",
       [cap, vs],
     );
-    await f.db.query("INSERT INTO activities VALUES($1,'active',$2)", [a, av]);
+    await f.db.query("INSERT INTO activities VALUES($1,'planned',$2)", [a, av]);
     const binding = {
       kind: "skill",
       status: "verified",
@@ -110,6 +110,9 @@ it("真PG只读快照继承共享绑定，退役引用和旧版本不污染当�
       "UPDATE activities SET current_definition_version_id=$1 WHERE id=$2",
       [randomUUID(), a],
     );
+    out = await readSkillBusinessOwnership(f.db, registry);
+    expect(out.get(skill).status).toBe("mapped");
+    await f.db.query("UPDATE workflow_activity_refs SET activity_definition_version_id=$1 WHERE id=$2", [randomUUID(), refs[1]]);
     out = await readSkillBusinessOwnership(f.db, registry);
     expect(out.get(skill).status).toBe("unknown");
     expect(out.get(skill).paths).toEqual([]);

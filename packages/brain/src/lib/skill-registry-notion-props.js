@@ -36,6 +36,13 @@ export const COLUMNS = Object.freeze([
   { key: 'owner', name: '负责人', type: 'people', owner: 'none' },
   { key: 'category', name: '分类', type: 'select', owner: 'human' },
   { key: 'note', name: '备注', type: 'rich_text', owner: 'human' },
+  { key: 'businessAreas', name: '部门（Area）', type: 'multi_select', owner: 'machine' },
+  { key: 'valueStreams', name: '价值流（Value Stream）', type: 'multi_select', owner: 'machine' },
+  { key: 'capabilities', name: '能力（Capability）', type: 'multi_select', owner: 'machine' },
+  { key: 'businessWorkflows', name: '关联流程', type: 'multi_select', owner: 'machine' },
+  { key: 'ownershipPaths', name: '归属路径', type: 'rich_text', owner: 'machine' },
+  { key: 'ownershipStatus', name: '归属状态', type: 'select', owner: 'machine', def: opts(['已归属', '共享技能', '待核归属', '待归属']) },
+  { key: 'agentAssignmentStatus', name: 'Agent分配状态', type: 'select', owner: 'machine', def: opts(['已分配', '待分配']) },
 ]);
 
 export const HUMAN_KEYS = COLUMNS.filter((c) => c.owner === 'human').map((c) => c.key);
@@ -43,6 +50,64 @@ export const HUMAN_KEYS = COLUMNS.filter((c) => c.owner === 'human').map((c) => 
 const labels = (codes, map) => [...new Set((codes || []).map((c) => map[c] || c))].sort();
 const homeShort = (p) => (p ? String(p).replace(/^\/(Users|home)\/[^/]+/, '~') : null);
 const dateOnly = (d) => (d ? new Date(d).toISOString().slice(0, 10) : null);
+
+const ownershipLabel = value => String(value || '').replace(/,/g, '，');
+
+/** 全批次按规范实体身份消歧；同名或截断后重名的节点不能被 Notion 合并。 */
+export function buildBusinessLabels(ownerships) {
+  const labels = {};
+  for (const type of ['areas', 'value_streams', 'capabilities', 'workflows']) {
+    const entities = new Map();
+    for (const ownership of ownerships.values()) {
+      for (const node of ownership[type] || []) entities.set(node.id, node);
+    }
+    const counts = new Map();
+    for (const node of entities.values()) {
+      const short = ownershipLabel(node.name).slice(0, 100);
+      counts.set(short, (counts.get(short) || 0) + 1);
+    }
+    const suffixed = new Set([...entities.values()].filter(node => {
+      const name = ownershipLabel(node.name);
+      return name.length > 100 || counts.get(name.slice(0, 100)) > 1;
+    }).map(node => node.id));
+    // A literal name can equal another node's generated suffix. Promote every
+    // final collision until all options are distinct; suffixes end in unique IDs.
+    for (;;) {
+      const finalNames = new Map();
+      labels[type] = {};
+      for (const node of entities.values()) {
+        const name = ownershipLabel(node.name);
+        const value = suffixed.has(node.id) ? `${name.slice(0, 60)} [${node.id}]` : name;
+        labels[type][node.id] = value;
+        if (!finalNames.has(value)) finalNames.set(value, []);
+        finalNames.get(value).push(node.id);
+      }
+      const collisions = [...finalNames.values()].filter(ids => ids.length > 1);
+      if (!collisions.length) break;
+      for (const ids of collisions) for (const id of ids) suffixed.add(id);
+    }
+  }
+  return labels;
+}
+
+function businessValues(row) {
+  const ownership = row.business_ownership || {}, labelMap = row.business_labels || {};
+  const label = (type, node) => node && (labelMap[type]?.[node.id] || ownershipLabel(node.name));
+  const values = type => [...new Set((ownership[type] || []).map(node => label(type, node)).filter(Boolean))].sort();
+  const paths = [...new Set((ownership.paths || []).map(path => [
+    label('areas', path.area) || '部门待确认',
+    label('value_streams', path.value_stream) || '价值流待确认',
+    label('capabilities', path.capability) || '能力待确认',
+    label('workflows', path.workflow) || '流程待确认',
+  ].join(' → ')))].sort();
+  return {
+    businessAreas: values('areas'), valueStreams: values('value_streams'),
+    capabilities: values('capabilities'), businessWorkflows: values('workflows'),
+    ownershipPaths: paths.length ? paths.join('\n') : null,
+    ownershipStatus: { mapped: '已归属', shared: '共享技能', partial: '待核归属' }[ownership.status] || '待归属',
+    agentAssignmentStatus: row.assigned_agents?.length ? '已分配' : '待分配',
+  };
+}
 
 export function machineValues(row) {
   const evalScore = row.metadata?.eval_score;
@@ -57,6 +122,7 @@ export function machineValues(row) {
     agents: [...(row.assigned_agents || [])].sort(),
     evalScore: evalScore == null ? null : String(evalScore).slice(0, 200),
     driftCopies: Number.isFinite(row.drift_copies) ? row.drift_copies : 0,
+    ...businessValues(row),
   };
 }
 

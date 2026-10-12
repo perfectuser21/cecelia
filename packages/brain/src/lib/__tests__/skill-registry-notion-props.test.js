@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  COLUMNS, machineValues, humanValues, machineDigest, toNotionProp, fromNotionProp, sameValue, buildProps,
+  COLUMNS, machineValues, humanValues, machineDigest, toNotionProp, fromNotionProp, sameValue, buildProps, buildBusinessLabels,
 } from '../skill-registry-notion-props.js';
 
 const row = {
@@ -139,5 +139,30 @@ describe('规范业务归属投影', () => {
     const renamed = { ...ownership, capabilities: [{ id: 'cap-1', name: '正式多平台发布' }] };
     expect(machineDigest(machineValues({ ...row, business_ownership: renamed }))).not.toBe(first);
     expect(machineDigest(machineValues(row))).not.toBe(first);
+  });
+
+  it('同名部门或过长标签不会把不同规范UUID合并成一个Notion分组', () => {
+    const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
+    const labelMap = buildBusinessLabels(new Map(ids.map(id => [id, {
+      areas: [{ id, name: '研发部' }], value_streams: [], capabilities: [], workflows: [],
+    }])));
+    expect(labelMap.areas[ids[0]]).not.toBe(labelMap.areas[ids[1]]);
+    expect(labelMap.areas[ids[0]]).toContain(ids[0]);
+    const long = buildBusinessLabels(new Map([[ids[0], { areas: [{ id: ids[0], name: '甲'.repeat(120) }] }]]));
+    expect(long.areas[ids[0]].length).toBeLessThanOrEqual(100);
+    expect(long.areas[ids[0]]).toContain(ids[0]);
+  });
+
+  it('字面名称撞上生成的UUID后缀时，最终标签及投影仍保留三个独立身份', () => {
+    const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'];
+    const areas = ids.map((id, index) => ({ id, name: index === 2 ? `发布 [${ids[0]}]` : '发布' }));
+    const grouped = new Map([['skill', { areas }]]);
+    const labelMap = buildBusinessLabels(grouped);
+    expect(new Set(Object.values(labelMap.areas)).size).toBe(3);
+    expect(labelMap.areas[ids[0]]).not.toBe(labelMap.areas[ids[2]]);
+    expect(Object.values(labelMap.areas).every(label => label.length <= 100)).toBe(true);
+    expect(buildBusinessLabels(new Map([['skill', { areas: [...areas].reverse() }]]))).toEqual(labelMap);
+    const values = machineValues({ ...row, business_ownership: { areas, status: 'mapped' }, business_labels: labelMap });
+    expect(values.businessAreas).toHaveLength(3);
   });
 });
