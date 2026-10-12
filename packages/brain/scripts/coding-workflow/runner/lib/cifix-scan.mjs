@@ -79,11 +79,11 @@ const MAX_CONFLICT_FIXES = 3;
 const BASE_FRESH_CHECK = 'lint-base-fresh';
 const RUN_LINK_RE = /\/actions\/runs\/(\d+)\//;
 
-/** 失败的检查：[{ name, runId }]（runId 取自检查链接，取不到为 null）。 */
+/** 失败的检查：[{ name, runId, link }]（runId 取自检查链接，取不到为 null）。 */
 export async function failingChecks(cfg, prNumber) {
   const rows = await ghJson(cfg, ['pr', 'checks', String(prNumber), '--json', 'name,bucket,link']);
   return (Array.isArray(rows) ? rows : []).filter((r) => r.bucket === 'fail')
-    .map((r) => ({ name: r.name, runId: RUN_LINK_RE.exec(r.link ?? '')?.[1] ?? null }));
+    .map((r) => ({ name: r.name, runId: RUN_LINK_RE.exec(r.link ?? '')?.[1] ?? null, link: r.link ?? null }));
 }
 
 /**
@@ -136,16 +136,23 @@ export async function findTarget(cfg, log) {
   return null;
 }
 
+/** 一个检查（{ link }）的完整 job 日志（去 Actions 时间戳）；链接不是 job 链接返回 null。 */
+export async function checkLog(cfg, check) {
+  const m = JOB_LINK_RE.exec(check?.link ?? '');
+  if (!m) return null;
+  const r = await run(cfg.ghBin, ['api', `repos/${m[1]}/actions/jobs/${m[2]}/logs`], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
+  return r.stdout.split('\n').map((l) => l.replace(ACTIONS_TS_RE, '')).join('\n');
+}
+
 /** 全部失败检查的 job 日志末尾（去 Actions 时间戳），按检查名分段，总长封顶。返回 { names, text }。 */
 export async function failureLogs(cfg, prNumber) {
   const rows = await ghJson(cfg, ['pr', 'checks', String(prNumber), '--json', 'name,bucket,link']);
   const failed = (Array.isArray(rows) ? rows : []).filter((r) => r.bucket === 'fail');
   const parts = [];
   for (const check of failed) {
-    const m = JOB_LINK_RE.exec(check.link ?? '');
-    if (!m) continue;
-    const r = await run(cfg.ghBin, ['api', `repos/${m[1]}/actions/jobs/${m[2]}/logs`], { cwd: cfg.repo, timeoutMs: GH_TIMEOUT_MS });
-    const lines = r.stdout.split('\n').map((l) => l.replace(ACTIONS_TS_RE, '')).filter((l) => l.trim());
+    const log = await checkLog(cfg, check);
+    if (log === null) continue;
+    const lines = log.split('\n').filter((l) => l.trim());
     parts.push(`### ${check.name}\n\`\`\`\n${lines.slice(-LOG_TAIL_LINES).join('\n')}\n\`\`\``);
   }
   const text = parts.join('\n\n');

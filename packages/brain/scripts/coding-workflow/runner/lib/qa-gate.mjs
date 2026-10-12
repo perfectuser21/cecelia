@@ -61,7 +61,7 @@ export async function previewCall(cfg, route, body) {
 }
 
 /** 回写 Brain：result.qa 摘要（+ 升级记录）。拿不到 task_id 只记本地。 */
-async function report(ctx, taskId, s) {
+export async function report(ctx, taskId, s) {
   if (!taskId) return;
   const last = s.rounds.at(-1);
   const result = { qa: {
@@ -193,7 +193,7 @@ export async function preflightSmoke(worktree, smoke, previewUrl) {
 }
 
 /** PR 相对 main 改了 API 面没有；diff 取不到按「改了」算（不默认放行）。 */
-async function prTouchesApi(worktree) {
+export async function prTouchesApi(worktree) {
   const r = await git(worktree, ['diff', '--name-only', 'origin/main...HEAD']);
   return r.code !== 0 || touchesApiSurface(r.stdout.split('\n').filter(Boolean));
 }

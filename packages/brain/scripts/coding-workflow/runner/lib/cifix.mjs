@@ -1,5 +1,6 @@
 // CI 红自动修复：对 findTarget 找到的 cw PR，在 PR 分支 worktree 里让 claude 按失败日志修复并提交，
 // 程序核对（有新提交、工作区干净、只追加不改写、不碰 sprints/ 与 agent 配置）后由 runner 推送。
+// runner 固化的 QA 回归 smoke 在 CI 红：不派修复会话，由 smoke-refit.mjs 剔除失败条目重新固化一次（C2c）。
 // 与 main 冲突的 PR（kind=conflict）：程序合并 origin/main（只追加的登记表取并集），剩余冲突才派 claude 解决。
 // 每次尝试都记进 <logDir>/cifix-<pr>.json 并回写 Brain 任务 result.ci_fix；worktree 用完即删。
 import fs from 'node:fs';
@@ -12,6 +13,7 @@ import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { revokeQaPass } from './qa-gate.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
+import { smokeRefitDecision, refitSmoke } from './smoke-refit.mjs';
 
 const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)'];
 const GH_TIMEOUT_MS = 2 * 60 * 1000;
@@ -158,6 +160,14 @@ export async function runCiFix(ctx, signal) {
   let target;
   try {
     target = await findTarget(cfg, ctx.log);
+    // runner 固化的 QA 回归 smoke 在 CI 红：runner 自己剔除重固化（一次），不派修复会话（它无权改 smoke，C2c）
+    if (target && target.kind !== 'conflict' && target.action !== 'update_branch') {
+      const d = await smokeRefitDecision(cfg, target);
+      const r = d?.action === 'refit' ? await refitSmoke(ctx, target, d, signal) : d;
+      const reason = r?.escalate ?? (r?.action === 'escalate' ? r.reason : null);
+      if (reason) await escalateCi(ctx, target.pr, readState(cfg, target.pr.number), reason);
+      if (d) return true;
+    }
     if (target && target.action !== 'fix') {
       const state = readState(cfg, target.pr.number);
       if (target.action === 'escalate') await escalateCi(ctx, target.pr, state, target.reason);
