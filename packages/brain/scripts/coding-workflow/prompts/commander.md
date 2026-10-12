@@ -29,6 +29,7 @@ RULING_PATH: {{RULING_PATH}}
    - qa_stalled：连续几轮失败数不降。找出反复失败的真正原因（常见：裁判与修复会话来回改、QA 场景本身有问题、根因没修到），给出决定性的修法。
    - qa_cannot_verify：QA 验不了。判断是规格里的 Q-n 写得验不了（追加裁决节改成能验的做法）还是环境缺工具（上交）。
    - ci_fix_exhausted：自动修了两次 CI 仍红。看失败的检查与日志线索，本地复现，自己修或给额度。
+     reason 是 qa_smoke_refit_exhausted / qa_smoke_fail_unlocated / qa_smoke_refit_failed:* 的：红的是 runner 固化的 QA 回归 smoke，runner 已剔除过一次失败条目仍红（或定位不到哪条失败、剔除没成）。smoke 你不能改；看 Smoke Glob Runner 日志判断是产品代码在 CI 空库下真有问题（自己修代码）还是场景依赖预览库已有数据（上交主理人说明哪条 T-n 该撤）。
    - qa_smoke_missing：PR 改了 API 面、QA 有 PASS 的 API 条目（ESCALATION 的 api_items），但一条都没固化成回归 smoke（skipped 列出每条被剔除的原因：preflight_failed:退出码 = 在预览上预跑失败，other_port / local_path / production = 命令打了别处或依赖本机路径，not_preview = 没打预览 API）。合并后这个 API 就没有回归守卫，所以默认不放行。两种裁法，二选一：
      - 放行：确认这个改动确实不需要/做不出 API 回归（例如命令只能依赖预览库已有数据、已有等价的单测或别的 smoke 覆盖），对每个 T-n 写 `"verdict":"放行"` 并把理由写具体（放行理由会记进 Brain，主理人会看）。放行时不要提交任何代码，否则不算放行。
      - 要求 QA 重跑：根因是 QA 的命令写法（依赖会话变量、打了别的端口、依赖已有数据等）→ 在 SPEC_PATH 末尾追加裁决节，写清对应 Q-n 的命令必须怎么写（自己造数据、地址变量在同一条命令里赋值），verdict 用「采纳」或「维持规格」。你的裁决记录推送后 head 会变，QA 门会在 CI 绿后按新 head 重跑一轮。

@@ -175,3 +175,63 @@ export function registerSmoke(worktree, smoke) {
   }
   return changed;
 }
+
+const BLOCK_HEAD_RE = /^echo "== (T-\d+)（/;
+const blockEnd = (id) => `); then echo "FAIL: ${id}" >&2; exit 1; fi`;
+const blockIds = (content) => [...String(content).matchAll(/^echo "== (T-\d+)（/gm)].map((m) => m[1]);
+
+/**
+ * Smoke Glob Runner 日志（run-smoke-ratchet.sh 输出，已去 Actions 时间戳）里本 PR smoke 的结果（C2c）：
+ * failed = 该脚本被判基线失败（`BASELINE FAIL (exit n): <name>`）；ids = 该脚本输出段（`── ▶  <name>` 到下一个 `── ` / 失败判定行）
+ * 里 block() 打出的 `FAIL: T-n`。别的脚本输出的 FAIL 不算。
+ */
+export function smokeCiFailures(log, name) {
+  const lines = String(log ?? '').split('\n').map((l) => l.trim());
+  const failed = lines.some((l) => /BASELINE FAIL \(exit \d+\):\s*(\S+)$/.exec(l)?.[1] === name);
+  if (!failed) return { failed: false, ids: [] };
+  const ids = [];
+  const start = lines.findIndex((l) => /^── ▶\s+(\S+)$/.exec(l)?.[1] === name);
+  for (let i = start < 0 ? lines.length : start + 1; i < lines.length; i += 1) {
+    if (lines[i].startsWith('── ') || /(?:BASELINE|DEBT) FAIL/.test(lines[i])) break;
+    const id = /^FAIL: (T-\d+)$/.exec(lines[i])?.[1];
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return { failed: true, ids };
+}
+
+/** 从 runner 生成的 smoke 里剔除 T-n 块（block() 的格式）：→ { content, removed: [实际剔掉的], items: [剩下的] }。 */
+export function dropSmokeBlocks(content, ids) {
+  const drop = new Set(ids);
+  const lines = String(content).split('\n');
+  const out = [];
+  const removed = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const id = BLOCK_HEAD_RE.exec(lines[i])?.[1];
+    const end = id && drop.has(id) ? lines.indexOf(blockEnd(id), i) : -1;
+    if (end < 0) {
+      out.push(lines[i]);
+      continue;
+    }
+    removed.push(id);
+    i = end + (lines[end + 1] === '' ? 1 : 0);
+  }
+  const text = removed.length ? out.join('\n') : String(content);
+  return { content: text, removed, items: blockIds(text) };
+}
+
+/** 删一行（没有则不动）；返回是否改了。 */
+function removeLine(file, line) {
+  if (!fs.existsSync(file)) return false;
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  const kept = lines.filter((l) => l !== line);
+  if (kept.length === lines.length) return false;
+  fs.writeFileSync(file, kept.join('\n'));
+  return true;
+}
+
+/** 剔光后：删脚本、撤 allowlist / write-targets 登记；返回改动的仓库相对路径。 */
+export function unregisterSmoke(worktree, name) {
+  const rel = `${QA_SMOKE_DIR}/${name}`;
+  fs.rmSync(path.join(worktree, rel), { force: true });
+  return [rel, ...[ALLOWLIST, WRITE_TARGETS].filter((f) => removeLine(path.join(worktree, f), name))];
+}
