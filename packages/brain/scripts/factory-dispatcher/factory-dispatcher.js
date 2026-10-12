@@ -14,14 +14,14 @@ import * as fsp from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-
+import { isFactoryTask, readDispatchMode, refreshEligibleTask, envMinutes } from './factory-dispatcher-config.js';
+export { FACTORY_TASK_TYPE, isFactoryTask, readDispatchMode } from './factory-dispatcher-config.js';
 export const SAFE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const TERMINAL_STATUSES = new Set(['completed', 'completed_no_pr', 'failed', 'cancelled', 'archived']);
 const LOCK_SUBCOMMANDS = new Set(['lock-status', 'lock-acquire', 'lock-release', 'lock-refresh']);
 const DEFAULT_SSH_HOST = 'xian-m4';
 const AGENT_ID = 'skill-factory';
 const UTF8_ENV = { LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' };
-
 export const DEFAULT_OPTS = {
   claimer: `factory-dispatcher@${hostname()}`,
   stateDir: join(homedir(), '.factory-dispatcher'),
@@ -119,6 +119,7 @@ export function buildAgentMessage({ runId, taskId, contract }) {
     `阶段 stage：${contract.stage}｜轮次 round：${contract.round}｜workflow_key：${contract.workflow_key}｜技能：${contract.skill}`,
     `设备：node=${device.node} profile=${device.profile} serial=${device.serial}（ssh ${device.ssh_host}）`,
     '',
+    ...(contract.stage === 'verify' ? ['核验只读验收标准和同 run 原始证据；禁止读取执行会话，禁止对外动作，只判不修。'] : []),
     `设备锁：锁已由派发器代领，开工 lock-status 核对，不要再 lock-acquire；结束必须 lock-release 并回读 free（owner=${runId}）。`,
     `任务：先读任务正文按【执行参数】执行；结束把交付 JSON 写入 result.delivery（PATCH /api/brain/tasks/${taskId}）。`,
   ];
@@ -314,6 +315,8 @@ async function superviseSession(deps, opts, ctx) {
 /** 派发单个任务：claim → in_progress → 等锁代领 → 写消息 → 启动会话 → 守望 → 收尾放锁。 */
 export async function dispatchTask(task, deps, userOpts = {}) {
   const opts = { ...DEFAULT_OPTS, ...userOpts };
+  task = await refreshEligibleTask(task, deps.brain, opts.dispatchMode);
+  if (!task) return { outcome: 'mode_rejected' };
   const taskId = task.id;
   const claim = await deps.brain.claim(taskId, opts.claimer, opts.leaseSeconds);
   if (claim.status === 409) {
@@ -382,22 +385,12 @@ export async function dispatchTask(task, deps, userOpts = {}) {
   return { outcome: 'session_terminal', status: end.status, lock_released: release.released };
 }
 
-/**
- * 技能工厂执行单 / 核验单判定（派发总闸 F，任务 0a70684f）：独立类型 skill_factory_run；
- * 迁移窗口内仍认旧借壳形状 research + factory_dispatch。其他类型即使带开关也不领（防误领别家的单）。
- */
-export const FACTORY_TASK_TYPE = 'skill_factory_run';
-export function isFactoryTask(t) {
-  if (t?.payload?.factory_dispatch !== true) return false;
-  return t.task_type === FACTORY_TASK_TYPE || t.task_type === 'research';
-}
-
 /** 一轮：时段外不认领；时段内挑第一个 queued 的技能工厂单派发。 */
 export async function pollOnce(deps, userOpts = {}) {
   const opts = { ...DEFAULT_OPTS, ...userOpts };
   if (!isWithinWorkHours(deps.now(), opts)) return { skipped: 'off_hours' };
   const queued = await deps.brain.listQueued();
-  const task = (queued || []).find((t) => t?.status === 'queued' && isFactoryTask(t));
+  const task = (queued || []).find((t) => t?.status === 'queued' && isFactoryTask(t, opts.dispatchMode));
   if (!task) return { skipped: 'no_task' };
   return dispatchTask(task, deps, opts);
 }
@@ -463,11 +456,6 @@ async function spawnAgent({ command, args, env, logFile }) {
   };
 }
 
-function envMinutes(name, fallbackMs) {
-  const v = Number(process.env[name]);
-  return Number.isFinite(v) && v > 0 ? v * 60_000 : fallbackMs;
-}
-
 export async function main() {
   const log = (msg) => console.log(`[${new Date().toISOString()}] [factory-dispatcher] ${msg}`);
   const check = hostSelfCheck({ platform: process.platform, env: process.env, exists: existsSync });
@@ -477,6 +465,7 @@ export async function main() {
   }
   const opts = {
     ...DEFAULT_OPTS,
+    dispatchMode: readDispatchMode(process.env.FACTORY_DISPATCHER_MODE),
     stateDir: process.env.FACTORY_DISPATCHER_STATE_DIR || DEFAULT_OPTS.stateDir,
     openclawBin: process.env.OPENCLAW_BIN || DEFAULT_OPTS.openclawBin,
     lockWaitTimeoutMs: envMinutes('FACTORY_LOCK_WAIT_MIN', DEFAULT_OPTS.lockWaitTimeoutMs),
@@ -494,7 +483,7 @@ export async function main() {
     readFile: fsp.readFile,
     mkdir: fsp.mkdir,
   };
-  log(`启动：state=${opts.stateDir} brain=${process.env.BRAIN_URL || 'http://localhost:5221'}`);
+  log(`启动：mode=${opts.dispatchMode} state=${opts.stateDir} brain=${process.env.BRAIN_URL || 'http://localhost:5221'}`);
   for (;;) {
     try {
       const r = await pollOnce(deps, opts);

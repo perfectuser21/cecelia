@@ -81,6 +81,11 @@
 - [x] [BEHAVIOR] factorypushersmoke 真库真代码 smoke：真 createTask 建执行单、在途不重复、裁判建核验单、核验 pass 入窗、2/2 全过 rule 推进 3→4 留痕、同 run_id 去重、开关关闭整轮跳过。
   Test: manual:bash packages/brain/scripts/smoke/factory-pusher-smoke.sh
 
+# 工厂仅核验消费者（任务 8b5a3dfb）
+
+- [x] [BEHAVIOR] factoryverifyonly 显式 verify-only 同时保护轮询与直接派发；严格核验契约，claim 前读回拒陈旧队列，未知模式拒启动，默认旧行为兼容。
+  Test: manual:bash packages/brain/scripts/smoke/factory-verify-only-smoke.sh
+
 # 技能工厂台账（迁移 548，任务 1c589b13）
 
 - [x] [BEHAVIOR] factoryledger 技能工厂台账（决策 cc008b7e / 2bb08a99）：迁移 548 新建 factory_ledger（workflow_id 唯一、stage 1..7、validation_mode 两档、blocked_kind 四种、滑窗计数约束）与只追加的 factory_stage_events；转换规则 human 任意跳退、rule/agent 只许相邻推进或登记退回（3→2/5→3/6→5/7→6），人工关口/安全红线下 rule/agent 409、跳级 400、原地 400；滑窗按 window_k 截尾、同 run_id 窗内去重、降级累计；接口参数错 400 不进库、重复进厂 409、写接口挂内部鉴权；连接池事务成功 COMMIT 失败 ROLLBACK 且归还连接。

@@ -80,6 +80,7 @@ executor-liveness-t1-smoke.sh
 factory-f0-proposal-smoke.sh
 factory-f1-devloop-smoke.sh
 factory-f2-deploy-smoke.sh
+factory-verify-only-smoke.sh
 factory-f3-nightly-smoke.sh
 factory-f4-selfheal-smoke.sh
 factory-f5-cockpit-smoke.sh
