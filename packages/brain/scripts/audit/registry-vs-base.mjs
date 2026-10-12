@@ -203,7 +203,9 @@ site({ label: 'actions.js:43 CODING_TASK_TYPES', file: 'actions.js',
 site({ label: 'actions.js:19 systemTypes（裁决后→NO_GOAL_TASK_TYPES）', file: 'actions.js',
   extract: (s) => extractNamedLiteral(s, 'systemTypes'), current: () => R.NO_GOAL_TASK_TYPES.filter(notPostBase), compare: 'set' });
 site({ label: 'routes/task-tasks.js:27 CODING_MUTATION_TASK_TYPES', file: 'routes/task-tasks.js',
-  extract: (s) => extractNamedLiteral(s, 'CODING_MUTATION_TASK_TYPES'), current: () => R.CODING_MUTATION_TASK_TYPES, compare: 'set' });
+  extract: (s) => extractNamedLiteral(s, 'CODING_MUTATION_TASK_TYPES'),
+  // #6371 显式编码建单新增 CM 语义；专属审计测试钉 coding_workflow 必在，其余历史成员仍逐项比对。
+  current: () => R.CODING_MUTATION_TASK_TYPES.filter((t) => t !== 'coding_workflow'), compare: 'set' });
 site({ label: 'orchestrator/kernel-run-store.js:23 ELIGIBLE_TASK_TYPES', file: 'orchestrator/kernel-run-store.js',
   extract: (s) => extractNamedLiteral(s, 'ELIGIBLE_TASK_TYPES'), current: () => R.KERNEL_RUN_ELIGIBLE_TASK_TYPES, compare: 'set' });
 site({ label: 'task-queue-lanes.js:1 PIPELINE_TASK_TYPES', file: 'task-queue-lanes.js',

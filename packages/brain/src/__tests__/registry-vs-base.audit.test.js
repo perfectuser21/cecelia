@@ -21,6 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { CODING_MUTATION_TASK_TYPES } from '../lib/task-type-registry.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRAIN_DIR = join(HERE, '..', '..'); // packages/brain
@@ -47,6 +48,10 @@ if (skipReason) {
 }
 
 describe('registry-vs-base 审计脚本是 CI 棘轮（终审 I4）', () => {
+  it('#6371 coding_workflow 必须保留编码变更语义，不能被历史基线豁免掩盖删除', () => {
+    expect(CODING_MUTATION_TASK_TYPES).toContain('coding_workflow');
+  });
+
   it.skipIf(Boolean(skipReason))('node scripts/audit/registry-vs-base.mjs 必须 exit 0 且 FAIL/ERROR 0', () => {
     expect(existsSync(SCRIPT), `审计脚本不存在：${SCRIPT}`).toBe(true);
 
