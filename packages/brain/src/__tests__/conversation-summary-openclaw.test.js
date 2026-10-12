@@ -4,7 +4,10 @@ vi.mock('../machine-registry.js', () => ({ resolvePrimaryWorkerId: () => 'mmv', 
 import { sshWithStdin } from '../lib/ssh-exec.js';
 import { callConversationSummary } from '../conversation-summary-openclaw.js';
 import { summarizeSession } from '../conversation-capture.js';
-import { summaryAgentConfig } from '../../scripts/configure-conversation-summarizer.mjs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { summaryAgentConfig, applySummaryAgent } from '../../scripts/configure-conversation-summarizer.mjs';
 
 describe('会话摘要 OpenClaw Codex 通道', () => {
   it('部署合同固定 Codex、空技能与全部工具拒绝，不沿用有行动权限的 agent', () => {
@@ -18,6 +21,7 @@ describe('会话摘要 OpenClaw Codex 通道', () => {
     sshWithStdin.mockResolvedValue(JSON.stringify({ result: { payloads: [{ text: '{"topics":["恢复工作流部署","核验私密发布"]}' }] } }));
     expect(await summarizeSession('用户原文 `不可执行` $(不可执行)')).toBe('1. 恢复工作流部署\n2. 核验私密发布');
     const [, args, input, timeout] = sshWithStdin.mock.lastCall;
+    expect(args.at(-1)).toMatch(/^set -e;/);
     expect(args.at(-1)).toContain('--agent conversation-summarizer');
     expect(args.at(-1)).toMatch(/--session-id summary-[a-f0-9-]+/);
     expect(args.at(-1)).not.toContain('用户原文');
@@ -28,8 +32,12 @@ describe('会话摘要 OpenClaw Codex 通道', () => {
     sshWithStdin.mockResolvedValue('启动日志\n' + JSON.stringify({ finalAssistantVisibleText: '{"topics":["真实结论"]}' }, null, 2));
     expect((await callConversationSummary('thalamus', '摘要')).text).toBe('{"topics":["真实结论"]}');
   });
+  it('读取实际 CLI meta 中的最终正文，优先于过程 payload', async () => {
+    sshWithStdin.mockResolvedValue(JSON.stringify({ status: 'ok', result: { payloads: [{ text: '过程' }], meta: { aborted: false, finalAssistantVisibleText: '{"topics":["完成"]}' } } }));
+    expect((await callConversationSummary('thalamus', '摘要')).text).toBe('{"topics":["完成"]}');
+  });
   it('空回执、坏 JSON、传输失败均报错，摘要层仍安全降级', async () => {
-    for (const stdout of ['非JSON', '{"result":{"payloads":[]}}']) {
+    for (const stdout of ['非JSON', '{"status":"error",\n{"finalAssistantVisibleText":"假摘要"}', '{"result":{"payloads":[]}}', '{"finalAssistantVisibleText":"假结果"', JSON.stringify({ status: 'error', finalAssistantVisibleText: '假结果' }), JSON.stringify({ result: { meta: { aborted: true }, finalAssistantVisibleText: '假结果' } })]) {
       sshWithStdin.mockResolvedValue(stdout);
       await expect(callConversationSummary('thalamus', '摘要')).rejects.toThrow('summary_reply_missing');
     }
@@ -42,5 +50,26 @@ describe('会话摘要 OpenClaw Codex 通道', () => {
     const a = sshWithStdin.mock.lastCall[1].at(-1);
     await callConversationSummary('thalamus', '二');
     expect(sshWithStdin.mock.lastCall[1].at(-1)).not.toBe(a);
+  });
+});
+
+describe('摘要配置安全写入', () => {
+  it('保留其他配置和未知 agent 字段', () => {
+    const home = mkdtempSync(join(tmpdir(), 'summary-config-'));
+    try {
+      const path = join(home, 'config.json');
+      writeFileSync(path, JSON.stringify({ untouched: true, agents: { entries: { 'conversation-summarizer': { identity: { name: '摘要' } } } } }));
+      applySummaryAgent(path, home);
+      expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({ untouched: true, agents: { entries: { 'conversation-summarizer': { identity: { name: '摘要' }, tools: { deny: ['*'] } } } } });
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+  it('检测并保留其他写入者的变更', () => {
+    const home = mkdtempSync(join(tmpdir(), 'summary-config-'));
+    try {
+      const path = join(home, 'config.json');
+      writeFileSync(path, '{}');
+      expect(() => applySummaryAgent(path, home, () => writeFileSync(path, '{"concurrent":true}'))).toThrow('summary_config_changed');
+      expect(readFileSync(path, 'utf8')).toBe('{"concurrent":true}');
+    } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });
