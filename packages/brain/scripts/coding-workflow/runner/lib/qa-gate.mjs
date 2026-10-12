@@ -1,3 +1,4 @@
+import { stageQaRecords } from './qa-records.mjs';
 import { sumCostUsd } from '../../lib/transcript.mjs';
 // QA 门（evaluator 真人 QA，决策 02d8e749）：runner 自己开的 cw PR，必需检查全绿后、合并前，在 PR 预览环境（local 仓库：PR worktree，C6）里由
 // evaluate 活动像真人 QA 一样黑盒验收。FAIL → 报告提交、开发按报告修复、推送、CI 再跑、再验（不设轮数上限）。
@@ -164,9 +165,9 @@ async function evaluate(ctx, worktree, input, signal) {
 }
 
 /** 把本轮验收记录（QA 报告、截图目录、裁决）提交并推到 PR 分支。 */
-async function commitRecords(cfg, worktree, pr, paths, message) {
-  const present = paths.filter((p) => fs.existsSync(path.join(worktree, p)));
-  if ((await git(worktree, ['add', '--', ...present])).code !== 0) throw new Error('qa_report_add_failed');
+async function commitRecords(cfg, worktree, pr, paths, message, intent, round, smoke = []) {
+  await stageQaRecords(worktree, { ...intent, round }, paths);
+  if (smoke.length && (await git(worktree, ['add', '--', ...smoke])).code !== 0) throw new Error('qa_smoke_add_failed');
   if ((await git(worktree, [...RUNNER_ID, 'commit', '-q', '-m', message])).code !== 0) throw new Error('qa_report_commit_failed');
   await pushPrHead(cfg, worktree, pr);
 }
@@ -393,10 +394,10 @@ async function qaRound(ctx, pr, s, signal) {
     ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮 ${label}（失败 ${fails}）`);
     const records = [report0, `${intent.sprintDir}/qa-r${round}`];
     // 记录提交成功才算这一轮（提交失败下轮同一 head 重验，裁判计数回滚）
-    const commit = async (message) => {
+    const commit = async (message, smoke = []) => {
       const snapshot = { judge_bad: s.judge_bad, judge_pending: s.judge_pending };
       try {
-        await commitRecords(cfg, worktree, pr, records, message);
+        await commitRecords(cfg, worktree, pr, records, message, intent, round, smoke);
       } catch (error) {
         Object.assign(s, snapshot);
         throw error;
@@ -406,8 +407,8 @@ async function qaRound(ctx, pr, s, signal) {
     if (verdict === 'PASS' && cfg.judge) {
       const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
       if (j.file) records.push(`${intent.sprintDir}/${j.file}`);
-      if (!j.error && j.verdict === 'PASS') records.push(...await solidifyQa(ctx, pr, s, round, worktree, intent, result.outputs.qa_report_file, qa.env?.url));
-      await commit(`docs(qa): 第 ${round} 轮真人 QA ${label}，${j.error ? '独立裁判待定' : `独立裁判 ${j.verdict}`}`);
+      const smoke = !j.error && j.verdict === 'PASS' ? await solidifyQa(ctx, pr, s, round, worktree, intent, result.outputs.qa_report_file, qa.env?.url) : [];
+      await commit(`docs(qa): 第 ${round} 轮真人 QA ${label}，${j.error ? '独立裁判待定' : `独立裁判 ${j.verdict}`}`, smoke);
       return afterJudge(ctx, pr, s, worktree, intent, entry, j);
     }
     await commit(`docs(qa): 第 ${round} 轮真人 QA ${label}`);
@@ -435,7 +436,7 @@ async function judgeRound(ctx, pr, s, signal) {
     const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
     const smoke = !j.error && j.verdict === 'PASS' && entry.report
       ? await solidifyQa(ctx, pr, s, entry.round, worktree, intent, path.basename(entry.report), entry.env_url) : [];
-    if (j.file) await commitRecords(ctx.cfg, worktree, pr, [`${intent.sprintDir}/${j.file}`, ...smoke], `docs(qa): 第 ${entry.round} 轮独立裁判 ${j.verdict}`);
+    if (j.file) await commitRecords(ctx.cfg, worktree, pr, [`${intent.sprintDir}/${j.file}`], `docs(qa): 第 ${entry.round} 轮独立裁判 ${j.verdict}`, intent, entry.round, smoke);
     return afterJudge(ctx, pr, s, worktree, intent, entry, j);
   });
 }
