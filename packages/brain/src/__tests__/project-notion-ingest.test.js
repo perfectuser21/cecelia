@@ -87,6 +87,23 @@ describe('Projects Notion 导入接缝', () => {
     expect(req).not.toHaveBeenCalled();
   });
 
+  it('已勾 Archive 的历史副本即使复用 Run ID 也跳过，不阻断正常项目回灌', async () => {
+    const f = database([root({ notion_props: { notion_id: 'another-page', human_baseline: baseline } })]);
+    const req = vi.fn();
+    expect(await api.ingestProjectPage(f.client, 'token', page({ run: `brain:${ID}`, archive: true }), deps(req))).toBeNull();
+    expect(f.rows[0].notion_props.notion_id).toBe('another-page');
+    expect(req).not.toHaveBeenCalled();
+  });
+
+  it('仅初始化基线不刷新项目业务活动时间', async () => {
+    const f = database([root({ notion_props: { notion_id: PAGE, project_db: 'db' } })]);
+    await api.ingestProjectPage(f.client, 'token', page({ run: `brain:${ID}` }), deps(vi.fn()));
+    const update = f.calls.find(c => /UPDATE projects/.test(c.sql));
+    expect(update).toBeDefined();
+    expect(update.sql).not.toContain('updated_at = NOW()');
+    expect(f.rows[0].notion_props.human_baseline).toEqual(baseline);
+  });
+
   it('已关联页即使勾 Archive，人工变更仍回写并保留其他字段', async () => {
     const old = Array.from({ length: 20 }, (_, i) => ({ field: 'old', at: `${i}` }));
     const f = database([root({ status: 'paused', metadata: { retained: true, notion_overrides: old } })]);
@@ -95,6 +112,7 @@ describe('Projects Notion 导入接缝', () => {
     expect(f.rows[0].metadata.notion_overrides).toHaveLength(20);
     expect(f.rows[0].metadata.notion_overrides.at(-1)).toMatchObject({ field: 'status' });
     expect(f.calls.some(c => /FOR UPDATE/.test(c.sql))).toBe(true);
+    expect(f.calls.find(c => /UPDATE projects/.test(c.sql)).sql).toContain('updated_at = NOW()');
   });
 });
 
