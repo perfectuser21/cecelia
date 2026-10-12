@@ -56,6 +56,24 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       .toEqual([`${SPRINT}/05-qa-report-r1.md`, `${SPRINT}/06-judge-r1.md`]);
   });
 
+  it('ignorecase 被忽略的 CANNOT_VERIFY 报告仍提交并进入 commander 升级，不伪造 PASS', async () => {
+    addToBranch('.gitignore', '*REPORT*.md\n'); git(sb.clone, 'config', 'core.ignorecase', 'true');
+    const r = await go(green({ prs: [pr({ headRefOid: E.remoteHead() })] }), { mode: 'cannot' });
+    expect(r.stderr).not.toContain('qa_report_add_failed');
+    expect(state()).toMatchObject({ rounds: [{ verdict: 'CANNOT_VERIFY' }], escalated: { type: 'qa_cannot_verify' } });
+    expect(state().passed).toBeFalsy();
+    expect(git(sb.origin, 'show', '--name-only', '--format=', BRANCH).trim()).toBe(`${SPRINT}/05-qa-report-r1.md`);
+  });
+
+  it('被忽略的产品 smoke 仍普通 add 拒绝，不随 QA 记录 force-add', async () => {
+    addToBranch('.gitignore', 'packages/brain/scripts/smoke/*.sh\n');
+    const before = E.remoteHead();
+    const r = await go(green({ prs: [pr({ headRefOid: before })] }), { mode: 'pass-api' });
+    expect(r.stderr).toContain('qa_smoke_add_failed');
+    expect(E.remoteHead()).toBe(before);
+    expect(state().passed).toBeFalsy();
+  });
+
   it('evaluate 入口来自 runner 专用 clone（main），不用 PR 分支里可能被改过的 evaluate.mjs（审计 P0 #1）', async () => {
     const rel = 'packages/brain/scripts/coding-workflow/activities/evaluate.mjs';
     // PR 分支里放一个「被改过的」evaluate：一跑就留下 poison 记录并判 PASS
@@ -125,8 +143,10 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
   });
 
   it('裁判调用失败 → QA 报告照常提交（裁判待定），不合并；下一轮只重跑裁判（不重跑 QA），PASS 后提交裁决并批准', async () => {
+    addToBranch('.gitignore', '*REPORT*.md\n*JUDGE*.md\n');
+    git(sb.clone, 'config', 'core.ignorecase', 'true');
     judge.mode = 'http500';
-    let r = await go(green());
+    let r = await go(green({ prs: [pr({ headRefOid: E.remoteHead() })] }));
     expect(r.exitCode, r.stderr).toBe(0);
     expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判待定');
     expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);

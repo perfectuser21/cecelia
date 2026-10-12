@@ -7,3 +7,9 @@
 回归首红 514e86f54：1 failed / 22 passed；修复后 evaluate 23/23 通过。真实 native QA 在一次性 linked worktree 中验证固定提交 archive/show 提取、旧/新用户 CLI 黑盒输出不同，HEAD 与已跟踪文件不变。原始证据保留在 ~/.codex-team1/artifacts/cw-qa-baseline-ecaa6e07；不据此改写 Z0 历史 Q6 或旧失败报告。
 
 权限回归口径：本补丁不改 sandbox。旧 Codex 适配真实 QA 探针 cw-native-qa-probe2 已证 commit 返回 128；本轮初始会话未产生 commit 命令事件，后续探针仅有拒绝 stderr 文件而无原生 command_execution，不能把自述计作本轮提交拒绝证据。新提取与黑盒对比有完整原生命令完成事件，独立外层核查 HEAD/tracked 保持不变。
+
+## 记录落盘也适配目标仓
+
+下一真实 QA 已完成基线黑盒操作并有效报告 CANNOT_VERIFY，但目标仓 core.ignorecase=true 与 *REPORT*.md 使普通 git add 拒绝报告，卡在进入 commander 前。首红 fe989657c 用真实临时 Git 的完整 QA 门复现 qa_report_add_failed。仅当前任务/sprint/轮次严格限定记录用 literal-pathspecs + add -f；全部路径预验，不跟随链接，不允许空记录或已有暂存夹带。smoke 分开普通 add。既有 pr-branch/plan 统一 sprints/<stamp>-cw-<task8> 命名，验证沿用合同。
+
+验证：完整 QA 门48/48绿，新 CANNOT_VERIFY 忽略报告和 smoke 不强制添加3/3定向绿，路径边界真实Git14/14绿。judgeRound 重试用例增加忽略报告/裁决规则，1/1绿。保留旧冻结工作树与错误，不手填 passed。
