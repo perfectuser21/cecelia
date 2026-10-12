@@ -210,3 +210,9 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 - [x] [BEHAVIOR] codeidentitysql 实际scratch私有schema执行原生产判重SQL，inactive/非法Workflow、字符串布尔、伪造slot、盗用另一任务receipt和候选对象冒充均不能取得标题豁免；真ledger唯一键保留。
   Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/__tests__/integration/code-task-dedup.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
 
+
+## 比价领单租约守卫（任务 c5f6e683）
+- [x] [BEHAVIOR] priceleaseguard 租约409永久停止新业务和迟到结果；网络不明拒绝新动作；过期执行精确owner清理，清理失败显式返回。
+  Test: node --test scripts/phone-rpa/us-price-lease.test.mjs
+- [x] [BEHAVIOR] priceleasecleanup 手机停止标记拦后续业务但放行finally清理，并拒绝越界owner。
+  Test: python3 -m unittest discover -s scripts/phone-rpa -p test_us_price_lease.py
