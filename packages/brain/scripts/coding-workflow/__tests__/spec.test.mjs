@@ -411,4 +411,27 @@ describe('spec 活动（子进程 + 假 claude）', () => {
       expect(r.result.failure_class).toBeNull();
     },
   );
+
+  // C6：QA 模式按仓库。local（zenithjoy 第一阶段：PR worktree 内黑盒）验不了 UI / 真机，spec 阶段就判不支持并上交，不进 build
+  describe('按仓库的 QA 模式与规矩', () => {
+    const REPOS = JSON.parse(fs.readFileSync(path.join(HERE, '../repos.json'), 'utf8')).repos;
+    const ZJ = REPOS.find((r) => r.key === 'zenithjoy-workspace');
+    const CECELIA = REPOS.find((r) => r.key === 'cecelia');
+
+    it('local 仓库的 02 写了 QA_UNSUPPORTED → needs_human qa_mode_unsupported，原因进 evidence', async () => {
+      const r = await run('qa-unsupported', { repo_profile: ZJ });
+      expect(r.result).toMatchObject({ status: 'failed', failure_class: 'needs_human', reason_code: 'qa_mode_unsupported' });
+      expect(JSON.stringify(r.result.evidence)).toContain('真机点按抖音发布页');
+    });
+
+    it('brain_preview 仓库（cecelia）不认这一行，照常校验', async () => {
+      const r = await run('qa-unsupported', { repo_profile: CECELIA });
+      expect(r.result.status, r.stderr).toBe('completed');
+    });
+
+    it('prompt 注入本仓规矩：没传 profile = cecelia，传 zenithjoy 用 zenithjoy 的', async () => {
+      expect((await run('ok')).stderr).toContain('FAKE_REPO_RULES: cecelia');
+      expect((await run('ok', { repo_profile: ZJ })).stderr).toContain('FAKE_REPO_RULES: zenithjoy-workspace');
+    });
+  });
 });

@@ -212,4 +212,47 @@ describe('new-task.mjs', () => {
     expect(validatePlan({ project: { name: 'n' }, title: 't', acceptance: ['x'] })).toMatchObject({ projectId: null, project: { name: 'n', description: '' }, errors: [] });
     expect(validatePlan({ title: 't', acceptance: ['x'] })).toMatchObject({ projectId: null, project: null, errors: [] });
   });
+
+  // C6：任务可指定仓库（--repo / 计划顶层 repo / 单条 t.repo），经 repos.json 别名归一写规范 key；未登记的拒绝（不猜）
+  describe('--repo：按仓库建任务', () => {
+    it('--repo zenithjoy → payload.repo 写规范 key zenithjoy-workspace；仓库未启用时 stderr 提示 runner 不会认领', async () => {
+      brain = await startBrain();
+      const r = await runScript(['--repo', 'zenithjoy', plan({ title: '修 wf-run trap 顺序', acceptance: ['x'] })], { BRAIN_URL: brain.url });
+      expect(r.code, r.stderr).toBe(0);
+      expect(brain.posts[0].payload).toMatchObject({ coding_workflow: true, repo: 'zenithjoy-workspace' });
+      expect(r.stderr).toContain('未启用');
+    });
+
+    it('--repo=<URL> 写法同样归一；计划顶层 repo 与单条 t.repo（单条优先）', async () => {
+      brain = await startBrain();
+      let r = await runScript([`--repo=https://github.com/perfectuser21/zenithjoy-workspace.git`, plan({ title: 't', acceptance: ['x'] })], { BRAIN_URL: brain.url });
+      expect(r.code, r.stderr).toBe(0);
+      expect(brain.posts[0].payload.repo).toBe('zenithjoy-workspace');
+      r = await runScript([plan({ repo: 'zenithjoy', tasks: [{ title: 'a', acceptance: ['x'] }, { title: 'b', acceptance: ['x'], repo: 'cecelia' }] })], { BRAIN_URL: brain.url });
+      expect(r.code, r.stderr).toBe(0);
+      expect(brain.posts.slice(1).map((p) => p.payload.repo)).toEqual(['zenithjoy-workspace', 'cecelia']);
+    });
+
+    it('不给仓库 = cecelia（行为不变）；--dry-run 输出带 repo', async () => {
+      const r = await runScript([plan({ title: 't', acceptance: ['x'] }), '--dry-run', '--repo', 'zenithjoy-workspace']);
+      expect(r.code, r.stderr).toBe(0);
+      expect(JSON.parse(r.stdout)).toEqual([expect.objectContaining({ title: 't', repo: 'zenithjoy-workspace' })]);
+      expect(validatePlan({ title: 't', acceptance: ['x'] }).tasks[0].repoKey).toBe('cecelia');
+    });
+
+    it('未登记的仓库 → 校验失败 repo_unknown，不调 Brain', async () => {
+      expect(validatePlan({ title: 't', acceptance: ['x'], repo: 'nope' }).errors).toContain('#1:repo_unknown:nope');
+      expect(validatePlan({ title: 't', acceptance: ['x'] }, { repo: 'nope' }).errors).toContain('#1:repo_unknown:nope');
+      brain = await startBrain();
+      const r = await runScript(['--repo', 'nope', plan({ title: 't', acceptance: ['x'] })], { BRAIN_URL: brain.url });
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain('repo_unknown:nope');
+      expect(brain.posts).toEqual([]);
+    });
+
+    it('--repo 缺值 → 用法错误', async () => {
+      const r = await runScript([plan({ title: 't', acceptance: ['x'] }), '--repo']);
+      expect(r.code).toBe(2);
+    });
+  });
 });
