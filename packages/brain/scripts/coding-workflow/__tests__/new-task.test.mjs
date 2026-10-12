@@ -215,11 +215,23 @@ describe('new-task.mjs', () => {
 
   // C6：任务可指定仓库（--repo / 计划顶层 repo / 单条 t.repo），经 repos.json 别名归一写规范 key；未登记的拒绝（不猜）
   describe('--repo：按仓库建任务', () => {
-    it('--repo zenithjoy → payload.repo 写规范 key zenithjoy-workspace；仓库未启用时 stderr 提示 runner 不会认领', async () => {
+    it('--repo zenithjoy → payload.repo 写规范 key zenithjoy-workspace；C7 已开闸，不再提示未启用', async () => {
       brain = await startBrain();
       const r = await runScript(['--repo', 'zenithjoy', plan({ title: '修 wf-run trap 顺序', acceptance: ['x'] })], { BRAIN_URL: brain.url });
       expect(r.code, r.stderr).toBe(0);
       expect(brain.posts[0].payload).toMatchObject({ coding_workflow: true, repo: 'zenithjoy-workspace' });
+      expect(r.stderr).not.toContain('未启用');
+    });
+
+    it('仓库登记了但未启用（CODING_WF_REPOS_FILE 指向关闸的表）：照建，stderr 提示 runner 不会认领', async () => {
+      brain = await startBrain();
+      const real = JSON.parse(fs.readFileSync(path.join(path.dirname(SCRIPT), 'repos.json'), 'utf8'));
+      const closed = { repos: real.repos.map((r) => (r.default ? r : { ...r, enabled: false })) };
+      const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'repos-closed-')), 'repos.json');
+      fs.writeFileSync(file, JSON.stringify(closed));
+      const r = await runScript(['--repo', 'zenithjoy', plan({ title: 't', acceptance: ['x'] })], { BRAIN_URL: brain.url, CODING_WF_REPOS_FILE: file });
+      expect(r.code, r.stderr).toBe(0);
+      expect(brain.posts[0].payload.repo).toBe('zenithjoy-workspace');
       expect(r.stderr).toContain('未启用');
     });
 
