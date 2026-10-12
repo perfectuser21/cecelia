@@ -1,7 +1,7 @@
 ---
 id: harness-contract-proposer-skill
 description: |
-  Harness Contract Proposer — Harness v5 GAN Layer 2a：
+  【已废弃（2026-10-12）：旧 harness 编排不再派发，编码改建 coding_workflow 单】Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
 version: 9.27.0
@@ -59,6 +59,7 @@ changelog:
   - 6.0.0: Working Skeleton — is_skeleton 检测；按 journey_type 切换 E2E test 模板（4 种）；contract-dod-ws0.md 加 YAML header
   - 5.0.0: [已废弃] 曾禁止 [BEHAVIOR] 出现在合同中（此规则已被 v7.4 反转）。TDD 融合 — 合同产出 3 份产物；Test Contract 索引表。当前正确规则：[BEHAVIOR] 必须在 contract-dod.md 里，带 manual:bash 命令。
 ---
+> **已废弃（2026-10-12）**：旧 harness 链（task_type=harness_initiative / orchestrator=skill-relay / kernel-v1）无头派发已关闭、建单入口拒无头 harness_initiative；编码工作改建 coding_workflow 单（`packages/brain/scripts/coding-workflow/new-task.mjs`），由 coding-workflow-runner 跑 spec→GAN→实现→QA→合并。本 skill 仅留作历史参考，随旧 harness 代码删除（车道 A5）一并下线，勿再点火。
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，直接按本文档流程操作。**

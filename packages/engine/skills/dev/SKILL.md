@@ -1,7 +1,7 @@
 ---
 name: dev
-version: 19.6.0
-updated: 2026-07-17
+version: 19.7.5
+updated: 2026-10-12
 description: 统一开发点火入口。查 12 张 Brain DB 表拿上下文 → 判断类型（bug / 小改动 / 大功能）→ 生成 PrepPRD → 用户确认 → 路由执行。
 trigger: /dev, --task-id <id>, 我想做, 有个 bug, 改一下, 出问题了, walking skeleton, harness, journey, feature
 ---
@@ -51,7 +51,7 @@ curl -s "localhost:5221/api/brain/okr/tree"
 用户描述
   ├── 有 bug / 出问题 / 不对 / 报错    → 【路径 A：Bug】
   ├── 改一个字段 / 加个配置 / 小改动   → 【路径 B：小改动】（单 WS）
-  └── 想做 X / 新功能 / 贯穿 Journey   → 【路径 C：大功能】（多 WS，Harness）
+  └── 想做 X / 新功能 / 贯穿 Journey   → 【路径 C：大功能】（建 coding_workflow 单，runner 无头跑）
 ```
 
 ---
@@ -319,7 +319,7 @@ Tier 1 固定默认：
 
 ---
 
-### 路径 C：大功能（Harness）
+### 路径 C：大功能（coding_workflow）
 
 PrepPRD 确认后，**立即执行**这条 bash 命令写 decision（不要生成 JSON、不要描述，直接 Bash 运行）：
 
@@ -340,38 +340,59 @@ node ~/.claude/skills/dev/scripts/add-feature.js \
   --thickness "thin" --area "<area>"
 ```
 
-点火：
+点火 = 建 **coding_workflow** 单（2026-10-12 起；旧 `harness_initiative` 无头 kernel 已退役：派发关闭、建单入口拒无头 harness_initiative，返回 422 `no_executor_for_task_type`）。
+MMV 上的 coding-workflow-runner 每 300s 认领一轮，自动跑 intent → spec → spec-review GAN → 实现 → CI 自修 → 预览 QA → 独立裁判 → 合并 → 报告。
+
+推荐用建单脚本（字段口径与 runner 一致，先整体校验再逐条建）：
+
+```bash
+cat > /tmp/cw-plan.json <<'EOF'
+{
+  "title": "<feature_name>",
+  "description": "<thin_prd + PrepPRD 要点>",
+  "acceptance": ["<可验证断言 1：查库/接口/页面上能看到什么>", "<可验证断言 2>"],
+  "priority": "P1",
+  "gp_anchor": "none(infra)"
+}
+EOF
+node packages/brain/scripts/coding-workflow/new-task.mjs /tmp/cw-plan.json --dry-run   # 先看请求体
+node packages/brain/scripts/coding-workflow/new-task.mjs /tmp/cw-plan.json             # 输出 [{key,id,title}]
+```
+
+大改拆成有序小任务：`{"project": {"name": "<功能名>"}, "tasks": [{"key": "a", "title": "...", "acceptance": [...]}, {"key": "b", "title": "...", "acceptance": [...], "depends_on": ["a"]}]}`（有 depends_on 必须给 project 或 project_id）。
+
+等价的 curl（不用脚本时，字段照 runner 口径）：
 ```bash
 curl -s -X POST localhost:5221/api/brain/tasks \
   -H "Content-Type: application/json" \
   -d "{
-    \"task_type\": \"harness_initiative\",
+    \"task_type\": \"coding_workflow\",
     \"title\": \"<feature_name>\",
     \"description\": \"<thin_prd>\",
     \"priority\": \"P1\",
+    \"trigger_source\": \"manual\",
     \"payload\": {
-      \"sprint_dir\": \"<sprint_dir>\",
-      \"thin_prd\": \"<thin_prd>\",
-      \"prep_prd_body\": \"<PrepPRD全文Markdown>\",
-      \"journey_id\": \"<notion_journey_id>\",
-      \"feature_id\": \"<notion_feature_id>\",
-      \"base_repo\": \"<见下方规则>\",
-      \"target_environment\": \"<windows_cloud|mac_web|local_api>\"
+      \"coding_workflow\": true,
+      \"repo\": \"cecelia\",
+      \"acceptance\": [\"<可验证断言>\"],
+      \"gp_anchor\": \"none(infra)\"
     }
   }"
 ```
 
-**`base_repo` 规则：**
+> 旧借壳形状 `task_type=data` + `payload.coding_workflow=true` + `payload.headed_manual="true"`（**字符串**）runner 仍认、Brain 建单时归一成 coding_workflow；新建一律直接用 `coding_workflow`。
 
-| target_environment | base_repo 格式 |
-|---|---|
-| `windows_cloud` / `mac_web` | **必须 GitHub URL**（Generator 跑在 Actions runner，访问不到本地路径）|
-| `local_api` | 本地路径或 GitHub URL 均可 |
+**仓库限制**：runner 只认领 `packages/brain/scripts/coding-workflow/repos.json` 里 `enabled=true` 的仓库（当前只有 cecelia；zenithjoy-workspace 已登记未开闸）。不支持的仓库无头建单会被拒（`runner_repo_unsupported`），改在本 /dev 会话里有头做，账本行必须带字符串 `headed_manual` 并立刻认领：
 
-> ❌ 错误：`windows_cloud` + `base_repo=/Users/administrator/...` → Harness 入队失败
-> ✅ 正确：`windows_cloud` + `base_repo=https://github.com/perfectuser21/zenithjoy-workspace.git`
+```bash
+curl -s -X POST localhost:5221/api/brain/tasks -H "Content-Type: application/json" \
+  -d "{\"title\": \"<PR 标题>\", \"task_type\": \"dev\", \"priority\": \"P1\", \"change_kind\": \"capability_change\",
+       \"repo_hint\": \"https://github.com/perfectuser21/zenithjoy-workspace\", \"map_scope_hint\": [\"<格子>\"],
+       \"trigger_source\": \"manual\", \"payload\": {\"headed_manual\": \"true\"}}"
+curl -s -X POST localhost:5221/api/brain/tasks/<id>/claim -H "Content-Type: application/json" -d '{"claimer":"interactive-dev-skill"}'
+```
 
-Brain tick 自动 pick up，`curl localhost:5221/api/brain/tasks/<task_id>` 查进度。
+进度：`curl localhost:5221/api/brain/tasks/<task_id>`（`result.coding_workflow` 有 runner 写回），MMV 上 `~/Library/Logs/coding-workflow-runner.log`。
 
 ---
 
@@ -448,6 +469,8 @@ node ~/.claude/skills/dev/scripts/status.js --area "ZenithJoy"
 ---
 
 ## Harness Pipeline 定义
+
+> **已废弃（2026-10-12）**：下述旧 harness 编排（planner → GAN → generator → evaluator → report，task_type=harness_initiative）已不再派发，仅留作历史参考；路径 C 改建 coding_workflow 单，由 coding-workflow-runner 执行。
 
 ### Run 固定结构
 

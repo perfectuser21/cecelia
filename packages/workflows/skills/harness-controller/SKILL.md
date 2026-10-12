@@ -1,7 +1,7 @@
 ---
 id: harness-controller-skill
 description: |
-  Harness Controller — PR-level 单 session 编排者（SDD 模式）。2026-07-05 cecelia #3554 起为**唯一编排路径**：
+  【已废弃（2026-10-12）：旧 harness 编排不再派发，编码改建 coding_workflow 单】Harness Controller — PR-level 单 session 编排者（SDD 模式）。2026-07-05 cecelia #3554 起为**唯一编排路径**：
   Brain 硬校验 payload.orchestrator==='skill-relay'，LangGraph 图已废弃（代码保留观察期但不再被 invoke）。
   一个 claude session 从头跑完一条 sprint：planner → GAN(proposer×reviewer) → generator(TDD) → evaluator → judge → merge → report。
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
@@ -39,6 +39,7 @@ changelog:
   - 1.1.0: N4 三跑实证修订——①merge 前禁退出(run-3 恢复session早退实证)②台账每步硬性 bash③report 回写 initiative_runs phase(治巡逻误报 Stuck)④CI 门禁三件套前置进 generator 验收(三跑均在 CI 才踩)
   - 1.0.0: 首版——SDD 模式移植（主理人 2026-07-04 拍板：单 session skill 接力，不自造 orchestrator，Brain 核心不动）
 ---
+> **已废弃（2026-10-12）**：旧 harness 链（task_type=harness_initiative / orchestrator=skill-relay / kernel-v1）无头派发已关闭、建单入口拒无头 harness_initiative；编码工作改建 coding_workflow 单（`packages/brain/scripts/coding-workflow/new-task.mjs`），由 coding-workflow-runner 跑 spec→GAN→实现→QA→合并。本 skill 仅留作历史参考，随旧 harness 代码删除（车道 A5）一并下线，勿再点火。
 
 > **语言规则: 所有输出简体中文。**
 > **角色**: 车间主任（编排/派活/验收），不亲自写代码。每个阶段派 fresh subagent（Task tool），自己只保留协调所需的最小上下文。

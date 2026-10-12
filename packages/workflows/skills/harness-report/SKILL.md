@@ -1,7 +1,7 @@
 ---
 id: harness-report-skill
 description: |
-  Harness Report — 最终步骤：交付报告 + Sprint 状态同步。
+  【已废弃（2026-10-12）：旧 harness 编排不再派发，编码改建 coding_workflow 单】Harness Report — 最终步骤：交付报告 + Sprint 状态同步。
   Phase A（6步交付）：回写Brain任务状态 → 更新中台Dashboard → 写Notion AI Notes（GAN标注表+截图）
   → 更新Notion Feature Registry → 飞书通知 → 写本地harness-report.md备份。
   Phase B（Sprint状态同步）：写本地Brain DB → 通过 db-update skill 触发 notion-push-sync.js 的 8 个 push 函数（journeys/journey_features/issues/skill_registry/journey_steps/journey_step_links/decisions/initiative_contracts）→ git commit。
@@ -24,6 +24,7 @@ changelog:
   - 5.0.0: 6步完整交付 — 回写Brain任务状态 + Dashboard + Notion AI Notes + Feature Registry + 飞书 + 本地备份
   - 4.0.0: Harness v4.0 Report（独立 skill，新增 CI/Deploy watch 状态）
 ---
+> **已废弃（2026-10-12）**：旧 harness 链（task_type=harness_initiative / orchestrator=skill-relay / kernel-v1）无头派发已关闭、建单入口拒无头 harness_initiative；编码工作改建 coding_workflow 单（`packages/brain/scripts/coding-workflow/new-task.mjs`），由 coding-workflow-runner 跑 spec→GAN→实现→QA→合并。本 skill 仅留作历史参考，随旧 harness 代码删除（车道 A5）一并下线，勿再点火。
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，不要 find/glob 查找任何 SKILL.md，直接按本文档流程操作。**

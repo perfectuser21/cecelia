@@ -1,7 +1,7 @@
 ---
 id: harness-generator-skill
 description: |
-  Harness Generator — 严格合同执行者 × Superpowers 融合。
+  【已废弃（2026-10-12）：旧 harness 编排不再派发，编码改建 coding_workflow 单】Harness Generator — 严格合同执行者 × Superpowers 融合。
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator 本地候选；远端发布只由 Judge PASS 后的可信 Publisher 执行。
@@ -39,6 +39,7 @@ changelog:
   - 4.0.1: 禁止 find /Users 广泛搜索，只能在当前目录(.)内搜索
   - 4.0.0: Harness v4.0 Generator（严格合同执行者，输出 pr_url 供 harness_ci_watch 使用）
 ---
+> **已废弃（2026-10-12）**：旧 harness 链（task_type=harness_initiative / orchestrator=skill-relay / kernel-v1）无头派发已关闭、建单入口拒无头 harness_initiative；编码工作改建 coding_workflow 单（`packages/brain/scripts/coding-workflow/new-task.mjs`），由 coding-workflow-runner 跑 spec→GAN→实现→QA→合并。本 skill 仅留作历史参考，随旧 harness 代码删除（车道 A5）一并下线，勿再点火。
 
 > **语言规则: 所有输出必须使用简体中文。严禁日语、韩语或其他语言。**
 > **执行规则: 严格按照下面列出的步骤执行。不要搜索/查找其他 skill 文件，不要 find/glob 查找任何 SKILL.md，直接按本文档流程操作。**
