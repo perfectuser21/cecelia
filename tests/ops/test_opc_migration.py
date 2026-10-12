@@ -50,6 +50,16 @@ class Migration(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, '执行现场'): m.main()
                 write.assert_not_called()
 
+    def test_failed_claim_blocks_all_business_writes(self):
+        for name, target in [('opc-kr-current', 'company_items'), ('opc-okr-sync', 'fetch')]:
+            m = load(name)
+            def call(url, body=None, method=None):
+                if url.endswith('/tasks'): return {'id': 'fixture'}
+                return {'success': False, 'accepted': False}
+            with patch.object(m, 'call', side_effect=call), patch.object(m, target) as business:
+                with self.assertRaisesRegex(RuntimeError, '认领'): m.main()
+                business.assert_not_called()
+
     def test_business_date_uses_shanghai_once(self):
         m = load('opc-kr-current')
         source = Path(m.__file__).read_text()
