@@ -10,6 +10,7 @@ describe('预览等待必须有界', () => {
       let r = await E.go(E.green(), { extra });
       expect(r.exitCode, r.stderr).toBe(0);
       expect(E.state().preview).toMatchObject({ waiting_since: expect.any(String), waiting_head: E.head });
+      expect(E.brainStateResults().at(-1).qa_state.preview).toEqual(E.state().preview);
       expect(E.state().escalated).toBeUndefined();
       expect(E.qaCalls()).toEqual([]);
       const since = E.state().preview.waiting_since;
