@@ -2,5 +2,5 @@
 BEGIN;
 DROP INDEX IF EXISTS idx_projects_notion_id_unique;
 ALTER TABLE projects DROP COLUMN IF EXISTS ai_tier;
-DELETE FROM schema_version WHERE version = '552';
+DELETE FROM schema_version WHERE version = '554';
 COMMIT;

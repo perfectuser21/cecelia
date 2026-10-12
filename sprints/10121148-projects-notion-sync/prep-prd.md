@@ -16,7 +16,7 @@ GP-Anchor: none(infra)（本仓库无 product-map，N/A）
    - **基线初始化**（已关联 Notion 页但无 human_baseline 的存量行，只做一次）：status 基线=按第 2 条把 Brain 现值换算成 Notion 值；priority/due/ai_tier 基线=Brain 现值（多为空）；remark 基线=Notion 现值（存量 Remark 是机器旧摘要），随后推送把 Remark 清空、摘要改写进「AI 进展」。这样存量页里人以前改过的 Status（如 coding 合同对抗改成 Completed）被正确识别为人改并拉回，机器推过的值不会被误判。
    - 拉增量：Notion 查询 `last_edited_time >= 游标-2min`，游标存 `ops_notion_ingest_cursor`（db_key='projects'）。自己推送引起的编辑因等于基线自动无操作。
 6. Notion 人建项目入库：未勾 Archive 且 Run ID 为空的页 → INSERT projects（name=标题，status/priority/remark/end_date/ai_tier 取页面值，ai_tier 空=知情，metadata.source='notion'，notion_props 写 notion_id/project_db/human_baseline）→ 回填 Run ID=`brain:<id>`。幂等：先按 notion_props.notion_id 查已有行。
-7. AI 参与：迁移 552 加 `projects.ai_tier TEXT NOT NULL DEFAULT '知情' CHECK (ai_tier IN ('知情','盯着','介入'))`；PATCH /projects/:id 支持 ai_tier（非法值 400）。Notion 缺列时自动补建「AI 参与」(select 三选项) 与「AI 进展」(rich_text)，只补缺不改人调过的配置。
+7. AI 参与：迁移 554 加 `projects.ai_tier TEXT NOT NULL DEFAULT '知情' CHECK (ai_tier IN ('知情','盯着','介入'))`；PATCH /projects/:id 支持 ai_tier（非法值 400）。Notion 缺列时自动补建「AI 参与」(select 三选项) 与「AI 进展」(rich_text)，只补缺不改人调过的配置。
 8. 上线后数据：9 个在做项目 PATCH ai_tier=介入，其余保持知情。
 
 ## 不做

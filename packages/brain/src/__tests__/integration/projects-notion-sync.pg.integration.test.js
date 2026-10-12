@@ -91,7 +91,7 @@ beforeAll(async () => {
       topic text, decision text, priority text, reason text, notion_id text, notion_synced_at timestamptz);
     CREATE TABLE ops_notion_ingest_cursor(db_key text PRIMARY KEY,last_seen timestamptz,updated_at timestamptz);
     CREATE TABLE schema_version(version text PRIMARY KEY,description text);`);
-  await client.query(readFileSync(new URL('../../../migrations/552_projects_ai_tier.sql', import.meta.url), 'utf8'));
+  await client.query(readFileSync(new URL('../../../migrations/554_projects_ai_tier.sql', import.meta.url), 'utf8'));
 });
 beforeEach(async () => {
   await client.query('TRUNCATE projects, tasks, decisions, ops_notion_ingest_cursor');

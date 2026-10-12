@@ -9,7 +9,7 @@ const database = process.env.CI ? DB_DEFAULTS.database : 'cecelia_scratch';
 const schema = `projects_ai_tier_${randomUUID().replaceAll('-', '')}`;
 const client = new pg.Client({ ...DB_DEFAULTS, database });
 const readMigration = (down = false) => readFileSync(new URL(
-  `../../../migrations/${down ? 'rollback/' : ''}552_projects_ai_tier${down ? '.down' : ''}.sql`, import.meta.url
+  `../../../migrations/${down ? 'rollback/' : ''}554_projects_ai_tier${down ? '.down' : ''}.sql`, import.meta.url
 ), 'utf8');
 
 beforeAll(async () => {
@@ -31,7 +31,7 @@ afterAll(async () => {
   await client.end();
 });
 
-describe.sequential('迁移 552 项目档位与 Notion 唯一关联', () => {
+describe.sequential('迁移 554 项目档位与 Notion 唯一关联', () => {
   it('已有与新建项目默认知情，合法档位持久化，非法值和 null 被 DB 拒绝', async () => {
     await client.query(readMigration());
     expect((await client.query('SELECT ai_tier FROM projects')).rows[0].ai_tier).toBe('知情');
@@ -54,7 +54,7 @@ describe.sequential('迁移 552 项目档位与 Notion 唯一关联', () => {
     await client.query("UPDATE projects SET ai_tier='介入'");
     await client.query(readMigration());
     expect((await client.query('SELECT ai_tier FROM projects')).rows[0].ai_tier).toBe('介入');
-    expect((await client.query("SELECT count(*)::int AS n FROM schema_version WHERE version='552'")).rows[0].n).toBe(1);
+    expect((await client.query("SELECT count(*)::int AS n FROM schema_version WHERE version='554'")).rows[0].n).toBe(1);
   });
   it('历史重复关联使整次迁移失败，不删除或改写已有项目', async () => {
     await client.query(`INSERT INTO projects(name, notion_props) VALUES ('历史重复', '{"notion_id":"page-1"}')`);
@@ -67,7 +67,7 @@ describe.sequential('迁移 552 项目档位与 Notion 唯一关联', () => {
     await client.query(readMigration());
     await client.query(readMigration(true));
     expect((await client.query('SELECT count(*)::int AS n FROM projects')).rows[0].n).toBe(1);
-    expect((await client.query("SELECT count(*)::int AS n FROM schema_version WHERE version='552'")).rows[0].n).toBe(0);
+    expect((await client.query("SELECT count(*)::int AS n FROM schema_version WHERE version='554'")).rows[0].n).toBe(0);
     await client.query(readMigration());
   });
 });

@@ -31,8 +31,8 @@ GP-Anchor: none(infra)
 | ws1 | `packages/brain/src/__tests__/projects-notion-sync.test.js` | 超过30个和较早归档项目也参与推送 | 行为 |
 | ws1 | `packages/brain/src/__tests__/projects-notion-sync.test.js` | 人工备注与机器进展分列 | 单元 |
 | ws1 | `packages/brain/src/routes/__tests__/task-projects-ai-tier.test.js` | 未指定时默认为知情 | 路由 |
-| ws1 | `packages/brain/src/__tests__/integration/migration-552-projects-ai-tier.pg.integration.test.js` | 合法档位持久化 | 真实 PostgreSQL |
-| ws1 | `packages/brain/src/__tests__/integration/migration-552-projects-ai-tier.pg.integration.test.js` | 同一 Notion 页不能关联两个项目 | 真实 PostgreSQL |
+| ws1 | `packages/brain/src/__tests__/integration/migration-554-projects-ai-tier.pg.integration.test.js` | 合法档位持久化 | 真实 PostgreSQL |
+| ws1 | `packages/brain/src/__tests__/integration/migration-554-projects-ai-tier.pg.integration.test.js` | 同一 Notion 页不能关联两个项目 | 真实 PostgreSQL |
 | ws1 | `packages/brain/scripts/smoke/projects-notion-sync-smoke.sh` | 项目同步与数据库约束全链验证 | CI smoke |
 
 ## 生产验收与范围边界

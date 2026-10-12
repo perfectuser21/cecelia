@@ -23,7 +23,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_notion_id_unique
   WHERE notion_props->>'notion_id' IS NOT NULL;
 
 INSERT INTO schema_version (version, description)
-VALUES ('552', '项目 AI 参与档位默认知情，限制知情/盯着/介入；Notion 页与项目唯一关联')
+VALUES ('554', '项目 AI 参与档位默认知情，限制知情/盯着/介入；Notion 页与项目唯一关联')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
