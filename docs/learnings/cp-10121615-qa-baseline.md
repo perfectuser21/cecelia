@@ -13,3 +13,5 @@
 下一真实 QA 已完成基线黑盒操作并有效报告 CANNOT_VERIFY，但目标仓 core.ignorecase=true 与 *REPORT*.md 使普通 git add 拒绝报告，卡在进入 commander 前。首红 fe989657c 用真实临时 Git 的完整 QA 门复现 qa_report_add_failed。仅当前任务/sprint/轮次严格限定记录用 literal-pathspecs + add -f；全部路径预验，不跟随链接，不允许空记录或已有暂存夹带。smoke 分开普通 add。既有 pr-branch/plan 统一 sprints/<stamp>-cw-<task8> 命名，验证沿用合同。
 
 验证：完整 QA 门48/48绿，新 CANNOT_VERIFY 忽略报告和 smoke 不强制添加3/3定向绿，路径边界真实Git14/14绿。judgeRound 重试用例增加忽略报告/裁决规则，1/1绿。保留旧冻结工作树与错误，不手填 passed。
+
+CI 夹具修正：新 qa-records 临时仓未设置提交身份，本机 Git 自动探测掩盖问题，Linux CI 初始化14例全部失败。隔离全局/系统配置并启用 user.useConfigOnly 重现14红；修复为临时仓局部设置 name/email/useConfigOnly，不改任何全局配置。其余本 PR 新用例复用 sandbox.mjs，seed 原有本地身份与 runner 显式 RUNNER_ID 保持。产品候选 c7bc9fe29 完全未改。

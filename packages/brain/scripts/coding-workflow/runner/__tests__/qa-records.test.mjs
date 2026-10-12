@@ -14,6 +14,9 @@ describe('QA 记录只对当前任务/轮次限定路径 force-add（真实 Git�
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-records-'));
     git(dir, 'init', '-q'); git(dir, 'config', 'core.ignorecase', 'true');
+    git(dir, 'config', 'user.useConfigOnly', 'true');
+    git(dir, 'config', 'user.name', 'QA fixture');
+    git(dir, 'config', 'user.email', 'qa-fixture@example.invalid');
     put('.gitignore', '*REPORT*.md\nqa-r*/\n'); git(dir, 'add', '.gitignore'); git(dir, 'commit', '-qm', 'fixture');
   });
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
