@@ -16,7 +16,9 @@ const script = JSON.parse(fs.readFileSync(process.env.FAKE_GAN_SCRIPT, 'utf8'));
 const statePath = process.env.FAKE_GAN_STATE;
 const state = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, 'utf8')) : { review: 0, revise: 0 };
 const DIMS = ['意图对齐', '可验证', '场景覆盖', '回归风险', '可执行'];
-const result = (cost) => console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: cost ?? 0.1 }));
+const result = (cost) => console.log(JSON.stringify(process.env.FAKE_GAN_NATIVE === 'codex'
+  ? { type: 'turn.completed', usage: { input_tokens: 100, output_tokens: 20 } }
+  : { type: 'result', subtype: 'success', is_error: false, total_cost_usd: cost ?? 0.1 }));
 
 if (process.env.FAKE_GAN_SEEN) fs.appendFileSync(process.env.FAKE_GAN_SEEN, `${role} PRIOR_OPEN=${field('PRIOR_OPEN')} SPEC_ERRORS=${field('SPEC_ERRORS')} PREV_REVIEW_ERRORS=${field('PREV_REVIEW_ERRORS')} STUCK=${field('STUCK')} UNTRACKED_DEFERRALS=${field('UNTRACKED_DEFERRALS')}\n`);
 

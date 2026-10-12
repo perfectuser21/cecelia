@@ -54,6 +54,14 @@ describe('spec_review 活动 v2（合同对抗）', () => {
   };
   const seen = () => fs.readFileSync(path.join(tmp, 'seen.log'), 'utf8');
 
+  it('Codex 多轮 GAN 不把未知美元费用累加成0，输出明确未知', async () => {
+    const r = await run({ reviews: [{ scores: 6, issues: [blocker('R-1')] }, { scores: 8, prior: [{ id: 'R-1', status: '关闭' }] }] }, { FAKE_GAN_NATIVE: 'codex' });
+    expect(r.result.status, r.stderr).toBe('completed');
+    expect(r.result.outputs.gan.cost_usd).toBeNull();
+    expect(r.result.metrics.cost_usd).toBeNull();
+    expect(r.result.evidence.join(' ')).toContain('花费 未知');
+  });
+
   it('首轮评分全部 ≥7、无阻断/重要问题 → completed：02-review-r1.md 与 02-review.md 相同，outputs 带 gan 摘要', async () => {
     const r = await run({ reviews: [{ scores: 8, issues: [{ id: 'R-1', severity: '建议', scene: '', basis: '' }], cost: 0.3 }] });
     expect(r.result.status).toBe('completed');

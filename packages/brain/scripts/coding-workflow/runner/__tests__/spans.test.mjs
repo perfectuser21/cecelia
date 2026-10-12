@@ -55,6 +55,11 @@ describe('chainSpans', () => {
 });
 
 describe('gateSpan', () => {
+  it('未知美元费用明确上报 null，链路 span 与独立 gate span 都保留', () => {
+    expect(gateSpan({ taskId: TASK, key: 'qa', startedAt: T0, endedAt: T0, ok: true, occurrence: '1', costUsd: null }).cost_usd).toBeNull();
+    const spans = chainSpans({ activities: [{ key: 'spec', status: 'completed', attempts: [{ status: 'completed', metrics: { cost_usd: null } }] }] }, { taskId: TASK, startedAt: T0 });
+    expect(spans[0].cost_usd).toBeNull();
+  });
   it('runner 侧环节（QA/裁判/合并/CI 修复）一条 span；结论映射 pass/fail；幂等键带 PR 与轮次', () => {
     expect(gateSpan({ taskId: TASK, key: 'qa', startedAt: T0, endedAt: T0 + 90000, ok: false, costUsd: 0.5, occurrence: '77:r1', evidence: { verdict: 'FAIL' } }))
       .toEqual({

@@ -97,6 +97,10 @@ describe('runTimeoutMs', () => {
 });
 
 describe('summarizeReceipt', () => {
+  it('有未知费用的活动时总额保留 null，不把已知小计当总成本', () => {
+    expect(summarizeReceipt({ status: 'completed', outputs: { pr_url: 'u' }, metrics: { spec: { cost_usd: 0.3 }, build: { cost_usd: null } } }).cost_usd).toBeNull();
+    expect(summarizeReceipt({ status: 'failed', metrics: { spec: { cost_usd: null } } }).cost_usd).toBeNull();
+  });
   // 审计 #35：链路总花费 = 各活动 metrics.cost_usd 之和（有才带）
   it('回执 metrics 里各活动的 cost_usd 求和为 cost_usd；没有花费不带这个字段', () => {
     const receipt = { status: 'completed', outputs: { pr_url: 'u' }, activities: [], metrics: { spec: { cost_usd: 0.3 }, build: { cost_usd: 1.25 }, intent: {} } };

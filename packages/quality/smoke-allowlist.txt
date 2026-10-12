@@ -441,3 +441,5 @@ coding-workflow-route-smoke.sh
 content-pipeline-runs-shadow-smoke.sh
 bypass-audit-smoke.sh
 task-lease-device-pool-smoke.sh
+
+coding-workflow-codex-smoke.sh

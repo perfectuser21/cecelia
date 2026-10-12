@@ -27,6 +27,10 @@ let n = 0;
 const emit = (command, output) => {
   if (mode === 'fabricate') return;
   n += 1;
+  if (process.env.FAKE_EVAL_NATIVE === 'codex') {
+    console.log(JSON.stringify({ type: 'item.completed', item: { id: `c${n}`, type: 'command_execution', command, aggregated_output: output, exit_code: 0, status: 'completed' } }));
+    return;
+  }
   console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: `t${n}`, name: 'Bash', input: { command } }] } }));
   console.log(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: `t${n}`, content: output }] } }));
 };
@@ -62,4 +66,6 @@ const upstream = qaIds.map((q) => `"02-spec.md#${q}"`).join(', ');
 const body = mode === 'badformat' ? '看起来都好。\n' : sections.join('\n');
 fs.writeFileSync(field('REPORT_PATH'), `---\ntask_id: ${field('TASK_ID')}\nstep: evaluate\nupstream: [${upstream}]\n---\n# QA 报告\n\n${body}`);
 if (mode === 'outside') fs.writeFileSync('stray.txt', 'x\n');
-console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.7 }));
+console.log(JSON.stringify(process.env.FAKE_EVAL_NATIVE === 'codex'
+  ? { type: 'turn.completed', usage: { input_tokens: 100, output_tokens: 20 } }
+  : { type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.7 }));
