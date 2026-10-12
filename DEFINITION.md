@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.426.0
+**Brain 版本**: 1.427.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -78,6 +78,15 @@ summary: 版本、实现影响、地图及发布证据测试改用精确scratch�
 
 - 官方 ZenithJoy 试点映射将真实内容生产价值流与安卓多平台发布能力纳入固定源配置；只从完整旧集合升级，保旧身份、父级、来源与激活 CAS。
 - 当前 Workflow 定义使用唯一当前同来源清单，避免同一 SHA 旧清单造成歧义；非当前历史多清单仍明确拒绝。
+
+## Brain 1.427.0 — coding workflow 回归 smoke 在 CI 首跑失败由 runner 剔除失败条目重新固化一次
+
+- 新增 `runner/lib/smoke-refit.mjs`：cw PR 的 Smoke Glob Runner 红、且红的是 runner 固化的 `cw-*-qa-smoke.sh` → 从 job 日志本脚本段里的 `FAIL: T-n` 定位失败条目，剔除后重新固化并推送（runner 署名提交），每个 PR 最多一次（`qa-<pr>.json` 的 `smoke_refit`，随状态镜像进 Brain）；smoke_note 追加「CI 首跑 Smoke Glob Runner 失败，剔除 T-n(ci_failed)」；已批准的改绑到新 head（不撤销、不重跑 QA）
+- 不派 CI 修复会话（它无权改 smoke，只会撞 protected_path 升级），不计 CI 修复尝试
+- 剔除后零固化：删脚本、撤 allowlist / write-targets 登记；PR 改了 API 面 → 撤销批准，升级 `qa_smoke_missing` 交 commander（决策 4fe863c3，同 C2b 口径）；没改 API 面 → 记「无回归 smoke」照常合并
+- 已剔过一次仍红 / 日志定位不到 `FAIL: T-n` / 剔除失败 → 升级 `ci_fix_exhausted`（reason `qa_smoke_refit_exhausted` / `qa_smoke_fail_unlocated` / `qa_smoke_refit_failed:*`），`prompts/commander.md` 补裁法
+- `lib/qa-smoke.mjs` 新增 `smokeCiFailures` / `dropSmokeBlocks` / `unregisterSmoke`；`cifix-scan.mjs` 抽出 `checkLog`（完整 job 日志），失败检查带 link
+- 运行时口径：runner 每 300s 自更新到 origin/main，合并后下一轮起生效；只影响已固化 smoke 且 Smoke Glob Runner 红的 cw PR
 
 ## Brain 1.426.0 — drift-sentinel 补部署改 detached、超时只告警不杀进程；部署 Bark 告警在容器内真能推出去
 
