@@ -8,6 +8,7 @@
  *     期望：映射 Backlog→Open、Done→Closed、open→Open、closed→Closed（大小写不敏感），合法值原样，未知→Open。
  */
 import { describe, it, expect, vi } from 'vitest';
+vi.mock('../project-notion-ingest.js', () => ({ ingestProjectPage: vi.fn(async () => null), pullProjects: vi.fn() }));
 
 const mockQuery = vi.fn();
 const mockNotionReq = vi.fn();
@@ -56,7 +57,7 @@ describe('archived ancestor 400 → 视同 404 自愈', () => {
     const root = { id: '11111111-1111-4111-8111-111111111111', title: 'p', description: 'd', status: 'in_progress',
       notion_props: { notion_id: 'p1', project_digest: 'stale' } };
     const pool = { query: vi.fn(async (sql, params) => {
-      if (/FROM projects\s+WHERE status NOT IN/.test(sql)) return { rows: [root] };
+      if (/FROM projects ORDER BY/.test(sql)) return { rows: [root] };
       if (/UPDATE projects SET/.test(sql)) { updates.push(params); return { rows: [] }; }
       return { rows: [] };
     }) };
@@ -68,7 +69,7 @@ describe('archived ancestor 400 → 视同 404 自愈', () => {
     const s = await pushProjectRoots(pool, 'tok', { notionReq: req, log: { warn: () => {} } });
     expect(s.pushed).toBe(1);
     expect(s.failed).toBe(0);
-    expect(updates[0][1]).toBe('page-new');
+    expect(updates.find(p => typeof p[2] === 'string' && p[2].length === 40)[1]).toBe('page-new');
   });
 });
 

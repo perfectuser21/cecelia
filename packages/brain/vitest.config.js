@@ -6,6 +6,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
   'src/lib/__tests__/integration/skill-business-ownership.pg.integration.test.js',
+  'src/__tests__/integration/projects-notion-sync.pg.integration.test.js',
+  'src/__tests__/integration/relay-mirror-smoke.pg.integration.test.js',
+  'src/__tests__/integration/migration-554-projects-ai-tier.pg.integration.test.js',
   'src/__tests__/integration/workflow-source-registration.pg.integration.test.js',
   'src/__tests__/integration/device-patrol-admission.pg.integration.test.js',
   'src/lib/__tests__/integration/manual-qiumi-dispatch.test.js',

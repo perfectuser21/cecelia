@@ -203,7 +203,15 @@ site({ label: 'actions.js:43 CODING_TASK_TYPES', file: 'actions.js',
 site({ label: 'actions.js:19 systemTypes（裁决后→NO_GOAL_TASK_TYPES）', file: 'actions.js',
   extract: (s) => extractNamedLiteral(s, 'systemTypes'), current: () => R.NO_GOAL_TASK_TYPES.filter(notPostBase), compare: 'set' });
 site({ label: 'routes/task-tasks.js:27 CODING_MUTATION_TASK_TYPES', file: 'routes/task-tasks.js',
-  extract: (s) => extractNamedLiteral(s, 'CODING_MUTATION_TASK_TYPES'), current: () => R.CODING_MUTATION_TASK_TYPES, compare: 'set' });
+  extract: (s) => extractNamedLiteral(s, 'CODING_MUTATION_TASK_TYPES'),
+  current: () => {
+    // #6371（452d6d0bf）为 coding_workflow 加 CM：入口必须强制声明编码变更语义。
+    // 新增项也必须受审计，不能只 filter 掉后让误删 CM 标签悄悄通过。
+    if (!R.CODING_MUTATION_TASK_TYPES.includes('coding_workflow')) {
+      throw new Error('#6371 要求 coding_workflow 属于 CODING_MUTATION_TASK_TYPES');
+    }
+    return R.CODING_MUTATION_TASK_TYPES.filter((t) => t !== 'coding_workflow');
+  }, compare: 'set' });
 site({ label: 'orchestrator/kernel-run-store.js:23 ELIGIBLE_TASK_TYPES', file: 'orchestrator/kernel-run-store.js',
   extract: (s) => extractNamedLiteral(s, 'ELIGIBLE_TASK_TYPES'), current: () => R.KERNEL_RUN_ELIGIBLE_TASK_TYPES, compare: 'set' });
 site({ label: 'task-queue-lanes.js:1 PIPELINE_TASK_TYPES', file: 'task-queue-lanes.js',

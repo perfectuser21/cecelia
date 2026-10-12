@@ -259,6 +259,7 @@ registry-photo-layer-smoke.sh
 relay-baton-smoke.sh
 handoff-kinds-smoke.sh
 relay-mirror-smoke.sh
+projects-notion-sync-smoke.sh
 relay-runs-filter-smoke.sh
 relay-runs-patch-shortid-smoke.sh
 relay-runs-since-smoke.sh
