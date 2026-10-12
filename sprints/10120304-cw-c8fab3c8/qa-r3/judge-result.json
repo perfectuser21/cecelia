@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "failure_class": null,
+  "blocking": [],
+  "unsatisfied": [],
+  "concerns": [],
+  "file": "06-judge-r3.md",
+  "model": "gpt-5.6-sol",
+  "usage": {
+    "prompt_tokens": 20939,
+    "completion_tokens": 1902,
+    "total_tokens": 22841,
+    "completion_tokens_details": {
+      "reasoning_tokens": 1241
+    }
+  },
+  "completed_at": "2026-10-12T05:38:47.631Z"
+}
