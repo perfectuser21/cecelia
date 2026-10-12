@@ -43,6 +43,15 @@ BEGIN
       made_by_type, (SELECT string_agg(quote_literal(v), ', ') FROM unnest(con_vals) AS v));
     SELECT pg_get_expr(conbin, conrelid) INTO probe_expr
     FROM pg_constraint WHERE conrelid = 'pg_temp.decisions_made_by_probe'::regclass AND conname = 'probe_chk';
+    IF probe_expr IS DISTINCT FROM con.expr THEN
+      -- 迁移 193 / pg_dump 的既有形态显式将 varchar 字面量转为 text；
+      -- 仅回放这一已知等价形态，不通过删括号或正则改写表达式放宽校验。
+      ALTER TABLE pg_temp.decisions_made_by_probe DROP CONSTRAINT probe_chk;
+      EXECUTE format('ALTER TABLE pg_temp.decisions_made_by_probe ADD CONSTRAINT probe_chk CHECK (made_by::text = ANY (ARRAY[%s]))',
+        (SELECT string_agg(format('(%L::character varying)::text', v), ', ') FROM unnest(con_vals) AS v));
+      SELECT pg_get_expr(conbin, conrelid) INTO probe_expr
+      FROM pg_constraint WHERE conrelid = 'pg_temp.decisions_made_by_probe'::regclass AND conname = 'probe_chk';
+    END IF;
     DROP TABLE pg_temp.decisions_made_by_probe;
     IF probe_expr IS DISTINCT FROM con.expr THEN
       RAISE EXCEPTION 'decisions 上约束 % 无法解析出完整的 made_by 取值（回放不一致）：%', con.conname, con.def;
