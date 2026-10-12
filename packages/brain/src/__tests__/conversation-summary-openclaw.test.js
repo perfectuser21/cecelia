@@ -4,7 +4,9 @@ vi.mock('../machine-registry.js', () => ({ resolvePrimaryWorkerId: () => 'mmv', 
 import { sshWithStdin } from '../lib/ssh-exec.js';
 import { callConversationSummary } from '../conversation-summary-openclaw.js';
 import { summarizeSession } from '../conversation-capture.js';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { summaryAgentConfig, applySummaryAgent } from '../../scripts/configure-conversation-summarizer.mjs';
@@ -54,6 +56,18 @@ describe('会话摘要 OpenClaw Codex 通道', () => {
 });
 
 describe('摘要配置安全写入', () => {
+  it('通过含符号链接的实际文件路径启动 CLI 也会执行检查', () => {
+    const home = mkdtempSync(join(tmpdir(), 'summary-cli-'));
+    try {
+      const configPath = join(home, 'config.json');
+      writeFileSync(configPath, JSON.stringify({ agents: { entries: { 'conversation-summarizer': summaryAgentConfig(home) } } }));
+      const link = join(home, 'configure.mjs');
+      symlinkSync(fileURLToPath(new URL('../../scripts/configure-conversation-summarizer.mjs', import.meta.url)), link);
+      const result = spawnSync(process.execPath, [link], { encoding: 'utf8', env: { ...process.env, HOME: home, OPENCLAW_CONFIG_PATH: configPath } });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('现场配置一致');
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
   it('保留其他配置和未知 agent 字段', () => {
     const home = mkdtempSync(join(tmpdir(), 'summary-config-'));
     try {
