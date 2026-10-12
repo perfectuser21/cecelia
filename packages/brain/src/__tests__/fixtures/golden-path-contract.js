@@ -124,15 +124,16 @@ export class StatefulContractDb {
       /FROM tasks/i.test(compact)
       && /payload->>'gp_contract_id'/i.test(compact)
     ) {
+      // 按调用方真实传入的类型清单过滤：签字实现单改投 coding_workflow 后，清单漏类型即漏单
+      const types = Array.isArray(params[1]) ? params[1] : ['harness_initiative'];
       return {
         rows: this.tasks
-          .filter((task) => task.payload?.gp_contract_id === params[0])
+          .filter((task) => task.payload?.gp_contract_id === params[0] && types.includes(task.task_type))
           .map((task) => structuredClone(task)),
       };
     }
-    if (/FROM tasks/i.test(compact) && /harness_initiative/i.test(compact)) {
-      // 按 SQL 里真实列出的类型过滤：签字实现单改投 coding_workflow 后，查询漏列类型即漏单
-      const types = ['harness_initiative', 'coding_workflow'].filter((type) => compact.includes(`'${type}'`));
+    if (/FROM tasks/i.test(compact) && /payload->>'golden_path_id'/i.test(compact)) {
+      const types = Array.isArray(params[1]) ? params[1] : ['harness_initiative'];
       return {
         rows: this.tasks
           .filter((task) => (

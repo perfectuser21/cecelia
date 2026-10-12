@@ -128,6 +128,8 @@ async function createTestTask(app, overrides = {}) {
         map_scope_hint: ['F1'],
         branch: 'cp-cross-package-fixture',
         base_sha: 'a'.repeat(40),
+        // A2：夹具仓库非 runner 支持仓库，按有头账本行（harness_initiative）入账
+        payload: { headed_manual: 'true' },
       }
     : {};
   const res = await request(app)

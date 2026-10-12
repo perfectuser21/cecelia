@@ -121,6 +121,8 @@ describe('planner recovery consumption store', () => {
         title: `Recover Planner receipt ${RECEIPT_ID}`,
         description: `Resume initiative ${INITIATIVE_ID} from immutable Planner receipt ${RECEIPT_ID}.`,
         mutation_intent: 'write',
+        // A2：kernel 续跑单不改投 coding_workflow runner
+        kernel_continuation: true,
         declared_change_kind: 'new_capability',
         execution_profile_override_request: null,
         repo_hint: 'perfectuser21/cecelia',

@@ -7,14 +7,14 @@
  *  1. 无头编码单 canonical=coding_workflow，形状能被 runner plan.mjs pickCandidates 选中；
  *  2. 有头账本行（headed_manual / 非 queued|blocked / executor_kind=headed-session）仍是 harness_initiative；
  *  3. runner 不支持的仓库：无头建单抛 runner_repo_unsupported，有头照建；
- *  4. 仓库支持判定只有一个源（scripts/coding-workflow/repos.mjs），Brain 与 runner 同读，Brain 镜像带上它。
+ *  4. 仓库支持判定只有一个源（scripts/coding-workflow/repos.json，经 runner/lib/repos.mjs 读），Brain 与 runner 同读，Brain 镜像带上它。
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { routeWork, selectPipeline } from '../work-router.js';
+import { routeWork, runnerRepoOf, selectPipeline } from '../work-router.js';
 import { createRoutedTask } from '../work-routing-store.js';
 import { materializeNextSteps } from '../lib/relay-baton.js';
 import { pickCandidates } from '../../scripts/coding-workflow/runner/lib/plan.mjs';
@@ -128,6 +128,13 @@ describe('routeWork：有头判定与 runner 仓库判定', () => {
       .toMatchObject({ canonical_task_type: 'harness_initiative' });
   });
 
+  it('kernel 续跑单（planner recovery 后继，kernel_continuation）仍是 harness_initiative，不受 runner 仓库限制', () => {
+    expect(routeWork(codingRequest({ kernel_continuation: true }), FACTS))
+      .toMatchObject({ canonical_task_type: 'harness_initiative', pipeline: 'harness' });
+    expect(routeWork(codingRequest({ kernel_continuation: true, repo_hint: 'zenithjoy-workspace' }), FACTS))
+      .toMatchObject({ canonical_task_type: 'harness_initiative' });
+  });
+
   it('runner 不支持的仓库：无头抛 runner_repo_unsupported（带 code），有头照建 harness_initiative', () => {
     const headless = codingRequest({ repo_hint: 'zenithjoy-workspace' });
     let caught = null;
@@ -192,9 +199,9 @@ describe('relay-baton：handoff 编码子单改投 coding_workflow', () => {
 });
 
 describe('仓库支持判定单一来源', () => {
-  it('repos.mjs 是唯一来源：cecelia 及其别名支持，zenithjoy 不支持', async () => {
-    const { runnerRepoOf, SUPPORTED_REPOS } = await import('../../scripts/coding-workflow/repos.mjs');
-    expect(SUPPORTED_REPOS).toEqual(['cecelia']);
+  it('repos.json 是唯一来源：已启用的 cecelia 及其别名支持，登记但未启用的 zenithjoy 不支持', async () => {
+    const { enabledRepos } = await import('../../scripts/coding-workflow/runner/lib/repos.mjs');
+    expect(enabledRepos({}).map((r) => r.key)).toEqual(['cecelia']);
     expect(runnerRepoOf('cecelia')).toBe('cecelia');
     expect(runnerRepoOf('perfectuser21/cecelia')).toBe('cecelia');
     expect(runnerRepoOf('https://github.com/perfectuser21/cecelia.git')).toBe('cecelia');
@@ -202,17 +209,18 @@ describe('仓库支持判定单一来源', () => {
     expect(runnerRepoOf(null)).toBeNull();
   });
 
-  it('work-router 与 runner plan.mjs 都从 repos.mjs 导入，不各写一份', () => {
+  it('work-router 与 runner plan.mjs 都经 runner/lib/repos.mjs 读 repos.json，不各写一份', () => {
     const router = readFileSync(join(brainRoot, 'src/work-router.js'), 'utf8');
     const plan = readFileSync(join(brainRoot, 'scripts/coding-workflow/runner/lib/plan.mjs'), 'utf8');
-    expect(router).toContain("from '../scripts/coding-workflow/repos.mjs'");
-    expect(plan).toContain("from '../../repos.mjs'");
-    expect(plan).not.toMatch(/new Set\(\['cecelia'\]\)/);
+    expect(router).toContain("from '../scripts/coding-workflow/runner/lib/repos.mjs'");
+    expect(plan).toContain("from './repos.mjs'");
+    expect(router).not.toMatch(/new Set\(\['cecelia'/);
   });
 
-  it('Brain 镜像带上 repos.mjs（work-router 运行时依赖），构建期验证导入', () => {
+  it('Brain 镜像带上 repos.json 与读表模块（work-router 运行时依赖），构建期验证导入', () => {
     const dockerfile = readFileSync(join(brainRoot, 'Dockerfile'), 'utf8');
-    expect(dockerfile).toMatch(/^COPY\s+packages\/brain\/scripts\/coding-workflow\/repos\.mjs\s+\.\/scripts\/coding-workflow\/\s*$/m);
+    expect(dockerfile).toMatch(/^COPY\s+packages\/brain\/scripts\/coding-workflow\/repos\.json\s+\.\/scripts\/coding-workflow\/\s*$/m);
+    expect(dockerfile).toMatch(/^COPY\s+packages\/brain\/scripts\/coding-workflow\/runner\/lib\/repos\.mjs\s+\.\/scripts\/coding-workflow\/runner\/lib\/\s*$/m);
     expect(dockerfile).toContain("await import('./src/work-router.js')");
   });
 });

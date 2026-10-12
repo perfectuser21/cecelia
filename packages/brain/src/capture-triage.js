@@ -171,7 +171,8 @@ async function routeAtom(pool, atom, verdict, opts) {
         priority: 'P1',
         trigger_source: 'cortex',
         dedupe_key: `capture-triage-urgent-${atom.id}`,
-        payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' },
+        // 有头待办（A2）：headed_manual 字符串 "true" 才落有头账本行，否则路由按无头编码改投 coding_workflow runner
+        payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed', headed_manual: 'true' },
         ...codingRoute(),
       });
       taskId = result?.task?.id;
@@ -231,6 +232,7 @@ async function routeAtom(pool, atom, verdict, opts) {
           orchestrator: 'skill-relay',
           executor: 'claude',
           mode: 'headed',
+          headed_manual: 'true',
           journey_id: journeyId,
           thin_prd: atom.content,
         },

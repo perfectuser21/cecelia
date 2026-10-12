@@ -52,6 +52,7 @@ const NKR = 'nightly_kr_bonus';      // nightly-orchestrator.js:122 scoreTask ty
 const GPSCOPE = 'gp_scope_task_types';
 const DEVDASH = 'dev_dashboard_query';  // routes/execution.js:3721 GET /api/brain/dev/tasks 查询名单 ['dev','review']
 const VERDICT = 'verdict_harness_types'; // routes/execution.js:1659 VERDICT_HARNESS_TYPES（产生 verdict 需持久化到 tasks.result 的 harness 任务类型）
+const GPIMPL = 'gp_implementation';  // golden-path-contracts 签字实现单的类型（A2：无头 coding_workflow / 有头 harness_initiative）
 const WARROOM = 'warroom_feed_types';    // routes/warroom.js:36 FEED_TYPES（战情室 feed 纳入的"有实质执行"任务类型）
 const REC = 'recovery_harness';      // recovery-loop HARNESS_TASK_TYPES
 const LOCK = 'initiative_lock';      // dispatcher INITIATIVE_LOCK_TASK_TYPES
@@ -170,7 +171,7 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // 无头 kernel 入口退役（任务 dacd75f3）：kernel 派发自 09-30 起全败 kernel_authority_not_created（30 天 372 次 / 112 单），
   // 无头编码改走 coding_workflow。surface=none → 无头 queued 建单即拒；HKR → dispatcher drain 存量无头 queued 单。
   // 有头 /dev 会话仍拿它当账本行（headed_manual 字符串/布尔），不受影响。KR 暂留（kernel-run-store 存量收账），删代码阶段再摘。
-  harness_initiative:       workflow(T('none', true,  true,  'relay-container', 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, INF, BP, GUIDE, KR, CM, FK, GPSCOPE, WARROOM, HKR])),
+  harness_initiative:       workflow(T('none', true,  true,  'relay-container', 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, INF, BP, GUIDE, KR, CM, FK, GPSCOPE, WARROOM, HKR, GPIMPL])),
   harness_task:             workflow(T('none', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, RET, BP])),
   harness_final_e2e:        T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, RET, FV]),
   trigger_backup:           T('none', false, false, null, 'none', true, true, 'none', true, []),
@@ -219,7 +220,7 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // 编码 workflow（派发总闸 F，任务 0a70684f）：原借 data + payload.coding_workflow + headed_manual 三件套。独立类型后
   // tick 按类型排除，由 coding-workflow-runner（MMV LaunchDaemon，每 5 分钟）领单跑 coding 链（spec→GAN→实现→QA→合并），
   // kind=workflow（编排多阶段）。runner 自带收尾对账，watchdog=external-worker。
-  coding_workflow:          workflow(T('external', false, false, 'coding-workflow-runner', 'external-worker', true, false, 'none', true, [V, ANC])),
+  coding_workflow:          workflow(T('external', false, false, 'coding-workflow-runner', 'external-worker', true, false, 'none', true, [V, ANC, GPIMPL])),
   // ── executor=script 一等任务类型（链 bf5088a3 棒 3，任务 5cdbd52a）──
   // 确定性脚本步：Brain 经 ssh 在跑场机执行 payload.cmd（{host,cmd,cwd,env,timeout_sec}），与 AI 步同一条 DAG。
   // kind=agent：脚本也是「一步交付」（df67a9d6 判据）。pr=false 但成功终态写 completed 而非 completed_no_pr——
@@ -302,6 +303,8 @@ export const HARNESS_CHAIN_TASK_TYPES = tagged(HC);
 export const NIGHTLY_KR_BONUS_TASK_TYPES = tagged(NKR);
 /** triage-officer-15min.js / triage-officer-rank.js / work-routing-observability.js 原内联 ['dev','harness_initiative']。 */
 export const GP_SCOPE_TASK_TYPES = tagged(GPSCOPE);
+/** golden-path-contracts.js 签字实现单可能落的类型（换版取消 / 重试幂等都要按它查，A2 改投后不止 harness_initiative）。 */
+export const GP_IMPLEMENTATION_TASK_TYPES = tagged(GPIMPL);
 /** routes/execution.js:3721 GET /api/brain/dev/tasks 原内联 ['dev','review']。 */
 export const DEV_DASHBOARD_TASK_TYPES = tagged(DEVDASH);
 /** routes/execution.js:1659 原内联 VERDICT_HARNESS_TYPES。 */

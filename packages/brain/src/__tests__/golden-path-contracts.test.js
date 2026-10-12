@@ -440,7 +440,6 @@ describe('Golden Path contract signature and Harness launch', () => {
     });
 
     expect(result).toMatchObject({ task: { id: 'task-existing-cw' }, idempotent: true });
-    expect(db.events.some((sql) => /payload->>'gp_contract_id'/.test(sql) && /'coding_workflow'/.test(sql))).toBe(true);
   });
 
   it('A2：合同换版时排队中的 coding_workflow 实现单同样被取消', async () => {
