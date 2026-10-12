@@ -33,4 +33,5 @@ node ../../node_modules/vitest/vitest.mjs run \
 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js \
   src/__tests__/integration/migration-554-projects-ai-tier.pg.integration.test.js \
   src/__tests__/integration/projects-notion-sync.pg.integration.test.js \
+  src/__tests__/integration/relay-mirror-smoke.pg.integration.test.js \
   --maxWorkers=1 --minWorkers=1
