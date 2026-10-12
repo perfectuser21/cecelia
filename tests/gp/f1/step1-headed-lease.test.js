@@ -1,7 +1,8 @@
+// F1 step1：真实领单租约跨 watchdog 边界，保证有头执行者不会被旧 stale 扫描清除。
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { taskLeaseFixture, seedTask } from '../helpers/task-lease-pg-fixture.js';
-import { claimTaskWithLease } from '../../lib/task-lease.js';
-import { resumeStalledHarnessDrivers } from '../../harness-watchdog.js';
+import { taskLeaseFixture, seedTask } from '../../../packages/brain/src/__tests__/helpers/task-lease-pg-fixture.js';
+import { claimTaskWithLease } from '../../../packages/brain/src/lib/task-lease.js';
+import { resumeStalledHarnessDrivers } from '../../../packages/brain/src/harness-watchdog.js';
 
 let fx;
 beforeEach(async () => {

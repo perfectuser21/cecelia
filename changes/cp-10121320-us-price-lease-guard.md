@@ -7,3 +7,5 @@
 Brain watchdog 的 never-started 扫描及锁后复核排除有效同 owner task_leases；修复 G/摘要两个有头会话在 4h 租期内仍被旧 20min stale 扫描清 claim 的真实复现。5 项真 PostgreSQL 回归覆盖有效、过期、释放、异主及续租竞争。
 
 新增固定工厂 Commander 开关 GET/PUT API：内部认证、严格输入、同 run 真实外壳收割及正式独立核验门禁；事务串行、幂等、actor/前后值审计、回读。默认关闭，不凭执行者 success 自述开启。
+
+专属 API smoke 进入棘轮 allowlist，真 HTTP 与私有 PG schema 验证；F1 step1 租约跨扫描器回归由 required integration CI 显式执行。

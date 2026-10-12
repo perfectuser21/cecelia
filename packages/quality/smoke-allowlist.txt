@@ -442,3 +442,5 @@ bypass-audit-smoke.sh
 task-lease-device-pool-smoke.sh
 
 coding-workflow-codex-smoke.sh
+
+factory-commander-route-api-smoke.sh

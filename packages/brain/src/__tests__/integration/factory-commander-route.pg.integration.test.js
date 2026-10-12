@@ -10,7 +10,7 @@ beforeEach(async () => {
     CREATE TABLE cecelia_events(id UUID DEFAULT gen_random_uuid(),event_type TEXT,source TEXT,payload JSONB,created_at TIMESTAMPTZ DEFAULT now());`);
   taskId = await seedTask(fx.pool, { status: 'completed', task_type: 'workflow_dispatch' });
   runId = 'wfd-' + taskId.slice(0, 8) + '-1791784544616';
-  // 正向为合成成功；外壳字段来源与失败实况见 helpers/factory-commander-proof-fixture.js。
+  // 正向为合成成功；外壳字段来源与失败实况见 lib/__tests__/factory-commander-route.test.js。
   delivery = {
     source: 'wf-agent-run', task_id: taskId, run_id: runId,
     workflow_key: 'douyin_video_publish.android', contract_key: 'douyin_video_publish',
