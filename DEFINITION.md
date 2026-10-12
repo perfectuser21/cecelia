@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.428.0
+**Brain 版本**: 1.428.3
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -78,6 +78,25 @@ summary: 版本、实现影响、地图及发布证据测试改用精确scratch�
 
 - 官方 ZenithJoy 试点映射将真实内容生产价值流与安卓多平台发布能力纳入固定源配置；只从完整旧集合升级，保旧身份、父级、来源与激活 CAS。
 - 当前 Workflow 定义使用唯一当前同来源清单，避免同一 SHA 旧清单造成歧义；非当前历史多清单仍明确拒绝。
+
+## Brain 1.428.3 — coding workflow 支持 Codex 原生执行
+
+- 显式 CODING_WF_PROVIDER=codex 选择原生 CLI，保留默认 Claude；规格禁 shell 且只读文件工具限定工作树，命令网络关闭、QA gitdir 只读。
+- Codex 原生命令事件作为验证证据；仅有模型自述不算执行；订阅美元费用未知为 null，贯穿活动和任务回执。
+- 初期限定 local QA；需要预览网络或无法映射的工具限制明确拒绝，不扩全局 runner 权限。
+
+## Brain 1.428.2 — coding workflow 预览等待有界
+
+- pending/error 按 PR head 跨 tick 持久计时，超过现有预览等待阈值交 commander；预览恢复或 head 更新后重新计时。
+- 永久回归覆盖 pending、网络错误、恢复和 head 更换；不绕过 QA。
+
+## Brain 1.428.1 — decisions_made_by_check 补 ai（只增不减）
+
+- 迁移 552：按列（非按约束名）找出 decisions 上所有涉及 made_by 的单列 CHECK，取值并集补 `ai` 后收敛重建为唯一的 `decisions_made_by_check`；多列或无法解析的 made_by 约束直接报错回滚
+- 保留迁移外加宽过的取值（约束被删时以 193 的 user/cecelia/system 为底），只增不减，重跑幂等
+- 新约束 NOT VALID，不扫存量行；列类型 varchar(20) 与默认值 'system' 不变
+
+- Codex 续接修复：允许对预览已有 varchar→text ARRAY 约束进行第二种严格回放，仍拒绝抽值不完整/多列/非枚举表达式；真实 scratch PG 11 条通过。
 
 ## Brain 1.428.0 — Skill Registry 按规范业务关联持续分组
 
