@@ -161,6 +161,7 @@
           "sprint_dir_invalid",
           "task_id_missing",
           "chain_files_missing",
+          "gp_anchor_invalid",
           "branch_invalid",
           "git_add_failed",
           "git_commit_failed",

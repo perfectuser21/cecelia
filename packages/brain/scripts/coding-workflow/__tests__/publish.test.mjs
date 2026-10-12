@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runActivityProcess } from './helpers/run-activity.mjs';
@@ -84,6 +85,51 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(body).toContain('- sprints/s1/01-intent.md');
     expect(body).toContain('- sprints/s1/02-spec.md');
   });
+
+  // 原始 ZJ L1 脚本验真 publish 的 GH 正文，不重写 lint 正则。
+  const lintBody = (body) => spawnSync(
+    fs.existsSync('/opt/homebrew/bin/bash') ? '/opt/homebrew/bin/bash' : 'bash',
+    [path.join(HERE, 'fixtures/zenithjoy-gp-anchor/.github/workflows/scripts/lint-gp-anchor.sh')],
+    { env: { ...process.env, PR_BODY: body }, encoding: 'utf8' },
+  );
+  it.each(['none(infra)', 'none(docs)', 'none(config)',
+    'line02/benchmark_link_acquisition#step1', 'line02/benchmark_link_acquisition keep-green'])(
+    'gp_anchor=%s 原值进入唯一声明，真实 ZJ lint 通过', async (gp_anchor) => {
+      const r = await run('new', { gp_anchor });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(prBody().split('\n').filter((line) => line.startsWith('GP-Anchor:'))).toEqual([`GP-Anchor: ${gp_anchor}`]);
+      const lint = lintBody(prBody());
+      expect(lint.status, lint.stdout + lint.stderr).toBe(0);
+      const duplicate = lintBody(`${prBody()}\nGP-Anchor: none(infra)`);
+      expect(duplicate.status).toBe(1);
+      expect(duplicate.stdout).toContain('GP-ANCHOR-MULTIPLE');
+    },
+  );
+  it('缺失锚点保留既有不声明行为；不从 .dev-mode 缺省伪造豁免，ZJ lint 仍拒绝', async () => {
+    fs.writeFileSync(path.join(worktree, '.dev-mode.cp-1007000000-test'), 'gp_anchor: none(infra)\n');
+    expect((await run('new')).exitCode).toBe(0);
+    expect(prBody()).not.toContain('GP-Anchor:');
+    const lint = lintBody(prBody());
+    expect(lint.status).toBe(1);
+    expect(lint.stdout).toContain('GP-ANCHOR-MISSING');
+  });
+  it('未知业务锚原值转呈，由 ZJ 原规则拒绝，不能改为 infra', async () => {
+    expect((await run('new', { gp_anchor: 'line02/no_such_gp#step1' })).exitCode).toBe(0);
+    expect(prBody()).toContain('GP-Anchor: line02/no_such_gp#step1');
+    const lint = lintBody(prBody());
+    expect(lint.status).toBe(1);
+    expect(lint.stdout).toContain('GP-ANCHOR-ID-NOTFOUND');
+  });
+  it.each(['none(infra)\nGP-Anchor: none(docs)', 'none(infra)\rhidden', 'none(infra)\u0000', '', '   ', 42, {}, null])(
+    '非法 gp_anchor=%j 在 git/gh 副作用之前拒绝', async (gp_anchor) => {
+      const r = await run('new', { gp_anchor });
+      expect(r.result.reason_code).toBe('gp_anchor_invalid');
+      expect(r.result.failure_class).toBe('fatal');
+      expect(ghCalls()).toEqual([]);
+      expect(git(worktree, 'log', '--oneline').trim().split('\n')).toHaveLength(1);
+      expect(() => git(origin, 'rev-parse', '--verify', 'refs/heads/cp-1007000000-test')).toThrow();
+    },
+  );
 
   it('四文件链 + verified_ids：含代码提交时标题为 feat(workflow): <01-intent 标题>，PR 正文追加每条 I-n 的验收摘要', async () => {
     fs.writeFileSync(path.join(worktree, 'sprints/s1/01-intent.md'), '---\ntask_id: x\nstep: intent\nupstream: []\n---\n# 登录功能  \n\n### I-1\n能登录\n');

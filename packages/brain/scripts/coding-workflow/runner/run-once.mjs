@@ -107,6 +107,8 @@ async function execute(ctx, task, job, signal) {
     contract,
     input: {
       run_tag: names.runTag, task_id: task.id, worktree, sprint_dir: names.sprintDir, brain_url: cfg.brainUrl,
+      // 只透传任务登记值；不采用 .dev-mode 为兼容旧任务生成的豁免缺省。
+      ...(task.payload?.gp_anchor !== undefined ? { gp_anchor: task.payload.gp_anchor } : {}),
       // 活动层按仓库参数化（C6）：版本碎片、CI 预检清单、本仓规矩提示词、QA 模式随任务所在仓库的 repos.json 条目走
       ...(cfg.repoProfile ? { repo_profile: cfg.repoProfile } : {}),
     },
