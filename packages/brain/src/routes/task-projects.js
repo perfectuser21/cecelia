@@ -18,6 +18,7 @@ import projectLocateRoutes from './project-locate-routes.js';
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const AI_TIERS = ['知情', '盯着', '介入'];
 
 // POST /projects — 新建（name 必填；kr_id 若给必须是真实 key_results）
 router.post('/', async (req, res) => {
@@ -25,10 +26,15 @@ router.post('/', async (req, res) => {
     const {
       name, description = null, status = 'planning', area_id = null, kr_id = null,
       owner_role = null, start_date = null, end_date = null, metadata = null, custom_props = null,
+      ai_tier = '知情',
     } = req.body;
 
     if (!name || !String(name).trim()) {
       return res.status(400).json({ error: 'name is required' });
+    }
+
+    if (!AI_TIERS.includes(ai_tier)) {
+      return res.status(400).json({ error: 'invalid_ai_tier', message: 'ai_tier 必须是知情、盯着或介入' });
     }
 
     if (kr_id) {
@@ -42,9 +48,9 @@ router.post('/', async (req, res) => {
     // 未传时必须落回 DB 默认值，COALESCE 兜底（棒4 起 /api/brain/okr/projects 复用本路由，
     // 真库集成测试才把这条撞出来——之前只有 mock 测试覆盖不到 NOT NULL 约束）。
     const result = await pool.query(
-      `INSERT INTO projects (name, description, status, area_id, kr_id, owner_role, start_date, end_date, metadata, custom_props)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, '{}'::jsonb)) RETURNING *`,
-      [name, description, status, area_id, kr_id, owner_role, start_date, end_date, metadata, custom_props]
+      `INSERT INTO projects (name, description, status, area_id, kr_id, owner_role, start_date, end_date, metadata, custom_props, ai_tier)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, '{}'::jsonb), $11) RETURNING *`,
+      [name, description, status, area_id, kr_id, owner_role, start_date, end_date, metadata, custom_props, ai_tier]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -282,8 +288,12 @@ router.patch('/:id', async (req, res) => {
   try {
     const {
       status, title, name, area_id, owner_role, kr_id, description,
-      start_date, end_date, metadata, custom_props,
+      start_date, end_date, metadata, custom_props, ai_tier,
     } = req.body;
+
+    if (ai_tier !== undefined && !AI_TIERS.includes(ai_tier)) {
+      return res.status(400).json({ error: 'invalid_ai_tier', message: 'ai_tier 必须是知情、盯着或介入' });
+    }
 
     const setClauses = [];
     const params = [];
@@ -330,6 +340,10 @@ router.patch('/:id', async (req, res) => {
     if (custom_props !== undefined) {
       setClauses.push(`custom_props = $${paramIndex++}`);
       params.push(custom_props);
+    }
+    if (ai_tier !== undefined) {
+      setClauses.push(`ai_tier = $${paramIndex++}`);
+      params.push(ai_tier);
     }
 
     if (setClauses.length === 0) {
