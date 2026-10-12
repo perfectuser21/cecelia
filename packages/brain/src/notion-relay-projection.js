@@ -140,7 +140,7 @@ export function buildProjectBody(root, snap) {
 export async function replacePageBody(notionReq, token, pageId, blocks) {
   const existing = await notionReq(token, `/blocks/${pageId}/children?page_size=100`, 'GET');
   for (const b of existing?.results || []) {
-    try { await notionReq(token, `/blocks/${b.id}`, 'DELETE'); } catch { /* 已删/无权限：忽略 */ }
+    await notionReq(token, `/blocks/${b.id}`, 'DELETE');
   }
   if (blocks.length) await notionReq(token, `/blocks/${pageId}/children`, 'PATCH', { children: blocks });
 }
@@ -164,6 +164,7 @@ export async function pushProjectRoots(pool, token, { notionReq = defaultNotionR
       const snap = await buildProjectSnapshot(pool, root);
       let props = buildProjectProps(root, snap);
       const body = root.metadata?.source === 'notion' ? [] : buildProjectBody(root, snap);
+      const bodyDigest = digestOf({}, body);
       let digest = digestOf(props, body);
       let pageId = root.notion_props?.notion_id;
       if (pageId && root.notion_props?.project_digest === digest) { stat.skipped++; continue; }
@@ -202,6 +203,7 @@ export async function pushProjectRoots(pool, token, { notionReq = defaultNotionR
       if (pageId) {
         const baselineProps = humanProps(root.notion_props?.human_baseline || values);
         for (const col of HUMAN_COLUMNS) {
+          if (col === 'AI 参与' && !page.properties?.[col]?.select) continue;
           if (JSON.stringify(outgoing[col]) === JSON.stringify(baselineProps[col])) delete outgoing[col];
         }
         try { await notionReq(token, `/pages/${pageId}`, 'PATCH', { properties: outgoing }); }
@@ -219,10 +221,10 @@ export async function pushProjectRoots(pool, token, { notionReq = defaultNotionR
       await pool.query(`UPDATE projects SET notion_props = (notion_props - 'pending_human_push') ||
         jsonb_build_object('human_baseline', $2::jsonb, 'notion_id', $3::text, 'project_db', $4::text) WHERE id = $1`,
         [root.id, JSON.stringify(values), pageId, dbId]);
-      if (page && body.length) await replacePageBody(notionReq, token, pageId, body);
+      if (page && body.length && root.notion_props?.body_digest !== bodyDigest) await replacePageBody(notionReq, token, pageId, body);
       await pool.query(`UPDATE projects SET notion_props = notion_props ||
-        jsonb_build_object('notion_id', $2::text, 'project_digest', $3::text, 'project_db', $4::text) WHERE id = $1`,
-        [root.id, pageId, digest, dbId]);
+        jsonb_build_object('notion_id', $2::text, 'project_digest', $3::text, 'project_db', $4::text, 'body_digest', $5::text) WHERE id = $1`,
+        [root.id, pageId, digest, dbId, bodyDigest]);
       stat.pushed++;
     } catch (err) {
       stat.failed++;
