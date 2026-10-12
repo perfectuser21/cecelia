@@ -3,6 +3,16 @@
   "repo": "perfectuser21/cecelia",
   "relations": [
     {
+      "owner_path": "packages/brain/src/skill-registry-projection.js",
+      "path": "packages/brain/src/__tests__/skill-registry-projection.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-registry-notion-props.js",
+      "path": "packages/brain/src/lib/__tests__/skill-registry-notion-props.test.js",
+      "role": "verification"
+    },
+    {
       "owner_path": "packages/brain/src/lib/skill-business-ownership.js",
       "path": "packages/brain/src/lib/__tests__/skill-business-ownership.test.js",
       "role": "verification"
