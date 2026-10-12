@@ -46,6 +46,16 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(E.brain.patches.some((p) => p.id.startsWith('dddddddd'))).toBe(false);
   });
 
+  it('真实 Git ignorecase + *REPORT*.md 仍只提交本轮 QA 报告和裁决', async () => {
+    addToBranch('.gitignore', '*REPORT*.md\n');
+    git(sb.clone, 'config', 'core.ignorecase', 'true');
+    const r = await go(green({ prs: [pr({ headRefOid: E.remoteHead() })] }));
+    expect(r.stderr).not.toContain('qa_report_add_failed');
+    expect(state()).toMatchObject({ passed: true, rounds: [{ verdict: 'PASS' }] });
+    expect(git(sb.origin, 'show', '--name-only', '--format=', BRANCH).trim().split('\n').sort())
+      .toEqual([`${SPRINT}/05-qa-report-r1.md`, `${SPRINT}/06-judge-r1.md`]);
+  });
+
   it('evaluate 入口来自 runner 专用 clone（main），不用 PR 分支里可能被改过的 evaluate.mjs（审计 P0 #1）', async () => {
     const rel = 'packages/brain/scripts/coding-workflow/activities/evaluate.mjs';
     // PR 分支里放一个「被改过的」evaluate：一跑就留下 poison 记录并判 PASS
