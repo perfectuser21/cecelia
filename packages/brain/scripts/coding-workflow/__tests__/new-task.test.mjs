@@ -6,14 +6,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { validatePlan } from '../new-task.mjs';
+import { validatePlan as validateRawPlan } from '../new-task.mjs';
+const routing = { change_kind: 'bugfix', map_scope_hint: ['F1'] };
+const validatePlan = (plan, opts) => validateRawPlan({ ...routing, ...plan }, opts);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, '../new-task.mjs');
 const PROJECT_ID = 'p0000000-0000-4000-8000-000000000001';
 const ROOT_ID = '11111111-1111-4111-8111-111111111111';
 
-function startBrain({ failAt = null, projectFail = false } = {}) {
+function startBrain({ failAt = null, projectFail = false, wrongRoute = false } = {}) {
   const state = { posts: [], projectPosts: [], order: [] };
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -34,7 +36,7 @@ function startBrain({ failAt = null, projectFail = false } = {}) {
       state.order.push('task');
       if (failAt === state.posts.length) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'change_kind_required' })); }
       res.statusCode = 201;
-      return res.end(JSON.stringify({ id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body }));
+      return res.end(JSON.stringify({ id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } }));
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
@@ -60,7 +62,7 @@ describe('new-task.mjs', () => {
   let brain;
   const plan = (obj) => {
     const file = path.join(dir, 'plan.json');
-    fs.writeFileSync(file, JSON.stringify(obj));
+    fs.writeFileSync(file, JSON.stringify({ ...routing, ...obj }));
     return file;
   };
 
@@ -77,7 +79,8 @@ describe('new-task.mjs', () => {
     expect(r.code, r.stderr).toBe(0);
     expect(brain.posts).toHaveLength(1);
     expect(brain.posts[0]).toMatchObject({
-      task_type: 'coding_workflow',
+      task_type: 'coding_workflow', mutation_intent: 'write', change_kind: 'bugfix',
+      repo_hint: 'cecelia', map_scope_hint: ['F1'],
       title: '改 X',
       description: '为什么',
       trigger_source: 'manual',
@@ -87,6 +90,32 @@ describe('new-task.mjs', () => {
     expect(brain.posts[0].payload.depends_on).toBeUndefined();
     expect(brain.posts[0].project_id).toBeUndefined();
     expect(JSON.parse(r.stdout)).toEqual([{ key: null, id: '00000000-0000-4000-8000-000000000001', title: '改 X' }]);
+  });
+
+  it.each([
+    [{ change_kind: null }, 'change_kind_required'],
+    [{ change_kind: 'wrong' }, 'invalid_change_kind'],
+    [{ map_scope_hint: [] }, 'map_scope_required'],
+    [{ map_scope_hint: [''] }, 'invalid_map_scope'],
+  ])('编码语义不完整时建单前拒绝 %j', async (invalid, error) => {
+    brain = await startBrain();
+    const r = await runScript([plan({ title: '修路由', acceptance: ['x'], ...invalid })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain(error);
+    expect(brain.posts).toEqual([]);
+  });
+
+  it('服务端误分类或清空仓库：保留已建 id，停止依赖批次，不报告成功', async () => {
+    brain = await startBrain({ wrongRoute: true });
+    const r = await runScript([plan({ project_id: ROOT_ID, tasks: [
+      { key: 'a', title: '一', acceptance: ['x'] },
+      { key: 'b', title: '二', acceptance: ['x'], depends_on: ['a'] },
+    ] })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(1);
+    expect(brain.posts).toHaveLength(1);
+    expect(r.stderr).toContain('task_route_mismatch');
+    expect(r.stderr).toContain('00000000-0000-4000-8000-000000000001');
+    expect(r.stdout).toBe('');
   });
 
   it('批次：按顺序创建，depends_on 的 key 换成前面任务的真实 id，带 batch 名', async () => {
