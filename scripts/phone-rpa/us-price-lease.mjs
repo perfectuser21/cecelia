@@ -1,4 +1,14 @@
 /** 业务操作必须确认租约；丢失后只允许精确 owner 的清理。任务 c5f6e683。 */
+export async function markPhoneLeaseLost(owner, run) {
+  if (!/^price[0-9a-f]{64}$/i.test(owner)) throw new Error('invalid price owner');
+  const script = 'import sys,json,re,pathlib; o=json.load(sys.stdin); assert re.fullmatch(r"price[0-9a-f]{64}",o,re.I); p=pathlib.Path("/Users/jinnuoshengyuan/Library/Caches/us-price-native-staging/agent-runs")/o; p.mkdir(parents=True,exist_ok=True); (p/"lease-lost").write_text("lease_lost"); print(json.dumps({"owner":o,"stopped":True}))';
+  const result = await run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 'xian-m4', 'python3', '-c', `'${script}'`], JSON.stringify(owner));
+  if (result.code !== 0) throw new Error('lease cleanup: 远端停止标记失败');
+  const receipt = JSON.parse(result.stdout);
+  if (receipt.owner !== owner || receipt.stopped !== true) throw new Error('lease cleanup: 停止标记回读不符');
+  return receipt;
+}
+
 export function createLeaseGuard({ taskId, owner, request, onLost, leaseSeconds = 900, heartbeatMs = 180000, now = Date.now }) {
   let lost = false, closed = false, pending, cleanup, cleanupError;
   let confirmedAt = now();

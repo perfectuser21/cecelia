@@ -1,8 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createLeaseGuard } from './us-price-lease.mjs';
+import { createLeaseGuard, markPhoneLeaseLost } from './us-price-lease.mjs';
 
 const conflict = () => Object.assign(new Error('HTTP 409 lease_lost'), { status: 409 });
+test('远端停止仅传精确owner，失败或错回执不得声称收尾成功', async () => {
+  const owner = 'price' + 'a'.repeat(64);
+  await assert.rejects(markPhoneLeaseLost('../other', () => assert.fail()), /invalid/);
+  await markPhoneLeaseLost(owner, async (cmd, args, input) => {
+    assert.equal(cmd, 'ssh'); assert.ok(args.includes('xian-m4')); assert.equal(JSON.parse(input), owner);
+    return { code: 0, stdout: JSON.stringify({ owner, stopped: true }) };
+  });
+  await assert.rejects(markPhoneLeaseLost(owner, async () => ({ code: 1 })), /停止标记失败/);
+  await assert.rejects(markPhoneLeaseLost(owner, async () => ({ code: 0, stdout: '{"owner":"other","stopped":true}' })), /回读不符/);
+});
 test('409 永久停止后续业务，收尾只调用一次且可等待', async () => {
   let lost = false, cleanup = 0, actions = 0;
   const guard = createLeaseGuard({ taskId: 't', owner: 'o', heartbeatMs: 100000,
