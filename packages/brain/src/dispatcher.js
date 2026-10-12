@@ -222,6 +222,12 @@ const DUPLICATE_TASK_TITLE_THRESHOLD = 0.6;
  * 查询失败保守放行（返回 null），
  * 不能因为一次 DB 抖动阻塞整个派发循环。
  */
+/** sibling 仍 queued 且创建时间严格晚于候选 → 不挡候选（同时创建或缺时间戳时保持原判重）。 */
+function newerQueuedSibling(row, candidate) {
+  if (row.sibling_status !== 'queued' || !row.sibling_created_at || !candidate.created_at) return false;
+  return new Date(row.sibling_created_at).getTime() > new Date(candidate.created_at).getTime();
+}
+
 export async function _internals_findDuplicateTaskSibling(candidate) {
   try {
     const codeMulti = candidate.task_type === 'script_run'
@@ -259,7 +265,8 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
     // 避免两条查询的 SQL 指纹在测试里按字符串前缀匹配时被混淆（同一 dispatchNextTask 内两条
     // 语义不同的查询都含 "task_type" + "SELECT ... FROM tasks"，纯前缀匹配无法区分）。
     const { rows } = await pool.query(
-      `SELECT tasks.id AS id, tasks.title AS title${recurringColumns}${identityColumns}
+      `SELECT tasks.id AS id, tasks.title AS title,
+              tasks.status AS sibling_status, tasks.created_at AS sibling_created_at${recurringColumns}${identityColumns}
         FROM tasks${identityJoins}
         WHERE tasks.task_type = $1
           AND tasks.status IN ('queued', 'in_progress')
@@ -280,6 +287,9 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
         if (row.candidate_recurring_identity === row.recurring_identity) return { ...row, duplicate_reason: 'duplicate_recurring_identity_match' };
         continue;
       }
+      // 标题判重只为「让已在办/先来的那个继续走」：更新的 queued sibling 不挡更早的候选，
+      // 否则两张同分钟定时单（标题日期/时间 token 占多数）互判重复、都 queued 谁也派不出去（生产 10-12 07:30）。
+      if (newerQueuedSibling(row, candidate)) continue;
       comparable.push(row);
     }
     return findDuplicateSibling(candidate.title || '', comparable, {
