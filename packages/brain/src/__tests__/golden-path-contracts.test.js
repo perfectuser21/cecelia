@@ -404,7 +404,7 @@ describe('Golden Path contract signature and Harness launch', () => {
   });
 
   it('A2：runner 不支持的仓库 → 签字照常成功，实现单降为有头待办（harness_initiative + headed_manual）', async () => {
-    const db = signingDb({ mapRepo: 'zenithjoy-workspace' });
+    const db = signingDb({ mapRepo: 'zenithjoy-miniapp' });
 
     await signAndLaunchGoldenPathContract(db, {
       goldenPathId: 'gp-1',
@@ -417,7 +417,7 @@ describe('Golden Path contract signature and Harness launch', () => {
     expect(db.contracts[0].status).toBe('signed');
     expect(db.tasks).toHaveLength(1);
     expect(db.tasks[0].task_type).toBe('harness_initiative');
-    expect(db.tasks[0].payload).toMatchObject({ headed_manual: 'true', repo: 'zenithjoy-workspace' });
+    expect(db.tasks[0].payload).toMatchObject({ headed_manual: 'true', repo: 'zenithjoy-miniapp' });
   });
 
   it('A2：重试签字时已有 coding_workflow 实现单 → 幂等返回同一单', async () => {

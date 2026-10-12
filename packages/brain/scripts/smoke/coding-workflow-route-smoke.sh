@@ -31,7 +31,7 @@ const ok = (m) => console.log(`PASS: ${m}`);
 const hex = () => randomUUID().replaceAll('-', '');
 const FACTS = [
   { scope_key: 'cecelia', repo: 'cecelia', path: null, aliases: ['perfectuser21/cecelia'] },
-  { scope_key: 'zenithjoy', repo: 'zenithjoy-workspace', path: null, aliases: [] },
+  { scope_key: 'unsupported-sample', repo: 'zenithjoy-miniapp', path: null, aliases: [] },
 ];
 const req = (over = {}) => ({
   source: 'api', source_id: `coding-route-smoke-${hex()}`, title: `coding-route-smoke-${hex().slice(0, 8)}`, description: 'smoke',
@@ -96,7 +96,7 @@ try {
   await client.query('SAVEPOINT unsupported');
   let err = null;
   const title = `coding-route-smoke-unsupported-${hex().slice(0, 8)}`;
-  try { await create({ repo_hint: 'zenithjoy-workspace', title }); } catch (e) { err = e; }
+  try { await create({ repo_hint: 'zenithjoy-miniapp', title }); } catch (e) { err = e; }
   await client.query('ROLLBACK TO SAVEPOINT unsupported');
   if (err?.code !== 'runner_repo_unsupported') die(`非 runner 仓库应拒，实际: ${err?.code || 'created'} ${err?.message || ''}`);
   const leaked = await client.query('SELECT count(*)::int AS n FROM tasks WHERE title = $1', [title]);

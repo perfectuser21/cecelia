@@ -25,6 +25,8 @@ const ROOT = '11111111-1111-4111-8111-111111111111';
 const FACTS = [
   { repo: 'cecelia', scope_key: 'cecelia', aliases: ['perfectuser21/cecelia'] },
   { repo: 'zenithjoy-workspace', scope_key: 'zenithjoy', aliases: ['perfectuser21/zenithjoy-workspace'] },
+  // 仓库事实里有、repos.json 没登记的仓库（runner 不支持）
+  { repo: 'zenithjoy-miniapp', scope_key: 'zenithjoy', aliases: ['perfectuser21/zenithjoy-miniapp'] },
 ];
 
 function codingRequest(overrides = {}) {
@@ -135,14 +137,19 @@ describe('routeWork：有头判定与 runner 仓库判定', () => {
       .toMatchObject({ canonical_task_type: 'harness_initiative' });
   });
 
+  it('C7 开闸后 zenithjoy 无头编码单 canonical=coding_workflow（不再抛 runner_repo_unsupported）', () => {
+    expect(routeWork(codingRequest({ repo_hint: 'zenithjoy-workspace' }), FACTS))
+      .toMatchObject({ canonical_task_type: 'coding_workflow', pipeline: 'coding_workflow', repo: 'zenithjoy-workspace' });
+  });
+
   it('runner 不支持的仓库：无头抛 runner_repo_unsupported（带 code），有头照建 harness_initiative', () => {
-    const headless = codingRequest({ repo_hint: 'zenithjoy-workspace' });
+    const headless = codingRequest({ repo_hint: 'zenithjoy-miniapp' });
     let caught = null;
     try { routeWork(headless, FACTS); } catch (error) { caught = error; }
     expect(caught?.message).toBe('runner_repo_unsupported');
     expect(caught?.code).toBe('runner_repo_unsupported');
     expect(routeWork({ ...headless, metadata: { headed_manual: 'true' } }, FACTS))
-      .toMatchObject({ canonical_task_type: 'harness_initiative', repo: 'zenithjoy-workspace' });
+      .toMatchObject({ canonical_task_type: 'harness_initiative', repo: 'zenithjoy-miniapp' });
   });
 });
 
@@ -207,7 +214,7 @@ describe('A4：harness_initiative 只当有头账本类型——建单入口拒�
 });
 
 describe('relay-baton：handoff 编码子单改投 coding_workflow', () => {
-  it('dispatch_headless 编码步 → 子单 coding_workflow 且 runner 可认领；非支持仓库进 skipped', async () => {
+  it('dispatch_headless 编码步 → 子单 coding_workflow 且 runner 可认领；zenithjoy（C7 已开闸）同样建 coding_workflow；非支持仓库进 skipped', async () => {
     const db = fakeDb();
     const create = (_pool, req) => createRoutedTask(db, req, FACTS);
     const parent = { id: '33333333-3333-4333-8333-333333333333', title: '上一棒', priority: 'P1', parent_task_id: ROOT, payload: { repo: 'cecelia', map_scope: ['F1'] } };
@@ -223,18 +230,28 @@ describe('relay-baton：handoff 编码子单改投 coding_workflow', () => {
     const out2 = await materializeNextSteps({ query: async () => ({ rows: [] }) }, zj, {
       next_steps: [{ kind: 'dispatch_headless', title: '改 zj 代码', change_kind: 'bugfix' }],
     }, { createRoutedTask: create });
-    expect(out2.skipped[0]).toMatchObject({ kind: 'dispatch_headless', error: 'runner_repo_unsupported' });
+    expect(out2.skipped).toEqual([]);
+    expect(db.tasks[1]).toMatchObject({ task_type: 'coding_workflow' });
+    expect(db.tasks[1].payload).toMatchObject({ coding_workflow: true, repo: 'zenithjoy-workspace' });
+
+    const mini = { ...parent, id: '55555555-5555-4555-8555-555555555555', payload: { repo: 'zenithjoy-miniapp', map_scope: ['F1'] } };
+    const out3 = await materializeNextSteps({ query: async () => ({ rows: [] }) }, mini, {
+      next_steps: [{ kind: 'dispatch_headless', title: '改小程序代码', change_kind: 'bugfix' }],
+    }, { createRoutedTask: create });
+    expect(out3.skipped[0]).toMatchObject({ kind: 'dispatch_headless', error: 'runner_repo_unsupported' });
   });
 });
 
 describe('仓库支持判定单一来源', () => {
-  it('repos.json 是唯一来源：已启用的 cecelia 及其别名支持，登记但未启用的 zenithjoy 不支持', async () => {
+  it('repos.json 是唯一来源：已启用的 cecelia、zenithjoy（C7 开闸）及其别名支持，未登记的不支持', async () => {
     const { enabledRepos } = await import('../../scripts/coding-workflow/runner/lib/repos.mjs');
-    expect(enabledRepos({}).map((r) => r.key)).toEqual(['cecelia']);
+    expect(enabledRepos({}).map((r) => r.key)).toEqual(['cecelia', 'zenithjoy-workspace']);
     expect(runnerRepoOf('cecelia')).toBe('cecelia');
     expect(runnerRepoOf('perfectuser21/cecelia')).toBe('cecelia');
     expect(runnerRepoOf('https://github.com/perfectuser21/cecelia.git')).toBe('cecelia');
-    expect(runnerRepoOf('zenithjoy-workspace')).toBeNull();
+    expect(runnerRepoOf('zenithjoy-workspace')).toBe('zenithjoy-workspace');
+    expect(runnerRepoOf('https://github.com/perfectuser21/zenithjoy-workspace.git')).toBe('zenithjoy-workspace');
+    expect(runnerRepoOf('zenithjoy-miniapp')).toBeNull();
     expect(runnerRepoOf(null)).toBeNull();
   });
 

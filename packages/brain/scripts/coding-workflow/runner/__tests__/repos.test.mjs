@@ -28,9 +28,9 @@ describe('repos.json', () => {
     expect(c.preview).toMatchObject({ type: 'brain_preview', base_repo: 'cecelia' });
   });
 
-  it('zenithjoy：先登记不启用、不自动合并（合入 main 会自动部署生产手机控制器）、12 个必需检查、生产判定不含 MMV 公网 IP', () => {
+  it('zenithjoy：已开闸（C7）但不自动合并（合入 main 会自动部署生产手机控制器）、12 个必需检查、生产判定不含 MMV 公网 IP', () => {
     const z = byKey('zenithjoy-workspace');
-    expect(z).toMatchObject({ enabled: false, automerge: false, slug: 'perfectuser21/zenithjoy-workspace', state_ns: 'zenithjoy-workspace',
+    expect(z).toMatchObject({ enabled: true, automerge: false, slug: 'perfectuser21/zenithjoy-workspace', state_ns: 'zenithjoy-workspace',
       base_fresh_check: null, version_fragment: null });
     expect(z.required_checks).toHaveLength(12);
     const prod = new RegExp(z.production_re.join('|'));
@@ -66,15 +66,19 @@ describe('resolveRepo：别名归一', () => {
 });
 
 describe('enabledRepos：CODING_WF_REPOS 开关', () => {
-  it('默认 = repos.json 里 enabled=true 的（只有 cecelia）', () => {
-    expect(enabledRepos({}, repos).map((r) => r.key)).toEqual(['cecelia']);
+  it('默认 = repos.json 里 enabled=true 的（C7 开闸后：cecelia + zenithjoy-workspace，按表顺序）', () => {
+    expect(enabledRepos({}, repos).map((r) => r.key)).toEqual(['cecelia', 'zenithjoy-workspace']);
+  });
+
+  it('CODING_WF_REPOS 只列 cecelia = 紧急关 zenithjoy 的开关（不用改表）', () => {
+    expect(enabledRepos({ CODING_WF_REPOS: 'cecelia' }, repos).map((r) => r.key)).toEqual(['cecelia']);
   });
 
   it('显式列出：按别名归一；enabled=false 的仓库即使列出也不启用（双闸）；未登记的忽略', () => {
-    expect(enabledRepos({ CODING_WF_REPOS: 'cecelia, zenithjoy ,nope' }, repos).map((r) => r.key)).toEqual(['cecelia']);
-    const opened = repos.map((r) => ({ ...r, enabled: true }));
-    expect(enabledRepos({ CODING_WF_REPOS: 'cecelia,zenithjoy' }, opened).map((r) => r.key)).toEqual(['cecelia', 'zenithjoy-workspace']);
-    expect(enabledRepos({ CODING_WF_REPOS: 'zenithjoy' }, opened).map((r) => r.key)).toEqual(['zenithjoy-workspace']);
+    expect(enabledRepos({ CODING_WF_REPOS: 'cecelia, zenithjoy ,nope' }, repos).map((r) => r.key)).toEqual(['cecelia', 'zenithjoy-workspace']);
+    const closed = repos.map((r) => (r.default ? r : { ...r, enabled: false }));
+    expect(enabledRepos({ CODING_WF_REPOS: 'cecelia, zenithjoy ,nope' }, closed).map((r) => r.key)).toEqual(['cecelia']);
+    expect(enabledRepos({ CODING_WF_REPOS: 'zenithjoy' }, repos).map((r) => r.key)).toEqual(['zenithjoy-workspace']);
   });
 });
 
