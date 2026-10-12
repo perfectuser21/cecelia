@@ -1,6 +1,6 @@
 // lib/qa-report.mjs：evaluator 的 05-qa-report——按 QA 场景逐条测（T-n 对应 Q-n）+ 探索发现（X-n 带严重度/场景）。
 import { describe, it, expect } from 'vitest';
-import { parseQaReport, judgeQa, unitTestEvidence, productionTouches, trivialAssertions, screenshotProblems } from '../lib/qa-report.mjs';
+import { parseQaReport, judgeQa, unitTestEvidence, productionTouches, productionMatchers, trivialAssertions, screenshotProblems } from '../lib/qa-report.mjs';
 import { parseEvidence } from '../lib/evidence.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -175,5 +175,30 @@ describe('screenshotProblems', () => {
     fs.mkdirSync(path.join(sprint, 'qa-r1'));
     fs.writeFileSync(path.join(sprint, 'qa-r1', 'home.png'), 'png');
     expect(screenshotProblems({ reportText: '', items, executions, sprintDir: sprint, shotsDir: path.join(sprint, 'qa-r1') })).toEqual([]);
+  });
+});
+
+// C6：生产判定按仓库（repos.json production_re，活动层取 本仓 ∪ 默认仓）；不传 patterns = cecelia 口径不变
+describe('productionTouches：按仓库的生产口径', () => {
+  const ZJ = [':5200\\b', '100\\.86\\.118\\.99', '\\bhk-vps\\b', ':5221\\b', '\\b(?:localhost|127\\.0\\.0\\.1)\\s+5221\\b', '100\\.79\\.41\\.61', '\\bus-vps\\b'];
+  const ex = (...cmds) => cmds.map((command) => ({ command }));
+  it('zenithjoy：打 hk-vps / 100.86.118.99:5200 / 变量赋成生产地址再 curl → 算碰生产；只读 grep 不算', () => {
+    const hits = productionTouches(ex(
+      'curl -s http://100.86.118.99:5200/api/health',
+      'ssh hk-vps "docker ps"',
+      'H=http://100.86.118.99:5200; curl -s "$H/api/x"',
+      'grep -n hk-vps docs/ops.md',
+      'node scripts/check.mjs --base http://127.0.0.1:5302',
+    ), ZJ);
+    expect(hits).toEqual(['curl -s http://100.86.118.99:5200/api/health', 'ssh hk-vps "docker ps"', 'H=http://100.86.118.99:5200; curl -s "$H/api/x"']);
+  });
+  it('不传 patterns = cecelia 口径：hk-vps 不算，5221 算', () => {
+    expect(productionTouches(ex('curl -s http://100.86.118.99:5200/x', 'curl -s localhost:5221/api/brain/tasks'))).toEqual(['curl -s localhost:5221/api/brain/tasks']);
+  });
+  it('productionMatchers：target / assign 两个正则由片段拼出', () => {
+    const m = productionMatchers(['\\bhk-vps\\b']);
+    expect(m.target.test('ssh hk-vps')).toBe(true);
+    expect(m.assign.test('H=hk-vps')).toBe(true);
+    expect(m.assign.test('H=hk-vps2x')).toBe(false);
   });
 });

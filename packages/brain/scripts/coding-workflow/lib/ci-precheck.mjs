@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { childEnv } from './protocol.mjs';
+import { profileOf } from './repo-profile.mjs';
 
 export { prKindOf } from './pr-kind.mjs';
 
@@ -35,6 +36,37 @@ export function defaultChecks({ branch, feature }) {
   ];
 }
 
+/**
+ * zenithjoy-workspace 的预检（以它自己的 CI 为准，C6）：L1 的测试配对 / TDD 顺序 / 测试质量 / 无假测试 / 版本号 bump，
+ * Smoke Glob Gate 的 lint-smoke-baseline，L2 Consistency 的 Orphan Test Check（builtin，同 ci-l2-consistency.yml）、
+ * registry sync、product-map 校验（CI 先 generate 再 check，本地只做不改文件的 validate）与 wf-plan / step-dod 漂移。
+ */
+function zenithjoyChecks() {
+  return [
+    lint('lint-test-pairing'),
+    lint('lint-tdd-commit-order'),
+    lint('lint-test-quality'),
+    lint('lint-no-fake-test'),
+    lint('lint-agent-version-bump'),
+    lint('lint-line04-manifest-version-bump'),
+    lint('lint-smoke-baseline'),
+    { name: 'orphan-test-registry', builtin: 'orphan-test-registry' },
+    { name: 'registry-sync', cmd: ['node', 'scripts/sync-registry.cjs'] },
+    { name: 'product-map-validate', cmd: ['node', 'scripts/product-map/cli.mjs', 'validate'] },
+    { name: 'wf-plan-check', cmd: ['node', 'scripts/product-map/wf-plan.mjs', '--check'] },
+    { name: 'gen-step-dod-check', cmd: ['node', 'scripts/product-map/gen-step-dod.mjs', '--check'] },
+  ];
+}
+
+const CHECK_SETS = { cecelia: defaultChecks, zenithjoy: zenithjoyChecks };
+
+/** 按仓库挑预检清单（repos.json prechecks，C6）；没传 profile = 默认仓；清单名不认识 → 抛错（配置错不能静默不检）。 */
+export function checksFor(profile, opts) {
+  const set = CHECK_SETS[profileOf(profile).prechecks];
+  if (!set) throw new Error(`prechecks_unknown: ${profileOf(profile).prechecks}`);
+  return set(opts);
+}
+
 const SMOKE_DIR = 'packages/brain/scripts/smoke';
 const SMOKE_LISTS = ['smoke-allowlist.txt', 'smoke-denylist.txt', 'smoke-debt.txt'].map((f) => `packages/quality/${f}`);
 
@@ -53,6 +85,37 @@ function smokeRegistration(worktree) {
   return missing.length > 0
     ? { ok: false, output_tail: `未登记的 smoke 脚本（新增脚本必须加入 packages/quality/smoke-allowlist.txt，因 CI 环境限制跑不了的加入 smoke-denylist.txt）：\n${missing.map((f) => `- ${f}`).join('\n')}` }
     : { ok: true, output_tail: 'smoke 脚本全部已登记' };
+}
+
+const TEST_FILE_RE = /\.(?:test|spec)\.(?:ts|tsx|js)$/;
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage']);
+const REGISTRY = 'test-registry.yaml';
+
+/** worktree 里全部测试文件（同 CI 的 find：*.test|spec.ts|tsx|js，跳过 node_modules / .git / dist / build / coverage）。 */
+function testFiles(root, rel = '') {
+  const out = [];
+  for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+    const p = rel ? `${rel}/${e.name}` : e.name;
+    if (e.isDirectory()) {
+      if (!SKIP_DIRS.has(e.name)) out.push(...testFiles(root, p));
+    } else if (TEST_FILE_RE.test(e.name)) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * 同 zenithjoy ci-l2-consistency.yml 的 Orphan Test Check：每个测试文件都要登记进 test-registry.yaml（`path:` 行，
+ * CI 用 grep -F 子串匹配）；.test.mjs 不受约束。登记文件不存在则跳过。
+ */
+function orphanTestRegistry(worktree) {
+  const file = path.join(worktree, REGISTRY);
+  if (!fs.existsSync(file)) return { ok: true, skipped: true, output_tail: `${REGISTRY} 不存在，跳过` };
+  const registered = fs.readFileSync(file, 'utf8').split('\n').filter((l) => /^\s+path:\s+/.test(l))
+    .map((l) => l.replace(/.*path:\s*/, '').replace(/"/g, ''));
+  const orphans = testFiles(worktree).sort().filter((f) => !registered.some((r) => r.includes(f)));
+  return orphans.length > 0
+    ? { ok: false, output_tail: `未登记的测试文件（每个都要加进 ${REGISTRY}，写 id/path/type/ci/status/product）：\n${orphans.map((f) => `- ${f}`).join('\n')}` }
+    : { ok: true, output_tail: '测试文件全部已登记' };
 }
 
 function exec(cmd, args, { cwd, env, timeoutMs = CHECK_TIMEOUT_MS }) {
@@ -93,6 +156,10 @@ export async function runPrechecks(worktree, { checks, env = {} }) {
     }
     if (check.builtin === 'smoke-registration') {
       results.push({ name: check.name, ...smokeRegistration(worktree) });
+      continue;
+    }
+    if (check.builtin === 'orphan-test-registry') {
+      results.push({ name: check.name, ...orphanTestRegistry(worktree) });
       continue;
     }
     const [cmd, ...args] = check.cmd;

@@ -1,5 +1,5 @@
 // 真人 QA 的验收命令固化成回归 smoke（审计 #9，旧 controller 1.5.0「E2E 验收脚本必须有 CI 回归宿主」；决策 c8621227）：
-// QA + 独立裁判都通过后，把 PASS 的 T-n 里请求预览环境 API 的命令搬进 packages/brain/scripts/smoke/cw-<task8>-qa-smoke.sh，
+// QA + 独立裁判都通过后，把 PASS 的 T-n 里请求预览环境 API 的命令搬进本仓 smoke 目录（cecelia：packages/brain/scripts/smoke）的 cw-<task8>-qa-smoke.sh，
 // 预览地址换成 $BRAIN_URL，登记 allowlist（CI 红即挡合并）；有写请求的同时登记 write-targets 并在第一条命令后做生产保护。
 // 前提是 spec 要求每个 Q-n 自己造数据（空库可复现），见 prompts/spec.md。
 import fs from 'node:fs';
@@ -9,6 +9,8 @@ import { parseQaReport, PRODUCTION_TARGET_RE, PRODUCTION_ASSIGN_RE } from './qa-
 export const QA_SMOKE_DIR = 'packages/brain/scripts/smoke';
 const ALLOWLIST = 'packages/quality/smoke-allowlist.txt';
 const WRITE_TARGETS = 'packages/quality/smoke-write-targets.txt';
+// 目录与登记文件按仓库（repos.json qa_smoke，C6）；不传 = 默认仓（cecelia）口径
+const DEFAULT_PATHS = { dir: QA_SMOKE_DIR, allowlist: ALLOWLIST, write_targets: WRITE_TARGETS };
 const BROWSER_RE = /\bplaywright\b|\bchromium\b|\bpuppeteer\b|qa-page/i;
 // 同 packages/quality/tests/smoke-production-guard.node-test.mjs 的写请求判定
 const HTTP_WRITE_RE = /\b(?:curl|brain_curl)\b[^\n]*-X\s+(POST|PATCH|DELETE|PUT|["']?\$)/;
@@ -161,17 +163,17 @@ function appendLine(file, line) {
   fs.writeFileSync(file, `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}${line}\n`);
 }
 
-/** 写脚本并登记；返回改动的仓库相对路径（交给 QA 记录一并提交）。 */
-export function registerSmoke(worktree, smoke) {
-  const rel = `${QA_SMOKE_DIR}/${smoke.name}`;
-  fs.mkdirSync(path.join(worktree, QA_SMOKE_DIR), { recursive: true });
+/** 写脚本并登记（paths：本仓的 { dir, allowlist, write_targets }）；返回改动的仓库相对路径（交给 QA 记录一并提交）。 */
+export function registerSmoke(worktree, smoke, paths = DEFAULT_PATHS) {
+  const rel = `${paths.dir}/${smoke.name}`;
+  fs.mkdirSync(path.join(worktree, paths.dir), { recursive: true });
   fs.writeFileSync(path.join(worktree, rel), smoke.content, { mode: 0o755 });
   fs.chmodSync(path.join(worktree, rel), 0o755);
-  appendLine(path.join(worktree, ALLOWLIST), smoke.name);
-  const changed = [rel, ALLOWLIST];
+  appendLine(path.join(worktree, paths.allowlist), smoke.name);
+  const changed = [rel, paths.allowlist];
   if (smoke.writes) {
-    appendLine(path.join(worktree, WRITE_TARGETS), smoke.name);
-    changed.push(WRITE_TARGETS);
+    appendLine(path.join(worktree, paths.write_targets), smoke.name);
+    changed.push(paths.write_targets);
   }
   return changed;
 }
@@ -229,9 +231,9 @@ function removeLine(file, line) {
   return true;
 }
 
-/** 剔光后：删脚本、撤 allowlist / write-targets 登记；返回改动的仓库相对路径。 */
-export function unregisterSmoke(worktree, name) {
-  const rel = `${QA_SMOKE_DIR}/${name}`;
+/** 剔光后：删脚本、撤 allowlist / write-targets 登记（paths 同 registerSmoke）；返回改动的仓库相对路径。 */
+export function unregisterSmoke(worktree, name, paths = DEFAULT_PATHS) {
+  const rel = `${paths.dir}/${name}`;
   fs.rmSync(path.join(worktree, rel), { force: true });
-  return [rel, ...[ALLOWLIST, WRITE_TARGETS].filter((f) => removeLine(path.join(worktree, f), name))];
+  return [rel, ...[paths.allowlist, paths.write_targets].filter((f) => removeLine(path.join(worktree, f), name))];
 }

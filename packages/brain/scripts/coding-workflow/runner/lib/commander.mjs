@@ -11,9 +11,10 @@ import path from 'node:path';
 import { git } from './proc.mjs';
 import { removeWorktree } from './worktree.mjs';
 import { listOwnPrs } from './cifix-scan.mjs';
-import { intentOf, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from './pr-branch.mjs';
+import { intentOf, preparePrWorktree, checkFixCommits, pushPrHead, headOf, smokeDirOf } from './pr-branch.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
+import { repoRules } from '../../lib/repo-profile.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
 import { prFile, prLabel } from './repos.mjs';
 import { notifyBark } from './bark.mjs';
@@ -119,8 +120,8 @@ function release(cfg, pr, esc, ruling, done) {
 }
 
 /** 核对 commander 的提交：同修复会话的核对（受保护路径、削弱测试），另许改规格但只许纯追加。失败抛 Error(reason)。 */
-async function checkCommits(worktree, before, specRel) {
-  const { commits } = await checkFixCommits(worktree, before, { allow: [specRel] });
+async function checkCommits(cfg, worktree, before, specRel) {
+  const { commits } = await checkFixCommits(worktree, before, { allow: [specRel], smokeDir: smokeDirOf(cfg) });
   const old = await git(worktree, ['show', `${before}:${specRel}`]);
   const now = fs.readFileSync(path.join(worktree, specRel), 'utf8');
   if (old.code === 0 && now !== old.stdout && (!now.startsWith(old.stdout) || !now.slice(old.stdout.length).includes('commander 裁决'))) {
@@ -159,7 +160,7 @@ async function intervene(ctx, pr, esc, cs, signal) {
       ROUND: String(n), MAX: String(cfg.commanderMax), PR_NUMBER: `#${pr.number}`, BRANCH: pr.headRefName,
       ESCALATION_TYPE: esc.detail.type, ESCALATION_JSON: JSON.stringify(esc.detail), CONTEXT_PATH: contextPath,
       SPRINT_DIR: path.join(worktree, intent.sprintDir), INTENT_PATH: path.join(worktree, intent.sprintDir, '01-intent.md'),
-      SPEC_PATH: path.join(worktree, specRel), RULING_PATH: rulingPath,
+      SPEC_PATH: path.join(worktree, specRel), RULING_PATH: rulingPath, REPO_RULES: repoRules(cfg.repoProfile),
     });
     ctx.log(`coding commander PR #${pr.number} 第 ${n} 次介入（${esc.detail.type}）`);
     // 裁决文件写在 logDir（worktree 外）：显式授权该目录，否则 Write 被拒（真实 Opus 演练实证）
@@ -175,7 +176,7 @@ async function intervene(ctx, pr, esc, cs, signal) {
     let commits = [];
     if ((await headOf(worktree)) !== before) {
       try {
-        commits = await checkCommits(worktree, before, specRel);
+        commits = await checkCommits(cfg, worktree, before, specRel);
       } catch (error) {
         return await fail(`commander_${error?.message || 'commit_check_failed'}`);
       }

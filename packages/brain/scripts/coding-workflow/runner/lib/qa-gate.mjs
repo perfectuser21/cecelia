@@ -1,4 +1,4 @@
-// QA 门（evaluator 真人 QA，决策 02d8e749）：runner 自己开的 cw PR，必需检查全绿后、合并前，在 PR 预览环境里由
+// QA 门（evaluator 真人 QA，决策 02d8e749）：runner 自己开的 cw PR，必需检查全绿后、合并前，在 PR 预览环境（local 仓库：PR worktree，C6）里由
 // evaluate 活动像真人 QA 一样黑盒验收。FAIL → 报告提交、开发按报告修复、推送、CI 再跑、再验（不设轮数上限）。
 // PASS → 独立裁判（judge-gate.mjs，不同模型复核需求+合同+QA 报告+改动）：PASS 才开自动合并；product → 按裁决修复；
 // qa_gap → 下一轮 QA 带着裁决补验；contract_gap / 推翻前轮裁决（ruling_conflict）→ 升级；裁判不可用 → 下轮只重跑裁判。
@@ -11,23 +11,22 @@ import path from 'node:path';
 import { run, git, gh } from './proc.mjs';
 import { removeWorktree } from './worktree.mjs';
 import { listOwnPrs, requiredState } from './cifix-scan.mjs';
-import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead, headOf } from './pr-branch.mjs';
+import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead, headOf, smokeDirOf } from './pr-branch.mjs';
 import { previewOf } from '../../lib/preview.mjs';
-import { buildQaSmoke, selectQaSmokeItems, registerSmoke, QA_SMOKE_DIR } from '../../lib/qa-smoke.mjs';
-import { PRODUCTION_TARGET_RE } from '../../lib/qa-report.mjs';
-import { touchesApiSurface } from '../../lib/pr-kind.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { cannotVerifyAccepted } from './cv-accepted.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { runJudge, priorJudgeFiles } from './judge-gate.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
 import { prFile, stateDir, prLabel } from './repos.mjs';
+import { solidifyQa } from './qa-solidify.mjs';
+
+export { preflightSmoke, prTouchesApi } from './qa-solidify.mjs';
 
 const EVALUATE_REL = 'packages/brain/scripts/coding-workflow/activities/evaluate.mjs';
 const EVALUATE_TIMEOUT_MS = 55 * 60 * 1000;
 const GH_TIMEOUT_MS = 60 * 1000;
 const STALL_ROUNDS = 3;
-const PREFLIGHT_TIMEOUT_MS = 60 * 1000;
 const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)'];
 const RUNNER_ID = ['-c', 'user.name=coding-workflow-runner', '-c', 'user.email=coding-workflow-runner@cecelia.local'];
 
@@ -176,75 +175,6 @@ const qaIssueLines = (qa) => [...qa.failed, ...qa.blocking]
 const judgeIssueLines = (j) => j.blocking
   .map((i) => `- ${i.id}（对应 ${i.covers.join('、')}，${i.severity}，${i.type}）${i.where ? `［${i.where}］` : ''}：${i.detail}`).join('\n');
 
-/** 未固化的 PASS 条目及原因（other_port / local_path / production / browser / not_preview / preflight_failed:退出码），拼进 smoke_note。 */
-const skippedNote = (skipped = []) => (skipped.length ? `；剔除 ${skipped.map((x) => `${x.id}(${x.reason})`).join(',')}` : '');
-
-/**
- * 固化前逐条预跑（C2b）：每个 T-n 单独用 bash 跑一遍（BRAIN_URL=预览地址、SMOKE_ALLOW_WRITE=1，60s 超时），
- * 返回跑不通的 [{ id, reason: 'preflight_failed:<退出码|timeout>' }]。预览地址指向生产 → 一条都不跑，全部剔除。
- */
-export async function preflightSmoke(worktree, smoke, previewUrl) {
-  const origin = String(previewUrl ?? '').replace(/\/+$/, '');
-  if (PRODUCTION_TARGET_RE.test(origin)) return smoke.commands.map((c) => ({ id: c.id, reason: 'preflight_failed:production_target' }));
-  const failed = [];
-  for (const c of smoke.commands) {
-    const r = await run('bash', ['-c', `set -euo pipefail\n${c.command}`], {
-      cwd: worktree, env: { BRAIN_URL: origin, SMOKE_ALLOW_WRITE: '1' }, timeoutMs: PREFLIGHT_TIMEOUT_MS,
-    });
-    if (r.code !== 0) failed.push({ id: c.id, reason: `preflight_failed:${r.timedOut ? 'timeout' : r.code ?? 'spawn'}` });
-  }
-  return failed;
-}
-
-/** PR 相对 main 改了 API 面没有；diff 取不到按「改了」算（不默认放行）。 */
-export async function prTouchesApi(worktree) {
-  const r = await git(worktree, ['diff', '--name-only', 'origin/main...HEAD']);
-  return r.code !== 0 || touchesApiSurface(r.stdout.split('\n').filter(Boolean));
-}
-
-/**
- * QA 与裁判都通过：把 PASS 的 T-n API 命令逐条在预览上预跑，跑通的固化成回归 smoke 并登记（审计 #9，决策 c8621227），
- * 返回要随 QA 记录一并提交的路径；没有可固化的条目返回 []。
- * 结果写进 s.smoke / s.smoke_note（决策 b8030661）：没有可固化命令时保留分支上已有版本（不删不改），说明哪轮保留哪版。
- * 一条都没固化、分支上也没有前轮版本、QA 有 PASS 的 API 条目且 PR 改了 API 面 → s.smoke_missing（afterJudge 据此升级，决策 4fe863c3）。
- */
-async function solidifyQa(ctx, pr, s, round, worktree, intent, reportFile, previewUrl) {
-  const file = `${QA_SMOKE_DIR}/cw-${String(intent.taskId).slice(0, 8)}-qa-smoke.sh`;
-  delete s.smoke_missing;
-  delete s.smoke_gap;
-  try {
-    const args = { taskId: intent.taskId, previewUrl, reportText: fs.readFileSync(path.join(worktree, intent.sprintDir, reportFile), 'utf8') };
-    const first = buildQaSmoke(args);
-    const failed = first ? await preflightSmoke(worktree, first, previewUrl) : [];
-    if (failed.length) ctx.log(`QA 门 PR #${pr.number}：预跑失败剔除 ${failed.map((x) => `${x.id}(${x.reason})`).join(',')}`);
-    const preflight = first ? `；预跑 ${first.items.length} 条通过 ${first.items.length - failed.length} 条` : '';
-    const smoke = failed.length ? buildQaSmoke({ ...args, exclude: failed }) : first;
-    if (!smoke) {
-      const { skipped, api } = selectQaSmokeItems({ ...args, exclude: failed });
-      const why = `${preflight}${skippedNote(skipped)}`;
-      ctx.log(`QA 门 PR #${pr.number}：QA 报告里没有可固化（预跑通过）的 API 验收命令，不生成回归 smoke${why}`);
-      const kept = fs.existsSync(path.join(worktree, file));
-      s.smoke_note = (kept
-        ? `第 ${round} 轮 QA 报告无可固化的 API 验收命令，保留第 ${s.smoke?.round ?? '?'} 轮版本 ${file}`
-        : `本任务无回归 smoke（第 ${round} 轮 QA 报告无可固化的 API 验收命令）`) + why;
-      if (!kept && api.length > 0 && await prTouchesApi(worktree)) {
-        s.smoke_missing = true;
-        s.smoke_gap = { round, api_items: api, skipped };
-      }
-      return [];
-    }
-    const changed = registerSmoke(worktree, smoke);
-    s.smoke = { round, file, items: smoke.items, at: new Date().toISOString() };
-    s.smoke_note = `第 ${round} 轮固化 ${file}（${smoke.items.join(',')}）${preflight}${skippedNote(smoke.skipped)}`;
-    ctx.log(`QA 门 PR #${pr.number}：验收命令 ${smoke.items.join(',')} 固化为 ${smoke.name}（登记 allowlist${smoke.writes ? ' + write-targets' : ''}）`);
-    return changed;
-  } catch (error) {
-    s.smoke_note = `第 ${round} 轮固化回归 smoke 失败：${error?.message || error}`;
-    ctx.log(`QA 门 PR #${pr.number}：固化回归 smoke 失败：${error?.message || error}`);
-    return [];
-  }
-}
-
 /** QA 门累计花费（审计 #35）：evaluate 与 qa-fix 会话，随状态同步进 Brain，合并时汇总。 */
 function addCost(s, usd) {
   if (typeof usd === 'number' && usd > 0) s.cost_usd = Math.round(((s.cost_usd ?? 0) + usd) * 10000) / 10000;
@@ -293,7 +223,7 @@ async function qaFix(ctx, pr, s, worktree, intent, entry, { recordFile, issues }
     return 'ruling_conflict';
   }
   try {
-    await checkFixCommits(worktree, before);
+    await checkFixCommits(worktree, before, { smokeDir: smokeDirOf(ctx.cfg) });
     await pushPrHead(ctx.cfg, worktree, pr);
     return 'pushed';
   } catch (error) {
@@ -423,6 +353,8 @@ async function qaRound(ctx, pr, s, signal) {
       run_tag: `qa-${pr.number}-r${round}`, task_id: intent.taskId, worktree, sprint_dir: intent.sprintDir,
       intent_ids: intent.intentIds, intent_sha256: intent.intentSha256, pr_number: pr.number, round, head_sha: pr.headRefOid,
       transcript_path: transcript,
+      // 活动层按仓库参数化（C6）：QA 模式（预览 / local）、碰生产口径随本仓 repos.json 条目走
+      ...(cfg.repoProfile ? { repo_profile: cfg.repoProfile } : {}),
       ...(prior?.failure_class === 'qa_insufficient' ? { judge_feedback: `${intent.sprintDir}/${prior.file}` } : {}),
       // 重试必须带新信息（审计 #33）：上次评估不合格的原因交给这次
       ...(s.last_eval_error ? { prev_errors: `${s.last_eval_error.reason_code}: ${s.last_eval_error.evidence}` } : {}),
@@ -524,7 +456,12 @@ export async function runQaGate(ctx, signal) {
       // 同 head 验过就不重验；上一轮修复因 PR 被关没推上去（之后重开）的除外
       if (s.rounds.at(-1)?.head === pr.headRefOid && s.rounds.at(-1)?.fix !== 'pr_closed') continue;
       if ((await requiredState(cfg, pr.number)).state !== 'pass') continue;
-      // 只有 brain_preview 类仓库能起 PR 预览；其他 QA 模式（zenithjoy 的 local）待活动层参数化接入前不验，同一 head 只记一行
+      // local 模式（zenithjoy 第一阶段，C6）：不起预览，evaluate 在 PR worktree 里黑盒验
+      if (cfg.previewType === 'local') {
+        await qaRound(ctx, pr, s, signal);
+        return true;
+      }
+      // 其他未接入的 QA 模式不验，同一 head 只记一行
       if (!usesBrainPreview(cfg)) {
         if (s.qa_unsupported !== pr.headRefOid) {
           ctx.log(`QA 门 ${prLabel(cfg, pr.number)}：本仓 QA 模式 ${cfg.previewType} 尚未接入，不验（不批准、不合并）`);

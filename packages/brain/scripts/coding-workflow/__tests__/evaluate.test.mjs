@@ -194,4 +194,38 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     // 金丝雀 3e8414f6：规格要求和「改动前」对比，QA 拿生产当了基线 → 只读也不行，基线须在本机从 main 起
     for (const s of ['哪怕只是只读请求', '绝不能拿生产当基线', 'git worktree add']) expect(p).toContain(s);
   });
+
+  // C6：QA 模式按仓库。zenithjoy 第一阶段 local：不起预览、不等预览，在 PR worktree 里黑盒验；碰生产按本仓 ∪ 默认仓口径判
+  describe('local 模式（repo_profile.preview.type=local）', () => {
+    const ZJ = JSON.parse(fs.readFileSync(path.join(HERE, '../repos.json'), 'utf8')).repos.find((r) => r.key === 'zenithjoy-workspace');
+
+    it('不查预览环境（预览不存在也照验），用 evaluate-local 提示词（WORKTREE、本仓生产口径），env.kind=local', async () => {
+      preview = null;
+      const r = await run('pass', { repo_profile: ZJ });
+      expect(r.result.status, r.stderr).toBe('completed');
+      expect(r.result.outputs.qa).toMatchObject({ verdict: 'PASS', env: { kind: 'local', worktree } });
+      expect(r.stderr).toContain(`FAKE_WORKTREE: ${worktree}`);
+      expect(r.stderr).toContain('FAKE_PRODUCTION: ');
+      expect(r.stderr).toMatch(/FAKE_PRODUCTION: .*hk-vps/);
+      expect(r.stderr).toContain('FAKE_PREVIEW_URL: \n');
+      expect(fs.existsSync(path.join(sprint(), '03-build.md'))).toBe(true);
+    });
+
+    it('碰了 zenithjoy 生产（hk-vps 100.86.118.99:5200）→ fatal evaluate_touched_production', async () => {
+      const r = await run('prod-hk', { repo_profile: ZJ });
+      expect(r.result).toMatchObject({ status: 'failed', failure_class: 'fatal', reason_code: 'evaluate_touched_production' });
+      expect(JSON.stringify(r.result.evidence)).toContain('100.86.118.99');
+    });
+
+    it('local 仓库碰 cecelia 生产 Brain（localhost:5221）同样违规', async () => {
+      const r = await run('prod', { repo_profile: ZJ });
+      expect(r.result.reason_code).toBe('evaluate_touched_production');
+    });
+
+    it('cecelia（没传 profile）碰 hk-vps 不归它判（口径不变），仍按预览模式验', async () => {
+      const r = await run('prod-hk');
+      expect(r.result.status, r.stderr).toBe('completed');
+      expect(r.result.outputs.qa.env.kind).toBe('preview');
+    });
+  });
 });

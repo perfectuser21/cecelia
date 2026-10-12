@@ -104,7 +104,11 @@ async function execute(ctx, task, job, signal) {
   const contract = readContract(path.join(trusted, 'contract.json'));
   const envelope = {
     contract,
-    input: { run_tag: names.runTag, task_id: task.id, worktree, sprint_dir: names.sprintDir, brain_url: cfg.brainUrl },
+    input: {
+      run_tag: names.runTag, task_id: task.id, worktree, sprint_dir: names.sprintDir, brain_url: cfg.brainUrl,
+      // 活动层按仓库参数化（C6）：版本碎片、CI 预检清单、本仓规矩提示词、QA 模式随任务所在仓库的 repos.json 条目走
+      ...(cfg.repoProfile ? { repo_profile: cfg.repoProfile } : {}),
+    },
   };
   log(`开跑 ${task.id}：worktree=${worktree} branch=${names.branch}`);
   const startedAt = Date.now();

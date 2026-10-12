@@ -35,7 +35,7 @@ describe('门禁按仓库遍历 + automerge=false 等人合并', () => {
       }
       const z = REAL_REPOS.repos.find((r) => r.key === 'zenithjoy-workspace');
       repos.push({ ...z, key: 'zj', aliases: ['zj'], slug: ZJ_SLUG, origin: sb.origin, clone: zjClone(), worktree_base: path.join(sb.root, 'wt-zj'),
-        state_ns: 'zj', enabled: true, automerge: zj.automerge, preview: { type: 'brain_preview', base_repo: 'zj' } });
+        state_ns: 'zj', enabled: true, automerge: zj.automerge, preview: { type: 'brain_preview', base_repo: 'zj' }, ...(zj.override ?? {}) });
     }
     fs.writeFileSync(reposFile(), JSON.stringify({ repos }));
   };
@@ -106,6 +106,24 @@ describe('门禁按仓库遍历 + automerge=false 等人合并', () => {
     expect(git(sb.clone, 'branch', '-r')).not.toContain(`origin/${BRANCH}`);
   });
 
+  // C6：QA 门按仓库的 QA 模式。local（zenithjoy 第一阶段）不起预览，直接在 PR worktree 里跑 evaluate（带本仓 repo_profile）；
+  // 本仓不固化回归 smoke（qa_smoke=null）：不写 smoke、不判 smoke_missing，smoke_note 写明
+  it('多仓库：zj 仓 QA 模式 local → 不请求预览、直接跑 evaluate（input 带 zj 的 repo_profile）；PASS + 裁判 PASS → 批准，不固化 smoke', async () => {
+    writeRepos({ zj: { automerge: false, override: { preview: { type: 'local' }, qa_smoke: null } } });
+    const r = await go({ prs: [], byRepo: { [ZJ_SLUG]: green() } }, { mode: 'pass-api', tasks: [{ id: TASK, status: 'completed' }] });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const [call] = E.qaCalls();
+    expect(call.repo_profile).toMatchObject({ key: 'zj', preview: { type: 'local' }, qa_smoke: null });
+    expect(E.preview.calls.filter((c) => c.url.includes('/preview/'))).toEqual([]);
+    expect(r.stderr).not.toContain('尚未接入');
+    const s = read(zjLogDir());
+    expect(s).toMatchObject({ passed: true });
+    expect(s.smoke).toBeUndefined();
+    expect(s.smoke_missing).toBeUndefined();
+    expect(s.smoke_note).toContain('不固化');
+    expect(E.originLog().join('\n')).not.toContain('qa-smoke');
+  });
+
   it('多仓库：zj 仓 automerge=false → 不合并，<logDir>/zj/qa-77.json 记 awaiting_human，Bark 一次', async () => {
     writeRepos({ zj: { automerge: false } });
     const head = remoteHead();
@@ -140,6 +158,8 @@ describe('任务按仓库执行', () => {
     expect(git(sb.clone, 'worktree', 'list')).not.toContain(worktree);
     const branch = git(worktree, 'rev-parse', '--abbrev-ref', 'HEAD').trim();
     expect(JSON.parse(fs.readFileSync(path.join(worktree, `.dev-lock.${branch}`), 'utf8')).repo).toBe('zj');
+    // 活动层按仓库参数化（C6）：信封带任务所在仓库的 repos.json 条目
+    expect(readJsonLines(sb.execLog)[0].envelope.input.repo_profile).toMatchObject({ key: 'zj', version_fragment: null });
     // 执行器的 --cwd（判卷代码目录）在默认仓 clone 里
     expect(argv[argv.indexOf('--cwd') + 1].startsWith(`${sb.clone}/`)).toBe(true);
   }, 30000);

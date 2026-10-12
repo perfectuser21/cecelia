@@ -4,13 +4,29 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { git, gh } from './proc.mjs';
 import { writeDevFiles, ensureIgnored, installDeps } from './worktree.mjs';
+import { QA_SMOKE_DIR } from '../../lib/qa-smoke.mjs';
+import { qaSmokeOf } from '../../lib/repo-profile.mjs';
 
 const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
 const PUSH_TIMEOUT_MS = 5 * 60 * 1000;
 const GH_TIMEOUT_MS = 60 * 1000;
 // 修复提交不许碰：sprint 目录（需求与验收记录）、agent 配置
-// runner 生成的 QA 回归 smoke 只由 runner 固化（金丝雀 4：修复会话改它，与下次固化互相覆盖）
-const PROTECTED_RE = /^(sprints\/|\.claude\/|CLAUDE\.md$|AGENTS\.md$|packages\/brain\/scripts\/smoke\/cw-[0-9a-f]{8}-qa-smoke\.sh$)/;
+const PROTECTED_RE = /^(sprints\/|\.claude\/|CLAUDE\.md$|AGENTS\.md$)/;
+const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * 修复提交不许碰的路径。runner 生成的 QA 回归 smoke 只由 runner 固化（金丝雀 4：修复会话改它，与下次固化互相覆盖）：
+ * 它在哪个目录按仓库（repos.json qa_smoke.dir，C6）；不传 = 默认仓目录；null = 本仓不固化，不保护。
+ */
+export function protectedPath(file, smokeDir = QA_SMOKE_DIR) {
+  if (PROTECTED_RE.test(file)) return true;
+  return Boolean(smokeDir) && new RegExp(`^${escapeRe(smokeDir)}/cw-[0-9a-f]{8}-qa-smoke\\.sh$`).test(file);
+}
+
+/** cfg（某仓库视图）的 QA 回归 smoke 目录；cfg 没带 repoProfile = 默认仓；本仓不固化 = null。 */
+export function smokeDirOf(cfg) {
+  return qaSmokeOf(cfg?.repoProfile)?.dir ?? null;
+}
 const INTENT_ANCHOR_RE = /^### (I-\d+)(?:[\s:：].*)?$/gm;
 
 const stop = (code) => new Error(code);
@@ -129,16 +145,16 @@ export async function ownChangedFiles(worktree, before, mainRef = null) {
 
 /**
  * claude 修复后的核对：工作区干净、有新提交、只追加不改写、不碰受保护路径、不削弱测试。通过返回 { commits }，否则抛 Error(reason_code)。
- * mainRef：本次合进了 main（冲突修复），受保护路径与削弱测试只核对 PR 自身的改动。
+ * mainRef：本次合进了 main（冲突修复），受保护路径与削弱测试只核对 PR 自身的改动。smokeDir：本仓 QA 回归 smoke 目录（smokeDirOf(cfg)）。
  */
-export async function checkFixCommits(worktree, before, { mainRef = null, allow = [] } = {}) {
+export async function checkFixCommits(worktree, before, { mainRef = null, allow = [], smokeDir = QA_SMOKE_DIR } = {}) {
   if ((await git(worktree, ['status', '--porcelain'])).stdout.trim()) throw stop('uncommitted');
   const head = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
   if (!head || head === before) throw stop('no_commit');
   if ((await git(worktree, ['merge-base', '--is-ancestor', before, head])).code !== 0) throw stop('history_rewritten');
   const changed = await ownChangedFiles(worktree, before, mainRef);
   // allow：调用方单独核对的受保护文件（coding commander 只许纯追加的规格）
-  if (changed.some((f) => PROTECTED_RE.test(f) && !allow.includes(f))) throw stop('protected_path');
+  if (changed.some((f) => protectedPath(f, smokeDir) && !allow.includes(f))) throw stop('protected_path');
   if (await weakenedTests(worktree, before, head, mainRef ? changed : null)) throw stop('test_weakened');
   const log = await git(worktree, ['rev-list', '--reverse', `${before}..${head}`]);
   return { commits: log.stdout.split('\n').filter(Boolean) };

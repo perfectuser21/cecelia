@@ -4,7 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { git, gitPlain, initCommittableRepo } from './helpers/git.mjs';
-import { defaultChecks, runPrechecks, prKindOf, PR_SIZE_LIMIT } from '../lib/ci-precheck.mjs';
+import { defaultChecks, checksFor, runPrechecks, prKindOf, PR_SIZE_LIMIT } from '../lib/ci-precheck.mjs';
+
+const REPOS = JSON.parse(fs.readFileSync(new URL('../repos.json', import.meta.url), 'utf8')).repos;
+const ZJ = REPOS.find((r) => r.key === 'zenithjoy-workspace');
+const CECELIA = REPOS.find((r) => r.key === 'cecelia');
 
 describe('defaultChecks', () => {
   it('覆盖 ci-passed 里能本地离线复现的规矩类门禁，base 用 origin/main；feature PR 传 PR_LABELS=feature', () => {
@@ -90,5 +94,70 @@ describe('runPrechecks', () => {
     const [size] = await runPrechecks(worktree, { checks: defaultChecks({ branch: 'b', feature: false }).filter((c) => c.name === 'pr-size-check') });
     expect(size).toMatchObject({ name: 'pr-size-check', ok: false });
     expect(size.output_tail).toContain(String(PR_SIZE_LIMIT + 1));
+  });
+});
+
+// C6：预检清单按仓库（repos.json prechecks）。zenithjoy 以它自己的 CI 为准：L2 Consistency 的 Orphan Test Check
+// （*.test.ts/tsx/js、*.spec.ts/tsx/js 必须登记 test-registry.yaml，.test.mjs 不受约束）、registry sync、product-map 校验与漂移，
+// Smoke Glob Gate 的 lint-smoke-baseline，L1 的测试配对 / TDD 顺序 / 测试质量 / 无假测试 / 版本号 bump；cecelia 专属门禁不跑。
+describe('checksFor：按仓库挑预检清单', () => {
+  it('cecelia（及没传 profile 的旧调用方）= defaultChecks，口径不变', () => {
+    const opts = { branch: 'cp-10100039-cw-05ae922c', feature: true };
+    expect(checksFor(CECELIA, opts)).toEqual(defaultChecks(opts));
+    expect(checksFor(undefined, opts)).toEqual(defaultChecks(opts));
+  });
+
+  it('zenithjoy：按它自己的 CI 挑门禁，不跑 cecelia 专属的（branch-naming / registry-lint / 迁移编号 / smoke allowlist / pr-size）', () => {
+    const names = checksFor(ZJ, { branch: 'cp-10100039-cw-05ae922c', feature: true }).map((c) => c.name);
+    expect(names).toEqual([
+      'lint-test-pairing', 'lint-tdd-commit-order', 'lint-test-quality', 'lint-no-fake-test', 'lint-agent-version-bump',
+      'lint-line04-manifest-version-bump', 'lint-smoke-baseline', 'orphan-test-registry', 'registry-sync', 'product-map-validate',
+      'wf-plan-check', 'gen-step-dod-check',
+    ]);
+    const byName = Object.fromEntries(checksFor(ZJ, { branch: 'b', feature: false }).map((c) => [c.name, c]));
+    expect(byName['lint-smoke-baseline'].cmd).toEqual(['bash', '.github/workflows/scripts/lint-smoke-baseline.sh', 'origin/main']);
+    expect(byName['registry-sync'].cmd).toEqual(['node', 'scripts/sync-registry.cjs']);
+    expect(byName['wf-plan-check'].cmd).toEqual(['node', 'scripts/product-map/wf-plan.mjs', '--check']);
+    expect(byName['orphan-test-registry'].builtin).toBe('orphan-test-registry');
+  });
+});
+
+describe('orphan-test-registry（同 zenithjoy ci-l2-consistency.yml Orphan Test Check）', () => {
+  let root;
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'orphan-')); });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  const write = (rel, text = 'x\n') => {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), text);
+  };
+  const check = async () => (await runPrechecks(root, { checks: [{ name: 'orphan-test-registry', builtin: 'orphan-test-registry' }] }))[0];
+  const REGISTRY = 'version: "1.0.0"\ntests:\n  - id: a\n    path: "apps/api/src/a.test.ts"\n    type: unit\n';
+
+  it('没有 test-registry.yaml → 跳过（同 CI 的 SKIP）', async () => {
+    write('apps/api/src/b.test.js');
+    expect(await check()).toMatchObject({ ok: true, skipped: true });
+  });
+
+  it('新增未登记的 foo.test.js → 失败并点名；登记过的、.test.mjs、node_modules / dist 下的不算', async () => {
+    write('test-registry.yaml', REGISTRY);
+    write('apps/api/src/a.test.ts');
+    write('scripts/x/__tests__/ok.test.mjs');
+    write('node_modules/pkg/z.test.js');
+    write('apps/web/dist/y.spec.js');
+    expect(await check()).toMatchObject({ ok: true });
+    write('services/foo/foo.test.js');
+    const r = await check();
+    expect(r.ok).toBe(false);
+    expect(r.output_tail).toContain('services/foo/foo.test.js');
+    expect(r.output_tail).toContain('test-registry.yaml');
+    expect(r.output_tail).not.toContain('a.test.ts');
+  });
+
+  it('.spec.tsx 也要登记；登记后通过', async () => {
+    write('test-registry.yaml', REGISTRY);
+    write('apps/web/src/Page.spec.tsx');
+    expect((await check()).ok).toBe(false);
+    fs.appendFileSync(path.join(root, 'test-registry.yaml'), '  - id: p\n    path: apps/web/src/Page.spec.tsx\n');
+    expect((await check()).ok).toBe(true);
   });
 });

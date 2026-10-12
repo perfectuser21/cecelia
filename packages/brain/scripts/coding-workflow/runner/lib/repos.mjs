@@ -14,7 +14,8 @@ export function reposFile(env = process.env) {
   return env.CODING_WF_REPOS_FILE || REPOS_FILE;
 }
 export const REQUIRED_FIELDS = ['key', 'default', 'enabled', 'slug', 'origin', 'aliases', 'clone', 'worktree_base', 'state_ns',
-  'required_checks', 'base_fresh_check', 'install', 'qa_smoke', 'version_fragment', 'preview', 'production_re', 'automerge'];
+  'required_checks', 'base_fresh_check', 'install', 'qa_smoke', 'version_fragment', 'preview', 'production_re', 'automerge',
+  'prechecks', 'rules_prompt'];
 
 /** 仓库名归一：去空白、小写、去 github 前缀（https / ssh）、去 .git 与尾斜杠。非字符串返回 ''。 */
 export function normalizeRepoName(value) {
@@ -91,6 +92,8 @@ export function repoFields(rc) {
     repo: rc.clone, worktreeBase: rc.worktreeBase, repoKey: rc.key, repoSlug: rc.slug, stateNs: rc.stateNs,
     repoAutomerge: rc.automerge, baseFreshCheck: rc.baseFreshCheck, install: rc.install,
     previewType: rc.previewType, previewBaseRepo: rc.previewBaseRepo,
+    // 活动层与提示词按仓库参数化（C6）：repos.json 原条目，经信封 input.repo_profile 交给各活动（lib/repo-profile.mjs）
+    repoProfile: rc.profile,
   };
 }
 
