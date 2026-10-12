@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.428.10
+**Brain 版本**: 1.430.0
 
 Notion GTD 入口自循环在独立调度周期初始化，重启后不等慢串行任务；原启用开关、固定起算点及幂等同步互斥保持。
 
@@ -80,6 +80,13 @@ summary: 版本、实现影响、地图及发布证据测试改用精确scratch�
 - 当前 Workflow 定义使用唯一当前同来源清单，避免同一 SHA 旧清单造成歧义；非当前历史多清单仍明确拒绝。
 
 fix: Codex 原生 command_execution 的已知 shell -lc/-c 外层字面量只解一层，命令全文精确匹配；保留完成状态和退出码，阻止 echo、注释、复合子串或未完成事件冒认执行。真实 Z0 here-doc/引号证据可回放，不改证据原判分。
+
+fix: local QA 基线从合同指定的固定 commit 只读提取到独享临时目录，不再要求 git worktree add；缺少历史起点仍 CANNOT_VERIFY，保留黑盒和 Git 元数据只读边界。 QA 记录只对当前任务/轮次报告和截图 force-add，兼容目标仓忽略规则；smoke 保持普通 add，空记录、预暂存、越界和链接拒绝。
+
+## Brain 1.429.0 — Projects 双向同步与 AI 参与三档
+
+- Projects 全量同步：修正状态映射，Notion 人建项目幂等导入，人工列三方合并优先保留人的编辑并留痕；AI 参与支持知情、盯着、介入，保留人工项目正文。
+- 分页回灌成功后推进游标，失败可重试；真实 PostgreSQL 迁移与同步回归守卫。
 
 ## Brain 1.428.9 — 会话摘要接入 OpenClaw Codex
 
