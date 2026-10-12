@@ -98,7 +98,7 @@ fi
 # 启动端是唯一知道 session 出处的地方。派发标记优先于 TTY；无法确定出处时不登记，
 # 让采集端按未登记 session 失败关闭。登记失败不能阻塞 Claude，HTTP 总等待最多 2 秒。
 _register_session_provenance() {
-    local kind launched_by task_id body brain_url
+    local kind launched_by task_id body brain_url service_token
     if [[ "${CECELIA_DISPATCH:-0}" == "1" ]]; then
         kind="machine"
         launched_by="${CECELIA_LAUNCHED_BY:-cecelia-dispatch}"
@@ -109,6 +109,24 @@ _register_session_provenance() {
         return 0
     fi
 
+    # 只读既有服务凭据：不执行缓存内容；无凭据就不登记，仍继续启动。
+    service_token="$(python3 -c '
+import os,pathlib,re,stat
+try:
+    token=os.environ.get("CECELIA_INTERNAL_TOKEN", "")
+    if not token:
+        p=pathlib.Path.home()/".credentials"/"cecelia-internal.env"
+        st=p.lstat()
+        if not stat.S_ISREG(st.st_mode) or st.st_uid!=os.getuid() or st.st_mode & 0o077:
+            raise ValueError("unsafe credential cache")
+        token=next((line.split("=",1)[1] for line in p.read_text().splitlines()
+                    if line.startswith("CECELIA_INTERNAL_TOKEN=")), "")
+    if re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", token):
+        print(token)
+except (OSError,ValueError,UnicodeError):
+    pass
+' 2>/dev/null)" || return 0
+    [[ -n "$service_token" ]] || return 0
     task_id="${HARNESS_TASK_ID:-}"
     # 核心库已迁到 us-vps，启动器经 Brain API 写真身，不依赖执行机本地数据库。
     # JSON 编码避免 shell 插值破坏字段；正文、路径、凭据都不进入登记请求。
@@ -117,7 +135,8 @@ _register_session_provenance() {
         sys.argv[1:4] + [sys.argv[4] or None]))))' \
         "$SID" "$kind" "$launched_by" "$task_id" 2>/dev/null)" || return 0
     brain_url="${BRAIN_URL:-http://100.79.41.61:5221}"
-    curl -fsS --connect-timeout 2 --max-time 2 \
+    printf 'Authorization: Bearer %s\n' "$service_token" | \
+        curl -fsS --connect-timeout 2 --max-time 2 --header @- \
         -H 'Content-Type: application/json' --data-binary "$body" \
         "${brain_url%/}/api/brain/session-provenance" >/dev/null 2>&1 || true
 }

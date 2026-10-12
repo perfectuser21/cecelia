@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import pool from '../db.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
 const router = Router();
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -9,7 +10,7 @@ const FIELDS = new Set(['session_id', 'kind', 'launched_by', 'task_id']);
 const COLUMNS = 'session_id, kind, launched_by, task_id, created_at';
 
 // 启动器只提交出处元数据。重复启动保持首条记录，不能把机器来源改写成人类。
-router.post('/', async (req, res) => {
+router.post('/', internalAuthOrLoopback, async (req, res) => {
   const body = req.body;
   if (!body || typeof body !== 'object' || Array.isArray(body)
     || Object.keys(body).some(key => !FIELDS.has(key))
