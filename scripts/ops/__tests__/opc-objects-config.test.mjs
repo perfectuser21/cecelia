@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -17,7 +17,10 @@ const configs = ${JSON.stringify(configs)};
 const read = fs.readFileSync;
 fs.existsSync = p => Object.hasOwn(configs, String(p));
 fs.readFileSync = (p, ...args) => {
-  if (!Object.hasOwn(configs, String(p))) return read(p, ...args);
+  if (!Object.hasOwn(configs, String(p))) {
+    if (String(p).endsWith('.json')) throw Object.assign(new Error('missing fixture config'), {code:'ENOENT'});
+    return read(p, ...args);
+  }
   const value = configs[String(p)];
   if (value?.error) throw Object.assign(new Error('fixture secret SECRET_MUST_NOT_LEAK'), {code: value.error});
   return typeof value === 'string' ? value : JSON.stringify(value);
