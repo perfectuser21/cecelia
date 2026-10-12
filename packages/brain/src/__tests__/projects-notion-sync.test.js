@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { pushProjectRoots, buildProjectProps, PROJECT_STATUS_TO_NOTION } from '../notion-relay-projection.js';
+import { pushProjectRoots, buildProjectProps, buildProjectBody, digestOf, replacePageBody, PROJECT_STATUS_TO_NOTION } from '../notion-relay-projection.js';
 import { brainHuman, humanProps } from '../lib/project-notion-human.js';
 
 const root = { id: '11111111-1111-4111-8111-111111111111', title: '项目', status: 'active', ai_tier: '知情', custom_props: {} };
@@ -21,6 +21,32 @@ function fixture(row = root) {
   return { pool, req, saved };
 }
 describe('项目同步推送回归', () => {
+  it('新建AI列尚为空时填出默认知情', async () => {
+    const f = fixture({ ...root, notion_props: { notion_id: 'page', human_baseline: brainHuman(root) } });
+    const original = f.req.getMockImplementation();
+    f.req.mockImplementation(async (...args) => {
+      const result = await original(...args);
+      if (args[1] === '/pages/page' && args[2] === 'GET') result.properties['AI 参与'].select = null;
+      return result;
+    });
+    expect((await pushProjectRoots(f.pool, 'tok', { notionReq: f.req })).failed).toBe(0);
+    expect(f.req.mock.calls.find(([, , method, body]) => method === 'PATCH' && body?.properties?.Name)?.[3].properties['AI 参与']).toEqual({ select: { name: '知情' } });
+  });
+  it('只有属性变化时，不重复重写正文', async () => {
+    const bodyDigest = digestOf({}, buildProjectBody(root, snap));
+    const f = fixture({ ...root, notion_props: { notion_id: 'page', human_baseline: brainHuman(root), body_digest: bodyDigest } });
+    expect((await pushProjectRoots(f.pool, 'tok', { notionReq: f.req })).failed).toBe(0);
+    expect(f.req.mock.calls.some(([, path]) => path.startsWith('/blocks/'))).toBe(false);
+  });
+  it('正文删除失败不能报告成功，也不能继续追加重复正文', async () => {
+    const req = vi.fn(async (_t, _p, method) => {
+      if (method === 'GET') return { results: [{ id: 'b1' }] };
+      if (method === 'DELETE') throw new Error('429');
+      return {};
+    });
+    await expect(replacePageBody(req, 'tok', 'page', [{}])).rejects.toThrow('429');
+    expect(req.mock.calls.some(([, , m]) => m === 'PATCH')).toBe(false);
+  });
   it('已归档→Discard，规划→In Progress；人工备注与机器进展分列', () => {
     expect(PROJECT_STATUS_TO_NOTION.archived).toBe('Discard');
     expect(PROJECT_STATUS_TO_NOTION.planning).toBe('In Progress');
