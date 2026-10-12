@@ -6,6 +6,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { buildQaSmoke, registerSmoke, unregisterSmoke, targetsPreviewApi, QA_SMOKE_DIR } from '../lib/qa-smoke.mjs';
 import { PRODUCTION_TARGET_RE, PRODUCTION_ASSIGN_RE } from '../lib/qa-report.mjs';
+import { loadPrompt } from '../lib/claude.mjs';
+import { repoRules } from '../lib/repo-profile.mjs';
 
 const F = '```';
 const PREVIEW = 'http://localhost:5302';
@@ -91,7 +93,8 @@ describe('生成的 smoke 真跑', () => {
 
 describe('prompt（决策 c8621227）', () => {
   it('spec：Q-n 的前提由操作自己造、空库可复现；evaluate：API 命令会固化成回归、必须带断言', () => {
-    const spec = fs.readFileSync(new URL('../prompts/spec.md', import.meta.url), 'utf8');
+    // C6：「空库可复现」是 cecelia（brain_preview + 固化 smoke）的 QA 环境规矩，随本仓规矩注入 spec 提示词
+    const spec = loadPrompt('spec', { REPO_RULES: repoRules(undefined) });
     for (const s of ['自己造', '空库']) expect(spec).toContain(s);
     const evaluate = fs.readFileSync(new URL('../prompts/evaluate.md', import.meta.url), 'utf8');
     for (const s of ['固化成回归', 'smoke', '断言']) expect(evaluate).toContain(s);

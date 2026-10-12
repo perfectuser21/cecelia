@@ -17,7 +17,7 @@ RULING_PATH: {{RULING_PATH}}
 - 自己修代码：先写能复现问题的失败测试，再改代码让它通过，跑相关测试确认；提交到当前分支。
 - CI 修不动（ci_fix_exhausted）且你判断是可修的普通失败：在裁决里 `reset_ci_budget: true` 给自动修复再一轮额度（或者直接自己修掉）。
 不可以：
-- 改需求 INTENT_PATH（01-intent.md）、sprints/ 下除 SPEC_PATH 以外的任何文件、.claude/、CLAUDE.md、AGENTS.md、runner 生成的 `packages/brain/scripts/smoke/cw-*-qa-smoke.sh`。
+- 改需求 INTENT_PATH（01-intent.md）、sprints/ 下除 SPEC_PATH 以外的任何文件、.claude/、CLAUDE.md、AGENTS.md、runner 生成的 `cw-*-qa-smoke.sh`（在哪见下方本仓库规矩）。
 - 删除或放宽 main 上已有测试的断言。
 - push、调用 gh、改写已有提交（不 amend/rebase/reset）。结束时工作区必须干净。
 
@@ -42,3 +42,5 @@ RULING_PATH: {{RULING_PATH}}
 - `rulings` 必须逐条覆盖升级里的每个问题（J-n、失败的检查名或原因码）。
 - 上交时 `action` 写 `"human"`，并加 `"human_reason"`：主理人需要定什么。
 - 程序会核对你的提交：改了禁止的文件、规格不是纯追加、削弱测试 → 你的改动不会推送，直接上交主理人。
+
+{{REPO_RULES}}

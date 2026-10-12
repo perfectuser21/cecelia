@@ -7,6 +7,7 @@ import { intentHeading, prKindOf } from '../lib/pr-kind.mjs';
 import { parseReview } from '../lib/review.mjs';
 import { RUBRIC_DIMS } from '../lib/gan.mjs';
 import { SPEC_FILE, uncoveredSection } from '../lib/spec-check.mjs';
+import { profileOf } from '../lib/repo-profile.mjs';
 
 const GH_AUTH_RE = /\bHTTP 401\b|authentication|auth login|missing required scope|bad credentials/i;
 // 凭据提示会让无 tty 的子进程挂住；--literal-pathspecs 禁用 :/ 等 pathspec 魔法
@@ -17,8 +18,6 @@ const BRANCH_RE = /^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$/;
 const STDERR_TAIL_LINES = 20;
 const BUILD_FILE = '03-build.md';
 const BASE_REF = process.env.CODING_WF_BASE_REF || 'origin/main';
-const BRAIN_SRC_RE = /^packages\/brain\/src\//;
-const FRAGMENT_RE = /^changes\/(?!README\.md$).+\.md$/i;
 
 /** 运行子进程（不经 shell），输出转写到本进程 stderr；返回 { code, stdout, stderr, output }。 */
 function runCmd(bin, args, cwd) {
@@ -68,21 +67,27 @@ function prTitle(chainFiles, dir, taskId) {
   return `${prKindOf(heading)}(workflow): ${heading}`;
 }
 
+const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
- * 版本碎片（changes/README.md：PR 不碰版本五件套，改 packages/brain/src 的 PR 带 changes/<分支>.md，
- * 合并后 auto-version 统一 bump）：改了 Brain 源码且分支上还没有碎片 → 写一份；返回相对路径或 null。
+ * 版本碎片（cecelia changes/README.md：PR 不碰版本五件套，改 packages/brain/src 的 PR 带 changes/<分支>.md，
+ * 合并后 auto-version 统一 bump）：改了碎片规则覆盖的源码且分支上还没有碎片 → 写一份；返回相对路径或 null。
+ * 规则按仓库（repos.json version_fragment { src_re, dir }，C6）；为 null（zenithjoy：auto-version 按提交标题 bump）不写。
  */
-async function ensureVersionFragment({ worktree, branch, dir, taskId, sprintRel }) {
+async function ensureVersionFragment({ worktree, branch, dir, taskId, sprintRel, rule }) {
+  if (!rule) return null;
+  const srcRe = new RegExp(rule.src_re);
+  const fragmentRe = new RegExp(`^${escapeRe(rule.dir)}/(?!README\\.md$).+\\.md$`, 'i');
   const diff = await runCmd('git', ['-C', worktree, 'diff', '--name-only', `${BASE_REF}...HEAD`]);
   if (diff.code !== 0) {
     log(`[publish] 取相对 ${BASE_REF} 的改动失败，不写版本碎片`);
     return null;
   }
   const files = diff.stdout.split('\n').filter(Boolean);
-  if (!files.some((f) => BRAIN_SRC_RE.test(f)) || files.some((f) => FRAGMENT_RE.test(f))) return null;
-  const rel = `changes/${branch}.md`;
+  if (!files.some((f) => srcRe.test(f)) || files.some((f) => fragmentRe.test(f))) return null;
+  const rel = `${rule.dir}/${branch}.md`;
   const heading = intentHeading(dir) || `coding workflow ${taskId.slice(0, 8)}`;
-  fs.mkdirSync(path.join(worktree, 'changes'), { recursive: true });
+  fs.mkdirSync(path.join(worktree, rule.dir), { recursive: true });
   fs.writeFileSync(path.join(worktree, rel), `## Brain {VERSION} — ${heading}\n\n- coding workflow 任务 ${taskId.slice(0, 8)}：需求、合同与验收记录见 ${sprintRel}/。\n`);
   return rel;
 }
@@ -153,7 +158,7 @@ await runActivity(async (input) => {
   const title = prTitle(chainFiles, dir, taskId);
   const sprintRel = sprintDir.replace(/[\\/]+$/, '');
 
-  const fragment = await ensureVersionFragment({ worktree, branch, dir, taskId, sprintRel });
+  const fragment = await ensureVersionFragment({ worktree, branch, dir, taskId, sprintRel, rule: profileOf(input.repo_profile).version_fragment ?? null });
   const paths = [sprintRel, ...(fragment ? [fragment] : [])];
   const add = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'add', '--', ...paths]);
   if (add.code !== 0) return fail('fatal', 'git_add_failed');

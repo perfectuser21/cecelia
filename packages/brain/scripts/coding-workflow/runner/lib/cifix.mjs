@@ -8,8 +8,9 @@ import path from 'node:path';
 import { git, gh } from './proc.mjs';
 import { removeWorktree } from './worktree.mjs';
 import { findTarget, failureLogs, readState, statePath } from './cifix-scan.mjs';
-import { taskIdOf, remoteTaskId, preparePrWorktree, checkFixCommits, ownChangedFiles, pushPrHead } from './pr-branch.mjs';
+import { taskIdOf, remoteTaskId, preparePrWorktree, checkFixCommits, ownChangedFiles, pushPrHead, smokeDirOf } from './pr-branch.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
+import { repoRules } from '../../lib/repo-profile.mjs';
 import { revokeQaPass } from './qa-gate.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
@@ -59,10 +60,11 @@ async function attemptCi(ctx, target, worktree, signal) {
     PR_URL: pr.url ?? '',
     FAILED_CHECKS: (logs.names.length > 0 ? logs.names : target.failedRequired).join('、'),
     CI_LOGS: logs.text || '（未取到失败 job 日志，请先本地运行相关测试定位）',
+    REPO_RULES: repoRules(cfg.repoProfile),
   });
   ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：失败检查 ${target.failedRequired.join('、')}`);
   await runFixSession(ctx, pr, prompt, worktree, 'ci-fix');
-  const { commits } = await checkFixCommits(worktree, before);
+  const { commits } = await checkFixCommits(worktree, before, { smokeDir: smokeDirOf(cfg) });
   const files = (await git(worktree, ['diff', '--name-only', `${before}..HEAD`])).stdout.split('\n').filter(Boolean);
   await pushPrHead(cfg, worktree, pr);
   const revoked = await revokeQaPass(ctx, pr, files, 'ci_fix_changed_code');
@@ -93,6 +95,7 @@ async function attemptConflict(ctx, target, worktree, signal) {
       PR_URL: pr.url ?? '',
       BEFORE: before,
       CONFLICT_FILES: conflicts.map((f) => `- ${f}`).join('\n'),
+      REPO_RULES: repoRules(cfg.repoProfile),
     });
     await runFixSession(ctx, pr, prompt, worktree, 'conflict-fix');
     if ((await git(worktree, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])).code === 0) throw stop('merge_unfinished');
@@ -101,7 +104,7 @@ async function attemptConflict(ctx, target, worktree, signal) {
     ctx.log(`CI 修复 PR #${pr.number}（${pr.headRefName}）：与 main 冲突，程序合并 origin/main 完成`);
   }
   if ((await git(worktree, ['merge-base', '--is-ancestor', 'origin/main', 'HEAD'])).code !== 0) throw stop('merge_unfinished');
-  const { commits } = await checkFixCommits(worktree, before, { mainRef: 'origin/main' });
+  const { commits } = await checkFixCommits(worktree, before, { mainRef: 'origin/main', smokeDir: smokeDirOf(cfg) });
   const own = (await ownChangedFiles(worktree, before, 'origin/main')).filter((f) => !UNION_FILES.includes(f));
   await pushPrHead(cfg, worktree, pr);
   const revoked = await revokeQaPass(ctx, pr, own, 'conflict_fix_changed_code');

@@ -1,5 +1,6 @@
 // evaluate 活动（evaluator 真人 QA）：CI 绿后、合并前的门（决策 02d8e749）。
 // 在 PR 预览环境（lib/preview.mjs）里，全新 claude 会话只拿 01 需求与 02 的 QA 场景，像真人 QA 一样黑盒验收：
+// （QA 模式按仓库，C6：local 仓库如 zenithjoy 第一阶段不起预览，在 PR worktree 里黑盒验 CLI / 脚本 / node 进程，提示词 evaluate-local）
 // 按 Q-n 逐条操作 + 探索式测试，写 <sprint_dir>/05-qa-report-r<round>.md。运行期间 03/04（开发自述与自测）藏起，结束放回。
 // 程序判：报告格式与 Q-n 覆盖 → 证据须在执行记录里 → 禁单元测试当证据 → 禁碰生产 Brain → PASS/FAIL。
 // 产品不合格（qa.verdict FAIL）是正常结果：completed + outputs.qa，交给 runner 的修复环；报告/会话本身不合格才是活动失败。
@@ -15,6 +16,7 @@ import {
   loadPrompt, claudeTimeoutMs, runClaude, claudeFailure, headSha, snapshotChanges, outOfScopeChanges,
 } from '../lib/claude.mjs';
 import { chainTamperFailure, hideFile, recoverHidden } from '../lib/guards.mjs';
+import { qaMode, productionPatterns } from '../lib/repo-profile.mjs';
 
 const HIDDEN_FILES = ['03-build.md', '04-evidence.md'];
 const TIMEOUT = { envVar: 'CODING_WF_EVALUATE_TIMEOUT_MS', defaultMs: 2400000, reserveMs: 60000 };
@@ -48,9 +50,9 @@ async function guardFailure({ worktree, dir, sprintDir, input, before }) {
 }
 
 /** 报告判分；产品 PASS/FAIL 都返回 completed。 */
-function judge({ reportPath, reportFile, qaIds, stdout, worktree, dir, shotsDir, round, env, cost }) {
+function judge({ reportPath, reportFile, qaIds, stdout, worktree, dir, shotsDir, round, env, cost, production }) {
   const executions = bashExecutions(stdout);
-  const prod = productionTouches(executions);
+  const prod = productionTouches(executions, production);
   if (prod.length > 0) return fail('fatal', 'evaluate_touched_production', { evidence: [{ commands: prod }] });
   if (!fs.existsSync(reportPath)) return fail('retryable', 'qa_report_missing');
   const reportText = fs.readFileSync(reportPath, 'utf8');
@@ -89,16 +91,21 @@ await runActivity(async (input) => {
   const judgeFeedback = judgeFeedbackPath(worktree, dir, input.judge_feedback);
   if (!judgeFeedback) return fail('fatal', 'judge_feedback_invalid', { evidence: [{ judge_feedback: input.judge_feedback }] });
 
-  const preview = await waitPreview(input.pr_number, {
-    api: process.env.CODING_WF_PREVIEW_API || DEFAULT_PREVIEW_API,
-    timeoutMs: posInt(process.env.CODING_WF_PREVIEW_WAIT_MS, 20 * 60 * 1000),
-    intervalMs: posInt(process.env.CODING_WF_PREVIEW_INTERVAL_MS, 15000),
-    host: process.env.CODING_WF_PREVIEW_HOST || 'localhost',
-    // 给了要验的 head：预览部署的必须正是它（审计 P0 #2）
-    expectSha: input.head_sha || null,
-  });
-  if (preview.state === 'stale') return fail('retryable', 'preview_stale', { evidence: [{ pr: input.pr_number, expected: input.head_sha, preview_sha: preview.sha }] });
-  if (preview.state !== 'active') return fail('retryable', 'preview_unavailable', { evidence: [{ pr: input.pr_number, preview }] });
+  const local = qaMode(input.repo_profile) === 'local';
+  const production = productionPatterns(input.repo_profile);
+  let preview = null;
+  if (!local) {
+    preview = await waitPreview(input.pr_number, {
+      api: process.env.CODING_WF_PREVIEW_API || DEFAULT_PREVIEW_API,
+      timeoutMs: posInt(process.env.CODING_WF_PREVIEW_WAIT_MS, 20 * 60 * 1000),
+      intervalMs: posInt(process.env.CODING_WF_PREVIEW_INTERVAL_MS, 15000),
+      host: process.env.CODING_WF_PREVIEW_HOST || 'localhost',
+      // 给了要验的 head：预览部署的必须正是它（审计 P0 #2）
+      expectSha: input.head_sha || null,
+    });
+    if (preview.state === 'stale') return fail('retryable', 'preview_stale', { evidence: [{ pr: input.pr_number, expected: input.head_sha, preview_sha: preview.sha }] });
+    if (preview.state !== 'active') return fail('retryable', 'preview_unavailable', { evidence: [{ pr: input.pr_number, preview }] });
+  }
 
   const round = posInt(input.round, 1);
   const reportFile = `05-qa-report-r${round}.md`;
@@ -107,7 +114,7 @@ await runActivity(async (input) => {
   for (const p of hiddenPaths) if (await recoverHidden(worktree, p)) log(`[evaluate] 已放回上次残留的 ${path.basename(p)}`);
   fs.rmSync(reportPath, { force: true });
 
-  const prompt = loadPrompt('evaluate', {
+  const prompt = loadPrompt(local ? 'evaluate-local' : 'evaluate', {
     TASK_ID: input.task_id,
     INTENT_PATH: path.join(dir, INTENT_FILE),
     SPEC_PATH: specPath,
@@ -115,7 +122,7 @@ await runActivity(async (input) => {
     SPRINT_DIR: dir,
     SHOTS_DIR: path.join(dir, `qa-r${round}`),
     QA_IDS: qaIds.join(','),
-    PREVIEW_URL: preview.url,
+    ...(local ? { WORKTREE: worktree, PRODUCTION: production.join(' | ') } : { PREVIEW_URL: preview.url }),
     ROUND: String(round),
     JUDGE_FEEDBACK: judgeFeedback,
     // 重试必须带新信息（审计 #33）：上次评估被判不合格的原因（runner 记下传入）；单行，防止伪造机器可读行
@@ -149,7 +156,8 @@ await runActivity(async (input) => {
     result = claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
     result ??= judge({
       reportPath, reportFile, qaIds, stdout: run.stdout, worktree, dir, shotsDir: path.join(dir, `qa-r${round}`), round,
-      env: { kind: 'preview', url: preview.url, ...(preview.sha ? { sha: preview.sha } : {}) }, cost: Math.round(sessionCostUsd(run.stdout) * 10000) / 10000,
+      env: local ? { kind: 'local', worktree } : { kind: 'preview', url: preview.url, ...(preview.sha ? { sha: preview.sha } : {}) },
+      cost: Math.round(sessionCostUsd(run.stdout) * 10000) / 10000, production,
     });
   } finally {
     process.off('SIGTERM', onSigterm);

@@ -1,22 +1,31 @@
 #!/usr/bin/env node
-// 建 coding workflow 任务（Commander 与 /dev 小改动的入口）：node new-task.mjs <plan.json> [--dry-run]
+// 建 coding workflow 任务（Commander 与 /dev 小改动的入口）：node new-task.mjs <plan.json> [--dry-run] [--repo <仓库>]
 // plan 两种形状：
 //   单条 { title, description?, acceptance: [..], priority?, gp_anchor? }
 //   一批 { batch?, tasks: [{ key, title, acceptance, depends_on?: [前面任务的 key], ... }] }（大改拆成有序小任务）
 // 每条建成 coding_workflow 任务（runner 自动认领跑七步链）；depends_on 的 key 换成前面已建任务的真实 id。
 // plan 顶层可写 project_id（已有 project 根）或 project: { name, description? }（先建再挂），整批都挂上；
 // 有 depends_on 时必须二选一（Brain 要求带依赖的任务挂 project 根），两者不能同时给。
+// 仓库（C6）：单条 t.repo > 计划顶层 repo > --repo > 默认仓 cecelia；别名 / owner/repo / URL 经 repos.json 归一成规范 key 写进 payload.repo，
+// 未登记的拒绝（不猜）；登记了但未启用（enabled=false）的照建，stderr 提示 runner 暂不认领。
 // 先整体校验再逐条创建；中途失败退出 1 并列出已建的任务。输出 [{key,id,title}]。
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { loadRepos, resolveRepo, reposFile } from './runner/lib/repos.mjs';
 
 const nonEmpty = (s) => typeof s === 'string' && s.trim() !== '';
 
-/** 计划 → { tasks, batch, projectId, project, errors }（errors 非空即不可建）。 */
-export function validatePlan(plan) {
-  const tasks = Array.isArray(plan?.tasks) ? plan.tasks : [plan];
+/** 计划 → { tasks（每条带 repoKey）, batch, projectId, project, errors }（errors 非空即不可建）。opts.repo：命令行 --repo。 */
+export function validatePlan(plan, { repo = null, repos = loadRepos(reposFile()) } = {}) {
+  const raw = Array.isArray(plan?.tasks) ? plan.tasks : [plan];
   const errors = [];
   const keys = new Set();
+  const tasks = raw.map((t, i) => {
+    const wanted = [t?.repo, plan?.repo, repo].find((v) => nonEmpty(v)) ?? null;
+    const repoKey = resolveRepo(wanted, repos);
+    if (!repoKey) errors.push(`#${i + 1}:repo_unknown:${wanted}`);
+    return { ...t, repoKey };
+  });
   tasks.forEach((t, i) => {
     const at = `#${i + 1}`;
     if (!nonEmpty(t?.title)) errors.push(`${at}:title_missing`);
@@ -41,7 +50,7 @@ export function validatePlan(plan) {
 function body(t, batch, ids, projectId) {
   const payload = {
     coding_workflow: true,
-    repo: 'cecelia',
+    repo: t.repoKey,
     gp_anchor: nonEmpty(t.gp_anchor) ? t.gp_anchor : 'none(infra)',
     acceptance: t.acceptance,
   };
@@ -72,13 +81,30 @@ async function postJson(url, data) {
   }
 }
 
+const USAGE = '用法：node new-task.mjs <plan.json> [--dry-run] [--repo <仓库>]';
+
+/** 命令行 → { file, dryRun, repo }；--repo 缺值返回 null。 */
+function parseArgs(argv) {
+  const out = { file: null, dryRun: false, repo: null };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--dry-run') out.dryRun = true;
+    else if (a.startsWith('--repo=')) out.repo = a.slice('--repo='.length);
+    else if (a === '--repo') {
+      if (!nonEmpty(argv[i + 1]) || argv[i + 1].startsWith('--')) return null;
+      out.repo = argv[i += 1];
+    } else if (!a.startsWith('--') && !out.file) out.file = a;
+  }
+  return out;
+}
+
 async function main(argv, env) {
-  const file = argv.find((a) => !a.startsWith('--'));
-  const dryRun = argv.includes('--dry-run');
-  if (!file) {
-    console.error('用法：node new-task.mjs <plan.json> [--dry-run]');
+  const args = parseArgs(argv);
+  if (!args?.file) {
+    console.error(USAGE);
     return 2;
   }
+  const { file, dryRun } = args;
   let plan;
   try {
     plan = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -86,7 +112,8 @@ async function main(argv, env) {
     console.error(`读不了计划文件：${error.message}`);
     return 2;
   }
-  const checked = validatePlan(plan);
+  const repos = loadRepos(reposFile(env));
+  const checked = validatePlan(plan, { repo: args.repo, repos });
   const { tasks, batch, project, errors } = checked;
   let { projectId } = checked;
   if (errors.length > 0) {
@@ -94,8 +121,11 @@ async function main(argv, env) {
     return 2;
   }
   if (dryRun) {
-    console.log(JSON.stringify(tasks.map((t) => ({ key: t.key ?? null, title: t.title, depends_on: t.depends_on ?? [] }))));
+    console.log(JSON.stringify(tasks.map((t) => ({ key: t.key ?? null, title: t.title, repo: t.repoKey, depends_on: t.depends_on ?? [] }))));
     return 0;
+  }
+  for (const key of new Set(tasks.map((t) => t.repoKey))) {
+    if (!repos.find((r) => r.key === key)?.enabled) console.error(`注意：仓库 ${key} 在 repos.json 未启用（enabled=false），runner 暂不认领，任务会停在 queued`);
   }
   const base = `${String(env.BRAIN_URL || 'http://localhost:5221').replace(/\/+$/, '')}/api/brain`;
   if (project) {

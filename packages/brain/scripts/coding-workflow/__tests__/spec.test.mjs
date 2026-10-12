@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFrontmatter } from '../lib/md-chain.mjs';
+import { loadPrompt } from '../lib/claude.mjs';
+import { repoRules } from '../lib/repo-profile.mjs';
 import { runActivityProcess } from './helpers/run-activity.mjs';
 import { gitPlain } from './helpers/git.mjs';
 import { expectGone, readPid } from './helpers/procs.mjs';
@@ -135,9 +137,10 @@ describe('spec 活动（子进程 + 假 claude）', () => {
     expect(JSON.stringify(r.result.evidence)).toContain('qa_missing');
     const prompt = fs.readFileSync(path.join(HERE, '../prompts/spec.md'), 'utf8');
     for (const s of ['## QA 场景', '### Q-n', '对应:', '前提:', '操作:', '期望:', '不能是单元测试']) expect(prompt).toContain(s);
-    // QA 场景不写死生产地址（金丝雀 3e8414f6：Q-n 写着 localhost:5221，诱发 QA 越界/误判）
-    expect(prompt).toContain('<预览环境>/api/brain/');
-    expect(prompt).toContain('不能写 `localhost:5221`');
+    // QA 场景不写死生产地址（金丝雀 3e8414f6：Q-n 写着 localhost:5221，诱发 QA 越界/误判）；C6 起这是 cecelia 的本仓规矩，注入后可见
+    const rendered = loadPrompt('spec', { REPO_RULES: repoRules(undefined) });
+    expect(rendered).toContain('<预览环境>/api/brain/');
+    expect(rendered).toContain('不能写 `localhost:5221`');
   });
 
   // 审计 #33：重试必须带新信息——上次生成的 02 不合格，重跑时把问题交给 claude，而不是原样再来一遍

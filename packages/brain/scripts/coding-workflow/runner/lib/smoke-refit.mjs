@@ -11,6 +11,7 @@ import { checkLog } from './cifix-scan.mjs';
 import { intentOf, preparePrWorktree, pushPrHead, headOf } from './pr-branch.mjs';
 import { readState, writeState, escalate, report, prTouchesApi } from './qa-gate.mjs';
 import { smokeCiFailures, dropSmokeBlocks, unregisterSmoke } from '../../lib/qa-smoke.mjs';
+import { qaSmokeOf } from '../../lib/repo-profile.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 
 const SMOKE_JOB = 'Smoke Glob Runner';
@@ -43,7 +44,7 @@ async function rewrite(cfg, pr, worktree, d, signal) {
   const name = path.basename(d.file);
   let changed = [d.file];
   if (dropped.items.length > 0) fs.writeFileSync(abs, dropped.content);
-  else changed = unregisterSmoke(worktree, name);
+  else changed = unregisterSmoke(worktree, name, qaSmokeOf(cfg.repoProfile) ?? undefined);
   if ((await git(worktree, ['add', '-A', '--', ...changed])).code !== 0) throw new Error('smoke_refit_add_failed');
   const message = `test(smoke): CI 首跑失败剔除 ${dropped.removed.join(',')}，${dropped.items.length ? `重新固化 ${name}` : `撤下 ${name}`}`;
   if ((await git(worktree, [...RUNNER_ID, 'commit', '-q', '-m', message])).code !== 0) throw new Error('smoke_refit_commit_failed');
