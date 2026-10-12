@@ -213,9 +213,12 @@ class Pipeline(unittest.TestCase):
         self.assertFalse(any(method == "PATCH" and body.get("status") == "completed" for _, method, body in calls))
         self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
 
-    def test_refused_completion_is_recorded_as_failure(self):
-        calls = self.collector(completion_state="in_progress")
-        self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
+    def test_refused_completion_raises_without_overwriting_terminal_state(self):
+        with patch("sys.stdout", new_callable=StringIO) as stdout:
+            calls = self.collector(completion_state="in_progress")
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual([body["status"] for _, method, body in calls if method == "PATCH"],
+                         ["in_progress", "completed"])
 
     def test_renderer_uses_raw_values_and_original_ratio(self):
         module = load("opc-okr-sync")
