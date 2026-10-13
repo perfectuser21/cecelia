@@ -2,6 +2,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { buildActivityCardProps, buildStepCardProps, executorLabel, humanize, judgmentText, releaseText } from './activity-card.js';
 import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
+import { observeWorkflows, WORKFLOW_OBSERVATION_SQL, WORKFLOW_OBSERVATION_PREFIX_SQL } from './workflow-observation.js';
 // 值是投影身份键（projection_links.entity_type 与 Notion「真身来源」文本），不是 SQL 表名；
 // value_streams / capabilities 仍记作 journeys，改了会让已有目录页被当新页重建。
 export const DIRECTORY_TABLES = Object.freeze({ areas: 'areas', value_streams: 'journeys', capabilities: 'journeys', workflows: 'workflows', activities: 'activities', steps: 'steps' });
@@ -104,6 +105,7 @@ export function buildDirectoryRows(data, config = {}) {
   const rows = [], journeys = new Map(data.journeys.map(j => [j.id, j]));
   const refs = data.refs.filter(r => r.active).sort((a, b) => a.sequence_no - b.sequence_no || a.slot_key.localeCompare(b.slot_key) || a.workflow_id.localeCompare(b.workflow_id));
   const runtimeByWorkflow = new Map((data.workflow_runtime || []).map(r => [r.workflow_id, r]));
+  const observations = data.run_records ? observeWorkflows(data) : new Map();
   const areasById = new Map((data.areas || []).map(a => [a.id, a]));
   function areaChain(areaId) { // 公司 → 部门 → 子部门；有环就停在重复处，不死循环
     const out = [], visited = new Set(); let cur = areasById.get(areaId);
@@ -182,7 +184,10 @@ export function buildDirectoryRows(data, config = {}) {
   for (const w of data.workflows) {
     const usage = refs.filter(r => r.workflow_id === w.id);
     const version = currentDefinition(w, 'workflow'), ctx = capabilityContext(w.capability_id);
-    const rt = runtimeByWorkflow.get(w.id) || {}, acts = unique(usage.map(r => ref('activities', r.activity_id))).length;
+    const observation = observations.get(w.id);
+    const original = runtimeByWorkflow.get(w.id) || {};
+    const rt = observation ? { ...original, ...observation.stats, last_started:observation.last_started } : original;
+    const acts = unique(usage.map(r => ref('activities', r.activity_id))).length;
     const row = make('workflows', w, { '名称': title(w.name),
       // 顺序属于流程↔Activity 引用（共用 Activity 在不同流程里位置不同），只在这里按引用顺序列名字
       'Activity 顺序': rich(usage.map(r => `${r.sequence_no}. ${activityNames.get(r.activity_id) ?? r.activity_id}`).join('\n')),
@@ -193,6 +198,14 @@ export function buildDirectoryRows(data, config = {}) {
       'Activity': unique(usage.map(r => ref('activities', r.activity_id))),
     }, !w.capability_id ? ['capability_unknown'] : []);
     row.definitionVersion = versionEvidence(version);
+    if (observation) {
+      row.workflowObservation = observation;
+      Object.assign(row.properties, { '流程版本':rich(observation.version), '代码版本':rich(observation.deployment),
+        '执行层':rich(observation.execution), '启动入口':rich(observation.entrypoint),
+        '7天成功':num(rt.success7), '7天失败次数':num(rt.failed7), '7天等待':num(rt.deferred7),
+        '7天取消':num(rt.cancelled7), '运行中':num(rt.running7), '排队任务':num(rt.queued),
+        '7天重试':num(rt.retries7), '任务完成率':maybeNum(rt.completed_task_rate), '统计口径':rich(rt.policy) });
+    }
   }
   for (const a of data.activities) {
     const usage = refs.filter(r => r.activity_id === a.id);
@@ -236,7 +249,8 @@ export function buildDirectoryRows(data, config = {}) {
 
 /** 单条SQL使用同一数据库快照；复合身份绑定当前版本，旧行无current字段时不取历史。 */
 export async function loadDirectorySource(pool) {
-  const { rows } = await pool.query(`SELECT jsonb_build_object(
+  const { rows } = await pool.query(`${WORKFLOW_OBSERVATION_PREFIX_SQL}SELECT jsonb_build_object(
+    ${WORKFLOW_OBSERVATION_SQL}
     'areas',COALESCE((SELECT jsonb_agg(to_jsonb(a)) FROM areas a),'[]'::jsonb),
     'journeys',COALESCE((SELECT jsonb_agg(to_jsonb(j)) FROM ${TREE_NODES_SQL} j),'[]'::jsonb),
     'workflows',COALESCE((SELECT jsonb_agg(to_jsonb(w) || jsonb_build_object('definition_version',to_jsonb(v))) FROM workflows w

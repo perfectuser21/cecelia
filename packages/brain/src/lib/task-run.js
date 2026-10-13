@@ -135,6 +135,44 @@ async function resolvePool(deps) {
   return (await import('../db.js')).default;
 }
 
+// CASE（而非 WHERE 的求值顺序）守住 UUID cast：坏 payload 不能让普通运行丢账。
+const WORKFLOW_UUID_PATTERN = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+function workflowIdentitySql(json) {
+  return `CASE WHEN jsonb_typeof(${json}->'workflow_id')='string'
+    AND ${json}->>'workflow_id' ~ '${WORKFLOW_UUID_PATTERN}'
+    THEN (${json}->>'workflow_id')::uuid END`;
+}
+
+const WORKFLOW_SNAPSHOT_KEYS = ['workflow_version', 'definition_version_id', 'source_revision',
+  'control_source_revision', 'phone_serial', 'batch_task_id', 'attempt'];
+const WORKFLOW_START_FALLBACKS = {
+  workflow_version: ",to_jsonb(w)->'version'",
+  definition_version_id: ",t.payload->'workflow_definition_version_id',to_jsonb(w)->'current_definition_version_id'",
+  batch_task_id: ",t.payload->'original_scope'->'origin_batch_task_id'",
+};
+
+/** 只接收同一次运行的结构化回执；控制台文本和其它尝试不能充当版本证据。 */
+export function extractWorkflowRunReceipt(stdout, runId, taskId) {
+  if (typeof stdout !== 'string' || typeof runId !== 'string' || !runId) return null;
+  const candidates = [stdout.trim(), ...stdout.split('\n').reverse().map(line => line.trim())];
+  for (const candidate of candidates) {
+    let receipt;
+    try { receipt = JSON.parse(candidate); } catch { continue; }
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) continue;
+    const receiptRunId = receipt.run_id ?? receipt.runId;
+    const receiptTaskId = receipt.task_id ?? receipt.taskId;
+    if (receiptRunId !== undefined && receiptRunId !== runId) continue;
+    if (receiptTaskId !== undefined && taskId !== undefined && receiptTaskId !== taskId) continue;
+    if (receiptRunId === undefined && (taskId === undefined || receiptTaskId !== taskId)) continue;
+    const snapshot = {};
+    for (const key of ['status', 'source_revision', 'control_source_revision', 'workflow_id', 'phone_serial', 'batch_task_id']) {
+      if (typeof receipt[key] === 'string' && receipt[key].trim()) snapshot[key] = receipt[key];
+    }
+    if (Object.keys(snapshot).length) return snapshot;
+  }
+  return null;
+}
+
 async function resolveEmit(deps) {
   if (deps?.emit) return deps.emit;
   return (await import('../event-bus.js')).emit;
@@ -175,8 +213,21 @@ export async function startRun({ taskId, runId, source, context, definition } = 
     const ctx = buildRunContext({ ...(context || {}), source });
     const pool = await resolvePool(deps);
     const ins = await pool.query(
-      `INSERT INTO task_runs (task_id, run_id, status, context)
-       VALUES ($1, $2, 'running', $3::jsonb)
+      `INSERT INTO task_runs (task_id, run_id, status, context, workflow_id)
+       SELECT t.id, $2, 'running',
+         $3::jsonb || jsonb_build_object('task_type',t.task_type) ||
+         CASE WHEN w.id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('workflow_snapshot',
+           jsonb_build_object('workflow_id',w.id,
+             ${WORKFLOW_SNAPSHOT_KEYS.map(key => `'${key}',COALESCE($3::jsonb->'workflow_snapshot'->'${key}',
+               t.payload->'workflow_snapshot'->'${key}',t.payload->'${key}'${WORKFLOW_START_FALLBACKS[key] || ''})`).join(',')}
+           )) END,
+         w.id
+       FROM tasks t LEFT JOIN workflows w ON w.id=${workflowIdentitySql('t.payload')}
+         AND (NOT COALESCE($3::jsonb->'workflow_snapshot' ? 'workflow_id',false) OR
+           ${workflowIdentitySql("($3::jsonb->'workflow_snapshot')")}=w.id)
+         AND (NOT COALESCE(t.payload->'workflow_snapshot' ? 'workflow_id',false) OR
+           ${workflowIdentitySql("(t.payload->'workflow_snapshot')")}=w.id)
+       WHERE t.id=$1
        ON CONFLICT (run_id) DO NOTHING
        RETURNING id, run_id`,
       [taskId, String(runId), JSON.stringify(ctx)],
@@ -397,4 +448,15 @@ export async function attachRunsToWorkflow({ workflowId, taskIds }, deps = {}) {
   if (rows.some(r => r.workflow_id && r.workflow_id !== workflowId)) throw new Error('Run 已有不同工作流归属');
   return (await pool.query(`UPDATE task_runs SET workflow_id=$2,notion_synced_at=NULL
     WHERE task_id=ANY($1::uuid[]) AND workflow_id IS NULL RETURNING id,run_id`, [taskIds, workflowId])).rows;
+}
+
+/** 历史运行只补可证明的归属；缺失版本保持未知，禁止用当前 Workflow 重写历史。 */
+export async function backfillWorkflowRunIdentity(deps = {}) {
+  const pool = await resolvePool(deps);
+  return (await pool.query(`UPDATE task_runs r SET workflow_id=w.id,notion_synced_at=NULL
+    FROM tasks t JOIN workflows w ON w.id=${workflowIdentitySql('t.payload')}
+    WHERE r.task_id=t.id AND r.workflow_id IS NULL
+      AND (NOT COALESCE(r.context->'workflow_snapshot' ? 'workflow_id',false) OR
+        ${workflowIdentitySql("(r.context->'workflow_snapshot')")}=w.id)
+    RETURNING r.id,r.run_id,r.workflow_id`)).rows;
 }
