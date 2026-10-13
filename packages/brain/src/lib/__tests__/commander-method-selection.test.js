@@ -22,3 +22,8 @@ it('方法事务回归固定分配给有真实PG的CI，普通unit不误连数�
  const ci=readFileSync(new URL('../../../../../.github/workflows/ci.yml',import.meta.url),'utf8');
  expect(ci.slice(ci.indexOf('POSTGRES_INTEGRATION:'),ci.indexOf('POSTGRES_INTEGRATION:')+10000)).toContain(path);
 });
+
+it('历史已拒收活动的run不能凭后来的PASS成为方法候选',()=>{
+ const p=proof();p.task.result.workflow_control.rejected_activity_facts=[{code:'invalid_activity_fact',seq:1}];
+ expect(qualifiedMethod(p)).toBe(false);
+});

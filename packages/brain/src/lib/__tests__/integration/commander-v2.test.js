@@ -256,3 +256,82 @@ it.each(['run','lease'])('核验%s起跑账失败整笔回滚，零SSH且不伪�
  expect((await f.db.query('SELECT * FROM task_runs WHERE task_id=$1',[child.id])).rows).toHaveLength(0);
  expect((await f.db.query('SELECT * FROM task_leases WHERE task_id=$1',[child.id])).rows).toHaveLength(0);
 });
+
+import express from 'express';
+import { createWorkflowCommanderRouter } from '../../../routes/workflow-commander.js';
+import { digest } from '../../commander-v2-contract.js';
+function activityData(e, over={}) {
+ return {reference_id:e.definition.expected_path[0].reference_id,started_at:'2026-10-13T00:00:00Z',ended_at:'2026-10-13T00:01:00Z',outcome:'pass',evidence:{ref:'actual'},...over};
+}
+it.each([{outcome:'completed'},{started_at:'bad'},{ended_at:null},{outcome:'skipped',evidence:{}}])('活动语义拒收保存原件同hash零span，duplicate保留拒收事实 %j',async bad=>{
+ await prepareCommander(f.db,id,deps);const e=await envelope(),data=activityData(e,bad);
+ const input={protocol:e.protocol,run_id:e.run_id,attempt:e.attempt,owner_epoch:e.owner_epoch,seq:1,type:'activity_completed',data};
+ const receipt=await receiveCommanderEvent(f.db,id,input);
+ expect(receipt).toMatchObject({accepted:true,seq:1,rejected:{code:'invalid_activity_fact',seq:1,event_sha256:digest(input)}});
+ expect(receipt.rejected.fields.length).toBeGreaterThan(0);
+ expect(await receiveCommanderEvent(f.db,id,input)).toMatchObject({duplicate:true,seq:1,rejected:receipt.rejected});
+ await expect(receiveCommanderEvent(f.db,id,{...input,data:activityData(e)})).rejects.toMatchObject({status:409});
+ expect((await f.db.query('SELECT * FROM spans WHERE run_id=$1',[e.run_id])).rows).toHaveLength(0);
+ const facts=(await f.db.query("SELECT event_type,payload FROM task_events WHERE task_id=$1 AND event_type IN ('commander_feedback','rejected_activity_fact')",[id])).rows;
+ expect(facts).toHaveLength(2);expect(facts.find(x=>x.event_type==='commander_feedback').payload).toEqual({...input,sha256:digest(input)});
+ expect(facts.find(x=>x.event_type==='rejected_activity_fact').payload).toMatchObject({run_id:e.run_id,...receipt.rejected});
+ expect((await state()).result.workflow_control.last_seq).toBe(1);
+});
+it('语义错误不得掩盖旧fence、未知type、错误路径及完整绑定身份，零事实零推进',async()=>{
+ await prepareCommander(f.db,id,deps);const e=await envelope(),data=activityData(e,{outcome:'completed'});
+ const input={protocol:e.protocol,run_id:e.run_id,attempt:e.attempt,owner_epoch:e.owner_epoch,seq:1,type:'activity_completed',data};
+ for(const over of [{owner_epoch:0},{type:'made_up'},{data:{...data,reference_id:randomUUID()}},{data:{...data,workflow_definition_version_id:randomUUID()}},{data:{...data,step_id:randomUUID()}}]) await expect(receiveCommanderEvent(f.db,id,{...input,...over})).rejects.toThrow();
+ // 完整绑定预检先于语义分类，不能只信 envelope.expected_path。
+ const c=(await state()).result.workflow_control;c.envelope.definition.attempt_key='wrong-attempt';
+ await f.db.query('UPDATE tasks SET result=$2 WHERE id=$1',[id,{workflow_control:c}]);
+ await expect(receiveCommanderEvent(f.db,id,input)).rejects.toMatchObject({code:'SPAN_RUN_IDENTITY_MISMATCH'});
+ expect((await f.db.query("SELECT * FROM task_events WHERE task_id=$1 AND event_type IN ('commander_feedback','rejected_activity_fact')",[id])).rows).toHaveLength(0);
+ expect((await state()).result.workflow_control.last_seq).toBe(0);
+});
+it('数据库写span或拒收证据失败必须整笔回滚，不能作为可消费语义错误',async()=>{
+ await prepareCommander(f.db,id,deps);const e=await envelope();
+ for(const outcome of ['pass','completed']) {
+  const fault={connect:async()=>{const client=await f.db.connect();return {release:()=>client.release(),query:(sql,args)=>{
+   if(sql.startsWith('INSERT INTO spans') || (sql.startsWith('INSERT INTO task_events')&&args[1]==='rejected_activity_fact')) throw Object.assign(Error('db unavailable'),{code:'XX000'});
+   return client.query(sql,args);
+  }};}};
+  await expect(receiveCommanderEvent(fault,id,{protocol:e.protocol,run_id:e.run_id,attempt:e.attempt,owner_epoch:e.owner_epoch,seq:1,type:'activity_completed',data:activityData(e,{outcome})})).rejects.toMatchObject({code:'XX000'});
+ }
+ expect((await f.db.query("SELECT * FROM task_events WHERE task_id=$1 AND event_type IN ('commander_feedback','rejected_activity_fact')",[id])).rows).toHaveLength(0);
+ expect((await state()).result.workflow_control.last_seq).toBe(0);
+});
+it.each(['pass','completed'])('正式HTTP鉴权路由提交后丢响应，重发只记一次span或拒收原件（%s）',async outcome=>{
+ await prepareCommander(f.db,id,deps);const e=await envelope();
+ const input={protocol:e.protocol,run_id:e.run_id,attempt:e.attempt,owner_epoch:e.owner_epoch,seq:1,type:'activity_completed',data:activityData(e,{outcome})};
+ const app=express();let drop=true;
+ app.use((req,res,next)=>{const json=res.json.bind(res);res.json=body=>{if(drop&&body.accepted){drop=false;res.socket.destroy();return res;}return json(body);};next();});
+ app.use(createWorkflowCommanderRouter(f.db));
+ const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
+ vi.stubEnv('CECELIA_INTERNAL_TOKEN','test-only-token');
+ const request=()=>fetch(`http://127.0.0.1:${server.address().port}/tasks/${id}/events`,{method:'POST',headers:{'Content-Type':'application/json','X-Internal-Token':'test-only-token'},body:JSON.stringify(input)});
+ try {
+  await expect(request()).rejects.toThrow();
+  const response=await request();expect(response.status).toBe(200);const body=await response.json();
+  expect(body).toMatchObject({duplicate:true,seq:1});
+  if(outcome==='completed')expect(body.rejected).toMatchObject({code:'invalid_activity_fact',event_sha256:digest(input)});
+  expect((await f.db.query('SELECT * FROM spans WHERE run_id=$1',[e.run_id])).rows).toHaveLength(outcome==='pass'?1:0);
+  expect((await f.db.query("SELECT * FROM task_events WHERE task_id=$1 AND event_type='commander_feedback'",[id])).rows).toHaveLength(1);
+  expect((await f.db.query("SELECT * FROM task_events WHERE task_id=$1 AND event_type='rejected_activity_fact'",[id])).rows).toHaveLength(outcome==='pass'?0:1);
+ } finally {vi.unstubAllEnvs();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
+it.each([false,true])('拒收痕迹跨反馈和delivery保留，完整span及独立PASS也不得完成，预算耗尽仍blocked（%s）',async exhausted=>{
+ await dispatchCommanderV2(f.db,id,deps);const e=await envelope();
+ await sendEvent(1,'activity_completed',activityData(e,{outcome:'completed'}),e);
+ await sendEvent(2,'heartbeat',{},e);await sendEvent(3,'started',{session:'original'},e);
+ await completePath(e);await stopWithDelivery(e);
+ let c=(await state()).result.workflow_control;
+ expect(c.delivery).toMatchObject({status:'failed',failure:{code:'invalid_activity_fact'}});
+ expect(c.rejected_activity_facts).toHaveLength(1);
+ const spec=deps.createVerify.mock.calls[0][1];expect(spec.metadata.workflow_verification.rejected_activity_facts).toEqual(c.rejected_activity_facts);
+ const run=(await f.db.query('SELECT * FROM task_runs WHERE run_id=$1',[e.run_id])).rows[0];expect(run.status).toBe('failed');expect(run.result.rejected_activity_facts).toEqual(c.rejected_activity_facts);
+ if(exhausted){c.envelope.recovery.max_attempts=1;await f.db.query('UPDATE tasks SET result=$2 WHERE id=$1',[id,{workflow_control:c}]);}
+ await verify('PASS');c=(await state()).result.workflow_control;
+ expect((await state()).status).toBe('in_progress');expect(c.phase).toBe(exhausted?'blocked':'recovering');expect(c.verification.verdict).not.toBe('PASS');
+ if(exhausted)expect(c.resume_condition).toBe('recovery_budget_exhausted');
+ else {await reconcileCommanderTask(f.db,id,deps);c=(await state()).result.workflow_control;expect(c.history[0].rejected_activity_facts).toHaveLength(1);expect(c.envelope.deadline_at).toBe(e.deadline_at);}
+});
