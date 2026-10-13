@@ -339,3 +339,10 @@ tests:
     ci: L4
     status: active
     note: "真实CLI与活动子进程验证一次性START凭证：阻塞/快任务、独占0600发布、UUID及摘要绑定、写失败、旧凭证保护、参数边界、事件库不可用与无旗标兼容。"
+
+  - id: version-identity-preflight-pg
+    path: packages/brain/src/__tests__/integration/version-identity-preflight.pg.integration.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "真实scratch PG验证版本对象复合身份、只读摘要、禁改历史、漂移及锁冲突拒绝、DDL整批回滚；CI从隔离test服务创建scratch，不放宽生产写入白名单。"
