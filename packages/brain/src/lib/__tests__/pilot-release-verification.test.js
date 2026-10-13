@@ -63,6 +63,16 @@ it('实际主线工作流与凭据隔离存在，不依赖影响workflow整体�
  for(const job of Object.values(w.jobs))for(const s of job.steps||[])if(s.uses?.startsWith('actions/setup-node'))expect(s.with?.cache).toBeUndefined();
 });
 
+it('同main的多个scope上传和下载使用各自artifact，证据不得碰撞',()=>{
+ const w=yaml.load(readFileSync(new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8'));
+ const upload=w.jobs.snapshot.steps.find(s=>s.uses?.startsWith('actions/upload-artifact'));
+ const download=w.jobs.verify.steps.find(s=>s.uses?.startsWith('actions/download-artifact'));
+ const result=w.jobs.verify.steps.find(s=>s.uses?.startsWith('actions/upload-artifact'));
+ expect(download.with.name).toBe(upload.with.name);
+ for(const step of [upload,download,result])expect(step.with.name).toContain("${{ inputs.scope || 'cecelia-kr' }}");
+ expect(upload.with.name).not.toBe(result.with.name);
+});
+
 it('并发main同步同SHA时仅409回读固定快照，unknown不得变PASS',()=>{
  const w=yaml.load(readFileSync(new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8'));
  const step=w.jobs.snapshot.steps.find(s=>s.name?.includes('刷新并导出'));
