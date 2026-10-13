@@ -3,6 +3,21 @@
   "repo": "perfectuser21/cecelia",
   "relations": [
     {
+      "owner_path": "packages/brain/src/projection/workflow-body.js",
+      "path": "cp-1013222800-notion-span-readback.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/workflow-body.js",
+      "path": "cp-1013222800-notion-span-readback.dod.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/workflow-body.js",
+      "path": "changes/cp-1013222800-notion-span-readback.md",
+      "role": "release"
+    },
+    {
       "owner_path": "packages/brain/src/skill-registry-projection.js",
       "path": "packages/brain/src/__tests__/skill-registry-projection.test.js",
       "role": "verification"
@@ -756,21 +771,6 @@
       "owner_path": "packages/brain/src/lib/runtime-version-graph.js",
       "path": "cp-10132012-runtime-version-graph.dod.md",
       "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/projection/workflow-body.js",
-      "path": "cp-1013222800-notion-span-readback.prd.md",
-      "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/projection/workflow-body.js",
-      "path": "cp-1013222800-notion-span-readback.dod.md",
-      "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/projection/workflow-body.js",
-      "path": "changes/cp-1013222800-notion-span-readback.md",
-      "role": "release"
     }
   ]
 }
