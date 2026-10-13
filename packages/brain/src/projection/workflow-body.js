@@ -43,7 +43,7 @@ async function list(token,id,request) {
   if(!response.has_more)break;
   if(typeof response.next_cursor!=='string'||!response.next_cursor||seen.has(response.next_cursor))throw Error('Workflow正文分页循环');
   cursor=response.next_cursor;seen.add(cursor);
- }while(true);
+ }while(cursor);
  return all;
 }
 async function machineBlocks(token,pageId,request) {
