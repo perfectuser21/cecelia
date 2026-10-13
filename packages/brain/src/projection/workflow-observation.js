@@ -7,7 +7,11 @@ const revision = value => typeof value === 'string' && value ? value : '未知';
 
 /** 任务回执只有run_id相同时才属于该次尝试；旧Run永不套用后来那次stdout。 */
 export function receiptForRun(run, task) {
-  if (run.result?.business_receipt) return run.result.business_receipt;
+  if (run.result?.business_receipt) {
+    const receipt=run.result.business_receipt;
+    if (receipt.workflow_id!=null && run.workflow_id!=null && receipt.workflow_id!==run.workflow_id) return {};
+    return receipt;
+  }
   if (task?.script?.run_id !== run.run_id || typeof task.script.stdout !== 'string') return {};
   const lines = task.script.stdout.trim().split('\n');
   for (const line of lines.reverse()) {
@@ -64,7 +68,7 @@ export function observeWorkflows(data) {
   }
   for(const workflow of data.workflows) {
     const runs=[...dedup.values()].filter(r=>r.workflow_id===workflow.id && when(r.started_at)<=now).sort((a,b)=>when(b.started_at)-when(a.started_at)||a.run_id.localeCompare(b.run_id));
-    const tasks=[...taskById.values()].filter(t=>t.workflow_id===workflow.id);
+    const tasks=[...new Map((data.task_records || []).filter(t=>t.workflow_id===workflow.id).map(t=>[t.id,t])).values()];
     const recent=runs.filter(r=>when(r.started_at)>=now-WEEK),count=status=>recent.filter(r=>r.status===status).length;
     const success7=count('success'),failed7=count('failed')+count('timeout'),eligible=success7+failed7;
     const attemptedTasks=[...new Set(recent.map(r=>r.task_id).filter(Boolean))];
@@ -106,6 +110,7 @@ export const WORKFLOW_OBSERVATION_SQL = `
    'notion_id',t.notion_id,'created_at',t.created_at,'parent_task_id',t.parent_task_id,
    'script',jsonb_build_object('run_id',t.result->'script'->>'run_id','stdout',t.result->'script'->>'stdout')))
    FROM tasks t JOIN workflows w ON w.id::text=t.payload->>'workflow_id'
+     OR EXISTS(SELECT 1 FROM task_runs owned WHERE owned.task_id=t.id AND owned.workflow_id=w.id)
    WHERE t.created_at>=now()-interval '30 days' OR t.status IN ('queued','in_progress','blocked','paused')
      OR EXISTS(SELECT 1 FROM task_runs recent WHERE recent.task_id=t.id AND recent.started_at>=now()-interval '7 days')),'[]'::jsonb),
  'run_records',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM (

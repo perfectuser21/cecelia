@@ -45,4 +45,8 @@ describe('真实Workflow观测',()=>{
     const rt=observeWorkflows(d).get('wf');expect(rt.recentRuns.find(r=>r.run_id==='a1')).toMatchObject({workflow_version:'0.0.9',definition_version_id:'frozen-definition',source_revision:'frozen-source'});
     expect(rt.recentRuns.find(r=>r.run_id==='b1').definition_version_id).toBe('preflight-id');
   });
+  it('冻结业务回执也必须属于当前Workflow',()=>{
+    const d=data();d.run_records=[{...run('a1','a'),result:{business_receipt:{workflow_id:'foreign',status:'deferred',source_revision:'foreign'}}}];
+    const rt=observeWorkflows(d).get('wf');expect(rt.stats.deferred7).toBe(0);expect(rt.recentRuns[0].source_revision).toBe('未知');
+  });
 });
