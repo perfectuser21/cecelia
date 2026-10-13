@@ -1,3 +1,8 @@
+# 固定版本依赖验收
+
+- [x] [BEHAVIOR] runtimeversiongraph 真实PG验证复合身份FK、类型约束、固定slot完整性、Workflow快照与Recipe一致、同契约换实现、配置代码独立换版、历史不变、影响只读、并发封存、安装幂等与结构漂移拒绝。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/lib/__tests__/runtime-version-graph.test.js"
+
 # OPC 巡检配置迁移修复（任务 de5194d0）
 
 - [x] [BEHAVIOR] opcconfiglookup OPC CLI 在 MMV 读取当前用户的 openclaw.json，显式 OPENCLAW_CONFIG_PATH 优先且配置不存在、无权限、坏 JSON、账号字段缺失均失败关闭；旧 Linux 路径保留，错误不泄露凭据；真实只读查询返回经营对象。新增同次快照分批入口每批最多50条，完整覆盖所有命中记录；旧单批安全上限保持。
@@ -286,5 +291,18 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 # Commander 合并后 CI 固定基线修复（任务 1e30e1ec）
 
+- [x] [BEHAVIOR] versionidentitypreflight 真实PG只读一致快照报告四处构建/首构建/发布版本对象身份缺口和九类历史摘要；显式scratch迁移，错对象/坏历史/漂移/中途DDL失败/锁冲突均拒绝并保留原件；禁改触发器保留，生产连接在DDL前拒绝。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/lib/__tests__/version-identity-preflight.test.js"
+
 - [x] [BEHAVIOR] commanderfollowupregistry 保留原 handler 白名单身份，只校正源码实际行号；DoD checkout 完整历史，真实 Git 克隆能读固定旧 blob，既有 registry-vs-base 审计真实运行且 FAIL/ERROR 0。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/task-type-registry.guard.test.js src/__tests__/registry-vs-base.audit.test.js"
+
+# Agent与Skill身份验收
+
+- [x] [BEHAVIOR] runtimesourceidentity 真实PG验证稳定UUID、来源链接唯一、非Agent拒绝、固定Git版本不可变、同名未核实、路径和摘要检查、映射审计同事务、安装冲突和生产拒写、两连接旧快照拒写。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/lib/__tests__/runtime-identities.test.js"
+
+# 固定来源核验验收
+
+- [x] [BEHAVIOR] skillgitprovenance 临时真实Git仓库验证固定commit、SSH/HTTPS归一、只出摘要、修改/删除/未跟踪/ignore文件拒绝、链接拒绝、凭据remote拒绝及Git环境隔离、禁用refs/replace、目录逃逸、执行权限及读取期HEAD漂移。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/skill-git-provenance.test.js"

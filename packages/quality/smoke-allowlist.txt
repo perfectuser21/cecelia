@@ -453,3 +453,4 @@ coding-workflow-base-smoke.sh
 commander-generic-smoke.sh
 
 workflow-observation-smoke.sh
+version-identity-preflight-smoke.sh
