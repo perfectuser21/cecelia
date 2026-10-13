@@ -11,6 +11,9 @@ let client, schema;
 beforeEach(async () => {
   if (!(DB_DEFAULTS.database === 'cecelia_scratch' || process.env.CI === 'true' && DB_DEFAULTS.database === 'cecelia_test')) throw new Error('仅允许scratch/CI隔离库');
   client = new pg.Client(DB_DEFAULTS); await client.connect();
+  // 空、小型私有夹具缺少生产统计，估计代价会触发 Linux LLVM JIT 编译；
+  // 仅关闭本测试连接的 JIT，全部验收 SQL 和真实 PostgreSQL 边仍照常执行。
+  await client.query('SET jit=off');
   expect((await client.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `directory_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`); await client.query(`SET search_path TO ${schema}`);
