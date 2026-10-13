@@ -73,3 +73,29 @@ it('分页请求及累计条目都有硬上限',async()=>{
  const oversized=async()=>({results:Array(10001).fill({type:'paragraph'}),has_more:false});
  expect(await syncWorkflowBodies(pool,{token:'t',notionReq:oversized,rows:[row]})).toMatchObject({failed:1});
 });
+
+it('Notion省略纯空白片段时20条运行和任务仍保留分隔与链接',async()=>{
+ const many={...row,workflowObservation:{...row.workflowObservation,
+  recentRuns:Array.from({length:20},(_,i)=>({run_id:`actual-run-${i}`,notion_id:`run-page-${i}`})),
+  recentTasks:Array.from({length:20},(_,i)=>({title:`actual-task-${i}`,notion_id:`task-page-${i}`}))}};
+ const b=backend();
+ const normalizeResponse=value=>{
+  if(Array.isArray(value))return value.map(normalizeResponse);
+  if(!value||typeof value!=='object')return value;
+  return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,key==='rich_text'
+   ?item.filter(part=>String(part.text?.content??part.plain_text??'').trim()).map(normalizeResponse)
+   :normalizeResponse(item)]));
+ };
+ const request=async(...args)=>normalizeResponse(await b.request(...args));
+ expect(await syncWorkflowBodies(pool,{token:'t',notionReq:request,rows:[many]})).toMatchObject({rewritten:1,failed:0});
+ const writes=b.writes;
+ expect(await syncWorkflowBodies(pool,{token:'t',notionReq:request,rows:[many]})).toMatchObject({unchanged:1,failed:0});
+ expect(b.writes).toBe(writes);
+ const actual=normalizeResponse(b.blocks[0]);
+ const linked=actual.toggle.children.flatMap(block=>block[block.type].rich_text).filter(part=>part.text?.link);
+ expect(linked).toHaveLength(40);
+ expect(linked.map(part=>part.text.link.url)).toEqual([
+  ...Array.from({length:20},(_,i)=>`https://app.notion.com/p/runpage${i}`),
+  ...Array.from({length:20},(_,i)=>`https://app.notion.com/p/taskpage${i}`)]);
+ expect(linked.filter(part=>part.text.content.startsWith('\n'))).toHaveLength(38);
+});
