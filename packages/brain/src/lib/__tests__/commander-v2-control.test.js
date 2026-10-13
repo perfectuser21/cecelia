@@ -107,3 +107,11 @@ it('历史方法PASS必须同时证明原目标和所选方法，错hash或空�
  expect(readVerification(child(both),{id:'task'},{envelope}).verdict).toBe('PASS');
  for(const bad of [{...both,assertions:both.assertions.map(a=>a.name==='original_goal'?{...a,definition_sha256:'wrong'}:a)},{...both,assertions:both.assertions.map(a=>a.name==='selected_method'?{...a,evidence:[]}:a)}])expect(readVerification(child(bad),{id:'task'},{envelope}).verdict).toBe('INCONCLUSIVE');
 });
+
+it('恢复分两阶段：旧核验不以未来目录已存在为安全条件，新attempt业务前仍须强制隔离',()=>{
+ const request=verificationRequest({id:'task'},{envelope:e,delivery:{outputs:{}}});
+ expect(request.description).toContain('旧attempt安全核验不得要求尚未授权的新attempt目录已经存在');
+ expect(request.description).toContain('独立核对当前正式runner强制创建唯一新run目录、不覆盖旧证据的实现与摘要');
+ expect(request.description).toContain('真正新attempt起跑前必须由运行端强制校验独立目录与旧证据保留，未通过不得启动业务');
+ expect(request.description).not.toContain('官方child终态、新attempt独立目录及旧失败证据保留；证据齐全才');
+});
