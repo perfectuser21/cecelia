@@ -358,3 +358,31 @@ tests:
     ci: L4
     status: active
     note: "真实PG起跑冻结版本、重放幂等和历史可信补链"
+
+  - id: version-identity-preflight-pg
+    path: packages/brain/src/lib/__tests__/version-identity-preflight.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "真实scratch PG验证版本对象复合身份、只读摘要、禁改历史、漂移及锁冲突拒绝、DDL整批回滚；CI从隔离test服务创建scratch，不放宽生产写入白名单。"
+
+  - id: runtime-identities-pg
+    path: packages/brain/src/lib/__tests__/runtime-identities.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "隔离真实PG验证Agent稳定身份、来源链接、Skill不可变Git源版本、同名待核实、事件回滚和两连接旧快照拒写。"
+
+  - id: skill-git-provenance
+    path: packages/brain/src/lib/__tests__/skill-git-provenance.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "真实Git仓库验证固定Skill源摘要、安装漂移、未跟踪及ignore文件、来源身份、链接和Git环境隔离。"
+
+  - id: runtime-version-graph-pg
+    path: packages/brain/src/lib/__tests__/runtime-version-graph.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "真实PG验证typed依赖、固定槽位快照、契约换构建、独立模型代码、不可变组合、并发封存与结构漂移。"
