@@ -14,3 +14,4 @@
 - 独立 research 核验使用限定 OpenClaw transport，固定 skill-factory / openai/gpt-6.1-sol；独立运行与租约先提交再起跑，池满/旧 Bridge 不阻断，普通 research/qiumi 不变。
 - 核验回执逐项核对官方 requested/effective、rerouted 及执行 trace，缺证据或错误模型不能完成；原始产物优先经 gateway_exec 只读核验执行机，不能误把模型沙箱当 MMV。
 - 同release多scope发布证据逐份保持完整冻结计划与断言核验，按实际Workflow所属依赖闭包联合覆盖全部定义；缺失或损坏证据仍拒绝发布绿。
+- 同main多scope发布的快照与验证artifact名称包含scope，确保各自上传和下载同一份证据。

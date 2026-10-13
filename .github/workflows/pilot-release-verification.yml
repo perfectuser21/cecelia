@@ -71,7 +71,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: pilot-release-snapshot-${{ inputs.head_revision || github.sha }}
+          name: pilot-release-snapshot-${{ inputs.scope || 'cecelia-kr' }}-${{ inputs.head_revision || github.sha }}
           path: evidence/*.json
           if-no-files-found: error
   verify:
@@ -109,7 +109,7 @@ jobs:
           mkdir -p output
       - uses: actions/download-artifact@v4
         with:
-          name: pilot-release-snapshot-${{ inputs.head_revision || github.sha }}
+          name: pilot-release-snapshot-${{ inputs.scope || 'cecelia-kr' }}-${{ inputs.head_revision || github.sha }}
           path: snapshot
       - name: 固定完整计划及白名单环境运行全部登记回归
         env:
@@ -127,7 +127,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: pilot-release-verification-${{ inputs.head_revision || github.sha }}
+          name: pilot-release-verification-${{ inputs.scope || 'cecelia-kr' }}-${{ inputs.head_revision || github.sha }}
           path: output/*.json
           retention-days: 90
           if-no-files-found: error
