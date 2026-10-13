@@ -476,7 +476,6 @@
     {"owner_path": "packages/brain/src/lib/task-type-registry.js", "path": "docs/learnings/cp-1013152200-commander-ci-followup.md", "role": "documentation"},
     {"owner_path": "packages/brain/src/lib/commander-verification-transport.js", "path": "docs/learnings/cp-10131820-commander-brain-acceptance.md", "role": "documentation"},
     {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/src/lib/__tests__/version-identity-preflight.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/scripts/smoke/version-identity-preflight-smoke.sh", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/scripts/runtime-catalog-preflight.mjs", "role": "verification"}
+    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/scripts/smoke/version-identity-preflight-smoke.sh", "role": "verification"}
   ]
 }
