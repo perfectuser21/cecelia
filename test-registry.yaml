@@ -379,3 +379,10 @@ tests:
     ci: L4
     status: active
     note: "真实Git仓库验证固定Skill源摘要、安装漂移、未跟踪及ignore文件、来源身份、链接和Git环境隔离。"
+
+  - id: runtime-version-graph-pg
+    path: packages/brain/src/lib/__tests__/runtime-version-graph.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "真实PG验证typed依赖、固定槽位快照、契约换构建、独立模型代码、不可变组合、并发封存与结构漂移。"

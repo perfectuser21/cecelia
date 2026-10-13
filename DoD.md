@@ -1,3 +1,8 @@
+# 固定版本依赖验收
+
+- [x] [BEHAVIOR] runtimeversiongraph 真实PG验证复合身份FK、类型约束、固定slot完整性、Workflow快照与Recipe一致、同契约换实现、配置代码独立换版、历史不变、影响只读、并发封存、安装幂等与结构漂移拒绝。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/lib/__tests__/runtime-version-graph.test.js"
+
 # OPC 巡检配置迁移修复（任务 de5194d0）
 
 - [x] [BEHAVIOR] opcconfiglookup OPC CLI 在 MMV 读取当前用户的 openclaw.json，显式 OPENCLAW_CONFIG_PATH 优先且配置不存在、无权限、坏 JSON、账号字段缺失均失败关闭；旧 Linux 路径保留，错误不泄露凭据；真实只读查询返回经营对象。新增同次快照分批入口每批最多50条，完整覆盖所有命中记录；旧单批安全上限保持。

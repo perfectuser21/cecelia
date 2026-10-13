@@ -4,13 +4,15 @@ import pg from 'pg';
 import { pathToFileURL } from 'node:url';
 import { auditVersionIdentity,applyScratchIdentityConstraints } from '../src/lib/version-identity-preflight.js';
 import {installScratchIdentities} from '../src/lib/runtime-identities.js';
+import {installScratchVersionGraph} from '../src/lib/runtime-version-graph.js';
 
 export async function main(args=process.argv.slice(2),env=process.env) {
-  const allowed=['--apply-scratch','--schema','--expected-digest','--install-scratch-identities'];
-  let schema='public',expectedDigest,apply=false,install=false;
+  const allowed=['--apply-scratch','--schema','--expected-digest','--install-scratch-identities','--install-scratch-version-graph'];
+  let schema='public',expectedDigest,apply=false,install=false,graph=false;
   for(let i=0;i<args.length;i++) {
     if(!allowed.includes(args[i]))throw Error(`不支持的参数：${args[i]}`);
     if(args[i]==='--apply-scratch')apply=true;
+    else if(args[i]==='--install-scratch-version-graph')graph=true;
     else if(args[i]==='--install-scratch-identities')install=true;
     else {
       const value=args[++i];
@@ -19,7 +21,7 @@ export async function main(args=process.argv.slice(2),env=process.env) {
       else expectedDigest=value;
     }
   }
-  if(apply&&install)throw Error('每次只能执行一个隔离安装动作');
+  if([apply,install,graph].filter(Boolean).length>1)throw Error('每次只能执行一个隔离安装动作');
   if(!env.DB_NAME)throw Error('DB_NAME 必须显式指定；禁止默认连接生产库');
   const pool=new pg.Pool({host:env.DB_HOST||'/tmp',port:Number(env.DB_PORT||5432),database:env.DB_NAME,
     user:env.DB_USER||'administrator',password:env.DB_PASSWORD,max:1,connectionTimeoutMillis:10000});
@@ -27,7 +29,8 @@ export async function main(args=process.argv.slice(2),env=process.env) {
   try {
     db=await pool.connect();
     let result;
-    if(install)result=await installScratchIdentities(db,{sourceSchema:schema});
+    if(graph)result=await installScratchVersionGraph(db,{sourceSchema:schema});
+    else if(install)result=await installScratchIdentities(db,{sourceSchema:schema});
     else if(apply)result=await applyScratchIdentityConstraints(db,{schema,expectedDigest});
     else result=await auditVersionIdentity(db,{schema});
     process.stdout.write(JSON.stringify(result,null,2)+'\n');
