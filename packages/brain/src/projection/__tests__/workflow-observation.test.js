@@ -6,6 +6,12 @@ const task = (id, status='completed') => ({ id, workflow_id:'wf', status, title:
 const run = (id, task_id, status='success') => ({ id, run_id:id, task_id, workflow_id:'wf', status, started_at:'2026-10-12T09:00:00Z', ended_at:'2026-10-12T09:01:00Z', ledger:'task_runs', notion_id:`page-${id}`, context:{attempt:Number(id.slice(-1))||1} });
 function data() { return { observed_at:now, workflows:[{id:'wf',version:'0.1.1'}], activities:[],refs:[],workflow_runtime:[], task_records:[],run_records:[], entrypoints:[] }; }
 describe('真实Workflow观测',()=>{
+  it('脚本和Agent入口只有进程success而缺业务回执时，不编造成业务成功',()=>{
+    const d=data();d.run_records=['script','openclaw-agent'].map((source,i)=>({...run('transport'+i,'a'),context:{source}}));
+    const rt=observeWorkflows(d).get('wf');
+    expect(rt.stats).toMatchObject({runs7:2,success7:0,unverified7:2,success_rate:null,completed_tasks7:0});
+    expect(rt.recentRuns.every(r=>r.status==='回执缺失'&&r.transport_status==='success')).toBe(true);
+  });
   it('高频运行的SQL聚合与最近明细共同计算完整统计，不制造明细或任务',()=>{
     const d=data();d.run_records=[{...run('a1','a'),duration_ms:100}];
     d.run_summaries=[{workflow_id:'wf',runs7:1000,success7:800,failed7:100,running7:50,cancelled7:50,duration_count:950,duration_total_ms:190000}];

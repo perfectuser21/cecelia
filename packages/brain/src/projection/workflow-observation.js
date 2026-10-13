@@ -36,6 +36,7 @@ export function observedRun(run, task) {
     else if (receipt.status==='skipped') status='skipped';
     else if (receipt.status==='queued') status='派发完成';
     else if (['failed','error','timeout','cancelled'].includes(receipt.status)) status=receipt.status==='error'?'failed':receipt.status;
+    else if (!receipt.status && ['script','openclaw-agent'].includes(run.context?.source)) status='回执缺失';
   }
   return { id:run.id,run_id:run.run_id,task_id:run.task_id,workflow_id:run.workflow_id,ledger:run.ledger,
     notion_id:run.notion_id,status,started_at:run.started_at,ended_at:run.ended_at,
@@ -86,12 +87,12 @@ export function observeWorkflows(data) {
     }
     const durationCount=durations.length+additional('duration_count');
     const stats={runs7:recent.length+additional('runs7'),success7,failed7,deferred7:count('deferred')+additional('deferred7'),cancelled7:count('cancelled')+additional('cancelled7'),running7:count('running')+additional('running7'),dispatch7:count('派发完成')+additional('dispatch7'),
-      skipped7:count('skipped')+additional('skipped7'),queued:tasks.filter(t=>t.status==='queued').length,waiting:tasks.filter(t=>['blocked','paused'].includes(t.status)).length,
+      skipped7:count('skipped')+additional('skipped7'),unverified7:count('回执缺失'),queued:tasks.filter(t=>t.status==='queued').length,waiting:tasks.filter(t=>['blocked','paused'].includes(t.status)).length,
       retries7:[...attempts.values()].reduce((n,c)=>n+[...c].filter(a=>a>1).length,0),
       success_rate:eligible?success7/eligible:null,completed_task_rate:attemptedTasks.length?completed/attemptedTasks.length:null,
       attempted_tasks7:attemptedTasks.length,completed_tasks7:completed,avg_duration_ms:durationCount?(durations.reduce((a,b)=>a+b,0)+additional('duration_total_ms'))/durationCount:null,
       window_start:new Date(now-WEEK).toISOString(),window_end:new Date(now).toISOString(),
-      policy:'尝试成功率=业务成功/(业务成功+失败+超时)，不计deferred/取消/运行中/派发完成；最终任务完成率=最新尝试业务成功或派发完成且task.completed的任务/窗口内有尝试的任务。批次仅计派发，单手机独立计数。'};
+      policy:'尝试成功率=业务成功/(业务成功+失败+超时)，不计deferred/取消/运行中/派发完成/回执缺失；最终任务完成率=最新尝试业务成功或派发完成且task.completed的任务/窗口内有尝试的任务。批次仅计派发，单手机独立计数。'};
     const refs=(data.refs || []).filter(r=>r.active && r.workflow_id===workflow.id).sort((a,b)=>a.sequence_no-b.sequence_no);
     const activities=refs.map(r=>({...data.activities.find(a=>a.id===r.activity_id),sequence_no:r.sequence_no}));
     const entries=(data.entrypoints || []).filter(e=>e.workflow_id===workflow.id);
