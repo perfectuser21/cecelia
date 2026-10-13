@@ -608,11 +608,6 @@
       "role": "documentation"
     },
     {
-      "owner_path": "packages/brain/src/lib/commander-verification-transport.js",
-      "path": "changes/cp-10131820-commander-brain-acceptance.md",
-      "role": "release"
-    },
-    {
       "owner_path": "packages/brain/src/projection/directory-projector.js",
       "path": "changes/cp-10131706-cw-b7f88520.md",
       "role": "release"
