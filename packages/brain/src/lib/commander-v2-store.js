@@ -29,6 +29,43 @@ export async function frozenContract(db, task) {
   requireCommander(contract && [contract.key, contract.workflow, workflow.payload.key].includes(task.payload.workflow_key), 'workflow_key与冻结合同不符');
   return { definition, contract, release };
 }
+/** 语义key只来自release冻结引用及步骤；definition的严格UUID schema保持原样。 */
+export function activityBindings(definition, release) {
+  const workflow = release.payload.workflows.find(w => w.id === definition.workflow_definition_version_id && w.workflow_id === definition.workflow_id);
+  requireCommander(workflow?.payload_sha256 === definition.snapshot_sha256, '活动映射冻结定义摘要不符');
+  const refs = workflow.payload.activities, path = definition.expected_path;
+  requireCommander(Array.isArray(path) && path.length > 0, '活动映射缺路径');
+  const keys = new Set(), covered = new Set(), result = [];
+  for (const entry of path.filter(p => !p.step_id)) {
+    const ref = refs.find(r => r.reference_id === entry.reference_id);
+    const activity = release.payload.activities.find(a => a.id === ref?.activity_version_id);
+    requireCommander(ref && activity && entry.activity_id === ref.activity_id && activity.activity_id === ref.activity_id
+      && entry.activity_definition_version_id === activity.id, '活动映射路径身份不符');
+    requireCommander(typeof ref.slot_key === 'string' && ref.slot_key.length > 0 && !keys.has(ref.slot_key), '活动映射key缺失或重复');
+    keys.add(ref.slot_key);
+    const stepKeys = new Set(), steps = [];
+    for (const step of activity.payload.steps ?? []) {
+      requireCommander(step.step_id && step.locator?.activity_id === activity.activity_id, '冻结步骤路径身份缺失');
+      requireCommander(typeof step.locator.step_key === 'string' && step.locator.step_key.length > 0 && !stepKeys.has(step.locator.step_key), '冻结步骤key缺失或重复');
+      stepKeys.add(step.locator.step_key);
+      steps.push({ key: step.locator.step_key, step_id: step.step_id });
+    }
+    for (const stepId of [undefined, ...steps.map(s => s.step_id)]) {
+      const matches = path.filter(p => p.reference_id === ref.reference_id && p.step_id === stepId
+        && p.activity_id === activity.activity_id && p.activity_definition_version_id === activity.id);
+      const identity = `${ref.reference_id}:${stepId ?? ''}`;
+      requireCommander(matches.length === 1 && !covered.has(identity), '冻结路径缺失或重复');
+      covered.add(identity);
+    }
+    result.push({ key: ref.slot_key, reference_id: ref.reference_id, activity_id: activity.activity_id,
+      activity_definition_version_id: activity.id, steps });
+  }
+  requireCommander(result.length === refs.length && covered.size === path.length, '冻结路径未完整覆盖');
+  return result;
+}
+export async function frozenActivityBindings(db, definition) {
+  return activityBindings(definition, await getRelease(db, definition.release_id));
+}
 export function checkFence(task, input) {
   const c = task.result?.workflow_control, e = c?.envelope;
   requireCommander(e && task.status === 'in_progress' && c.phase !== 'final', '运行不接收反馈', 409);

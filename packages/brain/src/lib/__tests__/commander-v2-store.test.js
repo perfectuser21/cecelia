@@ -19,3 +19,22 @@ it('事务工作失败回滚且释放连接，不提交',async()=>{
  await expect(transaction({connect:async()=>db},'task',async()=>{throw Error('work failed');})).rejects.toThrow('work failed');
  expect(db.query.mock.calls.some(([sql])=>sql==='COMMIT')).toBe(false);expect(db.query).toHaveBeenCalledWith('ROLLBACK');expect(db.release).toHaveBeenCalledTimes(1);
 });
+
+import { activityBindings } from '../commander-v2-store.js';
+it('活动及步骤映射按冻结UUID关联，不按数组位置或当前定义猜测',()=>{
+ const definition={workflow_id:'w',workflow_definition_version_id:'wv',snapshot_sha256:'hash',expected_path:[
+  {reference_id:'r2',activity_id:'a2',activity_definition_version_id:'v2'},
+  {reference_id:'r1',activity_id:'a1',activity_definition_version_id:'v1',step_id:'s1'},
+  {reference_id:'r1',activity_id:'a1',activity_definition_version_id:'v1'}]};
+ const release={payload:{workflows:[{id:'wv',workflow_id:'w',payload_sha256:'hash',payload:{activities:[
+  {reference_id:'r1',slot_key:'preflight',activity_id:'a1',activity_version_id:'v1'},
+  {reference_id:'r2',slot_key:'cleanup',activity_id:'a2',activity_version_id:'v2'}]}}],activities:[
+  {id:'v2',activity_id:'a2',payload:{steps:[]}},
+  {id:'v1',activity_id:'a1',payload:{steps:[{step_id:'s1',locator:{activity_id:'a1',step_key:'check'}}]}}]}};
+ expect(activityBindings(definition,release)).toEqual([
+  {key:'cleanup',reference_id:'r2',activity_id:'a2',activity_definition_version_id:'v2',steps:[]},
+  {key:'preflight',reference_id:'r1',activity_id:'a1',activity_definition_version_id:'v1',steps:[{key:'check',step_id:'s1'}]}]);
+ expect(()=>activityBindings({...definition,expected_path:definition.expected_path.slice(0,1)},release)).toThrow('路径');
+ const missing=structuredClone(release);delete missing.payload.workflows[0].payload.activities[0].slot_key;
+ expect(()=>activityBindings(definition,missing)).toThrow('key');
+});

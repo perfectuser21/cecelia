@@ -194,3 +194,23 @@ it('正式Codex回调stdout可收进核验结果，完整冻结span加独立PASS
  const child=(await f.db.query('SELECT * FROM tasks WHERE id=$1',[c.verify_task_id])).rows[0];expect(child.result.workflow_verification).toEqual(v);
  expect(child.payload.workflow_verification.execution_location.ssh_target).toBe(parent.result.workflow_control.execution_location.ssh_target);
 });
+it('正式信封活动映射只消费冻结release，当前活动key漂移不改变映射',async()=>{
+ const workflow=f.workflows.find(w=>w.id===definition.workflow_definition_version_id);
+ const ref=workflow.payload.activities[0];
+ await f.db.query("UPDATE activities SET activity_key='mutable_wrong' WHERE id=$1",[ref.activity_id]);
+ await prepareCommander(f.db,id,deps);const e=await envelope();
+ const binding=e.activity_bindings.find(b=>b.reference_id===ref.reference_id);
+ expect(binding.key).toBe(ref.slot_key);expect(binding.key).not.toBe('mutable_wrong');
+ const activity=f.activities.find(a=>a.id===ref.activity_version_id);
+ expect(binding.steps).toEqual(activity.payload.steps.map(s=>({key:s.locator.step_key,step_id:s.step_id})));
+ const context=(await f.db.query('SELECT context FROM task_runs WHERE run_id=$1',[e.run_id])).rows[0].context;
+ expect(context.commander_envelope.activity_bindings).toEqual(e.activity_bindings);
+});
+it('冻结路径映射不完整在ready及业务起跑前拒绝，零运行零外部副作用',async()=>{
+ definition.expected_path=definition.expected_path.slice(0,-1);
+ await expect(dispatchCommanderV2(f.db,id,deps)).rejects.toThrow('路径');
+ expect(deps.ready).not.toHaveBeenCalled();expect(deps.sshDispatch).not.toHaveBeenCalled();
+ expect(deps.lockGate).not.toHaveBeenCalled();expect(deps.setLease).not.toHaveBeenCalled();
+ expect((await f.db.query('SELECT * FROM task_runs WHERE task_id=$1',[id])).rows).toHaveLength(0);
+ expect((await state()).status).toBe('queued');
+});

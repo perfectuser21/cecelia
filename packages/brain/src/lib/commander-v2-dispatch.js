@@ -7,8 +7,8 @@ import { buildRemoteCommand } from '../openclaw-agent-executor.js';
 import { startRun } from './task-run.js';
 import { checkDeviceLockForManualDispatch } from './manual-dispatch-device-gate.js';
 import { setBrainLease } from './task-lease.js';
-import { transaction, frozenContract, writeControl, event } from './commander-v2-store.js';
-import { makeEnvelope, validateReady, isCommanderV2, requireCommander } from './commander-v2-contract.js';
+import { transaction, frozenContract, frozenActivityBindings, writeControl, event } from './commander-v2-store.js';
+import { makeEnvelope, validateReady, isCommanderV2, requireCommander, bounded } from './commander-v2-contract.js';
 const target = deps => deps.target ?? sshTargetFor(resolvePrimaryWorkerId());
 const send = (args, input) => sshWithStdin(spawn, args, input);
 export async function readyCommander(e, deps = {}) {
@@ -31,6 +31,8 @@ export async function prepareCommander(pool, taskId, deps = {}) {
     const frozen = previous ? { definition: previous.envelope.definition, contract: previous.envelope.contract } : await (deps.frozenContract ?? frozenContract)(db, task);
     const sourceTask = previous ? { ...task, payload: { ...task.payload, workflow_input: previous.envelope.input } } : task;
     const e = makeEnvelope(sourceTask, frozen.definition, frozen.contract, previous?.envelope, (deps.now ?? (() => new Date()))(), previous);
+    e.activity_bindings = await frozenActivityBindings(db, e.definition);
+    bounded(e, 180000, '信封');
     // ready为只读协议握手，实际run binding再次检查数据库当前部署，不能用ready替代release闸。
     validateReady(await readyCommander(e, deps), e.definition);
     await (deps.startRun ?? startRun)({ taskId, runId: e.run_id, source: 'workflow-commander-v2', definition: e.definition, context: { commander_envelope: e } }, { pool, transactionClient: db });
