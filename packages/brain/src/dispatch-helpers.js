@@ -1,3 +1,4 @@
+import { verificationTaskSql } from './lib/commander-verification-transport.js';
 /**
  * Brain v2 Phase D Part 1.4 — dispatch helpers 抽出。
  *
@@ -73,7 +74,9 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
   let onlyTypesClause = '';
   if (Array.isArray(onlyTaskTypes) && onlyTaskTypes.length > 0) {
     queryParams.push(onlyTaskTypes);
-    onlyTypesClause = `AND t.task_type = ANY($${queryParams.length}::text[])`;
+    onlyTypesClause = options.includeCommanderVerification
+      ? `AND (t.task_type = ANY($${queryParams.length}::text[]) OR ${verificationTaskSql('t')})`
+      : `AND t.task_type = ANY($${queryParams.length}::text[])`;
   }
   queryParams.push([...TICK_DISPATCH_EXCLUDED]);
   const excludedTypesIdx = queryParams.length;

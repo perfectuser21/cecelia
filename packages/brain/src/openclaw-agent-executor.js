@@ -1,3 +1,4 @@
+import { isCommanderVerification, verificationLaunch, verificationPrompt, verificationTaskSql, verificationRuntime, prepareVerificationRun } from './lib/commander-verification-transport.js';
 /**
  * 秋米非设备任务执行体（PR3）：Brain（us-vps）经 ssh 在主力 worker 上起 `openclaw agent`。
  *
@@ -35,13 +36,7 @@ import { consumeCompanyAnalysis, markCompanyAnalysis, assertCompanyAnalysisDispa
 import {
   parseDeviceBusyMarker, planDeviceBusy, requeueForDeviceBusy, DEVICE_BUSY_EXPIRED_REASON, DUE_AT_SELECT_SQL,
 } from './lib/qiumi-device-busy.js';
-
-// 两条白名单，宽严不同：
-//  · SAFE_ID —— run_id / department / taskId。它们要当文件名用（~/brain-runs/<run_id>.log），
-//    所以连 `/` 都不许有，否则能把日志写到目录外。
-//  · SAFE_MODEL —— model 与 bin 路径。必须放行真实 model 串（claude-cli/claude-sonnet-5、
-//    openai/gpt-5.3-codex），所以允许 `/`。
-// 两条都另外拒绝 `..`：正则允许 `.` 就挡不住 `../../.ssh/x` 这类路径穿越。
+// 文件身份禁止路径分隔符；model/bin允许斜线，二者均拒绝..。
 const SAFE_ID = /^[A-Za-z0-9._-]+$/;
 const SAFE_MODEL = /^[A-Za-z0-9._/:-]+$/;
 const OPENCLAW_BIN = '/opt/homebrew/bin/openclaw';
@@ -53,24 +48,20 @@ const TIMEOUT_MAX_SEC = 10800;
 const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'adaptive', 'max']);
 const REAP_SSH_TIMEOUT_MS = 15_000;
 const REAP_BATCH = 10;
-
 /** 实际下发给 --timeout 的秒数：越界回落默认。prompt 里写的超时与命令行同一口径。 */
 function effectiveTimeoutSec(timeoutSec) {
   const t = Math.round(Number(timeoutSec));
   return t >= TIMEOUT_MIN_SEC && t <= TIMEOUT_MAX_SEC ? t : AGENT_TIMEOUT_SEC;
 }
-
 function assertSafe(name, value, re) {
   const v = String(value);
   if (!re.test(v) || v.includes('..')) throw new Error(`invalid ${name}`);
 }
-
 /** run_id 既进远端 shell 也当文件名，收割侧复用同一条判据。 */
 export function isSafeRunId(runId) {
   const v = String(runId);
   return SAFE_ID.test(v) && !v.includes('..');
 }
-
 /**
  * 远端一次性脚本：建目录 → 从 stdin 吸 prompt 进 $M → nohup 后台起 agent → 落三件套 → 回 DISPATCHED。
  *
@@ -185,6 +176,7 @@ function appliedParamsNotice(p) {
 }
 
 function promptOf(task) {
+  if (isCommanderVerification(task)) return verificationPrompt(task);
   const p = task.payload ?? {};
   const s = p.qiumi_source ?? {};
   const sourceBody = p.company_kr_analysis?.version === 1 ? companyAnalysisPrompt(p.company_kr_analysis) : s.body;
@@ -213,9 +205,17 @@ function promptOf(task) {
 export async function triggerOpenclawAgent(task, deps = {}) {
   const spawnFn = deps.spawnFn ?? nodeSpawn;
   const pool = deps.pool ?? (await import('./db.js')).default;
+  let verification;
+  if (isCommanderVerification(task)) {
+    try { verification = await verificationLaunch(pool, task); }
+    catch (error) {
+      await finalizeTask(pool, task.id, 'failed', { set: { error_message: error.message }, onlyIfStatus: ['queued', 'in_progress'] });
+      return { success: false, failed: true, taskTerminal: true, taskId: task.id, reason: 'commander_verification_rejected', error: error.message };
+    }
+  }
   const runId = task.payload?.run_id;
-  const model = task.payload?.model;
-  const department = task.payload?.qiumi_department;
+  const model = verification?.model ?? task.payload?.model;
+  const department = verification?.department ?? task.payload?.qiumi_department;
   if (!runId || !department) {
     return { success: false, taskId: task.id, reason: 'openclaw_agent_spawn_failed', error: 'missing run_id/department' };
   }
@@ -236,13 +236,20 @@ export async function triggerOpenclawAgent(task, deps = {}) {
   try {
     remote = buildRemoteCommand({
       runId, department, model, taskId: task.id,
-      timeoutSec: task.payload?.timeout_sec ?? AGENT_TIMEOUT_SEC,
+      timeoutSec: verification?.timeoutSec ?? task.payload?.timeout_sec ?? AGENT_TIMEOUT_SEC,
       thinking: task.payload?.thinking ?? null,
     });
     machine = resolvePrimaryWorkerId();
     target = primaryTarget();
   } catch (err) {
     return { success: false, taskId: task.id, reason: 'openclaw_agent_spawn_failed', error: err.message };
+  }
+
+  if (verification) {
+    try { await prepareVerificationRun(pool, task, verification, deps); }
+    catch (error) { return { success: false, taskId: task.id, reason: 'commander_verification_preflight_failed', error: error.message }; }
+    remote = buildRemoteCommand({ runId, department, model, taskId: task.id, timeoutSec: verification.timeoutSec });
+    remote = `mkdir -p ~/brain-runs; if mkdir ~/brain-runs/${runId}.verification-dispatch 2>/dev/null; then ${remote}; else cat >/dev/null; echo ALREADY; fi`;
   }
 
   // spec 第 3 节：ssh 派发失败重试一次再判死。重试是安全的——远端命令自带 ALREADY 探针
@@ -283,8 +290,8 @@ export async function triggerOpenclawAgent(task, deps = {}) {
   );
   // Brain 租约（派发总闸 G，任务 c5f6e683）：超时 + 15 分钟，过期由 task-lease-reaper 先探活再判 lost，
   // 不再「生死未知不处置」。落租约失败不影响派发（fail-open）。
-  try {
-    await (deps.setLease ?? setBrainLease)(pool, task.id, effectiveTimeoutSec(task.payload?.timeout_sec ?? AGENT_TIMEOUT_SEC) + BRAIN_LEASE_MARGIN_SECONDS);
+  if (!verification) try {
+    await (deps.setLease ?? setBrainLease)(pool, task.id, effectiveTimeoutSec(verification?.timeoutSec ?? task.payload?.timeout_sec ?? AGENT_TIMEOUT_SEC) + BRAIN_LEASE_MARGIN_SECONDS);
   } catch (err) {
     console.warn(`[openclaw-agent] 落 Brain 租约失败（不影响派发） task=${task.id}: ${err.message}`);
   }
@@ -293,7 +300,7 @@ export async function triggerOpenclawAgent(task, deps = {}) {
   });
 
   // 一次执行 = 一行 task_runs（run 原语，fail-open）：ssh 已把 agent 起到执行机，此刻起算开始。
-  await startRun({
+  if (!verification) await startRun({
     taskId: task.id,
     runId,
     source: 'openclaw-agent',
@@ -413,15 +420,13 @@ async function settleDeviceBusy(pool, row, receipt, now) {
  * 例外：最终文本含 DEVICE_BUSY 标记行（手机锁被占）→ 先于三态处理，回队等待（settleDeviceBusy）。
  * 两条 UPDATE 都带 `AND status = 'in_progress'` 的 CAS：不覆盖别的通道已经结过的账。
  *
- * 取数 LIMIT 10 且单条 ssh 15s：最坏 10×15s=150s，压在 scheduler job 的 300s 超时里。
- * ORDER BY started_at ASC NULLS FIRST —— 老任务先收，积压时不会有任务被一直挤在队尾饿死。
  */
 export async function reapOpenclawAgentRuns(pool, deps = {}) {
   const execFileFn = deps.execFileFn ?? nodeExecFile;
   const now = deps.now ?? Date.now;
   const { rows } = await pool.query(
-    `SELECT id, payload->>'run_id' AS run_id, payload, ${DUE_AT_SELECT_SQL} AS due_at FROM tasks
-      WHERE task_type = 'qiumi_task' AND status = 'in_progress' AND executor_kind = 'openclaw-agent'
+    `SELECT id, task_type, payload->>'run_id' AS run_id, payload, ${DUE_AT_SELECT_SQL} AS due_at FROM tasks
+      WHERE (task_type = 'qiumi_task' OR ${verificationTaskSql()}) AND status = 'in_progress' AND executor_kind = 'openclaw-agent'
         AND payload->>'run_id' IS NOT NULL
       ORDER BY started_at ASC NULLS FIRST
       LIMIT ${REAP_BATCH}`,
@@ -437,7 +442,7 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
     try {
       stdout = await sshRun(execFileFn, [
         ...SSH_BASE_ARGS, primaryTarget(),
-        `if [ -f ~/brain-runs/${r.run_id}.exit ]; then echo EXIT=$(cat ~/brain-runs/${r.run_id}.exit); tail -c ${companyAnalysis ? 160000 : 20000} ~/brain-runs/${r.run_id}.log 2>/dev/null; else echo NO_EXIT; fi`,
+        `if [ -f ~/brain-runs/${r.run_id}.exit ]; then echo EXIT=$(cat ~/brain-runs/${r.run_id}.exit); tail -c ${isCommanderVerification(r) ? 200000 : companyAnalysis ? 160000 : 20000} ~/brain-runs/${r.run_id}.log 2>/dev/null; else echo NO_EXIT; fi`,
       ], { timeout: REAP_SSH_TIMEOUT_MS, encoding: 'utf8' });
     } catch (err) {
       console.warn(`[openclaw-agent] 收割 ${r.run_id} 探测失败: ${err.message}`);
@@ -448,13 +453,17 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
     const exit = parseInt(m[1], 10);
     const tail = stdout.replace(/^EXIT=\d+\n?/m, '');
     const receipt = parseReceipt(exit, tail);
-    const busy = await settleDeviceBusy(pool, r, receipt, now());
+    const busy = isCommanderVerification(r) ? null : await settleDeviceBusy(pool, r, receipt, now());
     if (busy === 'requeued') { out.requeued++; continue; }
     if (busy === 'failed') { out.failed++; out.reaped++; continue; }
     let outcome = reapOutcome(receipt, tail);
-    if (outcome.status === 'completed_no_pr') {
+    if (outcome.status === 'completed_no_pr' && !isCommanderVerification(r)) {
       const reason = rpaExploreFailure(r, receipt);
       if (reason) outcome = { status: 'failed', reason, yieldSummary: null };
+    }
+    if (isCommanderVerification(r)) {
+      try { receipt.verification_runtime = verificationRuntime(tail, r.run_id); }
+      catch (error) { outcome = { status: 'failed', reason: error.message, yieldSummary: null }; }
     }
     let analysis = null;
     if (companyAnalysis && outcome.status === 'completed_no_pr') {

@@ -1,3 +1,4 @@
+import { isCommanderVerification } from './lib/commander-verification-transport.js';
 import {LINUX_POOL_EXECUTOR_KIND} from './linux-pool/task-authority.js';
 /**
  * executor-contracts.js
@@ -68,6 +69,7 @@ export const EXECUTOR_KIND_FOR = Object.freeze({
  * @returns {string|null} 无映射返回 null（保持调用方原有兜底语义）
  */
 export function resolveExecutorKind(task) {
+  if (isCommanderVerification(task)) return OPENCLAW_AGENT_EXECUTOR_KIND;
   const mapped = Object.prototype.hasOwnProperty.call(EXECUTOR_KIND_FOR, task?.task_type)
     ? EXECUTOR_KIND_FOR[task.task_type]
     : null;
@@ -84,6 +86,7 @@ export function resolveExecutorKind(task) {
  * 只做 relay-container → kernel-process 这一个方向的纠正，其余原样返回。
  */
 export function resolveLivenessKind(task) {
+  if (isCommanderVerification(task)) return OPENCLAW_AGENT_EXECUTOR_KIND;
   const persisted = task?.executor_kind || null;
   if (task?.payload?.harness_runtime === 'kernel-v1') {
     const mappedIsRelay = EXECUTOR_KIND_FOR[task?.task_type] === 'relay-container';
@@ -112,6 +115,7 @@ export const EXTERNALLY_EXECUTED_KINDS = Object.freeze([
  */
 export function isExternallyExecuted(task) {
   if (!task) return false;
+  if (isCommanderVerification(task)) return true;
   // audit是通用类型；只有网关私有authority铸造并持久化的kind才交专用controller。
   if (task.executor_kind === LINUX_POOL_EXECUTOR_KIND) return true;
   // runner 认领时显式写入的 kind；task_type=data 是通用类型，只能按持久化 kind 判。

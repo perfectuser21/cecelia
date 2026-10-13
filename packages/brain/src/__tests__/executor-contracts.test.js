@@ -349,3 +349,10 @@ describe('external-worker probe 直接调用', () => {
     expect(await probe({ id: 'xyz' }, { activeProcesses: null })).toBe('alive');
   });
 });
+
+it('Commander核验SSH派发在途按外部OpenClaw判活，普通research不变',async()=>{
+ const {resolveExecutorKind,resolveLivenessKind,isExternallyExecuted}=await import('../executor-contracts.js');
+ const task={task_type:'research',payload:{verification_transport:'openclaw-agent-v1'}};
+ expect(resolveExecutorKind(task)).toBe('openclaw-agent');expect(resolveLivenessKind(task)).toBe('openclaw-agent');expect(isExternallyExecuted(task)).toBe(true);
+ expect(isExternallyExecuted({task_type:'research',payload:{}})).toBe(false);
+});

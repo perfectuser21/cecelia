@@ -11,3 +11,5 @@
 - 恢复信封携有界失败断言和证据，核验使用真实 Codex 路由及官方回调，固定执行机用于跨机只读产物读回；blocked 巡检公平轮转。
 - 信封活动及步骤 key 精确关联冻结 release 的引用和 UUID，当前定义漂移不影响；路径缺口在 ready、运行与资源副作用之前拒绝。
 - 输入输出 schema 校验首错即停，避免全错误遍历资源耗尽；shell 活动依据冻结 by 字段记 code，模型为空，不信任事件自述。
+- 独立 research 核验使用限定 OpenClaw transport，固定 skill-factory / openai/gpt-6.1-sol；独立运行与租约先提交再起跑，池满/旧 Bridge 不阻断，普通 research/qiumi 不变。
+- 核验回执逐项核对官方 requested/effective、rerouted 及执行 trace，缺证据或错误模型不能完成；原始产物优先经 gateway_exec 只读核验执行机，不能误把模型沙箱当 MMV。

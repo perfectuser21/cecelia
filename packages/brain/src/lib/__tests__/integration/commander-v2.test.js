@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events';
+import { triggerOpenclawAgent, reapOpenclawAgentRuns } from '../../../openclaw-agent-executor.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { beforeEach, afterEach, it, expect, vi } from 'vitest';
@@ -13,8 +15,10 @@ let f, id, definition, contract, deps;
 const input = { text: '中文\n换行 $(touch /tmp/no-command) `false` ; "引号"', empty: [] };
 beforeEach(async context => {
  f = await releaseEvidenceDatabase(context.task.name.includes('冻结shell') ? {activityExecutor:'shell'} : {}); id = randomUUID();
- await f.db.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS result jsonb,ADD COLUMN IF NOT EXISTS task_type text,ADD COLUMN IF NOT EXISTS claimed_by text,ADD COLUMN IF NOT EXISTS claimed_at timestamptz,ADD COLUMN IF NOT EXISTS executor_kind text,ADD COLUMN IF NOT EXISTS error_message text`);
+ await f.db.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS parent_task_id uuid,ADD COLUMN IF NOT EXISTS project_id uuid,ADD COLUMN IF NOT EXISTS summary text,ADD COLUMN IF NOT EXISTS priority text,ADD COLUMN IF NOT EXISTS due_at timestamptz,ADD COLUMN IF NOT EXISTS description text,ADD COLUMN IF NOT EXISTS result jsonb,ADD COLUMN IF NOT EXISTS task_type text,ADD COLUMN IF NOT EXISTS claimed_by text,ADD COLUMN IF NOT EXISTS claimed_at timestamptz,ADD COLUMN IF NOT EXISTS executor_kind text,ADD COLUMN IF NOT EXISTS error_message text`);
  await f.db.query(readFileSync(new URL('../../../../migrations/268_task_events.sql',import.meta.url),'utf8'));
+ await f.db.query(readFileSync(new URL('../../../../migrations/553_task_leases_device_pools.sql',import.meta.url),'utf8').split('CREATE TABLE IF NOT EXISTS device_pools')[0]);
+ await f.db.query('CREATE TABLE IF NOT EXISTS device_locks(locked_by text,expires_at timestamptz)');
  await f.db.query('DROP TABLE spans CASCADE');
  for(const file of ['495_vs_model_spans.sql','514_span_occurrences.sql','516_span_definition_provenance.sql'])await withLegacyNames(f.db,()=>f.db.query(readFileSync(new URL(`../../../../migrations/${file}`,import.meta.url),'utf8')));
  const release=(await createRelease(f.db,f.releaseInput)).release;
@@ -23,7 +27,7 @@ beforeEach(async context => {
  contract={ key:'report', input_schema:{type:'object',required:['text','empty'],properties:{text:{type:'string'},empty:{type:'array'}}}, resources:{},recovery:{max_attempts:2,total_timeout_sec:2400,cleanup_timeout_sec:300,retry_safe:true,retry_on:['verification_failed','execution_failed']} };
  await f.db.query("INSERT INTO tasks(id,title,status,task_type,payload) VALUES($1,'通用报告','queued','workflow_dispatch',$2)",[id,{commander_protocol:'commander-v2',workflow_key:'report',workflow_input:input,workflow_definition:definition}]);
  deps={ afterTerminal:vi.fn(), frozenContract:async()=>({definition,contract}),ready:vi.fn(async e=>({protocol:'commander-v2',ready:true,...e.definition})),sshDispatch:vi.fn(async()=> 'DISPATCHED'),lockGate:vi.fn(async()=>({pass:true})),setLease:vi.fn(),releaseLease:vi.fn(),releaseLock:vi.fn(),createVerify:vi.fn(async(db,spec)=>{
-   const child=randomUUID();await db.query("INSERT INTO tasks(id,title,status,task_type,payload) VALUES($1,$2,'queued','research',$3)",[child,spec.title,spec.metadata]);return {task:{id:child}};
+   const child=randomUUID();await db.query("INSERT INTO tasks(id,title,status,task_type,payload,description) VALUES($1,$2,'queued','research',$3,$4)",[child,spec.title,spec.metadata,spec.description]);return {task:{id:child}};
  }) };
 });
 afterEach(async()=>{await f?.close();f=null;});
@@ -98,7 +102,8 @@ it('终态回执丢失时status events幂等补账，核验只建一次',async()
 });
 async function verify(verdict){
  const c=(await state()).result.workflow_control,e=c.envelope;
- await f.db.query("UPDATE tasks SET status='completed',result=$2 WHERE id=$1",[c.verify_task_id,{workflow_verification:{task_id:id,run_id:e.run_id,attempt:e.attempt,definition_sha256:e.definition.snapshot_sha256,verdict,assertions:[{name:'cleanup',pass:true},{name:'effects_safe_to_retry',pass:true},{name:'output',pass:verdict==='PASS'}],evidence:['independent:readback']}}]);
+ const child=(await f.db.query('SELECT * FROM tasks WHERE id=$1',[c.verify_task_id])).rows[0];
+ await f.db.query("UPDATE tasks SET status='completed',result=$2 WHERE id=$1",[c.verify_task_id,{receipt:{verification_runtime:{provider:'openai',model:'gpt-6.1-sol',logical_run_id:child.payload.run_id,official_run_id:'fixture',rerouted:false}},workflow_verification:{task_id:id,run_id:e.run_id,attempt:e.attempt,definition_sha256:e.definition.snapshot_sha256,verdict,assertions:[{name:'cleanup',pass:true},{name:'effects_safe_to_retry',pass:true},{name:'output',pass:verdict==='PASS'}],evidence:['independent:readback']}}]);
  await reconcileCommanderTask(f.db,id,deps);
 }
 it('独立核验PASS与真实cleanup成立才完成原任务',async()=>{
@@ -138,7 +143,7 @@ it('unknown副作用补独立逐项读回后同task恢复，原delivery及run历
  const blocked=(await state()).result.workflow_control;
  await reconcileCommanderTask(f.db,id,deps);expect(deps.createVerify).toHaveBeenCalledTimes(1);expect(deps.releaseLease).toHaveBeenCalledTimes(1);
  const v={...blocked.verification,assertions:[...blocked.verification.assertions,{name:`effect:${key}`,pass:true,status:'none',evidence:['independent:account-readback']} ]};
- await f.db.query('UPDATE tasks SET result=$2 WHERE id=$1',[blocked.verify_task_id,{workflow_verification:v}]);
+ await f.db.query('UPDATE tasks SET result=result||$2::jsonb WHERE id=$1',[blocked.verify_task_id,{workflow_verification:v}]);
  await reconcileCommanderTask(f.db,id,deps);expect((await state()).result.workflow_control.phase).toBe('recovering');
  await reconcileCommanderTask(f.db,id,deps);expect((await envelope()).attempt).toBe(2);
  const original=(await f.db.query('SELECT result FROM task_runs WHERE run_id=$1',[e.run_id])).rows[0].result;
@@ -184,15 +189,30 @@ async function completePath(e){
  let seq=(await state()).result.workflow_control.last_seq;
  for(const path of e.definition.expected_path)await sendEvent(++seq,'activity_completed',{reference_id:path.reference_id,step_id:path.step_id,started_at:'2026-10-13T00:00:00Z',ended_at:'2026-10-13T00:01:00Z',outcome:'pass',evidence:{ref:'actual:execution'}},e);
 }
-it('正式Codex回调stdout可收进核验结果，完整冻结span加独立PASS才完成',async()=>{
+function officialVerification(v,over={}) {
+ return JSON.stringify({runId:'official-run',status:'ok',result:{payloads:[{text:`WORKFLOW_VERIFICATION ${JSON.stringify(v)}`}],meta:{agentMeta:{provider:'openai',model:'gpt-6.1-sol',terminalReceipt:{runId:'official-run',requested:{provider:'openai',model:'gpt-6.1-sol'},effective:{provider:'openai',model:'gpt-6.1-sol'},rerouted:false,successfulToolNames:['gateway_exec']}},executionTrace:{winnerProvider:'openai',winnerModel:'gpt-6.1-sol',fallbackUsed:false,...over}}}});
+}
+it.each([false,true])('正式OpenClaw运输落独立run，真实模型回执收割后才允许独立PASS（fallback=%s）',async fallback=>{
  await dispatchCommanderV2(f.db,id,deps);const e=await envelope();await completePath(e);await stopWithDelivery(e);
  const c=(await state()).result.workflow_control;
+ const child=(await f.db.query('SELECT * FROM tasks WHERE id=$1',[c.verify_task_id])).rows[0];
+ const observedAtLaunch=[];
+ const spawnFn=vi.fn(()=>{const proc=new EventEmitter();proc.stdout=new EventEmitter();proc.stderr=new EventEmitter();proc.stdin={end:vi.fn()};proc.kill=vi.fn();setImmediate(async()=>{observedAtLaunch.push((await f.db.query('SELECT EXISTS(SELECT 1 FROM task_runs WHERE task_id=$1) AS run_ready,EXISTS(SELECT 1 FROM task_leases WHERE task_id=$1) AS lease_ready',[child.id])).rows[0]);proc.stdout.emit('data',Buffer.from('DISPATCHED'));proc.emit('close',0);});return proc;});
+ expect((await triggerOpenclawAgent(child,{pool:f.db,spawnFn})).success).toBe(true);
+ expect(observedAtLaunch).toEqual([{run_ready:true,lease_ready:true}]);
+ expect((await f.db.query('SELECT task_id FROM task_leases WHERE task_id=$1 AND released_at IS NULL',[child.id])).rows).toHaveLength(1);
+ expect(spawnFn.mock.calls[0][1].at(-1)).toContain('--model openai/gpt-6.1-sol');
+ expect(spawnFn.mock.calls[0][1].at(-1)).toContain(`agent:skill-factory:${child.payload.run_id}`);
+ expect((await f.db.query('SELECT run_id FROM task_runs WHERE task_id=$1',[child.id])).rows).toEqual([{run_id:child.payload.run_id}]);
+ expect(child.payload.run_id).not.toBe(e.run_id);
  const v={task_id:id,run_id:e.run_id,attempt:e.attempt,definition_sha256:e.definition.snapshot_sha256,verdict:'PASS',assertions:[{name:'cleanup',pass:true},{name:'output',pass:true}],evidence:['independent:readback']};
- await f.db.query("UPDATE tasks SET status='completed',payload=payload||$2::jsonb WHERE id=$1",[c.verify_task_id,{last_run_result:{result_summary:`只读核验完成\nWORKFLOW_VERIFICATION ${JSON.stringify(v)}`}}]);
+ const execFileFn=vi.fn((cmd,args,opts,cb)=>cb(null,`EXIT=0\n${officialVerification(v,{fallbackUsed:fallback})}`,''));
+ const reaped=await reapOpenclawAgentRuns(f.db,{execFileFn});expect(reaped).toMatchObject(fallback?{failed:1,completed:0}:{failed:0,completed:1});
  await reconcileCommanderTask(f.db,id,deps);
- const parent=await state();expect(parent.status).toBe('completed');expect(parent.result.workflow_control.reconciliation).toMatchObject({evidence_status:'verified',business_outcome:'pass'});
- const child=(await f.db.query('SELECT * FROM tasks WHERE id=$1',[c.verify_task_id])).rows[0];expect(child.result.workflow_verification).toEqual(v);
- expect(child.payload.workflow_verification.execution_location.ssh_target).toBe(parent.result.workflow_control.execution_location.ssh_target);
+ const parent=await state();expect(parent.status).toBe(fallback?'in_progress':'completed');
+ const settled=(await f.db.query('SELECT * FROM tasks WHERE id=$1',[child.id])).rows[0];
+ if(!fallback){expect(settled.result.workflow_verification).toEqual(v);expect(settled.result.receipt.verification_runtime).toMatchObject({provider:'openai',model:'gpt-6.1-sol',logical_run_id:child.payload.run_id});}
+ else expect(settled.error_message).toContain('fallback');
 });
 it('正式信封活动映射只消费冻结release，当前活动key漂移不改变映射',async()=>{
  const workflow=f.workflows.find(w=>w.id===definition.workflow_definition_version_id);
@@ -225,4 +245,14 @@ it('agent活动不能凭事件自述shell伪装code事实',async()=>{
  await prepareCommander(f.db,id,deps);const e=await envelope();const path=e.definition.expected_path[0];
  await sendEvent(1,'activity_completed',{reference_id:path.reference_id,started_at:'2026-10-13T00:00:00Z',ended_at:'2026-10-13T00:01:00Z',outcome:'pass',executor_kind:'code',evidence:{source:'commander-shell'}},e);
  expect((await f.db.query('SELECT executor_kind FROM spans WHERE run_id=$1',[e.run_id])).rows[0].executor_kind).toBe('agent');
+});
+
+it.each(['run','lease'])('核验%s起跑账失败整笔回滚，零SSH且不伪造运行成功',async failure=>{
+ await dispatchCommanderV2(f.db,id,deps);await stopWithDelivery(await envelope());
+ const c=(await state()).result.workflow_control,child=(await f.db.query('SELECT * FROM tasks WHERE id=$1',[c.verify_task_id])).rows[0],spawnFn=vi.fn();
+ const inject=failure==='run'?{startRun:async()=>null}:{setLease:async()=>{throw Error('lease unavailable');}};
+ const result=await triggerOpenclawAgent(child,{pool:f.db,spawnFn,...inject});
+ expect(result).toMatchObject({success:false,reason:'commander_verification_preflight_failed'});expect(spawnFn).not.toHaveBeenCalled();
+ expect((await f.db.query('SELECT * FROM task_runs WHERE task_id=$1',[child.id])).rows).toHaveLength(0);
+ expect((await f.db.query('SELECT * FROM task_leases WHERE task_id=$1',[child.id])).rows).toHaveLength(0);
 });

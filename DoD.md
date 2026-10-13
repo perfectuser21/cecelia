@@ -270,9 +270,9 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 # 通用 Commander v2（任务 c22e9273）
 
-- [x] [BEHAVIOR] commanderv2control 正式入口冻结合同、输入、版本及总预算后起跑；非手机零锁；失败绑定零业务副作用；并发派发单run；反馈鉴权、序号与owner隔离；输入输出schema首错即停；输出schema拒绝成功但消费原序事件；恢复诊断有界传递；活动及步骤key仅从release冻结路径精确映射；Codex实际路由、跨机材料身份及公平巡检；旧收割/租约/终态入口不抢收。
-  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/commander-v2*.test.js src/routes/__tests__/workflow-commander.test.js src/lib/__tests__/workflow-commander-dispatch.test.js src/lib/__tests__/task-terminal.test.js src/lib/__tests__/task-lease.test.js"
-- [x] [BEHAVIOR] commanderv2transactions scratch真实运行/绑定/span/事件读回；重复反馈单事实；活child不重发；丢回执补账；独立PASS且冻结路径完整才完成、started不造悬空span、shell执行者仅由冻结by字段推导、Codex回调正式读回；FAIL原task同预算新run；unknown不重复外部动作；错误指纹按版本累计，阈值只建议不创建coding。
+- [x] [BEHAVIOR] commanderv2control 正式入口冻结合同、输入、版本及总预算后起跑；非手机零锁；失败绑定零业务副作用；并发派发单run；反馈鉴权、序号与owner隔离；输入输出schema首错即停；输出schema拒绝成功但消费原序事件；恢复诊断有界传递；活动及步骤key仅从release冻结路径精确映射；限定research核验走OpenClaw固定Codex模型、独立run和租约先入账、跨机材料身份及公平巡检；旧收割/租约/终态入口不抢收。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/commander-v2*.test.js src/lib/__tests__/commander-verification-transport.test.js src/__tests__/openclaw-agent-executor.test.js src/routes/__tests__/workflow-commander.test.js src/lib/__tests__/workflow-commander-dispatch.test.js src/lib/__tests__/task-terminal.test.js src/lib/__tests__/task-lease.test.js"
+- [x] [BEHAVIOR] commanderv2transactions scratch真实运行/绑定/span/事件读回；重复反馈单事实；活child不重发；丢回执补账；独立PASS且冻结路径完整才完成、started不造悬空span、shell执行者仅由冻结by字段推导、官方CLI模型回执与receipt.text正式读回、fallback不能完成；FAIL原task同预算新run；unknown不重复外部动作；错误指纹按版本累计，阈值只建议不创建coding。
   Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/lib/__tests__/integration/commander-v2.test.js src/lib/__tests__/integration/task-run-definition.test.js"
 
 - [x] [BEHAVIOR] commanderdefinitionfreeze 正式六阶段登记冻结完整输入输出合同和实现，篡改来源及并发漂移拒绝；scratch真实扫描、地图、回归实跑和release verified贯通。

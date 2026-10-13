@@ -9,6 +9,7 @@ import { releaseDeviceLocksHeldBy } from '../device-lock-helpers.js';
 import { finalizeTask, afterTerminalTransition } from './task-terminal.js';
 import { recordCommanderFailure } from './commander-v2-failures.js';
 import { readSystemRunEvidence } from './capability-system-evidence.js';
+import { verificationMetadata, isCommanderVerification, verifiedRuntime } from './commander-verification-transport.js';
 import { createRoutedTask } from '../work-routing-store.js';
 export function verificationRequest(task, c) {
   const e = c.envelope;
@@ -18,8 +19,8 @@ export function verificationRequest(task, c) {
     execution_status: c.delivery.status, effects: c.delivery.effects };
   return { source: 'scheduler', declared_domain: 'research', mutation_intent: 'read_only', source_id: `commander-verify:${e.run_id}`, requested_task_type: 'research',
     title: `独立核验 ${e.workflow_key} ${e.run_id}`, parent_task_id: task.id,
-    description: `使用run-verify技能，只读合同和实际产物，不读执行会话，不执行发布或修复。必须独立读取原始来源及outputs、cleanup证据，逐项核实。\n固定材料：${JSON.stringify(fixed)}\n最后一行输出 WORKFLOW_VERIFICATION {task_id,run_id,attempt,definition_sha256,verdict:"PASS|FAIL|INCONCLUSIVE",assertions:[],evidence:[]}。PASS必须有非空断言和独立证据，收尾须断言name=cleanup、pass=true。失败时须独立读回外部副作用；仅确认未提交或已补偿，才能加入name=effects_safe_to_retry、pass=true断言，禁止依据执行者自述。对delivery中committed/unknown的每个effect，只有独立确认无动作或已补偿，才能附{name:"effect:<key>",pass:true,status:"none|compensated",evidence:[]}逐项读回断言；后续核验补充证据可更新同核验任务结果触发恢复。执行材料属于固定execution_location.ssh_target，outputs绝对路径只在该执行机解释；核验机通过只读SSH读取同源JSON/CSV及冻结contract.runtime所指helper，不能把远端路径当成本机路径。`,
-    metadata: { workflow_verification_of: task.id, workflow_verification: fixed, skill: 'run-verify', executor: 'codex' },
+    description: `使用run-verify技能，只读合同和实际产物，不读执行会话，不执行发布或修复。必须独立读取原始来源及outputs、cleanup证据，逐项核实。\n固定材料：${JSON.stringify(fixed)}\n最后一行输出 WORKFLOW_VERIFICATION {task_id,run_id,attempt,definition_sha256,verdict:"PASS|FAIL|INCONCLUSIVE",assertions:[],evidence:[]}。PASS必须有非空断言和独立证据，收尾须断言name=cleanup、pass=true。失败时须独立读回外部副作用；仅确认未提交或已补偿，才能加入name=effects_safe_to_retry、pass=true断言，禁止依据执行者自述。对delivery中committed/unknown的每个effect，只有独立确认无动作或已补偿，才能附{name:"effect:<key>",pass:true,status:"none|compensated",evidence:[]}逐项读回断言；后续核验补充证据可更新同核验任务结果触发恢复。执行材料属于固定execution_location.ssh_target，outputs绝对路径只在该执行机解释；核验机优先通过gateway_exec访问已确认的MMV执行机；其他固定宿主用官方node_exec/file_fetch或只读SSH读取同源JSON/CSV及冻结contract.runtime所指helper，不能把模型沙箱当作执行机。`,
+    metadata: verificationMetadata(fixed),
     task: { status: 'queued', priority: 'P1', parent_task_id: task.id, created_by: 'workflow-commander-v2', trigger_source: 'brain_auto' } };
 }
 async function ensureVerification(db, task, c, deps) {
@@ -29,7 +30,7 @@ async function ensureVerification(db, task, c, deps) {
   requireCommander(c.verify_task_id && c.verify_task_id !== task.id, '独立核验建单失败', 409);
 }
 function callbackVerification(vt) {
-  const raw = vt.payload?.last_run_result?.result_summary;
+  const raw = isCommanderVerification(vt) ? vt.result?.receipt?.text : vt.payload?.last_run_result?.result_summary;
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > 50000) return null;
   const line = [...raw.matchAll(/^WORKFLOW_VERIFICATION[ \t]+(\{[^\n]*\})[ \t]*$/gm)].at(-1)?.[1];
   try { const parsed = JSON.parse(line ?? raw); return parsed.workflow_verification ?? (line ? parsed : null); }
@@ -37,6 +38,7 @@ function callbackVerification(vt) {
 }
 export function readVerification(vt, task, c) {
   if (!vt || !['completed', 'completed_no_pr', 'failed', 'cancelled'].includes(vt.status)) return null;
+  if (isCommanderVerification(vt) && !verifiedRuntime(vt)) return { verdict: 'INCONCLUSIVE', reason: '核验实际模型未获官方回执确认', assertions: [], evidence: [] };
   const v = vt.result?.workflow_verification ?? callbackVerification(vt), e = c.envelope;
   if (!v || v.task_id !== task.id || v.run_id !== e.run_id || v.attempt !== e.attempt || v.definition_sha256 !== e.definition.snapshot_sha256
       || !['PASS', 'FAIL', 'INCONCLUSIVE'].includes(v.verdict) || !Array.isArray(v.assertions) || !Array.isArray(v.evidence)) {

@@ -1,16 +1,18 @@
 import { it, expect } from 'vitest';
 import { verificationRequest, readVerification, reconcileCommanderV2 } from '../commander-v2-control.js';
-import { resolveExecutor } from '../../routing/resolve-executor.js';
+import { resolveDispatchRoute } from '../dispatch-route.js';
 const e={task_id:'task',workflow_key:'report',run_id:'run',attempt:1,definition:{snapshot_sha256:'hash'}};
 const v={task_id:'task',run_id:'run',attempt:1,definition_sha256:'hash',verdict:'PASS',assertions:[{name:'cleanup',pass:true}],evidence:['independent']};
-it('核验正式显式Codex路由排除默认Claude，携带真正远端产物位置',async()=>{
+it('独立research核验走限定OpenClaw，固定Codex且不借qiumi身份',()=>{
  const spec=verificationRequest({id:'task'},{envelope:e,delivery:{outputs:{path:'/remote/report.json'}},execution_location:{ssh_target:'worker@actual-host'}});
- const codex={name:'codex-worker',status:'active',metadata:{executors:[{executor:'codex',url:'http://codex'}]}};
- const claude={name:'other',status:'active',metadata:{executors:[{executor:'claude',default:true,url:'http://claude'}]}};
- const route=await resolveExecutor({task_type:'research',payload:spec.metadata},{loadMachines:async()=>[claude,codex],selectLoadBalanced:async rows=>rows[0]});
- expect(route.executor).toBe('codex');expect(route.machineId).toBe('codex-worker');
+ expect(resolveDispatchRoute({task_type:'research',payload:spec.metadata}).route).toBe('openclaw-agent');
+ expect(spec.metadata).toMatchObject({verification_transport:'openclaw-agent-v1',verification_agent:'skill-factory',model:'openai/gpt-6.1-sol'});
+ expect(spec.metadata.run_id).toMatch(/^wfv-[0-9a-f-]{36}$/);expect(spec.metadata.run_id).not.toBe(e.run_id);
+ expect(spec.metadata.qiumi_department).toBeUndefined();expect(spec.metadata.qiumi_source).toBeUndefined();
+ expect(Date.parse(spec.metadata.verification_deadline_at)-Date.now()).toBeLessThanOrEqual(900000);
  expect(spec.metadata.workflow_verification.execution_location.ssh_target).toBe('worker@actual-host');
  expect(spec.description).toContain('只读SSH');
+ expect(resolveDispatchRoute({task_type:'research',payload:{}}).route).toBe('codex-bridge');
 });
 it('仅解析固定核验子任务终态回调末行JSON，身份不匹配不接受PASS',()=>{
  const child={status:'completed',payload:{last_run_result:{result_summary:`报告\nWORKFLOW_VERIFICATION ${JSON.stringify(v)}`}}};
@@ -36,4 +38,12 @@ it('公平巡检：20个无新证据blocked不会饿死第21个任务',async()=>
  }};
  await reconcileCommanderV2(pool);await reconcileCommanderV2(pool);
  expect(scanned[0]).not.toContain('task-20');expect(scanned[1]).toContain('task-20');expect(touched).toContain('task-20');
+});
+
+it('OpenClaw receipt.text须匹配固定主run，缺真实模型或错run均不能PASS',()=>{
+ const payload={verification_transport:'openclaw-agent-v1',run_id:'wfv-independent'};
+ const child={task_type:'research',status:'completed_no_pr',payload,result:{receipt:{text:`WORKFLOW_VERIFICATION ${JSON.stringify(v)}`,verification_runtime:{provider:'openai',model:'gpt-6.1-sol',logical_run_id:payload.run_id,official_run_id:'official',rerouted:false}}}};
+ expect(readVerification(child,{id:'task'},{envelope:e})).toEqual(v);
+ expect(readVerification(child,{id:'task'},{envelope:{...e,run_id:'other'}}).verdict).toBe('INCONCLUSIVE');
+ child.result.receipt.verification_runtime.model='fallback';expect(readVerification(child,{id:'task'},{envelope:e}).verdict).toBe('INCONCLUSIVE');
 });

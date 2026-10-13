@@ -756,3 +756,32 @@ describe('Brain 租约（派发总闸 G，任务 c5f6e683）：openclaw-agent �
     expect(setLease).not.toHaveBeenCalled();
   });
 });
+
+import { verificationMetadata } from '../lib/commander-verification-transport.js';
+it('独立research核验无qiumi字段也运输，实际命令固定agent/model/独立session',async()=>{
+ const fixed={task_id:'parent',run_id:'business',attempt:1,definition_sha256:'hash',input_sha256:'input',definition:{snapshot_sha256:'hash'}};
+ const p=verificationMetadata(fixed),t={id:'child',task_type:'research',description:'只读核验固定材料',payload:p};
+ const c={verify_task_id:t.id,envelope:{...fixed}};
+ const pool={query:vi.fn(async sql=>({rows:sql.startsWith('SELECT status,payload')?[{status:'queued',payload:p}]:sql.startsWith('SELECT * FROM tasks')?[{id:'parent',status:'in_progress',result:{workflow_control:c}}]:sql.startsWith('INSERT INTO task_runs')?[{id:'run-row'}]:sql.startsWith('SELECT task_id,status')?[{task_id:'child',status:'running',ended_at:null}]:[],rowCount:1})),release:vi.fn()};pool.connect=async()=>pool;
+ const spawnFn=spawnMock();
+ expect((await triggerOpenclawAgent(t,{pool,spawnFn,setLease:vi.fn(async()=>({lease_until:new Date(Date.now()+900000).toISOString()}))})).success).toBe(true);
+ const command=spawnFn.mock.calls[0][1].at(-1);
+ expect(command).toContain('--agent skill-factory --model openai/gpt-6.1-sol');expect(command).toContain(`--session-key agent:skill-factory:${p.run_id}`);
+ const prompt=spawnFn.child.stdin.end.mock.calls[0][0];expect(prompt).toContain('gateway_exec');expect(prompt).toContain('禁止sessions_spawn');expect(prompt).not.toContain('页面正文');
+});
+it('固定核验命令在真实sh中完整传参，重复只起一次且不执行输入中的shell片段',async()=>{
+ const directory=join('/tmp',`commander-verify-shell-${randomUUID()}`);mkdirSync(directory,{recursive:true});
+ try{
+  const fakeBin=join(directory,'fakeclaw'),runId=`wfv-${randomUUID()}`;
+  writeFileSync(fakeBin,'#!/bin/sh\nfor arg in "$@"; do printf "%s\n" "$arg"; done\n');chmodSync(fakeBin,0o755);
+  const command=buildRemoteCommand({runId,department:'skill-factory',model:'openai/gpt-6.1-sol',taskId:'child',timeoutSec:600,binPath:fakeBin}).replaceAll('~/brain-runs',`${directory}/brain-runs`);
+  const input=`独立核验\n$(touch ${directory}/injected) \`false\``;
+  expect(spawnSync('sh',['-c',command],{input,encoding:'utf8'}).stdout).toContain('DISPATCHED');
+  const exit=join(directory,'brain-runs',`${runId}.exit`);
+  for(let i=0;i<100&&!existsSync(exit);i++)await new Promise(r=>setTimeout(r,20));
+  const log=readFileSync(join(directory,'brain-runs',`${runId}.log`),'utf8');
+  expect(log).toContain(`--model\nopenai/gpt-6.1-sol`);expect(log).toContain(`agent:skill-factory:${runId}`);expect(log).toContain(input);expect(existsSync(join(directory,'injected'))).toBe(false);
+  expect(spawnSync('sh',['-c',command],{input,encoding:'utf8'}).stdout).toContain('ALREADY');
+  expect(readFileSync(join(directory,'brain-runs',`${runId}.log`),'utf8')).toBe(log);
+ }finally{rmSync(directory,{recursive:true,force:true});}
+});

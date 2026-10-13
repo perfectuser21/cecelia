@@ -21,6 +21,7 @@
  *   own-consumer   → tick 不派（tick_dispatchable=false），由该类型专属消费方领单，surface 不受约束
  *   headed         → payload.headed_manual=true，执行者是有头会话（人），不进 tick
  */
+import { isCommanderVerification } from './commander-verification-transport.js';
 import {
   getTaskType,
   LOCATION_MAP,
@@ -94,6 +95,7 @@ export function resolveDispatchRoute(task, { dynamic = null } = {}) {
   if (REVIEW.has(type)) return ok('codex-review', 'codex-review-local');
   if (type === 'staging_e2e') return ok('internal', 'brain-local');
   if (INTERNAL.has(type)) return ok('internal', 'brain-local');
+  if (isCommanderVerification(task)) return ok('openclaw-agent', 'openclaw-agent');
   if (type === 'qiumi_task') return ok('openclaw-agent', 'openclaw-agent');
   if (type === 'script_run') return ok('script', 'script');
   // 显式 override（payload.machine/executor）：executor=claude 强制落退役收口；其余（codex / 只给 machine）

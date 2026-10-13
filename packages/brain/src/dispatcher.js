@@ -13,6 +13,7 @@
  * 保持原 [tick]/[dispatch] 日志前缀不变。
  */
 
+import { isCommanderVerification } from './lib/commander-verification-transport.js';
 import pool from './db.js';
 import { getFleetStatus } from './fleet-resource-cache.js';
 import { codeTaskIdentitySql, compareCodeTaskIdentity } from './lib/code-task-identity.js';
@@ -61,7 +62,7 @@ import { CLAUDE_CHANNEL_RETIRED_CODE } from './lib/claude-channel.js';
  * cecelia-run 熔断与 bridge 健康检查对它都是误伤（2026-09-23 生产实证 task 72b010e9）。
  * 判据只从注册表 surface 派生，不手抄名单（铁律 76cb816c）。
  */
-const isOpenclawSurface = (type) => getTaskType(type)?.surface === 'openclaw-agent';
+const isOpenclawSurface = task => isCommanderVerification(task) || getTaskType(task?.task_type)?.surface === 'openclaw-agent';
 /** script 表面（script_run，棒 3）同样是 Brain 经 ssh 直派跑场机，不经 cecelia-bridge；熔断 key 独立，互不牵连。 */
 const isScriptSurface = (type) => getTaskType(type)?.surface === 'script';
 
@@ -690,7 +691,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
         try {
           const qiumiProbe = await selectNextDispatchableTask(goalIds, [], {
             priorityFilter: _quotaPriorityFilter,
-            onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES],
+            onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES], includeCommanderVerification: true,
           });
           if (qiumiProbe) {
             tickLog(`[tick] qiumi bypass: task_pool 已满但队列有 qiumi_task=${qiumiProbe.id}，穿透 MMV 不占 fleet 槽位，放行（仅选 qiumi_task）`);
@@ -831,7 +832,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, {
       priorityFilter: _quotaPriorityFilter,
       ...(codeOnly ? {codeOnly:true} : {}),
-      ...(qiumiOnlyBypass ? { onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES] } : {}),
+      ...(qiumiOnlyBypass ? { onlyTaskTypes: [...OPENCLAW_PASSTHROUGH_TASK_TYPES], includeCommanderVerification: true } : {}),
     });
     if (!candidate) {
       if (breakerSkipIds.length > 0 && noExecutorSkipIds.length === 0) {
@@ -1254,7 +1255,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
   // 跳过 bridge check，否则 bridge 不在时 harness 会被错误 revert 到 queued。
   // 名单见 lib/task-type-registry.js（HARNESS_INFLIGHT_TASK_TYPES）。
   const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES.includes(nextTask.task_type)
-    && !isOpenclawSurface(nextTask.task_type)
+    && !isOpenclawSurface(nextTask)
     && !isScriptSurface(nextTask.task_type);
 
   // Circuit breaker — 只对依赖 cecelia-bridge 的任务生效（harness_initiative 豁免）
@@ -1490,6 +1491,11 @@ export async function dispatchNextTask(goalIds, options = {}) {
     return {dispatched:false,reason:'wait:capacity',task_id:nextTask.id,actions};
   }
 
+  if (!execResult.success && isCommanderVerification(nextTask) && execResult.reason === 'commander_verification_rejected' && execResult.taskTerminal === true) {
+    await recordDispatchResult(pool, false, execResult.reason, undefined, nextTask.id);
+    return { dispatched: false, reason: execResult.reason, task_id: nextTask.id, terminal: true, actions };
+  }
+
   // 5a. Check if executor actually succeeded — revert to queued if not
   if (!execResult.success && execResult.reason === 'company_kr_analysis_superseded' && execResult.taskTerminal === true) {
     await recordDispatchResult(pool, false, 'company_kr_analysis_superseded', undefined, nextTask.id);
@@ -1583,7 +1589,7 @@ export async function dispatchNextTask(goalIds, options = {}) {
     } else if (execResult.reason === 'local_execution_disabled_on_scheduler') {
       console.warn(`[dispatch] local_execution_disabled_on_scheduler detected — skipping cecelia-run breaker count`);
     } else {
-      await recordFailure(isOpenclawSurface(nextTask.task_type) ? 'openclaw-agent' : isScriptSurface(nextTask.task_type) ? SCRIPT_BREAKER_KEY : 'cecelia-run');
+      await recordFailure(isOpenclawSurface(nextTask) ? 'openclaw-agent' : isScriptSurface(nextTask.task_type) ? SCRIPT_BREAKER_KEY : 'cecelia-run');
 
       // dispatch-fail-autoblock：连续失败计数 + 自动隔离
       // configError / spawn_deduplicated 已在上方 early-return，此处只处理真实执行失败。
@@ -1645,8 +1651,8 @@ export async function dispatchNextTask(goalIds, options = {}) {
   // 这里已经在 try 内、postClaimException 的覆盖范围里，而 agent 早就 spawn 出去了——
   // 所以必须自己吞掉异常：一旦让它冒到兜底，就会放 claim + 标 status='failed'，
   // 下个 tick 把同一个还在跑的任务再派一遍（比丢一笔事后记账糟得多）。
-  if (isOpenclawSurface(nextTask.task_type) || isScriptSurface(nextTask.task_type)) {
-    const breakerKey = isOpenclawSurface(nextTask.task_type) ? 'openclaw-agent' : SCRIPT_BREAKER_KEY;
+  if (isOpenclawSurface(nextTask) || isScriptSurface(nextTask.task_type)) {
+    const breakerKey = isOpenclawSurface(nextTask) ? 'openclaw-agent' : SCRIPT_BREAKER_KEY;
     try {
       await recordSuccess(breakerKey);
     } catch (e) {
