@@ -657,6 +657,9 @@
       "owner_path": "packages/brain/src/ops-notion-schema.js",
       "path": "packages/brain/scripts/smoke/ops-notion-schema-smoke.sh",
       "role": "verification"
-    }
+    },
+    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/src/__tests__/integration/version-identity-preflight.pg.integration.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/scripts/smoke/version-identity-preflight-smoke.sh", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/scripts/runtime-catalog-preflight.mjs", "role": "implementation"}
   ]
 }
