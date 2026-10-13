@@ -1,7 +1,8 @@
 import {afterEach,beforeAll,beforeEach,expect,it} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
-import {installScratchIdentities} from '../runtime-identities.js';
+import {installScratchIdentities,registerScratchSkillGitSource} from '../runtime-identities.js';
+import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {execFileSync} from 'node:child_process';
 import {scratchOnlyConnection} from '../../__tests__/fixtures/scratch-only-db.js';
 let pool,db,source,schema,skill,agent;
 let connection;
@@ -128,4 +129,18 @@ it('两连接旧快照不能登记与已提交固定来源不同的摘要',async
     await second.query('ROLLBACK');
     expect((await db.query(`SELECT count(*)::int n FROM ${schema}.skill_source_versions`)).rows[0].n).toBe(1);
   } finally {await second.query('ROLLBACK');second.release();}
+});
+
+it('真实Git核验与登记联动，重复幂等；漂移和未知Skill不能入版本表',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'identity-git-')),file=path.join(root,'skills/fixture/SKILL.md');fs.mkdirSync(path.dirname(file),{recursive:true});
+ const git=(...args)=>execFileSync('git',['-C',root,...args],{stdio:['ignore','pipe','pipe']});
+ try{
+  fs.writeFileSync(file,'真实登记夹具');git('init','-q');git('config','user.name','fixture');git('config','user.email','fixture@example.invalid');
+  git('remote','add','origin','https://github.com/owner/fixture.git');git('add','.');git('commit','-qm','fixed source');
+  const first=await registerScratchSkillGitSource(db,{schema,skillId:skill,sourcePath:file});expect(first).toMatchObject({registered:true,created:true,remote_revision_verified:false});
+  expect(await registerScratchSkillGitSource(db,{schema,skillId:skill,sourcePath:file})).toMatchObject({version_id:first.version_id,created:false});
+  await expect(registerScratchSkillGitSource(db,{schema,skillId:randomUUID(),sourcePath:file})).rejects.toMatchObject({code:'23503'});
+  fs.writeFileSync(file,'漂移');expect(await registerScratchSkillGitSource(db,{schema,skillId:skill,sourcePath:file})).toMatchObject({registered:false,reason:'local_drift'});
+  expect((await db.query(`SELECT count(*)::int n FROM ${schema}.skill_source_versions`)).rows[0].n).toBe(1);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
