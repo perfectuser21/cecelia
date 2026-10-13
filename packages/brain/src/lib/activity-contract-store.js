@@ -5,7 +5,15 @@ import { contractPath } from './activity-contract-loader.js';
 import { declareStepsFromContract, assertStepsHaveReadback } from './contract-steps.js';
 export const REGISTRATIONS_SQL = `SELECT id,key,capability_id,source_repo,source_path,source_workflow,source_capability,status,contract_sync_revision,
   (SELECT capability_code FROM capabilities WHERE id=workflows.capability_id) AS capability_code
-  FROM workflows WHERE source_repo=$1 ORDER BY key`;
+  FROM workflows WHERE source_repo=$1 AND NOT EXISTS(
+    SELECT 1 FROM workflow_definition_versions v WHERE v.id=workflows.current_definition_version_id
+      AND v.workflow_id=workflows.id AND v.payload->>'registration_protocol'='definition-freeze-v1'
+      AND workflows.source_capability IS NULL AND workflows.source_workflow IS NULL
+      AND v.source_repo=workflows.source_repo AND v.source_path=workflows.source_path
+      AND v.payload->'contract'->'source'->>'repo'=v.source_repo
+      AND v.payload->'contract'->'source'->>'ref'=v.source_path
+      AND v.payload->'contract'->'source'->>'revision'=v.source_commit
+  ) ORDER BY key`;
 export async function storeActivityContracts(pool, plans, head, repo, registrations = plans.map(p=>p.workflow), {beforeCommit,synchronizeSteps=false} = {}) {
   const out = {head_sha:head,updated:[],inserted:[],deprecated:[],unmapped:[]};
   // 不写读回不许过：要同步 Step 就先验每个 Step 都有读回，缺了整轮拒绝，一行都不写
@@ -88,7 +96,7 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
     for(const plan of plans) for(const item of plan.activities) bindingsByActivity.set(definitions.get(`${item.activity.from}.${item.activity.key}`),item.bindings);
     await snapshotDefinitions(client,{workflowIds:plans.map(p=>p.workflow.id),source:{repo,path:'product-map/generated/contracts.json',commit:head},
       bindingsByActivity,documentsByWorkflow:new Map(plans.map(p=>[p.workflow.id,p.contract]))});
-    await client.query('UPDATE workflows SET contract_sync_revision=contract_sync_revision+1 WHERE source_repo=$1',[repo]);
+    await client.query('UPDATE workflows SET contract_sync_revision=contract_sync_revision+1 WHERE id=ANY($1::uuid[])',[registrations.map(w=>w.id)]);
     if(beforeCommit)await beforeCommit();
     await client.query('COMMIT');
     return out;

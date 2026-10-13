@@ -11,7 +11,7 @@ export function validateAuthoringAdapterConfig(config){
 }
 export function selectAuthoringDefinitions(config,rows){
   if(!validateAuthoringAdapterConfig(config))fail('authoring适配登记不合法');
-  return rows.filter(row=>config.workflow_keys.includes(row.payload?.key));
+  return rows.filter(row=>row.payload?.registration_protocol===FREEZE_PROTOCOL&&config.workflow_keys.includes(row.payload?.key));
 }
 export function checkAuthoringSnapshot(config,definitions,canonical,query,gap){
   if(!validateAuthoringAdapterConfig(config)){gap('authoring_adapter_invalid');return;}
@@ -21,7 +21,7 @@ export function checkAuthoringSnapshot(config,definitions,canonical,query,gap){
       gap('authoring_definition_missing',{key});continue;
     }
     const row=versions[0],source=row.payload.contract?.source;
-    if(row.source_repo!==config.source_repo||row.source_commit!==query.revision||row.source_path!==source?.ref
+    if(row.payload.registration_protocol!==FREEZE_PROTOCOL||row.source_repo!==config.source_repo||row.source_commit!==query.revision||row.source_path!==source?.ref
       ||source?.repo!==row.source_repo||source?.revision!==row.source_commit||owner.source_repo!==row.source_repo||owner.source_path!==row.source_path
       ||row.payload.contract?.capability_id!==owner.capability_id||row.payload.contract?.key!==key)gap('authoring_definition_source_mismatch',{key});
   }

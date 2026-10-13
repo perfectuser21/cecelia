@@ -252,6 +252,7 @@ export async function readImplementationSnapshotInTransaction(db,q){
     w.payload.definition_scope==='consumer_evidence'&&w.payload.source_scope===EXISTING_OPS_SCOPE&&EXISTING_OPS_IDENTITIES.some(i=>i.workflow_id===w.workflow_id):!['consumer_evidence','device_workflow_admission'].includes(w.payload.definition_scope));
   const authoring=repositories.length===1&&repositories[0].adapter_config?.definition_protocol;
   if(authoring)candidates=selectAuthoringDefinitions(repositories[0].adapter_config,candidates);
+  else candidates=candidates.filter(w=>w.payload.registration_protocol!=='definition-freeze-v1');
   const workflows=factory?(await db.query('SELECT * FROM workflows WHERE id=ANY($1::uuid[]) ORDER BY id',[EXISTING_OPS_IDENTITIES.map(i=>i.workflow_id)])).rows:
     (await db.query('SELECT * FROM workflows WHERE source_repo=$1 ORDER BY id',[anchor.repo])).rows;
   const selected=[];

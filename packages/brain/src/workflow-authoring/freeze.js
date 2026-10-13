@@ -65,7 +65,7 @@ export async function freezeRegisteredWorkflow(client,workflow,definition,activi
     if(steps.length)await syncSteps(client,{capability:definition.key,steps},{manageTransaction:false});
     await client.query('UPDATE steps SET active=(key=ANY($2::text[])) WHERE activity_id=$1 AND active IS DISTINCT FROM (key=ANY($2::text[]))',[activityIds[index],steps.map(s=>s.key)]);
   }
-  await snapshotDefinitions(client,{workflowIds:[workflow.id],source:proof.source,bindingsByActivity,documentsByWorkflow:new Map([[workflow.id,definition]])});
+  await snapshotDefinitions(client,{workflowIds:[workflow.id],source:proof.source,bindingsByActivity,documentsByWorkflow:new Map([[workflow.id,definition]]),registrationProtocol:FREEZE_PROTOCOL});
   const row=(await client.query('SELECT current_definition_version_id FROM workflows WHERE id=$1',[workflow.id])).rows[0];
   if(!row?.current_definition_version_id)fail('冻结版本回读失败');
   return {registration_protocol:FREEZE_PROTOCOL,current_definition_version_id:row.current_definition_version_id};
