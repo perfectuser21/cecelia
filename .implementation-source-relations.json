@@ -461,6 +461,13 @@
     {"owner_path": "packages/brain/src/workflow-authoring/fixed-git-source.js", "path": "packages/brain/src/workflow-authoring/fixed-git-source.test.js", "role": "verification"},
     {"owner_path": "packages/brain/src/workflow-authoring/freeze.js", "path": "packages/brain/src/workflow-authoring/freeze.test.js", "role": "verification"},
     {"owner_path": "packages/brain/src/dispatch-helpers.js", "path": "packages/brain/src/__tests__/dedup-dispatch-fixes.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/workflow-authoring/registration.js", "path": "packages/brain/src/workflow-authoring/registration-freeze.test.js", "role": "verification"}
+    {"owner_path": "packages/brain/src/workflow-authoring/registration.js", "path": "packages/brain/src/workflow-authoring/registration-freeze.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/dispatch-helpers.js", "path": "packages/brain/src/__tests__/dispatch-helpers-only-task-types.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/dispatcher.js", "path": "packages/brain/src/__tests__/dispatcher-qiumi-pool-gate-bypass.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/dispatcher.js", "path": "packages/brain/src/__tests__/dispatcher-qiumi-routing.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/executor-contracts.js", "path": "packages/brain/src/__tests__/executor-contracts.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/executor.js", "path": "packages/brain/src/__tests__/executor-route-override.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/openclaw-agent-executor.js", "path": "packages/brain/src/__tests__/openclaw-agent-executor.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/commander-verification-transport.js", "path": "packages/brain/src/lib/__tests__/commander-verification-transport.test.js", "role": "verification"}
   ]
 }

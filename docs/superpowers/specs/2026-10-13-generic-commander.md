@@ -17,7 +17,7 @@ Brain 唤醒 OpenClaw 的 work-commander；加载 workflow-commander 和本次�
 5. 活动反馈经内部鉴权接口按 task/run/attempt/owner_epoch/seq/hash 事务校验。相同序号相同内容幂等，异内容冲突；旧 owner/旧 run/晚到反馈不得推进新状态。活动事实使用现有 spans。
 6. 掉线先读官方子会话绑定和 agent.wait，仍活只续接等待。已完成丢回执则幂等补账。确认旧执行结束且合同允许恢复才新建 attempt/run，保持 task_id。切换旧版本需兼容/验证/部署证据，不能重写旧 run。
 7. 执行结束记录真实 attempt 终态，原任务以 workflow_control.phase=awaiting_verify 留在受管理状态。确认执行停止才关闭执行租约；核验子任务有独立租约和固定 run/definition/input/产物引用。
-8. 通用控制器幂等创建核验子任务。独立核验只看合同和产物，PASS 且 cleanup 证据成立才能完成原任务；fail/inconclusive 返回断言与证据供恢复。未知副作用先读回，不重复发布。
+8. 通用控制器幂等创建核验子任务。核验仍是独立 research 任务，以限定标记复用现有 OpenClaw 执行与收割通道，使用单独 session 和实际 Codex 模型回执；普通 research 的路由不变。独立核验只看合同和产物，PASS 且 cleanup 证据成立才能完成原任务；fail/inconclusive 返回断言与证据供恢复。未知副作用先读回，不重复发布。
 9. 旧 reaper、通用完成入口和 lease/watchdog 不得越过 v2 控制器。factory 对 v2 只消费最终判定且去重，不再重复创建核验；普通 workflow 不写 factory ledger。
 
 ## 上线与验收
@@ -27,6 +27,8 @@ Brain 唤醒 OpenClaw 的 work-commander；加载 workflow-commander 和本次�
 必须验证：正常输入输出；中文/换行/空数组及恶意 shell 字符往返；绑定失败零副作用；重复派发只有一个活执行；child 仍活重入；终态丢回执补账；核验失败回原任务；未知活性不重复动作；旧 owner 反馈拒绝；跨重启 deadline 不变；部署漂移拒绝；无稳定版不伪造回退。
 
 真实验收两类：已有授权的抖音私密发布（允许关闭并放弃旧编辑）与不依赖手机的任务/部署核对报告。报告由独立核验重读原始来源与 JSON/CSV 产物。两类均从正式 Brain→OpenClaw→Commander 入口运行，查回任务、运行、输入输出、活动、版本及证据关系；单测通过不能代替真实验收。
+
+执行位置以冻结 execution_location 为准。启动 OpenClaw CLI 的机器不等于 Codex shell 的机器；Commander 的信封、外壳命令和产物读回须通过已验证的宿主工具通道到达该位置，不能把远端绝对路径当成本机路径。核验会话不得调用业务子会话或修改待验产物。
 
 ## 评审
 
