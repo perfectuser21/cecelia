@@ -1,5 +1,8 @@
 import { afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import pg from 'pg';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {main as preflightCli} from '../../../scripts/runtime-catalog-preflight.mjs';
 import { randomUUID } from 'node:crypto';
 import { auditVersionIdentity, applyScratchIdentityConstraints } from '../version-identity-preflight.js';
 
@@ -132,4 +135,13 @@ it('第二连接占锁时限时退出，零DDL并释放事务；随后可成功�
     expect((await auditVersionIdentity(db,{schema})).constraints.every(x=>!x.enforced)).toBe(true);
   } finally {await writer.query('ROLLBACK');writer.release();}
   expect((await applyScratchIdentityConstraints(db,{schema,expectedDigest:before.baseline.sha256})).constraints.every(x=>x.enforced)).toBe(true);
+});
+
+it('真实CLI只读验证指定schema，缺少参数值返回受控错误',async()=>{
+  const root=fileURLToPath(new URL('../../../../../',import.meta.url));
+  const env={...process.env,DB_NAME:'cecelia_scratch',DB_HOST:connection.host,DB_PORT:String(connection.port),DB_USER:connection.user};
+  await expect(preflightCli(['--schema'],env)).rejects.toMatchObject({code:'INVALID_ARGUMENT'});
+  const report=JSON.parse(execFileSync('node',['packages/brain/scripts/runtime-catalog-preflight.mjs','--schema',schema],{cwd:root,env,encoding:'utf8'}));
+  expect(report.schema).toBe(schema);expect(report.production_migration_applied).toBe(false);expect(report.constraints.every(x=>x.available&&x.mismatches===0)).toBe(true);
+  expect(()=>execFileSync('node',['packages/brain/scripts/runtime-catalog-preflight.mjs','--schema'],{cwd:root,env,stdio:'pipe'})).toThrow();
 });
