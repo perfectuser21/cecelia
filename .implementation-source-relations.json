@@ -659,7 +659,6 @@
       "role": "verification"
     },
     {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/src/lib/__tests__/version-identity-preflight.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/scripts/smoke/version-identity-preflight-smoke.sh", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/scripts/runtime-catalog-preflight.mjs", "role": "verification"}
+    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/scripts/smoke/version-identity-preflight-smoke.sh", "role": "verification"}
   ]
 }

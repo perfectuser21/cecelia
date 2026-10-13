@@ -15,7 +15,25 @@ TS=$(date +%s%N); R=$(curl -q -s -w '\n%{http_code}' -X POST "$BRAIN_URL"/api/br
 
 echo "== T-2（对应 Q-2）"
 if ! (
-TS=$(date +%s); U="$BRAIN_URL"/api/brain/strategic-decisions; FAIL=0; chk(){ CODE=$(echo "$1" | tail -n1); BODY=$(echo "$1" | sed '$d'); echo "$CODE $(echo "$BODY" | cut -c1-120)"; [ "$CODE" = "400" ] || FAIL=1; echo "$BODY" | jq -e '.allowed_categories | type == "array" and length > 0' >/dev/null || FAIL=1; echo "$BODY" | grep -qiE 'decisions_category_chk|check constraint|violates|relation' && FAIL=1; }; for i in 1 2 3; do chk "$(curl -q -s -w '\n%{http_code}' -X POST $U -H 'Content-Type: application/json' -d "{\"category\":123,\"topic\":\"qa-num-$TS\",\"decision\":\"qa 数字 category\"}")"; done; chk "$(curl -q -s -w '\n%{http_code}' -X POST $U -H 'Content-Type: application/json' -d "{\"category\":\"Decision\",\"topic\":\"qa-case-$TS\",\"decision\":\"qa 大小写\"}")"; chk "$(curl -q -s -w '\n%{http_code}' -X POST $U -H 'Content-Type: application/json' -d "$(python3 -c "import json;print(json.dumps({'category':'a'*5000,'topic':'qa-long-$TS','decision':'qa 超长'}))")")"; G=$(curl -q -s "$U?category=Decision&limit=10"); echo "$G"; echo "$G" | jq -e '.data == []' && [ $FAIL = 0 ]
+TS=$(date +%s); U="$BRAIN_URL"/api/brain/strategic-decisions; FAIL=0
+chk(){
+  CODE=$(echo "$1" | tail -n1); BODY=$(echo "$1" | sed '$d')
+  echo "$CODE $(echo "$BODY" | cut -c1-120)"
+  [ "$CODE" = "400" ] || FAIL=1
+  echo "$BODY" | jq -e '.allowed_categories | type == "array" and length > 0' >/dev/null || FAIL=1
+  if echo "$BODY" | grep -qiE 'decisions_category_chk|check constraint|violates|relation'; then FAIL=1; fi
+}
+while IFS= read -r JSON_BODY; do
+  RESPONSE=$(curl -q -s -w '\n%{http_code}' -X POST "$U" -H 'Content-Type: application/json' --data-binary "$JSON_BODY")
+  chk "$RESPONSE"
+done < <(python3 - "$TS" <<'PYDATA'
+import json, sys
+for category in [123, 123, 123, 'Decision', 'a' * 5000]:
+    print(json.dumps({'category': category, 'topic': 'qa-invalid-' + sys.argv[1], 'decision': 'qa invalid category'}))
+PYDATA
+)
+G=$(curl -q -s "$U?category=Decision&limit=10"); echo "$G"
+echo "$G" | jq -e '.data == []' && [ "$FAIL" = 0 ]
 ); then echo "FAIL: T-2" >&2; exit 1; fi
 
 echo "== T-3（对应 Q-3）"
