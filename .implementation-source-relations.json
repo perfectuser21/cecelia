@@ -664,8 +664,6 @@
     {"owner_path": "packages/brain/src/lib/commander-method-selection.js", "path": "changes/cp-10131925-commander-method-select.md", "role": "release"},
     {"owner_path": "packages/brain/src/lib/commander-method-selection.js", "path": "docs/learnings/cp-10131925-commander-method-select.md", "role": "documentation"},
     {"owner_path": "packages/brain/src/lib/commander-method-selection.js", "path": "packages/brain/scripts/smoke/commander-method-smoke.sh", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/commander-v2-feedback.js", "path": "packages/brain/src/lib/__tests__/integration/commander-v2.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/routes/workflow-commander.js", "path": "packages/brain/src/lib/__tests__/integration/commander-v2.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/commander-v2-control.js", "path": "packages/brain/src/lib/__tests__/integration/commander-v2.test.js", "role": "verification"}
+    {"owner_path": "packages/brain/src/lib/commander-v2-feedback.js", "path": "packages/brain/src/lib/__tests__/integration/commander-v2.test.js", "role": "verification"}
   ]
 }
