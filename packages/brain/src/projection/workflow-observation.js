@@ -1,6 +1,6 @@
 /** Workflow读模型：复用两张真实运行账，优先task_runs，绝不创建平行运行记录。 */
 const WEEK = 7 * 86400000;
-const labels = { pass:'success', fail:'failed', timeout:'timeout', running:'running', skipped:'skipped', cancelled:'cancelled' };
+const labels = { pass:'success', success:'success', fail:'failed', failed:'failed', timeout:'timeout', running:'running', skipped:'skipped', cancelled:'cancelled', deferred:'deferred', queued:'派发完成', '派发完成':'派发完成' };
 const terminal = new Set(['success','failed','timeout','cancelled','deferred','派发完成','skipped']);
 const when = value => value == null ? NaN : new Date(value).getTime();
 const revision = value => typeof value === 'string' && value ? value : '未知';
@@ -69,8 +69,11 @@ export function observeWorkflows(data) {
   for(const workflow of data.workflows) {
     const runs=[...dedup.values()].filter(r=>r.workflow_id===workflow.id && when(r.started_at)<=now).sort((a,b)=>when(b.started_at)-when(a.started_at)||a.run_id.localeCompare(b.run_id));
     const tasks=[...new Map((data.task_records || []).filter(t=>t.workflow_id===workflow.id).map(t=>[t.id,t])).values()];
+    // 高频runs账只取最近明细；其余记录在同一SQL快照聚合，统计仍覆盖完整窗口。
+    const summary=(data.run_summaries || []).find(s=>s.workflow_id===workflow.id) || {};
+    const additional=key=>Number(summary[key]) || 0;
     const recent=runs.filter(r=>when(r.started_at)>=now-WEEK),count=status=>recent.filter(r=>r.status===status).length;
-    const success7=count('success'),failed7=count('failed')+count('timeout'),eligible=success7+failed7;
+    const success7=count('success')+additional('success7'),failed7=count('failed')+count('timeout')+additional('failed7'),eligible=success7+failed7;
     const attemptedTasks=[...new Set(recent.map(r=>r.task_id).filter(Boolean))];
     const completed=attemptedTasks.filter(id=>taskById.get(id)?.status==='completed' && ['success','派发完成'].includes(runs.find(r=>r.task_id===id)?.status)).length;
     const durations=recent.filter(r=>terminal.has(r.status)&&r.duration_ms!=null).map(r=>r.duration_ms);
@@ -81,11 +84,12 @@ export function observeWorkflows(data) {
         if(!attempts.has(r.task_id))attempts.set(r.task_id,new Set());attempts.get(r.task_id).add(Number(attempt));
       }
     }
-    const stats={runs7:recent.length,success7,failed7,deferred7:count('deferred'),cancelled7:count('cancelled'),running7:count('running'),dispatch7:count('派发完成'),
-      skipped7:count('skipped'),queued:tasks.filter(t=>t.status==='queued').length,waiting:tasks.filter(t=>['blocked','paused'].includes(t.status)).length,
+    const durationCount=durations.length+additional('duration_count');
+    const stats={runs7:recent.length+additional('runs7'),success7,failed7,deferred7:count('deferred')+additional('deferred7'),cancelled7:count('cancelled')+additional('cancelled7'),running7:count('running')+additional('running7'),dispatch7:count('派发完成')+additional('dispatch7'),
+      skipped7:count('skipped')+additional('skipped7'),queued:tasks.filter(t=>t.status==='queued').length,waiting:tasks.filter(t=>['blocked','paused'].includes(t.status)).length,
       retries7:[...attempts.values()].reduce((n,c)=>n+[...c].filter(a=>a>1).length,0),
       success_rate:eligible?success7/eligible:null,completed_task_rate:attemptedTasks.length?completed/attemptedTasks.length:null,
-      attempted_tasks7:attemptedTasks.length,completed_tasks7:completed,avg_duration_ms:durations.length?durations.reduce((a,b)=>a+b,0)/durations.length:null,
+      attempted_tasks7:attemptedTasks.length,completed_tasks7:completed,avg_duration_ms:durationCount?(durations.reduce((a,b)=>a+b,0)+additional('duration_total_ms'))/durationCount:null,
       window_start:new Date(now-WEEK).toISOString(),window_end:new Date(now).toISOString(),
       policy:'尝试成功率=业务成功/(业务成功+失败+超时)，不计deferred/取消/运行中/派发完成；最终任务完成率=最新尝试业务成功或派发完成且task.completed的任务/窗口内有尝试的任务。批次仅计派发，单手机独立计数。'};
     const refs=(data.refs || []).filter(r=>r.active && r.workflow_id===workflow.id).sort((a,b)=>a.sequence_no-b.sequence_no);
@@ -104,32 +108,63 @@ export function observeWorkflows(data) {
 }
 
 /** SQL只读同一个source快照，不读取/投影凭据和整条任务指令。 */
+export const WORKFLOW_OBSERVATION_PREFIX_SQL = `WITH
+ task_associations AS (
+   SELECT t.id AS task_id,w.id AS workflow_id FROM tasks t JOIN workflows w ON w.id::text=t.payload->>'workflow_id'
+   UNION
+   SELECT DISTINCT r.task_id,r.workflow_id FROM task_runs r JOIN workflows w ON w.id=r.workflow_id
+ ),
+ recent_task_ids AS (SELECT DISTINCT task_id FROM task_runs WHERE started_at>=now()-interval '7 days'),
+ workflow_task_runs AS MATERIALIZED (
+   SELECT r.*,w.id AS resolved_workflow_id FROM task_runs r JOIN tasks t ON t.id=r.task_id
+   JOIN workflows w ON w.id::text=COALESCE(r.workflow_id::text,
+     CASE WHEN NOT COALESCE(r.context->'workflow_snapshot' ? 'workflow_id',false)
+       OR lower(r.context->'workflow_snapshot'->>'workflow_id')=t.payload->>'workflow_id' THEN t.payload->>'workflow_id' END)
+   WHERE (r.started_at>=now()-interval '30 days' OR r.ended_at IS NULL) AND r.started_at<=now()
+ ),
+ eligible_legacy_runs AS MATERIALIZED (
+   SELECT r.id,r.run_id,r.workflow_id,r.started_at,r.ended_at,r.outcome,r.duration_ms,r.notion_id,
+     row_number() OVER(PARTITION BY r.workflow_id ORDER BY r.started_at DESC,r.run_id DESC) AS position
+   FROM runs r WHERE r.workflow_id IS NOT NULL AND r.started_at>=now()-interval '30 days' AND r.started_at<=now()
+     AND NOT EXISTS(SELECT 1 FROM workflow_task_runs tr WHERE tr.run_id=r.run_id)
+ ) `;
 export const WORKFLOW_OBSERVATION_SQL = `
  'observed_at',now(),
  'task_records',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',t.id,'workflow_id',w.id,'title',t.title,'status',t.status,
    'notion_id',t.notion_id,'created_at',t.created_at,'parent_task_id',t.parent_task_id,
    'script',jsonb_build_object('run_id',t.result->'script'->>'run_id','stdout',t.result->'script'->>'stdout')))
-   FROM tasks t JOIN workflows w ON w.id::text=t.payload->>'workflow_id'
-     OR EXISTS(SELECT 1 FROM task_runs owned WHERE owned.task_id=t.id AND owned.workflow_id=w.id)
+   FROM task_associations a JOIN tasks t ON t.id=a.task_id JOIN workflows w ON w.id=a.workflow_id
+   LEFT JOIN recent_task_ids recent ON recent.task_id=t.id
    WHERE t.created_at>=now()-interval '30 days' OR t.status IN ('queued','in_progress','blocked','paused')
-     OR EXISTS(SELECT 1 FROM task_runs recent WHERE recent.task_id=t.id AND recent.started_at>=now()-interval '7 days')),'[]'::jsonb),
+     OR recent.task_id IS NOT NULL),'[]'::jsonb),
  'run_records',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM (
-   SELECT r.id,r.run_id,r.task_id,w.id AS workflow_id,r.started_at,r.ended_at,r.status,NULL::text AS outcome,
-     NULL::bigint AS duration_ms,r.result,r.context || jsonb_build_object('bound_definition',
+   SELECT r.id,r.run_id,r.task_id,r.resolved_workflow_id AS workflow_id,r.started_at,r.ended_at,r.status,NULL::text AS outcome,
+     NULL::bigint AS duration_ms,r.result,COALESCE(r.context,'{}'::jsonb) || jsonb_build_object('bound_definition',
        jsonb_build_object('id',v.id,'version',v.payload->'contract'->>'version','source_commit',v.source_commit)) AS context,
      r.notion_id,'task_runs'::text AS ledger
-     FROM task_runs r JOIN tasks t ON t.id=r.task_id JOIN workflows w ON w.id=r.workflow_id OR (r.workflow_id IS NULL AND w.id::text=t.payload->>'workflow_id'
-       AND (NOT COALESCE(r.context->'workflow_snapshot' ? 'workflow_id',false) OR lower(r.context->'workflow_snapshot'->>'workflow_id')=w.id::text))
-     LEFT JOIN run_definition_bindings b ON b.run_id=r.run_id AND b.workflow_id=w.id
+     FROM workflow_task_runs r
+     LEFT JOIN run_definition_bindings b ON b.run_id=r.run_id AND b.workflow_id=r.resolved_workflow_id
      LEFT JOIN workflow_definition_versions v ON v.id=b.workflow_definition_version_id AND v.workflow_id=b.workflow_id
-     WHERE r.started_at>=now()-interval '30 days' OR r.ended_at IS NULL
    UNION ALL
    SELECT r.id,r.run_id,NULL::uuid,r.workflow_id,r.started_at,r.ended_at,NULL::text,r.outcome,r.duration_ms,
      '{}'::jsonb,jsonb_build_object('bound_definition',jsonb_build_object('id',v.id,'version',v.payload->'contract'->>'version','source_commit',v.source_commit)),
-     r.notion_id,'runs'::text FROM runs r
+     r.notion_id,'runs'::text FROM eligible_legacy_runs r
      LEFT JOIN run_definition_bindings b ON b.run_id=r.run_id AND b.workflow_id=r.workflow_id
      LEFT JOIN workflow_definition_versions v ON v.id=b.workflow_definition_version_id AND v.workflow_id=b.workflow_id
-     WHERE r.workflow_id IS NOT NULL AND r.started_at>=now()-interval '30 days'
+     WHERE r.position<=20
+ ) x),'[]'::jsonb),
+ 'run_summaries',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM (
+   SELECT workflow_id,count(*) AS runs7,
+     count(*) FILTER(WHERE outcome IN ('pass','success')) AS success7,
+     count(*) FILTER(WHERE outcome IN ('fail','failed','timeout')) AS failed7,
+     count(*) FILTER(WHERE outcome='cancelled') AS cancelled7,
+     count(*) FILTER(WHERE outcome='running') AS running7,
+     count(*) FILTER(WHERE outcome='skipped') AS skipped7,
+     count(*) FILTER(WHERE outcome='deferred') AS deferred7,
+     count(*) FILTER(WHERE outcome IN ('queued','派发完成')) AS dispatch7,
+     count(duration_ms) FILTER(WHERE outcome IN ('pass','success','fail','failed','timeout','cancelled','deferred','queued','派发完成','skipped')) AS duration_count,
+     COALESCE(sum(duration_ms) FILTER(WHERE outcome IN ('pass','success','fail','failed','timeout','cancelled','deferred','queued','派发完成','skipped')),0) AS duration_total_ms
+   FROM eligible_legacy_runs WHERE position>20 AND started_at>=now()-interval '7 days' GROUP BY workflow_id
  ) x),'[]'::jsonb),
  'entrypoints',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',r.id,'workflow_id',w.id,'name',r.title,'enabled',r.is_active,
    'cron',r.cron_expression,'runtime_requires_llm',r.template->'payload'->'runtime_requires_llm'))

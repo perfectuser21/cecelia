@@ -6,6 +6,13 @@ const task = (id, status='completed') => ({ id, workflow_id:'wf', status, title:
 const run = (id, task_id, status='success') => ({ id, run_id:id, task_id, workflow_id:'wf', status, started_at:'2026-10-12T09:00:00Z', ended_at:'2026-10-12T09:01:00Z', ledger:'task_runs', notion_id:`page-${id}`, context:{attempt:Number(id.slice(-1))||1} });
 function data() { return { observed_at:now, workflows:[{id:'wf',version:'0.1.1'}], activities:[],refs:[],workflow_runtime:[], task_records:[],run_records:[], entrypoints:[] }; }
 describe('真实Workflow观测',()=>{
+  it('高频运行的SQL聚合与最近明细共同计算完整统计，不制造明细或任务',()=>{
+    const d=data();d.run_records=[{...run('a1','a'),duration_ms:100}];
+    d.run_summaries=[{workflow_id:'wf',runs7:1000,success7:800,failed7:100,running7:50,cancelled7:50,duration_count:950,duration_total_ms:190000}];
+    const rt=observeWorkflows(d).get('wf');
+    expect(rt.stats).toMatchObject({runs7:1001,success7:801,failed7:100,running7:50,cancelled7:50,success_rate:801/901,avg_duration_ms:190100/951,attempted_tasks7:1});
+    expect(rt.recentRuns).toHaveLength(1);
+  });
   it('同一run_id跨账本去重；成功/失败/运行中/取消/deferred不混成成功，排队没有Run',()=>{
     const d=data();d.task_records=[task('a'),task('b','failed'),task('c'),task('d','in_progress'),task('e','cancelled'),task('q','queued')];
     d.task_records[2].script={run_id:'c1',stdout:JSON.stringify({status:'deferred'})};

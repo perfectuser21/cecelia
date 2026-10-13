@@ -2,7 +2,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { buildActivityCardProps, buildStepCardProps, executorLabel, humanize, judgmentText, releaseText } from './activity-card.js';
 import { TREE_NODES_SQL } from '../lib/tree-nodes-sql.js';
-import { observeWorkflows, WORKFLOW_OBSERVATION_SQL } from './workflow-observation.js';
+import { observeWorkflows, WORKFLOW_OBSERVATION_SQL, WORKFLOW_OBSERVATION_PREFIX_SQL } from './workflow-observation.js';
 // 值是投影身份键（projection_links.entity_type 与 Notion「真身来源」文本），不是 SQL 表名；
 // value_streams / capabilities 仍记作 journeys，改了会让已有目录页被当新页重建。
 export const DIRECTORY_TABLES = Object.freeze({ areas: 'areas', value_streams: 'journeys', capabilities: 'journeys', workflows: 'workflows', activities: 'activities', steps: 'steps' });
@@ -249,7 +249,7 @@ export function buildDirectoryRows(data, config = {}) {
 
 /** 单条SQL使用同一数据库快照；复合身份绑定当前版本，旧行无current字段时不取历史。 */
 export async function loadDirectorySource(pool) {
-  const { rows } = await pool.query(`SELECT jsonb_build_object(
+  const { rows } = await pool.query(`${WORKFLOW_OBSERVATION_PREFIX_SQL}SELECT jsonb_build_object(
     ${WORKFLOW_OBSERVATION_SQL}
     'areas',COALESCE((SELECT jsonb_agg(to_jsonb(a)) FROM areas a),'[]'::jsonb),
     'journeys',COALESCE((SELECT jsonb_agg(to_jsonb(j)) FROM ${TREE_NODES_SQL} j),'[]'::jsonb),

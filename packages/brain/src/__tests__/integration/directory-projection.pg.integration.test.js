@@ -48,6 +48,31 @@ beforeEach(async () => {
 });
 afterEach(async () => { if (client) { await client.query('ROLLBACK'); if (schema) await client.query(`DROP SCHEMA ${schema} CASCADE`); await client.end(); } });
 describe('六层目录真实PG边界', () => {
+  it('超过20条legacy仅采样明细，遗漏聚合同源补齐七天统计并排除task_runs重复',async()=>{
+    const workflow=randomUUID(),task=randomUUID();
+    await client.query("INSERT INTO workflows VALUES($1,'大量真实运行','many-runs',NULL)",[workflow]);
+    await client.query(`INSERT INTO runs(id,run_id,workflow_id,started_at,ended_at,outcome,duration_ms)
+      SELECT gen_random_uuid(),'legacy-'||n,$1,now()-n*interval '1 minute',now()-n*interval '1 minute'+n*interval '1 second','pass',n*1000
+      FROM generate_series(1,25) n`,[workflow]);
+    await client.query("INSERT INTO tasks(id,title,status,payload) VALUES($1,'失败尝试','failed',$2)",[task,{workflow_id:workflow}]);
+    await client.query(`INSERT INTO task_runs(id,run_id,task_id,workflow_id,started_at,ended_at,status)
+      VALUES($1,'dedup',$2,$3,now()-interval '1 hour',now()-interval '1 hour'+interval '1 second','failed')`,[randomUUID(),task,workflow]);
+    await client.query(`INSERT INTO runs(id,run_id,workflow_id,started_at,ended_at,outcome,duration_ms)
+      VALUES($1,'dedup',$2,now()-interval '1 hour',now()-interval '1 hour'+interval '1 second','pass',1000)`,[randomUUID(),workflow]);
+    const unboundTask=randomUUID();
+    await client.query("INSERT INTO tasks(id,title,status) VALUES($1,'无Workflow尝试','completed')",[unboundTask]);
+    await client.query(`INSERT INTO task_runs(id,run_id,task_id,started_at,ended_at,status)
+      VALUES($1,'unbound-native',$2,now()-interval '2 hours',now()-interval '2 hours'+interval '1 second','success')`,[randomUUID(),unboundTask]);
+    await client.query(`INSERT INTO runs(id,run_id,workflow_id,started_at,ended_at,outcome,duration_ms)
+      VALUES($1,'unbound-native',$2,now()-interval '2 hours',now()-interval '2 hours'+interval '1 second','pass',1000)`,[randomUUID(),workflow]);
+    const source=await loadDirectorySource(client);
+    expect(source.run_records.filter(r=>r.ledger==='runs')).toHaveLength(20);
+    expect(source.run_records.filter(r=>r.run_id==='dedup')).toHaveLength(1);
+    expect(source.run_summaries).toEqual([expect.objectContaining({workflow_id:workflow,runs7:6,success7:6,duration_count:6,duration_total_ms:116000})]);
+    const observed=buildDirectoryRows(source).find(r=>r.id===workflow).workflowObservation;
+    expect(observed.stats).toMatchObject({runs7:27,success7:26,failed7:1,success_rate:26/27});
+    expect(observed.stats.avg_duration_ms).toBeCloseTo(327000/27);
+  });
   it('真实PG合并双运行账按run_id去重；deferred exit0与批次派发、排队和未来记录分开',async()=>{
     const phone=randomUUID(),batch=randomUUID(),phoneTask=randomUUID(),batchTask=randomUUID(),queued=randomUUID();
     await client.query("INSERT INTO workflows VALUES($1,'手机','phone',NULL),($2,'批次','batch',NULL)",[phone,batch]);
