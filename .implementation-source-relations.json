@@ -607,7 +607,6 @@
       "path": "docs/learnings/cp-10131820-commander-brain-acceptance.md",
       "role": "documentation"
     },
-    
     {
       "owner_path": "packages/brain/src/projection/directory-projector.js",
       "path": "cp-10131706-cw-b7f88520.dod.md",
@@ -682,11 +681,6 @@
       "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
       "path": "cp-10131845-version-identity-preflight.dod.md",
       "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
-      "path": "test-registry.yaml",
-      "role": "verification"
     },
     {
       "owner_path": "packages/brain/src/routes/strategic-decisions.js",
