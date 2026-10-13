@@ -607,7 +607,6 @@
       "path": "docs/learnings/cp-10131820-commander-brain-acceptance.md",
       "role": "documentation"
     },
-    
     {
       "owner_path": "packages/brain/src/projection/directory-projector.js",
       "path": "cp-10131706-cw-b7f88520.dod.md",
@@ -657,6 +656,21 @@
       "owner_path": "packages/brain/src/ops-notion-schema.js",
       "path": "packages/brain/scripts/smoke/ops-notion-schema-smoke.sh",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/workflow-body.js",
+      "path": "changes/cp-1013205500-workflow-notion-readback-fix.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/workflow-body.js",
+      "path": "cp-1013205500-workflow-notion-readback-fix.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/workflow-body.js",
+      "path": "cp-1013205500-workflow-notion-readback-fix.dod.md",
+      "role": "documentation"
     }
   ]
 }
