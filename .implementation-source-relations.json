@@ -658,12 +658,45 @@
       "path": "packages/brain/scripts/smoke/ops-notion-schema-smoke.sh",
       "role": "verification"
     },
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/src/lib/__tests__/version-identity-preflight.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/scripts/smoke/version-identity-preflight-smoke.sh", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "changes/cp-10131845-version-identity-preflight.md", "role": "release"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "cp-10131845-version-identity-preflight.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "cp-10131845-version-identity-preflight.dod.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "test-registry.yaml", "role": "verification"},
-    {"owner_path": "packages/brain/src/routes/strategic-decisions.js", "path": "packages/brain/scripts/smoke/cw-bd2b1556-qa-smoke.sh", "role": "verification"}
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "packages/brain/src/lib/__tests__/version-identity-preflight.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "packages/brain/scripts/smoke/version-identity-preflight-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "changes/cp-10131845-version-identity-preflight.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "cp-10131845-version-identity-preflight.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "cp-10131845-version-identity-preflight.dod.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "test-registry.yaml",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/strategic-decisions.js",
+      "path": "packages/brain/scripts/smoke/cw-bd2b1556-qa-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-identities.js",
+      "path": "packages/brain/src/lib/__tests__/runtime-identities.test.js",
+      "role": "verification"
+    }
   ]
 }

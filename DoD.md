@@ -291,3 +291,8 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] commanderfollowupregistry 保留原 handler 白名单身份，只校正源码实际行号；DoD checkout 完整历史，真实 Git 克隆能读固定旧 blob，既有 registry-vs-base 审计真实运行且 FAIL/ERROR 0。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/task-type-registry.guard.test.js src/__tests__/registry-vs-base.audit.test.js"
+
+# Agent与Skill身份验收
+
+- [x] [BEHAVIOR] runtimesourceidentity 真实PG验证稳定UUID、来源链接唯一、非Agent拒绝、固定Git版本不可变、同名未核实、路径和摘要检查、映射审计同事务、安装冲突和生产拒写、两连接旧快照拒写。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/lib/__tests__/runtime-identities.test.js"

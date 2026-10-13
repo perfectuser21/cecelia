@@ -365,3 +365,10 @@ tests:
     ci: L4
     status: active
     note: "真实scratch PG验证版本对象复合身份、只读摘要、禁改历史、漂移及锁冲突拒绝、DDL整批回滚；CI从隔离test服务创建scratch，不放宽生产写入白名单。"
+
+  - id: runtime-identities-pg
+    path: packages/brain/src/lib/__tests__/runtime-identities.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "隔离真实PG验证Agent稳定身份、来源链接、Skill不可变Git源版本、同名待核实、事件回滚和两连接旧快照拒写。"
