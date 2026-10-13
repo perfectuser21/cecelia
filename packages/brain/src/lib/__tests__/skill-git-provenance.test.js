@@ -2,6 +2,7 @@ import {afterEach,beforeEach,expect,it} from 'vitest';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {auditSkillGitSource} from '../skill-git-provenance.js';
+import {main as catalogCli} from '../../../scripts/runtime-catalog-preflight.mjs';
 import {main as provenanceCli} from '../../../scripts/audit-skill-git-sources.mjs';
 let repo,skill;
 const git=(...args)=>execFileSync('git',['-C',repo,...args],{stdio:['ignore','pipe','pipe']}).toString().trim();
@@ -83,3 +84,12 @@ it('真实CLI生成600权限本地核验报告，声明远端提交未认证',()
 });
 
 it('命令行入口可导入且非法参数拒绝，保持原有真实CLI验收',()=>{expect(()=>provenanceCli([])).toThrow('需要 --input');});
+
+it('统一目录CLI执行真实来源核验，显式生产环境也不连接数据库',async()=>{
+ const input=path.join(repo,'snapshot.json'),output=path.join(repo,'audit.json');
+ fs.writeFileSync(input,JSON.stringify([{id:'fixture',presence:'present',status:'active',source_path:skill}]));
+ const result=await catalogCli(['--audit-skill-sources','--input',input,'--output',output],{DB_NAME:'cecelia',DB_HOST:'invalid.example'});
+ expect(result).toMatchObject({total:1,states:{verified:1},production_migration_applied:false});
+ expect(JSON.parse(fs.readFileSync(output))[0]).toMatchObject({status:'verified',remote_revision_verified:false});
+ await expect(catalogCli(['--audit-skill-sources','--apply-scratch','--input',input,'--output',output])).rejects.toThrow('每次只能');
+});
