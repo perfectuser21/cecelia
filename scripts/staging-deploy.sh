@@ -32,7 +32,7 @@ STAGING_DB="cecelia_staging"
 
 VERSION=$(node -e "console.log(require('$BRAIN_DIR/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
-CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:-${HOST_HOME:-$HOME}/.credentials/cecelia-internal.env}"
+CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:-/Users/administrator/.credentials/cecelia-internal.env}"
 export CECELIA_INTERNAL_ENV_FILE
 
 DRY_RUN=false
