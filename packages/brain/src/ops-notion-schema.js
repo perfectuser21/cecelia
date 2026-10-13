@@ -71,6 +71,9 @@ export const OPS_DB_PROPS = {
     StartedAt: { date: {} }, EndedAt: { date: {} },
     ExitCode: { number: {} }, Artifacts: { rich_text: {} },
     Minutes: { number: {} }, Error: { rich_text: {} },
+    '业务状态': { select: {} }, '流程版本': { rich_text: {} }, '源码版本': { rich_text: {} },
+    '辅助源码版本': { rich_text: {} }, '定义版本': { rich_text: {} }, '设备': { rich_text: {} },
+    '批次任务': { rich_text: {} }, '尝试': { number: {} },
   },
 
   // run 记录库：只存业务流程的每次执行

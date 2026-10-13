@@ -8,7 +8,9 @@ import { startRun } from '../../task-run.js';
 import { bindRunDefinition } from '../../run-definition-binding.js';
 let f,input,task;
 beforeEach(async()=>{
-  f=await releaseEvidenceDatabase();task=randomUUID();await f.db.query("INSERT INTO tasks(id,title,status) VALUES($1,'固定定义起跑','in_progress')",[task]);
+  f=await releaseEvidenceDatabase();
+  await f.db.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_type text, ADD COLUMN IF NOT EXISTS payload jsonb DEFAULT '{}'::jsonb");
+  task=randomUUID();await f.db.query("INSERT INTO tasks(id,title,status) VALUES($1,'固定定义起跑','in_progress')",[task]);
   await f.db.query('DROP TABLE spans CASCADE');
   for(const file of ['495_vs_model_spans.sql','514_span_occurrences.sql','516_span_definition_provenance.sql'])await withLegacyNames(f.db,()=>f.db.query(readFileSync(new URL(`../../../../migrations/${file}`,import.meta.url),'utf8')));
   const release=(await createRelease(f.db,f.releaseInput)).release;

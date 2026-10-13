@@ -149,3 +149,48 @@ describe('接线钉子', () => {
     expect(src).not.toMatch(/UPDATE\s+task_runs/i);
   });
 });
+
+describe('Workflow真实关系与历史版本',()=>{
+ it('关联真正Workflow/Task页，deferred与transport success分开，旧版本不伪造',async()=>{
+  const {buildTaskRunNotionProperties}=await import('../notion-push-sync.js');
+  const p=buildTaskRunNotionProperties({...RUN,workflow_page_id:'workflow-page',task_page_id:'task-page',
+   script:{run_id:RUN.run_id,stdout:'{"status":"deferred","serial":"phone-1","source_revision":"old-sha"}'},
+   context:{...RUN.context,attempt:2,workflow_snapshot:{batch_task_id:'batch'}}});
+  expect(p.Workflow.relation).toEqual([{id:'workflow-page'}]);expect(p.Task.relation).toEqual([{id:'task-page'}]);
+  expect(p['业务状态'].select.name).toBe('deferred');expect(p.Status.select.name).toBe('success');
+  expect(JSON.stringify(p['流程版本'])).toContain('未知');expect(JSON.stringify(p['源码版本'])).toContain('old-sha');
+  expect(JSON.stringify(p['设备'])).toContain('phone-1');expect(JSON.stringify(p['批次任务'])).toContain('batch');expect(p['尝试'].number).toBe(2);
+ });
+ it('最新任务回执不会污染旧尝试，冻结版本优先',async()=>{
+  const {buildTaskRunNotionProperties}=await import('../notion-push-sync.js');
+  const p=buildTaskRunNotionProperties({...RUN,script:{run_id:'new-run',stdout:'{"status":"deferred","source_revision":"new-sha"}'},
+    context:{workflow_snapshot:{workflow_version:'0.1.0',source_revision:'frozen-sha'}}});
+  expect(p['业务状态'].select.name).toBe('success');expect(JSON.stringify(p['源码版本'])).toContain('frozen-sha');expect(JSON.stringify(p['流程版本'])).toContain('0.1.0');
+ });
+ it('关联Workflow的已同步行仍轮转核对，按真实目录读取关系目标',async()=>{
+  const {pushTaskRunsForTest}=await import('../notion-push-sync.js');
+  mockNotionReq.mockResolvedValue({properties:{}});
+  const pool=makePool({registered:true});await pushTaskRunsForTest(pool,'fake-token');
+  const sql=pool.calls.find(c=>/FROM task_runs r/.test(c.sql)).sql;
+  expect(sql).toContain('projection_links');expect(sql).toContain('notion-directory');expect(sql).toContain('notion_synced_at ASC');
+  expect(pool.calls.some(c=>/FROM projection_targets/.test(c.sql))).toBe(true);
+  expect(pool.calls.some(c=>/title = 'Tasks'/.test(c.sql))).toBe(true);
+ });
+});
+
+it('Run关系schema使用正式库，保留已有错误目标并停止推送',async()=>{
+ const {pushTaskRunsForTest}=await import('../notion-push-sync.js');
+ const calls=[];const pool={query:vi.fn(async(sql,params)=>{
+  calls.push({sql:String(sql),params});if(String(sql).includes('FROM projection_targets'))return {rows:[{config:{dbs:{workflows:'wf-db'}}}]};
+  if(String(sql).includes("title = 'Tasks'"))return {rows:[{notion_db_id:'tasks-db'}]};
+  if(String(sql).includes('FROM notion_projection_map'))return {rows:[{notion_db_id:'db-runs'}]};
+  if(String(sql).includes('FROM task_runs r'))return {rows:[RUN]};return {rows:[]};
+ })};
+ mockNotionReq.mockImplementation(async(_t,p,method)=>{
+  if(method==='GET')return {properties:{Workflow:{type:'relation',relation:{database_id:'wrong-db'}}}};
+  return {};
+ });
+ await pushTaskRunsForTest(pool,'t');
+ expect(mockNotionReq.mock.calls.some(c=>c[1]==='/pages')).toBe(false);
+ expect(calls.some(c=>c.sql.includes('FROM task_runs r'))).toBe(false);
+});

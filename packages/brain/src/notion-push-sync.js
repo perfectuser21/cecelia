@@ -22,6 +22,7 @@ import { QIUMI_STATUS_MAP } from './lib/qiumi-status-map.js';
 import { toStartIso, toEndIso, isFuture, scheduledNote } from './lib/qiumi-schedule.js';
 import { parseEnPage, parseZhPage, GTD_DB_ID, EN_NATIVE_MARK } from './notion-gtd-sync.js';
 import { TREE_NODES_SQL, treeNodeTable } from './lib/tree-nodes-sql.js';
+import { observedRun } from './projection/workflow-observation.js';
 
 // journeys / journey_features 不再硬编码库常量：AI Journey / AI Feature 两库 2026-09-19 进回收站，
 // 迁移 480 把注册表两行归档（决策 24a37029：停推，不恢复不重建）。这两张表只认 notion_projection_map
@@ -1702,6 +1703,7 @@ async function syncOpsMembersRelation(pool, token) {
  * 没发生的事不编造：running 行无 EndedAt/ExitCode/Minutes。
  */
 export function buildTaskRunNotionProperties(r) {
+  const observed = observedRun(r, { script: r.script });
   const started = r.started_at ? new Date(r.started_at) : null;
   const ended = r.ended_at ? new Date(r.ended_at) : null;
   const source = r.context?.source || null;
@@ -1721,6 +1723,14 @@ export function buildTaskRunNotionProperties(r) {
   if (artifacts.length) p.Artifacts = { rich_text: buildRichText(artifacts.join(', ').slice(0, 1900)) };
   if (started && ended) p.Minutes = { number: Math.round((ended.getTime() - started.getTime()) / 60000) };
   if (r.error_message) p.Error = { rich_text: buildRichText(String(r.error_message).slice(0, 500)) };
+  if (r.workflow_page_id) p.Workflow = { relation: [{ id: r.workflow_page_id }] };
+  if (r.task_page_id) p.Task = { relation: [{ id: r.task_page_id }] };
+  p['业务状态'] = { select: { name: observed.status } };
+  for (const [column, key] of Object.entries({ '流程版本': 'workflow_version', '定义版本': 'definition_version_id',
+    '源码版本': 'source_revision', '辅助源码版本': 'control_source_revision', '设备': 'phone_serial', '批次任务': 'batch_task_id' })) {
+    p[column] = { rich_text: buildRichText(String(observed[key] || '未知')) };
+  }
+  p['尝试'] = { number: Number.isFinite(Number(observed.attempt)) && observed.attempt != null ? Number(observed.attempt) : null };
   return p;
 }
 
@@ -1732,24 +1742,58 @@ export function buildTaskRunNotionProperties(r) {
 async function pushTaskRuns(pool, token) {
   const dbId = await resolveDbId(pool, 'task_runs');
   if (!dbId) return;
+  const directory = (await pool.query("SELECT config FROM projection_targets WHERE target='notion-directory' AND enabled=true")).rows[0];
+  const taskTargets = (await pool.query(`SELECT notion_db_id FROM notion_projection_map
+    WHERE brain_table = 'tasks' AND title = 'Tasks' AND face = 'inlet' AND direction = 'both' AND status = 'active'`)).rows;
+  if (taskTargets.length > 1) throw new Error('Tasks 正式投影库身份不唯一');
+  const workflowsDb = directory?.config?.dbs?.workflows;
+  const tasksDb = taskTargets[0]?.notion_db_id;
+  const props = { ...OPS_DB_PROPS.task_runs,
+    ...(workflowsDb ? { Workflow: { relation: { database_id: workflowsDb, single_property: {} } } } : {}),
+    ...(tasksDb ? { Task: { relation: { database_id: tasksDb, single_property: {} } } } : {}) };
   try {
-    const { added } = await ensureOpsDbProps(token, dbId, OPS_DB_PROPS.task_runs, { notionReq });
+    const checkSchemaReq = async (...args) => {
+      const response = await notionReq(...args);
+      if (args[1] === `/databases/${dbId}` && args[2] === 'GET') {
+        for (const [name, expected] of Object.entries(props)) {
+          const existing = response.properties?.[name];
+          if (!existing) continue;
+          const type = Object.keys(expected)[0];
+          if (existing.type !== type || type === 'relation' &&
+            String(existing.relation?.database_id || '').replaceAll('-', '') !== expected.relation.database_id.replaceAll('-', '')) {
+            throw new Error(`Runs 属性身份冲突：${name}`);
+          }
+        }
+      }
+      return response;
+    };
+    const { added } = await ensureOpsDbProps(token, dbId, props, { notionReq: checkSchemaReq });
     if (added.length) console.log(`[task-runs-push] Runs 库补列: ${added.join(', ')}`);
   } catch (err) {
     await logSyncError(pool, `[task-runs-push] Runs 库补列失败: ${err.message}`);
+    return; // schema身份未证实，禁止把Run写进错误关系目标。
   }
   const { rows } = await pool.query(
-    `SELECT r.*, t.title AS task_title
+    `SELECT r.*, t.title AS task_title, t.notion_id AS task_page_id, pl.external_id AS workflow_page_id,
+            jsonb_build_object('id',v.id,'version',v.payload->'contract'->>'version','source_commit',v.source_commit) AS definition_version,
+            jsonb_build_object('run_id',t.result->'script'->>'run_id','stdout',t.result->'script'->>'stdout') AS script
        FROM task_runs r
        JOIN tasks t ON t.id = r.task_id
+       LEFT JOIN run_definition_bindings b ON b.run_id=r.run_id AND b.workflow_id=r.workflow_id
+       LEFT JOIN workflow_definition_versions v ON v.id=b.workflow_definition_version_id AND v.workflow_id=b.workflow_id
+       LEFT JOIN projection_links pl ON pl.target='notion-directory' AND pl.entity_type='workflows'
+         AND (pl.entity_id=r.workflow_id OR (r.workflow_id IS NULL AND pl.entity_id::text=t.payload->>'workflow_id'
+           AND (NOT COALESCE(r.context->'workflow_snapshot' ? 'workflow_id',false) OR lower(r.context->'workflow_snapshot'->>'workflow_id')=pl.entity_id::text)))
       WHERE r.notion_id IS NULL OR r.notion_synced_at IS NULL OR r.updated_at > r.notion_synced_at
-      ORDER BY r.started_at DESC
+         OR pl.external_id IS NOT NULL
+      ORDER BY r.notion_synced_at ASC NULLS FIRST, r.started_at DESC
       LIMIT 100`);
   if (rows.length === 0) return;
   // 直接走统一引擎、不经 upsertOpsRows：后者的 onFatal 会把「库不可达」写成 ops_notion_dbs.disabled，
   // 那是运行舱四库的终止开关，Runs 库出问题不许连坐运行舱推送。
   await pushRegisteredRows(pool, token, {
-    table: 'task_runs', dbId, rows, buildProps: buildTaskRunNotionProperties,
+    table: 'task_runs', dbId, rows, buildProps: r => buildTaskRunNotionProperties({ ...r,
+      workflow_page_id: workflowsDb ? r.workflow_page_id : null, task_page_id: tasksDb ? r.task_page_id : null }),
     notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'task_run',
   });
 }

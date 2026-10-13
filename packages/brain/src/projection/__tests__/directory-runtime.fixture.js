@@ -15,7 +15,7 @@ export function runtimeFixture() {
   const databases=new Map(Object.entries(schemas).map(([layer,properties])=>[dbs[layer],{id:dbs[layer],properties:Object.fromEntries(Object.entries(properties).map(([k,v])=>[k,{...v,type:Object.keys(v)[0]}]))}]));
   const pages=new Map([[fixtureEntityId(41),{id:fixtureEntityId(41),parent:{database_id:dbs.areas},properties:{Name:{title:[{text:{content:'组织'}}]}}}],
     [fixtureEntityId(42),{id:fixtureEntityId(42),parent:{database_id:dbs.value_streams},properties:{Name:{title:[{text:{content:'产品'}}]}}}]]);
-  const links=[],writes=[],memory=new Map(); let next=100;
+  const links=[],writes=[],memory=new Map(),blocks=new Map(); let next=100;
   const query=async(sql,args=[])=>{
     if(sql.includes('pg_try_advisory_lock'))return{rows:[{locked:true}]};
     if(sql.includes('FROM projection_targets'))return{rows:[{enabled:true,config}]};
@@ -34,6 +34,22 @@ export function runtimeFixture() {
   const notionReq=async(_token,path,method,body)=>{
     if(method==='PATCH'||path==='/pages')writes.push({path,body});
     const id=path.split('/')[2];
+    if(path.startsWith('/blocks/')){
+      if(method==='DELETE'){
+        for(const [parent,children] of blocks)blocks.set(parent,children.filter(b=>b.id!==id));
+        blocks.delete(id);return {};
+      }
+      if(method==='PATCH'){
+        const added=body.children.map(b=>{
+          const block=structuredClone(b),blockId=fixtureEntityId(next++);block.id=blockId;
+          if(block[block.type]?.children){blocks.set(blockId,block[block.type].children);delete block[block.type].children;block.has_children=true;}
+          return block;
+        });
+        blocks.set(id,[...(blocks.get(id)||[]),...added]);
+        return {results:structuredClone(added)};
+      }
+      return {results:structuredClone(blocks.get(id)||[]),has_more:false,next_cursor:null};
+    }
     if(path.startsWith('/databases/')){
       if(path.endsWith('/query'))return{results:[...pages.values()].filter(p=>p.parent.database_id===id&&
         p.properties['Brain ID']?.rich_text?.[0]?.text?.content===body.filter.rich_text.equals),has_more:false};
@@ -51,5 +67,5 @@ export function runtimeFixture() {
     if(method==='PATCH')Object.assign(page.properties,body.properties);return structuredClone(page);
   };
   const pool={query,connect:async()=>({query,release(){}})};
-  return {dbs,config,source,databases,pages,links,writes,memory,notionReq,pool};
+  return {dbs,config,source,databases,pages,links,writes,memory,blocks,notionReq,pool};
 }

@@ -1,5 +1,5 @@
 import {finalizeTask} from './lib/task-terminal.js';
-import {finishRun} from './lib/task-run.js';
+import {finishRun,extractWorkflowRunReceipt} from './lib/task-run.js';
 import {recordTaskEventSafe} from './lib/task-event-log.js';
 import {getBackoffMs} from './lib/retry-policy.js';
 
@@ -18,6 +18,8 @@ export async function settleScriptRun(pool, row, parsed, { hostId, runId, reserv
   const env = payload.env ?? {};
   const stdout = redactEnvValues(parsed.stdout, env);
   const stderr = redactEnvValues(parsed.stderr, env);
+  const workflowReceipt = extractWorkflowRunReceipt(stdout,runId,row.id);
+  const runResult = workflowReceipt ? {business_receipt:workflowReceipt} : {};
   const prior = Array.isArray(payload.script_attempts) ? payload.script_attempts : [];
   const attemptNo = prior.length + 1;
   const artifacts = parsed.artifacts ?? [
@@ -35,7 +37,7 @@ export async function settleScriptRun(pool, row, parsed, { hostId, runId, reserv
     // 成功终态写 completed：hard 依赖门禁只放行 completed。
     const settled=await finalizeTask(pool, row.id, 'completed', { ...authority,mergeResult: { script }, onlyIfStatus });
     if(!settled.rowCount)return 'skipped';
-    await finishRun({ runId, status: 'completed', exitCode: 0, artifacts }, { pool });
+    await finishRun({ runId, status: 'completed', exitCode: 0, artifacts, result:runResult }, { pool });
     await recordTaskEventSafe(pool, row.id, 'script_reaped', { run_id: runId, exit: 0 });
     return 'completed';
   }
@@ -47,6 +49,7 @@ export async function settleScriptRun(pool, row, parsed, { hostId, runId, reserv
     exitCode: parsed.exit,
     artifacts,
     error: code,
+    result:runResult,
   }, { pool });
   const attempts = [...prior, {
     attempt: attemptNo, run_id: runId, exit_code: parsed.exit, timed_out: parsed.timedOut, error: code,

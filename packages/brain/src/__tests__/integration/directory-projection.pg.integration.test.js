@@ -20,6 +20,11 @@ beforeEach(async () => {
     CREATE TABLE value_streams(id uuid,name text,kind text,area_id uuid,parent_journey_id uuid);
     CREATE TABLE capabilities(id uuid,name text,kind text,area_id uuid,parent_journey_id uuid);
     CREATE TABLE workflows(id uuid,name text,key text,capability_id uuid);
+    CREATE TABLE tasks(id uuid,title text,status text,notion_id text,created_at timestamptz DEFAULT now(),parent_task_id uuid,payload jsonb DEFAULT '{}'::jsonb,result jsonb DEFAULT '{}'::jsonb);
+    CREATE TABLE task_runs(id uuid,run_id text,task_id uuid,workflow_id uuid,started_at timestamptz,ended_at timestamptz,status text,result jsonb DEFAULT '{}'::jsonb,context jsonb DEFAULT '{}'::jsonb,notion_id text,notion_synced_at timestamptz);
+    CREATE TABLE runs(id uuid,run_id text,workflow_id uuid,started_at timestamptz,ended_at timestamptz,outcome text,duration_ms bigint,notion_id text);
+    CREATE TABLE recurring_tasks(id uuid,title text,is_active boolean,cron_expression text,template jsonb);
+    CREATE TABLE run_definition_bindings(run_id text,workflow_id uuid,workflow_definition_version_id uuid);
     CREATE TABLE ops_schedule_entries(workflow_id uuid,label text,schedule_desc text,enabled boolean,last_status text,last_run_at timestamptz,source text);
     CREATE TABLE v_workflow_run_stats(workflow_id uuid,time_window text,runs int,failed int,success_rate numeric,avg_duration_ms int,last_started_at timestamptz);
     CREATE TABLE workflow_definition_versions(id uuid,workflow_id uuid,payload jsonb,source_repo text,source_path text,source_commit text,created_at timestamptz);
@@ -43,6 +48,66 @@ beforeEach(async () => {
 });
 afterEach(async () => { if (client) { await client.query('ROLLBACK'); if (schema) await client.query(`DROP SCHEMA ${schema} CASCADE`); await client.end(); } });
 describe('六层目录真实PG边界', () => {
+  it('真实PG合并双运行账按run_id去重；deferred exit0与批次派发、排队和未来记录分开',async()=>{
+    const phone=randomUUID(),batch=randomUUID(),phoneTask=randomUUID(),batchTask=randomUUID(),queued=randomUUID();
+    await client.query("INSERT INTO workflows VALUES($1,'手机','phone',NULL),($2,'批次','batch',NULL)",[phone,batch]);
+    await client.query(`INSERT INTO tasks(id,title,status,payload,result) VALUES
+      ($1,'手机','completed',$4,$6),($2,'批次','completed',$5,$7),($3,'排队','queued',$4,'{}')`,
+      [phoneTask,batchTask,queued,{workflow_id:phone},{workflow_id:batch},
+        {script:{run_id:'phone-run',stdout:'{"status":"deferred","source_revision":"historical"}'}},
+        {script:{run_id:'batch-run',stdout:'{"status":"queued"}'}}]);
+    await client.query(`INSERT INTO task_runs(id,run_id,task_id,started_at,ended_at,status,result) VALUES
+      ($1,'phone-run',$3,now()-interval '1 hour',now(),'success','{"exit_code":0}'),
+      ($2,'batch-run',$4,now()-interval '1 hour',now(),'success','{"exit_code":0}')`,[randomUUID(),randomUUID(),phoneTask,batchTask]);
+    await client.query(`INSERT INTO runs(id,run_id,workflow_id,started_at,ended_at,outcome,duration_ms) VALUES
+      ($1,'phone-run',$4,now()-interval '1 hour',now(),'pass',3600000),
+      ($2,'future',$4,now()+interval '1 hour',NULL,'running',NULL),
+      ($3,'old',$4,now()-interval '8 days',now()-interval '8 days' +interval '1 second','fail',1000)`,[randomUUID(),randomUUID(),randomUUID(),phone]);
+    const rows=buildDirectoryRows(await loadDirectorySource(client));
+    const p=rows.find(r=>r.id===phone).workflowObservation,b=rows.find(r=>r.id===batch).workflowObservation;
+    expect(p.stats).toMatchObject({runs7:1,success7:0,deferred7:1,queued:1,success_rate:null});
+    expect(p.recentRuns.find(r=>r.run_id==='phone-run')).toMatchObject({ledger:'task_runs',status:'deferred',source_revision:'historical',workflow_version:'未知'});
+    expect(p.recentRuns.some(r=>r.run_id==='future')).toBe(false);
+    expect(b.stats).toMatchObject({runs7:1,dispatch7:1,success7:0,completed_task_rate:1});
+    // 不可变定义绑定优先于当前登记版本和任务末次回执；两张运行账都读取真实历史版本。
+    const frozen=randomUUID(),commit='a'.repeat(40);
+    await client.query('INSERT INTO workflow_definition_versions(id,workflow_id,payload,source_commit) VALUES($1,$2,$3,$4)',
+      [frozen,phone,{workflow_id:phone,contract:{version:'0.1.0'}},commit]);
+    await client.query("INSERT INTO run_definition_bindings VALUES('phone-run',$1,$2),('old',$1,$2)",[phone,frozen]);
+    await client.query('ALTER TABLE workflows ADD COLUMN version text');
+    await client.query("UPDATE workflows SET version='9.9.9' WHERE id=$1",[phone]);
+    const bound=buildDirectoryRows(await loadDirectorySource(client)).find(r=>r.id===phone).workflowObservation;
+    expect(bound.version).toBe('9.9.9');
+    expect(bound.recentRuns.find(r=>r.run_id==='phone-run')).toMatchObject({workflow_version:'0.1.0',source_revision:commit,definition_version_id:frozen,status:'deferred'});
+    expect(bound.recentRuns.find(r=>r.run_id==='old')).toMatchObject({workflow_version:'0.1.0',source_revision:commit,definition_version_id:frozen,ledger:'runs'});
+  });
+  it('真PG目录管道连接真实任务及Run页；正文严格读回、重跑保留人工正文与页身份',async()=>{
+    const f=runtimeFixture(),workflow=randomUUID(),task=randomUUID(),run=randomUUID(),page=randomUUID(),taskPage=randomUUID(),runPage=randomUUID();
+    const config={...f.config,value_stream_bindings:[]};
+    await client.query('CREATE TABLE working_memory(key text PRIMARY KEY,value_json jsonb,updated_at timestamptz)');
+    await client.query("INSERT INTO workflows VALUES($1,'手机实跑','single-phone-account-patrol',NULL)",[workflow]);
+    await client.query("INSERT INTO tasks(id,title,status,payload,result,notion_id) VALUES($1,'真实手机','completed',$2,$3,$4)",
+      [task,{workflow_id:workflow},{script:{run_id:'actual-run',stdout:'{"status":"completed","source_revision":"observed-revision"}'}},taskPage]);
+    await client.query("INSERT INTO task_runs(id,run_id,task_id,started_at,ended_at,status,notion_id) VALUES($1,'actual-run',$2,now()-interval '1 hour',now(),'success',$3)",[run,task,runPage]);
+    await client.query("INSERT INTO projection_targets(target,enabled,config) VALUES('notion-directory',true,$1)",[config]);
+    await client.query(`INSERT INTO notion_projection_map(notion_db_id,brain_table,status,direction,face,title) VALUES
+      ($1,'task_runs','active','push','mirror','Runs'),($2,'tasks','active','both','inlet','Tasks')`,[fixtureEntityId(998),fixtureEntityId(997)]);
+    await client.query("INSERT INTO projection_links(target,entity_type,entity_id,external_id) VALUES('notion-directory','workflows',$1,$2)",[workflow,page]);
+    f.pages.set(page,{id:page,parent:{database_id:f.dbs.workflows},properties:{'Brain ID':{rich_text:[{text:{content:workflow}}]}}});
+    const human={id:randomUUID(),type:'paragraph',paragraph:{rich_text:[{text:{content:'人工备注不能覆盖'}}]}};f.blocks.set(page,[human]);
+    const pool={connect:async()=>({query:client.query.bind(client),release(){}})};
+    const first=await runDirectoryProjection(pool,{token:'test',notionReq:f.notionReq,force:true,bodies:null});
+    expect(first.failed).toBe(0);expect(first.workflow_body).toMatchObject({rewritten:1,failed:0});
+    expect(f.pages.get(page).properties['代码运行'].relation).toEqual([{id:runPage}]);
+    expect(f.pages.get(page).properties['关联任务'].relation).toEqual([{id:taskPage}]);
+    expect((await client.query('SELECT workflow_id FROM task_runs WHERE id=$1',[run])).rows[0].workflow_id).toBe(workflow);
+    const machine=f.blocks.get(page).find(b=>b.type==='toggle');
+    expect(JSON.stringify(f.blocks.get(machine.id))).toContain(runPage.replaceAll('-',''));
+    const second=await runDirectoryProjection(pool,{token:'test',notionReq:f.notionReq,force:true,bodies:null});
+    expect(second.failed).toBe(0);expect(second.workflow_body).toMatchObject({failed:0});
+    expect(f.blocks.get(page).filter(b=>b.type==='toggle')).toHaveLength(1);expect(f.blocks.get(page)[0]).toEqual(human);
+    expect((await client.query("SELECT external_id FROM projection_links WHERE entity_type='workflows' AND entity_id=$1",[workflow])).rows).toEqual([{external_id:page}]);
+  });
   it('目录源载入 Activity 的 8 格状态与用料，供 Notion 卡片列使用', async () => {
     const activity=fixtureEntityId(860),item=fixtureEntityId(861),workflow=fixtureEntityId(862);
     await client.query('ALTER TABLE activities ADD COLUMN current_definition_version_id uuid, ADD COLUMN capability_key text, ADD COLUMN activity_key text');
@@ -135,7 +200,9 @@ describe('六层目录真实PG边界', () => {
     await insertVersion(current,workflows[0],'2026-10-01');
     await insertVersion(historical,workflows[0],'2026-10-02');
     await insertVersion(wrong,workflows[0],'2026-10-03');
-    await client.query("INSERT INTO v_workflow_run_stats VALUES($1,'7d',137,3,0.9781,12345,'2026-10-06T09:40:10Z'),($1,'24h',20,0,1,1000,'2026-10-06T09:40:10Z')",[workflows[0]]);
+    await client.query(`INSERT INTO runs(id,run_id,workflow_id,started_at,ended_at,outcome,duration_ms)
+      SELECT gen_random_uuid(),'real-'||n,$1,now()-interval '1 hour',now()-interval '1 hour'+interval '12.345 seconds',
+        CASE WHEN n<=134 THEN 'pass' ELSE 'fail' END,12345 FROM generate_series(1,137) n`,[workflows[0]]);
     let queries=0;
     const source=await loadDirectorySource({query:async(...args)=>{queries++;return client.query(...args);}});
     expect(queries).toBe(1);
@@ -143,7 +210,7 @@ describe('六层目录真实PG边界', () => {
     expect(row.definitionVersion.id).toBe(current);
     expect(rows.find(r=>r.id===workflows[1]).definitionVersion).toBeNull();
     expect(row.properties['7天次数']).toEqual({number:137});
-    expect(row.properties['7天成功率']).toEqual({number:0.9781});
+    expect(row.properties['7天成功率']).toEqual({number:134/137});
     expect(row.properties['平均时长']).toEqual({rich_text:[{text:{content:'12.3 秒'}}]});
     expect(row.properties['运行情况']).toEqual({select:{name:'在跑'}});
     const page=fixtureEntityId(820),dbId=fixtureEntityId(821);let properties;
