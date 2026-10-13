@@ -335,3 +335,18 @@ it.each([false,true])('拒收痕迹跨反馈和delivery保留，完整span及独
  if(exhausted)expect(c.resume_condition).toBe('recovery_budget_exhausted');
  else {await reconcileCommanderTask(f.db,id,deps);c=(await state()).result.workflow_control;expect(c.history[0].rejected_activity_facts).toHaveLength(1);expect(c.envelope.deadline_at).toBe(e.deadline_at);}
 });
+
+it('status顺序补账含坏活动原件仍能读到真实delivery和官方停止，不越过原预算',async()=>{
+ await dispatchCommanderV2(f.db,id,deps);const e=await envelope();
+ const make=(seq,type,data)=>({protocol:e.protocol,run_id:e.run_id,attempt:e.attempt,owner_epoch:e.owner_epoch,seq,type,data});
+ const events=[make(1,'activity_completed',activityData(e,{outcome:'completed'})),make(2,'delivery',delivery(e))];
+ const status=async()=>({protocol:e.protocol,run_id:e.run_id,execution_stopped:true,events});
+ await reconcileCommanderTask(f.db,id,{...deps,status});
+ let c=(await state()).result.workflow_control;
+ expect(c.last_seq).toBe(2);expect(c.phase).toBe('awaiting_verify');expect(c.delivery.status).toBe('failed');
+ expect(c.envelope.deadline_at).toBe(e.deadline_at);expect(deps.createVerify).toHaveBeenCalledTimes(1);
+ await reconcileCommanderTask(f.db,id,{...deps,status});expect(deps.createVerify).toHaveBeenCalledTimes(1);
+ expect((await f.db.query('SELECT * FROM spans WHERE run_id=$1',[e.run_id])).rows).toHaveLength(0);
+ expect((await f.db.query("SELECT * FROM task_events WHERE task_id=$1 AND event_type='commander_feedback'",[id])).rows).toHaveLength(2);
+ expect((await f.db.query('SELECT status FROM task_runs WHERE run_id=$1',[e.run_id])).rows[0].status).toBe('failed');
+});

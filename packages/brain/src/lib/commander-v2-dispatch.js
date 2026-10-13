@@ -43,7 +43,7 @@ export async function prepareCommander(pool, taskId, deps = {}) {
     validateMethodReady(await readyCommander(e, deps), e);
     await (deps.startRun ?? startRun)({ taskId, runId: e.run_id, source: 'workflow-commander-v2', definition: e.definition, context: { commander_envelope: e } }, { pool, transactionClient: db });
     const c = { phase: 'prepared', envelope: e, execution_location: { ssh_target: target(deps), run_directory: `~/wf-agent-runs/${e.run_id}` }, last_seq: 0, execution_stopped: false, launch_state: 'pending',
-      history: previous ? [...(previous.history ?? []), { run_id: previous.envelope.run_id, attempt: previous.envelope.attempt, verification: previous.verification, failure: previous.failure }] : [] };
+      history: previous ? [...(previous.history ?? []), { run_id: previous.envelope.run_id, attempt: previous.envelope.attempt, verification: previous.verification, failure: previous.failure, ...(previous.rejected_activity_facts?.length ? { rejected_activity_facts: previous.rejected_activity_facts } : {}) }] : [] };
     if (previous) {
       c.recovery_mode = selected?.definition ? 'verified_historical_method' : 'same_verified_implementation_retry';
       c.method_selection_gaps = selected?.gaps ?? [];

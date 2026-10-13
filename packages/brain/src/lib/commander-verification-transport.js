@@ -28,6 +28,7 @@ export async function verificationLaunch(pool, task, now = Date.now()) {
     && fixed.definition_sha256 === e.definition.snapshot_sha256 && fixed.input_sha256 === e.input_sha256, '固定主run身份不符');
   for (const key of ['input', 'definition', 'contract', 'method_selection']) requireVerification(isDeepStrictEqual(fixed[key], e[key]), `固定${key}不符`);
   for (const key of ['outputs', 'evidence', 'cleanup', 'effects']) requireVerification(isDeepStrictEqual(fixed[key], c.delivery?.[key]), `固定${key}不符`);
+  requireVerification(isDeepStrictEqual(fixed.rejected_activity_facts, c.rejected_activity_facts?.length ? c.rejected_activity_facts : undefined), '固定拒收事实不符');
   requireVerification(isDeepStrictEqual(fixed.execution_location, c.execution_location) && fixed.execution_status === c.delivery?.status, '固定执行身份不符');
   return { runId: p.run_id, department: 'skill-factory', model: VERIFICATION_MODEL, timeoutSec: remaining };
 }

@@ -8,9 +8,11 @@ import { digest, requireCommander, recoveryAllowed } from './commander-v2-contra
 import { METHOD_PROTOCOL, frozenWorkflow, methodManifest, compatibilityDigest, expectedPath, validateMethodSupport } from './commander-method-contract.js';
 const metaKey = 'workflow_commander.internal';
 const host = 'mmv';
+const rejectedFacts = value => value !== undefined && (!Array.isArray(value) || value.length > 0);
 export function qualifiedMethod({ run, task, verificationTask, frozen, evidence }) {
   const c = task?.result?.workflow_control, e = c?.envelope, b = frozen?.binding, w = frozen?.workflow;
-  if (!e || !b || !w || !run || run.run_id !== e.run_id || run.task_id !== task.id || run.status !== 'success' || !run.ended_at
+  if (rejectedFacts(c?.rejected_activity_facts) || rejectedFacts(run?.result?.rejected_activity_facts)
+      || c?.delivery?.failure?.code === 'invalid_activity_fact' || run?.result?.delivery?.failure?.code === 'invalid_activity_fact' || !e || !b || !w || !run || run.run_id !== e.run_id || run.task_id !== task.id || run.status !== 'success' || !run.ended_at
       || !['completed', 'completed_no_pr'].includes(task.status) || c.phase !== 'final' || c.verdict !== 'PASS'
       || c.delivery?.status !== 'completed' || !c.delivery?.cleanup?.completed || !c.delivery.cleanup.evidence?.length
       || !isCommanderVerification(verificationTask) || !verifiedRuntime(verificationTask) || verificationTask.id !== c.verify_task_id || verificationTask.parent_task_id !== task.id

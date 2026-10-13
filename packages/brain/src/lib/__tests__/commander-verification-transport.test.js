@@ -77,3 +77,14 @@ it('历史方法独立核验运输也固定双定义材料，删除或篡改选�
  delete materials.method_selection;await expect(verificationLaunch(pool,task)).rejects.toThrow('method_selection');
  materials.method_selection={...e.method_selection,original_goal_definition:{snapshot_sha256:'wrong'}};await expect(verificationLaunch(pool,task)).rejects.toThrow('method_selection');
 });
+
+it('拒收事实是独立核验固定材料，删除或篡改均在运输起跑前拒绝',async()=>{
+ const e={run_id:'business',attempt:1,input_sha256:'input',definition:{snapshot_sha256:'snapshot'}};
+ const rejected=[{code:'invalid_activity_fact',seq:1,event_sha256:'raw-hash',fields:['outcome']}];
+ const materials={task_id:'parent',run_id:e.run_id,attempt:1,input_sha256:e.input_sha256,definition_sha256:'snapshot',definition:e.definition,rejected_activity_facts:structuredClone(rejected)};
+ const task={id:'verify',task_type:'research',payload:verificationMetadata(materials)};
+ const pool={query:vi.fn(async()=>({rows:[{id:'parent',status:'in_progress',result:{workflow_control:{verify_task_id:'verify',envelope:e,rejected_activity_facts:rejected}}}]}))};
+ expect(await verificationLaunch(pool,task)).toMatchObject({department:'skill-factory'});
+ delete materials.rejected_activity_facts;await expect(verificationLaunch(pool,task)).rejects.toThrow('拒收');
+ materials.rejected_activity_facts=[{...rejected[0],event_sha256:'changed'}];await expect(verificationLaunch(pool,task)).rejects.toThrow('拒收');
+});

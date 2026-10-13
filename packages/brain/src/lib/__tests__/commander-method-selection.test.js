@@ -27,3 +27,18 @@ it('历史已拒收活动的run不能凭后来的PASS成为方法候选',()=>{
  const p=proof();p.task.result.workflow_control.rejected_activity_facts=[{code:'invalid_activity_fact',seq:1}];
  expect(qualifiedMethod(p)).toBe(false);
 });
+
+it('运行账拒收痕迹不可被缺失控制快照遮盖，异常标记shape也拒绝候选',()=>{
+ for(const marker of [[{code:'invalid_activity_fact',seq:1}],null,{},'invalid']){
+  const p=proof();p.run.result={rejected_activity_facts:marker};expect(qualifiedMethod(p)).toBe(false);
+  const q=proof();q.task.result.workflow_control.rejected_activity_facts=marker;expect(qualifiedMethod(q)).toBe(false);
+ }
+});
+
+it('派生delivery保留invalid_activity_fact时也不能成为历史候选',()=>{
+ for(const where of ['control','run']){
+  const p=proof(),delivery={status:'completed',failure:{code:'invalid_activity_fact'}};
+  if(where==='run')p.run.result={delivery};else p.task.result.workflow_control.delivery.failure=delivery.failure;
+  expect(qualifiedMethod(p)).toBe(false);
+ }
+});
