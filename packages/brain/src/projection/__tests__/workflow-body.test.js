@@ -99,3 +99,46 @@ it('Notion省略纯空白片段时20条运行和任务仍保留分隔与链接',
   ...Array.from({length:20},(_,i)=>`https://app.notion.com/p/taskpage${i}`)]);
  expect(linked.filter(part=>part.text.content.startsWith('\n'))).toHaveLength(38);
 });
+
+// 实页读回：Notion 将未投影为链接的运行/任务记录，以及长文本分段合并。
+function mergeNotionSpans(value) {
+ if(Array.isArray(value))return value.map(mergeNotionSpans);
+ if(!value||typeof value!=='object')return value;
+ return Object.fromEntries(Object.entries(value).map(([key,item])=>{
+  if(key!=='rich_text')return [key,mergeNotionSpans(item)];
+  const merged=[];
+  for(const part of item){
+   const previous=merged.at(-1);
+   if(previous&&(previous.text.link?.url??null)===(part.text.link?.url??null))previous.text.content+=part.text.content;
+   else merged.push(structuredClone(part));
+  }
+  return [key,merged];
+ }));
+}
+it('实页合并相同链接片段后仍严格核对文字和链接且不重复写入',async()=>{
+ const many={...row,workflowObservation:{...row.workflowObservation,
+  maintenance_owner:'负责人'.repeat(800),
+  recentRuns:[{run_id:'unprojected-run',status:'pass'}],
+  recentTasks:Array.from({length:6},(_,i)=>({id:`task-${i}`,title:`真实任务${i}`}))}};
+ const b=backend();const request=async(...args)=>mergeNotionSpans(await b.request(...args));
+ expect(await syncWorkflowBodies(pool,{token:'t',notionReq:request,rows:[many]})).toMatchObject({rewritten:1,failed:0});
+ const writes=b.writes;
+ expect(await syncWorkflowBodies(pool,{token:'t',notionReq:request,rows:[many]})).toMatchObject({unchanged:1,failed:0});
+ expect(b.writes).toBe(writes);
+});
+it.each(['text','link'])('实页合并片段后%s被改变仍判失败并保留旧正文',async corruption=>{
+ const old={...buildWorkflowBodyBlock({...row.workflowObservation,version:'old'}),id:'old-readable'};
+ const b=backend([old]);
+ const request=async(...args)=>{
+  const value=mergeNotionSpans(await b.request(...args));
+  if(args[2]==='GET'&&args[1].includes('new-body-')){
+   const parts=value.results[15].paragraph.rich_text;
+   if(corruption==='text')parts[0].text.content=parts[0].text.content.slice(1);
+   else parts[0].text.link.url='https://app.notion.com/p/wrongpage';
+  }
+  return value;
+ };
+ expect(await syncWorkflowBodies(pool,{token:'t',notionReq:request,rows:[row]})).toMatchObject({rewritten:0,failed:1});
+ expect(b.blocks.find(block=>block.id==='old-readable')).toEqual(old);
+ expect(b.request.mock.calls.some(call=>call[2]==='DELETE')).toBe(false);
+});

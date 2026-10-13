@@ -30,7 +30,15 @@ export function buildWorkflowBodyBlock(observation={}) {
 }
 function normalized(block) {
  const type=block.type,body=block[type]||{};
- return {type,rich_text:(body.rich_text||[]).map(p=>({text:p.text?.content ?? p.plain_text ?? '',link:p.text?.link?.url ?? null})),
+ // Notion 可以合并/拆分同链接片段；按连续链接区间核对，文字字节和链接边界仍必须完全一致。
+ const spans=[];
+ for(const p of body.rich_text||[]){
+  const span={text:p.text?.content ?? p.plain_text ?? '',link:p.text?.link?.url ?? null};
+  const previous=spans.at(-1);
+  if(previous&&previous.link===span.link)previous.text+=span.text;
+  else spans.push(span);
+ }
+ return {type,rich_text:spans,
   children:(body.children||[]).map(normalized)};
 }
 async function list(token,id,request) {
