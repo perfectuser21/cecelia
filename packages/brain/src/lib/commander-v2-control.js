@@ -8,17 +8,18 @@ import { releaseTaskLease } from './task-lease.js';
 import { releaseDeviceLocksHeldBy } from '../device-lock-helpers.js';
 import { finalizeTask, afterTerminalTransition } from './task-terminal.js';
 import { recordCommanderFailure } from './commander-v2-failures.js';
+import { readSystemRunEvidence } from './capability-system-evidence.js';
 import { createRoutedTask } from '../work-routing-store.js';
 export function verificationRequest(task, c) {
   const e = c.envelope;
   const fixed = { task_id: task.id, run_id: e.run_id, attempt: e.attempt, definition_sha256: e.definition.snapshot_sha256,
-    input_sha256: e.input_sha256, definition: e.definition, input: e.input, contract: e.contract,
+    execution_location: c.execution_location, input_sha256: e.input_sha256, definition: e.definition, input: e.input, contract: e.contract,
     outputs: c.delivery.outputs, evidence: c.delivery.evidence, cleanup: c.delivery.cleanup,
     execution_status: c.delivery.status, effects: c.delivery.effects };
   return { source: 'scheduler', declared_domain: 'research', mutation_intent: 'read_only', source_id: `commander-verify:${e.run_id}`, requested_task_type: 'research',
     title: `独立核验 ${e.workflow_key} ${e.run_id}`, parent_task_id: task.id,
-    description: `使用run-verify技能，只读合同和实际产物，不读执行会话，不执行发布或修复。必须独立读取原始来源及outputs、cleanup证据，逐项核实。\n固定材料：${JSON.stringify(fixed)}\n结果写result.workflow_verification={task_id,run_id,attempt,definition_sha256,verdict:"PASS|FAIL|INCONCLUSIVE",assertions:[],evidence:[]}。PASS必须有非空断言和独立证据，收尾须断言name=cleanup、pass=true。失败时须独立读回外部副作用；仅确认未提交或已补偿，才能加入name=effects_safe_to_retry、pass=true断言，禁止依据执行者自述。对delivery中committed/unknown的每个effect，只有独立确认无动作或已补偿，才能附{name:"effect:<key>",pass:true,status:"none|compensated",evidence:[]}逐项读回断言；后续核验补充证据可更新同核验任务结果触发恢复。`,
-    metadata: { workflow_verification_of: task.id, workflow_verification: fixed, skill: 'run-verify', model: 'codex' },
+    description: `使用run-verify技能，只读合同和实际产物，不读执行会话，不执行发布或修复。必须独立读取原始来源及outputs、cleanup证据，逐项核实。\n固定材料：${JSON.stringify(fixed)}\n最后一行输出 WORKFLOW_VERIFICATION {task_id,run_id,attempt,definition_sha256,verdict:"PASS|FAIL|INCONCLUSIVE",assertions:[],evidence:[]}。PASS必须有非空断言和独立证据，收尾须断言name=cleanup、pass=true。失败时须独立读回外部副作用；仅确认未提交或已补偿，才能加入name=effects_safe_to_retry、pass=true断言，禁止依据执行者自述。对delivery中committed/unknown的每个effect，只有独立确认无动作或已补偿，才能附{name:"effect:<key>",pass:true,status:"none|compensated",evidence:[]}逐项读回断言；后续核验补充证据可更新同核验任务结果触发恢复。执行材料属于固定execution_location.ssh_target，outputs绝对路径只在该执行机解释；核验机通过只读SSH读取同源JSON/CSV及冻结contract.runtime所指helper，不能把远端路径当成本机路径。`,
+    metadata: { workflow_verification_of: task.id, workflow_verification: fixed, skill: 'run-verify', executor: 'codex' },
     task: { status: 'queued', priority: 'P1', parent_task_id: task.id, created_by: 'workflow-commander-v2', trigger_source: 'brain_auto' } };
 }
 async function ensureVerification(db, task, c, deps) {
@@ -27,9 +28,16 @@ async function ensureVerification(db, task, c, deps) {
   c.verify_task_id = created.task?.id;
   requireCommander(c.verify_task_id && c.verify_task_id !== task.id, '独立核验建单失败', 409);
 }
-function readVerification(vt, task, c) {
+function callbackVerification(vt) {
+  const raw = vt.payload?.last_run_result?.result_summary;
+  if (typeof raw !== 'string' || Buffer.byteLength(raw) > 50000) return null;
+  const line = [...raw.matchAll(/^WORKFLOW_VERIFICATION[ \t]+(\{[^\n]*\})[ \t]*$/gm)].at(-1)?.[1];
+  try { const parsed = JSON.parse(line ?? raw); return parsed.workflow_verification ?? (line ? parsed : null); }
+  catch { return null; }
+}
+export function readVerification(vt, task, c) {
   if (!vt || !['completed', 'completed_no_pr', 'failed', 'cancelled'].includes(vt.status)) return null;
-  const v = vt.result?.workflow_verification, e = c.envelope;
+  const v = vt.result?.workflow_verification ?? callbackVerification(vt), e = c.envelope;
   if (!v || v.task_id !== task.id || v.run_id !== e.run_id || v.attempt !== e.attempt || v.definition_sha256 !== e.definition.snapshot_sha256
       || !['PASS', 'FAIL', 'INCONCLUSIVE'].includes(v.verdict) || !Array.isArray(v.assertions) || !Array.isArray(v.evidence)) {
     return { verdict: 'INCONCLUSIVE', reason: '核验身份或证据格式无效', assertions: [], evidence: [] };
@@ -74,9 +82,17 @@ async function advanceVerification(pool, taskId, deps) {
     if (c?.phase !== 'awaiting_verify' && !(c?.phase === 'blocked' && c.verification)) return;
     await ensureVerification(db, task, c, deps);
     const vt = (await db.query('SELECT * FROM tasks WHERE id=$1', [c.verify_task_id])).rows[0];
-    const v = readVerification(vt, task, c);
+    let v = readVerification(vt, task, c);
     if (!v) { await writeControl(db, taskId, c); return; }
-    if (c.phase === 'blocked' && digest(v) === digest(c.verification)) return;
+    if (c.phase === 'blocked' && digest(v) === (c.verification_source_sha256 ?? digest(c.verification))) return;
+    c.verification_source_sha256 = digest(v);
+    if (!vt.result?.workflow_verification && v.task_id === taskId && v.run_id === c.envelope.run_id) {
+      await db.query(`UPDATE tasks SET result=COALESCE(result,'{}'::jsonb)||jsonb_build_object('workflow_verification',$2::jsonb) WHERE id=$1`, [vt.id, JSON.stringify(v)]);
+    }
+    c.reconciliation = await (deps.readEvidence ?? readSystemRunEvidence)(db, c.envelope.run_id);
+    if (v.verdict === 'PASS' && (c.reconciliation.evidence_status !== 'verified' || !['pass', 'skipped'].includes(c.reconciliation.business_outcome))) {
+      v = { ...v, verdict: 'INCONCLUSIVE', assertions: [...v.assertions, { name: 'frozen_path', pass: false, gaps: c.reconciliation.gaps }], reason: '冻结路径执行证据不完整或存在失败' };
+    }
     c.verification = v;
     if (v.verdict === 'PASS' && c.delivery.status === 'completed' && c.delivery.cleanup.completed && c.delivery.cleanup.evidence.length) {
       c.phase = 'final'; c.verdict = 'PASS'; c.resume_condition = null;
@@ -122,11 +138,17 @@ export async function reconcileCommanderTask(pool, taskId, deps = {}) {
 }
 export async function reconcileCommanderV2(pool, deps = {}) {
   const tasks = (await pool.query(`SELECT id FROM tasks WHERE task_type='workflow_dispatch' AND status='in_progress'
-    AND payload->>'commander_protocol'='commander-v2' ORDER BY updated_at LIMIT 20`)).rows;
+    AND payload->>'commander_protocol'='commander-v2' ORDER BY updated_at,id LIMIT 20`)).rows;
   const out = [];
   for (const task of tasks) {
     try { await reconcileCommanderTask(pool, task.id, deps); out.push({ task_id: task.id, reconciled: true }); }
     catch (err) { out.push({ task_id: task.id, error: err.message }); }
+    finally {
+      // 无变化blocked同样轮转；不能让固定20个旧任务永久占据巡检窗口。
+      await pool.query(`UPDATE tasks SET updated_at=NOW() WHERE id=$1 AND status='in_progress'
+        AND payload->>'commander_protocol'='commander-v2'`, [task.id]);
+    }
+
   }
   return out;
 }

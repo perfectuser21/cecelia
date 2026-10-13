@@ -176,8 +176,11 @@ describe('reconcileDelegatedDeviceJobs — 不变量', () => {
       const { pool, writes } = makePool({ child: childRow(s) });
       await reconcileDelegatedDeviceJobs(pool);
       for (const w of writes) {
-        expect(w.sql).not.toMatch(/payload/);
-        expect(w.sql).not.toMatch(/task_type\s*=/);
+        const assignment = w.sql.match(/UPDATE\s+tasks\s+SET\s+([\s\S]*?)\s+WHERE\b/i)?.[1];
+        expect(assignment).toBeTruthy();
+        expect(assignment).not.toMatch(/\bpayload\s*=/);
+        expect(assignment).not.toMatch(/\btask_type\s*=/);
+        expect(w.sql).toContain("payload->>'commander_protocol'");
       }
     }
   });

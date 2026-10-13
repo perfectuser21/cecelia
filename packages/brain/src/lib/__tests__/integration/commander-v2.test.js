@@ -32,7 +32,8 @@ async function envelope(){return (await state()).result.workflow_control.envelop
 async function sendEvent(seq,type,data,e){e??=await envelope();return receiveCommanderEvent(f.db,id,{protocol:e.protocol,run_id:e.run_id,attempt:e.attempt,owner_epoch:e.owner_epoch,seq,type,data});}
 function delivery(e,over={}) { return {...e,status:'completed',outputs:[{path:'/tmp/report.json'}],evidence:['source:actual'],cleanup:{completed:true,evidence:['resource:free']},effects:[],...over}; }
 async function stopWithDelivery(e,over={}){
- await sendEvent(1,'delivery',delivery(e,over),e);
+ const seq=((await state()).result.workflow_control.last_seq??0)+1;
+ await sendEvent(seq,'delivery',delivery(e,over),e);
  await reconcileCommanderTask(f.db,id,{...deps,status:async()=>({protocol:e.protocol,run_id:e.run_id,execution_stopped:true,events:[]})});
 }
 it('正式派发先落task_runs/绑定/完整输入，非手机零锁，中文恶意字符仅stdin往返',async()=>{
@@ -101,7 +102,7 @@ async function verify(verdict){
  await reconcileCommanderTask(f.db,id,deps);
 }
 it('独立核验PASS与真实cleanup成立才完成原任务',async()=>{
- await dispatchCommanderV2(f.db,id,deps);await stopWithDelivery(await envelope());await verify('PASS');
+ await dispatchCommanderV2(f.db,id,deps);await completePath(await envelope());await stopWithDelivery(await envelope());await verify('PASS');
  expect((await state()).status).toBe('completed');expect((await state()).result.workflow_control.verdict).toBe('PASS');
 });
 it('核验FAIL回原task并自动用已验证实现接续，保留历史run及总deadline',async()=>{
@@ -142,4 +143,54 @@ it('unknown副作用补独立逐项读回后同task恢复，原delivery及run历
  await reconcileCommanderTask(f.db,id,deps);expect((await envelope()).attempt).toBe(2);
  const original=(await f.db.query('SELECT result FROM task_runs WHERE run_id=$1',[e.run_id])).rows[0].result;
  expect(original.delivery.effects[0].status).toBe('unknown');expect(deps.sshDispatch).toHaveBeenCalledTimes(2);
+});
+it('输出schema不符拒绝成功声明但接受原序事件，不卡重放，独立核验处理真实失败',async()=>{
+ contract.output_schema={type:'object',required:['json_path','csv_path','task_count','deployment_count','source_snapshot']};
+ await dispatchCommanderV2(f.db,id,deps);const e=await envelope();
+ const original=delivery(e,{outputs:{}});
+ const accepted=await sendEvent(1,'delivery',original,e);
+ expect(accepted).toMatchObject({accepted:true,success_claim_rejected:{code:'output_contract_invalid'}});
+ expect((await state()).result.workflow_control.delivery).toMatchObject({status:'failed',outputs:{},failure:{code:'output_contract_invalid'}});
+ expect(await sendEvent(1,'delivery',original,e)).toMatchObject({duplicate:true});
+ const fact=(await f.db.query("SELECT payload FROM task_events WHERE task_id=$1 AND event_type='commander_feedback'",[id])).rows;
+ expect(fact).toHaveLength(1);expect(fact[0].payload.data.status).toBe('completed');expect(fact[0].payload.data.outputs).toEqual({});
+ expect(deps.createVerify).not.toHaveBeenCalled();expect(deps.releaseLease).not.toHaveBeenCalled();
+ await reconcileCommanderTask(f.db,id,{...deps,status:async()=>({protocol:e.protocol,run_id:e.run_id,execution_stopped:true,events:[]})});
+ expect((await state()).result.workflow_control.phase).toBe('awaiting_verify');expect((await state()).status).toBe('in_progress');
+ expect(deps.createVerify).toHaveBeenCalledTimes(1);
+ expect((await f.db.query('SELECT status FROM task_runs WHERE run_id=$1',[e.run_id])).rows[0].status).toBe('failed');
+});
+it('开始事件只留task_events，完成事件才形成可对账span',async()=>{
+ await dispatchCommanderV2(f.db,id,deps);const e=await envelope(),path=e.definition.expected_path[0];
+ const data={reference_id:path.reference_id,started_at:'2026-10-13T00:00:00Z'};
+ await sendEvent(1,'activity_started',data,e);await sendEvent(2,'activity_completed',{...data,ended_at:'2026-10-13T00:01:00Z',outcome:'pass'},e);
+ const spans=(await f.db.query('SELECT * FROM spans WHERE run_id=$1',[e.run_id])).rows;
+ expect(spans).toHaveLength(1);expect(spans[0].ended_at).not.toBeNull();
+});
+it('核验声称PASS但冻结路径无span，原任务不能完成且保留缺口',async()=>{
+ await dispatchCommanderV2(f.db,id,deps);await stopWithDelivery(await envelope());await verify('PASS');
+ const t=await state();expect(t.status).toBe('in_progress');
+ expect(t.result.workflow_control.reconciliation.gaps.some(g=>g.code==='EXPECTED_SPAN_MISSING')).toBe(true);
+});
+it('新attempt收到前一核验失败断言和证据，预算与输入不变',async()=>{
+ await dispatchCommanderV2(f.db,id,deps);const old=await envelope();await stopWithDelivery(old);await verify('FAIL');
+ await reconcileCommanderTask(f.db,id,deps);const next=await envelope();
+ expect(next.recovery.previous_attempt).toMatchObject({run_id:old.run_id,attempt:1,verification:{verdict:'FAIL',evidence:['independent:readback']}});
+ expect(next.recovery.previous_attempt.verification.assertions.some(a=>a.name==='output'&&a.pass===false)).toBe(true);
+ expect(next.deadline_at).toBe(old.deadline_at);expect(next.input).toEqual(old.input);
+});
+
+async function completePath(e){
+ let seq=(await state()).result.workflow_control.last_seq;
+ for(const path of e.definition.expected_path)await sendEvent(++seq,'activity_completed',{reference_id:path.reference_id,step_id:path.step_id,started_at:'2026-10-13T00:00:00Z',ended_at:'2026-10-13T00:01:00Z',outcome:'pass',evidence:{ref:'actual:execution'}},e);
+}
+it('正式Codex回调stdout可收进核验结果，完整冻结span加独立PASS才完成',async()=>{
+ await dispatchCommanderV2(f.db,id,deps);const e=await envelope();await completePath(e);await stopWithDelivery(e);
+ const c=(await state()).result.workflow_control;
+ const v={task_id:id,run_id:e.run_id,attempt:e.attempt,definition_sha256:e.definition.snapshot_sha256,verdict:'PASS',assertions:[{name:'cleanup',pass:true},{name:'output',pass:true}],evidence:['independent:readback']};
+ await f.db.query("UPDATE tasks SET status='completed',payload=payload||$2::jsonb WHERE id=$1",[c.verify_task_id,{last_run_result:{result_summary:`只读核验完成\nWORKFLOW_VERIFICATION ${JSON.stringify(v)}`}}]);
+ await reconcileCommanderTask(f.db,id,deps);
+ const parent=await state();expect(parent.status).toBe('completed');expect(parent.result.workflow_control.reconciliation).toMatchObject({evidence_status:'verified',business_outcome:'pass'});
+ const child=(await f.db.query('SELECT * FROM tasks WHERE id=$1',[c.verify_task_id])).rows[0];expect(child.result.workflow_verification).toEqual(v);
+ expect(child.payload.workflow_verification.execution_location.ssh_target).toBe(parent.result.workflow_control.execution_location.ssh_target);
 });

@@ -30,11 +30,11 @@ export async function prepareCommander(pool, taskId, deps = {}) {
     requireCommander(task.status === 'queued' || previous?.phase === 'recovering', '任务不可起跑', 409);
     const frozen = previous ? { definition: previous.envelope.definition, contract: previous.envelope.contract } : await (deps.frozenContract ?? frozenContract)(db, task);
     const sourceTask = previous ? { ...task, payload: { ...task.payload, workflow_input: previous.envelope.input } } : task;
-    const e = makeEnvelope(sourceTask, frozen.definition, frozen.contract, previous?.envelope, (deps.now ?? (() => new Date()))());
+    const e = makeEnvelope(sourceTask, frozen.definition, frozen.contract, previous?.envelope, (deps.now ?? (() => new Date()))(), previous);
     // ready为只读协议握手，实际run binding再次检查数据库当前部署，不能用ready替代release闸。
     validateReady(await readyCommander(e, deps), e.definition);
     await (deps.startRun ?? startRun)({ taskId, runId: e.run_id, source: 'workflow-commander-v2', definition: e.definition, context: { commander_envelope: e } }, { pool, transactionClient: db });
-    const c = { phase: 'prepared', envelope: e, last_seq: 0, execution_stopped: false, launch_state: 'pending',
+    const c = { phase: 'prepared', envelope: e, execution_location: { ssh_target: target(deps), run_directory: `~/wf-agent-runs/${e.run_id}` }, last_seq: 0, execution_stopped: false, launch_state: 'pending',
       history: previous ? [...(previous.history ?? []), { run_id: previous.envelope.run_id, attempt: previous.envelope.attempt, verification: previous.verification, failure: previous.failure }] : [] };
     await writeControl(db, taskId, c);
     await db.query(`UPDATE tasks SET status='in_progress',claimed_by='workflow-commander-v2',claimed_at=NOW(),started_at=COALESCE(started_at,NOW()),executor_kind='openclaw-agent',

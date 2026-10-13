@@ -18,7 +18,7 @@ async function activityFact(db, c, input) {
     run_binding_id: context.binding.id, reference_id: path.reference_id,
     workflow_definition_version_id: e.definition.workflow_definition_version_id,
     activity_definition_version_id: path.activity_definition_version_id, attempt_key: e.definition.attempt_key }, 0);
-  await writeSpans(db, [span], { transactionClient: db });
+  if (input.type === 'activity_completed') await writeSpans(db, [span], { transactionClient: db });
 }
 export async function receiveCommanderEvent(pool, taskId, input) {
   bounded(input, 210000, '反馈'); bounded(input?.data, 200000, '事件data');
@@ -32,8 +32,15 @@ export async function receiveCommanderEvent(pool, taskId, input) {
     requireCommander(!c.delivery, '终态交付后只允许原样重放', 409);
     if (input.type.startsWith('activity_')) await activityFact(db, c, input);
     if (input.type === 'delivery') {
-      validateDelivery(input.data, c.envelope);
-      c.delivery = input.data; c.phase = 'awaiting_stop';
+      try { validateDelivery(input.data, c.envelope); c.delivery = input.data; }
+      catch (err) {
+        if (err.code !== 'COMMANDER_OUTPUT_CONTRACT_INVALID') throw err;
+        // 身份及结构已验证：按原hash接受事件，拒绝成功声明而非卡住不可变反馈队列。
+        c.delivery = { ...input.data, status: 'failed', failure: { code: 'output_contract_invalid', message: err.message,
+          claimed_status: input.data.status, original_failure: input.data.failure ?? null } };
+        c.success_claim_rejected = { code: 'output_contract_invalid', reason: err.message, seq: input.seq };
+      }
+      c.phase = 'awaiting_stop';
       c.resume_condition = 'official_status_execution_stopped';
     } else if (input.type === 'blocked') {
       c.phase = 'blocked'; c.resume_condition = 'official_child_wait_or_delivery'; c.failure = input.data;
@@ -43,6 +50,6 @@ export async function receiveCommanderEvent(pool, taskId, input) {
     c.last_seq = input.seq; c.last_feedback_at = new Date().toISOString();
     await event(db, taskId, 'commander_feedback', { ...input, sha256: digest(input) });
     await writeControl(db, taskId, c);
-    return { accepted: true, seq: input.seq, phase: c.phase };
+    return { accepted: true, seq: input.seq, phase: c.phase, ...(c.success_claim_rejected ? { success_claim_rejected: c.success_claim_rejected } : {}) };
   });
 }

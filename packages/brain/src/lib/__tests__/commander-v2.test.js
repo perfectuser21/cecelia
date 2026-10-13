@@ -62,3 +62,15 @@ it('独立核验建单满足正式路由合同，落research而非coding通道',
  const spec=verificationRequest(task,{envelope:{workflow_key:'report',run_id:'run',attempt:1,definition:{snapshot_sha256:'hash'},input:{}},delivery:{outputs:[],evidence:[],cleanup:{},effects:[]}});
  expect(routeWork(spec,[])).toMatchObject({canonical_task_type:'research',work_kind:'research',pipeline:'research'});
 });
+import { validateDelivery } from '../commander-v2-contract.js';
+const reportOutputSchema={type:'object',additionalProperties:false,required:['json_path','csv_path','task_count','deployment_count','source_snapshot'],properties:{json_path:{type:'string',minLength:1},csv_path:{type:'string',minLength:1},task_count:{type:'integer',minimum:0},deployment_count:{type:'integer',minimum:0},source_snapshot:{type:'string',minLength:1}}};
+it('completed交付必须满足冻结输出schema，空对象/错类型/多余字段拒绝',()=>{
+ const e=makeEnvelope({...task,payload:{...task.payload,workflow_key:'report',workflow_input:{text:'ok'}}},{},{...contract,output_schema:reportOutputSchema},null);
+ const d={...e,status:'completed',outputs:{},evidence:[],effects:[],cleanup:{completed:true,evidence:[]}};
+ expect(()=>validateDelivery(d,e)).toThrow('outputs不符合同');
+ const outputs={json_path:'/report.json',csv_path:'/report.csv',task_count:0,deployment_count:0,source_snapshot:'sha256'};
+ expect(()=>validateDelivery({...d,outputs},e)).not.toThrow();
+ expect(()=>validateDelivery({...d,outputs:{...outputs,task_count:'0'}},e)).toThrow('outputs不符合同');
+ expect(()=>validateDelivery({...d,outputs:{...outputs,uncontracted:true}},e)).toThrow('outputs不符合同');
+ expect(()=>validateDelivery({...d,status:'failed',failure:{code:'output_schema_invalid'}},e)).not.toThrow();
+});
