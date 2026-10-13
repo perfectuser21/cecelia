@@ -469,6 +469,8 @@
     {"owner_path": "packages/brain/src/executor.js", "path": "packages/brain/src/__tests__/executor-route-override.test.js", "role": "verification"},
     {"owner_path": "packages/brain/src/openclaw-agent-executor.js", "path": "packages/brain/src/__tests__/openclaw-agent-executor.test.js", "role": "verification"},
     {"owner_path": "packages/brain/src/lib/commander-verification-transport.js", "path": "packages/brain/src/lib/__tests__/commander-verification-transport.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/dispatcher.js", "path": "packages/brain/src/__tests__/golden-path-proposal-wiring.test.js", "role": "verification"}
+    {"owner_path": "packages/brain/src/dispatcher.js", "path": "packages/brain/src/__tests__/golden-path-proposal-wiring.test.js", "role": "verification"},
+    {"owner_path": "scripts/staging-deploy.sh", "path": "packages/brain/src/__tests__/staging-deploy-env.test.js", "role": "verification"},
+    {"owner_path": "scripts/staging-deploy.sh", "path": "changes/cp-1013152200-commander-ci-followup.md", "role": "release"}
   ]
 }
