@@ -438,6 +438,29 @@
       "owner_path": "packages/brain/src/harness-skill-relay.js",
       "path": "packages/brain/src/__tests__/kernel-runtime-retired.test.js",
       "role": "verification"
-    }
+    },
+    {"owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js", "path": "changes/cp-1013123429-commander-generic.md", "role": "release"},
+    {"owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js", "path": "docs/learnings/cp-1013123429-commander-generic.md", "role": "documentation"},
+    {"owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js", "path": "docs/superpowers/plans/2026-10-13-generic-commander.md", "role": "documentation"},
+    {"owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js", "path": "docs/superpowers/specs/2026-10-13-generic-commander.md", "role": "documentation"},
+    {"owner_path": "packages/brain/src/lib/commander-v2-dispatch.js", "path": "packages/brain/scripts/smoke/commander-generic-smoke.sh", "role": "verification"},
+    {"owner_path": "packages/brain/src/actions.js", "path": "packages/brain/src/__tests__/actions.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/task-creation-inventory.js", "path": "packages/brain/src/__tests__/task-creation-inventory.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/commander-v2-contract.js", "path": "packages/brain/src/lib/__tests__/commander-v2-contract.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/commander-v2-control.js", "path": "packages/brain/src/lib/__tests__/commander-v2-control.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/commander-v2-dispatch.js", "path": "packages/brain/src/lib/__tests__/commander-v2-dispatch.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/commander-v2-failures.js", "path": "packages/brain/src/lib/__tests__/commander-v2-failures.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/commander-v2-feedback.js", "path": "packages/brain/src/lib/__tests__/commander-v2-feedback.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/commander-v2-store.js", "path": "packages/brain/src/lib/__tests__/commander-v2-store.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/commander-v2-dispatch.js", "path": "packages/brain/src/lib/__tests__/commander-v2.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/pilot-release-verification.js", "path": "packages/brain/src/lib/__tests__/pilot-release-verification.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/lib/task-terminal.js", "path": "packages/brain/src/lib/__tests__/task-terminal.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/routes/workflow-commander.js", "path": "packages/brain/src/routes/__tests__/workflow-commander.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/routing/device-delegation.js", "path": "packages/brain/src/routing/__tests__/device-delegation.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/workflow-authoring/ci-adapter.js", "path": "packages/brain/src/workflow-authoring/ci-adapter.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/workflow-authoring/fixed-git-source.js", "path": "packages/brain/src/workflow-authoring/fixed-git-source.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/workflow-authoring/freeze.js", "path": "packages/brain/src/workflow-authoring/freeze.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/dispatch-helpers.js", "path": "packages/brain/src/__tests__/dedup-dispatch-fixes.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/workflow-authoring/registration.js", "path": "packages/brain/src/workflow-authoring/registration-freeze.test.js", "role": "verification"}
   ]
 }
