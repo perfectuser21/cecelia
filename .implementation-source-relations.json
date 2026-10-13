@@ -475,7 +475,6 @@
     
     {"owner_path": "packages/brain/src/lib/task-type-registry.js", "path": "docs/learnings/cp-1013152200-commander-ci-followup.md", "role": "documentation"},
     {"owner_path": "packages/brain/src/lib/commander-verification-transport.js", "path": "docs/learnings/cp-10131820-commander-brain-acceptance.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/commander-verification-transport.js", "path": "changes/cp-10131820-commander-brain-acceptance.md", "role": "release"},
     {
       "owner_path": "packages/brain/src/lib/commander-method-contract.js",
       "path": "packages/brain/src/lib/__tests__/commander-method-contract.test.js",
