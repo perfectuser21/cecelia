@@ -657,11 +657,7 @@
       "path": "packages/brain/scripts/smoke/ops-notion-schema-smoke.sh",
       "role": "verification"
     },
-    {
-      "owner_path": "packages/brain/src/projection/workflow-body.js",
-      "path": "changes/cp-1013205500-workflow-notion-readback-fix.md",
-      "role": "release"
-    },
+    
     {
       "owner_path": "packages/brain/src/projection/workflow-body.js",
       "path": "cp-1013205500-workflow-notion-readback-fix.prd.md",
