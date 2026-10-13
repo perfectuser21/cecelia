@@ -651,6 +651,11 @@
       "owner_path": "packages/brain/src/projection/workflow-observation.js",
       "path": "test-registry.yaml",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/ops-notion-schema.js",
+      "path": "packages/brain/scripts/smoke/ops-notion-schema-smoke.sh",
+      "role": "verification"
     }
   ]
 }

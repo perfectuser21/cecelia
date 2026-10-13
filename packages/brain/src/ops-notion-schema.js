@@ -84,6 +84,13 @@ export const OPS_DB_PROPS = {
   },
 };
 
+/** Runs真实关联的目标由正式登记配置提供；补列与推送必须共用这份定义。 */
+export function buildTaskRunDbProps({ workflowsDb, tasksDb } = {}) {
+  return { ...OPS_DB_PROPS.task_runs,
+    ...(workflowsDb ? { Workflow: { relation: { database_id: workflowsDb, single_property: {} } } } : {}),
+    ...(tasksDb ? { Task: { relation: { database_id: tasksDb, single_property: {} } } } : {}) };
+}
+
 /**
  * Tasks 投影库（NOTION_TASKS_DB）的缺列即补清单（链 bf5088a3 棒5·PR B）。
  * 库既有列（2026-09-25 实测）：Name / Status / Description / Project(dual→Projects) / Blocked by(dual 自关联) ...

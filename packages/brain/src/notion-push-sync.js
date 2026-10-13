@@ -8,7 +8,7 @@ import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId, isPageGoneError, isWrongDatabaseError } from './lib/notion-projection-engine.js';
-import { OPS_DB_PROPS, buildTasksDbProps, buildStepLinkDbProps, diffMissingProps } from './ops-notion-schema.js';
+import { OPS_DB_PROPS, buildTaskRunDbProps, buildTasksDbProps, buildStepLinkDbProps, diffMissingProps } from './ops-notion-schema.js';
 import { buildStepLinkNotionProperties } from './notion-probe-projection.js';
 import {
   ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
@@ -1748,9 +1748,7 @@ async function pushTaskRuns(pool, token) {
   if (taskTargets.length > 1) throw new Error('Tasks 正式投影库身份不唯一');
   const workflowsDb = directory?.config?.dbs?.workflows;
   const tasksDb = taskTargets[0]?.notion_db_id;
-  const props = { ...OPS_DB_PROPS.task_runs,
-    ...(workflowsDb ? { Workflow: { relation: { database_id: workflowsDb, single_property: {} } } } : {}),
-    ...(tasksDb ? { Task: { relation: { database_id: tasksDb, single_property: {} } } } : {}) };
+  const props = buildTaskRunDbProps({ workflowsDb, tasksDb });
   try {
     const checkSchemaReq = async (...args) => {
       const response = await notionReq(...args);

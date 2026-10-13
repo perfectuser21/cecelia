@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 node --input-type=module -e "
-import { OPS_DB_PROPS } from './src/ops-notion-schema.js';
+import { OPS_DB_PROPS, buildTaskRunDbProps } from './src/ops-notion-schema.js';
 import { readFileSync } from 'fs';
 const push = readFileSync('./src/notion-push-sync.js', 'utf8');
 const script = readFileSync('../../scripts/ops/create-ops-notion-dbs.js', 'utf8');
@@ -20,7 +20,13 @@ const unitCols = new Set(Object.keys(OPS_DB_PROPS.graph));
 const runCols = new Set(Object.keys(OPS_DB_PROPS.runs));
 const skillCols = new Set(Object.keys(OPS_DB_PROPS.skills));
 // task_runs 投影库「Runs」（链 bf5088a3 棒1）：pushTaskRuns 的列同样必须先进库定义再推
-const taskRunCols = new Set(Object.keys(OPS_DB_PROPS.task_runs));
+const relationTargets = { workflowsDb: '00000000-0000-4000-8000-000000000001', tasksDb: '00000000-0000-4000-8000-000000000002' };
+const taskRunProps = buildTaskRunDbProps(relationTargets);
+if (taskRunProps.Workflow?.relation?.database_id !== relationTargets.workflowsDb ||
+    taskRunProps.Task?.relation?.database_id !== relationTargets.tasksDb) fail('Runs 关联没有使用正式登记目标');
+if ('Workflow' in buildTaskRunDbProps() || 'Task' in buildTaskRunDbProps()) fail('未登记目标时构造了虚假Runs关联');
+if (!push.includes('buildTaskRunDbProps({ workflowsDb, tasksDb })')) fail('Runs补列没有使用共享定义');
+const taskRunCols = new Set(Object.keys(taskRunProps));
 const known = new Set([...wfCols, ...unitCols, ...runCols, ...skillCols, ...taskRunCols]);
 const missing = [...new Set(emitted)].filter((c) => !known.has(c));
 if (missing.length) fail('推送发了库定义里没有的列: ' + missing.join(', ') + ' —— 上线即 400 静默停更');
