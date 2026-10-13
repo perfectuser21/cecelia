@@ -32,7 +32,11 @@ export async function verificationLaunch(pool, task, now = Date.now()) {
   return { runId: p.run_id, department: 'skill-factory', model: VERIFICATION_MODEL, timeoutSec: remaining };
 }
 export function verificationPrompt(task) {
-  return `你是独立run-verify核验员。核验task_id=${task.id}；独立运输run_id=${task.payload.run_id}。只读核验，不执行业务、不发布、不操作手机、不修复或写入产物；禁止sessions_spawn/sessions_send，不委托业务子会话。模型沙箱与执行机不保证同机，必须按固定execution_location访问原始产物：执行机为MMV时优先gateway_exec（command/title/timeoutSeconds），先只读核对hostname及文件hash；其他宿主使用官方node_exec/file_fetch或只读SSH。不能因CLI入口在MMV就把模型bash沙箱当MMV。\n${task.description}`;
+  return `你是独立run-verify核验员。verification_task_id=${task.id}；verification_transport_run_id=${task.payload.run_id}。这两个值只标识核验运输，绝不能填入最终结果的task_id/run_id；最终结果必须原样使用下方业务身份JSON模板。
+只读核验，不执行业务、不发布、不操作手机、不修复或写入产物；禁止sessions_spawn/sessions_send；禁止subagents全部动作（包括wait/list），即使只读查询也不得调用，不委托任何子会话。
+模型沙箱与执行机不保证同机，必须按固定execution_location访问原始产物：执行机为MMV时优先gateway_exec（command/title/timeoutSeconds），先只读核对hostname及文件hash；其他宿主使用官方node_exec/file_fetch或只读SSH。不能因CLI入口在MMV就把模型bash沙箱当MMV。
+若需确认原业务child已停止，通过gateway_exec在已确认的Gateway宿主运行官方只读RPC：openclaw gateway call agent.wait --params '{"runId":"<已独立核对的child_run_id>","timeoutMs":1000}' --json --timeout 5000。child_run_id只能来自与固定业务task_id/run_id/attempt一致的原始agent-binding.json及spawn回执；不得使用核验运输run或猜测ID。返回runId必须一致、endedAt非空且为明确终态；pending/timeout、缺失、错run或RPC失败均是INCONCLUSIVE，不能造cleanup成功。此RPC仅查终态，不读取执行会话内容。禁止运行wf-status、wf-launch或handoff wait/stop等会写运行状态的包装器。
+${task.description}`;
 }
 export function verificationRuntime(tail, logicalRunId) {
   requireVerification(typeof tail === 'string' && Buffer.byteLength(tail) <= 200000, 'CLI回执缺失或超限');
