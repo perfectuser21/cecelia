@@ -283,3 +283,8 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] commanderartifactscope 同main多scope发布快照及验证产物按scope隔离，上传下载名称一致，禁止同名覆盖。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/pilot-release-verification.test.js"
+
+# Commander 合并后 CI 固定基线修复（任务 1e30e1ec）
+
+- [x] [BEHAVIOR] commanderfollowupregistry 保留原 handler 白名单身份，只校正源码实际行号；DoD checkout 完整历史，真实 Git 克隆能读固定旧 blob，既有 registry-vs-base 审计真实运行且 FAIL/ERROR 0。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/task-type-registry.guard.test.js src/__tests__/registry-vs-base.audit.test.js"

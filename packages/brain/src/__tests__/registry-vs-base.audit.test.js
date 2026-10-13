@@ -18,7 +18,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import yaml from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { CODING_MUTATION_TASK_TYPES } from '../lib/task-type-registry.js';
@@ -72,4 +74,21 @@ describe('registry-vs-base 审计脚本是 CI 棘轮（终审 I4）', () => {
       `审计输出里没找到 "FAIL/ERROR 0" 汇总行，说明有站点与基线不等或提取失败，完整输出：\n${stdout}`,
     ).toMatch(/FAIL\/ERROR 0\b/);
   });
+});
+
+// 用真实本地Git历史复现actions/checkout的depth语义，不替代上方正式基线审计。
+it('DoD动态命令的checkout必须能读取固定历史基线',()=>{
+ const workflow=yaml.load(readFileSync(join(BRAIN_DIR,'../../.github/workflows/ci.yml'),'utf8'));
+ const checkout=workflow.jobs['dod-behavior-dynamic'].steps.find(s=>s.uses?.startsWith('actions/checkout@'));
+ const depth=checkout.with?.['fetch-depth']??1;
+ const root=mkdtempSync(join(tmpdir(),'dod-baseline-')),origin=join(root,'origin'),clone=join(root,'checkout');
+ const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ try{
+  git(root,'init','-q',origin);git(origin,'config','user.name','fixture');git(origin,'config','user.email','fixture@example.invalid');
+  writeFileSync(join(origin,'baseline.txt'),'fixed baseline');git(origin,'add','.');git(origin,'commit','-qm','baseline');const base=git(origin,'rev-parse','HEAD');
+  writeFileSync(join(origin,'baseline.txt'),'current bytes');git(origin,'commit','-qam','head');
+  git(root,'clone','-q',...(Number(depth)===0?[]:['--depth',String(depth)]),`file://${origin}`,clone);
+  let baseline;try{baseline=git(clone,'show',`${base}:baseline.txt`);}catch{baseline='BASELINE_OBJECT_MISSING';}
+  expect(baseline).toBe('fixed baseline');
+ }finally{rmSync(root,{recursive:true,force:true});}
 });
