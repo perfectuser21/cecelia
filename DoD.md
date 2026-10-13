@@ -277,3 +277,6 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] commanderdefinitionfreeze 正式六阶段登记冻结完整输入输出合同和实现，篡改来源及并发漂移拒绝；scratch真实扫描、地图、回归实跑和release verified贯通。
   Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-authoring-freeze.pg.integration.test.js"
+
+- [x] [BEHAVIOR] commanderreleasescopes 同release多scope Pilot证据各自完整核验冻结计划和全部断言，只投影所属Workflow完整Activity依赖闭包；联合覆盖全部固定定义身份/摘要/来源，缺scope、错版本、篡改或坏报告不得发布绿；原单scope及普通CI证据保持。
+  Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/lib/__tests__/integration/pilot-release-verification.test.js src/lib/__tests__/integration/release-index.test.js"

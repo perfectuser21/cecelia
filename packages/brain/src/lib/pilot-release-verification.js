@@ -73,7 +73,7 @@ export function assertPilotDefinitionSubset(full,subset){
   if(!Array.isArray(full?.[kind])||new Set(full[kind].map(r=>r.id)).size!==full[kind].length||new Set(subset[kind].map(r=>r.id)).size!==subset[kind].length)fail();
   for(const row of subset[kind]){
    const original=full[kind].find(r=>r.id===row.id);
-   if(!original||!same(Object.fromEntries(['id','payload_sha256','source_repo','source_commit','source_path','payload'].map(k=>[k,row[k]])),Object.fromEntries(['id','payload_sha256','source_repo','source_commit','source_path','payload'].map(k=>[k,original[k]]))))fail();
+   if(!original||!same(Object.fromEntries(['id',kind==='workflows'?'workflow_id':'activity_id','payload_sha256','source_repo','source_commit','source_path','payload'].map(k=>[k,row[k]])),Object.fromEntries(['id',kind==='workflows'?'workflow_id':'activity_id','payload_sha256','source_repo','source_commit','source_path','payload'].map(k=>[k,original[k]]))))fail();
   }
  }
  const refs=[];

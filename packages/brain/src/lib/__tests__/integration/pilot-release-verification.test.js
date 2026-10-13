@@ -1,6 +1,10 @@
 import {afterEach,beforeEach,expect,it} from 'vitest';
 import {existsSync} from 'node:fs';
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
+import {migrationTable} from '../../../__tests__/fixtures/minimum-definition-schema.js';
+import {registerWorkflow,registrationDigest} from '../../../workflow-authoring/registration.js';
+import {prepareDefinitionFreeze} from '../../../workflow-authoring/freeze.js';
+import {exportImplementationSnapshot} from '../../implementation-ci-snapshot.js';
 import express from 'express';
 import request from 'supertest';
 import {createReleasesRouter} from '../../../routes/releases.js';
@@ -110,6 +114,7 @@ it.each([
  ['重复Workflow',f=>f.subset.workflows.push(f.subset.workflows[0])],
  ['重复依赖',f=>f.subset.activities.push(f.subset.activities[0])],
  ['未知版本',f=>f.subset.workflows[0].id=id(99)],
+ ['错Workflow逻辑身份',f=>f.subset.workflows[0].workflow_id=id(99)],
  ['错摘要',f=>f.subset.activities[0].payload_sha256='f'.repeat(64)],
  ['错来源',f=>f.subset.activities[0].source_commit='b'.repeat(40)],
  ['篡改原文',f=>f.subset.activities[0].payload.steps.push({key:'forged'})],
@@ -119,3 +124,50 @@ it.each([
  const f=fixture();mutate(f);expect(()=>assertPilotDefinitionSubset(f.full,f.subset)).toThrow();
 });
 }
+
+async function twoScopeRelease(){
+ await cover();const legacy=evidence(await plan()),repo=f.releaseInput.components[0].repo,skill=randomUUID();
+ await f.db.query(migrationTable('283_skill_registry_and_journey_step_links.sql','skill_registry'));
+ await f.db.query("INSERT INTO skill_registry(id,name,location,status) VALUES($1,'workflow-commander','/skills/commander','active')",[skill]);
+ const definition={key:'workflow_report',name:'报告',capability_id:f.workflows[0].payload.capability_id,channel:'internal',form:'openclaw_skill',version:'1.0.0',
+  source:{repo,ref:'commander/report.json',revision:RELEASE_HEAD},runtime:{skill_id:skill,entrypoint:'workflow-commander'},
+  activities:[{key:'report',name:'生成报告',executor_kind:'code',acceptance:['报告可回读'],implementation:{kind:'code',ref:'src/controller.js',version:'1.0.0',repo,path:'src/controller.js',revision:'contract'},
+   steps:[{key:'read',name:'读回',dod:{mode:'checkpoint',readback:{type:'json',path:'report.json'}}}]}]};
+ const {source,...document}=definition;
+ const freezeProof=await prepareDefinitionFreeze(definition,{readFile:async s=>s.path===source.ref?JSON.stringify(document):'export const controller=true;\n'});
+ const db=await f.db.connect();try{await db.query('BEGIN');await registerWorkflow(db,definition,{definitionSha256:registrationDigest(definition),registrationProtocol:'definition-freeze-v1',freezeProof});await db.query('COMMIT');}catch(e){await db.query('ROLLBACK');throw e;}finally{db.release();}
+ await f.db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('commander-generic','commander-source','legacy-ledger-v1',$1)",[{source_repo:repo,definition_protocol:'definition-freeze-v1',workflow_keys:[definition.key]}]);
+ await f.map(RELEASE_HEAD,[definition.capability_id],'commander-generic','commander-source');
+ const query={scope:'commander-generic',repo,revision:RELEASE_HEAD};let snapshot=await exportImplementationSnapshot(f.db,query);
+ expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
+ const a=snapshot.definitions.activities[0];for(const step_id of [null,...a.payload.steps.map(s=>s.step_id)])await registerCapabilityRegression(f.db,{capability_id:definition.capability_id,activity_id:a.activity_id,step_id,assertion_ref:'scripts/smoke/report.sh'});
+ snapshot=await exportImplementationSnapshot(f.db,query);
+ const authoring=evidence(service.buildPilotReleasePlan({...query,definitions:snapshot.definitions,assertions:snapshot.assertions}));
+ return {...structuredClone(f.releaseInput),workflows:[...f.releaseInput.workflows,...snapshot.definitions.workflows.map(w=>({workflow_definition_version_id:w.id,payload_sha256:w.payload_sha256}))],ci_evidence:[legacy,authoring]};
+}
+it('真实PG同repo两scope完整证据联合覆盖同release，逐份仍冻结完整断言计划',async()=>{
+ const input=await twoScopeRelease(),{release}=await createRelease(f.db,input);
+ expect(release.payload.verification.ci_status,JSON.stringify(release.payload.verification.gaps)).toBe('verified');
+ expect(release.payload.workflows).toHaveLength(3);expect(release.payload.assertion_plans).toHaveLength(2);
+ expect(new Set(release.payload.assertion_plans.map(p=>p.scope))).toEqual(new Set(['phones','commander-generic']));
+ expect((await getRelease(f.db,release.id)).payload.assertion_plans.map(p=>p.required_assertions)).toEqual(input.ci_evidence.map(e=>e.report.required_assertions));
+});
+it('真实PG联合证据缺一、错版本或篡改不能按相同repo冒作全部覆盖',async()=>{
+ const input=await twoScopeRelease();
+ for(const [index,mutate] of [
+  e=>e.splice(1,1),e=>e.splice(0,1),
+  e=>e[1].report.definition_versions.workflows[0].id=randomUUID(),
+  e=>e[1].report.definition_versions.activities[0].payload_sha256='0'.repeat(64),
+  e=>e[1].report.definition_versions.activities[0].source_commit='c'.repeat(40),
+  e=>e[1].receipt.assertions[0].exit_code=1,
+  e=>e[1].receipt.assertions.pop(),
+  e=>{const bad=structuredClone(e[1]);bad.receipt.assertions[0].exit_code=1;e.push(bad);},
+ ].entries()){
+  const copy=structuredClone(input);copy.release_key=`union-invalid-${index}`;mutate(copy.ci_evidence);
+  for(const e of copy.ci_evidence){e.report.assertion_plan_sha256=service.pilotPlanHash(service.pilotPlanBody(e.report));e.receipt.assertion_plan_sha256=e.report.assertion_plan_sha256;e.receipt.report_sha256=hash(e.report);}
+  const {release}=await createRelease(f.db,copy);expect(release.payload.verification.ci_status,`case ${index}`).toBe('unknown');
+  expect((await getRelease(f.db,release.id)).payload.verification.status).toBe('unknown');
+  if(index<2)expect(release.payload.verification.gaps.some(g=>g.code==='ci_definition_evidence_missing'&&g.kind==='workflows')).toBe(true);
+  else expect(release.payload.verification.gaps.some(g=>g.code==='pilot_release_unverified')).toBe(true);
+ }
+});

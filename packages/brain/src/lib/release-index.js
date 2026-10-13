@@ -108,10 +108,20 @@ function governanceChecksMatch(expected,observed){
 }
 async function validateCiEvidence(db, items, definitions, components) {
   const valid = [], gaps = [], assertionPlans = [];
+  const covered = {workflows:new Set(),activities:new Set()};
+  const recordCoverage = subset => { for(const kind of ['workflows','activities'])for(const row of subset[kind])covered[kind].add(row.id); };
   for (const [index, { report, receipt }] of items.entries()) {
     const repo = report?.source?.repo, revision = report?.source?.head_revision;
     if(report?.protocol==='pilot_release_verification_v1'){
-      try { assertionPlans.push(await validatePilotReleaseEvidence(db,report,receipt,definitions)); valid.push(repo); }
+      try {
+        // 完整报告仍逐项验证；只有报告实际拥有的Workflow及其完整依赖可投影到本release。
+        const ids=new Set((report.definition_versions?.workflows||[]).map(w=>w.id));
+        const workflows=definitions.workflows.filter(w=>ids.has(w.id));
+        const dependencies=new Set(workflows.flatMap(w=>w.payload.activities.map(r=>r.activity_version_id)));
+        const subset={workflows,activities:definitions.activities.filter(a=>dependencies.has(a.id))};
+        const plan=await validatePilotReleaseEvidence(db,report,receipt,subset);
+        assertionPlans.push(plan);valid.push(repo);recordCoverage(subset);
+      }
       catch(error){ gaps.push({code:'pilot_release_unverified',index,reason:error.code}); }
       continue;
     }
@@ -134,9 +144,11 @@ async function validateCiEvidence(db, items, definitions, components) {
       const expected = definitions[kind].filter(row => row.source_repo === repo);
       ok &&= Array.isArray(evidence) && expected.every(row => evidence.some(e => e && e.id === row.id && e.payload_sha256 === row.payload_sha256 && e.source_commit === row.source_commit && e.source_repo === row.source_repo));
     }
-    if (ok) valid.push(repo); else gaps.push({ code: 'ci_evidence_unverified', index });
+    if (ok) { valid.push(repo); recordCoverage(Object.fromEntries(['workflows','activities'].map(kind=>[kind,definitions[kind].filter(row=>row.source_repo===repo)]))); }
+    else gaps.push({ code: 'ci_evidence_unverified', index });
   }
   for (const repo of new Set(components.filter(c => c.kind === 'repo').map(c => c.repo))) if (!valid.includes(repo)) gaps.push({ code: 'ci_repo_evidence_missing', repo });
+  for(const kind of ['workflows','activities'])for(const row of definitions[kind])if(!covered[kind].has(row.id))gaps.push({code:'ci_definition_evidence_missing',kind,definition_version_id:row.id});
   return { status: gaps.length ? 'unknown' : 'verified', gaps, assertionPlans };
 }
 export async function createRelease(pool, input) {
