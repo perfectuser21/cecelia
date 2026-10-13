@@ -34,7 +34,7 @@ beforeAll(async()=>{
       priority TEXT DEFAULT 'P2',executor_kind TEXT DEFAULT 'script',payload JSONB DEFAULT '{}',result JSONB DEFAULT '{"handoff":{"schema_version":"v1","next_steps":[]}}',
       claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,completed_at TIMESTAMPTZ,
       updated_at TIMESTAMPTZ DEFAULT NOW(),error_message TEXT,parent_task_id UUID,project_id UUID,summary TEXT);
-    CREATE TABLE task_runs(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID,run_id TEXT UNIQUE,status TEXT,
+    CREATE TABLE task_runs(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID,run_id TEXT UNIQUE,status TEXT,workflow_id UUID,
       context JSONB,result JSONB,started_at TIMESTAMPTZ DEFAULT NOW(),ended_at TIMESTAMPTZ,error_message TEXT,updated_at TIMESTAMPTZ DEFAULT NOW());
     CREATE TABLE task_events(task_id UUID,event_type TEXT,payload JSONB,created_at TIMESTAMPTZ);
     CREATE TABLE initiative_runs(id UUID PRIMARY KEY,phase TEXT DEFAULT 'planning',orchestrator_version TEXT DEFAULT 'v2');`);
