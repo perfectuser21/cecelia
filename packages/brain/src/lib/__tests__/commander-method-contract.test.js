@@ -32,7 +32,7 @@ it('组合ready逐项核验当前监督器和方法实包；echo所选定义不�
  const e={definition:{release_id:'r',snapshot_sha256:'h'},method_selection:m};
  const parts={protocol:'commander-composition-v1',supervisor_runtime_sha256:'s',method_manifest_sha256:'m',resolved_bindings_sha256:digest(m.method_instance.resolved_bindings)};
  e.definition.runtime_snapshot_sha256=digest(parts);
- const ready={protocol:'commander-v2',ready:true,...e.definition,...parts,protocol:'commander-v2'};
+ const ready={ready:true,...e.definition,...parts,protocol:'commander-v2'};
  expect(()=>methods.validateMethodReady(ready,e)).not.toThrow();
  expect(()=>methods.validateMethodReady({...ready,supervisor_runtime_sha256:'wrong'},e)).toThrow();
  expect(()=>methods.validateMethodReady({protocol:'commander-v2',ready:true,...e.definition},e)).toThrow();

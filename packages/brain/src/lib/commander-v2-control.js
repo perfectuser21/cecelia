@@ -10,18 +10,20 @@ import { finalizeTask, afterTerminalTransition } from './task-terminal.js';
 import { recordCommanderFailure } from './commander-v2-failures.js';
 import { readSystemRunEvidence } from './capability-system-evidence.js';
 import { verificationMetadata, isCommanderVerification, verifiedRuntime } from './commander-verification-transport.js';
+import { methodVerificationValid } from './commander-method-contract.js';
 import { createRoutedTask } from '../work-routing-store.js';
 export function verificationRequest(task, c) {
   const e = c.envelope;
   const fixed = { task_id: task.id, run_id: e.run_id, attempt: e.attempt, definition_sha256: e.definition.snapshot_sha256,
     execution_location: c.execution_location, input_sha256: e.input_sha256, definition: e.definition, input: e.input, contract: e.contract,
     outputs: c.delivery.outputs, evidence: c.delivery.evidence, cleanup: c.delivery.cleanup,
-    execution_status: c.delivery.status, effects: c.delivery.effects };
+    execution_status: c.delivery.status, effects: c.delivery.effects, ...(e.method_selection ? { method_selection: e.method_selection } : {}) };
+  const methodInstructions = e.method_selection ? `历史业务方法选择：当前Commander监督器不可回退。必须分别独立核验original_goal_definition完整原目标与本次selected方法实际产物；最终assertions必须包含{name:"original_goal",pass:true,definition_sha256:"${e.method_selection.original_goal_definition.snapshot_sha256}",evidence:[实际读回]}和{name:"selected_method",pass:true,definition_sha256:"${e.definition.snapshot_sha256}",evidence:[方法实包与产物读回]}，缺失或任一不符不得PASS。方法helper/skill只能从method_selection.method_instance.resolved_bindings精确读取，不能使用全局同名旧路径；通过当前安全helper python3 ~/.openclaw/commander/wf-method.py resolve <本次envelope绝对路径>，stdin JSON {"source_path":"冻结绑定path"}取得唯一路径，独立核对该helper摘要后只读verify；禁止execute/collect/业务动作。\n` : '';
   const template = { task_id: fixed.task_id, run_id: fixed.run_id, attempt: fixed.attempt,
     definition_sha256: fixed.definition_sha256, verdict: 'INCONCLUSIVE', assertions: [], evidence: [] };
   return { source: 'scheduler', declared_domain: 'research', mutation_intent: 'read_only', source_id: `commander-verify:${e.run_id}`, requested_task_type: 'research',
     title: `独立核验 ${e.workflow_key} ${e.run_id}`, parent_task_id: task.id,
-    description: `使用run-verify技能，只读合同和实际产物，不读执行会话，不执行发布或修复。必须独立读取原始来源及outputs、cleanup证据，逐项核实。\n固定材料：${JSON.stringify(fixed)}\n最后一行必须使用下列有效JSON模板，四个业务身份字段原样保留，禁止填核验task_id或wfv运输run；仅根据独立证据填写verdict（PASS/FAIL/INCONCLUSIVE）、assertions及evidence：\nWORKFLOW_VERIFICATION ${JSON.stringify(template)}\nPASS必须有非空断言和独立证据，收尾须断言name=cleanup、pass=true。失败时按冻结合同声明的外部提交和本地写路径独立核查副作用范围，不要求证明合同范围外全世界无动作。resources={}或effects=[]不能作为安全证据。若合同仅允许读取来源和写本次隔离产物，须独立核对固定helper实际字节及摘要、GET只读来源、outputs的realpath在本run目录且无符号链接越界、官方child终态、新attempt独立目录及旧失败证据保留；证据齐全才可给effects_safe_to_retry，产物不合格仍保持FAIL。POST/发布未完成独立副作用读回、源码摘要漂移、路径越界或child终态未知时禁止给安全重试断言；无法确定的项标INCONCLUSIVE，真实产物FAIL不能因此改PASS。失败时须独立读回合同范围内的外部副作用；仅确认未提交或已补偿，才能加入name=effects_safe_to_retry、pass=true断言，禁止依据执行者自述。对delivery中committed/unknown的每个effect，只有独立确认无动作或已补偿，才能附{name:"effect:<key>",pass:true,status:"none|compensated",evidence:[]}逐项读回断言；后续核验补充证据可更新同核验任务结果触发恢复。执行材料属于固定execution_location.ssh_target，outputs绝对路径只在该执行机解释；核验机优先通过gateway_exec访问已确认的MMV执行机；其他固定宿主用官方node_exec/file_fetch或只读SSH读取同源JSON/CSV及冻结contract.runtime所指helper，不能把模型沙箱当作执行机。`,
+    description: `${methodInstructions}使用run-verify技能，只读合同和实际产物，不读执行会话，不执行发布或修复。必须独立读取原始来源及outputs、cleanup证据，逐项核实。\n固定材料：${JSON.stringify(fixed)}\n最后一行必须使用下列有效JSON模板，四个业务身份字段原样保留，禁止填核验task_id或wfv运输run；仅根据独立证据填写verdict（PASS/FAIL/INCONCLUSIVE）、assertions及evidence：\nWORKFLOW_VERIFICATION ${JSON.stringify(template)}\nPASS必须有非空断言和独立证据，收尾须断言name=cleanup、pass=true。失败时按冻结合同声明的外部提交和本地写路径独立核查副作用范围，不要求证明合同范围外全世界无动作。resources={}或effects=[]不能作为安全证据。若合同仅允许读取来源和写本次隔离产物，须独立核对固定helper实际字节及摘要、GET只读来源、outputs的realpath在本run目录且无符号链接越界、官方child终态、新attempt独立目录及旧失败证据保留；证据齐全才可给effects_safe_to_retry，产物不合格仍保持FAIL。POST/发布未完成独立副作用读回、源码摘要漂移、路径越界或child终态未知时禁止给安全重试断言；无法确定的项标INCONCLUSIVE，真实产物FAIL不能因此改PASS。失败时须独立读回合同范围内的外部副作用；仅确认未提交或已补偿，才能加入name=effects_safe_to_retry、pass=true断言，禁止依据执行者自述。对delivery中committed/unknown的每个effect，只有独立确认无动作或已补偿，才能附{name:"effect:<key>",pass:true,status:"none|compensated",evidence:[]}逐项读回断言；后续核验补充证据可更新同核验任务结果触发恢复。执行材料属于固定execution_location.ssh_target，outputs绝对路径只在该执行机解释；核验机优先通过gateway_exec访问已确认的MMV执行机；其他固定宿主用官方node_exec/file_fetch或只读SSH读取同源JSON/CSV及冻结contract.runtime所指helper，不能把模型沙箱当作执行机。`,
     metadata: verificationMetadata(fixed),
     task: { status: 'queued', priority: 'P1', parent_task_id: task.id, created_by: 'workflow-commander-v2', trigger_source: 'brain_auto' } };
 }
@@ -47,7 +49,7 @@ export function readVerification(vt, task, c) {
     return { verdict: 'INCONCLUSIVE', reason: '核验身份或证据格式无效', assertions: [], evidence: [] };
   }
   const pass = vt.status.startsWith('completed') && v.assertions.length > 0 && v.assertions.every(a => a.pass === true)
-    && v.assertions.some(a => a.name === 'cleanup' && a.pass === true) && v.evidence.length > 0;
+    && v.assertions.some(a => a.name === 'cleanup' && a.pass === true) && v.evidence.length > 0 && methodVerificationValid(v, e);
   return v.verdict === 'PASS' && !pass ? { ...v, verdict: 'INCONCLUSIVE', reason: 'PASS缺独立断言或收尾证据' } : v;
 }
 async function requestRecovery(db, task, c, reason, deps) {

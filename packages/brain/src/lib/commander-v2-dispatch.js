@@ -8,12 +8,14 @@ import { startRun } from './task-run.js';
 import { checkDeviceLockForManualDispatch } from './manual-dispatch-device-gate.js';
 import { setBrainLease } from './task-lease.js';
 import { transaction, frozenContract, frozenActivityBindings, writeControl, event } from './commander-v2-store.js';
-import { makeEnvelope, validateReady, isCommanderV2, requireCommander, bounded } from './commander-v2-contract.js';
+import { makeEnvelope, isCommanderV2, requireCommander, bounded } from './commander-v2-contract.js';
+import { selectHistoricalMethod, validateMethodGates } from './commander-method-selection.js';
+import { validateMethodReady } from './commander-method-contract.js';
 const target = deps => deps.target ?? sshTargetFor(resolvePrimaryWorkerId());
 const send = (args, input) => sshWithStdin(spawn, args, input);
 export async function readyCommander(e, deps = {}) {
   if (deps.ready) return deps.ready(e);
-  const raw = await (deps.sshDispatch ?? send)([...SSH_BASE_ARGS, target(deps), '~/.openclaw/commander/wf-launch.sh --ready'], JSON.stringify({ definition: e.definition, workflow_key: e.workflow_key }));
+  const raw = await (deps.sshDispatch ?? send)([...SSH_BASE_ARGS, target(deps), '~/.openclaw/commander/wf-launch.sh --ready'], JSON.stringify({ definition: e.definition, workflow_key: e.workflow_key, ...(e.method_selection ? { method_selection: e.method_selection } : {}) }));
   return JSON.parse(raw);
 }
 export async function statusCommander(e, deps = {}) {
@@ -28,16 +30,25 @@ export async function prepareCommander(pool, taskId, deps = {}) {
     const previous = task.result?.workflow_control;
     if (previous && previous.phase !== 'recovering') return previous;
     requireCommander(task.status === 'queued' || previous?.phase === 'recovering', '任务不可起跑', 409);
-    const frozen = previous ? { definition: previous.envelope.definition, contract: previous.envelope.contract } : await (deps.frozenContract ?? frozenContract)(db, task);
+    const selected = previous ? await (deps.selectHistoricalMethod ?? selectHistoricalMethod)(db, task, previous, { ready: e => readyCommander(e, deps), now: deps.now }) : null;
+    const frozen = selected?.definition ? selected : previous ? { definition: previous.envelope.definition, contract: previous.envelope.contract } : await (deps.frozenContract ?? frozenContract)(db, task);
     const sourceTask = previous ? { ...task, payload: { ...task.payload, workflow_input: previous.envelope.input } } : task;
     const e = makeEnvelope(sourceTask, frozen.definition, frozen.contract, previous?.envelope, (deps.now ?? (() => new Date()))(), previous);
+    if (selected?.method_selection) e.method_selection = selected.method_selection;
+    else if (previous?.envelope.method_selection) e.method_selection = { ...previous.envelope.method_selection, selection_receipt: { ...previous.envelope.method_selection.selection_receipt, previous_run_id: previous.envelope.run_id } };
     e.activity_bindings = await frozenActivityBindings(db, e.definition);
     bounded(e, 180000, '信封');
     // ready为只读协议握手，实际run binding再次检查数据库当前部署，不能用ready替代release闸。
-    validateReady(await readyCommander(e, deps), e.definition);
+    await validateMethodGates(db, e);
+    validateMethodReady(await readyCommander(e, deps), e);
     await (deps.startRun ?? startRun)({ taskId, runId: e.run_id, source: 'workflow-commander-v2', definition: e.definition, context: { commander_envelope: e } }, { pool, transactionClient: db });
     const c = { phase: 'prepared', envelope: e, execution_location: { ssh_target: target(deps), run_directory: `~/wf-agent-runs/${e.run_id}` }, last_seq: 0, execution_stopped: false, launch_state: 'pending',
       history: previous ? [...(previous.history ?? []), { run_id: previous.envelope.run_id, attempt: previous.envelope.attempt, verification: previous.verification, failure: previous.failure }] : [] };
+    if (previous) {
+      c.recovery_mode = selected?.definition ? 'verified_historical_method' : 'same_verified_implementation_retry';
+      c.method_selection_gaps = selected?.gaps ?? [];
+      await event(db, taskId, 'commander_method_selection', { run_id: e.run_id, recovery_mode: c.recovery_mode, receipt: e.method_selection?.selection_receipt, gaps: c.method_selection_gaps });
+    }
     await writeControl(db, taskId, c);
     await db.query(`UPDATE tasks SET status='in_progress',claimed_by='workflow-commander-v2',claimed_at=NOW(),started_at=COALESCE(started_at,NOW()),executor_kind='openclaw-agent',
       payload=COALESCE(payload,'{}'::jsonb)||jsonb_build_object('run_id',$2::text) WHERE id=$1`, [taskId, e.run_id]);
@@ -50,7 +61,8 @@ export async function launchCommander(pool, taskId, deps = {}) {
     const c = task.result?.workflow_control, e = c?.envelope;
     if (c?.phase !== 'prepared' || c.launch_state !== 'pending') return { waiting: true };
     requireCommander(Date.now() < Date.parse(e.deadline_at), '起跑预算已耗尽', 409);
-    validateReady(await readyCommander(e, deps), e.definition);
+    await validateMethodGates(db, e);
+    validateMethodReady(await readyCommander(e, deps), e);
     if (e.contract.resources.device_serial) {
       const gate = await (deps.lockGate ?? (t => checkDeviceLockForManualDispatch(t, 'workflow-commander-v2')))({ ...task, payload: { ...task.payload,
         device_serial: e.contract.resources.device_serial, device_ttl_minutes: Math.ceil((Date.parse(e.cleanup_deadline_at) - Date.now()) / 60000) } });

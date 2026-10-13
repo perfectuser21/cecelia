@@ -3,6 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 npx vitest run src/lib/__tests__/commander-v2*.test.js \
+  src/lib/__tests__/commander-method*.test.js \
   src/lib/__tests__/commander-verification-transport.test.js \
   src/routes/__tests__/workflow-commander.test.js \
   src/workflow-authoring/freeze.test.js \
