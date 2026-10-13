@@ -9,11 +9,15 @@ async function activityFact(db, c, input) {
   const context = await getRunDefinitionBinding(db, e.run_id);
   const path = e.definition.expected_path.find(p => p.reference_id === d.reference_id && (p.step_id ?? null) === (d.step_id ?? null));
   requireCommander(path && (!d.activity_id || path.activity_id === d.activity_id), '活动不属于冻结路径');
+  const activity = context.activities.find(a => a.id === path.activity_definition_version_id && a.activity_id === path.activity_id);
+  requireCommander(activity, '冻结活动定义缺失');
+  const shell = activity.payload.contract?.by === 'shell';
   const evidence = { ...(d.evidence ?? {}), runtime_snapshot_sha256: e.definition.runtime_snapshot_sha256 };
   const span = normalizeSpan({ run_id: e.run_id, workflow_id: e.definition.workflow_id,
     activity_id: path.activity_id, step_id: path.step_id, started_at: d.started_at,
     ended_at: input.type === 'activity_completed' ? d.ended_at : null,
-    executor_kind: 'agent', executor_id: 'work-commander', model: d.model ?? 'codex', outcome: d.outcome ?? 'unknown',
+    executor_kind: shell ? 'code' : 'agent', executor_id: shell ? 'commander-shell' : 'work-commander',
+    model: shell ? null : (d.model ?? 'codex'), outcome: d.outcome ?? 'unknown',
     evidence, occurrence_key: `commander:${e.attempt}:${input.seq}`, identity_protocol: 2,
     run_binding_id: context.binding.id, reference_id: path.reference_id,
     workflow_definition_version_id: e.definition.workflow_definition_version_id,

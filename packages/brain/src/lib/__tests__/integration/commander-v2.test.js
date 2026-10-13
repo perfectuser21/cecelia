@@ -11,8 +11,8 @@ import { finalizeTask } from '../../task-terminal.js';
 import { dispatchWorkflowCommanderTasks } from '../../workflow-commander-dispatch.js';
 let f, id, definition, contract, deps;
 const input = { text: '中文\n换行 $(touch /tmp/no-command) `false` ; "引号"', empty: [] };
-beforeEach(async () => {
- f = await releaseEvidenceDatabase(); id = randomUUID();
+beforeEach(async context => {
+ f = await releaseEvidenceDatabase(context.task.name.includes('冻结shell') ? {activityExecutor:'shell'} : {}); id = randomUUID();
  await f.db.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS result jsonb,ADD COLUMN IF NOT EXISTS task_type text,ADD COLUMN IF NOT EXISTS claimed_by text,ADD COLUMN IF NOT EXISTS claimed_at timestamptz,ADD COLUMN IF NOT EXISTS executor_kind text,ADD COLUMN IF NOT EXISTS error_message text`);
  await f.db.query(readFileSync(new URL('../../../../migrations/268_task_events.sql',import.meta.url),'utf8'));
  await f.db.query('DROP TABLE spans CASCADE');
@@ -213,4 +213,16 @@ it('冻结路径映射不完整在ready及业务起跑前拒绝，零运行零�
  expect(deps.lockGate).not.toHaveBeenCalled();expect(deps.setLease).not.toHaveBeenCalled();
  expect((await f.db.query('SELECT * FROM task_runs WHERE task_id=$1',[id])).rows).toHaveLength(0);
  expect((await state()).status).toBe('queued');
+});
+
+it('冻结shell活动落code且无模型，事件自述agent/codex不能改执行者身份',async()=>{
+ await prepareCommander(f.db,id,deps);const e=await envelope();const path=e.definition.expected_path[0];
+ await sendEvent(1,'activity_completed',{reference_id:path.reference_id,started_at:'2026-10-13T00:00:00Z',ended_at:'2026-10-13T00:01:00Z',outcome:'pass',executor_kind:'agent',model:'codex',evidence:{source:'agent'}},e);
+ const span=(await f.db.query('SELECT executor_kind,executor_id,model FROM spans WHERE run_id=$1',[e.run_id])).rows[0];
+ expect(span).toEqual({executor_kind:'code',executor_id:'commander-shell',model:null});
+});
+it('agent活动不能凭事件自述shell伪装code事实',async()=>{
+ await prepareCommander(f.db,id,deps);const e=await envelope();const path=e.definition.expected_path[0];
+ await sendEvent(1,'activity_completed',{reference_id:path.reference_id,started_at:'2026-10-13T00:00:00Z',ended_at:'2026-10-13T00:01:00Z',outcome:'pass',executor_kind:'code',evidence:{source:'commander-shell'}},e);
+ expect((await f.db.query('SELECT executor_kind FROM spans WHERE run_id=$1',[e.run_id])).rows[0].executor_kind).toBe('agent');
 });

@@ -21,6 +21,7 @@ export async function releaseEvidenceDatabase(options={}){
       for(const step of activity.steps||[])step.implementation={ref:'harvest-keyword.sh:35 open-search',status:'implemented'};
     }
     if(options.enablerDeclarations)for(const doc of Object.values(fixture.contracts.docs))for(const activity of doc.activities)for(const binding of activity.implementation_bindings||[])binding.enabler_key='test-lock';
+    if(options.activityExecutor)for(const doc of Object.values(fixture.contracts.docs))for(const activity of doc.activities)if(!activity.ref)activity.by=options.activityExecutor;
     await fixture.advance(options.enablerDeclarations?{bindings:fixture.contracts.docs.keyword_acquisition.activities[0].implementation_bindings}:{});
     const schema=(await db.query('SELECT current_schema() AS name')).rows[0].name;
     pool=new pg.Pool({...DB_DEFAULTS,max:6,options:`-c search_path=${schema}`});

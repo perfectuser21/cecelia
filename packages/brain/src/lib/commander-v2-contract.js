@@ -15,7 +15,7 @@ export const digest = value => createHash('sha256').update(JSON.stringify(canoni
 export function bounded(value, bytes, label) {
   requireCommander(value !== undefined && Buffer.byteLength(JSON.stringify(value)) <= bytes, `${label}缺失或超限`);
 }
-const ajv = new Ajv({ allErrors: true, strict: false });
+const ajv = new Ajv({ allErrors: false, strict: false });
 function validateSchema(value, schema, label, code = 'COMMANDER_CONTRACT') {
   const check = ajv.compile(schema);
   if (!check(value)) throw Object.assign(Error(`${label}不符合同: ${ajv.errorsText(check.errors)}`), { status: 422, code });

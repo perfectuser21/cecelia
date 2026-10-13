@@ -26,3 +26,17 @@ it('巨大诊断保留有界断言摘要和完整内容hash，不使安全恢复
  expect(Buffer.byteLength(JSON.stringify(next.recovery.previous_attempt))).toBeLessThanOrEqual(30000);
  expect(next.recovery.previous_attempt.diagnostic_sha256).toMatch(/^[0-9a-f]{64}$/);
 });
+it('输入和输出schema在首个错误即拒绝，不收集攻击者扩展的全部错误',()=>{
+ const schema={type:'object',required:Array.from({length:1000},(_,i)=>`field_${i}`)};
+ let inputError;
+ try{makeEnvelope({...task,payload:{...task.payload,workflow_input:{}}},{},{...contract,input_schema:schema},null);}catch(err){inputError=err;}
+ expect(inputError.code).toBe('COMMANDER_CONTRACT');
+ expect(inputError.message).toContain('field_0');expect(inputError.message).not.toContain('field_1');
+ expect(inputError.message.length).toBeLessThan(200);
+ const e=makeEnvelope(task,{}, {...contract,output_schema:schema},null);
+ let outputError;
+ try{validateDelivery({...e,status:'completed',outputs:{},effects:[],evidence:[],cleanup:{completed:true,evidence:[]}},e);}catch(err){outputError=err;}
+ expect(outputError.code).toBe('COMMANDER_OUTPUT_CONTRACT_INVALID');
+ expect(outputError.message).toContain('field_0');expect(outputError.message).not.toContain('field_1');
+ expect(outputError.message.length).toBeLessThan(200);
+});
