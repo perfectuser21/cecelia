@@ -14,7 +14,8 @@ function recordParts(items) {
   const id=item.notion_id || item.page_id || item.pageId;
   const url=item.url || (id ? `https://app.notion.com/p/${id.replaceAll('-','')}` : null);
   const label=item.title || item.name || item.run_id || item.id || '真实记录';
-  return [...(index ? rich('\n') : []),{type:'text',text:{content:String(label).slice(0,1900),...(url ? {link:{url}} : {})}},
+  // Notion 会省略纯换行 rich_text；分隔符必须与非空标题处于同一片段。
+  return [{type:'text',text:{content:`${index ? '\n' : ''}${String(label).slice(0,1899)}`,...(url ? {link:{url}} : {})}},
    ...rich(`\n${display(item)}`)];
  });
 }
