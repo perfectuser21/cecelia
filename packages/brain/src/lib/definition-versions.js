@@ -29,9 +29,10 @@ function verifyDocument(workflow,doc) {
     ||(workflow.source_capability&&(doc.contract_key??doc.capability)!==workflow.source_capability)
     ||(doc.capability_id&&doc.capability_id!==workflow.capability_id)) throw Error(`工作流契约身份不匹配: ${workflow.id}`);
 }
-export async function snapshotDefinitions(client,{workflowIds,source,bindingsByActivity=new Map(),documentsByWorkflow=new Map(),admissionScope,authoringByWorkflow=new Map()}) {
+export async function snapshotDefinitions(client,{workflowIds,source,bindingsByActivity=new Map(),documentsByWorkflow=new Map(),admissionScope,authoringByWorkflow=new Map(),registrationProtocol}) {
   if(admissionScope!==undefined&&admissionScope!=='cecelia-device-patrol') throw Error('unsupported admission scope');
-  const metadata=admissionScope?{definition_scope:'device_workflow_admission',source_scope:admissionScope}:{};
+  if(registrationProtocol!==undefined&&(registrationProtocol!=='definition-freeze-v1'||admissionScope))throw Error('unsupported registration protocol');
+  const metadata=admissionScope?{definition_scope:'device_workflow_admission',source_scope:admissionScope}:registrationProtocol?{registration_protocol:registrationProtocol}:{};
   if(!/^[0-9a-f]{40}$/.test(source.commit||'')) throw Error('快照必须使用固定commit');
   const workflows=new Map();
   for(const id of workflowIds) {

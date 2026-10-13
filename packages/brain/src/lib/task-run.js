@@ -196,9 +196,10 @@ async function startDefinedRun({taskId,runId,source,context,definition},deps){
   const definition_preflight=Object.fromEntries(['release_id','workflow_definition_version_id','snapshot_sha256','runtime_snapshot_sha256','attempt_key']
     .filter(key=>definition[key]!==undefined).map(key=>[key,definition[key]]));
   const ctx=buildRunContext({...context,source,definition_preflight});
-  const pool=await resolvePool(deps),client=await pool.connect();
+  const pool=await resolvePool(deps),client=deps.transactionClient ?? await pool.connect();
+  const ownsTransaction=!deps.transactionClient;
   try{
-    await client.query('BEGIN');
+    if(ownsTransaction)await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,515))',[String(runId)]);
     const inserted=await client.query(`INSERT INTO task_runs(task_id,run_id,status,context,workflow_id)
       VALUES($1,$2,'running',$3,$4) ON CONFLICT(run_id) DO NOTHING RETURNING *`,[taskId,String(runId),ctx,definition.workflow_id]);
@@ -206,8 +207,8 @@ async function startDefinedRun({taskId,runId,source,context,definition},deps){
     if(!run||run.task_id!==taskId||run.workflow_id!==definition.workflow_id)throw Error('固定运行已属于另一个任务或Workflow');
     const {bindRunDefinitionInTransaction}=await import('./run-definition-binding.js');
     const fixed=await bindRunDefinitionInTransaction(client,String(runId),{...definition,source_kind:'internal',task_run_id:run.id});
-    await client.query('COMMIT');return {id:run.id,run_id:run.run_id,created:inserted.rows.length>0,binding:fixed.binding};
-  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+    if(ownsTransaction)await client.query('COMMIT');return {id:run.id,run_id:run.run_id,created:inserted.rows.length>0,binding:fixed.binding};
+  }catch(error){if(ownsTransaction)await client.query('ROLLBACK');throw error;}finally{if(ownsTransaction)client.release();}
 }
 
 /**
@@ -246,6 +247,7 @@ export async function finishRun({ runId, status, exitCode, artifacts, error, res
     if (row) await emitRunFinished(row, runId, deps);
     return { updated: Boolean(row) };
   } catch (err) {
+    if (deps.strict) throw err;
     console.warn(`[task-run] finishRun failed (non-fatal) run=${runId}: ${err.message}`);
     return { updated: false };
   }

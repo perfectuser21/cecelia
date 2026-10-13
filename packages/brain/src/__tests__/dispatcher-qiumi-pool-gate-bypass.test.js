@@ -55,7 +55,7 @@ let _candidatePool = [];
 const mockSelectNextDispatchableTask = vi.fn(async (goalIds, excludeIds = [], options = {}) => {
   const only = options?.onlyTaskTypes;
   return _candidatePool.find((c) => (
-    !excludeIds.includes(c.id) && (!Array.isArray(only) || only.length === 0 || only.includes(c.task_type))
+    !excludeIds.includes(c.id) && (!Array.isArray(only) || only.length === 0 || only.includes(c.task_type) || (options.includeCommanderVerification && c.task_type === 'research' && c.payload?.verification_transport === 'openclaw-agent-v1'))
   )) || null;
 });
 vi.mock('../dispatch-helpers.js', () => ({
@@ -192,4 +192,13 @@ describe('任务池总闸关着：秋米任务旁路放行（任务 6e63bedf）'
       expect(o?.onlyTaskTypes ?? null, '总闸开着也限定了任务类型——普通任务全被饿死').toBeNull();
     }
   });
+});
+
+it('池满且旧Codex池不可用时，独立核验仍可选，普通research不放行',async()=>{
+ const verification={...normal,id:'verify',task_type:'research',payload:{verification_transport:'openclaw-agent-v1'}};
+ _candidatePool=[{...normal,task_type:'research'},verification];
+ await dispatchNextTask(null);
+ expect(mockUpdateTask).toHaveBeenCalledWith({task_id:'verify',status:'in_progress'});
+ expect(routeQiumiTask).not.toHaveBeenCalled();
+ expect(selectOptions().every(o=>o.includeCommanderVerification===true)).toBe(true);
 });

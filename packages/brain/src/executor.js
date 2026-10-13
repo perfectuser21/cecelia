@@ -30,6 +30,7 @@ import { generateL0Summary } from './memory-utils.js';
 import { getDecisionsSummary } from './decisions-context.js';
 import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
 import { getTaskLocation, getInternalTaskHandler } from './task-router.js';
+import { isCommanderVerification } from './lib/commander-verification-transport.js';
 import { resolveExecutor } from './routing/resolve-executor.js';
 import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCache as _refreshCache } from './task-type-config-cache.js';
 import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
@@ -3356,7 +3357,7 @@ async function _triggerCeceliaRunInner(task) {
   // 0.7 秋米非设备任务（PR3）→ openclaw-agent 执行体：ssh 到主力 worker 起 `openclaw agent`。
   //     不占 claude/codex 槽位，也绝不在 us-vps 本地跑（铁律 96054a8b）。
   //     动态 import：executor.js 是热路径，秋米链路只在真有 qiumi_task 时才拉起来。
-  if (task.task_type === 'qiumi_task') {
+  if (task.task_type === 'qiumi_task' || isCommanderVerification(task)) {
     console.log(`[executor] 路由决策: task_type=qiumi_task → openclaw-agent executor (run_id=${task.payload?.run_id})`);
     const { triggerOpenclawAgent } = await import('./openclaw-agent-executor.js');
     return triggerOpenclawAgent(task);
@@ -3711,6 +3712,7 @@ async function probeTaskLiveness() {
   `);
 
   for (const task of result.rows) {
+    if (task.payload?.commander_protocol === 'commander-v2') continue;
     // 已认领有头会话可能在远端；本机无 PID 不足以判死，沿用合同的 unknown 保留语义。
     if (task.executor_kind === 'headed-session'
         && typeof task.claimed_by === 'string' && task.claimed_by.trim()) {
@@ -4182,6 +4184,7 @@ async function syncOrphanTasksOnStartup() {
   const LANGGRAPH_TYPES = new Set(['harness_initiative']);
 
   for (const task of result.rows) {
+    if (task.payload?.commander_protocol === 'commander-v2') continue;
     // 雷11（R5 首航实证 39b97ade/a3d61486/4cedf175/174dea35 同源）：
     // skill-relay（payload.orchestrator==='skill-relay'）虽然 task_type 也是
     // harness_initiative，但它不是 LangGraph（已废弃）——它有真实进程（无头=docker

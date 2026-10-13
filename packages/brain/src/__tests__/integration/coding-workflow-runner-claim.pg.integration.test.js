@@ -25,6 +25,7 @@ beforeAll(async () => {
   await admin.connect();
   await admin.query(`CREATE SCHEMA ${schema}`);
   await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY, claimed_by TEXT, claimed_at TIMESTAMPTZ,
+    payload JSONB DEFAULT '{}'::jsonb,
     executor_kind TEXT CONSTRAINT tasks_executor_kind_check CHECK (executor_kind IN ('headed-session','brain-local')))`);
   await pool.query(sql('535_coding_workflow_runner_executor_kind.sql'));
   const { default: router } = await import('../../routes/task-tasks.js');

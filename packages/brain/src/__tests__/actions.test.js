@@ -548,11 +548,22 @@ describe('actions.js', () => {
     });
   });
 
+  function mockTaskMutation(rows, rowCount = rows.length) {
+    mockQuery.mockImplementation(async sql => {
+      if (/SELECT id, payload, result FROM tasks/.test(sql)) return { rows: [] };
+      if (/UPDATE tasks/.test(sql)) return { rows, rowCount };
+      throw new Error(`Unexpected task mutation query: ${sql}`);
+    });
+  }
+  function taskMutationSql() {
+    return mockQuery.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql))[0];
+  }
+
   // ========== updateTask ==========
   describe('updateTask', () => {
     it('正常更新 status', async () => {
       const fakeTask = { id: 'task-upd', status: 'completed' };
-      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [fakeTask] });
+      mockTaskMutation([fakeTask]);
 
       const result = await updateTask({
         task_id: 'task-upd',
@@ -566,7 +577,7 @@ describe('actions.js', () => {
 
     it('正常更新 priority', async () => {
       const fakeTask = { id: 'task-pri', priority: 'P0' };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+      mockTaskMutation([fakeTask]);
 
       const result = await updateTask({
         task_id: 'task-pri',
@@ -578,7 +589,7 @@ describe('actions.js', () => {
 
     it('同时更新 status 和 priority', async () => {
       const fakeTask = { id: 'task-both', status: 'completed', priority: 'P0' };
-      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [fakeTask] });
+      mockTaskMutation([fakeTask]);
 
       const result = await updateTask({
         task_id: 'task-both',
@@ -596,7 +607,7 @@ describe('actions.js', () => {
     });
 
     it('任务不存在返回失败', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+      mockTaskMutation([]);
 
       const result = await updateTask({
         task_id: 'task-404',
@@ -608,7 +619,7 @@ describe('actions.js', () => {
     });
 
     it('in_progress 状态有原子守卫（只有 queued 可以转移）', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [] });
+      mockTaskMutation([]);
 
       const result = await updateTask({
         task_id: 'task-guard',
@@ -616,7 +627,7 @@ describe('actions.js', () => {
       });
 
       // 检查 SQL 包含 AND status = 'queued'
-      const sql = mockQuery.mock.calls[0][0];
+      const sql = taskMutationSql();
       expect(sql).toContain("status = 'queued'");
       expect(result.success).toBe(false);
       expect(result.error).toContain('already dispatched');
@@ -624,7 +635,7 @@ describe('actions.js', () => {
 
     it('in_progress 转移成功', async () => {
       const fakeTask = { id: 'task-disp', status: 'in_progress' };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+      mockTaskMutation([fakeTask]);
 
       const result = await updateTask({
         task_id: 'task-disp',
@@ -636,7 +647,7 @@ describe('actions.js', () => {
 
     it('completed 状态设置 completed_at', async () => {
       const fakeTask = { id: 'task-comp', status: 'completed' };
-      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [fakeTask] });
+      mockTaskMutation([fakeTask]);
 
       await updateTask({
         task_id: 'task-comp',
@@ -649,20 +660,20 @@ describe('actions.js', () => {
 
     it('in_progress 状态设置 started_at', async () => {
       const fakeTask = { id: 'task-start', status: 'in_progress' };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+      mockTaskMutation([fakeTask]);
 
       await updateTask({
         task_id: 'task-start',
         status: 'in_progress',
       });
 
-      const sql = mockQuery.mock.calls[0][0];
+      const sql = taskMutationSql();
       expect(sql).toContain('started_at = NOW()');
     });
 
     it('queued 状态同时清除 claimed_by 和 claimed_at', async () => {
       const fakeTask = { id: 'task-requeue', status: 'queued', claimed_by: null, claimed_at: null };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+      mockTaskMutation([fakeTask]);
 
       const result = await updateTask({
         task_id: 'task-requeue',
@@ -670,23 +681,23 @@ describe('actions.js', () => {
       });
 
       expect(result.success).toBe(true);
-      const sql = mockQuery.mock.calls[0][0];
+      const sql = taskMutationSql();
       expect(sql).toContain('claimed_by = NULL');
       expect(sql).toContain('claimed_at = NULL');
     });
 
     it('转 queued 时 WHERE 带终态守卫（completed/cancelled 不可被打回）', async () => {
       const fakeTask = { id: 'task-requeue2', status: 'queued' };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+      mockTaskMutation([fakeTask]);
 
       await updateTask({ task_id: 'task-requeue2', status: 'queued' });
 
-      const sql = mockQuery.mock.calls[0][0];
+      const sql = taskMutationSql();
       expect(sql).toContain(`status NOT IN ('completed', 'cancelled')`);
     });
 
     it('completed 任务转 queued 被拒（0 行命中返回 error）', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [] });
+      mockTaskMutation([]);
 
       const result = await updateTask({ task_id: 'task-done', status: 'queued' });
 
@@ -696,7 +707,7 @@ describe('actions.js', () => {
 
     it('转 in_progress / completed 不受终态守卫影响', async () => {
       const fakeTask = { id: 'task-c', status: 'completed' };
-      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [fakeTask] });
+      mockTaskMutation([fakeTask]);
 
       await updateTask({ task_id: 'task-c', status: 'completed' });
 
@@ -1059,7 +1070,7 @@ describe('actions.js', () => {
   // ========== batchUpdateTasks ==========
   describe('batchUpdateTasks', () => {
     it('按 status 过滤并更新 status', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'a' }, { id: 'b' }], rowCount: 2 });
+      mockTaskMutation([{ id: 'a' }, { id: 'b' }], 2);
 
       const result = await batchUpdateTasks({
         filter: { status: 'queued' },
@@ -1071,7 +1082,7 @@ describe('actions.js', () => {
     });
 
     it('按 priority 过滤并更新 priority', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'c' }], rowCount: 1 });
+      mockTaskMutation([{ id: 'c' }], 1);
 
       const result = await batchUpdateTasks({
         filter: { priority: 'P2' },
@@ -1083,7 +1094,7 @@ describe('actions.js', () => {
     });
 
     it('按 project_id 过滤', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      mockTaskMutation([], 0);
 
       const result = await batchUpdateTasks({
         filter: { project_id: 'proj-1' },
@@ -1095,7 +1106,7 @@ describe('actions.js', () => {
     });
 
     it('多条件过滤', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'd' }], rowCount: 1 });
+      mockTaskMutation([{ id: 'd' }], 1);
 
       const result = await batchUpdateTasks({
         filter: { status: 'queued', priority: 'P0', project_id: 'proj-2' },
@@ -1103,7 +1114,7 @@ describe('actions.js', () => {
       });
 
       expect(result.success).toBe(true);
-      const sql = mockQuery.mock.calls[0][0];
+      const sql = taskMutationSql();
       expect(sql).toContain('status =');
       expect(sql).toContain('priority =');
       expect(sql).toContain('project_id =');
@@ -1120,7 +1131,7 @@ describe('actions.js', () => {
     });
 
     it('空过滤条件（更新所有任务）', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'e' }], rowCount: 5 });
+      mockTaskMutation([{ id: 'e' }], 5);
 
       const result = await batchUpdateTasks({
         filter: {},
@@ -1129,7 +1140,7 @@ describe('actions.js', () => {
 
       expect(result.success).toBe(true);
       expect(result.count).toBe(5);
-      const sql = mockQuery.mock.calls[0][0];
+      const sql = taskMutationSql();
       // 没有额外过滤条件，只有 1=1
       expect(sql).toContain('1=1');
     });

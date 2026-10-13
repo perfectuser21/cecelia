@@ -20,6 +20,8 @@ vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── 注入 resolveExecutor（单元 1 的核心依赖，可控返回 / 抛错）─────────
+const openclawTriggerMock = vi.fn(async task => ({success:true,taskId:task.id,runId:task.payload.run_id,executor:'openclaw-agent'}));
+vi.mock('../openclaw-agent-executor.js',()=>({triggerOpenclawAgent:(...args)=>openclawTriggerMock(...args)}));
 const resolveExecutorMock = vi.fn();
 const ExecutorRouteErrorMock = class ExecutorRouteError extends Error {
   constructor(message) {
@@ -96,6 +98,14 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
 
     const executor = await import('../executor.js');
     triggerCeceliaRun = executor.triggerCeceliaRun;
+  });
+
+  it('Commander核验在旧Bridge路由前进入独立OpenClaw，零Bridge请求',async()=>{
+    getTaskLocationMock.mockReturnValue('xian');
+    const task={id:'cccccccc-cccc-4ddd-aeee-fffffffffffe',task_type:'research',title:'独立核验',payload:{verification_transport:'openclaw-agent-v1',run_id:'wfv-independent'}};
+    expect(await triggerCeceliaRun(task)).toMatchObject({success:true,executor:'openclaw-agent'});
+    expect(openclawTriggerMock).toHaveBeenCalledWith(task);expect(resolveExecutorMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   // 原「普通Docker本地启动不能借MMV bridge grant（execution_legacy_identity_required）」测的 HARNESS_DOCKER_ENABLED

@@ -5,6 +5,10 @@ import { defineConfig } from 'vitest/config';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
+  'src/__tests__/integration/commander-generic-wiring.pg.integration.test.js',
+  'src/__tests__/integration/workflow-authoring-source-isolation.pg.integration.test.js',
+  'src/__tests__/integration/workflow-authoring-freeze.pg.integration.test.js',
+  'src/lib/__tests__/integration/commander-v2.test.js',
   '../../tests/gp/f1/step1-headed-lease.test.js',
   'src/lib/__tests__/integration/skill-business-ownership.pg.integration.test.js',
   'src/__tests__/integration/projects-notion-sync.pg.integration.test.js',

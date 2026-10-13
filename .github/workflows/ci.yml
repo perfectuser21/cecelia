@@ -993,6 +993,7 @@ jobs:
             --config vitest.integration.config.js \
             src/__tests__/integration/ \
             ../../tests/gp/f1/step1-headed-lease.test.js \
+            src/lib/__tests__/integration/commander-v2.test.js \
             src/__tests__/integration/account-quota-ledger.pg.integration.test.js \
             src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js \
             src/__tests__/commander-watchdog.pg.integration.test.js \

@@ -104,10 +104,10 @@ const candidate = { id: 'q1', task_type: 'qiumi_task', status: 'queued', priorit
 const fullRow = { ...candidate, payload: { qiumi_source: buildQiumiSource({ title: '给张三发个私信确认收货地址' }) } };
 
 /** 按 SQL 形状回答，不靠调用次序——dispatchNextTask 前面还有若干条真查询 */
-function wireQueries({ running = 0, claimed = true } = {}) {
+function wireQueries({ running = 0, claimed = true, row = fullRow } = {}) {
   mockQuery.mockImplementation(async (sql) => {
     if (/UPDATE tasks SET claimed_by = \$1/.test(sql)) return { rows: claimed ? [{ id: 'q1' }] : [] };
-    if (/SELECT \* FROM tasks WHERE id = \$1/.test(sql)) return { rows: [fullRow] };
+    if (/SELECT \* FROM tasks WHERE id = \$1/.test(sql)) return { rows: [row] };
     if (/count\(\*\)::int AS n FROM tasks/.test(sql) && /openclaw-agent/.test(sql)) return { rows: [{ n: running }] };
     return { rows: [] };
   });
@@ -552,4 +552,15 @@ describe('同机串行（任务 5ad81457）：同一台手机已有秋米任务�
     const newRunId = upd[1].find((v) => typeof v === 'string' && v.startsWith('qiumi-'));
     expect(newRunId).toMatch(/^qiumi-q1-\d+$/);
   });
+});
+
+it.each([false,true])('限定Commander核验不查旧Bridge、不进qiumi；终态运输拒绝不回队（reject=%s）',async reject=>{
+ const task={...candidate,id:'verification',task_type:'research',payload:{verification_transport:'openclaw-agent-v1',run_id:'wfv-independent'}};
+ _candidatePool=[task];wireQueries({row:task});mockIsAllowed.mockImplementation(k=>k!=='cecelia-run');
+ checkCeceliaRunAvailable.mockResolvedValue({available:false,error:'bridge down'});
+ if(reject)mockTriggerCeceliaRun.mockResolvedValue({success:false,taskTerminal:true,reason:'commander_verification_rejected'});
+ const result=await dispatchNextTask(null);
+ expect(mockTriggerCeceliaRun).toHaveBeenCalledTimes(1);expect(checkCeceliaRunAvailable).not.toHaveBeenCalled();expect(routeQiumiTask).not.toHaveBeenCalled();
+ expect(mockUpdateTask).not.toHaveBeenCalledWith({task_id:task.id,status:'queued'});
+ expect(result).toMatchObject(reject?{dispatched:false,terminal:true}:{dispatched:true,task_id:task.id});
 });

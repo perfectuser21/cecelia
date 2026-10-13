@@ -47,6 +47,12 @@ describe('task creation inventory', () => {
     });
   });
 
+  it('Commander 独立核验经 scheduler 原子建单边界登记', () => {
+    expect(TASK_CREATION_INVENTORY.find(row => row.module === 'lib/commander-v2-control.js')).toEqual({
+      module: 'lib/commander-v2-control.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed',
+    });
+  });
+
   it('records each executable creation boundary', () => {
     expect(TASK_CREATION_INVENTORY_VERSION).toBe(ROUTER_VERSION);
     expect(TASK_CREATION_INVENTORY.length).toBeGreaterThanOrEqual(33);

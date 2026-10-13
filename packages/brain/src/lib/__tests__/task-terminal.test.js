@@ -19,7 +19,7 @@ describe('buildTerminalUpdate', () => {
     expect(sql).toContain('claimed_at = NULL');
     expect(sql).toContain('completed_at = COALESCE(completed_at, NOW())');
     expect(sql).toContain('updated_at = NOW()');
-    expect(sql).toMatch(/WHERE id = \$1\s+RETURNING id, status/);
+    expect(sql).toMatch(/WHERE id = \$1 AND .*commander-v2.*RETURNING id, status/);
     expect(params).toEqual([ID]);
   });
 

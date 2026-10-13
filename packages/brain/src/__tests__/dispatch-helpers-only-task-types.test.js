@@ -70,3 +70,10 @@ describe('selectNextDispatchableTask：options.onlyTaskTypes', () => {
     expect(params[excludedIdx - 1]).not.toEqual(['qiumi_task']);
   });
 });
+
+it('任务池满时仅增加限定Commander核验，普通research不能穿透',async()=>{
+ await selectNextDispatchableTask(null,[],{onlyTaskTypes:['qiumi_task'],includeCommanderVerification:true});
+ const [sql,params]=mockQuery.mock.calls[0];
+ expect(sql).toContain("OR (t.task_type='research' AND t.payload->>'verification_transport'='openclaw-agent-v1')");
+ expect(params).toContainEqual(['qiumi_task']);expect(params).not.toContainEqual(['qiumi_task','research']);
+});

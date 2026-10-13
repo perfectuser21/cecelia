@@ -19,6 +19,20 @@ vi.mock('../db.js', () => ({
   }
 }));
 
+
+function mockTaskMutation(pool, rows) {
+  pool.query.mockImplementation(async sql => {
+    if (/^\s*SELECT id, payload, result FROM tasks/.test(sql)) return { rows: [] };
+    if (/^\s*SELECT \* FROM tasks/.test(sql)) return { rows };
+    if (/^\s*UPDATE tasks/.test(sql)) return { rows, rowCount: rows.length };
+    throw new Error(`unexpected test query: ${sql}`);
+  });
+}
+function taskUpdateSql(pool) {
+  const calls = pool.query.mock.calls.filter(([sql]) => /^\s*UPDATE tasks/.test(sql));
+  expect(calls).toHaveLength(1);
+  return calls[0][0];
+}
 /**
  * Bug 1: PLACEHOLDER
  * checkExploratoryDecompositionContinue (Check 7) 已从 decomposition-checker.js 删除
@@ -47,9 +61,7 @@ describe('Bug 2: Task can be reverted from in_progress to queued (revert behavio
   });
 
   it('updateTask allows reverting in_progress back to queued (no atomic guard on revert)', async () => {
-    pool.query.mockResolvedValueOnce({
-      rows: [{ id: 'task-revert-001', status: 'queued' }]
-    });
+    mockTaskMutation(pool, [{ id: 'task-revert-001', status: 'queued' }]);
 
     const { updateTask } = await import('../actions.js');
     const result = await updateTask({ task_id: 'task-revert-001', status: 'queued' });
@@ -91,30 +103,24 @@ describe('Bug 3: updateTask WHERE status=queued guard on in_progress transition'
   });
 
   it('updateTask with status=in_progress uses AND status=queued in WHERE clause', async () => {
-    pool.query.mockResolvedValueOnce({
-      rows: [{ id: 'task-001', status: 'in_progress' }]
-    });
+    mockTaskMutation(pool, [{ id: 'task-001', status: 'in_progress' }]);
 
     const { updateTask } = await import('../actions.js');
     await updateTask({ task_id: 'task-001', status: 'in_progress' });
 
-    const queryCall = pool.query.mock.calls[0];
-    const sql = queryCall[0];
+    const sql = taskUpdateSql(pool);
 
     // Atomic guard must be present
     expect(sql).toContain("status = 'queued'");
   });
 
   it('updateTask with status=queued does NOT add the atomic guard (only for in_progress)', async () => {
-    pool.query.mockResolvedValueOnce({
-      rows: [{ id: 'task-001', status: 'queued' }]
-    });
+    mockTaskMutation(pool, [{ id: 'task-001', status: 'queued' }]);
 
     const { updateTask } = await import('../actions.js');
     await updateTask({ task_id: 'task-001', status: 'queued' });
 
-    const queryCall = pool.query.mock.calls[0];
-    const sql = queryCall[0];
+    const sql = taskUpdateSql(pool);
 
     // Reverting to queued does NOT need the guard
     expect(sql).not.toContain("AND status = 'queued'");
@@ -122,7 +128,7 @@ describe('Bug 3: updateTask WHERE status=queued guard on in_progress transition'
 
   it('returns error when task already dispatched (race condition protection)', async () => {
     // Simulate race: another process already dispatched → UPDATE returns 0 rows
-    pool.query.mockResolvedValueOnce({ rows: [] });
+    mockTaskMutation(pool, []);
 
     const { updateTask } = await import('../actions.js');
     const result = await updateTask({ task_id: 'task-race-001', status: 'in_progress' });

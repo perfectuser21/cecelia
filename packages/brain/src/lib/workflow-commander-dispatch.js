@@ -34,6 +34,9 @@ import { finalizeTask } from './task-terminal.js';
 import { recordTaskEventSafe } from './task-event-log.js';
 import { startRun, finishRun } from './task-run.js';
 
+import { dispatchCommanderV2 } from './commander-v2-dispatch.js';
+import { reconcileCommanderV2 } from './commander-v2-control.js';
+
 export const WORKFLOW_DISPATCH_TASK_TYPE = 'workflow_dispatch';
 export const COMMANDER_AGENT = 'work-commander';
 const CLAIMER = 'workflow-commander-dispatch';
@@ -197,6 +200,18 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
       LIMIT ${BATCH}`,
   );
   for (const t of rows ?? []) {
+    if (t.payload?.commander_protocol !== undefined) {
+      if (t.payload.commander_protocol !== 'commander-v2') {
+        await failQueued(pool, t.id, 'workflow_dispatch_unsupported_protocol'); out.failed++; continue;
+      }
+      try {
+        const result = await dispatchCommanderV2(pool, t.id, deps);
+        if (result.dispatched) out.dispatched++; else out.waiting++;
+      } catch (err) {
+        await recordEvent(pool, t.id, 'commander_preflight_rejected', { reason: err.message }); out.waiting++;
+      }
+      continue;
+    }
     let r = resolveCommanderOrder(t, deps);
     if (r.ok && !withinPublishHours(now(), r.cfg.publish_hours)) { out.skipped++; continue; }
     const claim = await pool.query(
@@ -303,6 +318,7 @@ export async function reapWorkflowCommanderRuns(pool, deps = {}) {
       ORDER BY started_at ASC NULLS FIRST LIMIT 10`,
   );
   for (const row of rows ?? []) {
+    if (row.payload?.commander_protocol === 'commander-v2') continue;
     if (!isSafeRunId(row.run_id)) continue;
     let stdout;
     try {
@@ -346,7 +362,8 @@ export async function reapWorkflowCommanderRuns(pool, deps = {}) {
 
 /** scheduler job 入口：先收后派（收完放锁，同一轮就能派下一张）。 */
 export async function runWorkflowCommanderDispatch(pool, deps = {}) {
+  const controlled = await reconcileCommanderV2(pool, deps);
   const reaped = await reapWorkflowCommanderRuns(pool, deps);
   const dispatched = await dispatchWorkflowCommanderTasks(pool, deps);
-  return { reaped, dispatched };
+  return { reaped, dispatched, controlled };
 }
