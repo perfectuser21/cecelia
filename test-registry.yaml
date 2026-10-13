@@ -372,3 +372,10 @@ tests:
     ci: L4
     status: active
     note: "隔离真实PG验证Agent稳定身份、来源链接、Skill不可变Git源版本、同名待核实、事件回滚和两连接旧快照拒写。"
+
+  - id: skill-git-provenance
+    path: packages/brain/src/lib/__tests__/skill-git-provenance.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "真实Git仓库验证固定Skill源摘要、安装漂移、未跟踪及ignore文件、来源身份、链接和Git环境隔离。"

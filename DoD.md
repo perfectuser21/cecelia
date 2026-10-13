@@ -296,3 +296,8 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] runtimesourceidentity 真实PG验证稳定UUID、来源链接唯一、非Agent拒绝、固定Git版本不可变、同名未核实、路径和摘要检查、映射审计同事务、安装冲突和生产拒写、两连接旧快照拒写。
   Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/lib/__tests__/runtime-identities.test.js"
+
+# 固定来源核验验收
+
+- [x] [BEHAVIOR] skillgitprovenance 临时真实Git仓库验证固定commit、SSH/HTTPS归一、只出摘要、修改/删除/未跟踪/ignore文件拒绝、链接拒绝、凭据remote拒绝及Git环境隔离、禁用refs/replace、目录逃逸、执行权限及读取期HEAD漂移。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/skill-git-provenance.test.js"

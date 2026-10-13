@@ -712,6 +712,11 @@
       "owner_path": "packages/brain/src/lib/runtime-identities.js",
       "path": "cp-10131905-agent-skill-identities.dod.md",
       "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-git-provenance.js",
+      "path": "packages/brain/src/lib/__tests__/skill-git-provenance.test.js",
+      "role": "verification"
     }
   ]
 }
