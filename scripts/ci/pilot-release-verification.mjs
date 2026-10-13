@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {validateImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import {buildPilotReleasePlan,assertPilotReleaseReport} from '../../packages/brain/src/lib/pilot-release-verification.js';
+import {isAuthoringReleaseSnapshot} from '../../packages/brain/src/workflow-authoring/ci-adapter.js';
 import {runRegisteredAssertions} from './implementation-gate.mjs';
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const sha=v=>createHash('sha256').update(v).digest('hex');
@@ -16,7 +17,7 @@ export async function runPilotReleaseVerification({repoRoot,snapshot,outputDir,e
   if(!['push','workflow_dispatch'].includes(event)||ref!=='refs/heads/main')fail('PILOT_RELEASE_MAIN_REQUIRED');
   const s=validateImplementationSnapshot(snapshot);
   if(s.status!=='verified'||s.gaps?.length)fail('PILOT_RELEASE_SNAPSHOT_UNKNOWN');
-  if(![['zenithjoy','perfectuser21/zenithjoy-workspace'],['cecelia-kr','perfectuser21/cecelia']].some(([scope,repo])=>s.scope===scope&&s.repo===repo))fail('PILOT_RELEASE_SCOPE_UNSUPPORTED');
+  if(![['zenithjoy','perfectuser21/zenithjoy-workspace'],['cecelia-kr','perfectuser21/cecelia']].some(([scope,repo])=>s.scope===scope&&s.repo===repo)&&!isAuthoringReleaseSnapshot(s))fail('PILOT_RELEASE_SCOPE_UNSUPPORTED');
   const git=(...args)=>execFileSync('git',args,{cwd:repoRoot,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   if(git('rev-parse','HEAD')!==s.revision||git('rev-parse','refs/remotes/origin/main')!==s.revision||git('status','--porcelain=v1','--untracked-files=no'))fail('PILOT_RELEASE_SOURCE_MISMATCH');
   const report={...buildPilotReleasePlan({scope:s.scope,repo:s.repo,revision:s.revision,definitions:s.definitions,assertions:s.assertions}),snapshot_sha256:s.snapshot_sha256};

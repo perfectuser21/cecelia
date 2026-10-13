@@ -2,6 +2,7 @@ import {
   STAGES, requireCondition, object, text, uuid, stringArray,
   definitionDigest, validateRequest, validateSubmission, validateStageOutput,
 } from './contracts.js';
+import { FREEZE_PROTOCOL, prepareDefinitionFreeze } from './freeze.js';
 
 async function transaction(pool, action) {
   const client = await pool.connect();
@@ -118,6 +119,8 @@ async function processStage(client, taskId, state, body, deps) {
       definitionSha256: state.outputs.compose.definition_sha256,
       operation: state.request.operation,
       workflowId: state.outputs.intake.workflow_id ?? state.request.workflow_id,
+      registrationProtocol: state.request.registration_protocol,
+      freezeProof: deps.freezeProof,
     });
     object(receipt, '登记回执');
     return receipt;
@@ -127,6 +130,15 @@ async function processStage(client, taskId, state, body, deps) {
 
 export async function submitAuthoring(pool, taskId, body, deps = {}) {
   validateSubmission(body);
+  // 先只读状态及固定Git来源；进入事务后仍重新校验revision和定义digest，防慢网络期间的并发推进。
+  if (body.stage === 'register') {
+    const state = await getAuthoring(pool, taskId);
+    if (state.request.registration_protocol === FREEZE_PROTOCOL
+      && !state.receipts.some(receipt => receipt.submission_id === body.submission_id)) {
+      requireCondition(state.stage === body.stage && state.revision === body.revision, 'register阶段或revision已变化', 409);
+      deps = { ...deps, freezeProof: await prepareDefinitionFreeze(state.outputs.compose.definition, deps.freezeOptions) };
+    }
+  }
   return transaction(pool, async client => {
     const row = await task(client, taskId, { lock: true, writable: false });
     const state = row.result?.workflow_authoring;

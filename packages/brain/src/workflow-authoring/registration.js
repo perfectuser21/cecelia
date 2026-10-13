@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { FREEZE_PROTOCOL, assertPreparedFreeze, freezeRegisteredWorkflow } from './freeze.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const KEY = /^[a-z][a-z0-9_.-]{0,99}$/;
@@ -112,14 +113,18 @@ async function registrationReceipt(client, workflow, definition, options, activi
   if (canonicalDefinition(actualIds) !== canonicalDefinition(activityIds) || stored.version !== definition.version) {
     throw registrationError('registration_readback_failed', '登记回读的有序活动与定义不一致');
   }
+  const frozen = options.registrationProtocol === FREEZE_PROTOCOL
+    ? await freezeRegisteredWorkflow(client, workflow, definition, actualIds, options.freezeProof) : {};
   return { workflow_id: stored.id, key: stored.key, version: stored.version, status: stored.status,
     definition_sha256: registrationDigest(definition), activity_ids: actualIds, task_id: options.taskId,
-    runtime: definition.runtime, readback_verified: true, replayed };
+    runtime: definition.runtime, readback_verified: true, replayed, ...frozen };
 }
 
 // 调用者必须持有事务：定义、引用和阶段回执一起提交，失败一起回滚。
 export async function registerWorkflow(client, definition, options = {}) {
   validateDefinition(definition);
+  if (options.registrationProtocol !== undefined && options.registrationProtocol !== FREEZE_PROTOCOL) throw registrationError('registration_protocol_invalid', '未知冻结协议', 400);
+  if (options.registrationProtocol === FREEZE_PROTOCOL) assertPreparedFreeze(definition, options.freezeProof);
   const digest = registrationDigest(definition);
   if (options.definitionSha256 !== digest) throw registrationError('definition_digest_conflict', '登记定义与已验收定义不一致');
   // capability锁保护同一能力下并发登记；不重编号其它流程。
@@ -176,7 +181,10 @@ export async function registerWorkflow(client, definition, options = {}) {
           contract_source=EXCLUDED.contract_source,notion_synced_at=NULL,updated_at=NOW()
         WHERE activities.workflow_id=EXCLUDED.workflow_id RETURNING id`,
       [activity.name,activity.implementation.ref,definition.key,key,
-        definition.version,workflow.id,activity.executor_kind,JSON.stringify(contract),registrationDigest(contract),`${definition.source.ref}@${definition.source.revision}`]);
+        definition.version,workflow.id,activity.executor_kind,JSON.stringify(contract),registrationDigest(contract),
+        options.registrationProtocol === FREEZE_PROTOCOL
+          ? `https://github.com/${definition.source.repo}/blob/${definition.source.revision}/${definition.source.ref}`
+          : `${definition.source.ref}@${definition.source.revision}`]);
         if (!result.rows.length) throw registrationError('activity_ownership_conflict', '活动归属冲突');
         activityId = result.rows[0].id;
       }

@@ -34,7 +34,7 @@ jobs:
           set -euo pipefail
           test "$SOURCE_REPO" = "$CALLER_REPO" && test "$HEAD" = "$CALLER_SHA"
           case "$SOURCE_REPO:$MAP_SCOPE" in
-            perfectuser21/cecelia:cecelia-kr|perfectuser21/zenithjoy-workspace:zenithjoy) ;;
+            perfectuser21/cecelia:cecelia-kr|perfectuser21/zenithjoy-workspace:zenithjoy|perfectuser21/zenithjoy-workspace:commander-generic) ;;
             *) exit 1 ;;
           esac
           test "$(gh api "repos/$SOURCE_REPO/git/ref/heads/main" --jq .object.sha)" = "$HEAD"

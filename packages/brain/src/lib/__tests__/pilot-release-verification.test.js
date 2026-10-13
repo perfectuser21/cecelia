@@ -58,6 +58,7 @@ it('PR、漏Step与本机测试脏字节拒绝且无PASS收据',async()=>{
 it('实际主线工作流与凭据隔离存在，不依赖影响workflow整体成功',()=>{
  const url=new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url);expect(existsSync(url)).toBe(true);const w=yaml.load(readFileSync(url,'utf8'));
  expect(w.name).toBe('Pilot release verification');expect(w.on.pull_request).toBeUndefined();expect(w.on.push.branches).toEqual(['main']);
+ expect(w.jobs.snapshot.steps[0].run).toContain('perfectuser21/zenithjoy-workspace:commander-generic');
  expect(JSON.stringify(w.jobs.verify)).not.toContain('CECELIA_INTERNAL_TOKEN');expect(JSON.stringify(w.jobs.verify)).toContain('pilot-release-verification.mjs');
  for(const job of Object.values(w.jobs))for(const s of job.steps||[])if(s.uses?.startsWith('actions/setup-node'))expect(s.with?.cache).toBeUndefined();
 });

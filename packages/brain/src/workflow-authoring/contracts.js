@@ -51,6 +51,7 @@ function bounded(value, limit) {
 export function validateRequest(request) {
   object(request, 'request');
   bounded(request, 16384);
+  requireCondition(request.registration_protocol === undefined || request.registration_protocol === 'definition-freeze-v1', '未知 registration_protocol');
   requireCondition(['create', 'update'].includes(request.operation), 'operation 必须是 create 或 update');
   text(request.goal, 'goal');
   text(request.actor, 'actor', 128);

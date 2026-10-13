@@ -10,6 +10,7 @@ import { resolveGitHubToken } from '../harness-credentials.js';
 import { TREE_NODES_SQL } from './tree-nodes-sql.js';
 import { EXISTING_OPS_SCOPE,EXISTING_OPS_REPO,EXISTING_OPS_IDENTITIES } from './existing-ops-source.js';
 import { readExistingOpsRegistry,registerExistingOpsSources,validateExistingOpsRegistry,prepareExistingOpsManifestAdvance } from './existing-ops-registration.js';
+import { validateAuthoringAdapterConfig,selectAuthoringDefinitions,checkAuthoringSnapshot,verifyAuthoringSnapshotSources } from '../workflow-authoring/ci-adapter.js';
 export const ciFailure=(code,message,status=422)=>Object.assign(Error(message||code),{code:`IMPLEMENTATION_CI_${code}`,status});
 export function isImplementationScratchDatabase(database,env=process.env){
   return database==='cecelia_scratch'||database==='cecelia_test'&&env.CI==='true'&&env.GITHUB_ACTIONS==='true';
@@ -249,6 +250,8 @@ export async function readImplementationSnapshotInTransaction(db,q){
   }else candidates=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[q.repo,q.revision])).rows;
   candidates=candidates.filter(w=>factory?
     w.payload.definition_scope==='consumer_evidence'&&w.payload.source_scope===EXISTING_OPS_SCOPE&&EXISTING_OPS_IDENTITIES.some(i=>i.workflow_id===w.workflow_id):!['consumer_evidence','device_workflow_admission'].includes(w.payload.definition_scope));
+  const authoring=repositories.length===1&&repositories[0].adapter_config?.definition_protocol;
+  if(authoring)candidates=selectAuthoringDefinitions(repositories[0].adapter_config,candidates);
   const workflows=factory?(await db.query('SELECT * FROM workflows WHERE id=ANY($1::uuid[]) ORDER BY id',[EXISTING_OPS_IDENTITIES.map(i=>i.workflow_id)])).rows:
     (await db.query('SELECT * FROM workflows WHERE source_repo=$1 ORDER BY id',[anchor.repo])).rows;
   const selected=[];
@@ -263,6 +266,7 @@ export async function readImplementationSnapshotInTransaction(db,q){
   if(crossConsumer)for(const w of selected)if(w.source_repo!==anchor.repo||w.source_commit!==anchor.revision
     ||w.payload_sha256!==stepSha256({source:{repo:w.source_repo,path:w.source_path,commit:w.source_commit},payload:w.payload}))gap('consumer_source_digest_mismatch',{workflow_id:w.workflow_id});
   if(!selected.length)gap('definition_snapshot_missing',{repo:q.repo,revision:q.revision});
+  if(authoring)checkAuthoringSnapshot(repositories[0].adapter_config,selected,workflows,q,gap);
   const activityVersions=[...new Set(selected.flatMap(w=>w.payload.activities.map(a=>a.activity_version_id)))];
   const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[]) ORDER BY id',[activityVersions])).rows;
   if(activities.length!==activityVersions.length)gap('activity_snapshot_missing');
@@ -374,7 +378,7 @@ async function reuseConcurrentSnapshot(pool,q,checkMain,conflict,waitMs){
   throw conflict;
 }
 export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalThis.fetch,resolveToken=resolveGitHubToken,
-  readBinding,conflictWaitMs=5000,allowRepos=(process.env.CECELIA_IMPLEMENTATION_CI_REPOS??`${CONTRACT_REPO},perfectuser21/cecelia`).split(',').map(r=>r.trim()).filter(Boolean)}={}){
+  readBinding,authoringSourceOptions,conflictWaitMs=5000,allowRepos=(process.env.CECELIA_IMPLEMENTATION_CI_REPOS??`${CONTRACT_REPO},perfectuser21/cecelia`).split(',').map(r=>r.trim()).filter(Boolean)}={}){
   const q=validateSnapshotQuery(input);
   const consumer=input?.workspace_consumer;
   if(consumer!==undefined&&(q.scope!==EXISTING_OPS_SCOPE||q.repo!==EXISTING_OPS_REPO
@@ -400,6 +404,14 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
     if((await response.text()).trim()!==q.revision)throw ciFailure('MAIN_MOVED','请求revision不等于远端main',409);
   };
   await checkMain();
+  const registration=(await pool.query('SELECT adapter_config FROM map_scope_repositories WHERE scope_key=$1',[q.scope])).rows;
+  if(registration.length===1&&registration[0].adapter_config?.definition_protocol){
+    const snapshot=await exportImplementationSnapshot(pool,q);
+    await verifyAuthoringSnapshotSources(snapshot,{fetchFn,resolveToken:async()=>token,...authoringSourceOptions});
+    await checkMain();const after=await exportImplementationSnapshot(pool,q);
+    if(after.snapshot_sha256!==snapshot.snapshot_sha256)throw ciFailure('AUTHORING_SNAPSHOT_CHANGED','来源核验期间登记或地图变化',409);
+    return after;
+  }
   const pilotPlan=q.scope===EXISTING_OPS_SCOPE ? await prepareExistingOpsManifestAdvance(pool,q) : await preparePilotManifestAdvance(pool,q);
   if(q.repo===CONTRACT_REPO){
     try{await syncActivityContracts(pool,{fetchFn,resolveToken:async()=>token,expectedRevision:q.revision,beforeCommit:checkMain,synchronizeSteps:true,readBinding});}
@@ -450,7 +462,7 @@ export async function registerImplementationRepository(pool,input){
   if(!input||Array.isArray(input)||Object.keys(input).some(k=>!['scope_key','repo','adapter_key','adapter_config'].includes(k))
     ||!validText(input.scope_key,/^[a-z][a-z0-9-]{0,127}$/)||!validText(input.repo,/^[\w.-]+(?:\/[\w.-]+)?$/)
     ||input.adapter_key!=='legacy-ledger-v1'||!input.adapter_config||Array.isArray(input.adapter_config)
-    ||Object.keys(input.adapter_config).some(k=>k!=='source_repo')||!validText(input.adapter_config.source_repo,/^[\w.-]+\/[\w.-]+$/))
+    ||(!validateAuthoringAdapterConfig(input.adapter_config)&&Object.keys(input.adapter_config).some(k=>k!=='source_repo'))||!validText(input.adapter_config.source_repo,/^[\w.-]+\/[\w.-]+$/))
     throw ciFailure('REPOSITORY_INPUT_INVALID','只接受scope/repo/legacy-ledger-v1及明确source_repo',400);
   const client=await pool.connect();
   try{
@@ -460,7 +472,7 @@ export async function registerImplementationRepository(pool,input){
     if(rows.length){
       const row=rows[0];
       if(rows.length!==1||row.repo!==input.repo||row.scope_key!==input.scope_key||row.adapter_key!==input.adapter_key
-        ||JSON.stringify(row.adapter_config)!==JSON.stringify(input.adapter_config))throw ciFailure('REPOSITORY_CONFLICT','登记键或scope canonical来源已被占用',409);
+        ||digest(row.adapter_config)!==digest(input.adapter_config))throw ciFailure('REPOSITORY_CONFLICT','登记键或scope canonical来源已被占用',409);
       await client.query('COMMIT');return {repository:row,created:false};
     }
     const row=(await client.query('INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES($1,$2,$3,$4) RETURNING *',
