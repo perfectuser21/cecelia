@@ -439,7 +439,7 @@
       "path": "packages/brain/src/__tests__/kernel-runtime-retired.test.js",
       "role": "verification"
     },
-    {"owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js", "path": "changes/cp-1013123429-commander-generic.md", "role": "release"},
+    
     {"owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js", "path": "docs/learnings/cp-1013123429-commander-generic.md", "role": "documentation"},
     {"owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js", "path": "docs/superpowers/plans/2026-10-13-generic-commander.md", "role": "documentation"},
     {"owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js", "path": "docs/superpowers/specs/2026-10-13-generic-commander.md", "role": "documentation"},
