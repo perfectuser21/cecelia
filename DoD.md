@@ -287,7 +287,7 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 # Commander 合并后 CI 固定基线修复（任务 1e30e1ec）
 
 - [x] [BEHAVIOR] versionidentitypreflight 真实PG只读一致快照报告四处构建/首构建/发布版本对象身份缺口和九类历史摘要；显式scratch迁移，错对象/坏历史/漂移/中途DDL失败/锁冲突均拒绝并保留原件；禁改触发器保留，生产连接在DDL前拒绝。
-  Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/__tests__/integration/version-identity-preflight.pg.integration.test.js"
+  Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-/tmp} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/lib/__tests__/version-identity-preflight.test.js"
 
 - [x] [BEHAVIOR] commanderfollowupregistry 保留原 handler 白名单身份，只校正源码实际行号；DoD checkout 完整历史，真实 Git 克隆能读固定旧 blob，既有 registry-vs-base 审计真实运行且 FAIL/ERROR 0。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/task-type-registry.guard.test.js src/__tests__/registry-vs-base.audit.test.js"
