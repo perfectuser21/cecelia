@@ -187,6 +187,19 @@ const isUuidLike = (v) => typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v);
 /** 裁判一张执行单。deps: {store, createTask, recordRun, resolveConfig, now, log} */
 export async function judgeTask(task, deps) {
   const { store, now = () => new Date(), log = () => {} } = deps;
+  if (task.payload?.commander_protocol === 'commander-v2') {
+    const control = task.result?.workflow_control;
+    if (control?.phase !== 'final') return { task_id: task.id, state: 'awaiting_verify' };
+    if (task.payload?.factory_dispatch !== true) return { task_id: task.id, state: 'not_factory' };
+    const f = task.payload.factory || {};
+    const ledger = await store.findLedger(task.payload.factory_ledger_id || null, f.workflow_key || task.payload.workflow_key);
+    const runId = control.envelope.run_id;
+    const verdict = control.verdict === 'PASS' ? 'pass' : 'fail';
+    const recorded = ledger ? await deps.recordRun(ledger.id, { run_id: runId, pass: verdict === 'pass', source_task_id: task.id }) : null;
+    const final = { state: 'final', verdict, run_id: runId, ledger_id: ledger?.id ?? null, recorded: Boolean(ledger), duplicate: Boolean(recorded?.duplicate), verify_task_id: control.verify_task_id, judged_at: now().toISOString() };
+    await store.writeJudge(task.id, final);
+    return { task_id: task.id, ...final };
+  }
   const delivery = isObj(task.result?.delivery) ? task.result.delivery : {};
   const f = task.payload?.factory || {};
   const prev = isObj(task.result?.[JUDGE_KEY]) ? task.result[JUDGE_KEY] : null;

@@ -88,15 +88,15 @@ export function normalizeSpan(raw, index) {
   return { params: [...params, occurrence_key, payload_sha256], occurrence_key, payload_sha256,identity_protocol:provenance.identity_protocol,provenance,normalized };
 }
 
-export async function writeSpans(pool, rows) {
+export async function writeSpans(pool, rows, { transactionClient } = {}) {
   // 按实际冲突键固定取锁顺序；保存输入序号供响应恢复调用者的顺序。
   const ordered = rows.map((row, index) => ({ row, index, key: JSON.stringify(row.occurrence_key === null
     ? [row.params[0], 'legacy', row.params[3] || row.params[2] || row.params[4], row.params[5]]
     : [row.params[0], 'occurrence', row.occurrence_key]) }))
     .sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : a.index - b.index);
-  const client = await pool.connect();
+  const client = transactionClient ?? await pool.connect();
   try {
-    await client.query('BEGIN');
+    if (!transactionClient) await client.query('BEGIN');
     // 与首次绑定使用同一运行锁；排序避免多运行批次反序死锁。
     // 旧协议由数据库触发器校验，迁移前客户端仍保持原SQL形状。
     const v2=rows.filter(row=>row.identity_protocol===2);
@@ -123,13 +123,13 @@ export async function writeSpans(pool, rows) {
         });
       }
     }
-    await client.query('COMMIT');
+    if (!transactionClient) await client.query('COMMIT');
     const ids = inserted.sort((a, b) => a.index - b.index).map(row => row.id);
     return { inserted: ids.length, skipped: rows.length - ids.length, count: rows.length, ids };
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (!transactionClient) await client.query('ROLLBACK');
     if(error.code==='23514'&&error.constraint?.startsWith('spans_bound_run_'))Object.assign(error,{status:422,code:error.constraint==='spans_bound_run_protocol'?'SPAN_IDENTITY_PROTOCOL_REQUIRED':'SPAN_RUN_IDENTITY_MISMATCH'});
     throw error;
   }
-  finally { client.release(); }
+  finally { if (!transactionClient) client.release(); }
 }

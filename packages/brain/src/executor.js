@@ -3711,6 +3711,7 @@ async function probeTaskLiveness() {
   `);
 
   for (const task of result.rows) {
+    if (task.payload?.commander_protocol === 'commander-v2') continue;
     // 已认领有头会话可能在远端；本机无 PID 不足以判死，沿用合同的 unknown 保留语义。
     if (task.executor_kind === 'headed-session'
         && typeof task.claimed_by === 'string' && task.claimed_by.trim()) {
@@ -4182,6 +4183,7 @@ async function syncOrphanTasksOnStartup() {
   const LANGGRAPH_TYPES = new Set(['harness_initiative']);
 
   for (const task of result.rows) {
+    if (task.payload?.commander_protocol === 'commander-v2') continue;
     // 雷11（R5 首航实证 39b97ade/a3d61486/4cedf175/174dea35 同源）：
     // skill-relay（payload.orchestrator==='skill-relay'）虽然 task_type 也是
     // harness_initiative，但它不是 LangGraph（已废弃）——它有真实进程（无头=docker

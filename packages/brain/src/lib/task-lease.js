@@ -85,7 +85,7 @@ export async function claimTaskWithLease(pool, { taskId, claimer, executorKind, 
   const result = await pool.query(
     `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(),
             executor_kind = CASE WHEN $4 THEN $3 ELSE COALESCE(executor_kind, $3) END
-      WHERE id = $2 AND claimed_by IS NULL
+      WHERE id = $2 AND claimed_by IS NULL AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
       RETURNING id, claimed_by, claimed_at, executor_kind`,
     [claimer, taskId, kind, forceKind],
   );
@@ -114,7 +114,7 @@ export async function heartbeatTaskLease(pool, { taskId, claimer, leaseSeconds }
             heartbeat_at = NOW(), heartbeat_count = l.heartbeat_count + 1
        FROM tasks t
       WHERE l.task_id = $1 AND t.id = l.task_id AND l.claimer = $2 AND l.released_at IS NULL
-        AND t.claimed_by = $2 AND t.status IN ('queued', 'in_progress')
+        AND t.claimed_by = $2 AND t.status IN ('queued', 'in_progress') AND t.payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
       RETURNING l.task_id, l.lease_until, l.heartbeat_count, l.lease_seconds`,
     [taskId, claimer, seconds],
   );
@@ -197,6 +197,7 @@ export async function reapExpiredLeases(pool, deps = {}) {
   );
   let probes = 0;
   for (const row of rows ?? []) {
+    if (row.payload?.commander_protocol === 'commander-v2') { out.skipped++; continue; }
     if (!row.id || !ACTIVE.includes(row.status)) {
       await markReleased(pool, row.task_id, 'task_terminal');
       out.released++;

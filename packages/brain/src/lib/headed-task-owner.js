@@ -5,8 +5,9 @@ export async function headedOwner(pool,taskId){
  return (await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[taskId])).rows[0]??null;
 }
 export async function assertAutomaticTaskOwner(pool,taskId){
- const task=(await pool.query("SELECT payload->'headed_takeover' AS headed_takeover FROM tasks WHERE id=$1",[taskId])).rows[0];
+ const task=(await pool.query("SELECT payload->'headed_takeover' AS headed_takeover, payload->>'commander_protocol' AS commander_protocol FROM tasks WHERE id=$1",[taskId])).rows[0];
  if(task?.headed_takeover)throw conflict('headed_task_owned');
+ if(task?.commander_protocol==='commander-v2')throw conflict('commander_control_owned');
 }
 /** 外层已COMMIT：仅真实saveHandoff的原task UPDATE借用独立授权小事务。 */
 export function headedPostcommitPool(pool,owner){
