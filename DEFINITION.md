@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.431.0
+**Brain 版本**: 1.431.1
 
 通用 Commander v2 在任何业务起跑前事务冻结合同、输入、运行及版本；活动回执有身份与顺序门禁，输出schema、冻结路径对账、独立Codex核验和收尾同时成立才完成原任务；拒绝虚假成功仍消费原序事件，安全失败携诊断在同一目标继续已有已验证实现，巡检公平轮转。信封活动/步骤key精确映射冻结release，不读取current定义；schema首错停止，shell执行者身份从冻结合同推导。限定research独立核验复用OpenClaw运输，固定Codex模型以官方回执读回，独立run及租约提交后才起跑。同目标release可联合多scope完整Pilot证据，仅投影各自冻结Workflow依赖闭包，全部定义身份、摘要与来源须被有效证据覆盖；同main的发布产物按scope命名，防止并发覆盖。
 
@@ -84,6 +84,10 @@ summary: 版本、实现影响、地图及发布证据测试改用精确scratch�
 fix: Codex 原生 command_execution 的已知 shell -lc/-c 外层字面量只解一层，命令全文精确匹配；保留完成状态和退出码，阻止 echo、注释、复合子串或未完成事件冒认执行。真实 Z0 here-doc/引号证据可回放，不改证据原判分。
 
 fix: local QA 基线从合同指定的固定 commit 只读提取到独享临时目录，不再要求 git worktree add；缺少历史起点仍 CANNOT_VERIFY，保留黑盒和 Git 元数据只读边界。 QA 记录只对当前任务/轮次报告和截图 force-add，兼容目标仓忽略规则；smoke 保持普通 add，空记录、预暂存、越界和链接拒绝。
+
+## Brain 1.431.1 — CI 固定历史审计
+
+- DoD 动态审计获取完整 Git 历史；原 handler 清单按真实源码位置校正，固定基线审计与零新增名单守卫继续生效。
 
 ## Brain 1.431.0 — 通用 Commander 固定合同与独立核验闭环
 
