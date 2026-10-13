@@ -76,9 +76,10 @@ describe('dispatcher: golden_path_proposal 防线接线', () => {
     // （qiumi_task 走 ssh 直派，不经 cecelia-bridge，所以不查 bridge 健康度），
     // 条件变成两个合取项，正则同步放宽到跨行匹配这两项。
     // 棒 3（executor=script）：script 表面同样是 ssh 直派跑场机，不经 bridge，加第三个合取项。
+    // Commander独立核验使用research的限定payload标记；表面判定须传整份任务。
     expect(new Set(HARNESS_INFLIGHT_TASK_TYPES)).toEqual(new Set(['harness_initiative', 'golden_path_proposal']));
     expect(DISPATCHER_SRC).toMatch(
-      /const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES\.includes\(nextTask\.task_type\)\s*&&\s*!isOpenclawSurface\(nextTask\.task_type\)\s*&&\s*!isScriptSurface\(nextTask\.task_type\);/
+      /const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES\.includes\(nextTask\.task_type\)\s*&&\s*!isOpenclawSurface\(nextTask\)\s*&&\s*!isScriptSurface\(nextTask\.task_type\);/
     );
   });
   it('绝不在 retired 集合（加了 = 派发即 terminal failed）', () => {
