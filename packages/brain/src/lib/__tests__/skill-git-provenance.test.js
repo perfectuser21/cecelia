@@ -2,6 +2,7 @@ import {afterEach,beforeEach,expect,it} from 'vitest';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {auditSkillGitSource} from '../skill-git-provenance.js';
+import {main as provenanceCli} from '../../../scripts/audit-skill-git-sources.mjs';
 let repo,skill;
 const git=(...args)=>execFileSync('git',['-C',repo,...args],{stdio:['ignore','pipe','pipe']}).toString().trim();
 const write=(name,content)=>{const p=path.join(repo,name);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,content);};
@@ -80,3 +81,5 @@ it('真实CLI生成600权限本地核验报告，声明远端提交未认证',()
  }
  expect(()=>execFileSync(process.execPath,[cli.pathname,'--input',input,'--output',input],{stdio:'pipe'})).toThrow();expect(fs.readFileSync(input,'utf8')).toBe(before);
 });
+
+it('命令行入口可导入且非法参数拒绝，保持原有真实CLI验收',()=>{expect(()=>provenanceCli([])).toThrow('需要 --input');});

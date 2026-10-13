@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {auditSkillGitSource} from '../src/lib/skill-git-provenance.js';
-const args=process.argv.slice(2),inputIndex=args.indexOf('--input'),outputIndex=args.indexOf('--output');
+export function main(args=process.argv.slice(2)) {
+const inputIndex=args.indexOf('--input'),outputIndex=args.indexOf('--output');
 if(inputIndex<0||outputIndex<0||!args[inputIndex+1]||!args[outputIndex+1]) {
-  console.error('需要 --input <注册表快照.json> --output <新的核验结果.json>');process.exit(2);
+  throw Object.assign(Error('需要 --input <注册表快照.json> --output <新的核验结果.json>'),{code:'INVALID_ARGUMENT'});
 }
 try {
   if(path.resolve(args[inputIndex+1])===path.resolve(args[outputIndex+1]))throw Error('input_output_conflict');
@@ -18,3 +20,8 @@ try {
   const states={},reasons={};for(const x of results){states[x.status]=(states[x.status]||0)+1;if(x.reason)reasons[x.reason]=(reasons[x.reason]||0)+1;}
   console.log(JSON.stringify({total:results.length,states,reasons,production_migration_applied:false}));
 }catch {console.error('来源核验失败；未读取凭据或修改数据库');process.exitCode=1;}
+
+}
+if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url) {
+ try{main();}catch{console.error('需要 --input <注册表快照.json> --output <新的核验结果.json>');process.exitCode=2;}
+}
