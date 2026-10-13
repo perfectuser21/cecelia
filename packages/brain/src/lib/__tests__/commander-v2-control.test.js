@@ -98,3 +98,12 @@ it('缺正式运输确认准确标识核验单，不把真实模型正确的tool
  expect(result).toMatchObject({verdict:'INCONCLUSIVE',reason:'核验运输未获正式确认',verification_task_id:'verify-rejected'});
  expect(JSON.stringify(result)).not.toContain('sensitive');
 });
+
+it('历史方法PASS必须同时证明原目标和所选方法，错hash或空证据不可完成',()=>{
+ const envelope={...e,method_selection:{original_goal_definition:{snapshot_sha256:'original'},selection_receipt:{compatibility_sha256:'compatible'}}};
+ const child=value=>({status:'completed',result:{workflow_verification:value}});
+ expect(readVerification(child(v),{id:'task'},{envelope}).verdict).toBe('INCONCLUSIVE');
+ const both={...v,assertions:[...v.assertions,{name:'original_goal',pass:true,definition_sha256:'original',evidence:['source']},{name:'selected_method',pass:true,definition_sha256:'hash',evidence:['actual']}]};
+ expect(readVerification(child(both),{id:'task'},{envelope}).verdict).toBe('PASS');
+ for(const bad of [{...both,assertions:both.assertions.map(a=>a.name==='original_goal'?{...a,definition_sha256:'wrong'}:a)},{...both,assertions:both.assertions.map(a=>a.name==='selected_method'?{...a,evidence:[]}:a)}])expect(readVerification(child(bad),{id:'task'},{envelope}).verdict).toBe('INCONCLUSIVE');
+});

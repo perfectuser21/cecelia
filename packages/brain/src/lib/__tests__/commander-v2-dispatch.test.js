@@ -16,3 +16,10 @@ it('已经持久准备的任务重入不重建定义或运行',async()=>{
  expect(await prepareCommander({connect:async()=>db},'task',{frozenContract,startRun,ready})).toBe(c);
  expect(frozenContract).not.toHaveBeenCalled();expect(startRun).not.toHaveBeenCalled();expect(ready).not.toHaveBeenCalled();
 });
+
+it('方法ready传完整双定义，不把组合验证降成单release echo',async()=>{
+ const sshDispatch=vi.fn(async()=>JSON.stringify({ready:true}));
+ const e={workflow_key:'report',definition:{release_id:'method'},method_selection:{protocol:'commander-method-v1',supervisor_definition:{release_id:'current'}}};
+ await readyCommander(e,{target:'worker',sshDispatch});
+ expect(JSON.parse(sshDispatch.mock.calls[0][1])).toEqual(e);
+});
