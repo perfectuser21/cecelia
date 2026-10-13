@@ -71,6 +71,9 @@ export const OPS_DB_PROPS = {
     StartedAt: { date: {} }, EndedAt: { date: {} },
     ExitCode: { number: {} }, Artifacts: { rich_text: {} },
     Minutes: { number: {} }, Error: { rich_text: {} },
+    '业务状态': { select: {} }, '流程版本': { rich_text: {} }, '源码版本': { rich_text: {} },
+    '辅助源码版本': { rich_text: {} }, '定义版本': { rich_text: {} }, '设备': { rich_text: {} },
+    '批次任务': { rich_text: {} }, '尝试': { number: {} },
   },
 
   // run 记录库：只存业务流程的每次执行
@@ -80,6 +83,13 @@ export const OPS_DB_PROPS = {
     RunId: { rich_text: {} },
   },
 };
+
+/** Runs真实关联的目标由正式登记配置提供；补列与推送必须共用这份定义。 */
+export function buildTaskRunDbProps({ workflowsDb, tasksDb } = {}) {
+  return { ...OPS_DB_PROPS.task_runs,
+    ...(workflowsDb ? { Workflow: { relation: { database_id: workflowsDb, single_property: {} } } } : {}),
+    ...(tasksDb ? { Task: { relation: { database_id: tasksDb, single_property: {} } } } : {}) };
+}
 
 /**
  * Tasks 投影库（NOTION_TASKS_DB）的缺列即补清单（链 bf5088a3 棒5·PR B）。

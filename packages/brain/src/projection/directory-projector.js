@@ -4,6 +4,9 @@ import { propsDigest } from '../lib/notion-projection-engine.js';
 import { ensureDirectorySchemas } from './directory-schema.js';
 import { loadDirectorySource, buildDirectoryRows } from './directory-source.js';
 import { syncActivityBodies } from './activity-body.js';
+import { syncWorkflowBodies } from './workflow-body.js';
+import { resolveDbId } from '../lib/notion-projection-engine.js';
+import { backfillWorkflowRunIdentity } from '../lib/task-run.js';
 
 export const DIRECTORY_LOCK = 613006;
 export const DIRECTORY_TARGET = 'notion-directory';
@@ -134,10 +137,21 @@ export async function runDirectoryProjection(pool, { token, notionReq = defaultN
     if (!target?.enabled) return { skipped: true, reason: 'not_configured' };
     if (!force && target.last_success_at && Date.now() - new Date(target.last_success_at).getTime() < 300000) return { skipped: true, reason: 'interval' };
     token ||= getToken();
-    const { dbs } = target.config;
+    const dbs = { ...target.config.dbs };
+    dbs.task_runs = await resolveDbId(client,'task_runs');
+    dbs.runs = await resolveDbId(client,'runs');
+    dbs.tasks = (await client.query("SELECT notion_db_id FROM notion_projection_map WHERE brain_table='tasks' AND direction='both' AND status='active' AND face='inlet' AND title='Tasks'")).rows[0]?.notion_db_id;
     await ensureDirectorySchemas({ dbs, token, notionReq });
     if (beforeSource) await beforeSource({ client, token, config: target.config, notionReq });
+    await backfillWorkflowRunIdentity({pool:client});
     const sourceRows = buildDirectoryRows(await loadDirectorySource(client), target.config);
+    for(const row of sourceRows.filter(r=>r.workflowObservation)) {
+      const observation=row.workflowObservation;
+      const relation=(records)=>({relation:[...new Set(records.map(r=>r.notion_id).filter(Boolean))].map(id=>({id}))});
+      if(dbs.task_runs)row.properties['代码运行']=relation(observation.recentRuns.filter(r=>r.ledger==='task_runs'));
+      if(dbs.runs)row.properties['其他运行']=relation(observation.recentRuns.filter(r=>r.ledger==='runs'));
+      if(dbs.tasks)row.properties['关联任务']=relation(observation.recentTasks);
+    }
     const catalogGap = row => row.layer==='value_streams' && row.gaps.includes('value_stream_empty') ? 'value_stream_empty' :
       row.layer==='areas' && !row.pageId ? 'area_page_binding_missing' : null;
     const catalogGaps = sourceRows.filter(catalogGap).map(r=>({id:r.id,gap:catalogGap(r)}));
@@ -145,6 +159,7 @@ export async function runDirectoryProjection(pool, { token, notionReq = defaultN
     const stateKey = 'directory_projection_pending';
     const state = (await client.query('SELECT value_json FROM working_memory WHERE key=$1', [stateKey])).rows[0]?.value_json || {};
     const pending = state.pages || {};
+    let bodyPending = Array.isArray(state.body_pending) ? state.body_pending : [];
     const links = (await client.query("SELECT entity_type,entity_id,external_id FROM projection_links WHERE target IN ('notion','notion-directory')")).rows;
     const pages = new Map(), errors = [], gapRows = [], stat = { total: rows.length, processed: 0, synced: 0, incomplete: 0, failed: 0 };
     for (const row of rows) {
@@ -155,7 +170,7 @@ export async function runDirectoryProjection(pool, { token, notionReq = defaultN
     const start = Number.isInteger(state.cursor) && state.cursor < rows.length ? state.cursor : 0;
     const batch = rows.slice(start, start + Math.max(1, Math.min(25, batchSize)));
     const saveState = async cursor => client.query(`INSERT INTO working_memory(key,value_json,updated_at) VALUES($1,$2::jsonb,NOW())
-      ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json,updated_at=NOW()`, [stateKey, JSON.stringify({ pages: pending, cursor })]);
+      ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json,updated_at=NOW()`, [stateKey, JSON.stringify({ pages: pending, cursor,body_pending:bodyPending })]);
     // 两阶段建身份、连关系。第一阶段不写成功receipt，断开后按Brain ID精确找回。
     for (const row of batch) {
       stat.processed++;
@@ -193,13 +208,20 @@ export async function runDirectoryProjection(pool, { token, notionReq = defaultN
         if (gaps.length) { stat.incomplete++; gapRows.push({ layer: row.layer, id: row.id, gaps }); } else stat.synced++;
       } catch (error) { stat.failed++; errors.push({ layer: row.layer, id: row.id, code: error.message }); }
     }
+    // 正文有自己的持久待核验队列，不让单页故障卡住其它目录批次，也不遗失正文重试。
+    const bodyCandidates=[...new Map([...rows.filter(r=>bodyPending.includes(r.id)),...batch]
+      .filter(r=>r.layer==='workflows'&&pages.has(`${r.layer}:${r.id}`)).map(r=>[r.id,r])).values()];
+    const bodyBatch=bodyCandidates.slice(0,25);
+    const workflowBody=await syncWorkflowBodies(client,{token,notionReq,rows:bodyBatch,limit:25});
+    if(workflowBody?.failed) { stat.failed+=workflowBody.failed;errors.push(...workflowBody.errors.map(e=>({layer:'workflows',id:e.id,code:e.error}))); }
+    bodyPending=[...new Set([...bodyCandidates.slice(25).map(r=>r.id),...(workflowBody?.errors||[]).map(e=>e.id)])];
     await saveState(start + batch.length >= rows.length ? 0 : start + batch.length);
-    // Activity 页面正文的机器区块（9 段标准项）；正文失败只记在结果里，不算目录失败
+    // Activity正文为原有独立旁路，排在本棒Workflow验收之后。
     let body = null;
     try { body = bodies ? await bodies(client, { token, notionReq }) : null; } catch (error) { body = { error: error.message }; }
     await client.query(`UPDATE projection_targets SET last_success_at=CASE WHEN $2=0 THEN NOW() ELSE last_success_at END,
       last_error=$3,updated_at=NOW() WHERE target=$1`, [DIRECTORY_TARGET, stat.failed, errors.length ? JSON.stringify(errors).slice(0, 4000) : null]);
-    return { ...stat, status: stat.failed ? 'failed' : stat.incomplete || catalogGaps.length ? 'partial' : 'batch_verified', errors, catalog_gaps: catalogGaps, gap_rows: gapRows, body };
+    return { ...stat, status: stat.failed ? 'failed' : stat.incomplete || catalogGaps.length ? 'partial' : 'batch_verified', errors, catalog_gaps: catalogGaps, gap_rows: gapRows, body,workflow_body:workflowBody };
   } catch (error) {
     await client.query('UPDATE projection_targets SET last_error=$2,updated_at=NOW() WHERE target=$1', [DIRECTORY_TARGET, error.message]).catch(() => {});
     throw error;
