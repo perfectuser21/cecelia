@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
-import { auditVersionIdentity, applyScratchIdentityConstraints } from '../../lib/version-identity-preflight.js';
+import { auditVersionIdentity, applyScratchIdentityConstraints } from '../version-identity-preflight.js';
 
 let pool, db, schema, a, b, va, vb, ca, cb;
 const connection={host:process.env.DB_HOST||'/tmp',port:Number(process.env.DB_PORT||5432),

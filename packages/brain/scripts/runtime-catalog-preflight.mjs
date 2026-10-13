@@ -10,8 +10,12 @@ export async function main(args=process.argv.slice(2),env=process.env) {
   for(let i=0;i<args.length;i++) {
     if(!allowed.includes(args[i]))throw Error(`不支持的参数：${args[i]}`);
     if(args[i]==='--apply-scratch')apply=true;
-    else if(args[i]==='--schema')schema=args[++i];
-    else expectedDigest=args[++i];
+    else {
+      const value=args[++i];
+      if(!value||value.startsWith('--'))throw Object.assign(Error('参数缺少值'),{code:'INVALID_ARGUMENT'});
+      if(args[i-1]==='--schema')schema=value;
+      else expectedDigest=value;
+    }
   }
   if(!env.DB_NAME)throw Error('DB_NAME 必须显式指定；禁止默认连接生产库');
   const pool=new pg.Pool({host:env.DB_HOST||'/tmp',port:Number(env.DB_PORT||5432),database:env.DB_NAME,
