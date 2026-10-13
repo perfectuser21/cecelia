@@ -1,5 +1,5 @@
 import { it, expect, vi } from 'vitest';
-import { verificationMetadata, verificationRuntime, verificationLaunch, isCommanderVerification } from '../commander-verification-transport.js';
+import { verificationPrompt, verificationMetadata, verificationRuntime, verificationLaunch, isCommanderVerification } from '../commander-verification-transport.js';
 const fixed={task_id:'parent',run_id:'business-run',attempt:1,definition_sha256:'hash',input_sha256:'input'};
 function official(over={}) {return JSON.stringify({runId:'official',status:'ok',result:{meta:{agentMeta:{provider:'openai',model:'gpt-6.1-sol',terminalReceipt:{runId:'official',rerouted:false,requested:{provider:'openai',model:'gpt-6.1-sol'},effective:{provider:'openai',model:'gpt-6.1-sol'},successfulToolNames:['bash']}},executionTrace:{winnerProvider:'openai',winnerModel:'gpt-6.1-sol',fallbackUsed:false,...over}}}});}
 it('实际官方回执的provider/model三处一致且无fallback才接受，文本自述不能替代',()=>{
@@ -51,4 +51,19 @@ it('真实CLI漂亮打印超过100个对象仍保留顶层回执，允许前置�
  for(const prefix of ['', 'OpenClaw starting\n']) expect(verificationRuntime(prefix+pretty,'wfv-logical')).toMatchObject({official_run_id:'official',logical_run_id:'wfv-logical'});
  value.result.meta.executionTrace.attempts[150].model='other';
  expect(()=>verificationRuntime(JSON.stringify(value,null,2),'wfv-logical')).toThrow('fallback');
+});
+
+it('只读核验明确禁用subagents全部动作，官方RPC只读回固定child终态',()=>{
+ const task={id:'verification-task',payload:verificationMetadata(fixed),description:'固定合同'};
+ const prompt=verificationPrompt(task);
+ for(const text of ['verification_task_id=verification-task','verification_transport_run_id=wfv-',
+   '禁止subagents全部动作（包括wait/list）','sessions_spawn','sessions_send','gateway_exec',
+   'openclaw gateway call agent.wait','child_run_id','endedAt','INCONCLUSIVE','wf-status']) expect(prompt).toContain(text);
+});
+it.each(['subagents','sessions_spawn','sessions_send'])('严格拒绝%s，即使核验者称仅wait/list只读', tool=>{
+ const value=JSON.parse(official());
+ value.result.meta.agentMeta.terminalReceipt.successfulToolNames=['gateway_exec'];
+ expect(verificationRuntime(JSON.stringify(value),'wfv-logical').official_run_id).toBe('official');
+ value.result.meta.agentMeta.terminalReceipt.successfulToolNames.push(tool);
+ expect(()=>verificationRuntime(JSON.stringify(value),'wfv-logical')).toThrow('核验不能委托');
 });
