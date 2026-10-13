@@ -37,3 +37,26 @@ it('组合ready逐项核验当前监督器和方法实包；echo所选定义不�
  expect(()=>methods.validateMethodReady({...ready,supervisor_runtime_sha256:'wrong'},e)).toThrow();
  expect(()=>methods.validateMethodReady({protocol:'commander-v2',ready:true,...e.definition},e)).toThrow();
 });
+it('首版仅固定安全skill可作只读上下文，业务skill入口或未知skill依赖明确拒绝',()=>{
+ const r=release(),sup=release();sup.payload.components[1].kind='skill';sup.payload.activities[0].payload.implementation_bindings[0].kind='skill';sup.payload.activities[0].payload.implementation_bindings[0].field='implementation_bindings';
+ const safety=methods.methodManifest(sup,'version').bindings;
+ expect(()=>methods.validateMethodSupport(r,'version',safety)).not.toThrow();
+ for(const mutate of [x=>x.payload.workflows[0].payload.contract.skill='business',x=>x.payload.activities[0].payload.contract.implementation.kind='skill',x=>x.payload.activities[0].payload.steps[0].contract.skill='business',x=>x.payload.activities[0].payload.contract.runtime={kind:'skill',ref:'business'},x=>{x.payload.components[1].kind='skill';x.payload.activities[0].payload.implementation_bindings[0].kind='skill';}]){
+  const bad=release();mutate(bad);expect(()=>methods.validateMethodSupport(bad,'version',[])).toThrow('unsupported_method_skill');
+ }
+ expect(()=>methods.validateMethodSupport(sup,'version',safety)).not.toThrow();
+ const badContext=structuredClone(sup);delete badContext.payload.activities[0].payload.implementation_bindings[0].field;
+ expect(()=>methods.validateMethodSupport(badContext,'version',safety)).toThrow('unsupported_method_skill');
+ const drift=structuredClone(safety);drift[0].digest='sha256:'+'c'.repeat(64);
+ expect(()=>methods.validateMethodSupport(sup,'version',drift)).toThrow('unsupported_method_skill');
+});
+it('普通code业务方法可以变字节，executor类型本身不是安全职责',()=>{
+ const current=release(),historical=release('d'.repeat(40));
+ for(const r of [current,historical]){r.payload.workflows[0].payload.contract.activities[0].executor_kind='code';r.payload.activities[0].payload.contract.executor_kind='code';}
+ historical.payload.activities[0].payload.implementation_bindings[0].digest='sha256:'+'e'.repeat(64);historical.payload.components[1].digest='sha256:'+'e'.repeat(64);
+ expect(()=>methods.compatibilityDigest(current,'version',historical,'version')).not.toThrow();
+ for(const slot of ['preflight','cleanup','controller']){
+  for(const r of [current,historical])r.payload.workflows[0].payload.activities[0].slot_key=slot;
+  expect(()=>methods.compatibilityDigest(current,'version',historical,'version')).toThrow('安全');
+ }
+});

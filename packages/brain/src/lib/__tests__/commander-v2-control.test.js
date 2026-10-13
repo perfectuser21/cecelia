@@ -115,3 +115,11 @@ it('恢复分两阶段：旧核验不以未来目录已存在为安全条件，�
  expect(request.description).toContain('真正新attempt起跑前必须由运行端强制校验独立目录与旧证据保留，未通过不得启动业务');
  expect(request.description).not.toContain('官方child终态、新attempt独立目录及旧失败证据保留；证据齐全才');
 });
+
+it('方法核验只解析执行机当前run的持久信封，不接受副本或符号链接',()=>{
+ const request=verificationRequest({id:'task'},{envelope:{...e,method_selection:{original_goal_definition:{snapshot_sha256:'original'}}},delivery:{outputs:{}},execution_location:{ssh_target:'worker@mmv',run_directory:'~/wf-agent-runs/run'}});
+ expect(request.description).toContain('execution_location.run_directory/envelope.json');
+ expect(request.description).toContain('执行机realpath');
+ expect(request.description).toContain('禁止复制、改写信封或使用符号链接');
+ expect(request.metadata.workflow_verification.execution_location.run_directory).toBe('~/wf-agent-runs/run');
+});

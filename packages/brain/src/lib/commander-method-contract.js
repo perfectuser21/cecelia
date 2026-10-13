@@ -53,7 +53,7 @@ export function compatibilityDigest(original, originalVersion, candidate, candid
   const originalActivities = activities(original, frozenWorkflow(original, originalVersion));
   for (const { ref, row } of activities(candidate, frozenWorkflow(candidate, candidateVersion))) {
     const c = row.payload.contract;
-    if (c.by !== 'shell' && !['preflight', 'cleanup'].includes(ref.slot_key) && c.executor_kind !== 'code') continue;
+    if (c.by !== 'shell' && !['preflight', 'cleanup', 'controller'].includes(ref.slot_key)) continue;
     const current = originalActivities.find(a => a.ref.reference_id === ref.reference_id).row;
     const safety = activity => (activity.payload.implementation_bindings ?? []).map(b => ({ kind: b.kind, repo: b.repo ?? b.raw?.repo ?? activity.source_repo, path: b.path, digest: b.digest })).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
     requireCommander(same(safety(current), safety(row)), '历史方法不得回退安全shell或controller字节');
@@ -79,4 +79,18 @@ export function methodVerificationValid(v, e) {
   if (!e.method_selection) return true;
   return [['original_goal', e.method_selection.original_goal_definition.snapshot_sha256], ['selected_method', e.definition.snapshot_sha256]].every(([name, hash]) =>
     v.assertions.some(a => a.name === name && a.pass === true && a.definition_sha256 === hash && Array.isArray(a.evidence) && a.evidence.length > 0));
+}
+
+/** 首版没有可机验的业务skill依赖协议；当前监督skill只能保留为固定只读上下文。 */
+export function validateMethodSupport(release, version, supervisorBindings) {
+  const workflow = frozenWorkflow(release, version);
+  const contracts = [workflow.payload.contract, ...activities(release, workflow).flatMap(({ row }) => [row.payload.contract, ...(row.payload.steps ?? []).map(s => s.contract)])];
+  const executionSkill = c => c && (c.skill || c.implementation?.kind === 'skill' || c.runtime?.kind === 'skill' || (c.activities ?? []).some(executionSkill) || (c.steps ?? []).some(executionSkill));
+  requireCommander(!contracts.some(executionSkill), 'unsupported_method_skill: 业务skill执行依赖未声明');
+  for (const { row } of activities(release, workflow)) for (const b of row.payload.implementation_bindings ?? []) {
+    requireCommander(b.kind !== 'skill' || b.field === 'implementation_bindings', 'unsupported_method_skill: skill不是声明的只读绑定上下文');
+  }
+  for (const binding of methodManifest(release, version).bindings.filter(b => b.kind === 'skill')) {
+    requireCommander(supervisorBindings.some(s => s.kind === binding.kind && s.repo === binding.repo && s.path === binding.path && s.digest === binding.digest), 'unsupported_method_skill: 非当前安全skill或未知上下文依赖');
+  }
 }

@@ -5,7 +5,7 @@ import { readSystemRunEvidence } from './capability-system-evidence.js';
 import { verifiedRuntime, isCommanderVerification } from './commander-verification-transport.js';
 import { readVerification } from './commander-v2-control.js';
 import { digest, requireCommander, recoveryAllowed } from './commander-v2-contract.js';
-import { METHOD_PROTOCOL, frozenWorkflow, methodManifest, compatibilityDigest, expectedPath } from './commander-method-contract.js';
+import { METHOD_PROTOCOL, frozenWorkflow, methodManifest, compatibilityDigest, expectedPath, validateMethodSupport } from './commander-method-contract.js';
 const metaKey = 'workflow_commander.internal';
 const host = 'mmv';
 export function qualifiedMethod({ run, task, verificationTask, frozen, evidence }) {
@@ -61,6 +61,7 @@ export async function validateMethodGates(db, e) {
   const releases = await Promise.all(definitions.map(d => getRelease(db, d.release_id)));
   for (const r of [...releases].sort((a,b)=>`${a.environment}:${a.target}`.localeCompare(`${b.environment}:${b.target}`))) await lockReleaseTarget(db, r.environment, r.target);
   const [supervised, selected] = await Promise.all(definitions.map(d => currentGate(db, d)));
+  validateMethodSupport(selected.release, selected.workflow.id, methodManifest(supervised.release, supervised.workflow.id).bindings);
   requireCommander(supervised.workflow.payload.contract.key === metaKey && supervised.release.target === host, '监督器身份不符');
   const origin = await getRunDefinitionBinding(db, m.original_goal_definition.original_run_id);
   requireCommander(origin && origin.release.id === m.original_goal_definition.release_id && origin.workflow.id === m.original_goal_definition.workflow_definition_version_id && origin.workflow.workflow_id === e.definition.workflow_id && origin.workflow.payload_sha256 === m.original_goal_definition.snapshot_sha256 && digest(origin.workflow.payload.contract) === digest(m.original_goal_definition.contract), '原目标冻结来源不匹配');
@@ -112,7 +113,9 @@ export async function selectHistoricalMethod(db, task, control, { ready, now = (
       requireCommander(chosen, '合格历史方法尚无当前正式安装实例');
       const sup = await supervisor(db, original.release, ready);
       // 任何与监督器共用的依赖只能执行当前相同字节，不能借业务包回退安全底座。
-      for (const b of manifest.bindings) for (const live of sup.release.payload.components.filter(c => c.kind === b.kind && c.repo === b.repo && c.path === b.path)) requireCommander(live.digest === b.digest, '历史方法共享安全底座字节已过时');
+      const supervisorBindings = methodManifest(sup.release, sup.definition.workflow_definition_version_id).bindings;
+      validateMethodSupport(candidate.release, candidate.workflow.id, supervisorBindings);
+      for (const b of manifest.bindings) for (const live of supervisorBindings.filter(c => c.kind === b.kind && c.repo === b.repo && c.path === b.path)) requireCommander(live.digest === b.digest, '历史方法共享安全底座字节已过时');
       const { previous_attempt: _prior, ...policy } = previous.recovery;
       const selection = { protocol: METHOD_PROTOCOL, original_goal_definition: first ?? { original_run_id: previous.run_id, release_id: original.release.id, workflow_id: original.workflow.workflow_id, workflow_definition_version_id: originVersion,
         snapshot_sha256: original.workflow.payload_sha256, contract: previous.contract, recovery: policy, deadline_at: previous.deadline_at, cleanup_deadline_at: previous.cleanup_deadline_at, input_sha256: previous.input_sha256 },

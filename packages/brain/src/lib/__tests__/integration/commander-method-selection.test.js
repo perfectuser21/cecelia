@@ -49,22 +49,33 @@ async function completePath(e){
 import { digest } from '../../commander-v2-contract.js';
 import { methodManifest, expectedPath } from '../../commander-method-contract.js';
 import { launchCommander } from '../../commander-v2-dispatch.js';
-async function versions(revision,date) {
+async function versions(revision,date,differentBusiness=false,driftSafety=false,businessSkill=false) {
  const acts=[];
  for(const a of f.activities){
   const row=structuredClone(a);row.id=randomUUID();row.source_commit=revision;row.created_at=date;row.payload.source_commit=revision;
-  for(const b of row.payload.implementation_bindings??[])b.revision=revision;
+  for(const b of row.payload.implementation_bindings??[]){b.revision=revision;if(differentBusiness)b.digest='sha256:'+revision[0].repeat(64);}
+  if(row.payload.implementation_bindings?.length) {row.payload.contract={...row.payload.contract,key:'report',executor_kind:differentBusiness?'code':'agent',...(businessSkill?{skill:'business-skill'}:{})};if(driftSafety)row.payload.implementation_bindings.push({kind:'code',repo:row.source_repo,path:'src/supervisor.py',revision,digest:'sha256:'+(revision[0]==='e'?'8':'7').repeat(64),status:'verified'});}
   row.payload_sha256=digest(row.payload);
   await f.db.query('INSERT INTO activity_definition_versions(id,activity_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[row.id,row.activity_id,row.payload,digest(row.payload.contract),row.payload_sha256,row.source_repo,row.source_path,revision,date]);acts.push(row);
+ }
+ const business=acts.find(a=>a.payload.implementation_bindings?.length);
+ const meta=structuredClone(business);meta.id=randomUUID();meta.payload.contract={key:'supervisor',executor_kind:'code'};
+ meta.payload.implementation_bindings=[{kind:'code',repo:meta.source_repo,path:'src/supervisor.py',revision,digest:'sha256:'+(driftSafety&&revision[0]==='e'?'8':'7').repeat(64),status:'verified'}];meta.payload_sha256=digest(meta.payload);
+ await f.db.query('INSERT INTO activity_definition_versions(id,activity_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[meta.id,meta.activity_id,meta.payload,digest(meta.payload.contract),meta.payload_sha256,meta.source_repo,meta.source_path,revision,date]);
+ if(f.workflows.length===2)for(let i=2;i<7;i++){
+  const row=structuredClone(f.workflows[0]);row.workflow_id=randomUUID();row.payload.workflow_id=row.workflow_id;
+  await f.db.query('INSERT INTO workflows(id,capability_id,key,name,channel) VALUES($1,$2,$3,$3,$4)',[row.workflow_id,row.payload.capability_id,`other_business_${i}`,'fixture']);f.workflows.push(row);
  }
  const workflows=[];
  for(const [i,w] of f.workflows.entries()){
   const row=structuredClone(w);row.id=randomUUID();row.source_commit=revision;row.created_at=date;row.payload.source_commit=revision;
-  row.payload.contract={...row.payload.contract,...contract,key:i===0?'report':'workflow_commander.internal'};
-  for(const ref of row.payload.activities)ref.activity_version_id=acts.find(a=>a.activity_id===ref.activity_id).id;
+  row.payload.contract={...row.payload.contract,...contract,key:i===0?'report':i===1?'workflow_commander.internal':`other_business_${i}`};
+  for(const ref of row.payload.activities){ref.activity_version_id=acts.find(a=>a.activity_id===ref.activity_id).id;if(ref.activity_id===business.activity_id)ref.slot_key='report';}
+  if(i===1)row.payload.activities=[{...row.payload.activities[0],activity_id:meta.activity_id,activity_version_id:meta.id,slot_key:'supervisor'}];
   row.payload_sha256=digest(row.payload);
   await f.db.query('INSERT INTO workflow_definition_versions(id,workflow_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[row.id,row.workflow_id,row.payload,digest(row.payload.contract),row.payload_sha256,row.source_repo,row.source_path,revision,date]);workflows.push(row);
  }
+ acts.push(meta);
  const all=acts.flatMap(a=>(a.payload.implementation_bindings??[]).filter(b=>['code','skill'].includes(b.kind)).map(({kind,repo,path,revision,digest})=>({kind,repo,path,revision,digest})));
  const components=[{kind:'repo',repo:workflows[0].source_repo,revision},...new Map(all.map(b=>[JSON.stringify(b),b])).values()];
  return {workflows,activities:acts,components,verification:{status:'verified',gaps:[]},allowed_enabler_calls:[],ci_evidence:[]};
@@ -78,11 +89,11 @@ async function install(payload,target='mmv',evidence='fixture:actual'){
 function use({release:r,observation:o}){
  const w=r.payload.workflows[0];definition={release_id:r.id,observation_id:o.id,workflow_id:w.workflow_id,workflow_definition_version_id:w.id,snapshot_sha256:w.payload_sha256,runtime_snapshot_sha256:'9'.repeat(64),expected_path:expectedPath(r,w.id)};contract=w.payload.contract;
 }
-async function historyAndFailure(){
- const historical=await install(await versions('d'.repeat(40),'2025-01-01T00:00:00Z'));use(historical);
+async function historyAndFailure(differentBusiness=false,driftSafety=false,businessSkill=false){
+ const historical=await install(await versions('d'.repeat(40),'2025-01-01T00:00:00Z',differentBusiness,driftSafety,businessSkill));use(historical);
  await dispatchCommanderV2(f.db,id,deps);const old=await envelope();await completePath(old);await stopWithDelivery(old);await verify('PASS');
  expect((await state()).status).toBe('completed');const historyTask=await state();
- const current=await install(await versions('e'.repeat(40),'2026-01-01T00:00:00Z'));use(current);
+ const current=await install(await versions('e'.repeat(40),'2026-01-01T00:00:00Z',differentBusiness,driftSafety,businessSkill));use(current);
  id=randomUUID();await f.db.query("INSERT INTO tasks(id,title,status,task_type,payload) VALUES($1,'失败后选方法','queued','workflow_dispatch',$2)",[id,{commander_protocol:'commander-v2',workflow_key:'report',workflow_input:input,workflow_definition:definition}]);
  await dispatchCommanderV2(f.db,id,deps);const first=await envelope();await stopWithDelivery(first);await verify('FAIL');
  const w=historical.release.payload.workflows[0],ids=new Set(w.payload.activities.map(r=>r.activity_version_id));
@@ -137,4 +148,29 @@ it('准备后历史官方核验证明被撤销，launch拒绝且零业务副作�
  await f.db.query("UPDATE tasks SET result=result #- '{receipt,verification_runtime}' WHERE id=$1",[x.historyTask.result.workflow_control.verify_task_id]);
  deps.sshDispatch.mockClear();deps.setLease.mockClear();await expect(launchCommander(f.db,id,deps)).rejects.toThrow('历史');
  expect(deps.sshDispatch).not.toHaveBeenCalled();expect(deps.setLease).not.toHaveBeenCalled();
+});
+
+it('真实聚合release内当前report业务不同字节不属于meta安全闭包，历史方法可选',async()=>{
+ const x=await historyAndFailure(true);assertAggregate(x.current.release);await dispatchCommanderV2(f.db,id,deps);const next=await envelope();
+ expect(next.definition.workflow_definition_version_id).toBe(x.historical.release.payload.workflows[0].id);expect(next.method_selection).toBeDefined();
+ expect(next.method_selection.method_instance.resolved_bindings[0].digest).not.toBe(x.current.release.payload.components.find(c=>c.path===next.method_selection.method_instance.resolved_bindings[0].path).digest);
+});
+
+it('历史业务方法包含旧监督安全依赖时仍拒绝，不因业务可回退放宽安全底座',async()=>{
+ const x=await historyAndFailure(true,true);assertAggregate(x.current.release);await dispatchCommanderV2(f.db,id,deps);const next=await envelope();
+ expect(next.definition.workflow_definition_version_id).toBe(x.first.definition.workflow_definition_version_id);expect(next.method_selection).toBeUndefined();
+ expect((await state()).result.workflow_control.method_selection_gaps.some(g=>g.reason.includes('安全底座'))).toBe(true);
+});
+
+function assertAggregate(release){
+ const workflows=release.payload.workflows;expect(workflows).toHaveLength(7);expect(new Set(workflows.map(w=>w.payload.contract.key)).size).toBe(7);
+ const meta=workflows.filter(w=>w.payload.contract.key==='workflow_commander.internal');expect(meta).toHaveLength(1);
+ expect(methodManifest(release,meta[0].id).bindings.map(b=>b.path)).toEqual(['src/supervisor.py']);
+ expect(release.payload.components.some(c=>c.path==='src/controller.js')).toBe(true);
+}
+
+it('历史官方PASS仍不支持业务skill未声明执行依赖，Brain明确筛除而非交运行端碰运气',async()=>{
+ await historyAndFailure(false,false,true);await dispatchCommanderV2(f.db,id,deps);
+ const next=await envelope();expect(next.method_selection).toBeUndefined();
+ expect((await state()).result.workflow_control.method_selection_gaps.some(g=>g.reason.includes('unsupported_method_skill'))).toBe(true);
 });

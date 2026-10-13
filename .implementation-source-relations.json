@@ -499,6 +499,7 @@
       "owner_path": "packages/brain/src/lib/commander-method-selection.js",
       "path": "docs/learnings/cp-10131925-commander-method-select.md",
       "role": "documentation"
-    }
+    },
+    {"owner_path": "packages/brain/src/lib/commander-method-selection.js", "path": "packages/brain/scripts/smoke/commander-method-smoke.sh", "role": "verification"}
   ]
 }

@@ -11,3 +11,14 @@ it('精确历史业务完成加独立官方PASS可作为候选，仅CI/span/自�
   const p=proof();change(p);expect(qualifiedMethod(p)).toBe(false);
  }
 });
+
+import { readFileSync } from 'node:fs';
+import config, { POSTGRES_INTEGRATION_TESTS } from '../../../vitest.config.js';
+import integrationConfig from '../../../vitest.integration.config.js';
+it('方法事务回归固定分配给有真实PG的CI，普通unit不误连数据库',()=>{
+ const path='src/lib/__tests__/integration/commander-method-selection.test.js';
+ expect(POSTGRES_INTEGRATION_TESTS).toContain(path);
+ expect(config.test.exclude).toContain(path);expect(integrationConfig.test.exclude).not.toContain(path);
+ const ci=readFileSync(new URL('../../../../../.github/workflows/ci.yml',import.meta.url),'utf8');
+ expect(ci.slice(ci.indexOf('POSTGRES_INTEGRATION:'),ci.indexOf('POSTGRES_INTEGRATION:')+10000)).toContain(path);
+});
