@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {readFileSync} from 'node:fs';
+import {runtimeIdentitiesSql} from '../../scripts/schema/runtime-identities.mjs';
 const quote=value=>{
   if(typeof value!=='string'||!/^[a-z][a-z0-9_]{0,62}$/.test(value))throw Error('非法schema');
   return `"${value}"`;
@@ -12,7 +12,7 @@ export async function installScratchIdentities(db,{schema='runtime',sourceSchema
   if(typeof db.release!=='function')throw Object.assign(Error('需要pool.connect()签出的专用Client'),{code:'CLIENT_REQUIRED'});
   const catalog=quote(schema),source=quote(sourceSchema);
   if(schema===sourceSchema)throw Error('原件schema与治理schema必须分开');
-  const sql=readFileSync(new URL('../../scripts/runtime-catalog-identities.sql',import.meta.url),'utf8')
+  const sql=runtimeIdentitiesSql
     .replaceAll('__catalog__',catalog).replaceAll('__source__',source);
   const digest=createHash('sha256').update(sql).digest('hex');
   await db.query('BEGIN');

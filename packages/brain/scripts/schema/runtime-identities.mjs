@@ -1,4 +1,5 @@
--- 显式安装包；不在自动 migrations 目录。标识符由隔离安装器验证后替换。
+// 隔离治理 schema 的 SQL 原件；静态导入使部署来源可追溯。
+export const runtimeIdentitiesSql = String.raw`-- 显式安装包；不在自动 migrations 目录。标识符由隔离安装器验证后替换。
 CREATE TABLE __catalog__.agent_identities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), display_name text NOT NULL CHECK(length(trim(display_name))>0),
   status text NOT NULL DEFAULT 'active' CHECK(status IN ('active','retired')), created_at timestamptz NOT NULL DEFAULT now()
@@ -145,3 +146,4 @@ CREATE FUNCTION __catalog__.touch_skill_link() RETURNS trigger LANGUAGE plpgsql 
 BEGIN NEW.updated_at=clock_timestamp(); RETURN NEW; END $$;
 CREATE TRIGGER skill_link_updated BEFORE UPDATE ON __catalog__.legacy_skill_links
   FOR EACH ROW EXECUTE FUNCTION __catalog__.touch_skill_link();
+`;
