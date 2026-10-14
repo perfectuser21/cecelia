@@ -856,6 +856,26 @@
       "owner_path": "packages/brain/src/lib/commander-v2-contract.js",
       "path": "packages/brain/src/lib/__tests__/commander-v2-shared-source.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/activity-judge.js",
+      "path": "packages/brain/src/lib/__tests__/activity-judge.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/factory-judge.js",
+      "path": "packages/brain/src/lib/__tests__/factory-judge.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/factory-ledger.js",
+      "path": "packages/brain/src/lib/__tests__/factory-ledger.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/step-reconcile.js",
+      "path": "packages/brain/src/lib/__tests__/step-reconcile.test.js",
+      "role": "verification"
     }
   ]
 }

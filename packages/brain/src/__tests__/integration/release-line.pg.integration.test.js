@@ -43,7 +43,10 @@ beforeEach(async () => {
     CREATE TABLE workflow_definition_versions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workflow_id uuid REFERENCES workflows(id), payload jsonb NOT NULL,
       created_at timestamptz DEFAULT clock_timestamp());
     CREATE TABLE spans(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id text, activity_id uuid, step_id uuid, enabler_id uuid, outcome text,
-      evidence jsonb, attempts int DEFAULT 1, started_at timestamptz, activity_definition_version_id uuid, created_at timestamptz DEFAULT now());`);
+      evidence jsonb, attempts int DEFAULT 1, started_at timestamptz, activity_definition_version_id uuid, created_at timestamptz DEFAULT now(),
+      identity_protocol int DEFAULT 1, run_binding_id uuid);
+    CREATE TABLE run_definition_bindings(id uuid PRIMARY KEY, run_id text, expected_path jsonb);
+    CREATE TABLE tasks(id uuid PRIMARY KEY, status text, task_type text, payload jsonb, result jsonb);`);
   await client.query(M538);
 });
 afterEach(async () => { if (client) { await client.query(`DROP SCHEMA ${schema} CASCADE`).catch(() => {}); await client.end(); } });
@@ -88,9 +91,9 @@ async function register(a, b, inserted = true, env = {}) {
 }
 let tick = 0;
 const at = () => new Date(Date.UTC(2026, 9, 10, 1, 0, tick++)).toISOString();
-async function run(runId, a, stepId, b, observed = 1, outcome = 'pass') {
+async function run(runId, a, stepId, b, observed = 1, outcome = 'pass', execution = {}) {
   await client.query('INSERT INTO spans(run_id,activity_id,step_id,outcome,evidence,started_at,activity_definition_version_id) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',
-    [runId, a, stepId, outcome, JSON.stringify({ observed }), at(), b]);
+    [runId, a, stepId, outcome, JSON.stringify({ observed, ...execution }), at(), b]);
 }
 /** 写一条纯净的 converged 裁判，让 b 所属版本受保护。 */
 async function markConverged(a, b) {
@@ -277,7 +280,10 @@ describe('自动退回 / 手动退回', () => {
 
   async function failingRuns(a, s, b, n) {
     for (let i = 0; i < n; i++) {
-      await run(`f${b}${i}`, a, s, b, 0);
+      await run(`f${b}${i}`, a, s, b, 0, 'pass', {
+        implementation: { kind: 'code', id: `fixture-${a}`, version: b, digest: `fixture-${b}` },
+        environment: { id: 'scratch', fingerprint: schema }, execution_role: 'primary',
+      });
       await judgeActivity(client, a, { trigger: 'auto', triggerRef: `f${b}${i}`, runIdleMs: 0, onRecorded: async () => {}, applyCell: async () => {} });
     }
   }
