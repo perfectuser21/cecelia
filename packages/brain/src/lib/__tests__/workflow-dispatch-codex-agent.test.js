@@ -213,12 +213,18 @@ describe('推进器经开关改建 workflow_dispatch', () => {
   it('开关开 → workflow_dispatch，payload 带 workflow_key 与工厂字段；锁纪律换成外壳代领；factory-dispatcher 不领它', () => {
     const spec = buildExecSpec({ ledger: L, cfg, stage: 3, skill: 'android-douyin-private-video@1.0.8', round: 2, commanderRoute: true });
     expect(spec.task_type).toBe('workflow_dispatch');
+    expect(spec.payload.commander_protocol).toBe('commander-v2');
+    expect(spec.payload.workflow_definition).toBeDefined();
+    expect(spec.payload.workflow_input).toBeDefined();
     expect(spec.payload).toMatchObject({ workflow_key: 'douyin_video_publish.android', factory_dispatch: true, factory_ledger_id: L.id, factory: { stage: '3', round: 2 } });
     expect(spec.description).toContain('外壳');
     expect(spec.description).not.toContain('派发器代领');
     expect(spec.description).toContain('wf-agent-runs');
     expect(spec.description).toMatch(/run_id 由 workflow-commander-dispatch 生成/);
     expect(isFactoryTask({ ...spec, status: 'queued' })).toBe(false);
+  });
+  it('正式旧配置缺冻结definition/input时开关开启必须拒绝，不降回旧Commander', () => {
+    expect(() => buildExecSpec({ ledger: L, cfg, stage: 3, skill: 's', round: 1, commanderRoute: true })).toThrow('缺冻结定义或结构输入');
   });
   it('没登记 commander 的 workflow 开关开也照旧', () => {
     const plain = { ...cfg, dispatch_via: undefined, commander: undefined };
@@ -240,6 +246,8 @@ describe('推进器经开关改建 workflow_dispatch', () => {
     };
     const fakeDb = { query: vi.fn(async () => ({ rows: [] })) };
     await runFactoryPusher(fakeDb, { store, createTask, resolveConfig: resolveWorkflowConfig, now: () => new Date('2026-10-11T06:00:00Z'), commanderRoute: true });
+    expect(createTask).toHaveBeenCalledTimes(1);
     expect(createTask.mock.calls[0][0].task_type).toBe('workflow_dispatch');
+    expect(createTask.mock.calls[0][0].payload.commander_protocol).toBe('commander-v2');
   });
 });
