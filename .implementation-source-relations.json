@@ -818,16 +818,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/brain/src/lib/commander-v2-contract.js",
-      "path": "packages/brain/src/lib/__tests__/fixtures/commander-contract-v1.js",
-      "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/commander-v2-contract.js",
-      "path": "packages/brain/src/lib/__tests__/fixtures/commander-contract-v1.json",
-      "role": "verification"
-    },
-    {
       "owner_path": "packages/brain/src/lib/commander-v2-action-bindings.js",
       "path": "packages/brain/src/lib/__tests__/commander-v2-action-bindings.test.js",
       "role": "verification"
