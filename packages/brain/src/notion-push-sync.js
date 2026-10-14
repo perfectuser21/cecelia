@@ -1724,7 +1724,9 @@ export function buildTaskRunNotionProperties(r) {
   if (artifacts.length) p.Artifacts = { rich_text: buildRichText(artifacts.join(', ').slice(0, 1900)) };
   if (started && ended) p.Minutes = { number: Math.round((ended.getTime() - started.getTime()) / 60000) };
   const failureText=formatWorkflowFailure(observed.failure);
-  if (failureText||r.error_message) p.Error = { rich_text: buildRichText(failureText||String(r.error_message).slice(0, 500)) };
+  const historicalError=[r.error_message?String(r.error_message).slice(0,500):null,
+    ['failed','timeout'].includes(observed.status)&&!observed.failure?'具体原因未知（该次运行未保存失败证据）':null].filter(Boolean).join(' · ');
+  if (failureText||historicalError) p.Error = { rich_text: buildRichText(failureText||historicalError) };
   if (r.workflow_page_id) p.Workflow = { relation: [{ id: r.workflow_page_id }] };
   if (r.task_page_id) p.Task = { relation: [{ id: r.task_page_id }] };
   p['业务状态'] = { select: { name: observed.status } };

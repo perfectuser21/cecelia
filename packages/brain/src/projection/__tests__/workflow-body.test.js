@@ -1,5 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import { buildWorkflowBodyBlock, syncWorkflowBodies, BODY_MARKER } from '../workflow-body.js';
+import {observeWorkflows} from '../workflow-observation.js';
+it('20条最大合法失败回执的正文摘要不超过Notion每块100个rich_text，保留真实Run链接',()=>{
+ const failure={stage:'s'.repeat(128),code:'c'.repeat(128),message:'m'.repeat(1000),stderr:'e'.repeat(2000),stdout:'o'.repeat(2000),evidence:Array.from({length:10},(_,i)=>`host:/proof-${i}/`+'p'.repeat(480))};
+ const run_records=Array.from({length:20},(_,i)=>({id:`id-${i}`,run_id:`run-${i}`,task_id:`task-${i}`,workflow_id:'wf',notion_id:`page-${i}`,status:'failed',started_at:'2026-10-14T00:00:00Z',result:{business_receipt:{status:'failed',failure}}}));
+ const o=observeWorkflows({observed_at:'2026-10-14T01:00:00Z',workflows:[{id:'wf'}],run_records}).get('wf');
+ const b=buildWorkflowBodyBlock(o);
+ for(const child of b.toggle.children)expect((child[child.type].rich_text||[]).length).toBeLessThanOrEqual(100);
+ expect(b.toggle.children.flatMap(c=>c[c.type].rich_text||[]).filter(t=>t.text.link)).toHaveLength(20);
+ expect(o.recentRuns[0].failure.truncated).toBe(true);expect(failure.evidence).toHaveLength(10);expect(failure.stdout).toHaveLength(2000);
+});
 const row = { id:'workflow-1', layer:'workflows', workflowObservation:{workflow:{name:'手机巡查',version:'0.1.1'},activities:[{name:'检查',sequence_no:1}],execution:'纯代码',entrypoint:'Agent启动',deployment:'未知',stats:{runs7:1,success_rate:1},recentRuns:[{run_id:'actual-run',notion_id:'page-run',status:'success'}],recentTasks:[],maintenance_owner:'主理人'}};
 function backend(children=[]){
  let blocks=children.map(b=>({...b,id:b.id||'body-old'}));let writes=0,next=1;
