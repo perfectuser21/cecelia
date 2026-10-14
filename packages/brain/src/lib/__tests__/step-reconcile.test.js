@@ -131,7 +131,7 @@ describe('冻结 Activity 证据归集（D 回归）', () => {
 
 describe('Skill可先独立验证（D 回归）',()=>{
   const implementation={kind:'skill',id:'publish-skill',version:'2',digest:'s2'}, environment={id:'phone',fingerprint:'p1'};
-  const payload={commander_implementation:{implementation,path:'SKILL.md'},implementation_bindings:[{...implementation,path:'SKILL.md'}]};
+  const payload={commander_implementation:{implementation,path:'SKILL.md'},implementation_bindings:[{...implementation,path:'SKILL.md',status:'verified',validation_scope:'reference_only'}]};
   it('单Skill冻结来源可匹配，摘要或环境漂移则拒绝',()=>{
     const scope={activity_definition_version_id:'av2',implementation,environment};
     expect(frozenScopeMatches(scope,payload,environment)).toBe(true);
@@ -143,7 +143,7 @@ describe('Skill可先独立验证（D 回归）',()=>{
     expect(frozenScopeMatches({activity_definition_version_id:'av2',implementation:code,environment},{commander_implementation:{implementation:code,path:'code.js'},implementation_bindings:[{...code,path:'code.js'}]},environment)).toBe(false);
   });  it('来源绑定sha256前缀可比较，声明身份仍保持固定原值',()=>{
     const scope={activity_definition_version_id:'av2',implementation,environment};
-    const prefixed={...payload,implementation_bindings:[{...implementation,path:'SKILL.md',digest:'sha256:'+implementation.digest}]};
+    const prefixed={...payload,implementation_bindings:[{...implementation,path:'SKILL.md',digest:'sha256:'+implementation.digest,status:'verified',validation_scope:'reference_only'}]};
     expect(frozenScopeMatches(scope,prefixed,environment)).toBe(true);
     expect(frozenScopeMatches({...scope,implementation:{...implementation,digest:'changed'}},prefixed,environment)).toBe(false);
   });

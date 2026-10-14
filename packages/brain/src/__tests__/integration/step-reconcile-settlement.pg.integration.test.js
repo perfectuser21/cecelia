@@ -99,7 +99,7 @@ describe('收敛对账（真 PG）', () => {
     const {a,s1,s2}=await seedActivity(), version=randomUUID(), binding=randomUUID();
     const rb={type:'metric',expect:{op:'==',value:1}}, implementation={kind:'code',id:'publish',version:'2',digest:'c2'};
     const environment={id:'phone',fingerprint:'p1'};
-    await client.query('INSERT INTO activity_definition_versions VALUES($1,$2,$3)',[version,a,{commander_implementations:{business_requirement_sha256:'same-business',code:{implementation,path:'publish.js'},skill:{implementation:{kind:'skill',id:'publish-skill',version:'2',digest:'s2'},path:'SKILL.md'}},implementation_bindings:[{...implementation,path:'publish.js'}],steps:[
+    await client.query('INSERT INTO activity_definition_versions VALUES($1,$2,$3)',[version,a,{commander_implementations:{business_requirement_sha256:'same-business',code:{implementation,path:'publish.js'},skill:{implementation:{kind:'skill',id:'publish-skill',version:'2',digest:'s2'},path:'SKILL.md'}},implementation_bindings:[{...implementation,path:'publish.js',status:'verified',validation_scope:'reference_only'}],steps:[
       {step_id:s1,locator:{step_key:'frozen.open'},contract:{readback:rb}},
       {step_id:s2,locator:{step_key:'frozen.save'},contract:{readback:rb}}]}]);
     await client.query('INSERT INTO run_definition_bindings VALUES($1,$2,$3)',[binding,'fixed',JSON.stringify([s1,s2].map(step_id=>({activity_id:a,activity_definition_version_id:version,step_id})))]);
