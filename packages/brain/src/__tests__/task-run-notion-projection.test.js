@@ -229,3 +229,37 @@ it.each(['failed','timeout'])('历史%s无失败证据时Error明确未知，旧
   if(error_message)expect(text).toContain(error_message);
  }
 });
+
+it('Run来源正文区分四类SHA，旧来源属性和定义UUID/版本保留，旧Run明确未知',async()=>{
+ const {buildTaskRunNotionBodyBlock,buildTaskRunNotionProperties}=await import('../notion-push-sync.js');
+ expect(buildTaskRunNotionBodyBlock).toBeTypeOf('function');
+ const row={...RUN,definition_version:{id:'fixed-definition-id',version:'1.2.3',source_commit:'D-binding'},context:{workflow_snapshot:{source_revision:'4f-original',entry_source_revision:'f38-entry',phone_source_revision:'4f-phone',control_source_revision:'f38-control',definition_source_revision:'D-definition'}}};
+ const text=JSON.stringify(buildTaskRunNotionBodyBlock(row));
+ for(const line of ['执行入口源码：f38-entry','手机执行源码：4f-phone','控制器源码：f38-control','定义来源：D-definition','fixed-definition-id','1.2.3'])expect(text).toContain(line);
+ expect(JSON.stringify(buildTaskRunNotionProperties(row)['源码版本'])).toContain('4f-original');
+ const old=JSON.stringify(buildTaskRunNotionBodyBlock({...RUN,workflow:{source_revision:'current-not-for-old'}}));
+ for(const role of ['执行入口源码','手机执行源码','控制器源码','定义来源'])expect(old).toContain(`${role}：未知`);
+ expect(old).not.toContain('current-not-for-old');
+});
+it('正式Run推送也同步已有页来源正文，保人工块且幂等唯一',async()=>{
+ const {pushTaskRunsForTest}=await import('../notion-push-sync.js');
+ const pool=makePool({registered:true}),original=pool.query;
+ pool.query=vi.fn(async(sql,args)=>String(sql).includes('SELECT id,notion_id FROM task_runs')?{rows:[{id:RUN.id,notion_id:'existing-run-page'}]}:original(sql,args));
+ const blocks=[{id:'human',type:'paragraph',paragraph:{rich_text:[{text:{content:'人工备注'}}]}}];let next=0;
+ mockNotionReq.mockImplementation(async(_t,path,method,body)=>{
+  if(path==='/databases/db-runs'&&method==='GET')return {properties:{}};
+  if(path==='/pages'&&method==='POST')return {id:'existing-run-page'};
+  if(path.startsWith('/blocks/')&&method==='GET'){
+   const id=path.split('/')[2];return {results:id==='existing-run-page'?blocks:blocks.find(b=>b.id===id)?.toggle.children||[],has_more:false};
+  }
+  if(path==='/blocks/existing-run-page/children'&&method==='PATCH'){
+   const block={...structuredClone(body.children[0]),id:`machine-${++next}`};blocks.push(block);return {results:[block]};
+  }
+  if(path.startsWith('/blocks/')&&method==='DELETE'){blocks.splice(blocks.findIndex(b=>b.id===path.split('/')[2]),1);return {};}
+  return {};
+ });
+ await pushTaskRunsForTest(pool,'fake-token');
+ expect(blocks).toHaveLength(2);expect(JSON.stringify(blocks)).toContain('执行入口源码');
+ await pushTaskRunsForTest(pool,'fake-token');
+ expect(blocks).toHaveLength(2);expect(blocks[0].id).toBe('human');expect(next).toBe(1);
+});
