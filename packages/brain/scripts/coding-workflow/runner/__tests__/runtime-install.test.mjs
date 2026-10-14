@@ -21,7 +21,10 @@ else if(args[0]==='disable') s.disabled=true;
 else if(args[0]==='enable') s.disabled=false;
 else if(args[0]==='bootstrap') { s.loaded=true; s.contents=fs.readFileSync(args[2],'utf8'); }
 else if(args[0]==='bootout') s.loaded=false;
-fs.writeFileSync(${JSON.stringify(state)},JSON.stringify(s));`, { mode: 0o755 });
+if(['disable','enable','bootstrap','bootout'].includes(args[0])) {
+ const target=${JSON.stringify(state)},temporary=target+'.'+process.pid+'.tmp';
+ fs.writeFileSync(temporary,JSON.stringify(s));fs.renameSync(temporary,target);
+}`, { mode: 0o755 });
   fs.writeFileSync(script, `#!/bin/bash\nprintf '%s' "$CODING_WF_AUTOMERGE" > '${root}/automerge'\nprintf changed > '${dest}'\nlaunchctl bootout system/com.cecelia.coding-workflow-runner\nlaunchctl bootstrap system '${dest}'\nexit "\${FAIL_INSTALL:-0}"\n`);
   env = { ...cleanTestEnv(), PATH: `${bin}:${process.env.PATH}`, HOME: root, CODING_WF_LOCK_DIR: path.join(root, 'locks') };
 });
@@ -82,12 +85,26 @@ it.each(['failed', 'cancelled'])('首次安装已bootstrap后%s，必须卸载�
   if (kind === 'cancelled') fs.appendFileSync(script, 'sleep 30\n');
   // 原脚本末尾exit需改成等待，让取消发生在bootstrap后。
   if (kind === 'cancelled') fs.writeFileSync(script, fs.readFileSync(script, 'utf8').replace('exit "${FAIL_INSTALL:-0}"', ':'));
-  const pending = run({ FAIL_INSTALL: kind === 'failed' ? '3' : '0' }, control.signal);
-  if (kind === 'cancelled') {
-    for (let i = 0; i < 100 && !JSON.parse(fs.readFileSync(state)).loaded; i++) await new Promise(r => setTimeout(r, 20));
+  // 起跑即观察拒绝；即使轮询或断言失败，也先等安装/回滚结束再删fixture。
+  const pending = run({ FAIL_INSTALL: kind === 'failed' ? '3' : '0' }, control.signal)
+    .then(value => ({ value }), error => ({ error }));
+  try {
+    if (kind === 'cancelled') {
+      let bootstrapped = false;
+      for (let i = 0; i < 100; i++) {
+        if (JSON.parse(fs.readFileSync(state)).loaded) { bootstrapped = true; break; }
+        await new Promise(r => setTimeout(r, 20));
+      }
+      expect(bootstrapped).toBe(true);
+      control.abort();
+    }
+    const outcome = await pending;
+    expect(outcome.error).toBeInstanceOf(Error);
+    expect(outcome.error.message).toContain('runtime_install_failed');
+  } finally {
     control.abort();
+    await pending;
   }
-  await expect(pending).rejects.toThrow('runtime_install_failed');
   expect(fs.existsSync(dest)).toBe(false);
   expect(JSON.parse(fs.readFileSync(state)).loaded).toBe(false);
   expect(JSON.parse(fs.readFileSync(state)).disabled).toBe(false);
