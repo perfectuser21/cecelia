@@ -21,7 +21,7 @@ it.each(affected)('真实 $id 的 const 路径与 JSON 判断可证明只读', i
   expect(shots([item])).toEqual([]);
 });
 
-it('完整原报告 22 项经过现有截图/断言/生产与原生证据门，误报消失', () => {
+it('22 条原报告命令分类回归与单项合成原生绑定契约保持', () => {
   expect(items).toHaveLength(22);
   expect(shots(items)).toEqual([]);
   expect(trivialAssertions(items)).toEqual([]);

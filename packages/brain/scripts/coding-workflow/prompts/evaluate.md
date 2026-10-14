@@ -36,6 +36,16 @@ PREV_ERRORS: {{PREV_ERRORS}}
 6. **页面类场景**：每个 Q-n 都用一个全新的浏览器上下文（`browser.newContext()`，不带上次的 storageState / cookie / localStorage），截图存进 SHOTS_DIR，并在条目里写 `截图: qa-r<轮次>/<文件名>.png`（相对 SPRINT_DIR）。用了浏览器却没留截图，报告会被判不合格。
 7. **数据库断言要带本轮的时间窗或本轮创建的 id**：预览库是生产库的克隆，历史数据会冒充本轮产出。查库时加 `created_at > <本轮开始时间>` 或只查你这次操作返回的 id。
 
+### 合同要求文档/源码核对时
+
+仅在合同要求核对文本本身时，使用完整静态 `node -e` 和 `const fs/p/s/x`、`for-if-throw` 形状；路径与非空期望词按真实合同替换，保留所有关键词（包括 `--dry-run`、浏览器名称），每项命令仍须真实执行、逐字留证。例如只读文档断言：
+
+```bash
+node -e 'const fs=require("fs");const p="README.md";const s=fs.readFileSync(p,"utf8");for(const x of ["--dry-run","playwright"])if(!s.includes(x))throw Error(x);console.log("文本核对通过")'
+```
+
+普通源码读取可复用同形状；路径只支持直接字面量或 const 直接绑定的静态字符串，不支持拼接或动态路径。验收器不承诺任意 JavaScript 都能证明只读，未知语法保守拒绝。此类文本检查不能替代功能或浏览器验收；不得删除关键词或启动合同外浏览器制造无关截图来通过检查。
+
 ## 禁止
 - **不能拿单元测试当证据**：vitest / jest / mocha / npm test / node --test / playwright test 一律不算（那是 CI 的事）。你要的是真实操作预览环境的结果。
 - **不许碰生产**：只能访问 PREVIEW_URL。绝不访问 localhost:5221（那是生产 Brain）或任何生产地址；不修改生产数据。哪怕只是只读请求、哪怕是拿来当「改动前」基线做对比，也不行——碰了就判违规，整轮作废。

@@ -34,6 +34,16 @@ PREV_ERRORS: {{PREV_ERRORS}}
 5. **外部依赖一律用替身**：要调别的服务、数据库、第三方平台、手机设备的，在 WORKTREE 或临时目录里起假服务 / 桩函数 / 沙箱库代替，并在条目里写明用了什么替身、替身之外哪一步没验到。
 6. **异步/时序类场景跑两次**：同样的操作连做两次，各写一条 T-n。两次结果不一致就判 FAIL，并在输出后写明「FLAKY」。
 
+### 合同要求文档/源码核对时
+
+仅在合同要求核对文本本身时，使用完整静态 `node -e` 和 `const fs/p/s/x`、`for-if-throw` 形状；路径与非空期望词按真实合同替换，保留所有关键词（包括 `--dry-run`、浏览器名称），每项命令仍须真实执行、逐字留证。例如只读文档断言：
+
+```bash
+node -e 'const fs=require("fs");const p="README.md";const s=fs.readFileSync(p,"utf8");for(const x of ["--dry-run","playwright"])if(!s.includes(x))throw Error(x);console.log("文本核对通过")'
+```
+
+普通源码读取可复用同形状；路径只支持直接字面量或 const 直接绑定的静态字符串，不支持拼接或动态路径。验收器不承诺任意 JavaScript 都能证明只读，未知语法保守拒绝。此类文本检查不能替代功能或浏览器验收；不得删除关键词或启动合同外浏览器制造无关截图来通过检查。
+
 ## 禁止
 - **不能拿单元测试当证据**：vitest / jest / mocha / npm test / node --test / playwright test 一律不算（那是 CI 的事）。你要的是真实运行的结果。
 - **不许碰生产**：命令里不许出现 PRODUCTION 里的任何地址/主机（例如 hk-vps、生产 API 端口），也不许访问本机 localhost:5221（那是 Cecelia 生产 Brain）；不 ssh 到任何服务器，不连生产数据库。哪怕只是只读请求、哪怕是拿来当「改动前」基线，也不行——碰了就判违规，整轮作废。
