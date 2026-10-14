@@ -4,7 +4,7 @@
  * 连续 N 次整个 Activity 全绿 = 收敛，可以固化（蒸馏成脚本）。
  */
 import { describe, it, expect } from 'vitest';
-import { reconcileSteps } from '../step-reconcile.js';
+import { reconcileSteps, frozenScopeMatches } from '../step-reconcile.js';
 
 const steps = [
   { id: 's1', key: 'a.b.lock', readback: { type: 'metric', ref: 'metrics.lock', expect: { op: '==', value: 1 } } },
@@ -88,5 +88,58 @@ describe('reconcileSteps：跨运行收敛', () => {
     const spans = [...greenRun('r1'), span('r2', 's1', 0), span('r2', 's2', 2), span('r2', 's3')];
     const r = reconcileSteps({ steps, spans, runsWanted: 5, requiredGreen: 2 });
     expect(r.per_step.find(s => s.key === 'a.b.lock')).toMatchObject({ verified: 1, mismatch: 1, failed: 0, missing: 0 });
+  });
+});
+
+
+describe('冻结 Activity 证据归集（D 回归）', () => {
+  const scoped = (run, version = 'av2', digest = 'c2', environment = 'phone1', role = 'primary') => span(run, 's1', 1, 'pass', {
+    activity_definition_version_id: version, identity_protocol: 2, run_binding_id: 'binding',
+    evidence: { observed: 1, implementation: {kind: 'code', id: 'publish', version: '2', digest},
+      execution_role: role, environment: {id: environment, fingerprint: environment} },
+  });
+  const oneStep = [steps[0]];
+  it('跨定义版本不能凑够晋级次数', () => {
+    const r = reconcileSteps({steps: oneStep, spans: [scoped('r1','av1'), scoped('r2')], requiredGreen: 2});
+    expect(r.converged).toBe(false);
+    expect(r.runs).toHaveLength(1);
+  });
+  it('相同定义下不同实现与环境分开', () => {
+    const r = reconcileSteps({steps: oneStep, spans: [scoped('r1','av2','c1'), scoped('r2','av2','c2','phone2'), scoped('r3')], requiredGreen: 2});
+    expect(r.converged).toBe(false);
+    expect(r.runs.map(x => x.run_id)).toEqual(['r3']);
+  });
+  it('Code失败后救场成功不得覆盖原失败', () => {
+    const failed = {...scoped('r1'), outcome:'fail'};
+    const rescued = scoped('r1','av2','s2','phone1','rescue');
+    rescued.evidence.implementation.kind='skill';
+    const r = reconcileSteps({steps: oneStep, spans: [failed,rescued], requiredGreen: 1});
+    expect(r.converged).toBe(false);
+    expect(r.runs[0].steps[0].status).toBe('failed');
+    expect(r.execution_outcomes).toEqual(expect.arrayContaining([expect.objectContaining({execution_role:'rescue',outcome:'pass'})]));
+  });
+  it('同一实现重试成功也不能洗掉同次运行失败', () => {
+    const r = reconcileSteps({steps:oneStep,spans:[{...scoped('r1'),outcome:'fail'},scoped('r1')],requiredGreen:1});
+    expect(r.converged).toBe(false);
+  });
+  it('版本化span缺实现或环境只能诊断，不能晋级', () => {
+    const s = scoped('r1'); delete s.evidence.environment;
+    expect(reconcileSteps({steps:oneStep,spans:[s],requiredGreen:1}).converged).toBe(false);
+  });
+});
+
+
+describe('Skill可先独立验证（D 回归）',()=>{
+  const implementation={kind:'skill',id:'publish-skill',version:'2',digest:'s2'}, environment={id:'phone',fingerprint:'p1'};
+  const payload={commander_implementation:{implementation,path:'SKILL.md'},implementation_bindings:[{...implementation,path:'SKILL.md'}]};
+  it('单Skill冻结来源可匹配，摘要或环境漂移则拒绝',()=>{
+    const scope={activity_definition_version_id:'av2',implementation,environment};
+    expect(frozenScopeMatches(scope,payload,environment)).toBe(true);
+    expect(frozenScopeMatches({...scope,implementation:{...implementation,digest:'changed'}},payload,environment)).toBe(false);
+    expect(frozenScopeMatches(scope,payload,{...environment,fingerprint:'changed'})).toBe(false);
+  });
+  it('仅单Code且无配套Skill不能获得固化来源资格',()=>{
+    const code={...implementation,kind:'code'};
+    expect(frozenScopeMatches({activity_definition_version_id:'av2',implementation:code,environment},{commander_implementation:{implementation:code,path:'code.js'},implementation_bindings:[{...code,path:'code.js'}]},environment)).toBe(false);
   });
 });

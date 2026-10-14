@@ -174,3 +174,40 @@ describe('judgeTask 流程', () => {
     expect(n).toBe(1);
   });
 });
+
+
+describe('Commander v2 正式独立核验与归属（D 回归）', () => {
+  const control = (over={}) => ({phase:'final',verdict:'PASS',verify_task_id:'verify-1',
+    envelope:{task_id:'exec-1',run_id:'run-1',attempt:1,definition:{snapshot_sha256:'hash',expected_path:[{activity_id:'a1',activity_definition_version_id:'av2'}]}},
+    verification:{task_id:'exec-1',run_id:'run-1',attempt:1,definition_sha256:'hash',verdict:'PASS',assertions:[{name:'cleanup',pass:true}],evidence:['actual-readback']}, ...over});
+  const task = c => ({id:'exec-1',status:'completed',payload:{factory_dispatch:true,commander_protocol:'commander-v2'},result:{workflow_control:c}});
+  it('控制器自报PASS但缺正式核验任务不能计成功', async () => {
+    const store=fakeStore(); const deps=depsWith(store);
+    const out=await judgeTask(task(control()),deps);
+    expect(out.verdict).toBe('inconclusive'); expect(deps.recordRun).not.toHaveBeenCalled();
+  });
+  it('核验run不符不能给固定版本PASS', async () => {
+    const store=fakeStore({verifyTask:{id:'verify-1',status:'completed',result:{}}});const deps=depsWith(store);
+    const c=control();c.verification.run_id='other';
+    expect((await judgeTask(task(c),deps)).verdict).toBe('inconclusive');
+  });  it('正式核验成功保留Code失败和Skill救场，业务成功不晋级Code', async () => {
+    const c=control(); c.envelope.contract={environment:{id:'phone',fingerprint:'p1'}};
+    const store=fakeStore({verifyTask:{id:'verify-1',status:'completed',result:{workflow_verification:c.verification}}});
+    const implementation={kind:'code',id:'publish',version:'2',digest:'c2'};
+    const frozen={commander_implementations:{code:{implementation,path:'publish.js'}},implementation_bindings:[{...implementation,path:'publish.js'}],steps:[{step_id:'s1',locator:{step_key:'publish'},contract:{readback:{type:'metric',expect:{op:'==',value:1}}}}]};
+    const evidence={implementation,execution_role:'primary',environment:c.envelope.contract.environment,observed:0};
+    store.readActivityEvidence=vi.fn(async()=>[{run_id:'run-1',step_id:'s1',activity_id:'a1',activity_definition_version_id:'av2',outcome:'fail',started_at:'2026-10-14T08:00:00Z',identity_protocol:2,run_binding_id:'b1',binding_verified:true,frozen_payload:frozen,evidence},
+      {run_id:'run-1',step_id:'s1',activity_id:'a1',activity_definition_version_id:'av2',outcome:'pass',started_at:'2026-10-14T08:00:01Z',evidence:{...evidence,observed:1,implementation:{...implementation,kind:'skill',digest:'s2'},execution_role:'rescue'}}]);
+    const deps=depsWith(store),out=await judgeTask(task(c),deps);
+    expect(out.verdict).toBe('pass');expect(out.degraded).toBe(true);
+    expect(out.activity_evidence).toEqual(expect.arrayContaining([expect.objectContaining({execution_role:'primary',pass:false,readback_verified:false}),expect.objectContaining({execution_role:'rescue',pass:true,readback_verified:false})]));
+    expect(deps.recordRun).toHaveBeenCalledWith(LEDGER,expect.objectContaining({pass:true,degraded:true,activity_evidence:out.activity_evidence}));
+  });
+  it('业务未知保留INCONCLUSIVE，不作已证明失败入窗', async () => {
+    const c=control({verdict:'INCONCLUSIVE'}),store=fakeStore(),deps=depsWith(store);
+    const out=await judgeTask(task(c),deps);
+    expect(out.verdict).toBe('inconclusive');expect(out.business_verdict).toBe('INCONCLUSIVE');
+    expect(deps.recordRun).not.toHaveBeenCalled();
+  });
+
+});

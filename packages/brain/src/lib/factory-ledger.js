@@ -9,6 +9,8 @@
  * db 可以是 pg.Pool（自起事务）或已连接的 pg.Client（用 SAVEPOINT，适配外层事务）。
  */
 
+import { evidenceScopeKey, evidenceScopeOf } from './step-reconcile.js';
+
 export const STAGE_NAMES = Object.freeze({ 1: '试跑', 2: '摸边界', 3: '验证', 4: '沉淀', 5: '上线跑', 6: '蒸馏', 7: '晋级/守护' });
 export const VALIDATION_MODES = Object.freeze(['use_while_validate', 'validate_before_release']);
 export const BLOCKED_KINDS = Object.freeze(['none', 'human_gate', 'resource', 'safety']);
@@ -52,11 +54,38 @@ export function applyRunOutcome(runs, outcome, windowK) {
       ...(outcome.degraded ? { degraded: true } : {}),
       ...(outcome.safeStop ? { safe_stop: true } : {}),
       ...(outcome.sourceTaskId ? { source_task_id: outcome.sourceTaskId } : {}),
+      ...(outcome.evidenceScope ? {evidence_scope:outcome.evidenceScope} : {}),
+      ...(outcome.executionRole ? {execution_role:outcome.executionRole, independent_verified:outcome.independentVerified === true,
+        code_independent_pass:outcome.pass === true && outcome.independentVerified === true && outcome.executionRole === 'primary'
+          && outcome.evidenceScope?.implementation?.kind === 'code' && !outcome.degraded} : {}),
+      ...(outcome.activityEvidence ? {activity_evidence:outcome.activityEvidence} : {}),
+      ...((outcome.evidenceScope || outcome.activityEvidence) ? {evidence_provenance:outcome.trustedEvidence ? 'factory_judge':'unverified'} : {}),
       at: outcome.at,
     });
   }
   next = next.slice(-windowK);
   return { runs: duplicate ? runs : next, duplicate, recentPass: next.filter((r) => r.pass === true).length, recentTotal: next.length };
+}
+
+/** 推进器用证据窗口；业务通过计数不能代替Code独立验收。scope明确指定，绝不拼版本。 */
+export function decideEvidenceWindow(runs, {evidenceScope, implementationKind = 'code', requiredGreen = 5} = {}) {
+  if (!Number.isInteger(requiredGreen) || requiredGreen < 1 || requiredGreen > 100) throw bad('requiredGreen must be in 1..100');
+  const key = evidenceScopeKey(evidenceScope), seen = new Set(), eligible = [];
+  for (const run of [...(runs || [])].reverse()) {
+    if (run.evidence_provenance !== 'factory_judge') break;
+    if (typeof run.run_id !== 'string' || !run.run_id.trim()) break;
+    if (seen.has(run.run_id)) continue;
+    seen.add(run.run_id);
+    const facts = run.activity_evidence || [run];
+    if (!facts.length || !facts.some(f=>evidenceScopeKey(f.evidence_scope))) break;
+    const fact = facts.find(f => evidenceScopeKey(f.evidence_scope) === key && key);
+    if (!fact) continue;
+    if (fact.pass !== true || fact.independent_verified !== true || fact.execution_role !== 'primary'
+      || fact.evidence_scope?.implementation?.kind !== implementationKind || fact.readback_verified !== true) break;
+    eligible.push(run.run_id);
+  }
+  return {eligible: Boolean(key) && eligible.length >= requiredGreen, consecutive_green:eligible.length,
+    required_green:requiredGreen,evidence_run_ids:eligible,evidence_scope:evidenceScope ?? null};
 }
 
 function validateWindowK(v) {
@@ -127,10 +156,21 @@ export function validateRun(body = {}) {
   if (body.degraded !== undefined && typeof body.degraded !== 'boolean') throw bad('degraded must be a boolean');
   if (body.safe_stop !== undefined && typeof body.safe_stop !== 'boolean') throw bad('safe_stop must be a boolean');
   if (body.source_task_id !== undefined && body.source_task_id !== null && !isUuid(body.source_task_id)) throw bad('source_task_id must be a uuid');
+  if (body.execution_role !== undefined && !['primary','fallback','rescue'].includes(body.execution_role)) throw bad('execution_role invalid');
+  if (body.independent_verified !== undefined && typeof body.independent_verified !== 'boolean') throw bad('independent_verified must be boolean');
+  const validScope = scope => evidenceScopeOf({activity_definition_version_id:scope?.activity_definition_version_id,
+    evidence:{implementation:scope?.implementation,environment:scope?.environment}});
+  if (body.evidence_scope && !validScope(body.evidence_scope)) throw bad('evidence_scope incomplete');
+  if (body.activity_evidence !== undefined && (!Array.isArray(body.activity_evidence) || body.activity_evidence.some(f =>
+    !validScope(f?.evidence_scope) || typeof f.pass !== 'boolean' || typeof f.independent_verified !== 'boolean'
+      || !['primary','fallback','rescue'].includes(f.execution_role)))) throw bad('activity_evidence invalid');
   return {
     runId: body.run_id.trim(), pass: body.pass, degraded: body.degraded === true,
     ...(body.safe_stop === true ? { safeStop: true } : {}),
     ...(body.source_task_id ? { sourceTaskId: body.source_task_id } : {}),
+    ...(body.evidence_scope ? {evidenceScope:body.evidence_scope} : {}),
+    ...(body.execution_role ? {executionRole:body.execution_role,independentVerified:body.independent_verified === true} : {}),
+    ...(body.activity_evidence ? {activityEvidence:body.activity_evidence} : {}),
   };
 }
 
@@ -238,8 +278,16 @@ export async function transitionLedger(db, id, body) {
   });
 }
 
-export async function recordRun(db, id, body) {
+const JUDGED_EVIDENCE = Symbol('factory-judge-internal-evidence');
+/** 仅工厂裁判的内部adapter调用；不暴露为HTTP入口，不接受JSON信任标记。 */
+export function recordJudgedRun(db,id,body) { return recordRun(db,id,body,JUDGED_EVIDENCE); }
+export async function recordRun(db, id, body, provenance = null) {
   const v = validateRun(body);
+  v.trustedEvidence=provenance === JUDGED_EVIDENCE;
+  if (!v.trustedEvidence) {
+    v.independentVerified=false;
+    if (v.activityEvidence) v.activityEvidence=v.activityEvidence.map(f=>({...f,independent_verified:false,readback_verified:false}));
+  }
   return withTx(db, async (client) => {
     const row = await lockLedger(client, id);
     const w = applyRunOutcome(row.recent_runs, { ...v, at: new Date().toISOString() }, row.window_k);

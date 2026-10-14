@@ -1,7 +1,7 @@
 /** 技能工厂台账纯规则（迁移 548）：阶段转换规则、滑窗计数、入参校验。 */
 import { describe, it, expect, vi } from 'vitest';
 import {
-  STAGE_NAMES, RULE_RETREATS, checkTransition, applyRunOutcome, validateCreate, validatePatch, validateTransition, validateRun, createLedger,
+  STAGE_NAMES, RULE_RETREATS, checkTransition, applyRunOutcome, decideEvidenceWindow, validateCreate, validatePatch, validateTransition, validateRun, createLedger,
 } from '../factory-ledger.js';
 
 describe('阶段转换规则 checkTransition', () => {
@@ -141,4 +141,33 @@ describe('裁判结果入窗（任务 2231ecc0）', () => {
     expect(() => validateRun({ run_id: 'r', pass: false, safe_stop: 'yes' })).toThrow(/safe_stop/);
     expect(() => validateRun({ run_id: 'r', pass: false, source_task_id: 'nope' })).toThrow(/source_task_id/);
   });
+});
+
+
+describe('运行归属保留（D 回归）', () => {
+  it('保留冻结证据scope与独立成功结论，不把救场计成代码独立成功', () => {
+    const scope={activity_definition_version_id:'av2',implementation:{kind:'skill',id:'publish',version:'2',digest:'s2'},environment:{id:'phone',fingerprint:'p1'}};
+    const r=applyRunOutcome([], {runId:'r1',pass:true,degraded:true,executionRole:'rescue',evidenceScope:scope,independentVerified:true},10);
+    expect(r.runs[0]).toMatchObject({execution_role:'rescue',evidence_scope:scope,independent_verified:true,code_independent_pass:false});
+  });
+});
+
+
+describe('Activity晋级证据窗口（D 回归）',()=>{
+  const scope={activity_definition_version_id:'av2',implementation:{kind:'code',id:'publish',version:'2',digest:'c2'},environment:{id:'phone',fingerprint:'p1'}};
+  const fact=(over={})=>({pass:true,independent_verified:true,execution_role:'primary',readback_verified:true,evidence_scope:scope,...over});
+  it('目标Activity独立绿可保留，另一Activity救场不清它的证据',()=>{
+    const runs=[{run_id:'r1',evidence_provenance:'factory_judge',degraded:true,activity_evidence:[fact(),fact({execution_role:'rescue',evidence_scope:{...scope,activity_definition_version_id:'other'}})]}];
+    expect(decideEvidenceWindow(runs,{evidenceScope:scope,requiredGreen:1}).eligible).toBe(true);
+  });
+  it('救场、缺观测、未独立核验、混实现都不能凑晋级次数',()=>{
+    for(const over of [{execution_role:'rescue'},{readback_verified:false},{independent_verified:false},{evidence_scope:{...scope,implementation:{...scope.implementation,digest:'c1'}}}])
+      expect(decideEvidenceWindow([{run_id:'r1',evidence_provenance:'factory_judge',activity_evidence:[fact(over)]}],{evidenceScope:scope,requiredGreen:1}).eligible).toBe(false);
+  });  it('Skill主运行可独立验收，不等Code；不能转记Code晋级',()=>{
+    const skillScope={...scope,implementation:{...scope.implementation,kind:'skill',digest:'s2'}};
+    const runs=[{run_id:'skill-first',evidence_provenance:'factory_judge',activity_evidence:[fact({evidence_scope:skillScope})]}];
+    expect(decideEvidenceWindow(runs,{evidenceScope:skillScope,implementationKind:'skill',requiredGreen:1}).eligible).toBe(true);
+    expect(decideEvidenceWindow(runs,{evidenceScope:skillScope,implementationKind:'code',requiredGreen:1}).eligible).toBe(false);
+  });
+
 });

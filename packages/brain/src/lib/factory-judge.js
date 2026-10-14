@@ -9,6 +9,7 @@
  * 裁判结论写回执行单 result.factory_judge（state=awaiting_verify|final），既是留痕也是幂等标记。
  */
 import { STAGE_NAMES } from './factory-ledger.js';
+import { evidenceScopeOf, evidenceScopeKey, independentVerification, frozenScopeMatches, reconcileSteps } from './step-reconcile.js';
 
 export const JUDGE_KEY = 'factory_judge';
 const TERMINAL = new Set(['completed', 'completed_no_pr', 'failed', 'cancelled', 'archived']);
@@ -158,8 +159,8 @@ export function makeJudgeStore(db) {
           WHERE payload->>'factory_dispatch' = 'true'
             AND COALESCE(payload->'factory'->>'stage', '') <> 'verify'
             AND status IN ('completed', 'failed')
-            AND result ? 'delivery'
-            AND (result->'${JUDGE_KEY}' IS NULL OR result->'${JUDGE_KEY}'->>'state' = 'awaiting_verify')
+            AND (result ? 'delivery' OR (payload->>'commander_protocol'='commander-v2' AND result->'workflow_control'->>'phase'='final'))
+            AND (result->'${JUDGE_KEY}' IS NULL OR result->'${JUDGE_KEY}'->>'state' = 'awaiting_verify' OR result->'${JUDGE_KEY}'->>'verdict' = 'inconclusive')
           ORDER BY updated_at ASC LIMIT $1`, [limit]);
       return rows;
     },
@@ -171,8 +172,17 @@ export function makeJudgeStore(db) {
       return rows[0] || null;
     },
     async getTask(id) {
-      const { rows } = await db.query('SELECT id, title, status, payload, result FROM tasks WHERE id = $1', [id]);
+      const { rows } = await db.query('SELECT id, task_type, title, status, payload, result FROM tasks WHERE id = $1', [id]);
       return rows[0] || null;
+    },
+    async readActivityEvidence(runId) {
+      return (await db.query(`SELECT s.run_id, s.step_id, s.activity_id, s.activity_definition_version_id, s.outcome, s.evidence,
+        s.started_at, s.identity_protocol, s.run_binding_id, v.payload AS frozen_payload, true AS binding_verified FROM spans s
+        JOIN run_definition_bindings b ON b.id=s.run_binding_id AND b.run_id=s.run_id
+        JOIN activity_definition_versions v ON v.id=s.activity_definition_version_id AND v.activity_id=s.activity_id
+        WHERE s.run_id=$1 AND s.identity_protocol=2 AND EXISTS (SELECT 1 FROM jsonb_array_elements(b.expected_path) p
+          WHERE p->>'activity_id'=s.activity_id::text AND p->>'activity_definition_version_id'=s.activity_definition_version_id::text
+            AND COALESCE(p->>'step_id','')=COALESCE(s.step_id::text,'')) ORDER BY s.started_at`,[runId])).rows;
     },
     async writeJudge(taskId, judge) {
       await db.query(
@@ -193,12 +203,38 @@ export async function judgeTask(task, deps) {
     if (task.payload?.factory_dispatch !== true) return { task_id: task.id, state: 'not_factory' };
     const f = task.payload.factory || {};
     const ledger = await store.findLedger(task.payload.factory_ledger_id || null, f.workflow_key || task.payload.workflow_key);
-    const runId = control.envelope.run_id;
-    const verdict = control.verdict === 'PASS' ? 'pass' : 'fail';
-    const recorded = ledger ? await deps.recordRun(ledger.id, { run_id: runId, pass: verdict === 'pass', source_task_id: task.id }) : null;
-    const final = { state: 'final', verdict, run_id: runId, ledger_id: ledger?.id ?? null, recorded: Boolean(ledger), duplicate: Boolean(recorded?.duplicate), verify_task_id: control.verify_task_id, judged_at: now().toISOString() };
-    await store.writeJudge(task.id, final);
-    return { task_id: task.id, ...final };
+    const e=control.envelope, runId = e?.run_id;
+    const vt = control.verify_task_id ? await store.getTask(control.verify_task_id) : null;
+    const verification = independentVerification(vt,task.id,e);
+    const verdict = control.verdict === 'PASS' ? (verification ? 'pass':'inconclusive') : control.verdict === 'FAIL' ? 'fail':'inconclusive';
+    const spans = store.readActivityEvidence ? await store.readActivityEvidence(runId) : [];
+    const grouped = new Map();
+    for (const span of spans) {
+      const scope=evidenceScopeOf(span), role=span.evidence?.execution_role;
+      if (!scope || !['primary','fallback','rescue'].includes(role)) continue;
+      const key=JSON.stringify([span.activity_id,evidenceScopeKey(scope),role]);
+      const fact=grouped.get(key) || {activity_id:span.activity_id,evidence_scope:scope,execution_role:role,
+        pass:true,independent_verified:Boolean(verification),readback_verified:false,outcomes:[]};
+      fact.outcomes.push({step_id:span.step_id ?? null,outcome:span.outcome});
+      fact.pass=fact.pass && span.outcome==='pass';
+      grouped.set(key,fact);
+    }
+    const activityEvidence=[...grouped.values()];
+    for (const fact of activityEvidence) {
+      const relevant=spans.filter(s => s.activity_id===fact.activity_id && evidenceScopeKey(evidenceScopeOf(s))===evidenceScopeKey(fact.evidence_scope));
+      const frozen=relevant[0]?.frozen_payload;
+      const steps=(frozen?.steps || []).map(s=>({id:s.step_id,key:s.locator?.step_key,readback:s.contract?.readback ?? s.registration?.readback})).filter(s=>s.id);
+      const scoped=relevant.filter(s=>s.step_id).map(s=>({...s,independent_verified:Boolean(verification),scope_verified:s.binding_verified===true && frozenScopeMatches(fact.evidence_scope,frozen,e.contract?.environment)}));
+      fact.readback_verified=steps.length>0 && reconcileSteps({steps,spans:scoped,requiredGreen:1,evidenceScope:fact.evidence_scope}).promotion_eligible;
+    }
+    const degraded=activityEvidence.some(f=>f.execution_role!=='primary');
+    const recorded = ledger && verdict !== 'inconclusive' ? await deps.recordRun(ledger.id, {
+      run_id:runId,pass:verdict==='pass',source_task_id:task.id,degraded,activity_evidence:activityEvidence }) : null;
+    const final = { state:'final',verdict,business_verdict:control.verdict ?? 'INCONCLUSIVE',run_id:runId,ledger_id:ledger?.id ?? null,
+      recorded:Boolean(recorded),duplicate:Boolean(recorded?.duplicate),verify_task_id:control.verify_task_id,
+      activity_evidence:activityEvidence,degraded,judged_at:now().toISOString() };
+    await store.writeJudge(task.id,final);
+    return {task_id:task.id,...final};
   }
   const delivery = isObj(task.result?.delivery) ? task.result.delivery : {};
   const f = task.payload?.factory || {};

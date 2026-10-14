@@ -39,7 +39,7 @@ describe('judgeActivity', () => {
     const reconcile = vi.fn(async () => report());
     const applyCell = vi.fn(async () => {});
     const out = await judgeActivity(db, ACT, { trigger: 'auto', triggerRef: 'r9', reconcile, applyCell, runsWanted: 6, requiredGreen: 5 });
-    expect(reconcile).toHaveBeenCalledWith(db, ACT, { runsWanted: 6, requiredGreen: 5, applyCell: false });
+    expect(reconcile).toHaveBeenCalledWith(db, ACT, { runsWanted: 6, requiredGreen: 5, applyCell: false, triggerRunId:'r9' });
     expect(applyCell).toHaveBeenCalledWith(db, ACT, 'converging');
     const ins = db.calls.find(c => /INSERT INTO activity_judgments/.test(c.sql));
     expect(ins.params.slice(0, 9)).toEqual([ACT, VER, 'converging', false, 2, 5, 2, 'auto', 'r9']);
@@ -247,5 +247,15 @@ describe('onSpansWritten（挂在 POST /spans 主路径上的钩子）', () => {
     process.off('unhandledRejection', unhandled);
     expect(unhandled).not.toHaveBeenCalled();
     expect(silent.warn).toHaveBeenCalled();
+  });
+});
+
+
+describe('裁判固定scope与独立证据（D 回归）', () => {
+  it('读回收敛但未独立核验不能登记收敛', async () => {
+    const db=fakeDb([[/INSERT INTO activity_judgments/,()=>({rows:[{id:'j1'}]})]]);
+    const out=await judgeActivity(db,ACT,{reconcile:async()=>report({verdict:'converged',converged:true,promotion_eligible:false,evidence_scope:{activity_definition_version_id:VER}})});
+    expect(out.converged).toBe(false);expect(out.verdict).toBe('converging');
+    expect(out.activity_definition_version_id).toBe(VER);
   });
 });
