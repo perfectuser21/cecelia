@@ -5,8 +5,9 @@ import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {scriptDefinitionDatabase} from '../fixtures/script-definition-db.js';
 import {versionsDatabase,seedWorkflows} from '../fixtures/definition-versions-db.js';
 import {migrationSql,withLegacyNames} from '../fixtures/minimum-definition-schema.js';
+import {finishRun} from '../../lib/task-run.js';
 import {triggerScriptRun} from '../../script-executor.js';
-import {recordReleaseObservation} from '../../lib/release-index.js';
+import {recordReleaseObservation,getReleaseGate} from '../../lib/release-index.js';
 import {PATROL_CAPABILITY} from '../../lib/device-patrol-admission.js';
 vi.mock('../../runtime-safety.js',()=>({assertExternalExecutionAllowed(){}}));
 let fixture,db,workflow,calls;
@@ -67,7 +68,7 @@ async function managedDependencies(){
     start:async(host,body)=>{
       calls.push('worker.start');observed.push((await db.query('SELECT * FROM run_definition_bindings WHERE run_id=$1',[body.owner_key])).rows);
       return {receipt:{status:'running',container_id:'d'.repeat(64),worker_id:'private-worker',worker_boot_id:'private-boot'}};
-    }};
+    },inspect:async()=>({receipt:{status:'running',container_id:'d'.repeat(64),worker_id:'private-worker',worker_boot_id:'private-boot'}})};
   return {observed,deps:{pool:db,env:{SCRIPT_MANAGED_MACHINES:'us-mac-m4'},managed:{executionDirectory:false,client,
     collectSnapshot:async()=>({verified:true,machine:'us-mac-m4',captured_at:Date.now(),expires_at:Date.now()+60000,capacity:{ok:true,physical_base_slots:6,effective_base_slots:6}})}}};
 }
@@ -157,4 +158,43 @@ it('两次SSH交付失败后同一未知尝试仍可由原ALREADY协议恢复，
   expect(await triggerScriptRun(t,{pool:db,spawnFn:already})).toMatchObject({success:true,alreadyRunning:true});
   expect((await db.query('SELECT * FROM run_definition_bindings')).rows).toEqual([original]);
   expect((await db.query('SELECT status FROM task_runs WHERE task_id=$1',[t.id])).rows).toEqual([{status:'running'}]);
+});
+
+it('多份来源匹配的实际已部署release不能猜选；显式冻结声明可精确消歧',async()=>{
+  const t=await frozenTask();const other=await fixture.publishRelease('scratch_secondary');
+  expect((await getReleaseGate(db,fixture.release.id)).deployed).toBe(true);const otherGate=await getReleaseGate(db,other.id);expect(otherGate.deployed,JSON.stringify(otherGate)).toBe(true);
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:false,reason:'script_definition_unverified'});expect(calls).toEqual([]);
+  t.payload.workflow_definition={release_id:fixture.release.id,workflow_definition_version_id:fixture.workflow.id,snapshot_sha256:fixture.workflow.payload_sha256};
+  await db.query("UPDATE tasks SET status='queued',payload=$2 WHERE id=$1",[t.id,t.payload]);
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:true});
+  expect((await db.query('SELECT release_id FROM run_definition_bindings')).rows).toEqual([{release_id:fixture.release.id}]);
+});
+it('新尝试生成独立Run及binding，旧尝试上下文与版本保持原样',async()=>{
+  const t=await frozenTask();await triggerScriptRun(t,{pool:db,spawnFn:transport});
+  const old=(await db.query('SELECT * FROM task_runs WHERE task_id=$1',[t.id])).rows[0];
+  await finishRun({runId:old.run_id,status:'failed'},{pool:db});
+  const frozen=(await db.query('SELECT * FROM task_runs WHERE id=$1',[old.id])).rows[0];
+  t.payload.script_attempts=[{run_id:old.run_id,exit_code:1}];await db.query("UPDATE tasks SET status='queued',payload=$2 WHERE id=$1",[t.id,t.payload]);
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:true,runId:'script-'+t.id+'-a2'});
+  expect((await db.query('SELECT * FROM task_runs WHERE id=$1',[old.id])).rows[0]).toEqual(frozen);
+  expect((await db.query('SELECT * FROM run_definition_bindings')).rows).toHaveLength(2);
+});
+it('managed资源wait后使用原预约和绑定恢复，不补当前定义、不新建Run',async()=>{
+  const t=await frozenTask({managed_script:{profile:'harmless'}}),{deps}=await managedDependencies();
+  const realStart=deps.managed.client.start;let waiting=true;
+  deps.managed.client.start=async(...args)=>waiting?{receipt:{status:'waiting_resources'}}:realStart(...args);
+  deps.managed.client.inspect=async()=>({receipt:{status:'waiting_resources'}});
+  expect(await triggerScriptRun(t,deps)).toMatchObject({success:false,wait:true});
+  const original=(await db.query('SELECT * FROM run_definition_bindings')).rows[0];waiting=false;
+  expect(await triggerScriptRun(t,deps)).toMatchObject({success:true});
+  expect(calls).toEqual(['worker.start']);expect((await db.query('SELECT * FROM run_definition_bindings')).rows).toEqual([original]);
+});
+it('managed启动回执丢失后inspect恢复同一Run，不能二次worker.start',async()=>{
+  const t=await frozenTask({managed_script:{profile:'harmless'}}),{deps}=await managedDependencies();
+  const realStart=deps.managed.client.start;
+  deps.managed.client.start=async(...args)=>{await realStart(...args);throw Error('fixture reply lost');};
+  expect(await triggerScriptRun(t,deps)).toMatchObject({success:true,pending:true});
+  const original=(await db.query('SELECT * FROM run_definition_bindings')).rows[0];
+  expect(await triggerScriptRun(t,deps)).toMatchObject({success:true,alreadyRunning:true});
+  expect(calls).toEqual(['worker.start']);expect((await db.query('SELECT * FROM run_definition_bindings')).rows).toEqual([original]);
 });

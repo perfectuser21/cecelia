@@ -68,6 +68,17 @@ export async function scriptDefinitionDatabase(){
       components:[{kind:'repo',repo,revision:source.revision},{kind:a.kind,repo:a.repo,path:a.path,revision:a.revision,digest:a.digest}],ci_evidence:[{report,receipt,evidence_ref:'scratch:actual-script-regression'}]})).release;}finally{sourceReader.mockRestore();}
     const observation=(await recordReleaseObservation(db,release.id,{event_key:'install-1',attempt_key:'install-1',environment:'scratch',target,components:release.payload.components,collector:'fixture-collector',observed_at:new Date().toISOString(),evidence_ref:'scratch:readback-fixed-git-files'},{trustedCollector:'fixture-collector'})).observation;
     return {...f,db,definition,command,release,observation,workflow:w,activities:snapshot.definitions.activities,
+      async publishRelease(environment){
+        const reader=vi.spyOn(fixedGit,'readFixedGitFile').mockImplementation(readFixed);
+        try{
+          const copy=(await createRelease(db,{release_key:'copy-'+environment,environment,target:release.target,actor:'test:script',
+            workflows:[{workflow_definition_version_id:w.id,payload_sha256:w.payload_sha256}],components:release.payload.components,
+            ci_evidence:[{report,receipt,evidence_ref:'scratch:actual-script-regression'}]})).release;
+          await recordReleaseObservation(db,copy.id,{event_key:'copy-install',attempt_key:'copy-install',environment,target:copy.target,
+            components:copy.payload.components,collector:'fixture-collector',observed_at:new Date().toISOString(),evidence_ref:'scratch:same-fixed-files-readback'},{trustedCollector:'fixture-collector'});
+          return copy;
+        }finally{reader.mockRestore();}
+      },
       registered,async close(){await f.close();rmSync(root,{recursive:true,force:true});}};
   }catch(error){await f.close();rmSync(root,{recursive:true,force:true});throw error;}
 }
