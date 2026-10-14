@@ -21,7 +21,12 @@ beforeEach(async () => {
   await client.query(`
     CREATE TABLE schema_version(version text PRIMARY KEY, description text, applied_at timestamptz DEFAULT now());
     CREATE TABLE activities(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, current_definition_version_id uuid);
-    CREATE TABLE workflows(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), capability_id uuid, created_at timestamptz DEFAULT now());
+    CREATE TABLE value_streams(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text);
+    CREATE TABLE capabilities(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, parent_journey_id uuid REFERENCES value_streams(id));
+    CREATE TABLE workflows(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), capability_id uuid, key text, name text, channel text, created_at timestamptz DEFAULT now());
+    CREATE TABLE workflow_definition_versions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workflow_id uuid REFERENCES workflows(id),
+      payload jsonb, contract_sha256 text, payload_sha256 text, source_repo text, source_path text, source_commit text, UNIQUE(workflow_id,id));
+    CREATE TABLE task_runs(id uuid PRIMARY KEY);
     CREATE TABLE workflow_activity_refs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workflow_id uuid, activity_id uuid, source_ref text, active boolean DEFAULT true);
     CREATE TABLE steps(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), activity_id uuid REFERENCES activities(id), step_order int, key text UNIQUE,
       activity_key text, readback jsonb NOT NULL DEFAULT '{}', active boolean DEFAULT true);
@@ -31,10 +36,11 @@ beforeEach(async () => {
       payload jsonb NOT NULL, contract_sha256 text, payload_sha256 text, source_repo text, source_path text, source_commit text, created_at timestamptz DEFAULT now());
     CREATE TABLE spans(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id text, activity_id uuid, step_id uuid, enabler_id uuid, outcome text,
       evidence jsonb, attempts int DEFAULT 1, started_at timestamptz, activity_definition_version_id uuid, created_at timestamptz DEFAULT now(),
-      identity_protocol int DEFAULT 1, run_binding_id uuid, ended_at timestamptz, executor_kind text);
-    CREATE TABLE run_definition_bindings(id uuid PRIMARY KEY, run_id text, expected_path jsonb);
-    CREATE TABLE tasks(id uuid PRIMARY KEY, status text, task_type text, payload jsonb, result jsonb);
+      identity_protocol int DEFAULT 1, run_binding_id uuid, ended_at timestamptz, executor_kind text, workflow_id uuid,
+      workflow_definition_version_id uuid, reference_id text, attempt_key text, occurrence_key text, payload_sha256 text);
+    CREATE TABLE tasks(id uuid PRIMARY KEY, title text, status text, task_type text, payload jsonb, result jsonb);
     CREATE UNIQUE INDEX ON activity_cells(step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL;`);
+  await client.query(readFileSync(new URL('../../../migrations/515_release_definition_evidence.sql', import.meta.url), 'utf8'));
   await client.query(MIGRATION);
 });
 afterEach(async () => { if (client) { await client.query(`DROP SCHEMA ${schema} CASCADE`); await client.end(); } });
