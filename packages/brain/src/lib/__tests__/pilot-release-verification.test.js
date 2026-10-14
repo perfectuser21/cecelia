@@ -34,13 +34,15 @@ function reseal(f){
  for(const a of f.snapshot.definitions.activities)a.payload_sha256=pilotPlanHash({source:{repo:a.source_repo,path:a.source_path,commit:a.source_commit},payload:a.payload});
  delete f.snapshot.snapshot_sha256;f.snapshot.snapshot_sha256=pilotPlanHash(f.snapshot);
 }
-async function crossRevisionAuthoring(){
+async function crossRevisionAuthoring({complete=false}={}){
  const f=fixture(),s=f.snapshot,[w]=s.definitions.workflows,[a]=s.definitions.activities;
  const old=s.revision,repo=s.repo;
  const definition={key:'patrol.internal',name:'固定版本巡查',capability_id:w.payload.capability_id,channel:'internal',form:'code',version:'1.0.1',
   runtime:{skill_id:w.workflow_id,entrypoint:'fixed-runtime'},
   activities:[{key:'read',name:'读取',executor_kind:'code',acceptance:['固定实现可读'],
-   implementation:{kind:'code',ref:'entry.js',version:old,repo,path:'entry.js',revision:old}}]};
+   implementation:{kind:'code',ref:'entry.js',version:old,repo,path:'entry.js',revision:old},
+   steps:[{key:'verify',dod:{readback:{type:'json'}}}]}]};
+ if(complete){definition.activities[0].steps.push({key:'finish',dod:{readback:{type:'json'}}});definition.activities.push({...structuredClone(definition.activities[0]),key:'write'});}
  mkdirSync(join(f.root,'contracts'));writeFileSync(join(f.root,'contracts/pilot.json'),JSON.stringify(definition));
  writeFileSync(join(f.root,'entry.js'),'export const fixed = "new bytes must not replace old implementation";\n');
  f.git('add','.');f.git('commit','-qm','definition with newer implementation bytes');s.revision=f.git('rev-parse','HEAD');f.git('update-ref','refs/remotes/origin/main',s.revision);
@@ -50,7 +52,19 @@ async function crossRevisionAuthoring(){
  const proof=await prepareDefinitionFreeze(definition,{readFile});
  for(const r of [w,a]){r.source_commit=s.revision;r.payload.registration_protocol='definition-freeze-v1';}
  w.payload.key=definition.key;w.payload.contract=definition;a.payload.implementation_bindings=proof.bindings.get('read');
- w.payload.activities[0].slot_key='read';
+ w.payload.activities[0].slot_key='read';w.payload.activities[0].sequence_no=1;
+ a.payload.steps[0].contract=definition.activities[0].steps[0];
+ if(complete){
+  const id=n=>`${String(n).padStart(8,'0')}-1111-4111-8111-111111111111`;
+  a.payload.steps.push({step_id:id(30),locator:{activity_id:a.activity_id,step_key:'finish'},contract:definition.activities[0].steps[1]});
+  const other=structuredClone(a);other.id=id(31);other.activity_id=id(32);other.payload.activity_id=other.activity_id;
+  other.payload.steps.forEach((step,i)=>{step.step_id=id(33+i);step.locator.activity_id=other.activity_id;});
+  other.payload.implementation_bindings=proof.bindings.get('write');s.definitions.activities.push(other);
+  w.payload.activities.push({reference_id:id(35),activity_id:other.activity_id,activity_version_id:other.id,slot_key:'write',sequence_no:2});
+  s.assertions=s.definitions.activities.flatMap((activity,i)=>[null,...activity.payload.steps.map(st=>st.step_id)].map((step,j)=>({
+   ...s.assertions[0],id:id(40+i*3+j),step_id:activity.activity_id,step_id_ref:step,cell_key:`regression:${w.payload.capability_id}:${activity.activity_id}:${step||'activity'}`,
+  })));
+ }
  s.scope='patrol-definitions';s.map={repositories:[{scope_key:s.scope,adapter_config:{source_repo:repo,definition_protocol:'definition-freeze-v1',workflow_keys:[definition.key]}}]};
  s.canonical={workflows:[{id:w.workflow_id,key:definition.key,status:'active',capability_id:definition.capability_id,source_repo:repo,source_path:definition.source.ref}]};reseal(f);
  expect(readFileSync(join(f.root,'entry.js'),'utf8')).not.toBe(await readFile({repo,path:'entry.js',revision:old}));
@@ -158,4 +172,22 @@ it('正式Git对象校源token仅接入CLI，登记回归子进程不可继承',
  vi.stubEnv('GITHUB_TOKEN','fixture-source-only-token');
  const f=fixture(),{runPilotReleaseVerification}=await module();
  expect((await runPilotReleaseVerification({...f,repoRoot:f.root})).receipt.verdict).toBe('PASS');
+});
+
+it('真实固定Git的两Activity两Step完整快照可发布',async()=>{
+ const f=await crossRevisionAuthoring({complete:true}),{runPilotReleaseVerification}=await module();
+ expect((await runPilotReleaseVerification({...f,repoRoot:f.root})).report.expected_usages).toHaveLength(6);
+});
+it.each(['activity-delete','step-delete','activity-order','activity-slot','step-order','step-contract'])('自洽重封不能删改真实Git定义的Activity或Step全集 %s',async reason=>{
+ const f=await crossRevisionAuthoring({complete:true}),s=f.snapshot,w=s.definitions.workflows[0],a=s.definitions.activities[0];
+ if(reason==='activity-delete'){w.payload.activities.pop();s.definitions.activities.pop();}
+ if(reason==='step-delete')a.payload.steps.pop();
+ if(reason==='activity-order')w.payload.activities.reverse();
+ if(reason==='activity-slot')w.payload.activities[0].slot_key='write';
+ if(reason==='step-order')a.payload.steps.reverse();
+ if(reason==='step-contract')a.payload.steps[0].contract={...a.payload.steps[0].contract,key:'forged'};
+ reseal(f);
+ const {runPilotReleaseVerification}=await module();
+ await expect(runPilotReleaseVerification({...f,repoRoot:f.root})).rejects.toThrow();
+ expect(existsSync(join(f.outputDir,'receipt.json'))).toBe(false);
 });
