@@ -206,7 +206,7 @@ export async function judgeTask(task, deps) {
     const e=control.envelope, runId = e?.run_id;
     const vt = control.verify_task_id ? await store.getTask(control.verify_task_id) : null;
     const verification = independentVerification(vt,task.id,e);
-    const verdict = control.verdict === 'PASS' ? (verification ? 'pass':'inconclusive') : 'fail';
+    const verdict = control.verdict === 'PASS' ? (verification ? 'pass':'inconclusive') : control.verdict === 'FAIL' ? 'fail':'inconclusive';
     const spans = store.readActivityEvidence ? await store.readActivityEvidence(runId) : [];
     const grouped = new Map();
     for (const span of spans) {
@@ -230,7 +230,7 @@ export async function judgeTask(task, deps) {
     const degraded=activityEvidence.some(f=>f.execution_role!=='primary');
     const recorded = ledger && verdict !== 'inconclusive' ? await deps.recordRun(ledger.id, {
       run_id:runId,pass:verdict==='pass',source_task_id:task.id,degraded,activity_evidence:activityEvidence }) : null;
-    const final = { state:'final',verdict,run_id:runId,ledger_id:ledger?.id ?? null,
+    const final = { state:'final',verdict,business_verdict:control.verdict ?? 'INCONCLUSIVE',run_id:runId,ledger_id:ledger?.id ?? null,
       recorded:Boolean(recorded),duplicate:Boolean(recorded?.duplicate),verify_task_id:control.verify_task_id,
       activity_evidence:activityEvidence,degraded,judged_at:now().toISOString() };
     await store.writeJudge(task.id,final);

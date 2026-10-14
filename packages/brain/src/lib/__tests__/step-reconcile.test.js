@@ -4,7 +4,7 @@
  * 连续 N 次整个 Activity 全绿 = 收敛，可以固化（蒸馏成脚本）。
  */
 import { describe, it, expect } from 'vitest';
-import { reconcileSteps } from '../step-reconcile.js';
+import { reconcileSteps, frozenScopeMatches } from '../step-reconcile.js';
 
 const steps = [
   { id: 's1', key: 'a.b.lock', readback: { type: 'metric', ref: 'metrics.lock', expect: { op: '==', value: 1 } } },
@@ -125,5 +125,21 @@ describe('冻结 Activity 证据归集（D 回归）', () => {
   it('版本化span缺实现或环境只能诊断，不能晋级', () => {
     const s = scoped('r1'); delete s.evidence.environment;
     expect(reconcileSteps({steps:oneStep,spans:[s],requiredGreen:1}).converged).toBe(false);
+  });
+});
+
+
+describe('Skill可先独立验证（D 回归）',()=>{
+  const implementation={kind:'skill',id:'publish-skill',version:'2',digest:'s2'}, environment={id:'phone',fingerprint:'p1'};
+  const payload={commander_implementation:{implementation,path:'SKILL.md'},implementation_bindings:[{...implementation,path:'SKILL.md'}]};
+  it('单Skill冻结来源可匹配，摘要或环境漂移则拒绝',()=>{
+    const scope={activity_definition_version_id:'av2',implementation,environment};
+    expect(frozenScopeMatches(scope,payload,environment)).toBe(true);
+    expect(frozenScopeMatches({...scope,implementation:{...implementation,digest:'changed'}},payload,environment)).toBe(false);
+    expect(frozenScopeMatches(scope,payload,{...environment,fingerprint:'changed'})).toBe(false);
+  });
+  it('仅单Code且无配套Skill不能获得固化来源资格',()=>{
+    const code={...implementation,kind:'code'};
+    expect(frozenScopeMatches({activity_definition_version_id:'av2',implementation:code,environment},{commander_implementation:{implementation:code,path:'code.js'},implementation_bindings:[{...code,path:'code.js'}]},environment)).toBe(false);
   });
 });

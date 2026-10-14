@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { createLedger, getLedger, listLedger, transitionLedger, recordRun, patchLedger, decideEvidenceWindow } from '../../lib/factory-ledger.js';
+import { createLedger, getLedger, listLedger, transitionLedger, recordRun, patchLedger, decideEvidenceWindow, recordJudgedRun } from '../../lib/factory-ledger.js';
 
 const body = (file) => readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8')
   .split('\n').filter((line) => !/^\s*(BEGIN|COMMIT);\s*$/.test(line)).join('\n');
@@ -102,7 +102,7 @@ describe('迁移 548：技能工厂台账', () => {
     const facts=[{activity_id:randomUUID(),evidence_scope:scope,execution_role:'primary',pass:false,independent_verified:true},
       {activity_id:randomUUID(),evidence_scope:{...scope,implementation:{...scope.implementation,kind:'skill',digest:'s2'}},execution_role:'rescue',pass:true,independent_verified:true}];
     const payload={run_id:'d-rescued-real',pass:true,degraded:true,activity_evidence:facts};
-    await recordRun(client,id,payload); const read=await getLedger(client,id);
+    await recordJudgedRun(client,id,payload); const read=await getLedger(client,id);
     const actual=read.ledger.recent_runs.find(r=>r.run_id===payload.run_id);
     expect(actual).toMatchObject({pass:true,degraded:true,activity_evidence:facts});
     expect((await recordRun(client,id,payload)).duplicate).toBe(true);

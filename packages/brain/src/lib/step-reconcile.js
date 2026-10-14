@@ -64,7 +64,9 @@ export function evidenceScopeOf(span) {
     environment: {id:environment.id,fingerprint:environment.fingerprint} };
 }
 export function frozenScopeMatches(scope, payload, environment) {
-  const fixed=payload?.commander_implementations?.[scope?.implementation?.kind];
+  const kind=scope?.implementation?.kind, pair=payload?.commander_implementations;
+  const fixed=pair?.[kind] ?? (kind==='skill' ? payload?.commander_implementation:null);
+  if (kind==='code' && (!pair?.skill?.implementation || pair.skill.implementation.kind !== 'skill' || !pair.business_requirement_sha256)) return false;
   if (!fixed?.implementation || !environment || !scope) return false;
   return ['kind','id','version','digest'].every(k => fixed.implementation[k]===scope.implementation[k])
     && ['id','fingerprint'].every(k => environment[k]===scope.environment[k])

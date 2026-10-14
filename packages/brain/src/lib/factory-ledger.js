@@ -59,6 +59,7 @@ export function applyRunOutcome(runs, outcome, windowK) {
         code_independent_pass:outcome.pass === true && outcome.independentVerified === true && outcome.executionRole === 'primary'
           && outcome.evidenceScope?.implementation?.kind === 'code' && !outcome.degraded} : {}),
       ...(outcome.activityEvidence ? {activity_evidence:outcome.activityEvidence} : {}),
+      ...((outcome.evidenceScope || outcome.activityEvidence) ? {evidence_provenance:outcome.trustedEvidence ? 'factory_judge':'unverified'} : {}),
       at: outcome.at,
     });
   }
@@ -71,6 +72,7 @@ export function decideEvidenceWindow(runs, {evidenceScope, implementationKind = 
   if (!Number.isInteger(requiredGreen) || requiredGreen < 1 || requiredGreen > 100) throw bad('requiredGreen must be in 1..100');
   const key = evidenceScopeKey(evidenceScope), seen = new Set(), eligible = [];
   for (const run of [...(runs || [])].reverse()) {
+    if (run.evidence_provenance !== 'factory_judge') break;
     if (typeof run.run_id !== 'string' || !run.run_id.trim()) break;
     if (seen.has(run.run_id)) continue;
     seen.add(run.run_id);
@@ -276,8 +278,16 @@ export async function transitionLedger(db, id, body) {
   });
 }
 
-export async function recordRun(db, id, body) {
+const JUDGED_EVIDENCE = Symbol('factory-judge-internal-evidence');
+/** 仅工厂裁判的内部adapter调用；不暴露为HTTP入口，不接受JSON信任标记。 */
+export function recordJudgedRun(db,id,body) { return recordRun(db,id,body,JUDGED_EVIDENCE); }
+export async function recordRun(db, id, body, provenance = null) {
   const v = validateRun(body);
+  v.trustedEvidence=provenance === JUDGED_EVIDENCE;
+  if (!v.trustedEvidence) {
+    v.independentVerified=false;
+    if (v.activityEvidence) v.activityEvidence=v.activityEvidence.map(f=>({...f,independent_verified:false,readback_verified:false}));
+  }
   return withTx(db, async (client) => {
     const row = await lockLedger(client, id);
     const w = applyRunOutcome(row.recent_runs, { ...v, at: new Date().toISOString() }, row.window_k);
