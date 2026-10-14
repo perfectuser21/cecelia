@@ -8,6 +8,7 @@ import { parseEvidence } from './evidence.mjs';
 import { BLOCKING } from './review.mjs';
 import { isReadonlyDocAssertion } from './qa-doc-assertion.mjs';
 import { isReadonlyQaCommand } from './readonly-qa-ast.mjs';
+import { isReadonlySearchSource } from './readonly-search-source.mjs';
 
 const Q_RE = /^Q-\d+$/;
 export const CANNOT_VERIFY = 'CANNOT_VERIFY';
@@ -138,7 +139,8 @@ function usesBrowser(command, executions) {
   if (isReadonlyQaCommand(command)) return false;
   if (BROWSER_RE.test(command)) return true;
   const scripts = [...command.matchAll(/([\w./-]+\.(?:mjs|cjs|js|ts|py))\b/g)].map((m) => path.basename(m[1]));
-  return scripts.some((name) => executions.some((e) => String(e.command).includes(name) && BROWSER_RE.test(String(e.command))));
+  return scripts.some((name) => executions.some((e) => String(e.command).includes(name)
+    && BROWSER_RE.test(String(e.command)) && !isReadonlySearchSource(e.command)));
 }
 
 /**

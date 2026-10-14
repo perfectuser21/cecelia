@@ -46,6 +46,16 @@ node -e 'const fs=require("fs");const p="README.md";const s=fs.readFileSync(p,"u
 
 普通源码读取可复用同形状；路径只支持直接字面量或 const 直接绑定的静态字符串，不支持拼接或动态路径。含 `--dry-run` 字面量的只读豁免仍仅限 Markdown 文档，真实 dry-run 不获豁免。验收器不承诺任意 JavaScript 都能证明只读，未知语法保守拒绝。此类文本检查不能替代功能或浏览器验收；不得删除关键词或启动合同外浏览器制造无关截图来通过检查。
 
+### 文档/源码调查中的查询来源
+
+仅合同要求文档/源码调查时，查询可用完整静态形状：
+
+```bash
+/opt/homebrew/bin/rg --no-config -n -e 'playwright|status' -- packages/brain/scripts/coding-workflow/runner/status.mjs
+```
+
+仅支持已安装的 `/opt/homebrew/bin/rg`、`/usr/local/bin/rg` 或 `/usr/bin/rg`，按现场真实路径替换；不把 `command -v` 的任意结果或 env 包装视为受支持。`--no-config` 必须显式保留，禁止 `--pre`、未知选项、展开、重定向或复合命令；裸 rg 或历史未知环境的查询仍保守判定。该形状只避免查询被误当作“写入浏览器脚本”的来源，不替代功能/浏览器验收，也不免除真实执行和逐字留证；不修改旧命令或旧回执冒充新证据。工具缺失时如实报告阻断。
+
 ## 禁止
 - **不能拿单元测试当证据**：vitest / jest / mocha / npm test / node --test / playwright test 一律不算（那是 CI 的事）。你要的是真实操作预览环境的结果。
 - **不许碰生产**：只能访问 PREVIEW_URL。绝不访问 localhost:5221（那是生产 Brain）或任何生产地址；不修改生产数据。哪怕只是只读请求、哪怕是拿来当「改动前」基线做对比，也不行——碰了就判违规，整轮作废。

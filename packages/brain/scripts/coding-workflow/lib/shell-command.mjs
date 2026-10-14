@@ -3,7 +3,7 @@
 const SHELL_PREFIX = /^(?:(?:\/bin\/|\/usr\/bin\/|\/usr\/local\/bin\/|\/opt\/homebrew\/bin\/)?(?:bash|sh|zsh))[ \t]+-(?:lc|c)[ \t]+/;
 
 /** 一个静态 shell word，可由相邻单/双引号片段拼接；动态扩展或额外参数返回 null。 */
-function literalWord(text) {
+export function literalWord(text) {
   let out = '';
   let quote = null;
   let quoted = false;
