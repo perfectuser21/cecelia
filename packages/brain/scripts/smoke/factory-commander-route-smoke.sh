@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # factory-commander-route-smoke — 工厂执行单改走 Brain→Commander→外壳→Codex（任务 c0fe7e30，决策 2186700a / 26df670a）真库真代码火：
-# brain_config 开关 factory_commander_route_enabled 默认关、置 true 才开 → 推进器建单形状为 workflow_dispatch（真 tasks 约束放行）
+# v2只验证共享冻结材料的spec构建与缺材料阻断；后半段单独验证旧在途协议兼容（真tasks约束）
 # → 派发器调度单带 --run-id/--task-id 经 stdin 交（假）ssh → 收割读（假）外壳 delivery.json 分隔块进 result.delivery、
 # 陪跑 skill 版本进 result 与 task_runs → 自动裁判按合同活动读回逐活动判证据（真 tasks 读写）。
 # 全程一个事务内跑，结束回滚；ssh 一律注入假传输，绝不碰真机。
@@ -20,10 +20,11 @@ BRAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 import pg from 'pg';
 import { dispatchWorkflowCommanderTasks, reapWorkflowCommanderRuns, DELIVERY_BEGIN, DELIVERY_END } from './src/lib/workflow-commander-dispatch.js';
 import { isFactoryCommanderRouteEnabled } from './src/lib/factory-cycle.js';
-import { buildExecSpec } from './src/lib/factory-pusher.js';
+import { buildExecSpec, decideLedger } from './src/lib/factory-pusher.js';
 import { judgeTask, makeJudgeStore } from './src/lib/factory-judge.js';
 import { resolveWorkflowConfig } from './src/lib/factory-workflow-config.js';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './src/device-lock-helpers.js';
+import { sample } from './src/lib/__tests__/fixtures/commander-contract-v1.js';
 
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
 const die = (m) => { console.error(`FAIL: ${m}`); process.exitCode = 1; throw new Error(m); };
@@ -39,15 +40,41 @@ try {
 
   const cfg = resolveWorkflowConfig('douyin_video_publish.android');
   const ledger = { id: '1b5a0be0-f0b2-4960-af44-f09790a039c1', workflow_key: 'douyin_video_publish.android', workflow_name: '抖音 · 视频发布（安卓真机）', stage: 3, validation_mode: 'use_while_validate', window_k: 3, recent_pass: 0, recent_total: 0, candidate_version: 'android-douyin-private-video@1.0.8' };
-  const spec = buildExecSpec({ ledger, cfg, stage: 3, skill: ledger.candidate_version, round: 1, commanderRoute: true });
-  if (spec.task_type !== 'workflow_dispatch' || spec.payload.workflow_key !== 'douyin_video_publish.android') die(`开关开时建单形状不对: ${spec.task_type}`);
+  const off = buildExecSpec({ ledger, cfg, stage: 3, skill: ledger.candidate_version, round: 1, commanderRoute: false });
+  if (off.task_type !== 'skill_factory_run' || off.payload.commander_protocol !== undefined || off.payload.workflow_key !== undefined) die('gate-off旧建单兼容不符');
+  ok('gate-off保留旧工厂建单兼容');
+
+  const frozenCfg = { ...cfg, commander: { ...cfg.commander, workflow_definition: sample.definition, workflow_input: sample.task.payload.workflow_input,
+    evidence_scopes: [{ activity_definition_version_id: sample.definition.expected_path[0].activity_definition_version_id,
+      implementation: sample.implementations.code.implementation, environment: sample.contract.environment }] } };
+  const frozenLedger = { ...ledger, workflow_key: sample.task.payload.workflow_key };
+  const v2 = buildExecSpec({ ledger: frozenLedger, cfg: frozenCfg, stage: 3, skill: ledger.candidate_version, round: 1, commanderRoute: true });
+  if (v2.task_type !== 'workflow_dispatch' || v2.payload.commander_protocol !== 'commander-v2' || v2.payload.workflow_key !== frozenLedger.workflow_key
+    || JSON.stringify(v2.payload.workflow_definition) !== JSON.stringify(sample.definition)
+    || JSON.stringify(v2.payload.workflow_input) !== JSON.stringify(sample.task.payload.workflow_input)
+    || v2.payload.workflow_definition === sample.definition || v2.payload.workflow_input === sample.task.payload.workflow_input) die('v2冻结材料透传或隔离不符');
+  ok('v2构建使用共享冻结定义及输入，不代表真实业务验收');
+  for (const field of ['workflow_definition', 'workflow_input']) {
+    const missing = structuredClone(frozenCfg); delete missing.commander[field];
+    let rejected = false;
+    try { buildExecSpec({ ledger: frozenLedger, cfg: missing, stage: 3, skill: ledger.candidate_version, round: 1, commanderRoute: true }); }
+    catch (error) { rejected = error.code === 'COMMANDER_CONTRACT' && error.status === 422; }
+    if (!rejected) die(`缺${field}未拒绝v2建单`);
+    const decision = decideLedger({ ledger: frozenLedger, cfg: missing, commanderRoute: true });
+    if (decision.actions.length !== 1 || decision.actions[0].type !== 'block' || decision.actions[0].kind !== 'resource'
+      || !decision.reason.includes('缺冻结定义或结构输入')) die(`缺${field}未资源阻断`);
+  }
+  ok('缺定义或输入时资源阻断，不降级旧协议');
+
+  // 旧在途兼容fixture另行构造；不把共享v2样例登记为真实业务任务或移除其协议字段。
+  const spec = { ...off, task_type: 'workflow_dispatch', payload: { ...off.payload, workflow_key: ledger.workflow_key } };
   const serial = cfg.device.serial;
   await client.query(`INSERT INTO device_locks (device_name) VALUES ($1) ON CONFLICT (device_name) DO NOTHING`, [serial]);
   await client.query(`UPDATE device_locks SET locked_by = NULL, locked_at = NULL, expires_at = NULL WHERE device_name = $1`, [serial]);
   const taskId = (await client.query(
     `INSERT INTO tasks (title, description, task_type, status, priority, payload) VALUES ($1, $2, $3, 'queued', 'P1', $4::jsonb) RETURNING id`,
     [spec.title, spec.description, spec.task_type, JSON.stringify(spec.payload)])).rows[0].id;
-  ok('推进器 Commander 路径建单：workflow_dispatch 带 workflow_key 与工厂字段，真 tasks 约束放行');
+  ok('旧在途兼容fixture：workflow_dispatch带workflow_key及工厂字段，真tasks约束放行');
 
   const sent = [];
   const deps = {
