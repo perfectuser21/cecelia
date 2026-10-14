@@ -203,5 +203,11 @@ describe('Commander v2 正式独立核验与归属（D 回归）', () => {
     expect(out.activity_evidence).toEqual(expect.arrayContaining([expect.objectContaining({execution_role:'primary',pass:false,readback_verified:false}),expect.objectContaining({execution_role:'rescue',pass:true,readback_verified:false})]));
     expect(deps.recordRun).toHaveBeenCalledWith(LEDGER,expect.objectContaining({pass:true,degraded:true,activity_evidence:out.activity_evidence}));
   });
+  it('业务未知保留INCONCLUSIVE，不作已证明失败入窗', async () => {
+    const c=control({verdict:'INCONCLUSIVE'}),store=fakeStore(),deps=depsWith(store);
+    const out=await judgeTask(task(c),deps);
+    expect(out.verdict).toBe('inconclusive');expect(out.business_verdict).toBe('INCONCLUSIVE');
+    expect(deps.recordRun).not.toHaveBeenCalled();
+  });
 
 });
