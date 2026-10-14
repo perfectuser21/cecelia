@@ -386,3 +386,22 @@ tests:
     ci: L4
     status: active
     note: "真实PG验证typed依赖、固定槽位快照、契约换构建、独立模型代码、不可变组合、并发封存与结构漂移。"
+
+  - id: task-execution-body
+    path: packages/brain/src/projection/__tests__/task-execution-body.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "任务真实执行回链、身份门禁、正文保护、预算及并发待办"
+  - id: task-execution-seams
+    path: packages/brain/src/projection/__tests__/task-execution-seams.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "正式Task与Run投影保存页面身份后补链及晚到页面自愈"
+  - id: task-execution-body-pg
+    path: packages/brain/src/__tests__/integration/task-execution-body.pg.integration.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "真实PG全部attempt、nonce CAS与公平持久队列"

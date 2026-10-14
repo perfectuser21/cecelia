@@ -22,7 +22,9 @@ export function getToken() {
   return token;
 }
 
-export async function notionReq(token, path, method = 'GET', body = null) {
+export async function notionReq(token, path, method = 'GET', body = null, { deadline = Infinity } = {}) {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error('Notion request deadline exhausted');
   const opts = {
     method,
     headers: {
@@ -30,7 +32,7 @@ export async function notionReq(token, path, method = 'GET', body = null) {
       'Notion-Version': NOTION_VERSION,
       'Content-Type': 'application/json',
     },
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(Math.max(1, Math.min(30000, remaining))),
   };
   if (body) opts.body = JSON.stringify(body);
 

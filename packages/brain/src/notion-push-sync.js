@@ -1,3 +1,4 @@
+import {syncTaskExecutionBodies,queueTaskExecutionBodies} from './projection/task-execution-body.js';
 import {syncManagedBodyBlock} from './projection/workflow-body.js';
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { createRoutedTask } from './work-routing-store.js';
@@ -380,7 +381,9 @@ export function buildTaskNotionProperties(t, { blockedBy = false } = {}) {
   };
 }
 
-async function pushTaskRows(pool, token, rows, { blockedBy = false } = {}) {
+export async function pushTaskRows(pool, token, rows, { blockedBy = false } = {}) {
+  const executionBodyDeadline=Date.now()+45000;
+  await queueTaskExecutionBodies(pool,rows.map(t=>t.id),executionBodyDeadline).catch(e=>console.warn('[task-execution-body] 入队待重试',e.message));
   for (const t of rows) {
     try {
       const properties = buildTaskNotionProperties(t, { blockedBy });
@@ -430,6 +433,8 @@ async function pushTaskRows(pool, token, rows, { blockedBy = false } = {}) {
       }
     }
   }
+  const body=await syncTaskExecutionBodies(pool,{token,notionReq,taskDbId:NOTION_TASKS_DB,deadline:executionBodyDeadline});
+  if(body.failed)console.warn('[task-execution-body] Tasks回链待重试',body.errors);
 }
 
 /**
@@ -1757,14 +1762,17 @@ export function buildTaskRunNotionBodyBlock(row){
  * 推前缺列即补（Notion 缺列 400 的血训）；失败只记日志，DB（task_runs）才是真相源。
  */
 async function pushTaskRuns(pool, token) {
-  const dbId = await resolveDbId(pool, 'task_runs');
-  if (!dbId) return;
+  const bodyDeadline=Date.now()+45000;
+
   const directory = (await pool.query("SELECT config FROM projection_targets WHERE target='notion-directory' AND enabled=true")).rows[0];
   const taskTargets = (await pool.query(`SELECT notion_db_id FROM notion_projection_map
     WHERE brain_table = 'tasks' AND title = 'Tasks' AND face = 'inlet' AND direction = 'both' AND status = 'active'`)).rows;
   if (taskTargets.length > 1) throw new Error('Tasks 正式投影库身份不唯一');
   const workflowsDb = directory?.config?.dbs?.workflows;
   const tasksDb = taskTargets[0]?.notion_db_id;
+  await syncTaskExecutionBodies(pool,{token,notionReq,taskDbId:tasksDb,deadline:Math.min(bodyDeadline,Date.now()+10000)});
+  const dbId = await resolveDbId(pool,'task_runs');
+  if(!dbId)return;
   const props = buildTaskRunDbProps({ workflowsDb, tasksDb });
   try {
     const checkSchemaReq = async (...args) => {
@@ -1803,17 +1811,23 @@ async function pushTaskRuns(pool, token) {
          OR pl.external_id IS NOT NULL
       ORDER BY r.notion_synced_at ASC NULLS FIRST, r.started_at DESC
       LIMIT 100`);
-  if (rows.length === 0) return;
+  if (rows.length === 0) {
+    return;
+  }
   // 直接走统一引擎、不经 upsertOpsRows：后者的 onFatal 会把「库不可达」写成 ops_notion_dbs.disabled，
   // 那是运行舱四库的终止开关，Runs 库出问题不许连坐运行舱推送。
-  const bodyDeadline=Date.now()+45000;
+  await queueTaskExecutionBodies(pool,rows.map(r=>r.task_id),bodyDeadline).catch(e=>console.warn('[task-execution-body] Run回链入队待重试',e.message));
+  const runDeadline=bodyDeadline-10000; // 原45s总预算内给Task回链预留10s。
   await pushRegisteredRows(pool, token, {
     table: 'task_runs', dbId, rows, buildProps: r => buildTaskRunNotionProperties({ ...r,
       workflow_page_id: workflowsDb ? r.workflow_page_id : null, task_page_id: tasksDb ? r.task_page_id : null }),
-    notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'task_run',budgetMs:45000,
+    notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'task_run',budgetMs:Math.max(0,runDeadline-Date.now()),
     syncBody:(row,pageId)=>syncManagedBodyBlock(token,pageId,buildTaskRunNotionBodyBlock(row),
-      (...args)=>{if(Date.now()>=bodyDeadline)throw Error('Run来源正文同步预算耗尽');return notionReq(...args);},RUN_SOURCE_MARKER),
+      (...args)=>{if(Date.now()>=runDeadline)throw Error('Run来源正文同步预算耗尽');return notionReq(...args);},RUN_SOURCE_MARKER),
   });
+  const taskBodies=await syncTaskExecutionBodies(pool,{token,notionReq,taskDbId:tasksDb,
+    deadline:bodyDeadline});
+  if(taskBodies.failed)console.warn('[task-execution-body] Run回链待重试',taskBodies.errors);
 
 }
 

@@ -49,10 +49,11 @@ export async function runProjectionOutbox(pool, {
     [limit]
   );
 
+  const executionBodyDeadline = Date.now()+45000;
   const summary = { processed: rows.length, done: 0, failed: 0, deferred: 0 };
   for (const event of rows) {
     try {
-      const result = await adapter(pool, event);
+      const result = await adapter(pool, event, { executionBodyDeadline });
       if (result?.skipped && ['entity_not_found', 'unsupported_target'].includes(result.reason)) {
         summary.done += 1;
         await updateOutbox(pool, event, 'done');

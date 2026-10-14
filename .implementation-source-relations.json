@@ -701,6 +701,26 @@
     
     {"owner_path": "packages/brain/src/lib/notion-projection-engine.js", "path": "packages/brain/src/lib/__tests__/notion-projection-engine.test.js", "role": "verification"},
     {"owner_path": "packages/brain/src/lib/script-run-definition.js", "path": "packages/brain/src/lib/__tests__/script-run-definition.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/workflow-authoring/release-proof.js", "path": "packages/brain/src/workflow-authoring/release-proof.test.js", "role": "verification"}
+    {"owner_path": "packages/brain/src/workflow-authoring/release-proof.js", "path": "packages/brain/src/workflow-authoring/release-proof.test.js", "role": "verification"},
+    {
+      "owner_path": "packages/brain/src/projection/task-execution-body.js",
+      "path": "packages/brain/src/projection/__tests__/task-execution-body.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/task-execution-body.js",
+      "path": "packages/brain/src/projection/__tests__/task-execution-seams.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/task-execution-body.js",
+      "path": "packages/brain/src/__tests__/integration/task-execution-body.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/task-execution-body.js",
+      "path": "packages/brain/src/projection/__tests__/fixtures/tasks-identity-schema.json",
+      "role": "verification"
+    }
   ]
 }

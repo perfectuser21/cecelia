@@ -1,4 +1,5 @@
 import { notionRequest } from '../notion-capture-ingest.js';
+import {syncTaskExecutionBodies} from './task-execution-body.js';
 import { recordProjectionCommand } from './commands.js';
 
 const TASK_STATUS = {
@@ -83,7 +84,7 @@ async function loadEntity(pool, event) {
   return null;
 }
 
-export async function syncNotionEntity(pool, event) {
+export async function syncNotionEntity(pool, event, { executionBodyDeadline = Date.now()+8000 } = {}) {
   if (event.target !== 'notion') return { skipped: true, reason: 'unsupported_target' };
   const config = await getConfig(pool);
   if (!config.enabled || !config.token || !config.taskDbId || !config.projectDbId) {
@@ -139,6 +140,11 @@ export async function syncNotionEntity(pool, event) {
     `UPDATE ${table} SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2`,
     [externalId, event.entity_id]
   );
+  if (event.entity_type === 'tasks') {
+    const body = await syncTaskExecutionBodies(pool, { token:config.token, taskDbId:config.taskDbId, taskIds:[entity.id], deadline:executionBodyDeadline });
+    if (body.failed) console.warn('[task-execution-body] Task正文待重试', body.errors);
+    if (body.failed || body.pending || !body.synced) return { externalId, skipped:true, reason:'task_execution_body_pending' };
+  }
   return { externalId };
 }
 
