@@ -454,4 +454,3 @@ commander-generic-smoke.sh
 
 workflow-observation-smoke.sh
 version-identity-preflight-smoke.sh
-cw-3a27ca36-qa-smoke.sh
