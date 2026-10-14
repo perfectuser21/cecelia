@@ -15,6 +15,14 @@ it.each(['\n',' '])('前后缀分隔%j时跨行pretty JSON先整片段脱敏，�
   expect(safe).toContain('prefix');expect(safe).toContain('suffix');
  }
 });
+it('JSON字符串信封多层转义仍解码脱敏，不退回无法识别的转义正则',()=>{
+ let message=JSON.stringify({password:'wrapped-secret'});
+ for(let layer=0;layer<3;layer++){
+  message=JSON.stringify(message);
+  const safe=redactFailureText('prefix '+JSON.stringify({message},null,2)+' suffix');
+  expect(safe).not.toContain('wrapped-secret');
+ }
+});
 it('过深JSON字符串、多片段或超大日志有界省略，不抛或泄露尾部秘密',()=>{
  let nested=JSON.stringify({password:'deep-secret'});for(let i=0;i<13;i++)nested=JSON.stringify({message:nested});
  for(const input of [nested,'p '+Array.from({length:70},()=>JSON.stringify({message:'safe'})).join(' ')+' token=tail-secret',

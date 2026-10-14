@@ -33,6 +33,7 @@ export function redactFailureText(value,env={},nesting=0) {
  // 日志中的JSON字符串可能再次转义了密码和引号，先按结构脱敏再重编码。
  try{
   const parsed=JSON.parse(text);
+  if(typeof parsed==='string')return JSON.stringify(redactFailureText(parsed,env,nesting+1));
   if(parsed&&typeof parsed==='object'){
    const clean=(v,depth=0)=>{
     if(depth+nesting>12)return OMITTED;
@@ -44,10 +45,10 @@ export function redactFailureText(value,env={},nesting=0) {
    return JSON.stringify(clean(parsed));
   }
  }catch{ /* 普通日志按文本脱敏，不把解析失败当业务失败。 */ }
- // 整段不是JSON时，各行仍可能是JSON回执；普通行继续沿用文本脱敏。
- if(text.includes('\n'))return text.split('\n').map(line=>redactFailureText(line,env,nesting+1)).join('\n');
+ // 必须先扫描完整文本中的JSON片段；pretty JSON不能先拆行，否则会失去结构。
  const embedded=embeddedJson(text,env,nesting);
  if(embedded!==null)text=embedded;
+ if(text.includes('\n'))return text.split('\n').map(line=>redactFailureText(line,env,nesting+1)).join('\n');
  return text.replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi,'$1***@')
   .replace(/(\b(?:Bearer|Basic)\s+)[a-z0-9._~+/-]+=*/gi,'$1***')
   .replace(/((?:["']?(?:[\w-]*(?:token|password|passwd|secret|api[_-]?key|authorization)[\w-]*)["']?)\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&,;}]+)/gi,'$1***');
