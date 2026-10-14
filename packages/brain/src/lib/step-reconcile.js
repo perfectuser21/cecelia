@@ -70,7 +70,7 @@ export function frozenScopeMatches(scope, payload, environment) {
   if (!fixed?.implementation || !environment || !scope) return false;
   return ['kind','id','version','digest'].every(k => fixed.implementation[k]===scope.implementation[k])
     && ['id','fingerprint'].every(k => environment[k]===scope.environment[k])
-    && (payload.implementation_bindings || []).some(b => b.kind===fixed.implementation.kind && b.digest===fixed.implementation.digest && b.path===fixed.path);
+    && (payload.implementation_bindings || []).some(b => b.kind===fixed.implementation.kind && typeof b.digest==='string' && b.digest.replace(/^sha256:/,'')===fixed.implementation.digest && b.path===fixed.path);
 }
 export const evidenceScopeKey = scope => evidenceScopeOf({activity_definition_version_id:scope?.activity_definition_version_id,
   evidence:{implementation:scope?.implementation,environment:scope?.environment}}) ? JSON.stringify([
