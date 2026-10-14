@@ -42,7 +42,7 @@ PREV_ERRORS: {{PREV_ERRORS}}
 node -e 'const fs=require("fs");const p="README.md";const s=fs.readFileSync(p,"utf8");for(const x of ["--dry-run","playwright"])if(!s.includes(x))throw Error(x);console.log("文本核对通过")'
 ```
 
-普通源码读取可复用同形状；路径只支持直接字面量或 const 直接绑定的静态字符串，不支持拼接或动态路径。验收器不承诺任意 JavaScript 都能证明只读，未知语法保守拒绝。此类文本检查不能替代功能或浏览器验收；不得删除关键词或启动合同外浏览器制造无关截图来通过检查。
+普通源码读取可复用同形状；路径只支持直接字面量或 const 直接绑定的静态字符串，不支持拼接或动态路径。含 `--dry-run` 字面量的只读豁免仍仅限 Markdown 文档，真实 dry-run 不获豁免。验收器不承诺任意 JavaScript 都能证明只读，未知语法保守拒绝。此类文本检查不能替代功能或浏览器验收；不得删除关键词或启动合同外浏览器制造无关截图来通过检查。
 
 ## 禁止
 - **不能拿单元测试当证据**：vitest / jest / mocha / npm test / node --test / playwright test 一律不算（那是 CI 的事）。你要的是真实运行的结果。
