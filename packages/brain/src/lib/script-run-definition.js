@@ -17,12 +17,16 @@ const same=(a,b)=>evidenceHash(a)===evidenceHash(b);
 const machine=host=>resolveMachineId(host)||host;
 function templateCommand(template,payload){
   requireValue(typeof template==='string'&&template.length<=8192,'固定脚本命令模板缺失或过长');
-  return template.replace(/\{\{([^{}]+)\}\}/g,(_,key)=>{
+  let applicable=true;
+  const rendered=template.replace(/\{\{([^{}]+)\}\}/g,(_,key)=>{
+    requireValue(['phone_serial','recovery_demand_id'].includes(key),'固定模板含未知参数');
     const value=payload[key];
+    if(value===undefined){applicable=false;return '';}
     requireValue((key==='phone_serial'&&typeof value==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(value))
       ||(key==='recovery_demand_id'&&UUID.test(value||'')),'固定脚本模板参数不可确认');
     return value;
   });
+  return applicable?rendered:null;
 }
 function expectedPath(workflow,activities){
   return workflow.payload.activities.flatMap(ref=>{
@@ -91,7 +95,11 @@ export async function startScriptDefinitionRun({task,spec,runId,context},pool){
     const patrol=workflow?.capability_id===PATROL_CAPABILITY&&PATROL_KEYS.has(workflow.key);
     const explicit=task.payload.workflow_definition;
     const current=workflow?.current_definition_version_id&&(await client.query('SELECT payload FROM workflow_definition_versions WHERE id=$1',[workflow.current_definition_version_id])).rows[0];
-    if(!patrol&&!explicit&&current?.payload.registration_protocol!==FREEZE_PROTOCOL){await client.query('COMMIT');return null;}
+    if(!patrol&&!explicit&&current?.payload.registration_protocol!==FREEZE_PROTOCOL){
+      const exists=(await client.query("SELECT to_regclass('run_definition_bindings') AS name")).rows[0]?.name;
+      const bound=exists&&(await client.query('SELECT 1 FROM run_definition_bindings WHERE run_id=$1',[runId])).rows.length>0;
+      if(!bound){await client.query('COMMIT');return null;}
+    }
     requireValue(workflow,'正式Workflow不存在');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,515))',[runId]);
     const prior=(await client.query('SELECT * FROM task_runs WHERE run_id=$1',[runId])).rows[0];
@@ -101,7 +109,12 @@ export async function startScriptDefinitionRun({task,spec,runId,context},pool){
       requireValue(fixed,'历史未绑定Run不可事后补挂当前定义');
       const identity=scriptRuntimeIdentity(task,spec,fixed.release,fixed.workflow,fixed.activities,runId,patrol);
       requireValue(fixed.binding.payload.runtime_snapshot_sha256===identity.runtime_snapshot_sha256,'同Run的执行脚本或来源已改变');
-      if(explicit)requireValue(['release_id','workflow_definition_version_id','snapshot_sha256'].every(k=>explicit[k]===fixed.binding[k]),'同Run不可切换固定定义');
+      if(explicit){
+        requireValue(['release_id','workflow_definition_version_id','snapshot_sha256'].every(k=>explicit[k]===fixed.binding[k]),'同Run不可切换固定定义');
+        for(const key of ['observation_id','runtime_snapshot_sha256','expected_path','attempt_key','workflow_id']){
+          if(explicit[key]!==undefined)requireValue(same(explicit[key],fixed.binding[key]??fixed.binding.payload[key]),'同Run显式声明与原冻结身份不符');
+        }
+      }
       requireValue((await getReleaseGate(client,fixed.release.id)).deployed,'原固定安装已漂移');
       await client.query('COMMIT');return {id:prior.id,run_id:runId,binding:fixed.binding,created:false};
     }
