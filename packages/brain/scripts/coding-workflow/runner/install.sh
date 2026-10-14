@@ -5,6 +5,7 @@
 # 用法：
 #   bash install.sh --dry-run                       # 只打印将写入的 plist 与将执行的命令，不落盘
 #   sudo env PATH="$PATH" bash install.sh           # 真装（需 root；PATH 透传以解析 node/git/gh/所选 provider）
+# 原服务disabled时拒绝安装；操作者明确启用后再重试，安装器不暗中启动禁用服务。
 #
 # 可覆盖：CODING_WF_RUN_USER（默认 administrator）、CODING_WF_USER_HOME（默认 /Users/<user>）、
 #         CODING_WF_REPO（默认 <home>/perfect21/cecelia-cw-runner）、CODING_WF_ORIGIN_URL、BRAIN_URL。
@@ -185,16 +186,15 @@ do_cmd chown "$RUN_USER" "$LOG_FILE"
 do_cmd env HOME="$USER_HOME" node "$HERE/runtime-install-guard.mjs"
 do_cmd install -m 644 -o root -g wheel "$PLIST_SRC" "$DEST"
 if [ "$DRY_RUN" -eq 1 ]; then
-  echo "launchctl bootout system/$LABEL || true"
-else
-  if launchctl print "system/$LABEL" >/dev/null 2>&1; then
-    launchctl bootout "system/$LABEL"
-  fi
+  echo "# 原服务disabled时在任何服务/配置动作前拒绝：runtime_install_disabled"
+  echo "# 以下由安装器持外锁执行；仅原已加载时bootout"
+  echo "launchctl bootout system/$LABEL"
+  do_cmd launchctl enable "system/$LABEL"
+  do_cmd launchctl bootstrap system "$DEST"
+  echo "# 随后恢复安装前disabled/enabled状态；失败恢复原plist/loaded状态"
 fi
-do_cmd launchctl bootstrap system "$DEST"
-if [ "$DRY_RUN" -eq 1 ]; then do_cmd launchctl enable "system/$LABEL"; fi
 
 if [ "$DRY_RUN" -eq 0 ]; then
   rm -f "$PLIST_SRC"
-  echo "已安装 ${LABEL}；核对：launchctl print system/$LABEL"
+  echo "已准备 ${LABEL} 配置；由持锁安装器加载并恢复原启用状态"
 fi
