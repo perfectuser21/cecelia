@@ -8,7 +8,7 @@ import { cleanTestEnv } from './helpers/sandbox.mjs';
 const entry = fileURLToPath(new URL('../runtime-health.mjs', import.meta.url));
 let root, home, account, bin, env;
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-health-'));
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cw-health-')));
   home = path.join(root, 'home'); account = path.join(root, 'account'); bin = path.join(root, 'bin');
   for (const dir of [home, account, bin]) fs.mkdirSync(dir);
   env = { ...cleanTestEnv(), HOME: home, CODING_WF_PROVIDER: 'codex', CODING_WF_CODEX_MODEL: 'gpt-6-sol', CODING_WF_JUDGE_MODEL: 'gpt-6-astra', CODING_WF_JUDGE_PROVIDER: 'codex', CODING_WF_CODEX_HOME: account, PATH: `${bin}:/usr/bin:/bin` };
