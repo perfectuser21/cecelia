@@ -5,6 +5,10 @@ import { checkTransition } from '../factory-ledger.js';
 import { resolveWorkflowConfig } from '../factory-workflow-config.js';
 import { parseFactoryContract } from '../../../scripts/factory-dispatcher/factory-dispatcher.js';
 
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
 const cfg = resolveWorkflowConfig('douyin_video_publish.android');
 const DAY = new Date('2026-10-11T06:00:00Z'); // 上海 14:00
 const NIGHT = new Date('2026-10-11T16:30:00Z'); // 上海 00:30
@@ -133,4 +137,19 @@ describe('时段与建单契约', () => {
     expect(spec.payload.headed_manual).toBe('true');
     expect(spec.payload.factory_dispatch).toBeUndefined();
   });
+});
+
+it('现行工厂smoke内嵌Node实际验证v2构建/缺材料阻断/gate-off兼容', () => {
+  const script = readFileSync(new URL('../../../scripts/smoke/factory-commander-route-smoke.sh', import.meta.url), 'utf8');
+  const body = script.match(/<<'NODE'\n([\s\S]*?)\nNODE\n/)[1];
+  const imports = body.slice(0, body.indexOf('const client ='));
+  const assertions = body.match(/  const cfg = [\s\S]*?(?=  const serial =)/)[0];
+  // 执行smoke自身的构建断言；不连接数据库、不派发任务或模拟业务PASS。
+  const output = execFileSync(process.execPath, ['--input-type=module', '-'], {
+    cwd: fileURLToPath(new URL('../../../', import.meta.url)), encoding: 'utf8', timeout: 10000,
+    input: `${imports}\nconst die=m=>{throw Error(m)};const ok=m=>console.log('PASS: '+m);\n${assertions}`,
+  });
+  expect(output).toContain('PASS: v2构建使用共享冻结定义及输入，不代表真实业务验收');
+  expect(output).toContain('PASS: 缺定义或输入时资源阻断，不降级旧协议');
+  expect(output).toContain('PASS: gate-off保留旧工厂建单兼容');
 });

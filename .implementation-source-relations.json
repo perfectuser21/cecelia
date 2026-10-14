@@ -881,11 +881,6 @@
       "owner_path": "packages/brain/src/lib/activity-judge.js",
       "path": "packages/brain/scripts/smoke/activity-judgments-smoke.sh",
       "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/lib/factory-pusher.js",
-      "path": "packages/brain/src/lib/__tests__/factory-pusher-smoke.test.js",
-      "role": "verification"
     }
   ]
 }
