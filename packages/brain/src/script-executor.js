@@ -33,7 +33,8 @@ import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { sshWithStdin, sshRun } from './lib/ssh-exec.js';
 import { sshTargetFor, resolveMachineId, listComputeWorkerIds } from './machine-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
-import { startRun } from './lib/task-run.js';
+import { startRun,finishRun } from './lib/task-run.js';
+import {startScriptDefinitionRun} from './lib/script-run-definition.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { isAllowed } from './circuit-breaker.js';
 import { recordDispatchResult } from './dispatch-stats.js';
@@ -349,6 +350,14 @@ export async function triggerScriptRun(task, deps = {}) {
     return { success: false, taskId: task.id, reason: 'script_spawn_failed', error: err.message };
   }
 
+  let definedRun;
+  try {
+    definedRun=await startScriptDefinitionRun({task,spec,runId,context:{host:spec.host,attempt,timeout_sec:spec.timeout_sec,env_keys:Object.keys(spec.env)}},pool);
+  } catch(error) {
+    await pool.query("UPDATE tasks SET status='blocked',error_message=$2,claimed_by=NULL,claimed_at=NULL,updated_at=NOW() WHERE id=$1 AND status IN ('queued','in_progress')",[task.id,'script_definition_unverified: '+error.message]);
+    return {success:false,taskId:task.id,reason:'script_definition_unverified',configError:true,taskStateHandled:true};
+  }
+
   // ssh 派发失败重试一次再判死。安全：远端 runner 自带 ALREADY 探针，第一次其实起来了的话第二次只回 ALREADY。
   const once = async () => {
     const out = await sshWithStdin(spawnFn, [...SSH_BASE_ARGS, target, 'sh -s'], runner);
@@ -364,6 +373,7 @@ export async function triggerScriptRun(task, deps = {}) {
     try {
       outcome = await once();
     } catch (second) {
+      if(definedRun)await finishRun({runId,status:'failed',error:'script_spawn_failed: '+second.message},{pool});
       return { success: false, taskId: task.id, reason: 'script_spawn_failed', error: `${first.message} | 重试: ${second.message}` };
     }
   }
@@ -384,7 +394,7 @@ export async function triggerScriptRun(task, deps = {}) {
     run_id: runId, host: spec.host, attempt, timeout_sec: spec.timeout_sec, env_keys: envKeys, already_running: alreadyRunning,
   });
   // 一次执行 = 一行 task_runs（棒 1 run 原语，fail-open）：ssh 已把脚本起到跑场机，此刻起算开始。
-  await startRun({
+  if(!definedRun)await startRun({
     taskId: task.id,
     runId,
     source: SCRIPT_SOURCE,

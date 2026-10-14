@@ -12,7 +12,7 @@ let fixture,db,workflow,calls;
 beforeEach(async()=>{
   fixture=await versionsDatabase();await fixture.migrate();db=fixture.db;
   await withLegacyNames(db,()=>db.query(migrationSql('515_release_definition_evidence.sql')));
-  await db.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_type text, ADD COLUMN IF NOT EXISTS executor_kind text,
+  await db.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_type text, ADD COLUMN IF NOT EXISTS executor_kind text, ADD COLUMN IF NOT EXISTS error_message text, ADD COLUMN IF NOT EXISTS claimed_by text, ADD COLUMN IF NOT EXISTS claimed_at timestamptz,
     ADD COLUMN IF NOT EXISTS payload jsonb DEFAULT '{}';
     CREATE TABLE task_events(task_id uuid,event_type text,payload jsonb,created_at timestamptz)`);
   const ids=await seedWorkflows(db,{keywordCapability:PATROL_CAPABILITY});workflow=ids.keyword;
