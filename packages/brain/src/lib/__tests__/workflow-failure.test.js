@@ -6,6 +6,15 @@ it('单行console前后缀及多条JSON片段不漏嵌套秘密',()=>{
  const safe=redactFailureText('probe started '+json+' console suffix '+json+' done');
  expect(safe).not.toContain('fake alpha beta');expect(safe).toContain('probe started');expect(safe).toContain('console suffix');expect(safe).toContain('done');
 });
+it.each(['\n',' '])('前后缀分隔%j时跨行pretty JSON先整片段脱敏，混合多个格式不泄露',separator=>{
+ const value={failure:{message:JSON.stringify({password:'fake alpha beta'})}};
+ const pretty=JSON.stringify(value,null,2),compact=JSON.stringify(value);
+ for(const fragments of [pretty,pretty+' middle '+compact,compact+' middle '+pretty]){
+  const safe=redactFailureText('prefix'+separator+fragments+separator+'suffix password="other-secret"');
+  expect(safe).not.toContain('fake alpha beta');expect(safe).not.toContain('other-secret');
+  expect(safe).toContain('prefix');expect(safe).toContain('suffix');
+ }
+});
 it('过深JSON字符串、多片段或超大日志有界省略，不抛或泄露尾部秘密',()=>{
  let nested=JSON.stringify({password:'deep-secret'});for(let i=0;i<13;i++)nested=JSON.stringify({message:nested});
  for(const input of [nested,'p '+Array.from({length:70},()=>JSON.stringify({message:'safe'})).join(' ')+' token=tail-secret',
