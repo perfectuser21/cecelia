@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { observeWorkflows } from '../workflow-observation.js';
+import { observeWorkflows,observedRun } from '../workflow-observation.js';
+
+it('失败详情带stage/code/message/evidence进入近期真实Run；历史未知不靠exit猜ADB',()=>{
+ const r={id:'id',run_id:'r',task_id:'task',workflow_id:'wf',status:'failed',context:{source:'script'},result:{exit_code:255,
+  business_receipt:{status:'failed',failure:{stage:'adb_connect',code:'ADB_UNREACHABLE',message:'offline',evidence:['host:/tmp/probe.json']}}}};
+ expect(observedRun(r)).toMatchObject({failure:{stage:'adb_connect',code:'ADB_UNREACHABLE',message:'offline',evidence:['host:/tmp/probe.json']}});
+ expect(observedRun({...r,result:{exit_code:255}}).failure).toBeNull();
+ for(const identity of [{task_id:'other'},{run_id:'previous'},{workflow_id:'other'}])expect(observedRun({...r,result:{business_receipt:{...r.result.business_receipt,...identity}}}).failure).toBeNull();
+ expect(observedRun({...r,status:'success',result:{business_receipt:{status:'completed',failure:r.result.business_receipt.failure}}}).failure).toBeNull();
+ for(const identity of [{serial:'other'},{source_revision:'different'}])expect(observedRun({...r,context:{workflow_snapshot:{phone_serial:'phone',source_revision:'fixed'}},result:{business_receipt:{...r.result.business_receipt,...identity}}}).failure).toBeNull();
+});
 
 const now = '2026-10-13T09:00:00Z';
 const task = (id, status='completed') => ({ id, workflow_id:'wf', status, title:id, notion_id:`page-${id}`, payload:{} });

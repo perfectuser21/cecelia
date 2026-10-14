@@ -194,3 +194,38 @@ it('Run关系schema使用正式库，保留已有错误目标并停止推送',as
  expect(mockNotionReq.mock.calls.some(c=>c[1]==='/pages')).toBe(false);
  expect(calls.some(c=>c.sql.includes('FROM task_runs r'))).toBe(false);
 });
+it('Run Error优先同身份结构化具体失败，成功不显示失败详情',async()=>{
+ const {buildTaskRunNotionProperties}=await import('../notion-push-sync.js');
+ const row={...RUN,status:'failed',error_message:'script_exit_255',result:{exit_code:255,business_receipt:{status:'failed',failure:{stage:'adb_connect',code:'ADB_UNREACHABLE',message:'device offline',evidence:['host:/tmp/probe.json']}}}};
+ const content=buildTaskRunNotionProperties(row).Error.rich_text.map(t=>t.text.content).join('');
+ expect(content).toContain('adb_connect');expect(content).toContain('ADB_UNREACHABLE');expect(content).toContain('device offline');expect(content).toContain('host:/tmp/probe.json');
+ expect(buildTaskRunNotionProperties({...row,status:'success',error_message:null,result:{business_receipt:{status:'completed',failure:row.result.business_receipt.failure}}})).not.toHaveProperty('Error');
+});
+it.each(['device unauthorized','device offline','device not found'])('Run Error直接展示ADB具体诊断 %s 和执行上下文',async diagnostic=>{
+ const {buildTaskRunNotionProperties}=await import('../notion-push-sync.js');
+ const failure={stage:'adb_preflight',code:'ADB_CONNECT_FAILED',message:'ADB无法连接设备',host:'xian-m4',exit_code:1,
+  timeout_sec:30,error_type:'CalledProcessError',truncated:false,stderr:diagnostic,stdout:'must-not-prefer-stdout'};
+ const row={...RUN,status:'failed',result:{business_receipt:{status:'failed',failure}}};
+ const text=buildTaskRunNotionProperties(row).Error.rich_text.map(t=>t.text.content).join('');
+ for(const part of [diagnostic,'host=xian-m4','exit_code=1','timeout_sec=30','CalledProcessError','truncated=false'])expect(text).toContain(part);
+ expect(text).not.toContain('must-not-prefer-stdout');
+});
+it('Run Error无stderr时回退stdout，诊断脱敏限长并明确摘要截断，原账不改变',async()=>{
+ const {buildTaskRunNotionProperties}=await import('../notion-push-sync.js');
+ const failure={stage:'ssh',code:'REMOTE_FAILED',message:'远端步骤失败 '+ 'm'.repeat(1000),host:'xian-m4',exit_code:255,
+  stdout:'Connection refused token=fake-secret '+ 'd'.repeat(2000),evidence:Array.from({length:10},()=>'/proof/'+ 'p'.repeat(490)),truncated:false};
+ const row={...RUN,status:'failed',result:{business_receipt:{status:'failed',failure}}};
+ const before=JSON.stringify(row),text=buildTaskRunNotionProperties(row).Error.rich_text.map(t=>t.text.content).join('');
+ expect(text).toContain('stdout: Connection refused');expect(text).not.toContain('fake-secret');
+ expect(text).toContain('host=xian-m4');expect(text).toContain('exit_code=255');expect(text).toContain('truncated=true');
+ expect(text.length).toBeLessThanOrEqual(1900);expect(JSON.stringify(row)).toBe(before);
+});
+it.each(['failed','timeout'])('历史%s无失败证据时Error明确未知，旧运输错误保留且不猜ADB',async status=>{
+ const {buildTaskRunNotionProperties}=await import('../notion-push-sync.js');
+ for(const error_message of [null,'script_exit_255']){
+  const p=buildTaskRunNotionProperties({...RUN,status,error_message,result:{exit_code:255}});
+  const text=p.Error?.rich_text.map(t=>t.text.content).join('');
+  expect(text).toContain('具体原因未知（该次运行未保存失败证据）');expect(text).not.toContain('ADB');
+  if(error_message)expect(text).toContain(error_message);
+ }
+});

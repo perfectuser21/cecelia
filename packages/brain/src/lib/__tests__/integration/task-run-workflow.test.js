@@ -3,7 +3,30 @@ import pg from 'pg';
 import { beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { DB_DEFAULTS } from '../../../db-config.js';
 import { startRun, backfillWorkflowRunIdentity } from '../../task-run.js';
+import { settleScriptRun } from '../../../script-settlement.js';
+import { observedRun } from '../../../projection/workflow-observation.js';
+import { buildWorkflowBodyBlock } from '../../../projection/workflow-body.js';
 let admin, db, schema, workflow, other;
+it('真PG失败结算冻结诊断，同一Run重结算不覆盖；Workflow正文读到同一证据',async()=>{
+ await db.query(`ALTER TABLE tasks ADD COLUMN status text DEFAULT 'in_progress',ADD COLUMN claimed_by text,ADD COLUMN claimed_at timestamptz,ADD COLUMN updated_at timestamptz;
+  ALTER TABLE task_runs ADD COLUMN error_message text;
+  CREATE TABLE task_events(task_id uuid,event_type text,payload jsonb,created_at timestamptz)`);
+ const payload={workflow_id:workflow,phone_serial:'fixture-phone',source_revision:'fixed',env:{TOKEN:'fixture-secret'}};
+ const id=await task(payload),runId=`script-${id}-a1`;
+ await run(id,runId);
+ const receipt={task_id:id,run_id:runId,workflow_id:workflow,serial:'fixture-phone',source_revision:'fixed',status:'failed',
+  failure:{stage:'adb_connect',code:'ADB_UNREACHABLE',message:'offline token=fixture-secret',stderr:'ssh refused',evidence:['fixture:/probe.json']}};
+ expect(await settleScriptRun(db,{id,payload},{exit:255,stderr:JSON.stringify(receipt)},{hostId:'fixture',runId})).toBe('retried');
+ const saved=(await db.query('SELECT * FROM task_runs WHERE run_id=$1',[runId])).rows[0];
+ expect(saved.status).toBe('failed');expect(saved.result.business_receipt.failure).toMatchObject({stage:'adb_connect',code:'ADB_UNREACHABLE',evidence:['fixture:/probe.json']});
+ expect(JSON.stringify(saved)).not.toContain('fixture-secret');
+ const recent=observedRun(saved);expect(recent.failure.message).toContain('offline');
+ const body=JSON.stringify(buildWorkflowBodyBlock({recentRuns:[recent]}));
+ expect(body).toContain('ADB_UNREACHABLE');expect(body).toContain('fixture:/probe.json');
+ receipt.failure.message='newer attempt must not overwrite';
+ await settleScriptRun(db,{id,payload},{exit:1,stdout:JSON.stringify(receipt)},{hostId:'fixture',runId});
+ expect((await db.query('SELECT result FROM task_runs WHERE run_id=$1',[runId])).rows[0].result).toEqual(saved.result);
+});
 beforeEach(async () => {
   if (DB_DEFAULTS.database === 'cecelia') throw new Error('禁止测试连接生产');
   admin = new pg.Client(DB_DEFAULTS); await admin.connect();

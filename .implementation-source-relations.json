@@ -696,6 +696,7 @@
     {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "packages/brain/src/lib/__tests__/runtime-version-graph.test.js", "role": "verification"},
     
     {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "cp-10132012-runtime-version-graph.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "cp-10132012-runtime-version-graph.dod.md", "role": "documentation"}
+    {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "cp-10132012-runtime-version-graph.dod.md", "role": "documentation"},
+    {"owner_path": "packages/brain/src/lib/workflow-failure.js", "path": "packages/brain/src/lib/__tests__/workflow-failure.test.js", "role": "verification"}
   ]
 }
