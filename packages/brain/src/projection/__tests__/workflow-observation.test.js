@@ -65,7 +65,7 @@ describe('真实Workflow观测',()=>{
   it('固定定义Run使用不可变binding证据，保留起跑声明而不套当前版本',()=>{
     const d=data();d.run_records=[{...run('a1','a'),context:{bound_definition:{id:'frozen-definition',version:'0.0.9',source_commit:'frozen-source'}}},
       {...run('b1','b'),context:{definition_preflight:{workflow_definition_version_id:'preflight-id'}}}];
-    const rt=observeWorkflows(d).get('wf');expect(rt.recentRuns.find(r=>r.run_id==='a1')).toMatchObject({workflow_version:'0.0.9',definition_version_id:'frozen-definition',source_revision:'frozen-source'});
+    const rt=observeWorkflows(d).get('wf');expect(rt.recentRuns.find(r=>r.run_id==='a1')).toMatchObject({workflow_version:'0.0.9',definition_version_id:'frozen-definition',source_revision:'未知',definition_source_revision:'frozen-source'});
     expect(rt.recentRuns.find(r=>r.run_id==='b1').definition_version_id).toBe('preflight-id');
   });
   it('冻结业务回执也必须属于当前Workflow',()=>{
@@ -77,6 +77,6 @@ describe('真实Workflow观测',()=>{
 it('Run四角色源码只来自本次冻结上下文或本次定义绑定，旧Run不借当前Workflow',()=>{
  const row={run_id:'mixed',task_id:'t',context:{workflow_snapshot:{source_revision:'4f-original',entry_source_revision:'f38-entry',phone_source_revision:'4f-phone',control_source_revision:'f38-control',definition_source_revision:'D-definition'}},definition_version:{id:'def-id',source_commit:'binding-D'}};
  expect(observedRun(row)).toMatchObject({source_revision:'4f-original',entry_source_revision:'f38-entry',phone_source_revision:'4f-phone',control_source_revision:'f38-control',definition_source_revision:'D-definition'});
- expect(observedRun({run_id:'old',definition_version:{id:'old-binding',source_commit:'old-D'},workflow:{source_commit:'current-D'}})).toMatchObject({entry_source_revision:'未知',phone_source_revision:'未知',control_source_revision:'未知',definition_source_revision:'old-D'});
+ expect(observedRun({run_id:'old',definition_version:{id:'old-binding',source_commit:'old-D'},workflow:{source_commit:'current-D'}})).toMatchObject({source_revision:'未知',entry_source_revision:'未知',phone_source_revision:'未知',control_source_revision:'未知',definition_source_revision:'old-D'});
  expect(observedRun({run_id:'old',workflow:{source_commit:'current-D'}})).toMatchObject({entry_source_revision:'未知',phone_source_revision:'未知',control_source_revision:'未知',definition_source_revision:'未知'});
 });

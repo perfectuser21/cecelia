@@ -237,14 +237,13 @@ it('Run来源正文区分四类SHA，旧来源属性和定义UUID/版本保留�
  const text=JSON.stringify(buildTaskRunNotionBodyBlock(row));
  for(const line of ['执行入口源码：f38-entry','手机执行源码：4f-phone','控制器源码：f38-control','定义来源：D-definition','fixed-definition-id','1.2.3'])expect(text).toContain(line);
  expect(JSON.stringify(buildTaskRunNotionProperties(row)['源码版本'])).toContain('4f-original');
- const old=JSON.stringify(buildTaskRunNotionBodyBlock({...RUN,workflow:{source_revision:'current-not-for-old'}}));
+ const old=JSON.stringify(buildTaskRunNotionBodyBlock({...RUN,workflow:{source_revision:'current-not-for-old'},result:{business_receipt:{control_source_revision:'receipt-only-not-frozen'}}}));
  for(const role of ['执行入口源码','手机执行源码','控制器源码','定义来源'])expect(old).toContain(`${role}：未知`);
- expect(old).not.toContain('current-not-for-old');
+ expect(old).not.toContain('current-not-for-old');expect(old).not.toContain('receipt-only-not-frozen');
 });
 it('正式Run推送也同步已有页来源正文，保人工块且幂等唯一',async()=>{
  const {pushTaskRunsForTest}=await import('../notion-push-sync.js');
- const pool=makePool({registered:true}),original=pool.query;
- pool.query=vi.fn(async(sql,args)=>String(sql).includes('SELECT id,notion_id FROM task_runs')?{rows:[{id:RUN.id,notion_id:'existing-run-page'}]}:original(sql,args));
+ const pool=makePool({registered:true});
  const blocks=[{id:'human',type:'paragraph',paragraph:{rich_text:[{text:{content:'人工备注'}}]}}];let next=0;
  mockNotionReq.mockImplementation(async(_t,path,method,body)=>{
   if(path==='/databases/db-runs'&&method==='GET')return {properties:{}};
@@ -262,4 +261,8 @@ it('正式Run推送也同步已有页来源正文，保人工块且幂等唯一'
  expect(blocks).toHaveLength(2);expect(JSON.stringify(blocks)).toContain('执行入口源码');
  await pushTaskRunsForTest(pool,'fake-token');
  expect(blocks).toHaveLength(2);expect(blocks[0].id).toBe('human');expect(next).toBe(1);
+ const stale=structuredClone(blocks[1]);stale.id='stale-owned';stale.toggle.children[0].paragraph.rich_text=[{text:{content:'过时源码'}}];blocks.push(stale);
+ await pushTaskRunsForTest(pool,'fake-token');
+ expect(blocks).toHaveLength(2);expect(blocks[0].id).toBe('human');expect(next).toBe(1);
+ expect(mockNotionReq.mock.calls.some(c=>c[1]==='/blocks/stale-owned'&&c[2]==='DELETE')).toBe(true);
 });
