@@ -6,6 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseEvidence } from './evidence.mjs';
 import { BLOCKING } from './review.mjs';
+import { isReadonlyDocAssertion } from './qa-doc-assertion.mjs';
+import { isReadonlyQaCommand } from './readonly-qa-ast.mjs';
 
 const Q_RE = /^Q-\d+$/;
 export const CANNOT_VERIFY = 'CANNOT_VERIFY';
@@ -112,7 +114,8 @@ export function productionTouches(executions, patterns = null) {
 }
 
 // 恒真命令（审计 #36，旧 evaluator 反作弊红线 + proposer 作弊反例清单）：吞掉失败、假执行、只回显自己的结论
-const SWALLOW_RE = /\|\|\s*(?:true|:)\s*$|;\s*exit\s+0\s*$|--dry-run\b/;
+const SWALLOW_RE = /\|\|\s*(?:true|:)\s*$|;\s*exit\s+0\s*$/;
+const DRY_RUN_RE = /--dry-run\b/;
 const ECHO_ONLY_RE = /^\s*(?:echo|printf|true|:)(?:\s|$)/;
 
 /** 判 PASS 却用恒真命令的条目 id（FAIL 条目不管：它已经在报问题）。 */
@@ -120,7 +123,8 @@ export function trivialAssertions(items) {
   return items.filter((i) => i.verdict === 'PASS').filter((i) => {
     const lines = String(i.command ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
     if (lines.length === 0) return false;
-    return lines.some((l) => SWALLOW_RE.test(l)) || lines.every((l) => ECHO_ONLY_RE.test(l));
+    return lines.some((l) => SWALLOW_RE.test(l)) || lines.every((l) => ECHO_ONLY_RE.test(l))
+      || (DRY_RUN_RE.test(i.command) && !isReadonlyDocAssertion(i.command));
   }).map((i) => i.id);
 }
 
@@ -131,6 +135,7 @@ const IMAGE_PATH_RE = /[\w./-]+\.(?:png|jpe?g|webp)\b/gi;
 
 /** 条目是否用了浏览器：命令里直接出现，或跑的脚本是本次会话写出来、内容引用浏览器库的。 */
 function usesBrowser(command, executions) {
+  if (isReadonlyQaCommand(command)) return false;
   if (BROWSER_RE.test(command)) return true;
   const scripts = [...command.matchAll(/([\w./-]+\.(?:mjs|cjs|js|ts|py))\b/g)].map((m) => path.basename(m[1]));
   return scripts.some((name) => executions.some((e) => String(e.command).includes(name) && BROWSER_RE.test(String(e.command))));
