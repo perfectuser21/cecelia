@@ -1,0 +1,180 @@
+{
+  "report_sha256": "97794ef86160f9d6903bf2d70538cfda26c4d21a1f5b526edfba74146b719930",
+  "native_sha256": "f8c911379ee824cf0f3a1ab57c42767772e882d5c2a749820cc6449d62abc70a",
+  "items": [
+    {
+      "id": "T-1",
+      "covers": [
+        "Q-1"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"CODING_WF_PROVIDER=codex\",\"CODING_WF_CODEX_MODEL=gpt-6-sol\",\"CODING_WF_JUDGE_PROVIDER=codex\",\"CODING_WF_JUDGE_MODEL=gpt-6-astra\",\"CODING_WF_REPOS=cecelia\",\"--dry-run\",\"runtime_install_disabled\"])if(!s.includes(x))throw Error(x);console.log(\"安装手册核对通过\")'",
+      "output": "安装手册核对通过"
+    },
+    {
+      "id": "T-2",
+      "covers": [
+        "Q-1"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/install.sh\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"CODING_WF_PROVIDER:-codex\",\"CODING_WF_REPOS:-cecelia\",\"CODING_WF_CODEX_MODEL:-gpt-6-sol\",\"CODING_WF_JUDGE_PROVIDER:-codex\",\"CODING_WF_JUDGE_MODEL:-gpt-6-astra\",\"CODING_WF_USER_HOME:-/Users/$RUN_USER\",\"runtime_install_disabled\"])if(!s.includes(x))throw Error(x);console.log(\"安装器源码核对通过\")'",
+      "output": "安装器源码核对通过"
+    },
+    {
+      "id": "T-3",
+      "covers": [
+        "Q-2"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"原服务 disabled\",\"不能临时绕过禁用门\",\"账号失效\",\"不改用 API key\",\"Claude\",\"旧锁\",\"核对锁目录的 PID\",\"不按年龄删除\"])if(!s.includes(x))throw Error(x);console.log(\"故障判读核对通过\")'",
+      "output": "故障判读核对通过"
+    },
+    {
+      "id": "T-4",
+      "covers": [
+        "Q-2"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/runtime-install.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"print-disabled\",\"runtime_install_disabled\",\"runtime_install_disabled_state_unknown\",\"disabledBefore\",\"strictLock\"])if(!s.includes(x))throw Error(x);console.log(\"禁用门源码核对通过\")'",
+      "output": "禁用门源码核对通过"
+    },
+    {
+      "id": "T-5",
+      "covers": [
+        "Q-2"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/runtime-health.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"CODEX_HOME: env.CODING_WF_CODEX_HOME\",\"OPENAI_API_KEY\",\"CODEX_API_KEY\",\"Logged in using ChatGPT\",\"runtime_codex_chatgpt_login_required\",\"authentication: \\u0027chatgpt\\u0027\"])if(!s.includes(x))throw Error(x);console.log(\"账号健康源码核对通过\")'",
+      "output": "账号健康源码核对通过"
+    },
+    {
+      "id": "T-6",
+      "covers": [
+        "Q-3"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"runtime-health.mjs\",\"ok:true\",\"authentication:\",\"launchctl print system/com.cecelia.coding-workflow-runner\",\"launchctl print-disabled system\",\"status.mjs --json\",\"CODING_WF_USER_HOME=/Volumes/runner-home\",\"/Volumes/runner-home/Library/Logs/coding-workflow-runner.log\",\"StandardOutPath\",\"StandardErrorPath\",\"tail -n 100\"])if(!s.includes(x))throw Error(x);console.log(\"健康与日志手册核对通过\")'",
+      "output": "健康与日志手册核对通过"
+    },
+    {
+      "id": "T-7",
+      "covers": [
+        "Q-3"
+      ],
+      "verdict": "PASS",
+      "command": "node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir sprints/10141904-cw-3a27ca36/qa-r2/empty-logs --json | jq -e 'if . == [] then . else error(\"expected empty receipts\") end'",
+      "output": "[]"
+    },
+    {
+      "id": "T-8",
+      "covers": [
+        "Q-3"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/com.cecelia.coding-workflow-runner.plist.tmpl\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"StandardOutPath\",\"StandardErrorPath\",\"__LOG__\",\"UserName\",\"StartInterval\",\"__INTERVAL__\"])if(!s.includes(x))throw Error(x);console.log(\"服务模板源码核对通过\")'",
+      "output": "服务模板源码核对通过"
+    },
+    {
+      "id": "T-9",
+      "covers": [
+        "Q-4"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\".cecelia/hb.sh\",\".cecelia/lights/<安全文件名>.live\",\"git merge --ff-only\",\"源码脏\",\"本地 ahead 或分叉\",\"心跳冲突\",\"不执行 `git reset --hard` 或 `git clean`\",\"不按年龄删除\",\"确认所有权\"])if(!s.includes(x))throw Error(x);console.log(\"自更新与旧锁手册核对通过\")'",
+      "output": "自更新与旧锁手册核对通过"
+    },
+    {
+      "id": "T-10",
+      "covers": [
+        "Q-4"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/runtime-update.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\".cecelia/hb.sh\",\"lights\",\"not_main\",\"git_operation_in_progress\",\"dirty\",\"merge-base\",\"--is-ancestor\",\"runtime_collision\",\"--ff-only\"])if(!s.includes(x))throw Error(x);console.log(\"更新源码核对通过\")'",
+      "output": "更新源码核对通过"
+    },
+    {
+      "id": "T-11",
+      "covers": [
+        "Q-5"
+      ],
+      "verdict": "PASS",
+      "command": "PREVIEW_URL=http://localhost:5301; curl -fsS \"$PREVIEW_URL/api/brain/health\" | jq -e --arg sha \"$(git rev-parse HEAD)\" 'if .git_sha == $sha then . else error(\"preview git_sha mismatch\") end'",
+      "output": "{\n  \"status\": \"healthy\",\n  \"runtime\": {\n    \"isolated\": true,\n    \"background_automation\": false\n  },\n  \"version\": \"1.432.2\",\n  \"xian_bridge_status\": \"disabled\",\n  \"local_execution\": {\n    \"enabled\": false,\n    \"role\": \"disabled\",\n    \"guard\": \"harness-skill-relay.spawnSkillRelaySession\",\n    \"reason\": \"runtime_isolated\"\n  },\n  \"uptime\": 5405,\n  \"uptime_seconds\": 5405,\n  \"active_pipelines\": 0,\n  \"evaluator_stats\": {\n    \"total_runs\": 0,\n    \"passed\": 0,\n    \"failed\": 0,\n    \"last_run_at\": null\n  },\n  \"tick_stats\": {\n    \"total_executions\": 0,\n    \"last_executed_at\": null,\n    \"last_duration_ms\": null\n  },\n  \"organs\": {\n    \"scheduler\": {\n      \"status\": \"stopped\",\n      \"enabled\": true,\n      \"last_tick\": null,\n      \"max_concurrent\": 16\n    },\n    \"circuit_breaker\": {\n      \"status\": \"all_closed\",\n      \"open\": [],\n      \"half_open\": [],\n      \"states\": {\n        \"cecelia-run\": {\n          \"state\": \"CLOSED\",\n          \"failures\": 1,\n          \"lastFailureAt\": 1782479035149,\n          \"openedAt\": null\n        }\n      }\n    },\n    \"event_bus\": {\n      \"status\": \"active\"\n    },\n    \"notifier\": {\n      \"status\": \"unconfigured\",\n      \"channel\": \"none\"\n    },\n    \"planner\": {\n      \"status\": \"v2\"\n    }\n  },\n  \"docker_runtime\": {\n    \"enabled\": false,\n    \"status\": \"disabled\",\n    \"reachable\": false,\n    \"version\": null,\n    \"error\": null,\n    \"reason\": \"runtime_isolated\"\n  },\n  \"fleet_transport\": {\n    \"enabled\": false,\n    \"status\": \"disabled\",\n    \"reason\": \"runtime_isolated\",\n    \"shared_secret_configured\": false,\n    \"worker_machines\": []\n  },\n  \"git_sha\": \"47b2a5e590e1ac388e82c41d63662af10a19a916\",\n  \"timestamp\": \"2026-10-14T14:19:54.881Z\"\n}"
+    },
+    {
+      "id": "T-12",
+      "covers": [
+        "Q-5"
+      ],
+      "verdict": "PASS",
+      "command": "PREVIEW_URL=http://localhost:5301; curl -fsS \"$PREVIEW_URL/api/brain/health\" | jq -e --arg sha \"$(git rev-parse HEAD)\" 'if .git_sha == $sha then {status,git_sha} else error(\"preview git_sha mismatch\") end'",
+      "output": "{\n  \"status\": \"healthy\",\n  \"git_sha\": \"47b2a5e590e1ac388e82c41d63662af10a19a916\"\n}"
+    },
+    {
+      "id": "T-13",
+      "covers": [
+        "Q-5"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"PR 编号和 40 位 head SHA\",\"PREVIEW_URL\",\"CURL_HOME\",\"Unix socket\",\"同源 HTTP API\",\"隔离 Chromium\",\"跨源重定向\",\"WebSocket\",\"serviceWorkers: '\\''block'\\''\",\"CANNOT_VERIFY\"])if(!s.includes(x))throw Error(x);console.log(\"预览边界手册核对通过\")'",
+      "output": "预览边界手册核对通过"
+    },
+    {
+      "id": "T-14",
+      "covers": [
+        "Q-5"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/lib/preview-bridge.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"headSha\",\"prNumber\",\"/api/brain/health\",\"preview_sha_mismatch\",\".curlrc\",\"unix-socket\",\"preview_redirect_forbidden\",\"CONNECT\",\"upgrade\"])if(!s.includes(x))throw Error(x);console.log(\"预览桥源码核对通过\")'",
+      "output": "预览桥源码核对通过"
+    },
+    {
+      "id": "T-15",
+      "covers": [
+        "Q-6"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"playwright-1.62.1/node_modules\",\"playwright-core\",\"integrity\",\"test -L\",\"chromium.launch({headless:true,args:\",\"--single-process\",\"--no-zygote\",\"await b.close()\",\"preview_browser_unavailable\",\"automerge=false\",\"PR #2132\",\"人工放行\"])if(!s.includes(x))throw Error(x);console.log(\"依赖与人工放行手册核对通过\")'",
+      "output": "依赖与人工放行手册核对通过"
+    },
+    {
+      "id": "T-16",
+      "covers": [
+        "Q-6"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/lib/preview-browser.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"preview_browser_unavailable\",\"chromium.launch\",\"--single-process\",\"--no-zygote\",\"serviceWorkers: \\u0027block\\u0027\",\"routeWebSocket\",\"origin_blocked\"])if(!s.includes(x))throw Error(x);console.log(\"浏览器隔离源码核对通过\")'",
+      "output": "浏览器隔离源码核对通过"
+    },
+    {
+      "id": "T-17",
+      "covers": [
+        "Q-6"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/repos.json\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"zenithjoy-workspace\",\"\\\"automerge\\\": false\"])if(!s.includes(x))throw Error(x);console.log(\"仓库合并配置核对通过\")'",
+      "output": "仓库合并配置核对通过"
+    },
+    {
+      "id": "T-18",
+      "covers": [
+        "Q-6"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/runtime-deps/package-lock.json\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"node_modules/playwright\",\"node_modules/playwright-core\",\"node_modules/acorn\",\"\\\"version\\\": \\\"1.62.1\\\"\",\"\\\"version\\\": \\\"8.16.0\\\"\",\"\\\"integrity\\\": \\\"sha512-\"])if(!s.includes(x))throw Error(x);console.log(\"依赖锁文件核对通过\")'",
+      "output": "依赖锁文件核对通过"
+    },
+    {
+      "id": "X-1",
+      "covers": [
+        "Q-3"
+      ],
+      "verdict": "PASS",
+      "command": "node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir sprints/10141904-cw-3a27ca36/qa-r2/nonexistent-logs --json | jq -e 'if . == [] then . else error(\"expected empty receipts\") end'",
+      "output": "[]",
+      "severity": "",
+      "scene": "运维人员查询一个不存在的回执目录，命令仍返回空数组；手册已提醒空数组不代表服务健康。"
+    }
+  ],
+  "pollutingCommand": "/bin/zsh -lc \"rg -n 'CODING_WF_|runtime_install_disabled|disabled|playwright|integrity|automerge|2132|merge --ff-only|hb.sh|lights|StandardOutPath|login status|ChatGPT|preview_sha_mismatch|CANNOT_VERIFY|WebSocket|Service Worker|cross.origin|跨源|同源' packages/brain/scripts/coding-workflow/runner/install.sh packages/brain/scripts/coding-workflow/runner/runtime-install.mjs packages/brain/scripts/coding-workflow/runner/runtime-install-guard.mjs packages/brain/scripts/coding-workflow/runner/runtime-health.mjs packages/brain/scripts/coding-workflow/runner/runtime-update.mjs packages/brain/scripts/coding-workflow/runner/runtime-lock.mjs packages/brain/scripts/coding-workflow/runner/runtime-launch.mjs packages/brain/scripts/coding-workflow/runner/status.mjs packages/brain/scripts/coding-workflow/runner/com.cecelia.coding-workflow-runner.plist.tmpl packages/brain/scripts/coding-workflow/activities/evaluate.mjs packages/brain/scripts/coding-workflow/runner/lib/preview-bridge.mjs packages/brain/scripts/coding-workflow/runner/lib/preview-browser.mjs packages/brain/scripts/coding-workflow/runner/lib/codex-session.mjs packages/brain/scripts/coding-workflow/runner/lib/merge-gate.mjs packages/brain/scripts/coding-workflow/repos.json\""
+}
