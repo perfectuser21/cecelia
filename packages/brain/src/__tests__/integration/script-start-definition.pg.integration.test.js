@@ -57,3 +57,29 @@ it('真实freeze-v1及已部署release在首次业务SSH之前原子绑定完整
   expect(bindings[0].expected_path).toHaveLength(2);
   expect(bindings[0].expected_path[1].step_id).toBe(fixture.activities[0].payload.steps[0].step_id);
 });
+async function managedDependencies(){
+  await db.query(`CREATE TABLE harness_attempts(id uuid,status text,machine_id text,actual_machine_id text,requested_machine_id text);
+    CREATE TABLE harness_attempt_cleanup_outbox(attempt_id uuid,status text,target_machine_id text)`);
+  await db.query(migrationSql('501_capacity_reservations.sql'));
+  const observed=[];
+  const client={capabilities:async()=>({worker_id:'private-worker',worker_boot_id:'private-boot',profiles:{harmless:'c'.repeat(64)}}),
+    start:async(host,body)=>{
+      calls.push('worker.start');observed.push((await db.query('SELECT * FROM run_definition_bindings WHERE run_id=$1',[body.owner_key])).rows);
+      return {receipt:{status:'running',container_id:'d'.repeat(64),worker_id:'private-worker',worker_boot_id:'private-boot'}};
+    }};
+  return {observed,deps:{pool:db,env:{SCRIPT_MANAGED_MACHINES:'us-mac-m4'},managed:{executionDirectory:false,client,
+    collectSnapshot:async()=>({verified:true,machine:'us-mac-m4',captured_at:Date.now(),expires_at:Date.now()+60000,capacity:{ok:true,physical_base_slots:6,effective_base_slots:6}})}}};
+}
+it('正式定义缺失时managed预约也不得绕过绑定调用worker.start',async()=>{
+  const t=await task({managed_script:{profile:'harmless'}});const {deps}=await managedDependencies();
+  const result=await triggerScriptRun(t,deps);
+  expect(calls).toEqual([]);expect(result).toMatchObject({success:false,reason:'script_definition_unverified'});
+});
+it('managed首次worker.start前真实Run和完整definition binding已经提交',async()=>{
+  await fixture.close();fixture=await scriptDefinitionDatabase();db=fixture.db;workflow=fixture.workflow.workflow_id;
+  const t=await task({cmd:fixture.command,source_revision:fixture.definition.source.revision,managed_script:{profile:'harmless'}});
+  const {deps,observed}=await managedDependencies();const result=await triggerScriptRun(t,deps);
+  expect(calls).toEqual(['worker.start']);expect(observed[0]).toHaveLength(1);
+  expect(observed[0][0]).toMatchObject({workflow_id:workflow,release_id:fixture.release.id});
+  expect(result).toMatchObject({success:true});
+});
