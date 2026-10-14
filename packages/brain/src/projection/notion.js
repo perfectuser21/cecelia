@@ -143,7 +143,7 @@ export async function syncNotionEntity(pool, event, { executionBodyDeadline = Da
   if (event.entity_type === 'tasks') {
     const body = await syncTaskExecutionBodies(pool, { token:config.token, taskDbId:config.taskDbId, taskIds:[entity.id], deadline:executionBodyDeadline });
     if (body.failed) console.warn('[task-execution-body] Task正文待重试', body.errors);
-    if (body.failed || body.pending || !body.synced) return { externalId, skipped:true, reason:'task_execution_body_pending' };
+    if (!body.completedTaskIds.includes(entity.id)) return { externalId, skipped:true, reason:'task_execution_body_pending' };
   }
   return { externalId };
 }

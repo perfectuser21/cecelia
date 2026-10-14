@@ -47,11 +47,11 @@ export async function queueTaskExecutionBodies(pool,taskIds,deadline){
 }
 /** 正式血管周期消费最多10项；同Task锁、共享deadline及成功nonce CAS。 */
 export async function syncTaskExecutionBodies(pool,{token,notionReq=defaultNotionReq,taskIds=[],taskDbId,deadline=Date.now()+8000}={}){
- const stat={synced:0,pending:0,failed:0,skipped:0,errors:[]};
+ const stat={synced:0,pending:0,failed:0,skipped:0,errors:[],completedTaskIds:[]};
  if(Date.now()>=deadline)return{...stat,pending:new Set(taskIds).size};
  if(!token||!uuid(taskDbId))return{...stat,pending:new Set(taskIds).size};
  let pending;
- try{await queueTaskExecutionBodies(pool,taskIds,deadline);pending=(await metadata(pool,"SELECT key,value_json FROM working_memory WHERE key LIKE 'task_execution_body_pending:%' ORDER BY updated_at,key LIMIT 10",[],deadline)).rows;}
+ try{await queueTaskExecutionBodies(pool,taskIds,deadline);pending=(await metadata(pool,"SELECT key,value_json FROM working_memory WHERE starts_with(key,$1) ORDER BY updated_at,key LIMIT 10",[PENDING_PREFIX],deadline)).rows;}
  catch(e){return{...stat,failed:1,errors:[{error:e.message}]};}
  for(let index=0;index<pending.length;index++){
   const entry=pending[index],id=entry.value_json?.task_id;
@@ -80,7 +80,7 @@ export async function syncTaskExecutionBodies(pool,{token,notionReq=defaultNotio
    if(compact(page.id)!==compact(task.notion_id)||page.archived||page.in_trash||compact(page.parent?.database_id)!==compact(taskDbId)||!taskPageIdentity(page,id))throw Error('Task页面Brain ID或数据库身份不符');
    await syncManagedBodyBlock(token,task.notion_id,buildTaskExecutionBlock({task,workflows,runs,totalRuns:runs[0]?.total_runs??0}),request,marker(id));stat.synced++;
    complete=runs.every(r=>r.notion_id)&&workflows.length===workflowIds.length&&workflows.every(w=>w.notion_id);
-   if(complete)await metadataOn(c,'DELETE FROM working_memory WHERE key=$1 AND value_json=$2::jsonb',[entry.key,JSON.stringify(entry.value_json)],deadline);else stat.pending++;
+   if(complete){const removed=await metadataOn(c,'DELETE FROM working_memory WHERE key=$1 AND value_json=$2::jsonb',[entry.key,JSON.stringify(entry.value_json)],deadline);if(removed.rowCount===1)stat.completedTaskIds.push(id);else stat.pending++;}else stat.pending++;
   }catch(e){stat.failed++;stat.errors.push({task_id:id,error:e.message});}
   finally{
    if(c){if(transaction)await c.query('ROLLBACK').catch(()=>{});
