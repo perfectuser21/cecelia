@@ -142,3 +142,12 @@ describe('裁判结果入窗（任务 2231ecc0）', () => {
     expect(() => validateRun({ run_id: 'r', pass: false, source_task_id: 'nope' })).toThrow(/source_task_id/);
   });
 });
+
+
+describe('运行归属保留（D 回归）', () => {
+  it('保留冻结证据scope与独立成功结论，不把救场计成代码独立成功', () => {
+    const scope={activity_definition_version_id:'av2',implementation:{kind:'skill',id:'publish',version:'2',digest:'s2'},environment:{id:'phone',fingerprint:'p1'}};
+    const r=applyRunOutcome([], {runId:'r1',pass:true,degraded:true,executionRole:'rescue',evidenceScope:scope,independentVerified:true},10);
+    expect(r.runs[0]).toMatchObject({execution_role:'rescue',evidence_scope:scope,independent_verified:true,code_independent_pass:false});
+  });
+});

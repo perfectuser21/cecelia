@@ -90,3 +90,40 @@ describe('reconcileSteps：跨运行收敛', () => {
     expect(r.per_step.find(s => s.key === 'a.b.lock')).toMatchObject({ verified: 1, mismatch: 1, failed: 0, missing: 0 });
   });
 });
+
+
+describe('冻结 Activity 证据归集（D 回归）', () => {
+  const scoped = (run, version = 'av2', digest = 'c2', environment = 'phone1', role = 'primary') => span(run, 's1', 1, 'pass', {
+    activity_definition_version_id: version, identity_protocol: 2, run_binding_id: 'binding',
+    evidence: { observed: 1, implementation: {kind: 'code', id: 'publish', version: '2', digest},
+      execution_role: role, environment: {id: environment, fingerprint: environment} },
+  });
+  const oneStep = [steps[0]];
+  it('跨定义版本不能凑够晋级次数', () => {
+    const r = reconcileSteps({steps: oneStep, spans: [scoped('r1','av1'), scoped('r2')], requiredGreen: 2});
+    expect(r.converged).toBe(false);
+    expect(r.runs).toHaveLength(1);
+  });
+  it('相同定义下不同实现与环境分开', () => {
+    const r = reconcileSteps({steps: oneStep, spans: [scoped('r1','av2','c1'), scoped('r2','av2','c2','phone2'), scoped('r3')], requiredGreen: 2});
+    expect(r.converged).toBe(false);
+    expect(r.runs.map(x => x.run_id)).toEqual(['r3']);
+  });
+  it('Code失败后救场成功不得覆盖原失败', () => {
+    const failed = {...scoped('r1'), outcome:'fail'};
+    const rescued = scoped('r1','av2','s2','phone1','rescue');
+    rescued.evidence.implementation.kind='skill';
+    const r = reconcileSteps({steps: oneStep, spans: [failed,rescued], requiredGreen: 1});
+    expect(r.converged).toBe(false);
+    expect(r.runs[0].steps[0].status).toBe('failed');
+    expect(r.execution_outcomes).toEqual(expect.arrayContaining([expect.objectContaining({execution_role:'rescue',outcome:'pass'})]));
+  });
+  it('同一实现重试成功也不能洗掉同次运行失败', () => {
+    const r = reconcileSteps({steps:oneStep,spans:[{...scoped('r1'),outcome:'fail'},scoped('r1')],requiredGreen:1});
+    expect(r.converged).toBe(false);
+  });
+  it('版本化span缺实现或环境只能诊断，不能晋级', () => {
+    const s = scoped('r1'); delete s.evidence.environment;
+    expect(reconcileSteps({steps:oneStep,spans:[s],requiredGreen:1}).converged).toBe(false);
+  });
+});
