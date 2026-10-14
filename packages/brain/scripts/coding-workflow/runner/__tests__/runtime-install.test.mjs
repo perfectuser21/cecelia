@@ -2,6 +2,7 @@ import { it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { cleanTestEnv } from './helpers/sandbox.mjs';
 let root, env, script, dest, state, log;
 beforeEach(() => {
@@ -108,3 +109,34 @@ process.stdout.write(cp.execFileSync('/bin/ps',process.argv.slice(2)));`, { mode
   });
   expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(true);
 });
+
+
+it('假launchctl慢写状态时公开JSON始终完整，子进程settle后才清理', async () => {
+  const stub = path.join(root, 'bin/launchctl'), paused = path.join(root, 'state-write-paused'), release = path.join(root, 'state-write-release');
+  const initial = JSON.parse(fs.readFileSync(state));
+  const slowWrite = `const write=fs.writeFileSync.bind(fs);
+fs.writeFileSync=(file,data,...rest)=>{
+ if(!String(file).startsWith(${JSON.stringify(state)})) return write(file,data,...rest);
+ const text=String(data),middle=Math.floor(text.length/2),fd=fs.openSync(file,'w');
+ fs.writeSync(fd,text.slice(0,middle));write(${JSON.stringify(paused)},'ready');
+ const deadline=Date.now()+5000;
+ while(!fs.existsSync(${JSON.stringify(release)})){if(Date.now()>deadline)throw Error('fixture_write_barrier_timeout');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);}
+ fs.writeSync(fd,text.slice(middle));fs.closeSync(fd);
+};`;
+  fs.writeFileSync(stub, fs.readFileSync(stub, 'utf8').replace("const fs=require('fs');", "const fs=require('fs');" + slowWrite));
+  const child = spawn(process.execPath, [stub, 'disable', 'system/com.cecelia.coding-workflow-runner'], { env, stdio: 'ignore' });
+  const settled = new Promise(resolve => {
+    child.once('error', error => resolve({ error }));
+    child.once('close', code => resolve({ code }));
+  });
+  try {
+    for (let i = 0; i < 100 && !fs.existsSync(paused); i++) await new Promise(r => setTimeout(r, 20));
+    expect(fs.existsSync(paused)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(state))).toEqual(initial);
+  } finally {
+    fs.writeFileSync(release, 'continue');
+    const result = await settled;
+    expect(result.error).toBeUndefined(); expect(result.code).toBe(0);
+  }
+  expect(JSON.parse(fs.readFileSync(state)).disabled).toBe(true);
+}, 10000);
