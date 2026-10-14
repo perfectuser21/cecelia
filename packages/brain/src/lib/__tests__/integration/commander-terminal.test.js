@@ -1,7 +1,9 @@
 import pg from 'pg';
-import { beforeEach, afterEach, describe, it, expect } from 'vitest';
+import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../../db-config.js';
 import { finalizeTask } from '../../task-terminal.js';
+vi.mock('../../../db.js', () => ({ default: {} }));
+import { acquireDeviceLock, releaseDeviceLocksHeldBy, sweepStaleDeviceLocks } from '../../../device-lock-helpers.js';
 
 const ID = '44444444-4444-4444-8444-444444444444';
 let client;
@@ -13,6 +15,36 @@ beforeEach(async () => {
     updated_at timestamptz, completed_at timestamptz,
     claimed_by text, claimed_at timestamptz
   )`);
+  await client.query(`CREATE TEMP TABLE device_locks (
+    device_name text PRIMARY KEY, locked_by text, locked_at timestamptz, expires_at timestamptz
+  ); CREATE TEMP TABLE task_leases (task_id uuid, released_at timestamptz, lease_until timestamptz)`);
+});
+
+describe('Commander 未决清理的设备锁隔离', () => {
+  async function locked(control, protocol = 'commander-v2') {
+    await seed(control, protocol);
+    await client.query("UPDATE tasks SET status='failed'");
+    await client.query("INSERT INTO device_locks VALUES ('phone',$1,now()-interval '8 hours',now()-interval '1 hour')", [ID]);
+  }
+  it.each([
+    { execution_stopped: false, delivery: { cleanup: { completed: true, evidence: ['readback'] } } },
+    { execution_stopped: true, delivery: { cleanup: { completed: false, evidence: ['unknown'] } } },
+    { execution_stopped: true, delivery: { cleanup: { completed: true, evidence: [] } } },
+    { execution_stopped: true, delivery: { cleanup: { completed: true, evidence: {} } } },
+  ])('任务失败和TTL过期不证明已停止/清理：%j', async control => {
+    await locked(control);
+    expect(await sweepStaleDeviceLocks(client)).toBe(0);
+    expect(await releaseDeviceLocksHeldBy(ID, client)).toBe(0);
+    expect((await acquireDeviceLock('another-owner', 'phone', 30, client)).result).toBe('locked');
+    expect((await client.query('SELECT locked_by FROM device_locks')).rows[0].locked_by).toBe(ID);
+  });
+  it('官方停止和清理证据落账后可释放，旧任务失败仍正常回收', async () => {
+    await locked({ execution_stopped: true, delivery: { cleanup: { completed: true, evidence: ['official-cleanup-readback'] } } });
+    expect(await releaseDeviceLocksHeldBy(ID, client)).toBe(1);
+    await client.query('TRUNCATE tasks,device_locks');
+    await locked({}, 'legacy');
+    expect(await sweepStaleDeviceLocks(client)).toBe(1);
+  });
 });
 afterEach(async () => { await client?.end(); });
 
