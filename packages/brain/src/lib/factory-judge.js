@@ -176,7 +176,7 @@ export function makeJudgeStore(db) {
       return rows[0] || null;
     },
     async readActivityEvidence(runId) {
-      return (await db.query(`SELECT s.run_id, s.step_id, s.activity_id, s.activity_definition_version_id, s.outcome, s.evidence,
+      return (await db.query(`SELECT s.id, s.reference_id, s.ended_at, s.run_id, s.step_id, s.activity_id, s.activity_definition_version_id, s.outcome, s.evidence,
         s.started_at, s.identity_protocol, s.run_binding_id, v.payload AS frozen_payload, true AS binding_verified FROM spans s
         JOIN run_definition_bindings b ON b.id=s.run_binding_id AND b.run_id=s.run_id
         JOIN activity_definition_versions v ON v.id=s.activity_definition_version_id AND v.activity_id=s.activity_id
@@ -193,6 +193,27 @@ export function makeJudgeStore(db) {
 }
 
 const isUuidLike = (v) => typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v);
+
+/** 原unknown只追加后续资格；正式resolution、真实后续同身份PASS与独立断言缺一不可。 */
+function independentlyResolved(span, spans, control, verification) {
+  if (!verification || span.outcome !== 'unknown' || span.evidence?.execution_role !== 'primary'
+    || typeof span.id !== 'string' || !span.id || control.readback_resolution?.kind !== 'independent_readback_success') return false;
+  const marker=(control.readback_resolution.readbacks || []).find(r=>r.unknown_span_id===span.id);
+  const name=`readback:${span.reference_id}:${span.step_id ?? 'activity'}`;
+  if (!marker || marker.verification_assertion !== name || !marker.readback_span_id || span.run_id !== control.envelope.run_id) return false;
+  const later=spans.find(s=>s.id===marker.readback_span_id);
+  if (!later || later.outcome !== 'pass' || later.id===span.id || later.run_id !== span.run_id
+    || !span.run_binding_id || later.run_binding_id!==span.run_binding_id || later.identity_protocol!==2 || span.identity_protocol!==2
+    || span.binding_verified!==true || later.binding_verified!==true
+    || later.reference_id!==span.reference_id || later.activity_id!==span.activity_id || (later.step_id ?? null)!==(span.step_id ?? null)
+    || later.evidence?.execution_role!=='primary' || evidenceScopeKey(evidenceScopeOf(later))!==evidenceScopeKey(evidenceScopeOf(span))
+    || !Number.isFinite(Date.parse(span.ended_at)) || !Number.isFinite(Date.parse(later.started_at))
+    || !Number.isFinite(Date.parse(later.ended_at)) || Date.parse(later.ended_at)<Date.parse(later.started_at)
+    || Date.parse(later.started_at)<Date.parse(span.ended_at)) return false;
+  return verification.assertions.some(a=>a.name===name && a.pass===true && Array.isArray(a.evidence) && a.evidence.length
+    && evidenceScopeKey(evidenceScopeOf({activity_definition_version_id:span.activity_definition_version_id,
+      evidence:{implementation:a.implementation,environment:a.environment}}))===evidenceScopeKey(evidenceScopeOf(span)));
+}
 
 /** 裁判一张执行单。deps: {store, createTask, recordRun, resolveConfig, now, log} */
 export async function judgeTask(task, deps) {
@@ -216,7 +237,7 @@ export async function judgeTask(task, deps) {
       const fact=grouped.get(key) || {activity_id:span.activity_id,evidence_scope:scope,execution_role:role,
         pass:true,independent_verified:Boolean(verification),readback_verified:false,outcomes:[]};
       fact.outcomes.push({step_id:span.step_id ?? null,outcome:span.outcome});
-      fact.pass=fact.pass && span.outcome==='pass';
+      fact.pass=fact.pass && (span.outcome==='pass' || independentlyResolved(span,spans,control,verification));
       grouped.set(key,fact);
     }
     const activityEvidence=[...grouped.values()];
@@ -226,6 +247,9 @@ export async function judgeTask(task, deps) {
       const steps=(frozen?.steps || []).map(s=>({id:s.step_id,key:s.locator?.step_key,readback:s.contract?.readback ?? s.registration?.readback})).filter(s=>s.id);
       const scoped=relevant.filter(s=>s.step_id).map(s=>({...s,independent_verified:Boolean(verification),scope_verified:s.binding_verified===true && frozenScopeMatches(fact.evidence_scope,frozen,e.contract?.environment)}));
       fact.readback_verified=steps.length>0 && reconcileSteps({steps,spans:scoped,requiredGreen:1,evidenceScope:fact.evidence_scope}).promotion_eligible;
+      fact.resolved_unknown_span_ids=relevant.filter(s=>independentlyResolved(s,spans,control,verification)).map(s=>s.id);
+      fact.code_independent_pass=fact.pass && fact.independent_verified && fact.readback_verified
+        && fact.execution_role==='primary' && fact.evidence_scope.implementation.kind==='code';
     }
     const degraded=activityEvidence.some(f=>f.execution_role!=='primary');
     const recorded = ledger && verdict !== 'inconclusive' ? await deps.recordRun(ledger.id, {
