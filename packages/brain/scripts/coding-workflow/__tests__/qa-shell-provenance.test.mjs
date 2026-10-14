@@ -95,7 +95,8 @@ it.each([
 
 it('真实 rg 配置 --pre 会执行；新 no-config 查询读取文件但不执行预处理器',()=>{
   // 只为隔离 CLI 语义测试定位真实工具，不把任意 PATH 结果加入分类器白名单。
-  const rg=spawnSync('/usr/bin/which',['rg'],{encoding:'utf8'}).stdout.trim();
+  const rg=['/opt/homebrew/bin/rg','/usr/local/bin/rg','/usr/bin/rg'].find(p=>fs.existsSync(p))
+    || spawnSync('/usr/bin/which',['rg'],{encoding:'utf8'}).stdout.trim();
   expect(rg,'测试需要真实 ripgrep').toBeTruthy();
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'qa-rg-config-'));
   try{
