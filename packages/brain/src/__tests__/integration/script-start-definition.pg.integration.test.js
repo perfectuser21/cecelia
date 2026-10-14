@@ -135,3 +135,10 @@ it('起跑前取消任务保持人值，不能创建Run或发SSH',async()=>{
   expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:false});expect(calls).toEqual([]);
   expect((await db.query('SELECT status FROM tasks WHERE id=$1',[t.id])).rows[0].status).toBe('cancelled');
 });
+it('首次显式声明不能冒用其他Workflow或省略固定Step路径',async()=>{
+  const t=await frozenTask();
+  t.payload.workflow_definition={release_id:fixture.release.id,workflow_definition_version_id:fixture.workflow.id,snapshot_sha256:fixture.workflow.payload_sha256,
+    workflow_id:randomUUID(),expected_path:[]};
+  await db.query('UPDATE tasks SET payload=$2 WHERE id=$1',[t.id,t.payload]);
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:false,reason:'script_definition_unverified'});expect(calls).toEqual([]);
+});
