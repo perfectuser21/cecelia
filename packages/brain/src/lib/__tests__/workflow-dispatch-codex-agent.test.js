@@ -20,6 +20,7 @@ import { computeCodeVerdict, judgeTask, globToRegExp } from '../factory-judge.js
 import { buildExecSpec } from '../factory-pusher.js';
 import { isFactoryCommanderRouteEnabled, runFactoryPusher } from '../factory-cycle.js';
 import { resolveWorkflowConfig } from '../factory-workflow-config.js';
+import { sample } from './fixtures/commander-contract-v1.js';
 import { isFactoryTask } from '../../../scripts/factory-dispatcher/factory-dispatcher.js';
 
 const cfg = resolveWorkflowConfig('douyin_video_publish.android');
@@ -200,6 +201,12 @@ describe('推进器经开关改建 workflow_dispatch', () => {
     candidate_version: 'android-douyin-private-video@1.0.8', production_version: null, blocked_kind: 'none',
     next_action: null, stage_changed_at: '2026-10-11T09:00:00Z',
   };
+  const frozenCfg = { ...cfg, commander: { ...cfg.commander, workflow_definition: sample.definition,
+    workflow_input: { content_ref: sample.task.payload.workflow_input.content_ref, visibility: 'private' },
+    evidence_scopes: [{ activity_definition_version_id: sample.definition.expected_path[0].activity_definition_version_id,
+      implementation: sample.implementations.code.implementation, environment: sample.contract.environment }] } };
+  const frozenLedger = { ...L, workflow_key: sample.task.payload.workflow_key };
+  const ledgerDb = () => ({ query: vi.fn(async sql => ({ rows: /SELECT[\s\S]*FROM factory_ledger/.test(sql) ? [L] : [] })) });
   it('配置登记 dispatch_via=commander；Commander 调度单时限 55 分钟', () => {
     expect(cfg.dispatch_via).toBe('commander');
     expect(cfg.commander.timeout_min).toBe(55);
@@ -211,12 +218,15 @@ describe('推进器经开关改建 workflow_dispatch', () => {
     expect(spec.payload.workflow_key).toBeUndefined();
   });
   it('开关开 → workflow_dispatch，payload 带 workflow_key 与工厂字段；锁纪律换成外壳代领；factory-dispatcher 不领它', () => {
-    const spec = buildExecSpec({ ledger: L, cfg, stage: 3, skill: 'android-douyin-private-video@1.0.8', round: 2, commanderRoute: true });
+    const spec = buildExecSpec({ ledger: frozenLedger, cfg: frozenCfg, stage: 3, skill: 'android-douyin-private-video@1.0.8', round: 2, commanderRoute: true });
     expect(spec.task_type).toBe('workflow_dispatch');
     expect(spec.payload.commander_protocol).toBe('commander-v2');
-    expect(spec.payload.workflow_definition).toBeDefined();
-    expect(spec.payload.workflow_input).toBeDefined();
-    expect(spec.payload).toMatchObject({ workflow_key: 'douyin_video_publish.android', factory_dispatch: true, factory_ledger_id: L.id, factory: { stage: '3', round: 2 } });
+    expect(spec.payload.workflow_definition).toEqual(frozenCfg.commander.workflow_definition);
+    expect(spec.payload.workflow_input).toEqual(frozenCfg.commander.workflow_input);
+    expect(spec.payload.workflow_definition).not.toBe(frozenCfg.commander.workflow_definition);
+    expect(spec.payload.workflow_input).not.toBe(frozenCfg.commander.workflow_input);
+    expect(spec.payload.workflow_input.authorization).toBeUndefined();
+    expect(spec.payload).toMatchObject({ workflow_key: frozenLedger.workflow_key, factory_dispatch: true, factory_ledger_id: L.id, factory: { stage: '3', round: 2 } });
     expect(spec.description).toContain('外壳');
     expect(spec.description).not.toContain('派发器代领');
     expect(spec.description).toContain('wf-agent-runs');
@@ -241,13 +251,32 @@ describe('推进器经开关改建 workflow_dispatch', () => {
   it('runFactoryPusher 把 commanderRoute 传给建单', async () => {
     const createTask = vi.fn(async () => ({ task: { id: 'cccccccc-1111-4222-8333-444444444444' } }));
     const store = {
-      listLedgers: vi.fn(async () => [L]), inFlight: vi.fn(async () => null), countRounds: vi.fn(async () => 0),
+      listLedgers: vi.fn(async () => [frozenLedger]), inFlight: vi.fn(async () => null), countRounds: vi.fn(async () => 0),
       consecutiveFails: vi.fn(async () => 0), tickets: vi.fn(async () => ({ done: 0, total: 0 })),
     };
-    const fakeDb = { query: vi.fn(async () => ({ rows: [] })) };
-    await runFactoryPusher(fakeDb, { store, createTask, resolveConfig: resolveWorkflowConfig, now: () => new Date('2026-10-11T06:00:00Z'), commanderRoute: true });
+    const fakeDb = ledgerDb();
+    const out = await runFactoryPusher(fakeDb, { store, createTask, resolveConfig: () => frozenCfg, now: () => new Date('2026-10-11T06:00:00Z'), commanderRoute: true });
+    expect(out[0].error).toBeUndefined();
     expect(createTask).toHaveBeenCalledTimes(1);
     expect(createTask.mock.calls[0][0].task_type).toBe('workflow_dispatch');
-    expect(createTask.mock.calls[0][0].payload.commander_protocol).toBe('commander-v2');
+    expect(createTask.mock.calls[0][0].payload).toMatchObject({ commander_protocol: 'commander-v2',
+      workflow_definition: frozenCfg.commander.workflow_definition, workflow_input: frozenCfg.commander.workflow_input });
+    expect(out[0].actions).toEqual([{ type: 'dispatch', task_id: 'cccccccc-1111-4222-8333-444444444444' }]);
   });
+});
+
+it('工厂开关开但正式旧配置缺冻结材料时，不建业务单并落资源阻断', async () => {
+  const ledger = { id: LEDGER_ID, workflow_key: 'douyin_video_publish.android', stage: 3, blocked_kind: 'none', recent_runs: [], candidate_version: 'old' };
+  const db = { query: vi.fn(async sql => ({ rows: /SELECT[\s\S]*FROM factory_ledger/.test(sql) ? [ledger] : [] })) };
+  const createTask = vi.fn();
+  const store = { listLedgers: async () => [ledger], inFlight: async () => null, consecutiveFails: async () => 0 };
+  const out = await runFactoryPusher(db, { store, createTask, resolveConfig: resolveWorkflowConfig, commanderRoute: true });
+  expect(createTask).not.toHaveBeenCalled();
+  expect(out[0].actions).toEqual([{ type: 'block' }]);
+  expect(out[0].reason).toContain('缺冻结定义或结构输入');
+  const blocked = db.query.mock.calls.find(([sql]) => /UPDATE factory_ledger SET/.test(sql) && /blocked_kind/.test(sql));
+  expect(blocked).toBeDefined();
+  const [sql, args] = blocked;
+  expect(args[Number(sql.match(/blocked_kind = \$(\d+)/)[1]) - 1]).toBe('resource');
+  expect(args[Number(sql.match(/blocked_reason = \$(\d+)/)[1]) - 1]).toContain('缺冻结定义或结构输入');
 });
