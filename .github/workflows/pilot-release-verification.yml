@@ -113,6 +113,7 @@ jobs:
           path: snapshot
       - name: 固定完整计划及白名单环境运行全部登记回归
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
         run: |
