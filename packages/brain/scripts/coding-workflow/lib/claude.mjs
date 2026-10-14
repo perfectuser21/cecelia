@@ -39,7 +39,7 @@ function remoteIsolatedEnv(ghConfigDir) {
   const env = claudeEnv();
   for (const key of GH_TOKEN_KEYS) delete env[key];
   // 编排凭据不属于开发/QA/裁判；Codex 必须使用选定账号的订阅登录。
-  for (const key of ['DEPLOY_TOKEN', 'CECELIA_INTERNAL_TOKEN', 'TOAPIS_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'BARK_TOKEN', 'OP_SERVICE_ACCOUNT_TOKEN']) delete env[key];
+  for (const key of ['DEPLOY_TOKEN', 'CECELIA_INTERNAL_TOKEN', 'TOAPIS_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'OPENAI_ACCESS_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'BARK_TOKEN', 'OP_SERVICE_ACCOUNT_TOKEN']) delete env[key];
   env.GH_CONFIG_DIR = ghConfigDir;
   return env;
 }

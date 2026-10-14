@@ -27,14 +27,14 @@ const p = fs.readFileSync(0,'utf8');
 if(!p.includes('独立裁判') || p.length < 200000) process.exit(4);
 const a=process.argv.slice(2);
 if(!a.includes('-') || !a.includes('--ephemeral') || !a.includes('judge-model')) process.exit(5);
-if(process.env.DEPLOY_TOKEN || process.env.CECELIA_INTERNAL_TOKEN || process.env.TOAPIS_API_KEY || process.env.OPENAI_API_KEY) process.exit(6);
+if(process.env.DEPLOY_TOKEN || process.env.CECELIA_INTERNAL_TOKEN || process.env.TOAPIS_API_KEY || process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.CODEX_ACCESS_TOKEN || process.env.OPENAI_ACCESS_TOKEN) process.exit(6);
 console.log(JSON.stringify({type:'thread.started',thread_id:'judge-only'}));
 fs.writeFileSync(a[a.indexOf('--output-last-message')+1], ${JSON.stringify(JSON.stringify(answer))});
 console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:${JSON.stringify(JSON.stringify(answer))}}}));
 console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:3,output_tokens:4}}));`);
     const old = { ...process.env };
     try {
-      Object.assign(process.env, { CODING_WF_PROVIDER: 'claude', DEPLOY_TOKEN: 'fake-deploy', CECELIA_INTERNAL_TOKEN: 'fake-brain', TOAPIS_API_KEY: 'fake-judge', OPENAI_API_KEY: 'fake-api' });
+      Object.assign(process.env, { CODING_WF_PROVIDER: 'claude', DEPLOY_TOKEN: 'fake-deploy', CECELIA_INTERNAL_TOKEN: 'fake-brain', TOAPIS_API_KEY: 'fake-judge', OPENAI_API_KEY: 'fake-api', CODEX_API_KEY: 'fake-api', CODEX_ACCESS_TOKEN: 'fake-access', OPENAI_ACCESS_TOKEN: 'fake-access' });
       const transcriptPath = path.join(f.dir, 'judge.jsonl');
       const r = await callJudge({ ...prompt, user: 'x'.repeat(250000) }, { provider: 'codex', model: 'judge-model', codexHome: f.dir, codexBin: f.bin, transcriptPath, timeoutMs: 3000 });
       expect(JSON.parse(r.content)).toEqual(answer);
