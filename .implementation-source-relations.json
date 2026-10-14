@@ -791,6 +791,11 @@
       "owner_path": "packages/brain/src/lib/step-reconcile.js",
       "path": "packages/brain/src/lib/__tests__/step-reconcile.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/activity-judge.js",
+      "path": "packages/brain/scripts/smoke/activity-judgments-smoke.sh",
+      "role": "verification"
     }
   ]
 }
