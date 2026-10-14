@@ -286,7 +286,7 @@ export async function recordRun(db, id, body, provenance = null) {
   v.trustedEvidence=provenance === JUDGED_EVIDENCE;
   if (!v.trustedEvidence) {
     v.independentVerified=false;
-    if (v.activityEvidence) v.activityEvidence=v.activityEvidence.map(f=>({...f,independent_verified:false,readback_verified:false}));
+    if (v.activityEvidence) v.activityEvidence=v.activityEvidence.map(f=>({...f,independent_verified:false,readback_verified:false,code_independent_pass:false,resolved_unknown_span_ids:[]}));
   }
   return withTx(db, async (client) => {
     const row = await lockLedger(client, id);
