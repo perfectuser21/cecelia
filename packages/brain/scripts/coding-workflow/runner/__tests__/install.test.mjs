@@ -41,6 +41,7 @@ describe('install.sh', () => {
       ...cleanTestEnv(),
       PATH: `${toolDirs.join(':')}:/usr/bin:/bin:/usr/sbin:/sbin`,
       CODING_WF_RUN_USER: 'administrator',
+      CODING_WF_PROVIDER: 'claude',
       CODING_WF_USER_HOME: path.join(root, 'home'),
     };
   });
@@ -179,6 +180,27 @@ describe('install.sh', () => {
     const r = runInstall(['--dry-run'], { ...env, PATH: `${toolDirs.slice(0, 3).join(':')}:/usr/bin:/bin` });
     expect(r.status).not.toBe(0);
     expect(r.stderr).toContain('claude');
+    expect(r.stdout).not.toContain('<plist');
+  });
+
+  it('Codex安装不要求Claude，持久化provider、账户、模型、独立judge且仓库仍只cecelia', () => {
+    const codexDir = path.join(root, 'codex-bin'); fs.mkdirSync(codexDir);
+    fs.writeFileSync(path.join(codexDir, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const r = runInstall(['--dry-run'], { ...env, CODING_WF_PROVIDER: 'codex', CODING_WF_CODEX_MODEL: 'gpt-6-sol', CODING_WF_JUDGE_MODEL: 'gpt-6-astra', CODING_WF_REPOS: 'cecelia', PATH: `${codexDir}:${toolDirs.slice(0, 3).join(':')}:/usr/bin:/bin` });
+    expect(r.status, r.stderr).toBe(0);
+    const plist = plistOf(r.stdout);
+    for (const [key, value] of Object.entries({ CODING_WF_PROVIDER: 'codex', CODING_WF_CODEX_HOME: `${env.CODING_WF_USER_HOME}/.codex-team1`, CODING_WF_CODEX_MODEL: 'gpt-6-sol', CODING_WF_JUDGE_PROVIDER: 'codex', CODING_WF_JUDGE_MODEL: 'gpt-6-astra', CODING_WF_REPOS: 'cecelia' })) {
+      expect(plist).toContain(`<key>${key}</key>\n    <string>${value}</string>`);
+    }
+    expect(r.stdout).toContain('sudo -u administrator env');
+    expect(r.stdout).toContain('runtime-health.mjs');
+    expect(r.stdout.indexOf('runtime-health.mjs')).toBeLessThan(r.stdout.indexOf('launchctl bootout'));
+    expect(plist).not.toContain('bin-claude');
+  });
+
+  it('未知provider必须失败，不能降级Claude', () => {
+    const r = runInstall(['--dry-run'], { ...env, CODING_WF_PROVIDER: 'unknown' });
+    expect(r.status).not.toBe(0);
     expect(r.stdout).not.toContain('<plist');
   });
 

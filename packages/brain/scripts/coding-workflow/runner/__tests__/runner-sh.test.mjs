@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { cleanTestEnv } from './helpers/sandbox.mjs';
 import { git, gitPlain } from '../../__tests__/helpers/git.mjs';
@@ -50,7 +50,7 @@ describe('runner.sh 启动器', () => {
     fs.writeFileSync(path.join(seed, STUB_REL), STUB);
     commitSeed('v1');
     // 不读本机真实凭据文件：默认指向不存在的路径，且不继承外部 DEPLOY_TOKEN
-    env = { ...cleanTestEnv(), CODING_WF_REPO: clone, CODING_WF_ORIGIN_URL: origin, CODING_WF_DEPLOY_TOKEN_FILE: path.join(root, 'no-token.env'), CODING_WF_INTERNAL_TOKEN_FILE: path.join(root, 'no-internal.env') };
+    env = { ...cleanTestEnv(), CODING_WF_LOCK_DIR: path.join(root, 'locks'), CODING_WF_PROVIDER: 'claude', CODING_WF_REPO: clone, CODING_WF_ORIGIN_URL: origin, CODING_WF_DEPLOY_TOKEN_FILE: path.join(root, 'no-token.env'), CODING_WF_INTERNAL_TOKEN_FILE: path.join(root, 'no-internal.env') };
     delete env.DEPLOY_TOKEN;
     delete env.CECELIA_INTERNAL_TOKEN;
   });
@@ -89,7 +89,7 @@ describe('runner.sh 启动器', () => {
     expect(stubOut(r).internal).toBe('from-env');
   });
 
-  it('工作区干净：fetch + reset --hard origin/main 自更新到最新', () => {
+  it('工作区干净：fetch + fast-forward origin/main 自更新到最新', () => {
     gitPlain('clone', '-q', origin, clone);
     commitSeed('v2');
     const r = runRunner(env);
@@ -126,6 +126,115 @@ describe('runner.sh 启动器', () => {
     expect(stubOut(r).head).toBe('v1');
     expect(fs.readFileSync(path.join(clone, 'local-note.txt'), 'utf8')).toBe('keep me\n');
   });
+
+  function runtimeFiles() {
+    fs.mkdirSync(path.join(clone, '.cecelia/lights'), { recursive: true });
+    fs.symlinkSync('../guardian.sh', path.join(clone, '.cecelia/hb.sh'));
+    fs.writeFileSync(path.join(clone, '.cecelia/lights/nosid000-cp-test.live'), 'live');
+  }
+
+  it('未跟踪心跳文件不阻挡自更新，symlink与灯原样保留', () => {
+    gitPlain('clone', '-q', origin, clone);
+    runtimeFiles();
+    const light = path.join(clone, '.cecelia/lights/nosid000-cp-test.live');
+    const before = fs.statSync(light).mtimeMs;
+    commitSeed('v2');
+    const r = runRunner(env);
+    expect(r.status, r.stderr).toBe(0);
+    expect(stubOut(r).head).toBe('v2');
+    expect(fs.readlinkSync(path.join(clone, '.cecelia/hb.sh'))).toBe('../guardian.sh');
+    expect(fs.readFileSync(light, 'utf8')).toBe('live');
+    expect(fs.statSync(light).mtimeMs).toBe(before);
+  });
+
+  it.each(['tracked', 'staged', 'unknown', 'special', 'nested', 'tracked-heartbeat'])('心跳噪音不能掩盖 %s 改动', (kind) => {
+    if (kind === 'tracked-heartbeat') {
+      fs.mkdirSync(path.join(seed, '.cecelia'), { recursive: true });
+      fs.writeFileSync(path.join(seed, '.cecelia/hb.sh'), 'tracked');
+      commitSeed('v1');
+    }
+    gitPlain('clone', '-q', origin, clone);
+    if (kind !== 'tracked-heartbeat') runtimeFiles();
+    const file = kind === 'tracked-heartbeat' ? '.cecelia/hb.sh' : ['tracked', 'staged'].includes(kind) ? 'version.txt' : kind === 'special' ? '.cecelia/lights/a\nb.live' : kind === 'nested' ? '.cecelia/lights/nested/x.live' : '.cecelia/unknown';
+    fs.mkdirSync(path.dirname(path.join(clone, file)), { recursive: true });
+    fs.writeFileSync(path.join(clone, file), 'keep');
+    if (kind === 'staged') git(clone, 'add', 'version.txt');
+    commitSeed('v2');
+    const r = runRunner(env);
+    expect(stubOut(r).head).toBe('v1');
+    expect(fs.readFileSync(path.join(clone, file), 'utf8')).toBe('keep');
+  });
+
+  it.each(['local-commit', 'diverged', 'branch', 'detached', 'merge', 'rebase'])('拒更新 %s，保留原HEAD', (kind) => {
+    gitPlain('clone', '-q', origin, clone);
+    git(clone, 'config', 'user.name', 'test');
+    git(clone, 'config', 'user.email', 'test@example.com');
+    git(clone, 'config', 'core.hooksPath', path.join(root, 'no-hooks'));
+    if (['local-commit', 'diverged'].includes(kind)) git(clone, 'commit', '--allow-empty', '-m', 'local');
+    if (kind === 'branch') git(clone, 'checkout', '-b', 'cp-user');
+    if (kind === 'detached') git(clone, 'checkout', '--detach');
+    if (kind === 'merge') fs.writeFileSync(path.join(clone, '.git/MERGE_HEAD'), git(clone, 'rev-parse', 'HEAD'));
+    if (kind === 'rebase') fs.mkdirSync(path.join(clone, '.git/rebase-merge'));
+    const before = git(clone, 'rev-parse', 'HEAD');
+    if (kind !== 'local-commit') commitSeed('v2');
+    runRunner(env);
+    expect(git(clone, 'rev-parse', 'HEAD')).toBe(before);
+  });
+
+  it('远端新增同名运行态文件时拒绝更新，不覆盖灯', () => {
+    gitPlain('clone', '-q', origin, clone);
+    runtimeFiles();
+    fs.mkdirSync(path.join(seed, '.cecelia/lights'), { recursive: true });
+    fs.writeFileSync(path.join(seed, '.cecelia/lights/nosid000-cp-test.live'), 'remote');
+    commitSeed('v2');
+    const r = runRunner(env);
+    expect(stubOut(r).head).toBe('v1');
+    expect(fs.readFileSync(path.join(clone, '.cecelia/lights/nosid000-cp-test.live'), 'utf8')).toBe('live');
+  });
+
+  it('Git status失败即拒绝更新，不把空输出当干净', () => {
+    gitPlain('clone', '-q', origin, clone);
+    commitSeed('v2');
+    const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
+    const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+    fs.writeFileSync(path.join(bin, 'git'), `#!/bin/bash\nfor a in "$@"; do if [ "$a" = status ]; then exit 77; fi; done\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+    runRunner({ ...env, PATH: `${bin}:${env.PATH}` });
+    expect(git(clone, 'log', '-1', '--format=%s').trim()).toBe('v1');
+  });
+
+  it('已有run-once持锁时不更新也不启动新一轮', () => {
+    gitPlain('clone', '-q', origin, clone); commitSeed('v2');
+    const lock = path.join(env.CODING_WF_LOCK_DIR, 'coding-workflow-runner.lock');
+    fs.mkdirSync(lock, { recursive: true });
+    fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+    fs.writeFileSync(path.join(lock, 'started_at'), String(Date.now()));
+    const r = runRunner(env);
+    expect(git(clone, 'log', '-1', '--format=%s').trim()).toBe('v1');
+    expect(r.stdout).not.toContain('RUN_ONCE_STUB');
+    expect(fs.readFileSync(path.join(lock, 'pid'), 'utf8')).toBe(String(process.pid));
+  });
+
+  it('外层锁贯穿子进程执行，SIGTERM等待子进程收尾再释放', async () => {
+    fs.writeFileSync(path.join(seed, STUB_REL), `import fs from 'node:fs';
+fs.writeFileSync(process.env.READY, 'ready');
+process.on('SIGTERM', () => setTimeout(() => { fs.writeFileSync(process.env.FINISHED, 'done'); process.exit(0); }, 200));
+setInterval(() => {}, 1000);`);
+    commitSeed('v1-wait');
+    const ready = path.join(root, 'ready'); const finished = path.join(root, 'finished');
+    const child = spawn('bash', [RUNNER_SH], { env: { ...env, READY: ready, FINISHED: finished }, stdio: 'ignore' });
+    try {
+      for (let i = 0; i < 100 && !fs.existsSync(ready); i++) await new Promise(r => setTimeout(r, 50));
+      expect(fs.existsSync(ready)).toBe(true);
+      commitSeed('v2');
+      const second = runRunner(env);
+      expect(second.stdout).not.toContain('RUN_ONCE_STUB');
+      expect(git(clone, 'log', '-1', '--format=%s').trim()).toBe('v1-wait');
+      child.kill('SIGTERM');
+      await new Promise(r => child.once('exit', r));
+      expect(fs.readFileSync(finished, 'utf8')).toBe('done');
+      expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(false);
+    } finally { child.kill('SIGKILL'); }
+  }, 20000);
 
   it('主日志超过 10MB 时滚动（copy+truncate），保留 3 份', () => {
     gitPlain('clone', '-q', origin, clone);
