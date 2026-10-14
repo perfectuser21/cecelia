@@ -7,7 +7,7 @@ import { cleanTestEnv } from './helpers/sandbox.mjs';
 
 let root, env, dest, state, script, log;
 const label = 'com.cecelia.coding-workflow-runner';
-const original = '<plist><dict><key>EnvironmentVariables</key><dict></dict></dict></plist>';
+const original = '<plist><dict><key>EnvironmentVariables</key><dict><key>CODING_WF_REPOS</key><string>cecelia</string></dict></dict></plist>';
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-launchd-semantics-'));
   const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
