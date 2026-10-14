@@ -39,7 +39,7 @@ describe('judgeActivity', () => {
     const reconcile = vi.fn(async () => report());
     const applyCell = vi.fn(async () => {});
     const out = await judgeActivity(db, ACT, { trigger: 'auto', triggerRef: 'r9', reconcile, applyCell, runsWanted: 6, requiredGreen: 5 });
-    expect(reconcile).toHaveBeenCalledWith(db, ACT, { runsWanted: 6, requiredGreen: 5, applyCell: false });
+    expect(reconcile).toHaveBeenCalledWith(db, ACT, { runsWanted: 6, requiredGreen: 5, applyCell: false, triggerRunId:'r9' });
     expect(applyCell).toHaveBeenCalledWith(db, ACT, 'converging');
     const ins = db.calls.find(c => /INSERT INTO activity_judgments/.test(c.sql));
     expect(ins.params.slice(0, 9)).toEqual([ACT, VER, 'converging', false, 2, 5, 2, 'auto', 'r9']);

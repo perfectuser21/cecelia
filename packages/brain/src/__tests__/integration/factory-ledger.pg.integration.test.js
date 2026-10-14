@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createLedger, getLedger, listLedger, transitionLedger, recordRun, patchLedger } from '../../lib/factory-ledger.js';
@@ -96,5 +97,15 @@ describe('迁移 548：技能工厂台账', () => {
     const e = await client.query('UPDATE factory_stage_events SET reason = $1 WHERE ledger_id = $2', ['改写', id]).then(() => null, (err) => err);
     await client.query('ROLLBACK TO SAVEPOINT ap');
     expect(e?.message).toMatch(/只追加/);
+  });  it('救场和原Code失败事实真实落库，重复回执不增加运行计数', async () => {
+    const scope={activity_definition_version_id:randomUUID(),implementation:{kind:'code',id:'publish',version:'2',digest:'c2'},environment:{id:'phone',fingerprint:'p1'}};
+    const facts=[{activity_id:randomUUID(),evidence_scope:scope,execution_role:'primary',pass:false,independent_verified:true},
+      {activity_id:randomUUID(),evidence_scope:{...scope,implementation:{...scope.implementation,kind:'skill',digest:'s2'}},execution_role:'rescue',pass:true,independent_verified:true}];
+    const payload={run_id:'d-rescued-real',pass:true,degraded:true,activity_evidence:facts};
+    await recordRun(client,id,payload); const read=await getLedger(client,id);
+    const actual=read.ledger.recent_runs.find(r=>r.run_id===payload.run_id);
+    expect(actual).toMatchObject({pass:true,degraded:true,activity_evidence:facts});
+    expect((await recordRun(client,id,payload)).duplicate).toBe(true);
   });
+
 });

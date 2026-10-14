@@ -25,7 +25,11 @@ beforeEach(async () => {
       updated_at timestamptz DEFAULT now());
     CREATE UNIQUE INDEX uq_cell ON activity_cells(step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL;
     CREATE TABLE spans(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id text, activity_id uuid, step_id uuid, outcome text, evidence jsonb,
-      attempts int DEFAULT 1, started_at timestamptz, created_at timestamptz DEFAULT now());
+      attempts int DEFAULT 1, started_at timestamptz, created_at timestamptz DEFAULT now(),
+      activity_definition_version_id uuid, identity_protocol int DEFAULT 1, run_binding_id uuid);
+    CREATE TABLE run_definition_bindings(id uuid PRIMARY KEY,run_id text,expected_path jsonb);
+    CREATE TABLE activity_definition_versions(id uuid PRIMARY KEY,activity_id uuid,payload jsonb);
+    CREATE TABLE tasks(id uuid PRIMARY KEY,status text,task_type text,payload jsonb,result jsonb);
     CREATE TABLE pending_actions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), action_type text, params jsonb, context jsonb, status text, expires_at timestamp,
       category text, priority text, source text, signature text, options jsonb, comments jsonb);`);
 });
@@ -50,15 +54,15 @@ async function span(run, a, step, observed, outcome = 'pass') {
 const readbackCell = async a => (await client.query("SELECT cell_status FROM activity_cells WHERE step_id=$1 AND cell_key='readback'", [a])).rows[0].cell_status;
 
 describe('收敛对账（真 PG）', () => {
-  it('连续绿达标 → 收敛，readback 格翻绿；出现对不上 → 翻红；没数据不动', async () => {
+  it('旧协议绿次数只诊断不晋级；出现对不上翻红；没数据不动', async () => {
     const { a, s1, s2 } = await seedActivity();
     expect((await reconcileActivity(client, a, { runsWanted: 5, requiredGreen: 2 })).verdict).toBe('no_data');
     expect(await readbackCell(a)).toBe('gray');
 
     for (const run of ['r1', 'r2']) { await span(run, a, s1, 1); await span(run, a, s2, 5); }
     const ok = await reconcileActivity(client, a, { runsWanted: 5, requiredGreen: 2 });
-    expect(ok).toMatchObject({ verdict: 'converged', converged: true, consecutive_green: 2 });
-    expect(await readbackCell(a)).toBe('green');
+    expect(ok).toMatchObject({ verdict: 'converging', converged: false, consecutive_green: 2, promotion_eligible:false });
+    expect(await readbackCell(a)).toBe('pending');
 
     await span('r3', a, s1, 0); await span('r3', a, s2, 5);
     const bad = await reconcileActivity(client, a, { runsWanted: 5, requiredGreen: 2 });
@@ -87,8 +91,35 @@ describe('收敛对账（真 PG）', () => {
     await reconcileActivity(client, a, { runsWanted: 5, requiredGreen: 1 });
     const cells = (await client.query("SELECT cell_key, cell_status FROM activity_cells WHERE step_id=$1 ORDER BY cell_key", [a])).rows;
     expect(cells).toHaveLength(8);
-    expect(cells.find(c => c.cell_key === 'readback').cell_status).toBe('green');
+    expect(cells.find(c => c.cell_key === 'readback').cell_status).toBe('pending');
     expect(cells.filter(c => c.cell_key !== 'readback').every(c => c.cell_status === 'gray')).toBe(true);
+  });
+
+  it('固定Activity版本用冻结Steps；正式核验通过才翻绿，其他Activity不受局部升级影响', async () => {
+    const {a,s1,s2}=await seedActivity(), version=randomUUID(), binding=randomUUID();
+    const rb={type:'metric',expect:{op:'==',value:1}}, implementation={kind:'code',id:'publish',version:'2',digest:'c2'};
+    const environment={id:'phone',fingerprint:'p1'};
+    await client.query('INSERT INTO activity_definition_versions VALUES($1,$2,$3)',[version,a,{commander_implementations:{code:{implementation,path:'publish.js'}},implementation_bindings:[{...implementation,path:'publish.js'}],steps:[
+      {step_id:s1,locator:{step_key:'frozen.open'},contract:{readback:rb}},
+      {step_id:s2,locator:{step_key:'frozen.save'},contract:{readback:rb}}]}]);
+    await client.query('INSERT INTO run_definition_bindings VALUES($1,$2,$3)',[binding,'fixed',JSON.stringify([s1,s2].map(step_id=>({activity_id:a,activity_definition_version_id:version,step_id})))]);
+    await client.query("UPDATE steps SET readback='{}'::jsonb WHERE activity_id=$1",[a]);
+    const evidence={observed:{value:1},implementation:{kind:'code',id:'publish',version:'2',digest:'c2'},execution_role:'primary',environment:{id:'phone',fingerprint:'p1'}};
+    for(const step of [s1,s2]) await client.query('INSERT INTO spans(run_id,activity_id,step_id,outcome,evidence,started_at,activity_definition_version_id,identity_protocol,run_binding_id) VALUES($1,$2,$3,$4,$5,now(),$6,2,$7)', ['fixed',a,step,'pass',evidence,version,binding]);
+    const first=await reconcileActivity(client,a,{requiredGreen:1});
+    expect(first.promotion_eligible).toBe(false);expect(first.converged).toBe(false);expect(await readbackCell(a)).toBe('pending');
+    const parent=randomUUID(), verify=randomUUID(), env={run_id:'fixed',attempt:1,definition:{snapshot_sha256:'frozen-hash'},contract:{environment}};
+    const verification={task_id:parent,run_id:'fixed',attempt:1,definition_sha256:'frozen-hash',verdict:'PASS',assertions:[{name:'cleanup',pass:true}],evidence:['independent-real-source']};
+    await client.query('INSERT INTO tasks VALUES($1,$2,$3,$4,$5)',[verify,'completed','research',{}, {workflow_verification:verification}]);
+    await client.query('INSERT INTO tasks VALUES($1,$2,$3,$4,$5)',[parent,'completed','workflow_dispatch',{}, {workflow_control:{phase:'final',verdict:'PASS',envelope:env,verify_task_id:verify}}]);
+    const ok=await reconcileActivity(client,a,{requiredGreen:1});
+    expect(ok).toMatchObject({converged:true,promotion_eligible:true});
+    expect(ok.runs[0].steps.map(s=>s.key)).toEqual(['frozen.open','frozen.save']);
+    expect(await readbackCell(a)).toBe('green');
+    await client.query("UPDATE steps SET key=key||'.prior' WHERE activity_id=$1",[a]);
+    const other=await seedActivity(); await span('other',other.a,other.s1,0);
+    await reconcileActivity(client,other.a,{requiredGreen:1});
+    expect(await readbackCell(a)).toBe('green');
   });
 
   it('活动不存在 → 抛错', async () => {
