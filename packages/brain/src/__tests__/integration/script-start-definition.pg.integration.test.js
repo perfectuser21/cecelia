@@ -6,6 +6,7 @@ import {scriptDefinitionDatabase} from '../fixtures/script-definition-db.js';
 import {versionsDatabase,seedWorkflows} from '../fixtures/definition-versions-db.js';
 import {migrationSql,withLegacyNames} from '../fixtures/minimum-definition-schema.js';
 import {triggerScriptRun} from '../../script-executor.js';
+import {recordReleaseObservation} from '../../lib/release-index.js';
 import {PATROL_CAPABILITY} from '../../lib/device-patrol-admission.js';
 vi.mock('../../runtime-safety.js',()=>({assertExternalExecutionAllowed(){}}));
 let fixture,db,workflow,calls;
@@ -82,4 +83,55 @@ it('managed首次worker.start前真实Run和完整definition binding已经提交
   expect(calls).toEqual(['worker.start']);expect(observed[0]).toHaveLength(1);
   expect(observed[0][0]).toMatchObject({workflow_id:workflow,release_id:fixture.release.id});
   expect(result).toMatchObject({success:true});
+});
+async function frozenTask(payload={}){
+  await fixture.close();fixture=await scriptDefinitionDatabase();db=fixture.db;workflow=fixture.workflow.workflow_id;
+  return task({cmd:fixture.command,source_revision:fixture.definition.source.revision,...payload});
+}
+it('同Run重复请求读原binding；current移除也不能退回旧路径绕过运行范围校验',async()=>{
+  const t=await frozenTask();await triggerScriptRun(t,{pool:db,spawnFn:transport});
+  const original=(await db.query('SELECT * FROM run_definition_bindings')).rows[0];
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:true});
+  expect((await db.query('SELECT * FROM run_definition_bindings')).rows).toEqual([original]);
+  await db.query('UPDATE workflows SET current_definition_version_id=NULL WHERE id=$1',[workflow]);
+  const changed={...t,payload:{...t.payload,cmd:t.payload.cmd+' --changed'}};
+  await db.query('UPDATE tasks SET payload=$2 WHERE id=$1',[t.id,changed.payload]);calls=[];
+  expect(await triggerScriptRun(changed,{pool:db,spawnFn:transport})).toMatchObject({success:false,reason:'script_definition_unverified'});
+  expect(calls).toEqual([]);expect((await db.query('SELECT * FROM run_definition_bindings')).rows).toEqual([original]);
+});
+it('已存在的未绑定历史Run不能在重放时补挂新定义',async()=>{
+  const t=await frozenTask(),runId='script-'+t.id+'-a1';
+  await db.query("INSERT INTO task_runs(task_id,run_id,status,workflow_id) VALUES($1,$2,'running',$3)",[t.id,runId,workflow]);
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:false,reason:'script_definition_unverified'});
+  expect(calls).toEqual([]);expect((await db.query('SELECT * FROM run_definition_bindings')).rows).toHaveLength(0);
+});
+it.each(['source_revision','cmd','cwd','env'])('实际%s与冻结来源不符时零启动，不靠payload自报摘要放行',async field=>{
+  const t=await frozenTask(),bad={source_revision:'f'.repeat(40),cmd:fixture.command+' --unexpected',cwd:'/tmp',env:{APP_TEST:'mismatch'}};
+  t.payload[field]=bad[field];await db.query('UPDATE tasks SET payload=$2 WHERE id=$1',[t.id,t.payload]);
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:false,reason:'script_definition_unverified'});
+  expect(calls).toEqual([]);expect((await db.query('SELECT * FROM run_definition_bindings')).rows).toHaveLength(0);
+});
+it('已有运行的显式观测或runtime摘要不可被任务自报值冒领',async()=>{
+  const t=await frozenTask();const launched=await triggerScriptRun(t,{pool:db,spawnFn:transport});
+  const binding=(await db.query('SELECT * FROM run_definition_bindings WHERE run_id=$1',[launched.runId])).rows[0];
+  t.payload.workflow_definition={release_id:binding.release_id,workflow_definition_version_id:binding.workflow_definition_version_id,snapshot_sha256:binding.snapshot_sha256,
+    observation_id:randomUUID(),runtime_snapshot_sha256:'f'.repeat(64)};
+  await db.query('UPDATE tasks SET payload=$2 WHERE id=$1',[t.id,t.payload]);calls=[];
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:false,reason:'script_definition_unverified'});
+  expect(calls).toEqual([]);
+});
+it('部署漂移不能凭曾部署成功观测起跑',async()=>{
+  const t=await frozenTask();await recordReleaseObservation(db,fixture.release.id,{event_key:'drift',attempt_key:'drift',environment:fixture.release.environment,target:fixture.release.target,
+    components:[],collector:'fixture-collector',observed_at:new Date(Date.now()+1000).toISOString(),evidence_ref:'scratch:actual-drift'},{trustedCollector:'fixture-collector'});
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:false,reason:'script_definition_unverified'});expect(calls).toEqual([]);
+});
+it('binding真实INSERT失败时Run与binding共同回滚，零外部启动',async()=>{
+  const t=await frozenTask();await db.query("CREATE FUNCTION reject_script_binding() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture binding insert rejected'; END $$;CREATE TRIGGER reject_script_binding BEFORE INSERT ON run_definition_bindings FOR EACH ROW EXECUTE FUNCTION reject_script_binding()");
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:false,reason:'script_definition_unverified'});expect(calls).toEqual([]);
+  expect((await db.query('SELECT * FROM task_runs WHERE task_id=$1',[t.id])).rows).toHaveLength(0);
+});
+it('起跑前取消任务保持人值，不能创建Run或发SSH',async()=>{
+  const t=await frozenTask();await db.query("UPDATE tasks SET status='cancelled' WHERE id=$1",[t.id]);
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:false});expect(calls).toEqual([]);
+  expect((await db.query('SELECT status FROM tasks WHERE id=$1',[t.id])).rows[0].status).toBe('cancelled');
 });

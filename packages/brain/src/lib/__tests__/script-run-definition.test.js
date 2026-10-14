@@ -22,3 +22,10 @@ it('旧恢复任务source仍4f，实际控制入口f38不得误绑成4f代码',(
 it('显式控制来源与已冻结入口不一致仍拒绝',()=>{
   const f=fixture();f.task.payload.control_source_revision='e'.repeat(40);expect(()=>identity(f)).toThrow();
 });
+it('多入口中不适用的恢复模板参数缺失不阻塞合法直接phone入口',()=>{
+  const f=fixture();const recovery=f.spec.cmd.replace('maintain','recovery-phone --demand-task-id {{recovery_demand_id}} --serial {{phone_serial}}');
+  const direct='/usr/bin/python3 /Users/administrator/.local/share/phone-account-patrol/releases/'+phone+'/runner.py phone --serial phone-a --execution-script "$0"';
+  f.spec.cmd=direct;f.task.payload.source_revision=phone;
+  f.workflow.payload.contract.runtime.script.commands=[recovery,direct];
+  expect(identity(f).phone_source_revision).toBe(phone);
+});
