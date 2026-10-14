@@ -49,12 +49,12 @@ it('启动器外锁已占用则拒装，旧plist不变、不触及launchctl', as
   await expect(run()).rejects.toThrow('runtime_install_launcher_busy');
   expect(fs.readFileSync(dest, 'utf8')).toBe(initial); expect(fs.existsSync(log)).toBe(false);
 });
-it('安装失败恢复旧plist并显式失败，旧disabled状态也保留', async () => {
+it('旧disabled状态拒绝安装，旧plist与服务状态不变', async () => {
   const initial = fs.readFileSync(dest, 'utf8'); fs.writeFileSync(state, JSON.stringify({ disabled: true, active: false }));
-  await expect(run({ FAIL_INSTALL: '3' })).rejects.toThrow('runtime_install_failed');
+  await expect(run({ FAIL_INSTALL: '3' })).rejects.toThrow('runtime_install_disabled');
   expect(fs.readFileSync(dest, 'utf8')).toBe(initial);
   expect(JSON.parse(fs.readFileSync(state)).disabled).toBe(true);
-  expect(JSON.parse(fs.readFileSync(state)).contents).toBe(initial);
+  expect(fs.readFileSync(log, 'utf8').trim().split('\n')).toEqual(['print-disabled system']);
 });
 it('明确指定AUTOMERGE=1可覆盖旧0', async () => {
   expect(await run({ CODING_WF_AUTOMERGE: '1' })).toBe(0);
