@@ -9,6 +9,15 @@ it('普通日志夹JSON行时仍逐行解开嵌套JSON秘密，保留普通诊�
  expect(safe).toContain('probe started');expect(safe).toContain('probe ended');
  expect(JSON.parse(safe.split('\n')[1]).failure.message).not.toContain('fake alpha beta');
 });
+it('实际失败settlement写入任务stdout和Run快照时，混合日志均不泄露嵌套秘密',async()=>{
+ const {settleScriptRun}=await import('../../script-settlement.js');
+ const writes=[];const pool={query:async(sql,args)=>{writes.push([sql,args]);return {rowCount:1,rows:[{id:'task',task_id:'task',status:'failed',result:{}}]};}};
+ const receipt={task_id:'task',run_id:'run',status:'failed',failure:{stage:'probe',message:JSON.stringify({password:'fake alpha beta'})}};
+ await settleScriptRun(pool,{id:'task',payload:{script_attempts:[{},{}]}},{exit:1,stdout:'probe started\n'+JSON.stringify(receipt)},{hostId:'fixture',runId:'run'});
+ expect(JSON.stringify(writes)).not.toContain('fake alpha beta');
+ expect(writes.some(([sql])=>sql.includes('UPDATE task_runs'))).toBe(true);
+ expect(writes.some(([sql])=>sql.startsWith('UPDATE tasks'))).toBe(true);
+});
 it('混合日志的多行PEM不能因逐行处理而泄露内部字节',()=>{
  expect(redactFailureText('probe\n-----BEGIN PRIVATE KEY-----\nfake-private-material\n-----END PRIVATE KEY-----\ndone')).not.toContain('fake-private-material');
 });
