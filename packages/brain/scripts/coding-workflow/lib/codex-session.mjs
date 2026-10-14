@@ -54,7 +54,11 @@ export function prepareCodexSession({ args, cwd, env = process.env, nativeOption
   config('approval_policy', 'never');
   config('default_permissions', 'coding');
   const filesystem = {};
-  filesystem[path.join(env.HOME || os.homedir(), '.credentials')] = 'deny';
+  const home = env.HOME || os.homedir();
+  filesystem[path.join(home, '.credentials')] = 'deny';
+  // The CLI controller logs in outside the command sandbox; its tools must not read the account token.
+  const accountHome = env.CODING_WF_CODEX_HOME || env.CODEX_HOME || path.join(home, '.codex');
+  filesystem[path.resolve(accountHome, 'auth.json')] = 'deny';
   config('web_search', 'disabled');
   config('shell_environment_policy.ignore_default_excludes', false);
   // 不读取 worktree 中的 .codex 配置/钩子；本仓规矩已由 runner 注入 prompt。

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,12 +14,12 @@ const cleanup = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
 async function fixture() {
   const hits = [];
-  const state = { sha: SHA };
+  const state = { sha: SHA, driftAfterBusiness: false };
   const server = http.createServer((req, res) => {
     hits.push(req.url);
     if (req.url === '/api/brain/health') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ git_sha: state.sha })); }
     else if (req.url === '/redirect') { res.writeHead(302, { location: 'http://localhost:5221/api/brain/health' }); res.end(); }
-    else { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ method: req.method, path: req.url })); }
+    else { if (state.driftAfterBusiness) state.sha = 'b'.repeat(40); res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ method: req.method, path: req.url })); }
   });
   for (let port = 5380; port < 5400; port += 1) {
     const ok = await new Promise((resolve) => { server.once('error', () => resolve(false)); server.listen(port, '127.0.0.1', () => resolve(true)); });
@@ -40,7 +40,7 @@ async function bridge(options = {}) {
   const f = await fixture();
   const { createPreviewBridge } = await import('../lib/preview-bridge.mjs');
   const b = await createPreviewBridge({ origin: f.origin, headSha: SHA, prNumber: 123, ...options });
-  cleanup.push(() => b.close()); return { ...f, ...b };
+  cleanup.push(() => b.close()); return Object.assign(b, f);
 }
 
 describe('Codex preview capability 实际HTTP隔离', () => {
@@ -57,6 +57,36 @@ describe('Codex preview capability 实际HTTP隔离', () => {
     b.state.sha = 'b'.repeat(40);
     const r = await request(b.capability.socketPath, new URL(b.origin).host);
     expect(r.status).toBe(502); expect(r.body).toBe('preview_sha_mismatch');
+    expect(b.hits).not.toContain('/api/brain/check');
+  });
+  it('health核对后业务响应期间切换head，响应不交付且整轮sticky失效', async () => {
+    const b = await bridge(); b.state.driftAfterBusiness = true;
+    const r = await request(b.capability.socketPath, new URL(b.origin).host);
+    expect(r.status).toBe(502); expect(r.body).toBe('preview_sha_mismatch');
+    b.state.sha = SHA; b.state.driftAfterBusiness = false;
+    await expect(b.verify()).rejects.toThrow('preview_sha_mismatch');
+    expect(b.invalidated).toBe('preview_sha_mismatch');
+  });
+  it('会话结束控制器独立核SHA，close后不能重新向上游发health或业务请求', async () => {
+    const b = await bridge();
+    await expect(b.verify()).resolves.toBeUndefined();
+    b.state.sha = 'b'.repeat(40);
+    await expect(b.verify()).rejects.toThrow('preview_sha_mismatch');
+    await b.close(); const count = b.hits.length;
+    await expect(b.verify()).rejects.toThrow(/preview/);
+    expect(b.hits.length).toBe(count);
+  });
+  it('health响应完成与close竞争时不在收割后新发业务请求', async () => {
+    const b = await bridge(); const original = http.request.bind(http);
+    let closed; const closing = new Promise((resolve) => { closed = resolve; });
+    const spy = vi.spyOn(http, 'request').mockImplementation((options, callback) => original(options, (res) => {
+      callback(res);
+      if (options.path === '/api/brain/health') res.once('end', () => queueMicrotask(async () => { await b.close(); closed(); }));
+    }));
+    cleanup.push(() => spy.mockRestore());
+    const response = request(b.capability.socketPath, new URL(b.origin).host).catch((e) => e.code);
+    await closing; await response;
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(b.hits).not.toContain('/api/brain/check');
   });
   it('Host换端口、绝对URL、双斜线、CONNECT和跨源redirect在桥上拒绝', async () => {
@@ -109,8 +139,8 @@ describe('native judge无工具权限和stdin', () => {
   });
 });
 
-it('真实evaluate进程仅在waitPreview核head后授予桥，curl通过专用配置、报告命令可固化，finally收割', async () => {
-  const f = await fixture();
+it.each([false, true])('真实evaluate进程预览桥与sticky漂移门（drift=%s），finally收割', async (drift) => {
+  const f = await fixture(); f.state.driftAfterBusiness = drift;
   const api = http.createServer((_req, res) => res.end(JSON.stringify({ status: 'active', port: new URL(f.origin).port })));
   await new Promise((resolve) => api.listen(0, '127.0.0.1', resolve)); cleanup.push(() => new Promise((resolve) => api.close(resolve)));
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'evaluate-bridge-')); cleanup.push(() => fs.rmSync(cwd, { recursive: true, force: true }));
@@ -127,6 +157,11 @@ it('真实evaluate进程仅在waitPreview核head后授予桥，curl通过专用�
     intent_sha256: crypto.createHash('sha256').update(intent).digest('hex'), pr_number: 123, head_sha: SHA,
   }, { CODING_WF_PROVIDER: 'codex', CODING_WF_CODEX_BIN: fixturePath, CODING_WF_CODEX_MODEL: 'gpt-6-sol', FAKE_EVAL_MODE: 'bridge', FAKE_EVAL_NATIVE: 'codex',
     CODING_WF_PREVIEW_API: `http://127.0.0.1:${api.address().port}`, CODING_WF_PREVIEW_HOST: '127.0.0.1' });
+  if (drift) {
+    expect(r.result?.status, r.stderr).toBe('failed'); expect(r.result.reason_code).toBe('preview_stale');
+    const home = r.stderr.match(/FAKE_CURL_HOME: (.+)/)?.[1]; expect(fs.existsSync(home)).toBe(false);
+    expect(fs.existsSync(path.join(dir, '03-build.md'))).toBe(true); return;
+  }
   expect(r.result?.status, r.stderr).toBe('completed');
   expect(r.result.outputs.qa).toMatchObject({ provider: 'codex', model: 'gpt-6-sol' });
   expect(r.result.outputs.qa.env).toMatchObject({ kind: 'preview', url: f.origin, sha: SHA, transport: 'unix_api_only' });

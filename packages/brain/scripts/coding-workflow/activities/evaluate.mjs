@@ -165,7 +165,14 @@ await runActivity(async (input) => {
         log(`[evaluate] 执行记录落盘失败：${error?.message || error}`);
       }
     }
-    result = claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
+    // A model report cannot override controller-observed head drift, even if it claims PASS.
+    if (state.bridge) {
+      try { await state.bridge.verify(); } catch (error) {
+        result = fail('retryable', error.message === 'preview_sha_mismatch' ? 'preview_stale' : 'preview_unavailable',
+          { evidence: [{ bridge_error: error.message, expected: input.head_sha }] });
+      }
+    }
+    result ??= claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
     result ??= judge({
       reportPath, reportFile, qaIds, stdout: run.stdout, worktree, dir, shotsDir: path.join(dir, `qa-r${round}`), round,
       env: local ? { kind: 'local', worktree } : { kind: 'preview', url: preview.url, ...(preview.sha ? { sha: preview.sha } : {}),

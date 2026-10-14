@@ -33,11 +33,12 @@ function collect(stream) {
 }
 
 /** No proxy env, automatic redirect, cookie jar, or inherited authorization. */
-function upstream(origin, target, options, pending) {
+function upstream(origin, target, options, pending, ensureActive) {
   return new Promise((resolve, reject) => {
+    ensureActive();
     const req = http.request({ hostname: origin.hostname, port: origin.port, path: target, agent: false,
       method: options.method ?? 'GET', headers: { ...headers(options.headers ?? {}), host: origin.host, connection: 'close' }, timeout: 10000 }, async (res) => {
-      try { resolve({ status: res.statusCode, headers: res.headers, body: await collect(res) }); } catch (e) { reject(e); }
+      try { const body = await collect(res); ensureActive(); resolve({ status: res.statusCode, headers: res.headers, body }); } catch (e) { reject(e); }
     });
     pending.add(req); req.on('close', () => pending.delete(req));
     req.on('timeout', () => req.destroy(new Error('preview_upstream_timeout'))); req.on('error', reject);
@@ -49,26 +50,39 @@ export async function createPreviewBridge({ origin, headSha, prNumber, productio
   const target = originOf(origin, production);
   if (!/^[a-f0-9]{40}$/.test(headSha ?? '') || !Number.isSafeInteger(prNumber) || prNumber <= 0) throw new Error('preview_identity_invalid');
   const pending = new Set();
+  let closed = false; let invalidated = null; let capability;
+  const ensureActive = () => {
+    if (closed) throw new Error('preview_bridge_closed');
+    if (invalidated) throw new Error(invalidated);
+  };
   const verifySha = async () => {
-    const r = await upstream(target, '/api/brain/health', {}, pending);
+    ensureActive();
+    const r = await upstream(target, '/api/brain/health', {}, pending, ensureActive);
+    ensureActive();
     let body; try { body = JSON.parse(r.body); } catch { /* rejected below */ }
-    if (r.status !== 200 || body?.git_sha !== headSha) throw new Error('preview_sha_mismatch');
+    if (r.status !== 200 || body?.git_sha !== headSha) {
+      invalidated = 'preview_sha_mismatch'; if (capability) active.delete(capability);
+      throw new Error(invalidated);
+    }
   };
   await verifySha();
   const runtimeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cw-preview-')));
   const socketPath = path.join(runtimeDir, 'bridge.sock');
   // CURL_HOME keeps report commands portable; CI/preflight use those exact commands without this transport config.
   fs.writeFileSync(path.join(runtimeDir, '.curlrc'), `unix-socket = "${socketPath.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"\nproxy = ""\nnoproxy = "*"\n`, { mode: 0o400 });
-  const capability = Object.freeze({ runtimeDir, socketPath, origin: target.origin, headSha, prNumber });
-  const sockets = new Set(); const requests = []; let closed = false;
+  capability = Object.freeze({ runtimeDir, socketPath, origin: target.origin, headSha, prNumber });
+  const sockets = new Set(); const requests = [];
   const server = http.createServer(async (req, res) => {
     const deny = (status, reason) => { if (!res.headersSent) res.writeHead(status, { 'content-type': 'text/plain', connection: 'close' }); res.end(reason); };
     if (closed || req.headers.host !== target.host || !req.url.startsWith('/') || req.url.startsWith('//')
       || /[\\\x00-\x20]/.test(req.url) || req.headers.upgrade || req.method === 'CONNECT') return deny(403, 'preview_bridge_forbidden');
     try {
-      const body = await collect(req);
-      await verifySha();
-      const r = await upstream(target, req.url, { method: req.method, headers: req.headers, body }, pending);
+      const body = await collect(req); ensureActive();
+      await verifySha(); ensureActive();
+      const r = await upstream(target, req.url, { method: req.method, headers: req.headers, body }, pending, ensureActive);
+      ensureActive();
+      // The deployment may switch after the first health check; never release that response as the old head.
+      await verifySha(); ensureActive();
       if (r.headers.location) {
         const location = new URL(r.headers.location, target.origin);
         if (location.origin !== target.origin || location.username || location.password) return deny(502, 'preview_redirect_forbidden');
@@ -91,5 +105,5 @@ export async function createPreviewBridge({ origin, headSha, prNumber, productio
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(socketPath, resolve); });
     fs.chmodSync(socketPath, 0o600); active.add(capability);
   } catch (e) { await close(); throw e; }
-  return { capability, close, requests };
+  return { capability, close, requests, verify: verifySha, get invalidated() { return invalidated; } };
 }
