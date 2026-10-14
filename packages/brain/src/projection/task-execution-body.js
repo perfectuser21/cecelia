@@ -10,7 +10,7 @@ export function taskPageIdentity(page,id){
  const brain=content(page.properties?.['Brain ID']),description=content(page.properties?.Description);
  const matches=[...description.matchAll(/(?:^|[\s·])brain:([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})(?=$|[\s·])/gi)].map(m=>m[1]);
  if(page.properties?.['Brain ID']&&brain!==id)return false;
- if(description.includes('brain:')&&(matches.length!==1||matches[0]!==id))return false;
+ if(/brain:/i.test(description)&&(matches.length!==1||matches[0]!==id))return false;
  return brain===id||matches.length===1&&matches[0]===id;
 }
 function connectBefore(pool,deadline){
