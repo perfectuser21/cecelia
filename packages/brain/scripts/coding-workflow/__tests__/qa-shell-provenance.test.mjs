@@ -111,3 +111,12 @@ it('真实 rg 配置 --pre 会执行；新 no-config 查询读取文件但不执
     expect(check(status,[query])).toEqual([]);
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+it.each(['evaluate.md','evaluate-local.md'])('入口 %s 的新查询形状确实不会污染来源',file=>{
+  const prompt=fs.readFileSync(new URL('../prompts/'+file,import.meta.url),'utf8');
+  const section=prompt.split('### 文档/源码调查中的查询来源')[1]?.split('\n## ')[0] || '';
+  const command=section.match(/```bash\n([^]*?)```/)?.[1].trim();
+  expect(command).toBeTruthy();
+  expect(check(status,[command])).toEqual([]);
+  expect(check(status,[command.replace('--no-config ','')])).toEqual(['screenshot_none:T-7','screenshot_none:X-1']);
+});
