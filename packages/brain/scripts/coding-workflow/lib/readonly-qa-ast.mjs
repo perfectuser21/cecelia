@@ -19,8 +19,15 @@ function member(node) {
 
 function inspect(program) {
   const bindings = new Map();
+  const staticStrings = new Map(); // 仅已见 const 的直接 Literal；不传播别名/拼接或循环变量。
   let reads = 0;
   let assertions = 0;
+  const truthy = type => type === 'boolean' || type === 'json';
+  function staticPath(node, scope) {
+    if (literal(node)) return node.value;
+    return node?.type === 'Identifier' && scope.get(node.name) === 'string'
+      ? staticStrings.get(node.name) : undefined;
+  }
   function fresh(node, scope) {
     if (node?.type !== 'Identifier' || RESERVED.has(node.name) || scope.has(node.name)) bad();
     return node.name;
@@ -37,7 +44,7 @@ function inspect(program) {
       return 'json'; // JSON.parse 的数据没有 getter/函数；禁止原型入口。
     }
     if (node.type === 'UnaryExpression' && node.operator === '!') {
-      if (infer(node.argument, scope) !== 'boolean') bad();
+      if (!truthy(infer(node.argument, scope))) bad();
       return 'boolean';
     }
     if (node.type === 'BinaryExpression') {
@@ -57,8 +64,9 @@ function inspect(program) {
     if (isId(callee, 'require') && args.length === 1 && literal(args[0]) && args[0].value === 'fs') return 'fs';
     if (key === 'readFileSync' && callee.object?.type === 'Identifier'
       && scope.get(callee.object.name) === 'fs') {
-      if (args.length !== 2 || !literal(args[0]) || !TEXT_PATH.test(args[0].value)
-        || args[0].value.split('/').some(p => p === '.' || p === '..' || p.startsWith('.'))
+      const file = staticPath(args[0], scope);
+      if (args.length !== 2 || typeof file !== 'string' || !TEXT_PATH.test(file)
+        || file.split('/').some(p => p === '.' || p === '..' || p.startsWith('.'))
         || !literal(args[1]) || args[1].value !== 'utf8') bad();
       reads++;
       return 'string';
@@ -86,6 +94,7 @@ function inspect(program) {
       for (const decl of node.declarations) {
         const name = fresh(decl.id, scope);
         scope.set(name, infer(decl.init, scope));
+        if (literal(decl.init)) staticStrings.set(name, decl.init.value);
       }
       return;
     }
@@ -98,7 +107,7 @@ function inspect(program) {
       statement(node.body, local);
       return;
     }
-    if (node.type === 'IfStatement' && !node.alternate && infer(node.test, scope) === 'boolean') {
+    if (node.type === 'IfStatement' && !node.alternate && truthy(infer(node.test, scope))) {
       const error = node.consequent.type === 'ThrowStatement' ? node.consequent.argument : null;
       if (error?.type !== 'CallExpression' || !isId(error.callee, 'Error') || error.optional
         || error.arguments.length !== 1 || infer(error.arguments[0], scope) !== 'string') bad();
