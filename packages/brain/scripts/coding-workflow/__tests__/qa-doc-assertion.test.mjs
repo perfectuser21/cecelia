@@ -10,10 +10,23 @@ const script = 'const fs=require("fs");const p="packages/brain/scripts/coding-wo
 const command = `node -e '${script}'`;
 const reject = (cmd) => trivialAssertions([{ id: 'Q1', verdict: 'PASS', command: cmd }]);
 const node = (code) => `node -e '${code}'`;
+const doubleQuoted = `node -e "${script.replaceAll('"', '\\"')}"`;
 
 describe('只读文档中的 dry-run 字面量', () => {
   it('真实 Q1 完整命令是可失败的读取断言，不是假执行', () => {
     expect(reject(command)).toEqual([]);
+  });
+
+  it.each([
+    doubleQuoted,
+    command.replace('node -e', '/usr/bin/node -e'),
+    command.replace('node -e', '/usr/local/bin/node -e'),
+    command.replace('node -e', '/opt/homebrew/bin/node -e'),
+    ` \t${command}\t `,
+    node(script + ';'),
+    node(script.replace('const fs=', 'const\tfs = ')),
+  ])('静态完整 shell 参数允许明确支持的拼写：%s', (cmd) => {
+    expect(reject(cmd)).toEqual([]);
   });
 
   it('真实临时文档完整时成功，缺任一词或缺文件时失败', () => {
@@ -25,6 +38,8 @@ describe('只读文档中的 dry-run 字面量', () => {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, tokens.join('\n'));
       expect(run()).toMatchObject({ status: 0, stdout: '安装手册核对通过\n' });
+      expect(spawnSync('/bin/sh', ['-c', doubleQuoted], { cwd, encoding: 'utf8' }))
+        .toMatchObject({ status: 0, stdout: '安装手册核对通过\n' });
       for (const token of tokens) {
         fs.writeFileSync(file, tokens.filter((t) => t !== token).join('\n'));
         expect(run().status).not.toBe(0);
@@ -60,6 +75,21 @@ describe('只读文档中的 dry-run 字面量', () => {
     node(script.replace('console.log("安装手册核对通过")', 'console.log(process.env.X)')),
     node(script.replace('const fs=', 'const other=')),
     command.replace("node -e '", 'node -e "').replace(/'$/, '"'),
+    doubleQuoted.replace('const fs=', '$X;const fs='),
+    doubleQuoted.replace('const fs=', '`true`;const fs='),
+    doubleQuoted.replace('const fs=', '\\$X;const fs='),
+    `${command}''`, `${command} 2>/dev/null`, `${command} | cat`,
+    command.slice(0, -1), command.replace('node -e ', 'node -e -- '),
+    command.replace('node -e', './node -e'),
+    node(script.replace('const p=', 'const\np=')),
+    node(script.replace('"--dry-run"', '"--dry-run",')),
+    node(script.replace('"--dry-run"', '"--dry-run", ""')),
+    node(script.replace('s.includes(x)', 's.includes("--dry-run")')),
+    node(script.replace('"安装手册核对通过"', '`--dry-run ${process.exit(0)}`')),
+    node(script.replace('const fs=', 'const fs2=')),
+    node(script.replace('console.log', 'console["log"]')),
+    node(script.replace('"fs"', '"node:fs"')),
+    node(script.replace('throw Error(x);', 'throw Error(x);process.exit(0);')),
   ])('未知或危险命令仍拒绝：%s', (cmd) => {
     expect(reject(cmd)).toEqual(['Q1']);
   });
