@@ -127,12 +127,14 @@ it('正文整行完成后预算耗尽，其余行不写同步成功可下轮继�
  }finally{now.mockRestore();}
 });
 
-it.each([false,true])('Run正文子块404保留页身份，待同步重试；新建=%s',async created=>{
- const row={id:1,...(!created?{notion_id:'existing-run-page'}:{})},pool=mkPool(),notion=okNotion();
+it.each(['existing','same-digest','new'])('Run正文子块404保留页身份，待同步重试；路径=%s',async phase=>{
+ const created=phase==='new';
+ const row={id:1,...(!created?{notion_id:'existing-run-page'}:{}),...(phase==='same-digest'?{notion_digest:propsDigest({})}:{})},pool=mkPool(),notion=okNotion();
  const result=await pushRegisteredRows(pool,'t',{table:'task_runs',dbId:'db',rows:[row],buildProps:()=>({}),notionReq:notion,
   syncBody:async()=>{throw Error('404 object_not_found: child block missing');}});
  expect(result.failed).toBe(1);expect(result.cleared).toBe(0);
  expect(pool.query.mock.calls.some(c=>/SET notion_id = NULL/.test(c[0]))).toBe(false);
+ expect(pool.query.mock.calls.some(c=>c[0].includes('notion_digest=NULL'))).toBe(true);
  expect(pool.query.mock.calls.some(c=>/notion_synced_at=NULL/.test(c[0]))).toBe(true);
  expect(pool.query.mock.calls.some(c=>c[0].includes('= NOW()'))).toBe(false);
  if(created)expect(pool.query.mock.calls.some(c=>c[0].includes('SET notion_id=$2')&&c[1][1]==='new-page')).toBe(true);

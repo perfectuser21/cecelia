@@ -83,12 +83,12 @@ export async function pushRegisteredRows(pool, token, o) {
   const deadline=Date.now()+budgetMs;
   for (const r of rows) {
     if(Date.now()>=deadline)break;
-    let properties;
+    let properties,bodyPhase=false;
     try {
       properties = buildProps(r);
       const digest = propsDigest(properties);
       if (r.notion_id && r.notion_digest === digest) {
-        if(syncBody)await syncBody(r,r.notion_id);
+        if(syncBody){bodyPhase=true;await syncBody(r,r.notion_id);bodyPhase=false;}
         // 指纹同：不打 Notion；但要把 synced 抬到现在，否则 updated_at > notion_synced_at 的行
         // 会在每轮 LIMIT 里永久占位，把别的行饿死
         await pool.query(`UPDATE ${tableFor(r)} SET notion_synced_at = NOW() WHERE id = $1`, [r.id]).catch(() => {});
@@ -96,7 +96,7 @@ export async function pushRegisteredRows(pool, token, o) {
       }
       if (r.notion_id) {
         await notionReq(token, `/pages/${r.notion_id}`, 'PATCH', { properties });
-        if(syncBody)await syncBody(r,r.notion_id);
+        if(syncBody){bodyPhase=true;await syncBody(r,r.notion_id);bodyPhase=false;}
         await pool.query(
           `UPDATE ${tableFor(r)} SET notion_digest = $2, notion_synced_at = NOW() WHERE id = $1`, [r.id, digest]);
         stat.patched++;
@@ -107,7 +107,7 @@ export async function pushRegisteredRows(pool, token, o) {
         if(syncBody){
           // 正文失败也必须保留新页身份，重试沿用该页；未核验正文不能标完整同步。
           await pool.query(`UPDATE ${tableFor(r)} SET notion_id=$2, notion_synced_at=NULL WHERE id=$1`,[r.id,page.id]);
-          await syncBody(r,page.id);
+          bodyPhase=true;await syncBody(r,page.id);bodyPhase=false;
         }
         await pool.query(
           `UPDATE ${tableFor(r)} SET notion_id = $2, notion_digest = $3, notion_synced_at = NOW() WHERE id = $1`,
@@ -115,13 +115,14 @@ export async function pushRegisteredRows(pool, token, o) {
         stat.created++;
       }
     } catch (err) {
-      if (onFatal(err)) { stat.failed++; return stat; }
-      if ((isPageGoneError(err) && r.notion_id) || isWrongDatabaseError(err)) {
+      if (!bodyPhase && onFatal(err)) { stat.failed++; return stat; }
+      // 子块404或正文schema错误不能证明Run页已消失；保留页ID重试。
+      if (!bodyPhase && ((isPageGoneError(err) && r.notion_id) || isWrongDatabaseError(err))) {
         await pool.query(`UPDATE ${tableFor(r)} SET notion_id = NULL, notion_digest = NULL WHERE id = $1`, [r.id]).catch(() => {});
         stat.cleared++;
         continue;
       }
-      if(syncBody)await pool.query(`UPDATE ${tableFor(r)} SET notion_synced_at=NULL WHERE id=$1`,[r.id]).catch(()=>{});
+      if(syncBody)await pool.query(`UPDATE ${tableFor(r)} SET ${bodyPhase?'notion_digest=NULL, ':''}notion_synced_at=NULL WHERE id=$1`,[r.id]).catch(()=>{});
       stat.failed++;
       console.warn(`[notion-push-sync] ${label} ${r.id} 推送失败: ${err.message}`);
       await logSyncError(pool, err.message);
