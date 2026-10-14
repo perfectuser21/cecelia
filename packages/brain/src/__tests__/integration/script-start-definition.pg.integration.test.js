@@ -142,3 +142,19 @@ it('首次显式声明不能冒用其他Workflow或省略固定Step路径',async
   await db.query('UPDATE tasks SET payload=$2 WHERE id=$1',[t.id,t.payload]);
   expect(await triggerScriptRun(t,{pool:db,spawnFn:transport})).toMatchObject({success:false,reason:'script_definition_unverified'});expect(calls).toEqual([]);
 });
+it('两次SSH交付失败后同一未知尝试仍可由原ALREADY协议恢复，不改绑定或重开终态',async()=>{
+  const t=await frozenTask();
+  const failed=()=>{
+    const child=transport();child.stdin.removeAllListeners('finish');
+    child.stdin.on('finish',()=>queueMicrotask(()=>{child.stderr.end('fixture transport unavailable');child.emit('close',255);}));return child;
+  };
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:failed})).toMatchObject({success:false,reason:'script_spawn_failed'});
+  const original=(await db.query('SELECT * FROM run_definition_bindings')).rows[0];
+  const already=()=>{
+    const child=transport();child.stdin.removeAllListeners('finish');
+    child.stdin.on('finish',()=>queueMicrotask(()=>{child.stdout.end('ALREADY\n');child.emit('close',0);}));return child;
+  };
+  expect(await triggerScriptRun(t,{pool:db,spawnFn:already})).toMatchObject({success:true,alreadyRunning:true});
+  expect((await db.query('SELECT * FROM run_definition_bindings')).rows).toEqual([original]);
+  expect((await db.query('SELECT status FROM task_runs WHERE task_id=$1',[t.id])).rows).toEqual([{status:'running'}]);
+});
