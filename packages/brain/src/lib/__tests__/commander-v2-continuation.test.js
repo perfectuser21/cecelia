@@ -60,6 +60,13 @@ it('正式source binding的sha256前缀与固定implementation hex身份一致�
   for (const b of source.payload.activities[0].payload.implementation_bindings) b.digest = `sha256:${b.digest}`;
   expect(activityBindings(definition, source)[0].implementations).toEqual(sample.implementations);
 });
+it('仅引用未验证的实现或Skill来源version不同不得绑定起跑', () => {
+  for (const change of ['unresolved','version']) {
+    const source = structuredClone(release), binding = source.payload.activities[0].payload.implementation_bindings[1];
+    if (change === 'unresolved') binding.status = 'unresolved'; else binding.version = 'old';
+    expect(() => activityBindings(definition, source)).toThrow('实现');
+  }
+});
 
 function runtimeControl({ stopped = false, cleanup = false, expired = true } = {}) {
   const envelope = makeEnvelope(task, definition, contract, null, now());
