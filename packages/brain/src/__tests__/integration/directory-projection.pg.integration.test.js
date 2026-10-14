@@ -106,8 +106,8 @@ describe('六层目录真实PG边界', () => {
     await client.query("UPDATE workflows SET version='9.9.9' WHERE id=$1",[phone]);
     const bound=buildDirectoryRows(await loadDirectorySource(client)).find(r=>r.id===phone).workflowObservation;
     expect(bound.version).toBe('9.9.9');
-    expect(bound.recentRuns.find(r=>r.run_id==='phone-run')).toMatchObject({workflow_version:'0.1.0',source_revision:commit,definition_version_id:frozen,status:'deferred'});
-    expect(bound.recentRuns.find(r=>r.run_id==='old')).toMatchObject({workflow_version:'0.1.0',source_revision:commit,definition_version_id:frozen,ledger:'runs'});
+    expect(bound.recentRuns.find(r=>r.run_id==='phone-run')).toMatchObject({workflow_version:'0.1.0',source_revision:'historical',definition_source_revision:commit,definition_version_id:frozen,status:'deferred'});
+    expect(bound.recentRuns.find(r=>r.run_id==='old')).toMatchObject({workflow_version:'0.1.0',source_revision:'未知',definition_source_revision:commit,definition_version_id:frozen,ledger:'runs'});
     // 任务payload后续被清空，既有Run真实归属仍足以找回原任务与最终业务结果。
     await client.query("UPDATE tasks SET payload='{}' WHERE id=$1",[phoneTask]);
     await client.query("UPDATE task_runs SET workflow_id=$1 WHERE task_id=$2",[phone,phoneTask]);

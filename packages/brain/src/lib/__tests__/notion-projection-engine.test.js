@@ -101,3 +101,41 @@ describe('resolveDbId — 库 id 优先从注册表取', () => {
     expect(await resolveDbId(pool, 'journeys', 'const-db')).toBe('const-db');
   });
 });
+
+it('新页正文失败保留pageId且不标完成，下次沿同页重试',async()=>{
+ const state={id:1,name:'run'},pool=mkPool(async(sql,args)=>{if(sql.includes('SET notion_id=$2'))state.notion_id=args[1];return {rows:[]};});
+ const notion=okNotion(),syncBody=vi.fn().mockRejectedValueOnce(Error('readback mismatch')).mockResolvedValueOnce(true);
+ const options={table:'task_runs',dbId:'db',rows:[state],buildProps:()=>({}),notionReq:notion,syncBody};
+ expect((await pushRegisteredRows(pool,'t',options)).failed).toBe(1);
+ expect(state.notion_id).toBe('new-page');expect(pool.query.mock.calls.some(c=>c[0].includes('= NOW()'))).toBe(false);
+ expect((await pushRegisteredRows(pool,'t',options)).patched).toBe(1);
+ expect(notion.mock.calls.filter(c=>c[2]==='POST')).toHaveLength(1);
+ expect(syncBody.mock.calls.every(c=>c[1]==='new-page')).toBe(true);
+});
+it('属性指纹相同仍验正文，失败不被stale relation旧逻辑标成功',async()=>{
+ const pool=mkPool(),syncBody=vi.fn(async()=>{throw Error('body failure');});
+ const result=await pushRegisteredRows(pool,'t',{table:'task_runs',dbId:'db',rows:[{id:1,notion_id:'page',notion_digest:propsDigest({})}],buildProps:()=>({}),notionReq:okNotion(),syncBody,isStaleRelationError:()=>true});
+ expect(result.failed).toBe(1);expect(result.skipped).toBe(0);expect(syncBody).toHaveBeenCalled();
+ expect(pool.query.mock.calls.some(c=>c[0].includes('= NOW()'))).toBe(false);
+});
+it('正文整行完成后预算耗尽，其余行不写同步成功可下轮继续',async()=>{
+ let clock=100;const now=vi.spyOn(Date,'now').mockImplementation(()=>clock),pool=mkPool(),notion=okNotion();
+ try{
+  const result=await pushRegisteredRows(pool,'t',{table:'task_runs',dbId:'db',rows:[{id:1,notion_id:'page1'},{id:2,notion_id:'page2'}],buildProps:()=>({}),notionReq:notion,budgetMs:50,syncBody:async()=>{clock+=51;}});
+  expect(result.patched).toBe(1);expect(notion).toHaveBeenCalledTimes(1);
+  expect(pool.query.mock.calls.every(c=>c[1][0]===1)).toBe(true);
+ }finally{now.mockRestore();}
+});
+
+it.each(['existing','same-digest','new'])('Run正文子块404保留页身份，待同步重试；路径=%s',async phase=>{
+ const created=phase==='new';
+ const row={id:1,...(!created?{notion_id:'existing-run-page'}:{}),...(phase==='same-digest'?{notion_digest:propsDigest({})}:{})},pool=mkPool(),notion=okNotion();
+ const result=await pushRegisteredRows(pool,'t',{table:'task_runs',dbId:'db',rows:[row],buildProps:()=>({}),notionReq:notion,
+  syncBody:async()=>{throw Error('404 object_not_found: child block missing');}});
+ expect(result.failed).toBe(1);expect(result.cleared).toBe(0);
+ expect(pool.query.mock.calls.some(c=>/SET notion_id = NULL/.test(c[0]))).toBe(false);
+ expect(pool.query.mock.calls.some(c=>c[0].includes('notion_digest=NULL'))).toBe(true);
+ expect(pool.query.mock.calls.some(c=>/notion_synced_at=NULL/.test(c[0]))).toBe(true);
+ expect(pool.query.mock.calls.some(c=>c[0].includes('= NOW()'))).toBe(false);
+ if(created)expect(pool.query.mock.calls.some(c=>c[0].includes('SET notion_id=$2')&&c[1][1]==='new-page')).toBe(true);
+});

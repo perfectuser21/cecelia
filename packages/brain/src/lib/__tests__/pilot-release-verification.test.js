@@ -11,7 +11,7 @@ async function module(){const url=new URL('../../../../../scripts/ci/pilot-relea
 function fixture(){
  const root=mkdtempSync(join(tmpdir(),'pilot-release-git-'));roots.push(root);const git=(...a)=>execFileSync('git',a,{cwd:root,encoding:'utf8'}).trim();
  git('init','-q','-b','pilot-fixture');git('config','user.email','fixture@example.invalid');git('config','user.name','fixture');git('remote','add','origin','https://github.com/perfectuser21/zenithjoy-workspace.git');
- mkdirSync(join(root,'scripts/smoke'),{recursive:true});writeFileSync(join(root,'scripts/smoke/pilot.sh'),'#!/bin/bash\nset -e\ntest -z "${CECELIA_INTERNAL_TOKEN:-}"\nprintf tested > actual-output\n');writeFileSync(join(root,'entry.js'),'export const fixed = true;\n');git('add','.');git('commit','-qm','fixture');const revision=git('rev-parse','HEAD');git('update-ref','refs/remotes/origin/main',revision);
+ mkdirSync(join(root,'scripts/smoke'),{recursive:true});writeFileSync(join(root,'scripts/smoke/pilot.sh'),'#!/bin/bash\nset -e\ntest -z "${CECELIA_INTERNAL_TOKEN:-}"\ntest -z "${GITHUB_TOKEN:-}"\nprintf tested > actual-output\n');writeFileSync(join(root,'entry.js'),'export const fixed = true;\n');git('add','.');git('commit','-qm','fixture');const revision=git('rev-parse','HEAD');git('update-ref','refs/remotes/origin/main',revision);
  const id=n=>`${String(n).padStart(8,'0')}-1111-4111-8111-111111111111`,repo='perfectuser21/zenithjoy-workspace';
  const row=(n,payload,identity)=>{const source={repo,path:'contracts/pilot.json',commit:revision};return {id:id(n),...identity,source_repo:repo,source_path:source.path,source_commit:revision,payload,payload_sha256:pilotPlanHash({source,payload})};};
  const activity=row(2,{activity_id:id(3),steps:[{step_id:id(4),locator:{activity_id:id(3),step_key:'verify'}}],implementation_bindings:[{kind:'code',scope:'activity',status:'verified',repo,path:'entry.js',revision,digest:'sha256:'+createHash('sha256').update(readFileSync(join(root,'entry.js'))).digest('hex')}]},{activity_id:id(3)});
@@ -30,9 +30,77 @@ const descriptions=[
  {kind:'raw',scope:'step',field:'implementation',step_key:'open_search',status:'unresolved',raw:{ref:'harvest-keyword.sh:35 open-search',status:'implemented'}},
 ];
 function reseal(f){
+ for(const w of f.snapshot.definitions.workflows)w.payload_sha256=pilotPlanHash({source:{repo:w.source_repo,path:w.source_path,commit:w.source_commit},payload:w.payload});
  for(const a of f.snapshot.definitions.activities)a.payload_sha256=pilotPlanHash({source:{repo:a.source_repo,path:a.source_path,commit:a.source_commit},payload:a.payload});
  delete f.snapshot.snapshot_sha256;f.snapshot.snapshot_sha256=pilotPlanHash(f.snapshot);
 }
+async function crossRevisionAuthoring({complete=false}={}){
+ const f=fixture(),s=f.snapshot,[w]=s.definitions.workflows,[a]=s.definitions.activities;
+ const old=s.revision,repo=s.repo;
+ const definition={key:'patrol.internal',name:'固定版本巡查',capability_id:w.payload.capability_id,channel:'internal',form:'code',version:'1.0.1',
+  runtime:{skill_id:w.workflow_id,entrypoint:'fixed-runtime'},
+  activities:[{key:'read',name:'读取',executor_kind:'code',acceptance:['固定实现可读'],
+   implementation:{kind:'code',ref:'entry.js',version:old,repo,path:'entry.js',revision:old},
+   steps:[{key:'verify',dod:{readback:{type:'json'}}}]}]};
+ if(complete){definition.activities[0].steps.push({key:'finish',dod:{readback:{type:'json'}}});definition.activities.push({...structuredClone(definition.activities[0]),key:'write'});}
+ mkdirSync(join(f.root,'contracts'));writeFileSync(join(f.root,'contracts/pilot.json'),JSON.stringify(definition));
+ writeFileSync(join(f.root,'entry.js'),'export const fixed = "new bytes must not replace old implementation";\n');
+ f.git('add','.');f.git('commit','-qm','definition with newer implementation bytes');s.revision=f.git('rev-parse','HEAD');f.git('update-ref','refs/remotes/origin/main',s.revision);
+ definition.source={repo,ref:'contracts/pilot.json',revision:s.revision};
+ const readFile=async q=>{if(q.repo!==repo)throw Error('wrong repo');return execFileSync('git',['show',`${q.revision}:${q.path}`],{cwd:f.root,encoding:'utf8'});};
+ const {prepareDefinitionFreeze}=await import('../../workflow-authoring/freeze.js');
+ const proof=await prepareDefinitionFreeze(definition,{readFile});
+ for(const r of [w,a]){r.source_commit=s.revision;r.payload.registration_protocol='definition-freeze-v1';}
+ w.payload.key=definition.key;w.payload.contract=definition;a.payload.implementation_bindings=proof.bindings.get('read');
+ w.payload.activities[0].slot_key='read';w.payload.activities[0].sequence_no=1;
+ a.payload.steps[0].contract=definition.activities[0].steps[0];
+ if(complete){
+  const id=n=>`${String(n).padStart(8,'0')}-1111-4111-8111-111111111111`;
+  a.payload.steps.push({step_id:id(30),locator:{activity_id:a.activity_id,step_key:'finish'},contract:definition.activities[0].steps[1]});
+  const other=structuredClone(a);other.id=id(31);other.activity_id=id(32);other.payload.activity_id=other.activity_id;
+  other.payload.steps.forEach((step,i)=>{step.step_id=id(33+i);step.locator.activity_id=other.activity_id;});
+  other.payload.implementation_bindings=proof.bindings.get('write');s.definitions.activities.push(other);
+  w.payload.activities.push({reference_id:id(35),activity_id:other.activity_id,activity_version_id:other.id,slot_key:'write',sequence_no:2});
+  s.assertions=s.definitions.activities.flatMap((activity,i)=>[null,...activity.payload.steps.map(st=>st.step_id)].map((step,j)=>({
+   ...s.assertions[0],id:id(40+i*3+j),step_id:activity.activity_id,step_id_ref:step,cell_key:`regression:${w.payload.capability_id}:${activity.activity_id}:${step||'activity'}`,
+  })));
+ }
+ s.scope='patrol-definitions';s.map={repositories:[{scope_key:s.scope,adapter_config:{source_repo:repo,definition_protocol:'definition-freeze-v1',workflow_keys:[definition.key]}}]};
+ s.canonical={workflows:[{id:w.workflow_id,key:definition.key,status:'active',capability_id:definition.capability_id,source_repo:repo,source_path:definition.source.ref}]};reseal(f);
+ expect(readFileSync(join(f.root,'entry.js'),'utf8')).not.toBe(await readFile({repo,path:'entry.js',revision:old}));
+ return {...f,old,authoringSourceOptions:{readFile}};
+}
+it('真实旧commit与HEAD字节不同，正式authoring冻结引用仍可发布源码证明，不能用HEAD替换',async()=>{
+ const f=await crossRevisionAuthoring(),{runPilotReleaseVerification}=await module();
+ const result=await runPilotReleaseVerification({...f,repoRoot:f.root});
+ expect(result.receipt.verdict).toBe('PASS');
+ expect(result.report.implementation_source_set).toContainEqual(expect.objectContaining({revision:f.old,path:'entry.js',digest:f.snapshot.definitions.activities[0].payload.implementation_bindings[0].digest}));
+ expect(result.report.implementation_source_set.some(b=>b.revision===f.snapshot.revision&&b.path==='entry.js')).toBe(false);
+});
+it.each(['digest','revision','repo','path','protocol','owner','step-only','extra-step'])('authoring跨版本不可用伪造或不完整来源放行 %s',async reason=>{
+ const f=await crossRevisionAuthoring(),{runPilotReleaseVerification}=await module();
+ const binding=f.snapshot.definitions.activities[0].payload.implementation_bindings[0];
+ if(reason==='digest')binding.digest='sha256:'+'0'.repeat(64);
+ if(reason==='revision')binding.revision='0'.repeat(40);
+ if(reason==='repo')binding.repo='perfectuser21/cecelia';
+ if(reason==='path')binding.path='missing.js';
+ if(reason==='protocol')delete f.snapshot.definitions.workflows[0].payload.registration_protocol;
+ if(reason==='owner')f.snapshot.canonical.workflows[0].source_path='other.json';
+ if(reason==='step-only')binding.scope='step';
+ if(reason==='extra-step')f.snapshot.definitions.activities[0].payload.implementation_bindings.push({...binding,scope:'step',step_key:'unverified'});
+ reseal(f);await expect(runPilotReleaseVerification({...f,repoRoot:f.root})).rejects.toThrow();
+ expect(existsSync(join(f.outputDir,'receipt.json'))).toBe(false);
+});
+it('authoring证明不可伪造、克隆、跨snapshot重用，取源期间变更同样拒绝',async()=>{
+ const f=await crossRevisionAuthoring();
+ const {prepareAuthoringReleaseProof,assertAuthoringReleaseProof}=await import('../../workflow-authoring/release-proof.js');
+ const proof=await prepareAuthoringReleaseProof(f.snapshot,f.authoringSourceOptions);
+ expect(()=>assertAuthoringReleaseProof(f.snapshot,proof)).not.toThrow();
+ expect(()=>assertAuthoringReleaseProof(f.snapshot,structuredClone(proof))).toThrow();
+ const changed=structuredClone(f.snapshot);changed.scope='another-scope';expect(()=>assertAuthoringReleaseProof(changed,proof)).toThrow();
+ proof.implementation_source_set[0].revision=f.snapshot.revision;expect(()=>assertAuthoringReleaseProof(f.snapshot,proof)).toThrow();
+ await expect(prepareAuthoringReleaseProof(f.snapshot,{readFile:async s=>{const bytes=await f.authoringSourceOptions.readFile(s);f.snapshot.untrusted_change=true;return bytes;}})).rejects.toThrow();
+});
 it('真实规范raw描述保留unresolved；固定Code与真实回归仍被核验',async()=>{
  const {runPilotReleaseVerification}=await module(),f=fixture();
  f.snapshot.definitions.activities[0].payload.implementation_bindings.push(...structuredClone(descriptions));reseal(f);
@@ -80,4 +148,45 @@ it('并发main同步同SHA时仅409回读固定快照，unknown不得变PASS',()
   const r=spawnSync('/bin/bash',['-c',step.run],{cwd:root,encoding:'utf8',env:{PATH:`${root}/bin:${process.env.PATH}`,FIXTURE_STATUS:status,BRAIN_URL:'http://fixture.invalid',CECELIA_INTERNAL_TOKEN:'fixture',SOURCE_REPO:'perfectuser21/zenithjoy-workspace',MAP_SCOPE:'zenithjoy',HEAD:'a'.repeat(40)}});
   if(status==='verified')expect(r.status,r.stderr).toBe(0);else{expect(r.status).not.toBe(0);expect(existsSync(join(root,'evidence/gap.json'))).toBe(true);}
  }
+});
+
+it('正式caller仅接纳固定repo的新设备巡检scope并拒绝其它身份漂移',()=>{
+ const w=yaml.load(readFileSync(new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8'));
+ const root=mkdtempSync(join(tmpdir(),'pilot-caller-scope-'));roots.push(root);mkdirSync(join(root,'bin'));
+ writeFileSync(join(root,'bin/gh'),'#!/bin/bash\nprintf "%s\\n" "$FIXTURE_REMOTE_HEAD"\n',{mode:0o755});
+ const head='a'.repeat(40),repo='perfectuser21/zenithjoy-workspace';
+ const base={PATH:`${root}/bin:${process.env.PATH}`,SOURCE_REPO:repo,CALLER_REPO:repo,HEAD:head,CALLER_SHA:head,FIXTURE_REMOTE_HEAD:head,MAP_SCOPE:'cecelia-device-patrol-definitions'};
+ const run=patch=>spawnSync('/bin/bash',['-c',w.jobs.snapshot.steps[0].run],{cwd:root,encoding:'utf8',env:{...base,...patch}});
+ expect(run({}).status).toBe(0);
+ for(const patch of [{MAP_SCOPE:'cecelia-device-patrol-definitions-extra'},{SOURCE_REPO:'other/repo'},{CALLER_REPO:'other/repo'},{HEAD:'b'.repeat(40)},{FIXTURE_REMOTE_HEAD:'b'.repeat(40)},{SOURCE_REPO:'perfectuser21/cecelia',CALLER_REPO:'perfectuser21/cecelia'}])expect(run(patch).status).not.toBe(0);
+});
+
+it('正式Git对象校源token仅接入CLI，登记回归子进程不可继承',async()=>{
+ const w=yaml.load(readFileSync(new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8'));
+ const step=w.jobs.verify.steps.find(s=>s.run?.includes('pilot-release-verification.mjs'));
+ expect(step.env.GITHUB_TOKEN).toBe('${{ github.token }}');
+ expect(w.permissions.contents).toBe('read');
+ expect(Object.values(w.permissions)).not.toContain('write');
+ expect(step.env).not.toHaveProperty('CECELIA_INTERNAL_TOKEN');
+ vi.stubEnv('GITHUB_TOKEN','fixture-source-only-token');
+ const f=fixture(),{runPilotReleaseVerification}=await module();
+ expect((await runPilotReleaseVerification({...f,repoRoot:f.root})).receipt.verdict).toBe('PASS');
+});
+
+it('真实固定Git的两Activity两Step完整快照可发布',async()=>{
+ const f=await crossRevisionAuthoring({complete:true}),{runPilotReleaseVerification}=await module();
+ expect((await runPilotReleaseVerification({...f,repoRoot:f.root})).report.expected_usages).toHaveLength(6);
+});
+it.each(['activity-delete','step-delete','activity-order','activity-slot','step-order','step-contract'])('自洽重封不能删改真实Git定义的Activity或Step全集 %s',async reason=>{
+ const f=await crossRevisionAuthoring({complete:true}),s=f.snapshot,w=s.definitions.workflows[0],a=s.definitions.activities[0];
+ if(reason==='activity-delete'){w.payload.activities.pop();s.definitions.activities.pop();}
+ if(reason==='step-delete')a.payload.steps.pop();
+ if(reason==='activity-order')w.payload.activities.reverse();
+ if(reason==='activity-slot')w.payload.activities[0].slot_key='write';
+ if(reason==='step-order')a.payload.steps.reverse();
+ if(reason==='step-contract')a.payload.steps[0].contract={...a.payload.steps[0].contract,key:'forged'};
+ reseal(f);
+ const {runPilotReleaseVerification}=await module();
+ await expect(runPilotReleaseVerification({...f,repoRoot:f.root})).rejects.toThrow();
+ expect(existsSync(join(f.outputDir,'receipt.json'))).toBe(false);
 });

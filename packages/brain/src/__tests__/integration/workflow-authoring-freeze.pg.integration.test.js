@@ -1,5 +1,7 @@
-import { beforeEach,afterEach,it,expect } from 'vitest';
-import { randomUUID } from 'node:crypto';
+import { beforeEach,afterEach,it,expect,vi } from 'vitest';
+import * as fixedGit from '../../workflow-authoring/fixed-git-source.js';
+import { randomUUID,createHash } from 'node:crypto';
+import {pilotPlanHash,pilotPlanBody} from '../../lib/pilot-release-verification.js';
 import { versionsDatabase } from '../fixtures/definition-versions-db.js';
 import { migrationTable,migrationSql,withLegacyNames } from '../fixtures/minimum-definition-schema.js';
 import { minimumMapSchema } from '../fixtures/minimum-map-schema.js';
@@ -101,7 +103,7 @@ it('快照保存失败，workflow/活动/步骤/回执全部回滚',async()=>{
   expect((await db.query('SELECT result FROM tasks WHERE id=$1',[taskId])).rows[0].result.workflow_authoring.stage).toBe('register');
 });
 
-it('真实Git扫描→正式地图→已登记authoring范围→实际执行回归→现有release门禁可验证',async()=>{
+it.each([false,true])('真实Git扫描→正式地图→authoring回归→release门禁，跨版本复用=%s',async reuseOld=>{
   const directory=mkdtempSync(join(tmpdir(),'authoring-release-')),repoRoot=join(directory,'repo');mkdirSync(repoRoot);
   const git=(...args)=>execFileSync('git',args,{cwd:repoRoot,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   const write=(path,content)=>{mkdirSync(dirname(join(repoRoot,path)),{recursive:true});writeFileSync(join(repoRoot,path),content);};
@@ -109,10 +111,16 @@ it('真实Git扫描→正式地图→已登记authoring范围→实际执行回�
     await minimumMapSchema(db);
     await withLegacyNames(db,()=>db.query(migrationSql('515_release_definition_evidence.sql')));
     await db.query(migrationSql('537_assertion_source_repo.sql'));
+    git('init','-b','main');
+    const oldBytes='export const report = input => ({text: input.text, items: []});\n';
+    if(reuseOld){
+      write('commander/report.js',oldBytes);git('add','.');git('-c','user.name=fixture','-c','user.email=fixture@example.invalid','commit','-m','test: 实际旧实现');
+      definition.activities[0].implementation.revision=git('rev-parse','HEAD');
+    }
     const {source,...document}=definition;
-    write(source.ref,JSON.stringify(document));write('commander/report.js','export const report = input => ({text: input.text, items: []});\n');
+    write(source.ref,JSON.stringify(document));write('commander/report.js',reuseOld?'export const changed = "HEAD不能代替旧实现";\n':oldBytes);
     write('scripts/smoke/report.sh','#!/bin/bash\nset -euo pipefail\ntest -f commander/report.js\ntest -f commander/contracts/report.json\n');
-    git('init','-b','main');git('add','.');git('-c','user.name=fixture','-c','user.email=fixture@example.invalid','commit','-m','test: 固定报告合同');
+    git('add','.');git('-c','user.name=fixture','-c','user.email=fixture@example.invalid','commit','-m','test: 固定报告合同');
     git('remote','add','origin',`https://github.com/${source.repo}.git`);
     source.revision=git('rev-parse','HEAD');git('update-ref','refs/remotes/origin/main',source.revision);
     state.outputs.compose.definition_sha256=registrationDigest(definition);
@@ -136,14 +144,38 @@ it('真实Git扫描→正式地图→已登记authoring范围→实际执行回�
     let snapshot=await exportImplementationSnapshot(db,query);expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
     const activity=snapshot.definitions.activities[0];
     for(const stepId of [null,activity.payload.steps[0].step_id])await registerCapabilityRegression(db,{capability_id:definition.capability_id,activity_id:activity.activity_id,step_id:stepId,assertion_ref:'scripts/smoke/report.sh'});
-    snapshot=await refreshImplementationSnapshot(db,query,{fetchFn:async()=>({ok:true,text:async()=>source.revision}),resolveToken:async()=> 'fixture',authoringSourceOptions:{readFile:async s=>readFileSync(join(repoRoot,s.path),'utf8')}});
-    const {report,receipt}=await runPilotReleaseVerification({repoRoot,snapshot,outputDir:join(directory,'evidence'),event:'workflow_dispatch',ref:'refs/heads/main'});
+    const readFixed=s=>Promise.resolve(execFileSync('git',['show',`${s.revision}:${s.path}`],{cwd:repoRoot,encoding:'utf8'}));
+    snapshot=await refreshImplementationSnapshot(db,query,{fetchFn:async()=>({ok:true,text:async()=>source.revision}),resolveToken:async()=> 'fixture',authoringSourceOptions:{readFile:readFixed}});
+    const {report,receipt}=await runPilotReleaseVerification({repoRoot,snapshot,outputDir:join(directory,'evidence'),event:'workflow_dispatch',ref:'refs/heads/main',authoringSourceOptions:{readFile:readFixed}});
     expect(receipt.verdict).toBe('PASS');expect(report.expected_usages).toHaveLength(2);
     const b=activity.payload.implementation_bindings[0],w=snapshot.definitions.workflows[0];
-    const release=await createRelease(db,{release_key:'authoring-report',environment:'scratch',target:'fixture',actor:'test:authoring',
+    const sourceReader=vi.spyOn(fixedGit,'readFixedGitFile').mockImplementation(readFixed);
+    const input={release_key:'authoring-report',environment:'scratch',target:'fixture',actor:'test:authoring',
       workflows:[{workflow_definition_version_id:result.receipt.output.current_definition_version_id,payload_sha256:w.payload_sha256}],
-      components:[{kind:'repo',repo:source.repo,revision:source.revision},{kind:b.kind,repo:b.repo,path:b.path,revision:b.revision,digest:b.digest}],
-      ci_evidence:[{report,receipt,evidence_ref:'scratch:真实回归执行'}]});
+      components:[{kind:'repo',repo:source.repo,revision:source.revision},...(reuseOld?[{kind:'repo',repo:b.repo,revision:b.revision}]:[]),{kind:b.kind,repo:b.repo,path:b.path,revision:b.revision,digest:b.digest}],
+      ci_evidence:[{report,receipt,evidence_ref:'scratch:真实回归执行'}]};
+    let release;try{
+      release=await createRelease(db,input);
+      if(reuseOld){
+        for(const kind of ['source-set','snapshot','wrong-fixed-bytes']){
+          const changed=structuredClone(input),e=changed.ci_evidence[0];changed.release_key=`tampered-${kind}`;
+          if(kind==='source-set')e.report.implementation_source_set[0].revision=source.revision;
+          if(kind==='snapshot')e.report.snapshot_sha256='0'.repeat(64);
+          if(kind==='wrong-fixed-bytes')sourceReader.mockImplementation(s=>s.path==='commander/report.js'?Promise.resolve(readFileSync(join(repoRoot,s.path),'utf8')):readFixed(s));
+          e.report.assertion_plan_sha256=pilotPlanHash(pilotPlanBody(e.report));
+          e.receipt.assertion_plan_sha256=e.report.assertion_plan_sha256;e.receipt.snapshot_sha256=e.report.snapshot_sha256;
+          e.receipt.report_sha256=createHash('sha256').update(JSON.stringify(e.report)).digest('hex');
+          const rejected=await createRelease(db,changed);expect(rejected.release.payload.verification.ci_status,kind).toBe('unknown');
+        }
+      }else{
+        const legacy=structuredClone(input),e=legacy.ci_evidence[0];legacy.release_key='legacy-same-head-authoring';
+        delete e.report.implementation_source_set;
+        e.report.assertion_plan_sha256=pilotPlanHash(pilotPlanBody(e.report));
+        e.receipt.assertion_plan_sha256=e.report.assertion_plan_sha256;
+        e.receipt.report_sha256=createHash('sha256').update(JSON.stringify(e.report)).digest('hex');
+        expect((await createRelease(db,legacy)).release.payload.verification.ci_status).toBe('verified');
+      }
+    }finally{sourceReader.mockRestore();}
     expect(release.release.payload.verification.ci_status).toBe('verified');
     expect(release.release.payload.verification.status).toBe('verified');
     const missing=await exportImplementationSnapshot(db,{...query,revision:'b'.repeat(40)});

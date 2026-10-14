@@ -3,7 +3,9 @@
 **Brain 版本**: 1.431.15
 
 
+
 Activity裁判按冻结定义、实现与运行环境归集真实观测；Code失败、Skill接手和Commander救场分别保留，正式独立核验前不收敛。工厂业务成功与代码独立晋级证据分账，局部升级保留其他Activity有效证据。
+
 
 脚本失败回执按固定 task/run/workflow/设备/源码身份冻结脱敏限长诊断；近期 Run、Workflow 正文及 Runs Error 展示同次失败阶段、代码、原因与证据，缺失证据保留未知。
 
