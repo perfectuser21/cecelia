@@ -1,5 +1,34 @@
 import {describe,expect,it} from 'vitest';
 import {settleScriptRun,redactEnvValues} from '../script-settlement.js';
+
+async function frozenReceipt(receipt,{exit=1,channel='stdout',payload={}}={}){
+ const writes=[];const pool={query:async(sql,args)=>{writes.push([sql,args]);return {rowCount:1,rows:[{id:'task',task_id:'task',status:'failed',result:{}}]};}};
+ await settleScriptRun(pool,{id:'task',payload:{workflow_id:'workflow',phone_serial:'phone',source_revision:'fixed',...payload}},
+  {exit,[channel]:JSON.stringify(receipt)}, {hostId:'us-mac-m4',runId:'current'});
+ return JSON.parse(writes.find(([sql])=>/UPDATE task_runs/.test(sql))[1][2]).business_receipt;
+}
+const failedReceipt=()=>({status:'failed',task_id:'task',run_id:'current',serial:'phone',workflow_id:'workflow',source_revision:'fixed',
+ failure:{stage:'adb_connect',code:'ADB_UNREACHABLE',message:'device unreachable',exit_code:255,host:'xian-m4',stderr:'adb refused',stdout:'probe failed',evidence:['host:/tmp/probe.json'],extra:'never-store'}});
+it.each(['stdout','stderr'])('同身份失败回执从%s冻结具体原因和证据白名单',async channel=>{
+ const stored=await frozenReceipt(failedReceipt(),{channel});
+ expect(stored).toMatchObject({status:'failed',phone_serial:'phone',failure:{stage:'adb_connect',code:'ADB_UNREACHABLE',message:'device unreachable',exit_code:255,host:'xian-m4',evidence:['host:/tmp/probe.json']}});
+ expect(stored.failure).not.toHaveProperty('extra');
+});
+it.each([{task_id:'other'},{run_id:'previous'},{workflow_id:'other'},{serial:'other'},{source_revision:'newer'}])('失败回执身份冲突不采信 %j',async wrong=>{
+ expect(await frozenReceipt({...failedReceipt(),...wrong})).toBeUndefined();
+});
+it('冻结失败详情先脱敏再限长，不复制秘密或嵌套blob',async()=>{
+ const r=failedReceipt();r.failure.message='token=topsecret password="hidden value" Authorization: Bearer bearer-value '+ 'x'.repeat(4000);
+ r.failure.stderr='env-secret '+ 'y'.repeat(6000);r.failure.evidence=Array.from({length:30},()=> 'https://user:pass@example.org/file?api_key=url-secret&ok=yes'+ 'z'.repeat(700));
+ const stored=await frozenReceipt(r,{payload:{env:{TOKEN:'env-secret'}}});const text=JSON.stringify(stored);
+ for(const secret of ['topsecret','hidden value','bearer-value','env-secret','url-secret','user:pass'])expect(text).not.toContain(secret);
+ expect(stored.failure.message.length).toBeLessThanOrEqual(1000);expect(stored.failure.stderr.length).toBeLessThanOrEqual(2000);
+ expect(stored.failure.evidence.length).toBeLessThanOrEqual(10);expect(stored.failure.evidence.every(s=>s.length<=500)).toBe(true);
+});
+it.each([{status:'completed',exit:0},{status:'failed',exit:0},{status:'completed',exit:1}])('成功/失败运输与业务回执矛盾不把failure混进成功 %j',async({status,exit})=>{
+ const stored=await frozenReceipt({...failedReceipt(),status},{exit});
+ expect(stored?.failure).toBeUndefined();
+});
 describe('脚本结算保持run身份',()=>{
   it('旧run的终态CAS不命中时不会落完成事件或修改run',async()=>{
     const writes=[];const pool={query:async(sql,args)=>{writes.push([sql,args]);return {rowCount:0,rows:[]};}};

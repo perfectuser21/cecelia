@@ -194,3 +194,10 @@ it('Run关系schema使用正式库，保留已有错误目标并停止推送',as
  expect(mockNotionReq.mock.calls.some(c=>c[1]==='/pages')).toBe(false);
  expect(calls.some(c=>c.sql.includes('FROM task_runs r'))).toBe(false);
 });
+it('Run Error优先同身份结构化具体失败，成功不显示失败详情',async()=>{
+ const {buildTaskRunNotionProperties}=await import('../notion-push-sync.js');
+ const row={...RUN,status:'failed',error_message:'script_exit_255',result:{exit_code:255,business_receipt:{status:'failed',failure:{stage:'adb_connect',code:'ADB_UNREACHABLE',message:'device offline',evidence:['host:/tmp/probe.json']}}}};
+ const content=buildTaskRunNotionProperties(row).Error.rich_text.map(t=>t.text.content).join('');
+ expect(content).toContain('adb_connect');expect(content).toContain('ADB_UNREACHABLE');expect(content).toContain('device offline');expect(content).toContain('host:/tmp/probe.json');
+ expect(buildTaskRunNotionProperties({...row,status:'success',error_message:null,result:{business_receipt:{status:'completed',failure:row.result.business_receipt.failure}}})).not.toHaveProperty('Error');
+});
