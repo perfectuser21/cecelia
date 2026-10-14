@@ -33,7 +33,7 @@ function expectedPath(workflow,activities){
     return [base,...activity.payload.steps.map(s=>({...base,step_id:s.step_id}))];
   });
 }
-function runtimeIdentity(task,spec,release,workflow,activities,runId,patrol){
+export function scriptRuntimeIdentity(task,spec,release,workflow,activities,runId,patrol){
   requireValue(workflow?.payload.registration_protocol===FREEZE_PROTOCOL&&!workflow.payload.definition_scope,'不是正式freeze-v1执行定义');
   const contract=workflow.payload.contract,script=contract?.runtime?.script;
   requireValue(script&&machine(script.host)===spec.host&&script.cwd===spec.cwd&&same(script.env,spec.env),'脚本host/cwd/env与固定定义不符');
@@ -94,7 +94,7 @@ export async function startScriptDefinitionRun({task,spec,runId,context},pool){
       requireValue(prior.task_id===task.id&&prior.workflow_id===workflow.id&&prior.status==='running'&&!prior.ended_at,'同Run已结束或属于其他任务');
       const fixed=await getRunDefinitionBinding(client,runId);
       requireValue(fixed,'历史未绑定Run不可事后补挂当前定义');
-      const hash=runtimeIdentity(task,spec,fixed.release,fixed.workflow,fixed.activities,runId,patrol);
+      const hash=scriptRuntimeIdentity(task,spec,fixed.release,fixed.workflow,fixed.activities,runId,patrol);
       requireValue(fixed.binding.payload.runtime_snapshot_sha256===hash,'同Run的执行脚本或来源已改变');
       if(explicit)requireValue(['release_id','workflow_definition_version_id','snapshot_sha256'].every(k=>explicit[k]===fixed.binding[k]),'同Run不可切换固定定义');
       requireValue((await getReleaseGate(client,fixed.release.id)).deployed,'原固定安装已漂移');
@@ -110,7 +110,7 @@ export async function startScriptDefinitionRun({task,spec,runId,context},pool){
       if(!fixed)continue;
       const ids=new Set(fixed.payload.activities.map(a=>a.activity_version_id)),activities=release.payload.activities.filter(a=>ids.has(a.id));
       let hash,expected;
-      try{expected=expectedPath(fixed,activities);hash=runtimeIdentity(task,spec,release,fixed,activities,runId,patrol);}catch{continue;}
+      try{expected=expectedPath(fixed,activities);hash=scriptRuntimeIdentity(task,spec,release,fixed,activities,runId,patrol);}catch{continue;}
       if(explicit&&explicit.snapshot_sha256!==fixed.payload_sha256)continue;
       const gate=await getReleaseGate(client,release.id);
       if(gate.deployed&&(!explicit?.observation_id||explicit.observation_id===gate.current_observation_id))candidates.push({release,fixed,hash,expected,observationId:gate.current_observation_id});
