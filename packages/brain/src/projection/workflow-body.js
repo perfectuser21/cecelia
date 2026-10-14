@@ -55,9 +55,9 @@ async function list(token,id,request) {
  }while(cursor);
  return all;
 }
-async function machineBlocks(token,pageId,request) {
+async function machineBlocks(token,pageId,request,marker=BODY_MARKER) {
  const children=await list(token,pageId,request);
- const found=children.filter(b=>b.type==='toggle'&&textOf(b.toggle.rich_text).startsWith(BODY_MARKER));
+ const found=children.filter(b=>b.type==='toggle'&&textOf(b.toggle.rich_text).startsWith(marker));
  const loaded=[];
  for(const b of found){if(!b.id)throw Error('Workflow机器区块无身份');loaded.push({...b,toggle:{...b.toggle,children:await list(token,b.id,request)}});}
  return loaded;
@@ -71,25 +71,30 @@ export async function syncWorkflowBodies(pool,{token,notionReq,rows=[],limit=8}=
   if(count++>=limit)break;
   try {
    const pageId=pages.get(row.id)||row.pageId;if(!pageId)throw Error('Workflow正文缺少目录页身份');
-   const expected=buildWorkflowBodyBlock(row.workflowObservation),want=JSON.stringify(normalized(expected));
-   const existing=await machineBlocks(token,pageId,notionReq);
-   if(existing.length===1&&JSON.stringify(normalized(existing[0]))===want){stat.unchanged++;continue;}
+   if(await syncManagedBodyBlock(token,pageId,buildWorkflowBodyBlock(row.workflowObservation),notionReq))stat.rewritten++;else stat.unchanged++;
+  }catch(error){stat.failed++;stat.errors.push({id:row.id,error:error.message});}
+ }
+ return stat;
+}
+
+/** 相同的先追加后校验策略供Run专属来源块复用；marker隔离所有权。 */
+export async function syncManagedBodyBlock(token,pageId,expected,notionReq,marker=BODY_MARKER){
+ const want=JSON.stringify(normalized(expected));
+   const existing=await machineBlocks(token,pageId,notionReq,marker);
+   if(existing.length===1&&JSON.stringify(normalized(existing[0]))===want){return false;}
    // 先追加并核验，再删旧版本；中断时旧正文仍可读。残留正确新区块直接复用。
    let keeper=existing.find(b=>JSON.stringify(normalized(b))===want);
    if(!keeper){
     const appended=await notionReq(token,`/blocks/${pageId}/children`,'PATCH',{children:[expected]});
-    const created=(appended?.results||[]).filter(b=>b.type==='toggle'&&textOf(b.toggle?.rich_text).startsWith(BODY_MARKER));
+    const created=(appended?.results||[]).filter(b=>b.type==='toggle'&&textOf(b.toggle?.rich_text).startsWith(marker));
     if(created.length!==1||!created[0].id||existing.some(b=>b.id===created[0].id))throw Error('Workflow正文追加身份不一致');
-    const verified=await machineBlocks(token,pageId,notionReq);
+    const verified=await machineBlocks(token,pageId,notionReq,marker);
     keeper=verified.find(b=>b.id===created[0].id);
     if(!keeper||JSON.stringify(normalized(keeper))!==want)throw Error('Workflow新正文读回不一致');
    }
    // 不移动人工正文，只清本模块其它机器块。
    for(const b of existing)if(b.id!==keeper.id)await notionReq(token,`/blocks/${b.id}`,'DELETE');
-   const readback=await machineBlocks(token,pageId,notionReq);
+   const readback=await machineBlocks(token,pageId,notionReq,marker);
    if(readback.length!==1||JSON.stringify(normalized(readback[0]))!==want)throw Error('Workflow正文读回不一致');
-   stat.rewritten++;
-  }catch(error){stat.failed++;stat.errors.push({id:row.id,error:error.message});}
- }
- return stat;
+ return true;
 }

@@ -39,7 +39,10 @@ export async function evidenceTransaction(pool, key, fn) {
   } catch (error) { await client.query('ROLLBACK'); throw error; }
   finally { client.release(); }
 }
-function componentKey(c) { return `${c.kind}:${c.repo}:${c.path || ''}`; }
+function componentBaseKey(c) { return `${c.kind}:${c.repo}:${c.path || ''}`; }
+function componentKey(c) { return `${componentBaseKey(c)}:${c.revision}`; }
+// 单版本仍按原身份排序；只有同一旧身份的多版本才按revision细分。
+const componentOrder=(a,b)=>componentBaseKey(a).localeCompare(componentBaseKey(b))||a.revision.localeCompare(b.revision);
 function validateComponents(components, allowEmpty = false) {
   requireEvidence(Array.isArray(components) && (allowEmpty || components.length > 0) && components.length <= 10000, 'components必须为组件数组');
   const keys = new Set();
@@ -187,7 +190,7 @@ export function evaluateReleaseObservation(release, observation) {
     if (observation.release_id !== release.id) gaps.push({ code: 'current_release_mismatch' });
     if (release.environment !== payload.environment || release.target !== payload.target) gaps.push({ code: 'deployment_target_mismatch' });
     if (!observation.collector || !observation.evidence_ref) gaps.push({ code: 'observation_evidence_missing' });
-    if (!Array.isArray(actual) || !same([...release.payload.components].sort((a,b) => componentKey(a).localeCompare(componentKey(b))), [...actual].sort((a,b) => componentKey(a).localeCompare(componentKey(b))))) gaps.push({ code: 'component_mismatch' });
+    if (!Array.isArray(actual) || !same([...release.payload.components].sort(componentOrder), [...actual].sort(componentOrder))) gaps.push({ code: 'component_mismatch' });
   }
   const matched = !gaps.length;
   if (release.payload.verification.status !== 'verified') gaps.push({ code: 'release_unverified' });
