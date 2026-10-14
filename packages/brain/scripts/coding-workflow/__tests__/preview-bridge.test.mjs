@@ -3,16 +3,21 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { prepareCodexSession } from '../lib/codex-session.mjs';
+import { runActivityProcess } from './helpers/run-activity.mjs';
+import { gitPlain } from './helpers/git.mjs';
 
 const SHA = 'a'.repeat(40);
 const cleanup = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
 async function fixture() {
   const hits = [];
+  const state = { sha: SHA };
   const server = http.createServer((req, res) => {
     hits.push(req.url);
-    if (req.url === '/api/brain/health') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ git_sha: SHA })); }
+    if (req.url === '/api/brain/health') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ git_sha: state.sha })); }
     else if (req.url === '/redirect') { res.writeHead(302, { location: 'http://localhost:5221/api/brain/health' }); res.end(); }
     else { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ method: req.method, path: req.url })); }
   });
@@ -22,13 +27,13 @@ async function fixture() {
   }
   if (!server.address()) throw new Error('no free isolated preview fixture port');
   cleanup.push(() => new Promise((resolve) => server.close(resolve)));
-  return { server, hits, origin: `http://127.0.0.1:${server.address().port}` };
+  return { server, hits, state, origin: `http://127.0.0.1:${server.address().port}` };
 }
 function request(socketPath, host, target = '/api/brain/check', method = 'GET') {
   return new Promise((resolve, reject) => {
     const req = http.request({ socketPath, path: target, method, headers: { host } }, (res) => {
       let body = ''; res.on('data', (b) => { body += b; }); res.on('end', () => resolve({ status: res.statusCode, body, headers: res.headers }));
-    }); req.on('error', reject); req.end();
+    }); req.on('connect', (res, socket) => { socket.destroy(); resolve({ status: res.statusCode, headers: res.headers }); }); req.on('error', reject); req.end();
   });
 }
 async function bridge(options = {}) {
@@ -46,6 +51,13 @@ describe('Codex preview capability 实际HTTP隔离', () => {
     expect(b.hits).toContain('/api/brain/health');
     expect(fs.readFileSync(path.join(c.runtimeDir, '.curlrc'), 'utf8')).toContain(c.socketPath);
     await b.close(); expect(fs.existsSync(c.runtimeDir)).toBe(false);
+  });
+  it('预览SHA运行中漂移则每次请求重新核验并拒绝，不向业务API发送请求', async () => {
+    const b = await bridge();
+    b.state.sha = 'b'.repeat(40);
+    const r = await request(b.capability.socketPath, new URL(b.origin).host);
+    expect(r.status).toBe(502); expect(r.body).toBe('preview_sha_mismatch');
+    expect(b.hits).not.toContain('/api/brain/check');
   });
   it('Host换端口、绝对URL、双斜线、CONNECT和跨源redirect在桥上拒绝', async () => {
     const b = await bridge(); const host = new URL(b.origin).host;
@@ -95,4 +107,30 @@ describe('native judge无工具权限和stdin', () => {
     expect(s.args).toContain('--skip-git-repo-check');
     expect(text).toContain(`${JSON.stringify(path.join(os.homedir(), '.credentials'))}="deny"`);
   });
+});
+
+it('真实evaluate进程仅在waitPreview核head后授予桥，curl通过专用配置、报告命令可固化，finally收割', async () => {
+  const f = await fixture();
+  const api = http.createServer((_req, res) => res.end(JSON.stringify({ status: 'active', port: new URL(f.origin).port })));
+  await new Promise((resolve) => api.listen(0, '127.0.0.1', resolve)); cleanup.push(() => new Promise((resolve) => api.close(resolve)));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'evaluate-bridge-')); cleanup.push(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  gitPlain('init', '-q', cwd);
+  const dir = path.join(cwd, 'sprints/s1'); fs.mkdirSync(dir, { recursive: true });
+  const id = '11111111-2222-3333-4444-555555555555';
+  const intent = `---\ntask_id: ${id}\nstep: intent\nupstream: []\n---\n### I-1\n查API\n`;
+  fs.writeFileSync(path.join(dir, '01-intent.md'), intent);
+  fs.writeFileSync(path.join(dir, '02-spec.md'), `---\ntask_id: ${id}\nstep: spec\nupstream: ["01-intent.md#I-1"]\n---\n## QA 场景\n### Q-1\n对应: I-1\n操作: 查询API\n期望: 200\n`);
+  for (const name of ['03-build.md', '04-evidence.md']) fs.writeFileSync(path.join(dir, name), 'hidden');
+  const fixturePath = fileURLToPath(new URL('./fixtures/fake-claude-eval.mjs', import.meta.url)); fs.chmodSync(fixturePath, 0o755);
+  const r = await runActivityProcess(fileURLToPath(new URL('../activities/evaluate.mjs', import.meta.url)), {
+    run_tag: 'rt', task_id: id, worktree: cwd, sprint_dir: 'sprints/s1', intent_ids: ['I-1'],
+    intent_sha256: crypto.createHash('sha256').update(intent).digest('hex'), pr_number: 123, head_sha: SHA,
+  }, { CODING_WF_PROVIDER: 'codex', CODING_WF_CODEX_BIN: fixturePath, CODING_WF_CODEX_MODEL: 'gpt-6-sol', FAKE_EVAL_MODE: 'bridge', FAKE_EVAL_NATIVE: 'codex',
+    CODING_WF_PREVIEW_API: `http://127.0.0.1:${api.address().port}`, CODING_WF_PREVIEW_HOST: '127.0.0.1' });
+  expect(r.result?.status, r.stderr).toBe('completed');
+  expect(r.result.outputs.qa).toMatchObject({ provider: 'codex', model: 'gpt-6-sol' });
+  expect(r.result.outputs.qa.env).toMatchObject({ kind: 'preview', url: f.origin, sha: SHA, transport: 'unix_api_only' });
+  expect(f.hits).toContain('/api/brain/check?q=Q-1');
+  const home = r.stderr.match(/FAKE_CURL_HOME: (.+)/)?.[1]; expect(home).toBeTruthy(); expect(fs.existsSync(home)).toBe(false);
+  expect(r.stderr).toContain('FAKE_HIDDEN_BUILD: true'); expect(fs.existsSync(path.join(dir, '03-build.md'))).toBe(true);
 });

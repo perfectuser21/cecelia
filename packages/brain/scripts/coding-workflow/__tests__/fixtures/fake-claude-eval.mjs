@@ -7,9 +7,10 @@
 // | playwright-noshot（T-1 用 Playwright 但截图目录为空）| playwright-shot（同上但留了截图）。启动时打印 FAKE_HIDDEN_BUILD / FAKE_HIDDEN_EVIDENCE（03/04 是否被藏起）。
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const argv = process.argv.slice(2);
-const prompt = argv[argv.indexOf('-p') + 1] || '';
+const prompt = argv.includes('-p') ? argv[argv.indexOf('-p') + 1] : fs.readFileSync(0, 'utf8');
 const field = (name) => (prompt.match(new RegExp(`^${name}: (.*)$`, 'm')) || [])[1] ?? '';
 const mode = process.env.FAKE_EVAL_MODE || 'pass';
 const sprint = field('SPRINT_DIR');
@@ -22,6 +23,10 @@ console.error(`FAKE_WORKTREE: ${field('WORKTREE')}`);
 console.error(`FAKE_PRODUCTION: ${field('PRODUCTION')}`);
 console.error(`FAKE_JUDGE_FEEDBACK: ${field('JUDGE_FEEDBACK')}`);
 console.error(`FAKE_PREV_ERRORS: ${field('PREV_ERRORS')}`);
+if (mode === 'bridge') {
+  if (!process.env.CURL_HOME || !prompt.includes('API-only')) throw new Error('bridge_transport_missing');
+  console.error(`FAKE_CURL_HOME: ${process.env.CURL_HOME}`);
+}
 
 let n = 0;
 const emit = (command, output) => {
@@ -47,7 +52,7 @@ tested.forEach((q, i) => {
     fs.mkdirSync(field('SHOTS_DIR'), { recursive: true });
     fs.writeFileSync(path.join(field('SHOTS_DIR'), 'home.png'), 'png');
   }
-  const output = `{"ok":true,"scenario":"${q}"}`;
+  const output = mode === 'bridge' ? execFileSync('/bin/sh', ['-c', command], { encoding: 'utf8' }).trim() : `{"ok":true,"scenario":"${q}"}`;
   emit(command, output);
   const last = i === tested.length - 1;
   const verdict = mode === 'fail' && last ? 'FAIL' : (mode === 'cannot' || mode === 'cannot-noreason') && last ? 'CANNOT_VERIFY' : 'PASS';
