@@ -1,6 +1,7 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.432.3
+**Brain 版本**: 1.432.4
+
 
 脚本失败回执按固定 task/run/workflow/设备/源码身份冻结脱敏限长诊断；近期 Run、Workflow 正文及 Runs Error 展示同次失败阶段、代码、原因与证据，缺失证据保留未知。
 
@@ -75,6 +76,10 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## 巡查直接入口冻结身份
+
+直接手机巡查入口须与冻结手机版本及实际部署目录一致；控制器恢复仍保留原手机来源。
 
 ## 1.423.12
 
