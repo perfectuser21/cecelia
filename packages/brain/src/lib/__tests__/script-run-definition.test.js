@@ -43,3 +43,9 @@ it.each(['source_revision','control_source_revision'])('实际%s不满足固定�
   else f.workflow.payload.contract.input_schema.properties.control_source_revision={const:'e'.repeat(40)};
   expect(()=>identity(f)).toThrow();
 });
+it('恢复模板UUID参数必须是真字符串，数组字符串化不能冒充需求身份',()=>{
+  const f=fixture(true),id='11111111-1111-4111-8111-111111111111';
+  f.workflow.payload.contract.runtime.script.commands=[f.spec.cmd.replace(id,'{{recovery_demand_id}}')];
+  f.task.payload.recovery_demand_id=[id];
+  expect(()=>identity(f)).toThrow();
+});
