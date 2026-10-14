@@ -789,12 +789,12 @@
     },
     {
       "owner_path": "packages/brain/src/lib/commander-v2-deadline.js",
-      "path": "packages/brain/src/lib/__tests__/commander-v2-continuation.test.js",
+      "path": "packages/brain/src/lib/__tests__/commander-v2-deadline.test.js",
       "role": "verification"
     },
     {
       "owner_path": "packages/brain/src/lib/commander-v2-implementation.js",
-      "path": "packages/brain/src/lib/__tests__/commander-v2-skill-proof.test.js",
+      "path": "packages/brain/src/lib/__tests__/commander-v2-implementation.test.js",
       "role": "verification"
     },
     {
