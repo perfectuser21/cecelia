@@ -8,6 +8,7 @@ it('失败详情带stage/code/message/evidence进入近期真实Run；历史未�
  expect(observedRun({...r,result:{exit_code:255}}).failure).toBeNull();
  for(const identity of [{task_id:'other'},{run_id:'previous'},{workflow_id:'other'}])expect(observedRun({...r,result:{business_receipt:{...r.result.business_receipt,...identity}}}).failure).toBeNull();
  expect(observedRun({...r,status:'success',result:{business_receipt:{status:'completed',failure:r.result.business_receipt.failure}}}).failure).toBeNull();
+ for(const identity of [{serial:'other'},{source_revision:'different'}])expect(observedRun({...r,context:{workflow_snapshot:{phone_serial:'phone',source_revision:'fixed'}},result:{business_receipt:{...r.result.business_receipt,...identity}}}).failure).toBeNull();
 });
 
 const now = '2026-10-13T09:00:00Z';

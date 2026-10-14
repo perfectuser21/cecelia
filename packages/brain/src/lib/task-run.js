@@ -19,6 +19,8 @@
  * 也可经 deps.pool 注入（openclaw-agent-executor 等已持有 pool 的调用方）。
  */
 
+import {FAILURE_STATUSES,sanitizeWorkflowFailure} from './workflow-failure.js';
+
 const RUN_STATUS_MAP = Object.freeze({
   running: 'running',
   completed: 'success',
@@ -152,21 +154,34 @@ const WORKFLOW_START_FALLBACKS = {
 };
 
 /** 只接收同一次运行的结构化回执；控制台文本和其它尝试不能充当版本证据。 */
-export function extractWorkflowRunReceipt(stdout, runId, taskId) {
+export function extractWorkflowRunReceipt(stdout, runId, taskId, options={}) {
   if (typeof stdout !== 'string' || typeof runId !== 'string' || !runId) return null;
   const candidates = [stdout.trim(), ...stdout.split('\n').reverse().map(line => line.trim())];
   for (const candidate of candidates) {
     let receipt;
     try { receipt = JSON.parse(candidate); } catch { continue; }
     if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) continue;
+    if(options.rejectSuccess&&['completed','success','succeeded','pass'].includes(receipt.status))continue;
     const receiptRunId = receipt.run_id ?? receipt.runId;
     const receiptTaskId = receipt.task_id ?? receipt.taskId;
     if (receiptRunId !== undefined && receiptRunId !== runId) continue;
     if (receiptTaskId !== undefined && taskId !== undefined && receiptTaskId !== taskId) continue;
     if (receiptRunId === undefined && (taskId === undefined || receiptTaskId !== taskId)) continue;
+    if (['run_id','runId'].some(k=>receipt[k]!=null&&receipt[k]!==runId)
+      ||['task_id','taskId'].some(k=>receipt[k]!=null&&taskId!=null&&receipt[k]!==taskId))continue;
+    if ([['workflow_id',options.workflowId],['serial',options.phoneSerial],['phone_serial',options.phoneSerial],['source_revision',options.sourceRevision]]
+      .some(([key,expected])=>expected!=null&&receipt[key]!=null&&receipt[key]!==expected))continue;
+    if(receipt.failure&&options.requireFailureIdentity&&(receiptRunId!==runId||receiptTaskId!==taskId
+      ||[['workflow_id',options.workflowId],['source_revision',options.sourceRevision]].some(([key,expected])=>expected!=null&&receipt[key]!==expected)
+      ||options.phoneSerial!=null&&(receipt.serial??receipt.phone_serial)!==options.phoneSerial))continue;
     const snapshot = {};
     for (const key of ['status', 'source_revision', 'control_source_revision', 'workflow_id', 'phone_serial', 'batch_task_id']) {
       if (typeof receipt[key] === 'string' && receipt[key].trim()) snapshot[key] = receipt[key];
+    }
+    if(typeof receipt.serial==='string'&&receipt.serial.trim())snapshot.phone_serial=receipt.serial;
+    if(FAILURE_STATUSES.has(receipt.status)){
+      const failure=sanitizeWorkflowFailure(receipt.failure,options.env);
+      if(failure)snapshot.failure=failure;
     }
     if (Object.keys(snapshot).length) return snapshot;
   }

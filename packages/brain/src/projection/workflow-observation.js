@@ -1,4 +1,5 @@
 /** Workflow读模型：复用两张真实运行账，优先task_runs，绝不创建平行运行记录。 */
+import {FAILURE_STATUSES,sanitizeWorkflowFailure} from '../lib/workflow-failure.js';
 const WEEK = 7 * 86400000;
 const labels = { pass:'success', success:'success', fail:'failed', failed:'failed', timeout:'timeout', running:'running', skipped:'skipped', cancelled:'cancelled', deferred:'deferred', queued:'派发完成', '派发完成':'派发完成' };
 const terminal = new Set(['success','failed','timeout','cancelled','deferred','派发完成','skipped']);
@@ -7,9 +8,14 @@ const revision = value => typeof value === 'string' && value ? value : '未知';
 
 /** 任务回执只有run_id相同时才属于该次尝试；旧Run永不套用后来那次stdout。 */
 export function receiptForRun(run, task) {
+  const snapshot=run.context?.workflow_snapshot||{};
+  const conflicting=receipt=>['run_id','runId'].some(k=>receipt[k]!=null&&receipt[k]!==run.run_id)
+    ||['task_id','taskId'].some(k=>receipt[k]!=null&&receipt[k]!==run.task_id)
+    ||[['workflow_id',run.workflow_id],['serial',snapshot.phone_serial],['phone_serial',snapshot.phone_serial],['source_revision',snapshot.source_revision]]
+      .some(([key,expected])=>expected!=null&&receipt[key]!=null&&receipt[key]!==expected);
   if (run.result?.business_receipt) {
     const receipt=run.result.business_receipt;
-    if (receipt.workflow_id!=null && run.workflow_id!=null && receipt.workflow_id!==run.workflow_id) return {};
+    if(conflicting(receipt))return {};
     return receipt;
   }
   if (task?.script?.run_id !== run.run_id || typeof task.script.stdout !== 'string') return {};
@@ -18,6 +24,7 @@ export function receiptForRun(run, task) {
     try {
       const receipt=JSON.parse(line);
       if (!receipt || typeof receipt!=='object' || Array.isArray(receipt)) continue;
+      if(conflicting(receipt))continue;
       if ((receipt.run_id ?? receipt.runId)!=null && (receipt.run_id ?? receipt.runId)!==run.run_id) continue;
       if ((receipt.task_id ?? receipt.taskId)!=null && (receipt.task_id ?? receipt.taskId)!==run.task_id) continue;
       if (receipt.workflow_id!=null && run.workflow_id!=null && receipt.workflow_id!==run.workflow_id) continue;
@@ -46,7 +53,8 @@ export function observedRun(run, task) {
     source_revision:revision(snapshot.source_revision || bound.source_commit || receipt.source_revision),control_source_revision:revision(snapshot.control_source_revision || receipt.control_source_revision),
     phone_serial:snapshot.phone_serial || receipt.serial || receipt.phone_serial || null,
     batch_task_id:snapshot.batch_task_id || receipt.batch_task_id || null,attempt:run.context?.attempt || snapshot.attempt || null,
-    transport_status:run.status || run.outcome,exit_code:run.result?.exit_code ?? null };
+    transport_status:run.status || run.outcome,exit_code:run.result?.exit_code ?? null,
+    failure:FAILURE_STATUSES.has(status)&&FAILURE_STATUSES.has(receipt.status)?sanitizeWorkflowFailure(receipt.failure):null };
 }
 
 const codeLabel = kind => ({code:'纯代码',agent:'Agent',human:'人工'})[kind] || '未知';

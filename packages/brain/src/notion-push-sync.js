@@ -8,6 +8,7 @@ import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId, isPageGoneError, isWrongDatabaseError } from './lib/notion-projection-engine.js';
+import {formatWorkflowFailure} from './lib/workflow-failure.js';
 import { OPS_DB_PROPS, buildTaskRunDbProps, buildTasksDbProps, buildStepLinkDbProps, diffMissingProps } from './ops-notion-schema.js';
 import { buildStepLinkNotionProperties } from './notion-probe-projection.js';
 import {
@@ -1722,7 +1723,8 @@ export function buildTaskRunNotionProperties(r) {
   const artifacts = Array.isArray(r.result?.artifacts) ? r.result.artifacts : [];
   if (artifacts.length) p.Artifacts = { rich_text: buildRichText(artifacts.join(', ').slice(0, 1900)) };
   if (started && ended) p.Minutes = { number: Math.round((ended.getTime() - started.getTime()) / 60000) };
-  if (r.error_message) p.Error = { rich_text: buildRichText(String(r.error_message).slice(0, 500)) };
+  const failureText=formatWorkflowFailure(observed.failure);
+  if (failureText||r.error_message) p.Error = { rich_text: buildRichText(failureText||String(r.error_message).slice(0, 500)) };
   if (r.workflow_page_id) p.Workflow = { relation: [{ id: r.workflow_page_id }] };
   if (r.task_page_id) p.Task = { relation: [{ id: r.task_page_id }] };
   p['业务状态'] = { select: { name: observed.status } };

@@ -2,6 +2,7 @@ import {finalizeTask} from './lib/task-terminal.js';
 import {finishRun,extractWorkflowRunReceipt} from './lib/task-run.js';
 import {recordTaskEventSafe} from './lib/task-event-log.js';
 import {getBackoffMs} from './lib/retry-policy.js';
+import {redactFailureText} from './lib/workflow-failure.js';
 
 export function redactEnvValues(text, env) {
   let out = String(text ?? '');
@@ -16,9 +17,13 @@ export async function settleScriptRun(pool, row, parsed, { hostId, runId, reserv
   const authority = reservationId ? {where:{sql:"payload->>'script_run_id'=$1 AND payload->>'script_reservation_id'=$2",params:[runId,reservationId]}} : {};
   const payload = row.payload ?? {};
   const env = payload.env ?? {};
-  const stdout = redactEnvValues(parsed.stdout, env);
-  const stderr = redactEnvValues(parsed.stderr, env);
-  const workflowReceipt = extractWorkflowRunReceipt(stdout,runId,row.id);
+  const stdout = redactFailureText(parsed.stdout, env);
+  const stderr = redactFailureText(parsed.stderr, env);
+  const receiptOptions={workflowId:payload.workflow_id,phoneSerial:payload.phone_serial,
+    sourceRevision:payload.workflow_snapshot?.source_revision??payload.source_revision,env,
+    rejectSuccess:parsed.exit!==0||parsed.timedOut===true,requireFailureIdentity:true};
+  const receipts=[parsed.stdout,parsed.stderr].map(text=>extractWorkflowRunReceipt(text,runId,row.id,receiptOptions)).filter(Boolean);
+  const workflowReceipt=receipts.find(receipt=>receipt.failure)||receipts[0];
   const runResult = workflowReceipt ? {business_receipt:workflowReceipt} : {};
   const prior = Array.isArray(payload.script_attempts) ? payload.script_attempts : [];
   const attemptNo = prior.length + 1;
