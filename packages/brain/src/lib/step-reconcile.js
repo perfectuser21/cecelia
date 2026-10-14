@@ -171,6 +171,7 @@ export async function applyReadbackCell(db, activityId, verdict, { journeyId } =
 export async function reconcileActivity(db, activityId, { runsWanted = 5, requiredGreen = 5, applyCell = true, triggerRunId = null } = {}) {
   const act = await capabilityOf(db, activityId);
   if (!act) throw Object.assign(new Error(`activity_not_found: ${activityId}`), { status: 404 });
+  // Step归属只恢复旧事实诊断；冻结binding仍校验原span身份，不借当前Step授予晋级。
   const spans = (await db.query(
     `SELECT s.run_id, s.step_id, s.outcome, s.evidence, s.attempts, s.started_at, s.activity_definition_version_id,
             s.identity_protocol, s.run_binding_id,
@@ -178,7 +179,8 @@ export async function reconcileActivity(db, activityId, { runsWanted = 5, requir
               AND EXISTS (SELECT 1 FROM jsonb_array_elements(b.expected_path) p WHERE p->>'activity_id'=s.activity_id::text
                 AND p->>'activity_definition_version_id'=s.activity_definition_version_id::text
                 AND p->>'step_id'=s.step_id::text)) AS binding_verified
-      FROM spans s WHERE s.step_id IS NOT NULL AND s.activity_id = $1 ORDER BY s.started_at`, [activityId])).rows;
+      FROM spans s LEFT JOIN steps st ON st.id=s.step_id
+      WHERE s.step_id IS NOT NULL AND COALESCE(s.activity_id,st.activity_id) = $1 ORDER BY s.started_at`, [activityId])).rows;
   const parents = spans.length ? (await db.query(
     `SELECT t.id, t.result->'workflow_control' AS control, to_jsonb(v) AS verify_task
       FROM tasks t JOIN tasks v ON v.id::text=t.result->'workflow_control'->>'verify_task_id'

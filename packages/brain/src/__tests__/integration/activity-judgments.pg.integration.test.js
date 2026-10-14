@@ -65,7 +65,9 @@ describe('自动裁判落库（真 PG）', () => {
       ids.push(await span(`legacy-${i}`, { step: s1, observed: 1 }));
       ids.push(await span(`legacy-${i}`, { step: s2, observed: 3 }));
     }
-    const [judgment] = await flushJudgments(client, ids);
+    const [auto] = await flushJudgments(client, ids);
+    expect(auto).toMatchObject({ verdict: 'converging', consecutive_green: 1, promotion_eligible: false });
+    const judgment = await judgeActivity(client, a);
     expect(judgment).toMatchObject({ verdict: 'converging', consecutive_green: 5, promotion_eligible: false, converged: false });
     expect(await getLatestJudgment(client, a)).toMatchObject({ verdict: 'converging', converged: false });
     expect((await client.query("SELECT cell_status FROM activity_cells WHERE step_id=$1 AND cell_key='readback'", [a])).rows[0].cell_status).toBe('pending');
@@ -80,16 +82,24 @@ describe('自动裁判落库（真 PG）', () => {
     expect(await getLatestJudgment(client, a)).toBeNull();
   });
 
+  it('显式Activity归属优先，不能借另一个Activity的Step补到当前诊断窗口', async () => {
+    const { a, s1, s2 } = await seed();
+    const other = await seed();
+    await span('explicit-other', { a: other.a, step: s1, observed: 1 });
+    await span('explicit-other', { a: other.a, step: s2, observed: 3 });
+    expect(await judgeActivity(client, a)).toMatchObject({ verdict: 'no_data', promotion_eligible: false });
+  });
+
   it('Step 级 span（不带 activity_id）→ 经 steps 找到 Activity → 对账结果只追加落库，最新可查', async () => {
-    const { a, s1, s2, v1 } = await seed();
+    const { a, s1, s2 } = await seed();
     const ids = [];
-    for (const run of ['r1', 'r2']) { ids.push(await span(run, { step: s1, observed: 1, version: v1, a })); ids.push(await span(run, { step: s2, observed: 3 })); }
+    for (const run of ['r1', 'r2']) { ids.push(await span(run, { step: s1, observed: 1, a })); ids.push(await span(run, { step: s2, observed: 3 })); }
     const out = await flushJudgments(client, ids);
     expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({ activity_id: a, verdict: 'converging', consecutive_green: 2, activity_definition_version_id: v1 });
+    expect(out[0]).toMatchObject({ activity_id: a, verdict: 'converging', consecutive_green: 1, activity_definition_version_id: null, promotion_eligible: false });
     const latest = await getLatestJudgment(client, a);
-    expect(latest).toMatchObject({ activity_id: a, verdict: 'converging', consecutive_green: 2, required_green: 5,
-      runs_considered: 2, trigger_kind: 'auto', trigger_ref: 'r2', activity_definition_version_id: v1 });
+    expect(latest).toMatchObject({ activity_id: a, verdict: 'converging', consecutive_green: 1, required_green: 5,
+      runs_considered: 1, trigger_kind: 'auto', trigger_ref: 'r2', activity_definition_version_id: null });
     expect(latest.report.per_step).toHaveLength(2);
 
     await expect(client.query('UPDATE activity_judgments SET verdict=$1', ['converged'])).rejects.toThrow(/只追加/);
@@ -132,7 +142,7 @@ describe('运行没跑完不裁判（真 PG，按 Step 逐条上报）', () => {
     const rest = await span('r3', { step: s2, observed: 3, at: at() });
     await flushJudgments(client, [rest]);
     expect(await countJudgments(a)).toBe(2);
-    expect(await getLatestJudgment(client, a)).toMatchObject({ verdict: 'converging', consecutive_green: 3, trigger_ref: 'r3' });
+    expect(await getLatestJudgment(client, a)).toMatchObject({ verdict: 'converging', consecutive_green: 1, trigger_ref: 'r3' });
     expect(await readbackCell(a)).toBe('pending');
   });
 
