@@ -32,3 +32,14 @@ it.each(['missing_proof', 'wrong_implementation', 'wrong_environment', 'old_atte
   await reconcileCommanderTask(f.pool, f.task.id, f.deps);
   expect(f.current.status).toBe('in_progress'); expect(f.current.result.workflow_control.verification.verdict).not.toBe('PASS');
 });
+it('原unknown后有同冻结实现的机械读回pass和独立证明，仅完成业务不写Code独立成功', async () => {
+  const f = setup(), original = f.reconciliation.spans[0], code = f.implementations.code.implementation;
+  original.outcome = 'unknown';
+  f.reconciliation.spans[1] = { ...structuredClone(original), id: 'readback-span', outcome: 'pass', occurrence_key: 'readback:2' };
+  f.reconciliation.business_outcome = 'unknown'; f.reconciliation.gaps = [{ code: 'SPAN_OUTCOME_UNKNOWN', span_id: original.id }];
+  f.verifier.result.workflow_verification.assertions[1] = { name: `readback:${original.reference_id}:activity`, pass: true,
+    implementation: code, environment: f.contract.environment, evidence: ['independent:source-readback'] };
+  await reconcileCommanderTask(f.pool, f.task.id, f.deps);
+  expect(f.current.status).toBe('completed'); expect(f.current.result.workflow_control.execution_outcome).toBe('independent_readback_success');
+  expect(f.current.result.workflow_control.reconciliation.spans.map(s => s.outcome)).toEqual(['unknown', 'pass']);
+});
