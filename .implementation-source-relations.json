@@ -716,11 +716,6 @@
       "owner_path": "packages/brain/src/projection/task-execution-body.js",
       "path": "packages/brain/src/__tests__/integration/task-execution-body.pg.integration.test.js",
       "role": "verification"
-    },
-    {
-      "owner_path": "packages/brain/src/projection/task-execution-body.js",
-      "path": "packages/brain/src/projection/__tests__/fixtures/tasks-identity-schema.json",
-      "role": "verification"
     }
   ]
 }
