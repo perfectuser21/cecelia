@@ -40,6 +40,10 @@ it('放弃旧稿授权必须匹配当前任务、冻结账号与私密验收；�
   const plain = structuredClone(task); delete plain.payload.workflow_input.allow_discard_existing_draft; delete plain.payload.workflow_input.authorization;
   expect(makeEnvelope(plain, definition, contract, null, now()).input.allow_discard_existing_draft).not.toBe(true);
 });
+it('环境声明缺身份或fingerprint时不能形成固定运行条件', () => {
+  for (const environment of [{}, {id:'scratch'}, {id:'scratch',fingerprint:'bad'}])
+    expect(() => makeEnvelope(task, definition, { ...contract, environment }, null, now())).toThrow('环境');
+});
 
 it('相同阻断摘要不重建轮；输入实际变化才可恢复', () => {
   const spec = buildExecSpec({ ledger, cfg, stage: 3, skill: 'paired@2', round: 1, commanderRoute: true });
