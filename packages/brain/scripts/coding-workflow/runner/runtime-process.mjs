@@ -3,11 +3,12 @@ import { spawn, spawnSync } from 'node:child_process';
 
 function processes() {
   const result = spawnSync('ps', ['-axo', 'pid=,ppid=,pgid=,lstart='], { encoding: 'utf8', timeout: 1000 });
-  if (result.status !== 0) return [];
-  return result.stdout.split('\n').flatMap(line => {
+  if (result.status !== 0) return null;
+  const rows = result.stdout.split('\n').flatMap(line => {
     const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
     return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), start: match[4] }] : [];
   });
+  return rows.some(row => row.pid === process.pid) ? rows : null;
 }
 
 // 只向出生标识仍匹配的进程发信号；组长退出时需有仍匹配的已知组员证明组归属。
@@ -30,16 +31,19 @@ export function signalOwned(leader, owned, snapshot, signal, send = process.kill
 
 export function runtimeProcess(bin, args, { env = process.env, cwd, signal, timeoutMs = 60000, graceMs = 1000, inherit = false } = {}) {
   if (signal?.aborted) return Promise.resolve({ code: null, aborted: true, stdout: '', stderr: '' });
-  return new Promise(resolve => {
+  if (!processes()) return Promise.reject(new Error('runtime_process_identity_unavailable'));
+  return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { env, cwd, detached: true, stdio: inherit ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe'] });
-    let stdout = '', stderr = '', stopping = false, finished = false, killTimer, scanTimer, exited = false;
+    let stdout = '', stderr = '', stopping = false, finished = false, killTimer, scanTimer, deadlineTimer, exited = false;
     const owned = new Map();
     let ownershipChanged = false;
     const initial = processes();
-    const root = initial.find(row => row.pid === child.pid);
+    let ownershipUnavailable = initial === null;
+    const root = initial?.find(row => row.pid === child.pid);
     if (root) owned.set(root.pid, root.start);
     const collect = () => {
       const rows = processes();
+      if (!rows) { ownershipUnavailable = true; return; }
       const current = new Map(rows.map(row => [row.pid, row]));
       let added;
       do {
@@ -53,20 +57,36 @@ export function runtimeProcess(bin, args, { env = process.env, cwd, signal, time
         }
       } while (added);
     };
-    const killAll = sig => { ownershipChanged = signalOwned(child.pid, owned, processes(), sig) || ownershipChanged; };
-    const finish = code => {
+    const killAll = sig => {
+      const snapshot = processes();
+      if (!snapshot || owned.size === 0) { ownershipUnavailable = true; return; }
+      ownershipChanged = signalOwned(child.pid, owned, snapshot, sig) || ownershipChanged;
+    };
+    const finish = (code, incomplete = false) => {
       if (finished) return;
-      finished = true; clearTimeout(timer); clearTimeout(killTimer); clearInterval(scanTimer);
+      finished = true; clearTimeout(timer); clearTimeout(killTimer); clearTimeout(deadlineTimer); clearInterval(scanTimer);
       signal?.removeEventListener('abort', stop);
       if (stopping) { collect(); killAll('SIGKILL'); }
+      if (incomplete || (stopping && ownershipUnavailable)) {
+        // 不盲杀无法证明归属的PID；关闭自己的句柄以便有界退出，调用方必须保留故障锁。
+        child.unref(); child.stdout?.destroy(); child.stderr?.destroy();
+        console.error(`runtime_process_cleanup_unverified pid=${child.pid ?? 'unknown'}`);
+        reject(new Error('runtime_process_cleanup_unverified'));
+        return;
+      }
       if (ownershipChanged) console.error('runtime_process_ownership_changed_not_signalled');
       resolve({ code: ownershipChanged ? null : code, ownershipChanged, aborted: signal?.aborted === true, terminated: stopping, stdout, stderr });
     };
     const stop = () => {
       if (stopping || finished) return;
       stopping = true; collect(); killAll('SIGTERM');
-      scanTimer = setInterval(collect, 100);
-      killTimer = setTimeout(() => { collect(); killAll('SIGKILL'); if (exited) finish(null); }, graceMs);
+      if (!ownershipUnavailable) scanTimer = setInterval(collect, 100);
+      killTimer = setTimeout(() => {
+        collect(); killAll('SIGKILL');
+        if (exited) finish(null);
+        else if (ownershipUnavailable) finish(null, true);
+        else deadlineTimer = setTimeout(() => finish(null, true), 1000);
+      }, ownershipUnavailable ? Math.min(graceMs, 1000) : graceMs);
     };
     const timer = timeoutMs ? setTimeout(stop, timeoutMs) : null;
     signal?.addEventListener('abort', stop, { once: true });
@@ -78,5 +98,6 @@ export function runtimeProcess(bin, args, { env = process.env, cwd, signal, time
     child.once('error', () => finish(null));
     child.once('exit', () => { exited = true; if (stopping) { collect(); killAll('SIGKILL'); } });
     child.once('close', code => finish(code));
+    if (initial === null) stop();
   });
 }

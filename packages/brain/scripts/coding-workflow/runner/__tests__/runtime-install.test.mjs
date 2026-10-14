@@ -93,3 +93,18 @@ it.each(['failed', 'cancelled'])('首次安装已bootstrap后%s，必须卸载�
   const commands = fs.readFileSync(log, 'utf8').trim().split('\n');
   expect(commands.filter(c => c.startsWith('bootout'))).toHaveLength(2);
 }, 10000);
+it('回滚子进程失去归属信息时也保留安装外锁，不假称已收尾', async () => {
+  const { withProcessEnv } = await import('../../__tests__/helpers/procs.mjs');
+  const flag = path.join(root, 'rollback-ps-fail'); const count = path.join(root, 'ps-count');
+  fs.writeFileSync(path.join(root, 'bin/ps'), `#!${process.execPath}
+const fs=require('fs'),cp=require('child_process');
+if(fs.existsSync(${JSON.stringify(flag)})) {
+ const file=${JSON.stringify(count)};const n=fs.existsSync(file)?Number(fs.readFileSync(file)):0;fs.writeFileSync(file,String(n+1));if(n>=2)process.exit(7);
+}
+process.stdout.write(cp.execFileSync('/bin/ps',process.argv.slice(2)));`, { mode: 0o755 });
+  fs.writeFileSync(script, `#!/bin/bash\ntouch '${flag}'\nsleep 0.05\nexit 3\n`);
+  await withProcessEnv({ PATH: env.PATH }, async () => {
+    await expect(run()).rejects.toThrow('runtime_process_cleanup_unverified');
+  });
+  expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(true);
+});

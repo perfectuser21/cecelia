@@ -21,9 +21,16 @@ export async function withInstallation({ script, dest = `/Library/LaunchDaemons/
   }
   const lock = strictLock(path.join(locks, 'launcher'));
   if (!lock) throw new Error('runtime_install_launcher_busy');
-  let disabledBefore, loadedBefore, changedDisable = false, backup, installing = false;
+  let disabledBefore, loadedBefore, changedDisable = false, backup, installing = false, preserveLock = false;
+  const managedProcess = async (...args) => {
+    try { return await runtimeProcess(...args); }
+    catch (error) {
+      if (error.message === 'runtime_process_cleanup_unverified') preserveLock = true;
+      throw error;
+    }
+  };
   const ctl = async (...args) => {
-    const result = await runtimeProcess('launchctl', args, { env, timeoutMs: 10000 });
+    const result = await managedProcess('launchctl', args, { env, timeoutMs: 10000 });
     if (result.code !== 0 || result.terminated) throw new Error(`runtime_install_launchctl_${args[0]}_failed`);
     return result.stdout;
   };
@@ -49,15 +56,19 @@ export async function withInstallation({ script, dest = `/Library/LaunchDaemons/
     }
     if (signal?.aborted) throw new Error('runtime_install_cancelled');
     installing = true;
-    const result = await runtimeProcess('/bin/bash', [script, '--runtime-install-locked'], {
+    const result = await managedProcess('/bin/bash', [script, '--runtime-install-locked'], {
       env: { ...installEnv, CODING_WF_INSTALL_LOCK_PID: String(process.pid) }, signal, timeoutMs: 0, inherit: true,
     });
     if (result.code !== 0 || result.terminated || signal?.aborted) throw new Error('runtime_install_failed');
     if (!disabledBefore) await ctl('enable', `system/${label}`);
     return 0;
   } catch (error) {
+    if (error.message === 'runtime_process_cleanup_unverified') {
+      preserveLock = true; // 安装子进程可能仍活跃：不并发回滚、不重新启用周期服务。
+      throw error;
+    }
     if (installing) {
-      const current = await runtimeProcess('launchctl', ['print', `system/${label}`], { env, timeoutMs: 5000 });
+      const current = await managedProcess('launchctl', ['print', `system/${label}`], { env, timeoutMs: 5000 });
       const currentOutput = `${current.stdout}\n${current.stderr}`;
       if (current.terminated || (current.code !== 0 && !currentOutput.includes(`Could not find service "${label}"`))) {
         throw new Error('runtime_install_rollback_state_unknown');
@@ -75,7 +86,7 @@ export async function withInstallation({ script, dest = `/Library/LaunchDaemons/
     }
     if (changedDisable) await ctl('enable', `system/${label}`);
     throw error;
-  } finally { lock.release(); }
+  } finally { if (!preserveLock) lock.release(); }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -20,7 +20,7 @@ const locks = env.CODING_WF_LOCK_DIR || path.join(env.HOME || os.homedir(), '.ce
 async function main() {
   const outer = strictLock(path.join(locks, 'launcher'));
   if (!outer) { log('启动器已运行，本轮不换代码、不重复执行'); return 0; }
-  let updateLock;
+  let updateLock, preserveLocks = false;
   try {
     updateLock = strictLock(locks);
     if (!updateLock) { log('run-once 已持锁，本轮不换代码、不重复执行'); return 0; }
@@ -43,7 +43,10 @@ async function main() {
       graceMs: Number.isFinite(grace) && grace > 0 ? grace : 210000,
     });
     return result.code ?? (control.signal.aborted ? 143 : 1);
-  } finally { updateLock?.release(); outer.release(); }
+  } catch (error) {
+    preserveLocks = error.message === 'runtime_process_cleanup_unverified';
+    throw error;
+  } finally { if (!preserveLocks) { updateLock?.release(); outer.release(); } }
 }
 main().then(code => { process.exitCode = code; process.off('SIGTERM', stop); process.off('SIGINT', stop); }).catch(error => {
   // 仅输出本地定义的错误码；子进程原始错误可能带命令/环境，不扩散。

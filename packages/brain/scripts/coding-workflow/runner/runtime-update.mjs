@@ -40,7 +40,8 @@ export async function updateClone(repo, log, { signal } = {}) {
     await git('-c', 'merge.autoStash=false', 'merge', '--ff-only', '--no-edit', '--no-overwrite-ignore', target);
     if (before !== target) log(`已自更新到 origin/main ${(await git('rev-parse', '--short', 'HEAD')).trim()}`);
     return true;
-  } catch {
+  } catch (error) {
+    if (error.message === 'runtime_process_cleanup_unverified') throw error;
     // 不打印 git stderr（remote 配置可能带认证）；任何读取失败也按不安全处理。
     log('工作区不干净或不满足安全快进条件，跳过自更新（不破坏现场）');
     return false;
@@ -52,13 +53,16 @@ if (process.argv[1] && import.meta.url === (await import('node:url')).pathToFile
   const { strictLock } = await import('./runtime-lock.mjs');
   const control = new AbortController(); const stop = () => control.abort();
   process.on('SIGTERM', stop); process.on('SIGINT', stop);
-  let lock;
+  let lock, preserveLock = false;
   try {
     lock = strictLock(process.env.CODING_WF_LOCK_DIR || path.join(process.env.HOME, '.cecelia'));
     if (!lock) throw new Error('runtime_update_runner_busy');
     if (!path.isAbsolute(process.argv[2] || '')) throw new Error('runtime_update_repo_invalid');
     const ok = await updateClone(process.argv[2], message => console.error(message), { signal: control.signal });
     if (!ok || control.signal.aborted) throw new Error('runtime_update_refused');
-  } catch (error) { console.error(/^runtime_/.test(error.message) ? error.message : 'runtime_update_failed'); process.exitCode = 1; }
-  finally { lock?.release(); process.off('SIGTERM', stop); process.off('SIGINT', stop); }
+  } catch (error) {
+    preserveLock = error.message === 'runtime_process_cleanup_unverified';
+    console.error(/^runtime_/.test(error.message) ? error.message : 'runtime_update_failed'); process.exitCode = 1;
+  }
+  finally { if (!preserveLock) lock?.release(); process.off('SIGTERM', stop); process.off('SIGINT', stop); }
 }
