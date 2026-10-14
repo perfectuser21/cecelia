@@ -12,7 +12,7 @@ DoD：
 - [x] 真实 T5/T6 原文先红后绿，保留失败历史（c74e9d9e3）。
 - [x] 真浏览器/副作用/原型/可变与遮蔽反例拒绝，现有守卫回归通过（10文件305项；补充真实文件与参数后定向93项全绿）。
 - [x] Codex 依赖缺失/错误版本失败关闭（canonical临时路径首红4391deaf0：2红12绿）。
-- [ ] 独立双依赖实际安装与链接验收（根代理负责，不能用共享传递依赖冒充）。
+- [x] 独立双依赖 npm ci、Acorn AST、真实浏览器 DOM 与安装后启动通过；根代理持外锁与内锁切换稳定路径，旧依赖保留。证据 qa-readonly-browser-runtime-deps.json 与 qa-readonly-browser-runtime-install.json。
 - [ ] 提交交根与 retire 独审；不 push、不操作生产。
 
 真实隔离文件验收：T5/T6原文node参数逐字执行，完整文本/JSON均成功，缺README均非零；执行前后文件逐字相同。未把这个本地夹具结果冒充正式QA通过。
