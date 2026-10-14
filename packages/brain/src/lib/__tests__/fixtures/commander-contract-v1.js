@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
+import sharedSample from './commander-contract-v1.json' with { type: 'json' };
 import { makeEnvelope, digest } from '../../commander-v2-contract.js';
 import { activityBindings } from '../../commander-v2-store.js';
-export const sample = JSON.parse(readFileSync(new URL('./commander-contract-v1.json', import.meta.url)));
+export const sample = structuredClone(sharedSample);
 export function commanderCases() {
   const fixture = structuredClone(sample), { task, definition, contract, release } = fixture;
   const envelope = makeEnvelope(task, definition, contract, null);

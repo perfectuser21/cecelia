@@ -851,6 +851,11 @@
       "owner_path": "packages/brain/src/workflow-authoring/release-proof.js",
       "path": "packages/brain/src/workflow-authoring/release-proof.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-contract.js",
+      "path": "packages/brain/src/lib/__tests__/commander-v2-shared-source.test.js",
+      "role": "verification"
     }
   ]
 }
