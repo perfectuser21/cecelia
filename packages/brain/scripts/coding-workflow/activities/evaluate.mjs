@@ -176,7 +176,7 @@ await runActivity(async (input) => {
     result ??= judge({
       reportPath, reportFile, qaIds, stdout: run.stdout, worktree, dir, shotsDir: path.join(dir, `qa-r${round}`), round,
       env: local ? { kind: 'local', worktree } : { kind: 'preview', url: preview.url, ...(preview.sha ? { sha: preview.sha } : {}),
-        ...(state.bridge ? { transport: 'unix_api_only' } : {}) },
+        ...(state.bridge ? { transport: 'unix_http_browser' } : {}) },
       cost: run.cost_usd === undefined ? sessionCostUsd(run.stdout) : run.cost_usd, production,
       provider: run.provider, model: run.model,
     });

@@ -120,6 +120,8 @@ describe('Codex preview capability 实际HTTP隔离', () => {
     expect(text).toContain(`${JSON.stringify(b.capability.runtimeDir)}="read"`);
     expect(text).toContain(`${JSON.stringify(fs.realpathSync(path.join(cwd, '.git')))}="read"`);
     expect(s.env.CURL_HOME).toBe(b.capability.runtimeDir);
+    expect(s.env.CODING_WF_PREVIEW_BROWSER_HELPER).toBe(b.capability.browserHelperPath);
+    expect(fs.existsSync(b.capability.browserHelperPath)).toBe(true);
     await b.close(); expect(() => prepareCodexSession({ args, cwd, nativeOptions: { previewCapability: b.capability } })).toThrow();
   });
 });
@@ -164,7 +166,7 @@ it.each([false, true])('真实evaluate进程预览桥与sticky漂移门（drift=
   }
   expect(r.result?.status, r.stderr).toBe('completed');
   expect(r.result.outputs.qa).toMatchObject({ provider: 'codex', model: 'gpt-6-sol' });
-  expect(r.result.outputs.qa.env).toMatchObject({ kind: 'preview', url: f.origin, sha: SHA, transport: 'unix_api_only' });
+  expect(r.result.outputs.qa.env).toMatchObject({ kind: 'preview', url: f.origin, sha: SHA, transport: 'unix_http_browser' });
   expect(f.hits).toContain('/api/brain/check?q=Q-1');
   const home = r.stderr.match(/FAKE_CURL_HOME: (.+)/)?.[1]; expect(home).toBeTruthy(); expect(fs.existsSync(home)).toBe(false);
   expect(r.stderr).toContain('FAKE_HIDDEN_BUILD: true'); expect(fs.existsSync(path.join(dir, '03-build.md'))).toBe(true);

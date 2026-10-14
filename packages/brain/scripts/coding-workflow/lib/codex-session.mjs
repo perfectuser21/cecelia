@@ -91,5 +91,5 @@ export function prepareCodexSession({ args, cwd, env = process.env, nativeOption
   if (env.CODING_WF_CODEX_MODEL) native.push('--model', env.CODING_WF_CODEX_MODEL);
   native.push('-');
   return { bin: env.CODING_WF_CODEX_BIN || 'codex', args: native, stdin: input.prompt,
-    env: { ...(env.CODING_WF_CODEX_HOME ? { CODEX_HOME: env.CODING_WF_CODEX_HOME } : {}), ...(preview ? { CURL_HOME: preview.runtimeDir } : {}) } };
+    env: { ...(env.CODING_WF_CODEX_HOME ? { CODEX_HOME: env.CODING_WF_CODEX_HOME } : {}), ...(preview ? { CURL_HOME: preview.runtimeDir, CODING_WF_PREVIEW_BROWSER_HELPER: preview.browserHelperPath } : {}) } };
 }

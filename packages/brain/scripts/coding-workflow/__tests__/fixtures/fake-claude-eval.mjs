@@ -24,7 +24,7 @@ console.error(`FAKE_PRODUCTION: ${field('PRODUCTION')}`);
 console.error(`FAKE_JUDGE_FEEDBACK: ${field('JUDGE_FEEDBACK')}`);
 console.error(`FAKE_PREV_ERRORS: ${field('PREV_ERRORS')}`);
 if (mode === 'bridge') {
-  if (!process.env.CURL_HOME || !prompt.includes('API-only')) throw new Error('bridge_transport_missing');
+  if (!process.env.CURL_HOME || !prompt.includes('HTTP + browser')) throw new Error('bridge_transport_missing');
   console.error(`FAKE_CURL_HOME: ${process.env.CURL_HOME}`);
 }
 

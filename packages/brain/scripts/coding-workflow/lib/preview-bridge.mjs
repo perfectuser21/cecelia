@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { productionMatchers } from './qa-report.mjs';
+import { writePreviewBrowserHelper } from './preview-browser.mjs';
 
 const active = new WeakSet();
 const LIMIT = 8 * 1024 * 1024;
@@ -70,7 +71,8 @@ export async function createPreviewBridge({ origin, headSha, prNumber, productio
   const socketPath = path.join(runtimeDir, 'bridge.sock');
   // CURL_HOME keeps report commands portable; CI/preflight use those exact commands without this transport config.
   fs.writeFileSync(path.join(runtimeDir, '.curlrc'), `unix-socket = "${socketPath.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"\nproxy = ""\nnoproxy = "*"\n`, { mode: 0o400 });
-  capability = Object.freeze({ runtimeDir, socketPath, origin: target.origin, headSha, prNumber });
+  const browserHelperPath = writePreviewBrowserHelper({ runtimeDir, socketPath, origin: target.origin });
+  capability = Object.freeze({ runtimeDir, socketPath, browserHelperPath, origin: target.origin, headSha, prNumber });
   const sockets = new Set(); const requests = [];
   const server = http.createServer(async (req, res) => {
     const deny = (status, reason) => { if (!res.headersSent) res.writeHead(status, { 'content-type': 'text/plain', connection: 'close' }); res.end(reason); };
