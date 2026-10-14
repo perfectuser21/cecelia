@@ -8,7 +8,7 @@ import { cleanTestEnv } from './helpers/sandbox.mjs';
 const entry = fileURLToPath(new URL('../runtime-health.mjs', import.meta.url));
 let root, home, account, bin, env;
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-health-'));
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cw-health-')));
   home = path.join(root, 'home'); account = path.join(root, 'account'); bin = path.join(root, 'bin');
   for (const dir of [home, account, bin]) fs.mkdirSync(dir);
   env = { ...cleanTestEnv(), HOME: home, CODING_WF_PROVIDER: 'codex', CODING_WF_CODEX_MODEL: 'gpt-6-sol', CODING_WF_JUDGE_MODEL: 'gpt-6-astra', CODING_WF_JUDGE_PROVIDER: 'codex', CODING_WF_CODEX_HOME: account, PATH: `${bin}:/usr/bin:/bin` };
@@ -48,4 +48,22 @@ it('预检与真实配置使用同一个Codex binary，不能查错PATH账户', 
   const selected = path.join(root, 'selected-codex');
   fs.writeFileSync(selected, '#!/bin/sh\necho "Logged in using ChatGPT"\n', { mode: 0o755 });
   expect(run({ CODING_WF_CODEX_BIN: selected }).status).toBe(0);
+});
+
+it.each(['missing', 'wrong-version'])('Codex runtime 的 Acorn %s 在领单前拒绝', kind => {
+  fake('echo "Logged in using ChatGPT"');
+  const isolated = path.join(root, 'isolated');
+  fs.mkdirSync(isolated);
+  for (const name of ['runtime-health.mjs', 'runtime-process.mjs']) {
+    fs.copyFileSync(path.join(path.dirname(entry), name), path.join(isolated, name));
+  }
+  if (kind === 'wrong-version') {
+    const pkg = path.join(isolated, 'node_modules/acorn');
+    fs.mkdirSync(pkg, {recursive:true});
+    fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({name:'acorn',version:'8.15.0',type:'module',exports:'./index.mjs'}));
+    fs.writeFileSync(path.join(pkg, 'index.mjs'), 'export const version="8.15.0"; export function parse() {}');
+  }
+  const r = spawnSync(process.execPath, [path.join(isolated, 'runtime-health.mjs')], {env,encoding:'utf8',timeout:5000});
+  expect(r.status).not.toBe(0);
+  expect(r.stderr).toContain('runtime_acorn_');
 });
