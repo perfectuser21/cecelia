@@ -1,0 +1,206 @@
+{
+  "source_report_sha256": "43a794d4c8827d2af6b443261d9f14517b3b4a2a8b852cbed5301bfcdfaf8394",
+  "source_native_sha256": "1f8a6ca9d1cb99e3b8907d5a17eb26f44c774a27ba092c20a6daaa3e8d523ae1",
+  "items": [
+    {
+      "id": "T-1",
+      "covers": [
+        "Q-1"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"CODING_WF_PROVIDER=codex\",\"CODING_WF_CODEX_MODEL=gpt-6-sol\",\"CODING_WF_JUDGE_PROVIDER=codex\",\"CODING_WF_JUDGE_MODEL=gpt-6-astra\",\"CODING_WF_REPOS=cecelia\",\"--dry-run\",\"runtime_install_disabled\"])if(!s.includes(x))throw Error(x);console.log(\"安装手册核对通过\")'",
+      "output": "安装手册核对通过"
+    },
+    {
+      "id": "T-2",
+      "covers": [
+        "Q-1"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"CODING_WF_CODEX_HOME=/Users/administrator/.codex-team1\",\"sudo env PATH=\",\"bash packages/brain/scripts/coding-workflow/runner/install.sh\",\"原服务 disabled\",\"不能临时绕过禁用门\",\"不保证成功\"])if(!s.includes(x))throw Error(x);console.log(\"安装边界核对通过\")'",
+      "output": "安装边界核对通过"
+    },
+    {
+      "id": "T-3",
+      "covers": [
+        "Q-1"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/install.sh\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"CODING_WF_PROVIDER:-codex\",\"CODING_WF_REPOS:-cecelia\",\"CODING_WF_CODEX_MODEL:-gpt-6-sol\",\"CODING_WF_JUDGE_MODEL:-gpt-6-astra\",\"runtime_install_disabled\"])if(!s.includes(x))throw Error(x);console.log(\"安装器参数核对通过\")'",
+      "output": "安装器参数核对通过"
+    },
+    {
+      "id": "T-4",
+      "covers": [
+        "Q-2"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"runtime_install_disabled\",\"操作者确认后明确恢复启用\",\"不能临时绕过禁用门\",\"账号失效\",\"不改用 API key\",\"Claude\",\"旧锁或未知锁\",\"不按年龄删除\",\"核对锁目录的 PID\"])if(!s.includes(x))throw Error(x);console.log(\"故障判读核对通过\")'",
+      "output": "故障判读核对通过"
+    },
+    {
+      "id": "T-5",
+      "covers": [
+        "Q-2"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/runtime-install.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"runtime_install_disabled\",\"runtime_install_launcher_busy\",\"strictLock\"])if(!s.includes(x))throw Error(x);console.log(\"禁用与安装锁源码核对通过\")'",
+      "output": "禁用与安装锁源码核对通过"
+    },
+    {
+      "id": "T-6",
+      "covers": [
+        "Q-2"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/runtime-install-guard.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"runtime_install_lock_unknown\",\"coding-workflow-runner.lock\"])if(!s.includes(x))throw Error(x);console.log(\"未知锁守卫源码核对通过\")'",
+      "output": "未知锁守卫源码核对通过"
+    },
+    {
+      "id": "T-7",
+      "covers": [
+        "Q-3"
+      ],
+      "verdict": "PASS",
+      "command": "mkdir -p /tmp/qa-6433-r2-empty-status && node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir /tmp/qa-6433-r2-empty-status --json | jq -e 'if . == [] then . else error(\"nonempty\") end'",
+      "output": "[]"
+    },
+    {
+      "id": "T-8",
+      "covers": [
+        "Q-3"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"runtime-health.mjs\",\"launchctl print system/com.cecelia.coding-workflow-runner\",\"launchctl print-disabled system\",\"status.mjs --json\",\"/Volumes/runner-home/Library/Logs/coding-workflow-runner.log\",\"plutil -extract StandardOutPath raw\",\"StandardErrorPath\",\"tail -n 100\",\"ok:true\",\"Logged in using ChatGPT\"])if(!s.includes(x))throw Error(x);console.log(\"健康与日志手册核对通过\")'",
+      "output": "健康与日志手册核对通过"
+    },
+    {
+      "id": "T-9",
+      "covers": [
+        "Q-3"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/com.cecelia.coding-workflow-runner.plist.tmpl\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"StandardOutPath\",\"StandardErrorPath\",\"StartInterval\",\"__INTERVAL__\",\"__LOG__\"])if(!s.includes(x))throw Error(x);console.log(\"system 日志与周期模板核对通过\")'",
+      "output": "system 日志与周期模板核对通过"
+    },
+    {
+      "id": "T-10",
+      "covers": [
+        "Q-3"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/install.sh\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"INTERVAL=\",\"300\",\"__INTERVAL__\",\"CODING_WF_USER_HOME\"])if(!s.includes(x))throw Error(x);console.log(\"安装器周期与用户目录核对通过\")'",
+      "output": "安装器周期与用户目录核对通过"
+    },
+    {
+      "id": "T-11",
+      "covers": [
+        "Q-4"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\".cecelia/hb.sh\",\".cecelia/lights/<安全文件名>.live\",\"origin/main\",\"git merge --ff-only\",\"源码脏\",\"本地 ahead 或分叉\",\"不按年龄删除\",\"不执行\",\"git reset --hard\",\"git clean\"])if(!s.includes(x))throw Error(x);console.log(\"更新与旧锁手册核对通过\")'",
+      "output": "更新与旧锁手册核对通过"
+    },
+    {
+      "id": "T-12",
+      "covers": [
+        "Q-4"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/runtime-update.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\".cecelia/hb.sh\",\"origin/main\",\"--ff-only\"])if(!s.includes(x))throw Error(x);console.log(\"安全更新源码核对通过\")'",
+      "output": "安全更新源码核对通过"
+    },
+    {
+      "id": "T-13",
+      "covers": [
+        "Q-5"
+      ],
+      "verdict": "PASS",
+      "command": "PREVIEW_URL=http://localhost:5301; curl -fsS \"$PREVIEW_URL/api/brain/health\" | jq -e --arg sha \"$(git rev-parse HEAD)\" 'if .git_sha == $sha then .git_sha else error(\"preview_sha_mismatch\") end'",
+      "output": "\"47b2a5e590e1ac388e82c41d63662af10a19a916\""
+    },
+    {
+      "id": "T-14",
+      "covers": [
+        "Q-5"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"40 位 head SHA\",\"PREVIEW_URL\",\"CURL_HOME\",\"Unix socket\",\"同源 HTTP API\",\"隔离 Chromium\",\"跨源重定向\",\"WebSocket\",\"serviceWorkers\",\"CANNOT_VERIFY\",\"控制器不会自动注入\"])if(!s.includes(x))throw Error(x);console.log(\"预览边界手册核对通过\")'",
+      "output": "预览边界手册核对通过"
+    },
+    {
+      "id": "T-15",
+      "covers": [
+        "Q-5"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/lib/preview-bridge.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"headSha\",\"prNumber\",\"git_sha\",\"CONNECT\",\"upgrade\"])if(!s.includes(x))throw Error(x);console.log(\"预览桥源码核对通过\")'",
+      "output": "预览桥源码核对通过"
+    },
+    {
+      "id": "T-16",
+      "covers": [
+        "Q-5"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/activities/evaluate.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"PREVIEW_URL: preview.url\",\"createPreviewBridge\",\"headSha: input.head_sha\",\"prNumber: input.pr_number\"])if(!s.includes(x))throw Error(x);console.log(\"预览能力授予源码核对通过\")'",
+      "output": "预览能力授予源码核对通过"
+    },
+    {
+      "id": "T-17",
+      "covers": [
+        "Q-6"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"playwright-1.62.1/node_modules\",\"playwright-core\",\"integrity\",\"clone 的\",\"chromium.launch({headless:true,args:[\",\"--single-process\",\"--no-zygote\",\"await b.close()\",\"preview_browser_unavailable\",\"automerge=false\",\"PR #2132\",\"人工放行\"])if(!s.includes(x))throw Error(x);console.log(\"浏览器前置与人工放行手册核对通过\")'",
+      "output": "浏览器前置与人工放行手册核对通过"
+    },
+    {
+      "id": "T-18",
+      "covers": [
+        "Q-6"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/runtime-deps/package-lock.json\";const s=JSON.parse(fs.readFileSync(p,\"utf8\"));if(s.packages[\"node_modules/playwright\"].version!==\"1.62.1\"||!s.packages[\"node_modules/playwright\"].integrity||s.packages[\"node_modules/playwright-core\"].version!==\"1.62.1\"||!s.packages[\"node_modules/playwright-core\"].integrity)throw Error(\"lock\");console.log(\"依赖锁版本与完整性核对通过\")'",
+      "output": "依赖锁版本与完整性核对通过"
+    },
+    {
+      "id": "T-19",
+      "covers": [
+        "Q-6"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/lib/preview-browser.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"serviceWorkers\",\"block\",\"routeWebSocket\",\"origin_blocked\",\"preview_browser_unavailable\",\"single-process\",\"no-zygote\"])if(!s.includes(x))throw Error(x);console.log(\"隔离浏览器源码核对通过\")'",
+      "output": "隔离浏览器源码核对通过"
+    },
+    {
+      "id": "T-20",
+      "covers": [
+        "Q-6"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/repos.json\";const s=JSON.parse(fs.readFileSync(p,\"utf8\"));if(!s.repos.find(x=>x.key===\"zenithjoy-workspace\"&&x.automerge===false))throw Error(\"zenithjoy-workspace\");console.log(\"ZenithJoy 人工合并配置核对通过\")'",
+      "output": "ZenithJoy 人工合并配置核对通过"
+    },
+    {
+      "id": "T-21",
+      "covers": [
+        "Q-6"
+      ],
+      "verdict": "PASS",
+      "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/lib/merge-gate.mjs\";const s=fs.readFileSync(p,\"utf8\");for(const x of [\"automerge=false\",\"请人工合并\"])if(!s.includes(x))throw Error(x);console.log(\"合并门源码核对通过\")'",
+      "output": "合并门源码核对通过"
+    },
+    {
+      "id": "X-1",
+      "covers": [
+        "Q-3"
+      ],
+      "verdict": "PASS",
+      "command": "node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir /tmp/qa-6433-r2-no-such-dir --json | jq -e '. == []'",
+      "output": "true",
+      "severity": "",
+      "scene": "运维人员查询一个不存在的回执目录，仍得到空数组；手册明确空数组不能证明服务健康。"
+    }
+  ]
+}
