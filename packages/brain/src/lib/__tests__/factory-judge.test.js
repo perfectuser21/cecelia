@@ -174,3 +174,21 @@ describe('judgeTask 流程', () => {
     expect(n).toBe(1);
   });
 });
+
+
+describe('Commander v2 正式独立核验与归属（D 回归）', () => {
+  const control = (over={}) => ({phase:'final',verdict:'PASS',verify_task_id:'verify-1',
+    envelope:{task_id:'exec-1',run_id:'run-1',attempt:1,definition:{snapshot_sha256:'hash',expected_path:[{activity_id:'a1',activity_definition_version_id:'av2'}]}},
+    verification:{task_id:'exec-1',run_id:'run-1',attempt:1,definition_sha256:'hash',verdict:'PASS',assertions:[{name:'cleanup',pass:true}],evidence:['actual-readback']}, ...over});
+  const task = c => ({id:'exec-1',status:'completed',payload:{factory_dispatch:true,commander_protocol:'commander-v2'},result:{workflow_control:c}});
+  it('控制器自报PASS但缺正式核验任务不能计成功', async () => {
+    const store=fakeStore(); const deps=depsWith(store);
+    const out=await judgeTask(task(control()),deps);
+    expect(out.verdict).toBe('inconclusive'); expect(deps.recordRun).not.toHaveBeenCalled();
+  });
+  it('核验run不符不能给固定版本PASS', async () => {
+    const store=fakeStore({verifyTask:{id:'verify-1',status:'completed',result:{}}});const deps=depsWith(store);
+    const c=control();c.verification.run_id='other';
+    expect((await judgeTask(task(c),deps)).verdict).toBe('inconclusive');
+  });
+});

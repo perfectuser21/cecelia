@@ -249,3 +249,13 @@ describe('onSpansWritten（挂在 POST /spans 主路径上的钩子）', () => {
     expect(silent.warn).toHaveBeenCalled();
   });
 });
+
+
+describe('裁判固定scope与独立证据（D 回归）', () => {
+  it('读回收敛但未独立核验不能登记收敛', async () => {
+    const db=fakeDb([[/INSERT INTO activity_judgments/,()=>({rows:[{id:'j1'}]})]]);
+    const out=await judgeActivity(db,ACT,{reconcile:async()=>report({verdict:'converged',converged:true,promotion_eligible:false,evidence_scope:{activity_definition_version_id:VER}})});
+    expect(out.converged).toBe(false);expect(out.verdict).toBe('converging');
+    expect(out.activity_definition_version_id).toBe(VER);
+  });
+});
