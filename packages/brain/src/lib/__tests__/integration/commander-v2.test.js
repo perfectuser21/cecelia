@@ -350,3 +350,34 @@ it('status顺序补账含坏活动原件仍能读到真实delivery和官方停�
  expect((await f.db.query("SELECT * FROM task_events WHERE task_id=$1 AND event_type='commander_feedback'",[id])).rows).toHaveLength(2);
  expect((await f.db.query('SELECT status FROM task_runs WHERE run_id=$1',[e.run_id])).rows[0].status).toBe('failed');
 });
+it('真实任务和运行账在收尾期限耗尽后收敛，未知活性不伪报停止或放锁',async()=>{
+ await dispatchCommanderV2(f.db,id,deps);const e=await envelope();
+ await reconcileCommanderTask(f.db,id,{...deps,now:()=>new Date(e.cleanup_deadline_at),fence:async()=>{throw Error('offline');},status:async()=>{throw Error('offline');}});
+ const t=await state(),c=t.result.workflow_control;
+ expect(t.status).toBe('failed');expect(c).toMatchObject({phase:'final',verdict:'INCONCLUSIVE',terminal_status:'failed',execution_fenced:true,remote_execution_fenced:false,execution_stopped:false});
+ const run=(await f.db.query('SELECT * FROM task_runs WHERE run_id=$1',[e.run_id])).rows[0];
+ expect(run.status).toBe('timeout');expect(run.result.execution_stopped).toBe(false);expect(deps.releaseLock).not.toHaveBeenCalled();
+ await expect(sendEvent(1,'started',{},e)).rejects.toThrow('不接收反馈');
+});
+it('failed final仅补官方停止清理证据与放锁，迟到成功不改变原业务终判',async()=>{
+ await dispatchCommanderV2(f.db,id,deps);const e=await envelope();
+ await reconcileCommanderTask(f.db,id,{...deps,now:()=>new Date(e.cleanup_deadline_at),fence:async()=>({execution_fenced:true}),status:async()=>({protocol:e.protocol,run_id:e.run_id,execution_stopped:false})});
+ const original=(await state()).result.workflow_control.verdict;
+ const late=delivery(e,{evidence:['official:late-delivery'],cleanup:{completed:true,evidence:['official:resource-cleaned']}});
+ await reconcileCommanderTask(f.db,id,{...deps,status:async()=>({protocol:e.protocol,run_id:e.run_id,execution_stopped:true,delivery:late})});
+ const t=await state(),c=t.result.workflow_control;
+ expect(t.status).toBe('failed');expect(c.verdict).toBe(original);expect(c.cleanup_verification).toMatchObject({confirmed:true,source:'official_status',evidence:['official:resource-cleaned']});
+ expect(deps.releaseLock).toHaveBeenCalledTimes(1);
+ const events=(await f.db.query("SELECT * FROM task_events WHERE task_id=$1 AND event_type='commander_final_cleanup_readback'",[id])).rows;
+ expect(events).toHaveLength(1);expect(events[0].payload.verdict_preserved).toBe('INCONCLUSIVE');
+ await reconcileCommanderTask(f.db,id,{...deps,status:async()=>{throw Error('must not rerun');}});expect(deps.sshDispatch).toHaveBeenCalledTimes(1);
+});
+it('超期终态CAS未命中须整笔回滚，不能报告已失败而原任务仍在跑',async()=>{
+ await dispatchCommanderV2(f.db,id,deps);const e=await envelope();
+ const guarded={query:(...args)=>f.db.query(...args),connect:async()=>{
+   const db=await f.db.connect();return {release:()=>db.release(),query:(sql,args)=>sql.startsWith("UPDATE tasks SET status = 'failed'")?Promise.resolve({rows:[],rowCount:0}):db.query(sql,args)};
+ }};
+ await expect(reconcileCommanderTask(guarded,id,{...deps,now:()=>new Date(e.cleanup_deadline_at),fence:async()=>({execution_fenced:true}),status:async()=>({protocol:e.protocol,run_id:e.run_id,execution_stopped:false})})).rejects.toThrow('原任务');
+ expect((await state()).status).toBe('in_progress');expect((await state()).result.workflow_control.phase).toBe('running');
+ expect((await f.db.query('SELECT status FROM task_runs WHERE run_id=$1',[e.run_id])).rows[0].status).toBe('running');
+});
