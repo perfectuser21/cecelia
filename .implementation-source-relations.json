@@ -698,7 +698,7 @@
     {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "cp-10132012-runtime-version-graph.prd.md", "role": "documentation"},
     {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "cp-10132012-runtime-version-graph.dod.md", "role": "documentation"},
     {"owner_path": "packages/brain/src/lib/workflow-failure.js", "path": "packages/brain/src/lib/__tests__/workflow-failure.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/script-run-definition.js", "path": ".dod-cp-10141600-script-definition-binding.md", "role": "documentation"},
+    
     {"owner_path": "packages/brain/src/lib/notion-projection-engine.js", "path": "packages/brain/src/lib/__tests__/notion-projection-engine.test.js", "role": "verification"},
     {"owner_path": "packages/brain/src/lib/script-run-definition.js", "path": "packages/brain/src/lib/__tests__/script-run-definition.test.js", "role": "verification"},
     {"owner_path": "packages/brain/src/workflow-authoring/release-proof.js", "path": "packages/brain/src/workflow-authoring/release-proof.test.js", "role": "verification"}
