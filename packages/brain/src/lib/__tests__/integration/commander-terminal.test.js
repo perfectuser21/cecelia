@@ -31,6 +31,7 @@ describe('Commander 未决清理的设备锁隔离', () => {
     { execution_stopped: true, delivery: { cleanup: { completed: false, evidence: ['unknown'] } } },
     { execution_stopped: true, delivery: { cleanup: { completed: true, evidence: [] } } },
     { execution_stopped: true, delivery: { cleanup: { completed: true, evidence: {} } } },
+    { execution_stopped: true, delivery: { cleanup: { completed: true, evidence: ['self-reported'] } } },
   ])('任务失败和TTL过期不证明已停止/清理：%j', async control => {
     await locked(control);
     expect(await sweepStaleDeviceLocks(client)).toBe(0);
@@ -39,7 +40,8 @@ describe('Commander 未决清理的设备锁隔离', () => {
     expect((await client.query('SELECT locked_by FROM device_locks')).rows[0].locked_by).toBe(ID);
   });
   it('官方停止和清理证据落账后可释放，旧任务失败仍正常回收', async () => {
-    await locked({ execution_stopped: true, delivery: { cleanup: { completed: true, evidence: ['official-cleanup-readback'] } } });
+    await locked({ execution_stopped: true, delivery: { cleanup: { completed: true, evidence: ['official-cleanup-readback'] } },
+      cleanup_verification: { confirmed: true, source: 'official_status', evidence: ['phone:readback'] } });
     expect(await releaseDeviceLocksHeldBy(ID, client)).toBe(1);
     await client.query('TRUNCATE tasks,device_locks');
     await locked({}, 'legacy');

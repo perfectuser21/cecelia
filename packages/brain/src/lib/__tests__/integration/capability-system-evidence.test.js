@@ -7,6 +7,19 @@ import * as service from '../../capability-system-evidence.js';
 let f;
 beforeEach(async()=>{f=await releaseEvidenceDatabase();});
 afterEach(async()=>{await f?.close();f=null;});
+it('读回保留Code与Skill的独立归属，展示白名单不透出任意执行材料',async()=>{
+  const implementation={kind:'code',id:'publish-code',version:'2.0.0',digest:'c'.repeat(64),command:'private-command'};
+  const environment={id:'current-host',fingerprint:'e'.repeat(64),secret:'private-env'};
+  await f.db.query("INSERT INTO spans(run_id,workflow_id,activity_id,started_at,ended_at,executor_kind,outcome,evidence) VALUES('attributed-run',$1,$2,NOW(),NOW(),'code','fail',$3)",
+    [f.workflows[0].workflow_id,f.activities[0].activity_id,{implementation,environment,execution_role:'primary',command:'private-command',observed:{value:0}}]);
+  const report=await service.readSystemRunEvidence(f.db,'attributed-run');
+  expect(report.business_outcome).toBe('unknown');
+  expect(report.spans[0]).toMatchObject({outcome:'fail',evidence:{implementation:{kind:'code',id:'publish-code',version:'2.0.0',digest:'c'.repeat(64)},environment:{id:'current-host',fingerprint:'e'.repeat(64)},execution_role:'primary'}});
+  expect(report.spans[0].evidence).not.toHaveProperty('command');
+  expect(report.spans[0].evidence.implementation).not.toHaveProperty('command');
+  expect(report.spans[0].evidence.environment).not.toHaveProperty('secret');
+  expect(report.spans[0].evidence).not.toHaveProperty('observed');
+});
 it('发布和运行列表按Workflow过滤及分页，不向展示面透出任意payload',async()=>{
   const release=(await createRelease(f.db,f.releaseInput)).release;
   const observation=(await recordReleaseObservation(f.db,release.id,f.observationInput,{trustedCollector:'fixture-collector'})).observation;
