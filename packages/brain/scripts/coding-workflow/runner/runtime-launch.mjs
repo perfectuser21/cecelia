@@ -30,8 +30,9 @@ async function main() {
       const clone = await runtimeProcess('git', ['clone', '-q', env.CODING_WF_ORIGIN_URL || 'https://github.com/perfectuser21/cecelia.git', repo], { signal: control.signal });
       if (clone.code !== 0 || clone.terminated || control.signal.aborted) throw new Error('runtime_clone_failed');
     }
-    await updateClone(repo, log, { signal: control.signal });
+    const verified = await updateClone(repo, log, { signal: control.signal });
     if (control.signal.aborted) return 143;
+    if (!verified) throw new Error('runtime_update_not_verified');
     // 到这里更新已完成。内锁交给 run-once 自己获取；外锁仍阻止第二个启动器更新。
     updateLock.release(); updateLock = null;
     const childEnv = env.CODING_WF_PROVIDER === 'codex' ? codexEnvironment(env) : env;

@@ -116,14 +116,16 @@ describe('runner.sh 启动器', () => {
     expect(stubOut(r).head).toBe('v3');
   });
 
-  it('工作区不干净：记日志、不更新、不动现场，照常 exec', () => {
+  it('工作区不干净：记日志、不更新、不动现场，也不执行源码', () => {
     gitPlain('clone', '-q', origin, clone);
     commitSeed('v2');
     fs.writeFileSync(path.join(clone, 'local-note.txt'), 'keep me\n');
     const r = runRunner(env);
-    expect(r.status, r.stderr).toBe(0);
+    expect(r.status).not.toBe(0);
     expect(r.stderr).toContain('工作区不干净');
-    expect(stubOut(r).head).toBe('v1');
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).not.toContain('RUN_ONCE_STUB');
+    expect(git(clone, 'log', '-1', '--format=%s').trim()).toBe('v1');
     expect(fs.readFileSync(path.join(clone, 'local-note.txt'), 'utf8')).toBe('keep me\n');
   });
 
@@ -161,7 +163,9 @@ describe('runner.sh 启动器', () => {
     if (kind === 'staged') git(clone, 'add', 'version.txt');
     commitSeed('v2');
     const r = runRunner(env);
-    expect(stubOut(r).head).toBe('v1');
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).not.toContain('RUN_ONCE_STUB');
+    expect(git(clone, 'log', '-1', '--format=%s').trim()).toBe('v1');
     expect(fs.readFileSync(path.join(clone, file), 'utf8')).toBe('keep');
   });
 
@@ -177,7 +181,8 @@ describe('runner.sh 启动器', () => {
     if (kind === 'rebase') fs.mkdirSync(path.join(clone, '.git/rebase-merge'));
     const before = git(clone, 'rev-parse', 'HEAD');
     if (kind !== 'local-commit') commitSeed('v2');
-    runRunner(env);
+    const r = runRunner(env);
+    expect(r.status).not.toBe(0); expect(r.stdout).not.toContain('RUN_ONCE_STUB');
     expect(git(clone, 'rev-parse', 'HEAD')).toBe(before);
   });
 
@@ -188,7 +193,9 @@ describe('runner.sh 启动器', () => {
     fs.writeFileSync(path.join(seed, '.cecelia/lights/nosid000-cp-test.live'), 'remote');
     commitSeed('v2');
     const r = runRunner(env);
-    expect(stubOut(r).head).toBe('v1');
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).not.toContain('RUN_ONCE_STUB');
+    expect(git(clone, 'log', '-1', '--format=%s').trim()).toBe('v1');
     expect(fs.readFileSync(path.join(clone, '.cecelia/lights/nosid000-cp-test.live'), 'utf8')).toBe('live');
   });
 
@@ -263,7 +270,9 @@ console.log(JSON.stringify({ inner: fs.existsSync(dir + '/coding-workflow-runner
     const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
     fs.writeFileSync(path.join(bin, 'git'), `#!/bin/bash\nfor a in "$@"; do if [ "$a" = fetch ]; then printf keep > "${clone}/during-fetch.txt"; fi; done\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
     const r = runRunner({ ...env, PATH: `${bin}:${env.PATH}` });
-    expect(stubOut(r).head).toBe('v1');
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).not.toContain('RUN_ONCE_STUB');
+    expect(git(clone, 'log', '-1', '--format=%s').trim()).toBe('v1');
     expect(fs.readFileSync(path.join(clone, 'during-fetch.txt'), 'utf8')).toBe('keep');
   });
 
@@ -273,7 +282,9 @@ console.log(JSON.stringify({ inner: fs.existsSync(dir + '/coding-workflow-runner
     fs.writeFileSync(path.join(clone, 'ignored.txt'), 'keep');
     fs.writeFileSync(path.join(seed, 'ignored.txt'), 'remote'); git(seed, 'add', '-f', 'ignored.txt'); commitSeed('v2');
     const r = runRunner(env);
-    expect(stubOut(r).head).toBe('v1'); expect(fs.readFileSync(path.join(clone, 'ignored.txt'), 'utf8')).toBe('keep');
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).not.toContain('RUN_ONCE_STUB');
+    expect(git(clone, 'log', '-1', '--format=%s').trim()).toBe('v1'); expect(fs.readFileSync(path.join(clone, 'ignored.txt'), 'utf8')).toBe('keep');
   });
 
   it.each(['execution', 'fetch'])('终止%s阶段会有界回收忽略SIGTERM的独立组子孙，再释放锁', async (phase) => {
@@ -307,6 +318,15 @@ fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify([process.pid,child.pi
       expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'coding-workflow-runner.lock'))).toBe(false);
     } finally { child.kill('SIGKILL'); for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); } catch {} } }
   }, 12000);
+
+  it('fetch网络失败时拒绝本轮执行，不靠猜测认定旧代码安全', () => {
+    gitPlain('clone', '-q', origin, clone);
+    git(clone, 'remote', 'set-url', 'origin', path.join(root, 'missing-origin'));
+    const r = runRunner(env);
+    expect(r.status).not.toBe(0); expect(r.stdout).not.toContain('RUN_ONCE_STUB');
+    expect(r.stderr).toContain('runtime_update_not_verified');
+    expect(git(clone, 'log', '-1', '--format=%s').trim()).toBe('v1');
+  });
 
   it('主日志超过 10MB 时滚动（copy+truncate），保留 3 份', () => {
     gitPlain('clone', '-q', origin, clone);

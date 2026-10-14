@@ -36,6 +36,7 @@ export async function assertIdle({ env = process.env, allowLauncherPid = null } 
     }
     throw new Error('runtime_install_runner_active');
   }
+  return { loaded: service.code === 0 };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try { await assertIdle({ allowLauncherPid: Number(process.env.CODING_WF_INSTALL_LOCK_PID) || null }); }

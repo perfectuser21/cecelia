@@ -21,7 +21,7 @@ export async function withInstallation({ script, dest = `/Library/LaunchDaemons/
   }
   const lock = strictLock(path.join(locks, 'launcher'));
   if (!lock) throw new Error('runtime_install_launcher_busy');
-  let disabledBefore, changedDisable = false, backup, installing = false;
+  let disabledBefore, loadedBefore, changedDisable = false, backup, installing = false;
   const ctl = async (...args) => {
     const result = await runtimeProcess('launchctl', args, { env, timeoutMs: 10000 });
     if (result.code !== 0 || result.terminated) throw new Error(`runtime_install_launchctl_${args[0]}_failed`);
@@ -33,8 +33,9 @@ export async function withInstallation({ script, dest = `/Library/LaunchDaemons/
     if (!match && !/disabled services\s*=\s*\{/.test(disabled)) throw new Error('runtime_install_disabled_state_unknown');
     disabledBefore = match?.[1] === 'true';
     if (!disabledBefore) { await ctl('disable', `system/${label}`); changedDisable = true; }
-    await assertIdle({ env, allowLauncherPid: process.pid });
+    ({ loaded: loadedBefore } = await assertIdle({ env, allowLauncherPid: process.pid }));
     backup = fs.existsSync(dest) ? { bytes: fs.readFileSync(dest), mode: fs.statSync(dest).mode & 0o777 } : null;
+    if (loadedBefore && !backup) throw new Error('runtime_install_existing_plist_missing');
     const installEnv = { ...env };
     if (!installEnv.CODING_WF_AUTOMERGE && backup) {
       const xml = backup.bytes.toString('utf8');
@@ -56,13 +57,21 @@ export async function withInstallation({ script, dest = `/Library/LaunchDaemons/
     return 0;
   } catch (error) {
     if (installing) {
-      if (backup) {
+      const current = await runtimeProcess('launchctl', ['print', `system/${label}`], { env, timeoutMs: 5000 });
+      const currentOutput = `${current.stdout}\n${current.stderr}`;
+      if (current.terminated || (current.code !== 0 && !currentOutput.includes(`Could not find service "${label}"`))) {
+        throw new Error('runtime_install_rollback_state_unknown');
+      }
+      const loadedNow = current.code === 0;
+      const bytesNow = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
+      const fileChanged = backup ? !bytesNow?.equals(backup.bytes) : bytesNow !== null;
+      // 前置失败尚未动文件/服务时不重启。首次安装则必须撤销新加载的服务。
+      if (loadedNow && (!loadedBefore || fileChanged)) await ctl('bootout', `system/${label}`);
+      if (backup && fileChanged) {
         fs.writeFileSync(dest, backup.bytes, { mode: backup.mode }); fs.chmodSync(dest, backup.mode);
-        // 旧服务若仍加载则 bootstrap 会失败；先核状态，避免中断仍在的旧服务。
-        const current = await runtimeProcess('launchctl', ['print', `system/${label}`], { env, timeoutMs: 5000 });
-        if (current.code === 0) await ctl('bootout', `system/${label}`);
-        await ctl('bootstrap', 'system', dest);
-      } else if (fs.existsSync(dest)) fs.unlinkSync(dest);
+      } else if (!backup && bytesNow) fs.unlinkSync(dest);
+      // 原本未加载的旧plist只恢复文件，不能替用户把服务启动起来。
+      if (loadedBefore && (!loadedNow || fileChanged)) await ctl('bootstrap', 'system', dest);
     }
     if (changedDisable) await ctl('enable', `system/${label}`);
     throw error;

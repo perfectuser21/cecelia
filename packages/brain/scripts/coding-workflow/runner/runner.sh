@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # coding workflow runner 启动器（LaunchDaemon 每 5 分钟调一次）。
 # 使用专用 clone（不碰主仓 checkout）：clone 不存在则 clone；仅精确未跟踪心跳噪音可豁免，满足安全快进条件才自更新到 origin/main（HEAD 变了才记一行），
-# 不干净只记日志、不破坏现场；然后 exec clone 里的 run-once.mjs（worktree prune 与保留期清理由它负责）。
+# 未通过安全更新检查则本轮停止、不破坏现场；通过后执行 clone 里的 run-once.mjs（worktree prune 与保留期清理由它负责）。
 # 多仓库（C5）：其他已启用仓库（repos.json enabled + CODING_WF_REPOS）的 clone 不存在时按 repos.json 的路径与 origin clone；
 # 已存在的不 fetch、不 reset（各道门按需 fetch origin，不动现场——路径万一指到人用的目录也不会被冲掉）。
 # 主日志（CODING_WF_MAIN_LOG，launchd 的 StandardOutPath）超过 10MB 时 copy+truncate 滚动，保留 3 份。
