@@ -98,3 +98,28 @@ it('缺正式运输确认准确标识核验单，不把真实模型正确的tool
  expect(result).toMatchObject({verdict:'INCONCLUSIVE',reason:'核验运输未获正式确认',verification_task_id:'verify-rejected'});
  expect(JSON.stringify(result)).not.toContain('sensitive');
 });
+
+it('历史方法PASS必须同时证明原目标和所选方法，错hash或空证据不可完成',()=>{
+ const envelope={...e,method_selection:{original_goal_definition:{snapshot_sha256:'original'},selection_receipt:{compatibility_sha256:'compatible'}}};
+ const child=value=>({status:'completed',result:{workflow_verification:value}});
+ expect(readVerification(child(v),{id:'task'},{envelope}).verdict).toBe('INCONCLUSIVE');
+ const both={...v,assertions:[...v.assertions,{name:'original_goal',pass:true,definition_sha256:'original',evidence:['source']},{name:'selected_method',pass:true,definition_sha256:'hash',evidence:['actual']}]};
+ expect(readVerification(child(both),{id:'task'},{envelope}).verdict).toBe('PASS');
+ for(const bad of [{...both,assertions:both.assertions.map(a=>a.name==='original_goal'?{...a,definition_sha256:'wrong'}:a)},{...both,assertions:both.assertions.map(a=>a.name==='selected_method'?{...a,evidence:[]}:a)}])expect(readVerification(child(bad),{id:'task'},{envelope}).verdict).toBe('INCONCLUSIVE');
+});
+
+it('恢复分两阶段：旧核验不以未来目录已存在为安全条件，新attempt业务前仍须强制隔离',()=>{
+ const request=verificationRequest({id:'task'},{envelope:e,delivery:{outputs:{}}});
+ expect(request.description).toContain('旧attempt安全核验不得要求尚未授权的新attempt目录已经存在');
+ expect(request.description).toContain('独立核对当前正式runner强制创建唯一新run目录、不覆盖旧证据的实现与摘要');
+ expect(request.description).toContain('真正新attempt起跑前必须由运行端强制校验独立目录与旧证据保留，未通过不得启动业务');
+ expect(request.description).not.toContain('官方child终态、新attempt独立目录及旧失败证据保留；证据齐全才');
+});
+
+it('方法核验只解析执行机当前run的持久信封，不接受副本或符号链接',()=>{
+ const request=verificationRequest({id:'task'},{envelope:{...e,method_selection:{original_goal_definition:{snapshot_sha256:'original'}}},delivery:{outputs:{}},execution_location:{ssh_target:'worker@mmv',run_directory:'~/wf-agent-runs/run'}});
+ expect(request.description).toContain('execution_location.run_directory/envelope.json');
+ expect(request.description).toContain('执行机realpath');
+ expect(request.description).toContain('禁止复制、改写信封或使用符号链接');
+ expect(request.metadata.workflow_verification.execution_location.run_directory).toBe('~/wf-agent-runs/run');
+});

@@ -1,6 +1,7 @@
 /** Commander v2：只接受固定合同，业务数据不参与shell构造。 */
 import Ajv from 'ajv';
 import { createHash, randomUUID } from 'node:crypto';
+import { resolveActionBindings } from './commander-v2-action-bindings.js';
 export const PROTOCOL = 'commander-v2';
 export const isCommanderV2 = task => task?.payload?.commander_protocol === PROTOCOL;
 export const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -49,8 +50,12 @@ export function validateContract(task, contract) {
   bounded(contract, 200000, '冻结合同'); bounded(task.payload.workflow_input, 100000, 'workflow_input');
   requireCommander(object(contract) && object(contract.input_schema), '固定合同缺input_schema');
   validateSchema(task.payload.workflow_input, contract.input_schema, 'workflow_input');
+  validateAuthorization(task, contract);
   if (contract.output_schema !== undefined) ajv.compile(contract.output_schema);
   requireCommander(object(contract.resources), '合同缺resources');
+  if (contract.environment !== undefined) requireCommander(object(contract.environment)
+    && typeof contract.environment.id === 'string' && contract.environment.id.trim().length > 0
+    && typeof contract.environment.fingerprint === 'string' && /^[a-f0-9]{64}$/.test(contract.environment.fingerprint), '冻结环境身份或fingerprint缺失');
   const r = contract.resources;
   if (r.device_serial) for (const k of ['device_serial', 'machine', 'profile', 'account_ref']) {
     requireCommander(typeof r[k] === 'string' && /^[\p{L}\p{N}._-]{1,200}$/u.test(r[k]), `资源${k}缺失或非法`);
@@ -64,6 +69,19 @@ export function validateContract(task, contract) {
   if (policy.improvement_after_failures !== undefined) requireCommander(Number.isInteger(policy.improvement_after_failures) && policy.improvement_after_failures > 0 && policy.improvement_after_failures <= 100, '改进阈值越界');
   return policy;
 }
+export function validateAuthorization(task, contract) {
+  const input = task.payload.workflow_input;
+  if (!object(input) || input.allow_discard_existing_draft === undefined || input.allow_discard_existing_draft === false) return;
+  requireCommander(input.allow_discard_existing_draft === true, '放弃旧稿授权必须是boolean');
+  const grant = input.authorization;
+  requireCommander(object(grant) && grant.action === 'discard_existing_draft'
+    && grant.object?.task_id === task.id && typeof contract.resources?.account_ref === 'string'
+    && grant.object?.account_ref === contract.resources.account_ref
+    && grant.scope?.visibility === 'private' && input.visibility === 'private'
+    && grant.scope?.purpose === 'acceptance' && typeof input.content_ref === 'string' && input.content_ref.length > 0
+    && grant.scope?.content_ref === input.content_ref && typeof grant.grant_ref === 'string' && grant.grant_ref.trim().length > 0,
+  '放弃旧稿授权对象、任务、账号或私密验收范围不匹配');
+}
 export function makeEnvelope(task, definition, contract, previous, now = new Date(), previousControl) {
   const recovery = { ...validateContract(task, contract), ...(previousControl ? { previous_attempt: previousDiagnosis(previousControl) } : {}) };
   const attempt = previous ? previous.attempt + 1 : 1;
@@ -75,6 +93,8 @@ export function makeEnvelope(task, definition, contract, previous, now = new Dat
     attempt, owner_epoch: (previous?.owner_epoch ?? 0) + 1, deadline_at, cleanup_deadline_at,
     input: task.payload.workflow_input, input_sha256: digest(task.payload.workflow_input),
     definition: { ...definition, attempt_key: `${task.id}:${attempt}`, actor: 'workflow-commander' }, contract, recovery };
+  const actions = resolveActionBindings(task, contract);
+  if (actions) envelope.action_bindings = actions;
   bounded(envelope, 180000, '信封'); return envelope;
 }
 export function validateReady(ready, definition) {

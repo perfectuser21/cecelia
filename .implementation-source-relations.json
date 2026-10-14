@@ -12,7 +12,6 @@
       "path": "cp-1013222800-notion-span-readback.dod.md",
       "role": "documentation"
     },
-    
     {
       "owner_path": "packages/brain/src/skill-registry-projection.js",
       "path": "packages/brain/src/__tests__/skill-registry-projection.test.js",
@@ -668,7 +667,6 @@
       "path": "packages/brain/scripts/smoke/ops-notion-schema-smoke.sh",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/src/projection/workflow-body.js",
       "path": "cp-1013205500-workflow-notion-readback-fix.prd.md",
@@ -679,24 +677,165 @@
       "path": "cp-1013205500-workflow-notion-readback-fix.dod.md",
       "role": "documentation"
     },
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/src/lib/__tests__/version-identity-preflight.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/scripts/smoke/version-identity-preflight-smoke.sh", "role": "verification"},
-    
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "cp-10131845-version-identity-preflight.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "cp-10131845-version-identity-preflight.dod.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/routes/strategic-decisions.js", "path": "packages/brain/scripts/smoke/cw-bd2b1556-qa-smoke.sh", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/runtime-identities.js", "path": "packages/brain/src/lib/__tests__/runtime-identities.test.js", "role": "verification"},
-    
-    {"owner_path": "packages/brain/src/lib/runtime-identities.js", "path": "cp-10131905-agent-skill-identities.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/runtime-identities.js", "path": "cp-10131905-agent-skill-identities.dod.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/skill-git-provenance.js", "path": "packages/brain/src/lib/__tests__/skill-git-provenance.test.js", "role": "verification"},
-    
-    {"owner_path": "packages/brain/src/lib/skill-git-provenance.js", "path": "cp-10131958-skill-git-provenance.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/skill-git-provenance.js", "path": "cp-10131958-skill-git-provenance.dod.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "packages/brain/src/lib/__tests__/runtime-version-graph.test.js", "role": "verification"},
-    
-    {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "cp-10132012-runtime-version-graph.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "cp-10132012-runtime-version-graph.dod.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/workflow-failure.js", "path": "packages/brain/src/lib/__tests__/workflow-failure.test.js", "role": "verification"}
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "packages/brain/src/lib/__tests__/version-identity-preflight.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "packages/brain/scripts/smoke/version-identity-preflight-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "cp-10131845-version-identity-preflight.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "cp-10131845-version-identity-preflight.dod.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/strategic-decisions.js",
+      "path": "packages/brain/scripts/smoke/cw-bd2b1556-qa-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-identities.js",
+      "path": "packages/brain/src/lib/__tests__/runtime-identities.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-identities.js",
+      "path": "cp-10131905-agent-skill-identities.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-identities.js",
+      "path": "cp-10131905-agent-skill-identities.dod.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-git-provenance.js",
+      "path": "packages/brain/src/lib/__tests__/skill-git-provenance.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-git-provenance.js",
+      "path": "cp-10131958-skill-git-provenance.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-git-provenance.js",
+      "path": "cp-10131958-skill-git-provenance.dod.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-version-graph.js",
+      "path": "packages/brain/src/lib/__tests__/runtime-version-graph.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-version-graph.js",
+      "path": "cp-10132012-runtime-version-graph.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-version-graph.js",
+      "path": "cp-10132012-runtime-version-graph.dod.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-failure.js",
+      "path": "packages/brain/src/lib/__tests__/workflow-failure.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-method-contract.js",
+      "path": "packages/brain/src/lib/__tests__/commander-method-contract.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-method-selection.js",
+      "path": "packages/brain/src/lib/__tests__/commander-method-selection.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-method-selection.js",
+      "path": "packages/brain/src/lib/__tests__/integration/commander-method-selection.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-method-selection.js",
+      "path": "changes/cp-10131925-commander-method-select.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-method-selection.js",
+      "path": "docs/learnings/cp-10131925-commander-method-select.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-method-selection.js",
+      "path": "packages/brain/scripts/smoke/commander-method-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-feedback.js",
+      "path": "packages/brain/src/lib/__tests__/integration/commander-v2.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-deadline.js",
+      "path": "packages/brain/src/lib/__tests__/commander-v2-continuation.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-implementation.js",
+      "path": "packages/brain/src/lib/__tests__/commander-v2-skill-proof.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-implementation.js",
+      "path": "packages/brain/src/lib/__tests__/commander-v2-skill-first.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-rescue-outcome.js",
+      "path": "packages/brain/src/lib/__tests__/commander-v2-rescue-outcome.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/factory-pusher.js",
+      "path": "packages/brain/src/lib/__tests__/commander-v2-factory-evidence.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-commander-dispatch.js",
+      "path": "packages/brain/src/lib/__tests__/commander-v2-preflight.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-contract.js",
+      "path": "packages/brain/src/lib/__tests__/fixtures/commander-contract-v1.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-contract.js",
+      "path": "packages/brain/src/lib/__tests__/fixtures/commander-contract-v1.json",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-action-bindings.js",
+      "path": "packages/brain/src/lib/__tests__/commander-v2-action-bindings.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-implementation.js",
+      "path": "packages/brain/src/lib/__tests__/integration/commander-v2-shared-contract.pg.integration.test.js",
+      "role": "verification"
+    }
   ]
 }

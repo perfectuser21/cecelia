@@ -3,7 +3,7 @@
  *
  * 开关（默认开）：环境变量 FACTORY_PUSHER_ENABLED=false，或 brain_config key=factory_pusher_enabled value=false（不重启即生效）。
  */
-import { STAGE_NAMES, listLedger, transitionLedger, patchLedger, recordRun, resetLedgerWindow } from './factory-ledger.js';
+import { STAGE_NAMES, listLedger, transitionLedger, patchLedger, recordJudgedRun, resetLedgerWindow } from './factory-ledger.js';
 import { decideLedger, buildExecSpec, buildTicketSpec, PUSHER_TAG } from './factory-pusher.js';
 import { makeJudgeStore, runFactoryJudge, JUDGE_KEY } from './factory-judge.js';
 import { resolveWorkflowConfig } from './factory-workflow-config.js';
@@ -55,6 +55,14 @@ export function makePusherStore(db) {
         `SELECT count(*)::int AS n FROM tasks WHERE payload->>'factory_ledger_id' = $1
             AND payload->>'factory_dispatch' = 'true' AND payload->'factory'->>'stage' = $2`, [ledgerId, String(stage)]);
       return rows[0]?.n ?? 0;
+    },
+    async lastBlock(ledgerId, stage) {
+      const { rows } = await db.query(`SELECT payload,result FROM tasks WHERE payload->>'factory_ledger_id'=$1
+        AND payload->'factory'->>'stage'=$2 AND payload->>'commander_protocol'='commander-v2'
+        ORDER BY created_at DESC,id DESC LIMIT 1`, [ledgerId, String(stage)]);
+      const previous = rows[0], c = previous?.result?.workflow_control;
+      if (!c || !(c.phase === 'blocked' || c.verdict === 'INCONCLUSIVE' || c.delivery?.status === 'blocked')) return null;
+      return { condition_sha256: previous.payload.factory_dispatch_condition_sha256, reason: c.failure?.reason ?? c.resume_condition };
     },
     /** 本阶段（stage_changed_at 之后）已最终裁判的执行单，从新到旧数连续 fail（safe_stop 不计、inconclusive 跳过）。 */
     async consecutiveFails(ledgerId, stage, since) {
@@ -112,7 +120,8 @@ async function applyActions(db, ledger, cfg, decision, deps) {
       a.task_id = id;
     } else if (a.type === 'dev_ticket' || a.type === 'commander_ticket') {
       const kind = a.type === 'dev_ticket' ? 'dev' : 'commander';
-      const out = await deps.createTask(buildTicketSpec({ ledger, cfg, stage: a.stage, kind }));
+      const round = kind === 'commander' ? (await deps.store.countRounds(ledger.id, a.stage)) + 1 : 1;
+      const out = await deps.createTask(buildTicketSpec({ ledger, cfg, stage: a.stage, kind, round, commanderRoute: deps.commanderRoute === true }));
       const id = out?.task?.id;
       if (!id) throw new Error(`工单建单失败：${JSON.stringify(out).slice(0, 200)}`);
       summary = `已建 ${a.stage} ${STAGE_NAMES[a.stage]} ${kind === 'dev' ? '/dev' : 'Commander'} 工单 ${id}，完成后自动推进`;
@@ -134,9 +143,10 @@ export async function runFactoryPusher(db, deps) {
     try {
       const cfg = deps.resolveConfig(ledger.workflow_key);
       const inFlight = await deps.store.inFlight(ledger.id);
+      const lastBlock = deps.store.lastBlock ? await deps.store.lastBlock(ledger.id, ledger.stage) : null;
       const consecutiveFails = ledger.stage === 3 ? await deps.store.consecutiveFails(ledger.id, 3, ledger.stage_changed_at) : 0;
       const t = [4, 5, 6].includes(ledger.stage) ? await deps.store.tickets(ledger.id, ledger.stage, ledger.stage_changed_at) : { done: 0, total: 0 };
-      const decision = decideLedger({ ledger, cfg, inFlight, consecutiveFails, ticketsDone: t.done, ticketsTotal: t.total, now });
+      const decision = decideLedger({ ledger, cfg, inFlight, lastBlock, commanderRoute: deps.commanderRoute === true, consecutiveFails, ticketsDone: t.done, ticketsTotal: t.total, now });
       results.push(await applyActions(db, ledger, cfg, decision, deps));
     } catch (e) {
       (deps.log || console.warn)(`推进台账 ${ledger.id} 失败：${e.message}`);
@@ -167,7 +177,7 @@ async function runCycleOnce(db, deps) {
   const resolveConfig = deps.resolveConfig || ((key) => resolveWorkflowConfig(key));
   const judge = await runFactoryJudge({
     store: deps.judgeStore || makeJudgeStore(db), createTask, resolveConfig, log, now: deps.now,
-    recordRun: deps.recordRun || ((id, body) => recordRun(db, id, body)),
+    recordRun: deps.recordRun || ((id, body) => recordJudgedRun(db, id, body)),
   });
   const commanderRoute = deps.commanderRoute ?? (await isFactoryCommanderRouteEnabled(db));
   const push = await runFactoryPusher(db, { store: deps.pusherStore || makePusherStore(db), createTask, raise, log, resolveConfig, now: deps.now, commanderRoute });

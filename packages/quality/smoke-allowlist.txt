@@ -451,6 +451,6 @@ coding-workflow-codex-smoke.sh
 coding-workflow-base-smoke.sh
 # 通用 Commander 合同、固定来源与独立核验运输回归
 commander-generic-smoke.sh
-
+commander-method-smoke.sh
 workflow-observation-smoke.sh
 version-identity-preflight-smoke.sh
