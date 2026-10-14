@@ -758,11 +758,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/brain/src/lib/script-run-definition.js",
-      "path": ".dod-cp-10141600-script-definition-binding.md",
-      "role": "documentation"
-    },
-    {
       "owner_path": "packages/brain/src/lib/notion-projection-engine.js",
       "path": "packages/brain/src/lib/__tests__/notion-projection-engine.test.js",
       "role": "verification"
