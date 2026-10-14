@@ -23,7 +23,7 @@ const save=()=>fs.writeFileSync(file,JSON.stringify(s));
 fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({op:args[0],locked:fs.existsSync(${JSON.stringify(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))})})+'\n');
 if(args[0]==='print-disabled') console.log('disabled services = {\n "${label}" => '+(s.rawValue??(s.format==='boolean'?s.disabled:(s.disabled?'disabled':'enabled')))+'\n}');
 else if(args[0]==='print') {if(!s.loaded){console.error('Could not find service "${label}" in domain for system');process.exit(113);}console.log('active count = 0\nstate = not running');}
-else if(args[0]==='disable'||args[0]==='enable') {if(s.failRestore && args[0]==='disable' && s.boots){process.exit(8);}s.disabled=args[0]==='disable';}
+else if(args[0]==='disable'||args[0]==='enable') {if(s.failRestore && args[0]==='enable' && s.boots){process.exit(8);}s.disabled=args[0]==='disable';}
 else if(args[0]==='bootout'){if(s.failBootout){process.exit(9);}s.loaded=false;}
 else if(args[0]==='bootstrap') {
  if(s.disabled){console.error('Bootstrap failed: 5: Input/output error');process.exit(5);}
@@ -40,10 +40,18 @@ const set = values => fs.writeFileSync(state, JSON.stringify({ ...get(), ...valu
 const run = () => withInstallation({ script, dest, env });
 const commands = () => fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
 
-it.each(['words', 'boolean'])('真实%s格式：成功安装加载新版并保持原disabled', async format => {
+it.each(['words', 'boolean'])('真实%s禁用状态：任何服务/配置动作前拒装', async format => {
   set({ disabled: true, loaded: false, format });
+  await expect(run()).rejects.toThrow('runtime_install_disabled');
+  expect(get()).toMatchObject({ disabled: true, loaded: false });
+  expect(fs.readFileSync(dest, 'utf8')).toBe(original);
+  expect(commands().map(x => x.op)).toEqual(['print-disabled']);
+  expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(false);
+});
+it.each(['words', 'boolean'])('真实%s启用状态：加载新版时全程持外锁', async format => {
+  set({ disabled: false, loaded: false, format });
   expect(await run()).toBe(0);
-  expect(get()).toMatchObject({ disabled: true, loaded: true, contents: 'changed' });
+  expect(get()).toMatchObject({ disabled: false, loaded: true, contents: 'changed' });
   const ops = commands(); expect(ops.every(x => x.locked)).toBe(true);
   expect(ops.findIndex(x => x.op === 'enable')).toBeLessThan(ops.findIndex(x => x.op === 'bootstrap'));
 });
@@ -52,27 +60,27 @@ it('原enabled/loaded：先卸载旧配置再加载新版，仍保持enabled', a
   expect(get()).toMatchObject({ disabled: false, loaded: true, contents: 'changed' });
   expect(commands().filter(x => ['bootout', 'enable', 'bootstrap'].includes(x.op)).map(x => x.op)).toEqual(['bootout', 'enable', 'bootstrap', 'enable']);
 });
-it.each([false, true])('新bootstrap失败：恢复旧loaded服务和disabled=%s', async disabled => {
-  set({ disabled, failBoots: 1 });
+it.each(['words', 'boolean'])('新bootstrap失败：恢复旧loaded服务和enabled（%s）', async format => {
+  const disabled = false; set({ disabled, format, failBoots: 1 });
   await expect(run()).rejects.toThrow('runtime_install_launchctl_bootstrap_failed');
   expect(get()).toMatchObject({ loaded: true, disabled, contents: original });
   expect(fs.readFileSync(dest, 'utf8')).toBe(original);
 });
-it('新bootstrap与回滚bootstrap均失败：仍恢复原disabled且明确诊断/保锁', async () => {
-  set({ disabled: true, failBoots: 2 });
+it('新bootstrap与回滚bootstrap均失败：仍恢复原enabled且明确诊断/保锁', async () => {
+  set({ disabled: false, failBoots: 2 });
   await expect(run()).rejects.toThrow('runtime_install_rollback_failed');
-  expect(get()).toMatchObject({ disabled: true, loaded: false });
+  expect(get()).toMatchObject({ disabled: false, loaded: false });
   expect(fs.readFileSync(dest, 'utf8')).toBe(original);
   expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(true);
 });
 it('原unloaded，新bootstrap失败不得在回滚时启动旧plist', async () => {
-  set({ loaded: false, disabled: true, failBoots: 1 });
+  set({ loaded: false, disabled: false, failBoots: 1 });
   await expect(run()).rejects.toThrow('runtime_install_launchctl_bootstrap_failed');
-  expect(get()).toMatchObject({ loaded: false, disabled: true, boots: 1 });
+  expect(get()).toMatchObject({ loaded: false, disabled: false, boots: 1 });
   expect(fs.readFileSync(dest, 'utf8')).toBe(original);
 });
-it('禁用状态恢复失败也显式失败，回滚文件并保锁', async () => {
-  set({ loaded: false, disabled: true, failRestore: true });
+it('启用状态恢复失败也显式失败，回滚文件并保锁', async () => {
+  set({ loaded: false, disabled: false, failRestore: true });
   await expect(run()).rejects.toThrow('runtime_install_rollback_failed');
   expect(get()).toMatchObject({ loaded: false });
   expect(fs.readFileSync(dest, 'utf8')).toBe(original);
