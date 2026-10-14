@@ -1,4 +1,4 @@
-// 安装和启动共用外锁；先禁未来触发再核 idle，失败恢复旧配置与启用状态。
+// 安装和启动共用外锁；拒绝原禁用服务，先禁未来触发再核 idle，失败恢复旧配置与启用状态。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -39,8 +39,11 @@ export async function withInstallation({ script, dest = `/Library/LaunchDaemons/
     const entry = /"com\.cecelia\.coding-workflow-runner"\s*=>\s*([^\s;}]+)/.exec(disabled);
     if (entry ? !['true', 'false', 'enabled', 'disabled'].includes(entry[1])
       : disabled.includes(label) || !/disabled services\s*=\s*\{/.test(disabled)) throw new Error('runtime_install_disabled_state_unknown');
-    disabledBefore = entry?.[1] === 'true' || entry?.[1] === 'disabled';
-    if (!disabledBefore) await ctl('disable', `system/${label}`);
+    // 禁用服务不能靠短暂enable安全安装：RunAtLoad可能延迟派生到外锁释放以后。
+    // 必须由操作者明确启用后再安装；赋值前拒绝，catch也不得产生服务状态动作。
+    if (entry?.[1] === 'true' || entry?.[1] === 'disabled') throw new Error('runtime_install_disabled');
+    disabledBefore = false;
+    await ctl('disable', `system/${label}`);
     ({ loaded: loadedBefore } = await assertIdle({ env, allowLauncherPid: process.pid }));
     backup = fs.existsSync(dest) ? { bytes: fs.readFileSync(dest), mode: fs.statSync(dest).mode & 0o777 } : null;
     if (loadedBefore && !backup) throw new Error('runtime_install_existing_plist_missing');
