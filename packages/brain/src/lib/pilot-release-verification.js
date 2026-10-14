@@ -3,6 +3,8 @@ import {createHash} from 'node:crypto';
 import {readImplementationSnapshotInTransaction} from './implementation-ci-snapshot.js';
 import {canonicalAssertionCommandText,classifyAssertionRef} from './gp-assertion-command.js';
 import {assertionDigest} from './journey-assertion-receipt.js';
+import {isAuthoringReleaseSnapshot} from '../workflow-authoring/ci-adapter.js';
+import {prepareAuthoringReleaseProof,assertAuthoringReleaseProof} from '../workflow-authoring/release-proof.js';
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 export const pilotPlanHash=v=>createHash('sha256').update(JSON.stringify(canonical(v))).digest('hex');
 const same=(a,b)=>pilotPlanHash(a)===pilotPlanHash(b);
@@ -12,9 +14,15 @@ const sha=v=>typeof v==='string'&&/^[0-9a-f]{40}$/.test(v);
 const hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
 const isRegressionRegistration=row=>row?.cell_kind==='scenario'&&typeof row.cell_key==='string'&&row.cell_key.startsWith('regression:');
 export function pilotPlanBody(report){
- return Object.fromEntries(['scope','source','definition_versions','expected_usages','required_assertions','assertion_source'].map(k=>[k,report[k]]));
+ return Object.fromEntries(['scope','source','definition_versions','expected_usages','required_assertions','assertion_source',...(report.implementation_source_set?['implementation_source_set']:[])].map(k=>[k,report[k]]));
 }
-export function buildPilotReleasePlan({scope,repo,revision,definitions,assertions}){
+export function buildPilotReleasePlan({scope,repo,revision,definitions,assertions,authoringSnapshot,authoringProof}){
+ let implementationSources;
+ if(authoringSnapshot||authoringProof){
+  implementationSources=assertAuthoringReleaseProof(authoringSnapshot,authoringProof);
+  if(authoringSnapshot.scope!==scope||authoringSnapshot.repo!==repo||authoringSnapshot.revision!==revision
+    ||!same(authoringSnapshot.definitions,definitions)||!same(authoringSnapshot.assertions,assertions))throw Object.assign(Error('发布计划与核验快照不符'),{code:'AUTHORING_RELEASE_PROOF_INVALID'});
+ }
  const gaps=[],expected_usages=[],groups=new Map();
  const gap=(code,detail={})=>gaps.push({code,...detail});
  if(typeof scope!=='string'||!scope||typeof repo!=='string'||!repo.includes('/')||!sha(revision))gap('pilot_source_invalid');
@@ -28,7 +36,7 @@ export function buildPilotReleasePlan({scope,repo,revision,definitions,assertion
   }));
  }
  const referenced=new Set((definitions?.workflows||[]).flatMap(w=>(w.payload?.activities||[]).map(r=>r.activity_version_id)));
- for(const a of definitions?.activities||[])if(referenced.has(a.id)&&!(a.payload?.implementation_bindings||[]).some(b=>b.scope==='activity'&&['code','skill'].includes(b.kind)&&b.status==='verified'&&b.repo===repo&&b.revision===revision&&typeof b.path==='string'&&b.path.length&&/^sha256:[0-9a-f]{64}$/.test(b.digest||'')))gap('pilot_activity_implementation_missing',{activity_id:a.activity_id,activity_definition_version_id:a.id});
+ for(const a of definitions?.activities||[])if(referenced.has(a.id)&&!(a.payload?.implementation_bindings||[]).some(b=>b.scope==='activity'&&['code','skill'].includes(b.kind)&&b.status==='verified'&&(implementationSources||(b.repo===repo&&b.revision===revision))&&sha(b.revision)&&typeof b.path==='string'&&b.path.length&&/^sha256:[0-9a-f]{64}$/.test(b.digest||'')))gap('pilot_activity_implementation_missing',{activity_id:a.activity_id,activity_definition_version_id:a.id});
  for(const w of definitions?.workflows||[]){
   if(!uuid(w.payload?.capability_id)||!Array.isArray(w.payload?.activities)||!w.payload.activities.length){gap('pilot_workflow_identity_missing',{id:w.id});continue;}
   for(const ref of w.payload.activities){
@@ -57,7 +65,7 @@ export function buildPilotReleasePlan({scope,repo,revision,definitions,assertion
  for(const u of expected_usages)if(!covered.has(pair(u)))gap('pilot_regression_missing',u);
  const required_assertions=sorted([...groups.values()].map(g=>({...g,source_bindings:sorted(g.source_bindings)})));
  if(!required_assertions.length)gap('pilot_regressions_empty');
- const plan={scope,source:{repo,head_revision:revision},definition_versions,expected_usages,required_assertions,assertion_source:'current_registration'};
+ const plan={scope,source:{repo,head_revision:revision},definition_versions,expected_usages,required_assertions,assertion_source:'current_registration',...(implementationSources?{implementation_source_set:implementationSources}:{})};
  return {schema_version:1,protocol:'pilot_release_verification_v1',purpose:'release_verification',...plan,assertion_plan_sha256:pilotPlanHash(plan),verification_status:gaps.length?'unknown':'verified',gaps};
 }
 export function assertPilotReleaseReport(report){
@@ -86,9 +94,14 @@ export function assertPilotDefinitionSubset(full,subset){
 export async function validatePilotReleaseEvidence(db,report,receipt,definitions){
  assertPilotReleaseReport(report);
  const snapshot=await readImplementationSnapshotInTransaction(db,{scope:report.scope,repo:report.source.repo,revision:report.source.head_revision});
- const expected=buildPilotReleasePlan({scope:report.scope,repo:report.source.repo,revision:report.source.head_revision,definitions:snapshot.definitions,assertions:snapshot.assertions});
+ // 旧同HEAD报告保持原计划；跨版本必须携带可重建的完整来源集合，不能沿旧格式豁免。
+ const authoring=report.implementation_source_set&&isAuthoringReleaseSnapshot(snapshot)
+  ?{authoringSnapshot:snapshot,authoringProof:await prepareAuthoringReleaseProof(snapshot)}:{};
+ const expected=buildPilotReleasePlan({scope:report.scope,repo:report.source.repo,revision:report.source.head_revision,definitions:snapshot.definitions,assertions:snapshot.assertions,...authoring});
  const fail=()=>{throw Object.assign(Error('固定完整计划与当前登记或执行收据不符'),{code:'PILOT_RELEASE_PLAN_MISMATCH'});};
- if(snapshot.status!=='verified'||expected.verification_status!=='verified'||!same(pilotPlanBody(expected),pilotPlanBody(report)))fail();
+ if(snapshot.status!=='verified'||expected.verification_status!=='verified'
+  ||(report.implementation_source_set&&report.snapshot_sha256!==snapshot.snapshot_sha256)
+  ||!same(pilotPlanBody(expected),pilotPlanBody(report)))fail();
  assertPilotDefinitionSubset(snapshot.definitions,definitions);
  if(receipt?.purpose!=='release_verification'||receipt.actor!=='pilot_release_verification'||receipt.scope!=='declared_pilot_regressions'||receipt.verdict!=='PASS'||receipt.business_runtime_status!=='not_evaluated'||!same(receipt.source,report.source)||receipt.snapshot_sha256!==report.snapshot_sha256||receipt.assertion_plan_sha256!==report.assertion_plan_sha256||receipt.report_sha256!==createHash('sha256').update(JSON.stringify(report)).digest('hex'))fail();
  if(!Array.isArray(receipt.assertions)||receipt.assertions.length!==report.required_assertions.length||new Set(receipt.assertions.map(a=>a.assertion_ref)).size!==receipt.assertions.length)fail();

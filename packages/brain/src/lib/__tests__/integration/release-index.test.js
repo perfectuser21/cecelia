@@ -15,6 +15,17 @@ beforeEach(async()=>{
 afterEach(async()=>{await fixture?.close();fixture=null;});
 const post=()=>request(app).post('/releases').send(fixture.releaseInput);
 const observe=(id,extra={})=>request(app).post(`/releases/${id}/observations`).send({...fixture.observationInput,...extra});
+it('同repo多固定revision可并存，完全重复仍拒绝，部署观测不能把旧版本换成新版本',async()=>{
+ const input=structuredClone(fixture.releaseInput),repo=input.components.find(c=>c.kind==='repo');
+ const historical={...repo,revision:'a'.repeat(40)};input.components.push(historical);
+ const r=await request(app).post('/releases').send(input);expect(r.status,r.body).toBe(201);
+ const good=await observe(r.body.release.id,{components:input.components});expect(good.status,good.body).toBe(201);
+ expect((await request(app).get(`/releases/${r.body.release.id}/gate`)).body.deployed).toBe(true);
+ const wrong=input.components.map(c=>c===historical?{...c,revision:'c'.repeat(40)}:c);
+ await observe(r.body.release.id,{event_key:'wrong-history',components:wrong,observed_at:new Date(Date.now()+1000).toISOString()});
+ expect((await request(app).get(`/releases/${r.body.release.id}/gate`)).body.deployed).toBe(false);
+ const duplicate=await request(app).post('/releases').send({...input,release_key:'duplicate',components:[...input.components,historical]});expect(duplicate.status).toBe(422);
+});
 it('消费者历史证据不能冒作完整执行release，保留旧current与不可变历史', async()=>{
   const old=fixture.workflows[0],payload={...old.payload,definition_scope:'consumer_evidence',coverage:{status:'unknown',unverified_reference_ids:['source_unknown']}};
   const source={repo:old.source_repo,path:old.source_path,commit:old.source_commit};

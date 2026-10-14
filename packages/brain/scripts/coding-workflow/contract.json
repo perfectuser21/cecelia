@@ -26,7 +26,7 @@
       "failure": {
         "empty_ok": [],
         "retryable": ["claude_failed", "claude_timeout", "spec_invalid"],
-        "needs_human": { "cases": ["claude_auth", "qa_mode_unsupported"] },
+        "needs_human": { "cases": ["codex_auth", "codex_configuration", "claude_auth", "qa_mode_unsupported"] },
         "fatal": ["sprint_dir_invalid", "task_id_missing", "intent_ids_missing", "intent_ids_invalid", "spec_missing", "spec_out_of_scope_write", "chain_tampered"]
       },
       "runtime": {
@@ -44,7 +44,7 @@
       "failure": {
         "empty_ok": [],
         "retryable": ["claude_failed", "claude_timeout", "spec_invalid", "response_missing"],
-        "needs_human": { "cases": ["claude_auth"] },
+        "needs_human": { "cases": ["codex_auth", "codex_configuration", "claude_auth"] },
         "fatal": [
           "task_id_missing",
           "sprint_dir_invalid",
@@ -72,7 +72,7 @@
       "failure": {
         "empty_ok": [],
         "retryable": ["claude_failed", "claude_timeout", "remote_check_failed", "git_check_failed"],
-        "needs_human": { "cases": ["claude_auth"] },
+        "needs_human": { "cases": ["codex_auth", "codex_configuration", "claude_auth"] },
         "fatal": [
           "sprint_dir_invalid",
           "task_id_missing",
@@ -105,7 +105,7 @@
       "failure": {
         "empty_ok": [],
         "retryable": ["claude_failed", "claude_timeout", "remote_check_failed"],
-        "needs_human": { "cases": ["claude_auth"] },
+        "needs_human": { "cases": ["codex_auth", "codex_configuration", "claude_auth"] },
         "fatal": [
           "sprint_dir_invalid",
           "task_id_missing",

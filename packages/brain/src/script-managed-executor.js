@@ -3,6 +3,7 @@ import {createScriptReservationStore} from './orchestrator/script-reservation-st
 import {createProductionCapabilityProbes} from './orchestrator/preflight/production-probes.js';
 import {createScriptWorkerClient} from './script-worker-client.js';
 import {startRun,finishRun} from './lib/task-run.js';
+import {startScriptDefinitionRun} from './lib/script-run-definition.js';
 import {recordTaskEventSafe} from './lib/task-event-log.js';
 import {currentNode} from './execution-directory/directory.js';
 import {createLinuxRuntimeAdmission} from './linux-pool/runtime-admission.js';
@@ -84,6 +85,17 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
   [task.id,JSON.stringify({script_run_id:row.owner_key,script_reservation_id:row.id,script_managed:true,script_dispatch_id:dispatchId}),row.id,row.owner_key,task.payload?.script_attempts?.length??0]);
   if(!current.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
   const fresh=row.status==='reserved';
+  let definedRun;
+  try {
+    definedRun=await startScriptDefinitionRun({task,spec,runId:row.owner_key,context:{transport:'managed-container',reservation_id:row.id}},pool);
+  } catch(error) {
+    await pool.query(`UPDATE tasks SET status='blocked',claimed_by=NULL,claimed_at=NULL,error_message=$2,updated_at=NOW()
+      WHERE id=$1 AND status IN ('queued','in_progress') AND payload->>'script_reservation_id'=$3 AND payload->>'script_run_id'=$4`,
+      [task.id,'script_definition_unverified: '+error.message,row.id,row.owner_key]);
+    // 无业务start；预约仍保留身份，既有收割器用认证cancel/墓碑完成清理，不能直接清锁。
+    await prepared.store.recordUnknown(row.id,'script_definition_unverified');
+    return {success:false,taskId:task.id,reason:'script_definition_unverified',configError:true,taskStateHandled:true};
+  }
   try {
     if(fresh)row=await prepared.store.markLaunching(row.id,prepared.capabilities);
     let verified=await prepared.client[fresh?'start':'inspect'](spec.host,{...body(row),...(fresh?{job:prepared.job}:{})});
@@ -95,7 +107,7 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
       return {success:false,reason:'script_local_resources_wait',wait:true,taskStateHandled:true,configError:true};
     }
     if(result.container_id && ['launching','running'].includes(row.status))row=await prepared.store.markRunning(row.id,result);
-    await startRun({taskId:task.id,runId:row.owner_key,source:'script',context:{transport:'managed-container',reservation_id:row.id}},{pool});
+    if(!definedRun)await startRun({taskId:task.id,runId:row.owner_key,source:'script',context:{transport:'managed-container',reservation_id:row.id}},{pool});
     await recordTaskEventSafe(pool,task.id,'script_spawned',{run_id:row.owner_key,reservation_id:row.id,transport:'managed-container'});
     return {success:true,taskId:task.id,runId:row.owner_key,executor:'script',alreadyRunning:!fresh};
   } catch(error) {

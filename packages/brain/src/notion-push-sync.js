@@ -1,3 +1,4 @@
+import {syncManagedBodyBlock} from './projection/workflow-body.js';
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { createRoutedTask } from './work-routing-store.js';
 import { finalizeTask } from './lib/task-terminal.js';
@@ -1738,6 +1739,18 @@ export function buildTaskRunNotionProperties(r) {
   return p;
 }
 
+const RUN_SOURCE_MARKER='🤖 运行源码（机器维护';
+/** 只展示该Run冻结事实；绝不用当前Workflow填补历史。 */
+export function buildTaskRunNotionBodyBlock(row){
+ const run=observedRun(row,{script:row.script});
+ const sources={...run,control_source_revision:row.context?.workflow_snapshot?.control_source_revision||'未知'};
+ const lines=[`定义版本：${run.definition_version_id}`,`流程版本：${run.workflow_version}`,
+  ...Object.entries({'执行入口源码':'entry_source_revision','手机执行源码':'phone_source_revision','控制器源码':'control_source_revision','定义来源':'definition_source_revision'})
+   .map(([label,key])=>`${label}：${sources[key]}`)].join('\n');
+ return {object:'block',type:'toggle',toggle:{rich_text:buildRichText(`${RUN_SOURCE_MARKER}：改事实请改 Brain）`),
+  children:[{object:'block',type:'paragraph',paragraph:{rich_text:buildRichText(lines)}}]}};
+}
+
 /**
  * task_runs 投影面（链 bf5088a3 棒1）：库在 notion_projection_map 登记为 push+active 才推，
  * 未登记（Notion「Runs」库尚未建，占位行为 pending_vessel）→ 整个跳过（flag-off 安全）。
@@ -1793,11 +1806,15 @@ async function pushTaskRuns(pool, token) {
   if (rows.length === 0) return;
   // 直接走统一引擎、不经 upsertOpsRows：后者的 onFatal 会把「库不可达」写成 ops_notion_dbs.disabled，
   // 那是运行舱四库的终止开关，Runs 库出问题不许连坐运行舱推送。
+  const bodyDeadline=Date.now()+45000;
   await pushRegisteredRows(pool, token, {
     table: 'task_runs', dbId, rows, buildProps: r => buildTaskRunNotionProperties({ ...r,
       workflow_page_id: workflowsDb ? r.workflow_page_id : null, task_page_id: tasksDb ? r.task_page_id : null }),
-    notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'task_run',
+    notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'task_run',budgetMs:45000,
+    syncBody:(row,pageId)=>syncManagedBodyBlock(token,pageId,buildTaskRunNotionBodyBlock(row),
+      (...args)=>{if(Date.now()>=bodyDeadline)throw Error('Run来源正文同步预算耗尽');return notionReq(...args);},RUN_SOURCE_MARKER),
   });
+
 }
 
 /** 吞错壳：投影失败绝不连坐同轮其它推送。 */

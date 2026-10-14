@@ -8,10 +8,11 @@ import {fileURLToPath} from 'node:url';
 import {validateImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import {buildPilotReleasePlan,assertPilotReleaseReport} from '../../packages/brain/src/lib/pilot-release-verification.js';
 import {isAuthoringReleaseSnapshot} from '../../packages/brain/src/workflow-authoring/ci-adapter.js';
+import {prepareAuthoringReleaseProof} from '../../packages/brain/src/workflow-authoring/release-proof.js';
 import {runRegisteredAssertions} from './implementation-gate.mjs';
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const sha=v=>createHash('sha256').update(v).digest('hex');
-export async function runPilotReleaseVerification({repoRoot,snapshot,outputDir,event,ref}){
+export async function runPilotReleaseVerification({repoRoot,snapshot,outputDir,event,ref,authoringSourceOptions}){
  mkdirSync(outputDir,{recursive:true});const save=(name,data)=>writeFileSync(join(outputDir,name),JSON.stringify(data,null,2)+'\n');
  try{
   if(!['push','workflow_dispatch'].includes(event)||ref!=='refs/heads/main')fail('PILOT_RELEASE_MAIN_REQUIRED');
@@ -20,9 +21,11 @@ export async function runPilotReleaseVerification({repoRoot,snapshot,outputDir,e
   if(![['zenithjoy','perfectuser21/zenithjoy-workspace'],['cecelia-kr','perfectuser21/cecelia']].some(([scope,repo])=>s.scope===scope&&s.repo===repo)&&!isAuthoringReleaseSnapshot(s))fail('PILOT_RELEASE_SCOPE_UNSUPPORTED');
   const git=(...args)=>execFileSync('git',args,{cwd:repoRoot,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   if(git('rev-parse','HEAD')!==s.revision||git('rev-parse','refs/remotes/origin/main')!==s.revision||git('status','--porcelain=v1','--untracked-files=no'))fail('PILOT_RELEASE_SOURCE_MISMATCH');
-  const report={...buildPilotReleasePlan({scope:s.scope,repo:s.repo,revision:s.revision,definitions:s.definitions,assertions:s.assertions}),snapshot_sha256:s.snapshot_sha256};
+  const authoring=isAuthoringReleaseSnapshot(s)?{authoringSnapshot:s,authoringProof:await prepareAuthoringReleaseProof(s,authoringSourceOptions)}:{};
+  const report={...buildPilotReleasePlan({scope:s.scope,repo:s.repo,revision:s.revision,definitions:s.definitions,assertions:s.assertions,...authoring}),snapshot_sha256:s.snapshot_sha256};
   save('head.json',{snapshot:s});save('report.json',report);assertPilotReleaseReport(report);
-  for(const a of s.definitions.activities)for(const b of a.payload.implementation_bindings||[]){
+  // authoring的全部Activity/Step绑定已逐固定commit核验，不能拿HEAD字节替代旧实现。
+  if(!authoring.authoringProof)for(const a of s.definitions.activities)for(const b of a.payload.implementation_bindings||[]){
    if(b.kind==='raw'&&b.status==='unresolved')continue;
    if(!['code','skill'].includes(b.kind)||b.status!=='verified'||b.repo!==s.repo||b.revision!==s.revision||typeof b.path!=='string'||b.path.startsWith('/')||b.path.split('/').some(p=>!p||p==='..'||p==='.')||b.path.includes('\\'))fail('PILOT_RELEASE_COMPONENT_UNKNOWN');
    const bytes=execFileSync('git',['show',`${s.revision}:${b.path}`],{cwd:repoRoot,maxBuffer:16*1024*1024});

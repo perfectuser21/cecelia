@@ -62,6 +62,8 @@ export function isPageGoneError(err) {
  * @param {object[]} o.rows           已选出的行（需含 id / notion_id / notion_digest）
  * @param {Function} o.buildProps     (row) => properties
  * @param {Function} [o.buildChildren] (row) => children blocks（仅创建时附带）
+ * @param {Function} [o.syncBody] (row,pageId) => 正文同步并读回；成功后才标整行完成
+ * @param {number} [o.budgetMs] 本批预算，未开始的行不触碰
  * @param {Function} o.notionReq      (token, path, method, body) => json
  * @param {Function} [o.logSyncError] (pool, msg)
  * @param {Function} [o.isStaleRelationError] (err) => bool
@@ -71,19 +73,22 @@ export function isPageGoneError(err) {
  */
 export async function pushRegisteredRows(pool, token, o) {
   const {
-    table, dbId, rows, buildProps, buildChildren, notionReq,
+    table, dbId, rows, buildProps, buildChildren, notionReq, syncBody, budgetMs=Infinity,
     logSyncError = async () => {}, isStaleRelationError = () => false,
     isWrongDatabaseError = () => false, onFatal = () => false, label = typeof table === 'function' ? 'rows' : table,
   } = o;
   // table 可以是函数：同一批行落在不同真身表时（价值流 / 能力）按行取回写表名
   const tableFor = (row) => (typeof table === 'function' ? table(row) : table);
   const stat = { created: 0, patched: 0, skipped: 0, failed: 0, cleared: 0 };
+  const deadline=Date.now()+budgetMs;
   for (const r of rows) {
-    let properties;
+    if(Date.now()>=deadline)break;
+    let properties,bodyPhase=false;
     try {
       properties = buildProps(r);
       const digest = propsDigest(properties);
       if (r.notion_id && r.notion_digest === digest) {
+        if(syncBody){bodyPhase=true;await syncBody(r,r.notion_id);bodyPhase=false;}
         // 指纹同：不打 Notion；但要把 synced 抬到现在，否则 updated_at > notion_synced_at 的行
         // 会在每轮 LIMIT 里永久占位，把别的行饿死
         await pool.query(`UPDATE ${tableFor(r)} SET notion_synced_at = NOW() WHERE id = $1`, [r.id]).catch(() => {});
@@ -91,6 +96,7 @@ export async function pushRegisteredRows(pool, token, o) {
       }
       if (r.notion_id) {
         await notionReq(token, `/pages/${r.notion_id}`, 'PATCH', { properties });
+        if(syncBody){bodyPhase=true;await syncBody(r,r.notion_id);bodyPhase=false;}
         await pool.query(
           `UPDATE ${tableFor(r)} SET notion_digest = $2, notion_synced_at = NOW() WHERE id = $1`, [r.id, digest]);
         stat.patched++;
@@ -98,22 +104,29 @@ export async function pushRegisteredRows(pool, token, o) {
         const children = buildChildren ? buildChildren(r) : undefined;
         const page = await notionReq(token, '/pages', 'POST',
           { parent: { database_id: dbId }, properties, ...(children?.length ? { children } : {}) });
+        if(syncBody){
+          // 正文失败也必须保留新页身份，重试沿用该页；未核验正文不能标完整同步。
+          await pool.query(`UPDATE ${tableFor(r)} SET notion_id=$2, notion_synced_at=NULL WHERE id=$1`,[r.id,page.id]);
+          bodyPhase=true;await syncBody(r,page.id);bodyPhase=false;
+        }
         await pool.query(
           `UPDATE ${tableFor(r)} SET notion_id = $2, notion_digest = $3, notion_synced_at = NOW() WHERE id = $1`,
           [r.id, page.id, digest]);
         stat.created++;
       }
     } catch (err) {
-      if (onFatal(err)) { stat.failed++; return stat; }
-      if ((isPageGoneError(err) && r.notion_id) || isWrongDatabaseError(err)) {
+      if (!bodyPhase && onFatal(err)) { stat.failed++; return stat; }
+      // 子块404或正文schema错误不能证明Run页已消失；保留页ID重试。
+      if (!bodyPhase && ((isPageGoneError(err) && r.notion_id) || isWrongDatabaseError(err))) {
         await pool.query(`UPDATE ${tableFor(r)} SET notion_id = NULL, notion_digest = NULL WHERE id = $1`, [r.id]).catch(() => {});
         stat.cleared++;
         continue;
       }
+      if(syncBody)await pool.query(`UPDATE ${tableFor(r)} SET ${bodyPhase?'notion_digest=NULL, ':''}notion_synced_at=NULL WHERE id=$1`,[r.id]).catch(()=>{});
       stat.failed++;
       console.warn(`[notion-push-sync] ${label} ${r.id} 推送失败: ${err.message}`);
       await logSyncError(pool, err.message);
-      if (isStaleRelationError(err)) {
+      if (isStaleRelationError(err) && !syncBody) {
         await pool.query(`UPDATE ${tableFor(r)} SET notion_synced_at = NOW() WHERE id = $1`, [r.id]).catch(() => {});
       }
     }

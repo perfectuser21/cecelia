@@ -273,6 +273,7 @@ async function judgeStep(ctx, pr, s, worktree, intent, entry) {
   entry.judge = {
     verdict: j.verdict, failure_class: j.failure_class, file: j.file, model: j.model,
     issues: j.blocking.map((i) => i.id), unsatisfied: j.unsatisfied, concerns: j.concerns ?? [], usage: j.usage,
+    ...(j.provider ? { provider: j.provider, cost_usd: j.cost_usd, transcript_path: j.transcript_path, input_sha256: j.input_sha256, head: entry.head } : {}),
   };
   ctx.log(`QA 门 PR #${pr.number} 第 ${entry.round} 轮独立裁判 ${j.verdict}${j.failure_class ? `（${j.failure_class}）` : ''}`);
   return j;
