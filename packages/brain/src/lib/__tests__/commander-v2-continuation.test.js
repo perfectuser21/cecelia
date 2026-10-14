@@ -9,7 +9,9 @@ const sample = JSON.parse(readFileSync(new URL('./fixtures/commander-contract-v1
 const { task, contract, definition, release } = sample;
 const now = () => new Date('2026-10-14T00:00:00Z');
 const ledger = { id: 'ledger', workflow_key: task.payload.workflow_key, stage: 3, candidate_version: 'paired@2', blocked_kind: 'none', recent_runs: [], recent_total: 0, recent_pass: 0, window_k: 3 };
-const cfg = { device: { node: 'worker', profile: 'private', serial: 'phone' }, agent: 'work-commander', dispatch_via: 'commander', commander: { workflow_definition: definition, workflow_input: task.payload.workflow_input } };
+const cfg = { device: { node: 'worker', profile: 'private', serial: 'phone' }, agent: 'work-commander', dispatch_via: 'commander', commander: { workflow_definition: definition, workflow_input: task.payload.workflow_input,
+  evidence_scopes: [{ activity_definition_version_id: definition.expected_path[0].activity_definition_version_id,
+    implementation: sample.implementations.code.implementation, environment: contract.environment }] } };
 
 it('工厂新单带v2冻结定义和结构输入，未知输入不降回旧五参数', () => {
   const spec = buildExecSpec({ ledger, cfg, stage: 3, skill: 'paired@2', round: 1, commanderRoute: true });
@@ -52,6 +54,11 @@ it('配套Code/Skill及环境来自冻结release，摘要漂移在起跑前拒�
   expect(bindings[0].implementations).toEqual(sample.implementations);
   const forged = structuredClone(release); forged.payload.activities[0].payload.commander_implementations.skill.implementation.digest = 'f'.repeat(64);
   expect(() => activityBindings(definition, forged)).toThrow('实现');
+});
+it('正式source binding的sha256前缀与固定implementation hex身份一致校验', () => {
+  const source = structuredClone(release);
+  for (const b of source.payload.activities[0].payload.implementation_bindings) b.digest = `sha256:${b.digest}`;
+  expect(activityBindings(definition, source)[0].implementations).toEqual(sample.implementations);
 });
 
 function runtimeControl({ stopped = false, cleanup = false, expired = true } = {}) {

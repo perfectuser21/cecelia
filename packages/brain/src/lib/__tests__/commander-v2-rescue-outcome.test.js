@@ -43,3 +43,12 @@ it('原unknown后有同冻结实现的机械读回pass和独立证明，仅完�
   expect(f.current.status).toBe('completed'); expect(f.current.result.workflow_control.execution_outcome).toBe('independent_readback_success');
   expect(f.current.result.workflow_control.reconciliation.spans.map(s => s.outcome)).toEqual(['unknown', 'pass']);
 });
+it('exit0原unknown后机械CodeprobeFAIL再Skill救场，保留三件事实并仅完成业务', async () => {
+  const f = setup(), failed = f.reconciliation.spans[0];
+  f.reconciliation.spans.unshift({ ...structuredClone(failed), id: 'original-exit0', outcome: 'unknown', occurrence_key: 'code-exit0' });
+  f.reconciliation.gaps.push({ code: 'SPAN_OUTCOME_UNKNOWN', span_id: 'original-exit0' });
+  f.verifier.result.workflow_verification.assertions[1].code_outcome = 'fail';
+  await reconcileCommanderTask(f.pool, f.task.id, f.deps);
+  expect(f.current.status).toBe('completed'); expect(f.current.result.workflow_control.execution_outcome).toBe('commander_rescue_success');
+  expect(f.current.result.workflow_control.reconciliation.spans.map(s => s.outcome)).toEqual(['unknown','fail','pass']);
+});
