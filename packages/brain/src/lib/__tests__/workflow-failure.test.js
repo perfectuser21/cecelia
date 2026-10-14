@@ -1,6 +1,20 @@
 import {it,expect} from 'vitest';
 import {redactFailureText,sanitizeWorkflowFailure} from '../workflow-failure.js';
 
+it('单行console前后缀及多条JSON片段不漏嵌套秘密',()=>{
+ const json=JSON.stringify({failure:{message:JSON.stringify({password:'fake alpha beta'})}});
+ const safe=redactFailureText('probe started '+json+' console suffix '+json+' done');
+ expect(safe).not.toContain('fake alpha beta');expect(safe).toContain('probe started');expect(safe).toContain('console suffix');expect(safe).toContain('done');
+});
+it('过深JSON字符串、多片段或超大日志有界省略，不抛或泄露尾部秘密',()=>{
+ let nested=JSON.stringify({password:'deep-secret'});for(let i=0;i<13;i++)nested=JSON.stringify({message:nested});
+ for(const input of [nested,'p '+Array.from({length:70},()=>JSON.stringify({message:'safe'})).join(' ')+' token=tail-secret',
+  'x'.repeat(300000)+' password=tail-secret']){
+  let safe;expect(()=>{safe=redactFailureText(input);}).not.toThrow();
+  expect(safe).not.toContain('deep-secret');expect(safe).not.toContain('tail-secret');expect(safe).toContain('省略');
+ }
+});
+
 it('普通日志夹JSON行时仍逐行解开嵌套JSON秘密，保留普通诊断',()=>{
  const json=JSON.stringify({failure:{message:JSON.stringify({password:'fake alpha beta'})}});
  const mixed=`probe started\n${json}\nAuthorization: Basic ZmFrZTpwYXNz\nprobe ended`;

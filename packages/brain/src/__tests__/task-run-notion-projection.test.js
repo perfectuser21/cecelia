@@ -201,3 +201,12 @@ it('Run Error优先同身份结构化具体失败，成功不显示失败详情'
  expect(content).toContain('adb_connect');expect(content).toContain('ADB_UNREACHABLE');expect(content).toContain('device offline');expect(content).toContain('host:/tmp/probe.json');
  expect(buildTaskRunNotionProperties({...row,status:'success',error_message:null,result:{business_receipt:{status:'completed',failure:row.result.business_receipt.failure}}})).not.toHaveProperty('Error');
 });
+it.each(['failed','timeout'])('历史%s无失败证据时Error明确未知，旧运输错误保留且不猜ADB',async status=>{
+ const {buildTaskRunNotionProperties}=await import('../notion-push-sync.js');
+ for(const error_message of [null,'script_exit_255']){
+  const p=buildTaskRunNotionProperties({...RUN,status,error_message,result:{exit_code:255}});
+  const text=p.Error?.rich_text.map(t=>t.text.content).join('');
+  expect(text).toContain('具体原因未知（该次运行未保存失败证据）');expect(text).not.toContain('ADB');
+  if(error_message)expect(text).toContain(error_message);
+ }
+});
