@@ -7,7 +7,8 @@ import { execFileSync } from 'node:child_process';
 import { solidifyQa } from '../lib/qa-solidify.mjs';
 
 const TASK = '3a27ca36-7be9-4efc-a27f-18361dae6557';
-const SPRINT = 'sprints/docs-task';
+const SPRINT = 'sprints/10141904-cw-3a27ca36';
+const BRANCH = 'cp-10141904-cw-3a27ca36';
 const SMOKE = 'packages/brain/scripts/smoke/cw-3a27ca36-qa-smoke.sh';
 const ALLOW = 'packages/quality/smoke-allowlist.txt';
 let root, server, url, calls;
@@ -33,7 +34,7 @@ async function solidify({ broken = false } = {}) {
   write(`${SPRINT}/05-qa-report-r2.md`, `---\ntask_id: ${TASK}\nstep: evaluate\nupstream: ["02-spec.md#Q-1"]\n---\n### T-1\n对应: Q-1\nverdict: PASS\n\`\`\`command\n${command}\n\`\`\`\n\`\`\`output\n\n\`\`\`\n`);
   write(`${SPRINT}/06-judge-r2.md`, 'verdict: PASS\n');
   const state = {};
-  const changed = await solidifyQa({ cfg: {}, log() {} }, { number: 6433 }, state, 2, root, { taskId: TASK, sprintDir: SPRINT }, '05-qa-report-r2.md', url);
+  const changed = await solidifyQa({ cfg: {}, log() {} }, { number: 6433, headRefName: BRANCH }, state, 2, root, { taskId: TASK, sprintDir: SPRINT }, '05-qa-report-r2.md', url);
   return { state, changed };
 }
 
@@ -52,9 +53,19 @@ it('暂存和未暂存的普通 Markdown 记录仍可证明只改文档', async 
   const { state, changed } = await solidify(); expect(changed).toEqual([]); expect(state.smoke_note).toContain('纯 Markdown 文档');
 });
 
-it.each(['api', 'code', 'mixed', 'unknown-base', 'empty', 'untracked-code', 'staged-code', 'unstaged-code', 'reverted-code', 'staged-reverted-code', 'code-renamed-md', 'screenshot', 'json-record', 'symlink-md', 'executable-md'])(
+it('保留同任务旧 QA PNG/CJS 和新未提交记录，产品仅 README 时仍不生成 smoke', async () => {
+  write('README.md', 'updated\n');
+  write(`${SPRINT}/qa-r1/q-5-preview.png`, 'historical screenshot');
+  write(`${SPRINT}/qa-r1/qa-playwright.cjs`, 'historical browser script'); commit();
+  write(`${SPRINT}/qa-r2/receipt.json`, '{}');
+  const { state, changed } = await solidify();
+  expect(changed).toEqual([]); expect(calls).toBe(1); expect(state.smoke_note).toContain('纯 Markdown 文档');
+  expect(fs.readFileSync(path.join(root, `${SPRINT}/qa-r1/qa-playwright.cjs`), 'utf8')).toBe('historical browser script');
+});
+
+it.each(['api', 'code', 'mixed', 'unknown-base', 'empty', 'untracked-code', 'staged-code', 'unstaged-code', 'reverted-code', 'staged-reverted-code', 'code-renamed-md', 'other-sprint-image', 'non-record-json', 'sprint-source', 'records-only', 'symlink-md', 'executable-md'])(
   '%s 不能按 docs-only 豁免，真实 API 命令仍固化', async kind => {
-    if (kind !== 'empty') { write('README.md', 'updated\n'); commit(); }
+    if (!['empty', 'records-only'].includes(kind)) { write('README.md', 'updated\n'); commit(); }
     if (['api', 'mixed'].includes(kind)) { write('packages/brain/src/routes/example.js', 'export default 2;\n'); commit(); }
     if (kind === 'code') { write('app.js', 'export default 2;\n'); commit(); }
     if (kind === 'unknown-base') git('update-ref', '-d', 'refs/remotes/origin/main');
@@ -64,8 +75,10 @@ it.each(['api', 'code', 'mixed', 'unknown-base', 'empty', 'untracked-code', 'sta
     if (kind === 'reverted-code') { write('app.js', 'export default 2;\n'); commit(); write('app.js', 'export default 1;\n'); }
     if (kind === 'staged-reverted-code') { write('app.js', 'export default 2;\n'); git('add', 'app.js'); write('app.js', 'export default 1;\n'); }
     if (kind === 'code-renamed-md') { git('mv', 'app.js', 'app.md'); commit(); }
-    if (kind === 'screenshot') write(`${SPRINT}/qa-r2/screenshot.png`, 'image');
-    if (kind === 'json-record') write(`${SPRINT}/qa-r2/result.json`, '{}');
+    if (kind === 'other-sprint-image') write('sprints/10141904-cw-deadbeef/qa-r2/screenshot.png', 'image');
+    if (kind === 'non-record-json') write(`${SPRINT}/result.json`, '{}');
+    if (kind === 'sprint-source') write(`${SPRINT}/script.js`, 'code');
+    if (kind === 'records-only') { write(`${SPRINT}/05-qa-report-r1.md`, 'old report'); commit(); }
     if (kind === 'symlink-md') fs.symlinkSync('app.js', path.join(root, 'link.md'));
     if (kind === 'executable-md') { fs.chmodSync(path.join(root, 'README.md'), 0o755); git('add', 'README.md'); commit(); }
     const { state, changed } = await solidify();
