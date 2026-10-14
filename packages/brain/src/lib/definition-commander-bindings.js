@@ -14,7 +14,8 @@ function validateSource(selected, kind, bindings) {
   need(object(selected) && object(identity) && identity.kind===kind && hash(identity.digest)
     && ['id','version'].every(k=>typeof identity[k]==='string' && identity[k].trim())
     && typeof selected.path==='string' && selected.path && !selected.path.startsWith('/')
-    && !/[\\\x00-\x1f?#]/.test(selected.path) && !selected.path.split('/').some(p=>['.','..',''].includes(p)), '实现身份或路径');
+    && ![...selected.path].some(c=>['\\','?','#'].includes(c) || c.charCodeAt(0)<32)
+    && !selected.path.split('/').some(p=>['.','..',''].includes(p)), '实现身份或路径');
   const verified=bindings.filter(b=>b.kind===kind && b.path===selected.path && b.scope==='activity'
     && b.status==='verified' && b.validation_scope==='reference_only'
     && /^[a-f0-9]{40}$/.test(b.revision ?? '') && typeof b.repo==='string'
