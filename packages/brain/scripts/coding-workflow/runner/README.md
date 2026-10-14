@@ -68,7 +68,7 @@ curl -fsS "$PREVIEW_URL/api/brain/health"
 
 将响应 `git_sha` 与本 PR 的 40 位 head SHA 比对；不能直连预览 TCP 端口，也不能把生产地址代入 `PREVIEW_URL`。只允许同源 HTTP API 和隔离 Chromium 页面经桥访问。桥拒绝任意上游、跨源重定向、`CONNECT`/upgrade，限制 body 大小与超时；浏览器阻断跨源请求及 WebSocket，context 使用 `serviceWorkers: 'block'`。每个 QA 场景新建隔离 context/进程，关闭后的能力不能复用。依赖 WS、Service Worker 或跨源资源的步骤应写 `CANNOT_VERIFY` 并列出实际已验步骤与阻断原因，不能伪称 PASS。错误 PR/head、非法 origin、超大 body 或超时同样不能给成功结论。
 
-可信运行依赖前置：以版本化的 `packages/brain/scripts/coding-workflow/runner/runtime-deps/package.json` 和 `package-lock.json` 为安装清单，在服务空闲且持有启动器外锁的维护窗口，将两份清单复制到受控依赖安装目录并执行 `npm ci --prefix <受控依赖安装目录> --ignore-scripts`；验证后再由维护过程替换正式目录并保留旧目录备份，不能在运行中的依赖目录直接安装。专用依赖目录 `~/.cecelia/coding-workflow-runtime/playwright-1.62.1/node_modules` 保持稳定：Playwright 与 playwright-core 均为 1.62.1，另含 Acorn 8.16.0；各包 integrity 与上述版本化 lock 一致，正式 clone 的 `node_modules` 须链到该专用依赖目录。以下只读检查会在缺依赖、版本或链接不符时失败；运行用户按实际 home 和 clone 路径替换。headless 实启动检查会启动并关闭 Chromium，只供获准的现场维护使用，本次手册 QA 不执行。
+可信运行依赖前置：以版本化的 `packages/brain/scripts/coding-workflow/runner/runtime-deps/package.json` 和 `package-lock.json` 为安装清单，在服务空闲且持有启动器外锁与 run-once 互斥锁的维护窗口，将两份清单复制到受控依赖安装目录并执行 `npm ci --prefix <受控依赖安装目录> --ignore-scripts`；验证后再由维护过程替换正式目录并保留旧目录备份，不能在运行中的依赖目录直接安装。专用依赖目录 `~/.cecelia/coding-workflow-runtime/playwright-1.62.1/node_modules` 保持稳定：Playwright 与 playwright-core 均为 1.62.1，另含 Acorn 8.16.0；各包 integrity 与上述版本化 lock 一致，正式 clone 的 `node_modules` 须链到该专用依赖目录。以下只读检查会在缺依赖、版本或链接不符时失败；运行用户按实际 home 和 clone 路径替换。headless 实启动检查会启动并关闭 Chromium，只供获准的现场维护使用，本次手册 QA 不执行。
 
 ```bash
 RUNTIME_MODULES="$HOME/.cecelia/coding-workflow-runtime/playwright-1.62.1/node_modules"
