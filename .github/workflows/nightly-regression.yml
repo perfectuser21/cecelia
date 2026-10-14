@@ -52,6 +52,11 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+      - name: Install ripgrep for real CLI integration tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ripgrep
+          /usr/bin/rg --version
       - run: cd packages/brain && npm ci
       - name: Brain Unit Tests（全量 shard ${{ matrix.shard }}/6）
         env:

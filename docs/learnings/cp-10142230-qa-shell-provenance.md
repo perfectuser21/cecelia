@@ -12,3 +12,8 @@
 - [x] 提示词和可用工具必须一起核：本机起初只有 Codex 私有 rg，标准路径缺失已报告根处理，本分支不耦合私有版本或擅自安装。
 
 有效首红 3fc23f237：8 红 / 46 绿。初 red.log 缺标准路径工具为测试环境失败，改用真实工具验证隔离 CLI 语义后重跑 red-valid.log；不把任意 PATH 结果视为受支持分类路径。8 个相邻文件 362 项绿；独立审查、CI、部署与新 QA 另记，未提前完成。
+
+
+### CI 系统依赖补齐
+
+首轮 PR #6441 的 brain-unit (1) job 115914400168 在真实 ripgrep 集成测试失败：Ubuntu runner 未安装 rg。保留原失败日志；测试不跳过、不 mock。实际执行入口 brain-unit 与 brain-unit-nightly 显式安装发行版 ripgrep 并读回 `/usr/bin/rg --version`。Smoke Glob 只跑已登记 smoke 的明确测试文件，Sprint Tests 仅选择 sprints 下的 test.ts，本轮均不执行此测试。以后真实外部 CLI 验证需同时核本地和实际 CI 执行入口依赖。
