@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.431.13
+**Brain 版本**: 1.431.14
 
 Activity裁判按冻结定义、实现与运行环境归集真实观测；Code失败、Skill接手和Commander救场分别保留，正式独立核验前不收敛。工厂业务成功与代码独立晋级证据分账，局部升级保留其他Activity有效证据。
 
@@ -6785,3 +6785,5 @@ openclaw-agent-reaper与手机窄派发共用独立收尾循环，不再受串�
 Commander v2 终态门禁保留 final PASS 成功出口；控制器持久化 final + FAIL/INCONCLUSIVE + terminal_status=failed 后可收失败账。未决清理事实与设备锁不因任务失败被改记已清理。真实 PostgreSQL 回归覆盖终判错配、原认领保留与旧入口兼容。
 
 Commander v2 未决清理设备锁独立隔离：任务失败和TTL到期不触发转让、主动释放或扫描回收；只有官方停止及非空清理证据、来源明确的cleanup_verification确认后才解除。运行证据白名单补实际实现/角色/环境与run_binding_id，保留原Code失败，支持Commander独立裁判救场业务结果。
+
+Commander配套及独立Skill声明由正式定义快照生产者验证固定来源后保存到Activity payload外层；业务contract仅移除这两个实现声明，避免业务摘要自包含。来源必须reference_only verified并匹配固定path、digest、Skill实际name/version，业务可用性仍由正式独立核验判定；无声明旧快照不改变。错字节、未核验symbol、错Skill版本或业务摘要整笔回滚。不接runtime组合表消费者、不修改稳定指针策略。

@@ -1,6 +1,7 @@
 /** 调用方持有定义写事务；每个稳定对象的语义内容复用版本，版本中的来源永久固定。 */
 import { stepSha256,canonicalJson } from '../../scripts/sync-steps-from-workspace.mjs';
 import { runReleaseLineHook,registerActivityBuild,refreshWorkflowRecipe } from './release-line.js';
+import { commanderBusinessContract,freezeCommanderDeclarations } from './definition-commander-bindings.js';
 async function saveVersion(client,kind,id,payload,source,setCurrent=true) {
   const table=kind==='activity'?'activity_definition_versions':'workflow_definition_versions';
   const column=kind==='activity'?'activity_id':'workflow_id';
@@ -59,9 +60,11 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
   }
   for(const a of activities) {
     const binding=bindingsByActivity.get(a.id),activitySource=sources.get(a.id);
-    const contract=admissionScope?[...documentsByWorkflow.values()].flatMap(w=>w.activities).find(v=>v.id===a.id):a.contract;
-    if(!contract)throw Error(`来源契约缺少活动: ${a.id}`);
+    const sourceContract=admissionScope?[...documentsByWorkflow.values()].flatMap(w=>w.activities).find(v=>v.id===a.id):a.contract;
+    if(!sourceContract)throw Error(`来源契约缺少活动: ${a.id}`);
+    const declarations=freezeCommanderDeclarations(sourceContract,binding),contract=commanderBusinessContract(sourceContract);
     const payload={...metadata,activity_id:a.id,definition_key:`${a.capability_key}.${a.activity_key}`,contract,
+      ...declarations,
       steps:admissionScope?[]:await snapshotSteps(client,a),implementation_bindings:binding,resources:contract.resources||{},verification:{preconditions:contract.preconditions||[],postconditions:contract.postconditions||[],steps:contract.steps||[]},
       ...(admissionScope?{canonical_reference:{activity_id:a.id,contract_sha256:stepSha256(a.contract),contract_source:a.contract_source,current_definition_version_id:a.current_definition_version_id}}:{})};
     const saved=await saveVersion(client,'activity',a.id,payload,activitySource,!admissionScope),versionId=saved.id;
