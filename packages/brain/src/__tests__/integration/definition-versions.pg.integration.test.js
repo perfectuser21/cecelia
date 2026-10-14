@@ -19,6 +19,45 @@ afterEach(async()=>{if(fixture)await fixture.close();});
 async function counts(){return (await db.query(`SELECT (SELECT count(*)::int FROM activity_definition_versions) activities,(SELECT count(*)::int FROM workflow_definition_versions) workflows`)).rows[0];}
 async function versions(){return (await db.query('SELECT * FROM activity_definition_versions ORDER BY id')).rows;}
 describe('不可变能力定义版本',()=>{
+  function commanderFixture(mode='pair') {
+    const f=contractsFixture(),activity=f.docs.keyword_acquisition.activities[0];
+    const content={code:'export const check = true;\n',skill:'---\nname: check\nversion: 1.0.0\n---\n# 检查\n'};
+    const entry=kind=>({implementation:{kind,id:kind==='skill'?'check':'check-code',version:'1.0.0',digest:createHash('sha256').update(content[kind]).digest('hex')},
+      path:kind==='skill'?'skills/check/SKILL.md':'src/check.js'});
+    activity.implementation_bindings=['code','skill'].map(kind=>({kind,repo:'perfectuser21/zenithjoy-workspace',path:entry(kind).path,revision:'contract'}));
+    const business=createHash('sha256').update(JSON.stringify(canonical(activity))).digest('hex');
+    const declaration=mode==='pair'?{business_requirement_sha256:business,code:entry('code'),skill:{...entry('skill'),verification_ref:{task_id:randomUUID(),run_id:'wfd-'+randomUUID(),definition_sha256:'f'.repeat(64)}}}
+      :{...entry('skill'),business_requirement_sha256:business};
+    activity[mode==='pair'?'commander_implementations':'commander_implementation']=declaration;
+    f.refresh();
+    return {f,activity,declaration,business,readBinding:async b=>content[b.kind]};
+  }
+  function canonical(v) { return Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v; }
+  it.each(['pair','skill'])('正式来源冻结保留Commander %s，业务hash不包含实现声明',async mode=>{
+    await fixture.migrate();const {f,declaration,business,readBinding}=commanderFixture(mode);
+    await syncActivityContracts(db,{...f,readBinding});
+    const row=(await db.query(`SELECT v.payload FROM journey_steps a JOIN activity_definition_versions v ON v.id=a.current_definition_version_id
+      WHERE a.capability_key='keyword_acquisition' AND a.activity_key='preflight'`)).rows[0];
+    const field=mode==='pair'?'commander_implementations':'commander_implementation';
+    expect(row.payload[field]).toEqual(declaration);
+    expect(row.payload.contract).not.toHaveProperty(field);
+    expect(createHash('sha256').update(JSON.stringify(canonical(row.payload.contract))).digest('hex')).toBe(business);
+    expect(row.payload.implementation_bindings.filter(b=>b.status==='verified')).toHaveLength(2);
+  });
+  it.each(['wrong_digest','wrong_skill_version','unverified_symbol','wrong_business_hash'])('正式快照拒绝Commander %s并整笔回滚',async mode=>{
+    await fixture.migrate();const {f,activity,declaration,readBinding}=commanderFixture();
+    if(mode==='wrong_digest')declaration.code.implementation.digest='0'.repeat(64);
+    if(mode==='wrong_skill_version')declaration.skill.implementation.version='2.0.0';
+    if(mode==='unverified_symbol') {
+      activity.implementation_bindings[0].symbol='unchecked';
+      const business=structuredClone(activity);delete business.commander_implementations;
+      declaration.business_requirement_sha256=createHash('sha256').update(JSON.stringify(canonical(business))).digest('hex');
+    }
+    if(mode==='wrong_business_hash')declaration.business_requirement_sha256='0'.repeat(64);
+    f.refresh();
+    await expect(syncActivityContracts(db,{...f,readBinding})).rejects.toThrow(/Commander/);
+    expect(await counts()).toEqual({activities:0,workflows:0});
+  });
   it('迁移幂等，同内容复用版本，共享更新仅增加一活动和两个workflow版本且旧快照不变',async()=>{
     await expect(fixture.migrate()).resolves.toBeUndefined();await fixture.migrate();
     const f=contractsFixture();await syncActivityContracts(db,f);expect(await counts()).toEqual({activities:9,workflows:2});
