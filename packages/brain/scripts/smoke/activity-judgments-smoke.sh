@@ -19,8 +19,8 @@ BRAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 (cd "$BRAIN_DIR" && "$NODE" --input-type=module - <<'NODE'
 import pg from 'pg';
-import { randomUUID } from 'node:crypto';
-import { flushJudgments, getLatestJudgment } from './src/lib/activity-judge.js';
+import { randomUUID, createHash } from 'node:crypto';
+import { judgeActivity, flushJudgments, getLatestJudgment } from './src/lib/activity-judge.js';
 import { compareActivityVersions } from './src/lib/activity-version-compare.js';
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
 const die = (m) => { console.error(`FAIL: ${m}`); process.exitCode = 1; throw new Error(m); };
@@ -28,7 +28,7 @@ const ok = (m) => console.log(`PASS: ${m}`);
 await client.connect();
 try {
   await client.query('BEGIN');
-  const reg = (await client.query("SELECT to_regclass('public.activity_judgments') IS NOT NULL AS ok")).rows[0].ok;
+  const reg = (await client.query("SELECT to_regclass('activity_judgments') IS NOT NULL AS ok")).rows[0].ok;
   if (!reg) die('activity_judgments 表不存在（迁移 538 未跑？）');
   ok('迁移 538：activity_judgments 表存在');
 
@@ -50,8 +50,10 @@ try {
   const out = await flushJudgments(client, ids);
   if (out.length !== 1 || out[0].activity_id !== act || out[0].verdict !== 'converging' || !out[0].judgment_id) die(`自动裁判结果不对: ${JSON.stringify(out)}`);
   const latest = await getLatestJudgment(client, act);
-  if (latest?.verdict !== 'converging' || latest.consecutive_green !== 2 || latest.trigger_kind !== 'auto' || latest.trigger_ref !== `${tag}-r2`) die(`最新裁判不对: ${JSON.stringify(latest)}`);
-  ok('Step 级 span 经 steps 找到 Activity，对账结果只追加落库，最新裁判可查（连续绿 2、触发运行 r2）');
+  if (latest?.verdict !== 'converging' || latest.consecutive_green !== 1 || latest.runs_considered !== 1
+    || latest.report.evidence_scope !== null || latest.report.promotion_eligible !== false
+    || latest.trigger_kind !== 'auto' || latest.trigger_ref !== `${tag}-r2`) die(`最新裁判不对: ${JSON.stringify(latest)}`);
+  ok('旧协议仅诊断：连续绿 1、不晋级');
 
   const half = (await client.query(
     `INSERT INTO spans(run_id, step_id, started_at, ended_at, executor_kind, outcome, evidence)
@@ -80,6 +82,71 @@ try {
   try { await compareActivityVersions(client, act, { candidateVersionId: randomUUID(), baselineVersionId: v1 }); die('错配版本没报 404'); }
   catch (e) { if (e.status !== 404) throw e; }
   ok('新旧版本对比：无样本 → insufficient_data（下限 5），版本不属于该 Activity → 404');
+
+  // 完整冻结主运行 + 独立核验，测试两次窗口；下面的证据均为事务内 Smoke fixture。
+  const json = value => JSON.stringify(value);
+  const hash = value => createHash('sha256').update(json(value)).digest('hex');
+  const insert = async (sql, args) => (await client.query(sql, args)).rows[0].id;
+  const environment = { id: 'smoke-scratch', fingerprint: hash({ tag, host: 'scratch' }) };
+  const implementation = { kind: 'skill', id: 'smoke-fixture', version: '1', digest: hash({ tag, fixture: 'skill' }) };
+  const path = 'smoke/fixture/SKILL.md';
+  const payload = { activity_id: act, contract: {}, steps: [s1, s2].map((step_id, i) => ({ step_id,
+    locator: { step_key: `${tag}.${i ? 'save' : 'open'}` },
+    contract: { readback: { type: 'metric', expect: { op: i ? '>=' : '==', value: 1 } } } })),
+    commander_implementation: { implementation, path },
+    implementation_bindings: [{ kind: 'skill', status: 'verified', validation_scope: 'reference_only', path,
+      version: '1', digest: `sha256:${implementation.digest}` }] };
+  const version = await insert(`INSERT INTO activity_definition_versions(activity_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit)
+    VALUES($1,$2::jsonb,$3,$4,'smoke/repo','smoke/frozen.json',$5) RETURNING id`, [act,json(payload),hash(payload.contract),hash(payload),commit]);
+  const stream = await insert('INSERT INTO value_streams(name) VALUES($1) RETURNING id', [tag]);
+  const capability = await insert('INSERT INTO capabilities(name,parent_journey_id) VALUES($1,$2) RETURNING id', [tag,stream]);
+  const workflow = await insert('INSERT INTO workflows(capability_id,key,name,channel) VALUES($1,$2,$2,\'smoke\') RETURNING id', [capability,tag]);
+  const wfPayload = { workflow_id: workflow, contract: { environment }, activities: [{ activity_id: act, activity_version_id: version }] };
+  const wfVersion = await insert(`INSERT INTO workflow_definition_versions(workflow_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit)
+    VALUES($1,$2::jsonb,$3,$4,'smoke/repo','smoke/workflow.json',$5) RETURNING id`, [workflow,json(wfPayload),hash(wfPayload.contract),hash(wfPayload),commit]);
+  const release = await insert(`INSERT INTO release_versions(release_key,manifest_sha256,request_sha256,environment,target,actor,payload)
+    VALUES($1,$2,$2,'scratch','smoke','smoke',$3::jsonb) RETURNING id`, [tag,hash(wfPayload),json(wfPayload)]);
+  const observation = await insert(`INSERT INTO release_observations(release_id,event_key,attempt_key,payload_sha256,payload,collector,evidence_ref,observed_at)
+    VALUES($1,$2,$2,$3,$4::jsonb,'smoke','transaction-fixture',now()) RETURNING id`, [release,tag,hash(wfPayload),json(wfPayload)]);
+  const reference = randomUUID();
+  const expectedPath = [s1,s2].map(step_id => ({ reference_id: reference, activity_id: act, activity_definition_version_id: version, step_id }));
+  async function frozenRun(number, actualEnvironment = environment) {
+    const run = `${tag}-frozen-${number}`, attempt = `${run}:1`, task = randomUUID(), verify = randomUUID();
+    const binding = await insert(`INSERT INTO run_definition_bindings(run_id,release_id,observation_id,workflow_id,workflow_definition_version_id,
+      snapshot_sha256,expected_path,source_kind,external_origin,attempt_key,actor,payload_sha256,payload)
+      VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'external','smoke-fixture',$8,'smoke',$6,$9::jsonb) RETURNING id`,
+      [run,release,observation,workflow,wfVersion,hash(wfPayload),json(expectedPath),attempt,json(wfPayload)]);
+    const evidenceIds = [];
+    for (const [step_id,observed] of [[s1,1],[s2,3]]) {
+      evidenceIds.push(await insert(`INSERT INTO spans(run_id,workflow_id,activity_id,step_id,started_at,ended_at,executor_kind,outcome,evidence,
+        activity_definition_version_id,workflow_definition_version_id,identity_protocol,run_binding_id,reference_id,attempt_key,occurrence_key,payload_sha256)
+        VALUES($1,$2,$3,$4,$5,$5,'agent','pass',$6::jsonb,$7,$8,2,$9,$12,$10,$11,$13) RETURNING id`,
+        [run,workflow,act,step_id,new Date(Date.UTC(2020,0,2,0,0,number*2 + (step_id===s2 ? 1:0))).toISOString(),
+          json({ observed,implementation,environment:actualEnvironment,execution_role:'primary' }),version,wfVersion,binding,attempt,step_id,reference,hash({run,step_id,observed,environment:actualEnvironment})]));
+    }
+    const envelope = { run_id: run, attempt: 1, definition: { snapshot_sha256: hash(wfPayload) }, contract: { environment } };
+    const proof = { task_id: task,run_id:run,attempt:1,definition_sha256:hash(wfPayload),verdict:'PASS',
+      assertions:[{name:'activity-readback',pass:true},{name:'cleanup',pass:true}],evidence:evidenceIds };
+    await client.query(`INSERT INTO tasks(id,title,status,task_type,payload,result) VALUES($1,$2,'completed','research',$3::jsonb,$4::jsonb),
+      ($5,$2,'completed','research',$6::jsonb,$7::jsonb)`, [task,tag,json({}),json({workflow_control:{phase:'final',verdict:'PASS',verify_task_id:verify,envelope}}),
+      verify,json({verification_transport:'openclaw-agent-v1',run_id:`verify-${run}`}),json({workflow_verification:proof,
+        receipt:{verification_runtime:{provider:'openai',model:'gpt-6.1-sol',logical_run_id:`verify-${run}`,official_run_id:`official-${run}`,rerouted:false}}})]);
+    return evidenceIds;
+  }
+  await frozenRun(1); const frozenIds = await frozenRun(2);
+  const [frozen] = await flushJudgments(client,frozenIds,{ judge:(db,id,options) => judgeActivity(db,id,{...options,requiredGreen:2}) });
+  const storedFrozen = await getLatestJudgment(client,act);
+  if (frozen?.consecutive_green!==2 || frozen.verdict!=='converged' || frozen.promotion_eligible!==true
+    || storedFrozen?.consecutive_green!==2 || storedFrozen.verdict!=='converged' || storedFrozen.report.promotion_eligible!==true
+    || storedFrozen.report.evidence_scope?.implementation.kind!=='skill' || storedFrozen.activity_definition_version_id!==version) die(`冻结范围裁判不对: ${json(frozen)}`);
+  ok('冻结范围：连续绿 2、正式独立核验通过');
+  const wrongIds = await frozenRun(3,{...environment,fingerprint:hash({tag,host:'other'})});
+  const [wrong] = await flushJudgments(client,wrongIds,{judge:(db,id,options) => judgeActivity(db,id,{...options,requiredGreen:2})});
+  const storedWrong = await getLatestJudgment(client,act);
+  if (wrong?.consecutive_green!==1 || wrong.verdict!=='converging' || wrong.promotion_eligible!==false
+    || storedWrong?.consecutive_green!==1 || storedWrong.report.promotion_eligible!==false || wrong.runs.length!==1
+    || wrong.evidence_scope?.environment.fingerprint===environment.fingerprint) die(`错范围借到了旧绿: ${json(wrong)}`);
+  ok('错环境范围：连续绿 1、不晋级');
 } finally {
   await client.query('ROLLBACK').catch(() => {});
   await client.end();

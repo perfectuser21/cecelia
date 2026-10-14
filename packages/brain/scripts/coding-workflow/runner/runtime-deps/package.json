@@ -1,0 +1,9 @@
+{
+  "name": "coding-workflow-runtime-deps",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "acorn": "8.16.0",
+    "playwright": "1.62.1"
+  }
+}

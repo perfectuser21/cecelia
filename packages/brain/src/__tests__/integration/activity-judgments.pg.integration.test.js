@@ -4,6 +4,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import pg from 'pg';
 import { beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
@@ -20,20 +21,26 @@ beforeEach(async () => {
   await client.query(`
     CREATE TABLE schema_version(version text PRIMARY KEY, description text, applied_at timestamptz DEFAULT now());
     CREATE TABLE activities(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, current_definition_version_id uuid);
-    CREATE TABLE workflows(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), capability_id uuid, created_at timestamptz DEFAULT now());
+    CREATE TABLE value_streams(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text);
+    CREATE TABLE capabilities(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, parent_journey_id uuid REFERENCES value_streams(id));
+    CREATE TABLE workflows(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), capability_id uuid, key text, name text, channel text, created_at timestamptz DEFAULT now());
+    CREATE TABLE workflow_definition_versions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workflow_id uuid REFERENCES workflows(id),
+      payload jsonb, contract_sha256 text, payload_sha256 text, source_repo text, source_path text, source_commit text, UNIQUE(workflow_id,id));
+    CREATE TABLE task_runs(id uuid PRIMARY KEY);
     CREATE TABLE workflow_activity_refs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workflow_id uuid, activity_id uuid, source_ref text, active boolean DEFAULT true);
     CREATE TABLE steps(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), activity_id uuid REFERENCES activities(id), step_order int, key text UNIQUE,
-      readback jsonb NOT NULL DEFAULT '{}', active boolean DEFAULT true);
+      activity_key text, readback jsonb NOT NULL DEFAULT '{}', active boolean DEFAULT true);
     CREATE TABLE activity_cells(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), journey_id uuid, step_id uuid, cell_kind text, cell_key text,
       cell_status text DEFAULT 'gray', parent_cell_key text);
     CREATE TABLE activity_definition_versions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), activity_id uuid NOT NULL REFERENCES activities(id),
-      payload jsonb NOT NULL, created_at timestamptz DEFAULT now());
+      payload jsonb NOT NULL, contract_sha256 text, payload_sha256 text, source_repo text, source_path text, source_commit text, created_at timestamptz DEFAULT now());
     CREATE TABLE spans(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id text, activity_id uuid, step_id uuid, enabler_id uuid, outcome text,
       evidence jsonb, attempts int DEFAULT 1, started_at timestamptz, activity_definition_version_id uuid, created_at timestamptz DEFAULT now(),
-      identity_protocol int DEFAULT 1, run_binding_id uuid);
-    CREATE TABLE run_definition_bindings(id uuid PRIMARY KEY, run_id text, expected_path jsonb);
-    CREATE TABLE tasks(id uuid PRIMARY KEY, status text, task_type text, payload jsonb, result jsonb);
+      identity_protocol int DEFAULT 1, run_binding_id uuid, ended_at timestamptz, executor_kind text, workflow_id uuid,
+      workflow_definition_version_id uuid, reference_id text, attempt_key text, occurrence_key text, payload_sha256 text);
+    CREATE TABLE tasks(id uuid PRIMARY KEY, title text, status text, task_type text, payload jsonb, result jsonb);
     CREATE UNIQUE INDEX ON activity_cells(step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL;`);
+  await client.query(readFileSync(new URL('../../../migrations/515_release_definition_evidence.sql', import.meta.url), 'utf8'));
   await client.query(MIGRATION);
 });
 afterEach(async () => { if (client) { await client.query(`DROP SCHEMA ${schema} CASCADE`); await client.end(); } });
@@ -55,6 +62,36 @@ async function span(run, { a = null, step, observed, outcome = 'pass', version =
     'INSERT INTO spans(run_id,activity_id,step_id,outcome,evidence,started_at,activity_definition_version_id) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING id',
     [run, a, step, outcome, JSON.stringify(observed === undefined ? {} : { observed }), at ?? ts(), version])).rows[0].id;
 }
+
+// 执行现行 Smoke 的原始 Node 段；仅连接到本用例隔离 schema，不替换任何裁判或查询。
+async function runSmokeBody() {
+  const shell = readFileSync(new URL('../../../scripts/smoke/activity-judgments-smoke.sh', import.meta.url), 'utf8');
+  const body = shell.split("<<'NODE'\n")[1]?.split('\nNODE\n')[0];
+  if (!body) throw new Error('smoke Node body missing');
+  const database = new URL('postgresql://localhost');
+  database.username = DB_DEFAULTS.user; database.password = DB_DEFAULTS.password ?? '';
+  database.hostname = DB_DEFAULTS.host; database.port = String(DB_DEFAULTS.port);
+  database.pathname = `/${DB_DEFAULTS.database}`;
+  return await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module'], {
+      cwd: new URL('../../../', import.meta.url),
+      env: { ...process.env, DATABASE_URL: database.href, PGOPTIONS: `-c search_path=${schema}` },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let output = ''; child.stdout.on('data', x => output += x); child.stderr.on('data', x => output += x);
+    child.on('error', reject); child.on('close', code => resolve({ code, output })); child.stdin.end(body);
+  });
+}
+
+describe('现行 Smoke 的真实裁判合同', () => {
+  it('legacy 单 run 仅诊断；正式冻结两次独立通过可收敛；错环境不能借绿', async () => {
+    const actual = await runSmokeBody();
+    expect(actual.code, actual.output).toBe(0);
+    for (const marker of ['旧协议仅诊断：连续绿 1、不晋级', '冻结范围：连续绿 2、正式独立核验通过', '错环境范围：连续绿 1、不晋级']) {
+      expect(actual.output).toContain(`PASS: ${marker}`);
+    }
+  });
+});
 
 describe('自动裁判落库（真 PG）', () => {
   it('旧Step-only完整观测仍可诊断落库，五次通过不能取得独立晋级资格', async () => {

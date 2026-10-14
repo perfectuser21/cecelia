@@ -1,0 +1,12 @@
+[
+  {
+    "id": "T-5",
+    "command": "PREVIEW_URL=http://localhost:5301; SHA=$(git rev-parse HEAD); curl -fsS \"$PREVIEW_URL/api/brain/health\" | jq -e --arg sha \"$SHA\" '.git_sha == $sha' && node -e 'const fs=require(\"fs\"),a=fs.readFileSync(\"packages/brain/scripts/coding-workflow/runner/README.md\",\"utf8\"),b=fs.readFileSync(\"packages/brain/scripts/coding-workflow/lib/preview-bridge.mjs\",\"utf8\"),c=fs.readFileSync(\"packages/brain/scripts/coding-workflow/lib/preview-browser.mjs\",\"utf8\");for(const x of [\"40 位 head SHA\",\"CURL_HOME\",\"同源 HTTP API\",\"隔离 Chromium\",\"CANNOT_VERIFY\",\"WebSocket\",\"Service Worker\",\"跨源\"])if(!a.includes(x))throw Error(\"手册缺 \"+x);if(!b.includes(\"body?.git_sha !== headSha\")||!b.includes(\"preview_redirect_forbidden\")||!c.includes(\"serviceWorkers: \\u0027block\\u0027\")||!c.includes(\"routeWebSocket\"))throw Error(\"预览实现不符\");console.log(\"预览边界核对通过\")'",
+    "output": "true\n预览边界核对通过"
+  },
+  {
+    "id": "T-6",
+    "command": "node -e 'const fs=require(\"fs\"),a=fs.readFileSync(\"packages/brain/scripts/coding-workflow/runner/README.md\",\"utf8\"),r=JSON.parse(fs.readFileSync(\"packages/brain/scripts/coding-workflow/repos.json\",\"utf8\")),z=r.repos.find(x=>x.key===\"zenithjoy-workspace\"),b=fs.readFileSync(\"packages/brain/scripts/coding-workflow/lib/preview-browser.mjs\",\"utf8\"),g=fs.readFileSync(\"packages/brain/scripts/coding-workflow/runner/lib/merge-gate.mjs\",\"utf8\"),lock=JSON.parse(fs.readFileSync(\"package-lock.json\",\"utf8\"));for(const x of [\"playwright-1.62.1/node_modules\",\"playwright-core\",\"integrity\",\"node_modules\",\"chromium.launch({headless:true\",\"preview_browser_unavailable\",\"automerge=false\",\"PR #2132\",\"人工放行\"])if(!a.includes(x))throw Error(\"手册缺 \"+x);if(z.automerge!==false||!b.includes(\"preview_browser_unavailable\")||!g.includes(\"automerge=false\")||lock.packages[\"node_modules/playwright\"].version!==\"1.62.1\"||lock.packages[\"node_modules/playwright-core\"].version!==\"1.62.1\")throw Error(\"配置不符\");console.log(\"Playwright 前置、失败停止、ZenithJoy 人工门核对通过\")'",
+    "output": "Playwright 前置、失败停止、ZenithJoy 人工门核对通过"
+  }
+]
