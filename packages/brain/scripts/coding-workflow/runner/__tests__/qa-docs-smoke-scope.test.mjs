@@ -63,7 +63,7 @@ it('保留同任务旧 QA PNG/CJS 和新未提交记录，产品仅 README 时�
   expect(fs.readFileSync(path.join(root, `${SPRINT}/qa-r1/qa-playwright.cjs`), 'utf8')).toBe('historical browser script');
 });
 
-it.each(['api', 'code', 'mixed', 'unknown-base', 'empty', 'untracked-code', 'staged-code', 'unstaged-code', 'reverted-code', 'staged-reverted-code', 'code-renamed-md', 'other-sprint-image', 'non-record-json', 'sprint-source', 'records-only', 'symlink-md', 'executable-md'])(
+it.each(['api', 'code', 'mixed', 'unknown-base', 'empty', 'untracked-code', 'staged-code', 'unstaged-code', 'reverted-code', 'staged-reverted-code', 'code-renamed-md', 'other-sprint-image', 'non-record-json', 'sprint-source', 'records-only', 'symlink-md', 'executable-md', 'symlink-record', 'executable-record'])(
   '%s 不能按 docs-only 豁免，真实 API 命令仍固化', async kind => {
     if (!['empty', 'records-only'].includes(kind)) { write('README.md', 'updated\n'); commit(); }
     if (['api', 'mixed'].includes(kind)) { write('packages/brain/src/routes/example.js', 'export default 2;\n'); commit(); }
@@ -81,6 +81,8 @@ it.each(['api', 'code', 'mixed', 'unknown-base', 'empty', 'untracked-code', 'sta
     if (kind === 'records-only') { write(`${SPRINT}/05-qa-report-r1.md`, 'old report'); commit(); }
     if (kind === 'symlink-md') fs.symlinkSync('app.js', path.join(root, 'link.md'));
     if (kind === 'executable-md') { fs.chmodSync(path.join(root, 'README.md'), 0o755); git('add', 'README.md'); commit(); }
+    if (kind === 'symlink-record') { fs.mkdirSync(path.join(root, SPRINT, 'qa-r1'), { recursive: true }); fs.symlinkSync(path.join(root, 'app.js'), path.join(root, SPRINT, 'qa-r1/script.cjs')); }
+    if (kind === 'executable-record') { write(`${SPRINT}/qa-r1/script.cjs`, 'code'); fs.chmodSync(path.join(root, SPRINT, 'qa-r1/script.cjs'), 0o755); commit(); }
     const { state, changed } = await solidify();
     expect(changed).toContain(SMOKE); expect(fs.readFileSync(path.join(root, ALLOW), 'utf8')).toContain('cw-3a27ca36-qa-smoke.sh');
     expect(state.smoke).toMatchObject({ round: 2, items: ['T-1'] }); expect(calls).toBe(2);

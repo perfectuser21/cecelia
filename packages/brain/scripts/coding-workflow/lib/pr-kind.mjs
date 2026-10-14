@@ -30,3 +30,9 @@ const TEST_FILE_RE = /(?:^|\/)__tests__\/|\.test\.[cm]?[jt]sx?$/;
 export function touchesApiSurface(files) {
   return Array.isArray(files) && files.some((f) => API_SURFACE_RE.test(f) && !TEST_FILE_RE.test(f));
 }
+
+/** 仅供已成功读取的 Git 路径集；空/未知不是纯文档，不按 sprint 目录豁免截图或源码。 */
+export function onlyMarkdownFiles(files) {
+  return Array.isArray(files) && files.length > 0
+    && files.every((file) => typeof file === 'string' && file.endsWith('.md') && !/[\x00-\x1f\x7f]/.test(file));
+}
