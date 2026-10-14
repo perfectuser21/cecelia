@@ -43,7 +43,10 @@ beforeEach(async () => {
     CREATE TABLE workflow_definition_versions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workflow_id uuid REFERENCES workflows(id), payload jsonb NOT NULL,
       created_at timestamptz DEFAULT clock_timestamp());
     CREATE TABLE spans(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id text, activity_id uuid, step_id uuid, enabler_id uuid, outcome text,
-      evidence jsonb, attempts int DEFAULT 1, started_at timestamptz, activity_definition_version_id uuid, created_at timestamptz DEFAULT now());`);
+      evidence jsonb, attempts int DEFAULT 1, started_at timestamptz, activity_definition_version_id uuid, created_at timestamptz DEFAULT now(),
+      identity_protocol int DEFAULT 1, run_binding_id uuid);
+    CREATE TABLE run_definition_bindings(id uuid PRIMARY KEY, run_id text, expected_path jsonb);
+    CREATE TABLE tasks(id uuid PRIMARY KEY, status text, task_type text, payload jsonb, result jsonb);`);
   await client.query(M538);
 });
 afterEach(async () => { if (client) { await client.query(`DROP SCHEMA ${schema} CASCADE`).catch(() => {}); await client.end(); } });
