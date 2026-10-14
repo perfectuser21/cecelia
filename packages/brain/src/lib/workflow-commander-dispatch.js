@@ -36,6 +36,7 @@ import { startRun, finishRun } from './task-run.js';
 
 import { dispatchCommanderV2 } from './commander-v2-dispatch.js';
 import { reconcileCommanderV2 } from './commander-v2-control.js';
+import { digest } from './commander-v2-contract.js';
 
 export const WORKFLOW_DISPATCH_TASK_TYPE = 'workflow_dispatch';
 export const COMMANDER_AGENT = 'work-commander';
@@ -208,7 +209,13 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
         const result = await dispatchCommanderV2(pool, t.id, deps);
         if (result.dispatched) out.dispatched++; else out.waiting++;
       } catch (err) {
-        await recordEvent(pool, t.id, 'commander_preflight_rejected', { reason: err.message }); out.waiting++;
+        const rejection = { reason: err.message, condition_sha256: digest(t.payload), error_code: err.code ?? null };
+        if (digest(t.result?.commander_preflight ?? null) !== digest(rejection)) {
+          await pool.query(`UPDATE tasks SET result=COALESCE(result,'{}'::jsonb)||jsonb_build_object('commander_preflight',$2::jsonb)
+            WHERE id=$1 AND status IN ('queued','in_progress')`, [t.id, JSON.stringify(rejection)]);
+          await recordEvent(pool, t.id, 'commander_preflight_rejected', rejection);
+        }
+        out.waiting++;
       }
       continue;
     }

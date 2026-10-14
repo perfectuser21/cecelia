@@ -166,8 +166,14 @@ export function buildTerminalUpdate(taskId, status, opts = {}) {
     params.push(...(opts.where.params || []));
   }
 
-  // v2只能由持久控制器的最终核验判定进入成功终态，旧失败入口不得抢收。
-  where.push("(payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' OR (result->'workflow_control'->>'phase' = 'final' AND result->'workflow_control'->>'verdict' = 'PASS' AND " + (isRelayTerminalStatus(status) ? 'TRUE' : 'FALSE') + "))");
+  // v2 只接受控制器已持久化的终判；未决清理事实保留，不代表工作者已停止。
+  const control = "result->'workflow_control'";
+  const verdictGate = isRelayTerminalStatus(status)
+    ? `${control}->>'verdict' = 'PASS'`
+    : status === 'failed'
+      ? `${control}->>'verdict' IN ('FAIL', 'INCONCLUSIVE') AND ${control}->>'terminal_status' = 'failed'`
+      : 'FALSE';
+  where.push(`(payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' OR (${control}->>'phase' = 'final' AND ${verdictGate}))`);
   const returning = ['id', 'status', ...toList(opts.returning).filter((c) => c !== 'id' && c !== 'status')];
   const sql = `UPDATE tasks SET ${sets.join(', ')} WHERE ${where.join(' AND ')} RETURNING ${returning.join(', ')}`;
   return { sql, params };

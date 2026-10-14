@@ -1,6 +1,7 @@
 /** 状态只存在tasks.result；运行事实继续走task-run唯一入口。 */
 import { getRelease } from './release-index.js';
 import { requireCommander, digest } from './commander-v2-contract.js';
+import { pairedImplementations, primaryImplementation } from './commander-v2-implementation.js';
 export async function transaction(pool, taskId, work) {
   const db = await pool.connect();
   try {
@@ -57,8 +58,11 @@ export function activityBindings(definition, release) {
       requireCommander(matches.length === 1 && !covered.has(identity), '冻结路径缺失或重复');
       covered.add(identity);
     }
+    const implementations = pairedImplementations(activity);
+    const primary = primaryImplementation(activity, implementations);
     result.push({ key: ref.slot_key, reference_id: ref.reference_id, activity_id: activity.activity_id,
-      activity_definition_version_id: activity.id, steps });
+      activity_definition_version_id: activity.id, steps, ...(implementations ? { implementations } : {}),
+      ...(primary ? { primary_implementation: primary } : {}) });
   }
   requireCommander(result.length === refs.length && covered.size === path.length, '冻结路径未完整覆盖');
   return result;
@@ -69,6 +73,7 @@ export async function frozenActivityBindings(db, definition) {
 export function checkFence(task, input) {
   const c = task.result?.workflow_control, e = c?.envelope;
   requireCommander(e && task.status === 'in_progress' && c.phase !== 'final', '运行不接收反馈', 409);
+  requireCommander(c.execution_fenced !== true, '执行权已隔离，不接收迟到反馈', 409);
   for (const k of ['protocol', 'run_id', 'attempt', 'owner_epoch']) requireCommander(input[k] === e[k], `过期反馈:${k}`, 409);
   return c;
 }

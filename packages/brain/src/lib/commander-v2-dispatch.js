@@ -11,6 +11,7 @@ import { transaction, frozenContract, frozenActivityBindings, writeControl, even
 import { makeEnvelope, isCommanderV2, requireCommander, bounded } from './commander-v2-contract.js';
 import { selectHistoricalMethod, validateMethodGates } from './commander-method-selection.js';
 import { validateMethodReady } from './commander-method-contract.js';
+import { verifySkillPairings } from './commander-v2-implementation.js';
 const target = deps => deps.target ?? sshTargetFor(resolvePrimaryWorkerId());
 const send = (args, input) => sshWithStdin(spawn, args, input);
 export async function readyCommander(e, deps = {}) {
@@ -37,9 +38,11 @@ export async function prepareCommander(pool, taskId, deps = {}) {
     if (selected?.method_selection) e.method_selection = selected.method_selection;
     else if (previous?.envelope.method_selection) e.method_selection = { ...previous.envelope.method_selection, selection_receipt: { ...previous.envelope.method_selection.selection_receipt, previous_run_id: previous.envelope.run_id } };
     e.activity_bindings = await frozenActivityBindings(db, e.definition);
+    requireCommander(!e.activity_bindings.some(b => b.implementations || b.primary_implementation) || e.contract.environment, '固定实现缺冻结环境');
     bounded(e, 180000, '信封');
     // ready为只读协议握手，实际run binding再次检查数据库当前部署，不能用ready替代release闸。
     await validateMethodGates(db, e);
+    await verifySkillPairings(db, e);
     validateMethodReady(await readyCommander(e, deps), e);
     await (deps.startRun ?? startRun)({ taskId, runId: e.run_id, source: 'workflow-commander-v2', definition: e.definition, context: { commander_envelope: e } }, { pool, transactionClient: db });
     const c = { phase: 'prepared', envelope: e, execution_location: { ssh_target: target(deps), run_directory: `~/wf-agent-runs/${e.run_id}` }, last_seq: 0, execution_stopped: false, launch_state: 'pending',
@@ -62,6 +65,7 @@ export async function launchCommander(pool, taskId, deps = {}) {
     if (c?.phase !== 'prepared' || c.launch_state !== 'pending') return { waiting: true };
     requireCommander(Date.now() < Date.parse(e.deadline_at), '起跑预算已耗尽', 409);
     await validateMethodGates(db, e);
+    await verifySkillPairings(db, e);
     validateMethodReady(await readyCommander(e, deps), e);
     if (e.contract.resources.device_serial) {
       const gate = await (deps.lockGate ?? (t => checkDeviceLockForManualDispatch(t, 'workflow-commander-v2')))({ ...task, payload: { ...task.payload,

@@ -14,6 +14,7 @@
  */
 import { evaluateReadback } from './step-readback-eval.js';
 import { ensureEightCells } from './activity-cells.js';
+import { isCommanderVerification, verifiedRuntime } from './commander-verification-transport.js';
 
 const GREEN_OK = new Set(['verified', 'skipped', 'exempt']);
 const ISSUE_CODE = { mismatch: 'step_readback_mismatch', unverified: 'step_unobserved', failed: 'step_failed', missing: 'step_missing' };
@@ -24,6 +25,7 @@ function statusOf(step, span) {
   if (span.outcome === 'skipped') return 'skipped';
   if (span.outcome === 'fail') return 'failed';
   if (step.readback?.type === 'none') return 'exempt';
+  if (span.outcome !== 'pass') return 'unverified';
   const observed = span.evidence?.observed;
   const result = evaluateReadback(step.readback, observed);
   if (result.verdict === 'pass') return 'verified';
@@ -31,11 +33,65 @@ function statusOf(step, span) {
   return 'unverified';
 }
 
+/** 正式核验任务独立结果，不读取执行者evidence里的自报verification_ref。 */
+export function independentVerification(vt, taskId, envelope) {
+  if (!vt || vt.id === taskId || !['completed','completed_no_pr'].includes(vt.status)
+    || (isCommanderVerification(vt) && !verifiedRuntime(vt))) return null;
+  let v = vt.result?.workflow_verification;
+  if (!v) {
+    const raw = isCommanderVerification(vt) ? vt.result?.receipt?.text : vt.payload?.last_run_result?.result_summary;
+    if (typeof raw === 'string' && Buffer.byteLength(raw) <= 50000) {
+      const line = [...raw.matchAll(/^WORKFLOW_VERIFICATION[ \t]+(\{[^\n]*\})[ \t]*$/gm)].at(-1)?.[1];
+      try { const parsed=JSON.parse(line ?? raw); v=parsed.workflow_verification ?? (line ? parsed:null); } catch { return null; }
+    }
+  }
+  if (!v || v.task_id !== taskId || v.run_id !== envelope?.run_id || v.attempt !== envelope?.attempt
+    || v.definition_sha256 !== envelope?.definition?.snapshot_sha256 || v.verdict !== 'PASS'
+    || !Array.isArray(v.evidence) || !v.evidence.length || !Array.isArray(v.assertions) || !v.assertions.length
+    || !v.assertions.every(a => a.pass === true) || !v.assertions.some(a => a.name === 'cleanup' && a.pass === true)) return null;
+  return v;
+}
+
+/** Activity局部证据身份；不使用整条Workflow摘要，局部升级不清其他Activity证据。 */
+export function evidenceScopeOf(span) {
+  const implementation = span?.evidence?.implementation, environment = span?.evidence?.environment;
+  const text = v => typeof v === 'string' && v.trim().length > 0;
+  if (!text(span?.activity_definition_version_id) || !['code', 'skill'].includes(implementation?.kind)
+    || !['id', 'version', 'digest'].every(k => text(implementation[k]))
+    || !['id', 'fingerprint'].every(k => text(environment?.[k]))) return null;
+  return { activity_definition_version_id: span.activity_definition_version_id,
+    implementation: {kind:implementation.kind,id:implementation.id,version:implementation.version,digest:implementation.digest},
+    environment: {id:environment.id,fingerprint:environment.fingerprint} };
+}
+export function frozenScopeMatches(scope, payload, environment) {
+  const kind=scope?.implementation?.kind, pair=payload?.commander_implementations;
+  const fixed=pair?.[kind] ?? (kind==='skill' ? payload?.commander_implementation:null);
+  if (kind==='code' && (!pair?.skill?.implementation || pair.skill.implementation.kind !== 'skill' || !pair.business_requirement_sha256)) return false;
+  if (!fixed?.implementation || !environment || !scope) return false;
+  return ['kind','id','version','digest'].every(k => fixed.implementation[k]===scope.implementation[k])
+    && ['id','fingerprint'].every(k => environment[k]===scope.environment[k])
+    && (payload.implementation_bindings || []).some(b => b.kind===fixed.implementation.kind && b.status==='verified' && b.validation_scope==='reference_only'
+      && (b.version===undefined || String(b.version)===fixed.implementation.version) && typeof b.digest==='string' && b.digest.replace(/^sha256:/,'')===fixed.implementation.digest && b.path===fixed.path);
+}
+export const evidenceScopeKey = scope => evidenceScopeOf({activity_definition_version_id:scope?.activity_definition_version_id,
+  evidence:{implementation:scope?.implementation,environment:scope?.environment}}) ? JSON.stringify([
+  scope.activity_definition_version_id, scope.implementation?.kind, scope.implementation?.id,
+  scope.implementation?.version, scope.implementation?.digest, scope.environment?.id, scope.environment?.fingerprint,
+]) : null;
+const spanScopeKey = span => evidenceScopeKey(evidenceScopeOf(span));
+const independent = span => span.evidence?.execution_role === 'primary';
+
 /**
  * @param {{steps:{id:string,key:string,readback:object}[], spans:object[], runsWanted?:number, requiredGreen?:number}} input
  *   spans = Step 级 span（run_id/step_id/outcome/evidence.observed/started_at）
  */
-export function reconcileSteps({ steps, spans, runsWanted = 5, requiredGreen = 5 }) {
+export function reconcileSteps({ steps, spans, runsWanted = 5, requiredGreen = 5, evidenceScope = null }) {
+  const originals = spans;
+  const versioned = spans.some(s => s.activity_definition_version_id || s.identity_protocol === 2);
+  const candidates = spans.filter(s => independent(s) && evidenceScopeOf(s)).sort((a,b) => Date.parse(b.started_at)-Date.parse(a.started_at));
+  const scope = evidenceScope || evidenceScopeOf(candidates[0]);
+  if (versioned) spans = spans.filter(s => independent(s) && scope && spanScopeKey(s) === evidenceScopeKey(scope));
+
   const stepById = new Map(steps.map(s => [s.id, s]));
   const byRun = new Map();
   for (const sp of spans) {
@@ -50,7 +106,7 @@ export function reconcileSteps({ steps, spans, runsWanted = 5, requiredGreen = 5
     const list = byRun.get(run_id);
     const stepStatuses = steps.map(step => {
       const mine = list.filter(sp => sp.step_id === step.id).sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
-      const status = statusOf(step, mine.at(-1));
+      const status = statusOf(step, mine.find(s => s.outcome === 'fail') || mine.at(-1));
       if (ISSUE_CODE[status]) issues.push({ code: ISSUE_CODE[status], step_key: step.key, run_id });
       return { key: step.key, step_id: step.id, status };
     });
@@ -72,7 +128,12 @@ export function reconcileSteps({ steps, spans, runsWanted = 5, requiredGreen = 5
     for (const run of runs) row[run.steps.find(s => s.step_id === step.id).status] += 1;
     return row;
   });
-  return { verdict, converged, consecutive_green: consecutive, required_green: requiredGreen, runs, per_step, issues };
+  return { verdict, converged, consecutive_green: consecutive, required_green: requiredGreen, runs, per_step, issues,
+    evidence_scope: scope, promotion_eligible: Boolean(scope) && converged && runs.slice(0, requiredGreen).every(r => r.steps.some(s => s.status === 'verified')
+      && byRun.get(r.run_id).every(s => s.independent_verified === true && s.scope_verified === true)),
+    excluded_span_count: originals.length - spans.length,
+    execution_outcomes: originals.map(s => ({run_id:s.run_id,step_id:s.step_id,outcome:s.outcome,
+      execution_role:s.evidence?.execution_role ?? 'unattributed', evidence_scope:evidenceScopeOf(s)})) };
 }
 
 const CELL_FOR_VERDICT = { converged: 'green', diverged: 'red', converging: 'pending' };
@@ -104,19 +165,50 @@ export async function applyReadbackCell(db, activityId, verdict, { journeyId } =
 }
 
 /**
- * 读库对账：取 Activity 的 active Steps 与它名下全部 Step 级 span 对账。
+ * 读库对账：版本化运行按冻结Steps、实现和环境隔离；旧协议仅作诊断。
  * applyCell=true（默认）时按结论把 readback 格翻色；false 只算报告不动格子（自动裁判先判这次运行跑完没有再决定翻不翻）。
  */
-export async function reconcileActivity(db, activityId, { runsWanted = 5, requiredGreen = 5, applyCell = true } = {}) {
+export async function reconcileActivity(db, activityId, { runsWanted = 5, requiredGreen = 5, applyCell = true, triggerRunId = null } = {}) {
   const act = await capabilityOf(db, activityId);
   if (!act) throw Object.assign(new Error(`activity_not_found: ${activityId}`), { status: 404 });
-  const steps = (await db.query(
-    'SELECT id, key, readback FROM steps WHERE activity_id = $1 AND active IS NOT FALSE ORDER BY step_order', [activityId])).rows;
   const spans = (await db.query(
-    `SELECT run_id, step_id, outcome, evidence, attempts, started_at FROM spans
-      WHERE step_id IS NOT NULL AND (activity_id = $1 OR step_id = ANY($2::uuid[]))
-      ORDER BY started_at`, [activityId, steps.map(s => s.id)])).rows;
-  const report = reconcileSteps({ steps, spans, runsWanted, requiredGreen });
+    `SELECT s.run_id, s.step_id, s.outcome, s.evidence, s.attempts, s.started_at, s.activity_definition_version_id,
+            s.identity_protocol, s.run_binding_id,
+            EXISTS (SELECT 1 FROM run_definition_bindings b WHERE b.id=s.run_binding_id AND b.run_id=s.run_id
+              AND EXISTS (SELECT 1 FROM jsonb_array_elements(b.expected_path) p WHERE p->>'activity_id'=s.activity_id::text
+                AND p->>'activity_definition_version_id'=s.activity_definition_version_id::text
+                AND p->>'step_id'=s.step_id::text)) AS binding_verified
+      FROM spans s WHERE s.step_id IS NOT NULL AND s.activity_id = $1 ORDER BY s.started_at`, [activityId])).rows;
+  const parents = spans.length ? (await db.query(
+    `SELECT t.id, t.result->'workflow_control' AS control, to_jsonb(v) AS verify_task
+      FROM tasks t JOIN tasks v ON v.id::text=t.result->'workflow_control'->>'verify_task_id'
+      WHERE t.result->'workflow_control'->'envelope'->>'run_id'=ANY($1::text[])
+        AND t.result->'workflow_control'->>'phase'='final' AND t.status IN ('completed','completed_no_pr')`, [[...new Set(spans.map(s=>s.run_id))]])).rows : [];
+  const verifiedRuns = new Set(parents.filter(t => t.control?.verdict === 'PASS'
+    && independentVerification(t.verify_task,t.id,t.control.envelope)).map(t=>t.control.envelope.run_id));
+  for (const span of spans) span.independent_verified=verifiedRuns.has(span.run_id);
+  const primary = spans.filter(s => independent(s) && evidenceScopeOf(s));
+  const target = (triggerRunId ? primary.filter(s => s.run_id === triggerRunId) : primary)
+    .sort((a,b) => Date.parse(b.started_at)-Date.parse(a.started_at))[0];
+  const scope = evidenceScopeOf(target);
+  let steps, frozenPayload;
+  if (scope) {
+    const version = (await db.query('SELECT payload FROM activity_definition_versions WHERE activity_id=$1 AND id=$2',
+      [activityId,scope.activity_definition_version_id])).rows[0];
+    if (!version) throw new Error('frozen_activity_definition_missing');
+    frozenPayload=version.payload;
+    steps = (version.payload.steps || []).map(s => ({id:s.step_id,key:s.locator?.step_key,
+      readback:s.contract?.readback ?? s.registration?.readback})).filter(s => s.id);
+  } else {
+    steps = (await db.query('SELECT id, key, readback FROM steps WHERE activity_id = $1 AND active IS NOT FALSE ORDER BY step_order', [activityId])).rows;
+  }
+  for (const span of spans) {
+    const parent=parents.find(t => t.control?.envelope?.run_id===span.run_id);
+    span.scope_verified=span.binding_verified===true && frozenScopeMatches(evidenceScopeOf(span),frozenPayload,parent?.control?.envelope?.contract?.environment);
+  }
+  const report = reconcileSteps({ steps, spans: triggerRunId && !scope ? spans.filter(s=>s.run_id===triggerRunId) : spans, runsWanted, requiredGreen, evidenceScope:scope });
+  // 旧协议仅供诊断；缺固定身份或没有实际观测，不能替代独立业务验收。
+  if (!scope || !steps.length || !report.promotion_eligible) { report.converged=false; report.promotion_eligible=false; if (report.verdict==='converged') report.verdict='converging'; }
   if (applyCell) await applyReadbackCell(db, activityId, report.verdict, { journeyId: act.journey_id });
   return { activity_id: activityId, ...report };
 }

@@ -3,6 +3,14 @@ import { getRelease, getReleaseGate } from './release-index.js';
 import { getRunDefinitionBinding } from './run-definition-binding.js';
 import { reconcileRunEvidence } from './run-reconciliation.js';
 const pick=(row,keys)=>Object.fromEntries(keys.filter(k=>row?.[k]!==undefined).map(k=>[k,row[k]]));
+function executionEvidence(span) {
+  const evidence = span.evidence ?? {};
+  const result = {};
+  if (evidence.implementation) result.implementation = pick(evidence.implementation, ['kind', 'id', 'version', 'digest']);
+  if (evidence.environment) result.environment = pick(evidence.environment, ['id', 'fingerprint']);
+  if (['primary', 'fallback', 'rescue'].includes(evidence.execution_role)) result.execution_role = evidence.execution_role;
+  return Object.keys(result).length ? { evidence: result } : {};
+}
 function pagination({limit=20,offset=0}={}) {
   if(!Number.isInteger(limit)||limit<1||limit>100||!Number.isInteger(offset)||offset<0)throw Object.assign(Error('分页参数无效'),{status:400});
   return {limit,offset};
@@ -65,5 +73,5 @@ export async function readSystemRunEvidence(db,runId){
   const result=reconcileRunEvidence({run_id:runId,context,spans,task_run:task||null});
   return {...pick(result,['run_id','run_binding_id','release_id','business_outcome','evidence_status','gaps','missing','unexpected','duration_ms','span_count','expected_count']),
     links:{task_run_id:task?.id||null,task_id:task?.task_id||null},
-    spans:spans.map(s=>pick(s,['id','run_id','activity_id','step_id','enabler_id','reference_id','workflow_definition_version_id','activity_definition_version_id','attempt_key','occurrence_key','started_at','ended_at','outcome','identity_protocol']))};
+    spans:spans.map(s=>({...pick(s,['id','run_id','run_binding_id','activity_id','step_id','enabler_id','reference_id','workflow_definition_version_id','activity_definition_version_id','attempt_key','occurrence_key','started_at','ended_at','outcome','identity_protocol']),...executionEvidence(s)}))};
 }

@@ -26,8 +26,19 @@ export function commanderCases() {
     attempt_key: envelope.definition.attempt_key, occurrence_key: `commander:${envelope.attempt}:${e.seq}` }));
   const reconciliation = { run_id: envelope.run_id, run_binding_id: 'binding', evidence_status: 'incomplete', business_outcome: 'fail',
     gaps: [{ code: 'LIFECYCLE_OUTCOME_CONFLICT', lifecycle_status: 'success' }], missing: [], unexpected: [], spans };
-  return { ...fixture, envelope, events, delivery, verification, reconciliation,
+  return JSON.parse(JSON.stringify({ ...fixture, envelope, events, delivery, verification, reconciliation,
     negative: { old_epoch: { ...events[0], owner_epoch: 0 }, wrong_account: { ...task.payload.workflow_input,
       authorization: { ...task.payload.workflow_input.authorization, object: { task_id: task.id, account_ref: 'wrong' } } },
-    missing_proof: { ...verification, assertions: verification.assertions.filter(a => a.name === 'cleanup') } }, input_sha256: digest(envelope.input) };
+    missing_proof: { ...verification, assertions: verification.assertions.filter(a => a.name === 'cleanup') } }, input_sha256: digest(envelope.input) }));
+}
+export function skillFirstCases() {
+  const f = commanderCases(), source = f.release.payload.activities[0].payload;
+  delete source.commander_implementations;
+  source.commander_implementation = f.skill_first.primary_implementation;
+  source.implementation_bindings = source.implementation_bindings.filter(b => b.kind === 'skill');
+  f.envelope.activity_bindings = activityBindings(f.definition, f.release);
+  f.events = [{ ...f.events[1], seq: 1, data: { ...f.events[1].data, evidence: { ...f.events[1].data.evidence, execution_role: 'primary' } } }];
+  f.verification.implementation = f.skill_first.primary_implementation.implementation;
+  f.verification.environment = f.contract.environment; f.verification.execution_role = 'primary';
+  return JSON.parse(JSON.stringify(f));
 }

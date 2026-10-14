@@ -4,6 +4,7 @@ import { transaction, writeControl, event, checkFence, duplicateEvent } from './
 import { normalizeSpan, writeSpans } from './span-ingestion.js';
 import { normalizeSpanProvenance, validateSpanBinding } from './span-provenance.js';
 import { getRunDefinitionBinding } from './run-definition-binding.js';
+import { validateExecutionEvidence } from './commander-v2-implementation.js';
 const TYPES = new Set(['started', 'heartbeat', 'activity_started', 'activity_completed', 'delivery', 'blocked']);
 function validateActivitySemantics(d, completed) {
   const fields = [];
@@ -26,15 +27,17 @@ async function activityFact(db, c, input) {
   requireCommander(activity, '冻结活动定义缺失');
   const shell = activity.payload.contract?.by === 'shell';
   const evidence = { ...(d.evidence ?? {}), runtime_snapshot_sha256: e.definition.runtime_snapshot_sha256 };
+  const execution = validateExecutionEvidence(e, path, evidence);
   const raw = { run_id: e.run_id, workflow_id: e.definition.workflow_id,
     activity_id: path.activity_id, step_id: path.step_id, started_at: d.started_at,
     ended_at: input.type === 'activity_completed' ? d.ended_at : null,
     executor_kind: shell ? 'code' : 'agent', executor_id: shell ? 'commander-shell' : 'work-commander',
-    model: shell ? null : (d.model ?? 'codex'), outcome: d.outcome ?? 'unknown',
+    model: execution?.executor_kind === 'code' || shell ? null : (d.model ?? 'codex'), outcome: d.outcome ?? 'unknown',
     evidence, occurrence_key: `commander:${e.attempt}:${input.seq}`, identity_protocol: 2,
     run_binding_id: context.binding.id, reference_id: path.reference_id,
     workflow_definition_version_id: e.definition.workflow_definition_version_id,
     activity_definition_version_id: path.activity_definition_version_id, attempt_key: e.definition.attempt_key };
+  if (execution) Object.assign(raw, execution);
   // 所有身份先于可接收的语义拒收：原事件若声明额外身份，也必须与冻结绑定一致。
   for (const key of ['run_id', 'workflow_id', 'activity_id', 'run_binding_id', 'reference_id',
     'workflow_definition_version_id', 'activity_definition_version_id', 'attempt_key', 'identity_protocol']) {
@@ -93,6 +96,7 @@ export async function receiveCommanderEvent(pool, taskId, input) {
       c.phase = 'running'; c.session = input.data; c.resume_condition = null;
     }
     c.last_seq = input.seq; c.last_feedback_at = new Date().toISOString();
+    if (['started', 'activity_started', 'activity_completed', 'delivery'].includes(input.type)) c.last_progress_at = c.last_feedback_at;
     await event(db, taskId, 'commander_feedback', { ...input, sha256: digest(input) });
     await writeControl(db, taskId, c);
     return { accepted: true, seq: input.seq, phase: c.phase, ...(rejected ? { rejected } : {}), ...(c.success_claim_rejected ? { success_claim_rejected: c.success_claim_rejected } : {}) };

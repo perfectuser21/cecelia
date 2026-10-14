@@ -60,7 +60,8 @@ export async function judgeActivity(db, activityId, {
   log = console,
 } = {}) {
   const auto = trigger === 'auto';
-  const report = await reconcile(db, activityId, auto ? { runsWanted, requiredGreen, applyCell: false } : { runsWanted, requiredGreen });
+  const report = await reconcile(db, activityId, auto ? { runsWanted, requiredGreen, applyCell: false, triggerRunId:triggerRef } : { runsWanted, requiredGreen });
+  if (report.promotion_eligible === false && report.converged) { report.converged=false; report.verdict='converging'; }
   if (auto && report.verdict === 'no_data') return { ...report, judgment_id: null, skipped: 'no_data' };
   if (auto) {
     const wait = pendingRunWaitMs(report, triggerRef, { now, runIdleMs });
@@ -71,7 +72,7 @@ export async function judgeActivity(db, activityId, {
     `SELECT activity_definition_version_id AS version_id, max(started_at) AS last FROM spans
       WHERE activity_id = $1 AND run_id = ANY($2::text[]) AND activity_definition_version_id IS NOT NULL
       GROUP BY activity_definition_version_id ORDER BY last DESC`, [activityId, runIds])).rows.map(r => r.version_id) : [];
-  const versionId = versionIds[0] ?? null;
+  const versionId = report.evidence_scope?.activity_definition_version_id ?? versionIds[0] ?? null;
   // 发布线用：每次运行带版本的 span 属于哪些构建（自动退回只认触发运行纯属生产版的），以及窗口里没有任何带版本 span 的运行数
   //（everConverged 只认 window_unversioned_run_count = 0 的纯净窗口）
   const runVersionIds = {};
@@ -81,7 +82,7 @@ export async function judgeActivity(db, activityId, {
         WHERE activity_id = $1 AND run_id = ANY($2::text[]) AND activity_definition_version_id IS NOT NULL`, [activityId, runIds])).rows;
     for (const r of perRun) if (r.run_id) (runVersionIds[r.run_id] ||= []).push(r.version_id);
   }
-  const stored = { ...report, window_version_ids: versionIds, run_version_ids: runVersionIds,
+  const stored = { ...report, window_version_ids: report.evidence_scope ? [versionId] : versionIds, run_version_ids: runVersionIds,
     window_unversioned_run_count: runIds.filter(id => !runVersionIds[id]).length };
   const row = (await db.query(INSERT_JUDGMENT, [
     activityId, versionId, report.verdict, Boolean(report.converged), report.consecutive_green ?? 0,

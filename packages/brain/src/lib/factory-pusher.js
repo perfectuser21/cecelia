@@ -9,7 +9,9 @@
  *   - 7 守护：滑窗尾部连续 fail 达阈值 → 退回 6 并告警
  * 配置取不到设备/agent/技能 → blocked_kind=resource 写原因，不猜。
  */
-import { STAGE_NAMES } from './factory-ledger.js';
+import { STAGE_NAMES, decideEvidenceWindow } from './factory-ledger.js';
+import { digest, object, requireCommander } from './commander-v2-contract.js';
+import { evidenceScopeKey } from './step-reconcile.js';
 
 export const PUSHER_TAG = '[推进器]';
 const HUMAN_BLOCKS = new Set(['human_gate', 'safety']);
@@ -58,6 +60,19 @@ export function tailConsecutiveFails(runs = []) {
 const windowAllPass = (l) => l.recent_total >= l.window_k && l.recent_pass >= l.window_k;
 const runIds = (l) => (l.recent_runs || []).map((r) => r.run_id);
 const advance = (l, why) => ({ type: 'transition', to_stage: l.stage + 1, reason: `${why}：滑窗 ${l.recent_pass}/${l.window_k} 全过 → 推进到 ${l.stage + 1} ${STAGE_NAMES[l.stage + 1]}`, evidence_run_ids: runIds(l) });
+function promotionEvidence(l, cfg, commanderRoute) {
+  if (!usesCommanderRoute(cfg, commanderRoute)) return { eligible: windowAllPass(l), legacy: true };
+  const scopes = cfg.commander.evidence_scopes, path = cfg.commander.workflow_definition?.expected_path;
+  if (!Array.isArray(scopes) || !scopes.length || !Array.isArray(path)
+    || scopes.some(s => !evidenceScopeKey(s) || !path.some(p => p.activity_definition_version_id === s.activity_definition_version_id))
+    || path.some(p => !scopes.some(s => s.activity_definition_version_id === p.activity_definition_version_id))) return { missing: true, eligible: false };
+  const windows = scopes.map(scope => decideEvidenceWindow(l.recent_runs, { evidenceScope: scope, implementationKind: scope.implementation.kind, requiredGreen: l.window_k }));
+  return { eligible: windows.every(w => w.eligible), evidence_run_ids: [...new Set(windows.flatMap(w => w.evidence_run_ids))] };
+}
+function evidenceAdvance(l, evidence, why) {
+  return evidence.legacy ? advance(l, why) : { type: 'transition', to_stage: l.stage + 1,
+    reason: `${why}：冻结版本、实现及环境的独立观测窗口通过`, evidence_run_ids: evidence.evidence_run_ids };
+}
 
 /** 资源卡点：只在原因变化时重写，避免每轮刷 updated_at。 */
 function blockResource(l, why) {
@@ -78,16 +93,22 @@ function blockResource(l, why) {
  * @param {Date} p.now
  * @returns {{actions: object[], reason: string}}
  */
-export function decideLedger({ ledger: l, cfg, inFlight = null, consecutiveFails = 0, ticketsDone = 0, ticketsTotal = 0, now = new Date() }) {
+export function decideLedger({ ledger: l, cfg, inFlight = null, lastBlock = null, commanderRoute = false, consecutiveFails = 0, ticketsDone = 0, ticketsTotal = 0, now = new Date() }) {
   if (HUMAN_BLOCKS.has(l.blocked_kind)) return { actions: [], reason: `卡点 ${l.blocked_kind}（${l.blocked_reason || '未写原因'}），只有人工能动` };
   if (inFlight) return { actions: [], reason: `在途 ${inFlight.id}（${inFlight.status}），等它结束并裁判完`, keep: inFlight.id };
+  if (usesCommanderRoute(cfg, commanderRoute) && (l.stage <= 3 || l.stage === 5)) {
+    if (!object(cfg.commander.workflow_definition) || cfg.commander.workflow_input === undefined) return blockResource(l, 'Commander v2 缺冻结定义或结构输入');
+    if (lastBlock?.condition_sha256 === dispatchCondition(l, cfg, l.stage, stageSkill(l.stage, l, cfg))) return { actions: [], reason: `同一阻断条件未改变：${lastBlock.reason || '未决运行'}` };
+  }
+  const promotion = promotionEvidence(l, cfg, commanderRoute);
+  if (promotion.missing && l.stage <= 6) return blockResource(l, 'Commander v2 缺完整冻结晋级证据 scope，不能凭业务通过计数或开发工单晋级');
   const ownBlock = l.blocked_kind === 'resource' && String(l.blocked_reason || '').startsWith(PUSHER_TAG);
   const foreignBlock = l.blocked_kind === 'resource' && !ownBlock;
   const s = l.stage;
   const hours = cfg?.publish_hours;
 
   if (s <= 3) {
-    if (windowAllPass(l)) return { actions: [advance(l, '规则推进')], reason: '滑窗全过，推进' };
+    if (promotion.eligible) return { actions: [evidenceAdvance(l, promotion, '规则推进')], reason: '独立证据窗口通过，推进' };
     const actions = [];
     const runs = l.recent_runs || [];
     const fails = runs.filter((r) => r.pass === false);
@@ -108,13 +129,14 @@ export function decideLedger({ ledger: l, cfg, inFlight = null, consecutiveFails
   }
 
   if (s === 4 || s === 6) {
+    if (!promotion.legacy && ticketsDone > 0 && !promotion.eligible) return blockResource(l, '开发工单已完成，仍缺冻结版本的业务独立验收');
     if (ticketsDone > 0) return { actions: [{ type: 'transition', to_stage: s + 1, reason: `规则推进：${STAGE_NAMES[s]}工单已完成 → ${s + 1} ${STAGE_NAMES[s + 1]}`, evidence_run_ids: [] }], reason: '工单完成，推进' };
     if (!cfg?.dev?.repo_hint) return blockResource(l, `workflow ${l.workflow_key} 未配置 dev.repo_hint，建不了${STAGE_NAMES[s]}工单`);
     return { actions: [...(ownBlock ? [{ type: 'unblock' }] : []), { type: 'dev_ticket', stage: s }], reason: `建${STAGE_NAMES[s]}工单` };
   }
 
   if (s === 5) {
-    if (windowAllPass(l)) return { actions: [advance(l, '规则推进')], reason: '上线跑滑窗全过，推进' };
+    if (promotion.eligible) return { actions: [evidenceAdvance(l, promotion, '规则推进')], reason: '上线跑独立证据窗口通过，推进' };
     if (!cfg) return blockResource(l, `workflow ${l.workflow_key} 未在 config/factory-workflows.json 登记`);
     if (foreignBlock) return { actions: [], reason: `资源卡点（人工标注：${l.blocked_reason || ''}），不建单` };
     if (!withinPublishHours(now, hours)) return { actions: [], reason: '发布时段外，不建上线跑工单' };
@@ -150,6 +172,10 @@ function deviceLine(d) {
  */
 export function usesCommanderRoute(cfg, commanderRoute) {
   return commanderRoute === true && cfg?.dispatch_via === 'commander' && Boolean(cfg?.commander);
+}
+export function dispatchCondition(ledger, cfg, stage, skill) {
+  return digest({ workflow_key: ledger.workflow_key, stage, skill, candidate_version: ledger.candidate_version,
+    definition: cfg.commander?.workflow_definition ?? null, input: cfg.commander?.workflow_input ?? null, device: cfg.device });
 }
 
 /** Commander 路径下的正文纪律：锁那行换成外壳代领（旧路径仍是派发器代领），交付补外壳落盘说明。 */
@@ -214,10 +240,17 @@ export function buildExecSpec({ ledger: l, cfg, stage, skill, round, commanderRo
   };
   if (!viaCommander) return spec;
   // 经 Commander+外壳：workflow_dispatch 由 workflow-commander-dispatch 认领；工厂字段原样保留供在途/轮次/裁判复用
-  return { ...spec, task_type: 'workflow_dispatch', payload: { ...spec.payload, workflow_key: l.workflow_key } };
+  requireCommander(object(cfg.commander.workflow_definition) && cfg.commander.workflow_input !== undefined, 'Commander v2缺冻结定义或结构输入');
+  return { ...spec, task_type: 'workflow_dispatch', payload: { ...spec.payload, workflow_key: l.workflow_key,
+    commander_protocol: 'commander-v2', workflow_definition: structuredClone(cfg.commander.workflow_definition),
+    workflow_input: structuredClone(cfg.commander.workflow_input), factory_dispatch_condition_sha256: dispatchCondition(l, cfg, stage, skill) } };
 }
 
-export function buildTicketSpec({ ledger: l, cfg, stage, kind }) {
+export function buildTicketSpec({ ledger: l, cfg, stage, kind, round = 1, commanderRoute = false }) {
+  if (kind === 'commander' && usesCommanderRoute(cfg, commanderRoute)) {
+    const spec = buildExecSpec({ ledger: l, cfg, stage, skill: stageSkill(stage, l, cfg), round, commanderRoute });
+    return { ...spec, payload: { ...spec.payload, factory_ticket: 'commander' } };
+  }
   const isDev = kind === 'dev';
   const what = stage === 4 ? '沉淀：把验证通过的候选版 skill 固化成契约（skill→契约）' : stage === 6 ? '蒸馏：把稳定 Step 换成脚本（Step→脚本）' : '上线跑：经 Commander（work-commander）按 workflow 真跑';
   const desc = [

@@ -48,10 +48,13 @@ it('执行者effects自述为空不能授权核验失败后重做',()=>{
  expect(recoveryAllowed({envelope:e,execution_stopped:true,delivery:{cleanup:{completed:true},effects:[]},verification:{verdict:'FAIL',assertions:[],evidence:['readback']}},'verification_failed')).toBe(false);
 });
 it('factory对v2只消费最终判定，不重复创建核验，普通workflow不写台账',async()=>{
- const store={findLedger:vi.fn(async()=>({id:'ledger'})),writeJudge:vi.fn()},recordRun=vi.fn(async()=>({duplicate:true})),createTask=vi.fn();
+ const proof={id:'independent',task_type:'research',status:'completed',parent_task_id:task.id,payload:{verification_transport:'openclaw-agent-v1',run_id:'wfv-independent'},
+  result:{receipt:{verification_runtime:{provider:'openai',model:'gpt-6.1-sol',logical_run_id:'wfv-independent',official_run_id:'official',rerouted:false}},
+   workflow_verification:{task_id:task.id,run_id:'run',attempt:1,definition_sha256:'hash',verdict:'PASS',assertions:[{name:'cleanup',pass:true}],evidence:['independent-readback']}}};
+ const store={findLedger:vi.fn(async()=>({id:'ledger'})),writeJudge:vi.fn(),getTask:vi.fn(async()=>proof)},recordRun=vi.fn(async()=>({duplicate:true})),createTask=vi.fn();
  const t={...task,result:{workflow_control:{phase:'awaiting_verify'}}};
  expect((await judgeTask(t,{store,recordRun,createTask})).state).toBe('awaiting_verify');
- t.result.workflow_control={phase:'final',verdict:'PASS',envelope:{run_id:'run'},verify_task_id:'independent'};
+ t.result.workflow_control={phase:'final',verdict:'PASS',envelope:{run_id:'run',attempt:1,definition:{snapshot_sha256:'hash'}},verify_task_id:'independent'};
  expect((await judgeTask(t,{store,recordRun,createTask})).state).toBe('not_factory');expect(recordRun).not.toHaveBeenCalled();
  t.payload={...t.payload,factory_dispatch:true};await judgeTask(t,{store,recordRun,createTask});
  expect(recordRun).toHaveBeenCalledTimes(1);expect(createTask).not.toHaveBeenCalled();

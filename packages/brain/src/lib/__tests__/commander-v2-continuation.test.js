@@ -61,7 +61,7 @@ it('配套Code/Skill及环境来自冻结release，摘要漂移在起跑前拒�
 });
 it('正式source binding的sha256前缀与固定implementation hex身份一致校验', () => {
   const source = structuredClone(release);
-  for (const b of source.payload.activities[0].payload.implementation_bindings) b.digest = `sha256:${b.digest}`;
+  for (const b of source.payload.activities[0].payload.implementation_bindings) b.digest = `sha256:${b.digest.replace(/^sha256:/, '')}`;
   expect(activityBindings(definition, source)[0].implementations).toEqual(sample.implementations);
 });
 it('仅引用未验证的实现或Skill来源version不同不得绑定起跑', () => {
