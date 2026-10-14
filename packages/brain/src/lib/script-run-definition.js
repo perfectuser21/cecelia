@@ -73,6 +73,13 @@ export function scriptRuntimeIdentity(task,spec,release,workflow,activities,runI
       release_id:release.id,manifest_sha256:release.manifest_sha256,target:release.target,spec,
       sources:{source_revision:sources.source_revision,phone_source_revision:phone??null,control_source_revision:control??null,phone_serial:sources.phone_serial??null}})};
 }
+function validateDeclaration(explicit,definition){
+  if(!explicit)return;
+  const allowed=['release_id','observation_id','workflow_id','workflow_definition_version_id','snapshot_sha256','runtime_snapshot_sha256','expected_path','attempt_key','actor'];
+  requireValue(typeof explicit==='object'&&!Array.isArray(explicit)&&Object.keys(explicit).every(k=>allowed.includes(k)),'显式固定定义含未知字段');
+  requireValue(['release_id','workflow_definition_version_id','snapshot_sha256'].every(k=>explicit[k]===definition[k]),'显式固定定义身份不匹配');
+  for(const key of allowed)if(explicit[key]!==undefined)requireValue(same(explicit[key],definition[key]),'显式声明与真实冻结身份不符');
+}
 function runContext(task,workflow,context,identity){
   const p=task.payload;
   return {...context,task_type:task.task_type,workflow_snapshot:{workflow_id:workflow.workflow_id,workflow_version:workflow.payload.contract.version,
@@ -109,12 +116,7 @@ export async function startScriptDefinitionRun({task,spec,runId,context},pool){
       requireValue(fixed,'历史未绑定Run不可事后补挂当前定义');
       const identity=scriptRuntimeIdentity(task,spec,fixed.release,fixed.workflow,fixed.activities,runId,patrol);
       requireValue(fixed.binding.payload.runtime_snapshot_sha256===identity.runtime_snapshot_sha256,'同Run的执行脚本或来源已改变');
-      if(explicit){
-        requireValue(['release_id','workflow_definition_version_id','snapshot_sha256'].every(k=>explicit[k]===fixed.binding[k]),'同Run不可切换固定定义');
-        for(const key of ['observation_id','runtime_snapshot_sha256','expected_path','attempt_key','workflow_id']){
-          if(explicit[key]!==undefined)requireValue(same(explicit[key],fixed.binding[key]??fixed.binding.payload[key]),'同Run显式声明与原冻结身份不符');
-        }
-      }
+      validateDeclaration(explicit,fixed.binding.payload);
       requireValue((await getReleaseGate(client,fixed.release.id)).deployed,'原固定安装已漂移');
       await client.query('COMMIT');return {id:prior.id,run_id:runId,binding:fixed.binding,created:false};
     }
@@ -139,6 +141,7 @@ export async function startScriptDefinitionRun({task,spec,runId,context},pool){
     if(explicit?.runtime_snapshot_sha256!==undefined)requireValue(explicit.runtime_snapshot_sha256===hash,'任务自报runtime摘要与实际执行不符');
     const definition={release_id:release.id,observation_id:observationId,workflow_id:workflow.id,workflow_definition_version_id:fixed.id,
       snapshot_sha256:fixed.payload_sha256,runtime_snapshot_sha256:hash,expected_path:expected,attempt_key:runId,actor:'script-dispatch'};
+    validateDeclaration(explicit,definition);
     const result=await startRun({taskId:task.id,runId,source:'script',context:runContext(task,fixed,context,identity),definition},{pool,transactionClient:client});
     await client.query('COMMIT');return result;
   }catch(error){await client.query('ROLLBACK');throw Object.assign(Error(error.code==='script_definition_unverified'?error.message:'固定定义起跑核验失败'),{code:'script_definition_unverified'});}

@@ -1,4 +1,6 @@
 /** 真Git、正式freeze-v1、完整CI回归与可信部署观测；仅私有scratch schema。 */
+import {vi} from 'vitest';
+import * as fixedGit from '../../workflow-authoring/fixed-git-source.js';
 import {randomUUID} from 'node:crypto';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -58,10 +60,12 @@ export async function scriptDefinitionDatabase(){
     await activateMapManifest(db,draft.manifest_version.id);const query={scope,repo,revision:source.revision};let snapshot=await exportImplementationSnapshot(db,query);
     const activity=snapshot.definitions.activities[0];for(const step of [null,activity.payload.steps[0].step_id])await registerCapabilityRegression(db,{capability_id:cap,activity_id:activity.activity_id,step_id:step,assertion_ref:'scripts/smoke/probe.sh'});
     snapshot=await refreshImplementationSnapshot(db,query,{fetchFn:async()=>({ok:true,text:async()=>source.revision}),resolveToken:async()=> 'fixture',authoringSourceOptions:{readFile:async s=>readFileSync(join(root,s.path),'utf8')}});
-    const {report,receipt}=await runPilotReleaseVerification({repoRoot:root,snapshot,outputDir:join(root,'evidence'),event:'workflow_dispatch',ref:'refs/heads/main'});
+    const readFixed=s=>Promise.resolve(execFileSync('git',['show',s.revision+':'+s.path],{cwd:root,encoding:'utf8'}));
+    const {report,receipt}=await runPilotReleaseVerification({repoRoot:root,snapshot,outputDir:join(root,'evidence'),event:'workflow_dispatch',ref:'refs/heads/main',authoringSourceOptions:{readFile:readFixed}});
     const a=activity.payload.implementation_bindings[0],w=snapshot.definitions.workflows[0],target='mmv:'+root;
-    const release=(await createRelease(db,{release_key:'script-fixture',environment:'scratch',target,actor:'test:script',workflows:[{workflow_definition_version_id:w.id,payload_sha256:w.payload_sha256}],
-      components:[{kind:'repo',repo,revision:source.revision},{kind:a.kind,repo:a.repo,path:a.path,revision:a.revision,digest:a.digest}],ci_evidence:[{report,receipt,evidence_ref:'scratch:actual-script-regression'}]})).release;
+    const sourceReader=vi.spyOn(fixedGit,'readFixedGitFile').mockImplementation(readFixed);
+    let release;try{release=(await createRelease(db,{release_key:'script-fixture',environment:'scratch',target,actor:'test:script',workflows:[{workflow_definition_version_id:w.id,payload_sha256:w.payload_sha256}],
+      components:[{kind:'repo',repo,revision:source.revision},{kind:a.kind,repo:a.repo,path:a.path,revision:a.revision,digest:a.digest}],ci_evidence:[{report,receipt,evidence_ref:'scratch:actual-script-regression'}]})).release;}finally{sourceReader.mockRestore();}
     const observation=(await recordReleaseObservation(db,release.id,{event_key:'install-1',attempt_key:'install-1',environment:'scratch',target,components:release.payload.components,collector:'fixture-collector',observed_at:new Date().toISOString(),evidence_ref:'scratch:readback-fixed-git-files'},{trustedCollector:'fixture-collector'})).observation;
     return {...f,db,definition,command,release,observation,workflow:w,activities:snapshot.definitions.activities,
       registered,async close(){await f.close();rmSync(root,{recursive:true,force:true});}};
