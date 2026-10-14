@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { it, expect, vi } from 'vitest';
 import { makeEnvelope } from '../commander-v2-contract.js';
-import { buildExecSpec, decideLedger } from '../factory-pusher.js';
+import { buildExecSpec, buildTicketSpec, decideLedger } from '../factory-pusher.js';
 import { reconcileCommanderTask } from '../commander-v2-control.js';
 import { activityBindings, checkFence } from '../commander-v2-store.js';
 
@@ -16,6 +16,11 @@ it('工厂新单带v2冻结定义和结构输入，未知输入不降回旧五�
   expect(spec.payload).toMatchObject({ commander_protocol: 'commander-v2', workflow_definition: definition, workflow_input: task.payload.workflow_input });
   expect(spec.payload.factory_dispatch_condition_sha256).toMatch(/^[a-f0-9]{64}$/);
   expect(() => buildExecSpec({ ledger, cfg: { ...cfg, commander: {} }, stage: 3, skill: 'paired@2', round: 2, commanderRoute: true })).toThrow('冻结');
+});
+it('上线跑stage5同样走v2，不借旧data工单绕开结构输入', () => {
+  const spec = buildTicketSpec({ ledger: { ...ledger, stage: 5 }, cfg, stage: 5, kind: 'commander', round: 2, commanderRoute: true });
+  expect(spec.task_type).toBe('workflow_dispatch'); expect(spec.payload.commander_protocol).toBe('commander-v2');
+  expect(decideLedger({ ledger: { ...ledger, stage: 5 }, cfg: { ...cfg, commander: {} }, commanderRoute: true }).actions.some(a => a.type === 'commander_ticket')).toBe(false);
 });
 
 it('放弃旧稿授权必须匹配当前任务、冻结账号与私密验收；缺失默认不授权', () => {
@@ -60,6 +65,7 @@ function runtimeControl({ stopped = false, cleanup = false, expired = true } = {
     return { rows: [] };
   }) };
   const deps = { now: () => new Date(expired ? envelope.cleanup_deadline_at : envelope.deadline_at),
+    fence: vi.fn(async () => ({ execution_fenced: true })),
     status: vi.fn(async () => ({ protocol: envelope.protocol, run_id: envelope.run_id, execution_stopped: stopped, events: [], cleanup: { completed: cleanup, evidence: cleanup ? ['official:cleaned'] : [] } })),
     releaseLease: vi.fn(), releaseLock: vi.fn(), finishRun: vi.fn(), afterTerminal: vi.fn() };
   return { current, envelope, deps, pool: { connect: async () => db, query: db.query } };
