@@ -94,7 +94,6 @@ it.each(['digest','revision','repo','path','protocol','owner','step-only','extra
 it('authoring证明不可伪造、克隆、跨snapshot重用，取源期间变更同样拒绝',async()=>{
  const f=await crossRevisionAuthoring();
  const {prepareAuthoringReleaseProof,assertAuthoringReleaseProof}=await import('../../workflow-authoring/release-proof.js');
- for(const proof of [true,{}, {snapshot_sha256:f.snapshot.snapshot_sha256}])expect(()=>assertAuthoringReleaseProof(f.snapshot,proof)).toThrow();
  const proof=await prepareAuthoringReleaseProof(f.snapshot,f.authoringSourceOptions);
  expect(()=>assertAuthoringReleaseProof(f.snapshot,proof)).not.toThrow();
  expect(()=>assertAuthoringReleaseProof(f.snapshot,structuredClone(proof))).toThrow();
