@@ -21,7 +21,7 @@ export async function withInstallation({ script, dest = `/Library/LaunchDaemons/
   }
   const lock = strictLock(path.join(locks, 'launcher'));
   if (!lock) throw new Error('runtime_install_launcher_busy');
-  let disabledBefore, loadedBefore, changedDisable = false, backup, installing = false, preserveLock = false;
+  let disabledBefore, loadedBefore, backup, installing = false, preserveLock = false;
   const managedProcess = async (...args) => {
     try { return await runtimeProcess(...args); }
     catch (error) {
@@ -36,10 +36,11 @@ export async function withInstallation({ script, dest = `/Library/LaunchDaemons/
   };
   try {
     const disabled = await ctl('print-disabled', 'system');
-    const match = /"com\.cecelia\.coding-workflow-runner"\s*=>\s*(true|false)/.exec(disabled);
-    if (!match && !/disabled services\s*=\s*\{/.test(disabled)) throw new Error('runtime_install_disabled_state_unknown');
-    disabledBefore = match?.[1] === 'true';
-    if (!disabledBefore) { await ctl('disable', `system/${label}`); changedDisable = true; }
+    const entry = /"com\.cecelia\.coding-workflow-runner"\s*=>\s*([^\s;}]+)/.exec(disabled);
+    if (entry ? !['true', 'false', 'enabled', 'disabled'].includes(entry[1])
+      : disabled.includes(label) || !/disabled services\s*=\s*\{/.test(disabled)) throw new Error('runtime_install_disabled_state_unknown');
+    disabledBefore = entry?.[1] === 'true' || entry?.[1] === 'disabled';
+    if (!disabledBefore) await ctl('disable', `system/${label}`);
     ({ loaded: loadedBefore } = await assertIdle({ env, allowLauncherPid: process.pid }));
     backup = fs.existsSync(dest) ? { bytes: fs.readFileSync(dest), mode: fs.statSync(dest).mode & 0o777 } : null;
     if (loadedBefore && !backup) throw new Error('runtime_install_existing_plist_missing');
@@ -60,31 +61,59 @@ export async function withInstallation({ script, dest = `/Library/LaunchDaemons/
       env: { ...installEnv, CODING_WF_INSTALL_LOCK_PID: String(process.pid) }, signal, timeoutMs: 0, inherit: true,
     });
     if (result.code !== 0 || result.terminated || signal?.aborted) throw new Error('runtime_install_failed');
-    if (!disabledBefore) await ctl('enable', `system/${label}`);
+    // shell只准备已核验的clone/plist。直到此时才允许launchd加载新代码；外锁仍阻止领单。
+    if (loadedBefore) await ctl('bootout', `system/${label}`);
+    await ctl('enable', `system/${label}`);
+    await ctl('bootstrap', 'system', dest);
+    if (signal?.aborted) throw new Error('runtime_install_cancelled');
+    await ctl(disabledBefore ? 'disable' : 'enable', `system/${label}`);
     return 0;
   } catch (error) {
     if (error.message === 'runtime_process_cleanup_unverified') {
       preserveLock = true; // 安装子进程可能仍活跃：不并发回滚、不重新启用周期服务。
       throw error;
     }
-    if (installing) {
-      const current = await managedProcess('launchctl', ['print', `system/${label}`], { env, timeoutMs: 5000 });
-      const currentOutput = `${current.stdout}\n${current.stderr}`;
-      if (current.terminated || (current.code !== 0 && !currentOutput.includes(`Could not find service "${label}"`))) {
-        throw new Error('runtime_install_rollback_state_unknown');
+    const failures = [];
+    const restore = async action => {
+      try { await action(); return true; }
+      catch (failure) {
+        // 失联子进程仍可能改系统，禁止继续并发恢复；保锁留给人工核查。
+        if (failure.message === 'runtime_process_cleanup_unverified') throw failure;
+        failures.push(failure); return false;
       }
-      const loadedNow = current.code === 0;
-      const bytesNow = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
-      const fileChanged = backup ? !bytesNow?.equals(backup.bytes) : bytesNow !== null;
-      // 前置失败尚未动文件/服务时不重启。首次安装则必须撤销新加载的服务。
-      if (loadedNow && (!loadedBefore || fileChanged)) await ctl('bootout', `system/${label}`);
-      if (backup && fileChanged) {
-        fs.writeFileSync(dest, backup.bytes, { mode: backup.mode }); fs.chmodSync(dest, backup.mode);
-      } else if (!backup && bytesNow) fs.unlinkSync(dest);
-      // 原本未加载的旧plist只恢复文件，不能替用户把服务启动起来。
-      if (loadedBefore && (!loadedNow || fileChanged)) await ctl('bootstrap', 'system', dest);
+    };
+    if (installing) {
+      let loadedNow;
+      await restore(async () => {
+        const current = await managedProcess('launchctl', ['print', `system/${label}`], { env, timeoutMs: 5000 });
+        const output = `${current.stdout}\n${current.stderr}`;
+        if (current.terminated || (current.code !== 0 && !output.includes(`Could not find service "${label}"`))) throw new Error('runtime_install_rollback_state_unknown');
+        loadedNow = current.code === 0;
+      });
+      let bytesNow, fileChanged;
+      const fileKnown = await restore(async () => {
+        bytesNow = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
+        fileChanged = backup ? !bytesNow?.equals(backup.bytes) : bytesNow !== null;
+      });
+      // 必要恢复动作独立尝试：bootout或bootstrap失败不应跳过文件及disabled状态恢复。
+      if (loadedNow && (!loadedBefore || fileChanged)) {
+        if (await restore(() => ctl('bootout', `system/${label}`))) loadedNow = false;
+      }
+      const fileRestored = fileKnown && await restore(async () => {
+        if (backup && fileChanged) {
+          fs.writeFileSync(dest, backup.bytes, { mode: backup.mode }); fs.chmodSync(dest, backup.mode);
+        } else if (!backup && bytesNow) fs.unlinkSync(dest);
+      });
+      // 原本未加载的旧plist只恢复文件；原loaded仅在确认卸载且文件恢复成功后重新加载。
+      if (loadedBefore && loadedNow === false && fileRestored) {
+        if (await restore(() => ctl('enable', `system/${label}`))) await restore(() => ctl('bootstrap', 'system', dest));
+      }
     }
-    if (changedDisable) await ctl('enable', `system/${label}`);
+    if (disabledBefore !== undefined) await restore(() => ctl(disabledBefore ? 'disable' : 'enable', `system/${label}`));
+    if (failures.length) {
+      preserveLock = true;
+      throw new AggregateError([error, ...failures], `runtime_install_rollback_failed: ${error.message}; ${failures.map(x => x.message).join('; ')}`);
+    }
     throw error;
   } finally { if (!preserveLock) lock.release(); }
 }

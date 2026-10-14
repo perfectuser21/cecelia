@@ -185,16 +185,14 @@ do_cmd chown "$RUN_USER" "$LOG_FILE"
 do_cmd env HOME="$USER_HOME" node "$HERE/runtime-install-guard.mjs"
 do_cmd install -m 644 -o root -g wheel "$PLIST_SRC" "$DEST"
 if [ "$DRY_RUN" -eq 1 ]; then
-  echo "launchctl bootout system/$LABEL || true"
-else
-  if launchctl print "system/$LABEL" >/dev/null 2>&1; then
-    launchctl bootout "system/$LABEL"
-  fi
+  echo "# 以下由安装器持外锁执行；仅原已加载时bootout"
+  echo "launchctl bootout system/$LABEL"
+  do_cmd launchctl enable "system/$LABEL"
+  do_cmd launchctl bootstrap system "$DEST"
+  echo "# 随后恢复安装前disabled/enabled状态；失败恢复原plist/loaded状态"
 fi
-do_cmd launchctl bootstrap system "$DEST"
-if [ "$DRY_RUN" -eq 1 ]; then do_cmd launchctl enable "system/$LABEL"; fi
 
 if [ "$DRY_RUN" -eq 0 ]; then
   rm -f "$PLIST_SRC"
-  echo "已安装 ${LABEL}；核对：launchctl print system/$LABEL"
+  echo "已准备 ${LABEL} 配置；由持锁安装器加载并恢复原启用状态"
 fi
