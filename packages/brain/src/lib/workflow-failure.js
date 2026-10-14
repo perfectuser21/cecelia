@@ -73,6 +73,27 @@ export function sanitizeWorkflowFailure(value,env={}) {
  return Object.keys(result).some(k=>!['exit_code','evidence','timeout_sec','truncated'].includes(k))?result:null;
 }
 export function formatWorkflowFailure(failure){
- if(!failure)return null;
- return [failure.stage,failure.code,failure.message,...(failure.evidence||[])].filter(Boolean).join(' · ').slice(0,1900)||null;
+ const safe=sanitizeWorkflowFailure(failure);
+ if(!safe)return null;
+ let truncated=safe.truncated===true;
+ const clip=(text,limit)=>{if(text.length>limit)truncated=true;return text.slice(0,limit);};
+ const parts=[safe.stage,safe.code,safe.message?clip(safe.message,600):null].filter(Boolean);
+ // 原始诊断优先于证据路径，避免泛化的message掩盖unauthorized/offline等实际区别。
+ const channel=safe.stderr?'stderr':safe.stdout?'stdout':null;
+ if(channel)parts.push(`${channel}: ${clip(safe[channel],500)}`);
+ if(safe.host)parts.push(`host=${safe.host}`);
+ if(safe.exit_code!=null)parts.push(`exit_code=${safe.exit_code}`);
+ if(safe.timeout_sec!=null)parts.push(`timeout_sec=${safe.timeout_sec}`);
+ if(safe.error_type)parts.push(`error_type=${safe.error_type}`);
+ if(safe.evidence){
+  if(safe.evidence.length>2)truncated=true;
+  parts.push(...safe.evidence.slice(0,2).map(ref=>clip(ref,180)));
+ }
+ let text=parts.join(' · ');
+ // 截断标记始终保留在末尾；摘要预算不改变Run账中的完整诊断。
+ const marker=' · truncated=true',budget=1900-' · truncated=false'.length;
+ if(text.length>budget){truncated=true;text=text.slice(0,budget);}
+ if(truncated)text+=marker;
+ else if(safe.truncated===false)text+=' · truncated=false';
+ return text||null;
 }
