@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadPrompt } from './claude.mjs';
 import { BLOCKING } from './review.mjs';
+import { callCodexJudge } from './codex-judge.mjs';
 
 // 与 Brain 现役裁判（src/harness-judge.js）同一默认：裁判不能比被审的角色弱
 export const DEFAULT_JUDGE_MODEL = 'gpt-5.6-sol';
@@ -155,6 +156,14 @@ function readCreds(file) {
 
 /** 裁判连接配置：环境变量优先，否则读 ToAPIs 凭据文件（运行时读，不进代码/plist）。 */
 export function resolveJudgeConfig(env = process.env) {
+  const provider = env.CODING_WF_JUDGE_PROVIDER || 'api';
+  if (!['api', 'codex'].includes(provider)) throw new Error('judge_provider_unsupported');
+  if (provider === 'codex') return {
+    provider,
+    model: env.CODING_WF_JUDGE_MODEL || 'gpt-6-astra',
+    codexHome: env.CODING_WF_CODEX_HOME || null,
+    codexBin: env.CODING_WF_CODEX_BIN || 'codex',
+  };
   const creds = readCreds(env.CODING_WF_JUDGE_CREDS || path.join(env.HOME || os.homedir(), '.credentials/toapis.env'));
   return {
     api: env.CODING_WF_JUDGE_API || env.TOAPIS_BASE_URL || creds.TOAPIS_BASE_URL || DEFAULT_API,
@@ -164,7 +173,10 @@ export function resolveJudgeConfig(env = process.env) {
 }
 
 /** OpenAI 兼容 chat/completions → { content, usage }；失败抛 Error(judge_*)。 */
-export async function callJudge({ system, user }, { api, key, model, timeoutMs = DEFAULT_TIMEOUT_MS, fetchFn = fetch }) {
+export async function callJudge({ system, user }, config) {
+  if (config.provider === 'codex') return callCodexJudge({ system, user }, config);
+  if (config.provider && config.provider !== 'api') throw new Error('judge_provider_unsupported');
+  const { api, key, model, timeoutMs = DEFAULT_TIMEOUT_MS, fetchFn = fetch } = config;
   if (!key) throw new Error('judge_key_missing');
   let res;
   try {

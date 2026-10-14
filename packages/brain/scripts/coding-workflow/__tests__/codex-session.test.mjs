@@ -21,6 +21,13 @@ describe('Codex 原生会话参数与权限', () => {
     expect(s.args).not.toContain('--permission-mode');
     expect(s.args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
   });
+  it('所选Codex账号auth与HOME凭据目录禁止工具读取，默认/自定义账号均覆盖', () => {
+    const configured = prepareCodexSession({ args: flags, cwd, env: { ...env, HOME: '/fixture/home' } }).args.join('\n');
+    expect(configured).toContain('"/configured/account/auth.json"="deny"');
+    expect(configured).toContain('"/fixture/home/.credentials"="deny"');
+    const fallback = prepareCodexSession({ args: flags, cwd, env: { HOME: '/fixture/home' } }).args.join('\n');
+    expect(fallback).toContain('"/fixture/home/.codex/auth.json"="deny"');
+  });
   it('build 只开放实际 gitdir 写权限，QA gitdir保持只读，均关闭命令网络', () => {
     fs.mkdirSync(path.join(cwd, '.git'), { recursive: true });
     const gitdir = fs.realpathSync(path.join(cwd, '.git'));

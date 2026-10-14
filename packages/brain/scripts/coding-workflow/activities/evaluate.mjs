@@ -12,6 +12,7 @@ import { qaScenarios, SPEC_FILE, INTENT_FILE } from '../lib/spec-check.mjs';
 import { parseQaReport, judgeQa, unitTestEvidence, productionTouches, trivialAssertions, screenshotProblems } from '../lib/qa-report.mjs';
 import { bashExecutions, unverifiedItems, sessionCostUsd } from '../lib/transcript.mjs';
 import { waitPreview, DEFAULT_PREVIEW_API } from '../lib/preview.mjs';
+import { createPreviewBridge } from '../lib/preview-bridge.mjs';
 import {
   loadPrompt, claudeTimeoutMs, runClaude, claudeFailure, headSha, snapshotChanges, outOfScopeChanges,
 } from '../lib/claude.mjs';
@@ -50,7 +51,7 @@ async function guardFailure({ worktree, dir, sprintDir, input, before }) {
 }
 
 /** 报告判分；产品 PASS/FAIL 都返回 completed。 */
-function judge({ reportPath, reportFile, qaIds, stdout, worktree, dir, shotsDir, round, env, cost, production }) {
+function judge({ reportPath, reportFile, qaIds, stdout, worktree, dir, shotsDir, round, env, cost, production, provider, model }) {
   const executions = bashExecutions(stdout);
   const prod = productionTouches(executions, production);
   if (prod.length > 0) return fail('fatal', 'evaluate_touched_production', { evidence: [{ commands: prod }] });
@@ -71,7 +72,7 @@ function judge({ reportPath, reportFile, qaIds, stdout, worktree, dir, shotsDir,
   const shots = screenshotProblems({ reportText, items, executions, sprintDir: dir, shotsDir });
   if (shots.length > 0) return fail('retryable', 'qa_screenshot_missing', { evidence: [{ problems: shots }] });
   const qa = {
-    verdict: judged.verdict, round, env, failed: brief(judged.failed), blocking: brief(judged.blocking),
+    verdict: judged.verdict, round, env, provider, model: model ?? null, failed: brief(judged.failed), blocking: brief(judged.blocking),
     cannot_verify: judged.cannot_verify.map(({ id, covers, reason }) => ({ id, covers, reason })), cost_usd: cost,
   };
   log(`[evaluate] 第 ${round} 轮真人 QA ${judged.verdict}：失败场景 ${qa.failed.map((i) => i.id).join(',') || '无'}，阻断发现 ${qa.blocking.map((i) => i.id).join(',') || '无'}，验不了 ${qa.cannot_verify.map((i) => i.id).join(',') || '无'}`);
@@ -131,18 +132,29 @@ await runActivity(async (input) => {
   const args = ['-p', prompt, '--permission-mode', 'acceptEdits', ...SESSION_FLAGS, '--allowedTools', 'Bash', '--disallowedTools', ...DENIED];
   const before = { head: await headSha(worktree), changes: await snapshotChanges(worktree) };
 
-  const state = { hidden: [], claudeRunning: false };
+  const state = { hidden: [], claudeRunning: false, bridge: null };
   const restoreAll = () => state.hidden.every((h) => h.restore());
   const onSigterm = () => {
+    void state.bridge?.close();
     restoreAll();
     if (!state.claudeRunning) process.exit(2);
   };
   process.on('SIGTERM', onSigterm);
   let result;
   try {
+    if (!local && process.env.CODING_WF_PROVIDER === 'codex') {
+      try {
+        state.bridge = await createPreviewBridge({ origin: preview.url, headSha: input.head_sha, prNumber: input.pr_number, production });
+        args[1] += '\n\n' + loadPrompt('evaluate-codex-transport', {});
+      } catch (error) {
+        return fail('retryable', 'preview_unavailable', { evidence: [{ bridge_error: error.message }] });
+      }
+    }
     for (const p of hiddenPaths) state.hidden.push(await hideFile(worktree, p));
     state.claudeRunning = true;
-    const run = await runClaude({ args, cwd: worktree, timeoutMs: claudeTimeoutMs(input.budget, TIMEOUT), tag: 'evaluate', isolateRemote: true });
+    const run = await runClaude({ args, cwd: worktree, timeoutMs: claudeTimeoutMs(input.budget, TIMEOUT), tag: 'evaluate', isolateRemote: true,
+      ...(state.bridge ? { nativeOptions: { previewCapability: state.bridge.capability } } : {}),
+    });
     state.claudeRunning = false;
     // 会话执行记录落盘留证（runner 传 transcript_path；判越界/证据不实时可复核）
     if (input.transcript_path) {
@@ -153,13 +165,23 @@ await runActivity(async (input) => {
         log(`[evaluate] 执行记录落盘失败：${error?.message || error}`);
       }
     }
-    result = claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
+    // A model report cannot override controller-observed head drift, even if it claims PASS.
+    if (state.bridge) {
+      try { await state.bridge.verify(); } catch (error) {
+        result = fail('retryable', error.message === 'preview_sha_mismatch' ? 'preview_stale' : 'preview_unavailable',
+          { evidence: [{ bridge_error: error.message, expected: input.head_sha }] });
+      }
+    }
+    result ??= claudeFailure(run, { streamJson: true }) ?? (await guardFailure({ worktree, dir, sprintDir, input, before }));
     result ??= judge({
       reportPath, reportFile, qaIds, stdout: run.stdout, worktree, dir, shotsDir: path.join(dir, `qa-r${round}`), round,
-      env: local ? { kind: 'local', worktree } : { kind: 'preview', url: preview.url, ...(preview.sha ? { sha: preview.sha } : {}) },
+      env: local ? { kind: 'local', worktree } : { kind: 'preview', url: preview.url, ...(preview.sha ? { sha: preview.sha } : {}),
+        ...(state.bridge ? { transport: 'unix_http_browser' } : {}) },
       cost: run.cost_usd === undefined ? sessionCostUsd(run.stdout) : run.cost_usd, production,
+      provider: run.provider, model: run.model,
     });
   } finally {
+    await state.bridge?.close();
     process.off('SIGTERM', onSigterm);
     if (!restoreAll()) result = fail('fatal', 'hidden_restore_failed', { evidence: [{ hidden: state.hidden.map((h) => h.hiddenPath) }] });
   }
