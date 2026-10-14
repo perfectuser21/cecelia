@@ -147,5 +147,12 @@ describe('Skill可先独立验证（D 回归）',()=>{
     expect(frozenScopeMatches(scope,prefixed,environment)).toBe(true);
     expect(frozenScopeMatches({...scope,implementation:{...implementation,digest:'changed'}},prefixed,environment)).toBe(false);
   });
+  it('未核验符号来源及Skill版本不符不能获晋级scope资格',()=>{
+    const scope={activity_definition_version_id:'av2',implementation,environment};
+    for(const over of [{status:'unresolved'},{version:'wrong-source-version'}]) {
+      const unsafe={...payload,implementation_bindings:[{...implementation,path:'SKILL.md',status:'verified',validation_scope:'reference_only',...over}]};
+      expect(frozenScopeMatches(scope,unsafe,environment)).toBe(false);
+    }
+  });
 
 });
