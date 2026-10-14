@@ -31,7 +31,8 @@ export async function prepareCommander(pool, taskId, deps = {}) {
     const previous = task.result?.workflow_control;
     if (previous && previous.phase !== 'recovering') return previous;
     requireCommander(task.status === 'queued' || previous?.phase === 'recovering', '任务不可起跑', 409);
-    const selected = previous ? await (deps.selectHistoricalMethod ?? selectHistoricalMethod)(db, task, previous, { ready: e => readyCommander(e, deps), now: deps.now }) : null;
+    const declaredImplementation = previous?.envelope.activity_bindings?.some(b => b.primary_implementation || b.implementations);
+    const selected = previous && !declaredImplementation ? await (deps.selectHistoricalMethod ?? selectHistoricalMethod)(db, task, previous, { ready: e => readyCommander(e, deps), now: deps.now }) : null;
     const frozen = selected?.definition ? selected : previous ? { definition: previous.envelope.definition, contract: previous.envelope.contract } : await (deps.frozenContract ?? frozenContract)(db, task);
     const sourceTask = previous ? { ...task, payload: { ...task.payload, workflow_input: previous.envelope.input } } : task;
     const e = makeEnvelope(sourceTask, frozen.definition, frozen.contract, previous?.envelope, (deps.now ?? (() => new Date()))(), previous);

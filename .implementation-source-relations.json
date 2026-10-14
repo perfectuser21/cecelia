@@ -836,6 +836,11 @@
       "owner_path": "packages/brain/src/lib/commander-v2-implementation.js",
       "path": "packages/brain/src/lib/__tests__/integration/commander-v2-shared-contract.pg.integration.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-dispatch.js",
+      "path": "packages/brain/src/lib/__tests__/commander-v2-frozen-retry.test.js",
+      "role": "verification"
     }
   ]
 }
