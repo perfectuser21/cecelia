@@ -49,3 +49,50 @@ it('恢复模板UUID参数必须是真字符串，数组字符串化不能冒充
   f.task.payload.recovery_demand_id=[id];
   expect(()=>identity(f)).toThrow();
 });
+
+const currentPhone='864154c57e88e8085d2add741a79103a28891a44';
+function compatibleFixture(entryRevision,phoneRevision=entryRevision,mode='phone'){
+  const f=fixture(true),contract=f.workflow.payload.contract;
+  const binding={...f.activities[0].payload.implementation_bindings[0],revision:currentPhone};
+  f.activities[0].payload.implementation_bindings.push(binding);
+  // The same immutable definition covers both genuinely installed releases.
+  contract.input_schema.properties.source_revision={enum:[phone,currentPhone,control]};
+  contract.input_schema.properties.phone_source_revision={enum:[phone,currentPhone]};
+  f.task.payload.source_revision=entryRevision;
+  f.task.payload.phone_source_revision=phoneRevision;
+  f.release.target=f.release.target.replace(phone,phoneRevision);
+  const command=`/usr/bin/python3 /Users/administrator/.local/share/phone-account-patrol/releases/${entryRevision}/runner.py ${mode}${mode==='phone'?' --serial phone-a':''} --execution-script "$0"`;
+  f.spec.cmd=command;contract.runtime.script.commands=[command];
+  return f;
+}
+it.each(['phone','batch'].flatMap(mode=>[[mode,phone,currentPhone],[mode,currentPhone,phone]]))(
+  '兼容定义的%s直接入口不能交叉：entry=%s phone=%s',(mode,entryRevision,phoneRevision)=>{
+  expect(()=>identity(compatibleFixture(entryRevision,phoneRevision,mode))).toThrow();
+});
+it.each(['phone','batch'])('兼容定义的%s直接入口按各自真实target保留4f及864',mode=>{
+  for(const revision of [phone,currentPhone]){
+    const result=identity(compatibleFixture(revision,revision,mode));
+    expect(result.entry_source_revision).toBe(revision);
+    expect(result.phone_source_revision).toBe(revision);
+  }
+});
+for(const kind of ['outside','prefix','traversal'])it(`固定basename不能冒充真实安装入口：${kind}`,()=>{
+  const f=compatibleFixture(currentPhone),target=f.release.target.slice(f.release.target.indexOf(':')+1);
+  const entry={outside:`/tmp/releases/${currentPhone}/runner.py`,
+    prefix:`${target}-shadow/releases/${currentPhone}/runner.py`,
+    traversal:`${target}/../shadow/releases/${currentPhone}/runner.py`}[kind];
+  f.spec.cmd=f.spec.cmd.replace(target+'/runner.py',entry);
+  f.workflow.payload.contract.runtime.script.commands=[f.spec.cmd];
+  expect(()=>identity(f)).toThrow();
+});
+it.each([phone,currentPhone])('兼容定义的native恢复保持真实phone与original_scope：%s',revision=>{
+  const f=compatibleFixture(revision),recovery=fixture(true).spec.cmd;
+  f.spec.cmd=recovery;f.workflow.payload.contract.runtime.script.commands=[recovery];
+  f.task.payload.original_scope={phone_source_revision:revision};
+  const result=identity(f);
+  expect(result.entry_source_revision).toBe(control);
+  expect(result.phone_source_revision).toBe(revision);
+  expect(f.task.payload.source_revision).toBe(revision);
+  f.task.payload.original_scope.phone_source_revision=revision===phone?currentPhone:phone;
+  expect(()=>identity(f)).toThrow();
+});

@@ -21,6 +21,7 @@ it.each(fixtures)('真实 $id 原文只读检查不启动浏览器，不应要�
 it.each([
   t6.replace('node -e', '/usr/bin/node -e'),
   t6.replace('node -e', '/opt/homebrew/bin/node -e'),
+  `${t6}''`, // 相邻空引号不产生第二个参数。
   `node -e "${script.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`,
 ])('完整静态参数的受支持拼写保留：%s', command => {
   expect(isReadonlyQaCommand(command)).toBe(true);
@@ -73,7 +74,7 @@ it.each([
   node(script + ';import("playwright")'),
   node(script + ';require("playwright").chromium.launch()'),
   t6 + ' --require playwright', t6 + ' && true', t6 + '\ntrue',
-  `${t6}''`, t6 + ' 2>/dev/null', t6 + ' | cat',
+  t6 + ' 2>/dev/null', t6 + ' | cat',
   t6.replace('node -e', 'env node -e'), t6.replace('node -e', 'node\n-e'),
   t6.replace('node -e', 'node -r playwright -e'),
   t5.replace('$(git rev-parse HEAD)', '$(npx playwright --version)'),

@@ -71,6 +71,7 @@ export function scriptRuntimeIdentity(task,spec,release,workflow,activities,runI
   if(patrol){
     if(sources.original_scope?.phone_source_revision!==undefined)requireValue(phone===sources.original_scope.phone_source_revision,'恢复原始手机源码不可改变');
     requireValue(SHA.test(phone)&&targetPath.endsWith('/phone-account-patrol/releases/'+phone),'手机源码与真实并存安装目标不符');
+    if(!controlEntry)requireValue(revision===phone&&path.posix.normalize(entry)===entry&&entry.startsWith(targetPath+'/'),'直接巡查入口必须匹配手机源码与实际部署目录');
     for(const source of [phone,control].filter(v=>v!==undefined)){
       requireValue(SHA.test(source)&&bindings.some(b=>b.kind==='code'&&b.repo===PATROL_REPO&&b.revision===source),'手机或控制源码不属于固定实现');
     }
