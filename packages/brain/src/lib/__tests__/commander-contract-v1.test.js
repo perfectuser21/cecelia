@@ -1,7 +1,8 @@
-import { it, expect } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+describe('commander-contract-v1真实来源', () => {
 it('固定共享JSON信封进入实际源码依赖图，修改样例可追到消费它的夹具', () => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url));
   const fixture = 'packages/brain/src/lib/__tests__/fixtures/commander-contract-v1.js';
@@ -17,4 +18,5 @@ it('固定共享JSON信封进入实际源码依赖图，修改样例可追到消
   const consumer = graph.modules.find(module => module.source.endsWith(fixture));
   expect(consumer).toBeDefined();
   expect(consumer.dependencies.some(dependency => dependency.resolved?.endsWith(json))).toBe(true);
+});
 });

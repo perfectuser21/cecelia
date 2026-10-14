@@ -854,7 +854,7 @@
     },
     {
       "owner_path": "packages/brain/src/lib/commander-v2-contract.js",
-      "path": "packages/brain/src/lib/__tests__/commander-v2-shared-source.test.js",
+      "path": "packages/brain/src/lib/__tests__/commander-contract-v1.test.js",
       "role": "verification"
     },
     {
