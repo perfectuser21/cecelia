@@ -63,17 +63,30 @@ it('真实旧commit与HEAD字节不同，正式authoring冻结引用仍可发布
  expect(result.report.implementation_source_set).toContainEqual(expect.objectContaining({revision:f.old,path:'entry.js',digest:f.snapshot.definitions.activities[0].payload.implementation_bindings[0].digest}));
  expect(result.report.implementation_source_set.some(b=>b.revision===f.snapshot.revision&&b.path==='entry.js')).toBe(false);
 });
-it.each(['digest','revision','path','protocol','owner','step-only'])('authoring跨版本不可用伪造或不完整来源放行 %s',async reason=>{
+it.each(['digest','revision','repo','path','protocol','owner','step-only','extra-step'])('authoring跨版本不可用伪造或不完整来源放行 %s',async reason=>{
  const f=await crossRevisionAuthoring(),{runPilotReleaseVerification}=await module();
  const binding=f.snapshot.definitions.activities[0].payload.implementation_bindings[0];
  if(reason==='digest')binding.digest='sha256:'+'0'.repeat(64);
  if(reason==='revision')binding.revision='0'.repeat(40);
+ if(reason==='repo')binding.repo='perfectuser21/cecelia';
  if(reason==='path')binding.path='missing.js';
  if(reason==='protocol')delete f.snapshot.definitions.workflows[0].payload.registration_protocol;
  if(reason==='owner')f.snapshot.canonical.workflows[0].source_path='other.json';
  if(reason==='step-only')binding.scope='step';
+ if(reason==='extra-step')f.snapshot.definitions.activities[0].payload.implementation_bindings.push({...binding,scope:'step',step_key:'unverified'});
  reseal(f);await expect(runPilotReleaseVerification({...f,repoRoot:f.root})).rejects.toThrow();
  expect(existsSync(join(f.outputDir,'receipt.json'))).toBe(false);
+});
+it('authoring证明不可伪造、克隆、跨snapshot重用，取源期间变更同样拒绝',async()=>{
+ const f=await crossRevisionAuthoring();
+ const {prepareAuthoringReleaseProof,assertAuthoringReleaseProof}=await import('../../workflow-authoring/release-proof.js');
+ for(const proof of [true,{}, {snapshot_sha256:f.snapshot.snapshot_sha256}])expect(()=>assertAuthoringReleaseProof(f.snapshot,proof)).toThrow();
+ const proof=await prepareAuthoringReleaseProof(f.snapshot,f.authoringSourceOptions);
+ expect(()=>assertAuthoringReleaseProof(f.snapshot,proof)).not.toThrow();
+ expect(()=>assertAuthoringReleaseProof(f.snapshot,structuredClone(proof))).toThrow();
+ const changed=structuredClone(f.snapshot);changed.scope='another-scope';expect(()=>assertAuthoringReleaseProof(changed,proof)).toThrow();
+ proof.implementation_source_set[0].revision=f.snapshot.revision;expect(()=>assertAuthoringReleaseProof(f.snapshot,proof)).toThrow();
+ await expect(prepareAuthoringReleaseProof(f.snapshot,{readFile:async s=>{const bytes=await f.authoringSourceOptions.readFile(s);f.snapshot.untrusted_change=true;return bytes;}})).rejects.toThrow();
 });
 it('真实规范raw描述保留unresolved；固定Code与真实回归仍被核验',async()=>{
  const {runPilotReleaseVerification}=await module(),f=fixture();
