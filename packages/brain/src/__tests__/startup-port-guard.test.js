@@ -33,10 +33,29 @@ describe('startup-port-guard', () => {
   const cleanup = [];
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     while (cleanup.length) {
       const srv = cleanup.pop();
       await new Promise((r) => srv.close(r));
     }
+  });
+
+  it('自由端口fixture不能因Math.random命中已有监听socket而选择占用端口', async () => {
+    let blocker;
+    for (let i = 0; i < 30; i++) {
+      blocker = await occupyPort(0);
+      const port = blocker.address().port;
+      if (port >= 40000 && port < 60000) break;
+      await new Promise(resolve => blocker.close(resolve));
+      blocker = null;
+    }
+    expect(blocker).not.toBeNull();
+    cleanup.push(blocker);
+    const held = blocker.address().port;
+    vi.spyOn(Math, 'random').mockReturnValue((held - 40000 + 0.25) / 20000);
+    const selected = await randomPort();
+    await expect(isPortInUse(selected)).resolves.toBe(false);
+    expect(blocker.listening).toBe(true);
   });
 
   describe('isPortInUse', () => {
