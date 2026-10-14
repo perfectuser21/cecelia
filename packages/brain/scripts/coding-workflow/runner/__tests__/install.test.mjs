@@ -143,7 +143,7 @@ describe('install.sh', () => {
   });
 
   // C5：多仓库——CODING_WF_REPOS 透传进 plist；已启用的其他仓库 clone 不存在时以运行用户身份 clone（clone 路径与 origin 取自 repos.json）
-  it('CODING_WF_REPOS=cecelia,zj：写进 plist（合法），并为 zj 打印 sudo -u <用户> git clone；未设置时 plist 不出现该键', () => {
+  it('CODING_WF_REPOS=cecelia,zj：写进 plist（合法），并为 zj 打印 sudo -u <用户> git clone；未设置时默认仅cecelia', () => {
     // list-clones 要真 node 跑：把 node 桩换成真 node
     const nodeStub = path.join(toolDirs[0], 'node');
     fs.rmSync(nodeStub);
@@ -173,7 +173,7 @@ describe('install.sh', () => {
     expect(only.status, only.stderr).toBe(0);
     expect(only.stdout).not.toContain(zjClone);
     const none = runInstall(['--dry-run'], env);
-    expect(plistOf(none.stdout)).not.toContain('CODING_WF_REPOS');
+    expect(plistOf(none.stdout)).toContain('<key>CODING_WF_REPOS</key>\n    <string>cecelia</string>');
   });
 
   it('缺工具（claude 不在 PATH）：报错退出，不输出 plist', () => {
@@ -195,7 +195,28 @@ describe('install.sh', () => {
     expect(r.stdout).toContain('sudo -u administrator env');
     expect(r.stdout).toContain('runtime-health.mjs');
     expect(r.stdout.indexOf('runtime-health.mjs')).toBeLessThan(r.stdout.indexOf('launchctl bootout'));
+    expect(r.stdout).toContain('runtime-install-guard.mjs');
+    expect(r.stdout).toContain('runtime-update.mjs');
+    expect(r.stdout.indexOf('runtime-update.mjs')).toBeLessThan(r.stdout.indexOf('launchctl bootout'));
+    expect(r.stdout.indexOf('runtime-health.mjs')).toBeLessThan(r.stdout.indexOf('runtime-update.mjs'));
+    expect(r.stdout.indexOf('runtime-install-guard.mjs')).toBeLessThan(r.stdout.indexOf('launchctl bootout'));
     expect(plist).not.toContain('bin-claude');
+  });
+
+  it('Codex默认安装与显式账户/模型覆盖可重建，XML环境值安全转义', () => {
+    const codexDir = path.join(root, 'codex-bin'); fs.mkdirSync(codexDir);
+    fs.writeFileSync(path.join(codexDir, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const defaults = { ...env, PATH: `${codexDir}:${env.PATH}` }; delete defaults.CODING_WF_PROVIDER;
+    const first = runInstall(['--dry-run'], defaults);
+    expect(first.status, first.stderr).toBe(0);
+    expect(plistOf(first.stdout)).toContain('<key>CODING_WF_PROVIDER</key>\n    <string>codex</string>');
+    const r = runInstall(['--dry-run'], { ...defaults, CODING_WF_CODEX_HOME: '/Users/account&a', CODING_WF_CODEX_MODEL: 'developer', CODING_WF_JUDGE_MODEL: 'judge' });
+    expect(r.status, r.stderr).toBe(0);
+    const plist = plistOf(r.stdout);
+    expect(plist).toContain('<string>/Users/account&amp;a</string>');
+    expect(plist).toContain('<key>CODING_WF_CODEX_MODEL</key>\n    <string>developer</string>');
+    expect(plist).toContain('<key>CODING_WF_JUDGE_MODEL</key>\n    <string>judge</string>');
+    expect(plist).toContain(`<key>HOME</key>\n    <string>${env.CODING_WF_USER_HOME}</string>`);
   });
 
   it('未知provider必须失败，不能降级Claude', () => {

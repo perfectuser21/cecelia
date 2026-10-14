@@ -236,6 +236,78 @@ setInterval(() => {}, 1000);`);
     } finally { child.kill('SIGKILL'); }
   }, 20000);
 
+  it('账户预检失败时不更新、不启动run-once，不回退Claude', () => {
+    gitPlain('clone', '-q', origin, clone); commitSeed('v2');
+    const r = runRunner({ ...env, CODING_WF_PROVIDER: 'codex', CODING_WF_CODEX_HOME: path.join(root, 'missing-account') });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).not.toContain('RUN_ONCE_STUB');
+    expect(git(clone, 'log', '-1', '--format=%s').trim()).toBe('v1');
+    expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'coding-workflow-runner.lock'))).toBe(false);
+    expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(false);
+  });
+
+  it('更新后内锁交还run-once，外锁持续持有至正常退出', () => {
+    fs.writeFileSync(path.join(seed, STUB_REL), `import fs from 'node:fs';
+const dir = process.env.CODING_WF_LOCK_DIR;
+console.log(JSON.stringify({ inner: fs.existsSync(dir + '/coding-workflow-runner.lock'), outer: fs.existsSync(dir + '/launcher/coding-workflow-runner.lock') }));`);
+    commitSeed('v2-lock-handoff');
+    const r = runRunner(env);
+    expect(r.status, r.stderr).toBe(0);
+    expect(stubOut(r)).toEqual({ inner: false, outer: true });
+    expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(false);
+  });
+
+  it('fetch期间源码变脏则重新检查，不快进', () => {
+    gitPlain('clone', '-q', origin, clone); commitSeed('v2');
+    const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
+    const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+    fs.writeFileSync(path.join(bin, 'git'), `#!/bin/bash\nfor a in "$@"; do if [ "$a" = fetch ]; then printf keep > "${clone}/during-fetch.txt"; fi; done\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+    const r = runRunner({ ...env, PATH: `${bin}:${env.PATH}` });
+    expect(stubOut(r).head).toBe('v1');
+    expect(fs.readFileSync(path.join(clone, 'during-fetch.txt'), 'utf8')).toBe('keep');
+  });
+
+  it('快进不覆盖被ignore的本地文件', () => {
+    fs.writeFileSync(path.join(seed, '.gitignore'), 'ignored.txt\n'); commitSeed('v1');
+    gitPlain('clone', '-q', origin, clone);
+    fs.writeFileSync(path.join(clone, 'ignored.txt'), 'keep');
+    fs.writeFileSync(path.join(seed, 'ignored.txt'), 'remote'); git(seed, 'add', '-f', 'ignored.txt'); commitSeed('v2');
+    const r = runRunner(env);
+    expect(stubOut(r).head).toBe('v1'); expect(fs.readFileSync(path.join(clone, 'ignored.txt'), 'utf8')).toBe('keep');
+  });
+
+  it.each(['execution', 'fetch'])('终止%s阶段会有界回收忽略SIGTERM的独立组子孙，再释放锁', async (phase) => {
+    const marker = path.join(root, 'tree.json');
+    const treeCode = `import fs from 'node:fs'; import { spawn } from 'node:child_process';
+process.on('SIGTERM',()=>{});
+const child = spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"], { detached: true, stdio: 'ignore' });
+fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify([process.pid,child.pid])); setInterval(()=>{},1000);`;
+    let runEnv = { ...env, CODING_WF_LAUNCHER_KILL_GRACE_MS: '150' };
+    if (phase === 'execution') { fs.writeFileSync(path.join(seed, STUB_REL), treeCode); commitSeed('v1-tree'); }
+    else {
+      gitPlain('clone', '-q', origin, clone); commitSeed('v2');
+      const bin = path.join(root, 'bin'); fs.mkdirSync(bin); fs.writeFileSync(path.join(root, 'tree.mjs'), treeCode);
+      const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+      fs.writeFileSync(path.join(bin, 'git'), `#!/bin/bash\nfor a in "$@"; do if [ "$a" = fetch ]; then exec "${process.execPath}" "${root}/tree.mjs"; fi; done\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+      runEnv.PATH = `${bin}:${env.PATH}`;
+    }
+    const child = spawn('bash', [RUNNER_SH], { env: runEnv, stdio: 'ignore' });
+    const exited = new Promise(r => child.once('exit', r));
+    let pids = [];
+    try {
+      for (let i = 0; i < 100 && !fs.existsSync(marker); i++) await new Promise(r => setTimeout(r, 50));
+      expect(fs.existsSync(marker)).toBe(true); pids = JSON.parse(fs.readFileSync(marker, 'utf8'));
+      child.kill('SIGTERM');
+      await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error('launcher termination timed out')), 3000).unref())]);
+      for (const pid of pids) {
+        for (let i = 0; i < 20; i++) { try { process.kill(pid, 0); await new Promise(r => setTimeout(r, 50)); } catch { break; } }
+        expect(() => process.kill(pid, 0)).toThrow();
+      }
+      expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(false);
+      expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'coding-workflow-runner.lock'))).toBe(false);
+    } finally { child.kill('SIGKILL'); for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); } catch {} } }
+  }, 12000);
+
   it('主日志超过 10MB 时滚动（copy+truncate），保留 3 份', () => {
     gitPlain('clone', '-q', origin, clone);
     const main = path.join(root, 'runner.log');

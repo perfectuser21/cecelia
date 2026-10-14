@@ -4,13 +4,15 @@
 #
 # 用法：
 #   bash install.sh --dry-run                       # 只打印将写入的 plist 与将执行的命令，不落盘
-#   sudo env PATH="$PATH" bash install.sh           # 真装（需 root；PATH 透传以解析 node/git/gh/claude）
+#   sudo env PATH="$PATH" bash install.sh           # 真装（需 root；PATH 透传以解析 node/git/gh/所选 provider）
 #
 # 可覆盖：CODING_WF_RUN_USER（默认 administrator）、CODING_WF_USER_HOME（默认 /Users/<user>）、
 #         CODING_WF_REPO（默认 <home>/perfect21/cecelia-cw-runner）、CODING_WF_ORIGIN_URL、BRAIN_URL。
+#         CODING_WF_PROVIDER（默认 codex）、CODING_WF_CODEX_HOME（默认 <home>/.codex-team1）、
+#         CODING_WF_CODEX_MODEL（默认 gpt-6-sol）、CODING_WF_JUDGE_PROVIDER/MODEL（默认 codex/gpt-6-astra）。
 #         CODING_WF_AUTOMERGE（设置后写入 plist 的 EnvironmentVariables，如 0=关闭自动合并；未设置/为空则不写）。
 #         CODING_WF_REPOS（启用的仓库，逗号分隔，如 cecelia,zenithjoy-workspace；设置后写入 plist，并以运行用户身份预先
-#         clone 其中缺 clone 的非默认仓库——路径与 origin 取自 repos.json；未设置/为空则不写，runner 按 repos.json enabled 判定）。
+#         clone 其中缺 clone 的非默认仓库——路径与 origin 取自 repos.json；未设置/为空则只启用 cecelia，额外仓必须显式声明）。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,9 +24,11 @@ TEMPLATE="$HERE/$LABEL.plist.tmpl"
 RUNNER_REL="packages/brain/scripts/coding-workflow/runner/runner.sh"
 
 DRY_RUN=0
+LOCKED_INSTALL=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
+    --runtime-install-locked) LOCKED_INSTALL=1 ;;
     *) echo "未知参数：${arg}（只支持 --dry-run）" >&2; exit 2 ;;
   esac
 done
@@ -36,14 +40,35 @@ ORIGIN_URL="${CODING_WF_ORIGIN_URL:-https://github.com/perfectuser21/cecelia.git
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 LOG_FILE="$USER_HOME/Library/Logs/coding-workflow-runner.log"
 
+# 新安装默认 Codex；显式 Claude 配置仍可重建。两个模型保持不同，账户路径不改变 HOME。
+export CODING_WF_PROVIDER="${CODING_WF_PROVIDER:-codex}"
+export CODING_WF_REPOS="${CODING_WF_REPOS:-cecelia}"
+case "$CODING_WF_PROVIDER" in codex|claude) ;; *) echo "runtime_provider_unknown" >&2; exit 1 ;; esac
+if [ "$CODING_WF_PROVIDER" = codex ]; then
+  export CODING_WF_CODEX_HOME="${CODING_WF_CODEX_HOME:-$USER_HOME/.codex-team1}"
+  export CODING_WF_CODEX_MODEL="${CODING_WF_CODEX_MODEL:-gpt-6-sol}"
+  export CODING_WF_JUDGE_PROVIDER="${CODING_WF_JUDGE_PROVIDER:-codex}"
+  export CODING_WF_JUDGE_MODEL="${CODING_WF_JUDGE_MODEL:-gpt-6-astra}"
+fi
+
 if [ "$DRY_RUN" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
   echo "真装需要 root：sudo env PATH=\"\$PATH\" bash $0（或先用 --dry-run 预览）" >&2
   exit 1
 fi
 
-# PATH：node/git/gh/claude 的实际所在目录 + 系统目录，去重保序
+if [ "$DRY_RUN" -eq 0 ] && [ "$LOCKED_INSTALL" -eq 0 ]; then
+  export HOME="$USER_HOME" CODING_WF_RUN_USER="$RUN_USER"
+  exec node "$HERE/runtime-install.mjs" "$0"
+fi
+if [ "$LOCKED_INSTALL" -eq 1 ] && [ "${CODING_WF_INSTALL_LOCK_PID:-}" != "$PPID" ]; then
+  echo "runtime_install_lock_required" >&2; exit 1
+fi
+
+# PATH：node/git/gh/所选 provider 的实际所在目录 + 系统目录，去重保序
 DIRS=()
-for tool in node git gh claude; do
+PROVIDER_BIN="$CODING_WF_PROVIDER"
+if [ "$CODING_WF_PROVIDER" = codex ]; then PROVIDER_BIN="${CODING_WF_CODEX_BIN:-codex}"; fi
+for tool in node git gh "$PROVIDER_BIN"; do
   bin="$(command -v "$tool" || true)"
   if [ -z "$bin" ]; then
     echo "找不到 ${tool}：请在能找到它的 PATH 下运行（sudo 时用 env PATH=\"\$PATH\" 透传）" >&2
@@ -90,7 +115,13 @@ render_plist() {
       -e "s|__BRAIN_URL__|$(esc "$BRAIN")|g" \
       -e "s|__REPO__|$(esc "$REPO")|g" \
       -e "s|__LOG__|$(esc "$LOG_FILE")|g" \
-      "$TEMPLATE" | fill_env __AUTOMERGE_ENV__ CODING_WF_AUTOMERGE | fill_env __REPOS_ENV__ CODING_WF_REPOS
+      "$TEMPLATE" | fill_env __AUTOMERGE_ENV__ CODING_WF_AUTOMERGE | fill_env __REPOS_ENV__ CODING_WF_REPOS \
+      | fill_env __PROVIDER_ENV__ CODING_WF_PROVIDER \
+      | fill_env __CODEX_HOME_ENV__ CODING_WF_CODEX_HOME \
+      | fill_env __CODEX_BIN_ENV__ CODING_WF_CODEX_BIN \
+      | fill_env __CODEX_MODEL_ENV__ CODING_WF_CODEX_MODEL \
+      | fill_env __JUDGE_PROVIDER_ENV__ CODING_WF_JUDGE_PROVIDER \
+      | fill_env __JUDGE_MODEL_ENV__ CODING_WF_JUDGE_MODEL
 }
 
 # dry-run 只打印；否则执行
@@ -115,10 +146,26 @@ else
   plutil -lint "$PLIST_SRC" >/dev/null
 fi
 
+# dry-run 仅打印，不读取生产进程；真实安装必须先看清旧 daemon/直接 runner 都空闲。
+do_cmd env HOME="$USER_HOME" node "$HERE/runtime-install-guard.mjs"
+
+# 在实际运行用户下检查；dry-run 仅展示命令，不读取账户、不触发任务。
+do_cmd sudo -u "$RUN_USER" env HOME="$USER_HOME" PATH="$RUN_PATH" \
+  CODING_WF_PROVIDER="$CODING_WF_PROVIDER" \
+  CODING_WF_CODEX_HOME="${CODING_WF_CODEX_HOME:-}" \
+  CODING_WF_CODEX_BIN="${CODING_WF_CODEX_BIN:-}" \
+  CODING_WF_CODEX_MODEL="${CODING_WF_CODEX_MODEL:-}" \
+  CODING_WF_JUDGE_PROVIDER="${CODING_WF_JUDGE_PROVIDER:-}" \
+  CODING_WF_JUDGE_MODEL="${CODING_WF_JUDGE_MODEL:-}" \
+  node "$HERE/runtime-health.mjs"
+
 # 专用 clone：以运行用户身份准备（runner.sh 之后每轮自更新）
 if [ ! -d "$REPO/.git" ]; then
   do_cmd sudo -u "$RUN_USER" git clone -q "$ORIGIN_URL" "$REPO"
 fi
+# 首次切换也用候选代码安全快进旧 clone，保留hb/lights；拒绝更新则停止安装。
+do_cmd sudo -u "$RUN_USER" env HOME="$USER_HOME" PATH="$RUN_PATH" \
+  node "$HERE/runtime-update.mjs" "$REPO"
 # 其他已启用仓库的专用 clone（repos.json 的路径与 origin）：缺的以运行用户身份 clone；已存在的不动
 CLONES_SH="$HERE/list-clones.mjs"
 if [ -f "$CLONES_SH" ]; then
@@ -134,14 +181,18 @@ do_cmd mkdir -p "$(dirname "$LOG_FILE")"
 do_cmd touch "$LOG_FILE"
 do_cmd chown "$RUN_USER" "$LOG_FILE"
 
+# 前置检查后可能经历 clone，写入/bootout 前再核一次，拒绝中途启动的任务。
+do_cmd env HOME="$USER_HOME" node "$HERE/runtime-install-guard.mjs"
 do_cmd install -m 644 -o root -g wheel "$PLIST_SRC" "$DEST"
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "launchctl bootout system/$LABEL || true"
 else
-  launchctl bootout "system/$LABEL" 2>/dev/null || true
+  if launchctl print "system/$LABEL" >/dev/null 2>&1; then
+    launchctl bootout "system/$LABEL"
+  fi
 fi
 do_cmd launchctl bootstrap system "$DEST"
-do_cmd launchctl enable "system/$LABEL"
+if [ "$DRY_RUN" -eq 1 ]; then do_cmd launchctl enable "system/$LABEL"; fi
 
 if [ "$DRY_RUN" -eq 0 ]; then
   rm -f "$PLIST_SRC"

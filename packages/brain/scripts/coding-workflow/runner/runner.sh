@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
 # coding workflow runner 启动器（LaunchDaemon 每 5 分钟调一次）。
-# 使用专用 clone（不碰主仓 checkout）：clone 不存在则 clone；工作区干净才自更新到 origin/main（HEAD 变了才记一行），
+# 使用专用 clone（不碰主仓 checkout）：clone 不存在则 clone；仅精确未跟踪心跳噪音可豁免，满足安全快进条件才自更新到 origin/main（HEAD 变了才记一行），
 # 不干净只记日志、不破坏现场；然后 exec clone 里的 run-once.mjs（worktree prune 与保留期清理由它负责）。
 # 多仓库（C5）：其他已启用仓库（repos.json enabled + CODING_WF_REPOS）的 clone 不存在时按 repos.json 的路径与 origin clone；
 # 已存在的不 fetch、不 reset（各道门按需 fetch origin，不动现场——路径万一指到人用的目录也不会被冲掉）。
 # 主日志（CODING_WF_MAIN_LOG，launchd 的 StandardOutPath）超过 10MB 时 copy+truncate 滚动，保留 3 份。
 set -uo pipefail
 
-REPO="${CODING_WF_REPO:-$HOME/perfect21/cecelia-cw-runner}"
-ORIGIN_URL="${CODING_WF_ORIGIN_URL:-https://github.com/perfectuser21/cecelia.git}"
 NODE_BIN="${CODING_WF_NODE:-node}"
-RUN_ONCE_REL="packages/brain/scripts/coding-workflow/runner/run-once.mjs"
-CLONES_REL="packages/brain/scripts/coding-workflow/runner/list-clones.mjs"
 
 MAIN_LOG="${CODING_WF_MAIN_LOG:-}"
 LOG_MAX_BYTES=$((10 * 1024 * 1024))
@@ -31,60 +27,5 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE CLAUDECODE
 for var in $(compgen -e | grep '^CLAUDE_CODE_' || true); do unset "$var"; done
 export GIT_TERMINAL_PROMPT=0
 
-if [ ! -d "$REPO/.git" ]; then
-  log "clone 不存在，从 $ORIGIN_URL clone 到 $REPO"
-  mkdir -p "$(dirname "$REPO")"
-  if ! git clone -q "$ORIGIN_URL" "$REPO"; then
-    log "clone 失败"
-    exit 1
-  fi
-fi
-
-if [ -z "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
-  BEFORE_SHA="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)"
-  if git -C "$REPO" fetch -q origin main && git -C "$REPO" reset -q --hard origin/main; then
-    # 每 5 分钟一轮：HEAD 没变就不打（否则同一 sha 每轮一行，占满主日志）
-    if [ "$(git -C "$REPO" rev-parse HEAD)" != "$BEFORE_SHA" ]; then
-      log "已自更新到 origin/main $(git -C "$REPO" rev-parse --short HEAD)"
-    fi
-  else
-    log "自更新失败，沿用当前版本 $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null)"
-  fi
-else
-  log "工作区不干净，跳过自更新（不破坏现场）"
-fi
-
-# 其他已启用仓库：只补缺的 clone（失败只记日志，run-once 会跳过 clone 不存在的仓库，不影响默认仓）
-if [ -f "$REPO/$CLONES_REL" ]; then
-  CLONE_LIST="$("$NODE_BIN" "$REPO/$CLONES_REL")" || log "列仓库 clone 失败（repos.json 不可读？），本轮不补 clone"
-  while IFS=$'\t' read -r EXTRA_CLONE EXTRA_ORIGIN; do
-    [ -n "$EXTRA_CLONE" ] || continue
-    [ -e "$EXTRA_CLONE/.git" ] && continue
-    if [ -e "$EXTRA_CLONE" ] && [ -n "$(ls -A "$EXTRA_CLONE" 2>/dev/null)" ]; then
-      log "仓库目录 $EXTRA_CLONE 已存在但不是 git clone，不覆盖"
-      continue
-    fi
-    log "仓库 clone 不存在，从 $EXTRA_ORIGIN clone 到 $EXTRA_CLONE"
-    mkdir -p "$(dirname "$EXTRA_CLONE")"
-    git clone -q "$EXTRA_ORIGIN" "$EXTRA_CLONE" || log "clone $EXTRA_CLONE 失败（本轮跳过该仓库）"
-  done <<< "${CLONE_LIST:-}"
-fi
-
-cd "$REPO" || exit 1
-# QA 门请求/停止 PR 预览环境要 DEPLOY_TOKEN：运行时从凭据文件读（不进代码、不进 plist）
-TOKEN_FILE="${CODING_WF_DEPLOY_TOKEN_FILE:-$HOME/.credentials/cecelia-deploy-token.env}"
-if [ -z "${DEPLOY_TOKEN:-}" ] && [ -f "$TOKEN_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$TOKEN_FILE"
-  set +a
-fi
-
-# 上报执行记录（POST /api/brain/spans）要 Brain 内部令牌：同样运行时从凭据文件读，只取这一项（不把整份文件导进环境）
-INTERNAL_TOKEN_FILE="${CODING_WF_INTERNAL_TOKEN_FILE:-$HOME/.credentials/cecelia-internal.env}"
-if [ -z "${CECELIA_INTERNAL_TOKEN:-}" ] && [ -f "$INTERNAL_TOKEN_FILE" ]; then
-  CECELIA_INTERNAL_TOKEN="$(sed -n 's/^CECELIA_INTERNAL_TOKEN=//p' "$INTERNAL_TOKEN_FILE" | head -1 | tr -d "\"' \r")"
-  export CECELIA_INTERNAL_TOKEN
-fi
-
-exec "$NODE_BIN" "$REPO/$RUN_ONCE_REL"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$NODE_BIN" "$HERE/runtime-launch.mjs"
