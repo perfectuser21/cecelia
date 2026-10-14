@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.432.6
+**Brain 版本**: 1.432.7
 
 脚本失败回执按固定 task/run/workflow/设备/源码身份冻结脱敏限长诊断；近期 Run、Workflow 正文及 Runs Error 展示同次失败阶段、代码、原因与证据，缺失证据保留未知。
 

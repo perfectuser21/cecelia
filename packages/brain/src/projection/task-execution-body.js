@@ -25,7 +25,7 @@ export function buildTaskExecutionBlock({task,workflows=[],runs=[],totalRuns=0})
  const wf=workflows.length?workflows.map((w,i)=>w.notion_id?link(`${i?'\n':''}${w.name||w.id}`,w.notion_id):text(`${i?'\n':''}${w.name||w.id}（未投影）`)):[text('流程归属未知')];
  const records=runs.length?runs.flatMap(r=>[r.notion_id?link(r.run_id,r.notion_id):text(`${r.run_id}（未投影）`),text(` · ${r.status||'未知'} · ${r.started_at||'时间未知'} · 流程 ${r.workflow_id||'归属未知'}\n`)]):[text('暂无运行记录')];
  const omitted=Math.max(0,totalRuns-runs.length);
- return{object:'block',type:'toggle',toggle:{rich_text:[text(marker(task.id)+'：真实流程与每次运行')],children:[...paragraphs([text('任务声明/实际Run关联流程（各Run归属见记录）')]),...paragraphs(wf),...paragraphs([text('真实运行记录（按最近开始时间排序；每条为独立attempt）')]),...paragraphs(records),...paragraphs([text(`共 ${totalRuns} 次运行；展示最近 ${runs.length} 次；另 ${omitted} 次未展示。${omitted?'更早记录请在 Runs 库按 Task 关系查看。':''}`)])]}};
+ return{object:'block',type:'toggle',toggle:{rich_text:[text(marker(task.id)+'：真实流程与每次运行')],children:[...paragraphs([text('任务声明/实际Run关联流程（各Run归属见记录）')]),...paragraphs(wf),...paragraphs([text('真实运行记录（按最近开始时间排序；每条为独立attempt；执行状态（业务结果见运行明细））')]),...paragraphs(records),...paragraphs([text(`共 ${totalRuns} 次运行；展示最近 ${runs.length} 次；另 ${omitted} 次未展示。${omitted?'更早记录请在 Runs 库按 Task 关系查看。':''}`)])]}};
 }
 const PENDING_PREFIX='task_execution_body_pending:';
 async function metadataOn(client,sql,args,deadline){
