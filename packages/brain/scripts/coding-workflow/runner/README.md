@@ -58,23 +58,24 @@ tail -n 100 "${CODING_WF_USER_HOME:-/Users/${CODING_WF_RUN_USER:-administrator}}
 
 ## 独立预览 QA 边界
 
-控制器把当前 PR 编号和 40 位 head SHA 绑定到预览能力，先查预览 `/api/brain/health` 的 `git_sha`。不一致、预览换版或能力关闭即停止；部署恢复后只在同一 head 重新验。预览未就绪或漂移对应 `preview_unavailable` / `preview_stale`，不能报 PASS。受控 Codex QA 会话继承控制器给的 `PREVIEW_URL`、`CURL_HOME`，普通 HTTP 方法、路径、header、body 经 `CURL_HOME` 中 `.curlrc` 指向的 Unix socket 桥转发：
+控制器把当前 PR 编号和 40 位 head SHA 绑定到预览能力，先查预览 `/api/brain/health` 的 `git_sha`。不一致、预览换版或能力关闭即停止；部署恢复后只在同一 head 重新验。预览未就绪或漂移对应 `preview_unavailable` / `preview_stale`，不能报 PASS。受控 Codex QA 会话从控制器提示词取得本轮完整 `PREVIEW_URL`；控制器不会自动注入 `PREVIEW_URL` 环境变量，须先在执行请求的同一 shell 中赋值。`CURL_HOME` 由控制器自动注入，保留其原值；普通 HTTP 方法、路径、header、body 经其中 `.curlrc` 指向的 Unix socket 桥转发：
 
 ```bash
-# 仅在控制器已授予本轮预览能力的 QA 会话内执行；PREVIEW_URL 用本轮提示词的完整值
+# 仅在控制器已授予本轮预览能力的 QA 会话内执行；先用提示词原值替换占位符
+PREVIEW_URL='<本轮提示词中的完整 PREVIEW_URL>'
 curl -fsS "$PREVIEW_URL/api/brain/health"
 ```
 
 将响应 `git_sha` 与本 PR 的 40 位 head SHA 比对；不能直连预览 TCP 端口，也不能把生产地址代入 `PREVIEW_URL`。只允许同源 HTTP API 和隔离 Chromium 页面经桥访问。桥拒绝任意上游、跨源重定向、`CONNECT`/upgrade，限制 body 大小与超时；浏览器阻断跨源请求及 WebSocket，context 使用 `serviceWorkers: 'block'`。每个 QA 场景新建隔离 context/进程，关闭后的能力不能复用。依赖 WS、Service Worker 或跨源资源的步骤应写 `CANNOT_VERIFY` 并列出实际已验步骤与阻断原因，不能伪称 PASS。错误 PR/head、非法 origin、超大 body 或超时同样不能给成功结论。
 
-可信浏览器前置：专用依赖目录 `~/.cecelia/coding-workflow-runtime/playwright-1.62.1/node_modules` 下的 Playwright 与 playwright-core 均须为 1.62.1，包的 integrity 与本仓 `package-lock.json` 一致；正式 clone 的 `node_modules` 须链到该专用依赖目录。以下只读检查会在缺依赖、版本或链接不符时失败；运行用户按实际 home 和 clone 路径替换。headless 实启动检查会启动并关闭 Chromium，只供获准的现场维护使用，本次手册 QA 不执行。
+可信运行依赖前置：以版本化的 `packages/brain/scripts/coding-workflow/runner/runtime-deps/package.json` 和 `package-lock.json` 为安装清单，在服务空闲且持有启动器外锁的维护窗口，将两份清单复制到受控依赖安装目录并执行 `npm ci --prefix <受控依赖安装目录> --ignore-scripts`；验证后再由维护过程替换正式目录并保留旧目录备份，不能在运行中的依赖目录直接安装。专用依赖目录 `~/.cecelia/coding-workflow-runtime/playwright-1.62.1/node_modules` 保持稳定：Playwright 与 playwright-core 均为 1.62.1，另含 Acorn 8.16.0；各包 integrity 与上述版本化 lock 一致，正式 clone 的 `node_modules` 须链到该专用依赖目录。以下只读检查会在缺依赖、版本或链接不符时失败；运行用户按实际 home 和 clone 路径替换。headless 实启动检查会启动并关闭 Chromium，只供获准的现场维护使用，本次手册 QA 不执行。
 
 ```bash
 RUNTIME_MODULES="$HOME/.cecelia/coding-workflow-runtime/playwright-1.62.1/node_modules"
 CLONE_MODULES="$HOME/perfect21/cecelia-cw-runner/node_modules"
 test -L "$CLONE_MODULES" && test "$(readlink "$CLONE_MODULES")" = "$RUNTIME_MODULES"
-RUNTIME_MODULES="$RUNTIME_MODULES" node -e 'const fs=require("fs"),path=require("path"),m=process.env.RUNTIME_MODULES,repo=require("./package-lock.json"),runtime=JSON.parse(fs.readFileSync(path.join(m,"..","package-lock.json")));for(const n of ["playwright","playwright-core"]){const p=JSON.parse(fs.readFileSync(path.join(m,n,"package.json"))),a=repo.packages["node_modules/"+n],b=runtime.packages["node_modules/"+n];if(p.version!=="1.62.1"||a.version!==p.version||b?.version!==p.version||!a.integrity||b.integrity!==a.integrity)throw Error(n+" version/integrity mismatch");console.log(n,p.version,a.integrity)}'
+RUNTIME_MODULES="$RUNTIME_MODULES" node -e 'const fs=require("fs"),path=require("path"),m=process.env.RUNTIME_MODULES,repo=require("./packages/brain/scripts/coding-workflow/runner/runtime-deps/package-lock.json"),runtime=JSON.parse(fs.readFileSync(path.join(m,"..","package-lock.json")));for(const [n,v] of Object.entries({playwright:"1.62.1","playwright-core":"1.62.1",acorn:"8.16.0"})){const p=JSON.parse(fs.readFileSync(path.join(m,n,"package.json"))),a=repo.packages["node_modules/"+n],b=runtime.packages["node_modules/"+n];if(p.version!==v||a.version!==p.version||b?.version!==p.version||!a.integrity||b.integrity!==a.integrity)throw Error(n+" version/integrity mismatch");console.log(n,p.version,a.integrity)}'
 RUNTIME_MODULES="$RUNTIME_MODULES" node -e 'const {createRequire}=require("module");const r=createRequire(process.env.RUNTIME_MODULES+"/playwright/package.json");(async()=>{const b=await r("playwright").chromium.launch({headless:true,args:["--single-process","--no-zygote"]});await b.close();console.log("Chromium headless OK")})().catch(e=>{console.error(e.message);process.exitCode=1})'
 ```
 
-若依赖或浏览器二进制缺失，helper 报 `preview_browser_unavailable` 或启动失败，停止浏览器验收，不从脏主仓的 `node_modules` 猜测成功。ZenithJoy 在 `repos.json` 为 `automerge=false`；PR #2132 待人工处理，合并和业务生产仍须人工放行。本手册金丝雀只核对文档与实现，不代表重新完成浏览器或生产业务验收。
+运行健康检查缺少 Acorn 时返回 `runtime_acorn_unavailable`，版本不是 8.16.0 或解析接口不符时返回 `runtime_acorn_version_mismatch`；停止运行并修复可信依赖，不能用旧版健康结果替代。若浏览器依赖或二进制缺失，helper 报 `preview_browser_unavailable` 或启动失败，停止浏览器验收，不从脏主仓的 `node_modules` 猜测成功。ZenithJoy 在 `repos.json` 为 `automerge=false`；PR #2132 待人工处理，合并和业务生产仍须人工放行。本手册金丝雀只核对文档与实现，不代表重新完成浏览器或生产业务验收。
