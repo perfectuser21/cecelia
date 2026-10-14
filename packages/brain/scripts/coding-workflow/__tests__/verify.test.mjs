@@ -266,6 +266,12 @@ describe('verify 活动（子进程 + 假 claude）', () => {
     expect(r.result.reason_code).toBe('claude_auth');
   });
 
+  it('verify-authresult在大日志pipe背压下保留末尾鉴权事件，不误报claude_failed', async () => {
+    const r = await run('verify-authresult', {}, { FAKE_CLAUDE_MARKER: 'x'.repeat(100000) });
+    expect(r.result, JSON.stringify(r.result)).toMatchObject({ status: 'failed', failure_class: 'needs_human', reason_code: 'claude_auth' });
+    expect(r.stderr).toContain('"result":"Invalid API key · Please run /login"');
+  });
+
   it('claude 鉴权失败 -> needs_human claude_auth', async () => {
     const r = await run('auth');
     expect(r.result.failure_class).toBe('needs_human');

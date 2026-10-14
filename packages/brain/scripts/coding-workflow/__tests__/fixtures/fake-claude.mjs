@@ -82,6 +82,14 @@ console.log(`FAKE_PREV_ERRORS: ${(prompt.match(/^PREV_ERRORS: (.*)$/m) || [])[1]
 console.log(`FAKE_PROMPT_MENTIONS_BUILD: ${prompt.includes('03-build')}`);
 for (let i = 0; i < 200; i += 1) console.log(`fake claude log line ${i}`);
 
+// 鉴权终态等待两条管道写完再退出；CI背压不能截掉末尾result事件。
+if (mode === 'verify-authresult') {
+  const event = { type: 'result', subtype: 'error', is_error: true, result: 'Invalid API key · Please run /login' };
+  await new Promise(resolve => process.stdout.write(`${JSON.stringify(event)}\n`, resolve));
+  await new Promise(resolve => process.stderr.write('', resolve));
+  process.exit(1);
+}
+
 if (mode === 'nofile') process.exit(0);
 
 const field = (name) => (prompt.match(new RegExp(`^${name}: (.+)$`, 'm')) || [])[1];
@@ -139,11 +147,6 @@ function verify() {
   if (mode === 'verify-bizauth') {
     emitBash('npm test', 'FAIL auth.test.js > login: authentication failed for user admin');
     console.log(JSON.stringify({ type: 'result', subtype: 'error_max_turns', is_error: true, result: 'max turns reached' }));
-    process.exit(1);
-  }
-  // verify-authresult：claude 自身的 result 事件报鉴权错误
-  if (mode === 'verify-authresult') {
-    console.log(JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'Invalid API key · Please run /login' }));
     process.exit(1);
   }
   console.log(`FAKE_BUILD_PRESENT: ${fs.existsSync(path.join(path.dirname(field('EVIDENCE_PATH')), '03-build.md'))}`);
