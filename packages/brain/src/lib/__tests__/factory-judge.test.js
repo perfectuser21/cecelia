@@ -211,3 +211,34 @@ describe('Commander v2 正式独立核验与归属（D 回归）', () => {
   });
 
 });
+
+
+describe('Code未决结果后续独立证实（D 回归）',()=>{
+  const mk = () => {
+    const implementation={kind:'code',id:'publish',version:'2',digest:'c2'},environment={id:'phone',fingerprint:'p1'};
+    const frozen={commander_implementations:{business_requirement_sha256:'business',code:{implementation,path:'publish.js'},skill:{implementation:{kind:'skill',id:'s2',version:'2',digest:'s2'},path:'SKILL.md'}},
+      implementation_bindings:[{...implementation,path:'publish.js',status:'verified',validation_scope:'reference_only'}],
+      steps:[{step_id:'s1',locator:{step_key:'publish'},contract:{readback:{type:'metric',expect:{op:'==',value:1}}}}]};
+    const common={run_id:'run-1',activity_id:'a1',reference_id:'ref1',activity_definition_version_id:'av2',identity_protocol:2,run_binding_id:'binding-1',binding_verified:true,frozen_payload:frozen,evidence:{implementation,environment,execution_role:'primary',observed:{value:1}}};
+    const original={...common,id:'unknown-1',step_id:null,outcome:'unknown',started_at:'2026-10-14T08:00:00Z',ended_at:'2026-10-14T08:00:01Z'};
+    const later={...common,id:'later-1',step_id:null,outcome:'pass',started_at:'2026-10-14T08:00:01Z',ended_at:'2026-10-14T08:00:02Z'};
+    const step={...later,id:'step-1',step_id:'s1'};
+    const v={task_id:'exec-1',run_id:'run-1',attempt:1,definition_sha256:'hash',verdict:'PASS',assertions:[{name:'cleanup',pass:true},{name:'readback:ref1:activity',pass:true,implementation,environment,evidence:['actual-probe-source']}],evidence:['independent-source']};
+    const c={phase:'final',verdict:'PASS',verify_task_id:'verify-1',envelope:{run_id:'run-1',attempt:1,definition:{snapshot_sha256:'hash'},contract:{environment}},readback_resolution:{kind:'independent_readback_success',readbacks:[{unknown_span_id:'unknown-1',readback_span_id:'later-1',verification_assertion:'readback:ref1:activity'}]}};
+    const t={id:'exec-1',status:'completed',payload:{factory_dispatch:true,commander_protocol:'commander-v2'},result:{workflow_control:c}};
+    const store=fakeStore({verifyTask:{id:'verify-1',status:'completed',result:{workflow_verification:v}}});
+    store.readActivityEvidence=vi.fn(async()=>[original,later,step]);
+    return {original,later,step,v,c,t,store};
+  };
+  it('保留unknown原件，后续机械PASS及正式独立断言允许派生Code资格',async()=>{
+    const f=mk(),out=await judgeTask(f.t,depsWith(f.store));
+    expect(out.activity_evidence[0]).toMatchObject({pass:true,code_independent_pass:true,readback_verified:true});
+    expect(out.activity_evidence[0].outcomes).toContainEqual({step_id:null,outcome:'unknown'});
+  });
+  it('仅原unknown、自填resolution、错span引用或借另一run都不合格',async()=>{
+    for(const mutate of [f=>f.store.readActivityEvidence.mockResolvedValue([f.original]),f=>f.v.assertions.pop(),f=>f.c.readback_resolution.readbacks[0].readback_span_id='wrong',f=>f.later.run_id='run-2',f=>f.later.run_binding_id='other',f=>f.later.evidence={...f.later.evidence,environment:{id:'other',fingerprint:'p1'}},f=>f.original.outcome='fail']) {
+      const f=mk();mutate(f);const out=await judgeTask(f.t,depsWith(f.store));
+      expect(out.activity_evidence.find(x=>x.evidence_scope.implementation.kind==='code').code_independent_pass).toBe(false);
+    }
+  });
+});
