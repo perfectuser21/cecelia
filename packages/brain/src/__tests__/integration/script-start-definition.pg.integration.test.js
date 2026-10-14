@@ -1,6 +1,7 @@
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
-import {randomUUID} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+import {randomUUID,createHash} from 'node:crypto';
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {scriptDefinitionDatabase} from '../fixtures/script-definition-db.js';
 import {versionsDatabase,seedWorkflows} from '../fixtures/definition-versions-db.js';
@@ -197,4 +198,17 @@ it('managed启动回执丢失后inspect恢复同一Run，不能二次worker.star
   const original=(await db.query('SELECT * FROM run_definition_bindings')).rows[0];
   expect(await triggerScriptRun(t,deps)).toMatchObject({success:true,alreadyRunning:true});
   expect(calls).toEqual(['worker.start']);expect((await db.query('SELECT * FROM run_definition_bindings')).rows).toEqual([original]);
+});
+
+it.each(['legacy','managed'])('跨提交定义D与执行I独立冻结且实际安装字节匹配：%s',async transportKind=>{
+  await fixture.close();fixture=await scriptDefinitionDatabase({reuseOldImplementation:true});db=fixture.db;workflow=fixture.workflow.workflow_id;
+  const implementation=fixture.activities[0].payload.implementation_bindings[0];
+  expect(implementation.revision).not.toBe(fixture.definition.source.revision);
+  expect('sha256:'+createHash('sha256').update(readFileSync(fixture.command.split(' ')[1])).digest('hex')).toBe(implementation.digest);
+  const t=await task({cmd:fixture.command,source_revision:implementation.revision,...(transportKind==='managed'?{managed_script:{profile:'harmless'}}:{})});
+  const deps=transportKind==='managed'?(await managedDependencies()).deps:{pool:db,spawnFn:transport};
+  const result=await triggerScriptRun(t,deps);expect(result).toMatchObject({success:true});
+  const run=(await db.query('SELECT * FROM task_runs WHERE task_id=$1',[t.id])).rows[0];
+  expect(run.context.workflow_snapshot).toMatchObject({source_revision:implementation.revision,entry_source_revision:implementation.revision,definition_source_revision:fixture.definition.source.revision});
+  expect((await db.query('SELECT * FROM run_definition_bindings WHERE run_id=$1',[run.run_id])).rows[0]).toMatchObject({workflow_definition_version_id:fixture.workflow.id,release_id:fixture.release.id});
 });
