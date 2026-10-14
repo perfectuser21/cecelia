@@ -60,6 +60,14 @@ export function scriptRuntimeIdentity(task,spec,release,workflow,activities,runI
   requireValue(typeof entry==='string'&&path.posix.isAbsolute(entry)&&bindings.some(b=>b.kind==='code'&&b.revision===revision
     &&(entry.endsWith('/'+b.path)||path.posix.basename(entry)===path.posix.basename(b.path))
     &&(!patrol||b.repo===PATROL_REPO&&entry.includes('/releases/'+revision+'/'))),'执行入口与任务源码及已核验Code不符');
+  for(const [field,actual] of Object.entries({source_revision:sources.source_revision,phone_source_revision:phone,control_source_revision:control})){
+    const schema=contract.input_schema?.properties?.[field];
+    const required=patrol&&field!=='control_source_revision'||contract.input_schema?.required?.includes(field);
+    if(actual===undefined&&!required)continue;
+    if(!schema&&!patrol)continue;
+    const allowed=schema&&Object.hasOwn(schema,'const')?[schema.const]:schema?.enum;
+    requireValue(Array.isArray(allowed)&&allowed.length>0&&allowed.length<=20&&allowed.every(v=>SHA.test(v))&&allowed.includes(actual),'执行来源不满足固定输入const/enum：'+field);
+  }
   if(patrol){
     if(sources.original_scope?.phone_source_revision!==undefined)requireValue(phone===sources.original_scope.phone_source_revision,'恢复原始手机源码不可改变');
     requireValue(SHA.test(phone)&&targetPath.endsWith('/phone-account-patrol/releases/'+phone),'手机源码与真实并存安装目标不符');

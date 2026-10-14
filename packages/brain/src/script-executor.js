@@ -33,7 +33,7 @@ import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { sshWithStdin, sshRun } from './lib/ssh-exec.js';
 import { sshTargetFor, resolveMachineId, listComputeWorkerIds } from './machine-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
-import { startRun,finishRun } from './lib/task-run.js';
+import { startRun } from './lib/task-run.js';
 import {startScriptDefinitionRun} from './lib/script-run-definition.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { isAllowed } from './circuit-breaker.js';
@@ -373,7 +373,8 @@ export async function triggerScriptRun(task, deps = {}) {
     try {
       outcome = await once();
     } catch (second) {
-      if(definedRun)await finishRun({runId,status:'failed',error:'script_spawn_failed: '+second.message},{pool});
+      // 无回执不能证明远端没启动；保留同一未确认尝试供既有ALREADY重放，终态由真实收割决定。
+      if(definedRun)await recordTaskEventSafe(pool,task.id,'script_dispatch_unconfirmed',{run_id:runId,reason:'transport_unconfirmed'});
       return { success: false, taskId: task.id, reason: 'script_spawn_failed', error: `${first.message} | 重试: ${second.message}` };
     }
   }
