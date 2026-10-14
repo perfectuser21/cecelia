@@ -23,7 +23,7 @@ function templateCommand(template,payload){
     const value=payload[key];
     if(value===undefined){applicable=false;return '';}
     requireValue((key==='phone_serial'&&typeof value==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(value))
-      ||(key==='recovery_demand_id'&&UUID.test(value||'')),'固定脚本模板参数不可确认');
+      ||(key==='recovery_demand_id'&&typeof value==='string'&&UUID.test(value)),'固定脚本模板参数不可确认');
     return value;
   });
   return applicable?rendered:null;
