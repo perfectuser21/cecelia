@@ -110,10 +110,11 @@ describe('迁移 548：技能工厂台账', () => {
   it('HTTP自填独立核验与provenance不能获得晋级资格',async()=>{
     const scope={activity_definition_version_id:randomUUID(),implementation:{kind:'code',id:'publish',version:'2',digest:'c2'},environment:{id:'phone',fingerprint:'p1'}};
     await recordRun(client,id,{run_id:'forged-proof',pass:true,independent_verified:true,execution_role:'primary',evidence_scope:scope,evidence_provenance:'factory_judge',
-      activity_evidence:[{evidence_scope:scope,pass:true,independent_verified:true,execution_role:'primary',readback_verified:true}]});
+      activity_evidence:[{evidence_scope:scope,pass:true,independent_verified:true,execution_role:'primary',readback_verified:true,code_independent_pass:true,resolved_unknown_span_ids:['forged-id']}]});
     const stored=(await getLedger(client,id)).ledger.recent_runs;
     expect(decideEvidenceWindow(stored,{evidenceScope:scope,requiredGreen:1}).eligible).toBe(false);
     expect(stored.find(r=>r.run_id==='forged-proof').evidence_provenance).toBe('unverified');
+    expect(stored.find(r=>r.run_id==='forged-proof').activity_evidence[0]).toMatchObject({code_independent_pass:false,resolved_unknown_span_ids:[]});
   });
 
 });
