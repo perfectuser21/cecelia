@@ -21,7 +21,7 @@ beforeEach(() => {
 const fs=require('fs'),args=process.argv.slice(2),file=${JSON.stringify(state)},s=JSON.parse(fs.readFileSync(file));
 const save=()=>fs.writeFileSync(file,JSON.stringify(s));
 fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({op:args[0],locked:fs.existsSync(${JSON.stringify(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))})})+'\n');
-if(args[0]==='print-disabled') console.log('disabled services = {\n "${label}" => '+(s.format==='boolean'?s.disabled:(s.disabled?'disabled':'enabled'))+'\n}');
+if(args[0]==='print-disabled') console.log('disabled services = {\n "${label}" => '+(s.rawValue??(s.format==='boolean'?s.disabled:(s.disabled?'disabled':'enabled')))+'\n}');
 else if(args[0]==='print') {if(!s.loaded){console.error('Could not find service "${label}" in domain for system');process.exit(113);}console.log('active count = 0\nstate = not running');}
 else if(args[0]==='disable'||args[0]==='enable') {if(s.failRestore && args[0]==='disable' && s.boots){process.exit(8);}s.disabled=args[0]==='disable';}
 else if(args[0]==='bootout'){if(s.failBootout){process.exit(9);}s.loaded=false;}
@@ -76,5 +76,18 @@ it('禁用状态恢复失败也显式失败，回滚文件并保锁', async () =
   await expect(run()).rejects.toThrow('runtime_install_rollback_failed');
   expect(get()).toMatchObject({ loaded: false });
   expect(fs.readFileSync(dest, 'utf8')).toBe(original);
+  expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(true);
+});
+it('目标label存在但状态词未知时拒绝，不猜成enabled', async () => {
+  set({ rawValue: 'unknown' });
+  await expect(run()).rejects.toThrow('runtime_install_disabled_state_unknown');
+  expect(commands().map(x => x.op)).toEqual(['print-disabled']);
+  expect(fs.readFileSync(dest, 'utf8')).toBe(original);
+});
+it('回滚读取plist失败：仍恢复原enabled位并保锁，不盲目bootstrap', async () => {
+  fs.writeFileSync(script, `#!/bin/bash\nrm '${dest}'\nmkdir '${dest}'\nexit 3\n`);
+  await expect(run()).rejects.toThrow('runtime_install_rollback_failed');
+  expect(get().disabled).toBe(false);
+  expect(commands().some(x => x.op === 'bootstrap')).toBe(false);
   expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(true);
 });
