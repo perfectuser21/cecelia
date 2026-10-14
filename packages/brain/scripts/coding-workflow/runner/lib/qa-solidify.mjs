@@ -6,8 +6,9 @@ import path from 'node:path';
 import { run, git } from './proc.mjs';
 import { buildQaSmoke, selectQaSmokeItems, registerSmoke } from '../../lib/qa-smoke.mjs';
 import { productionMatchers } from '../../lib/qa-report.mjs';
-import { touchesApiSurface } from '../../lib/pr-kind.mjs';
+import { touchesApiSurface, onlyMarkdownFiles } from '../../lib/pr-kind.mjs';
 import { qaSmokeOf, productionPatterns } from '../../lib/repo-profile.mjs';
+import { isRecordFile } from './qa-records.mjs';
 
 const PREFLIGHT_TIMEOUT_MS = 60 * 1000;
 
@@ -37,6 +38,49 @@ export async function prTouchesApi(worktree) {
   return r.code !== 0 || touchesApiSurface(r.stdout.split('\n').filter(Boolean));
 }
 
+/** 只有提交与现场均证明为普通 Markdown 才跳过固化；任一未知沿用原固化/缺失门。 */
+async function prOnlyMarkdown(worktree, branch) {
+  try {
+    const base = await git(worktree, ['merge-base', 'origin/main', 'HEAD']);
+    if (base.code !== 0 || !/^[a-f0-9]{40}$/.test(base.stdout.trim())) return false;
+    const files = new Set();
+    const productFiles = new Set();
+    let committedProduct = false;
+    // 分别检查，防止已提交源码被工作区回退抵消，或暂存源码被未暂存回退抵消。
+    for (const refs of [[base.stdout.trim(), 'HEAD'], ['--cached', 'HEAD'], []]) {
+      const r = await git(worktree, ['diff', '--raw', '--no-abbrev', '-z', '--no-renames', '--ignore-submodules=none', ...refs]);
+      if (r.code !== 0) return false;
+      const entries = r.stdout.split('\0');
+      if (entries.pop() !== '') return false;
+      for (let i = 0; i < entries.length; i += 2) {
+        // 不允许可执行文件、symlink、submodule、冲突或未知 raw 结构伪装成 .md。
+        const file = entries[i + 1];
+        if (!/^:(?:100644|000000) (?:100644|000000) [a-f0-9]+ [a-f0-9]+ [AMD]$/.test(entries[i]) || typeof file !== 'string') return false;
+        files.add(file);
+        if (!isRecordFile(file, branch)) {
+          productFiles.add(file);
+          if (refs[0] === base.stdout.trim()) committedProduct = true;
+        }
+      }
+    }
+    const untracked = await git(worktree, ['ls-files', '--others', '--exclude-standard', '-z']);
+    if (untracked.code !== 0) return false;
+    const extra = untracked.stdout.split('\0');
+    if (extra.pop() !== '') return false;
+    for (const file of extra) { files.add(file); if (!isRecordFile(file, branch)) productFiles.add(file); }
+    if (!committedProduct || !onlyMarkdownFiles([...productFiles])) return false;
+    for (const file of files) {
+      try {
+        const stat = fs.lstatSync(path.join(worktree, file));
+        if (!stat.isFile() || (stat.mode & 0o111)) return false;
+      } catch (error) {
+        if (error.code !== 'ENOENT' || extra.includes(file)) return false;
+      }
+    }
+    return true;
+  } catch { return false; }
+}
+
 /**
  * QA 与裁判都通过：把 PASS 的 T-n API 命令逐条在预览上预跑，跑通的固化成回归 smoke 并登记（审计 #9，决策 c8621227），
  * 返回要随 QA 记录一并提交的路径；没有可固化的条目返回 []。
@@ -49,6 +93,10 @@ export async function solidifyQa(ctx, pr, s, round, worktree, intent, reportFile
   const paths = qaSmokeOf(ctx.cfg.repoProfile);
   if (!paths) {
     s.smoke_note = `本仓不固化回归 smoke（repos.json qa_smoke=null，第 ${round} 轮）`;
+    return [];
+  }
+  if (await prOnlyMarkdown(worktree, pr.headRefName)) {
+    s.smoke_note = `第 ${round} 轮产品仅普通纯 Markdown 文档改动，不固化 API 回归 smoke（按本任务既有 QA 记录规则分类；预览 health 验收不扩大任务范围）`;
     return [];
   }
   const file = `${paths.dir}/cw-${String(intent.taskId).slice(0, 8)}-qa-smoke.sh`;

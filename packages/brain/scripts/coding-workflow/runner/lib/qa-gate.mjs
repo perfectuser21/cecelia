@@ -22,9 +22,11 @@ import { runJudge, priorJudgeFiles } from './judge-gate.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
 import { prFile, stateDir, prLabel } from './repos.mjs';
 import { solidifyQa } from './qa-solidify.mjs';
+import { isRecordFile } from './qa-records.mjs';
 import { waitForPreview, clearPreviewWait } from './preview-wait.mjs';
 
 export { preflightSmoke, prTouchesApi } from './qa-solidify.mjs';
+export { isRecordFile } from './qa-records.mjs';
 
 const EVALUATE_REL = 'packages/brain/scripts/coding-workflow/activities/evaluate.mjs';
 const EVALUATE_TIMEOUT_MS = 55 * 60 * 1000;
@@ -88,16 +90,6 @@ export async function escalate(ctx, pr, s, taskId, detail) {
   ctx.log(`[coding-qa][P1] PR #${pr.number} QA 门升级给 coding commander：${detail.type} ${JSON.stringify(detail)}`);
   writeState(ctx.cfg, pr.number, s);
   await report(ctx, taskId ?? (await remoteTaskId(ctx.cfg, pr.headRefName)), s);
-}
-
-/**
- * 不影响产品行为、也不改验收依据的记录性改动：本 PR 的版本碎片（changes/<分支>.md 或其他顶层碎片）、
- * 本 sprint 的 QA 报告 / 裁决 / QA 截图。01 需求、02 合同、别的 sprint、changes/ 子目录都不算。
- */
-export function isRecordFile(file, branch) {
-  if (/^changes\/[^/]+\.md$/.test(file)) return true;
-  const id8 = branch.slice(-8);
-  return new RegExp(`^sprints/[^/]+-cw-${id8}/(05-qa-report-r\\d+\\.md|06-judge-r\\d+\\.md|07-commander-r\\d+\\.md|qa-r\\d+/.+)$`).test(file);
 }
 
 /**

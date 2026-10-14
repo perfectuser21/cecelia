@@ -46,3 +46,11 @@ export async function stageQaRecords(worktree, { sprintDir, taskId, round }, rec
   if ((await git(worktree, ['--literal-pathspecs', 'add', '-f', '--', ...new Set(files)])).code !== 0) throw new Error('qa_report_add_failed');
   return files;
 }
+
+/** 既有 QA 记录规则：顶层版本碎片、本任务 05/06/07 报告及 qa-rN 产物；不是整个 sprint。 */
+export function isRecordFile(file, branch) {
+  if (/^changes\/[^/]+\.md$/.test(file)) return true;
+  const id8 = /-cw-([a-f0-9]{8})$/.exec(String(branch ?? ''))?.[1];
+  if (!id8) return false;
+  return new RegExp(`^sprints/[^/]+-cw-${id8}/(05-qa-report-r\\d+\\.md|06-judge-r\\d+\\.md|07-commander-r\\d+\\.md|qa-r\\d+/.+)$`).test(file);
+}
