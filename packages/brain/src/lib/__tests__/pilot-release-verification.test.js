@@ -11,7 +11,7 @@ async function module(){const url=new URL('../../../../../scripts/ci/pilot-relea
 function fixture(){
  const root=mkdtempSync(join(tmpdir(),'pilot-release-git-'));roots.push(root);const git=(...a)=>execFileSync('git',a,{cwd:root,encoding:'utf8'}).trim();
  git('init','-q','-b','pilot-fixture');git('config','user.email','fixture@example.invalid');git('config','user.name','fixture');git('remote','add','origin','https://github.com/perfectuser21/zenithjoy-workspace.git');
- mkdirSync(join(root,'scripts/smoke'),{recursive:true});writeFileSync(join(root,'scripts/smoke/pilot.sh'),'#!/bin/bash\nset -e\ntest -z "${CECELIA_INTERNAL_TOKEN:-}"\nprintf tested > actual-output\n');writeFileSync(join(root,'entry.js'),'export const fixed = true;\n');git('add','.');git('commit','-qm','fixture');const revision=git('rev-parse','HEAD');git('update-ref','refs/remotes/origin/main',revision);
+ mkdirSync(join(root,'scripts/smoke'),{recursive:true});writeFileSync(join(root,'scripts/smoke/pilot.sh'),'#!/bin/bash\nset -e\ntest -z "${CECELIA_INTERNAL_TOKEN:-}"\ntest -z "${GITHUB_TOKEN:-}"\nprintf tested > actual-output\n');writeFileSync(join(root,'entry.js'),'export const fixed = true;\n');git('add','.');git('commit','-qm','fixture');const revision=git('rev-parse','HEAD');git('update-ref','refs/remotes/origin/main',revision);
  const id=n=>`${String(n).padStart(8,'0')}-1111-4111-8111-111111111111`,repo='perfectuser21/zenithjoy-workspace';
  const row=(n,payload,identity)=>{const source={repo,path:'contracts/pilot.json',commit:revision};return {id:id(n),...identity,source_repo:repo,source_path:source.path,source_commit:revision,payload,payload_sha256:pilotPlanHash({source,payload})};};
  const activity=row(2,{activity_id:id(3),steps:[{step_id:id(4),locator:{activity_id:id(3),step_key:'verify'}}],implementation_bindings:[{kind:'code',scope:'activity',status:'verified',repo,path:'entry.js',revision,digest:'sha256:'+createHash('sha256').update(readFileSync(join(root,'entry.js'))).digest('hex')}]},{activity_id:id(3)});
@@ -146,4 +146,16 @@ it('正式caller仅接纳固定repo的新设备巡检scope并拒绝其它身份�
  const run=patch=>spawnSync('/bin/bash',['-c',w.jobs.snapshot.steps[0].run],{cwd:root,encoding:'utf8',env:{...base,...patch}});
  expect(run({}).status).toBe(0);
  for(const patch of [{MAP_SCOPE:'cecelia-device-patrol-definitions-extra'},{SOURCE_REPO:'other/repo'},{CALLER_REPO:'other/repo'},{HEAD:'b'.repeat(40)},{FIXTURE_REMOTE_HEAD:'b'.repeat(40)},{SOURCE_REPO:'perfectuser21/cecelia',CALLER_REPO:'perfectuser21/cecelia'}])expect(run(patch).status).not.toBe(0);
+});
+
+it('正式Git对象校源token仅接入CLI，登记回归子进程不可继承',async()=>{
+ const w=yaml.load(readFileSync(new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8'));
+ const step=w.jobs.verify.steps.find(s=>s.run?.includes('pilot-release-verification.mjs'));
+ expect(step.env.GITHUB_TOKEN).toBe('${{ github.token }}');
+ expect(w.permissions.contents).toBe('read');
+ expect(Object.values(w.permissions)).not.toContain('write');
+ expect(step.env).not.toHaveProperty('CECELIA_INTERNAL_TOKEN');
+ vi.stubEnv('GITHUB_TOKEN','fixture-source-only-token');
+ const f=fixture(),{runPilotReleaseVerification}=await module();
+ expect((await runPilotReleaseVerification({...f,repoRoot:f.root})).receipt.verdict).toBe('PASS');
 });
