@@ -14,6 +14,24 @@ const TTL_MIN = 1;
 const TTL_MAX = 240;
 const TTL_DEFAULT = 30;
 
+// 失败终判与锁过期不能证明工作者已停止。官方停止及清理事实落账后才解除隔离。
+const COMMANDER_LOCK_UNRESOLVED = `EXISTS (
+  SELECT 1 FROM tasks commander_holder
+   WHERE commander_holder.id::text = device_locks.locked_by
+     AND commander_holder.payload->>'commander_protocol' = 'commander-v2'
+     AND NOT COALESCE(
+       commander_holder.result->'workflow_control'->>'execution_stopped' = 'true'
+       AND commander_holder.result->'workflow_control'->'delivery'->'cleanup'->>'completed' = 'true'
+       AND commander_holder.result->'workflow_control'->'cleanup_verification'->>'confirmed' = 'true'
+       AND commander_holder.result->'workflow_control'->'cleanup_verification'->>'source' IN ('independent_verifier', 'official_status')
+       AND CASE WHEN jsonb_typeof(commander_holder.result->'workflow_control'->'cleanup_verification'->'evidence') = 'array'
+         THEN jsonb_array_length(commander_holder.result->'workflow_control'->'cleanup_verification'->'evidence') > 0
+         ELSE FALSE END
+       AND CASE WHEN jsonb_typeof(commander_holder.result->'workflow_control'->'delivery'->'cleanup'->'evidence') = 'array'
+         THEN jsonb_array_length(commander_holder.result->'workflow_control'->'delivery'->'cleanup'->'evidence') > 0
+         ELSE FALSE END, FALSE)
+)`;
+
 function clampTtl(ttlMinutes) {
   const n = Number(ttlMinutes);
   if (!Number.isFinite(n)) return TTL_DEFAULT;
@@ -43,6 +61,7 @@ export async function acquireDeviceLock(taskId, deviceName, ttlMinutes = TTL_DEF
           OR locked_by = $1
           OR (
             expires_at IS NOT NULL AND expires_at < NOW()
+            AND NOT (${COMMANDER_LOCK_UNRESOLVED})
             AND NOT EXISTS (
               SELECT 1 FROM tasks t
                WHERE t.id::text = device_locks.locked_by AND t.status = 'in_progress'
@@ -73,7 +92,8 @@ export async function acquireDeviceLock(taskId, deviceName, ttlMinutes = TTL_DEF
 /** 释放某任务持有的全部设备锁（无锁时 no-op）。 */
 export async function releaseDeviceLocksHeldBy(taskId, pool = defaultPool) {
   const { rowCount } = await pool.query(
-    'UPDATE device_locks SET locked_by = NULL, locked_at = NULL, expires_at = NULL WHERE locked_by = $1',
+    `UPDATE device_locks SET locked_by = NULL, locked_at = NULL, expires_at = NULL
+      WHERE locked_by = $1 AND NOT (${COMMANDER_LOCK_UNRESOLVED})`,
     [String(taskId)],
   );
   return rowCount;
@@ -94,6 +114,7 @@ export async function sweepStaleDeviceLocks(pool = defaultPool) {
     `UPDATE device_locks
         SET locked_by = NULL, locked_at = NULL, expires_at = NULL
       WHERE locked_by IS NOT NULL
+        AND NOT (${COMMANDER_LOCK_UNRESOLVED})
         AND locked_by ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
         AND NOT EXISTS (
           SELECT 1 FROM tasks t

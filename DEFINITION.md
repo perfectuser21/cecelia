@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.431.12
+**Brain 版本**: 1.431.13
 
 脚本失败回执按固定 task/run/workflow/设备/源码身份冻结脱敏限长诊断；近期 Run、Workflow 正文及 Runs Error 展示同次失败阶段、代码、原因与证据，缺失证据保留未知。
 
@@ -6781,3 +6781,5 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 openclaw-agent-reaper与手机窄派发共用独立收尾循环，不再受串行慢job阻塞；保留60秒执行周期、真实调用防重入、preview停用及全局Tick关闭。
 
 Commander v2 终态门禁保留 final PASS 成功出口；控制器持久化 final + FAIL/INCONCLUSIVE + terminal_status=failed 后可收失败账。未决清理事实与设备锁不因任务失败被改记已清理。真实 PostgreSQL 回归覆盖终判错配、原认领保留与旧入口兼容。
+
+Commander v2 未决清理设备锁独立隔离：任务失败和TTL到期不触发转让、主动释放或扫描回收；只有官方停止及非空清理证据、来源明确的cleanup_verification确认后才解除。运行证据白名单补实际实现/角色/环境与run_binding_id，保留原Code失败，支持Commander独立裁判救场业务结果。
