@@ -43,9 +43,11 @@ export async function runJudge(cfg, worktree, intent, { round, reportRel, log })
     // 前几轮裁决（金丝雀 4 翻转）：裁判知道开发方已经照哪些结论改过
     const priorRulings = priorJudgeFiles(worktree, intent.sprintDir, round).map((f) => ({ round: f.round, text: read(f.rel) }));
     const prompt = buildJudgePrompt({ ...texts, diff, qaReportFile: path.basename(reportRel), intentIds: intent.intentIds, round, priorRulings });
-    reply = await callJudge(prompt, { ...cfg.judgeConn, timeoutMs: cfg.judgeTimeoutMs });
+    const transcriptPath = path.join(cfg.logDir, `judge-${intent.taskId || path.basename(intent.sprintDir)}-r${round}-${Date.now()}.jsonl`);
+    reply = await callJudge(prompt, { ...cfg.judgeConn, timeoutMs: cfg.judgeTimeoutMs, transcriptPath });
   } catch (error) {
-    return { error: String(error?.message || error).split(':')[0] };
+    const reason = String(error?.message || error).split(':')[0];
+    return { error: reason, ...(/^judge_codex_(auth|configuration|config_missing)$/.test(reason) ? { escalate: true } : {}) };
   }
   const parsed = parseJudge(reply.content, { intentIds: intent.intentIds });
   if (parsed.errors.length > 0) {
@@ -60,5 +62,5 @@ export async function runJudge(cfg, worktree, intent, { round, reportRel, log })
   fs.writeFileSync(path.join(worktree, intent.sprintDir, file), renderJudgeReport({ round, model, parsed, decision, qaReport: path.basename(reportRel) }));
   // 建议级问题不阻断，但要可见（审计 #41）
   const concerns = parsed.issues.filter((i) => i.severity === '建议').map(({ id, severity, covers, detail, where }) => ({ id, severity, covers, detail, where }));
-  return { ...decision, concerns, file, model, usage: reply.usage };
+  return { ...decision, concerns, file, model, usage: reply.usage, ...(reply.provider ? { provider: reply.provider, cost_usd: reply.cost_usd, transcript_path: reply.transcriptPath, input_sha256: reply.input_sha256 } : {}) };
 }

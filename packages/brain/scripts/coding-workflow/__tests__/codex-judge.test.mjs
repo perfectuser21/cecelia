@@ -29,6 +29,7 @@ const a=process.argv.slice(2);
 if(!a.includes('-') || !a.includes('--ephemeral') || !a.includes('judge-model')) process.exit(5);
 if(process.env.DEPLOY_TOKEN || process.env.CECELIA_INTERNAL_TOKEN || process.env.TOAPIS_API_KEY || process.env.OPENAI_API_KEY) process.exit(6);
 console.log(JSON.stringify({type:'thread.started',thread_id:'judge-only'}));
+fs.writeFileSync(a[a.indexOf('--output-last-message')+1], ${JSON.stringify(JSON.stringify(answer))});
 console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:${JSON.stringify(JSON.stringify(answer))}}}));
 console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:3,output_tokens:4}}));`);
     const old = { ...process.env };
@@ -47,7 +48,10 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:3,output_t
   it.each([
     ['failed', "console.log(JSON.stringify({type:'turn.failed',error:{message:'quota exceeded'}}));", 'judge_codex_auth'],
     ['partial', "console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'{}'}}));", 'judge_codex_incomplete'],
-    ['tool-text', "console.log(JSON.stringify({type:'item.completed',item:{type:'command_execution',aggregated_output:'{}'}}));console.log(JSON.stringify({type:'turn.completed'}));", 'judge_empty'],
+    ['tool-text', "console.log(JSON.stringify({type:'item.completed',item:{type:'command_execution',aggregated_output:'{}'}}));console.log(JSON.stringify({type:'turn.completed'}));", 'judge_codex_tool_used'],
+    ['only-commentary', "console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'正在分析'}}));console.log(JSON.stringify({type:'turn.completed'}));", 'judge_empty'],
+    ['two-turns', "console.log(JSON.stringify({type:'turn.completed'}));console.log(JSON.stringify({type:'turn.completed'}));", 'judge_codex_incomplete'],
+    ['output-mismatch', "const fs=require('fs');const a=process.argv.slice(2);fs.writeFileSync(a[a.indexOf('--output-last-message')+1],'{}');console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'unrelated'}}));console.log(JSON.stringify({type:'turn.completed'}));", 'judge_codex_output_unverified'],
   ])('%s 不能伪装成功或退回API', async (_, script, error) => {
     const f = fixture(script);
     try { await expect(callJudge(prompt, { provider: 'codex', codexBin: f.bin, codexHome: f.dir, model: 'judge-model', timeoutMs: 3000 })).rejects.toThrow(error); }

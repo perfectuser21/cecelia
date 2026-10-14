@@ -11,7 +11,7 @@ import { prepareCodexSession } from './codex-session.mjs';
 
 const PROMPTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../prompts');
 // 只认 claude CLI 自身的鉴权/额度报错措辞；裸 login、/login 路由等业务输出不算
-const AUTH_RE = /\bauthenticat|please run \/login|invalid api key|quota|rate limit/i;
+const AUTH_RE = /\bauthenticat|please run \/login|invalid api key|quota|rate limit|usage limit|not logged in|login required/i;
 const KILL_GRACE_MS = 5000; // 超时 SIGTERM 之后到 SIGKILL 的宽限
 const TIMEOUT_MARGIN_MS = 10000; // 钳制超时时给收尾留的余量
 const EXIT_GRACE_MS = 1500; // claude 退出后等输出管道关闭的宽限，过了就整组 SIGKILL
@@ -38,6 +38,8 @@ function claudeEnv() {
 function remoteIsolatedEnv(ghConfigDir) {
   const env = claudeEnv();
   for (const key of GH_TOKEN_KEYS) delete env[key];
+  // 编排凭据不属于开发/QA/裁判；Codex 必须使用选定账号的订阅登录。
+  for (const key of ['DEPLOY_TOKEN', 'CECELIA_INTERNAL_TOKEN', 'TOAPIS_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'BARK_TOKEN', 'OP_SERVICE_ACCOUNT_TOKEN']) delete env[key];
   env.GH_CONFIG_DIR = ghConfigDir;
   return env;
 }
@@ -82,13 +84,14 @@ export function claudeTimeoutMs(budget, { envVar, defaultMs, reserveMs = 0, env 
  * streamJson（stdout 是 stream-json 对话记录，含工具输出）时只看 claude 自身的错误事件与 stderr，
  * 不扫描 tool_result 里的业务输出；否则扫描全部输出。
  */
-export function claudeFailure({ code, output, stdout = '', stderr = '', timedOut, terminated, provider }, { streamJson = false } = {}) {
+export function claudeFailure({ code, output, stdout = '', stderr = '', timedOut, terminated, provider, configurationError }, { streamJson = false } = {}) {
   const detail = provider ? { evidence: [{ provider }] } : {};
+  if (configurationError) return fail('needs_human', 'codex_configuration', { evidence: [{ provider, error: configurationError }] });
   if (timedOut) return fail('retryable', 'claude_timeout', detail);
   if (terminated) return fail('retryable', 'claude_failed', { evidence: [{ terminated: true, ...(provider ? { provider } : {}) }] });
   if (code === 0) return null;
   const authText = streamJson || provider === 'codex' ? `${claudeOwnErrorText(stdout)}\n${stderr}` : output;
-  if (AUTH_RE.test(authText)) return fail('needs_human', 'claude_auth', detail);
+  if (AUTH_RE.test(authText)) return fail('needs_human', provider === 'codex' ? 'codex_auth' : 'claude_auth', detail);
   return fail('retryable', 'claude_failed', detail);
 }
 
@@ -116,18 +119,18 @@ function signalGroup(child, signal, tag) {
 const withCostOutput = (args) => (args.includes('--output-format') ? args : [...args, '--output-format', 'json']);
 
 /** 起 claude 会话；返回值另带 cost_usd（result 事件的 total_cost_usd，Claude 兼容缺失值 0；Codex 订阅美元未知为 null）。 */
-export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolateRemote = false, transcriptPath }) {
-  const provider = process.env.CODING_WF_PROVIDER || 'claude';
-  if (!['claude', 'codex'].includes(provider)) return { code: null, stdout: '', stderr: '', output: `provider_unsupported:${provider}`, provider, cost_usd: null };
+export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolateRemote = false, transcriptPath, provider: selectedProvider, nativeOptions, codexEnv = {} }) {
+  const provider = selectedProvider ?? process.env.CODING_WF_PROVIDER ?? 'claude';
+  if (!['claude', 'codex'].includes(provider)) return { code: null, stdout: '', stderr: 'provider_unsupported', output: 'provider_unsupported', configurationError: 'provider_unsupported', provider, cost_usd: null };
   let native;
-  try { if (provider === 'codex') native = prepareCodexSession({ args: callerArgs, cwd }); }
-  catch (error) { return { code: null, stdout: '', stderr: '', output: error.message, provider, cost_usd: null }; }
+  try { if (provider === 'codex') native = prepareCodexSession({ args: callerArgs, cwd, env: { ...process.env, ...codexEnv }, nativeOptions }); }
+  catch (error) { return { code: null, stdout: '', stderr: error.message, output: error.message, configurationError: error.message, provider, cost_usd: null }; }
   const args = native?.args ?? withModel(withCostOutput(callerArgs));
-  const priced = (run) => ({ ...run, provider, cost_usd: provider === 'codex' ? null : sessionCostUsd(run.stdout ?? ''), ...(transcriptPath ? { transcriptPath } : {}) });
+  const priced = (run) => ({ ...run, provider, model: provider === 'codex' ? codexEnv.CODING_WF_CODEX_MODEL || process.env.CODING_WF_CODEX_MODEL || null : process.env.CODING_WF_CLAUDE_MODEL || DEFAULT_MODEL, cost_usd: provider === 'codex' ? null : sessionCostUsd(run.stdout ?? ''), ...(transcriptPath ? { transcriptPath } : {}) });
   if (!isolateRemote && provider === 'claude') return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv(), transcriptPath }));
   const ghConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-wf-gh-'));
   try {
-    return priced(await spawnClaude({ args, bin: native?.bin, cwd, timeoutMs, tag, env: { ...remoteIsolatedEnv(ghConfigDir), ...native?.env }, transcriptPath }));
+    return priced(await spawnClaude({ args, bin: native?.bin, stdin: native?.stdin, cwd, timeoutMs, tag, env: { ...remoteIsolatedEnv(ghConfigDir), ...native?.env }, transcriptPath }));
   } finally {
     fs.rmSync(ghConfigDir, { recursive: true, force: true });
   }
@@ -151,7 +154,7 @@ function openSink(transcriptPath, tag) {
   }
 }
 
-function spawnClaude({ args, cwd, timeoutMs, tag, env, transcriptPath, bin = process.env.CODING_WF_CLAUDE_BIN || 'claude' }) {
+function spawnClaude({ args, cwd, timeoutMs, tag, env, transcriptPath, stdin, bin = process.env.CODING_WF_CLAUDE_BIN || 'claude' }) {
   const sink = openSink(transcriptPath, tag);
   return new Promise((resolve) => {
     let output = '';
@@ -164,7 +167,12 @@ function spawnClaude({ args, cwd, timeoutMs, tag, env, transcriptPath, bin = pro
     let graceTimer;
     let child;
     try {
-      child = spawn(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: GROUP_KILL });
+      child = spawn(bin, args, { cwd, env, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], detached: GROUP_KILL });
+      if (stdin !== undefined) {
+        // 大规格/完整 diff 可超过系统 argv 上限。提前退出的子进程由 error/close 统一判失败。
+        child.stdin.on('error', () => {});
+        child.stdin.end(stdin);
+      }
     } catch (error) {
       const message = String(error?.message || error);
       sink.write(`${message}\n`);
