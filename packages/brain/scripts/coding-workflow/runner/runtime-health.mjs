@@ -21,6 +21,10 @@ export async function checkRuntimeHealth(env = process.env, { signal } = {}) {
   if (!env.CODING_WF_CODEX_MODEL?.trim() || !env.CODING_WF_JUDGE_MODEL?.trim()) throw new Error('runtime_models_missing');
   if (env.CODING_WF_CODEX_MODEL.trim() === env.CODING_WF_JUDGE_MODEL.trim()) throw new Error('runtime_judge_model_not_independent');
   if (env.CODING_WF_JUDGE_PROVIDER !== 'codex') throw new Error('runtime_judge_provider_not_codex');
+  let acorn;
+  try { acorn = await import('acorn'); }
+  catch { throw new Error('runtime_acorn_unavailable'); }
+  if (acorn.version !== '8.16.0' || typeof acorn.parse !== 'function') throw new Error('runtime_acorn_version_mismatch');
   const status = await runtimeProcess(env.CODING_WF_CODEX_BIN || 'codex', ['login', 'status'], {
     env: codexEnvironment(env), signal, timeoutMs: 15000,
   });

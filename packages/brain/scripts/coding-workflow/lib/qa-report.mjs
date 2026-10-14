@@ -7,6 +7,7 @@ import path from 'node:path';
 import { parseEvidence } from './evidence.mjs';
 import { BLOCKING } from './review.mjs';
 import { isReadonlyDocAssertion } from './qa-doc-assertion.mjs';
+import { isReadonlyQaCommand } from './readonly-qa-ast.mjs';
 
 const Q_RE = /^Q-\d+$/;
 export const CANNOT_VERIFY = 'CANNOT_VERIFY';
@@ -134,6 +135,7 @@ const IMAGE_PATH_RE = /[\w./-]+\.(?:png|jpe?g|webp)\b/gi;
 
 /** 条目是否用了浏览器：命令里直接出现，或跑的脚本是本次会话写出来、内容引用浏览器库的。 */
 function usesBrowser(command, executions) {
+  if (isReadonlyQaCommand(command)) return false;
   if (BROWSER_RE.test(command)) return true;
   const scripts = [...command.matchAll(/([\w./-]+\.(?:mjs|cjs|js|ts|py))\b/g)].map((m) => path.basename(m[1]));
   return scripts.some((name) => executions.some((e) => String(e.command).includes(name) && BROWSER_RE.test(String(e.command))));
