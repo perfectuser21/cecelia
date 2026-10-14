@@ -73,6 +73,8 @@ describe('install.sh', () => {
     // 将执行的命令
     expect(r.stdout).toContain(`launchctl bootstrap system /Library/LaunchDaemons/${LABEL}.plist`);
     expect(r.stdout).toContain(`launchctl enable system/${LABEL}`);
+    expect(r.stdout.indexOf(`launchctl enable system/${LABEL}`)).toBeLessThan(r.stdout.indexOf(`launchctl bootstrap system`));
+    expect(r.stdout).toContain('恢复安装前disabled/enabled状态');
 
     // 不落盘：没有在用户 home 下建任何东西
     expect(fs.existsSync(home)).toBe(false);
