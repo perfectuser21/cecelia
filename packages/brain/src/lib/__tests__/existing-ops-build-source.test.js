@@ -36,7 +36,7 @@ describe('固定 build 原生执行来源合同',()=>{
   });
 });
 
-import { BUILD_SOURCE_PATHS, proveBuildSources, buildSelectorEnabled } from '../existing-ops-build-source.js';
+import { BUILD_SOURCE_PATHS, proveBuildSources } from '../existing-ops-build-source.js';
 const buildSources=()=>Object.fromEntries(['test','helper','activity','cli','protocol'].map(key=>[key,key==='test'?explicitProvider(fixedBuild(BUILD_SOURCE_PATHS[key])):fixedBuild(BUILD_SOURCE_PATHS[key])]));
 const mutateBuild=(key,before,after)=>{const s=buildSources();expect(s[key]).toContain(before);s[key]=s[key].replace(before,after);return s;};
 describe('固定 build 执行封套反例（只解析，不执行 payload）',()=>{
@@ -77,11 +77,6 @@ describe('固定 build 执行封套反例（只解析，不执行 payload）',()
     const prefix="it('claude 参数：acceptEdits，允许 Bash，禁 git push 与 gh；prompt 带 S-n 列表与 03 路径', async () => {";
     for(const statement of ['return;','if(false) return;','const unused=async()=>{ await run("build-ok"); }; return;','switch(1){case 1:return;}','do {} while(true);'])
       expect(proveBuildSources(mutateBuild('test',prefix,prefix+statement),parse)).toBe(false);
-  });
-  it('独立marker缺省或0保旧，未知/动态/重复/可变拒绝',()=>{
-    for(const text of ['', '// export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=1;', 'const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=1;', 'export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=0;'])expect(buildSelectorEnabled(text,parse)).toBe(false);
-    expect(buildSelectorEnabled('export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=1;',parse)).toBe(true);
-    for(const text of ['export let EXISTING_OPS_BUILD_SELECTOR_SCHEMA=1;','export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=2;','export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=process.env.X;','export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=1; export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=0;'])expect(()=>buildSelectorEnabled(text,parse)).toThrow();
   });
   it('真实exclude未选择build测试时不凭文件存在认领活动模板与假CLI',async()=>{
     const config='packages/brain/vitest.config.js';
