@@ -10,6 +10,8 @@
 
 CI changes 输出、workspace-test 条件与 ci-passed 失败出口联合核验；npm 行为字段、实际 Vitest lock 解析与安装生命周期入口必须符合已审合同。API 根与 features 编译配置原文固定，消费路径祖先目录额外 tsconfig/jsconfig 拒绝；config/setup/三测试固定已审 b580 原文 hash，类型导入、语义注释、using 等均不能被规范化抹掉。AST 额外核真实 runtime import、active render、有函数体且非 declare 的 default export。组件正文可正常变化。
 
+正式草稿 CI 又暴露安装边界：Brain 单包 npm ci 不安装 API 的 TypeScript，顶层 require 使未使用证明的 definitionEdges 导入也崩溃。解析器现固定为 Brain devDependency TypeScript 5.9.3，首次适用证明时才从可信 Brain 安装加载；缺失或错版本明确抛错，不能由宽 catch 吞为空边或回退候选依赖。root/Brain 两份 lock 只追加必要依赖事实，API/CI 已审封套不改。
+
 ## 不变量与限制
 
 - 不改冻结 snapshot/definitions/owner 声明、原七条关系、联合门禁及三条注册断言；未知消费链不补边，原门禁继续拒绝。
