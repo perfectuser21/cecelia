@@ -103,6 +103,14 @@ function provenReaderClosure(consumer) {
     ||node.type==='Identifier'&&node.name==='parseEnvelope'&&parent?.type==='CallExpression'&&parent.callee===node&&!readerOf(node));
 }
 
+// 已独审的完整 runtime 指纹闭包：固定五文件只读→SHA摘要/比较；没有模板执行或原文出口。
+// 仅此路径且整个模块 AST 相等时认可该消费者；任何语义改动都须重新审查。
+// 这不把 runtime 加入文件白名单，模块原 R1–R7/进程别名扫描照常执行。
+const HASH_RUNTIME_FILE = path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
+const HASH_RUNTIME_SHA256 = '98bcc9fb345bf0e1a4dad7b15e69d54e28c4fc9fa3cf9eb5c8dd7ff94bbadde2';
+const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
+  &&createHash('sha256').update(astShape(parseModule(text))).digest('hex')===HASH_RUNTIME_SHA256;
+
 function envelopeRanges(src,sources) {
   const tree=parseModule(src), rows=astRows(tree);
   const declarations=tree.body.filter(n=>n.type==='ExportNamedDeclaration'&&n.declaration?.kind==='const').flatMap(n=>n.declaration.declarations).filter(n=>n.id.name==='ENVELOPES');
@@ -111,7 +119,7 @@ function envelopeRanges(src,sources) {
   if(data.init?.type!=='ObjectExpression'||!properties?.length||properties.some(p=>p.type!=='Property'||p.computed||p.method||p.kind!=='init'||p.value?.type!=='TemplateLiteral'||p.value.expressions.length))return null;
   if(rows.some(({node,parent})=>node.type==='Identifier'&&node.name==='ENVELOPES'&&!(parent===data&&parent.id===node)))return null;
   // 额外消费者没有获得纯数据资格；不推断它不会执行字符串。
-  for(const [file,text] of sources)if(file!==ENVELOPE_FILE&&file!==ENVELOPE_CONSUMER&&text.includes('existing-ops-build-envelopes'))return null;
+  for(const [file,text] of sources)if(file!==ENVELOPE_FILE&&file!==ENVELOPE_CONSUMER&&text.includes('existing-ops-build-envelopes')&&!provenFingerprintReader(file,text))return null;
   const consumer=parseModule(sources.get(ENVELOPE_CONSUMER)||''), usages=astRows(consumer);
   if(!provenReaderClosure(consumer))return null;
   const imports=consumer.body.filter(n=>n.type==='ImportDeclaration');
