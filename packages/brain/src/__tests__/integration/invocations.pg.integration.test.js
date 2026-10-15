@@ -22,7 +22,7 @@ const options={readFile:source=>fixedReader(source),probeRuntime:async()=>({read
 beforeEach(async()=>{
  fixedReader=async()=>content;
  fixture=await createIntakeTestDatabase();pool=fixture.pool;
- for(const table of ['task_events','task_runs','skill_registry','activity_definition_versions','workflow_definition_versions','warehouse_items'])await pool.query(`CREATE TABLE ${fixture.schema}.${table}(LIKE public.${table} INCLUDING ALL)`);
+ for(const table of ['task_events','task_runs','skill_registry','activity_definition_versions','workflow_definition_versions','warehouse_items','release_versions','release_observations'])await pool.query(`CREATE TABLE ${fixture.schema}.${table}(LIKE public.${table} INCLUDING ALL)`);
  skillId=randomUUID();taskId=randomUUID();const activityId=randomUUID();
  await pool.query('INSERT INTO skill_registry(id,name) VALUES($1,$2)',[skillId,`pure-${skillId}`]);
  definition={key:'pure',source:{repo:'perfectuser21/cecelia',ref:'flow.json',revision:'a'.repeat(40)},input_schema:schema,output_schema:schema,activities:[{id:activityId,key:'uppercase',executor_kind:'agent',runtime:{transport:'codex-bridge'},mutation_intent:'none',input_schema:schema,output_schema:schema,acceptance:['真实大写结果'],implementation:{kind:'skill',skill_id:skillId,repo:'perfectuser21/cecelia',path:'skills/pure/SKILL.md',revision:'a'.repeat(40)}}]};
@@ -72,6 +72,14 @@ describe('真实scratch调用账本与并发',()=>{
   const missing=await post('/resolve',{...body,input:{}});expect(missing.status).toBe(200);expect(missing.body.input_schema).toEqual(schema);expect(missing.body.gaps.some(g=>g.code==='input_schema_invalid')).toBe(true);
   expect((await post('',body)).status).toBe(202);
   expect((await request(app).get('/api/brain/invocations/by-request/request-one').set('x-tenant-id','other')).status).toBe(404);
+ });
+ it('正式调用无真实发布证据保持blocked，不能借候选证明授予正式资格',async()=>{
+  const activity=definition.activities[0],version=randomUUID(),payload={activity_id:activity.id,contract:activity};
+  await pool.query('INSERT INTO activity_definition_versions(id,activity_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[version,activity.id,payload,definitionDigest(activity),definitionDigest(payload),'perfectuser21/cecelia','flow.json','a'.repeat(40)]);
+  const released={target:{kind:'activity',id:activity.id,definition_version_id:version},mode:'released',input:{text:'abc'},request_key:'formal-one'};
+  const resolution=await post('/resolve',released);expect(resolution.status).toBe(200);expect(resolution.body.readiness).toBe('blocked');expect(resolution.body.gaps.some(g=>g.code==='verified_release_missing')).toBe(true);
+  expect((await post('',released)).status).toBe(409);
+  expect((await pool.query("SELECT count(*)::int n FROM tasks WHERE payload ? 'invocation'")).rows[0].n).toBe(0);
  });
  it('单次派发预留不重发；固定快照不漂版，撤销组装阻止新运行',async()=>{
   const accepted=await post('',body);expect(accepted.status).toBe(202);const task=(await pool.query('SELECT * FROM tasks WHERE id=$1',[accepted.body.task_id])).rows[0];
