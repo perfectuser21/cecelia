@@ -17,7 +17,7 @@ export async function invocationJson<T>(path: string, signal: AbortSignal, body?
   try {
     const response = await fetch(`/api/brain/invocations${path}`, { signal: controller.signal, credentials: 'same-origin', ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) });
     const result = await response.json();
-    if (!response.ok) throw new InvocationError(result.error?.message || result.message || `请求失败 HTTP ${response.status}`, response.status, result.gaps || []);
+    if (!response.ok) throw new InvocationError(result.error?.message || result.message || `请求失败 HTTP ${response.status}`, response.status, result.gaps || result.resolution?.gaps || []);
     return result;
   } finally { clearTimeout(timeout); signal.removeEventListener('abort', abort); }
 }

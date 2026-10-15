@@ -92,4 +92,15 @@ describe('现有目录调用', () => {
     expect(screen.getByRole('button',{name:'启动调用'})).toBeDisabled();
   });
 
+  it('执行前重验拒绝时展示后端更新的资源缺口', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('/resolve') ? response(ready)
+      : response({error:'INVOCATION_BLOCKED',message:'调用前置条件尚不满足',resolution:{...ready,readiness:'blocked',gaps:[{code:'resource_offline',message:'执行设备已离线'}]}},409)));
+    render(<InvocationPanel target={target} />);
+    fireEvent.change(await screen.findByLabelText('主题'),{target:{value:'测试'}});
+    await waitFor(() => expect(screen.getByRole('button',{name:'启动调用'})).toBeEnabled());
+    fireEvent.click(screen.getByRole('button',{name:'启动调用'}));
+    expect(await screen.findByText('执行设备已离线')).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'启动调用'})).toBeDisabled();
+  });
+
 });
