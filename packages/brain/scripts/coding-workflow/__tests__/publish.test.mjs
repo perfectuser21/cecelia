@@ -99,13 +99,14 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     git(worktree, 'add', '--', owner, '.implementation-source-relations.json'); git(worktree, 'commit', '-m', 'fixture source');git(worktree, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
     fs.mkdirSync(path.join(worktree, sprint));
     fs.writeFileSync(path.join(worktree, sprint, '01-intent.md'), `---\ntask_id: ${TASK_ID}\nstep: intent\nupstream: []\n---\n# fixture\n`);
-    fs.writeFileSync(path.join(worktree, sprint, '02-spec.md'), '# fixture spec\n');
+    const names = ['01-intent.md','01-invariants.md','02-spec.md','02-review.md','02-review-r1.md','02-review-r2.md','02-review-r3.md','02-response-r1.md','02-response-r2.md','03-build.md','04-evidence.md'];
+    for (const name of names.filter(name => name !== '01-intent.md')) fs.writeFileSync(path.join(worktree, sprint, name), `# fixture ${name}\n`);
     const r = await run('new', { sprint_dir: sprint });
     expect(r.exitCode, r.stderr).toBe(0);
     const manifest = JSON.parse(git(origin, 'show', `${branch}:.implementation-source-relations.json`));
-    expect(manifest.relations).toContainEqual({ owner_path: owner, path: `${sprint}/01-intent.md`, role: 'documentation' });
-    expect(manifest.relations).toContainEqual({ owner_path: owner, path: `${sprint}/02-spec.md`, role: 'documentation' });
-    expect(git(origin, 'show', '--name-only', '--format=', branch)).toContain('.implementation-source-relations.json');
+    for (const name of names) expect(manifest.relations).toContainEqual({ owner_path: owner, path: `${sprint}/${name}`, role: 'documentation' });
+    expect(manifest.relations).toHaveLength(names.length + 1);
+    expect(git(origin, 'show', '--name-only', '--format=', branch).trim().split('\n')).toEqual(['.implementation-source-relations.json', ...names.map(name => `${sprint}/${name}`)].sort());
     const head = git(worktree, 'rev-parse', 'HEAD');
     expect((await run('existing', { sprint_dir: sprint })).exitCode).toBe(0);
     expect(git(worktree, 'rev-parse', 'HEAD')).toBe(head);
