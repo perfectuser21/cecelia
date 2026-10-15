@@ -19,6 +19,10 @@ function checked(plan) {
   if (plan.workflow_key === 'douyin_lead_outreach' ? plan.send_authorized !== true : plan.send_authorized !== undefined) throw Error('send authorization invalid');
   if (!plan.env || typeof plan.env !== 'object' || Array.isArray(plan.env)) throw Error('leadgen env invalid');
   for (const [key, value] of Object.entries(plan.env)) {
+    if (key === 'QUEUED_VIDEO_COLLECTION_SECONDS') {
+      if (plan.workflow_key !== 'douyin_video_processing' || !/^[1-9][0-9]{0,3}$/.test(String(value)) || Number(value) > 1920) throw Error('102 collection budget invalid');
+      continue;
+    }
     if (!['LEADGEN_SOURCE_RUN', 'LEADGEN_LIMIT', 'LEADGEN_COMMENT_LIMIT', 'WF_MMV_SSH_ROUTE'].includes(key)) throw Error('leadgen env not allowed');
     if (key === 'WF_MMV_SSH_ROUTE' ? value !== 'public' : key === 'LEADGEN_SOURCE_RUN' ? !TOKEN.test(value) : !/^[1-9][0-9]?$/.test(String(value)) || Number(value) > 50) throw Error('leadgen env value invalid');
   }

@@ -13,6 +13,7 @@ import { startRun,finishRun } from './task-run.js';
 import { finalizeTask } from './task-terminal.js';
 import { recordTaskEventSafe } from './task-event-log.js';
 import { getRunDefinitionBinding } from './run-definition-binding.js';
+import { verifiedEmptyOutreach } from './leadgen-empty-terminal.js';
 import { reconcileRunEvidence } from './run-reconciliation.js';
 const CLAIMER='leadgen-run-dispatch';
 export const LEADGEN_SSH_ARGS=SSH_BASE_ARGS.filter((v,i,a)=>v!=='StrictHostKeyChecking=no'&&!(v==='-o'&&a[i+1]==='StrictHostKeyChecking=no'));
@@ -87,8 +88,11 @@ export async function validateLeadgenTerminal(pool,plan,response,deps={}) {
   if(result?.run_id!==plan.business_run_id||result.status!=='completed'||result.evidence_status!=='sent')throw Error('真实业务交付未完成');
   const spans=(await pool.query('SELECT * FROM spans WHERE run_id=$1 ORDER BY started_at,created_at',[plan.business_run_id])).rows;
   const reconciliation=reconcileRunEvidence({run_id:plan.business_run_id,context:binding,spans});
+  if(verifiedEmptyOutreach(plan,receipt,binding,spans,reconciliation))return {status:'completed',business_outcome:'empty',outward_sent:0,actual_send_acceptance:false,receipt,reconciliation,external_business_run_id:plan.business_run_id};
   if(reconciliation.business_outcome!=='pass'||reconciliation.evidence_status!=='verified')throw Error('中央完整路径证据未通过');
-  return {status:'completed',receipt,reconciliation,external_business_run_id:plan.business_run_id};
+  const scoring=result.results?.find(r=>r.activity==='scoring')?.result;
+  const scoreFacts=plan.workflow_key==='douyin_comment_scoring'?{scored_count:Number.isSafeInteger(scoring?.scored)?scoring.scored:null,scoring_outcome:scoring?.scored===0?'empty':Number.isSafeInteger(scoring?.scored)&&scoring.scored>0?'scored':'unknown',actual_scoring_acceptance:Number.isSafeInteger(scoring?.scored)&&scoring.scored>0}:{};
+  return {status:'completed',receipt,reconciliation,...scoreFacts,external_business_run_id:plan.business_run_id};
 }
 export async function reapLeadgenTask(pool,task,deps={}){
   const plan=task.payload.leadgen_run;
@@ -104,6 +108,7 @@ export async function reapLeadgenTask(pool,task,deps={}){
   if(!outcome)return null;
   await terminal(pool,task,outcome.status,outcome.reason??null,outcome,deps);
   if(plan.machine!=='mmv')await (deps.releaseLock??releaseDeviceLocksHeldBy)(task.id,pool);
-  await (deps.finishRun??finishRun)({runId:plan.controller_run_id,status:outcome.status,exitCode:response.exit_code,result:{external_business_run_id:plan.business_run_id,reconciliation:outcome.reconciliation??null}},{pool});
+  const facts=Object.fromEntries(['business_outcome','outward_sent','actual_send_acceptance','scored_count','scoring_outcome','actual_scoring_acceptance'].filter(k=>outcome[k]!==undefined).map(k=>[k,outcome[k]]));
+  await (deps.finishRun??finishRun)({runId:plan.controller_run_id,status:outcome.status,exitCode:response.exit_code,result:{external_business_run_id:plan.business_run_id,reconciliation:outcome.reconciliation??null,...facts}},{pool});
   return outcome.status;
 }

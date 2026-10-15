@@ -10,7 +10,7 @@ export function resolveLeadgenInput(task) {
   const key=task?.payload?.workflow_key, cfg=resolveWorkflowConfig(key), p=task?.payload?.leadgen;
   requireValue(LEADGEN_KEYS.includes(key)&&cfg?.dispatch_via==='leadgen-run-v1','未登记入口');
   requireValue(UUID.test(task.id||'')&&p&&typeof p==='object'&&!Array.isArray(p),'任务或输入无效');
-  requireValue(Object.keys(p).every(k=>['line','company_id','profile','serial','source_run','source_binding_run_id','limit','comment_limit','send_authorized'].includes(k)),'含未批准输入');
+  requireValue(Object.keys(p).every(k=>['line','company_id','profile','serial','source_run','source_binding_run_id','limit','comment_limit','send_authorized','collection_budget_s'].includes(k)),'含未批准输入');
   requireValue(TOKEN.test(p.line||'')&&UUID.test(p.company_id||''),'公司身份不完整');
   const scoring=key===LEADGEN_KEYS[2];
   requireValue(key===LEADGEN_KEYS[3]?p.send_authorized===true:p.send_authorized===undefined,'触达须有本次明确发送授权');
@@ -25,6 +25,7 @@ export function resolveLeadgenInput(task) {
     requireValue(typeof p.source_binding_run_id==='string'&&new RegExp(`^${upstream}-${p.source_run}__a[1-9][0-9]*$`).test(p.source_binding_run_id),'上游绑定身份错误');
     env.LEADGEN_SOURCE_RUN=p.source_run;
   }else requireValue(p.source_run===undefined&&p.source_binding_run_id===undefined,'此入口不接受上游批次覆盖');
+  if(p.collection_budget_s!==undefined){requireValue(key===LEADGEN_KEYS[1]&&Number.isSafeInteger(p.collection_budget_s)&&p.collection_budget_s>0&&p.collection_budget_s<=cfg.leadgen.timeout_sec-480,'采集预算无效');env.QUEUED_VIDEO_COLLECTION_SECONDS=String(p.collection_budget_s);}
   if(p.comment_limit!==undefined){requireValue(key===LEADGEN_KEYS[1]&&Number.isSafeInteger(p.comment_limit)&&p.comment_limit>=1&&p.comment_limit<=50,'评论数量无效');env.LEADGEN_COMMENT_LIMIT=String(p.comment_limit);}
   const business_tag=`brain${task.id.replaceAll('-','')}`;
   return {task_id:task.id,controller_run_id:`wfd-${task.id}`,workflow_key:key,workflow_id:cfg.leadgen.workflow_id,

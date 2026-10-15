@@ -92,8 +92,16 @@ describe('四flow真实完整交付形状闭环（隔离fixtures，非生产执�
   const receipt={binding_ack:{id:binding.id},frozen:{read_frozen_verified:true,snapshot_sha256:'runtime-hash-fixture',deployment:{source_commit:p.source_commit}},split_result:{run_id:p.business_run_id,status:'completed',evidence_status:'sent',results:[]}};
   const response={state:'terminal',exit_code:0,business_run_id:p.business_run_id,receipt};
   const pool={query:async()=>({rows:[{...path,id:'span-fixture',identity_protocol:2,run_binding_id:binding.id,run_id:p.business_run_id,outcome:'pass',started_at:'2026-10-15T01:00:00Z',ended_at:'2026-10-15T01:00:01Z'}]})};
-  const got=await validateLeadgenTerminal(pool,p,response,{getBinding:async()=>({binding})});expect(got.status).toBe('completed');expect(got.reconciliation.evidence_status).toBe('verified');
+  if(key==='douyin_comment_scoring')receipt.split_result.results=[{activity:'scoring',result:{scored:0,ids:[]}}];
+  const got=await validateLeadgenTerminal(pool,p,response,{getBinding:async()=>({binding})});if(key==='douyin_comment_scoring'){expect(got.scoring_outcome).toBe('empty');expect(got.actual_scoring_acceptance).toBe(false);expect(got.scored_count).toBe(0);}expect(got.status).toBe('completed');expect(got.reconciliation.evidence_status).toBe('verified');
   await expect(validateLeadgenTerminal(pool,p,{...response,receipt:{...receipt,binding_ack:{id:'forged'}}},{getBinding:async()=>({binding})})).rejects.toThrow('ACK');
   await expect(validateLeadgenTerminal({query:async()=>({rows:[]})},p,response,{getBinding:async()=>({binding})})).rejects.toThrow('中央完整路径');
  });
+});
+
+describe('102显式采集预算使用正式冻结原生输入',()=>{
+ const make=n=>task('douyin_video_processing',{profile:'legacy',serial:'serial',source_binding_run_id:'douyin_video_discovery-q102real__a1',comment_limit:5,collection_budget_s:n});
+ it('1500秒只映射原生白名单env，给全局2400保留480清场/资格空间',()=>expect(resolveLeadgenInput(make(1500)).env.QUEUED_VIDEO_COLLECTION_SECONDS).toBe('1500'));
+ it.each([0,-1,1921,1.5,'1500'])('预算无效拒绝 %s',n=>expect(()=>resolveLeadgenInput(make(n))).toThrow());
+ it('103不接受手机采集预算',()=>expect(()=>resolveLeadgenInput(task(undefined,{collection_budget_s:1500}))).toThrow());
 });
