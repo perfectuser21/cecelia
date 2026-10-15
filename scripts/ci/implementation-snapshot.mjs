@@ -21,6 +21,7 @@ import { runProjection } from '../../packages/brain/src/map/projector.js';
 import { digestMapManifest,validateMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
 import { EXISTING_OPS_SCOPE,buildExistingOpsSources } from '../../packages/brain/src/lib/existing-ops-source.js';
+import { collectWorkspaceInputEdges } from '../../packages/brain/src/lib/existing-ops-workspace-source.js';
 import { readExistingOpsRegistry,registerExistingOpsSources,prepareExistingOpsManifestAdvance } from '../../packages/brain/src/lib/existing-ops-registration.js';
 import {preparePilotManifestAdvance,advancePilotManifest} from '../../packages/brain/src/lib/implementation-ci-pilot-manifest.js';
 
@@ -179,14 +180,14 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
   const edges=definitionEdges(s); // 在写隔离扫描图之前先拒绝无效定义路径。
   const cross=s.scope===EXISTING_OPS_SCOPE&&s.repo==='perfectuser21/zenithjoy-workspace';
   const registryRepo=s.map.repositories[0].repo;
-  await scanFixedImplementationGraph(db,cross?s.repo:registryRepo,repoRoot,s.revision,edges);
+  await scanFixedImplementationGraph(db,cross?s.repo:registryRepo,repoRoot,s.revision,edges,undefined,s.repo);
   if(cross){
     const nativeRoot=fileURLToPath(new URL('../../',import.meta.url)),dir=mkdtempSync(join(tmpdir(),'implementation-native-graph-'));
     try{
       execFileSync('git',['clone','--shared','--no-checkout','--quiet',nativeRoot,dir],{stdio:['ignore','pipe','pipe']});
       execFileSync('git',['checkout','--quiet','--detach',s.registry_source.revision],{cwd:dir,stdio:['ignore','pipe','pipe']});
       const nativeEdges=definitionEdges({...s,repo:s.registry_source.repo,revision:s.registry_source.revision,assertions:[]});
-      await scanFixedImplementationGraph(db,registryRepo,dir,s.registry_source.revision,nativeEdges,'cecelia');
+      await scanFixedImplementationGraph(db,registryRepo,dir,s.registry_source.revision,nativeEdges,'cecelia',s.registry_source.repo);
     }finally{rmSync(dir,{recursive:true,force:true});}
   }
   const manifest=structuredClone(s.map.manifest.manifest);
@@ -304,7 +305,7 @@ async function scratchWorkspaceProof(db,revision,repoRoot,anchor){
  if(proof.status!=='verified')throw ciFailure('CONSUMER_SOURCE_MISMATCH');return proof;
 }
 
-async function scanFixedImplementationGraph(db,repo,root,revision,edges,sourceName){
+async function scanFixedImplementationGraph(db,repo,root,revision,edges,sourceName,sourceRepo){
  // Frozen-definition readers do not need the scanner's root dependencies.
  const {scanRepo}=await import('../scan/scan-graph.mjs');
  const staging=`ci-scan:${repo}`;
@@ -312,6 +313,14 @@ async function scanFixedImplementationGraph(db,repo,root,revision,edges,sourceNa
  if(result.error||result.skipped||result.sourceRevision!==revision)throw ciFailure('GRAPH_SCAN_FAILED',result.error?.message||'scan revision mismatch');
  const raw=(await db.query('SELECT src_path,dst_path,edge_type,detail FROM graph_edges WHERE repo=$1',[staging])).rows;
  const byKey=new Map(raw.map(e=>[JSON.stringify([e.src_path,e.dst_path,e.edge_type]),e]));
+ // 仅本机CI scratch升级原生输入解析；不改冻结definition或中央生产graph。
+ if(sourceRepo==='perfectuser21/cecelia'){
+  const {parse}=await import('acorn');
+  const paths=execFileSync('git',['ls-tree','-rz','--name-only',revision],{cwd:root,encoding:'utf8'}).split('\0').filter(Boolean);
+  const inputs=await collectWorkspaceInputEdges({revision,paths,parse:text=>parse(text,{ecmaVersion:'latest',sourceType:'module'}),
+    readSource:async path=>execFileSync('git',['show',`${revision}:${path}`],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024})});
+  for(const edge of inputs)byKey.set(JSON.stringify([edge.src_path,edge.dst_path,edge.edge_type]),edge);
+ }
  for(const edge of edges){const key=JSON.stringify([edge.src_path,edge.dst_path,edge.edge_type]);if(!byKey.has(key))byKey.set(key,edge);}
- await replaceRepoEdges(db,repo,[...byKey.values()],{sourceRevision:revision,scannerVersion:'implementation-ci-v1'});
+ await replaceRepoEdges(db,repo,[...byKey.values()],{sourceRevision:revision,scannerVersion:'implementation-ci-v2-workspace-inputs'});
 }
