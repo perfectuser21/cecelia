@@ -11,7 +11,7 @@ const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
 const PUSH_TIMEOUT_MS = 5 * 60 * 1000;
 const GH_TIMEOUT_MS = 60 * 1000;
 // 修复提交不许碰：sprint 目录（需求与验收记录）、agent 配置
-const PROTECTED_RE = /^(sprints\/|\.claude\/|CLAUDE\.md$|AGENTS\.md$)/;
+const PROTECTED_RE = /^(sprints\/|\.claude\/|CLAUDE\.md$|AGENTS\.md$|\.implementation-source-relations\.json$)/;
 const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**

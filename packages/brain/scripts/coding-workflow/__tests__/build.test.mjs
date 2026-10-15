@@ -49,6 +49,13 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
   const buildFile = () => path.join(sprintAbs, '03-build.md');
   const head = () => git(worktree, 'rev-parse', 'HEAD').trim();
 
+  it('build 模型不能先提交控制器来源索引再让publish登记洗白', async () => {
+    const r = await run('build-ok', {}, { FAKE_BUILD_EXTRA_FILE: '.implementation-source-relations.json' });
+    expect(r.result.status).toBe('failed');
+    expect(r.result.reason_code).toBe('build_touched_controlled_metadata');
+    expect(r.result.evidence).toEqual([{ files: ['.implementation-source-relations.json'] }]);
+  });
+
   it('build-ok：completed，outputs 带 03-build.md 与新提交 SHA，03 覆盖全部 S-n', async () => {
     const before = head();
     const r = await run('build-ok');

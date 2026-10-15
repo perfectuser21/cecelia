@@ -69,6 +69,7 @@ async function postFailure({ worktree, sprintDir, before }) {
   if (polluted.length > 0) return fail('fatal', 'build_sprint_polluted', { evidence: [{ files: polluted }] });
   const changed = await changedFilesSince(worktree, before.head);
   if (changed === null) return gitCheckFailed('diff --name-only');
+  if (changed.includes('.implementation-source-relations.json')) return fail('fatal', 'build_touched_controlled_metadata', { evidence: [{ files: ['.implementation-source-relations.json'] }] });
   const agentFiles = agentConfigFiles(changed);
   if (agentFiles.length > 0) return fail('fatal', 'build_touched_agent_config', { evidence: [{ files: agentFiles }] });
   return null;
