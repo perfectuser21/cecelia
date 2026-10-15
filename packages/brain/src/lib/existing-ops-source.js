@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
+import { runtimeSelectorEnabled, collectRuntimeSources } from './existing-ops-runtime-source.js';
 let parse;
 async function requireParser() {
   if (parse) return;
@@ -339,13 +340,16 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     requireProof(integrationConfig && nativeIntegrationConfigProven(integrationConfig), 'native_integration_config_unproven');
     const schemaPath = 'packages/brain/src/lib/existing-ops-source.js';
     // 读取固定修订的协议标记，不向旧修订追加新的 binding 或重写其摘要。
-    const expanded = tree.has(schemaPath) && expandedSelectorSchema(await readSource(schemaPath, revision));
+    const schemaText = tree.has(schemaPath) ? await readSource(schemaPath, revision) : '';
+    const expanded = schemaText && expandedSelectorSchema(schemaText);
+    const runtime = schemaText && runtimeSelectorEnabled(schemaText, ast);
     const selectors = expanded && config ? regressionSelectors(config) : null;
     if (selectors) for (const path of paths.filter(path => path.startsWith('tests/regression/') && !path.split('/').some(part => part.startsWith('.'))
       && selectors.include.some(pattern => pattern.test(path)) && !selectors.exclude.some(pattern => pattern.test(path)))) {
       if (await read(path)) relations.push({ consumer_path: 'packages/brain/vitest.config.js', input_path: path,
         kind: 'literal_vitest_regression_selector', selector: 'native_nightly_include_minus_exclude', revision });
     }
+    if (runtime && selectors) await collectRuntimeSources({ parse: ast, paths, selectors, read, readSource, revision, relations, requireProof, ci });
     const ciDoc = ci ? yaml.load(ci) : null, versionJob = 'brain-version-bump-gate', versionPath = 'scripts/ci/check-brain-version-bump.sh';
     if (expanded && ciDoc?.jobs?.[versionJob]) {
       const job = ciDoc.jobs[versionJob];
