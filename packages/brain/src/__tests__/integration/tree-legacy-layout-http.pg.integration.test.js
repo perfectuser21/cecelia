@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import pg from 'pg';
 import express from 'express';
 import {createTreeLegacyLayoutRouter} from '../../routes/tree-legacy-layout.js';
-import {it} from 'vitest';
+import {it,expect} from 'vitest';
 import {DB_DEFAULTS} from '../../db-config.js';
 it('真实HTTP验证整批回滚、共享与冻结保留、孤立退役及稳定回执',async()=>{
 const connection=DB_DEFAULTS;
@@ -15,7 +15,7 @@ let pool,server;const previousToken=process.env.CECELIA_INTERNAL_TOKEN;
 const task='a2b3101f-f76b-4d13-816e-7c42926c2875',decision='5155c28c-ce2a-4452-87d4-cefb0362bf34';
 try{
  await admin.query(`CREATE SCHEMA ${schema}`);
- for(const table of ['tasks','decisions','value_streams','capabilities','workflows','activities','workflow_activity_refs','activity_definition_versions'])await admin.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
+ for(const table of ['tasks','decisions','value_streams','capabilities','workflows','activities','workflow_activity_refs','activity_definition_versions','workflow_definition_versions'])await admin.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
  pool=new pg.Pool({...connection,options:`-c search_path=${schema}`});
  process.env.CECELIA_INTERNAL_TOKEN='isolated-fixture-only';
  const app=express();app.use(express.json());app.use('/api/brain/tree',createTreeLegacyLayoutRouter({pool}));
@@ -48,7 +48,17 @@ try{
  const allOther=(await pool.query('SELECT id FROM workflow_activity_refs WHERE workflow_id=$1 AND active',[other])).rows.map(x=>x.id);
  assert.equal((await post({...body,client_request_id:randomUUID(),changes:[change,{...otherChange,expected_active_reference_ids:allOther}]})).status,409);
  assert.equal((await pool.query('SELECT capability_id FROM workflows WHERE id=$1',[wf])).rows[0].capability_id,oldCap);
- const first=await post(body);assert.equal(first.status,200);assert.equal(first.body.receipt.readback_verified,true);
+ await pool.query('UPDATE workflows SET source_repo=NULL,source_workflow=$2 WHERE id=$1',[other,'formal-workflow']);
+ const protectedRequest={...body,client_request_id:randomUUID(),changes:[change,{...otherChange,expected_active_reference_ids:allOther}]};
+ expect((await post(protectedRequest)).status).toBe(409);
+ expect((await pool.query('SELECT capability_id FROM workflows WHERE id=$1',[wf])).rows[0].capability_id).toBe(oldCap);
+ await pool.query('UPDATE workflows SET source_workflow=NULL WHERE id=$1',[other]);
+ const workflowVersion=randomUUID();
+ await pool.query("INSERT INTO workflow_definition_versions(id,workflow_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit) VALUES($1,$2,jsonb_build_object('workflow_id',$2::uuid::text,'contract','{}'::jsonb,'activities','[]'::jsonb),$3,$4,'fixture','fixture',$5)",[workflowVersion,other,'a'.repeat(64),'b'.repeat(64),'c'.repeat(40)]);
+ expect((await post({...protectedRequest,client_request_id:randomUUID()})).status).toBe(409);
+ expect((await pool.query('SELECT capability_id FROM workflows WHERE id=$1',[wf])).rows[0].capability_id).toBe(oldCap);
+ await pool.query('DELETE FROM workflow_definition_versions WHERE id=$1',[workflowVersion]);
+ const first=await post(body);expect(first.status).toBe(200);assert.equal(first.body.receipt.readback_verified,true);
  const statuses=(await pool.query('SELECT id,status FROM activities WHERE id=ANY($1::uuid[])',[activities])).rows;
  assert.equal(statuses.find(x=>x.id===activities[0]).status,'active');assert.equal(statuses.find(x=>x.id===activities[1]).status,'deprecated');assert.equal(statuses.find(x=>x.id===activities[2]).status,'active');
  const replay=await post(body);assert.equal(replay.status,200);assert.equal(replay.body.replayed,true);

@@ -13,7 +13,7 @@ beforeAll(async () => {
   expect((await admin.query('SELECT current_database() name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `layout_${randomUUID().replaceAll('-', '')}`;
   await admin.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['tasks','decisions','value_streams','capabilities','workflows','activities','workflow_activity_refs','activity_definition_versions'])
+  for (const table of ['tasks','decisions','value_streams','capabilities','workflows','activities','workflow_activity_refs','activity_definition_versions','workflow_definition_versions'])
     await admin.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
   pool = new pg.Pool({...DB_DEFAULTS,options:`-c search_path=${schema}`});
 });
