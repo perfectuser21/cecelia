@@ -44,15 +44,18 @@ async function executeProvider(t,{initial={},refresh={},after={},moved=false,get
  const history=artifact.errorBody?{error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}:bundle(base,{childMissing:true});
  writeFileSync(join(dir,'history.json'),JSON.stringify(history));
  execFileSync('python3',['-c','import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.write(sys.argv[2],"head.json"); z.close()',join(dir,'history.zip'),join(dir,'history.json')]);
+ writeFileSync(join(dir,'older-error.json'),JSON.stringify({error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}));
+ execFileSync('python3',['-c','import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.write(sys.argv[2],"head.json"); z.close()',join(dir,'older-error.zip'),join(dir,'older-error.json')]);
  writeFileSync(join(dir,'artifact-config.json'),JSON.stringify(artifact));
  writeFileSync(join(dir,'main-sha'),moved?'c'.repeat(40):head);
  writeFileSync(join(dir,'bin/gh'),`#!/usr/bin/env node
 const fs=require('fs'),p=process.argv[3],cfg=JSON.parse(fs.readFileSync('${dir}/artifact-config.json'));fs.appendFileSync('${dir}/gh-calls.jsonl',JSON.stringify(process.argv.slice(2))+'\\n');
-const item={id:1,name:'implementation-snapshot-${base}',expired:false,created_at:'2026-01-01',workflow_run:{id:17,head_branch:'main',head_sha:'${base}',repository_id:1,head_repository_id:1}};
+const item={id:1,name:'implementation-snapshot-${base}',expired:false,created_at:'2026-01-02T00:00:00Z',...cfg.itemPatch,workflow_run:{id:17,head_branch:'main',head_sha:'${base}',repository_id:1,head_repository_id:1}};
+const older={...item,id:2,created_at:'2026-01-01T00:00:00Z'};
 if(p.endsWith('/commits/main'))console.log(fs.readFileSync('${dir}/main-sha','utf8'));
-else if(p.includes('artifacts?'))console.log(JSON.stringify({total_count:cfg.missing?0:1,artifacts:cfg.missing?[]:[item]}));
-else if(p.endsWith('/zip'))process.stdout.write(fs.readFileSync('${dir}/history.zip'));
-else if(p.includes('/artifacts/'))console.log(JSON.stringify(item));
+else if(p.includes('artifacts?'))console.log(JSON.stringify({total_count:cfg.missing?0:cfg.nonmonotonic?2:1,artifacts:cfg.missing?[]:cfg.nonmonotonic?[older,item]:[item]}));
+else if(p.endsWith('/zip'))process.stdout.write(fs.readFileSync(cfg.nonmonotonic&&p.includes('/artifacts/2/')?'${dir}/older-error.zip':'${dir}/history.zip'));
+else if(p.includes('/artifacts/'))console.log(JSON.stringify(p.endsWith('/2')?older:item));
 else if(p.includes('/jobs?'))console.log(JSON.stringify({total_count:1,jobs:[{name:'snapshot-main',status:'completed',conclusion:cfg.failedJob?'failure':'success'}]}));
 else if(p.includes('/actions/runs/'))console.log(JSON.stringify({id:17,head_sha:'${base}',head_branch:'main',event:'push',path:'.github/workflows/implementation-impact.yml',conclusion:'failure',repository:{full_name:'${repo}'},head_repository:{full_name:'${repo}'},...cfg.runPatch}));
 else process.exit(9);
@@ -153,7 +156,7 @@ async function executeDownload(t,{runPatch={},failedJob=false,errorBody=false,to
  execFileSync('python3',['-c','import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.write(sys.argv[2],"head.json"); z.close()',join(dir,'input.zip'),join(dir,'head.json')]);
  writeFileSync(join(dir,'bin/gh'),`#!/usr/bin/env node
 const fs=require('fs'),a=process.argv.slice(2),p=a[1];
-if(p.includes('artifacts?'))console.log(JSON.stringify({artifacts:[{id:1,expired:false,created_at:'2026-01-01',workflow_run:{head_branch:'main',head_sha:'${base}',repository_id:1,head_repository_id:1}}]}));
+if(p.includes('artifacts?'))console.log(JSON.stringify({artifacts:[{id:1,expired:false,created_at:'2026-01-02T00:00:00Z',...cfg.itemPatch,workflow_run:{head_branch:'main',head_sha:'${base}',repository_id:1,head_repository_id:1}}]}));
 else if(p.endsWith('/zip'))process.stdout.write(fs.readFileSync('${dir}/input.zip'));
 else if(p.includes('/artifacts/'))console.log('17');
 else if(p.includes('/jobs?'))process.stdout.write(fs.readFileSync('${dir}/jobs.json'));
@@ -224,4 +227,18 @@ test('官方dispatch base=head当前缺来源先正规刷新，再同一完整bu
  assert.notEqual(failed.code,0);assert.equal(failed.calls.some(c=>c.method==='POST'),false);assert.equal(existsSync(join(failed.dir,'evidence/head.json')),false);
  const drift=await executeProvider(t,{baseEqualsHead:true,initial:{parentMissing:true,childMissing:true},movedAfterPost:true});
  assert.notEqual(drift.code,0);assert.match(drift.stderr,/MAIN_MOVED/);assert.equal(drift.calls.filter(c=>c.method==='POST').length,1);assert.equal(existsSync(join(drift.dir,'evidence/base.json')),false);assert.equal(existsSync(join(drift.dir,'evidence/head.json')),false);
+});
+
+test('同SHA旧错误artifact ID较大时按创建时间选择较新的有效产物',async t=>{
+ const r=await executeProvider(t,{baseUnknown:true,artifact:{nonmonotonic:true}});assert.equal(r.code,0,r.stderr);
+ const receipt=JSON.parse(readFileSync(join(r.dir,'evidence/diagnostics/historical-base-source.json')));assert.equal(receipt.artifact_id,1);
+ assert.equal(JSON.parse(readFileSync(join(r.dir,'evidence/base.json'))).snapshot.revision,base);
+ assert.equal(r.calls.some(c=>c.method==='POST'&&c.revision===base),false);
+ const calls=readFileSync(join(r.dir,'gh-calls.jsonl'),'utf8');assert.match(calls,/artifacts\/1\/zip/);assert.doesNotMatch(calls,/artifacts\/2\/zip/);
+});
+test('历史artifact创建时间缺失或非法不能参与选择',async t=>{
+ for(const created_at of [null,'','not-a-date']){
+  const r=await executeProvider(t,{baseUnknown:true,artifact:{itemPatch:{created_at}}});assert.notEqual(r.code,0);
+  assert.match(r.stderr,/BASE_ARTIFACT_MISSING/);assert.equal(existsSync(join(r.dir,'evidence/base.json')),false);
+ }
 });
