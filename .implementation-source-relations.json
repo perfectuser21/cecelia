@@ -353,6 +353,15 @@
       "role": "verification"
     },
     {
+      "owner_path": "scripts/ci/implementation-main-gate.mjs", "path": "cp-10152320-main-scopes.prd.md", "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-main-gate.mjs", "path": "docs/learnings/cp-10152320-main-scopes.md", "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-main-gate.mjs", "path": "changes/cp-10152320-main-scopes.md", "role": "release"
+    },
+    {
       "owner_path": "packages/brain/src/lib/implementation-ci-pilot-manifest.js",
       "path": "packages/brain/src/lib/__tests__/integration/implementation-ci-pilot-manifest.test.js",
       "role": "verification"

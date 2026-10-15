@@ -195,18 +195,21 @@ it('main联合证据保留真实用途并执行每scope回归，PR输出不变',
  const root=mkdtempSync(join(tmpdir(),'multi-main-gate-'));
  const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
  try{
-  git('init','-q');git('remote','add','origin','https://github.com/'+source.repo+'.git');mkdirSync(join(root,'src'));mkdirSync(join(root,'tests/smoke'),{recursive:true});
+  git('init','-q');git('remote','add','origin','https://github.com/perfectuser21/cecelia.git');mkdirSync(join(root,'src'));mkdirSync(join(root,'tests/smoke'),{recursive:true});
   for(const name of ['controller.js','shared-lock.js'])writeFileSync(join(root,'src',name),'old\n');
   for(const name of ['a','b'])writeFileSync(join(root,`tests/smoke/scope-${name}.sh`),`#!/bin/bash\nprintf '${name}' > '${root}/actual-${name}'\n`);
   const commit=()=>{git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture');return git('rev-parse','HEAD');};
   const base=commit();for(const name of ['controller.js','shared-lock.js'])writeFileSync(join(root,'src',name),'changed\n');const head=commit();
-  const src={...source,base_revision:base,head_revision:head},parts=structuredClone(reports);
+  // 联合引擎的结构夹具使用支持的身份封套；不声称它是官方Factory导出。
+  // 完整CLI的来源真实性另由固定官方bundle与真实Git验收。
+  const src={...source,repo:'perfectuser21/cecelia',base_revision:base,head_revision:head};
+  const parts=JSON.parse(JSON.stringify(reports).replaceAll(source.repo,src.repo).replaceAll('fixture-second-source','cecelia-factory'));
   for(const [i,part] of parts.entries()){
    part.source.base_revision=base;part.source.head_revision=head;part.ci_context={purpose:'release'};
    for(const side of ['base','head']){part[side].revision=src[`${side}_revision`];part[side].graph_snapshot.source_revision=src[`${side}_revision`];}
    for(const assertion of part.required_assertions){assertion.assertion_ref=`tests/smoke/scope-${i?'b':'a'}.sh`;assertion.source_repo=src.repo;}
   }
-  const options={source:src,expectedScopes:['cecelia-kr','fixture-second-source'],reports:parts};
+  const options={source:src,expectedScopes:['cecelia-kr','cecelia-factory'],reports:parts};
   const legacy=multi.aggregateScopedImplementationEvidence(options);
   const evidence=multi.aggregateScopedImplementationEvidence({...options,purpose:'main_verification'});
   expect(legacy.purpose).toBe('admission_only');expect(evidence.purpose).toBe('main_verification');expect(evidence.evidence_kind).toBe('scoped_implementation_main');
@@ -215,6 +218,7 @@ it('main联合证据保留真实用途并执行每scope回归，PR输出不变',
   expect(receipt.business_runtime_status).toBe('not_evaluated');for(const name of ['a','b'])expect(readFileSync(join(root,`actual-${name}`),'utf8')).toBe(name);
   expect(multi.aggregateScopedImplementationEvidence(options)).toEqual(legacy);
   for(const purpose of ['release','pr','unknown'])expect(()=>multi.aggregateScopedImplementationEvidence({...options,purpose})).toThrow();
+  for(const changed of [{source:{...src,repo:'other/repo'}},{expectedScopes:['cecelia-kr']},{expectedScopes:['cecelia-kr','other']},{expectedScopes:['cecelia-factory','cecelia-kr']}])expect(()=>multi.aggregateScopedImplementationEvidence({...options,...changed,purpose:'main_verification'})).toThrow('IMPACT_MULTISCOPE_MAIN_SOURCE_INVALID');
   parts[1].ci_context.purpose='admission_only';expect(()=>multi.aggregateScopedImplementationEvidence({...options,purpose:'main_verification'})).toThrow();
   expect(()=>multi.verifyScopedImplementationGitSource(root,{...evidence,purpose:'admission_only'})).toThrow();
  }finally{rmSync(root,{recursive:true,force:true});}

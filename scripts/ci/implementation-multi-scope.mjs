@@ -72,7 +72,9 @@ function assertScopedAuxiliaryReport(report,context){
   }
   return true;
 }
-export function aggregateScopedImplementationEvidence({source,expectedScopes,reports,auxiliary_scope_context}){
+export function aggregateScopedImplementationEvidence({source,expectedScopes,reports,auxiliary_scope_context,purpose='admission_only'}){
+  if(!['admission_only','main_verification'].includes(purpose))fail('IMPACT_MULTISCOPE_PURPOSE_INVALID');
+  if(purpose==='main_verification'&&(source?.repo!=='perfectuser21/cecelia'||JSON.stringify(expectedScopes)!=='["cecelia-kr","cecelia-factory"]'))fail('IMPACT_MULTISCOPE_MAIN_SOURCE_INVALID');
   if(!Array.isArray(expectedScopes)||!expectedScopes.length||new Set(expectedScopes).size!==expectedScopes.length||
     !Array.isArray(reports)||reports.length!==expectedScopes.length)fail('IMPACT_MULTISCOPE_SCOPES_REQUIRED');
   const normalized=validateImplementationImpact({scope:expectedScopes[0],repo:source?.repo,base_revision:source?.base_revision,head_revision:source?.head_revision,changed_files:source?.changed_files});
@@ -81,6 +83,7 @@ export function aggregateScopedImplementationEvidence({source,expectedScopes,rep
   const context=verifyAuxiliaryScopeContext(source,expectedScopes,auxiliary_scope_context);
   const seen=new Set(),claims=new Map(changes.map(c=>[key(c),[]]));
   for(const report of reports){
+    if(purpose==='main_verification'&&(report.ci_context?.purpose!=='release'||report.head?.revision!==source.head_revision||!report.required_assertions?.length))fail('IMPACT_MULTISCOPE_MAIN_SOURCE_INVALID');
     if(!Array.isArray(report.gaps)||report.mapping_status==='unknown'&&!report.gaps.length||
       ['base','head'].some(side=>report[side]?.mapping_status==='unknown'))fail('IMPACT_MULTISCOPE_UNRESOLVED_UNKNOWN');
     if(!expectedScopes.includes(report?.scope_key)||seen.has(report.scope_key))fail('IMPACT_MULTISCOPE_SCOPE_MISMATCH');
@@ -102,8 +105,8 @@ export function aggregateScopedImplementationEvidence({source,expectedScopes,rep
     claims.set(key(change),scopes.map(scope_key=>({scope_key,coverage_kind:'scoped_auxiliary_source',context_sha256:context.context_sha256})));
   }
   if([...claims.values()].some(v=>!v.length))fail('IMPACT_MULTISCOPE_FILE_UNCLAIMED');
-  const body={schema_version:2,evidence_kind:'scoped_implementation_admission',source:{repo:source.repo,base_revision:source.base_revision,head_revision:source.head_revision,changed_files:changes},
-    purpose:'admission_only',scope_reports:structuredClone(reports),
+  const body={schema_version:2,evidence_kind:purpose==='main_verification'?'scoped_implementation_main':'scoped_implementation_admission',source:{repo:source.repo,base_revision:source.base_revision,head_revision:source.head_revision,changed_files:changes},
+    purpose,scope_reports:structuredClone(reports),
     ...(context?{auxiliary_scope_context:context}:{}),
     file_coverage:changes.map(c=>({...c,claims:claims.get(key(c))})),
     business_runtime_status:'not_evaluated'};
@@ -111,7 +114,7 @@ export function aggregateScopedImplementationEvidence({source,expectedScopes,rep
 }
 
 export function verifyScopedImplementationGitSource(repoRoot,proof){
-  const rebuilt=aggregateScopedImplementationEvidence({source:proof?.source,expectedScopes:(proof?.scope_reports||[]).map(r=>r.scope_key),reports:proof?.scope_reports,auxiliary_scope_context:proof?.auxiliary_scope_context});
+  const rebuilt=aggregateScopedImplementationEvidence({source:proof?.source,expectedScopes:(proof?.scope_reports||[]).map(r=>r.scope_key),reports:proof?.scope_reports,auxiliary_scope_context:proof?.auxiliary_scope_context,purpose:proof?.purpose});
   const {evidence_sha256,...body}=proof;
   if(evidence_sha256!==sha(body)||evidence_sha256!==rebuilt.evidence_sha256)fail('IMPACT_MULTISCOPE_DIGEST_MISMATCH');
   const git=(...args)=>execFileSync('git',args,{cwd:repoRoot,encoding:'utf8',maxBuffer:16*1024*1024}).trim();
@@ -126,7 +129,7 @@ export function verifyScopedImplementationGitSource(repoRoot,proof){
 }
 
 /** 每个输入仍是完整差异的原生报告；仅明确的foreign文件缺归属可由另一领域真实调用闭包解释。 */
-export function resolveScopedImplementationReports({source,expectedScopes,reports}){
+export function resolveScopedImplementationReports({source,expectedScopes,reports,purpose='admission_only'}){
   const resolutions=[],parts=[],owners=new Map();
   if(!Array.isArray(reports)||!Array.isArray(expectedScopes)||reports.length!==expectedScopes.length)fail('IMPACT_MULTISCOPE_SCOPES_REQUIRED');
   const context=auxiliaryScopeContext(source,expectedScopes,reports);
@@ -169,7 +172,7 @@ export function resolveScopedImplementationReports({source,expectedScopes,report
     // 所有side图/定义/回归证据及辅助owner UNKNOWN保留，由原校验完整拒绝。
     assertImplementationReport(part);parts.push(part);
   }
-  const proof=aggregateScopedImplementationEvidence({source,expectedScopes,reports:parts,auxiliary_scope_context:context});
+  const proof=aggregateScopedImplementationEvidence({source,expectedScopes,reports:parts,auxiliary_scope_context:context,purpose});
   const body={schema_version:1,evidence:proof,source_reports:structuredClone(reports),resolved_foreign_paths:resolutions};
   return {...body,resolution_sha256:sha(body)};
 }
@@ -186,12 +189,12 @@ export async function runScopedImplementationGate({repoRoot,evidence,timeoutMs=3
     const assertions=await runRegisteredAssertions({repoRoot,source:evidence.source,required_assertions:report.required_assertions,timeoutMs});
     receipts.push({schema_version:1,actor:'implementation_ci_gate',scope_key:report.scope_key,source:report.source,
       report_sha256:sha(report),assertions,verdict:assertions.every(a=>a.exit_code===0&&!a.error)?'PASS':'FAIL',
-      purpose:'admission_only',business_runtime_status:'not_evaluated'});
+      purpose:evidence.purpose,business_runtime_status:'not_evaluated'});
   }
   verifyScopedImplementationGitSource(repoRoot,evidence);
-  return {schema_version:2,actor:'implementation_ci_gate',evidence_kind:'scoped_implementation_admission',source:evidence.source,
-    evidence_sha256:evidence.evidence_sha256,scope_receipts:receipts,purpose:'admission_only',
-    ...(evidence.auxiliary_scope_context?{auxiliary_scope_receipt:{schema_version:1,purpose:'admission_only',
+  return {schema_version:2,actor:'implementation_ci_gate',evidence_kind:evidence.evidence_kind,source:evidence.source,
+    evidence_sha256:evidence.evidence_sha256,scope_receipts:receipts,purpose:evidence.purpose,
+    ...(evidence.auxiliary_scope_context?{auxiliary_scope_receipt:{schema_version:1,purpose:evidence.purpose,
       context_sha256:evidence.auxiliary_scope_context.context_sha256,owner_claims:evidence.auxiliary_scope_context.owner_claims,
       joint_files:evidence.auxiliary_scope_context.joint_files,verdict:'PASS',business_runtime_status:'not_evaluated'}}:{}),
     verdict:receipts.every(r=>r.verdict==='PASS')?'PASS':'FAIL',business_runtime_status:'not_evaluated',recorded_at:new Date().toISOString()};
