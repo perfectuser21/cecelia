@@ -126,8 +126,8 @@ function inspect(program) {
   return reads > 0 && assertions > 0;
 }
 
-export function isReadonlyQaCommand(command) {
-  const source = readonlyQaScript(command);
+export function isReadonlyQaCommand(command, { allowHealthPrefix = true } = {}) {
+  const source = readonlyQaScript(command, { allowHealthPrefix });
   if (source === null) return false;
   try {
     const comments = [];

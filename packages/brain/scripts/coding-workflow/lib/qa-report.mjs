@@ -9,6 +9,7 @@ import { BLOCKING } from './review.mjs';
 import { isReadonlyDocAssertion } from './qa-doc-assertion.mjs';
 import { isReadonlyQaCommand } from './readonly-qa-ast.mjs';
 import { isReadonlySearchSource } from './readonly-search-source.mjs';
+import { unwrapShellCommand } from './shell-command.mjs';
 
 const Q_RE = /^Q-\d+$/;
 export const CANNOT_VERIFY = 'CANNOT_VERIFY';
@@ -109,6 +110,9 @@ export function productionTouches(executions, patterns = null) {
   const { target, assign } = productionMatchers(patterns);
   return executions.map((e) => e.command).filter((c) => {
     const cmd = String(c);
+    // 只豁免完整纯 node-e 读取；浏览器门允许的 health curl 封套在这里仍是真访问。
+    // 解码失败/未知语法保留原始文本判定，不截子串、不忽略 shell 前后动作。
+    if (isReadonlyQaCommand(unwrapShellCommand(cmd), { allowHealthPrefix: false })) return false;
     if (assign.test(cmd) && NETWORK_RE.test(cmd)) return true;
     return cmd.split(/;|&&|\|\||\|/).some((part) => NETWORK_RE.test(part) && target.test(part));
   });
