@@ -1,9 +1,10 @@
 import {afterEach, expect, it} from 'vitest';
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {execFileSync} from 'node:child_process';
+import {createRequire} from 'node:module';
+import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {reverseImplementationPaths} from '../../../src/lib/implementation-impact.js';
 const sourceRoot=fileURLToPath(new URL('../../../../../',import.meta.url));
@@ -111,3 +112,22 @@ it('正式版本机器人只改本地包版本元数据不改变真实Vitest消�
 
 it.each(['apps/api/tsconfig.json','apps/api/features/tsconfig.json'])('%s不能替换JSX运行时',(path)=>{const f=fixture(),p=JSON.parse(readFileSync(join(f.root,path),'utf8'));p.compilerOptions.jsxImportSource='./nonexistent-proof-runtime';f.put(path,JSON.stringify(p));f.commit();expect(collect(f)).toEqual([]);});
 it.each(['tsconfig.json','apps/tsconfig.json','apps/api/test/tsconfig.json','apps/api/features/planning/tsconfig.json','apps/api/features/planning/pages/tsconfig.json','apps/api/features/planning/pages/capability-system/tsconfig.json'])('不接受消费路径上新增更近编译配置%s',path=>{const f=fixture();mkdirSync(dirname(join(f.root,path)),{recursive:true});f.put(path,JSON.stringify({compilerOptions:{jsxImportSource:'./false-runtime'}}));f.commit();expect(collect(f)).toEqual([]);});
+
+function parserBoundary(f,{trusted=false,fakeCandidate=false,applicable=true,wrongVersion=false}={}){
+ const root=mkdtempSync(join(tmpdir(),'workspace-parser-tooling-'));roots.push(root);
+ for(const path of ['scripts/ci/workspace-test-source.mjs','scripts/ci/workspace-test-envelopes.mjs','packages/brain/src/lib/gp-assertion-command.js','packages/brain/src/lib/step-probe-spec.js']){mkdirSync(dirname(join(root,path)),{recursive:true});writeFileSync(join(root,path),readFileSync(join(sourceRoot,path)));}
+ writeFileSync(join(root,'package.json'),JSON.stringify({type:'module'}));
+ const req=createRequire(import.meta.url);mkdirSync(join(root,'node_modules'),{recursive:true});symlinkSync(dirname(req.resolve('js-yaml/package.json')),join(root,'node_modules/js-yaml'),'dir');
+ if(trusted){mkdirSync(join(root,'packages/brain/node_modules'),{recursive:true});symlinkSync(dirname(realpathSync(req.resolve('typescript/package.json'))),join(root,'packages/brain/node_modules/typescript'),'dir');}
+ if(wrongVersion){const path=join(root,'packages/brain/node_modules/typescript');mkdirSync(path,{recursive:true});writeFileSync(join(path,'package.json'),JSON.stringify({main:'index.cjs'}));writeFileSync(join(path,'index.cjs'),"module.exports={version:'0.0.0'};");}
+ if(fakeCandidate){const path=join(f.root,'node_modules/typescript');mkdirSync(path,{recursive:true});writeFileSync(join(path,'package.json'),JSON.stringify({main:'index.cjs'}));writeFileSync(join(path,'index.cjs'),"throw Error('CANDIDATE_PARSER_MUST_NOT_LOAD');");}
+ writeFileSync(join(root,'snapshot.json'),JSON.stringify(applicable?f.snapshot():{repo:'other/repo'}));
+ writeFileSync(join(root,'probe.mjs'),"import fs from 'node:fs';import {collectWorkspaceTestEdges} from './scripts/ci/workspace-test-source.mjs';try { console.log(JSON.stringify({edges:collectWorkspaceTestEdges(process.argv[2],JSON.parse(fs.readFileSync(new URL('./snapshot.json',import.meta.url))))})); } catch(e){ console.log(JSON.stringify({code:e.code,message:e.message})); }");
+ const result=spawnSync(process.execPath,[join(root,'probe.mjs'),f.root],{encoding:'utf8',env:{...process.env,NODE_PATH:''}});expect(result.stderr).toBe('');expect(result.status).toBe(0);return JSON.parse(result.stdout);
+}
+it('不适用消费者可导入且不安装TypeScript，不触发解析器加载',()=>{expect(parserBoundary(fixture(),{applicable:false})).toEqual({edges:[]});});
+it('适用消费者缺可信解析器明确失败，不吞成空边成功',()=>{expect(parserBoundary(fixture())).toMatchObject({code:'WORKSPACE_TEST_PARSER_UNAVAILABLE'});});
+it('候选仓自带解析器不能替代缺失的可信解析器',()=>{expect(parserBoundary(fixture(),{fakeCandidate:true})).toMatchObject({code:'WORKSPACE_TEST_PARSER_UNAVAILABLE'});});
+it('仅可信Brain包解析器安装即证明真实消费，无需API依赖',()=>{expect(parserBoundary(fixture(),{trusted:true}).edges).toHaveLength(9);});
+
+it('可信位置解析器版本漂移明确拒绝',()=>{expect(parserBoundary(fixture(),{wrongVersion:true})).toMatchObject({code:'WORKSPACE_TEST_PARSER_VERSION_MISMATCH'});});
