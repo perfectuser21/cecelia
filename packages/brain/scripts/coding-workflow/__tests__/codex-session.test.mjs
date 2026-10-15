@@ -145,7 +145,7 @@ describe('控制器 provenance 根与全部 Codex profile 隔离', () => {
     const s = prepareCodexSession({ args: flags, cwd: linked, env: { HOME: f.home } }).args.join('\n');
     for (const dir of dirs) {
       expect(s).toContain(`${JSON.stringify(dir)}="write"`);
-      for (const name of ['config', 'config.worktree', 'hooks', 'commondir', 'gitdir']) expect(s).toContain(`${JSON.stringify(path.join(dir, name))}="read"`);
+      for (const name of ['config', 'config.worktree', 'hooks', 'commondir', 'gitdir', 'refs/replace', 'info/grafts']) expect(s).toContain(`${JSON.stringify(path.join(dir, name))}="read"`);
     }
     expect(s).toContain(`${JSON.stringify(path.join(linked, '.git'))}="read"`);
     expect(s).toContain(`${JSON.stringify(path.join(f.home, '.git-hooks'))}="read"`);

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { fail, childEnv, log } from './protocol.mjs';
 import { claudeOwnErrorText, sessionCostUsd } from './transcript.mjs';
 import { prepareCodexSession } from './codex-session.mjs';
+import { captureNativeExecution } from './record-provenance.mjs';
 
 const PROMPTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../prompts');
 // 只认 claude CLI 自身的鉴权/额度报错措辞；裸 login、/login 路由等业务输出不算
@@ -126,7 +127,12 @@ export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolate
   try { if (provider === 'codex') native = prepareCodexSession({ args: callerArgs, cwd, env: { ...process.env, ...codexEnv }, nativeOptions }); }
   catch (error) { return { code: null, stdout: '', stderr: error.message, output: error.message, configurationError: error.message, provider, cost_usd: null }; }
   const args = native?.args ?? withModel(withCostOutput(callerArgs));
-  const priced = (run) => ({ ...run, provider, model: provider === 'codex' ? codexEnv.CODING_WF_CODEX_MODEL || process.env.CODING_WF_CODEX_MODEL || null : process.env.CODING_WF_CLAUDE_MODEL || DEFAULT_MODEL, cost_usd: provider === 'codex' ? null : sessionCostUsd(run.stdout ?? ''), ...(transcriptPath ? { transcriptPath } : {}) });
+  const priced = (run) => {
+    const result = { ...run, provider, model: provider === 'codex' ? codexEnv.CODING_WF_CODEX_MODEL || process.env.CODING_WF_CODEX_MODEL || null : process.env.CODING_WF_CLAUDE_MODEL || DEFAULT_MODEL, cost_usd: provider === 'codex' ? null : sessionCostUsd(run.stdout ?? ''), ...(transcriptPath ? { transcriptPath } : {}) };
+    // 直接采集进程管道返回值；不回读模型可以改写的 transcriptPath/logDir。
+    captureNativeExecution({ ...result, tag });
+    return result;
+  };
   if (!isolateRemote && provider === 'claude') return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv(), transcriptPath }));
   const ghConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-wf-gh-'));
   try {

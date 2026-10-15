@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { previewCapability } from './preview-bridge.mjs';
+import { provenanceRoot, canonicalPath, assertProvenanceSeparation } from './provenance-path.mjs';
 
 const READ_SERVER = fileURLToPath(new URL('./codex-files.mjs', import.meta.url));
 const MUTATIONS = ['git commit', 'git reset', 'git checkout', 'git rebase'];
@@ -55,6 +56,10 @@ export function prepareCodexSession({ args, cwd, env = process.env, nativeOption
   config('default_permissions', 'coding');
   const filesystem = {};
   const home = env.HOME || os.homedir();
+  const protectedRoot = provenanceRoot(home);
+  const gitDirs = gitDirectories(cwd);
+  const protectedRealRoot = assertProvenanceSeparation(protectedRoot, [cwd, ...input.addDirs, ...gitDirs,
+    ...(preview ? [preview.runtimeDir] : []), ...(nativeOptions.outputLastMessage ? [nativeOptions.outputLastMessage] : [])]);
   filesystem[path.join(home, '.credentials')] = 'deny';
   // The CLI controller logs in outside the command sandbox; its tools must not read the account token.
   const accountHome = env.CODING_WF_CODEX_HOME || env.CODEX_HOME || path.join(home, '.codex');
@@ -64,7 +69,24 @@ export function prepareCodexSession({ args, cwd, env = process.env, nativeOption
   // 不读取 worktree 中的 .codex 配置/钩子；本仓规矩已由 runner 注入 prompt。
   config('projects', { [cwd]: { trust_level: 'untrusted' } });
   for (const feature of DISABLED) native.push('--disable', feature);
-  for (const dir of gitDirectories(cwd)) filesystem[dir] = readGit ? 'read' : 'write';
+  for (const dir of gitDirs) filesystem[dir] = readGit ? 'read' : 'write';
+  // Git data stays writable for build, but it cannot install a hook/config which
+  // a later controller-side Git command would execute outside the model sandbox.
+  const gitControlPaths = [path.join(home, '.git-hooks'), path.join(home, '.gitconfig'),
+    ...gitDirs.flatMap((dir) => ['config', 'config.worktree', 'hooks', 'commondir', 'gitdir', 'refs/replace', 'info/grafts'].map((name) => path.join(dir, name)))];
+  const gitPointer = path.join(cwd, '.git');
+  if (fs.existsSync(gitPointer) && !fs.statSync(gitPointer).isDirectory()) gitControlPaths.push(gitPointer);
+  if (gitDirs.length) {
+    try {
+      const hooks = execFileSync('git', ['config', '--path', '--get', 'core.hooksPath'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      if (hooks) gitControlPaths.push(path.resolve(cwd, hooks));
+    } catch (error) { if (error.status !== 1) throw error; }
+  }
+  assertProvenanceSeparation(protectedRoot, gitControlPaths);
+  for (const file of gitControlPaths) {
+    filesystem[file] = 'read';
+    filesystem[canonicalPath(file)] = 'read';
+  }
   for (const denial of input.denied.filter((s) => s.startsWith('Read('))) filesystem[denial.slice(6, -1)] = 'deny';
   let network = { enabled: false };
   if (preview) {
@@ -74,6 +96,9 @@ export function prepareCodexSession({ args, cwd, env = process.env, nativeOption
       allow_local_binding: false, allow_upstream_proxy: false, dangerously_allow_all_unix_sockets: false,
       unix_sockets: { [preview.socketPath]: 'allow' } };
   }
+  // Last and unconditional: neither Commander add-dir nor judge/no-shell profiles own receipts.
+  filesystem[protectedRoot] = 'deny';
+  filesystem[protectedRealRoot] = 'deny';
   config('permissions', { coding: { extends: judge ? ':read-only' : ':workspace', filesystem, network } });
   for (const dir of input.addDirs) native.push('--add-dir', path.resolve(dir));
   if (noShell) {

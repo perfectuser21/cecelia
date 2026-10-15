@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { runRecordedActivity } from '../lib/activity-provenance.mjs';
 import { runClaude } from '../lib/claude.mjs';
+import { captureNativeExecution } from '../lib/record-provenance.mjs';
 
 describe('实际活动结束时封存来源，不在 publish 补造', () => {
   let temp, worktree, root, input;
@@ -77,5 +78,18 @@ describe('实际活动结束时封存来源，不在 publish 补造', () => {
     await runRecordedActivity({ ...input, provenance_root: fakeRoot, provenance: { status: 'PASS' } }, options('intent'), async () => { intent(); return { status: 'completed' }; });
     expect(fs.existsSync(fakeRoot)).toBe(false);
     expect(files().length).toBeGreaterThan(0);
+  });
+  it.each([[undefined, 1], [-1, 1], ['2', 2]])('evaluate round=%s 的实际文件与凭证统一为 %s', async (round, expected) => {
+    await runRecordedActivity({ ...input, round }, options('evaluate'), async current => {
+      expect(current.round).toBe(expected);
+      fs.writeFileSync(path.join(worktree, sprint, `05-qa-report-r${current.round}.md`),
+        `---\ntask_id: ${taskId}\nstep: evaluate\nupstream: []\n---\n# QA\n`);
+      captureNativeExecution({ provider: 'codex', code: 0,
+        stdout: '{"type":"thread.started","thread_id":"fixture-round"}\n{"type":"turn.completed"}\n' });
+      return { status: 'completed' };
+    });
+    const stage = files().map(f => JSON.parse(fs.readFileSync(path.join(root, f), 'utf8'))).find(e => e.kind === 'stage');
+    expect(stage.round).toBe(expected);
+    expect(stage.records[0].path).toBe(`${sprint}/05-qa-report-r${expected}.md`);
   });
 });

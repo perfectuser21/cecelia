@@ -1,3 +1,4 @@
+import { verifyMergeSource } from './source-provenance.mjs';
 import { sumCostUsd, costText } from '../../lib/transcript.mjs';
 // 合并门（决策 a1fdbc51，对应旧 harness「merge 前 head == 锚定 SHA」硬检查）：runner 亲自合并，且只合并被批准的那个 head。
 // 批准 = QA 与独立裁判在该 head 上通过（qa-gate.mjs 记 s.approved.head）。合并条件：当前 head 就是批准的 head、
@@ -47,6 +48,9 @@ async function gate(ctx, pr, s) {
       ctx.log(`合并门 PR #${pr.number}：批准后又改了代码（${code.join('、')}），撤销批准，新 head 重新 QA + 裁判`);
       return true;
     }
+    try { verifyMergeSource(cfg, pr, s.approved.round); } catch (error) {
+      return escalate(ctx, pr, s, await syncTaskId(ctx, pr), { type: 'source_provenance_missing', reason: error.message, head: pr.headRefOid });
+    }
     s.approved = { ...s.approved, head: pr.headRefOid, rebound_from: s.approved.head };
     writeState(cfg, pr.number, s);
     ctx.log(`合并门 PR #${pr.number}：批准后只有记录/主干合入，改绑到 ${pr.headRefOid.slice(0, 9)}`);
@@ -54,6 +58,9 @@ async function gate(ctx, pr, s) {
   if ((await requiredState(cfg, pr.number)).state !== 'pass') return false;
   // task_id 在 sprint 的 01-intent.md 里，只能从远端分支读：必须在合并（--delete-branch 删分支）之前取
   const taskId = await syncTaskId(ctx, pr);
+  try { verifyMergeSource(cfg, pr, s.approved.round); } catch (error) {
+    return escalate(ctx, pr, s, taskId, { type: 'source_provenance_missing', reason: error.message, head: pr.headRefOid });
+  }
   if (cfg.repoAutomerge === false) return awaitHuman(ctx, pr, s, taskId);
   const startedAt = Date.now();
   // 在外部动作前留下精确批准 head；崩溃后只凭 GitHub MERGED + 同 head 恢复收账，不重新合并。

@@ -1,3 +1,5 @@
+import { controllerIdentity, withRecordProvenance, sealStageEvidence, beginRecordRegistration, observeRecordRegistration, finalizeRecordRegistration } from '../../lib/record-provenance.mjs';
+import { sourceContext, verifySourceHead } from './source-provenance.mjs';
 import { registerRecordSources } from '../../lib/record-sources.mjs';
 // coding commander（决策 c167d6e3，018e4e84「Commander 是 workflow 的陪跑/兜底」）：runner 自己开的 cw PR 在 QA 门或
 // CI 修复升级后，下一轮起 Opus 会话按规格逐条裁决并动手——维持/修订规格（只许在 02-spec.md 末尾追加裁决节）、
@@ -21,6 +23,7 @@ import { prFile, prLabel } from './repos.mjs';
 import { notifyBark } from './bark.mjs';
 
 // commander 能处理的升级；其余（预览环境、裁判不可用/关闭、改动超限、评估会话坏、sprint 丢失……）是基础设施或要人定，直接通知主理人
+const SOURCE_CONTROLLER = controllerIdentity(import.meta.url, ['../../lib/record-sources.mjs', '../../lib/claude.mjs', './source-provenance.mjs'].map(p => new URL(p, import.meta.url)));
 export const HANDLED = new Set(['judge_contract_gap', 'judge_ruling_conflict', 'qa_fix_failed', 'qa_stalled', 'qa_cannot_verify', 'qa_smoke_missing', 'ci_fix_exhausted']);
 const CLAUDE_TOOLS = ['--allowedTools', 'Bash', '--disallowedTools', 'Bash(git push:*)', 'Bash(gh:*)'];
 const RUNNER_ID = ['-c', 'user.name=coding-workflow-runner', '-c', 'user.email=coding-workflow-runner@cecelia.local'];
@@ -141,6 +144,7 @@ async function intervene(ctx, pr, esc, cs, signal) {
   const startedAt = Date.now();
   let taskId = null;
   let costUsd;
+  let rulingDir;
   const fail = async (reason, detail) => {
     await toHuman(ctx, pr, cs, esc, reason, detail, taskId);
     if (taskId) await postSpans(ctx, [gateSpan({ taskId, key: 'commander', startedAt, endedAt: Date.now(), ok: false, costUsd, occurrence: `${pr.number}:c${n}`, evidence: { escalation: esc.detail.type, reason } })]);
@@ -150,61 +154,76 @@ async function intervene(ctx, pr, esc, cs, signal) {
     const intent = intentOf(worktree, pr.headRefName);
     if (!intent?.taskId) return await fail('commander_sprint_missing');
     taskId = intent.taskId;
-    const before = await headOf(worktree);
-    const specRel = `${intent.sprintDir}/02-spec.md`;
-    const contextPath = file(cfg, `commander-${pr.number}-${n}-context.json`);
-    const rulingPath = file(cfg, `commander-${pr.number}-${n}-ruling.json`);
-    writeJson(contextPath, { pr: pr.number, branch: pr.headRefName, escalation: esc.detail, qa_state: readJson(file(cfg, `qa-${pr.number}.json`), null),
-      ci_fix_state: readJson(file(cfg, `cifix-${pr.number}.json`), null), previous: cs.interventions });
-    fs.rmSync(rulingPath, { force: true });
-    const prompt = loadPrompt('commander', {
-      ROUND: String(n), MAX: String(cfg.commanderMax), PR_NUMBER: `#${pr.number}`, BRANCH: pr.headRefName,
-      ESCALATION_TYPE: esc.detail.type, ESCALATION_JSON: JSON.stringify(esc.detail), CONTEXT_PATH: contextPath,
-      SPRINT_DIR: path.join(worktree, intent.sprintDir), INTENT_PATH: path.join(worktree, intent.sprintDir, '01-intent.md'),
-      SPEC_PATH: path.join(worktree, specRel), RULING_PATH: rulingPath, REPO_RULES: repoRules(cfg.repoProfile),
-    });
-    ctx.log(`coding commander PR #${pr.number} 第 ${n} 次介入（${esc.detail.type}）`);
-    // 裁决文件写在 logDir（worktree 外）：显式授权该目录，否则 Write 被拒（真实 Opus 演练实证）
-    const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', '--add-dir', cfg.logDir, ...CLAUDE_TOOLS], cwd: worktree, timeoutMs: cfg.commanderTimeoutMs, tag: 'commander', isolateRemote: true,
-      transcriptPath: sessionLogPath(cfg, 'commander', pr.number, n) });
-    costUsd = run.cost_usd;
-    ctx.log(sessionSummary('commander', pr.number, run));
-    if (run.timedOut || run.terminated || run.code !== 0) return await fail('commander_session_failed', run.timedOut ? 'timeout' : `exit ${run.code}`);
-    const parsed = parseRuling(fs.existsSync(rulingPath) ? fs.readFileSync(rulingPath, 'utf8') : '');
-    if (parsed.error) return await fail('commander_output_invalid', parsed.error);
-    const { ruling } = parsed;
-    if (ruling.action === 'human') return await fail('commander_human', ruling.human_reason);
-    let commits = [];
-    if ((await headOf(worktree)) !== before) {
-      try {
-        commits = await checkCommits(cfg, worktree, before, specRel);
-      } catch (error) {
-        return await fail(`commander_${error?.message || 'commit_check_failed'}`);
+    const provenance = sourceContext(cfg, worktree, intent, 'commander', n, SOURCE_CONTROLLER);
+    const execute = async () => {
+      const before = await headOf(worktree);
+      verifySourceHead(cfg, worktree, intent, before);
+      const specRel = `${intent.sprintDir}/02-spec.md`;
+      const contextPath = file(cfg, `commander-${pr.number}-${n}-context.json`);
+      const rulingPath = file(cfg, `commander-${pr.number}-${n}-ruling.json`);
+      writeJson(contextPath, { pr: pr.number, branch: pr.headRefName, escalation: esc.detail, qa_state: readJson(file(cfg, `qa-${pr.number}.json`), null),
+        ci_fix_state: readJson(file(cfg, `cifix-${pr.number}.json`), null), previous: cs.interventions });
+      fs.rmSync(rulingPath, { force: true });
+      rulingDir = fs.mkdtempSync(path.join(cfg.logDir, `commander-${pr.number}-${n}-ruling-`));
+      const sessionRuling = path.join(rulingDir, 'ruling.json');
+      const prompt = loadPrompt('commander', {
+        ROUND: String(n), MAX: String(cfg.commanderMax), PR_NUMBER: `#${pr.number}`, BRANCH: pr.headRefName,
+        ESCALATION_TYPE: esc.detail.type, ESCALATION_JSON: JSON.stringify(esc.detail), CONTEXT_PATH: contextPath,
+        SPRINT_DIR: path.join(worktree, intent.sprintDir), INTENT_PATH: path.join(worktree, intent.sprintDir, '01-intent.md'),
+        SPEC_PATH: path.join(worktree, specRel), RULING_PATH: sessionRuling, REPO_RULES: repoRules(cfg.repoProfile),
+      });
+      ctx.log(`coding commander PR #${pr.number} 第 ${n} 次介入（${esc.detail.type}）`);
+      // 模型只可写本次裁决目录；QA/合并状态与历史日志不在额外写权限内。
+      const run = await runClaude({ args: ['-p', prompt, '--permission-mode', 'acceptEdits', '--add-dir', rulingDir, ...CLAUDE_TOOLS], cwd: worktree, timeoutMs: cfg.commanderTimeoutMs, tag: 'commander', isolateRemote: true,
+        transcriptPath: sessionLogPath(cfg, 'commander', pr.number, n) });
+      costUsd = run.cost_usd;
+      ctx.log(sessionSummary('commander', pr.number, run));
+      if (run.timedOut || run.terminated || run.code !== 0) return await fail('commander_session_failed', run.timedOut ? 'timeout' : `exit ${run.code}`);
+      const parsed = parseRuling(fs.existsSync(sessionRuling) ? fs.readFileSync(sessionRuling, 'utf8') : '');
+      if (parsed.error) return await fail('commander_output_invalid', parsed.error);
+      const { ruling } = parsed;
+      writeJson(rulingPath, ruling);
+      if (ruling.action === 'human') return await fail('commander_human', ruling.human_reason);
+      let commits = [];
+      if ((await headOf(worktree)) !== before) {
+        try {
+          commits = await checkCommits(cfg, worktree, before, specRel);
+        } catch (error) {
+          return await fail(`commander_${error?.message || 'commit_check_failed'}`);
+        }
+      } else if ((await git(worktree, ['status', '--porcelain'])).stdout.trim()) {
+        return await fail('commander_uncommitted');
       }
-    } else if ((await git(worktree, ['status', '--porcelain'])).stdout.trim()) {
-      return await fail('commander_uncommitted');
-    }
-    const record = `${intent.sprintDir}/07-commander-r${n}.md`;
-    fs.writeFileSync(path.join(worktree, record), renderRuling({ n, escalation: esc.detail, ruling, commits }));
-    const sourceFiles = registerRecordSources(worktree, { ...intent, stage: 'commander', round: n }, [record]);
-    if ((await git(worktree, ['add', '--', record, ...sourceFiles])).code !== 0
-      || (await git(worktree, [...RUNNER_ID, 'commit', '-q', '-m', `docs(commander): 第 ${n} 次 coding commander 裁决（${esc.detail.type}）`])).code !== 0) {
-      return await fail('commander_record_commit_failed');
-    }
-    await pushPrHead(cfg, worktree, pr);
-    const head = await headOf(worktree);
-    release(cfg, pr.number, esc, ruling, { n, head, commits });
-    const entry = { n, at: new Date().toISOString(), kind: esc.kind, escalation: esc.detail, action: 'resume', rulings: ruling.rulings, summary: ruling.summary,
-      reset_ci_budget: ruling.reset_ci_budget, commits, record, head, cost_usd: costUsd ?? null };
-    cs.interventions.push(entry);
-    writeJson(file(cfg, `commander-${pr.number}.json`), cs);
-    const task = await ctx.brain.getTask(taskId);
-    const prev = task.ok ? task.body?.result?.commander_overrides ?? [] : [];
-    const r = await ctx.brain.patch(taskId, { result: { commander_overrides: [...(Array.isArray(prev) ? prev : []), { ...entry, by: 'coding-commander' }] } });
-    if (!r.ok) ctx.log(`coding commander 回写 Brain 任务 ${taskId} 失败（HTTP ${r.status}）`);
-    await postSpans(ctx, [gateSpan({ taskId, key: 'commander', startedAt, endedAt: Date.now(), ok: true, costUsd, occurrence: `${pr.number}:c${n}`, evidence: { escalation: esc.detail.type, commits: commits.length } })]);
-    ctx.log(`coding commander PR #${pr.number} 第 ${n} 次裁决：${ruling.summary}（解除 ${esc.detail.type}）`);
-    return true;
+      const changedSpec = (await git(worktree, ['diff', '--name-only', before, 'HEAD', '--', specRel])).stdout.trim() !== '';
+      if (provenance && changedSpec) sealStageEvidence({ files: [specRel], producer: 'model', result: { status: 'completed', outputs: { commander_spec_append: true } } });
+      const record = `${intent.sprintDir}/07-commander-r${n}.md`;
+      fs.writeFileSync(path.join(worktree, record), renderRuling({ n, escalation: esc.detail, ruling, commits }));
+      if (provenance) sealStageEvidence({ files: [record], producer: 'controller_render', result: { status: 'completed', outputs: { action: ruling.action } }, controllerInput: { n, escalation: esc.detail, ruling, commits } });
+      const registration = provenance ? beginRecordRegistration(provenance, [...(changedSpec ? [specRel] : []), record]) : null;
+      const sourceFiles = registerRecordSources(worktree, { ...intent, stage: 'commander', round: n }, [record]);
+      if (registration) observeRecordRegistration(registration, sourceFiles);
+      if ((await git(worktree, ['add', '--', record, ...sourceFiles])).code !== 0
+        || (await git(worktree, [...RUNNER_ID, 'commit', '-q', '-m', `docs(commander): 第 ${n} 次 coding commander 裁决（${esc.detail.type}）`])).code !== 0) {
+        return await fail('commander_record_commit_failed');
+      }
+      if (registration) finalizeRecordRegistration(registration);
+      verifySourceHead(cfg, worktree, intent, await headOf(worktree));
+      await pushPrHead(cfg, worktree, pr);
+      const head = await headOf(worktree);
+      release(cfg, pr.number, esc, ruling, { n, head, commits });
+      const entry = { n, at: new Date().toISOString(), kind: esc.kind, escalation: esc.detail, action: 'resume', rulings: ruling.rulings, summary: ruling.summary,
+        reset_ci_budget: ruling.reset_ci_budget, commits, record, head, cost_usd: costUsd ?? null };
+      cs.interventions.push(entry);
+      writeJson(file(cfg, `commander-${pr.number}.json`), cs);
+      const task = await ctx.brain.getTask(taskId);
+      const prev = task.ok ? task.body?.result?.commander_overrides ?? [] : [];
+      const r = await ctx.brain.patch(taskId, { result: { commander_overrides: [...(Array.isArray(prev) ? prev : []), { ...entry, by: 'coding-commander' }] } });
+      if (!r.ok) ctx.log(`coding commander 回写 Brain 任务 ${taskId} 失败（HTTP ${r.status}）`);
+      await postSpans(ctx, [gateSpan({ taskId, key: 'commander', startedAt, endedAt: Date.now(), ok: true, costUsd, occurrence: `${pr.number}:c${n}`, evidence: { escalation: esc.detail.type, commits: commits.length } })]);
+      ctx.log(`coding commander PR #${pr.number} 第 ${n} 次裁决：${ruling.summary}（解除 ${esc.detail.type}）`);
+      return true;
+    };
+    return provenance ? await withRecordProvenance(provenance, execute) : await execute();
   } catch (error) {
     // 会话期间 PR 被关：不推送、不 Bark，升级原样保留，交给外部关闭收尾（pr-closure.mjs）
     if (error?.message === 'pr_closed') {
@@ -213,6 +232,7 @@ async function intervene(ctx, pr, esc, cs, signal) {
     }
     return await fail('commander_error', String(error?.message || error).slice(0, 300));
   } finally {
+    if (rulingDir) fs.rmSync(rulingDir, { recursive: true, force: true });
     await removeWorktree(cfg, worktree, pr.headRefName);
     fs.rmSync(worktree, { recursive: true, force: true });
   }

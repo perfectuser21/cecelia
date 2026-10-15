@@ -16,6 +16,7 @@ import { decide, detectTrend, stalled } from '../lib/gan.mjs';
 import { sessionCostUsd, sumCostUsd, costText } from '../lib/transcript.mjs';
 import { SPEC_FILE, INTENT_FILE, specErrors, specIds, qaScenarios, judgmentPoints, untrackedDeferrals, explainSpecErrors } from '../lib/spec-check.mjs';
 import { INVARIANTS_FILE, loadInvariantIds } from '../lib/invariants.mjs';
+import { sealStageEvidence } from '../lib/record-provenance.mjs';
 
 const REVIEW_FILE = '02-review.md';
 const TIMEOUT = { envVar: 'CODING_WF_SPEC_REVIEW_TIMEOUT_MS', defaultMs: 900000 };
@@ -197,6 +198,8 @@ await runActivity(async (input) => {
     }
     badStreak = 0;
     reviewErrors = [];
+    sealStageEvidence({ files: [`${sprintDir}/${reviewName(round)}`], round,
+      result: { status: 'completed' }, producer: 'model' });
     usedIds.push(...review.issues.map((i) => i.id));
     const open = openIssuesAfter(prevOpen, review);
     history.push({ scores: review.scores, specLines: fs.readFileSync(specPath, 'utf8').split('\n').length });
@@ -222,6 +225,8 @@ await runActivity(async (input) => {
     const specErr = specErrors(fs.readFileSync(specPath, 'utf8'), taskId, intentIds, { invariantIds });
     if (specErr.length > 0) return fail('retryable', 'spec_invalid', { evidence: [{ spec_errors: specErr }] });
     if (!fs.existsSync(responsePath)) return fail('retryable', 'response_missing', { evidence: [{ round }] });
+    sealStageEvidence({ files: [`${sprintDir}/${responseName(round)}`, `${sprintDir}/${SPEC_FILE}`], round,
+      result: { status: 'completed' }, producer: 'model' });
     untracked = untrackedDeferrals(fs.readFileSync(responsePath, 'utf8')).filter((id) => open.some((i) => i.id === id));
   }
-});
+}, { stage: 'spec_review', entry: import.meta.url });

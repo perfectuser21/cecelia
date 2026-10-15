@@ -132,4 +132,4 @@ async function main(input) {
 await runActivity(async (input) => {
   const result = await main(input);
   return { ...result, metrics: { ...(result?.metrics ?? {}), cost_usd: spend.usd } };
-});
+}, { stage: 'verify', entry: import.meta.url });
