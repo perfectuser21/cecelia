@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { execFileSync,spawnSync } from 'node:child_process';
-import {mkdtempSync,writeFileSync,existsSync,rmSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,existsSync,rmSync,realpathSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,9 @@ import {loadHistoricalImplementationContext} from '../../lib/implementation-cont
 import * as snapshots from '../../lib/implementation-ci-snapshot.js';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
 import { randomUUID } from 'node:crypto';
+import { cruise } from 'dependency-cruiser';
+import { parse } from 'acorn';
+import { collectWorkspaceInputEdges } from '../../lib/existing-ops-workspace-source.js';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 // 一次冻结真实 checkout；CI 浅历史不依赖旧提交，也不授予候选 main 身份。
@@ -236,3 +239,23 @@ it('跨仓声明、Brain anchor、冻结source_set或执行边界重算全部has
   await expect(snapshots.extractImplementationAdmissionSnapshotsForDatabase(fixture.db,altered,['zenithjoy','cecelia-factory'])).rejects.toThrow();
  }
 });
+
+// 原生扫描器是根workspace工具；在安装其依赖的真实integration通道保留该永久断言。
+it('原生依赖扫描从真实被选择测试解析三个UI owner，不伪造辅助来源或import边', async () => {
+    const proof = await collectWorkspaceInputEdges({ revision, paths, readSource,
+      parse: text => parse(text, { ecmaVersion: 'latest', sourceType: 'module' }) });
+    const owners = ['BusinessInputs', 'CapabilitySystem', 'InvocationPanel'];
+    const tests = owners.map(name => `apps/api/features/planning/pages/capability-system/${name}.test.tsx`);
+    expect(tests.every(path => proof.some(b => b.dst_path === path))).toBe(true);
+    const temporary = mkdtempSync(join(tmpdir(), 'nightly-workspace-source-')), checkout = join(temporary, 'source');
+    try {
+      execFileSync('git', ['worktree', 'add', '--quiet', '--detach', checkout, revision], { cwd: root });
+      const scanned = await cruise(tests, { baseDir: realpathSync(checkout), doNotFollow: { path: 'node_modules' }, exclude: { path: 'node_modules' } });
+      const graph = typeof scanned.output === 'string' ? JSON.parse(scanned.output) : scanned.output;
+      for (const path of tests) expect(graph.modules.find(m => m.source === path)?.dependencies)
+        .toContainEqual(expect.objectContaining({ resolved: path.replace('.test.tsx', '.tsx'), couldNotResolve: false }));
+    } finally {
+      execFileSync('git', ['worktree', 'remove', '--force', checkout], { cwd: root });
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  });

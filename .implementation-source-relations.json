@@ -386,6 +386,7 @@
       "path": "packages/brain/src/__tests__/scheduler-jobs-recurring-independent-loop.test.js",
       "role": "verification"
     },
+    {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"changes/cp-10160051-preserve-source-contract.md","role":"release"},
     {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"changes/cp-10151510-nightly-ui-source.md","role":"release"},
     {"owner_path":"packages/brain/src/lib/existing-ops-workspace-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-workspace-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-workspace-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-workspace-graph.test.js","role":"verification"},
@@ -654,6 +655,8 @@
       "path": "packages/brain/src/__tests__/golden-path-proposal-wiring.test.js",
       "role": "verification"
     },
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/runtime-install.mjs","path":"packages/brain/scripts/coding-workflow/runner/__tests__/runtime-install.test.mjs","role":"verification"},
+    {"owner_path":"packages/brain/src/startup-port-guard.js","path":"packages/brain/src/__tests__/startup-port-guard.test.js","role":"verification"},
     {
       "owner_path": "packages/brain/src/lib/task-type-registry.js",
       "path": "packages/brain/src/__tests__/task-type-registry.guard.test.js",
