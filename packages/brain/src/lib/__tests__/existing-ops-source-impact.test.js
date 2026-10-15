@@ -121,10 +121,26 @@ it('被声明的入口源字节缺失仍UNKNOWN，不保留成功绑定',async()
 });
 
 it('旧YAML真实单scope在已安装联合CLI时仍有来源，未运行的联合分支不冒Factory消费者',async()=>{
- const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];
+ const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;
  const overrides=new Map([[workflow,yaml.dump(doc)],...['scripts/ci/implementation-pr-gate.mjs',entry,multi].map(path=>[path,readFileSync(new URL(path,new URL('../../../../../',import.meta.url)),'utf8')])]);
  const f3=(await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths:[...new Set([...paths,entry,multi])],readSource:async path=>overrides.get(path)??read(path)})).consumers[1];
  expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
  expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:'scripts/ci/implementation-pr-gate.mjs',kind:'direct_admission_runner'}));
  expect(f3.input_relations.some(r=>r.kind==='conditional_pr_admission_runner')).toBe(false);
+});
+
+it.each(['condition','callee','argument','else','side_effect','workflow_env','job_env','step_env'])('旧单scope不得把 %s 的main分支误证为未运行',async kind=>{
+ const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;
+ let pr=readFileSync(new URL('scripts/ci/implementation-pr-gate.mjs',new URL('../../../../../',import.meta.url)),'utf8');
+ if(kind==='condition')pr=pr.replace('options.mainScopes!==undefined','options.mainScopes===undefined');
+ if(kind==='callee')pr=pr.replace('return runImplementationMainGate(options);','return otherGate(options);');
+ if(kind==='argument')pr=pr.replace('return runImplementationMainGate(options);','return runImplementationMainGate({});');
+ if(kind==='else')pr=pr.replace('return runImplementationMainGate(options);','return runImplementationMainGate(options);else return {};');
+ if(kind==='side_effect')pr=pr.replace('if(options.mainScopes!==undefined)','options.mainScopes="injected";if(options.mainScopes!==undefined)');
+ if(kind==='workflow_env')doc.env={IMPLEMENTATION_MAIN_SCOPES:false};
+ if(kind==='job_env')doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES='';
+ if(kind==='step_env')doc.jobs.gate.steps[0].env={IMPLEMENTATION_MAIN_SCOPES:'active'};
+ const overrides=new Map([[workflow,yaml.dump(doc)],['scripts/ci/implementation-pr-gate.mjs',pr]]);
+ const f3=(await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async path=>overrides.get(path)??read(path)})).consumers[1];
+ expect(f3.status,JSON.stringify(f3.gaps)).toBe('unknown');expect(f3.bindings).toEqual([]);
 });

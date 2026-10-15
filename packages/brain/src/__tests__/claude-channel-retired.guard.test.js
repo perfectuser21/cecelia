@@ -159,3 +159,24 @@ describe('守卫自证：每条判据都会报警', () => {
     expect(findClaudeInvocations(line)).toEqual([]);
   });
 });
+
+
+describe('只读来源封套数据与实际执行代码分离',()=>{
+ const dataFile=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-envelopes.js');
+ const consumer=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-source.js');
+ const baseSources=()=>new Map([[dataFile,readFileSync(dataFile,'utf8')],[consumer,readFileSync(consumer,'utf8')]]);
+ const scan=(edit=()=>{},suffix='')=>{const sources=baseSources();edit(sources);return findClaudeInvocations(sources.get(dataFile)+suffix,{file:dataFile,sources});};
+ it('真实无插值ENVELOPES仅供Acorn解析，原R3文本不是进程执行',()=>expect(scan()).toEqual([]));
+ it.each(['spawn','alias','interpolation','consume','consumer_alias','extra_consumer','parser_shadow','parser_reassign'])('封套 %s 不得被纯数据豁免遮住',kind=>{
+  const result=scan(sources=>{
+   if(kind==='spawn')sources.set(dataFile,sources.get(dataFile)+"\nspawn('claude',['-p']);");
+   if(kind==='alias')sources.set(dataFile,sources.get(dataFile)+"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);");
+   if(kind==='interpolation')sources.set(dataFile,sources.get(dataFile).replace('spawnParameters: `','spawnParameters: `${launch("claude")}'));
+   if(kind==='consume')sources.set(consumer,sources.get(consumer)+"\nexec(ENVELOPES.spawnParameters);");
+   if(kind==='consumer_alias')sources.set(consumer,sources.get(consumer)+"\nconst escaped=ENVELOPES;exec(escaped.spawnParameters);");
+   if(kind==='extra_consumer')sources.set(path.join(BRAIN_ROOT,'src/extra.js'),"import {ENVELOPES} from './lib/existing-ops-build-envelopes.js';exec(ENVELOPES.spawnParameters)");
+   if(kind==='parser_shadow')sources.set(consumer,sources.get(consumer).replace('function functionMatches(tree,name,parse)', 'function functionMatches(tree,name,parse,parseEnvelope)'));
+   if(kind==='parser_reassign')sources.set(consumer,sources.get(consumer)+"\nparseEnvelope=eval;");
+  });expect(result.length).toBeGreaterThan(0);
+ });
+});
