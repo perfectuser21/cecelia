@@ -41,6 +41,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: perfectuser21/cecelia
+          ref: ${{ github.repository == 'perfectuser21/cecelia' && github.sha || inputs.tooling_revision }}
+          path: tooling
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 仅可信已发布main工具读取中央凭据
+        working-directory: tooling
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+        working-directory: tooling
       - uses: tailscale/github-action@v2
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
@@ -48,41 +65,35 @@ jobs:
         env:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
           CECELIA_INTERNAL_TOKEN: ${{ secrets.CECELIA_INTERNAL_TOKEN }}
+          GH_TOKEN: ${{ secrets.CECELIA_ACTIONS_READ_TOKEN || github.token }}
           MAP_SCOPE: ${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}
           SOURCE_REPO: ${{ inputs.source_repo || github.repository }}
           BASE: ${{ inputs.base_revision || github.event.before }}
           HEAD: ${{ inputs.head_revision || github.sha }}
         run: |
           set -euo pipefail
-          test -n "$CECELIA_INTERNAL_TOKEN" || { echo '::error::CECELIA_INTERNAL_TOKEN未配置'; exit 1; }
-          [[ "$BASE" =~ ^[0-9a-f]{40}$ && "$HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 1
-          mkdir -p evidence
-          for side in base head; do
-            revision="$BASE"; if [[ "$side" == head ]]; then revision="$HEAD"; fi
-            curl --fail-with-body --silent --show-error --get "$BRAIN_URL/api/brain/implementation-ci/snapshot" \
-              -H "X-Internal-Token: $CECELIA_INTERNAL_TOKEN" \
-              --data-urlencode "scope=$MAP_SCOPE" --data-urlencode "repo=$SOURCE_REPO" --data-urlencode "revision=$revision" > "evidence/$side.json"
-          done
-          if jq -e '.snapshot.gaps[]? | select(.code == "definition_snapshot_missing")' evidence/head.json >/dev/null; then
-            jq -n --arg scope "$MAP_SCOPE" --arg repo "$SOURCE_REPO" --arg revision "$HEAD" '{scope:$scope,repo:$repo,revision:$revision}' > evidence/refresh-request.json
-            curl --fail-with-body --silent --show-error "$BRAIN_URL/api/brain/implementation-ci/refresh" \
-              -H "X-Internal-Token: $CECELIA_INTERNAL_TOKEN" -H 'Content-Type: application/json' \
-              --data-binary @evidence/refresh-request.json > evidence/head.json
-          fi
+          node tooling/scripts/ci/implementation-main-snapshot.mjs
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: implementation-snapshot-${{ inputs.head_revision || github.sha }}
           path: evidence/head.json
           retention-days: 90
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: implementation-baseline-${{ inputs.head_revision || github.sha }}
           path: evidence/base.json
           retention-days: 90
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: implementation-snapshot-diagnostics-${{ inputs.head_revision || github.sha }}
+          path: evidence/diagnostics/
+          retention-days: 90
+          if-no-files-found: warn
   gate:
     name: Implementation impact gate
     needs: [snapshot-main]
@@ -177,10 +188,17 @@ jobs:
             artifact_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact" --jq '.workflow_run.id')
             gap_code=IMPLEMENTATION_CI_ARTIFACT_ORIGIN_INVALID
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$artifact_run" --jq '.event + " " + .path' | grep -Eq '^(push|workflow_dispatch) .github/workflows/implementation-impact.yml$'
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$artifact_run" | jq -e --arg sha "$BASE" --arg repo "$GITHUB_REPOSITORY" --argjson run "$artifact_run" \
+              '.id == $run and .head_sha == $sha and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch") and .path == ".github/workflows/implementation-impact.yml" and .repository.full_name == $repo and .head_repository.full_name == $repo' >/dev/null
+            gap_code=IMPLEMENTATION_CI_SNAPSHOT_PROVIDER_FAILED
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$artifact_run/jobs?per_page=100" | jq -e \
+              '.total_count <= 100 and any(.jobs[]; .name == "snapshot-main" and .status == "completed" and .conclusion == "success")' >/dev/null
             gap_code=IMPLEMENTATION_CI_ARTIFACT_DOWNLOAD_FAILED
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$RUNNER_TEMP/implementation-input/base.zip"
             mkdir -p "$RUNNER_TEMP/implementation-input/base"
             unzip -p "$RUNNER_TEMP/implementation-input/base.zip" head.json > "$RUNNER_TEMP/implementation-input/base/base.json"
+            gap_code=IMPLEMENTATION_CI_SNAPSHOT_PROVIDER_FAILED
+            jq -e 'type == "object" and .error == null and (.snapshot | type == "object")' "$RUNNER_TEMP/implementation-input/base/base.json" >/dev/null
             mkdir -p "$RUNNER_TEMP/implementation-input/head"
             cp "$RUNNER_TEMP/implementation-input/base/base.json" "$RUNNER_TEMP/implementation-input/head/head.json"
             if [[ -n "${ADMISSION_SCOPES:-}" ]]; then

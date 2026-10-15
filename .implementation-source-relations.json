@@ -706,6 +706,11 @@
     {"owner_path": "packages/brain/src/lib/existing-ops-source.js", "path": "docs/learnings/cp-10151430-ci-source-bootstrap.md", "role": "documentation"},
     {"owner_path": "packages/brain/src/lib/existing-ops-runtime-source.js", "path": "packages/brain/src/lib/__tests__/existing-ops-runtime-source.test.js", "role": "verification"},
     
-    {"owner_path": "packages/brain/src/lib/existing-ops-source.js", "path": "sprints/10151430-ci-source-bootstrap/contract-draft.md", "role": "documentation"}
+    {"owner_path": "packages/brain/src/lib/existing-ops-source.js", "path": "sprints/10151430-ci-source-bootstrap/contract-draft.md", "role": "documentation"},
+    {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": ".prd.md", "role": "documentation"},
+    {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "docs/learnings/cp-10151400-ci-snapshot.md", "role": "documentation"},
+    {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "scripts/ci/__tests__/implementation-main-snapshot.test.mjs", "role": "verification"},
+    {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "changes/cp-10151400-ci-snapshot.md", "role": "release"},
+    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "packages/brain/scripts/coding-workflow/runner/README.md", "role": "documentation"}
   ]
 }
