@@ -26,6 +26,13 @@ async function collect(overrides = {}, enabled = true) {
       ? read(path) + '\nexport const EXISTING_OPS_WORKSPACE_SELECTOR_SCHEMA = 1;' : read(path)) })).consumers[1];
 }
 describe('真实nightly workspace消费者来源', () => {
+  it('独立图解析不能激活中央冻结合同之外的workspace绑定', async () => {
+    const legacy = await collect({}, false);
+    const marked = await collect();
+    expect(marked.status).toBe('verified');
+    expect(marked.bindings).toEqual(legacy.bindings);
+    expect(marked.input_relations).toEqual(legacy.input_relations);
+  });
   it('固定Git现有直接命令及字面量选择器证明前端测试输入，不把全部apps路径直接认领', async () => {
     const proof = await collect();
     expect(proof.status, JSON.stringify(proof.gaps)).toBe('verified');
