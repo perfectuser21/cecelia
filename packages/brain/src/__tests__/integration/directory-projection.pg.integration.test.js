@@ -51,6 +51,57 @@ beforeEach(async () => {
 });
 afterEach(async () => { if (client) { await client.query('ROLLBACK'); if (schema) await client.query(`DROP SCHEMA ${schema} CASCADE`); await client.end(); } });
 describe('六层目录真实PG边界', () => {
+  it('真PG价值流与能力改名更新原页摘要，标题读回失败不刷新收据，重试后幂等', async () => {
+    const f=runtimeFixture(), vs=fixtureEntityId(22), cap=fixtureEntityId(23), area=fixtureEntityId(21);
+    await client.query('CREATE TABLE working_memory(key text PRIMARY KEY,value_json jsonb,updated_at timestamptz)');
+    await client.query('INSERT INTO areas VALUES($1,$2,$3)',[area,'组织',fixtureEntityId(41)]);
+    await client.query("INSERT INTO value_streams VALUES($1,'产品','value_stream',$2,NULL)",[vs,area]);
+    await client.query("INSERT INTO capabilities VALUES($1,'能力','capability',$2,$3)",[cap,area,vs]);
+    await client.query("INSERT INTO map_projection_runs VALUES($1,'cecelia','active')",[randomUUID()]);
+    const run=(await client.query('SELECT id FROM map_projection_runs')).rows[0].id;
+    await client.query("INSERT INTO map_projection_nodes VALUES($1,'product','value_stream','产品',$2)",[run,{journey_id:vs}]);
+    await client.query("INSERT INTO notion_map_node_pages VALUES('cecelia','product',$1,NULL)",[fixtureEntityId(42)]);
+    await client.query("INSERT INTO projection_targets(target,enabled,config) VALUES('notion-directory',true,$1)",[f.config]);
+    const pool={connect:async()=>({query:client.query.bind(client),release(){}})};
+    const execute=(notionReq=f.notionReq)=>runDirectoryProjection(pool,{token:'test',notionReq,force:true,bodies:null});
+    expect((await execute()).failed).toBe(0);
+    const initial=(await client.query("SELECT entity_id,external_id,content_hash FROM projection_links WHERE target='notion-directory' AND entity_id=ANY($1::uuid[]) ORDER BY entity_id",[[vs,cap]])).rows;
+    expect(initial).toHaveLength(2);
+    await client.query("UPDATE value_streams SET name='新版产品' WHERE id=$1",[vs]);
+    await client.query("UPDATE capabilities SET name='新版能力' WHERE id=$1",[cap]);
+    // 显式绑定验证仍要求地图节点与来源同名。
+    await client.query("UPDATE map_projection_nodes SET name='新版产品' WHERE node_key='product'");
+    let stale=true;
+    const calls=[];
+    const notionReq=async (...args)=>{
+      if(args[1]===`/pages/${initial.find(x=>x.entity_id===cap).external_id}`) calls.push(args[2]);
+      const page=await f.notionReq(...args);
+      if(stale&&args[2]==='GET'&&args[1]===`/pages/${initial.find(x=>x.entity_id===cap).external_id}`)
+        page.properties['名称']={title:[{text:{content:'能力'}}]};
+      return page;
+    };
+    const failure=await execute(notionReq);
+    expect(failure).toMatchObject({status:'failed'});
+    expect(calls).toEqual(expect.arrayContaining(['PATCH','GET']));
+    expect(calls.indexOf('PATCH')).toBeLessThan(calls.lastIndexOf('GET'));
+    expect(failure.errors).toContainEqual(expect.objectContaining({id:cap,code:'目录属性读回不一致: 名称'}));
+    const partial=(await client.query("SELECT entity_id,external_id,content_hash FROM projection_links WHERE target='notion-directory' AND entity_id=ANY($1::uuid[]) ORDER BY entity_id",[[vs,cap]])).rows;
+    expect(partial.find(x=>x.entity_id===cap).content_hash).toBe(initial.find(x=>x.entity_id===cap).content_hash);
+    stale=false;
+    expect((await execute(notionReq)).failed).toBe(0);
+    const updated=(await client.query("SELECT entity_id,external_id,content_hash FROM projection_links WHERE target='notion-directory' AND entity_id=ANY($1::uuid[]) ORDER BY entity_id",[[vs,cap]])).rows;
+    for(const row of updated){
+      const before=initial.find(x=>x.entity_id===row.entity_id);
+      expect(row.external_id).toBe(before.external_id);
+      expect(row.content_hash).not.toBe(before.content_hash);
+    }
+    expect(f.pages.get(updated.find(x=>x.entity_id===vs).external_id).properties['名称'].title[0].text.content).toBe('新版产品');
+    expect(f.pages.get(updated.find(x=>x.entity_id===cap).external_id).properties['名称'].title[0].text.content).toBe('新版能力');
+    f.writes.length=0;
+    expect((await execute()).failed).toBe(0);
+    expect(f.writes.filter(x=>x.path.startsWith('/pages/'))).toEqual([]);
+    expect((await client.query("SELECT entity_id,external_id,content_hash FROM projection_links WHERE target='notion-directory' AND entity_id=ANY($1::uuid[]) ORDER BY entity_id",[[vs,cap]])).rows).toEqual(updated);
+  });
   it('超过20条legacy仅采样明细，遗漏聚合同源补齐七天统计并排除task_runs重复',async()=>{
     const workflow=randomUUID(),task=randomUUID();
     await client.query("INSERT INTO workflows VALUES($1,'大量真实运行','many-runs',NULL)",[workflow]);
