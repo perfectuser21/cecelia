@@ -25,6 +25,7 @@ export function compileInvocation(definition, catalog = {}, options = {}) {
     a.input_schema=contract?.input_schema;a.output_schema=contract?.output_schema;
     if (!['none','read_only'].includes(contract?.mutation_intent)) gap('mutation_unsupported',a.key);
     if (contract?.status === 'deprecated' || ['scheduler_only','deprecated'].includes(contract?.runtime?.mode)) gap('execution_mode_unsupported',a.key);
+    if (contract?.resources && Object.keys(contract.resources).length) gap('resource_not_connected',a.key);
     if (a.transport !== 'codex-bridge') gap('transport_not_connected',a.key);
     if (a.implementation?.kind !== 'skill') gap('implementation_not_connected',a.key);
     // 保留来源声明摘要，固定引用核验会比对真实文件字节。
