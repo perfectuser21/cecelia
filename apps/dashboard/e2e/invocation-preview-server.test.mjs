@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createInvocationPreview } from './invocation-preview-server.mjs';
@@ -20,4 +21,19 @@ test('受控preview拒绝外部Origin、跨租户头和非白名单写入，不�
 test('仅loopback后端且显式tenant/operator/token可启动', () => {
   assert.throws(() => createInvocationPreview({brainOrigin:'https://production.example',tenantId:'a',operatorId:'b',token:'x'}));
   assert.throws(() => createInvocationPreview({brainOrigin:'http://127.0.0.1:5999'}));
+});
+
+test('真实HTTP传输固定服务端目的地址，客户端query不能改变上游主机', async () => {
+  const seen = [];
+  const upstream = createServer((req,res) => { seen.push({url:req.url,host:req.headers.host,tenant:req.headers['x-tenant-id']});res.writeHead(200,{'Content-Type':'application/json'}).end('{"readiness":"blocked"}'); });
+  await new Promise(resolve => upstream.listen(0,'127.0.0.1',resolve));
+  const upstreamOrigin = `http://127.0.0.1:${upstream.address().port}`;
+  const preview = createInvocationPreview({brainOrigin:upstreamOrigin,tenantId:'scratch',operatorId:'operator',token:'fixture-secret'});
+  await new Promise(resolve => preview.listen(0,'127.0.0.1',resolve));
+  const origin = `http://127.0.0.1:${preview.address().port}`;
+  try {
+    const response = await fetch(origin+'/api/brain/invocations/resolve?next=http%3A%2F%2Fevil.example',{method:'POST',headers:{origin,'Content-Type':'application/json'},body:'{}'});
+    assert.equal(response.status,200);assert.deepEqual(await response.json(),{readiness:'blocked'});
+    assert.deepEqual(seen,[{url:'/api/brain/invocations/resolve?next=http%3A%2F%2Fevil.example',host:new URL(upstreamOrigin).host,tenant:'scratch'}]);
+  } finally { await new Promise(resolve => preview.close(resolve));await new Promise(resolve => upstream.close(resolve)); }
 });

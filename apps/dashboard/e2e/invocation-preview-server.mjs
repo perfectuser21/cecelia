@@ -1,10 +1,24 @@
 // 仅供隔离验收：本机固定操作人和租户，不能作为生产用户认证。
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const mime = { '.js':'text/javascript', '.css':'text/css', '.html':'text/html', '.json':'application/json', '.svg':'image/svg+xml', '.png':'image/png', '.woff2':'font/woff2' };
-export function createInvocationPreview({ brainOrigin, tenantId, operatorId, token, staticRoot = fileURLToPath(new URL('../dist/',import.meta.url)), fetcher = fetch } = {}) {
+function requestPreviewBrain(upstream, {path, method, headers, body}) {
+  return new Promise((resolveResponse, reject) => {
+    // 网络目的地址只来自已校验的服务端配置；客户端数据只允许成为HTTP path。
+    const outgoing = httpRequest({hostname:upstream.hostname.replace(/^\[|\]$/g,''), port:upstream.port, method, headers, path, timeout:20000}, incoming => {
+      let data = '';
+      incoming.on('data', chunk => { data += chunk; if (Buffer.byteLength(data) > 2097152) { outgoing.destroy(Error('preview响应过大')); } });
+      incoming.on('end', () => resolveResponse({status:incoming.statusCode, text:async () => data}));
+      incoming.on('error', reject);
+    });
+    outgoing.on('timeout', () => outgoing.destroy(Error('preview响应超时')));
+    outgoing.on('error', reject);
+    outgoing.end(body);
+  });
+}
+export function createInvocationPreview({ brainOrigin, tenantId, operatorId, token, staticRoot = fileURLToPath(new URL('../dist/',import.meta.url)), fetcher = requestPreviewBrain } = {}) {
   const upstream = new URL(brainOrigin);
   if (upstream.protocol !== 'http:' || !['127.0.0.1','[::1]'].includes(upstream.hostname) || upstream.username || upstream.password || upstream.pathname !== '/' || upstream.search || upstream.hash) throw Error('preview后端必须为明确的本机隔离Brain');
   if (![tenantId,operatorId,token].every(value => typeof value === 'string' && value.length > 0 && !/[\r\n]/.test(value))) throw Error('preview必须显式指定服务端租户、操作人和内部凭据');
@@ -27,7 +41,7 @@ export function createInvocationPreview({ brainOrigin, tenantId, operatorId, tok
         let body = '';
         for await (const chunk of request) { body += chunk; if (Buffer.byteLength(body) > 1048576) return fail(413,'请求过大'); }
         const headers = { 'Content-Type':'application/json', 'x-internal-token':token, 'x-tenant-id':tenantId, 'x-invocation-operator':operatorId };
-        const result = await fetcher(new URL(url.pathname+url.search,upstream), { method:request.method, headers, ...(request.method === 'POST' ? { body } : {}), signal:AbortSignal.timeout(20000), redirect:'error' });
+        const result = await fetcher(upstream, { path:url.pathname+url.search, method:request.method, headers, ...(request.method === 'POST' ? { body } : {}) });
         const data = await result.text();
         if (data.includes(token)) return fail(502,'后端响应包含内部凭据，已拒绝返回');
         response.writeHead(result.status, {'Content-Type':'application/json', 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff'}).end(data);
