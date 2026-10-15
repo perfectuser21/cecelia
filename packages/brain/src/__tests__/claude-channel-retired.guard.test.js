@@ -103,6 +103,14 @@ function provenReaderClosure(consumer) {
     ||node.type==='Identifier'&&node.name==='parseEnvelope'&&parent?.type==='CallExpression'&&parent.callee===node&&!readerOf(node));
 }
 
+// 已独审的完整 runtime 指纹闭包：固定五文件只读→SHA摘要/比较；没有模板执行或原文出口。
+// 仅此路径且整个模块 AST 相等时认可该消费者；任何语义改动都须重新审查。
+// 这不把 runtime 加入文件白名单，模块原 R1–R7/进程别名扫描照常执行。
+const HASH_RUNTIME_FILE = path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
+const HASH_RUNTIME_SHA256 = '98bcc9fb345bf0e1a4dad7b15e69d54e28c4fc9fa3cf9eb5c8dd7ff94bbadde2';
+const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
+  &&createHash('sha256').update(astShape(parseModule(text))).digest('hex')===HASH_RUNTIME_SHA256;
+
 function envelopeRanges(src,sources) {
   const tree=parseModule(src), rows=astRows(tree);
   const declarations=tree.body.filter(n=>n.type==='ExportNamedDeclaration'&&n.declaration?.kind==='const').flatMap(n=>n.declaration.declarations).filter(n=>n.id.name==='ENVELOPES');
@@ -111,7 +119,7 @@ function envelopeRanges(src,sources) {
   if(data.init?.type!=='ObjectExpression'||!properties?.length||properties.some(p=>p.type!=='Property'||p.computed||p.method||p.kind!=='init'||p.value?.type!=='TemplateLiteral'||p.value.expressions.length))return null;
   if(rows.some(({node,parent})=>node.type==='Identifier'&&node.name==='ENVELOPES'&&!(parent===data&&parent.id===node)))return null;
   // 额外消费者没有获得纯数据资格；不推断它不会执行字符串。
-  for(const [file,text] of sources)if(file!==ENVELOPE_FILE&&file!==ENVELOPE_CONSUMER&&text.includes('existing-ops-build-envelopes'))return null;
+  for(const [file,text] of sources)if(file!==ENVELOPE_FILE&&file!==ENVELOPE_CONSUMER&&text.includes('existing-ops-build-envelopes')&&!provenFingerprintReader(file,text))return null;
   const consumer=parseModule(sources.get(ENVELOPE_CONSUMER)||''), usages=astRows(consumer);
   if(!provenReaderClosure(consumer))return null;
   const imports=consumer.body.filter(n=>n.type==='ImportDeclaration');
@@ -269,5 +277,41 @@ describe('只读来源封套数据与实际执行代码分离',()=>{
    if(kind==='parser_shadow')sources.set(consumer,sources.get(consumer).replace('function functionMatches(tree,name,_parse)', 'function functionMatches(tree,name,_parse,parseEnvelope)'));
    if(kind==='parser_reassign')sources.set(consumer,sources.get(consumer)+"\nparseEnvelope=eval;");
   });expect(result.length).toBeGreaterThan(0);
+ });
+});
+
+describe('固定runtime字节指纹不执行来源模板',()=>{
+ const runtime=path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
+ const source=readFileSync(runtime,'utf8');
+ const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],[runtime,source]]);
+ const scan=sources=>findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources});
+ it('真实固定模块仅fs读取后hash/比较，允许模板数据且模块本身仍经过R1-R7',()=>{
+  expect(scan(base())).toEqual([]);
+  expect(findClaudeInvocations(source,{file:runtime,sources:base()})).toEqual([]);
+ });
+ it.each([
+  ['eval',s=>s+"\neval(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
+  ['Function',s=>s+"\nFunction(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'))();"],
+  ['exec',s=>s+"\nimport {exec} from 'node:child_process';exec(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
+  ['spawn',s=>s+"\nimport {spawn} from 'node:child_process';spawn(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
+  ['raw export',s=>s+"\nexport const raw=readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8');"],
+  ['raw hash replacement',s=>s.replace("createHash('sha256').update(bytes).digest('hex')","bytes.toString('utf8')")],
+  ['hash rebinding',s=>s+"\ncreateHash=eval;"],
+  ['dynamic import',s=>s+"\nawait import('node:child_process');"],
+  ['changed read path',s=>s.replace('new URL(name,import.meta.url)',"new URL(name,'file:///tmp/')")],
+  ['global side effect',s=>s+"\nBuffer.from=eval;"],
+  ['exec alias',s=>s+"\nimport {exec as launch} from 'node:child_process';launch(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
+  ['names expansion',s=>s.replace("'existing-ops-source.js',","'unreviewed-source.js','existing-ops-source.js',")],
+  ['raw return',s=>s.replace("files:files.map(f=>({...f}))","files:readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8')")],
+  ['extra top call',s=>s+"\nsendElsewhere(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
+ ])('runtime %s 必须拒绝整条模板数据资格',(_name,edit)=>{
+  const sources=base();sources.set(runtime,edit(source));
+  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
+ });
+ it.each(['same source at other path','third consumer'])('%s 不继承固定runtime资格',kind=>{
+  const sources=base(),other=path.join(BRAIN_ROOT,'src/lib/other-runtime.js');
+  if(kind==='same source at other path'){sources.delete(runtime);sources.set(other,source);}
+  else sources.set(other,"import {ENVELOPES} from './existing-ops-build-envelopes.js';export const raw=ENVELOPES;");
+  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
  });
 });

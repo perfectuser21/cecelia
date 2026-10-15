@@ -1198,7 +1198,7 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.dod == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     services:
       postgres:
         image: mirror.gcr.io/pgvector/pgvector:pg15
@@ -1251,21 +1251,12 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - name: Install deps（前端 DoD 装全 workspace，后端 DoD 仅 brain）
-        # 前端 harness 任务的 [BEHAVIOR] 是 `cd apps/dashboard && npx vitest ...`，需要 dashboard
-        # 自己的 node_modules。注意：在 workspace 子目录跑 `cd apps/dashboard && npm ci` 会裁剪掉
-        # brain 独有依赖（如 dotenv），导致随后 `node src/migrate.js` 报 ERR_MODULE_NOT_FOUND。
-        # 因此前端 DoD 用根 `npm ci` 一次性装全 workspace（brain + dashboard 都在）；后端 DoD
-        # 保持 brain-only（快）。
+      - name: Install workspace dependencies
+        # DoD 的真实源码图扫描跨 workspace 解析 TSX，dependency-cruiser 需要 apps/api 的
+        # TypeScript；仅安装 Brain 会静默丢失 test→component 边。与 brain-integration 一致，
+        # 从根安装完整锁定依赖，也避免子 workspace 安装裁剪其他命令所需依赖。
         if: steps.detect.outputs.has_dynamic == 'true'
-        run: |
-          if grep -qE 'apps/dashboard' "${{ steps.detect.outputs.task_card }}"; then
-            echo "🔧 DoD 含 apps/dashboard 前端命令，安装全 workspace 依赖（根 npm ci）"
-            npm ci
-          else
-            echo "DoD 后端命令，安装 Brain 与根锁定工具依赖"
-            npm ci --workspace=packages/brain --include-workspace-root
-          fi
+        run: npm ci
       - name: Setup /workspace symlink + playground deps
         if: steps.detect.outputs.has_dynamic == 'true'
         run: |

@@ -1,0 +1,118 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,dirname} from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {createServer} from 'node:http';
+import {createHash} from 'node:crypto';
+import yaml from 'js-yaml';
+import {expectedSourceRuntime,waitForSourceRuntime} from '../implementation-source-ready.mjs';
+const paths=['source','runtime-source','build-source','build-envelopes','workspace-source'].map(n=>`packages/brain/src/lib/existing-ops-${n}.js`).sort();
+const root=mkdtempSync(join(tmpdir(),'source-ready-'));
+const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
+git('init','-q');mkdirSync(join(root,'empty-hooks'));git('config','core.hooksPath',join(root,'empty-hooks'));git('config','user.email','test@example.invalid');git('config','user.name','Fixture');
+for(const path of paths){mkdirSync(dirname(join(root,path)),{recursive:true});writeFileSync(join(root,path),`// fixed fixture ${path}\n`);}
+git('add','.');git('commit','-qm','fixture');const revision=git('rev-parse','HEAD');
+const expected={schema_version:1,repo:'perfectuser21/cecelia',files:paths.map(path=>({path,sha256:createHash('sha256').update(readFileSync(join(root,path))).digest('hex')}))};
+const runtime=()=>({...structuredClone(expected),git_sha:'a'.repeat(40)});
+test.after(()=>rmSync(root,{recursive:true,force:true}));
+async function fixture(responses,run){
+ const requests=[];let i=0;
+ const server=createServer((req,res)=>{requests.push({method:req.method,url:req.url,auth:req.headers['x-internal-token']});const item=responses[Math.min(i++,responses.length-1)];res.writeHead(item.status??200,{'Content-Type':'application/json'});res.end(typeof item.body==='string'?item.body:JSON.stringify(item.body));});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const url=`http://127.0.0.1:${server.address().port}`;
+ try{await run(url,requests);}finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+}
+function options(brainUrl){return {brainUrl,token:'test-only',repoRoot:root,revision,timeoutMs:100,intervalMs:10};}
+function deps(extra={}){let time=0;return {readMain:async()=>revision,now:()=>time,sleep:async ms=>{time+=ms;},...extra};}
+test('固定单提交Git读取五文件；工作区未提交字节不作为可信指纹',()=>{
+ const actual=expectedSourceRuntime({repoRoot:root,revision});assert.deepEqual(actual,expected);
+ writeFileSync(join(root,paths[0]),'dirty bytes');assert.deepEqual(expectedSourceRuntime({repoRoot:root,revision}),expected);git('checkout','--',paths[0]);
+});
+test('真实HTTP仅GET，旧部署指纹等待后匹配；不同build SHA可接受',async()=>{
+ const old=runtime();old.files[0].sha256='0'.repeat(64);
+ await fixture([{body:old},{body:runtime()}],async(url,requests)=>{
+  const r=await waitForSourceRuntime(options(url),deps());assert.equal(r.status,'ready');assert.equal(r.attempts,2);assert.equal(r.runtime_git_sha,'a'.repeat(40));
+  assert.deepEqual(requests.map(r=>[r.method,r.url,r.auth]),Array(2).fill(['GET','/api/brain/implementation-ci/runtime-source','test-only']));
+ });
+});
+test('旧端点404及部署503只读等待后正常就绪',async()=>{
+ await fixture([{status:404,body:{}},{status:503,body:{}},{body:runtime()}],async(url,requests)=>{
+  assert.equal((await waitForSourceRuntime(options(url),deps())).attempts,3);assert.ok(requests.every(r=>r.method==='GET'));
+ });
+});
+test('网络异常有界等待，不吞普通程序错误',async()=>{
+ let calls=0;const fetchFn=async()=>{if(++calls===1)throw new TypeError('network');return new Response(JSON.stringify(runtime()));};
+ assert.equal((await waitForSourceRuntime(options('http://localhost'),deps({fetchFn}))).attempts,2);
+ await assert.rejects(waitForSourceRuntime(options('http://localhost'),deps({fetchFn:async()=>{throw Error('bug');}})),/SOURCE_READY_FETCH_ERROR/);
+});
+test('部署断连造成响应流中断时只读等待',async()=>{
+ let calls=0;
+ const fetchFn=async()=>++calls===1?{ok:true,text:async()=>{throw new TypeError('terminated');}}:new Response(JSON.stringify(runtime()));
+ assert.equal((await waitForSourceRuntime(options('http://localhost'),deps({fetchFn}))).attempts,2);
+});
+for(const status of [401,403,409,429])test(`HTTP ${status}立即拒绝，不重试`,async()=>{
+ await fixture([{status,body:{}}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_HTTP_ERROR/);assert.equal(requests.length,1);});
+});
+for(const [name,mutate] of [
+ ['schema',b=>b.schema_version=2],['repo',b=>b.repo='foreign/repo'],['extra field',b=>b.proof='trusted'],
+ ['duplicate path',b=>b.files[0]=b.files[1]],['extra path',b=>b.files.push({path:'secret',sha256:'0'.repeat(64)})],
+ ['invalid digest',b=>b.files[0].sha256='oops'],['malicious path',b=>b.files[0].path='../secret'],['invalid build sha',b=>b.git_sha='main']
+])test(`未知或恶意${name}响应立即拒绝`,async()=>{
+ const b=runtime();mutate(b);await fixture([{body:b}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
+});
+test('缺省build SHA可以由匹配模块指纹证明就绪',async()=>{
+ const b=runtime();b.git_sha=null;await fixture([{body:b}],async url=>assert.equal((await waitForSourceRuntime(options(url),deps())).runtime_git_sha,null));
+});
+for(const body of ['not-json','x'.repeat(65537)])test(`非法或超大响应拒绝(${body.length})`,async()=>{
+ await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
+});
+test('错误指纹持续存在时严格超时，全部请求只有GET',async()=>{
+ const b=runtime();b.files[0].sha256='0'.repeat(64);
+ await fixture([{body:b}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/);assert.equal(requests.length,10);assert.ok(requests.every(r=>r.method==='GET'));});
+});
+test('main在读取前或响应后移动都立即失败',async()=>{
+ let calls=0;await fixture([{body:runtime()}],async(url,requests)=>{
+  await assert.rejects(waitForSourceRuntime(options(url),deps({readMain:async()=> 'b'.repeat(40)})),/SOURCE_READY_MAIN_MOVED/);assert.equal(requests.length,0);
+  await assert.rejects(waitForSourceRuntime(options(url),deps({readMain:async()=>++calls===1?revision:'b'.repeat(40)})),/SOURCE_READY_MAIN_MOVED/);assert.equal(requests.length,1);
+ });
+});
+test('迟到的匹配响应不能越过硬截止时间',async()=>{
+ let time=0;await assert.rejects(waitForSourceRuntime(options('http://localhost'),deps({now:()=>time,fetchFn:async()=>{time=101;return new Response(JSON.stringify(runtime()));}})),/SOURCE_READY_TIMEOUT/);
+});
+test('拒绝超60分钟预算及非固定HEAD',async()=>{
+ await assert.rejects(waitForSourceRuntime({...options('http://localhost'),timeoutMs:3600001},deps()),/SOURCE_READY_INPUT_INVALID/);
+ assert.throws(()=>expectedSourceRuntime({repoRoot:root,revision:'a'.repeat(40)}),/SOURCE_READY_CHECKOUT_MISMATCH/);
+});
+
+test('真实workflow保持原snapshot谓词与15/40分钟，独立只读就绪60分钟',()=>{
+ const workflow=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+ const ready=workflow.jobs['source-runtime-ready'],snapshot=workflow.jobs['snapshot-main'];
+ const old="inputs.export_device_patrol_source_identity != true && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'";
+ assert.equal(ready.if,old);assert.equal(snapshot.if,old);assert.deepEqual(snapshot.needs,['source-runtime-ready']);
+ assert.equal(ready['timeout-minutes'],60);assert.equal(snapshot['timeout-minutes'],15);assert.equal(workflow.jobs.gate['timeout-minutes'],40);
+ const scopeStep=ready.steps.find(s=>s.id==='scope');assert.match(scopeStep.run,/echo "applicable=\$REQUIRED"/);
+ const evaluate=(expression,context)=>Function('github','inputs','vars',`return (${expression.replace(/^\$\{\{ | \}\}$/g,'')})`)(context.github,context.inputs,context.vars);
+ const context={github:{repository:'perfectuser21/cecelia',ref:'refs/heads/main',event_name:'push',sha:revision},inputs:{},vars:{}};
+ for(const [name,patch,jobExpected,appExpected] of [
+  ['self push',{},true,true],['self dispatch',{github:{event_name:'workflow_dispatch'}},true,true],
+  ['PR',{github:{event_name:'pull_request'}},false,false],['device',{inputs:{export_device_patrol_source_identity:true}},false,true],
+  ['crossrepo',{github:{repository:'foreign/repo'},inputs:{source_repo:'foreign/repo',tooling_revision:revision}},true,false],
+  ['foreign source',{inputs:{source_repo:'foreign/repo'}},true,false],['other scope',{inputs:{scope:'cecelia-device-patrol'}},true,false],
+  ['other head',{inputs:{head_revision:'a'.repeat(40)}},true,false],['other tooling',{inputs:{tooling_revision:'a'.repeat(40)}},true,false],
+  ['other mode',{inputs:{mode:'release'}},true,false]
+ ]){
+  const c={github:{...context.github,...patch.github},inputs:{...patch.inputs},vars:{}};
+  assert.equal(evaluate(ready.if,c),jobExpected,name);assert.equal(evaluate(snapshot.if,c),jobExpected,name);
+  assert.equal(evaluate(scopeStep.env.REQUIRED,c),appExpected,name);
+ }
+ for(const step of ready.steps.filter(s=>s!==scopeStep))assert.ok(step.if.includes("steps.scope.outputs.applicable == 'true'"));
+ assert.equal(ready.steps.find(s=>s.uses==='actions/checkout@v4').with.ref,'${{ github.sha }}');
+ assert.ok(ready.steps.some(s=>s.run==='node tooling/scripts/ci/implementation-source-ready.mjs'));
+});
+test('固定Git输入可在真实depth1浅克隆运行',()=>{
+ const clone=join(root,'shallow');execFileSync('git',['clone','--quiet','--depth','1',`file://${root}`,clone]);
+ assert.equal(execFileSync('git',['rev-parse','--is-shallow-repository'],{cwd:clone,encoding:'utf8'}).trim(),'true');
+ assert.deepEqual(expectedSourceRuntime({repoRoot:clone,revision}),expected);
+});

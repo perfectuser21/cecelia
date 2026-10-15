@@ -1,3 +1,4 @@
+import './implementation-source-ready.test.mjs';
 import './factory-workflow-config-source.test.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';

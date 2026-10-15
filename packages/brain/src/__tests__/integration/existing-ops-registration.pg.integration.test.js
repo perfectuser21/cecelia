@@ -207,12 +207,13 @@ it('生产refresh拒绝外部proof、scratch旗标及未认证来源；失败不
 it('正式refresh只读固定main commit/tree字节，来源未知和截断树不能写历史',async()=>{
   await factoryMap(); const before=await registration.readExistingOpsRegistry(fixture.db);
   const treeSha=execFileSync('git',['rev-parse',`${revision}^{tree}`],{cwd:root,encoding:'utf8'}).trim();
+  const treeEntries=execFileSync('git',['ls-tree','-rz',revision],{cwd:root,encoding:'utf8',maxBuffer:16e6}).split('\0').filter(Boolean).map(line=>{const [meta,path]=line.split('\t'),[mode,type,sha]=meta.split(' ');return {mode,type,sha,path};});
   let truncated=true,reads=0;
   const fetchFn=async(url,options)=>{
     reads++;expect(options.redirect).toBe('error');
     if(url.endsWith('/commits/main'))return {ok:true,text:async()=>revision};
     if(url.endsWith(`/git/commits/${revision}`))return {ok:true,json:async()=>({sha:revision,tree:{sha:treeSha}})};
-    if(url.endsWith(`/git/trees/${treeSha}?recursive=1`))return {ok:true,json:async()=>({sha:treeSha,truncated,tree:paths.map(path=>({path,type:'blob'}))})};
+    if(url.endsWith(`/git/trees/${treeSha}?recursive=1`))return {ok:true,json:async()=>({sha:treeSha,truncated,tree:treeEntries})};
     const prefix='https://api.github.com/repos/perfectuser21/cecelia/contents/';
     expect(url.startsWith(prefix)).toBe(true);expect(new URL(url).searchParams.get('ref')).toBe(revision);
     const path=decodeURIComponent(new URL(url).pathname.slice('/repos/perfectuser21/cecelia/contents/'.length));

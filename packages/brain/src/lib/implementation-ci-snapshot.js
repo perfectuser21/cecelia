@@ -1,3 +1,5 @@
+import {prepareNativeConsumerSelection,selectNativeConsumerDefinition} from './native-consumer-source-selection.js';
+import {assertNativeConsumerRuntime} from './native-consumer-runtime.js';
 import {manifestMatchesImplementationSource} from './implementation-context.js';
 import {hasFrozenConsumerSource,sealedConsumerVersion,collectWorkspaceConsumerSourceSet,isTrustedWorkspaceConsumerSource,sealedBrainConsumerDefinition,consumerSourceAdmissionScope} from './consumer-source-set.js';
 /** 中央定义只读导出；身份由登记表给出，历史来源不以latest补齐。 */
@@ -223,7 +225,7 @@ function validateSnapshot(snapshot,admissionScope={allowScratch:false}){
 /** 默认同步验证不接受scratch准入；异步入口只由实际数据库身份派生权限。 */
 export function validateImplementationSnapshot(snapshot){return validateSnapshot(snapshot);}
 export async function validateImplementationSnapshotForDatabase(db,snapshot){return validateSnapshot(snapshot,await consumerSourceAdmissionScope(db));}
-export async function readImplementationSnapshotInTransaction(db,q){
+export async function readImplementationSnapshotInTransaction(db,q,nativeProof){
   const factory=q.scope===EXISTING_OPS_SCOPE;
   const gaps=[],gap=(code,details={})=>gaps.push({code,...details});
   if(factory&&![EXISTING_OPS_REPO,CONTRACT_REPO].includes(q.repo))gap('factory_source_repo_mismatch');
@@ -262,7 +264,8 @@ export async function readImplementationSnapshotInTransaction(db,q){
     const current=rows.find(r=>r.id===workflows.find(w=>w.id===id)?.current_definition_version_id);
     if(current)selected.push(current);
     else if(rows.length===1)selected.push(rows[0]);
-    else gap('definition_snapshot_ambiguous',{workflow_id:id,revision:q.revision});
+    else {const matched=!authoring&&!crossConsumer&&await selectNativeConsumerDefinition(db,q,rows,nativeProof);
+      if(matched)selected.push(matched);else gap('definition_snapshot_ambiguous',{workflow_id:id,revision:q.revision});}
   }
   if(crossConsumer)for(const w of selected)if(w.source_repo!==anchor.repo||w.source_commit!==anchor.revision
     ||w.payload_sha256!==stepSha256({source:{repo:w.source_repo,path:w.source_path,commit:w.source_commit},payload:w.payload}))gap('consumer_source_digest_mismatch',{workflow_id:w.workflow_id});
@@ -331,13 +334,15 @@ export async function readImplementationSnapshotInTransaction(db,q){
     definitions:{workflows:selected,activities},map:{manifest,repositories,source_basis:manifestBasis},assertion_source:'current_registration',assertions});
   return {...body,snapshot_sha256:digest(body)};
 }
-export async function exportImplementationSnapshot(pool,input){
-  const q=validateSnapshotQuery(input),db=await pool.connect();
+export async function exportImplementationSnapshot(pool,input,{nativeConsumerSourceOptions}={}){
+  const q=validateSnapshotQuery(input);
+  const nativeProof=await prepareNativeConsumerSelection(pool,{...q,scope:companionParent(q)?EXISTING_OPS_SCOPE:q.scope},nativeConsumerSourceOptions);
+  const db=await pool.connect();
   try{
     await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    let result=await readImplementationSnapshotInTransaction(db,q);
+    let result=await readImplementationSnapshotInTransaction(db,q,nativeProof);
     if(companionParent(q)||crossCompanionParent(q)){
-      const snapshot=await readImplementationSnapshotInTransaction(db,{...q,scope:EXISTING_OPS_SCOPE});
+      const snapshot=await readImplementationSnapshotInTransaction(db,{...q,scope:EXISTING_OPS_SCOPE},nativeProof);
       const companion={schema_version:1,purpose:'admission_only',scope:EXISTING_OPS_SCOPE,repo:q.repo,revision:q.revision,
         ...(crossCompanionParent(q)?{source_basis:'cross_repo_source_set',registry_source:snapshot.registry_source||{repo:EXISTING_OPS_REPO,revision:null},source_set:snapshot.source_set||[]}:{}),snapshot};
       const {snapshot_sha256:_snapshotSha256,...body}=result;
@@ -407,9 +412,9 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
   await checkMain();
   const registration=(await pool.query('SELECT adapter_config FROM map_scope_repositories WHERE scope_key=$1',[q.scope])).rows;
   if(registration.length===1&&registration[0].adapter_config?.definition_protocol){
-    const snapshot=await exportImplementationSnapshot(pool,q);
+    const snapshot=await exportImplementationSnapshot(pool,q,{nativeConsumerSourceOptions:{fetchFn,resolveToken}});
     await verifyAuthoringSnapshotSources(snapshot,{fetchFn,resolveToken:async()=>token,...authoringSourceOptions});
-    await checkMain();const after=await exportImplementationSnapshot(pool,q);
+    await checkMain();const after=await exportImplementationSnapshot(pool,q,{nativeConsumerSourceOptions:{fetchFn,resolveToken}});
     if(after.snapshot_sha256!==snapshot.snapshot_sha256)throw ciFailure('AUTHORING_SNAPSHOT_CHANGED','来源核验期间登记或地图变化',409);
     return after;
   }
@@ -436,6 +441,7 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
       if(!response.ok)throw ciFailure('SOURCE_TREE_UNAVAILABLE');
       const tree=await response.json();
       if(tree.truncated||tree.sha!==commit.tree.sha||!Array.isArray(tree.tree))throw ciFailure('SOURCE_TREE_INCOMPLETE');
+      await assertNativeConsumerRuntime(readFile,tree);
       const paths=tree.tree.filter(n=>n.type==='blob').map(n=>n.path),registry=await readExistingOpsRegistry(pool);
       let workspaceConsumerProof;
       if(consumer!==undefined){
@@ -454,7 +460,7 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
         readBinding:readBinding||(b=>{if(b.repo!==q.repo)throw ciFailure('CROSS_REPO_SNAPSHOT_MISSING');return readFile(b.path,b.revision);})});
     }
   }
-  await checkMain();await advancePilotManifest(pool,pilotPlan,checkMain);return exportImplementationSnapshot(pool,q);
+  await checkMain();await advancePilotManifest(pool,pilotPlan,checkMain);return exportImplementationSnapshot(pool,q,{nativeConsumerSourceOptions:{fetchFn,resolveToken}});
 }
 
 /** 唯一登记键的窄入口；不接收路径、扫描命令或任意adapter参数。 */
