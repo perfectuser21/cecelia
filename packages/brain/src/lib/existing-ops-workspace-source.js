@@ -1,5 +1,6 @@
 /** 只证明固定Git内nightly实际选择的workspace测试；源码依赖仍由原生扫描器解析。 */
 import yaml from 'js-yaml';
+import { createHash } from 'node:crypto';
 const WORKFLOW = '.github/workflows/nightly-regression.yml';
 const fail = () => { throw Error('workspace_selector_unproven'); };
 const key = property => property.key?.name ?? property.key?.value;
@@ -83,4 +84,31 @@ export async function collectWorkspaceSources({ nightly, parse, paths, read, rev
       if (await read(path)) relations.push({ consumer_path: config, input_path: path, kind: 'literal_workspace_vitest_selector', revision });
     }
   }
+}
+
+/** 图解析能力独立于definition协议：旧定义字节不变，只解析两侧各自真实固定Git输入。 */
+export async function collectWorkspaceInputEdges({ revision, paths, readSource, parse }) {
+  const unknown = () => { throw Object.assign(Error('workspace input source unproven'), { code: 'WORKSPACE_INPUT_SOURCE_UNPROVEN' }); };
+  if (!/^[a-f0-9]{40}$/.test(revision) || !Array.isArray(paths) || typeof readSource !== 'function') unknown();
+  if (!paths.includes(WORKFLOW)) return [];
+  const contents = new Map(), relations = [];
+  const read = async path => {
+    if (!paths.includes(path)) unknown();
+    const text = await readSource(path, revision);
+    if (typeof text !== 'string' || !text.trim()) unknown();
+    contents.set(path, createHash('sha256').update(text).digest('hex'));
+    return text;
+  };
+  try {
+    const nightly = await read(WORKFLOW);
+    if (!yaml.load(nightly)?.jobs?.['workspace-test-nightly']) return [];
+    await collectWorkspaceSources({ nightly, parse, paths, read, revision, relations, requireProof: condition => {
+      if (!condition) unknown();
+      return true;
+    } });
+  } catch { unknown(); }
+  return relations.map(row => ({ src_path: row.consumer_path, dst_path: row.input_path, edge_type: 'import', detail: {
+    via: 'fixed_git_workspace_input', selector_kind: row.kind, source_revision: revision,
+    consumer_sha256: contents.get(row.consumer_path), input_sha256: contents.get(row.input_path), selector_schema: 1,
+  } }));
 }

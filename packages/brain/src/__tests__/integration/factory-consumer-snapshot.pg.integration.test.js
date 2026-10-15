@@ -37,16 +37,45 @@ beforeEach(async () => {
     }
   }
 });
-async function factoryMap() {
-  const decision=randomUUID(), manifestId=randomUUID(), binding=(entity_type,entity_id)=>({entity_type,entity_id,source_repo:'perfectuser21/cecelia',source_revision:revision});
+async function factoryMap(sourceRevision=revision) {
+  const decision=randomUUID(), manifestId=randomUUID(), binding=(entity_type,entity_id)=>({entity_type,entity_id,source_repo:'perfectuser21/cecelia',source_revision:sourceRevision});
   const manifest={scope_key:'cecelia-factory',schema_version:1,source_decision_id:decision,boundaries:[],crosscut_pool:[],shared_prerequisites:{applicable:false,items:[],reason:"两个现存工厂消费者独立验证来源，无共享执行前置"},value_streams:[{key:'factory',name:'研发工厂',perceiver:'主理人',order:1,brain_binding:binding('value_stream','aaaaaaaa-f0f0-4000-8000-000000000001')}],capabilities:EXISTING_OPS_IDENTITIES.map((i,n)=>({key:`F${n+2}`,name:i.workflow_key,order:n+1,value_stream_key:'factory',brain_binding:binding('capability',i.capability_id)}))};
   await fixture.db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','test','真实工厂来源隔离测试','active')",[decision]);
   await fixture.db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('cecelia-factory','cecelia-factory-source','legacy-ledger-v1',$1)",[{source_repo:'perfectuser21/cecelia'}]);
   await fixture.db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,'cecelia-factory',1,$2,$3,$4,'active',NOW())",[manifestId,decision,manifest,'a'.repeat(64)]);
-  await fixture.db.query("INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES('cecelia-factory',$1,$2,$3,'fixture',$2,'active',NOW())",[manifestId,'a'.repeat(64),{'cecelia-factory-source':revision}]);
+  await fixture.db.query("INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES('cecelia-factory',$1,$2,$3,'fixture',$2,'active',NOW())",[manifestId,'a'.repeat(64),{'cecelia-factory-source':sourceRevision}]);
 }
 afterEach(async () => { await fixture?.close(); });
 const options = extra => ({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths, readSource, checkMain: async () => {}, actor: 'test-real-main', ...extra });
+
+it('旧固定定义不变：真实scratch原生输入图让三个UI owner沿nightly入口获得来源',async()=>{
+ const historical='b5800c2d297cb121e90ff74987ebc410679371a2';
+ const oldPaths=execFileSync('git',['ls-tree','-rz','--name-only',historical],{cwd:root,encoding:'utf8'}).split('\0').filter(Boolean);
+ const oldRead=async path=>execFileSync('git',['show',`${historical}:${path}`],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024});
+ const before=await registration.readExistingOpsRegistry(fixture.db);
+ await registration.registerExistingOpsSources(fixture.db,options({revision:historical,paths:oldPaths,readSource:oldRead,expectedRegistrySha256:before.registry_sha256}));
+ await factoryMap(historical);
+ const snapshot=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:historical});
+ const frozen=JSON.stringify(snapshot.definitions);
+ expect(snapshot.definitions.activities.every(a=>a.payload.implementation_bindings.every(b=>!b.path.startsWith('apps/')))).toBe(true);
+ const temporary=mkdtempSync(join(tmpdir(),'workspace-history-')),checkout=join(temporary,'source');
+ try{
+  execFileSync('git',['worktree','add','--quiet','--detach',checkout,historical],{cwd:root});
+  const {projectImplementationSnapshot}=await import('../../../../../scripts/ci/implementation-snapshot.mjs');
+  const {readImplementationImpact}=await import('../../lib/implementation-impact.js');
+  // factoryMap的导出占位run不属于实际扫描投影；避免同修订两条fixture记录造成歧义。
+  await fixture.db.query("DELETE FROM map_projection_runs WHERE scope_key='cecelia-factory'");
+  await projectImplementationSnapshot(fixture.db,snapshot,checkout);
+  const owners=['BusinessInputs','CapabilitySystem','InvocationPanel'].map(name=>({path:`apps/api/features/planning/pages/capability-system/${name}.tsx`}));
+  const report=await readImplementationImpact(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',base_revision:historical,head_revision:historical,changed_files:owners});
+  for(const side of ['base','head'])for(const row of report[side].file_coverage)expect(row.matched_paths,JSON.stringify({row,gaps:report.gaps})).toContain('.github/workflows/nightly-regression.yml');
+  expect(JSON.stringify(snapshot.definitions)).toBe(frozen);
+  const rows=await fixture.db.query('SELECT payload FROM activity_definition_versions ORDER BY id');
+  expect(rows.rows.every(a=>a.payload.implementation_bindings.every(b=>!b.path.startsWith('apps/')))).toBe(true);
+ }finally{
+  execFileSync('git',['worktree','remove','--force',checkout],{cwd:root});rmSync(temporary,{recursive:true,force:true});
+ }
+},120000);
 
 // 固定08c/913/323真实字节摘要；323非main祖先，仅作scratch来源负边界，不授予生产准入。
 const frozenWorkspace={"source_set": [{"repo": "perfectuser21/zenithjoy-workspace", "revision": "08c546027494496014690982354aba617a6490d0"}, {"repo": "perfectuser21/cecelia", "revision": "91317659645e4ff6aae1fb3d5dcdde77a5948330"}, {"repo": "perfectuser21/cecelia", "revision": "32363a5d1e1ba0f259ebc63ba14e9e6580bc691a"}], "bindings": [{"kind": "code", "repo": "perfectuser21/zenithjoy-workspace", "revision": "08c546027494496014690982354aba617a6490d0", "path": ".github/workflows/implementation-impact.yml", "content_sha256": "f565ae0255755d6a376b53c05479d9b039de4b35fa7cfb4a90dc71f33c10a956", "digest": "sha256:f565ae0255755d6a376b53c05479d9b039de4b35fa7cfb4a90dc71f33c10a956", "scope": "activity", "validation_scope": "consumer_source", "status": "verified"}, {"kind": "code", "repo": "perfectuser21/zenithjoy-workspace", "revision": "08c546027494496014690982354aba617a6490d0", "path": "scripts/ci/__tests__/implementation-impact-workflow.test.mjs", "content_sha256": "ec88e3896be0338a2ebadde2d33c7d0421c05b222a1a983ba2639156216b685d", "digest": "sha256:ec88e3896be0338a2ebadde2d33c7d0421c05b222a1a983ba2639156216b685d", "scope": "activity", "validation_scope": "consumer_source", "status": "verified"}, {"kind": "code", "repo": "perfectuser21/cecelia", "revision": "91317659645e4ff6aae1fb3d5dcdde77a5948330", "path": ".github/workflows/implementation-impact.yml", "content_sha256": "f5cc9005046be3e79d51d4c848001b4e85b075ec71323e7e68ab3aeceda82a92", "digest": "sha256:f5cc9005046be3e79d51d4c848001b4e85b075ec71323e7e68ab3aeceda82a92", "scope": "activity", "validation_scope": "consumer_source", "status": "verified"}, {"kind": "code", "repo": "perfectuser21/cecelia", "revision": "91317659645e4ff6aae1fb3d5dcdde77a5948330", "path": "packages/brain/src/migrate.js", "content_sha256": "f9aeea3f265c674050b6f64bfc1660495d9d309f280be179ebf80a77b2686567", "digest": "sha256:f9aeea3f265c674050b6f64bfc1660495d9d309f280be179ebf80a77b2686567", "scope": "activity", "validation_scope": "consumer_source", "status": "verified"}, {"kind": "code", "repo": "perfectuser21/cecelia", "revision": "91317659645e4ff6aae1fb3d5dcdde77a5948330", "path": "scripts/ci/implementation-pr-gate.mjs", "content_sha256": "83e71f5418bcfc989eeaf68027f3fd56a2e235a9f72bb5b816573fa614994c53", "digest": "sha256:83e71f5418bcfc989eeaf68027f3fd56a2e235a9f72bb5b816573fa614994c53", "scope": "activity", "validation_scope": "consumer_source", "status": "verified"}, {"kind": "code", "repo": "perfectuser21/zenithjoy-workspace", "revision": "08c546027494496014690982354aba617a6490d0", "path": ".github/workflows/pilot-release-verification.yml", "content_sha256": "fdc68dc91016746e02d0bfdca4a294675d0056d280b85a884964bd9052a30393", "digest": "sha256:fdc68dc91016746e02d0bfdca4a294675d0056d280b85a884964bd9052a30393", "scope": "activity", "validation_scope": "consumer_source", "status": "verified"}, {"kind": "code", "repo": "perfectuser21/zenithjoy-workspace", "revision": "08c546027494496014690982354aba617a6490d0", "path": "scripts/ci/__tests__/pilot-release-workflow.test.mjs", "content_sha256": "ca65ecec4f3f85d2b0fd4f3c85a3a129e33fea7d32f46f9cc08fc369638c6904", "digest": "sha256:ca65ecec4f3f85d2b0fd4f3c85a3a129e33fea7d32f46f9cc08fc369638c6904", "scope": "activity", "validation_scope": "consumer_source", "status": "verified"}, {"kind": "code", "repo": "perfectuser21/cecelia", "revision": "32363a5d1e1ba0f259ebc63ba14e9e6580bc691a", "path": ".github/workflows/pilot-release-verification.yml", "content_sha256": "a9d29ba854a7f6582278ce2b4072ee38666c02463a7cd052e9a171411080d2a3", "digest": "sha256:a9d29ba854a7f6582278ce2b4072ee38666c02463a7cd052e9a171411080d2a3", "scope": "activity", "validation_scope": "consumer_source", "status": "verified"}, {"kind": "code", "repo": "perfectuser21/cecelia", "revision": "32363a5d1e1ba0f259ebc63ba14e9e6580bc691a", "path": "scripts/ci/pilot-release-verification.mjs", "content_sha256": "e25af6408229ce4a67505aa45ac6a9af69b3532c6ad839d1e49ef94c5e4dd82a", "digest": "sha256:e25af6408229ce4a67505aa45ac6a9af69b3532c6ad839d1e49ef94c5e4dd82a", "scope": "activity", "validation_scope": "consumer_source", "status": "verified"}]};
