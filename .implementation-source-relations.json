@@ -5,7 +5,6 @@
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/prep-prd.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/contract-draft.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "docs/learnings/cp-10151330-cw-terminal-sync.md", "role": "documentation"},
-    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "changes/cp-10151330-cw-terminal-sync.md", "role": "release"},
     {
       "owner_path": "packages/brain/src/projection/workflow-body.js",
       "path": "cp-1013222800-notion-span-readback.prd.md",
@@ -364,7 +363,6 @@
     },
     {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "cp-10152210-snapshot-recovery.prd.md", "role": "documentation"},
     {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "docs/learnings/cp-10152210-snapshot-recovery.md", "role": "documentation"},
-    {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "changes/cp-10152210-snapshot-recovery.md", "role": "release"},
     {
       "owner_path": "scripts/map/register-capability-pilots.mjs",
       "path": "packages/brain/src/lib/__tests__/implementation-ci-pilots.test.js",
@@ -717,7 +715,6 @@
     {"owner_path": "packages/brain/src/lib/leadgen-dispatch.js", "path": ".prd.md", "role": "documentation"},
     {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "docs/learnings/cp-10151400-ci-snapshot.md", "role": "documentation"},
     {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "scripts/ci/__tests__/implementation-main-snapshot.test.mjs", "role": "verification"},
-    {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "changes/cp-10151400-ci-snapshot.md", "role": "release"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "packages/brain/scripts/coding-workflow/runner/README.md", "role": "documentation"},
     {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"docs/current/brain-leadgen-dispatch.md","role":"documentation"},
     {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"packages/brain/src/lib/__tests__/leadgen-dispatch.test.js","role":"verification"},
