@@ -22,3 +22,16 @@ AST 封套来自正式祖先 2eb4d0557365befafed1953140c9c47e20bab495，仅作�
 注册期递归检查所有 describe：只允许固定根 setup、惰性函数与纯数据初始化，拒绝 only、异步注册、立即调用、未知嵌套 hook 与测试进程控制。输入解析、规格 ID 校验、目录校验、HEAD 查询使用固定小函数 AST 封套，拒绝调用前的确定提前退出；不模拟文件系统或 Git 外部环境成功，真实回归继续负责运行结果。
 
 固定 Git 测试使用本分支直接祖先，正式 CI fetch-depth: 0；无跨分支未合入对象依赖。可信旧2eb4工具应经真实静态 import 认领本棒新纯proof模块，不能候选工具自证；完整来源独审与正式CI后才合并。第二棒须等正式加载与新完整artifact，再激活marker。
+
+
+## 正式 CI 发现的兼容合同
+
+5bbda8 正式 brain-unit(1) 暴露当前 CLI 的 mainScopes 前置分支未被旧单范围来源证明识别；同例在正式 base 2eb4 也失败。保留当前真实 CLI，旧 YAML 夹具还原未配置 MAIN_SCOPES 的环境。仅精确缺省分支及实际 Acorn AST 合同通过时认定仍走单范围；任何层环境设置、前序副作用、条件/目标/参数改写都拒绝。
+
+brain-unit(4) 将纯模板的 bin 兜底文本识别为执行。守卫只剥离固定无插值 ENVELOPES 的数据值，并绑定真实 Acorn 解析及既有布尔比较闭包；额外消费、AST 输出逃逸、真实进程别名调用继续报警，不整文件豁免。无 Acorn 启动夹具补齐本棒两个真实静态依赖，保留 import 成功、503 和零候选读取原断言。该夹具遗漏由本地精确复现发现，不冒称已在本次 PR CI 执行。
+
+| Workstream | Test File | BEHAVIOR 覆盖 |
+|---|---|---|
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-source-impact.test.js` | `真实当前CLI只有mainScopes缺省才走单scope，false或空值仍进入main拒绝` |
+| ws1 | `packages/brain/src/__tests__/claude-channel-retired.guard.test.js` | `真实无插值ENVELOPES仅供Acorn解析，原R3文本不是进程执行` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-parser-startup.test.js` | `source extraction is explicitly unavailable and never reads or verifies candidate bytes` |

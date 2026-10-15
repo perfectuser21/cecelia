@@ -205,7 +205,22 @@ function legacyImpactRunnerProven(text,prText,gateText){
    ||!job.steps?.some(step=>step.if===undefined&&typeof step.run==='string'&&hash(step.run)===LEGACY_IMPACT_GATE_SHA256))return false;
  const pr=ast(prText),gate=ast(gateText),fn=namedExport(pr,'runImplementationPrGate'),gateFn=namedExport(gate,'runImplementationGate');
  const delegated=fn?.body.body.at(-1)?.type==='ReturnStatement'&&fn.body.body.at(-1).argument?.callee?.name==='implementationPrEvidence'&&literal(fn.body.body.at(-1).argument.arguments[1],true);
- if(delegated&&fn.body.body.slice(0,-1).some(n=>n.type!=='IfStatement'||n.test?.type!=='MemberExpression'||n.test.object?.name!=='options'||!['multi','extractScopes'].includes(n.test.property?.name)))return false;
+ // 旧入口只有未配置 MAIN_SCOPES 时才继续单scope；任何层显式设置都不能猜为空。
+ if(job.steps.some(s=>typeof s.run==='string'&&s.run.includes('IMPLEMENTATION_MAIN_SCOPES')))return false;
+ if([doc.env,job.env,...job.steps.map(s=>s.env)].some(env=>env&&Object.hasOwn(env,'IMPLEMENTATION_MAIN_SCOPES')))return false;
+ const mainBranch=ast('function branch(options){if(options.mainScopes!==undefined)return runImplementationMainGate(options);}').body[0].body.body[0];
+ const shape=n=>JSON.stringify(n,(key,value)=>['start','end','raw'].includes(key)?undefined:value);
+ const parser=pr.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='parseArgs');
+ const parseMain=ast('const mainScopes=process.env.IMPLEMENTATION_MAIN_SCOPES||undefined;').body[0];
+ const parseAssign=ast('if(mainScopes!==undefined)options.mainScopes=mainScopes;').body[0];
+ const dormantMain=n=>shape(n)===shape(mainBranch)
+   &&shape(parser?.body.body.at(-2))===shape(parseAssign)
+   &&nodes(pr).filter(x=>member(x,'options','mainScopes')).length===2
+   &&shape(parser?.body.body[0])===shape(parseMain)
+   &&!nodes(pr).some(x=>(x.type==='VariableDeclarator'&&nodes(x.id).some(id=>id.name==='undefined'))||(['FunctionDeclaration','FunctionExpression','ArrowFunctionExpression'].includes(x.type)&&(x.id?.name==='undefined'||x.params.some(p=>nodes(p).some(id=>id.name==='undefined'))))||(x.type==='ImportSpecifier'&&x.local.name==='undefined')||(x.type==='AssignmentExpression'&&x.left?.name==='undefined'))
+   &&namedImport(pr,'./implementation-main-gate.mjs',['runImplementationMainGate'])
+   &&fn.params.length===1&&fn.params[0].name==='options';
+ if(delegated&&fn.body.body.slice(0,-1).some(n=>!dormantMain(n)&&(n.type!=='IfStatement'||n.test?.type!=='MemberExpression'||n.test.object?.name!=='options'||!['multi','extractScopes'].includes(n.test.property?.name))))return false;
  const caller=delegated?pr.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='implementationPrEvidence'):fn;
  const statements=caller?.body.body.find(n=>n.type==='TryStatement')?.block.body;
  return namedImport(pr,'./implementation-gate.mjs',['runImplementationGate'])

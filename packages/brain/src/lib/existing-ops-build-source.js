@@ -4,8 +4,11 @@
 // runClaude 的 provider/isolateRemote 分支、loadPrompt/renderPrompt、withModel/openSink/claudeTimeoutMs、
 // build main 至首次 runClaude 的前缀、spawnClaude 至真正 spawn 的前缀。
 // 不冻结整个 build main；额外模板字段仅接受已审 INTENT_PATH。未知结构变化失败关闭，需显式重审。
+import { createRequire } from 'node:module';
 import { ENVELOPES } from './existing-ops-build-envelopes.js';
 export { buildSelectorEnabled } from './existing-ops-build-envelopes.js';
+const requireAcorn = createRequire(import.meta.url);
+function parseEnvelope(text) { return requireAcorn('acorn').parse(text, { ecmaVersion: 'latest', sourceType: 'module' }); }
 const PREFIX = 'packages/brain/scripts/coding-workflow/';
 export const BUILD_SOURCE_PATHS = Object.freeze({ test: PREFIX+'__tests__/build.test.mjs', helper: PREFIX+'__tests__/helpers/run-activity.mjs', activity: PREFIX+'activities/build.mjs', cli: PREFIX+'lib/claude.mjs', protocol: PREFIX+'lib/protocol.mjs', prompt: PREFIX+'prompts/build.md', fake: PREFIX+'__tests__/fixtures/fake-claude.mjs' });
 const canonical = value => JSON.stringify(value, (key,item) => ['start','end','raw'].includes(key) ? undefined : item);
@@ -67,8 +70,8 @@ function intact(tree, additional=[], allowedMutations=[], allowedEnvAliases=[]) 
 function moduleEnvelope(tree,key,parse) {
   const actualImports=tree.body.filter(n=>n.type==='ImportDeclaration').filter(n=>!(key==='activity'&&n.source.value==='../lib/spec-check.mjs'&&n.specifiers.length===1&&n.specifiers[0].imported?.name==='INTENT_FILE'&&n.specifiers[0].local.name==='INTENT_FILE'));
   const constants=tree.body.filter(n=>declaration(n)?.type==='VariableDeclaration');
-  return same(actualImports,parse(ENVELOPES[key+'Imports']).body)&&same(constants,parse(ENVELOPES[key+'Constants']).body)
-    && tree.body.every(n=>['ImportDeclaration','VariableDeclaration','FunctionDeclaration'].includes(n.type)||n.type==='ExportNamedDeclaration'&&!n.source&&['VariableDeclaration','FunctionDeclaration'].includes(n.declaration?.type)||key==='activity'&&same(n,parse(ENVELOPES.entry).body[0])||['test','publishTest'].includes(key)&&call(n.expression,'describe'));
+  return same(actualImports,parseEnvelope(ENVELOPES[key+'Imports']).body)&&same(constants,parseEnvelope(ENVELOPES[key+'Constants']).body)
+    && tree.body.every(n=>['ImportDeclaration','VariableDeclaration','FunctionDeclaration'].includes(n.type)||n.type==='ExportNamedDeclaration'&&!n.source&&['VariableDeclaration','FunctionDeclaration'].includes(n.declaration?.type)||key==='activity'&&same(n,parseEnvelope(ENVELOPES.entry).body[0])||['test','publishTest'].includes(key)&&call(n.expression,'describe'));
 }
 /** 固定调用边的 named imports 必须链接到目标的真实公开函数，存在私有同名函数不够。 */
 function namedFunctionsLink(consumer,provider,source) {
@@ -76,7 +79,7 @@ function namedFunctionsLink(consumer,provider,source) {
   const exported=new Set(provider.body.filter(n=>n.type==='ExportNamedDeclaration'&&!n.source&&n.declaration?.type==='FunctionDeclaration').map(n=>n.declaration.id.name));
   return imports.length===1&&imports[0].specifiers.length>0&&imports[0].specifiers.every(n=>n.type==='ImportSpecifier'&&exported.has(n.imported.name));
 }
-function functionMatches(tree,name,parse) { return same(fn(tree,name),parse(ENVELOPES[name]).body[0]); }
+function functionMatches(tree,name,parse) { return same(fn(tree,name),parseEnvelope(ENVELOPES[name]).body[0]); }
 function registration(n) {
   if(n?.type!=='CallExpression')return false;
   if(['beforeAll','beforeEach','afterEach','it','describe'].includes(n.callee?.name))return true;
@@ -123,7 +126,7 @@ function testSetup(tree,key,body,parse) {
   // 测试文件无需进程控制入口；即使藏于先行测试或别名读取也不认领后续 witness。
   if(nodes(tree).some(n=>n.type==='MemberExpression'&&n.object?.name==='process'&&(n.computed?n.property?.value:n.property?.name)!=='env'))return false;
   const hooks=body.filter(n=>n.type==='ExpressionStatement'&&['beforeAll','beforeEach','afterEach'].includes(n.expression?.callee?.name));
-  return same(hooks,parse(ENVELOPES[key+'Hooks']).body)&&same(body.filter(n=>n.type==='VariableDeclaration'),parse(ENVELOPES[key+'Declarations']).body)&&registrationBody(body,true);
+  return same(hooks,parseEnvelope(ENVELOPES[key+'Hooks']).body)&&same(body.filter(n=>n.type==='VariableDeclaration'),parseEnvelope(ENVELOPES[key+'Declarations']).body)&&registrationBody(body,true);
 }
 function testWitness(tree,parse) {
   const top=tree.body.filter(n=>n.type==='ExpressionStatement');
@@ -151,7 +154,7 @@ function mainPrefix(tree,parse) {
   if(prompt.length!==1||!call(prompt[0].init,'loadPrompt')||prompt[0].init.arguments[0]?.value!=='build')return false;
   const values=prompt[0].init.arguments[1];
   if(values?.type!=='ObjectExpression'||values.properties.some(p=>p.type!=='Property'||p.computed||p.kind!=='init'||p.method))return false;
-  const expected=parse(`async function main(input) {${ENVELOPES.mainPrefix}}`).body[0].body.body;
+  const expected=parseEnvelope(`async function main(input) {${ENVELOPES.mainPrefix}}`).body[0].body.body;
   const expectedValues=variable({body:expected},'prompt')[0].init.arguments[1];
   const key=p=>p.key.type==='Identifier'?p.key.name:p.key.type==='Literal'&&typeof p.key.value==='string'?p.key.value:null;
   const keys=expectedValues.properties.map(key), actualKeys=values.properties.map(key);
@@ -167,14 +170,14 @@ function mainPrefix(tree,parse) {
 }
 function cliEnvelope(tree,parse) {
   if(!['runClaude','loadPrompt','renderPrompt','withModel','openSink','claudeTimeoutMs','headSha','gitOut','gitRun'].every(name=>functionMatches(tree,name,parse)))return false;
-  const spawn=fn(tree,'spawnClaude'),parameters=parse(ENVELOPES.spawnParameters).body[0];
-  if(!spawn||!same(spawn.params,parameters.params)||spawn.body.body.length!==2||!same(spawn.body.body[0],parse(ENVELOPES.spawnOuter).body[0]))return false;
+  const spawn=fn(tree,'spawnClaude'),parameters=parseEnvelope(ENVELOPES.spawnParameters).body[0];
+  if(!spawn||!same(spawn.params,parameters.params)||spawn.body.body.length!==2||!same(spawn.body.body[0],parseEnvelope(ENVELOPES.spawnOuter).body[0]))return false;
   const returned=spawn.body.body[1];const promise=returned.argument;
   if(returned.type!=='ReturnStatement'||promise?.type!=='NewExpression'||promise.callee?.name!=='Promise'||promise.arguments.length!==1)return false;
   const callback=promise.arguments[0];if(callback.type!=='ArrowFunctionExpression'||callback.params.length!==1||callback.params[0].name!=='resolve')return false;
   const body=callback.body?.body;if(!body)return false;
-  const prefix=parse(ENVELOPES.spawnPrefix).body;
-  if(!same(body.slice(0,prefix.length),prefix)||body[prefix.length]?.type!=='TryStatement'||!same(body[prefix.length].block.body[0],parse(ENVELOPES.spawnCall).body[0]))return false;
+  const prefix=parseEnvelope(ENVELOPES.spawnPrefix).body;
+  if(!same(body.slice(0,prefix.length),prefix)||body[prefix.length]?.type!=='TryStatement'||!same(body[prefix.length].block.body[0],parseEnvelope(ENVELOPES.spawnCall).body[0]))return false;
   return intact(tree,['PROMPTS_DIR','runClaude','spawnClaude','loadPrompt','renderPrompt'],[],nodes(fn(tree,'claudeTimeoutMs')).filter(n=>member(n,'process','env')));
 }
 /** 只验证所登记的有限执行封套，不执行候选源码，也不承诺任意 JS 的可达性。 */
@@ -188,7 +191,7 @@ export function proveBuildSources(sources,parse) {
       &&namedFunctionsLink(trees.cli,trees.protocol,'./protocol.mjs')
       &&testWitness(trees.test,parse)&&functionMatches(trees.helper,'runActivityProcess',parse)&&functionMatches(trees.helper,'baseEnv',parse)
       &&intact(trees.helper,['runActivityProcess'])&&functionMatches(trees.activity,'specIds',parse)&&mainPrefix(trees.activity,parse)
-      &&same(trees.activity.body.at(-1),parse(ENVELOPES.entry).body[0])&&['runActivity','childEnv','readStdin','validateBase','resolveSprintDir'].every(name=>functionMatches(trees.protocol,name,parse))
+      &&same(trees.activity.body.at(-1),parseEnvelope(ENVELOPES.entry).body[0])&&['runActivity','childEnv','readStdin','validateBase','resolveSprintDir'].every(name=>functionMatches(trees.protocol,name,parse))
       &&intact(trees.protocol,['runActivity'],nodes(fn(trees.protocol,'runActivity')).filter(n=>n.type==='AssignmentExpression'&&member(n.left,'process','exitCode')),nodes(fn(trees.protocol,'childEnv')).filter(n=>member(n,'process','env')))&&cliEnvelope(trees.cli,parse);
   } catch { return false; }
 }
