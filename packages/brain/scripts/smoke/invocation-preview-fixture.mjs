@@ -72,5 +72,14 @@ app.post('/__fixture/drive/:task_id',async(req,res)=>{
 });
 const lines=createInterface({input:process.stdin});
 lines.on('line',line=>{Promise.resolve().then(()=>drive(JSON.parse(line).task_id)).then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>process.stderr.write(error.message+'\n'));});
-async function close(){server.close();lines.close();await fixture.close();rmSync(directory,{recursive:true,force:true});process.exit(0);}
-process.on('SIGTERM',close);process.on('SIGINT',close);
+let closePromise,completeStop;
+export const previewStopped=new Promise(resolve=>{completeStop=resolve;});
+export function closePreview(){
+ if(!closePromise)closePromise=(async()=>{
+  await new Promise(resolve=>server.close(resolve));lines.close();await fixture.close();
+  rmSync(directory,{recursive:true,force:true});completeStop();
+ })();
+ return closePromise;
+}
+const stop=()=>closePreview().catch(error=>process.stderr.write(error.message+'\n'));
+process.on('SIGTERM',stop);process.on('SIGINT',stop);process.on('SIGUSR2',stop);
