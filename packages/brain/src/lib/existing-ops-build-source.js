@@ -306,6 +306,53 @@ afterEach(() => {
   }
   return env;
 }`,
+  specIds: `function specIds(specPath) {
+  if (!fs.existsSync(specPath)) return null;
+  const text = fs.readFileSync(specPath, 'utf8');
+  return extractAnchors(parseFrontmatter(text)?.body ?? text).filter((id) => SPEC_ID_RE.test(id));
+}`,
+  readStdin: `function readStdin() {
+  return fs.readFileSync(0, 'utf8');
+}`,
+  validateBase: `function validateBase(input) {
+  const taskId = input?.task_id;
+  if (typeof taskId !== 'string' || taskId === '') throw new Error('task_id_missing');
+  return { dir: resolveSprintDir(input.worktree, input.sprint_dir) };
+}`,
+  resolveSprintDir: `function resolveSprintDir(worktree, sprintDir) {
+  if (typeof worktree !== 'string' || !path.isAbsolute(worktree)) {
+    throw new Error('sprint_dir_invalid');
+  }
+  if (typeof sprintDir !== 'string' || sprintDir === '' || path.isAbsolute(sprintDir)) {
+    throw new Error('sprint_dir_invalid');
+  }
+  if (sprintDir.split(/[\\\\/]+/).includes('..')) {
+    throw new Error('sprint_dir_invalid');
+  }
+  const resolved = path.join(worktree, sprintDir);
+  // '.'、'./' 等解析后就是 worktree 本身：会让"只处理 sprint 目录"扩大成整个工作区
+  if (path.relative(worktree, resolved) === '') {
+    throw new Error('sprint_dir_invalid');
+  }
+  return resolved;
+}`,
+  headSha: `async function headSha(worktree) {
+  return (await gitOut(worktree, ['rev-parse', '--verify', 'HEAD']))?.trim() || null;
+}`,
+  gitOut: `async function gitOut(worktree, args) {
+  const { code, stdout } = await gitRun(worktree, args);
+  return code === 0 ? stdout : null;
+}`,
+  gitRun: `function gitRun(worktree, args) {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['--literal-pathspecs', '-C', worktree, ...args],
+      { env: claudeEnv(), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: GIT_TIMEOUT_MS },
+      (error, stdout) => resolve({ code: error ? (typeof error.code === 'number' && !error.killed ? error.code : null) : 0, stdout }),
+    );
+  });
+}`,
   mainPrefix: `const { worktree, sprint_dir: sprintDir } = input;
 const { dir } = validateBase(input);
 const specPath = path.join(dir, SPEC_FILE);
@@ -432,17 +479,53 @@ function registration(n) {
   if(n.callee?.type==='MemberExpression'&&n.callee.object?.name==='it'&&!n.callee.computed&&['skip','todo','only'].includes(n.callee.property?.name))return true;
   return n.callee?.type==='CallExpression'&&member(n.callee.callee,'it','each')&&n.callee.arguments.length===1&&n.callee.arguments[0]?.type==='ArrayExpression';
 }
+/** 注册期只允许已有 setup、惰性函数、字面量数据与测试登记；不执行任意初始化。 */
+function registrationBody(body, root = false, inherited = new Set()) {
+  const values=new Set(inherited);
+  const pure=n=>!n||['Literal','ArrowFunctionExpression','FunctionExpression'].includes(n.type)
+    ||n.type==='Identifier'&&values.has(n.name)
+    ||n.type==='TemplateLiteral'&&n.expressions.every(pure)
+    ||n.type==='ArrayExpression'&&n.elements.every(pure)
+    ||n.type==='ObjectExpression'&&n.properties.every(p=>p.type==='Property'&&!p.computed&&!p.method&&p.kind==='init'&&pure(p.value));
+  for(const statement of body) {
+    if(statement.type==='VariableDeclaration') {
+      // 根层声明已逐字 AST 对照；嵌套注册只允许无调用的有限数据/函数初始化。
+      for(const d of statement.declarations) {
+        if(d.id.type!=='Identifier'||(!root&&!pure(d.init)))return false;
+        if(d.init?.type==='Literal')values.add(d.id.name);
+      }
+      continue;
+    }
+    if(statement.type==='FunctionDeclaration')continue;
+    if(statement.type!=='ExpressionStatement'||!registration(statement.expression))return false;
+    const expr=statement.expression;
+    if(call(expr,'describe')) {
+      const callback=expr.arguments[1];
+      if(expr.arguments.length!==2||expr.arguments[0]?.type!=='Literal'||callback?.type!=='ArrowFunctionExpression'||callback.async||callback.params.length||callback.body.type!=='BlockStatement'||!registrationBody(callback.body.body,false,values))return false;
+    } else if(['beforeAll','beforeEach','afterEach'].includes(expr.callee?.name)) {
+      if(!root)return false; // 仅根层已审的固定 setup，未知嵌套 hook 不作活跃证明。
+    } else {
+      // it.each 的表格在注册时求值，拒调用、spread 或带 getter 的数据。
+      if(expr.callee.type==='CallExpression'&&!pure(expr.callee.arguments[0]))return false;
+      if(expr.arguments[0]?.type!=='Literal'||!['ArrowFunctionExpression','FunctionExpression'].includes(expr.arguments[1]?.type))return false;
+      if(expr.arguments.length>2&&expr.arguments.slice(2).some(n=>n.type!=='Literal'))return false;
+    }
+  }
+  return true;
+}
 function testSetup(tree,key,body,parse) {
   const rootOf=n=>n?.type==='Identifier'?n.name:n?.type==='MemberExpression'?rootOf(n.object):n?.type==='CallExpression'?rootOf(n.callee):null;
   if(nodes(tree).some(n=>n.type==='MemberExpression'&&['it','describe'].includes(rootOf(n))&&(n.computed?n.property?.value:n.property?.name)==='only'))return false;
+  // 测试文件无需进程控制入口；即使藏于先行测试或别名读取也不认领后续 witness。
+  if(nodes(tree).some(n=>n.type==='MemberExpression'&&n.object?.name==='process'&&(n.computed?n.property?.value:n.property?.name)!=='env'))return false;
   const hooks=body.filter(n=>n.type==='ExpressionStatement'&&['beforeAll','beforeEach','afterEach'].includes(n.expression?.callee?.name));
-  return same(hooks,parse(ENVELOPES[key+'Hooks']).body)&&same(body.filter(n=>n.type==='VariableDeclaration'),parse(ENVELOPES[key+'Declarations']).body);
+  return same(hooks,parse(ENVELOPES[key+'Hooks']).body)&&same(body.filter(n=>n.type==='VariableDeclaration'),parse(ENVELOPES[key+'Declarations']).body)&&registrationBody(body,true);
 }
 function testWitness(tree,parse) {
   const top=tree.body.filter(n=>n.type==='ExpressionStatement');
   if(top.length!==1||!call(top[0].expression,'describe'))return false;
   const group=top[0].expression.arguments;
-  if(group.length!==2||group[1]?.params?.length!==0||group[1]?.body?.type!=='BlockStatement')return false;
+  if(group.length!==2||group[1]?.type!=='ArrowFunctionExpression'||group[1].async||group[1].params.length!==0||group[1].body?.type!=='BlockStatement')return false;
   const body=group[1].body.body;
   if(!testSetup(tree,'test',body,parse))return false;
   if(body.some(n=>!['VariableDeclaration','ExpressionStatement'].includes(n.type)))return false;
@@ -476,7 +559,7 @@ function mainPrefix(tree,parse) {
     &&variable(tree,'args').length===1&&intact(tree,['main','prompt','args']);
 }
 function cliEnvelope(tree,parse) {
-  if(!['runClaude','loadPrompt','renderPrompt','withModel','openSink','claudeTimeoutMs'].every(name=>functionMatches(tree,name,parse)))return false;
+  if(!['runClaude','loadPrompt','renderPrompt','withModel','openSink','claudeTimeoutMs','headSha','gitOut','gitRun'].every(name=>functionMatches(tree,name,parse)))return false;
   const spawn=fn(tree,'spawnClaude'),parameters=parse(ENVELOPES.spawnParameters).body[0];
   if(!spawn||!same(spawn.params,parameters.params)||spawn.body.body.length!==2||!same(spawn.body.body[0],parse(ENVELOPES.spawnOuter).body[0]))return false;
   const returned=spawn.body.body[1];const promise=returned.argument;
@@ -493,8 +576,8 @@ export function proveBuildSources(sources,parse) {
     const trees=Object.fromEntries(['test','helper','activity','cli','protocol'].map(k=>[k,parse(sources[k])]));
     for(const [key,tree] of Object.entries(trees))if(!moduleEnvelope(tree,key,parse))return false;
     return testWitness(trees.test,parse)&&functionMatches(trees.helper,'runActivityProcess',parse)&&functionMatches(trees.helper,'baseEnv',parse)
-      &&intact(trees.helper,['runActivityProcess'])&&mainPrefix(trees.activity,parse)
-      &&same(trees.activity.body.at(-1),parse(ENVELOPES.entry).body[0])&&functionMatches(trees.protocol,'runActivity',parse)&&functionMatches(trees.protocol,'childEnv',parse)
+      &&intact(trees.helper,['runActivityProcess'])&&functionMatches(trees.activity,'specIds',parse)&&mainPrefix(trees.activity,parse)
+      &&same(trees.activity.body.at(-1),parse(ENVELOPES.entry).body[0])&&['runActivity','childEnv','readStdin','validateBase','resolveSprintDir'].every(name=>functionMatches(trees.protocol,name,parse))
       &&intact(trees.protocol,['runActivity'],nodes(fn(trees.protocol,'runActivity')).filter(n=>n.type==='AssignmentExpression'&&member(n.left,'process','exitCode')),nodes(fn(trees.protocol,'childEnv')).filter(n=>member(n,'process','env')))&&cliEnvelope(trees.cli,parse);
   } catch { return false; }
 }
@@ -519,7 +602,7 @@ export function provePublishSources(test,helper,parse) {
     if(!moduleEnvelope(tree,'publishTest',parse)||!moduleEnvelope(h,'helper',parse)||!functionMatches(h,'runActivityProcess',parse)||!functionMatches(h,'baseEnv',parse)||!intact(h,['runActivityProcess']))return false;
     const top=tree.body.filter(n=>n.type==='ExpressionStatement');
     if(top.length!==1||!call(top[0].expression,'describe'))return false;
-    const group=top[0].expression.arguments;if(group.length!==2||group[1]?.params?.length!==0||group[1]?.body?.type!=='BlockStatement')return false;
+    const group=top[0].expression.arguments;if(group.length!==2||group[1]?.type!=='ArrowFunctionExpression'||group[1].async||group[1].params.length!==0||group[1].body?.type!=='BlockStatement')return false;
     const body=group[1].body.body;
     if(!testSetup(tree,'publishTest',body,parse))return false;
     if(body.some(n=>!['VariableDeclaration','ExpressionStatement'].includes(n.type)))return false;

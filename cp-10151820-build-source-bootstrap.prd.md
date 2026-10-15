@@ -12,9 +12,11 @@ AST 封套来自正式祖先 2eb4d0557365befafed1953140c9c47e20bab495，仅作�
 
 | Workstream | Test File | BEHAVIOR 覆盖 |
 |---|---|---|
-| ws1 | `packages/brain/src/lib/__tests__/existing-ops-runtime-source.test.js` | `激活后仅沿真实活跃 build 子进程认领活动、模板与假 CLI 输入` |
-| ws1 | `packages/brain/src/lib/__tests__/existing-ops-runtime-source.test.js` | `缺省与0标记读取固定旧Git时保留完整输出逐字一致` |
-| ws1 | `packages/brain/src/lib/__tests__/existing-ops-runtime-source.test.js` | `真实固定封套及第二棒新增 INTENT_PATH 普通参数均可证明` |
-| ws1 | `packages/brain/src/lib/__tests__/existing-ops-runtime-source.test.js` | `现有活跃 publish 子进程在新协议中认领真实入口，不泛化其它活动或假GH` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-build-source.test.js` | `激活后仅沿真实活跃 build 子进程认领活动、模板与假 CLI 输入` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-build-source.test.js` | `缺省与0标记读取固定旧Git时保留完整输出逐字一致` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-build-source.test.js` | `真实固定封套及第二棒新增 INTENT_PATH 普通参数均可证明` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-build-source.test.js` | `现有活跃 publish 子进程在新协议中认领真实入口，不泛化其它活动或假GH` |
+
+注册期递归检查所有 describe：只允许固定根 setup、惰性函数与纯数据初始化，拒绝 only、异步注册、立即调用、未知嵌套 hook 与测试进程控制。输入解析、规格 ID 校验、目录校验、HEAD 查询使用固定小函数 AST 封套，拒绝调用前的确定提前退出；不模拟文件系统或 Git 外部环境成功，真实回归继续负责运行结果。
 
 固定 Git 测试使用本分支直接祖先，正式 CI fetch-depth: 0；无跨分支未合入对象依赖。可信旧2eb4工具应经真实静态 import 认领本棒新纯proof模块，不能候选工具自证；完整来源独审与正式CI后才合并。第二棒须等正式加载与新完整artifact，再激活marker。
