@@ -135,8 +135,10 @@ async function stopFinishedPreviews(ctx, closed) {
     if (!s.preview_stopped || hasUnmirroredStates(ctx.cfg, pr.number)) rememberPr(ctx, { ...pr, state: pr.merged ? 'MERGED' : 'CLOSED' });
     if (s.preview_stopped) continue;
     const r = await previewCall(ctx.cfg, `stop/${pr.number}`);
-    ctx.log(`停 PR #${pr.number} 预览环境（${pr.merged ? '已合并' : '外部关闭'}）：HTTP ${r.status}`);
-    if (r.ok) writeState(ctx.cfg, pr.number, { ...readState(ctx.cfg, pr.number), preview_stopped: true });
+    let stopped = false;
+    try { stopped = r.ok && JSON.parse(r.body)?.stopped === true; } catch { /* 未知回执保留待办，下轮重试。 */ }
+    ctx.log(`停 PR #${pr.number} 预览环境（${pr.merged ? '已合并' : '外部关闭'}）：HTTP ${r.status}，${stopped ? '已确认停止' : '停止未确认，保留待办'}`);
+    if (stopped) writeState(ctx.cfg, pr.number, { ...readState(ctx.cfg, pr.number), preview_stopped: true });
   }
 }
 

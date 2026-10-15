@@ -13,6 +13,7 @@ import { canonicalRepoIdentity } from '../../packages/brain/src/lib/gp-assertion
 import { readImplementationImpact } from '../../packages/brain/src/lib/implementation-impact.js';
 import * as snapshotApi from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import {runImplementationMultiPrGate,parseImplementationMultiArgs} from './implementation-multi-pr-gate.mjs';
+import {runImplementationMainGate} from './implementation-main-gate.mjs';
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024}).trim();
 const read=path=>{const data=JSON.parse(readFileSync(path,'utf8'));return data.snapshot||data;};
 const save=(dir,name,data)=>writeFileSync(join(dir,name),JSON.stringify(data,null,2)+'\n');
@@ -75,6 +76,7 @@ async function implementationPrEvidence({repoRoot,scope,base,head,mode,snapshotB
 // collector不是gate：保留真实UNKNOWN报告，供完整差异联合准入执行各自真实回归。
 export function collectImplementationPrEvidence(options){return implementationPrEvidence(options,false);}
 export async function runImplementationPrGate(options){
+  if(options.mainScopes!==undefined)return runImplementationMainGate(options);
   if(options.multi)return runImplementationMultiPrGate(options.multi);
   if(options.extractScopes){
     const {snapshotFile,scopesFile,side,outputDir}=options.extractScopes;
@@ -90,6 +92,8 @@ export async function runImplementationPrGate(options){
   return implementationPrEvidence(options,true);
 }
 function parseArgs(args){
+  const mainScopes=process.env.IMPLEMENTATION_MAIN_SCOPES||undefined;
+  if(mainScopes!==undefined&&(args.includes('--extract-scopes')||args.includes('--scopes-file')))throw ciFailure('MAIN_SCOPES_INVALID');
   if(args[0]==='--extract-scopes'){
     const fields={'--snapshot-file':'snapshotFile','--scopes-file':'scopesFile','--side':'side','--output-dir':'outputDir'},options={};
     for(let i=1;i<args.length;i+=2){if(!fields[args[i]]||!args[i+1]||options[fields[args[i]]])throw ciFailure('ADMISSION_EXTRACT_ARGUMENT_INVALID');options[fields[args[i]]]=args[i+1];}
@@ -100,7 +104,9 @@ function parseArgs(args){
   const allowed={'--repo-root':'repoRoot','--scope':'scope','--base':'base','--head':'head','--mode':'mode','--snapshot-base':'snapshotBase','--snapshot-head':'snapshotHead','--output-dir':'outputDir'},options={};
   for(let i=0;i<args.length;i+=2){if(!allowed[args[i]]||!args[i+1]||options[allowed[args[i]]])throw ciFailure('ARGUMENT_INVALID');options[allowed[args[i]]]=args[i+1];}
   if(Object.values(allowed).some(k=>!options[k]))throw ciFailure('ARGUMENT_MISSING');
-  options.repoRoot=realpathSync(options.repoRoot);options.outputDir=resolve(options.outputDir);return options;
+  options.repoRoot=realpathSync(options.repoRoot);options.outputDir=resolve(options.outputDir);
+  if(mainScopes!==undefined)options.mainScopes=mainScopes;
+  return options;
 }
 if(process.argv[1]&&fileURLToPath(import.meta.url)===realpathSync(process.argv[1])){
   runImplementationPrGate(parseArgs(process.argv.slice(2))).then(({receipt})=>process.stdout.write(`${receipt.purpose}: ${receipt.verdict}\n`))
