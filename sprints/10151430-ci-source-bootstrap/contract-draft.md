@@ -18,6 +18,24 @@
 
 以上测试路径均在 packages/brain/src/lib/__tests__/。当前合同第一棒不导出激活标记；后续正式 PR 才激活。
 
+## Test Contract
+
+以下 BEHAVIOR 使用现有永久测试的完整 `it()` 名称，测试文件均为仓库根目录相对路径。
+
+| Workstream | Test File | BEHAVIOR 覆盖 |
+|---|---|---|
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-runtime-source.test.js` | `缺省、私有或注释标记不启用，合法 export const 1 才启用` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-runtime-source.test.js` | `动态、可变、未知与重复声明不猜为可执行来源` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-source.test.js` | `固定 9c 真实 nightly include 选中 runner 测试，活跃 it 经原生子进程消费真实入口` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-source.test.js` | `未激活与注释 marker 逐项保留旧 bindings / input_relations，未知值拒绝` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-source.test.js` | `真实 exclude 不选择 runner test 时不凭文件存在认领 run-once` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-source.test.js` | `只接受活跃 it 的真实具名 helper 调用，不接受 skip、死支路、假字符串或遮蔽` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-source.test.js` | `固定 sandbox AST 拒绝参数漂移、路径逃逸、赋值和绑定遮蔽` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-source.test.js` | `真实 provider 工作流及 required CI 测试逐项登记，注释或条件假调用拒绝` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-parser-startup.test.js` | `imports source identity for normal service startup without loading Acorn` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-parser-startup.test.js` | `source extraction is explicitly unavailable and never reads or verifies candidate bytes` |
+| ws1 | `packages/brain/src/lib/__tests__/existing-ops-parser-startup.test.js` | `invalid admission remains invalid before attempting parser resolution` |
+
 ## 验收命令与已有证据
 
 ```bash
