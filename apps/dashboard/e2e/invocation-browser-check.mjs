@@ -35,7 +35,7 @@ try {
   await panel.getByLabel('候选摘要',{exact:true}).fill(compose);
   for (const [key,value] of Object.entries(input)) {
     const field = panel.getByLabel(key,{exact:true});
-    if (typeof value === 'boolean') await field.setChecked(value);
+    if (typeof value === 'boolean') await field.selectOption(String(value));
     else await field.fill(typeof value === 'object' ? JSON.stringify(value) : String(value));
   }
   await panel.getByRole('button',{name:'启动调用',exact:true}).waitFor({state:'visible'});
