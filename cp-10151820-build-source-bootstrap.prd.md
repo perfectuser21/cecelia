@@ -1,8 +1,10 @@
-# 固定 build/publish 原生执行来源自举
+# 活动执行来源与双 scope 联合归属修复
 
 根任务：427d7e49-27c5-4612-b115-9214f03d47f9。GP-Anchor: none(infra)。
 
 现有来源工具已真实选择 coding-workflow 测试，但没有沿 runActivityProcess 的参数追踪 activity、动态 loadPrompt 模板和测试 CLI。因此 build 意图修复虽回归通过，旧可信来源仍拒绝未归属文件；本棒补齐真实调用证据，不改地图或放宽归属。
+
+同一 PR 同时修复双 scope 中无自有变更的合法切片：保留完整原始双来源、逐文件 foreign 解释和全部已登记真实断言，联合无主文件仍拒绝。该窄合同与反例详见 `cp-10152055-scope-no-owned.prd.md`。
 
 独立 revision marker 缺省/0 完全保留旧固定 Git 的全部 bindings/relations。第一棒只支持而不激活。激活时，仅当固定 build/publish 测试被原 include-minus-exclude 真实选中，活跃且非跳过的指定 it 直线调用唯一 run，入口/环境/原生 spawn 封套及保护绑定均证明通过，才登记固定入口。build 继续证明真实已执行 main→loadPrompt→args→runClaude 的 provider/isolateRemote 分支、真实 reader 与 fake CLI。publish 只声明 Node 入口被实际消费，不认领未改 fake GH，也不宣称真实发布成功。
 
