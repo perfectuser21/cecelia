@@ -36,7 +36,7 @@ export function invocationPrompt(envelope,taskId,runId){
     '严格按 input_mapping 连接 $input 与前序 $activity 输出，按 output_mapping 生成最终 outputs。每一步产物必须符合各自 JSON schema。',
     `身份：${JSON.stringify({task_id:taskId,run_id:runId,tenant_id:envelope.tenant_id,target:envelope.target,input_sha256:envelope.input_sha256})}`,
     '最终仅输出一个 JSON 对象：protocol="skill-invocation-result-v1"，附上上述全部身份字段、activities=[{key,skill_sha256,outputs}]、outputs。失败报告 error，禁止伪造完成。',
-    `固定调用快照：\n${JSON.stringify({...envelope,activities:envelope.activities.map(({skill_content,...a})=>a)})}`,
+    `固定调用快照：\n${JSON.stringify({...envelope,activities:envelope.activities.map(({skill_content:_skillContent,...a})=>a)})}`,
     ...envelope.activities.map(a=>`\nSkill ${a.key}，sha256=${a.skill_sha256}，来源=${a.implementation.repo}@${a.implementation.revision}/${a.implementation.path}\n${a.skill_content}`),
   ].join('\n\n');
 }
