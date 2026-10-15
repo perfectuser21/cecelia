@@ -41,10 +41,18 @@ it('生产owner正常修改仍由当前真实export绑定且hash改变，不硬�
  const f=fixture(),before=collect(f);f.change(PREFIX+'BusinessInputs.tsx','后端尚未提供业务输入合同。','等待输入合同。');f.commit();const edges=collect(f);
  expect(edges).toHaveLength(9);expect(edges.find(e=>e.dst_path===PREFIX+'BusinessInputs.tsx').detail.target_sha256).not.toBe(before.find(e=>e.dst_path===PREFIX+'BusinessInputs.tsx').detail.target_sha256);
 });
-it('格式和注释变化保持规范AST真实封套',()=>{
- const f=fixture();f.change(PREFIX+'BusinessInputs.test.tsx',"import { afterEach",'// audited whitespace\nimport {  afterEach');f.commit();expect(collect(f)).toHaveLength(9);
+it('未审格式变化也保守拒绝固定原文封套',()=>{
+ const f=fixture();f.change(PREFIX+'BusinessInputs.test.tsx',"import { afterEach",'import {  afterEach');f.commit();expect(collect(f)).toEqual([]);
 });
 const negatives=[
+ ['JSX注释会替换运行时',PREFIX+'BusinessInputs.test.tsx',"import { afterEach","/** @jsxImportSource ./nonexistent-proof-runtime */\nimport { afterEach"],
+ ['未审注释保守不补边',PREFIX+'BusinessInputs.test.tsx',"import { afterEach","// unreviewed comment\nimport { afterEach"],
+ ['类型组件导入没有运行时消费',PREFIX+'BusinessInputs.test.tsx','import BusinessInputs','import type BusinessInputs'],
+ ['类型render导入没有运行时调用',PREFIX+'BusinessInputs.test.tsx','cleanup, render','cleanup, type render'],
+ ['类型it导入不符合显式注册合同',PREFIX+'BusinessInputs.test.tsx','expect, it','expect, type it'],
+ ['using注册前处置语义',PREFIX+'CapabilitySystem.test.tsx','const registry','using registry'],
+ ['using目标不是原const',PREFIX+'InvocationPanel.test.tsx','const target','using target'],
+
  ['CI路径选择排除apps',CI,"grep -qE '^apps/'","grep -qE '^elsewhere/'"],
  ['输出接错',CI,'workspace: ${{ steps.detect.outputs.workspace }}','workspace: ${{ steps.detect.outputs.brain }}'],
  ['job不执行',CI,"  workspace-test:\n    needs: changes\n    if: needs.changes.outputs.workspace == 'true'","  workspace-test:\n    needs: changes\n    if: false"],
@@ -95,3 +103,5 @@ it('历史revision缺文件不补边，不破坏其它原生图路径',()=>{cons
 it.each(['.npmrc','apps/api/.npmrc','apps/api/vitest.workspace.ts','apps/api/vitest.config.js','apps/api/vite.config.ts'])('新增可影响npm/Vitest执行的%s不补边',path=>{const f=fixture();f.put(path,'export default [];\n');f.commit();expect(collect(f)).toEqual([]);});
 it('其他workspace安装生命周期不能提前覆盖API测试',()=>{const f=fixture();const p='packages/evil/package.json';mkdirSync(dirname(join(f.root,p)),{recursive:true});f.put(p,JSON.stringify({name:'evil',scripts:{postinstall:'echo overwrite'}}));f.commit();expect(collect(f)).toEqual([]);});
 it.each(['package.json','apps/api/package.json'])('%s不能用包解析覆盖把vitest替换成别的程序',path=>{const f=fixture();const pkg=JSON.parse(readFileSync(join(f.root,path),'utf8'));pkg.overrides={vitest:'npm:fake-vitest@1.0.0'};f.put(path,JSON.stringify(pkg));f.commit();expect(collect(f)).toEqual([]);});
+
+it('仅函数声明没有运行时default出口不能补边',()=>{const f=fixture();f.put(PREFIX+'BusinessInputs.tsx','export default function BusinessInputs(): any;\n');f.commit();expect(collect(f)).toEqual([]);});
