@@ -63,6 +63,8 @@ describe('真实scratch调用账本与并发',()=>{
  it('按同请求键并发只建一个原生路由任务，异输入409，原键可查',async()=>{
   const results=await Promise.all(Array.from({length:6},()=>post('',body)));expect(results.map(r=>r.status)).toEqual(Array(6).fill(202));
   expect(new Set(results.map(r=>r.body.task_id)).size).toBe(1);
+  const canonicalRetry=await post('',{...body,target:results[0].body.target});
+  expect(canonicalRetry.status).toBe(202);expect(canonicalRetry.body.task_id).toBe(results[0].body.task_id);
   expect((await post('',{...body,input:{text:'changed'}})).status).toBe(409);
   const read=await request(app).get('/api/brain/invocations/by-request/request-one');expect(read.status).toBe(200);expect(read.body.status).toBe('queued');
   expect((await pool.query("SELECT count(*)::int n FROM tasks WHERE payload ? 'invocation'")).rows[0].n).toBe(1);
