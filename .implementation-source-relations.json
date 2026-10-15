@@ -2,6 +2,11 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path": "packages/brain/src/routes/workflow-authoring.js", "path": "changes/cp-10151838-workflow-assembly.md", "role": "release"},
+    {"owner_path": "packages/brain/src/routes/workflow-authoring.js", "path": "packages/brain/scripts/smoke/workflow-assembly-plan-smoke.sh", "role": "verification"},
+    {"owner_path": "packages/brain/src/routes/workflow-authoring.js", "path": "packages/brain/src/routes/workflow-assembly-plan.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/workflow-authoring/assembly-plan.js", "path": "packages/brain/src/workflow-authoring/assembly-plan.test.js", "role": "verification"},
+    {"owner_path": "packages/brain/src/workflow-authoring/assembly-resolver.js", "path": "packages/brain/src/workflow-authoring/assembly-resolver.test.js", "role": "verification"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/prep-prd.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/contract-draft.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "docs/learnings/cp-10151330-cw-terminal-sync.md", "role": "documentation"},
