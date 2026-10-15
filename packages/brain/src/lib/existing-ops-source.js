@@ -16,6 +16,7 @@ export const EXISTING_OPS_SCOPE = 'cecelia-factory';
 // 仅固定 Git 源携带此版本才扩展证据；旧冻结修订的消费者绑定必须保持原样。
 export const EXISTING_OPS_SELECTOR_SCHEMA = 2;
 export const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;
+export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_IDENTITIES = Object.freeze([
   { workflow_id: '7743d66a-d3e0-4ebf-b82d-3f5d2d769fb1', workflow_key: 'factory_f2_ops', capability_id: '2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6', activity_id: '0ab79a73-1ec3-4ddc-bb88-1433568ae2e2', reference_id: 'a83b69b9-f426-4958-8cef-7560659ef6f8', slot_key: 'step_1', sequence_no: 1,
     unverified_reference_ids: ['3584783c-b847-4eb7-8920-76834cafba38', '5d963288-2dde-4b08-9f8c-5cd7d391a76f', 'c9a31a17-0751-4cad-a982-99325461fdf3'] },

@@ -8,6 +8,8 @@
 
 build 现在传入并先读 01-intent.md，验证与提交服从原任务及规格边界；禁止仓库测试时用允许的临时材料或内联命令作真实可失败验证。控制器在 publish、QA、Commander 三个真实提交点，只登记当前任务、当前阶段白名单中的普通非可执行 Markdown，来源索引和记录同一提交。QA 先完成整组校验及原有空索引检查，再登记及暂存。
 
+本棒在第一棒正式合入并实际加载后，以正式主线重基，激活 `EXISTING_OPS_BUILD_SELECTOR_SCHEMA=1`。消费者证明仍读取固定 Git 修订；旧修订没有此标记时不扩展绑定，不重写旧快照。正式来源验收必须使用实际基线官方双 scope artifact 和新的精确 HEAD。
+
 ## 不变量与失败行为
 
 - 控制器核实 Cecelia origin、任务 UUID、实际分支、sprint 路径与 intent 身份；只写精确 documentation 关系，旧关系原始字节保留，冲突拒绝，重复调用幂等，原子替换。

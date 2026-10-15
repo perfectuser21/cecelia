@@ -11,4 +11,6 @@
 - [x] controlledmetadata 来源索引只能由控制器精确维护；build 的 `build_touched_controlled_metadata` 与模型修复 protected-path 守卫拒绝执行者自行改归属，已提交的篡改也不能洗白。
 - [x] docsclassification 三个 Git 视图分别验证准确增量；仅豁免索引这一项，源码、非 Markdown、链接和执行位仍受原规则约束。
 
-本地真实 Git/子进程回归验证程序行为；正式来源、CI、上线与连续两条自然样本仍须各自取证，不能把本次修复追认旧 A 成功。本文件尚未发送 Learning API。
+- [x] buildsourceactivation 来源证明和启用分棒发布；确认正式工具加载后才在新修订启用 marker，以实际基线官方 artifact 和新 HEAD 验证，不拿候选内存预检或旧快照充当正式来源。
+
+本地真实 Git/子进程回归验证程序行为；正式来源、CI、上线与连续两条自然样本仍须各自取证，不能把本次修复追认旧 A 成功。
