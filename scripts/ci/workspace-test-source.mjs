@@ -14,6 +14,8 @@ const SELF='perfectuser21/cecelia',F3='0466016e-6d9f-4325-aeb4-d8bc70424a48';
 const CI='.github/workflows/ci.yml',PKG='apps/api/package.json',CONFIG='apps/api/vitest.config.ts',SETUP='apps/api/test/setup.ts';
 const PREFIX='apps/api/features/planning/pages/capability-system/';
 const NAMES=['BusinessInputs','CapabilitySystem','InvocationPanel'];
+const compilerFiles=['apps/api/tsconfig.json','apps/api/features/tsconfig.json'];
+const compilerDirectories=new Set([CONFIG,SETUP,...NAMES.map(n=>PREFIX+n+'.test.tsx')].flatMap(path=>{const parts=path.split('/').slice(0,-1);return parts.map((_,i)=>parts.slice(0,i+1).join('/')).concat('');}));
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,stable(value[k])])):value;
 const digest=value=>sha(JSON.stringify(stable(value)));
@@ -72,6 +74,8 @@ export function collectWorkspaceTestEdges(root,snapshot){
   if(binding.digest!=='sha256:'+ciHash||binding.content_sha256!==ciHash)return [];
   // Unsupported npm/project/config entrypoints must not execute ahead of the reviewed test.
   for(const path of entries.keys()){
+   const slash=path.lastIndexOf('/'),dir=path.slice(0,slash<0?0:slash),name=path.slice(slash+1);
+   if(compilerDirectories.has(dir)&&/^(?:tsconfig|jsconfig)(?:\.[^/]*)?\.json$/.test(name)&&!compilerFiles.includes(path))return [];
    if(/^(?:apps\/api\/)?npm-shrinkwrap\.json$/.test(path))return [];
    if(/^(?:\.npmrc|(?:apps|packages)\/[^/]+\/\.npmrc)$/.test(path))return [];
    if(/^(?:apps\/api\/)?vitest\.(?:workspace|projects)\./.test(path))return [];
@@ -85,6 +89,7 @@ export function collectWorkspaceTestEdges(root,snapshot){
   if(digest(packageView(rootPackage))!==WORKSPACE_ENVELOPES.rootPackage||digest(packageView(pkg))!==WORKSPACE_ENVELOPES.apiPackage)return [];
   if(pkg.devDependencies?.vitest!=='^4.0.18'||pkg.devDependencies?.typescript!=='^5.6.0')return [];
   if(digest(lockView(JSON.parse(readText('package-lock.json')),false))!==WORKSPACE_ENVELOPES.rootLock||digest(lockView(JSON.parse(readText('apps/api/package-lock.json')),true))!==WORKSPACE_ENVELOPES.apiLock)return [];
+  if(compilerFiles.some(path=>sha(readText(path))!==WORKSPACE_ENVELOPES.compiler[path]))return [];
   ast(CONFIG,readText(CONFIG));ast(SETUP,readText(SETUP));
   if(sha(readText(CONFIG))!==WORKSPACE_ENVELOPES.config||sha(readText(SETUP))!==WORKSPACE_ENVELOPES.setup)return [];
   for(const name of NAMES){

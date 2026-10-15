@@ -3,6 +3,10 @@
  * All comments and formatting are retained; any edit fails closed pending review.
  * Production owner implementations are NOT pinned to these hashes. */
 export const WORKSPACE_ENVELOPES = Object.freeze({
+  "compiler": {
+    "apps/api/tsconfig.json": "099f479a5bc9d717d5ba91e42b7a5add8cbd987a04ca1ed31e5013c47cc8ae3e",
+    "apps/api/features/tsconfig.json": "251400345c117ce20c74a185a47566d6d91b9189a4b7dfe6d2b4f537e83fb847"
+  },
   "rootLock": "41b31222f7dbaa1942edab7d5d2a905efb6a098a487a99e45b0236aca3961fda",
   "apiLock": "9ce610b470295ad9209461d30b8d86b1060ff503e30f14ffc79f7ae9e0c03bdd",
   "workflow": "e44fc03de07c1d82668a173e8afcaba7bca1c5cbd206e3e56acebff9af855a26",
