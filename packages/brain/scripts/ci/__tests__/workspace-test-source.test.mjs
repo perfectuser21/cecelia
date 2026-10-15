@@ -12,7 +12,7 @@ const {collectWorkspaceTestEdges}=await import('../../../../../scripts/ci/worksp
 const CI='.github/workflows/ci.yml',PKG='apps/api/package.json',CONFIG='apps/api/vitest.config.ts',SETUP='apps/api/test/setup.ts';
 const PREFIX='apps/api/features/planning/pages/capability-system/';
 const names=['BusinessInputs','CapabilitySystem','InvocationPanel'];
-const paths=[CI,'package.json','package-lock.json','apps/api/package-lock.json',PKG,CONFIG,SETUP,...names.flatMap(n=>[PREFIX+n+'.test.tsx',PREFIX+n+'.tsx'])];
+const paths=['apps/api/tsconfig.json','apps/api/features/tsconfig.json',CI,'package.json','package-lock.json','apps/api/package-lock.json',PKG,CONFIG,SETUP,...names.flatMap(n=>[PREFIX+n+'.test.tsx',PREFIX+n+'.tsx'])];
 const roots=[];
 const hash=b=>createHash('sha256').update(b).digest('hex');
 function fixture(){
@@ -108,3 +108,6 @@ it('仅函数声明没有运行时default出口不能补边',()=>{const f=fixtur
 
 it.each([['package-lock.json','apps/api/node_modules/vitest'],['apps/api/package-lock.json','node_modules/vitest']])('%s不能把真实vitest锁解析替换为伪CLI',(path,key)=>{const f=fixture(),j=JSON.parse(readFileSync(join(f.root,path),'utf8'));j.packages[key].resolved='https://example.invalid/false-runner.tgz';j.packages[key].bin={vitest:'echo-pass.js'};f.put(path,JSON.stringify(j));f.commit();expect(collect(f)).toEqual([]);});
 it('正式版本机器人只改本地包版本元数据不改变真实Vitest消费',()=>{const f=fixture();for(const path of ['package.json','apps/api/package.json','package-lock.json','apps/api/package-lock.json']){const p=JSON.parse(readFileSync(join(f.root,path),'utf8'));p.version='9.9.9';if(p.packages){p.packages[''].version='9.9.9';if(p.packages['apps/api'])p.packages['apps/api'].version='9.9.9';}f.put(path,JSON.stringify(p));}f.commit();expect(collect(f)).toHaveLength(9);});
+
+it.each(['apps/api/tsconfig.json','apps/api/features/tsconfig.json'])('%s不能替换JSX运行时',(path)=>{const f=fixture(),p=JSON.parse(readFileSync(join(f.root,path),'utf8'));p.compilerOptions.jsxImportSource='./nonexistent-proof-runtime';f.put(path,JSON.stringify(p));f.commit();expect(collect(f)).toEqual([]);});
+it.each(['tsconfig.json','apps/tsconfig.json','apps/api/test/tsconfig.json','apps/api/features/planning/tsconfig.json','apps/api/features/planning/pages/tsconfig.json','apps/api/features/planning/pages/capability-system/tsconfig.json'])('不接受消费路径上新增更近编译配置%s',path=>{const f=fixture();mkdirSync(dirname(join(f.root,path)),{recursive:true});f.put(path,JSON.stringify({compilerOptions:{jsxImportSource:'./false-runtime'}}));f.commit();expect(collect(f)).toEqual([]);});
