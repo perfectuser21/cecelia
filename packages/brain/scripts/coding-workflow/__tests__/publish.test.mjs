@@ -86,6 +86,31 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     expect(body).toContain('- sprints/s1/02-spec.md');
   });
 
+  it('Cecelia 发布将当前任务 Markdown 与精确来源关系同提交，重复发布不重复登记', async () => {
+    const branch = 'cp-10152110-cw-11111111', sprint = 'sprints/10152110-cw-11111111';
+    const owner = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs';
+    git(worktree, 'checkout', '-b', branch);
+    git(worktree, 'remote', 'set-url', '--push', 'origin', origin);
+    git(worktree, 'remote', 'set-url', 'origin', 'https://github.com/perfectuser21/cecelia.git');
+    fs.mkdirSync(path.join(worktree, path.dirname(owner)), { recursive: true });
+    fs.writeFileSync(path.join(worktree, owner), '// fixture runner\n');
+    const original = '{"schema_version":1,"repo":"perfectuser21/cecelia","relations":[\n  {"owner_path":"'+owner+'","path":"README.md","role":"documentation"}\n]}\n';
+    fs.writeFileSync(path.join(worktree, '.implementation-source-relations.json'), original);
+    git(worktree, 'add', '--', owner, '.implementation-source-relations.json'); git(worktree, 'commit', '-m', 'fixture source');git(worktree, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    fs.mkdirSync(path.join(worktree, sprint));
+    fs.writeFileSync(path.join(worktree, sprint, '01-intent.md'), `---\ntask_id: ${TASK_ID}\nstep: intent\nupstream: []\n---\n# fixture\n`);
+    fs.writeFileSync(path.join(worktree, sprint, '02-spec.md'), '# fixture spec\n');
+    const r = await run('new', { sprint_dir: sprint });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const manifest = JSON.parse(git(origin, 'show', `${branch}:.implementation-source-relations.json`));
+    expect(manifest.relations).toContainEqual({ owner_path: owner, path: `${sprint}/01-intent.md`, role: 'documentation' });
+    expect(manifest.relations).toContainEqual({ owner_path: owner, path: `${sprint}/02-spec.md`, role: 'documentation' });
+    expect(git(origin, 'show', '--name-only', '--format=', branch)).toContain('.implementation-source-relations.json');
+    const head = git(worktree, 'rev-parse', 'HEAD');
+    expect((await run('existing', { sprint_dir: sprint })).exitCode).toBe(0);
+    expect(git(worktree, 'rev-parse', 'HEAD')).toBe(head);
+  });
+
   // 原始 ZJ L1 脚本验真 publish 的 GH 正文，不重写 lint 正则。
   const lintBody = (body) => spawnSync(
     fs.existsSync('/opt/homebrew/bin/bash') ? '/opt/homebrew/bin/bash' : 'bash',
