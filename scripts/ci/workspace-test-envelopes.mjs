@@ -3,6 +3,8 @@
  * All comments and formatting are retained; any edit fails closed pending review.
  * Production owner implementations are NOT pinned to these hashes. */
 export const WORKSPACE_ENVELOPES = Object.freeze({
+  "rootLock": "07088f080c117c861563ddf4ef972113ba75e153f606f9cfdcd40025271a77cd",
+  "apiLock": "ecc8fc688b4d8a704e0ec9a638f4dee878e9af5aabf7df1734cfba9aea79fa10",
   "workflow": "e44fc03de07c1d82668a173e8afcaba7bca1c5cbd206e3e56acebff9af855a26",
   "rootPackage": "c9998cd4c379267585a4c61fa465d4846e1f05f6fb4683fb1d320d260fc44b19",
   "apiPackage": "0df6ee7d060ab79fc0d4da75e02ac446533337717cf99ecb92288c6a04f41e3f",
