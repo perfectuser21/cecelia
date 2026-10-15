@@ -72,6 +72,7 @@ export function collectWorkspaceTestEdges(root,snapshot){
   if(binding.digest!=='sha256:'+ciHash||binding.content_sha256!==ciHash)return [];
   // Unsupported npm/project/config entrypoints must not execute ahead of the reviewed test.
   for(const path of entries.keys()){
+   if(/^(?:apps\/api\/)?npm-shrinkwrap\.json$/.test(path))return [];
    if(/^(?:\.npmrc|(?:apps|packages)\/[^/]+\/\.npmrc)$/.test(path))return [];
    if(/^(?:apps\/api\/)?vitest\.(?:workspace|projects)\./.test(path))return [];
    if(/^apps\/api\/(?:vitest|vite)\.config\./.test(path)&&path!==CONFIG)return [];
