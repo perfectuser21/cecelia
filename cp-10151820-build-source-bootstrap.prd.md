@@ -35,3 +35,5 @@ brain-unit(4) 将纯模板的 bin 兜底文本识别为执行。守卫只剥离�
 | ws1 | `packages/brain/src/lib/__tests__/existing-ops-source-impact.test.js` | `真实当前CLI只有mainScopes缺省才走单scope，false或空值仍进入main拒绝` |
 | ws1 | `packages/brain/src/__tests__/claude-channel-retired.guard.test.js` | `真实无插值ENVELOPES仅供Acorn解析，原R3文本不是进程执行` |
 | ws1 | `packages/brain/src/lib/__tests__/existing-ops-parser-startup.test.js` | `source extraction is explicitly unavailable and never reads or verifies candidate bytes` |
+
+守卫实际读取 `existing-ops-build-source.js` 并验证固定解析与布尔 matcher 的 canonical AST，故按既有辅助关系登记该真实 verification owner；不增加装饰 import，也不扩大 collector 选择器。旧 34f 来源扫描仅该守卫未归属，失败记录保留，新基线 e9 与新增精确关系须重新完整验收。
