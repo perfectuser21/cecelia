@@ -84,4 +84,12 @@ describe('现有目录调用', () => {
     expect(screen.getByText('验证通过后仍需正式发布门禁。')).toBeInTheDocument();
   });
 
+  it('鉴权失败如实显示无法核对，不能持续冒充加载状态', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({error:{message:'缺少可信授权'}},401)));
+    render(<InvocationPanel target={target} />);
+    expect(await screen.findByText('缺少可信授权')).toBeInTheDocument();
+    expect(screen.getByText('无法核对调用条件')).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'启动调用'})).toBeDisabled();
+  });
+
 });

@@ -6,7 +6,7 @@ export interface Resolution { target: InvocationTarget; readiness: 'ready' | 'bl
 export interface InvocationResult { task_id: string; status: string; target: InvocationTarget; outputs?: unknown; evidence?: unknown; gaps?: InvocationGap[]; run_id?: string; request_key?: string }
 export const INVOCATION_POLL_MS = 5000;
 export const terminalInvocation = (status: string) => ['completed', 'failed', 'cancelled', 'canceled', 'rejected'].includes(status);
-export const invocationStatus = (status: string) => ({ accepted: '已受理', queued: '排队中', in_progress: '运行中', running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消', rejected: '已拒绝', result_pending: '结果确认中', unknown: '结果确认中' }[status] || `结果确认中（${status}）`);
+export const invocationStatus = (status: string) => ({ accepted: '已受理', queued: '排队中', in_progress: '运行中', running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消', canceled: '已取消', rejected: '已拒绝', result_pending: '结果确认中', unknown: '结果确认中' }[status] || `结果确认中（${status}）`);
 export class InvocationError extends Error { constructor(message: string, public status: number, public gaps: InvocationGap[] = []) { super(message); } }
 export async function invocationJson<T>(path: string, signal: AbortSignal, body?: unknown): Promise<T> {
   const controller = new AbortController();
