@@ -33,6 +33,7 @@ describe('startup-port-guard', () => {
   const cleanup = [];
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     while (cleanup.length) {
       const srv = cleanup.pop();
       await new Promise((r) => srv.close(r));
@@ -41,6 +42,10 @@ describe('startup-port-guard', () => {
 
   describe('isPortInUse', () => {
     it('returns false for a free port', async () => {
+      // 原随机选择器恰好挑中一个真实占用端口，必须仍能取得独立空闲端口。
+      const blocker = await occupyPort(0);
+      cleanup.push(blocker);
+      vi.spyOn(Math, 'random').mockReturnValue((blocker.address().port - 40000 + 0.25) / 20000);
       const port = randomPort();
       await expect(isPortInUse(port)).resolves.toBe(false);
     });
