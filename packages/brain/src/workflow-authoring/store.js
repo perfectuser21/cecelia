@@ -2,6 +2,7 @@ import {
   STAGES, requireCondition, object, text, uuid, stringArray,
   definitionDigest, validateRequest, validateSubmission, validateStageOutput,
 } from './contracts.js';
+import {loadAssemblyCatalog} from '../lib/workflow-assembly-store.js';
 import { FREEZE_PROTOCOL, prepareDefinitionFreeze } from './freeze.js';
 
 async function transaction(pool, action) {
@@ -121,6 +122,8 @@ async function processStage(client, taskId, state, body, deps) {
       workflowId: state.outputs.intake.workflow_id ?? state.request.workflow_id,
       registrationProtocol: state.request.registration_protocol,
       freezeProof: deps.freezeProof,
+      assemblyMode: state.request.assembly_mode,
+      tenantId: deps.tenantId,
     });
     object(receipt, '登记回执');
     return receipt;
@@ -136,7 +139,7 @@ export async function submitAuthoring(pool, taskId, body, deps = {}) {
     if (state.request.registration_protocol === FREEZE_PROTOCOL
       && !state.receipts.some(receipt => receipt.submission_id === body.submission_id)) {
       requireCondition(state.stage === body.stage && state.revision === body.revision, 'register阶段或revision已变化', 409);
-      deps = { ...deps, freezeProof: await prepareDefinitionFreeze(state.outputs.compose.definition, deps.freezeOptions) };
+      deps = { ...deps, freezeProof: await prepareDefinitionFreeze(state.outputs.compose.definition, {...deps.freezeOptions,sharedVersions:(await loadAssemblyCatalog(pool,state.outputs.compose.definition)).activity_versions}) };
     }
   }
   return transaction(pool, async client => {
@@ -152,7 +155,7 @@ export async function submitAuthoring(pool, taskId, body, deps = {}) {
     requireWritable(row);
     requireCondition(body.stage === state.stage, `当前阶段是 ${state.stage}`, 409);
     requireCondition(body.revision === state.revision, 'revision 已过期', 409);
-    const output = await processStage(client, taskId, state, body, deps);
+    const output = await processStage(client, taskId, state, body, {...deps,tenantId:row.payload?.tenant_id??'default'});
     const receipt = {
       stage: body.stage, revision: state.revision + 1, submission_id: body.submission_id,
       input_sha256: digest, actor: state.request.actor, output,

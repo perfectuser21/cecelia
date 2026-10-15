@@ -53,7 +53,8 @@ export async function validateReferences(client, definition, { requireActive = f
   for (const activity of definition.activities.filter(a => a.reuse_activity_id)) {
     const row = (await client.query('SELECT id,status,contract_sha256 FROM activities WHERE id=$1 FOR SHARE', [activity.reuse_activity_id])).rows[0];
     if (!row || row.status !== 'active') throw registrationError('activity_not_ready', `共享活动不可用: ${activity.reuse_activity_id}`);
-    if (!activity.reuse_contract_sha256 || activity.reuse_contract_sha256 !== row.contract_sha256) throw registrationError('activity_revision_conflict', '共享活动定义已变化，需重新查找与验收');
+    const fixed=activity.reuse_activity_definition_version_id ? (await client.query('SELECT contract_sha256 FROM activity_definition_versions WHERE id=$1 AND activity_id=$2',[activity.reuse_activity_definition_version_id,activity.reuse_activity_id])).rows[0] : row;
+    if (!activity.reuse_contract_sha256 || activity.reuse_contract_sha256 !== fixed?.contract_sha256) throw registrationError('activity_revision_conflict', '共享活动定义已变化，需重新查找与验收');
   }
   return true;
 }
@@ -96,12 +97,12 @@ async function hasRegistrationReceipt(client, workflow, digest) {
   return result.rows.length > 0;
 }
 
-async function guardConsumers(client, workflow, definition, existing) {
+async function guardConsumers(client, workflow, definition, existing, allowFixed = false) {
   for (const old of existing) {
     const incoming = definition.activities.find(a => !a.reuse_activity_id && `${definition.key}.${a.key}` === old.activity_key);
     if (incoming && sameActivityContract(old.contract, activityContract(definition, incoming))) continue;
-    const consumers = (await client.query(`SELECT workflow_id FROM workflow_activity_refs
-      WHERE activity_id=$1 AND workflow_id<>$2 AND active LIMIT 1`, [old.id, workflow.id])).rows;
+    const consumers = (await client.query(`SELECT r.workflow_id FROM workflow_activity_refs r LEFT JOIN activity_definition_versions v ON v.id=r.activity_definition_version_id AND v.activity_id=r.activity_id
+      WHERE r.activity_id=$1 AND r.workflow_id<>$2 AND r.active AND ($3::boolean=false OR v.id IS NULL OR v.payload->'contract' IS NULL) LIMIT 1`, [old.id, workflow.id,allowFixed])).rows;
     if (consumers.length) throw registrationError('activity_consumers_require_validation',
       `活动 ${old.activity_key} 被其它工作流引用，修改或弃用需要消费者重新验收`);
   }
@@ -114,7 +115,7 @@ async function registrationReceipt(client, workflow, definition, options, activi
     throw registrationError('registration_readback_failed', '登记回读的有序活动与定义不一致');
   }
   const frozen = options.registrationProtocol === FREEZE_PROTOCOL
-    ? await freezeRegisteredWorkflow(client, workflow, definition, actualIds, options.freezeProof) : {};
+    ? await freezeRegisteredWorkflow(client, workflow, definition, actualIds, options.freezeProof,{strictAssembly:options.assemblyMode===true,tenantId:options.tenantId??'default'}) : {};
   return { workflow_id: stored.id, key: stored.key, version: stored.version, status: stored.status,
     definition_sha256: registrationDigest(definition), activity_ids: actualIds, task_id: options.taskId,
     runtime: definition.runtime, readback_verified: true, replayed, ...frozen };
@@ -123,6 +124,8 @@ async function registrationReceipt(client, workflow, definition, options, activi
 // 调用者必须持有事务：定义、引用和阶段回执一起提交，失败一起回滚。
 export async function registerWorkflow(client, definition, options = {}) {
   validateDefinition(definition);
+  if (options.assemblyMode!==undefined && typeof options.assemblyMode!=='boolean')throw registrationError('invalid_workflow_definition','assemblyMode必须是布尔值',400);
+  if (options.assemblyMode && options.registrationProtocol !== FREEZE_PROTOCOL) throw registrationError('registration_protocol_invalid','装配必须使用冻结协议',400);
   if (options.registrationProtocol !== undefined && options.registrationProtocol !== FREEZE_PROTOCOL) throw registrationError('registration_protocol_invalid', '未知冻结协议', 400);
   if (options.registrationProtocol === FREEZE_PROTOCOL) assertPreparedFreeze(definition, options.freezeProof);
   const digest = registrationDigest(definition);
@@ -133,6 +136,11 @@ export async function registerWorkflow(client, definition, options = {}) {
   let workflow = (await client.query('SELECT * FROM workflows WHERE key=$1 FOR UPDATE', [definition.key])).rows[0];
   if (workflow && (workflow.capability_id !== definition.capability_id || workflow.channel !== definition.channel || workflow.form !== definition.form)) {
     throw registrationError('workflow_ownership_conflict', '同 key 已属于其它能力、渠道或执行形态');
+  }
+  if(workflow&&options.assemblyMode){
+    const previous=(await client.query('SELECT payload,source_repo,source_path FROM workflow_definition_versions WHERE id=$1 AND workflow_id=$2',[workflow.current_definition_version_id,workflow.id])).rows[0];
+    if(!previous||previous.payload?.registration_protocol!==FREEZE_PROTOCOL||workflow.source_repo!==definition.source.repo||workflow.source_path!==definition.source.ref
+      ||previous.source_repo!==workflow.source_repo||previous.source_path!==workflow.source_path||previous.payload?.contract?.key!==definition.key)throw registrationError('workflow_ownership_conflict','未知工作流来源不能由装配认领或覆盖');
   }
   if (options.operation === 'update' && (!workflow || workflow.id !== options.workflowId)) throw registrationError('workflow_ownership_conflict', '更新目标与稳定 key 不一致');
   // 位置与顺序只存在流程引用里（迁移 527 起 activities 不再带 journey_id / step_number）：没有引用底座一律拒绝，保留草案
@@ -151,7 +159,7 @@ export async function registerWorkflow(client, definition, options = {}) {
     const ids = definition.activities.map(a => a.reuse_activity_id ?? existing.find(old => old.activity_key === `${definition.key}.${a.key}`)?.id);
     return registrationReceipt(client, workflow, definition, options, ids, true);
   }
-  if (workflow) await guardConsumers(client, workflow, definition, existing);
+  if (workflow) await guardConsumers(client, workflow, definition, existing, options.assemblyMode===true);
   if (!workflow) {
     workflow = (await client.query(`INSERT INTO workflows(key,name,capability_id,channel,form,version,status)
       VALUES($1,$2,$3,$4,$5,$6,'active') RETURNING *`,
@@ -190,11 +198,11 @@ export async function registerWorkflow(client, definition, options = {}) {
       }
     }
     activityIds.push(activityId);
-    await client.query(`INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no,source_ref,source_commit,active)
-      VALUES($1,$2,$3,$4,$5,$6,true) ON CONFLICT(workflow_id,slot_key) DO UPDATE SET
-      activity_id=EXCLUDED.activity_id,sequence_no=EXCLUDED.sequence_no,source_ref=EXCLUDED.source_ref,
+    await client.query(`INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no,source_ref,source_commit,active,activity_definition_version_id)
+      VALUES($1,$2,$3,$4,$5,$6,true,$7) ON CONFLICT(workflow_id,slot_key) DO UPDATE SET
+      activity_id=EXCLUDED.activity_id,activity_definition_version_id=EXCLUDED.activity_definition_version_id,sequence_no=EXCLUDED.sequence_no,source_ref=EXCLUDED.source_ref,
       source_commit=EXCLUDED.source_commit,active=true,updated_at=NOW()`,
-    [workflow.id,activity.key,activityId,index+1,definition.source.ref,definition.source.revision]);
+    [workflow.id,activity.key,activityId,index+1,definition.source.ref,definition.source.revision,activity.reuse_activity_definition_version_id??null]);
   }
   await client.query(`UPDATE activities SET status='deprecated',notion_synced_at=NULL,updated_at=NOW()
     WHERE workflow_id=$1 AND status<>'deprecated' AND NOT(activity_key=ANY($2::text[])) AND contract->'workflow_authoring'->>'workflow_key'=$3`,

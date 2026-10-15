@@ -1,5 +1,6 @@
 /** 调用方持有定义写事务；每个稳定对象的语义内容复用版本，版本中的来源永久固定。 */
 import { stepSha256,canonicalJson } from '../../scripts/sync-steps-from-workspace.mjs';
+import { assertPinnedReference, verifyAssemblyReadback } from './workflow-assembly-readback.js';
 import { runReleaseLineHook,registerActivityBuild,refreshWorkflowRecipe } from './release-line.js';
 async function saveVersion(client,kind,id,payload,source,setCurrent=true) {
   const table=kind==='activity'?'activity_definition_versions':'workflow_definition_versions';
@@ -29,9 +30,10 @@ function verifyDocument(workflow,doc) {
     ||(workflow.source_capability&&(doc.contract_key??doc.capability)!==workflow.source_capability)
     ||(doc.capability_id&&doc.capability_id!==workflow.capability_id)) throw Error(`工作流契约身份不匹配: ${workflow.id}`);
 }
-export async function snapshotDefinitions(client,{workflowIds,source,bindingsByActivity=new Map(),documentsByWorkflow=new Map(),admissionScope,authoringByWorkflow=new Map(),registrationProtocol}) {
+export async function snapshotDefinitions(client,{workflowIds,source,bindingsByActivity=new Map(),documentsByWorkflow=new Map(),admissionScope,authoringByWorkflow=new Map(),registrationProtocol,strictAssembly=false,pinnedReferences=new Map()}) {
   if(admissionScope!==undefined&&admissionScope!=='cecelia-device-patrol') throw Error('unsupported admission scope');
   if(registrationProtocol!==undefined&&(registrationProtocol!=='definition-freeze-v1'||admissionScope))throw Error('unsupported registration protocol');
+  if(strictAssembly&&registrationProtocol!=='definition-freeze-v1')throw Error('装配必须使用冻结协议');
   const metadata=admissionScope?{definition_scope:'device_workflow_admission',source_scope:admissionScope}:registrationProtocol?{registration_protocol:registrationProtocol}:{};
   if(!/^[0-9a-f]{40}$/.test(source.commit||'')) throw Error('快照必须使用固定commit');
   const workflows=new Map();
@@ -41,10 +43,16 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
     verifyDocument(workflow,documentsByWorkflow.get(id));
     workflows.set(id,workflow);
   }
+  const pinnedActivities=new Set();
+  for(const [reference,version] of pinnedReferences){
+    const [workflowId,slot]=reference.split(':');
+    await assertPinnedReference(client,workflowId,slot,version);
+    pinnedActivities.add(version.activity_id);
+  }
   const activities=(await client.query(`SELECT DISTINCT a.* FROM activities a JOIN workflow_activity_refs r ON r.activity_id=a.id
     WHERE r.workflow_id=ANY($1::uuid[]) AND r.active ORDER BY a.id`,[workflowIds])).rows;
   const versions=new Map(),sources=new Map();
-  for(const a of activities) {
+  for(const a of activities.filter(a=>!pinnedActivities.has(a.id))) {
     if(admissionScope){
       sources.set(a.id,source);
       if(!bindingsByActivity.has(a.id))throw Error(`活动缺少绑定核验证据: ${a.id}`);
@@ -57,7 +65,7 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
     const binding=bindingsByActivity.get(a.id);
     if(!binding) throw Error(`活动缺少绑定核验证据: ${a.id}`);
   }
-  for(const a of activities) {
+  for(const a of activities.filter(a=>!pinnedActivities.has(a.id))) {
     const binding=bindingsByActivity.get(a.id),activitySource=sources.get(a.id);
     const contract=admissionScope?[...documentsByWorkflow.values()].flatMap(w=>w.activities).find(v=>v.id===a.id):a.contract;
     if(!contract)throw Error(`来源契约缺少活动: ${a.id}`);
@@ -67,16 +75,17 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
     const saved=await saveVersion(client,'activity',a.id,payload,activitySource,!admissionScope),versionId=saved.id;
     versions.set(a.id,versionId);
     // 发布线（迁移 541）：构建登记到内容版本、按冷启动规则动生产指针；SAVEPOINT 内 fail-open，出错不影响同步
-    if(!admissionScope)await runReleaseLineHook(client,'register_build',db=>registerActivityBuild(db,{activityId:a.id,buildId:versionId,inserted:saved.inserted}));
+    if(!admissionScope)await runReleaseLineHook(client,'register_build',db=>registerActivityBuild(db,{activityId:a.id,buildId:versionId,inserted:saved.inserted},{candidateOnly:strictAssembly}),{strict:strictAssembly});
     if(!admissionScope)await client.query('UPDATE workflow_activity_refs SET activity_definition_version_id=$2 WHERE activity_id=$1 AND workflow_id=ANY($3::uuid[]) AND active AND activity_definition_version_id IS DISTINCT FROM $2',[a.id,versionId,workflowIds]);
   }
   for(const id of workflowIds) {
     const workflow=workflows.get(id);
     const refs=(await client.query('SELECT * FROM workflow_activity_refs WHERE workflow_id=$1 AND active ORDER BY sequence_no',[id])).rows;
-    const payload={...metadata,workflow_id:id,key:workflow.key,name:workflow.name,capability_id:workflow.capability_id,channel:workflow.channel,form:workflow.form,
-      contract:documentsByWorkflow.get(id),activities:refs.map(r=>({reference_id:r.id,slot_key:r.slot_key,sequence_no:r.sequence_no,activity_id:r.activity_id,activity_version_id:versions.get(r.activity_id),source_ref:r.source_ref})),
+    const payload={...metadata,...(strictAssembly?{assembly_mode:true}:{}),workflow_id:id,key:workflow.key,name:workflow.name,capability_id:workflow.capability_id,channel:workflow.channel,form:workflow.form,
+      contract:documentsByWorkflow.get(id),activities:refs.map(r=>({reference_id:r.id,slot_key:r.slot_key,sequence_no:r.sequence_no,activity_id:r.activity_id,activity_version_id:pinnedReferences.get(`${id}:${r.slot_key}`)?.id??versions.get(r.activity_id),source_ref:r.source_ref})),
       ...(admissionScope?{canonical_reference:{workflow_id:id,current_definition_version_id:workflow.current_definition_version_id,authoring_receipt:authoringByWorkflow.get(id)||null}}:{})};
     await saveVersion(client,'workflow',id,payload,{...source,path:admissionScope?source.path:workflow.source_path||source.path},!admissionScope);
-    if(!admissionScope)await runReleaseLineHook(client,'refresh_recipe',db=>refreshWorkflowRecipe(db,id,{cause:'definition_sync'}));
+    if(!admissionScope)await runReleaseLineHook(client,'refresh_recipe',db=>refreshWorkflowRecipe(db,id,{cause:'definition_sync'}),{strict:strictAssembly});
+    if(strictAssembly)await verifyAssemblyReadback(client,id,payload.activities);
   }
 }
