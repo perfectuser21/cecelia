@@ -5,6 +5,7 @@ import { initializeAuthoring, getAuthoring, submitAuthoring } from '../workflow-
 import { loadCatalog } from '../workflow-authoring/catalog.js';
 import { validateDefinition, validateReferences, registerWorkflow } from '../workflow-authoring/registration.js';
 import { registerWorkflowSource } from '../lib/workflow-source-registration.js';
+import { resolveAuthoringAssembly } from '../workflow-authoring/assembly-resolver.js';
 
 export function createWorkflowAuthoringRouter({ db = pool, sourceOptions, freezeOptions } = {}) {
   const router = Router();
@@ -20,6 +21,8 @@ export function createWorkflowAuthoringRouter({ db = pool, sourceOptions, freeze
   router.post('/runs/:id/init', handle(req => initializeAuthoring(db, req.params.id, req.body)));
   router.post('/sources/register', handle(req => registerWorkflowSource(db, req.body, sourceOptions)));
   router.get('/runs/:id', handle(req => getAuthoring(db, req.params.id)));
+  router.get('/runs/:id/assembly-plan', handle(req => resolveAuthoringAssembly(db, req.params.id,
+    String(req.get('x-tenant-id') ?? 'default').trim())));
   router.post('/runs/:id/submit', handle(req => submitAuthoring(db, req.params.id, req.body,
     { loadCatalog, validateDefinition, validateReferences, registerWorkflow, freezeOptions })));
   return router;
