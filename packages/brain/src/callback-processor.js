@@ -52,8 +52,8 @@ export async function processExecutionCallback(data, pool) {
   } = data;
 
   if (!task_id) throw new Error('task_id is required');
-  await guardInvocationCallback(pool, data);
   await assertAutomaticTaskOwner(pool, task_id);
+  await guardInvocationCallback(pool, data);
 
   console.log(`[callback-processor] Processing callback for task ${task_id}, status: ${status}`);
 
