@@ -4,7 +4,7 @@
   "relations": [
     {"owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs", "path": "cp-10151810-build-intent-boundary.prd.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs", "path": "docs/learnings/cp-10151810-build-intent-boundary.md", "role": "documentation"},
-    {"owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs", "path": "changes/cp-10151810-build-intent-boundary.md", "role": "release"},
+    
     
     {"owner_path":"packages/brain/src/projection/directory-source.js","path":"packages/brain/src/projection/__tests__/directory-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/projection/directory-projector.js","path":"packages/brain/src/projection/__tests__/directory-projector.test.js","role":"verification"},
@@ -14,7 +14,7 @@
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/prep-prd.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/contract-draft.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "docs/learnings/cp-10151330-cw-terminal-sync.md", "role": "documentation"},
-    {"owner_path":"packages/brain/src/routes/workflow-authoring.js","path":"changes/cp-10151838-workflow-assembly.md","role":"release"},
+    
     {"owner_path":"packages/brain/src/routes/workflow-authoring.js","path":"packages/brain/scripts/smoke/workflow-assembly-plan-smoke.sh","role":"verification"},
     {"owner_path":"packages/brain/src/routes/workflow-authoring.js","path":"packages/brain/src/routes/workflow-assembly-plan.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/workflow-authoring/assembly-plan.js","path":"packages/brain/src/workflow-authoring/assembly-plan.test.js","role":"verification"},
@@ -754,7 +754,7 @@
     {"owner_path":"packages/brain/src/lib/leadgen-controller.js","path":"packages/brain/src/lib/leadgen-controller.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/routes/workflows.js","path":"packages/brain/src/routes/workflows.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/factory-workflow-config.js","path":"scripts/ci/__tests__/factory-workflow-config-source.test.mjs","role":"verification"},
-    {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "changes/cp-10151848-cw-691b0cd9.md", "role": "release"},
+    
     {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/brain/scripts/smoke/tree-legacy-layout.sh", "role": "verification"},
     {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/brain/src/lib/__tests__/tree-legacy-layout.test.js", "role": "verification"},
     {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/brain/src/__tests__/integration/tree-legacy-layout.pg.integration.test.js", "role": "verification"},
@@ -765,7 +765,7 @@
     {"owner_path": "apps/api/features/planning/pages/capability-system/CapabilitySystem.tsx", "path": "apps/api/features/planning/pages/capability-system/CapabilitySystem.test.tsx", "role": "verification"},
     {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/invocation-preview-server.test.mjs", "role": "verification"},
     {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/smoke/invocation-smoke.sh", "role": "verification"},
-    {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "changes/cp-10152144-workflow-ui.md", "role": "release"},
+    
     {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/invocation-browser-check.spec.mjs", "role": "verification"},
     {"owner_path":"apps/api/features/planning/pages/capability-system/BusinessInputs.tsx","path":"apps/api/features/planning/pages/capability-system/BusinessInputs.test.tsx","role":"verification"}
   ]
