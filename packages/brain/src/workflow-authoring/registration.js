@@ -127,6 +127,7 @@ export async function registerWorkflow(client, definition, options = {}) {
   if (options.assemblyMode!==undefined && typeof options.assemblyMode!=='boolean')throw registrationError('invalid_workflow_definition','assemblyMode必须是布尔值',400);
   if (options.assemblyMode && options.registrationProtocol !== FREEZE_PROTOCOL) throw registrationError('registration_protocol_invalid','装配必须使用冻结协议',400);
   if (options.registrationProtocol !== undefined && options.registrationProtocol !== FREEZE_PROTOCOL) throw registrationError('registration_protocol_invalid', '未知冻结协议', 400);
+  if(options.registrationProtocol===FREEZE_PROTOCOL&&definition.activities.some(a=>a.reuse_activity_id)&&options.assemblyMode!==true)throw registrationError('registration_protocol_invalid','共享冻结必须使用严格装配，旧配方不保证固定版本',400);
   if (options.registrationProtocol === FREEZE_PROTOCOL) assertPreparedFreeze(definition, options.freezeProof);
   const digest = registrationDigest(definition);
   if (options.definitionSha256 !== digest) throw registrationError('definition_digest_conflict', '登记定义与已验收定义不一致');

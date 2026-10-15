@@ -49,6 +49,10 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
     await assertPinnedReference(client,workflowId,slot,version);
     pinnedActivities.add(version.activity_id);
   }
+  if(pinnedReferences.size){
+    const refs=(await client.query('SELECT workflow_id,slot_key,activity_id FROM workflow_activity_refs WHERE workflow_id=ANY($1::uuid[]) AND active',[workflowIds])).rows;
+    for(const ref of refs)if(!pinnedReferences.has(`${ref.workflow_id}:${ref.slot_key}`))pinnedActivities.delete(ref.activity_id);
+  }
   const activities=(await client.query(`SELECT DISTINCT a.* FROM activities a JOIN workflow_activity_refs r ON r.activity_id=a.id
     WHERE r.workflow_id=ANY($1::uuid[]) AND r.active ORDER BY a.id`,[workflowIds])).rows;
   const versions=new Map(),sources=new Map();
@@ -76,7 +80,7 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
     versions.set(a.id,versionId);
     // 发布线（迁移 541）：构建登记到内容版本、按冷启动规则动生产指针；SAVEPOINT 内 fail-open，出错不影响同步
     if(!admissionScope)await runReleaseLineHook(client,'register_build',db=>registerActivityBuild(db,{activityId:a.id,buildId:versionId,inserted:saved.inserted},{candidateOnly:strictAssembly}),{strict:strictAssembly});
-    if(!admissionScope)await client.query('UPDATE workflow_activity_refs SET activity_definition_version_id=$2 WHERE activity_id=$1 AND workflow_id=ANY($3::uuid[]) AND active AND activity_definition_version_id IS DISTINCT FROM $2',[a.id,versionId,workflowIds]);
+    if(!admissionScope)await client.query(`UPDATE workflow_activity_refs SET activity_definition_version_id=$2 WHERE activity_id=$1 AND workflow_id=ANY($3::uuid[]) AND active AND activity_definition_version_id IS DISTINCT FROM $2 AND NOT((workflow_id::text||':'||slot_key)=ANY($4::text[]))`,[a.id,versionId,workflowIds,[...pinnedReferences.keys()]]);
   }
   for(const id of workflowIds) {
     const workflow=workflows.get(id);
