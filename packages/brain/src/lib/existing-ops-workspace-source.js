@@ -50,14 +50,7 @@ function selectors(text, parse) {
   // Vitest默认排除目录，以及当前API显式排除目录；都不能成为测试来源。
   return { include, exclude: exclude ? literals(exclude).map(glob) : [] };
 }
-export function workspaceSelectorEnabled(text, parse) {
-  const list = parse(text).body.filter(n => n.type === 'ExportNamedDeclaration' && n.declaration?.type === 'VariableDeclaration')
-    .flatMap(n => n.declaration.declarations.filter(d => d.id?.name === 'EXISTING_OPS_WORKSPACE_SELECTOR_SCHEMA').map(d => ({ parent: n.declaration, value: d.init })));
-  if (!list.length) return false;
-  if (list.length !== 1 || list[0].parent.kind !== 'const' || list[0].value?.type !== 'Literal' || ![0, 1].includes(list[0].value.value)) fail();
-  return list[0].value.value === 1;
-}
-export async function collectWorkspaceSources({ nightly, parse, paths, read, revision, relations, requireProof }) {
+async function collectWorkspaceSources({ nightly, parse, paths, read, revision, relations, requireProof }) {
   const doc = yaml.load(nightly), job = doc?.jobs?.['workspace-test-nightly'];
   const environment = !doc.env || Object.keys(doc.env).every(name => name === 'CODEX_RELAY_HOME');
   if (!requireProof(Boolean(job && environment && !doc.defaults && !job.defaults && job.if === undefined && job.env === undefined && !job.container && !job['continue-on-error']), 'nightly_workspace_job_unproven')) return;
