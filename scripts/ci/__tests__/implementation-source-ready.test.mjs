@@ -8,7 +8,9 @@ import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
 import yaml from 'js-yaml';
 import {expectedSourceRuntime,waitForSourceRuntime} from '../implementation-source-ready.mjs';
-const paths=['source','runtime-source','build-source','build-envelopes','workspace-source'].map(n=>`packages/brain/src/lib/existing-ops-${n}.js`).sort();
+const legacyPaths=['source','runtime-source','build-source','build-envelopes','workspace-source'].map(n=>`packages/brain/src/lib/existing-ops-${n}.js`).sort();
+const provenancePaths=['envelope','core-envelope','entry-envelopes','local-envelopes'].map(n=>`packages/brain/src/lib/existing-ops-provenance-${n}.js`).sort();
+const paths=[...legacyPaths,...provenancePaths].sort();
 const root=mkdtempSync(join(tmpdir(),'source-ready-'));
 const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
 git('init','-q');mkdirSync(join(root,'empty-hooks'));git('config','core.hooksPath',join(root,'empty-hooks'));git('config','user.email','test@example.invalid');git('config','user.name','Fixture');
@@ -26,9 +28,39 @@ async function fixture(responses,run){
 }
 function options(brainUrl){return {brainUrl,token:'test-only',repoRoot:root,revision,timeoutMs:100,intervalMs:10};}
 function deps(extra={}){let time=0;return {readMain:async()=>revision,now:()=>time,sleep:async ms=>{time+=ms;},...extra};}
-test('固定单提交Git读取五文件；工作区未提交字节不作为可信指纹',()=>{
+test('固定单提交Git读取九文件；工作区未提交字节不作为可信指纹',()=>{
  const actual=expectedSourceRuntime({repoRoot:root,revision});assert.deepEqual(actual,expected);
  writeFileSync(join(root,paths[0]),'dirty bytes');assert.deepEqual(expectedSourceRuntime({repoRoot:root,revision}),expected);git('checkout','--',paths[0]);
+});
+test('已知旧5模块只能等待，新9模块匹配才真实HTTP就绪',async()=>{
+ const old=runtime();old.files=old.files.filter(f=>legacyPaths.includes(f.path));
+ await fixture([{body:old},{body:runtime()}],async(url,requests)=>{
+  const result=await waitForSourceRuntime(options(url),deps());assert.equal(result.attempts,2);assert.equal(result.files.length,9);
+  assert.ok(requests.every(r=>r.method==='GET'));
+ });
+});
+test('已知旧5模块持续存在只能有界等待，不能凭旧指纹放行',async()=>{
+ const old=runtime();old.files=old.files.filter(f=>legacyPaths.includes(f.path));
+ await fixture([{body:old}],async(url,requests)=>{
+  await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/);assert.equal(requests.length,10);
+ });
+});
+for(const path of provenancePaths)test(`新增依赖 ${path} 指纹错误不能宣布ready`,async()=>{
+ const body=runtime();body.files.find(f=>f.path===path).sha256='0'.repeat(64);
+ await fixture([{body}],async url=>await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/));
+});
+for(const [name,change] of [
+ ['乱序',files=>files.reverse()],['重复',files=>{files[0]=files[1];return files;}],
+ ['坏hash',files=>{files[0].sha256='oops';return files;}],
+ ['未知第5路径',files=>{files[0].path=provenancePaths[0];return files;}],
+ ['只剩4个',files=>files.slice(1)],
+])test(`旧模块协议 ${name} 仍立即拒绝`,async()=>{
+ const body=runtime();body.files=change(body.files.filter(f=>legacyPaths.includes(f.path)));
+ await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
+});
+test('新协议任意缺1文件的8模块子集也立即拒绝',async()=>{
+ const body=runtime();body.files.pop();
+ await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
 });
 test('真实HTTP仅GET，旧部署指纹等待后匹配；不同build SHA可接受',async()=>{
  const old=runtime();old.files[0].sha256='0'.repeat(64);

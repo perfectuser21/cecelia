@@ -6,6 +6,9 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {readNativeConsumerRuntime} from '../../packages/brain/src/lib/native-consumer-runtime.js';
 const REPO='perfectuser21/cecelia',SHA=/^[a-f0-9]{40}$/,HASH=/^[a-f0-9]{64}$/;
+// 精确历史响应仅表示旧进程仍在运行；绝不能据此宣告新收集器就绪。
+const LEGACY_PATHS=['source','runtime-source','build-source','build-envelopes','workspace-source']
+ .map(name=>`packages/brain/src/lib/existing-ops-${name}.js`).sort();
 const fail=code=>Object.assign(Error(code),{code});
 const keys=(value,expected)=>value&&typeof value==='object'&&!Array.isArray(value)
  &&JSON.stringify(Object.keys(value).sort())===JSON.stringify([...expected].sort());
@@ -19,8 +22,12 @@ export function expectedSourceRuntime({repoRoot,revision}){
 function validateResponse(body,expected){
  if(!keys(body,['schema_version','repo','git_sha','files'])||body.schema_version!==1||body.repo!==REPO
   ||!(body.git_sha===null||typeof body.git_sha==='string'&&SHA.test(body.git_sha))
-  ||!Array.isArray(body.files)||body.files.length!==expected.files.length)throw fail('SOURCE_READY_RESPONSE_INVALID');
- for(const [i,file] of body.files.entries())if(!keys(file,['path','sha256'])||file.path!==expected.files[i].path||typeof file.sha256!=='string'||!HASH.test(file.sha256))throw fail('SOURCE_READY_RESPONSE_INVALID');
+  ||!Array.isArray(body.files))throw fail('SOURCE_READY_RESPONSE_INVALID');
+ const legacy=body.files.length===LEGACY_PATHS.length;
+ const paths=legacy?LEGACY_PATHS:expected.files.map(file=>file.path);
+ if(body.files.length!==paths.length)throw fail('SOURCE_READY_RESPONSE_INVALID');
+ for(const [i,file] of body.files.entries())if(!keys(file,['path','sha256'])||file.path!==paths[i]||typeof file.sha256!=='string'||!HASH.test(file.sha256))throw fail('SOURCE_READY_RESPONSE_INVALID');
+ if(legacy)return false;
  return body.files.every((f,i)=>f.sha256===expected.files[i].sha256);
 }
 export async function waitForSourceRuntime({brainUrl,token,repoRoot,revision,timeoutMs=3600000,intervalMs=30000},
