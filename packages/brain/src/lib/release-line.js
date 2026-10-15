@@ -182,11 +182,12 @@ export async function interfaceImpact(db, activityId, fromVersion, toVersion) {
  * @param {{activityId:string, buildId:string, inserted:boolean}} input  inserted = 本次真的新插入了构建行
  * 命中已存在构建（CI 重跑 / 重新同步旧 commit）只补映射，不碰生产指针，防止 bootstrap 指针被拨回旧内容。
  */
-export async function registerActivityBuild(db, { activityId, buildId, inserted }, { env = process.env, alert = defaultRaise } = {}) {
+export async function registerActivityBuild(db, { activityId, buildId, inserted }, { env = process.env, alert = defaultRaise, candidateOnly = false } = {}) {
   const flags = releaseLineFlags(env);
   await lockReleaseLine(db);
   const { version } = await ensureVersionForBuild(db, buildId);
   if (!version) return { action: 'skipped_consumer_evidence' };
+  if (candidateOnly) return { action: 'candidate_registered', version_id: version.id };
   const pointer = await getPointer(db, activityId, { forUpdate: true });
   if (!pointer) {
     const event = await setInitialPointer(db, activityId, version.id, 'first_build');
@@ -223,13 +224,13 @@ const RECIPE_SQL = `
     SELECT w.id AS workflow_id,
            COALESCE(jsonb_agg(jsonb_build_object(
              'slot_key', e->>'slot_key', 'sequence_no', (e->>'sequence_no')::int, 'activity_id', e->>'activity_id',
-             'activity_version_id', COALESCE(s.production_version_id, m.activity_version_id), 'content_md5', av.content_md5)
+             'activity_version_id', CASE WHEN v.payload->>'assembly_mode'='true' THEN m.activity_version_id ELSE COALESCE(s.production_version_id, m.activity_version_id) END, 'content_md5', av.content_md5)
              ORDER BY (e->>'sequence_no')::int, e->>'slot_key'), '[]'::jsonb) AS recipe
       FROM workflows w JOIN workflow_definition_versions v ON v.id = w.current_definition_version_id
            CROSS JOIN LATERAL jsonb_array_elements(v.payload->'activities') e
            LEFT JOIN activity_version_builds m ON m.build_id::text = e->>'activity_version_id'
            LEFT JOIN activity_release_state s ON s.activity_id::text = e->>'activity_id'
-           LEFT JOIN activity_versions av ON av.id = COALESCE(s.production_version_id, m.activity_version_id)
+           LEFT JOIN activity_versions av ON av.id = CASE WHEN v.payload->>'assembly_mode'='true' THEN m.activity_version_id ELSE COALESCE(s.production_version_id, m.activity_version_id) END
      WHERE w.id = $1 AND COALESCE(v.payload->>'definition_scope', '') <> 'consumer_evidence'
      GROUP BY w.id)
   INSERT INTO workflow_production_recipes (workflow_id, recipe, recipe_md5, cause, cause_event_id)
@@ -256,7 +257,13 @@ export async function refreshRecipesForActivity(db, activityId, opts = {}) {
  * 同步挂钩外壳：开关 + SAVEPOINT + fail-open。发布线任何异常回滚到 savepoint，记日志 + P2，同步照常提交。
  * 调用方的事务未开（SAVEPOINT 报错）也只记日志不抛。
  */
-export async function runReleaseLineHook(client, label, fn, { env = process.env, log = console, alert = defaultRaise } = {}) {
+export async function runReleaseLineHook(client, label, fn, { env = process.env, log = console, alert = defaultRaise, strict = false } = {}) {
+  if (strict) {
+    if (!releaseLineFlags(env).syncHook || !await releaseLineReady(client)) throw Error(`assembly_release_hook_unavailable:${label}`);
+    const result = await fn(client);
+    if (result?.skipped || result?.error) throw Error(`assembly_release_hook_incomplete:${label}`);
+    return result;
+  }
   if (!releaseLineFlags(env).syncHook) return { skipped: 'disabled' };
   let savepoint = false;
   try {
