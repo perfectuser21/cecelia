@@ -266,3 +266,92 @@ it('真实workflow shell仅显式PR scopes调用联合入口，main仍单scope�
   execFileSync('/bin/bash',['-c',script],{env:{...env,MODE:'main'}});expect(readFileSync(capture,'utf8')).toContain('implementation-pr-gate.mjs');expect(readFileSync(capture,'utf8')).not.toContain('implementation-multi-pr-gate.mjs');
  }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+// Real PG/Git fixture, with the supported self/pair envelope applied explicitly.
+// This does not claim the synthetic consumer definitions came from the central Factory API.
+async function noOwnedFixture({purpose='admission_only',exit=0,emptyIndex=0,orphan=false}={}){
+ const root=mkdtempSync(join(tmpdir(),'multi-no-owned-'));
+ const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
+ git('init','-q');git('remote','add','origin','https://github.com/perfectuser21/cecelia.git');
+ for(const dir of ['src','docs','tests/smoke'])mkdirSync(join(root,dir),{recursive:true});
+ for(const file of ['src/shared-lock.js','src/factory-deploy.js'])writeFileSync(join(root,file),'old\n');
+ for(const file of ['docs/alpha.md','docs/beta.md'])writeFileSync(join(root,file),'documentation\n');
+ for(const name of ['a','a2','b'])writeFileSync(join(root,`tests/smoke/scope-${name}.sh`),`#!/bin/bash\nprintf '${name}' > '${root}/actual-${name}'\nexit ${name===(emptyIndex?'b':'a')?exit:0}\n`);
+ const relations=[{owner_path:'src/shared-lock.js',path:'docs/alpha.md',role:'documentation'},
+  {owner_path:'src/factory-deploy.js',path:'docs/beta.md',role:'documentation'}];
+ writeFileSync(join(root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:'perfectuser21/cecelia',relations}));
+ const commit=()=>{git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture');return git('rev-parse','HEAD');};
+ const base=commit();writeFileSync(join(root,emptyIndex?'docs/alpha.md':'docs/beta.md'),'updated\n');
+ if(orphan)writeFileSync(join(root,'docs/orphan.md'),'unclaimed\n');
+ const head=commit();await a.close();await b.close();
+ a=await releaseEvidenceDatabase({scope:'cecelia-kr',baseRevision:base,headRevision:head,assertionRef:'manual:bash tests/smoke/scope-a.sh'});
+ b=await releaseEvidenceDatabase({scope:'fixture-second-source',baseRevision:base,headRevision:head,assertionRef:'manual:bash tests/smoke/scope-b.sh'});
+ await b.db.query("UPDATE graph_edge_snapshots SET dst_path='src/factory-deploy.js' WHERE dst_path='src/shared-lock.js'");
+ const full={repo:'perfectuser21/cecelia',base_revision:base,head_revision:head,changed_files:git('diff','--no-renames','--name-only',base,head).split('\n').map(path=>({path}))};
+ const auxiliary=collectAuxiliarySourceEvidence(root,full),raw=[];
+ const owners=relations.map(row=>row.owner_path),query=[...full.changed_files,...owners.map(path=>({path}))];
+ for(const [db,scope] of [[a.db,'cecelia-kr'],[b.db,'fixture-second-source']]){
+  const original=await readImplementationImpact(db,{scope,repo:source.repo,base_revision:base,head_revision:head,changed_files:query});
+  const report=JSON.parse(JSON.stringify(original).replaceAll(source.repo,full.repo).replaceAll('fixture-second-source','cecelia-factory'));
+  const ownerCoverage={};for(const side of ['base','head']){
+   ownerCoverage[side]=owners.map(path=>report[side].file_coverage.find(f=>f.path===path)).map(({path,matched_paths,truncated})=>({path,matched_paths,truncated}));
+   report[side].file_coverage=report[side].file_coverage.slice(0,full.changed_files.length);
+  }
+  report.source.changed_files=full.changed_files;report.unclaimed_paths=report.unclaimed_paths.filter(f=>full.changed_files.some(c=>c.path===f.path));
+  for(const gap of report.gaps)if(gap.code==='changed_file_unclaimed'&&owners.includes(gap.path))gap.code='auxiliary_owner_unclaimed';
+  applyAuxiliarySourceEvidence(report,auxiliary,ownerCoverage);
+  report.ci_context={purpose:purpose==='main_verification'?'release':'admission_only',base_snapshot_sha256:'a'.repeat(64),head_snapshot_sha256:'b'.repeat(64)};
+  if(scope==='cecelia-kr')report.required_assertions.push({...structuredClone(report.required_assertions[0]),assertion_ref:'manual:bash tests/smoke/scope-a2.sh'});
+  raw.push(report);
+ }
+ return {root,full,raw,purpose,cleanup:()=>rmSync(root,{recursive:true,force:true})};
+}
+it.each([['admission_only',0,0],['main_verification',0,0],['admission_only',7,0],['main_verification',7,1]])(
+ 'no_owned_changes 保留双scope原始证据和三个真实回归 %s %i %i',async(purpose,exit,emptyIndex)=>{
+ const f=await noOwnedFixture({purpose,exit,emptyIndex});
+ try{
+  const options={source:f.full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:f.raw,purpose};
+  const resolution=multi.resolveScopedImplementationReports(options),proof=resolution.evidence;
+  expect(proof.scope_reports).toHaveLength(2);
+  expect(proof.scope_reports[emptyIndex].source.changed_files).toEqual([]);
+  expect(proof.no_owned_changes_context.source_reports).toEqual(f.raw);
+  expect(proof.no_owned_changes_context.scope_keys).toEqual([emptyIndex?'cecelia-factory':'cecelia-kr']);
+  expect(proof.file_coverage).toHaveLength(1);
+  expect(proof.file_coverage[0].claims.map(c=>c.scope_key)).toEqual([emptyIndex?'cecelia-kr':'cecelia-factory']);
+  expect(()=>multi.verifyScopedImplementationGitSource(f.root,proof)).not.toThrow();
+  const receipt=await multi.runScopedImplementationGate({repoRoot:f.root,evidence:proof});
+  expect(receipt.verdict).toBe(exit?'FAIL':'PASS');expect(receipt.scope_receipts).toHaveLength(2);
+  expect(receipt.scope_receipts.map(r=>r.assertions.length)).toEqual([2,1]);
+  expect(receipt.scope_receipts[emptyIndex].ownership_status).toBe('no_owned_changes');
+  expect(receipt.scope_receipts[emptyIndex].assertions[0].exit_code).toBe(exit);
+  for(const name of ['a','a2','b'])expect(readFileSync(join(f.root,`actual-${name}`),'utf8')).toBe(name);
+  const {assertImplementationReport}=await import('../../lib/implementation-report.js');
+  expect(()=>assertImplementationReport(proof.scope_reports[emptyIndex])).toThrow('IMPACT_FILE_COVERAGE_MISSING');
+ }finally{f.cleanup();}
+});
+it('no_owned_changes 不消解联合孤儿文件和真实UNKNOWN',async()=>{
+ const f=await noOwnedFixture({orphan:true});
+ try{expect(()=>multi.resolveScopedImplementationReports({source:f.full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:f.raw})).toThrow('IMPACT_MULTISCOPE_FILE_UNCLAIMED');}
+ finally{f.cleanup();}
+});
+it('no_owned_changes 拒绝scope、snapshot、用途、原始证据与断言篡改',async()=>{
+ const f=await noOwnedFixture();
+ try{
+  const options={source:f.full,expectedScopes:['cecelia-kr','cecelia-factory'],reports:f.raw};
+  const proof=multi.resolveScopedImplementationReports(options).evidence;
+  for(const change of [r=>r[0].gaps.push({code:'regression_missing'}),r=>r[0].head.mapping_status='unknown',
+   r=>r[0].head.traversal.truncated=true,r=>r[0].head.graph_snapshot.digest='bad',r=>r[0].head.definition_versions.activities=[],
+   r=>r[0].required_assertions=[],r=>r[0].ci_context.base_snapshot_sha256='bad',
+   r=>r[0].auxiliary_source_evidence.head.relations[0].owner_sha256='f'.repeat(64)]){
+   const altered=structuredClone(f.raw);change(altered);expect(()=>multi.resolveScopedImplementationReports({...options,reports:altered})).toThrow();
+  }
+  for(const delta of [{reports:[f.raw[1]]},{expectedScopes:['cecelia-factory','cecelia-kr']},{source:{...f.full,repo:'foreign/repo'}}])
+   expect(()=>multi.resolveScopedImplementationReports({...options,...delta})).toThrow();
+  for(const change of [e=>e.scope_reports[0].required_assertions.pop(),e=>e.scope_reports[0].affected_usages=[],
+   e=>e.no_owned_changes_context.scope_keys=['cecelia-factory'],e=>e.no_owned_changes_context.source_reports[0].gaps=[],
+   e=>e.no_owned_changes_context.context_sha256='0'.repeat(64),e=>delete e.no_owned_changes_context,
+   e=>e.scope_reports.splice(0,1),e=>e.purpose='main_verification']){
+   const altered=structuredClone(proof);change(altered);expect(()=>multi.verifyScopedImplementationGitSource(f.root,altered)).toThrow();
+  }
+ }finally{f.cleanup();}
+});
