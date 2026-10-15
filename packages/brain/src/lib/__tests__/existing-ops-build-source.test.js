@@ -163,3 +163,12 @@ it('注册 callback 不能是立即执行表达式，根 describe 不能异步�
   expect(proveBuildSources({...s,test:s.test.replace("describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {", "describe('build 活动（子进程 + 假 claude + 真实 git 提交）', async () => {")},parse)).toBe(false);
   expect(proveBuildSources({...s,test:s.test.replace("  it('claude 参数：", "  it('blocked',(()=>{throw Error('blocked')})());\n  it('claude 参数：")},parse)).toBe(false);
 });
+
+it('根 describe 名称必须为字符串字面量，不执行名称表达式',()=>{
+  const s=buildSources();
+  expect(proveBuildSources({...s,test:s.test.replace("describe('build 活动（子进程 + 假 claude + 真实 git 提交）',", "describe((()=>{throw Error('name')})(),")},parse)).toBe(false);
+  expect(provePublishSources(fixedBuild(publishTest).replace("describe('publish 活动（临时裸仓 + 假 gh）',", "describe((()=>{throw Error('name')})(),"),s.helper,parse)).toBe(false);
+});
+it.each(["EXTRA: 'unregistered',",'INTENT_PATH: path.join(dir, INTENT_FILE),','EXTRA: totallyMissingIdentifier,','EXTRA: path.join(dir, TOTALLY_MISSING_CONSTANT),',"'SPEC_PATH': '/missing',"] )('模板变量拒绝未绑定或重复键 %s',(extra)=>{
+  expect(proveBuildSources(mutateBuild('activity','    TASK_ID: input.task_id,','    '+extra+'\n    TASK_ID: input.task_id,'),parse)).toBe(false);
+});

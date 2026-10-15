@@ -3,7 +3,7 @@
 // 仅作 AST 对照数据，不执行：runActivityProcess/baseEnv、runActivity/childEnv、
 // runClaude 的 provider/isolateRemote 分支、loadPrompt/renderPrompt、withModel/openSink/claudeTimeoutMs、
 // build main 至首次 runClaude 的前缀、spawnClaude 至真正 spawn 的前缀。
-// 不冻结整个 build main；只允许无副作用模板变量扩展。未知结构变化失败关闭，需显式重审。
+// 不冻结整个 build main；额外模板字段仅接受已审 INTENT_PATH。未知结构变化失败关闭，需显式重审。
 export const ENVELOPES = {
   testImports: `import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import crypto from 'node:crypto';
@@ -408,4 +408,3 @@ export function buildSelectorEnabled(text,parse) {
   if (declarations.length!==1 || declarations[0].kind!=='const' || declarations[0].value?.type!=='Literal' || ![0,1].includes(declarations[0].value.value)) throw Error('build_selector_schema_unknown');
   return declarations[0].value.value===1;
 }
-

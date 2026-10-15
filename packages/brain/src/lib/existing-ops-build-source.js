@@ -3,7 +3,7 @@
 // 仅作 AST 对照数据，不执行：runActivityProcess/baseEnv、runActivity/childEnv、
 // runClaude 的 provider/isolateRemote 分支、loadPrompt/renderPrompt、withModel/openSink/claudeTimeoutMs、
 // build main 至首次 runClaude 的前缀、spawnClaude 至真正 spawn 的前缀。
-// 不冻结整个 build main；只允许无副作用模板变量扩展。未知结构变化失败关闭，需显式重审。
+// 不冻结整个 build main；额外模板字段仅接受已审 INTENT_PATH。未知结构变化失败关闭，需显式重审。
 import { ENVELOPES } from './existing-ops-build-envelopes.js';
 export { buildSelectorEnabled } from './existing-ops-build-envelopes.js';
 const PREFIX = 'packages/brain/scripts/coding-workflow/';
@@ -123,7 +123,7 @@ function testWitness(tree,parse) {
   const top=tree.body.filter(n=>n.type==='ExpressionStatement');
   if(top.length!==1||!call(top[0].expression,'describe'))return false;
   const group=top[0].expression.arguments;
-  if(group.length!==2||group[1]?.type!=='ArrowFunctionExpression'||group[1].async||group[1].params.length!==0||group[1].body?.type!=='BlockStatement')return false;
+  if(group.length!==2||group[0]?.type!=='Literal'||typeof group[0].value!=='string'||group[1]?.type!=='ArrowFunctionExpression'||group[1].async||group[1].params.length!==0||group[1].body?.type!=='BlockStatement')return false;
   const body=group[1].body.body;
   if(!testSetup(tree,'test',body,parse))return false;
   if(body.some(n=>!['VariableDeclaration','ExpressionStatement'].includes(n.type)))return false;
@@ -147,12 +147,15 @@ function mainPrefix(tree,parse) {
   if(values?.type!=='ObjectExpression'||values.properties.some(p=>p.type!=='Property'||p.computed||p.kind!=='init'||p.method))return false;
   const expected=parse(`async function main(input) {${ENVELOPES.mainPrefix}}`).body[0].body.body;
   const expectedValues=variable({body:expected},'prompt')[0].init.arguments[1];
-  const keys=expectedValues.properties.map(p=>p.key.name);
-  // 原模板参数保持；仅允许新增无副作用的普通值或固定 path.join(dir, CONSTANT) 参数。
-  const safeValue=n=>['Literal','Identifier'].includes(n?.type)||n?.type==='MemberExpression'&&!n.computed&&n.object?.name==='input'
-    ||n?.type==='CallExpression'&&member(n.callee,'path','join')&&n.arguments.length===2&&n.arguments[0]?.name==='dir'&&n.arguments[1]?.type==='Identifier';
-  if(values.properties.filter(p=>!keys.includes(p.key.name)).some(p=>!safeValue(p.value)))return false;
-  values.properties=values.properties.filter(p=>keys.includes(p.key.name));
+  const key=p=>p.key.type==='Identifier'?p.key.name:p.key.type==='Literal'&&typeof p.key.value==='string'?p.key.value:null;
+  const keys=expectedValues.properties.map(key), actualKeys=values.properties.map(key);
+  if(actualKeys.some(k=>k===null)||new Set(actualKeys).size!==actualKeys.length)return false;
+  // 未绑定标识符会在模板读取前抛错；额外值仅接受下一棒已审的 INTENT_PATH。
+  const intentImport=tree.body.some(n=>n.type==='ImportDeclaration'&&n.source.value==='../lib/spec-check.mjs'&&n.specifiers.length===1&&n.specifiers[0].imported?.name==='INTENT_FILE'&&n.specifiers[0].local.name==='INTENT_FILE');
+  const safeExtra=p=>key(p)==='INTENT_PATH'&&intentImport
+    &&p.value.type==='CallExpression'&&member(p.value.callee,'path','join')&&p.value.arguments.length===2&&p.value.arguments[0]?.name==='dir'&&p.value.arguments[1]?.name==='INTENT_FILE';
+  if(values.properties.filter(p=>!keys.includes(key(p))).some(p=>!safeExtra(p)))return false;
+  values.properties=values.properties.filter(p=>keys.includes(key(p)));
   return same(actual,expected)&&variable(tree,'prompt').length===2 // precheck 独立局部 + main；不允许额外同名影子
     &&variable(tree,'args').length===1&&intact(tree,['main','prompt','args']);
 }
@@ -200,7 +203,7 @@ export function provePublishSources(test,helper,parse) {
     if(!moduleEnvelope(tree,'publishTest',parse)||!moduleEnvelope(h,'helper',parse)||!functionMatches(h,'runActivityProcess',parse)||!functionMatches(h,'baseEnv',parse)||!intact(h,['runActivityProcess']))return false;
     const top=tree.body.filter(n=>n.type==='ExpressionStatement');
     if(top.length!==1||!call(top[0].expression,'describe'))return false;
-    const group=top[0].expression.arguments;if(group.length!==2||group[1]?.type!=='ArrowFunctionExpression'||group[1].async||group[1].params.length!==0||group[1].body?.type!=='BlockStatement')return false;
+    const group=top[0].expression.arguments;if(group.length!==2||group[0]?.type!=='Literal'||typeof group[0].value!=='string'||group[1]?.type!=='ArrowFunctionExpression'||group[1].async||group[1].params.length!==0||group[1].body?.type!=='BlockStatement')return false;
     const body=group[1].body.body;
     if(!testSetup(tree,'publishTest',body,parse))return false;
     if(body.some(n=>!['VariableDeclaration','ExpressionStatement'].includes(n.type)))return false;
