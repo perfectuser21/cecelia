@@ -3,14 +3,18 @@
  * 来源 config/factory-workflows.json，按 workflows.key 取并与 defaults 合并；没登记的 workflow 返回 null（推进器据此标 resource 卡点，不猜）。
  */
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const CONFIG_PATH = fileURLToPath(new URL('../../config/factory-workflows.json', import.meta.url));
+const require = createRequire(import.meta.url);
 let cached = null;
 
 export function loadFactoryConfig(path = CONFIG_PATH) {
   if (path === CONFIG_PATH && cached) return cached;
-  const raw = JSON.parse(readFileSync(path, 'utf8'));
+  const raw = path === CONFIG_PATH
+    ? require('../../config/factory-workflows.json')
+    : JSON.parse(readFileSync(path, 'utf8'));
   const out = { defaults: raw.defaults || {}, workflows: raw.workflows || {} };
   if (path === CONFIG_PATH) cached = out;
   return out;

@@ -81,3 +81,12 @@ describe('GET /workflows', () => {
     expect(res._data.error).toMatch(/boom/);
   });
 });
+
+describe('PATCH /workflows/:id/runtime-status 真实路由鉴权',()=>{
+ it('不能经只读GET绕过mutation auth',()=>{
+  const layer=routes.stack.find(l=>l.route?.path==='/workflows/:id/runtime-status');
+  expect(layer.route.methods.patch).toBe(true);expect(layer.route.stack).toHaveLength(2);
+  const prior=process.env.CECELIA_INTERNAL_TOKEN;process.env.CECELIA_INTERNAL_TOKEN='isolated-auth-fixture';
+  try{const {req,res}=mockReqRes();req.headers={};req.socket={remoteAddress:'127.0.0.1'};const next=vi.fn();layer.route.stack[0].handle(req,res,next);expect(res._status).toBe(401);expect(next).not.toHaveBeenCalled();}finally{if(prior===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=prior;}
+ });
+});

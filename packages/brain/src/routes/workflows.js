@@ -5,12 +5,19 @@
  */
 import { Router } from 'express';
 import pool from '../db.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { setLeadgenRuntimeStatus } from '../lib/leadgen-runtime-status.js';
 import { readDefinitionHistory } from '../lib/definition-history.js';
 import { listWorkflows, readActivity, readActivityConsumers } from '../lib/workflow-read-service.js';
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATUSES = new Set(['active', 'paused', 'retired']);
+
+router.patch('/workflows/:id/runtime-status',internalAuthOrLoopback,async(req,res)=>{
+  try{return res.json(await setLeadgenRuntimeStatus(pool,req.params.id,req.body));}
+  catch(error){return res.status(error.status||500).json({error:error.status?error.message:'运行状态更新失败'});}
+});
 
 router.get('/workflows', async (req, res) => {
   const { capability_id: capabilityId, value_stream_id: valueStreamId, status } = req.query;

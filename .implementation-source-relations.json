@@ -5,7 +5,6 @@
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/prep-prd.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/contract-draft.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "docs/learnings/cp-10151330-cw-terminal-sync.md", "role": "documentation"},
-    
     {
       "owner_path": "packages/brain/src/projection/workflow-body.js",
       "path": "cp-1013222800-notion-span-readback.prd.md",
@@ -364,7 +363,6 @@
     },
     {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "cp-10152210-snapshot-recovery.prd.md", "role": "documentation"},
     {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "docs/learnings/cp-10152210-snapshot-recovery.md", "role": "documentation"},
-    
     {
       "owner_path": "scripts/map/register-capability-pilots.mjs",
       "path": "packages/brain/src/lib/__tests__/implementation-ci-pilots.test.js",
@@ -714,10 +712,20 @@
     {"owner_path": "packages/brain/src/lib/existing-ops-runtime-source.js", "path": "packages/brain/src/lib/__tests__/existing-ops-runtime-source.test.js", "role": "verification"},
     
     {"owner_path": "packages/brain/src/lib/existing-ops-source.js", "path": "sprints/10151430-ci-source-bootstrap/contract-draft.md", "role": "documentation"},
-    {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": ".prd.md", "role": "documentation"},
+    {"owner_path": "packages/brain/src/lib/leadgen-dispatch.js", "path": ".prd.md", "role": "documentation"},
     {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "docs/learnings/cp-10151400-ci-snapshot.md", "role": "documentation"},
     {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "scripts/ci/__tests__/implementation-main-snapshot.test.mjs", "role": "verification"},
-    
-    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "packages/brain/scripts/coding-workflow/runner/README.md", "role": "documentation"}
+    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "packages/brain/scripts/coding-workflow/runner/README.md", "role": "documentation"},
+    {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"docs/current/brain-leadgen-dispatch.md","role":"documentation"},
+    {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"packages/brain/src/lib/__tests__/leadgen-dispatch.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/leadgen-dispatch-contract.js","path":"packages/brain/src/lib/__tests__/leadgen-dispatch-contract.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/leadgen-batch-proof.js","path":"packages/brain/src/lib/__tests__/leadgen-batch-proof.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/leadgen-empty-terminal.js","path":"packages/brain/src/lib/__tests__/leadgen-empty-terminal.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/leadgen-runtime-status.js","path":"packages/brain/src/lib/__tests__/leadgen-runtime-status.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/task-lease.js","path":"packages/brain/src/lib/__tests__/task-lease.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/factory-workflow-config.js","path":"packages/brain/src/lib/__tests__/factory-workflow-config.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/leadgen-controller.js","path":"packages/brain/src/lib/leadgen-controller.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/routes/workflows.js","path":"packages/brain/src/routes/workflows.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/factory-workflow-config.js","path":"scripts/ci/__tests__/factory-workflow-config-source.test.mjs","role":"verification"}
   ]
 }
