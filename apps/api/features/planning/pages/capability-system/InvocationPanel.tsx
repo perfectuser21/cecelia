@@ -14,7 +14,7 @@ function InvocationSession({ target }: { target: InvocationTarget }) {
   const [result, setResult] = useState<InvocationResult | null>(null), [uncertain, setUncertain] = useState(false);
   const [requestKey, setRequestKey] = useState(''), [refresh, setRefresh] = useState(0);
   const lock = useRef(false), alive = useRef<AbortController | null>(null);
-  const payload: InvocationRequest = { target, mode, input, ...(mode === 'candidate' ? { authoring_task_id: authoringTask, compose_sha256: compose } : {}) };
+  const payload: InvocationRequest = { target: mode === 'candidate' ? { kind: target.kind, id: target.id } : target, mode, input, ...(mode === 'candidate' ? { authoring_task_id: authoringTask, compose_sha256: compose } : {}) };
   const serialized = JSON.stringify(payload);
   useEffect(() => {
     const controller = new AbortController(); alive.current = controller;

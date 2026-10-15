@@ -77,6 +77,8 @@ describe('现有目录调用', () => {
     await waitFor(() => expect(screen.getByRole('button', {name:'启动调用'})).toBeEnabled());
     fireEvent.click(screen.getByRole('button', {name:'启动调用'}));
     expect(await screen.findByText('失败')).toBeInTheDocument();
+    const candidateResolve = fetcher.mock.calls.filter(([url]) => url.endsWith('/resolve')).map(([,init]) => JSON.parse(String(init?.body))).find(body => body.mode === 'candidate');
+    expect(candidateResolve.target).toEqual({kind:'activity',id:'a1'});
     const create = fetcher.mock.calls.find(([url]) => url.endsWith('/invocations'))!;
     expect(JSON.parse(String(create[1]?.body))).toMatchObject({mode:'candidate', authoring_task_id:'authoring-task', compose_sha256:'hash', target:fixed});
     expect(screen.getByText('验证通过后仍需正式发布门禁。')).toBeInTheDocument();
