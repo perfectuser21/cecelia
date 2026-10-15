@@ -1,4 +1,5 @@
-## Brain {VERSION} — build 尊重原任务验证范围
+## Brain {VERSION} — build 范围与流水线记录来源
 
-- build 显式传入并先读取原意图文件，验证与提交受任务及规格范围约束。
-- 禁止测试文件的文档任务采用允许的临时或内联真实断言，避免通用 TDD 模板要求越界新增测试。
+- build 先读取原意图；测试和提交服从任务范围，禁止测试文件时用允许的真实断言验证。
+- publish、QA、Commander 将当前任务白名单 Markdown 与准确来源关系同提交，保留旧索引字节并支持幂等恢复。
+- build 新增 `build_touched_controlled_metadata` 拒绝原因；模型修复不能编辑来源索引，docs-only 仅豁免三视图可精确重算的控制器增量。
