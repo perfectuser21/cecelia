@@ -375,6 +375,7 @@ fleet-local-resource-admission-smoke.sh
 phone-registry-sync-smoke.sh
 alertness-schema-smoke.sh
 activity-contract-runtime-smoke.sh
+invocations-smoke.sh
 
 preview-owned-cache-smoke.sh
 
