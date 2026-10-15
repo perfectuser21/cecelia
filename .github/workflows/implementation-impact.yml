@@ -36,7 +36,57 @@ concurrency:
   group: implementation-impact-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  source-runtime-ready:
+    if: inputs.export_device_patrol_source_identity != true && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 判定原生main来源就绪适用范围
+        id: scope
+        env:
+          REQUIRED: ${{ github.repository == 'perfectuser21/cecelia' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (!inputs.source_repo || inputs.source_repo == github.repository) && (!inputs.head_revision || inputs.head_revision == github.sha) && (!inputs.tooling_revision || inputs.tooling_revision == github.sha) && (!inputs.mode || inputs.mode == 'main') && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' }}
+        run: |
+          echo "applicable=$REQUIRED" >> "$GITHUB_OUTPUT"
+          echo "applicable=$REQUIRED"
+      - uses: actions/checkout@v4
+        if: steps.scope.outputs.applicable == 'true'
+        with:
+          repository: perfectuser21/cecelia
+          ref: ${{ github.sha }}
+          path: tooling
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 核实可信已发布main工具
+        if: steps.scope.outputs.applicable == 'true'
+        working-directory: tooling
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: actions/setup-node@v4
+        if: steps.scope.outputs.applicable == 'true'
+        with:
+          node-version: '22'
+      - uses: tailscale/github-action@v2
+        if: steps.scope.outputs.applicable == 'true'
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+      - name: 只读等待实际来源收集器就绪
+        if: steps.scope.outputs.applicable == 'true'
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
+          CECELIA_INTERNAL_TOKEN: ${{ secrets.CECELIA_INTERNAL_TOKEN }}
+          GH_TOKEN: ${{ secrets.CECELIA_ACTIONS_READ_TOKEN || github.token }}
+          HEAD: ${{ github.sha }}
+        run: node tooling/scripts/ci/implementation-source-ready.mjs
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.scope.outputs.applicable == 'true'
+        with:
+          name: implementation-source-readiness-${{ github.sha }}
+          path: evidence/source-readiness/
+          retention-days: 90
+          if-no-files-found: warn
   snapshot-main:
+    needs: [source-runtime-ready]
     if: inputs.export_device_patrol_source_identity != true && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15

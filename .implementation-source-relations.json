@@ -2,6 +2,8 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/src/lib/implementation-ci-snapshot.js","path":"changes/cp-10160115-cw-source-compat.md","role":"release"},
+    {"owner_path":"packages/brain/src/lib/implementation-ci-snapshot.js","path":"docs/learnings/cp-10160115-cw-source-compat.md","role":"documentation"},
     {"owner_path":"packages/brain/src/lib/task-type-registry.js","path":"changes/cp-10160115-cw-source-compat.md","role":"release"},
     {"owner_path":"packages/brain/src/lib/task-type-registry.js","path":"docs/learnings/cp-10160115-cw-source-compat.md","role":"documentation"},
     {"owner_path":"packages/brain/src/invocations/runtime.js","path":"packages/brain/src/invocations/runtime.test.js","role":"verification"},
