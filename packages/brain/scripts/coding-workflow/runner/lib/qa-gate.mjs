@@ -1,7 +1,7 @@
 import { stageQaRecords } from './qa-records.mjs';
 import { sumCostUsd } from '../../lib/transcript.mjs';
-// QA 门（evaluator 真人 QA，决策 02d8e749）：runner 自己开的 cw PR，必需检查全绿后、合并前，在 PR 预览环境（local 仓库：PR worktree，C6）里由
-// evaluate 活动像真人 QA 一样黑盒验收。FAIL → 报告提交、开发按报告修复、推送、CI 再跑、再验（不设轮数上限）。
+// QA 门（evaluator AI QA，决策 02d8e749）：runner 自己开的 cw PR，必需检查全绿后、合并前，在 PR 预览环境（local 仓库：PR worktree，C6）里由
+// evaluate 活动像AI QA 一样黑盒验收。FAIL → 报告提交、开发按报告修复、推送、CI 再跑、再验（不设轮数上限）。
 // PASS → 独立裁判（judge-gate.mjs，不同模型复核需求+合同+QA 报告+改动）：PASS 才开自动合并；product → 按裁决修复；
 // qa_gap → 下一轮 QA 带着裁决补验；contract_gap / 推翻前轮裁决（ruling_conflict）→ 升级；裁判不可用 → 下轮只重跑裁判。
 // 失败数连续 3 轮不降（不收敛）、评估会话/裁判连坏、预览环境长期起不来 → 升级给 coding commander。
@@ -340,7 +340,7 @@ async function qaRound(ctx, pr, s, signal) {
       ctx.log(`QA 门 PR #${pr.number}：检出的 ${checkedOut.slice(0, 9)} 不是列表里的 head ${pr.headRefOid.slice(0, 9)}，下轮再验`);
       return undefined;
     }
-    ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮真人 QA 开始`);
+    ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮AI QA 开始`);
     // QA 会话执行记录落在 runner 日志目录（判越界、证据不实时可复核）
     const transcript = prFile(cfg, `qa-${pr.number}-r${round}.jsonl`);
     const evalStartedAt = Date.now();
@@ -401,10 +401,10 @@ async function qaRound(ctx, pr, s, signal) {
       const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
       if (j.file) records.push(`${intent.sprintDir}/${j.file}`);
       const smoke = !j.error && j.verdict === 'PASS' ? await solidifyQa(ctx, pr, s, round, worktree, intent, result.outputs.qa_report_file, qa.env?.url) : [];
-      await commit(`docs(qa): 第 ${round} 轮真人 QA ${label}，${j.error ? '独立裁判待定' : `独立裁判 ${j.verdict}`}`, smoke);
+      await commit(`docs(qa): 第 ${round} 轮AI QA ${label}，${j.error ? '独立裁判待定' : `独立裁判 ${j.verdict}`}`, smoke);
       return afterJudge(ctx, pr, s, worktree, intent, entry, j);
     }
-    await commit(`docs(qa): 第 ${round} 轮真人 QA ${label}`);
+    await commit(`docs(qa): 第 ${round} 轮AI QA ${label}`);
     if (verdict === 'PASS') {
       // 裁判是合并的必要条件（审计 #32）：关掉裁判时不批准，交人审
       return escalate(ctx, pr, s, intent.taskId, { type: 'judge_disabled', round });

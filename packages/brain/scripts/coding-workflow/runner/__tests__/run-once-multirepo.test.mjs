@@ -135,6 +135,35 @@ describe('门禁按仓库遍历 + automerge=false 等人合并', () => {
     expect(barkCalls()).toHaveLength(1);
     expect(decodeURIComponent(barkCalls()[0].url)).toContain('zj');
   });
+  it('人工合并删branch且回执失败：窗口外重试不获得自动合并权限', async () => {
+    writeRepos({ ceceliaAutomerge: false });
+    const head = remoteHead();
+    seed(sb.logDir, { ...approved(head), awaiting_human: { head, task_id: TASK } });
+    git(sb.origin, 'update-ref', 'refs/pull/77/head', head);
+    git(sb.origin, 'update-ref', '-d', `refs/heads/${BRANCH}`);
+    const merged = { ...pr({ headRefOid: head }), state: 'MERGED', mergedAt: '2026-10-15T00:00:00Z' };
+    await go({ prs: [], mergedPrs: [merged] }, { tasks: [{ id: TASK, status: 'completed', result: { runner: { host: 'mmv' } } }], brainOptions: { resultPatchStatus: 409 } });
+    const task = structuredClone(E.brain.tasks[0]);
+    expect(task.result.merge).toBeUndefined();
+    await E.closeBrain();
+    await go({ prs: [], mergedPrs: [], prDetails: { 77: merged } }, { tasks: [task] });
+    expect(E.brain.tasks[0].result).toMatchObject({ merge: { merged: true, by: 'human', head }, runner: { host: 'mmv', phase: 'merged' }, qa_state: { preview_stopped: true, merged: { by: 'human' } } });
+    expect(mergeCalls()).toEqual([]);
+  });
+  it('人合并的head不同于原批准：仅记真实合并，不声称AI QA通过', async () => {
+    writeRepos({ ceceliaAutomerge: false });
+    const head = remoteHead();
+    seed(sb.logDir, { ...approved(head), awaiting_human: { head, task_id: TASK } });
+    const merged = { ...pr({ headRefOid: 'b'.repeat(40) }), state: 'MERGED', mergedAt: '2026-10-15T00:00:00Z' };
+    await go({ prs: [], mergedPrs: [merged] }, { tasks: [{ id: TASK, status: 'completed', result: {} }] });
+    const result = E.brain.tasks[0].result;
+    expect(result.merge.head).toBe('b'.repeat(40));
+    expect(result.handoff.verdict).toBe('UNKNOWN');
+    expect(result.handoff.done.join(' ')).not.toContain('独立裁判通过');
+    expect(result.qa_state.approved.head).toBe(head);
+    expect(mergeCalls()).toEqual([]);
+  });
+
 });
 
 describe('任务按仓库执行', () => {
@@ -163,4 +192,5 @@ describe('任务按仓库执行', () => {
     // 执行器的 --cwd（判卷代码目录）在默认仓 clone 里
     expect(argv[argv.indexOf('--cwd') + 1].startsWith(`${sb.clone}/`)).toBe(true);
   }, 30000);
+
 });

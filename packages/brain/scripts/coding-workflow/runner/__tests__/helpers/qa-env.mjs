@@ -6,11 +6,12 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FAKE_GH_CI } from '../fixtures/fake-gh-ci.mjs';
 import { git } from '../../../__tests__/helpers/git.mjs';
 import { FAKE_EXECUTOR, startFakeBrain, makeSandbox, runnerEnv, runOnceProcess, readJsonLines } from './sandbox.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const FAKE_GH_CI = path.join(HERE, '../fixtures/fake-gh-ci.mjs');
+export { FAKE_GH_CI };
 export const FAKE_EVALUATE = path.join(HERE, '../fixtures/fake-evaluate.mjs');
 export const FAKE_CLAUDE = path.join(HERE, '../fixtures/fake-claude-cifix.mjs');
 export const TASK = 'c954ebfd-469f-4006-a95f-b277fa6564f6';
@@ -132,9 +133,9 @@ export function useQaEnv({ onReady } = {}) {
   };
   E.pr = (extra = {}) => ({ number: 77, headRefName: BRANCH, headRefOid: E.head, url: 'https://github.com/x/y/pull/77', isDraft: false, ...extra });
   E.green = (extra = {}) => ({ prs: [E.pr()], required: { 77: [{ name: 'ci-passed', bucket: 'pass' }] }, checks: { 77: [] }, ...extra });
-  E.go = async (ghState, { mode = 'pass', extra = {}, tasks = [] } = {}) => {
+  E.go = async (ghState, { mode = 'pass', extra = {}, tasks = [], brainOptions = {} } = {}) => {
     fs.writeFileSync(E.files.gh, JSON.stringify(ghState));
-    E.brain = await startFakeBrain({ tasks });
+    E.brain = await startFakeBrain({ tasks, ...brainOptions });
     return runOnceProcess(runnerEnv(E.sb, E.brain.url, {
       CODING_WF_QA_GATE: '1',
       CODING_WF_GH_BIN: FAKE_GH_CI,
@@ -172,7 +173,7 @@ export function useQaEnv({ onReady } = {}) {
   E.ghCalls = () => readJsonLines(E.sb.ghLog);
   E.originLog = () => git(E.sb.origin, 'log', '--format=%s', BRANCH).trim().split('\n');
   // 业务回写（不含 runner 每轮的状态同步 qa_state / ci_fix_state，审计 #34；那部分看 brainStateResults）
-  const STATE_KEYS = ['qa_state', 'ci_fix_state'];
+  const STATE_KEYS = ['qa_state', 'ci_fix_state', 'commander_state'];
   const ofTask = () => E.brain.patches.filter((p) => p.id === TASK);
   const stateOnly = (p) => p.body.result && !p.body.status && Object.keys(p.body.result).every((k) => STATE_KEYS.includes(k));
   E.brainResults = () => ofTask().filter((p) => !stateOnly(p)).map((p) => p.body.result);

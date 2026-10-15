@@ -10,11 +10,12 @@ import { sumCostUsd, costText } from '../../lib/transcript.mjs';
 import { git, gh } from './proc.mjs';
 import { listOwnPrs, requiredState, ghJson, CW_BRANCH_RE } from './cifix-scan.mjs';
 import { readState, writeState, isRecordFile, escalate } from './qa-gate.mjs';
-import { remoteTaskId, remoteTaskIdByPr } from './pr-branch.mjs';
+import { syncTaskId, syncTask, rememberPr, syncEntry, updateSync } from './pr-sync.mjs';
 import { notifyBark } from './bark.mjs';
 import { prLabel } from './repos.mjs';
 import { readState as readCiFixState } from './cifix-scan.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
+import { recordMergeLearning } from './merge-learning.mjs';
 
 const GH_TIMEOUT_MS = 60 * 1000;
 const MAX_MERGE_FAILURES = 3;
@@ -52,9 +53,11 @@ async function gate(ctx, pr, s) {
   }
   if ((await requiredState(cfg, pr.number)).state !== 'pass') return false;
   // task_id 在 sprint 的 01-intent.md 里，只能从远端分支读：必须在合并（--delete-branch 删分支）之前取
-  const taskId = await remoteTaskId(cfg, pr.headRefName);
+  const taskId = await syncTaskId(ctx, pr);
   if (cfg.repoAutomerge === false) return awaitHuman(ctx, pr, s, taskId);
   const startedAt = Date.now();
+  // 在外部动作前留下精确批准 head；崩溃后只凭 GitHub MERGED + 同 head 恢复收账，不重新合并。
+  rememberPr(ctx, { ...pr, state: 'OPEN' }, { merge_intent: { head: s.approved.head, at: new Date().toISOString() } });
   // --delete-branch：合并后删远端分支（审计 #28）
   const merge = await gh(cfg, ['pr', 'merge', String(pr.number), '--squash', '--delete-branch', '--match-head-commit', s.approved.head], { timeoutMs: GH_TIMEOUT_MS });
   // 执行记录（决策 b34e346a）：合并成功/失败各一条，失败按累计次数区分幂等键
@@ -69,6 +72,7 @@ async function gate(ctx, pr, s) {
     await mergeFailed(ctx, pr, s, merge.stderr.trim().split('\n').pop() || String(merge.code));
     return false;
   }
+  rememberPr(ctx, { ...pr, state: 'MERGED' }, { receipt_pending: true, learning_pending: true });
   s.merged = { head: s.approved.head, at: new Date().toISOString() };
   writeState(cfg, pr.number, s);
   ctx.log(`合并门 ${prLabel(cfg, pr.number)} 已合并（head ${s.approved.head.slice(0, 9)}）`);
@@ -83,23 +87,30 @@ async function recordMerged(ctx, pr, s, taskId) {
     ctx.log(`合并门 PR #${pr.number}：分支上找不到 task_id，合并结果没有回写 Brain`);
     return false;
   }
-  const task = await ctx.brain.getTask(taskId);
-  const prior = task.ok ? task.body?.result ?? {} : {};
+  const task = await syncTask(ctx, taskId, pr);
+  const prior = task.result ?? {};
   const ciFix = readCiFixState(cfg, pr.number);
   const cost = costSummary(prior, s, ciFix);
-  const r = await ctx.brain.patch(taskId, { result: {
+  // PATCH 响应丢失后先核已有回执，避免重复追加 handoff.done。
+  const alreadyRecorded = prior.runner?.phase === 'merged' && prior.merge?.merged === true && prior.merge.head === s.merged.head;
+  const r = alreadyRecorded ? { ok: true } : await ctx.brain.patch(taskId, { result: {
     merge: { merged: true, ...s.merged }, cost_usd: cost,
     // result 顶层合并：runner 带上原字段整体回写，只改阶段
     runner: { ...prior.runner, phase: 'merged', ...(prior.runner?.automerge ? { automerge: { ...prior.runner.automerge, merge: 'merged' } } : {}) },
     handoff: mergedHandoff(taskId, pr, prior, s, cost),
   } });
-  if (!r.ok) ctx.log(`合并门回写 Brain 任务 ${taskId} 失败（HTTP ${r.status}）`);
-  // 交付复盘落库（审计 #22，旧 report 6.5/6.8）：程序按这次的真实记录拼，不让模型编
-  const learned = await ctx.brain.postLearnings({
+  if (!r.ok) {
+    ctx.log(`合并门回写 Brain 任务 ${taskId} 失败（HTTP ${r.status}），保留待办`);
+    return false;
+  }
+  const wasPending = syncEntry(cfg, pr)?.receipt_pending;
+  updateSync(ctx, pr, { receipt_pending: false });
+  // 已存在终态可能来自旧版本/响应丢失，不能回放它的历史 Learning。
+  if (alreadyRecorded && wasPending) updateSync(ctx, pr, { learning_pending: true, learning_blocked: true, learning_status: 'existing_receipt_unverified' });
+  await recordMergeLearning(ctx, pr, {
     task_id: taskId, branch_name: pr.headRefName, pr_number: pr.number, repo: cfg.repoKey ?? 'cecelia', issues_found: [],
     next_steps_suggested: learningLines(taskId, pr, prior, s, ciFix, cost),
   });
-  if (!learned.ok) ctx.log(`合并门 PR #${pr.number} 交付复盘写入 learnings 失败（HTTP ${learned.status}）`);
   return false;
 }
 
@@ -124,9 +135,10 @@ export function finalHandoff(taskId, pr, prior, { verdict, done, notDone = [] })
 
 /** 合并交接单：PR、合并 head、QA 轮次与花费。 */
 function mergedHandoff(taskId, pr, prior, qa, cost) {
-  return finalHandoff(taskId, pr, prior, { verdict: 'PASS', done: [
+  const approved = qa.passed && qa.approved?.head === qa.merged.head;
+  return finalHandoff(taskId, pr, prior, { verdict: approved ? 'PASS' : 'UNKNOWN', done: [
     `PR #${pr.number} 已${qa.merged.by === 'human' ? '由主理人人工' : ''}合并（head ${qa.merged.head.slice(0, 9)}）`,
-    `真人 QA ${qa.rounds?.length ?? 0} 轮 + 独立裁判通过；全链花费 ${costText(cost.total)}`,
+    `${approved ? `AI QA 第 ${qa.approved.round} 轮 + 独立裁判通过` : '合并 head 未与 AI QA 批准记录对齐，未补造批准'}；历史记录 ${qa.rounds?.length ?? 0} 轮；全链花费 ${costText(cost.total)}`,
   ] });
 }
 
@@ -138,7 +150,7 @@ function costSummary(prior, qa, ciFix) {
   return { chain: money(chain), qa: money(q), ci_fix: money(c), total: sumCostUsd(chain, q, c) };
 }
 
-/** 交付复盘：合同对抗、真人 QA 各轮、CI 修复、撤销批准、花费（每条一行写进 learnings）。 */
+/** 交付复盘：合同对抗、AI QA 各轮、CI 修复、撤销批准、花费（每条一行写进 learnings）。 */
 function learningLines(taskId, pr, prior, qa, ciFix, cost) {
   const gan = prior.coding_workflow?.gan;
   const rounds = qa.rounds ?? [];
@@ -146,10 +158,10 @@ function learningLines(taskId, pr, prior, qa, ciFix, cost) {
   const lines = [
     `coding workflow ${String(taskId).slice(0, 8)} 合并复盘（PR #${pr.number}）：`
       + `合同对抗 ${gan ? `${gan.rounds} 轮 ${gan.verdict}（走势 ${gan.trend}）` : '无记录'}；`
-      + `真人 QA ${rounds.length} 轮；CI 修复 ${attempts.length} 次；花费 ${costText(cost.total)}`,
+      + `AI QA ${rounds.length} 轮；CI 修复 ${attempts.length} 次；花费 ${costText(cost.total)}`,
   ];
   for (const r of rounds) {
-    if (r.verdict !== 'PASS') lines.push(`真人 QA 第 ${r.round} 轮 ${r.verdict}（${r.fails ?? 0} 处失败，报告 ${r.report ?? '无'}）${r.fix ? `，修复结果 ${r.fix}` : ''}`);
+    if (r.verdict !== 'PASS') lines.push(`AI QA 第 ${r.round} 轮 ${r.verdict}（${r.fails ?? 0} 处失败，报告 ${r.report ?? '无'}）${r.fix ? `，修复结果 ${r.fix}` : ''}`);
   }
   for (const a of attempts) {
     lines.push(`CI 修复：${(a.checks ?? a.failed ?? []).join('、') || '失败检查未记录'} → ${a.result ?? a.reason ?? '未知'}`);
@@ -200,8 +212,8 @@ async function awaitHuman(ctx, pr, s, taskId) {
     ctx.log(`合并门 ${label}：分支上找不到 task_id，等人合并没有回写 Brain`);
     return false;
   }
-  const task = await ctx.brain.getTask(taskId);
-  const prior = task.ok ? task.body?.result ?? {} : {};
+  const task = await syncTask(ctx, taskId, pr);
+  const prior = task.result ?? {};
   const r = await ctx.brain.patch(taskId, { result: {
     runner: { ...prior.runner, phase: 'awaiting_human' },
     merge: { merged: false, awaiting_human: true, head, url: pr.url, at: s.awaiting_human.at },
@@ -216,11 +228,14 @@ export async function settleHumanMerges(ctx) {
   if (cfg.repoAutomerge !== false) return;
   try {
     const merged = await ghJson(cfg, ['pr', 'list', '--state', 'merged', '--limit', '30', '--json', 'number,headRefName,headRefOid,url,mergedAt']);
-    for (const pr of (Array.isArray(merged) ? merged : []).filter((p) => CW_BRANCH_RE.test(p.headRefName ?? ''))) {
+    const candidates = new Map((Array.isArray(merged) ? merged : []).map((p) => [p.number, p]));
+    for (const [number, pr] of ctx.syncPrs ?? []) if (pr.state === 'MERGED') candidates.set(number, pr);
+    for (const pr of [...candidates.values()].filter((p) => CW_BRANCH_RE.test(p.headRefName ?? ''))) {
       const s = readState(cfg, pr.number);
       if (!s.awaiting_human || s.merged) continue;
       // 人合并时可能已删分支：先用等人合并时记下的 task_id，再读分支 / refs/pull
-      const taskId = s.awaiting_human.task_id ?? await remoteTaskId(cfg, pr.headRefName) ?? await remoteTaskIdByPr(cfg, pr.number, pr.headRefName);
+      rememberPr(ctx, { ...pr, state: 'MERGED' }, { receipt_pending: true, learning_pending: true });
+      const taskId = await syncTaskId(ctx, pr);
       const at = pr.mergedAt ?? new Date().toISOString();
       s.merged = { head: pr.headRefOid ?? s.awaiting_human.head, at, by: 'human' };
       writeState(cfg, pr.number, s);
@@ -240,6 +255,26 @@ export async function settleHumanMerges(ctx) {
 /** 检查所有已批准未合并的 PR；有撤销批准（本轮算做了事）返回 true。不抛错。 */
 export async function runMergeGate(ctx) {
   try {
+    for (const pr of ctx.syncPrs?.values() ?? []) {
+      let entry = syncEntry(ctx.cfg, pr);
+      if (pr.state !== 'MERGED') continue;
+      const s = readState(ctx.cfg, pr.number);
+      // intent 是动作前持久的凭据：即使本机/远端已出现 merged，也先补齐尚未确认的回执待办。
+      if (entry?.merge_intent?.head === pr.headRefOid && entry.receipt_pending === undefined) {
+        updateSync(ctx, pr, { receipt_pending: true, learning_pending: entry.learning_pending ?? true });
+        entry = syncEntry(ctx.cfg, pr);
+      }
+      if (!s.merged && entry?.merge_intent?.head === pr.headRefOid) {
+        s.merged = { head: pr.headRefOid, at: pr.mergedAt ?? entry.merge_intent.at };
+        const taskId = await syncTaskId(ctx, pr);
+        if (taskId) {
+          const at = Date.parse(s.merged.at) || Date.now();
+          await postSpans(ctx, [gateSpan({ taskId, key: 'merge', startedAt: at, endedAt: at, ok: true, terminal: true, occurrence: `${pr.number}`, evidence: { head: s.merged.head } })]);
+        }
+        writeState(ctx.cfg, pr.number, s);
+      } else if (!entry?.receipt_pending && !entry?.learning_pending) continue;
+      if (s.merged) await recordMerged(ctx, pr, s, await syncTaskId(ctx, pr));
+    }
     const prs = await listOwnPrs(ctx.cfg);
     let acted = false;
     for (const pr of prs ?? []) {
