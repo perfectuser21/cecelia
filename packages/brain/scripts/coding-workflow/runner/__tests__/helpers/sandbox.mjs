@@ -23,7 +23,7 @@ const TRANSITIONS = { queued: ['in_progress'], in_progress: ['completed', 'faile
  * onResultPatch(task) 在只带 result 的 PATCH 后调用（模拟 Brain 重启把任务打回 queued 等）；
  * 认领对 coding-workflow-runner 强制写 kind（同真 Brain），legacyClaim=true 模拟旧端点的 COALESCE。
  */
-export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {}, onResultPatch, legacyClaim = false, internalToken = null, heartbeatStatus = null } = {}) {
+export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = {}, onResultPatch, legacyClaim = false, internalToken = null, heartbeatStatus = null, getTaskStatus = null, resultPatchStatus = null, learningStatus = null } = {}) {
   const state = { tasks: structuredClone(tasks), calls: [], patches: [], learnings: [], spans: [], heartbeats: [] };
 
   const find = (id) => state.tasks.find((t) => t.id === id);
@@ -55,11 +55,13 @@ export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = 
       }
       // learnings 落库（审计 #22）：同真 Brain 的 POST /api/brain/learnings-received
       if (req.method === 'POST' && url.pathname === '/api/brain/learnings-received') {
+        if (learningStatus) return send(res, learningStatus, { error: 'forced' });
         state.learnings.push(JSON.parse(raw));
         return send(res, 200, { success: true });
       }
       const one = /^\/api\/brain\/tasks\/([^/]+)$/.exec(url.pathname);
       if (req.method === 'GET' && one) {
+        if (getTaskStatus) return send(res, getTaskStatus, { error: 'forced' });
         const task = find(one[1]);
         return task ? send(res, 200, task) : send(res, 404, { error: 'Task not found' });
       }
@@ -85,7 +87,7 @@ export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = 
 
         const body = JSON.parse(raw);
         state.patches.push({ id: one[1], body });
-        const forced = body.status ? patchStatus[body.status] : undefined;
+        const forced = body.status ? patchStatus[body.status] : (body.result?.merge ? resultPatchStatus : undefined);
         if (forced) return send(res, forced, { code: 'FORCED' });
         const task = find(one[1]);
         if (!task) return send(res, 404, { code: 'TASK_NOT_FOUND' });

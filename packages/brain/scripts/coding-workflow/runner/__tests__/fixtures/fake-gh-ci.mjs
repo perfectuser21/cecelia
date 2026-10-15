@@ -44,6 +44,11 @@ if (argv[0] === 'pr' && argv[1] === 'merge' && argv.includes('--delete-branch'))
 }
 // pr view <n> --json state：prStateSeq 逐次消费 > prStates > 在 prs（open 列表）里即 OPEN
 if (argv[0] === 'pr' && argv[1] === 'view') {
+  if (argv.at(-1).includes('headRefName')) {
+    const pr = state.prDetails?.[argv[2]] ?? [...(state.prs ?? []), ...(state.closedPrs ?? []), ...(state.mergedPrs ?? [])].find((p) => String(p.number) === argv[2]);
+    if (!pr) process.exit(1);
+    out({ ...pr, state: pr.state ?? 'OPEN' });
+  }
   const seq = state.prStateSeq?.[argv[2]];
   if (Array.isArray(seq) && seq.length > 0 && process.env.FAKE_GH_CI) {
     const counter = `${process.env.FAKE_GH_CI}.seq-${argv[2]}`;
