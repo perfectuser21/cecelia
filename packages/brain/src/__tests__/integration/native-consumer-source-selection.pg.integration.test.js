@@ -5,7 +5,7 @@ import { versionsDatabase } from '../fixtures/definition-versions-db.js';
 import { EXISTING_OPS_IDENTITIES } from '../../lib/existing-ops-source.js';
 import * as registration from '../../lib/existing-ops-registration.js';
 import { minimumMapSchema } from '../fixtures/minimum-map-schema.js';
-import { exportImplementationSnapshot } from '../../lib/implementation-ci-snapshot.js';
+import { exportImplementationSnapshot,refreshImplementationSnapshot } from '../../lib/implementation-ci-snapshot.js';
 import { randomUUID } from 'node:crypto';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
@@ -51,7 +51,8 @@ function transport(change=()=>{}){
  const calls=[];
  const fetchFn=async(url)=>{
   calls.push(url); let value;
-  if(url.endsWith(`/git/commits/${revision}`))value={sha:revision,tree:{sha:treeSha}};
+  if(url.endsWith('/commits/main'))value=revision;
+  else if(url.endsWith(`/git/commits/${revision}`))value={sha:revision,tree:{sha:treeSha}};
   else if(url.endsWith(`/git/trees/${treeSha}?recursive=1`))value={sha:treeSha,truncated:false,tree:structuredClone(entries)};
   else if(url.includes('/contents/')){
    const u=new URL(url),path=decodeURIComponent(u.pathname.split('/contents/')[1]);
@@ -90,4 +91,13 @@ it('same-SHA 旧535/新644完整链：唯一固定Git匹配导出且不改历史
  expect(snapshot.definitions.activities.map(a=>a.id)).not.toContain(oldF3.id);
  expect(await history()).toEqual(before);
  expect(source.calls.length).toBeGreaterThan(100);
+},120000);
+
+it('factory refresh实际collector不匹配目标源码时409且任何历史/current/地图均零写',async()=>{
+ await factoryMap();const before=await history();
+ const source=transport((url,value)=>url.includes('/contents/packages/brain/src/lib/existing-ops-source.js')
+  ?value.replace(/^export const EXISTING_OPS_WORKSPACE_SELECTOR_SCHEMA = [^\n]+;\r?\n/m,''):value);
+ await expect(refreshImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision},source))
+  .rejects.toMatchObject({code:'IMPLEMENTATION_CI_SOURCE_RUNTIME_MISMATCH',status:409});
+ expect(await history()).toEqual(before);
 },120000);
