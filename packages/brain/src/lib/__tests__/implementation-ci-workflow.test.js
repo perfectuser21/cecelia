@@ -47,7 +47,10 @@ it('自仓PR仅精确native双scope消费同一官方artifact companion，main e
  const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
  const producer=workflow.jobs['snapshot-main'];
  expect(producer.steps.find(s=>s.env).env.ADMISSION_SCOPES).toBeUndefined();
- expect(producer.steps.filter(s=>(s.uses||'').startsWith('actions/upload-artifact')).map(s=>s.with.path)).toEqual(['evidence/head.json','evidence/base.json']);
+ expect(producer.steps.filter(s=>(s.uses||'').startsWith('actions/upload-artifact')).map(s=>({path:s.with.path,condition:s.if}))).toEqual([
+  {path:'evidence/head.json',condition:'success()'},{path:'evidence/base.json',condition:'success()'},
+  {path:'evidence/diagnostics/',condition:'always()'}
+ ]);
  expect(workflow.jobs.gate.env.ADMISSION_SCOPES).toBe("${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || (github.event_name == 'pull_request' && github.repository == 'perfectuser21/cecelia' && '{\"schema_version\":1,\"scopes\":[\"cecelia-kr\",\"cecelia-factory\"]}' || '') }}");
  const download=workflow.jobs.gate.steps.find(s=>s.name?.includes('下载固定SHA')).run;
  expect(download.match(/node tooling\/scripts\/ci\/implementation-pr-gate\.mjs --extract-scopes/g)).toHaveLength(2);
@@ -88,7 +91,9 @@ case "$*" in
  *'/actions/artifacts?name='*) printf '%s\\n' '{"artifacts":[{"id":123,"expired":false,"workflow_run":{"head_branch":"main","head_sha":"${'a'.repeat(40)}","repository_id":1,"head_repository_id":1}}]}' ;;
  *'/actions/artifacts/123/zip'*) cat "$ARCHIVE" ;;
  *'/actions/artifacts/123'*) printf '99\\n' ;;
- *'/actions/runs/99'*) printf 'push .github/workflows/implementation-impact.yml\\n' ;;
+ *'/actions/runs/99/jobs?'*) printf '%s\\n' '{"total_count":1,"jobs":[{"name":"snapshot-main","status":"completed","conclusion":"success"}]}' ;;
+ *'/actions/runs/99'*'--jq'*) printf 'push .github/workflows/implementation-impact.yml\\n' ;;
+ *'/actions/runs/99'*) printf '{"id":99,"head_sha":"${'a'.repeat(40)}","head_branch":"main","event":"push","path":".github/workflows/implementation-impact.yml","repository":{"full_name":"%s"},"head_repository":{"full_name":"%s"}}\\n' "$GITHUB_REPOSITORY" "$GITHUB_REPOSITORY" ;;
  *) exit 80 ;;
 esac
 `,{mode:0o755});
@@ -119,7 +124,9 @@ case "$*" in
  *'/actions/artifacts?name='*) printf '%s\\n' '{"artifacts":[{"id":123,"created_at":"2026-10-09T05:45:12Z","expired":false,"workflow_run":{"head_branch":"main","head_sha":"${'a'.repeat(40)}","repository_id":1,"head_repository_id":1}},{"id":122,"created_at":"2026-10-09T05:49:49Z","expired":false,"workflow_run":{"head_branch":"main","head_sha":"${'a'.repeat(40)}","repository_id":1,"head_repository_id":1}}]}' ;;
  *'/actions/artifacts/123/zip'*|*'/actions/artifacts/122/zip'*) cat "$ARCHIVE" ;;
  *'/actions/artifacts/123'*|*'/actions/artifacts/122'*) printf '99\\n' ;;
- *'/actions/runs/99'*) printf 'push .github/workflows/implementation-impact.yml\\n' ;;
+ *'/actions/runs/99/jobs?'*) printf '%s\\n' '{"total_count":1,"jobs":[{"name":"snapshot-main","status":"completed","conclusion":"success"}]}' ;;
+ *'/actions/runs/99'*'--jq'*) printf 'push .github/workflows/implementation-impact.yml\\n' ;;
+ *'/actions/runs/99'*) printf '{"id":99,"head_sha":"${'a'.repeat(40)}","head_branch":"main","event":"push","path":".github/workflows/implementation-impact.yml","repository":{"full_name":"%s"},"head_repository":{"full_name":"%s"}}\\n' "$GITHUB_REPOSITORY" "$GITHUB_REPOSITORY" ;;
  *) exit 80 ;;
 esac
 `,{mode:0o755});
