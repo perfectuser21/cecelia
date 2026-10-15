@@ -128,3 +128,14 @@ it('旧共享版本有Step合同但缺固定Step登记身份时拒绝复用，�
  const d=f.definition('assembly.incomplete');delete d.warehouse_items;d.activities=[{...owner.activities[0],reuse_activity_id:activity.id,reuse_activity_definition_version_id:v.id,reuse_contract_sha256:v.contract_sha256}];
  const b=await f.submit(d),before=await f.snapshot();await expect(b.run()).rejects.toThrow(/Step固定登记/);expect(await f.snapshot()).toEqual(before);
 });
+it('拥有者更新与同流程旧版引用并存时按槽位分别冻结，不将旧版覆盖到新版本槽位',async()=>{
+ f=await assemblyDatabase();const original=f.definition(),first=await f.submit(original),r=(await first.run()).receipt.output;
+ const a=(await f.db.query('SELECT * FROM activities WHERE id=$1',[r.activity_ids[0]])).rows[0];
+ const old=(await f.db.query('SELECT * FROM activity_definition_versions WHERE id=$1',[a.current_definition_version_id])).rows[0];
+ const next=structuredClone(original);next.version='1.1.0';next.source.revision='b'.repeat(40);next.activities[0].acceptance.push('新版读回');
+ next.activities.push({...original.activities[0],key:'previous',reuse_activity_id:a.id,reuse_activity_definition_version_id:old.id,reuse_contract_sha256:old.contract_sha256});next.output_mapping={report:'$activity.render.report'};
+ const update=await f.submit(next,{operation:'update',workflowId:r.workflow_id,expectedVersion:'1.0.0'});
+ await update.run();
+ const refs=(await f.db.query('SELECT activity_id,activity_definition_version_id FROM workflow_activity_refs WHERE workflow_id=$1 AND active ORDER BY sequence_no',[r.workflow_id])).rows;
+ expect(refs.map(x=>x.activity_id)).toEqual([a.id,a.id]);expect(refs[0].activity_definition_version_id).not.toBe(old.id);expect(refs[1].activity_definition_version_id).toBe(old.id);
+});
