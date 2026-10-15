@@ -285,7 +285,9 @@ async function afterJudge(ctx, pr, s, worktree, intent, entry, j) {
   } else if (j.verdict === 'PASS') {
     // API 类 PR 一条回归 smoke 都没固化：不批准，交 commander 裁决（决策 4fe863c3；commander 已放行过的不再拦）
     if (s.smoke_missing && !s.smoke_waived) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_smoke_missing', ...s.smoke_gap, round: entry.round });
-    await approve(ctx.cfg, s, entry, worktree, intent);
+    try { await approve(ctx.cfg, s, entry, worktree, intent); } catch (error) {
+      return escalate(ctx, pr, s, intent.taskId, { type: 'source_provenance_missing', reason: error.message, head: await headOf(worktree) });
+    }
   } else {
     entry.fails = Math.max(1, j.blocking.length);
     if (j.failure_class === 'ruling_conflict') {

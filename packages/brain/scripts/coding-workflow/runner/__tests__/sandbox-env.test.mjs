@@ -1,5 +1,8 @@
 // 测试环境隔离：外部 CODING_WF_* 不得泄漏进被测子进程（childEnv 本身保留它们，由测试侧剥离）。
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { cleanTestEnv, runnerEnv } from './helpers/sandbox.mjs';
 
 describe('cleanTestEnv', () => {
@@ -17,13 +20,15 @@ describe('cleanTestEnv', () => {
 
 describe('runnerEnv', () => {
   it('外部 CODING_WF_AUTOMERGE 不泄漏；显式 extra 仍生效', () => {
-    const sb = { clone: '/c', worktreeBase: '/w', logDir: '/l', lockDir: '/k', execLog: '/e', ghLog: '/g' };
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-runner-env-'));
+    const sb = { root, clone: '/c', worktreeBase: '/w', logDir: '/l', lockDir: '/k', execLog: '/e', ghLog: '/g' };
     const saved = process.env.CODING_WF_AUTOMERGE;
     process.env.CODING_WF_AUTOMERGE = '0';
     try {
       expect(runnerEnv(sb, 'http://x').CODING_WF_AUTOMERGE).toBeUndefined();
       expect(runnerEnv(sb, 'http://x', { CODING_WF_AUTOMERGE: '1' }).CODING_WF_AUTOMERGE).toBe('1');
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
       if (saved === undefined) delete process.env.CODING_WF_AUTOMERGE;
       else process.env.CODING_WF_AUTOMERGE = saved;
     }

@@ -12,6 +12,7 @@ import { startFakeBrain, runnerEnv, runOnceProcess, readJsonLines, codingTask, S
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REAL_REPOS = JSON.parse(fs.readFileSync(path.join(HERE, '../../repos.json'), 'utf8'));
 const ZJ_SLUG = 'acme/zj';
+const DEFAULT_SLUG = 'x/y';
 
 describe('门禁按仓库遍历 + automerge=false 等人合并', () => {
   let sb;
@@ -25,9 +26,9 @@ describe('门禁按仓库遍历 + automerge=false 等人合并', () => {
   const mergeCalls = () => ghCalls().filter((a) => a[1] === 'merge');
   const ofTask = () => E.brain.patches.filter((p) => p.id === TASK).map((p) => p.body.result ?? {});
 
-  /** 测试用 repos.json：cecelia 照抄（可改 automerge）；zj 可选，指向同一个 origin 的第二个 clone。 */
+  /** 测试用 repos.json：默认仓使用通用 fixture 身份（可改 automerge）；zj 可选，指向同一个 origin 的第二个 clone。 */
   const writeRepos = ({ ceceliaAutomerge = true, zj = null } = {}) => {
-    const repos = REAL_REPOS.repos.map((r) => (r.default ? { ...r, automerge: ceceliaAutomerge } : r));
+    const repos = REAL_REPOS.repos.map((r) => (r.default ? { ...r, slug: DEFAULT_SLUG, origin: sb.origin, automerge: ceceliaAutomerge } : r));
     if (zj) {
       if (!fs.existsSync(zjClone())) {
         gitPlain('clone', '-q', sb.origin, zjClone());
@@ -96,7 +97,7 @@ describe('门禁按仓库遍历 + automerge=false 等人合并', () => {
     expect(mergeCalls()).toEqual([['pr', 'merge', '77', '--squash', '--delete-branch', '--match-head-commit', head]]);
     const repoCalls = readJsonLines(repoLog());
     expect(repoCalls.find((c) => c.argv[1] === 'merge').repo).toBe(ZJ_SLUG);
-    expect(repoCalls.filter((c) => c.argv[1] === 'list').map((c) => c.repo)).toEqual(expect.arrayContaining(['perfectuser21/cecelia', ZJ_SLUG]));
+    expect(repoCalls.filter((c) => c.argv[1] === 'list').map((c) => c.repo)).toEqual(expect.arrayContaining([DEFAULT_SLUG, ZJ_SLUG]));
     expect(read(zjLogDir())).toMatchObject({ merged: { head } });
     expect(fs.existsSync(path.join(sb.logDir, 'qa-77.json'))).toBe(false);
     expect(E.brain.learnings).toEqual([expect.objectContaining({ task_id: TASK, repo: 'zj' })]);
