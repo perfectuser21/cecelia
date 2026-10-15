@@ -156,7 +156,7 @@ async function executeDownload(t,{runPatch={},failedJob=false,errorBody=false,to
  execFileSync('python3',['-c','import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.write(sys.argv[2],"head.json"); z.close()',join(dir,'input.zip'),join(dir,'head.json')]);
  writeFileSync(join(dir,'bin/gh'),`#!/usr/bin/env node
 const fs=require('fs'),a=process.argv.slice(2),p=a[1];
-if(p.includes('artifacts?'))console.log(JSON.stringify({artifacts:[{id:1,expired:false,created_at:'2026-01-02T00:00:00Z',...cfg.itemPatch,workflow_run:{head_branch:'main',head_sha:'${base}',repository_id:1,head_repository_id:1}}]}));
+if(p.includes('artifacts?'))console.log(JSON.stringify({artifacts:[{id:1,expired:false,created_at:'2026-01-01',workflow_run:{head_branch:'main',head_sha:'${base}',repository_id:1,head_repository_id:1}}]}));
 else if(p.endsWith('/zip'))process.stdout.write(fs.readFileSync('${dir}/input.zip'));
 else if(p.includes('/artifacts/'))console.log('17');
 else if(p.includes('/jobs?'))process.stdout.write(fs.readFileSync('${dir}/jobs.json'));

@@ -27,10 +27,11 @@ function readHistoricalArtifact({repo,revision,diagnostics}){
  const collection=json(`${prefix}/artifacts?name=${name}&per_page=100`);
  if(!Array.isArray(collection.artifacts)||collection.total_count>100)throw fail('IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING');
  const valid=item=>Number.isSafeInteger(item?.id)&&item.id>0&&item.name===name&&item.expired===false
+  &&typeof item.created_at==='string'&&item.created_at.trim()!==''&&Number.isFinite(Date.parse(item.created_at))
   &&item.workflow_run?.head_sha===revision&&item.workflow_run.head_branch==='main'
   &&Number.isSafeInteger(item.workflow_run.id)&&item.workflow_run.id>0
   &&Number.isSafeInteger(item.workflow_run.repository_id)&&item.workflow_run.repository_id===item.workflow_run.head_repository_id;
- const candidate=collection.artifacts.filter(valid).sort((a,b)=>b.id-a.id)[0];
+ const candidate=collection.artifacts.filter(valid).sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)||b.id-a.id)[0];
  if(!candidate)throw fail('IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING');
  const artifact=json(`${prefix}/artifacts/${candidate.id}`);
  if(!valid(artifact)||artifact.id!==candidate.id||artifact.workflow_run.id!==candidate.workflow_run.id)throw fail('IMPLEMENTATION_CI_ARTIFACT_ORIGIN_INVALID');
