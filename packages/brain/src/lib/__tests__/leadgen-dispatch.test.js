@@ -36,7 +36,8 @@ describe('独立评分精确已提交102批原生身份',()=>{
 });
 
 describe('104原发送开关只由本次明确授权驱动',()=>{
- const make=extra=>task('douyin_lead_outreach',{source_run:undefined,source_binding_run_id:undefined,profile:'jinoshengyuan-work',serial:'realserial',...extra});
+ const make=extra=>task('douyin_lead_outreach',{source_run:undefined,source_binding_run_id:undefined,profile:'jinoshengyuan-work',serial:'realserial',limit:1,...extra});
+ it('原263只支持单次发送，limit2须在启动前拒绝',()=>expect(()=>resolveLeadgenInput(make({send_authorized:true,limit:2}))).toThrow());
  it('缺明确发送授权拒绝',()=>expect(()=>resolveLeadgenInput(make({}))).toThrow());
  it('授权不允许携带任意env或pause绕过',()=>{expect(resolveLeadgenInput(make({send_authorized:true})).send_authorized).toBe(true);expect(()=>resolveLeadgenInput(make({send_authorized:true,env:{OUTREACH_PAUSED:'0'}}))).toThrow();});
 });
@@ -69,7 +70,7 @@ describe('正常任务到真实适配入口及收割',()=>{
 });
 
 describe('104公司隔离必须在任何外发之前成立',()=>{
- const p=resolveLeadgenInput(task('douyin_lead_outreach',{source_run:undefined,source_binding_run_id:undefined,profile:'legacy',serial:'serial',send_authorized:true}));
+ const p=resolveLeadgenInput(task('douyin_lead_outreach',{source_run:undefined,source_binding_run_id:undefined,profile:'legacy',serial:'serial',send_authorized:true,limit:1}));
  const base={company_id:p.company_id,config_status:'enabled',runtime_config:{routing:{line_key:'jinuo'},platform_accounts:[{enabled:true,verification_status:'verified',profile:'legacy',device_serial:'serial'}]}};
  it('公司A与lineB拒绝',()=>expect(()=>verifyBatchRows(p,[],base,()=>{},()=>'',{key:'yuesheng'})).toThrow('COMPANY_SOURCE'));
  it('公司未授权手机拒绝',()=>expect(()=>verifyBatchRows({...p,serial:'other'},[],base,()=>{},()=>'',{key:'jinuo'})).toThrow('COMPANY_ACCOUNT'));
@@ -84,7 +85,7 @@ describe('跨网前记账故障不执行业务',()=>{
 
 describe('四flow真实完整交付形状闭环（隔离fixtures，非生产执行）',()=>{
  it.each(['douyin_video_discovery','douyin_video_processing','douyin_comment_scoring','douyin_lead_outreach'])('%s 原ACK+冻结来源+中央完整路径才完成',async key=>{
-  const base=task(key,{...(key==='douyin_comment_scoring'?{}:{profile:'legacy',serial:'serial'}),...(key==='douyin_lead_outreach'?{source_run:undefined,source_binding_run_id:undefined,send_authorized:true}:{}),...(key==='douyin_video_discovery'?{source_run:undefined,source_binding_run_id:undefined}:{}),...(key==='douyin_video_processing'?{source_binding_run_id:'douyin_video_discovery-q102real__a1'}:{})});
+  const base=task(key,{...(key==='douyin_comment_scoring'?{}:{profile:'legacy',serial:'serial'}),...(key==='douyin_lead_outreach'?{source_run:undefined,source_binding_run_id:undefined,send_authorized:true,limit:1}:{}),...(key==='douyin_video_discovery'?{source_run:undefined,source_binding_run_id:undefined}:{}),...(key==='douyin_video_processing'?{source_binding_run_id:'douyin_video_discovery-q102real__a1'}:{})});
   const p={...resolveLeadgenInput(base),release_id:'release-fixture',workflow_definition_version_id:'version-fixture',snapshot_sha256:'workflow-hash-fixture',source_commit:'source-fixture'};
   const path={reference_id:'ref-fixture',activity_id:'activity-fixture',activity_definition_version_id:'activity-version-fixture',required:true};
   const binding={id:'binding-fixture',source_kind:'external',release_id:p.release_id,workflow_definition_version_id:p.workflow_definition_version_id,snapshot_sha256:p.snapshot_sha256,payload:{runtime_snapshot_sha256:'runtime-hash-fixture'},expected_path:[path]};

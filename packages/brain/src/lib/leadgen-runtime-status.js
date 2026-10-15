@@ -13,7 +13,7 @@ export async function setLeadgenRuntimeStatus(pool,id,input,deps={}) {
   try{
     await client.query('BEGIN');
     const task=(await client.query('SELECT * FROM tasks WHERE id=$1 FOR SHARE',[input.task_id])).rows[0];
-    check(task&&task.status==='in_progress'&&task.payload?.actor===input.actor&&task.payload?.workflow_runtime_scope?.includes(id),'治理任务未登记认领或作用域不符');
+    check(task&&task.status==='in_progress'&&typeof task.claimed_by==='string'&&task.claimed_by.trim().length>0&&task.payload?.actor===input.actor&&task.payload?.workflow_runtime_scope?.includes(id),'治理任务未登记认领或作用域不符');
     const workflow=(await client.query('SELECT * FROM workflows WHERE id=$1 FOR UPDATE',[id])).rows[0];
     check(workflow?.key===LEADGEN_KEYS[index]&&['active','paused'].includes(workflow.status),'正式Workflow身份或状态不符');
     if(input.status==='active'){
