@@ -803,6 +803,7 @@ module.exports = {
   callbackBrain,
   cleanupTmpDir,
   createBridgeServer,
+  executeCodex,
   createKernelHandlerFromEnvironment,
   injectLocalAccount,
   kernelHealthEvidence,
