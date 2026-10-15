@@ -139,3 +139,137 @@ test('actual inputs',()=>{
     expect(missing.consumers[1].status).toBe('unknown');expect(missing.consumers[1].bindings).toEqual([]);
   });
 });
+
+
+describe('版本化原生 runner 消费链，固定真实 Git 来源', () => {
+  const sha = '9c16d46a53afeea76c94636977433e785b2c2ea9';
+  const schema = 'packages/brain/src/lib/existing-ops-source.js';
+  const testPath = 'packages/brain/scripts/coding-workflow/runner/__tests__/run-once.test.mjs';
+  const sandbox = 'packages/brain/scripts/coding-workflow/runner/__tests__/helpers/sandbox.mjs';
+  const runner = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs';
+  const fixedPaths = execFileSync('git', ['ls-tree', '-rz', '--name-only', sha], { cwd: root, encoding: 'utf8' }).replace(/\0$/, '').split('\0');
+  const cache = new Map();
+  const fixed = path => { if (!cache.has(path)) cache.set(path, execFileSync('git', ['show', `${sha}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 16*1024*1024 })); return cache.get(path); };
+  const collect = (overrides = {}, marker = '1') => buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision: sha, paths: fixedPaths,
+    readSource: async path => overrides[path] ?? (path === schema ? fixed(path) + `\nexport const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = ${marker};` : fixed(path)) });
+  it('固定 9c 真实 nightly include 选中 runner 测试，活跃 it 经原生子进程消费真实入口', async () => {
+    const f3 = (await collect()).consumers[1];
+    expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
+    expect(f3.bindings.map(b => b.path)).toContain(testPath);
+    expect(f3.bindings.map(b => b.path)).toContain(sandbox);
+    expect(f3.bindings.map(b => b.path)).toContain(runner);
+    expect(f3.input_relations).toContainEqual(expect.objectContaining({ consumer_path: sandbox, input_path: runner, kind: 'native_node_runner_spawn', revision: sha }));
+  });
+  it('未激活与注释 marker 逐项保留旧 bindings / input_relations，未知值拒绝', async () => {
+    const old = await collect({ [schema]: fixed(schema) });
+    for (const text of [fixed(schema)+'\nexport const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 0;', fixed(schema)+'\n// export const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;', fixed(schema)+'\nconst EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;']) {
+      const result = await collect({ [schema]: text });
+      expect(result).toEqual(old);
+    }
+    for (const marker of ['2', 'process.env.RUNTIME']) {
+      const f3 = (await collect({}, marker)).consumers[1];
+      expect(f3.status).toBe('unknown');
+      expect(f3.bindings).toEqual([]);
+    }
+  });
+  it('真实 exclude 不选择 runner test 时不凭文件存在认领 run-once', async () => {
+    const config = 'packages/brain/vitest.config.js';
+    const f3 = (await collect({ [config]: fixed(config).replace('exclude: [', "exclude: ['scripts/coding-workflow/runner/**',") })).consumers[1];
+    expect(f3.status).toBe('verified');
+    expect(f3.bindings.map(b => b.path)).not.toContain(runner);
+  });
+  it('只接受活跃 it 的真实具名 helper 调用，不接受 skip、死支路、假字符串或遮蔽', async () => {
+    const prefix = "import {describe,it} from 'vitest'; import {runOnceProcess} from './helpers/sandbox.mjs'; ";
+    for (const code of [
+      "describe('x',()=>{it.skip('x',async()=>{await runOnceProcess({})})})",
+      "describe.skip('x',()=>{it('x',async()=>{await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{if(false) await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{return; await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{switch(1){case 1:return;} await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{do {} while(true); await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{for(const x of [1]) return; await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{stop:{return;} await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{const runOnceProcess=()=>{}; await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async(it)=>{await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{process.execPath='/bin/true'; await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{const alias=process; alias.execPath='/bin/true'; await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{poison(process); await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{globalThis['Function']('process.execPath=42')(); await runOnceProcess({})})})",
+      "const unused=async()=>runOnceProcess({});",
+      "const text='await runOnceProcess({})'; // await runOnceProcess({})"
+    ]) {
+      const f3 = (await collect({ [testPath]: prefix+code })).consumers[1];
+      expect(f3.status, code).toBe('unknown');
+      expect(f3.bindings).toEqual([]);
+    }
+  });
+  it('固定 sandbox AST 拒绝参数漂移、路径逃逸、赋值和绑定遮蔽', async () => {
+    for (const mutate of [
+      t => t.replace('[RUN_ONCE]', "[RUN_ONCE, '--eval']"),
+      t => t.replace('[RUN_ONCE]', '[...RUN_ONCE]'),
+      t => t.replace("'../../run-once.mjs'", "'../../../../../../../../outside.mjs'"),
+      t => t.replace("'../../run-once.mjs'", "'../../' + 'run-once.mjs'"),
+      t => t.replace('function runOnceProcess(env)', 'function runOnceProcess(env, process)'),
+      t => t.replace('const child = spawn', 'const spawn = () => {}; const child = spawn'),
+      t => t.replace('const child = spawn', 'const path = {}; const child = spawn'),
+      t => t.replace('const child = spawn', 'const RUN_ONCE = "fake"; const child = spawn'),
+      t => t + '\nRUN_ONCE = "fake";',
+      t => t + '\nReflect.set(process, "execPath", "fake");',
+      t => t + '\nObject.assign(path, {join:()=>"fake"});',
+      t => t.replace('const HERE =', 'const alias=process; alias.execPath="/bin/true"; const HERE ='),
+      t => t.replace('const HERE =', 'new Function("process.execPath=42")(); const HERE ='),
+      t => t.replace('const HERE =', 'const box={runtime:process}; const HERE ='),
+      t => t.replace('export function makeSandbox() {', 'function poison(target){target.execPath="/bin/true";} export function makeSandbox() { poison(process);'),
+      t => t.replace('const HERE =', 'const Build=Function; const ignored=Build("process.execPath=42")(); const HERE ='),
+      t => t.replace('const HERE =', 'const Build=globalThis["Function"]; const HERE ='),
+      t => t.replace('export function makeSandbox() {', 'function escape(){return process;} export function makeSandbox() {'),
+      t => t.replace('export function makeSandbox() {', 'function escape(value=process){return value;} export function makeSandbox() {'),
+      t => t.replace('export function makeSandbox() {', 'export function makeSandbox() { let alias; alias=process;'),
+      t => t.replace('return new Promise', 'return; new Promise'),
+      t => t.replace('const child = spawn(process.execPath, [RUN_ONCE],', 'const child = fake(process.execPath, [RUN_ONCE],')
+    ]) {
+      const f3 = (await collect({ [sandbox]: mutate(fixed(sandbox)) })).consumers[1];
+      expect(f3.status).toBe('unknown');
+      expect(f3.bindings).toEqual([]);
+    }
+  });
+  it('真实 provider 工作流及 required CI 测试逐项登记，注释或条件假调用拒绝', async () => {
+    const workflow = '.github/workflows/implementation-impact.yml', ci = '.github/workflows/ci.yml';
+    const helper = 'scripts/ci/implementation-main-snapshot.mjs', test = 'scripts/ci/__tests__/implementation-main-snapshot.test.mjs';
+    // 自包含候选工作流 fixture；生产字节另用固定 Git 独审，不依赖未合并兄弟分支对象。
+    const providerDoc = yaml.load(fixed(workflow));
+    providerDoc.jobs['snapshot-main'].steps = [
+      {uses:'actions/checkout@v4',with:{repository:'perfectuser21/cecelia',path:'tooling'}},
+      {'working-directory':'tooling',run:'set -euo pipefail\ngit merge-base --is-ancestor HEAD origin/main'},
+      {run:`set -euo pipefail\nnode tooling/${helper}`}
+    ];
+    const ciDoc = yaml.load(fixed(ci));
+    ciDoc.jobs['lint-auto-merge-decision'].steps.push({run:`node --test ${test}`});
+    const overrides = {[workflow]:yaml.dump(providerDoc),[ci]:yaml.dump(ciDoc),[helper]:'export const fixture = true;', [test]:"import {test} from 'node:test'; test('fixture',()=>{});"};
+    const run = edits => buildExistingOpsSources({ scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:sha,
+      paths:[...fixedPaths,helper,test],readSource:async path => edits?.[path] ?? overrides[path] ?? (path===schema?fixed(path)+'\nexport const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;':fixed(path)) });
+    const f3 = (await run()).consumers[1];
+    expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
+    expect(f3.bindings.map(b=>b.path)).toContain(helper);
+    expect(f3.bindings.map(b=>b.path)).toContain(test);
+    for (const mutation of [
+      {[workflow]:overrides[workflow].replace('node tooling/scripts/ci/implementation-main-snapshot.mjs','# node tooling/scripts/ci/implementation-main-snapshot.mjs')},
+      {[workflow]:overrides[workflow].replace('node tooling/scripts/ci/implementation-main-snapshot.mjs','if false; then node tooling/scripts/ci/implementation-main-snapshot.mjs; fi')},
+      {[ci]:overrides[ci].replace('node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs','echo node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs')}
+      , ...[
+        doc => {doc.jobs['snapshot-main'].steps.at(-1)['working-directory']='elsewhere';},
+        doc => {doc.defaults={run:{'working-directory':'elsewhere'}};},
+        doc => {doc.jobs['snapshot-main'].steps.at(-1).shell='python';}
+      ].map(mutate=>{const doc=yaml.load(overrides[workflow]);mutate(doc);return {[workflow]:yaml.dump(doc)};}),
+      ...[
+        doc => {doc.jobs['lint-auto-merge-decision'].if='false';},
+        doc => {doc.jobs['lint-auto-merge-decision'].defaults={run:{'working-directory':'elsewhere'}};},
+        doc => {doc.jobs['lint-auto-merge-decision'].steps.at(-1)['continue-on-error']=true;}
+      ].map(mutate=>{const doc=yaml.load(overrides[ci]);mutate(doc);return {[ci]:yaml.dump(doc)};})
+    ]) {
+      const failed=(await run(mutation)).consumers[1];
+      expect(failed.status).toBe('unknown'); expect(failed.bindings).toEqual([]);
+    }
+  });
+
+});
