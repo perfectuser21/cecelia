@@ -22,21 +22,16 @@ function ast(path,text){
  if(tree.parseDiagnostics.length)throw Error('unparsed source');
  return tree;
 }
-function astShape(node){
- const children=[];ts.forEachChild(node,n=>{children.push(astShape(n));});
- return {kind:ts.SyntaxKind[node.kind],...('text' in node&&typeof node.text==='string'&&!ts.isSourceFile(node)?{text:node.text}:{}),children};
-}
-const astDigest=tree=>digest(astShape(tree));
 function children(node){const out=[];ts.forEachChild(node,n=>{out.push(n);});return out;}
 function nodes(node){return [node,...children(node).flatMap(nodes)];}
 const named=(n,name)=>n&&ts.isIdentifier(n)&&n.text===name;
 const call=(n,name)=>n&&ts.isCallExpression(n)&&named(n.expression,name);
 function imports(tree,source){return tree.statements.filter(n=>ts.isImportDeclaration(n)&&n.moduleSpecifier.text===source);}
-function imported(tree,source,name){return imports(tree,source).some(n=>n.importClause?.namedBindings?.elements?.some(s=>s.name.text===name&&!s.propertyName));}
+function imported(tree,source,name){return imports(tree,source).some(n=>n.importClause?.namedBindings?.elements?.some(s=>s.name.text===name&&!s.propertyName&&!s.isTypeOnly&&!n.importClause.isTypeOnly));}
 function rendersImportedOwner(test,owner,name){
  const incoming=imports(test,'./'+name);
- if(incoming.length!==1||incoming[0].importClause?.name?.text!==name||!imported(test,'vitest','it')||!imported(test,'@testing-library/react','render'))return false;
- const exported=owner.statements.filter(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name&&n.modifiers?.some(m=>m.kind===ts.SyntaxKind.ExportKeyword)&&n.modifiers.some(m=>m.kind===ts.SyntaxKind.DefaultKeyword));
+ if(incoming.length!==1||incoming[0].importClause?.name?.text!==name||incoming[0].importClause.isTypeOnly||!imported(test,'vitest','it')||!imported(test,'@testing-library/react','render'))return false;
+ const exported=owner.statements.filter(n=>ts.isFunctionDeclaration(n)&&n.body&&n.name?.text===name&&!n.modifiers?.some(m=>m.kind===ts.SyntaxKind.DeclareKeyword)&&n.modifiers?.some(m=>m.kind===ts.SyntaxKind.ExportKeyword)&&n.modifiers.some(m=>m.kind===ts.SyntaxKind.DefaultKeyword));
  if(exported.length!==1)return false;
  const active=[];
  const register=statements=>{
@@ -87,12 +82,12 @@ export function collectWorkspaceTestEdges(root,snapshot){
   const rootPackage=JSON.parse(readText('package.json')),pkg=JSON.parse(readText(PKG));
   if(digest(packageView(rootPackage))!==WORKSPACE_ENVELOPES.rootPackage||digest(packageView(pkg))!==WORKSPACE_ENVELOPES.apiPackage)return [];
   if(pkg.devDependencies?.vitest!=='^4.0.18'||pkg.devDependencies?.typescript!=='^5.6.0')return [];
-  const config=ast(CONFIG,readText(CONFIG)),setup=ast(SETUP,readText(SETUP));
-  if(astDigest(config)!==WORKSPACE_ENVELOPES.config||astDigest(setup)!==WORKSPACE_ENVELOPES.setup)return [];
+  ast(CONFIG,readText(CONFIG));ast(SETUP,readText(SETUP));
+  if(sha(readText(CONFIG))!==WORKSPACE_ENVELOPES.config||sha(readText(SETUP))!==WORKSPACE_ENVELOPES.setup)return [];
   for(const name of NAMES){
    const test=ast(PREFIX+name+'.test.tsx',readText(PREFIX+name+'.test.tsx'));
    const owner=ast(PREFIX+name+'.tsx',readText(PREFIX+name+'.tsx'));
-   if(astDigest(test)!==WORKSPACE_ENVELOPES.tests[name]||!rendersImportedOwner(test,owner,name))return [];
+   if(sha(readText(PREFIX+name+'.test.tsx'))!==WORKSPACE_ENVELOPES.tests[name]||!rendersImportedOwner(test,owner,name))return [];
   }
   const inputs=Object.fromEntries([...texts].map(([path,text])=>[path,sha(text)]));
   const pairs=[[CI,PKG],[PKG,CONFIG],[CONFIG,SETUP],...NAMES.flatMap(n=>[[CONFIG,PREFIX+n+'.test.tsx'],[PREFIX+n+'.test.tsx',PREFIX+n+'.tsx']])];
