@@ -119,7 +119,12 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
       if (ownerError.statusCode === 409) return res.status(409).json({success:false,error:ownerError.message});
       throw ownerError;
     }
-    await guardInvocationCallback(pool, req.body);
+    try { await guardInvocationCallback(pool, req.body); }
+    catch (error) {
+      const statusCode = error.statusCode ?? error.status ?? 503;
+      return res.status(statusCode).json({success:false,code:'INVOCATION_RECEIPT_REJECTED',
+        error:statusCode<500?error.message:'调用回执门禁不可读，请按原run重试回执'});
+    }
 
     console.log(`[execution-callback] Received callback for task ${task_id}, status: ${status}`);
 

@@ -3314,10 +3314,7 @@ const _RETIRED_HARNESS_TYPES = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
  */
 async function triggerCeceliaRun(task) {
   assertExternalExecutionAllowed();
-  // 固定调用已选定Bridge；动态research配置、普通handler或旧provider不能改派该快照。
-  const fixedSkillBridge = invocationBridgeRequired(task);
-  if (fixedSkillBridge) await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__bridge_path);
-  const execResult = fixedSkillBridge ? await triggerCodexBridge(task) : await _triggerCeceliaRunInner(task);
+  const execResult = await _triggerCeceliaRunInner(task);
   const source = task?.payload?.harness_runtime === 'kernel-v1' ? 'kernel' : 'executor';
   const runId = await startRunForExecResult({ task, execResult, source });
   if (runId && execResult && execResult.success === true && !execResult.runId) {
@@ -3327,6 +3324,11 @@ async function triggerCeceliaRun(task) {
 }
 
 async function _triggerCeceliaRunInner(task) {
+  // 固定调用仍经原run漏斗，动态research配置与普通handler不得改派。
+  if (invocationBridgeRequired(task)) {
+    await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__bridge_path);
+    return triggerCodexBridge(task);
+  }
   // 动态路由：优先从 task_type_configs 缓存读取（其余 Codex B类，前台可调）
   // A类和 Coding pathway B类不在缓存中，getCachedLocation 返回 null，走 hardcoded 逻辑
   const dynamicLocation = getCachedLocation(task.task_type);

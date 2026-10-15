@@ -2,7 +2,7 @@
 import Ajv from 'ajv';
 import { compileAssemblyPlan } from '../workflow-authoring/assembly-plan.js';
 import { authoringError } from '../workflow-authoring/contracts.js';
-const ajv = new Ajv({ allErrors: true, strict: true, validateFormats: false });
+const ajv = new Ajv({ allErrors: false, strict: true, validateFormats: false });
 const STATIC_GAPS = new Set(['implementation_reference_unverified','runtime_admission_unverified','execution_evidence_unverified']);
 export function validateInvocationOutput(schema, value) {
   let validate;

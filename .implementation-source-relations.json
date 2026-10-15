@@ -2,6 +2,12 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/src/invocations/runtime.js","path":"packages/brain/src/invocations/runtime.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/invocations/resolve.js","path":"packages/brain/src/invocations/resolve.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/invocations/store.js","path":"packages/brain/src/invocations/store.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/orchestrator/skill-activity-adapter.js","path":"tests/gp/f1/step4-fixed-skill-invocation-receipt.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/routes/execution.js","path":"tests/integration/execution-callback-await.test.js","role":"verification"},
+    {"owner_path":"packages/brain/scripts/codex-bridge/codex-bridge.cjs","path":"packages/brain/src/__tests__/codex-bridge-legacy-contract.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/routes/invocations.js","path":"packages/brain/src/__tests__/integration/invocation-browser-preview.test.js","role":"verification"},
     {"owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs", "path": "cp-10151810-build-intent-boundary.prd.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs", "path": "docs/learnings/cp-10151810-build-intent-boundary.md", "role": "documentation"},

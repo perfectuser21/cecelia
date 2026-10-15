@@ -41,8 +41,10 @@ async function loadDefinition(db,body,tenantId) {
     }
     return {definition,target:{...body.target,definition_version_id:expected}};
   }
-  const kind=body.target.kind,table=kind==='activity'?'activity_definition_versions':'workflow_definition_versions';
-  const row=(await db.query(`SELECT * FROM ${table} WHERE id=$1 AND ${kind}_id=$2`,[body.target.definition_version_id,body.target.id])).rows[0];
+  const kind=body.target.kind,args=[body.target.definition_version_id,body.target.id];
+  const row=(kind==='activity'
+    ? await db.query('SELECT * FROM activity_definition_versions WHERE id=$1 AND activity_id=$2',args)
+    : await db.query('SELECT * FROM workflow_definition_versions WHERE id=$1 AND workflow_id=$2',args)).rows[0];
   requireCondition(row?.payload?.[`${kind}_id`]===body.target.id,'固定目标版本不存在',404);
   const definition=kind==='activity'?activityDefinition(row):{...row.payload.contract,source:source(row)};
   requireCondition((definition.tenant_id??'default')===tenantId,'固定目标版本不存在',404);
