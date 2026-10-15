@@ -87,23 +87,32 @@ export async function publishMainSnapshots({brainUrl,token,scope,repo,base,head,
   }
   await main();let current=await readParent();
   const scopes=scope==='cecelia-kr'&&repo==='perfectuser21/cecelia'?[scope,'cecelia-factory']:[scope];
-  for(const target of scopes){
-   const before=stageSnapshot(current,target);
-   if(!before)throw fail('IMPLEMENTATION_CI_ADMISSION_COMPANION_MISSING');
-   if(before.status==='verified'&&before.gaps.length===0)continue;
-   if(!refreshable(before))throw fail('IMPLEMENTATION_CI_SNAPSHOT_NOT_REFRESHABLE');
-   await main();let conflict;
-   try{
-    const refreshed=await request('POST',target,head);
-    validatePublishedSnapshot(refreshed,{scope:target,repo,revision:head});
-   }catch(error){
-    if(error.status!==409||!CAS_CODES.has(error.code))throw error;
-    conflict=error; // 只复用同 SHA 的已提交赢家；不重发 refresh、不放宽中央 CAS。
+  for(let round=0;round<2;round++){
+   for(const target of scopes){
+    const before=stageSnapshot(current,target);
+    if(!before)throw fail('IMPLEMENTATION_CI_ADMISSION_COMPANION_MISSING');
+    if(before.status==='verified'&&before.gaps.length===0)continue;
+    if(!refreshable(before))throw fail('IMPLEMENTATION_CI_SNAPSHOT_NOT_REFRESHABLE');
+    await main();let conflict;
+    try{
+     const refreshed=await request('POST',target,head);
+     validatePublishedSnapshot(refreshed,{scope:target,repo,revision:head});
+    }catch(error){
+     if(error.status!==409||!CAS_CODES.has(error.code))throw error;
+     conflict=error; // 只复用同 SHA 的已提交赢家；不重发 refresh、不放宽中央 CAS。
+    }
+    await main();current=await readParent();const after=stageSnapshot(current,target);
+    if(after?.status!=='verified'||after.gaps.length)throw conflict??fail('IMPLEMENTATION_CI_SNAPSHOT_UNKNOWN');
    }
-   await main();current=await readParent();const after=stageSnapshot(current,target);
-   if(after?.status!=='verified'||after.gaps.length)throw conflict??fail('IMPLEMENTATION_CI_SNAPSHOT_UNKNOWN');
+   current=await readParent();await main();
+   const missing=scopes.map(target=>stageSnapshot(current,target)).filter(s=>s?.status!=='verified'||s.gaps.length);
+   if(!missing.length)break;
+   if(round===1)throw fail('IMPLEMENTATION_CI_SNAPSHOT_UNKNOWN');
+   if(missing.some(s=>s?.status!=='unknown'||!refreshable(s)))throw fail('IMPLEMENTATION_CI_SNAPSHOT_NOT_REFRESHABLE');
+   // 仅已通过的阶段在最终读取时退化才补一次；POST失败与单阶段验证失败不会到达这里。
+   await main();current=await readParent();await main();
   }
-  current=await readParent();validatePublishedSnapshot(current,{scope,repo,revision:head,complete:true});await main();
+  validatePublishedSnapshot(current,{scope,repo,revision:head,complete:true});await main();
   if(base===head)baseline=current; // 当前 SHA 不是历史：只复用刚完成双 scope 验证的同一 bundle。
   // 两份都完成验证后再落盘；upload 只在整个 step 成功时允许执行。
   for(const [name,value] of [['base',baseline],['head',current]]){
