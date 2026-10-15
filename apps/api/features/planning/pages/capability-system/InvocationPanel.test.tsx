@@ -104,4 +104,12 @@ describe('现有目录调用', () => {
     expect(screen.getByRole('button',{name:'启动调用'})).toBeDisabled();
   });
 
+  it('后端只给缺口代码时展示业务原因，代码收进技术详情', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({...ready,readiness:'blocked',gaps:[{code:'transport_missing'}]})));
+    render(<InvocationPanel target={target} />);
+    expect(await screen.findByText('缺少可用的执行通道')).toBeInTheDocument();
+    expect(screen.getByText('transport_missing')).not.toBeVisible();
+    expect(screen.getByRole('button',{name:'启动调用'})).toBeDisabled();
+  });
+
 });

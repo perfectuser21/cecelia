@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import BusinessInputs from './BusinessInputs';
 import InvocationEvidence from './InvocationEvidence';
-import { InvocationError, InvocationRequest, InvocationResult, InvocationTarget, Resolution, INVOCATION_POLL_MS, invocationJson, terminalInvocation } from './invocations';
+import { InvocationError, InvocationRequest, InvocationResult, InvocationTarget, Resolution, INVOCATION_POLL_MS, invocationGapMessage, invocationJson, terminalInvocation } from './invocations';
 export default function InvocationPanel({ target }: { target: InvocationTarget }) {
   return <InvocationSession key={JSON.stringify(target)} target={target} />;
 }
@@ -73,7 +73,7 @@ function InvocationSession({ target }: { target: InvocationTarget }) {
       <label className="block text-sm">调用用途<select aria-label="调用用途" value={mode} disabled={busy || !!requestKey} onChange={e => setMode(e.target.value as InvocationRequest['mode'])} className="ml-2 rounded border p-2 dark:bg-slate-900"><option value="released">正式版本</option><option value="candidate">候选验证（不代表正式可用）</option></select></label>
       {mode === 'candidate' && <details><summary className="text-sm">候选验证来源</summary><fieldset disabled={busy || !!requestKey}><label className="block text-sm">编写任务<input aria-label="编写任务" required value={authoringTask} onChange={e => setAuthoringTask(e.target.value)} className="block w-full rounded border p-2 dark:bg-slate-900" /></label><label className="block text-sm">候选摘要<input aria-label="候选摘要" required value={compose} onChange={e => setCompose(e.target.value)} className="block w-full rounded border p-2 dark:bg-slate-900" /></label><p className="text-sm text-amber-800">验证通过后仍需正式发布门禁。</p></fieldset></details>}
       <p role="status">{resolving ? '正在核对调用条件…' : resolution ? { ready: '可调用', blocked: '调用受阻', unverified: '尚未验证' }[resolution.readiness] : '无法核对调用条件'}</p>
-      {resolution?.gaps?.map((gap, i) => <p key={i} className="text-sm text-amber-800">{gap.message || gap.code}{gap.field ? ` · ${gap.field}` : ''}</p>)}
+      {resolution?.gaps?.map((gap, i) => <p key={i} className="text-sm text-amber-800">{invocationGapMessage(gap)}{gap.field ? ` · ${gap.field}` : ''}</p>)}
       <button type="button" disabled={busy || !!requestKey} onClick={() => setRefresh(n => n + 1)} className="text-sm text-blue-700 underline disabled:opacity-40">重新核对调用条件</button>
       <BusinessInputs schema={resolution?.input_schema} value={input} onChange={setInput} disabled={busy || !!requestKey} />
       <button type="submit" disabled={busy || resolving || resolution?.readiness !== 'ready' || (!!result && !uncertain)} className="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-40">{busy ? '提交中…' : uncertain ? '按原请求重试' : '启动调用'}</button>
@@ -82,6 +82,6 @@ function InvocationSession({ target }: { target: InvocationTarget }) {
     {error && <p role="alert" className="text-red-800">{error}</p>}
     {result && <InvocationEvidence result={result} />}
     {result && terminalInvocation(result.status) && <button type="button" onClick={() => { setResult(null); setRequestKey(''); setRefresh(n => n + 1); }} className="text-sm text-blue-700 underline">发起另一调用</button>}
-    <details><summary className="text-sm">调用技术信息</summary><p className="break-all text-xs">目标：{target.kind} / {target.id}</p>{requestKey && <p className="break-all text-xs">请求键：{requestKey}</p>}</details>
+    <details><summary className="text-sm">调用技术信息</summary><p className="break-all text-xs">目标：{target.kind} / {target.id}</p>{resolution?.gaps?.map((gap,i) => <p key={i} className="text-xs">{gap.code}{gap.field ? ` · ${gap.field}` : ""}</p>)}{requestKey && <p className="break-all text-xs">请求键：{requestKey}</p>}</details>
   </section>;
 }
