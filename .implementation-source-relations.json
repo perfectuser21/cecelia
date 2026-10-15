@@ -746,7 +746,7 @@
     {"owner_path":"packages/brain/src/lib/leadgen-controller.js","path":"packages/brain/src/lib/leadgen-controller.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/routes/workflows.js","path":"packages/brain/src/routes/workflows.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/factory-workflow-config.js","path":"scripts/ci/__tests__/factory-workflow-config-source.test.mjs","role":"verification"},
-    {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "changes/cp-10151848-cw-691b0cd9.md", "role": "release"},
+    
     {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/brain/scripts/smoke/tree-legacy-layout.sh", "role": "verification"},
     {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/brain/src/lib/__tests__/tree-legacy-layout.test.js", "role": "verification"},
     {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/brain/src/__tests__/integration/tree-legacy-layout.pg.integration.test.js", "role": "verification"},
