@@ -53,7 +53,7 @@ function workflowEnvelope(ci){
  return {on:ci.on,env:ci.env,defaults:ci.defaults,permissions:ci.permissions,changes:ci.jobs?.changes,workspace:ci.jobs?.['workspace-test'],aggregate:ci.jobs?.['ci-passed']};
 }
 const packageView=p=>Object.fromEntries(['name','type','bin','scripts','workspaces','dependencies','devDependencies','optionalDependencies','peerDependencies','peerDependenciesMeta','overrides','config','packageManager','engines','os','cpu'].filter(k=>k in p).map(k=>[k,p[k]]));
-const lockView=(lock,api)=>({lockfileVersion:lock.lockfileVersion,packages:Object.fromEntries((api?['','node_modules/vitest']:['','apps/api','apps/api/node_modules/vitest']).map(path=>[path,lock.packages?.[path]]))});
+const lockView=(lock,api)=>({lockfileVersion:lock.lockfileVersion,packages:Object.fromEntries((api?['','node_modules/vitest']:['','apps/api','apps/api/node_modules/vitest']).map(path=>[path,path.includes('node_modules/')?lock.packages?.[path]:packageView(lock.packages?.[path]||{})]))});
 const hooks=new Set(['preinstall','install','postinstall','prepublish','prepare','preprepare','postprepare']);
 /** Only the already frozen self-repo F3 code binding can anchor these rebuilt edges. */
 export function collectWorkspaceTestEdges(root,snapshot){
