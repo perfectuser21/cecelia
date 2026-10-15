@@ -77,11 +77,11 @@ const SYSTEM = { 'Brain ID': 'Brain:id', '同步状态': '系统:同步状态（
 /** 每一列的来源（给清理脚本 dry-run 和人看）：Brain:表.列 / 派生:说明 / 人工。 */
 export const DIRECTORY_COLUMN_SOURCES = Object.freeze({
   areas: { ...SYSTEM, Name: '人工', '价值流': '派生:value_streams.area_id 反查（只连建了页的价值流）' },
-  value_streams: { ...SYSTEM, '名称': 'Brain:value_streams.name（建页时）', '说明': 'Brain:value_streams.description',
+  value_streams: { ...SYSTEM, '名称': 'Brain:value_streams.name（持续同步）', '说明': 'Brain:value_streams.description',
     '所属部门': 'Brain:value_streams.area_id（可为子部门）', '能力': '派生:capabilities.parent_journey_id 反查', '树位置': '派生:部门树' },
-  capabilities: { ...SYSTEM, '名称': 'Brain:capabilities.name（建页时）', '说明': 'Brain:capabilities.description',
+  capabilities: { ...SYSTEM, '名称': 'Brain:capabilities.name（持续同步）', '说明': 'Brain:capabilities.description',
     '所属价值流': 'Brain:capabilities.parent_journey_id', '流程': '派生:workflows.capability_id 反查', '状态': 'Brain:capabilities.status（在用/弃用）', '树位置': '派生:祖先链' },
-  workflows: { ...SYSTEM, '名称': 'Brain:workflows.name（建页时）', '所属能力': 'Brain:workflows.capability_id', 'Activity': 'Brain:workflow_activity_refs',
+  workflows: { ...SYSTEM, '名称': 'Brain:workflows.name（持续同步）', '所属能力': 'Brain:workflows.capability_id', 'Activity': 'Brain:workflow_activity_refs',
     '流程版本':'Brain:workflows.version', '代码版本':'派生:登记源码和最新运行快照；未核验部署指针标未知',
     '执行层':'派生:Activity.executor_kind 与实现语言', '启动入口':'派生:recurring_tasks冻结参数，独立于执行层',
     '7天成功':'派生:真实运行业务成功', '7天失败次数':'派生:真实运行失败+超时', '7天等待':'派生:业务deferred',
@@ -91,11 +91,11 @@ export const DIRECTORY_COLUMN_SOURCES = Object.freeze({
     'Activity 顺序': '派生:workflow_activity_refs 按顺序列 Activity 名', '运行方式': '派生:workflows.form + ops_schedule_entries（人话）',
     '运行情况': '派生:runs/闹钟/引用', '最近运行': '派生:runs + ops_schedule_entries 最近一次', '7天次数': '派生:v_workflow_run_stats.runs(7d)',
     '7天成功率': '派生:v_workflow_run_stats.success_rate(7d)', '平均时长': '派生:v_workflow_run_stats.avg_duration_ms(7d)', [HUMAN_MARK_COLUMN]: '人工', '树位置': '派生:祖先链' },
-  activities: { ...SYSTEM, '名称': 'Brain:activities.name（建页时）', '所属流程': 'Brain:workflow_activity_refs', 'Step': 'Brain:steps.activity_id',
+  activities: { ...SYSTEM, '名称': 'Brain:activities.name（持续同步）', '所属流程': 'Brain:workflow_activity_refs', 'Step': 'Brain:steps.activity_id',
     '承诺（FR）': 'Brain:activities.promise', '输入': 'Brain:activities.inputs', '输出': 'Brain:activities.outputs', '谁来执行': 'Brain:activities.executor_kind',
     '还缺什么': '派生:标准项空缺 + activity_cells 红/待判/未验', '裁判结论': 'Brain:activity_judgments 最新一条 verdict + 连续绿/要求绿',
     '生产版本': 'Brain:activity_release_state 生产指针 → v<版本号> + 收敛过/冷启动（无指针留空）', '树位置': '派生:祖先链' },
-  steps: { ...SYSTEM, '名称': 'Brain:steps.name（建页时）', '所属Activity': 'Brain:steps.activity_id', '顺序': 'Brain:steps.step_order', '做什么': 'Brain:steps.action',
+  steps: { ...SYSTEM, '名称': 'Brain:steps.name（持续同步）', '所属Activity': 'Brain:steps.activity_id', '顺序': 'Brain:steps.step_order', '做什么': 'Brain:steps.action',
     '输入': 'Brain:steps.inputs', '输出': 'Brain:steps.outputs', '怎么验收': '派生:steps.readback + 当前定义版本判定（人话）', '失败了怎么办': 'Brain:steps.on_fail',
     '谁来执行': 'Brain:activities.executor_kind', '还缺什么': '派生:空缺项 + 实现核验状态' },
 });

@@ -130,7 +130,7 @@ describe('六层目录源映射', () => {
   it('Activity 只写 名称/承诺（FR）/输入/输出/谁来执行/还缺什么/树位置；不写 Key、正本、格子、9 项正文列', () => {
     const data=sample();Object.assign(data.activities[0],{capability_key:'cap',activity_key:'act',contract_source:'https://github.com/x/y/blob/abc/c.yaml',promise:'承诺一句'});
     const row=api.buildDirectoryRows(data,config).find(r=>r.id===fixtureEntityId(6));
-    expect(Object.keys(row.properties).sort()).toEqual(['Brain ID','承诺（FR）','输入','输出','谁来执行','还缺什么','裁判结论','生产版本','树位置'].sort());
+    expect(Object.keys(row.properties).sort()).toEqual(['Brain ID','名称','承诺（FR）','输入','输出','谁来执行','还缺什么','裁判结论','生产版本','树位置'].sort());
     expect(text(row.properties['承诺（FR）'])).toBe('承诺一句');
     expect(row.createProperties['名称'].title[0].text.content).toBe('共享活动');
     expect(row.gaps).toEqual([]);
@@ -223,6 +223,15 @@ describe('六层目录源映射', () => {
     const area = rows.find(r => r.layer === 'areas');
     expect(Object.keys(area.properties)).toEqual(['Brain ID']);
     for (const r of rows) for (const k of ['登记缺口', '同步时间', '责任主体', '真身来源']) expect(r.properties, `${r.layer}.${k}`).not.toHaveProperty(k);
+  });
+  it('五层机器名称同时用于建页和既有页属性，部门标题仍为人工列', () => {
+    const rows = api.buildDirectoryRows(sample(), config);
+    expect(rows.find(r => r.layer === 'areas').properties).not.toHaveProperty('Name');
+    for (const layer of ['value_streams', 'capabilities', 'workflows', 'activities', 'steps']) {
+      const row = rows.find(r => r.layer === layer);
+      expect(row.properties['名称']).toEqual(row.createProperties['名称']);
+      expect(row.properties['名称'].title[0].text.content.length).toBeLessThanOrEqual(200);
+    }
   });
   it('缺实现声明写进还缺什么；关系移除生成已知空数组', () => {
     const data = sample(); data.refs = [];

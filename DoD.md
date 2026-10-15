@@ -1,3 +1,8 @@
+# 六层目录名称同步（任务 bb4fa876）
+
+- [x] [BEHAVIOR] directorytitlesync 价值流与能力既有页改名更新同一Brain ID页面，标题纳入摘要与读回；错身份和错误读回不刷新收据，部门与去留人工列保留，重试及重复运行幂等。
+  Test: manual:bash packages/brain/scripts/smoke/directory-title-sync-smoke.sh
+
 # 固定版本依赖验收
 
 - [x] [BEHAVIOR] runtimeversiongraph 真实PG验证复合身份FK、类型约束、固定slot完整性、Workflow快照与Recipe一致、同契约换实现、配置代码独立换版、历史不变、影响只读、并发封存、安装幂等与结构漂移拒绝。
