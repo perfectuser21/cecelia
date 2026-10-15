@@ -6,11 +6,12 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FAKE_GH_CI } from '../fixtures/fake-gh-ci.mjs';
 import { git } from '../../../__tests__/helpers/git.mjs';
 import { FAKE_EXECUTOR, startFakeBrain, makeSandbox, runnerEnv, runOnceProcess, readJsonLines } from './sandbox.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const FAKE_GH_CI = path.join(HERE, '../fixtures/fake-gh-ci.mjs');
+export { FAKE_GH_CI };
 export const FAKE_EVALUATE = path.join(HERE, '../fixtures/fake-evaluate.mjs');
 export const FAKE_CLAUDE = path.join(HERE, '../fixtures/fake-claude-cifix.mjs');
 export const TASK = 'c954ebfd-469f-4006-a95f-b277fa6564f6';

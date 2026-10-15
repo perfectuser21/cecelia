@@ -31,6 +31,9 @@
 | terminal-21 | `packages/brain/scripts/coding-workflow/runner/__tests__/run-once-multirepo.test.mjs` | 人工合并删branch且回执失败：窗口外重试不获得自动合并权限 |
 | terminal-22 | `packages/brain/scripts/coding-workflow/runner/__tests__/run-once-multirepo.test.mjs` | 人合并的head不同于原批准：仅记真实合并，不声称AI QA通过 |
 | terminal-23 | `packages/brain/scripts/coding-workflow/runner/__tests__/run-once-retention.test.mjs` | qa-<pr>.json / cifix-<pr>.json 是状态台账：超期也不删；同目录的执行记录照常按期清 |
+| terminal-24 | `packages/brain/scripts/coding-workflow/runner/__tests__/fake-gh-ci-module.test.mjs` | 真实import只提供CLI自身路径，不读取回放状态、不写调用日志、不退出宿主 |
+| terminal-25 | `packages/brain/scripts/coding-workflow/runner/__tests__/fake-gh-ci-module.test.mjs` | 实际绝对路径CLI保留required checks的0/1/8退出码与JSON输出 |
+| terminal-26 | `packages/brain/scripts/coding-workflow/runner/__tests__/fake-gh-ci-module.test.mjs` | 相对路径与真实可执行软链CLI均运行，import同一软链仍无副作用 |
 
 ## 行为合同
 
