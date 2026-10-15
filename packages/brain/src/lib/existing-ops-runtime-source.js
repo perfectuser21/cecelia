@@ -31,10 +31,10 @@ function escapedObject(node, parent = null) {
   if (!node || typeof node !== 'object') return false;
   if (node.type === 'Identifier' && ['process','path','spawn','fileURLToPath','Promise'].includes(node.name)) {
     const bindingKey = parent?.type === 'Property' && parent.key === node && !parent.computed && !parent.shorthand;
-    const memberRead = parent?.type === 'MemberExpression' && parent.object === node && !parent.computed
-      && (node.name === 'process' ? ['env','execPath'].includes(parent.property.name) : node.name === 'path' && ['join','dirname'].includes(parent.property.name));
+    const memberKey = parent?.type === 'MemberExpression' && parent.property === node && !parent.computed;
+    const memberRead = parent?.type === 'MemberExpression' && parent.object === node && !parent.computed && (node.name === 'process' ? ['env','execPath','pid'].includes(parent.property.name) : node.name === 'path' && ['join','dirname','resolve','basename'].includes(parent.property.name));
     const invocation = ['CallExpression','NewExpression'].includes(parent?.type) && parent.callee === node;
-    if (!bindingKey && !memberRead && !invocation) return true;
+    if (!bindingKey && !memberKey && !memberRead && !invocation) return true;
   }
   return Object.values(node).some(value => Array.isArray(value) ? value.some(child => escapedObject(child,node)) : value && typeof value === 'object' && escapedObject(value,node));
 }
@@ -43,12 +43,16 @@ function bindingsIntact(program, protectedNames, allowed) {
   const touches = node => names(node).some(name => protectedNames.includes(name));
   return !nodes(program).some(n => {
     if (allowed.includes(n)) return false;
+    const sandbox = protectedNames.includes('process');
+    if (sandbox && n.type === 'Identifier' && ['Function','eval','globalThis','global'].includes(n.name)) return true;
+    if (sandbox && ['CallExpression','NewExpression'].includes(n.type) && n.arguments.some(argument => escapedObject(argument))) return true;
+    if (sandbox && n.type === 'ReturnStatement' && escapedObject(n.argument)) return true;
     if (n.type.startsWith('Import') && n.local) return protectedNames.includes(n.local.name);
     if (n.type === 'VariableDeclarator') return boundNames(n.id).some(name => protectedNames.includes(name)) || protectedNames.includes('process') && escapedObject(n.init);
     if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(n.type))
-      return [...boundNames(n.id), ...n.params.flatMap(boundNames)].some(name => protectedNames.includes(name));
+      return [...boundNames(n.id), ...n.params.flatMap(boundNames)].some(name => protectedNames.includes(name)) || sandbox && n.params.some(parameter => parameter.type === 'AssignmentPattern' && escapedObject(parameter.right));
     if (n.type === 'CatchClause') return boundNames(n.param).some(name => protectedNames.includes(name));
-    if (n.type === 'AssignmentExpression') return touches(n.left);
+    if (n.type === 'AssignmentExpression') return touches(n.left) || sandbox && escapedObject(n.right);
     if (n.type === 'UpdateExpression') return touches(n.argument);
     if (['CallExpression','NewExpression'].includes(n.type) && ['eval','Function'].includes(n.callee?.name)) return true;
     if (n.type === 'CallExpression' && ['Object','Reflect'].includes(n.callee?.object?.name) && ['assign','defineProperty','defineProperties','set','deleteProperty'].includes(n.callee?.property?.name)) return touches(n.arguments[0]);
@@ -64,7 +68,8 @@ export function runtimeSelectorEnabled(text, parse) {
 }
 function testCallsRunner(text, parse) {
   const program = parse(text), required = [imported(program, 'vitest', 'describe'), imported(program, 'vitest', 'it'), imported(program, './helpers/sandbox.mjs', 'runOnceProcess')];
-  if (required.some(n => !n) || !bindingsIntact(program, ['describe','it','runOnceProcess'], required)) return false;
+  const optional = [imported(program,'node:path','path','ImportDefaultSpecifier'),imported(program,'node:child_process','spawn'),imported(program,'node:url','fileURLToPath')].filter(Boolean);
+  if (required.some(n => !n) || !bindingsIntact(program, ['describe','it','runOnceProcess','process','path','spawn','fileURLToPath','Promise'], [...required,...optional])) return false;
   const callback = call => (call?.arguments?.length === 2 || call?.arguments?.length === 3 && call.arguments[2]?.type === 'Literal' && typeof call.arguments[2].value === 'number' && call.arguments[2].value > 0) && call.arguments[0]?.type === 'Literal'
     && ['ArrowFunctionExpression','FunctionExpression'].includes(call.arguments[1]?.type) && call.arguments[1].params.length === 0
     && call.arguments[1].body.type === 'BlockStatement' ? call.arguments[1].body.body : null;

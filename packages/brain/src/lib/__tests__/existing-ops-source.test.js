@@ -191,6 +191,10 @@ describe('版本化原生 runner 消费链，固定真实 Git 来源', () => {
       "describe('x',()=>{it('x',async()=>{stop:{return;} await runOnceProcess({})})})",
       "describe('x',()=>{it('x',async()=>{const runOnceProcess=()=>{}; await runOnceProcess({})})})",
       "describe('x',()=>{it('x',async(it)=>{await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{process.execPath='/bin/true'; await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{const alias=process; alias.execPath='/bin/true'; await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{poison(process); await runOnceProcess({})})})",
+      "describe('x',()=>{it('x',async()=>{globalThis['Function']('process.execPath=42')(); await runOnceProcess({})})})",
       "const unused=async()=>runOnceProcess({});",
       "const text='await runOnceProcess({})'; // await runOnceProcess({})"
     ]) {
@@ -215,6 +219,12 @@ describe('版本化原生 runner 消费链，固定真实 Git 来源', () => {
       t => t.replace('const HERE =', 'const alias=process; alias.execPath="/bin/true"; const HERE ='),
       t => t.replace('const HERE =', 'new Function("process.execPath=42")(); const HERE ='),
       t => t.replace('const HERE =', 'const box={runtime:process}; const HERE ='),
+      t => t.replace('export function makeSandbox() {', 'function poison(target){target.execPath="/bin/true";} export function makeSandbox() { poison(process);'),
+      t => t.replace('const HERE =', 'const Build=Function; const ignored=Build("process.execPath=42")(); const HERE ='),
+      t => t.replace('const HERE =', 'const Build=globalThis["Function"]; const HERE ='),
+      t => t.replace('export function makeSandbox() {', 'function escape(){return process;} export function makeSandbox() {'),
+      t => t.replace('export function makeSandbox() {', 'function escape(value=process){return value;} export function makeSandbox() {'),
+      t => t.replace('export function makeSandbox() {', 'export function makeSandbox() { let alias; alias=process;'),
       t => t.replace('return new Promise', 'return; new Promise'),
       t => t.replace('const child = spawn(process.execPath, [RUN_ONCE],', 'const child = fake(process.execPath, [RUN_ONCE],')
     ]) {
