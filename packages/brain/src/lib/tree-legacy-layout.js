@@ -31,6 +31,7 @@ export async function applyTreeLegacyLayout(pool,input){
   const refs=(await db.query('SELECT id,workflow_id,activity_id,active FROM workflow_activity_refs WHERE workflow_id=ANY($1::uuid[]) ORDER BY workflow_id,id FOR UPDATE',[workflowIds])).rows;
   const deactivateIds=changes.flatMap(x=>x.deactivate_reference_ids);
   const activityIds=sorted(new Set(refs.filter(x=>deactivateIds.includes(x.id)).map(x=>x.activity_id)));
+  if(activityIds.length)await db.query('SELECT id FROM workflow_activity_refs WHERE activity_id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',[activityIds]);
   const activities=activityIds.length?(await db.query('SELECT id,status,current_definition_version_id FROM activities WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',[activityIds])).rows:[];
   const state=(workflow,allRefs,allActivities)=>({workflow_id:workflow.id,capability_id:workflow.capability_id,name:workflow.name,active_reference_ids:sorted(allRefs.filter(x=>x.workflow_id===workflow.id&&x.active).map(x=>x.id)),deactivated_reference_ids:sorted(allRefs.filter(x=>x.workflow_id===workflow.id&&!x.active).map(x=>x.id)),activity_statuses:allActivities.filter(a=>allRefs.some(r=>r.workflow_id===workflow.id&&r.activity_id===a.id)).map(a=>({activity_id:a.id,status:a.status}))});
   const before=[];
