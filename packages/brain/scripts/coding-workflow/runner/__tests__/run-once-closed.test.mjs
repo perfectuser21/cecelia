@@ -117,7 +117,7 @@ describe('runner 收尾外部关闭的 PR', () => {
     // 第 1 次查（推 QA 记录）还开着，第 2 次查（推修复）已关
     const r = await go(green({ prStateSeq: { 77: ['OPEN', 'CLOSED'] } }), { mode: 'fail' });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA FAIL');
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮AI QA FAIL');
     expect(originLog()).not.toContain('fix(ci): 修复 CI 失败');
     const s = state();
     expect(s.escalated).toBeUndefined();

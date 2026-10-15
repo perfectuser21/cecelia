@@ -4,7 +4,7 @@
 // 不会把已升级、已批准的 PR 当新的重新处理。
 // 人工重置一个 PR（例如清掉升级重跑）必须两边一起清：删本机文件，并把 Brain 的 result.<kind>_state 置 null。
 import fs from 'node:fs';
-import { remoteTaskId } from './pr-branch.mjs';
+import { syncTaskId, syncTask, rememberPr, syncEntry, forgetSyncedPr, validSyncPr } from './pr-sync.mjs';
 import { prFile, stateDir } from './repos.mjs';
 
 const KINDS = {
@@ -31,14 +31,15 @@ function pick(kind, s) {
 /** 本机缺状态文件的 PR：从 Brain 任务 result 恢复。尽力而为，失败只记日志。 */
 export async function restoreStates(ctx, prs) {
   for (const pr of prs ?? []) {
+    if (!validSyncPr(pr)) continue;
     for (const kind of Object.keys(KINDS)) {
       const file = filePath(ctx.cfg, kind, pr.number);
       if (fs.existsSync(file)) continue;
       try {
-        const taskId = await remoteTaskId(ctx.cfg, pr.headRefName);
+        const taskId = await syncTaskId(ctx, pr);
         if (!taskId) continue;
-        const r = await ctx.brain.getTask(taskId);
-        const saved = r.ok ? r.body?.result?.[KINDS[kind].key] : null;
+        const task = await syncTask(ctx, taskId, pr);
+        const saved = task.result?.[KINDS[kind].key];
         if (!saved || typeof saved !== 'object') continue;
         fs.mkdirSync(stateDir(ctx.cfg), { recursive: true });
         fs.writeFileSync(file, `${JSON.stringify({ ...saved, [MIRRORED]: JSON.stringify(pick(kind, saved)) }, null, 2)}\n`);
@@ -52,7 +53,11 @@ export async function restoreStates(ctx, prs) {
 
 /** 关键字段与上次写入 Brain 的不同 → PATCH result.<kind>_state；成功后记下已同步的快照。尽力而为。 */
 export async function mirrorStates(ctx, prs) {
-  for (const pr of prs ?? []) {
+  // ctx.syncPrs 包含本轮确认的终态，以及合并门当轮更新后的身份；不能用旧 open 列表盖掉它。
+  const candidates = new Map((prs ?? []).filter(validSyncPr).map((pr) => [pr.number, pr]));
+  for (const [number, pr] of ctx.syncPrs ?? []) candidates.set(number, pr);
+  for (const pr of candidates.values()) {
+    rememberPr(ctx, pr);
     for (const kind of Object.keys(KINDS)) {
       const file = filePath(ctx.cfg, kind, pr.number);
       const s = readJson(file);
@@ -60,18 +65,35 @@ export async function mirrorStates(ctx, prs) {
       const snapshot = JSON.stringify(pick(kind, s));
       if (s[MIRRORED] === snapshot) continue;
       try {
-        const taskId = await remoteTaskId(ctx.cfg, pr.headRefName);
+        const taskId = await syncTaskId(ctx, pr);
         if (!taskId) continue;
-        const r = await ctx.brain.patch(taskId, { result: { [KINDS[kind].key]: JSON.parse(snapshot) } });
+        const task = await syncTask(ctx, taskId, pr);
+        const prior = task.result?.[KINDS[kind].key];
+        // 远端非镜像扩展字段留在原处；镜像字段完全以本机当前快照为准，撤销的字段也要消失。
+        const extra = prior && typeof prior === 'object' && !Array.isArray(prior)
+          ? Object.fromEntries(Object.entries(prior).filter(([key]) => !KINDS[kind].fields.includes(key))) : {};
+        const r = await ctx.brain.patch(taskId, { result: { [KINDS[kind].key]: { ...extra, ...JSON.parse(snapshot) } } });
         if (!r.ok) {
           ctx.log(`PR #${pr.number} 状态写入 Brain 失败（HTTP ${r.status}），下轮重试`);
           continue;
         }
-        // 重读再写，避免覆盖本轮之后的改动（同一进程内串行，读到的就是最新）
-        fs.writeFileSync(file, `${JSON.stringify({ ...readJson(file), [MIRRORED]: snapshot }, null, 2)}\n`);
+        const latest = readJson(file);
+        if (latest) fs.writeFileSync(file, `${JSON.stringify({ ...latest, [MIRRORED]: snapshot }, null, 2)}\n`);
       } catch (error) {
         ctx.log(`PR #${pr.number} 状态写入 Brain 失败：${error?.message || error}`);
       }
     }
+    const qa = readJson(filePath(ctx.cfg, 'qa', pr.number)) ?? {};
+    const entry = syncEntry(ctx.cfg, pr);
+    const terminal = pr.state === 'CLOSED' ? Boolean(qa.closed) : pr.state === 'MERGED' && Boolean(qa.merged);
+    const previewDone = !ctx.cfg.qaGate || (ctx.cfg.previewType ?? 'brain_preview') !== 'brain_preview' || qa.preview_stopped;
+    if (terminal && previewDone && !entry?.receipt_pending && !entry?.learning_pending && !hasUnmirroredStates(ctx.cfg, pr.number)) forgetSyncedPr(ctx, pr);
   }
+}
+
+export function hasUnmirroredStates(cfg, pr) {
+  return Object.keys(KINDS).some((kind) => {
+    const s = readJson(filePath(cfg, kind, pr));
+    return s && s[MIRRORED] !== JSON.stringify(pick(kind, s));
+  });
 }

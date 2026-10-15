@@ -1,4 +1,4 @@
-// run-once.mjs 的 QA 门（evaluator 真人 QA，CI 绿后、合并前）+ 独立裁判：共用测试环境见 helpers/qa-env.mjs。
+// run-once.mjs 的 QA 门（evaluator AI QA，CI 绿后、合并前）+ 独立裁判：共用测试环境见 helpers/qa-env.mjs。
 // 合并门（绑定 head SHA）用例在 run-once-merge.test.mjs。
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -10,7 +10,7 @@ import { loadConfig } from '../lib/config.mjs';
 import { useQaEnv, FAKE_EVALUATE, TASK, BRANCH, SPRINT, INTENT } from './helpers/qa-env.mjs';
 import { expectSessionOnlyInFile } from './helpers/session-quiet.mjs';
 
-describe('runner QA 门（evaluator 真人 QA）', () => {
+describe('runner QA 门（evaluator AI QA）', () => {
   let sb;
   let head;
   let preview;
@@ -35,7 +35,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       intent_sha256: crypto.createHash('sha256').update(INTENT).digest('hex'),
     })]);
     expect(qaCalls()[0].judge_feedback).toBeUndefined();
-    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判 PASS');
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮AI QA PASS，独立裁判 PASS');
     expect(git(sb.origin, 'show', '--name-only', '--format=', BRANCH).trim().split('\n').sort()).toEqual([`${SPRINT}/05-qa-report-r1.md`, `${SPRINT}/06-judge-r1.md`]);
     expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
     expect(state()).toMatchObject({
@@ -101,7 +101,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     judge.mode = 'product';
     const r = await go(green());
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(originLog().slice(0, 2)).toEqual(['fix(ci): 修复 CI 失败', 'docs(qa): 第 1 轮真人 QA PASS，独立裁判 FAIL']);
+    expect(originLog().slice(0, 2)).toEqual(['fix(ci): 修复 CI 失败', 'docs(qa): 第 1 轮AI QA PASS，独立裁判 FAIL']);
     expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
     expect(state().passed).toBeFalsy();
     expect(state().rounds).toEqual([expect.objectContaining({
@@ -117,7 +117,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     judge.mode = 'qa_gap';
     let r = await go(green());
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判 FAIL');
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮AI QA PASS，独立裁判 FAIL');
     expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
     expect(fs.existsSync(files.prompt)).toBe(false);
     expect(state().rounds[0]).toMatchObject({ judge: { failure_class: 'qa_insufficient' } });
@@ -137,7 +137,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(r.exitCode, r.stderr).toBe(0);
     expect(r.stderr).toContain('[coding-qa][P1]');
     expect(state().escalated).toMatchObject({ type: 'judge_contract_gap', issues: ['J-1'] });
-    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判 FAIL');
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮AI QA PASS，独立裁判 FAIL');
     expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
     expect(brainQa().at(-1).escalations).toEqual([expect.objectContaining({ type: 'judge_contract_gap', pr: 77 })]);
   });
@@ -148,7 +148,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     judge.mode = 'http500';
     let r = await go(green({ prs: [pr({ headRefOid: E.remoteHead() })] }));
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判待定');
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮AI QA PASS，独立裁判待定');
     expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
     expect(state()).toMatchObject({ judge_pending: true, judge_bad: 1 });
     await E.closeBrain();
@@ -199,7 +199,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     const r = await go(green(), { extra: { CODING_WF_JUDGE: '0' } });
     expect(r.exitCode, r.stderr).toBe(0);
     expect(judge.calls).toEqual([]);
-    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS');
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮AI QA PASS');
     expect(r.stderr).toContain('[coding-qa][P1]');
     expect(state().passed).toBeFalsy();
     expect(state().escalated).toMatchObject({ type: 'judge_disabled' });
@@ -208,7 +208,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
   it('QA FAIL：报告提交 → 开发按报告修复提交 → 推送；不开自动合并；修复 prompt 带报告路径与失败条目', async () => {
     const r = await go(green(), { mode: 'fail' });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(originLog().slice(0, 2)).toEqual(['fix(ci): 修复 CI 失败', 'docs(qa): 第 1 轮真人 QA FAIL']);
+    expect(originLog().slice(0, 2)).toEqual(['fix(ci): 修复 CI 失败', 'docs(qa): 第 1 轮AI QA FAIL']);
     expect(ghCalls().some((a) => a[1] === 'merge')).toBe(false);
     expect(state().rounds).toEqual([expect.objectContaining({ round: 1, verdict: 'FAIL', fails: 1, fix: 'pushed' })]);
     const prompt = fs.readFileSync(files.prompt, 'utf8');
@@ -298,7 +298,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     expect(r.exitCode, r.stderr).toBe(0);
     expect(qaCalls()[0].round).toBe(3);
     expect(state().escalated).toMatchObject({ type: 'qa_stalled' });
-    expect(originLog()[0]).toBe('docs(qa): 第 3 轮真人 QA FAIL');
+    expect(originLog()[0]).toBe('docs(qa): 第 3 轮AI QA FAIL');
   });
 
   it('commander 解除 qa_stalled 后（stall_floor）只看之后的轮次判不收敛', async () => {
@@ -344,7 +344,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
   it('QA 报告 CANNOT_VERIFY → 报告提交、不修代码、不批准，升级 qa_cannot_verify（带条目与原因）', async () => {
     const r = await go(green(), { mode: 'cannot' });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA CANNOT_VERIFY');
+    expect(originLog()[0]).toBe('docs(qa): 第 1 轮AI QA CANNOT_VERIFY');
     expect(state()).toMatchObject({ escalated: { type: 'qa_cannot_verify', cannot_verify: [{ id: 'T-2', reason: '工具缺失：预览环境没有 ffprobe' }] } });
     expect(state().passed).toBeFalsy();
     expect(r.stderr).toContain('[coding-qa][P1]');
@@ -457,7 +457,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       expect(state().escalated).toMatchObject({ type: 'qa_smoke_missing', round: 1, api_items: ['T-1'], skipped: [{ id: 'T-1', reason: 'preflight_failed:22' }] });
       expect(r.stderr).toContain('[coding-qa][P1]');
       expect(brainQa().at(-1).escalations).toEqual([expect.objectContaining({ type: 'qa_smoke_missing', pr: 77 })]);
-      expect(originLog()[0]).toBe('docs(qa): 第 1 轮真人 QA PASS，独立裁判 PASS');
+      expect(originLog()[0]).toBe('docs(qa): 第 1 轮AI QA PASS，独立裁判 PASS');
     });
 
     it('没改 API 面的 PR，API 条目全部被剔除 → 照常批准，只记 smoke_note', async () => {
@@ -487,7 +487,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
     });
   });
 
-  // 决策 b34e346a：真人 QA 与独立裁判各上报一条 span
+  // 决策 b34e346a：AI QA 与独立裁判各上报一条 span
   it('QA 轮次与裁判各上报 span（结论、花费、幂等键带 PR 与轮次）', async () => {
     const r = await go(green(), { mode: 'pass' });
     expect(r.exitCode, r.stderr).toBe(0);
@@ -531,7 +531,7 @@ describe('runner QA 门（evaluator 真人 QA）', () => {
       expect(fs.existsSync(files.prompt)).toBe(false);
       expect(r.stderr).toContain('[coding-qa][P1]');
       expect(state().escalated).toMatchObject({ type: 'judge_ruling_conflict', issues: ['J-1'], reverses: ['r1:J-1'], file: `${SPRINT}/06-judge-r2.md` });
-      expect(originLog()[0]).toBe('docs(qa): 第 2 轮真人 QA PASS，独立裁判 FAIL');
+      expect(originLog()[0]).toBe('docs(qa): 第 2 轮AI QA PASS，独立裁判 FAIL');
     });
 
     it('修复会话判定裁决与规格/前轮矛盾（输出 RULING_CONFLICT）→ 不推送，升级 qa_fix_failed（ruling_conflict，带说明）', async () => {

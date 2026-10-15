@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 vi.mock('../lib/pr-branch.mjs', () => ({ remoteTaskId: vi.fn(), remoteTaskIdByPr: vi.fn() }));
 import { remoteTaskId, remoteTaskIdByPr } from '../lib/pr-branch.mjs';
-import { mirrorStates } from '../lib/state-store.mjs';
+import { mirrorStates, restoreStates } from '../lib/state-store.mjs';
 const ID = 'c954ebfd-469f-4006-a95f-b277fa6564f6';
 const PR = { number: 77, headRefName: 'cp-10091835-cw-c954ebfd', url: 'https://github.com/x/y/pull/77' };
 describe('终态镜像可靠写回', () => {
@@ -65,4 +65,20 @@ describe('终态镜像可靠写回', () => {
     await mirrorStates(ctx, [PR]);
     expect(ctx.brain.patch).toHaveBeenCalledTimes(count);
   });
+  for (const conflict of [{ id: 'wrong-id' }, { payload: { repo: 'other/repo' } }, { result: { pr_url: 'https://github.com/x/other/pull/77' } }, { result: { coding_workflow: { pr_url: 'https://github.com/x/y/pull/78' } } }]) {
+    it(`任务读回显式身份矛盾不写: ${JSON.stringify(conflict)}`, async () => {
+      remote = { ...remote, ...conflict };
+      write({ passed: true });
+      await mirrorStates(ctx, [PR]);
+      expect(ctx.brain.patch).not.toHaveBeenCalled();
+      expect(local().mirrored).toBeUndefined();
+    });
+  }
+
+  it('恢复状态也拒绝错误body.id，不把别的任务批准落到本地', async () => {
+    remote = { id: 'wrong-id', result: { qa_state: { passed: true, approved: { head: 'a'.repeat(40) } } } };
+    await restoreStates(ctx, [PR]);
+    expect(fs.existsSync(file())).toBe(false);
+  });
+
 });

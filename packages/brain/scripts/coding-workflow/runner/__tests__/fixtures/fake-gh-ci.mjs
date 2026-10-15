@@ -41,6 +41,8 @@ if (argv[0] === 'pr' && argv[1] === 'merge' && state.mergeExit) {
 if (argv[0] === 'pr' && argv[1] === 'merge' && argv.includes('--delete-branch')) {
   const branch = (state.prs ?? []).find((p) => String(p.number) === argv[2])?.headRefName;
   if (branch) execFileSync('git', ['push', '-q', 'origin', '--delete', branch], { stdio: 'ignore' });
+  // 故障注入：仅杀沙箱 run-once 子进程，模拟 GitHub 已成功、runner 尚未写本地标记。
+  if (state.crashAfterMerge) process.kill(process.ppid, 'SIGKILL');
 }
 // pr view <n> --json state：prStateSeq 逐次消费 > prStates > 在 prs（open 列表）里即 OPEN
 if (argv[0] === 'pr' && argv[1] === 'view') {

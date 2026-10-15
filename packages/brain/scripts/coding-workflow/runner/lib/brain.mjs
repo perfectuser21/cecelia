@@ -93,6 +93,11 @@ export function brainClient(baseUrl, { listLimit = 500, log = () => {} } = {}) {
       return request(`${baseUrl}/api/brain/learnings-received`, json('POST', body));
     },
 
+    /** 只读确认 learnings-received 返回的 ID 与原文；该列表无 task_id 过滤。 */
+    listLearnings({ limit = 100, offset = 0 } = {}) {
+      return request(`${baseUrl}/api/brain/learnings?limit=${limit}&offset=${offset}`, { method: 'GET' });
+    },
+
     /** PATCH /tasks/:id；网络错误、5xx、429 重试两次。返回最后一次 { ok, status, body }。 */
     async patch(id, body) {
       let r = await request(`${tasksUrl}/${encodeURIComponent(id)}`, json('PATCH', body));

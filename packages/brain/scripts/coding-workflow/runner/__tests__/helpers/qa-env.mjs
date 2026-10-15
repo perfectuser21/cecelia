@@ -172,7 +172,7 @@ export function useQaEnv({ onReady } = {}) {
   E.ghCalls = () => readJsonLines(E.sb.ghLog);
   E.originLog = () => git(E.sb.origin, 'log', '--format=%s', BRANCH).trim().split('\n');
   // 业务回写（不含 runner 每轮的状态同步 qa_state / ci_fix_state，审计 #34；那部分看 brainStateResults）
-  const STATE_KEYS = ['qa_state', 'ci_fix_state'];
+  const STATE_KEYS = ['qa_state', 'ci_fix_state', 'commander_state'];
   const ofTask = () => E.brain.patches.filter((p) => p.id === TASK);
   const stateOnly = (p) => p.body.result && !p.body.status && Object.keys(p.body.result).every((k) => STATE_KEYS.includes(k));
   E.brainResults = () => ofTask().filter((p) => !stateOnly(p)).map((p) => p.body.result);

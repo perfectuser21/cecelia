@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // coding workflow runner：每次调用至多新跑一条开关任务（task_type=coding_workflow；迁移窗口内兼容旧三件套
 // task_type=data + payload.headed_manual="true" + payload.coding_workflow===true）：保留期清理 → 对账（本机丢失的 in_progress、带本机痕迹的 queued）
-// → 自己开的 cw PR 有 CI 红则本轮只修它（lib/cifix.mjs）→ CI 绿的过真人 QA 门（lib/qa-gate.mjs，PASS 才开自动合并）
+// → 自己开的 cw PR 有 CI 红则本轮只修它（lib/cifix.mjs）→ CI 绿的过AI QA 门（lib/qa-gate.mjs，PASS 才开自动合并）
 // → 认领 → 建 worktree → 跑 coding 链 → 回写 Brain。
 // 退出码：0 = 无新任务 / 上一轮仍在跑 / 新任务完成；1 = 新任务失败或 runner 自身出错。
 import fs from 'node:fs';
@@ -24,6 +24,7 @@ import { runCommander } from './lib/commander.mjs';
 import { listOwnPrs } from './lib/cifix-scan.mjs';
 import { idleLogDue } from './lib/session-log.mjs';
 import { restoreStates, mirrorStates } from './lib/state-store.mjs';
+import { prepareStateSync } from './lib/pr-sync.mjs';
 import { settleClosedPrs } from './lib/pr-closure.mjs';
 import { readyCandidates } from './lib/deps.mjs';
 import { repoViews, taskView } from './lib/repos.mjs';
@@ -159,7 +160,8 @@ async function runGates(ctx, signal) {
 async function runRepoGates(ctx, signal) {
   const { cfg } = ctx;
   const prs = await listOwnPrs(cfg).catch(() => null);
-  await restoreStates(ctx, prs);
+  await prepareStateSync(ctx, prs);
+  await restoreStates(ctx, [...ctx.syncPrs.values()]);
   try {
     // 外部关闭（未合并）的 PR 收尾、重开恢复、已结束的停预览：不算本轮动作，不挡后面的门
     await settleClosedPrs(ctx, prs);
@@ -171,7 +173,7 @@ async function runRepoGates(ctx, signal) {
     if (cfg.commander && await runCommander(ctx, signal)) return true;
     // 先收尾再开新：自己开的 PR CI 红了，本轮只修它
     if (cfg.ciFix && await runCiFix(ctx, signal)) return true;
-    // CI 绿了：真人 QA 门（PASS 才开自动合并，FAIL 进修复环）
+    // CI 绿了：AI QA 门（PASS 才开自动合并，FAIL 进修复环）
     return Boolean(cfg.qaGate && await runQaGate(ctx, signal));
   } finally {
     await mirrorStates(ctx, prs);
