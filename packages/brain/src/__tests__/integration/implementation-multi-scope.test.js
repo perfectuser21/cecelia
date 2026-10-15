@@ -191,6 +191,35 @@ it('联合准入实际执行每scope固定提交回归并保存独立收据，�
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 
+it('main联合证据保留真实用途并执行每scope回归，PR输出不变',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'multi-main-gate-'));
+ const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
+ try{
+  git('init','-q');git('remote','add','origin','https://github.com/'+source.repo+'.git');mkdirSync(join(root,'src'));mkdirSync(join(root,'tests/smoke'),{recursive:true});
+  for(const name of ['controller.js','shared-lock.js'])writeFileSync(join(root,'src',name),'old\n');
+  for(const name of ['a','b'])writeFileSync(join(root,`tests/smoke/scope-${name}.sh`),`#!/bin/bash\nprintf '${name}' > '${root}/actual-${name}'\n`);
+  const commit=()=>{git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture');return git('rev-parse','HEAD');};
+  const base=commit();for(const name of ['controller.js','shared-lock.js'])writeFileSync(join(root,'src',name),'changed\n');const head=commit();
+  const src={...source,base_revision:base,head_revision:head},parts=structuredClone(reports);
+  for(const [i,part] of parts.entries()){
+   part.source.base_revision=base;part.source.head_revision=head;part.ci_context={purpose:'release'};
+   for(const side of ['base','head']){part[side].revision=src[`${side}_revision`];part[side].graph_snapshot.source_revision=src[`${side}_revision`];}
+   for(const assertion of part.required_assertions){assertion.assertion_ref=`tests/smoke/scope-${i?'b':'a'}.sh`;assertion.source_repo=src.repo;}
+  }
+  const options={source:src,expectedScopes:['cecelia-kr','fixture-second-source'],reports:parts};
+  const legacy=multi.aggregateScopedImplementationEvidence(options);
+  const evidence=multi.aggregateScopedImplementationEvidence({...options,purpose:'main_verification'});
+  expect(legacy.purpose).toBe('admission_only');expect(evidence.purpose).toBe('main_verification');expect(evidence.evidence_kind).toBe('scoped_implementation_main');
+  const receipt=await multi.runScopedImplementationGate({repoRoot:root,evidence});
+  expect(receipt.verdict).toBe('PASS');expect(receipt.purpose).toBe('main_verification');expect(receipt.scope_receipts.every(r=>r.purpose==='main_verification')).toBe(true);
+  expect(receipt.business_runtime_status).toBe('not_evaluated');for(const name of ['a','b'])expect(readFileSync(join(root,`actual-${name}`),'utf8')).toBe(name);
+  expect(multi.aggregateScopedImplementationEvidence(options)).toEqual(legacy);
+  for(const purpose of ['release','pr','unknown'])expect(()=>multi.aggregateScopedImplementationEvidence({...options,purpose})).toThrow();
+  parts[1].ci_context.purpose='admission_only';expect(()=>multi.aggregateScopedImplementationEvidence({...options,purpose:'main_verification'})).toThrow();
+  expect(()=>multi.verifyScopedImplementationGitSource(root,{...evidence,purpose:'admission_only'})).toThrow();
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
+
 it('真实Factory scope拒绝泛用执行workflow fixture，不借别scope覆盖缺消费者定义', async () => {
  await expect(releaseEvidenceDatabase({ scope: 'cecelia-factory' })).rejects.toMatchObject({
   code:'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED',status:422
