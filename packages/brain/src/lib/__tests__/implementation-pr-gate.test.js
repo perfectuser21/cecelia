@@ -41,3 +41,24 @@ it('正式extract-scopes CLI只读验证固定源，坏schema/缺companion明确
   expect(child.status).toBe(1);expect(child.stderr).toMatch(/ADMISSION_SCOPES_INVALID/);expect(existsSync(join(out,'base-cecelia-factory.json'))).toBe(false);
  }finally{rmSync(f.dir,{recursive:true,force:true});}
 });
+const mainScopes=JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-factory']});
+function mainCli(f,{mode='main',scope='cecelia-kr',request=mainScopes}={}){
+ const out=join(f.dir,'main-out'),missing=join(f.dir,'missing.json');
+ return spawnSync(process.execPath,[entry,'--repo-root',f.repo,'--scope',scope,'--base',f.base,'--head',f.head,'--mode',mode,'--snapshot-base',missing,'--snapshot-head',missing,'--output-dir',out],{encoding:'utf8',env:{...process.env,IMPLEMENTATION_MAIN_SCOPES:request}});
+}
+it('main显式双scope经真实单入口选择main验证，缺源明确拒绝',()=>{
+ const f=gitFixture();try{
+  const child=mainCli(f);expect(child.status).toBe(1);
+  const gap=JSON.parse(readFileSync(join(f.dir,'main-out/gap.json'),'utf8'));
+  expect(gap.stage).toBe('scoped_main');expect(gap.code).toBe('ENOENT');expect(child.stdout).not.toContain('PASS');
+ }finally{rmSync(f.dir,{recursive:true,force:true});}
+});
+it('main双scope拒绝非main污染、外仓、错顶层scope和非法schema',()=>{
+ const f=gitFixture();try{
+  for(const options of [{mode:'pr'},{mode:'release'},{scope:'cecelia-device-patrol'},{request:'{}'},{request:'null'},{request:'bad-json'},{request:JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-kr']})},{request:JSON.stringify({schema_version:1,scopes:['cecelia-kr','unknown']})},{request:JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-factory'],extra:true})}]){
+   const child=mainCli(f,options);expect(child.status).toBe(1);expect(child.stderr).toContain('IMPLEMENTATION_MAIN_SCOPES_INVALID');
+  }
+  execFileSync('git',['remote','set-url','origin','https://github.com/other/repo.git'],{cwd:f.repo});
+  const child=mainCli(f);expect(child.status).toBe(1);expect(child.stderr).toContain('IMPLEMENTATION_MAIN_REPO_INVALID');
+ }finally{rmSync(f.dir,{recursive:true,force:true});}
+});
