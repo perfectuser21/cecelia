@@ -85,7 +85,7 @@ const astShape = n => JSON.stringify(n,(k,v)=>['start','end','raw'].includes(k)?
 // 已独审的 boolean readers 及其纯比较闭包；摘要只决定模板可否剥除，并不豁免模块扫描。
 // 模板 AST 不得流出这些固定函数；改变 matcher 时需显式复审此有限消费合同。
 const PURE_READERS = new Set(["canonical", "declaration", "walk", "nodes", "bound", "member", "call", "variable", "fn", "same", "intact", "moduleEnvelope", "namedFunctionsLink", "functionMatches", "registration", "registrationBody", "testSetup", "testWitness", "mainPrefix", "cliEnvelope", "proveBuildSources", "provePublishSources"]);
-const PURE_READERS_SHA256 = '8427036abbc3742517974f7fca6443b635acdbaee95c9c86ba6fa4bbacd7dd59';
+const PURE_READERS_SHA256 = '7ad701ac9a0798fd6f7ff80e52eee7dcaff94fb45de84a6328ad558286b8cfbe';
 function provenReaderClosure(consumer) {
   if(consumer.body.some(n=>n.type==='ExportNamedDeclaration'&&n.source&&(n.source.value!=='./existing-ops-build-envelopes.js'||n.specifiers.length!==1||n.specifiers[0].local.name!=='buildSelectorEnabled'||n.specifiers[0].exported.name!=='buildSelectorEnabled')))return false;
   const declarations=consumer.body.map(n=>n.type==='ExportNamedDeclaration'?n.declaration:n).filter(Boolean);
@@ -266,7 +266,7 @@ describe('只读来源封套数据与实际执行代码分离',()=>{
    if(kind==='helper_side_effect')sources.set(consumer,sources.get(consumer).replace('const same=(a,b)=>canonical(a)===canonical(b);','const same=(a,b)=>{ sendElsewhere(b); return true; };'));
    if(kind==='top_side_effect')sources.set(consumer,sources.get(consumer)+"\nJSON.stringify=executeDerived;");
    if(kind==='dynamic_module')sources.set(consumer,sources.get(consumer)+"\nconst tool=await import('node:child_process');");
-   if(kind==='parser_shadow')sources.set(consumer,sources.get(consumer).replace('function functionMatches(tree,name,parse)', 'function functionMatches(tree,name,parse,parseEnvelope)'));
+   if(kind==='parser_shadow')sources.set(consumer,sources.get(consumer).replace('function functionMatches(tree,name,_parse)', 'function functionMatches(tree,name,_parse,parseEnvelope)'));
    if(kind==='parser_reassign')sources.set(consumer,sources.get(consumer)+"\nparseEnvelope=eval;");
   });expect(result.length).toBeGreaterThan(0);
  });

@@ -67,7 +67,7 @@ function intact(tree, additional=[], allowedMutations=[], allowedEnvAliases=[]) 
   });
   return ok;
 }
-function moduleEnvelope(tree,key,parse) {
+function moduleEnvelope(tree,key,_parse) {
   const actualImports=tree.body.filter(n=>n.type==='ImportDeclaration').filter(n=>!(key==='activity'&&n.source.value==='../lib/spec-check.mjs'&&n.specifiers.length===1&&n.specifiers[0].imported?.name==='INTENT_FILE'&&n.specifiers[0].local.name==='INTENT_FILE'));
   const constants=tree.body.filter(n=>declaration(n)?.type==='VariableDeclaration');
   return same(actualImports,parseEnvelope(ENVELOPES[key+'Imports']).body)&&same(constants,parseEnvelope(ENVELOPES[key+'Constants']).body)
@@ -79,7 +79,7 @@ function namedFunctionsLink(consumer,provider,source) {
   const exported=new Set(provider.body.filter(n=>n.type==='ExportNamedDeclaration'&&!n.source&&n.declaration?.type==='FunctionDeclaration').map(n=>n.declaration.id.name));
   return imports.length===1&&imports[0].specifiers.length>0&&imports[0].specifiers.every(n=>n.type==='ImportSpecifier'&&exported.has(n.imported.name));
 }
-function functionMatches(tree,name,parse) { return same(fn(tree,name),parseEnvelope(ENVELOPES[name]).body[0]); }
+function functionMatches(tree,name,_parse) { return same(fn(tree,name),parseEnvelope(ENVELOPES[name]).body[0]); }
 function registration(n) {
   if(n?.type!=='CallExpression')return false;
   if(['beforeAll','beforeEach','afterEach','it','describe'].includes(n.callee?.name))return true;
@@ -120,7 +120,7 @@ function registrationBody(body, root = false, inherited = new Set()) {
   }
   return true;
 }
-function testSetup(tree,key,body,parse) {
+function testSetup(tree,key,body,_parse) {
   const rootOf=n=>n?.type==='Identifier'?n.name:n?.type==='MemberExpression'?rootOf(n.object):n?.type==='CallExpression'?rootOf(n.callee):null;
   if(nodes(tree).some(n=>n.type==='MemberExpression'&&['it','describe'].includes(rootOf(n))&&(n.computed?n.property?.value:n.property?.name)==='only'))return false;
   // 测试文件无需进程控制入口；即使藏于先行测试或别名读取也不认领后续 witness。
@@ -145,7 +145,7 @@ function testWitness(tree,parse) {
   const expectedCall=parse("const r=await run('build-ok');").body[0];
   return same(witness.arguments[1].body?.body?.[0],expectedCall)&&intact(tree,['HERE','ENTRY','FAKE_CLAUDE','run']);
 }
-function mainPrefix(tree,parse) {
+function mainPrefix(tree,_parse) {
   const main=fn(tree,'main');if(!main?.async||main.params.length!==1||main.params[0].name!=='input')return false;
   const index=main.body.body.findIndex(n=>n.type==='VariableDeclaration'&&n.declarations.some(d=>d.id?.name==='run'));
   if(index<0)return false;
