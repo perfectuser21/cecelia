@@ -2,6 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path": "scripts/ci/workspace-test-source.mjs", "path": "packages/brain/scripts/ci/__tests__/workspace-test-source.test.mjs", "role": "verification"},
     {"owner_path": "scripts/ci/implementation-snapshot.mjs", "path": "cp-10152330-cw-ui-source-proof.prd.md", "role": "documentation"},
     {"owner_path": "scripts/ci/implementation-snapshot.mjs", "path": "docs/learnings/cp-10152330-cw-ui-source-proof.md", "role": "documentation"},
     {"owner_path": "scripts/ci/implementation-snapshot.mjs", "path": "changes/cp-10152330-cw-ui-source-proof.md", "role": "release"},

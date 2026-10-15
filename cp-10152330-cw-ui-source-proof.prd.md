@@ -8,7 +8,7 @@
 
 在真实 scanRepo 成功后的固定修订重建阶段，新增 self 仓库的有限消费者证明。必须已有冻结 F3 活动的 ci.yml verified binding 且 repo/revision/digest 一致，才补 ci.yml→API package→配置→测试→组件方向的来源边。所有输入来自 git show 精确 commit 的普通文件；不读取候选工作树、不运行候选代码。边记录修订、输入 hash、选择器及证明版本。
 
-CI changes 输出、workspace-test 条件与 ci-passed 失败出口联合核验；npm 行为字段、实际 Vitest lock 解析与安装生命周期入口必须符合已审合同。config/setup/三测试固定已审 b580 原文 hash，类型导入、语义注释、using 等均不能被规范化抹掉。AST 额外核真实 runtime import、active render、有函数体且非 declare 的 default export。组件正文可正常变化。
+CI changes 输出、workspace-test 条件与 ci-passed 失败出口联合核验；npm 行为字段、实际 Vitest lock 解析与安装生命周期入口必须符合已审合同。API 根与 features 编译配置原文固定，消费路径祖先目录额外 tsconfig/jsconfig 拒绝；config/setup/三测试固定已审 b580 原文 hash，类型导入、语义注释、using 等均不能被规范化抹掉。AST 额外核真实 runtime import、active render、有函数体且非 declare 的 default export。组件正文可正常变化。
 
 ## 不变量与限制
 
@@ -16,7 +16,7 @@ CI changes 输出、workspace-test 条件与 ci-passed 失败出口联合核验�
 - 固定封套不等于通用 TSX 解释器：测试/config/setup 即使只改格式或注释也 fail-closed，CI/npm 执行语义变化也需重新审查可信工具，可能再次需要 bootstrap。
 - root/API lock 仅锁实际 Vitest 记录及本工作区解析入口，不宣称审计全部第三方依赖供应链。
 - 图边表示真实消费者依赖，不表示 docs-only PR 实际运行 workspace-test，也不表示业务验收通过。
-- 本棒仅给 PRD/Learning/release 三个新路径追加精确来源关系，owner 是实际接入文件；去掉新增行必须逐字恢复原 manifest。
+- 本棒仅给 PRD/Learning/release 三个新路径和永久回归测试追加四条精确来源关系；文档 owner 是实际接入文件，测试 verification owner 是其实际调用的 helper。去掉四条新增行必须逐字恢复原 manifest。
 - 旧可信 b580 工具的 FAIL 是 bootstrap 事实。候选新工具本地 PASS 不追认旧 CI；发布/合并需 root 最后取得明确例外批准，本候选不得自行 autoMerge。
 
 ## Test Contract
