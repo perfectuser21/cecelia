@@ -9,6 +9,8 @@
 - [x] cwproofenvelope 先用固定main工具读取真实base/head，保留旧链成功、新链拒绝及完整collector缺口证据；先交付严格旧/新封套兼容，再交付运行入口变更。
 - [x] cwproofdelegate 明确新版已审AST闭包与handler→原生AsyncLocalStorage调用链；拒绝前置退出、调用替换和旧新混配，不把文件哈希当成执行事实。
 
+- [x] cwproofruntime collector 新增本地依赖时同步加载身份和就绪检查；只将精确已知旧格式视为升级中，完整新依赖字节匹配才准就绪。
+
 ### 验证范围
 
 这一步只准备来源检查兼容，不代表新的无人任务已经跑通。运行任务须等后续修复正常合入、实际加载后再单独验收。

@@ -84,8 +84,8 @@ function astRows(tree) {
 const astShape = n => JSON.stringify(n,(k,v)=>['start','end','raw'].includes(k)?undefined:v);
 // 已独审的 boolean readers 及其纯比较闭包；摘要只决定模板可否剥除，并不豁免模块扫描。
 // 模板 AST 不得流出这些固定函数；改变 matcher 时需显式复审此有限消费合同。
-const PURE_READERS = new Set(["canonical", "declaration", "walk", "nodes", "bound", "member", "call", "variable", "fn", "same", "intact", "moduleEnvelope", "namedFunctionsLink", "functionMatches", "registration", "registrationBody", "testSetup", "testWitness", "mainPrefix", "cliEnvelope", "proveBuildSources", "provePublishSources"]);
-const PURE_READERS_SHA256 = '7ad701ac9a0798fd6f7ff80e52eee7dcaff94fb45de84a6328ad558286b8cfbe';
+const PURE_READERS = new Set(["canonical", "declaration", "walk", "nodes", "bound", "member", "call", "variable", "fn", "same", "intact", "moduleEnvelope", "namedFunctionsLink", "functionMatches", "registration", "registrationBody", "testSetup", "testWitness", "mainPrefix", "cliEnvelope", "proveLegacyBuildSources", "proveBuildSources", "proveLegacyPublishSources", "provePublishSources"]);
+const PURE_READERS_SHA256 = '32834e4869d8d7b9f6062813044fcc44224ac9712082b7ab36ea98a4ac889d63';
 function provenReaderClosure(consumer) {
   if(consumer.body.some(n=>n.type==='ExportNamedDeclaration'&&n.source&&(n.source.value!=='./existing-ops-build-envelopes.js'||n.specifiers.length!==1||n.specifiers[0].local.name!=='buildSelectorEnabled'||n.specifiers[0].exported.name!=='buildSelectorEnabled')))return false;
   const declarations=consumer.body.map(n=>n.type==='ExportNamedDeclaration'?n.declaration:n).filter(Boolean);
@@ -93,8 +93,8 @@ function provenReaderClosure(consumer) {
   const selected=[...PURE_READERS].map(name=>definitions.filter(n=>n.id?.name===name));
   if(selected.some(rows=>rows.length!==1)||createHash('sha256').update(astShape(selected.map(rows=>rows[0]))).digest('hex')!==PURE_READERS_SHA256)return false;
   const constants=new Set(['requireAcorn','PREFIX','BUILD_SOURCE_PATHS','PUBLISH_TEST','PUBLISH_ENTRY']);
-  const functions=new Set([...PURE_READERS,'parseEnvelope','collectBuildSources','collectPublishSources']);
-  if(declarations.some(n=>n.type==='ImportDeclaration'?!['node:module','./existing-ops-build-envelopes.js'].includes(n.source.value):n.type==='VariableDeclaration'?n.declarations.some(d=>!constants.has(d.id.name)&&!PURE_READERS.has(d.id.name)):n.type==='FunctionDeclaration'?!functions.has(n.id.name):true))return false;
+  const functions=new Set([...PURE_READERS,'parseEnvelope','collectBuildSources','collectPublishSources','provenanceInputs','collectProvenanceInputs']);
+  if(declarations.some(n=>n.type==='ImportDeclaration'?!['node:module','./existing-ops-build-envelopes.js','./existing-ops-provenance-envelope.js'].includes(n.source.value):n.type==='VariableDeclaration'?n.declarations.some(d=>!constants.has(d.id.name)&&!PURE_READERS.has(d.id.name)):n.type==='FunctionDeclaration'?!functions.has(n.id.name):true))return false;
   // 真实模块无需动态代码/模块入口；新增顶层副作用或读取者之外的全局写入一律失败关闭。
   const rows=astRows(consumer),parents=new Map(rows.map(r=>[r.node,r.parent]));
   const readerOf=node=>{for(let n=node;n;n=parents.get(n))if(n.type==='FunctionDeclaration'&&PURE_READERS.has(n.id?.name))return n;return null;};
@@ -103,13 +103,43 @@ function provenReaderClosure(consumer) {
     ||node.type==='Identifier'&&node.name==='parseEnvelope'&&parent?.type==='CallExpression'&&parent.callee===node&&!readerOf(node));
 }
 
-// 已独审的完整 runtime 指纹闭包：固定五文件只读→SHA摘要/比较；没有模板执行或原文出口。
+// 已独审的完整 runtime 指纹闭包：固定九文件只读→SHA摘要/比较；没有模板执行或原文出口。
 // 仅此路径且整个模块 AST 相等时认可该消费者；任何语义改动都须重新审查。
 // 这不把 runtime 加入文件白名单，模块原 R1–R7/进程别名扫描照常执行。
 const HASH_RUNTIME_FILE = path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
-const HASH_RUNTIME_SHA256 = '98bcc9fb345bf0e1a4dad7b15e69d54e28c4fc9fa3cf9eb5c8dd7ff94bbadde2';
+const HASH_RUNTIME_SHA256 = '6005f1f4ce11db154c073b4e7732504103efc561f3a0d06b31d740ccedb521e3';
 const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
   &&createHash('sha256').update(astShape(parseModule(text))).digest('hex')===HASH_RUNTIME_SHA256;
+
+// V2 normalize 返回代码字符串投影；安全边界是完整已审 helper + 唯一已审 caller，
+// caller 只将投影交回旧 Acorn/matcher。未知消费者不能继承此资格。
+const PROVENANCE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-envelope.js');
+const PROVENANCE_READER_HASHES = new Map([
+  ['existing-ops-provenance-envelope.js','16e8bba02ce671ea14abf35631337d8778a05efc986dddb8e14683d36f246d0d'],
+  ['existing-ops-provenance-core-envelope.js','139d5d4ca56f3d2db3d59670d0185c3ea38651304405f08389b532db0f294e4d'],
+  ['existing-ops-provenance-entry-envelopes.js','126a93b9db9856fe06894a394ecb9e0afd099860b9fb54e8927c56c8b96a15bb'],
+  ['existing-ops-provenance-local-envelopes.js','59466515d6911ad4b2d242f310a1f8b3bd20cb0ef8471f1f98ad1103bcc91b93'],
+].map(([name,hash])=>[path.join(BRAIN_ROOT,'src/lib',name),hash]));
+const PROVENANCE_CALLER_SHA256 = '2bfb37d6daa7183ec3ce618d2ae7e27c133b29260667f6dedff5218a754a3089';
+function decodedReferenceTexts(text) {
+  try{return [text,...astRows(parseModule(text)).flatMap(({node})=>node.type==='Literal'&&typeof node.value==='string'?[node.value]
+    :node.type==='TemplateLiteral'&&!node.expressions.length?[node.quasis.map(q=>q.value.cooked).join('')]:[])];}
+  catch{return [text];} // 非 JS 文件仍保留原文本检查；不推断任意字符串拼接。
+}
+function provenanceReaderClosure(sources) {
+  if(createHash('sha256').update(astShape(parseModule(sources.get(ENVELOPE_CONSUMER)||''))).digest('hex')!==PROVENANCE_CALLER_SHA256)return false;
+  const decoded=new Map([...sources].map(([file,text])=>[file,decodedReferenceTexts(text)]));
+  for(const [file,hash] of PROVENANCE_READER_HASHES) {
+    if(createHash('sha256').update(astShape(parseModule(sources.get(file)||''))).digest('hex')!==hash)return false;
+    for(const [consumer,text] of sources) {
+      if(!decoded.get(consumer).some(value=>value.includes(path.basename(file))))continue;
+      if(consumer===(file===PROVENANCE_HELPER?ENVELOPE_CONSUMER:PROVENANCE_HELPER))continue;
+      if(provenFingerprintReader(consumer,text))continue;
+      return false;
+    }
+  }
+  return true;
+}
 
 function envelopeRanges(src,sources) {
   const tree=parseModule(src), rows=astRows(tree);
@@ -119,7 +149,8 @@ function envelopeRanges(src,sources) {
   if(data.init?.type!=='ObjectExpression'||!properties?.length||properties.some(p=>p.type!=='Property'||p.computed||p.method||p.kind!=='init'||p.value?.type!=='TemplateLiteral'||p.value.expressions.length))return null;
   if(rows.some(({node,parent})=>node.type==='Identifier'&&node.name==='ENVELOPES'&&!(parent===data&&parent.id===node)))return null;
   // 额外消费者没有获得纯数据资格；不推断它不会执行字符串。
-  for(const [file,text] of sources)if(file!==ENVELOPE_FILE&&file!==ENVELOPE_CONSUMER&&text.includes('existing-ops-build-envelopes')&&!provenFingerprintReader(file,text))return null;
+  if(!provenanceReaderClosure(sources))return null;
+  for(const [file,text] of sources)if(file!==ENVELOPE_FILE&&file!==ENVELOPE_CONSUMER&&file!==PROVENANCE_HELPER&&text.includes('existing-ops-build-envelopes')&&!provenFingerprintReader(file,text))return null;
   const consumer=parseModule(sources.get(ENVELOPE_CONSUMER)||''), usages=astRows(consumer);
   if(!provenReaderClosure(consumer))return null;
   const imports=consumer.body.filter(n=>n.type==='ImportDeclaration');
@@ -259,7 +290,7 @@ describe('守卫自证：每条判据都会报警', () => {
 describe('只读来源封套数据与实际执行代码分离',()=>{
  const dataFile=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-envelopes.js');
  const consumer=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-source.js');
- const baseSources=()=>new Map([[dataFile,readFileSync(dataFile,'utf8')],[consumer,readFileSync(consumer,'utf8')]]);
+ const baseSources=()=>new Map([[dataFile,readFileSync(dataFile,'utf8')],[consumer,readFileSync(consumer,'utf8')],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readFileSync(file,'utf8')])]);
  const scan=(edit=()=>{},suffix='')=>{const sources=baseSources();edit(sources);return findClaudeInvocations(sources.get(dataFile)+suffix,{file:dataFile,sources});};
  it('真实无插值ENVELOPES仅供Acorn解析，原R3文本不是进程执行',()=>expect(scan()).toEqual([]));
  it.each(['spawn','alias','interpolation','consume','consumer_alias','extra_consumer','parser_shadow','parser_reassign','ast_escape','helper_side_effect','top_side_effect','dynamic_module'])('封套 %s 不得被纯数据豁免遮住',kind=>{
@@ -278,12 +309,24 @@ describe('只读来源封套数据与实际执行代码分离',()=>{
    if(kind==='parser_reassign')sources.set(consumer,sources.get(consumer)+"\nparseEnvelope=eval;");
   });expect(result.length).toBeGreaterThan(0);
  });
+ it.each(['helper eval','helper raw export','third helper consumer','escaped helper import','escaped dynamic helper import','third data consumer','other helper path','data top effect'])('V2 %s 不得逃逸完整只读消费闭包',kind=>{
+  const result=scan(sources=>{
+   if(kind==='helper eval')sources.set(PROVENANCE_HELPER,sources.get(PROVENANCE_HELPER)+'\neval(ENVELOPES.runClaude);');
+   if(kind==='helper raw export')sources.set(PROVENANCE_HELPER,sources.get(PROVENANCE_HELPER)+'\nexport const raw=ENVELOPES.runClaude;');
+   if(kind==='third helper consumer')sources.set(path.join(BRAIN_ROOT,'src/other.js'),"import {normalizeProvenanceBuild} from './lib/existing-ops-provenance-envelope.js'; eval(normalizeProvenanceBuild(candidate,parse).cli);");
+   if(kind==='escaped helper import')sources.set(path.join(BRAIN_ROOT,'src/other.js'),"import {normalizeProvenanceBuild} from './lib/existing-ops-provenance-\\u0065nvelope.js'; eval(normalizeProvenanceBuild(candidate,parse).cli);");
+   if(kind==='escaped dynamic helper import')sources.set(path.join(BRAIN_ROOT,'src/other.js'),"const {normalizeProvenanceBuild}=await import('./lib/existing-ops-provenance-\\u0065nvelope.js'); eval(normalizeProvenanceBuild(candidate,parse).cli);");
+   if(kind==='third data consumer')sources.set(path.join(BRAIN_ROOT,'src/other.js'),"import {REVIEWED} from './lib/existing-ops-provenance-entry-envelopes.js'; eval(REVIEWED.runClaude);");
+   if(kind==='other helper path'){sources.set(path.join(BRAIN_ROOT,'src/lib/other-helper.js'),sources.get(PROVENANCE_HELPER));sources.delete(PROVENANCE_HELPER);}
+   if(kind==='data top effect'){const file=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-entry-envelopes.js');sources.set(file,sources.get(file)+'\nexecute(REVIEWED.runClaude);');}
+  });expect(result.some(hit=>hit.rule==='E1')).toBe(true);
+ });
 });
 
 describe('固定runtime字节指纹不执行来源模板',()=>{
  const runtime=path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
  const source=readFileSync(runtime,'utf8');
- const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],[runtime,source]]);
+ const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],[runtime,source],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readFileSync(file,'utf8')])]);
  const scan=sources=>findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources});
  it('真实固定模块仅fs读取后hash/比较，允许模板数据且模块本身仍经过R1-R7',()=>{
   expect(scan(base())).toEqual([]);
