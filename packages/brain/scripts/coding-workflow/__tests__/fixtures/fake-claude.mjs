@@ -96,6 +96,14 @@ const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
 
 // build-*：在当前分支真实提交一份代码+测试，再按 SPEC_IDS 写 03-build.md
 function build() {
+  // 捕获真实活动传给 CLI 的输入，读取实际 intent；仅测试显式开启，不模拟模型语义判断。
+  if (process.env.FAKE_BUILD_CONTEXT_FILE) {
+    const intentPath = field('INTENT_PATH');
+    fs.writeFileSync(process.env.FAKE_BUILD_CONTEXT_FILE, JSON.stringify({
+      intent_path: intentPath, intent: fs.readFileSync(intentPath, 'utf8'),
+      spec_path: field('SPEC_PATH'), prompt,
+    }));
+  }
   let sha = '';
   if (mode === 'build-amend') {
     writeFile('src/feature.js', 'export const feature = () => 0;\n');

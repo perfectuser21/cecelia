@@ -8,6 +8,7 @@ import { buildQaSmoke, selectQaSmokeItems, registerSmoke } from '../../lib/qa-sm
 import { productionMatchers } from '../../lib/qa-report.mjs';
 import { touchesApiSurface, onlyMarkdownFiles } from '../../lib/pr-kind.mjs';
 import { qaSmokeOf, productionPatterns } from '../../lib/repo-profile.mjs';
+import { RECORD_SOURCE_MANIFEST, isRecordSourceDelta } from '../../lib/record-sources.mjs';
 import { isRecordFile } from './qa-records.mjs';
 
 const PREFLIGHT_TIMEOUT_MS = 60 * 1000;
@@ -47,7 +48,9 @@ async function prOnlyMarkdown(worktree, branch) {
     const productFiles = new Set();
     let committedProduct = false;
     // 分别检查，防止已提交源码被工作区回退抵消，或暂存源码被未暂存回退抵消。
-    for (const refs of [[base.stdout.trim(), 'HEAD'], ['--cached', 'HEAD'], []]) {
+    const views = [[base.stdout.trim(), 'HEAD'], ['HEAD', ':'], [':', null]];
+    for (const [from, to] of views) {
+      const refs = to === null ? [] : to === ':' ? ['--cached', 'HEAD'] : [from, to];
       const r = await git(worktree, ['diff', '--raw', '--no-abbrev', '-z', '--no-renames', '--ignore-submodules=none', ...refs]);
       if (r.code !== 0) return false;
       const entries = r.stdout.split('\0');
@@ -57,7 +60,8 @@ async function prOnlyMarkdown(worktree, branch) {
         const file = entries[i + 1];
         if (!/^:(?:100644|000000) (?:100644|000000) [a-f0-9]+ [a-f0-9]+ [AMD]$/.test(entries[i]) || typeof file !== 'string') return false;
         files.add(file);
-        if (!isRecordFile(file, branch)) {
+        const sourceRecord = file === RECORD_SOURCE_MANIFEST && isRecordSourceDelta(worktree, { from, to, branch });
+        if (!isRecordFile(file, branch) && !sourceRecord) {
           productFiles.add(file);
           if (refs[0] === base.stdout.trim()) committedProduct = true;
         }
