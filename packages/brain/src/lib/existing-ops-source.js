@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
 import { runtimeSelectorEnabled, collectRuntimeSources } from './existing-ops-runtime-source.js';
+import { buildSelectorEnabled, collectBuildSources } from './existing-ops-build-source.js';
 let parse;
 async function requireParser() {
   if (parse) return;
@@ -197,6 +198,8 @@ function impactRunnerProven(text){
     ||![LEGACY_ADMISSION_SCOPES,SELF_PR_ADMISSION_SCOPES].includes(job.env?.ADMISSION_SCOPES))return false;
   return job.steps?.some(step=>step.if===undefined&&typeof step.run==='string'&&hash(step.run)===IMPACT_GATE_SHA256);
 }
+// 新 dormant-main 兼容分支仅认可正式 2eb4 的完整 CLI AST（含入口与初始化）；未知修改需重审。
+const LEGACY_MAIN_CLI_SHA256='b9fd6f6cf551afd2b560135a1cf633fbd615d0e44ab218b02b5d3bbe25505149';
 function legacyImpactRunnerProven(text,prText,gateText){
  const doc=yaml.load(text),job=doc?.jobs?.gate;
  if(!doc?.on?.pull_request||job?.if!=="always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')"
@@ -204,7 +207,13 @@ function legacyImpactRunnerProven(text,prText,gateText){
    ||!job.steps?.some(step=>step.if===undefined&&typeof step.run==='string'&&hash(step.run)===LEGACY_IMPACT_GATE_SHA256))return false;
  const pr=ast(prText),gate=ast(gateText),fn=namedExport(pr,'runImplementationPrGate'),gateFn=namedExport(gate,'runImplementationGate');
  const delegated=fn?.body.body.at(-1)?.type==='ReturnStatement'&&fn.body.body.at(-1).argument?.callee?.name==='implementationPrEvidence'&&literal(fn.body.body.at(-1).argument.arguments[1],true);
- if(delegated&&fn.body.body.slice(0,-1).some(n=>n.type!=='IfStatement'||n.test?.type!=='MemberExpression'||n.test.object?.name!=='options'||!['multi','extractScopes'].includes(n.test.property?.name)))return false;
+ // 旧入口只有未配置 MAIN_SCOPES 时才继续单scope；任何层显式设置都不能猜为空。
+ if(job.steps.some(s=>typeof s.run==='string'&&s.run.includes('IMPLEMENTATION_MAIN_SCOPES')))return false;
+ if([doc.env,job.env,...job.steps.map(s=>s.env)].some(env=>env&&Object.hasOwn(env,'IMPLEMENTATION_MAIN_SCOPES')))return false;
+ const mainBranch=ast('function branch(options){if(options.mainScopes!==undefined)return runImplementationMainGate(options);}').body[0].body.body[0];
+ const shape=n=>JSON.stringify(n,(key,value)=>['start','end','raw'].includes(key)?undefined:value);
+ const dormantMain=n=>shape(n)===shape(mainBranch)&&hash(shape(pr))===LEGACY_MAIN_CLI_SHA256;
+ if(delegated&&fn.body.body.slice(0,-1).some(n=>!dormantMain(n)&&(n.type!=='IfStatement'||n.test?.type!=='MemberExpression'||n.test.object?.name!=='options'||!['multi','extractScopes'].includes(n.test.property?.name))))return false;
  const caller=delegated?pr.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='implementationPrEvidence'):fn;
  const statements=caller?.body.body.find(n=>n.type==='TryStatement')?.block.body;
  return namedImport(pr,'./implementation-gate.mjs',['runImplementationGate'])
@@ -344,6 +353,7 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     const schemaText = tree.has(schemaPath) ? await readSource(schemaPath, revision) : '';
     const expanded = schemaText && expandedSelectorSchema(schemaText);
     const runtime = schemaText && runtimeSelectorEnabled(schemaText, ast);
+    const buildInputs = schemaText && buildSelectorEnabled(schemaText, ast);
     const selectors = expanded && config ? regressionSelectors(config) : null;
     if (selectors) for (const path of paths.filter(path => path.startsWith('tests/regression/') && !path.split('/').some(part => part.startsWith('.'))
       && selectors.include.some(pattern => pattern.test(path)) && !selectors.exclude.some(pattern => pattern.test(path)))) {
@@ -351,6 +361,10 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
         kind: 'literal_vitest_regression_selector', selector: 'native_nightly_include_minus_exclude', revision });
     }
     if (runtime && selectors) await collectRuntimeSources({ parse: ast, paths, selectors, read, readSource, revision, relations, requireProof, ci });
+    if (buildInputs) {
+      if (requireProof(Boolean(runtime && selectors), 'build_selector_parent_unproven'))
+        await collectBuildSources({ parse: ast, paths, selectors, read, readSource, revision, relations, requireProof });
+    }
     const ciDoc = ci ? yaml.load(ci) : null, versionJob = 'brain-version-bump-gate', versionPath = 'scripts/ci/check-brain-version-bump.sh';
     if (expanded && ciDoc?.jobs?.[versionJob]) {
       const job = ciDoc.jobs[versionJob];

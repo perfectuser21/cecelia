@@ -27,7 +27,7 @@ function assertFileCoverage(report) {
     }
   }
 }
-export function assertImplementationReport(report) {
+function assertReport(report, assertCoverage) {
   if(report?.mapping_status!=='verified'||!Array.isArray(report.gaps)||report.gaps.length)fail('IMPACT_EVIDENCE_UNKNOWN');
   if(!objectId(report.source?.base_revision)||!objectId(report.source?.head_revision))fail('IMPACT_REVISION_REQUIRED');
   for(const side of ['base','head']){
@@ -49,7 +49,7 @@ export function assertImplementationReport(report) {
     if(report.ci_context?.purpose!=='admission_only'||report.impact_status!=='governance_only'||report.required_assertions.length)fail('IMPACT_USAGE_EVIDENCE_MISSING');
     for(const change of report.source.changed_files||[])assertGovernanceCoverage(report,change.path);
   }
-  assertFileCoverage(report);
+  assertCoverage(report);
   if(report.affected_usages.length&&!report.required_assertions.length)fail('IMPACT_REGRESSION_MISSING');
   for(const usage of report.affected_usages){
     if(!Array.isArray(usage.evidence)||!usage.evidence.length)fail('IMPACT_USAGE_EVIDENCE_MISSING');
@@ -60,4 +60,19 @@ export function assertImplementationReport(report) {
         binding=>binding.capability_id===evidence.capability_id&&binding.activity_id===evidence.activity_id&&(binding.step_id??null)===step)))fail('IMPACT_REGRESSION_MISSING');
     }
   }
+}
+
+export function assertImplementationReport(report) {
+  return assertReport(report, assertFileCoverage);
+}
+/** 仅验证联合空切片的内部证据；调用者还必须重算完整跨scope来源与foreign归属。 */
+export function assertJointNoOwnedImplementationReport(report) {
+  if(!['admission_only','release'].includes(report?.ci_context?.purpose)||
+    !hashId(report.ci_context.base_snapshot_sha256)||!hashId(report.ci_context.head_snapshot_sha256)||
+    !report.affected_usages?.length||!report.required_assertions?.length)fail('IMPACT_NO_OWNED_EVIDENCE_MISSING');
+  return assertReport(report, value=>{
+    if(!Array.isArray(value.source.changed_files)||value.source.changed_files.length||
+      !Array.isArray(value.unclaimed_paths)||value.unclaimed_paths.length||
+      ['base','head'].some(side=>!Array.isArray(value[side].file_coverage)||value[side].file_coverage.length))fail('IMPACT_NO_OWNED_SLICE_INVALID');
+  });
 }
