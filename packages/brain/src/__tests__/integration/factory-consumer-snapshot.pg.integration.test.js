@@ -48,19 +48,33 @@ async function factoryMap(sourceRevision=revision) {
 afterEach(async () => { await fixture?.close(); });
 const options = extra => ({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths, readSource, checkMain: async () => {}, actor: 'test-real-main', ...extra });
 
-it('旧固定定义不变：真实scratch原生输入图让三个UI owner沿nightly入口获得来源',async()=>{
- const historical='b5800c2d297cb121e90ff74987ebc410679371a2';
- const oldPaths=execFileSync('git',['ls-tree','-rz','--name-only',historical],{cwd:root,encoding:'utf8'}).split('\0').filter(Boolean);
- const oldRead=async path=>execFileSync('git',['show',`${historical}:${path}`],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024});
- const before=await registration.readExistingOpsRegistry(fixture.db);
- await registration.registerExistingOpsSources(fixture.db,options({revision:historical,paths:oldPaths,readSource:oldRead,expectedRegistrySha256:before.registry_sha256}));
- await factoryMap(historical);
- const snapshot=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:historical});
- const frozen=JSON.stringify(snapshot.definitions);
- expect(snapshot.definitions.activities.every(a=>a.payload.implementation_bindings.every(b=>!b.path.startsWith('apps/')))).toBe(true);
+it('旧固定定义不变：浅历史也以离线旧协议Git模型验证真实UI输入图',async()=>{
  const temporary=mkdtempSync(join(tmpdir(),'workspace-history-')),checkout=join(temporary,'source');
  try{
-  execFileSync('git',['worktree','add','--quiet','--detach',checkout,historical],{cwd:root});
+  // Smoke使用浅checkout：只依赖当前真实固定tree，离线生成另一个明确标作模型的旧协议commit。
+  // 真实历史b580的字节/来源仍由独立固定Git单测与官方artifact联合门禁验证。
+  execFileSync('git',['clone','--quiet','--shared','--no-checkout',root,checkout]);
+  const git=(args,extra={})=>execFileSync('git',args,{cwd:checkout,encoding:'utf8',maxBuffer:32*1024*1024,...extra}).trim();
+  git(['read-tree',revision]);
+  const schemaPath='packages/brain/src/lib/existing-ops-source.js';
+  const legacy=(await readSource(schemaPath)).replace(/^export const EXISTING_OPS_WORKSPACE_SELECTOR_SCHEMA = [^\n]+;\r?\n/m,'');
+  expect(legacy).not.toMatch(/^export const EXISTING_OPS_WORKSPACE_SELECTOR_SCHEMA/m);
+  const blob=git(['hash-object','-w','--stdin'],{input:legacy});
+  git(['update-index','--cacheinfo','100644',blob,schemaPath]);
+  const tree=git(['write-tree']);
+  const env={...process.env,GIT_AUTHOR_NAME:'source-fixture',GIT_AUTHOR_EMAIL:'source-fixture@example.invalid',GIT_COMMITTER_NAME:'source-fixture',GIT_COMMITTER_EMAIL:'source-fixture@example.invalid',GIT_AUTHOR_DATE:'2026-10-15T00:00:00Z',GIT_COMMITTER_DATE:'2026-10-15T00:00:00Z'};
+  const historical=git(['commit-tree',tree,'-p',revision,'-m','test: model absent workspace selector marker'],{env});
+  // 仅新建私有clone：read-tree只写index，强制检出完整固定tree供原生扫描读取。
+  git(['checkout','--quiet','--force','--detach',historical]);
+  expect(existsSync(join(checkout,'apps/api/features/planning/pages/capability-system/InvocationPanel.tsx'))).toBe(true);
+  const oldPaths=git(['ls-tree','-rz','--name-only',historical]).split('\0').filter(Boolean);
+  const oldRead=async path=>execFileSync('git',['show',`${historical}:${path}`],{cwd:checkout,encoding:'utf8',maxBuffer:32*1024*1024});
+  const before=await registration.readExistingOpsRegistry(fixture.db);
+  await registration.registerExistingOpsSources(fixture.db,options({revision:historical,paths:oldPaths,readSource:oldRead,expectedRegistrySha256:before.registry_sha256,actor:'test-fixed-legacy-protocol'}));
+  await factoryMap(historical);
+  const snapshot=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:historical});
+  const frozen=JSON.stringify(snapshot.definitions);
+  expect(snapshot.definitions.activities.every(a=>a.payload.implementation_bindings.every(b=>!b.path.startsWith('apps/')))).toBe(true);
   const {projectImplementationSnapshot}=await import('../../../../../scripts/ci/implementation-snapshot.mjs');
   const {readImplementationImpact}=await import('../../lib/implementation-impact.js');
   // factoryMap的导出占位run不属于实际扫描投影；避免同修订两条fixture记录造成歧义。
@@ -73,7 +87,7 @@ it('旧固定定义不变：真实scratch原生输入图让三个UI owner沿nigh
   const rows=await fixture.db.query('SELECT payload FROM activity_definition_versions ORDER BY id');
   expect(rows.rows.every(a=>a.payload.implementation_bindings.every(b=>!b.path.startsWith('apps/')))).toBe(true);
  }finally{
-  execFileSync('git',['worktree','remove','--force',checkout],{cwd:root});rmSync(temporary,{recursive:true,force:true});
+  rmSync(temporary,{recursive:true,force:true});
  }
 },120000);
 
