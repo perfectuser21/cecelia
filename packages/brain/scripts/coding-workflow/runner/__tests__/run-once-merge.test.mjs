@@ -57,7 +57,7 @@ describe('合并门（绑定 head SHA）', () => {
     const l = E.brain.learnings[0];
     expect(l).toMatchObject({ task_id: TASK, branch_name: BRANCH, pr_number: 77, repo: 'cecelia', issues_found: [] });
     const text = l.next_steps_suggested.join('\n');
-    for (const s of ['合同对抗 3 轮 APPROVED', '真人 QA 2 轮', '第 1 轮 FAIL（2 处失败', 'CI 修复 1 次', 'brain-unit (3)', '$5.5']) expect(text).toContain(s);
+    for (const s of ['合同对抗 3 轮 APPROVED', 'AI QA 2 轮', '第 1 轮 FAIL（2 处失败', 'CI 修复 1 次', 'brain-unit (3)', '$5.5']) expect(text).toContain(s);
   });
 
   // 决策 b34e346a：合并门合并成功上报「合并」span

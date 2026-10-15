@@ -9,7 +9,8 @@
 import fs from 'node:fs';
 import { ghJson, CW_BRANCH_RE } from './cifix-scan.mjs';
 import { readState, writeState, previewCall, usesBrainPreview } from './qa-gate.mjs';
-import { remoteTaskId, remoteTaskIdByPr } from './pr-branch.mjs';
+import { syncTaskId, syncTask, rememberPr } from './pr-sync.mjs';
+import { hasUnmirroredStates, restoreStates } from './state-store.mjs';
 import { finalHandoff } from './merge-gate.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { prFile } from './repos.mjs';
@@ -42,22 +43,25 @@ function commanderHuman(cfg, number) {
 
 /** 关闭时的 QA 状态（写进交接单 not_done）。 */
 function qaAtClose(s) {
-  if (s.passed) return `关闭时已通过真人 QA + 独立裁判（第 ${s.approved?.round ?? '?'} 轮），未合并`;
+  if (s.passed) return `关闭时已通过AI QA + 独立裁判（第 ${s.approved?.round ?? '?'} 轮），未合并`;
   return `关闭时 QA 未通过（已验 ${s.rounds.length} 轮${s.escalated ? `，升级 ${s.escalated.type} 未解除` : ''}）`;
 }
 
 async function settleOne(ctx, pr) {
   const { cfg } = ctx;
+  const current = readState(cfg, pr.number);
+  if (!current.closed || hasUnmirroredStates(cfg, pr.number)) rememberPr(ctx, { ...pr, state: 'CLOSED' });
+  if (current.closed) return;
+  await restoreStates(ctx, [pr]);
   if (readState(cfg, pr.number).closed) return;
   const mark = (extra) => writeState(cfg, pr.number, { ...readState(cfg, pr.number), closed: { at: pr.closedAt ?? null, head: pr.headRefOid, ...extra } });
-  const taskId = await remoteTaskId(cfg, pr.headRefName) ?? await remoteTaskIdByPr(cfg, pr.number, pr.headRefName);
+  const taskId = await syncTaskId(ctx, pr);
   if (!taskId) {
-    ctx.log(`[coding-closure] PR #${pr.number} 已被外部关闭，但分支与 refs/pull 上都读不到 task_id，只记本机`);
-    mark({ by: null, task_id: null });
+    ctx.log(`[coding-closure] PR #${pr.number} 已被外部关闭，但分支与 refs/pull 上都读不到 task_id，保留待办下轮重试`);
     return;
   }
-  const task = await ctx.brain.getTask(taskId);
-  const prior = task.ok ? task.body?.result ?? {} : {};
+  const task = await syncTask(ctx, taskId, pr);
+  const prior = task.result ?? {};
   // 换机 / 本机记录丢失：Brain 已收过尾，只补本机标记
   if (prior.runner?.phase === CLOSED_PHASE) {
     mark({ by: prior.merge?.closed_by ?? null, task_id: taskId });
@@ -93,11 +97,12 @@ async function settleOne(ctx, pr) {
 /** 重开：清本机 closed / preview_stopped，Brain phase 回 awaiting_qa、merge 置空、记 reopened。Brain 写失败下轮重试。 */
 async function reopen(ctx, pr, s) {
   const { cfg } = ctx;
-  const taskId = s.closed.task_id ?? await remoteTaskId(cfg, pr.headRefName);
+  const taskId = await syncTaskId(ctx, pr);
   const entry = { at: new Date().toISOString(), closed_at: s.closed.at ?? null };
+  if (!taskId) return;
   if (taskId) {
-    const task = await ctx.brain.getTask(taskId);
-    const { closed_reason: _reason, ...runner } = (task.ok ? task.body?.result?.runner : null) ?? {};
+    const task = await syncTask(ctx, taskId, pr);
+    const { closed_reason: _reason, ...runner } = task.result?.runner ?? {};
     const r = await ctx.brain.patch(taskId, { result: {
       runner: { ...runner, phase: 'awaiting_qa', reopened: [...(Array.isArray(runner.reopened) ? runner.reopened : []), entry] },
       merge: null,
@@ -114,14 +119,21 @@ async function reopen(ctx, pr, s) {
 
 /** 已结束的 PR 停预览释放容量（只停一次）：合并的要求 QA 通过过；外部关闭的一律停。 */
 async function stopFinishedPreviews(ctx, closed) {
-  const merged = await ghJson(ctx.cfg, ['pr', 'list', '--state', 'merged', '--limit', '30', '--json', 'number,headRefName']);
-  const done = [
+  const merged = await ghJson(ctx.cfg, ['pr', 'list', '--state', 'merged', '--limit', '30', '--json', 'number,headRefName,headRefOid,url,mergedAt']);
+  const listed = [
     ...(Array.isArray(merged) ? merged : []).filter((p) => CW_BRANCH_RE.test(p.headRefName ?? '')).map((p) => ({ ...p, merged: true })),
     ...closed.map((p) => ({ ...p, merged: false })),
   ];
-  for (const pr of done) {
+  const done = new Map(listed.map((p) => [p.number, p]));
+  for (const [number, pr] of ctx.syncPrs ?? []) {
+    if (pr.state === 'OPEN') done.delete(number);
+    else if (['MERGED', 'CLOSED'].includes(pr.state)) done.set(number, { ...pr, merged: pr.state === 'MERGED' });
+  }
+  for (const pr of done.values()) {
     const s = readState(ctx.cfg, pr.number);
-    if (s.preview_stopped || (pr.merged && !s.passed)) continue;
+    if (pr.merged && !s.passed) continue;
+    if (!s.preview_stopped || hasUnmirroredStates(ctx.cfg, pr.number)) rememberPr(ctx, { ...pr, state: pr.merged ? 'MERGED' : 'CLOSED' });
+    if (s.preview_stopped) continue;
     const r = await previewCall(ctx.cfg, `stop/${pr.number}`);
     ctx.log(`停 PR #${pr.number} 预览环境（${pr.merged ? '已合并' : '外部关闭'}）：HTTP ${r.status}`);
     if (r.ok) writeState(ctx.cfg, pr.number, { ...readState(ctx.cfg, pr.number), preview_stopped: true });
@@ -131,9 +143,17 @@ async function stopFinishedPreviews(ctx, closed) {
 /** 外部关闭收尾 + 重开恢复 + 停预览。openPrs = 本轮 open 列表（取不到为 null）。不抛错，也不算「本轮做了事」。 */
 export async function settleClosedPrs(ctx, openPrs) {
   const warn = (what) => (error) => ctx.log(`[coding-closure] ${what}出错：${error?.message || error}`);
-  const closed = await listClosedUnmerged(ctx.cfg).catch(warn('列外部关闭的 PR ')) ?? [];
+  const listed = await listClosedUnmerged(ctx.cfg).catch(warn('列外部关闭的 PR ')) ?? [];
+  const candidates = new Map(listed.map((p) => [p.number, p]));
+  for (const [number, pr] of ctx.syncPrs ?? []) {
+    if (pr.state === 'CLOSED') candidates.set(number, pr);
+    else candidates.delete(number);
+  }
+  const closed = [...candidates.values()];
   for (const pr of closed) await settleOne(ctx, pr).catch(warn(`PR #${pr.number} 收尾`));
-  for (const pr of openPrs ?? []) {
+  const opened = new Map((openPrs ?? []).map((p) => [p.number, p]));
+  for (const [number, pr] of ctx.syncPrs ?? []) if (pr.state === 'OPEN') opened.set(number, pr);
+  for (const pr of opened.values()) {
     const s = readState(ctx.cfg, pr.number);
     if (s.closed) await reopen(ctx, pr, s).catch(warn(`PR #${pr.number} 重开恢复`));
   }

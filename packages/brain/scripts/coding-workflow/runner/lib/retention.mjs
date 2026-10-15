@@ -10,7 +10,7 @@ const WORKTREE_RE = /^cw-[0-9a-f]{8}/;
 const BRANCH_RE = /^cp-[0-9]{8,10}-cw-[0-9a-f]{8}$/;
 const LOG_RE = /\.(json|log)$/;
 // QA 门 / CI 修复的状态台账（审计 #34）：不是日志，超期也不删——删了已升级的 PR 会被当新的重新处理
-const STATE_RE = /^(qa|cifix)-\d+\.json$/;
+const STATE_RE = /^(?:(qa|cifix)-\d+|pr-sync-pending)\.json$/;
 
 function mtimeMs(file) {
   try {

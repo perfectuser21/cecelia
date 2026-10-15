@@ -2,6 +2,10 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/prep-prd.md", "role": "documentation"},
+    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/contract-draft.md", "role": "documentation"},
+    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "docs/learnings/cp-10151330-cw-terminal-sync.md", "role": "documentation"},
+    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "changes/cp-10151330-cw-terminal-sync.md", "role": "release"},
     {
       "owner_path": "packages/brain/src/projection/workflow-body.js",
       "path": "cp-1013222800-notion-span-readback.prd.md",
