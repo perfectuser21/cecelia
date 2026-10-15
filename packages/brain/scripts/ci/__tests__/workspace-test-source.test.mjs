@@ -100,7 +100,7 @@ it.each(['repo','scope','bindingRepo','bindingRevision','bindingDigest','activit
 it('Git remote不匹配不能借自仓snapshot补边',()=>{const f=fixture();f.git('remote','set-url','origin','https://github.com/other/repo.git');expect(collect(f)).toEqual([]);});
 it('symlink源码即使指向真实文本也不作固定blob证明',()=>{const f=fixture();const path=PREFIX+'BusinessInputs.test.tsx';rmSync(join(f.root,path));symlinkSync('InvocationPanel.test.tsx',join(f.root,path));f.commit();expect(collect(f)).toEqual([]);});
 it('历史revision缺文件不补边，不破坏其它原生图路径',()=>{const f=fixture();rmSync(join(f.root,CONFIG));f.commit();expect(collect(f)).toEqual([]);});
-it.each(['.npmrc','apps/api/.npmrc','apps/api/vitest.workspace.ts','apps/api/vitest.config.js','apps/api/vite.config.ts'])('新增可影响npm/Vitest执行的%s不补边',path=>{const f=fixture();f.put(path,'export default [];\n');f.commit();expect(collect(f)).toEqual([]);});
+it.each(['npm-shrinkwrap.json','apps/api/npm-shrinkwrap.json','.npmrc','apps/api/.npmrc','apps/api/vitest.workspace.ts','apps/api/vitest.config.js','apps/api/vite.config.ts'])('新增可影响npm/Vitest执行的%s不补边',path=>{const f=fixture();f.put(path,'export default [];\n');f.commit();expect(collect(f)).toEqual([]);});
 it('其他workspace安装生命周期不能提前覆盖API测试',()=>{const f=fixture();const p='packages/evil/package.json';mkdirSync(dirname(join(f.root,p)),{recursive:true});f.put(p,JSON.stringify({name:'evil',scripts:{postinstall:'echo overwrite'}}));f.commit();expect(collect(f)).toEqual([]);});
 it.each(['package.json','apps/api/package.json'])('%s不能用包解析覆盖把vitest替换成别的程序',path=>{const f=fixture();const pkg=JSON.parse(readFileSync(join(f.root,path),'utf8'));pkg.overrides={vitest:'npm:fake-vitest@1.0.0'};f.put(path,JSON.stringify(pkg));f.commit();expect(collect(f)).toEqual([]);});
 
