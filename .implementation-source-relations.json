@@ -7,6 +7,8 @@
     {"owner_path":"packages/brain/src/projection/directory-projector.js","path":"packages/brain/src/projection/__tests__/directory-projector.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/projection/directory-projector.js","path":"packages/brain/src/projection/__tests__/directory-runtime.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/projection/directory-projector.js","path":"packages/brain/scripts/smoke/directory-title-sync-smoke.sh","role":"verification"},
+    {"owner_path":"scripts/ci/implementation-multi-scope.mjs","path":"cp-10152055-scope-no-owned.prd.md","role":"documentation"},
+    {"owner_path":"scripts/ci/implementation-multi-scope.mjs","path":"changes/cp-10152055-scope-no-owned.md","role":"release"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/prep-prd.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/contract-draft.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "docs/learnings/cp-10151330-cw-terminal-sync.md", "role": "documentation"},

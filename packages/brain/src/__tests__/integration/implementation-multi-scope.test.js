@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync,readFileSync,chmodSync} from 'node:fs';
 import yaml from 'js-yaml';
 import {join} from 'node:path';
@@ -353,5 +354,30 @@ it('no_owned_changes 拒绝scope、snapshot、用途、原始证据与断言篡�
    e=>e.scope_reports.splice(0,1),e=>e.purpose='main_verification']){
    const altered=structuredClone(proof);change(altered);expect(()=>multi.verifyScopedImplementationGitSource(f.root,altered)).toThrow();
   }
+  // Recomputing the public digests must not turn forged raw/sliced evidence into a valid proof.
+  for(const change of [e=>e.scope_reports[0].required_assertions.pop(),
+    e=>e.no_owned_changes_context.scope_keys=['cecelia-factory'],
+    e=>{e.no_owned_changes_context.source_reports[0].gaps=[];e.no_owned_changes_context.source_reports[0].mapping_status='verified';}]){
+    const forged=structuredClone(proof);change(forged);
+    const {context_sha256,...contextBody}=forged.no_owned_changes_context;
+    forged.no_owned_changes_context.context_sha256=createHash('sha256').update(JSON.stringify(contextBody)).digest('hex');
+    const {evidence_sha256,...body}=forged;
+    forged.evidence_sha256=createHash('sha256').update(JSON.stringify(body)).digest('hex');
+    expect(()=>multi.verifyScopedImplementationGitSource(f.root,forged)).toThrow();
+    await expect(multi.runScopedImplementationGate({repoRoot:f.root,evidence:forged})).rejects.toThrow();
+  }
+ }finally{f.cleanup();}
+});
+it('no_owned_changes 要求完整原始逐文件证据和两个verified快照封套',async()=>{
+ const f=await noOwnedFixture();
+ try{
+  const mutations=[['side_status',r=>delete r[0].base.mapping_status],['owned_hash',r=>r[1].ci_context.head_snapshot_sha256='bad'],
+   ['wrong_purpose',r=>r[0].ci_context.purpose='release'],['missing_coverage',r=>r[0].base.file_coverage=[]],
+   ['wrong_index',r=>r[0].head.file_coverage[0].change_index=99],['wrong_path',r=>r[0].base.file_coverage[0].path='other'],
+   ['hidden_foreign_gap',r=>{r[0].gaps=r[0].gaps.filter(g=>g.code!=='changed_file_unclaimed');r[0].unclaimed_paths=[];}],
+   ['bad_scope',r=>r[0].scope_key='cecelia-factory']];
+  const accepted=[];for(const [name,change] of mutations){const reports=structuredClone(f.raw);change(reports);
+   try{multi.resolveScopedImplementationReports({source:f.full,expectedScopes:['cecelia-kr','cecelia-factory'],reports});accepted.push(name);}catch{}}
+  expect(accepted).toEqual([]);
  }finally{f.cleanup();}
 });
