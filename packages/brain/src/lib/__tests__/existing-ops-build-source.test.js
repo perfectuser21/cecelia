@@ -179,3 +179,14 @@ it.each(['test','helper','cli','protocol'])('拒绝 %s 未登记的再导出模�
   if(key==='test')expect(provePublishSources(fixedBuild(publishTest)+"\nexport {} from './does-not-exist-source.mjs';",sources.helper,parse)).toBe(false);
   if(key==='helper')expect(provePublishSources(fixedBuild(publishTest),sources.helper,parse)).toBe(false);
 });
+
+it.each([
+  ['helper','runActivityProcess'],
+  ...['runActivity','validateBase','fail','childEnv','log'].map(name=>['protocol',name]),
+  ...['loadPrompt','claudeTimeoutMs','runClaude','claudeFailure','gitOut','headSha','snapshotChanges','outOfScopeChanges','sprintChangesExcept'].map(name=>['cli',name]),
+])('真实named import必须能链接到 %s.%s 的公开函数',(key,name)=>{
+  const s=buildSources(), pattern=new RegExp('export ((?:async )?function '+name+'\\()');
+  expect(s[key]).toMatch(pattern);s[key]=s[key].replace(pattern,'$1');
+  expect(proveBuildSources(s,parse)).toBe(false);
+  if(key==='helper')expect(provePublishSources(fixedBuild(publishTest),s.helper,parse)).toBe(false);
+});

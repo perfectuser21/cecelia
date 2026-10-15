@@ -70,6 +70,12 @@ function moduleEnvelope(tree,key,parse) {
   return same(actualImports,parse(ENVELOPES[key+'Imports']).body)&&same(constants,parse(ENVELOPES[key+'Constants']).body)
     && tree.body.every(n=>['ImportDeclaration','VariableDeclaration','FunctionDeclaration'].includes(n.type)||n.type==='ExportNamedDeclaration'&&!n.source&&['VariableDeclaration','FunctionDeclaration'].includes(n.declaration?.type)||key==='activity'&&same(n,parse(ENVELOPES.entry).body[0])||['test','publishTest'].includes(key)&&call(n.expression,'describe'));
 }
+/** 固定调用边的 named imports 必须链接到目标的真实公开函数，存在私有同名函数不够。 */
+function namedFunctionsLink(consumer,provider,source) {
+  const imports=consumer.body.filter(n=>n.type==='ImportDeclaration'&&n.source.value===source);
+  const exported=new Set(provider.body.filter(n=>n.type==='ExportNamedDeclaration'&&!n.source&&n.declaration?.type==='FunctionDeclaration').map(n=>n.declaration.id.name));
+  return imports.length===1&&imports[0].specifiers.length>0&&imports[0].specifiers.every(n=>n.type==='ImportSpecifier'&&exported.has(n.imported.name));
+}
 function functionMatches(tree,name,parse) { return same(fn(tree,name),parse(ENVELOPES[name]).body[0]); }
 function registration(n) {
   if(n?.type!=='CallExpression')return false;
@@ -176,7 +182,11 @@ export function proveBuildSources(sources,parse) {
   try {
     const trees=Object.fromEntries(['test','helper','activity','cli','protocol'].map(k=>[k,parse(sources[k])]));
     for(const [key,tree] of Object.entries(trees))if(!moduleEnvelope(tree,key,parse))return false;
-    return testWitness(trees.test,parse)&&functionMatches(trees.helper,'runActivityProcess',parse)&&functionMatches(trees.helper,'baseEnv',parse)
+    return namedFunctionsLink(trees.test,trees.helper,'./helpers/run-activity.mjs')
+      &&namedFunctionsLink(trees.activity,trees.protocol,'../lib/protocol.mjs')
+      &&namedFunctionsLink(trees.activity,trees.cli,'../lib/claude.mjs')
+      &&namedFunctionsLink(trees.cli,trees.protocol,'./protocol.mjs')
+      &&testWitness(trees.test,parse)&&functionMatches(trees.helper,'runActivityProcess',parse)&&functionMatches(trees.helper,'baseEnv',parse)
       &&intact(trees.helper,['runActivityProcess'])&&functionMatches(trees.activity,'specIds',parse)&&mainPrefix(trees.activity,parse)
       &&same(trees.activity.body.at(-1),parse(ENVELOPES.entry).body[0])&&['runActivity','childEnv','readStdin','validateBase','resolveSprintDir'].every(name=>functionMatches(trees.protocol,name,parse))
       &&intact(trees.protocol,['runActivity'],nodes(fn(trees.protocol,'runActivity')).filter(n=>n.type==='AssignmentExpression'&&member(n.left,'process','exitCode')),nodes(fn(trees.protocol,'childEnv')).filter(n=>member(n,'process','env')))&&cliEnvelope(trees.cli,parse);
@@ -200,7 +210,7 @@ const PUBLISH_TEST=PREFIX+'__tests__/publish.test.mjs', PUBLISH_ENTRY=PREFIX+'ac
 export function provePublishSources(test,helper,parse) {
   try {
     const tree=parse(test),h=parse(helper);
-    if(!moduleEnvelope(tree,'publishTest',parse)||!moduleEnvelope(h,'helper',parse)||!functionMatches(h,'runActivityProcess',parse)||!functionMatches(h,'baseEnv',parse)||!intact(h,['runActivityProcess']))return false;
+    if(!moduleEnvelope(tree,'publishTest',parse)||!moduleEnvelope(h,'helper',parse)||!namedFunctionsLink(tree,h,'./helpers/run-activity.mjs')||!functionMatches(h,'runActivityProcess',parse)||!functionMatches(h,'baseEnv',parse)||!intact(h,['runActivityProcess']))return false;
     const top=tree.body.filter(n=>n.type==='ExpressionStatement');
     if(top.length!==1||!call(top[0].expression,'describe'))return false;
     const group=top[0].expression.arguments;if(group.length!==2||group[0]?.type!=='Literal'||typeof group[0].value!=='string'||group[1]?.type!=='ArrowFunctionExpression'||group[1].async||group[1].params.length!==0||group[1].body?.type!=='BlockStatement')return false;
