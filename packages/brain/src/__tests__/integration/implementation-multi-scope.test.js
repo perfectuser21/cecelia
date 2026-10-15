@@ -191,13 +191,13 @@ it('联合准入实际执行每scope固定提交回归并保存独立收据，�
  }finally{rmSync(root,{recursive:true,force:true});}
 });
 
-it('main联合证据保留真实用途并执行每scope回归，PR输出不变',async()=>{
+it.each([0,7])('main联合证据保留真实用途并执行每scope回归，PR输出不变 %i',async failureExit=>{
  const root=mkdtempSync(join(tmpdir(),'multi-main-gate-'));
  const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
  try{
   git('init','-q');git('remote','add','origin','https://github.com/perfectuser21/cecelia.git');mkdirSync(join(root,'src'));mkdirSync(join(root,'tests/smoke'),{recursive:true});
   for(const name of ['controller.js','shared-lock.js'])writeFileSync(join(root,'src',name),'old\n');
-  for(const name of ['a','b'])writeFileSync(join(root,`tests/smoke/scope-${name}.sh`),`#!/bin/bash\nprintf '${name}' > '${root}/actual-${name}'\n`);
+  for(const name of ['a','b'])writeFileSync(join(root,`tests/smoke/scope-${name}.sh`),`#!/bin/bash\nprintf '${name}' > '${root}/actual-${name}'\nexit ${name==='b'?failureExit:0}\n`);
   const commit=()=>{git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture');return git('rev-parse','HEAD');};
   const base=commit();for(const name of ['controller.js','shared-lock.js'])writeFileSync(join(root,'src',name),'changed\n');const head=commit();
   // 联合引擎的结构夹具使用支持的身份封套；不声称它是官方Factory导出。
@@ -214,7 +214,8 @@ it('main联合证据保留真实用途并执行每scope回归，PR输出不变',
   const evidence=multi.aggregateScopedImplementationEvidence({...options,purpose:'main_verification'});
   expect(legacy.purpose).toBe('admission_only');expect(evidence.purpose).toBe('main_verification');expect(evidence.evidence_kind).toBe('scoped_implementation_main');
   const receipt=await multi.runScopedImplementationGate({repoRoot:root,evidence});
-  expect(receipt.verdict).toBe('PASS');expect(receipt.purpose).toBe('main_verification');expect(receipt.scope_receipts.every(r=>r.purpose==='main_verification')).toBe(true);
+  expect(receipt.verdict).toBe(failureExit?'FAIL':'PASS');expect(receipt.purpose).toBe('main_verification');expect(receipt.scope_receipts.every(r=>r.purpose==='main_verification')).toBe(true);
+  expect(receipt.scope_receipts[1].assertions.every(a=>a.exit_code===failureExit)).toBe(true);
   expect(receipt.business_runtime_status).toBe('not_evaluated');for(const name of ['a','b'])expect(readFileSync(join(root,`actual-${name}`),'utf8')).toBe(name);
   expect(multi.aggregateScopedImplementationEvidence(options)).toEqual(legacy);
   for(const purpose of ['release','pr','unknown'])expect(()=>multi.aggregateScopedImplementationEvidence({...options,purpose})).toThrow();

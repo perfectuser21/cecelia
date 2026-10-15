@@ -12,6 +12,6 @@ d920 自然 main 已产生完整双 scope 官方快照，但消费端只检查 K
 |---|---|---|
 | ws1 | `packages/brain/src/lib/__tests__/implementation-pr-gate.test.js` | `main显式双scope经真实单入口选择main验证，缺源明确拒绝` |
 | ws1 | `packages/brain/src/lib/__tests__/implementation-pr-gate.test.js` | `main双scope拒绝非main污染、外仓、错顶层scope和非法schema` |
-| ws1 | `packages/brain/src/__tests__/integration/implementation-multi-scope.test.js` | `main联合证据保留真实用途并执行每scope回归，PR输出不变` |
+| ws1 | `packages/brain/src/__tests__/integration/implementation-multi-scope.test.js` | `main联合证据保留真实用途并执行每scope回归，PR输出不变 %i` |
 
 正式 d920 原失败与新固定 main 完整官方 bundle 做真实 CLI 端到端核验；旧可信 collector 必须认领全部改动。若旧工具不认领，改走正规自举，不削弱范围或断言。
