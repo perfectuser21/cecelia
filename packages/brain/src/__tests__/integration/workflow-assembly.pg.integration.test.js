@@ -42,7 +42,7 @@ export async function assemblyDatabase(){
 import {afterEach,it,expect} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {implementationImpactDatabase} from '../fixtures/implementation-impact-db.js';
-import {refreshWorkflowRecipe} from '../../lib/release-line.js';
+import {refreshWorkflowRecipe,ensureVersionForBuild} from '../../lib/release-line.js';
 let f;afterEach(async()=>{await f?.close();f=null;});
 it('真实PG重复装配保持树仓库用料步骤与版本身份；完整合同拆列和静态计划一致，候选不启用生产',async()=>{
  f=await assemblyDatabase();const d=f.definition(),a=await f.submit(d);const first=await a.run();
@@ -116,4 +116,15 @@ it('外部合同同步也消费同一合同列和显式用料服务，不把实�
  const rows=(await f.db.query("SELECT a.inputs,a.outputs,u.role FROM activities a JOIN activity_uses u ON u.activity_id=a.id JOIN warehouse_items w ON w.id=u.item_id WHERE w.key='external.renderer'")).rows;
  expect(rows).toEqual([{inputs:contract.inputs,outputs:contract.outputs,role:'depends'}]);
  expect((await f.db.query('SELECT count(*)::int n FROM activity_uses')).rows[0].n).toBe(1);
+});
+it('旧共享版本有Step合同但缺固定Step登记身份时拒绝复用，不复制补写共享真身',async()=>{
+ f=await assemblyDatabase();const owner=f.definition(),a=await f.submit(owner),r=(await a.run()).receipt.output;
+ const activity=(await f.db.query('SELECT * FROM activities WHERE id=$1',[r.activity_ids[0]])).rows[0];
+ const original=(await f.db.query('SELECT * FROM activity_definition_versions WHERE id=$1',[activity.current_definition_version_id])).rows[0];
+ const payload=structuredClone(original.payload);payload.steps[0].step_id=null;
+ const v=(await f.db.query(`INSERT INTO activity_definition_versions(activity_id,payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256)
+ VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,[activity.id,payload,registrationDigest({source:{repo:original.source_repo,path:original.source_path,commit:original.source_commit},payload}),original.source_repo,original.source_path,original.source_commit,original.contract_sha256])).rows[0];
+ await ensureVersionForBuild(f.db,v.id);
+ const d=f.definition('assembly.incomplete');delete d.warehouse_items;d.activities=[{...owner.activities[0],reuse_activity_id:activity.id,reuse_activity_definition_version_id:v.id,reuse_contract_sha256:v.contract_sha256}];
+ const b=await f.submit(d),before=await f.snapshot();await expect(b.run()).rejects.toThrow(/Step固定登记/);expect(await f.snapshot()).toEqual(before);
 });
