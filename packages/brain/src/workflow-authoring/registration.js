@@ -101,8 +101,10 @@ async function guardConsumers(client, workflow, definition, existing, allowFixed
   for (const old of existing) {
     const incoming = definition.activities.find(a => !a.reuse_activity_id && `${definition.key}.${a.key}` === old.activity_key);
     if (incoming && sameActivityContract(old.contract, activityContract(definition, incoming))) continue;
-    const consumers = (await client.query(`SELECT r.workflow_id FROM workflow_activity_refs r LEFT JOIN activity_definition_versions v ON v.id=r.activity_definition_version_id AND v.activity_id=r.activity_id
-      WHERE r.activity_id=$1 AND r.workflow_id<>$2 AND r.active AND ($3::boolean=false OR v.id IS NULL OR v.payload->'contract' IS NULL) LIMIT 1`, [old.id, workflow.id,allowFixed])).rows;
+    const consumers = allowFixed
+      ? (await client.query(`SELECT r.workflow_id FROM workflow_activity_refs r LEFT JOIN activity_definition_versions v ON v.id=r.activity_definition_version_id AND v.activity_id=r.activity_id
+        WHERE r.activity_id=$1 AND r.workflow_id<>$2 AND r.active AND (v.id IS NULL OR v.payload->'contract' IS NULL) LIMIT 1`,[old.id,workflow.id])).rows
+      : (await client.query('SELECT workflow_id FROM workflow_activity_refs WHERE activity_id=$1 AND workflow_id<>$2 AND active LIMIT 1',[old.id,workflow.id])).rows;
     if (consumers.length) throw registrationError('activity_consumers_require_validation',
       `活动 ${old.activity_key} 被其它工作流引用，修改或弃用需要消费者重新验收`);
   }
@@ -199,11 +201,13 @@ export async function registerWorkflow(client, definition, options = {}) {
       }
     }
     activityIds.push(activityId);
-    await client.query(`INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no,source_ref,source_commit,active,activity_definition_version_id)
-      VALUES($1,$2,$3,$4,$5,$6,true,$7) ON CONFLICT(workflow_id,slot_key) DO UPDATE SET
-      activity_id=EXCLUDED.activity_id,activity_definition_version_id=EXCLUDED.activity_definition_version_id,sequence_no=EXCLUDED.sequence_no,source_ref=EXCLUDED.source_ref,
+    const fixed=options.registrationProtocol===FREEZE_PROTOCOL||activity.reuse_activity_definition_version_id!==undefined;
+    await client.query(`INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no,source_ref,source_commit,active${fixed?',activity_definition_version_id':''})
+      VALUES($1,$2,$3,$4,$5,$6,true${fixed?',$7':''}) ON CONFLICT(workflow_id,slot_key) DO UPDATE SET
+      activity_id=EXCLUDED.activity_id,${fixed?'activity_definition_version_id=EXCLUDED.activity_definition_version_id,':''}sequence_no=EXCLUDED.sequence_no,source_ref=EXCLUDED.source_ref,
       source_commit=EXCLUDED.source_commit,active=true,updated_at=NOW()`,
-    [workflow.id,activity.key,activityId,index+1,definition.source.ref,definition.source.revision,activity.reuse_activity_definition_version_id??null]);
+    [workflow.id,activity.key,activityId,index+1,definition.source.ref,definition.source.revision,...(fixed?[activity.reuse_activity_definition_version_id??null]:[])]);
+
   }
   await client.query(`UPDATE activities SET status='deprecated',notion_synced_at=NULL,updated_at=NOW()
     WHERE workflow_id=$1 AND status<>'deprecated' AND NOT(activity_key=ANY($2::text[])) AND contract->'workflow_authoring'->>'workflow_key'=$3`,
