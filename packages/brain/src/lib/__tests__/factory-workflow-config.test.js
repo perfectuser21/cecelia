@@ -32,3 +32,18 @@ describe('resolveWorkflowConfig', () => {
     expect(c.anchor).toBeNull();
   });
 });
+
+// 固定运行配置必须出现在正式扫描器使用的真实模块依赖中，不能仅靠来源声明认领。
+it('默认运行配置由原生依赖图绑定到实际读取器', async () => {
+  const {cruise}=await import('dependency-cruiser');
+  const {fileURLToPath}=await import('node:url');
+  const root=fileURLToPath(new URL('../../../../../',import.meta.url));
+  const previous=process.cwd();
+  try {
+    process.chdir(root);
+    const result=await cruise(['packages/brain/src/lib/factory-workflow-config.js'],{baseDir:root,doNotFollow:{path:'node_modules'},exclude:{path:'node_modules'}});
+    const graph=typeof result.output==='string'?JSON.parse(result.output):result.output;
+    const reader=graph.modules.find(m=>m.source==='packages/brain/src/lib/factory-workflow-config.js');
+    expect(reader.dependencies.some(d=>d.resolved==='packages/brain/config/factory-workflows.json'&&!d.couldNotResolve)).toBe(true);
+  } finally {process.chdir(previous);}
+});
