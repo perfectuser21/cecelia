@@ -55,6 +55,7 @@ try {
   assert.equal(readback.target.definition_version_id,`candidate:${compose}`);
   assert(readback.run_id && readback.evidence,'应有真实运行与证据');
   assert(readback.evidence.runs?.length && readback.evidence.events?.length,'应有真实运行账和事件账');
+  await panel.getByLabel('调用结果',{exact:true}).scrollIntoViewIfNeeded();
   await page.screenshot({path:outputDir+'/completed.png',fullPage:true});
   await writeFile(outputDir+'/readback.json',JSON.stringify({url:origin+'/map',frontend_head:head,backend_head:process.env.INVOCATION_CHECK_BACKEND_HEAD,build,request:creates[0],readback},null,2));
   process.stdout.write(JSON.stringify({event:'browser_verified',task_id:accepted.task_id,run_id:readback.run_id,output_dir:outputDir})+'\n');

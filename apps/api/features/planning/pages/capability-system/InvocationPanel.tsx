@@ -68,7 +68,7 @@ function InvocationSession({ target }: { target: InvocationTarget }) {
   }
   return <section aria-label={`${target.kind === 'activity' ? '活动' : '工作流'}调用`} className="my-4 space-y-3 rounded-xl border p-4">
     <h3 className="font-semibold">{target.kind === 'activity' ? '活动' : '工作流'}调用</h3>
-    <p className="break-all text-sm">指定版本：{target.definition_version_id || '未指定（由后端确认）'}</p>
+    <p className="break-all text-sm">指定版本：{resolution?.target.definition_version_id || (mode === 'candidate' ? '候选身份待后端确认' : target.definition_version_id || '未指定（由后端确认）')}</p>
     <form onSubmit={submit} className="space-y-3">
       <label className="block text-sm">调用用途<select aria-label="调用用途" value={mode} disabled={busy || !!requestKey} onChange={e => setMode(e.target.value as InvocationRequest['mode'])} className="ml-2 rounded border p-2 dark:bg-slate-900"><option value="released">正式版本</option><option value="candidate">候选验证（不代表正式可用）</option></select></label>
       {mode === 'candidate' && <details><summary className="text-sm">候选验证来源</summary><fieldset disabled={busy || !!requestKey}><label className="block text-sm">编写任务<input aria-label="编写任务" required value={authoringTask} onChange={e => setAuthoringTask(e.target.value)} className="block w-full rounded border p-2 dark:bg-slate-900" /></label><label className="block text-sm">候选摘要<input aria-label="候选摘要" required value={compose} onChange={e => setCompose(e.target.value)} className="block w-full rounded border p-2 dark:bg-slate-900" /></label><p className="text-sm text-amber-800">验证通过后仍需正式发布门禁。</p></fieldset></details>}

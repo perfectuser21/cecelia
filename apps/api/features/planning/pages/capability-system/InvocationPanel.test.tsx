@@ -75,6 +75,7 @@ describe('现有目录调用', () => {
     fireEvent.change(screen.getByLabelText('候选摘要'), {target:{value:'hash'}});
     fireEvent.change(screen.getByLabelText('主题'), {target:{value:'候选'}});
     await waitFor(() => expect(screen.getByRole('button', {name:'启动调用'})).toBeEnabled());
+    expect(screen.getByText('指定版本：candidate:hash')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', {name:'启动调用'}));
     expect(await screen.findByText('失败')).toBeInTheDocument();
     const candidateResolve = fetcher.mock.calls.filter(([url]) => url.endsWith('/resolve')).map(([,init]) => JSON.parse(String(init?.body))).find(body => body.mode === 'candidate');
