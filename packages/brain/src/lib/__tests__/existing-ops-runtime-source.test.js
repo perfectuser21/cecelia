@@ -52,3 +52,99 @@ describe('固定 build 原生执行来源合同',()=>{
     expect(JSON.stringify(disabled)).toBe(JSON.stringify(original));
   });
 });
+
+import { BUILD_SOURCE_PATHS, proveBuildSources, buildSelectorEnabled } from '../existing-ops-build-source.js';
+const buildSources=()=>Object.fromEntries(['test','helper','activity','cli','protocol'].map(key=>[key,key==='test'?explicitProvider(fixedBuild(BUILD_SOURCE_PATHS[key])):fixedBuild(BUILD_SOURCE_PATHS[key])]));
+const mutateBuild=(key,before,after)=>{const s=buildSources();expect(s[key]).toContain(before);s[key]=s[key].replace(before,after);return s;};
+describe('固定 build 执行封套反例（只解析，不执行 payload）',()=>{
+  it('真实固定封套及第二棒新增 INTENT_PATH 普通参数均可证明',()=>{
+    const s=buildSources();expect(proveBuildSources(s,parse)).toBe(true);
+    s.activity=s.activity.replace("import { intentHeading, prKindOf } from '../lib/pr-kind.mjs';","import { intentHeading, prKindOf } from '../lib/pr-kind.mjs';\nimport { INTENT_FILE } from '../lib/spec-check.mjs';")
+      .replace('    TASK_ID: input.task_id,','    TASK_ID: input.task_id,\n    INTENT_PATH: path.join(dir, INTENT_FILE),');
+    expect(proveBuildSources(s,parse)).toBe(true);
+  });
+  it.each([
+    ['未固定provider','test',"CODING_WF_PROVIDER: 'claude', ",''],
+    ['不同provider','test',"CODING_WF_PROVIDER: 'claude'","CODING_WF_PROVIDER: 'codex'"],
+    ['describe.skip','test',"describe('build 活动","describe.skip('build 活动"],
+    ['it.skip','test',"it('claude 参数：","it.skip('claude 参数："],
+    ['ENTRY改向','test',"'../activities/build.mjs'","'../activities/spec.mjs'"],
+    ['FAKE改向','test',"'fixtures/fake-claude.mjs'","'fixtures/other.mjs'"],
+    ['run重赋','test',"  it('claude 参数：","  run=()=>{};\n  it('claude 参数："],
+    ['第三参数覆盖CLI','test',"    const r = await run('build-ok');\n    expect(r.stderr)","    const r = await run('build-ok', {}, {CODING_WF_CLAUDE_BIN:'/bin/true'});\n    expect(r.stderr)"],
+    ['helper调用替换','test','runActivityProcess(ENTRY, input(patch)','unused(ENTRY, input(patch)'],
+    ['helper argv扩大','helper','[entry]','["-e",entry]'],
+    ['helper提前返回','helper','    const child = spawn','    return;\n    const child = spawn'],
+    ['关键对象别名逃逸','helper','    const child = spawn','    const alias=process; alias.execPath="/bin/true";\n    const child = spawn'],
+    ['env别名逃逸','activity','  const specPath =','  const alias=process.env; alias.CODING_WF_PROVIDER="codex";\n  const specPath ='],
+    ['入口不调用main','activity','const result = await main(input);','const result = {};'],
+    ['main提前返回','activity','  const specPath =','  return {};\n  const specPath ='],
+    ['模板未进参数','activity',"const args = ['-p', prompt,","const args = ['-p', 'ignored',"],
+    ['prompt重新赋值','activity',"  const args = ['-p', prompt,","  prompt='ignored';\n  const args = ['-p', prompt,"],
+    ['vars副作用调用','activity','    TASK_ID: input.task_id,','    EXTRA: poison(),\n    TASK_ID: input.task_id,'],
+    ['加载另一个模板','activity',"loadPrompt('build',","loadPrompt('spec',"],
+    ['reader改向','cli',"'../prompts'","'../other-prompts'"],
+    ['reader未用模板','cli',"return renderPrompt(fs.readFileSync(path.join(PROMPTS_DIR, `${name}.md`), 'utf8'), vars);","return 'ignored';"],
+    ['默认bin改向','cli',"bin = process.env.CODING_WF_CLAUDE_BIN || 'claude'","bin = '/bin/true'"],
+    ['isolate分支bin替换','cli','bin: native?.bin,','bin: "other",'],
+    ['真实spawn改bin','cli','child = spawn(bin, args,','child = spawn("other", args,'],
+    ['protocol不调用handler','protocol','await handler(input)','{}'],
+  ])('%s 必须拒绝',(_name,key,before,after)=>{expect(proveBuildSources(mutateBuild(key,before,after),parse)).toBe(false);});
+  it('跳过、提前返回及未调用函数中的 run 不算活跃调用',()=>{
+    const prefix="it('claude 参数：acceptEdits，允许 Bash，禁 git push 与 gh；prompt 带 S-n 列表与 03 路径', async () => {";
+    for(const statement of ['return;','if(false) return;','const unused=async()=>{ await run("build-ok"); }; return;','switch(1){case 1:return;}','do {} while(true);'])
+      expect(proveBuildSources(mutateBuild('test',prefix,prefix+statement),parse)).toBe(false);
+  });
+  it('独立marker缺省或0保旧，未知/动态/重复/可变拒绝',()=>{
+    for(const text of ['', '// export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=1;', 'const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=1;', 'export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=0;'])expect(buildSelectorEnabled(text,parse)).toBe(false);
+    expect(buildSelectorEnabled('export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=1;',parse)).toBe(true);
+    for(const text of ['export let EXISTING_OPS_BUILD_SELECTOR_SCHEMA=1;','export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=2;','export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=process.env.X;','export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=1; export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA=0;'])expect(()=>buildSelectorEnabled(text,parse)).toThrow();
+  });
+  it('真实exclude未选择build测试时不凭文件存在认领活动模板与假CLI',async()=>{
+    const config='packages/brain/vitest.config.js';
+    const f3=(await collectBuild(enabledBuild,{[config]:fixedBuild(config).replace('exclude: [',"exclude: ['scripts/coding-workflow/__tests__/build.test.mjs',")})).consumers[1];
+    expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
+    for(const key of ['activity','prompt','fake'])expect(f3.bindings.map(b=>b.path)).not.toContain(BUILD_SOURCE_PATHS[key]);
+  });
+});
+
+import { provePublishSources } from '../existing-ops-build-source.js';
+const publishTest=buildPrefix+'__tests__/publish.test.mjs';
+describe('固定 publish 原生入口来源',()=>{
+  it('现有活跃 publish 子进程在新协议中认领真实入口，不泛化其它活动或假GH',async()=>{
+    expect(provePublishSources(fixedBuild(publishTest),fixedBuild(BUILD_SOURCE_PATHS.helper),parse)).toBe(true);
+    const f3=(await collectBuild(enabledBuild)).consumers[1];
+    expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
+    expect(f3.bindings.map(b=>b.path)).toContain(buildPrefix+'activities/publish.mjs');
+    expect(f3.input_relations).toContainEqual(expect.objectContaining({input_path:buildPrefix+'activities/publish.mjs',kind:'native_publish_activity_spawn'}));
+    expect(f3.bindings.map(b=>b.path)).not.toContain(buildPrefix+'__tests__/fixtures/fake-gh.mjs');
+  });
+  it.each([
+    ['skip',"it('new：","it.skip('new："],
+    ['不同入口',"'../activities/publish.mjs'","'../activities/spec.mjs'"],
+    ['未执行helper','runActivityProcess(ENTRY, input(patch)','unused(ENTRY, input(patch)'],
+    ['覆盖参数',"const r = await run('new');","const r = await run('new', {}, {CODING_WF_GH_BIN:'other'});"],
+    ['return提前终止',"const r = await run('new');","return; const r = await run('new');"],
+    ['绑定篡改',"  it('new：","  ENTRY='other';\n  it('new："],
+  ])('publish %s 无执行证明',(_label,before,after)=>{
+    const original=fixedBuild(publishTest);expect(original).toContain(before);
+    expect(provePublishSources(original.replace(before,after),fixedBuild(BUILD_SOURCE_PATHS.helper),parse)).toBe(false);
+  });
+});
+
+describe('固定 witness 的测试选择与 setup 封套',()=>{
+  it('其它 it.only 或 describe.only/链式 each.only 不得排除 build witness 后仍认领',()=>{
+    const original=buildSources();
+    for(const [before,after] of [["it('02-spec.md 不存在", "it.only('02-spec.md 不存在"], ["describe('build 活动","describe.only('build 活动"], ["    it.each(['CLAUDE.md'", "    it.each.only(['CLAUDE.md'"]]) {
+      expect(original.test).toContain(before);
+      expect(proveBuildSources({...original,test:original.test.replace(before,after)},parse)).toBe(false);
+    }
+  });
+  it('build与publish的 setup 提前终止或被替换时没有活跃witness',()=>{
+    for(const prefix of ['throw Error("stop");','return;','if(true)return;','process.exit(0);']) {
+      const original=buildSources();original.test=original.test.replace('beforeEach(() => {','beforeEach(() => {'+prefix);
+      expect(proveBuildSources(original,parse)).toBe(false);
+      expect(provePublishSources(fixedBuild(publishTest).replace('beforeEach(() => {','beforeEach(() => {'+prefix),fixedBuild(BUILD_SOURCE_PATHS.helper),parse)).toBe(false);
+    }
+  });
+});

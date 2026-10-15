@@ -45,7 +45,7 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     ...patch,
   });
   const run = (mode, patch, extraEnv = {}) =>
-    runActivityProcess(ENTRY, input(patch), { CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: mode, ...extraEnv });
+    runActivityProcess(ENTRY, input(patch), { CODING_WF_PROVIDER: 'claude', CODING_WF_CLAUDE_BIN: FAKE_CLAUDE, FAKE_CLAUDE_MODE: mode, ...extraEnv });
   const buildFile = () => path.join(sprintAbs, '03-build.md');
   const head = () => git(worktree, 'rev-parse', 'HEAD').trim();
 

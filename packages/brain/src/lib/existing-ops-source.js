@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
 import { runtimeSelectorEnabled, collectRuntimeSources } from './existing-ops-runtime-source.js';
+import { buildSelectorEnabled, collectBuildSources } from './existing-ops-build-source.js';
 let parse;
 async function requireParser() {
   if (parse) return;
@@ -344,6 +345,7 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     const schemaText = tree.has(schemaPath) ? await readSource(schemaPath, revision) : '';
     const expanded = schemaText && expandedSelectorSchema(schemaText);
     const runtime = schemaText && runtimeSelectorEnabled(schemaText, ast);
+    const buildInputs = schemaText && buildSelectorEnabled(schemaText, ast);
     const selectors = expanded && config ? regressionSelectors(config) : null;
     if (selectors) for (const path of paths.filter(path => path.startsWith('tests/regression/') && !path.split('/').some(part => part.startsWith('.'))
       && selectors.include.some(pattern => pattern.test(path)) && !selectors.exclude.some(pattern => pattern.test(path)))) {
@@ -351,6 +353,10 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
         kind: 'literal_vitest_regression_selector', selector: 'native_nightly_include_minus_exclude', revision });
     }
     if (runtime && selectors) await collectRuntimeSources({ parse: ast, paths, selectors, read, readSource, revision, relations, requireProof, ci });
+    if (buildInputs) {
+      if (requireProof(Boolean(runtime && selectors), 'build_selector_parent_unproven'))
+        await collectBuildSources({ parse: ast, paths, selectors, read, readSource, revision, relations, requireProof });
+    }
     const ciDoc = ci ? yaml.load(ci) : null, versionJob = 'brain-version-bump-gate', versionPath = 'scripts/ci/check-brain-version-bump.sh';
     if (expanded && ciDoc?.jobs?.[versionJob]) {
       const job = ciDoc.jobs[versionJob];
