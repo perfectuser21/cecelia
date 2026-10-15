@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { useQaEnv } from './helpers/qa-env.mjs';
+import { useQaEnv, TASK } from './helpers/qa-env.mjs';
 
 describe('预览等待必须有界', () => {
   const E = useQaEnv();
@@ -7,18 +7,23 @@ describe('预览等待必须有界', () => {
     it(`${kind} 跨 tick 计时，超时升级且不运行 QA`, async () => {
       if (kind === 'pending') E.preview.status[77].status = 'starting';
       const extra = kind === 'error' ? { CODING_WF_PREVIEW_API: 'http://127.0.0.1:1' } : {};
-      let r = await E.go(E.green(), { extra });
+      // 镜像必须落到真实存在的任务；空任务表中的 PATCH 日志不代表写入成功。
+      let r = await E.go(E.green(), { extra, tasks: [{ id: TASK, status: 'completed' }] });
       expect(r.exitCode, r.stderr).toBe(0);
       expect(E.state().preview).toMatchObject({ waiting_since: expect.any(String), waiting_head: E.head });
       expect(E.brainStateResults().at(-1).qa_state.preview).toEqual(E.state().preview);
+      expect(E.brain.tasks[0]).toMatchObject({ id: TASK, result: { qa_state: { preview: E.state().preview } } });
       expect(E.state().escalated).toBeUndefined();
       expect(E.qaCalls()).toEqual([]);
       const since = E.state().preview.waiting_since;
+      const persistedTask = structuredClone(E.brain.tasks[0]);
       await E.closeBrain();
-      r = await E.go(E.green(), { extra: { ...extra, CODING_WF_QA_PREVIEW_ESCALATE_MS: '0' } });
+      r = await E.go(E.green(), { tasks: [persistedTask], extra: { ...extra, CODING_WF_QA_PREVIEW_ESCALATE_MS: '0' } });
       expect(r.exitCode, r.stderr).toBe(0);
       expect(E.state().escalated).toMatchObject({ type: 'qa_preview_unavailable', preview_state: kind, since });
       expect(E.brainResults().at(-1).escalations).toEqual([expect.objectContaining({ type: 'qa_preview_unavailable', pr: 77 })]);
+      expect(E.brain.tasks[0].result.qa_state.escalated).toEqual(E.state().escalated);
+      expect(E.brain.tasks[0].result.escalations).toEqual(E.brainResults().at(-1).escalations);
       expect(E.qaCalls()).toEqual([]);
     });
   }
