@@ -20,9 +20,11 @@ else if(args[0]==='disable') s.disabled=true;
 else if(args[0]==='enable') s.disabled=false;
 else if(args[0]==='bootstrap') { s.loaded=true; s.contents=fs.readFileSync(args[2],'utf8'); }
 else if(args[0]==='bootout') s.loaded=false;
-fs.writeFileSync(${JSON.stringify(state)},'');
+const next=${JSON.stringify(state)}+'.'+process.pid+'.tmp';
+fs.writeFileSync(next,'');
 if(process.env.STATE_WRITE_PAUSE==='1') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50);
-fs.writeFileSync(${JSON.stringify(state)},JSON.stringify(s));`, { mode: 0o755 });
+fs.writeFileSync(next,JSON.stringify(s));
+fs.renameSync(next,${JSON.stringify(state)});`, { mode: 0o755 });
   fs.writeFileSync(script, `#!/bin/bash\nprintf '%s' "$CODING_WF_AUTOMERGE" > '${root}/automerge'\nprintf changed > '${dest}'\nlaunchctl bootout system/com.cecelia.coding-workflow-runner\nlaunchctl bootstrap system '${dest}'\nexit "\${FAIL_INSTALL:-0}"\n`);
   env = { ...cleanTestEnv(), PATH: `${bin}:${process.env.PATH}`, HOME: root, CODING_WF_LOCK_DIR: path.join(root, 'locks') };
 });

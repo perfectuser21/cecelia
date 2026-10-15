@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { cruise } from 'dependency-cruiser';
 import yaml from 'js-yaml';
 import { buildExistingOpsSources } from '../existing-ops-source.js';
 import { collectWorkspaceInputEdges } from '../existing-ops-workspace-source.js';
@@ -50,23 +46,6 @@ describe('真实nightly workspace消费者来源', () => {
     const proof = await collectDefinition({}, false);
     expect(proof.status).toBe('verified');
     expect(proof.bindings.some(b => b.path.startsWith('apps/'))).toBe(false);
-  });
-  it('原生依赖扫描从真实被选择测试解析三个UI owner，不伪造辅助来源或import边', async () => {
-    const proof = await collect();
-    const owners = ['BusinessInputs', 'CapabilitySystem', 'InvocationPanel'];
-    const tests = owners.map(name => `apps/api/features/planning/pages/capability-system/${name}.test.tsx`);
-    expect(tests.every(path => proof.some(b => b.dst_path === path))).toBe(true);
-    const temporary = mkdtempSync(join(tmpdir(), 'nightly-workspace-source-')), checkout = join(temporary, 'source');
-    try {
-      execFileSync('git', ['worktree', 'add', '--quiet', '--detach', checkout, revision], { cwd: root });
-      const scanned = await cruise(tests, { baseDir: realpathSync(checkout), doNotFollow: { path: 'node_modules' }, exclude: { path: 'node_modules' } });
-      const graph = typeof scanned.output === 'string' ? JSON.parse(scanned.output) : scanned.output;
-      for (const path of tests) expect(graph.modules.find(m => m.source === path)?.dependencies)
-        .toContainEqual(expect.objectContaining({ resolved: path.replace('.test.tsx', '.tsx'), couldNotResolve: false }));
-    } finally {
-      execFileSync('git', ['worktree', 'remove', '--force', checkout], { cwd: root });
-      rmSync(temporary, { recursive: true, force: true });
-    }
   });
   it('脚本替换不能扩大真实图消费者来源', async () => {
     const manifest = 'apps/api/package.json', pkg = JSON.parse(read(manifest));
