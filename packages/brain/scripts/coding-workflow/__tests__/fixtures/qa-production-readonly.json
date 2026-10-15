@@ -1,0 +1,11 @@
+{
+  "source": "Codex canary R3 attempt3 X-1, historical failed run; no approval",
+  "command": "node -e 'const fs=require(\"fs\");const p=\"packages/brain/scripts/coding-workflow/runner/README.md\";const s=fs.readFileSync(p,\"utf8\");if(s.includes(\"PREVIEW_URL=http://localhost:5221\")||s.includes(\"curl http://localhost:5221\"))throw Error(\"production_preview_example\");if(!s.includes(\"不能把生产地址代入 `PREVIEW_URL`\"))throw Error(\"production_warning_missing\");console.log(\"预览命令未指向生产地址\")'",
+  "native": {
+    "command": "/bin/zsh -lc \"node -e 'const fs=require(\\\"fs\\\");const p=\\\"packages/brain/scripts/coding-workflow/runner/README.md\\\";const s=fs.readFileSync(p,\\\"utf8\\\");if(s.includes(\\\"PREVIEW_URL=http://localhost:5221\\\")||s.includes(\\\"curl http://localhost:5221\\\"))throw Error(\\\"production_preview_example\\\");if(\"'!s.includes(\"不能把生产地址代入 `PREVIEW_URL`\"))throw Error(\"production_warning_missing\");console.log(\"预览命令未指向生产地址\")'\"'\"",
+    "result": "预览命令未指向生产地址\n",
+    "provider": "codex",
+    "completed": true,
+    "exitCode": 0
+  }
+}
