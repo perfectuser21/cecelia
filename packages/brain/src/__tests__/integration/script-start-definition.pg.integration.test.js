@@ -3,6 +3,7 @@ import {PassThrough} from 'node:stream';
 import {readFileSync} from 'node:fs';
 import {randomUUID,createHash} from 'node:crypto';
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
+import {seedExecutionDirectoryFixture} from '../helpers/execution-directory-fixture.js';
 import {scriptDefinitionDatabase} from '../fixtures/script-definition-db.js';
 import {versionsDatabase,seedWorkflows} from '../fixtures/definition-versions-db.js';
 import {migrationSql,withLegacyNames} from '../fixtures/minimum-definition-schema.js';
@@ -13,6 +14,7 @@ import {PATROL_CAPABILITY} from '../../lib/device-patrol-admission.js';
 vi.mock('../../runtime-safety.js',()=>({assertExternalExecutionAllowed(){}}));
 let fixture,db,workflow,calls;
 beforeEach(async()=>{
+  await seedExecutionDirectoryFixture();
   fixture=await versionsDatabase();await fixture.migrate();db=fixture.db;
   await withLegacyNames(db,()=>db.query(migrationSql('515_release_definition_evidence.sql')));
   await db.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_type text, ADD COLUMN IF NOT EXISTS executor_kind text, ADD COLUMN IF NOT EXISTS error_message text, ADD COLUMN IF NOT EXISTS claimed_by text, ADD COLUMN IF NOT EXISTS claimed_at timestamptz,
