@@ -8,8 +8,17 @@ import {createRequire} from 'node:module';
 import yaml from 'js-yaml';
 import {canonicalRepoIdentity} from '../../packages/brain/src/lib/gp-assertion-command.js';
 import {WORKSPACE_ENVELOPES} from './workspace-test-envelopes.mjs';
-// Resolve the explicitly declared TypeScript dependency from trusted tooling, never candidate root.
-const ts=createRequire(new URL('../../apps/api/package.json',import.meta.url))('typescript');
+// Resolve only when a proof is applicable, from the trusted Brain installation.
+// Missing tooling is an explicit error, never an empty successful graph or candidate fallback.
+let ts;
+function loadTrustedParser(){
+ if(ts)return;
+ let parser;
+ try{parser=createRequire(new URL('../../packages/brain/package.json',import.meta.url))('typescript');}
+ catch(cause){throw Object.assign(new Error('Trusted Brain TypeScript 5.9.3 is required',{cause}),{code:'WORKSPACE_TEST_PARSER_UNAVAILABLE'});}
+ if(parser.version!=='5.9.3')throw Object.assign(new Error('Trusted Brain TypeScript version must be 5.9.3'),{code:'WORKSPACE_TEST_PARSER_VERSION_MISMATCH'});
+ ts=parser;
+}
 const SELF='perfectuser21/cecelia',F3='0466016e-6d9f-4325-aeb4-d8bc70424a48';
 const CI='.github/workflows/ci.yml',PKG='apps/api/package.json',CONFIG='apps/api/vitest.config.ts',SETUP='apps/api/test/setup.ts';
 const PREFIX='apps/api/features/planning/pages/capability-system/';
@@ -90,6 +99,7 @@ export function collectWorkspaceTestEdges(root,snapshot){
   if(pkg.devDependencies?.vitest!=='^4.0.18'||pkg.devDependencies?.typescript!=='^5.6.0')return [];
   if(digest(lockView(JSON.parse(readText('package-lock.json')),false))!==WORKSPACE_ENVELOPES.rootLock||digest(lockView(JSON.parse(readText('apps/api/package-lock.json')),true))!==WORKSPACE_ENVELOPES.apiLock)return [];
   if(compilerFiles.some(path=>sha(readText(path))!==WORKSPACE_ENVELOPES.compiler[path]))return [];
+  loadTrustedParser();
   ast(CONFIG,readText(CONFIG));ast(SETUP,readText(SETUP));
   if(sha(readText(CONFIG))!==WORKSPACE_ENVELOPES.config||sha(readText(SETUP))!==WORKSPACE_ENVELOPES.setup)return [];
   for(const name of NAMES){
@@ -101,5 +111,5 @@ export function collectWorkspaceTestEdges(root,snapshot){
   const pairs=[[CI,PKG],[PKG,CONFIG],[CONFIG,SETUP],...NAMES.flatMap(n=>[[CONFIG,PREFIX+n+'.test.tsx'],[PREFIX+n+'.test.tsx',PREFIX+n+'.tsx']])];
   return pairs.map(([src_path,dst_path])=>({src_path,dst_path,edge_type:'import',detail:{via:'fixed_workspace_test_consumer',proof_version:'workspace-test-v1',source_revision:revision,source_repo:SELF,source_sha256:inputs[src_path],target_sha256:inputs[dst_path],inputs,
    selector:'changes.apps/** -> workspace-test -> apps/api npm test -> **/*.{test,spec}.{ts,tsx}',execution_claim:'dependency_only; not per-run test PASS',parser:'typescript '+ts.version}}));
- }catch{return [];}
+ }catch(error){if(error.code?.startsWith('WORKSPACE_TEST_PARSER_'))throw error;return [];}
 }
