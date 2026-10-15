@@ -30,3 +30,8 @@ describe('workflow authoring 输入合同', () => {
     }
   });
 });
+
+it('显式装配请求必须有冻结协议，不能回退到旧登记',()=>{
+ expect(()=>validateRequest({operation:'create',actor:'装配器',goal:'登记',assembly_mode:true})).toThrow();
+ expect(()=>validateRequest({operation:'create',actor:'装配器',goal:'登记',assembly_mode:true,registration_protocol:'definition-freeze-v1'})).not.toThrow();
+});

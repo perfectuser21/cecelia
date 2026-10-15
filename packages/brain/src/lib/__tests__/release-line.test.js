@@ -103,3 +103,13 @@ describe('自动退回钩子不影响裁判落库', () => {
     expect(stored.window_unversioned_run_count).toBe(1);
   });
 });
+
+it('严格装配构建失败向外抛错，不能容错提交或发送告警',async()=>{
+ const db={query:vi.fn(async()=>({rows:[{ok:true}]}))},alert=vi.fn();
+ await expect(runReleaseLineHook(db,'register_build',async()=>{throw Error('build_failed');},{strict:true,env:{},alert,log:{warn:vi.fn()}})).rejects.toThrow('build_failed');
+ expect(alert).not.toHaveBeenCalled();
+});
+it.each(['disabled','not_migrated'])('严格装配不能忽略发布线%s',async why=>{
+ const db={query:vi.fn(async()=>({rows:[{ok:false}]}))};
+ await expect(runReleaseLineHook(db,'refresh_recipe',vi.fn(),{strict:true,env:why==='disabled'?{RELEASE_LINE_SYNC_HOOK:'off'}:{}})).rejects.toThrow();
+});
