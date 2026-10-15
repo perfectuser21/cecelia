@@ -47,7 +47,7 @@ it('格式和注释变化保持规范AST真实封套',()=>{
 const negatives=[
  ['CI路径选择排除apps',CI,"grep -qE '^apps/'","grep -qE '^elsewhere/'"],
  ['输出接错',CI,'workspace: ${{ steps.detect.outputs.workspace }}','workspace: ${{ steps.detect.outputs.brain }}'],
- ['job不执行',CI,"if: needs.changes.outputs.workspace == 'true'","if: false"],
+ ['job不执行',CI,"  workspace-test:\n    needs: changes\n    if: needs.changes.outputs.workspace == 'true'","  workspace-test:\n    needs: changes\n    if: false"],
  ['needs缺失',CI,'needs: [secrets-scan,','needs: [secrets-scan,'],
  ['CI失败出口被吞',CI,'check "workspace-test"','echo "workspace-test"'],
  ['job容错',CI,'  workspace-test:\n','  workspace-test:\n    continue-on-error: true\n'],

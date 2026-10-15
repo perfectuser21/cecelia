@@ -1,5 +1,6 @@
 /** 仅scratch：复用中央身份和正式投影器，固定git产生两侧不可变图。 */
 import pg from 'pg';
+import {collectWorkspaceTestEdges} from './workspace-test-source.mjs';
 import { registerCompanyKrWorkflow,activityContract } from '../../packages/brain/src/lib/company-kr-registration.js';
 import { execFileSync } from 'node:child_process';
 import { loadActivityContracts } from '../../packages/brain/src/lib/activity-contract-loader.js';
@@ -179,7 +180,7 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
   const edges=definitionEdges(s); // 在写隔离扫描图之前先拒绝无效定义路径。
   const cross=s.scope===EXISTING_OPS_SCOPE&&s.repo==='perfectuser21/zenithjoy-workspace';
   const registryRepo=s.map.repositories[0].repo;
-  await scanFixedImplementationGraph(db,cross?s.repo:registryRepo,repoRoot,s.revision,edges);
+  await scanFixedImplementationGraph(db,cross?s.repo:registryRepo,repoRoot,s.revision,edges,undefined,s);
   if(cross){
     const nativeRoot=fileURLToPath(new URL('../../',import.meta.url)),dir=mkdtempSync(join(tmpdir(),'implementation-native-graph-'));
     try{
@@ -304,7 +305,7 @@ async function scratchWorkspaceProof(db,revision,repoRoot,anchor){
  if(proof.status!=='verified')throw ciFailure('CONSUMER_SOURCE_MISMATCH');return proof;
 }
 
-async function scanFixedImplementationGraph(db,repo,root,revision,edges,sourceName){
+async function scanFixedImplementationGraph(db,repo,root,revision,edges,sourceName,snapshot){
  // Frozen-definition readers do not need the scanner's root dependencies.
  const {scanRepo}=await import('../scan/scan-graph.mjs');
  const staging=`ci-scan:${repo}`;
@@ -312,6 +313,6 @@ async function scanFixedImplementationGraph(db,repo,root,revision,edges,sourceNa
  if(result.error||result.skipped||result.sourceRevision!==revision)throw ciFailure('GRAPH_SCAN_FAILED',result.error?.message||'scan revision mismatch');
  const raw=(await db.query('SELECT src_path,dst_path,edge_type,detail FROM graph_edges WHERE repo=$1',[staging])).rows;
  const byKey=new Map(raw.map(e=>[JSON.stringify([e.src_path,e.dst_path,e.edge_type]),e]));
- for(const edge of edges){const key=JSON.stringify([edge.src_path,edge.dst_path,edge.edge_type]);if(!byKey.has(key))byKey.set(key,edge);}
+ for(const edge of [...edges,...(snapshot?collectWorkspaceTestEdges(root,snapshot):[])]){const key=JSON.stringify([edge.src_path,edge.dst_path,edge.edge_type]);if(!byKey.has(key))byKey.set(key,edge);}
  await replaceRepoEdges(db,repo,[...byKey.values()],{sourceRevision:revision,scannerVersion:'implementation-ci-v1'});
 }
