@@ -1,8 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {spawn} from 'node:child_process';
-import {mkdtempSync,writeFileSync,readFileSync,existsSync,mkdirSync,symlinkSync,rmSync,readdirSync} from 'node:fs';
+import {spawn,execFileSync} from 'node:child_process';
+import {mkdtempSync,writeFileSync,readFileSync,existsSync,mkdirSync,symlinkSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -100,4 +100,72 @@ test('正式artifact仅成功上传，diagnostic独立always',()=>{
  const steps=workflow().jobs['snapshot-main'].steps,uploads=steps.filter(s=>s.uses?.startsWith('actions/upload-artifact@'));
  for(const kind of ['implementation-snapshot-','implementation-baseline-'])assert.ok(uploads.some(s=>s.with?.name.startsWith(kind)&&s.if==='success()'));
  assert.ok(uploads.some(s=>s.with?.name.startsWith('implementation-snapshot-diagnostics-')&&s.if==='always()'));
+});
+
+test('2xx错误对象、摘要篡改和错revision不能成为正式快照',async t=>{
+ for(const options of [
+  {refresh:{'cecelia-factory':{body:{error:{code:'provider-error'}}}}},
+  {mutateFinal:body=>({...body,snapshot:{...body.snapshot,snapshot_sha256:'0'.repeat(64)}})},
+  {mutateFinal:()=>bundle('c'.repeat(40))},
+ ]){
+  const r=await executeProvider(t,{initial:{childMissing:true},...options});assert.notEqual(r.code,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+ }
+});
+test('未知409不能假设并发赢家，保留原冲突',async t=>{
+ const r=await executeProvider(t,{initial:{childMissing:true},refresh:{'cecelia-factory':{status:409,body:{error:{code:'OPS_REGISTRY_CHANGED'}}}},after:{'cecelia-factory':{childMissing:false}}});assert.notEqual(r.code,0);assert.match(r.stderr,/OPS_REGISTRY_CHANGED/);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+});
+test('当前完整bundle无refresh，历史base合法unknown companion明确仅父验证',async t=>{
+ const r=await executeProvider(t);assert.equal(r.code,0,r.stderr);assert.equal(r.calls.filter(c=>c.method==='POST').length,0);
+ const publication=JSON.parse(readFileSync(join(r.dir,'evidence/diagnostics/publication.json')));assert.equal(publication.base_admission,'parent_scope_only');
+ assert.equal(JSON.parse(readFileSync(join(r.dir,'evidence/base.json'))).snapshot.admission_companion.snapshot.status,'unknown');
+});
+test('中央凭据只交可信main工具，候选源码不参与provider执行',()=>{
+ const steps=workflow().jobs['snapshot-main'].steps,checkout=steps.find(s=>s.uses?.startsWith('actions/checkout@'));
+ assert.equal(checkout.with.repository,repo);assert.equal(checkout.with['persist-credentials'],false);assert.equal(checkout.with.path,'tooling');
+ const trusted=steps.findIndex(s=>s.name==='仅可信已发布main工具读取中央凭据'),secret=steps.findIndex(s=>s.env?.CECELIA_INTERNAL_TOKEN);
+ assert.ok(trusted>=0&&trusted<secret);assert.match(steps[trusted].run,/git merge-base --is-ancestor HEAD origin\/main/);
+ assert.match(steps[secret].run,/node tooling\/scripts\/ci\/implementation-main-snapshot.mjs/);
+ assert.ok(steps.some(s=>s.run==='npm ci --ignore-scripts'&&s['working-directory']==='tooling'));
+});
+
+async function executeDownload(t,{runPatch={},failedJob=false,errorBody=false,toolingRoot=root}={}){
+ const dir=mkdtempSync(join(tmpdir(),'implementation-download-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ mkdirSync(join(dir,'bin'));symlinkSync(toolingRoot,join(dir,'tooling'),'dir');
+ const run={id:17,head_sha:base,head_branch:'main',event:'push',path:'.github/workflows/implementation-impact.yml',conclusion:'failure',repository:{full_name:repo},head_repository:{full_name:repo},...runPatch};
+ const jobs={total_count:1,jobs:[{name:'snapshot-main',status:'completed',conclusion:failedJob?'failure':'success'}]};
+ writeFileSync(join(dir,'run.json'),JSON.stringify(run));writeFileSync(join(dir,'jobs.json'),JSON.stringify(jobs));
+ writeFileSync(join(dir,'head.json'),JSON.stringify(errorBody?{error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}:bundle(base)));
+ execFileSync('python3',['-c','import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.write(sys.argv[2],"head.json"); z.close()',join(dir,'input.zip'),join(dir,'head.json')]);
+ writeFileSync(join(dir,'bin/gh'),`#!/usr/bin/env node
+const fs=require('fs'),a=process.argv.slice(2),p=a[1];
+if(p.includes('artifacts?'))console.log(JSON.stringify({artifacts:[{id:1,expired:false,created_at:'2026-01-01',workflow_run:{head_branch:'main',head_sha:'${base}',repository_id:1,head_repository_id:1}}]}));
+else if(p.endsWith('/zip'))process.stdout.write(fs.readFileSync('${dir}/input.zip'));
+else if(p.includes('/artifacts/'))console.log('17');
+else if(p.includes('/jobs?'))process.stdout.write(fs.readFileSync('${dir}/jobs.json'));
+else if(a.includes('--jq'))console.log('push .github/workflows/implementation-impact.yml');
+else process.stdout.write(fs.readFileSync('${dir}/run.json'));
+`,{mode:0o700});
+ const runStep=workflow().jobs.gate.steps.find(s=>s.name==='下载固定SHA中央bundle（PR无中央写凭据）');
+ const env={...process.env,PATH:join(dir,'bin')+':'+process.env.PATH,RUNNER_TEMP:dir,GITHUB_REPOSITORY:repo,MODE:'pr',MAP_SCOPE:'cecelia-kr',BASE:base,HEAD:head,ADMISSION_SCOPES:JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-factory']})};
+ const result=await new Promise(resolve=>{const child=spawn('bash',['-c',runStep.run],{cwd:dir,env});let stderr='';child.stderr.on('data',c=>stderr+=c);child.on('close',code=>resolve({code,stderr}));});return {...result,dir};
+}
+test('真实consumer shell：provider job成功即可，不要求整个main gate成功',async t=>{
+ const r=await executeDownload(t);assert.equal(r.code,0,r.stderr);assert.ok(existsSync(join(r.dir,'implementation-input/base/base-cecelia-factory.json')));
+});
+test('真实consumer shell：固定SHA/branch/repo/run来源不符保持拒绝',async t=>{
+ for(const runPatch of [{head_sha:head},{head_branch:'cp-other'},{id:18},{head_repository:{full_name:'attacker/fork'}},{path:'.github/workflows/ci.yml'}]){
+  const r=await executeDownload(t,{runPatch});assert.notEqual(r.code,0);assert.equal(JSON.parse(readFileSync(join(r.dir,'implementation-output/gap.json'))).code,'IMPLEMENTATION_CI_ARTIFACT_ORIGIN_INVALID');
+ }
+});
+test('真实consumer shell：失败provider及历史错误artifact明确归provider失败',async t=>{
+ for(const opts of [{failedJob:true},{errorBody:true}]){
+  const r=await executeDownload(t,opts);assert.notEqual(r.code,0);assert.equal(JSON.parse(readFileSync(join(r.dir,'implementation-output/gap.json'))).code,'IMPLEMENTATION_CI_SNAPSHOT_PROVIDER_FAILED');
+ }
+});
+
+// 审查时可对真实固定旧base checkout运行同一consumer测试；CI默认仍跑现行工具。
+if(process.env.IMPLEMENTATION_TEST_OLD_TOOLING)test('真实固定旧base不含新helper仍可消费修复后的下载step',async t=>{
+ const toolingRoot=process.env.IMPLEMENTATION_TEST_OLD_TOOLING;
+ assert.equal(existsSync(join(toolingRoot,'scripts/ci/implementation-main-snapshot.mjs')),false);
+ const r=await executeDownload(t,{toolingRoot});assert.equal(r.code,0,r.stderr);
 });
