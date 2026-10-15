@@ -456,3 +456,4 @@ workflow-observation-smoke.sh
 version-identity-preflight-smoke.sh
 workflow-assembly-plan-smoke.sh
 directory-title-sync-smoke.sh
+tree-legacy-layout.sh

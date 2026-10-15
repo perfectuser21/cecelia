@@ -145,3 +145,4 @@ bypass-audit-smoke.sh
 dispatch-route-gate-smoke.sh
 coding-workflow-route-smoke.sh
 task-lease-device-pool-smoke.sh
+tree-legacy-layout.sh
