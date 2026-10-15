@@ -47,6 +47,7 @@ app.get('/api/brain/invocation-preview-directory',async(_req,res)=>{
  res.json({workflow:{id:original.id,name:original.result.workflow_authoring.outputs.compose.definition.name},activity:{id:activityId,name:activity.name},authoring_task_id:taskId,compose_sha256:definitionDigest(definition)});
 });
 const server=await new Promise(resolve=>{const server=app.listen(Number(process.env.INVOCATION_PREVIEW_PORT??15283),'127.0.0.1',()=>resolve(server));});
+export const previewPort=server.address().port;
 process.stdout.write(JSON.stringify({preview:true,port:server.address().port,authoring_task_id:taskId,workflow_id:taskId,activity_id:activityId,compose_sha256:definitionDigest(definition),input:{text:'abc'},expected_outputs:{text:'ABC'},schema:fixture.schema,git_commit:commit})+'\n');
 const require=createRequire(import.meta.url),{executeCodex}=require('../codex-bridge/codex-bridge.cjs');
 let running=false;
