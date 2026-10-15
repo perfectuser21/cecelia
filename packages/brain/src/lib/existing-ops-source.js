@@ -198,6 +198,8 @@ function impactRunnerProven(text){
     ||![LEGACY_ADMISSION_SCOPES,SELF_PR_ADMISSION_SCOPES].includes(job.env?.ADMISSION_SCOPES))return false;
   return job.steps?.some(step=>step.if===undefined&&typeof step.run==='string'&&hash(step.run)===IMPACT_GATE_SHA256);
 }
+// 正式 2eb4 的有限 parseArgs 合同；只用于新 main 分支的缺省证明，未知改动失败关闭。
+const LEGACY_MAIN_PARSE_ARGS_SHA256='cdca58011911260e7984f1592a846862c745d6666376a977a656f89ca51a1b52';
 function legacyImpactRunnerProven(text,prText,gateText){
  const doc=yaml.load(text),job=doc?.jobs?.gate;
  if(!doc?.on?.pull_request||job?.if!=="always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')"
@@ -211,12 +213,8 @@ function legacyImpactRunnerProven(text,prText,gateText){
  const mainBranch=ast('function branch(options){if(options.mainScopes!==undefined)return runImplementationMainGate(options);}').body[0].body.body[0];
  const shape=n=>JSON.stringify(n,(key,value)=>['start','end','raw'].includes(key)?undefined:value);
  const parser=pr.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='parseArgs');
- const parseMain=ast('const mainScopes=process.env.IMPLEMENTATION_MAIN_SCOPES||undefined;').body[0];
- const parseAssign=ast('if(mainScopes!==undefined)options.mainScopes=mainScopes;').body[0];
  const dormantMain=n=>shape(n)===shape(mainBranch)
-   &&shape(parser?.body.body.at(-2))===shape(parseAssign)
-   &&nodes(pr).filter(x=>member(x,'options','mainScopes')).length===2
-   &&shape(parser?.body.body[0])===shape(parseMain)
+   &&parser&&hash(shape(parser))===LEGACY_MAIN_PARSE_ARGS_SHA256
    &&!nodes(pr).some(x=>(x.type==='VariableDeclarator'&&nodes(x.id).some(id=>id.name==='undefined'))||(['FunctionDeclaration','FunctionExpression','ArrowFunctionExpression'].includes(x.type)&&(x.id?.name==='undefined'||x.params.some(p=>nodes(p).some(id=>id.name==='undefined'))))||(x.type==='ImportSpecifier'&&x.local.name==='undefined')||(x.type==='AssignmentExpression'&&x.left?.name==='undefined'))
    &&namedImport(pr,'./implementation-main-gate.mjs',['runImplementationMainGate'])
    &&fn.params.length===1&&fn.params[0].name==='options';
