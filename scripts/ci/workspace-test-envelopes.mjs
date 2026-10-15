@@ -4,8 +4,8 @@
  * Production owner implementations are NOT pinned to these hashes. */
 export const WORKSPACE_ENVELOPES = Object.freeze({
   "workflow": "e44fc03de07c1d82668a173e8afcaba7bca1c5cbd206e3e56acebff9af855a26",
-  "rootPackage": "dc678c885010834da8180211cb5ff85edd9c73e209ddec8b2eb81eb44318a567",
-  "apiScripts": "b8967db21ca175d2c2d9fc5000c371ab35139fa4d0abfe881a8c11f72f6e31f7",
+  "rootPackage": "c9998cd4c379267585a4c61fa465d4846e1f05f6fb4683fb1d320d260fc44b19",
+  "apiPackage": "0df6ee7d060ab79fc0d4da75e02ac446533337717cf99ecb92288c6a04f41e3f",
   "config": "f4986084d0fdc4d14b8382fbf4d3dd5ea2b1705a6fad66d22aaa9ae3fda45dcf",
   "setup": "4b4162bc958d4573f078d36deba1d5c0c7578821760188b9a2731a9f2b403fca",
   "tests": {

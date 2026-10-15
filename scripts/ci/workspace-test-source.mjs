@@ -57,6 +57,7 @@ function workflowEnvelope(ci){
  // Entire reviewed selection, setup and failure-exit envelopes are compared, not substrings.
  return {on:ci.on,env:ci.env,defaults:ci.defaults,permissions:ci.permissions,changes:ci.jobs?.changes,workspace:ci.jobs?.['workspace-test'],aggregate:ci.jobs?.['ci-passed']};
 }
+const packageView=p=>Object.fromEntries(['name','type','bin','scripts','workspaces','dependencies','devDependencies','optionalDependencies','peerDependencies','peerDependenciesMeta','overrides','config','packageManager','engines','os','cpu'].filter(k=>k in p).map(k=>[k,p[k]]));
 const hooks=new Set(['preinstall','install','postinstall','prepublish','prepare','preprepare','postprepare']);
 /** Only the already frozen self-repo F3 code binding can anchor these rebuilt edges. */
 export function collectWorkspaceTestEdges(root,snapshot){
@@ -79,12 +80,12 @@ export function collectWorkspaceTestEdges(root,snapshot){
    if(/^(?:apps\/api\/)?vitest\.(?:workspace|projects)\./.test(path))return [];
    if(/^apps\/api\/(?:vitest|vite)\.config\./.test(path)&&path!==CONFIG)return [];
    if(/^(?:apps|packages)\/[^/]+\/package\.json$/.test(path)){
-    const pkg=JSON.parse(read(path));if(Object.keys(pkg.scripts||{}).some(k=>hooks.has(k)))return [];
+    const pkg=JSON.parse(readText(path));if(Object.keys(pkg.scripts||{}).some(k=>hooks.has(k)))return [];
    }
   }
   const ci=yaml.load(ciText);if(digest(workflowEnvelope(ci))!==WORKSPACE_ENVELOPES.workflow)return [];
   const rootPackage=JSON.parse(readText('package.json')),pkg=JSON.parse(readText(PKG));
-  if(digest({scripts:rootPackage.scripts,workspaces:rootPackage.workspaces})!==WORKSPACE_ENVELOPES.rootPackage||digest(pkg.scripts)!==WORKSPACE_ENVELOPES.apiScripts)return [];
+  if(digest(packageView(rootPackage))!==WORKSPACE_ENVELOPES.rootPackage||digest(packageView(pkg))!==WORKSPACE_ENVELOPES.apiPackage)return [];
   if(pkg.devDependencies?.vitest!=='^4.0.18'||pkg.devDependencies?.typescript!=='^5.6.0')return [];
   const config=ast(CONFIG,readText(CONFIG)),setup=ast(SETUP,readText(SETUP));
   if(astDigest(config)!==WORKSPACE_ENVELOPES.config||astDigest(setup)!==WORKSPACE_ENVELOPES.setup)return [];
