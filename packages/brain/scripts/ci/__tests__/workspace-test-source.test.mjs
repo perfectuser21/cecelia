@@ -12,7 +12,7 @@ const {collectWorkspaceTestEdges}=await import('../../../../../scripts/ci/worksp
 const CI='.github/workflows/ci.yml',PKG='apps/api/package.json',CONFIG='apps/api/vitest.config.ts',SETUP='apps/api/test/setup.ts';
 const PREFIX='apps/api/features/planning/pages/capability-system/';
 const names=['BusinessInputs','CapabilitySystem','InvocationPanel'];
-const paths=[CI,'package.json',PKG,CONFIG,SETUP,...names.flatMap(n=>[PREFIX+n+'.test.tsx',PREFIX+n+'.tsx'])];
+const paths=[CI,'package.json','package-lock.json','apps/api/package-lock.json',PKG,CONFIG,SETUP,...names.flatMap(n=>[PREFIX+n+'.test.tsx',PREFIX+n+'.tsx'])];
 const roots=[];
 const hash=b=>createHash('sha256').update(b).digest('hex');
 function fixture(){
@@ -105,3 +105,5 @@ it('其他workspace安装生命周期不能提前覆盖API测试',()=>{const f=f
 it.each(['package.json','apps/api/package.json'])('%s不能用包解析覆盖把vitest替换成别的程序',path=>{const f=fixture();const pkg=JSON.parse(readFileSync(join(f.root,path),'utf8'));pkg.overrides={vitest:'npm:fake-vitest@1.0.0'};f.put(path,JSON.stringify(pkg));f.commit();expect(collect(f)).toEqual([]);});
 
 it('仅函数声明没有运行时default出口不能补边',()=>{const f=fixture();f.put(PREFIX+'BusinessInputs.tsx','export default function BusinessInputs(): any;\n');f.commit();expect(collect(f)).toEqual([]);});
+
+it.each([['package-lock.json','apps/api/node_modules/vitest'],['apps/api/package-lock.json','node_modules/vitest']])('%s不能把真实vitest锁解析替换为伪CLI',(path,key)=>{const f=fixture(),j=JSON.parse(readFileSync(join(f.root,path),'utf8'));j.packages[key].resolved='https://example.invalid/false-runner.tgz';j.packages[key].bin={vitest:'echo-pass.js'};f.put(path,JSON.stringify(j));f.commit();expect(collect(f)).toEqual([]);});
