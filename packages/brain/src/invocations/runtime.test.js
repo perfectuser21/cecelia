@@ -1,5 +1,5 @@
 import {it,expect} from 'vitest';
-import {invocationTaskPrompt,prepareInvocationDispatch,guardInvocationCallback} from './runtime.js';
+import {invocationTaskPrompt,invocationBridgeRequired,prepareInvocationDispatch,guardInvocationCallback} from './runtime.js';
 it('普通历史任务保持既有提示词与派发路径，不借调用器换执行体',async()=>{
  const task={id:'ordinary',payload:{}};
  expect(invocationTaskPrompt(task,'run')).toBe(null);
@@ -13,4 +13,10 @@ it('回执run身份与服务端预留不符在任何终态写入前拒绝',async
  const db={query:async()=>{reads++;return {rows:[{payload:{invocation:{dispatch:{run_id:'original'}}}}]};}};
  await expect(guardInvocationCallback(db,{task_id:'task',run_id:'other',status:'AI Done',result:{}})).rejects.toThrow('run 身份');
  expect(reads).toBe(1);
+});
+
+it('固定纯Skill调用始终要求原生research桥接，不能借其他task_type改变执行通道',()=>{
+ expect(invocationBridgeRequired({task_type:'research',payload:{invocation:{}}})).toBe(true);
+ expect(invocationBridgeRequired({task_type:'research',payload:{}})).toBe(false);
+ expect(()=>invocationBridgeRequired({task_type:'coding_workflow',payload:{invocation:{}}})).toThrow('调用任务类型');
 });

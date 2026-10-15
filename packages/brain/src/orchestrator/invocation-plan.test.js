@@ -13,3 +13,9 @@ describe('固定调用计划',()=>{
  it('需要未接通设备或外部资源的Skill不得伪称纯输入输出就绪',()=>{const d=fixture();d.activities[0].resources={phone_serial:'required'};expect(compileInvocation(d,catalog,{input:{text:'x'}}).gaps.some(g=>g.code==='resource_not_connected')).toBe(true);});
  it('输入和结构化输出均遵守schema',()=>{expect(compileInvocation(fixture(),catalog,{input:{text:1}}).gaps.some(g=>g.code==='input_schema_invalid')).toBe(true);expect(()=>validateInvocationOutput(schema,{text:1})).toThrow();});
 });
+
+it('台账active不能替代仓库用料已抵达执行进程的证据',()=>{
+ const d=fixture();d.activities[0].warehouse_dependencies=[{key:'material',role:'uses'}];
+ const plan=compileInvocation(d,{...catalog,warehouse_items:[{id:'material-id',key:'material',active:true}]},{input:{text:'x'}});
+ expect(plan.gaps.some(g=>g.code==='resource_material_unverified')).toBe(true);
+});

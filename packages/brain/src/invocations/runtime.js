@@ -4,6 +4,11 @@ import { assertSkillEnvelope,validateSkillReceipt,invocationPrompt } from '../or
 import { probeInvocationRuntime } from './resolve.js';
 import { startRun } from '../lib/task-run.js';
 import { normalizeCallbackStatus } from '../lib/callback-utils.js';
+export function invocationBridgeRequired(task){
+  if(!task?.payload?.invocation)return false;
+  requireCondition(task.task_type==='research','调用任务类型与固定transport不匹配',409);
+  return true;
+}
 export async function assertInvocationAuthority(db,inv,{probeRuntime=probeInvocationRuntime}={}){
   const e=inv.envelope;assertSkillEnvelope(e);
   requireCondition(e.tenant_id===inv.tenant_id&&definitionDigest(e.target)===definitionDigest(inv.target),'调用租户或目标不匹配');

@@ -1,4 +1,4 @@
-import { prepareInvocationDispatch, invocationTaskPrompt } from './invocations/runtime.js';
+import { prepareInvocationDispatch, invocationTaskPrompt, invocationBridgeRequired } from './invocations/runtime.js';
 import { isPhoneDispatchTask } from './phone-dispatch/task-ownership.js';
 import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
 import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
@@ -3314,7 +3314,10 @@ const _RETIRED_HARNESS_TYPES = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
  */
 async function triggerCeceliaRun(task) {
   assertExternalExecutionAllowed();
-  const execResult = await _triggerCeceliaRunInner(task);
+  // 固定调用已选定Bridge；动态research配置、普通handler或旧provider不能改派该快照。
+  const fixedSkillBridge = invocationBridgeRequired(task);
+  if (fixedSkillBridge) await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__bridge_path);
+  const execResult = fixedSkillBridge ? await triggerCodexBridge(task) : await _triggerCeceliaRunInner(task);
   const source = task?.payload?.harness_runtime === 'kernel-v1' ? 'kernel' : 'executor';
   const runId = await startRunForExecResult({ task, execResult, source });
   if (runId && execResult && execResult.success === true && !execResult.runId) {
