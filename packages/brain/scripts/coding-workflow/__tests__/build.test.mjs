@@ -82,10 +82,10 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     const r = await run('build-ok', {}, { FAKE_BUILD_CONTEXT_FILE: contextFile });
     expect(r.exitCode, r.stderr).toBe(0);
     const context = JSON.parse(fs.readFileSync(contextFile, 'utf8'));
-    expect(context.intent_path).toBe(path.join(fs.realpathSync(sprintAbs), '01-intent.md'));
+    expect(context.intent_path).toBe(path.join(sprintAbs, '01-intent.md'));
     expect(path.isAbsolute(context.intent_path)).toBe(true);
     expect(context.intent).toBe(intent);
-    expect(context.spec_path).toBe(path.join(fs.realpathSync(sprintAbs), '02-spec.md'));
+    expect(context.spec_path).toBe(path.join(sprintAbs, '02-spec.md'));
     // 这里只证明真实输入传递，不把假 CLI 的输出当作模型遵守文件范围的证据。
   });
 

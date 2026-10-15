@@ -15,6 +15,7 @@ import {
 import { checksFor, runPrechecks } from '../lib/ci-precheck.mjs';
 import { repoRules } from '../lib/repo-profile.mjs';
 import { intentHeading, prKindOf } from '../lib/pr-kind.mjs';
+import { INTENT_FILE } from '../lib/spec-check.mjs';
 
 const spend = { usd: 0 };
 
@@ -119,6 +120,7 @@ async function main(input) {
   const buildPath = path.join(dir, BUILD_FILE);
   const prompt = loadPrompt('build', {
     TASK_ID: input.task_id,
+    INTENT_PATH: path.join(dir, INTENT_FILE),
     SPEC_PATH: specPath,
     BUILD_PATH: buildPath,
     SPEC_IDS: ids.join(','),
