@@ -655,6 +655,7 @@
       "path": "packages/brain/src/__tests__/golden-path-proposal-wiring.test.js",
       "role": "verification"
     },
+    {"owner_path":"packages/brain/src/startup-port-guard.js","path":"packages/brain/src/__tests__/startup-port-guard.test.js","role":"verification"},
     {
       "owner_path": "packages/brain/src/lib/task-type-registry.js",
       "path": "packages/brain/src/__tests__/task-type-registry.guard.test.js",
