@@ -172,3 +172,10 @@ it('根 describe 名称必须为字符串字面量，不执行名称表达式',(
 it.each(["EXTRA: 'unregistered',",'INTENT_PATH: path.join(dir, INTENT_FILE),','EXTRA: totallyMissingIdentifier,','EXTRA: path.join(dir, TOTALLY_MISSING_CONSTANT),',"'SPEC_PATH': '/missing',"] )('模板变量拒绝未绑定或重复键 %s',(extra)=>{
   expect(proveBuildSources(mutateBuild('activity','    TASK_ID: input.task_id,','    '+extra+'\n    TASK_ID: input.task_id,'),parse)).toBe(false);
 });
+
+it.each(['test','helper','cli','protocol'])('拒绝 %s 未登记的再导出模块加载',(key)=>{
+  const sources=buildSources();sources[key]+="\nexport {} from './does-not-exist-source.mjs';";
+  expect(proveBuildSources(sources,parse)).toBe(false);
+  if(key==='test')expect(provePublishSources(fixedBuild(publishTest)+"\nexport {} from './does-not-exist-source.mjs';",sources.helper,parse)).toBe(false);
+  if(key==='helper')expect(provePublishSources(fixedBuild(publishTest),sources.helper,parse)).toBe(false);
+});

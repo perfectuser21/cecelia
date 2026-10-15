@@ -68,7 +68,7 @@ function moduleEnvelope(tree,key,parse) {
   const actualImports=tree.body.filter(n=>n.type==='ImportDeclaration').filter(n=>!(key==='activity'&&n.source.value==='../lib/spec-check.mjs'&&n.specifiers.length===1&&n.specifiers[0].imported?.name==='INTENT_FILE'&&n.specifiers[0].local.name==='INTENT_FILE'));
   const constants=tree.body.filter(n=>declaration(n)?.type==='VariableDeclaration');
   return same(actualImports,parse(ENVELOPES[key+'Imports']).body)&&same(constants,parse(ENVELOPES[key+'Constants']).body)
-    && tree.body.every(n=>['ImportDeclaration','VariableDeclaration','FunctionDeclaration','ExportNamedDeclaration'].includes(n.type)||key==='activity'&&same(n,parse(ENVELOPES.entry).body[0])||['test','publishTest'].includes(key)&&call(n.expression,'describe'));
+    && tree.body.every(n=>['ImportDeclaration','VariableDeclaration','FunctionDeclaration'].includes(n.type)||n.type==='ExportNamedDeclaration'&&!n.source&&['VariableDeclaration','FunctionDeclaration'].includes(n.declaration?.type)||key==='activity'&&same(n,parse(ENVELOPES.entry).body[0])||['test','publishTest'].includes(key)&&call(n.expression,'describe'));
 }
 function functionMatches(tree,name,parse) { return same(fn(tree,name),parse(ENVELOPES[name]).body[0]); }
 function registration(n) {
@@ -99,13 +99,13 @@ function registrationBody(body, root = false, inherited = new Set()) {
     const expr=statement.expression;
     if(call(expr,'describe')) {
       const callback=expr.arguments[1];
-      if(expr.arguments.length!==2||expr.arguments[0]?.type!=='Literal'||callback?.type!=='ArrowFunctionExpression'||callback.async||callback.params.length||callback.body.type!=='BlockStatement'||!registrationBody(callback.body.body,false,values))return false;
+      if(expr.arguments.length!==2||expr.arguments[0]?.type!=='Literal'||typeof expr.arguments[0].value!=='string'||callback?.type!=='ArrowFunctionExpression'||callback.async||callback.params.length||callback.body.type!=='BlockStatement'||!registrationBody(callback.body.body,false,values))return false;
     } else if(['beforeAll','beforeEach','afterEach'].includes(expr.callee?.name)) {
       if(!root)return false; // 仅根层已审的固定 setup，未知嵌套 hook 不作活跃证明。
     } else {
       // it.each 的表格在注册时求值，拒调用、spread 或带 getter 的数据。
       if(expr.callee.type==='CallExpression'&&!pure(expr.callee.arguments[0]))return false;
-      if(expr.arguments[0]?.type!=='Literal'||!['ArrowFunctionExpression','FunctionExpression'].includes(expr.arguments[1]?.type))return false;
+      if(expr.arguments[0]?.type!=='Literal'||typeof expr.arguments[0].value!=='string'||!['ArrowFunctionExpression','FunctionExpression'].includes(expr.arguments[1]?.type))return false;
       if(expr.arguments.length>2&&expr.arguments.slice(2).some(n=>n.type!=='Literal'))return false;
     }
   }
