@@ -79,3 +79,26 @@ RUNTIME_MODULES="$RUNTIME_MODULES" node -e 'const {createRequire}=require("modul
 ```
 
 运行健康检查缺少 Acorn 时返回 `runtime_acorn_unavailable`，版本不是 8.16.0 或解析接口不符时返回 `runtime_acorn_version_mismatch`；停止运行并修复可信依赖，不能用旧版健康结果替代。若浏览器依赖或二进制缺失，helper 报 `preview_browser_unavailable` 或启动失败，停止浏览器验收，不从脏主仓的 `node_modules` 猜测成功。ZenithJoy 在 `repos.json` 为 `automerge=false`；PR #2132 待人工处理，合并和业务生产仍须人工放行。本手册金丝雀只核对文档与实现，不代表重新完成浏览器或生产业务验收。
+
+## 运行回执如何判读
+
+在仓库根目录以运行用户执行只读命令，按现场替换回执目录；`--json` 输出完整行，适合核对被文本行省略的字段：
+
+```bash
+node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir <回执目录>
+node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir <回执目录> --json
+```
+
+省略 `--log-dir` 时，目录取 `CODING_WF_LOG_DIR`，未设置则取运行用户 home 下的 `~/.cecelia/coding-workflow-runner`。命令按目录内 JSON 文件的 mtime（修改时间）倒序列出，新文件在前；同一文件更新后按新的 mtime 排序。目录不存在或没有可列的 JSON 时，`--json` 输出 `[]`，文本显示“没有运行记录”，命令仍可退出 0。这只表示没有记录，不能证明服务健康；继续只读核对 system 服务状态和主日志。
+
+`status.mjs` 按文件内容作最小判读，不验证任务 ID 等完整回执字段：
+
+- `running`：能解析为非 null 的 JSON 对象，且有 `last_event` 属性；该属性优先于终态 `status`。
+- `completed`、`partial`、`failed`：没有 `last_event`，且 `status` 正好是这三种终态之一。`partial` 和 `failed` 的 `failed_activity` 取首个状态既非 `completed` 也非 `skipped` 的 activity；`reason_code` 优先取该 activity 最后一次尝试的原因，再回退到 activity、回执级原因及默认 `run_<status>`。
+- `unreadable`：JSON 解析失败、值不是对象，或对象既无 `last_event` 又无上述终态 `status`。单个文件不可读不妨碍其他文件列出；并发改写也可能造成暂时不可解析，应重读并结合文件用途排查。
+
+扫描范围是目录中除 `cifix-<数字>.json` 外的所有 `.json` 文件。因此合法的 QA、Commander 状态 JSON 和终态回写待办 `pr-sync-pending.json` 也可能显示 `unreadable`；带终态 `status` 的非回执 JSON 甚至可能显示 `completed` 等标签。`unreadable` 不能单独作为文件损坏或删除现场的依据，尤其不能据此删除 `pr-sync-pending.json` 待办；其他状态标签也不能单独证明文件是真任务回执。
+
+仅当判读出的 `pr_url` 能提取 `/pull/<PR号>` 且存在对应 `cifix-<PR号>.json` 尝试记录时，才有 `ci_fix` 摘要：`attempts` 是尝试次数，`last_result` 是最后一次结果。没有关联记录时 JSON 中 `ci_fix` 为 `null`，文本行不显示它。这些信息只从本地文件读取，查看状态不会请求 GitHub 或 Brain。
+
+回执 `completed` 不等于 PR 已合并或整条任务最终成功。即使 `outputs.pr_url` 缺失，摘要仍保持 `status=completed`，同时给出 `reason_code=pr_url_missing`、`pr_url=null`；`completed` 的文本行默认不打印这个原因。因此先用 `--json` 检查 `pr_url`，不能从文本 `completed` 推断已有有效 PR。即使 URL 存在，也要按同一任务和 PR 只读回查 GitHub 对应 PR 的最终 head SHA 与合并状态、Brain 的 `runner.phase=merged` 和 `merge.merged=true`，以及 QA 终态，才判断完整成功。URL 不可核实、head 不匹配、PR 未合并、Brain 或 QA 未达终态、查询失败时均标为尚未核实；不要把回执状态当作合并授权，也不要手工改批准或 FAIL 记录。
