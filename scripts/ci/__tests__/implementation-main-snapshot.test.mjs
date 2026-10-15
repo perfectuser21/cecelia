@@ -38,17 +38,18 @@ function bundle(revision,{parentMissing=false,childMissing=false,parentGaps=null
  return {snapshot:seal({schema_version:1,scope:'cecelia-kr',repo,revision,status:parentMissing?'unknown':'verified',gaps:parentMissing?(parentGaps??[{code:'definition_snapshot_missing'}]):[],map:{manifest:parentManifest},canonical:{workflows:[],journeys:[]},definitions:{workflows:[],activities:[]},admission_companion:companion})};
 }
 const workflow=()=>yaml.load(readFileSync(join(root,'.github/workflows/implementation-impact.yml'),'utf8'));
-async function executeProvider(t,{initial={},refresh={},after={},moved=false,getError=false,mutateFinal=null,baseUnknown=false,artifact={},baseEqualsHead=false}={}){
+async function executeProvider(t,{initial={},refresh={},after={},moved=false,getError=false,mutateFinal=null,baseUnknown=false,artifact={},baseEqualsHead=false,movedAfterPost=false}={}){
  const dir=mkdtempSync(join(tmpdir(),'implementation-publish-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  mkdirSync(join(dir,'bin'));symlinkSync(root,join(dir,'tooling'),'dir');
  const history=artifact.errorBody?{error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}:bundle(base,{childMissing:true});
  writeFileSync(join(dir,'history.json'),JSON.stringify(history));
  execFileSync('python3',['-c','import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.write(sys.argv[2],"head.json"); z.close()',join(dir,'history.zip'),join(dir,'history.json')]);
  writeFileSync(join(dir,'artifact-config.json'),JSON.stringify(artifact));
+ writeFileSync(join(dir,'main-sha'),moved?'c'.repeat(40):head);
  writeFileSync(join(dir,'bin/gh'),`#!/usr/bin/env node
 const fs=require('fs'),p=process.argv[3],cfg=JSON.parse(fs.readFileSync('${dir}/artifact-config.json'));fs.appendFileSync('${dir}/gh-calls.jsonl',JSON.stringify(process.argv.slice(2))+'\\n');
 const item={id:1,name:'implementation-snapshot-${base}',expired:false,created_at:'2026-01-01',workflow_run:{id:17,head_branch:'main',head_sha:'${base}',repository_id:1,head_repository_id:1}};
-if(p.endsWith('/commits/main'))console.log('${moved?'c'.repeat(40):head}');
+if(p.endsWith('/commits/main'))console.log(fs.readFileSync('${dir}/main-sha','utf8'));
 else if(p.includes('artifacts?'))console.log(JSON.stringify({total_count:cfg.missing?0:1,artifacts:cfg.missing?[]:[item]}));
 else if(p.endsWith('/zip'))process.stdout.write(fs.readFileSync('${dir}/history.zip'));
 else if(p.includes('/artifacts/'))console.log(JSON.stringify(item));
@@ -62,7 +63,7 @@ else process.exit(9);
   const q=req.method==='POST'?JSON.parse(raw):Object.fromEntries(url.searchParams);calls.push({method:req.method,...q});
   let code=200,value;
   if(req.method==='POST'){
-   posts++;const response=refresh[q.scope];code=response?.status??200;
+   posts++;if(movedAfterPost)writeFileSync(join(dir,'main-sha'),'c'.repeat(40));const response=refresh[q.scope];code=response?.status??200;
    if(code<300){if(q.scope==='cecelia-kr')stage.parentMissing=false;else stage.childMissing=false;}
    Object.assign(stage,after[q.scope]??{});
    value=response?.body??(q.scope==='cecelia-factory'?{snapshot:bundle(head,stage).snapshot.admission_companion.snapshot}:bundle(head,stage));
@@ -221,4 +222,6 @@ test('官方dispatch base=head当前缺来源先正规刷新，再同一完整bu
  assert.doesNotMatch(readFileSync(join(r.dir,'gh-calls.jsonl'),'utf8'),/artifacts/);
  const failed=await executeProvider(t,{baseEqualsHead:true,initial:{parentMissing:true,childMissing:true},moved:true});
  assert.notEqual(failed.code,0);assert.equal(failed.calls.some(c=>c.method==='POST'),false);assert.equal(existsSync(join(failed.dir,'evidence/head.json')),false);
+ const drift=await executeProvider(t,{baseEqualsHead:true,initial:{parentMissing:true,childMissing:true},movedAfterPost:true});
+ assert.notEqual(drift.code,0);assert.match(drift.stderr,/MAIN_MOVED/);assert.equal(drift.calls.filter(c=>c.method==='POST').length,1);assert.equal(existsSync(join(drift.dir,'evidence/base.json')),false);assert.equal(existsSync(join(drift.dir,'evidence/head.json')),false);
 });

@@ -74,13 +74,16 @@ export async function publishMainSnapshots({brainUrl,token,scope,repo,base,head,
  const readParent=async()=>{const b=await request('GET',scope,head);validatePublishedSnapshot(b,{scope,repo,revision:head});return b;};
  const stageSnapshot=(body,target)=>target===scope?body.snapshot:body.snapshot.admission_companion?.snapshot;
  try{
-  let baseline=await request('GET',scope,base),baseSource='central_exact_revision';
-  let bs=validatePublishedSnapshot(baseline,{scope,repo,revision:base});
-  if(bs.status!=='verified'){
-   baseline=readHistoricalArtifact({repo,revision:base,diagnostics});baseSource='official_exact_revision_artifact';
-   bs=validatePublishedSnapshot(baseline,{scope,repo,revision:base});
+  let baseline=null,baseSource=base===head?'validated_current_head':'central_exact_revision';
+  if(base!==head){
+   baseline=await request('GET',scope,base);
+   let bs=validatePublishedSnapshot(baseline,{scope,repo,revision:base});
+   if(bs.status!=='verified'){
+    baseline=readHistoricalArtifact({repo,revision:base,diagnostics});baseSource='official_exact_revision_artifact';
+    bs=validatePublishedSnapshot(baseline,{scope,repo,revision:base});
+   }
+   if(bs.status!=='verified')throw fail('IMPLEMENTATION_CI_BASE_SNAPSHOT_UNKNOWN');
   }
-  if(bs.status!=='verified')throw fail('IMPLEMENTATION_CI_BASE_SNAPSHOT_UNKNOWN');
   await main();let current=await readParent();
   const scopes=scope==='cecelia-kr'&&repo==='perfectuser21/cecelia'?[scope,'cecelia-factory']:[scope];
   for(const target of scopes){
@@ -100,6 +103,7 @@ export async function publishMainSnapshots({brainUrl,token,scope,repo,base,head,
    if(after?.status!=='verified'||after.gaps.length)throw conflict??fail('IMPLEMENTATION_CI_SNAPSHOT_UNKNOWN');
   }
   current=await readParent();validatePublishedSnapshot(current,{scope,repo,revision:head,complete:true});await main();
+  if(base===head)baseline=current; // 当前 SHA 不是历史：只复用刚完成双 scope 验证的同一 bundle。
   // 两份都完成验证后再落盘；upload 只在整个 step 成功时允许执行。
   for(const [name,value] of [['base',baseline],['head',current]]){
    const temporary=join(output,`.${name}.validated.tmp`);writeFileSync(temporary,JSON.stringify(value)+'\n');renameSync(temporary,join(output,`${name}.json`));
