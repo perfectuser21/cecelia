@@ -75,6 +75,20 @@ describe('build 活动（子进程 + 假 claude + 真实 git 提交）', () => {
     expect(r.stderr).toContain(`FAKE_CWD: ${fs.realpathSync(worktree)}`);
   });
 
+  it('真实 build 子进程收到可读取的原始 intent 绝对路径，任务禁止项不在渲染中丢失', async () => {
+    const intent = '# 文档任务\n\n仅改 README.md；不改程序、测试，不新增镜像单元测试。\n';
+    fs.writeFileSync(path.join(sprintAbs, '01-intent.md'), intent);
+    const contextFile = path.join(root, 'build-context.json');
+    const r = await run('build-ok', {}, { FAKE_BUILD_CONTEXT_FILE: contextFile });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const context = JSON.parse(fs.readFileSync(contextFile, 'utf8'));
+    expect(context.intent_path).toBe(path.join(fs.realpathSync(sprintAbs), '01-intent.md'));
+    expect(path.isAbsolute(context.intent_path)).toBe(true);
+    expect(context.intent).toBe(intent);
+    expect(context.spec_path).toBe(path.join(fs.realpathSync(sprintAbs), '02-spec.md'));
+    // 这里只证明真实输入传递，不把假 CLI 的输出当作模型遵守文件范围的证据。
+  });
+
   it('多个提交按时间顺序（旧→新）全部列出', async () => {
     const r = await run('build-ok', {}, { FAKE_BUILD_COMMITS: '3' });
     expect(r.exitCode, r.stderr).toBe(0);
