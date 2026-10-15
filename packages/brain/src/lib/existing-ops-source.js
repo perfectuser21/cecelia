@@ -198,8 +198,8 @@ function impactRunnerProven(text){
     ||![LEGACY_ADMISSION_SCOPES,SELF_PR_ADMISSION_SCOPES].includes(job.env?.ADMISSION_SCOPES))return false;
   return job.steps?.some(step=>step.if===undefined&&typeof step.run==='string'&&hash(step.run)===IMPACT_GATE_SHA256);
 }
-// 正式 2eb4 的有限 parseArgs 合同；只用于新 main 分支的缺省证明，未知改动失败关闭。
-const LEGACY_MAIN_PARSE_ARGS_SHA256='cdca58011911260e7984f1592a846862c745d6666376a977a656f89ca51a1b52';
+// 新 dormant-main 兼容分支仅认可正式 2eb4 的完整 CLI AST（含入口与初始化）；未知修改需重审。
+const LEGACY_MAIN_CLI_SHA256='b9fd6f6cf551afd2b560135a1cf633fbd615d0e44ab218b02b5d3bbe25505149';
 function legacyImpactRunnerProven(text,prText,gateText){
  const doc=yaml.load(text),job=doc?.jobs?.gate;
  if(!doc?.on?.pull_request||job?.if!=="always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')"
@@ -212,12 +212,7 @@ function legacyImpactRunnerProven(text,prText,gateText){
  if([doc.env,job.env,...job.steps.map(s=>s.env)].some(env=>env&&Object.hasOwn(env,'IMPLEMENTATION_MAIN_SCOPES')))return false;
  const mainBranch=ast('function branch(options){if(options.mainScopes!==undefined)return runImplementationMainGate(options);}').body[0].body.body[0];
  const shape=n=>JSON.stringify(n,(key,value)=>['start','end','raw'].includes(key)?undefined:value);
- const parser=pr.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='parseArgs');
- const dormantMain=n=>shape(n)===shape(mainBranch)
-   &&parser&&hash(shape(parser))===LEGACY_MAIN_PARSE_ARGS_SHA256
-   &&!nodes(pr).some(x=>(x.type==='VariableDeclarator'&&nodes(x.id).some(id=>id.name==='undefined'))||(['FunctionDeclaration','FunctionExpression','ArrowFunctionExpression'].includes(x.type)&&(x.id?.name==='undefined'||x.params.some(p=>nodes(p).some(id=>id.name==='undefined'))))||(x.type==='ImportSpecifier'&&x.local.name==='undefined')||(x.type==='AssignmentExpression'&&x.left?.name==='undefined'))
-   &&namedImport(pr,'./implementation-main-gate.mjs',['runImplementationMainGate'])
-   &&fn.params.length===1&&fn.params[0].name==='options';
+ const dormantMain=n=>shape(n)===shape(mainBranch)&&hash(shape(pr))===LEGACY_MAIN_CLI_SHA256;
  if(delegated&&fn.body.body.slice(0,-1).some(n=>!dormantMain(n)&&(n.type!=='IfStatement'||n.test?.type!=='MemberExpression'||n.test.object?.name!=='options'||!['multi','extractScopes'].includes(n.test.property?.name))))return false;
  const caller=delegated?pr.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='implementationPrEvidence'):fn;
  const statements=caller?.body.body.find(n=>n.type==='TryStatement')?.block.body;
