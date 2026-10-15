@@ -13,7 +13,7 @@ import {validateImplementationSnapshot,extractImplementationAdmissionSnapshots} 
 const root=fileURLToPath(new URL('../../../',import.meta.url));
 const repo='perfectuser21/cecelia',head='a'.repeat(40),base='b'.repeat(40);
 const seal=(body,key='snapshot_sha256')=>({...body,[key]:stepSha256(body)});
-function bundle(revision,{parentMissing=false,childMissing=false}={}){
+function bundle(revision,{parentMissing=false,childMissing=false,parentGaps=null,parentManifest=null}={}){
  const registry={workflows:[],references:[],activities:[],steps:[],capabilities:[],value_streams:[{id:'aaaaaaaa-f0f0-4000-8000-000000000001'}]};
  const definitions={workflows:[],activities:[]};
  for(const i of identities){
@@ -35,13 +35,27 @@ function bundle(revision,{parentMissing=false,childMissing=false}={}){
  }
  const child=seal({schema_version:1,scope:'cecelia-factory',repo,revision,status:childMissing?'unknown':'verified',gaps:childMissing?[{code:'definition_snapshot_missing'},{code:'scope_manifest_missing'}]:[],snapshot_scope:'consumer_evidence',execution_status:'unknown',consumer_registry:frozen,unverified_reference_ids:identities.flatMap(i=>i.unverified_reference_ids),canonical:{...registry,journeys:[]},definitions:childMissing?{workflows:[],activities:[]}:definitions,map:{},assertions:[]});
  const companion=seal({schema_version:1,purpose:'admission_only',scope:child.scope,repo,revision,snapshot:child},'companion_sha256');
- return {snapshot:seal({schema_version:1,scope:'cecelia-kr',repo,revision,status:parentMissing?'unknown':'verified',gaps:parentMissing?[{code:'definition_snapshot_missing'}]:[],canonical:{workflows:[],journeys:[]},definitions:{workflows:[],activities:[]},admission_companion:companion})};
+ return {snapshot:seal({schema_version:1,scope:'cecelia-kr',repo,revision,status:parentMissing?'unknown':'verified',gaps:parentMissing?(parentGaps??[{code:'definition_snapshot_missing'}]):[],map:{manifest:parentManifest},canonical:{workflows:[],journeys:[]},definitions:{workflows:[],activities:[]},admission_companion:companion})};
 }
 const workflow=()=>yaml.load(readFileSync(join(root,'.github/workflows/implementation-impact.yml'),'utf8'));
-async function executeProvider(t,{initial={},refresh={},after={},moved=false,getError=false,mutateFinal=null}={}){
+async function executeProvider(t,{initial={},refresh={},after={},moved=false,getError=false,mutateFinal=null,baseUnknown=false,artifact={}}={}){
  const dir=mkdtempSync(join(tmpdir(),'implementation-publish-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  mkdirSync(join(dir,'bin'));symlinkSync(root,join(dir,'tooling'),'dir');
- writeFileSync(join(dir,'bin/gh'),`#!/bin/sh\nprintf '%s\\n' '${moved?'c'.repeat(40):head}'\n`,{mode:0o700});
+ const history=artifact.errorBody?{error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}:bundle(base,{childMissing:true});
+ writeFileSync(join(dir,'history.json'),JSON.stringify(history));
+ execFileSync('python3',['-c','import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.write(sys.argv[2],"head.json"); z.close()',join(dir,'history.zip'),join(dir,'history.json')]);
+ writeFileSync(join(dir,'artifact-config.json'),JSON.stringify(artifact));
+ writeFileSync(join(dir,'bin/gh'),`#!/usr/bin/env node
+const fs=require('fs'),p=process.argv[3],cfg=JSON.parse(fs.readFileSync('${dir}/artifact-config.json'));fs.appendFileSync('${dir}/gh-calls.jsonl',JSON.stringify(process.argv.slice(2))+'\\n');
+const item={id:1,name:'implementation-snapshot-${base}',expired:false,created_at:'2026-01-01',workflow_run:{id:17,head_branch:'main',head_sha:'${base}',repository_id:1,head_repository_id:1}};
+if(p.endsWith('/commits/main'))console.log('${moved?'c'.repeat(40):head}');
+else if(p.includes('artifacts?'))console.log(JSON.stringify({total_count:cfg.missing?0:1,artifacts:cfg.missing?[]:[item]}));
+else if(p.endsWith('/zip'))process.stdout.write(fs.readFileSync('${dir}/history.zip'));
+else if(p.includes('/artifacts/'))console.log(JSON.stringify(item));
+else if(p.includes('/jobs?'))console.log(JSON.stringify({total_count:1,jobs:[{name:'snapshot-main',status:'completed',conclusion:cfg.failedJob?'failure':'success'}]}));
+else if(p.includes('/actions/runs/'))console.log(JSON.stringify({id:17,head_sha:'${base}',head_branch:'main',event:'push',path:'.github/workflows/implementation-impact.yml',conclusion:'failure',repository:{full_name:'${repo}'},head_repository:{full_name:'${repo}'},...cfg.runPatch}));
+else process.exit(9);
+`,{mode:0o700});
  const calls=[];let stage={...initial},posts=0;
  const server=createServer(async(req,res)=>{
   let raw='';for await(const chunk of req)raw+=chunk;const url=new URL(req.url,'http://test');
@@ -53,7 +67,7 @@ async function executeProvider(t,{initial={},refresh={},after={},moved=false,get
    Object.assign(stage,after[q.scope]??{});
    value=response?.body??(q.scope==='cecelia-factory'?{snapshot:bundle(head,stage).snapshot.admission_companion.snapshot}:bundle(head,stage));
   }else if(getError){code=409;value={error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}};}
-  else {value=bundle(q.revision,q.revision===head?stage:{childMissing:true});if(mutateFinal&&posts)value=mutateFinal(value);}
+  else {value=bundle(q.revision,q.revision===head?stage:{parentMissing:baseUnknown,childMissing:true});if(mutateFinal&&posts)value=mutateFinal(value);}
   res.writeHead(code,{'content-type':'application/json'});res.end(JSON.stringify(value));
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
@@ -168,4 +182,34 @@ if(process.env.IMPLEMENTATION_TEST_OLD_TOOLING)test('真实固定旧base不含�
  const toolingRoot=process.env.IMPLEMENTATION_TEST_OLD_TOOLING;
  assert.equal(existsSync(join(toolingRoot,'scripts/ci/implementation-main-snapshot.mjs')),false);
  const r=await executeDownload(t,{toolingRoot});assert.equal(r.code,0,r.stderr);
+});
+
+
+test('新main激活后中央旧base UNKNOWN时读取exact-SHA官方artifact，不刷新历史',async t=>{
+ const r=await executeProvider(t,{baseUnknown:true});assert.equal(r.code,0,r.stderr);
+ assert.equal(JSON.parse(readFileSync(join(r.dir,'evidence/base.json'))).snapshot.revision,base);
+ assert.equal(r.calls.some(c=>c.method==='POST'&&c.revision===base),false);
+ const ghCalls=readFileSync(join(r.dir,'gh-calls.jsonl'),'utf8');assert.match(ghCalls,new RegExp('implementation-snapshot-'+base));assert.doesNotMatch(ghCalls,/latest/);
+});
+test('历史artifact必须精确官方run来源和成功provider job，错误体不能充基线',async t=>{
+ for(const artifact of [{runPatch:{head_sha:head}},{runPatch:{head_branch:'cp-forged'}},{runPatch:{head_repository:{full_name:'attacker/fork'}}},{runPatch:{path:'.github/workflows/ci.yml'}},{failedJob:true},{errorBody:true},{missing:true}]){
+  const r=await executeProvider(t,{baseUnknown:true,artifact});assert.notEqual(r.code,0);
+  assert.equal(existsSync(join(r.dir,'evidence/base.json')),false);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+  assert.match(r.stderr,/ARTIFACT_ORIGIN_INVALID|SNAPSHOT_PROVIDER_FAILED|BASE_ARTIFACT_MISSING/);
+  assert.equal(r.calls.some(c=>c.method==='POST'&&c.revision===base),false);
+ }
+});
+test('真实缺manifest派生unmapped只在同scope缺失且manifest=null时正规刷新',async t=>{
+ const gaps=[{code:'scope_manifest_missing'},{code:'workflow_capability_unmapped',workflow_key:'G5'}];
+ const r=await executeProvider(t,{initial:{parentMissing:true,parentGaps:gaps,childMissing:true}});assert.equal(r.code,0,r.stderr);
+ assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-kr','cecelia-factory']);
+ for(const initial of [{parentMissing:true,parentGaps:[gaps[1]]},{parentMissing:true,parentGaps:gaps,parentManifest:{id:'existing'}},{parentMissing:true,parentGaps:[...gaps,{code:'unrecognized_gap'}]}]){
+  const r=await executeProvider(t,{initial});assert.notEqual(r.code,0);assert.equal(r.calls.filter(c=>c.method==='POST').length,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+ }
+});
+test('仅已证实manifest CAS409可复用赢家，其他activity冲突保留原错误',async t=>{
+ for(const code of ['ACTIVITY_CONTRACT_SNAPSHOT_CHANGED','IMPLEMENTATION_CI_ACTIVITY_CONTRACT_SNAPSHOT_CHANGED']){
+  const r=await executeProvider(t,{initial:{childMissing:true},refresh:{'cecelia-factory':{status:409,body:{error:{code}}}},after:{'cecelia-factory':{childMissing:false}}});
+  assert.notEqual(r.code,0);assert.match(r.stderr,new RegExp(code));assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+ }
 });
