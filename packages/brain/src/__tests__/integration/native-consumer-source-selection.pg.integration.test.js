@@ -69,12 +69,19 @@ function transport(change=()=>{}){
  };
  return {calls,fetchFn,resolveToken:async()=> 'fixture-only'};
 }
+function withoutBuildSelector(text){
+ const marker='export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 1;';
+ expect(text.split(marker)).toHaveLength(2);
+ const changed=text.replace(marker,'export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 0;');
+ expect(changed).not.toBe(text);
+ return changed;
+}
 async function twoGenerations(extra={}){
  const before=await registration.readExistingOpsRegistry(fixture.db);
- // 复现旧部署 collector 尚无 workspace marker 的完整旧代，同一固定 SHA。
+ // 当前协议下用真实 build 选择器关闭生成完整旧代；原52a的535/644事故证据保留在历史回放。
  const old=await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256,
   readSource:async path=>path==='packages/brain/src/lib/existing-ops-source.js'
-   ?(await readSource(path)).replace(/^export const EXISTING_OPS_WORKSPACE_SELECTOR_SCHEMA = [^\n]+;\r?\n/m,''):readSource(path)}));
+   ?withoutBuildSelector(await readSource(path)):readSource(path)}));
  const fresh=await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256,...extra}));
  await factoryMap();
  return {old,fresh};
@@ -86,11 +93,12 @@ async function history(){return {
  projections:(await fixture.db.query('SELECT * FROM map_projection_runs ORDER BY id')).rows,
  activities:(await fixture.db.query('SELECT * FROM activity_definition_versions ORDER BY id')).rows,
 };}
-it('same-SHA 旧535/新644完整链：唯一固定Git匹配导出且不改历史/current/登记',async()=>{
+it('same-SHA 两代完整链：唯一固定Git匹配导出且不改历史/current/登记',async()=>{
  const {old,fresh}=await twoGenerations();
  const oldF3=old.definitions.activities.find(a=>a.payload.contract.key==='factory_f3_ops');
  const newF3=fresh.definitions.activities.find(a=>a.payload.contract.key==='factory_f3_ops');
- expect(newF3.payload.implementation_bindings.length-oldF3.payload.implementation_bindings.length).toBe(109);
+ expect(newF3.payload.implementation_bindings.length).toBeGreaterThan(oldF3.payload.implementation_bindings.length);
+ expect(newF3.id).not.toBe(oldF3.id);
  const before=await history(),source=transport();
  const snapshot=await exportImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision},{nativeConsumerSourceOptions:source});
  expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
@@ -102,8 +110,9 @@ it('same-SHA 旧535/新644完整链：唯一固定Git匹配导出且不改历史
 
 it('factory refresh实际collector不匹配目标源码时409且任何历史/current/地图均零写',async()=>{
  await factoryMap();const before=await history();
+ const changed=withoutBuildSelector(await readSource('packages/brain/src/lib/existing-ops-source.js'));
  const source=transport((url,value)=>url.includes('/contents/packages/brain/src/lib/existing-ops-source.js')
-  ?value.replace(/^export const EXISTING_OPS_WORKSPACE_SELECTOR_SCHEMA = [^\n]+;\r?\n/m,''):value);
+  ?changed:value);
  await expect(refreshImplementationSnapshot(fixture.db,{scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision},source))
   .rejects.toMatchObject({code:'IMPLEMENTATION_CI_SOURCE_RUNTIME_MISMATCH',status:409});
  expect(await history()).toEqual(before);
@@ -141,7 +150,7 @@ it('非歧义旧定义与显式current保持原路径，零联网且不依据cre
  const source={fetchFn:()=>{throw Error('must not fetch');},resolveToken:()=>{throw Error('must not resolve');}};
  expect((await exportImplementationSnapshot(fixture.db,query,{nativeConsumerSourceOptions:source})).status).toBe('verified');
  const old=await registration.registerExistingOpsSources(fixture.db,options({expectedRegistrySha256:before.registry_sha256,
-  readSource:async path=>path==='packages/brain/src/lib/existing-ops-source.js'?(await readSource(path)).replace(/^export const EXISTING_OPS_WORKSPACE_SELECTOR_SCHEMA = [^\n]+;\r?\n/m,''):readSource(path)}));
+  readSource:async path=>path==='packages/brain/src/lib/existing-ops-source.js'?withoutBuildSelector(await readSource(path)):readSource(path)}));
  // 旧错误代更晚追加，唯一正确源仍不靠时间选择。
  const fixed=await exportImplementationSnapshot(fixture.db,query,{nativeConsumerSourceOptions:transport()});
  expect(fixed.definitions.workflows.map(w=>w.id).sort()).toEqual(receipt.definitions.workflows.map(w=>w.id).sort());
@@ -189,7 +198,7 @@ it.each(invalidSources)('固定Git读取失败 %s 仍UNKNOWN且不缓存失败',
 },120000);
 
 it('目标Git实际collector闭包不同（blob封印正确）仍UNKNOWN',async()=>{
- await twoGenerations();const path='packages/brain/src/lib/existing-ops-source.js',changed=(await readSource(path)).replace(/^export const EXISTING_OPS_WORKSPACE_SELECTOR_SCHEMA = [^\n]+;\r?\n/m,'');
+ await twoGenerations();const path='packages/brain/src/lib/existing-ops-source.js',changed=withoutBuildSelector(await readSource(path));
  const sha=createHash('sha1').update(`blob ${Buffer.byteLength(changed)}\0`).update(changed).digest('hex');
  const source=transport((url,value)=>url.includes('/git/trees/')?{...value,tree:value.tree.map(e=>e.path===path?{...e,sha}:e)}:url.includes(`/contents/${path}`)?changed:value);
  expect((await exportImplementationSnapshot(fixture.db,query,{nativeConsumerSourceOptions:source})).status).toBe('unknown');

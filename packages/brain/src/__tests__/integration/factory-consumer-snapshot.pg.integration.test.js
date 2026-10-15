@@ -249,13 +249,13 @@ it('原生依赖扫描从真实被选择测试解析三个UI owner，不伪造�
     expect(tests.every(path => proof.some(b => b.dst_path === path))).toBe(true);
     const temporary = mkdtempSync(join(tmpdir(), 'nightly-workspace-source-')), checkout = join(temporary, 'source');
     try {
-      execFileSync('git', ['worktree', 'add', '--quiet', '--detach', checkout, revision], { cwd: root });
+      execFileSync('git', ['clone', '--quiet', '--shared', '--no-checkout', root, checkout]);
+      execFileSync('git', ['checkout', '--quiet', '--detach', revision], { cwd: checkout });
       const scanned = await cruise(tests, { baseDir: realpathSync(checkout), doNotFollow: { path: 'node_modules' }, exclude: { path: 'node_modules' } });
       const graph = typeof scanned.output === 'string' ? JSON.parse(scanned.output) : scanned.output;
       for (const path of tests) expect(graph.modules.find(m => m.source === path)?.dependencies)
         .toContainEqual(expect.objectContaining({ resolved: path.replace('.test.tsx', '.tsx'), couldNotResolve: false }));
     } finally {
-      execFileSync('git', ['worktree', 'remove', '--force', checkout], { cwd: root });
       rmSync(temporary, { recursive: true, force: true });
     }
   });

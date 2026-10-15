@@ -3,7 +3,6 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 import { parse } from 'acorn';
-import { cruise } from 'dependency-cruiser';
 import { collectWorkspaceInputEdges } from '../existing-ops-workspace-source.js';
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const revision = 'b5800c2d297cb121e90ff74987ebc410679371a2';
@@ -41,14 +40,3 @@ describe('旧冻结定义的真实workspace图输入', () => {
     expect(edges.some(e => e.dst_path === selected)).toBe(false);
   });
 });
-
-// scan-graph.mjs 使用同一原生 cruise 入口。partial workspace 安装也必须具备 TSX 解析器，
-// 否则 selector 边虽在，真实 test→component import 边仍会静默消失。
-it.each(['BusinessInputs','CapabilitySystem','InvocationPanel'])('实际安装的原生扫描器解析 %s TSX测试到组件',async name=>{
- const prefix='apps/api/features/planning/pages/capability-system/';
- const input=`${prefix}${name}.test.tsx`,owner=`${prefix}${name}.tsx`;
- const result=await cruise([input],{baseDir:root,doNotFollow:{path:'node_modules'},exclude:{path:'node_modules'}});
- const output=typeof result.output==='string'?JSON.parse(result.output):result.output;
- const dependencies=output.modules.find(module=>module.source===input)?.dependencies||[];
- expect(dependencies.some(dependency=>dependency.resolved===owner&&!dependency.couldNotResolve),JSON.stringify({input,owner,modules:output.modules.map(module=>module.source)})).toBe(true);
-},30000);
