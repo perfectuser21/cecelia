@@ -321,7 +321,7 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] legacylayoutauth 敏感入口严格鉴权与请求白名单，仅接收本次批准任务和决策；失效决策不得重放。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/routes/__tests__/tree-legacy-layout.test.js src/lib/__tests__/tree-legacy-layout.test.js --maxWorkers=1 --minWorkers=1"
-- [x] [BEHAVIOR] legacylayoutatomic 真实HTTP及隔离PG验证稳定流程改挂、冲突整批回滚、共享及冻结Activity保留、孤立退役、原引用保留、幂等与原任务结果保留；撤销先持锁时拒绝写入。
+- [x] [BEHAVIOR] legacylayoutatomic 真实HTTP及隔离PG验证稳定流程改挂、冲突整批回滚、共享及冻结Activity保留、孤立退役、原引用保留、幂等与原任务结果保留；撤销先持锁或等待期间正式版本先提交时均拒绝写入。
   Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-127.0.0.1} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/__tests__/integration/tree-legacy-layout.pg.integration.test.js src/__tests__/integration/tree-legacy-layout-http.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] legacywritecatalogue 真实固定Git验证写入门禁分类表来源；任意其他txt仍拒绝，来源/摘要/已认领代码要求保持。

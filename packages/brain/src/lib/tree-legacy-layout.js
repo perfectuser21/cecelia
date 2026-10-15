@@ -20,8 +20,10 @@ export async function applyTreeLegacyLayout(pool,input){
   const previous=receipts.find(x=>x.client_request_id===input.client_request_id);
   if(previous){if(!equal(previous.request,input))reject(409,'IDEMPOTENCY_CONFLICT');await db.query('COMMIT');open=false;return {receipt:previous,replayed:true};}
   const changes=[...input.changes].sort((a,b)=>a.workflow_id.localeCompare(b.workflow_id)), workflowIds=changes.map(x=>x.workflow_id);
-  const workflows=(await db.query('SELECT id,capability_id,name,key,status,current_definition_version_id,source_repo,source_path,source_capability,source_workflow,EXISTS(SELECT 1 FROM workflow_definition_versions v WHERE v.workflow_id=workflows.id) AS has_definition_versions FROM workflows WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',[workflowIds])).rows;
+  const workflows=(await db.query('SELECT id,capability_id,name,key,status,current_definition_version_id,source_repo,source_path,source_capability,source_workflow FROM workflows WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',[workflowIds])).rows;
   if(workflows.length!==changes.length)reject(404,'WORKFLOW_NOT_FOUND');
+  // 父行锁取得后另起语句读版本，拒绝等待 FK 入架提交期间留下的旧快照。
+  const frozenWorkflows=new Set((await db.query('SELECT workflow_id FROM workflow_definition_versions WHERE workflow_id=ANY($1::uuid[])',[workflowIds])).rows.map(x=>x.workflow_id));
   const targetIds=sorted(new Set(changes.map(x=>x.target_capability_id)));
   const targets=(await db.query('SELECT id,parent_journey_id,status FROM capabilities WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',[targetIds])).rows;
   if(targets.length!==targetIds.length)reject(404,'CAPABILITY_NOT_FOUND');
@@ -37,7 +39,7 @@ export async function applyTreeLegacyLayout(pool,input){
   const before=[];
   for(const change of changes){
    const workflow=workflows.find(x=>x.id===change.workflow_id);
-   if(workflow.current_definition_version_id!==null||workflow.source_repo!==null||workflow.source_path!==null||workflow.source_capability!==null||workflow.source_workflow!==null||workflow.has_definition_versions)reject(409,'WORKFLOW_FROZEN');
+   if(workflow.current_definition_version_id!==null||workflow.source_repo!==null||workflow.source_path!==null||workflow.source_capability!==null||workflow.source_workflow!==null||frozenWorkflows.has(workflow.id))reject(409,'WORKFLOW_FROZEN');
    if(workflow.capability_id!==change.expected_capability_id||!equal(state(workflow,refs,activities).active_reference_ids,sorted(change.expected_active_reference_ids)))reject(409,'CAS_CONFLICT');
    if(change.deactivate_reference_ids.some(id=>!refs.some(r=>r.id===id&&r.workflow_id===workflow.id&&r.active)))reject(409,'CAS_CONFLICT');
    before.push(state(workflow,refs,activities));

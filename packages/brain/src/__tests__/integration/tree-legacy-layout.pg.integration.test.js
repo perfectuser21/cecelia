@@ -38,6 +38,19 @@ it('真实 PG 原子改挂、回执和重放，失效决策拒绝重放', async 
   const result=(await pool.query('SELECT result FROM tasks WHERE id=$1',[TASK])).rows[0].result;
   expect(result.keep).toBe('yes'); expect(result.tree_legacy_layout_receipts).toHaveLength(1);
   const second={...payload,client_request_id:randomUUID(),changes:[{...payload.changes[0],expected_capability_id:newCap,target_capability_id:oldCap,expected_active_reference_ids:[],deactivate_reference_ids:[],deprecate_detached:false}]};
+  const versionLock=await pool.connect();
+  try {
+    await versionLock.query('BEGIN');
+    await versionLock.query('SELECT id FROM workflows WHERE id=$1 FOR KEY SHARE',[wf]);
+    await versionLock.query("INSERT INTO workflow_definition_versions(workflow_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit) VALUES($1,jsonb_build_object('workflow_id',$1::uuid::text,'contract','{}'::jsonb,'activities','[]'::jsonb),$2,$3,'fixture','fixture',$4)",[wf,'a'.repeat(64),'b'.repeat(64),'c'.repeat(40)]);
+    let settled=false;
+    const pending=applyTreeLegacyLayout(pool,second).finally(()=>{settled=true;});
+    await new Promise(resolve=>setTimeout(resolve,50));
+    expect(settled).toBe(false);
+    await versionLock.query('COMMIT');
+    await expect(pending).rejects.toMatchObject({status:409,code:'WORKFLOW_FROZEN'});
+  } finally { await versionLock.query('ROLLBACK');versionLock.release(); }
+  expect((await pool.query('SELECT capability_id FROM workflows WHERE id=$1',[wf])).rows[0].capability_id).toBe(newCap);
   const locked=await pool.connect();
   try {
     await locked.query('BEGIN');
