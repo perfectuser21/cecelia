@@ -763,10 +763,10 @@
     {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/quality/smoke-write-targets.txt", "role": "verification"},
     {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/api/features/planning/pages/capability-system/InvocationPanel.test.tsx", "role": "verification"},
     {"owner_path": "apps/api/features/planning/pages/capability-system/CapabilitySystem.tsx", "path": "apps/api/features/planning/pages/capability-system/CapabilitySystem.test.tsx", "role": "verification"},
-    {"owner_path": "apps/dashboard/e2e/invocation-preview-server.mjs", "path": "apps/dashboard/e2e/invocation-preview-server.test.mjs", "role": "verification"},
-    {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/invocation-smoke.sh", "role": "verification"},
+    {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/invocation-preview-server.test.mjs", "role": "verification"},
+    {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/smoke/invocation-smoke.sh", "role": "verification"},
     {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "changes/cp-10152144-workflow-ui.md", "role": "release"},
-    {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/invocation-browser-check.mjs", "role": "verification"},
+    {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/invocation-browser-check.spec.mjs", "role": "verification"},
     {"owner_path":"apps/api/features/planning/pages/capability-system/BusinessInputs.tsx","path":"apps/api/features/planning/pages/capability-system/BusinessInputs.test.tsx","role":"verification"}
   ]
 }
