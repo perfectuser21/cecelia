@@ -36,3 +36,16 @@ describe('resolveExpiryAction：按任务类型现有语义', () => {
     expect(resolveExpiryAction({ executor_kind: 'bridge' }, { on_expire: 'fail' })).toBe('fail');
   });
 });
+
+import {reapExpiredLeases} from '../task-lease.js';
+import {vi} from 'vitest';
+describe('获客跨机controller不能代替实际业务终态',()=>{
+ it.each(['dead','unknown','alive'])('MMV探活=%s也不能解锁仍可能在M4运行的业务',async verdict=>{
+  const row={id:'task',task_id:'task',status:'in_progress',source:'brain',expired_sec:10000,extend_count:99,payload:{leadgen_run:{machine:'xian-m4'}}};
+  const query=vi.fn(async sql=>sql.includes('FROM task_leases l')?{rows:[row]}:sql.includes('RETURNING lease_until')?{rows:[{lease_until:'2026-10-15T12:00:00Z'}]}:{rows:[]});
+  const r=await reapExpiredLeases({query},{probe:async()=>verdict});
+  expect(r.extended).toBe(1);expect(r.failed).toBe(0);expect(r.requeued).toBe(0);
+  expect(query.mock.calls.some(c=>c[0].includes('UPDATE tasks')||c[0].includes('DELETE FROM device_locks'))).toBe(false);
+  expect(query.mock.calls.some(c=>c[0].includes('UPDATE device_locks SET expires_at'))).toBe(true);
+ });
+});

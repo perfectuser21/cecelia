@@ -2,22 +2,51 @@
   "_comment": "技能工厂推进器 / 自动裁判的 workflow 配置（任务 a5f42455 / 2231ecc0，决策 cc008b7e）。按 workflows.key 取；取不到设备/agent/技能时推进器把台账行标 blocked_kind=resource，不猜。",
   "defaults": {
     "agent": "skill-factory",
-    "publish_hours": [9, 23],
+    "publish_hours": [
+      9,
+      23
+    ],
     "retreat_fail_threshold": 3,
     "guard_fail_threshold": 3,
     "visual_verify": true,
     "outward_external": false,
-    "stage_skills": { "1": "skill-explore", "2": "skill-boundary" },
-    "anchor": { "gp_id": "factory/skill-factory-pilot", "step_id": "keep-green", "journey_id": "a1000000-0000-4000-8000-000000000001" },
-    "dev": { "repo_hint": "https://github.com/perfectuser21/cecelia", "map_scope_hint": ["factory"], "change_kind": "capability_change" }
+    "stage_skills": {
+      "1": "skill-explore",
+      "2": "skill-boundary"
+    },
+    "anchor": {
+      "gp_id": "factory/skill-factory-pilot",
+      "step_id": "keep-green",
+      "journey_id": "a1000000-0000-4000-8000-000000000001"
+    },
+    "dev": {
+      "repo_hint": "https://github.com/perfectuser21/cecelia",
+      "map_scope_hint": [
+        "factory"
+      ],
+      "change_kind": "capability_change"
+    }
   },
   "workflows": {
     "douyin_video_publish.android": {
-      "device": { "node": "XIAN-M4-PHONE", "profile": "xiaolongxia", "serial": "ANGYVB4311010223", "ssh_host": "xian-m4", "pool": "douyin.internal", "_pool_comment": "Brain 主动派 workflow_dispatch 时从设备池 douyin.internal（抖音·内部号）按 priority 选可用的一台（任务 c5f6e683）；serial 仍是技能工厂推进器/派发器的固定机" },
+      "device": {
+        "node": "XIAN-M4-PHONE",
+        "profile": "xiaolongxia",
+        "serial": "ANGYVB4311010223",
+        "ssh_host": "xian-m4",
+        "pool": "douyin.internal",
+        "_pool_comment": "Brain 主动派 workflow_dispatch 时从设备池 douyin.internal（抖音·内部号）按 priority 选可用的一台（任务 c5f6e683）；serial 仍是技能工厂推进器/派发器的固定机"
+      },
       "dispatch_via": "commander",
-      "commander": { "capability": "douyin_video_publish", "machine": "xian-m4", "biz": "Ai办公室", "timeout_min": 55, "_comment": "Brain 主动派 workflow_dispatch 给 work-commander 的调度单（任务 f38e7cc2）：<capability> <machine> <profile> <serial> <biz>；capability 对应 zenithjoy-workspace product-map/contracts/douyin_video_publish.yaml。dispatch_via=commander 且 brain_config factory_commander_route_enabled=true 时推进器改建 workflow_dispatch（Brain→Commander→外壳→Codex），正文锁那行换 lock_brief、交付补 delivery_note（任务 c0fe7e30）",
+      "commander": {
+        "capability": "douyin_video_publish",
+        "machine": "xian-m4",
+        "biz": "Ai办公室",
+        "timeout_min": 55,
+        "_comment": "Brain 主动派 workflow_dispatch 给 work-commander 的调度单（任务 f38e7cc2）：<capability> <machine> <profile> <serial> <biz>；capability 对应 zenithjoy-workspace product-map/contracts/douyin_video_publish.yaml。dispatch_via=commander 且 brain_config factory_commander_route_enabled=true 时推进器改建 workflow_dispatch（Brain→Commander→外壳→Codex），正文锁那行换 lock_brief、交付补 delivery_note（任务 c0fe7e30）",
         "lock_brief": "锁：Brain 设备锁由 Brain 代领、手机控制器锁由外壳（wf-agent-run 准备活动）代领，owner=本 run_id；开工 lock-status 核对 owner，不要 lock-acquire / lock-release，收尾由外壳释放并回读 free",
-        "delivery_note": "由外壳汇总写 ~/wf-agent-runs/<run_id>/delivery.json，执行会话不要 PATCH Brain 任务" },
+        "delivery_note": "由外壳汇总写 ~/wf-agent-runs/<run_id>/delivery.json，执行会话不要 PATCH Brain 任务"
+      },
       "expected_outward": 1,
       "candidate_sources": {
         "android-douyin-private-video@1.0.8": "Brain 任务 5f00cf51-c625-4b5c-ac53-b2a96a957058 的 result.delivery.flow_skill"
@@ -41,6 +70,62 @@
         "可选只读复核：锁由派发器代领（owner=本核验 run_id），可经控制器 account-current / ui-evidence 只读查看当前私密作品数；禁止任何对外动作",
         "账号基准以设备登记为准：xiaolongxia 对应 ANGYVB4311010223、抖音号 90915521618 / Ai办公室"
       ]
+    },
+    "douyin_video_discovery": {
+      "dispatch_via": "leadgen-run-v1",
+      "publish_hours": [
+        0,
+        24
+      ],
+      "stage_skills": {},
+      "outward_external": false,
+      "leadgen": {
+        "workflow_id": "b1000000-0000-4000-8000-000000000101",
+        "max_limit": 50,
+        "timeout_sec": 2400
+      }
+    },
+    "douyin_video_processing": {
+      "dispatch_via": "leadgen-run-v1",
+      "publish_hours": [
+        0,
+        24
+      ],
+      "stage_skills": {},
+      "outward_external": false,
+      "leadgen": {
+        "workflow_id": "b1000000-0000-4000-8000-000000000102",
+        "max_limit": 50,
+        "timeout_sec": 2400
+      }
+    },
+    "douyin_comment_scoring": {
+      "dispatch_via": "leadgen-run-v1",
+      "publish_hours": [
+        0,
+        24
+      ],
+      "stage_skills": {},
+      "outward_external": false,
+      "leadgen": {
+        "workflow_id": "b1000000-0000-4000-8000-000000000103",
+        "max_limit": 50,
+        "timeout_sec": 1800
+      }
+    },
+    "douyin_lead_outreach": {
+      "dispatch_via": "leadgen-run-v1",
+      "publish_hours": [
+        0,
+        24
+      ],
+      "stage_skills": {},
+      "outward_external": true,
+      "leadgen": {
+        "workflow_id": "b1000000-0000-4000-8000-000000000104",
+        "max_limit": 10,
+        "timeout_sec": 1800
+      }
     }
   }
 }

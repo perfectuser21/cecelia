@@ -219,6 +219,12 @@ export async function reapExpiredLeases(pool, deps = {}) {
       probes++;
       const verdict = await probe(row);
       detail.probe = verdict;
+      // 获客跨机控制器断网不能证明远端手机已停；未知只续租保锁，专属收割/人工只读恢复，禁止重发。
+      if (row.payload?.leadgen_run) {
+        const renewed=await pool.query("UPDATE task_leases SET lease_until=NOW()+($2::int * INTERVAL '1 second'),extend_count=extend_count+1 WHERE task_id=$1 AND released_at IS NULL RETURNING lease_until",[row.task_id,BRAIN_LEASE_EXTEND_SECONDS]);
+        if(renewed.rows?.[0]?.lease_until)await syncDeviceLocks(pool,row.task_id,renewed.rows[0].lease_until);
+        await recordTaskEventSafe(pool,row.task_id,'leadgen_lease_retained_unknown_or_alive',detail);out.extended++;continue;
+      }
       if (verdict === 'alive' && row.extend_count < BRAIN_LEASE_MAX_EXTENDS) {
         await pool.query(
           `UPDATE task_leases SET lease_until = NOW() + ($2::int * INTERVAL '1 second'), extend_count = extend_count + 1

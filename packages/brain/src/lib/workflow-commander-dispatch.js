@@ -34,6 +34,8 @@ import { finalizeTask } from './task-terminal.js';
 import { recordTaskEventSafe } from './task-event-log.js';
 import { startRun, finishRun } from './task-run.js';
 
+import { isLeadgenTask } from './leadgen-dispatch-contract.js';
+import { dispatchLeadgenTask,reapLeadgenTask } from './leadgen-dispatch.js';
 import { dispatchCommanderV2 } from './commander-v2-dispatch.js';
 import { reconcileCommanderV2 } from './commander-v2-control.js';
 
@@ -185,6 +187,7 @@ async function failQueued(pool, id, reason, extra = {}) {
 /** 派发一轮：返回 { dispatched, waiting, failed, skipped }。 */
 export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
   const now = deps.now ?? (() => new Date());
+  const roundStarted=Date.now();
   const sshDispatch = deps.sshDispatch ?? defaultSshDispatch;
   const lockGate = deps.lockGate ?? defaultLockGate;
   const releaseLock = deps.releaseLock ?? defaultReleaseLock;
@@ -196,10 +199,13 @@ export async function dispatchWorkflowCommanderTasks(pool, deps = {}) {
   const { rows } = await pool.query(
     `SELECT * FROM tasks
       WHERE task_type = '${WORKFLOW_DISPATCH_TASK_TYPE}' AND status = 'queued' AND claimed_by IS NULL
+      AND NOT EXISTS (SELECT 1 FROM workflows w WHERE w.key=tasks.payload->>'workflow_key' AND w.status='paused' AND w.key=ANY(ARRAY['douyin_video_discovery','douyin_video_processing','douyin_comment_scoring','douyin_lead_outreach']))
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC
-      LIMIT ${BATCH}`,
+      LIMIT ${BATCH * 10}`,
   );
   for (const t of rows ?? []) {
+    if(out.dispatched>=BATCH||Date.now()-roundStarted>=45_000)break;
+    if (isLeadgenTask(t)) { const state=await dispatchLeadgenTask(pool,t,deps.leadgen??{}); out[state]++; continue; }
     if (t.payload?.commander_protocol !== undefined) {
       if (t.payload.commander_protocol !== 'commander-v2') {
         await failQueued(pool, t.id, 'workflow_dispatch_unsupported_protocol'); out.failed++; continue;
@@ -318,6 +324,7 @@ export async function reapWorkflowCommanderRuns(pool, deps = {}) {
       ORDER BY started_at ASC NULLS FIRST LIMIT 10`,
   );
   for (const row of rows ?? []) {
+    if (isLeadgenTask(row)) { const state=await reapLeadgenTask(pool,row,deps.leadgen??{}); if(state)out[state]++; continue; }
     if (row.payload?.commander_protocol === 'commander-v2') continue;
     if (!isSafeRunId(row.run_id)) continue;
     let stdout;
