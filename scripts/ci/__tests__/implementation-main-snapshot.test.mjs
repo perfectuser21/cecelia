@@ -38,7 +38,7 @@ function bundle(revision,{parentMissing=false,childMissing=false,parentGaps=null
  return {snapshot:seal({schema_version:1,scope:'cecelia-kr',repo,revision,status:parentMissing?'unknown':'verified',gaps:parentMissing?(parentGaps??[{code:'definition_snapshot_missing'}]):[],map:{manifest:parentManifest},canonical:{workflows:[],journeys:[]},definitions:{workflows:[],activities:[]},admission_companion:companion})};
 }
 const workflow=()=>yaml.load(readFileSync(join(root,'.github/workflows/implementation-impact.yml'),'utf8'));
-async function executeProvider(t,{initial={},refresh={},after={},moved=false,getError=false,mutateFinal=null,baseUnknown=false,artifact={},baseEqualsHead=false,movedAfterPost=false}={}){
+async function executeProvider(t,{initial={},refresh={},after={},moved=false,getError=false,mutateFinal=null,baseUnknown=false,artifact={},baseEqualsHead=false,movedAfterPost=false,moveOnPostNumber=0}={}){
  const dir=mkdtempSync(join(tmpdir(),'implementation-publish-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  mkdirSync(join(dir,'bin'));symlinkSync(root,join(dir,'tooling'),'dir');
  const history=artifact.errorBody?{error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}:bundle(base,{childMissing:true});
@@ -66,12 +66,12 @@ else process.exit(9);
   const q=req.method==='POST'?JSON.parse(raw):Object.fromEntries(url.searchParams);calls.push({method:req.method,...q});
   let code=200,value;
   if(req.method==='POST'){
-   posts++;if(movedAfterPost)writeFileSync(join(dir,'main-sha'),'c'.repeat(40));const response=refresh[q.scope];code=response?.status??200;
+   posts++;if(movedAfterPost||posts===moveOnPostNumber)writeFileSync(join(dir,'main-sha'),'c'.repeat(40));const response=refresh[q.scope];code=response?.status??200;
    if(code<300){if(q.scope==='cecelia-kr')stage.parentMissing=false;else stage.childMissing=false;}
    Object.assign(stage,after[q.scope]??{});
    value=response?.body??(q.scope==='cecelia-factory'?{snapshot:bundle(head,stage).snapshot.admission_companion.snapshot}:bundle(head,stage));
   }else if(getError){code=409;value={error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}};}
-  else {value=bundle(q.revision,q.revision===head?stage:{parentMissing:baseUnknown,childMissing:true});if(mutateFinal&&posts)value=mutateFinal(value);}
+  else {value=bundle(q.revision,q.revision===head?stage:{parentMissing:baseUnknown,childMissing:true});if(mutateFinal&&posts)value=mutateFinal(value,{posts,dir});}
   res.writeHead(code,{'content-type':'application/json'});res.end(JSON.stringify(value));
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
@@ -240,5 +240,49 @@ test('历史artifact创建时间缺失或非法不能参与选择',async t=>{
  for(const created_at of [null,'','not-a-date']){
   const r=await executeProvider(t,{baseUnknown:true,artifact:{itemPatch:{created_at}}});assert.notEqual(r.code,0);
   assert.match(r.stderr,/BASE_ARTIFACT_MISSING/);assert.equal(existsSync(join(r.dir,'evidence/base.json')),false);
+ }
+});
+
+// 真 e7e 回执：父先 verified，factory 200 后旧部署定时器切回父 current。
+const regressedParent={parentMissing:true,parentGaps:[{code:'scope_manifest_missing'},{code:'workflow_capability_unmapped'}],parentManifest:null};
+const regressionOptions={initial:{childMissing:true},after:{'cecelia-factory':regressedParent}};
+test('首轮factory成功后父scope回退，仅额外刷新父scope一次',async t=>{
+ const r=await executeProvider(t,regressionOptions);assert.equal(r.code,0,r.stderr);
+ assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-factory','cecelia-kr']);
+ const published=JSON.parse(readFileSync(join(r.dir,'evidence/head.json'))).snapshot;
+ assert.equal(published.status,'verified');assert.equal(published.admission_companion.snapshot.status,'verified');
+});
+test('补偿后再次回退有界失败且无正式文件',async t=>{
+ let repairReads=0;
+ const r=await executeProvider(t,{...regressionOptions,mutateFinal:(b,{posts})=>posts===2&&++repairReads>1?bundle(head,regressedParent):b});
+ assert.notEqual(r.code,0);assert.match(r.stderr,/SNAPSHOT_UNKNOWN/);
+ assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-factory','cecelia-kr']);
+ assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);assert.equal(existsSync(join(r.dir,'evidence/base.json')),false);
+});
+test('回退缺口不受支持或身份摘要非法时不追加刷新',async t=>{
+ const variants=[
+  {after:{'cecelia-factory':{...regressedParent,parentGaps:[{code:'unrecognized_gap'}]}}},
+  {after:{'cecelia-factory':{...regressedParent,parentGaps:[{code:'workflow_capability_unmapped'}]}}},
+  {after:{'cecelia-factory':{...regressedParent,parentManifest:{id:'present'}}}},
+  {mutateFinal:b=>({snapshot:seal({...b.snapshot,revision:'c'.repeat(40)})})},
+  {mutateFinal:b=>({snapshot:{...b.snapshot,snapshot_sha256:'0'.repeat(64)}})}
+ ];
+ for(const variant of variants){
+  const r=await executeProvider(t,{...regressionOptions,...variant});assert.notEqual(r.code,0);
+  assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-factory']);
+  assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+ }
+});
+test('补偿计划前或补偿POST后main漂移拒绝发布',async t=>{
+ for(const [variant,count] of [[{mutateFinal:(b,{dir})=>{writeFileSync(join(dir,'main-sha'),'c'.repeat(40));return b;}},1],[{moveOnPostNumber:2},2]]){
+  const r=await executeProvider(t,{...regressionOptions,...variant});assert.notEqual(r.code,0);assert.match(r.stderr,/MAIN_MOVED/);
+  assert.equal(r.calls.filter(c=>c.method==='POST').length,count);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+ }
+});
+test('补偿POST失败或仍UNKNOWN不可再重试',async t=>{
+ for(const variant of [{refresh:{'cecelia-kr':{status:409,body:{error:{code:'UNRELATED_CONFLICT'}}}}},{after:{...regressionOptions.after,'cecelia-kr':regressedParent}}]){
+  const r=await executeProvider(t,{...regressionOptions,...variant});assert.notEqual(r.code,0);
+  assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>c.scope),['cecelia-factory','cecelia-kr']);
+  assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
  }
 });
