@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
-    {"owner_path":"packages/brain/src/projection/directory-source.js","path":"changes/cp-10151829-cw-bb4fa876.md","role":"release"},
+    
     {"owner_path":"packages/brain/src/projection/directory-source.js","path":"packages/brain/src/projection/__tests__/directory-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/projection/directory-projector.js","path":"packages/brain/src/projection/__tests__/directory-projector.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/projection/directory-projector.js","path":"packages/brain/src/projection/__tests__/directory-runtime.test.js","role":"verification"},
