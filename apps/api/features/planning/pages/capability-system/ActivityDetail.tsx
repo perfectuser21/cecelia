@@ -1,3 +1,4 @@
+import InvocationPanel from "./InvocationPanel";
 import { Registry, Selection, stateLabel } from "./model";
 export function State({ value }: { value?: string }) {
   const state = stateLabel(value);
@@ -52,6 +53,7 @@ export default function ActivityDetail({
           ? usage.activity_definition_version_id || "unknown"
           : activity.current_definition_version_id || "unknown"}
       </p>
+      <InvocationPanel target={{ kind: "activity", id: activity.id, definition_version_id: usage ? usage.activity_definition_version_id : activity.current_definition_version_id }} />
       <h3 className="mb-2 mt-5 font-semibold">
         被谁引用 · {activity.consumers?.length || 0}
       </h3>

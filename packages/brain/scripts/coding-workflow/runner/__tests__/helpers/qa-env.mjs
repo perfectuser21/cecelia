@@ -80,7 +80,7 @@ export function useQaEnv({ onReady } = {}) {
     git(sb.clone, 'config', 'core.hooksPath', path.join(sb.root, 'no-hooks'));
     Object.assign(E.files, { gh: path.join(sb.root, 'gh-ci.json'), qaLog: path.join(sb.root, 'qa.log'), prompt: path.join(sb.root, 'prompt.txt') });
 
-    const preview = { status: { 77: { status: 'active', port: 0 } }, start: 200, calls: [] };
+    const preview = { status: { 77: { status: 'active', port: 0 } }, start: 200, stop: 200, stopBody: { stopped: true }, calls: [] };
     preview.server = await serve((req, raw, res) => {
       preview.calls.push({ method: req.method, url: req.url, auth: req.headers.authorization ?? null, raw });
       // 预览 Brain 的 /health：git_sha 默认等于假 gh 里 PR 当前 head（已部署最新），preview.sha 可指定旧版本
@@ -95,7 +95,10 @@ export function useQaEnv({ onReady } = {}) {
         return res.end(JSON.stringify({ pr_number: Number(st[1]), ...p }));
       }
       if (req.url === '/api/brain/preview/start') { res.statusCode = preview.start; return res.end(JSON.stringify({ port: 5309, reason: 'disk' })); }
-      if (/\/api\/brain\/preview\/stop\/\d+$/.test(req.url)) return res.end('{"ok":true}');
+      if (/\/api\/brain\/preview\/stop\/\d+$/.test(req.url)) {
+        res.statusCode = preview.stop;
+        return res.end(preview.stopRaw ?? JSON.stringify(preview.stopBody));
+      }
       // 预览 Brain 的业务 API（固化前预跑打这里）：建任务回 id；qa-broken 固定 500
       if (req.url === '/api/brain/tasks' && req.method === 'POST') return res.end('{"id":"qa-1"}');
       if (req.url === '/api/brain/qa-broken') { res.statusCode = 500; return res.end('{"error":"boom"}'); }

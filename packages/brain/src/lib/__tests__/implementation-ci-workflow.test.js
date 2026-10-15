@@ -6,6 +6,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync,execFileSync } from 'node:child_process';
 describe('implementation-ci-workflow',()=>{
+it('main显式来源环境只启用官方self main push和dispatch，冻结主run与PR来源保持',()=>{
+ const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+ const env=workflow.jobs.gate.env,run=workflow.jobs.gate.steps.find(s=>s.name==='实际变更影响与固定回归').run;
+ expect(createHash('sha256').update(run).digest('hex')).toBe('8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d');
+ expect(env.ADMISSION_SCOPES).toBe('${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || (github.event_name == \'pull_request\' && github.repository == \'perfectuser21/cecelia\' && \'{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}\' || \'\') }}');
+ const evaluate=new Function('github','inputs','vars',`return (${env.IMPLEMENTATION_MAIN_SCOPES.slice(3,-2)});`);
+ const github={repository:'perfectuser21/cecelia',ref:'refs/heads/main',event_name:'push',sha:'a'.repeat(40)};
+ const expected=JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-factory']});
+ expect(evaluate(github,{},{})).toBe(expected);expect(evaluate({...github,event_name:'workflow_dispatch'},{},{})).toBe(expected);
+ for(const [g,inputs,vars] of [[{event_name:'pull_request'},{},{}],[{event_name:'release'},{},{}],[{repository:'other/repo'},{},{}],[{ref:'refs/heads/topic'},{},{}],[{},{source_repo:'other/repo'},{}],[{},{mode:'pr'},{}],[{},{head_revision:'b'.repeat(40)},{}],[{},{tooling_revision:'b'.repeat(40)},{}],[{},{scope:'cecelia-device-patrol'},{}],[{},{export_device_patrol_source_identity:true},{}],[{},{},{IMPLEMENTATION_MAP_SCOPE:'other'}]])expect(evaluate({...github,...g},inputs,vars)).toBe('');
+});
 it('正常Brain单测执行巡查可信baseline实际ZIP与治理行为回归',()=>{
  const root=new URL('../../../../../',import.meta.url);
  const child=spawnSync(process.execPath,['--test','scripts/ci/__tests__/device-patrol-baseline.test.mjs','scripts/ci/__tests__/device-patrol-governance.test.mjs'],{cwd:root,encoding:'utf8',timeout:30000});

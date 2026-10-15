@@ -60,4 +60,28 @@ describe('目录运行循环',()=>{
     for(let n=0;n<3;n++)await runDirectoryProjection(f.pool,{token:'test',notionReq:f.notionReq,force:true,batchSize:2});
     expect(f.writes).toEqual([]);
   });
+  it('标题读回落后时整轮 failed 且不刷新目标成功收据，纠正后重试成功', async () => {
+    const f=runtimeFixture();
+    await runDirectoryProjection(f.pool,{token:'test',notionReq:f.notionReq,force:true});
+    const id=fixtureEntityId(24), link=f.links.find(l=>l.entity_id===id), oldHash=link.content_hash;
+    f.source.workflows[0].name='新版流程';
+    let stale=true;
+    const notionReq=async (...args)=>{
+      const page=await f.notionReq(...args);
+      if(stale&&args[2]==='GET'&&args[1]===`/pages/${link.external_id}`) {
+        page.properties['名称']={title:[{text:{content:'A'}}]};
+      }
+      return page;
+    };
+    const failed=await runDirectoryProjection(f.pool,{token:'test',notionReq,force:true});
+    expect(failed.status).toBe('failed');
+    expect(failed.failed).toBeGreaterThan(0);
+    expect(failed.errors).toContainEqual(expect.objectContaining({id,code:'目录属性读回不一致: 名称'}));
+    expect(link.content_hash).toBe(oldHash);
+    stale=false;
+    const recovered=await runDirectoryProjection(f.pool,{token:'test',notionReq,force:true});
+    expect(recovered.failed).toBe(0);
+    expect(link.content_hash).not.toBe(oldHash);
+    expect(f.pages.get(link.external_id).properties['名称'].title[0].text.content).toBe('新版流程');
+  });
 });

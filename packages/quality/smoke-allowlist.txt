@@ -375,6 +375,7 @@ fleet-local-resource-admission-smoke.sh
 phone-registry-sync-smoke.sh
 alertness-schema-smoke.sh
 activity-contract-runtime-smoke.sh
+invocations-smoke.sh
 
 preview-owned-cache-smoke.sh
 
@@ -454,3 +455,7 @@ commander-generic-smoke.sh
 
 workflow-observation-smoke.sh
 version-identity-preflight-smoke.sh
+workflow-assembly-plan-smoke.sh
+directory-title-sync-smoke.sh
+tree-legacy-layout.sh
+workflow-assembly-registration-smoke.sh

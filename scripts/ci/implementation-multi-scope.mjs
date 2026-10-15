@@ -6,7 +6,7 @@ import {assertGovernanceCoverage} from '../../packages/brain/src/lib/implementat
 import {collectAuxiliarySourceEvidence,assertAuxiliarySourceEvidence,SOURCE_RELATIONS_PATH} from './implementation-auxiliary-evidence.mjs';
 /** 联合证据保留领域切片，外层完整Git差异单独验收，不伪造一个投影。 */
 import {createHash} from 'node:crypto';
-import {assertImplementationReport} from '../../packages/brain/src/lib/implementation-report.js';
+import {assertImplementationReport,assertJointNoOwnedImplementationReport} from '../../packages/brain/src/lib/implementation-report.js';
 import {validateImplementationImpact} from '../../packages/brain/src/lib/implementation-impact.js';
 const sha=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail=code=>{throw Object.assign(Error(code),{code});};
@@ -72,15 +72,19 @@ function assertScopedAuxiliaryReport(report,context){
   }
   return true;
 }
-export function aggregateScopedImplementationEvidence({source,expectedScopes,reports,auxiliary_scope_context}){
+export function aggregateScopedImplementationEvidence({source,expectedScopes,reports,auxiliary_scope_context,no_owned_changes_context,purpose='admission_only'}){
+  if(!['admission_only','main_verification'].includes(purpose))fail('IMPACT_MULTISCOPE_PURPOSE_INVALID');
+  if(purpose==='main_verification'&&(source?.repo!=='perfectuser21/cecelia'||JSON.stringify(expectedScopes)!=='["cecelia-kr","cecelia-factory"]'))fail('IMPACT_MULTISCOPE_MAIN_SOURCE_INVALID');
   if(!Array.isArray(expectedScopes)||!expectedScopes.length||new Set(expectedScopes).size!==expectedScopes.length||
     !Array.isArray(reports)||reports.length!==expectedScopes.length)fail('IMPACT_MULTISCOPE_SCOPES_REQUIRED');
   const normalized=validateImplementationImpact({scope:expectedScopes[0],repo:source?.repo,base_revision:source?.base_revision,head_revision:source?.head_revision,changed_files:source?.changed_files});
   const changes=normalized.changed_files,known=new Set(changes.map(key));
   if(known.size!==changes.length)fail('IMPACT_MULTISCOPE_DIFF_DUPLICATE');
   const context=verifyAuxiliaryScopeContext(source,expectedScopes,auxiliary_scope_context);
+  const noOwned=verifyNoOwnedContext(source,expectedScopes,reports,no_owned_changes_context,context,purpose);
   const seen=new Set(),claims=new Map(changes.map(c=>[key(c),[]]));
   for(const report of reports){
+    if(purpose==='main_verification'&&(report.ci_context?.purpose!=='release'||report.head?.revision!==source.head_revision||!report.required_assertions?.length))fail('IMPACT_MULTISCOPE_MAIN_SOURCE_INVALID');
     if(!Array.isArray(report.gaps)||report.mapping_status==='unknown'&&!report.gaps.length||
       ['base','head'].some(side=>report[side]?.mapping_status==='unknown'))fail('IMPACT_MULTISCOPE_UNRESOLVED_UNKNOWN');
     if(!expectedScopes.includes(report?.scope_key)||seen.has(report.scope_key))fail('IMPACT_MULTISCOPE_SCOPE_MISMATCH');
@@ -88,7 +92,8 @@ export function aggregateScopedImplementationEvidence({source,expectedScopes,rep
     if(report.source?.repo!==source.repo||report.source.base_revision!==source.base_revision||report.source.head_revision!==source.head_revision)
       fail('IMPACT_MULTISCOPE_SOURCE_MISMATCH');
     // UNKNOWN、断言遗漏、source/图错误必须在各自领域内拒绝，不借另一个领域的PASS。
-    assertImplementationReport(report);
+    if(noOwned?.scope_keys.includes(report.scope_key))assertJointNoOwnedImplementationReport(report);
+    else assertImplementationReport(report);
     assertScopedAuxiliaryReport(report,context);
     for(const change of report.source.changed_files){
       if(!known.has(key(change)))fail('IMPACT_MULTISCOPE_DIFF_MISMATCH');
@@ -102,16 +107,17 @@ export function aggregateScopedImplementationEvidence({source,expectedScopes,rep
     claims.set(key(change),scopes.map(scope_key=>({scope_key,coverage_kind:'scoped_auxiliary_source',context_sha256:context.context_sha256})));
   }
   if([...claims.values()].some(v=>!v.length))fail('IMPACT_MULTISCOPE_FILE_UNCLAIMED');
-  const body={schema_version:2,evidence_kind:'scoped_implementation_admission',source:{repo:source.repo,base_revision:source.base_revision,head_revision:source.head_revision,changed_files:changes},
-    purpose:'admission_only',scope_reports:structuredClone(reports),
+  const body={schema_version:2,evidence_kind:purpose==='main_verification'?'scoped_implementation_main':'scoped_implementation_admission',source:{repo:source.repo,base_revision:source.base_revision,head_revision:source.head_revision,changed_files:changes},
+    purpose,scope_reports:structuredClone(reports),
     ...(context?{auxiliary_scope_context:context}:{}),
+    ...(noOwned?{no_owned_changes_context:noOwned}:{}),
     file_coverage:changes.map(c=>({...c,claims:claims.get(key(c))})),
     business_runtime_status:'not_evaluated'};
   return {...body,evidence_sha256:sha(body)};
 }
 
 export function verifyScopedImplementationGitSource(repoRoot,proof){
-  const rebuilt=aggregateScopedImplementationEvidence({source:proof?.source,expectedScopes:(proof?.scope_reports||[]).map(r=>r.scope_key),reports:proof?.scope_reports,auxiliary_scope_context:proof?.auxiliary_scope_context});
+  const rebuilt=aggregateScopedImplementationEvidence({source:proof?.source,expectedScopes:(proof?.scope_reports||[]).map(r=>r.scope_key),reports:proof?.scope_reports,auxiliary_scope_context:proof?.auxiliary_scope_context,no_owned_changes_context:proof?.no_owned_changes_context,purpose:proof?.purpose});
   const {evidence_sha256,...body}=proof;
   if(evidence_sha256!==sha(body)||evidence_sha256!==rebuilt.evidence_sha256)fail('IMPACT_MULTISCOPE_DIGEST_MISMATCH');
   const git=(...args)=>execFileSync('git',args,{cwd:repoRoot,encoding:'utf8',maxBuffer:16*1024*1024}).trim();
@@ -126,7 +132,7 @@ export function verifyScopedImplementationGitSource(repoRoot,proof){
 }
 
 /** 每个输入仍是完整差异的原生报告；仅明确的foreign文件缺归属可由另一领域真实调用闭包解释。 */
-export function resolveScopedImplementationReports({source,expectedScopes,reports}){
+function resolveReportParts({source,expectedScopes,reports,purpose='admission_only'}){
   const resolutions=[],parts=[],owners=new Map();
   if(!Array.isArray(reports)||!Array.isArray(expectedScopes)||reports.length!==expectedScopes.length)fail('IMPACT_MULTISCOPE_SCOPES_REQUIRED');
   const context=auxiliaryScopeContext(source,expectedScopes,reports);
@@ -145,7 +151,7 @@ export function resolveScopedImplementationReports({source,expectedScopes,report
   }
   for(const report of reports){
     const indexes=source.changed_files.flatMap((change,index)=>!context?.joint_files.some(f=>f.path===change.path)&&owners.get(key(change))?.includes(report.scope_key)?[index]:[]);
-    if(!indexes.length)fail('IMPACT_MULTISCOPE_SCOPE_WITHOUT_NATIVE_CLAIM');
+    if(!indexes.length)assertNoOwnedRawReports(source,expectedScopes,reports,context,purpose);
     for(const gap of report.gaps||[]){
       if(gap.code==='auxiliary_owner_unclaimed'&&context){
         const rows=context.owner_claims.filter(c=>c.owner_path===gap.path&&(!gap.side||c.side===gap.side));
@@ -167,11 +173,69 @@ export function resolveScopedImplementationReports({source,expectedScopes,report
     for(const side of ['base','head'])part[side].file_coverage=indexes.map((i,change_index)=>({...part[side].file_coverage[i],change_index}));
     part.gaps=[];part.unclaimed_paths=[];part.mapping_status='verified';
     // 所有side图/定义/回归证据及辅助owner UNKNOWN保留，由原校验完整拒绝。
-    assertImplementationReport(part);parts.push(part);
+    if(indexes.length)assertImplementationReport(part);else assertJointNoOwnedImplementationReport(part);
+    parts.push(part);
   }
-  const proof=aggregateScopedImplementationEvidence({source,expectedScopes,reports:parts,auxiliary_scope_context:context});
+  return {parts,resolutions,context};
+}
+
+export function resolveScopedImplementationReports({source,expectedScopes,reports,purpose='admission_only'}){
+  const {parts,resolutions,context}=resolveReportParts({source,expectedScopes,reports,purpose});
+  const noOwned=buildNoOwnedContext(source,reports,parts,resolutions,purpose);
+  const proof=aggregateScopedImplementationEvidence({source,expectedScopes,reports:parts,auxiliary_scope_context:context,no_owned_changes_context:noOwned,purpose});
   const body={schema_version:1,evidence:proof,source_reports:structuredClone(reports),resolved_foreign_paths:resolutions};
   return {...body,resolution_sha256:sha(body)};
+}
+
+
+function assertNoOwnedBoundary(source,scopes,purpose){
+  if(source?.repo!=='perfectuser21/cecelia'||JSON.stringify(scopes)!=='["cecelia-kr","cecelia-factory"]'||
+    !['admission_only','main_verification'].includes(purpose))fail('IMPACT_MULTISCOPE_NO_OWNED_SOURCE_INVALID');
+}
+function assertNoOwnedRawReports(source,scopes,reports,context,purpose){
+  assertNoOwnedBoundary(source,scopes,purpose);
+  if(JSON.stringify(reports.map(r=>r.scope_key))!==JSON.stringify(scopes))fail('IMPACT_MULTISCOPE_SCOPE_MISMATCH');
+  for(const report of reports){
+    if(report.ci_context?.purpose!==(purpose==='main_verification'?'release':'admission_only')||
+      !['base','head'].every(side=>/^[0-9a-f]{64}$/.test(report.ci_context?.[`${side}_snapshot_sha256`]||'')))
+      fail('IMPACT_MULTISCOPE_NO_OWNED_SOURCE_INVALID');
+    for(const side of ['base','head']){
+      const files=report[side]?.file_coverage;
+      if(report[side]?.mapping_status!=='verified'||!Array.isArray(files)||files.length!==source.changed_files.length)
+        fail('IMPACT_MULTISCOPE_NO_OWNED_SOURCE_INVALID');
+      for(const [index,change] of source.changed_files.entries()){
+        const file=files[index];
+        if(file?.change_index!==index||file.path!==(side==='base'?change.old_path||change.path:change.path)||
+          !Array.isArray(file.matched_paths)||file.truncated!==false)fail('IMPACT_MULTISCOPE_NO_OWNED_SOURCE_INVALID');
+      }
+    }
+    for(const [index,change] of source.changed_files.entries()){
+      const pair=['base','head'].map(side=>report[side].file_coverage[index]);
+      if(pair.some(f=>f.matched_paths.length)||pair.every(f=>f.coverage_kind==='governance')||context?.joint_files.some(f=>f.path===change.path))continue;
+      if(!report.gaps.some(g=>g.code==='changed_file_unclaimed'&&!g.side&&g.path===change.path&&(g.old_path??null)===(change.old_path??null))||
+        !report.unclaimed_paths?.some(f=>key(f)===key(change)))fail('IMPACT_MULTISCOPE_NO_OWNED_SOURCE_INVALID');
+    }
+  }
+}
+function buildNoOwnedContext(source,reports,parts,resolutions,purpose){
+  const scope_keys=parts.filter(r=>!r.source.changed_files.length).map(r=>r.scope_key);
+  if(!scope_keys.length)return null;
+  const body={schema_version:1,source:structuredClone(source),purpose,scope_keys,
+    source_reports:structuredClone(reports),source_report_hashes:reports.map(r=>({scope_key:r.scope_key,report_sha256:sha(r)})),
+    resolved_foreign_paths:structuredClone(resolutions)};
+  return {...body,context_sha256:sha(body)};
+}
+/** 空切片只能由完整原始报告重新推导；外层标志/自填hash不能免除任一scope。 */
+function verifyNoOwnedContext(source,scopes,reports,context,auxiliary,purpose){
+  const empty=reports.some(r=>Array.isArray(r?.source?.changed_files)&&!r.source.changed_files.length);
+  if(!empty&&!context)return null;
+  assertNoOwnedBoundary(source,scopes,purpose);
+  if(!empty||!context)fail('IMPACT_MULTISCOPE_NO_OWNED_CONTEXT_MISMATCH');
+  const rebuilt=resolveReportParts({source,expectedScopes:scopes,reports:context.source_reports,purpose});
+  const expected=buildNoOwnedContext(source,context.source_reports,rebuilt.parts,rebuilt.resolutions,purpose);
+  if(!expected||sha(expected)!==sha(context)||sha(rebuilt.parts)!==sha(reports)||sha(rebuilt.context)!==sha(auxiliary))
+    fail('IMPACT_MULTISCOPE_NO_OWNED_CONTEXT_MISMATCH');
+  return expected;
 }
 
 export async function runScopedImplementationGate({repoRoot,evidence,timeoutMs=300000}){
@@ -186,12 +250,14 @@ export async function runScopedImplementationGate({repoRoot,evidence,timeoutMs=3
     const assertions=await runRegisteredAssertions({repoRoot,source:evidence.source,required_assertions:report.required_assertions,timeoutMs});
     receipts.push({schema_version:1,actor:'implementation_ci_gate',scope_key:report.scope_key,source:report.source,
       report_sha256:sha(report),assertions,verdict:assertions.every(a=>a.exit_code===0&&!a.error)?'PASS':'FAIL',
-      purpose:'admission_only',business_runtime_status:'not_evaluated'});
+      purpose:evidence.purpose,business_runtime_status:'not_evaluated',
+      ...(evidence.no_owned_changes_context?.scope_keys.includes(report.scope_key)?{ownership_status:'no_owned_changes',
+        no_owned_context_sha256:evidence.no_owned_changes_context.context_sha256}: {})});
   }
   verifyScopedImplementationGitSource(repoRoot,evidence);
-  return {schema_version:2,actor:'implementation_ci_gate',evidence_kind:'scoped_implementation_admission',source:evidence.source,
-    evidence_sha256:evidence.evidence_sha256,scope_receipts:receipts,purpose:'admission_only',
-    ...(evidence.auxiliary_scope_context?{auxiliary_scope_receipt:{schema_version:1,purpose:'admission_only',
+  return {schema_version:2,actor:'implementation_ci_gate',evidence_kind:evidence.evidence_kind,source:evidence.source,
+    evidence_sha256:evidence.evidence_sha256,scope_receipts:receipts,purpose:evidence.purpose,
+    ...(evidence.auxiliary_scope_context?{auxiliary_scope_receipt:{schema_version:1,purpose:evidence.purpose,
       context_sha256:evidence.auxiliary_scope_context.context_sha256,owner_claims:evidence.auxiliary_scope_context.owner_claims,
       joint_files:evidence.auxiliary_scope_context.joint_files,verdict:'PASS',business_runtime_status:'not_evaluated'}}:{}),
     verdict:receipts.every(r=>r.verdict==='PASS')?'PASS':'FAIL',business_runtime_status:'not_evaluated',recorded_at:new Date().toISOString()};

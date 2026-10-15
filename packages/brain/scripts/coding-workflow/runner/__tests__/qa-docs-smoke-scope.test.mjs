@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
+import { registerRecordSources, RECORD_SOURCE_MANIFEST as M, RECORD_SOURCE_OWNER as OWNER } from '../../lib/record-sources.mjs';
 import { solidifyQa } from '../lib/qa-solidify.mjs';
 
 const TASK = '3a27ca36-7be9-4efc-a27f-18361dae6557';
@@ -93,4 +94,28 @@ it('API 变更的预跑失败仍触 smoke_missing，不能以 Markdown 记录抵
   write('packages/brain/src/routes/example.js', 'export default 2;\n'); commit();
   const { state, changed } = await solidify({ broken: true });
   expect(changed).toEqual([]); expect(state.smoke_missing).toBe(true); expect(state.smoke_gap.api_items).toEqual(['T-1']);
+});
+
+it.each(['committed', 'staged', 'working'])('精确控制器来源增量在%s视图保持纯文档，不把health固化为新测试', async view => {
+  git('remote','add','origin','https://github.com/perfectuser21/cecelia.git');
+  write(OWNER,'// runner fixture\n');write(M,JSON.stringify({schema_version:1,repo:'perfectuser21/cecelia',relations:[]}));commit();git('update-ref','refs/remotes/origin/main','HEAD');git('checkout','-b',BRANCH);
+  write('README.md','new documentation\n');commit();
+  write(`${SPRINT}/01-intent.md`,`---\ntask_id: ${TASK}\nstep: intent\nupstream: []\n---\n`);
+  registerRecordSources(root,{taskId:TASK,sprintDir:SPRINT,stage:'publish'},[`${SPRINT}/01-intent.md`]);
+  if(view==='committed')commit();else if(view==='staged')git('add','--',M,`${SPRINT}/01-intent.md`);
+  const {state,changed}=await solidify();expect(changed).toEqual([]);expect(calls).toBe(1);expect(state.smoke_note).toContain('纯 Markdown 文档');
+});
+
+it.each(['old-owner','other-task','source-code','staged-reverted-manifest'])('来源索引%s不能藏住非纯文档变化', async kind => {
+  git('remote','add','origin','https://github.com/perfectuser21/cecelia.git');
+  write(OWNER,'// runner fixture\n');write(M,JSON.stringify({schema_version:1,repo:'perfectuser21/cecelia',relations:[{path:'README.md',owner_path:OWNER,role:'documentation'}]}));commit();git('update-ref','refs/remotes/origin/main','HEAD');git('checkout','-b',BRANCH);
+  write('README.md','new documentation\n');commit();
+  write(`${SPRINT}/01-intent.md`,`---\ntask_id: ${TASK}\nstep: intent\nupstream: []\n---\n`);
+  registerRecordSources(root,{taskId:TASK,sprintDir:SPRINT,stage:'publish'},[`${SPRINT}/01-intent.md`]);commit();
+  const original=fs.readFileSync(path.join(root,M),'utf8');const data=JSON.parse(original);
+  if(kind==='old-owner'||kind==='staged-reverted-manifest')data.relations.find(r=>r.path==='README.md').owner_path='app.js';
+  if(kind==='other-task')data.relations.push({path:'sprints/10141904-cw-deadbeef/01-intent.md',owner_path:OWNER,role:'documentation'});
+  if(kind==='source-code'){write('app.js','export default 99;\n');commit();}else write(M,JSON.stringify(data));
+  if(kind==='staged-reverted-manifest'){git('add',M);write(M,original);}
+  const {changed}=await solidify();expect(changed).toContain(SMOKE);expect(calls).toBe(2);
 });

@@ -5,6 +5,9 @@ const require = createRequire(import.meta.url);
 const bridge = require('../../scripts/codex-bridge/codex-bridge.cjs');
 
 describe('Codex Bridge legacy /run 执行合同', () => {
+  it('真实进程适配器可供隔离验收复用，不引入另一套执行器', () => {
+    expect(typeof bridge.executeCodex).toBe('function');
+  });
   it('prompt 模式始终使用本机配置的 repo workspace，并允许跨设备映射 canonical repo', () => {
     expect(typeof bridge.resolveLegacyWorkDir).toBe('function');
     expect(bridge.resolveLegacyWorkDir({

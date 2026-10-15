@@ -1,3 +1,4 @@
+import { prepareInvocationDispatch, invocationTaskPrompt, invocationBridgeRequired } from './invocations/runtime.js';
 import { isPhoneDispatchTask } from './phone-dispatch/task-ownership.js';
 import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
 import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
@@ -1996,6 +1997,7 @@ function _prepareCodeReviewArgs(task) {
 }
 
 function _prepareResearchPrompt(task) {
+  if (task.payload?.invocation) return invocationTaskPrompt(task, task.payload.invocation.dispatch?.run_id ?? task.payload.current_run_id);
   return `请调研以下内容，只读取和分析，不要修改任何文件：
 
 # ${task.title}
@@ -2533,7 +2535,9 @@ export async function pickLocalAccountByDeficit(maxAccounts = 3) {
 }
 
 /** Build prompt with decisions summary injection for Codex tasks. */
-async function buildCodexPromptContent(task) {
+async function buildCodexPromptContent(task, runId) {
+  const fixedInvocationPrompt = invocationTaskPrompt(task, runId);
+  if (fixedInvocationPrompt) return fixedInvocationPrompt;
   let promptContent = task.description || task.title || '请执行此任务';
   try {
     const decisionsSummary = await getDecisionsSummary();
@@ -2626,7 +2630,9 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
 
     console.log(`[executor] Calling Xian Codex Bridge for task=${task.id} type=${task.task_type}${forceBridgeUrl ? ` (pinned: ${forceBridgeUrl})` : ''}`);
 
-    const promptContent = await buildCodexPromptContent(task);
+    const invocationDispatch = await prepareInvocationDispatch(pool, task, runId);
+    if (invocationDispatch?.already) return { success: true, taskId: task.id, runId: invocationDispatch.runId, executor: 'codex-bridge', dispatchUncertain: true };
+    const promptContent = await buildCodexPromptContent(task, runId);
     const taskBranch = buildCodexTaskBranch(task, isCodexDev);
     const injectedAccounts = await selectCodexAccounts();
 
@@ -3318,6 +3324,11 @@ async function triggerCeceliaRun(task) {
 }
 
 async function _triggerCeceliaRunInner(task) {
+  // 固定调用仍经原run漏斗，动态research配置与普通handler不得改派。
+  if (invocationBridgeRequired(task)) {
+    await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__bridge_path);
+    return triggerCodexBridge(task);
+  }
   // 动态路由：优先从 task_type_configs 缓存读取（其余 Codex B类，前台可调）
   // A类和 Coding pathway B类不在缓存中，getCachedLocation 返回 null，走 hardcoded 逻辑
   const dynamicLocation = getCachedLocation(task.task_type);

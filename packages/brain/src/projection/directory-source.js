@@ -139,7 +139,7 @@ export function buildDirectoryRows(data, config = {}) {
     const table = DIRECTORY_TABLES[layer];
     const createProperties = {};
     for (const key of ['名称']) {
-      if (properties[key]) { createProperties[key] = properties[key]; delete properties[key]; }
+      if (properties[key]) createProperties[key] = properties[key];
     }
     // Activity 的旧 notion_id 来自更早的同步（可能指向别的库或回收站里的页），不能当目录页身份：
     // 页面身份只认目录链接与 Brain ID 查询（526 把旧步骤挂进流程后这些行才进目录，不改会报「目录页身份或数据库不符」）

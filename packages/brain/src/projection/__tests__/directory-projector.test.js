@@ -5,13 +5,13 @@ const id = '00000000-0000-4000-8000-000000000001';
 const dbId = '00000000-0000-4000-8000-000000000002';
 const pageId = '00000000-0000-4000-8000-000000000003';
 const rich = value => ({ rich_text: [{ text: { content: value } }] });
-function fixture({ linked = true, identity = id, parent = dbId, readbackWrong = false, duplicate = false } = {}) {
+function fixture({ linked = true, identity = id, parent = dbId, readbackWrong = false, duplicate = false, archived = false } = {}) {
   let properties = { 'Brain ID': rich(identity) };
   const query = vi.fn(async sql => ({ rows: sql.includes('FROM projection_links') && sql.includes('entity_type=$1') ? (linked ? [{ entity_type: 'workflows', entity_id: id, external_id: pageId }] : []) : [] }));
   const notionReq = vi.fn(async (_token, path, method, body) => {
     if (path.endsWith('/query')) return { results: duplicate ? [{ id: pageId }, { id: 'duplicate' }] : [], has_more: false };
     if (method === 'PATCH' || path === '/pages') properties = { ...properties, ...body.properties };
-    return { id: pageId, parent: { database_id: parent }, properties: readbackWrong && method === 'GET' ? { ...properties, Activities: { relation: [] } } : structuredClone(properties) };
+    return { id: pageId, archived, parent: { database_id: parent }, properties: readbackWrong && method === 'GET' ? { ...properties, Activities: { relation: [] } } : structuredClone(properties) };
   });
   const row = { layer: 'workflows', table: 'workflows', id, pageId: null, allowCreate: true, properties: { 'Brain ID': rich(id) }, relations: {}, gaps: [] };
   return { pool: { query }, query, notionReq, row };
@@ -91,7 +91,31 @@ describe('严格目录页投影', () => {
     expect(f.notionReq.mock.calls.map(c => c[2])).toEqual(['GET', 'PATCH', 'GET']);
     expect(f.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO projection_links'))).toBe(true);
   });
-  it.each([{ parent: 'wrong' }, { identity: 'other' }])('旧页错库或身份冲突保留映射且零PATCH %j', async options => {
+  it('既有页源标题变化时 PATCH 后 GET，摘要改变；相同标题重跑零 PATCH', async () => {
+    const f = fixture();
+    const first = { ...f.row.properties, '名称': { title: [{ text: { content: '新版流程' } }] } };
+    await api.projectDirectoryPage(f.pool, { token: 'test', dbId, row: f.row, properties: first, notionReq: f.notionReq });
+    expect(f.notionReq.mock.calls.map(c => c[2])).toEqual(['GET', 'PATCH', 'GET']);
+    expect(f.notionReq.mock.calls.find(c => c[2] === 'PATCH')[3].properties['名称']).toEqual(first['名称']);
+    expect(f.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO projection_links'))[1][3]).toMatch(/./);
+    f.notionReq.mockClear();
+    await api.projectDirectoryPage(f.pool, { token: 'test', dbId, row: f.row, properties: first, notionReq: f.notionReq });
+    expect(f.notionReq.mock.calls.some(c => c[2] === 'PATCH')).toBe(false);
+  });
+  it('标题 PATCH 后 GET 仍旧值时拒绝成功收据', async () => {
+    const f = fixture();
+    const original = f.notionReq;
+    f.notionReq = vi.fn(async (...args) => {
+      const page = await original(...args);
+      if (args[2] === 'GET' && original.mock.calls.some(c => c[2] === 'PATCH')) page.properties['名称'] = { title: [{ text: { content: '旧标题' } }] };
+      return page;
+    });
+    await expect(api.projectDirectoryPage(f.pool, { token: 'test', dbId, row: f.row,
+      properties: { ...f.row.properties, '名称': { title: [{ text: { content: '新版' } }] } }, notionReq: f.notionReq }))
+      .rejects.toThrow('目录属性读回不一致: 名称');
+    expect(f.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO projection_links'))).toBe(false);
+  });
+  it.each([{ parent: 'wrong' }, { identity: 'other' }, { archived: true }])('旧页错库、归档或身份冲突保留映射且零PATCH %j', async options => {
     const f = fixture(options);
     await expect(api.projectDirectoryPage(f.pool, { token: 'test', dbId, row: f.row, properties: f.row.properties, notionReq: f.notionReq })).rejects.toThrow();
     expect(f.notionReq.mock.calls.some(c => c[2] === 'PATCH')).toBe(false);
@@ -106,5 +130,16 @@ describe('严格目录页投影', () => {
     const f = fixture({ linked: false, duplicate: true });
     await expect(api.projectDirectoryPage(f.pool, { token: 'test', dbId, row: f.row, properties: f.row.properties, notionReq: f.notionReq })).rejects.toThrow(/重复/);
     expect(f.notionReq.mock.calls.some(c => c[1] === '/pages')).toBe(false);
+  });
+  it('同名但不同 Brain ID 的页不被认领', async () => {
+    const f = fixture({ linked: false });
+    const original = f.notionReq;
+    f.notionReq = vi.fn(async (...args) => args[1].endsWith('/query') ? {
+      results: [{ id: pageId, parent: { database_id: dbId }, properties: { 'Brain ID': rich('other'), '名称': { title: [{ text: { content: '同名' } }] } } }], has_more: false,
+    } : original(...args));
+    await expect(api.projectDirectoryPage(f.pool, { token: 'test', dbId, row: f.row,
+      properties: { ...f.row.properties, '名称': { title: [{ text: { content: '同名' } }] } }, notionReq: f.notionReq })).rejects.toThrow(/身份冲突/);
+    expect(f.notionReq.mock.calls.some(c => c[2] === 'PATCH')).toBe(false);
+    expect(f.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO projection_links'))).toBe(false);
   });
 });

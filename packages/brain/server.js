@@ -93,6 +93,8 @@ import stepProbesRouter from './src/routes/step-probes.js';
 import stepsRouter from './src/routes/steps.js';
 import workflowsRouter from './src/routes/workflows.js';
 import workflowAuthoringRouter from './src/routes/workflow-authoring.js';
+import invocationsRouter from './src/routes/invocations.js';
+import { createTreeLegacyLayoutRouter } from './src/routes/tree-legacy-layout.js';
 import spansRouter from './src/routes/spans.js';
 import skillSettlementRouter from './src/routes/skill-settlement.js';
 import activityJudgmentsRouter from './src/routes/activity-judgments.js';
@@ -471,6 +473,8 @@ app.use('/api/brain', stepProbesRouter); // 步级探针注册表（链 bf5088a3
 app.use('/api/brain', stepsRouter); // Step / 使能件只读清单 GET /steps、/enablers（价值流建模⑤，决策 3e867cad，任务 741cdf5a）
 app.use('/api/brain', workflowsRouter); // Workflow 只读清单 GET /workflows（价值流建模③，决策 3e867cad，任务 ce41cd59）
 app.use('/api/brain/workflow-authoring', workflowAuthoringRouter);
+app.use('/api/brain/invocations', invocationsRouter);
+app.use('/api/brain/tree', createTreeLegacyLayoutRouter({ pool }));
 app.use('/api/brain', spansRouter); // 执行段上报 POST/GET /spans（价值流建模④，决策 3e867cad，任务 ec643d60）
 app.use('/api/brain', skillSettlementRouter); // 路 B：收敛对账 + 沉淀技能候选（v3.0 第 4 刀，任务 3590ec8f）
 app.use('/api/brain', activityJudgmentsRouter); // 裁判：Activity 最新裁判 / 裁判史 / 新旧版本对比（五块模型，决策 de6dff5d）

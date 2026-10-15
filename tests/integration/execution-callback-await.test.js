@@ -56,6 +56,7 @@ describe('/execution-callback — callback_queue INSERT 行为', () => {
     mockQuery.mockImplementation(async sql => {
       if (sql.includes("payload->'headed_takeover'")) return { rows: [{ headed_takeover: null }] };
       if (sql.includes("result ? 'workflow_authoring'")) return { rows: [] };
+      if (sql.includes('SELECT id,payload,status FROM tasks')) return {rows:[]};
       if (sql.includes('INSERT INTO callback_queue')) throw new Error('DB unavailable');
       throw new Error('unexpected SQL outside guards and queue retries');
     });
@@ -67,8 +68,8 @@ describe('/execution-callback — callback_queue INSERT 行为', () => {
     expect(mockQuery.mock.calls[0][0]).toContain("result ? 'workflow_authoring'");
     expect(mockQuery.mock.calls[1][0]).toContain("payload->'headed_takeover'");
     expect(mockQuery.mock.calls.filter(([sql]) => sql.includes('INSERT INTO callback_queue'))).toHaveLength(4);
-    expect(mockQuery.mock.calls.filter(([sql]) => /SELECT/.test(sql))).toHaveLength(2);
-    expect(mockQuery).toHaveBeenCalledTimes(6);
+    expect(mockQuery.mock.calls.filter(([sql]) => /SELECT/.test(sql))).toHaveLength(3);
+    expect(mockQuery).toHaveBeenCalledTimes(7);
   });
 
   it('owner读取失败时failclosed，不能写callback_queue或继续副作用', async () => {

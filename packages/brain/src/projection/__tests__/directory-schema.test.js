@@ -24,6 +24,10 @@ function boundary(change = () => {}) {
 }
 
 describe('六层目录字段契约', () => {
+  it('机器标题来源登记为持续同步，部门 Name 保持人工', () => {
+    expect(DIRECTORY_COLUMN_SOURCES.areas.Name).toBe('人工');
+    for (const layer of names.slice(1)) expect(DIRECTORY_COLUMN_SOURCES[layer]['名称']).toContain('持续同步');
+  });
   it('每层只挂直接上级；关系指向规范层级', () => {
     const s = buildDirectorySchemas(dbs);
     expect(s.value_streams['所属部门'].relation.database_id).toBe(dbs.areas);

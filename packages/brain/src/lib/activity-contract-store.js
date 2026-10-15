@@ -1,8 +1,9 @@
 /** 定义与工作流关系在同一事务中落库。唯一冲突必须回滚并向上抛出。 */
 import { snapshotDefinitions } from './definition-versions.js';
-import { canonicalJson,syncSteps } from '../../scripts/sync-steps-from-workspace.mjs';
+import {syncAssemblyActivity,ensureAssemblyWarehouse} from './workflow-assembly-store.js';
+import { canonicalJson } from '../../scripts/sync-steps-from-workspace.mjs';
 import { contractPath } from './activity-contract-loader.js';
-import { declareStepsFromContract, assertStepsHaveReadback } from './contract-steps.js';
+import { assertStepsHaveReadback } from './contract-steps.js';
 export const REGISTRATIONS_SQL = `SELECT id,key,capability_id,source_repo,source_path,source_workflow,source_capability,status,contract_sync_revision,
   (SELECT capability_code FROM capabilities WHERE id=workflows.capability_id) AS capability_code
   FROM workflows WHERE source_repo=$1 AND NOT EXISTS(
@@ -84,13 +85,11 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
         if (result.rows.length) out.deprecated.push(key);
       }
     }
-    if(synchronizeSteps){
-      for(const [key,activityId] of definitions){
-        const activity=plans.flatMap(p=>p.activities).find(i=>`${i.activity.from}.${i.activity.key}`===key).activity;
-        const existing=(await client.query('SELECT id,key FROM steps WHERE activity_id=$1',[activityId])).rows;
-        const declared=declareStepsFromContract(activity,key,existing);
-        if(declared.length)await syncSteps(client,{capability:activity.from,steps:declared},{manageTransaction:false});
-      }
+    for(const plan of plans)if(plan.contract?.warehouse_items)await ensureAssemblyWarehouse(client,plan.contract,{repo,path:plan.workflow.source_path});
+    for(const [key,activityId] of definitions){
+      const activity=plans.flatMap(p=>p.activities).find(i=>`${i.activity.from}.${i.activity.key}`===key).activity;
+      await syncAssemblyActivity(client,{activityId,contract:activity,canonical:key,activityKey:activity.key,capabilityKey:activity.from,
+        source:{repo,path:contractPath(activity.from)},synchronizeSteps});
     }
     const bindingsByActivity=new Map();
     for(const plan of plans) for(const item of plan.activities) bindingsByActivity.set(definitions.get(`${item.activity.from}.${item.activity.key}`),item.bindings);

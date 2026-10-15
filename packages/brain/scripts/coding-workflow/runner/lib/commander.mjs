@@ -1,3 +1,4 @@
+import { registerRecordSources } from '../../lib/record-sources.mjs';
 // coding commander（决策 c167d6e3，018e4e84「Commander 是 workflow 的陪跑/兜底」）：runner 自己开的 cw PR 在 QA 门或
 // CI 修复升级后，下一轮起 Opus 会话按规格逐条裁决并动手——维持/修订规格（只许在 02-spec.md 末尾追加裁决节）、
 // TDD 修代码、给 CI 修复追加额度——程序核对后推送，写 07-commander-rN.md 裁决记录，解除升级，记 Brain
@@ -185,7 +186,8 @@ async function intervene(ctx, pr, esc, cs, signal) {
     }
     const record = `${intent.sprintDir}/07-commander-r${n}.md`;
     fs.writeFileSync(path.join(worktree, record), renderRuling({ n, escalation: esc.detail, ruling, commits }));
-    if ((await git(worktree, ['add', '--', record])).code !== 0
+    const sourceFiles = registerRecordSources(worktree, { ...intent, stage: 'commander', round: n }, [record]);
+    if ((await git(worktree, ['add', '--', record, ...sourceFiles])).code !== 0
       || (await git(worktree, [...RUNNER_ID, 'commit', '-q', '-m', `docs(commander): 第 ${n} 次 coding commander 裁决（${esc.detail.type}）`])).code !== 0) {
       return await fail('commander_record_commit_failed');
     }
