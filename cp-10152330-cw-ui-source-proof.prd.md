@@ -12,6 +12,10 @@ CI changes 输出、workspace-test 条件与 ci-passed 失败出口联合核验�
 
 正式草稿 CI 又暴露安装边界：Brain 单包 npm ci 不安装 API 的 TypeScript，顶层 require 使未使用证明的 definitionEdges 导入也崩溃。解析器现固定为 Brain devDependency TypeScript 5.9.3，首次适用证明时才从可信 Brain 安装加载；缺失或错版本明确抛错，不能由宽 catch 吞为空边或回退候选依赖。root/Brain 两份 lock 只追加必要依赖事实，API/CI 已审封套不改。
 
+来源重建还需覆盖新增依赖文件：已审 workspace-test 的根 npm ci 真实消费根 manifest、根 lock 和匹配 packages/* 的 Brain manifest。Brain 独立 lock 保持独立安装一致性，但 workspace npm ci 不解析它；它的边仅来自完整已审 runner-tests-shell 中 setup-node 的 cache-dependency-path 缓存键。缓存 job 未知只撤销该缓存边，不扩大安装声明，也不抹去已有 UI/安装证明。所有输入仍绑定精确 Git blob 与 hash，边不声称该 PR 执行过 job。
+
+正式 CI 同时发现继承基线的 task-type-registry guard 定位漂移：executor 路由已在 2227 行，旧 fixture 仍写 2225。仅同步一条白名单定位和两处注释，保留全部负例，不修改 executor 或扩大白名单。
+
 ## 不变量与限制
 
 - 不改冻结 snapshot/definitions/owner 声明、原七条关系、联合门禁及三条注册断言；未知消费链不补边，原门禁继续拒绝。

@@ -21,6 +21,7 @@ function loadTrustedParser(){
 }
 const SELF='perfectuser21/cecelia',F3='0466016e-6d9f-4325-aeb4-d8bc70424a48';
 const CI='.github/workflows/ci.yml',PKG='apps/api/package.json',CONFIG='apps/api/vitest.config.ts',SETUP='apps/api/test/setup.ts';
+const BRAIN_PACKAGE='packages/brain/package.json',BRAIN_LOCK='packages/brain/package-lock.json';
 const PREFIX='apps/api/features/planning/pages/capability-system/';
 const NAMES=['BusinessInputs','CapabilitySystem','InvocationPanel'];
 const compilerFiles=['apps/api/tsconfig.json','apps/api/features/tsconfig.json'];
@@ -107,9 +108,24 @@ export function collectWorkspaceTestEdges(root,snapshot){
    const owner=ast(PREFIX+name+'.tsx',readText(PREFIX+name+'.tsx'));
    if(sha(readText(PREFIX+name+'.test.tsx'))!==WORKSPACE_ENVELOPES.tests[name]||!rendersImportedOwner(test,owner,name))return [];
   }
+  // The reviewed workspace job runs root npm ci: it reads the root manifest/lock
+  // and each selected workspace manifest. This does NOT consume Brain's own lock.
+  const installInputs=['package.json','package-lock.json'];
+  if(rootPackage.workspaces.includes('packages/*')&&entries.has(BRAIN_PACKAGE)){
+   readText(BRAIN_PACKAGE);installInputs.push(BRAIN_PACKAGE);
+  }
+  // Independently prove setup-node's cache-key input. Unknown runner jobs lose
+  // only this edge; they cannot erase an already proved UI/install dependency.
+  const cacheInput=digest(ci.jobs?.['runner-tests-shell']||{})===WORKSPACE_ENVELOPES.runnerCache&&/^100644 blob [a-f0-9]{40}$/.test(entries.get(BRAIN_LOCK)||'');
+  if(cacheInput)readText(BRAIN_LOCK);
   const inputs=Object.fromEntries([...texts].map(([path,text])=>[path,sha(text)]));
   const pairs=[[CI,PKG],[PKG,CONFIG],[CONFIG,SETUP],...NAMES.flatMap(n=>[[CONFIG,PREFIX+n+'.test.tsx'],[PREFIX+n+'.test.tsx',PREFIX+n+'.tsx']])];
-  return pairs.map(([src_path,dst_path])=>({src_path,dst_path,edge_type:'import',detail:{via:'fixed_workspace_test_consumer',proof_version:'workspace-test-v1',source_revision:revision,source_repo:SELF,source_sha256:inputs[src_path],target_sha256:inputs[dst_path],inputs,
-   selector:'changes.apps/** -> workspace-test -> apps/api npm test -> **/*.{test,spec}.{ts,tsx}',execution_claim:'dependency_only; not per-run test PASS',parser:'typescript '+ts.version}}));
+  const consumers=[
+   ...pairs.map(([src,dst])=>[src,dst,'fixed_workspace_test_consumer','changes.apps/** -> workspace-test -> apps/api npm test -> **/*.{test,spec}.{ts,tsx}']),
+   ...installInputs.map(dst=>[CI,dst,'fixed_root_workspace_npm_ci_input','changes.apps/** or push -> workspace-test -> root npm ci -> packages/* workspace manifests']),
+   ...(cacheInput?[[CI,BRAIN_LOCK,'fixed_runner_setup_node_cache_key','changes.docker/cecelia-runner/** or main -> runner-tests-shell -> actions/setup-node@v4 cache-dependency-path; cache key only, not npm lock resolution']]:[]),
+  ];
+  return consumers.map(([src_path,dst_path,via,selector])=>({src_path,dst_path,edge_type:'import',detail:{via,proof_version:'workspace-test-v1',source_revision:revision,source_repo:SELF,source_sha256:inputs[src_path],target_sha256:inputs[dst_path],inputs,
+   selector,execution_claim:'dependency_only; not per-run test PASS',parser:'typescript '+ts.version}}));
  }catch(error){if(error.code?.startsWith('WORKSPACE_TEST_PARSER_'))throw error;return [];}
 }
