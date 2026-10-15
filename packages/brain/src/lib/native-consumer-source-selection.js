@@ -18,7 +18,7 @@ function cacheFor(fetchFn,resolveToken){
  let cache=resolvers.get(resolveToken);if(!cache){cache=new Map();resolvers.set(resolveToken,cache);}return cache;
 }
 async function buildProof(q,fetchFn,resolveToken){
- const token=await resolveToken(),base=`https://api.github.com/repos/${EXISTING_OPS_REPO}`,deadline=AbortSignal.timeout(120000);
+ const token=await resolveToken(),base=`https://api.github.com/repos/${EXISTING_OPS_REPO}`,deadline=AbortSignal.timeout(540000);
  const get=async(url,raw=false)=>{
   const response=await fetchFn(url,{redirect:'error',headers:{Accept:raw?'application/vnd.github.raw':'application/vnd.github+json',Authorization:`Bearer ${token}`},signal:AbortSignal.any([deadline,AbortSignal.timeout(15000)])});
   if(!response.ok)throw Error('source_unavailable');return raw?response.text():response.json();
