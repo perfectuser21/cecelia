@@ -2,7 +2,9 @@ import {it,expect} from 'vitest';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {readFileSync} from 'node:fs';
+import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import yaml from 'js-yaml';
 import {buildExistingOpsSources} from '../existing-ops-source.js';
 const root=fileURLToPath(new URL('../../../../../',import.meta.url));
@@ -101,7 +103,7 @@ if(process.argv[1]&&fileURLToPath(import.meta.url)===realpathSync(process.argv[1
 runImplementationPrGate(parseArgs(process.argv.slice(2))).then(()=>{}).catch(()=>{});
 }`;
 it.each(['actual','comment','dead_branch','early_return'])('旧main单scope真实runner %s保留或拒绝，无须D候选生产存在',async kind=>{
- const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];
+ const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;
  if(kind==='comment')doc.jobs.gate.steps[0].run='# '+legacyRun.replaceAll('\n','\n# ');
  if(kind==='dead_branch')doc.jobs.gate.steps[0].if='false';
  const sources=new Map([[workflow,yaml.dump(doc)],['scripts/ci/implementation-pr-gate.mjs',kind==='early_return'?legacyPr.replace('const receipt=','return; const receipt='):legacyPr]]);
@@ -121,10 +123,45 @@ it('被声明的入口源字节缺失仍UNKNOWN，不保留成功绑定',async()
 });
 
 it('旧YAML真实单scope在已安装联合CLI时仍有来源，未运行的联合分支不冒Factory消费者',async()=>{
- const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];
+ const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;
  const overrides=new Map([[workflow,yaml.dump(doc)],...['scripts/ci/implementation-pr-gate.mjs',entry,multi].map(path=>[path,readFileSync(new URL(path,new URL('../../../../../',import.meta.url)),'utf8')])]);
  const f3=(await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths:[...new Set([...paths,entry,multi])],readSource:async path=>overrides.get(path)??read(path)})).consumers[1];
  expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
  expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:'scripts/ci/implementation-pr-gate.mjs',kind:'direct_admission_runner'}));
  expect(f3.input_relations.some(r=>r.kind==='conditional_pr_admission_runner')).toBe(false);
+});
+
+it.each(['condition','callee','argument','else','side_effect','workflow_env','job_env','step_env','null_env','step_injection','forced_parse','undefined_shadow','forced_option','object_assign','computed_option','alias_option','entry_options','module_env','prototype_option'])('旧单scope不得把 %s 的main分支误证为未运行',async kind=>{
+ const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;
+ let pr=readFileSync(new URL('scripts/ci/implementation-pr-gate.mjs',new URL('../../../../../',import.meta.url)),'utf8');
+ if(kind==='condition')pr=pr.replace('options.mainScopes!==undefined','options.mainScopes===undefined');
+ if(kind==='callee')pr=pr.replace('return runImplementationMainGate(options);','return otherGate(options);');
+ if(kind==='argument')pr=pr.replace('return runImplementationMainGate(options);','return runImplementationMainGate({});');
+ if(kind==='else')pr=pr.replace('return runImplementationMainGate(options);','return runImplementationMainGate(options);else return {};');
+ if(kind==='side_effect')pr=pr.replace('if(options.mainScopes!==undefined)','options.mainScopes="injected";if(options.mainScopes!==undefined)');
+ if(kind==='undefined_shadow')pr+='\nconst undefined="forced";';
+ if(kind==='entry_options')pr=pr.replace('runImplementationPrGate(parseArgs(process.argv.slice(2)))',"runImplementationPrGate({mainScopes:'forced'})");
+ if(kind==='module_env')pr+="\nprocess.env.IMPLEMENTATION_MAIN_SCOPES='forced';";
+ if(kind==='prototype_option')pr+="\nObject.prototype.mainScopes='forced';";
+ if(kind==='object_assign')pr=pr.replace('if(mainScopes!==undefined)options.mainScopes=mainScopes;', "Object.assign(options,{mainScopes:'forced'});if(mainScopes!==undefined)options.mainScopes=mainScopes;");
+ if(kind==='computed_option')pr=pr.replace('if(mainScopes!==undefined)options.mainScopes=mainScopes;', "options['main'+'Scopes']='forced';if(mainScopes!==undefined)options.mainScopes=mainScopes;");
+ if(kind==='alias_option')pr=pr.replace('if(mainScopes!==undefined)options.mainScopes=mainScopes;', "const alias=options;alias.mainScopes='forced';if(mainScopes!==undefined)options.mainScopes=mainScopes;");
+ if(kind==='forced_option')pr=pr.replace('if(mainScopes!==undefined)options.mainScopes=mainScopes;', 'options.mainScopes="forced";');
+ if(kind==='forced_parse')pr=pr.replace('process.env.IMPLEMENTATION_MAIN_SCOPES||undefined', '"forced"');
+ if(kind==='null_env')doc.env={IMPLEMENTATION_MAIN_SCOPES:null};
+ if(kind==='step_injection')doc.jobs.gate.steps.unshift({run:'echo IMPLEMENTATION_MAIN_SCOPES=forced >> "$GITHUB_ENV"'});
+ if(kind==='workflow_env')doc.env={IMPLEMENTATION_MAIN_SCOPES:false};
+ if(kind==='job_env')doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES='';
+ if(kind==='step_env')doc.jobs.gate.steps[0].env={IMPLEMENTATION_MAIN_SCOPES:'active'};
+ const overrides=new Map([[workflow,yaml.dump(doc)],['scripts/ci/implementation-pr-gate.mjs',pr]]);
+ const f3=(await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async path=>overrides.get(path)??read(path)})).consumers[1];
+ expect(f3.status,JSON.stringify(f3.gaps)).toBe('unknown');expect(f3.bindings).toEqual([]);
+});
+
+it('真实当前CLI只有mainScopes缺省才走单scope，false或空值仍进入main拒绝',async()=>{
+ const {runImplementationPrGate}=await import('../../../../../scripts/ci/implementation-pr-gate.mjs');
+ const dir=mkdtempSync(join(tmpdir(),'legacy-main-contract-'));
+ try{for(const [label,extra,code]of [['absent',{},'IMPLEMENTATION_CI_INPUT_INVALID'],['undefined',{mainScopes:undefined},'IMPLEMENTATION_CI_INPUT_INVALID'],['false',{mainScopes:false},'IMPLEMENTATION_MAIN_SCOPES_INVALID'],['empty',{mainScopes:''},'IMPLEMENTATION_MAIN_SCOPES_INVALID']])
+  await expect(runImplementationPrGate({mode:'main',scope:'cecelia-kr',outputDir:join(dir,label),...extra})).rejects.toMatchObject({code});
+ }finally{rmSync(dir,{recursive:true,force:true});}
 });

@@ -17,6 +17,8 @@
  *   R7 argv 数组首元素是 claude 且紧跟参数（['claude', '-p', …] 交给任意执行器）
  */
 import { describe, it, expect } from 'vitest';
+import { parse } from 'acorn';
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, lstatSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,25 +72,110 @@ function stripComments(src) {
     .map((line) => (/^\s*(\/\/|#|\*)/.test(line) ? '' : line.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')));
 }
 
-export function findClaudeInvocations(src) {
+// 只剥离已证明流入 Acorn 的固定模板值；模块其余内容仍经过所有原规则。
+const ENVELOPE_FILE = path.join(BRAIN_ROOT,'src/lib/existing-ops-build-envelopes.js');
+const ENVELOPE_CONSUMER = path.join(BRAIN_ROOT,'src/lib/existing-ops-build-source.js');
+const parseModule = text => parse(text,{ecmaVersion:'latest',sourceType:'module'});
+function astRows(tree) {
+  const rows=[];
+  const visit=(node,parent=null)=>{if(!node||typeof node!=='object')return;if(node.type)rows.push({node,parent});for(const v of Object.values(node))if(Array.isArray(v))v.forEach(n=>visit(n,node));else if(v&&typeof v==='object')visit(v,node);};
+  visit(tree);return rows;
+}
+const astShape = n => JSON.stringify(n,(k,v)=>['start','end','raw'].includes(k)?undefined:v);
+// 已独审的 boolean readers 及其纯比较闭包；摘要只决定模板可否剥除，并不豁免模块扫描。
+// 模板 AST 不得流出这些固定函数；改变 matcher 时需显式复审此有限消费合同。
+const PURE_READERS = new Set(["canonical", "declaration", "walk", "nodes", "bound", "member", "call", "variable", "fn", "same", "intact", "moduleEnvelope", "namedFunctionsLink", "functionMatches", "registration", "registrationBody", "testSetup", "testWitness", "mainPrefix", "cliEnvelope", "proveBuildSources", "provePublishSources"]);
+const PURE_READERS_SHA256 = '7ad701ac9a0798fd6f7ff80e52eee7dcaff94fb45de84a6328ad558286b8cfbe';
+function provenReaderClosure(consumer) {
+  if(consumer.body.some(n=>n.type==='ExportNamedDeclaration'&&n.source&&(n.source.value!=='./existing-ops-build-envelopes.js'||n.specifiers.length!==1||n.specifiers[0].local.name!=='buildSelectorEnabled'||n.specifiers[0].exported.name!=='buildSelectorEnabled')))return false;
+  const declarations=consumer.body.map(n=>n.type==='ExportNamedDeclaration'?n.declaration:n).filter(Boolean);
+  const definitions=declarations.flatMap(n=>n.type==='VariableDeclaration'?n.declarations:[n]);
+  const selected=[...PURE_READERS].map(name=>definitions.filter(n=>n.id?.name===name));
+  if(selected.some(rows=>rows.length!==1)||createHash('sha256').update(astShape(selected.map(rows=>rows[0]))).digest('hex')!==PURE_READERS_SHA256)return false;
+  const constants=new Set(['requireAcorn','PREFIX','BUILD_SOURCE_PATHS','PUBLISH_TEST','PUBLISH_ENTRY']);
+  const functions=new Set([...PURE_READERS,'parseEnvelope','collectBuildSources','collectPublishSources']);
+  if(declarations.some(n=>n.type==='ImportDeclaration'?!['node:module','./existing-ops-build-envelopes.js'].includes(n.source.value):n.type==='VariableDeclaration'?n.declarations.some(d=>!constants.has(d.id.name)&&!PURE_READERS.has(d.id.name)):n.type==='FunctionDeclaration'?!functions.has(n.id.name):true))return false;
+  // 真实模块无需动态代码/模块入口；新增顶层副作用或读取者之外的全局写入一律失败关闭。
+  const rows=astRows(consumer),parents=new Map(rows.map(r=>[r.node,r.parent]));
+  const readerOf=node=>{for(let n=node;n;n=parents.get(n))if(n.type==='FunctionDeclaration'&&PURE_READERS.has(n.id?.name))return n;return null;};
+  return !rows.some(({node,parent})=>node.type==='ImportExpression'||node.type==='Identifier'&&['eval','Function','global','globalThis','process','Reflect'].includes(node.name)
+    ||node.type==='AssignmentExpression'&&!readerOf(node)
+    ||node.type==='Identifier'&&node.name==='parseEnvelope'&&parent?.type==='CallExpression'&&parent.callee===node&&!readerOf(node));
+}
+
+function envelopeRanges(src,sources) {
+  const tree=parseModule(src), rows=astRows(tree);
+  const declarations=tree.body.filter(n=>n.type==='ExportNamedDeclaration'&&n.declaration?.kind==='const').flatMap(n=>n.declaration.declarations).filter(n=>n.id.name==='ENVELOPES');
+  if(declarations.length!==1)return null;
+  const data=declarations[0],properties=data.init?.properties;
+  if(data.init?.type!=='ObjectExpression'||!properties?.length||properties.some(p=>p.type!=='Property'||p.computed||p.method||p.kind!=='init'||p.value?.type!=='TemplateLiteral'||p.value.expressions.length))return null;
+  if(rows.some(({node,parent})=>node.type==='Identifier'&&node.name==='ENVELOPES'&&!(parent===data&&parent.id===node)))return null;
+  // 额外消费者没有获得纯数据资格；不推断它不会执行字符串。
+  for(const [file,text] of sources)if(file!==ENVELOPE_FILE&&file!==ENVELOPE_CONSUMER&&text.includes('existing-ops-build-envelopes'))return null;
+  const consumer=parseModule(sources.get(ENVELOPE_CONSUMER)||''), usages=astRows(consumer);
+  if(!provenReaderClosure(consumer))return null;
+  const imports=consumer.body.filter(n=>n.type==='ImportDeclaration');
+  const dataImport=imports.filter(n=>n.source.value==='./existing-ops-build-envelopes.js');
+  const moduleImport=imports.filter(n=>n.source.value==='node:module');
+  if(dataImport.length!==1||dataImport[0].specifiers.length!==1||dataImport[0].specifiers[0].imported?.name!=='ENVELOPES'||dataImport[0].specifiers[0].local.name!=='ENVELOPES')return null;
+  if(moduleImport.length!==1||moduleImport[0].specifiers.length!==1||moduleImport[0].specifiers[0].imported?.name!=='createRequire'||moduleImport[0].specifiers[0].local.name!=='createRequire')return null;
+  const requireDeclaration=consumer.body.find(n=>n.type==='VariableDeclaration'&&n.declarations.some(d=>d.id.name==='requireAcorn'));
+  const parser=consumer.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='parseEnvelope');
+  if(astShape(requireDeclaration)!==astShape(parseModule('const requireAcorn = createRequire(import.meta.url);').body[0])||astShape(parser)!==astShape(parseModule("function parseEnvelope(text) { return requireAcorn('acorn').parse(text, { ecmaVersion: 'latest', sourceType: 'module' }); }").body[0]))return null;
+  const parents=new Map(usages.map(({node,parent})=>[node,parent]));
+  let count=0;
+  for(const {node,parent} of usages) {
+    if(node.type!=='Identifier')continue;
+    if(node.name==='ENVELOPES') {
+      if(parent?.type==='ImportSpecifier')continue;
+      if(parent?.type!=='MemberExpression'||parent.object!==node)return null;
+      if(parent.computed&&!['Identifier','Literal','BinaryExpression'].includes(parent.property.type))return null;
+      const use=parents.get(parent);
+      const direct=use?.type==='CallExpression'&&use.callee.name==='parseEnvelope'&&use.arguments.length===1&&use.arguments[0]===parent;
+      const wrapped=use?.type==='TemplateLiteral'&&use.expressions.length===1&&use.expressions[0]===parent&&parent.property.name==='mainPrefix'&&!parent.computed&&use.quasis.map(q=>q.value.cooked).join('|')==='async function main(input) {|}'&&parents.get(use)?.callee?.name==='parseEnvelope'&&parents.get(use).arguments.length===1;
+      if(!direct&&!wrapped)return null;count++;
+    }
+    if(node.name==='parseEnvelope'&&!(parent===parser&&parent.id===node)&&!(parent?.type==='CallExpression'&&parent.callee===node))return null;
+    if(node.name==='requireAcorn'&&!(parent===requireDeclaration.declarations[0]&&parent.id===node)&&!(parent?.type==='CallExpression'&&parent.callee===node&&node.start>=parser.start&&node.end<=parser.end))return null;
+    if(node.name==='createRequire'&&parent?.type!=='ImportSpecifier'&&!(parent?.type==='CallExpression'&&parent.callee===node&&node.start>=requireDeclaration.start&&node.end<=requireDeclaration.end))return null;
+  }
+  return count?properties.map(p=>[p.value.start,p.value.end]):null;
+}
+// 原正则仍保留；补充进程函数的显式本地别名，不能靠改名藏起真实启动。
+function aliasedProcessCalls(src) {
+  try {
+    const rows=astRows(parseModule(src)),aliases=new Set(['spawn','spawnSync','exec','execSync','execFile','execFileSync','fork']);
+    for(const {node} of rows)if(node.type==='ImportDeclaration'&&['node:child_process','child_process'].includes(node.source.value))for(const spec of node.specifiers)if(aliases.has(spec.imported?.name))aliases.add(spec.local.name);
+    for(let i=0;i<rows.length;i++){let added=false;for(const {node} of rows)if(node.type==='VariableDeclarator'&&node.id.type==='Identifier'&&aliases.has(node.init?.name)&&!aliases.has(node.id.name)){aliases.add(node.id.name);added=true;}if(!added)break;}
+    return rows.filter(({node})=>node.type==='CallExpression'&&aliases.has(node.callee?.name)&&typeof node.arguments[0]?.value==='string'&&/(^|\/)claude(?:\s|$)/.test(node.arguments[0].value)).map(({node})=>({rule:'R1',line:src.slice(0,node.start).split('\n').length,text:src.slice(node.start,node.end).slice(0,160)}));
+  }catch{return [];}
+}
+
+export function findClaudeInvocations(src, {file,sources}={}) {
+  const original=src;
+  if(file===ENVELOPE_FILE) {
+    let ranges;try{ranges=envelopeRanges(src,sources);}catch{ranges=null;}
+    if(!ranges)return [{rule:"E1",line:1,text:"来源模板不是已证明的只读 Acorn 输入"},...findClaudeInvocations(src)];
+    for(const [start,end] of [...ranges].reverse())src=src.slice(0,start)+src.slice(start,end).replace(/[^\n]/g," ")+src.slice(end);
+  }
   const hits = [];
   stripComments(src).forEach((line, i) => {
     for (const rule of RULES) {
       if (rule.re.test(line)) hits.push({ rule: rule.id, line: i + 1, text: line.trim().slice(0, 160) });
     }
   });
-  return hits;
+  return [...hits,...aliasedProcessCalls(original)];
 }
 
 function scanOffenders() {
   const offenders = [];
-  for (const root of SCAN_ROOTS) {
-    for (const file of collectSources(root)) {
+  const files=SCAN_ROOTS.flatMap(root=>collectSources(root));
+  const sources=new Map([...files,...collectSources(path.join(REPO_ROOT,"scripts"))].map(file=>[file,readFileSync(file,"utf8")]));
+  for (const file of files) {
       if (isWhitelisted(file)) continue;
-      for (const hit of findClaudeInvocations(readFileSync(file, 'utf8'))) {
+      for (const hit of findClaudeInvocations(sources.get(file),{file,sources})) {
         offenders.push(`${path.relative(REPO_ROOT, file)}:${hit.line} [${hit.rule}] ${hit.text}`);
       }
-    }
   }
   return offenders;
 }
@@ -158,4 +245,29 @@ describe('守卫自证：每条判据都会报警', () => {
   ])('不误报：%s', (line) => {
     expect(findClaudeInvocations(line)).toEqual([]);
   });
+});
+
+
+describe('只读来源封套数据与实际执行代码分离',()=>{
+ const dataFile=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-envelopes.js');
+ const consumer=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-source.js');
+ const baseSources=()=>new Map([[dataFile,readFileSync(dataFile,'utf8')],[consumer,readFileSync(consumer,'utf8')]]);
+ const scan=(edit=()=>{},suffix='')=>{const sources=baseSources();edit(sources);return findClaudeInvocations(sources.get(dataFile)+suffix,{file:dataFile,sources});};
+ it('真实无插值ENVELOPES仅供Acorn解析，原R3文本不是进程执行',()=>expect(scan()).toEqual([]));
+ it.each(['spawn','alias','interpolation','consume','consumer_alias','extra_consumer','parser_shadow','parser_reassign','ast_escape','helper_side_effect','top_side_effect','dynamic_module'])('封套 %s 不得被纯数据豁免遮住',kind=>{
+  const result=scan(sources=>{
+   if(kind==='spawn')sources.set(dataFile,sources.get(dataFile)+"\nspawn('claude',['-p']);");
+   if(kind==='alias')sources.set(dataFile,sources.get(dataFile)+"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);");
+   if(kind==='interpolation')sources.set(dataFile,sources.get(dataFile).replace('spawnParameters: `','spawnParameters: `${launch("claude")}'));
+   if(kind==='consume')sources.set(consumer,sources.get(consumer)+"\nexec(ENVELOPES.spawnParameters);");
+   if(kind==='consumer_alias')sources.set(consumer,sources.get(consumer)+"\nconst escaped=ENVELOPES;exec(escaped.spawnParameters);");
+   if(kind==='extra_consumer')sources.set(path.join(BRAIN_ROOT,'src/extra.js'),"import {ENVELOPES} from './lib/existing-ops-build-envelopes.js';exec(ENVELOPES.spawnParameters)");
+   if(kind==='ast_escape')sources.set(consumer,sources.get(consumer)+"\nimport {spawn as executeDerived} from 'node:child_process';const derived=parseEnvelope(ENVELOPES.spawnParameters);executeDerived(derived.body[0].params[0].properties.find(p=>p.key.name==='bin').value.right.right.value,['-p','probe']);");
+   if(kind==='helper_side_effect')sources.set(consumer,sources.get(consumer).replace('const same=(a,b)=>canonical(a)===canonical(b);','const same=(a,b)=>{ sendElsewhere(b); return true; };'));
+   if(kind==='top_side_effect')sources.set(consumer,sources.get(consumer)+"\nJSON.stringify=executeDerived;");
+   if(kind==='dynamic_module')sources.set(consumer,sources.get(consumer)+"\nconst tool=await import('node:child_process');");
+   if(kind==='parser_shadow')sources.set(consumer,sources.get(consumer).replace('function functionMatches(tree,name,_parse)', 'function functionMatches(tree,name,_parse,parseEnvelope)'));
+   if(kind==='parser_reassign')sources.set(consumer,sources.get(consumer)+"\nparseEnvelope=eval;");
+  });expect(result.length).toBeGreaterThan(0);
+ });
 });
