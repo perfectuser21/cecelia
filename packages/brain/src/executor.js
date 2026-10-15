@@ -1,3 +1,4 @@
+import { prepareInvocationDispatch, invocationTaskPrompt } from './invocations/runtime.js';
 import { isPhoneDispatchTask } from './phone-dispatch/task-ownership.js';
 import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
 import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
@@ -1996,6 +1997,7 @@ function _prepareCodeReviewArgs(task) {
 }
 
 function _prepareResearchPrompt(task) {
+  if (task.payload?.invocation) return invocationTaskPrompt(task, task.payload.invocation.dispatch?.run_id ?? task.payload.current_run_id);
   return `请调研以下内容，只读取和分析，不要修改任何文件：
 
 # ${task.title}
@@ -2533,7 +2535,9 @@ export async function pickLocalAccountByDeficit(maxAccounts = 3) {
 }
 
 /** Build prompt with decisions summary injection for Codex tasks. */
-async function buildCodexPromptContent(task) {
+async function buildCodexPromptContent(task, runId) {
+  const fixedInvocationPrompt = invocationTaskPrompt(task, runId);
+  if (fixedInvocationPrompt) return fixedInvocationPrompt;
   let promptContent = task.description || task.title || '请执行此任务';
   try {
     const decisionsSummary = await getDecisionsSummary();
@@ -2626,7 +2630,9 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
 
     console.log(`[executor] Calling Xian Codex Bridge for task=${task.id} type=${task.task_type}${forceBridgeUrl ? ` (pinned: ${forceBridgeUrl})` : ''}`);
 
-    const promptContent = await buildCodexPromptContent(task);
+    const invocationDispatch = await prepareInvocationDispatch(pool, task, runId);
+    if (invocationDispatch?.already) return { success: true, taskId: task.id, runId: invocationDispatch.runId, executor: 'codex-bridge', dispatchUncertain: true };
+    const promptContent = await buildCodexPromptContent(task, runId);
     const taskBranch = buildCodexTaskBranch(task, isCodexDev);
     const injectedAccounts = await selectCodexAccounts();
 

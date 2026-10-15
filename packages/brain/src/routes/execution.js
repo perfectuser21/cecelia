@@ -1,3 +1,4 @@
+import { guardInvocationCallback } from '../invocations/runtime.js';
 import {assertAutomaticTaskOwner} from '../lib/headed-task-owner.js';
 import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
@@ -101,6 +102,8 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
         error: 'task_id is required'
       });
     }
+
+    await guardInvocationCallback(pool, req.body);
 
     // 必须在 callback_queue 入队前验证，避免重放器再次处理被拒绝的伪造回执。
     const reservedError = authoringMutationError(null, { result });

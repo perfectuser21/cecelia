@@ -1,3 +1,4 @@
+import { guardInvocationCallback } from './invocations/runtime.js';
 import {assertAutomaticTaskOwner} from './lib/headed-task-owner.js';
 import { COMPANY_KR_SQL_GUARD } from './lib/company-kr-metrics.js';
 /**
@@ -51,6 +52,7 @@ export async function processExecutionCallback(data, pool) {
   } = data;
 
   if (!task_id) throw new Error('task_id is required');
+  await guardInvocationCallback(pool, data);
   await assertAutomaticTaskOwner(pool, task_id);
 
   console.log(`[callback-processor] Processing callback for task ${task_id}, status: ${status}`);
