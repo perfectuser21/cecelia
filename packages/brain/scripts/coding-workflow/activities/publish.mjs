@@ -7,6 +7,7 @@ import { intentHeading, prKindOf } from '../lib/pr-kind.mjs';
 import { parseReview } from '../lib/review.mjs';
 import { RUBRIC_DIMS } from '../lib/gan.mjs';
 import { SPEC_FILE, uncoveredSection } from '../lib/spec-check.mjs';
+import { registerRecordSources } from '../lib/record-sources.mjs';
 import { profileOf } from '../lib/repo-profile.mjs';
 
 const GH_AUTH_RE = /\bHTTP 401\b|authentication|auth login|missing required scope|bad credentials/i;
@@ -166,7 +167,9 @@ await runActivity(async (input) => {
   const sprintRel = sprintDir.replace(/[\\/]+$/, '');
 
   const fragment = await ensureVersionFragment({ worktree, branch, dir, taskId, sprintRel, rule: profileOf(input.repo_profile).version_fragment ?? null });
-  const paths = [sprintRel, ...(fragment ? [fragment] : [])];
+  const sourceFiles = registerRecordSources(worktree, { taskId, sprintDir: sprintRel, stage: 'publish' },
+    fs.readdirSync(dir).map(name => `${sprintRel}/${name}`));
+  const paths = [sprintRel, ...(fragment ? [fragment] : []), ...sourceFiles];
   const add = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'add', '--', ...paths]);
   if (add.code !== 0) return fail('fatal', 'git_add_failed');
 

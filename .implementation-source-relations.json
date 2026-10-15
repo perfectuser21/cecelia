@@ -2,6 +2,9 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs", "path": "cp-10151810-build-intent-boundary.prd.md", "role": "documentation"},
+    {"owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs", "path": "docs/learnings/cp-10151810-build-intent-boundary.md", "role": "documentation"},
+    {"owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs", "path": "changes/cp-10151810-build-intent-boundary.md", "role": "release"},
     
     {"owner_path":"packages/brain/src/projection/directory-source.js","path":"packages/brain/src/projection/__tests__/directory-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/projection/directory-projector.js","path":"packages/brain/src/projection/__tests__/directory-projector.test.js","role":"verification"},

@@ -47,6 +47,21 @@ describe('QA 记录只对当前任务/轮次限定路径 force-add（真实 Git�
     else fs.symlinkSync(path.join(dir, kind === 'dangling' ? 'missing.txt' : 'outside.txt'), path.join(dir, shots, 'screen.png'));
     await expect(stageQaRecords(dir, intent, [report, shots])).rejects.toThrow('qa_record_path_invalid');expect(staged()).toBe('');
   });
+  it('Cecelia QA 在索引空检查后把本轮报告与来源登记一起stage', async () => {
+    const owner = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs';
+    git(dir, 'checkout', '-b', 'cp-10121524-cw-088c3431');
+    git(dir, 'remote', 'add', 'origin', 'https://github.com/perfectuser21/cecelia.git');
+    put(owner, '// fixture runner');
+    put(`${intent.sprintDir}/01-intent.md`, `---\ntask_id: ${intent.taskId}\nstep: intent\nupstream: []\n---\n`);
+    put('.implementation-source-relations.json', JSON.stringify({schema_version:1,repo:'perfectuser21/cecelia',relations:[]}));
+    git(dir, 'add', '--', owner, `${intent.sprintDir}/01-intent.md`, '.implementation-source-relations.json');git(dir, 'commit', '-qm', 'fixture identity');git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    put(report);
+    await stageQaRecords(dir, intent, [report]);
+    expect(staged().split('\n')).toEqual(['.implementation-source-relations.json', report]);
+    const manifest = JSON.parse(git(dir, 'show', ':.implementation-source-relations.json'));
+    expect(manifest.relations).toEqual([{owner_path:owner,path:report,role:'documentation'}]);
+  });
+
   it('任务与sprint不一致或非法轮次拒绝', async () => {
     put(report);
     await expect(stageQaRecords(dir, { ...intent, taskId: 'aaaaaaaa-0000-0000-0000-000000000000' }, [report])).rejects.toThrow('qa_record_path_invalid');

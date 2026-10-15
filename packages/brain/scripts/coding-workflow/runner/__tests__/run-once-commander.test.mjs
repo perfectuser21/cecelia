@@ -49,6 +49,27 @@ describe('coding commander（升级后自动裁决）', () => {
     expect(bark.calls).toEqual([]);
   });
 
+  it('Cecelia commander 独立07提交同时登记来源，真实裸仓回读无孤立记录', async () => {
+    const owner = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs', manifest = '.implementation-source-relations.json';
+    fs.mkdirSync(path.join(sb.seed,path.dirname(owner)),{recursive:true});
+    fs.writeFileSync(path.join(sb.seed,owner),'// fixture runner\n');
+    fs.writeFileSync(path.join(sb.seed,manifest),JSON.stringify({schema_version:1,repo:'perfectuser21/cecelia',relations:[]}));
+    git(sb.seed,'add','--',owner,manifest);git(sb.seed,'commit','-qm','fixture source');
+    git(sb.seed,'push','-q','origin',`${BRANCH}:main`,BRANCH);git(sb.clone,'fetch','origin','main');
+    E.head=git(sb.seed,'rev-parse','HEAD').trim();
+    // Git transport仍为本地裸仓；只替身仓库标识查询，避免任何GitHub网络请求。
+    const bin=path.join(sb.root,'git-identity-bin');fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin,'git'),'#!/bin/sh\nif [ "$3" = remote ] && [ "$4" = get-url ] && [ "$5" = origin ]; then echo https://github.com/perfectuser21/cecelia.git; exit 0; fi\nexec /usr/bin/git "$@"\n',{mode:0o755});
+    qaEscalated('judge_contract_gap',{issues:['J-1']});
+    const r=await go(green(),{mode:'cmd-resume',extra:{PATH:`${bin}:${process.env.PATH}`}});
+    expect(r.exitCode,r.stderr).toBe(0);
+    const rows=JSON.parse(git(sb.origin,'show',`${BRANCH}:${manifest}`)).relations;
+    expect(rows,r.stderr).toContainEqual({owner_path:owner,path:`${SPRINT}/07-commander-r1.md`,role:'documentation'});
+    const files=git(sb.origin,'show','--name-only','--format=',BRANCH).trim().split('\n');
+    expect(files).toEqual([manifest,`${SPRINT}/07-commander-r1.md`]);
+    expect(cmdState().interventions).toHaveLength(1);expect(state().escalated).toBeUndefined();
+  });
+
   // 真实 Opus 演练（金丝雀 5 r2 重放）：裁决文件在 logDir（worktree 外），Write 工具被 permission_denials 拒，会话碰巧改用 Bash 写成
   it('commander 会话授权写日志目录（--add-dir <logDir>），裁决文件在那里', async () => {
     qaEscalated('judge_contract_gap', { issues: ['J-1'] });
