@@ -1,3 +1,4 @@
+import {readNativeConsumerRuntime} from '../lib/native-consumer-runtime.js';
 import {PATROL_SCOPE} from '../lib/device-patrol-admission.js';
 import {bootstrapPatrolScope,exportPatrolAdmissionSnapshot} from '../lib/device-patrol-registration.js';
 import { Router } from 'express';
@@ -16,7 +17,8 @@ export function createImplementationCiRouter({pool=defaultPool,refreshOptions}={
   }};
   router.post('/repositories',async(req,res)=>{try{const result=await registerImplementationRepository(pool,req.body);res.status(result.created?201:200).json(result);}catch(error){res.status(error.status||500).json({error:{code:error.code||'IMPLEMENTATION_CI_INTERNAL_ERROR',message:error.status?error.message:'repo登记失败'}});}});
   router.post('/device-patrol/bootstrap',async(req,res)=>{try{const result=await bootstrapPatrolScope(pool,req.body);res.status(result.created?201:200).json(result);}catch(error){res.status(error.status||500).json({error:{code:error.code||'PATROL_BOOTSTRAP_FAILED',message:error.status?error.message:'巡查来源登记失败'}});}});
-  router.get('/snapshot',send(req=>req.query.scope===PATROL_SCOPE?exportPatrolAdmissionSnapshot(pool,req.query):exportImplementationSnapshot(pool,req.query)));
+  router.get('/runtime-source',(_req,res)=>res.json(readNativeConsumerRuntime()));
+  router.get('/snapshot',send(req=>req.query.scope===PATROL_SCOPE?exportPatrolAdmissionSnapshot(pool,req.query):exportImplementationSnapshot(pool,req.query,{nativeConsumerSourceOptions:refreshOptions})));
   router.post('/refresh',send(req=>refreshImplementationSnapshot(pool,req.body,refreshOptions)));
   return router;
 }
