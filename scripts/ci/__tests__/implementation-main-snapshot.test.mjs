@@ -38,7 +38,7 @@ function bundle(revision,{parentMissing=false,childMissing=false,parentGaps=null
  return {snapshot:seal({schema_version:1,scope:'cecelia-kr',repo,revision,status:parentMissing?'unknown':'verified',gaps:parentMissing?(parentGaps??[{code:'definition_snapshot_missing'}]):[],map:{manifest:parentManifest},canonical:{workflows:[],journeys:[]},definitions:{workflows:[],activities:[]},admission_companion:companion})};
 }
 const workflow=()=>yaml.load(readFileSync(join(root,'.github/workflows/implementation-impact.yml'),'utf8'));
-async function executeProvider(t,{initial={},refresh={},after={},moved=false,getError=false,mutateFinal=null,baseUnknown=false,artifact={}}={}){
+async function executeProvider(t,{initial={},refresh={},after={},moved=false,getError=false,mutateFinal=null,baseUnknown=false,artifact={},baseEqualsHead=false}={}){
  const dir=mkdtempSync(join(tmpdir(),'implementation-publish-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  mkdirSync(join(dir,'bin'));symlinkSync(root,join(dir,'tooling'),'dir');
  const history=artifact.errorBody?{error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}:bundle(base,{childMissing:true});
@@ -72,7 +72,7 @@ else process.exit(9);
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
  const step=workflow().jobs['snapshot-main'].steps.find(s=>s.name==='固定main中央定义导出');
- const env={...process.env,PATH:join(dir,'bin')+':'+process.env.PATH,BRAIN_URL:`http://127.0.0.1:${server.address().port}`,CECELIA_INTERNAL_TOKEN:'isolated-test-not-secret',SOURCE_REPO:repo,MAP_SCOPE:'cecelia-kr',BASE:base,HEAD:head};
+ const env={...process.env,PATH:join(dir,'bin')+':'+process.env.PATH,BRAIN_URL:`http://127.0.0.1:${server.address().port}`,CECELIA_INTERNAL_TOKEN:'isolated-test-not-secret',SOURCE_REPO:repo,MAP_SCOPE:'cecelia-kr',BASE:baseEqualsHead?head:base,HEAD:head};
  const result=await new Promise(resolve=>{const child=spawn('bash',['-c',step.run],{cwd:dir,env});let stdout='',stderr='';child.stdout.on('data',c=>stdout+=c);child.stderr.on('data',c=>stderr+=c);child.on('close',code=>resolve({code,stdout,stderr}));});
  return {dir,calls,...result};
 }
@@ -212,4 +212,13 @@ test('仅已证实manifest CAS409可复用赢家，其他activity冲突保留原
   const r=await executeProvider(t,{initial:{childMissing:true},refresh:{'cecelia-factory':{status:409,body:{error:{code}}}},after:{'cecelia-factory':{childMissing:false}}});
   assert.notEqual(r.code,0);assert.match(r.stderr,new RegExp(code));assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
  }
+});
+
+test('官方dispatch base=head当前缺来源先正规刷新，再同一完整bundle发布两份输入',async t=>{
+ const r=await executeProvider(t,{baseEqualsHead:true,initial:{parentMissing:true,childMissing:true}});assert.equal(r.code,0,r.stderr);
+ assert.deepEqual(r.calls.filter(c=>c.method==='POST').map(c=>[c.scope,c.revision]),[['cecelia-kr',head],['cecelia-factory',head]]);
+ assert.deepEqual(JSON.parse(readFileSync(join(r.dir,'evidence/base.json'))),JSON.parse(readFileSync(join(r.dir,'evidence/head.json'))));
+ assert.doesNotMatch(readFileSync(join(r.dir,'gh-calls.jsonl'),'utf8'),/artifacts/);
+ const failed=await executeProvider(t,{baseEqualsHead:true,initial:{parentMissing:true,childMissing:true},moved:true});
+ assert.notEqual(failed.code,0);assert.equal(failed.calls.some(c=>c.method==='POST'),false);assert.equal(existsSync(join(failed.dir,'evidence/head.json')),false);
 });
