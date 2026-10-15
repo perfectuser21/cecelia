@@ -1,3 +1,5 @@
+import InvocationEvidence from "./InvocationEvidence";
+import { InvocationResult } from "./invocations";
 import { useState } from "react";
 import { Gap } from "./model";
 import { State } from "./ActivityDetail";
@@ -97,6 +99,8 @@ export default function EvidenceView({
   workflows?: Array<{ id: string; name: string }>;
   onOpenWorkflow?: (id: string) => void;
 }) {
+  const [invocationId, setInvocationId] = useState("");
+  const invocation = useRead<InvocationResult>(mode === "运行" && invocationId ? `/api/brain/invocations/${encodeURIComponent(invocationId)}` : null);
   const [offset, setOffset] = useState(0),
     [selected, setSelected] = useState("");
   const kind = mode === "运行" ? "runs" : "releases";
@@ -131,6 +135,11 @@ export default function EvidenceView({
             ? "发布与实际部署"
             : "运行与证据对账"}
       </h2>
+      {mode === "运行" && <section className="rounded border p-3">
+        <label className="text-sm">追踪调用任务<input aria-label="追踪调用任务" className="ml-2 rounded border p-2 dark:bg-slate-900" placeholder="任务 ID" onChange={e => setInvocationId(e.target.value.trim())} /></label>
+        <ReadState {...invocation} />
+        {invocation.data && <InvocationEvidence result={invocation.data} />}
+      </section>}
       <ReadState {...list} />
       {list.data && (
         <>
