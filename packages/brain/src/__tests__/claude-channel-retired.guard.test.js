@@ -271,3 +271,39 @@ describe('只读来源封套数据与实际执行代码分离',()=>{
   });expect(result.length).toBeGreaterThan(0);
  });
 });
+
+describe('固定runtime字节指纹不执行来源模板',()=>{
+ const runtime=path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
+ const source=readFileSync(runtime,'utf8');
+ const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],[runtime,source]]);
+ const scan=sources=>findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources});
+ it('真实固定模块仅fs读取后hash/比较，允许模板数据且模块本身仍经过R1-R7',()=>{
+  expect(scan(base())).toEqual([]);
+  expect(findClaudeInvocations(source,{file:runtime,sources:base()})).toEqual([]);
+ });
+ it.each([
+  ['eval',s=>s+"\neval(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
+  ['Function',s=>s+"\nFunction(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'))();"],
+  ['exec',s=>s+"\nimport {exec} from 'node:child_process';exec(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
+  ['spawn',s=>s+"\nimport {spawn} from 'node:child_process';spawn(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
+  ['raw export',s=>s+"\nexport const raw=readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8');"],
+  ['raw hash replacement',s=>s.replace("createHash('sha256').update(bytes).digest('hex')","bytes.toString('utf8')")],
+  ['hash rebinding',s=>s+"\ncreateHash=eval;"],
+  ['dynamic import',s=>s+"\nawait import('node:child_process');"],
+  ['changed read path',s=>s.replace('new URL(name,import.meta.url)',"new URL(name,'file:///tmp/')")],
+  ['global side effect',s=>s+"\nBuffer.from=eval;"],
+  ['exec alias',s=>s+"\nimport {exec as launch} from 'node:child_process';launch(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
+  ['names expansion',s=>s.replace("'existing-ops-source.js',","'unreviewed-source.js','existing-ops-source.js',")],
+  ['raw return',s=>s.replace("files:files.map(f=>({...f}))","files:readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8')")],
+  ['extra top call',s=>s+"\nsendElsewhere(readFileSync(new URL('existing-ops-build-envelopes.js',import.meta.url),'utf8'));"],
+ ])('runtime %s 必须拒绝整条模板数据资格',(_name,edit)=>{
+  const sources=base();sources.set(runtime,edit(source));
+  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
+ });
+ it.each(['same source at other path','third consumer'])('%s 不继承固定runtime资格',kind=>{
+  const sources=base(),other=path.join(BRAIN_ROOT,'src/lib/other-runtime.js');
+  if(kind==='same source at other path'){sources.delete(runtime);sources.set(other,source);}
+  else sources.set(other,"import {ENVELOPES} from './existing-ops-build-envelopes.js';export const raw=ENVELOPES;");
+  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
+ });
+});
