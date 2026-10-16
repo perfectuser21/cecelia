@@ -349,6 +349,38 @@ describe('新增阶段封套不允许执行或额外消费者',()=>{
  });
 });
 
+describe('isolation 新封套仍只允许已审 Acorn 消费闭包',()=>{
+ const core=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-core-envelope.js');
+ const local=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-local-envelopes.js');
+ const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readFileSync(file,'utf8')])]);
+ const scan=sources=>[ENVELOPE_FILE,STAGE_DATA].map(file=>findClaudeInvocations(sources.get(file),{file,sources}));
+ it('完整新版本取得只读资格，原执行规则仍扫描剩余代码',()=>{
+  const sources=base();
+  expect(sources.get(core)).toContain('export const ISOLATION_REVIEWED');
+  expect(sources.get(local)).toContain('export const ISOLATION_REVIEWED');
+  expect(sources.get(STAGE_DATA)).toContain('export const ISOLATION_STAGE_ENVELOPES');
+  expect(scan(sources)).toEqual([[],[]]);
+ });
+ it.each(['core eval','local Function','stage exec','raw helper export','extra core consumer','extra local consumer','escaped stage consumer','dynamic helper consumer','caller executes selector'])('%s不能继承新增数据的只读资格',kind=>{
+  const sources=base(),other=path.join(BRAIN_ROOT,'src/unreviewed-isolation-consumer.js');
+  if(kind==='core eval')sources.set(core,sources.get(core)+'\neval(ISOLATION_REVIEWED.recordProvenance);');
+  if(kind==='local Function')sources.set(local,sources.get(local)+'\nnew Function(ISOLATION_REVIEWED.qaIsolation)();');
+  if(kind==='stage exec')sources.set(STAGE_DATA,sources.get(STAGE_DATA)+'\nexec(ISOLATION_STAGE_ENVELOPES.evaluate);');
+  if(kind==='raw helper export')sources.set(PROVENANCE_HELPER,sources.get(PROVENANCE_HELPER)+'\nexport const raw=ISOLATION_CORE.recordProvenance;');
+  if(kind==='extra core consumer')sources.set(other,"import {ISOLATION_REVIEWED} from './lib/existing-ops-provenance-core-envelope.js';export const raw=ISOLATION_REVIEWED;");
+  if(kind==='extra local consumer')sources.set(other,"import {ISOLATION_REVIEWED} from './lib/existing-ops-provenance-local-envelopes.js';eval(ISOLATION_REVIEWED.qaIsolation);");
+  if(kind==='escaped stage consumer')sources.set(other,"import {ISOLATION_STAGE_ENVELOPES} from './lib/existing-ops-stage-\\u0065nvelopes.js';eval(ISOLATION_STAGE_ENVELOPES.evaluate);");
+  if(kind==='dynamic helper consumer')sources.set(other,"const {provenanceSourceVersion}=await import('./lib/existing-ops-provenance-\\u0065nvelope.js');provenanceSourceVersion(candidate,eval);");
+  if(kind==='caller executes selector')sources.set(ENVELOPE_CONSUMER,sources.get(ENVELOPE_CONSUMER)+'\nprovenanceSourceVersion(candidate,eval);');
+  for(const hits of scan(sources))expect(hits.some(h=>h.rule==='E1')).toBe(true);
+ });
+ it('新阶段数据后的真实claude进程调用仍同时触发E1与R1',()=>{
+  const sources=base();sources.set(STAGE_DATA,sources.get(STAGE_DATA)+"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p','probe']);");
+  const hits=findClaudeInvocations(sources.get(STAGE_DATA),{file:STAGE_DATA,sources});
+  expect(hits.some(h=>h.rule==='E1')).toBe(true);expect(hits.some(h=>h.rule==='R1')).toBe(true);
+ });
+});
+
 describe('固定runtime字节指纹不执行来源模板',()=>{
  const runtime=path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
  const source=readFileSync(runtime,'utf8');
