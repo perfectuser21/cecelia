@@ -2,6 +2,13 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"PRD.cp-10161723-leadgen-cloud-binding.md","role":"documentation"},
+    {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"DoD.cp-10161723-leadgen-cloud-binding.md","role":"documentation"},
+    {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"docs/learnings/cp-10161723-leadgen-cloud-binding.md","role":"documentation"},
+    {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"changes/cp-10161723-leadgen-cloud-binding.md","role":"release"},
+    {"owner_path":"packages/brain/src/lib/leadgen-resources.js","path":"packages/brain/src/lib/__tests__/leadgen-resources.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/routes/phone-registry.js","path":"packages/brain/src/routes/phone-registry.test.js","role":"verification"},
+
     {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"docs/learnings/cp-10161513-cw-isolation-source.md","role":"documentation"},
     
     {"owner_path":"packages/brain/scripts/coding-workflow/lib/record-provenance.mjs","path":"docs/learnings/cp-10160605-cw-source-proof.md","role":"documentation"},
