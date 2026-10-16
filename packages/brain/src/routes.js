@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import {createNativeAssemblyRouter} from './routes/workflow-assembly-native.js';
+import nativeAssemblyPool from './db.js';
 import statusRouter from './routes/status.js';
 import tasksRouter from './routes/tasks.js';
 import tickRouter from './routes/tick.js';
@@ -45,6 +47,7 @@ export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
 
 const router = Router();
+router.use('/workflow-assembly-maintenance',createNativeAssemblyRouter({pool:nativeAssemblyPool}));
 router.use('/session-provenance', sessionProvenanceRouter);
 router.use('/projections/notion/directory', createDirectoryProjectionRouter({ pool: directoryPool }));
 for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter, harnessSelftestRouter]) {

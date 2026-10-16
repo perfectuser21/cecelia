@@ -132,3 +132,9 @@ describe('现有目录调用', () => {
   });
 
 });
+
+it('原生维护只显示系统入口，不解析Skill资格或开放浏览器启动', () => {
+  render(<InvocationPanel target={{kind:'workflow',id:'native'}} schedulerOnly />);
+  expect(screen.getByRole('button', {name:'由系统调度或内部管理员触发'})).toBeDisabled();
+  expect(screen.getByText(/每30秒执行一个有界轮次/)).toBeTruthy();
+});

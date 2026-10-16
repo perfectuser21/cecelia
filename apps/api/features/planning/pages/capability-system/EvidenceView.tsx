@@ -168,6 +168,7 @@ export default function EvidenceView({
                     <p>
                       <span>定义</span> <State value={run.definition_status} />
                     </p>
+                    <p className="break-all">固定定义版本：<code>{run.workflow_definition_version_id || 'unknown'}</code></p>
                     <p className="my-2">
                       证据 <State value={run.evidence_status} />
                     </p>

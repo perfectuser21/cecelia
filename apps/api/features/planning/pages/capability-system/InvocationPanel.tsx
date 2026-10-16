@@ -2,7 +2,8 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import BusinessInputs from './BusinessInputs';
 import InvocationEvidence from './InvocationEvidence';
 import { InvocationError, InvocationRequest, InvocationResult, InvocationTarget, Resolution, INVOCATION_POLL_MS, invocationGapMessage, invocationJson, terminalInvocation } from './invocations';
-export default function InvocationPanel({ target }: { target: InvocationTarget }) {
+export default function InvocationPanel({ target, schedulerOnly = false }: { target: InvocationTarget; schedulerOnly?: boolean }) {
+  if (schedulerOnly) return <section aria-label="系统维护调用"><p>纯代码 · 系统定时维护，每30秒执行一个有界轮次；内部管理员可触发单轮。运行结果不授予业务流程正式发布资格。</p><button type="button" disabled>由系统调度或内部管理员触发</button></section>;
   return <InvocationSession key={JSON.stringify(target)} target={target} />;
 }
 function InvocationSession({ target }: { target: InvocationTarget }) {
