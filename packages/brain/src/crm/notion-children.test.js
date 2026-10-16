@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import pg from 'pg';
 import { projectCustomerChildren } from './notion-children.js';
 
 const id = n => `30000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -113,11 +115,73 @@ describe('CRM原文与报告只写已登记库', () => {
   });
   it('Date格式周期转YYYY-MM-DD，标题不暴露英文类型', async () => {
     const { store, request } = setup();
-    store.listCustomerReports.mockResolvedValue([{ ...report, period_start: new Date('2026-10-16T00:00:00Z'), period_end: new Date('2026-10-16T00:00:00Z') }]);
+    store.listCustomerReports.mockResolvedValue([{ ...report, period_start: pg.types.getTypeParser(1082)('2026-10-16'), period_end: pg.types.getTypeParser(1082)('2026-10-16') }]);
     await projectCustomerChildren({}, store, request, binding, customer);
     const body = request.mock.calls.filter(c => c[0] === '/pages')[1][2];
     expect(body.properties.客户名称.title[0].text.content).toContain('日报 2026-10-16');
     expect(body.markdown).toContain('2026-10-16 ～ 2026-10-16');
+  });
+  it.each(['Asia/Shanghai', 'Pacific/Kiritimati', 'UTC', 'America/Los_Angeles'])('真实PG DATE在%s保持日历周期，消息时间仍为时间点', tz => {
+    const script = `
+      import pg from 'pg';
+      import { projectCustomerChildren } from ${JSON.stringify(new URL('./notion-children.js', import.meta.url).href)};
+      const binding = ${JSON.stringify(binding)}, customer = ${JSON.stringify(customer)};
+      const message = ${JSON.stringify(message)}, report = ${JSON.stringify(report)};
+      const parse = pg.types.getTypeParser(1082), output = [];
+      const config = binding.fields.reports;
+      Object.assign(config, { period_start: '周期开始', period_end: '周期结束' });
+      for (const date of ['2026-10-16', '2026-01-01', '2026-03-01', '2024-02-29', '2026-03-08', '2026-11-01']) {
+        const pages = new Map(), bodies = [];
+        const request = async (path, method, body) => {
+          if (path.startsWith('/data_sources/') && !method) {
+            const cfg = path.includes(config.data_source_id) ? config : binding.fields.messages;
+            return { id: cfg.data_source_id, properties: {
+              Brain记录ID: { type: 'rich_text' }, 客户名称: { type: 'title' },
+              对应客户: { type: 'relation', relation: { data_source_id: binding.data_source_id } },
+              周期开始: { type: 'date' }, 周期结束: { type: 'date' },
+            } };
+          }
+          if (path.endsWith('/query')) return { results: [], has_more: false };
+          if (path === '/pages' && method === 'POST') {
+            bodies.push(body);
+            const id = bodies.length === 1 ? message.id : report.id;
+            const properties = Object.fromEntries(Object.entries(body.properties).map(([key, value]) => [key, { type: Object.keys(value)[0], ...value }]));
+            const page = { id, parent: body.parent, properties };
+            pages.set(id, page); return page;
+          }
+          if (path.startsWith('/pages/')) return pages.get(path.split('/')[2]);
+          throw Error('unexpected request');
+        };
+        const store = {
+          listCustomerMessages: async () => [message],
+          listCustomerReports: async () => [{ ...report, period_start: parse(date), period_end: parse(date) }],
+          markMessageProjected: async () => true, markReportProjected: async () => true,
+        };
+        await projectCustomerChildren({}, store, request, binding, customer);
+        output.push({ date, title: bodies[1].properties.客户名称.title[0].text.content,
+          markdown: bodies[1].markdown, start: bodies[1].properties.周期开始.date.start,
+          end: bodies[1].properties.周期结束.date.start, message: bodies[0].markdown });
+      }
+      process.stdout.write(JSON.stringify(output));
+    `;
+    const rows = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      env: { ...process.env, TZ: tz }, encoding: 'utf8', timeout: 15000,
+    }));
+    for (const row of rows) {
+      expect(row.title).toContain('日报 ' + row.date);
+      expect(row.markdown).toContain(row.date + ' ～ ' + row.date);
+      expect(row.start).toBe(row.date);
+      expect(row.end).toBe(row.date);
+      expect(row.message).toContain('2026-10-16T01:00:00.000Z');
+    }
+  });
+  it('无效Date拒绝报告创建和回填', async () => {
+    const { store, request } = setup();
+    store.listCustomerMessages.mockResolvedValue([]);
+    store.listCustomerReports.mockResolvedValue([{ ...report, message_ids: [], period_start: new Date(NaN) }]);
+    await expect(projectCustomerChildren({}, store, request, binding, customer)).rejects.toMatchObject({ code: 'invalid_input' });
+    expect(request.mock.calls.some(call => call[0] === '/pages')).toBe(false);
+    expect(store.markReportProjected).not.toHaveBeenCalled();
   });
   it('服务端已创建但响应超时，重跑仅找回原页', async () => {
     const { store, request } = setup();

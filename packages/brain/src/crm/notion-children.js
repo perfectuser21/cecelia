@@ -38,8 +38,12 @@ function validatePage(page, row, config, customer) {
 const rich = content => [{ type: 'text', text: { content } }];
 const reportType = value => ({ daily: '日报', weekly: '周报', monthly: '月报' }[value] ?? '进展报告');
 function day(value) {
-  const parsed = new Date(value);
+  // pg DATE values are local-midnight calendar dates, not UTC instants.
+  const parsed = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(parsed.getTime())) throw fault('invalid_input');
+  if (value instanceof Date) {
+    return [parsed.getFullYear(), String(parsed.getMonth() + 1).padStart(2, '0'), String(parsed.getDate()).padStart(2, '0')].join('-');
+  }
   return parsed.toISOString().slice(0, 10);
 }
 function propertiesFor(row, config, customer, kind) {

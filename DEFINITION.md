@@ -6986,7 +6986,7 @@ openclaw-agent-reaper与手机窄派发共用独立收尾循环，不再受串�
 
 ### CRM 权威数据边界
 
-Notion 作为客户资料录入和展示面；Brain 独立 CRM 实体为唯一真相源，任务表不代存客户主档。企业 Tenant 下账号、人设与好友关系分别登记，跨账号不按昵称归并。原文、报告保留来源和证据关联。CRM_SYNC_ENABLED 默认关闭，生产 schema 迁移与正式绑定另行放行。
+Notion 作为客户资料录入和展示面；Brain 独立 CRM 实体为唯一真相源，任务表不代存客户主档。企业 Tenant 下账号、人设与好友关系分别登记，跨账号不按昵称归并。原文、报告保留来源和证据关联。CRM_SYNC_ENABLED 默认关闭，生产 schema 迁移与正式绑定另行放行。 报告周期为日历日期；PostgreSQL DATE 返回的本地午夜 Date 按本地年月日投影，禁止转 UTC 截日导致少一天；沟通发生时间仍按 ISO 时间点表示。
 
 受内部鉴权保护的 `POST /api/brain/internal/crm/contacts/resolve` 仅按 `tenant_id + account_id + contact_id` 精确读取既有客户、好友关系及该账号的 Agent/人设。未知或跨租户关系、归档客户、停用数据源绑定统一返回 404，不按昵称回退、不创建客户、不修改业务数据。本入口沿用 CRM 默认关闭开关；它只补身份查询，不代表 HK 客服已切换或好友自动开户已实现。
 
