@@ -40,7 +40,7 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
     if(error.code==='assembly_reconcile_cancelled' || error.code==='assembly_reconcile_budget')return {stopped:error.code==='assembly_reconcile_cancelled'?'cancelled':'budget'};
     throw error;
   }
-  let locked=false,transaction=false,lockKey,destroy;
+  let locked=false,transaction=false,lockKey,destroy,roundError;
   // 原生statement_timeout覆盖事务前读取与锁等待，query_timeout防失联；不靠外层race宣称已停。
   const client={query:async(text,values)=>{
     check();let remaining=Math.max(1,deadline-now());
@@ -59,6 +59,8 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
     lockKey=`workflow-assembly-reconcile:${identity.database}:${identity.schema}`;
     locked=(await client.query('SELECT pg_try_advisory_lock(hashtextextended($1,6)) AS locked',[lockKey])).rows[0]?.locked===true;
     if(!locked)return {skipped:'locked'};
+    // 仅服务端原生观测入口使用：持同一会话锁，先确保持久owner头；失败禁止任何业务写。
+    if(options.onLocked && await options.onLocked(connection,{deadline,check})===false)return {skipped:'replayed'};
     check();const last=(await client.query('SELECT value_json FROM working_memory WHERE key=$1',[CURSOR])).rows[0]?.value_json?.last_id ?? null;
     const scan=async after=>(await client.query(`SELECT * FROM tasks WHERE payload->>'workflow_authoring'='true'
       AND result#>>'{workflow_authoring,request,assembly_mode}'='true'
@@ -177,12 +179,14 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
     }
     return report;
   }catch(error){
-    if(error.code==='assembly_reconcile_cancelled' || error.code==='assembly_reconcile_budget' || error.code==='57014' || error.message==='Query read timeout')return {...report,stopped:error.code==='assembly_reconcile_cancelled'?'cancelled':'budget'};
+    roundError=error;
+    if(error.code==='assembly_reconcile_cancelled' || error.code==='assembly_reconcile_budget' || error.code==='57014' || error.message==='Query read timeout'){report.stopped=error.code==='assembly_reconcile_cancelled'?'cancelled':'budget';return report;}
     throw error;
   }finally{
     try{
       if(transaction)await rollback();
       await connection.query({text:'RESET statement_timeout',query_timeout:5000});
+      if(locked && options.onSettled)await options.onSettled(connection,report,roundError);
       if(locked)await connection.query({text:'SELECT pg_advisory_unlock(hashtextextended($1,6))',values:[lockKey],query_timeout:5000});
     }catch(error){destroy=error;}finally{connection.release(destroy);}
   }

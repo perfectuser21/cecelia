@@ -59,6 +59,7 @@ async function loadDefinition(db,body,tenantId) {
     ? await db.query('SELECT * FROM activity_definition_versions WHERE id=$1 AND activity_id=$2',args)
     : await db.query('SELECT * FROM workflow_definition_versions WHERE id=$1 AND workflow_id=$2',args)).rows[0];
   requireCondition(row?.payload?.[`${kind}_id`]===body.target.id,'固定目标版本不存在',404);
+  requireCondition(row.payload.protocol!=='workflow-assembly-native-v1','系统维护流程仅允许定时调度或内部管理员单轮入口',409);
   const definition=kind==='activity'?activityDefinition(row):{...row.payload.contract,source:source(row)};
   requireCondition((definition.tenant_id??'default')===tenantId,'固定目标版本不存在',404);
   if(kind==='workflow')for(const [index,slot]of definition.activities.entries()){

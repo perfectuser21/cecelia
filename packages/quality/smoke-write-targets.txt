@@ -149,3 +149,5 @@ task-lease-device-pool-smoke.sh
 tree-legacy-layout.sh
 workflow-assembly-registration-smoke.sh
 workflow-assembly-reconcile-smoke.sh
+
+workflow-assembly-native-smoke.sh

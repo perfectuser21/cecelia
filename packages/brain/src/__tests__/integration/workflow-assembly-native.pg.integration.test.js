@@ -1,22 +1,13 @@
+import {nativeMaintenanceDatabase,readSource} from '../fixtures/workflow-assembly-native-db.test.js';
 import {it,expect,afterEach} from 'vitest';
-import {readFileSync} from 'node:fs';
-import {authoringExecutionDatabase,startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.test.js';
+import {startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.test.js';
 import {nativeSpec as s,prepareNativeSource} from '../../lib/workflow-assembly-native-source.js';
 import {registerNativeReconcile} from '../../lib/workflow-assembly-native-registration.js';
 import {runNativeReconcile} from '../../lib/workflow-assembly-native.js';
+import {listSystemRuns,readSystemRunEvidence} from '../../lib/capability-system-evidence.js';
 let f;
 afterEach(async()=>{await f?.close();f=null;});
-const readSource=async(_revision,path)=>readFileSync(new URL('../../../../../'+path,import.meta.url),'utf8');
-async function fixture(){
-  f=await authoringExecutionDatabase();const db=f.pool;
-  await db.query('CREATE TABLE ops_schedule_entries(LIKE public.ops_schedule_entries INCLUDING ALL);CREATE TABLE ops_workflows(LIKE public.ops_workflows INCLUDING ALL);CREATE TABLE working_memory(LIKE public.working_memory INCLUDING ALL)');
-  await db.query("INSERT INTO capabilities(id,name,parent_journey_id,status) SELECT $1,'系统看护 · 业务线健康巡检',parent_journey_id,'active' FROM capabilities LIMIT 1",[s.capability_id]);
-  await db.query("INSERT INTO ops_workflows(id,source,wf_id,name,machine,active) VALUES($1,'scheduler',$2,'真实维护作业','us-vps',false)",[s.schedule.ops_workflow_id,s.schedule.label]);
-  await db.query(`INSERT INTO ops_schedule_entries(id,source,host_alias,label,kind,ops_workflow_id,active,enabled,registered_via,ledger_status)
-    VALUES($1,'brain','us-vps',$2,'brain_job',$3,true,true,'brain-job','registered')`,[s.schedule.id,s.schedule.label,s.schedule.ops_workflow_id]);
-  const source=await prepareNativeSource({revision:'a'.repeat(40),readFile:readSource});
-  return {db,source,services:{revision:source.commit,readSource}};
-}
+async function fixture(){f=await nativeMaintenanceDatabase();return f;}
 it('真实PG登记幂等固定版本，镜子状态不变，无生产release指针；单轮一run一span，同key只读回',async()=>{
   const {db,source,services}=await fixture();
   const first=await registerNativeReconcile(db,source),second=await registerNativeReconcile(db,source);
@@ -51,6 +42,55 @@ it('真实PG已登记Activity被人工停用后，原生入口不能继续写游
   await db.query("UPDATE activities SET status='paused' WHERE id=$1",[s.activities[0].id]);
   await expect(runNativeReconcile(db,{request_key:'inactive'},services)).rejects.toThrow();
   expect((await db.query('SELECT count(*)::int n FROM working_memory')).rows[0].n).toBe(0);
+});
+it('真实PG升级原生版本后，目录运行列表和证据保持旧run固定版本，同key不重新执行',async()=>{
+  const {db,source,services}=await fixture();const first=await registerNativeReconcile(db,source);
+  const run=await runNativeReconcile(db,{request_key:'history'},services);
+  const next=await registerNativeReconcile(db,await prepareNativeSource({revision:'b'.repeat(40),readFile:readSource}));
+  expect(next.workflow_definition_version_id).not.toBe(first.workflow_definition_version_id);
+  const list=await listSystemRuns(db,{workflowId:s.id});
+  expect(list.total).toBe(1);expect(list.runs[0].workflow_definition_version_id).toBe(first.workflow_definition_version_id);
+  const evidence=await readSystemRunEvidence(db,run.native_run_id);
+  expect(evidence.workflow_definition_version_id).toBe(first.workflow_definition_version_id);
+  expect(evidence).toMatchObject({native_maintenance:true,formal_release:false,business_outcome:'not_evaluated',evidence_status:'native_observation'});
+  await expect(runNativeReconcile(db,{request_key:'history'},services)).rejects.toMatchObject({status:409});
+  expect((await db.query('SELECT count(*)::int n FROM runs')).rows[0].n).toBe(1);
+});
+it('真实PG首轮自动登记和已部署源码续版，不靠HTTP逐条补目录',async()=>{
+  const {db,services}=await fixture();const first=await runNativeReconcile(db,{request_key:'auto-first'},services);
+  expect(first.run.workflow_id).toBe(s.id);
+  const oldVersion=first.run.detail.workflow_definition_version_id;
+  const updatedServices={...services,revision:'b'.repeat(40),readSource:async(revision,path)=>revision==='a'.repeat(40)?'outdated bytes':readSource(revision,path)};
+  const second=await runNativeReconcile(db,{request_key:'auto-next'},updatedServices);
+  expect(second.run.detail.source.commit).toBe('b'.repeat(40));
+  expect(second.run.detail.workflow_definition_version_id).not.toBe(oldVersion);
+  expect((await db.query('SELECT active FROM ops_workflows')).rows[0].active).toBe(false);
+});
+it('真实PG清理连接失败不假成功；下轮取原锁后将遗留owner收unknown，不重发旧key或补PASS span',async()=>{
+  const {db,source,services}=await fixture();await registerNativeReconcile(db,source);
+  const poison={query:db.query.bind(db),connect:async()=>{
+    const client=await db.connect();return {release:e=>client.release(e),query:(sql,...values)=>{
+      if(sql?.text==='RESET statement_timeout')throw Error('fixture_reset_failure');return client.query(sql,...values);
+    }};
+  }};
+  await expect(runNativeReconcile(poison,{request_key:'interrupted'},services)).rejects.toMatchObject({status:503});
+  expect((await db.query('SELECT outcome FROM runs')).rows[0].outcome).toBe('running');
+  const second=await runNativeReconcile(db,{request_key:'recover'},services);expect(second.run.outcome).toBe('pass');
+  const old=(await db.query("SELECT * FROM runs WHERE trigger_ref='interrupted'")).rows[0];
+  expect(old.outcome).toBe('unknown');expect(old.detail.reason).toBe('owner_interrupted');
+  expect((await db.query('SELECT count(*)::int n FROM spans WHERE run_id=$1',[old.run_id])).rows[0].n).toBe(0);
+  expect((await runNativeReconcile(db,{request_key:'interrupted'},services)).run.outcome).toBe('unknown');
+});
+it('真实PG原锁竞争零新run；同key运行中只读回，不二次执行或抢旧终态',async()=>{
+  const {db,source,services}=await fixture();await registerNativeReconcile(db,source);await startPureAuthoring(f);
+  let begin,release;const began=new Promise(r=>begin=r),wait=new Promise(r=>release=r);
+  const first=runNativeReconcile(db,{request_key:'concurrent'},{...services,runnerOptions:{readReadiness:async()=>{begin();await wait;return {};}}});
+  try{
+    await began;
+    const replay=await runNativeReconcile(db,{request_key:'concurrent'},services);expect(replay.replayed).toBe(true);expect(replay.run.outcome).toBe('running');
+    const locked=await runNativeReconcile(db,{request_key:'other'},services);expect(locked.report.skipped).toBe('locked');expect(locked.native_run_id).toBeNull();
+    expect((await db.query('SELECT count(*)::int n FROM runs')).rows[0].n).toBe(1);
+  }finally{release();await first;}
 });
 it.each(['cancelled','budget'])('真实runner%s停止不能被通用error分支误记fail',async stopped=>{
   const {db,source,services}=await fixture();await registerNativeReconcile(db,source);await startPureAuthoring(f);
