@@ -119,15 +119,32 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
         }
         const audit=!tenantConflict && fresh.result?.workflow_authoring_candidate
           ? await auditAssemblyDerivations(client,fresh,{transaction:'existing',check,repair:resourceCondition==='ready'}):{gaps:[],detected:[],repaired:[]};
-        check();let previous=fresh.result?.workflow_assembly_reconcile;
+        check();const before=fresh.result?.workflow_assembly_reconcile;
+        const sameVersion=before?.target_version===target && before.definition_sha256===digest;
+        const repairedAt=audit.repaired.length?new Date((await client.query('SELECT clock_timestamp() AS at')).rows[0].at).getTime():null;check();
+        let previous=before;
         if(audit.detected.length){
           previous=reconcileGapState(previous,{...observation,status:'blocked',gaps:audit.detected},{now:now()});
           for(const issue of Object.values(previous.issues)){
-            if(audit.repaired.some(g=>g.code===issue.gap.code && (g.activity_key??null)===issue.gap.activity_key))issue.repaired_at=now();
+            if(audit.repaired.some(g=>g.code===issue.gap.code && (g.activity_key??null)===issue.gap.activity_key))issue.repaired_at=repairedAt;
           }
         }
         const finalObservation={...observation,gaps:[...observation.gaps??[],...audit.gaps]};
         const state=reconcileGapState(previous,finalObservation,{now:now()});
+        state.repair_sequence=sameVersion?before.repair_sequence??0:0;
+        if(sameVersion && before.revalidation_request)state.revalidation_request=before.revalidation_request;
+        if(audit.repaired.length){
+          const input=fresh.result.workflow_authoring.request.validation_input;
+          if(!input || typeof input!=='object' || Array.isArray(input))throw Error('validation_input_missing');
+          state.repair_sequence++;
+          const gapKeys=Object.values(state.issues).filter(i=>i.repaired_at===repairedAt).map(i=>i.key).sort();
+          const gapId=definitionDigest(gapKeys),owner=fresh.result.workflow_authoring_candidate,inputSha=definitionDigest(input);
+          const repairIdentity={protocol:'workflow-assembly-repair-v1',tenant_id:tenantId,authoring_task_id:row.id,
+            definition_sha256:digest,input_sha256:inputSha,candidate_owner:owner,gap_id:gapId,sequence:state.repair_sequence};
+          const attempt={protocol:'workflow-authoring-revalidation-v1',tenant_id:tenantId,authoring_task_id:row.id,
+            definition_sha256:digest,input_sha256:inputSha,candidate_owner:owner,gap_id:gapId,repair_id:definitionDigest(repairIdentity)};
+          state.revalidation_request={...attempt,attempt_id:definitionDigest(attempt),requested_at:new Date(repairedAt).toISOString()};
+        }
         state.resource_refs=resourceRefs;
         state.derivations={checked_at:now(),detected:audit.detected,repaired:audit.repaired};
         if(fresh.result?.workflow_authoring_candidate && observation.resource_condition==='ready'
