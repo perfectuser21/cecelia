@@ -1,3 +1,4 @@
+import {collectStageSources} from './existing-ops-stage-source.js';
 /** 固定 build/publish 测试的只读执行来源证明；不执行候选程序。 */
 // 封套取自正式 Git 2eb4d0557365befafed1953140c9c47e20bab495。
 // 仅作 AST 对照数据，不执行：runActivityProcess/baseEnv、runActivity/childEnv、
@@ -229,6 +230,12 @@ export async function collectBuildSources({parse,paths,selectors,read,readSource
   }
   }
   await collectPublishSources({parse,paths,selectors,read,readSource,revision,relations,requireProof});
+  const stageSelected=paths.some(path=>/coding-workflow\/__tests__\/(intent|spec|spec-review|verify|evaluate)\.test\.mjs$/.test(path)&&selectors.include.some(r=>r.test(path))&&!selectors.exclude.some(r=>r.test(path)));
+  if(stageSelected){
+    const support={...await provenanceInputs(paths,readSource,revision),...Object.fromEntries(await Promise.all(['test','helper','activity','cli','protocol'].map(async key=>[key,await readSource(BUILD_SOURCE_PATHS[key],revision)])))};
+    await collectStageSources({parse,paths,selectors,read,readSource,revision,relations,requireProof,
+      supportProven:proveBuildSources(support,parse),supportVersion:normalizeProvenanceBuild(support,parse)?'recorded':'legacy'});
+  }
 }
 
 const PUBLISH_TEST=PREFIX+'__tests__/publish.test.mjs', PUBLISH_ENTRY=PREFIX+'activities/publish.mjs';

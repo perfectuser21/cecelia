@@ -10,7 +10,9 @@ import yaml from 'js-yaml';
 import {expectedSourceRuntime,waitForSourceRuntime} from '../implementation-source-ready.mjs';
 const legacyPaths=['source','runtime-source','build-source','build-envelopes','workspace-source'].map(n=>`packages/brain/src/lib/existing-ops-${n}.js`).sort();
 const provenancePaths=['envelope','core-envelope','entry-envelopes','local-envelopes'].map(n=>`packages/brain/src/lib/existing-ops-provenance-${n}.js`).sort();
-const paths=[...legacyPaths,...provenancePaths].sort();
+const priorPaths=[...legacyPaths,...provenancePaths].sort();
+const stagePaths=['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-stage-${n}.js`).sort();
+const paths=[...priorPaths,...stagePaths].sort();
 const root=mkdtempSync(join(tmpdir(),'source-ready-'));
 const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
 git('init','-q');mkdirSync(join(root,'empty-hooks'));git('config','core.hooksPath',join(root,'empty-hooks'));git('config','user.email','test@example.invalid');git('config','user.name','Fixture');
@@ -28,14 +30,14 @@ async function fixture(responses,run){
 }
 function options(brainUrl){return {brainUrl,token:'test-only',repoRoot:root,revision,timeoutMs:100,intervalMs:10};}
 function deps(extra={}){let time=0;return {readMain:async()=>revision,now:()=>time,sleep:async ms=>{time+=ms;},...extra};}
-test('固定单提交Git读取九文件；工作区未提交字节不作为可信指纹',()=>{
+test('固定单提交Git读取十一文件；工作区未提交字节不作为可信指纹',()=>{
  const actual=expectedSourceRuntime({repoRoot:root,revision});assert.deepEqual(actual,expected);
  writeFileSync(join(root,paths[0]),'dirty bytes');assert.deepEqual(expectedSourceRuntime({repoRoot:root,revision}),expected);git('checkout','--',paths[0]);
 });
-test('已知旧5模块只能等待，新9模块匹配才真实HTTP就绪',async()=>{
+test('已知旧5模块只能等待，新11模块匹配才真实HTTP就绪',async()=>{
  const old=runtime();old.files=old.files.filter(f=>legacyPaths.includes(f.path));
  await fixture([{body:old},{body:runtime()}],async(url,requests)=>{
-  const result=await waitForSourceRuntime(options(url),deps());assert.equal(result.attempts,2);assert.equal(result.files.length,9);
+  const result=await waitForSourceRuntime(options(url),deps());assert.equal(result.attempts,2);assert.equal(result.files.length,11);
   assert.ok(requests.every(r=>r.method==='GET'));
  });
 });
@@ -45,7 +47,7 @@ test('已知旧5模块持续存在只能有界等待，不能凭旧指纹放行'
   await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/);assert.equal(requests.length,10);
  });
 });
-for(const path of provenancePaths)test(`新增依赖 ${path} 指纹错误不能宣布ready`,async()=>{
+for(const path of [...provenancePaths,...stagePaths])test(`新增依赖 ${path} 指纹错误不能宣布ready`,async()=>{
  const body=runtime();body.files.find(f=>f.path===path).sha256='0'.repeat(64);
  await fixture([{body}],async url=>await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/));
 });
@@ -58,7 +60,7 @@ for(const [name,change] of [
  const body=runtime();body.files=change(body.files.filter(f=>legacyPaths.includes(f.path)));
  await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
 });
-test('新协议任意缺1文件的8模块子集也立即拒绝',async()=>{
+test('新协议任意缺1文件的10模块子集也立即拒绝',async()=>{
  const body=runtime();body.files.pop();
  await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
 });
@@ -148,3 +150,7 @@ test('固定Git输入可在真实depth1浅克隆运行',()=>{
  assert.equal(execFileSync('git',['rev-parse','--is-shallow-repository'],{cwd:clone,encoding:'utf8'}).trim(),'true');
  assert.deepEqual(expectedSourceRuntime({repoRoot:clone,revision}),expected);
 });
+
+test('精确历史9模块只等待，11完整匹配才ready',async()=>{const old=runtime();old.files=old.files.filter(f=>priorPaths.includes(f.path));await fixture([{body:old},{body:runtime()}],async(url,requests)=>{const r=await waitForSourceRuntime(options(url),deps());assert.equal(r.attempts,2);assert.equal(r.files.length,11);assert.ok(requests.every(x=>x.method==='GET'));});});
+test('精确历史9持续存在到硬截止不能ready',async()=>{const old=runtime();old.files=old.files.filter(f=>priorPaths.includes(f.path));await fixture([{body:old}],async url=>assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/));});
+for(const mutate of [f=>f.reverse(),f=>{f[0]=f[1];return f;},f=>f.slice(1),f=>{f[0].sha256='bad';return f;},f=>{f[0].path=stagePaths[0];return f;}])test('未知历史9变体立即拒绝',async()=>{const b=runtime();b.files=mutate(b.files.filter(x=>priorPaths.includes(x.path)));await fixture([{body:b}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});});
