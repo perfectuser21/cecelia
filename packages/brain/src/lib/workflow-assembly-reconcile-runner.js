@@ -25,7 +25,22 @@ async function defaultReadiness(pool,id,options){
 export async function runWorkflowAssemblyReconcile(pool,options={}){
   const now=options.now ?? Date.now,budget=Math.max(1,Math.min(20000,options.budgetMs ?? 20000));
   const deadline=now()+budget,check=()=>{if(options.signal?.aborted)throw Object.assign(Error('assembly_reconcile_cancelled'),{code:'assembly_reconcile_cancelled'});if(now()>=deadline)throw deadlineError();};
-  const connection=await pool.connect();let locked=false,transaction=false,lockKey,destroy;
+  if(options.signal?.aborted)return {stopped:'cancelled'};
+  let connection;
+  try{
+    connection=await new Promise((resolve,reject)=>{
+      let settled=false;const fail=()=>{if(!settled){settled=true;clearTimeout(timer);options.signal?.removeEventListener('abort',abort);reject(options.signal?.aborted?Object.assign(Error('assembly_reconcile_cancelled'),{code:'assembly_reconcile_cancelled'}):deadlineError());}};
+      const abort=()=>fail(),timer=setTimeout(fail,Math.max(1,deadline-now()));
+      options.signal?.addEventListener('abort',abort,{once:true});
+      Promise.resolve().then(()=>pool.connect()).then(client=>{
+        if(settled){client.release();return;}settled=true;clearTimeout(timer);options.signal?.removeEventListener('abort',abort);resolve(client);
+      },error=>{if(!settled){settled=true;clearTimeout(timer);options.signal?.removeEventListener('abort',abort);reject(error);}});
+    });
+  }catch(error){
+    if(error.code==='assembly_reconcile_cancelled' || error.code==='assembly_reconcile_budget')return {stopped:error.code==='assembly_reconcile_cancelled'?'cancelled':'budget'};
+    throw error;
+  }
+  let locked=false,transaction=false,lockKey,destroy;
   // 原生statement_timeout覆盖事务前读取与锁等待，query_timeout防失联；不靠外层race宣称已停。
   const client={query:async(text,values)=>{
     check();let remaining=Math.max(1,deadline-now());
@@ -84,7 +99,7 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
           :await (options.readReadiness ?? defaultReadiness)(pool,row.id,{tenantId,deadline,signal:options.signal});
         check();
       }catch(error){
-        check();readiness={status:'blocked',resource_condition:'unknown',gaps:[{code:'readiness_unavailable'}]};
+        check();readiness={protocol:'workflow-authoring-execution-v1',tenant_id:tenantId,definition_sha256:digest,target_version:target,status:'blocked',resource_condition:'unknown',gaps:[{code:error.status===403 || error.status===401?'readiness_authorization_required':'readiness_unavailable'}]};
       }
       check();
       if(readiness.protocol!=='workflow-authoring-execution-v1' || readiness.tenant_id!==tenantId
