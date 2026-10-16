@@ -2,6 +2,13 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/01-intent.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/01-invariants.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/02-review-r1.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/02-review.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/02-spec.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/03-build.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/04-evidence.md","role":"documentation"},
     
     {"owner_path":"packages/brain/scripts/coding-workflow/lib/record-provenance.mjs","path":"docs/learnings/cp-10160605-cw-source-proof.md","role":"documentation"},
     {"owner_path":"packages/brain/vitest.config.js","path":"packages/brain/src/__tests__/vitest.real-env-smoke.config.test.js","role":"verification"},
