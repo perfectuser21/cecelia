@@ -1752,7 +1752,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
-    # 572项 smoke 已实测全项通过但30分钟任务时限取消；40分钟含启动清理余量。
+    # 572项串行 smoke；已出现全循环完成后30分钟任务取消，40分钟含启动清理余量。
     timeout-minutes: 40
     services:
       postgres:
