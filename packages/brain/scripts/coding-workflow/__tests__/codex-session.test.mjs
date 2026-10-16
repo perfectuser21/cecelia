@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { prepareCodexSession } from '../lib/codex-session.mjs';
 import { runClaude, claudeFailure } from '../lib/claude.mjs';
 
@@ -71,5 +72,82 @@ describe('Codex 原生会话参数与权限', () => {
     const r = claudeFailure({ provider: 'codex', code: 1, stdout, output: stdout });
     expect(r.reason_code).toBe('claude_failed');
     expect(r.evidence).toContainEqual({ provider: 'codex' });
+  });
+});
+
+describe('控制器 provenance 根与全部 Codex profile 隔离', () => {
+  function fixture() {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-provenance-'));
+    const home = path.join(base, 'home');
+    const worktree = path.join(base, 'worktree');
+    const root = path.join(home, '.cecelia', 'coding-workflow-provenance');
+    const logDir = path.join(home, '.cecelia', 'coding-workflow-runner');
+    for (const dir of [root, worktree, logDir]) fs.mkdirSync(dir, { recursive: true });
+    return { base, home, worktree, root, logDir };
+  }
+  for (const profile of ['build', 'qa', 'commander', 'noShell', 'judge']) {
+    it(`${profile} 明确 deny 控制器根，合法 workspace 与 sibling ruling 仍可配置`, () => {
+      const f = fixture();
+      const args = [...flags];
+      if (profile === 'qa') args.push('--disallowedTools', 'Bash(git commit:*)');
+      if (profile === 'noShell') args.push('--disallowedTools', 'Bash');
+      if (profile === 'commander') args.push('--add-dir', f.logDir);
+      const nativeOptions = profile === 'judge' ? { access: 'judge', outputLastMessage: path.join(f.logDir, 'ruling.json') } : {};
+      const s = prepareCodexSession({ args, cwd: f.worktree, env: { HOME: f.home }, nativeOptions });
+      expect(s.args.join('\n')).toContain(`${JSON.stringify(fs.realpathSync(f.root))}="deny"`);
+      if (profile === 'commander') expect(s.args).toContain(f.logDir);
+      if (profile === 'judge') expect(s.args).toContain(path.join(f.logDir, 'ruling.json'));
+    });
+  }
+  for (const relation of ['root', 'child', 'parent', 'symlink']) {
+    it(`拒绝 cwd/add-dir 与 provenance ${relation} 交叠，含不存在子路径`, () => {
+      const f = fixture();
+      const alias = path.join(f.base, 'alias');
+      fs.symlinkSync(f.root, alias);
+      const dir = { root: f.root, child: path.join(f.root, 'not-created'), parent: path.dirname(f.root), symlink: alias }[relation];
+      for (const input of [{ args: flags, cwd: dir }, { args: [...flags, '--add-dir', dir], cwd: f.worktree }]) {
+        expect(() => prepareCodexSession({ ...input, env: { HOME: f.home } })).toThrow(/provenance_path_overlap/);
+      }
+    });
+  }
+  it('拒绝 judge 原生输出落入根，且不以字符串前缀误拒相邻目录', () => {
+    const f = fixture();
+    expect(() => prepareCodexSession({ args: flags, cwd: f.worktree, env: { HOME: f.home }, nativeOptions: { access: 'judge', outputLastMessage: path.join(f.root, 'forged.json') } })).toThrow(/provenance_path_overlap/);
+    expect(() => prepareCodexSession({ args: [...flags, '--add-dir', `${f.root}-other`], cwd: f.worktree, env: { HOME: f.home } })).not.toThrow();
+  });
+  it('拒绝 git 元数据把控制器根重新授为 write/read', () => {
+    const f = fixture();
+    fs.symlinkSync(f.root, path.join(f.worktree, '.git'));
+    expect(() => prepareCodexSession({ args: flags, cwd: f.worktree, env: { HOME: f.home } })).toThrow(/provenance_path_overlap/);
+  });
+  it('拒绝别名后 traversal 与悬空链接，未创建根也受保护', () => {
+    const f = fixture();
+    const alias = path.join(f.base, 'alias');
+    fs.symlinkSync(f.root, alias);
+    expect(() => prepareCodexSession({ args: [...flags, '--add-dir', `${alias}/../escape`], cwd: f.worktree, env: { HOME: f.home } })).toThrow(/provenance_path_invalid/);
+    const broken = path.join(f.base, 'broken');
+    fs.symlinkSync(path.join(f.base, 'missing'), broken);
+    expect(() => prepareCodexSession({ args: [...flags, '--add-dir', broken], cwd: f.worktree, env: { HOME: f.home } })).toThrow(/provenance_path_dangling_symlink/);
+    const freshHome = path.join(f.base, 'fresh-home');
+    const unbornRoot = path.join(freshHome, '.cecelia', 'coding-workflow-provenance');
+    const s = prepareCodexSession({ args: flags, cwd: f.worktree, env: { HOME: freshHome } });
+    expect(s.args.join('\n')).toContain(`${JSON.stringify(unbornRoot)}="deny"`);
+    expect(() => prepareCodexSession({ args: [...flags, '--add-dir', freshHome], cwd: f.worktree, env: { HOME: freshHome } })).toThrow(/provenance_path_overlap/);
+  });
+  it('真实 linked worktree 保持Git数据可写，配置/hook/指针不可被模型改为父进程执行入口', () => {
+    const f = fixture();
+    const common = path.join(f.base, 'repository');
+    execFileSync('git', ['init', common], { stdio: 'pipe' });
+    execFileSync('git', ['-C', common, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.hooksPath=/dev/null', 'commit', '--allow-empty', '-m', 'fixture'], { stdio: 'pipe' });
+    const linked = path.join(f.base, 'linked');
+    execFileSync('git', ['-C', common, 'worktree', 'add', '-b', 'cp-provenance-test', linked], { stdio: 'pipe' });
+    const dirs = ['--absolute-git-dir', '--git-common-dir'].map((flag) => fs.realpathSync(path.resolve(linked, execFileSync('git', ['rev-parse', flag], { cwd: linked, encoding: 'utf8' }).trim())));
+    const s = prepareCodexSession({ args: flags, cwd: linked, env: { HOME: f.home } }).args.join('\n');
+    for (const dir of dirs) {
+      expect(s).toContain(`${JSON.stringify(dir)}="write"`);
+      for (const name of ['config', 'config.worktree', 'hooks', 'commondir', 'gitdir', 'refs/replace', 'info/grafts']) expect(s).toContain(`${JSON.stringify(path.join(dir, name))}="read"`);
+    }
+    expect(s).toContain(`${JSON.stringify(path.join(linked, '.git'))}="read"`);
+    expect(s).toContain(`${JSON.stringify(path.join(f.home, '.git-hooks'))}="read"`);
   });
 });

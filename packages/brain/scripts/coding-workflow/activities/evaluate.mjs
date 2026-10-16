@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
+import { provenanceRequired, verifyRecordProvenance, provenanceProjection } from '../lib/record-provenance.mjs';
 import { intentIdsError } from '../lib/intent.mjs';
 import { qaScenarios, SPEC_FILE, INTENT_FILE } from '../lib/spec-check.mjs';
 import { parseQaReport, judgeQa, unitTestEvidence, productionTouches, trivialAssertions, screenshotProblems } from '../lib/qa-report.mjs';
@@ -109,6 +110,10 @@ await runActivity(async (input) => {
   }
 
   const round = posInt(input.round, 1);
+  // 独立从受保护事件和精确 Git 验证，不采信任务 JSON 传来的 PASS/投影。
+  const sourceProvenance = provenanceRequired(worktree)
+    ? provenanceProjection(verifyRecordProvenance({ worktree, taskId: input.task_id, sprintDir,
+      head: input.head_sha || await headSha(worktree) })) : null;
   const reportFile = `05-qa-report-r${round}.md`;
   const reportPath = path.join(dir, reportFile);
   const hiddenPaths = HIDDEN_FILES.map((f) => path.join(dir, f));
@@ -125,6 +130,8 @@ await runActivity(async (input) => {
     QA_IDS: qaIds.join(','),
     ...(local ? { WORKTREE: worktree, PRODUCTION: production.join(' | ') } : { PREVIEW_URL: preview.url }),
     ROUND: String(round),
+    TESTED_HEAD: input.head_sha || await headSha(worktree) || '未知',
+    SOURCE_PROVENANCE: sourceProvenance ? JSON.stringify(sourceProvenance) : '本仓未接入来源凭证，不能据此宣称来源通过',
     JUDGE_FEEDBACK: judgeFeedback,
     // 重试必须带新信息（审计 #33）：上次评估被判不合格的原因（runner 记下传入）；单行，防止伪造机器可读行
     PREV_ERRORS: typeof input.prev_errors === 'string' && input.prev_errors.trim() ? input.prev_errors.replace(/\s+/g, ' ').trim().slice(0, 2000) : '无',
@@ -186,4 +193,4 @@ await runActivity(async (input) => {
     if (!restoreAll()) result = fail('fatal', 'hidden_restore_failed', { evidence: [{ hidden: state.hidden.map((h) => h.hiddenPath) }] });
   }
   return result;
-});
+}, { stage: 'evaluate', entry: import.meta.url });

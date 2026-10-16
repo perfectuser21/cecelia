@@ -73,4 +73,4 @@ await runActivity(async (input) => {
     outputs: { spec_file: SPEC_FILE, spec_sha256: sha256File(specPath) },
     evidence: [`${SPEC_FILE} 已生成`],
   });
-});
+}, { stage: 'spec', entry: import.meta.url });

@@ -1,3 +1,5 @@
+import { controllerIdentity, finalizeRecordRegistration } from '../../lib/record-provenance.mjs';
+import { sourceContext, verifySourceHead } from './source-provenance.mjs';
 import { stageQaRecords } from './qa-records.mjs';
 import { sumCostUsd } from '../../lib/transcript.mjs';
 // QA 门（evaluator AI QA，决策 02d8e749）：runner 自己开的 cw PR，必需检查全绿后、合并前，在 PR 预览环境（local 仓库：PR worktree，C6）里由
@@ -28,6 +30,7 @@ import { waitForPreview, clearPreviewWait } from './preview-wait.mjs';
 export { preflightSmoke, prTouchesApi } from './qa-solidify.mjs';
 export { isRecordFile } from './qa-records.mjs';
 
+const SOURCE_CONTROLLER = controllerIdentity(import.meta.url, ['./qa-records.mjs', './source-provenance.mjs', '../../lib/record-sources.mjs'].map(p => new URL(p, import.meta.url)));
 const EVALUATE_REL = 'packages/brain/scripts/coding-workflow/activities/evaluate.mjs';
 const EVALUATE_TIMEOUT_MS = 55 * 60 * 1000;
 const GH_TIMEOUT_MS = 60 * 1000;
@@ -158,9 +161,11 @@ async function evaluate(ctx, worktree, input, signal) {
 
 /** 把本轮验收记录（QA 报告、截图目录、裁决）提交并推到 PR 分支。 */
 async function commitRecords(cfg, worktree, pr, paths, message, intent, round, smoke = []) {
-  await stageQaRecords(worktree, { ...intent, round }, paths);
+  const context = sourceContext(cfg, worktree, intent, 'qa', round, SOURCE_CONTROLLER);
+  const { registration } = await stageQaRecords(worktree, { ...intent, round }, paths, context);
   if (smoke.length && (await git(worktree, ['add', '--', ...smoke])).code !== 0) throw new Error('qa_smoke_add_failed');
   if ((await git(worktree, [...RUNNER_ID, 'commit', '-q', '-m', message])).code !== 0) throw new Error('qa_report_commit_failed');
+  if (registration) finalizeRecordRegistration(registration);
   await pushPrHead(cfg, worktree, pr);
 }
 
@@ -227,7 +232,8 @@ async function qaFix(ctx, pr, s, worktree, intent, entry, { recordFile, issues }
 
 /** 开自动合并，记 passed。 */
 /** 批准：绑定验收记录推送后的 head（合并门只合并这个 head，见 merge-gate.mjs）。 */
-async function approve(s, entry, worktree) {
+async function approve(cfg, s, entry, worktree, intent) {
+  verifySourceHead(cfg, worktree, intent, await headOf(worktree), entry.round);
   s.passed = true;
   s.approved = { head: await headOf(worktree), round: entry.round, at: new Date().toISOString() };
 }
@@ -279,7 +285,9 @@ async function afterJudge(ctx, pr, s, worktree, intent, entry, j) {
   } else if (j.verdict === 'PASS') {
     // API 类 PR 一条回归 smoke 都没固化：不批准，交 commander 裁决（决策 4fe863c3；commander 已放行过的不再拦）
     if (s.smoke_missing && !s.smoke_waived) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_smoke_missing', ...s.smoke_gap, round: entry.round });
-    await approve(s, entry, worktree);
+    try { await approve(ctx.cfg, s, entry, worktree, intent); } catch (error) {
+      return escalate(ctx, pr, s, intent.taskId, { type: 'source_provenance_missing', reason: error.message, head: await headOf(worktree) });
+    }
   } else {
     entry.fails = Math.max(1, j.blocking.length);
     if (j.failure_class === 'ruling_conflict') {
@@ -339,6 +347,9 @@ async function qaRound(ctx, pr, s, signal) {
     if (checkedOut !== pr.headRefOid) {
       ctx.log(`QA 门 PR #${pr.number}：检出的 ${checkedOut.slice(0, 9)} 不是列表里的 head ${pr.headRefOid.slice(0, 9)}，下轮再验`);
       return undefined;
+    }
+    try { verifySourceHead(cfg, worktree, intent, checkedOut); } catch (error) {
+      return escalate(ctx, pr, s, intent.taskId, { type: 'source_provenance_missing', reason: error.message, head: checkedOut });
     }
     ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮AI QA 开始`);
     // QA 会话执行记录落在 runner 日志目录（判越界、证据不实时可复核）

@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { registerRecordSources } from '../../lib/record-sources.mjs';
 import { git } from './proc.mjs';
+import { beginRecordRegistration, observeRecordRegistration } from '../../lib/record-provenance.mjs';
 
-export async function stageQaRecords(worktree, { sprintDir, taskId, round }, records) {
+export async function stageQaRecords(worktree, { sprintDir, taskId, round }, records, provenance = null) {
   const relative = (p) => typeof p === 'string' && p.length > 0 && !p.includes('\\')
     && !/[\x00-\x1f\x7f]/.test(p) && !path.isAbsolute(p)
     && p.split('/').every((part) => part && part !== '.' && part !== '..' && part.toLowerCase() !== '.git');
@@ -44,9 +45,12 @@ export async function stageQaRecords(worktree, { sprintDir, taskId, round }, rec
   for (const record of records) inspect(record, record === shots);
   if (files.length === 0) throw new Error('qa_records_empty');
   if ((await git(worktree, ['diff', '--cached', '--quiet'])).code !== 0) throw new Error('qa_records_index_not_empty');
-  const sourceFiles = registerRecordSources(worktree, { taskId, sprintDir, stage: 'qa', round }, files);
+  const registration = provenance ? beginRecordRegistration(provenance, files) : null;
+  const markdown = files.filter(file => reports.includes(file));
+  const sourceFiles = markdown.length ? registerRecordSources(worktree, { taskId, sprintDir, stage: 'qa', round }, markdown) : [];
+  if (registration) observeRecordRegistration(registration, sourceFiles);
   if ((await git(worktree, ['--literal-pathspecs', 'add', '-f', '--', ...new Set([...files, ...sourceFiles])])).code !== 0) throw new Error('qa_report_add_failed');
-  return files;
+  return { files, registration };
 }
 
 /** 既有 QA 记录规则：顶层版本碎片、本任务 05/06/07 报告及 qa-rN 产物；不是整个 sprint。 */

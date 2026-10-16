@@ -134,7 +134,7 @@ describe('合并后终态不因退出 open 列表丢失', () => {
   it('merge intent与实际MERGED head不同：不恢复虚假的批准或收账', async () => {
     const head = E.remoteHead();
     E.seedState({ passed: true, approved: { head, round: 1 }, rounds: [] });
-    const pending = { repo: 'perfectuser21/cecelia', entries: { 77: { pr: E.pr({ state: 'OPEN' }), merge_intent: { head, at: '2026-10-15T00:00:00Z' } } } };
+    const pending = { repo: 'x/y', entries: { 77: { pr: E.pr({ state: 'OPEN' }), merge_intent: { head, at: '2026-10-15T00:00:00Z' } } } };
     fs.writeFileSync(path.join(E.sb.logDir, 'pr-sync-pending.json'), JSON.stringify(pending));
     await E.go({ prs: [], prDetails: { 77: E.pr({ state: 'MERGED', headRefOid: 'f'.repeat(40) }) } }, { tasks: [{ id: TASK, status: 'completed', result: {} }] });
     expect(E.state().merged).toBeUndefined();
@@ -146,7 +146,7 @@ describe('合并后终态不因退出 open 列表丢失', () => {
   it('恢复在本地merged落盘后中断、pending仍仅有intent：仍补回执待办', async () => {
     const head = E.remoteHead();
     E.seedState({ passed: true, approved: { head, round: 1 }, rounds: [], merged: { head, at: '2026-10-15T00:00:00Z' } });
-    const pending = { repo: 'perfectuser21/cecelia', entries: { 77: { pr: E.pr({ state: 'MERGED' }), merge_intent: { head, at: '2026-10-15T00:00:00Z' } } } };
+    const pending = { repo: 'x/y', entries: { 77: { pr: E.pr({ state: 'MERGED' }), merge_intent: { head, at: '2026-10-15T00:00:00Z' } } } };
     fs.writeFileSync(path.join(E.sb.logDir, 'pr-sync-pending.json'), JSON.stringify(pending));
     await E.go({ prs: [], prDetails: { 77: E.pr({ state: 'MERGED', headRefOid: head }) } }, { tasks: [{ id: TASK, status: 'completed', result: { runner: { host: 'mmv' } } }] });
     expect(E.brain.tasks[0].result).toMatchObject({ merge: { merged: true, head }, runner: { phase: 'merged', host: 'mmv' } });

@@ -8,6 +8,7 @@ import { parseReview } from '../lib/review.mjs';
 import { RUBRIC_DIMS } from '../lib/gan.mjs';
 import { SPEC_FILE, uncoveredSection } from '../lib/spec-check.mjs';
 import { registerRecordSources } from '../lib/record-sources.mjs';
+import { provenanceRequired, controllerIdentity, beginRecordRegistration, observeRecordRegistration, finalizeRecordRegistration } from '../lib/record-provenance.mjs';
 import { profileOf } from '../lib/repo-profile.mjs';
 
 const GH_AUTH_RE = /\bHTTP 401\b|authentication|auth login|missing required scope|bad credentials/i;
@@ -167,8 +168,11 @@ await runActivity(async (input) => {
   const sprintRel = sprintDir.replace(/[\\/]+$/, '');
 
   const fragment = await ensureVersionFragment({ worktree, branch, dir, taskId, sprintRel, rule: profileOf(input.repo_profile).version_fragment ?? null });
-  const sourceFiles = registerRecordSources(worktree, { taskId, sprintDir: sprintRel, stage: 'publish' },
-    fs.readdirSync(dir).map(name => `${sprintRel}/${name}`));
+  const records = fs.readdirSync(dir).map(name => `${sprintRel}/${name}`);
+  const registration = provenanceRequired(worktree) ? beginRecordRegistration({ worktree, taskId,
+    sprintDir: sprintRel, stage: 'publish', controller: controllerIdentity(import.meta.url) }, records) : null;
+  const sourceFiles = registerRecordSources(worktree, { taskId, sprintDir: sprintRel, stage: 'publish' }, records);
+  if (registration) observeRecordRegistration(registration, sourceFiles);
   const paths = [sprintRel, ...(fragment ? [fragment] : []), ...sourceFiles];
   const add = await runCmd('git', [...GIT_PATHSPEC, '-C', worktree, 'add', '--', ...paths]);
   if (add.code !== 0) return fail('fatal', 'git_add_failed');
@@ -185,6 +189,8 @@ await runActivity(async (input) => {
     return fail('fatal', 'git_diff_failed');
   }
 
+  // commit 已发生而凭证未完成时必须停在这里；不能推送后补造来源历史。
+  if (registration) finalizeRecordRegistration(registration);
   const push = await runCmd('git', ['-C', worktree, 'push', '-u', 'origin', branch]);
   if (push.code !== 0) return fail('retryable', 'push_failed');
 
@@ -220,4 +226,4 @@ await runActivity(async (input) => {
     outputs: { pr_url: prUrl, branch },
     evidence: [`PR ${prUrl}（分支 ${branch}）`],
   };
-});
+}, { stage: 'publish', entry: import.meta.url });

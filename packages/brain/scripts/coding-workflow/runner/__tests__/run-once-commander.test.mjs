@@ -33,6 +33,21 @@ describe('coding commander（升级后自动裁决）', () => {
   const qaEscalated = (type, extra = {}) => seedState({ rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'PASS', fails: 1, judge: { verdict: 'FAIL', failure_class: 'contract_gap', file: '06-judge-r1.md' } }],
     escalated: { type, pr: 77, at: '2026-10-11T00:00:00.000Z', ...extra } });
 
+  it('Commander仅授权本次ruling独享目录，不授整个QA合并状态目录，控制器另存canonical裁决', async () => {
+    qaEscalated('judge_contract_gap');
+    const argsFile = path.join(sb.root, 'commander-args.json');
+    const r = await go(green(), { extra: { FAKE_CIFIX_ARGS: argsFile } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
+    const dirs = args.flatMap((v, i) => v === '--add-dir' ? [args[i + 1]] : []);
+    expect(dirs).toHaveLength(1);expect(dirs).not.toContain(sb.logDir);
+    expect(path.dirname(dirs[0])).toBe(sb.logDir);
+    const prompt = fs.readFileSync(files.prompt, 'utf8');
+    const ruling = /^RULING_PATH: (.+)$/m.exec(prompt)[1].trim();expect(path.dirname(ruling)).toBe(dirs[0]);
+    expect(JSON.parse(fs.readFileSync(path.join(sb.logDir, 'commander-77-1-ruling.json'), 'utf8')).action).toBe('resume');
+    expect(cmdState().interventions).toHaveLength(1);
+  });
+
   it('QA 门升级 judge_contract_gap + commander 维持规格并追加裁决节 → 规格追加、07 裁决记录提交推送；解除升级；Brain 记 commander_overrides；上报 commander span', async () => {
     qaEscalated('judge_contract_gap', { issues: ['J-1'], file: `${SPRINT}/06-judge-r1.md` });
     const r = await go(green(), { mode: 'cmd-amend' });
@@ -71,14 +86,15 @@ describe('coding commander（升级后自动裁决）', () => {
   });
 
   // 真实 Opus 演练（金丝雀 5 r2 重放）：裁决文件在 logDir（worktree 外），Write 工具被 permission_denials 拒，会话碰巧改用 Bash 写成
-  it('commander 会话授权写日志目录（--add-dir <logDir>），裁决文件在那里', async () => {
+  it('commander会话只授权本轮裁决子目录，裁决路径位于该精确目录', async () => {
     qaEscalated('judge_contract_gap', { issues: ['J-1'] });
     const argsFile = path.join(sb.root, 'claude-args.json');
     const r = await go(green(), { mode: 'cmd-resume', extra: { FAKE_CIFIX_ARGS: argsFile } });
     expect(r.exitCode, r.stderr).toBe(0);
     const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
-    expect(args[args.indexOf('--add-dir') + 1]).toBe(sb.logDir);
-    expect(fs.readFileSync(files.prompt, 'utf8')).toContain(`RULING_PATH: ${sb.logDir}/`);
+    const granted = args[args.indexOf('--add-dir') + 1];
+    expect(path.dirname(granted)).toBe(sb.logDir);expect(granted).not.toBe(sb.logDir);
+    expect(fs.readFileSync(files.prompt, 'utf8')).toContain(`RULING_PATH: ${granted}/ruling.json`);
   });
 
   it('commander 会话输出只落 commander-<pr>-<n>.log，主日志只一行摘要', async () => {

@@ -120,7 +120,7 @@ export function buildResult(input, res) {
  * json-stdio-v1 活动入口：读 stdin JSON → 调 handler → stdout 写一次结果 JSON。
  * completed 退出码 0，其余 2；handler 抛错 → failed/fatal，reason_code=error.message。
  */
-export async function runActivity(handler) {
+export async function runActivity(handler, provenance) {
   // stdout 只留给结果 JSON：依赖或 handler 里的 console.log 一律改道 stderr
   console.log = log;
   console.info = log;
@@ -130,7 +130,11 @@ export async function runActivity(handler) {
   let result;
   try {
     input = JSON.parse(readStdin());
-    result = buildResult(input, await handler(input));
+    if (provenance) {
+      validateBase(input);
+      const { runRecordedActivity } = await import('./activity-provenance.mjs');
+      result = await runRecordedActivity(input, provenance, async (current) => buildResult(current, await handler(current)));
+    } else result = buildResult(input, await handler(input));
   } catch (error) {
     log(error?.stack || String(error));
     result = buildResult(input, {
