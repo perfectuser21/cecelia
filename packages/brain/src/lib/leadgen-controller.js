@@ -1,3 +1,4 @@
+import {isTcpPhoneSerial,isMmvRegistry,isMmvInstance,isApprovedAdbPort} from './leadgen-resources.js';
 /** 确定性控制器：Brain只传批准输入，263业务字节仍由正式入口冻结/ACK。 */
 const FLOWS = { douyin_video_discovery: '101', douyin_video_processing: '102', douyin_comment_scoring: '103', douyin_lead_outreach: '104' };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -12,13 +13,19 @@ function checked(plan) {
   if (plan.timeout_sec !== (['douyin_video_discovery', 'douyin_video_processing'].includes(plan.workflow_key) ? 2400 : 1800)) throw Error('leadgen timeout invalid');
   if (typeof plan.source_commit !== 'string' || !/^[a-f0-9]{40}$/.test(plan.source_commit)) throw Error('leadgen source invalid');
   if (plan.workflow_id !== `b1000000-0000-4000-8000-000000000${FLOWS[plan.workflow_key]}` || !/^[a-f0-9]{64}$/.test(plan.snapshot_sha256)) throw Error('leadgen workflow freeze invalid');
-  if ([plan.profile, plan.serial, plan.line].some(v => typeof v !== 'string' || !TOKEN.test(v))) throw Error('leadgen resources invalid');
+  if ([plan.profile, plan.line].some(v => typeof v !== 'string' || !TOKEN.test(v))) throw Error('leadgen resources invalid');
+  const mmvPhone=plan.machine==='mmv'&&['douyin_video_discovery','douyin_video_processing'].includes(plan.workflow_key);
+  if(mmvPhone){
+    if(!isTcpPhoneSerial(plan.serial)||!isMmvRegistry(plan.registry)||!isMmvInstance(plan.device_instance_id))throw Error('MMV resources invalid');
+  }else if(!TOKEN.test(plan.serial)||plan.registry!==undefined||plan.device_instance_id!==undefined)throw Error('phone resources invalid');
   if (plan.workflow_key === 'douyin_comment_scoring') {
     if (plan.machine !== 'mmv' || plan.profile !== 'mmv-scoring' || plan.serial !== 'none') throw Error('103 is MMV only');
-  } else if (plan.machine !== 'xian-m4' || plan.serial === 'none') throw Error('phone flow is M4 only');
+  } else if ((!mmvPhone&&plan.machine !== 'xian-m4') || plan.serial === 'none') throw Error('phone flow is M4 only');
   if (plan.workflow_key === 'douyin_lead_outreach' ? plan.send_authorized !== true : plan.send_authorized !== undefined) throw Error('send authorization invalid');
   if (!plan.env || typeof plan.env !== 'object' || Array.isArray(plan.env)) throw Error('leadgen env invalid');
+  if(mmvPhone&&(!isApprovedAdbPort(Number(plan.env.DOUYIN_ADB_PORT))||plan.env.DOUYIN_ADB_PORT!==String(Number(plan.env.DOUYIN_ADB_PORT))||plan.env.ADB_SERVER_SOCKET!==`tcp:127.0.0.1:${plan.env.DOUYIN_ADB_PORT}`||plan.env.LEADGEN_MMV_DEVICE_RUNTIME!=='1'))throw Error('MMV routing missing');
   for (const [key, value] of Object.entries(plan.env)) {
+    if(mmvPhone&&['LEADGEN_MMV_DEVICE_RUNTIME','DOUYIN_ADB_PORT','ADB_SERVER_SOCKET'].includes(key))continue;
     if (key === 'QUEUED_VIDEO_COLLECTION_SECONDS') {
       if (plan.workflow_key !== 'douyin_video_processing' || !/^[1-9][0-9]{0,3}$/.test(String(value)) || Number(value) > 1920) throw Error('102 collection budget invalid');
       continue;
@@ -116,6 +123,9 @@ def worker(root,role):
         except Exception:terminal(p,root,2,False,'preflight_rejected');return
         # 清除上一次执行遗留的控制变量；正常HOME/PATH/BRAIN_*与正式凭据加载仍保留。
         env={k:v for k,v in os.environ.items() if not k.startswith(('LEADGEN_','WF_','WFR_','QUEUED_'))}
+        if p['machine']=='mmv' and p['workflow_key']!='douyin_comment_scoring':
+            for k in ['ADB_SERVER_SOCKET','ADB_SERVER_PORT','ANDROID_ADB_SERVER_PORT','ANDROID_ADB_SERVER_ADDRESS','DOUYIN_ADB_BIN','DOUYIN_ADB_PORT','DOUYIN_PHONE_REGISTRY']:env.pop(k,None)
+            env['DOUYIN_ADB_BIN']='/opt/homebrew/bin/adb';env['DOUYIN_PHONE_REGISTRY']=str(H/'.config/openclaw'/p['registry'])
         env.update({k:str(v) for k,v in p['env'].items()});env['WF_RELEASE_ID']=p['release_id'];env['WF_RUN_MAX_SECONDS']=str(p['timeout_sec'])
         if p['workflow_key']=='douyin_lead_outreach' and p.get('send_authorized') is True:env['LEADGEN_SEND']='1'
         # 可执行入口由部署合同固定，不接受调用者提供路径/任意命令。

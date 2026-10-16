@@ -1,0 +1,11 @@
+# 显式MMV云手机沿原获客派发闭环
+
+任务：b26b4432-82c6-4253-b911-144c1e76175e；父任务bfcdbe26-f2cc-4f0f-bca4-ab6970e598e6；base ae639018414e0f3ba7b599784b30111d01f45677。
+
+101/102输入明确提供MMV host、供应商实例、严格IPv4端口序列号、现有批准ADB端口和HOME配置目录下registry basename，才可选择既有MMV冻结CLI。正式release必须属于MMV，中央台账匹配profile/serial/host/实例别名，业务启动前公司账号须已verified且enabled。
+
+MMV手机与M4手机同受中央设备锁和失败清场约束。云手机的serial与实例别名按确定顺序经原非阻塞gate全部成功才启动，任一忙不启动且只回收本任务锁。跨网未知只探测不重放、不提前释放。
+
+103仍在MMV异步读取已提交的原102评论，沿原部署数据库连接和READ ONLY事务读取原102冻结账号绑定，把可信返回值交原native validator。调用者company_binding不构成授权。104仍M4及原发送审批边界；本改动不启用Workflow、不创建recurring、不操作手机或修改业务PG数据。
+
+验收：永久回归测试覆盖原入口正例、路由及账号负例、双别名冲突/未知、终态清场、真实隔离子进程环境、实际生成103程序的安装模块调用；部署后另核真实MMV新helper，未部署缺模块应失败关闭。

@@ -41,6 +41,15 @@ describe('GET /api/brain/phone-registry', () => {
 });
 
 describe('PUT /api/brain/phone-registry/:serial', () => {
+  it('严格IPv4:port沿原认证参数化接口登记，实体serial不变', async () => {
+    const serial='47.100.213.173:10001';
+    mockPool.query.mockResolvedValueOnce({rows:[{...row,serial,host:'mmv',profile:'cloud-phone-test'}]});
+    const result=await request(app).put('/api/brain/phone-registry/'+encodeURIComponent(serial)).set('X-Internal-Token',TOKEN).send({nickname:'云测试',host:'mmv',profile:'cloud-phone-test'});
+    expect(result.status).toBe(200);expect(mockPool.query.mock.calls[0][1][0]).toBe(serial);
+  });
+  it.each(['999.1.2.3:1','1.2.3.4:0','1.2.3.4:65536','evil.example:5555','1.2.3.4:22;touch'])('非法TCP设备拒绝且零写 %s', async serial => {
+    expect((await request(app).put('/api/brain/phone-registry/'+encodeURIComponent(serial)).set('X-Internal-Token',TOKEN).send({nickname:'x'})).status).toBe(400);expect(mockPool.query).not.toHaveBeenCalled();
+  });
   it('挂 internalAuthOrLoopback 中间件', () => {
     const layer = router.stack.find((l) => l.route?.path === '/phone-registry/:serial' && l.route.methods.put);
     expect(layer).toBeTruthy();
