@@ -1,5 +1,6 @@
 /** 额外协议的窄执行关系证明；只解析固定 Git 字节，不执行候选代码。 */
 import yaml from 'js-yaml';
+import { createHash } from 'node:crypto';
 const TEST = 'packages/brain/scripts/coding-workflow/runner/__tests__/run-once.test.mjs';
 const SANDBOX = 'packages/brain/scripts/coding-workflow/runner/__tests__/helpers/sandbox.mjs';
 const RUNNER = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs';
@@ -142,5 +143,99 @@ export async function collectRuntimeSources({ parse, paths, selectors, read, rea
       await read(PROVIDER); await read(PROVIDER_TEST);
       relation(WORKFLOW,PROVIDER,'trusted_main_snapshot_node_entry'); relation('.github/workflows/ci.yml',PROVIDER_TEST,'required_node_test');
     }
+  }
+}
+
+
+// 两个协议由目标 Git 自己声明；旧冻结修订缺省关闭，不因当前进程升级改变其绑定。
+export function ciEntrySelectorEnabled(text, parse, name) {
+  const list = parse(text).body.filter(n => n.type === 'ExportNamedDeclaration').map(declaration)
+    .filter(n => n?.type === 'VariableDeclaration').flatMap(n => n.declarations
+      .filter(d => d.id?.name === name).map(d => ({ parent: n, d })));
+  if (!list.length) return false;
+  if (list.length !== 1 || list[0].parent.kind !== 'const' || list[0].d.init?.type !== 'Literal'
+    || ![0, 1].includes(list[0].d.init.value)) throw Error('ci_entry_selector_schema_unknown');
+  return list[0].d.init.value === 1;
+}
+const CI = '.github/workflows/ci.yml';
+const AGGREGATE_READER = '.github/workflows/scripts/__tests__/ci-aggregate-results.test.mjs';
+const SMOKE_WORKFLOW = '.github/workflows/ci-smoke-glob-runner.yml';
+const GOLDSET_ENTRY = 'packages/quality/skill-distillation/scripts/goldset-eval.mjs';
+// 已审完整 reader AST：包括顶层调用、真实 fs/URL 数据流、测试注册及 spawn 失败传播。
+// 只忽略注释/格式；别名、遮蔽、控制流或未调用函数里的同名字符串均不能替代证明。
+const AGGREGATE_READER_AST = '0f21916911e40f7c83c0315dd71b833c3f86c6e1d1a2132d22abeb73286f51b6';
+function aggregateInputsProven(text, parse) {
+  const program = parse(text);
+  if (createHash('sha256').update(canonical(program)).digest('hex') !== AGGREGATE_READER_AST) return false;
+  const fn = program.body.find(n => n.type === 'FunctionDeclaration' && n.id.name === 'loadGate');
+  const input = fn?.body.body[0]?.declarations?.[0]?.init;
+  const url = input?.arguments?.[0], template = url?.arguments?.[0], meta = url?.arguments?.[1];
+  if (input?.callee?.name !== 'readFileSync' || input.arguments.length !== 2 || input.arguments[1]?.value !== 'utf8'
+    || url?.type !== 'NewExpression' || url.callee?.name !== 'URL' || url.arguments.length !== 2
+    || template?.type !== 'TemplateLiteral' || template.expressions.length !== 1 || template.expressions[0]?.name !== 'filename'
+    || template.quasis[0]?.value.cooked !== '../../' || template.quasis[1]?.value.cooked !== ''
+    || meta?.type !== 'MemberExpression' || meta.computed || meta.object?.type !== 'MetaProperty'
+    || meta.object.meta?.name !== 'import' || meta.object.property?.name !== 'meta' || meta.property?.name !== 'url') return false;
+  const calls = program.body.filter(n => n.type === 'VariableDeclaration').flatMap(n => n.declarations)
+    .map(d => d.init).filter(n => n?.type === 'CallExpression' && n.callee?.name === 'loadGate');
+  return calls.length === 2 && [['ci.yml', 'ci-passed'], ['ci-smoke-glob-runner.yml', 'smoke-glob-runner-passed']]
+    .every(args => calls.some(n => n.arguments.length === 2 && n.arguments.every((a, i) => a.type === 'Literal' && a.value === args[i])));
+}
+const sorted = value => Array.isArray(value) ? value.map(sorted) : value && typeof value === 'object'
+  ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : value;
+const sha256 = text => createHash('sha256').update(text).digest('hex');
+// 只固定实际入口之前的已审步骤（含入口），不锁死其它 job 的预算或后续步骤。
+const CI_PREFIX = {
+  'lint-auto-merge-decision': 'd3b6f0ffc4ba19728ee7bedf1c4e44780ad059e55a55fcc1005cb535ab7e031d',
+  'goldset-eval': '1af5458b0a9cb29df7e20b6f1d22c3fac6f432c828888659720bc5b4ef4fcba6',
+};
+const AGGREGATE_PREFIX_BODIES = [
+  ['.github/workflows/scripts/__tests__/should-auto-merge.test.sh', 'bad6be2a6cd7c51e97e97770d20f80de444f227a7466f9d839ebb18e7c5dd9ee'],
+  ['.github/workflows/scripts/should-auto-merge.sh', '8c9f84f38c21170b5bb2f01a567c05b989843fbd8e4781fbcf7769d8e008e746'],
+];
+function ciNodeEntry(doc, jobId, command, condition, expectedEnv) {
+  const job = doc?.jobs?.[jobId], steps = job?.steps;
+  if (!job || !Array.isArray(steps) || job.if !== condition || job.defaults !== undefined || doc.defaults !== undefined
+    || job.env !== undefined || job['continue-on-error'] !== undefined
+    || job['runs-on'] !== 'ubuntu-latest' || ['container', 'services', 'strategy', 'uses', 'environment'].some(key => job[key] !== undefined)
+    || canonical(doc.env) !== canonical({ CODEX_RELAY_HOME: '/tmp/ci-fake-codex-home' })
+    || !Array.isArray(doc.jobs['ci-passed']?.needs) || !doc.jobs['ci-passed'].needs.includes(jobId)) return false;
+  const matches = steps.filter(s => s.run === command);
+  const step = matches[0], checkout = steps.find(s => s.uses === 'actions/checkout@v4');
+  return matches.length === 1 && checkout && checkout.if === undefined && checkout.with === undefined
+    && checkout['continue-on-error'] === undefined && steps.indexOf(checkout) < steps.indexOf(step)
+    && step.if === undefined && step.shell === undefined && step['working-directory'] === undefined
+    && step['continue-on-error'] === undefined && canonical(step.env) === canonical(expectedEnv)
+    && sha256(JSON.stringify(sorted(steps.slice(0, steps.indexOf(step) + 1)))) === CI_PREFIX[jobId];
+}
+/** 仅绑定真实 CI node 入口；条件 job 保留条件语义，不扩展目录或伪造二进制输入摘要。 */
+export async function collectCiEntrySources({ aggregate, goldset, parse, read, ci, revision, relations, requireProof }) {
+  const doc = yaml.load(ci), relation = (consumer_path, input_path, kind) => relations.push({ consumer_path, input_path, kind, revision });
+  if (aggregate) {
+    const invoked = ciNodeEntry(doc, 'lint-auto-merge-decision', `node --test ${AGGREGATE_READER}`, undefined, undefined)
+      && doc.jobs['lint-auto-merge-decision'].needs === undefined;
+    let prefixProven = requireProof(invoked, 'aggregate_reader_ci_unproven');
+    if (prefixProven) for (const [path, digest] of AGGREGATE_PREFIX_BODIES) {
+      // 前置 shell 及其唯一子脚本已审为只读；仅前缀命令不够，脚本体变动同样关闭证明。
+      const body = await read(path);
+      if (!requireProof(body && sha256(body) === digest, 'aggregate_prefix_body_unproven')) prefixProven = false;
+    }
+    if (prefixProven) {
+      relation(CI, AGGREGATE_PREFIX_BODIES[0][0], 'required_bash_prefix');
+      relation(AGGREGATE_PREFIX_BODIES[0][0], AGGREGATE_PREFIX_BODIES[1][0], 'reviewed_bash_prefix_input');
+      const text = await read(AGGREGATE_READER);
+      if (requireProof(text && aggregateInputsProven(text, parse), 'aggregate_reader_inputs_unproven')) {
+        relation(CI, AGGREGATE_READER, 'required_node_test');
+        for (const input of [CI, SMOKE_WORKFLOW]) if (await read(input)) relation(AGGREGATE_READER, input, 'node_test_url_workflow_input');
+      }
+    }
+  }
+  if (goldset) {
+    const invoked = ciNodeEntry(doc, 'goldset-eval', `node ${GOLDSET_ENTRY}`, "needs.changes.outputs.distill == 'true'", {
+      TOAPIS_API_KEY: '${{ secrets.TOAPIS_API_KEY }}', TOAPIS_BASE_URL: '${{ secrets.TOAPIS_BASE_URL }}',
+    }) && doc.jobs['goldset-eval'].needs === 'changes'
+      && doc.jobs.changes?.outputs?.distill === '${{ steps.detect.outputs.distill }}';
+    if (requireProof(invoked, 'goldset_ci_entry_unproven') && await read(GOLDSET_ENTRY))
+      relation(CI, GOLDSET_ENTRY, 'conditional_required_node_entry');
   }
 }

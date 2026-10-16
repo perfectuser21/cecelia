@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
-import { runtimeSelectorEnabled, collectRuntimeSources } from './existing-ops-runtime-source.js';
+import { runtimeSelectorEnabled, collectRuntimeSources, ciEntrySelectorEnabled, collectCiEntrySources } from './existing-ops-runtime-source.js';
 import { buildSelectorEnabled, collectBuildSources } from './existing-ops-build-source.js';
 let parse;
 async function requireParser() {
@@ -17,6 +17,8 @@ export const EXISTING_OPS_SCOPE = 'cecelia-factory';
 export const EXISTING_OPS_SELECTOR_SCHEMA = 2;
 export const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 1;
+export const EXISTING_OPS_AGGREGATE_SELECTOR_SCHEMA = 1;
+export const EXISTING_OPS_GOLDSET_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_IDENTITIES = Object.freeze([
   { workflow_id: '7743d66a-d3e0-4ebf-b82d-3f5d2d769fb1', workflow_key: 'factory_f2_ops', capability_id: '2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6', activity_id: '0ab79a73-1ec3-4ddc-bb88-1433568ae2e2', reference_id: 'a83b69b9-f426-4958-8cef-7560659ef6f8', slot_key: 'step_1', sequence_no: 1,
     unverified_reference_ids: ['3584783c-b847-4eb7-8920-76834cafba38', '5d963288-2dde-4b08-9f8c-5cd7d391a76f', 'c9a31a17-0751-4cad-a982-99325461fdf3'] },
@@ -355,6 +357,9 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     const expanded = schemaText && expandedSelectorSchema(schemaText);
     const runtime = schemaText && runtimeSelectorEnabled(schemaText, ast);
     const buildInputs = schemaText && buildSelectorEnabled(schemaText, ast);
+    const aggregate = schemaText && ciEntrySelectorEnabled(schemaText, ast, 'EXISTING_OPS_AGGREGATE_SELECTOR_SCHEMA');
+    const goldset = schemaText && ciEntrySelectorEnabled(schemaText, ast, 'EXISTING_OPS_GOLDSET_SELECTOR_SCHEMA');
+    if (aggregate || goldset) await collectCiEntrySources({ aggregate, goldset, parse: ast, read, ci, revision, relations, requireProof });
     const selectors = expanded && config ? regressionSelectors(config) : null;
     if (selectors) for (const path of paths.filter(path => path.startsWith('tests/regression/') && !path.split('/').some(part => part.startsWith('.'))
       && selectors.include.some(pattern => pattern.test(path)) && !selectors.exclude.some(pattern => pattern.test(path)))) {
