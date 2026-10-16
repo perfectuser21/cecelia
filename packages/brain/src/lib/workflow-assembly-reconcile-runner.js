@@ -118,7 +118,7 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
           await rollback();transaction=false;report.skipped_objects++;await cursor(row.id);continue;
         }
         const audit=!tenantConflict && fresh.result?.workflow_authoring_candidate
-          ? await auditAssemblyDerivations(client,fresh,{transaction:'existing',check,repair:resourceCondition==='ready'}):{gaps:[],detected:[],repaired:[]};
+          ? await auditAssemblyDerivations(client,fresh,{transaction:'existing',check,repair:resourceCondition==='ready' && observation.resource_condition!=='safe_stop'}):{gaps:[],detected:[],repaired:[]};
         check();const before=fresh.result?.workflow_assembly_reconcile;
         const sameVersion=before?.target_version===target && before.definition_sha256===digest;
         const repairedAt=audit.repaired.length?new Date((await client.query('SELECT clock_timestamp() AS at')).rows[0].at).getTime():null;check();
