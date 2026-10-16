@@ -148,6 +148,15 @@ describe('merge 后 evaluate 严格读链与 identity 文件消费',()=>{
  });
  it('全未选中不登记新读取关系',async()=>{const r=await collect('source_merge',()=>{},/^never$/);expect(r).toEqual({bindings:[],gaps:[],relations:[]});});
  const cases=[
+  ['store额外未知kind',s=>change(s,'lib/record-provenance-store.mjs',"'isolation', 'merge'","'isolation', 'merge', 'anything'")],
+  ['store删旧kind',s=>change(s,'lib/record-provenance-store.mjs',"'native', 'stage',","'stage',")],
+  ['store跳过digest核验',s=>change(s,'lib/record-provenance-store.mjs','digest !== hash(JSON.stringify(data))','false')],
+  ['store跳过schema核验',s=>change(s,'lib/record-provenance-store.mjs','event.schema_version !== 1','false')],
+  ['store错task边界',s=>change(s,'lib/record-provenance-store.mjs','event.task_id !== taskId','false')],
+  ['reader错HEAD绑定',s=>change(s,'runner/lib/source-provenance.mjs',"}, worktree, intent, head);","}, worktree, intent, input.head);")],
+  ['reader丢真实projection',s=>change(s,'runner/lib/source-provenance.mjs','...provenanceProjection(proof), sync','verified: true, sync')],
+  ['reader注册期退出',s=>{s[P+'runner/lib/source-provenance.mjs']+='\nprocess.exit(0);';}],
+  ['evaluate错task绑定',s=>change(s,'activities/evaluate.mjs','taskId: input.task_id, sprintDir','taskId: input.other_task, sprintDir')],
   ['旧 evaluate 搭新 store',s=>{s[P+'activities/evaluate.mjs']=isolationSources[P+'activities/evaluate.mjs'];}],
   ['旧 store 搭新 evaluate',s=>{s[P+'lib/record-provenance-store.mjs']=isolationSources[P+'lib/record-provenance-store.mjs'];}],
   ['缺 reader',s=>{delete s[P+'runner/lib/source-merge-proof.mjs'];}],
@@ -162,5 +171,6 @@ describe('merge 后 evaluate 严格读链与 identity 文件消费',()=>{
   ['改为执行writer',s=>{s[P+'runner/lib/source-merge-proof.mjs']+="\nawait import('./source-merge.mjs');";}],
   ['正常witness全部skip',s=>{s[P+'__tests__/evaluate.test.mjs']=s[P+'__tests__/evaluate.test.mjs'].replaceAll("it('","it.skip('");}],
  ];
+ for(const p of identityInputs)it('缺身份读取文件 '+p+' 不能完整认领',async()=>{const r=await collect('source_merge',s=>{delete s[p];},/\/__tests__\/evaluate\.test\.mjs$/);expect(r.gaps.length).toBeGreaterThan(0);});
  for(const [name,mutate] of cases)it(name+' 不可认领来源',async()=>{const r=await collect('source_merge',mutate);expect(r.gaps.length).toBeGreaterThan(0);for(const p of [...entries,...mergeReaderPaths])expect(r.bindings).not.toContain(p);});
 });
