@@ -20,6 +20,8 @@ it('注释、条件、替身命令和改cwd不能证明CI执行',async()=>{
   const doc=yaml.load(read(ci));mutate(doc.jobs['engine-tests'].steps.find(s=>s.name==='Unit Tests'));
   await expect(collect({[ci]:yaml.dump(doc)})).rejects.toThrow();
  }
+ const doc=yaml.load(read(ci));delete doc.jobs['engine-tests'].needs;
+ await expect(collect({[ci]:yaml.dump(doc)})).rejects.toThrow();
 });
 it('未知selector或serial排除当前test不能认领脚本',async()=>{
  await expect(collect({[config]:read(config).replace("include: ['tests/**/*.test.ts'","include: [process.env.TESTS")})).rejects.toThrow();
@@ -34,4 +36,18 @@ it('跳过、脚本替换、spawn替身、未调用函数和死分支不认领he
   "import {it} from 'vitest'; import {spawnSync} from 'child_process'; it('dead',()=>{if(false){spawnSync('bash',['x.sh']);}}); // spawnSync('bash',['x.sh'])"]){
   const edges=await collect({[test]:text});expect(edges.some(e=>e.dst_path===script)).toBe(false);
  }
+});
+it('有效SCRIPT身份也不能把注释、未调用函数、mock和提前返回误当实际调用',async()=>{
+ const prefix="import {it,describe} from 'vitest'; import {spawnSync} from 'child_process'; import {resolve} from 'path'; import {existsSync} from 'fs'; const SCRIPT=resolve(__dirname,'../../skills/dev/scripts/worktree-manage.sh');";
+ const call="spawnSync('bash',[SCRIPT,'cleanup']);";
+ for(const body of ["// "+call,"function unused(){"+call+"} it('none',()=>{});",
+  "it.skip('skip',()=>{"+call+"});", "it.each([])('zero',()=>{"+call+"});", "it('dead',()=>{if(false){"+call+"}});",
+  "it('return',()=>{if(true)return;"+call+"});", "it('maybe',()=>{if(process.env.SKIP)return;"+call+"});",
+  "vi.mock('child_process');it('fake',()=>{"+call+"});",
+  "function hidden(){function helper(){"+call+"}} it('scope',()=>{helper();});",
+  "function helper(SCRIPT){"+call+"} it('shadow',()=>{helper('other.sh');});"]){
+  const edges=await collect({[test]:prefix+'\n'+body});expect(edges.some(e=>e.dst_path===script)).toBe(false);
+ }
+ const positive=await collect({[test]:prefix+"describe('real',()=>{it('exec',()=>{"+call+"});});"});
+ expect(positive.some(e=>e.dst_path===script)).toBe(true);
 });
