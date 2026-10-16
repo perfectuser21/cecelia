@@ -464,3 +464,5 @@ workflow-assembly-reconcile-smoke.sh
 
 workflow-assembly-native-smoke.sh
 crm-canonical-smoke.sh
+crm-contact-resolve-smoke.sh
+crm-friend-onboard-smoke.sh
