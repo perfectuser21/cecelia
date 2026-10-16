@@ -345,3 +345,10 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] crmpgci 既有CI的POSTGRES_INTEGRATION和integration目录自动运行两份CRM真PG验收；DATABASE_URL优先、DB_*保留，只允许精确测试库，唯一schema创建与回收不写public；本地scratch开关兼容。
   Test: manual:bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/crm-pg-ci.test.js --maxWorkers=1 --minWorkers=1"
+
+# Brain-first 授权好友入档（任务 c5395d5a-bce3-410f-96e5-5996bd8d2b0e）
+
+- [x] [BEHAVIOR] crmfriendonboard 真实PG事务建立客户、稳定关系、授权事件收据和审计；按企业账号事件幂等，两账号同事件分域，同名不并，已有关系换binding/归档/停用拒绝，后续事件不覆盖人工资料；既有linkContact共用联系人锁。
+  Test: manual:bash -c "cd packages/brain && CRM_STORE_SCRATCH_TEST=1 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/crm-friend-onboard.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] crmfriendpage 真实PG加fake Notion验证独立提交fence、一次POST、超时/异步/重启未知不重发、allowlist拒建、返回前撤权、全分页唯一、双页CAS竞争、pull并发恢复原UUID及人工字段保留；不称真实Notion或生产通过。
+  Test: manual:bash -c "CRM_STORE_SCRATCH_TEST=1 bash packages/brain/scripts/smoke/crm-friend-onboard-smoke.sh"

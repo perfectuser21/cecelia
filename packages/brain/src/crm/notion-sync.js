@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { parseCustomerPage, buildCustomerProperties, validateCustomerSchema } from './notion-mapping.js';
 import { projectManagedProfile } from './notion-content.js';
 import { projectCustomerChildren } from './notion-children.js';
+import { recoverOnboardPage, projectOnboardCustomer } from './onboard-notion.js';
 
 function fault(code) { return Object.assign(new Error(`CRM sync: ${code}`), { code }); }
 const sameId = (a, b) => typeof a === 'string' && typeof b === 'string' && a.replaceAll('-', '').toLowerCase() === b.replaceAll('-', '').toLowerCase();
@@ -81,6 +82,8 @@ export async function runCrmSync(pool, bindingId, options = {}) {
         if (binding.fields?.allowed_page_ids && !binding.fields.allowed_page_ids.some(id => sameId(id, page.id))) continue;
         // Archived pages cannot request deletion. No customer or communication is removed.
         if (page.in_trash) continue;
+        const recovered = await recoverOnboardPage(client, request, binding, page);
+        if (recovered?.recovered) receipt.onboard_recovered = (receipt.onboard_recovered ?? 0) + 1;
         const result = await store.ingestCustomer(client, binding, parseCustomerPage(page, binding));
         receipt.read++;
         if (result.created) receipt.created++; else if (result.changed) receipt.updated++;
@@ -100,6 +103,12 @@ export async function runCrmSync(pool, bindingId, options = {}) {
     for (const { customer } of pending) {
       budget();
       if (binding.fields?.allowed_page_ids && !binding.fields.allowed_page_ids.some(id => sameId(id, customer.source_page_id))) continue;
+      if (!customer.source_page_id) {
+        const projected = await projectOnboardCustomer(client, request, binding, customer);
+        const key = projected.status === 'mapped' || projected.status === 'already_mapped' ? 'onboard_mapped' : 'deferred';
+        receipt[key] = (receipt[key] ?? 0) + 1;
+        continue;
+      }
       const properties = buildCustomerProperties(customer, binding);
       // Re-read the exact page and protect its parent. Never create another customer page.
       const page = await request(`/pages/${customer.source_page_id}`);
