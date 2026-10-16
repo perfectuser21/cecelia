@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+export {runWorkflowAssemblyReconcile} from './workflow-assembly-reconcile-runner.js';
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const SHA = /^[a-f0-9]{64}$/;
 
