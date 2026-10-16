@@ -117,14 +117,14 @@ const STAGE_HELPER=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-source.js');
 const STAGE_DATA=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
 const PROVENANCE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-envelope.js');
 const PROVENANCE_READER_HASHES = new Map([
-  ['existing-ops-stage-source.js','4711308d765f879ecbfa8163b7328e0aa841a709e3122ce4321f18fd974c2e80'],
-  ['existing-ops-stage-envelopes.js','b3e0e6060ebebd80c976586253b6627a4fa197a21da63509489119a2605224eb'],
-  ['existing-ops-provenance-envelope.js','16e8bba02ce671ea14abf35631337d8778a05efc986dddb8e14683d36f246d0d'],
-  ['existing-ops-provenance-core-envelope.js','139d5d4ca56f3d2db3d59670d0185c3ea38651304405f08389b532db0f294e4d'],
+  ['existing-ops-stage-source.js','0a84a71f3f1e3964ea0018cfae2d7ce3df079e0eed9eccb2c9a7610a007a4f08'],
+  ['existing-ops-stage-envelopes.js','10037cdd8693af4539cfe85ac255987214ad4f2972ea55f19b90dd4ff19e4b3a'],
+  ['existing-ops-provenance-envelope.js','37a0db6f3dd51ad76142eb15477161cb78079ccfeb6b9d7ec7a006af509b7330'],
+  ['existing-ops-provenance-core-envelope.js','c3e8769e7f053fc63d52074235b521df5134e65c31d34f151bb6a9400fa4ab93'],
   ['existing-ops-provenance-entry-envelopes.js','126a93b9db9856fe06894a394ecb9e0afd099860b9fb54e8927c56c8b96a15bb'],
-  ['existing-ops-provenance-local-envelopes.js','59466515d6911ad4b2d242f310a1f8b3bd20cb0ef8471f1f98ad1103bcc91b93'],
+  ['existing-ops-provenance-local-envelopes.js','3bd0ea4e7320ab7a1a533b16752a6f05b2e04b959b14bc296d007fe2a20673a3'],
 ].map(([name,hash])=>[path.join(BRAIN_ROOT,'src/lib',name),hash]));
-const PROVENANCE_CALLER_SHA256 = '05e4cc2e4088f05e54b41cdfd77f0344c7de80d921a3b36d56a257c8030cc326';
+const PROVENANCE_CALLER_SHA256 = '41f1648166e3240e7c028e6c42d432f74f0780e75b41f23d7e1aae73135f0655';
 function decodedReferenceTexts(text) {
   try{return [text,...astRows(parseModule(text)).flatMap(({node})=>node.type==='Literal'&&typeof node.value==='string'?[node.value]
     :node.type==='TemplateLiteral'&&!node.expressions.length?[node.quasis.map(q=>q.value.cooked).join('')]:[])];}
