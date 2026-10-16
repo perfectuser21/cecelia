@@ -25,7 +25,8 @@ beforeEach(async () => {
     CREATE TABLE workflows(id uuid,name text,key text,capability_id uuid);
     CREATE TABLE tasks(id uuid,title text,status text,notion_id text,created_at timestamptz DEFAULT now(),parent_task_id uuid,payload jsonb DEFAULT '{}'::jsonb,result jsonb DEFAULT '{}'::jsonb);
     CREATE TABLE task_runs(id uuid,run_id text,task_id uuid,workflow_id uuid,started_at timestamptz,ended_at timestamptz,status text,result jsonb DEFAULT '{}'::jsonb,context jsonb DEFAULT '{}'::jsonb,notion_id text,notion_synced_at timestamptz);
-    CREATE TABLE runs(id uuid,run_id text,workflow_id uuid,started_at timestamptz,ended_at timestamptz,outcome text,duration_ms bigint,notion_id text);
+    CREATE TABLE runs(id uuid,run_id text,workflow_id uuid,started_at timestamptz,ended_at timestamptz,outcome text,duration_ms bigint,notion_id text,
+      detail jsonb DEFAULT '{}'::jsonb,header_source text,executor_id text);
     CREATE TABLE recurring_tasks(id uuid,title text,is_active boolean,cron_expression text,template jsonb);
     CREATE TABLE run_definition_bindings(run_id text,workflow_id uuid,workflow_definition_version_id uuid);
     CREATE TABLE ops_schedule_entries(workflow_id uuid,label text,schedule_desc text,enabled boolean,last_status text,last_run_at timestamptz,source text);
