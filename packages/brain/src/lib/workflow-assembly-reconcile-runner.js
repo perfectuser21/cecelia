@@ -91,12 +91,12 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
       try{
         if(!tenantConflict && resourceCondition==='ready' && isAssemblyReconcileEnvironment(identity.database)
           && (options.advanceAuthoring || !options.readReadiness)){
-          try{check();await (options.advanceAuthoring??defaultAdvance)(pool,row.id,{tenantId,deadline,signal:options.signal});check();}
+          try{check();await (options.advanceAuthoring??defaultAdvance)(pool,row.id,{...options.authoringOptions,tenantId,deadline,signal:options.signal});check();}
           catch{check();driverError=true;}
         }
         readiness=tenantConflict?{}:resourceCondition!=='ready'
           ?{protocol:'workflow-authoring-execution-v1',tenant_id:tenantId,definition_sha256:digest,target_version:target,status:'blocked',resource_condition:resourceCondition,gaps:[{code:resourceCondition==='safe_stop'?'resource_unavailable':'resource_unknown'}]}
-          :await (options.readReadiness ?? defaultReadiness)(pool,row.id,{tenantId,deadline,signal:options.signal});
+          :await (options.readReadiness ?? defaultReadiness)(pool,row.id,{...options.authoringOptions,tenantId,deadline,signal:options.signal});
         check();
       }catch(error){
         check();readiness={protocol:'workflow-authoring-execution-v1',tenant_id:tenantId,definition_sha256:digest,target_version:target,status:'blocked',resource_condition:'unknown',gaps:[{code:error.status===403 || error.status===401?'readiness_authorization_required':'readiness_unavailable'}]};
