@@ -1,5 +1,5 @@
 /** 仅证明已审真实测试消费阶段入口；不改变业务执行、不声明实际模型或业务验收成功。 */
-import {STAGE_ENVELOPES as REVIEWED} from './existing-ops-stage-envelopes.js';
+import {STAGE_ENVELOPES as REVIEWED, ISOLATION_STAGE_ENVELOPES} from './existing-ops-stage-envelopes.js';
 const PREFIX='packages/brain/scripts/coding-workflow/';
 const STAGES=['intent','spec','spec-review','verify','evaluate'];
 const path=(kind,name)=>PREFIX+`${kind}/${name}.mjs`;
@@ -17,7 +17,8 @@ const named=(tree,source,name)=>tree.body.some(n=>n.type==='ImportDeclaration'&&
 const literal=(n,value)=>n?.type==='Literal'&&n.value===value;
 /** 版本判别是完整已审代码事实，任何缺失/混配/未知均不是旧版。 */
 export function stageSourceVersion(sources,parse){
- try{return ['legacy','recorded'].find(version=>STAGES.every(s=>typeof sources[s]==='string'&&same(parse(sources[s]),reviewed(REVIEWED[version][s],parse))))??null;}catch{return null;}
+ const versions={legacy:REVIEWED.legacy,recorded:REVIEWED.recorded,isolation:{...REVIEWED.recorded,...ISOLATION_STAGE_ENVELOPES}};
+ try{return Object.keys(versions).find(version=>STAGES.every(s=>typeof sources[s]==='string'&&same(parse(sources[s]),reviewed(versions[version][s],parse))))??null;}catch{return null;}
 }
 const WITNESSES={
  intent:'payload.acceptance 优先：只写 payload 的条目',
@@ -50,6 +51,14 @@ function testConsumer(tree,stage){
  return true;
 }
 const callPathJoin=n=>n?.type==='CallExpression'&&member(n.callee,'path','join');
+function isolationConsumer(tree){
+ const begin=calls(tree,'beginEvaluateIsolation');
+ const lifecycle=name=>nodes(tree).some(n=>n.type==='CallExpression'&&n.callee?.type==='MemberExpression'
+  &&!n.callee.computed&&member(n.callee.object,'state','isolation')&&n.callee.property.name===name);
+ return named(tree,'../lib/record-provenance.mjs','beginEvaluateIsolation')&&begin.length===1
+  &&nodes(tree).some(n=>n.type==='AssignmentExpression'&&member(n.left,'state','isolation')&&n.right===begin[0])
+  &&lifecycle('restore')&&lifecycle('abort');
+}
 function stageHandler(tree,stage){
  const entry=tree.body.at(-1)?.expression;
  if(entry?.type!=='AwaitExpression'||!call(entry.argument,'runActivity')||!named(tree,'../lib/protocol.mjs','runActivity'))return null;
@@ -95,6 +104,7 @@ export async function collectStageSources({parse,paths,selectors,read,readSource
   for(const stage of STAGES){
    const test=parse(inputs.tests[stage]),entry=parse(inputs.entries[stage]);
    if(!same(test,reviewed(REVIEWED.tests[stage],parse))||!testConsumer(test,stage)||!promptConsumer(entry,stage,stageHandler(entry,stage))||!stageHandler(entry,stage))throw Error('stage consumer');
+   if(version==='isolation'&&stage==='evaluate'&&!isolationConsumer(entry))throw Error('stage isolation consumer');
   }
   mode={};for(const p of Object.keys(REVIEWED.mode)){const text=await readSource(PREFIX+p,revision);mode[p]=p.endsWith('.json')?JSON.parse(text):parse(text);
    if(!same(mode[p],p.endsWith('.json')?JSON.parse(REVIEWED.mode[p]):reviewed(REVIEWED.mode[p],parse)))throw Error('stage mode');}
@@ -103,6 +113,9 @@ export async function collectStageSources({parse,paths,selectors,read,readSource
  }catch{requireProof(false,'native_stage_execution_unproven');return;}
  const edges=[[PREFIX+'lib/protocol.mjs',PREFIX+'lib/activity-provenance.mjs','native_activity_provenance_handler'],[PREFIX+'lib/activity-provenance.mjs',PREFIX+'lib/record-provenance.mjs','native_record_provenance_context']];
  for(const name of ['record-provenance-store','record-provenance-records','provenance-path'])edges.push([PREFIX+'lib/record-provenance.mjs',PREFIX+`lib/${name}.mjs`,'provenance_local_prehandler_dependency']);
+ if(version==='isolation')edges.push(
+  [PREFIX+'lib/record-provenance.mjs',PREFIX+'lib/qa-isolation.mjs','provenance_static_import_dependency'],
+  [PREFIX+'lib/qa-isolation.mjs',PREFIX+'lib/record-provenance-store.mjs','provenance_static_import_dependency']);
  if(selected.some(s=>s!=='intent'))edges.push([PREFIX+'lib/claude.mjs',PREFIX+'lib/record-provenance.mjs','native_pipe_provenance_capture']);
  for(const stage of selected){
   const test=PREFIX+`__tests__/${stage}.test.mjs`,entry=path('activities',stage),helper=PREFIX+'__tests__/helpers/run-activity.mjs';
@@ -111,6 +124,7 @@ export async function collectStageSources({parse,paths,selectors,read,readSource
   const names=stage==='spec'?['spec']:stage==='spec-review'?['spec-review']:stage==='evaluate'?['evaluate','evaluate-local']:[];
   for(const name of names)edges.push([entry,PREFIX+`prompts/${name}.md`,'executed_stage_prompt_argument'],[PREFIX+'lib/claude.mjs',PREFIX+`prompts/${name}.md`,'stage_template_read_render']);
   if(stage==='evaluate')edges.push([test,PREFIX+'repos.json','active_local_mode_fixture_read'],[entry,PREFIX+'lib/repo-profile.mjs','stage_qa_mode_call'],[PREFIX+'lib/repo-profile.mjs',PREFIX+'runner/lib/repos.mjs','stage_default_profile_reader']);
+  if(stage==='evaluate'&&version==='isolation')edges.push([entry,PREFIX+'lib/record-provenance.mjs','stage_evaluate_isolation_lifecycle']);
  }
  for(const [consumer_path,input_path,kind] of edges){await read(consumer_path);await read(input_path);if(!relations.some(r=>r.consumer_path===consumer_path&&r.input_path===input_path&&r.kind===kind&&r.revision===revision))relations.push({consumer_path,input_path,kind,revision});}
 }

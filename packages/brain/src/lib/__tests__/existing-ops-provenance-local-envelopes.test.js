@@ -1,3 +1,5 @@
+import * as isolationModule from '../existing-ops-provenance-local-envelopes.js';
+import {createHash} from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import { parse as acorn } from 'acorn';
 // 独立冻结 Git 样本：保留原始字节，不从被测封套常量重建。
@@ -68,4 +70,12 @@ describe('local-envelopes 独立固定源码与拒绝合同', () => {
     expect(normalizeProvenanceBuild(value, parse)).toBeNull();
     expect(proveBuildSources(value, parse)).toBe(false);
   });
+});
+
+// 已独审 ad15a43a5e886ce30ba05b4dc640f340dcbb6af5 原始源码；字节合同独立于被测导出。
+const ISOLATION_EXPECTED={"activityProvenance":"62ea903d27c63e0dcc7996cf85b292a1549372e6fce0505e99f88bc734a309c0","recordStore":"ad53044f329879b57f174b85c2724c538d85d12882a9a117aebc6ac9d89156aa","qaIsolation":"6903196f315e89fd50c5fdd509281d22ad9e02ed10dfcc85fe50f28bed9c21ea"};
+it('isolation新封套全部字段精确冻结且旧导出不被覆盖',()=>{
+ const value=isolationModule.ISOLATION_REVIEWED;
+ expect(Object.keys(value??{}).sort()).toEqual(Object.keys(ISOLATION_EXPECTED).sort());
+ for(const [key,digest] of Object.entries(ISOLATION_EXPECTED)){expect(typeof value[key]).toBe('string');expect(createHash('sha256').update(value[key]).digest('hex')).toBe(digest);}
 });

@@ -1,7 +1,7 @@
 /** V2 仅接受已审闭包形状；不执行候选模块，不信其声明或文件 hash。 */
 import { ENVELOPES } from './existing-ops-build-envelopes.js';
-import { REVIEWED as CORE } from './existing-ops-provenance-core-envelope.js';
-import { REVIEWED as LOCAL } from './existing-ops-provenance-local-envelopes.js';
+import { REVIEWED as CORE, ISOLATION_REVIEWED as ISOLATION_CORE } from './existing-ops-provenance-core-envelope.js';
+import { REVIEWED as LOCAL, ISOLATION_REVIEWED as ISOLATION_LOCAL } from './existing-ops-provenance-local-envelopes.js';
 import { REVIEWED as ENTRY } from './existing-ops-provenance-entry-envelopes.js';
 
 const PREFIX = 'packages/brain/scripts/coding-workflow/lib/';
@@ -11,6 +11,7 @@ export const PROVENANCE_SOURCE_PATHS = Object.freeze({
   recordStore: PREFIX + 'record-provenance-store.mjs',
   recordRecords: PREFIX + 'record-provenance-records.mjs',
   provenancePath: PREFIX + 'provenance-path.mjs',
+  qaIsolation: PREFIX + 'qa-isolation.mjs',
 });
 const canonical = value => JSON.stringify(value, (key, item) => ['start', 'end', 'raw'].includes(key) ? undefined : item);
 const same = (a, b) => canonical(a) === canonical(b);
@@ -26,12 +27,18 @@ const edit = (text, changes) => changes.sort((a, b) => b.node.start - a.node.sta
 
 /** 完整本地新增模块限制前置校验、导入初始化、存储绑定；旧 Node/库边界保持原合同。 */
 function forwardingSources(sources, parse) {
-  const trees = {};
-  for (const [key, reviewed] of Object.entries({ ...CORE, ...LOCAL })) {
-    if (typeof sources?.[key] !== 'string') return null;
-    trees[key] = parse(sources[key]);
-    if (!same(trees[key], parse(reviewed))) return null;
+  let trees, version;
+  const bundles = { recorded: { ...CORE, ...LOCAL }, isolation: { ...CORE, ...LOCAL, ...ISOLATION_CORE, ...ISOLATION_LOCAL } };
+  for (const [name, bundle] of Object.entries(bundles)) {
+    const candidate = {};
+    if (!Object.entries(bundle).every(([key, reviewed]) => {
+      if (typeof sources?.[key] !== 'string') return false;
+      candidate[key] = parse(sources[key]);
+      return same(candidate[key], parse(reviewed));
+    })) continue;
+    trees = candidate; version = name; break;
   }
+  if (!trees) return null;
   const activity = trees.activityProvenance, core = trees.recordProvenance;
   const recorded = fn(activity, 'runRecordedActivity'), context = fn(core, 'withRecordProvenance');
   if (!exported(activity, 'runRecordedActivity') || !exported(core, 'withRecordProvenance')
@@ -48,7 +55,30 @@ function forwardingSources(sources, parse) {
     || storage[0].init.arguments.length || context.params[1]?.name !== 'fn' || result?.type !== 'ReturnStatement'
     || result.argument?.type !== 'CallExpression' || !member(result.argument.callee, 'storage', 'run')
     || result.argument.arguments.length !== 2 || result.argument.arguments[0].name !== 'c' || result.argument.arguments[1].name !== 'fn') return null;
-  return trees;
+  if (version === 'isolation' && !isolationLinks(trees)) return null;
+  return { trees, version };
+}
+
+/** 完整已审 AST 之外，明确锚定实际导入/调用；静态依赖不冒称本次执行了隐藏。 */
+function isolationLinks(trees) {
+  const core = trees.recordProvenance, helper = trees.qaIsolation, activity = trees.activityProvenance;
+  for (const name of ['startQaIsolation', 'verifyQaIsolation', 'isolationProjection']) {
+    if (!namedImport(core, './qa-isolation.mjs', name) || !exported(helper, name)) return false;
+  }
+  if (calls(fn(core, 'beginEvaluateIsolation'), 'startQaIsolation').length !== 1
+    || !namedImport(helper, './record-provenance-store.mjs', 'writeEvent')
+    || calls(fn(helper, 'startQaIsolation'), 'writeEvent').length !== 2
+    || calls(fn(core, 'verifyQaRound'), 'verifyQaIsolation').length !== 1) return false;
+  const recorded = fn(activity, 'runRecordedActivity');
+  const sealed = nodes(recorded).find(n => n.type === 'VariableDeclarator' && n.id.name === 'sealed');
+  return namedImport(activity, './record-provenance.mjs', 'sealStageEvidence')
+    && sealed?.init?.type === 'CallExpression' && sealed.init.callee.name === 'sealStageEvidence'
+    && nodes(recorded).some(n => n.type === 'Property' && n.key.name === 'source_stage_event_id' && member(n.value, 'sealed', 'id'));
+}
+
+/** 版本来自完整源码组合；不读取候选提供的版本或状态声明。 */
+export function provenanceSourceVersion(sources, parse) {
+  try { return forwardingSources(sources, parse)?.version ?? null; } catch { return null; }
 }
 
 /** 先证明新增闭包，再把已证明等价的插桩边投影给原封套；其余旧检查完全保留。 */
