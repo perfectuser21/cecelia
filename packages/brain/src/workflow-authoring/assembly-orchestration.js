@@ -29,6 +29,8 @@ export async function readCandidateOwner(db,authoringTaskId,definition,tenantId)
  requireCondition(workflow&&workflow.status==='paused'&&version&&workflow.key===definition.key&&workflow.current_definition_version_id===version.id
   &&version.source_repo===definition.source.repo&&version.source_path===definition.source.ref&&version.source_commit===definition.source.revision
   &&definitionDigest(version.payload.contract)===owner.definition_sha256,'候选固定版本或来源不符',409);
+ const formal=(await db.query("SELECT EXISTS(SELECT 1 FROM release_versions r CROSS JOIN LATERAL jsonb_array_elements(COALESCE(r.payload->'workflows','[]'::jsonb)) w WHERE w->>'workflow_id'=$1) AS present",[owner.workflow_id])).rows[0];
+ if(formal?.present)blocked('candidate_formal_release_conflict','候选已进入发布清单，不可继续自动测试资格流程');
  const refs=(await db.query('SELECT id,slot_key,sequence_no,activity_id,activity_definition_version_id FROM workflow_activity_refs WHERE workflow_id=$1 AND active ORDER BY sequence_no',[owner.workflow_id])).rows;
  if(refs.length!==definition.activities.length||refs.length!==owner.slots.length)blocked('fixed_reference_missing','候选固定引用覆盖不足');
  for(const [index,ref] of refs.entries()){
@@ -42,6 +44,7 @@ export async function readCandidateOwner(db,authoringTaskId,definition,tenantId)
    &&fixed.slot_key===ref.slot_key&&fixed.sequence_no===index+1&&ref.sequence_no===index+1&&fixed.reference_id===ref.id,'候选Activity固定版本不存在',409);
   const live=(await db.query(`SELECT id,status,workflow_id,current_definition_version_id,contract,contract_sha256 FROM activities WHERE id=$1${db.authorityLock?' FOR SHARE':''}`,[slot.activity_id])).rows[0];
   requireCondition(live&&(contract.reuse_activity_id?live.status==='active':live.status==='planned'&&live.workflow_id===owner.workflow_id&&live.current_definition_version_id===a.id&&live.contract_sha256===a.contract_sha256&&definitionDigest(live.contract)===a.contract_sha256),'candidate_activity_authority_revoked',409);
+  if(!contract.reuse_activity_id&&(await db.query('SELECT 1 FROM activity_release_state WHERE activity_id=$1',[slot.activity_id])).rows.length)blocked('candidate_formal_release_conflict','候选活动已有生产指针');
   if(!contract.reuse_activity_id){
    const expected={...contract,workflow_authoring:{workflow_key:definition.key,source:definition.source,runtime:definition.runtime}};
    requireCondition(definitionDigest(a.payload.contract)===definitionDigest(expected)&&a.source_repo===definition.source.repo

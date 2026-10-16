@@ -14,7 +14,7 @@ export async function authoringExecutionDatabase(){
  try{
   for(const table of ['value_streams','capabilities','workflows','activities','steps','workflow_activity_refs','warehouse_items','activity_uses',
    'skill_registry','activity_definition_versions','workflow_definition_versions','activity_versions','activity_version_builds',
-   'activity_release_state','activity_release_events','workflow_production_recipes','task_events','task_runs','spans','runs'])
+   'release_versions','activity_release_state','activity_release_events','workflow_production_recipes','task_events','task_runs','spans','runs'])
    await f.pool.query(`CREATE TABLE ${f.schema}.${table}(LIKE public.${table} INCLUDING ALL)`);
   // LIKE不复制外键；明确恢复实际执行对象的归属约束，防候选UUID无实体也伪造span。
   await f.pool.query('ALTER TABLE spans ADD FOREIGN KEY(activity_id) REFERENCES activities(id),ADD FOREIGN KEY(step_id) REFERENCES steps(id),ADD FOREIGN KEY(workflow_id) REFERENCES workflows(id)');
@@ -43,7 +43,8 @@ export async function startPureAuthoring(f,invocationOptions={},tenantId='defaul
  if(tenantId!=='default')f.definition.tenant_id=tenantId;
  await f.pool.query("INSERT INTO tasks(id,title,status,task_type,claimed_by,payload) VALUES($1,$2,'in_progress','research','fixture',$3)",[id,`自动装配${id}`,{workflow_authoring:true,tenant_id:tenantId}]);
  const app=express();app.use(express.json());app.use('/api/brain/workflow-authoring',createWorkflowAuthoringRouter({db:f.pool,freezeOptions:{readFile:f.reader},invocationOptions:{readFile:f.reader,probeRuntime:async()=>({ready:true}),...invocationOptions}}));
- const post=(path,body)=>request(app).post(`/api/brain/workflow-authoring/runs/${id}${path}`).set('x-tenant-id',tenantId).send(body);
+ const post=(path,body)=>{const call=request(app).post(`/api/brain/workflow-authoring/runs/${id}${path}`).set('x-tenant-id',tenantId);
+  if(process.env.CECELIA_INTERNAL_TOKEN)call.set('x-internal-token',process.env.CECELIA_INTERNAL_TOKEN);return call.send(body);};
  let initialized=await post('/init',{operation:'create',goal:'无副作用纯Skill自动装配',actor:'fixture',assembly_mode:true,registration_protocol:'definition-freeze-v1',execution_protocol:'workflow-authoring-execution-v1',validation_input:{text:'abc'}});
  expect(initialized.status).toBe(200);
  const submit=async(stage,output,revision)=>{const r=await post('/submit',{stage,output,revision,submission_id:`${stage}-one`});expect(r.status,JSON.stringify(r.body)).toBe(200);return r.body;};

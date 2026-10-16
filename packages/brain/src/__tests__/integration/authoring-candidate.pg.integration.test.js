@@ -89,3 +89,10 @@ it('同key并发最多一个owner；失败事务回滚不留下实体或active�
  const before=await snapshot(),other=await ownerTask();await expect(run(other)).rejects.toMatchObject({code:'candidate_isolation_required'});
  expect(await snapshot()).toEqual(before);
 });
+it('候选一旦被其它路径写入正式发布指针，严格owner不再授测试资格',async()=>{
+ f=await authoringExecutionDatabase();const a=await ownerTask(),c=await f.pool.connect();let owner;
+ try{await c.query('BEGIN');owner=await orchestration.prepareAuthoringCandidate(c,a.id,a.state,{freezeProof:a.proof});await c.query('COMMIT');}finally{c.release();}
+ const slot=owner.slots[0],version=(await f.pool.query('SELECT activity_version_id FROM activity_version_builds WHERE build_id=$1',[slot.activity_definition_version_id])).rows[0];
+ await f.pool.query('INSERT INTO activity_release_state(activity_id,production_version_id) VALUES($1,$2)',[slot.activity_id,version.activity_version_id]);
+ await expect(orchestration.readCandidateOwner(f.pool,a.id,f.definition,'default')).rejects.toMatchObject({code:'candidate_formal_release_conflict'});
+});
