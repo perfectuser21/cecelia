@@ -1,12 +1,54 @@
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { describe, it, expect } from 'vitest';
 import { bashExecutions, unverifiedItems } from '../lib/transcript.mjs';
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/codex-shell-evidence.json', import.meta.url), 'utf8'));
 const native = (command, output = 'ok', exitCode = 0, type = 'item.completed', id = 'c1') => JSON.stringify({ type, item: { id, type: 'command_execution', command, aggregated_output: output, exit_code: exitCode, status: type === 'item.started' ? 'in_progress' : 'completed' } });
 const ev = (command, output = 'ok') => ({ id: 'E-1', command, output });
 const denied = [{ id: 'E-1', reason: 'command_not_executed' }];
+const shellQuote = (text) => "'" + text.replaceAll("'", "'\"'\"'") + "'";
 
 describe('Codex native shell 包装证据精确核对', () => {
+  it('真实shell执行：完整引用参数外的单个LF不改变命令，原生字节仍保留', () => {
+    const reported = "bash -c 'printf ok; exit 7'";
+    const payload = reported + '\n';
+    const actual = spawnSync('/bin/sh', ['-c', payload], { encoding: 'utf8' });
+    expect(actual.error).toBeUndefined();
+    expect(actual.status).toBe(7);
+    expect(actual.stdout).toBe('ok');
+    expect(actual.stderr).toBe('');
+    const raw = '/bin/sh -c ' + shellQuote(payload);
+    const runs = bashExecutions(native(raw, actual.stdout, actual.status));
+    expect(unverifiedItems([ev(reported)], runs)).toEqual([]);
+    expect(runs[0]).toMatchObject({ command: raw, result: 'ok', exitCode: 7 });
+    expect(unverifiedItems([ev(reported, 'invented')], runs)).toEqual([{ id: 'E-1', reason: 'output_not_in_result' }]);
+  });
+  it('内部here-doc与引号内换行保留，仅允许闭合shell参数之外一个LF', () => {
+    const script = "cat <<'END'\na\nEND\nprintf '%s' 'b\nc'";
+    const reported = 'bash -c ' + shellQuote(script);
+    const actual = spawnSync('/bin/sh', ['-c', reported + '\n'], { encoding: 'utf8' });
+    expect(actual.status).toBe(0);
+    expect(actual.stdout).toBe('a\nb\nc');
+    const runs = bashExecutions(native('/bin/sh -c ' + shellQuote(reported + '\n'), actual.stdout, actual.status));
+    expect(unverifiedItems([ev(reported, actual.stdout)], runs)).toEqual([]);
+    expect(unverifiedItems([ev(reported.replace('b\nc', 'b c'), actual.stdout)], runs)).toEqual(denied);
+  });
+  it.each([
+    'printf ok', "cat <<'END'\nok\nEND", 'printf ok\\', 'printf ok # comment',
+    "bash -c 'printf ok' extra", "bash -c 'printf ok'; true", "bash -c 'printf ok' # comment",
+    'bash -c "printf $DYNAMIC"', "bash -c 'printf ok", "env bash -c 'printf ok'",
+  ])('不能将任意脚本末尾LF当作可裁剪空白：%s', (reported) => {
+    const runs = bashExecutions(native('/bin/sh -c ' + shellQuote(reported + '\n')));
+    expect(unverifiedItems([ev(reported)], runs)).toEqual(denied);
+  });
+  it('两个LF、CRLF、引用参数内LF以及原样转录错误不能冒充匹配', () => {
+    const reported = "bash -c 'printf ok'";
+    for (const payload of [reported + '\n\n', reported + '\r\n', "bash -c 'printf ok\n'", "bash -c 'printf ok\n'\n"]) {
+      expect(unverifiedItems([ev(reported)], bashExecutions(native('/bin/sh -c ' + shellQuote(payload))))).toEqual(denied);
+    }
+    const correct = "bash -c 'node -e \"const x = true ? [] : []\"'";
+    expect(unverifiedItems([ev(correct.replace(': []', ': ['))], bashExecutions(native('/bin/sh -c ' + shellQuote(correct + '\n'))))).toEqual(denied);
+  });
   it.each(fixtures)('真实脱敏事件回放 $evidence.id（引号、here-doc、反斜杠只解一层）', ({ event, evidence }) => {
     expect(unverifiedItems([evidence], bashExecutions(JSON.stringify(event)))).toEqual([]);
   });
