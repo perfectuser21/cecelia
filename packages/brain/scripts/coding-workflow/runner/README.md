@@ -48,6 +48,25 @@ tail -n 100 "${CODING_WF_USER_HOME:-/Users/${CODING_WF_RUN_USER:-administrator}}
 
 若 plist 路径与变量推导不同，以 plist 的 `StandardOutPath` 读日志。分别判读服务状态、任务回执和主日志；日志或 dry-run 单独都不能证明运行正常。日志可能含任务现场信息，不复制令牌或账号文件内容。
 
+## 运行回执如何判读
+
+在仓库根目录按实际运行用户和回执目录只读查看：
+
+```bash
+node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir <回执目录> --json
+node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir <回执目录>
+```
+
+`--log-dir` 覆盖默认的 `CODING_WF_LOG_DIR`；未设置该变量时，默认目录是运行用户 home 下的 `.cecelia/coding-workflow-runner`。`--json` 输出 JSON 数组，不带它输出文本行；两种输出均按回执文件修改时间（mtime）倒序排列。目录不存在、为空、给了普通文件路径或目录不可读时，当前程序都可能以退出码 0 输出 JSON `[]`，文本为“没有运行记录（目录路径）”。这只表示本次没有读到回执，不能证明服务健康或目录确实可读；只读核对所用路径是否为目录及访问权限。
+
+参数须按示例完整传入：未知参数会被忽略；`--log-dir` 放在参数末尾且缺值时会回落默认目录。若误写成 `--log-dir --json`，程序会把 `--json` 当目录名，不会启用 JSON 输出；该路径不存在时显示文本“没有运行记录（--json）”，这不是默认目录的 JSON 检查结果。
+
+状态行来自目录内所有 `.json` 普通文件，仅排除文件名严格匹配 `cifix-<数字>.json` 的 CI 修复状态文件。带 `last_event` 的 JSON 显示 `running`；终态 `completed`、`partial`、`failed` 保留回执状态。未完成态显示首个状态不是 `completed` 或 `skipped` 的活动作为 `failed_activity`，`reason_code` 优先取该活动最后一次尝试，再取活动、回执原因，最后回落为 `run_<状态>`。解析失败或不符合这些回执形状的文件显示 `unreadable`，坏 JSON 不会阻断其他行。合法的 QA、Commander 状态 JSON 和终态回写待办 `pr-sync-pending.json` 也可能被扫成 `unreadable`；这不能证明文件损坏，更不是删除待办或现场的依据。程序逐个扫描文件并按 mtime 排序；重复或大量文件也照此处理，不凭文件名猜测任务身份或删文件。
+
+有 `pr_url` 的回执若对应 `cifix-<PR号>.json` 含 `attempts`，`ci_fix` 只报告 `ci_fix.attempts` 次数及最后一项的 `ci_fix.last_result`；没有修复记录时为 `null`。这两个字段不证明正式 CI 已通过，也不证明 PR 已合并。
+
+`completed` 只是执行器回执，不是最终合并结论。即使缺少 `outputs.pr_url`，回执仍为 `status=completed`，JSON 中另有 `reason_code=pr_url_missing`、`pr_url=null`；文本的 completed 行默认不打印该原因。因此先看上面的 `--json` 输出并核实 `pr_url`，不能从文本 completed 推断已有有效 PR。然后只读核对同一任务对应 GitHub PR 的最终 head 与已合并状态，以及 Brain 任务的 `runner.phase=merged`、`merge.merged=true` 和 QA 终态；任务、PR、head 必须相互对应。Brain 任务详情的现有读取接口是 `GET /api/brain/tasks/<任务ID>`（无 body）；现有 PR 身份读取命令是 `gh pr view <PR号> --json number,headRefName,headRefOid,url,state,closedAt,mergedAt`。本节只说明诊断，不要求向服务写入。PR URL 缺失、head 不符、尚未合并、QA 未到终态或 Brain 尚未回写时，标为待核实；不手工改批准或 FAIL 记录，也不以重试或删除现场代替核对。
+
 ## 故障时保留现场
 
 `runner.sh` 经 `runtime-launch.mjs` 先健康检查，再安全更新专用 clone，最后调用 `runtime-run.sh`。账号失效或缺目录等返回 `runtime_codex_*` 错码时，先停止并排查指定订阅账号；不改用 API key、其他账号或 Claude，也不直接重启。
