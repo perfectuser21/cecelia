@@ -72,7 +72,7 @@ async function validate(dependency, ...args) {
 }
 
 async function completedTask(client, id, tenantId) {
-  const { rows } = await client.query("SELECT id, status, result FROM tasks WHERE id = $1 AND COALESCE(tenant_id, 'default') = $2 AND COALESCE(payload->>'tenant_id','default')=$2 FOR SHARE", [id,tenantId]);
+  const { rows } = await client.query("SELECT id, status, result FROM tasks WHERE id = $1 AND COALESCE(tenant_id,payload->>'tenant_id','default')=$2 AND (tenant_id IS NULL OR payload->>'tenant_id' IS NULL OR tenant_id=payload->>'tenant_id') FOR SHARE", [id,tenantId]);
   requireCondition(rows[0]?.status === 'completed', `证据任务 ${id} 尚未完成`);
   return rows[0];
 }

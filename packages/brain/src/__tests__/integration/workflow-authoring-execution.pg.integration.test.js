@@ -171,8 +171,8 @@ it('legacy alpha证据接受唯一明确tenant来源，真列与payload显式冲
  const {definitionDigest}=await import('../../workflow-authoring/contracts.js');
  for(const [column,payloadTenant,allowed] of [[null,'alpha',true],['alpha',null,true],['beta','alpha',false]]){
   const id=randomUUID(),evidence=randomUUID(),state={schema_version:1,revision:3,stage:'build',request:{operation:'create',actor:'fixture'},outputs:{compose:{definition:f.definition,definition_sha256:definitionDigest(f.definition)}},receipts:[]};
-  await f.pool.query("INSERT INTO tasks(id,title,status,task_type,claimed_by,payload,result) VALUES($1,'legacy-alpha','in_progress','research','fixture',$2,$3)",[id,{workflow_authoring:true,tenant_id:'alpha'},{workflow_authoring:state}]);
-  await f.pool.query("INSERT INTO tasks(id,title,status,task_type,tenant_id,payload) VALUES($1,'legacy证据','completed','research',$2,$3)",[evidence,column,payloadTenant?{tenant_id:payloadTenant}:{}]);
+  await f.pool.query("INSERT INTO tasks(id,title,status,task_type,claimed_by,payload,result) VALUES($1::uuid,'legacy-alpha-'||$1::text,'in_progress','research','fixture',$2,$3)",[id,{workflow_authoring:true,tenant_id:'alpha'},{workflow_authoring:state}]);
+  await f.pool.query("INSERT INTO tasks(id,title,status,task_type,tenant_id,payload) VALUES($1::uuid,'legacy证据-'||$1::text,'completed','research',$2,$3)",[evidence,column,payloadTenant?{tenant_id:payloadTenant}:{}]);
   const action=submitAuthoring(f.pool,id,{stage:'build',revision:3,submission_id:'legacy-build',output:{reuse_only:false,implementation_task_ids:[evidence],evidence_refs:[`task:${evidence}`]}},{validateReferences});
   if(allowed)expect((await action).state.stage).toBe('verify');else await expect(action).rejects.toThrow('尚未完成');
  }
