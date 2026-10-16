@@ -11,7 +11,7 @@
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10170022-cw-ecd50ab6/02-spec.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10170022-cw-ecd50ab6/03-build.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10170022-cw-ecd50ab6/04-evidence.md","role":"documentation"},
-    {"owner_path":"scripts/ci/implementation-main-snapshot.mjs","path":"changes/cp-10162312-source-diagnostics.md","role":"release"},
+    
     {"owner_path":"scripts/ci/implementation-main-snapshot.mjs","path":"docs/learnings/cp-10162312-source-diagnostics.md","role":"documentation"},
 
     
