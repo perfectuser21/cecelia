@@ -7,7 +7,7 @@ import {collectStageSources} from './existing-ops-stage-source.js';
 // 不冻结整个 build main；额外模板字段仅接受已审 INTENT_PATH。未知结构变化失败关闭，需显式重审。
 import { createRequire } from 'node:module';
 import { ENVELOPES } from './existing-ops-build-envelopes.js';
-import { PROVENANCE_SOURCE_PATHS, normalizeProvenanceBuild, normalizeProvenancePublish } from './existing-ops-provenance-envelope.js';
+import { PROVENANCE_SOURCE_PATHS, normalizeProvenanceBuild, normalizeProvenancePublish, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
 export { buildSelectorEnabled } from './existing-ops-build-envelopes.js';
 const requireAcorn = createRequire(import.meta.url);
 function parseEnvelope(text) { return requireAcorn('acorn').parse(text, { ecmaVersion: 'latest', sourceType: 'module' }); }
@@ -206,15 +206,18 @@ async function provenanceInputs(paths,readSource,revision) {
   return Object.fromEntries(await Promise.all(Object.entries(PROVENANCE_SOURCE_PATHS).filter(([,path])=>paths.includes(path))
     .map(async([key,path])=>[key,await readSource(path,revision)])));
 }
-async function collectProvenanceInputs({read,relations,revision,build}) {
+async function collectProvenanceInputs({read,relations,revision,build,version}) {
   // 结构校验可以读取全封套；消费者绑定只包含本分支已证明使用的模块。
-  for(const [key,path] of Object.entries(PROVENANCE_SOURCE_PATHS))if(build||key!=='activityProvenance')await read(path);
+  for(const [key,path] of Object.entries(PROVENANCE_SOURCE_PATHS))if((build||key!=='activityProvenance')&&(key!=='qaIsolation'||version==='isolation'))await read(path);
   const edges=build?[
     [BUILD_SOURCE_PATHS.protocol,PROVENANCE_SOURCE_PATHS.activityProvenance,'native_activity_provenance_handler'],
     [PROVENANCE_SOURCE_PATHS.activityProvenance,PROVENANCE_SOURCE_PATHS.recordProvenance,'native_record_provenance_context'],
     [BUILD_SOURCE_PATHS.cli,PROVENANCE_SOURCE_PATHS.recordProvenance,'native_pipe_provenance_capture'],
   ]:[[PUBLISH_TEST,PROVENANCE_SOURCE_PATHS.recordProvenance,'explicit_test_provenance_fixture']];
   for(const key of ['recordStore','recordRecords','provenancePath'])edges.push([PROVENANCE_SOURCE_PATHS.recordProvenance,PROVENANCE_SOURCE_PATHS[key],'provenance_local_prehandler_dependency']);
+  if(version==='isolation')edges.push(
+    [PROVENANCE_SOURCE_PATHS.recordProvenance,PROVENANCE_SOURCE_PATHS.qaIsolation,'provenance_static_import_dependency'],
+    [PROVENANCE_SOURCE_PATHS.qaIsolation,PROVENANCE_SOURCE_PATHS.recordStore,'provenance_static_import_dependency']);
   for(const [consumer_path,input_path,kind] of edges)if(!relations.some(r=>r.consumer_path===consumer_path&&r.input_path===input_path&&r.kind===kind&&r.revision===revision))
     relations.push({consumer_path,input_path,kind,revision});
 }
@@ -226,7 +229,7 @@ export async function collectBuildSources({parse,paths,selectors,read,readSource
   for(const key of Object.keys(BUILD_SOURCE_PATHS))await read(BUILD_SOURCE_PATHS[key]);
   for(const [consumer,input,kind] of [['test','helper','active_build_test_helper'],['helper','activity','native_build_activity_spawn'],['activity','prompt','executed_build_prompt_input'],['cli','prompt','native_build_template_reader'],['test','fake','explicit_test_cli_environment'],['cli','fake','native_build_test_cli_spawn']])
     relations.push({consumer_path:BUILD_SOURCE_PATHS[consumer],input_path:BUILD_SOURCE_PATHS[input],kind,revision});
-  if(normalizeProvenanceBuild(sources,parse))await collectProvenanceInputs({read,relations,revision,build:true});
+  if(normalizeProvenanceBuild(sources,parse))await collectProvenanceInputs({read,relations,revision,build:true,version:provenanceSourceVersion(sources,parse)});
   }
   }
   await collectPublishSources({parse,paths,selectors,read,readSource,revision,relations,requireProof});
@@ -234,7 +237,7 @@ export async function collectBuildSources({parse,paths,selectors,read,readSource
   if(stageSelected){
     const support={...await provenanceInputs(paths,readSource,revision),...Object.fromEntries(await Promise.all(['test','helper','activity','cli','protocol'].map(async key=>[key,await readSource(BUILD_SOURCE_PATHS[key],revision)])))};
     await collectStageSources({parse,paths,selectors,read,readSource,revision,relations,requireProof,
-      supportProven:proveBuildSources(support,parse),supportVersion:normalizeProvenanceBuild(support,parse)?'recorded':'legacy'});
+      supportProven:proveBuildSources(support,parse),supportVersion:provenanceSourceVersion(support,parse)??'legacy'});
   }
 }
 
@@ -270,5 +273,5 @@ async function collectPublishSources({parse,paths,selectors,read,readSource,revi
   await read(PUBLISH_TEST);await read(BUILD_SOURCE_PATHS.helper);await read(PUBLISH_ENTRY);
   relations.push({consumer_path:PUBLISH_TEST,input_path:BUILD_SOURCE_PATHS.helper,kind:'active_publish_test_helper',revision},
     {consumer_path:BUILD_SOURCE_PATHS.helper,input_path:PUBLISH_ENTRY,kind:'native_publish_activity_spawn',revision});
-  if(normalizeProvenancePublish(test,parse,sources))await collectProvenanceInputs({read,relations,revision,build:false});
+  if(normalizeProvenancePublish(test,parse,sources))await collectProvenanceInputs({read,relations,revision,build:false,version:provenanceSourceVersion(sources,parse)});
 }
