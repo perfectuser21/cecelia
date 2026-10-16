@@ -51,3 +51,14 @@ it('真实PG旧freeze+assembly标记不获得新执行授权，完全不调用re
  let called=0;await x.run({readReadiness:async()=>{called++;return x.readiness();}});
  expect(called).toBe(0);expect((await x.saved()).workflow_assembly_reconcile).toBeUndefined();
 });
+it('真实PG事务之前的扫描查询也受预算限制，不等锁释放才能退出',async()=>{
+ const x=await fixture();await x.db.query('BEGIN');await x.db.query('LOCK TABLE working_memory IN ACCESS EXCLUSIVE MODE');
+ let released=false;const timer=setTimeout(()=>{released=true;void x.db.query('ROLLBACK');},500);
+ try{const out=await x.run({budgetMs:50});expect(out.stopped).toBe('budget');expect(released).toBe(false);}
+ finally{clearTimeout(timer);await x.db.query('ROLLBACK');}
+});
+it('真实PG租户真列与payload冲突只报身份gap，不调用下游验真',async()=>{
+ const x=await fixture();await x.db.query("UPDATE tasks SET payload=payload||'{\"tenant_id\":\"beta\"}' WHERE id=$1",[x.id]);
+ let called=0;await x.run({readReadiness:async()=>{called++;return x.readiness();}});
+ expect(called).toBe(0);expect(Object.values((await x.saved()).workflow_assembly_reconcile.issues).some(i=>i.gap.code==='readiness_identity_mismatch')).toBe(true);
+});
