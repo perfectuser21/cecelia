@@ -54,13 +54,14 @@ it('真实登记后旧无scope维护定义不得混入中央业务KR；升级固
  expect((await db.query('SELECT payload FROM workflow_definition_versions WHERE id=$1',[registered.workflow_definition_version_id])).rows[0].payload).toEqual(legacy);
  expect((await db.query('SELECT detail FROM runs WHERE run_id=$1',[run.native_run_id])).rows[0].detail.workflow_definition_version_id).toBe(registered.workflow_definition_version_id);
 });
-it.each(['scope_only','foreign_workflow','bad_digest','foreign_ref','foreign_activity_version','wrong_parent'])('真实PG伪scope或身份损坏%s不能从KR消失',async kind=>{
+it.each(['scope_only','foreign_workflow','bad_digest','foreign_ref','foreign_activity_version','null_activity_payload','wrong_parent'])('真实PG伪scope或身份损坏%s不能从KR消失',async kind=>{
  const {db,workflow}=await setup();const registered=await registerNativeReconcile(db,f.source);
  if(kind==='scope_only')await db.query("UPDATE workflow_definition_versions SET payload=payload||$2::jsonb WHERE workflow_id=$1",[workflow,{definition_scope:'native_maintenance_observation',protocol:spec.protocol}]);
  else if(kind==='foreign_workflow')await db.query("UPDATE workflow_definition_versions SET workflow_id=$2,payload=jsonb_set(payload,'{workflow_id}',to_jsonb($2::uuid)) WHERE id=$1",[registered.workflow_definition_version_id,workflow]);
  else if(kind==='bad_digest')await db.query("UPDATE workflow_definition_versions SET payload_sha256=repeat('0',64) WHERE id=$1",[registered.workflow_definition_version_id]);
  else if(kind==='foreign_ref')await db.query('UPDATE workflow_activity_refs SET workflow_id=$2 WHERE id=$1',[spec.activities[0].reference_id,workflow]);
  else if(kind==='foreign_activity_version')await db.query("UPDATE activity_definition_versions SET activity_id=$2,payload=jsonb_set(payload,'{activity_id}',to_jsonb($2::uuid)) WHERE id=$1",[registered.activity_definition_version_id,randomUUID()]);
+ else if(kind==='null_activity_payload')await db.query("UPDATE activity_definition_versions SET payload='null'::jsonb,payload_sha256=$2 WHERE id=$1",[registered.activity_definition_version_id,definitionDigest({source:{repo,path:sourcePath,commit:old},payload:null})]);
  else await db.query('UPDATE capabilities SET parent_journey_id=$2 WHERE id=$1',[spec.capability_id,f.definition.capability_id]);
  const result=await snapshot();
  if(kind==='scope_only'){expect(result.definitions.workflows.some(w=>w.workflow_id===workflow)).toBe(true);return;}
