@@ -8,6 +8,7 @@
  * （routing/phone-resolver.js）。PUT 只改请求里出现的字段：没传的列在冲突更新时保留台账原值，
  * 停用一台只需 {"enabled": false}（走 UPDATE，台账里没有这台回 404）；新增必须带 nickname。
  */
+import {isPhoneRegistrySerial} from '../lib/leadgen-resources.js';
 import { Router } from 'express';
 import pool from '../db.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
@@ -15,7 +16,6 @@ import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 const router = Router();
 
 const COLUMNS = 'serial, nickname, aliases, host, profile, model, owner, role, douyin_accounts, wechat, enabled, updated_at, updated_by';
-const SERIAL_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const TEXT_FIELDS = ['nickname', 'host', 'profile', 'model', 'owner', 'role', 'updated_by'];
 
 const isNonEmptyString = (v) => typeof v === 'string' && v.trim().length > 0;
@@ -72,7 +72,7 @@ router.get('/phone-registry', async (_req, res) => {
 
 router.put('/phone-registry/:serial', internalAuthOrLoopback, async (req, res) => {
   const serial = String(req.params.serial ?? '');
-  if (!SERIAL_RE.test(serial)) return res.status(400).json({ error: 'serial 非法（1-64 位字母数字 . _ -）' });
+  if (!isPhoneRegistrySerial(serial)) return res.status(400).json({ error: 'serial 非法（实体序列号或严格 IPv4:port）' });
   const { fields, error } = pickPhoneFields(req.body);
   if (error) return res.status(400).json({ error });
 

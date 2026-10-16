@@ -20,7 +20,7 @@ export async function setLeadgenRuntimeStatus(pool,id,input,deps={}) {
       const release=await (deps.getRelease??getRelease)(client,input.release_id);
       await (deps.lockReleaseTarget??lockReleaseTarget)(client,release.environment,release.target);
       const gate=await (deps.getReleaseGate??getReleaseGate)(client,release.id);
-      check(release.environment==='production'&&release.target===(index===2?'mmv':'xian-m4')&&gate.deployed&&gate.actual_matches&&Array.isArray(gate.gaps)&&gate.gaps.length===0&&gate.current_observation_id===input.observation_id,'当前正式目标发布未核验');
+      check(release.environment==='production'&&(index===2?release.target==='mmv':index===3?release.target==='xian-m4':['xian-m4','mmv'].includes(release.target))&&gate.deployed&&gate.actual_matches&&Array.isArray(gate.gaps)&&gate.gaps.length===0&&gate.current_observation_id===input.observation_id,'当前正式目标发布未核验');
       const fixed=release.payload.workflows.find(w=>w.workflow_id===id&&w.id===workflow.current_definition_version_id&&w.id===input.workflow_definition_version_id&&w.payload_sha256===input.snapshot_sha256);
       check(fixed&&fixed.source_repo===workflow.source_repo&&release.payload.components.some(c=>c.kind==='repo'&&c.repo===fixed.source_repo&&c.revision===fixed.source_commit),'当前完整同源Workflow不符');
     }
