@@ -197,3 +197,13 @@ it('真实PG正式release已收录的paused对象和自有active活动都不自�
  expect((await x.audit(true)).repaired).toEqual([]);
  expect((await x.db.query('SELECT count(*)::int n FROM workflow_activity_refs WHERE workflow_id=$1',[x.wf])).rows[0].n).toBe(0);
 });
+it('真实PG缺引用与人工配方冲突并存时整笔派生修复零写',async()=>{
+ const x=await frozenFixture();await x.db.query('DELETE FROM workflow_activity_refs WHERE id=$1',[x.reference]);
+ await x.db.query("UPDATE workflow_production_recipes SET recipe='[]'::jsonb WHERE workflow_id=$1",[x.wf]);
+ const snapshot=async()=>({refs:(await x.db.query('SELECT * FROM workflow_activity_refs ORDER BY id')).rows,builds:(await x.db.query('SELECT * FROM activity_version_builds ORDER BY build_id')).rows,recipes:(await x.db.query('SELECT * FROM workflow_production_recipes ORDER BY id')).rows});
+ const before=await snapshot(),row=(await x.db.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0];
+ await x.db.query('BEGIN');try{
+  const out=await api.auditAssemblyDerivations(x.db,row,{repair:true,transaction:'existing'});expect(out.gaps).toContainEqual({code:'recipe_conflict'});expect(out.repaired).toEqual([]);await x.db.query('COMMIT');
+ }catch(e){await x.db.query('ROLLBACK');throw e;}
+ expect(await snapshot()).toEqual(before);
+});
