@@ -8,7 +8,7 @@ import * as provenance from '../lib/record-provenance.mjs';
 const taskId = '088c3431-57ca-4f2a-8a50-14601518e2a2', sprintDir = 'sprints/10121524-cw-088c3431';
 const owner = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs';
 const names = ['03-build.md', '04-evidence.md'];
-let temp, worktree, root, options, head;
+let temp, worktree, root, options, head, latestStageId;
 const rel = name => `${sprintDir}/${name}`;
 const full = name => path.join(worktree, rel(name));
 const git = (...args) => {
@@ -19,8 +19,8 @@ const put = (name, bytes) => fs.writeFileSync(full(name), bytes);
 const report = () => put('05-qa-report-r1.md', `---\ntask_id: ${taskId}\nstep: evaluate\nupstream: []\n---\nObserved QA\n`);
 const native = () => provenance.captureNativeExecution({ provider: 'codex', model: 'fixture', tag: 'evaluate', code: 0,
   stdout: '{"type":"thread.started","thread_id":"fixture-session"}\n{"type":"turn.completed"}\n' });
-const seal = () => provenance.sealStageEvidence({ files: [rel('05-qa-report-r1.md')],
-  result: { status: 'completed', outputs: { qa: { verdict: 'PASS', round: 1 } } } });
+const seal = () => { const stage = provenance.sealStageEvidence({ files: [rel('05-qa-report-r1.md')],
+  result: { status: 'completed', outputs: { qa: { verdict: 'PASS', round: 1 } } } });latestStageId = stage.id;return stage; };
 const readEvents = () => fs.readdirSync(path.join(root, taskId)).filter(n => n.endsWith('.json'))
   .map(n => JSON.parse(fs.readFileSync(path.join(root, taskId, n))));
 function begin() {
@@ -57,7 +57,7 @@ it('model/native PASS without actual hide/restore cannot seal an approving evalu
 it('real hide/native/restore links current QA to exact task/run/round/head without exposing hidden text', () => {
   const { stage, run } = successful();
   for (const [i, name] of names.entries()) expect(fs.readFileSync(full(name), 'utf8')).toBe(i ? 'secret developer evidence\n' : 'secret developer statement\n');
-  const pending = provenance.verifyPendingStageEvidence({ ...options, head }, [rel('05-qa-report-r1.md')]);
+  const pending = provenance.verifyPendingStageEvidence({ ...options, head, stageEventId: latestStageId }, [rel('05-qa-report-r1.md')]);
   const projected = provenance.provenanceProjection(pending);
   expect(stage.producer).toBe('model');
   expect(projected.isolation).toMatchObject({ status: 'restored', producer: 'controller', task_id: taskId,
@@ -144,10 +144,10 @@ it.each(['head', 'holder'])('during-session %s drift cannot produce successful r
 });
 it('a stale same-byte QA stage from another round cannot supply current isolation facts', () => {
   successful();
-  expect(() => provenance.verifyPendingStageEvidence({ ...options, round: 2, head }, [rel('05-qa-report-r1.md')])).toThrow(/round|isolation/);
+  expect(() => provenance.verifyPendingStageEvidence({ ...options, round: 2, head, stageEventId: latestStageId }, [rel('05-qa-report-r1.md')])).toThrow(/round|isolation/);
 });
 it('model supplied projection fields cannot turn registration facts into controller isolation proof', () => {
-  successful();const pending = provenance.verifyPendingStageEvidence({ ...options, head }, [rel('05-qa-report-r1.md')]);
+  successful();const pending = provenance.verifyPendingStageEvidence({ ...options, head, stageEventId: latestStageId }, [rel('05-qa-report-r1.md')]);
   expect(() => provenance.provenanceProjection({ ...pending, isolation: { ...pending.isolation, producer: 'model' } })).toThrow(/isolation|projection/);
   expect(() => provenance.provenanceProjection({ ...pending, isolation: { ...pending.isolation, body: 'hidden text' } })).toThrow(/isolation|projection/);
 });
@@ -206,7 +206,7 @@ it.each(['missing-restored', 'missing-hidden', 'missing-link', 'extra-key', 'mis
     if (kind === 'time') e.observed_at = '1970-01-01T00:00:00.000Z';
     if (kind === 'holder') e.files[0].holder_path = path.join(worktree, 'model-receipt.json');
   });
-  expect(() => provenance.verifyPendingStageEvidence({ ...options, head }, [rel('05-qa-report-r1.md')])).toThrow(/isolation/);
+  expect(() => provenance.verifyPendingStageEvidence({ ...options, head, stageEventId: latestStageId }, [rel('05-qa-report-r1.md')])).toThrow(/isolation/);
 });
 it('duplicate begin cannot create a second lifecycle and an interrupted run cannot be recovered as PASS', () => {
   provenance.withRecordProvenance(options, () => {
@@ -223,4 +223,24 @@ it('after successful restore an abort still prevents sealing an approving stage'
     const isolation = begin();native();report();expect(isolation.restore()).toBe(true);
     expect(isolation.abort()).toBe(true);expect(() => seal()).toThrow(/isolation/);
   });
+});
+it.each([0o1644, 0o2644, 0o4644])('current reader rejects special permission bits %s on restored files', mode => {
+  successful();fs.chmodSync(full(names[0]), mode);
+  expect(() => provenance.verifyPendingStageEvidence({ ...options, head, stageEventId: latestStageId }, [rel('05-qa-report-r1.md')])).toThrow(/isolation/);
+});
+it('special holder permission bits cannot be accepted at native capture or restoration', () => {
+  provenance.withRecordProvenance(options, () => {
+    const isolation = begin(), hidden = readEvents().find(e => e.phase === 'hidden');
+    fs.chmodSync(hidden.files[0].holder_path, 0o1644);
+    expect(() => native()).toThrow(/isolation/);expect(isolation.restore()).toBe(false);
+    expect(fs.readFileSync(full(names[1]), 'utf8')).toBe('secret developer evidence\n');
+  });
+});
+it('same-head same-round same-byte attempts select the explicit stage, never UUID order', () => {
+  const first = successful().stage, second = successful().stage;
+  const get = stageEventId => provenance.verifyPendingStageEvidence({ ...options, head, stageEventId }, [rel('05-qa-report-r1.md')]);
+  expect(get(first.id).isolation.qa_stage_event_id).toBe(first.id);
+  expect(get(second.id).isolation.qa_stage_event_id).toBe(second.id);
+  expect(() => get('aaaaaaaa-0000-0000-0000-000000000000')).toThrow(/stage|isolation/);
+  expect(() => get(undefined)).toThrow(/stage|isolation/);
 });

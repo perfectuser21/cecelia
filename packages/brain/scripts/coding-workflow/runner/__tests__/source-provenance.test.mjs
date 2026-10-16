@@ -122,3 +122,23 @@ it('Commander真实spec先提交再封存，新07登记能绑定spec新字节而
     const proof = verifySourceHead(cfg, worktree, options, head());expect(proof.records.find(r => r.path === spec).stage).toBe('commander');
   });
 });
+
+it('registered judge retry uses original stage in a fresh worktree; product drift cannot reuse it', () => {
+  const tested = publish(), report = rel('05-qa-report-r1.md');put(report, fm('evaluate'));
+  const qa = seal('evaluate', [report], 1);
+  const token = beginRecordRegistration({ ...options, stage: 'qa', round: 1, qaStageEventId: qa.id }, [report]);
+  observeRecordRegistration(token, registerRecordSources(worktree, { taskId, sprintDir, stage: 'qa', round: 1 }, [report]));
+  const registered = commit();finalizeRecordRegistration(token);
+  const retryTree = path.join(temp, 'qa-retry');git(worktree, 'worktree', 'add', '-q', '--detach', retryTree, registered);
+  withRecordProvenance({ ...options, stage: 'judge', round: 1 }, () => {
+    const selector = { mode: 'registered', stageEventId: qa.id, testedHead: tested, round: 1 };
+    const facts = judgeSourceFacts(cfg, retryTree, options, registered, report, selector);
+    expect(facts.current_qa.status).toBe('verified');expect(facts.current_qa.isolation.qa_stage_event_id).toBe(qa.id);
+    expect(facts.current_qa.isolation.tested_head).toBe(tested);
+    expect(() => judgeSourceFacts(cfg, retryTree, options, registered, report, { ...selector, mode: 'pending' })).toThrow();
+    put('product.txt', 'unreviewed');const drifted = commit();
+    expect(() => judgeSourceFacts(cfg, worktree, options, drifted, report, selector)).toThrow(/isolation|retry|scope/);
+    fs.unlinkSync(path.join(worktree, 'product.txt'));const reverted = commit();
+    expect(() => judgeSourceFacts(cfg, worktree, options, reverted, report, selector)).toThrow(/isolation|retry|scope/);
+  });
+}, 20000);
