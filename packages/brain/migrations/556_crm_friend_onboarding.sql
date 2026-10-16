@@ -4,6 +4,7 @@ ALTER TABLE crm_sync_bindings ADD COLUMN IF NOT EXISTS config_revision bigint NO
 ALTER TABLE crm_customers ALTER COLUMN source_page_id DROP NOT NULL;
 ALTER TABLE crm_customers ALTER COLUMN source_edited_at DROP NOT NULL;
 ALTER TABLE crm_customers ADD COLUMN IF NOT EXISTS origin_kind text NOT NULL DEFAULT 'notion';
+ALTER TABLE crm_customers ADD COLUMN IF NOT EXISTS projection_checked_at timestamptz;
 ALTER TABLE crm_customers ADD CONSTRAINT crm_customer_origin CHECK(origin_kind IN ('notion','wechat_friend'));
 ALTER TABLE crm_customers ADD CONSTRAINT crm_customer_source_pair CHECK(
   (source_page_id IS NOT NULL AND source_edited_at IS NOT NULL) OR

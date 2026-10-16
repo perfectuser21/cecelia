@@ -176,7 +176,11 @@ export async function listPending(db, { tenant_id, binding_id, allowed_page_ids,
     JOIN crm_sync_bindings b ON b.id=c.binding_id AND b.tenant_id=c.tenant_id
     WHERE c.projection_pending AND b.enabled AND ($1::uuid IS NULL OR c.tenant_id=$1)
     AND ($2::uuid IS NULL OR b.id=$2) AND ($3::text[] IS NULL OR c.source_page_id=ANY($3::text[]))
-    ORDER BY c.updated_at,c.id LIMIT $4`, [tenant_id ?? null, binding_id ?? null, allowed_page_ids ?? null, limit])).rows;
+    ORDER BY c.projection_checked_at NULLS FIRST,c.updated_at,c.id LIMIT $4`, [tenant_id ?? null, binding_id ?? null, allowed_page_ids ?? null, limit])).rows;
+}
+/** Scheduling waterline only: never mutate business revision, pending, content, or creation fence. */
+export async function markProjectionChecked(db, tenant, id) {
+  return Boolean(await one(db, 'UPDATE crm_customers SET projection_checked_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING id', [uuid(tenant), uuid(id)]));
 }
 export async function markProjected(db, tenant, id, revision) {
   tenant = uuid(tenant); id = uuid(id); integer(revision);

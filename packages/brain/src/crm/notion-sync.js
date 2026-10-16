@@ -105,6 +105,7 @@ export async function runCrmSync(pool, bindingId, options = {}) {
     for (const { customer } of pending) {
       budget();
       if (binding.fields?.allowed_page_ids && !binding.fields.allowed_page_ids.some(id => sameId(id, customer.source_page_id))) continue;
+      await store.markProjectionChecked(client, binding.tenant_id, customer.id);
       if (!customer.source_page_id) {
         const projected = await projectOnboardCustomer(client, request, binding, customer);
         const key = projected.status === 'mapped' || projected.status === 'already_mapped' ? 'onboard_mapped' : 'deferred';
