@@ -2,6 +2,11 @@ import {definitionDigest,requireCondition} from './contracts.js';
 import {registerWorkflow} from './registration.js';
 export const EXECUTION_PROTOCOL='workflow-authoring-execution-v1';
 function blocked(code,message){throw Object.assign(Error(message),{code,status:409,statusCode:409,gaps:[{code}]});}
+function frozenVersion(row){
+ requireCondition(row?.payload&&row.contract_sha256===definitionDigest(row.payload.contract)
+  &&row.payload_sha256===definitionDigest({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload}),
+ '候选不可变版本摘要不符',409);
+}
 export async function requireCandidateEnvironment(db){
  const name=(await db.query('SELECT current_database() AS name')).rows[0]?.name;
  if(name!=='cecelia_scratch'&&!(name==='cecelia_test'&&process.env.CI==='true'&&process.env.GITHUB_ACTIONS==='true'))
@@ -9,26 +14,39 @@ export async function requireCandidateEnvironment(db){
 }
 /** 双向回读实际实体、固定版本及管理任务owner；不从result中的自述授予资格。 */
 export async function readCandidateOwner(db,authoringTaskId,definition,tenantId){
- const row=(await db.query('SELECT id,payload,result FROM tasks WHERE id=$1',[authoringTaskId])).rows[0];
+ const row=(await db.query('SELECT id,tenant_id,payload,result FROM tasks WHERE id=$1',[authoringTaskId])).rows[0];
  const owner=row?.result?.workflow_authoring_candidate;
  if(!owner)return null;
- requireCondition((row.payload?.tenant_id??'default')===tenantId&&owner.authoring_task_id===authoringTaskId
-  &&owner.definition_sha256===definitionDigest(definition),'候选owner或租户已变化',409);
+ requireCondition(row.payload?.workflow_authoring===true&&(row.payload?.tenant_id??'default')===tenantId
+  &&(!row.tenant_id||row.tenant_id===tenantId)&&owner.protocol===EXECUTION_PROTOCOL&&owner.tenant_id===tenantId
+  &&owner.authoring_task_id===authoringTaskId&&owner.definition_sha256===definitionDigest(definition)
+  &&definitionDigest(row.result.workflow_authoring?.outputs?.compose?.definition)===owner.definition_sha256,'候选owner或租户已变化',409);
  const claims=(await db.query("SELECT id FROM tasks WHERE result->'workflow_authoring_candidate'->>'workflow_id'=$1",[owner.workflow_id])).rows;
  requireCondition(claims.length===1&&claims[0].id===authoringTaskId,'候选归属不唯一',409);
  const workflow=(await db.query('SELECT * FROM workflows WHERE id=$1',[owner.workflow_id])).rows[0];
  const version=(await db.query('SELECT * FROM workflow_definition_versions WHERE id=$1 AND workflow_id=$2',[owner.workflow_definition_version_id,owner.workflow_id])).rows[0];
- requireCondition(workflow&&version&&workflow.key===definition.key&&workflow.current_definition_version_id===version.id
+ frozenVersion(version);
+ requireCondition(workflow&&workflow.status==='paused'&&version&&workflow.key===definition.key&&workflow.current_definition_version_id===version.id
   &&version.source_repo===definition.source.repo&&version.source_path===definition.source.ref&&version.source_commit===definition.source.revision
   &&definitionDigest(version.payload.contract)===owner.definition_sha256,'候选固定版本或来源不符',409);
- const refs=(await db.query('SELECT slot_key,activity_id,activity_definition_version_id FROM workflow_activity_refs WHERE workflow_id=$1 AND active ORDER BY sequence_no',[owner.workflow_id])).rows;
+ const refs=(await db.query('SELECT id,slot_key,sequence_no,activity_id,activity_definition_version_id FROM workflow_activity_refs WHERE workflow_id=$1 AND active ORDER BY sequence_no',[owner.workflow_id])).rows;
  requireCondition(refs.length===definition.activities.length&&refs.length===owner.slots.length,'候选引用数量不符',409);
  for(const [index,ref] of refs.entries()){
   const slot=owner.slots[index],contract=definition.activities[index];
   requireCondition(ref.slot_key===contract.key&&slot.slot_key===ref.slot_key&&slot.activity_id===ref.activity_id
    &&slot.activity_definition_version_id===ref.activity_definition_version_id,'候选slot固定引用不符',409);
   const a=(await db.query('SELECT * FROM activity_definition_versions WHERE id=$1 AND activity_id=$2',[slot.activity_definition_version_id,slot.activity_id])).rows[0];
-  requireCondition(a&&version.payload.activities[index].activity_version_id===a.id,'候选Activity固定版本不存在',409);
+  frozenVersion(a);
+  const fixed=version.payload.activities[index];
+  requireCondition(a&&a.payload.activity_id===ref.activity_id&&fixed.activity_version_id===a.id&&fixed.activity_id===ref.activity_id
+   &&fixed.slot_key===ref.slot_key&&fixed.sequence_no===index+1&&ref.sequence_no===index+1&&fixed.reference_id===ref.id,'候选Activity固定版本不存在',409);
+  if(!contract.reuse_activity_id){
+   const expected={...contract,workflow_authoring:{workflow_key:definition.key,source:definition.source,runtime:definition.runtime}};
+   requireCondition(definitionDigest(a.payload.contract)===definitionDigest(expected)&&a.source_repo===definition.source.repo
+    &&a.source_path===definition.source.ref&&a.source_commit===definition.source.revision,'候选活动合同或来源不符',409);
+  }else requireCondition(a.id===contract.reuse_activity_definition_version_id&&a.activity_id===contract.reuse_activity_id
+   &&a.contract_sha256===contract.reuse_contract_sha256,'共享候选固定合同不符',409);
+  requireCondition(Array.isArray(a.payload.steps)&&Array.isArray(slot.steps),'候选Step合同缺失',409);
   requireCondition(definitionDigest(a.payload.steps.map(s=>({id:s.step_id,key:s.contract.key})))===definitionDigest(slot.steps),'候选Step映射已变化',409);
  }
  return owner;
