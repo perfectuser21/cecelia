@@ -79,3 +79,11 @@ it('isolation新封套全部字段精确冻结且旧导出不被覆盖',()=>{
  expect(Object.keys(value??{}).sort()).toEqual(Object.keys(ISOLATION_EXPECTED).sort());
  for(const [key,digest] of Object.entries(ISOLATION_EXPECTED)){expect(typeof value[key]).toBe('string');expect(createHash('sha256').update(value[key]).digest('hex')).toBe(digest);}
 });
+
+// v1 独立冻结原字节；不从新生产常量生成期望值。
+const MERGE_EXPECTED={recordStore:'c4545528ecbab51a648cb2b95069d76653b4434a1bf5aa03d872bb423d70a873',sourceProvenance:'14362dd387277aa336b2654e2a2b95037757358caaec814e2a3837d08a3b2f7e',sourceMergeProof:'6d275f8bc9f16634d922d81e8b0521b318e60ea9616372ec9ff8b5d5cd2245e6'};
+it('merge 新增完整数据字段与独立冻结字节对应，原封套另保留',()=>{
+ const value=isolationModule.MERGE_REVIEWED;
+ expect(Object.keys(value??{}).sort()).toEqual(Object.keys(MERGE_EXPECTED).sort());
+ for(const [key,digest] of Object.entries(MERGE_EXPECTED)){expect(typeof value[key]).toBe('string');expect(createHash('sha256').update(value[key]).digest('hex')).toBe(digest);}
+});
