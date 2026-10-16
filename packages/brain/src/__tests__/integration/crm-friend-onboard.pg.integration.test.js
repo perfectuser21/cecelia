@@ -75,4 +75,25 @@ describe.skipIf(!crmPgTestConfig().enabled)('Brain-first 好友入档真实PG与
     expect((await call()).status).toBe(201); expect((await call()).status).toBe(200);
     vi.stubEnv('CRM_SYNC_ENABLED', 'false'); expect((await call()).status).toBe(503);
   });
+  it('既有linkContact与好友入档共用联系人锁，交错读无关系时不竞争插入', async () => {
+    const existing = (await store.ingestCustomer(db, binding, { page_id: id(9), display_name: '已登记客户', source_edited_at: input.observed_at })).customer;
+    const a = await fx.connect(), b = await fx.connect();
+    let reached, resume;
+    const atRead = new Promise(resolve => { reached = resolve; });
+    const continueRead = new Promise(resolve => { resume = resolve; });
+    const pausing = { query: async (sql, args) => {
+      const result = await a.query(sql, args);
+      if (sql.startsWith('SELECT * FROM crm_contact_links')) { reached(); await continueRead; }
+      return result;
+    } };
+    const linking = store.linkContact(pausing, tenant, { account_id: input.account_id, contact_id: input.contact_id, customer_id: existing.id });
+    await atRead;
+    const onboarding = api.onboardContact(b, input);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    resume();
+    const [linkResult, onboardResult] = await Promise.allSettled([linking, onboarding]);
+    expect(linkResult.status).toBe('fulfilled'); expect(onboardResult.status).toBe('fulfilled');
+    expect(onboardResult.value.customer.id).toBe(existing.id); expect(onboardResult.value.created).toBe(false);
+    expect((await db.query('SELECT count(*)::int n FROM crm_customers')).rows[0].n).toBe(1);
+  });
 });
