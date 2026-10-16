@@ -29,7 +29,7 @@ describe('固定租户对象版本的持续对账',()=>{
     const first=evolve(null,observation(),{now:1000});
     Object.values(first.issues)[0].repair_task_id='repair-a';
     const proof='b'.repeat(64);
-    const next=evolve(first,observation({gaps:[],status:'verified',verification_id:proof,proof_sha256:proof}),{now:2000});
+    const next=evolve(first,observation({gaps:[],status:'verified',verification_id:proof,proof_sha256:proof,verification_at:new Date(1500).toISOString()}),{now:2000});
     expect(Object.values(next.issues)[0]).toMatchObject({status:'closed',repair_task_id:'repair-a',verification_id:proof});
   });
   it('新版本独立计数，跨租户或对象state不允许混用',()=>{
@@ -55,15 +55,31 @@ describe('固定租户对象版本的持续对账',()=>{
   it('同target但不同定义摘要不能借proof关闭旧问题',()=>{
     const first=evolve(null,observation(),{now:1000});
     const proof='b'.repeat(64);
-    const next=evolve(first,observation({definition_sha256:'c'.repeat(64),gaps:[],status:'verified',verification_id:proof,proof_sha256:proof}),{now:2000});
+    const next=evolve(first,observation({definition_sha256:'c'.repeat(64),gaps:[],status:'verified',verification_id:proof,proof_sha256:proof,verification_at:new Date(1500).toISOString()}),{now:2000});
     expect(Object.values(next.issues)[0].status).not.toBe('closed');
   });
   it('已关账再次发现缺口撤掉当前验证标记，保留历史proof',()=>{
     const first=evolve(null,observation(),{now:1000}),proof='b'.repeat(64);
-    const closed=evolve(first,observation({gaps:[],status:'verified',verification_id:proof,proof_sha256:proof}),{now:2000});
+    const closed=evolve(first,observation({gaps:[],status:'verified',verification_id:proof,proof_sha256:proof,verification_at:new Date(1500).toISOString()}),{now:2000});
     const opened=evolve(closed,observation(),{now:3000});
     expect(Object.values(opened.issues)[0]).toMatchObject({status:'open',last_verification_id:proof});
     expect(Object.values(opened.issues)[0].verification_id).toBeUndefined();
     expect(Object.values(opened.issues)[0].verified_at).toBeUndefined();
   });
+});
+
+it('故障前旧成功run不能关闭修复后的缺口，修复后新真实完成时间才可关闭',()=>{
+ const first=evolve(null,observation(),{now:1000}),proof='d'.repeat(64);
+ Object.values(first.issues)[0].repaired_at=2000;
+ const old=evolve(first,observation({gaps:[],status:'verified',proof_sha256:proof,verification_id:proof,verification_at:new Date(500).toISOString()}),{now:3000});
+ expect(old.status).toBe('open');expect(Object.values(old.issues)[0].status).toBe('awaiting_verification');
+ const fresh=evolve(old,observation({gaps:[],status:'verified',proof_sha256:proof,verification_id:proof,verification_at:new Date(2500).toISOString()}),{now:4000});
+ expect(Object.values(fresh.issues)[0].status).toBe('closed');
+});
+it('已关闭故障复发必须重新设定检测时刻，不能借之前新于首次检测的proof',()=>{
+ const first=evolve(null,observation(),{now:1000}),proof='d'.repeat(64);
+ const closed=evolve(first,observation({gaps:[],status:'verified',proof_sha256:proof,verification_id:proof,verification_at:new Date(1500).toISOString()}),{now:2000});
+ const reopened=evolve(closed,observation(),{now:3000});
+ const stale=evolve(reopened,observation({gaps:[],status:'verified',proof_sha256:proof,verification_id:proof,verification_at:new Date(1500).toISOString()}),{now:4000});
+ expect(Object.values(stale.issues)[0].status).toBe('awaiting_verification');
 });
