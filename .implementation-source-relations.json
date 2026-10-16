@@ -439,7 +439,7 @@
     
     {"owner_path":"packages/brain/src/lib/native-maintenance-snapshot.js","path":"packages/brain/src/lib/native-maintenance-snapshot.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/native-maintenance-snapshot.js","path":"packages/brain/src/__tests__/integration/native-maintenance-snapshot.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/native-maintenance-snapshot.js","path":"changes/cp-10161752-native-snapshot-scope.md","role":"release"},
+    
     {"owner_path":"packages/brain/src/lib/workflow-assembly-native.js","path":"packages/brain/src/lib/workflow-assembly-native.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/workflow-assembly-native-source.js","path":"packages/brain/src/lib/workflow-assembly-native-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/workflow-assembly-native-registration.js","path":"packages/brain/src/lib/workflow-assembly-native-registration.test.js","role":"verification"},
