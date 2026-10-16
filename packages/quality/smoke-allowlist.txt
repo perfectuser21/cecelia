@@ -1,5 +1,6 @@
 # Smoke PASS 基线（allowlist）
 # 列表内脚本失败 → CI 红（棘轮闸）
+authoring-execution-smoke.sh
 # 新增脚本默认须加入此文件或 smoke-denylist.txt（新债不许欠）
 task-intake-smoke.sh
 agent-model-change-smoke.sh

@@ -20,4 +20,11 @@ describe('固定 GitHub 文件安全读取',()=>{
     }})).rejects.toThrow(/来源/);
     const fetchFn=vi.fn();await expect(readFixedGitFile({repo:'evil/repo',path:'contract.json',revision},{fetchFn})).rejects.toThrow();expect(fetchFn).not.toHaveBeenCalled();
   });
+  it('调用方取消及总deadline约束实际Git网络请求，过期时零请求',async()=>{
+    const f=git(),control=new AbortController();control.abort();
+    await expect(readFixedGitFile({repo,path:'contract.json',revision},{fetchFn:f.fetchFn,resolveToken:async()=> 'test-token',signal:control.signal})).rejects.toThrow();
+    expect(f.calls).toHaveLength(0);
+    await expect(readFixedGitFile({repo,path:'contract.json',revision},{fetchFn:f.fetchFn,resolveToken:async()=> 'test-token',deadline:Date.now()-1})).rejects.toThrow();
+    expect(f.calls).toHaveLength(0);
+  });
 });

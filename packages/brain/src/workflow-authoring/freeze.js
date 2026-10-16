@@ -15,13 +15,15 @@ const fail=(message,code='definition_freeze_proof_invalid')=>{throw Object.assig
 export async function prepareDefinitionFreeze(definition, options={}) {
   const source={repo:definition.source?.repo,path:definition.source?.ref,revision:definition.source?.revision};
   validateGitSource(source);
-  const readFile=options.readFile||((s)=>readFixedGitFile(s,options)),cache=new Map(),deadline=Date.now()+60000;
+  const readFile=options.readFile||((s)=>readFixedGitFile(s,options)),cache=new Map(),deadline=Math.min(options.deadline??Infinity,Date.now()+60000);
   let totalBytes=0;
   const read=async s=>{
+    if(options.signal?.aborted||Date.now()>=deadline)fail('readiness_deadline_exceeded');
     validateGitSource(s);const key=JSON.stringify([s.repo,s.path,s.revision]);
     if(!cache.has(key)){
       if(cache.size>=200||Date.now()>deadline)fail('来源核验超过文件数量或总时限');
       const content=await readFile(s);
+      if(options.signal?.aborted||Date.now()>=deadline)fail('readiness_deadline_exceeded');
       if(typeof content!=='string'||Buffer.byteLength(content)>1024*1024)fail('来源文件不是有界文本');
       totalBytes+=Buffer.byteLength(content);if(totalBytes>8*1024*1024||Date.now()>deadline)fail('来源核验超过总字节或时限');
       cache.set(key,content);

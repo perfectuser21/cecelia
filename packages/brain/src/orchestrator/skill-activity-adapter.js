@@ -19,7 +19,7 @@ export async function createSkillEnvelope(identity,{readFile=async source=>(awai
     input:identity.input,input_sha256:identity.input_sha256,definition_sha256:identity.plan.definition_sha256??null,
     output_schema:identity.plan.output_schema,output_mapping:identity.plan.output_mapping,activities,
     mode:identity.mode??'candidate',authoring_task_id:identity.authoring_task_id??null,compose_sha256:identity.compose_sha256??null,
-    release_id:identity.release_id??null};
+    release_id:identity.release_id??null,...(identity.candidateTrace?{candidate_trace:identity.candidateTrace}:{})};
   return {...envelope,envelope_sha256:definitionDigest(envelope)};
 }
 export function assertSkillEnvelope(envelope){

@@ -54,6 +54,9 @@ export function validateRequest(request) {
   requireCondition(request.registration_protocol === undefined || request.registration_protocol === 'definition-freeze-v1', '未知 registration_protocol');
   requireCondition(request.assembly_mode === undefined || typeof request.assembly_mode === 'boolean', 'assembly_mode 必须是布尔值');
   requireCondition(!request.assembly_mode || request.registration_protocol === 'definition-freeze-v1', '装配必须使用冻结协议');
+  requireCondition(request.execution_protocol===undefined||request.execution_protocol==='workflow-authoring-execution-v1','未知 execution_protocol');
+  requireCondition(!request.execution_protocol||request.assembly_mode===true,'真实执行资格必须使用严格装配冻结协议');
+  if(request.validation_input!==undefined)object(request.validation_input,'validation_input');
   requireCondition(['create', 'update'].includes(request.operation), 'operation 必须是 create 或 update');
   text(request.goal, 'goal');
   text(request.actor, 'actor', 128);
