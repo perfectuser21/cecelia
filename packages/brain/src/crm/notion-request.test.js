@@ -15,3 +15,32 @@ describe('Notion实际HTTP适配器的创建一次性边界', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('Notion请求固定域名与严格路径边界', () => {
+  it.each([
+    'https://evil.example/pages', '//evil.example/pages', '\\evil.example\\pages',
+    '/pages/../../evil', '/pages/%2f%2fevil.example', '/pages/%5cevil',
+    '/pages/page?redirect=https://evil.example', '/pages/page#evil',
+    '/pages\n', '/pages/page\n', '/pages/page\r\n', '/pages/page\r',
+    '/pages/page\u2028', '/pages/page\u2029', '/pages/page\0',
+    { toString: () => '/pages' },
+  ])('恶意或非字符串路径在发HTTP前拒绝：%j', async path => {
+    const fetchImpl = vi.fn().mockResolvedValue(success());
+    await expect(createNotionRequest({ token: 'test-only', fetchImpl })(path)).rejects.toMatchObject({ code: 'invalid_notion_path' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+  it.each(['/pages', '/pages/page-123', '/pages/page-123/markdown', '/blocks/block-123/children', '/data_sources/source-123', '/data_sources/source-123/query'])('合法路径仅能改变pathname且禁止重定向：%s', async path => {
+    const fetchImpl = vi.fn().mockResolvedValue(success());
+    await createNotionRequest({ token: 'test-only', fetchImpl })(path);
+    const [target, options] = fetchImpl.mock.calls[0];
+    expect(target).toBeInstanceOf(URL);
+    const url = new URL(target);
+    expect(url.origin).toBe('https://api.notion.com');
+    expect(url.pathname).toBe(`/v1${path}`);
+    expect(url.search).toBe('');
+    expect(url.hash).toBe('');
+    expect(url.username).toBe('');
+    expect(url.password).toBe('');
+    expect(options.redirect).toBe('error');
+  });
+});
