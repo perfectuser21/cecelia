@@ -3,6 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {authoringExecutionDatabase} from '../fixtures/authoring-execution-db.js';
 import {prepareDefinitionFreeze} from '../../workflow-authoring/freeze.js';
 import {definitionDigest} from '../../workflow-authoring/contracts.js';
+import {resolveInvocation} from '../../invocations/resolve.js';
 const orchestration=await import('../../workflow-authoring/assembly-orchestration.js').catch(()=>({}));
 let f;afterEach(async()=>{await f?.close();f=null;});
 async function ownerTask(){
@@ -15,6 +16,9 @@ it('无冲突create冻结真实候选paused，重放回读同owner；其它autho
  f=await authoringExecutionDatabase();const a=await ownerTask();
  const run=async task=>{const c=await f.pool.connect();try{await c.query('BEGIN');const v=await orchestration.prepareAuthoringCandidate(c,task.id,task.state,{freezeProof:task.proof,tenantId:'default'});await c.query('COMMIT');return v;}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}};
  const owner=await run(a);expect(owner.authoring_task_id).toBe(a.id);expect(owner.slots).toHaveLength(1);
+ const resolved=await resolveInvocation(f.pool,{target:{kind:'workflow',id:a.id},mode:'candidate',authoring_task_id:a.id,
+  compose_sha256:definitionDigest(f.definition),input:{text:'abc'}},'default',{readFile:f.reader,probeRuntime:async()=>({ready:true})});
+ expect(resolved.envelope.candidate_trace).toEqual(owner);
  expect((await f.pool.query('SELECT status FROM workflows WHERE id=$1',[owner.workflow_id])).rows[0].status).toBe('paused');
  expect((await f.pool.query('SELECT count(*)::int n FROM activity_release_state')).rows[0].n).toBe(0);
  const tables=['workflows','activities','steps','workflow_activity_refs','workflow_definition_versions','activity_definition_versions','workflow_production_recipes'];
