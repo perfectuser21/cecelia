@@ -86,12 +86,12 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
         if(health.blocked.length)resourceCondition='safe_stop';
         else if(health.degraded.length || health.stale.length || health.unknown.length)resourceCondition='unknown';
       }catch{check();resourceCondition='unknown';}
-      let driverError=false;
+      let driverError=false,advanced;
       const tenantConflict=row.tenant_id!=null && row.payload?.tenant_id!=null && row.tenant_id!==row.payload.tenant_id;
       try{
         if(!tenantConflict && resourceCondition==='ready' && isAssemblyReconcileEnvironment(identity.database)
           && (options.advanceAuthoring || !options.readReadiness)){
-          try{check();await (options.advanceAuthoring??defaultAdvance)(pool,row.id,{...options.authoringOptions,tenantId,deadline,signal:options.signal});check();}
+          try{check();advanced=await (options.advanceAuthoring??defaultAdvance)(pool,row.id,{...options.authoringOptions,tenantId,deadline,signal:options.signal});check();}
           catch{check();driverError=true;}
         }
         readiness=tenantConflict?{}:resourceCondition!=='ready'
@@ -107,7 +107,9 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
         readiness={protocol:'workflow-authoring-execution-v1',status:'blocked',resource_condition:'unknown',gaps:[{code:'readiness_identity_mismatch'}]};
       }
       if(driverError)readiness={...readiness,status:'blocked',gaps:[...readiness.gaps??[],{code:'driver_unavailable'}]};
-      const observation={...readiness,tenant_id:tenantId,object_id:row.id,target_version:target,definition_sha256:digest};
+      const pending=advanced?.status==='awaiting_execution' && resourceCondition==='ready' && readiness.resource_condition!=='safe_stop'
+        && !readiness.gaps?.some(g=>/resource|authority_revoked|permission|isolation|environment/.test(g.code));
+      const observation={...readiness,awaiting_execution:pending,tenant_id:tenantId,object_id:row.id,target_version:target,definition_sha256:digest};
       phase='write';
       try{
         check();await client.query('BEGIN');transaction=true;
@@ -129,7 +131,7 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
             if(audit.repaired.some(g=>g.code===issue.gap.code && (g.activity_key??null)===issue.gap.activity_key))issue.repaired_at=repairedAt;
           }
         }
-        const finalObservation={...observation,gaps:[...observation.gaps??[],...audit.gaps]};
+        const finalObservation={...observation,awaiting_execution:pending || audit.repaired.length>0 && resourceCondition==='ready' && observation.resource_condition!=='safe_stop',gaps:[...observation.gaps??[],...audit.gaps]};
         const state=reconcileGapState(previous,finalObservation,{now:now()});
         state.repair_sequence=sameVersion?before.repair_sequence??0:0;
         if(sameVersion && before.revalidation_request)state.revalidation_request=before.revalidation_request;

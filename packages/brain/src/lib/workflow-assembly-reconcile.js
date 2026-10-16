@@ -33,13 +33,14 @@ export function reconcileGapState(previous, observation, {now = Date.now()} = {}
     if (fresh) {issue.verification_id=observation.verification_id;issue.verified_at=now;}
   }
   const currentVerified=verified && !Object.values(issues).some(issue=>issue.target_version===target_version && issue.definition_sha256===definition_sha256 && issue.status!=='closed');
-  const waiting=observation.resource_condition!=='ready';
+  const pending=observation.awaiting_execution===true && observation.resource_condition!=='safe_stop';
+  const waiting=observation.resource_condition!=='ready' && !pending;
   const sameVersion=previous?.target_version===target_version && previous.definition_sha256===definition_sha256;
   let attempts=sameVersion?previous.resource_attempts??0:0,next=sameVersion?previous.next_check_at??0:0;
   if (waiting && now>=next) {attempts++;next=now+Math.min(3600000,60000*2**Math.min(attempts-1,6));}
   if (!waiting) {attempts=0;next=0;}
   return {protocol:'workflow-assembly-reconcile-v1',tenant_id,object_id,target_version,definition_sha256,issues,
-    status:waiting?'waiting_resource':currentVerified?'verified':'open',checked_at:now,next_check_at:next,
-    resource_condition:observation.resource_condition ?? 'unknown',resource_attempts:attempts,qualified:observation.qualified===true,
+    status:waiting?'waiting_resource':currentVerified?'verified':pending?'awaiting_execution':'open',checked_at:now,next_check_at:next,
+    resource_condition:observation.resource_condition ?? 'unknown',resource_attempts:attempts,qualified:verified,
     ...(currentVerified?{verification_id:observation.verification_id}: {})};
 }
