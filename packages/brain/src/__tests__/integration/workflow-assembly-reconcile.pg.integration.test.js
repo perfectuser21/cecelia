@@ -112,3 +112,13 @@ it('真实PG inactive人工引用、篡改owner、非scratch环境都不自动�
  const row=(await x.db.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0];
  expect((await api.auditAssemblyDerivations(x.db,row,{database:'cecelia',repair:true,check:()=>{}})).gaps).toContainEqual({code:'candidate_environment_unsupported'});
 });
+it('真实PG外层事务中后发现人工冲突，必须回滚此前本次派生修复',async()=>{
+ const x=await frozenFixture();await x.db.query('DELETE FROM activity_version_builds WHERE build_id=$1',[x.av]);
+ await x.db.query('UPDATE workflow_activity_refs SET active=false WHERE id=$1',[x.reference]);
+ const row=(await x.db.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0];
+ await x.db.query('BEGIN');
+ try{const out=await api.auditAssemblyDerivations(x.db,row,{database:'cecelia_scratch',repair:true,transaction:'existing',check:()=>{}});
+   expect(out.gaps).toContainEqual({code:'fixed_reference_conflict'});await x.db.query('COMMIT');}
+ catch(error){await x.db.query('ROLLBACK');throw error;}
+ expect((await x.db.query('SELECT count(*)::int n FROM activity_version_builds WHERE build_id=$1',[x.av])).rows[0].n).toBe(0);
+});
