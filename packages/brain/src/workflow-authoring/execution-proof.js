@@ -9,6 +9,7 @@ const same=(a,b)=>definitionDigest(a)===definitionDigest(b);
 async function snapshot(pool,options,action){
  const deadline=options.deadline??Date.now()+15000;
  const check=()=>{if(options.signal?.aborted||Date.now()>=deadline)fail('readiness_deadline_exceeded');};
+ if(options.transactionClient)return action(options.transactionClient,check);
  check();const client=await pool.connect();
  try{
   await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -28,7 +29,7 @@ export async function readInvocationLedger(db,taskId){
  requireCondition(task?.payload?.invocation,'调用任务不存在',404);
  const runId=task.payload.invocation.dispatch?.run_id;
  const runs=(await db.query('SELECT * FROM task_runs WHERE task_id=$1 ORDER BY started_at',[taskId])).rows;
- const events=(await db.query("SELECT event_type,payload,created_at FROM task_events WHERE task_id=$1 AND event_type LIKE 'invocation_%' ORDER BY created_at",[taskId])).rows;
+ const events=(await db.query("SELECT event_type,payload,created_at FROM task_events WHERE task_id=$1 AND event_type LIKE 'invocation_%' ORDER BY created_at,event_type,payload::text",[taskId])).rows;
  const spans=runId?(await db.query('SELECT * FROM spans WHERE run_id=$1 ORDER BY started_at,id',[runId])).rows:[];
  return {task,runs,events,spans};
 }
@@ -49,7 +50,7 @@ async function proofInSnapshot(db,{authoringTaskId,tenantId='default',definition
  if(!owner)fail('candidate_owner_missing');base.candidate_owner=owner;
  const execution=row.result.workflow_authoring_execution;
  if(!execution||execution.protocol!==EXECUTION_PROTOCOL||execution.definition_sha256!==digest
-  ||execution.tenant_id!==tenantId||definitionDigest(execution.input)!==execution.input_sha256)fail('candidate_execution_missing');
+  ||execution.tenant_id!==tenantId||definitionDigest(execution.input)!==execution.input_sha256||!same(execution.input,state.request.validation_input))fail('candidate_execution_missing');
  const refs=execution.invocations;
  if(!Array.isArray(refs)||refs.length!==definition.activities.length+1||new Set(refs.map(r=>r.task_id)).size!==refs.length)fail('candidate_execution_coverage_missing');
  if(invocationTaskIds&&!same(invocationTaskIds,refs.map(r=>r.task_id)))fail('candidate_execution_identity_mismatch');
@@ -100,7 +101,8 @@ async function readProof(pool,identity,options,readiness){
   if(!base.gaps.length){base.status='verified';if(readiness)base.resource_condition='ready';}
  }catch(error){base.gaps.push({code:error.code==='57014'?'readiness_deadline_exceeded':error.code??'execution_evidence_unverified'});}
  base.evidence=JSON.parse(JSON.stringify(base.evidence));
- base.proof_sha256=definitionDigest(base);base.verification_id=base.status==='verified'?base.proof_sha256:null;
+ const {resource_condition,gaps,verification_id,...stable}=base;
+ base.proof_sha256=definitionDigest(stable);base.verification_id=base.status==='verified'?base.proof_sha256:null;
  return base;
 }
 export async function readAuthoringExecutionProof(pool,identity,options={}){return readProof(pool,identity,options,false);}

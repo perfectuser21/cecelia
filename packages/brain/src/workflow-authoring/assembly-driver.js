@@ -15,14 +15,15 @@ async function control(db,id,tenantId){
  requireCondition(row.result?.workflow_authoring?.request?.execution_protocol===EXECUTION_PROTOCOL,'execution_protocol_required',409);
  await requireCandidateEnvironment(db);return row;
 }
-async function recordInvocation(pool,id,definitionSha,input,ref){
+async function recordInvocation(pool,id,definitionSha,input,ref,tenantId){
  const client=await pool.connect();
  try{
-  await client.query('BEGIN');const row=(await client.query('SELECT result FROM tasks WHERE id=$1 FOR UPDATE',[id])).rows[0];
-  requireCondition(row.result.workflow_authoring.outputs.compose.definition_sha256===definitionSha,'定义已变化',409);
+  await client.query('BEGIN');const row=(await client.query('SELECT id,tenant_id,status,claimed_by,payload,result FROM tasks WHERE id=$1 FOR UPDATE',[id])).rows[0];
+  requireCondition(row?.status==='in_progress'&&row.claimed_by&&(row.payload?.tenant_id??'default')===tenantId&&(!row.tenant_id||row.tenant_id===tenantId),'authoring_authority_revoked',409);
+  requireCondition(row.payload?.workflow_authoring===true&&row.result.workflow_authoring.request.execution_protocol===EXECUTION_PROTOCOL&&row.result.workflow_authoring.outputs.compose.definition_sha256===definitionSha&&definitionDigest(row.result.workflow_authoring.request.validation_input)===definitionDigest(input),'定义或输入已变化',409);
   const prior=row.result.workflow_authoring_execution;
-  requireCondition(!prior||prior.definition_sha256===definitionSha&&prior.input_sha256===definitionDigest(input),'候选输入已固定，不能覆盖',409);
-  const state=prior??{protocol:EXECUTION_PROTOCOL,definition_sha256:definitionSha,tenant_id:'default',input,input_sha256:definitionDigest(input),invocations:[]};
+  requireCondition(!prior||prior.protocol===EXECUTION_PROTOCOL&&prior.tenant_id===tenantId&&prior.definition_sha256===definitionSha&&prior.input_sha256===definitionDigest(input),'候选输入已固定，不能覆盖',409);
+  const state=prior??{protocol:EXECUTION_PROTOCOL,definition_sha256:definitionSha,tenant_id:tenantId,input,input_sha256:definitionDigest(input),invocations:[]};
   if(!state.invocations.some(v=>v.task_id===ref.task_id))state.invocations.push(ref);
   await client.query("UPDATE tasks SET result=COALESCE(result,'{}'::jsonb)||jsonb_build_object('workflow_authoring_execution',$2::jsonb) WHERE id=$1",[id,JSON.stringify(state)]);
   await client.query('COMMIT');return state;
@@ -32,8 +33,9 @@ async function enqueue(pool,row,kind,slotKey,input,options){
  const id=row.id,state=row.result.workflow_authoring,digest=state.outputs.compose.definition_sha256,tenantId=options.tenantId;
  const target=kind==='workflow'?{kind,id}:candidateSlotTarget({authoringTaskId:id,composeSha256:digest,slotKey,tenantId});
  const requestKey=`authoring:${id}:${definitionDigest({digest,kind,slotKey:slotKey??null,input}).slice(0,40)}`;
+ await control(pool,id,tenantId);
  const accepted=await invoke(pool,{mode:'candidate',authoring_task_id:id,compose_sha256:digest,target,input,request_key:requestKey},tenantId,options.invocationOptions??options);
- return recordInvocation(pool,id,digest,state.request.validation_input,{task_id:accepted.task_id,kind,slot_key:slotKey??null,request_key:requestKey});
+ return recordInvocation(pool,id,digest,state.request.validation_input,{task_id:accepted.task_id,kind,slot_key:slotKey??null,request_key:requestKey},tenantId);
 }
 export async function advanceAuthoringAssembly(pool,authoringTaskId,options={}){
  const tenantId=options.tenantId??'default',deadline=options.deadline??Date.now()+15000;
@@ -57,6 +59,7 @@ export async function advanceAuthoringAssembly(pool,authoringTaskId,options={}){
    check();execution=await enqueue(pool,row,'workflow',null,state.request.validation_input,{...options,tenantId});
   }
   const workflowRef=execution.invocations.find(v=>v.kind==='workflow'),ledger=await readInvocationLedger(pool,workflowRef.task_id);
+  if(['failed','cancelled'].includes(ledger.task.status))return {status:'blocked',gaps:[{code:ledger.task.status==='failed'?'candidate_execution_failed':'authoring_authority_revoked',task_id:ledger.task.id}],task_ids:execution.invocations.map(v=>v.task_id)};
   if(!['completed','completed_no_pr'].includes(ledger.task.status))return {status:'awaiting_execution',task_ids:execution.invocations.map(v=>v.task_id)};
   const verified=verifyInvocationLedger(ledger,{requireSpans:true});
   for(const slot of owner.slots)if(!execution.invocations.some(v=>v.kind==='activity'&&v.slot_key===slot.slot_key)){
@@ -64,6 +67,13 @@ export async function advanceAuthoringAssembly(pool,authoringTaskId,options={}){
   }
   check();const readiness=await readAuthoringReadiness(pool,row.id,{...options,...options.invocationOptions,tenantId,deadline});
   if(readiness.status!=='verified')return {status:'awaiting_execution',task_ids:execution.invocations.map(v=>v.task_id),gaps:readiness.gaps};
-  return {status:'verified',readiness};
+  const deps={validateDefinition,validateReferences,registerWorkflow,invocationOptions:{...options,...options.invocationOptions,deadline}};
+  row=await control(pool,authoringTaskId,tenantId);state=row.result.workflow_authoring;
+  if(state.stage==='verify'){
+   check();await submitAuthoring(pool,row.id,{stage:'verify',revision:state.revision,submission_id:`auto-verify:${readiness.proof_sha256}`,output:{validation_task_id:workflowRef.task_id}},deps);
+   row=await control(pool,authoringTaskId,tenantId);state=row.result.workflow_authoring;
+  }
+  check();const registered=await submitAuthoring(pool,row.id,{stage:'register',revision:state.revision,submission_id:`auto-register:${readiness.proof_sha256}`,output:{}},deps);
+  return {status:'completed',qualification:registered.state.outputs.register};
  }catch(error){return {status:'blocked',gaps:[{code:error.code==='WORKFLOW_AUTHORING_INVALID'?error.message:error.code??'authoring_advance_failed'}]};}
 }
