@@ -13,7 +13,7 @@ export async function auditAssemblyDerivations(db,task,options={}){
   const out={gaps:[],detected:[],repaired:[]},gap=(code,slot=null)=>{
     const item=slot?{code,activity_key:slot}:{code};out.gaps.push(item);out.detected.push(item);
   };
-  if(owns){check();await db.query('BEGIN');}
+  check();await db.query(owns?'BEGIN':'SAVEPOINT assembly_reconcile_derived');
   try{
     const actual=(await db.query('SELECT current_database() AS name')).rows[0]?.name;check();
     if(actual!=='cecelia_scratch' || options.database && options.database!==actual)deny('candidate_environment_unsupported');
@@ -93,9 +93,10 @@ export async function auditAssemblyDerivations(db,task,options={}){
         out.repaired.push({code:'recipe_missing'});out.gaps=out.gaps.filter(g=>g.code!=='recipe_missing');
       }
     }else if(expected.length!==slots.length || definitionDigest(recipe)!==definitionDigest(expected))gap('recipe_conflict');
-    check();if(owns)await db.query('COMMIT');return out;
+    check();await db.query(owns?'COMMIT':'RELEASE SAVEPOINT assembly_reconcile_derived');return out;
   }catch(error){
-    if(owns)await db.query('ROLLBACK');
+    await db.query(owns?'ROLLBACK':'ROLLBACK TO SAVEPOINT assembly_reconcile_derived');
+    if(!owns)await db.query('RELEASE SAVEPOINT assembly_reconcile_derived');
     if(!error.assemblyGap)throw error;
     return {gaps:[{code:error.assemblyGap}],detected:[...out.detected,{code:error.assemblyGap}],repaired:[]};
   }
