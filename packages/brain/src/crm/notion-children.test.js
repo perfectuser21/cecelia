@@ -15,12 +15,20 @@ function setup() {
   const request = vi.fn(async (path, method = 'GET', body) => {
     const config = path.includes(id(5)) ? binding.fields.reports : fields;
     if (path.startsWith('/data_sources/') && method === 'GET') return schema(config);
-    if (path.endsWith('/query')) return { results: [...pages.values()].filter(p => p.parent.data_source_id === config.data_source_id && p.properties.Brain记录ID.rich_text[0].plain_text === body.filter.rich_text.equals), has_more: false };
+    if (path.endsWith('/query')) return { results: [...pages.values()].filter(p => p.parent.data_source_id === config.data_source_id && (p.properties.Brain记录ID.rich_text[0].plain_text ?? p.properties.Brain记录ID.rich_text[0].text?.content) === body.filter.rich_text.equals), has_more: false };
     if (path === '/pages' && method === 'POST') {
       const recordId = body.properties.Brain记录ID.rich_text[0].text.content;
       const record = recordId === message.id ? message : report;
       const p = page(record, record === message ? fields : binding.fields.reports, id(nextId++));
+      for (const [key, value] of Object.entries(body.properties)) {
+        const type = Object.keys(value)[0]; p.properties[key] = { type, ...value };
+      }
       pages.set(p.id, p); return p;
+    }
+    if (path.startsWith('/pages/') && method === 'PATCH') {
+      const p = pages.get(path.split('/')[2]);
+      for (const [key, value] of Object.entries(body.properties)) p.properties[key] = { type: Object.keys(value)[0], ...value };
+      return p;
     }
     if (path.startsWith('/pages/')) return pages.get(path.split('/')[2]);
     throw Error('unexpected request');
@@ -126,5 +134,75 @@ describe('CRM原文与报告只写已登记库', () => {
     const creates = request.mock.calls.filter(c => c[0] === '/pages');
     expect(creates).toHaveLength(1);
     expect(creates[0][2].properties.Brain记录ID.rich_text[0].text.content).toBe(report.id);
+  });
+  it('报告类型周期与消息来源写入指定machine属性，日报view可筛选', async () => {
+    const { store, request } = setup(), normal = request.getMockImplementation();
+    const extended = { ...binding, fields: {
+      messages: { ...fields, direction: '消息方向', source_account: '来源账号', native_id: '消息ID' },
+      reports: { ...binding.fields.reports, report_type: '报告类型', period_start: '周期开始', period_end: '周期结束' },
+    } };
+    request.mockImplementation(async (path, method, body) => {
+      const value = await normal(path, method, body);
+      if (path.startsWith('/data_sources/') && !method) Object.assign(value.properties, path.includes(id(5)) ? { 报告类型: { type: 'select' }, 周期开始: { type: 'date' }, 周期结束: { type: 'date' } } : { 消息方向: { type: 'select' }, 来源账号: { type: 'rich_text' }, 消息ID: { type: 'rich_text' } });
+      return value;
+    });
+    await projectCustomerChildren({}, store, request, extended, customer);
+    const creates = request.mock.calls.filter(c => c[0] === '/pages');
+    expect(creates[0][2].properties.消息方向).toEqual({ select: { name: '客户' } });
+    expect(creates[0][2].properties.来源账号.rich_text[0].text.content).toBe('wx-self');
+    expect(creates[1][2].properties.报告类型).toEqual({ select: { name: '日报' } });
+    expect(creates[1][2].properties.周期开始).toEqual({ date: { start: '2026-10-16' } });
+    expect(creates[1][2].properties.周期结束).toEqual({ date: { start: '2026-10-16' } });
+  });
+  it('同UUID旧报告只补指定machine属性，不改正文和人工属性', async () => {
+    const { store, request, pages } = setup(), normal = request.getMockImplementation();
+    const extended = { ...binding, fields: { reports: { ...binding.fields.reports, report_type: '报告类型' } } };
+    const p = page(report, binding.fields.reports, id(30));
+    p.properties.人工备注 = { type: 'rich_text', rich_text: [{ plain_text: '人工保留' }] };
+    pages.set(p.id, p);
+    store.listCustomerMessages.mockResolvedValue([]);
+    store.listCustomerReports.mockResolvedValue([{ ...report, message_ids: [], notion_page_id: p.id, projection_pending: false }]);
+    request.mockImplementation(async (path, method, body) => {
+      const value = await normal(path, method, body);
+      if (path.startsWith('/data_sources/') && !method) value.properties.报告类型 = { type: 'select' };
+      return value;
+    });
+    await projectCustomerChildren({}, store, request, extended, customer);
+    const patches = request.mock.calls.filter(c => c[1] === 'PATCH');
+    expect(patches).toHaveLength(1);
+    expect(patches[0]).toEqual([`/pages/${p.id}`, 'PATCH', { properties: { 报告类型: { select: { name: '日报' } } } }]);
+    expect(p.properties.人工备注.rich_text[0].plain_text).toBe('人工保留');
+    expect(request.mock.calls.some(c => c[0] === '/pages')).toBe(false);
+    expect(store.markReportProjected).toHaveBeenCalledWith({}, binding.tenant_id, report.id, p.id);
+  });
+  it('可选machine属性类型不符零写入', async () => {
+    const { store, request } = setup(), normal = request.getMockImplementation();
+    const extended = { ...binding, fields: { reports: { ...binding.fields.reports, report_type: '报告类型' } } };
+    request.mockImplementation(async (path, method, body) => {
+      const value = await normal(path, method, body);
+      if (path.startsWith('/data_sources/') && !method) value.properties.报告类型 = { type: 'rich_text' };
+      return value;
+    });
+    await expect(projectCustomerChildren({}, store, request, extended, customer)).rejects.toMatchObject({ code: 'invalid_schema' });
+    expect(request.mock.calls.some(c => ['POST', 'PATCH'].includes(c[1]))).toBe(false);
+  });
+  it('补属性后读回仍不符则不得mark，GET返回别的页面也零PATCH', async () => {
+    for (const wrongPage of [false, true]) {
+      const { store, request, pages } = setup(), normal = request.getMockImplementation();
+      const extended = { ...binding, fields: { reports: { ...binding.fields.reports, report_type: '报告类型' } } };
+      const p = page(report, binding.fields.reports, id(30)); pages.set(p.id, p);
+      store.listCustomerMessages.mockResolvedValue([]);
+      store.listCustomerReports.mockResolvedValue([{ ...report, message_ids: [], notion_page_id: p.id }]);
+      request.mockImplementation(async (path, method, body) => {
+        if (method === 'PATCH') return p;
+        const value = await normal(path, method, body);
+        if (path.startsWith('/data_sources/') && !method) value.properties.报告类型 = { type: 'select' };
+        if (wrongPage && path.startsWith('/pages/')) return { ...value, id: id(99) };
+        return value;
+      });
+      await expect(projectCustomerChildren({}, store, request, extended, customer)).rejects.toMatchObject({ code: wrongPage ? 'external_identity_conflict' : 'projection_readback_mismatch' });
+      expect(store.markReportProjected).not.toHaveBeenCalled();
+      if (wrongPage) expect(request.mock.calls.some(c => c[1] === 'PATCH')).toBe(false);
+    }
   });
 });

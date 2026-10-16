@@ -323,3 +323,12 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
   Test: manual:bash -c "cd packages/brain && npx vitest run src/routes/__tests__/tree-legacy-layout.test.js src/lib/__tests__/tree-legacy-layout.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] legacylayoutatomic 真实HTTP及隔离PG验证稳定流程改挂、冲突整批回滚、共享及冻结Activity保留、孤立退役、原引用保留、幂等与原任务结果保留；撤销先持锁或等待期间正式版本先提交时均拒绝写入。
   Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-127.0.0.1} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/__tests__/integration/tree-legacy-layout.pg.integration.test.js src/__tests__/integration/tree-legacy-layout-http.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+
+# CRM 受控录入与关系投影（任务 ab9a936c）
+
+- [x] [BEHAVIOR] crmfieldownership 人工白名单、缺字段保留、托管正文边界、显式清空、关闭时不访问数据库、分页失败不推进及范围缩小不越权回填。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/notion-mapping.test.js src/crm/notion-content.test.js src/crm/notion-sync.test.js src/crm/router.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] crmrelationprojection 原文和日报精确身份关联到既有数据源，异步未知不记成功，创建响应未知后重放找回原页，不新增客户库。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/notion-children.test.js src/crm/__tests__/store.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] crmcanonicalpg 隔离PostgreSQL验证同名不并、账号人设、跨租户外键、人工更新审计、同分钟修改、消息及报告关联、旧版本回执不清新待办。
+  Test: manual:bash -c "cd packages/brain && CRM_STORE_SCRATCH_TEST=1 npx vitest run src/crm/__tests__/store.integration.test.js --maxWorkers=1 --minWorkers=1"

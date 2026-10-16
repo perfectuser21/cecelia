@@ -71,6 +71,7 @@ import { runOpsNotionPush } from './notion-push-sync.js';
 import { runOpsNotionIngest } from './ops-notion-ingest.js';
 import { runNotionInletIngest } from './notion-inlet-ingest.js';
 import { gtdSyncJobHandler } from './notion-gtd-sync.js';
+import { runCrmSyncJobs } from './crm/notion-sync.js';
 import { defaultExec } from './host-exec.js';
 import { maybeRunCrystalJudge } from './crystal-judge.js';
 import { reapOpenclawAgentRuns } from './openclaw-agent-executor.js';
@@ -179,6 +180,7 @@ export const JOBS = [
   { name: 'notion-directory', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runDirectoryJob(pool), description: '六层目录：先导入人工组织树，再按固定身份分批投影机器关系；锁与游标防重入，未知留缺口，读回后收据' },
   { name: 'notion-inlet-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runNotionInletIngest(pool), description: '✍️入口血管（三面模型PR②b，决策297ffee5）：遍历注册表 face=inlet&active 的库，「决策」库→decisions、员工Skill库zip→/api/skill-eval/upload；收据表幂等，人改了再收并留痕，机器不写入口库；自gate 5min' },
   { name: 'notion-gtd-sync', cadence: { everySec: 30 }, needsPool: true, timeoutMs: 30_000, livenessIntervalSec: 30, handler: (pool) => gtdSyncJobHandler(pool), description: '秋米中文GTD表↔英文Tasks库双向同步+入账+急停+回写（QIUMI_SYNC_ENABLED 门，handler 只确保 30s 自循环在跑并回报上次结果；活性按 handler 自报 liveness_at 算，09-24 卡死案；决策 b8abd28c，task b7efdbff）' },
+  { name: 'crm-notion-sync', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 150_000, handler: runCrmSyncJobs, description: 'CRM登记源回读和Brain结果投影；CRM_SYNC_ENABLED显式启用，默认关闭' },
   { name: 'ops-notion-ingest', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionIngest(pool, { execFn: defaultExec }), description: '运行舱人工列回读（Notion→Brain，last_edited_time增量）。含停用意图落实——主理人拍板直接生效真停n8n，故幂等+留痕+失败落enable_error显红' },
   // 顺序要紧：先把编码线格子成败搬进判官口粮，再让判官判——反过来判的是上一轮的旧账
   { name: 'crystal-coding-evidence', cadence: { everySec: 600 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => syncCodingEvidence({ dbPool: pool }), description: '编码线九格证据同步（10min自gate，harness_attempts+sequencer_ledger→crystal_run_evidence，只补账不代判，判官口粮第二铲）' },
