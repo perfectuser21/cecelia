@@ -27,7 +27,7 @@ export async function scriptDefinitionDatabase({reuseOldImplementation=false}={}
     await db.query(migrationTable('283_skill_registry_and_journey_step_links.sql','skill_registry'));
     await withLegacyNames(db,()=>db.query(migrationSql('515_release_definition_evidence.sql')));
     await db.query(migrationSql('537_assertion_source_repo.sql'));
-    await db.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_by text, ADD COLUMN IF NOT EXISTS result jsonb,
+    await db.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tenant_id text,ADD COLUMN IF NOT EXISTS claimed_by text, ADD COLUMN IF NOT EXISTS result jsonb,
       ADD COLUMN IF NOT EXISTS task_type text, ADD COLUMN IF NOT EXISTS executor_kind text, ADD COLUMN IF NOT EXISTS error_message text, ADD COLUMN IF NOT EXISTS claimed_at timestamptz;
       CREATE TABLE task_events(task_id uuid,event_type text,payload jsonb,created_at timestamptz)`);
     const cap=randomUUID(),parent=randomUUID(),skill=randomUUID(),author=randomUUID(),repo='perfectuser21/zenithjoy-workspace';
