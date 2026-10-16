@@ -36,6 +36,9 @@ const snapshot=(revision=old,scope='cecelia-kr')=>readImplementationSnapshotInTr
 async function legacyPayload(version){
  const row=(await f.db.query('SELECT * FROM workflow_definition_versions WHERE id=$1',[version])).rows[0];
  delete row.payload.definition_scope;delete row.payload.capability_id;
+ const av=(await f.db.query('SELECT * FROM activity_definition_versions WHERE id=$1',[row.payload.activities[0].activity_version_id])).rows[0];
+ delete av.payload.definition_scope;delete av.payload.capability_id;
+ await f.db.query('UPDATE activity_definition_versions SET payload=$2,payload_sha256=$3 WHERE id=$1',[av.id,av.payload,definitionDigest({source:{repo,path:sourcePath,commit:av.source_commit},payload:av.payload})]);
  await f.db.query('UPDATE workflow_definition_versions SET payload=$2,payload_sha256=$3 WHERE id=$1',[version,row.payload,definitionDigest({source:{repo,path:sourcePath,commit:row.source_commit},payload:row.payload})]);
  return row.payload;
 }
