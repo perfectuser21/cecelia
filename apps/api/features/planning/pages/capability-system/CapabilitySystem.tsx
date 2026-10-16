@@ -255,7 +255,7 @@ export default function CapabilitySystem() {
               </label>
             </div>
           )}
-          {workflow && r.workflows.filter(w => w.id === workflow).map(w => <InvocationPanel key={w.id} target={{ kind: "workflow", id: w.id, definition_version_id: w.current_definition_version_id }} />)}
+          {workflow && r.workflows.filter(w => w.id === workflow).map(w => <InvocationPanel key={w.id} schedulerOnly={w.key === 'workflow_assembly_reconcile.internal'} target={{ kind: "workflow", id: w.id, definition_version_id: w.current_definition_version_id }} />)}
           {(tab === "结构" || tab === "实现") && (
             <div
               className={`grid gap-5 ${selection ? "xl:grid-cols-[minmax(0,1fr)_380px]" : ""}`}

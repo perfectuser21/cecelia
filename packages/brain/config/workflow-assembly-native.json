@@ -1,0 +1,59 @@
+{
+  "protocol": "workflow-assembly-native-v1",
+  "id": "3ef22c63-b721-4ca0-bbb9-36a17ea05bf6",
+  "key": "workflow_assembly_reconcile.internal",
+  "name": "工作流持续对账与修复",
+  "version": "1.0.0",
+  "capability_id": "b5e6287e-2597-41a9-b26f-8dba2cc18db0",
+  "capability": "workflow_assembly_maintenance",
+  "runtime": {
+    "mode": "scheduler_only",
+    "job": "workflow-assembly-reconcile",
+    "cadence_seconds": 30,
+    "budget_ms": 20000,
+    "limit": 5,
+    "scope": "global_admin",
+    "entrypoint": "POST /api/brain/workflow-assembly-maintenance/runs"
+  },
+  "schedule": {
+    "id": 2061717,
+    "ops_workflow_id": 1495634,
+    "source": "brain",
+    "host_alias": "us-vps",
+    "kind": "brain_job",
+    "label": "workflow-assembly-reconcile"
+  },
+  "activities": [
+    {
+      "id": "72a326a2-c836-4b3e-a958-27750a343408",
+      "reference_id": "9a43b09a-c2f0-4b79-b278-de3975f25130",
+      "key": "reconcile_round",
+      "name": "执行有界对账轮次",
+      "version": "1.0.0",
+      "executor_kind": "code",
+      "inputs": {
+        "scope": "global_admin",
+        "budget_ms": 20000,
+        "limit": 5
+      },
+      "outputs": {
+        "checked": "本轮实际检查对象数",
+        "errors": "本轮对象错误数",
+        "stopped": "预算或取消停止原因；非业务资格"
+      },
+      "readback": "canonical runs及一条真实Activity span；原对象result保存缺口/修复/复验状态",
+      "implementation_bindings": [
+        {
+          "kind": "code",
+          "repo": "perfectuser21/cecelia",
+          "revision": "contract",
+          "path": "packages/brain/src/lib/workflow-assembly-reconcile-runner.js"
+        }
+      ],
+      "steps": [],
+      "runtime": {
+        "mode": "scheduler_only"
+      }
+    }
+  ]
+}

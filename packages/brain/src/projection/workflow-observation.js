@@ -124,7 +124,9 @@ export function observeWorkflows(data) {
     const refs=(data.refs || []).filter(r=>r.active && r.workflow_id===workflow.id).sort((a,b)=>a.sequence_no-b.sequence_no);
     const activities=refs.map(r=>({...data.activities.find(a=>a.id===r.activity_id),sequence_no:r.sequence_no}));
     const entries=(data.entrypoints || []).filter(e=>e.workflow_id===workflow.id);
-    const entrypoint=entries.length?entries.map(e=>`${e.enabled===false?'（已停）':''}${e.runtime_requires_llm===true?'Agent':e.runtime_requires_llm===false?'纯代码':'执行者未知'} · ${e.cron || e.schedule || '入口频率未知'} · ${e.name || ''}`).join('\n'):'启动入口未关联；不能据执行层推断入口为纯代码';
+    const entrypoint=workflow.key==='workflow_assembly_reconcile.internal'
+      ?'纯代码 · 系统定时维护30秒 · 内部管理员单轮入口 /api/brain/workflow-assembly-maintenance/runs'
+      :entries.length?entries.map(e=>`${e.enabled===false?'（已停）':''}${e.runtime_requires_llm===true?'Agent':e.runtime_requires_llm===false?'纯代码':'执行者未知'} · ${e.cron || e.schedule || '入口频率未知'} · ${e.name || ''}`).join('\n'):'启动入口未关联；不能据执行层推断入口为纯代码';
     const sources=[...new Set(activities.map(a=>a.contract?.implementation?.version || a.contract?.workflow_authoring?.source?.revision).filter(Boolean))];
     out.set(workflow.id,{workflow:{id:workflow.id,name:workflow.name,version:workflow.version || '未知',maintenance_owner:workflow.key?.includes('phone-account-patrol')?'主理人':'未登记'},
       version:workflow.version || '未知',deployment:`登记源码：${sources.join(' / ')||'未知'}；最新执行源码：${runs[0]?.source_revision || '未知'}；当前部署指针：未核验`,
@@ -152,7 +154,7 @@ export const WORKFLOW_OBSERVATION_PREFIX_SQL = `WITH
    WHERE (r.started_at>=now()-interval '30 days' OR r.ended_at IS NULL) AND r.started_at<=now()
  ),
  eligible_legacy_runs AS MATERIALIZED (
-   SELECT r.id,r.run_id,r.workflow_id,r.started_at,r.ended_at,r.outcome,r.duration_ms,r.notion_id,
+   SELECT r.id,r.run_id,r.workflow_id,r.started_at,r.ended_at,r.outcome,r.duration_ms,r.notion_id,r.detail,r.header_source,r.executor_id,
      row_number() OVER(PARTITION BY r.workflow_id ORDER BY r.started_at DESC,r.run_id DESC) AS position
    FROM runs r WHERE r.workflow_id IS NOT NULL AND r.started_at>=now()-interval '30 days' AND r.started_at<=now()
      AND NOT EXISTS(SELECT 1 FROM workflow_task_runs tr WHERE tr.run_id=r.run_id)
@@ -179,7 +181,10 @@ export const WORKFLOW_OBSERVATION_SQL = `
      '{}'::jsonb,jsonb_build_object('bound_definition',jsonb_build_object('id',v.id,'version',v.payload->'contract'->>'version','source_commit',v.source_commit)),
      r.notion_id,'runs'::text FROM eligible_legacy_runs r
      LEFT JOIN run_definition_bindings b ON b.run_id=r.run_id AND b.workflow_id=r.workflow_id
-     LEFT JOIN workflow_definition_versions v ON v.id=b.workflow_definition_version_id AND v.workflow_id=b.workflow_id
+     LEFT JOIN workflow_definition_versions v ON v.workflow_id=r.workflow_id AND (v.id=b.workflow_definition_version_id
+       OR (b.run_id IS NULL AND r.header_source='owner' AND r.executor_id='brain-native-maintenance'
+         AND r.detail->>'protocol'='workflow-assembly-native-v1' AND v.payload->>'protocol'='workflow-assembly-native-v1'
+         AND v.id::text=r.detail->>'workflow_definition_version_id' AND v.payload->'contract'->>'key'='workflow_assembly_reconcile.internal'))
      WHERE r.position<=20
  ) x),'[]'::jsonb),
  'run_summaries',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM (

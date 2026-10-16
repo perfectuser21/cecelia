@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execSync, spawnSync } from 'child_process'
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync, realpathSync } from 'fs'
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, chmodSync, realpathSync } from 'fs'
 import { resolve, join } from 'path'
 import { tmpdir } from 'os'
 
@@ -107,5 +107,41 @@ exit 0
   it.skipIf(!existsSync(SCRIPT))('脚本内不再有 set -e 下会中断的 ((x++)) 自增', () => {
     const r = spawnSync('grep', ['-nE', '\\(\\([a-zA-Z_]+(\\+\\+|--)\\)\\)', SCRIPT], { encoding: 'utf-8' })
     expect(r.stdout).toBe('')
+  })
+
+  it.each(['clean', 'dirty'])('create 达到上限必须零清理，保留已合并 %s worktree 和分支', (state) => {
+    writeFileSync(join(mainRepo, 'tracked.txt'), 'original\n')
+    sh(`git -C "${mainRepo}" add tracked.txt`)
+    sh(`git -C "${mainRepo}" commit -qm tracked`)
+    const wt = addWorktree('cp-merged-preserve')
+    if (state === 'dirty') {
+      writeFileSync(join(wt, 'tracked.txt'), 'unsaved change\n')
+      writeFileSync(join(wt, 'untracked.txt'), 'untracked evidence\n')
+    }
+    const beforeTrees = sh(`git -C "${mainRepo}" worktree list --porcelain`)
+    const beforeBranches = sh(`git -C "${mainRepo}" show-ref --heads`)
+    const tracked = readFileSync(join(wt, 'tracked.txt'), 'utf-8')
+    const realGit = sh('command -v git').trim()
+    const trace = join(root, 'git-calls.log')
+    writeFileSync(trace, '')
+    writeFileSync(join(binDir, 'git'), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "$GIT_CALLS_LOG"\nexec "${realGit}" "$@"\n`)
+    writeFileSync(join(binDir, 'flock'), '#!/usr/bin/env bash\nexit 0\n')
+    // 已合并分支确实有资格被旧 cleanup 删除；若误清理后继续创建，则撞车闸阻止后续副作用。
+    writeFileSync(join(binDir, 'gh'), `#!/usr/bin/env bash\nif [[ " $* " == *" --head "* ]]; then echo 4242; else echo '[{"number":4242,"title":"blocked-create","headRefName":"cp-blocked-create"}]'; fi\n`)
+    for (const command of ['git', 'flock', 'gh']) chmodSync(join(binDir, command), 0o755)
+    const bash = existsSync('/opt/homebrew/bin/bash') ? '/opt/homebrew/bin/bash' : 'bash'
+    const result = spawnSync(bash, [SCRIPT, 'create', 'blocked-create'], {
+      cwd: mainRepo, encoding: 'utf-8', timeout: 10000,
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, WORKTREE_BASE: wtBase,
+        MAX_WORKTREES: '1', GIT_CALLS_LOG: trace },
+    })
+    expect(result.status, result.stdout + result.stderr).toBe(1)
+    expect(existsSync(wt), '超限 create 不得移除已合并 worktree').toBe(true)
+    expect(sh(`git -C "${mainRepo}" worktree list --porcelain`)).toBe(beforeTrees)
+    expect(sh(`git -C "${mainRepo}" show-ref --heads`)).toBe(beforeBranches)
+    expect(readFileSync(join(wt, 'tracked.txt'), 'utf-8')).toBe(tracked)
+    if (state === 'dirty') expect(readFileSync(join(wt, 'untracked.txt'), 'utf-8')).toBe('untracked evidence\n')
+    expect(readFileSync(trace, 'utf-8')).not.toMatch(/worktree remove|branch -D/)
+    expect(result.stderr).toContain('数量已达上限')
   })
 })

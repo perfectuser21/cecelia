@@ -1,4 +1,4 @@
-import {runWorkflowAssemblyReconcile} from './lib/workflow-assembly-reconcile.js';
+import {runNativeReconcile} from './lib/workflow-assembly-native.js';
 import { runImageRetentionJanitor } from './image-retention-scheduler.js';
 import { startCompletionJobsLoop, stopCompletionJobsLoop } from './scheduler-completion-loop.js';
 import { runPhoneRpaDispatch } from './lib/phone-rpa-dispatch.js';
@@ -206,7 +206,7 @@ export const JOBS = [
   // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——
   // 本模块已 import ops-collector/notion-push-sync，反向 import 会成环（routes/sentinel.js 同款避坑）。
   // scheduler 行推 Notion 滞后一轮 60s，设计 §3.2 接受。
-  { name: 'workflow-assembly-reconcile', cadence: { everySec: 30 }, completionCadenceMs: 30_000, livenessIntervalSec: 30, needsPool: true, timeoutMs: 30_000, handler: pool => runWorkflowAssemblyReconcile(pool,{budgetMs:20000,limit:5}), description: '新协议scratch候选持续驱动与对账：有界游标、跨轮锁、真实proof复验、固定来源派生修复和责任任务稳定去重；未知仅留缺口' },
+  { name: 'workflow-assembly-reconcile', cadence: { everySec: 30 }, completionCadenceMs: 30_000, livenessIntervalSec: 30, needsPool: true, timeoutMs: 30_000, handler: pool => runNativeReconcile(pool), description: '原生维护流程：同一有界对账入口，固定版本runs及真实Activity span；业务修复仍仅scratch候选，不授正式发布资格' },
   { name: 'backbone-contract-sync', cadence: { everySec: 1800 }, needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runBackboneContractJob(pool), description: '主干活动契约 git→Brain→Notion（决策 0834e2fb / 92f6226b，任务 2fdd5f12）：真身 zenithjoy-workspace product-map/contracts/*.yaml，30min 自 gate 只读 GitHub API 比 contracts.json 活动哈希，变了才拉 YAML 写 journey_steps 只读副本（钉 commit 的正本链接），仓库删掉的活动标 deprecated；每轮把变更行推 Notion「Backbone Activities」镜子；同步连续失败超 2h 告 P1 一次' },
   { name: 'phone-registry-sync', cadence: { everySec: 1800 }, needsPool: true, timeoutMs: 180_000, livenessIntervalSec: 60, handler: pool => runPhoneRegistrySync(pool), description: '手机人写台账入口（任务cda0e3e8）：30min内容基线回灌；经MMV同代下发；每日持锁核验空闲设备账号，错号只提醒' },
   { name: 'notion-mirror-labels', cadence: { everySec: 72000 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runMirrorLabelJob(pool), description: '镜子库只读说明由注册表生成（任务 a7a6b8b4，交接单第5步）：notion_projection_map 里 active 推送镜子的库描述开头写「🔒 只读镜子：由 Brain <表> 经 <血管> 推送…」，已是同样说明零写，两面库/无 Brain 表的跳过；进程内 20h 自 gate' },
@@ -268,6 +268,8 @@ function writeSentinel(pool, jobName, record) {
 
 /** 真干活的一轮写 runs（决策 ff2019e2）；自 gate 跳过的不记，写失败只告警。 */
 async function writeRun(pool, jobName, startedAt, record, result) {
+  // 此维护流程在原runner会话锁内拥有canonical runs；外层观察超时不能补第二条或抢终态。
+  if(jobName==='workflow-assembly-reconcile')return;
   if (record.ok && isSelfSkipped(result)) return;
   try {
     await recordSchedulerRun(pool, {
