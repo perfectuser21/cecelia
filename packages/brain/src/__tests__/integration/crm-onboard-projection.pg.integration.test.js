@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import * as store from '../../crm/store.js';
 import { onboardContact } from '../../crm/onboard-store.js';
-import { runCrmSync } from '../../crm/notion-sync.js';
+import { runCrmSync, createNotionRequest } from '../../crm/notion-sync.js';
 import { crmPgTestConfig, createCrmPgFixture } from '../helpers/crm-pg-fixture.js';
 const api = await import('../../crm/onboard-notion.js').catch(() => ({}));
 const mapping = await import('../../crm/onboard-page-store.js').catch(() => ({}));
@@ -168,5 +168,20 @@ describe.skipIf(!crmPgTestConfig().enabled)('好友客户Notion投影：真PG+fa
     await expect(mapping.bindOnboardPage(db, binding, customer.id, makePage(customer.id, id(20), id(1)))).rejects.toMatchObject({ code: 'identity_conflict' });
     expect((await store.getCustomer(db, tenant, customer.id)).source_page_id).toBeNull();
     expect((await store.getCustomer(db, tenant, existing.id)).source_page_id).toBe(id(20));
+  });
+  it('真实HTTP adapter收到创建429只发一次网络POST，fence保留且重跑unknown', async () => {
+    const fetchImpl = vi.fn(async (url, options) => {
+      expect(new URL(url).origin).toBe('https://api.notion.com');
+      const path = new URL(url).pathname.replace(/^\/v1/, '');
+      if (path === '/pages' && options.method === 'POST') return { status: 429, ok: false, headers: new Headers({ 'retry-after': '0' }) };
+      const value = await request(path, options.method, options.body ? JSON.parse(options.body) : undefined);
+      return { status: 200, ok: true, json: async () => value };
+    });
+    const actualAdapter = createNotionRequest({ token: 'test-only', fetchImpl });
+    expect((await api.projectOnboardCustomer(db, actualAdapter, binding, customer)).status).toBe('unknown');
+    expect((await api.projectOnboardCustomer(db, actualAdapter, binding, customer)).status).toBe('unknown');
+    expect(fetchImpl.mock.calls.filter(([url, options]) => new URL(url).pathname === '/v1/pages' && options.method === 'POST')).toHaveLength(1);
+    expect((await db.query('SELECT count(*)::int n FROM crm_customer_page_attempts')).rows[0].n).toBe(1);
+    expect((await store.getCustomer(db, tenant, customer.id)).projection_pending).toBe(true);
   });
 });
