@@ -52,4 +52,18 @@ describe('固定租户对象版本的持续对账',()=>{
     expect(resumed.status).toBe('open');
     expect(Object.values(resumed.issues)[0].repair_task_id).toBe('repair-a');
   });
+  it('同target但不同定义摘要不能借proof关闭旧问题',()=>{
+    const first=evolve(null,observation(),{now:1000});
+    const proof='b'.repeat(64);
+    const next=evolve(first,observation({definition_sha256:'c'.repeat(64),gaps:[],status:'verified',verification_id:proof,proof_sha256:proof}),{now:2000});
+    expect(Object.values(next.issues)[0].status).not.toBe('closed');
+  });
+  it('已关账再次发现缺口撤掉当前验证标记，保留历史proof',()=>{
+    const first=evolve(null,observation(),{now:1000}),proof='b'.repeat(64);
+    const closed=evolve(first,observation({gaps:[],status:'verified',verification_id:proof,proof_sha256:proof}),{now:2000});
+    const opened=evolve(closed,observation(),{now:3000});
+    expect(Object.values(opened.issues)[0]).toMatchObject({status:'open',last_verification_id:proof});
+    expect(Object.values(opened.issues)[0].verification_id).toBeUndefined();
+    expect(Object.values(opened.issues)[0].verified_at).toBeUndefined();
+  });
 });
