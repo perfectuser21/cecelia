@@ -98,3 +98,10 @@ describe('已审 provenance V2 封套的真实闭包转发', () => {
     expect(bindings).toContain(fixture.paths.recordProvenance);
   });
 });
+
+const EXPECTED_STAGE_INPUTS={"packages/brain/scripts/coding-workflow/activities/intent.mjs":"f08bfef9a2abfcecf32bce283e8e0a2dceb9b4b865f524a08207cad292f213ac","packages/brain/scripts/coding-workflow/activities/spec.mjs":"9a0f4fe05d2d15da09ea2eeca969efcb01a9437234b9836df9dc54600e4667fa","packages/brain/scripts/coding-workflow/activities/spec-review.mjs":"b3a4bbc3b55c88fd91ba9a2d0c927006f237ea84a4d6c6ed9ee5ae0cbab88452","packages/brain/scripts/coding-workflow/activities/verify.mjs":"9342cfb897dc578b95d73f143aeb2c0febde5e1e78c019f5a60e911e2dcd0976","packages/brain/scripts/coding-workflow/activities/evaluate.mjs":"4f446c4888ff5567bd12a2e80c472b1d85bdce19617e207336efa049614c83af"};
+function checkedStageInputs(value){ return structuredClone(value); }
+describe('provenance完整阶段输入先核固定身份',()=>{
+ for(const source of Object.keys(EXPECTED_STAGE_INPUTS))it(source+' 字节改变拒绝',()=>{const value=structuredClone(stageInputs);value[source]+='\n';expect(()=>checkedStageInputs(value)).toThrow();});
+ for(const change of [v=>{delete v[Object.keys(v)[0]];},v=>{v.extra='x';},v=>{v[Object.keys(v)[0]]=7;}])it('缺字段/额外键/非字符串拒绝',()=>{const value=structuredClone(stageInputs);change(value);expect(()=>checkedStageInputs(value)).toThrow();});
+});
