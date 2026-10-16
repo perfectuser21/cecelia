@@ -1,4 +1,5 @@
 import {readFileSync} from 'node:fs';
+import {it,expect} from 'vitest';
 import {authoringExecutionDatabase} from './authoring-execution-db.test.js';
 import {nativeSpec as s,prepareNativeSource} from '../../lib/workflow-assembly-native-source.js';
 export const readSource=async(_revision,path)=>readFileSync(new URL('../../../../../'+path,import.meta.url),'utf8');
@@ -14,3 +15,10 @@ export async function nativeMaintenanceDatabase(){
   return {...f,db,source,services:{revision:source.commit,readSource}};
   }catch(error){await f.close();throw error;}
 }
+it('native夹具的真实入口拒绝生产库，连接/建schema之前停止',async()=>{
+  const previous=process.env.DB_NAME;
+  try{
+    process.env.DB_NAME='cecelia';
+    await expect(nativeMaintenanceDatabase()).rejects.toThrow('仅允许本机cecelia_scratch或CI隔离cecelia_test');
+  }finally{if(previous===undefined)delete process.env.DB_NAME;else process.env.DB_NAME=previous;}
+});
