@@ -206,7 +206,7 @@ export const JOBS = [
   // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——
   // 本模块已 import ops-collector/notion-push-sync，反向 import 会成环（routes/sentinel.js 同款避坑）。
   // scheduler 行推 Notion 滞后一轮 60s，设计 §3.2 接受。
-  { name: 'workflow-assembly-reconcile', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 30_000, handler: pool => runWorkflowAssemblyReconcile(pool,{budgetMs:20000,limit:5}), description: '新协议scratch候选持续驱动与对账：有界游标、跨轮锁、真实proof复验、固定来源派生修复和责任任务稳定去重；未知仅留缺口' },
+  { name: 'workflow-assembly-reconcile', cadence: { everySec: 30 }, completionCadenceMs: 30_000, livenessIntervalSec: 30, needsPool: true, timeoutMs: 30_000, handler: pool => runWorkflowAssemblyReconcile(pool,{budgetMs:20000,limit:5}), description: '新协议scratch候选持续驱动与对账：有界游标、跨轮锁、真实proof复验、固定来源派生修复和责任任务稳定去重；未知仅留缺口' },
   { name: 'backbone-contract-sync', cadence: { everySec: 1800 }, needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runBackboneContractJob(pool), description: '主干活动契约 git→Brain→Notion（决策 0834e2fb / 92f6226b，任务 2fdd5f12）：真身 zenithjoy-workspace product-map/contracts/*.yaml，30min 自 gate 只读 GitHub API 比 contracts.json 活动哈希，变了才拉 YAML 写 journey_steps 只读副本（钉 commit 的正本链接），仓库删掉的活动标 deprecated；每轮把变更行推 Notion「Backbone Activities」镜子；同步连续失败超 2h 告 P1 一次' },
   { name: 'phone-registry-sync', cadence: { everySec: 1800 }, needsPool: true, timeoutMs: 180_000, livenessIntervalSec: 60, handler: pool => runPhoneRegistrySync(pool), description: '手机人写台账入口（任务cda0e3e8）：30min内容基线回灌；经MMV同代下发；每日持锁核验空闲设备账号，错号只提醒' },
   { name: 'notion-mirror-labels', cadence: { everySec: 72000 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runMirrorLabelJob(pool), description: '镜子库只读说明由注册表生成（任务 a7a6b8b4，交接单第5步）：notion_projection_map 里 active 推送镜子的库描述开头写「🔒 只读镜子：由 Brain <表> 经 <血管> 推送…」，已是同样说明零写，两面库/无 Brain 表的跳过；进程内 20h 自 gate' },
@@ -227,7 +227,7 @@ const PROJECTION_JOB_NAME_SET = new Set([
 export const PROJECTION_JOBS = JOBS.filter(job => PROJECTION_JOB_NAME_SET.has(job.name));
 // GTD幂等初始化、窄授权手机派发和收尾共用独立循环，避免重启入口排在慢job后。
 // recurring-tasks 也在这里：定时到点建单不能排在串行慢轮后面（轮长 3-9 分钟 = 定时误差，任务 942491c2）。
-const COMPLETION_JOB_NAMES = new Set(['script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding', 'phone-rpa-dispatch', 'openclaw-agent-reaper', 'notion-gtd-sync', 'recurring-tasks']);
+const COMPLETION_JOB_NAMES = new Set(['script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding', 'phone-rpa-dispatch', 'openclaw-agent-reaper', 'notion-gtd-sync', 'recurring-tasks', 'workflow-assembly-reconcile']);
 export const COMPLETION_JOBS = JOBS.filter(job => COMPLETION_JOB_NAMES.has(job.name));
 export const SERIAL_JOBS = JOBS.filter(job => !PROJECTION_JOB_NAME_SET.has(job.name) && !COMPLETION_JOB_NAMES.has(job.name));
 
