@@ -46,11 +46,12 @@ const gitPaths = revision => execFileSync('git', ['ls-tree', '-rz', '--name-only
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const frozenDigest = value => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-async function aggregateProof({ marker = aggregateMarker, reader, mutateCi, missing = [] } = {}) {
+async function aggregateProof({ marker = aggregateMarker, reader, mutateCi, missing = [], overrides = {} } = {}) {
   const paths = gitPaths(aggregateRevision).filter(path => !missing.includes(path));
   return buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision: aggregateRevision, paths,
     readSource: async path => {
       const original = fixedGit(aggregateRevision, path);
+      if (Object.hasOwn(overrides, path)) return overrides[path];
       if (path === aggregateSchema) return `${original}\n${marker}\n`;
       if (path === aggregateReader && reader) return reader(original);
       if (path === aggregateCi && mutateCi) {
@@ -178,5 +179,40 @@ describe('goldset固定Git条件入口协议', () => {
       const f3 = aggregateF3(await goldsetProof({ marker }));
       expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
       expect(f3.bindings.some(b => b.path === goldsetEntry)).toBe(false);
+    }, 120000);
+});
+
+
+describe('CI入口固定Git步骤前缀完整性', () => {
+  for (const [jobId, marker, command] of [
+    ['lint-auto-merge-decision', aggregateMarker, `node --test ${aggregateReader}`],
+    ['goldset-eval', goldsetMarker, `node ${goldsetEntry}`],
+  ]) for (const [label, mutate] of [
+    ['插入会改写真实入口的未证明run', (doc, job, index) => job.steps.splice(index, 0, { run: "printf 'throw Error(1)' > actual-entry.mjs" })],
+    ['第二次checkout切换非固定ref', (doc, job, index) => job.steps.splice(index, 0, { uses: 'actions/checkout@v4', with: { ref: 'another-branch' } })],
+    ['setup替换Node执行参数', (doc, job, index) => job.steps.splice(index, 0, { uses: 'actions/setup-node@v4', with: { 'node-version': '99' } })],
+    ['前置step注入NODE_OPTIONS', (doc, job) => { job.steps[0].env = { NODE_OPTIONS: '--import=./unproven.mjs' }; }],
+    ['前置step改未知shell', (doc, job) => { job.steps[0].shell = 'custom-shell {0}'; }],
+    ['workflow defaults改shell', doc => { doc.defaults = { run: { shell: 'custom-shell {0}' } }; }],
+    ['job改为未知容器封套', (doc, job) => { job.container = 'unknown-image'; }],
+    ['job改为未知runner', (doc, job) => { job['runs-on'] = 'self-hosted'; }],
+  ]) it(`${jobId} ${label}不能证明固定Git代码曾被实际消费`, async () => {
+    const f3 = aggregateF3(await aggregateProof({ marker, mutateCi: doc => {
+      const job = doc.jobs[jobId], index = job.steps.findIndex(s => s.run === command);
+      mutate(doc, job, index);
+      for (const step of job.steps) if (step.run?.includes('actual-entry.mjs')) step.run = step.run.replace('actual-entry.mjs', jobId === 'goldset-eval' ? goldsetEntry : aggregateReader);
+    } }));
+    expect(f3.status).toBe('unknown'); expect(f3.gaps.length).toBeGreaterThan(0);
+    expect(f3.bindings).toEqual([]); expect(f3.input_relations).toEqual([]);
+  }, 120000);
+});
+
+
+describe('aggregate已审前置本地脚本本体完整性', () => {
+  for (const path of ['.github/workflows/scripts/__tests__/should-auto-merge.test.sh', '.github/workflows/scripts/should-auto-merge.sh'])
+    it(`前置脚本${path}被替换时不能认定后续reader仍来自固定Git`, async () => {
+      const f3 = aggregateF3(await aggregateProof({ overrides: { [path]: `#!/bin/bash\nprintf 'throw Error(1)' > ${aggregateReader}\n` } }));
+      expect(f3.status).toBe('unknown'); expect(f3.gaps.length).toBeGreaterThan(0);
+      expect(f3.bindings).toEqual([]); expect(f3.input_relations).toEqual([]);
     }, 120000);
 });
