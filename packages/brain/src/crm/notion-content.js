@@ -1,6 +1,8 @@
+import { validateCrmMarkdown } from './markdown.js';
 /** Only the explicit machine-owned region may change. The rest of the customer's page is human-owned. */
 export async function projectManagedProfile(request, customer) {
   if (customer.profile_managed !== true) return;
+  validateCrmMarkdown(customer.profile_markdown);
   const start = `**BRAIN-CRM-START:${customer.id}**`, end = `**BRAIN-CRM-END:${customer.id}**`;
   const error = () => Object.assign(new Error('CRM managed content boundary conflict'), { code: 'content_conflict' });
   if (customer.profile_markdown.includes('BRAIN-CRM-')) throw error();

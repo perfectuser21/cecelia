@@ -326,6 +326,9 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 # CRM 受控录入与关系投影（任务 ab9a936c）
 
+- [x] [BEHAVIOR] crmmarkdownscope 画像与报告中的Notion结构标签在数据库或外部API写入前拒绝，普通Markdown及原文围栏保留。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/markdown.test.js src/crm/notion-children.test.js --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] crmfieldownership 人工白名单、缺字段保留、托管正文边界、显式清空、关闭时不访问数据库、分页失败不推进及范围缩小不越权回填。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/notion-mapping.test.js src/crm/notion-content.test.js src/crm/notion-sync.test.js src/crm/router.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] crmrelationprojection 原文和日报精确身份关联到既有数据源，异步未知不记成功，创建响应未知后重放找回原页，不新增客户库。

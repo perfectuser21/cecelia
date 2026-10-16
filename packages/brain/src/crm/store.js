@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { validateCrmMarkdown } from './markdown.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function error(code, message = code) { return Object.assign(new Error(message), { code }); }
@@ -124,6 +125,7 @@ export async function ingestMessage(db, tenant, input) {
 }
 
 export async function saveReport(db, tenant, input) {
+  validateCrmMarkdown(input.markdown);
   tenant = uuid(tenant); const customerId = uuid(input.customer_id), version = integer(input.version ?? 1);
   if (!['daily', 'weekly', 'monthly'].includes(input.type)) throw error('invalid_input');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.period_start) || !/^\d{4}-\d{2}-\d{2}$/.test(input.period_end) || date(input.period_start) > date(input.period_end)) throw error('invalid_input');
@@ -147,6 +149,7 @@ export async function saveReport(db, tenant, input) {
 }
 
 export async function updateProfile(db, tenant, id, { profile_markdown, expected_revision }) {
+  validateCrmMarkdown(profile_markdown);
   tenant = uuid(tenant); id = uuid(id); integer(expected_revision); if (typeof profile_markdown !== 'string' || profile_markdown.length > 100000) throw error('invalid_input');
   return transaction(db, async tx => {
     const previous = await one(tx, 'SELECT * FROM crm_customers WHERE tenant_id=$1 AND id=$2 FOR UPDATE', [tenant, id]);

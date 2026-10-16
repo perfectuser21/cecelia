@@ -1,3 +1,4 @@
+import { validateCrmMarkdown } from './markdown.js';
 /** Immutable CRM communications are projected only to explicitly configured existing sources. */
 const UUID = /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i;
 function fault(code) { return Object.assign(new Error(`CRM children: ${code}`), { code }); }
@@ -93,6 +94,7 @@ function messageMarkdown(row) {
   return `# 沟通原文\n\n来源微信账号：\n${code(row.account_id)}\n\n方向：${direction}\n\n发生时间：${new Date(row.occurred_at).toISOString()}（${precision}）\n\n## 原始消息\n\n${code(row.text)}\n\n<details>\n<summary>来源依据</summary>\n\n原生消息ID：\n${code(row.message_id)}\n\n</details>`;
 }
 function reportMarkdown(row, messages) {
+  validateCrmMarkdown(row.markdown);
   const refs = (row.message_ids ?? []).map(id => {
     const source = messages.get(id);
     return `- [原始沟通 ${id}](https://www.notion.so/${uuid(source.notion_page_id).replaceAll('-', '')})`;

@@ -58,7 +58,7 @@ export function createCrmRouter({ pool, notionRequest } = {}) {
   });
   router.use((err, _req, res, _next) => {
     const code = err.code ?? 'crm_request_failed';
-    const known = ['invalid_input', 'invalid_schema', 'not_found', 'tenant_mismatch', 'stale_revision', 'identity_conflict', 'binding_disabled'];
+    const known = ['invalid_input', 'invalid_schema', 'invalid_markdown', 'not_found', 'tenant_mismatch', 'stale_revision', 'identity_conflict', 'binding_disabled'];
     res.status(code === 'not_found' ? 404 : known.includes(code) ? 409 : 503)
       .json({ error: known.includes(code) || /^notion_http_\d+$/.test(code) ? code : 'crm_request_failed', ...(err.receipt ? { receipt: err.receipt } : {}) });
   });
