@@ -461,3 +461,4 @@ directory-title-sync-smoke.sh
 tree-legacy-layout.sh
 workflow-assembly-registration-smoke.sh
 workflow-assembly-reconcile-smoke.sh
+crm-canonical-smoke.sh

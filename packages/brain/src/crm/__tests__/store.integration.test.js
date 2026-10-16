@@ -156,4 +156,16 @@ describe.skipIf(!enabled)('CRM store 真Postgres事务与关系约束（仅scrat
     expect(older.customer.manual_fields.note).toBe('原值');
     expect((await db.query('SELECT count(*)::int n FROM crm_audit WHERE customer_id=$1', [first.customer.id])).rows[0].n).toBe(3);
   });
+  it('allowlist在LIMIT前过滤，50个未授权pending不能饿死第51个授权客户', async () => {
+    const scope = await store.configureBinding(db, { tenant_id: tenant, data_source_id: '40000000-0000-4000-8000-000000000001', enabled: true });
+    let allowed;
+    for (let n = 1; n <= 51; n++) {
+      const result = await store.ingestCustomer(db, scope, { page_id: `40000000-0000-4000-8000-${String(n + 1).padStart(12, '0')}`, display_name: `客户${n}`, source_edited_at: '2026-10-16T03:00:00Z' });
+      if (n === 51) allowed = result.customer;
+    }
+    const rows = await store.listPending(db, { tenant_id: tenant, binding_id: scope.id, allowed_page_ids: [allowed.source_page_id], limit: 50 });
+    expect(rows.map(row => row.customer.id)).toEqual([allowed.id]);
+    expect(await store.listPending(db, { tenant_id: tenant, binding_id: scope.id, allowed_page_ids: [], limit: 50 })).toEqual([]);
+    expect((await db.query('SELECT count(*)::int n FROM crm_customers WHERE binding_id=$1 AND projection_pending', [scope.id])).rows[0].n).toBe(51);
+  });
 });

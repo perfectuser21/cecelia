@@ -6936,3 +6936,7 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 
 ### OpenClaw手机完成回收独立周期（1.379.7）
 openclaw-agent-reaper与手机窄派发共用独立收尾循环，不再受串行慢job阻塞；保留60秒执行周期、真实调用防重入、preview停用及全局Tick关闭。
+
+### CRM 权威数据边界
+
+Notion 作为客户资料录入和展示面；Brain 独立 CRM 实体为唯一真相源，任务表不代存客户主档。企业 Tenant 下账号、人设与好友关系分别登记，跨账号不按昵称归并。原文、报告保留来源和证据关联。CRM_SYNC_ENABLED 默认关闭，生产 schema 迁移与正式绑定另行放行。
