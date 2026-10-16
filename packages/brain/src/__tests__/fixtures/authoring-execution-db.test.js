@@ -1,3 +1,5 @@
+import {it,expect} from 'vitest';
+import {requireCandidateEnvironment} from '../../workflow-authoring/assembly-orchestration.js';
 import {createIntakeTestDatabase} from './task-intake-db.js';
 import {randomUUID} from 'node:crypto';
 /** 全部对象和执行账均为scratch私有schema，生产结构只读复制，结束完整删除。 */
@@ -27,3 +29,5 @@ export async function authoringExecutionDatabase(){
   return {...f,definition,reader,content,skill};
  }catch(error){await f.close();throw error;}
 }
+
+it('候选fixture遵守实际库边界，生产同名schema不能当scratch',async()=>{await expect(requireCandidateEnvironment({query:async()=>({rows:[{name:'cecelia'}]})})).rejects.toMatchObject({code:'candidate_environment_unsupported'});});

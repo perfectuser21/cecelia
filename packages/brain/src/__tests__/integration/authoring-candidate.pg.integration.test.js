@@ -1,6 +1,6 @@
 import {it,expect,afterEach} from 'vitest';
 import {randomUUID} from 'node:crypto';
-import {authoringExecutionDatabase} from '../fixtures/authoring-execution-db.js';
+import {authoringExecutionDatabase} from '../fixtures/authoring-execution-db.test.js';
 import {prepareDefinitionFreeze} from '../../workflow-authoring/freeze.js';
 import {definitionDigest} from '../../workflow-authoring/contracts.js';
 import {resolveInvocation} from '../../invocations/resolve.js';
@@ -70,4 +70,22 @@ it('owner协议/租户/服务器compose、冻结引用或非授权active篡改�
  version.activities[0].activity_id=randomUUID();
  await f.pool.query('UPDATE workflow_definition_versions SET payload=$2 WHERE id=$1',[owner.workflow_definition_version_id,version]);
  await expect(orchestration.readCandidateOwner(f.pool,a.id,f.definition,'default')).rejects.toThrow();
+});
+it('同key并发最多一个owner；失败事务回滚不留下实体或active窗口，正式对象零改动',async()=>{
+ f=await authoringExecutionDatabase();const a=await ownerTask(),b=await ownerTask();
+ const run=async(task,abort=false)=>{const c=await f.pool.connect();try{
+  await c.query('BEGIN');const owner=await orchestration.prepareAuthoringCandidate(c,task.id,task.state,{freezeProof:task.proof});
+  if(abort){expect((await f.pool.query('SELECT count(*)::int n FROM workflows')).rows[0].n).toBe(0);throw Error('forced_rollback');}
+  await c.query('COMMIT');return owner;
+ }catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}};
+ await expect(run(a,true)).rejects.toThrow('forced_rollback');
+ for(const table of ['workflows','activities','workflow_activity_refs','workflow_definition_versions','activity_definition_versions'])
+  expect((await f.pool.query(`SELECT count(*)::int n FROM ${table}`)).rows[0].n).toBe(0);
+ const concurrent=await Promise.allSettled([run(a),run(b)]);expect(concurrent.filter(v=>v.status==='fulfilled')).toHaveLength(1);
+ const owner=concurrent.find(v=>v.status==='fulfilled').value;
+ await f.pool.query("UPDATE workflows SET status='active' WHERE id=$1",[owner.workflow_id]);
+ const tables=['workflows','activities','steps','workflow_activity_refs','workflow_definition_versions','activity_definition_versions','workflow_production_recipes','activity_release_state'];
+ const snapshot=async()=>Object.fromEntries(await Promise.all(tables.map(async table=>[table,(await f.pool.query(`SELECT to_jsonb(t) r FROM ${table} t ORDER BY to_jsonb(t)::text`)).rows])));
+ const before=await snapshot(),other=await ownerTask();await expect(run(other)).rejects.toMatchObject({code:'candidate_isolation_required'});
+ expect(await snapshot()).toEqual(before);
 });

@@ -23,14 +23,14 @@ export async function readCandidateOwner(db,authoringTaskId,definition,tenantId)
   &&definitionDigest(row.result.workflow_authoring?.outputs?.compose?.definition)===owner.definition_sha256,'候选owner或租户已变化',409);
  const claims=(await db.query("SELECT id FROM tasks WHERE result->'workflow_authoring_candidate'->>'workflow_id'=$1",[owner.workflow_id])).rows;
  requireCondition(claims.length===1&&claims[0].id===authoringTaskId,'候选归属不唯一',409);
- const workflow=(await db.query('SELECT * FROM workflows WHERE id=$1',[owner.workflow_id])).rows[0];
+ const workflow=(await db.query(`SELECT * FROM workflows WHERE id=$1${db.authorityLock?' FOR SHARE':''}`,[owner.workflow_id])).rows[0];
  const version=(await db.query('SELECT * FROM workflow_definition_versions WHERE id=$1 AND workflow_id=$2',[owner.workflow_definition_version_id,owner.workflow_id])).rows[0];
  frozenVersion(version);
  requireCondition(workflow&&workflow.status==='paused'&&version&&workflow.key===definition.key&&workflow.current_definition_version_id===version.id
   &&version.source_repo===definition.source.repo&&version.source_path===definition.source.ref&&version.source_commit===definition.source.revision
   &&definitionDigest(version.payload.contract)===owner.definition_sha256,'候选固定版本或来源不符',409);
  const refs=(await db.query('SELECT id,slot_key,sequence_no,activity_id,activity_definition_version_id FROM workflow_activity_refs WHERE workflow_id=$1 AND active ORDER BY sequence_no',[owner.workflow_id])).rows;
- requireCondition(refs.length===definition.activities.length&&refs.length===owner.slots.length,'候选引用数量不符',409);
+ if(refs.length!==definition.activities.length||refs.length!==owner.slots.length)blocked('fixed_reference_missing','候选固定引用覆盖不足');
  for(const [index,ref] of refs.entries()){
   const slot=owner.slots[index],contract=definition.activities[index];
   requireCondition(ref.slot_key===contract.key&&slot.slot_key===ref.slot_key&&slot.activity_id===ref.activity_id
@@ -40,6 +40,8 @@ export async function readCandidateOwner(db,authoringTaskId,definition,tenantId)
   const fixed=version.payload.activities[index];
   requireCondition(a&&a.payload.activity_id===ref.activity_id&&fixed.activity_version_id===a.id&&fixed.activity_id===ref.activity_id
    &&fixed.slot_key===ref.slot_key&&fixed.sequence_no===index+1&&ref.sequence_no===index+1&&fixed.reference_id===ref.id,'候选Activity固定版本不存在',409);
+  const live=(await db.query(`SELECT id,status,workflow_id,current_definition_version_id,contract,contract_sha256 FROM activities WHERE id=$1${db.authorityLock?' FOR SHARE':''}`,[slot.activity_id])).rows[0];
+  requireCondition(live&&(contract.reuse_activity_id?live.status==='active':live.status==='planned'&&live.workflow_id===owner.workflow_id&&live.current_definition_version_id===a.id&&live.contract_sha256===a.contract_sha256&&definitionDigest(live.contract)===a.contract_sha256),'candidate_activity_authority_revoked',409);
   if(!contract.reuse_activity_id){
    const expected={...contract,workflow_authoring:{workflow_key:definition.key,source:definition.source,runtime:definition.runtime}};
    requireCondition(definitionDigest(a.payload.contract)===definitionDigest(expected)&&a.source_repo===definition.source.repo

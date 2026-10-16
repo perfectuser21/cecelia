@@ -2,7 +2,7 @@ import { compileInvocation } from '../orchestrator/invocation-plan.js';
 import { createSkillEnvelope } from '../orchestrator/skill-activity-adapter.js';
 import { definitionDigest,object,uuid,requireCondition } from '../workflow-authoring/contracts.js';
 import { legacyExecutorEntries } from '../execution-directory/legacy-executor.js';
-import { canonicalCandidateTarget } from './candidate-target.js';
+import { canonicalCandidateTarget,canonicalOwnerTarget } from './candidate-target.js';
 import {EXECUTION_PROTOCOL,readCandidateOwner,requireCandidateEnvironment} from '../workflow-authoring/assembly-orchestration.js';
 
 export function validateTargetRequest(body) {
@@ -41,9 +41,10 @@ async function loadDefinition(db,body,tenantId) {
       requireCondition(candidateTrace,'严格候选尚未形成真实冻结owner',409);
     }
     // 新建工作流以管理任务作为候选身份；更新时只能使用该管理任务声明的 workflow。
-    if(body.target.kind==='workflow')requireCondition(body.target.id===(stableId??row.id),'候选目标身份不匹配',409);
+    const canonical=candidateTrace?canonicalOwnerTarget(body,tenantId,candidateTrace):null;
+    if(body.target.kind==='workflow'&&!candidateTrace)requireCondition(body.target.id===(stableId??row.id),'候选目标身份不匹配',409);
     if(body.target.kind==='activity'){
-      const target=canonicalCandidateTarget(body,tenantId);
+      const target=canonical??canonicalCandidateTarget(body,tenantId);
       const selected=definition.activities?.find(a=>target.slot_key!==undefined?a.key===target.slot_key:
         a.id===target.id||a.activity_id===target.id||a.reuse_activity_id===target.id);
       requireCondition(selected,'候选定义未包含该活动',404);
@@ -51,7 +52,7 @@ async function loadDefinition(db,body,tenantId) {
         activities:[{...selected,key:selected.key??'single',input_mapping:undefined}],output_mapping:undefined},target,
         candidateTrace:candidateTrace?{...candidateTrace,slots:candidateTrace.slots.filter(s=>s.slot_key===selected.key)}:undefined};
     }
-    return {definition,target:{...body.target,definition_version_id:expected},candidateTrace};
+    return {definition,target:canonical??{...body.target,definition_version_id:expected},candidateTrace};
   }
   const kind=body.target.kind,args=[body.target.definition_version_id,body.target.id];
   const row=(kind==='activity'
@@ -78,10 +79,10 @@ async function catalogFor(db,definition){
   const warehouse_items=keys.length?(await db.query('SELECT id,key,active,shelf FROM warehouse_items WHERE key=ANY($1::text[])',[keys])).rows:[];
   return {activity_versions,skills,warehouse_items};
 }
-export async function probeInvocationRuntime({fetchFn=globalThis.fetch}={}){
+export async function probeInvocationRuntime({fetchFn=globalThis.fetch,signal,deadline=Date.now()+3000}={}){
   const entries=legacyExecutorEntries().filter(e=>e.executor==='codex');
   const results=await Promise.allSettled(entries.map(async e=>{
-    const response=await fetchFn(`${e.url}/health`,{signal:AbortSignal.timeout(3000)});
+    const response=await fetchFn(`${e.url}/health`,{signal:AbortSignal.any([AbortSignal.timeout(Math.max(1,Math.min(3000,deadline-Date.now()))),...(signal?[signal]:[])])});
     requireCondition(response.ok,'执行体离线');const health=await response.json();
     requireCondition(health.ok&&health.status==='healthy'&&health.accounts?.some(a=>!a.tokenExpired&&(a.primaryUsedPct??100)<95),'执行体无可用资源');
     return {machine_id:e.machineId,transport:'codex-bridge'};

@@ -2,6 +2,7 @@ import {
   STAGES, requireCondition, object, text, uuid, stringArray,
   definitionDigest, validateRequest, validateSubmission, validateStageOutput,
 } from './contracts.js';
+import {validateRevalidationRequest} from './revalidation.js';
 import {readAuthoringExecutionProof,readAuthoringReadiness} from './execution-proof.js';
 import {loadAssemblyCatalog} from '../lib/workflow-assembly-store.js';
 import { FREEZE_PROTOCOL, prepareDefinitionFreeze } from './freeze.js';
@@ -165,7 +166,7 @@ export async function submitAuthoring(pool, taskId, body, deps = {}) {
   if (body.stage === 'register') {
     const state = await getAuthoring(pool, taskId);
     if(state.request.execution_protocol===EXECUTION_PROTOCOL&&!state.receipts.some(r=>r.submission_id===body.submission_id)){
-      const row=await task(pool,taskId);
+      const row=await task(pool,taskId,{writable:false});
       const readiness=await readAuthoringReadiness(pool,taskId,{...deps.invocationOptions,tenantId:row.payload?.tenant_id??'default'});
       requireCondition(readiness.status==='verified','execution_readiness_blocked',409);deps={...deps,readiness};
     }
@@ -185,7 +186,11 @@ export async function submitAuthoring(pool, taskId, body, deps = {}) {
       requireCondition(previous.input_sha256 === digest, 'submission_id 已被不同请求占用', 409);
       return { state, receipt: previous, replayed: true };
     }
-    requireWritable(row);
+    if(deps.internalRevalidation&&row.status==='completed'){
+      const owner=await (await import('./assembly-orchestration.js')).readCandidateOwner(client,taskId,state.outputs.compose.definition,row.payload?.tenant_id??'default');
+      const request=validateRevalidationRequest(row,owner,row.payload?.tenant_id??'default');
+      requireCondition(request&&request.attempt_id===row.result.workflow_authoring_execution?.attempt_id,'revalidation_authority_mismatch',409);
+    }else requireWritable(row);
     requireCondition(body.stage === state.stage, `当前阶段是 ${state.stage}`, 409);
     requireCondition(body.revision === state.revision, 'revision 已过期', 409);
     const output = await processStage(client, taskId, state, body, {...deps,tenantId:row.payload?.tenant_id??'default'});
