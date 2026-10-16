@@ -52,9 +52,10 @@ it("旧运行记录明确标记定义未知并保留原始登记来源", async (
   } as Response);
   render(<EvidenceView mode="运行" workflow="" />);
   const row = await screen.findByRole("button", { name: /old-run/ });
-  expect(within(row).getByText("定义")).toBeInTheDocument();
+  expect(within(row).getByText("定义").closest("p")).toHaveTextContent(/^定义\s*unknown$/);
   expect(within(row).getByText("登记来源：task_runs")).toBeInTheDocument();
-  expect(within(row).getAllByText("unknown")).toHaveLength(2);
+  expect(within(row).getByText("证据")).toHaveTextContent(/^证据\s*unknown$/);
+  expect(within(row).getByText(/固定定义版本：/)).toHaveTextContent(/^固定定义版本：\s*unknown$/);
 });
 
 it("地图类型按钮在深色主题继承明确文字色且有选中语义", () => {
