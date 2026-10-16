@@ -18,7 +18,7 @@ export async function authoringExecutionDatabase(){
   const definition={key:`pure${cap.slice(0,8)}`,name:'纯Skill候选',capability_id:cap,channel:'internal',form:'code',version:'1.0.0',
    source:{repo:'perfectuser21/cecelia',ref:'contracts/pure.json',revision:'a'.repeat(40)},runtime:{skill_id:skill,entrypoint:'pure',transport:'codex-bridge'},
    input_schema:schema,output_schema:schema,activities:[{key:'uppercase',name:'大写',executor_kind:'agent',mutation_intent:'none',acceptance:['大写结果'],
-    runtime:{transport:'codex-bridge'},input_schema:schema,output_schema:schema,
+    input_schema:schema,output_schema:schema,
     implementation:{kind:'skill',skill_id:skill,ref:'skills/pure/SKILL.md',path:'skills/pure/SKILL.md',version:'1.0.0',repo:'perfectuser21/cecelia',revision:'contract'}}]};
   const content='---\nname: authoring-pure\nversion: 1.0.0\n---\n仅把输入text转成大写，输出text字段。禁止工具、文件、消息及其它副作用。';
   const reader=async s=>s.path===definition.source.ref?JSON.stringify(Object.fromEntries(Object.entries(definition).filter(([k])=>k!=='source'))):content;
