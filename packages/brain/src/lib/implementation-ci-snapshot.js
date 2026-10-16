@@ -1,4 +1,5 @@
 import {prepareNativeConsumerSelection,selectNativeConsumerDefinition} from './native-consumer-source-selection.js';
+import {isNativeMaintenanceObservationDefinition} from './native-maintenance-snapshot.js';
 import {assertNativeConsumerRuntime} from './native-consumer-runtime.js';
 import {manifestMatchesImplementationSource} from './implementation-context.js';
 import {hasFrozenConsumerSource,sealedConsumerVersion,collectWorkspaceConsumerSourceSet,isTrustedWorkspaceConsumerSource,sealedBrainConsumerDefinition,consumerSourceAdmissionScope} from './consumer-source-set.js';
@@ -252,6 +253,7 @@ export async function readImplementationSnapshotInTransaction(db,q,nativeProof){
   }else candidates=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_repo=$1 AND source_commit=$2 ORDER BY workflow_id,id',[q.repo,q.revision])).rows;
   candidates=candidates.filter(w=>factory?
     w.payload.definition_scope==='consumer_evidence'&&w.payload.source_scope===EXISTING_OPS_SCOPE&&EXISTING_OPS_IDENTITIES.some(i=>i.workflow_id===w.workflow_id):!['consumer_evidence','device_workflow_admission'].includes(w.payload.definition_scope));
+  if(!factory){const business=[];for(const row of candidates)if(!await isNativeMaintenanceObservationDefinition(db,row))business.push(row);candidates=business;}
   const authoring=repositories.length===1&&repositories[0].adapter_config?.definition_protocol;
   if(authoring)candidates=selectAuthoringDefinitions(repositories[0].adapter_config,candidates);
   else candidates=candidates.filter(w=>w.payload.registration_protocol!=='definition-freeze-v1');

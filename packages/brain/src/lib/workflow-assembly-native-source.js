@@ -10,11 +10,11 @@ export const NATIVE_REPO='perfectuser21/cecelia';
 const root=fileURLToPath(new URL('../../../../',import.meta.url));
 const require=createRequire(import.meta.url);
 export const nativeSpec=require('../../config/workflow-assembly-native.json');
-const paths=[NATIVE_SPEC_PATH,...['workflow-assembly-native.js','workflow-assembly-native-ledger.js','workflow-assembly-native-source.js','workflow-assembly-native-registration.js',
+export const NATIVE_SOURCE_PATHS=Object.freeze([NATIVE_SPEC_PATH,...['workflow-assembly-native.js','workflow-assembly-native-ledger.js','workflow-assembly-native-source.js','workflow-assembly-native-registration.js',
   'workflow-assembly-reconcile-runner.js','workflow-assembly-reconcile.js','workflow-assembly-reconcile-derived.js','workflow-assembly-reconcile-tasks.js'].map(p=>'packages/brain/src/lib/'+p),
-  'packages/brain/src/workflow-authoring/assembly-driver.js','packages/brain/src/workflow-authoring/execution-proof.js'];
+  'packages/brain/src/workflow-authoring/assembly-driver.js','packages/brain/src/workflow-authoring/execution-proof.js']);
 // Docker将packages/brain平铺/app；逻辑Git路径不等于运行时物理文件路径。
-const loaded=new Map(paths.map(path=>[path,readFileSync(new URL('../../'+path.slice('packages/brain/'.length),import.meta.url),'utf8')]));
+const loaded=new Map(NATIVE_SOURCE_PATHS.map(path=>[path,readFileSync(new URL('../../'+path.slice('packages/brain/'.length),import.meta.url),'utf8')]));
 const trusted=new WeakSet();
 const cache=new Map();
 const freeze=value=>{if(value&&typeof value==='object'){for(const item of Object.values(value))freeze(item);Object.freeze(value);}return value;};
@@ -31,7 +31,7 @@ export async function prepareNativeSource({revision,readFile=readSource,deadline
   if(!/^[a-f0-9]{40}$/.test(revision??''))throw Error('native_source_revision_required');
   if(readFile===readSource && cache.has(revision))return cache.get(revision);
   const bindings=[];
-  for(const path of paths){
+  for(const path of NATIVE_SOURCE_PATHS){
     if(signal?.aborted||Date.now()>=deadline)throw Error('native_source_budget');
     const text=await readFile(revision,path,{deadline,signal});
     if(signal?.aborted||Date.now()>=deadline)throw Error('native_source_budget');

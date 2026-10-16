@@ -31,12 +31,12 @@ export async function registerNativeReconcile(pool,source,options={}){
     const url=`https://github.com/${source.repo}/blob/${source.commit}/${source.path}`;
     await db.query(`INSERT INTO activities(id,name,status,workflow_id,capability_key,activity_key,executor_kind,contract,contract_sha256,contract_source,backbone_version)
       VALUES($1,$2,'active',$3,$4,$5,'code',$6,$7,$8,$9) ON CONFLICT(id) DO NOTHING`,[a.id,a.name,spec.id,spec.capability,a.key,a,definitionDigest(a),url,spec.version]);
-    const av=await version(db,'activity',a.id,{protocol:spec.protocol,activity_id:a.id,contract:a,steps:[],implementation_bindings:source.bindings},source);
+    const av=await version(db,'activity',a.id,{protocol:spec.protocol,definition_scope:'native_maintenance_observation',capability_id:spec.capability_id,activity_id:a.id,contract:a,steps:[],implementation_bindings:source.bindings},source);
     const refs=(await db.query('SELECT * FROM workflow_activity_refs WHERE workflow_id=$1 OR id=$2 FOR UPDATE',[spec.id,a.reference_id])).rows;
     if(refs.some(r=>r.id!==a.reference_id||r.workflow_id!==spec.id||r.activity_id!==a.id||r.slot_key!==a.key||r.sequence_no!==1||!r.active||r.source_repo!==source.repo||r.source_path!==source.path))conflict();
     await db.query(`INSERT INTO workflow_activity_refs(id,workflow_id,slot_key,activity_id,sequence_no,active,source_repo,source_path,source_commit,activity_definition_version_id)
       VALUES($1,$2,$3,$4,1,true,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET activity_definition_version_id=$8,source_commit=$7`,[a.reference_id,spec.id,a.key,a.id,source.repo,source.path,source.commit,av]);
-    const payload={protocol:spec.protocol,workflow_id:spec.id,key:spec.key,contract:spec,activities:[{reference_id:a.reference_id,slot_key:a.key,sequence_no:1,activity_id:a.id,activity_version_id:av}]};
+    const payload={protocol:spec.protocol,definition_scope:'native_maintenance_observation',capability_id:spec.capability_id,workflow_id:spec.id,key:spec.key,contract:spec,activities:[{reference_id:a.reference_id,slot_key:a.key,sequence_no:1,activity_id:a.id,activity_version_id:av}]};
     const wv=await version(db,'workflow',spec.id,payload,source);
     await db.query('UPDATE workflows SET current_definition_version_id=$2 WHERE id=$1',[spec.id,wv]);
     await db.query('UPDATE activities SET current_definition_version_id=$2,contract_source=$3 WHERE id=$1',[a.id,av,url]);
