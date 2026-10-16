@@ -1,15 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import unit from '../../vitest.config.js';
-import integration from '../../vitest.integration.config.js';
-const api = await import('./helpers/crm-pg-fixture.js').catch(() => ({}));
+import unit from '../../../vitest.config.js';
+import integration from '../../../vitest.integration.config.js';
+const api = await import('../helpers/crm-pg-fixture.js').catch(() => ({}));
 const files = ['crm-store.pg.integration.test.js', 'crm-contact-resolve.pg.integration.test.js'];
 describe('CRM真PG由既有CI集成消费者运行', () => {
   it('两份验收位于现有integration选择范围，unit排除而集成配置保留', () => {
-    for (const name of files) expect(existsSync(new URL(`./integration/${name}`, import.meta.url))).toBe(true);
+    for (const name of files) expect(existsSync(new URL(`./${name}`, import.meta.url))).toBe(true);
     expect(unit.test.exclude).toContain('src/__tests__/integration/**');
     expect(integration.test.exclude).not.toContain('src/__tests__/integration/**');
-    const workflow = readFileSync(new URL('../../../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/ci.yml', import.meta.url), 'utf8');
     const job = workflow.match(/\n  brain-integration:[\s\S]*?(?=\n  [\w-]+:|$)/)?.[0];
     expect(job).toContain("POSTGRES_INTEGRATION: '1'");
     expect(job).toContain('--config vitest.integration.config.js');

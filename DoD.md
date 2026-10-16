@@ -344,4 +344,4 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
   Test: manual:bash -c "cd packages/brain && CRM_STORE_SCRATCH_TEST=1 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/crm-contact-resolve.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] crmpgci 既有CI的POSTGRES_INTEGRATION和integration目录自动运行两份CRM真PG验收；DATABASE_URL优先、DB_*保留，只允许精确测试库，唯一schema创建与回收不写public；本地scratch开关兼容。
-  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/crm-pg-ci.test.js --maxWorkers=1 --minWorkers=1"
+  Test: manual:bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/crm-pg-ci.test.js --maxWorkers=1 --minWorkers=1"
