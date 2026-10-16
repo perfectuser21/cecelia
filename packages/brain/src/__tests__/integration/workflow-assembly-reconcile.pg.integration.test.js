@@ -122,3 +122,12 @@ it('真实PG外层事务中后发现人工冲突，必须回滚此前本次派�
  catch(error){await x.db.query('ROLLBACK');throw error;}
  expect((await x.db.query('SELECT count(*)::int n FROM activity_version_builds WHERE build_id=$1',[x.av])).rows[0].n).toBe(0);
 });
+it('真实PG已active候选和退休Activity不自动修复派生关系',async()=>{
+ const x=await frozenFixture();await x.db.query('DELETE FROM workflow_activity_refs WHERE id=$1',[x.reference]);
+ await x.db.query("UPDATE workflows SET status='active' WHERE id=$1",[x.wf]);
+ expect((await x.audit(true)).repaired).toEqual([]);
+ await x.db.query("UPDATE workflows SET status='paused' WHERE id=$1",[x.wf]);
+ await x.db.query("UPDATE activities SET status='deprecated' WHERE id=$1",[x.activity]);
+ expect((await x.audit(true)).repaired).toEqual([]);
+ expect((await x.db.query('SELECT count(*)::int n FROM workflow_activity_refs WHERE workflow_id=$1',[x.wf])).rows[0].n).toBe(0);
+});
