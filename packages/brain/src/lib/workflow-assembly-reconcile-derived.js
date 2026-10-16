@@ -18,6 +18,7 @@ export async function auditAssemblyDerivations(db,task,options={}){
   try{
     const actual=(await db.query('SELECT current_database() AS name')).rows[0]?.name;check();
     if(!isAssemblyReconcileEnvironment(actual) || options.database && options.database!==actual)deny('candidate_environment_unsupported');
+    if(!['in_progress','completed','completed_no_pr'].includes(task.status))deny('candidate_authority_revoked');
     const state=task.result?.workflow_authoring,definition=state?.outputs?.compose?.definition;
     const owner=task.result?.workflow_authoring_candidate,tenant=task.tenant_id ?? task.payload?.tenant_id ?? 'default';
     if(state?.request?.execution_protocol!=='workflow-authoring-execution-v1' || state.request.assembly_mode!==true
