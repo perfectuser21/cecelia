@@ -37,7 +37,7 @@ export async function runJudge(cfg, worktree, intent, options) {
   return context ? withRecordProvenance(context, run) : run();
 }
 
-async function runJudgeObserved(cfg, worktree, intent, { round, reportRel, log }) {
+async function runJudgeObserved(cfg, worktree, intent, { round, reportRel, log, qaStageEventId, sourceMode = 'pending', testedHead }) {
   const read = (rel) => fs.readFileSync(path.join(worktree, rel), 'utf8');
   let texts;
   try {
@@ -49,14 +49,15 @@ async function runJudgeObserved(cfg, worktree, intent, { round, reportRel, log }
   try {
     const exact = await git(worktree, ['rev-parse', 'HEAD']);
     if (exact.code !== 0) throw new Error('judge_head_missing');
-    facts = judgeSourceFacts(cfg, worktree, intent, exact.stdout.trim(), reportRel);
+    facts = judgeSourceFacts(cfg, worktree, intent, exact.stdout.trim(), reportRel,
+      { mode: sourceMode, stageEventId: qaStageEventId, testedHead, round });
     const diff = await prDiff(worktree);
     // 裁判必须看到完整改动（审计 #43）：超限不截断照判，交 coding commander
     if (diff.length > JUDGE_DIFF_LIMIT) return { error: 'judge_input_truncated', escalate: true, diff_chars: diff.length };
     // 前几轮裁决（金丝雀 4 翻转）：裁判知道开发方已经照哪些结论改过
     const priorRulings = priorJudgeFiles(worktree, intent.sprintDir, round).map((f) => ({ round: f.round, text: read(f.rel) }));
     const prompt = buildJudgePrompt({ ...texts, diff, qaReportFile: path.basename(reportRel), intentIds: intent.intentIds, round, priorRulings });
-    if (facts) prompt.user = `受信控制器来源事实（只证明阶段接收/登记，产品及命令语义仍独立裁判；sealed_not_registered不是已登记）：\n${JSON.stringify(facts)}\n\n${prompt.user}`;
+    if (facts) prompt.user = `受信控制器来源事实（阶段接收/登记及current_qa.isolation所列本轮控制器临时隐藏与原样恢复；仅解释精确03/04工作区暂移，不证明Git历史保密、不豁免产品范围或命令语义；sealed_not_registered不是已登记）：\n${JSON.stringify(facts)}\n\n${prompt.user}`;
     const transcriptPath = path.join(cfg.logDir, `judge-${intent.taskId || path.basename(intent.sprintDir)}-r${round}-${Date.now()}.jsonl`);
     reply = await callJudge(prompt, { ...cfg.judgeConn, timeoutMs: cfg.judgeTimeoutMs, transcriptPath });
   } catch (error) {
