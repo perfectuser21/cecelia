@@ -168,3 +168,21 @@ it('真实PG runner对确定候选语义缺口只建一条native核查单，comp
  const after=Object.values((await x.saved()).workflow_assembly_reconcile.issues)[0];expect(after.status).toBe('open');expect(after.repair_task_id).toBe(first.repair_task_id);
  expect((await x.db.query('SELECT count(*)::int n FROM work_routing_receipts')).rows[0].n).toBe(1);
 });
+it('真实PG取消信号在probe期间到达后不晚写任务状态或游标',async()=>{
+ const x=await fixture(),controller=new AbortController();
+ const out=await x.run({signal:controller.signal,readReadiness:async()=>{controller.abort();return x.readiness();}});
+ expect(out.stopped).toBe('cancelled');expect((await x.saved()).workflow_assembly_reconcile).toBeUndefined();
+ expect((await x.db.query('SELECT count(*)::int n FROM working_memory')).rows[0].n).toBe(0);
+});
+it('真实PG原资源offline、unknown、过期healthy均不驱动，fresh恢复同链才驱动一次',async()=>{
+ const x=await fixture();await x.db.query(migrationTable('539_resource_health.sql','resource_health'));
+ const ref={type:'phone',key:'test-isolated-phone'};
+ await x.db.query('UPDATE tasks SET payload=payload||$2::jsonb WHERE id=$1',[x.id,{resource_refs:[ref]}]);
+ await x.db.query("INSERT INTO resource_health(resource_type,resource_key,status,source,observed_at) VALUES('phone',$1,'offline','test',NOW())",[ref.key]);
+ let called=0,clock=Date.now();const run=()=>x.run({now:()=>clock,advanceAuthoring:async()=>{called++;},readReadiness:async()=>x.readiness()});
+ await run();expect(called).toBe(0);expect((await x.saved()).workflow_assembly_reconcile.status).toBe('waiting_resource');
+ clock+=100000;await x.db.query("UPDATE resource_health SET status='unknown' WHERE resource_key=$1",[ref.key]);await run();expect(called).toBe(0);
+ clock+=1000000;await x.db.query("UPDATE resource_health SET status='healthy',observed_at=NOW()-INTERVAL '2 days' WHERE resource_key=$1",[ref.key]);await run();expect(called).toBe(0);
+ clock+=10000000;await x.db.query("UPDATE resource_health SET observed_at=$2 WHERE resource_key=$1",[ref.key,new Date(clock)]);await run();expect(called).toBe(1);
+ expect((await x.saved()).workflow_assembly_reconcile.resource_refs).toEqual([ref]);
+});
