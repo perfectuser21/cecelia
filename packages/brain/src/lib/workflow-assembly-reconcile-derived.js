@@ -1,5 +1,6 @@
 import {definitionDigest} from '../workflow-authoring/contracts.js';
 import {ensureVersionForBuild,lockReleaseLine,refreshWorkflowRecipe} from './release-line.js';
+export const isAssemblyReconcileEnvironment=(name,env=process.env)=>name==='cecelia_scratch' || name==='cecelia_test' && env.CI==='true' && env.GITHUB_ACTIONS==='true';
 const UUID=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const deny=code=>{throw Object.assign(Error(code),{assemblyGap:code});};
 function fixed(row){
@@ -16,7 +17,7 @@ export async function auditAssemblyDerivations(db,task,options={}){
   check();await db.query(owns?'BEGIN':'SAVEPOINT assembly_reconcile_derived');
   try{
     const actual=(await db.query('SELECT current_database() AS name')).rows[0]?.name;check();
-    if(actual!=='cecelia_scratch' || options.database && options.database!==actual)deny('candidate_environment_unsupported');
+    if(!isAssemblyReconcileEnvironment(actual) || options.database && options.database!==actual)deny('candidate_environment_unsupported');
     const state=task.result?.workflow_authoring,definition=state?.outputs?.compose?.definition;
     const owner=task.result?.workflow_authoring_candidate,tenant=task.tenant_id ?? task.payload?.tenant_id ?? 'default';
     if(state?.request?.execution_protocol!=='workflow-authoring-execution-v1' || state.request.assembly_mode!==true

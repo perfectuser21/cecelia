@@ -1,6 +1,7 @@
+import {isAssemblyReconcileEnvironment} from './workflow-assembly-reconcile-derived.js';
 import {createRoutedTask} from '../work-routing-store.js';
 import {definitionDigest} from '../workflow-authoring/contracts.js';
-const SKIP=new Set(['candidate_environment_unsupported','candidate_isolation_required','readiness_unavailable','readiness_identity_mismatch','resource_unavailable','resource_unknown','awaiting_execution']);
+const SKIP=new Set(['candidate_environment_unsupported','candidate_isolation_required','driver_unavailable','readiness_authorization_required','readiness_unavailable','readiness_identity_mismatch','resource_unavailable','resource_unknown','awaiting_execution']);
 /** 调用者持事务；稳定问题键独立于router版本，completed仅作历史，不代表复验。 */
 export async function ensureAssemblyGapTask(db,authoring,issue,{check=()=>{}}={}){
   check();
@@ -12,7 +13,7 @@ export async function ensureAssemblyGapTask(db,authoring,issue,{check=()=>{}}={}
     || issue.definition_sha256!==definitionDigest(authoring.result?.workflow_authoring?.outputs?.compose?.definition)
     || issue.target_version!==`candidate:${issue.definition_sha256}`)throw Error('gap_task_identity_mismatch');
   const actual=(await db.query('SELECT current_database() AS name')).rows[0]?.name;check();
-  if(actual!=='cecelia_scratch')return null;
+  if(!isAssemblyReconcileEnvironment(actual))return null;
   await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,6))',[`assembly-gap:${issue.key}`]);check();
   const previous=(await db.query("SELECT id,status,payload->>'routing_receipt_id' AS routing_receipt_id FROM tasks WHERE payload->>'workflow_assembly_gap_key'=$1 ORDER BY created_at,id LIMIT 1",[issue.key])).rows[0];check();
   if(previous)return {task_id:previous.id,status:previous.status,routing_receipt_id:previous.routing_receipt_id,deduplicated:true};

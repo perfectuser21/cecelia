@@ -42,7 +42,7 @@ async function frozenFixture(){
  const owner={protocol:'workflow-authoring-execution-v1',authoring_task_id:x.id,tenant_id:'alpha',definition_sha256:digest,workflow_id:wf,workflow_definition_version_id:version,slots:[{slot_key:'render',activity_id:activity,activity_definition_version_id:av,steps:[]}]};
  original.workflow_authoring.outputs.compose={definition,definition_sha256:digest};original.workflow_authoring_candidate=owner;
  await db.query('UPDATE tasks SET result=$2 WHERE id=$1',[x.id,original]);
- const audit=async repair=>{expect(api.auditAssemblyDerivations).toBeTypeOf('function');return api.auditAssemblyDerivations(db,(await db.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0],{database:'cecelia_scratch',repair,check:()=>{}});};
+ const audit=async repair=>{expect(api.auditAssemblyDerivations).toBeTypeOf('function');return api.auditAssemblyDerivations(db,(await db.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0],{repair,check:()=>{}});};
  return {...x,digest,definition,wf,activity,reference,av,version,audit};
 }
 it('真实PG同数据库跨轮持锁；慢probe预算到期后不能晚建单或推进游标',async()=>{
@@ -118,7 +118,7 @@ it('真实PG外层事务中后发现人工冲突，必须回滚此前本次派�
  await x.db.query('UPDATE workflow_activity_refs SET active=false WHERE id=$1',[x.reference]);
  const row=(await x.db.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0];
  await x.db.query('BEGIN');
- try{const out=await api.auditAssemblyDerivations(x.db,row,{database:'cecelia_scratch',repair:true,transaction:'existing',check:()=>{}});
+ try{const out=await api.auditAssemblyDerivations(x.db,row,{repair:true,transaction:'existing',check:()=>{}});
    expect(out.gaps).toContainEqual({code:'fixed_reference_conflict'});await x.db.query('COMMIT');}
  catch(error){await x.db.query('ROLLBACK');throw error;}
  expect((await x.db.query('SELECT count(*)::int n FROM activity_version_builds WHERE build_id=$1',[x.av])).rows[0].n).toBe(0);

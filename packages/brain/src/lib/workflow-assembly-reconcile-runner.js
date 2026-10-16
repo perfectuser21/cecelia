@@ -1,6 +1,6 @@
 import {collectTaskResourceRefs,checkResourcesHealth} from './resource-health.js';
 import {ensureAssemblyGapTask} from './workflow-assembly-reconcile-tasks.js';
-import {auditAssemblyDerivations} from './workflow-assembly-reconcile-derived.js';
+import {auditAssemblyDerivations,isAssemblyReconcileEnvironment} from './workflow-assembly-reconcile-derived.js';
 import {definitionDigest} from '../workflow-authoring/contracts.js';
 import {reconcileGapState} from './workflow-assembly-reconcile.js';
 const CURSOR='workflow_assembly_reconcile_cursor:v1';
@@ -89,7 +89,7 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
       let driverError=false;
       const tenantConflict=row.tenant_id!=null && row.payload?.tenant_id!=null && row.tenant_id!==row.payload.tenant_id;
       try{
-        if(!tenantConflict && resourceCondition==='ready' && identity.database==='cecelia_scratch'
+        if(!tenantConflict && resourceCondition==='ready' && isAssemblyReconcileEnvironment(identity.database)
           && (options.advanceAuthoring || !options.readReadiness)){
           try{check();await (options.advanceAuthoring??defaultAdvance)(pool,row.id,{tenantId,deadline,signal:options.signal});check();}
           catch(error){check();driverError=true;}
