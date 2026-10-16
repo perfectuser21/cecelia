@@ -40,9 +40,10 @@ export async function runRecordedActivity(input, options, handler) {
     sprintDir: input.sprint_dir, stage, round: input.round ?? 0, controller, ...(root ? { root } : {}) }, async () => {
     const result = await handler(input);
     if (result?.status === 'completed' && stage !== 'publish') {
-      sealStageEvidence({ files: stageFiles(input, stage), result,
+      const sealed = sealStageEvidence({ files: stageFiles(input, stage), result,
         producer: stage === 'intent' ? 'controller' : 'model',
         ...(stage === 'intent' ? { controllerInput: { task_id: input.task_id, result } } : {}) });
+      if (stage === 'evaluate') return { ...result, outputs: { ...result.outputs, source_stage_event_id: sealed.id } };
     }
     return result;
   });

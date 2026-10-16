@@ -1,6 +1,6 @@
 // Claude stream-json / Codex exec --json 原生对话记录：提取实际执行过的 Bash 命令及其结果，核对 04-evidence 是否有据。
 import path from 'node:path';
-import { unwrapShellCommand } from './shell-command.mjs';
+import { matchesShellEvidence } from './shell-command.mjs';
 
 const OUTPUT_LINES_CHECKED = 5;
 
@@ -152,7 +152,7 @@ export function unverifiedItems(items, executions, { worktree } = {}) {
     const command = stripWorktreeCd(squashSpace(item.command), worktree);
     const exact = stripWorktreeCd(String(item.command).trim(), worktree);
     const matches = executions.filter((run) => run.provider === 'codex'
-      ? run.completed && Number.isInteger(run.exitCode) && unwrapShellCommand(run.command) === exact
+      ? run.completed && Number.isInteger(run.exitCode) && matchesShellEvidence(run.command, exact)
       : squashSpace(run.command).includes(command));
     if (matches.length === 0) {
       bad.push({ id: item.id, reason: 'command_not_executed' });

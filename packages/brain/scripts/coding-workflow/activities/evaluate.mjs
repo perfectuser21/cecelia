@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
-import { provenanceRequired, verifyRecordProvenance, provenanceProjection } from '../lib/record-provenance.mjs';
+import { provenanceRequired, verifyRecordProvenance, provenanceProjection, beginEvaluateIsolation } from '../lib/record-provenance.mjs';
 import { intentIdsError } from '../lib/intent.mjs';
 import { qaScenarios, SPEC_FILE, INTENT_FILE } from '../lib/spec-check.mjs';
 import { parseQaReport, judgeQa, unitTestEvidence, productionTouches, trivialAssertions, screenshotProblems } from '../lib/qa-report.mjs';
@@ -139,11 +139,11 @@ await runActivity(async (input) => {
   const args = ['-p', prompt, '--permission-mode', 'acceptEdits', ...SESSION_FLAGS, '--allowedTools', 'Bash', '--disallowedTools', ...DENIED];
   const before = { head: await headSha(worktree), changes: await snapshotChanges(worktree) };
 
-  const state = { hidden: [], claudeRunning: false, bridge: null };
-  const restoreAll = () => state.hidden.every((h) => h.restore());
+  const state = { hidden: [], isolation: null, claudeRunning: false, bridge: null };
+  const restoreAll = () => state.isolation ? state.isolation.restore() : state.hidden.map((h) => h.restore()).every(Boolean);
   const onSigterm = () => {
     void state.bridge?.close();
-    restoreAll();
+    if (state.isolation) state.isolation.abort();else restoreAll();
     if (!state.claudeRunning) process.exit(2);
   };
   process.on('SIGTERM', onSigterm);
@@ -157,7 +157,11 @@ await runActivity(async (input) => {
         return fail('retryable', 'preview_unavailable', { evidence: [{ bridge_error: error.message }] });
       }
     }
-    for (const p of hiddenPaths) state.hidden.push(await hideFile(worktree, p));
+    state.isolation = beginEvaluateIsolation();
+    if (sourceProvenance && !state.isolation) throw Error('record_provenance_isolation_missing');
+    if (state.isolation) args[1] += '\n\nCONTROLLER_WORKSPACE_ISOLATION: ' + JSON.stringify(state.isolation.hiddenFacts())
+      + '\n以上仅说明可信控制器在本轮会话前暂移03/04，尚未声明恢复；不豁免产品范围、其他文件或原生命令验收。不得自行读取或改写持有副本。';
+    else for (const p of hiddenPaths) state.hidden.push(await hideFile(worktree, p));
     state.claudeRunning = true;
     const run = await runClaude({ args, cwd: worktree, timeoutMs: claudeTimeoutMs(input.budget, TIMEOUT), tag: 'evaluate', isolateRemote: true,
       ...(state.bridge ? { nativeOptions: { previewCapability: state.bridge.capability } } : {}),
