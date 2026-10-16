@@ -5,12 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { provenanceRoot, assertProvenanceSeparation } from './provenance-path.mjs';
-import { REPO, MANIFEST, OWNER, UUID, SHA, hash, fail, gitText, fixedHead, ancestor, noLinks, workingBytes, workingMode, gitBytes, gitMode, sourceManifest, writeEvent, events } from './record-provenance-store.mjs';
+import { REPO, MANIFEST, OWNER, UUID, SHA, hash, fail, git, gitText, fixedHead, ancestor, noLinks, workingBytes, workingMode, gitBytes, gitMode, sourceManifest, writeEvent, events } from './record-provenance-store.mjs';
+import { startQaIsolation, verifyQaIsolation, isolationProjection } from './qa-isolation.mjs';
 import { identity, recordType, inspectRecord, workingRecord, branchIdentity, listRecords } from './record-provenance-records.mjs';
 
 const storage = new AsyncLocalStorage(), transactions = new WeakMap();
 const STAGES = new Set(['intent', 'spec', 'spec_review', 'build', 'verify', 'evaluate', 'judge', 'commander']);
-const ownUrls = [import.meta.url, new URL('./record-provenance-store.mjs', import.meta.url), new URL('./record-provenance-records.mjs', import.meta.url), new URL('./provenance-path.mjs', import.meta.url)];
+const ownUrls = [import.meta.url, new URL('./record-provenance-store.mjs', import.meta.url), new URL('./record-provenance-records.mjs', import.meta.url), new URL('./provenance-path.mjs', import.meta.url), new URL('./qa-isolation.mjs', import.meta.url)];
 const ownBytes = new Map(ownUrls.map(url => { const file = fileURLToPath(url);noLinks(file);return [file, hash(fs.readFileSync(file))]; }));
 const clone = value => JSON.parse(JSON.stringify(value));
 function controllerValid(c) {
@@ -52,6 +53,13 @@ export function withRecordProvenance(options, fn) {
   c.native = [];c.startedHead = gitText(c.worktree, 'rev-parse', 'HEAD');
   return storage.run(c, fn);
 }
+/** 只有可信 evaluate 父控制器可开启；身份从本次 context 取，不接受模型字段。 */
+export function beginEvaluateIsolation() {
+  const c = storage.getStore();if (!c) return null;
+  if (c.stage !== 'evaluate' || c.isolation) fail('isolation_context');
+  c.isolation = startQaIsolation(c);
+  return Object.freeze({ restore: () => c.isolation.restore(), abort: () => c.isolation.abort(), hiddenFacts: () => c.isolation.hiddenFacts() });
+}
 function nativeSucceeded(run) {
   if (run.provider !== 'codex' || run.code !== 0 || run.timedOut || run.terminated || typeof run.stdout !== 'string') return false;
   const rows = run.stdout.split('\n').filter(Boolean).map(line => { try { return JSON.parse(line); } catch { return null; } });
@@ -60,11 +68,19 @@ function nativeSucceeded(run) {
 /** 仅接收父控制器直接捕获的原生stdout，不从模型生成文件反读。 */
 export function captureNativeExecution(run) {
   const c = storage.getStore();if (!c) return null;
-  const data = { kind: 'native', run_id: c.runId, sprint_dir: c.sprintDir, stage: c.stage, round: c.round, controller: c.controller,
+  let hiddenId, isolationError;
+  if (c.stage === 'evaluate') {
+    if (!c.isolation) fail('isolation_missing');
+    try { hiddenId = c.isolation.assertActive(); } catch (error) { isolationError = error; }
+  }
+  const data = { kind: 'native', ...(isolationError ? { isolation_error: isolationError.message } : {}), ...(hiddenId ? { isolation_hidden_event_id: hiddenId } : {}), run_id: c.runId, sprint_dir: c.sprintDir, stage: c.stage, round: c.round, controller: c.controller,
     provider: run.provider ?? null, model: run.model ?? null, tag: run.tag ?? null, code: run.code ?? null,
     timed_out: Boolean(run.timedOut), terminated: Boolean(run.terminated), stdout: typeof run.stdout === 'string' ? run.stdout : '',
     success: nativeSucceeded(run) };
-  const event = writeEvent(c.root, c.taskId, data);c.native.push(event.id);return event;
+  const event = writeEvent(c.root, c.taskId, data);c.native.push(event.id);
+  // 即使隔离边界破坏也保留真实管道原文，但不能将它绑定为成功隔离。
+  if (isolationError) throw isolationError;
+  if (c.stage === 'evaluate') c.isolation.capture(event);return event;
 }
 function eventBase(c) { return { sprint_dir: c.sprintDir, run_id: c.runId, controller: c.controller }; }
 export function sealStageEvidence({ files, result, producer = 'model', controllerInput, round, nativeIds } = {}) {
@@ -80,8 +96,11 @@ export function sealStageEvidence({ files, result, producer = 'model', controlle
   if (producer !== 'controller' && (!ids.includes(c.native.at(-1)) || !natives.length || !all.find(e => e.id === c.native.at(-1))?.success || !natives.some(e => e?.kind === 'native' && e.run_id === c.runId && e.success))) fail('native_missing');
   if (producer === 'controller_render' && (!controllerInput || typeof controllerInput !== 'object')) fail('render_input_missing');
   const records = files.map(file => workingRecord(c, file, c.stage, r));
+  const isolationId = c.stage === 'evaluate' ? c.isolation?.completed() : null;
+  if (c.stage === 'evaluate' && !isolationId) fail('isolation_missing');
   return writeEvent(c.root, c.taskId, { kind: 'stage', ...eventBase(c), stage: c.stage, round: r, producer,
     head_before: c.startedHead, head_after: gitText(c.worktree, 'rev-parse', 'HEAD'), records,
+    ...(isolationId ? { isolation_event_id: isolationId } : {}),
     native_ids: ids, current_native_id: c.native.at(-1) ?? null, result: clone(result), ...(controllerInput ? { controller_input: clone(controllerInput) } : {}) });
 }
 function validateStage(c, stage, all) {
@@ -96,9 +115,10 @@ function validateStage(c, stage, all) {
     if (!native.some(n => n?.kind === 'native' && n.run_id === stage.run_id && n.stage === stage.stage && n.sprint_dir === c.sprintDir && n.success && nativeSucceeded({ provider: n.provider, code: n.code, timedOut: n.timed_out, terminated: n.terminated, stdout: n.stdout }))) fail('native_missing');
     if (stage.producer === 'controller_render' && (!['judge', 'commander'].includes(stage.stage) || !stage.controller_input)) fail('render_input_missing');
   }
+  if (stage.isolation_event_id !== undefined) verifyQaIsolation(c, stage, all);
 }
-function findStage(c, record, head, all) {
-  const matching = all.filter(e => e.kind === 'stage' && e.sprint_dir === c.sprintDir && e.records?.some(r => r.path === record.path && r.sha256 === record.sha256 && r.mode === record.mode) && ancestor(c.worktree, e.head_after, head));
+function findStage(c, record, head, all, stageEventId, qaStageEventId) {
+  const matching = all.filter(e => (!stageEventId || e.id === stageEventId) && (!qaStageEventId || e.controller_input?.qa_stage_event_id === qaStageEventId) && e.kind === 'stage' && e.sprint_dir === c.sprintDir && e.records?.some(r => r.path === record.path && r.sha256 === record.sha256 && r.mode === record.mode) && ancestor(c.worktree, e.head_after, head));
   for (const e of matching.reverse()) {
     validateStage(c, e, all);const r = e.records.find(x => x.path === record.path && x.sha256 === record.sha256 && x.mode === record.mode);
     const type = recordType(r.path, c.sprintDir);
@@ -135,8 +155,13 @@ export function beginRecordRegistration(options, files) {
   const c = config(options, true);c.controller = controllerValid(c.controller);
   if (!['publish', 'qa', 'commander'].includes(c.stage) || !Array.isArray(files) || !files.length || new Set(files).size !== files.length) fail('registration_invalid');
   const head = gitText(c.worktree, 'rev-parse', 'HEAD'), all = events(c.root, c.taskId);
+  if (c.stage === 'qa' && !UUID.test(c.qaStageEventId ?? '')) fail('qa_stage_selector_missing');
   const records = files.map(file => {
-    const rec = workingRecord(c, file), found = findStage(c, rec, head, all), type = recordType(file, c.sprintDir);
+    const rec = workingRecord(c, file), type = recordType(file, c.sprintDir);
+    const found = findStage(c, rec, head, all, c.stage === 'qa' && type.stages.includes('evaluate') ? c.qaStageEventId : undefined,
+      c.stage === 'qa' && type.stages.includes('judge') ? c.qaStageEventId : undefined);
+    if (c.stage === 'qa' && (found.stage.stage === 'evaluate'
+      ? found.stage.id !== c.qaStageEventId : found.stage.controller_input?.qa_stage_event_id !== c.qaStageEventId)) fail('qa_stage_binding');
     if ((c.stage === 'publish' && !['intent', 'spec', 'spec_review', 'build', 'verify'].includes(found.stage.stage)) ||
       (c.stage === 'qa' && !['evaluate', 'judge'].includes(found.stage.stage)) ||
       (c.stage === 'commander' && found.stage.stage !== 'commander') || (type.round && type.round !== c.round && c.stage !== 'publish')) fail('registration_stage');
@@ -182,6 +207,7 @@ function verifyQaRound(c, head, records, all) {
   if (!qaRecord || !judgeRecord) fail('qa_proof_missing');
   const qa = all.find(e => e.id === qaRecord.stage_event_id), judge = all.find(e => e.id === judgeRecord.stage_event_id);
   if (qa?.stage !== 'evaluate' || qa.producer !== 'model' || qa.round !== round || qa.result?.outputs?.qa?.verdict !== 'PASS' || qa.result.outputs.qa.round !== round || qa.head_before !== qa.head_after || !ancestor(c.worktree, qa.head_before, head)) fail('qa_pass_missing');
+  verifyQaIsolation(c, qa, all);
   if (judge?.stage !== 'judge' || judge.producer !== 'controller_render' || judge.round !== round || judge.result?.outputs?.judge_verdict !== 'PASS' || judge.controller_input?.decision?.verdict !== 'PASS' || judge.controller_input.round !== round || judge.controller_input.qa_stage_event_id !== qa.id || judge.controller_input.tested_head !== qa.head_before || !ancestor(c.worktree, qa.head_before, judge.head_before)) fail('judge_pass_missing');
 }
 export function verifyRecordProvenance(options) {
@@ -208,14 +234,52 @@ export function verifyPendingStageEvidence(options, files) {
   if (gitText(c.worktree, 'rev-parse', 'HEAD') !== head) fail('head_moved');
   const all = events(c.root, c.taskId);
   if (!Array.isArray(files) || !files.length) fail('files_invalid');
-  return baseResult(c, head, 'sealed_not_registered', files.map(file => {
-    const record = workingRecord(c, file), { stage } = findStage(c, record, head, all);
+  let isolation;
+  const records = files.map(file => {
+    const record = workingRecord(c, file), type = recordType(file, c.sprintDir);
+    if (type.stages.includes('evaluate') && !UUID.test(c.stageEventId ?? '')) fail('qa_stage_selector_missing');
+    const { stage } = findStage(c, record, head, all, type.stages.includes('evaluate') ? c.stageEventId : undefined);
+    if (/\/05-qa-report-r[1-9]\d*\.md$/.test(file)) isolation = verifyQaIsolation({ ...c, head }, stage, all, true);
     return { path: file, mode: record.mode, sha256: record.sha256, stage: stage.stage, round: record.round, producer: stage.producer, stage_event_id: stage.id, stage_input_head: stage.head_before };
-  }));
+  });
+  return { ...baseResult(c, head, 'sealed_not_registered', records), ...(isolation ? { isolation } : {}) };
+}
+/** 已登记 QA 的独立裁判重试：只允许原测试之后的本轮受保护记录提交。 */
+export function verifyRegisteredQaEvidence(options, reportRel) {
+  const c = config(options), head = fixedHead(c.worktree, c.head);
+  if (!UUID.test(c.stageEventId ?? '') || !SHA.test(c.testedHead ?? '') || !Number.isSafeInteger(c.round) || c.round < 1
+    || reportRel !== `${c.sprintDir}/05-qa-report-r${c.round}.md`) fail('qa_retry_selector');
+  if (gitText(c.worktree, 'rev-parse', 'HEAD') !== head || !ancestor(c.worktree, c.testedHead, head)) fail('qa_retry_head');
+  const verified = verifyRecordProvenance({ ...options, head }), all = events(c.root, c.taskId);
+  const record = verified.records.find(r => r.path === reportRel);
+  if (!record || record.stage_event_id !== c.stageEventId || record.stage_input_head !== c.testedHead || record.round !== c.round) fail('qa_retry_stage');
+  const stage = all.find(e => e.id === c.stageEventId);validateStage(c, stage, all);
+  const isolation = verifyQaIsolation(c, stage, all);
+  if (hash(workingBytes(c.worktree, reportRel)) !== record.sha256 || workingMode(c.worktree, reportRel) !== record.mode) fail('qa_retry_report');
+  let previous = c.testedHead;
+  const commits = gitText(c.worktree, 'rev-list', '--reverse', `${c.testedHead}..${head}`).split('\n').filter(Boolean);
+  if (!commits.length) fail('qa_retry_unregistered');
+  for (const commit of commits) {
+    if (gitText(c.worktree, 'show', '-s', '--format=%P', commit) !== previous) fail('qa_retry_history');
+    const changed = git(c.worktree, 'diff', '--name-only', '-z', previous, commit).toString('utf8').split('\0').filter(Boolean);
+    const registration = all.find(e => e.kind === 'registration' && e.commit === commit && e.stage === 'qa' && e.round === c.round);
+    if (!registration || registration.head_before !== previous) fail('qa_retry_registration');
+    for (const file of changed.filter(f => f !== MANIFEST)) {
+      const type = recordType(file, c.sprintDir);
+      if (type.round !== c.round || !type.stages.some(s => ['evaluate', 'judge'].includes(s))) fail('qa_retry_scope');
+      const rec = inspectRecord(c, file, gitBytes(c.worktree, commit, file), null, null, gitMode(c.worktree, commit, file));
+      const bound = registrationFor(c, rec, commit, all);
+      if (bound.event.id !== registration.id || (bound.stage.stage === 'evaluate'
+        ? bound.stage.id !== c.stageEventId : bound.stage.controller_input?.qa_stage_event_id !== c.stageEventId)) fail('qa_retry_binding');
+    }
+    manifestDelta(gitBytes(c.worktree, previous, MANIFEST), gitBytes(c.worktree, commit, MANIFEST), registration.records);
+    previous = commit;
+  }
+  return { ...baseResult(c, head, 'verified', [record]), isolation };
 }
 export function provenanceProjection(result) {
   if (!result || result.schema_version !== 1 || result.repo !== REPO || !['verified', 'sealed_not_registered'].includes(result.status)) fail('projection_invalid');
-  const keys = ['schema_version', 'status', 'repo', 'task_id', 'sprint_dir', 'head', 'records', 'evidence_scope', 'command_semantics'];
+  const keys = ['schema_version', 'status', 'repo', 'task_id', 'sprint_dir', 'head', 'records', 'evidence_scope', 'command_semantics', 'isolation'];
   if (Object.keys(result).some(k => !keys.includes(k)) || result.evidence_scope !== 'controller_registration_and_stage_capture' || result.command_semantics !== 'existing_verify_evaluate_checks') fail('projection_invalid');
   identity({ taskId: result.task_id, sprintDir: result.sprint_dir });
   if (!SHA.test(result.head ?? '') || !Array.isArray(result.records) || !result.records.length) fail('projection_invalid');
@@ -225,5 +289,6 @@ export function provenanceProjection(result) {
     if (!['100644', '100755'].includes(r.mode) || !/^[a-f0-9]{64}$/.test(r.sha256 ?? '') || !STAGES.has(r.stage) || !Number.isSafeInteger(r.round) || r.round < 0 || !['model', 'controller', 'controller_render'].includes(r.producer) || !UUID.test(r.stage_event_id ?? '') || !SHA.test(r.stage_input_head ?? '') || (result.status === 'verified' && (!UUID.test(r.registration_event_id ?? '') || !SHA.test(r.commit ?? '')))) fail('projection_invalid');
   }
   const records = result.records.map(r => Object.fromEntries(['path', 'mode', 'sha256', 'stage', 'round', 'producer', 'stage_event_id', 'stage_input_head', 'registration_event_id', 'commit'].filter(k => r[k] !== undefined).map(k => [k, r[k]])));
-  return baseResult({ taskId: result.task_id, sprintDir: result.sprint_dir }, result.head, result.status, records);
+  return { ...baseResult({ taskId: result.task_id, sprintDir: result.sprint_dir }, result.head, result.status, records),
+    ...(result.isolation ? { isolation: isolationProjection(result.isolation, result) } : {}) };
 }

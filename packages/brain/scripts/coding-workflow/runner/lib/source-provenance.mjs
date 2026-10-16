@@ -1,7 +1,7 @@
 // 来源证明独立于产品QA：只信固定Git与受保护控制器事件，不消费候选提供的PASS。
 import { execFileSync } from 'node:child_process';
 import { childEnv } from '../../lib/protocol.mjs';
-import { verifyRecordProvenance, verifyPendingStageEvidence, provenanceProjection } from '../../lib/record-provenance.mjs';
+import { verifyRecordProvenance, verifyPendingStageEvidence, verifyRegisteredQaEvidence, provenanceProjection } from '../../lib/record-provenance.mjs';
 
 export const needsSourceProvenance = cfg => cfg.repoSlug === 'perfectuser21/cecelia';
 export function sourceContext(cfg, worktree, intent, stage, round, controller) {
@@ -13,10 +13,15 @@ export function verifySourceHead(cfg, worktree, intent, head, requiredQaRound) {
   return verifyRecordProvenance({ worktree, taskId: intent.taskId, sprintDir: intent.sprintDir, head,
     ...(requiredQaRound !== undefined ? { requiredQaRound } : {}) });
 }
-export function judgeSourceFacts(cfg, worktree, intent, head, reportRel) {
+export function judgeSourceFacts(cfg, worktree, intent, head, reportRel, options = {}) {
   const committed = verifySourceHead(cfg, worktree, intent, head);
   if (!committed) return null;
-  const pending = verifyPendingStageEvidence({ worktree, taskId: intent.taskId, sprintDir: intent.sprintDir, head }, [reportRel]);
+  const { mode, stageEventId, testedHead, round } = options;
+  if (!['pending', 'registered'].includes(mode) || !Number.isSafeInteger(round) || round < 1
+    || reportRel !== `${intent.sprintDir}/05-qa-report-r${round}.md`) throw Error('record_provenance_qa_selector');
+  const selected = { worktree, taskId: intent.taskId, sprintDir: intent.sprintDir, head, stageEventId, testedHead, round };
+  if (mode === 'pending' && testedHead !== head) throw Error('record_provenance_qa_tested_head');
+  const pending = mode === 'registered' ? verifyRegisteredQaEvidence(selected, reportRel) : verifyPendingStageEvidence(selected, [reportRel]);
   return { committed: provenanceProjection(committed), current_qa: provenanceProjection(pending) };
 }
 // merge门不检出候选：从精确Git对象读唯一任务身份，core再核完整树/提交链。
