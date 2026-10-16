@@ -25,7 +25,7 @@ let fixture,db,definition,taskId,state,inTransaction;
 beforeEach(async()=>{
   fixture=await versionsDatabase();await fixture.migrate();db=fixture.db;
   await db.query(migrationTable('283_skill_registry_and_journey_step_links.sql','skill_registry'));
-  await db.query('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_by text, ADD COLUMN IF NOT EXISTS result jsonb');
+  await db.query('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tenant_id text,ADD COLUMN IF NOT EXISTS claimed_by text, ADD COLUMN IF NOT EXISTS result jsonb');
   const cap=randomUUID(),skill=randomUUID();
   await db.query("INSERT INTO capabilities(id,name,parent_journey_id,status) VALUES($1,'监控告警',$2,'active')",[cap,randomUUID()]);
   await db.query("INSERT INTO skill_registry(id,name,location,status) VALUES($1,'workflow-commander','/skills/workflow-commander/SKILL.md','active')",[skill]);

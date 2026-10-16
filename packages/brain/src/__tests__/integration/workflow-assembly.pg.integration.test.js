@@ -9,7 +9,7 @@ export async function assemblyDatabase(){
  try{
   await f.migrate();const db=f.db;
   await db.query(migrationTable('283_skill_registry_and_journey_step_links.sql','skill_registry'));
-  await db.query('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_by text,ADD COLUMN IF NOT EXISTS result jsonb');
+  await db.query('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tenant_id text,ADD COLUMN IF NOT EXISTS claimed_by text,ADD COLUMN IF NOT EXISTS result jsonb');
   await db.query(`ALTER TABLE warehouse_items ADD COLUMN shelf text,ADD COLUMN source_table text,ADD COLUMN source_ref text;
    ALTER TABLE activities ADD COLUMN inputs jsonb,ADD COLUMN outputs jsonb,ADD COLUMN preconditions jsonb,ADD COLUMN invariants jsonb,ADD COLUMN nfr jsonb,ADD COLUMN failure jsonb,ADD COLUMN readback jsonb;`);
   for(const table of ['activity_versions','activity_version_builds','activity_release_state','activity_release_events','workflow_production_recipes'])await db.query(migrationTable('541_release_line.sql',table));

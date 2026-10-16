@@ -35,3 +35,9 @@ it('显式装配请求必须有冻结协议，不能回退到旧登记',()=>{
  expect(()=>validateRequest({operation:'create',actor:'装配器',goal:'登记',assembly_mode:true})).toThrow();
  expect(()=>validateRequest({operation:'create',actor:'装配器',goal:'登记',assembly_mode:true,registration_protocol:'definition-freeze-v1'})).not.toThrow();
 });
+it('新执行资格协议显式选择且必须严格冻结；旧文字PASS不自动升级',()=>{
+ const base={operation:'create',actor:'装配器',goal:'验真'};
+ expect(()=>validateRequest({...base,execution_protocol:'future'})).toThrow();
+ expect(()=>validateRequest({...base,execution_protocol:'workflow-authoring-execution-v1'})).toThrow();
+ expect(()=>validateRequest({...base,execution_protocol:'workflow-authoring-execution-v1',assembly_mode:true,registration_protocol:'definition-freeze-v1',validation_input:{text:'abc'}})).not.toThrow();
+});

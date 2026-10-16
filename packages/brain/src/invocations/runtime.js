@@ -4,6 +4,9 @@ import { assertSkillEnvelope,validateSkillReceipt,invocationPrompt } from '../or
 import { probeInvocationRuntime } from './resolve.js';
 import { startRun } from '../lib/task-run.js';
 import { normalizeCallbackStatus } from '../lib/callback-utils.js';
+import {normalizeSpan,writeSpans} from '../lib/span-ingestion.js';
+import {invocationSlotInputs} from '../workflow-authoring/execution-ledger.js';
+import {requireCandidateEnvironment,readCandidateOwner} from '../workflow-authoring/assembly-orchestration.js';
 export function invocationBridgeRequired(task){
   if(!task?.payload?.invocation)return false;
   requireCondition(task.task_type==='research','调用任务类型与固定transport不匹配',409);
@@ -17,6 +20,12 @@ export async function assertInvocationAuthority(db,inv,{probeRuntime=probeInvoca
     requireCondition(row?.payload?.workflow_authoring===true&&(row.payload.tenant_id??'default')===e.tenant_id
       &&!['cancelled','failed'].includes(row.status)
       &&definitionDigest(row.result?.workflow_authoring?.outputs?.compose?.definition)===e.compose_sha256,'候选授权或组装摘要已撤销',409);
+    if(e.candidate_trace){
+      await requireCandidateEnvironment(db);
+      const owner=await readCandidateOwner(db,e.authoring_task_id,row.result.workflow_authoring.outputs.compose.definition,e.tenant_id);
+      const selected={...owner,slots:owner.slots.filter(s=>e.activities.some(a=>a.key===s.slot_key))};
+      requireCondition(definitionDigest(selected)===definitionDigest(e.candidate_trace),'候选冻结owner已变化',409);
+    }
   }else{
     requireCondition(e.release_id&&(await (await import('../lib/release-index.js')).getReleaseGate(db,e.release_id)).deployed,'发布资格已失效',409);
   }
@@ -40,7 +49,8 @@ export async function prepareInvocationDispatch(db,task,proposedRunId,options={}
     if(inv.dispatch){await client.query('COMMIT');return {runId:inv.dispatch.run_id,already:true};}
     requireCondition(['queued','in_progress','dispatched'].includes(row.status),'调用不是可执行状态',409);
     await assertInvocationAuthority(client,inv,options);
-    const run=await startRun({taskId:task.id,runId:proposedRunId,source:'skill-invocation',context:{tenant_id:inv.tenant_id,target:inv.target,input_sha256:inv.input_sha256,envelope_sha256:inv.envelope.envelope_sha256}},{pool:client});
+    const run=await startRun({taskId:task.id,runId:proposedRunId,source:'skill-invocation',context:{tenant_id:inv.tenant_id,target:inv.target,input_sha256:inv.input_sha256,envelope_sha256:inv.envelope.envelope_sha256,
+      ...(inv.envelope.candidate_trace?{candidate_trace:inv.envelope.candidate_trace,workflow_id:inv.envelope.candidate_trace.workflow_id}:{})}},{pool:client});
     requireCondition(run?.id,'运行账不可写，禁止派发',503);
     const dispatch={run_id:proposedRunId,at:new Date().toISOString(),state:'submitted_or_unknown'};
     await client.query("UPDATE tasks SET payload=jsonb_set(payload,'{invocation,dispatch}',$2::jsonb),updated_at=NOW() WHERE id=$1",[task.id,JSON.stringify(dispatch)]);
@@ -51,6 +61,24 @@ export async function prepareInvocationDispatch(db,task,proposedRunId,options={}
 }
 export function invocationTaskPrompt(task,runId){
   return task.payload?.invocation?invocationPrompt(task.payload.invocation.envelope,task.id,runId):null;
+}
+async function writeObservedCandidateSpans(client,inv,receipt,taskId,runId){
+  const e=inv.envelope,trace=e.candidate_trace;if(!trace)return;
+  await requireCandidateEnvironment(client);
+  const run=(await client.query('SELECT started_at,clock_timestamp() AS observed_at FROM task_runs WHERE task_id=$1 AND run_id=$2',[taskId,runId])).rows[0];
+  requireCondition(run,'缺少真实运行账，禁止写候选span',503);
+  const inputs=invocationSlotInputs(e,receipt),receiptHash=definitionDigest(receipt);
+  const rows=e.activities.map((activity,index)=>{
+    const slot=trace.slots.find(s=>s.slot_key===activity.key);requireCondition(slot,'候选slot缺少固定映射');
+    // 本transport只观察完整Activity产物；不把合同里的Step声明合成成功span。
+    return normalizeSpan({run_id:runId,workflow_id:trace.workflow_id,activity_id:slot.activity_id,
+      started_at:run.started_at,ended_at:run.observed_at,executor_kind:'agent',executor_id:'codex-bridge',outcome:'pass',
+      occurrence_key:`authoring:${activity.key}`,evidence:{protocol:'authoring-candidate-span-v1',timing_scope:'invocation_envelope_window',
+        tenant_id:inv.tenant_id,task_id:taskId,slot_key:activity.key,envelope_sha256:e.envelope_sha256,receipt_sha256:receiptHash,
+        workflow_definition_version_id:trace.workflow_definition_version_id,activity_definition_version_id:slot.activity_definition_version_id,
+        input_sha256:inputs[index].input_sha256,skill_sha256:activity.skill_sha256,outputs:receipt.activities[index].outputs}},index);
+  });
+  await writeSpans(client,rows,{transactionClient:client});
 }
 export async function guardInvocationCallback(db,{task_id,run_id,status,result}){
   const row=(await db.query('SELECT id,payload,status FROM tasks WHERE id=$1',[task_id])).rows[0];
@@ -67,8 +95,11 @@ export async function guardInvocationCallback(db,{task_id,run_id,status,result})
     const digest=definitionDigest(receipt);
     if(prior)requireCondition(prior.payload.receipt_sha256===digest,'同一 run 回执内容冲突',409);
     else{
+      await writeObservedCandidateSpans(client,inv,receipt,task_id,run_id);
       await client.query("UPDATE tasks SET result=COALESCE(result,'{}'::jsonb)||jsonb_build_object('skill_invocation',$2::jsonb) WHERE id=$1",[task_id,JSON.stringify(receipt)]);
-      for(const activity of receipt.activities)await client.query("INSERT INTO task_events(task_id,event_type,payload) VALUES($1,'invocation_activity_completed',$2::jsonb)",[task_id,JSON.stringify({actor:'codex-bridge',run_id,tenant_id:inv.tenant_id,target:inv.target,input_sha256:inv.input_sha256,...activity})]);
+      const inputs=invocationSlotInputs(inv.envelope,receipt);
+      for(const [index,activity]of receipt.activities.entries())await client.query("INSERT INTO task_events(task_id,event_type,payload) VALUES($1,'invocation_activity_completed',$2::jsonb)",[task_id,JSON.stringify({actor:'codex-bridge',run_id,tenant_id:inv.tenant_id,target:inv.target,input_sha256:inv.input_sha256,
+        envelope_sha256:inv.envelope.envelope_sha256,slot_input_sha256:inputs[index].input_sha256,...activity})]);
       await client.query("INSERT INTO task_events(task_id,event_type,payload) VALUES($1,'invocation_result_verified',$2::jsonb)",[task_id,JSON.stringify({actor:'brain',run_id,tenant_id:inv.tenant_id,target:inv.target,input_sha256:inv.input_sha256,envelope_sha256:inv.envelope.envelope_sha256,receipt_sha256:digest})]);
     }
     await client.query('COMMIT');return receipt;

@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { resolveGitHubToken } from '../harness-credentials.js';
 
 const REPOS = new Set(['perfectuser21/cecelia', 'perfectuser21/zenithjoy-workspace']);
 const SHA = /^[a-f0-9]{40}$/;
@@ -13,25 +12,29 @@ export function validateGitSource({ repo, path, revision } = {}) {
 }
 
 /** token 只发往固定 GitHub API；commit/tree/blob 身份均回读，禁止重定向。 */
-export async function readFixedGitFile(source, { fetchFn=globalThis.fetch, resolveToken=resolveGitHubToken } = {}) {
+export async function readFixedGitFile(source, { fetchFn=globalThis.fetch, resolveToken=async()=>(await import('../harness-credentials.js')).resolveGitHubToken(),signal,deadline=Date.now()+60000 } = {}) {
   validateGitSource(source);
+  const check=()=>{if(signal?.aborted||Date.now()>=deadline)throw Object.assign(Error('固定来源读取已取消或超时'),{code:'readiness_deadline_exceeded',status:503});};
+  check();
   const {repo,path,revision}=source,token=await resolveToken();
   async function get(kind,sha) {
+    check();
     if (!SHA.test(sha || '')) fail('Git对象身份不合法');
     const response=await fetchFn(`https://api.github.com/repos/${repo}/git/${kind}/${sha}${kind==='trees'?'?recursive=1':''}`, {
-      redirect:'error',headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000),
+      redirect:'error',headers:{Accept:'application/vnd.github+json',Authorization:`Bearer ${token}`},
+      signal:AbortSignal.any([...(signal?[signal]:[]),AbortSignal.timeout(Math.max(1,Math.min(15000,deadline-Date.now())))]),
     });
     if (!response.ok) fail('GitHub对象不可读');
     // 原生 fetch 逐块限流，避免不可信超大 JSON 在解析前占满内存。
     if (response.body?.getReader) {
       const reader=response.body.getReader(),chunks=[];let size=0;
       for (;;) {
-        const {done,value}=await reader.read();if(done)break;
+        const {done,value}=await reader.read();check();if(done)break;
         size+=value.length;if(size>16*MAX_FILE){await reader.cancel();fail('GitHub响应超过上限');}chunks.push(Buffer.from(value));
       }
       try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{fail('GitHub响应不是JSON');}
     }
-    return response.json();
+    const document=await response.json();check();return document;
   }
   const commit=await get('commits',revision);
   if(commit.sha!==revision||!SHA.test(commit.tree?.sha||''))fail('commit不匹配');

@@ -2,8 +2,11 @@ import {
   STAGES, requireCondition, object, text, uuid, stringArray,
   definitionDigest, validateRequest, validateSubmission, validateStageOutput,
 } from './contracts.js';
+import {validateRevalidationRequest} from './revalidation.js';
+import {readAuthoringExecutionProof,readAuthoringReadiness} from './execution-proof.js';
 import {loadAssemblyCatalog} from '../lib/workflow-assembly-store.js';
 import { FREEZE_PROTOCOL, prepareDefinitionFreeze } from './freeze.js';
+import {EXECUTION_PROTOCOL,prepareAuthoringCandidate,requireCandidateEnvironment} from './assembly-orchestration.js';
 
 async function transaction(pool, action) {
   const client = await pool.connect();
@@ -22,10 +25,11 @@ async function transaction(pool, action) {
 
 async function task(client, taskId, { lock = false, writable = true } = {}) {
   uuid(taskId, 'taskId');
-  const { rows } = await client.query(`SELECT id, status, claimed_by, payload, result FROM tasks WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [taskId]);
+  const { rows } = await client.query(`SELECT id, tenant_id, status, claimed_by, payload, result FROM tasks WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [taskId]);
   requireCondition(rows.length > 0, '任务不存在', 404);
   const row = rows[0];
   requireCondition(row.payload?.workflow_authoring === true, '任务未声明 workflow_authoring', 409);
+  requireCondition(!row.tenant_id||row.tenant_id===(row.payload?.tenant_id??'default'),'readiness_identity_mismatch',409);
   if (writable) requireWritable(row);
   return row;
 }
@@ -67,8 +71,8 @@ async function validate(dependency, ...args) {
   requireCondition(result !== false && result?.valid !== false, '流程定义或引用验证失败');
 }
 
-async function completedTask(client, id) {
-  const { rows } = await client.query('SELECT id, status, result FROM tasks WHERE id = $1 FOR SHARE', [id]);
+async function completedTask(client, id, tenantId) {
+  const { rows } = await client.query("SELECT id, status, result FROM tasks WHERE id = $1 AND COALESCE(tenant_id,payload->>'tenant_id','default')=$2 AND (tenant_id IS NULL OR payload->>'tenant_id' IS NULL OR tenant_id=payload->>'tenant_id') FOR SHARE", [id,tenantId]);
   requireCondition(rows[0]?.status === 'completed', `证据任务 ${id} 尚未完成`);
   return rows[0];
 }
@@ -97,12 +101,22 @@ async function processStage(client, taskId, state, body, deps) {
   } else if (stage === 'build') {
     for (const id of new Set(output.implementation_task_ids)) {
       requireCondition(id !== taskId, '实施任务不能引用管理任务自身');
-      await completedTask(client, id);
+      await completedTask(client, id,deps.tenantId);
     }
     await validate(deps.validateReferences, client, state.outputs.compose.definition, { requireActive: true });
+    if(state.request.execution_protocol===EXECUTION_PROTOCOL){
+      const owner=await prepareAuthoringCandidate(client,taskId,state,{freezeProof:deps.freezeProof,tenantId:deps.tenantId});
+      return {...output,candidate_owner:owner};
+    }
+  } else if (stage === 'verify'&&state.request.execution_protocol===EXECUTION_PROTOCOL) {
+    const proof=await readAuthoringExecutionProof(client,{authoringTaskId:taskId,tenantId:deps.tenantId},{transactionClient:client});
+    requireCondition(proof.status==='verified','execution_evidence_unverified',409);
+    const execution=(await client.query('SELECT result FROM tasks WHERE id=$1',[taskId])).rows[0].result.workflow_authoring_execution;
+    requireCondition(execution.invocations.some(v=>v.kind==='workflow'&&v.task_id===output.validation_task_id),'candidate_execution_identity_mismatch',409);
+    return {...output,proof_sha256:proof.proof_sha256,evidence_refs:proof.evidence.tasks.map(id=>`task:${id}`)};
   } else if (stage === 'verify') {
     requireCondition(output.validation_task_id !== taskId, '验证任务不能引用管理任务自身');
-    const row = await completedTask(client, output.validation_task_id);
+    const row = await completedTask(client, output.validation_task_id,deps.tenantId);
     const result = row.result?.workflow_validation;
     object(result, 'workflow_validation');
     requireCondition(result.verdict === 'PASS', '验证回执必须为 PASS');
@@ -112,6 +126,12 @@ async function processStage(client, taskId, state, body, deps) {
     stringArray(result.activity_keys, 'validation.activity_keys');
     requireCondition(state.outputs.compose.definition.activities.every(activity => result.activity_keys.includes(activity.key)), '验证未覆盖全部活动');
     return { ...output, validation: result, evidence_refs: result.evidence_refs };
+  } else if (stage === 'register'&&state.request.execution_protocol===EXECUTION_PROTOCOL) {
+    const proof=await readAuthoringExecutionProof(client,{authoringTaskId:taskId,tenantId:deps.tenantId},{transactionClient:client});
+    requireCondition(proof.status==='verified'&&deps.readiness?.status==='verified'&&proof.proof_sha256===deps.readiness.proof_sha256,'implementation_or_authority_changed',409);
+    return {test_qualification:{protocol:EXECUTION_PROTOCOL,status:'verified',formal_release:false,tenant_id:deps.tenantId,
+      candidate_owner:proof.candidate_owner,definition_sha256:proof.definition_sha256,proof_sha256:proof.proof_sha256,
+      input_sha256:definitionDigest(state.request.validation_input),verification_at:proof.verification_at},evidence_refs:proof.evidence.tasks.map(id=>`task:${id}`)};
   } else if (stage === 'register') {
     await validate(deps.validateReferences, client, state.outputs.compose.definition, { requireActive: true });
     requireCondition(typeof deps.registerWorkflow === 'function', '缺少登记器', 500);
@@ -133,10 +153,24 @@ async function processStage(client, taskId, state, body, deps) {
 
 export async function submitAuthoring(pool, taskId, body, deps = {}) {
   validateSubmission(body);
+  if(body.stage==='build'){
+    const state=await getAuthoring(pool,taskId);
+    if(state.request.execution_protocol===EXECUTION_PROTOCOL&&!state.receipts.some(r=>r.submission_id===body.submission_id)){
+      await requireCandidateEnvironment(pool);
+      requireCondition(state.stage===body.stage&&state.revision===body.revision,'build阶段或revision已变化',409);
+      deps={...deps,freezeProof:await prepareDefinitionFreeze(state.outputs.compose.definition,{...deps.freezeOptions,
+        sharedVersions:(await loadAssemblyCatalog(pool,state.outputs.compose.definition)).activity_versions})};
+    }
+  }
   // 先只读状态及固定Git来源；进入事务后仍重新校验revision和定义digest，防慢网络期间的并发推进。
   if (body.stage === 'register') {
     const state = await getAuthoring(pool, taskId);
-    if (state.request.registration_protocol === FREEZE_PROTOCOL
+    if(state.request.execution_protocol===EXECUTION_PROTOCOL&&!state.receipts.some(r=>r.submission_id===body.submission_id)){
+      const row=await task(pool,taskId,{writable:false});
+      const readiness=await readAuthoringReadiness(pool,taskId,{...deps.invocationOptions,tenantId:row.payload?.tenant_id??'default'});
+      requireCondition(readiness.status==='verified','execution_readiness_blocked',409);deps={...deps,readiness};
+    }
+    if (state.request.execution_protocol!==EXECUTION_PROTOCOL&&state.request.registration_protocol === FREEZE_PROTOCOL
       && !state.receipts.some(receipt => receipt.submission_id === body.submission_id)) {
       requireCondition(state.stage === body.stage && state.revision === body.revision, 'register阶段或revision已变化', 409);
       deps = { ...deps, freezeProof: await prepareDefinitionFreeze(state.outputs.compose.definition, {...deps.freezeOptions,sharedVersions:(await loadAssemblyCatalog(pool,state.outputs.compose.definition)).activity_versions}) };
@@ -152,7 +186,11 @@ export async function submitAuthoring(pool, taskId, body, deps = {}) {
       requireCondition(previous.input_sha256 === digest, 'submission_id 已被不同请求占用', 409);
       return { state, receipt: previous, replayed: true };
     }
-    requireWritable(row);
+    if(deps.internalRevalidation&&row.status==='completed'){
+      const owner=await (await import('./assembly-orchestration.js')).readCandidateOwner(client,taskId,state.outputs.compose.definition,row.payload?.tenant_id??'default');
+      const request=validateRevalidationRequest(row,owner,row.payload?.tenant_id??'default');
+      requireCondition(request&&request.attempt_id===row.result.workflow_authoring_execution?.attempt_id,'revalidation_authority_mismatch',409);
+    }else requireWritable(row);
     requireCondition(body.stage === state.stage, `当前阶段是 ${state.stage}`, 409);
     requireCondition(body.revision === state.revision, 'revision 已过期', 409);
     const output = await processStage(client, taskId, state, body, {...deps,tenantId:row.payload?.tenant_id??'default'});
