@@ -29,7 +29,9 @@ export async function configureBinding(db, { tenant_id, data_source_id, enabled 
     const cursor = previous && !changed ? previous.cursor : null;
     if (changed) await tx.query('UPDATE crm_customers SET projection_pending=true,revision=revision+1,updated_at=now() WHERE binding_id=$1 AND tenant_id=$2', [previous.id, tenant]);
     return one(tx, `INSERT INTO crm_sync_bindings(tenant_id,data_source_id,enabled,fields,cursor) VALUES($1,$2,$3,$4,$5)
-      ON CONFLICT(data_source_id) DO UPDATE SET enabled=EXCLUDED.enabled,fields=EXCLUDED.fields,cursor=EXCLUDED.cursor,updated_at=now() RETURNING *`, [tenant, source, enabled, JSON.stringify(fields), cursor]);
+      ON CONFLICT(data_source_id) DO UPDATE SET enabled=EXCLUDED.enabled,fields=EXCLUDED.fields,cursor=EXCLUDED.cursor,
+      config_revision=crm_sync_bindings.config_revision+CASE WHEN crm_sync_bindings.enabled IS DISTINCT FROM EXCLUDED.enabled OR crm_sync_bindings.fields IS DISTINCT FROM EXCLUDED.fields THEN 1 ELSE 0 END,
+      updated_at=now() RETURNING *`, [tenant, source, enabled, JSON.stringify(fields), cursor]);
   });
 }
 

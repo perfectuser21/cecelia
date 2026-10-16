@@ -40,10 +40,12 @@ export async function createCrmPgFixture(env = process.env) {
   const db = new pg.Client({ ...selected.config, connectionTimeoutMillis: 5000, query_timeout: 10000 });
   const schema = `crm_pg_${randomUUID().replaceAll('-', '')}`;
   let connected = false, created = false, closed = false;
+  const additional = new Set();
   const close = async () => {
     if (closed) return;
     closed = true;
     try {
+      for (const connection of additional) await connection.end();
       if (connected && created) {
         await db.query('ROLLBACK');
         await db.query(`DROP SCHEMA "${schema}" CASCADE`);
@@ -59,7 +61,13 @@ export async function createCrmPgFixture(env = process.env) {
     if ((await db.query('SELECT current_schema() AS schema')).rows[0]?.schema !== schema) throw unsafe();
     await db.query('CREATE TABLE schema_version(version text primary key,description text)');
     await db.query(await readFile(new URL('../../../migrations/555_crm_canonical.sql', import.meta.url), 'utf8'));
-    return { db, schema, close };
+    await db.query(await readFile(new URL('../../../migrations/556_crm_friend_onboarding.sql', import.meta.url), 'utf8'));
+    const connect = async () => {
+      const connection = new pg.Client({ ...selected.config, connectionTimeoutMillis: 5000, query_timeout: 10000 });
+      await connection.connect(); additional.add(connection);
+      await connection.query(`SET search_path TO "${schema}"`); return connection;
+    };
+    return { db, schema, close, connect };
   } catch (error) {
     await close();
     throw error;

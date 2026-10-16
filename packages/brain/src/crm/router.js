@@ -5,6 +5,7 @@ import * as store from './store.js';
 import { runCrmSync, createNotionRequest } from './notion-sync.js';
 import { validateCustomerSchema } from './notion-mapping.js';
 import { resolveContact } from './contact-resolve.js';
+import { onboardContact } from './onboard-store.js';
 
 /** Privileged cross-service API, not a customer-facing tenant authorization substitute. */
 export function createCrmRouter({ pool, notionRequest } = {}) {
@@ -39,6 +40,10 @@ export function createCrmRouter({ pool, notionRequest } = {}) {
       if (!result) return res.status(404).json({ error: 'not_found' });
       res.json(result);
     } catch (err) { next(err); }
+  });
+  router.post('/contacts/onboard', async (req, res, next) => {
+    try { const result = await onboardContact(pool, req.body); res.status(result.created ? 201 : 200).json(result); }
+    catch (err) { next(err); }
   });
   // Every write names its Tenant. No display-name matching or inferred account ownership.
   for (const [path, action] of [
