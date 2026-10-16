@@ -22,6 +22,7 @@ async function fixture(){
 }
 async function frozenFixture(){
  const x=await fixture(),db=x.db;
+ await db.query(migrationTable('515_release_definition_evidence.sql','release_versions'));
  for(const t of ['activity_versions','activity_version_builds','activity_release_state','activity_release_events','workflow_production_recipes'])await db.query(migrationTable('541_release_line.sql',t));
  const wf=(await seedWorkflows(db)).keyword,activity=randomUUID(),reference=randomUUID();
  const original=(await db.query('SELECT result FROM tasks WHERE id=$1',[x.id])).rows[0].result;
@@ -185,4 +186,14 @@ it('真实PG原资源offline、unknown、过期healthy均不驱动，fresh恢复
  clock+=1000000;await x.db.query("UPDATE resource_health SET status='healthy',observed_at=NOW()-INTERVAL '2 days' WHERE resource_key=$1",[ref.key]);await run();expect(called).toBe(0);
  clock+=10000000;await x.db.query("UPDATE resource_health SET observed_at=$2 WHERE resource_key=$1",[ref.key,new Date(clock)]);await run();expect(called).toBe(1);
  expect((await x.saved()).workflow_assembly_reconcile.resource_refs).toEqual([ref]);
+});
+
+it('真实PG正式release已收录的paused对象和自有active活动都不自动修复',async()=>{
+ const x=await frozenFixture();await x.db.query('DELETE FROM workflow_activity_refs WHERE id=$1',[x.reference]);
+ await x.db.query("UPDATE activities SET status='active' WHERE id=$1",[x.activity]);
+ expect((await x.audit(true)).repaired).toEqual([]);
+ await x.db.query("UPDATE activities SET status='planned' WHERE id=$1",[x.activity]);
+ await x.db.query("INSERT INTO release_versions(release_key,manifest_sha256,request_sha256,environment,target,actor,payload) VALUES('formal',$1,$1,'production','fixture','test',$2)",['a'.repeat(64),{workflows:[{id:x.version,workflow_id:x.wf}]}]);
+ expect((await x.audit(true)).repaired).toEqual([]);
+ expect((await x.db.query('SELECT count(*)::int n FROM workflow_activity_refs WHERE workflow_id=$1',[x.wf])).rows[0].n).toBe(0);
 });
