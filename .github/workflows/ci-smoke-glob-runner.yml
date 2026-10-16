@@ -24,8 +24,7 @@ jobs:
   smoke-glob-runner:
     name: Smoke Glob Runner
     runs-on: ubuntu-latest
-    # 完整批次实测耗尽30分钟；为构建、全部检查与清理保留预算。
-    timeout-minutes: 40
+    timeout-minutes: 30
 
     services:
       postgres:

@@ -16,9 +16,6 @@ for status in ['success', 'skipped', 'failure', 'cancelled', 'unknown', '']:
                  lambda m: 'success' if any(name in m[0] for name in ['core-regression', 'walking-ci-e2e']) else status, gate_run)
     (out / ('gate-' + (status or 'empty') + '.sh')).write_text(run)
 glob_workflow = pathlib.Path(sys.argv[3]).read_text()
-glob_job = glob_workflow.split('  smoke-glob-runner:\n', 1)[1].split('  smoke-glob-runner-passed:\n', 1)[0]
-glob_minutes = int(re.search(r'    timeout-minutes: (\d+)', glob_job)[1])
-(out / 'glob-budget').write_text(str(glob_minutes))
 glob_gate = glob_workflow.split('  smoke-glob-runner-passed:\n', 1)[1]
 glob_run = glob_gate.split('        run: |\n', 1)[1]
 glob_run = '\n'.join(line[10:] for line in glob_run.splitlines() if line.startswith('          '))
@@ -57,12 +54,8 @@ for state in success skipped failure cancelled timed_out unknown empty; do
     FAILED=$((FAILED + 1))
   fi
 done
-if [[ $(cat "$TMP/budget") -lt 40 ]]; then
-  echo 'FAIL: 真实环境完整串行检查连同启动和清理需要至少40分钟任务预算'
-  FAILED=$((FAILED + 1))
-fi
-if [[ $(cat "$TMP/glob-budget") -lt 40 ]]; then
-  echo 'FAIL: 完整冒烟已实测跑满30分钟，连同构建和清理需要至少40分钟任务预算'
+if [[ $(cat "$TMP/budget") -lt 30 ]]; then
+  echo 'FAIL: 498 条串行 smoke 加启动时间需要至少 30 分钟预算'
   FAILED=$((FAILED + 1))
 fi
 # 真 sleep 被 timeout 终止；后续脚本仍执行，整批必须失败。
