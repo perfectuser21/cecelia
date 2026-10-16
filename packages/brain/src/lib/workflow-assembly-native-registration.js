@@ -33,7 +33,7 @@ export async function registerNativeReconcile(pool,source,options={}){
       VALUES($1,$2,'active',$3,$4,$5,'code',$6,$7,$8,$9) ON CONFLICT(id) DO NOTHING`,[a.id,a.name,spec.id,spec.capability,a.key,a,definitionDigest(a),url,spec.version]);
     const av=await version(db,'activity',a.id,{protocol:spec.protocol,activity_id:a.id,contract:a,steps:[],implementation_bindings:source.bindings},source);
     const refs=(await db.query('SELECT * FROM workflow_activity_refs WHERE workflow_id=$1 OR id=$2 FOR UPDATE',[spec.id,a.reference_id])).rows;
-    if(refs.some(r=>r.id!==a.reference_id||r.workflow_id!==spec.id||r.activity_id!==a.id||r.slot_key!==a.key||r.sequence_no!==1||!r.active))conflict();
+    if(refs.some(r=>r.id!==a.reference_id||r.workflow_id!==spec.id||r.activity_id!==a.id||r.slot_key!==a.key||r.sequence_no!==1||!r.active||r.source_repo!==source.repo||r.source_path!==source.path))conflict();
     await db.query(`INSERT INTO workflow_activity_refs(id,workflow_id,slot_key,activity_id,sequence_no,active,source_repo,source_path,source_commit,activity_definition_version_id)
       VALUES($1,$2,$3,$4,1,true,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET activity_definition_version_id=$8,source_commit=$7`,[a.reference_id,spec.id,a.key,a.id,source.repo,source.path,source.commit,av]);
     const payload={protocol:spec.protocol,workflow_id:spec.id,key:spec.key,contract:spec,activities:[{reference_id:a.reference_id,slot_key:a.key,sequence_no:1,activity_id:a.id,activity_version_id:av}]};

@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {runWorkflowAssemblyReconcile} from './workflow-assembly-reconcile-runner.js';
 import {nativeSpec as spec,prepareNativeSource,deployedNativeRevision} from './workflow-assembly-native-source.js';
 import {registerNativeReconcile} from './workflow-assembly-native-registration.js';
-import {claimNativeRound,finishNativeRound,recoverNativeRounds} from './workflow-assembly-native-ledger.js';
+import {claimNativeRound,finishNativeRound} from './workflow-assembly-native-ledger.js';
 import {definitionDigest} from '../workflow-authoring/contracts.js';
 export function nativeReconcileOutcome(report){
   if(report.skipped)return {outcome:'skipped',reason:report.skipped};
@@ -43,7 +43,6 @@ export async function runNativeReconcile(pool,{request_key=randomUUID(),trigger=
   const report=await runWorkflowAssemblyReconcile(pool,{...(services.runnerOptions??{}),budgetMs:deadline-Date.now(),limit:5,signal:services.signal,
     onLocked:async(db,{check})=>{
       const guarded={query:async(...args)=>{check();const result=await db.query(...args);check();return result;}};
-      await recoverNativeRounds(guarded);
       claim=await claimNativeRound(guarded,{runId,requestKey:request_key,trigger,source});return claim.created;
     },
     onSettled:async(db,result,error)=>{

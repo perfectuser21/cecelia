@@ -4,10 +4,12 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {readFixedGitFile} from '../workflow-authoring/fixed-git-source.js';
 import {createHash} from 'node:crypto';
+import {createRequire} from 'node:module';
 export const NATIVE_SPEC_PATH='packages/brain/config/workflow-assembly-native.json';
 export const NATIVE_REPO='perfectuser21/cecelia';
 const root=fileURLToPath(new URL('../../../../',import.meta.url));
-export const nativeSpec=JSON.parse(readFileSync(new URL('../../config/workflow-assembly-native.json',import.meta.url),'utf8'));
+const require=createRequire(import.meta.url);
+export const nativeSpec=require('../../config/workflow-assembly-native.json');
 const paths=[NATIVE_SPEC_PATH,...['workflow-assembly-native.js','workflow-assembly-native-ledger.js','workflow-assembly-native-source.js','workflow-assembly-native-registration.js',
   'workflow-assembly-reconcile-runner.js','workflow-assembly-reconcile.js','workflow-assembly-reconcile-derived.js','workflow-assembly-reconcile-tasks.js'].map(p=>'packages/brain/src/lib/'+p),
   'packages/brain/src/workflow-authoring/assembly-driver.js','packages/brain/src/workflow-authoring/execution-proof.js'];
