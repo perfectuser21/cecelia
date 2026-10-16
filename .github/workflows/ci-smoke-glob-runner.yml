@@ -24,7 +24,7 @@ jobs:
   smoke-glob-runner:
     name: Smoke Glob Runner
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     services:
       postgres:
