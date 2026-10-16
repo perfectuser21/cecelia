@@ -4,6 +4,12 @@ import {authoringExecutionDatabase} from '../fixtures/authoring-execution-db.js'
 import {prepareDefinitionFreeze} from '../../workflow-authoring/freeze.js';
 import {definitionDigest} from '../../workflow-authoring/contracts.js';
 import {resolveInvocation} from '../../invocations/resolve.js';
+import {invoke} from '../../invocations/store.js';
+import {prepareInvocationDispatch,guardInvocationCallback} from '../../invocations/runtime.js';
+import {finishRun} from '../../lib/task-run.js';
+import {finalizeTask} from '../../lib/task-terminal.js';
+import {readInvocationLedger} from '../../workflow-authoring/execution-proof.js';
+import {verifyInvocationLedger} from '../../workflow-authoring/execution-ledger.js';
 const orchestration=await import('../../workflow-authoring/assembly-orchestration.js').catch(()=>({}));
 let f;afterEach(async()=>{await f?.close();f=null;});
 async function ownerTask(){
@@ -26,6 +32,24 @@ it('无冲突create冻结真实候选paused，重放回读同owner；其它autho
  const before=await snapshot();expect(await run(a)).toEqual(owner);expect(await snapshot()).toEqual(before);
  const b=await ownerTask();await expect(run(b)).rejects.toMatchObject({code:'candidate_isolation_required'});expect(await snapshot()).toEqual(before);
  a.state.request.operation='update';await expect(run(a)).rejects.toMatchObject({code:'candidate_isolation_required'});expect(await snapshot()).toEqual(before);
+});
+it('实际回执通道按已观察Activity产物写真实FK span，重放不重复，不能合成Step成功',async()=>{
+ f=await authoringExecutionDatabase();const a=await ownerTask(),c=await f.pool.connect();let owner;
+ try{await c.query('BEGIN');owner=await orchestration.prepareAuthoringCandidate(c,a.id,a.state,{freezeProof:a.proof});await c.query('COMMIT');}finally{c.release();}
+ const options={readFile:f.reader,probeRuntime:async()=>({ready:true})};
+ const accepted=await invoke(f.pool,{target:{kind:'workflow',id:a.id},mode:'candidate',authoring_task_id:a.id,compose_sha256:definitionDigest(f.definition),input:{text:'abc'},request_key:'span-receipt'},'default',options);
+ const task=(await f.pool.query('SELECT * FROM tasks WHERE id=$1',[accepted.task_id])).rows[0],runId=`observed-${randomUUID()}`;
+ const {envelope:e}=await prepareInvocationDispatch(f.pool,task,runId,options);
+ const receipt={protocol:'skill-invocation-result-v1',task_id:task.id,run_id:runId,tenant_id:'default',target:e.target,input_sha256:e.input_sha256,
+  activities:e.activities.map(slot=>({key:slot.key,skill_sha256:slot.skill_sha256,outputs:{text:'ABC'}})),outputs:{text:'ABC'}};
+ const callback={task_id:task.id,run_id:runId,status:'AI Done',result:receipt};
+ await guardInvocationCallback(f.pool,callback);await guardInvocationCallback(f.pool,callback);
+ const spans=(await f.pool.query('SELECT * FROM spans WHERE run_id=$1',[runId])).rows;
+ expect(spans).toHaveLength(1);expect(spans[0]).toMatchObject({workflow_id:owner.workflow_id,activity_id:owner.slots[0].activity_id,step_id:null,outcome:'pass'});
+ expect(spans[0].evidence.outputs).toEqual({text:'ABC'});
+ await finishRun({runId,status:'success',exitCode:0,result:{source:'callback-ledger-regression'}},{pool:f.pool});
+ await finalizeTask(f.pool,task.id,'completed',{mergeResult:{handoff:{summary:'回执真实账本回归',next_steps:[]}}});
+ expect(verifyInvocationLedger(await readInvocationLedger(f.pool,task.id),{requireSpans:true}).outputs).toEqual({text:'ABC'});
 });
 it('owner协议/租户/服务器compose、冻结引用或非授权active篡改不能重放认领',async()=>{
  f=await authoringExecutionDatabase();const a=await ownerTask();

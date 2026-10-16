@@ -10,6 +10,8 @@ export async function authoringExecutionDatabase(){
    await f.pool.query(`CREATE TABLE ${f.schema}.${table}(LIKE public.${table} INCLUDING ALL)`);
   // LIKE不复制外键；明确恢复实际执行对象的归属约束，防候选UUID无实体也伪造span。
   await f.pool.query('ALTER TABLE spans ADD FOREIGN KEY(activity_id) REFERENCES activities(id),ADD FOREIGN KEY(step_id) REFERENCES steps(id),ADD FOREIGN KEY(workflow_id) REFERENCES workflows(id)');
+  await f.pool.query('CREATE TRIGGER spans_ensure_run BEFORE INSERT ON spans FOR EACH ROW EXECUTE FUNCTION public.spans_ensure_run()');
+  await f.pool.query('ALTER TABLE spans ADD FOREIGN KEY(run_id) REFERENCES runs(run_id)');
   const cap=randomUUID(),skill=randomUUID(),vs=randomUUID();
   await f.pool.query("INSERT INTO value_streams(id,name) VALUES($1,'隔离候选价值流')",[vs]);
   await f.pool.query("INSERT INTO capabilities(id,name,parent_journey_id,status) VALUES($1,'隔离候选能力',$2,'active')",[cap,vs]);
