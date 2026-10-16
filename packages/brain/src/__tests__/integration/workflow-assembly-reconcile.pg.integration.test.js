@@ -20,7 +20,7 @@ async function fixture(){
  const saved=async()=> (await db.query('SELECT result FROM tasks WHERE id=$1',[id])).rows[0].result;
  return {db,id,digest,run,readiness,saved,pool};
 }
-async function frozenFixture(){
+async function frozenFixture({missingStep=false}={}){
  const x=await fixture(),db=x.db;
  await db.query(migrationTable('515_release_definition_evidence.sql','release_versions'));
  for(const t of ['activity_versions','activity_version_builds','activity_release_state','activity_release_events','workflow_production_recipes'])await db.query(migrationTable('541_release_line.sql',t));
@@ -31,7 +31,7 @@ async function frozenFixture(){
  await db.query("UPDATE workflows SET key=$2,status='paused',source_repo=$3,source_path=$4 WHERE id=$1",[wf,definition.key,source.repo,source.path]);
  await db.query("INSERT INTO activities(id,name,workflow_id,status) VALUES($1,'固定活动',$2,'planned')",[activity,wf]);
  const contract={...definition.activities[0],workflow_authoring:{workflow_key:definition.key,source:definition.source,runtime:definition.runtime??null}};
- const avPayload={activity_id:activity,contract,steps:[],implementation_bindings:[]};
+ const avPayload={activity_id:activity,contract,steps:missingStep?[{step_id:randomUUID(),source_sha256:'b'.repeat(64)}]:[],implementation_bindings:[]};
  const av=(await db.query('INSERT INTO activity_definition_versions(activity_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',[activity,avPayload,definitionDigest(contract),definitionDigest({source,payload:avPayload}),source.repo,source.path,source.commit])).rows[0].id;
  const slots=[{slot_key:'render',sequence_no:1,reference_id:reference,activity_id:activity,activity_version_id:av}];
  const payload={workflow_id:wf,contract:definition,assembly_mode:true,activities:slots};
@@ -206,4 +206,11 @@ it('真实PG缺引用与人工配方冲突并存时整笔派生修复零写',asy
   const out=await api.auditAssemblyDerivations(x.db,row,{repair:true,transaction:'existing'});expect(out.gaps).toContainEqual({code:'recipe_conflict'});expect(out.repaired).toEqual([]);await x.db.query('COMMIT');
  }catch(e){await x.db.query('ROLLBACK');throw e;}
  expect(await snapshot()).toEqual(before);
+});
+
+it('真实PG缺失Step时不能提交先前修复的构建映射，也不能把回滚缺口标成已修',async()=>{
+ const x=await frozenFixture({missingStep:true});await x.db.query('DELETE FROM activity_version_builds WHERE build_id=$1',[x.av]);
+ const out=await x.audit(true);expect(out.gaps.map(g=>g.code)).toContain('fixed_step_missing');expect(out.repaired).toEqual([]);
+ expect(out.gaps.map(g=>g.code)).toContain('fixed_build_missing');
+ expect((await x.db.query('SELECT count(*)::int n FROM activity_version_builds WHERE build_id=$1',[x.av])).rows[0].n).toBe(0);
 });
