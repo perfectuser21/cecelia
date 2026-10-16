@@ -105,11 +105,13 @@ export async function auditAssemblyDerivations(db,task,options={}){
         out.repaired.push({code:'recipe_missing'});out.gaps=out.gaps.filter(g=>g.code!=='recipe_missing');
       }
     }else if(expected.length!==slots.length || definitionDigest(recipe)!==definitionDigest(expected))deny('recipe_conflict');
+    if(out.gaps.length && out.repaired.length)throw Object.assign(Error('derived_repair_incomplete'),{assemblyGaps:out.detected});
     check();await db.query(owns?'COMMIT':'RELEASE SAVEPOINT assembly_reconcile_derived');return out;
   }catch(error){
     await db.query(owns?'ROLLBACK':'ROLLBACK TO SAVEPOINT assembly_reconcile_derived');
     if(!owns)await db.query('RELEASE SAVEPOINT assembly_reconcile_derived');
-    if(!error.assemblyGap)throw error;
-    return {gaps:[{code:error.assemblyGap}],detected:[...out.detected,{code:error.assemblyGap}],repaired:[]};
+    if(!error.assemblyGap && !error.assemblyGaps)throw error;
+    const gaps=error.assemblyGaps ?? [...out.detected,{code:error.assemblyGap}];
+    return {gaps,detected:gaps,repaired:[]};
   }
 }
