@@ -25,6 +25,14 @@ describe('真实 Map Manifest smoke 的 CI 执行归属', () => {
     expect(negative).toContain('SMOKE_ALLOW_WRITE');
     expect(negative).toContain('existsSync(marker)');
   });
+  it('完整串行smoke及启动清理保留至少40分钟总预算', () => {
+    const workflow = readFileSync(new URL('../../../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const real = workflow.match(/\n  real-env-smoke:[\s\S]*?(?=\n  [\w-]+:|$)/)?.[0];
+    expect(real, 'real-env-smoke job必须存在').toBeDefined();
+    const budget = real.match(/^    timeout-minutes: (\d+)$/m);
+    expect(budget, '必须明确配置该job的总预算').not.toBeNull();
+    expect(Number(budget[1]), '30分钟已在571通过/0失败/1委托后取消，需启动清理余量').toBeGreaterThanOrEqual(40);
+  });
   it('专属容器job明确接线真实PG正例及严格授权/身份，不给普通PG job授权', () => {
     const workflow = readFileSync(new URL('../../../../.github/workflows/ci.yml', import.meta.url), 'utf8');
     const real = workflow.slice(workflow.indexOf('\n  real-env-smoke:'));
