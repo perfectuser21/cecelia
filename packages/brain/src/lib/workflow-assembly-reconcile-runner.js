@@ -1,3 +1,4 @@
+import {ensureAssemblyGapTask} from './workflow-assembly-reconcile-tasks.js';
 import {auditAssemblyDerivations} from './workflow-assembly-reconcile-derived.js';
 import {definitionDigest} from '../workflow-authoring/contracts.js';
 import {reconcileGapState} from './workflow-assembly-reconcile.js';
@@ -91,6 +92,14 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
         const finalObservation={...observation,gaps:[...observation.gaps??[],...audit.gaps]};
         const state=reconcileGapState(previous,finalObservation,{now:now()});
         state.derivations={checked_at:now(),detected:audit.detected,repaired:audit.repaired};
+        if(fresh.result?.workflow_authoring_candidate && observation.resource_condition==='ready'
+          && !audit.gaps.some(g=>g.code.startsWith('candidate_') || g.code==='execution_protocol_required')){
+          for(const issue of Object.values(state.issues)){
+            if(issue.status!=='open' || issue.target_version!==target || issue.definition_sha256!==digest)continue;
+            check();const responsibility=await ensureAssemblyGapTask(client,fresh,issue,{check});check();
+            if(responsibility){issue.repair_task_id=responsibility.task_id;issue.repair_task_status=responsibility.status;issue.routing_receipt_id=responsibility.routing_receipt_id;}
+          }
+        }
         check();await client.query("UPDATE tasks SET result=COALESCE(result,'{}'::jsonb)||$2::jsonb,updated_at=NOW() WHERE id=$1",[row.id,{workflow_assembly_reconcile:state}]);
         check();await cursor(row.id);check();await client.query('COMMIT');transaction=false;report.checked++;
       }catch(error){
