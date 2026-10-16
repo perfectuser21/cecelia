@@ -1,8 +1,9 @@
 import {it,expect,afterEach} from 'vitest';
 import {randomUUID} from 'node:crypto';
-import {versionsDatabase} from '../fixtures/definition-versions-db.js';
+import {versionsDatabase,seedWorkflows} from '../fixtures/definition-versions-db.js';
 import {migrationTable} from '../fixtures/minimum-definition-schema.js';
 import {definitionDigest} from '../../workflow-authoring/contracts.js';
+import {ensureVersionForBuild,refreshWorkflowRecipe} from '../../lib/release-line.js';
 import * as api from '../../lib/workflow-assembly-reconcile.js';
 let f;
 afterEach(async()=>{await f?.close();f=null;});
@@ -18,6 +19,30 @@ async function fixture(){
  const run=options=>{expect(api.runWorkflowAssemblyReconcile).toBeTypeOf('function');return api.runWorkflowAssemblyReconcile(pool,{budgetMs:10000,readReadiness:async()=>readiness(),...options});};
  const saved=async()=> (await db.query('SELECT result FROM tasks WHERE id=$1',[id])).rows[0].result;
  return {db,id,digest,run,readiness,saved,pool};
+}
+async function frozenFixture(){
+ const x=await fixture(),db=x.db;
+ for(const t of ['activity_versions','activity_version_builds','activity_release_state','activity_release_events','workflow_production_recipes'])await db.query(migrationTable('541_release_line.sql',t));
+ const wf=(await seedWorkflows(db)).keyword,activity=randomUUID(),reference=randomUUID();
+ const original=(await db.query('SELECT result FROM tasks WHERE id=$1',[x.id])).rows[0].result;
+ const definition=original.workflow_authoring.outputs.compose.definition;definition.activities=[{key:'render',name:'生成',executor_kind:'code',acceptance:['读回'],steps:[]}];
+ const digest=definitionDigest(definition),source={repo:definition.source.repo,path:definition.source.ref,commit:definition.source.revision};
+ await db.query("UPDATE workflows SET key=$2,status='paused',source_repo=$3,source_path=$4 WHERE id=$1",[wf,definition.key,source.repo,source.path]);
+ await db.query("INSERT INTO activities(id,name,workflow_id,status) VALUES($1,'固定活动',$2,'planned')",[activity,wf]);
+ const contract={...definition.activities[0],workflow_authoring:{workflow_key:definition.key,source:definition.source,runtime:definition.runtime??null}};
+ const avPayload={activity_id:activity,contract,steps:[],implementation_bindings:[]};
+ const av=(await db.query('INSERT INTO activity_definition_versions(activity_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',[activity,avPayload,definitionDigest(contract),definitionDigest({source,payload:avPayload}),source.repo,source.path,source.commit])).rows[0].id;
+ const slots=[{slot_key:'render',sequence_no:1,reference_id:reference,activity_id:activity,activity_version_id:av}];
+ const payload={workflow_id:wf,contract:definition,assembly_mode:true,activities:slots};
+ const version=(await db.query('INSERT INTO workflow_definition_versions(workflow_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',[wf,payload,digest,definitionDigest({source,payload}),source.repo,source.path,source.commit])).rows[0].id;
+ await db.query('UPDATE workflows SET current_definition_version_id=$2 WHERE id=$1',[wf,version]);
+ await db.query('INSERT INTO workflow_activity_refs(id,workflow_id,slot_key,activity_id,activity_definition_version_id,sequence_no,source_repo,source_path,source_commit) VALUES($1,$2,\'render\',$3,$4,1,$5,$6,$7)',[reference,wf,activity,av,source.repo,source.path,source.commit]);
+ await ensureVersionForBuild(db,av);await refreshWorkflowRecipe(db,wf);
+ const owner={protocol:'workflow-authoring-execution-v1',authoring_task_id:x.id,tenant_id:'alpha',definition_sha256:digest,workflow_id:wf,workflow_definition_version_id:version,slots:[{slot_key:'render',activity_id:activity,activity_definition_version_id:av,steps:[]}]};
+ original.workflow_authoring.outputs.compose={definition,definition_sha256:digest};original.workflow_authoring_candidate=owner;
+ await db.query('UPDATE tasks SET result=$2 WHERE id=$1',[x.id,original]);
+ const audit=async repair=>{expect(api.auditAssemblyDerivations).toBeTypeOf('function');return api.auditAssemblyDerivations(db,(await db.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0],{database:'cecelia_scratch',repair,check:()=>{}});};
+ return {...x,digest,definition,wf,activity,reference,av,version,audit};
 }
 it('真实PG同数据库跨轮持锁；慢probe预算到期后不能晚建单或推进游标',async()=>{
  const x=await fixture();let clock=1000,release,started;
@@ -70,4 +95,20 @@ it('真实PG首个定义嵌套损坏只记录结构gap，不饿死后续正常�
  const state=(await x.db.query('SELECT result FROM tasks WHERE id=$1',[bad])).rows[0].result.workflow_assembly_reconcile;
  expect(state.structural_gaps).toContainEqual({code:'definition_invalid'});
  expect((await x.saved()).workflow_assembly_reconcile.checked_at).toBeTypeOf('number');
+});
+it('真实PG缺失固定引用与配方报红；仅同原reference_id补齐，生产指针不变',async()=>{
+ const x=await frozenFixture();await x.db.query('DELETE FROM workflow_activity_refs WHERE id=$1',[x.reference]);await x.db.query('DELETE FROM workflow_production_recipes WHERE workflow_id=$1',[x.wf]);
+ const before=await x.audit(false);expect(before.gaps.map(g=>g.code)).toEqual(expect.arrayContaining(['fixed_reference_missing','recipe_missing']));
+ const repaired=await x.audit(true);expect(repaired.repaired.length).toBeGreaterThan(0);expect(repaired.gaps).toEqual([]);
+ expect((await x.db.query('SELECT id,activity_definition_version_id FROM workflow_activity_refs WHERE workflow_id=$1',[x.wf])).rows).toEqual([{id:x.reference,activity_definition_version_id:x.av}]);
+ expect((await x.db.query('SELECT count(*)::int n FROM activity_release_state')).rows[0].n).toBe(0);
+});
+it('真实PG inactive人工引用、篡改owner、非scratch环境都不自动覆写',async()=>{
+ const x=await frozenFixture();await x.db.query('UPDATE workflow_activity_refs SET active=false WHERE id=$1',[x.reference]);
+ expect((await x.audit(true)).gaps.some(g=>g.code==='fixed_reference_conflict')).toBe(true);
+ expect((await x.db.query('SELECT active FROM workflow_activity_refs WHERE id=$1',[x.reference])).rows[0].active).toBe(false);
+ await x.db.query("UPDATE tasks SET result=jsonb_set(result,'{workflow_authoring_candidate,authoring_task_id}',to_jsonb($2::text)) WHERE id=$1",[x.id,randomUUID()]);
+ expect((await x.audit(true)).repaired).toEqual([]);
+ const row=(await x.db.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0];
+ expect((await api.auditAssemblyDerivations(x.db,row,{database:'cecelia',repair:true,check:()=>{}})).gaps).toContainEqual({code:'candidate_environment_unsupported'});
 });
