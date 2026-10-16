@@ -1,0 +1,116 @@
+/** 仅证明已审真实测试消费阶段入口；不改变业务执行、不声明实际模型或业务验收成功。 */
+import {STAGE_ENVELOPES as REVIEWED} from './existing-ops-stage-envelopes.js';
+const PREFIX='packages/brain/scripts/coding-workflow/';
+const STAGES=['intent','spec','spec-review','verify','evaluate'];
+const path=(kind,name)=>PREFIX+`${kind}/${name}.mjs`;
+const canonical=value=>JSON.stringify(value,(key,item)=>['start','end','raw'].includes(key)?undefined:item);
+const same=(a,b)=>canonical(a)===canonical(b);
+const cache=new Map();
+function reviewed(text,parse){if(!cache.has(text))cache.set(text,parse(text));return cache.get(text);}
+const nodes=n=>!n||typeof n!=='object'?[]:[...(n.type?[n]:[]),...Object.values(n).flatMap(v=>Array.isArray(v)?v.flatMap(nodes):nodes(v))];
+const call=(n,name)=>n?.type==='CallExpression'&&n.callee?.name===name;
+const calls=(tree,name)=>nodes(tree).filter(n=>call(n,name));
+const variable=(tree,name)=>nodes(tree).find(n=>n.type==='VariableDeclarator'&&n.id.name===name)?.init;
+const property=(n,name)=>n?.properties?.find(p=>p.key?.name===name||p.key?.value===name)?.value;
+const member=(n,object,name)=>n?.type==='MemberExpression'&&!n.computed&&n.object?.name===object&&n.property?.name===name;
+const named=(tree,source,name)=>tree.body.some(n=>n.type==='ImportDeclaration'&&n.source.value===source&&n.specifiers.some(s=>s.type==='ImportSpecifier'&&s.imported.name===name&&s.local.name===name));
+const literal=(n,value)=>n?.type==='Literal'&&n.value===value;
+/** 版本判别是完整已审代码事实，任何缺失/混配/未知均不是旧版。 */
+export function stageSourceVersion(sources,parse){
+ try{return ['legacy','recorded'].find(version=>STAGES.every(s=>typeof sources[s]==='string'&&same(parse(sources[s]),reviewed(REVIEWED[version][s],parse))))??null;}catch{return null;}
+}
+const WITNESSES={
+ intent:'payload.acceptance 优先：只写 payload 的条目',
+ spec:'ok：completed，写出合法 02-spec.md，stdout 整体可解析为单个结果 JSON',
+ 'spec-review':'首轮评分全部 ≥7、无阻断/重要问题 → completed：02-review-r1.md 与 02-review.md 相同，outputs 带 gan 摘要',
+ verify:'verify-pass：completed，outputs 为 04-evidence.md 与全部 I-n',
+ evaluate:'全部 Q-n PASS → completed，qa.verdict PASS；用预览环境 URL；03/04 运行时被藏起、结束后放回',
+};
+const LOCAL='不查预览环境（预览不存在也照验），用 evaluate-local 提示词（WORKTREE、本仓生产口径），env.kind=local';
+/** 完整AST限制所有setup/注册前置；这里额外锚定正常it与真实helper调用，不以存在/hash作证明。 */
+function witness(tree,name){
+ const found=[];
+ function visit(body){for(const statement of body){const c=statement.expression;if(call(c,'describe'))visit(c.arguments[1]?.body?.body??[]);else if(call(c,'it')&&literal(c.arguments[0],name))found.push(c.arguments[1]);}}
+ visit(tree.body);
+ return found.length===1&&found[0].async&&found[0].params.length===0?found[0]:null;
+}
+function testConsumer(tree,stage){
+ if(!named(tree,'./helpers/run-activity.mjs','runActivityProcess'))return false;
+ const entry=variable(tree,'ENTRY');
+ if(!callPathJoin(entry)||!literal(entry.arguments.at(-1),`../activities/${stage}.mjs`))return false;
+ const w=witness(tree,WITNESSES[stage]);if(!w)return false;
+ if(stage==='intent')return calls(w,'runActivityProcess').some(c=>c.arguments[0]?.name==='ENTRY');
+ const run=variable(tree,'run');
+ if(!run||!calls(run,'runActivityProcess').some(c=>c.arguments[0]?.name==='ENTRY')||!calls(w,'run').length)return false;
+ if(stage==='evaluate'){
+  const local=witness(tree,LOCAL),localCalls=calls(local,'run');
+  if(localCalls.length!==1||property(localCalls[0].arguments[1],'repo_profile')?.name!=='ZJ')return false;
+  if(calls(w,'run').length!==1||calls(w,'run')[0].arguments.length!==1)return false;
+ }
+ return true;
+}
+const callPathJoin=n=>n?.type==='CallExpression'&&member(n.callee,'path','join');
+function stageHandler(tree,stage){
+ const entry=tree.body.at(-1)?.expression;
+ if(entry?.type!=='AwaitExpression'||!call(entry.argument,'runActivity')||!named(tree,'../lib/protocol.mjs','runActivity'))return null;
+ const [handler,options]=entry.argument.arguments;
+ if(handler?.type!=='ArrowFunctionExpression'||!handler.async||handler.params.length!==1||handler.params[0].name!=='input'
+  ||property(options,'stage')?.value!==stage.replace('-','_'))return null;
+ return handler;
+}
+/** 已审CLI子证明保证loadPrompt真实read/render及runClaude原生转发；只锚定本阶段送入的prompt值。 */
+function promptConsumer(tree,stage,handler){
+ if(stage==='intent'||stage==='verify')return true; // 两者这里只证明Node活动入口，intent没有模型会话。
+ if(!named(tree,'../lib/claude.mjs','loadPrompt')||!named(tree,'../lib/claude.mjs','runClaude'))return false;
+ const prompt=variable(tree,'prompt');if(!call(prompt,'loadPrompt'))return false;
+ if(stage==='spec'&&!literal(prompt.arguments[0],'spec'))return false;
+ if(stage==='spec-review'){
+  const selected=prompt.arguments[0],mapping=variable(tree,'PROMPTS');
+  if(selected?.type!=='MemberExpression'||!selected.computed||selected.object.name!=='PROMPTS'||selected.property.name!=='role'
+   ||!literal(property(mapping,'spec_review'),'spec-review')||!calls(handler,'runSession').some(c=>literal(c.arguments[1],'spec_review')))return false;
+ }else if(stage==='evaluate'){
+  const choice=prompt.arguments[0],local=variable(tree,'local');
+  if(choice?.type!=='ConditionalExpression'||choice.test.name!=='local'||!literal(choice.consequent,'evaluate-local')||!literal(choice.alternate,'evaluate')
+   ||local?.type!=='BinaryExpression'||local.operator!=='==='||!call(local.left,'qaMode')||!literal(local.right,'local')
+   ||!member(local.left.arguments[0],'input','repo_profile')||!named(tree,'../lib/repo-profile.mjs','qaMode'))return false;
+ }
+ const native=calls(tree,'runClaude');
+ return native.some(c=>{let args=property(c.arguments[0],'args');if(args?.type==='Identifier')args=variable(tree,args.name);
+  return args?.type==='ArrayExpression'&&literal(args.elements[0],'-p')&&args.elements[1]?.name==='prompt';});
+}
+async function readStageInputs(readSource,revision){
+ const entries={},tests={};
+ for(const stage of STAGES){entries[stage]=await readSource(path('activities',stage),revision);tests[stage]=await readSource(PREFIX+`__tests__/${stage}.test.mjs`,revision);}
+ return {entries,tests};
+}
+/** supportProven/supportVersion来自唯一可信collector实际调用proveBuildSources，绝非候选声明。 */
+export async function collectStageSources({parse,paths,selectors,read,readSource,revision,relations,requireProof,supportProven,supportVersion}){
+ const selected=STAGES.filter(s=>{const p=PREFIX+`__tests__/${s}.test.mjs`;return paths.includes(p)&&selectors.include.some(r=>r.test(p))&&!selectors.exclude.some(r=>r.test(p));});
+ if(!selected.length)return;
+ let inputs,version,mode;
+ try{
+  inputs=await readStageInputs(readSource,revision);version=stageSourceVersion(inputs.entries,parse);
+  if(!version||version!==supportVersion||!supportProven)throw Error('stage source combination');
+  if(version==='legacy')return; // 旧已知完整组合不追加任何历史绑定。
+  for(const stage of STAGES){
+   const test=parse(inputs.tests[stage]),entry=parse(inputs.entries[stage]);
+   if(!same(test,reviewed(REVIEWED.tests[stage],parse))||!testConsumer(test,stage)||!promptConsumer(entry,stage,stageHandler(entry,stage))||!stageHandler(entry,stage))throw Error('stage consumer');
+  }
+  mode={};for(const p of Object.keys(REVIEWED.mode)){const text=await readSource(PREFIX+p,revision);mode[p]=p.endsWith('.json')?JSON.parse(text):parse(text);
+   if(!same(mode[p],p.endsWith('.json')?JSON.parse(REVIEWED.mode[p]):reviewed(REVIEWED.mode[p],parse)))throw Error('stage mode');}
+  const repos=mode['repos.json'].repos;
+  if(repos.find(r=>r.key==='zenithjoy-workspace')?.preview?.type!=='local'||repos.find(r=>r.default)?.preview?.type!=='brain_preview')throw Error('stage modes');
+ }catch{requireProof(false,'native_stage_execution_unproven');return;}
+ const edges=[[PREFIX+'lib/protocol.mjs',PREFIX+'lib/activity-provenance.mjs','native_activity_provenance_handler'],[PREFIX+'lib/activity-provenance.mjs',PREFIX+'lib/record-provenance.mjs','native_record_provenance_context']];
+ for(const name of ['record-provenance-store','record-provenance-records','provenance-path'])edges.push([PREFIX+'lib/record-provenance.mjs',PREFIX+`lib/${name}.mjs`,'provenance_local_prehandler_dependency']);
+ if(selected.some(s=>s!=='intent'))edges.push([PREFIX+'lib/claude.mjs',PREFIX+'lib/record-provenance.mjs','native_pipe_provenance_capture']);
+ for(const stage of selected){
+  const test=PREFIX+`__tests__/${stage}.test.mjs`,entry=path('activities',stage),helper=PREFIX+'__tests__/helpers/run-activity.mjs';
+  edges.push([test,helper,'active_stage_test_helper'],[helper,entry,'native_stage_activity_spawn'],[entry,PREFIX+'lib/protocol.mjs','stage_named_handler_protocol']);
+  if(stage!=='intent')edges.push([entry,PREFIX+'lib/claude.mjs','stage_named_cli_call']);
+  const names=stage==='spec'?['spec']:stage==='spec-review'?['spec-review']:stage==='evaluate'?['evaluate','evaluate-local']:[];
+  for(const name of names)edges.push([entry,PREFIX+`prompts/${name}.md`,'executed_stage_prompt_argument'],[PREFIX+'lib/claude.mjs',PREFIX+`prompts/${name}.md`,'stage_template_read_render']);
+  if(stage==='evaluate')edges.push([test,PREFIX+'repos.json','active_local_mode_fixture_read'],[entry,PREFIX+'lib/repo-profile.mjs','stage_qa_mode_call'],[PREFIX+'lib/repo-profile.mjs',PREFIX+'runner/lib/repos.mjs','stage_default_profile_reader']);
+ }
+ for(const [consumer_path,input_path,kind] of edges){await read(consumer_path);await read(input_path);if(!relations.some(r=>r.consumer_path===consumer_path&&r.input_path===input_path&&r.kind===kind&&r.revision===revision))relations.push({consumer_path,input_path,kind,revision});}
+}
