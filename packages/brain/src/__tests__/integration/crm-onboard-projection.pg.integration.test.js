@@ -76,7 +76,7 @@ describe.skipIf(!crmPgTestConfig().enabled)('好友客户Notion投影：真PG+fa
     expect((await api.projectOnboardCustomer(db, request, binding, customer)).status).toBe('mapped');
     expect(creates(request)).toHaveLength(1);
   });
-  it.each([[], [id(90)]])('任何allowlist数组都禁止未知page自动创建 %j', async allowed => {
+  it.each([{ allowed: [] }, { allowed: [id(90)] }])('任何allowlist数组都禁止未知page自动创建 %j', async ({ allowed }) => {
     binding = await store.configureBinding(db, { tenant_id: tenant, data_source_id: id(1), enabled: true, fields: { ...fields, allowed_page_ids: allowed } });
     expect((await api.projectOnboardCustomer(db, request, binding, customer)).status).toBe('blocked_scope');
     expect(creates(request)).toHaveLength(0); expect((await db.query('SELECT count(*)::int n FROM crm_customer_page_attempts')).rows[0].n).toBe(0);
@@ -145,5 +145,28 @@ describe.skipIf(!crmPgTestConfig().enabled)('好友客户Notion投影：真PG+fa
     await runCrmSync(pool, binding.id, { request, store: { ...base, listPending: async () => [] } });
     expect((await store.getCustomer(db, tenant, customer.id)).source_page_id).toBe(page.id);
     expect((await db.query('SELECT count(*)::int n FROM crm_customers')).rows[0].n).toBe(1);
+  });
+  it('已确认同页后正常配置更新可继续pull，旧fence保留且不再创建', async () => {
+    const mapped = await api.projectOnboardCustomer(db, request, binding, customer);
+    binding = await store.configureBinding(db, { tenant_id: tenant, data_source_id: id(1), enabled: true, fields: { ...fields, managed_content: true } });
+    const restored = await api.recoverOnboardPage(db, request, binding, pages.get(mapped.customer.source_page_id));
+    expect(restored.customer.id).toBe(customer.id); expect(restored.recovered).toBe(false);
+    expect(creates(request)).toHaveLength(1); expect((await db.query('SELECT count(*)::int n FROM crm_customer_page_attempts')).rows[0].n).toBe(1);
+  });
+  it('fence提交后进程退出且未POST，重启只查询，不能自动重发', async () => {
+    await mapping.reservePageAttempt(db, binding, customer);
+    expect((await api.projectOnboardCustomer(db, request, binding, customer)).status).toBe('unknown');
+    expect(creates(request)).toHaveLength(0); expect((await store.getCustomer(db, tenant, customer.id)).source_page_id).toBeNull();
+  });
+  it('查询分页不完整不创建；页面唯一约束拒绝占用其他客户的页', async () => {
+    const normal = request.getMockImplementation();
+    request.mockImplementation((path, method, body) => path.endsWith('/query') ? Promise.resolve({ results: [], has_more: true, next_cursor: null }) : normal(path, method, body));
+    await expect(api.projectOnboardCustomer(db, request, binding, customer)).rejects.toMatchObject({ code: 'incomplete_query' });
+    expect(creates(request)).toHaveLength(0); expect((await db.query('SELECT count(*)::int n FROM crm_customer_page_attempts')).rows[0].n).toBe(0);
+    const existing = (await store.ingestCustomer(db, binding, { page_id: id(20), display_name: '其他人工客户', source_edited_at: '2026-10-16T02:00:00Z' })).customer;
+    await mapping.reservePageAttempt(db, binding, customer);
+    await expect(mapping.bindOnboardPage(db, binding, customer.id, makePage(customer.id, id(20), id(1)))).rejects.toMatchObject({ code: 'identity_conflict' });
+    expect((await store.getCustomer(db, tenant, customer.id)).source_page_id).toBeNull();
+    expect((await store.getCustomer(db, tenant, existing.id)).source_page_id).toBe(id(20));
   });
 });
