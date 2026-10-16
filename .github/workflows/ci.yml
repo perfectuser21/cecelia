@@ -1752,8 +1752,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
-    # 全量 smoke 最近成功耗时 21m46s，预算包含容器启动和清理。
-    timeout-minutes: 30
+    # 572项串行 smoke；已出现全循环完成后30分钟任务取消，40分钟含启动清理余量。
+    timeout-minutes: 40
     services:
       postgres:
         image: mirror.gcr.io/pgvector/pgvector:pg15

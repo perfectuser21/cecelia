@@ -1,3 +1,6 @@
+import {createHash} from 'node:crypto';
+import assert from 'node:assert/strict';
+import {STAGE_ENVELOPES as STAGE} from '../existing-ops-stage-envelopes.js';
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +38,9 @@ const fixture = {
   }
 };
 
+// 020d完整阶段组合；不能将记录版protocol与旧活动混配为verified。
+const EXPECTED_STAGE_INPUTS={"packages/brain/scripts/coding-workflow/activities/intent.mjs":"f08bfef9a2abfcecf32bce283e8e0a2dceb9b4b865f524a08207cad292f213ac","packages/brain/scripts/coding-workflow/activities/spec.mjs":"9a0f4fe05d2d15da09ea2eeca969efcb01a9437234b9836df9dc54600e4667fa","packages/brain/scripts/coding-workflow/activities/spec-review.mjs":"b3a4bbc3b55c88fd91ba9a2d0c927006f237ea84a4d6c6ed9ee5ae0cbab88452","packages/brain/scripts/coding-workflow/activities/verify.mjs":"9342cfb897dc578b95d73f143aeb2c0febde5e1e78c019f5a60e911e2dcd0976","packages/brain/scripts/coding-workflow/activities/evaluate.mjs":"4f446c4888ff5567bd12a2e80c472b1d85bdce19617e207336efa049614c83af"};
+const stageInputs=checkedStageInputs({"packages/brain/scripts/coding-workflow/activities/intent.mjs":STAGE.recorded["intent"],"packages/brain/scripts/coding-workflow/activities/spec.mjs":STAGE.recorded["spec"],"packages/brain/scripts/coding-workflow/activities/spec-review.mjs":STAGE.recorded["spec-review"],"packages/brain/scripts/coding-workflow/activities/verify.mjs":STAGE.recorded["verify"],"packages/brain/scripts/coding-workflow/activities/evaluate.mjs":STAGE.recorded["evaluate"]});
 // 固定真实候选仅作 AST 数据；CI 不依赖未合并 commit，不 import/执行 fixture。
 const parse = source => acorn(source, { ecmaVersion: 'latest', sourceType: 'module' });
 const base = '52a9476e014f540d418014e7062ca66a72f38709';
@@ -66,7 +72,7 @@ describe('已审 provenance V2 封套的真实闭包转发', () => {
   });
   it('全 collector 读取新增5模块并记录真实闭包调用依赖，原 runner 关系不丢', async () => {
     const basePaths = execFileSync('git', ['ls-tree', '-rz', '--name-only', base], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).split('\0').filter(Boolean);
-    const overrides = Object.fromEntries(Object.entries(fixture.paths).map(([key, path]) => [path, fixture.sources[key]]));
+    const overrides = {...stageInputs,...Object.fromEntries(Object.entries(fixture.paths).map(([key, path]) => [path, fixture.sources[key]]))};
     const readPaths = new Set();
     const result = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision: base,
       paths: [...new Set([...basePaths, ...Object.values(fixture.paths)])],
@@ -93,4 +99,18 @@ describe('已审 provenance V2 封套的真实闭包转发', () => {
     expect(relations.some(r => r.input_path === fixture.paths.activityProvenance)).toBe(false);
     expect(bindings).toContain(fixture.paths.recordProvenance);
   });
+});
+
+// 五阶段原字节身份独立锁定020d；只读取数据，不执行候选源码。
+function checkedStageInputs(value){
+ assert.deepEqual(Object.keys(value).sort(),Object.keys(EXPECTED_STAGE_INPUTS).sort());
+ for(const [source,digest] of Object.entries(EXPECTED_STAGE_INPUTS)){
+  assert.equal(typeof value[source],'string');
+  assert.equal(createHash('sha256').update(value[source]).digest('hex'),digest,source);
+ }
+ return structuredClone(value);
+}
+describe('provenance完整阶段输入先核固定身份',()=>{
+ for(const source of Object.keys(EXPECTED_STAGE_INPUTS))it(source+' 字节改变拒绝',()=>{const value=structuredClone(stageInputs);value[source]+='\n';expect(()=>checkedStageInputs(value)).toThrow();});
+ for(const change of [v=>{delete v[Object.keys(v)[0]];},v=>{v.extra='x';},v=>{v[Object.keys(v)[0]]=7;}])it('缺字段/额外键/非字符串拒绝',()=>{const value=structuredClone(stageInputs);change(value);expect(()=>checkedStageInputs(value)).toThrow();});
 });
