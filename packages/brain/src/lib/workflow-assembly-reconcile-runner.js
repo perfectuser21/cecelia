@@ -46,11 +46,14 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
     if(!rows.length && last){rows=await scan(null);check();}
     check();if(!rows.length){await cursor(null);return report;}
     for(const row of rows){
+      let phase='definition';
+      try{
       check();if(!supported(row)){report.skipped_objects++;await cursor(row.id);continue;}
       const prior=row.result?.workflow_assembly_reconcile;
       const definition=row.result?.workflow_authoring?.outputs?.compose?.definition;
       if(!definition){report.skipped_objects++;await cursor(row.id);continue;}
       const digest=definitionDigest(definition),target=`candidate:${digest}`,tenantId=tenant(row);
+      phase='readiness';
       if(prior?.target_version===target && prior.next_check_at>now()){report.skipped_objects++;await cursor(row.id);continue;}
       let readiness;
       const tenantConflict=row.tenant_id!=null && row.payload?.tenant_id!=null && row.tenant_id!==row.payload.tenant_id;
@@ -66,6 +69,7 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
         readiness={protocol:'workflow-authoring-execution-v1',status:'blocked',resource_condition:'unknown',gaps:[{code:'readiness_identity_mismatch'}]};
       }
       const observation={...readiness,tenant_id:tenantId,object_id:row.id,target_version:target,definition_sha256:digest};
+      phase='write';
       try{
         check();await client.query('BEGIN');transaction=true;
         await client.query("SELECT set_config('statement_timeout',$1,true)",[String(Math.max(1,deadline-now()))]);check();
@@ -79,8 +83,18 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
         check();await cursor(row.id);check();await client.query('COMMIT');transaction=false;report.checked++;
       }catch(error){
         if(transaction){await rollback();transaction=false;}
-        if(error.code==='assembly_reconcile_budget')throw error;
-        report.errors++;check();await cursor(row.id);
+        throw error;
+      }
+      }catch(error){
+        if(error.code==='assembly_reconcile_budget' || error.code==='57014' || error.message==='Query read timeout')throw error;
+        report.errors++;check();
+        // 结构坏单只留稳定错误码；不记录原异常文本/凭据，不影响同轮后续对象。
+        const state={...(row.result?.workflow_assembly_reconcile ?? {}),protocol:'workflow-assembly-reconcile-v1',
+          tenant_id:tenant(row),object_id:row.id,status:'blocked',checked_at:now(),
+          structural_gaps:[{code:phase==='definition'?'definition_invalid':'reconcile_object_error'}]};
+        try{check();await client.query("UPDATE tasks SET result=COALESCE(result,'{}'::jsonb)||$2::jsonb,updated_at=NOW() WHERE id=$1",[row.id,{workflow_assembly_reconcile:state}]);}
+        catch(recordError){check();if(recordError.code==='57014')throw recordError;}
+        check();await cursor(row.id);
       }
     }
     return report;
