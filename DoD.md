@@ -358,3 +358,6 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/crm/notion-request.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] crmprojectionfair 真实PG跨两轮runCrmSync验证50个unknown不会饿死第51个可处理好友；独立检查水位排序，保留unknown的fence、pending及业务revision/人工字段。
   Test: manual:bash -c "cd packages/brain && CRM_STORE_SCRATCH_TEST=1 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/crm-onboard-projection.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] crmonboardtestpair 四个好友入档模块保留同名真实单测，验证事务回滚、授权失败零数据库访问、最小创建属性、身份/白名单拒绝、分页有界失败与未知创建不重复POST；中央真PG回归及CI选择器不变。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/onboard-common.test.js src/crm/onboard-store.test.js src/crm/onboard-page-store.test.js src/crm/onboard-notion.test.js --maxWorkers=1 --minWorkers=1"
