@@ -131,3 +131,11 @@ it('真实PG已active候选和退休Activity不自动修复派生关系',async()
  expect((await x.audit(true)).repaired).toEqual([]);
  expect((await x.db.query('SELECT count(*)::int n FROM workflow_activity_refs WHERE workflow_id=$1',[x.wf])).rows[0].n).toBe(0);
 });
+it('真实PG巡检入口恢复固定派生关联但旧成功proof不能关本次新缺口',async()=>{
+ const x=await frozenFixture();await x.db.query('DELETE FROM workflow_activity_refs WHERE id=$1',[x.reference]);
+ const read=async()=>x.readiness({definition_sha256:x.digest,target_version:'candidate:'+x.digest,status:'verified',gaps:[],proof_sha256:'b'.repeat(64),verification_id:'b'.repeat(64),verification_at:'2020-01-01T00:00:00Z'});
+ await x.run({readReadiness:read});
+ expect((await x.db.query('SELECT id FROM workflow_activity_refs WHERE workflow_id=$1',[x.wf])).rows).toEqual([{id:x.reference}]);
+ const state=(await x.saved()).workflow_assembly_reconcile;
+ expect(state.status).not.toBe('verified');expect(Object.values(state.issues).some(i=>i.status==='awaiting_verification' && i.repaired_at)).toBe(true);
+});
