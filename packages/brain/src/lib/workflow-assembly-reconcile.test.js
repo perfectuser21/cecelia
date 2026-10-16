@@ -95,3 +95,9 @@ it('新目标版本不继承旧版本资源退避窗口',()=>{
  const next=evolve(b,observation({resource_condition:'safe_stop',target_version:'candidate:'+'f'.repeat(64),definition_sha256:'f'.repeat(64)}),{now:101000});
  expect(next.resource_attempts).toBe(1);expect(next.next_check_at).toBe(161000);
 });
+it('正常执行等待不启动资源退避，但明确safe_stop优先且仍不授资格',()=>{
+ const pending=evolve(null,observation({resource_condition:'unknown',awaiting_execution:true}),{now:1000});
+ expect(pending.status).toBe('awaiting_execution');expect(pending.next_check_at).toBe(0);expect(pending.resource_attempts).toBe(0);expect(pending.qualified).toBe(false);
+ const stopped=evolve(null,observation({resource_condition:'safe_stop',awaiting_execution:true}),{now:1000});
+ expect(stopped.status).toBe('waiting_resource');expect(stopped.next_check_at).toBe(61000);
+});
