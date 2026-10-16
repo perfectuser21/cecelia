@@ -2,6 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":".github/workflows/ci.yml","path":"scripts/ci/__tests__/ci-results-smoke-budget.test.sh","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-stage-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-stage-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-stage-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-stage-envelopes.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-stage-source.js","path":"changes/cp-10160816-cw-stage-source.md","role":"release"},
