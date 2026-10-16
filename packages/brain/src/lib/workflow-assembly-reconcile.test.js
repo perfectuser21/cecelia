@@ -89,3 +89,9 @@ it('真实proof已绿但尚无匹配测试资格时不得宣称整体闭环完�
  expect(evolve(null,{...ready,qualified:undefined},{now:2000}).status).not.toBe('verified');
  expect(evolve(null,{...ready,qualified:true},{now:2000}).status).toBe('verified');
 });
+it('新目标版本不继承旧版本资源退避窗口',()=>{
+ const a=evolve(null,observation({resource_condition:'safe_stop'}),{now:1000});
+ const b=evolve(a,observation({resource_condition:'safe_stop'}),{now:100000});expect(b.resource_attempts).toBe(2);
+ const next=evolve(b,observation({resource_condition:'safe_stop',target_version:'candidate:'+'f'.repeat(64),definition_sha256:'f'.repeat(64)}),{now:101000});
+ expect(next.resource_attempts).toBe(1);expect(next.next_check_at).toBe(161000);
+});
