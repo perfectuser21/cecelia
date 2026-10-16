@@ -184,4 +184,22 @@ describe.skipIf(!crmPgTestConfig().enabled)('好友客户Notion投影：真PG+fa
     expect((await db.query('SELECT count(*)::int n FROM crm_customer_page_attempts')).rows[0].n).toBe(1);
     expect((await store.getCustomer(db, tenant, customer.id)).projection_pending).toBe(true);
   });
+  it('50个unknown不饿死第51个新好友，runCrmSync至少两轮公平轮转且不伪造业务进度', async () => {
+    await mapping.reservePageAttempt(db, binding, customer);
+    for (let n = 1; n <= 49; n++) {
+      const result = await onboardContact(db, { tenant_id: tenant, binding_id: binding.id, account_id: 'self', contact_id: `unknown-${n}`, event_id: `unknown-event-${n}`, display_name: `未确认${n}`, authorized: true, scope: 'test', authorization_ref: 'approved-test-task', identity_evidence_sha256: 'a'.repeat(64), observed_at: '2026-10-16T01:00:00Z', friendship_status: 'confirmed' });
+      await mapping.reservePageAttempt(db, binding, result.customer);
+    }
+    const last = (await onboardContact(db, { tenant_id: tenant, binding_id: binding.id, account_id: 'self', contact_id: 'processable-51', event_id: 'processable-event', display_name: '第51个可处理好友', authorized: true, scope: 'test', authorization_ref: 'approved-test-task', identity_evidence_sha256: 'a'.repeat(64), observed_at: '2026-10-16T01:00:00Z', friendship_status: 'confirmed' })).customer;
+    vi.stubEnv('CRM_SYNC_ENABLED', 'true');
+    const pool = { connect: async () => ({ query: db.query.bind(db), release() {} }) };
+    const first = await runCrmSync(pool, binding.id, { request });
+    expect(first.deferred).toBe(50); expect((await store.getCustomer(db, tenant, last.id)).source_page_id).toBeNull();
+    const second = await runCrmSync(pool, binding.id, { request });
+    expect(second.onboard_mapped).toBe(1); expect((await store.getCustomer(db, tenant, last.id)).source_page_id).toBeTruthy();
+    expect(creates(request)).toHaveLength(1);
+    const unknown = await store.getCustomer(db, tenant, customer.id);
+    expect(unknown).toMatchObject({ revision: 1, projection_pending: true, source_page_id: null, manual_fields: {} });
+    expect((await db.query('SELECT count(*)::int n FROM crm_customer_page_attempts')).rows[0].n).toBe(51);
+  });
 });
