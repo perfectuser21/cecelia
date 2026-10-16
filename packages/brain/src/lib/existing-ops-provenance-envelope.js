@@ -1,7 +1,7 @@
 /** V2 仅接受已审闭包形状；不执行候选模块，不信其声明或文件 hash。 */
 import { ENVELOPES } from './existing-ops-build-envelopes.js';
 import { REVIEWED as CORE, ISOLATION_REVIEWED as ISOLATION_CORE } from './existing-ops-provenance-core-envelope.js';
-import { REVIEWED as LOCAL, ISOLATION_REVIEWED as ISOLATION_LOCAL } from './existing-ops-provenance-local-envelopes.js';
+import { REVIEWED as LOCAL, ISOLATION_REVIEWED as ISOLATION_LOCAL, MERGE_REVIEWED as MERGE_LOCAL } from './existing-ops-provenance-local-envelopes.js';
 import { REVIEWED as ENTRY } from './existing-ops-provenance-entry-envelopes.js';
 
 const PREFIX = 'packages/brain/scripts/coding-workflow/lib/';
@@ -12,6 +12,8 @@ export const PROVENANCE_SOURCE_PATHS = Object.freeze({
   recordRecords: PREFIX + 'record-provenance-records.mjs',
   provenancePath: PREFIX + 'provenance-path.mjs',
   qaIsolation: PREFIX + 'qa-isolation.mjs',
+  sourceProvenance: 'packages/brain/scripts/coding-workflow/runner/lib/source-provenance.mjs',
+  sourceMergeProof: 'packages/brain/scripts/coding-workflow/runner/lib/source-merge-proof.mjs',
 });
 const canonical = value => JSON.stringify(value, (key, item) => ['start', 'end', 'raw'].includes(key) ? undefined : item);
 const same = (a, b) => canonical(a) === canonical(b);
@@ -28,7 +30,7 @@ const edit = (text, changes) => changes.sort((a, b) => b.node.start - a.node.sta
 /** 完整本地新增模块限制前置校验、导入初始化、存储绑定；旧 Node/库边界保持原合同。 */
 function forwardingSources(sources, parse) {
   let trees, version;
-  const bundles = { recorded: { ...CORE, ...LOCAL }, isolation: { ...CORE, ...LOCAL, ...ISOLATION_CORE, ...ISOLATION_LOCAL } };
+  const bundles = { recorded: { ...CORE, ...LOCAL }, isolation: { ...CORE, ...LOCAL, ...ISOLATION_CORE, ...ISOLATION_LOCAL }, source_merge: { ...CORE, ...LOCAL, ...ISOLATION_CORE, ...ISOLATION_LOCAL, ...MERGE_LOCAL } };
   for (const [name, bundle] of Object.entries(bundles)) {
     const candidate = {};
     if (!Object.entries(bundle).every(([key, reviewed]) => {
@@ -55,7 +57,8 @@ function forwardingSources(sources, parse) {
     || storage[0].init.arguments.length || context.params[1]?.name !== 'fn' || result?.type !== 'ReturnStatement'
     || result.argument?.type !== 'CallExpression' || !member(result.argument.callee, 'storage', 'run')
     || result.argument.arguments.length !== 2 || result.argument.arguments[0].name !== 'c' || result.argument.arguments[1].name !== 'fn') return null;
-  if (version === 'isolation' && !isolationLinks(trees)) return null;
+  if (['isolation', 'source_merge'].includes(version) && !isolationLinks(trees)) return null;
+  if (version === 'source_merge' && !mergeReadLinks(trees, parse)) return null;
   return { trees, version };
 }
 
@@ -74,6 +77,34 @@ function isolationLinks(trees) {
   return namedImport(activity, './record-provenance.mjs', 'sealStageEvidence')
     && sealed?.init?.type === 'CallExpression' && sealed.init.callee.name === 'sealStageEvidence'
     && nodes(recorded).some(n => n.type === 'Property' && n.key.name === 'source_stage_event_id' && member(n.value, 'sealed', 'id'));
+}
+
+
+/** 完整 AST 固定前置条件；另外证明返回事实来自真实 reader，而非候选自述。 */
+function mergeReadLinks(trees, parse) {
+  const reader = trees.sourceProvenance, proof = trees.sourceMergeProof, core = trees.recordProvenance;
+  const facts = fn(reader, 'sourceFacts'), verified = fn(reader, 'verifiedSource'), chain = fn(proof, 'verifySourceChain');
+  if (!exported(reader, 'sourceFacts') || !exported(proof, 'verifySourceChain')
+    || !namedImport(reader, './source-merge-proof.mjs', 'verifySourceChain')
+    || !namedImport(reader, '../../lib/record-provenance.mjs', 'provenanceProjection')
+    || !namedImport(proof, '../../lib/record-provenance.mjs', 'verifyRecordProvenance')
+    || !namedImport(proof, '../../lib/record-provenance.mjs', 'controllerIdentity')
+    || !exported(core, 'verifyRecordProvenance') || !exported(core, 'controllerIdentity')) return false;
+  const expression = text => parse(text).body[0].expression;
+  if (!same(calls(facts, 'verifiedSource'), [expression("verifiedSource({ repoSlug: 'perfectuser21/cecelia' }, worktree, intent, head)")])
+    || !same(calls(verified, 'verifySourceChain'), [expression('verifySourceChain(worktree, intent, head, requiredQaRound)')])
+    || !same(facts.body.body.at(-1), parse('function f(){ return { ...provenanceProjection(proof), sync }; }').body[0].body.body[0])
+    || !same(calls(chain, 'verifyRecordProvenance'), [expression('verifyRecordProvenance(options)')])
+    || !same(calls(chain, 'walkSourceMerges'), [expression('walkSourceMerges(c, head, requiredQaRound, all, verify)')])
+    || calls(chain, 'events').length !== 2
+    || !same(chain.body.body.at(-1), parse('function f(){ return { proof, sync }; }').body[0].body.body[0])) return false;
+  // URL 数组真正传给原 core：那里逐文件 noLinks/stat/readFileSync/hash；不是 writer 执行边。
+  const identity = calls(proof, 'controllerIdentity');
+  const expected = expression("controllerIdentity(import.meta.url, ['./source-merge.mjs', './source-provenance.mjs', './cifix.mjs', './pr-branch.mjs', './proc.mjs', './qa-gate.mjs', './repos.mjs'].map(p => new URL(p, import.meta.url)))");
+  const identityFn = fn(core, 'controllerIdentity');
+  return identity.length === 1 && same(identity[0], expected)
+    && calls(identityFn, 'noLinks').length === 1
+    && nodes(identityFn).some(n => n.type === 'CallExpression' && member(n.callee, 'fs', 'readFileSync'));
 }
 
 /** 版本来自完整源码组合；不读取候选提供的版本或状态声明。 */

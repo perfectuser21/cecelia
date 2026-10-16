@@ -208,14 +208,14 @@ async function provenanceInputs(paths,readSource,revision) {
 }
 async function collectProvenanceInputs({read,relations,revision,build,version}) {
   // 结构校验可以读取全封套；消费者绑定只包含本分支已证明使用的模块。
-  for(const [key,path] of Object.entries(PROVENANCE_SOURCE_PATHS))if((build||key!=='activityProvenance')&&(key!=='qaIsolation'||version==='isolation'))await read(path);
+  for(const key of ['activityProvenance','recordProvenance','recordStore','recordRecords','provenancePath','qaIsolation'])if((build||key!=='activityProvenance')&&(key!=='qaIsolation'||['isolation','source_merge'].includes(version)))await read(PROVENANCE_SOURCE_PATHS[key]);
   const edges=build?[
     [BUILD_SOURCE_PATHS.protocol,PROVENANCE_SOURCE_PATHS.activityProvenance,'native_activity_provenance_handler'],
     [PROVENANCE_SOURCE_PATHS.activityProvenance,PROVENANCE_SOURCE_PATHS.recordProvenance,'native_record_provenance_context'],
     [BUILD_SOURCE_PATHS.cli,PROVENANCE_SOURCE_PATHS.recordProvenance,'native_pipe_provenance_capture'],
   ]:[[PUBLISH_TEST,PROVENANCE_SOURCE_PATHS.recordProvenance,'explicit_test_provenance_fixture']];
   for(const key of ['recordStore','recordRecords','provenancePath'])edges.push([PROVENANCE_SOURCE_PATHS.recordProvenance,PROVENANCE_SOURCE_PATHS[key],'provenance_local_prehandler_dependency']);
-  if(version==='isolation')edges.push(
+  if(['isolation','source_merge'].includes(version))edges.push(
     [PROVENANCE_SOURCE_PATHS.recordProvenance,PROVENANCE_SOURCE_PATHS.qaIsolation,'provenance_static_import_dependency'],
     [PROVENANCE_SOURCE_PATHS.qaIsolation,PROVENANCE_SOURCE_PATHS.recordStore,'provenance_static_import_dependency']);
   for(const [consumer_path,input_path,kind] of edges)if(!relations.some(r=>r.consumer_path===consumer_path&&r.input_path===input_path&&r.kind===kind&&r.revision===revision))

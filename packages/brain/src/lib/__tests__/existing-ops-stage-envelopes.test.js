@@ -72,3 +72,13 @@ it('isolation新封套全部字段精确冻结且旧导出不被覆盖',()=>{
  expect(Object.keys(value??{}).sort()).toEqual(Object.keys(ISOLATION_EXPECTED).sort());
  for(const [key,digest] of Object.entries(ISOLATION_EXPECTED)){expect(typeof value[key]).toBe('string');expect(createHash('sha256').update(value[key]).digest('hex')).toBe(digest);}
 });
+
+it('merge evaluate 原字节独立冻结且实际版本证明拒缺失及前置退出',()=>{
+ const value=isolationModule.MERGE_STAGE_ENVELOPES;
+ expect(Object.keys(value??{})).toEqual(['evaluate']);
+ expect(createHash('sha256').update(value.evaluate).digest('hex')).toBe('30f7a6f89bb96c77d2010e151b61fe2e8dbf0a1001e5ade3a062bb7842e74180');
+ const source={...fixed.recorded,...value};
+ expect(stageSourceVersion(source,ast)).toBe('source_merge');
+ expect(stageSourceVersion({...source,evaluate:undefined},ast)).toBeNull();
+ expect(stageSourceVersion({...source,evaluate:source.evaluate+'\nprocess.exit(0);'},ast)).toBeNull();
+});

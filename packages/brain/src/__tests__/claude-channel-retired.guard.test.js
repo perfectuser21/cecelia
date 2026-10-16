@@ -117,14 +117,14 @@ const STAGE_HELPER=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-source.js');
 const STAGE_DATA=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
 const PROVENANCE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-envelope.js');
 const PROVENANCE_READER_HASHES = new Map([
-  ['existing-ops-stage-source.js','0a84a71f3f1e3964ea0018cfae2d7ce3df079e0eed9eccb2c9a7610a007a4f08'],
-  ['existing-ops-stage-envelopes.js','10037cdd8693af4539cfe85ac255987214ad4f2972ea55f19b90dd4ff19e4b3a'],
-  ['existing-ops-provenance-envelope.js','37a0db6f3dd51ad76142eb15477161cb78079ccfeb6b9d7ec7a006af509b7330'],
+  ['existing-ops-stage-source.js','4fdd0629c79c111cd75a545f859e76fc257110a7b0115b1f6692e4a17949bb6e'],
+  ['existing-ops-stage-envelopes.js','1fda2fc1f3bf3ef7684930e46ac8dc0364bd1af1f8f27e97c7eb197fe23a6d8f'],
+  ['existing-ops-provenance-envelope.js','745763215cdef93ad88be255b7fd808a9f2cabc916c6ccdbd2bd5c22ec1fb486'],
   ['existing-ops-provenance-core-envelope.js','c3e8769e7f053fc63d52074235b521df5134e65c31d34f151bb6a9400fa4ab93'],
   ['existing-ops-provenance-entry-envelopes.js','126a93b9db9856fe06894a394ecb9e0afd099860b9fb54e8927c56c8b96a15bb'],
-  ['existing-ops-provenance-local-envelopes.js','3bd0ea4e7320ab7a1a533b16752a6f05b2e04b959b14bc296d007fe2a20673a3'],
+  ['existing-ops-provenance-local-envelopes.js','ef359ef987229815f3d258ff78535fb55dc909bb64eae88d67ce63d0ea55c7f4'],
 ].map(([name,hash])=>[path.join(BRAIN_ROOT,'src/lib',name),hash]));
-const PROVENANCE_CALLER_SHA256 = '41f1648166e3240e7c028e6c42d432f74f0780e75b41f23d7e1aae73135f0655';
+const PROVENANCE_CALLER_SHA256 = '9eabed9cb853d87c4f7371de7d01e8ddd7c74c5d34e44dd8650aef3dd54a6f18';
 function decodedReferenceTexts(text) {
   try{return [text,...astRows(parseModule(text)).flatMap(({node})=>node.type==='Literal'&&typeof node.value==='string'?[node.value]
     :node.type==='TemplateLiteral'&&!node.expressions.length?[node.quasis.map(q=>q.value.cooked).join('')]:[])];}
@@ -414,5 +414,18 @@ describe('固定runtime字节指纹不执行来源模板',()=>{
   if(kind==='same source at other path'){sources.delete(runtime);sources.set(other,source);}
   else sources.set(other,"import {ENVELOPES} from './existing-ops-build-envelopes.js';export const raw=ENVELOPES;");
   expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
+ });
+});
+
+describe('merge 读取封套不增加 Claude 原文执行出口',()=>{
+ const local=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-local-envelopes.js');
+ const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readFileSync(file,'utf8')])]);
+ it('新实际五模块仅在完整固定 reader 闭包内取得纯数据资格',()=>{const sources=base();for(const file of [local,STAGE_DATA,ENVELOPE_FILE])expect(findClaudeInvocations(sources.get(file),{file,sources})).toEqual([]);});
+ it.each(['local eval','escaped consumer','stage execution'])('%s 仍使原封套 E1 拒绝',kind=>{
+  const sources=base();
+  if(kind==='local eval')sources.set(local,sources.get(local)+'\neval(MERGE_REVIEWED.sourceMergeProof);');
+  if(kind==='escaped consumer')sources.set(path.join(BRAIN_ROOT,'src/merge-escape.js'),"import {MERGE_REVIEWED} from './lib/existing-ops-provenance-local-\\u0065nvelopes.js';eval(MERGE_REVIEWED.sourceProvenance);");
+  if(kind==='stage execution')sources.set(STAGE_DATA,sources.get(STAGE_DATA)+'\nFunction(MERGE_STAGE_ENVELOPES.evaluate)();');
+  expect(findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources}).some(h=>h.rule==='E1')).toBe(true);
  });
 });
