@@ -30,6 +30,19 @@ it.each(['source','kind','host_alias','label','ops_workflow_id'])('真实PG镜�
   expect((await db.query('SELECT count(*)::int n FROM workflows WHERE id=$1',[s.id])).rows[0].n).toBe(0);
   expect((await db.query('SELECT count(*)::int n FROM workflow_definition_versions')).rows[0].n).toBe(0);
 });
+it.each(['source','kind','host_alias','label','ops_workflow_id'])('真实PG登记后镜子%s漂移也必须运行时拒绝，不能靠缓存续跑',async field=>{
+  const {db,source,services}=await fixture();await registerNativeReconcile(db,source);
+  await db.query(`UPDATE ops_schedule_entries SET ${field}=$1`,[field==='ops_workflow_id'?999:'other']);
+  await expect(runNativeReconcile(db,{request_key:'drift-'+field},services)).rejects.toThrow();
+  expect((await db.query('SELECT count(*)::int n FROM runs')).rows[0].n).toBe(0);
+  expect((await db.query('SELECT count(*)::int n FROM working_memory')).rows[0].n).toBe(0);
+});
+it('真实PG人工改引用来源后重复登记只报冲突，冻结指针保持',async()=>{
+  const {db,source}=await fixture();const before=await registerNativeReconcile(db,source);
+  await db.query("UPDATE workflow_activity_refs SET source_repo='other/repo' WHERE workflow_id=$1",[s.id]);
+  await expect(registerNativeReconcile(db,source)).rejects.toMatchObject({status:409});
+  expect((await db.query('SELECT current_definition_version_id FROM workflows WHERE id=$1',[s.id])).rows[0].current_definition_version_id).toBe(before.workflow_definition_version_id);
+});
 it('真实PG owner落账失败不写业务游标，不造span',async()=>{
   const {db,source,services}=await fixture();await registerNativeReconcile(db,source);
   await db.query("ALTER TABLE runs ADD CONSTRAINT reject_native CHECK (executor_id IS DISTINCT FROM 'brain-native-maintenance')");
