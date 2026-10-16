@@ -2,6 +2,8 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/05-qa-report-r1.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/06-judge-r1.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/01-intent.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/01-invariants.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10161224-cw-214f1098/02-review-r1.md","role":"documentation"},
