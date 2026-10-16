@@ -4,6 +4,7 @@ import {
 } from './contracts.js';
 import {loadAssemblyCatalog} from '../lib/workflow-assembly-store.js';
 import { FREEZE_PROTOCOL, prepareDefinitionFreeze } from './freeze.js';
+import {EXECUTION_PROTOCOL,prepareAuthoringCandidate,requireCandidateEnvironment} from './assembly-orchestration.js';
 
 async function transaction(pool, action) {
   const client = await pool.connect();
@@ -100,6 +101,10 @@ async function processStage(client, taskId, state, body, deps) {
       await completedTask(client, id);
     }
     await validate(deps.validateReferences, client, state.outputs.compose.definition, { requireActive: true });
+    if(state.request.execution_protocol===EXECUTION_PROTOCOL){
+      const owner=await prepareAuthoringCandidate(client,taskId,state,{freezeProof:deps.freezeProof,tenantId:deps.tenantId});
+      return {...output,candidate_owner:owner};
+    }
   } else if (stage === 'verify') {
     requireCondition(output.validation_task_id !== taskId, '验证任务不能引用管理任务自身');
     const row = await completedTask(client, output.validation_task_id);
@@ -133,6 +138,15 @@ async function processStage(client, taskId, state, body, deps) {
 
 export async function submitAuthoring(pool, taskId, body, deps = {}) {
   validateSubmission(body);
+  if(body.stage==='build'){
+    const state=await getAuthoring(pool,taskId);
+    if(state.request.execution_protocol===EXECUTION_PROTOCOL&&!state.receipts.some(r=>r.submission_id===body.submission_id)){
+      await requireCandidateEnvironment(pool);
+      requireCondition(state.stage===body.stage&&state.revision===body.revision,'build阶段或revision已变化',409);
+      deps={...deps,freezeProof:await prepareDefinitionFreeze(state.outputs.compose.definition,{...deps.freezeOptions,
+        sharedVersions:(await loadAssemblyCatalog(pool,state.outputs.compose.definition)).activity_versions})};
+    }
+  }
   // 先只读状态及固定Git来源；进入事务后仍重新校验revision和定义digest，防慢网络期间的并发推进。
   if (body.stage === 'register') {
     const state = await getAuthoring(pool, taskId);
