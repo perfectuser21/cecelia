@@ -160,8 +160,9 @@ async function evaluate(ctx, worktree, input, signal) {
 }
 
 /** 把本轮验收记录（QA 报告、截图目录、裁决）提交并推到 PR 分支。 */
-async function commitRecords(cfg, worktree, pr, paths, message, intent, round, smoke = []) {
+async function commitRecords(cfg, worktree, pr, paths, message, intent, round, smoke = [], qaStageEventId) {
   const context = sourceContext(cfg, worktree, intent, 'qa', round, SOURCE_CONTROLLER);
+  if (context) context.qaStageEventId = qaStageEventId;
   const { registration } = await stageQaRecords(worktree, { ...intent, round }, paths, context);
   if (smoke.length && (await git(worktree, ['add', '--', ...smoke])).code !== 0) throw new Error('qa_smoke_add_failed');
   if ((await git(worktree, [...RUNNER_ID, 'commit', '-q', '-m', message])).code !== 0) throw new Error('qa_report_commit_failed');
@@ -245,9 +246,10 @@ function stalled(s) {
 }
 
 /** 跑独立裁判，结果记进 entry.judge 与 s.judge_pending/judge_bad；返回 runJudge 结果。 */
-async function judgeStep(ctx, pr, s, worktree, intent, entry) {
+async function judgeStep(ctx, pr, s, worktree, intent, entry, sourceMode = 'pending') {
   const startedAt = Date.now();
-  const j = await runJudge(ctx.cfg, worktree, intent, { round: entry.round, reportRel: entry.report, log: ctx.log });
+  const j = await runJudge(ctx.cfg, worktree, intent, { round: entry.round, reportRel: entry.report, log: ctx.log,
+    qaStageEventId: entry.source_stage_event_id, sourceMode, testedHead: entry.head });
   // 执行记录（决策 b34e346a）：裁判出结论记一条；不可用的每次带计数，避免同一轮重试撞幂等键
   const bad = j.error && !j.escalate ? `:e${(s.judge_bad ?? 0) + 1}` : '';
   await postSpans(ctx, [gateSpan({
@@ -393,6 +395,7 @@ async function qaRound(ctx, pr, s, signal) {
     const verdict = cvAccepted ? 'PASS' : qa.verdict;
     const label = cvAccepted ? 'CANNOT_VERIFY（commander 已裁接受）' : qa.verdict;
     const entry = { round, head: pr.headRefOid, verdict, fails, report: report0, env_url: qa.env?.url, cost_usd: qa.cost_usd, at: new Date().toISOString(),
+      ...(result.outputs.source_stage_event_id ? { source_stage_event_id: result.outputs.source_stage_event_id } : {}),
       ...(cvAccepted ? { qa_verdict: qa.verdict, cv_accepted: cvAccepted } : {}) };
     addCost(s, qa.cost_usd);
     ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮 ${label}（失败 ${fails}）`);
@@ -401,7 +404,7 @@ async function qaRound(ctx, pr, s, signal) {
     const commit = async (message, smoke = []) => {
       const snapshot = { judge_bad: s.judge_bad, judge_pending: s.judge_pending };
       try {
-        await commitRecords(cfg, worktree, pr, records, message, intent, round, smoke);
+        await commitRecords(cfg, worktree, pr, records, message, intent, round, smoke, entry.source_stage_event_id);
       } catch (error) {
         Object.assign(s, snapshot);
         throw error;
@@ -437,10 +440,10 @@ async function qaRound(ctx, pr, s, signal) {
 async function judgeRound(ctx, pr, s, signal) {
   const entry = s.rounds.at(-1);
   return inPrWorktree(ctx, pr, s, `qa-${pr.number}-j${entry.round}`, signal, async (worktree, intent) => {
-    const j = await judgeStep(ctx, pr, s, worktree, intent, entry);
+    const j = await judgeStep(ctx, pr, s, worktree, intent, entry, 'registered');
     const smoke = !j.error && j.verdict === 'PASS' && entry.report
       ? await solidifyQa(ctx, pr, s, entry.round, worktree, intent, path.basename(entry.report), entry.env_url) : [];
-    if (j.file) await commitRecords(ctx.cfg, worktree, pr, [`${intent.sprintDir}/${j.file}`], `docs(qa): 第 ${entry.round} 轮独立裁判 ${j.verdict}`, intent, entry.round, smoke);
+    if (j.file) await commitRecords(ctx.cfg, worktree, pr, [`${intent.sprintDir}/${j.file}`], `docs(qa): 第 ${entry.round} 轮独立裁判 ${j.verdict}`, intent, entry.round, smoke, entry.source_stage_event_id);
     return afterJudge(ctx, pr, s, worktree, intent, entry, j);
   });
 }
