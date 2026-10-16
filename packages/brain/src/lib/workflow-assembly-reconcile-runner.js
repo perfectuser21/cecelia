@@ -17,7 +17,15 @@ async function defaultReadiness(pool,id,options){
 export async function runWorkflowAssemblyReconcile(pool,options={}){
   const now=options.now ?? Date.now,budget=Math.max(1,Math.min(20000,options.budgetMs ?? 20000));
   const deadline=now()+budget,check=()=>{if(now()>=deadline)throw deadlineError();};
-  const client=await pool.connect();let locked=false,transaction=false,lockKey,destroy;
+  const connection=await pool.connect();let locked=false,transaction=false,lockKey,destroy;
+  // 原生statement_timeout覆盖事务前读取与锁等待，query_timeout防失联；不靠外层race宣称已停。
+  const client={query:async(text,values)=>{
+    check();let remaining=Math.max(1,deadline-now());
+    await connection.query({text:"SELECT set_config('statement_timeout',$1,false)",values:[String(remaining)],query_timeout:remaining+250});
+    check();remaining=Math.max(1,deadline-now());
+    return connection.query({text,values,query_timeout:remaining+250});
+  }};
+  const rollback=()=>connection.query({text:'ROLLBACK',query_timeout:5000});
   const report={checked:0,skipped_objects:0,errors:0};
   const cursor=async id=>{
     check();await client.query(`INSERT INTO working_memory(key,value_json,updated_at) VALUES($1,$2,NOW())
@@ -45,8 +53,9 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
       const digest=definitionDigest(definition),target=`candidate:${digest}`,tenantId=tenant(row);
       if(prior?.target_version===target && prior.next_check_at>now()){report.skipped_objects++;await cursor(row.id);continue;}
       let readiness;
+      const tenantConflict=row.tenant_id!=null && row.payload?.tenant_id!=null && row.tenant_id!==row.payload.tenant_id;
       try{
-        readiness=await (options.readReadiness ?? defaultReadiness)(pool,row.id,{tenantId,deadline,signal:options.signal});
+        readiness=tenantConflict?{}:await (options.readReadiness ?? defaultReadiness)(pool,row.id,{tenantId,deadline,signal:options.signal});
         check();
       }catch(error){
         check();readiness={status:'blocked',resource_condition:'unknown',gaps:[{code:'readiness_unavailable'}]};
@@ -63,25 +72,26 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
         const fresh=(await client.query('SELECT * FROM tasks WHERE id=$1 FOR UPDATE',[row.id])).rows[0];check();
         if(!fresh || !supported(fresh) || tenant(fresh)!==tenantId
           || definitionDigest(fresh.result?.workflow_authoring?.outputs?.compose?.definition)!==digest){
-          await client.query('ROLLBACK');transaction=false;report.skipped_objects++;continue;
+          await rollback();transaction=false;report.skipped_objects++;await cursor(row.id);continue;
         }
         const state=reconcileGapState(fresh.result?.workflow_assembly_reconcile,observation,{now:now()});
         check();await client.query("UPDATE tasks SET result=COALESCE(result,'{}'::jsonb)||$2::jsonb,updated_at=NOW() WHERE id=$1",[row.id,{workflow_assembly_reconcile:state}]);
         check();await cursor(row.id);check();await client.query('COMMIT');transaction=false;report.checked++;
       }catch(error){
-        if(transaction){await client.query('ROLLBACK');transaction=false;}
+        if(transaction){await rollback();transaction=false;}
         if(error.code==='assembly_reconcile_budget')throw error;
         report.errors++;check();await cursor(row.id);
       }
     }
     return report;
   }catch(error){
-    if(error.code==='assembly_reconcile_budget')return {...report,stopped:'budget'};
+    if(error.code==='assembly_reconcile_budget' || error.code==='57014' || error.message==='Query read timeout')return {...report,stopped:'budget'};
     throw error;
   }finally{
     try{
-      if(transaction)await client.query('ROLLBACK');
-      if(locked)await client.query('SELECT pg_advisory_unlock(hashtextextended($1,6))',[lockKey]);
-    }catch(error){destroy=error;}finally{client.release(destroy);}
+      if(transaction)await rollback();
+      await connection.query({text:'RESET statement_timeout',query_timeout:5000});
+      if(locked)await connection.query({text:'SELECT pg_advisory_unlock(hashtextextended($1,6))',values:[lockKey],query_timeout:5000});
+    }catch(error){destroy=error;}finally{connection.release(destroy);}
   }
 }
