@@ -2,6 +2,9 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"scripts/ci/implementation-main-snapshot.mjs","path":"changes/cp-10162312-source-diagnostics.md","role":"release"},
+    {"owner_path":"scripts/ci/implementation-main-snapshot.mjs","path":"docs/learnings/cp-10162312-source-diagnostics.md","role":"documentation"},
+
     
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"docs/learnings/cp-10161920-cw-source-merge.md","role":"documentation"},
     
