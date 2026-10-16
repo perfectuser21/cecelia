@@ -83,3 +83,9 @@ it('已关闭故障复发必须重新设定检测时刻，不能借之前新于�
  const stale=evolve(reopened,observation({gaps:[],status:'verified',proof_sha256:proof,verification_id:proof,verification_at:new Date(1500).toISOString()}),{now:4000});
  expect(Object.values(stale.issues)[0].status).toBe('awaiting_verification');
 });
+it('真实proof已绿但尚无匹配测试资格时不得宣称整体闭环完成',()=>{
+ const proof='e'.repeat(64),ready=observation({gaps:[],status:'verified',proof_sha256:proof,verification_id:proof,verification_at:new Date(1500).toISOString()});
+ expect(evolve(null,{...ready,qualified:false},{now:2000}).status).not.toBe('verified');
+ expect(evolve(null,{...ready,qualified:undefined},{now:2000}).status).not.toBe('verified');
+ expect(evolve(null,{...ready,qualified:true},{now:2000}).status).toBe('verified');
+});
