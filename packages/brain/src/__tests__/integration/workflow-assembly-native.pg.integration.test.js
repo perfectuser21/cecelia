@@ -1,6 +1,6 @@
 import {it,expect,afterEach} from 'vitest';
 import {readFileSync} from 'node:fs';
-import {authoringExecutionDatabase} from '../fixtures/authoring-execution-db.test.js';
+import {authoringExecutionDatabase,startPureAuthoring,settleInvocation} from '../fixtures/authoring-execution-db.test.js';
 import {nativeSpec as s,prepareNativeSource} from '../../lib/workflow-assembly-native-source.js';
 import {registerNativeReconcile} from '../../lib/workflow-assembly-native-registration.js';
 import {runNativeReconcile} from '../../lib/workflow-assembly-native.js';
@@ -52,3 +52,39 @@ it('真实PG已登记Activity被人工停用后，原生入口不能继续写游
   await expect(runNativeReconcile(db,{request_key:'inactive'},services)).rejects.toThrow();
   expect((await db.query('SELECT count(*)::int n FROM working_memory')).rows[0].n).toBe(0);
 });
+it.each(['cancelled','budget'])('真实runner%s停止不能被通用error分支误记fail',async stopped=>{
+  const {db,source,services}=await fixture();await registerNativeReconcile(db,source);await startPureAuthoring(f);
+  const controller=new AbortController();let now=Date.now();services.signal=controller.signal;
+  services.runnerOptions={now:()=>now,readReadiness:async()=>{if(stopped==='cancelled')controller.abort();else now+=30000;return {};}};
+  const result=await runNativeReconcile(db,{request_key:'stop-'+stopped},services);
+  expect(result.run.outcome).toBe(stopped==='budget'?'timeout':'unknown');
+  expect(result.run.detail.reason).toBe(stopped);
+  expect((await db.query('SELECT outcome FROM spans WHERE activity_id=$1',[s.activities[0].id])).rows[0].outcome).toBe('unknown');
+});
+it('真实默认native入口驱动候选、损坏修复、新run复验到closed，每轮只记同一meta的一run一span',async()=>{
+  const {db,source,services}=await fixture();await registerNativeReconcile(db,source);
+  const authoring=await startPureAuthoring(f);
+  services.runnerOptions={authoringOptions:{freezeOptions:{readFile:f.reader},invocationOptions:{readFile:f.reader,probeRuntime:async()=>({ready:true})},readFile:f.reader,probeRuntime:async()=>({ready:true})}};
+  let rounds=0;
+  const current=async()=>(await db.query('SELECT result FROM tasks WHERE id=$1',[authoring.id])).rows[0].result;
+  const round=async()=>{
+    const r=await runNativeReconcile(db,{request_key:'closure-'+(++rounds)},services);expect(r.run.outcome).toBe('pass');
+    const queued=(await db.query("SELECT id FROM tasks WHERE payload->'invocation' IS NOT NULL AND status='queued'")).rows;
+    for(const t of queued)await settleInvocation(f,t.id);
+    return current();
+  };
+  let state;
+  for(let i=0;i<12;i++){state=await round();if(state.workflow_assembly_reconcile?.status==='verified')break;}
+  expect(state.workflow_assembly_reconcile?.status).toBe('verified');
+  const owner=state.workflow_authoring_candidate;
+  const old=(await db.query('SELECT run_id FROM task_runs')).rows.map(r=>r.run_id);
+  await db.query('DELETE FROM workflow_activity_refs WHERE workflow_id=$1',[owner.workflow_id]);
+  state=await round();expect(state.workflow_assembly_reconcile.revalidation_request).toBeTruthy();
+  expect(state.workflow_assembly_reconcile.status).not.toBe('verified');
+  for(let i=0;i<12;i++){state=await round();if(state.workflow_assembly_reconcile?.status==='verified')break;}
+  expect(state.workflow_assembly_reconcile.status).toBe('verified');
+  expect(Object.values(state.workflow_assembly_reconcile.issues).every(i=>i.status==='closed')).toBe(true);
+  expect((await db.query('SELECT count(*)::int n FROM task_runs WHERE run_id<>ALL($1::text[])',[old])).rows[0].n).toBeGreaterThan(0);
+  expect((await db.query('SELECT count(*)::int n FROM runs WHERE workflow_id=$1',[s.id])).rows[0].n).toBe(rounds);
+  expect((await db.query('SELECT count(*)::int n FROM spans WHERE activity_id=$1',[s.activities[0].id])).rows[0].n).toBe(rounds);
+},30000);
