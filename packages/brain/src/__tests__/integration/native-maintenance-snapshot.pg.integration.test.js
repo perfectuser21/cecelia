@@ -61,7 +61,10 @@ it.each(['scope_only','foreign_workflow','bad_digest','foreign_ref','foreign_act
  else if(kind==='bad_digest')await db.query("UPDATE workflow_definition_versions SET payload_sha256=repeat('0',64) WHERE id=$1",[registered.workflow_definition_version_id]);
  else if(kind==='foreign_ref')await db.query('UPDATE workflow_activity_refs SET workflow_id=$2 WHERE id=$1',[spec.activities[0].reference_id,workflow]);
  else if(kind==='foreign_activity_version')await db.query("UPDATE activity_definition_versions SET activity_id=$2,payload=jsonb_set(payload,'{activity_id}',to_jsonb($2::uuid)) WHERE id=$1",[registered.activity_definition_version_id,randomUUID()]);
- else if(kind==='null_activity_payload')await db.query("UPDATE activity_definition_versions SET payload='null'::jsonb,payload_sha256=$2 WHERE id=$1",[registered.activity_definition_version_id,definitionDigest({source:{repo,path:sourcePath,commit:old},payload:null})]);
+ else if(kind==='null_activity_payload'){
+  await expect(db.query("UPDATE activity_definition_versions SET payload='null'::jsonb,payload_sha256=$2 WHERE id=$1",[registered.activity_definition_version_id,definitionDigest({source:{repo,path:sourcePath,commit:old},payload:null})])).rejects.toMatchObject({code:'23514'});
+  expect((await snapshot()).gaps).toEqual([]);return;
+ }
  else await db.query('UPDATE capabilities SET parent_journey_id=$2 WHERE id=$1',[spec.capability_id,f.definition.capability_id]);
  const result=await snapshot();
  if(kind==='scope_only'){expect(result.definitions.workflows.some(w=>w.workflow_id===workflow)).toBe(true);return;}

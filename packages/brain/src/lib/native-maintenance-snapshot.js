@@ -41,7 +41,7 @@ export async function isNativeMaintenanceObservationDefinition(db,row){
   ||activity.id!==a.id||activity.workflow_id!==spec.id||activity.executor_kind!=='code'
   ||activity.capability_key!==spec.capability||activity.activity_key!==a.key||!same(activity.contract,a)
   ||!sealed(av,'activity',a.id,a)||av.source_commit!==row.source_commit)return false;
- const ap=av.payload;
+ const ap=av.payload;if(!ap||typeof ap!=='object'||Array.isArray(ap))return false;
  const expected={protocol:spec.protocol,activity_id:a.id,contract:a,steps:[],implementation_bindings:ap.implementation_bindings};
  return bindingsMatch(ap.implementation_bindings,row.source_commit)
   &&(same(ap,expected)||same(ap,{...expected,definition_scope:NATIVE_OBSERVATION_SCOPE,capability_id:spec.capability_id}));
