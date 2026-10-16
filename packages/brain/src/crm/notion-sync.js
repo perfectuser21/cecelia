@@ -9,11 +9,14 @@ const sameId = (a, b) => typeof a === 'string' && typeof b === 'string' && a.rep
 export function createNotionRequest({ token = process.env.NOTION_API_KEY, deadline = Date.now() + 120_000, fetchImpl = fetch } = {}) {
   return async function request(path, method = 'GET', body) {
     if (!token) throw fault('notion_credentials_missing');
-    if (!/^\/(?:pages|(data_sources|pages|blocks)\/[a-zA-Z0-9-]+(?:\/(query|children|markdown))?)$/.test(path)) throw fault('invalid_notion_path');
+    if (typeof path !== 'string' || !/^\/(?:pages|(data_sources|pages|blocks)\/[a-zA-Z0-9-]+(?:\/(query|children|markdown))?)(?![\s\S])/.test(path)) throw fault('invalid_notion_path');
+    // Only pathname is variable: the URL authority never consumes caller input.
+    const endpoint = new URL('https://api.notion.com');
+    endpoint.pathname = `/v1${path}`;
     for (let attempt = 0; attempt < 3; attempt++) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw fault('budget_exceeded');
-      const response = await fetchImpl(`https://api.notion.com/v1${path}`, {
+      const response = await fetchImpl(endpoint, {
         method, redirect: 'error', signal: AbortSignal.timeout(Math.min(15_000, remaining)),
         headers: { Authorization: `Bearer ${token}`, 'Notion-Version': '2026-03-11', 'Content-Type': 'application/json' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),

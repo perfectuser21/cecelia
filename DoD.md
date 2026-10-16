@@ -361,3 +361,6 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] crmonboardtestpair 四个好友入档模块保留同名真实单测，验证事务回滚、授权失败零数据库访问、最小创建属性、身份/白名单拒绝、分页有界失败与未知创建不重复POST；中央真PG回归及CI选择器不变。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/onboard-common.test.js src/crm/onboard-store.test.js src/crm/onboard-page-store.test.js src/crm/onboard-notion.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] crmnotionorigin Notion HTTP固定origin，调用方只可提供严格白名单pathname；绝对/协议相对/反斜杠/编码/CRLF/query/hash及非字符串路径在HTTP前拒绝，合法请求无queryhash且禁止重定向，创建429不重试。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/notion-request.test.js --maxWorkers=1 --minWorkers=1"
