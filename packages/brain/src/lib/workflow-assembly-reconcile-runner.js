@@ -3,7 +3,8 @@ import {reconcileGapState} from './workflow-assembly-reconcile.js';
 const CURSOR='workflow_assembly_reconcile_cursor:v1';
 const supported=row=>row.payload?.workflow_authoring===true
   && row.result?.workflow_authoring?.request?.assembly_mode===true
-  && row.result?.workflow_authoring?.request?.registration_protocol==='definition-freeze-v1';
+  && row.result?.workflow_authoring?.request?.registration_protocol==='definition-freeze-v1'
+  && row.result?.workflow_authoring?.request?.execution_protocol==='workflow-authoring-execution-v1';
 const tenant=row=>row.tenant_id ?? row.payload?.tenant_id ?? 'default';
 const deadlineError=()=>Object.assign(Error('assembly_reconcile_budget'),{code:'assembly_reconcile_budget'});
 
@@ -31,6 +32,7 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
     const scan=async after=>(await client.query(`SELECT * FROM tasks WHERE payload->>'workflow_authoring'='true'
       AND result#>>'{workflow_authoring,request,assembly_mode}'='true'
       AND result#>>'{workflow_authoring,request,registration_protocol}'='definition-freeze-v1'
+      AND result#>>'{workflow_authoring,request,execution_protocol}'='workflow-authoring-execution-v1'
       AND ($1::uuid IS NULL OR id>$1::uuid) ORDER BY id LIMIT $2`,[after,Math.max(1,Math.min(20,options.limit ?? 5))])).rows;
     check();let rows=await scan(last);check();
     if(!rows.length && last){rows=await scan(null);check();}
