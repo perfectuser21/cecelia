@@ -11,7 +11,7 @@ async function fixture(){
  await db.query('ALTER TABLE tasks ADD COLUMN result jsonb,ADD COLUMN tenant_id text,ADD COLUMN parent_task_id uuid,ADD COLUMN task_type text');
  await db.query(migrationTable('000_base_schema.sql','working_memory'));
  const id=randomUUID(),definition={key:'reconcile.fixture',source:{repo:'perfectuser21/cecelia',ref:'fixture.json',revision:'a'.repeat(40)},activities:[]};
- const digest=definitionDigest(definition),state={request:{assembly_mode:true,registration_protocol:'definition-freeze-v1'},outputs:{compose:{definition,definition_sha256:digest}}};
+ const digest=definitionDigest(definition),state={request:{assembly_mode:true,registration_protocol:'definition-freeze-v1',execution_protocol:'workflow-authoring-execution-v1'},outputs:{compose:{definition,definition_sha256:digest}}};
  await db.query("INSERT INTO tasks(id,title,status,tenant_id,task_type,payload,result) VALUES($1,'真实对账样板','completed','alpha','workflow_authoring',$2,$3)",[id,{workflow_authoring:true,tenant_id:'alpha'},{workflow_authoring:state}]);
  const pool=f.createPool(5);
  const readiness=extra=>({protocol:'workflow-authoring-execution-v1',status:'blocked',gaps:[{code:'execution_evidence_missing'}],tenant_id:'alpha',definition_sha256:digest,target_version:'candidate:'+digest,resource_condition:'ready',...extra});
@@ -45,4 +45,9 @@ it('真实PG资源safe_stop不建业务验证任务，未知恢复不放行，re
  clock=100000;await x.run({now:()=>clock,readReadiness:async()=>x.readiness({resource_condition:'unknown'})});
  expect((await x.saved()).workflow_assembly_reconcile.status).toBe('waiting_resource');
  clock=1000000;await x.run({now:()=>clock});expect((await x.saved()).workflow_assembly_reconcile.status).toBe('open');
+});
+it('真实PG旧freeze+assembly标记不获得新执行授权，完全不调用readiness',async()=>{
+ const x=await fixture();await x.db.query("UPDATE tasks SET result=jsonb_set(result,'{workflow_authoring,request}',(result#>'{workflow_authoring,request}')-'execution_protocol') WHERE id=$1",[x.id]);
+ let called=0;await x.run({readReadiness:async()=>{called++;return x.readiness();}});
+ expect(called).toBe(0);expect((await x.saved()).workflow_assembly_reconcile).toBeUndefined();
 });
