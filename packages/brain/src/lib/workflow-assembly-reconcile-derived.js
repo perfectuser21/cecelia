@@ -104,7 +104,7 @@ export async function auditAssemblyDerivations(db,task,options={}){
         if(definitionDigest(reread)!==definitionDigest(expected))deny('recipe_unverified');
         out.repaired.push({code:'recipe_missing'});out.gaps=out.gaps.filter(g=>g.code!=='recipe_missing');
       }
-    }else if(expected.length!==slots.length || definitionDigest(recipe)!==definitionDigest(expected))gap('recipe_conflict');
+    }else if(expected.length!==slots.length || definitionDigest(recipe)!==definitionDigest(expected))deny('recipe_conflict');
     check();await db.query(owns?'COMMIT':'RELEASE SAVEPOINT assembly_reconcile_derived');return out;
   }catch(error){
     await db.query(owns?'ROLLBACK':'ROLLBACK TO SAVEPOINT assembly_reconcile_derived');
