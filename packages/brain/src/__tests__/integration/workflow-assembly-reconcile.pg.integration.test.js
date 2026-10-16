@@ -62,3 +62,12 @@ it('真实PG租户真列与payload冲突只报身份gap，不调用下游验真'
  let called=0;await x.run({readReadiness:async()=>{called++;return x.readiness();}});
  expect(called).toBe(0);expect(Object.values((await x.saved()).workflow_assembly_reconcile.issues).some(i=>i.gap.code==='readiness_identity_mismatch')).toBe(true);
 });
+it('真实PG首个定义嵌套损坏只记录结构gap，不饿死后续正常对象',async()=>{
+ const x=await fixture(),bad='00000000-0000-4000-8000-000000000001';let definition={leaf:true};
+ for(let i=0;i<45;i++)definition={child:definition};
+ await x.db.query("INSERT INTO tasks(id,title,status,tenant_id,task_type,payload,result) SELECT $2,title,status,tenant_id,task_type,payload,jsonb_set(result,'{workflow_authoring,outputs,compose,definition}',$3) FROM tasks WHERE id=$1",[x.id,bad,definition]);
+ const out=await x.run();expect(out.errors).toBe(1);expect(out.checked).toBe(1);
+ const state=(await x.db.query('SELECT result FROM tasks WHERE id=$1',[bad])).rows[0].result.workflow_assembly_reconcile;
+ expect(state.structural_gaps).toContainEqual({code:'definition_invalid'});
+ expect((await x.saved()).workflow_assembly_reconcile.checked_at).toBeTypeOf('number');
+});
