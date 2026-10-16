@@ -416,3 +416,16 @@ describe('固定runtime字节指纹不执行来源模板',()=>{
   expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
  });
 });
+
+describe('merge 读取封套不增加 Claude 原文执行出口',()=>{
+ const local=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-local-envelopes.js');
+ const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readFileSync(file,'utf8')])]);
+ it('新实际五模块仅在完整固定 reader 闭包内取得纯数据资格',()=>{const sources=base();for(const file of [local,STAGE_DATA,ENVELOPE_FILE])expect(findClaudeInvocations(sources.get(file),{file,sources})).toEqual([]);});
+ it.each(['local eval','escaped consumer','stage execution'])('%s 仍使原封套 E1 拒绝',kind=>{
+  const sources=base();
+  if(kind==='local eval')sources.set(local,sources.get(local)+'\neval(MERGE_REVIEWED.sourceMergeProof);');
+  if(kind==='escaped consumer')sources.set(path.join(BRAIN_ROOT,'src/merge-escape.js'),"import {MERGE_REVIEWED} from './lib/existing-ops-provenance-local-\\u0065nvelopes.js';eval(MERGE_REVIEWED.sourceProvenance);");
+  if(kind==='stage execution')sources.set(STAGE_DATA,sources.get(STAGE_DATA)+'\nFunction(MERGE_STAGE_ENVELOPES.evaluate)();');
+  expect(findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources}).some(h=>h.rule==='E1')).toBe(true);
+ });
+});
