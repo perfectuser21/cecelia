@@ -48,6 +48,16 @@ tail -n 100 "${CODING_WF_USER_HOME:-/Users/${CODING_WF_RUN_USER:-administrator}}
 
 若 plist 路径与变量推导不同，以 plist 的 `StandardOutPath` 读日志。分别判读服务状态、任务回执和主日志；日志或 dry-run 单独都不能证明运行正常。日志可能含任务现场信息，不复制令牌或账号文件内容。
 
+## 运行回执如何判读
+
+从仓库根目录运行 `node packages/brain/scripts/coding-workflow/runner/status.mjs [--log-dir <目录>] [--json]`。`--log-dir` 指定要看的回执目录；省略时先取 `CODING_WF_LOG_DIR`，否则取运行用户 home 下的 `.cecelia/coding-workflow-runner`。`--json` 输出机器可读数组；普通模式逐行显示。结果按扫描到的 JSON 文件 mtime（修改时间）倒序排列。目录不存在或没有扫描到回执时，JSON 输出 `[]`，普通模式输出“没有运行记录（<目录>）”，进程仍以 0 退出；这只表示未找到记录，不证明服务健康。结合上面的 `launchctl` 状态和主日志继续检查。
+
+状态按当前磁盘文件判读：含 `last_event` 的 JSON 显示 `running`；终态回执的 `status` 为 `completed`、`partial` 或 `failed` 时显示对应状态。`partial` 和 `failed` 会显示首个非 `completed`/`skipped` 活动；原因先取该活动最后一次尝试的 `reason_code`，再依次回落到活动、回执的 `reason_code`，最后为 `run_<status>`。解析失败或不符合上述状态形状的 JSON 显示 `unreadable`。扫描范围是目录中除 `cifix-<数字>.json` 外的所有 `.json` 普通文件；合法的 `qa`、`commander` 状态 JSON 和终态回写待办 `pr-sync-pending.json` 也可能显示 `unreadable`。这个标签不能单独证明文件损坏，更不能据此删除文件或待办；先只读核对文件用途与内容。并发写入时只以当次读到的内容为准。
+
+`ci_fix` 是本地修复记录摘要：只有非空 `pr_url` 字符串匹配 `/pull/<编号>`，并且同目录 `cifix-<编号>.json` 有尝试记录，才显示 `attempts`（次数）和 `last_result`（最后结果）；否则 JSON 中为 `ci_fix:null`，普通行不附摘要。此匹配不校验 URL 域名、PR 是否存在或外部 CI 结果；即使 URL 是非 GitHub 域名，编号匹配也会显示本地次数，不能据此认定关联了有效 PR 或 CI 已修复。
+
+特别注意：`summarizeReceipt` 对没有 `outputs.pr_url` 的 `completed` 回执仍保留 `status=completed`，但在 JSON 中给出 `reason_code=pr_url_missing`、`pr_url=null`。普通 `completed` 行默认只打印 PR URL，不打印该原因；看到 `completed` 时必须再看 `--json` 并核实 `pr_url`。运行回执与最终合并是两项事实：只读核对对应 PR 的当前 head 及 GitHub 实际合并结果，再核对 Brain 的 `runner.phase=merged`、`merge.merged=true` 和 QA 终态是否与该 head 对应。任一项缺失或不一致，都不能宣布最终成功；继续只读复查，不手工更改批准状态或历史 FAIL 记录。
+
 ## 故障时保留现场
 
 `runner.sh` 经 `runtime-launch.mjs` 先健康检查，再安全更新专用 clone，最后调用 `runtime-run.sh`。账号失效或缺目录等返回 `runtime_codex_*` 错码时，先停止并排查指定订阅账号；不改用 API key、其他账号或 Claude，也不直接重启。
