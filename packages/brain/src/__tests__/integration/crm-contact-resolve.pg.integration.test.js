@@ -1,22 +1,16 @@
 import { beforeAll, afterAll, describe, it, expect, vi } from 'vitest';
-import { readFile } from 'node:fs/promises';
-import pg from 'pg';
 import express from 'express';
 import request from 'supertest';
-import * as store from '../store.js';
-import { createCrmRouter } from '../router.js';
-const api = await import('../contact-resolve.js').catch(() => ({}));
+import * as store from '../../crm/store.js';
+import { createCrmRouter } from '../../crm/router.js';
+import { crmPgTestConfig, createCrmPgFixture } from '../helpers/crm-pg-fixture.js';
+const api = await import('../../crm/contact-resolve.js');
 const tenant = 'b1000000-0000-4000-8000-000000000001', other = 'b2000000-0000-4000-8000-000000000001';
 const id = n => `b3000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-describe.skipIf(process.env.CRM_STORE_SCRATCH_TEST !== '1')('CRM联系人解析真实Postgres隔离与HTTP', () => {
-  let db, binding, customer, app;
-  const schema = `crm_resolve_${process.pid}_${Date.now()}`;
+describe.skipIf(!crmPgTestConfig().enabled)('CRM联系人解析真实Postgres隔离与HTTP', () => {
+  let db, binding, customer, app, fixture;
   beforeAll(async () => {
-    db = new pg.Client({ host: '/tmp', database: 'cecelia_scratch', user: 'administrator' }); await db.connect();
-    expect((await db.query('SELECT current_database() AS name')).rows[0].name).toBe('cecelia_scratch');
-    await db.query(`CREATE SCHEMA ${schema}`); await db.query(`SET search_path TO ${schema},public`);
-    await db.query('CREATE TABLE schema_version(version text primary key,description text)');
-    await db.query(await readFile(new URL('../../../migrations/555_crm_canonical.sql', import.meta.url), 'utf8'));
+    fixture = await createCrmPgFixture(); db = fixture.db;
     binding = await store.configureBinding(db, { tenant_id: tenant, data_source_id: id(1), enabled: true });
     customer = (await store.ingestCustomer(db, binding, { page_id: id(2), display_name: '同名客户', source_edited_at: '2026-10-16T01:00:00Z' })).customer;
     const second = (await store.ingestCustomer(db, binding, { page_id: id(3), display_name: '同名客户', source_edited_at: '2026-10-16T01:00:00Z' })).customer;
@@ -29,7 +23,7 @@ describe.skipIf(process.env.CRM_STORE_SCRATCH_TEST !== '1')('CRM联系人解析�
     app = express(); app.use(express.json()); app.use('/crm', createCrmRouter({ pool: db }));
   });
   afterAll(async () => {
-    vi.unstubAllEnvs(); if (db) { await db.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); await db.end(); }
+    vi.unstubAllEnvs(); if (fixture) await fixture.close();
   });
   it('同tenant两号同原生联系人ID按精确账号返回各自客户和人设，零修改', async () => {
     const before = (await db.query('SELECT count(*)::int AS n FROM crm_audit')).rows[0].n;

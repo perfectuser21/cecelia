@@ -1,28 +1,19 @@
 import { beforeAll, afterAll, describe, it, expect } from 'vitest';
-import pg from 'pg';
-import { readFile } from 'node:fs/promises';
-import * as store from '../store.js';
+import * as store from '../../crm/store.js';
+import { crmPgTestConfig, createCrmPgFixture } from '../helpers/crm-pg-fixture.js';
 
-const enabled = process.env.CRM_STORE_SCRATCH_TEST === '1';
+const enabled = crmPgTestConfig().enabled;
 const tenant = '20000000-0000-4000-8000-000000000001';
 const other = '20000000-0000-4000-8000-000000000002';
 const source = '20000000-0000-4000-8000-000000000003';
 const page = '20000000-0000-4000-8000-000000000004';
-describe.skipIf(!enabled)('CRM store 真Postgres事务与关系约束（仅scratch）', () => {
-  let db, binding, customer;
-  const schema = `crm_test_${process.pid}_${Date.now()}`;
+describe.skipIf(!enabled)('CRM store 真Postgres事务与关系约束（隔离测试库）', () => {
+  let db, binding, customer, fixture;
   beforeAll(async () => {
-    db = new pg.Client({ host: '/tmp', database: 'cecelia_scratch', user: 'administrator' });
-    await db.connect();
-    const identity = await db.query('SELECT current_database() AS name');
-    if (identity.rows[0].name !== 'cecelia_scratch') throw Error('仅允许scratch');
-    await db.query(`CREATE SCHEMA ${schema}`);
-    await db.query(`SET search_path TO ${schema},public`);
-    await db.query('CREATE TABLE schema_version(version text primary key,description text)');
-    await db.query(await readFile(new URL('../../../migrations/555_crm_canonical.sql', import.meta.url), 'utf8'));
+    fixture = await createCrmPgFixture(); db = fixture.db;
   });
   afterAll(async () => {
-    if (db) { await db.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); await db.end(); }
+    if (fixture) await fixture.close();
   });
   it('绑定默认关闭，datasource不能跨租户重绑', async () => {
     binding = await store.configureBinding(db, { tenant_id: tenant, data_source_id: source });
