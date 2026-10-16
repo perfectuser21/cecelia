@@ -10,8 +10,7 @@ import { onboardContact } from './onboard-store.js';
 /** Privileged cross-service API, not a customer-facing tenant authorization substitute. */
 export function createCrmRouter({ pool, notionRequest } = {}) {
   const router = Router();
-  router.use(internalAuthOrLoopback);
-  router.use(rateLimit({ windowMs: 60_000, limit: 100, standardHeaders: 'draft-7', legacyHeaders: false }));
+  router.use(rateLimit({ windowMs: 60_000, limit: 100, standardHeaders: 'draft-7', legacyHeaders: false }), internalAuthOrLoopback);
   router.get('/status', async (_req, res, next) => {
     if (process.env.CRM_SYNC_ENABLED !== 'true') return res.json({ enabled: false, bindings: [] });
     try { res.json({ enabled: true, bindings: await store.listBindings(pool) }); } catch (err) { next(err); }

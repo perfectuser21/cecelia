@@ -345,6 +345,8 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] crmpgci 既有CI的POSTGRES_INTEGRATION和integration目录自动运行两份CRM真PG验收；DATABASE_URL优先、DB_*保留，只允许精确测试库，唯一schema创建与回收不写public；本地scratch开关兼容。
   Test: manual:bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/crm-pg-ci.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] crmcodeqlguard 长空白非结构标签在隔离Node子进程1秒内结束，原开闭结构标签拒绝保持；未授权前100次401、第101次429且数据库零调用。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/markdown.test.js src/crm/router.test.js --maxWorkers=1 --minWorkers=1"
 
 # Brain-first 授权好友入档（任务 c5395d5a-bce3-410f-96e5-5996bd8d2b0e）
 
