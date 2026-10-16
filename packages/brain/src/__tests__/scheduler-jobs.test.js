@@ -1,3 +1,5 @@
+vi.mock('../lib/workflow-assembly-reconcile.js',()=>({runWorkflowAssemblyReconcile:vi.fn().mockResolvedValue({checked:0})}));
+import {runWorkflowAssemblyReconcile} from '../lib/workflow-assembly-reconcile.js';
 vi.mock('../image-retention-scheduler.js', () => ({ runImageRetentionJanitor: vi.fn().mockResolvedValue({ status: 'disabled' }) }));
 import { runImageRetentionJanitor } from '../image-retention-scheduler.js';
 vi.mock('../app-server/controller.js',()=>({reconcileAppServers:vi.fn().mockResolvedValue([])}));
@@ -885,4 +887,11 @@ describe('scheduler-jobs 写运行记录', () => {
     expect(r).toMatchObject({ name: 'real-job', ok: true });
     expect(pool.query.mock.calls.some(([sql]) => /working_memory/.test(sql))).toBe(true);
   });
+});
+
+it('装配持续对账只注册一个有界原scheduler入口且handler真实接线',async()=>{
+ const matching=JOBS.filter(j=>j.name==='workflow-assembly-reconcile');expect(matching).toHaveLength(1);
+ const job=matching[0];expect(job.timeoutMs).toBeGreaterThan(20000);expect(job.needsPool).toBe(true);
+ const pool={query:vi.fn().mockResolvedValue({rows:[]})};await runSchedulerJobsOnce(pool,[job]);
+ expect(runWorkflowAssemblyReconcile).toHaveBeenCalledWith(pool,{budgetMs:20000,limit:5});
 });

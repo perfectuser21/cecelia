@@ -148,3 +148,4 @@ coding-workflow-route-smoke.sh
 task-lease-device-pool-smoke.sh
 tree-legacy-layout.sh
 workflow-assembly-registration-smoke.sh
+workflow-assembly-reconcile-smoke.sh

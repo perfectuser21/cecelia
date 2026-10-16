@@ -53,6 +53,12 @@ describe('task creation inventory', () => {
     });
   });
 
+  it('候选持续对账责任单由scheduler经原生唯一路由创建',()=>{
+    expect(TASK_CREATION_INVENTORY.find(row=>row.module==='lib/workflow-assembly-reconcile-tasks.js')).toEqual({
+      module:'lib/workflow-assembly-reconcile-tasks.js',source:'scheduler',creates_executable_task:true,migration_status:'routed',
+    });
+  });
+
   it('records each executable creation boundary', () => {
     expect(TASK_CREATION_INVENTORY_VERSION).toBe(ROUTER_VERSION);
     expect(TASK_CREATION_INVENTORY.length).toBeGreaterThanOrEqual(33);
