@@ -236,3 +236,8 @@ it('真实PG已取消原authoring不恢复候选关系或生成重验attempt',as
  expect((await x.audit(true)).repaired).toEqual([]);
  expect((await x.db.query('SELECT count(*)::int n FROM workflow_activity_refs WHERE workflow_id=$1',[x.wf])).rows[0].n).toBe(0);
 });
+it('真实PG调度服务仅转交固定来源适配参数，预算与租户不能被适配选项覆盖',async()=>{
+ const x=await fixture(),reader=async()=>'';let received;
+ await x.run({authoringOptions:{readFile:reader,tenantId:'beta',deadline:0},advanceAuthoring:async(_pool,_id,options)=>{received=options;}});
+ expect(received?.readFile).toBe(reader);expect(received.tenantId).toBe('alpha');expect(received.deadline).toBeGreaterThan(Date.now()-1000);
+});
