@@ -21,7 +21,7 @@ export function reconcileGapState(previous, observation, {now = Date.now()} = {}
     if (issues[key].verification_id) issues[key].last_verification_id=issues[key].verification_id;
     delete issues[key].verification_id;delete issues[key].verified_at;
   }
-  const verified=observation.protocol==='workflow-authoring-execution-v1' && observation.status==='verified'
+  const verified=observation.protocol==='workflow-authoring-execution-v1' && observation.status==='verified' && observation.qualified===true
     && observation.resource_condition==='ready' && !observation.gaps?.length
     && SHA.test(observation.proof_sha256 ?? '') && observation.verification_id===observation.proof_sha256;
   const finished=Date.parse(observation.verification_at ?? observation.latest_run_finished_at ?? '');
@@ -39,6 +39,6 @@ export function reconcileGapState(previous, observation, {now = Date.now()} = {}
   if (!waiting) {attempts=0;next=0;}
   return {protocol:'workflow-assembly-reconcile-v1',tenant_id,object_id,target_version,definition_sha256,issues,
     status:waiting?'waiting_resource':currentVerified?'verified':'open',checked_at:now,next_check_at:next,
-    resource_condition:observation.resource_condition ?? 'unknown',resource_attempts:attempts,
+    resource_condition:observation.resource_condition ?? 'unknown',resource_attempts:attempts,qualified:observation.qualified===true,
     ...(currentVerified?{verification_id:observation.verification_id}: {})};
 }

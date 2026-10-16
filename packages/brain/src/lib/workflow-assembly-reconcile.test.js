@@ -5,7 +5,7 @@ const api = await import('./workflow-assembly-reconcile.js').catch(error => {
 });
 const identity = {tenant_id:'alpha',object_id:'authoring-a',target_version:'candidate:'+ 'a'.repeat(64),definition_sha256:'a'.repeat(64)};
 const gap = {code:'recipe_missing',activity_key:'slot_a'};
-const observation = extra => ({protocol:'workflow-authoring-execution-v1',...identity,status:'blocked',resource_condition:'ready',gaps:[gap],...extra});
+const observation = extra => ({protocol:'workflow-authoring-execution-v1',...identity,status:'blocked',qualified:true,resource_condition:'ready',gaps:[gap],...extra});
 const evolve = (...args) => {
   expect(api.reconcileGapState).toBeTypeOf('function');
   return api.reconcileGapState(...args);
