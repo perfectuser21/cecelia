@@ -1,3 +1,4 @@
+import {auditAssemblyDerivations} from './workflow-assembly-reconcile-derived.js';
 import {definitionDigest} from '../workflow-authoring/contracts.js';
 import {reconcileGapState} from './workflow-assembly-reconcile.js';
 const CURSOR='workflow_assembly_reconcile_cursor:v1';
@@ -78,7 +79,18 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
           || definitionDigest(fresh.result?.workflow_authoring?.outputs?.compose?.definition)!==digest){
           await rollback();transaction=false;report.skipped_objects++;await cursor(row.id);continue;
         }
-        const state=reconcileGapState(fresh.result?.workflow_assembly_reconcile,observation,{now:now()});
+        const audit=!tenantConflict && fresh.result?.workflow_authoring_candidate
+          ? await auditAssemblyDerivations(client,fresh,{transaction:'existing',check,repair:true}):{gaps:[],detected:[],repaired:[]};
+        check();let previous=fresh.result?.workflow_assembly_reconcile;
+        if(audit.detected.length){
+          previous=reconcileGapState(previous,{...observation,status:'blocked',gaps:audit.detected},{now:now()});
+          for(const issue of Object.values(previous.issues)){
+            if(audit.repaired.some(g=>g.code===issue.gap.code && (g.activity_key??null)===issue.gap.activity_key))issue.repaired_at=now();
+          }
+        }
+        const finalObservation={...observation,gaps:[...observation.gaps??[],...audit.gaps]};
+        const state=reconcileGapState(previous,finalObservation,{now:now()});
+        state.derivations={checked_at:now(),detected:audit.detected,repaired:audit.repaired};
         check();await client.query("UPDATE tasks SET result=COALESCE(result,'{}'::jsonb)||$2::jsonb,updated_at=NOW() WHERE id=$1",[row.id,{workflow_assembly_reconcile:state}]);
         check();await cursor(row.id);check();await client.query('COMMIT');transaction=false;report.checked++;
       }catch(error){
