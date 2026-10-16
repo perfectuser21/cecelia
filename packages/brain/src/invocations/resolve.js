@@ -3,6 +3,7 @@ import { createSkillEnvelope } from '../orchestrator/skill-activity-adapter.js';
 import { definitionDigest,object,uuid,requireCondition } from '../workflow-authoring/contracts.js';
 import { legacyExecutorEntries } from '../execution-directory/legacy-executor.js';
 import { canonicalCandidateTarget } from './candidate-target.js';
+import {EXECUTION_PROTOCOL,readCandidateOwner,requireCandidateEnvironment} from '../workflow-authoring/assembly-orchestration.js';
 
 export function validateTargetRequest(body) {
   object(body,'request');object(body.target,'target');object(body.input,'input');
@@ -33,6 +34,12 @@ async function loadDefinition(db,body,tenantId) {
     const expected=`candidate:${body.compose_sha256}`;
     requireCondition(!body.target.definition_version_id||body.target.definition_version_id===expected,'候选版本身份不匹配',409);
     const stableId=row.payload.workflow_authoring_request?.workflow_id??row.result?.workflow_authoring?.request?.workflow_id;
+    let candidateTrace;
+    if(row.result?.workflow_authoring?.request?.execution_protocol===EXECUTION_PROTOCOL){
+      await requireCandidateEnvironment(db);
+      candidateTrace=await readCandidateOwner(db,row.id,definition,tenantId);
+      requireCondition(candidateTrace,'严格候选尚未形成真实冻结owner',409);
+    }
     // 新建工作流以管理任务作为候选身份；更新时只能使用该管理任务声明的 workflow。
     if(body.target.kind==='workflow')requireCondition(body.target.id===(stableId??row.id),'候选目标身份不匹配',409);
     if(body.target.kind==='activity'){
@@ -41,9 +48,10 @@ async function loadDefinition(db,body,tenantId) {
         a.id===target.id||a.activity_id===target.id||a.reuse_activity_id===target.id);
       requireCondition(selected,'候选定义未包含该活动',404);
       return {definition:{...definition,key:'single-activity',input_schema:selected.input_schema,output_schema:selected.output_schema,
-        activities:[{...selected,key:selected.key??'single',input_mapping:undefined}],output_mapping:undefined},target};
+        activities:[{...selected,key:selected.key??'single',input_mapping:undefined}],output_mapping:undefined},target,
+        candidateTrace:candidateTrace?{...candidateTrace,slots:candidateTrace.slots.filter(s=>s.slot_key===selected.key)}:undefined};
     }
-    return {definition,target:{...body.target,definition_version_id:expected}};
+    return {definition,target:{...body.target,definition_version_id:expected},candidateTrace};
   }
   const kind=body.target.kind,args=[body.target.definition_version_id,body.target.id];
   const row=(kind==='activity'
@@ -101,7 +109,7 @@ export async function resolveInvocation(db,body,tenantId='default',options={}){
   let envelope=null,release=null;
   const gaps=[...plan.gaps];
   if(!gaps.some(g=>g.code!=='input_schema_invalid')){
-    try {envelope=await createSkillEnvelope({tenant_id:tenantId,target,input:body.input,input_sha256:definitionDigest(body.input),plan,mode:body.mode,authoring_task_id:body.authoring_task_id,compose_sha256:body.compose_sha256},options);}
+    try {envelope=await createSkillEnvelope({tenant_id:tenantId,target,input:body.input,input_sha256:definitionDigest(body.input),plan,mode:body.mode,authoring_task_id:body.authoring_task_id,compose_sha256:body.compose_sha256,candidateTrace:loaded.candidateTrace},options);}
     catch {gaps.push({code:'implementation_source_unverified'});}
   }
   const runtime=await (options.probeRuntime??probeInvocationRuntime)();

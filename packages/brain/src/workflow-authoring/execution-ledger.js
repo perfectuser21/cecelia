@@ -1,6 +1,7 @@
 /** 读取执行器实际持久化的同一回执；文字PASS、别次运行和不完整槽位均无资格。 */
 import {definitionDigest,requireCondition} from './contracts.js';
 import {validateSkillReceipt} from '../orchestrator/skill-activity-adapter.js';
+import {normalizeSpan} from '../lib/span-ingestion.js';
 const equal=(a,b)=>definitionDigest(a)===definitionDigest(b);
 export function invocationSlotInputs(envelope,receipt) {
   const previous=Object.create(null);
@@ -22,7 +23,10 @@ export function verifyInvocationLedger({task,runs,events,spans=[]},{requireSpans
   const matches=p=>p?.run_id===runId&&p.tenant_id===inv.tenant_id&&p.input_sha256===inv.input_sha256&&equal(p.target,inv.target);
   const run=runs.filter(r=>r.run_id===runId&&r.task_id===task.id);
   requireCondition(run.length===1&&run[0].status==='success'&&matches({...run[0].context,run_id:runId})
-    &&run[0].context.envelope_sha256===e.envelope_sha256,'运行账身份或成功回执不符');
+    &&run[0].context.source==='skill-invocation'&&run[0].context.envelope_sha256===e.envelope_sha256,'运行账身份或成功回执不符');
+  const started=run[0].started_at&&new Date(run[0].started_at).getTime(),ended=run[0].ended_at&&new Date(run[0].ended_at).getTime();
+  requireCondition(Number.isFinite(started)&&Number.isFinite(ended)&&ended>=started,'运行时间证据不完整');
+  if(requireSpans)requireCondition(spans.length===e.activities.length,'真实span集合与声明不一致');
   const final=events.filter(v=>v.event_type==='invocation_result_verified');
   requireCondition(final.length===1&&matches(final[0].payload)&&final[0].payload.actor==='brain'
     &&final[0].payload.envelope_sha256===e.envelope_sha256&&final[0].payload.receipt_sha256===receiptHash,'执行回执事件摘要不符');
@@ -39,11 +43,15 @@ export function verifyInvocationLedger({task,runs,events,spans=[]},{requireSpans
     if(requireSpans){
       const trace=e.candidate_trace,slot=trace?.slots?.find(s=>s.slot_key===activity.key),p=found[0].payload;
       requireCondition(slot&&p.envelope_sha256===e.envelope_sha256&&p.slot_input_sha256===inputs[index].input_sha256,'候选活动固定来源缺失');
+      requireCondition(!slot.steps?.length,'step_execution_unverified');
       const expected=[{step_id:null},...(slot.steps??[]).map(s=>({step_id:s.id}))];
       for(const target of expected){
         const selected=spans.filter(s=>s.run_id===runId&&s.evidence?.slot_key===activity.key&&(s.step_id??null)===target.step_id);
         requireCondition(selected.length===1,'真实活动或Step span缺失');
         const s=selected[0],proof=s.evidence;
+        const spanStart=new Date(s.started_at).getTime(),spanEnd=new Date(s.ended_at).getTime();
+        requireCondition(s.executor_kind==='agent'&&s.executor_id==='codex-bridge'&&s.occurrence_key===`authoring:${activity.key}`
+          &&normalizeSpan(s,0).payload_sha256===s.payload_sha256&&spanStart>=started&&spanEnd>=spanStart&&spanEnd<=ended,'span执行来源、发生位置或时间摘要不符');
         requireCondition(s.workflow_id===trace.workflow_id&&s.activity_id===slot.activity_id&&s.outcome==='pass'&&s.ended_at
           &&proof.protocol==='authoring-candidate-span-v1'&&proof.tenant_id===inv.tenant_id&&proof.task_id===task.id
           &&proof.envelope_sha256===e.envelope_sha256&&proof.receipt_sha256===receiptHash
