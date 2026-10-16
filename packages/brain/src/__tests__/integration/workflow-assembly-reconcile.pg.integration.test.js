@@ -224,3 +224,9 @@ it('真实PG修复成功生成同链稳定重验attempt，未再修复不递增�
  expect(request).toMatchObject({protocol:'workflow-authoring-revalidation-v1',tenant_id:'alpha',authoring_task_id:x.id,definition_sha256:x.digest,input_sha256:definitionDigest({sample:'a'})});
  await x.run({readReadiness:read});const next=(await x.saved()).workflow_assembly_reconcile;expect(next.revalidation_request).toEqual(request);expect(next.repair_sequence).toBe(1);
 });
+it('真实PG服务端readiness资源safe_stop时不修派生关系也不递增重验attempt',async()=>{
+ const x=await frozenFixture();await x.db.query('DELETE FROM workflow_activity_refs WHERE id=$1',[x.reference]);
+ await x.run({readReadiness:async()=>x.readiness({definition_sha256:x.digest,target_version:'candidate:'+x.digest,resource_condition:'safe_stop'})});
+ const state=(await x.saved()).workflow_assembly_reconcile;expect(state.revalidation_request).toBeUndefined();expect(state.repair_sequence).toBe(0);
+ expect((await x.db.query('SELECT count(*)::int n FROM workflow_activity_refs WHERE workflow_id=$1',[x.wf])).rows[0].n).toBe(0);
+});
