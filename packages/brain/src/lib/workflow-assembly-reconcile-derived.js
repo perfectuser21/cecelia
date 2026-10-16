@@ -28,7 +28,7 @@ export async function auditAssemblyDerivations(db,task,options={}){
     if(claims.length!==1 || claims[0].id!==task.id)deny('candidate_owner_mismatch');
     const workflow=(await db.query('SELECT * FROM workflows WHERE id=$1 FOR SHARE',[owner.workflow_id])).rows[0];check();
     const version=(await db.query('SELECT * FROM workflow_definition_versions WHERE id=$1 AND workflow_id=$2',[owner.workflow_definition_version_id,owner.workflow_id])).rows[0];check();fixed(version);
-    if(!workflow || !['paused','active'].includes(workflow.status) || workflow.current_definition_version_id!==version.id
+    if(!workflow || workflow.status!=='paused' || workflow.current_definition_version_id!==version.id
       || version.payload.assembly_mode!==true || version.payload.workflow_id!==workflow.id || workflow.key!==definition.key
       || workflow.source_repo!==version.source_repo || workflow.source_path!==version.source_path
       || version.source_repo!==definition.source?.repo || version.source_path!==definition.source?.ref || version.source_commit!==definition.source?.revision
@@ -43,6 +43,8 @@ export async function auditAssemblyDerivations(db,task,options={}){
       if(!UUID.test(slot.reference_id) || !UUID.test(slot.activity_id) || !UUID.test(slot.activity_version_id)
         || slot.sequence_no!==index+1 || own.slot_key!==slot.slot_key || own.activity_id!==slot.activity_id
         || own.activity_definition_version_id!==slot.activity_version_id)deny('candidate_source_unverified');
+      const live=(await db.query('SELECT * FROM activities WHERE id=$1 FOR SHARE',[slot.activity_id])).rows[0];check();
+      if(!live || !['planned','active'].includes(live.status))deny('candidate_activity_state_conflict');
       const activity=(await db.query('SELECT * FROM activity_definition_versions WHERE id=$1 AND activity_id=$2',[slot.activity_version_id,slot.activity_id])).rows[0];check();fixed(activity);
       if(activity.payload.activity_id!==slot.activity_id)deny('candidate_source_unverified');
       for(const step of activity.payload.steps ?? []){
