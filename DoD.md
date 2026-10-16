@@ -335,3 +335,10 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
   Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/notion-children.test.js src/crm/__tests__/store.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] crmcanonicalpg 隔离PostgreSQL验证同名不并、账号人设、跨租户外键、人工更新审计、同分钟修改、消息及报告关联、旧版本回执不清新待办。
   Test: manual:bash -c "cd packages/brain && CRM_STORE_SCRATCH_TEST=1 npx vitest run src/crm/__tests__/store.integration.test.js --maxWorkers=1 --minWorkers=1"
+
+# CRM 既有联系人只读解析（任务 5028a72e-4127-42db-971a-5c2293093cdc）
+
+- [x] [BEHAVIOR] crmcontactresolve 按租户、稳定账号与联系人ID精确查询客户、好友关系和账号人设；缺参/昵称参数拒绝，内部鉴权和默认关闭保持，未知与跨租户统一404，数据库仅SELECT。
+  Test: manual:bash packages/brain/scripts/smoke/crm-contact-resolve-smoke.sh
+- [x] [BEHAVIOR] crmcontactresolvepg 真PostgreSQL隔离schema验证同租户两号同联系人ID仍精确返回各自客户/人设、无审计新增；跨租户/未知/昵称不命中，归档客户/停用绑定404及HTTP凭据校验。
+  Test: manual:bash -c "cd packages/brain && CRM_STORE_SCRATCH_TEST=1 node ../../node_modules/vitest/vitest.mjs run src/crm/__tests__/contact-resolve.integration.test.js --maxWorkers=1 --minWorkers=1"

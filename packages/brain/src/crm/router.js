@@ -4,6 +4,7 @@ import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import * as store from './store.js';
 import { runCrmSync, createNotionRequest } from './notion-sync.js';
 import { validateCustomerSchema } from './notion-mapping.js';
+import { resolveContact } from './contact-resolve.js';
 
 /** Privileged cross-service API, not a customer-facing tenant authorization substitute. */
 export function createCrmRouter({ pool, notionRequest } = {}) {
@@ -31,6 +32,13 @@ export function createCrmRouter({ pool, notionRequest } = {}) {
   router.post('/bindings/:id/run', async (req, res, next) => {
     try { res.json(await runCrmSync(pool, req.params.id, notionRequest ? { request: notionRequest } : {})); }
     catch (err) { next(err); }
+  });
+  router.post('/contacts/resolve', async (req, res, next) => {
+    try {
+      const result = await resolveContact(pool, req.body);
+      if (!result) return res.status(404).json({ error: 'not_found' });
+      res.json(result);
+    } catch (err) { next(err); }
   });
   // Every write names its Tenant. No display-name matching or inferred account ownership.
   for (const [path, action] of [
