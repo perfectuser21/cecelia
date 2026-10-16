@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { validateCrmMarkdown } from './markdown.js';
+import { contactLock } from './onboard-common.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function error(code, message = code) { return Object.assign(new Error(message), { code }); }
@@ -98,7 +99,7 @@ export async function linkContact(db, tenant, { account_id, contact_id, customer
   return transaction(db, async tx => {
     if (!await getCustomer(tx, tenant, customer_id)) throw error('not_found');
     if (!await one(tx, 'SELECT account_id FROM crm_wechat_accounts WHERE tenant_id=$1 AND account_id=$2', [tenant, account_id])) throw error('not_found');
-    await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`crm-contact:${tenant}:${account_id}:${contact_id}`]);
+    await contactLock(tx, tenant, account_id, contact_id);
     const previous = await one(tx, 'SELECT * FROM crm_contact_links WHERE tenant_id=$1 AND account_id=$2 AND contact_id=$3', [tenant, account_id, contact_id]);
     if (previous && previous.customer_id !== customer_id) throw error('identity_conflict');
     return previous ?? one(tx, 'INSERT INTO crm_contact_links(tenant_id,account_id,contact_id,customer_id) VALUES($1,$2,$3,$4) RETURNING *', [tenant, account_id, contact_id, customer_id]);

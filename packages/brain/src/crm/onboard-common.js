@@ -22,6 +22,7 @@ export async function transaction(db, fn) {
   finally { if (client !== db) client.release(); }
 }
 export const identityLock = (db, tenant, customer) => db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`crm-identity:${tenant}:${customer}`]);
+export const contactLock = (db, tenant, account, contact) => db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`crm-contact:${tenant}:${account}:${contact}`]);
 export async function activeBinding(db, tenant, id) {
   const binding = await one(db, 'SELECT * FROM crm_sync_bindings WHERE tenant_id=$1 AND id=$2 FOR SHARE', [tenant, id]);
   if (!binding) throw fault('not_found');

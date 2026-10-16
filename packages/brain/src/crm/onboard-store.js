@@ -1,4 +1,4 @@
-import { fault, uuid, stable, hash, one, transaction, activeBinding } from './onboard-common.js';
+import { fault, uuid, stable, hash, one, transaction, activeBinding, contactLock } from './onboard-common.js';
 
 function normalize(input) {
   const keys = ['tenant_id','binding_id','account_id','contact_id','event_id','display_name','authorized','scope','authorization_ref','identity_evidence_sha256','observed_at','friendship_status'];
@@ -20,7 +20,7 @@ export async function onboardContact(db, input) {
     await activeBinding(tx, tenant, bindingId);
     if (!await one(tx, 'SELECT account_id FROM crm_wechat_accounts WHERE tenant_id=$1 AND account_id=$2', [tenant, account])) throw fault('not_found');
     await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`crm-friend-event:${tenant}:${account}:${value.event_id}`]);
-    await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`crm-friend-contact:${tenant}:${account}:${contact}`]);
+    await contactLock(tx, tenant, account, contact);
     const previous = await one(tx, 'SELECT * FROM crm_friend_events WHERE tenant_id=$1 AND account_id=$2 AND event_id=$3', [tenant, account, value.event_id]);
     if (previous && previous.payload_sha256 !== digest) throw fault('identity_conflict');
     let link = await one(tx, 'SELECT * FROM crm_contact_links WHERE tenant_id=$1 AND account_id=$2 AND contact_id=$3 FOR UPDATE', [tenant, account, contact]);
