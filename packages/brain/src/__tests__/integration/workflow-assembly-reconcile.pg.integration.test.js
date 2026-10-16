@@ -215,9 +215,9 @@ it('真实PG缺失Step时不能提交先前修复的构建映射，也不能把�
  expect((await x.db.query('SELECT count(*)::int n FROM activity_version_builds WHERE build_id=$1',[x.av])).rows[0].n).toBe(0);
 });
 
-it('真实PG修复成功生成同链稳定重验attempt，未再修复不递增或重发',async()=>{
+it('真实PG执行proof因缺引用unknown时仍按来源修复生成稳定attempt，不递增重发',async()=>{
  const x=await frozenFixture();await x.db.query('DELETE FROM workflow_activity_refs WHERE id=$1',[x.reference]);
- const read=async()=>x.readiness({definition_sha256:x.digest,target_version:'candidate:'+x.digest,gaps:[]});
+ const read=async()=>x.readiness({definition_sha256:x.digest,target_version:'candidate:'+x.digest,resource_condition:'unknown',gaps:[]});
  const start=Date.now();await x.run({readReadiness:read});const first=(await x.saved()).workflow_assembly_reconcile,request=first.revalidation_request;
  expect(request).toBeTruthy();expect(first.repair_sequence).toBe(1);
  const {attempt_id,requested_at,...identity}=request;expect(attempt_id).toBe(definitionDigest(identity));expect(Date.parse(requested_at)).toBeGreaterThanOrEqual(start-1000);
