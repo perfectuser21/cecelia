@@ -12,7 +12,7 @@ async function fixture(){
  await db.query('ALTER TABLE tasks ADD COLUMN result jsonb,ADD COLUMN tenant_id text,ADD COLUMN parent_task_id uuid,ADD COLUMN task_type text');
  await db.query(migrationTable('000_base_schema.sql','working_memory'));
  const id=randomUUID(),definition={key:'reconcile.fixture',source:{repo:'perfectuser21/cecelia',ref:'fixture.json',revision:'a'.repeat(40)},activities:[]};
- const digest=definitionDigest(definition),state={request:{assembly_mode:true,registration_protocol:'definition-freeze-v1',execution_protocol:'workflow-authoring-execution-v1'},outputs:{compose:{definition,definition_sha256:digest}}};
+ const digest=definitionDigest(definition),state={request:{validation_input:{sample:'a'},assembly_mode:true,registration_protocol:'definition-freeze-v1',execution_protocol:'workflow-authoring-execution-v1'},outputs:{compose:{definition,definition_sha256:digest}}};
  await db.query("INSERT INTO tasks(id,title,status,tenant_id,task_type,payload,result) VALUES($1,'真实对账样板','completed','alpha','workflow_authoring',$2,$3)",[id,{workflow_authoring:true,tenant_id:'alpha'},{workflow_authoring:state}]);
  const pool=f.createPool(5);
  const readiness=extra=>({protocol:'workflow-authoring-execution-v1',status:'blocked',gaps:[{code:'execution_evidence_missing'}],tenant_id:'alpha',definition_sha256:digest,target_version:'candidate:'+digest,resource_condition:'ready',...extra});
@@ -213,4 +213,14 @@ it('真实PG缺失Step时不能提交先前修复的构建映射，也不能把�
  const out=await x.audit(true);expect(out.gaps.map(g=>g.code)).toContain('fixed_step_missing');expect(out.repaired).toEqual([]);
  expect(out.gaps.map(g=>g.code)).toContain('fixed_build_missing');
  expect((await x.db.query('SELECT count(*)::int n FROM activity_version_builds WHERE build_id=$1',[x.av])).rows[0].n).toBe(0);
+});
+
+it('真实PG修复成功生成同链稳定重验attempt，未再修复不递增或重发',async()=>{
+ const x=await frozenFixture();await x.db.query('DELETE FROM workflow_activity_refs WHERE id=$1',[x.reference]);
+ const read=async()=>x.readiness({definition_sha256:x.digest,target_version:'candidate:'+x.digest,gaps:[]});
+ const start=Date.now();await x.run({readReadiness:read});const first=(await x.saved()).workflow_assembly_reconcile,request=first.revalidation_request;
+ expect(request).toBeTruthy();expect(first.repair_sequence).toBe(1);
+ const {attempt_id,requested_at,...identity}=request;expect(attempt_id).toBe(definitionDigest(identity));expect(Date.parse(requested_at)).toBeGreaterThanOrEqual(start-1000);
+ expect(request).toMatchObject({protocol:'workflow-authoring-revalidation-v1',tenant_id:'alpha',authoring_task_id:x.id,definition_sha256:x.digest,input_sha256:definitionDigest({sample:'a'})});
+ await x.run({readReadiness:read});const next=(await x.saved()).workflow_assembly_reconcile;expect(next.revalidation_request).toEqual(request);expect(next.repair_sequence).toBe(1);
 });
