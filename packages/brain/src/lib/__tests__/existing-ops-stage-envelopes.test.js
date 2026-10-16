@@ -1,3 +1,4 @@
+import * as isolationModule from '../existing-ops-stage-envelopes.js';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {describe,it,expect} from 'vitest';
@@ -62,4 +63,12 @@ function checkedFixture(value){
 describe('紧凑夹具必须先核全字段原字节身份',()=>{
  for(const [group,items] of Object.entries(EXPECTED_SHA256))for(const name of Object.keys(items))it(group+'/'+name+' 任一字节改变都拒绝',()=>{const value=structuredClone(STAGE_ENVELOPES);value[group][name]+='\n';expect(()=>checkedFixture(value)).toThrow();});
  for(const change of [v=>{delete v.legacy.intent;},v=>{v.legacy.extra='x';},v=>{delete v.tests;},v=>{v.extra={};},v=>{v.legacy.intent=7;}])it('缺字段/额外键/非字符串均拒绝',()=>{const value=structuredClone(STAGE_ENVELOPES);change(value);expect(()=>checkedFixture(value)).toThrow();});
+});
+
+// 已独审 ad15a43a5e886ce30ba05b4dc640f340dcbb6af5 原始源码；字节合同独立于被测导出。
+const ISOLATION_EXPECTED={"evaluate":"5241c7998e7be2c5bf24d883c0863d1a9077c4f59db099e4ae7e4896a3a87597"};
+it('isolation新封套全部字段精确冻结且旧导出不被覆盖',()=>{
+ const value=isolationModule.ISOLATION_STAGE_ENVELOPES;
+ expect(Object.keys(value??{}).sort()).toEqual(Object.keys(ISOLATION_EXPECTED).sort());
+ for(const [key,digest] of Object.entries(ISOLATION_EXPECTED)){expect(typeof value[key]).toBe('string');expect(createHash('sha256').update(value[key]).digest('hex')).toBe(digest);}
 });
