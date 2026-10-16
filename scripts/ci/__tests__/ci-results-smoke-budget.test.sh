@@ -54,8 +54,8 @@ for state in success skipped failure cancelled timed_out unknown empty; do
     FAILED=$((FAILED + 1))
   fi
 done
-if [[ $(cat "$TMP/budget") -lt 40 ]]; then
-  echo 'FAIL: 572 项串行 smoke 加启动清理需至少 40 分钟预算（30 分钟已在全项完成时取消）'
+if [[ $(cat "$TMP/budget") -lt 30 ]]; then
+  echo 'FAIL: 498 条串行 smoke 加启动时间需要至少 30 分钟预算'
   FAILED=$((FAILED + 1))
 fi
 # 真 sleep 被 timeout 终止；后续脚本仍执行，整批必须失败。
