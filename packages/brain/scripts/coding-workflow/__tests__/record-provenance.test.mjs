@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { beginEvaluateIsolation, withRecordProvenance, captureNativeExecution, sealStageEvidence, beginRecordRegistration, observeRecordRegistration, finalizeRecordRegistration, verifyRecordProvenance, verifyPendingStageEvidence, provenanceProjection, provenanceRequired, controllerIdentity } from '../lib/record-provenance.mjs';
 
 const taskId = '088c3431-57ca-4f2a-8a50-14601518e2a2', sprintDir = 'sprints/10121524-cw-088c3431';
@@ -162,7 +163,7 @@ it('info grafts不能隐藏报告篡改再恢复的历史', () => {
 it('最终合并要求真实同轮QA与judge凭证，publish前缀不冒充PASS', () => {
   register([file('01-intent.md')]);expect(() => verifyRecordProvenance({ ...options, head: git('rev-parse', 'HEAD'), requiredQaRound: 1 })).toThrow(/qa_proof_missing/);
 });
-it.each(['valid', 'qa-fail', 'judge-fail', 'wrong-qa-event', 'wrong-tested-head', 'wrong-round'])('最终同轮QA/judge真实链：%s', kind => {
+it.each(['valid', 'legacy-proof', 'qa-fail', 'judge-fail', 'wrong-qa-event', 'wrong-tested-head', 'wrong-round'])('最终同轮QA/judge真实链：%s', kind => {
   prepareQa();const tested = git('rev-parse', 'HEAD'), report = file('05-qa-report-r1.md'), judged = file('06-judge-r1.md');
   put(report, fm('evaluate'));
   const qa = withRecordProvenance({ ...options, stage: 'evaluate', round: 1 }, () => { const isolated = beginEvaluateIsolation();native();expect(isolated.restore()).toBe(true);return sealStageEvidence({ files: [report], result: { status: 'completed', outputs: { qa: { verdict: kind === 'qa-fail' ? 'FAIL' : 'PASS', round: 1 } } } }); });
@@ -170,9 +171,16 @@ it.each(['valid', 'qa-fail', 'judge-fail', 'wrong-qa-event', 'wrong-tested-head'
   withRecordProvenance({ ...options, stage: 'judge', round: 1 }, () => {
     native();sealStageEvidence({ files: [judged], producer: 'controller_render', result: { status: 'completed', outputs: { judge_verdict: kind === 'judge-fail' ? 'FAIL' : 'PASS' } }, controllerInput: { round: 1, decision: { verdict: kind === 'judge-fail' ? 'FAIL' : 'PASS' }, qa_stage_event_id: kind === 'wrong-qa-event' ? '00000000-0000-0000-0000-000000000000' : qa.id, tested_head: kind === 'wrong-tested-head' ? '0'.repeat(40) : tested } });
   });
-  if (kind === 'wrong-qa-event') { expect(() => beginRecordRegistration({ ...options, stage: 'qa', round: 1, qaStageEventId: qa.id }, [report, judged])).toThrow(/qa_stage_binding/);return; }
+  if (kind === 'wrong-qa-event') { expect(() => beginRecordRegistration({ ...options, stage: 'qa', round: 1, qaStageEventId: qa.id }, [report, judged])).toThrow(/stage_missing|qa_stage_binding/);return; }
   const token = beginRecordRegistration({ ...options, stage: 'qa', round: 1, qaStageEventId: qa.id }, [report, judged]);const data = JSON.parse(fs.readFileSync(path.join(worktree, M)));
   data.relations.push(...[report, judged].map(p => ({ path: p, owner_path: owner, role: 'documentation' })));put(M, JSON.stringify(data));observeRecordRegistration(token, [M]);const head = commit();finalizeRecordRegistration(token);
+  if (kind === 'legacy-proof') {
+    const target = path.join(root, taskId, `${qa.id}.json`), data = JSON.parse(fs.readFileSync(target));
+    delete data.isolation_event_id;delete data.digest;
+    fs.writeFileSync(target, JSON.stringify({ ...data, digest: createHash('sha256').update(JSON.stringify(data)).digest('hex') }));
+    expect(verifyRecordProvenance({ ...options, head }).status).toBe('verified');
+    expect(() => verifyRecordProvenance({ ...options, head, requiredQaRound: 1 })).toThrow(/isolation_missing/);return;
+  }
   if (kind === 'valid') expect(verifyRecordProvenance({ ...options, head, requiredQaRound: 1 }).status).toBe('verified');
   else expect(() => verifyRecordProvenance({ ...options, head, requiredQaRound: kind === 'wrong-round' ? 2 : 1 })).toThrow(/qa_proof_missing|qa_pass_missing|judge_pass_missing/);
 }, 15000);

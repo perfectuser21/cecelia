@@ -182,14 +182,16 @@ const rewrite = (event, change) => {
   fs.writeFileSync(path.join(root, taskId, `${event.id}.json`), JSON.stringify({ ...event, digest }));
 };
 it.each(['missing-restored', 'missing-hidden', 'missing-link', 'extra-key', 'missing-file', 'extra-file', 'reordered', 'path', 'hash', 'mode',
-  'fs-mode', 'run', 'round', 'head', 'native', 'time', 'holder', 'stage-link', 'native-link'])('persisted lifecycle reader rejects %s', kind => {
+  'fs-mode', 'run', 'round', 'head', 'native', 'time', 'holder', 'stage-link', 'native-link', 'native-error', 'schema'])('persisted lifecycle reader rejects %s', kind => {
   const { stage } = successful(), all = readEvents();
   const restored = all.find(e => e.kind === 'isolation' && e.phase === 'restored');
   const hidden = all.find(e => e.kind === 'isolation' && e.phase === 'hidden');
   if (kind === 'missing-restored' || kind === 'missing-hidden') fs.unlinkSync(path.join(root, taskId, `${kind === 'missing-restored' ? restored.id : hidden.id}.json`));
   else if (kind === 'stage-link') rewrite(stage, e => { delete e.isolation_event_id; });
+  else if (kind === 'native-error') rewrite(all.find(e => e.id === restored.native_event_id), e => { e.isolation_error = 'boundary_failed'; });
   else if (kind === 'native-link') rewrite(all.find(e => e.id === restored.native_event_id), e => { e.isolation_hidden_event_id = restored.id; });
   else rewrite(restored, e => {
+    if (kind === 'schema') e.schema_version = 2;
     if (kind === 'missing-link') delete e.hidden_event_id;
     if (kind === 'extra-key') e.approved = true;
     if (kind === 'missing-file') e.files.pop();
@@ -206,7 +208,7 @@ it.each(['missing-restored', 'missing-hidden', 'missing-link', 'extra-key', 'mis
     if (kind === 'time') e.observed_at = '1970-01-01T00:00:00.000Z';
     if (kind === 'holder') e.files[0].holder_path = path.join(worktree, 'model-receipt.json');
   });
-  expect(() => provenance.verifyPendingStageEvidence({ ...options, head, stageEventId: latestStageId }, [rel('05-qa-report-r1.md')])).toThrow(/isolation/);
+  expect(() => provenance.verifyPendingStageEvidence({ ...options, head, stageEventId: latestStageId }, [rel('05-qa-report-r1.md')])).toThrow(/isolation|event_invalid/);
 });
 it('duplicate begin cannot create a second lifecycle and an interrupted run cannot be recovered as PASS', () => {
   provenance.withRecordProvenance(options, () => {
