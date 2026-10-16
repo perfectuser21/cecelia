@@ -34,7 +34,8 @@ export function reconcileGapState(previous, observation, {now = Date.now()} = {}
   }
   const currentVerified=verified && !Object.values(issues).some(issue=>issue.target_version===target_version && issue.definition_sha256===definition_sha256 && issue.status!=='closed');
   const waiting=observation.resource_condition!=='ready';
-  let attempts=previous?.resource_attempts ?? 0,next=previous?.next_check_at ?? 0;
+  const sameVersion=previous?.target_version===target_version && previous.definition_sha256===definition_sha256;
+  let attempts=sameVersion?previous.resource_attempts??0:0,next=sameVersion?previous.next_check_at??0:0;
   if (waiting && now>=next) {attempts++;next=now+Math.min(3600000,60000*2**Math.min(attempts-1,6));}
   if (!waiting) {attempts=0;next=0;}
   return {protocol:'workflow-assembly-reconcile-v1',tenant_id,object_id,target_version,definition_sha256,issues,
