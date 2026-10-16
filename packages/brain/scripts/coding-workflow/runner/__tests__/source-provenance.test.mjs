@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { git } from '../../__tests__/helpers/git.mjs';
-import { withRecordProvenance, captureNativeExecution, sealStageEvidence, controllerIdentity, beginRecordRegistration, observeRecordRegistration, finalizeRecordRegistration } from '../../lib/record-provenance.mjs';
+import { beginEvaluateIsolation, withRecordProvenance, captureNativeExecution, sealStageEvidence, controllerIdentity, beginRecordRegistration, observeRecordRegistration, finalizeRecordRegistration } from '../../lib/record-provenance.mjs';
 import { registerRecordSources, RECORD_SOURCE_OWNER, RECORD_SOURCE_MANIFEST } from '../../lib/record-sources.mjs';
 import { verifySourceHead, verifyMergeSource, judgeSourceFacts, sourceContext } from '../lib/source-provenance.mjs';
 import { stageQaRecords } from '../lib/qa-records.mjs';
@@ -20,12 +20,14 @@ const commit = () => { git(worktree, 'add', '.');git(worktree, 'commit', '-qm', 
 const native = () => captureNativeExecution({ provider: 'codex', code: 0, stdout: '{"type":"thread.started","thread_id":"fixture-controller-capture"}\n{"type":"turn.completed"}\n' });
 function seal(stage, files, round = 0) {
   return withRecordProvenance({ ...options, stage, round }, () => {
+    const isolated = stage === 'evaluate' ? beginEvaluateIsolation() : null;
     if (stage !== 'intent') native();
+    if (isolated) expect(isolated.restore()).toBe(true);
     return sealStageEvidence({ files, result: { status: 'completed', ...(stage === 'evaluate' ? { outputs: { qa: { verdict: 'PASS', round } } } : {}) }, producer: stage === 'intent' ? 'controller' : 'model' });
   });
 }
 function publish(extra = []) {
-  const files = [rel('01-intent.md'), rel('03-build.md'), ...extra], token = beginRecordRegistration({ ...options, stage: 'publish' }, files);
+  const files = [rel('01-intent.md'), rel('03-build.md'), rel('04-evidence.md'), ...extra], token = beginRecordRegistration({ ...options, stage: 'publish' }, files);
   observeRecordRegistration(token, registerRecordSources(worktree, { taskId, sprintDir, stage: 'publish' }, files));
   commit();finalizeRecordRegistration(token);return head();
 }
@@ -39,6 +41,7 @@ beforeEach(() => {
   options = { root: path.join(temp, 'protected'), worktree, taskId, sprintDir, controller };cfg = { repoSlug: 'perfectuser21/cecelia', repo: worktree };
   put(rel('01-intent.md'), fm('intent'));seal('intent', [rel('01-intent.md')]);
   put(rel('03-build.md'), fm('build', 'PRIVATE DEVELOPMENT BODY'));seal('build', [rel('03-build.md')]);
+  put(rel('04-evidence.md'), fm('verify', 'PRIVATE VERIFY BODY'));seal('verify', [rel('04-evidence.md')]);
 });
 afterEach(() => fs.rmSync(temp, { recursive: true, force: true }));
 it('真实登记链按精确PR对象验证，main检出与继承Git环境不误选仓', () => {
@@ -48,7 +51,7 @@ it('真实登记链按精确PR对象验证，main检出与继承Git环境不误�
     const old = Object.fromEntries(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'].map(k => [k, process.env[k]]));
     try {
       process.env.GIT_DIR = '/does/not/exist';process.env.GIT_WORK_TREE = '/wrong/tree';process.env.GIT_INDEX_FILE = '/wrong/index';
-      const proof = verifySourceHead(cfg, worktree, options, exact);expect(proof.head).toBe(exact);expect(proof.records).toHaveLength(2);
+      const proof = verifySourceHead(cfg, worktree, options, exact);expect(proof.head).toBe(exact);expect(proof.records).toHaveLength(3);
     } finally { for (const [k, v] of Object.entries(old)) { if (v === undefined) delete process.env[k];else process.env[k] = v; } }
   });
 });
@@ -65,7 +68,7 @@ it('QA真实登记同时覆盖报告和binary截图，截图不冒Markdown辅助
   await withRecordProvenance({ ...options, stage: 'evaluate', round: 1 }, async () => {
     const staged = await stageQaRecords(worktree, { taskId, sprintDir, round: 1 }, [report, rel('qa-r1')], { ...options, stage: 'qa', round: 1 });
     git(worktree, 'commit', '-qm', 'QA registration');finalizeRecordRegistration(staged.registration);
-    expect(verifySourceHead(cfg, worktree, options, head()).records).toHaveLength(4);
+    expect(verifySourceHead(cfg, worktree, options, head()).records).toHaveLength(5);
     const rows = JSON.parse(fs.readFileSync(path.join(worktree, RECORD_SOURCE_MANIFEST))).relations;
     expect(rows.some(r => r.path === report)).toBe(true);expect(rows.some(r => r.path === image)).toBe(false);
   });

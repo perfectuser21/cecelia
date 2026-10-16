@@ -161,6 +161,7 @@ it('capture rechecks missing workspace files instead of trusting earlier hide re
   provenance.withRecordProvenance(options, () => {
     const isolation = begin();put(names[0], 'model recreated');
     expect(() => native()).toThrow(/isolation/);
+    expect(readEvents().find(e => e.kind === 'native')?.stdout).toContain('fixture-session');
     expect(isolation.restore()).toBe(false);
     expect(fs.readFileSync(full(names[1]), 'utf8')).toBe('secret developer evidence\n');
   });
@@ -171,5 +172,55 @@ it('capture rechecks holder integrity and abort cannot later be restored into su
     fs.writeFileSync(hidden.files[0].holder_path, 'changed');
     expect(() => native()).toThrow(/isolation/);
     expect(isolation.abort()).toBe(false);expect(isolation.restore()).toBe(false);
+  });
+});
+// 管理员级夹具改写仅用于验证 reader 拒绝坏结构；不宣称模型可写受保护目录。
+const rewrite = (event, change) => {
+  change(event);delete event.digest;
+  const digest = execFileSync(process.execPath, ['--input-type=module', '-e',
+    "import {createHash} from 'node:crypto';process.stdout.write(createHash('sha256').update(process.argv[1]).digest('hex'));", JSON.stringify(event)], { encoding: 'utf8' });
+  fs.writeFileSync(path.join(root, taskId, `${event.id}.json`), JSON.stringify({ ...event, digest }));
+};
+it.each(['missing-restored', 'missing-hidden', 'missing-link', 'extra-key', 'missing-file', 'extra-file', 'reordered', 'path', 'hash', 'mode',
+  'fs-mode', 'run', 'round', 'head', 'native', 'time', 'holder', 'stage-link', 'native-link'])('persisted lifecycle reader rejects %s', kind => {
+  const { stage } = successful(), all = readEvents();
+  const restored = all.find(e => e.kind === 'isolation' && e.phase === 'restored');
+  const hidden = all.find(e => e.kind === 'isolation' && e.phase === 'hidden');
+  if (kind === 'missing-restored' || kind === 'missing-hidden') fs.unlinkSync(path.join(root, taskId, `${kind === 'missing-restored' ? restored.id : hidden.id}.json`));
+  else if (kind === 'stage-link') rewrite(stage, e => { delete e.isolation_event_id; });
+  else if (kind === 'native-link') rewrite(all.find(e => e.id === restored.native_event_id), e => { e.isolation_hidden_event_id = restored.id; });
+  else rewrite(restored, e => {
+    if (kind === 'missing-link') delete e.hidden_event_id;
+    if (kind === 'extra-key') e.approved = true;
+    if (kind === 'missing-file') e.files.pop();
+    if (kind === 'extra-file') e.files.push({ ...e.files[0] });
+    if (kind === 'reordered') e.files.reverse();
+    if (kind === 'path') e.files[0].path = `${sprintDir}/README.md`;
+    if (kind === 'hash') e.files[0].sha256 = '0'.repeat(64);
+    if (kind === 'mode') e.files[0].mode = '100755';
+    if (kind === 'fs-mode') e.files[0].fs_mode = 0o777;
+    if (kind === 'run') e.run_id = 'aaaaaaaa-0000-0000-0000-000000000000';
+    if (kind === 'round') e.round = 2;
+    if (kind === 'head') e.head = '0'.repeat(40);
+    if (kind === 'native') e.native_event_id = hidden.id;
+    if (kind === 'time') e.observed_at = '1970-01-01T00:00:00.000Z';
+    if (kind === 'holder') e.files[0].holder_path = path.join(worktree, 'model-receipt.json');
+  });
+  expect(() => provenance.verifyPendingStageEvidence({ ...options, head }, [rel('05-qa-report-r1.md')])).toThrow(/isolation/);
+});
+it('duplicate begin cannot create a second lifecycle and an interrupted run cannot be recovered as PASS', () => {
+  provenance.withRecordProvenance(options, () => {
+    begin();expect(() => begin()).toThrow(/isolation/);
+  });
+  // 模拟控制器中断：不调用restore。原件留在受保护holder，新run不得将其冒充自己的完成事件。
+  provenance.withRecordProvenance(options, () => expect(() => begin()).toThrow(/isolation/));
+  const hidden = readEvents().find(e => e.phase === 'hidden');
+  expect(hidden.files.every(f => fs.existsSync(f.holder_path))).toBe(true);
+  expect(readEvents().some(e => e.phase === 'restored')).toBe(false);
+});
+it('after successful restore an abort still prevents sealing an approving stage', () => {
+  provenance.withRecordProvenance(options, () => {
+    const isolation = begin();native();report();expect(isolation.restore()).toBe(true);
+    expect(isolation.abort()).toBe(true);expect(() => seal()).toThrow(/isolation/);
   });
 });

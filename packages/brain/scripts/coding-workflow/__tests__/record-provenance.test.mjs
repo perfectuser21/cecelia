@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { withRecordProvenance, captureNativeExecution, sealStageEvidence, beginRecordRegistration, observeRecordRegistration, finalizeRecordRegistration, verifyRecordProvenance, verifyPendingStageEvidence, provenanceProjection, provenanceRequired, controllerIdentity } from '../lib/record-provenance.mjs';
+import { beginEvaluateIsolation, withRecordProvenance, captureNativeExecution, sealStageEvidence, beginRecordRegistration, observeRecordRegistration, finalizeRecordRegistration, verifyRecordProvenance, verifyPendingStageEvidence, provenanceProjection, provenanceRequired, controllerIdentity } from '../lib/record-provenance.mjs';
 
 const taskId = '088c3431-57ca-4f2a-8a50-14601518e2a2', sprintDir = 'sprints/10121524-cw-088c3431';
 const M = '.implementation-source-relations.json', owner = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs';
@@ -14,12 +14,18 @@ const fm = (step, body = 'observed report') => `---\ntask_id: ${taskId}\nstep: $
 const file = name => `${sprintDir}/${name}`;
 const commit = () => { git('add', '.');git('commit', '-qm', 'actual fixture commit');return git('rev-parse', 'HEAD'); };
 const native = () => captureNativeExecution({ provider: 'codex', model: 'fixture', tag: 'build', code: 0, timedOut: false, terminated: false, stdout: '{"type":"thread.started","thread_id":"real-fixture"}\n{"type":"turn.completed","usage":{"input_tokens":1}}\n' });
-function seal(stage, files, extra = {}) { return withRecordProvenance({ ...options, stage }, () => { if (stage !== 'intent') native();return sealStageEvidence({ files, result: { status: 'completed' }, producer: stage === 'intent' ? 'controller' : 'model', ...extra }); }); }
+function seal(stage, files, extra = {}) { return withRecordProvenance({ ...options, stage, round: extra.round ?? 0 }, () => { const isolated = stage === 'evaluate' ? beginEvaluateIsolation() : null;if (stage !== 'intent') native();if (isolated) expect(isolated.restore()).toBe(true);return sealStageEvidence({ files, result: { status: 'completed' }, producer: stage === 'intent' ? 'controller' : 'model', ...extra }); }); }
 function register(files) {
   const token = beginRecordRegistration({ ...options, stage: 'publish' }, files);
   const before = JSON.parse(fs.readFileSync(path.join(worktree, M), 'utf8'));
   for (const p of files.filter(x => x.endsWith('.md'))) if (!before.relations.some(r => r.path === p)) before.relations.push({ path: p, owner_path: owner, role: 'documentation' });
   put(M, JSON.stringify(before));observeRecordRegistration(token, [M]);commit();return finalizeRecordRegistration(token);
+}
+function prepareQa() {
+  for (const [stage, name] of [['build', '03-build.md'], ['verify', '04-evidence.md']]) {
+    put(file(name), fm(stage));seal(stage, [file(name)]);
+  }
+  register([file('01-intent.md'), file('03-build.md'), file('04-evidence.md')]);
 }
 beforeEach(() => {
   temp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'provenance-core-'));worktree = path.join(temp, 'repo');root = path.join(temp, 'protected');fs.mkdirSync(worktree);
@@ -56,6 +62,7 @@ it('登记事件后新提交修改报告拒绝，恢复旧bytes也不重放旧�
   put(file('01-intent.md'), original);commit();expect(() => verifyRecordProvenance({ ...options, head: git('rev-parse', 'HEAD') })).toThrow(/registration_missing/);
 });
 it('错误task、round与frontmatter身份不能封存', () => {
+  prepareQa();
   put(file('05-qa-report-r2.md'), fm('evaluate'));
   expect(() => seal('evaluate', [file('05-qa-report-r2.md')], { round: 1 })).toThrow(/round/);
   put(file('03-build.md'), fm('build').replace(taskId, 'aaaaaaaa-0000-0000-0000-000000000000'));expect(() => seal('build', [file('03-build.md')])).toThrow(/identity/);
@@ -64,7 +71,7 @@ it('受保护根或文件symlink均失败且不写到外部目标', () => {
   fs.rmSync(root, { recursive: true });fs.symlinkSync(worktree, root);expect(() => seal('intent', [file('01-intent.md')])).toThrow(/path|symlink/);
 });
 it('未登记QA证据只能标sealed_not_registered，binary附件同hash覆盖', () => {
-  register([file('01-intent.md')]);const head = git('rev-parse', 'HEAD');put(file('05-qa-report-r1.md'), fm('evaluate'));put(file('qa-r1/screen.png'), Buffer.from([0, 255, 1]));
+  prepareQa();const head = git('rev-parse', 'HEAD');put(file('05-qa-report-r1.md'), fm('evaluate'));put(file('qa-r1/screen.png'), Buffer.from([0, 255, 1]));
   seal('evaluate', [file('05-qa-report-r1.md'), file('qa-r1/screen.png')], { round: 1 });
   const pending = verifyPendingStageEvidence({ ...options, head }, [file('05-qa-report-r1.md'), file('qa-r1/screen.png')]);expect(pending.status).toBe('sealed_not_registered');expect(pending.records).toHaveLength(2);
 });
@@ -131,7 +138,7 @@ it('register之后两次提交不能把末尾无关commit冒充登记commit', ()
   expect(() => finalizeRecordRegistration(token)).toThrow(/commit_parent/);
 });
 it('QA中文空格可执行附件保持mode且删除附件同样拒绝', () => {
-  register([file('01-intent.md')]);const report = file('05-qa-report-r1.md'), attachment = file('qa-r1/实跑 证据.sh');put(report, fm('evaluate'));put(attachment, '#!/bin/sh\nexit 0\n');fs.chmodSync(path.join(worktree, attachment), 0o755);
+  prepareQa();const report = file('05-qa-report-r1.md'), attachment = file('qa-r1/实跑 证据.sh');put(report, fm('evaluate'));put(attachment, '#!/bin/sh\nexit 0\n');fs.chmodSync(path.join(worktree, attachment), 0o755);
   seal('evaluate', [report, attachment], { round: 1 });const token = beginRecordRegistration({ ...options, stage: 'qa', round: 1 }, [report, attachment]);
   const data = JSON.parse(fs.readFileSync(path.join(worktree, M)));data.relations.push({ path: report, owner_path: owner, role: 'documentation' });put(M, JSON.stringify(data));observeRecordRegistration(token, [M]);commit();finalizeRecordRegistration(token);
   expect(verifyRecordProvenance({ ...options, head: git('rev-parse', 'HEAD') }).records.find(r => r.path === attachment).mode).toBe('100755');
@@ -155,9 +162,9 @@ it('最终合并要求真实同轮QA与judge凭证，publish前缀不冒充PASS'
   register([file('01-intent.md')]);expect(() => verifyRecordProvenance({ ...options, head: git('rev-parse', 'HEAD'), requiredQaRound: 1 })).toThrow(/qa_proof_missing/);
 });
 it.each(['valid', 'qa-fail', 'judge-fail', 'wrong-qa-event', 'wrong-tested-head', 'wrong-round'])('最终同轮QA/judge真实链：%s', kind => {
-  register([file('01-intent.md')]);const tested = git('rev-parse', 'HEAD'), report = file('05-qa-report-r1.md'), judged = file('06-judge-r1.md');
+  prepareQa();const tested = git('rev-parse', 'HEAD'), report = file('05-qa-report-r1.md'), judged = file('06-judge-r1.md');
   put(report, fm('evaluate'));
-  const qa = withRecordProvenance({ ...options, stage: 'evaluate', round: 1 }, () => { native();return sealStageEvidence({ files: [report], result: { status: 'completed', outputs: { qa: { verdict: kind === 'qa-fail' ? 'FAIL' : 'PASS', round: 1 } } } }); });
+  const qa = withRecordProvenance({ ...options, stage: 'evaluate', round: 1 }, () => { const isolated = beginEvaluateIsolation();native();expect(isolated.restore()).toBe(true);return sealStageEvidence({ files: [report], result: { status: 'completed', outputs: { qa: { verdict: kind === 'qa-fail' ? 'FAIL' : 'PASS', round: 1 } } } }); });
   put(judged, '# controller-rendered judge');
   withRecordProvenance({ ...options, stage: 'judge', round: 1 }, () => {
     native();sealStageEvidence({ files: [judged], producer: 'controller_render', result: { status: 'completed', outputs: { judge_verdict: kind === 'judge-fail' ? 'FAIL' : 'PASS' } }, controllerInput: { round: 1, decision: { verdict: kind === 'judge-fail' ? 'FAIL' : 'PASS' }, qa_stage_event_id: kind === 'wrong-qa-event' ? '00000000-0000-0000-0000-000000000000' : qa.id, tested_head: kind === 'wrong-tested-head' ? '0'.repeat(40) : tested } });

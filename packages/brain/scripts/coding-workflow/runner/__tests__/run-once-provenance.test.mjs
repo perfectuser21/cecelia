@@ -69,9 +69,9 @@ describe('Cecelia 来源凭证为 QA / 合并的独立前置', () => {
     const root = path.join(E.sb.root, 'protected'), evaluate = path.join(E.sb.root, 'evaluate-proof.mjs'), codex = path.join(E.sb.root, 'judge-proof.mjs');
     const core = new URL('../../lib/record-provenance.mjs', import.meta.url).href, entry = import.meta.url;
     const native = '{"type":"thread.started","thread_id":"fixture-native"}\n{"type":"turn.completed"}\n';
-    fs.writeFileSync(evaluate, `import fs from 'node:fs';import path from 'node:path';import {withRecordProvenance,controllerIdentity,captureNativeExecution,sealStageEvidence} from ${JSON.stringify(core)};
+    fs.writeFileSync(evaluate, `import fs from 'node:fs';import path from 'node:path';import {withRecordProvenance,controllerIdentity,captureNativeExecution,sealStageEvidence,beginEvaluateIsolation} from ${JSON.stringify(core)};
 const i=JSON.parse(fs.readFileSync(0,'utf8'));const f='05-qa-report-r'+i.round+'.md';const result={status:'completed',outputs:{qa_report_file:f,qa:{verdict:'CANNOT_VERIFY',round:i.round,failed:[],blocking:[],cannot_verify:[{id:'T-2',covers:['Q-1'],reason:'fixture missing proof'}],env:{kind:'preview',url:process.env.FAKE_QA_PREVIEW_URL}}}};
-withRecordProvenance({root:${JSON.stringify(root)},worktree:i.worktree,taskId:i.task_id,sprintDir:i.sprint_dir,stage:'evaluate',round:i.round,controller:controllerIdentity(${JSON.stringify(entry)})},()=>{fs.writeFileSync(path.join(i.worktree,i.sprint_dir,f),'---\\ntask_id: '+i.task_id+'\\nstep: evaluate\\nupstream: []\\n---\\n### T-2\\n对应: Q-1\\nverdict: CANNOT_VERIFY\\n');captureNativeExecution({provider:'codex',code:0,stdout:${JSON.stringify(native)}});sealStageEvidence({files:[i.sprint_dir+'/'+f],result});});console.log(JSON.stringify(result));\n`);
+withRecordProvenance({root:${JSON.stringify(root)},worktree:i.worktree,taskId:i.task_id,sprintDir:i.sprint_dir,stage:'evaluate',round:i.round,controller:controllerIdentity(${JSON.stringify(entry)})},()=>{const isolation=beginEvaluateIsolation();fs.writeFileSync(path.join(i.worktree,i.sprint_dir,f),'---\\ntask_id: '+i.task_id+'\\nstep: evaluate\\nupstream: []\\n---\\n### T-2\\n对应: Q-1\\nverdict: CANNOT_VERIFY\\n');captureNativeExecution({provider:'codex',code:0,stdout:${JSON.stringify(native)}});if(!isolation.restore())throw Error('isolation_restore');sealStageEvidence({files:[i.sprint_dir+'/'+f],result});});console.log(JSON.stringify(result));\n`);
     const answer = JSON.stringify({ coverage: [{ intent: 'I-1', satisfied: true, evidence: 'fixture judge accepts' }], issues: [], summary: 'PASS' });
     fs.writeFileSync(codex, `#!/usr/bin/env node\nimport fs from 'node:fs';fs.readFileSync(0,'utf8');const a=process.argv.slice(2);fs.writeFileSync(a[a.indexOf('--output-last-message')+1],${JSON.stringify(answer)});console.log(JSON.stringify({type:'thread.started',thread_id:'judge-proof'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:${JSON.stringify(answer)}}}));console.log(JSON.stringify({type:'turn.completed'}));\n`, { mode: 0o755 });
     const prepare = (bin, state) => {
@@ -82,11 +82,13 @@ withRecordProvenance({root:${JSON.stringify(root)},worktree:i.worktree,taskId:i.
         git(E.sb.seed, 'add', '.');git(E.sb.seed, 'commit', '-qm', 'fixture trusted base');git(E.sb.seed, 'push', '-q', 'origin', 'HEAD:main');git(E.sb.seed, 'fetch', '-q', 'origin', 'main');git(E.sb.clone, 'fetch', '-q', 'origin', 'main');
         const c = { root, worktree: E.sb.seed, taskId: TASK, sprintDir: SPRINT, controller: controllerIdentity(import.meta.url) };
         put(`${SPRINT}/02-spec.md`, `---\ntask_id: ${TASK}\nstep: spec\nupstream: []\n---\n### S-1\n## QA 场景\n### Q-1\n对应: I-1\n操作: x\n期望: y\n`);
-        for (const [stage, file] of [['intent', '01-intent.md'], ['spec', '02-spec.md']]) withRecordProvenance({ ...c, stage }, () => {
-          if (stage === 'spec') captureNativeExecution({ provider: 'codex', code: 0, stdout: native });
+        put(`${SPRINT}/03-build.md`, `---\ntask_id: ${TASK}\nstep: build\nupstream: []\n---\nActual fixture build\n`);
+        put(`${SPRINT}/04-evidence.md`, `---\ntask_id: ${TASK}\nstep: verify\nupstream: []\n---\nActual fixture verify\n`);
+        for (const [stage, file] of [['intent', '01-intent.md'], ['spec', '02-spec.md'], ['build', '03-build.md'], ['verify', '04-evidence.md']]) withRecordProvenance({ ...c, stage }, () => {
+          if (stage !== 'intent') captureNativeExecution({ provider: 'codex', code: 0, stdout: native });
           sealStageEvidence({ files: [`${SPRINT}/${file}`], result: { status: 'completed' }, producer: stage === 'intent' ? 'controller' : 'model' });
         });
-        const files = [`${SPRINT}/01-intent.md`, `${SPRINT}/02-spec.md`], token = beginRecordRegistration({ ...c, stage: 'publish' }, files);
+        const files = [`${SPRINT}/01-intent.md`, `${SPRINT}/02-spec.md`, `${SPRINT}/03-build.md`, `${SPRINT}/04-evidence.md`], token = beginRecordRegistration({ ...c, stage: 'publish' }, files);
         observeRecordRegistration(token, registerRecordSources(E.sb.seed, { taskId: TASK, sprintDir: SPRINT, stage: 'publish' }, files));git(E.sb.seed, 'add', '.');git(E.sb.seed, 'commit', '-qm', 'fixture genuine registration');finalizeRecordRegistration(token);git(E.sb.seed, 'push', '-q', 'origin', 'HEAD');
         E.head = E.remoteHead();state.prs[0].headRefOid = E.head;
       } finally { process.env.PATH = previous; }
