@@ -216,3 +216,20 @@ describe('aggregate已审前置本地脚本本体完整性', () => {
       expect(f3.bindings).toEqual([]); expect(f3.input_relations).toEqual([]);
     }, 120000);
 });
+
+
+describe('CI入口聚合依赖必须精确匹配job ID', () => {
+  for (const [jobId, marker] of [['lint-auto-merge-decision', aggregateMarker], ['goldset-eval', goldsetMarker]])
+    for (const [shape, needs] of [
+      ['字符串子串', original => original.map(name => name === jobId ? `prefix-${jobId}-suffix` : name).join(',')],
+      ['未知对象', { job: jobId }],
+      ['数组只有近似名字', original => original.map(name => name === jobId ? `prefix-${jobId}-suffix` : name)],
+    ]) it(`${jobId}不能被${shape}冒充required dependency`, async () => {
+      const f3 = aggregateF3(await aggregateProof({ marker, mutateCi: doc => {
+        const original = doc.jobs['ci-passed'].needs;
+        doc.jobs['ci-passed'].needs = typeof needs === 'function' ? needs(original) : needs;
+      } }));
+      expect(f3.status).toBe('unknown'); expect(f3.gaps.length).toBeGreaterThan(0);
+      expect(f3.bindings).toEqual([]); expect(f3.input_relations).toEqual([]);
+    }, 120000);
+});
