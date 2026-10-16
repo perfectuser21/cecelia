@@ -159,3 +159,12 @@ it('真实PG native责任单并发和已completed均稳定去重且保留真实�
  const task=(await x.db.query('SELECT * FROM tasks WHERE id=$1',[a.task_id])).rows[0];expect(task.parent_task_id).toBe(x.id);expect(task.payload.tenant_id).toBe('alpha');expect(task.payload.workflow_authoring).not.toBe(true);
  expect((await x.db.query('SELECT count(*)::int n FROM tasks')).rows[0].n).toBe(2);
 });
+it('真实PG runner对确定候选语义缺口只建一条native核查单，completed不替代复验',async()=>{
+ const x=await frozenFixture();await routingFixture(x);
+ const read=async()=>x.readiness({definition_sha256:x.digest,target_version:'candidate:'+x.digest,gaps:[{code:'step_execution_unverified'}]});
+ await x.run({readReadiness:read});await x.run({readReadiness:read});
+ const first=Object.values((await x.saved()).workflow_assembly_reconcile.issues)[0];expect(first.repair_task_id).toBeTruthy();
+ await x.db.query("UPDATE tasks SET status='completed' WHERE id=$1",[first.repair_task_id]);await x.run({readReadiness:read});
+ const after=Object.values((await x.saved()).workflow_assembly_reconcile.issues)[0];expect(after.status).toBe('open');expect(after.repair_task_id).toBe(first.repair_task_id);
+ expect((await x.db.query('SELECT count(*)::int n FROM work_routing_receipts')).rows[0].n).toBe(1);
+});
