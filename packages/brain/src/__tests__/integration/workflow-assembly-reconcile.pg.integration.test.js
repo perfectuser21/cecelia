@@ -230,3 +230,9 @@ it('真实PG服务端readiness资源safe_stop时不修派生关系也不递增�
  const state=(await x.saved()).workflow_assembly_reconcile;expect(state.revalidation_request).toBeUndefined();expect(state.repair_sequence).toBe(0);
  expect((await x.db.query('SELECT count(*)::int n FROM workflow_activity_refs WHERE workflow_id=$1',[x.wf])).rows[0].n).toBe(0);
 });
+it('真实PG已取消原authoring不恢复候选关系或生成重验attempt',async()=>{
+ const x=await frozenFixture();await x.db.query('DELETE FROM workflow_activity_refs WHERE id=$1',[x.reference]);
+ await x.db.query("UPDATE tasks SET status='cancelled' WHERE id=$1",[x.id]);
+ expect((await x.audit(true)).repaired).toEqual([]);
+ expect((await x.db.query('SELECT count(*)::int n FROM workflow_activity_refs WHERE workflow_id=$1',[x.wf])).rows[0].n).toBe(0);
+});
