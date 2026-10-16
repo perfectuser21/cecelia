@@ -1,7 +1,7 @@
 import {it,expect,afterEach} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {versionsDatabase,seedWorkflows} from '../fixtures/definition-versions-db.js';
-import {migrationTable} from '../fixtures/minimum-definition-schema.js';
+import {migrationTable,migrationSql} from '../fixtures/minimum-definition-schema.js';
 import {definitionDigest} from '../../workflow-authoring/contracts.js';
 import {ensureVersionForBuild,refreshWorkflowRecipe} from '../../lib/release-line.js';
 import * as api from '../../lib/workflow-assembly-reconcile.js';
@@ -138,4 +138,24 @@ it('真实PG巡检入口恢复固定派生关联但旧成功proof不能关本次
  expect((await x.db.query('SELECT id FROM workflow_activity_refs WHERE workflow_id=$1',[x.wf])).rows).toEqual([{id:x.reference}]);
  const state=(await x.saved()).workflow_assembly_reconcile;
  expect(state.status).not.toBe('verified');expect(Object.values(state.issues).some(i=>i.status==='awaiting_verification' && i.repaired_at)).toBe(true);
+});
+async function routingFixture(x){
+ const db=x.db;
+ await db.query(`ALTER TABLE tasks ADD COLUMN location text,ADD COLUMN trigger_source text,ADD COLUMN domain text,ADD COLUMN okr_initiative_id uuid,ADD COLUMN ability_id uuid,ADD COLUMN blocked_at timestamptz,ADD COLUMN prd_content text,ADD COLUMN execution_profile text,ADD COLUMN owner_role text,ADD COLUMN delivery_type text,ADD COLUMN created_by text,ADD COLUMN dept text,ADD COLUMN phase text,ADD COLUMN executor_kind text,ADD COLUMN sequence_no int,ADD COLUMN kind text,ADD COLUMN blocked_reason text,ADD COLUMN blocked_detail jsonb`);
+ await db.query(migrationSql('413_work_routing_receipts.sql'));
+ await db.query('ALTER TABLE work_routing_receipts ADD COLUMN anchor_generation int DEFAULT 1,ADD COLUMN map_scope_validation_version text,ADD COLUMN direct_contract_seed jsonb');
+ await db.query(migrationTable('000_base_schema.sql','cecelia_events'));
+ await db.query('CREATE TABLE initiative_runs(current_task_id uuid,orchestrator_version text)');
+}
+it('真实PG native责任单并发和已completed均稳定去重且保留真实收据',async()=>{
+ const x=await fixture();await routingFixture(x);expect(api.ensureAssemblyGapTask).toBeTypeOf('function');
+ const authoring=(await x.db.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0];
+ const state=api.reconcileGapState(null,{...x.readiness(),object_id:x.id},{now:1000});const issue=Object.values(state.issues)[0];
+ const create=async()=>{const db=await x.pool.connect();try{await db.query('BEGIN');const out=await api.ensureAssemblyGapTask(db,authoring,issue,{check:()=>{}});await db.query('COMMIT');return out;}catch(e){await db.query('ROLLBACK');throw e;}finally{db.release();}};
+ const [a,b]=await Promise.all([create(),create()]);expect(a.task_id).toBe(b.task_id);
+ const receipt=(await x.db.query('SELECT * FROM work_routing_receipts WHERE task_id=$1',[a.task_id])).rows;expect(receipt).toHaveLength(1);expect(receipt[0].source).toBe('scheduler');
+ await x.db.query("UPDATE tasks SET status='completed' WHERE id=$1",[a.task_id]);
+ expect((await create()).task_id).toBe(a.task_id);
+ const task=(await x.db.query('SELECT * FROM tasks WHERE id=$1',[a.task_id])).rows[0];expect(task.parent_task_id).toBe(x.id);expect(task.payload.tenant_id).toBe('alpha');expect(task.payload.workflow_authoring).not.toBe(true);
+ expect((await x.db.query('SELECT count(*)::int n FROM tasks')).rows[0].n).toBe(2);
 });
