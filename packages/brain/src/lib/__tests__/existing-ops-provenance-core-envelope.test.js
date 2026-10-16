@@ -1,3 +1,5 @@
+import * as isolationModule from '../existing-ops-provenance-core-envelope.js';
+import {createHash} from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import { parse as acorn } from 'acorn';
 // 独立冻结 Git 样本：保留原始字节，不从被测封套常量重建。
@@ -66,4 +68,12 @@ describe('core-envelope 独立固定源码与拒绝合同', () => {
     expect(normalizeProvenanceBuild(value, parse)).toBeNull();
     expect(proveBuildSources(value, parse)).toBe(false);
   });
+});
+
+// 已独审 ad15a43a5e886ce30ba05b4dc640f340dcbb6af5 原始源码；字节合同独立于被测导出。
+const ISOLATION_EXPECTED={"recordProvenance":"b6de79a4f46511800daccafe8430b58ccee29aa60197828e1c8be68a752f3c27"};
+it('isolation新封套全部字段精确冻结且旧导出不被覆盖',()=>{
+ const value=isolationModule.ISOLATION_REVIEWED;
+ expect(Object.keys(value??{}).sort()).toEqual(Object.keys(ISOLATION_EXPECTED).sort());
+ for(const [key,digest] of Object.entries(ISOLATION_EXPECTED)){expect(typeof value[key]).toBe('string');expect(createHash('sha256').update(value[key]).digest('hex')).toBe(digest);}
 });
