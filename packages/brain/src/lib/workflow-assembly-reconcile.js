@@ -10,17 +10,20 @@ export function reconcileGapState(previous, observation, {now = Date.now()} = {}
   const issues = structuredClone(previous?.issues ?? {});
   const current = new Set();
   for (const gap of observation.gaps ?? []) {
-    const key=hash([tenant_id,object_id,target_version,gap.code,gap.activity_key ?? null,gap.field ?? null]);
+    const key=hash([tenant_id,object_id,target_version,definition_sha256,gap.code,gap.activity_key ?? null,gap.field ?? null]);
     current.add(key);
     issues[key]={...issues[key],key,tenant_id,object_id,target_version,definition_sha256,
       gap:{code:gap.code,activity_key:gap.activity_key ?? null,field:gap.field ?? null},status:'open',
       first_seen_at:issues[key]?.first_seen_at ?? now,last_seen_at:now};
+    if (issues[key].verification_id) issues[key].last_verification_id=issues[key].verification_id;
+    delete issues[key].verification_id;delete issues[key].verified_at;
   }
   const verified=observation.protocol==='workflow-authoring-execution-v1' && observation.status==='verified'
     && observation.resource_condition==='ready' && !observation.gaps?.length
     && SHA.test(observation.proof_sha256 ?? '') && observation.verification_id===observation.proof_sha256;
   for (const issue of Object.values(issues)) {
-    if (issue.target_version!==target_version || current.has(issue.key)) continue;
+    if (issue.target_version!==target_version || issue.definition_sha256!==definition_sha256 || current.has(issue.key)) continue;
+    if (issue.status==='closed' && !verified) continue;
     issue.status=verified?'closed':'awaiting_verification';
     if (verified) {issue.verification_id=observation.verification_id;issue.verified_at=now;}
   }
