@@ -33,6 +33,9 @@ export async function auditAssemblyDerivations(db,task,options={}){
       || workflow.source_repo!==version.source_repo || workflow.source_path!==version.source_path
       || version.source_repo!==definition.source?.repo || version.source_path!==definition.source?.ref || version.source_commit!==definition.source?.revision
       || version.contract_sha256!==owner.definition_sha256)deny('candidate_source_unverified');
+    const released=(await db.query(`SELECT id FROM release_versions r WHERE EXISTS(SELECT 1 FROM jsonb_array_elements(r.payload->'workflows') w
+      WHERE w->>'workflow_id'=$1 OR w->>'id'=$2) LIMIT 1`,[workflow.id,version.id])).rows;check();
+    if(released.length)deny('candidate_formal_release_conflict');
     const slots=version.payload.activities;
     if(!Array.isArray(slots) || !slots.length || slots.length>100 || slots.length!==owner.slots?.length)deny('candidate_source_unverified');
     const refs=(await db.query('SELECT * FROM workflow_activity_refs WHERE workflow_id=$1 ORDER BY sequence_no',[workflow.id])).rows;check();
@@ -44,7 +47,13 @@ export async function auditAssemblyDerivations(db,task,options={}){
         || slot.sequence_no!==index+1 || own.slot_key!==slot.slot_key || own.activity_id!==slot.activity_id
         || own.activity_definition_version_id!==slot.activity_version_id)deny('candidate_source_unverified');
       const live=(await db.query('SELECT * FROM activities WHERE id=$1 FOR SHARE',[slot.activity_id])).rows[0];check();
-      if(!live || !['planned','active'].includes(live.status))deny('candidate_activity_state_conflict');
+      const contract=definition.activities?.[index],reused=contract?.reuse_activity_id===slot.activity_id
+        && contract.reuse_activity_definition_version_id===slot.activity_version_id;
+      if(!live || (reused?!['planned','active'].includes(live.status):live.status!=='planned'||live.workflow_id!==workflow.id))deny('candidate_activity_state_conflict');
+      if(!reused){
+        const production=(await db.query('SELECT activity_id FROM activity_release_state WHERE activity_id=$1',[slot.activity_id])).rows;check();
+        if(production.length)deny('candidate_formal_release_conflict');
+      }
       const activity=(await db.query('SELECT * FROM activity_definition_versions WHERE id=$1 AND activity_id=$2',[slot.activity_version_id,slot.activity_id])).rows[0];check();fixed(activity);
       if(activity.payload.activity_id!==slot.activity_id)deny('candidate_source_unverified');
       for(const step of activity.payload.steps ?? []){
