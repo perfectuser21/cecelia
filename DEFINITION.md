@@ -6983,3 +6983,15 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 
 ### OpenClaw手机完成回收独立周期（1.379.7）
 openclaw-agent-reaper与手机窄派发共用独立收尾循环，不再受串行慢job阻塞；保留60秒执行周期、真实调用防重入、preview停用及全局Tick关闭。
+
+### CRM 权威数据边界
+
+Notion 作为客户资料录入和展示面；Brain 独立 CRM 实体为唯一真相源，任务表不代存客户主档。企业 Tenant 下账号、人设与好友关系分别登记，跨账号不按昵称归并。原文、报告保留来源和证据关联。CRM_SYNC_ENABLED 默认关闭，生产 schema 迁移与正式绑定另行放行。 报告周期为日历日期；PostgreSQL DATE 返回的本地午夜 Date 按本地年月日投影，禁止转 UTC 截日导致少一天；沟通发生时间仍按 ISO 时间点表示。
+
+受内部鉴权保护的 `POST /api/brain/internal/crm/contacts/resolve` 仅按 `tenant_id + account_id + contact_id` 精确读取既有客户、好友关系及该账号的 Agent/人设。未知或跨租户关系、归档客户、停用数据源绑定统一返回 404，不按昵称回退、不创建客户、不修改业务数据。本入口沿用 CRM 默认关闭开关；它只补身份查询，不代表 HK 客服已切换或好友自动开户已实现。
+
+`contacts/onboard` 接收受信 Workflow 的单好友测试授权事实，按企业、账号及事件幂等，在同一事务建立 Brain 客户、好友关系、收据与审计。新客户可先没有 Notion 来源页，后续事件不覆盖人工资料。迁移 556 另行允许该来源并记录配置版本及页面一次性创建尝试；当前不操作微信，不代表 HK 或生产已切换。
+
+待映射好友仅在未配置页面allowlist的已登记客户库创建最小名字和Brain ID；创建POST前独立提交冻结目标、配置版本和请求摘要的耐久fence，未知后只查回、不再次POST。Pull与projector共用身份锁/CAS，仅恢复同租户binding、有授权收据及attempt的onboard-origin客户；全分页重复ID、撤权、错父库或另一页占用均拒绝。完成映射后人工标题和备注从Notion读入，不以初始昵称回盖；该协议已在隔离PG和fake Notion验收，真实Notion另行核验。
+
+CRM Notion HTTP 适配器从固定 `https://api.notion.com` 创建 URL，仅将严格白名单字符串写入 pathname；外部输入不参与 origin 构造，禁止 query/hash、编码路径和行终止符，重定向保持 error。页面创建429不自动重试的耐久fence约束保持。

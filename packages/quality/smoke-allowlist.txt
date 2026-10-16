@@ -57,6 +57,9 @@ conversation-capture-multitool-smoke.sh
 conversation-capture-smoke.sh
 conversation-ttl-archiver-smoke.sh
 conversations-smoke.sh
+crm-canonical-smoke.sh
+crm-contact-resolve-smoke.sh
+crm-friend-onboard-smoke.sh
 credential-freshness-smoke.sh
 crontab-ledger-smoke.sh
 crystal-coding-evidence-smoke.sh

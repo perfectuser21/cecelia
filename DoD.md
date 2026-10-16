@@ -323,3 +323,44 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
   Test: manual:bash -c "cd packages/brain && npx vitest run src/routes/__tests__/tree-legacy-layout.test.js src/lib/__tests__/tree-legacy-layout.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] legacylayoutatomic 真实HTTP及隔离PG验证稳定流程改挂、冲突整批回滚、共享及冻结Activity保留、孤立退役、原引用保留、幂等与原任务结果保留；撤销先持锁或等待期间正式版本先提交时均拒绝写入。
   Test: manual:bash -c "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_scratch} DB_HOST=${DB_HOST:-127.0.0.1} DB_USER=${DB_USER:-administrator} npx vitest run --config vitest.integration.config.js src/__tests__/integration/tree-legacy-layout.pg.integration.test.js src/__tests__/integration/tree-legacy-layout-http.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+
+# CRM 受控录入与关系投影（任务 ab9a936c）
+
+- [x] [BEHAVIOR] crmmarkdownscope 画像与报告中的Notion结构标签在数据库或外部API写入前拒绝，普通Markdown及原文围栏保留。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/markdown.test.js src/crm/notion-children.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] crmfieldownership 人工白名单、缺字段保留、托管正文边界、显式清空、关闭时不访问数据库、分页失败不推进及范围缩小不越权回填。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/notion-mapping.test.js src/crm/notion-content.test.js src/crm/notion-sync.test.js src/crm/router.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] crmrelationprojection 原文和日报精确身份关联到既有数据源，异步未知不记成功，创建响应未知后重放找回原页，不新增客户库。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/notion-children.test.js src/crm/__tests__/store.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] crmcanonicalpg 隔离PostgreSQL验证同名不并、账号人设、跨租户外键、人工更新审计、同分钟修改、消息及报告关联、旧版本回执不清新待办。
+  Test: manual:bash -c "cd packages/brain && CRM_STORE_SCRATCH_TEST=1 npx vitest run --config vitest.integration.config.js src/__tests__/integration/crm-store.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+
+# CRM 既有联系人只读解析（任务 5028a72e-4127-42db-971a-5c2293093cdc）
+
+- [x] [BEHAVIOR] crmcontactresolve 按租户、稳定账号与联系人ID精确查询客户、好友关系和账号人设；缺参/昵称参数拒绝，内部鉴权和默认关闭保持，未知与跨租户统一404，数据库仅SELECT。
+  Test: manual:bash packages/brain/scripts/smoke/crm-contact-resolve-smoke.sh
+- [x] [BEHAVIOR] crmcontactresolvepg 真PostgreSQL隔离schema验证同租户两号同联系人ID仍精确返回各自客户/人设、无审计新增；跨租户/未知/昵称不命中，归档客户/停用绑定404及HTTP凭据校验。
+  Test: manual:bash -c "cd packages/brain && CRM_STORE_SCRATCH_TEST=1 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/crm-contact-resolve.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] crmpgci 既有CI的POSTGRES_INTEGRATION和integration目录自动运行两份CRM真PG验收；DATABASE_URL优先、DB_*保留，只允许精确测试库，唯一schema创建与回收不写public；本地scratch开关兼容。
+  Test: manual:bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/crm-pg-ci.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] crmcodeqlguard 长空白非结构标签在隔离Node子进程1秒内结束，原开闭结构标签拒绝保持；未授权前100次401、第101次429且数据库零调用。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/markdown.test.js src/crm/router.test.js --maxWorkers=1 --minWorkers=1"
+
+# Brain-first 授权好友入档（任务 c5395d5a-bce3-410f-96e5-5996bd8d2b0e）
+
+- [x] [BEHAVIOR] crmfriendonboard 真实PG事务建立客户、稳定关系、授权事件收据和审计；按企业账号事件幂等，两账号同事件分域，同名不并，已有关系换binding/归档/停用拒绝，后续事件不覆盖人工资料；既有linkContact共用联系人锁。
+  Test: manual:bash -c "cd packages/brain && CRM_STORE_SCRATCH_TEST=1 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/crm-friend-onboard.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] crmfriendpage 真实PG加fake Notion验证独立提交fence、一次POST、超时/异步/重启未知不重发、allowlist拒建、返回前撤权、全分页唯一、双页CAS竞争、pull并发恢复原UUID及人工字段保留；不称真实Notion或生产通过。
+  Test: manual:bash -c "CRM_STORE_SCRATCH_TEST=1 bash packages/brain/scripts/smoke/crm-friend-onboard-smoke.sh"
+- [x] [BEHAVIOR] crmcreateoncehttp 真实HTTP adapter的fetch spy固定创建429时物理网络调用仅一次，大小写POST一致，query/GET/幂等PATCH保留有界重试；PG验收创建429后fence不清、重跑unknown且不重发。
+  Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/crm/notion-request.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] crmprojectionfair 真实PG跨两轮runCrmSync验证50个unknown不会饿死第51个可处理好友；独立检查水位排序，保留unknown的fence、pending及业务revision/人工字段。
+  Test: manual:bash -c "cd packages/brain && CRM_STORE_SCRATCH_TEST=1 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/crm-onboard-projection.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] crmonboardtestpair 四个好友入档模块保留同名真实单测，验证事务回滚、授权失败零数据库访问、最小创建属性、身份/白名单拒绝、分页有界失败与未知创建不重复POST；中央真PG回归及CI选择器不变。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/onboard-common.test.js src/crm/onboard-store.test.js src/crm/onboard-page-store.test.js src/crm/onboard-notion.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] crmnotionorigin Notion HTTP固定origin，调用方只可提供严格白名单pathname；绝对/协议相对/反斜杠/编码/CRLF/query/hash及非字符串路径在HTTP前拒绝，合法请求无queryhash且禁止重定向，创建429不重试。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/notion-request.test.js --maxWorkers=1 --minWorkers=1"
