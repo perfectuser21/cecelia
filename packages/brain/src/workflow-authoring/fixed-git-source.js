@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { resolveGitHubToken } from '../harness-credentials.js';
 
 const REPOS = new Set(['perfectuser21/cecelia', 'perfectuser21/zenithjoy-workspace']);
 const SHA = /^[a-f0-9]{40}$/;
@@ -13,7 +12,7 @@ export function validateGitSource({ repo, path, revision } = {}) {
 }
 
 /** token 只发往固定 GitHub API；commit/tree/blob 身份均回读，禁止重定向。 */
-export async function readFixedGitFile(source, { fetchFn=globalThis.fetch, resolveToken=resolveGitHubToken,signal,deadline=Date.now()+60000 } = {}) {
+export async function readFixedGitFile(source, { fetchFn=globalThis.fetch, resolveToken=async()=>(await import('../harness-credentials.js')).resolveGitHubToken(),signal,deadline=Date.now()+60000 } = {}) {
   validateGitSource(source);
   const check=()=>{if(signal?.aborted||Date.now()>=deadline)throw Object.assign(Error('固定来源读取已取消或超时'),{code:'readiness_deadline_exceeded',status:503});};
   check();
