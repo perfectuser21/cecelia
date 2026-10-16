@@ -85,14 +85,14 @@ export async function runWorkflowAssemblyReconcile(pool,options={}){
         const health=await checkResourcesHealth(client,resourceRefs,{now:now()});check();
         if(health.blocked.length)resourceCondition='safe_stop';
         else if(health.degraded.length || health.stale.length || health.unknown.length)resourceCondition='unknown';
-      }catch(error){check();resourceCondition='unknown';}
+      }catch{check();resourceCondition='unknown';}
       let driverError=false;
       const tenantConflict=row.tenant_id!=null && row.payload?.tenant_id!=null && row.tenant_id!==row.payload.tenant_id;
       try{
         if(!tenantConflict && resourceCondition==='ready' && isAssemblyReconcileEnvironment(identity.database)
           && (options.advanceAuthoring || !options.readReadiness)){
           try{check();await (options.advanceAuthoring??defaultAdvance)(pool,row.id,{tenantId,deadline,signal:options.signal});check();}
-          catch(error){check();driverError=true;}
+          catch{check();driverError=true;}
         }
         readiness=tenantConflict?{}:resourceCondition!=='ready'
           ?{protocol:'workflow-authoring-execution-v1',tenant_id:tenantId,definition_sha256:digest,target_version:target,status:'blocked',resource_condition:resourceCondition,gaps:[{code:resourceCondition==='safe_stop'?'resource_unavailable':'resource_unknown'}]}
