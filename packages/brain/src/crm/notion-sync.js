@@ -18,7 +18,9 @@ export function createNotionRequest({ token = process.env.NOTION_API_KEY, deadli
         headers: { Authorization: `Bearer ${token}`, 'Notion-Version': '2026-03-11', 'Content-Type': 'application/json' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-      if (response.status === 429 && attempt < 2) {
+      // A page creation is a side effect with a durable fence. Even 429 must not cause
+      // another physical POST here; the owner resolves any uncertainty by querying.
+      if (response.status === 429 && attempt < 2 && !(path === '/pages' && String(method).toUpperCase() === 'POST')) {
         const delay = Math.min(2000, Math.max(0, Number(response.headers.get('retry-after') ?? 1) * 1000));
         if (Date.now() + delay >= deadline) throw fault('budget_exceeded');
         await new Promise(resolve => setTimeout(resolve, delay));

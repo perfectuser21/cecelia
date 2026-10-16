@@ -352,3 +352,5 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
   Test: manual:bash -c "cd packages/brain && CRM_STORE_SCRATCH_TEST=1 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/crm-friend-onboard.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] crmfriendpage 真实PG加fake Notion验证独立提交fence、一次POST、超时/异步/重启未知不重发、allowlist拒建、返回前撤权、全分页唯一、双页CAS竞争、pull并发恢复原UUID及人工字段保留；不称真实Notion或生产通过。
   Test: manual:bash -c "CRM_STORE_SCRATCH_TEST=1 bash packages/brain/scripts/smoke/crm-friend-onboard-smoke.sh"
+- [x] [BEHAVIOR] crmcreateoncehttp 真实HTTP adapter的fetch spy固定创建429时物理网络调用仅一次，大小写POST一致，query/GET/幂等PATCH保留有界重试；PG验收创建429后fence不清、重跑unknown且不重发。
+  Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/crm/notion-request.test.js --maxWorkers=1 --minWorkers=1"
