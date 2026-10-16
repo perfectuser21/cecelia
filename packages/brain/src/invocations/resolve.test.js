@@ -18,7 +18,7 @@ it('仅有slot key的新建活动可解析确定性候选身份，两slot不合�
  const slot=key=>({key,executor_kind:'agent',runtime:{transport:'codex-bridge'},mutation_intent:'none',
   input_schema:schema,output_schema:schema,acceptance:['真实产物'],implementation:{kind:'skill',skill_id:id,
    repo:'perfectuser21/cecelia',path:'skills/pure/SKILL.md',revision:'a'.repeat(40)}});
- const definition={key:'pure',source:{repo:'perfectuser21/cecelia',ref:'pure.json',revision:'a'.repeat(40)},
+ const definition={key:'pure',tenant_id:'company-a',source:{repo:'perfectuser21/cecelia',ref:'pure.json',revision:'a'.repeat(40)},
   input_schema:schema,output_schema:schema,activities:[slot('one'),slot('two')]};
  const db={query:async sql=>({rows:sql.includes('FROM tasks')?[{id,payload:{workflow_authoring:true,tenant_id:'company-a'},status:'in_progress',result:{workflow_authoring:{outputs:{compose:{definition}}}}}]:sql.includes('skill_registry')?[{id,status:'active'}]:[]})};
  const options={readFile:async()=> '---\nname: pure\nversion: 1.0.0\n---\n转成大写',probeRuntime:async()=>({ready:true})};

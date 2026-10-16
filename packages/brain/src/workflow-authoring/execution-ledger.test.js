@@ -1,7 +1,7 @@
 import {it,expect} from 'vitest';
 import {createSkillEnvelope} from '../orchestrator/skill-activity-adapter.js';
 import {definitionDigest} from './contracts.js';
-const {verifyInvocationLedger}=await import('./execution-ledger.js').catch(()=>({}));
+import {verifyInvocationLedger} from './execution-ledger.js';
 const id='11111111-1111-4111-8111-111111111111',schema={type:'object',properties:{text:{type:'string'}},required:['text']};
 async function ledger(){
  const activities=['one','two'].map(key=>({key,input_schema:schema,output_schema:schema,input_mapping:{text:'$input.text'},implementation:{kind:'skill',repo:'perfectuser21/cecelia',path:'pure/SKILL.md',revision:'a'.repeat(40)}}));

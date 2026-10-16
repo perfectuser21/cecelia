@@ -2,6 +2,7 @@ import { compileInvocation } from '../orchestrator/invocation-plan.js';
 import { createSkillEnvelope } from '../orchestrator/skill-activity-adapter.js';
 import { definitionDigest,object,uuid,requireCondition } from '../workflow-authoring/contracts.js';
 import { legacyExecutorEntries } from '../execution-directory/legacy-executor.js';
+import { canonicalCandidateTarget } from './candidate-target.js';
 
 export function validateTargetRequest(body) {
   object(body,'request');object(body.target,'target');object(body.input,'input');
@@ -35,9 +36,12 @@ async function loadDefinition(db,body,tenantId) {
     // 新建工作流以管理任务作为候选身份；更新时只能使用该管理任务声明的 workflow。
     if(body.target.kind==='workflow')requireCondition(body.target.id===(stableId??row.id),'候选目标身份不匹配',409);
     if(body.target.kind==='activity'){
-      const selected=definition.activities?.find(a=>a.id===body.target.id||a.activity_id===body.target.id||a.reuse_activity_id===body.target.id);
+      const target=canonicalCandidateTarget(body,tenantId);
+      const selected=definition.activities?.find(a=>target.slot_key!==undefined?a.key===target.slot_key:
+        a.id===target.id||a.activity_id===target.id||a.reuse_activity_id===target.id);
       requireCondition(selected,'候选定义未包含该活动',404);
-      return {definition:{...definition,key:'single-activity',input_schema:selected.input_schema,output_schema:selected.output_schema,activities:[{...selected,key:selected.key??'single'}],output_mapping:undefined},target:{...body.target,definition_version_id:expected}};
+      return {definition:{...definition,key:'single-activity',input_schema:selected.input_schema,output_schema:selected.output_schema,
+        activities:[{...selected,key:selected.key??'single',input_mapping:undefined}],output_mapping:undefined},target};
     }
     return {definition,target:{...body.target,definition_version_id:expected}};
   }
