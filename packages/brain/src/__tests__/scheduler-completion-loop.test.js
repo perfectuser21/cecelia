@@ -34,6 +34,16 @@ describe('脚本收尾独立周期', () => {
     return item;
   }
 
+  it('装配对账不排在慢串行轮后；观察超时不解除实际handler锁',async()=>{
+    const assembly=job('workflow-assembly-reconcile');
+    expect(COMPLETION_JOBS).toContain(assembly);expect(SERIAL_JOBS).not.toContain(assembly);
+    expect(assembly.completionCadenceMs).toBe(30000);expect(assembly.livenessIntervalSec).toBe(30);
+    hang(job('machine-vitals'));const first=hang(assembly);assembly.timeoutMs=100;
+    startSchedulerJobsLoop(pool);await vi.advanceTimersByTimeAsync(10000);expect(assembly.handler).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60000);expect(assembly.handler).toHaveBeenCalledTimes(1);
+    first.resolve({});await vi.advanceTimersByTimeAsync(10000);expect(assembly.handler).toHaveBeenCalledTimes(2);
+  });
+
   it('无关串行 job 真挂起时，90秒鲜度预算内仍触发收割与observer对账', async () => {
     hang(job('machine-vitals'));
     startSchedulerJobsLoop(pool);
