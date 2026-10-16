@@ -13,7 +13,8 @@ export const nativeSpec=require('../../config/workflow-assembly-native.json');
 const paths=[NATIVE_SPEC_PATH,...['workflow-assembly-native.js','workflow-assembly-native-ledger.js','workflow-assembly-native-source.js','workflow-assembly-native-registration.js',
   'workflow-assembly-reconcile-runner.js','workflow-assembly-reconcile.js','workflow-assembly-reconcile-derived.js','workflow-assembly-reconcile-tasks.js'].map(p=>'packages/brain/src/lib/'+p),
   'packages/brain/src/workflow-authoring/assembly-driver.js','packages/brain/src/workflow-authoring/execution-proof.js'];
-const loaded=new Map(paths.map(path=>[path,readFileSync(root+path,'utf8')]));
+// Docker将packages/brain平铺/app；逻辑Git路径不等于运行时物理文件路径。
+const loaded=new Map(paths.map(path=>[path,readFileSync(new URL('../../'+path.slice('packages/brain/'.length),import.meta.url),'utf8')]));
 const trusted=new WeakSet();
 const cache=new Map();
 const freeze=value=>{if(value&&typeof value==='object'){for(const item of Object.values(value))freeze(item);Object.freeze(value);}return value;};
