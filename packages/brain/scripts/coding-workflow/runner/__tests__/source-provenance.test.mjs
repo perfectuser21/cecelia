@@ -1,4 +1,4 @@
-import { beforeEach, afterEach, it, expect } from 'vitest';
+import { beforeEach, afterEach, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -40,12 +40,13 @@ beforeEach(() => {
   put(RECORD_SOURCE_OWNER, '// fixture controller\n');put(RECORD_SOURCE_MANIFEST, JSON.stringify({ schema_version: 1, repo: 'perfectuser21/cecelia', relations: [] }));commit();
   git(worktree, 'update-ref', 'refs/remotes/origin/main', 'HEAD');git(worktree, 'branch', 'main');
   controller = controllerIdentity(pathToFileURL(path.join(worktree, RECORD_SOURCE_OWNER)));
-  options = { root: path.join(temp, 'protected'), worktree, taskId, sprintDir, controller };cfg = { repoSlug: 'perfectuser21/cecelia', repo: worktree };
+  vi.stubEnv('HOME', temp);
+  options = { root: path.join(temp, '.cecelia', 'coding-workflow-provenance'), worktree, taskId, sprintDir, controller };cfg = { repoSlug: 'perfectuser21/cecelia', repo: worktree };
   put(rel('01-intent.md'), fm('intent'));seal('intent', [rel('01-intent.md')]);
   put(rel('03-build.md'), fm('build', 'PRIVATE DEVELOPMENT BODY'));seal('build', [rel('03-build.md')]);
   put(rel('04-evidence.md'), fm('verify', 'PRIVATE VERIFY BODY'));seal('verify', [rel('04-evidence.md')]);
 });
-afterEach(() => fs.rmSync(temp, { recursive: true, force: true }));
+afterEach(() => { vi.unstubAllEnvs();fs.rmSync(temp, { recursive: true, force: true }); });
 it('真实登记链按精确PR对象验证，main检出与继承Git环境不误选仓', () => {
   const exact = publish();expect(git(worktree, 'ls-tree', '--name-only', exact, 'sprints/').trim()).toBe(sprintDir);
   withRecordProvenance({ ...options, stage: 'judge', round: 1 }, () => {
