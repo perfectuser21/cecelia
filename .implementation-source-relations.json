@@ -442,7 +442,7 @@
     {"owner_path":"packages/brain/src/lib/workflow-assembly-native.js","path":"packages/brain/scripts/smoke/workflow-assembly-native-smoke.sh","role":"verification"},
     {"owner_path":"apps/api/features/planning/pages/capability-system/EvidenceView.tsx","path":"apps/api/features/planning/pages/capability-system/EvidenceView.test.tsx","role":"verification"},
     {"owner_path":"packages/engine/skills/dev/scripts/worktree-manage.sh","path":"packages/engine/tests/skills/worktree-cleanup-set-e.test.ts","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-native.js","path":"changes/cp-10161220-meta-workflow-closure.md","role":"release"},
+    
     {"owner_path":"packages/brain/src/lib/existing-ops-workspace-source.js","path":"packages/brain/src/__tests__/integration/engine-worktree-source.pg.integration.test.js","role":"verification"},
     
     {"owner_path":"packages/brain/src/lib/existing-ops-workspace-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-workspace-source.test.js","role":"verification"},
@@ -852,7 +852,7 @@
     
     {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/invocation-browser-check.spec.mjs", "role": "verification"},
     {"owner_path":"apps/api/features/planning/pages/capability-system/BusinessInputs.tsx","path":"apps/api/features/planning/pages/capability-system/BusinessInputs.test.tsx","role":"verification"},
-    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "changes/cp-10161456-cw-isolation-proof.md", "role": "release"},
+    
     {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "docs/learnings/cp-10161456-cw-isolation-proof.md", "role": "documentation"}
   ]
 }
