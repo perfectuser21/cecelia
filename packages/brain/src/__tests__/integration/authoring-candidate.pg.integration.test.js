@@ -23,3 +23,23 @@ it('无冲突create冻结真实候选paused，重放回读同owner；其它autho
  const b=await ownerTask();await expect(run(b)).rejects.toMatchObject({code:'candidate_isolation_required'});expect(await snapshot()).toEqual(before);
  a.state.request.operation='update';await expect(run(a)).rejects.toMatchObject({code:'candidate_isolation_required'});expect(await snapshot()).toEqual(before);
 });
+it('owner协议/租户/服务器compose、冻结引用或非授权active篡改不能重放认领',async()=>{
+ f=await authoringExecutionDatabase();const a=await ownerTask();
+ const c=await f.pool.connect();let owner;
+ try{await c.query('BEGIN');owner=await orchestration.prepareAuthoringCandidate(c,a.id,a.state,{freezeProof:a.proof});await c.query('COMMIT');}
+ finally{c.release();}
+ const saved=(await f.pool.query('SELECT result FROM tasks WHERE id=$1',[a.id])).rows[0].result;
+ for(const mutate of [r=>{r.workflow_authoring_candidate.protocol='legacy';},r=>{r.workflow_authoring_candidate.tenant_id='other';},
+  r=>{r.workflow_authoring.outputs.compose.definition.name='另一版';}]){
+  const changed=structuredClone(saved);mutate(changed);await f.pool.query('UPDATE tasks SET result=$2 WHERE id=$1',[a.id,changed]);
+  await expect(orchestration.readCandidateOwner(f.pool,a.id,f.definition,'default')).rejects.toThrow();
+  await f.pool.query('UPDATE tasks SET result=$2 WHERE id=$1',[a.id,saved]);
+ }
+ await f.pool.query("UPDATE workflows SET status='active' WHERE id=$1",[owner.workflow_id]);
+ await expect(orchestration.readCandidateOwner(f.pool,a.id,f.definition,'default')).rejects.toThrow();
+ await f.pool.query("UPDATE workflows SET status='paused' WHERE id=$1",[owner.workflow_id]);
+ const version=(await f.pool.query('SELECT payload FROM workflow_definition_versions WHERE id=$1',[owner.workflow_definition_version_id])).rows[0].payload;
+ version.activities[0].activity_id=randomUUID();
+ await f.pool.query('UPDATE workflow_definition_versions SET payload=$2 WHERE id=$1',[owner.workflow_definition_version_id,version]);
+ await expect(orchestration.readCandidateOwner(f.pool,a.id,f.definition,'default')).rejects.toThrow();
+});
