@@ -42,3 +42,16 @@ export function unwrapShellCommand(command) {
   const prefix = SHELL_PREFIX.exec(text);
   return prefix ? literalWord(text.slice(prefix[0].length)) : text;
 }
+
+/**
+ * 解一层原生展示后全文核对。唯一例外：完整静态 shell -c/-lc 调用的
+ * 唯一引用参数闭合后一个 LF；不裁剪参数内部脚本，也不解释任意脚本语法。
+ * 原始 command 保持不变，动态参数、额外命令/参数和更多尾字符均不走例外。
+ */
+export function matchesShellEvidence(command, reported) {
+  const decoded = unwrapShellCommand(command);
+  if (decoded === reported) return true;
+  if (decoded !== reported + '\n') return false;
+  const prefix = SHELL_PREFIX.exec(reported);
+  return Boolean(prefix) && literalWord(reported.slice(prefix[0].length)) !== null;
+}
