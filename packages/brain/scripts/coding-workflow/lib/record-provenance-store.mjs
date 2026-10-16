@@ -102,7 +102,7 @@ export function events(root, taskId) {
     let event;try { event = JSON.parse(bytes.toString('utf8')); } catch { fail('event_invalid'); }
     const { digest, ...data } = event;
     if (event.id !== name.slice(0, -5) || event.schema_version !== 1 || event.repo !== REPO || event.task_id !== taskId || digest !== hash(JSON.stringify(data))) fail('event_invalid');
-    if (!['native', 'stage', 'registration', 'isolation'].includes(event.kind)) fail('event_kind');
+    if (!['native', 'stage', 'registration', 'isolation', 'merge'].includes(event.kind)) fail('event_kind');
     return event;
   });
 }

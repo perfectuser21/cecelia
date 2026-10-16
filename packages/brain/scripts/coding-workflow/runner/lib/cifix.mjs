@@ -9,10 +9,12 @@ import path from 'node:path';
 import { git, gh } from './proc.mjs';
 import { removeWorktree } from './worktree.mjs';
 import { findTarget, failureLogs, readState, statePath } from './cifix-scan.mjs';
-import { taskIdOf, remoteTaskId, preparePrWorktree, checkFixCommits, ownChangedFiles, pushPrHead, smokeDirOf } from './pr-branch.mjs';
+import { taskIdOf, intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, ownChangedFiles, pushPrHead, smokeDirOf } from './pr-branch.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { repoRules } from '../../lib/repo-profile.mjs';
-import { revokeQaPass } from './qa-gate.mjs';
+import { revokeQaPass, readState as readQaState, writeState as writeQaState } from './qa-gate.mjs';
+import { needsSourceProvenance, verifySourceHead } from './source-provenance.mjs';
+import { createSourceMerge, observeSourceRemote } from './source-merge.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
 import { smokeRefitDecision, refitSmoke } from './smoke-refit.mjs';
@@ -82,6 +84,7 @@ async function attemptConflict(ctx, target, worktree, signal) {
   await preparePrWorktree(cfg, pr, worktree, signal);
   const before = (await git(worktree, ['rev-parse', 'HEAD'])).stdout.trim();
   if ((await git(worktree, ['fetch', 'origin', 'main'], { timeoutMs: FETCH_TIMEOUT_MS })).code !== 0) throw stop('git_fetch_failed');
+  if (needsSourceProvenance(cfg)) return attemptSourceConflict(ctx, pr, worktree, before);
   const attributes = `${worktree}.union-attributes`;
   fs.writeFileSync(attributes, UNION_FILES.map((f) => `${f} merge=union\n`).join(''));
   const merge = await git(worktree, [...RUNNER_ID, '-c', `core.attributesFile=${attributes}`, 'merge', '--no-ff', '--no-edit', 'origin/main']);
@@ -112,6 +115,28 @@ async function attemptConflict(ctx, target, worktree, signal) {
   return { result: 'pushed', resolved_by: resolvedBy, commits, ...(revoked ? { qa_revoked: true } : {}) };
 }
 
+/** 自仓同步不派模型：固定身份、撤销旧QA/auto、再次核PR/main后才推；不能凭本地事件声明远端成功。 */
+async function attemptSourceConflict(ctx, pr, worktree, before) {
+  const { cfg } = ctx, intent = intentOf(worktree, pr.headRefName);
+  if (!intent || before !== pr.headRefOid) throw stop('source_merge_identity');
+  const main = (await git(worktree, ['rev-parse', 'origin/main'])).stdout.trim();
+  const transaction = await createSourceMerge(cfg, worktree, intent, before, main, pr);
+  const { commits } = await checkFixCommits(worktree, before, { mainRef: main, smokeDir: smokeDirOf(cfg), sourceMergeToken: transaction.token });
+  // 即使只是manifest变更也需新HEAD新QA。关闭auto失败或本地撤销未落盘，均不可push。
+  const off = await gh(cfg, ['pr', 'merge', String(pr.number), '--disable-auto'], { timeoutMs: GH_TIMEOUT_MS });
+  if (off.code !== 0) throw stop('source_merge_disable_auto_failed');
+  const qa = readQaState(cfg, pr.number);qa.passed = false;delete qa.approved;delete qa.judge_pending;
+  qa.revoked = [...(qa.revoked ?? []), { at: new Date().toISOString(), reason: 'source_merge_new_head', before, head: transaction.commit, event_id: transaction.eventId, automerge_disabled: true }];
+  writeQaState(cfg, pr.number, qa);
+  const readback = readQaState(cfg, pr.number);
+  if (readback.passed !== false || readback.approved || readback.judge_pending || readback.revoked?.at(-1)?.event_id !== transaction.eventId) throw stop('source_merge_qa_revoke_failed');
+  verifySourceHead(cfg, worktree, intent, transaction.commit);
+  const remotePrePush = await observeSourceRemote(cfg, worktree, pr, before, main, true);
+  const pushed = await git(worktree, ['push', `--force-with-lease=refs/heads/${pr.headRefName}:${before}`, 'origin', `${transaction.commit}:refs/heads/${pr.headRefName}`], { timeoutMs: FETCH_TIMEOUT_MS });
+  if (pushed.code !== 0) throw stop('push_failed');
+  return { result: 'pushed', resolved_by: 'controller', commits, qa_revoked: true, source_merge: { event_id: transaction.eventId, head: transaction.commit, main, before, remote_pre_push: remotePrePush } };
+}
+
 const attempt = (ctx, target, worktree, signal) =>
   (target.kind === 'conflict' ? attemptConflict : attemptCi)(ctx, target, worktree, signal);
 
@@ -119,6 +144,7 @@ const attempt = (ctx, target, worktree, signal) =>
 async function record(ctx, pr, taskId, entry) {
   const state = readState(ctx.cfg, pr.number);
   state.attempts.push(entry);
+  if (entry.source_sync_trigger === 'behind') state.update_branch = [...(state.update_branch ?? []), { head: entry.head, at: entry.at, ok: entry.result === 'pushed', method: 'controller_source_merge' }];
   fs.mkdirSync(stateDir(ctx.cfg), { recursive: true });
   fs.writeFileSync(statePath(ctx.cfg, pr.number), `${JSON.stringify(state, null, 2)}\n`);
   if (!taskId) return;
@@ -165,6 +191,12 @@ export async function runCiFix(ctx, signal) {
   let target;
   try {
     target = await findTarget(cfg, ctx.log);
+    if (target?.action === 'update_branch' && needsSourceProvenance(cfg)) {
+      const prior = readState(cfg, target.pr.number);
+      target = { ...target, kind: 'conflict', source_sync_trigger: 'behind',
+        ...(prior.attempts.some(a => a.kind === 'conflict' && a.head === target.pr.headRefOid)
+          ? { action: 'escalate', reason: 'conflict_unresolved' } : { action: 'fix' }) };
+    }
     // runner 固化的 QA 回归 smoke 在 CI 红：runner 自己剔除重固化（一次），不派修复会话（它无权改 smoke，C2c）
     if (target && target.kind !== 'conflict' && target.action !== 'update_branch') {
       const d = await smokeRefitDecision(cfg, target);
@@ -196,11 +228,11 @@ export async function runCiFix(ctx, signal) {
   fs.rmSync(worktree, { recursive: true, force: true });
 
   const startedAt = Date.now();
-  const entry = { pr: pr.number, head: pr.headRefOid, at: new Date().toISOString(), failed_checks: target.failedRequired, ...(target.kind ? { kind: target.kind } : {}) };
+  const entry = { pr: pr.number, head: pr.headRefOid, at: new Date().toISOString(), failed_checks: target.failedRequired, ...(target.kind ? { kind: target.kind } : {}), ...(target.source_sync_trigger ? { source_sync_trigger: target.source_sync_trigger } : {}) };
   try {
     Object.assign(entry, await attempt(ctx, target, worktree, signal));
   } catch (error) {
-    entry.result = error?.message || 'ci_fix_error';
+    entry.result = error?.message === 'source_merge_pr_closed' ? 'pr_closed' : error?.message || 'ci_fix_error';
   }
   const taskId = fs.existsSync(worktree) ? taskIdOf(worktree, pr.headRefName) : null;
   ctx.log(`CI 修复 PR #${pr.number} 结果：${entry.result}`);

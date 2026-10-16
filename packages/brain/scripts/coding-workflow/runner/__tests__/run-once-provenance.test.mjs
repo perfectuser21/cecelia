@@ -14,7 +14,7 @@ describe('Cecelia 来源凭证为 QA / 合并的独立前置', () => {
   const go = (state, options = {}) => {
     const file = path.join(E.sb.root, 'self-repos.json');
     fs.copyFileSync(fileURLToPath(new URL('../../repos.json', import.meta.url)), file);
-    // 仅测试包装器注入显式临时凭证根；生产无环境变量/任务payload逃生口。
+    // 子进程HOME与凭证均限定临时sandbox的真实默认路径，不读宿主保护根。
     // 只替身远端身份查询；fetch/push/read/commit均走真实临时裸仓。
     const bin = path.join(E.sb.root, 'git-identity-bin');fs.mkdirSync(bin, { recursive: true });
     fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\ncase "$*" in *" remote get-url origin") echo https://github.com/perfectuser21/cecelia.git; exit 0;; esac\nexec /usr/bin/git "$@"\n', { mode: 0o755 });
@@ -22,13 +22,13 @@ describe('Cecelia 来源凭证为 QA / 合并的独立前置', () => {
     const processRunner = env => new Promise((resolve, reject) => {
       const core = new URL('../../lib/record-provenance.mjs', import.meta.url).href;
       const entry = new URL('../run-once.mjs', import.meta.url).href;
-      const context = { root: path.join(E.sb.root, 'protected'), worktree: E.sb.seed, taskId: TASK, sprintDir: SPRINT, stage: 'judge', round: 1 };
+      const context = { root: path.join(E.sb.root, '.cecelia', 'coding-workflow-provenance'), worktree: E.sb.seed, taskId: TASK, sprintDir: SPRINT, stage: 'judge', round: 1 };
       const code = `const {withRecordProvenance,controllerIdentity}=await import(${JSON.stringify(core)});const {main}=await import(${JSON.stringify(entry)});const c=JSON.parse(process.argv[1]);c.controller=controllerIdentity(${JSON.stringify(entry)});process.exitCode=await withRecordProvenance(c,()=>main());`;
       const child = spawn(process.execPath, ['--input-type=module', '-e', code, JSON.stringify(context)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '', stderr = '';child.stdout.on('data', b => { stdout += b; });child.stderr.on('data', b => { stderr += b; });
       child.on('error', reject);child.on('close', exitCode => resolve({ exitCode, stdout, stderr }));
     });
-    return E.go(state, { ...options, processRunner, extra: { ...options.extra, PATH: `${bin}:${process.env.PATH}`, CODING_WF_REPOS_FILE: file } });
+    return E.go(state, { ...options, processRunner, extra: { ...options.extra, HOME: E.sb.root, PATH: `${bin}:${process.env.PATH}`, CODING_WF_REPOS_FILE: file } });
   };
   it('旧 self PR 只有合法文件、没有历史凭证时不启动 QA、不批准', async () => {
     const r = await go(E.green());
@@ -66,7 +66,7 @@ describe('Cecelia 来源凭证为 QA / 合并的独立前置', () => {
     expect(E.state().approved).toBeUndefined();
   });
   it('受保护QA原判CANNOT_VERIFY不能被Commander状态接受洗成PASS，批准失败当轮升级并留完整轮次', async () => {
-    const root = path.join(E.sb.root, 'protected'), evaluate = path.join(E.sb.root, 'evaluate-proof.mjs'), codex = path.join(E.sb.root, 'judge-proof.mjs');
+    const root = path.join(E.sb.root, '.cecelia', 'coding-workflow-provenance'), evaluate = path.join(E.sb.root, 'evaluate-proof.mjs'), codex = path.join(E.sb.root, 'judge-proof.mjs');
     const core = new URL('../../lib/record-provenance.mjs', import.meta.url).href, entry = import.meta.url;
     const native = '{"type":"thread.started","thread_id":"fixture-native"}\n{"type":"turn.completed"}\n';
     fs.writeFileSync(evaluate, `import fs from 'node:fs';import path from 'node:path';import {withRecordProvenance,controllerIdentity,captureNativeExecution,sealStageEvidence,beginEvaluateIsolation} from ${JSON.stringify(core)};

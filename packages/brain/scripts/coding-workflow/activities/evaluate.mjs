@@ -7,7 +7,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
-import { provenanceRequired, verifyRecordProvenance, provenanceProjection, beginEvaluateIsolation } from '../lib/record-provenance.mjs';
+import { provenanceRequired, beginEvaluateIsolation } from '../lib/record-provenance.mjs';
+import { sourceFacts } from '../runner/lib/source-provenance.mjs';
 import { intentIdsError } from '../lib/intent.mjs';
 import { qaScenarios, SPEC_FILE, INTENT_FILE } from '../lib/spec-check.mjs';
 import { parseQaReport, judgeQa, unitTestEvidence, productionTouches, trivialAssertions, screenshotProblems } from '../lib/qa-report.mjs';
@@ -112,8 +113,7 @@ await runActivity(async (input) => {
   const round = posInt(input.round, 1);
   // 独立从受保护事件和精确 Git 验证，不采信任务 JSON 传来的 PASS/投影。
   const sourceProvenance = provenanceRequired(worktree)
-    ? provenanceProjection(verifyRecordProvenance({ worktree, taskId: input.task_id, sprintDir,
-      head: input.head_sha || await headSha(worktree) })) : null;
+    ? sourceFacts(worktree, { taskId: input.task_id, sprintDir }, input.head_sha || await headSha(worktree)) : null;
   const reportFile = `05-qa-report-r${round}.md`;
   const reportPath = path.join(dir, reportFile);
   const hiddenPaths = HIDDEN_FILES.map((f) => path.join(dir, f));

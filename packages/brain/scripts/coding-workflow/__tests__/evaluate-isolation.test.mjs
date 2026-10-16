@@ -1,4 +1,4 @@
-import { it, expect } from 'vitest';
+import { it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,9 +11,10 @@ import { judgeSourceFacts } from '../runner/lib/source-provenance.mjs';
 // 真 evaluate 父进程→runClaude→可控原生子进程；无外部服务、凭据或真实任务。
 it.each(['pass', 'timeout', 'signal', 'collision'])('actual evaluate child lifecycle: %s', async mode => {
   const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'evaluate-isolation-')));
-  const worktree = path.join(temp, 'repo'), root = path.join(temp, 'protected');fs.mkdirSync(worktree);
+  const worktree = path.join(temp, 'repo'), root = path.join(temp, '.cecelia', 'coding-workflow-provenance');fs.mkdirSync(worktree);
   const taskId = '088c3431-57ca-4f2a-8a50-14601518e2a2', sprintDir = 'sprints/10121524-cw-088c3431';
   const owner = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs', manifest = '.implementation-source-relations.json';
+  vi.stubEnv('HOME', temp);expect(os.homedir()).toBe(temp);
   const env = { ...process.env };for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete env[k];
   const git = (...args) => execFileSync('git', ['-C', worktree, '-c', 'core.hooksPath=/dev/null', ...args], { env, encoding: 'utf8' }).trim();
   const put = (rel, text) => { const p = path.join(worktree, rel);fs.mkdirSync(path.dirname(p), { recursive: true });fs.writeFileSync(p, text); };
@@ -89,5 +90,5 @@ console.log(JSON.stringify({type:'turn.completed'}));\n`, { mode: 0o755 });
       expect(native.stdout).toContain('actual-native-process');expect(native.stdout).toContain('hidden workspace verified');
       expect(native.isolation_hidden_event_id).toBe(facts.current_qa.isolation.hidden_event_id);
     });
-  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+  } finally { vi.unstubAllEnvs();fs.rmSync(temp, { recursive: true, force: true }); }
 }, 30000);
