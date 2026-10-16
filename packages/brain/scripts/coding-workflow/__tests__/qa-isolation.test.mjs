@@ -151,3 +151,25 @@ it('model supplied projection fields cannot turn registration facts into control
   expect(() => provenance.provenanceProjection({ ...pending, isolation: { ...pending.isolation, producer: 'model' } })).toThrow(/isolation|projection/);
   expect(() => provenance.provenanceProjection({ ...pending, isolation: { ...pending.isolation, body: 'hidden text' } })).toThrow(/isolation|projection/);
 });
+it('restoration preserves actual non-executable permissions, not only Git mode', () => {
+  fs.chmodSync(full(names[0]), 0o640);fs.chmodSync(full(names[1]), 0o600);
+  successful();
+  expect(fs.statSync(full(names[0])).mode & 0o777).toBe(0o640);
+  expect(fs.statSync(full(names[1])).mode & 0o777).toBe(0o600);
+});
+it('capture rechecks missing workspace files instead of trusting earlier hide receipt', () => {
+  provenance.withRecordProvenance(options, () => {
+    const isolation = begin();put(names[0], 'model recreated');
+    expect(() => native()).toThrow(/isolation/);
+    expect(isolation.restore()).toBe(false);
+    expect(fs.readFileSync(full(names[1]), 'utf8')).toBe('secret developer evidence\n');
+  });
+});
+it('capture rechecks holder integrity and abort cannot later be restored into success', () => {
+  provenance.withRecordProvenance(options, () => {
+    const isolation = begin(), hidden = readEvents().find(e => e.phase === 'hidden');
+    fs.writeFileSync(hidden.files[0].holder_path, 'changed');
+    expect(() => native()).toThrow(/isolation/);
+    expect(isolation.abort()).toBe(false);expect(isolation.restore()).toBe(false);
+  });
+});
