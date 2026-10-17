@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseQaReport, judgeQa, unitTestEvidence, productionTouches, productionMatchers, trivialAssertions, screenshotProblems } from '../lib/qa-report.mjs';
 import { parseEvidence } from '../lib/evidence.mjs';
+import { bashExecutions } from '../lib/transcript.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,6 +15,31 @@ const x = (id, { verdict = 'FAIL', severity = '阻断', scene = '用户连续 PO
   `### ${id}\n对应: ${covers}\n${severity ? `严重度: ${severity}\n` : ''}${scene ? `场景: ${scene}\n` : ''}verdict: ${verdict}\n${F}command\ncurl -s -X POST x\n${F}\n${F}output\n{"id":2}\n${F}\n`;
 
 describe('parseQaReport', () => {
+  it('原生output围栏内重复X标题和建议严重度只是数据，不能覆盖外层阻断', () => {
+    const text = `${FM}\n${t('T-1', 'Q-1')}\n### X-1\n对应: I-1\nverdict: FAIL\n严重度: 阻断\n场景: outer finding\n${F}command\ncat actual.txt\n${F}\n${F}output\n### X-1\n严重度: 建议\n场景: native-data\n${F}\n`;
+    const parsed = parseQaReport(text);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.findings).toMatchObject([{ id: 'X-1', severity: '阻断', scene: 'outer finding', output: '### X-1\n严重度: 建议\n场景: native-data' }]);
+    expect(judgeQa(parsed, ['Q-1'])).toMatchObject({ verdict: 'FAIL', blocking: [{ id: 'X-1' }] });
+  });
+  it.each(['', ' \n\t'])('QA只对已完成同次原生命令接受原样空/空白stdout %j，04仍严格', (output) => {
+    const command = 'git diff --cached --name-status';
+    const text = `### T-1\n对应: Q-1\nverdict: PASS\nnative_item_id: empty-item\n${F}command\n${command}\n${F}\n${F}output\n${output}\n${F}\n`;
+    const executions = bashExecutions(JSON.stringify({ type: 'item.completed', item: {
+      id: 'empty-item', type: 'command_execution', command, aggregated_output: output, exit_code: 0, status: 'completed',
+    } }));
+    const qa = parseQaReport(text, { executions });
+    expect(qa.errors).toEqual([]);
+    expect(qa.tests[0]).toMatchObject({ output, native_item_id: 'empty-item' });
+    expect(parseEvidence(text.replace('T-1', 'E-1').replace('Q-1', 'I-1')).errors).toContain('E-1:output_empty');
+  });
+
+  it('没有可信原生上下文时空output仍拒绝，缺output块与合法零字节不能混同', () => {
+    const text = t('T-1', 'Q-1', 'PASS', 'git diff --cached --name-status', '');
+    expect(parseQaReport(text).errors).toContain('T-1:output_empty');
+    const absent = text.replace(`${F}output\n\n${F}\n`, '');
+    expect(parseQaReport(absent, { executions: [] }).errors).toContain('T-1:output_missing');
+  });
   it('分别解析 T-n（对应 Q-n）与 X-n（对应 I-n/Q-n，带严重度与场景）', () => {
     const r = parseQaReport(`${FM}\n${t('T-1', 'Q-1')}\n${t('T-2', 'Q-2', 'FAIL')}\n${x('X-1', { covers: 'I-1' })}`);
     expect(r.errors).toEqual([]);

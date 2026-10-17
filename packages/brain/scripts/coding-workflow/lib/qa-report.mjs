@@ -10,13 +10,11 @@ import { isReadonlyDocAssertion } from './qa-doc-assertion.mjs';
 import { isReadonlyQaCommand } from './readonly-qa-ast.mjs';
 import { isReadonlySearchSource } from './readonly-search-source.mjs';
 import { unwrapShellCommand } from './shell-command.mjs';
+import { compiledLedger, resolveNativeItem, nativeRun } from './native-evidence.mjs';
 
 const Q_RE = /^Q-\d+$/;
 export const CANNOT_VERIFY = 'CANNOT_VERIFY';
 const IQ_RE = /^[IQ]-\d+$/;
-const FIELD = (name) => new RegExp(`^\\s*(?:[-*]\\s+)?(?:\\*\\*)?${name}(?:\\*\\*)?\\s*[:：]\\s*(.*?)\\s*$`);
-const SEVERITY_RE = FIELD('严重度');
-const SCENE_RE = FIELD('场景');
 // 单元测试当证据（那是 CI 的事，不是真人 QA）
 const UNIT_TEST_RE = /\b(?:vitest|jest|mocha)\b|\bnpm\s+(?:run\s+)?test\b|\bnode\s+--test\b|\bnpx\s+playwright\s+test\b/;
 // 生产 Brain：本机 5221 是 socat 代理到 us-vps 生产；us-vps tailscale IP / 主机别名
@@ -25,40 +23,22 @@ export const PRODUCTION_TARGET_RE = /:5221\b|\b(?:localhost|127\.0\.0\.1)\s+5221
 // （金丝雀 3e8414f6：规格 Q-n 本就写着 localhost:5221，只读命令被误判 evaluate_touched_production）
 const NETWORK_RE = /\b(?:curl|wget|nc|ncat|telnet|psql|pg_dump|ssh|scp|rsync|fetch|axios|requests|http\.get|https\.get)\b/;
 
-/** X-n 小节里的 严重度/场景（parseEvidence 不认这两个字段，单独扫）。 */
-function findingFields(text) {
-  const out = {};
-  let id = null;
-  for (const line of text.split(/\r?\n/)) {
-    const h = /^### (X-\d+)/.exec(line);
-    if (h) {
-      id = h[1];
-      out[id] = { severity: '', scene: '' };
-      continue;
-    }
-    if (/^#{1,3}\s/.test(line)) {
-      id = null;
-      continue;
-    }
-    if (!id) continue;
-    const s = SEVERITY_RE.exec(line);
-    if (s && !out[id].severity) out[id].severity = s[1].replace(/\*\*/g, '');
-    const c = SCENE_RE.exec(line);
-    if (c && !out[id].scene) out[id].scene = c[1].replace(/\*\*/g, '');
-  }
-  return out;
-}
-
 /** → { tests: [{id, covers, verdict, command, output}], findings: [{…, severity, scene}], errors } */
-export function parseQaReport(text) {
-  const raw = typeof text === 'string' ? text : '';
-  const t = parseEvidence(raw, { prefix: 'T', coversRe: Q_RE, verdicts: ['PASS', 'FAIL', CANNOT_VERIFY] });
-  const x = parseEvidence(raw, { prefix: 'X', coversRe: IQ_RE });
-  const fields = findingFields(raw);
+export function parseQaReport(text, { executions, draft = false } = {}) {
+  const full = typeof text === 'string' ? text : '';
+  const compiled = draft ? null : compiledLedger(full), raw = compiled?.body ?? full;
+  const commands = compiled?.ledger.commands ?? executions?.map(run => run.item_id ? run : nativeRun(run));
+  const t = parseEvidence(raw, { prefix: 'T', coversRe: Q_RE, verdicts: ['PASS', 'FAIL', CANNOT_VERIFY], qaNative: true });
+  const x = parseEvidence(raw, { prefix: 'X', coversRe: IQ_RE, qaNative: true });
   const errors = [...t.errors, ...x.errors];
+  for (const item of [...t.items, ...x.items]) {
+    if (commands) { try { resolveNativeItem(item, commands); } catch { errors.push(`${item.id}:native_unverified`); } }
+    else if (item.output.trim() === '' && item.evidence_source !== 'controller_native') errors.push(`${item.id}:output_empty`);
+    if (item.evidence_source === 'controller_native' && !commands) errors.push(`${item.id}:native_missing`);
+  }
   for (const item of t.items) if (item.verdict === CANNOT_VERIFY && !item.reason) errors.push(`${item.id}:reason_missing`);
   const findings = x.items.map((item) => {
-    const f = fields[item.id] ?? { severity: '', scene: '' };
+    const f = { severity: item.severity ?? '', scene: item.scene ?? '' };
     if (item.verdict === 'FAIL') {
       if (!f.severity) errors.push(`${item.id}:severity_missing`);
       if (!f.scene) errors.push(`${item.id}:scene_missing`);

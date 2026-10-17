@@ -11,6 +11,7 @@ import { execFileSync } from 'node:child_process';
 
 const argv = process.argv.slice(2);
 const prompt = argv.includes('-p') ? argv[argv.indexOf('-p') + 1] : fs.readFileSync(0, 'utf8');
+if (process.env.FAKE_EVAL_PROMPT_CAPTURE_PATH) fs.writeFileSync(process.env.FAKE_EVAL_PROMPT_CAPTURE_PATH, prompt);
 const field = (name) => (prompt.match(new RegExp(`^${name}: (.*)$`, 'm')) || [])[1] ?? '';
 const mode = process.env.FAKE_EVAL_MODE || 'pass';
 const sprint = field('SPRINT_DIR');

@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import { commanderCvScope } from './cv-accepted.mjs';
 import { controllerIdentity, withRecordProvenance, sealStageEvidence, beginRecordRegistration, observeRecordRegistration, finalizeRecordRegistration } from '../../lib/record-provenance.mjs';
 import { sourceContext, verifySourceHead } from './source-provenance.mjs';
 import { registerRecordSources } from '../../lib/record-sources.mjs';
@@ -159,6 +161,7 @@ async function intervene(ctx, pr, esc, cs, signal) {
       const before = await headOf(worktree);
       verifySourceHead(cfg, worktree, intent, before);
       const specRel = `${intent.sprintDir}/02-spec.md`;
+      const originalSpecSha256 = crypto.createHash('sha256').update(fs.readFileSync(path.join(worktree, specRel))).digest('hex');
       const contextPath = file(cfg, `commander-${pr.number}-${n}-context.json`);
       const rulingPath = file(cfg, `commander-${pr.number}-${n}-ruling.json`);
       writeJson(contextPath, { pr: pr.number, branch: pr.headRefName, escalation: esc.detail, qa_state: readJson(file(cfg, `qa-${pr.number}.json`), null),
@@ -213,6 +216,8 @@ async function intervene(ctx, pr, esc, cs, signal) {
       release(cfg, pr.number, esc, ruling, { n, head, commits });
       const entry = { n, at: new Date().toISOString(), kind: esc.kind, escalation: esc.detail, action: 'resume', rulings: ruling.rulings, summary: ruling.summary,
         reset_ci_budget: ruling.reset_ci_budget, commits, record, head, cost_usd: costUsd ?? null };
+      const cvScope = commanderCvScope(worktree, intent, esc.detail, ruling, head, originalSpecSha256);
+      if (cvScope) entry.cv_scope = cvScope;
       cs.interventions.push(entry);
       writeJson(file(cfg, `commander-${pr.number}.json`), cs);
       const task = await ctx.brain.getTask(taskId);

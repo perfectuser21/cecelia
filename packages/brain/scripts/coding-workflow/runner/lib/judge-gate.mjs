@@ -62,7 +62,7 @@ async function runJudgeObserved(cfg, worktree, intent, { round, reportRel, log, 
     reply = await callJudge(prompt, { ...cfg.judgeConn, timeoutMs: cfg.judgeTimeoutMs, transcriptPath });
   } catch (error) {
     const reason = String(error?.message || error).split(':')[0];
-    return { error: reason, ...(/^judge_codex_(auth|configuration|config_missing)$/.test(reason) ? { escalate: true } : {}) };
+    return { error: reason, ...(/^(?:judge_codex_(?:auth|configuration|config_missing)|judge_input_budget_(?:invalid|exceeded))$/.test(reason) ? { escalate: true } : {}) };
   }
   const parsed = parseJudge(reply.content, { intentIds: intent.intentIds });
   if (parsed.errors.length > 0) {
@@ -79,10 +79,14 @@ async function runJudgeObserved(cfg, worktree, intent, { round, reportRel, log, 
     sealStageEvidence({ files: [`${intent.sprintDir}/${file}`], producer: 'controller_render',
       result: { status: 'completed', outputs: { judge_verdict: decision.verdict } },
       controllerInput: { round, reportRel, parsed, decision, input_sha256: reply.input_sha256 ?? null,
+        materials_sha256: reply.materials_sha256 ?? null, stdin_sha256: reply.stdin_sha256 ?? null, stdin_bytes: reply.stdin_bytes ?? null,
+        judge_input_event_id: reply.judge_input_event_id ?? null,
         ...(facts ? { qa_stage_event_id: facts.current_qa.records.find(r => r.path === reportRel)?.stage_event_id,
           tested_head: facts.current_qa.records.find(r => r.path === reportRel)?.stage_input_head } : {}) } });
   } catch (error) { return { error: error.message }; }
   // 建议级问题不阻断，但要可见（审计 #41）
   const concerns = parsed.issues.filter((i) => i.severity === '建议').map(({ id, severity, covers, detail, where }) => ({ id, severity, covers, detail, where }));
-  return { ...decision, concerns, file, model, usage: reply.usage, ...(reply.provider ? { provider: reply.provider, cost_usd: reply.cost_usd, transcript_path: reply.transcriptPath, input_sha256: reply.input_sha256 } : {}) };
+  return { ...decision, concerns, file, model, usage: reply.usage, ...(reply.provider ? { provider: reply.provider, cost_usd: reply.cost_usd, transcript_path: reply.transcriptPath, input_sha256: reply.input_sha256, materials_sha256: reply.materials_sha256, stdin_sha256: reply.stdin_sha256, stdin_bytes: reply.stdin_bytes,
+      ...(reply.judge_input_event_id ? { judge_input_event_id: reply.judge_input_event_id } : {}),
+      ...(reply.source_native_event_id ? { source_native_event_id: reply.source_native_event_id } : {}) } : {}) };
 }

@@ -37,6 +37,35 @@ describe('bashExecutions', () => {
 });
 
 describe('unverifiedItems', () => {
+  describe('新QA原生item身份和零字节证据不能通过空行真值绕过', () => {
+    const command = 'git diff --cached --name-status';
+    const event = (id, patch = {}) => JSON.stringify({ type: 'item.completed', item: {
+      id, type: 'command_execution', command, aggregated_output: '', exit_code: 0, status: 'completed', ...patch,
+    } });
+    const empty = { id: 'T-1', covers: ['Q-1'], verdict: 'PASS', native_item_id: 'one', command, output: '' };
+    it('明确完成、string零字节与整数exit同时存在才接受空stdout', () => {
+      expect(unverifiedItems([empty], bashExecutions(event('one')))).toEqual([]);
+    });
+    it.each([
+      ['输出字段缺失', (() => { const row = JSON.parse(event('one'));delete row.item.aggregated_output;return JSON.stringify(row); })()],
+      ['输出null', event('one', { aggregated_output: null })],
+      ['非空原生却报空', event('one', { aggregated_output: 'real nonempty output\n' })],
+      ['仅空白原生却报零字节', event('one', { aggregated_output: ' \n\t' })],
+      ['单LF原生却报零字节', event('one', { aggregated_output: '\n' })],
+      ['退出码未知', event('one', { exit_code: null })],
+      ['未完成', event('one', { status: 'in_progress' })],
+    ])('%s不能冒充合法零字节stdout', (_label, stdout) => {
+      expect(unverifiedItems([empty], bashExecutions(stdout))).not.toEqual([]);
+    });
+    it('重复command不能任取另一次空输出冒充所选非空item', () => {
+      const stdout = [event('one', { exit_code: 7 }), event('two', { aggregated_output: 'second actual result\n' })].join('\n');
+      expect(unverifiedItems([{ ...empty, native_item_id: 'two' }], bashExecutions(stdout))).not.toEqual([]);
+    });
+    it('同item第六行改写也拒绝，不能只验证前五行', () => {
+      const stdout = event('one', { aggregated_output: 'one\ntwo\nthree\nfour\nfive\nactual sixth\n' });
+      expect(unverifiedItems([{ ...empty, output: 'one\ntwo\nthree\nfour\nfive\nforged sixth' }], bashExecutions(stdout))).not.toEqual([]);
+    });
+  });
   const executions = [
     { command: 'cd /repo &&  npm   test -- --run', result: 'RUN v1\n ✓ a.test.js (3)\n Tests  3 passed\nDone' },
     { command: 'curl -s http://x/health', result: '{"ok":true}' },

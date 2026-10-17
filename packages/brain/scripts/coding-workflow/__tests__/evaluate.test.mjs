@@ -202,7 +202,48 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     const p = fs.readFileSync(path.join(HERE, '../prompts/evaluate.md'), 'utf8');
     for (const s of ['真人', '黑盒', 'PREVIEW_URL', '单元测试', '5221', '探索', 'Playwright', '### T-n', '### X-n']) expect(p).toContain(s);
     // 金丝雀 3e8414f6：规格要求和「改动前」对比，QA 拿生产当了基线 → 只读也不行，基线须在本机从 main 起
-    for (const s of ['哪怕只是只读请求', '绝不能拿生产当基线', 'git worktree add']) expect(p).toContain(s);
+    for (const s of ['哪怕只是只读请求', '绝不能拿生产当基线', '固定 base SHA', 'git archive', '禁止 fetch', '增加 worktree']) expect(p).toContain(s);
+  });
+
+  it.each(['preview', 'local'])('真实%s会话收到历史范围用途声明，同时隔离当前03/04和保护副本', async kind => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-history-policy-'));
+    const captured = path.join(captureDir, 'actual-prompt.txt');
+    try {
+      const patch = kind === 'local' ? { repo_profile: { key: 'fixture-local', production_re: [], preview: { type: 'local' } } } : {};
+      const r = await run('pass', patch, { FAKE_EVAL_PROMPT_CAPTURE_PATH: captured });
+      expect(r.result.status, r.stderr).toBe('completed');
+      const prompt = fs.readFileSync(captured, 'utf8');
+      const line = /^QA_HISTORY_SCOPE_POLICY: (.+)$/m.exec(prompt);
+      expect(line, '实际CLI输入没有为可见旧报告的DAG范围审计明确许可').not.toBeNull();
+      const policy = JSON.parse(line[1]);
+      expect(policy).toMatchObject({ allowed_purpose: 'fixed_base_dag_scope_audit', read_only: true, each_parent: true,
+        content_mode_and_attribution: true, trust_old_product_verdicts: false,
+        deny_historical_03_04_bodies: true, deny_protected_and_holder: true });
+      expect(policy.visible_report_patterns).toEqual(['05-qa-report-rN.md', '06-judge-rN.md', '07-commander-rN.md']);
+      expect(policy.deny_current_report_bodies).toEqual(['03-build.md', '04-evidence.md']);
+      const instructedCommands = [...prompt.matchAll(/`([^`\n]+)`/g)].map(m => m[1].trim().split(/\s+/));
+      const mutatingBaseline = instructedCommands.filter(tokens => tokens[0] === 'git'
+        && ((tokens[1] === 'worktree' && tokens[2] === 'add')
+          || (['archive', 'show'].includes(tokens[1]) && tokens.some(t => /^origin\/main(?::|$)/.test(t)))));
+      expect(mutatingBaseline, 'read_only声明不能同时指导创建worktree或用浮动main提取基线').toEqual([]);
+      expect(prompt).not.toContain('开发自述');expect(prompt).not.toContain('开发自测');
+    } finally { fs.rmSync(captureDir, { recursive: true, force: true }); }
+  });
+
+  it.each(['preview', 'local'])('generic %s实际CLI只接收legacy证据合同，不承诺不存在的native compiler', async kind => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-generic-evidence-policy-'));
+    const captured = path.join(dir, 'actual-prompt.txt');
+    try {
+      const patch = kind === 'local' ? { repo_profile: { key: 'fixture-local', production_re: [], preview: { type: 'local' } } } : {};
+      const r = await run('pass', patch, { FAKE_EVAL_PROMPT_CAPTURE_PATH: captured });
+      expect(r.result.status, r.stderr).toBe('completed');
+      const prompt = fs.readFileSync(captured, 'utf8');
+      expect(/^QA_EVIDENCE_POLICY: (.+)$/m.exec(prompt)?.[1]).toBe('legacy_model_report');
+      expect(prompt).toMatch(/command/);expect(prompt).toMatch(/完整[^\n]*output|output[^\n]*完整/);
+      expect(prompt).not.toContain('controller_native');
+      expect(prompt).not.toContain('native_occurrence');
+      expect(prompt).not.toContain('输出由控制器从本轮原生记录完整装配');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 
   // C6：QA 模式按仓库。zenithjoy 第一阶段 local：不起预览、不等预览，在 PR worktree 里黑盒验；碰生产按本仓 ∪ 默认仓口径判

@@ -360,14 +360,45 @@ describe('runner QA 门（evaluator AI QA）', () => {
     }] }));
   };
 
-  it('验不了的项 commander 已裁过（同一 Q 项，维持规格）→ 不再升级，按 PASS 交独立裁判并批准', async () => {
+  it('旧 commander 仅接受同 Q 的另一原因 → 本轮保持 CANNOT_VERIFY、不调用裁判、不批准', async () => {
     seedCommander(['Q-1'], '维持规格');
     const r = await go(green(), { mode: 'cannot' });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(r.stderr).not.toContain('[coding-qa][P1]');
-    expect(judge.calls).toHaveLength(1);
-    expect(state().escalated).toBeUndefined();
-    expect(state()).toMatchObject({ passed: true, rounds: [{ round: 1, verdict: 'PASS', qa_verdict: 'CANNOT_VERIFY', cv_accepted: ['T-2'], judge: { verdict: 'PASS' } }] });
+    expect(r.stderr).toContain('[coding-qa][P1]');
+    expect(judge.calls).toHaveLength(0);
+    expect(state().escalated).toMatchObject({ type: 'qa_cannot_verify' });
+    expect(state().passed).toBeFalsy();
+    expect(state().rounds).toMatchObject([{ round: 1, verdict: 'CANNOT_VERIFY' }]);
+    expect(state().rounds[0].judge).toBeUndefined();
+  });
+
+  it('同问题的精确接受也不产生实际 QA PASS：保留原报告后明确上交，不再请模型重裁', async () => {
+    const sourceStage = '22222222-2222-4222-8222-222222222222';
+    let r = await go(green(), { mode: 'cannot', extra: { FAKE_QA_SOURCE_STAGE: sourceStage } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const first = state();
+    expect(first.escalated.qa_context).toMatchObject({ taskId: TASK, sprintDir: SPRINT, head, round: 1, qaStageEventId: sourceStage });
+    const context = first.escalated.qa_context;
+    const nextHead = E.remoteHead();
+    const { escalated, ...remaining } = first;
+    seedState(remaining);
+    fs.writeFileSync(path.join(sb.logDir, 'commander-77.json'), JSON.stringify({ interventions: [{
+      n: 1, kind: 'qa', action: 'resume', escalation: first.escalated,
+      rulings: [{ issue: 'T-2', verdict: '维持规格', reason: '同一限制已明确' }],
+      cv_scope: { schema_version: 1, task_id: TASK, sprint_dir: SPRINT, head: nextHead,
+        spec_sha256: context.specSha256, execution_context_sha256: context.executionContextSha256,
+        source_qa_stage_event_id: sourceStage, source_round: 1, applies_to_round: 2,
+        items: first.escalated.cannot_verify },
+    }] }));
+    await E.closeBrain();
+    r = await go(green({ prs: [pr({ headRefOid: nextHead })] }), { mode: 'cannot',
+      extra: { FAKE_QA_SOURCE_STAGE: '33333333-3333-4333-8333-333333333333' } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(judge.calls).toHaveLength(0);
+    expect(state().passed).toBeFalsy();
+    expect(state().rounds.at(-1)).toMatchObject({ verdict: 'CANNOT_VERIFY', cv_accepted: ['T-2'] });
+    expect(state().escalated.type).toBe('qa_accepted_unverified');
+    expect(E.remoteHead()).not.toBe(nextHead);
   });
 
   for (const [label, covers, verdict] of [['没被裁过的 Q 项', ['Q-9'], '维持规格'], ['裁决是上交', ['Q-1'], '上交']]) {

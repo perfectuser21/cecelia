@@ -8,10 +8,13 @@ import { provenanceRoot, assertProvenanceSeparation } from './provenance-path.mj
 import { REPO, MANIFEST, OWNER, UUID, SHA, hash, fail, git, gitText, fixedHead, ancestor, noLinks, workingBytes, workingMode, gitBytes, gitMode, sourceManifest, writeEvent, events } from './record-provenance-store.mjs';
 import { startQaIsolation, verifyQaIsolation, isolationProjection } from './qa-isolation.mjs';
 import { identity, recordType, inspectRecord, workingRecord, branchIdentity, listRecords } from './record-provenance-records.mjs';
+import { writeJudgeInput, validateJudgeStageInput, judgeInputRequired } from './record-provenance-inputs.mjs';
+import { assembleCurrentQa, validateQaAssembly, compiledQaRequired } from './record-provenance-qa.mjs';
+import { QA_NATIVE_POLICY } from './native-evidence.mjs';
 
 const storage = new AsyncLocalStorage(), transactions = new WeakMap();
 const STAGES = new Set(['intent', 'spec', 'spec_review', 'build', 'verify', 'evaluate', 'judge', 'commander']);
-const ownUrls = [import.meta.url, new URL('./record-provenance-store.mjs', import.meta.url), new URL('./record-provenance-records.mjs', import.meta.url), new URL('./provenance-path.mjs', import.meta.url), new URL('./qa-isolation.mjs', import.meta.url)];
+const ownUrls = [import.meta.url, new URL('./record-provenance-store.mjs', import.meta.url), new URL('./record-provenance-records.mjs', import.meta.url), new URL('./provenance-path.mjs', import.meta.url), new URL('./qa-isolation.mjs', import.meta.url), new URL('./record-provenance-inputs.mjs', import.meta.url), new URL('./record-provenance-qa.mjs', import.meta.url)];
 const ownBytes = new Map(ownUrls.map(url => { const file = fileURLToPath(url);noLinks(file);return [file, hash(fs.readFileSync(file))]; }));
 const clone = value => JSON.parse(JSON.stringify(value));
 function controllerValid(c) {
@@ -45,6 +48,12 @@ function config(options, writing = false) {
   return c;
 }
 export function hasRecordProvenanceContext() { return Boolean(storage.getStore()); }
+export function sealJudgeInput(materials) {
+  const c = storage.getStore();return c ? writeJudgeInput(c, materials) : null;
+}
+export function compileCurrentQaEvidence(reportRel) {
+  const c = storage.getStore();return c?.evidencePolicy === QA_NATIVE_POLICY ? assembleCurrentQa(c, reportRel) : null;
+}
 export function withRecordProvenance(options, fn) {
   const c = config(options, true);
   if (!(STAGES.has(c.stage) || c.stage === 'publish') || !Number.isSafeInteger(c.round ?? 0) || (c.round ?? 0) < 0) fail('stage_invalid');
@@ -61,7 +70,8 @@ export function beginEvaluateIsolation() {
   return Object.freeze({ restore: () => c.isolation.restore(), abort: () => c.isolation.abort(), hiddenFacts: () => c.isolation.hiddenFacts() });
 }
 function nativeSucceeded(run) {
-  if (run.provider !== 'codex' || run.code !== 0 || run.timedOut || run.terminated || typeof run.stdout !== 'string') return false;
+  if (run.provider !== 'codex' || run.code !== 0 || run.timedOut || run.terminated || typeof run.stdout !== 'string'
+    || run.stdin_error || (run.stdin_expected && !run.stdin_finished)) return false;
   const rows = run.stdout.split('\n').filter(Boolean).map(line => { try { return JSON.parse(line); } catch { return null; } });
   return rows.some(e => e?.type === 'thread.started' && typeof e.thread_id === 'string') && rows.some(e => e?.type === 'turn.completed') && !rows.some(e => e?.type === 'turn.failed' || e?.type === 'error');
 }
@@ -76,7 +86,12 @@ export function captureNativeExecution(run) {
   const data = { kind: 'native', ...(isolationError ? { isolation_error: isolationError.message } : {}), ...(hiddenId ? { isolation_hidden_event_id: hiddenId } : {}), run_id: c.runId, sprint_dir: c.sprintDir, stage: c.stage, round: c.round, controller: c.controller,
     provider: run.provider ?? null, model: run.model ?? null, tag: run.tag ?? null, code: run.code ?? null,
     timed_out: Boolean(run.timedOut), terminated: Boolean(run.terminated), stdout: typeof run.stdout === 'string' ? run.stdout : '',
-    success: nativeSucceeded(run) };
+    ...(c.judgeInput ? { judge_input_event_id: c.judgeInput.id } : {}),
+    ...(typeof run.stdin_sha256 === 'string' ? { stdin_sha256: run.stdin_sha256 } : {}),
+    ...(run.stdin_expected !== undefined ? { stdin_expected: run.stdin_expected, stdin_finished: Boolean(run.stdin_finished), stdin_bytes: run.stdin_bytes ?? null } : {}),
+    ...(run.stdin_error ? { stdin_error: run.stdin_error } : {}), success: nativeSucceeded(run)
+      && (!c.judgeInput || (run.stdin_sha256 === c.judgeInput.stdin_sha256 && run.stdin_bytes === c.judgeInput.stdin_bytes
+        && run.stdin_expected === true && run.stdin_finished === true)) };
   const event = writeEvent(c.root, c.taskId, data);c.native.push(event.id);
   // 即使隔离边界破坏也保留真实管道原文，但不能将它绑定为成功隔离。
   if (isolationError) throw isolationError;
@@ -85,7 +100,10 @@ export function captureNativeExecution(run) {
 function eventBase(c) { return { sprint_dir: c.sprintDir, run_id: c.runId, controller: c.controller }; }
 export function sealStageEvidence({ files, result, producer = 'model', controllerInput, round, nativeIds } = {}) {
   const c = storage.getStore();if (!c) return null;
-  if (!STAGES.has(c.stage) || result?.status !== 'completed' || !['model', 'controller', 'controller_render'].includes(producer)) fail('stage_not_completed');
+  if (judgeInputRequired({ stage: c.stage, controller: c.controller }) && !c.judgeInput) fail('judge_input_missing');
+  if (c.stage === 'evaluate' && compiledQaRequired(c) && (producer !== 'controller_assembly' || !c.qaAssembly)) fail('qa_compiled_policy');
+  if (producer === 'controller_assembly' && (c.stage !== 'evaluate' || !c.qaAssembly)) fail('qa_assembly_context');
+  if (!STAGES.has(c.stage) || result?.status !== 'completed' || !['model', 'controller', 'controller_render', 'controller_assembly'].includes(producer)) fail('stage_not_completed');
   if (producer === 'controller' && c.stage !== 'intent') fail('producer_invalid');
   if (producer === 'controller_render' && !['judge', 'commander'].includes(c.stage)) fail('producer_invalid');
   const r = round ?? c.round;if (!Number.isSafeInteger(r) || r < 0) fail('round_invalid');
@@ -101,21 +119,24 @@ export function sealStageEvidence({ files, result, producer = 'model', controlle
   return writeEvent(c.root, c.taskId, { kind: 'stage', ...eventBase(c), stage: c.stage, round: r, producer,
     head_before: c.startedHead, head_after: gitText(c.worktree, 'rev-parse', 'HEAD'), records,
     ...(isolationId ? { isolation_event_id: isolationId } : {}),
-    native_ids: ids, current_native_id: c.native.at(-1) ?? null, result: clone(result), ...(controllerInput ? { controller_input: clone(controllerInput) } : {}) });
+    ...(c.qaAssembly ? { evidence_policy: QA_NATIVE_POLICY, controller_input: clone(c.qaAssembly) } : {}),
+    native_ids: ids, current_native_id: c.native.at(-1) ?? null, ...(c.judgeInput ? { judge_input_event_id: c.judgeInput.id, stdin_sha256: c.judgeInput.stdin_sha256 } : {}), result: clone(result), ...(controllerInput ? { controller_input: clone(controllerInput) } : {}) });
 }
 function validateStage(c, stage, all) {
   if (stage.kind !== 'stage' || stage.sprint_dir !== c.sprintDir || !STAGES.has(stage.stage) || stage.result?.status !== 'completed' || !Array.isArray(stage.records)) fail('stage_invalid');
   controllerValid(stage.controller);
   if (stage.producer === 'controller') { if (stage.stage !== 'intent') fail('producer_invalid'); }
   else {
-    if (!['model', 'controller_render'].includes(stage.producer) || !Array.isArray(stage.native_ids)) fail('producer_invalid');
+    if (!['model', 'controller_render', 'controller_assembly'].includes(stage.producer) || !Array.isArray(stage.native_ids)) fail('producer_invalid');
     const native = stage.native_ids.map(id => all.find(e => e.id === id));
     const current = native.find(n => n?.id === stage.current_native_id);
-    if (!current || current.id !== stage.native_ids.at(-1) || JSON.stringify(current.controller) !== JSON.stringify(stage.controller) || !current.success || !nativeSucceeded({ provider: current.provider, code: current.code, timedOut: current.timed_out, terminated: current.terminated, stdout: current.stdout })) fail('native_missing');
+    if (!current || current.id !== stage.native_ids.at(-1) || JSON.stringify(current.controller) !== JSON.stringify(stage.controller) || !current.success || !nativeSucceeded({ ...current, timedOut: current.timed_out, stdout: current.stdout })) fail('native_missing');
     if (!native.some(n => n?.kind === 'native' && n.run_id === stage.run_id && n.stage === stage.stage && n.sprint_dir === c.sprintDir && n.success && nativeSucceeded({ provider: n.provider, code: n.code, timedOut: n.timed_out, terminated: n.terminated, stdout: n.stdout }))) fail('native_missing');
     if (stage.producer === 'controller_render' && (!['judge', 'commander'].includes(stage.stage) || !stage.controller_input)) fail('render_input_missing');
   }
+  validateQaAssembly(c, stage, all);
   if (stage.isolation_event_id !== undefined) verifyQaIsolation(c, stage, all);
+  validateJudgeStageInput(c, stage, all);
 }
 function findStage(c, record, head, all, stageEventId, qaStageEventId) {
   const matching = all.filter(e => (!stageEventId || e.id === stageEventId) && (!qaStageEventId || e.controller_input?.qa_stage_event_id === qaStageEventId) && e.kind === 'stage' && e.sprint_dir === c.sprintDir && e.records?.some(r => r.path === record.path && r.sha256 === record.sha256 && r.mode === record.mode) && ancestor(c.worktree, e.head_after, head));
@@ -206,7 +227,7 @@ function verifyQaRound(c, head, records, all) {
   const judgeRecord = records.find(r => r.path === `${c.sprintDir}/06-judge-r${round}.md`);
   if (!qaRecord || !judgeRecord) fail('qa_proof_missing');
   const qa = all.find(e => e.id === qaRecord.stage_event_id), judge = all.find(e => e.id === judgeRecord.stage_event_id);
-  if (qa?.stage !== 'evaluate' || qa.producer !== 'model' || qa.round !== round || qa.result?.outputs?.qa?.verdict !== 'PASS' || qa.result.outputs.qa.round !== round || qa.head_before !== qa.head_after || !ancestor(c.worktree, qa.head_before, head)) fail('qa_pass_missing');
+  if (qa?.stage !== 'evaluate' || !['model', 'controller_assembly'].includes(qa.producer) || qa.round !== round || qa.result?.outputs?.qa?.verdict !== 'PASS' || qa.result.outputs.qa.round !== round || qa.head_before !== qa.head_after || !ancestor(c.worktree, qa.head_before, head)) fail('qa_pass_missing');
   verifyQaIsolation(c, qa, all);
   if (judge?.stage !== 'judge' || judge.producer !== 'controller_render' || judge.round !== round || judge.result?.outputs?.judge_verdict !== 'PASS' || judge.controller_input?.decision?.verdict !== 'PASS' || judge.controller_input.round !== round || judge.controller_input.qa_stage_event_id !== qa.id || judge.controller_input.tested_head !== qa.head_before || !ancestor(c.worktree, qa.head_before, judge.head_before)) fail('judge_pass_missing');
 }
@@ -286,7 +307,7 @@ export function provenanceProjection(result) {
   for (const r of result.records) {
     if (Object.keys(r).some(k => !['path', 'mode', 'sha256', 'stage', 'round', 'producer', 'stage_event_id', 'stage_input_head', 'registration_event_id', 'commit'].includes(k))) fail('projection_invalid');
     recordType(r.path, result.sprint_dir);
-    if (!['100644', '100755'].includes(r.mode) || !/^[a-f0-9]{64}$/.test(r.sha256 ?? '') || !STAGES.has(r.stage) || !Number.isSafeInteger(r.round) || r.round < 0 || !['model', 'controller', 'controller_render'].includes(r.producer) || !UUID.test(r.stage_event_id ?? '') || !SHA.test(r.stage_input_head ?? '') || (result.status === 'verified' && (!UUID.test(r.registration_event_id ?? '') || !SHA.test(r.commit ?? '')))) fail('projection_invalid');
+    if (!['100644', '100755'].includes(r.mode) || !/^[a-f0-9]{64}$/.test(r.sha256 ?? '') || !STAGES.has(r.stage) || !Number.isSafeInteger(r.round) || r.round < 0 || !['model', 'controller', 'controller_render', 'controller_assembly'].includes(r.producer) || (r.producer === 'controller_assembly' && r.stage !== 'evaluate') || !UUID.test(r.stage_event_id ?? '') || !SHA.test(r.stage_input_head ?? '') || (result.status === 'verified' && (!UUID.test(r.registration_event_id ?? '') || !SHA.test(r.commit ?? '')))) fail('projection_invalid');
   }
   const records = result.records.map(r => Object.fromEntries(['path', 'mode', 'sha256', 'stage', 'round', 'producer', 'stage_event_id', 'stage_input_head', 'registration_event_id', 'commit'].filter(k => r[k] !== undefined).map(k => [k, r[k]])));
   return { ...baseResult({ taskId: result.task_id, sprintDir: result.sprint_dir }, result.head, result.status, records),

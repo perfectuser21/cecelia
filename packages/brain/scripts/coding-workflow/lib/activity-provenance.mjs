@@ -1,6 +1,7 @@
 // 仅可信活动入口选择阶段；任务 JSON 不得选择证据根、controller 身份或跳过封存。
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { withRecordProvenance, controllerIdentity, provenanceRequired, sealStageEvidence } from './record-provenance.mjs';
 
 const FIXED_REPORTS = {
@@ -35,15 +36,18 @@ export async function runRecordedActivity(input, options, handler) {
   // 与 evaluate 的既有默认口径一致，身份与文件名必须使用同一个实际轮次。
   if (stage === 'evaluate') input = { ...input,
     round: Number.isInteger(Number(input.round)) && Number(input.round) > 0 ? Number(input.round) : 1 };
-  const controller = controllerIdentity(entry, [import.meta.url, new URL('./claude.mjs', import.meta.url)]);
+  const controller = controllerIdentity(entry, [import.meta.url, new URL('./claude.mjs', import.meta.url),
+    ...(stage === 'evaluate' ? [new URL('./native-evidence.mjs', import.meta.url)] : [])]);
   return withRecordProvenance({ worktree: input.worktree, taskId: input.task_id,
-    sprintDir: input.sprint_dir, stage, round: input.round ?? 0, controller, ...(root ? { root } : {}) }, async () => {
+    sprintDir: input.sprint_dir, stage, round: input.round ?? 0, controller,
+    ...(stage === 'evaluate' ? { evidencePolicy: 'qa_native_compiled_v1' } : {}), ...(root ? { root } : {}) }, async () => {
     const result = await handler(input);
     if (result?.status === 'completed' && stage !== 'publish') {
       const sealed = sealStageEvidence({ files: stageFiles(input, stage), result,
-        producer: stage === 'intent' ? 'controller' : 'model',
+        producer: stage === 'intent' ? 'controller' : stage === 'evaluate' ? 'controller_assembly' : 'model',
         ...(stage === 'intent' ? { controllerInput: { task_id: input.task_id, result } } : {}) });
-      if (stage === 'evaluate') return { ...result, outputs: { ...result.outputs, source_stage_event_id: sealed.id } };
+      if (stage === 'evaluate') return { ...result, outputs: { ...result.outputs, source_stage_event_id: sealed.id,
+        source_execution_context_sha256: createHash('sha256').update(JSON.stringify({ controller: sealed.controller, evidence_policy: sealed.evidence_policy ?? null })).digest('hex') } };
     }
     return result;
   });

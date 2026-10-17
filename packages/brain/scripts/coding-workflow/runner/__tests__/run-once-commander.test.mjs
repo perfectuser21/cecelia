@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { git } from '../../__tests__/helpers/git.mjs';
 import { useQaEnv, TASK, BRANCH, SPRINT } from './helpers/qa-env.mjs';
 import { expectSessionOnlyInFile } from './helpers/session-quiet.mjs';
@@ -62,6 +63,29 @@ describe('coding commander（升级后自动裁决）', () => {
     expect(overrides()).toEqual([expect.objectContaining({ by: 'coding-commander', escalation: expect.objectContaining({ type: 'judge_contract_gap' }) })]);
     expect(E.brain.spans).toContainEqual(expect.objectContaining({ occurrence_key: 'commander:77:c1', outcome: 'pass' }));
     expect(bark.calls).toEqual([]);
+  });
+
+  it('接受无法验证问题只登记精确下一轮 scope，实际 QA 仍未通过', async () => {
+    const stage = '22222222-2222-4222-8222-222222222222';
+    const limitation = { id: 'T-2', covers: ['Q-1'], reason: '预览缺少 ffprobe' };
+    const originalSpec = git(sb.origin, 'show', `${BRANCH}:${SPRINT}/02-spec.md`);
+    const context = { taskId: TASK, sprintDir: SPRINT, head: remoteHead(), round: 1,
+      qaStageEventId: stage, specSha256: crypto.createHash('sha256').update(originalSpec).digest('hex'),
+      executionContextSha256: 'c'.repeat(64) };
+    seedState({ rounds: [{ round: 1, head: context.head, verdict: 'CANNOT_VERIFY', fails: 0,
+      source_stage_event_id: stage }], escalated: { type: 'qa_cannot_verify', round: 1,
+      pr: 77, at: '2026-10-11T00:00:00.000Z', cannot_verify: [limitation], qa_context: context } });
+    const ruling = { action: 'resume', rulings: [{ issue: 'T-2', verdict: '维持规格', reason: '限制已明确' }], summary: '记录限制，仍须实际验证' };
+    const r = await go(green(), { mode: 'cmd-resume', extra: { FAKE_CMD_RULING: JSON.stringify(ruling) } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const expectedSpec = git(sb.origin, 'show', `${BRANCH}:${SPRINT}/02-spec.md`);
+    expect(cmdState().interventions[0].cv_scope).toMatchObject({ schema_version: 1,
+      task_id: TASK, sprint_dir: SPRINT, head: remoteHead(),
+      spec_sha256: crypto.createHash('sha256').update(expectedSpec).digest('hex'),
+      execution_context_sha256: context.executionContextSha256,
+      source_qa_stage_event_id: stage, source_round: 1, applies_to_round: 2, items: [limitation] });
+    expect(state().passed).toBeFalsy();
+    expect(state().rounds[0].verdict).toBe('CANNOT_VERIFY');
   });
 
   it('Cecelia commander 独立07提交同时登记来源，真实裸仓回读无孤立记录', async () => {

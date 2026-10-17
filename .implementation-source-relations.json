@@ -49,6 +49,7 @@
 
     
     {"owner_path":"packages/brain/scripts/coding-workflow/lib/record-provenance.mjs","path":"docs/learnings/cp-10160605-cw-source-proof.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/lib/record-provenance.mjs","path":"docs/learnings/cp-10171320-qa-native-evidence.md","role":"documentation"},
     {"owner_path":"packages/brain/vitest.config.js","path":"packages/brain/src/__tests__/vitest.real-env-smoke.config.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-stage-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-stage-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-stage-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-stage-envelopes.test.js","role":"verification"},

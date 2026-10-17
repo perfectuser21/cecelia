@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
-import { provenanceRequired, beginEvaluateIsolation } from '../lib/record-provenance.mjs';
+import { provenanceRequired, beginEvaluateIsolation, compileCurrentQaEvidence } from '../lib/record-provenance.mjs';
 import { sourceFacts } from '../runner/lib/source-provenance.mjs';
 import { intentIdsError } from '../lib/intent.mjs';
 import { qaScenarios, SPEC_FILE, INTENT_FILE } from '../lib/spec-check.mjs';
@@ -58,7 +58,12 @@ function judge({ reportPath, reportFile, qaIds, stdout, worktree, dir, shotsDir,
   const prod = productionTouches(executions, production);
   if (prod.length > 0) return fail('fatal', 'evaluate_touched_production', { evidence: [{ commands: prod }] });
   if (!fs.existsSync(reportPath)) return fail('retryable', 'qa_report_missing');
-  const reportText = fs.readFileSync(reportPath, 'utf8');
+  const rel = path.relative(worktree, reportPath).split(path.sep).join('/');
+  let compiled;
+  try { compiled = compileCurrentQaEvidence(rel); } catch (error) {
+    return fail('retryable', 'qa_evidence_unverified', { evidence: [{ error: error.message }] });
+  }
+  const reportText = compiled ?? fs.readFileSync(reportPath, 'utf8');
   const report = parseQaReport(reportText);
   const judged = judgeQa(report, qaIds);
   if (judged.reason) return fail('retryable', judged.reason, { evidence: [{ errors: judged.errors, missing: judged.missing }] });
@@ -132,6 +137,13 @@ await runActivity(async (input) => {
     ROUND: String(round),
     TESTED_HEAD: input.head_sha || await headSha(worktree) || '未知',
     SOURCE_PROVENANCE: sourceProvenance ? JSON.stringify(sourceProvenance) : '本仓未接入来源凭证，不能据此宣称来源通过',
+    QA_EVIDENCE_POLICY: sourceProvenance ? 'qa_native_compiled_v1' : 'legacy_model_report',
+    QA_EVIDENCE_ITEM_RULE: sourceProvenance
+      ? '- 每个条目必须有 ```command 代码块及 `证据来源: controller_native`；由控制器绑定本轮实际执行记录并装配原生输出与退出码。页面操作仍写实际 Playwright 命令和截图路径。'
+      : '- 每个条目必须有真实执行的 ```command 和完整逐字的 ```output 代码块；页面操作仍写实际 Playwright 命令和截图路径。',
+    QA_EVIDENCE_ASSEMBLY_RULES: sourceProvenance
+      ? '原生证据装配规则：保留 PASS/FAIL/CANNOT_VERIFY 判定、对应项及原因。唯一执行过的精确命令可直接绑定；重复命令可写 `native_occurrence: N`，N 是同一精确 command 在本轮原生 completed 命令账中的 1 基序号（不是并发 start 顺序）。先按序号选中，再校验所给 native_item_id、退出码和 output 是否一致；非法或越界序号拒绝。也可使用已知的精确 native_item_id，或可唯一匹配的完整输出与退出码；没有足够 selector 的重复命令拒绝，不能任挑成功或最后一次。不要猜测内部 item_id。若填写 output，必须完整逐字匹配原件，包括第六行以后、空白和 CRLF。output 围栏只能放原始输出，退出码另列，禁止加 process_exit 等注释。真正零字节输出和空白输出不同。包装器摘要不能冒充子命令完整 stdout/stderr/exit；所有失败和重试均保留在完整有序命令账，账完整也不代表产品通过。'
+      : '证据提交规则：每个条目必须逐字记录实际执行的 command 和完整原始 output，不得省略输出或期待控制器自动填充。保留 PASS/FAIL/CANNOT_VERIFY 判定、对应项及原因；输出不得截断、改写或添加注释。失败和重复执行也须如实留证，退出码另列；命令成功不代表产品通过。',
     JUDGE_FEEDBACK: judgeFeedback,
     // 重试必须带新信息（审计 #33）：上次评估被判不合格的原因（runner 记下传入）；单行，防止伪造机器可读行
     PREV_ERRORS: typeof input.prev_errors === 'string' && input.prev_errors.trim() ? input.prev_errors.replace(/\s+/g, ' ').trim().slice(0, 2000) : '无',
