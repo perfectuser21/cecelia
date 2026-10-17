@@ -171,7 +171,9 @@ else:
     p=json.loads(base64.b64decode(sys.argv[2])) if len(sys.argv)>2 else json.load(sys.stdin)
     if action=='launch':dump(launch(p,'controller'))
     elif action=='adb_preflight':dump(remote(p,'adb_preflight_local'))
-    elif action=='adb_preflight_local':dump(adb_preflight(p))
+    elif action=='adb_preflight_local':
+        try:dump(adb_preflight(p))
+        except Exception as e:dump({'state':'rejected','reason':str(e)})
     elif action=='launch_business':dump(launch(p,'business'))
     elif action=='probe_business':dump(probe_local(p))
     elif action=='probe':dump(probe(p))

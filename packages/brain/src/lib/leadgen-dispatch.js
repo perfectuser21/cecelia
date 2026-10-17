@@ -40,7 +40,7 @@ export async function dispatchLeadgenTask(pool,task,deps={}) {
     if(!proof.eligible)return 'waiting';
     if(plan.machine==='xian-m4'&&isLeadgenPhoneFlow(plan.workflow_key)){
       const ready=parse(await (deps.adbPreflight??(p=>dispatch(buildLeadgenAdbPreflight(p))))(plan));
-      if(ready.state!=='device'||ready.serial!==plan.serial||ready.port!==(plan.env.DOUYIN_ADB_PORT===undefined?5037:Number(plan.env.DOUYIN_ADB_PORT)))throw Error('ADB预检身份不符');
+      if(ready.state!=='device'||ready.serial!==plan.serial||ready.port!==(plan.env.DOUYIN_ADB_PORT===undefined?5037:Number(plan.env.DOUYIN_ADB_PORT)))throw Error(`ADB预检失败: ${ready.reason??'身份不符'}`);
     }
   }catch(error){await terminal(pool,task,'failed',error.message,{phase:'preflight'},deps);return 'failed';}
   const claimed=await pool.query("UPDATE tasks SET claimed_by=$2,claimed_at=NOW() WHERE id=$1 AND status='queued' AND claimed_by IS NULL RETURNING id",[task.id,CLAIMER]);
