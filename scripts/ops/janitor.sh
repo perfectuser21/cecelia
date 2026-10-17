@@ -91,7 +91,16 @@ launchd_managed_pids() {
     return 0
   fi
   if [ -z "$_LAUNCHD_PIDS_CACHE" ]; then
-    _LAUNCHD_PIDS_CACHE=$(launchctl list 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {print $1}')
+    # list 仅覆盖当前用户域；LaunchDaemon必须从system域服务表读取。
+    # 只输出services表内的正PID，不把domain元数据/端点编号误当服务。
+    _LAUNCHD_PIDS_CACHE=$({
+      launchctl list 2>/dev/null | awk '$1 ~ /^[1-9][0-9]*$/ {print $1}'
+      launchctl print system 2>/dev/null | awk '
+        /^[[:space:]]*services = \{/ { inside=1; next }
+        inside && /^[[:space:]]*\}/ { inside=0 }
+        inside && NF==3 && $1 ~ /^[1-9][0-9]*$/ { print $1 }
+      '
+    } | sort -un)
   fi
   printf '%s\n' "$_LAUNCHD_PIDS_CACHE"
 }
