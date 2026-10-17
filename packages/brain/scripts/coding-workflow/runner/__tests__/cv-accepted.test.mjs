@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { cannotVerifyAccepted } from '../lib/cv-accepted.mjs';
+import { cannotVerifyAccepted, qaAcceptanceContext } from '../lib/cv-accepted.mjs';
 
 let dir, cfg;
 const current = { taskId: '11111111-1111-4111-8111-111111111111',
@@ -25,6 +25,16 @@ beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-cv-bound-'));
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 describe('CANNOT_VERIFY 的旧裁决只匹配明确问题与执行合同', () => {
+  it('相同环境模型与产品合同下可信执行控制器身份变化必须改变上下文摘要', () => {
+    const sprint = path.join(dir, current.sprintDir); fs.mkdirSync(sprint, { recursive: true });
+    fs.writeFileSync(path.join(sprint, '02-spec.md'), '固定规格');
+    const qa = { env: { kind: 'preview', url: 'http://127.0.0.1:5300', transport: 'loopback' }, provider: 'codex', model: 'local-stub' };
+    const stage = '22222222-2222-4222-8222-222222222222';
+    const first = qaAcceptanceContext(dir, current, current.head, 2, qa, stage, 'a'.repeat(64));
+    const changed = qaAcceptanceContext(dir, current, current.head, 2, qa, stage, 'b'.repeat(64));
+    expect(first.specSha256).toBe(changed.specSha256);
+    expect(first.executionContextSha256).not.toBe(changed.executionContextSha256);
+  });
   it('旧 covers-only 接受记录不证明本轮问题已被裁决', () => {
     seed({ bound: false });
     expect(cannotVerifyAccepted(cfg, 77, [item], current)).toBeNull();
