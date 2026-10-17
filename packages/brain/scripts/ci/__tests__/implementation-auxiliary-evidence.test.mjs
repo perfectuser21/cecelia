@@ -8,6 +8,7 @@ import { runImplementationPrGate } from '../../../../../scripts/ci/implementatio
 import { assertImplementationReport } from '../../../src/lib/implementation-report.js';
 import { applyAutoVersion } from '../../auto-version-apply.mjs';
 import './cleanup-source-retirement.test.mjs';
+import './verification-input-source.test.mjs';
 
 const roots=[];
 it('独立Node入口在Brain-only安装下仍真实记录无效输入，不提前加载scratch图扫描依赖',()=>{
