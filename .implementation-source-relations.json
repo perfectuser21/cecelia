@@ -266,6 +266,21 @@
       "role": "verification"
     },
     {
+      "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
+      "path": "packages/brain/scripts/ci/__tests__/verification-input-source.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
+      "path": "changes/cp-10171738-verification-input.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
+      "path": "docs/learnings/cp-10171738-verification-input.md",
+      "role": "documentation"
+    },
+    {
       "owner_path": "scripts/ci/implementation-pr-gate.mjs",
       "path": "packages/brain/src/lib/__tests__/implementation-ci-workflow.test.js",
       "role": "verification"
