@@ -94,7 +94,7 @@ function provenReaderClosure(consumer) {
   if(selected.some(rows=>rows.length!==1)||createHash('sha256').update(astShape(selected.map(rows=>rows[0]))).digest('hex')!==PURE_READERS_SHA256)return false;
   const constants=new Set(['requireAcorn','PREFIX','BUILD_SOURCE_PATHS','PUBLISH_TEST','PUBLISH_ENTRY']);
   const functions=new Set([...PURE_READERS,'parseEnvelope','collectBuildSources','collectPublishSources','provenanceInputs','collectProvenanceInputs']);
-  if(declarations.some(n=>n.type==='ImportDeclaration'?!['node:module','./existing-ops-build-envelopes.js','./existing-ops-provenance-envelope.js','./existing-ops-stage-source.js'].includes(n.source.value):n.type==='VariableDeclaration'?n.declarations.some(d=>!constants.has(d.id.name)&&!PURE_READERS.has(d.id.name)):n.type==='FunctionDeclaration'?!functions.has(n.id.name):true))return false;
+  if(declarations.some(n=>n.type==='ImportDeclaration'?!['node:module','./existing-ops-build-envelopes.js','./existing-ops-provenance-envelope.js','./existing-ops-stage-source.js','./existing-ops-native-evidence-source.js'].includes(n.source.value):n.type==='VariableDeclaration'?n.declarations.some(d=>!constants.has(d.id.name)&&!PURE_READERS.has(d.id.name)):n.type==='FunctionDeclaration'?!functions.has(n.id.name):true))return false;
   // 真实模块无需动态代码/模块入口；新增顶层副作用或读取者之外的全局写入一律失败关闭。
   const rows=astRows(consumer),parents=new Map(rows.map(r=>[r.node,r.parent]));
   const readerOf=node=>{for(let n=node;n;n=parents.get(n))if(n.type==='FunctionDeclaration'&&PURE_READERS.has(n.id?.name))return n;return null;};
@@ -103,11 +103,11 @@ function provenReaderClosure(consumer) {
     ||node.type==='Identifier'&&node.name==='parseEnvelope'&&parent?.type==='CallExpression'&&parent.callee===node&&!readerOf(node));
 }
 
-// 已独审的完整 runtime 指纹闭包：固定十一文件只读→SHA摘要/比较；没有模板执行或原文出口。
+// 已独审的完整 runtime 指纹闭包：固定十三文件只读→SHA摘要/比较；没有模板执行或原文出口。
 // 仅此路径且整个模块 AST 相等时认可该消费者；任何语义改动都须重新审查。
 // 这不把 runtime 加入文件白名单，模块原 R1–R7/进程别名扫描照常执行。
 const HASH_RUNTIME_FILE = path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
-const HASH_RUNTIME_SHA256 = '913daec3c751684fdb48d937ae819e09a000f173095f424775edd5820d3ca583';
+const HASH_RUNTIME_SHA256 = 'a3dc811f2170896591e197d3dbf503759a1e3ab21722adf59e8570c7a1193d99';
 const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
   &&createHash('sha256').update(astShape(parseModule(text))).digest('hex')===HASH_RUNTIME_SHA256;
 
@@ -116,19 +116,42 @@ const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
 const STAGE_HELPER=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-source.js');
 const STAGE_DATA=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
 const PROVENANCE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-envelope.js');
+const NATIVE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
+const NATIVE_DATA = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
 const PROVENANCE_READER_HASHES = new Map([
-  ['existing-ops-stage-source.js','4fdd0629c79c111cd75a545f859e76fc257110a7b0115b1f6692e4a17949bb6e'],
+  ['existing-ops-stage-source.js','0526cc902914d083cbef0cc58cbc48b8d63ade62bbdd782cb22b27322248cd3a'],
   ['existing-ops-stage-envelopes.js','1fda2fc1f3bf3ef7684930e46ac8dc0364bd1af1f8f27e97c7eb197fe23a6d8f'],
-  ['existing-ops-provenance-envelope.js','745763215cdef93ad88be255b7fd808a9f2cabc916c6ccdbd2bd5c22ec1fb486'],
+  ['existing-ops-provenance-envelope.js','27c87c40b07ef90e87d642042afbdeb6a770a71ec74582da312599ec6fae5d5e'],
   ['existing-ops-provenance-core-envelope.js','c3e8769e7f053fc63d52074235b521df5134e65c31d34f151bb6a9400fa4ab93'],
   ['existing-ops-provenance-entry-envelopes.js','126a93b9db9856fe06894a394ecb9e0afd099860b9fb54e8927c56c8b96a15bb'],
   ['existing-ops-provenance-local-envelopes.js','ef359ef987229815f3d258ff78535fb55dc909bb64eae88d67ce63d0ea55c7f4'],
+  // 新完整模块仅作有界Brotli→JSON数据与Acorn比较；整个AST及所有真实消费者均固定。
+  ['existing-ops-native-evidence-source.js','db5308fd90094044e2e4942dc704c90a41e6a225fd5bf04d0f5b876959175eb0'],
+  ['existing-ops-native-evidence-envelopes.js','ed0b4b01fb98b9ee5c852736286ae22ad7ce28252936840df257666778949c57'],
 ].map(([name,hash])=>[path.join(BRAIN_ROOT,'src/lib',name),hash]));
-const PROVENANCE_CALLER_SHA256 = '9eabed9cb853d87c4f7371de7d01e8ddd7c74c5d34e44dd8650aef3dd54a6f18';
+const PROVENANCE_CALLER_SHA256 = '689b9d5ed49e6d76a8f16b2a8cf8f4fea87f510cb33697a4ff3b2cb92770118e';
+// 仅静态折叠有界字面量拼接；不求值标识符、调用或运行时表达式。
+function constantReferenceString(node,depth=0) {
+  if(!node||depth>32)return null;
+  if(node.type==='Literal'&&typeof node.value==='string')return node.value.length<=4096?node.value:null;
+  if(node.type==='TemplateLiteral'&&!node.expressions.length) {
+    const value=node.quasis.map(q=>q.value.cooked).join('');
+    return value.length<=4096?value:null;
+  }
+  if(node.type==='BinaryExpression'&&node.operator==='+') {
+    const left=constantReferenceString(node.left,depth+1),right=constantReferenceString(node.right,depth+1);
+    if(left!==null&&right!==null&&left.length+right.length<=4096)return left+right;
+  }
+  return null;
+}
 function decodedReferenceTexts(text) {
-  try{return [text,...astRows(parseModule(text)).flatMap(({node})=>node.type==='Literal'&&typeof node.value==='string'?[node.value]
-    :node.type==='TemplateLiteral'&&!node.expressions.length?[node.quasis.map(q=>q.value.cooked).join('')]:[])];}
-  catch{return [text];} // 非 JS 文件仍保留原文本检查；不推断任意字符串拼接。
+  try{return [text,...astRows(parseModule(text)).flatMap(({node})=>{
+    if(node.type==='Literal'&&typeof node.value==='string')return [node.value];
+    if(node.type==='TemplateLiteral'&&!node.expressions.length)return [node.quasis.map(q=>q.value.cooked).join('')];
+    const value=constantReferenceString(node);
+    return value===null?[]:[value];
+  })];}
+  catch{return [text];} // 非 JS 文件仍保留原文本检查。
 }
 function provenanceReaderClosure(sources) {
   if(createHash('sha256').update(astShape(parseModule(sources.get(ENVELOPE_CONSUMER)||''))).digest('hex')!==PROVENANCE_CALLER_SHA256)return false;
@@ -137,8 +160,9 @@ function provenanceReaderClosure(sources) {
     if(createHash('sha256').update(astShape(parseModule(sources.get(file)||''))).digest('hex')!==hash)return false;
     for(const [consumer,text] of sources) {
       if(!decoded.get(consumer).some(value=>value.includes(path.basename(file))))continue;
-      const caller=file===STAGE_DATA?STAGE_HELPER:file===STAGE_HELPER||file===PROVENANCE_HELPER?ENVELOPE_CONSUMER:PROVENANCE_HELPER;
-      if(consumer===caller)continue;
+      const callers=file===NATIVE_DATA?[NATIVE_HELPER]:file===NATIVE_HELPER?[ENVELOPE_CONSUMER,STAGE_HELPER,PROVENANCE_HELPER]
+        :file===STAGE_DATA?[STAGE_HELPER]:file===STAGE_HELPER||file===PROVENANCE_HELPER?[ENVELOPE_CONSUMER]:[PROVENANCE_HELPER];
+      if(callers.includes(consumer))continue;
       if(provenFingerprintReader(consumer,text))continue;
       return false;
     }
@@ -197,6 +221,11 @@ function aliasedProcessCalls(src) {
 
 export function findClaudeInvocations(src, {file,sources}={}) {
   const original=src;
+  if(file===NATIVE_DATA){
+    let readonly=false;try{readonly=src===sources.get(file)&&provenanceReaderClosure(sources);}catch{}
+    // 压缩并不隐藏可执行语句：整个数据模块不匹配或任何新消费者出现都明确E1，原R1-R7继续扫描。
+    if(!readonly)return [{rule:'E1',line:1,text:'原生封套不在已审只读消费闭包'},...findClaudeInvocations(src)];
+  }
   if(file===STAGE_DATA){
     let ranges;try{if(src===sources.get(file)&&provenanceReaderClosure(sources))ranges=astRows(parseModule(src)).filter(({node})=>node.type==='Literal'&&typeof node.value==='string').map(({node})=>[node.start,node.end]);}catch{}
     if(!ranges)return [{rule:'E1',line:1,text:'阶段封套不在已审只读消费闭包'},...findClaudeInvocations(src)];
@@ -427,5 +456,42 @@ describe('merge 读取封套不增加 Claude 原文执行出口',()=>{
   if(kind==='escaped consumer')sources.set(path.join(BRAIN_ROOT,'src/merge-escape.js'),"import {MERGE_REVIEWED} from './lib/existing-ops-provenance-local-\\u0065nvelopes.js';eval(MERGE_REVIEWED.sourceProvenance);");
   if(kind==='stage execution')sources.set(STAGE_DATA,sources.get(STAGE_DATA)+'\nFunction(MERGE_STAGE_ENVELOPES.evaluate)();');
   expect(findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources}).some(h=>h.rule==='E1')).toBe(true);
+ });
+});
+
+describe('原生QA完整封套只作为有界解码后的Acorn输入',()=>{
+ const helper=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
+ const data=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
+ const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,HASH_RUNTIME_FILE,helper,data,...PROVENANCE_READER_HASHES.keys()])].map(file=>[file,readFileSync(file,'utf8')]));
+ const scan=sources=>findClaudeInvocations(sources.get(data),{file:data,sources});
+ it('完整已审新旧闭包及十三文件只读指纹不恢复任何Claude执行路径',()=>{
+  const sources=base();
+  for(const file of [ENVELOPE_FILE,STAGE_DATA,helper,data,HASH_RUNTIME_FILE])expect(findClaudeInvocations(sources.get(file),{file,sources})).toEqual([]);
+ });
+ it.each(['data eval','data Function','unbounded decode','changed encoding','changed payload','helper eval','helper raw export','caller eval','stage eval','provenance eval','third data consumer','third helper consumer','escaped data consumer','dynamic helper consumer','missing helper','runtime raw export','concat data consumer','concat helper consumer'])('%s 必须拒绝原生封套纯数据资格',kind=>{
+  const sources=base(),other=path.join(BRAIN_ROOT,'src/unreviewed-native-reader.js');
+  if(kind==='data eval')sources.set(data,sources.get(data)+'\neval(NATIVE_EVIDENCE_ENVELOPES.legacyCli);');
+  if(kind==='data Function')sources.set(data,sources.get(data)+'\nFunction(NATIVE_EVIDENCE_ENVELOPES.legacyCli)();');
+  if(kind==='unbounded decode')sources.set(data,sources.get(data).replace('{ maxOutputLength: 321616 }','{}'));
+  if(kind==='changed encoding')sources.set(data,sources.get(data).replace(", 'base64')",", 'utf8')"));
+  if(kind==='changed payload')sources.set(data,sources.get(data).replace(/Buffer\.from\('([A-Za-z0-9+/=])/,(_all,c)=>`Buffer.from('${c==='A'?'B':'A'}`));
+  if(kind==='helper eval')sources.set(helper,sources.get(helper)+'\neval(REVIEWED.legacyCli);');
+  if(kind==='helper raw export')sources.set(helper,sources.get(helper)+'\nexport const raw=REVIEWED.legacyCli;');
+  if(kind==='caller eval')sources.set(ENVELOPE_CONSUMER,sources.get(ENVELOPE_CONSUMER)+'\nnativeBuildSources(candidate,eval);');
+  if(kind==='stage eval')sources.set(STAGE_HELPER,sources.get(STAGE_HELPER)+'\nnativeEvidenceStages(candidate,eval);');
+  if(kind==='provenance eval')sources.set(PROVENANCE_HELPER,sources.get(PROVENANCE_HELPER)+'\nnativeEvidenceForwarding(candidate,eval);');
+  if(kind==='third data consumer')sources.set(other,"import {NATIVE_EVIDENCE_ENVELOPES as data} from './lib/existing-ops-native-evidence-envelopes.js';eval(data.legacyCli);");
+  if(kind==='third helper consumer')sources.set(other,"import {nativeCompatibleCli} from './lib/existing-ops-native-evidence-source.js';eval(nativeCompatibleCli());");
+  if(kind==='escaped data consumer')sources.set(other,"import {NATIVE_EVIDENCE_ENVELOPES} from './lib/existing-ops-native-evidence-\\u0065nvelopes.js';eval(NATIVE_EVIDENCE_ENVELOPES.legacyCli);");
+  if(kind==='dynamic helper consumer')sources.set(other,"const reader=await import('./lib/existing-ops-native-evidence-\\u0073ource.js');eval(reader.nativeCompatibleCli());");
+  if(kind==='concat data consumer')sources.set(other,"const d=await import('./lib/existing-ops-native-evidence-'+'envelopes.js');Function(d.NATIVE_EVIDENCE_ENVELOPES.legacyCli)();");
+  if(kind==='concat helper consumer')sources.set(other,"const d=await import('./lib/existing-ops-native-evidence-'+'source.js');Function(d.nativeCompatibleCli())();");
+  if(kind==='missing helper')sources.delete(helper);
+  if(kind==='runtime raw export')sources.set(HASH_RUNTIME_FILE,sources.get(HASH_RUNTIME_FILE)+"\nexport const raw=readFileSync(new URL('existing-ops-native-evidence-envelopes.js',import.meta.url),'utf8');");
+  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
+ });
+ it('数据后的实际进程别名调用仍同时触发E1与原R1',()=>{
+  const sources=base();sources.set(data,sources.get(data)+"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);");
+  const hits=scan(sources);expect(hits.some(hit=>hit.rule==='E1')).toBe(true);expect(hits.some(hit=>hit.rule==='R1')).toBe(true);
  });
 });

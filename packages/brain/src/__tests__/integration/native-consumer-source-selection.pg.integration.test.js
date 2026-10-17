@@ -137,12 +137,12 @@ it('HTTP GET/refresh与KR companion同一选版，重复GET只复用纯Git且不
  expect(refreshed.body.snapshot.definitions.workflows.map(w=>w.id).sort()).toEqual(fresh.definitions.workflows.map(w=>w.id).sort());
  expect(await history()).toEqual(before);
 },120000);
-it('认证runtime-source只返回固定十一hash，客户端路径/伪proof不影响身份',async()=>{
+it('认证runtime-source只返回固定十三hash，客户端路径/伪proof不影响身份',async()=>{
  const source=transport(),response=await request(server(source)).get('/ci/runtime-source').query({paths:'/etc/passwd',proof:'fake'});
  expect(response.status).toBe(200);expect(Object.keys(response.body).sort()).toEqual(['files','git_sha','repo','schema_version']);
- expect(response.body.repo).toBe(query.repo);expect(response.body.files).toHaveLength(11);
+ expect(response.body.repo).toBe(query.repo);expect(response.body.files).toHaveLength(13);
  expect(response.body.files.map(file=>file.path)).toEqual(['source','runtime-source','build-source','build-envelopes','workspace-source',
-  'provenance-envelope','provenance-core-envelope','provenance-entry-envelopes','provenance-local-envelopes','stage-source','stage-envelopes']
+  'provenance-envelope','provenance-core-envelope','provenance-entry-envelopes','provenance-local-envelopes','stage-source','stage-envelopes','native-evidence-source','native-evidence-envelopes']
   .map(name=>`packages/brain/src/lib/existing-ops-${name}.js`).sort());
  for(const file of response.body.files)expect(file.sha256).toBe(createHash('sha256').update(await readSource(file.path)).digest('hex'));
  expect(source.calls).toEqual([]);
