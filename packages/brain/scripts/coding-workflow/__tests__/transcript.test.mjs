@@ -51,6 +51,7 @@ describe('unverifiedItems', () => {
       ['输出null', event('one', { aggregated_output: null })],
       ['非空原生却报空', event('one', { aggregated_output: 'real nonempty output\n' })],
       ['仅空白原生却报零字节', event('one', { aggregated_output: ' \n\t' })],
+      ['单LF原生却报零字节', event('one', { aggregated_output: '\n' })],
       ['退出码未知', event('one', { exit_code: null })],
       ['未完成', event('one', { status: 'in_progress' })],
     ])('%s不能冒充合法零字节stdout', (_label, stdout) => {

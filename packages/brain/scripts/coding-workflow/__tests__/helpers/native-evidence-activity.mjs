@@ -9,7 +9,7 @@ import { withRecordProvenance, controllerIdentity, captureNativeExecution, sealS
 // Only the external CLI is replaced. Activity/provenance/Git/isolation are real.
 export async function nativeEvidenceActivity({ empty = false, verdict = 'PASS', nativePatch = null, patchIndex = 4,
   draftOutput, selectedItem = 'native-5', selectRepeated = false, corruptJson = false,
-  nativeText, controllerSource = false } = {}) {
+  nativeText, controllerSource = false, finding = false, draftScreenshot = null, otherScreenshot = false } = {}) {
   const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'native-evidence-activity-')));
   const worktree = path.join(temp, 'repo'), root = path.join(temp, '.cecelia/coding-workflow-provenance');
   fs.mkdirSync(worktree);
@@ -49,7 +49,8 @@ export async function nativeEvidenceActivity({ empty = false, verdict = 'PASS', 
     const outputs = ['first failed attempt\n', 'second actual attempt\n', '', ' \n\t', authoritative];
     const expected = commands.map((command, i) => ({ item_id: `native-${i + 1}`, command, output: outputs[i], exit_code: i === 0 ? 7 : 0 }));
     const reportRel = `${sprintDir}/05-qa-report-r1.md`;
-    const draft = Buffer.from(fm('evaluate', `# 原始模型草稿 Ω\n### T-1\n对应: Q-1\nverdict: ${verdict}\n${selectedItem ? `native_item_id: ${selectedItem}\n` : ''}${controllerSource ? '证据来源: controller_native\n' : ''}\`\`\`command\n${selectRepeated ? repeat : finalCommand}\n\`\`\`${controllerSource && draftOutput === undefined ? '' : `\n\`\`\`output\n${draftOutput ?? (selectRepeated ? outputs[1] : outputs[4])}\`\`\``}`));
+    const body = `# 原始模型草稿 Ω\n### T-1\n对应: Q-1\nverdict: ${verdict}\n${draftScreenshot ? `截图: ${draftScreenshot}\n` : ''}${selectedItem ? `native_item_id: ${selectedItem}\n` : ''}${controllerSource ? '证据来源: controller_native\n' : ''}\`\`\`command\n${selectRepeated ? repeat : finalCommand}\n\`\`\`${controllerSource && draftOutput === undefined ? '' : `\n\`\`\`output\n${draftOutput ?? (selectRepeated ? outputs[1] : outputs[4])}\`\`\``}`;
+    const draft = Buffer.from(fm('evaluate', body + (finding ? `\n### X-1\n对应: I-1\nverdict: FAIL\n严重度: 阻断\n场景: outer finding\nnative_item_id: native-5\n\`\`\`command\n${finalCommand}\n\`\`\`\n\`\`\`output\n${outputs[4]}\`\`\`` : '')));
     const bin = path.join(temp, 'native-cli.mjs'), promptFile = path.join(temp, 'prompt.txt');
     fs.writeFileSync(bin, `#!/usr/bin/env node
 import fs from 'node:fs';import {spawnSync} from 'node:child_process';
@@ -63,6 +64,7 @@ for(const [i,command] of ${JSON.stringify(commands)}.entries()){
  console.log(JSON.stringify({type:'item.completed',item}));
 }
 fs.writeFileSync(${JSON.stringify(path.join(worktree, reportRel))},Buffer.from(${JSON.stringify(draft.toString('base64'))},'base64'));
+if(${otherScreenshot}){fs.mkdirSync(${JSON.stringify(path.join(worktree,sprintDir,'qa-r1'))},{recursive:true});fs.writeFileSync(${JSON.stringify(path.join(worktree,sprintDir,'qa-r1/other.png'))},Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aOioAAAAASUVORK5CYII=','base64'));}
 if(${corruptJson})process.stdout.write('{invalid native JSON\\n');
 console.log(JSON.stringify({type:'turn.completed'}));
 `, { mode: 0o755 });

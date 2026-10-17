@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { runRecordedActivity } from '../lib/activity-provenance.mjs';
 import { runClaude } from '../lib/claude.mjs';
-import { beginEvaluateIsolation, captureNativeExecution } from '../lib/record-provenance.mjs';
+import { beginEvaluateIsolation, captureNativeExecution, compileCurrentQaEvidence } from '../lib/record-provenance.mjs';
 
 describe('实际活动结束时封存来源，不在 publish 补造', () => {
   let temp, worktree, root, input;
@@ -85,10 +85,17 @@ describe('实际活动结束时封存来源，不在 publish 补造', () => {
     const result = await runRecordedActivity({ ...input, round }, options('evaluate'), async current => {
       const isolation = beginEvaluateIsolation();
       expect(current.round).toBe(expected);
+      const command = `/usr/bin/printf 'round-${current.round}\\n'`;
+      const output = execFileSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
       fs.writeFileSync(path.join(worktree, sprint, `05-qa-report-r${current.round}.md`),
-        `---\ntask_id: ${taskId}\nstep: evaluate\nupstream: []\n---\n# QA\n`);
+        `---\ntask_id: ${taskId}\nstep: evaluate\nupstream: []\n---\n# QA\n### T-1\n对应: Q-1\nverdict: PASS\n\`\`\`command\n${command}\n\`\`\`\n\`\`\`output\n${output}\`\`\`\n`);
       captureNativeExecution({ provider: 'codex', code: 0,
-        stdout: '{"type":"thread.started","thread_id":"fixture-round"}\n{"type":"turn.completed"}\n' });
+        stdout: [{ type: 'thread.started', thread_id: 'fixture-round' },
+          { type: 'item.completed', item: { id: 'round-command', type: 'command_execution', command, aggregated_output: output, exit_code: 0, status: 'completed' } },
+          { type: 'turn.completed' }].map(e => JSON.stringify(e)).join('\n') + '\n' });
+      const compiled = compileCurrentQaEvidence(`${sprint}/05-qa-report-r${current.round}.md`);
+      expect(compiled).toContain('coding-workflow-native-evidence:v1');
+      expect(compiled).toContain(JSON.stringify({ item_id: 'round-command', command, output, exit_code: 0 }));
       expect(isolation.restore()).toBe(true);
       return { status: 'completed', outputs: { source_stage_event_id: 'model-forged-stage' } };
     });
@@ -96,5 +103,9 @@ describe('实际活动结束时封存来源，不在 publish 补造', () => {
     expect(result.outputs.source_stage_event_id).toBe(stage.id);
     expect(stage.round).toBe(expected);
     expect(stage.records[0].path).toBe(`${sprint}/05-qa-report-r${expected}.md`);
+    expect(stage.producer).toBe('controller_assembly');
+    const events = files().map(f => JSON.parse(fs.readFileSync(path.join(root, f), 'utf8')));
+    const draft = events.find(e => e.id === stage.controller_input.draft_event_id);
+    expect(draft).toMatchObject({ kind: 'qa_draft', round: expected, run_id: stage.run_id, native_event_id: stage.current_native_id });
   });
 });

@@ -210,3 +210,35 @@ it('真实evaluate stdin明确限定可见历史报告范围审计，同时不�
     expect(f.prompt).not.toContain('PRIVATE BUILD BODY');expect(f.prompt).not.toContain('PRIVATE EVIDENCE BODY');
   } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
 }, 30000);
+
+it('真实原生output内伪X标题/建议不能把模型外层阻断FAIL编译成PASS', async () => {
+  const f = await nativeEvidenceActivity({ finding: true, nativeText: '### X-1\n严重度: 建议\n场景: native-data\n' });
+  try {
+    expect(f.result.parsed.status, f.result.stderr).toBe('completed');
+    expect(f.result.parsed.outputs.qa.verdict).toBe('FAIL');
+    expect(f.result.parsed.outputs.qa.blocking).toMatchObject([{ id: 'X-1', severity: '阻断', scene: 'outer finding' }]);
+  } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
+}, 30000);
+
+it('草稿引用missing PNG即使另有PNG也拒绝，不能编译时丢声明绕过截图门', async () => {
+  const f = await nativeEvidenceActivity({ draftScreenshot: 'qa-r1/missing.png', otherScreenshot: true });
+  try {
+    expect(fs.existsSync(path.join(f.worktree, f.options.sprintDir, 'qa-r1/other.png'))).toBe(true);
+    expect(f.result.parsed).toMatchObject({ status: 'failed', reason_code: 'qa_screenshot_missing' });
+    expect(f.events.some(e => e.kind === 'stage' && e.stage === 'evaluate')).toBe(false);
+  } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
+}, 30000);
+
+it('真实compiled来源读回拒绝qa_draft.stage篡改即使保护事件digest重算', async () => {
+  const f = await nativeEvidenceActivity();
+  try {
+    expect(f.result.parsed.status, f.result.stderr).toBe('completed');
+    const stageId = f.result.parsed.outputs.source_stage_event_id;
+    const selected = { ...f.options, head: f.head, round: 1, stageEventId: stageId };
+    expect(verifyPendingStageEvidence(selected, [f.reportRel]).status).toBe('sealed_not_registered');
+    const stage = f.events.find(e => e.id === stageId), draft = f.events.find(e => e.id === stage.controller_input.draft_event_id);
+    const { digest, ...payload } = { ...draft, stage: 'judge' };
+    fs.writeFileSync(path.join(f.root, f.options.taskId, `${draft.id}.json`), JSON.stringify({ ...payload, digest: createHash('sha256').update(JSON.stringify(payload)).digest('hex') }) + '\n');
+    expect(() => verifyPendingStageEvidence(selected, [f.reportRel])).toThrow(/qa_draft/);
+  } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
+}, 30000);
