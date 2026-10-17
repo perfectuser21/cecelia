@@ -1,4 +1,4 @@
-import {isTcpPhoneSerial,isMmvRegistry,isMmvInstance,isApprovedAdbPort} from './leadgen-resources.js';
+import {isTcpPhoneSerial,isMmvRegistry,isMmvInstance,isApprovedAdbPort,physicalAdbPort} from './leadgen-resources.js';
 /** 确定性控制器：Brain只传批准输入，263业务字节仍由正式入口冻结/ACK。 */
 const FLOWS = { douyin_video_discovery: '101', douyin_video_processing: '102', douyin_comment_scoring: '103', douyin_lead_outreach: '104' };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -24,8 +24,11 @@ function checked(plan) {
   if (plan.workflow_key === 'douyin_lead_outreach' ? plan.send_authorized !== true : plan.send_authorized !== undefined) throw Error('send authorization invalid');
   if (!plan.env || typeof plan.env !== 'object' || Array.isArray(plan.env)) throw Error('leadgen env invalid');
   if(mmvPhone&&(!isApprovedAdbPort(Number(plan.env.DOUYIN_ADB_PORT))||plan.env.DOUYIN_ADB_PORT!==String(Number(plan.env.DOUYIN_ADB_PORT))||plan.env.ADB_SERVER_SOCKET!==`tcp:127.0.0.1:${plan.env.DOUYIN_ADB_PORT}`||plan.env.LEADGEN_MMV_DEVICE_RUNTIME!=='1'))throw Error('MMV routing missing');
+  const physicalPort=physicalAdbPort(plan),hasPort=plan.env.DOUYIN_ADB_PORT!==undefined,hasSocket=plan.env.ADB_SERVER_SOCKET!==undefined;
+  if(physicalPort!==null&&(hasPort!==hasSocket||(hasPort&&(!isApprovedAdbPort(physicalPort)||plan.env.DOUYIN_ADB_PORT!==String(physicalPort)||plan.env.ADB_SERVER_SOCKET!==`tcp:127.0.0.1:${physicalPort}`))))throw Error('physical ADB routing invalid');
   for (const [key, value] of Object.entries(plan.env)) {
     if(mmvPhone&&['LEADGEN_MMV_DEVICE_RUNTIME','DOUYIN_ADB_PORT','ADB_SERVER_SOCKET'].includes(key))continue;
+    if(physicalPort!==null&&hasPort&&['DOUYIN_ADB_PORT','ADB_SERVER_SOCKET'].includes(key))continue;
     if (key === 'QUEUED_VIDEO_COLLECTION_SECONDS') {
       if (plan.workflow_key !== 'douyin_video_processing' || !/^[1-9][0-9]{0,3}$/.test(String(value)) || Number(value) > 1920) throw Error('102 collection budget invalid');
       continue;
@@ -39,7 +42,7 @@ function checked(plan) {
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 // 同一程序用于MMV控制器和M4独立子进程；probe分支只读，不修文件、不重启业务。
 const CORE = String.raw`
-import os,sys,json,pathlib,subprocess,time,base64,shlex
+import os,sys,json,pathlib,subprocess,time,base64,shlex,socket
 os.umask(0o077)
 H=pathlib.Path.home()
 def dump(v): print(json.dumps(v,ensure_ascii=False),flush=True)
@@ -56,6 +59,27 @@ def remote(p,action):
     r=subprocess.run(['ssh','-J','xian-m1','-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=8','-o','ServerAliveInterval=5','-o','ServerAliveCountMax=2','xian-m4',command],capture_output=True,text=True,timeout=25)
     if r.returncode: raise ValueError('remote transport unknown')
     return json.loads(r.stdout)
+def adb_preflight(p):
+    if p['machine']!='xian-m4' or p['workflow_key']=='douyin_comment_scoring':return {'state':'not_required'}
+    port=int(p['env'].get('DOUYIN_ADB_PORT','5037'))
+    serial=p['serial']
+    request=('host-serial:'+serial+':get-state').encode('ascii')
+    try:
+        with socket.create_connection(('127.0.0.1',port),timeout=2) as conn:
+            conn.settimeout(2)
+            conn.sendall(('%04x'%len(request)).encode()+request)
+            def exact(n):
+                data=b''
+                while len(data)<n:
+                    chunk=conn.recv(n-len(data))
+                    if not chunk:raise ValueError('ADB reply truncated')
+                    data+=chunk
+                return data
+            if exact(4)!=b'OKAY':raise ValueError('ADB serial unavailable')
+            length=int(exact(4),16)
+            if length<1 or length>64 or exact(length)!=b'device':raise ValueError('ADB serial not online')
+    except (OSError,ValueError) as error:raise ValueError('ADB preflight rejected: '+str(error))
+    return {'state':'device','serial':serial,'port':port}
 def alive(root):
     try:
         pid=int((root/'pid').read_text());os.kill(pid,0)
@@ -120,11 +144,12 @@ def worker(root,role):
             manifest=readjson(H/'bin-harvest/deployment-manifest.json')
             if any(manifest.get(k)!=p[k] for k in ['release_id','observation_id','source_commit']):raise ValueError('deployment changed')
             if (H/'.config/zenithjoy/ledger'/(p['workflow_key']+'-'+p['business_tag'])).exists():raise ValueError('business directory exists')
+            adb_preflight(p)
         except Exception:terminal(p,root,2,False,'preflight_rejected');return
         # 清除上一次执行遗留的控制变量；正常HOME/PATH/BRAIN_*与正式凭据加载仍保留。
         env={k:v for k,v in os.environ.items() if not k.startswith(('LEADGEN_','WF_','WFR_','QUEUED_'))}
+        for k in ['ADB_SERVER_SOCKET','ADB_SERVER_PORT','ANDROID_ADB_SERVER_PORT','ANDROID_ADB_SERVER_ADDRESS','DOUYIN_ADB_BIN','DOUYIN_ADB_PORT','DOUYIN_PHONE_REGISTRY']:env.pop(k,None)
         if p['machine']=='mmv' and p['workflow_key']!='douyin_comment_scoring':
-            for k in ['ADB_SERVER_SOCKET','ADB_SERVER_PORT','ANDROID_ADB_SERVER_PORT','ANDROID_ADB_SERVER_ADDRESS','DOUYIN_ADB_BIN','DOUYIN_ADB_PORT','DOUYIN_PHONE_REGISTRY']:env.pop(k,None)
             env['DOUYIN_ADB_BIN']='/opt/homebrew/bin/adb';env['DOUYIN_PHONE_REGISTRY']=str(H/'.config/openclaw'/p['registry'])
         env.update({k:str(v) for k,v in p['env'].items()});env['WF_RELEASE_ID']=p['release_id'];env['WF_RUN_MAX_SECONDS']=str(p['timeout_sec'])
         if p['workflow_key']=='douyin_lead_outreach' and p.get('send_authorized') is True:env['LEADGEN_SEND']='1'
@@ -145,6 +170,8 @@ else:
     action=sys.argv[1] if len(sys.argv)>1 else 'launch'
     p=json.loads(base64.b64decode(sys.argv[2])) if len(sys.argv)>2 else json.load(sys.stdin)
     if action=='launch':dump(launch(p,'controller'))
+    elif action=='adb_preflight':dump(remote(p,'adb_preflight_local'))
+    elif action=='adb_preflight_local':dump(adb_preflight(p))
     elif action=='launch_business':dump(launch(p,'business'))
     elif action=='probe_business':dump(probe_local(p))
     elif action=='probe':dump(probe(p))
@@ -158,4 +185,9 @@ export function buildLeadgenLaunch(plan) {
 export function buildLeadgenProbe(plan) {
   const value = checked(plan), payload = Buffer.from(JSON.stringify(value)).toString('base64');
   return `python3 -c ${quote(program)} probe ${quote(payload)}`;
+}
+export function buildLeadgenAdbPreflight(plan) {
+  const value=checked(plan);
+  if(physicalAdbPort(value)===null)throw Error('physical ADB preflight only');
+  return {remote:`python3 -c ${quote(program)} adb_preflight`,input:JSON.stringify(value)};
 }

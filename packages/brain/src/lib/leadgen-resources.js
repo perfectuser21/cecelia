@@ -9,4 +9,6 @@ export const isPhoneRegistrySerial = value => typeof value==='string'&&(/^[A-Za-
 export const isMmvRegistry = value => typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}\.tsv$/.test(value);
 export const isMmvInstance = value => typeof value==='string'&&/^acp-[a-z0-9]{1,64}$/.test(value);
 export const isApprovedAdbPort = value => Number.isSafeInteger(value)&&[5037,5041,5042].includes(value);
+export const physicalAdbPort = plan => plan.machine==='xian-m4' && isLeadgenPhoneFlow(plan.workflow_key)
+  ? (plan.env.DOUYIN_ADB_PORT===undefined?5037:Number(plan.env.DOUYIN_ADB_PORT)) : null;
 export const leadgenDeviceLocks = plan => isLeadgenPhoneFlow(plan.workflow_key)?[...new Set([plan.serial,...(plan.machine==='mmv'?[plan.device_instance_id]:[])])].sort():[];
