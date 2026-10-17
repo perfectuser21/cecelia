@@ -16,7 +16,10 @@ export function resolveLeadgenInput(task) {
   const scoring=key===LEADGEN_KEYS[2],mmvPhone=p.device_host==='mmv';
   requireValue(p.device_host===undefined||mmvPhone,'未批准手机host');
   if(mmvPhone)requireValue([LEADGEN_KEYS[0],LEADGEN_KEYS[1]].includes(key)&&isTcpPhoneSerial(p.serial)&&isMmvInstance(p.device_instance_id)&&isApprovedAdbPort(p.adb_port)&&isMmvRegistry(p.registry),'MMV手机须显式完整登记路由');
-  else requireValue(['device_instance_id','adb_port','registry'].every(k=>p[k]===undefined),'不得隐式选择MMV手机');
+  else {
+    requireValue(p.device_instance_id===undefined&&p.registry===undefined,'不得隐式选择MMV手机');
+    requireValue(p.adb_port===undefined||(!scoring&&isApprovedAdbPort(p.adb_port)),'实体ADB端口无效');
+  }
   requireValue(key===LEADGEN_KEYS[3]?p.send_authorized===true:p.send_authorized===undefined,'触达须有本次明确发送授权');
   if(scoring)requireValue(p.profile===undefined&&p.serial===undefined,'评分不得借用手机身份');
   else requireValue(TOKEN.test(p.profile||'')&&(mmvPhone?isTcpPhoneSerial(p.serial):TOKEN.test(p.serial||'')),'须显式选择登记手机');
@@ -24,6 +27,7 @@ export function resolveLeadgenInput(task) {
   requireValue(Number.isSafeInteger(limit)&&limit>0&&limit<=cfg.leadgen.max_limit,'数量越界');
   const env={LEADGEN_LIMIT:String(limit),WF_MMV_SSH_ROUTE:'public'};
   if(mmvPhone)Object.assign(env,{LEADGEN_MMV_DEVICE_RUNTIME:'1',DOUYIN_ADB_PORT:String(p.adb_port),ADB_SERVER_SOCKET:`tcp:127.0.0.1:${p.adb_port}`});
+  else if(p.adb_port!==undefined)Object.assign(env,{DOUYIN_ADB_PORT:String(p.adb_port),ADB_SERVER_SOCKET:`tcp:127.0.0.1:${p.adb_port}`});
   if(key===LEADGEN_KEYS[1]||scoring){
     const upstream=key===LEADGEN_KEYS[1]?LEADGEN_KEYS[0]:LEADGEN_KEYS[1];
     requireValue(TOKEN.test(p.source_run||'')&&!/^commentbench/i.test(p.source_run),'须显式真实上游批次');

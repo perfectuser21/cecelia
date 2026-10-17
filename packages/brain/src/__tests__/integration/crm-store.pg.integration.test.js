@@ -1,5 +1,6 @@
 import { beforeAll, afterAll, describe, it, expect } from 'vitest';
 import * as store from '../../crm/store.js';
+import { runCrmSync } from '../../crm/notion-sync.js';
 import { crmPgTestConfig, createCrmPgFixture } from '../helpers/crm-pg-fixture.js';
 
 const enabled = crmPgTestConfig().enabled;
@@ -158,5 +159,53 @@ describe.skipIf(!enabled)('CRM store 真Postgres事务与关系约束（隔离�
     expect(rows.map(row => row.customer.id)).toEqual([allowed.id]);
     expect(await store.listPending(db, { tenant_id: tenant, binding_id: scope.id, allowed_page_ids: [], limit: 50 })).toEqual([]);
     expect((await db.query('SELECT count(*)::int n FROM crm_customers WHERE binding_id=$1 AND projection_pending', [scope.id])).rows[0].n).toBe(51);
+  });
+  it('既有客户启用档案模板重新投影，人工改动持续进入档案且幂等不新增', async () => {
+    const sourceId = '50000000-0000-4000-8000-000000000001';
+    const pageId = '50000000-0000-4000-8000-000000000002';
+    const fields = { name: '客户名称', customer_id: null, manual: { notes: '人工备注' }, managed_content: true };
+    let scope = await store.configureBinding(db, { tenant_id: tenant, data_source_id: sourceId, enabled: true, fields });
+    const inserted = (await store.ingestCustomer(db, scope, { page_id: pageId, display_name: '正式客户', manual_fields: { notes: '原备注' }, source_edited_at: '2026-10-17T01:00:00Z' })).customer;
+    await store.markProjected(db, tenant, inserted.id, inserted.revision);
+    scope = await store.configureBinding(db, { tenant_id: tenant, data_source_id: sourceId, enabled: true, fields: { ...fields, dossier_template: 'v1' } });
+    expect((await store.getCustomer(db, tenant, inserted.id)).projection_pending).toBe(true);
+    let note = '原备注', markdown = '原人工正文 KEEP\n<database url="https://app.notion.com/p/report">报告入口</database>', writes = 0;
+    const notion = async (path, method = 'GET', body) => {
+      if (path === `/data_sources/${sourceId}`) return { id: sourceId, properties: { 客户名称: { type: 'title' }, 人工备注: { type: 'rich_text' } } };
+      if (path.endsWith('/query')) return { results: [{ id: pageId, parent: { data_source_id: sourceId }, last_edited_time: '2026-10-17T01:00:00Z', properties: {
+        客户名称: { type: 'title', title: [{ plain_text: '正式客户' }] }, 人工备注: { type: 'rich_text', rich_text: [{ plain_text: note }] },
+      } }], has_more: false };
+      if (path === `/pages/${pageId}`) return { parent: { data_source_id: sourceId } };
+      if (path === `/pages/${pageId}/markdown`) {
+        if (method === 'GET') return { markdown, truncated: false };
+        writes++;
+        if (body.type === 'insert_content') markdown = body.insert_content.content + markdown;
+        else for (const edit of body.update_content.content_updates) markdown = markdown.replace(edit.old_str, edit.new_str);
+        return { markdown, truncated: false };
+      }
+      throw Error(`unexpected ${method} ${path}`);
+    };
+    const client = await fixture.connect();
+    const pool = { connect: async () => ({ query: client.query.bind(client), release() {} }) };
+    const oldFlag = process.env.CRM_SYNC_ENABLED;
+    process.env.CRM_SYNC_ENABLED = 'true';
+    try {
+      expect((await runCrmSync(pool, scope.id, { request: notion })).projected).toBe(1);
+      expect(markdown).toContain('## 客户介绍');
+      expect(markdown).toContain('画像待生成');
+      const once = writes;
+      await runCrmSync(pool, scope.id, { request: notion });
+      expect(writes).toBe(once);
+      note = '新人工备注';
+      await runCrmSync(pool, scope.id, { request: notion });
+      expect(markdown).toContain('新人工备注');
+      expect(markdown).toContain('原人工正文 KEEP\n<database');
+      expect(markdown.split(`BRAIN-CRM-START:${inserted.id}`)).toHaveLength(2);
+      expect((await db.query('SELECT count(*)::int n FROM crm_customers WHERE binding_id=$1', [scope.id])).rows[0].n).toBe(1);
+      expect((await store.getCustomer(db, tenant, inserted.id)).profile_managed).toBe(false);
+    } finally {
+      if (oldFlag === undefined) delete process.env.CRM_SYNC_ENABLED;
+      else process.env.CRM_SYNC_ENABLED = oldFlag;
+    }
   });
 });
