@@ -20,3 +20,29 @@ describe('104公司隔离必须在任何外发之前成立',()=>{
  it('公司未授权手机拒绝',()=>expect(()=>verifyBatchRows({...p,serial:'other'},[],base,()=>{},()=>'',{key:'jinuo'})).toThrow('COMPANY_ACCOUNT'));
  it('精确公司账号授权才允许后续领取任务',()=>expect(verifyBatchRows(p,[],base,()=>{},()=>'',{key:'jinuo'}).eligible).toBe(1));
 });
+
+describe('云101/102保留disabled历史账号但唯一当前身份可执行',()=>{
+ const current={profile:'cloud-phone-test',device_serial:'47.100.213.173:10001',douyin_id:'77980009922',platform:'douyin',company_id:'company',tenant_id:'tenant',enabled:true,verification_status:'verified',device_id:'acp-instance',source:{device_host:'mmv',device_instance_id:'acp-instance'}};
+ const historical={...current,douyin_id:'perfect21xx',enabled:false,verification_status:'unverified'};
+ const snapshot=accounts=>({company_id:'company',tenant_id:'tenant',config_status:'enabled',runtime_config:{routing:{line_key:'yuesheng',profiles:['cloud-phone-test']},platform_accounts:accounts}});
+ const cloud=workflow_key=>({workflow_key,company_id:'company',machine:'mmv',profile:current.profile,serial:current.device_serial,device_instance_id:'acp-instance',env:{}});
+ const verify=(accounts,workflow='douyin_video_discovery')=>verifyBatchRows(cloud(workflow),[],snapshot(accounts),()=>{},()=>'',{key:'yuesheng'});
+ for(const workflow of ['douyin_video_discovery','douyin_video_processing']){
+  it(`${workflow}忽略显式disabled历史而不修改快照`,()=>{
+   for(const accounts of [[historical,current],[current,historical]]){
+    const before=JSON.stringify(accounts);
+    expect(verify(accounts,workflow)).toEqual({company_id:'company',line_key:'yuesheng',eligible:1});
+    expect(JSON.stringify(accounts)).toBe(before);
+   }
+  });
+ }
+ it('只有disabled记录仍拒绝',()=>expect(()=>verify([historical])).toThrow('COMPANY_ACCOUNT_MISMATCH'));
+ it.each([undefined,null,'false','true',0,1])('未知enabled=%j不能被隐藏成历史行',enabled=>{
+  const unknown={...historical,enabled};
+  for(const accounts of [[unknown,current],[current,unknown]])expect(()=>verify(accounts)).toThrow('COMPANY_ACCOUNT_MISMATCH');
+ });
+ it('多个当前账号仍拒绝',()=>expect(()=>verify([historical,current,{...current,douyin_id:'other'}])).toThrow('COMPANY_ACCOUNT_MISMATCH'));
+ it.each([{enabled:false},{enabled:undefined},{verification_status:'unverified'},{company_id:'foreign'},{tenant_id:'foreign'},{platform:'wechat'},{device_serial:'foreign'},{device_id:'foreign'},{douyin_id:''},{source:{device_host:'xian-m4',device_instance_id:'acp-instance'}},{source:{device_host:'mmv',device_instance_id:'foreign'}}])('排除历史后身份守卫仍拒绝 %j',extra=>{
+  expect(()=>verify([historical,{...current,...extra}])).toThrow('COMPANY_ACCOUNT_MISMATCH');
+ });
+});

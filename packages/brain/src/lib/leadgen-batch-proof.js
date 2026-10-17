@@ -4,7 +4,7 @@ export function verifyBatchRows(plan,rows,snapshot,validateEvidence,hash,route,c
   if(plan.workflow_key!=='douyin_comment_scoring'){
     const accounts=snapshot.runtime_config?.platform_accounts||[];
     if(plan.machine==='mmv'){
-      const matches=accounts.filter(a=>a?.profile===plan.profile),a=matches[0],profiles=snapshot.runtime_config?.routing?.profiles;
+      const matches=accounts.filter(a=>a?.profile===plan.profile&&a.enabled!==false),a=matches[0],profiles=snapshot.runtime_config?.routing?.profiles;
       if(matches.length!==1||!Array.isArray(profiles)||profiles.filter(p=>p===plan.profile).length!==1
         ||a.enabled!==true||a.verification_status!=='verified'||a.device_serial!==plan.serial
         ||a.platform!=='douyin'||a.company_id!==snapshot.company_id||!snapshot.tenant_id||a.tenant_id!==snapshot.tenant_id
