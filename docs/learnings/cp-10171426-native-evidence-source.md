@@ -8,7 +8,7 @@
 
 先以实际固定Git原件复现19例中6FAIL13PASS，再新增原子native_evidence封套与实际import/call/参数链证明；完整相关9文件378例通过。固定输入补齐原有source-merge/cifix/pr-branch/proc依赖，不跳过source_unavailable。新core模块为static dependency，只有选中evaluate才记录编译可达边；不宣称judge模型或产品验收成功。正式CI/main发布和后续候选实际来源需另验，不追认旧A7。
 
-新增两份collector依赖也必须进入启动时冻结的实际运行身份。实际失败测试复现旧11路径遗漏后，最小扩为13路径，并将精确旧11响应仅判等待；缺失、错字节、Git blob/模式错误及加载后磁盘替换均不能冒充就绪。完整runtime 25项与Node readiness 56项回归通过。
+新增两份collector依赖也必须进入启动时冻结的实际运行身份。实际失败测试复现旧11路径遗漏后，最小扩为13路径，并将精确旧11响应仅判等待；缺失、错字节、Git blob/模式错误及加载后磁盘替换均不能冒充就绪。完整runtime 25项与Node readiness 56项回归通过。另一个真实scratch集成文件只在旧11路径断言处失败；对齐精确13路径后19项通过，其余18项HTTP、逐字节hash、注册与来源守卫保持。
 
 ### 下次预防
 
