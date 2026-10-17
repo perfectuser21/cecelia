@@ -904,6 +904,7 @@
     {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"docs/learnings/cp-10171426-native-evidence-source.md","role":"documentation"},
     {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-evidence-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"changes/cp-10171426-native-evidence-source.md","role":"release"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-evidence-envelopes.test.js","role":"verification"}
+    {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-evidence-envelopes.test.js","role":"verification"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/lib/record-provenance.mjs","path":"docs/learnings/cp-10171320-qa-native-evidence.md","role":"documentation"}
   ]
 }

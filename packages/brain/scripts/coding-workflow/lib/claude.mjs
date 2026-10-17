@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fail, childEnv, log } from './protocol.mjs';
@@ -85,11 +86,12 @@ export function claudeTimeoutMs(budget, { envVar, defaultMs, reserveMs = 0, env 
  * streamJson（stdout 是 stream-json 对话记录，含工具输出）时只看 claude 自身的错误事件与 stderr，
  * 不扫描 tool_result 里的业务输出；否则扫描全部输出。
  */
-export function claudeFailure({ code, output, stdout = '', stderr = '', timedOut, terminated, provider, configurationError }, { streamJson = false } = {}) {
+export function claudeFailure({ code, output, stdout = '', stderr = '', timedOut, terminated, provider, configurationError, stdin_error }, { streamJson = false } = {}) {
   const detail = provider ? { evidence: [{ provider }] } : {};
   if (configurationError) return fail('needs_human', 'codex_configuration', { evidence: [{ provider, error: configurationError }] });
   if (timedOut) return fail('retryable', 'claude_timeout', detail);
   if (terminated) return fail('retryable', 'claude_failed', { evidence: [{ terminated: true, ...(provider ? { provider } : {}) }] });
+  if (stdin_error) return fail('retryable', provider === 'codex' ? 'codex_stdin_failed' : 'claude_stdin_failed', { evidence: [{ provider, stdin_error }] });
   if (code === 0) return null;
   const authText = streamJson || provider === 'codex' ? `${claudeOwnErrorText(stdout)}\n${stderr}` : output;
   if (AUTH_RE.test(authText)) return fail('needs_human', provider === 'codex' ? 'codex_auth' : 'claude_auth', detail);
@@ -130,8 +132,8 @@ export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolate
   const priced = (run) => {
     const result = { ...run, provider, model: provider === 'codex' ? codexEnv.CODING_WF_CODEX_MODEL || process.env.CODING_WF_CODEX_MODEL || null : process.env.CODING_WF_CLAUDE_MODEL || DEFAULT_MODEL, cost_usd: provider === 'codex' ? null : sessionCostUsd(run.stdout ?? ''), ...(transcriptPath ? { transcriptPath } : {}) };
     // 直接采集进程管道返回值；不回读模型可以改写的 transcriptPath/logDir。
-    captureNativeExecution({ ...result, tag });
-    return result;
+    const event = captureNativeExecution({ ...result, tag });
+    return event ? { ...result, source_native_event_id: event.id } : result;
   };
   if (!isolateRemote && provider === 'claude') return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv(), transcriptPath }));
   const ghConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-wf-gh-'));
@@ -172,12 +174,26 @@ function spawnClaude({ args, cwd, timeoutMs, tag, env, transcriptPath, stdin, bi
     let killTimer;
     let graceTimer;
     let child;
+    let stdin_error = null;
+    let stdin_finished = stdin === undefined;
+    const stdin_bytes = stdin === undefined ? 0 : Buffer.byteLength(stdin);
+    const stdin_sha256 = stdin === undefined ? null : createHash('sha256').update(stdin).digest('hex');
+    const stdinFailed = (error) => {
+      stdin_error ??= { code: error?.code || 'STDIN_WRITE_FAILED', message: String(error?.message || error) };
+      if (finished) return;
+      clearTimeout(killTimer);
+      killTimer = setTimeout(() => {
+        if (finished) return;
+        signalGroup(child, 'SIGTERM', tag);
+        killTimer = setTimeout(() => { if (!finished) signalGroup(child, 'SIGKILL', tag); }, CANCEL_GRACE_MS);
+      }, 100);
+    };
     try {
       child = spawn(bin, args, { cwd, env, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], detached: GROUP_KILL });
       if (stdin !== undefined) {
         // 大规格/完整 diff 可超过系统 argv 上限。提前退出的子进程由 error/close 统一判失败。
-        child.stdin.on('error', () => {});
-        child.stdin.end(stdin);
+        child.stdin.on('error', stdinFailed);
+        child.stdin.end(stdin, (error) => { if (error) stdinFailed(error); else stdin_finished = true; });
       }
     } catch (error) {
       const message = String(error?.message || error);
@@ -229,7 +245,8 @@ function spawnClaude({ args, cwd, timeoutMs, tag, env, transcriptPath, stdin, bi
       child.stdout.destroy();
       child.stderr.destroy();
       sink.close();
-      resolve({ output, stdout, stderr, timedOut, terminated, ...result });
+      if (stdin !== undefined && !stdin_finished && !stdin_error) stdin_error = { code: 'STDIN_INCOMPLETE', message: 'stdin write did not finish' };
+      resolve({ output, stdout, stderr, timedOut, terminated, stdin_expected: stdin !== undefined, stdin_bytes, stdin_sha256, stdin_finished, stdin_error, ...result });
       // 取消路径要保证本进程能在执行器的 SIGKILL 之前自行收尾
       if (terminated) setTimeout(() => process.exit(2), 1000).unref();
     };

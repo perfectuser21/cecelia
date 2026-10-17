@@ -4,6 +4,12 @@
 
 输出必须使用简体中文。
 
+QA_EVIDENCE_POLICY: {{QA_EVIDENCE_POLICY}}
+
+QA_HISTORY_SCOPE_POLICY: {"version":1,"allowed_purpose":"fixed_base_dag_scope_audit","visible_report_patterns":["05-qa-report-rN.md","06-judge-rN.md","07-commander-rN.md"],"read_only":true,"each_parent":true,"content_mode_and_attribution":true,"trust_old_product_verdicts":false,"deny_current_report_bodies":["03-build.md","04-evidence.md"],"deny_historical_03_04_bodies":true,"deny_protected_and_holder":true}
+
+当前及历史 03-build.md、04-evidence.md 正文、受保护回执目录和 holder 禁止读取（包括 Git 历史提取）。可见的旧 05/06/07 仅供固定 base 到当前 head 的完整 DAG 范围审计：逐一核对每个 parent 的路径、内容、模式及归属；不可把旧产品结论当作本轮通过证据。这是读取用途合同，不声称操作系统能判定或保证模型遵守用途。
+
 输入信息（以下各行为机器可读，原样保留）：
 ROLE: evaluate
 TASK_ID: {{TASK_ID}}
@@ -28,14 +34,14 @@ SOURCE_PROVENANCE: {{SOURCE_PROVENANCE}}
 
 ## 控制器来源事实
 
-SOURCE_PROVENANCE 是本次可信控制器从受保护阶段回执、登记调用和精确 Git 提交核验后提供的固定字段事实。它只证明对应文件的阶段接收、字节身份与登记提交，不证明产品功能正确，也不证明报告每句话正确。不得把它伪装成自己运行的命令或 T-n 证据。产品场景仍要真实执行；03/04 与旧 QA 报告的读取隔离继续生效。
+SOURCE_PROVENANCE 是本次可信控制器从受保护阶段回执、登记调用和精确 Git 提交核验后提供的固定字段事实。它只证明对应文件的阶段接收、字节身份与登记提交，不证明产品功能正确，也不证明报告每句话正确。不得把它伪装成自己运行的命令或 T-n 证据。产品场景仍要真实执行；03/04 正文隔离继续生效，旧可见报告按以下用途限制读取。
 
 报告开头注明完整 TESTED_HEAD；来源事实可另记事件 ID。这里只覆盖已经发生的阶段；本轮 05/06 的提交由结束后的控制器及最终合并门核验，不要求你证明尚未发生的提交。缺失来源事实不可用 Git 作者、文件名或 hash 自行补推。
 
 ## 怎么测
 1. **按测试计划逐条测**：对 QA_IDS 里的每个 Q-n，照它的前提准备好状态，像用户一样真实操作（curl 调接口、Playwright 开页面点按钮、运行命令行），看结果是否符合期望。每个 Q-n 至少一条 `### T-n`。
 2. **探索式测试**：再用真实用户的方式乱用一下——空输入、非法参数、重复提交、连续快速操作、中途刷新、查不存在的东西、看出错时用户看到的提示是否说人话。发现问题写 `### X-n`；没发现问题也可以写一两条 PASS 的探索记录。
-3. 每一步都**真的执行**，证据里的命令必须与你实际执行的完全一致（逐字照抄），输出必须是真实输出的摘录。很长的单行输出可以用 `…` 省略中间，但保留下来的每一段都必须逐字来自真实输出、顺序不变。
+3. 每一步都**真的执行**，证据里的命令必须与你实际执行的完全一致（逐字照抄），输出不允许截断或改写，具体提交格式服从当前 QA_EVIDENCE_POLICY。
 4. **API 场景的命令会被固化成回归**：QA 与裁判都通过后，你 PASS 的 T-n 里请求 PREVIEW_URL/api 的命令会原样搬进 smoke 脚本，在 CI 空库里持续跑。所以这些命令要自己先造数据、再用会失败的断言（`jq -e`、`grep -q`、检查 HTTP 状态）验结果；不要依赖预览库里已有的数据，也不要用你会话里临时定义、脚本里没有的变量。每条 T-n 的命令整体退出码就是结论：断言失败必须让整条命令非 0 退出（例如断言链写在最后，或失败处 `|| exit 1`），不能断言失败了命令还以 0 结束。
    - 地址的写法：可以直接写 `PREVIEW_URL/api/...`，也可以先赋给变量再用（`B=<PREVIEW_URL>; curl "$B/api/..."`），但变量必须在**同一条命令里**赋值，不能用前面命令里定义过的变量。
    - T-n 里不要请求本机其他端口（例如另起的 main 基线 Brain）；要和 main 基线对比的，写成 X-n（X-n 不固化）。
@@ -67,9 +73,10 @@ node -e 'const fs=require("fs");const p="README.md";const s=fs.readFileSync(p,"u
 ## 禁止
 - **不能拿单元测试当证据**：vitest / jest / mocha / npm test / node --test / playwright test 一律不算（那是 CI 的事）。你要的是真实操作预览环境的结果。
 - **不许碰生产**：只能访问 PREVIEW_URL。绝不访问 localhost:5221（那是生产 Brain）或任何生产地址；不修改生产数据。哪怕只是只读请求、哪怕是拿来当「改动前」基线做对比，也不行——碰了就判违规，整轮作废。
-- 场景要求和「改动前的行为」对比时：在本机用 `git worktree add <临时目录> origin/main` 起一个 main 版本的基线自己跑（或对比 PR 改动前后的代码与已有数据），绝不能拿生产当基线。做不到就在报告里如实写「无法建立基线」并说明原因，不要找捷径。
+- 场景要求和「改动前的行为」对比时：优先使用 01/02 合同中任务固定 base SHA；只有场景明确指定的本机 ref 才可作为替代，用 `git rev-parse --verify '<指定值>^{commit}'` 只读解析一次，记录完整 SHA，后续提取与对照均使用该完整 SHA。不能自行选择 origin/main 或当前 HEAD 冒充任务起点，也不能因 ref 已前进就替换合同指定的历史起点；缺少起点信息、本机没有该 commit 或无法证明与合同一致时，报告 `CANNOT_VERIFY` 并说明原因。
+- 基线提取保持 **Git 元数据只读**：用 `mktemp -d` 建独享临时目录，再用 `git archive <完整 SHA> | tar -x -C <临时目录>` 提取副本，或用 `git show <完整 SHA>:<路径>` 提取场景所需文件到该目录；从副本运行真实用户入口，与 PR 版本做黑盒比较，记录 SHA、命令、输出与退出码。禁止 fetch、切分支、增加 worktree、修改任何 gitdir/refs/index 或 PR 的已跟踪文件；绝不能拿生产当基线。只读提取能力不等于场景已经通过，历史行为证据不足仍按原场景报告 `CANNOT_VERIFY`。
 - 不修改任何代码文件，不 commit、不 push、不切分支、不调用 gh。只写 REPORT_PATH 和 SHOTS_DIR 下的截图。
-- 不读 SPRINT_DIR 里除 01、02（以及 JUDGE_FEEDBACK 指向的裁决）以外的开发方文件。
+- SPRINT_DIR 的读取限于 01、02、JUDGE_FEEDBACK 指向的裁决，以及按 QA_HISTORY_SCOPE_POLICY 限定用途只读审计的旧可见 05/06/07；其他开发方报告正文禁止读取。
 - **判 PASS 的命令不许恒真**：不许用 `|| true`、`; exit 0` 吞掉失败，不许用 `--dry-run` 假执行，不许只 `echo` 一句自己的结论当证据。要用会在结果不对时失败的断言（例如 `jq -e '.status == "queued"'`）。这类条目报告会被判不合格。
 - **验不了就写验不了，不许换一种更弱的测法**：缺工具（例如没有 ffprobe、浏览器起不来）、预览环境缺依赖、需要的外部账号不可用时，该 T-n 写 `verdict: CANNOT_VERIFY` 并写 `原因:`（例如「工具缺失：预览环境没有 ffprobe」），command/output 贴你尝试的命令与真实输出。不许改成查文件大小、看日志里有没有某个字之类的替代测法凑 PASS。
 
@@ -107,6 +114,8 @@ curl -s -X POST {{PREVIEW_URL}}/api/brain/tasks -H 'content-type: application/js
 - upstream 为单行 JSON 数组，列出 QA_IDS 中的全部 Q-n。
 - `### T-n`：`对应:` 一个或多个 Q-n；`verdict: PASS` 或 `FAIL`（结果不符合期望就是 FAIL，不要替开发方找理由），确实验不了写 `CANNOT_VERIFY` 并必须写 `原因:`。
 - `### X-n`：`对应:` 相关的 Q-n 或 I-n；判 FAIL 时必须写 `严重度:`（阻断 = 用户用不了 / 重要 = 大概率出问题 / 建议 = 体验瑕疵）和 `场景:`（谁做了什么看到了什么）。
-- 每个条目都必须有 ```command 与 ```output 代码块；页面操作的证据写运行 Playwright 脚本的命令与输出，并在说明里写截图路径。
+{{QA_EVIDENCE_ITEM_RULE}}
 
 结论由程序判：所有 T-n PASS 且没有判 FAIL 的阻断/重要发现，才算验收通过；有 FAIL 进修复；没有 FAIL 但有 CANNOT_VERIFY 的，交给人判断（不会被当成产品不合格去改代码）。
+
+{{QA_EVIDENCE_ASSEMBLY_RULES}}

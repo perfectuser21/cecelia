@@ -18,7 +18,7 @@ import { listOwnPrs, requiredState } from './cifix-scan.mjs';
 import { intentOf, remoteTaskId, preparePrWorktree, checkFixCommits, pushPrHead, headOf, smokeDirOf } from './pr-branch.mjs';
 import { previewOf } from '../../lib/preview.mjs';
 import { gateSpan, postSpans } from './spans.mjs';
-import { cannotVerifyAccepted } from './cv-accepted.mjs';
+import { cannotVerifyAccepted, qaAcceptanceContext } from './cv-accepted.mjs';
 import { runClaude, loadPrompt } from '../../lib/claude.mjs';
 import { runJudge, priorJudgeFiles } from './judge-gate.mjs';
 import { sessionLogPath, sessionSummary } from './session-log.mjs';
@@ -390,13 +390,13 @@ async function qaRound(ctx, pr, s, signal) {
     delete s.last_eval_error;
     const fails = qa.failed.length + qa.blocking.length;
     const report0 = `${intent.sprintDir}/${result.outputs.qa_report_file}`;
-    // 验不了的项全部已被 commander 裁过接受且无失败 → 按 PASS 交独立裁判，不再重复升级
-    const cvAccepted = qa.verdict === 'CANNOT_VERIFY' && fails === 0 ? cannotVerifyAccepted(cfg, pr.number, qa.cannot_verify) : null;
-    const verdict = cvAccepted ? 'PASS' : qa.verdict;
+    const qaContext = qaAcceptanceContext(worktree, intent, pr.headRefOid, round, qa, result.outputs.source_stage_event_id, result.outputs.source_execution_context_sha256);
+    const cvAccepted = qa.verdict === 'CANNOT_VERIFY' && fails === 0 ? cannotVerifyAccepted(cfg, pr.number, qa.cannot_verify, qaContext) : null;
+    const verdict = qa.verdict;
     const label = cvAccepted ? 'CANNOT_VERIFY（commander 已裁接受）' : qa.verdict;
     const entry = { round, head: pr.headRefOid, verdict, fails, report: report0, env_url: qa.env?.url, cost_usd: qa.cost_usd, at: new Date().toISOString(),
       ...(result.outputs.source_stage_event_id ? { source_stage_event_id: result.outputs.source_stage_event_id } : {}),
-      ...(cvAccepted ? { qa_verdict: qa.verdict, cv_accepted: cvAccepted } : {}) };
+      ...(cvAccepted ? { cv_accepted: cvAccepted } : {}) };
     addCost(s, qa.cost_usd);
     ctx.log(`QA 门 PR #${pr.number} 第 ${round} 轮 ${label}（失败 ${fails}）`);
     const records = [report0, `${intent.sprintDir}/qa-r${round}`];
@@ -424,7 +424,7 @@ async function qaRound(ctx, pr, s, signal) {
       return escalate(ctx, pr, s, intent.taskId, { type: 'judge_disabled', round });
     } else if (qa.verdict === 'CANNOT_VERIFY') {
       // 验不了 ≠ 产品不合格（审计 #38/#19）：进修复环只会无限改代码，交 coding commander 判断（补工具 / 改场景 / 人验）
-      return escalate(ctx, pr, s, intent.taskId, { type: 'qa_cannot_verify', round, cannot_verify: qa.cannot_verify ?? [] });
+      return escalate(ctx, pr, s, intent.taskId, { type: cvAccepted ? 'qa_accepted_unverified' : 'qa_cannot_verify', round, cannot_verify: qa.cannot_verify ?? [], qa_context: qaContext });
     } else {
       const stall = stalled(s);
       if (stall) return escalate(ctx, pr, s, intent.taskId, { type: 'qa_stalled', fails: stall });

@@ -116,7 +116,7 @@ function validateEvent(c, e, stage, phase) {
 }
 /** 读取固定当前05 stage关联的生命周期；不接受模型提供的projection。 */
 export function verifyQaIsolation(c, stage, all, current = false) {
-  check(stage.stage === 'evaluate' && stage.producer === 'model' && UUID.test(stage.isolation_event_id ?? ''), 'missing');
+  check(stage.stage === 'evaluate' && ['model', 'controller_assembly'].includes(stage.producer) && UUID.test(stage.isolation_event_id ?? ''), 'missing');
   const restored = all.find(e => e.id === stage.isolation_event_id);
   validateEvent(c, restored, stage, 'restored');
   const hidden = all.find(e => e.id === restored.hidden_event_id);
@@ -147,7 +147,7 @@ export function isolationProjection(proof, result) {
     && proof.controller.modules.every(m => exactKeys(m, ['path', 'sha256']) && typeof m.path === 'string' && HEX.test(m.sha256))
     && ['run_id', 'qa_stage_event_id', 'hidden_event_id', 'restored_event_id', 'native_event_id'].every(k => UUID.test(proof[k])), 'projection');
   check(result.records.some(r => r.path === `${result.sprint_dir}/05-qa-report-r${proof.round}.md`
-    && r.stage === 'evaluate' && r.producer === 'model' && r.round === proof.round
+    && r.stage === 'evaluate' && ['model', 'controller_assembly'].includes(r.producer) && r.round === proof.round
     && r.stage_event_id === proof.qa_stage_event_id && r.stage_input_head === proof.tested_head), 'projection_stage');
   check(Array.isArray(proof.files) && proof.files.length === FILES.length && proof.files.every((f, i) => exactKeys(f, FILE_KEYS.filter(k => k !== 'holder_path'))
     && f.path === `${result.sprint_dir}/${FILES[i]}` && ['100644', '100755'].includes(f.mode) && HEX.test(f.sha256)
