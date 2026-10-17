@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { posix } from 'node:path';
 import { canonicalRepoIdentity } from '../../packages/brain/src/lib/gp-assertion-command.js';
 export const SOURCE_RELATIONS_PATH='.implementation-source-relations.json';
 const CONFIG_READER='.github/workflows/scripts/__tests__/nightly-runtime.test.mjs',CONFIG_CI='.github/workflows/ci.yml',CONFIG_INPUTS=[CONFIG_CI,'.github/workflows/nightly-regression.yml'];
@@ -21,18 +22,35 @@ function path(value){
  return value;
 }
 function ownerPath(value){path(value);if(!/\.(?:[cm]?[jt]sx?|py|sh)$/.test(value)||/\.(?:test|spec)\./.test(value)||/(?:^|\/)(?:tests|__tests__)\//.test(value))fail('AUXILIARY_OWNER_INVALID');return value;}
+function testOwnerPath(value){path(value);if(!/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(value)||/(?:^|\/)(?:fixtures|helpers)\//.test(value))fail('AUXILIARY_INPUT_OWNER_INVALID');return value;}
 function relation(row){
  const config=row?.role==='verification_config';
  const keys=config?'ci_path,consumer_path,owner_path,path,role':'owner_path,path,role';
  if(!row||Array.isArray(row)||Object.keys(row).sort().join(',')!==keys)fail('AUXILIARY_RELATION_INVALID');
- if(config){if(!configReader(row.owner_path))fail('AUXILIARY_CONFIG_OWNER_INVALID');}else ownerPath(row.owner_path);
+ if(config){if(!configReader(row.owner_path))fail('AUXILIARY_CONFIG_OWNER_INVALID');}else if(row.role==='verification_input')testOwnerPath(row.owner_path);else ownerPath(row.owner_path);
  path(row.path);if(row.path===row.owner_path)fail('AUXILIARY_DIRECTION_INVALID');
  if(config){
   if(!workspaceConfig(row)&&(!CONFIG_INPUTS.includes(row.path)||row.owner_path!==CONFIG_READER||row.consumer_path!==CONFIG_READER||row.ci_path!==CONFIG_CI))fail('AUXILIARY_CONFIG_SCOPE_INVALID');
   return row;
  }
- const valid=row.role==='documentation'?/\.md$/.test(row.path):row.role==='release'?/^changes\/(?!README\.md$)[^/]+\.md$/.test(row.path):row.role==='verification'?/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(row.path)||/\/smoke\/[^/]+\.sh$/.test(row.path)||['packages/quality/smoke-allowlist.txt','packages/quality/smoke-write-targets.txt','test-registry.yaml'].includes(row.path):false;
+ const valid=row.role==='verification_input'?/(?:^|\/)__tests__\/fixtures\/[^/]+\.mjs$/.test(row.path):row.role==='documentation'?/\.md$/.test(row.path):row.role==='release'?/^changes\/(?!README\.md$)[^/]+\.md$/.test(row.path):row.role==='verification'?/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(row.path)||/\/smoke\/[^/]+\.sh$/.test(row.path)||['packages/quality/smoke-allowlist.txt','packages/quality/smoke-write-targets.txt','test-registry.yaml'].includes(row.path):false;
  if(!valid)fail('AUXILIARY_ROLE_INVALID');return row;
+}
+/** 仅固定Git中已选测试的直接ESM输入；不执行模块，不投影原生运行边。 */
+function inputProof(reader,row){
+ const source=reader.toString('utf8'),{Linter}=brainRequire('eslint'),linter=new Linter();
+ const errors=linter.verify(source,[{languageOptions:{ecmaVersion:'latest',sourceType:'module'}}]);
+ const code=linter.getSourceCode();if(errors.some(e=>e.fatal)||!code)fail('AUXILIARY_INPUT_IMPORT_INVALID');
+ const relative=posix.relative(posix.dirname(row.owner_path),row.path),specifier=relative.startsWith('.')?relative:`./${relative}`;
+ const imports=code.ast.body.filter(n=>n.type==='ImportDeclaration'&&n.source.type==='Literal'&&n.source.value===specifier);
+ if(imports.length!==1)fail('AUXILIARY_INPUT_IMPORT_UNPROVEN');
+ return {kind:'direct_static_test_import',read_kind:'top_level_esm_import',owner_source:source,import_specifier:specifier,import_range:imports[0].range};
+}
+function validateInputEvidence(row){
+ const proof=row.consumer_evidence;
+ if(!proof||Object.keys(proof).sort().join(',')!=='import_range,import_specifier,kind,owner_source,read_kind'||typeof proof.owner_source!=='string'||bytesHash(proof.owner_source)!==row.owner_sha256||
+  !Array.isArray(proof.import_range)||proof.import_range.length!==2||proof.import_range.some(v=>!Number.isSafeInteger(v)||v<0)||proof.import_range[1]<=proof.import_range[0]||proof.import_range[1]>proof.owner_source.length)fail('AUXILIARY_INPUT_EVIDENCE_INVALID');
+ if(JSON.stringify(canonical(proof))!==JSON.stringify(canonical(inputProof(Buffer.from(proof.owner_source),row))))fail('AUXILIARY_INPUT_EVIDENCE_INVALID');
 }
 const rawRelation=row=>({owner_path:row.owner_path,path:row.path,role:row.role,...(row.role==='verification_config'?{consumer_path:row.consumer_path,ci_path:row.ci_path}:{})});
 function configProof(reader,ci,input,row){
@@ -239,7 +257,7 @@ export function collectAuxiliarySourceEvidence(root,source){
     const row=relation(raw);if(row.role==='verification_config'&&source.repo!==configRepo(row))fail('AUXILIARY_CONFIG_REPO_INVALID');if(seen.has(row.path))fail('AUXILIARY_RELATION_DUPLICATE');seen.add(row.path);
     const owner=readCommitted(root,rev,row.owner_path),auxiliary=readCommitted(root,rev,row.path);
     if(!owner||!auxiliary)fail('AUXILIARY_SOURCE_MISSING');
-    let config={};
+    let config=row.role==='verification_input'?{consumer_evidence:inputProof(owner,row)}:{};
     if(row.role==='verification_config'){
      if(!configReader(row.owner_path))fail('AUXILIARY_CONFIG_READER_OWNER_MISSING');
      const reader=readCommitted(root,rev,row.consumer_path),ci=readCommitted(root,rev,row.ci_path);if(!reader||!ci)fail('AUXILIARY_CONFIG_SOURCE_MISSING');
@@ -262,7 +280,8 @@ function validateFrozen(evidence,source){
   const f=evidence[side];if(f?.source_revision!==source[`${side}_revision`]||!(f.manifest_sha256===null||hash.test(f.manifest_sha256))||!Array.isArray(f.relations)||f.relations.length>1024||!f.manifest_sha256&&f.relations.length)fail('AUXILIARY_EVIDENCE_INVALID');
   const seen=new Set();for(const row of f.relations){
    relation(rawRelation(row));
-   const keys=row.role==='verification_config'?'ci_path,ci_sha256,consumer_evidence,consumer_path,consumer_sha256,owner_path,owner_sha256,path,role,sha256':'owner_path,owner_sha256,path,role,sha256';
+   const keys=row.role==='verification_config'?'ci_path,ci_sha256,consumer_evidence,consumer_path,consumer_sha256,owner_path,owner_sha256,path,role,sha256':row.role==='verification_input'?'consumer_evidence,owner_path,owner_sha256,path,role,sha256':'owner_path,owner_sha256,path,role,sha256';
+   if(row.role==='verification_input')validateInputEvidence(row);
    if(row.role==='verification_config'){if(source.repo!==configRepo(row))fail('AUXILIARY_CONFIG_REPO_INVALID');validateConfigEvidence(row);}
    if(Object.keys(row).sort().join(',')!==keys||seen.has(row.path)||!hash.test(row.owner_sha256)||!hash.test(row.sha256))fail('AUXILIARY_EVIDENCE_INVALID');seen.add(row.path);
   }
@@ -272,10 +291,22 @@ export function auxiliaryOwnerPaths(evidence){return evidence?[...new Set(['base
 function claimedOwners(report,evidence,side){
  const rows=evidence.owner_coverage?.[side];if(!Array.isArray(rows))fail('AUXILIARY_OWNER_EVIDENCE_MISSING');
  const consumers=new Set(report.affected_usages.flatMap(u=>(u.evidence||[]).filter(e=>e.side===side).map(e=>e.implementation?.path)));
- const owners=new Map();
+ const owners=new Map(),seen=new Set();
  for(const row of rows){
-  if(!(configReader(row.path)&&evidence[side].relations.some(r=>r.role==='verification_config'&&r.owner_path===row.path)))ownerPath(row.path);
-  if(owners.has(row.path)||row.source_revision!==report[side].revision||row.graph_sha256!==report[side].graph_snapshot.digest||row.truncated!==false||!Array.isArray(row.matched_paths)||row.matched_paths.some(p=>!consumers.has(p)))fail('AUXILIARY_OWNER_EVIDENCE_INVALID');
+  const inputs=evidence[side].relations.filter(r=>r.role==='verification_input'&&r.owner_path===row.path);
+  const unusedInput=!evidence[side].relations.some(r=>r.owner_path===row.path)&&['base','head'].some(s=>evidence[s].relations.some(r=>r.role==='verification_input'&&r.owner_path===row.path));
+  if(inputs.length||unusedInput)testOwnerPath(row.path);
+  else if(!(configReader(row.path)&&evidence[side].relations.some(r=>r.role==='verification_config'&&r.owner_path===row.path)))ownerPath(row.path);
+  if(seen.has(row.path)||row.source_revision!==report[side].revision||row.graph_sha256!==report[side].graph_snapshot.digest||row.truncated!==false||!Array.isArray(row.matched_paths)||row.matched_paths.some(p=>!consumers.has(p)))fail('AUXILIARY_OWNER_EVIDENCE_INVALID');
+  seen.add(row.path);
+  if(unusedInput)continue; // union查询的另一侧没有声明，绝不授予本侧辅助覆盖。
+  if(inputs.length){
+   const hashes=new Set(inputs.map(r=>r.owner_sha256));
+   if(hashes.size!==1)fail('AUXILIARY_INPUT_OWNER_UNPROVEN');
+   const native=report.affected_usages.flatMap(u=>u.evidence||[]).some(e=>e.side===side&&e.revision===report[side].revision&&
+    e.implementation?.kind==='code'&&e.implementation.repo===report.source.repo&&e.implementation.revision===report[side].revision&&e.implementation.path===row.path&&e.implementation.digest==='sha256:'+inputs[0].owner_sha256);
+   if(row.matched_paths.length&&(!row.matched_paths.includes(row.path)||!native))fail('AUXILIARY_INPUT_OWNER_UNPROVEN');
+  }
   owners.set(row.path,row.matched_paths);
  }
  return owners;
