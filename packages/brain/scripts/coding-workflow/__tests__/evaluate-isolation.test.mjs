@@ -140,6 +140,8 @@ it('controller_native来源渲染完整权威T项，围栏/假条目/CRLF/Unicod
 }, 30000);
 
 it.each([
+  ['controller_native提供伪造第六行不能被自动改正', { controllerSource: true, draftOutput: 'verified Ω\nline two\nline three\nline four\nline five\nforged sixth line\n' }],
+  ['controller_native显式空output不能替换非空原生', { controllerSource: true, draftOutput: '' }],
   ['第六行改写', { draftOutput: 'verified Ω\nline two\nline three\nline four\nline five\nforged sixth line\n' }],
   ['显式item不存在', { selectedItem: 'different-session-item' }],
   ['重复命令错误绑定失败item却借成功item输出', { selectRepeated: true, selectedItem: 'native-1' }],

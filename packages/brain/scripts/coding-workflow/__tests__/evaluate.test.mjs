@@ -202,7 +202,7 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     const p = fs.readFileSync(path.join(HERE, '../prompts/evaluate.md'), 'utf8');
     for (const s of ['真人', '黑盒', 'PREVIEW_URL', '单元测试', '5221', '探索', 'Playwright', '### T-n', '### X-n']) expect(p).toContain(s);
     // 金丝雀 3e8414f6：规格要求和「改动前」对比，QA 拿生产当了基线 → 只读也不行，基线须在本机从 main 起
-    for (const s of ['哪怕只是只读请求', '绝不能拿生产当基线', 'git worktree add']) expect(p).toContain(s);
+    for (const s of ['哪怕只是只读请求', '绝不能拿生产当基线', '固定 base SHA', 'git archive', '禁止 fetch', '增加 worktree']) expect(p).toContain(s);
   });
 
   it.each(['preview', 'local'])('真实%s会话收到历史范围用途声明，同时隔离当前03/04和保护副本', async kind => {

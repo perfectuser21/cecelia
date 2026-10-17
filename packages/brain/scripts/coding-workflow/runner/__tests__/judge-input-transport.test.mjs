@@ -14,7 +14,7 @@ vi.mock('../lib/source-provenance.mjs', () => ({
   judgeSourceFacts: () => supply.facts,
 }));
 import { runJudge } from '../lib/judge-gate.mjs';
-import { withRecordProvenance, controllerIdentity } from '../../lib/record-provenance.mjs';
+import { withRecordProvenance, controllerIdentity, verifyPendingStageEvidence } from '../../lib/record-provenance.mjs';
 
 const answer = JSON.stringify({ coverage: [{ intent: 'I-1', satisfied: true, evidence: '本地传输测试，不是产品验收' }], issues: [], summary: 'fixture' });
 const roots = [];
@@ -122,6 +122,27 @@ describe('裁判最终受控stdin完整传输及总字节预算', () => {
     const f = setup(); const root = path.join(f.dir, 'protected'); fs.writeFileSync(root, 'blocks-protected-write');
     const result = await protectedCall(f, root);
     expect(result.error).toBeTruthy(); expect(fs.existsSync(f.captured)).toBe(false);
+  });
+
+  it.each(['delete-stage-input', 'alter-stage-stdin-sha', 'alter-native-stdin-sha', 'delete-both-input-markers'])('新真实judge producer凭证拒绝%s降级/改写', async mutation => {
+    const f = setup(); const root = path.join(f.dir, 'protected');
+    expect((await protectedCall(f, root)).error).toBeUndefined();
+    const dir = path.join(root, f.id.taskId);
+    const events = fs.readdirSync(dir).filter(n => n.endsWith('.json')).map(n => JSON.parse(fs.readFileSync(path.join(dir, n))));
+    const stage = events.find(e => e.kind === 'stage'), native = events.find(e => e.kind === 'native');
+    const selected = { root, worktree: f.repo, ...f.id, head: f.git('rev-parse', 'HEAD').trim() };
+    const file = `${f.id.sprintDir}/06-judge-r7.md`;
+    expect(verifyPendingStageEvidence(selected, [file]).status).toBe('sealed_not_registered');
+    const persist = event => {
+      const { digest, ...payload } = event;
+      fs.writeFileSync(path.join(dir, `${event.id}.json`), JSON.stringify({ ...payload, digest: sha(JSON.stringify(payload)) }) + '\n');
+    };
+    if (mutation === 'delete-stage-input' || mutation === 'delete-both-input-markers') delete stage.judge_input_event_id;
+    if (mutation === 'alter-stage-stdin-sha') stage.stdin_sha256 = 'f'.repeat(64);
+    if (mutation === 'alter-native-stdin-sha') native.stdin_sha256 = 'e'.repeat(64);
+    if (mutation === 'delete-both-input-markers') delete native.judge_input_event_id;
+    persist(stage);persist(native);
+    expect(() => verifyPendingStageEvidence(selected, [file])).toThrow(/judge_input/);
   });
 
 });

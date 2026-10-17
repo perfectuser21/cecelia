@@ -49,7 +49,7 @@ export async function nativeEvidenceActivity({ empty = false, verdict = 'PASS', 
     const outputs = ['first failed attempt\n', 'second actual attempt\n', '', ' \n\t', authoritative];
     const expected = commands.map((command, i) => ({ item_id: `native-${i + 1}`, command, output: outputs[i], exit_code: i === 0 ? 7 : 0 }));
     const reportRel = `${sprintDir}/05-qa-report-r1.md`;
-    const draft = Buffer.from(fm('evaluate', `# 原始模型草稿 Ω\n### T-1\n对应: Q-1\nverdict: ${verdict}\n${selectedItem ? `native_item_id: ${selectedItem}\n` : ''}${controllerSource ? '证据来源: controller_native\n' : ''}\`\`\`command\n${selectRepeated ? repeat : finalCommand}\n\`\`\`${controllerSource ? '' : `\n\`\`\`output\n${draftOutput ?? (selectRepeated ? outputs[1] : outputs[4])}\`\`\``}`));
+    const draft = Buffer.from(fm('evaluate', `# 原始模型草稿 Ω\n### T-1\n对应: Q-1\nverdict: ${verdict}\n${selectedItem ? `native_item_id: ${selectedItem}\n` : ''}${controllerSource ? '证据来源: controller_native\n' : ''}\`\`\`command\n${selectRepeated ? repeat : finalCommand}\n\`\`\`${controllerSource && draftOutput === undefined ? '' : `\n\`\`\`output\n${draftOutput ?? (selectRepeated ? outputs[1] : outputs[4])}\`\`\``}`));
     const bin = path.join(temp, 'native-cli.mjs'), promptFile = path.join(temp, 'prompt.txt');
     fs.writeFileSync(bin, `#!/usr/bin/env node
 import fs from 'node:fs';import {spawnSync} from 'node:child_process';
