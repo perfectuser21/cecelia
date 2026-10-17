@@ -26,6 +26,30 @@ describe('正常任务到真实适配入口及收割',()=>{
  const db={query:async()=>({rows:[workflow]})};
  it('103正式身份预检不查询phone_registry',async()=>{const query=vi.fn(db.query);expect((await prepareLeadgenPlan({query},{...t,payload:{...t.payload,workflow_definition:explicit}},preflight())).machine).toBe('mmv');expect(query.mock.calls.some(c=>c[0].includes('phone_registry'))).toBe(false);});
  it.each([{environment:'staging'},{target:'xian-m4'}])('拒绝错误部署 %j',async override=>{await expect(prepareLeadgenPlan(db,{...t,payload:{...t.payload,workflow_definition:explicit}},preflight(override))).rejects.toThrow('真实部署');});
+ it('声明推进不替代当前实际部署的显式固定版本',async()=>{
+  const advanced={...workflow,current_definition_version_id:'66666666-6666-4666-8666-666666666666'};
+  const got=await prepareLeadgenPlan({query:async()=>({rows:[advanced]})},{...t,payload:{...t.payload,workflow_definition:explicit}},preflight());
+  expect(got.workflow_definition_version_id).toBe(fixed.id);expect(got.snapshot_sha256).toBe(fixed.payload_sha256);expect(got.source_commit).toBe(fixed.source_commit);
+ });
+ it.each([{workflow_definition_version_id:'66666666-6666-4666-8666-666666666666'},{snapshot_sha256:'c'.repeat(64)}])('显式固定版本错误仍拒绝 %j',async wrong=>{
+  await expect(prepareLeadgenPlan(db,{...t,payload:{...t.payload,workflow_definition:{...explicit,...wrong}}},preflight())).rejects.toThrow('完整固定版本');
+ });
+ it('实际新部署已替代旧release时，声明仍指旧版也拒绝',async()=>{
+  const {evaluateReleaseObservation}=await import('../release-index.js');
+  const release=await preflight().getRelease();release.payload.components=[];release.payload.verification={status:'verified'};
+  const d=preflight();d.getReleaseGate=async()=>({...evaluateReleaseObservation(release,{release_id:'77777777-7777-4777-8777-777777777777',collector:'fixture',evidence_ref:'fixture',payload:{environment:'production',target:'mmv',components:[]}}),current_observation_id:explicit.observation_id});
+  await expect(prepareLeadgenPlan(db,{...t,payload:{...t.payload,workflow_definition:explicit}},d)).rejects.toThrow('真实部署');
+ });
+ it.each([{deployed:false},{actual_matches:false},{gaps:[{code:'drift'}]},{current_observation_id:'77777777-7777-4777-8777-777777777777'}])('实际部署gate仍严格拒绝 %j',async wrong=>{
+  const d=preflight(),original=d.getReleaseGate;d.getReleaseGate=async()=>({...await original(),...wrong});
+  await expect(prepareLeadgenPlan(db,{...t,payload:{...t.payload,workflow_definition:explicit}},d)).rejects.toThrow('真实部署');
+ });
+ it('保留workflow身份与active/paused控制',async()=>{
+  const task={...t,payload:{...t.payload,workflow_definition:explicit}};
+  const run=status=>prepareLeadgenPlan({query:async()=>({rows:[{...workflow,status}]})},task,preflight());
+  expect(await run('paused')).toEqual({waiting:true,reason:'workflow_paused'});await expect(run('archived')).rejects.toThrow('未激活');
+  await expect(prepareLeadgenPlan({query:async()=>({rows:[{...workflow,key:'wrong'}]})},task,preflight())).rejects.toThrow('Workflow不匹配');
+ });
  it('同flow旧源102绑定不通过',async()=>{const d=preflight();d.getBinding=async()=>({binding:{source_kind:'external'},workflow:{workflow_id:'b1000000-0000-4000-8000-000000000102',source_commit:'c'.repeat(40)}});await expect(prepareLeadgenPlan(db,{...t,payload:{...t.payload,workflow_definition:explicit}},d)).rejects.toThrow('同源');});
 });
 
