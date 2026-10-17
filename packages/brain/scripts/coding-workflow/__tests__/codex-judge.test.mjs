@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -74,5 +74,39 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:3,output_t
       expect(claudeFailure(run)).toMatchObject({ status:'failed', failure_class:'needs_human', reason_code:'codex_configuration' });
       expect(claudeFailure({ provider:'codex', code:1, stdout:JSON.stringify({type:'turn.failed',error:{message:'usage limit reached'}}), stderr:'' })).toMatchObject({ failure_class:'needs_human',reason_code:'codex_auth' });
     } finally { f.cleanup(); }
+  });
+});
+
+// 只替换适配器最终stdin；runJudge/callJudge/runClaude/真实CLI/管道/哈希均不mock。
+describe('裁判必须核验实际native运输输入', () => {
+  it.each(['same-length', 'different-length', 'missing-stdin'])('适配器%s偏离冻结材料，即使CLI返回合法裁决也关闭', async mode => {
+    vi.resetModules();
+    vi.doMock('../lib/codex-session.mjs', async importOriginal => {
+      const original = await importOriginal();
+      return { ...original, prepareCodexSession(options) {
+        const native = original.prepareCodexSession(options);
+        return { ...native, stdin: mode === 'missing-stdin' ? undefined : mode === 'same-length' ? native.stdin.replace('检查', '伪造') : native.stdin + '\nUNEXPECTED-TRANSPORT-SUFFIX' };
+      } };
+    });
+    const f = fixture(`const fs=require('node:fs');const a=process.argv.slice(2);const bytes=fs.readFileSync(0);fs.writeFileSync(${JSON.stringify('CAPTURE_PLACEHOLDER')},bytes);fs.writeFileSync(a[a.indexOf('--output-last-message')+1],${JSON.stringify(JSON.stringify(answer))});console.log(JSON.stringify({type:'thread.started',thread_id:'transport-divergence'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:${JSON.stringify(JSON.stringify(answer))}}}));console.log(JSON.stringify({type:'turn.completed'}));`);
+    const captured = path.join(f.dir, 'actual-stdin');
+    fs.writeFileSync(f.bin, fs.readFileSync(f.bin, 'utf8').replace(JSON.stringify('CAPTURE_PLACEHOLDER'), JSON.stringify(captured)));
+    try {
+      const isolated = await import('../lib/judge.mjs?actual-transport-identity');
+      let failure, reply;
+      try { reply = await isolated.callJudge(prompt, { provider:'codex', model:'judge-model', codexHome:f.dir, codexBin:f.bin, transcriptPath:path.join(f.dir,'native.jsonl'), timeoutMs:3000 }); }
+      catch (error) { failure = error; }
+      const actual = fs.readFileSync(captured);
+      const expected = Buffer.from(`${prompt.system}\n\n${prompt.user}`);
+      expect(actual.equals(expected)).toBe(false); // CLI真实收到偏差，不因mock没有生效而假RED。
+      if (mode === 'same-length') expect(actual.byteLength).toBe(expected.byteLength);
+      if (mode === 'missing-stdin') expect(actual.byteLength).toBe(0);
+      if (process.env.CW_JUDGE_TEST_ARTIFACT_DIR) {
+        const target=path.join(process.env.CW_JUDGE_TEST_ARTIFACT_DIR,mode);fs.mkdirSync(target,{recursive:true});fs.copyFileSync(captured,path.join(target,'actual-stdin'));
+        fs.writeFileSync(path.join(target,'outcome.json'),JSON.stringify({ mode, reply, error:failure?.message, expected_stdin:expected.toString(), actual_bytes:actual.byteLength }));
+      }
+      expect(reply).toBeUndefined();
+      expect(failure?.message).toMatch(/judge_.*(?:input|stdin).*(?:mismatch|unverified|missing)/);
+    } finally { vi.doUnmock('../lib/codex-session.mjs'); vi.resetModules(); f.cleanup(); }
   });
 });
