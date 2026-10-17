@@ -100,3 +100,32 @@ it('dirty uncommitted input bytes do not replace fixed Git fixture bytes',()=>{
  const f=fixture(),e=collect(f);writeFileSync(join(f.root,input),'DIRTY_INPUT');
  expect(collect(f)).toEqual(e);expect(e.head.relations[0].sha256).toBe(sha('export const input=2;\nexport default input;\n'));
 });
+
+it('head-only input relation tolerates unused base-side test owner query from the actual owner union caller',()=>{
+ const f=fixture(),e=collect(f);
+ f.ownerCoverage.base=[{path:owner,matched_paths:[],truncated:false}];
+ expect(()=>apply(f,e)).not.toThrow();expect(f.report.mapping_status).toBe('verified');
+ expect(f.report.base.file_coverage.every(row=>row.coverage_kind!=='auxiliary_source')).toBe(true);
+});
+it('base-only removed input relation tolerates unused head-side test owner query without granting coverage',()=>{
+ const f=fixture(),base=f.source.head_revision;
+ writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:'example/repo',relations:[]}));
+ f.git('add','.');f.git('commit','-qm','remove only input relation');const head=f.git('rev-parse','HEAD');
+ f.source.base_revision=base;f.source.head_revision=head;f.report.base.revision=base;f.report.head.revision=head;
+ f.report.affected_usages[0].evidence[0].side='base';f.report.affected_usages[0].evidence[0].revision=base;
+ f.report.affected_usages[0].evidence[0].implementation.revision=base;
+ f.ownerCoverage.base=f.ownerCoverage.head;f.ownerCoverage.head=[{path:owner,matched_paths:[],truncated:false}];
+ expect(()=>apply(f)).not.toThrow();expect(f.report.mapping_status).toBe('verified');
+ expect(f.report.head.file_coverage.every(row=>row.coverage_kind!=='auxiliary_source')).toBe(true);
+});
+it('dual-scope caller preserves unclaimed KR owner as UNKNOWN while factory exact native test can claim its input',()=>{
+ const f=fixture(),e=collect(f),kr=structuredClone(f.report);
+ kr.affected_usages=[];kr.head.affected_usages=[];
+ const coverage={base:[],head:[{path:owner,matched_paths:[],truncated:false}]};
+ expect(()=>applyAuxiliarySourceEvidence(kr,e,coverage)).not.toThrow();
+ expect(kr.mapping_status).toBe('unknown');expect(kr.gaps).toContainEqual({code:'auxiliary_owner_unclaimed',side:'head',path:owner});
+ expect(kr.unclaimed_paths).toContainEqual({path:input});
+ expect(kr.head.file_coverage.every(row=>row.coverage_kind!=='auxiliary_source')).toBe(true);
+ expect(()=>assertAuxiliarySourceEvidence(kr)).not.toThrow();
+ expect(apply(f,e).mapping_status).toBe('verified');
+});
