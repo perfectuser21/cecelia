@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { prepareCodexSession } from '../lib/codex-session.mjs';
 import { runActivityProcess } from './helpers/run-activity.mjs';
 import { gitPlain } from './helpers/git.mjs';
+import { FAKE_CLAUDE_EVAL } from './fixtures/fake-claude-eval.mjs';
 
 const SHA = 'a'.repeat(40);
 const cleanup = [];
@@ -153,7 +154,7 @@ it.each([false, true])('真实evaluate进程预览桥与sticky漂移门（drift=
   fs.writeFileSync(path.join(dir, '01-intent.md'), intent);
   fs.writeFileSync(path.join(dir, '02-spec.md'), `---\ntask_id: ${id}\nstep: spec\nupstream: ["01-intent.md#I-1"]\n---\n## QA 场景\n### Q-1\n对应: I-1\n操作: 查询API\n期望: 200\n`);
   for (const name of ['03-build.md', '04-evidence.md']) fs.writeFileSync(path.join(dir, name), 'hidden');
-  const fixturePath = fileURLToPath(new URL('./fixtures/fake-claude-eval.mjs', import.meta.url)); fs.chmodSync(fixturePath, 0o755);
+  const fixturePath = FAKE_CLAUDE_EVAL; fs.chmodSync(fixturePath, 0o755);
   const r = await runActivityProcess(fileURLToPath(new URL('../activities/evaluate.mjs', import.meta.url)), {
     run_tag: 'rt', task_id: id, worktree: cwd, sprint_dir: 'sprints/s1', intent_ids: ['I-1'],
     intent_sha256: crypto.createHash('sha256').update(intent).digest('hex'), pr_number: 123, head_sha: SHA,
