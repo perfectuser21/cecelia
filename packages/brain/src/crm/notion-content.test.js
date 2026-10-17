@@ -80,3 +80,23 @@ describe('正式客户档案模板', () => {
     expect(doc.read().split('BRAIN-CRM-START:customer')).toHaveLength(2);
   });
 });
+
+describe('明确授权的旧机器状态说明迁移', () => {
+  it('只更新指定客户的完整旧段落，并保留相同词汇的人工笔记', async () => {
+    const old = '机器旧说明：服务器尚无对应客户ID，Notion自动同步未上线。';
+    let markdown = `人工笔记：Notion自动同步未上线需要复核\n${old}\nKEEP`;
+    const request = async (_path, method = 'GET', body) => {
+      if (method === 'GET') return { markdown, truncated: false };
+      if (body.type === 'insert_content') markdown = body.insert_content.content + markdown;
+      else for (const edit of body.update_content.content_updates) markdown = markdown.replace(edit.old_str, edit.new_str);
+      return { markdown, truncated: false };
+    };
+    const customer = { id: 'c', source_page_id: 'p', display_name: '客户', profile_managed: false, manual_fields: {} };
+    const fields = { dossier_template: 'v1', dossier_legacy_status: { page_id: 'p', previous: old } };
+    await projectManagedProfile(request, customer, { fields });
+    expect(markdown).not.toContain(old);
+    expect(markdown).toContain('人工笔记：Notion自动同步未上线需要复核');
+    expect(markdown).toContain('KEEP');
+    expect(markdown).toContain('本页已登记 Brain 客户主档');
+  });
+});
