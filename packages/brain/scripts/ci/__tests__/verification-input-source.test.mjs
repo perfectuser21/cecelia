@@ -16,10 +16,10 @@ function fixture({ownerPath=owner,inputPath=input,code="import { input } from '.
  const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  const put=(p,text)=>{mkdirSync(dirname(join(root,p)),{recursive:true});writeFileSync(join(root,p),text);};
  git('init','-q');git('config','user.name','SourceFixture');git('config','user.email','source@example.invalid');git('remote','add','origin','https://github.com/example/repo.git');
- put(ownerPath,code);put(inputPath,'export const input=1;\n');git('add','.');git('commit','-qm','fixed base');const base=git('rev-parse','HEAD');
- put(inputPath,'export const input=2;\n');
+ put(ownerPath,code);put(inputPath,'export const input=1;\nexport default input;\n');git('add','.');git('commit','-qm','fixed base');const base=git('rev-parse','HEAD');
+ put(inputPath,'export const input=2;\nexport default input;\n');
  if(missing)rmSync(join(root,missing==='owner'?ownerPath:inputPath));
- if(symlink){rmSync(join(root,inputPath));put('real-input.mjs','export const input=2;\n');symlinkSync('../../real-input.mjs',join(root,inputPath));}
+ if(symlink){rmSync(join(root,inputPath));put('real-input.mjs','export const input=2;\nexport default input;\n');symlinkSync('../../real-input.mjs',join(root,inputPath));}
  put('.implementation-source-relations.json',JSON.stringify({schema_version:1,repo:'example/repo',relations:[{owner_path:ownerPath,path:inputPath,role,...extra}]}));
  git('add','.');git('commit','-qm','actual fixed input relation');const head=git('rev-parse','HEAD');
  const source={repo:'example/repo',base_revision:base,head_revision:head,changed_files:[{path:'.implementation-source-relations.json'},{path:inputPath}]};
@@ -98,5 +98,5 @@ it.each(['proof-kind','unknown-proof-key','negative-range','out-of-range','short
  });
 it('dirty uncommitted input bytes do not replace fixed Git fixture bytes',()=>{
  const f=fixture(),e=collect(f);writeFileSync(join(f.root,input),'DIRTY_INPUT');
- expect(collect(f)).toEqual(e);expect(e.head.relations[0].sha256).toBe(sha('export const input=2;\n'));
+ expect(collect(f)).toEqual(e);expect(e.head.relations[0].sha256).toBe(sha('export const input=2;\nexport default input;\n'));
 });
