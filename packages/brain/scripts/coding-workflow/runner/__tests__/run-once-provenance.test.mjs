@@ -65,7 +65,7 @@ describe('Cecelia 来源凭证为 QA / 合并的独立前置', () => {
     expect(E.state().escalated.type).toBe('qa_cannot_verify');
     expect(E.state().approved).toBeUndefined();
   });
-  it('受保护QA原判CANNOT_VERIFY不能被Commander状态接受洗成PASS，批准失败当轮升级并留完整轮次', async () => {
+  it('受保护QA原判CANNOT_VERIFY不因旧Commander接受变PASS，不调用裁判并保留原轮次', async () => {
     const root = path.join(E.sb.root, '.cecelia', 'coding-workflow-provenance'), evaluate = path.join(E.sb.root, 'evaluate-proof.mjs'), codex = path.join(E.sb.root, 'judge-proof.mjs');
     const core = new URL('../../lib/record-provenance.mjs', import.meta.url).href, entry = import.meta.url;
     const native = '{"type":"thread.started","thread_id":"fixture-native"}\n{"type":"turn.completed"}\n';
@@ -97,8 +97,10 @@ withRecordProvenance({root:${JSON.stringify(root)},worktree:i.worktree,taskId:i.
     fs.writeFileSync(path.join(E.sb.logDir, 'commander-77.json'), JSON.stringify({ interventions: [{ action: 'resume', escalation: { type: 'qa_cannot_verify', cannot_verify: [{ id: 'T-2', covers: ['Q-1'] }] }, rulings: [{ issue: 'T-2', verdict: '采纳' }] }] }));
     const r = await go(E.green(), { prepare, extra: { CODING_WF_EVALUATE: evaluate, CODING_WF_JUDGE_PROVIDER: 'codex', CODING_WF_CODEX_BIN: codex, CODING_WF_CODEX_HOME: E.sb.root } });
     expect(r.exitCode, r.stderr).toBe(0);expect(E.state().rounds, JSON.stringify(E.state()) + r.stderr).toHaveLength(1);
-    expect(E.state().rounds[0]).toMatchObject({ qa_verdict: 'CANNOT_VERIFY', judge: { verdict: 'PASS' } });
-    expect(E.state().approved).toBeUndefined();expect(E.state().escalated?.type, r.stderr).toBe('source_provenance_missing');
+    expect(E.state().rounds[0]).toMatchObject({ verdict: 'CANNOT_VERIFY', fails: 0 });
+    expect(E.state().rounds[0]).not.toHaveProperty('judge');
+    expect(E.state().approved).toBeUndefined();expect(E.state().escalated?.type, r.stderr).toBe('qa_cannot_verify');
+    expect(E.state().escalated.cannot_verify).toEqual([{ id: 'T-2', covers: ['Q-1'], reason: 'fixture missing proof' }]);
     expect(E.ghCalls().filter(a => a[1] === 'merge')).toHaveLength(0);
   });
 });
