@@ -33,7 +33,7 @@
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10170627-cw-5190fd91/02-spec.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10170627-cw-5190fd91/03-build.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10170627-cw-5190fd91/04-evidence.md","role":"documentation"},
-    {"owner_path":"packages/brain/src/lib/leadgen-batch-proof.js","path":"changes/cp-10171423-cloud-history.md","role":"release"},
+    
     {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"packages/brain/scripts/smoke/leadgen-physical-adb-routing-smoke.sh","role":"verification"},
     
     
