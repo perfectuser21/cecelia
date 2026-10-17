@@ -14,6 +14,17 @@ describe('四独立获客正规入口配置', () => {
 });
 
 describe('四入口最窄输入合同',()=>{
+  it('实体 5042 显式路由只给手机流程，并保留默认 5037',()=>{
+    for(const key of ['douyin_video_discovery','douyin_video_processing','douyin_lead_outreach']){
+      const p=resolveLeadgenInput(task(key,{profile:'physical',serial:'realserial',source_run:key==='douyin_video_processing'?'source101':undefined,source_binding_run_id:key==='douyin_video_processing'?'douyin_video_discovery-source101__a1':undefined,send_authorized:key==='douyin_lead_outreach'?true:undefined,limit:1,adb_port:5042}));
+      expect(p.machine).toBe('xian-m4');
+      expect(p.env.DOUYIN_ADB_PORT).toBe('5042');
+      expect(p.env.ADB_SERVER_SOCKET).toBe('tcp:127.0.0.1:5042');
+    }
+    const old=resolveLeadgenInput(task('douyin_video_discovery',{profile:'physical',serial:'realserial',source_run:undefined,source_binding_run_id:undefined}));
+    expect(old.env.DOUYIN_ADB_PORT).toBeUndefined();
+    expect(old.env.ADB_SERVER_SOCKET).toBeUndefined();
+  });
   it('103固定MMV无手机身份，控制run与external业务run不同',()=>{
     const p=resolveLeadgenInput(task());
     expect(p.machine).toBe('mmv'); expect(p.profile).toBe('mmv-scoring');expect(p.serial).toBe('none');
