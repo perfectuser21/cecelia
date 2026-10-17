@@ -6,7 +6,7 @@ import { SSH_BASE_ARGS } from './ssh-args.js';
 import { resolvePrimaryWorkerId,sshTargetFor } from '../machine-registry.js';
 import { prepareLeadgenPlan } from './leadgen-dispatch-contract.js';
 import { buildLeadgenBatchProbe } from './leadgen-batch-proof.js';
-import { buildLeadgenLaunch,buildLeadgenProbe } from './leadgen-controller.js';
+import { buildLeadgenLaunch,buildLeadgenProbe,buildLeadgenAdbPreflight } from './leadgen-controller.js';
 import { checkDeviceLockForManualDispatch } from './manual-dispatch-device-gate.js';
 import { releaseDeviceLocksHeldBy } from '../device-lock-helpers.js';
 import { setBrainLease,BRAIN_LEASE_MARGIN_SECONDS } from './task-lease.js';
@@ -38,6 +38,10 @@ export async function dispatchLeadgenTask(pool,task,deps={}) {
     const proof=await (deps.batchProof??(async p=>parse(await dispatch(buildLeadgenBatchProbe(p)))))(plan);
     if(!Number.isSafeInteger(proof?.eligible)||proof.eligible<0||proof.company_id!==plan.company_id)throw Error('公司/批次读回无效');
     if(!proof.eligible)return 'waiting';
+    if(plan.machine==='xian-m4'&&isLeadgenPhoneFlow(plan.workflow_key)){
+      const ready=parse(await (deps.adbPreflight??(p=>dispatch(buildLeadgenAdbPreflight(p))))(plan));
+      if(ready.state!=='device'||ready.serial!==plan.serial||ready.port!==(plan.env.DOUYIN_ADB_PORT===undefined?5037:Number(plan.env.DOUYIN_ADB_PORT)))throw Error(`ADB预检失败: ${ready.reason??'身份不符'}`);
+    }
   }catch(error){await terminal(pool,task,'failed',error.message,{phase:'preflight'},deps);return 'failed';}
   const claimed=await pool.query("UPDATE tasks SET claimed_by=$2,claimed_at=NOW() WHERE id=$1 AND status='queued' AND claimed_by IS NULL RETURNING id",[task.id,CLAIMER]);
   if(!claimed.rows?.length)return 'skipped';
