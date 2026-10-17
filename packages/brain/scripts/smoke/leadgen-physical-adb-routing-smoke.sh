@@ -28,27 +28,27 @@ const reject=(task,pattern)=>assert.throws(()=>resolveLeadgenInput(task),pattern
 const out={case:kind,fixture:'isolated subprocess and in-memory dispatch ledger',claims:0,locks:0,launches:0};
 async function runController(p,state='device'){
   const root=mkdtempSync(join(tmpdir(),'leadgen-smoke-')),m4=join(root,'m4'),local=join(root,'local');
-  let server,protocol='tcp';
+  let server;const protocol='isolated-random-port-tcp';
+  try{
   mkdirSync(join(m4,'bin-harvest'),{recursive:true});mkdirSync(join(local,'test-bin'),{recursive:true});
   writeFileSync(join(m4,'bin-harvest/deployment-manifest.json'),JSON.stringify({release_id:p.release_id,observation_id:p.observation_id,source_commit:p.source_commit}));
   writeFileSync(join(m4,'bin-harvest/leadgen-run.sh'),`#!/bin/sh\npython3 -c 'import json,os,pathlib;h=pathlib.Path.home();(h/"observed.json").write_text(json.dumps({k:os.environ.get(k) for k in ["DOUYIN_ADB_PORT","ADB_SERVER_SOCKET","ADB_SERVER_PORT"]}));(h/"calls").write_text("x")'\nexit 7\n`,{mode:0o700});
   const port=p.env.DOUYIN_ADB_PORT??'5037';
-  if(state!=='closed'){
-    const ready=join(root,'ready'),error=join(root,'error'),serverFile=join(root,'adb-server.py');
-    writeFileSync(serverFile,`import socket,pathlib\ntry:\n s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('127.0.0.1',${port}));s.listen();pathlib.Path(${JSON.stringify(ready)}).write_text('ready')\nexcept OSError as e:\n pathlib.Path(${JSON.stringify(error)}).write_text(str(e.errno));raise\nwhile True:\n c,_=s.accept()\n try:\n  h=c.recv(4);n=int(h,16);req=b''\n  while len(req)<n:req+=c.recv(n-len(req))\n  reply=${JSON.stringify(state)}.encode()\n  c.sendall(b'OKAY'+('%04x'%len(reply)).encode()+reply if req==('host-serial:'+${JSON.stringify(state==='wrong-serial'?'other':p.serial)}+':get-state').encode() else b'FAIL0000')\n finally:c.close()\n`);
-    server=spawn('python3',[serverFile],{stdio:'ignore'});
-    for(let i=0;i<50&&!existsSync(ready)&&!existsSync(error);i++)await new Promise(r=>setTimeout(r,10));
-    if(existsSync(error)){
-      const errno=readFileSync(error,'utf8');server.kill();server=undefined;
-      if(errno!=='1')throw Error('ADB fixture bind failed: '+errno);
-      protocol='socket-module-fallback';
-      writeFileSync(join(m4,'socket.py'),`class Conn:\n def __init__(self):self.data=b''\n def __enter__(self):return self\n def __exit__(self,*a):pass\n def settimeout(self,*a):pass\n def sendall(self,data):\n  req=data[4:];reply=${JSON.stringify(state)}.encode()\n  self.data=b'OKAY'+('%04x'%len(reply)).encode()+reply if int(data[:4],16)==len(req) and req==('host-serial:'+${JSON.stringify(state==='wrong-serial'?'other':p.serial)}+':get-state').encode() else b'FAIL0000'\n def recv(self,n):out=self.data[:n];self.data=self.data[n:];return out\ndef create_connection(address,timeout=None):\n if address!=('127.0.0.1',${port}):raise OSError('closed port')\n return Conn()\n`);
-    }else assert.equal(existsSync(ready),true,'ADB fixture did not start');
-  }
+  // 只有fixture适配器看到批准端口；真实TCP仅连接内核分配的临时端口。
+  // closed仍保留一个已bind但未listen的socket，避免随机端口释放后被别人抢占。
+  const ready=join(root,'ready'),error=join(root,'error'),serverFile=join(root,'adb-server.py'),requests=join(root,'requests.jsonl');
+  writeFileSync(serverFile,`import socket,pathlib,time\ntry:\n s=socket.socket();s.bind(('127.0.0.1',0));port=s.getsockname()[1]\n assert port not in (5037,5041,5042)\n if ${JSON.stringify(state)}!='closed':s.listen()\n pathlib.Path(${JSON.stringify(ready)}).write_text(str(port))\nexcept Exception as e:\n pathlib.Path(${JSON.stringify(error)}).write_text(str(e));raise\nif ${JSON.stringify(state)}=='closed':\n while True:time.sleep(1)\nwhile True:\n c,_=s.accept()\n try:\n  h=c.recv(4);n=int(h,16);req=b''\n  while len(req)<n:\n   chunk=c.recv(n-len(req))\n   if not chunk:raise ValueError('fixture request truncated')\n   req+=chunk\n  reply=${JSON.stringify(state)}.encode()\n  c.sendall(b'OKAY'+('%04x'%len(reply)).encode()+reply if req==('host-serial:'+${JSON.stringify(state==='wrong-serial'?'other':p.serial)}+':get-state').encode() else b'FAIL0000')\n finally:c.close()\n`);
+  server=spawn('python3',[serverFile],{stdio:'ignore'});
+  for(let i=0;i<100&&!existsSync(ready)&&!existsSync(error);i++)await new Promise(r=>setTimeout(r,10));
+  assert.equal(existsSync(error),false,existsSync(error)?readFileSync(error,'utf8'):'');
+  assert.equal(existsSync(ready),true,'isolated ADB fixture did not start');
+  const fixturePort=Number(readFileSync(ready,'utf8'));assert.ok(fixturePort>1024&&![5037,5041,5042].includes(fixturePort));
+  writeFileSync(join(m4,'socket.py'),`import _socket,json\nclass Conn(_socket.socket):\n def __enter__(self):return self\n def __exit__(self,*args):self.close()\ndef create_connection(address,timeout=None):\n if address!=('127.0.0.1',${port}):raise OSError('fixture rejected unexpected approved address')\n with open(${JSON.stringify(requests)},'a') as log:log.write(json.dumps({'requested':address,'actual':['127.0.0.1',${fixturePort}]})+'\\n')\n conn=Conn(_socket.AF_INET,_socket.SOCK_STREAM);conn.settimeout(timeout)\n try:conn.connect(('127.0.0.1',${fixturePort}))\n except BaseException:conn.close();raise\n return conn\n`);
   writeFileSync(join(local,'test-bin/ssh'),`#!/usr/bin/env python3\nimport os,sys,subprocess\nassert '-J' in sys.argv and 'xian-m1' in sys.argv and 'StrictHostKeyChecking=yes' in sys.argv\ne=dict(os.environ);e['HOME']=e['FAKE_M4_HOME'];e['PYTHONPATH']=e['FAKE_M4_HOME']\nr=subprocess.run(['/bin/sh','-c',sys.argv[-1]],input=sys.stdin.buffer.read(),env=e);sys.exit(r.returncode)\n`,{mode:0o700});
   const env={...process.env,HOME:local,PATH:join(local,'test-bin')+':'+process.env.PATH,FAKE_M4_HOME:m4,ADB_SERVER_SOCKET:'tcp:evil:9',ADB_SERVER_PORT:'9999'};
   const execute=(command,input='')=>JSON.parse(execFileSync('sh',['-c',command],{input,env,encoding:'utf8',timeout:10000}));
-  try{
+    const preflight=buildLeadgenAdbPreflight(p),before=execute(preflight.remote,preflight.input);
+    assert.equal(before.state,state==='device'?'device':'rejected');
     const command=buildLeadgenLaunch(p);execute(command.remote,command.input);
     let result;
     for(let i=0;i<60;i++){result=execute(buildLeadgenProbe(p));if(result.state==='terminal')break;await new Promise(r=>setTimeout(r,50));}
@@ -57,7 +57,10 @@ async function runController(p,state='device'){
     assert.equal(calls,state==='device'?'x':'');
     const seen=existsSync(join(m4,'observed.json'))?JSON.parse(readFileSync(join(m4,'observed.json'),'utf8')):null;
     if(seen){assert.equal(seen.DOUYIN_ADB_PORT,p.env.DOUYIN_ADB_PORT??null);assert.equal(seen.ADB_SERVER_SOCKET,p.env.ADB_SERVER_SOCKET??null);assert.equal(seen.ADB_SERVER_PORT,null);}
-    return {protocol,execution_started:result.execution_started,calls:calls.length,env:seen};
+    const routes=readFileSync(requests,'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(routes.length,2,'preclaim与worker均须经过隔离路由');
+    for(const route of routes){assert.deepEqual(route.requested,['127.0.0.1',Number(port)]);assert.deepEqual(route.actual,['127.0.0.1',fixturePort]);}
+    return {protocol,fixture_port:fixturePort,preflight_checks:routes.length,execution_started:result.execution_started,calls:calls.length,env:seen};
   }finally{if(server)server.kill();const pid=join(local,'brain-runs',p.controller_run_id+'.pid');if(existsSync(pid)){try{process.kill(-Number(readFileSync(pid,'utf8')),'SIGTERM');}catch{}}rmSync(root,{recursive:true,force:true});}
 }
 if(kind==='5042'||kind==='legacy'){
