@@ -429,3 +429,38 @@ describe('merge 读取封套不增加 Claude 原文执行出口',()=>{
   expect(findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources}).some(h=>h.rule==='E1')).toBe(true);
  });
 });
+
+describe('原生QA完整封套只作为有界解码后的Acorn输入',()=>{
+ const helper=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
+ const data=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
+ const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,HASH_RUNTIME_FILE,helper,data,...PROVENANCE_READER_HASHES.keys()])].map(file=>[file,readFileSync(file,'utf8')]));
+ const scan=sources=>findClaudeInvocations(sources.get(data),{file:data,sources});
+ it('完整已审新旧闭包及十三文件只读指纹不恢复任何Claude执行路径',()=>{
+  const sources=base();
+  for(const file of [ENVELOPE_FILE,STAGE_DATA,helper,data,HASH_RUNTIME_FILE])expect(findClaudeInvocations(sources.get(file),{file,sources})).toEqual([]);
+ });
+ it.each(['data eval','data Function','unbounded decode','changed encoding','changed payload','helper eval','helper raw export','caller eval','stage eval','provenance eval','third data consumer','third helper consumer','escaped data consumer','dynamic helper consumer','missing helper','runtime raw export'])('%s 必须拒绝原生封套纯数据资格',kind=>{
+  const sources=base(),other=path.join(BRAIN_ROOT,'src/unreviewed-native-reader.js');
+  if(kind==='data eval')sources.set(data,sources.get(data)+'\neval(NATIVE_EVIDENCE_ENVELOPES.legacyCli);');
+  if(kind==='data Function')sources.set(data,sources.get(data)+'\nFunction(NATIVE_EVIDENCE_ENVELOPES.legacyCli)();');
+  if(kind==='unbounded decode')sources.set(data,sources.get(data).replace('{ maxOutputLength: 321616 }','{}'));
+  if(kind==='changed encoding')sources.set(data,sources.get(data).replace(", 'base64')",", 'utf8')"));
+  if(kind==='changed payload')sources.set(data,sources.get(data).replace(/Buffer\.from\('([A-Za-z0-9+/=])/,(_all,c)=>`Buffer.from('${c==='A'?'B':'A'}`));
+  if(kind==='helper eval')sources.set(helper,sources.get(helper)+'\neval(REVIEWED.legacyCli);');
+  if(kind==='helper raw export')sources.set(helper,sources.get(helper)+'\nexport const raw=REVIEWED.legacyCli;');
+  if(kind==='caller eval')sources.set(ENVELOPE_CONSUMER,sources.get(ENVELOPE_CONSUMER)+'\nnativeBuildSources(candidate,eval);');
+  if(kind==='stage eval')sources.set(STAGE_HELPER,sources.get(STAGE_HELPER)+'\nnativeEvidenceStages(candidate,eval);');
+  if(kind==='provenance eval')sources.set(PROVENANCE_HELPER,sources.get(PROVENANCE_HELPER)+'\nnativeEvidenceForwarding(candidate,eval);');
+  if(kind==='third data consumer')sources.set(other,"import {NATIVE_EVIDENCE_ENVELOPES as data} from './lib/existing-ops-native-evidence-envelopes.js';eval(data.legacyCli);");
+  if(kind==='third helper consumer')sources.set(other,"import {nativeCompatibleCli} from './lib/existing-ops-native-evidence-source.js';eval(nativeCompatibleCli());");
+  if(kind==='escaped data consumer')sources.set(other,"import {NATIVE_EVIDENCE_ENVELOPES} from './lib/existing-ops-native-evidence-\\u0065nvelopes.js';eval(NATIVE_EVIDENCE_ENVELOPES.legacyCli);");
+  if(kind==='dynamic helper consumer')sources.set(other,"const reader=await import('./lib/existing-ops-native-evidence-\\u0073ource.js');eval(reader.nativeCompatibleCli());");
+  if(kind==='missing helper')sources.delete(helper);
+  if(kind==='runtime raw export')sources.set(HASH_RUNTIME_FILE,sources.get(HASH_RUNTIME_FILE)+"\nexport const raw=readFileSync(new URL('existing-ops-native-evidence-envelopes.js',import.meta.url),'utf8');");
+  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
+ });
+ it('数据后的实际进程别名调用仍同时触发E1与原R1',()=>{
+  const sources=base();sources.set(data,sources.get(data)+"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);");
+  const hits=scan(sources);expect(hits.some(hit=>hit.rule==='E1')).toBe(true);expect(hits.some(hit=>hit.rule==='R1')).toBe(true);
+ });
+});
