@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$#" -eq 0 ]]; then
+  for smoke_case in 5042 legacy closed wrong-serial offline invalid-port cloud no-phone outreach dispatch-5042 dispatch-reject; do
+    bash "$0" --case "$smoke_case"
+  done
+  exit 0
+fi
 case_name="${2:-}"
 if [[ "${1:-}" != --case || ! "$case_name" =~ ^(5042|legacy|closed|wrong-serial|offline|invalid-port|cloud|no-phone|outreach|dispatch-5042|dispatch-reject)$ ]]; then
   echo 'usage: leadgen-physical-adb-routing-smoke.sh --case 5042|legacy|closed|wrong-serial|offline|invalid-port|cloud|no-phone|outreach|dispatch-5042|dispatch-reject' >&2
