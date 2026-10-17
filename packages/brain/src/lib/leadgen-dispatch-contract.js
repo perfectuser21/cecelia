@@ -52,7 +52,8 @@ export async function prepareLeadgenPlan(pool,task,deps={}) {
   const release=await (deps.getRelease??getRelease)(pool,explicit.release_id);
   const gate=await (deps.getReleaseGate??getReleaseGate)(pool,release.id);
   requireValue(release.environment==='production'&&release.target===plan.machine&&gate.deployed&&gate.actual_matches&&Array.isArray(gate.gaps)&&gate.gaps.length===0&&gate.current_observation_id===explicit.observation_id,'当前真实部署不符');
-  const fixed=release.payload.workflows.find(w=>w.workflow_id===plan.workflow_id&&w.id===row.current_definition_version_id&&w.id===explicit.workflow_definition_version_id&&w.payload_sha256===explicit.snapshot_sha256);
+  // 目录声明可先于部署推进；仅使用当前真实部署内的显式固定版本，不跟随未部署声明。
+  const fixed=release.payload.workflows.find(w=>w.workflow_id===plan.workflow_id&&w.id===explicit.workflow_definition_version_id&&w.payload_sha256===explicit.snapshot_sha256);
   requireValue(fixed,'当前完整固定版本不符');
   if(isLeadgenPhoneFlow(plan.workflow_key)){
     const phones=(await pool.query('SELECT * FROM phone_registry WHERE serial=$1',[plan.serial])).rows,phone=phones[0];
