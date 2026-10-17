@@ -380,3 +380,30 @@ describe('stdin收尾后的迟到写入错误', () => {
     }
   });
 });
+
+describe('原生管道输入哈希', () => {
+  it('run.stdin_sha256必须匹配真实CLI读取的UTF8字节，与JSON材料哈希分开', async () => {
+    const { createHash } = await import('node:crypto');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-native-stdin-hash-'));
+    const bin = path.join(dir, 'codex'), captured = path.join(dir, 'actual-stdin');
+    const input = '头部\r\n' + '汉😀'.repeat(50000) + '\n尾部-no-newline';
+    fs.writeFileSync(bin, `#!/usr/bin/env node\nconst fs=require('node:fs');const bytes=fs.readFileSync(0);fs.writeFileSync(${JSON.stringify(captured)},bytes);console.log(JSON.stringify({type:'thread.started',thread_id:'local-hash-fixture'}));console.log(JSON.stringify({type:'turn.completed'}));\n`); fs.chmodSync(bin, 0o755);
+    const sha = b => createHash('sha256').update(b).digest('hex');
+    try {
+      const result = await runClaude({ provider: 'codex', args: ['-p', input], cwd: dir,
+        timeoutMs: 5000, tag: 'stdin-hash', transcriptPath: path.join(dir, 'native.jsonl'),
+        codexEnv: { CODING_WF_CODEX_HOME: dir, CODING_WF_CODEX_MODEL: 'local-stub', CODING_WF_CODEX_BIN: bin } });
+      expect(result).toMatchObject({ code: 0, stdin_finished: true, stdin_error: null });
+      const actual = fs.readFileSync(captured);
+      expect(actual).toEqual(Buffer.from(input, 'utf8')); // 真实prepareCodexSession不修改prompt。
+      expect(sha(actual)).not.toBe(sha(JSON.stringify({ prompt: input })));
+      if (process.env.CW_JUDGE_TEST_ARTIFACT_DIR) {
+        const target = path.join(process.env.CW_JUDGE_TEST_ARTIFACT_DIR, 'native-stdin-hash'); fs.mkdirSync(target, { recursive: true });
+        fs.copyFileSync(captured, path.join(target, 'actual-stdin'));
+        fs.writeFileSync(path.join(target, 'run-result.json'), JSON.stringify({ ...result, observed_cli_stdin_sha256: sha(actual) }));
+      }
+      expect(result.stdin_sha256).toBe(sha(actual));
+      expect(result.stdin_bytes).toBe(actual.byteLength);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
