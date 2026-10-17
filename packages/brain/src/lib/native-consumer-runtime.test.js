@@ -10,8 +10,8 @@ const read=path=>readFileSync(new URL(basename(path),import.meta.url),'utf8');
 const stagePaths=['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-stage-${n}.js`);
 const provenancePaths=['envelope','core-envelope','entry-envelopes','local-envelopes']
  .map(name=>`packages/brain/src/lib/existing-ops-provenance-${name}.js`).concat(stagePaths).sort();
-it('实际身份包含全部6个新增收集器依赖，逐文件记录加载字节',()=>{
- const runtime=readNativeConsumerRuntime();expect(runtime.files).toHaveLength(11);
+it('实际身份包含全部8个新增收集器依赖，逐文件记录加载字节',()=>{
+ const runtime=readNativeConsumerRuntime();expect(runtime.files).toHaveLength(13);
  for(const path of provenancePaths)expect(runtime.files).toContainEqual({path,sha256:createHash('sha256').update(read(path)).digest('hex')});
 });
 it.each(provenancePaths)('%s 缺失、错误字节或非普通固定 blob 都拒绝',async path=>{
