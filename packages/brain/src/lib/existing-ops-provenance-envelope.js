@@ -3,6 +3,7 @@ import { ENVELOPES } from './existing-ops-build-envelopes.js';
 import { REVIEWED as CORE, ISOLATION_REVIEWED as ISOLATION_CORE } from './existing-ops-provenance-core-envelope.js';
 import { REVIEWED as LOCAL, ISOLATION_REVIEWED as ISOLATION_LOCAL, MERGE_REVIEWED as MERGE_LOCAL } from './existing-ops-provenance-local-envelopes.js';
 import { REVIEWED as ENTRY } from './existing-ops-provenance-entry-envelopes.js';
+import { NATIVE_PROVENANCE_PATHS, nativeEvidenceForwarding, nativeBuildSources, nativeCompatibleCli } from './existing-ops-native-evidence-source.js';
 
 const PREFIX = 'packages/brain/scripts/coding-workflow/lib/';
 export const PROVENANCE_SOURCE_PATHS = Object.freeze({
@@ -14,6 +15,7 @@ export const PROVENANCE_SOURCE_PATHS = Object.freeze({
   qaIsolation: PREFIX + 'qa-isolation.mjs',
   sourceProvenance: 'packages/brain/scripts/coding-workflow/runner/lib/source-provenance.mjs',
   sourceMergeProof: 'packages/brain/scripts/coding-workflow/runner/lib/source-merge-proof.mjs',
+  ...NATIVE_PROVENANCE_PATHS,
 });
 const canonical = value => JSON.stringify(value, (key, item) => ['start', 'end', 'raw'].includes(key) ? undefined : item);
 const same = (a, b) => canonical(a) === canonical(b);
@@ -29,9 +31,10 @@ const edit = (text, changes) => changes.sort((a, b) => b.node.start - a.node.sta
 
 /** 完整本地新增模块限制前置校验、导入初始化、存储绑定；旧 Node/库边界保持原合同。 */
 function forwardingSources(sources, parse) {
-  let trees, version;
+  const native = nativeEvidenceForwarding(sources, parse);
+  let trees = native?.trees, version = native?.version;
   const bundles = { recorded: { ...CORE, ...LOCAL }, isolation: { ...CORE, ...LOCAL, ...ISOLATION_CORE, ...ISOLATION_LOCAL }, source_merge: { ...CORE, ...LOCAL, ...ISOLATION_CORE, ...ISOLATION_LOCAL, ...MERGE_LOCAL } };
-  for (const [name, bundle] of Object.entries(bundles)) {
+  for (const [name, bundle] of native ? [] : Object.entries(bundles)) {
     const candidate = {};
     if (!Object.entries(bundle).every(([key, reviewed]) => {
       if (typeof sources?.[key] !== 'string') return false;
@@ -57,8 +60,8 @@ function forwardingSources(sources, parse) {
     || storage[0].init.arguments.length || context.params[1]?.name !== 'fn' || result?.type !== 'ReturnStatement'
     || result.argument?.type !== 'CallExpression' || !member(result.argument.callee, 'storage', 'run')
     || result.argument.arguments.length !== 2 || result.argument.arguments[0].name !== 'c' || result.argument.arguments[1].name !== 'fn') return null;
-  if (['isolation', 'source_merge'].includes(version) && !isolationLinks(trees)) return null;
-  if (version === 'source_merge' && !mergeReadLinks(trees, parse)) return null;
+  if (['isolation', 'source_merge', 'native_evidence'].includes(version) && !isolationLinks(trees)) return null;
+  if (['source_merge', 'native_evidence'].includes(version) && !mergeReadLinks(trees, parse)) return null;
   return { trees, version };
 }
 
@@ -115,8 +118,12 @@ export function provenanceSourceVersion(sources, parse) {
 /** 先证明新增闭包，再把已证明等价的插桩边投影给原封套；其余旧检查完全保留。 */
 export function normalizeProvenanceBuild(sources, parse) {
   try {
-    if (!forwardingSources(sources, parse)) return null;
-    const activity = parse(sources.activity), protocol = parse(sources.protocol), cli = parse(sources.cli);
+    const forwarded = forwardingSources(sources, parse);
+    if (!forwarded) return null;
+    if (forwarded.version === 'native_evidence' && !nativeBuildSources(sources, parse)) return null;
+    // 新CLI的完整AST及实际capture/stdin链先被证明，才可投影旧消费者等价封套。
+    const cliText = forwarded.version === 'native_evidence' ? nativeCompatibleCli() : sources.cli;
+    const activity = parse(sources.activity), protocol = parse(sources.protocol), cli = parse(cliText);
     const entry = activity.body.at(-1), runActivity = fn(protocol, 'runActivity'), runClaude = fn(cli, 'runClaude');
     const captureImports = cli.body.filter(n => n.type === 'ImportDeclaration' && n.source.value === './record-provenance.mjs');
     if (!same(entry, parse(ENTRY.entry).body[0]) || !same(runActivity, parse(ENTRY.runActivity).body[0])
@@ -130,7 +137,7 @@ export function normalizeProvenanceBuild(sources, parse) {
     return { ...sources,
       activity: edit(sources.activity, [{ node: entry, replacement: ENVELOPES.entry }]),
       protocol: edit(sources.protocol, [{ node: runActivity, replacement: ENVELOPES.runActivity }]),
-      cli: edit(sources.cli, [{ node: captureImports[0], replacement: '' }, { node: runClaude, replacement: ENVELOPES.runClaude }]),
+      cli: edit(cliText, [{ node: captureImports[0], replacement: '' }, { node: runClaude, replacement: ENVELOPES.runClaude }]),
     };
   } catch { return null; }
 }

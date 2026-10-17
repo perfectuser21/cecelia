@@ -8,6 +8,7 @@ import {collectStageSources} from './existing-ops-stage-source.js';
 import { createRequire } from 'node:module';
 import { ENVELOPES } from './existing-ops-build-envelopes.js';
 import { PROVENANCE_SOURCE_PATHS, normalizeProvenanceBuild, normalizeProvenancePublish, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
+import { NATIVE_PROVENANCE_PATHS, nativeStaticEdges } from './existing-ops-native-evidence-source.js';
 export { buildSelectorEnabled } from './existing-ops-build-envelopes.js';
 const requireAcorn = createRequire(import.meta.url);
 function parseEnvelope(text) { return requireAcorn('acorn').parse(text, { ecmaVersion: 'latest', sourceType: 'module' }); }
@@ -208,16 +209,18 @@ async function provenanceInputs(paths,readSource,revision) {
 }
 async function collectProvenanceInputs({read,relations,revision,build,version}) {
   // 结构校验可以读取全封套；消费者绑定只包含本分支已证明使用的模块。
-  for(const key of ['activityProvenance','recordProvenance','recordStore','recordRecords','provenancePath','qaIsolation'])if((build||key!=='activityProvenance')&&(key!=='qaIsolation'||['isolation','source_merge'].includes(version)))await read(PROVENANCE_SOURCE_PATHS[key]);
+  for(const key of ['activityProvenance','recordProvenance','recordStore','recordRecords','provenancePath','qaIsolation'])if((build||key!=='activityProvenance')&&(key!=='qaIsolation'||['isolation','source_merge','native_evidence'].includes(version)))await read(PROVENANCE_SOURCE_PATHS[key]);
+  if(version==='native_evidence')for(const path of Object.values(NATIVE_PROVENANCE_PATHS))await read(path);
   const edges=build?[
     [BUILD_SOURCE_PATHS.protocol,PROVENANCE_SOURCE_PATHS.activityProvenance,'native_activity_provenance_handler'],
     [PROVENANCE_SOURCE_PATHS.activityProvenance,PROVENANCE_SOURCE_PATHS.recordProvenance,'native_record_provenance_context'],
     [BUILD_SOURCE_PATHS.cli,PROVENANCE_SOURCE_PATHS.recordProvenance,'native_pipe_provenance_capture'],
   ]:[[PUBLISH_TEST,PROVENANCE_SOURCE_PATHS.recordProvenance,'explicit_test_provenance_fixture']];
   for(const key of ['recordStore','recordRecords','provenancePath'])edges.push([PROVENANCE_SOURCE_PATHS.recordProvenance,PROVENANCE_SOURCE_PATHS[key],'provenance_local_prehandler_dependency']);
-  if(['isolation','source_merge'].includes(version))edges.push(
+  if(['isolation','source_merge','native_evidence'].includes(version))edges.push(
     [PROVENANCE_SOURCE_PATHS.recordProvenance,PROVENANCE_SOURCE_PATHS.qaIsolation,'provenance_static_import_dependency'],
     [PROVENANCE_SOURCE_PATHS.qaIsolation,PROVENANCE_SOURCE_PATHS.recordStore,'provenance_static_import_dependency']);
+  if(version==='native_evidence')edges.push(...nativeStaticEdges());
   for(const [consumer_path,input_path,kind] of edges)if(!relations.some(r=>r.consumer_path===consumer_path&&r.input_path===input_path&&r.kind===kind&&r.revision===revision))
     relations.push({consumer_path,input_path,kind,revision});
 }
