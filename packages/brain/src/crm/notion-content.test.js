@@ -151,3 +151,15 @@ it('带非空后缀的围栏行不是闭合围栏，后续代码空行必须更�
   await projectManagedProfile(request, { id: 'c', source_page_id: 'p', profile_managed: true, profile_markdown: '```text\na\n```not-a-close\n\nb' });
   expect(markdown).toContain('```not-a-close\n\nb');
 });
+
+it('新增空介绍属性不能遮住已有客户摘要', async () => {
+  let markdown = '';
+  const request = async (_path, method = 'GET', body) => {
+    if (method === 'GET') return { markdown, truncated: false };
+    markdown = body.insert_content.content;
+    return { markdown, truncated: false };
+  };
+  await projectManagedProfile(request, { id: 'c', source_page_id: 'p', display_name: '客户', profile_managed: false,
+    manual_fields: { introduction: '', summary: '已经采集真实业务片段。' } }, { fields: { dossier_template: 'v1' } });
+  expect(markdown).toContain('已经采集真实业务片段。');
+});
