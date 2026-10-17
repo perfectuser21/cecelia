@@ -100,3 +100,32 @@ describe('明确授权的旧机器状态说明迁移', () => {
     expect(markdown).toContain('本页已登记 Brain 客户主档');
   });
 });
+
+describe('旧说明迁移的失败关闭', () => {
+  it('重复旧段落在任何正文写入前拒绝', async () => {
+    const previous = '旧机器说明';
+    const request = vi.fn(async () => ({ markdown: `${previous}\nKEEP\n${previous}`, truncated: false }));
+    await expect(projectManagedProfile(request, { id: 'c', source_page_id: 'p', manual_fields: {}, profile_managed: false }, {
+      fields: { dossier_template: 'v1', dossier_legacy_status: { page_id: 'p', previous } },
+    })).rejects.toThrow();
+    expect(request.mock.calls.filter(c => c[1] === 'PATCH')).toHaveLength(0);
+  });
+});
+
+describe('Notion真实读回格式兼容', () => {
+  it('Notion省略段落间空行后，同一画像不反复PATCH；代码块内空行仍有意义', async () => {
+    let markdown = 'KEEP', writes = 0;
+    const request = async (_path, method = 'GET', body) => {
+      if (method === 'GET') return { markdown, truncated: false };
+      writes++;
+      if (body.type === 'insert_content') markdown = body.insert_content.content.replace(/\n\n/g, '\n') + markdown;
+      else for (const edit of body.update_content.content_updates) markdown = markdown.replace(edit.old_str, edit.new_str);
+      return { markdown, truncated: false };
+    };
+    const c = { id: 'c', source_page_id: 'p', profile_managed: true, profile_markdown: '第一段\n\n第二段 **重点**', manual_fields: {} };
+    await projectManagedProfile(request, c, { fields: { dossier_template: 'v1' } });
+    const once = writes;
+    await projectManagedProfile(request, c, { fields: { dossier_template: 'v1' } });
+    expect(writes).toBe(once);
+  });
+});
