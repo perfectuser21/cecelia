@@ -343,3 +343,40 @@ describe('snapshotChanges / outOfScopeChanges', () => {
     }
   });
 });
+
+// 精确调度边界：child完成先被观察，pending Writable回调随后报错。
+// 真实Node Writable产生end callback/error；仅替换OS spawn和kill，避免对真实进程发信号。
+describe('stdin收尾后的迟到写入错误', () => {
+  it('finish已返回后，迟到EPIPE不得再安排进程组信号或留下timer', async () => {
+    const { EventEmitter } = await import('node:events');
+    const { Writable, PassThrough } = await import('node:stream');
+    const child = new EventEmitter(); child.pid = 987654321;
+    child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    let completeWrite;
+    child.stdin = new Writable({ write(_chunk, _encoding, callback) { completeWrite = callback; } });
+    vi.doMock('node:child_process', async importOriginal => ({ ...await importOriginal(), spawn: () => child }));
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-late-stdin-'));
+    vi.useFakeTimers();
+    try {
+      const isolated = await import('../lib/claude.mjs?late-stdin-lifecycle');
+      const running = isolated.runClaude({ provider: 'codex', args: ['-p', 'x'.repeat(900000)], cwd: tmp,
+        timeoutMs: 60000, tag: 'late-stdin', codexEnv: { CODING_WF_CODEX_HOME: tmp, CODING_WF_CODEX_MODEL: 'local-stub', CODING_WF_CODEX_BIN: '/local/stub' } });
+      expect(completeWrite).toBeTypeOf('function');
+      child.emit('close', 0);
+      const result = await running;
+      expect(result).toMatchObject({ code: 0, stdin_finished: false, stdin_error: { code: 'STDIN_INCOMPLETE' } });
+      const cleanupSignals = kill.mock.calls.length;
+      expect(cleanupSignals).toBe(1); // finish自己的必要SIGKILL，不禁止正常清理。
+      expect(vi.getTimerCount()).toBe(0);
+      completeWrite(Object.assign(new Error('late pipe closure'), { code: 'EPIPE' }));
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(kill.mock.calls).toHaveLength(cleanupSignals);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers(); kill.mockRestore(); vi.doUnmock('node:child_process');
+      child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
