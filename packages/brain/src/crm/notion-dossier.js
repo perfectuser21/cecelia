@@ -12,7 +12,8 @@ export function renderCustomerDossier(customer) {
   return [
     '## 客户介绍',
     `**客户：**${plain(customer.display_name)}`,
-    plain(m.introduction ?? m.summary, '客户背景待补充；不依据昵称推断公司、职务或购买情况。'),
+    plain(typeof m.introduction === 'string' && m.introduction.trim() ? m.introduction : m.summary,
+      '客户背景待补充；不依据昵称推断公司、职务或购买情况。'),
     `- **身份与角色：**${plain(m.role)}`,
     `- **行业与业务：**${plain(m.industry)}`,
     '## 当前画像',
