@@ -129,3 +129,25 @@ describe('Notion真实读回格式兼容', () => {
     expect(writes).toBe(once);
   });
 });
+
+it('代码块内空行属于画像内容，不能被幂等比较吞掉', async () => {
+  let markdown = '**BRAIN-CRM-START:c**\n```text\na\nb\n```\n**BRAIN-CRM-END:c**';
+  const request = async (_path, method = 'GET', body) => {
+    if (method === 'GET') return { markdown, truncated: false };
+    for (const edit of body.update_content.content_updates) markdown = markdown.replace(edit.old_str, edit.new_str);
+    return { markdown, truncated: false };
+  };
+  await projectManagedProfile(request, { id: 'c', source_page_id: 'p', profile_managed: true, profile_markdown: '```text\na\n\nb\n```' });
+  expect(markdown).toContain('a\n\nb');
+});
+
+it('带非空后缀的围栏行不是闭合围栏，后续代码空行必须更新', async () => {
+  let markdown = '**BRAIN-CRM-START:c**\n```text\na\n```not-a-close\nb\n**BRAIN-CRM-END:c**';
+  const request = async (_path, method = 'GET', body) => {
+    if (method === 'GET') return { markdown, truncated: false };
+    for (const edit of body.update_content.content_updates) markdown = markdown.replace(edit.old_str, edit.new_str);
+    return { markdown, truncated: false };
+  };
+  await projectManagedProfile(request, { id: 'c', source_page_id: 'p', profile_managed: true, profile_markdown: '```text\na\n```not-a-close\n\nb' });
+  expect(markdown).toContain('```not-a-close\n\nb');
+});
