@@ -48,6 +48,30 @@ tail -n 100 "${CODING_WF_USER_HOME:-/Users/${CODING_WF_RUN_USER:-administrator}}
 
 若 plist 路径与变量推导不同，以 plist 的 `StandardOutPath` 读日志。分别判读服务状态、任务回执和主日志；日志或 dry-run 单独都不能证明运行正常。日志可能含任务现场信息，不复制令牌或账号文件内容。
 
+## 运行回执如何判读
+
+在仓库根目录只读查看指定回执目录；省略 `--log-dir` 时使用 runner 配置的日志目录（`CODING_WF_LOG_DIR`，未设置时为运行用户 home 下的 `.cecelia/coding-workflow-runner`）：
+
+```bash
+node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir <回执目录>
+node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir <回执目录> --json
+```
+
+输出按文件 `mtime` 倒序排列。目录不存在或没有可扫描的 JSON 普通文件时，文本显示「没有运行记录」，JSON 为 `[]`；这只代表没有记录，不能证明服务健康。CLI 扫描目录内除 `cifix-<数字>.json` 外的所有 `.json` 普通文件，并非只扫描任务回执。
+
+| 显示状态 | 判读 |
+|---|---|
+| `running` | JSON 含 `last_event`，属于进度记录；即使同时带终态字段，也按进度显示。 |
+| `completed` | 终态回执原样保留此状态；只表示执行回执完成。 |
+| `partial` / `failed` | 终态回执原样保留状态；显示首个非 `completed`、非 `skipped` 活动及其末次尝试的原因；若没有活动级原因，回退到回执级原因或默认运行原因。 |
+| `unreadable` | JSON 解析失败，或内容不符合进度／终态回执形状；只影响该行，不阻断其他文件。 |
+
+合法的 `qa-*.json`、`commander-*.json` 和终态回写待办 `pr-sync-pending.json` 也可能被扫成 `unreadable`。它不证明文件损坏，不能据此删除文件，尤其不能删除 `pr-sync-pending.json` 待办；应先按文件实际用途核实。CLI 只反映本次读取结果，不保证并发写入期间的快照一致性。
+
+`ci_fix` 仅在回执 `pr_url` 可提取 PR 号、且对应 `cifix-<号>.json` 中有 `attempts` 时出现。`attempts` 是尝试次数，`last_result` 是末次结果；文本示例为 `ci_fix=2次 last=pushed`。它只是修复记录摘要，不能据此断定 CI 通过或 PR 已合并。
+
+`completed` 不等于最终合并。即使回执缺少 `outputs.pr_url`，JSON 仍会给出 `status=completed`、`pr_url=null`、`reason_code=pr_url_missing`；文本的 completed 行默认不打印该 `reason_code`，不能从表格行推断已有有效 PR。先用 `--json` 核对 `pr_url` 与 `reason_code`；有 PR 时再只读查询 `gh pr view <PR号或URL> --json headRefOid,state,mergedAt,url`，核实对应 PR 的最终 head 和合并事实。还需只读查询同一任务的 `GET <预览环境>/api/brain/tasks/<任务ID>`，核对 `result.runner.phase=merged`、`result.merge.merged=true`，以及 `result.qa_state` 的当前 head 对应的 QA 通过、批准与合并终态。PR 查不到、head 不同、Brain 不可读或任一终态缺失时，结论保持「未证实合并，可稍后重查」。诊断过程只读，不手工修改批准、FAIL 记录或运行状态。
+
 ## 故障时保留现场
 
 `runner.sh` 经 `runtime-launch.mjs` 先健康检查，再安全更新专用 clone，最后调用 `runtime-run.sh`。账号失效或缺目录等返回 `runtime_codex_*` 错码时，先停止并排查指定订阅账号；不改用 API key、其他账号或 Claude，也不直接重启。
