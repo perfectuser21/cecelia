@@ -2,6 +2,8 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10170627-cw-5190fd91/05-qa-report-r10.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10170627-cw-5190fd91/06-judge-r10.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10170627-cw-5190fd91/07-commander-r3.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10170627-cw-5190fd91/05-qa-report-r9.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10170627-cw-5190fd91/06-judge-r9.md","role":"documentation"},
