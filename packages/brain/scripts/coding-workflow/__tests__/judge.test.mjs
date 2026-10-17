@@ -39,12 +39,12 @@ describe('裁判关注面（审计 #39 #40）', () => {
 });
 
 describe('buildJudgePrompt', () => {
-  it('把需求、合同、QA 报告、PR 改动和 I-n 清单放进提示词；超过上限的改动兜底截断并标注（调用方应先升级）', () => {
+  it('完整保留需求、合同、QA 报告及改动；超diff限制由上游明确升级', () => {
     const p = buildJudgePrompt({ intent: 'INTENT-TEXT', spec: 'SPEC-TEXT', qaReport: 'QA-TEXT', diff: 'D'.repeat(300000), intentIds: ['I-1', 'I-2'], round: 2 });
     expect(p.system).toContain('JSON');
     for (const s of ['INTENT-TEXT', 'SPEC-TEXT', 'QA-TEXT', 'I-1,I-2', '第 2 轮']) expect(p.user).toContain(s);
-    expect(p.user).toContain('已截断');
-    expect(p.user.length).toBeLessThan(260000);
+    expect(p.user).toContain('D'.repeat(300000));
+    expect(p.user).not.toContain('已截断');
   });
 });
 
@@ -167,12 +167,13 @@ describe('规格约束力与前轮裁决（金丝雀 4 裁判翻转）', () => {
     expect(p).toContain('（无，本轮是首次裁决）');
   });
 
-  it('前轮裁决过长 → 只保留最近的、总量封顶', () => {
+  it('所有前轮正式裁决完整保留，不静默省略早轮或截短单轮', () => {
     const big = Array.from({ length: 6 }, (_, i) => ({ round: i + 1, text: `R${i + 1}-${'x'.repeat(20000)}` }));
     const p = buildJudgePrompt({ intent: 'i', spec: 's', qaReport: 'q', diff: 'd', intentIds: ['I-1'], round: 7, priorRulings: big }).user;
     expect(p).toContain('R6-');
-    expect(p).not.toContain('R1-');
-    expect(p.length).toBeLessThan(80000);
+    for (const r of big) expect(p).toContain(r.text);
+    expect(p).not.toContain('裁决略');
+    expect(p).not.toContain('已截断');
   });
 
   it('parseJudge 保留问题的 reverses（推翻的前轮条目）', () => {

@@ -77,6 +77,13 @@ it('未登记QA证据只能标sealed_not_registered，binary附件同hash覆盖'
   seal('evaluate', [file('05-qa-report-r1.md'), file('qa-r1/screen.png')], { round: 1 });
   const pending = verifyPendingStageEvidence({ ...options, head, stageEventId: lastQaStageId }, [file('05-qa-report-r1.md'), file('qa-r1/screen.png')]);expect(pending.status).toBe('sealed_not_registered');expect(pending.records).toHaveLength(2);
 });
+it('新可信compiled策略不能删除marker并以旧model producer降级封存', () => {
+  prepareQa();put(file('05-qa-report-r1.md'), fm('evaluate'));
+  withRecordProvenance({ ...options, stage: 'evaluate', round: 1, evidencePolicy: 'qa_native_compiled_v1' }, () => {
+    const isolation = beginEvaluateIsolation();native();expect(isolation.restore()).toBe(true);
+    expect(() => sealStageEvidence({ files: [file('05-qa-report-r1.md')], result: { status: 'completed', outputs: { qa: { verdict: 'PASS', round: 1 } } }, producer: 'model' })).toThrow(/compiled|policy|assembly/);
+  });
+});
 it('controller_render不可用无native绕过，且保存真实结构化输入', () => {
   put(file('06-judge-r1.md'), '# rendered judge');
   withRecordProvenance({ ...options, stage: 'judge', round: 1 }, () => {

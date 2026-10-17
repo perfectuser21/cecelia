@@ -45,6 +45,12 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:3,output_t
       expect(decideJudge(parsed).verdict).toBe('PASS');
     } finally { for (const key of Object.keys(process.env)) if (!(key in old)) delete process.env[key]; Object.assign(process.env, old); f.cleanup(); }
   });
+  it('CLI未消费stdin便伪造完成事件不能当完整输送成功', async () => {
+    const f = fixture(`const fs=require('node:fs');const a=process.argv.slice(2);fs.closeSync(0);fs.writeFileSync(a[a.indexOf('--output-last-message')+1], ${JSON.stringify(JSON.stringify(answer))});console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:${JSON.stringify(JSON.stringify(answer))}}}));console.log(JSON.stringify({type:'turn.completed'}));`);
+    try {
+      await expect(callJudge({ ...prompt, user: 'x'.repeat(900000) }, { provider:'codex', model:'judge-model', codexHome:f.dir, codexBin:f.bin, timeoutMs:3000 })).rejects.toThrow(/judge_.*stdin|judge_.*transport/);
+    } finally { f.cleanup(); }
+  });
   it.each([
     ['failed', "console.log(JSON.stringify({type:'turn.failed',error:{message:'quota exceeded'}}));", 'judge_codex_auth'],
     ['partial', "console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'{}'}}));", 'judge_codex_incomplete'],

@@ -205,6 +205,31 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     for (const s of ['哪怕只是只读请求', '绝不能拿生产当基线', 'git worktree add']) expect(p).toContain(s);
   });
 
+  it.each(['preview', 'local'])('真实%s会话收到历史范围用途声明，同时隔离当前03/04和保护副本', async kind => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-history-policy-'));
+    const captured = path.join(captureDir, 'actual-prompt.txt');
+    try {
+      const patch = kind === 'local' ? { repo_profile: { key: 'fixture-local', production_re: [], preview: { type: 'local' } } } : {};
+      const r = await run('pass', patch, { FAKE_EVAL_PROMPT_CAPTURE_PATH: captured });
+      expect(r.result.status, r.stderr).toBe('completed');
+      const prompt = fs.readFileSync(captured, 'utf8');
+      const line = /^QA_HISTORY_SCOPE_POLICY: (.+)$/m.exec(prompt);
+      expect(line, '实际CLI输入没有为可见旧报告的DAG范围审计明确许可').not.toBeNull();
+      const policy = JSON.parse(line[1]);
+      expect(policy).toMatchObject({ allowed_purpose: 'fixed_base_dag_scope_audit', read_only: true, each_parent: true,
+        content_mode_and_attribution: true, trust_old_product_verdicts: false,
+        deny_historical_03_04_bodies: true, deny_protected_and_holder: true });
+      expect(policy.visible_report_patterns).toEqual(['05-qa-report-rN.md', '06-judge-rN.md', '07-commander-rN.md']);
+      expect(policy.deny_current_report_bodies).toEqual(['03-build.md', '04-evidence.md']);
+      const instructedCommands = [...prompt.matchAll(/`([^`\n]+)`/g)].map(m => m[1].trim().split(/\s+/));
+      const mutatingBaseline = instructedCommands.filter(tokens => tokens[0] === 'git'
+        && ((tokens[1] === 'worktree' && tokens[2] === 'add')
+          || (['archive', 'show'].includes(tokens[1]) && tokens.some(t => /^origin\/main(?::|$)/.test(t)))));
+      expect(mutatingBaseline, 'read_only声明不能同时指导创建worktree或用浮动main提取基线').toEqual([]);
+      expect(prompt).not.toContain('开发自述');expect(prompt).not.toContain('开发自测');
+    } finally { fs.rmSync(captureDir, { recursive: true, force: true }); }
+  });
+
   // C6：QA 模式按仓库。zenithjoy 第一阶段 local：不起预览、不等预览，在 PR worktree 里黑盒验；碰生产按本仓 ∪ 默认仓口径判
   describe('local 模式（repo_profile.preview.type=local）', () => {
     const ZJ = JSON.parse(fs.readFileSync(path.join(HERE, '../repos.json'), 'utf8')).repos.find((r) => r.key === 'zenithjoy-workspace');
