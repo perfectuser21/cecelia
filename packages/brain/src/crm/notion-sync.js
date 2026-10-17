@@ -120,7 +120,7 @@ export async function runCrmSync(pool, bindingId, options = {}) {
       const page = await request(`/pages/${customer.source_page_id}`);
       if (!sameId(page.parent?.data_source_id, binding.data_source_id) || page.in_trash) throw fault('source_mismatch');
       if (Object.keys(properties).length) await request(`/pages/${customer.source_page_id}`, 'PATCH', { properties });
-      if (binding.fields?.managed_content === true) await projectManagedProfile(request, customer);
+      if (binding.fields?.managed_content === true) await projectManagedProfile(request, customer, binding);
       const children = await projectCustomerChildren(client, store, request, binding, customer);
       receipt.messages_projected = (receipt.messages_projected ?? 0) + children.messages_projected;
       receipt.reports_projected = (receipt.reports_projected ?? 0) + children.reports_projected;
