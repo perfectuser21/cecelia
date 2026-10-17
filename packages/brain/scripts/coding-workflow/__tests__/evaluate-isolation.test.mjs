@@ -242,3 +242,15 @@ it('真实compiled来源读回拒绝qa_draft.stage篡改即使保护事件digest
     expect(() => verifyPendingStageEvidence(selected, [f.reportRel])).toThrow(/qa_draft/);
   } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
 }, 30000);
+
+it('真实保护evaluate CLI只接收已接入的qa_native_compiled_v1证据合同', async () => {
+  const f = await nativeEvidenceActivity({ controllerSource: true });
+  try {
+    expect(f.result.parsed.status, f.result.stderr).toBe('completed');
+    expect(/^QA_EVIDENCE_POLICY: (.+)$/m.exec(f.prompt)?.[1]).toBe('qa_native_compiled_v1');
+    expect(f.prompt).toContain('controller_native');
+    expect(f.prompt).toContain('native_occurrence: N');
+    expect(f.prompt).toMatch(/completed/);
+    expect(f.prompt).not.toContain('QA_EVIDENCE_POLICY: legacy_model_report');
+  } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
+}, 30000);

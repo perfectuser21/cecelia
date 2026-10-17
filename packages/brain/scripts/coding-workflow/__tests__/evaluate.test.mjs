@@ -230,6 +230,22 @@ describe('evaluate 活动（evaluator 真人 QA）', () => {
     } finally { fs.rmSync(captureDir, { recursive: true, force: true }); }
   });
 
+  it.each(['preview', 'local'])('generic %s实际CLI只接收legacy证据合同，不承诺不存在的native compiler', async kind => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-generic-evidence-policy-'));
+    const captured = path.join(dir, 'actual-prompt.txt');
+    try {
+      const patch = kind === 'local' ? { repo_profile: { key: 'fixture-local', production_re: [], preview: { type: 'local' } } } : {};
+      const r = await run('pass', patch, { FAKE_EVAL_PROMPT_CAPTURE_PATH: captured });
+      expect(r.result.status, r.stderr).toBe('completed');
+      const prompt = fs.readFileSync(captured, 'utf8');
+      expect(/^QA_EVIDENCE_POLICY: (.+)$/m.exec(prompt)?.[1]).toBe('legacy_model_report');
+      expect(prompt).toMatch(/command/);expect(prompt).toMatch(/完整[^\n]*output|output[^\n]*完整/);
+      expect(prompt).not.toContain('controller_native');
+      expect(prompt).not.toContain('native_occurrence');
+      expect(prompt).not.toContain('输出由控制器从本轮原生记录完整装配');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
   // C6：QA 模式按仓库。zenithjoy 第一阶段 local：不起预览、不等预览，在 PR worktree 里黑盒验；碰生产按本仓 ∪ 默认仓口径判
   describe('local 模式（repo_profile.preview.type=local）', () => {
     const ZJ = JSON.parse(fs.readFileSync(path.join(HERE, '../repos.json'), 'utf8')).repos.find((r) => r.key === 'zenithjoy-workspace');
