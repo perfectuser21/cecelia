@@ -1,6 +1,7 @@
 /** 改进沿现有任务接棒：先只读诊断，证据齐全才交一次开发，不修改在途实现。 */
 import {createRoutedTask} from '../work-routing-store.js';
 import {digest} from './commander-v2-contract.js';
+import {diagnosisFacts} from './commander-diagnosis-facts.js';
 
 const PROTOCOL='commander-improvement-v1';
 const SHA=/^[a-f0-9]{40}$/;
@@ -13,7 +14,7 @@ export const improvementKey=(e,fingerprint)=>digest([e.workflow_key,e.definition
 async function frozenSources(db,e){
  const {getRelease}=await import('./release-index.js');
  const release=await getRelease(db,e.definition.release_id),sources=[];
- const add=source=>{if(REPO.test(source?.repo||'')&&SHA.test(source?.revision||''))sources.push({repo:source.repo,revision:source.revision});};
+ const add=source=>{if(REPO.test(source?.repo||'')&&SHA.test(source?.revision||''))sources.push({repo:source.repo,revision:source.revision,...(typeof source.path==='string'&&source.path.length<=512?{path:source.path}:{})});};
  for(const c of release.payload.components||[])add(c);
  for(const a of release.payload.activities||[])for(const b of a.payload?.implementation_bindings||[]){add(b);add(b.resolved_source);}
  return [...new Map(sources.map(s=>[JSON.stringify(s),s])).values()].slice(0,200);
@@ -29,8 +30,7 @@ function diagnosisSpec(task,c,failure,sources){
   deadline_at:new Date(Date.now()+24*3600000).toISOString(),origin_task_id:task.id,origin_run_id:e.run_id,
   workflow_key:e.workflow_key,runtime_snapshot_sha256:e.definition.runtime_snapshot_sha256,
   error_fingerprint:failure.error_fingerprint,effects_safe:Boolean(safeEffects(c)),frozen_sources:sources};
- const context={workflow_key:e.workflow_key,run_id:e.run_id,definition:e.definition.snapshot_sha256,release_id:e.definition.release_id,
-  error_fingerprint:failure.error_fingerprint,reason:failure.reason,evidence:(c.verification?.evidence||[]).slice(0,20),frozen_sources:sources};
+ const context=diagnosisFacts(c,failure,sources);
  return {source:'scheduler',source_id:'commander-improvement:'+chain_key,requested_task_type:'research',mutation_intent:'read_only',declared_domain:'research',
   title:`只读诊断 ${e.workflow_key} ${chain_key.slice(0,16)}`,parent_task_id:task.id,
   description:`只读分析原运行及冻结来源，禁止修改Skill/代码/配置，禁止真实发布、重发、补偿或放宽权限。未知副作用先独立读回，不能重试。\n${JSON.stringify(context)}\n`
@@ -39,7 +39,7 @@ function diagnosisSpec(task,c,failure,sources){
    +JSON.stringify({kind:'dispatch_headless',title:'明确修复目标',change_kind:'bugfix',task_type:'coding_workflow',repo_hint:'冻结repo全名',map_scope_hint:['真实合法节点'],base_sha:'冻结40位SHA',
     diagnosis:{category:'source_defect',fixed_source:{repo:'冻结repo全名',revision:'冻结40位SHA',path:'实际相对路径'},evidence:['独立来源读回引用'],reproduction:'可复现输入与结果',acceptance:['修复效果与关键回归'],effects_status:'none或verified_safe'}})
    +'。必须从原release固定来源定位责任仓，不能猜父任务仓库。开发任务只走隔离分支、独立QA、PR与CI，不直接改生产。'
-   +'只读任务不用写库；最终答复最后一行必须输出 COMMANDER_DIAGNOSIS '+JSON.stringify({chain_key,origin_task_id:task.id,next_steps:[]})+'；符合上述条件时把next_steps替换成该条结构化修补，无确证则写note。',
+   +'所附事实已脱敏且有界；truncated表示明细被裁剪，evidence引用不是证据正文。可用只读本地git show <冻结SHA>:<path>核对源码；无固定对象、引用不可读或证据不足时只写note，禁止联网fetch、推测源码或申请放宽沙箱。不要假定可GET Brain或远程证据。只读任务不用写库；最终答复最后一行必须输出 COMMANDER_DIAGNOSIS '+JSON.stringify({chain_key,origin_task_id:task.id,next_steps:[]})+'；符合上述条件时把next_steps替换成该条结构化修补，无确证则写note。',
   metadata:{lane:'AI',commander_improvement:chain},task:{status:'queued',priority:'P2',location:'xian',created_by:'commander-improvement',trigger_source:'brain_auto'}};
 }
 

@@ -35,4 +35,8 @@ it('只读诊断携带有界失败事实及冻结路径，不复制秘密和业�
  await recordCommanderFailure(db,{id:'task'},c,'verification_failed',{createDiagnosis,loadSources:async()=>sources});
  const bounded=JSON.parse(createDiagnosis.mock.calls[1][1].description.split('\n')[1]);
  expect(Buffer.byteLength(JSON.stringify(bounded))).toBeLessThanOrEqual(24000);expect(bounded.truncated).toBe(true);
+ const noEvidence=state(5);noEvidence.verification.evidence=[];
+ await recordCommanderFailure(db,{id:'task'},noEvidence,'verification_failed',{createDiagnosis,loadSources:async()=>[]});
+ const missing=createDiagnosis.mock.calls[2][1];expect(JSON.parse(missing.description.split('\n')[1]).evidence_status).toBe('insufficient_evidence');
+ expect(missing.description).toContain('无固定对象、引用不可读或证据不足时只写note');
 });

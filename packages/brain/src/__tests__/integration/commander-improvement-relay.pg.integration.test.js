@@ -81,7 +81,7 @@ it('冻结business声明与中央resolved_source双身份真实接到Skills runn
  await pool.query('UPDATE release_versions SET payload=$2 WHERE id=$1',[releaseId,JSON.stringify({components:[{kind:'repo',repo:'perfectuser21/zenithjoy-workspace',revision}],activities:[{payload:{implementation_bindings:[{kind:'skill',repo:'perfectuser21/zenithjoy-workspace',revision,path:'.agents/skills/publish/SKILL.md',resolved_source:{repo:skills,revision:skillRevision,path:'business-skills/publish/SKILL.md'}}]}}]})]);
  const task=await origin(),failure=await record(task,control(task));
  const diagnosis=(await pool.query('SELECT * FROM tasks WHERE id=$1',[failure.improvement.task_id])).rows[0];
- expect(diagnosis.payload.commander_improvement.frozen_sources).toContainEqual({repo:skills,revision:skillRevision});
+ expect(diagnosis.payload.commander_improvement.frozen_sources).toContainEqual({repo:skills,revision:skillRevision,path:'business-skills/publish/SKILL.md'});
  const step={kind:'dispatch_headless',title:'修复中央Skill候选',change_kind:'bugfix',repo_hint:skills,map_scope_hint:['skill_distribution'],base_sha:skillRevision,
   diagnosis:{category:'source_defect',fixed_source:{repo:skills,revision:skillRevision,path:'business-skills/publish/SKILL.md'},evidence:['fixed-source:sha'],reproduction:'弹窗场景未处理',acceptance:['弹窗与无弹窗均通过'],effects_status:'none'}};
  const chain=diagnosis.payload.commander_improvement;
