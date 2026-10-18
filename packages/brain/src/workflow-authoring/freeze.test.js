@@ -42,12 +42,15 @@ describe('显式 authoring 冻结来源协议',()=>{
     const d=definition(),path='.claude/skills/demo/SKILL.md',central='perfectuser21/zenithjoy-skills',centralRevision='b'.repeat(40);
     const content='---\nname: demo\nversion: 1\n---\ncentral\n',digest=createHash('sha256').update(content).digest('hex');
     d.activities[0].implementation={kind:'skill',repo,path,revision:'contract',name:'demo',version:'1'};
+    d.activities.push({...structuredClone(d.activities[0]),key:'read_again'});
     const lock=JSON.stringify({version:1,repository:central,revision:centralRevision,profile:'zenithjoy',loader_sha256:'a'.repeat(64)});
     const catalog=(sha=digest)=>JSON.stringify({version:1,profiles:{zenithjoy:{files:[{path,source:'business-skills/zenithjoy/demo/SKILL.md',sha256:sha}]}}});
     let catalogText=catalog();
     const readFile=vi.fn(async s=>s.path===d.source.ref?document(d):s.path==='.skills-source.json'?lock:s.path==='distribution/catalog.json'?catalogText:s.repo===central?content:Promise.reject(Error('deleted business skill')));
     const proof=await prepareDefinitionFreeze(d,{readFile});
     expect(proof.bindings.get('read')[0]).toMatchObject({status:'verified',repo,revision,path,resolved_source:{repo:central,revision:centralRevision,path:'business-skills/zenithjoy/demo/SKILL.md'}});
+    expect(proof.bindings.get('read_again')[0].resolved_source).toEqual(proof.bindings.get('read')[0].resolved_source);
+    expect(readFile.mock.calls.filter(([s])=>s.path==='distribution/catalog.json')).toHaveLength(1);
     expect(readFile).not.toHaveBeenCalledWith(expect.objectContaining({repo,path}));
     catalogText=catalog('0'.repeat(64));
     await expect(prepareDefinitionFreeze(d,{readFile})).rejects.toThrow(/摘要/);

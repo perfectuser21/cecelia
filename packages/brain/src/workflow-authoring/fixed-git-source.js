@@ -61,7 +61,10 @@ export async function readFixedGitFile(source, options={}) {
 /** 声明身份留在绑定中，解析身份仅来自业务固定提交的锁和中央固定提交的目录。 */
 export async function readFixedImplementationBinding(binding, options={}) {
   const read=async (location,central=false)=>{
+    if(options.signal?.aborted||Date.now()>=(options.deadline??Infinity))throw Object.assign(Error('固定来源读取已取消或超时'),{code:'readiness_deadline_exceeded',status:503});
     validateGitSource(location,{central});
+    const key=JSON.stringify([location.repo,location.revision,location.path]);
+    if(options.cache?.has(key))return options.cache.get(key);
     let bytes;
     if(options.readFile || (!central && options.readBusinessFile)){
       try{bytes=await (options.readFile||options.readBusinessFile)(location);}catch{fail('固定来源文件不可读');}
@@ -70,6 +73,7 @@ export async function readFixedImplementationBinding(binding, options={}) {
     const value=Buffer.from(bytes);
     if(!value.length||value.length>MAX_FILE)fail('固定来源文件大小非法');
     options.onReadBytes?.(value.length);
+    options.cache?.set(key,value);
     return value;
   };
     const declared={repo:binding.repo,path:binding.path,revision:binding.revision};

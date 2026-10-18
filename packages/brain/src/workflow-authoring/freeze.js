@@ -34,13 +34,13 @@ export async function prepareDefinitionFreeze(definition, options={}) {
   const {source:_source,...expected}=definition;
   if(definitionDigest(document)!==definitionDigest(expected))fail('冻结来源内容与已验收完整定义不一致','definition_source_invalid');
   assertStepsHaveReadback(definition.activities);
-  const bindings=new Map(),shared=new Map(),fixed={repo:source.repo,path:source.path,commit:source.revision};
+  const bindings=new Map(),shared=new Map(),bindingCache=new Map(),fixed={repo:source.repo,path:source.path,commit:source.revision};
   for(const activity of definition.activities){
     if(activity.reuse_activity_id){
       const pin=await prepareSharedFreeze(activity,options.sharedVersions,read);
       shared.set(activity.key,pin.version);bindings.set(activity.key,pin.bindings);continue;
     }
-    const verified=await validateFixedImplementationBindings(activity,fixed,{...options,deadline,readFile:options.readFile,onReadBytes:bytes=>{
+    const verified=await validateFixedImplementationBindings(activity,fixed,{...options,deadline,cache:bindingCache,readFile:options.readFile,onReadBytes:bytes=>{
       bindingFiles++;totalBytes+=bytes;
       if(bindingFiles+cache.size>200||totalBytes>8*1024*1024||Date.now()>deadline)fail('来源核验超过文件数量、总字节或时限');
     }});
