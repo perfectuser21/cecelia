@@ -96,6 +96,11 @@ if [[ "$RUN_GUARD" == true ]]; then
     echo ""
 fi
 
+# Restore the deployment root itself; CI-generated files are not Git-tracked.
+if [[ "$DRY_RUN" != true && -f "$MAIN_ROOT/.skills-source.json" ]]; then
+    bash "$MAIN_ROOT/scripts/ensure-skills-source.sh" "$MAIN_ROOT"
+fi
+
 # 检测改动文件范围（在当前 git 上下文中检测）
 if [[ -z "$CHANGED_FILES" ]]; then
     if git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
@@ -204,7 +209,7 @@ while IFS= read -r file; do
         NEED_DASHBOARD=true
     fi
     # workflow skills 变更 → 重新部署软链接
-    [[ "$file" == packages/workflows/skills/* ]] && NEED_WORKFLOW_SKILLS=true
+    [[ "$file" == packages/workflows/skills/* || "$file" == .skills-source.json ]] && NEED_WORKFLOW_SKILLS=true
 done <<< "$CHANGED_FILES"
 
 # SHA 对账结果叠加（优先于文件列表，确保 squash merge 不 bump version 场景也触发）

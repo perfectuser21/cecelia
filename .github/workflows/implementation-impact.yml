@@ -29,6 +29,7 @@ on:
       CECELIA_INTERNAL_TOKEN: {required: true}
       BRAIN_DEPLOY_URL: {required: false}
       CECELIA_ACTIONS_READ_TOKEN: {required: false}
+      SKILLS_SOURCE_SSH_KEY: {required: false}
 permissions:
   contents: read
   actions: read
@@ -267,6 +268,8 @@ jobs:
             fi
           fi
       - name: 实际变更影响与固定回归
+        env:
+          SKILLS_SOURCE_SSH_KEY: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
         run: |
           set -euo pipefail
           if [[ "$MODE" == pr && -n "$ADMISSION_SCOPES" ]]; then
