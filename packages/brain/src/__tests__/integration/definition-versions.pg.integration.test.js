@@ -74,13 +74,26 @@ describe('不可变能力定义版本',()=>{
     ['skill', 'skills/check/SKILL.md', '---\r\nname: check\r\nversion: 1.0.0\r\n---\r\n# 预检\r\n'],
     ['code', 'src/check.js', '\n  export const ready = true;\n\n'],
   ])('默认GitHub读取保留%s原文空白及digest，只有HEAD响应裁剪',async(kind,path,content)=>{
-    await fixture.migrate();const f=contractsFixture(),revision='c'.repeat(40),head='a'.repeat(40);
+    await fixture.migrate();const f=contractsFixture(),revision='c'.repeat(40),head='a'.repeat(40),repo='perfectuser21/cecelia';
     const sha256=createHash('sha256').update(content).digest('hex');
-    f.docs.keyword_acquisition.activities[0].implementation_bindings=[{kind,repo:'org/repo',path,revision,sha256,digest:`sha256:${sha256}`}];
+    f.docs.keyword_acquisition.activities[0].implementation_bindings=[{kind,repo,path,revision,sha256,digest:`sha256:${sha256}`}];
     f.refresh();const fetch=f.fetchFn;
-    f.fetchFn=async url=>url.includes('/repos/org/repo/')?{ok:true,text:async()=>content}
-      :url.includes('/commits/main')?{ok:true,text:async()=>`${head}\n`}:fetch(url);
+    // 历史固定Git树明确包含Skill，且没有锁；404/权限失败不能伪装这种缺失证据。
+    const bytes=Buffer.from(content),blob=createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`),bytes])).digest('hex'),tree='e'.repeat(40);
+    const objects={
+      [`commits/${revision}`]:{sha:revision,tree:{sha:tree}},
+      [`trees/${tree}`]:{sha:tree,truncated:false,tree:[{path,type:'blob',mode:'100644',sha:blob,size:bytes.length}]},
+      [`blobs/${blob}`]:{sha:blob,encoding:'base64',size:bytes.length,content:bytes.toString('base64')}
+    };
+    const seen=[];
+    f.fetchFn=async url=>{
+      const object=url.match(new RegExp(`/repos/${repo}/git/(commits|trees|blobs)/([a-f0-9]{40})`));
+      if(object){seen.push(url);const value=objects[`${object[1]}/${object[2]}`];return {ok:!!value,status:value?200:404,json:async()=>value};}
+      if(url.includes(`/repos/${repo}/contents/${path}?ref=${revision}`))return {ok:true,text:async()=>content};
+      return url.includes('/commits/main')?{ok:true,text:async()=>`${head}\n`}:fetch(url);
+    };
     await expect(syncActivityContracts(db,f)).resolves.toMatchObject({head_sha:head});
+    if(kind==='skill')expect(seen.some(url=>url.includes(`/git/commits/${revision}`))).toBe(true);
     const saved=(await db.query(`SELECT v.payload,v.source_commit FROM journey_steps a JOIN activity_definition_versions v
       ON v.id=a.current_definition_version_id WHERE a.capability_key='keyword_acquisition' AND a.activity_key='preflight'`)).rows[0];
     expect(saved.source_commit).toBe(head);

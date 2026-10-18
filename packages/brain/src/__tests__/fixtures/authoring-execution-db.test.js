@@ -31,7 +31,13 @@ export async function authoringExecutionDatabase(){
     input_schema:schema,output_schema:schema,
     implementation:{kind:'skill',skill_id:skill,ref:'skills/pure/SKILL.md',path:'skills/pure/SKILL.md',version:'1.0.0',repo:'perfectuser21/cecelia',revision:'contract'}}]};
   const content='---\nname: authoring-pure\nversion: 1.0.0\n---\n仅把输入text转成大写，输出text字段。禁止工具、文件、消息及其它副作用。';
-  const reader=async s=>s.path===definition.source.ref?JSON.stringify(Object.fromEntries(Object.entries(definition).filter(([k])=>k!=='source'))):content;
+  const reader=async(s,options={})=>{
+   if(s.repo!==definition.source.repo||s.revision!==definition.source.revision)throw Error('fixture_source_unknown');
+   if(s.path===definition.source.ref)return JSON.stringify(Object.fromEntries(Object.entries(definition).filter(([k])=>k!=='source')));
+   if(s.path==='skills/pure/SKILL.md')return content;
+   if(s.path==='.skills-source.json'&&options.allowMissing===true)return null;
+   throw Error('fixture_file_missing');
+  };
   return {...f,definition,reader,content,skill};
  }catch(error){await f.close();throw error;}
 }
