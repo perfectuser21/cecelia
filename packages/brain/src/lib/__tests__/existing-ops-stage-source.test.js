@@ -174,3 +174,32 @@ describe('merge 后 evaluate 严格读链与 identity 文件消费',()=>{
  for(const p of identityInputs)it('缺身份读取文件 '+p+' 不能完整认领',async()=>{const r=await collect('source_merge',s=>{delete s[p];},/\/__tests__\/evaluate\.test\.mjs$/);expect(r.gaps.length).toBeGreaterThan(0);});
  for(const [name,mutate] of cases)it(name+' 不可认领来源',async()=>{const r=await collect('source_merge',mutate);expect(r.gaps.length).toBeGreaterThan(0);for(const p of [...entries,...mergeReaderPaths])expect(r.bindings).not.toContain(p);});
 });
+
+
+// Independent fixed Git source bytes; never derive the expected mode from production envelopes.
+const skillsModeFixture=JSON.parse((await import('node:fs')).readFileSync(new URL('./fixtures/reviewed-skills-mode-2a537.json',import.meta.url),'utf8'));
+const independentSkillsMode=()=>Object.fromEntries(Object.entries(skillsModeFixture.files).map(([path,row])=>{
+ assert.equal(createHash('sha256').update(row.content).digest('hex'),row.sha256,'fixed fixture hash '+path);
+ return [P+path,row.content];
+}));
+describe('中央Skills独立固定模式的可信判卷器先行兼容',()=>{
+ it('完整固定三文件经真实阶段消费者证明，旧模式不受影响',async()=>{
+  expect(skillsModeFixture.source_commit).toBe('2a537e0f563fb8374f777218ac2fd2b6609a1462');
+  const r=await collect('recorded',s=>Object.assign(s,independentSkillsMode()));expect(r.gaps).toEqual([]);
+  expect(r.bindings).toContain(P+'repos.json');expect(r.bindings).toContain(P+'lib/repo-profile.mjs');
+  expect((await collect('recorded')).gaps).toEqual([]);
+ });
+ for(const change of ['旧配置混配','关闭裁判模式','篡改Skills来源','自动合并','任意新增仓库'])it(change+'仍经真实collector拒绝',async()=>{
+  const files=independentSkillsMode(),p=P+'repos.json',config=JSON.parse(files[p]),skills=config.repos.find(x=>x.key==='zenithjoy-skills');
+  expect(skills).toBeDefined(); // Mutation setup must not throw and masquerade as a rejection.
+  if(change==='旧配置混配')files[P+'lib/repo-profile.mjs']=STAGE.mode['lib/repo-profile.mjs'];
+  else {if(change==='关闭裁判模式')config.repos.find(x=>x.default).preview.type='local';
+   if(change==='篡改Skills来源')skills.origin='https://github.com/other/skills.git';
+   if(change==='自动合并')skills.automerge=true;
+   if(change==='任意新增仓库')config.repos.push({...skills,key:'unreviewed'});
+   files[p]=JSON.stringify(config);}
+  const r=await collect('recorded',s=>Object.assign(s,files));
+  expect(r.gaps).toContainEqual({code:'native_stage_execution_unproven'});
+  expect(r.bindings).not.toContain(P+'repos.json');
+ });
+});
