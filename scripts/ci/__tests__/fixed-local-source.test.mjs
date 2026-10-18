@@ -45,3 +45,16 @@ test('Pilot consumes private pinned central Git objects without any GitHub reque
  try{const result=await runPilotReleaseVerification({repoRoot:f.root,snapshot,outputDir:join(f.root,'output'),event:'push',ref:'refs/heads/main',authoringSourceOptions:{resolveToken:()=>{throw Error('PRIVATE_TOKEN_UNAVAILABLE');}}});assert.equal(result.receipt.verdict,'PASS');}
  finally{globalThis.fetch=prior;}
 });
+test('authoring definition and Skill freeze use the same local reader with textual source contract',async t=>{
+ const f=fixture(t),{fixedLocalSourceOptions}=await import('../fixed-local-git.mjs'),{prepareDefinitionFreeze}=await import('../../../packages/brain/src/workflow-authoring/freeze.js');
+ // Authoring references a commit in its envelope; the stored document deliberately omits that envelope.
+ const doc={key:'report',name:'报告',capability_id:'11111111-1111-4111-8111-111111111111',channel:'internal',form:'openclaw_skill',version:'1.0.0',runtime:{skill_id:'22222222-2222-4222-8222-222222222222',entrypoint:'workflow-commander'},input_schema:{type:'object'},resources:{},recovery:{max_attempts:1},activities:[{key:'read',name:'读回',executor_kind:'code',acceptance:['产物可读'],implementation:{kind:'code',ref:'contract.json',repo:f.repo,path:'contract.json',revision:'contract'}}]};
+ f.put(f.root,'definition.json',JSON.stringify(doc));const revision=f.commit(f.root),definition={...doc,source:{repo:f.repo,ref:'definition.json',revision}};
+ const options=fixedLocalSourceOptions(f.root,f.repo),proof=await prepareDefinitionFreeze(definition,options);assert.equal(proof.bindings.get('read')[0].revision,revision);
+ const custom=()=> 'explicit reader';assert.equal(fixedLocalSourceOptions(f.root,f.repo,{readFile:custom}).readFile,custom);
+});
+test('authorized but unavailable central object fails closed instead of fetching or reading latest',async t=>{
+ const f=fixture(t),{createFixedLocalSourceReader}=await import('../fixed-local-git.mjs');
+ const missing='f'.repeat(40);f.put(f.root,'.skills-source.json',JSON.stringify({version:1,repository:'perfectuser21/zenithjoy-skills',revision:missing,profile:'zenithjoy',loader_sha256:'a'.repeat(64)}));const revision=f.commit(f.root),read=createFixedLocalSourceReader(f.root,f.repo);
+ read({repo:f.repo,revision,path:'.skills-source.json'});assert.throws(()=>read({repo:'perfectuser21/zenithjoy-skills',revision:missing,path:f.source}));
+});
