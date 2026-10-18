@@ -1,3 +1,4 @@
+import './fixed-local-source.test.mjs';
 import './fixed-local-git.test.mjs';
 import './implementation-source-ready.test.mjs';
 import './factory-workflow-config-source.test.mjs';

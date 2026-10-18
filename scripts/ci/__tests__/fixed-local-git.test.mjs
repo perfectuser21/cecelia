@@ -37,7 +37,7 @@ test('allowMissing requires a real commit and exact absent tree path',async t=>{
 test('snapshot and pilot source callbacks never bypass isolated Git adapter',()=>{
  for(const file of ['implementation-snapshot.mjs','pilot-release-verification.mjs']){
   const source=readFileSync(new URL('../'+file,import.meta.url),'utf8');
-  assert.doesNotMatch(source,/execFileSync\(['"]git['"]/);assert.match(source,/readFixedLocalGitBlob/);
+  assert.doesNotMatch(source,/execFileSync\(['"]git['"]/);assert.match(source,/readFixedLocalGitBlob|fixedLocalSourceOptions/);
  }
 });
 

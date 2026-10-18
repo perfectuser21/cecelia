@@ -18,7 +18,7 @@ import {fileURLToPath} from 'node:url';
 import {pilotPlanHash} from './packages/brain/src/lib/pilot-release-verification.js';
 const root=mkdtempSync(join(tmpdir(),'central-skill-smoke-')),scenario=process.env.SMOKE_SCENARIO;
 const repo='perfectuser21/zenithjoy-workspace',centralRepo='perfectuser21/zenithjoy-skills';
-const business=join(root,'business'),central=join(root,'central'),tooling=join(root,'tooling');
+const business=join(root,'business'),central=join(business,'.skills-source'),tooling=join(root,'tooling');
 const skillPath='.claude/skills/demo/SKILL.md',sourcePath='business-skills/zenithjoy/demo/SKILL.md';
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -28,24 +28,8 @@ const id=n=>`${String(n).padStart(8,'0')}-1111-4111-8111-111111111111`;
 try{
   mkdirSync(business);mkdirSync(central);git(business,'init','-q','-b','main');git(business,'remote','add','origin','https://github.com/perfectuser21/zenithjoy-workspace.git');git(central,'init','-q','-b','main');symlinkSync(process.env.SMOKE_TOOLING,tooling,'dir');
   const fixture=join(root,'fixture.mjs');
-  writeFileSync(fixture,`import {execFileSync} from 'node:child_process';
-const repos=${JSON.stringify({[repo]:business,[centralRepo]:central})};
-const run=(cwd,...args)=>execFileSync('git',args,{cwd,stdio:['ignore','pipe','pipe']});
-globalThis.fetch=async (input,options={})=>{
- const url=new URL(input),m=url.pathname.match(/^\\/repos\\/(perfectuser21\\/(?:zenithjoy-workspace|zenithjoy-skills))\\/git\\/(commits|trees|blobs)\\/([0-9a-f]{40})$/);
- if(url.origin!=='https://api.github.com'||!m||options.redirect!=='error')throw Error('unexpected fixed object URL');
- const [,repo,kind,hash]=m,cwd=repos[repo];let value;
- try{
-  if(kind==='commits'){if(run(cwd,'cat-file','-t',hash).toString().trim()!=='commit')throw Error('not commit');value={sha:hash,tree:{sha:run(cwd,'rev-parse',hash+'^{tree}').toString().trim()}};}
-  else if(kind==='trees'){
-   if(run(cwd,'cat-file','-t',hash).toString().trim()!=='tree')throw Error('not tree');
-   const rows=run(cwd,'ls-tree','-r','-z','-l',hash).toString().split('\\0').filter(Boolean);
-   value={sha:hash,truncated:false,tree:rows.map(row=>{const m=row.match(/^(\\d+) (blob) ([0-9a-f]{40})\\s+(\\d+)\\t(.+)$/s);if(!m)throw Error('bad tree row');return {mode:m[1],type:m[2],sha:m[3],size:Number(m[4]),path:m[5]};})};
-  }else{if(run(cwd,'cat-file','-t',hash).toString().trim()!=='blob')throw Error('not blob');const bytes=run(cwd,'cat-file','-p',hash);value={sha:hash,size:bytes.length,encoding:'base64',content:bytes.toString('base64')};}
- }catch{throw Error('unknown fixed Git object');}
- return new Response(JSON.stringify(value),{status:200,headers:{'content-type':'application/json'}});
-};
-`);
+  writeFileSync(fixture,`globalThis.fetch=()=>{throw Error('NETWORK_FORBIDDEN_IN_FIXED_CACHE_CLI');};\n`);
+  put(business,'.gitignore','.skills-source/\n');
   put(business,'entry.js','export const fixed = true;\n');
   put(business,'scripts/smoke/pilot.sh','#!/bin/bash\nset -e\ntest -z "${GITHUB_TOKEN:-}"\ntest -z "${CECELIA_INTERNAL_TOKEN:-}"\n');
   put(business,skillPath,'---\nname: old\nversion: 1\n---\nremoved\n');commit(business);git(business,'rm','-q',skillPath);
