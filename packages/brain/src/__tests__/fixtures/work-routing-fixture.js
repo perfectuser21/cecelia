@@ -1,12 +1,14 @@
+import {randomUUID} from 'node:crypto';
+
 export async function seedActiveF1(client, scope='cecelia', node='F1') {
   await client.query(`SELECT pg_advisory_xact_lock(hashtext('work-routing-active-f1-fixture'))`);
   let manifest = (await client.query(
     `SELECT id,scope_key,digest FROM map_manifest_versions WHERE scope_key='${scope}' AND status='active'`,
   )).rows[0];
   if (!manifest) {
-    const decisionId = crypto.randomUUID();
-    const manifestId = crypto.randomUUID();
-    const digest = crypto.randomUUID().replaceAll('-', '').repeat(2);
+    const decisionId = randomUUID();
+    const manifestId = randomUUID();
+    const digest = randomUUID().replaceAll('-', '').repeat(2);
     const version = (await client.query(
       `SELECT COALESCE(MAX(version),0)+1 AS version FROM map_manifest_versions WHERE scope_key='${scope}'`,
     )).rows[0].version;
@@ -28,13 +30,13 @@ export async function seedActiveF1(client, scope='cecelia', node='F1') {
     `SELECT id FROM map_projection_runs WHERE scope_key='${scope}' AND status='active'`,
   )).rows[0]?.id;
   if (!runId) {
-    runId = crypto.randomUUID();
+    runId = randomUUID();
     await client.query(
       `INSERT INTO map_projection_runs(
          id,scope_key,manifest_version_id,manifest_digest,fact_revisions,
          projector_version,projection_digest,status,activated_at
        ) VALUES($1,'${scope}',$2,$3,'{}','test-v1',$4,'active',NOW())`,
-      [runId, manifest.id, manifest.digest, crypto.randomUUID().replaceAll('-', '').repeat(2)],
+      [runId, manifest.id, manifest.digest, randomUUID().replaceAll('-', '').repeat(2)],
     );
   }
   await client.query(
@@ -43,7 +45,7 @@ export async function seedActiveF1(client, scope='cecelia', node='F1') {
       WHERE NOT EXISTS (
         SELECT 1 FROM map_projection_nodes WHERE run_id=$1 AND node_key='${node}'
       )`,
-    [runId, crypto.randomUUID().replaceAll('-', '').repeat(2)],
+    [runId, randomUUID().replaceAll('-', '').repeat(2)],
   );
 }
 
