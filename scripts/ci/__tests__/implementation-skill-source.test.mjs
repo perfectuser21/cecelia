@@ -263,6 +263,8 @@ test('两入口先下载canonical快照再prepare历史对象，现代校验无k
   const w=yaml.load(readFileSync(new URL('../../../.github/workflows/'+file+'.yml',import.meta.url),'utf8')),steps=w.jobs[job].steps;
   const index=steps.findIndex(s=>s.name==='准备固定中央Skill对象缓存'),download=steps.findIndex(s=>s.uses?.startsWith('actions/download-artifact')||s.name==='下载固定SHA中央bundle（PR无中央写凭据）');
   assert.ok(index>download,'历史绑定必须先取得snapshot');assert.match(steps[index].run,/--snapshot/);
+  assert.match(steps[index].run,/jq -e '\.snapshot \| select\(type=="object"\)'/,'官方API包装需先提取canonical');
+  assert.match(steps[index].run,/canonical/);
  }
 });
 test('唯一旧兼容升级为821真实可信reader冷启动，而非185空缓存放行',()=>{
