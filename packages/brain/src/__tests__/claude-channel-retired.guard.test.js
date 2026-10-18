@@ -18,7 +18,18 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parse } from 'acorn';
-import { mutateStageMode } from './fixtures/claude-stage-mode-mutations.js';
+/** 模式常量只能留在已审解析闭包；每种突变均应使纯数据资格失败。 */
+function mutateStageMode(kind,sources,root){
+ const file=path.join(root,'existing-ops-stage-modes.js'),other=path.join(root,'../unreviewed-mode-consumer.js');
+ if(kind==='mode eval')sources.set(file,sources.get(file)+'\neval(REVIEWED_STAGE_MODES[0]["lib/repo-profile.mjs"]);');
+ if(kind==='mode raw export')sources.set(file,sources.get(file)+'\nexport const raw=STAGE_ENVELOPES.recorded.spec;');
+ if(kind==='mode process')sources.set(file,sources.get(file)+"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);");
+ if(kind==='third mode')sources.set(other,"import {REVIEWED_STAGE_MODES} from './lib/existing-ops-stage-modes.js';eval(REVIEWED_STAGE_MODES[0]['lib/repo-profile.mjs']);");
+ if(kind==='escaped mode')sources.set(other,"const m=await import('./lib/existing-ops-stage-\\u006dodes.js');eval(m.REVIEWED_STAGE_MODES[0]['lib/repo-profile.mjs']);");
+ if(kind==='concat mode')sources.set(other,"const m=await import('./lib/existing-ops-stage-'+'modes.js');Function(m.REVIEWED_STAGE_MODES[0]['lib/repo-profile.mjs'])();");
+ if(kind==='changed mode path'){sources.set(path.join(root,'other-stage-modes.js'),sources.get(file));sources.delete(file);}
+}
+
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, lstatSync } from 'node:fs';
 import path from 'node:path';
@@ -260,13 +271,11 @@ function scanOffenders() {
   }
   return offenders;
 }
-
 describe('Claude 无头通道防复活守卫：源码扫描', () => {
   it('packages/brain 与 packages/workflows 非测试源码中不存在任何拉起 claude CLI 的写法', () => {
     const offenders = scanOffenders();
     expect(offenders, `发现 claude 无头调用路径：\n${offenders.join('\n')}`).toEqual([]);
   });
-
   it('白名单生效而非守卫失灵：coding-workflow 的 claude 启动写法能被判据识别，但不进 offenders', () => {
     const src = readFileSync(CODING_WORKFLOW_CLAUDE, 'utf8');
     expect(findClaudeInvocations(src).length).toBeGreaterThan(0);
@@ -275,7 +284,6 @@ describe('Claude 无头通道防复活守卫：源码扫描', () => {
     expect(isWhitelisted(path.join(BRAIN_ROOT, 'src/executor.js'))).toBe(false);
     expect(scanOffenders().filter((o) => o.includes('scripts/coding-workflow/'))).toEqual([]);
   });
-
   it('单一来源常量模块存在且声明通道已退役', async () => {
     const mod = await import('../lib/claude-channel.js');
     expect(mod.CLAUDE_CHANNEL_RETIRED).toBe(true);
@@ -294,7 +302,6 @@ describe('Claude 无头通道防复活守卫：源码扫描', () => {
     expect(mod.isClaudeCommand(undefined)).toBe(false);
   });
 });
-
 describe('守卫自证：每条判据都会报警', () => {
   it.each([
     ['R1', "const p = spawn('claude', ['-p', prompt]);"],
@@ -313,7 +320,6 @@ describe('守卫自证：每条判据都会报警', () => {
   ])('%s 命中：%s', (rule, line) => {
     expect(findClaudeInvocations(line).map((h) => h.rule)).toContain(rule);
   });
-
   it.each([
     ["execSync(\"ps -eo pid,ppid,args | grep 'claude -p' | grep -v grep\")"],
     ["if (!bin.endsWith('/claude') && bin !== 'claude') continue;"],
@@ -327,7 +333,6 @@ describe('守卫自证：每条判据都会报警', () => {
     expect(findClaudeInvocations(line)).toEqual([]);
   });
 });
-
 describe('只读来源封套数据与实际执行代码分离',()=>{
  const dataFile=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-envelopes.js');
  const consumer=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-source.js');
@@ -363,7 +368,6 @@ describe('只读来源封套数据与实际执行代码分离',()=>{
   });expect(result.some(hit=>hit.rule==='E1')).toBe(true);
  });
 });
-
 describe('新增阶段封套不允许执行或额外消费者',()=>{
  const helper=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-source.js'),data=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
  const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys(),helper,data,STAGE_MODES].map(file=>[file,readFileSync(file,'utf8')])]);
@@ -380,7 +384,6 @@ describe('新增阶段封套不允许执行或额外消费者',()=>{
   expect(findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources}).some(hit=>hit.rule==='E1')).toBe(true);
  });
 });
-
 describe('isolation 新封套仍只允许已审 Acorn 消费闭包',()=>{
  const core=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-core-envelope.js');
  const local=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-local-envelopes.js');
@@ -412,7 +415,6 @@ describe('isolation 新封套仍只允许已审 Acorn 消费闭包',()=>{
   expect(hits.some(h=>h.rule==='E1')).toBe(true);expect(hits.some(h=>h.rule==='R1')).toBe(true);
  });
 });
-
 describe('固定runtime字节指纹不执行来源模板',()=>{
  const runtime=path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
  const source=readFileSync(runtime,'utf8');
@@ -448,7 +450,6 @@ describe('固定runtime字节指纹不执行来源模板',()=>{
   expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
  });
 });
-
 describe('merge 读取封套不增加 Claude 原文执行出口',()=>{
  const local=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-local-envelopes.js');
  const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readFileSync(file,'utf8')])]);
@@ -461,7 +462,6 @@ describe('merge 读取封套不增加 Claude 原文执行出口',()=>{
   expect(findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources}).some(h=>h.rule==='E1')).toBe(true);
  });
 });
-
 describe('原生QA完整封套只作为有界解码后的Acorn输入',()=>{
  const helper=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
  const data=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
