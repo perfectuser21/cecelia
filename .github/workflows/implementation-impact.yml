@@ -311,7 +311,10 @@ jobs:
                 args+=(--snapshot "$RUNNER_TEMP/implementation-input/base/base-$scope.json" --snapshot "$RUNNER_TEMP/implementation-input/head/head-$scope.json")
               done < <(jq -r '.scopes[]' "$RUNNER_TEMP/implementation-input/cache-scopes.json")
             else
-              args+=(--snapshot "$RUNNER_TEMP/implementation-input/base/base.json" --snapshot "$RUNNER_TEMP/implementation-input/head/head.json")
+              for side in base head; do
+                jq -e '.snapshot | select(type=="object")' "$RUNNER_TEMP/implementation-input/$side/$side.json" > "$RUNNER_TEMP/implementation-input/$side/canonical.json"
+                args+=(--snapshot "$RUNNER_TEMP/implementation-input/$side/canonical.json")
+              done
             fi
             cache="$(node tooling/scripts/ci/implementation-skill-source.mjs "${args[@]}")"
             case "$cache" in "$RUNNER_TEMP"/implementation-skills-ci-*/objects) test -d "$cache" ;; *) echo 'invalid fixed Skill cache' >&2; exit 1 ;; esac

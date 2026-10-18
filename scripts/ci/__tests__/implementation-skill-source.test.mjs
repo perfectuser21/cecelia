@@ -204,9 +204,11 @@ os.execv(${JSON.stringify(realGit)},[${JSON.stringify(realGit)}]+args)
   const smoke='scripts/smoke/pilot.sh';mkdirSync(join(f.business,'scripts/smoke'));
   writeFileSync(join(f.business,smoke),`#!/bin/bash\nset -eu\ntest -z "\${SKILLS_SOURCE_SSH_KEY:-}"\ntest -n "\${SKILLS_SOURCE_DIR:-}"\ntest -f '${f.path}'\ngit -C "$SKILLS_SOURCE_DIR" cat-file -e "${JSON.parse(git(f.business,'show',`${f.after}:.skills-source.json`)).revision}^{commit}"\n`);
   const head=commit(f.business);git(f.business,'update-ref','refs/remotes/origin/main',head);
-  const metadata=join(dirname(f.business),'snapshot.json');writeFileSync(metadata,JSON.stringify(historicalSnapshot(f,head,head,JSON.parse(git(f.business,'show',`${head}:.skills-source.json`)).revision)));
-  const prepared=spawnSync(process.execPath,[new URL('../implementation-skill-source.mjs',import.meta.url).pathname,'--prepare-ci-cache',f.business,'perfectuser21/zenithjoy-workspace',f.before,head,'--snapshot',metadata],{encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH,SKILLS_SOURCE_SSH_KEY:'fixture-secret',RUNNER_TEMP:dirname(f.business)}});
-  assert.equal(prepared.status,0,prepared.stderr);cache=prepared.stdout.trim();assert.ok(cache.startsWith(dirname(f.business)+'/implementation-skills-ci-'));
+  const workspace=dirname(f.business);symlinkSync(f.business,join(workspace,'source'));symlinkSync(new URL('../../../',import.meta.url).pathname,join(workspace,'tooling'));mkdirSync(join(workspace,'snapshot'));
+  writeFileSync(join(workspace,'snapshot/head.json'),JSON.stringify({snapshot:historicalSnapshot(f,head,head,JSON.parse(git(f.business,'show',`${head}:.skills-source.json`)).revision)}));
+  const pilotWorkflow=yaml.load(readFileSync(new URL('../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8')),step=pilotWorkflow.jobs.verify.steps.find(s=>s.name==='准备固定中央Skill对象缓存');
+  const prepared=spawnSync('bash',['-c',step.run],{cwd:workspace,encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH,SKILLS_SOURCE_SSH_KEY:'fixture-secret',RUNNER_TEMP:workspace,GITHUB_WORKSPACE:workspace,GITHUB_ENV:join(workspace,'env'),SOURCE_REPO:'perfectuser21/zenithjoy-workspace',HEAD:head}});
+  assert.equal(prepared.status,0,prepared.stderr);cache=readFileSync(join(workspace,'env'),'utf8').trim().replace(/^IMPLEMENTATION_SKILLS_SOURCE_DIR=/,'');assert.ok(cache.startsWith(workspace+'/implementation-skills-ci-'));
   assert.deepEqual(readFileSync(join(f.business,f.path)),f.payload);
   assert.equal(existsSync(JSON.parse(readFileSync(audit)).key_path),false,'fetch后必须删除0600私钥');
   delete process.env.SKILLS_SOURCE_SSH_KEY;process.env.IMPLEMENTATION_SKILLS_SOURCE_DIR=cache;
