@@ -203,3 +203,34 @@ describe('中央Skills独立固定模式的可信判卷器先行兼容',()=>{
   expect(r.bindings).not.toContain(P+'repos.json');
  });
 });
+
+// A fixed-source marker versions the evidence expansion; historical trees retain their original bindings.
+const ruleInputMarker='packages/brain/src/lib/existing-ops-stage-source.js';
+const addReviewedRuntimeInputs=s=>{
+ s[ruleInputMarker]='export const EXISTING_OPS_REPO_RULES_INPUT_SCHEMA=1;';
+ Object.assign(s,independentSkillsMode());
+ for(const ref of ['cecelia','zenithjoy','skills'])s[P+'prompts/repo-rules/'+ref+'.md']='# fixed '+ref+' runtime instructions\n';
+ s[P+'lib/ci-precheck.mjs']='export function checksFor(){return [];} export async function runPrechecks(){return [];}\n';
+};
+describe('已审repoRules和build预检的实际运行输入闭包',()=>{
+ it('版本化新树绑定三份被repoRules读取的提示词与实际precheck模块',async()=>{
+  const r=await collect('recorded',addReviewedRuntimeInputs);expect(r.gaps).toEqual([]);
+  for(const key of ['cecelia','zenithjoy','skills']){
+   const input_path=P+'prompts/repo-rules/'+key+'.md';expect(r.bindings).toContain(input_path);
+   expect(r.relations).toContainEqual(expect.objectContaining({consumer_path:P+'lib/repo-profile.mjs',input_path,kind:'reviewed_repo_rules_read'}));
+  }
+  expect(r.bindings).toContain(P+'lib/ci-precheck.mjs');
+  expect(r.relations).toContainEqual(expect.objectContaining({consumer_path:P+'activities/build.mjs',input_path:P+'lib/ci-precheck.mjs',kind:'reviewed_build_precheck_call'}));
+ });
+ for(const absent of ['prompts/repo-rules/skills.md','lib/ci-precheck.mjs'])it('缺少固定实际输入 '+absent+' 不得沿用成功证明',async()=>{
+  const r=await collect('recorded',s=>{addReviewedRuntimeInputs(s);delete s[P+absent];});expect(r.gaps.length).toBeGreaterThan(0);
+ });
+ it('只选spec不认领未运行build的precheck输入',async()=>{
+  const r=await collect('recorded',addReviewedRuntimeInputs,/\/__tests__\/spec\.test\.mjs$/);expect(r.gaps).toEqual([]);expect(r.bindings).not.toContain(P+'lib/ci-precheck.mjs');
+ });
+ it('无版本标记的历史树保持原绑定集合',async()=>{
+  const original=await collect('recorded'),extra=await collect('recorded',s=>{
+   for(const key of ['cecelia','zenithjoy','skills'])s[P+'prompts/repo-rules/'+key+'.md']='# ignored historical extra';
+  });expect(extra).toEqual(original);
+ });
+});
