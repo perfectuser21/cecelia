@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** main固定快照的全部声明回归；独立于PR变更归属，不改变影响报告。 */
-import {execFileSync} from 'node:child_process';
+import {fixedLocalGit,readFixedLocalGitBlob} from './fixed-local-git.mjs';
 import {readFileSync,mkdirSync,writeFileSync,realpathSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -20,7 +20,7 @@ export async function runPilotReleaseVerification({repoRoot,snapshot,outputDir,e
   const s=validateImplementationSnapshot(snapshot);
   if(s.status!=='verified'||s.gaps?.length)fail('PILOT_RELEASE_SNAPSHOT_UNKNOWN');
   if(![['zenithjoy','perfectuser21/zenithjoy-workspace'],['cecelia-kr','perfectuser21/cecelia']].some(([scope,repo])=>s.scope===scope&&s.repo===repo)&&!isAuthoringReleaseSnapshot(s))fail('PILOT_RELEASE_SCOPE_UNSUPPORTED');
-  const git=(...args)=>execFileSync('git',args,{cwd:repoRoot,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  const git=(...args)=>fixedLocalGit(repoRoot,args,{encoding:'utf8'}).trim();
   if(git('rev-parse','HEAD')!==s.revision||git('rev-parse','refs/remotes/origin/main')!==s.revision||git('status','--porcelain=v1','--untracked-files=no'))fail('PILOT_RELEASE_SOURCE_MISMATCH');
   const authoring=isAuthoringReleaseSnapshot(s)?{authoringSnapshot:s,authoringProof:await prepareAuthoringReleaseProof(s,authoringSourceOptions)}:{};
   const report={...buildPilotReleasePlan({scope:s.scope,repo:s.repo,revision:s.revision,definitions:s.definitions,assertions:s.assertions,...authoring}),snapshot_sha256:s.snapshot_sha256};
@@ -29,7 +29,7 @@ export async function runPilotReleaseVerification({repoRoot,snapshot,outputDir,e
   if(!authoring.authoringProof)for(const a of s.definitions.activities)for(const b of a.payload.implementation_bindings||[]){
    if(b.kind==='raw'&&b.status==='unresolved')continue;
    if(!['code','skill'].includes(b.kind)||b.status!=='verified'||b.repo!==s.repo||b.revision!==s.revision||typeof b.path!=='string'||b.path.startsWith('/')||b.path.split('/').some(p=>!p||p==='..'||p==='.')||b.path.includes('\\'))fail('PILOT_RELEASE_COMPONENT_UNKNOWN');
-   const actual=await readFixedImplementationBinding(b,{...authoringSourceOptions,readBusinessFile:location=>execFileSync('git',['show',`${location.revision}:${location.path}`],{cwd:repoRoot,maxBuffer:16*1024*1024})});
+   const actual=await readFixedImplementationBinding(b,{...authoringSourceOptions,readBusinessFile:(location,options)=>readFixedLocalGitBlob(repoRoot,location,options)});
    if(b.digest!==`sha256:${sha(actual.bytes)}`)fail('PILOT_RELEASE_COMPONENT_CHANGED');
    if(actual.resolved_source){
     if(!['repo','path','revision'].every(key=>b.resolved_source?.[key]===actual.resolved_source[key])

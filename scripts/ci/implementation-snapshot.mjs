@@ -1,7 +1,7 @@
 /** 仅scratch：复用中央身份和正式投影器，固定git产生两侧不可变图。 */
 import pg from 'pg';
 import { registerCompanyKrWorkflow,activityContract } from '../../packages/brain/src/lib/company-kr-registration.js';
-import { execFileSync } from 'node:child_process';
+import {fixedLocalGit,readFixedLocalGitBlob} from './fixed-local-git.mjs';
 import { loadActivityContracts } from '../../packages/brain/src/lib/activity-contract-loader.js';
 import { storeActivityContracts,REGISTRATIONS_SQL } from '../../packages/brain/src/lib/activity-contract-store.js';
 import { validateImplementationBindings } from '../../packages/brain/src/lib/implementation-bindings.js';
@@ -128,9 +128,9 @@ export async function verifySnapshotSource(s,repoRoot,{db}={}){
   if(s.scope===EXISTING_OPS_SCOPE&&s.repo==='perfectuser21/zenithjoy-workspace'){
     const proof=await scratchWorkspaceProof(db,s.revision,repoRoot,s.registry_source);
     const nativeRoot=fileURLToPath(new URL('../../',import.meta.url)),anchor=s.registry_source;
-    const paths=execFileSync('git',['ls-tree','-rz','--name-only',anchor.revision],{cwd:nativeRoot,encoding:'utf8'}).replace(/\0$/,'').split('\0');
+    const paths=fixedLocalGit(nativeRoot,['ls-tree','-rz','--name-only',anchor.revision],{encoding:'utf8'}).replace(/\0$/,'').split('\0');
     const native=await buildExistingOpsSources({scope:s.scope,repo:anchor.repo,revision:anchor.revision,paths,
-      readSource:async path=>execFileSync('git',['show',`${anchor.revision}:${path}`],{cwd:nativeRoot,encoding:'utf8',maxBuffer:32*1024*1024})});
+      readSource:async path=>readFixedLocalGitBlob(nativeRoot,{revision:anchor.revision,path}).toString('utf8')});
     for(const consumer of native.consumers){
       const activity=s.definitions.activities.find(a=>a.activity_id===consumer.activity_id);
       const extra=consumer.activity_id===proof.consumer.activity_id?proof.consumer.bindings:[];
@@ -144,8 +144,8 @@ export async function verifySnapshotSource(s,repoRoot,{db}={}){
     return s;
   }
   if(s.scope===EXISTING_OPS_SCOPE){
-    const paths=execFileSync('git',['ls-tree','-rz','--name-only',s.revision],{cwd:repoRoot,encoding:'utf8'}).replace(/\0$/,'').split('\0');
-    const readSource=async path=>execFileSync('git',['show',`${s.revision}:${path}`],{cwd:repoRoot,encoding:'utf8',maxBuffer:32*1024*1024});
+    const paths=fixedLocalGit(repoRoot,['ls-tree','-rz','--name-only',s.revision],{encoding:'utf8'}).replace(/\0$/,'').split('\0');
+    const readSource=async path=>fixedLocalGit(repoRoot,['show',`${s.revision}:${path}`],{encoding:'utf8'});
     const proof=await buildExistingOpsSources({scope:s.scope,repo:s.repo,revision:s.revision,paths,readSource});
     if(proof.consumers.some(c=>c.status!=='verified'||c.gaps.length))throw ciFailure('CONSUMER_SOURCE_MISMATCH');
     for(const consumer of proof.consumers){
@@ -165,7 +165,7 @@ export async function verifySnapshotSource(s,repoRoot,{db}={}){
 async function verifyGeneratedSource(s,repoRoot){
   if(s.repo!=='perfectuser21/zenithjoy-workspace')return s;
   const path='product-map/generated/contracts.json';
-  const read=path=>execFileSync('git',['show',`${s.revision}:${path}`],{cwd:repoRoot,encoding:'utf8',stdio:['ignore','pipe','pipe']});
+  const read=path=>fixedLocalGit(repoRoot,['show',`${s.revision}:${path}`],{encoding:'utf8'});
   let text;try{text=read(path);}catch{return s;}
   const digest=JSON.parse(text),owners=implementationSourceOwners(s);
   const plans=await loadActivityContracts(s.canonical.workflows,digest,read,owners);
@@ -185,8 +185,8 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
   if(cross){
     const nativeRoot=fileURLToPath(new URL('../../',import.meta.url)),dir=mkdtempSync(join(tmpdir(),'implementation-native-graph-'));
     try{
-      execFileSync('git',['clone','--shared','--no-checkout','--quiet',nativeRoot,dir],{stdio:['ignore','pipe','pipe']});
-      execFileSync('git',['checkout','--quiet','--detach',s.registry_source.revision],{cwd:dir,stdio:['ignore','pipe','pipe']});
+      fixedLocalGit(nativeRoot,['clone','--shared','--no-checkout','--quiet',nativeRoot,dir]);
+      fixedLocalGit(dir,['checkout','--quiet','--detach',s.registry_source.revision]);
       const nativeEdges=definitionEdges({...s,repo:s.registry_source.repo,revision:s.registry_source.revision,assertions:[]});
       await scanFixedImplementationGraph(db,registryRepo,dir,s.registry_source.revision,nativeEdges,'cecelia',s.registry_source.repo);
     }finally{rmSync(dir,{recursive:true,force:true});}
@@ -241,7 +241,7 @@ export async function advanceExistingOpsScratchManifest(db,query){
 }
 
 export async function buildPrImplementationSnapshot(db,registry,revision,repoRoot){
-  const read=path=>execFileSync('git',['show',`${revision}:${path}`],{cwd:repoRoot,encoding:'utf8',maxBuffer:32*1024*1024});
+  const read=path=>fixedLocalGit(repoRoot,['show',`${revision}:${path}`],{encoding:'utf8'});
   if(registry.scope===EXISTING_OPS_SCOPE){
     await validateImplementationSnapshotForDatabase(db,registry);
     if(registry.status!=='verified'||registry.gaps.length||registry.snapshot_scope!=='consumer_evidence')throw ciFailure('REGISTRY_UNKNOWN');
@@ -252,8 +252,8 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
     const anchor=cross?registry.registry_source:{repo:registry.repo,revision};
     if(!anchor||anchor.repo!=='perfectuser21/cecelia')throw ciFailure('CONSUMER_SOURCE_MISMATCH');
     const nativeRoot=cross?fileURLToPath(new URL('../../',import.meta.url)):repoRoot;
-    const paths=execFileSync('git',['ls-tree','-rz','--name-only',anchor.revision],{cwd:nativeRoot,encoding:'utf8'}).replace(/\0$/,'').split('\0');
-    const nativeRead=path=>execFileSync('git',['show',`${anchor.revision}:${path}`],{cwd:nativeRoot,encoding:'utf8',maxBuffer:32*1024*1024});
+    const paths=fixedLocalGit(nativeRoot,['ls-tree','-rz','--name-only',anchor.revision],{encoding:'utf8'}).replace(/\0$/,'').split('\0');
+    const nativeRead=path=>fixedLocalGit(nativeRoot,['show',`${anchor.revision}:${path}`],{encoding:'utf8'});
     const workspaceConsumerProof=cross?await scratchWorkspaceProof(db,revision,repoRoot,anchor):undefined;
     const before=await readExistingOpsRegistry(db);
     await registerExistingOpsSources(db,{scope:registry.scope,repo:anchor.repo,revision:anchor.revision,paths,readSource:nativeRead,workspaceConsumerProof,mode:'scratch_candidate',
@@ -265,7 +265,7 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
     const text=read('packages/brain/config/company-kr-workflow.json'),spec=JSON.parse(text);
     const workflow=registry.canonical.workflows.find(w=>w.key===spec.key&&w.capability_id===spec.capability_id);
     if(!workflow)throw ciFailure('WORKFLOW_REGISTRATION_MISSING');
-    const readBinding=async b=>{if(b.repo!==registry.repo)throw ciFailure('CROSS_REPO_SNAPSHOT_MISSING');return execFileSync('git',['show',`${b.revision}:${b.path}`],{cwd:repoRoot,encoding:'utf8'});};
+    const readBinding=async b=>{if(b.repo!==registry.repo)throw ciFailure('CROSS_REPO_SNAPSHOT_MISSING');return fixedLocalGit(repoRoot,['show',`${b.revision}:${b.path}`],{encoding:'utf8'});};
     const activities=[];
     for(const [index,a] of spec.activities.entries()){
       const activity={...activityContract(a,index+1,spec),from:spec.capability};
@@ -281,9 +281,9 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
     throw ciFailure('PR_ADAPTER_MISSING','该repo没有固定契约adapter；需要显式登记来源');
   const digestPath='product-map/generated/contracts.json',digest=JSON.parse(read(digestPath));
   const plans=await loadActivityContracts(registrations.filter(w=>w.status!=='retired'),digest,read,registrations);
-  for(const plan of plans)for(const item of plan.activities)item.bindings=await validateFixedImplementationBindings(item.activity,{repo:registry.repo,commit:revision},{readBusinessFile:b=>{
+  for(const plan of plans)for(const item of plan.activities)item.bindings=await validateFixedImplementationBindings(item.activity,{repo:registry.repo,commit:revision},{readBusinessFile:(b,options)=>{
     if(b.repo!==registry.repo)throw ciFailure('CROSS_REPO_SNAPSHOT_MISSING',`缺固定外仓源码: ${b.repo}`);
-    return execFileSync('git',['show',`${b.revision}:${b.path}`],{cwd:repoRoot,maxBuffer:32*1024*1024});
+    return readFixedLocalGitBlob(repoRoot,b,options);
   }});
   const lint=lintImplementationRegistry(registry,plans,digest);
   if(lint.gaps.length)throw ciFailure('REGISTRY_UNKNOWN',JSON.stringify(lint.gaps));
@@ -297,8 +297,7 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
 async function scratchWorkspaceProof(db,revision,repoRoot,anchor){
  if(!db)throw ciFailure('SCRATCH_REQUIRED');
  const workspace={repo:'perfectuser21/zenithjoy-workspace',revision},nativeRoot=fileURLToPath(new URL('../../',import.meta.url));
- const readSource=async source=>execFileSync('git',['show',`${source.revision}:${source.path}`],{
-  cwd:source.repo===workspace.repo?repoRoot:nativeRoot,maxBuffer:32*1024*1024});
+ const readSource=async source=>readFixedLocalGitBlob(source.repo===workspace.repo?repoRoot:nativeRoot,source);
  const revisions=await readWorkspaceConsumerBrainRevisions(workspace,readSource);
  const {EXISTING_OPS_IDENTITIES}=await import('../../packages/brain/src/lib/existing-ops-source.js');
  const {unverified_reference_ids,...identity}=EXISTING_OPS_IDENTITIES.find(i=>i.workflow_key==='factory_f3_ops');
@@ -317,9 +316,9 @@ async function scanFixedImplementationGraph(db,repo,root,revision,edges,sourceNa
  // 仅本机CI scratch升级原生输入解析；不改冻结definition或中央生产graph。
  if(sourceRepo==='perfectuser21/cecelia'){
   const {parse}=await import('acorn');
-  const paths=execFileSync('git',['ls-tree','-rz','--name-only',revision],{cwd:root,encoding:'utf8'}).split('\0').filter(Boolean);
+  const paths=fixedLocalGit(root,['ls-tree','-rz','--name-only',revision],{encoding:'utf8'}).split('\0').filter(Boolean);
   const inputs=await collectWorkspaceInputEdges({revision,paths,parse:text=>parse(text,{ecmaVersion:'latest',sourceType:'module'}),
-    readSource:async path=>execFileSync('git',['show',`${revision}:${path}`],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024})});
+    readSource:async path=>fixedLocalGit(root,['show',`${revision}:${path}`],{encoding:'utf8'})});
   for(const edge of inputs)byKey.set(JSON.stringify([edge.src_path,edge.dst_path,edge.edge_type]),edge);
  }
  for(const edge of edges){const key=JSON.stringify([edge.src_path,edge.dst_path,edge.edge_type]);if(!byKey.has(key))byKey.set(key,edge);}
