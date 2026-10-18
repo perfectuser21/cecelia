@@ -306,3 +306,17 @@ os.execv(${JSON.stringify(realGit)},[${JSON.stringify(realGit)}]+a)
   assert.notEqual(run(changed).status,0,'head锁字节漂移必须拒绝');assert.equal(existsSync(audit),false);
  }finally{f.cleanup();}
 });
+test('device patrol旧reader在显式CI缓存模式只读固定对象，缺对象不fetch且拒绝缓存覆盖',()=>{
+ const f=fixture(),bin=join(dirname(f.business),'bin'),marker=join(dirname(f.business),'fetch-attempt');
+ try{
+  mkdirSync(bin);const realGit=execFileSync('which',['git'],{encoding:'utf8'}).trim();
+  writeFileSync(join(bin,'git'),`#!/bin/sh\nfor arg in "$@"; do if [ "$arg" = fetch ]; then touch '${marker}'; exit 77; fi; done\nexec '${realGit}' "$@"\n`,{mode:0o700});
+  const module=new URL('../implementation-skill-source.mjs',import.meta.url).href;
+  const run=(cache,source)=>spawnSync(process.execPath,['--input-type=module','-e',`import{readImplementationSource}from ${JSON.stringify(module)};try{process.stdout.write(readImplementationSource(${JSON.stringify(f.business)},${JSON.stringify(f.after)},${JSON.stringify(f.path)},${source?JSON.stringify({source}):'{}'}));}catch(e){process.stderr.write(e.message);process.exitCode=1;}`],{encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH,IMPLEMENTATION_SKILLS_SOURCE_DIR:cache,SKILLS_SOURCE_SSH_KEY:''}});
+  const ready=run(f.central);assert.equal(ready.status,0,ready.stderr);assert.equal(ready.stdout,f.payload.toString());assert.equal(existsSync(marker),false);
+  const empty=join(dirname(f.business),'empty-cache');mkdirSync(empty);git(empty,'init','-q');
+  assert.notEqual(run(empty).status,0);assert.equal(existsSync(marker),false,'缺对象绝不重新私有fetch');
+  assert.notEqual(run('relative-cache').status,0);assert.equal(existsSync(marker),false);
+  assert.notEqual(run(f.central,empty).status,0,'调用方不能覆盖显式CI缓存');assert.equal(existsSync(marker),false);
+ }finally{f.cleanup();}
+});
