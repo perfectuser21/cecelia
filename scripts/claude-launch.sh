@@ -169,6 +169,12 @@ if [[ "$AUTO_WORKTREE" == "1" ]]; then
     cd "$_WT_PATH"
 fi
 
+# Restore generated skills before launching in a fresh or reused worktree.
+_SKILLS_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ "$DRY_RUN" == 0 && -n "$_SKILLS_ROOT" && -f "$_SKILLS_ROOT/.skills-source.json" ]]; then
+    bash "$_SKILLS_ROOT/scripts/ensure-skills-source.sh" "$_SKILLS_ROOT"
+fi
+
 # Phase 7.6: 用绝对路径/command 跳过 shell function + alias，避免递归陷阱。
 # Claude Code 的 shell-snapshots 会注入 'claude' shell function；在 bash 子进程里
 # `exec claude` 会解析成该 function 反复调回 launcher 本身，表现为 "permission

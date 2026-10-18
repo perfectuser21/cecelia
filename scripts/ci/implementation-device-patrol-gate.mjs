@@ -1,3 +1,4 @@
+import {readImplementationSource} from './implementation-skill-source.mjs';
 /** 窄巡查准入：固定Git字节+中央身份+真实回归。不会伪报手机业务已运行。 */
 import {execFileSync,spawnSync} from 'node:child_process';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
@@ -5,7 +6,7 @@ import {join,dirname} from 'node:path';
 import {PATROL_SCOPE,PATROL_REPO,PATROL_PATH,PATROL_PREFIX,PATROL_ASSERTION,sha,canonical,validatePatrolContract,validatePatrolSnapshot,patrolSourceProof} from '../../packages/brain/src/lib/device-patrol-admission.js';
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,maxBuffer:32*1024*1024});
-const read=(root,revision,path)=>git(root,'show',`${revision}:${path}`);
+const read=readImplementationSource;
 const exists=(root,revision,path)=>{try{return !!git(root,'ls-tree','-z',revision,'--',path).length;}catch{return false;}};
 const save=(root,name,value)=>writeFileSync(join(root,name),JSON.stringify(value,null,2)+'\n');
 const REVIEW_TEST='scripts/ci/__tests__/pr-review-thinking.test.mjs';

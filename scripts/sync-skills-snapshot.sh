@@ -1,26 +1,8 @@
 #!/usr/bin/env bash
-# sync-skills-snapshot.sh — 把 harness skill 的 SKILL.md 从 SSOT 同步到 monorepo 快照。
-#
-# 背景：所有 skill 的唯一 SSOT = zenithjoy-skills repo（见 ~/.claude/CLAUDE.md skills-architecture）。
-# packages/workflows/skills/ 是给 monorepo CI / evaluator 读的「快照拷贝」，不是 SSOT。
-# Brain 的 harness graph 用 loadSkillContent() 读快照里的 SKILL.md 注入给 agent，
-# 快照漂移 = agent 跑的是旧 skill。本脚本负责把 6 个 harness skill 的 SKILL.md 刷成最新。
-#
-# 用法：
-#   bash scripts/sync-skills-snapshot.sh
-#   SKILLS_SSOT_DIR=/path/to/zenithjoy-skills bash scripts/sync-skills-snapshot.sh
-#
-# 行为：逐个 cp 源 SKILL.md → 目标快照，结尾输出 diff 统计；源缺失则报错退出（非 0）。
-
+# Compatibility entry: restore the locked central bundle, never copy unpinned main.
 set -euo pipefail
-
-SSOT_DIR="${SKILLS_SSOT_DIR:-$HOME/perfect21/zenithjoy-skills}"
-
-# 目标快照目录：相对脚本位置定位 repo 根（scripts/ 的上一级）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEST_DIR="$REPO_ROOT/packages/workflows/skills"
-
 SKILLS=(
   harness-controller
   harness-planner
@@ -37,41 +19,9 @@ SKILLS=(
   workflow-authoring
 )
 
-if [[ ! -d "$SSOT_DIR" ]]; then
-  echo "[ERROR] SSOT 目录不存在: $SSOT_DIR" >&2
-  echo "        请设置 SKILLS_SSOT_DIR 指向 zenithjoy-skills repo" >&2
-  exit 1
-fi
-
-echo "[sync-skills-snapshot] SSOT=$SSOT_DIR → DEST=$DEST_DIR"
-
-synced=0
+args=(install --workspace "$REPO_ROOT")
+if [[ -n "${SKILLS_SSOT_DIR:-}" ]]; then args+=(--source "$SKILLS_SSOT_DIR"); fi
+python3 "$SCRIPT_DIR/skills-source.py" "${args[@]}"
 for skill in "${SKILLS[@]}"; do
-  src="$SSOT_DIR/$skill/SKILL.md"
-  if [[ ! -f "$src" ]]; then
-    echo "[ERROR] 源 SKILL.md 缺失: $src" >&2
-    exit 1
-  fi
-  dest="$DEST_DIR/$skill/SKILL.md"
-  mkdir -p "$DEST_DIR/$skill"
-
-  if [[ -f "$dest" ]]; then
-    added=$(diff <(cat "$dest") <(cat "$src") | grep -c '^>' || true)
-    removed=$(diff <(cat "$dest") <(cat "$src") | grep -c '^<' || true)
-  else
-    added=$(wc -l < "$src" | tr -d ' ')
-    removed=0
-  fi
-
-  cp "$src" "$dest"
-  if [[ "$skill" == "workflow-authoring" ]]; then
-    # OpenClaw 调用器随 skill 真身同步；快照中的脚本用于 Brain 契约验收。
-    mkdir -p "$DEST_DIR/$skill/scripts"
-    cp "$SSOT_DIR/$skill/scripts/client.mjs" "$DEST_DIR/$skill/scripts/client.mjs"
-    cp "$SSOT_DIR/$skill/scripts/self-definition.mjs" "$DEST_DIR/$skill/scripts/self-definition.mjs"
-  fi
-  echo "  ✓ $skill  (+${added} / -${removed} 行)"
-  synced=$((synced + 1))
+  test -f "$REPO_ROOT/packages/workflows/skills/$skill/SKILL.md"
 done
-
-echo "[sync-skills-snapshot] 完成：同步 $synced 个 skill 的 SKILL.md"

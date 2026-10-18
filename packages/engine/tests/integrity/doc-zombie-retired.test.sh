@@ -66,6 +66,7 @@ echo ""
 echo "[断言4] 全仓（排除 docs/archive/ 与本测试）无 write-current-state 引用"
 GREP_RESULT=$(grep -r "write-current-state" \
   --exclude-dir=".git" \
+  --exclude-dir=".skills-source" \
   --exclude="doc-zombie-retired.test.sh" \
   "$REPO_ROOT" 2>/dev/null \
   | grep -v "^$REPO_ROOT/docs/archive/" \
