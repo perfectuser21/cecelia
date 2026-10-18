@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${SMOKE_ALLOW_WRITE:-}" != 1 ]]; then exit 0; fi
+if [[ $# -eq 0 ]]; then
+  for scenario in baseline two-revisions invalid concurrency; do
+    bash "${BASH_SOURCE[0]}" --scenario "$scenario"
+  done
+  exit 0
+fi
 case "${1:-}" in
   --scenario) scenario="${2:-}" ;;
   *) echo 'usage: --scenario baseline|two-revisions|invalid|concurrency' >&2; exit 2 ;;
