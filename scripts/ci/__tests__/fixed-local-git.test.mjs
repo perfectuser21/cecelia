@@ -46,7 +46,7 @@ test('formal Pilot CLI accepts a historical tracked Skill without a central lock
  const skill='.claude/skills/demo/SKILL.md',content='---\nname: demo\nversion: 1\n---\nlegacy fixed skill\n';
  mkdirSync(join(f.root,'.claude/skills/demo'),{recursive:true});writeFileSync(join(f.root,skill),content);
  mkdirSync(join(f.root,'scripts/smoke'),{recursive:true});writeFileSync(join(f.root,'scripts/smoke/pilot.sh'),'#!/bin/bash\nset -e\ntest -f .claude/skills/demo/SKILL.md\n');
- const revision=f.commit('original fixed bytes');f.git('update-ref','refs/remotes/origin/main',revision);
+ const revision=f.commit('original fixed bytes');f.git('remote','add','origin',`https://github.com/${repo}.git`);f.git('update-ref','refs/remotes/origin/main',revision);
  const hash=value=>typeof value==='string'?createHash('sha256').update(value).digest('hex'):pilotPlanHash(value);
  const row=(n,payload,identity)=>{const source={repo,path:'contract.json',commit:revision};return {id:id(n),...identity,source_repo:repo,source_path:source.path,source_commit:revision,payload,payload_sha256:hash({source,payload})};};
  const activity=row(2,{activity_id:id(3),steps:[{step_id:id(4),locator:{activity_id:id(3),step_key:'verify'}}],implementation_bindings:[{kind:'skill',scope:'activity',status:'verified',repo,path:skill,revision,digest:'sha256:'+hash(content)}]},{activity_id:id(3)});
