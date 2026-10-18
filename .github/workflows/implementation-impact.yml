@@ -279,8 +279,8 @@ jobs:
           trap 'code=$?; if (( code != 0 )); then printf "%s\n" "{\"status\":\"unknown\",\"stage\":\"skill_cache_prepare\",\"code\":\"SKILL_CACHE_PREPARATION_FAILED\"}" > "$RUNNER_TEMP/implementation-output/gap.json"; fi' EXIT
           tooling_sha="$(git -C tooling rev-parse --verify HEAD)"
           test "$tooling_sha" = "$TOOLING_REVISION"
-          # 唯一已合并旧工具仍运行其原完整双scope gate；不是缺helper泛化降级。
-          if [[ "$NATIVE_PR" == true && "$GITHUB_REPOSITORY" == perfectuser21/cecelia && "$GITHUB_EVENT_NAME" == pull_request && "$SOURCE_REPO" == perfectuser21/cecelia && "$MODE" == pr && "$BASE" == 821dac5ae926cd5120d7b94fcd8012dd1f09bc23 && "$TOOLING_REVISION" == 821dac5ae926cd5120d7b94fcd8012dd1f09bc23 && "$MAP_SCOPE" == cecelia-kr && "$ADMISSION_SCOPES" == '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' ]]; then
+          # 仅精确已发布、reader及锁字节一致的旧工具；仍运行原完整双scope gate。
+          if [[ "$NATIVE_PR" == true && "$GITHUB_REPOSITORY" == perfectuser21/cecelia && "$GITHUB_EVENT_NAME" == pull_request && "$SOURCE_REPO" == perfectuser21/cecelia && "$MODE" == pr && ( "$BASE" == 821dac5ae926cd5120d7b94fcd8012dd1f09bc23 || "$BASE" == b8985542133fb7dcf87a2adf9151de43d0694185 ) && "$TOOLING_REVISION" == "$BASE" && "$MAP_SCOPE" == cecelia-kr && "$ADMISSION_SCOPES" == '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' ]]; then
             node --input-type=module <<'JS'
           import {readImplementationSource} from './tooling/scripts/ci/implementation-skill-source.mjs';
           import {readFixedLocalGitBlob} from './tooling/scripts/ci/fixed-local-git.mjs';
