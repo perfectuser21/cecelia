@@ -794,11 +794,6 @@ jobs:
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v4
-      - name: Restore pinned skill sources
-        if: hashFiles('.skills-source.json') != ''
-        uses: ./.github/actions/skills-source
-        with:
-          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
       - name: Self-test (auto-merge decision cases)
         run: bash .github/workflows/scripts/__tests__/should-auto-merge.test.sh
       - name: Self-test (aggregate gate result cases)
@@ -1905,11 +1900,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Restore pinned skill sources
-        if: hashFiles('.skills-source.json') != ''
-        uses: ./.github/actions/skills-source
-        with:
-          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
