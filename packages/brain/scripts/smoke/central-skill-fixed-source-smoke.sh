@@ -105,7 +105,7 @@ try{
       if(duplicateReport.expected_usages.length!==2)throw Error('duplicate expanded verification set');
       const cases=[[m1,a],[m2,b]];
       const results=await Promise.all(cases.map(async ([revision,skill],index)=>{
-        const checkout=join(root,`source-${index}`);git(root,'clone','-q',business,checkout);git(checkout,'remote','set-url','origin','https://github.com/perfectuser21/zenithjoy-workspace.git');git(checkout,'checkout','-q','--detach',revision);git(checkout,'update-ref','refs/remotes/origin/main',revision);
+        const checkout=join(root,`source-${index}`);git(root,'clone','-q',business,checkout);git(checkout,'remote','set-url','origin','https://github.com/perfectuser21/zenithjoy-workspace.git');git(checkout,'checkout','-q','--detach',revision);git(checkout,'update-ref','refs/remotes/origin/main',revision);git(root,'clone','-q',central,join(checkout,'.skills-source'));
         const file=join(root,`concurrent-${index}.json`),output=join(root,`concurrent-output-${index}`);
         writeFileSync(file,JSON.stringify({snapshot:snapshot(revision,skill)}));
         const args=['--import',fixture,join(tooling,'scripts/ci/pilot-release-verification.mjs'),'--repo-root',checkout,'--snapshot',file,'--output-dir',output,'--event','push','--ref','refs/heads/main'];
