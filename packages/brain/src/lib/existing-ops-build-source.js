@@ -237,7 +237,7 @@ export async function collectBuildSources({parse,paths,selectors,read,readSource
   }
   await collectPublishSources({parse,paths,selectors,read,readSource,revision,relations,requireProof});
   const stageSelected=paths.some(path=>/coding-workflow\/__tests__\/(intent|spec|spec-review|verify|evaluate)\.test\.mjs$/.test(path)&&selectors.include.some(r=>r.test(path))&&!selectors.exclude.some(r=>r.test(path)));
-  if(stageSelected){
+  if(stageSelected||selected){
     const support={...await provenanceInputs(paths,readSource,revision),...Object.fromEntries(await Promise.all(['test','helper','activity','cli','protocol'].map(async key=>[key,await readSource(BUILD_SOURCE_PATHS[key],revision)])))};
     await collectStageSources({parse,paths,selectors,read,readSource,revision,relations,requireProof,
       supportProven:proveBuildSources(support,parse),supportVersion:provenanceSourceVersion(support,parse)??'legacy'});

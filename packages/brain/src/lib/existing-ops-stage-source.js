@@ -118,9 +118,11 @@ function mergeReadEdges(edges,entry){
 /** supportProven/supportVersion来自唯一可信collector实际调用proveBuildSources，绝非候选声明。 */
 export async function collectStageSources({parse,paths,selectors,read,readSource,revision,relations,requireProof,supportProven,supportVersion}){
  const selected=STAGES.filter(s=>{const p=PREFIX+`__tests__/${s}.test.mjs`;return paths.includes(p)&&selectors.include.some(r=>r.test(p))&&!selectors.exclude.some(r=>r.test(p));});
- if(!selected.length)return;
+ const buildTest=PREFIX+'__tests__/build.test.mjs',buildSelected=paths.includes(buildTest)&&selectors.include.some(r=>r.test(buildTest))&&!selectors.exclude.some(r=>r.test(buildTest));
+ if(!selected.length&&!buildSelected)return;
  let inputs,version,mode,versionedInputs=false;
  try{
+  if(selected.length){
   inputs=await readStageInputs(readSource,revision);version=stageSourceVersion(inputs.entries,parse);
   if(!version||version!==supportVersion||!supportProven)throw Error('stage source combination');
   if(version==='legacy')return; // 旧已知完整组合不追加任何历史绑定。
@@ -130,6 +132,14 @@ export async function collectStageSources({parse,paths,selectors,read,readSource
    if(!same(test,reviewed(expectedTest,parse))||!testConsumer(test,stage)||!promptConsumer(entry,stage,stageHandler(entry,stage))||!stageHandler(entry,stage))throw Error('stage consumer');
    if(['isolation','source_merge','native_evidence'].includes(version)&&stage==='evaluate'&&!isolationConsumer(entry))throw Error('stage isolation consumer');
    if(['source_merge','native_evidence'].includes(version)&&stage==='evaluate'&&!mergeConsumer(entry,parse))throw Error('stage source reader consumer');
+  }
+  }else{
+   // Old build-only trees did not declare this evidence protocol; preserve their frozen bindings.
+   const own='packages/brain/src/lib/existing-ops-stage-source.js';
+   const marked=paths.includes(own)&&(await readSource(own,revision)).includes('EXISTING_OPS_REPO_RULES_INPUT_SCHEMA');
+   const reposPath=PREFIX+'repos.json',hint=paths.includes(reposPath)?JSON.parse(await readSource(reposPath,revision)):null;
+   if(!marked&&!hint?.repos?.some(profile=>profile.key==='zenithjoy-skills'))return;
+   if(!supportProven)throw Error('build source combination');version=supportVersion;
   }
   mode={};for(const p of Object.keys(REVIEWED.mode)){const text=await readSource(PREFIX+p,revision);mode[p]=p.endsWith('.json')?JSON.parse(text):parse(text);}
   // 接受完整旧模式或完整已审Skills扩展，禁止分别挑文件拼接成未知组合。
@@ -145,17 +155,18 @@ export async function collectStageSources({parse,paths,selectors,read,readSource
    if(declarations.length){if(declarations.length!==1||declarations[0].init?.type!=='Literal'||declarations[0].init.value!==1)throw Error('repo rules evidence schema');versionedInputs=true;}
   }
  }catch{requireProof(false,'native_stage_execution_unproven');return;}
- const edges=[[PREFIX+'lib/protocol.mjs',PREFIX+'lib/activity-provenance.mjs','native_activity_provenance_handler'],[PREFIX+'lib/activity-provenance.mjs',PREFIX+'lib/record-provenance.mjs','native_record_provenance_context']];
+ const edges=selected.length?[[PREFIX+'lib/protocol.mjs',PREFIX+'lib/activity-provenance.mjs','native_activity_provenance_handler'],[PREFIX+'lib/activity-provenance.mjs',PREFIX+'lib/record-provenance.mjs','native_record_provenance_context']]:[];
  if(versionedInputs){
   // The complete reviewed profile module proves repoRules' readFileSync(WORKFLOW_DIR, rules_prompt).
-  if(selected.some(stage=>['spec','spec-review','evaluate'].includes(stage))){
+  if(selected.includes('spec')||buildSelected){
    for(const profile of mode['repos.json'].repos)edges.push([PREFIX+'lib/repo-profile.mjs',PREFIX+profile.rules_prompt,'reviewed_repo_rules_read']);
-   for(const stage of selected.filter(s=>['spec','spec-review','evaluate'].includes(s)))edges.push([path('activities',stage),PREFIX+'lib/repo-profile.mjs','stage_repo_rules_call']);
+   if(selected.includes('spec'))edges.push([path('activities','spec'),PREFIX+'lib/repo-profile.mjs','stage_repo_rules_call']);
+   if(buildSelected)edges.push([path('activities','build'),PREFIX+'lib/repo-profile.mjs','stage_repo_rules_call']);
   }
-  const buildTest=PREFIX+'__tests__/build.test.mjs';
-  if(paths.includes(buildTest)&&selectors.include.some(r=>r.test(buildTest))&&!selectors.exclude.some(r=>r.test(buildTest)))
+  if(buildSelected)
    edges.push([path('activities','build'),PREFIX+'lib/ci-precheck.mjs','reviewed_build_precheck_call']);
  }
+ if(selected.length){
  for(const name of ['record-provenance-store','record-provenance-records','provenance-path'])edges.push([PREFIX+'lib/record-provenance.mjs',PREFIX+`lib/${name}.mjs`,'provenance_local_prehandler_dependency']);
  if(['isolation','source_merge','native_evidence'].includes(version))edges.push(
   [PREFIX+'lib/record-provenance.mjs',PREFIX+'lib/qa-isolation.mjs','provenance_static_import_dependency'],
@@ -165,6 +176,7 @@ export async function collectStageSources({parse,paths,selectors,read,readSource
   edges.push(...nativeStaticEdges());
  }
  if(selected.some(s=>s!=='intent'))edges.push([PREFIX+'lib/claude.mjs',PREFIX+'lib/record-provenance.mjs','native_pipe_provenance_capture']);
+ }
  for(const stage of selected){
   const test=PREFIX+`__tests__/${stage}.test.mjs`,entry=path('activities',stage),helper=PREFIX+'__tests__/helpers/run-activity.mjs';
   edges.push([test,helper,'active_stage_test_helper'],[helper,entry,'native_stage_activity_spawn'],[entry,PREFIX+'lib/protocol.mjs','stage_named_handler_protocol']);

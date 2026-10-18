@@ -132,7 +132,7 @@ const PROVENANCE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-
 const NATIVE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
 const NATIVE_DATA = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
 const PROVENANCE_READER_HASHES = new Map([
-  ['existing-ops-stage-source.js','27dfa8536572c35044b31cd6c7772a1fc135f79e7d95cf4698c96b517466e463'],
+  ['existing-ops-stage-source.js','549aae515174fc9963ed48220abb10886c76b364e2066969e4e66d1f79bbb745'],
   ['existing-ops-stage-modes.js','8266c7b1f74b11a0161684f83e3deb189ee101e2a0b64578cacffaaff1711752'],
   ['existing-ops-stage-envelopes.js','1fda2fc1f3bf3ef7684930e46ac8dc0364bd1af1f8f27e97c7eb197fe23a6d8f'],
   ['existing-ops-provenance-envelope.js','27c87c40b07ef90e87d642042afbdeb6a770a71ec74582da312599ec6fae5d5e'],
@@ -143,7 +143,7 @@ const PROVENANCE_READER_HASHES = new Map([
   ['existing-ops-native-evidence-source.js','db5308fd90094044e2e4942dc704c90a41e6a225fd5bf04d0f5b876959175eb0'],
   ['existing-ops-native-evidence-envelopes.js','ed0b4b01fb98b9ee5c852736286ae22ad7ce28252936840df257666778949c57'],
 ].map(([name,hash])=>[path.join(BRAIN_ROOT,'src/lib',name),hash]));
-const PROVENANCE_CALLER_SHA256 = '689b9d5ed49e6d76a8f16b2a8cf8f4fea87f510cb33697a4ff3b2cb92770118e';
+const PROVENANCE_CALLER_SHA256 = 'ac312d50ee66676fc27d1574d126cdf86f36e25d01facad5ecd2d0f3b77a7bb0';
 // 仅静态折叠有界字面量拼接；不求值标识符、调用或运行时表达式。
 function constantReferenceString(node,depth=0) {
   if(!node||depth>32)return null;
