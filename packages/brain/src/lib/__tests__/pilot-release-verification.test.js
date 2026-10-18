@@ -31,7 +31,7 @@ it('双 checkout 的正式 Pilot CLI 读取中央固定 Skill 并拒绝工作树
  expect(result.status,result.stderr).toBe(0);
  expect(result.stdout).toContain('baseline: PASS (3 CLI runs)');
 });
-const centralScenarios=[['baseline',3],['two-revisions',2],['invalid',9],['concurrency',7]];
+const centralScenarios=[['baseline',3],['two-revisions',2],['invalid',9],['concurrency',7],['cold-cache',3]];
 function centralSmoke(args=[],env={}){
  return spawnSync('bash',[new URL('../../../scripts/smoke/central-skill-fixed-source-smoke.sh',import.meta.url).pathname,...args],{
   cwd:new URL('../../../../../',import.meta.url).pathname,encoding:'utf8',timeout:25000,env:{...process.env,SMOKE_ALLOW_WRITE:'1',...env},

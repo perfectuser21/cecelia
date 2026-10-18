@@ -392,3 +392,5 @@ test('审查R2：非Error拒绝值也不能被诊断IO覆盖',async t=>{
  }});}catch(error){caught=true;assert.equal(error,undefined);}
  assert.equal(caught,true);
 });
+
+import './prepare-fixed-skill-cache.test.mjs';

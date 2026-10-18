@@ -265,7 +265,11 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
     const workflow=registry.canonical.workflows.find(w=>w.key===spec.key&&w.capability_id===spec.capability_id);
     if(!workflow)throw ciFailure('WORKFLOW_REGISTRATION_MISSING');
     const sourceOptions=fixedLocalSourceOptions(repoRoot,registry.repo);
-    const readBinding=async b=>(await readFixedImplementationBinding(b,sourceOptions)).content;
+    const readBinding=async b=>{
+      const result=await readFixedImplementationBinding(b,sourceOptions);
+      if(result.resolved_source)b.resolved_source=result.resolved_source;
+      return result.content;
+    };
     const activities=[];
     for(const [index,a] of spec.activities.entries()){
       const activity={...activityContract(a,index+1,spec),from:spec.capability};

@@ -7,11 +7,11 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {readNativeConsumerRuntime,assertNativeConsumerRuntime} from './native-consumer-runtime.js';
 const read=path=>readFileSync(new URL(basename(path),import.meta.url),'utf8');
-const stagePaths=['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-stage-${n}.js`);
+const stagePaths=['source','envelopes','modes'].map(n=>`packages/brain/src/lib/existing-ops-stage-${n}.js`);
 const provenancePaths=['envelope','core-envelope','entry-envelopes','local-envelopes']
  .map(name=>`packages/brain/src/lib/existing-ops-provenance-${name}.js`).concat(stagePaths).sort();
-it('实际身份包含全部8个新增收集器依赖，逐文件记录加载字节',()=>{
- const runtime=readNativeConsumerRuntime();expect(runtime.files).toHaveLength(13);
+it('实际身份包含全部9个新增收集器依赖，逐文件记录加载字节',()=>{
+ const runtime=readNativeConsumerRuntime();expect(runtime.files).toHaveLength(14);
  for(const path of provenancePaths)expect(runtime.files).toContainEqual({path,sha256:createHash('sha256').update(read(path)).digest('hex')});
 });
 it.each(provenancePaths)('%s 缺失、错误字节或非普通固定 blob 都拒绝',async path=>{
@@ -75,7 +75,7 @@ it('native evidence collector真实静态import闭包不能漏运行身份文件
  }
  const declared=new Set(runtime.files.map(f=>f.path));
  expect([...seen].filter(path=>!declared.has(path))).toEqual([]);
- expect(runtime.files).toHaveLength(13);
+ expect(runtime.files).toHaveLength(14);
 });
 it.each(nativeEvidencePaths)('native evidence %s实际加载hash与固定tree blob同时受核验',async path=>{
  const runtime=readNativeConsumerRuntime();
