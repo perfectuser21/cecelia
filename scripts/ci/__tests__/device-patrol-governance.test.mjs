@@ -24,7 +24,7 @@ function documentFixture(path){
   {id:'66fe22f5-1a60-4e23-bcfb-7b4df2f0fbff',key:'single-phone-account-patrol',activities:[{id:'d51eefa1-0ffd-43d7-94ba-16ff6b4d3800',key:'device-readiness',bindings:['scripts/phone-account-patrol/preflight.py'],assertion_ref:PATROL_ASSERTION}]},
   {id:'7dfd3b5d-bc5a-4d96-b744-10d26bc7eb70',key:'phone-account-patrol-batch',activities:[{id:'b33c9f29-5c5f-4fb1-908c-475bb9566085',key:'enabled-phone-list',bindings:['scripts/phone-account-patrol/runner.py'],assertion_ref:PATROL_ASSERTION}]}],auxiliary_paths:[PATROL_PATH,assertionPath],maintenance_owner:'主理人',schedule:{time:'22:00',timezone:'Asia/Shanghai'}};
  write(PATROL_PATH,JSON.stringify(contract));write('scripts/phone-account-patrol/preflight.py','READY = True\n');write('scripts/phone-account-patrol/runner.py','BATCH = True\n');
- write(assertionPath,"import {test} from 'node:test'; import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs'; test('actual isolated source bytes',()=>assert.equal(readFileSync('scripts/phone-account-patrol/preflight.py','utf8'),'READY = True\\n'));\n");
+ write(assertionPath,"import {test} from 'node:test'; import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs'; test('actual isolated source bytes',()=>assert.equal(readFileSync('scripts/phone-account-patrol/preflight.py','utf8'),'READY = True\\n')); test('central read credential is unavailable to candidate assertions',()=>assert.equal(process.env.SKILLS_SOURCE_SSH_KEY,undefined));\n");
  git('add','.');git('commit','--quiet','-m','actual introduced source');const introduced=git('rev-parse','HEAD');
  const source=patrolSourceProof(contract,introduced,path=>execFileSync('git',['show',`${introduced}:${path}`],{cwd:repo}));
  const registration={provenance:{base_revision:base,introduced_revision:introduced,base_tree_sha:baseTree,base_paths:['README.md'],introduced_paths:git('ls-tree','-r','--name-only',introduced).split('\n'),compare_status:'ahead',actor:'isolated regression fixture'},source};
@@ -57,5 +57,21 @@ test('近似infra项目文档仍由真实Git门禁拒绝，不扩大文档匹配
   const fixture=documentFixture(path);
   try{await assert.rejects(runDevicePatrolGate(fixture.options),error=>error.code===`PATROL_CHANGED_FILE_UNCLAIMED:${path}`);}
   finally{rmSync(fixture.root,{recursive:true,force:true});}
+ }
+});
+
+
+test('trusted gate retains central read capability while candidate regression receives no key',async()=>{
+ const previous=process.env.SKILLS_SOURCE_SSH_KEY;
+ process.env.SKILLS_SOURCE_SSH_KEY='isolated-test-capability-not-a-real-key';
+ const fixture=documentFixture('docs/learnings/cp-10101635-phone-account-patrol.md');
+ try{
+  const {receipt}=await runDevicePatrolGate(fixture.options);
+  assert.equal(receipt.verdict,'PASS');
+  assert.equal(receipt.assertions[0].exit_code,0);
+  assert.equal(process.env.SKILLS_SOURCE_SSH_KEY,'isolated-test-capability-not-a-real-key');
+ }finally{
+  if(previous===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=previous;
+  rmSync(fixture.root,{recursive:true,force:true});
  }
 });

@@ -698,6 +698,8 @@ jobs:
         run: node --test scripts/ci/__tests__/workspace-ci-source-bundle.test.mjs
       - name: 固定快照发布 HTTP 错误与并发回归
         run: node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs
+      - name: 固定技能Git来源与回归进程凭据隔离
+        run: node --test scripts/ci/__tests__/implementation-skill-source.test.mjs scripts/ci/__tests__/device-patrol-governance.test.mjs
 
   # 守卫 list-fs-guard-tests.sh：CI 快路用 vitest --changed 会漏跑 fs 读取型守卫测试
   # （#3506 / 2026-07-02 两次应验）。本 job 强制守护 selector 选择逻辑（Tier A，无需 vitest）；
