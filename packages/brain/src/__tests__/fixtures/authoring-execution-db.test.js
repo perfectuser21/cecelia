@@ -65,3 +65,14 @@ export async function settleInvocation(f,taskId,actualOutput){
  await finalizeTask(f.pool,taskId,'completed',{relay:false});
  return runId;
 }
+
+it('历史无锁fixture只在显式allowMissing时证明锁缺失，未知正文路径不可冒充Skill',async()=>{
+ const f=await authoringExecutionDatabase();
+ try{
+  const source={repo:f.definition.source.repo,revision:f.definition.source.revision,path:'.skills-source.json'};
+  expect(await f.reader(source,{allowMissing:true})).toBeNull();
+  await expect(f.reader(source)).rejects.toThrow('fixture_file_missing');
+  await expect(f.reader({...source,path:'unknown/SKILL.md'})).rejects.toThrow('fixture_file_missing');
+  expect(await f.reader({...source,path:'skills/pure/SKILL.md'})).toBe(f.content);
+ }finally{await f.close();}
+});
