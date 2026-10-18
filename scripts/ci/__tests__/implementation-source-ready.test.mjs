@@ -65,7 +65,7 @@ for(const [name,change] of [
  await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
 });
 test('新协议缺少非历史路径的14模块子集也立即拒绝',async()=>{
- const body=runtime();body.files.pop();
+ const body=runtime();body.files.shift();
  await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
 });
 test('真实HTTP仅GET，旧部署指纹等待后匹配；不同build SHA可接受',async()=>{
