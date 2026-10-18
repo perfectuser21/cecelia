@@ -95,6 +95,28 @@ function directNodeCommands(source){
  }
  return found;
 }
+const FIXED_SKILL_INITIALIZER='scripts/ci/prepare-fixed-skill-cache.mjs';
+const FIXED_SKILL_INPUTS=['scripts/ci/fixed-local-git.mjs','packages/brain/src/lib/implementation-ci-snapshot.js'];
+function fixedSkillInitializer(yaml,spec,job,step,source){
+ const reject=()=>fail('CALLEE_SKILL_INITIALIZER_UNPROVEN',{path:spec.name});
+ const steps=job.steps||[],at=steps.indexOf(step),mentions=steps.filter(s=>String(s.run||'').includes('tooling/'+FIXED_SKILL_INITIALIZER));
+ const secret=yaml.on?.workflow_call?.secrets?.SKILLS_SOURCE_SSH_KEY;
+ if(spec.name!=='pilot-release-verification'||mentions.length!==1||step.if!==undefined||step['continue-on-error']
+  ||step['working-directory']!==undefined||step.shell!==undefined||job.defaults?.run!==undefined||yaml.defaults?.run!==undefined
+  ||Object.keys(step.env||{}).join(',')!=='SKILLS_SOURCE_SSH_KEY'||step.env.SKILLS_SOURCE_SSH_KEY!=="${{ secrets.SKILLS_SOURCE_SSH_KEY }}"
+  ||!secret||Object.keys(secret).sort().join(',')!=='required'||secret.required!==false
+  ||sha(Buffer.from(source))!=='9da884935817c764464ebfe3e08a0ee5511a972c489927123c1060f6c9ba68da')reject();
+ const checkouts=steps.filter(s=>s.uses?.startsWith('actions/checkout@')&&s.with?.path==='source');
+ const downloads=steps.filter(s=>s.uses?.startsWith('actions/download-artifact@')&&s.with?.path==='snapshot');
+ const checkout=checkouts[0],download=downloads[0];
+ if(checkouts.length!==1||downloads.length!==1||steps.indexOf(checkout)>=at||steps.indexOf(download)>=at
+  ||checkout.if!==undefined||checkout['continue-on-error']||download.if!==undefined||download['continue-on-error']
+  ||checkout.with.repository!=="${{ inputs.source_repo || github.repository }}"||checkout.with.ref!=="${{ inputs.head_revision || github.sha }}"
+  ||checkout.with['fetch-depth']!==0||checkout.with['persist-credentials']!==false
+  ||download.with.name!=="pilot-release-snapshot-${{ inputs.scope || 'cecelia-kr' }}-${{ inputs.head_revision || github.sha }}"
+  ||!steps.slice(at+1).some(s=>directNodeCommands(String(s.run||'')).some(m=>m[1]===spec.runner)))reject();
+ return [FIXED_SKILL_INITIALIZER,...FIXED_SKILL_INPUTS].map(path=>({path,selector:'jobs.verify.steps.fixed_skill_initializer_exact_contract'}));
+}
 function calleeProof(yaml,spec,admissionScopesRequested=false){
  const inputs=yaml?.on?.workflow_call?.inputs;
  const optional=inputs?.admission_scopes;
@@ -109,6 +131,9 @@ function calleeProof(yaml,spec,admissionScopesRequested=false){
  const runners=[];
  for(const step of job.steps||[]){
   const source=String(step.run||'');let commands=directNodeCommands(source),conditional=false;
+  if(source.includes('tooling/'+FIXED_SKILL_INITIALIZER)){
+   runners.push(...fixedSkillInitializer(yaml,spec,job,step,source));continue;
+  }
   // callerProof 固定既有 scope=zenithjoy；这个精确预读只在独立巡查 scope 执行。
   // 它不能替代 required runner，也不能把未执行的 helper 冒记为既有消费者。
   if(source.includes('tooling/scripts/ci/implementation-patrol-baseline.mjs')){

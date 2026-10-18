@@ -2,20 +2,20 @@
 set -euo pipefail
 if [[ "${SMOKE_ALLOW_WRITE:-}" != 1 ]]; then exit 0; fi
 if [[ $# -eq 0 ]]; then
-  for scenario in baseline two-revisions invalid concurrency; do
+  for scenario in baseline two-revisions invalid concurrency cold-cache; do
     bash "${BASH_SOURCE[0]}" --scenario "$scenario"
   done
   exit 0
 fi
 case "${1:-}" in
   --scenario) scenario="${2:-}" ;;
-  *) echo 'usage: --scenario baseline|two-revisions|invalid|concurrency' >&2; exit 2 ;;
+  *) echo 'usage: --scenario baseline|two-revisions|invalid|concurrency|cold-cache' >&2; exit 2 ;;
 esac
-case "$scenario" in baseline|two-revisions|invalid|concurrency) ;; *) exit 2;; esac
+case "$scenario" in baseline|two-revisions|invalid|concurrency|cold-cache) ;; *) exit 2;; esac
 tooling="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$tooling"
 SMOKE_TOOLING="$tooling" SMOKE_SCENARIO="$scenario" node --input-type=module <<'NODE'
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,symlinkSync,existsSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,symlinkSync,existsSync,renameSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -71,7 +71,14 @@ try{
     return {receipt,gap};
   };
   put(business,skillPath,'---\nname: evil\nversion: 9\n---\nworktree poison\n');
-  if(scenario==='baseline'){
+  if(scenario==='cold-cache'){
+    const origin=join(root,'central-origin');renameSync(central,origin);
+    const {prepareFixedSkillCache}=await import('./scripts/ci/prepare-fixed-skill-cache.mjs');
+    const proof=await prepareFixedSkillCache({repoRoot:business,snapshot:snapshot(m1,a),cacheBase:root,key:'fixture-only',fetchCommit:async({directory,revision})=>{git(directory,'fetch','--quiet','--no-tags',origin,revision);}});
+    if(proof.status!=='prepared'||existsSync(join(central,sourcePath)))throw Error('cold cache did not prepare Git objects only');
+  }
+  put(business,skillPath,'---\nname: evil\nversion: 9\n---\nworktree poison\n');
+  if(scenario==='baseline'||scenario==='cold-cache'){
     run(m1,a);
     put(business,'entry.js','poison worktree\n');run(m1,a,{expectPass:false});
     put(business,'entry.js','export const fixed = true;\n');run(m1,a,{expectPass:false,ref:'refs/heads/other'});
