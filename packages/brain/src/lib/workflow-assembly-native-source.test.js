@@ -1,7 +1,8 @@
 import {it,expect} from 'vitest';
-import {readFileSync,mkdtempSync,cpSync,rmSync} from 'node:fs';
+import {readFileSync,mkdtempSync,cpSync,rmSync,mkdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join,dirname} from 'node:path';
+import {createRequire} from 'node:module';
 import {execFileSync} from 'node:child_process';
 import {prepareNativeSource,assertNativeSource} from './workflow-assembly-native-source.js';
 it('未固定commit或实际代码字节不同，不能形成登记凭证',async()=>{
@@ -20,6 +21,15 @@ it('真实Docker平铺Brain布局冷加载，不依赖容器里不存在的monor
   try{
     cpSync(new URL('../',import.meta.url),join(directory,'src'),{recursive:true});
     cpSync(new URL('../../config/',import.meta.url),join(directory,'config'),{recursive:true});
+    // Docker installs production packages; this isolated flat fixture must carry their real dependency closure too.
+    const pending=[['js-yaml',createRequire(import.meta.url)]],installed=new Set();
+    while(pending.length){
+      const [name,require]=pending.shift();if(installed.has(name))continue;installed.add(name);
+      const packagePath=require.resolve(name+'/package.json'),dependency=JSON.parse(readFileSync(packagePath,'utf8'));
+      mkdirSync(join(directory,'node_modules'),{recursive:true});
+      cpSync(dirname(packagePath),join(directory,'node_modules',name),{recursive:true});
+      for(const child of Object.keys(dependency.dependencies??{}))pending.push([child,createRequire(packagePath)]);
+    }
     const code=`import {readFileSync,realpathSync} from 'node:fs';import {pathToFileURL} from 'node:url';import {createRequire} from 'node:module';
       const root=${JSON.stringify(directory)},m=await import(pathToFileURL(root+'/src/lib/workflow-assembly-native-source.js'));
       const source=await m.prepareNativeSource({revision:'a'.repeat(40),readFile:async(_rev,path)=>readFileSync(root+'/'+path.replace('packages/brain/',''),'utf8')});
