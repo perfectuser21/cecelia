@@ -7,6 +7,7 @@ export function diagnosisFacts(control, failure, sources) {
     if (typeof value !== 'string') return undefined;
     if (value.length > max) truncated = true;
     return value.slice(0, max * 4)
+      .replace(/\b(?:proxy-authorization|authorization|set-cookie|cookie)["']?\s*:\s*[^\r\n]*/gi, '[redacted-header]')
       .replace(/\bBearer\s+[^\s"',;]+/gi, 'Bearer [redacted]')
       .replace(/\b[A-Za-z_]*(?:token|secret|password|api[_-]?key|authorization|cookie)["']?\s*[:=]\s*["']?[^\s"'&,;]+/gi, '[redacted]')
       .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*/g, '[redacted-private-key]')
@@ -37,13 +38,24 @@ export function diagnosisFacts(control, failure, sources) {
     frozen_sources:entries(sources,24).map(s=>({repo:text(s.repo,128),revision:text(s.revision,40),...(s.path?{path:text(s.path,512)}:{})})),
   };
   // Unicode和JSON转义按真实字节计；超预算只删尾部明细，保留失败与固定身份。
-  const arrays=[context.delivery?.effects,context.verification?.assertions,context.verification?.evidence,context.evidence,context.frozen_sources];
-  while(Buffer.byteLength(JSON.stringify(context))>23000){
-    const longest=arrays.filter(Array.isArray).sort((a,b)=>b.length-a.length)[0];
-    if(!longest?.length)break;
-    longest.pop();truncated=true;
+  const arrays=[];
+  const collect=value=>{
+    if(Array.isArray(value))arrays.push(value);
+    if(value&&typeof value==='object')for(const child of Object.values(value))collect(child);
+  };
+  collect(context);
+  const bytes=()=>Buffer.byteLength(JSON.stringify(context));
+  while(bytes()>23000){
+    const largest=arrays.filter(a=>a.length).sort((a,b)=>Buffer.byteLength(JSON.stringify(b))-Buffer.byteLength(JSON.stringify(a)))[0];
+    if(largest){largest.pop();truncated=true;continue;}
+    // JSON转义后的标量也可能超预算；只删诊断明细，保留固定身份。
+    const detail=['stack','message','reason'].find(key=>context.delivery?.failure?.[key]!==undefined);
+    if(detail){delete context.delivery.failure[detail];truncated=true;continue;}
+    if(context.reason!==undefined){delete context.reason;truncated=true;continue;}
+    throw Error('diagnosis_facts_budget_exceeded');
   }
   context.truncated=truncated;
   context.evidence_status=context.evidence.length?'recorded_refs_only':'insufficient_evidence';
+  if(bytes()>24000)throw Error('diagnosis_facts_budget_exceeded');
   return context;
 }
