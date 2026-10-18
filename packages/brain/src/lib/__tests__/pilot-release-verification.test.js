@@ -24,6 +24,12 @@ it('真实固定Git测试进程使用白名单环境，发布证明不要求改�
  const result=await runPilotReleaseVerification({...f,repoRoot:f.root});expect(result.receipt.verdict).toBe('PASS');expect(result.receipt).toMatchObject({purpose:'release_verification',actor:'pilot_release_verification',scope:'declared_pilot_regressions',business_runtime_status:'not_evaluated'});
  expect(result.report.source).not.toHaveProperty('base_revision');expect(result.report).not.toHaveProperty('mapping_status');expect(readFileSync(join(f.root,'actual-output'),'utf8')).toBe('tested');
 });
+it('双 checkout 的正式 Pilot CLI 读取中央固定 Skill 并拒绝工作树漂移',()=>{
+ const smoke=new URL('../../../scripts/smoke/central-skill-fixed-source-smoke.sh',import.meta.url);
+ const result=spawnSync('bash',[smoke.pathname,'--scenario','baseline'],{cwd:new URL('../../../../../',import.meta.url).pathname,encoding:'utf8',env:{...process.env,SMOKE_ALLOW_WRITE:'1'}});
+ expect(result.status,result.stderr).toBe(0);
+ expect(result.stdout).toContain('baseline: PASS (3 CLI runs)');
+});
 const descriptions=[
  {kind:'raw',scope:'activity',field:'runtime',status:'unresolved',raw:{entry:'discover-keyword.sh',phase:'source'}},
  {kind:'raw',scope:'activity',field:'execution.via',status:'unresolved',raw:'xian-m4 batch2.sh:78 → harvest-keyword.sh:35-43 → douyin-phone-adb'},

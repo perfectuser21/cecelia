@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFixedGitFile } from './fixed-git-source.js';
+import { validateFixedImplementationBindings } from './fixed-git-source.js';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
 const revision = 'a'.repeat(40), repo = 'perfectuser21/zenithjoy-workspace';
 describe('固定 GitHub 文件安全读取',()=>{
   function git(content='{"中文":"换行\\n"}') {
@@ -38,4 +43,62 @@ describe('固定 GitHub 文件安全读取',()=>{
     }finally{vi.doUnmock('../harness-credentials.js');vi.resetModules();}
   });
 
+});
+
+describe('集中 Skill 固定源',()=>{
+  it('从每个业务提交独立解析中央锁，并保留声明与实际来源',async()=>{
+    const root=mkdtempSync(join(tmpdir(),'fixed-skill-'));
+    try{
+      const dirs={ 'perfectuser21/zenithjoy-workspace':join(root,'business'), 'perfectuser21/zenithjoy-skills':join(root,'central') };
+      const git=(dir,...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
+      const put=(dir,path,data)=>{const target=join(dir,path);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,data);};
+      const commit=dir=>{git(dir,'add','-A');git(dir,'-c','user.name=Test','-c','user.email=test@example.com','commit','-qm','fixture');return git(dir,'rev-parse','HEAD');};
+      for(const dir of Object.values(dirs))mkdirSync(dir),git(dir,'init','-q');
+      const business=dirs['perfectuser21/zenithjoy-workspace'],central=dirs['perfectuser21/zenithjoy-skills'];
+      const path='.claude/skills/demo/SKILL.md',source='business-skills/zenithjoy/demo/SKILL.md';
+      const revisions=[];
+      for(const version of ['1','2']){
+        const content=`---\nname: demo\nversion: ${version}\n---\ncentral ${version}\n`;
+        put(central,source,content);
+        put(central,'distribution/catalog.json',JSON.stringify({version:1,profiles:{zenithjoy:{files:[{path,source,sha256:createHash('sha256').update(content).digest('hex')}]}}}));
+        const skillRevision=commit(central);
+        put(business,'.skills-source.json',JSON.stringify({version:1,repository:'perfectuser21/zenithjoy-skills',revision:skillRevision,profile:'zenithjoy',loader_sha256:'a'.repeat(64)}));
+        if(version==='1')put(business,path,'old business skill');
+        else git(business,'rm','-q',path);
+        revisions.push({business:commit(business),central:skillRevision,content});
+      }
+      put(business,path,'---\nname: evil\nversion: 9\n---\nworkspace poison\n');
+      const readFile=({repo,path,revision})=>execFileSync('git',['show',`${revision}:${path}`],{cwd:dirs[repo],stdio:['ignore','pipe','pipe']});
+      const activity=revision=>({implementation_bindings:[{kind:'skill',repo:'perfectuser21/zenithjoy-workspace',revision,path}]});
+      for(const row of revisions){
+        const result=await validateFixedImplementationBindings(activity(row.business),{repo:'perfectuser21/zenithjoy-workspace',commit:row.business},{readFile});
+        expect(result[0]).toMatchObject({status:'verified',digest:`sha256:${createHash('sha256').update(row.content).digest('hex')}`,resolved_source:{repo:'perfectuser21/zenithjoy-skills',revision:row.central, path:source}});
+        expect(result[0].path).toBe(path);expect(result[0].revision).toBe(row.business);
+      }
+      const repeated=activity(revisions[1].business);repeated.implementation_bindings.push({...repeated.implementation_bindings[0]});
+      const duplicates=await validateFixedImplementationBindings(repeated,{repo:'perfectuser21/zenithjoy-workspace',commit:revisions[1].business},{readFile});
+      expect(duplicates).toHaveLength(2);
+      expect(duplicates[0].resolved_source).toEqual(duplicates[1].resolved_source);
+      const goodLock=JSON.parse(execFileSync('git',['show',`${revisions[1].business}:.skills-source.json`],{cwd:business,encoding:'utf8'}));
+      for(const bad of [{...goodLock,revision:'main'},{...goodLock,repository:'other/repo'},{...goodLock,profile:'missing'}]){
+        put(business,'.skills-source.json',JSON.stringify(bad));
+        const revision=commit(business);
+        await expect(validateFixedImplementationBindings(activity(revision),{repo:'perfectuser21/zenithjoy-workspace',commit:revision},{readFile})).rejects.toThrow();
+      }
+      git(business,'rm','-q','.skills-source.json');
+      const noLock=commit(business);
+      await expect(validateFixedImplementationBindings(activity(noLock),{repo:'perfectuser21/zenithjoy-workspace',commit:noLock},{readFile})).rejects.toMatchObject({code:'definition_source_invalid'});
+      const codePath='src/plain.js';put(business,codePath,'fixed code\n');
+      const codeRevision=commit(business);put(business,codePath,'poison worktree\n');
+      const code=await validateFixedImplementationBindings({implementation_bindings:[{kind:'code',repo:'perfectuser21/zenithjoy-workspace',revision:codeRevision,path:codePath}]},{repo:'perfectuser21/zenithjoy-workspace',commit:codeRevision},{readFile});
+      expect(code[0].digest).toBe(`sha256:${createHash('sha256').update('fixed code\n').digest('hex')}`);
+      expect(code[0]).not.toHaveProperty('resolved_source');
+      for(const invalidPath of ['', '../SKILL.md', 'a'.repeat(1001)+'/SKILL.md']){
+        const bad=activity(codeRevision);bad.implementation_bindings[0].path=invalidPath;
+        const readInvalid=vi.fn();
+        await expect(validateFixedImplementationBindings(bad,{repo:'perfectuser21/zenithjoy-workspace',commit:codeRevision},{readFile:readInvalid})).rejects.toThrow();
+        expect(readInvalid).not.toHaveBeenCalled();
+      }
+    }finally{rmSync(root,{recursive:true,force:true});}
+  });
 });

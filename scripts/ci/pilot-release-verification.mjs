@@ -10,6 +10,7 @@ import {buildPilotReleasePlan,assertPilotReleaseReport} from '../../packages/bra
 import {isAuthoringReleaseSnapshot} from '../../packages/brain/src/workflow-authoring/ci-adapter.js';
 import {prepareAuthoringReleaseProof} from '../../packages/brain/src/workflow-authoring/release-proof.js';
 import {runRegisteredAssertions} from './implementation-gate.mjs';
+import {readFixedImplementationBinding} from '../../packages/brain/src/workflow-authoring/fixed-git-source.js';
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const sha=v=>createHash('sha256').update(v).digest('hex');
 export async function runPilotReleaseVerification({repoRoot,snapshot,outputDir,event,ref,authoringSourceOptions}){
@@ -28,8 +29,12 @@ export async function runPilotReleaseVerification({repoRoot,snapshot,outputDir,e
   if(!authoring.authoringProof)for(const a of s.definitions.activities)for(const b of a.payload.implementation_bindings||[]){
    if(b.kind==='raw'&&b.status==='unresolved')continue;
    if(!['code','skill'].includes(b.kind)||b.status!=='verified'||b.repo!==s.repo||b.revision!==s.revision||typeof b.path!=='string'||b.path.startsWith('/')||b.path.split('/').some(p=>!p||p==='..'||p==='.')||b.path.includes('\\'))fail('PILOT_RELEASE_COMPONENT_UNKNOWN');
-   const bytes=execFileSync('git',['show',`${s.revision}:${b.path}`],{cwd:repoRoot,maxBuffer:16*1024*1024});
-   if(b.digest!==`sha256:${sha(bytes)}`||!bytes.equals(readFileSync(resolve(repoRoot,b.path))))fail('PILOT_RELEASE_COMPONENT_CHANGED');
+   const actual=await readFixedImplementationBinding(b,{...authoringSourceOptions,readBusinessFile:location=>execFileSync('git',['show',`${location.revision}:${location.path}`],{cwd:repoRoot,maxBuffer:16*1024*1024})});
+   if(b.digest!==`sha256:${sha(actual.bytes)}`)fail('PILOT_RELEASE_COMPONENT_CHANGED');
+   if(actual.resolved_source){
+    if(!['repo','path','revision'].every(key=>b.resolved_source?.[key]===actual.resolved_source[key])
+      ||Object.keys(b.resolved_source).length!==3)fail('PILOT_RELEASE_COMPONENT_CHANGED');
+   }else if(!actual.bytes.equals(readFileSync(resolve(repoRoot,b.path))))fail('PILOT_RELEASE_COMPONENT_CHANGED');
   }
   const assertions=await runRegisteredAssertions({repoRoot,source:report.source,required_assertions:report.required_assertions});
   const receipt={schema_version:1,purpose:'release_verification',actor:'pilot_release_verification',scope:'declared_pilot_regressions',source:report.source,snapshot_sha256:s.snapshot_sha256,assertion_plan_sha256:report.assertion_plan_sha256,report_sha256:sha(JSON.stringify(report)),assertions,verdict:assertions.length===report.required_assertions.length&&assertions.every(a=>a.exit_code===0&&!a.error&&!a.signal)?'PASS':'FAIL',business_runtime_status:'not_evaluated',recorded_at:new Date().toISOString()};

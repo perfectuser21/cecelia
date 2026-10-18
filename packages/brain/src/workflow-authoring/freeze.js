@@ -1,6 +1,5 @@
 import { definitionDigest } from './contracts.js';
-import { readFixedGitFile, validateGitSource } from './fixed-git-source.js';
-import { validateImplementationBindings } from '../lib/implementation-bindings.js';
+import { readFixedGitFile, validateGitSource, validateFixedImplementationBindings } from './fixed-git-source.js';
 import { snapshotDefinitions } from '../lib/definition-versions.js';
 import { assertStepsHaveReadback } from '../lib/contract-steps.js';
 import { prepareSharedFreeze } from './shared-freeze.js';
@@ -16,7 +15,7 @@ export async function prepareDefinitionFreeze(definition, options={}) {
   const source={repo:definition.source?.repo,path:definition.source?.ref,revision:definition.source?.revision};
   validateGitSource(source);
   const readFile=options.readFile||((s)=>readFixedGitFile(s,options)),cache=new Map(),deadline=Math.min(options.deadline??Infinity,Date.now()+60000);
-  let totalBytes=0;
+  let totalBytes=0,bindingFiles=0;
   const read=async s=>{
     if(options.signal?.aborted||Date.now()>=deadline)fail('readiness_deadline_exceeded');
     validateGitSource(s);const key=JSON.stringify([s.repo,s.path,s.revision]);
@@ -41,7 +40,10 @@ export async function prepareDefinitionFreeze(definition, options={}) {
       const pin=await prepareSharedFreeze(activity,options.sharedVersions,read);
       shared.set(activity.key,pin.version);bindings.set(activity.key,pin.bindings);continue;
     }
-    const verified=await validateImplementationBindings(activity,read,fixed);
+    const verified=await validateFixedImplementationBindings(activity,fixed,{...options,deadline,readFile:options.readFile,onReadBytes:bytes=>{
+      bindingFiles++;totalBytes+=bytes;
+      if(bindingFiles+cache.size>200||totalBytes>8*1024*1024||Date.now()>deadline)fail('来源核验超过文件数量、总字节或时限');
+    }});
     if(!verified.length||verified.some(b=>b.status!=='verified'))fail(`活动实现无法完整核验：${activity.key}`);
     bindings.set(activity.key,verified);
   }

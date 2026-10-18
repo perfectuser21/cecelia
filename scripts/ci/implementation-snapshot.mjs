@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { loadActivityContracts } from '../../packages/brain/src/lib/activity-contract-loader.js';
 import { storeActivityContracts,REGISTRATIONS_SQL } from '../../packages/brain/src/lib/activity-contract-store.js';
 import { validateImplementationBindings } from '../../packages/brain/src/lib/implementation-bindings.js';
+import { validateFixedImplementationBindings } from '../../packages/brain/src/workflow-authoring/fixed-git-source.js';
 import { exportImplementationSnapshot } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { stepSha256 } from '../../packages/brain/scripts/sync-steps-from-workspace.mjs';
 import { lintImplementationRegistry } from './registry-lint.mjs';
@@ -280,10 +281,10 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
     throw ciFailure('PR_ADAPTER_MISSING','该repo没有固定契约adapter；需要显式登记来源');
   const digestPath='product-map/generated/contracts.json',digest=JSON.parse(read(digestPath));
   const plans=await loadActivityContracts(registrations.filter(w=>w.status!=='retired'),digest,read,registrations);
-  for(const plan of plans)for(const item of plan.activities)item.bindings=await validateImplementationBindings(item.activity,async b=>{
+  for(const plan of plans)for(const item of plan.activities)item.bindings=await validateFixedImplementationBindings(item.activity,{repo:registry.repo,commit:revision},{readBusinessFile:b=>{
     if(b.repo!==registry.repo)throw ciFailure('CROSS_REPO_SNAPSHOT_MISSING',`缺固定外仓源码: ${b.repo}`);
-    return execFileSync('git',['show',`${b.revision}:${b.path}`],{cwd:repoRoot,encoding:'utf8',maxBuffer:32*1024*1024});
-  },{repo:registry.repo,commit:revision});
+    return execFileSync('git',['show',`${b.revision}:${b.path}`],{cwd:repoRoot,maxBuffer:32*1024*1024});
+  }});
   const lint=lintImplementationRegistry(registry,plans,digest);
   if(lint.gaps.length)throw ciFailure('REGISTRY_UNKNOWN',JSON.stringify(lint.gaps));
   await storeActivityContracts(db,plans,revision,registry.repo,registrations,{synchronizeSteps:true});

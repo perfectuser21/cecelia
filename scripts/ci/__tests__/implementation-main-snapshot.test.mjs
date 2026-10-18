@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {spawn,execFileSync} from 'node:child_process';
+import {spawnSync} from 'node:child_process';
 import {mkdtempSync,writeFileSync,readFileSync,existsSync,mkdirSync,symlinkSync,rmSync,unlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -15,6 +16,12 @@ import {stepSha256} from '../../../packages/brain/scripts/sync-steps-from-worksp
 import {EXISTING_OPS_IDENTITIES as identities} from '../../../packages/brain/src/lib/existing-ops-source.js';
 import {validateImplementationSnapshot,extractImplementationAdmissionSnapshots} from '../../../packages/brain/src/lib/implementation-ci-snapshot.js';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
+test('双业务 SHA 的正式 Pilot CLI 各按固定中央 SHA 验证',()=>{
+ const script=join(root,'packages/brain/scripts/smoke/central-skill-fixed-source-smoke.sh');
+ const result=spawnSync('bash',[script,'--scenario','two-revisions'],{cwd:root,encoding:'utf8',env:{...process.env,SMOKE_ALLOW_WRITE:'1'}});
+ assert.equal(result.status,0,result.stderr);
+ assert.match(result.stdout,/two-revisions: PASS \(2 CLI runs\)/);
+});
 const repo='perfectuser21/cecelia',head='a'.repeat(40),base='b'.repeat(40);
 const seal=(body,key='snapshot_sha256')=>({...body,[key]:stepSha256(body)});
 function bundle(revision,{parentMissing=false,childMissing=false,parentGaps=null,parentManifest=null}={}){

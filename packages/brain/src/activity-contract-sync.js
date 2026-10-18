@@ -14,6 +14,7 @@ import { loadActivityContracts } from './lib/activity-contract-loader.js';
 import { storeActivityContracts, REGISTRATIONS_SQL } from './lib/activity-contract-store.js';
 import { raise } from './alerting.js';
 import { resolveGitHubToken } from './harness-credentials.js';
+import { readFixedImplementationBinding } from './workflow-authoring/fixed-git-source.js';
 
 export const CONTRACT_REPO = 'perfectuser21/zenithjoy-workspace';
 export const CONTRACTS_DIGEST_PATH = 'product-map/generated/contracts.json';
@@ -35,6 +36,13 @@ async function ghText(path, accept, { fetchFn, token }, repo = CONTRACT_REPO) {
 const fetchHead = async (d) => (await ghText('commits/main', 'application/vnd.github.sha', d)).trim();
 const fetchFile = (path, sha, d) => ghText(`contents/${path}?ref=${sha}`, 'application/vnd.github.raw', d);
 
+export async function readActivityBinding(binding,d) {
+  if(binding.kind!=='skill')return ghText(`contents/${binding.path}?ref=${binding.revision}`,'application/vnd.github.raw',d,binding.repo);
+  const result=await readFixedImplementationBinding(binding,{fetchFn:d.fetchFn,resolveToken:async()=>d.token});
+  if(result.resolved_source)binding.resolved_source=result.resolved_source;
+  return result.content;
+}
+
 // ─── 同步：GitHub → journey_steps ───────────────────────────────────────────
 
 /**
@@ -54,7 +62,7 @@ export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, 
   for(const plan of plans) for(const item of plan.activities) {
     const key=`${item.activity.from}.${item.activity.key}`;
     if(!checked.has(key)) checked.set(key,await validateImplementationBindings(item.activity,readBinding||
-      (binding=>ghText(`contents/${binding.path}?ref=${binding.revision}`,'application/vnd.github.raw',d,binding.repo)),{repo:CONTRACT_REPO,commit:head}));
+      (binding=>readActivityBinding(binding,d)),{repo:CONTRACT_REPO,commit:head}));
     item.bindings=checked.get(key);
   }
   return storeActivityContracts(pool,plans,head,CONTRACT_REPO,registrations,{beforeCommit,synchronizeSteps});
