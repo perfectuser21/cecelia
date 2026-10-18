@@ -30,7 +30,7 @@ ENV GIT_SHA=${GIT_SHA}
 # 实测(PR#3801) Step4 直接报 "createdb: command not found" 失败退出。
 # sqlite：feishu-task-ledger 只读查 OpenClaw 执行流水（判断秋米有没有真派 agent 去干活）。
 # 容器是 Node 20，node:sqlite 要 22.5+ 才内置；CLI 只占 ~1.5MB，且 -readonly 能防写穿第三方状态库。
-RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client sqlite flock \
+RUN apk add --no-cache curl bash python3 procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client sqlite flock \
  && adduser -D -u 1001 cecelia
 
 # 接入控制面只安装公开CLI；service token运行时从只读凭据挂载读取。

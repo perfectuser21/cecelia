@@ -36,6 +36,9 @@ git -C "$ROOT_DIR" fetch origin "$DEPLOY_BRANCH" 2>&1 | tail -3
 
 echo "  导出 origin/${DEPLOY_BRANCH} (FETCH_HEAD) 到临时 build context: $TEMP_BUILD"
 git -C "$ROOT_DIR" archive --format=tar FETCH_HEAD | tar -x -C "$TEMP_BUILD"
+if [[ -f "$TEMP_BUILD/.skills-source.json" ]]; then
+    bash "$TEMP_BUILD/scripts/ensure-skills-source.sh" "$TEMP_BUILD"
+fi
 
 # FR-01: 传 GIT_SHA build-arg（Gate3 SHA 对账）
 # 使用 FETCH_HEAD（origin/main 最新）作为构建期 SHA

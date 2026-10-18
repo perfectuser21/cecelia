@@ -169,6 +169,9 @@ PREVIEW_GIT_SHA=$(git -C "$WORK_DIR" rev-parse HEAD 2>>"$LOG_FILE") || {
   exit 1
 }
 log "  ✓ worktree 创建完成: ${WORK_DIR}"
+if [[ -f "$WORK_DIR/.skills-source.json" ]]; then
+  bash "$WORK_DIR/scripts/ensure-skills-source.sh" "$WORK_DIR"
+fi
 
 # ── 2. 构建前端 ───────────────────────────────────────────────────────────────
 # 在干净 worktree（无 packages/brain/node_modules symlink）中构建前端。
