@@ -125,3 +125,23 @@ describe('共享中央 Skill 与来源读取总预算回归',()=>{
     expect(readFile).toHaveBeenCalledTimes(2);
   });
 });
+
+it('自身绑定耗尽两百文件预算后在读取共享合同前拒绝',async()=>{
+  const {validateFixedImplementationBindings}=await import('./fixed-git-source.js');
+  const {definitionDigest}=await import('./contracts.js');
+  const d=definition(),content='export const fixed=true;';
+  const binding=index=>({kind:'code',repo,revision,path:`src/code-${index}.js`});
+  const contract={key:'shared',implementation:binding(0)};
+  const bindings=await validateFixedImplementationBindings(contract,{repo,commit:revision},{readFile:async()=>content});
+  const version={id:'shared-version',activity_id:'shared-activity',source_repo:repo,source_path:'shared.json',source_commit:revision,
+    contract_sha256:definitionDigest(contract),payload:{activity_id:'shared-activity',contract,steps:[],implementation_bindings:bindings}};
+  d.activities=[
+    {key:'own',implementation_bindings:Array.from({length:199},(_,index)=>binding(index))},
+    {key:'reuse',reuse_activity_id:version.activity_id,reuse_activity_definition_version_id:version.id,reuse_contract_sha256:version.contract_sha256},
+  ];
+  const readFile=vi.fn(async source=>source.path===d.source.ref?document(d):source.path==='shared.json'?JSON.stringify({activities:[contract]}):content);
+  const result=await prepareDefinitionFreeze(d,{readFile,sharedVersions:[version]}).then(()=>({accepted:true}),()=>({accepted:false}));
+  expect(readFile.mock.calls.some(([source])=>source.path==='shared.json')).toBe(false);
+  expect(readFile).toHaveBeenCalledTimes(200);
+  expect(result.accepted).toBe(false);
+});
