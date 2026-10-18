@@ -14,7 +14,8 @@ const fail=(message,code='definition_freeze_proof_invalid')=>{throw Object.assig
 export async function prepareDefinitionFreeze(definition, options={}) {
   const source={repo:definition.source?.repo,path:definition.source?.ref,revision:definition.source?.revision};
   validateGitSource(source);
-  const readFile=options.readFile||((s)=>readFixedGitFile(s,options)),cache=new Map(),deadline=Math.min(options.deadline??Infinity,Date.now()+60000);
+  const deadline=Math.min(options.deadline??Infinity,Date.now()+60000);
+  const readFile=options.readFile||((s)=>readFixedGitFile(s,{...options,deadline})),cache=new Map();
   let totalBytes=0,bindingFiles=0;
   const read=async s=>{
     if(options.signal?.aborted||Date.now()>=deadline)fail('readiness_deadline_exceeded');
@@ -35,18 +36,20 @@ export async function prepareDefinitionFreeze(definition, options={}) {
   if(definitionDigest(document)!==definitionDigest(expected))fail('冻结来源内容与已验收完整定义不一致','definition_source_invalid');
   assertStepsHaveReadback(definition.activities);
   const bindings=new Map(),shared=new Map(),bindingCache=new Map(),fixed={repo:source.repo,path:source.path,commit:source.revision};
+  const verifyBindings=(activity,activitySource)=>validateFixedImplementationBindings(activity,activitySource,{...options,deadline,cache:bindingCache,readFile:options.readFile,readBusinessFile:options.readBusinessFile||((s,readOptions)=>readFixedGitFile(s,{...options,...readOptions,deadline})),onReadBytes:bytes=>{
+    bindingFiles++;totalBytes+=bytes;
+    if(bindingFiles+cache.size>200||totalBytes>8*1024*1024||Date.now()>=deadline)fail('来源核验超过文件数量、总字节或时限');
+  }});
   for(const activity of definition.activities){
     if(activity.reuse_activity_id){
-      const pin=await prepareSharedFreeze(activity,options.sharedVersions,read);
+      const pin=await prepareSharedFreeze(activity,options.sharedVersions,read,verifyBindings);
       shared.set(activity.key,pin.version);bindings.set(activity.key,pin.bindings);continue;
     }
-    const verified=await validateFixedImplementationBindings(activity,fixed,{...options,deadline,cache:bindingCache,readFile:options.readFile,readBusinessFile:options.readBusinessFile||((s,readOptions)=>readFixedGitFile(s,{...options,...readOptions})),onReadBytes:bytes=>{
-      bindingFiles++;totalBytes+=bytes;
-      if(bindingFiles+cache.size>200||totalBytes>8*1024*1024||Date.now()>deadline)fail('来源核验超过文件数量、总字节或时限');
-    }});
+    const verified=await verifyBindings(activity,fixed);
     if(!verified.length||verified.some(b=>b.status!=='verified'))fail(`活动实现无法完整核验：${activity.key}`);
     bindings.set(activity.key,verified);
   }
+  if(options.signal?.aborted||Date.now()>=deadline)fail('固定来源读取已取消或超时','readiness_deadline_exceeded');
   const proof={source:fixed,bindings,shared,definition_sha256:definitionDigest(definition)};
   prepared.set(proof,definitionDigest({source:fixed,bindings:[...bindings],shared:[...shared],definition_sha256:proof.definition_sha256}));
   return proof;
