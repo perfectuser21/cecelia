@@ -72,13 +72,16 @@ export async function settleInvocation(f,taskId,actualOutput){
  return runId;
 }
 
-it('历史无锁fixture只在显式allowMissing时证明锁缺失，未知正文路径不可冒充Skill',async()=>{
- const f=await authoringExecutionDatabase();
- try{
-  const source={repo:f.definition.source.repo,revision:f.definition.source.revision,path:'.skills-source.json'};
-  expect(await f.reader(source,{allowMissing:true})).toBeNull();
-  await expect(f.reader(source)).rejects.toThrow('fixture_file_missing');
-  await expect(f.reader({...source,path:'unknown/SKILL.md'})).rejects.toThrow('fixture_file_missing');
-  expect(await f.reader({...source,path:'skills/pure/SKILL.md'})).toBe(f.content);
- }finally{await f.close();}
+it('历史无锁fixture只在显式allowMissing时证明锁缺失，纯reader不连接数据库',async()=>{
+ expect(typeof authoringFixtureReader).toBe('function');
+ const definition={source:{repo:'perfectuser21/cecelia',revision:'a'.repeat(40),ref:'contracts/pure.json'}};
+ const content='---\nname: authoring-pure\nversion: 1.0.0\n---\n固定正文';
+ const reader=authoringFixtureReader(definition,content);
+ const source={repo:definition.source.repo,revision:definition.source.revision,path:'.skills-source.json'};
+ expect(await reader(source,{allowMissing:true})).toBeNull();
+ await expect(reader(source)).rejects.toThrow('fixture_file_missing');
+ await expect(reader({...source,path:'unknown/SKILL.md'})).rejects.toThrow('fixture_file_missing');
+ expect(await reader({...source,path:'skills/pure/SKILL.md'})).toBe(content);
+ await expect(reader({...source,repo:'unknown/repo'},{allowMissing:true})).rejects.toThrow('fixture_source_unknown');
+ await expect(reader({...source,revision:'b'.repeat(40)},{allowMissing:true})).rejects.toThrow('fixture_source_unknown');
 });
