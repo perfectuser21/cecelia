@@ -185,7 +185,7 @@ export async function projectImplementationSnapshot(db,s,repoRoot){
   if(cross){
     const nativeRoot=fileURLToPath(new URL('../../',import.meta.url)),dir=mkdtempSync(join(tmpdir(),'implementation-native-graph-'));
     try{
-      fixedLocalGit(nativeRoot,['clone','--shared','--no-checkout','--quiet',nativeRoot,dir]);
+      fixedLocalGit(nativeRoot,['clone','--shared','--no-checkout','--quiet',nativeRoot,dir],{localClone:true});
       fixedLocalGit(dir,['checkout','--quiet','--detach',s.registry_source.revision]);
       const nativeEdges=definitionEdges({...s,repo:s.registry_source.repo,revision:s.registry_source.revision,assertions:[]});
       await scanFixedImplementationGraph(db,registryRepo,dir,s.registry_source.revision,nativeEdges,'cecelia',s.registry_source.repo);
