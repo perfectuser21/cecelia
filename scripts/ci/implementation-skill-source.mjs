@@ -4,7 +4,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,rmSync,realpathSync,readFileSync,lst
 import {fileURLToPath} from 'node:url';
 import {readFixedLocalGitBlob,fixedLocalGit} from './fixed-local-git.mjs';
 import {validateImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
-import {join,resolve,dirname} from 'node:path';
+import {join,resolve,dirname,isAbsolute} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 const fail=code=>{throw Object.assign(Error(code),{code});};
@@ -145,15 +145,18 @@ export function readImplementationSource(root,revision,path,{source}={}){
  if(!profileFor[repo])fail('SKILL_SOURCE_REPO_INVALID');
  let lockBytes;try{lockBytes=git(root,'show',`${revision}:.skills-source.json`);}catch{fail('SKILL_SOURCE_LOCK_MISSING');}
  const lock=fixedLock(lockBytes,repo);
- // Production always uses a new private cache outside the candidate checkout.
- const central=source?resolve(source):sourceCache();
- ensureSource(central,lock.revision);
- const catalog=JSON.parse(git(central,'show',`${lock.revision}:distribution/catalog.json`));
+ // An explicit CI cache is an offline capability, never permission to fetch again.
+ const ciCache=process.env.IMPLEMENTATION_SKILLS_SOURCE_DIR,offline=ciCache!==undefined;
+ if(offline&&(!isAbsolute(ciCache)||source&&resolve(source)!==resolve(ciCache)))fail('SKILL_SOURCE_CI_CACHE_INVALID');
+ const central=offline?ciCache:source?resolve(source):sourceCache(),deadline=Date.now()+60000;
+ if(!offline)ensureSource(central,lock.revision);
+ const read=path=>offline?readFixedLocalGitBlob(central,{revision:lock.revision,path},{deadline}):git(central,'show',`${lock.revision}:${path}`);
+ const catalog=JSON.parse(read('distribution/catalog.json'));
  const matches=catalog.profiles?.[lock.profile]?.files?.filter(e=>e.path===path);
  if(!matches||matches.length!==1)fail('SKILL_SOURCE_ENTRY_MISSING');
  const selected=matches[0];
  if(typeof selected.source!=='string'||selected.source.startsWith('/')||selected.source.split('/').some(v=>!v||v==='.'||v==='..')||selected.source.includes('\\')||!/^[0-9a-f]{64}$/.test(selected.sha256))fail('SKILL_SOURCE_ENTRY_INVALID');
- const payload=git(central,'show',`${lock.revision}:${selected.source}`);
+ const payload=read(selected.source);
  if(checksum(payload)!==selected.sha256)fail('SKILL_SOURCE_CHECKSUM_MISMATCH');
  return payload;
 }
