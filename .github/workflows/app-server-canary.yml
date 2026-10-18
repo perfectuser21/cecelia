@@ -2,6 +2,7 @@ name: App-server bounded container canary
 on:
   pull_request:
     paths:
+      - ".skills-source.json"
       - 'packages/brain/scripts/fleet-worker/app-server-*'
       - 'packages/brain/src/app-server/**'
       - 'packages/brain/migrations/506_app_server_streams.sql'
@@ -18,6 +19,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Restore pinned skill sources
+        if: hashFiles('.skills-source.json') != ''
+        uses: ./.github/actions/skills-source
+        with:
+          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
       # CI 不直连 Docker Hub：docker build/compose 拉镜像走 mirror.gcr.io（任务 7294cf3a）
       - uses: ./.github/actions/dockerhub-mirror
       - uses: actions/setup-node@v4

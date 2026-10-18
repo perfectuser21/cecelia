@@ -3,9 +3,11 @@ name: Android Agent CI
 on:
   push:
     paths:
+      - ".skills-source.json"
       - 'apps/android-agent/**'
   pull_request:
     paths:
+      - ".skills-source.json"
       - 'apps/android-agent/**'
 
 concurrency:
@@ -21,6 +23,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Restore pinned skill sources
+        if: hashFiles('.skills-source.json') != ''
+        uses: ./.github/actions/skills-source
+        with:
+          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
