@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { validateImplementationBindings } from '../lib/implementation-bindings.js';
 
-const REPOS = new Set(['perfectuser21/cecelia', 'perfectuser21/zenithjoy-workspace']);
+const SKILL_PROFILES = Object.freeze({'perfectuser21/cecelia':'cecelia','perfectuser21/zenithjoy-workspace':'zenithjoy'});
+const REPOS = new Set(Object.keys(SKILL_PROFILES));
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_FILE = 1024 * 1024;
 const CENTRAL_REPO = 'perfectuser21/zenithjoy-skills';
@@ -95,7 +96,7 @@ export async function readFixedImplementationBinding(binding, options={}) {
   };
     const declared={repo:binding.repo,path:binding.path,revision:binding.revision};
     validateGitSource(declared);
-    if(binding.kind!=='skill'||binding.repo!== 'perfectuser21/zenithjoy-workspace'){
+    if(binding.kind!=='skill'){
       return result(await read(declared));
     }
     const lockSource={repo:binding.repo,path:'.skills-source.json',revision:binding.revision};
@@ -105,7 +106,7 @@ export async function readFixedImplementationBinding(binding, options={}) {
     try{lock=JSON.parse(lockBytes.toString('utf8'));}catch{fail('Skill来源锁非法');}
     if(lock?.version!==1||lock.repository!==CENTRAL_REPO||!SHA.test(lock.revision||'')
       ||!DIGEST.test(lock.loader_sha256||'')||typeof lock.profile!=='string'
-      ||!lock.profile||lock.profile.length>100)fail('Skill来源锁非法');
+      ||lock.profile!==SKILL_PROFILES[binding.repo])fail('Skill来源锁profile与声明仓库不匹配');
     const catalogSource={repo:CENTRAL_REPO,path:'distribution/catalog.json',revision:lock.revision};
     const catalogBytes=await read(catalogSource,true);
     try{catalog=JSON.parse(catalogBytes.toString('utf8'));}catch{fail('中央Skill目录非法');}
