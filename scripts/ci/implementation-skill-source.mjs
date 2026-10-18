@@ -4,6 +4,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,rmSync,realpathSync,readFileSync,lst
 import {fileURLToPath} from 'node:url';
 import {readFixedLocalGitBlob,fixedLocalGit} from './fixed-local-git.mjs';
 import {validateImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
+import {PATROL_SCOPE,PATROL_REPO,validatePatrolSnapshot,canonical as patrolCanonical} from '../../packages/brain/src/lib/device-patrol-admission.js';
 import {join,resolve,dirname,isAbsolute} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
@@ -58,6 +59,13 @@ export function prepareImplementationSkillCache(root,repo,revisions,{snapshots=[
  for(const input of snapshots){
   const size=Buffer.byteLength(JSON.stringify(input));metadata+=size;
   if(size>4*1024*1024||metadata>16*1024*1024)fail('SKILL_CACHE_SNAPSHOT_BYTE_LIMIT');
+  if(input?.scope===PATROL_SCOPE&&repo===PATROL_REPO){
+   const s=validatePatrolSnapshot(input),{provenance,source}=s.registration;
+   const {source_sha256,...sourceBody}=source;
+   if(s.repo!==repo||![...revisions,provenance.base_revision].includes(s.revision)||s.registration_sha256!==checksum(JSON.stringify(patrolCanonical(s.registration)))||source_sha256!==checksum(JSON.stringify(patrolCanonical(sourceBody))))fail('SKILL_CACHE_SNAPSHOT_SOURCE_INVALID');
+   for(const revision of [s.revision,provenance.base_revision,provenance.introduced_revision])business.add(revision);
+   continue;
+  }
   const s=validateImplementationSnapshot(input);
   if(s.repo!==repo||!revisions.includes(s.revision)||s.status!=='verified'||s.gaps?.length)fail('SKILL_CACHE_SNAPSHOT_SOURCE_INVALID');
   for(const row of [...s.definitions.workflows,...s.definitions.activities]){
@@ -131,7 +139,9 @@ export function materializeImplementationSkills(root,revision,repo,source,{deadl
   try{const stat=lstatSync(target);if(stat.isSymbolicLink()||!stat.isFile()||!readFileSync(target).equals(bytes))fail('SKILL_MATERIALIZE_EXISTING_CONFLICT');}
   catch(error){if(error.code!=='ENOENT')throw error;pending.push({target,bytes});}
  }
- for(const {target,bytes} of pending){mkdirSync(dirname(target),{recursive:true});writeFileSync(target,bytes,{flag:'wx',mode:0o644});}
+ const check=()=>{if(Date.now()>=deadline)fail('SKILL_MATERIALIZE_TIMEOUT');};
+ for(const {target,bytes} of pending){check();mkdirSync(dirname(target),{recursive:true});check();writeFileSync(target,bytes,{flag:'wx',mode:0o644});check();}
+ check();
 }
 export function readImplementationSource(root,revision,path,{source}={}){
  if(!/^[0-9a-f]{40}$/.test(revision)||typeof path!=='string'||!path||path.startsWith('/')||path.split('/').some(v=>!v||v==='.'||v==='..')||path.includes('\\'))fail('SKILL_SOURCE_INPUT_INVALID');
