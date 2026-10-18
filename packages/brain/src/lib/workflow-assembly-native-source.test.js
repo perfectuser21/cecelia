@@ -14,15 +14,19 @@ it('固定Git字节对应本进程才可信；序列化副本不保留授权',as
   expect(()=>assertNativeSource(JSON.parse(JSON.stringify(source)))).toThrow('unprepared');
 });
 it('真实Docker平铺Brain布局冷加载，不依赖容器里不存在的monorepo路径或.git',()=>{
+  const manifest=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8'));
+  expect(manifest.dependencies['js-yaml']).toBeTruthy();
   const directory=mkdtempSync(join(tmpdir(),'native-flat-runtime-'));
   try{
     cpSync(new URL('../',import.meta.url),join(directory,'src'),{recursive:true});
     cpSync(new URL('../../config/',import.meta.url),join(directory,'config'),{recursive:true});
-    const code=`import {readFileSync} from 'node:fs';import {pathToFileURL} from 'node:url';
+    const code=`import {readFileSync,realpathSync} from 'node:fs';import {pathToFileURL} from 'node:url';import {createRequire} from 'node:module';
       const root=${JSON.stringify(directory)},m=await import(pathToFileURL(root+'/src/lib/workflow-assembly-native-source.js'));
       const source=await m.prepareNativeSource({revision:'a'.repeat(40),readFile:async(_rev,path)=>readFileSync(root+'/'+path.replace('packages/brain/',''),'utf8')});
-      console.log(JSON.stringify({bindings:source.bindings.length,revision:m.deployedNativeRevision()}));`;
+      const require=createRequire(pathToFileURL(root+'/package.json')),yaml=require('js-yaml');
+      const runtimeDependencies=['js-yaml','argparse'].every(name=>realpathSync(require.resolve(name+'/package.json')).startsWith(realpathSync(root)+'/node_modules/'));
+      console.log(JSON.stringify({bindings:source.bindings.length,revision:m.deployedNativeRevision(),yaml:yaml.load('fixed: true'),runtimeDependencies}));`;
     const out=execFileSync(process.execPath,['--input-type=module','-e',code],{cwd:directory,encoding:'utf8',env:{...process.env,GIT_SHA:'a'.repeat(40)},stdio:['ignore','pipe','pipe']});
-    expect(JSON.parse(out)).toEqual({bindings:11,revision:'a'.repeat(40)});
+    expect(JSON.parse(out)).toEqual({bindings:11,revision:'a'.repeat(40),yaml:{fixed:true},runtimeDependencies:true});
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
