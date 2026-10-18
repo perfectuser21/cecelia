@@ -5,6 +5,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
+import {pilotPlanHash} from '../../../packages/brain/src/lib/pilot-release-verification.js';
 function fixture(t){
  const root=mkdtempSync(join(tmpdir(),'fixed-ci-git-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const git=(...args)=>execFileSync('git',['-C',root,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -46,7 +47,7 @@ test('formal Pilot CLI accepts a historical tracked Skill without a central lock
  mkdirSync(join(f.root,'.claude/skills/demo'),{recursive:true});writeFileSync(join(f.root,skill),content);
  mkdirSync(join(f.root,'scripts/smoke'),{recursive:true});writeFileSync(join(f.root,'scripts/smoke/pilot.sh'),'#!/bin/bash\nset -e\ntest -f .claude/skills/demo/SKILL.md\n');
  const revision=f.commit('original fixed bytes');f.git('update-ref','refs/remotes/origin/main',revision);
- const hash=value=>createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');
+ const hash=value=>typeof value==='string'?createHash('sha256').update(value).digest('hex'):pilotPlanHash(value);
  const row=(n,payload,identity)=>{const source={repo,path:'contract.json',commit:revision};return {id:id(n),...identity,source_repo:repo,source_path:source.path,source_commit:revision,payload,payload_sha256:hash({source,payload})};};
  const activity=row(2,{activity_id:id(3),steps:[{step_id:id(4),locator:{activity_id:id(3),step_key:'verify'}}],implementation_bindings:[{kind:'skill',scope:'activity',status:'verified',repo,path:skill,revision,digest:'sha256:'+hash(content)}]},{activity_id:id(3)});
  const workflow=row(1,{workflow_id:id(5),capability_id:id(6),activities:[{reference_id:id(7),activity_id:id(3),activity_version_id:id(2)}]},{workflow_id:id(5)});
