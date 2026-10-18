@@ -280,7 +280,7 @@ jobs:
           tooling_sha="$(git -C tooling rev-parse --verify HEAD)"
           test "$tooling_sha" = "$TOOLING_REVISION"
           # 仅精确已发布、reader及锁字节一致的旧工具；仍运行原完整双scope gate。
-          if [[ "$NATIVE_PR" == true && "$GITHUB_REPOSITORY" == perfectuser21/cecelia && "$GITHUB_EVENT_NAME" == pull_request && "$SOURCE_REPO" == perfectuser21/cecelia && "$MODE" == pr && ( "$BASE" == 821dac5ae926cd5120d7b94fcd8012dd1f09bc23 || "$BASE" == b8985542133fb7dcf87a2adf9151de43d0694185 ) && "$TOOLING_REVISION" == "$BASE" && "$MAP_SCOPE" == cecelia-kr && "$ADMISSION_SCOPES" == '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' ]]; then
+          if [[ "$NATIVE_PR" == true && "$GITHUB_REPOSITORY" == perfectuser21/cecelia && "$GITHUB_EVENT_NAME" == pull_request && "$SOURCE_REPO" == perfectuser21/cecelia && "$MODE" == pr && ( "$BASE" == 821dac5ae926cd5120d7b94fcd8012dd1f09bc23 || "$BASE" == b8985542133fb7dcf87a2adf9151de43d0694185 || "$BASE" == a72ff8372d4eb2100e1b9b7572d88a22969bef2f ) && "$TOOLING_REVISION" == "$BASE" && "$MAP_SCOPE" == cecelia-kr && "$ADMISSION_SCOPES" == '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' ]]; then
             node --input-type=module <<'JS'
           import {readImplementationSource} from './tooling/scripts/ci/implementation-skill-source.mjs';
           import {readFixedLocalGitBlob} from './tooling/scripts/ci/fixed-local-git.mjs';
