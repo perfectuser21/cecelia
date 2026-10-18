@@ -129,7 +129,7 @@ test('CI缓存拒绝损坏锁、跨profile、非固定SHA及未知版本，不�
   assert.throws(()=>sourceApi.prepareImplementationSkillCache(f.business,'perfectuser21/zenithjoy-workspace',['0'.repeat(40)]));
  }finally{if(prior===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=prior;f.cleanup();}
 });
-for(const legacy of ['821dac5ae926cd5120d7b94fcd8012dd1f09bc23','b977d068919ff699318581214ddb07c314629e56'])test(`Impact自举只接受精确${legacy}本仓原生PR，其余缺prepare或身份不符绝不假绿`,()=>{
+for(const legacy of ['821dac5ae926cd5120d7b94fcd8012dd1f09bc23','b977d068919ff699318581214ddb07c314629e56','8665e5683c972f5a88649b5783e3d196b32e9a38'])test(`Impact自举只接受精确${legacy}本仓原生PR，其余缺prepare或身份不符绝不假绿`,()=>{
  const w=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
  const step=w.jobs.gate.steps.find(s=>s.name==='准备固定中央Skill对象缓存');assert.ok(step);
  const root=mkdtempSync(join(tmpdir(),'cache-workflow-step-')),bin=join(root,'bin');mkdirSync(bin);
@@ -282,7 +282,7 @@ test('唯一旧兼容升级为821真实可信reader冷启动，而非185空缓�
  assert.match(step.run,/readImplementationSource/);assert.match(step.run,/packages\/engine\/skills\/dev\/SKILL\.md/);
  assert.doesNotMatch(step.run,/18552f8eeafdb2d404294bd6601bc74d00a1d422/);
 });
-for(const legacy of ['b8985542133fb7dcf87a2adf9151de43d0694185','a72ff8372d4eb2100e1b9b7572d88a22969bef2f','b977d068919ff699318581214ddb07c314629e56'])test(`已发布同字节版本${legacy}实际执行可信reader冷fetch，锁漂移/既存cache拒绝且不运行candidate loader`,()=>{
+for(const legacy of ['b8985542133fb7dcf87a2adf9151de43d0694185','a72ff8372d4eb2100e1b9b7572d88a22969bef2f','b977d068919ff699318581214ddb07c314629e56','8665e5683c972f5a88649b5783e3d196b32e9a38'])test(`已发布同字节版本${legacy}实际执行可信reader冷fetch，锁漂移/既存cache拒绝且不运行candidate loader`,()=>{
  const f=fixture(),workspace=dirname(f.business),tooling=join(workspace,'tooling'),bin=join(workspace,'bin');
  try{
   symlinkSync(f.business,join(workspace,'source'));mkdirSync(tooling);git(tooling,'init','-q');git(tooling,'config','core.hooksPath','/dev/null');mkdirSync(bin);
