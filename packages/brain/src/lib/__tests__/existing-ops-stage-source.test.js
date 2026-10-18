@@ -175,25 +175,83 @@ describe('merge 后 evaluate 严格读链与 identity 文件消费',()=>{
  for(const [name,mutate] of cases)it(name+' 不可认领来源',async()=>{const r=await collect('source_merge',mutate);expect(r.gaps.length).toBeGreaterThan(0);for(const p of [...entries,...mergeReaderPaths])expect(r.bindings).not.toContain(p);});
 });
 
-describe('中央Skills runner配置是独立受审模式，不让合法新增仓库打断工厂来源证明',()=>{
- const modes=['repos.json','lib/repo-profile.mjs','runner/lib/repos.mjs'];
- it('现行完整Skills配置真实进入阶段消费证明',async()=>{
-  const {readFileSync}=await import('node:fs');
-  const files=Object.fromEntries(modes.map(name=>[P+name,readFileSync(new URL('../../../scripts/coding-workflow/'+name,import.meta.url),'utf8')]));
-  const r=await collect('recorded',s=>Object.assign(s,files));expect(r.gaps).toEqual([]);
+
+// Independent fixed Git source bytes; never derive the expected mode from production envelopes.
+const skillsModeFixture={"source_commit":"2a537e0f563fb8374f777218ac2fd2b6609a1462","files":{"repos.json":{"sha256":"2a8f4db4108a4985648688643dea9cf644a25ea488d75ff5c9f870ad06ee9238","content":"{\n  \"_doc\": \"coding workflow runner 仓库配置表（C4）：一行一个仓库。runner 判卷代码只从默认仓（cecelia）clone 读。enabled=false 的仓库即使列进 CODING_WF_REPOS 也不启用。required_checks 是登记口径（gh api .../branches/main/protection 只读核实），运行时仍以 GitHub 分支保护+规则集为准。production_re 是正则片段，按 | 拼接（活动层判碰生产用 本仓 ∪ 默认仓）。prechecks 是 lib/ci-precheck.mjs 的预检清单名；rules_prompt 是注入各提示词 {{REPO_RULES}} 的本仓规矩（C6）。\",\n  \"repos\": [\n    {\n      \"key\": \"cecelia\",\n      \"default\": true,\n      \"enabled\": true,\n      \"slug\": \"perfectuser21/cecelia\",\n      \"origin\": \"https://github.com/perfectuser21/cecelia.git\",\n      \"aliases\": [\"cecelia\"],\n      \"clone\": \"~/perfect21/cecelia-cw-runner\",\n      \"worktree_base\": \"~/worktrees/cecelia-cw\",\n      \"state_ns\": \"\",\n      \"required_checks\": [\"ci-passed\", \"Harness V5 Gate Passed\", \"Smoke Glob Runner Passed\"],\n      \"base_fresh_check\": \"lint-base-fresh\",\n      \"install\": [\"npm\", \"ci\", \"--legacy-peer-deps\", \"--ignore-scripts\"],\n      \"qa_smoke\": {\n        \"dir\": \"packages/brain/scripts/smoke\",\n        \"allowlist\": \"packages/quality/smoke-allowlist.txt\",\n        \"write_targets\": \"packages/quality/smoke-write-targets.txt\"\n      },\n      \"version_fragment\": { \"src_re\": \"^packages/brain/src/\", \"dir\": \"changes\" },\n      \"preview\": { \"type\": \"brain_preview\", \"base_repo\": \"cecelia\" },\n      \"production_re\": [\":5221\\\\b\", \"\\\\b(?:localhost|127\\\\.0\\\\.0\\\\.1)\\\\s+5221\\\\b\", \"100\\\\.79\\\\.41\\\\.61\", \"\\\\bus-vps\\\\b\"],\n      \"automerge\": true,\n      \"prechecks\": \"cecelia\",\n      \"rules_prompt\": \"prompts/repo-rules/cecelia.md\"\n    },\n    {\n      \"key\": \"zenithjoy-workspace\",\n      \"default\": false,\n      \"enabled\": true,\n      \"_note\": \"第一阶段：C7 已开闸（runner 认领、Brain 无头 zenithjoy 编码单改投 coding_workflow）；QA 走 local（不起预览），回归 smoke 不固化；紧急关闸 = plist 设 CODING_WF_REPOS=cecelia 或本行 enabled=false。合入 main 会经 pilot-release-verification → deploy-phone-adb-controller 自动部署生产 mmv/xian-m4 手机控制器，所以 automerge=false（已批准→Bark→人工合并）。38.23.47.81 是 MMV（US Mac M4）公网 IP，不是 zenithjoy 生产，不进 production_re。\",\n      \"slug\": \"perfectuser21/zenithjoy-workspace\",\n      \"origin\": \"https://github.com/perfectuser21/zenithjoy-workspace.git\",\n      \"aliases\": [\"zenithjoy\", \"zenithjoy-workspace\"],\n      \"clone\": \"~/perfect21/zenithjoy-cw-runner\",\n      \"worktree_base\": \"~/worktrees/zenithjoy-cw\",\n      \"state_ns\": \"zenithjoy-workspace\",\n      \"required_checks\": [\n        \"L4 E2E Gate Passed\",\n        \"L4 Runtime Gate Passed\",\n        \"Integration Gate Passed\",\n        \"L2 Consistency Gate Passed\",\n        \"WeChat CS Gate Passed\",\n        \"Smoke Glob Runner\",\n        \"Smoke Glob Gate Passed\",\n        \"Core Regression Gate Passed\",\n        \"Line02 Lead Gate Passed\",\n        \"Orphan E2E Gate Passed\",\n        \"L3 Code Gate Passed\",\n        \"Android CI Gate Passed\"\n      ],\n      \"base_fresh_check\": null,\n      \"install\": [\"npm\", \"ci\", \"--ignore-scripts\"],\n      \"qa_smoke\": null,\n      \"version_fragment\": null,\n      \"preview\": { \"type\": \"local\" },\n      \"production_re\": [\":5200\\\\b\", \"100\\\\.86\\\\.118\\\\.99\", \"\\\\bhk-vps\\\\b\"],\n      \"automerge\": false,\n      \"prechecks\": \"zenithjoy\",\n      \"rules_prompt\": \"prompts/repo-rules/zenithjoy.md\"\n    },\n    {\n      \"key\": \"zenithjoy-skills\",\n      \"default\": false,\n      \"enabled\": true,\n      \"slug\": \"perfectuser21/zenithjoy-skills\",\n      \"origin\": \"https://github.com/perfectuser21/zenithjoy-skills.git\",\n      \"aliases\": [\n        \"zenithjoy-skills\"\n      ],\n      \"clone\": \"~/perfect21/zenithjoy-skills-cw-runner\",\n      \"worktree_base\": \"~/worktrees/zenithjoy-skills-cw\",\n      \"state_ns\": \"zenithjoy-skills\",\n      \"required_checks\": [\n        \"lint-skills\"\n      ],\n      \"base_fresh_check\": null,\n      \"install\": [\n        \"python3\",\n        \"--version\"\n      ],\n      \"qa_smoke\": null,\n      \"version_fragment\": null,\n      \"preview\": {\n        \"type\": \"local\"\n      },\n      \"production_re\": [\n        \":5200\\\\b\",\n        \"100\\\\.86\\\\.118\\\\.99\",\n        \"\\\\bhk-vps\\\\b\",\n        \"\\\\b(?:mmv|xian-m4)\\\\b\",\n        \"\\\\badb\\\\b\"\n      ],\n      \"automerge\": false,\n      \"prechecks\": \"skills\",\n      \"rules_prompt\": \"prompts/repo-rules/skills.md\"\n    }\n  ]\n}\n"},"lib/repo-profile.mjs":{"sha256":"d100fcfc74f56dbffc0f3bc58a404d26c5cee07c8e164ecccbb701611c8dbe7a","content":"// 活动层与提示词的仓库口径（C6）：repos.json 条目由 runner 经信封 input.repo_profile（链上活动）/ cfg.repoProfile（门禁）传入，\n// 这里把它翻成各处要的口径：QA 模式、版本碎片规则、回归 smoke 目录、碰生产判定、预检清单名、本仓规矩提示词。\n// 没传（旧信封、旧调用方、单测手搓的 cfg）一律按默认仓（cecelia），行为不变。\nimport fs from 'node:fs';\nimport path from 'node:path';\nimport { fileURLToPath } from 'node:url';\nimport { loadRepos, reposFile } from '../runner/lib/repos.mjs';\n\nconst WORKFLOW_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');\n// lib/ci-precheck.mjs 认得的预检清单名（repos.json prechecks）\nexport const PRECHECK_SETS = ['cecelia', 'zenithjoy', 'skills'];\n\nlet cachedDefault = null;\n/** 默认仓的 repos.json 条目（CODING_WF_REPOS_FILE 覆盖配置表时读覆盖的那份）。 */\nexport function defaultProfile() {\n  cachedDefault ??= loadRepos(reposFile()).find((r) => r.default);\n  return cachedDefault;\n}\n\n/** 传入的是 repos.json 条目（带字符串 key）就用它，否则默认仓。 */\nexport function profileOf(profile) {\n  return profile && typeof profile === 'object' && typeof profile.key === 'string' ? profile : defaultProfile();\n}\n\n/** QA 模式：brain_preview（PR 预览环境）/ local（PR worktree 内黑盒，zenithjoy 第一阶段）。 */\nexport function qaMode(profile) {\n  return profileOf(profile).preview?.type ?? 'brain_preview';\n}\n\n/** 回归 smoke 的目录与登记文件 { dir, allowlist, write_targets }；本仓不固化返回 null。 */\nexport function qaSmokeOf(profile) {\n  return profileOf(profile).qa_smoke ?? null;\n}\n\n/** 碰生产判定的正则片段：本仓 ∪ 默认仓（MMV 本机 localhost:5221 永远是 cecelia 生产 Brain，任何仓库的 QA 都不许碰）。 */\nexport function productionPatterns(profile) {\n  return [...new Set([...profileOf(profile).production_re, ...defaultProfile().production_re])];\n}\n\n/** 本仓规矩提示词（注入 {{REPO_RULES}}）。 */\nexport function repoRules(profile) {\n  return fs.readFileSync(path.join(WORKFLOW_DIR, profileOf(profile).rules_prompt), 'utf8').trim();\n}\n"},"runner/lib/repos.mjs":{"sha256":"6a30662a1cc1d852ddba041aac2d01809f73d5ced269a50b69f570260b31aa27","content":"// 仓库配置表（C4）：coding-workflow/repos.json 是 runner 多仓库口径的唯一来源。\n// 本模块负责：读表校验、仓库名别名归一（短名 / owner/repo / https / ssh URL / 缺省）、CODING_WF_REPOS 开关、\n// 每仓库运行时视图（repoView：把 cfg 的 clone / worktree 根 / 状态命名空间换成该仓库的），以及按仓库分命名空间的状态路径。\nimport fs from 'node:fs';\nimport os from 'node:os';\nimport path from 'node:path';\nimport { fileURLToPath } from 'node:url';\n\nconst HERE = path.dirname(fileURLToPath(import.meta.url));\nexport const REPOS_FILE = path.join(HERE, '../../repos.json');\n\n/** 配置表路径：CODING_WF_REPOS_FILE 覆盖（测试 / 演练用；生产不设）。 */\nexport function reposFile(env = process.env) {\n  return env.CODING_WF_REPOS_FILE || REPOS_FILE;\n}\nexport const REQUIRED_FIELDS = ['key', 'default', 'enabled', 'slug', 'origin', 'aliases', 'clone', 'worktree_base', 'state_ns',\n  'required_checks', 'base_fresh_check', 'install', 'qa_smoke', 'version_fragment', 'preview', 'production_re', 'automerge',\n  'prechecks', 'rules_prompt'];\n\n/** 仓库名归一：去空白、小写、去 github 前缀（https / ssh）、去 .git 与尾斜杠。非字符串返回 ''。 */\nexport function normalizeRepoName(value) {\n  if (typeof value !== 'string') return '';\n  return value.trim().toLowerCase()\n    .replace(/^(?:https?:\\/\\/)?(?:www\\.)?github\\.com[/:]/, '')\n    .replace(/^git@github\\.com:/, '')\n    .replace(/\\/+$/, '')\n    .replace(/\\.git$/, '');\n}\n\n/** 读并校验 repos.json：缺字段、key/slug/clone/worktree_base/state_ns 重复、默认仓不是恰好一个 → 抛错（配置错不能带病跑）。 */\nexport function loadRepos(file = reposFile()) {\n  const repos = JSON.parse(fs.readFileSync(file, 'utf8'))?.repos;\n  if (!Array.isArray(repos) || repos.length === 0) throw new Error(`repos_config_invalid: ${file} 没有 repos`);\n  for (const r of repos) {\n    const missing = REQUIRED_FIELDS.filter((f) => !(f in (r ?? {})));\n    if (missing.length) throw new Error(`repos_config_invalid: ${r?.key ?? '?'} 缺 ${missing.join(',')}`);\n  }\n  for (const f of ['key', 'slug', 'clone', 'worktree_base', 'state_ns']) {\n    if (new Set(repos.map((r) => r[f])).size !== repos.length) throw new Error(`repos_config_invalid: ${f} 重复`);\n  }\n  if (repos.filter((r) => r.default).length !== 1) throw new Error('repos_config_invalid: 默认仓必须恰好一个');\n  return repos;\n}\n\nlet cached = null;\nconst allRepos = () => (cached ??= loadRepos());\n\n/** 任务 payload.repo → 仓库 key；缺省（null/undefined/空串）归默认仓；未登记返回 null（不猜）。 */\nexport function resolveRepo(value, repos = allRepos()) {\n  if (value === null || value === undefined || value === '') return repos.find((r) => r.default).key;\n  const name = normalizeRepoName(value);\n  if (!name) return null;\n  const hit = repos.find((r) => [r.key, r.slug, r.origin, ...r.aliases].some((a) => normalizeRepoName(a) === name));\n  return hit?.key ?? null;\n}\n\n/**\n * 启用的仓库（按 repos.json 顺序）：CODING_WF_REPOS（逗号分隔，接受别名）缺省 = 表里 enabled=true 的全部。\n * 双闸：表里 enabled=false 的即使列进环境变量也不启用；未登记的名字忽略。\n */\nexport function enabledRepos(env = process.env, repos = allRepos()) {\n  const raw = String(env.CODING_WF_REPOS ?? '').trim();\n  const wanted = raw ? new Set(raw.split(',').map((s) => s.trim()).filter(Boolean).map((s) => resolveRepo(s, repos)).filter(Boolean)) : null;\n  return repos.filter((r) => r.enabled === true && (!wanted || wanted.has(r.key)));\n}\n\nconst expandHome = (p, home) => (p === '~' ? home : p.startsWith('~/') ? path.join(home, p.slice(2)) : p);\n\n/** 表条目 → 运行时配置（展开 ~）；默认仓的 clone / worktree 根兼容旧环境变量 CODING_WF_REPO / CODING_WF_WORKTREE_BASE。 */\nexport function resolveEntry(entry, env = process.env) {\n  const home = env.HOME || os.homedir();\n  return {\n    key: entry.key,\n    slug: entry.slug,\n    origin: entry.origin,\n    clone: (entry.default && env.CODING_WF_REPO) || expandHome(entry.clone, home),\n    worktreeBase: (entry.default && env.CODING_WF_WORKTREE_BASE) || expandHome(entry.worktree_base, home),\n    stateNs: entry.state_ns || '',\n    automerge: entry.automerge === true,\n    baseFreshCheck: entry.base_fresh_check ?? null,\n    requiredChecks: entry.required_checks,\n    install: entry.install,\n    previewType: entry.preview?.type ?? null,\n    previewBaseRepo: entry.preview?.base_repo ?? null,\n    profile: entry,\n  };\n}\n\n/** 仓库相关的 cfg 字段（loadConfig 的默认仓视图与 repoView 共用）。trustedRepo（判卷代码 clone）不在其中，永远是默认仓。 */\nexport function repoFields(rc) {\n  return {\n    repo: rc.clone, worktreeBase: rc.worktreeBase, repoKey: rc.key, repoSlug: rc.slug, stateNs: rc.stateNs,\n    repoAutomerge: rc.automerge, baseFreshCheck: rc.baseFreshCheck, install: rc.install,\n    previewType: rc.previewType, previewBaseRepo: rc.previewBaseRepo,\n    // 活动层与提示词按仓库参数化（C6）：repos.json 原条目，经信封 input.repo_profile 交给各活动（lib/repo-profile.mjs）\n    repoProfile: rc.profile,\n  };\n}\n\n/** 某仓库的 cfg 视图：所有按 cfg.repo / cfg.worktreeBase / 状态目录 / gh 仓库工作的函数拿它即作用到该仓库。 */\nexport function repoView(cfg, rc) {\n  return { ...cfg, ...repoFields(rc), trustedRepo: cfg.trustedRepo ?? cfg.repo };\n}\n\n/** 门禁按仓库遍历的视图（cfg.repos 顺序）；cfg 没带 repos（旧调用方 / 单测）时就是 cfg 本身。 */\nexport function repoViews(cfg) {\n  return Array.isArray(cfg.repos) ? cfg.repos.map((rc) => repoView(cfg, rc)) : [cfg];\n}\n\n/** 任务所在仓库的视图（task.repoKey，缺省或不在已启用列表 → 默认仓 cfg 本身）。 */\nexport function taskView(cfg, task) {\n  const rc = (cfg.repos ?? []).find((r) => r.key === task?.repoKey);\n  return rc ? repoView(cfg, rc) : cfg;\n}\n\n/** 日志/通知里的 PR 称呼：默认仓（命名空间为空）只写 PR #n，其他仓库带仓库名。 */\nexport function prLabel(cfg, number) {\n  return cfg.stateNs ? `${cfg.repoKey} PR #${number}` : `PR #${number}`;\n}\n\n/** 状态目录：命名空间为空（cecelia）= logDir 本身（沿用旧路径，零迁移）；否则 <logDir>/<ns>/。 */\nexport function stateDir(cfg) {\n  return cfg.stateNs ? path.join(cfg.logDir, cfg.stateNs) : cfg.logDir;\n}\n\n/** 按 PR 的状态/会话文件路径（qa-<pr>.json、cifix-<pr>.json、commander-<pr>.json 及其会话日志）。 */\nexport function prFile(cfg, name) {\n  return path.join(stateDir(cfg), name);\n}\n"}}};
+const independentSkillsMode=()=>Object.fromEntries(Object.entries(skillsModeFixture.files).map(([path,row])=>{
+ assert.equal(createHash('sha256').update(row.content).digest('hex'),row.sha256,'fixed fixture hash '+path);
+ return [P+path,row.content];
+}));
+describe('中央Skills独立固定模式的可信判卷器先行兼容',()=>{
+ it('完整固定三文件经真实阶段消费者证明，旧模式不受影响',async()=>{
+  expect(skillsModeFixture.source_commit).toBe('2a537e0f563fb8374f777218ac2fd2b6609a1462');
+  const r=await collect('recorded',addReviewedRuntimeInputs);expect(r.gaps).toEqual([]);
   expect(r.bindings).toContain(P+'repos.json');expect(r.bindings).toContain(P+'lib/repo-profile.mjs');
+  expect((await collect('recorded')).gaps).toEqual([]);
  });
- for(const change of ['旧配置混配','关闭裁判模式','篡改Skills来源','自动合并','任意新增仓库'])it(change+'拒绝认领',async()=>{
-  const {readFileSync}=await import('node:fs');
-  const files=Object.fromEntries(modes.map(name=>[P+name,readFileSync(new URL('../../../scripts/coding-workflow/'+name,import.meta.url),'utf8')]));
-  const r=await collect('recorded',s=>{
-   Object.assign(s,files);const p=P+'repos.json',config=JSON.parse(s[p]),skills=config.repos.find(x=>x.key==='zenithjoy-skills');
-   if(change==='旧配置混配')s[P+'lib/repo-profile.mjs']=STAGE.mode['lib/repo-profile.mjs'];
-   else {if(change==='关闭裁判模式')config.repos.find(x=>x.default).preview.type='local';
-    if(change==='篡改Skills来源')skills.origin='https://github.com/other/skills.git';
-    if(change==='自动合并')skills.automerge=true;
-    if(change==='任意新增仓库')config.repos.push({...skills,key:'unreviewed'});
-    s[p]=JSON.stringify(config);}
-  });expect(r.gaps).toContainEqual({code:'native_stage_execution_unproven'});
+ for(const change of ['旧配置混配','关闭裁判模式','篡改Skills来源','自动合并','任意新增仓库'])it(change+'仍经真实collector拒绝',async()=>{
+  const files=independentSkillsMode(),p=P+'repos.json',config=JSON.parse(files[p]),skills=config.repos.find(x=>x.key==='zenithjoy-skills');
+  expect(skills).toBeDefined(); // Mutation setup must not throw and masquerade as a rejection.
+  if(change==='旧配置混配')files[P+'lib/repo-profile.mjs']=STAGE.mode['lib/repo-profile.mjs'];
+  else {if(change==='关闭裁判模式')config.repos.find(x=>x.default).preview.type='local';
+   if(change==='篡改Skills来源')skills.origin='https://github.com/other/skills.git';
+   if(change==='自动合并')skills.automerge=true;
+   if(change==='任意新增仓库')config.repos.push({...skills,key:'unreviewed'});
+   files[p]=JSON.stringify(config);}
+  const r=await collect('recorded',s=>Object.assign(s,files));
+  expect(r.gaps).toContainEqual({code:'native_stage_execution_unproven'});
+  expect(r.bindings).not.toContain(P+'repos.json');
  });
+});
+
+// A fixed-source marker versions the evidence expansion; historical trees retain their original bindings.
+const ruleInputMarker='packages/brain/src/lib/existing-ops-stage-source.js';
+const addReviewedRuntimeInputs=s=>{
+ s[ruleInputMarker]='export const EXISTING_OPS_REPO_RULES_INPUT_SCHEMA=1;';
+ Object.assign(s,independentSkillsMode());
+ for(const ref of ['cecelia','zenithjoy','skills'])s[P+'prompts/repo-rules/'+ref+'.md']='# fixed '+ref+' runtime instructions\n';
+ s[P+'lib/ci-precheck.mjs']='export function checksFor(){return [];} export async function runPrechecks(){return [];}\n';
+};
+describe('已审repoRules和build预检的实际运行输入闭包',()=>{
+ it('版本化新树绑定三份被repoRules读取的提示词与实际precheck模块',async()=>{
+  const r=await collect('recorded',addReviewedRuntimeInputs);expect(r.gaps).toEqual([]);
+  for(const key of ['cecelia','zenithjoy','skills']){
+   const input_path=P+'prompts/repo-rules/'+key+'.md';expect(r.bindings).toContain(input_path);
+   expect(r.relations).toContainEqual(expect.objectContaining({consumer_path:P+'lib/repo-profile.mjs',input_path,kind:'reviewed_repo_rules_read'}));
+  }
+  expect(r.bindings).toContain(P+'lib/ci-precheck.mjs');
+  expect(r.relations).toContainEqual(expect.objectContaining({consumer_path:P+'activities/build.mjs',input_path:P+'lib/ci-precheck.mjs',kind:'reviewed_build_precheck_call'}));
+ });
+ for(const absent of ['prompts/repo-rules/skills.md','lib/ci-precheck.mjs'])it('缺少固定实际输入 '+absent+' 不得沿用成功证明',async()=>{
+  const r=await collect('recorded',s=>{addReviewedRuntimeInputs(s);delete s[P+absent];});expect(r.gaps.length).toBeGreaterThan(0);
+ });
+ it('只选spec不认领未运行build的precheck输入',async()=>{
+  const r=await collect('recorded',addReviewedRuntimeInputs,/\/__tests__\/spec\.test\.mjs$/);expect(r.gaps).toEqual([]);expect(r.bindings).not.toContain(P+'lib/ci-precheck.mjs');
+ });
+ it('无版本标记的历史树保持原绑定集合',async()=>{
+  const original=await collect('recorded'),extra=await collect('recorded',s=>{
+   for(const key of ['cecelia','zenithjoy','skills'])s[P+'prompts/repo-rules/'+key+'.md']='# ignored historical extra';
+  });expect(extra).toEqual(original);
+ });
+});
+
+it('新Skills完整模式即使删除版本标记也不能省略真实提示词输入',async()=>{
+ const r=await collect('recorded',s=>{addReviewedRuntimeInputs(s);delete s[ruleInputMarker];delete s[P+'prompts/repo-rules/skills.md'];});expect(r.gaps.length).toBeGreaterThan(0);
+});
+it('未知运行输入协议及未审rules_prompt路径均拒绝',async()=>{
+ for(const patch of [s=>{s[ruleInputMarker]='export const EXISTING_OPS_REPO_RULES_INPUT_SCHEMA=2;';},s=>{
+  const config=JSON.parse(s[P+'repos.json']);config.repos.at(-1).rules_prompt='../arbitrary.md';s[P+'repos.json']=JSON.stringify(config);
+ }]){
+  const r=await collect('recorded',s=>{addReviewedRuntimeInputs(s);patch(s);});expect(r.gaps).toContainEqual({code:'native_stage_execution_unproven'});
+ }
+});
+it('build-only真实选中时也绑定precheck和repoRules，缺precheck拒绝',async()=>{
+ const selector=/\/__tests__\/build\.test\.mjs$/;
+ const valid=await collect('recorded',addReviewedRuntimeInputs,selector);expect(valid.gaps).toEqual([]);expect(valid.bindings).toContain(P+'lib/ci-precheck.mjs');
+ expect(valid.relations).toContainEqual(expect.objectContaining({consumer_path:P+'activities/build.mjs',input_path:P+'lib/repo-profile.mjs',kind:'stage_repo_rules_call'}));
+ const absent=await collect('recorded',s=>{addReviewedRuntimeInputs(s);delete s[P+'lib/ci-precheck.mjs'];},selector);expect(absent.gaps.length).toBeGreaterThan(0);
+});
+for(const stage of ['spec-review','evaluate'])it('仅选'+stage+'不得虚构repoRules实际调用',async()=>{
+ const r=await collect('recorded',addReviewedRuntimeInputs,new RegExp('/__tests__/'+stage+'\\.test\\.mjs$'));expect(r.gaps).toEqual([]);
+ expect(r.relations.filter(x=>x.kind==='stage_repo_rules_call'||x.kind==='reviewed_repo_rules_read')).toEqual([]);
 });
