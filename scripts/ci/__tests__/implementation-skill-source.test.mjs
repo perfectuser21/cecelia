@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {pilotPlanHash} from '../../../packages/brain/src/lib/pilot-release-verification.js';
 import {readImplementationSource} from '../implementation-skill-source.mjs';
 import * as sourceApi from '../implementation-skill-source.mjs';
 import {createFixedLocalSourceReader,readFixedLocalGitBlob} from '../fixed-local-git.mjs';
@@ -222,4 +223,48 @@ os.execv(${JSON.stringify(realGit)},[${JSON.stringify(realGit)}]+args)
   if(priorKey===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=priorKey;
   if(cache)rmSync(dirname(cache),{recursive:true,force:true});f.cleanup();
  }
+});
+function historicalSnapshot(f,head,bindingRevision,central,padding=''){
+ const repo='perfectuser21/zenithjoy-workspace',payload={implementation_bindings:[{kind:'skill',status:'verified',scope:'activity',repo,path:f.path,revision:bindingRevision,digest:'sha256:'+createHash('sha256').update(f.payload).digest('hex'),resolved_source:{repo:'perfectuser21/zenithjoy-skills',path:'body.md',revision:central}}]};
+ const source={repo,path:'contract.json',commit:head};
+ const body={schema_version:1,scope:'zenithjoy',repo,revision:head,status:'verified',gaps:[],definitions:{workflows:[],activities:[{source_repo:repo,source_path:source.path,source_commit:head,payload,payload_sha256:pilotPlanHash({source,payload})}]},evidence_padding:padding};
+ return {...body,snapshot_sha256:pilotPlanHash(body)};
+}
+test('快照冻结的历史Skill版本也进入同一cache，超过1MiB真实形态metadata可读，生成物仅HEAD',()=>{
+ const f=fixture(),prior=process.env.SKILLS_SOURCE_SSH_KEY;process.env.SKILLS_SOURCE_SSH_KEY='fixture-only';let cache;
+ try{
+  const lock=JSON.parse(git(f.business,'show',`${f.after}:.skills-source.json`)),old=lock.revision;
+  const next=Buffer.from('current HEAD body\n');writeFileSync(join(f.central,'body.md'),next);
+  const catalog=JSON.parse(git(f.central,'show',`${old}:distribution/catalog.json`));catalog.profiles.zenithjoy.files[0].sha256=createHash('sha256').update(next).digest('hex');writeFileSync(join(f.central,'distribution/catalog.json'),JSON.stringify(catalog));lock.revision=commit(f.central);
+  writeFileSync(join(f.business,'.skills-source.json'),JSON.stringify(lock));const head=commit(f.business),requested=[];
+  const snapshot=historicalSnapshot(f,head,f.after,old,'e'.repeat(1200000));
+  cache=sourceApi.prepareImplementationSkillCache(f.business,'perfectuser21/zenithjoy-workspace',[f.before,head],{snapshots:[snapshot],fetchSource:(dir,rev)=>{requested.push(rev);if(!existsSync(join(dir,'.git')))git(f.central,'clone','--no-checkout','--quiet',f.central,dir);}});
+  assert.deepEqual(new Set(requested),new Set([old,lock.revision]),'不能仅准备base/head两锁');
+  git(cache,'cat-file','-e',old+'^{commit}');sourceApi.materializeImplementationSkills(f.business,head,'perfectuser21/zenithjoy-workspace',cache);assert.deepEqual(readFileSync(join(f.business,f.path)),next);
+ }finally{if(cache)rmSync(dirname(cache),{recursive:true,force:true});if(prior===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=prior;f.cleanup();}
+});
+test('历史snapshot拒绝摘要漂移、伪中央身份、缺业务对象、过多版本和metadata预算',()=>{
+ const f=fixture(),prior=process.env.SKILLS_SOURCE_SSH_KEY;process.env.SKILLS_SOURCE_SSH_KEY='fixture-only';
+ try{
+  const central=JSON.parse(git(f.business,'show',`${f.after}:.skills-source.json`)).revision;
+  const snapshot=historicalSnapshot(f,f.after,f.after,central);
+  for(const mutate of [s=>({...s,snapshot_sha256:'0'.repeat(64)}),s=>{s.definitions.activities[0].payload.implementation_bindings[0].resolved_source.revision='f'.repeat(40);const row=s.definitions.activities[0];row.payload_sha256=pilotPlanHash({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload});const {snapshot_sha256,...b}=s;return {...b,snapshot_sha256:pilotPlanHash(b)};},s=>historicalSnapshot(f,f.after,'f'.repeat(40),central),s=>historicalSnapshot(f,f.after,f.after,central,'x'.repeat(4*1024*1024))]){
+   assert.throws(()=>sourceApi.prepareImplementationSkillCache(f.business,'perfectuser21/zenithjoy-workspace',[f.after],{snapshots:[mutate(structuredClone(snapshot))],fetchSource:()=>{throw Error('UNEXPECTED_FETCH');}}),/SNAPSHOT|BINDING|FIXED|OBJECT|BYTE/);
+  }
+  assert.throws(()=>sourceApi.prepareImplementationSkillCache(f.business,'perfectuser21/zenithjoy-workspace',[f.after],{snapshots:Array(9).fill(snapshot)}),/SNAPSHOT.*LIMIT/);
+ }finally{if(prior===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=prior;f.cleanup();}
+});
+test('两入口先下载canonical快照再prepare历史对象，现代校验无key',()=>{
+ for(const [file,job]of [['pilot-release-verification','verify'],['implementation-impact','gate']]){
+  const w=yaml.load(readFileSync(new URL('../../../.github/workflows/'+file+'.yml',import.meta.url),'utf8')),steps=w.jobs[job].steps;
+  const index=steps.findIndex(s=>s.name==='准备固定中央Skill对象缓存'),download=steps.findIndex(s=>s.uses?.startsWith('actions/download-artifact')||s.name==='下载固定SHA中央bundle（PR无中央写凭据）');
+  assert.ok(index>download,'历史绑定必须先取得snapshot');assert.match(steps[index].run,/--snapshot/);
+ }
+});
+test('唯一旧兼容升级为821真实可信reader冷启动，而非185空缓存放行',()=>{
+ const w=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+ const step=w.jobs.gate.steps.find(s=>s.name==='准备固定中央Skill对象缓存');
+ assert.match(step.run,/821dac5ae926cd5120d7b94fcd8012dd1f09bc23/);
+ assert.match(step.run,/readImplementationSource/);assert.match(step.run,/packages\/engine\/skills\/dev\/SKILL\.md/);
+ assert.doesNotMatch(step.run,/18552f8eeafdb2d404294bd6601bc74d00a1d422/);
 });
