@@ -1,9 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
-import {mkdtempSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {execFileSync,spawnSync} from 'node:child_process';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {createHash} from 'node:crypto';
 function fixture(t){
  const root=mkdtempSync(join(tmpdir(),'fixed-ci-git-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const git=(...args)=>execFileSync('git',['-C',root,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -37,4 +38,22 @@ test('snapshot and pilot source callbacks never bypass isolated Git adapter',()=
   const source=readFileSync(new URL('../'+file,import.meta.url),'utf8');
   assert.doesNotMatch(source,/execFileSync\(['"]git['"]/);assert.match(source,/readFixedLocalGitBlob/);
  }
+});
+
+test('formal Pilot CLI accepts a historical tracked Skill without a central lock',t=>{
+ const f=fixture(t),repo='perfectuser21/zenithjoy-workspace',id=n=>`${String(n).padStart(8,'0')}-1111-4111-8111-111111111111`;
+ const skill='.claude/skills/demo/SKILL.md',content='---\nname: demo\nversion: 1\n---\nlegacy fixed skill\n';
+ mkdirSync(join(f.root,'.claude/skills/demo'),{recursive:true});writeFileSync(join(f.root,skill),content);
+ mkdirSync(join(f.root,'scripts/smoke'),{recursive:true});writeFileSync(join(f.root,'scripts/smoke/pilot.sh'),'#!/bin/bash\nset -e\ntest -f .claude/skills/demo/SKILL.md\n');
+ const revision=f.commit('original fixed bytes');f.git('update-ref','refs/remotes/origin/main',revision);
+ const hash=value=>createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');
+ const row=(n,payload,identity)=>{const source={repo,path:'contract.json',commit:revision};return {id:id(n),...identity,source_repo:repo,source_path:source.path,source_commit:revision,payload,payload_sha256:hash({source,payload})};};
+ const activity=row(2,{activity_id:id(3),steps:[{step_id:id(4),locator:{activity_id:id(3),step_key:'verify'}}],implementation_bindings:[{kind:'skill',scope:'activity',status:'verified',repo,path:skill,revision,digest:'sha256:'+hash(content)}]},{activity_id:id(3)});
+ const workflow=row(1,{workflow_id:id(5),capability_id:id(6),activities:[{reference_id:id(7),activity_id:id(3),activity_version_id:id(2)}]},{workflow_id:id(5)});
+ const snapshot={schema_version:1,scope:'zenithjoy',repo,revision,status:'verified',gaps:[],definitions:{workflows:[workflow],activities:[activity]},assertions:[null,id(4)].map((step,i)=>({id:id(10+i),journey_id:id(6),step_id:id(3),step_id_ref:step,cell_kind:'scenario',cell_key:`regression:${id(6)}:${step||'activity'}`,assertion_ref:'scripts/smoke/pilot.sh',assertion_revision:1}))};
+ snapshot.snapshot_sha256=hash(snapshot);
+ const input=join(f.root,'../legacy-snapshot-'+revision+'.json'),output=join(f.root,'../legacy-output-'+revision);
+ t.after(()=>{rmSync(input,{force:true});rmSync(output,{recursive:true,force:true});});writeFileSync(input,JSON.stringify({snapshot}));
+ const result=spawnSync(process.execPath,[new URL('../pilot-release-verification.mjs',import.meta.url).pathname,'--repo-root',f.root,'--snapshot',input,'--output-dir',output,'--event','push','--ref','refs/heads/main'],{encoding:'utf8',timeout:15000});
+ assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(readFileSync(join(output,'receipt.json'))).verdict,'PASS');
 });
