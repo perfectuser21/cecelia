@@ -21,7 +21,6 @@ on:
     branches: [main]
     # 只在可能影响 Brain 运行时的改动上触发（避免纯文档 push 也起 staging）。
     paths:
-      - ".skills-source.json"
       - 'packages/brain/**'
       - 'docker-compose.staging.yml'
       - 'scripts/staging-deploy.sh'
@@ -54,11 +53,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Restore pinned skill sources
-        if: hashFiles('.skills-source.json') != ''
-        uses: ./.github/actions/skills-source
-        with:
-          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
       - name: 等待 Production 同 SHA 就绪
         env:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
