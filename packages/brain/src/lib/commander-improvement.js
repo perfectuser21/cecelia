@@ -1,7 +1,5 @@
 /** 改进沿现有任务接棒：先只读诊断，证据齐全才交一次开发，不修改在途实现。 */
 import {createRoutedTask} from '../work-routing-store.js';
-import {getRelease} from './release-index.js';
-import {event} from './commander-v2-store.js';
 import {digest} from './commander-v2-contract.js';
 
 const PROTOCOL='commander-improvement-v1';
@@ -13,6 +11,7 @@ const reject=code=>{throw Object.assign(Error(code),{code});};
 export const improvementKey=(e,fingerprint)=>digest([e.workflow_key,e.definition.runtime_snapshot_sha256,fingerprint]);
 
 async function frozenSources(db,e){
+ const {getRelease}=await import('./release-index.js');
  const release=await getRelease(db,e.definition.release_id),sources=[];
  const add=source=>{if(REPO.test(source?.repo||'')&&SHA.test(source?.revision||''))sources.push({repo:source.repo,revision:source.revision});};
  for(const c of release.payload.components||[])add(c);
@@ -61,6 +60,7 @@ export async function ensureCommanderImprovement(db,task,c,failure,deps={}){
   await db.query('ROLLBACK TO SAVEPOINT commander_improvement_dispatch');
   await db.query('RELEASE SAVEPOINT commander_improvement_dispatch');
   const code=String(error.code||'diagnosis_dispatch_failed').slice(0,100);
+  const {event}=await import('./commander-v2-store.js');
   await event(db,task.id,'commander_improvement_dispatch_failed',{chain_key,code,actor:'commander-improvement'});
   return {status:'dispatch_failed',chain_key,code};
  }
