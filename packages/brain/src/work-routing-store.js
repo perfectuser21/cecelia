@@ -346,7 +346,8 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         conflict.code = 'work_route_idempotency_conflict';
         throw conflict;
       }
-      assertRouteSnapshotLaunchAuthority({
+      // 只读任务没有地图写入锚；仅编码重放需要该权威校验。
+      if (persisted.work_kind === 'coding_mutation') assertRouteSnapshotLaunchAuthority({
         taskStatus: existing.rows[0].status,
         validationVersion: legacyDirectSeed
           ? null

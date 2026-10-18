@@ -7,7 +7,8 @@ import {buildLastRunResult} from '../../lib/callback-utils.js';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {relayOnComplete,materializeNextSteps} from '../../lib/relay-baton.js';
+import {afterTerminalTransition} from '../../lib/task-terminal.js';
+import {materializeNextSteps} from '../../lib/relay-baton.js';
 let fixture,pool,releaseId,mirror,oldMirror;
 const repo='perfectuser21/cecelia';
 const revision=execFileSync('git',['rev-parse','origin/main'],{encoding:'utf8'}).trim();
@@ -66,8 +67,28 @@ it('readonly研究通过完整源码诊断真实接到一份coding_workflow，�
  const chain=diagnosis.payload.commander_improvement;
  const receipt=buildLastRunResult({status:'completed',result:'COMMANDER_DIAGNOSIS '+JSON.stringify({chain_key:chain.chain_key,origin_task_id:chain.origin_task_id,next_steps:[step]})});
  await pool.query("UPDATE tasks SET status='completed',payload=payload||jsonb_build_object('last_run_result',$2::jsonb) WHERE id=$1",[diagnosis.id,JSON.stringify(receipt)]);
- for(let i=0;i<2;i++){const result=await relayOnComplete(pool,diagnosis.id);expect(result.tasks).toHaveLength(1);expect(result.skipped).toEqual([]);}
+ for(let i=0;i<2;i++){const {relay:result}=await afterTerminalTransition(pool,diagnosis.id,'completed');expect(result.skipped).toEqual([]);expect(result.tasks).toHaveLength(1);}
  const rows=(await pool.query("SELECT * FROM tasks WHERE task_type='coding_workflow'")).rows;
  expect(rows).toHaveLength(1);expect(rows[0].payload).toMatchObject({repo:'cecelia',map_scope:['F1'],base_sha:revision,commander_improvement:{phase:'repair',max_repairs:1}});
  const stopped=await materializeNextSteps(pool,rows[0],{next_steps:[step]});expect(stopped.tasks).toEqual([]);expect(stopped.skipped).toHaveLength(1);
+});
+
+it('冻结business声明与中央resolved_source双身份真实接到Skills runner，不信诊断自行追加的仓库',async()=>{
+ const skills='perfectuser21/zenithjoy-skills',skillRevision='73f87b9bbbe73402b72afab886d303063c9edcf3';
+ const run=(await pool.query("SELECT id FROM map_projection_runs WHERE scope_key='cecelia'")).rows[0].id;
+ await pool.query("INSERT INTO map_projection_nodes VALUES($1,'skill_distribution','crosscut')",[run]);
+ await pool.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('cecelia','zenithjoy-skills','legacy-ledger-v1',$1)",[JSON.stringify({aliases:[skills],path:'/Users/administrator/perfect21/zenithjoy-skills-cw-runner'})]);
+ await pool.query('UPDATE release_versions SET payload=$2 WHERE id=$1',[releaseId,JSON.stringify({components:[{kind:'repo',repo:'perfectuser21/zenithjoy-workspace',revision}],activities:[{payload:{implementation_bindings:[{kind:'skill',repo:'perfectuser21/zenithjoy-workspace',revision,path:'.agents/skills/publish/SKILL.md',resolved_source:{repo:skills,revision:skillRevision,path:'business-skills/publish/SKILL.md'}}]}}]})]);
+ const task=await origin(),failure=await record(task,control(task));
+ const diagnosis=(await pool.query('SELECT * FROM tasks WHERE id=$1',[failure.improvement.task_id])).rows[0];
+ expect(diagnosis.payload.commander_improvement.frozen_sources).toContainEqual({repo:skills,revision:skillRevision});
+ const step={kind:'dispatch_headless',title:'修复中央Skill候选',change_kind:'bugfix',repo_hint:skills,map_scope_hint:['skill_distribution'],base_sha:skillRevision,
+  diagnosis:{category:'source_defect',fixed_source:{repo:skills,revision:skillRevision,path:'business-skills/publish/SKILL.md'},evidence:['fixed-source:sha'],reproduction:'弹窗场景未处理',acceptance:['弹窗与无弹窗均通过'],effects_status:'none'}};
+ const chain=diagnosis.payload.commander_improvement;
+ await pool.query("UPDATE tasks SET status='completed',payload=payload||jsonb_build_object('last_run_result',$2::jsonb) WHERE id=$1",[diagnosis.id,JSON.stringify(buildLastRunResult({status:'completed',result:'COMMANDER_DIAGNOSIS '+JSON.stringify({chain_key:chain.chain_key,origin_task_id:chain.origin_task_id,next_steps:[step]})}))]);
+ const {relay:outcome}=await afterTerminalTransition(pool,diagnosis.id,'completed');expect(outcome.skipped).toEqual([]);expect(outcome.tasks).toHaveLength(1);
+ const repair=(await pool.query('SELECT * FROM tasks WHERE id=$1',[outcome.tasks[0].id])).rows[0];
+ expect(repair.task_type).toBe('coding_workflow');expect(repair.payload).toMatchObject({repo:'zenithjoy-skills',map_scope:['skill_distribution'],base_sha:skillRevision});
+ const forged={...step,repo_hint:'other/repo',diagnosis:{...step.diagnosis,fixed_source:{...step.diagnosis.fixed_source,repo:'other/repo'}}};
+ const refused=await materializeNextSteps(pool,{...diagnosis,status:'completed'},{next_steps:[forged]});expect(refused.tasks).toEqual([]);expect(refused.skipped).toHaveLength(1);
 });
