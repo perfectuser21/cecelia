@@ -18,3 +18,12 @@ it('认证与Cookie头整体清理，不能保留Basic载荷或后续会话Cooki
  const value=JSON.stringify(facts);
  expect(value).not.toMatch(/ZmFrZTpzZWNyZXQ=|fake-session|fake-refresh|fake-auth|fake-cookie/);
 });
+it('中文cleanup证据与JSON转义超预算时仍硬限24KB',()=>{
+ const refs=Array.from({length:8},()=>({ref:'证'.repeat(256),path:'路'.repeat(256),url:'链'.repeat(256),sha256:'哈'.repeat(64)}));
+ for(const letter of ['故','\u0001']){
+  const facts=diagnosisFacts({...control,delivery:{failure:{reason:letter.repeat(512),message:letter.repeat(1024),stack:letter.repeat(2048)},cleanup:{completed:true,evidence:refs}}},{reason:letter.repeat(512)},[]);
+  expect(Buffer.byteLength(JSON.stringify(facts))).toBeLessThanOrEqual(24000);
+  expect(facts.truncated).toBe(true);
+  expect(facts).toMatchObject({definition:'fixed',release_id:'release',delivery:{cleanup:{completed:true}}});
+ }
+});
