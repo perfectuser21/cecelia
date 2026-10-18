@@ -115,11 +115,11 @@ function provenReaderClosure(consumer) {
     ||node.type==='Identifier'&&node.name==='parseEnvelope'&&parent?.type==='CallExpression'&&parent.callee===node&&!readerOf(node));
 }
 
-// 已独审的完整 runtime 指纹闭包：固定十三文件只读→SHA摘要/比较；没有模板执行或原文出口。
+// 已独审的完整 runtime 指纹闭包：固定十五文件只读→SHA摘要/比较；没有模板执行或原文出口。
 // 仅此路径且整个模块 AST 相等时认可该消费者；任何语义改动都须重新审查。
 // 这不把 runtime 加入文件白名单，模块原 R1–R7/进程别名扫描照常执行。
 const HASH_RUNTIME_FILE = path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
-const HASH_RUNTIME_SHA256 = '70752011bbe75ce420d509b68e24abb611c023240faad9e3c0039eab6bd9891b';
+const HASH_RUNTIME_SHA256 = '9d673dcb89bf218ed3941b84b3d6fb9e9751bd7eb8059ba11f89e7c757f4bad8';
 const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
   &&createHash('sha256').update(astShape(parseModule(text))).digest('hex')===HASH_RUNTIME_SHA256;
 
@@ -467,7 +467,7 @@ describe('原生QA完整封套只作为有界解码后的Acorn输入',()=>{
  const data=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
  const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,HASH_RUNTIME_FILE,helper,data,...PROVENANCE_READER_HASHES.keys()])].map(file=>[file,readFileSync(file,'utf8')]));
  const scan=sources=>findClaudeInvocations(sources.get(data),{file:data,sources});
- it('完整已审新旧闭包及十四文件只读指纹不恢复任何Claude执行路径',()=>{
+ it('完整已审新旧闭包及十五文件只读指纹不恢复任何Claude执行路径',()=>{
   const sources=base();
   for(const file of [ENVELOPE_FILE,STAGE_DATA,helper,data,HASH_RUNTIME_FILE])expect(findClaudeInvocations(sources.get(file),{file,sources})).toEqual([]);
  });

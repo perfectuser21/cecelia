@@ -7,7 +7,7 @@ import { assertImplementationReport as assertReport } from '../../packages/brain
 import { execFileSync,spawnSync } from 'node:child_process';
 import { readFile,realpath,writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { dirname,join,relative,resolve } from 'node:path';
+import { dirname,join,relative,resolve,isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertionCommand,classifyAssertionRef,canonicalRepoIdentity } from '../../packages/brain/src/lib/gp-assertion-command.js';
 
@@ -19,6 +19,10 @@ function testEnvironment() {
   // 测试库连接是显式能力；不继承解释器启动钩子、模块搜索覆盖或通用凭据。
   for(const key of ['DB_HOST','DB_PORT','DB_NAME','DB_USER','DB_PASSWORD','PGHOST','PGPORT','PGDATABASE','PGUSER','PGPASSWORD','TZ','TMPDIR']){
     if(process.env[key]!==undefined)env[key]=process.env[key];
+  }
+  if(process.env.IMPLEMENTATION_SKILLS_SOURCE_DIR){
+    if(!isAbsolute(process.env.IMPLEMENTATION_SKILLS_SOURCE_DIR))fail('IMPACT_SKILL_CACHE_PATH_INVALID');
+    env.SKILLS_SOURCE_DIR=process.env.IMPLEMENTATION_SKILLS_SOURCE_DIR;
   }
   return env;
 }

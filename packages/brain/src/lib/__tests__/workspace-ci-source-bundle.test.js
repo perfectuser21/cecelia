@@ -21,22 +21,25 @@ import {load,dump} from 'js-yaml';
 const root=new URL('../../../../../',import.meta.url);
 const currentFile=path=>readFileSync(new URL(path,root));
 // 真实官方callee原件仅解析，不执行候选工作流/初始化器。
-async function officialPilotBundle(mutate=()=>{},missing=null){
+async function officialPilotBundle(mutate=()=>{},missing=null,{modern=false,changeSource=x=>x,mutateImpact=()=>{}}={}){
  const input=source(),repo=input.workspace.repo,files=new Map();
  for(const [name,job,readerName] of [['implementation-impact','impact','implementation-impact'],['pilot-release-verification','verify','pilot-release']]){
   const reader=`scripts/ci/__tests__/${readerName}-workflow.test.mjs`;
   files.set(`${repo}:${reader}`,Buffer.from(`import {test} from 'node:test';import {readFileSync,existsSync} from 'node:fs';import YAML from 'yaml';const file=new URL('../../../.github/workflows/${name}.yml',import.meta.url);function config(){if(!existsSync(file))throw Error('missing');return YAML.parse(readFileSync(file,'utf8'));}test('actual-reader',()=>{config();});`));
   files.set(`${repo}:.github/workflows/${name}.yml`,Buffer.from(`on: {push: {branches: [main]}}\njobs:\n  caller-contract:\n    steps:\n      - run: node --test ${reader}\n  ${job}:\n    needs: caller-contract\n    uses: perfectuser21/cecelia/.github/workflows/${name}.yml@${input.brain.revision}\n    with:\n      source_repo: ${repo}\n      scope: zenithjoy\n      head_revision: \${{ github.sha }}\n      tooling_revision: ${input.brain.revision}\n${name==='implementation-impact'?'      base_revision: ${{ github.event.before }}\n      mode: main\n':''}`));
  }
- const path='.github/workflows/pilot-release-verification.yml',callee=load(currentFile(path).toString());mutate(callee);
+ const path='.github/workflows/pilot-release-verification.yml',callee=load(currentFile(path).toString());
+ if(!modern){const step=callee.jobs.verify.steps.find(s=>String(s.run||'').includes('tooling/scripts/ci/implementation-skill-source.mjs'));step.run='set -euo pipefail\nnode tooling/scripts/ci/prepare-fixed-skill-cache.mjs --repo-root "$PWD/source" --snapshot "$PWD/snapshot/head.json"\n';}
+ mutate(callee);
  return extractWorkspaceCiSourceBundle({...input,readSource:async q=>{
   if(q.path===missing)throw Error('missing');
   if(q.repo===repo)return files.get(`${repo}:${q.path}`);
   if(q.path===path)return Buffer.from(dump(callee,{lineWidth:-1}));
-  return currentFile(q.path);
+  if(q.path==='.github/workflows/implementation-impact.yml'){const y=load(currentFile(q.path).toString());mutateImpact(y);return Buffer.from(dump(y,{lineWidth:-1}));}
+  return changeSource(currentFile(q.path),q.path);
  }});
 }
-it('官方Pilot固定初始化器及直接依赖均进入真实来源集合',async()=>{
+it('旧官方Pilot固定初始化器及直接依赖均进入真实来源集合',async()=>{
  const proof=await officialPilotBundle();expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
  for(const path of ['scripts/ci/prepare-fixed-skill-cache.mjs','scripts/ci/fixed-local-git.mjs','packages/brain/src/lib/implementation-ci-snapshot.js'])expect(proof.consumer.bindings).toContainEqual(expect.objectContaining({repo:'perfectuser21/cecelia',revision:'b'.repeat(40),path,content_sha256:createHash('sha256').update(currentFile(path)).digest('hex')}));
 });
@@ -62,3 +65,70 @@ it.each([
  ['duplicate initializer',y=>y.jobs.verify.steps.push(structuredClone(initStep(y)))],
 ])('初始化器%s必须拒绝',async(_name,mutate)=>{const proof=await officialPilotBundle(mutate);expect(proof.status).toBe('unknown');expect(proof.executable).toBe(false);});
 it.each(['scripts/ci/prepare-fixed-skill-cache.mjs','scripts/ci/fixed-local-git.mjs','packages/brain/src/lib/implementation-ci-snapshot.js'])('缺固定初始化依赖%s保持unknown',async path=>{const proof=await officialPilotBundle(()=>{},path);expect(proof.status).toBe('unknown');});
+
+const MODERN='scripts/ci/implementation-skill-source.mjs';
+const modernInputs=[MODERN,'scripts/ci/fixed-local-git.mjs','packages/brain/src/lib/implementation-ci-snapshot.js','packages/brain/src/lib/device-patrol-admission.js'];
+const modernStep=(y,job='verify')=>y.jobs[job].steps.find(s=>String(s.run||'').includes('tooling/'+MODERN));
+const modernBundle=(mutate=()=>{},missing=null,options={})=>officialPilotBundle(mutate,missing,{...options,modern:true});
+it('真实现代Pilot与Impact完整缓存封套及三直接imports冻结，来源证明仍非执行或main信任',async()=>{
+ const proof=await modernBundle();expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
+ expect(proof.admission.status).toBe('unknown');expect(proof.executable).toBe(false);
+ for(const name of ['pilot-release-verification','implementation-impact'])for(const path of modernInputs)expect(proof.consumer.input_relations).toContainEqual(expect.objectContaining({consumer:expect.objectContaining({path:`.github/workflows/${name}.yml`}),input:expect.objectContaining({path}),kind:'fixed_job_node_source'}));
+ for(const path of modernInputs){expect(proof.consumer.bindings).toContainEqual(expect.objectContaining({repo:'perfectuser21/cecelia',revision:'b'.repeat(40),path,content_sha256:createHash('sha256').update(currentFile(path)).digest('hex')}));
+ }
+
+});
+it.each(modernInputs)('现代缓存缺真实固定输入%s必须unknown',async path=>{const proof=await modernBundle(()=>{},path);expect(proof.status).toBe('unknown');expect(proof.executable).toBe(false);});
+const modernMutations=[
+ ['remove initializer',y=>{const s=modernStep(y);y.jobs.verify.steps.splice(y.jobs.verify.steps.indexOf(s),1);}],
+ ['changed shell',y=>modernStep(y).run+='echo unsafe\n'],
+ ['commented initializer',y=>modernStep(y).run=modernStep(y).run.split('\n').map(x=>'#'+x).join('\n')],
+ ['wrong secret',y=>modernStep(y).env.SKILLS_SOURCE_SSH_KEY='${{ secrets.FOREIGN_KEY }}'],
+ ['secret leaked to runner',y=>y.jobs.verify.steps.find(s=>String(s.run||'').includes('tooling/scripts/ci/pilot-release-verification.mjs')).env.SKILLS_SOURCE_SSH_KEY='${{ secrets.SKILLS_SOURCE_SSH_KEY }}'],
+ ['aliased runner secret',y=>y.jobs.verify.steps.find(s=>String(s.run||'').includes('tooling/scripts/ci/pilot-release-verification.mjs')).env.OTHER_KEY='${{ secrets.SKILLS_SOURCE_SSH_KEY }}'],
+ ['job NODE_OPTIONS',y=>y.jobs.verify.env.NODE_OPTIONS='--import ./candidate.mjs'],
+ ['global NODE_OPTIONS',y=>y.env={NODE_OPTIONS:'--import ./candidate.mjs'}],
+ ['job secret',y=>y.jobs.verify.env.SKILLS_SOURCE_SSH_KEY='${{ secrets.SKILLS_SOURCE_SSH_KEY }}'],
+ ['extra env',y=>modernStep(y).env.GIT_SSH_COMMAND='unsafe'],
+ ['conditional',y=>modernStep(y).if='always()'],
+ ['continue on error',y=>modernStep(y)['continue-on-error']=true],
+ ['working directory',y=>modernStep(y)['working-directory']='candidate'],
+ ['shell override',y=>modernStep(y).shell='bash'],
+ ['job defaults',y=>y.jobs.verify.defaults={run:{shell:'bash'}}],
+ ['wrong repo env',y=>y.jobs.verify.env.SOURCE_REPO='foreign/repo'],
+ ['wrong head env',y=>y.jobs.verify.env.HEAD='main'],
+ ['missing secret declaration',y=>delete y.on.workflow_call.secrets.SKILLS_SOURCE_SSH_KEY],
+ ['shallow source',y=>y.jobs.verify.steps.find(s=>s.with?.path==='source').with['fetch-depth']=1],
+ ['wrong artifact',y=>y.jobs.verify.steps.find(s=>s.uses?.startsWith('actions/download-artifact@')).with.name='latest'],
+ ['initializer before snapshot',y=>{const a=y.jobs.verify.steps,i=a.indexOf(modernStep(y));a.unshift(...a.splice(i,1));}],
+ ['initializer after runner',y=>{const a=y.jobs.verify.steps,i=a.indexOf(modernStep(y));a.push(...a.splice(i,1));}],
+ ['duplicate initializer',y=>y.jobs.verify.steps.push(structuredClone(modernStep(y)))],
+ ['mixed old initializer',y=>y.jobs.verify.steps.push({run:'node tooling/scripts/ci/prepare-fixed-skill-cache.mjs --repo-root source'})],
+ ['wrong cache output',y=>modernStep(y).run=modernStep(y).run.replace('IMPLEMENTATION_SKILLS_SOURCE_DIR','SKILLS_SOURCE_DIR')],
+ ['untrusted loader',y=>modernStep(y).run=modernStep(y).run.replace('node tooling/'+MODERN,'python3 source/scripts/skills-source.py')],
+];
+it.each(modernMutations)('现代Pilot%s必须unknown',async(_name,mutate)=>{const p=await modernBundle(mutate);expect(p.status).toBe('unknown');expect(p.executable).toBe(false);});
+it.each([
+ ['missing initializer',y=>{const s=modernStep(y,'gate');y.jobs.gate.steps.splice(y.jobs.gate.steps.indexOf(s),1);}],
+ ['changed shell',y=>modernStep(y,'gate').run+='echo unsafe\n'],
+ ['download replaced',y=>y.jobs.gate.steps.find(s=>String(s.run||'').includes('implementation-baseline-$HEAD')).run='echo implementation-baseline-$HEAD'],
+ ['download wrong run',y=>y.jobs.gate.steps.find(s=>String(s.run||'').includes('implementation-baseline-$HEAD')).env.RUN_ID='other'],
+ ['download after initializer',y=>{const a=y.jobs.gate.steps,i=a.findIndex(s=>String(s.run||'').includes('implementation-baseline-$HEAD'));a.push(...a.splice(i,1));}],
+ ['job NODE_OPTIONS',y=>y.jobs.gate.env.NODE_OPTIONS='--import ./candidate.mjs'],
+ ['wrong base',y=>y.jobs.gate.env.BASE='main'],
+ ['wrong mode',y=>y.jobs.gate.env.MODE='pr'],
+ ['wrong head',y=>y.jobs.gate.env.HEAD='main'],
+ ['wrong source',y=>y.jobs.gate.env.SOURCE_REPO='foreign/repo'],
+ ['wrong tooling',y=>y.jobs.gate.env.TOOLING_REVISION='main'],
+ ['native override',y=>modernStep(y,'gate').env.NATIVE_PR='true'],
+ ['unconditional runner key',y=>y.jobs.gate.steps.find(s=>s.name==='实际变更影响与固定回归').env.SKILLS_SOURCE_SSH_KEY='${{ secrets.SKILLS_SOURCE_SSH_KEY }}'],
+ ['duplicate initializer',y=>y.jobs.gate.steps.push(structuredClone(modernStep(y,'gate')))],
+ ['after runner',y=>{const a=y.jobs.gate.steps,i=a.indexOf(modernStep(y,'gate'));a.push(...a.splice(i,1));}],
+])('现代Impact%s必须unknown',async(_name,mutate)=>{const p=await modernBundle(()=>{},null,{mutateImpact:mutate});expect(p.status).toBe('unknown');});
+it.each([
+ ['deadline',s=>s.replace('Date.now()+60000','Date.now()+600000')],
+ ['metadata limit',s=>s.replace('4*1024*1024','40*1024*1024')],
+ ['history source',s=>s.replace('business.add(row.source_commit)','business.add(revisions.at(-1))')],
+ ['HEAD materialize',s=>s.replace('materializeImplementationSkills(realpathSync(root),revisions.at(-1)','materializeImplementationSkills(realpathSync(root),revisions[0]')],
+ ['extra import',s=>s+"\nimport './unreviewed.mjs';\n"],
+])('现代helper%s漂移不能冒已审源码封套',async(_name,change)=>{const p=await modernBundle(()=>{},null,{changeSource:(bytes,path)=>path===MODERN?Buffer.from(change(bytes.toString())):bytes});expect(p.status).toBe('unknown');});

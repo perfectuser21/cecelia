@@ -129,6 +129,23 @@ function httpApp() {
   app.use('/map/manifests',createMapManifestRouter({pool:db,projector}));
   app.use('/map',createMapRouter({pool:db})); return app;
 }
+it('HTTP事务CAS并发仅一份draft成功，旧无body入口兼容且丢失者不投影',async()=>{
+ const scope='http-cas-concurrent';await register(scope);const app=httpApp();
+ const old=await stores.lib.submit(manifest(scope,false));
+ await request(app).post(`/map/manifests/${old.id}/activate`).expect(200);
+ const rows=[];
+ for(const name of ['CAS一','CAS二']){const next=manifest(scope,false);next.capabilities[0].name=name;rows.push(await stores.lib.submit(next));}
+ const results=await Promise.all(rows.map(row=>request(app).post(`/map/manifests/${row.id}/activate`).send({expected_active:{id:old.id,digest:old.digest}})));
+ expect(results.map(r=>r.status).sort()).toEqual([200,409]);
+ const winner=results.find(r=>r.status===200),loser=results.find(r=>r.status===409);
+ expect(loser.body.error.code).toBe('MAP_MANIFEST_ACTIVE_CONFLICT');
+ const active=await db.query("SELECT id FROM map_manifest_versions WHERE scope_key=$1 AND status='active'",[scope]);
+ expect(active.rows).toEqual([{id:winner.body.manifest_version.id}]);
+ const lost=rows.find(row=>row.id!==winner.body.manifest_version.id);
+ expect((await db.query('SELECT status FROM map_manifest_versions WHERE id=$1',[lost.id])).rows).toEqual([{status:'draft'}]);
+ expect((await db.query('SELECT id FROM map_projection_runs WHERE manifest_version_id=$1',[lost.id])).rows).toEqual([]);
+ expect((await db.query("SELECT manifest_version_id FROM map_projection_runs WHERE scope_key=$1 AND status='active'",[scope])).rows).toEqual([{manifest_version_id:winner.body.manifest_version.id}]);
+});
 it('HTTP提交与激活保留绑定领域错误422及原始code', async () => {
   const scope='http-errors'; await register(scope); const app=httpApp(),m=manifest(scope);
   m.capabilities[0].brain_binding.entity_id=randomUUID();
