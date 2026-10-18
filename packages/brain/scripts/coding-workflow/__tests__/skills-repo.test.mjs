@@ -51,3 +51,12 @@ it('Skills routing base is read from its own clone instead of the current Ceceli
   const actual=await resolveCanonicalRoutingEvidence({repo:'zenithjoy-skills',branch:'cp-skills-fixture',source:'api',source_id:'fixture'},[{repo:'zenithjoy-skills'}]);expect(actual.base_sha).toBe(sha);
  }finally{if(old===undefined)delete process.env.REPO_ROOT_ZENITHJOY_SKILLS;else process.env.REPO_ROOT_ZENITHJOY_SKILLS=old;fs.rmSync(root,{recursive:true,force:true});}
 });
+it('Brain refuses headless Skills tasks when the registered runner profile is disabled',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'skills-disabled-'));
+ try{
+  const file=path.join(root,'repos.json');fs.writeFileSync(file,JSON.stringify({repos:loadRepos().map(r=>r.key==='zenithjoy-skills'?{...r,enabled:false}:r)}));
+  const module=new URL('../../../src/work-router.js',import.meta.url).href;
+  const code=`import{routeWork}from${JSON.stringify(module)};try{routeWork({source:'api',source_id:'disabled',title:'disabled fixture',mutation_intent:'write',declared_change_kind:'bugfix',repo_hint:'zenithjoy-skills',map_scope_hint:['skill_distribution']},[{repo:'zenithjoy-skills'}]);process.exit(2);}catch(error){if(error.code!=='runner_repo_unsupported')throw error;console.log(error.code);}`;
+  expect(execFileSync(process.execPath,['--input-type=module','-e',code],{env:{...process.env,CODING_WF_REPOS_FILE:file},encoding:'utf8'})).toContain('runner_repo_unsupported');
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
