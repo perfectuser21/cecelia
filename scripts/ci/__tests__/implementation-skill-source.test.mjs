@@ -5,7 +5,10 @@ import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import fs from 'node:fs';
+import {syncBuiltinESMExports} from 'node:module';
 import {pilotPlanHash} from '../../../packages/brain/src/lib/pilot-release-verification.js';
+import * as patrol from '../../../packages/brain/src/lib/device-patrol-admission.js';
 import {readImplementationSource} from '../implementation-skill-source.mjs';
 import * as sourceApi from '../implementation-skill-source.mjs';
 import {createFixedLocalSourceReader,readFixedLocalGitBlob} from '../fixed-local-git.mjs';
@@ -319,4 +322,27 @@ test('device patrol旧reader在显式CI缓存模式只读固定对象，缺对�
   assert.notEqual(run('relative-cache').status,0);assert.equal(existsSync(marker),false);
   assert.notEqual(run(f.central,empty).status,0,'调用方不能覆盖显式CI缓存');assert.equal(existsSync(marker),false);
  }finally{f.cleanup();}
+});
+test('巡查专用已登记快照准备introduced历史锁，其他缺definitions及身份篡改拒绝',()=>{
+ const f=fixture(),prior=process.env.SKILLS_SOURCE_SSH_KEY;process.env.SKILLS_SOURCE_SSH_KEY='fixture-key';let cache;
+ try{
+  const contract={schema_version:1,scope:patrol.PATROL_SCOPE,capability_id:patrol.PATROL_CAPABILITY,workflows:[['66fe22f5-1a60-4e23-bcfb-7b4df2f0fbff','single-phone-account-patrol','d51eefa1-0ffd-43d7-94ba-16ff6b4d3800'],['7dfd3b5d-bc5a-4d96-b744-10d26bc7eb70','phone-account-patrol-batch','b33c9f29-5c5f-4fb1-908c-475bb9566085']].map(([id,key,activity])=>({id,key,activities:[{id:activity,key:'readiness',bindings:['scripts/phone-account-patrol/preflight.py'],assertion_ref:patrol.PATROL_ASSERTION}]})),auxiliary_paths:[patrol.PATROL_PATH],maintenance_owner:'主理人',schedule:{time:'22:00',timezone:'Asia/Shanghai'}};
+  writeFileSync(join(f.business,patrol.PATROL_PATH),JSON.stringify(contract));writeFileSync(join(f.business,'scripts/phone-account-patrol/preflight.py'),'READY=True\n');const introduced=commit(f.business),old=JSON.parse(git(f.business,'show',`${introduced}:.skills-source.json`)).revision;
+  const source=patrol.patrolSourceProof(contract,introduced,path=>Buffer.from(git(f.business,'show',`${introduced}:${path}`)));
+  const registration={provenance:{base_revision:f.before,introduced_revision:introduced,base_tree_sha:git(f.business,'rev-parse',`${f.before}^{tree}`),base_paths:['README.md'],introduced_paths:[patrol.PATROL_PATH],compare_status:'ahead',actor:'fixture'},source};
+  writeFileSync(join(f.central,'next.txt'),'new HEAD central');const next=commit(f.central),lock=JSON.parse(git(f.business,'show',`${introduced}:.skills-source.json`));lock.revision=next;writeFileSync(join(f.business,'.skills-source.json'),JSON.stringify(lock));const head=commit(f.business);
+  const body={schema_version:1,scope:patrol.PATROL_SCOPE,repo:patrol.PATROL_REPO,purpose:'scope_identity_bootstrap_only',revision_basis:'requested_ci_input_not_source_attestation',status:'verified',gaps:[],revision:f.before,registration,registration_sha256:patrol.sha(JSON.stringify(patrol.canonical(registration)))},snapshot={...body,snapshot_sha256:patrol.sha(JSON.stringify(patrol.canonical(body)))},requested=[];
+  patrol.validatePatrolSnapshot(snapshot);
+  cache=sourceApi.prepareImplementationSkillCache(f.business,patrol.PATROL_REPO,[f.after,head],{snapshots:[snapshot],fetchSource:(dir,rev)=>{requested.push(rev);if(!existsSync(join(dir,'.git')))git(f.central,'clone','--quiet','--no-checkout',f.central,dir);}});
+  assert.deepEqual(new Set(requested),new Set([old,next]));
+  for(const change of [{scope:'zenithjoy'},{repo:'perfectuser21/cecelia'},{registration:{...registration,provenance:{...registration.provenance,introduced_revision:'main'}}}])assert.throws(()=>sourceApi.prepareImplementationSkillCache(f.business,patrol.PATROL_REPO,[f.after,head],{snapshots:[{...snapshot,...change}]}));
+ }finally{if(cache)rmSync(dirname(cache),{recursive:true,force:true});if(prior===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=prior;f.cleanup();}
+});
+test('materialize最后mkdir耗尽共享deadline后不得写文件或返回成功',()=>{
+ const f=fixture(),mkdir=fs.mkdirSync,now=Date.now;let clock=100000;
+ try{
+  Date.now=()=>clock;fs.mkdirSync=(...args)=>{const result=mkdir(...args);clock+=60001;return result;};syncBuiltinESMExports();
+  assert.throws(()=>sourceApi.materializeImplementationSkills(f.business,f.after,'perfectuser21/zenithjoy-workspace',f.central),/TIMEOUT/);
+  assert.equal(existsSync(join(f.business,f.path)),false);
+ }finally{fs.mkdirSync=mkdir;Date.now=now;syncBuiltinESMExports();f.cleanup();}
 });
