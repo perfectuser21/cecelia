@@ -166,6 +166,7 @@ jobs:
       DB_NAME: cecelia_scratch
       DB_USER: ci
       DB_PASSWORD: isolated-ci
+      SOURCE_REPO: ${{ inputs.source_repo || github.repository }}
       MAP_SCOPE: ${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}
       ADMISSION_SCOPES: ${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || (github.event_name == 'pull_request' && github.repository == 'perfectuser21/cecelia' && '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' || '') }}
       BASE: ${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}
