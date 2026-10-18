@@ -73,6 +73,7 @@ const modernBundle=(mutate=()=>{},missing=null,options={})=>officialPilotBundle(
 it('真实现代Pilot与Impact完整缓存封套及三直接imports冻结，来源证明仍非执行或main信任',async()=>{
  const proof=await modernBundle();expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');
  expect(proof.admission.status).toBe('unknown');expect(proof.executable).toBe(false);
+ for(const name of ['pilot-release-verification','implementation-impact'])for(const path of modernInputs)expect(proof.consumer.input_relations).toContainEqual(expect.objectContaining({consumer:expect.objectContaining({path:`.github/workflows/${name}.yml`}),input:expect.objectContaining({path}),kind:'fixed_job_node_source'}));
  for(const path of modernInputs){expect(proof.consumer.bindings).toContainEqual(expect.objectContaining({repo:'perfectuser21/cecelia',revision:'b'.repeat(40),path,content_sha256:createHash('sha256').update(currentFile(path)).digest('hex')}));
  }
 
@@ -84,6 +85,9 @@ const modernMutations=[
  ['commented initializer',y=>modernStep(y).run=modernStep(y).run.split('\n').map(x=>'#'+x).join('\n')],
  ['wrong secret',y=>modernStep(y).env.SKILLS_SOURCE_SSH_KEY='${{ secrets.FOREIGN_KEY }}'],
  ['secret leaked to runner',y=>y.jobs.verify.steps.find(s=>String(s.run||'').includes('tooling/scripts/ci/pilot-release-verification.mjs')).env.SKILLS_SOURCE_SSH_KEY='${{ secrets.SKILLS_SOURCE_SSH_KEY }}'],
+ ['aliased runner secret',y=>y.jobs.verify.steps.find(s=>String(s.run||'').includes('tooling/scripts/ci/pilot-release-verification.mjs')).env.OTHER_KEY='${{ secrets.SKILLS_SOURCE_SSH_KEY }}'],
+ ['job NODE_OPTIONS',y=>y.jobs.verify.env.NODE_OPTIONS='--import ./candidate.mjs'],
+ ['global NODE_OPTIONS',y=>y.env={NODE_OPTIONS:'--import ./candidate.mjs'}],
  ['job secret',y=>y.jobs.verify.env.SKILLS_SOURCE_SSH_KEY='${{ secrets.SKILLS_SOURCE_SSH_KEY }}'],
  ['extra env',y=>modernStep(y).env.GIT_SSH_COMMAND='unsafe'],
  ['conditional',y=>modernStep(y).if='always()'],
@@ -107,6 +111,10 @@ it.each(modernMutations)('现代Pilot%s必须unknown',async(_name,mutate)=>{cons
 it.each([
  ['missing initializer',y=>{const s=modernStep(y,'gate');y.jobs.gate.steps.splice(y.jobs.gate.steps.indexOf(s),1);}],
  ['changed shell',y=>modernStep(y,'gate').run+='echo unsafe\n'],
+ ['download replaced',y=>y.jobs.gate.steps.find(s=>String(s.run||'').includes('implementation-baseline-$HEAD')).run='echo implementation-baseline-$HEAD'],
+ ['download wrong run',y=>y.jobs.gate.steps.find(s=>String(s.run||'').includes('implementation-baseline-$HEAD')).env.RUN_ID='other'],
+ ['download after initializer',y=>{const a=y.jobs.gate.steps,i=a.findIndex(s=>String(s.run||'').includes('implementation-baseline-$HEAD'));a.push(...a.splice(i,1));}],
+ ['job NODE_OPTIONS',y=>y.jobs.gate.env.NODE_OPTIONS='--import ./candidate.mjs'],
  ['wrong base',y=>y.jobs.gate.env.BASE='main'],
  ['wrong mode',y=>y.jobs.gate.env.MODE='pr'],
  ['wrong head',y=>y.jobs.gate.env.HEAD='main'],
