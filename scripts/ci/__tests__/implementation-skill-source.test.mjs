@@ -277,11 +277,12 @@ test('唯一旧兼容升级为821真实可信reader冷启动，而非185空缓�
  const step=w.jobs.gate.steps.find(s=>s.name==='准备固定中央Skill对象缓存');
  assert.match(step.run,/821dac5ae926cd5120d7b94fcd8012dd1f09bc23/);
  assert.match(step.run,/b8985542133fb7dcf87a2adf9151de43d0694185/,'精确已发布同字节main必须可冷启动');
+ assert.match(step.run,/a72ff8372d4eb2100e1b9b7572d88a22969bef2f/,'实际新发布同reader与锁的main必须可冷启动');
  assert.match(step.run,/readImplementationSource/);assert.match(step.run,/packages\/engine\/skills\/dev\/SKILL\.md/);
  assert.doesNotMatch(step.run,/18552f8eeafdb2d404294bd6601bc74d00a1d422/);
 });
-test('已发布同字节版本workflow实际执行可信reader冷fetch，锁漂移/既存cache拒绝且不运行candidate loader',()=>{
- const f=fixture(),workspace=dirname(f.business),tooling=join(workspace,'tooling'),bin=join(workspace,'bin'),legacy='b8985542133fb7dcf87a2adf9151de43d0694185';
+for(const legacy of ['b8985542133fb7dcf87a2adf9151de43d0694185','a72ff8372d4eb2100e1b9b7572d88a22969bef2f'])test(`已发布同字节版本${legacy}实际执行可信reader冷fetch，锁漂移/既存cache拒绝且不运行candidate loader`,()=>{
+ const f=fixture(),workspace=dirname(f.business),tooling=join(workspace,'tooling'),bin=join(workspace,'bin');
  try{
   symlinkSync(f.business,join(workspace,'source'));mkdirSync(tooling);git(tooling,'init','-q');git(tooling,'config','core.hooksPath','/dev/null');mkdirSync(bin);
   const catalog=JSON.parse(git(f.central,'show','HEAD:distribution/catalog.json'));catalog.profiles.cecelia={files:[{...catalog.profiles.zenithjoy.files[0],path:'packages/engine/skills/dev/SKILL.md'}]};writeFileSync(join(f.central,'distribution/catalog.json'),JSON.stringify(catalog));
