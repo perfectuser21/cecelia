@@ -157,3 +157,37 @@ describe('历史来源与派生身份的回归边界',()=>{
     for(const kind of ['code','skill'])await expect(validateFixedImplementationBindings({implementation_bindings:[{...location,kind,resolved_source:{repo:central,path:sourcePath,revision:'e'.repeat(40)}}]},{repo,commit:revision},{readFile})).rejects.toThrow();
   });
 });
+
+describe('两业务仓中央Skill profile必须按仓库显式匹配',()=>{
+ const central='perfectuser21/zenithjoy-skills',sha='b'.repeat(40),path='packages/workflows/skills/demo/SKILL.md';
+ const content='---\nname: demo\nversion: 1\n---\nfixed central Skill\n';
+ const profiles={cecelia:'perfectuser21/cecelia',zenithjoy:'perfectuser21/zenithjoy-workspace'};
+ const source=profile=>`business-skills/${profile}/demo/SKILL.md`;
+ function table(profile,lockProfile=profile){
+  const files=new Map([[`${profiles[profile]}:.skills-source.json`,JSON.stringify({version:1,repository:central,revision:sha,profile:lockProfile,loader_sha256:'c'.repeat(64)})]]);
+  files.set(`${central}:distribution/catalog.json`,JSON.stringify({version:1,profiles:Object.fromEntries(Object.keys(profiles).map(p=>[p,{files:[{path,source:source(p),sha256:createHash('sha256').update(content).digest('hex')}]}]))}));
+  for(const p of Object.keys(profiles))files.set(`${central}:${source(p)}`,content);
+  return files;
+ }
+ it.each(Object.keys(profiles))('%s按正确锁读取中央正文，业务原路径已不存在',async profile=>{
+  const files=table(profile),readFile=vi.fn(s=>files.get(`${s.repo}:${s.path}`));
+  const binding={kind:'skill',repo:profiles[profile],path,revision};
+  const [result]=await validateFixedImplementationBindings({implementation_bindings:[binding]},{repo:profiles[profile],commit:revision},{readFile});
+  expect(result.resolved_source).toEqual({repo:central,path:source(profile),revision:sha});
+  expect(result.digest).toBe('sha256:'+createHash('sha256').update(content).digest('hex'));
+  expect(readFile.mock.calls.some(([s])=>s.repo===profiles[profile]&&s.path===path)).toBe(false);
+ });
+ it.each(Object.keys(profiles))('%s不能使用另一仓profile，即使中央目录包含同名路径',async profile=>{
+  const other=profile==='cecelia'?'zenithjoy':'cecelia',files=table(profile,other),reads=[];
+  await expect(readFixedImplementationBinding({kind:'skill',repo:profiles[profile],path,revision},{readFile:s=>{reads.push(s);return files.get(`${s.repo}:${s.path}`);}})).rejects.toMatchObject({code:'definition_source_invalid'});
+  expect(reads).toHaveLength(1);expect(reads[0].path).toBe('.skills-source.json');
+ });
+ it('Cecelia历史固定树证实无锁时仍读原Skill；不可读锁不得冒充无锁',async()=>{
+  const binding={kind:'skill',repo:profiles.cecelia,path,revision},reads=[];
+  const readFile=(s,options)=>{reads.push(s.path);if(s.path==='.skills-source.json'){expect(options).toEqual({allowMissing:true});return null;}return content;};
+  expect((await readFixedImplementationBinding(binding,{readFile})).content).toBe(content);
+  expect(reads).toEqual(['.skills-source.json',path]);
+  const forbidden=vi.fn(()=>{throw Object.assign(Error('forbidden'),{status:403});});
+  await expect(readFixedImplementationBinding(binding,{readFile:forbidden})).rejects.toThrow();expect(forbidden).toHaveBeenCalledOnce();
+ });
+});
