@@ -207,6 +207,25 @@ jobs:
           set -euo pipefail
           node tooling/scripts/ci/implementation-patrol-baseline.mjs "$TOOLING_REVISION" "$RUNNER_TEMP/implementation-input"
           printf 'ADMISSION_SCOPES=\n' >> "$GITHUB_ENV"
+      - name: 准备固定中央Skill对象缓存
+        id: skill-cache
+        env:
+          SKILLS_SOURCE_SSH_KEY: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+          NATIVE_PR: ${{ github.repository == 'perfectuser21/cecelia' && github.event_name == 'pull_request' && !inputs.source_repo && !inputs.tooling_revision && !inputs.scope && !inputs.head_revision && !inputs.base_revision && !inputs.mode && !inputs.admission_scopes }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/implementation-output"
+          trap 'code=$?; if (( code != 0 )); then printf "%s\n" "{\"status\":\"unknown\",\"stage\":\"skill_cache_prepare\",\"code\":\"SKILL_CACHE_PREPARATION_FAILED\"}" > "$RUNNER_TEMP/implementation-output/gap.json"; fi' EXIT
+          tooling_sha="$(git -C tooling rev-parse --verify HEAD)"
+          test "$tooling_sha" = "$TOOLING_REVISION"
+          # 唯一已合并旧工具仍运行其原完整双scope gate；不是缺helper泛化降级。
+          if [[ "$NATIVE_PR" == true && "$GITHUB_REPOSITORY" == perfectuser21/cecelia && "$GITHUB_EVENT_NAME" == pull_request && "$SOURCE_REPO" == perfectuser21/cecelia && "$MODE" == pr && "$BASE" == 18552f8eeafdb2d404294bd6601bc74d00a1d422 && "$TOOLING_REVISION" == 18552f8eeafdb2d404294bd6601bc74d00a1d422 && "$MAP_SCOPE" == cecelia-kr && "$ADMISSION_SCOPES" == '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' ]]; then
+            printf 'legacy_185=true\n' >> "$GITHUB_OUTPUT"
+          else
+            cache="$(node tooling/scripts/ci/implementation-skill-source.mjs --prepare-ci-cache "$GITHUB_WORKSPACE/source" "$SOURCE_REPO" "$BASE" "$HEAD")"
+            case "$cache" in "$RUNNER_TEMP"/implementation-skills-ci-*/objects) test -d "$cache" ;; *) echo 'invalid fixed Skill cache' >&2; exit 1 ;; esac
+            printf 'IMPLEMENTATION_SKILLS_SOURCE_DIR=%s\n' "$cache" >> "$GITHUB_ENV"
+          fi
       - name: 下载固定SHA中央bundle（PR无中央写凭据）
         if: env.MAP_SCOPE != 'cecelia-device-patrol'
         env:
@@ -269,7 +288,7 @@ jobs:
           fi
       - name: 实际变更影响与固定回归
         env:
-          SKILLS_SOURCE_SSH_KEY: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+          SKILLS_SOURCE_SSH_KEY: ${{ steps.skill-cache.outputs.legacy_185 == 'true' && secrets.SKILLS_SOURCE_SSH_KEY || '' }}
         run: |
           set -euo pipefail
           if [[ "$MODE" == pr && -n "$ADMISSION_SCOPES" ]]; then
