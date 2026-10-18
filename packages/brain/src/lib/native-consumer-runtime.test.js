@@ -9,9 +9,9 @@ import {readNativeConsumerRuntime,assertNativeConsumerRuntime} from './native-co
 const read=path=>readFileSync(new URL(basename(path),import.meta.url),'utf8');
 const stagePaths=['source','envelopes','modes'].map(n=>`packages/brain/src/lib/existing-ops-stage-${n}.js`);
 const provenancePaths=['envelope','core-envelope','entry-envelopes','local-envelopes']
- .map(name=>`packages/brain/src/lib/existing-ops-provenance-${name}.js`).concat(stagePaths).sort();
-it('实际身份包含全部9个新增收集器依赖，逐文件记录加载字节',()=>{
- const runtime=readNativeConsumerRuntime();expect(runtime.files).toHaveLength(14);
+ .map(name=>`packages/brain/src/lib/existing-ops-provenance-${name}.js`).concat(stagePaths,'packages/brain/src/lib/workspace-ci-source-bundle.js').sort();
+it('实际身份包含全部10个新增收集器依赖，逐文件记录加载字节',()=>{
+ const runtime=readNativeConsumerRuntime();expect(runtime.files).toHaveLength(15);
  for(const path of provenancePaths)expect(runtime.files).toContainEqual({path,sha256:createHash('sha256').update(read(path)).digest('hex')});
 });
 it.each(provenancePaths)('%s 缺失、错误字节或非普通固定 blob 都拒绝',async path=>{
@@ -67,15 +67,14 @@ it('固定blob封印和普通文件模式必须同时正确，不能用symlink�
 // 新collector实际静态依赖也必须进入启动时加载身份，不能只冻旧11个根。
 const nativeEvidencePaths=['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-native-evidence-${n}.js`).sort();
 it('native evidence collector真实静态import闭包不能漏运行身份文件',()=>{
- const runtime=readNativeConsumerRuntime(),queue=runtime.files.map(f=>f.path),seen=new Set();
+ const runtime=readNativeConsumerRuntime(),queue=['existing-ops-source.js','existing-ops-workspace-source.js','workspace-ci-source-bundle.js'].map(name=>`packages/brain/src/lib/${name}`),seen=new Set();
  while(queue.length){const path=queue.shift();if(seen.has(path))continue;seen.add(path);
   const tree=parse(read(path),{ecmaVersion:'latest',sourceType:'module'});
-  for(const node of tree.body)if(node.type==='ImportDeclaration'&&node.source.value.startsWith('./existing-ops-'))
+  for(const node of tree.body)if(node.type==='ImportDeclaration'&&node.source.value.startsWith('./'))
    queue.push(posix.normalize(posix.join(posix.dirname(path),node.source.value)));
  }
- const declared=new Set(runtime.files.map(f=>f.path));
- expect([...seen].filter(path=>!declared.has(path))).toEqual([]);
- expect(runtime.files).toHaveLength(14);
+ expect(runtime.files.map(file=>file.path).sort()).toEqual([...seen].sort());
+ expect(runtime.files).toHaveLength(15);
 });
 it.each(nativeEvidencePaths)('native evidence %s实际加载hash与固定tree blob同时受核验',async path=>{
  const runtime=readNativeConsumerRuntime();
