@@ -190,3 +190,9 @@ it.each([
   expect(proveBuildSources(s,parse)).toBe(false);
   if(key==='helper')expect(provePublishSources(fixedBuild(publishTest),s.helper,parse)).toBe(false);
 });
+import {collectBuildSources} from '../existing-ops-build-source.js';
+it('build-only不能忽略显式新运行输入协议中的未审profile配置',async()=>{
+ const own='packages/brain/src/lib/existing-ops-stage-source.js',repo=buildPrefix+'repos.json',paths=[...new Set([...buildPaths,own])],gaps=[];
+ await collectBuildSources({parse,paths,selectors:{include:[/\/__tests__\/build\.test\.mjs$/],exclude:[]},revision:buildBase,relations:[],read:async()=>'',requireProof:(ok,code)=>{if(!ok)gaps.push(code);return ok;},readSource:async p=>p===own?'export const EXISTING_OPS_REPO_RULES_INPUT_SCHEMA=1;':p===repo?'{"repos":[{"key":"unreviewed"}]}':p===buildTest?explicitProvider(fixedBuild(p)):fixedBuild(p)});
+ expect(gaps).toContain('native_stage_execution_unproven');
+});

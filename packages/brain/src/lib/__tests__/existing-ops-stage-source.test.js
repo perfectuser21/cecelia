@@ -245,3 +245,13 @@ it('未知运行输入协议及未审rules_prompt路径均拒绝',async()=>{
   const r=await collect('recorded',s=>{addReviewedRuntimeInputs(s);patch(s);});expect(r.gaps).toContainEqual({code:'native_stage_execution_unproven'});
  }
 });
+it('build-only真实选中时也绑定precheck和repoRules，缺precheck拒绝',async()=>{
+ const selector=/\/__tests__\/build\.test\.mjs$/;
+ const valid=await collect('recorded',addReviewedRuntimeInputs,selector);expect(valid.gaps).toEqual([]);expect(valid.bindings).toContain(P+'lib/ci-precheck.mjs');
+ expect(valid.relations).toContainEqual(expect.objectContaining({consumer_path:P+'activities/build.mjs',input_path:P+'lib/repo-profile.mjs',kind:'stage_repo_rules_call'}));
+ const absent=await collect('recorded',s=>{addReviewedRuntimeInputs(s);delete s[P+'lib/ci-precheck.mjs'];},selector);expect(absent.gaps.length).toBeGreaterThan(0);
+});
+for(const stage of ['spec-review','evaluate'])it('仅选'+stage+'不得虚构repoRules实际调用',async()=>{
+ const r=await collect('recorded',addReviewedRuntimeInputs,new RegExp('/__tests__/'+stage+'\\.test\\.mjs$'));expect(r.gaps).toEqual([]);
+ expect(r.relations.filter(x=>x.kind==='stage_repo_rules_call'||x.kind==='reviewed_repo_rules_read')).toEqual([]);
+});
