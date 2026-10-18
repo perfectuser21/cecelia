@@ -8,7 +8,7 @@ export function diagnosisFacts(control, failure, sources) {
     if (value.length > max) truncated = true;
     return value.slice(0, max * 4)
       .replace(/\bBearer\s+[^\s"',;]+/gi, 'Bearer [redacted]')
-      .replace(/\b[A-Za-z_]*(?:token|secret|password|api[_-]?key|authorization|cookie)[\"']?\s*[:=]\s*["']?[^\s"'&,;]+/gi, '[redacted]')
+      .replace(/\b[A-Za-z_]*(?:token|secret|password|api[_-]?key|authorization|cookie)["']?\s*[:=]\s*["']?[^\s"'&,;]+/gi, '[redacted]')
       .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*/g, '[redacted-private-key]')
       .replace(/\b1[3-9]\d{9}\b/g, '[redacted-phone]')
       .replace(/\b(?:sk-|ghp_|github_pat_)[A-Za-z0-9_-]+/g, '[redacted]')
