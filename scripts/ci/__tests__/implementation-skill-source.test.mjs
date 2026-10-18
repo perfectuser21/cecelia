@@ -100,6 +100,7 @@ test('Pilot与Impact使用trusted tooling准备隔离缓存，secret只进准备
  for(const [name,jobName,consume] of [['pilot-release-verification','verify','固定完整计划及白名单环境运行全部登记回归'],['implementation-impact','gate','实际变更影响与固定回归']]){
   const w=yaml.load(readFileSync(new URL('../../../.github/workflows/'+name+'.yml',import.meta.url),'utf8'));
   assert.deepEqual(w.on.workflow_call.secrets.SKILLS_SOURCE_SSH_KEY,{required:false});
+  assert.equal(w.jobs[jobName].env.SOURCE_REPO,'${{ inputs.source_repo || github.repository }}','prepare读取的SOURCE_REPO必须由实际job显式绑定');
   const steps=w.jobs[jobName].steps,index=steps.findIndex(s=>s.name==='准备固定中央Skill对象缓存');assert.ok(index>0);
   const step=steps[index];assert.equal(step.env.SKILLS_SOURCE_SSH_KEY,'${{ secrets.SKILLS_SOURCE_SSH_KEY }}');
   assert.match(step.run,/node tooling\/scripts\/ci\/implementation-skill-source\.mjs --prepare-ci-cache/);
