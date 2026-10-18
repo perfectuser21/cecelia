@@ -2,7 +2,8 @@
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync,realpathSync,readFileSync,lstatSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
-import {readFixedLocalGitBlob} from './fixed-local-git.mjs';
+import {readFixedLocalGitBlob,fixedLocalGit} from './fixed-local-git.mjs';
+import {validateImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import {join,resolve,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
@@ -20,9 +21,10 @@ function sourceCache(){
  if(!cache){cache=mkdtempSync(join(tmpdir(),'implementation-skills-'));process.once('exit',()=>rmSync(cache,{recursive:true,force:true}));}
  return join(cache,'objects');
 }
-function ensureSource(source,revision){
- try{git(source,'cat-file','-e',`${revision}^{commit}`);return;}catch{}
- mkdirSync(source,{recursive:true});git(source,'init','-q');
+function ensureSource(source,revision,{deadline=Date.now()+60000}={}){
+ const local=(...args)=>fixedLocalGit(source,args,{deadline});
+ try{local('cat-file','-e',`${revision}^{commit}`);return;}catch{}
+ mkdirSync(source,{recursive:true});local('-c','core.hooksPath=/dev/null','init','-q','--template=');
  const env=environment();let remote='https://github.com/perfectuser21/zenithjoy-skills.git';
  const key=process.env.SKILLS_SOURCE_SSH_KEY;
  const auth=mkdtempSync(join(tmpdir(),'implementation-skills-auth-'));
@@ -34,7 +36,8 @@ function ensureSource(source,revision){
    env.GIT_SSH_COMMAND=`ssh -F /dev/null -i "${identity}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="${hosts}"`;
    remote='git@github.com:perfectuser21/zenithjoy-skills.git';
   }
-  execFileSync('git',['--no-replace-objects','-C',source,'fetch','--quiet','--depth=1',remote,revision],{env,stdio:['ignore','pipe','pipe'],timeout:60000});
+  const timeout=deadline-Date.now();if(timeout<=0)fail('SKILL_CACHE_TIMEOUT');
+  execFileSync('git',['--no-replace-objects','-C',source,'fetch','--quiet','--depth=1',remote,revision],{env,stdio:['ignore','pipe','pipe'],timeout});
  }finally{rmSync(auth,{recursive:true,force:true});}
 }
 function fixedLock(bytes,repo){
@@ -43,23 +46,65 @@ function fixedLock(bytes,repo){
  if(lock.profile!==profileFor[repo])fail('SKILL_SOURCE_PROFILE_MISMATCH');return lock;
 }
 /** CI creates fresh trusted Git objects outside the candidate; it never runs a candidate/central loader. */
-export function prepareImplementationSkillCache(root,repo,revisions,{fetchSource=ensureSource}={}){
+export function prepareImplementationSkillCache(root,repo,revisions,{snapshots=[],fetchSource=ensureSource,deadline=Date.now()+60000}={}){
  if(!Object.hasOwn(profileFor,repo)||!Array.isArray(revisions)||!revisions.length||revisions.length>2||revisions.some(r=>!/^[0-9a-f]{40}$/.test(r)))fail('SKILL_CACHE_INPUT_INVALID');
- const remote=git(root,'remote','get-url','origin').toString().trim().replace(/^https:\/\/github\.com\//,'').replace(/^git@github\.com:/,'').replace(/\.git$/,'');
+ if(!Number.isSafeInteger(deadline))fail('SKILL_CACHE_INPUT_INVALID');deadline=Math.min(deadline,Date.now()+60000);
+ const read=(dir,location,options={})=>readFixedLocalGitBlob(dir,location,{...options,deadline});
+ const remote=fixedLocalGit(root,['remote','get-url','origin'],{deadline}).toString().trim().replace(/^https:\/\/github\.com\//,'').replace(/^git@github\.com:/,'').replace(/\.git$/,'');
  if(remote!==repo)fail('SKILL_CACHE_REPO_INVALID');
- const selected=[];
- for(const revision of [...new Set(revisions)]){
-  const bytes=readFixedLocalGitBlob(root,{revision,path:'.skills-source.json'},{allowMissing:true});
-  if(bytes!==null)selected.push(fixedLock(bytes,repo).revision);
+ if(!Array.isArray(snapshots)||snapshots.length>8)fail('SKILL_CACHE_SNAPSHOT_LIMIT');
+ const business=new Set(revisions),bindings=[];let metadata=0,total=0;
+ const bounded=bytes=>{total+=bytes.length;if(bytes.length>1024*1024||total>8*1024*1024)fail('SKILL_CACHE_BYTE_LIMIT');return bytes;};
+ for(const input of snapshots){
+  const size=Buffer.byteLength(JSON.stringify(input));metadata+=size;
+  if(size>4*1024*1024||metadata>16*1024*1024)fail('SKILL_CACHE_SNAPSHOT_BYTE_LIMIT');
+  const s=validateImplementationSnapshot(input);
+  if(s.repo!==repo||!revisions.includes(s.revision)||s.status!=='verified'||s.gaps?.length)fail('SKILL_CACHE_SNAPSHOT_SOURCE_INVALID');
+  for(const row of [...s.definitions.workflows,...s.definitions.activities]){
+   if(row.source_repo===repo)business.add(row.source_commit);
+   for(const b of row.payload?.implementation_bindings||[]){
+    if(b.kind==='raw'&&b.status==='unresolved')continue;
+    if(!['code','skill'].includes(b.kind)||! /^[0-9a-f]{40}$/.test(b.revision||'')||b.kind==='code'&&b.resolved_source!==undefined)fail('SKILL_CACHE_BINDING_INVALID');
+    if(b.repo!==repo){if(b.kind==='skill')fail('SKILL_CACHE_BINDING_REPO_INVALID');continue;}
+    business.add(b.revision);if(b.kind==='skill')bindings.push(b);
+   }
+  }
  }
- if(selected.length&&!process.env.SKILLS_SOURCE_SSH_KEY?.trim())fail('SKILL_SOURCE_SSH_KEY_REQUIRED');
+ if(business.size>16)fail('SKILL_CACHE_VERSION_LIMIT');
+ const locks=new Map(),selected=new Set();
+ for(const revision of business){
+  let bytes;try{bytes=read(root,{revision,path:'.skills-source.json'},{allowMissing:true});}catch{fail('SKILL_CACHE_BUSINESS_OBJECT_OR_LOCK_UNAVAILABLE');}
+  const lock=bytes===null?null:fixedLock(bounded(bytes),repo);locks.set(revision,lock);if(lock)selected.add(lock.revision);
+ }
+ if(business.size+selected.size>16)fail('SKILL_CACHE_VERSION_LIMIT');
+ for(const b of bindings){
+  const lock=locks.get(b.revision);
+  if(b.resolved_source!==undefined&&(!lock||Object.keys(b.resolved_source??{}).sort().join(',')!=='path,repo,revision'||b.resolved_source.repo!==lock.repository||b.resolved_source.revision!==lock.revision))fail('SKILL_CACHE_BINDING_SOURCE_INVALID');
+  if(!lock){const bytes=bounded(read(root,{revision:b.revision,path:b.path}));if(b.digest!=='sha256:'+checksum(bytes))fail('SKILL_CACHE_BINDING_DIGEST_INVALID');}
+ }
+ if(selected.size&&!process.env.SKILLS_SOURCE_SSH_KEY?.trim())fail('SKILL_SOURCE_SSH_KEY_REQUIRED');
  const parent=mkdtempSync(join(process.env.RUNNER_TEMP||tmpdir(),'implementation-skills-ci-')),source=join(parent,'objects');
- try{mkdirSync(source,{mode:0o700});for(const revision of [...new Set(selected)]){fetchSource(source,revision);git(source,'cat-file','-e',revision+'^{commit}');}return source;}
+ try{
+  mkdirSync(source,{mode:0o700});const catalogs=new Map();
+  for(const revision of selected){
+   if(Date.now()>=deadline)fail('SKILL_CACHE_TIMEOUT');fetchSource(source,revision,{deadline});
+   const catalog=JSON.parse(bounded(read(source,{revision,path:'distribution/catalog.json'}))),files=catalog?.profiles?.[profileFor[repo]]?.files;
+   if(catalog.version!==1||!Array.isArray(files)||files.length>200)fail('SKILL_CACHE_CATALOG_INVALID');catalogs.set(revision,files);
+  }
+  for(const b of bindings){
+   const lock=locks.get(b.revision);if(!lock)continue;
+   const matches=catalogs.get(lock.revision).filter(e=>e?.path===b.path);if(matches.length!==1)fail('SKILL_CACHE_BINDING_ENTRY_INVALID');
+   const entry=matches[0];if(b.resolved_source!==undefined&&b.resolved_source.path!==entry.source)fail('SKILL_CACHE_BINDING_SOURCE_INVALID');
+   const bytes=bounded(read(source,{revision:lock.revision,path:entry.source}));
+   if(checksum(bytes)!==entry.sha256||b.digest!=='sha256:'+checksum(bytes))fail('SKILL_CACHE_BINDING_DIGEST_INVALID');
+  }
+  return source;
+ }
  catch(error){rmSync(parent,{recursive:true,force:true});throw error;}
 }
 /** Materialize catalog bytes only: no candidate code, loader execution, or tracked-file overwrite. */
-export function materializeImplementationSkills(root,revision,repo,source){
- const deadline=Date.now()+60000,read=(dir,location,options={})=>readFixedLocalGitBlob(dir,location,{...options,deadline});
+export function materializeImplementationSkills(root,revision,repo,source,{deadline=Date.now()+60000}={}){
+ deadline=Math.min(deadline,Date.now()+60000);const read=(dir,location,options={})=>readFixedLocalGitBlob(dir,location,{...options,deadline});
  const lockBytes=read(root,{revision,path:'.skills-source.json'},{allowMissing:true});
  if(lockBytes===null)return;
  const lock=fixedLock(lockBytes,repo),catalog=JSON.parse(read(source,{revision:lock.revision,path:'distribution/catalog.json'}));
@@ -115,10 +160,17 @@ export function readImplementationSource(root,revision,path,{source}={}){
 
 if(process.argv[1]&&process.argv[1]!=='-'&&realpathSync(process.argv[1])===fileURLToPath(import.meta.url)){
  try{
-  const [mode,root,repo,...revisions]=process.argv.slice(2);
+  const deadline=Date.now()+60000,[mode,root,repo,...args]=process.argv.slice(2),revisions=[],snapshots=[];let bytes=0;
   if(mode!=='--prepare-ci-cache'||!root)fail('SKILL_CACHE_ARGUMENT_INVALID');
-  const source=prepareImplementationSkillCache(realpathSync(root),repo,revisions);
-  try{materializeImplementationSkills(realpathSync(root),revisions.at(-1),repo,source);process.stdout.write(source+'\n');}
+  for(let i=0;i<args.length;i++){
+   if(args[i]==='--snapshot'){
+    const path=args[++i];if(!path||snapshots.length>=8)fail('SKILL_CACHE_SNAPSHOT_LIMIT');
+    const stat=lstatSync(path);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>4*1024*1024||(bytes+=stat.size)>16*1024*1024)fail('SKILL_CACHE_SNAPSHOT_BYTE_LIMIT');
+    snapshots.push(JSON.parse(readFileSync(path,'utf8')));
+   }else revisions.push(args[i]);
+  }
+  const source=prepareImplementationSkillCache(realpathSync(root),repo,revisions,{snapshots,deadline});
+  try{materializeImplementationSkills(realpathSync(root),revisions.at(-1),repo,source,{deadline});process.stdout.write(source+'\n');}
   catch(error){rmSync(dirname(source),{recursive:true,force:true});throw error;}
  }catch(error){process.stderr.write((error.code||'SKILL_CACHE_PREPARATION_FAILED')+'\n');process.exitCode=1;}
 }

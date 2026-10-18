@@ -208,25 +208,6 @@ jobs:
           set -euo pipefail
           node tooling/scripts/ci/implementation-patrol-baseline.mjs "$TOOLING_REVISION" "$RUNNER_TEMP/implementation-input"
           printf 'ADMISSION_SCOPES=\n' >> "$GITHUB_ENV"
-      - name: 准备固定中央Skill对象缓存
-        id: skill-cache
-        env:
-          SKILLS_SOURCE_SSH_KEY: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
-          NATIVE_PR: ${{ github.repository == 'perfectuser21/cecelia' && github.event_name == 'pull_request' && !inputs.source_repo && !inputs.tooling_revision && !inputs.scope && !inputs.head_revision && !inputs.base_revision && !inputs.mode && !inputs.admission_scopes }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/implementation-output"
-          trap 'code=$?; if (( code != 0 )); then printf "%s\n" "{\"status\":\"unknown\",\"stage\":\"skill_cache_prepare\",\"code\":\"SKILL_CACHE_PREPARATION_FAILED\"}" > "$RUNNER_TEMP/implementation-output/gap.json"; fi' EXIT
-          tooling_sha="$(git -C tooling rev-parse --verify HEAD)"
-          test "$tooling_sha" = "$TOOLING_REVISION"
-          # 唯一已合并旧工具仍运行其原完整双scope gate；不是缺helper泛化降级。
-          if [[ "$NATIVE_PR" == true && "$GITHUB_REPOSITORY" == perfectuser21/cecelia && "$GITHUB_EVENT_NAME" == pull_request && "$SOURCE_REPO" == perfectuser21/cecelia && "$MODE" == pr && "$BASE" == 18552f8eeafdb2d404294bd6601bc74d00a1d422 && "$TOOLING_REVISION" == 18552f8eeafdb2d404294bd6601bc74d00a1d422 && "$MAP_SCOPE" == cecelia-kr && "$ADMISSION_SCOPES" == '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' ]]; then
-            printf 'legacy_185=true\n' >> "$GITHUB_OUTPUT"
-          else
-            cache="$(node tooling/scripts/ci/implementation-skill-source.mjs --prepare-ci-cache "$GITHUB_WORKSPACE/source" "$SOURCE_REPO" "$BASE" "$HEAD")"
-            case "$cache" in "$RUNNER_TEMP"/implementation-skills-ci-*/objects) test -d "$cache" ;; *) echo 'invalid fixed Skill cache' >&2; exit 1 ;; esac
-            printf 'IMPLEMENTATION_SKILLS_SOURCE_DIR=%s\n' "$cache" >> "$GITHUB_ENV"
-          fi
       - name: 下载固定SHA中央bundle（PR无中央写凭据）
         if: env.MAP_SCOPE != 'cecelia-device-patrol'
         env:
@@ -287,9 +268,58 @@ jobs:
                 --side head --output-dir "$RUNNER_TEMP/implementation-input/head"
             fi
           fi
+      - name: 准备固定中央Skill对象缓存
+        id: skill-cache
+        env:
+          SKILLS_SOURCE_SSH_KEY: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+          NATIVE_PR: ${{ github.repository == 'perfectuser21/cecelia' && github.event_name == 'pull_request' && !inputs.source_repo && !inputs.tooling_revision && !inputs.scope && !inputs.head_revision && !inputs.base_revision && !inputs.mode && !inputs.admission_scopes }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/implementation-output"
+          trap 'code=$?; if (( code != 0 )); then printf "%s\n" "{\"status\":\"unknown\",\"stage\":\"skill_cache_prepare\",\"code\":\"SKILL_CACHE_PREPARATION_FAILED\"}" > "$RUNNER_TEMP/implementation-output/gap.json"; fi' EXIT
+          tooling_sha="$(git -C tooling rev-parse --verify HEAD)"
+          test "$tooling_sha" = "$TOOLING_REVISION"
+          # 唯一已合并旧工具仍运行其原完整双scope gate；不是缺helper泛化降级。
+          if [[ "$NATIVE_PR" == true && "$GITHUB_REPOSITORY" == perfectuser21/cecelia && "$GITHUB_EVENT_NAME" == pull_request && "$SOURCE_REPO" == perfectuser21/cecelia && "$MODE" == pr && "$BASE" == 821dac5ae926cd5120d7b94fcd8012dd1f09bc23 && "$TOOLING_REVISION" == 821dac5ae926cd5120d7b94fcd8012dd1f09bc23 && "$MAP_SCOPE" == cecelia-kr && "$ADMISSION_SCOPES" == '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' ]]; then
+            node --input-type=module <<'JS'
+          import {readImplementationSource} from './tooling/scripts/ci/implementation-skill-source.mjs';
+          import {readFixedLocalGitBlob} from './tooling/scripts/ci/fixed-local-git.mjs';
+          import {lstatSync} from 'node:fs';
+          import {join} from 'node:path';
+          const base=process.env.BASE,head=process.env.HEAD,root=join(process.cwd(),'source'),tooling=join(process.cwd(),'tooling'),cache=join(root,'.skills-source');
+          const trusted=readFixedLocalGitBlob(tooling,{revision:base,path:'.skills-source.json'});
+          for(const revision of [base,head])if(!readFixedLocalGitBlob(root,{revision,path:'.skills-source.json'}).equals(trusted))throw Error('SKILL_LEGACY_821_LOCK_MISMATCH');
+          if(!process.env.SKILLS_SOURCE_SSH_KEY?.trim())throw Error('SKILL_SOURCE_SSH_KEY_REQUIRED');
+          try{lstatSync(cache);throw Error('SKILL_LEGACY_821_CACHE_EXISTS');}catch(e){if(e.code!=='ENOENT')throw e;}
+          const path='packages/engine/skills/dev/SKILL.md';
+          if(readFixedLocalGitBlob(root,{revision:head,path},{allowMissing:true})!==null)throw Error('SKILL_LEGACY_821_PATH_NOT_MIGRATED');
+          readImplementationSource(root,head,path,{source:cache});
+          readFixedLocalGitBlob(cache,{revision:JSON.parse(trusted).revision,path:'distribution/catalog.json'});
+          JS
+            printf 'legacy_821=true\n' >> "$GITHUB_OUTPUT"
+          else
+            args=(--prepare-ci-cache "$GITHUB_WORKSPACE/source" "$SOURCE_REPO" "$BASE" "$HEAD")
+            scoped="${ADMISSION_SCOPES:-${IMPLEMENTATION_MAIN_SCOPES:-}}"
+            if [[ -n "$scoped" ]]; then
+              printf '%s\n' "$scoped" > "$RUNNER_TEMP/implementation-input/cache-scopes.json"
+              if [[ "$MODE" == main ]]; then
+                for side in base head; do
+                  IMPLEMENTATION_MAIN_SCOPES= node tooling/scripts/ci/implementation-pr-gate.mjs --extract-scopes --snapshot-file "$RUNNER_TEMP/implementation-input/$side/$side.json" --scopes-file "$RUNNER_TEMP/implementation-input/cache-scopes.json" --side "$side" --output-dir "$RUNNER_TEMP/implementation-input/$side"
+                done
+              fi
+              while IFS= read -r scope; do
+                args+=(--snapshot "$RUNNER_TEMP/implementation-input/base/base-$scope.json" --snapshot "$RUNNER_TEMP/implementation-input/head/head-$scope.json")
+              done < <(jq -r '.scopes[]' "$RUNNER_TEMP/implementation-input/cache-scopes.json")
+            else
+              args+=(--snapshot "$RUNNER_TEMP/implementation-input/base/base.json" --snapshot "$RUNNER_TEMP/implementation-input/head/head.json")
+            fi
+            cache="$(node tooling/scripts/ci/implementation-skill-source.mjs "${args[@]}")"
+            case "$cache" in "$RUNNER_TEMP"/implementation-skills-ci-*/objects) test -d "$cache" ;; *) echo 'invalid fixed Skill cache' >&2; exit 1 ;; esac
+            printf 'IMPLEMENTATION_SKILLS_SOURCE_DIR=%s\n' "$cache" >> "$GITHUB_ENV"
+          fi
       - name: 实际变更影响与固定回归
         env:
-          SKILLS_SOURCE_SSH_KEY: ${{ steps.skill-cache.outputs.legacy_185 == 'true' && secrets.SKILLS_SOURCE_SSH_KEY || '' }}
+          SKILLS_SOURCE_SSH_KEY: ${{ steps.skill-cache.outputs.legacy_821 == 'true' && secrets.SKILLS_SOURCE_SSH_KEY || '' }}
         run: |
           set -euo pipefail
           if [[ "$MODE" == pr && -n "$ADMISSION_SCOPES" ]]; then

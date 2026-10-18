@@ -97,18 +97,18 @@ test('fresh私有cache容纳base/head两份锁：不运行候选loader，不信s
   assert.deepEqual(read({repo:'perfectuser21/zenithjoy-skills',revision:lock.revision,path:'body.md'}),f.payload);
  }finally{if(cache)rmSync(dirname(cache),{recursive:true,force:true});if(previous===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=previous;f.cleanup();}
 });
-test('Pilot与Impact使用trusted tooling准备隔离缓存，secret只进准备step且早于下载/校验',()=>{
+test('Pilot与Impact使用trusted tooling准备隔离缓存，secret只进准备step且下载后校验前',()=>{
  for(const [name,jobName,consume] of [['pilot-release-verification','verify','固定完整计划及白名单环境运行全部登记回归'],['implementation-impact','gate','实际变更影响与固定回归']]){
   const w=yaml.load(readFileSync(new URL('../../../.github/workflows/'+name+'.yml',import.meta.url),'utf8'));
   assert.deepEqual(w.on.workflow_call.secrets.SKILLS_SOURCE_SSH_KEY,{required:false});
   assert.equal(w.jobs[jobName].env.SOURCE_REPO,'${{ inputs.source_repo || github.repository }}','prepare读取的SOURCE_REPO必须由实际job显式绑定');
   const steps=w.jobs[jobName].steps,index=steps.findIndex(s=>s.name==='准备固定中央Skill对象缓存');assert.ok(index>0);
   const step=steps[index];assert.equal(step.env.SKILLS_SOURCE_SSH_KEY,'${{ secrets.SKILLS_SOURCE_SSH_KEY }}');
-  assert.match(step.run,/node tooling\/scripts\/ci\/implementation-skill-source\.mjs --prepare-ci-cache/);
+  assert.match(step.run,/implementation-skill-source\.mjs/);assert.match(step.run,/--prepare-ci-cache/);
   assert.match(step.run,/"\$GITHUB_WORKSPACE\/source"/);assert.match(step.run,/"\$SOURCE_REPO"/);
   assert.ok(index>steps.findIndex(s=>s.with?.path==='source'));assert.ok(index<steps.findIndex(s=>s.name===consume));
-  const download=steps.findIndex(s=>s.uses?.startsWith('actions/download-artifact')||s.name==='下载固定SHA中央bundle（PR无中央写凭据）');assert.ok(index<download);
-  if(jobName==='gate')assert.match(steps.find(s=>s.name===consume).env?.SKILLS_SOURCE_SSH_KEY||'',/steps\.skill-cache\.outputs\.legacy_185/);else assert.equal(steps.find(s=>s.name===consume).env?.SKILLS_SOURCE_SSH_KEY,undefined);
+  const download=steps.findIndex(s=>s.uses?.startsWith('actions/download-artifact')||s.name==='下载固定SHA中央bundle（PR无中央写凭据）');assert.ok(index>download);
+  if(jobName==='gate')assert.match(steps.find(s=>s.name===consume).env?.SKILLS_SOURCE_SSH_KEY||'',/steps\.skill-cache\.outputs\.legacy_821/);else assert.equal(steps.find(s=>s.name===consume).env?.SKILLS_SOURCE_SSH_KEY,undefined);
   assert.doesNotMatch(step.run,/source\/scripts\/(?:ensure-skills-source|skills-source)/);
   assert.match(step.run,jobName==='gate'?/"\$BASE" "\$HEAD"/:/"\$HEAD"/);
  }
@@ -126,10 +126,10 @@ test('CI缓存拒绝损坏锁、跨profile、非固定SHA及未知版本，不�
   assert.throws(()=>sourceApi.prepareImplementationSkillCache(f.business,'perfectuser21/zenithjoy-workspace',['0'.repeat(40)]));
  }finally{if(prior===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=prior;f.cleanup();}
 });
-test('Impact自举只接受精确旧185本仓原生PR，其余缺prepare或身份不符绝不假绿',()=>{
+test('Impact自举只接受精确821本仓原生PR，其余缺prepare或身份不符绝不假绿',()=>{
  const w=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
  const step=w.jobs.gate.steps.find(s=>s.name==='准备固定中央Skill对象缓存');assert.ok(step);
- const root=mkdtempSync(join(tmpdir(),'cache-workflow-step-')),bin=join(root,'bin'),legacy='18552f8eeafdb2d404294bd6601bc74d00a1d422';mkdirSync(bin);
+ const root=mkdtempSync(join(tmpdir(),'cache-workflow-step-')),bin=join(root,'bin'),legacy='821dac5ae926cd5120d7b94fcd8012dd1f09bc23';mkdirSync(bin);
  try{
   writeFileSync(join(bin,'git'),'#!/bin/sh\nprintf "%s\\n" "$ACTUAL_TOOLING"\n',{mode:0o700});
   writeFileSync(join(bin,'node'),'#!/bin/sh\nexit 0\n',{mode:0o700}); // old helper missing prepare mode: exit0+empty stdout must reject
@@ -204,7 +204,8 @@ os.execv(${JSON.stringify(realGit)},[${JSON.stringify(realGit)}]+args)
   const smoke='scripts/smoke/pilot.sh';mkdirSync(join(f.business,'scripts/smoke'));
   writeFileSync(join(f.business,smoke),`#!/bin/bash\nset -eu\ntest -z "\${SKILLS_SOURCE_SSH_KEY:-}"\ntest -n "\${SKILLS_SOURCE_DIR:-}"\ntest -f '${f.path}'\ngit -C "$SKILLS_SOURCE_DIR" cat-file -e "${JSON.parse(git(f.business,'show',`${f.after}:.skills-source.json`)).revision}^{commit}"\n`);
   const head=commit(f.business);git(f.business,'update-ref','refs/remotes/origin/main',head);
-  const prepared=spawnSync(process.execPath,[new URL('../implementation-skill-source.mjs',import.meta.url).pathname,'--prepare-ci-cache',f.business,'perfectuser21/zenithjoy-workspace',f.before,head],{encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH,SKILLS_SOURCE_SSH_KEY:'fixture-secret',RUNNER_TEMP:dirname(f.business)}});
+  const metadata=join(dirname(f.business),'snapshot.json');writeFileSync(metadata,JSON.stringify(historicalSnapshot(f,head,head,JSON.parse(git(f.business,'show',`${head}:.skills-source.json`)).revision)));
+  const prepared=spawnSync(process.execPath,[new URL('../implementation-skill-source.mjs',import.meta.url).pathname,'--prepare-ci-cache',f.business,'perfectuser21/zenithjoy-workspace',f.before,head,'--snapshot',metadata],{encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH,SKILLS_SOURCE_SSH_KEY:'fixture-secret',RUNNER_TEMP:dirname(f.business)}});
   assert.equal(prepared.status,0,prepared.stderr);cache=prepared.stdout.trim();assert.ok(cache.startsWith(dirname(f.business)+'/implementation-skills-ci-'));
   assert.deepEqual(readFileSync(join(f.business,f.path)),f.payload);
   assert.equal(existsSync(JSON.parse(readFileSync(audit)).key_path),false,'fetch后必须删除0600私钥');
@@ -252,6 +253,9 @@ test('历史snapshot拒绝摘要漂移、伪中央身份、缺业务对象、过
    assert.throws(()=>sourceApi.prepareImplementationSkillCache(f.business,'perfectuser21/zenithjoy-workspace',[f.after],{snapshots:[mutate(structuredClone(snapshot))],fetchSource:()=>{throw Error('UNEXPECTED_FETCH');}}),/SNAPSHOT|BINDING|FIXED|OBJECT|BYTE/);
   }
   assert.throws(()=>sourceApi.prepareImplementationSkillCache(f.business,'perfectuser21/zenithjoy-workspace',[f.after],{snapshots:Array(9).fill(snapshot)}),/SNAPSHOT.*LIMIT/);
+  const many=structuredClone(snapshot),row=many.definitions.activities[0];row.payload.implementation_bindings=Array.from({length:17},(_,i)=>({kind:'code',repo:'perfectuser21/zenithjoy-workspace',revision:i.toString(16).padStart(40,'0'),path:'contract.json'}));
+  row.payload_sha256=pilotPlanHash({source:{repo:row.source_repo,path:row.source_path,commit:row.source_commit},payload:row.payload});const {snapshot_sha256,...body}=many;
+  assert.throws(()=>sourceApi.prepareImplementationSkillCache(f.business,'perfectuser21/zenithjoy-workspace',[f.after],{snapshots:[{...body,snapshot_sha256:pilotPlanHash(body)}]}),/VERSION_LIMIT/);
  }finally{if(prior===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=prior;f.cleanup();}
 });
 test('两入口先下载canonical快照再prepare历史对象，现代校验无key',()=>{
@@ -267,4 +271,34 @@ test('唯一旧兼容升级为821真实可信reader冷启动，而非185空缓�
  assert.match(step.run,/821dac5ae926cd5120d7b94fcd8012dd1f09bc23/);
  assert.match(step.run,/readImplementationSource/);assert.match(step.run,/packages\/engine\/skills\/dev\/SKILL\.md/);
  assert.doesNotMatch(step.run,/18552f8eeafdb2d404294bd6601bc74d00a1d422/);
+});
+test('821 workflow实际执行可信reader冷fetch，锁漂移/既存cache拒绝且不运行candidate loader',()=>{
+ const f=fixture(),workspace=dirname(f.business),tooling=join(workspace,'tooling'),bin=join(workspace,'bin'),legacy='821dac5ae926cd5120d7b94fcd8012dd1f09bc23';
+ try{
+  symlinkSync(f.business,join(workspace,'source'));mkdirSync(tooling);git(tooling,'init','-q');git(tooling,'config','core.hooksPath','/dev/null');mkdirSync(bin);
+  const catalog=JSON.parse(git(f.central,'show','HEAD:distribution/catalog.json'));catalog.profiles.cecelia={files:[{...catalog.profiles.zenithjoy.files[0],path:'packages/engine/skills/dev/SKILL.md'}]};writeFileSync(join(f.central,'distribution/catalog.json'),JSON.stringify(catalog));
+  const lock={...JSON.parse(git(f.business,'show',`${f.after}:.skills-source.json`)),profile:'cecelia',revision:commit(f.central)};writeFileSync(join(f.business,'.skills-source.json'),JSON.stringify(lock));const head=commit(f.business);git(f.business,'remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
+  writeFileSync(join(tooling,'.skills-source.json'),JSON.stringify(lock));mkdirSync(join(tooling,'scripts/ci'),{recursive:true});
+  // The fixture aliases the published Git identity; actual reader/Git/fetch operations remain real.
+  for(const file of ['implementation-skill-source.mjs','fixed-local-git.mjs'])writeFileSync(join(tooling,'scripts/ci',file),`export * from ${JSON.stringify(new URL('../'+file,import.meta.url).href)};\n`);
+  const trusted=commit(tooling),realGit=execFileSync('which',['git'],{encoding:'utf8'}).trim(),python=execFileSync('python3',['-c','import sys;print(sys.executable)'],{encoding:'utf8'}).trim(),audit=join(workspace,'fetches');
+  writeFileSync(join(bin,'git'),`#!${python}
+import os,sys,subprocess,pathlib
+a=sys.argv[1:];root=a[a.index('-C')+1] if '-C' in a else ''
+if root=='tooling' and 'rev-parse' in a: print('${legacy}');sys.exit(0)
+revision='${trusted}' if os.path.realpath(root)==os.path.realpath(${JSON.stringify(tooling)}) else '${head}'
+a=[x.replace('${legacy}',revision) for x in a]
+if 'fetch' in a:
+ assert a[-2]=='git@github.com:perfectuser21/zenithjoy-skills.git'
+ pathlib.Path(${JSON.stringify(audit)}).write_text('fetch')
+ a[-2]=${JSON.stringify(f.central)}
+os.execv(${JSON.stringify(realGit)},[${JSON.stringify(realGit)}]+a)
+`,{mode:0o700});
+  const w=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8')),step=w.jobs.gate.steps.find(s=>s.name==='准备固定中央Skill对象缓存');
+  const run=selected=>spawnSync('bash',['-c',step.run],{cwd:workspace,encoding:'utf8',env:{...process.env,PATH:bin+':'+process.env.PATH,GITHUB_WORKSPACE:workspace,RUNNER_TEMP:workspace,GITHUB_ENV:join(workspace,'env'),GITHUB_OUTPUT:join(workspace,'output'),GITHUB_REPOSITORY:'perfectuser21/cecelia',GITHUB_EVENT_NAME:'pull_request',SOURCE_REPO:'perfectuser21/cecelia',NATIVE_PR:'true',MAP_SCOPE:'cecelia-kr',ADMISSION_SCOPES:'{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}',MODE:'pr',BASE:legacy,HEAD:selected,TOOLING_REVISION:legacy,SKILLS_SOURCE_SSH_KEY:'fixture-key'}});
+  const result=run(head);assert.equal(result.status,0,result.stderr);assert.equal(readFileSync(audit,'utf8'),'fetch');assert.match(readFileSync(join(workspace,'output'),'utf8'),/legacy_821=true/);git(join(f.business,'.skills-source'),'cat-file','-e',lock.revision+'^{commit}');
+  rmSync(audit);assert.notEqual(run(head).status,0,'existing cache不能被当可信冷启动');assert.equal(existsSync(audit),false);
+  rmSync(join(f.business,'.skills-source'),{recursive:true});writeFileSync(join(f.business,'.skills-source.json'),JSON.stringify({...lock,loader_sha256:'f'.repeat(64)}));const changed=commit(f.business);
+  assert.notEqual(run(changed).status,0,'head锁字节漂移必须拒绝');assert.equal(existsSync(audit),false);
+ }finally{f.cleanup();}
 });
