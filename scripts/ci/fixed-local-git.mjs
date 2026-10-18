@@ -1,6 +1,6 @@
 /** Bounded local Git reads: a caller's environment and refs/replace are not source authority. */
 import {execFileSync} from 'node:child_process';
-import {isAbsolute} from 'node:path';
+import {isAbsolute,join} from 'node:path';
 export function fixedLocalGit(root,args,{encoding,localClone=false}={}){
  if(localClone&&(!isAbsolute(root)||args.length!==6||args.slice(0,4).join(' ')!=='clone --shared --no-checkout --quiet'||args[4]!==root||!isAbsolute(args[5])))throw Error('INVALID_LOCAL_CLONE');
  const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('GIT_')));
@@ -9,7 +9,7 @@ export function fixedLocalGit(root,args,{encoding,localClone=false}={}){
 }
 export function readFixedLocalGitBlob(root,{revision,path},{allowMissing=false}={}){
  if(!/^[0-9a-f]{40}$/.test(revision||'')||typeof path!=='string'||path.startsWith('/')||path.includes('\\')||path.includes('\0')||path.split('/').some(p=>!p||p==='.'||p==='..'))throw Error('INVALID_FIXED_GIT_LOCATION');
- if(allowMissing){
+ {
   fixedLocalGit(root,['cat-file','-e',revision+'^{commit}']);
   const tree=fixedLocalGit(root,['ls-tree','-z',revision,'--',path],{encoding:'utf8'});
   if(!tree){
@@ -18,9 +18,38 @@ export function readFixedLocalGitBlob(root,{revision,path},{allowMissing=false}=
     const ancestor=fixedLocalGit(root,['ls-tree','-z',revision,'--',parts.slice(0,i).join('/')],{encoding:'utf8'});
     if(ancestor&&!ancestor.startsWith('040000 tree '))throw Error('INVALID_FIXED_GIT_PARENT');
    }
-   return null;
+   if(allowMissing)return null;
+   throw Error('FIXED_GIT_PATH_MISSING');
   }
   if(!/^100(?:644|755) blob [0-9a-f]{40}\t/.test(tree))throw Error('FIXED_GIT_PATH_NOT_REGULAR_BLOB');
  }
  return fixedLocalGit(root,['show',`${revision}:${path}`]);
+}
+
+/** Only the fixed business lock authorizes local central objects; never cache HEAD or generated files. */
+export function createFixedLocalSourceReader(root,repo,{readBusinessFile}={}){
+ if(!['perfectuser21/cecelia','perfectuser21/zenithjoy-workspace'].includes(repo))throw Error('FIXED_LOCAL_REPO_UNSUPPORTED');
+ const revisions=new Set();
+ return (location,options={})=>{
+  if(location.repo===repo){
+   const bytes=readBusinessFile?readBusinessFile(location,options):readFixedLocalGitBlob(root,location,options);
+   const remember=value=>{
+    if(location.path==='.skills-source.json'&&value!==null){
+     const lock=JSON.parse(Buffer.from(value).toString('utf8'));
+     if(lock.version!==1||lock.repository!=='perfectuser21/zenithjoy-skills'||! /^[0-9a-f]{40}$/.test(lock.revision||''))throw Error('FIXED_LOCAL_SKILL_LOCK_INVALID');
+     revisions.add(lock.revision);
+    }
+    return value;
+   };
+   return bytes?.then?bytes.then(remember):remember(bytes);
+  }
+  if(location.repo!=='perfectuser21/zenithjoy-skills')throw Error('FIXED_LOCAL_CROSS_REPO_UNAVAILABLE');
+  if(!revisions.has(location.revision))throw Error('FIXED_LOCAL_CENTRAL_LOCK_REQUIRED');
+  return readFixedLocalGitBlob(join(root,'.skills-source'),location,options);
+ };
+}
+export function fixedLocalSourceOptions(root,repo,options={}){
+ if(options.readFile)return options;
+ const read=createFixedLocalSourceReader(root,repo,options),text=value=>value===null?null:Buffer.from(value).toString('utf8');
+ return {...options,readFile:(location,settings)=>{const value=read(location,settings);return value?.then?value.then(text):text(value);}};
 }

@@ -1,11 +1,10 @@
 /** 仅scratch：复用中央身份和正式投影器，固定git产生两侧不可变图。 */
 import pg from 'pg';
 import { registerCompanyKrWorkflow,activityContract } from '../../packages/brain/src/lib/company-kr-registration.js';
-import {fixedLocalGit,readFixedLocalGitBlob} from './fixed-local-git.mjs';
+import {fixedLocalGit,readFixedLocalGitBlob,fixedLocalSourceOptions} from './fixed-local-git.mjs';
 import { loadActivityContracts } from '../../packages/brain/src/lib/activity-contract-loader.js';
 import { storeActivityContracts,REGISTRATIONS_SQL } from '../../packages/brain/src/lib/activity-contract-store.js';
-import { validateImplementationBindings } from '../../packages/brain/src/lib/implementation-bindings.js';
-import { validateFixedImplementationBindings } from '../../packages/brain/src/workflow-authoring/fixed-git-source.js';
+import { readFixedImplementationBinding,validateFixedImplementationBindings } from '../../packages/brain/src/workflow-authoring/fixed-git-source.js';
 import { exportImplementationSnapshot } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { stepSha256 } from '../../packages/brain/scripts/sync-steps-from-workspace.mjs';
 import { lintImplementationRegistry } from './registry-lint.mjs';
@@ -265,11 +264,12 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
     const text=read('packages/brain/config/company-kr-workflow.json'),spec=JSON.parse(text);
     const workflow=registry.canonical.workflows.find(w=>w.key===spec.key&&w.capability_id===spec.capability_id);
     if(!workflow)throw ciFailure('WORKFLOW_REGISTRATION_MISSING');
-    const readBinding=async b=>{if(b.repo!==registry.repo)throw ciFailure('CROSS_REPO_SNAPSHOT_MISSING');return fixedLocalGit(repoRoot,['show',`${b.revision}:${b.path}`],{encoding:'utf8'});};
+    const sourceOptions=fixedLocalSourceOptions(repoRoot,registry.repo);
+    const readBinding=async b=>(await readFixedImplementationBinding(b,sourceOptions)).content;
     const activities=[];
     for(const [index,a] of spec.activities.entries()){
       const activity={...activityContract(a,index+1,spec),from:spec.capability};
-      activities.push({activity,bindings:await validateImplementationBindings(activity,readBinding,{repo:registry.repo,commit:revision})});
+      activities.push({activity,bindings:await validateFixedImplementationBindings(activity,{repo:registry.repo,commit:revision},sourceOptions)});
     }
     const lint=lintImplementationRegistry(registry,[{workflow,activities}],{capabilities:{[spec.capability]:{}}});
     if(lint.gaps.length)throw ciFailure('REGISTRY_UNKNOWN',JSON.stringify(lint.gaps));
@@ -281,10 +281,7 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
     throw ciFailure('PR_ADAPTER_MISSING','该repo没有固定契约adapter；需要显式登记来源');
   const digestPath='product-map/generated/contracts.json',digest=JSON.parse(read(digestPath));
   const plans=await loadActivityContracts(registrations.filter(w=>w.status!=='retired'),digest,read,registrations);
-  for(const plan of plans)for(const item of plan.activities)item.bindings=await validateFixedImplementationBindings(item.activity,{repo:registry.repo,commit:revision},{readBusinessFile:(b,options)=>{
-    if(b.repo!==registry.repo)throw ciFailure('CROSS_REPO_SNAPSHOT_MISSING',`缺固定外仓源码: ${b.repo}`);
-    return readFixedLocalGitBlob(repoRoot,b,options);
-  }});
+  for(const plan of plans)for(const item of plan.activities)item.bindings=await validateFixedImplementationBindings(item.activity,{repo:registry.repo,commit:revision},fixedLocalSourceOptions(repoRoot,registry.repo));
   const lint=lintImplementationRegistry(registry,plans,digest);
   if(lint.gaps.length)throw ciFailure('REGISTRY_UNKNOWN',JSON.stringify(lint.gaps));
   await storeActivityContracts(db,plans,revision,registry.repo,registrations,{synchronizeSteps:true});
