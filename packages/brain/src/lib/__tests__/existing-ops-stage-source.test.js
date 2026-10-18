@@ -238,3 +238,10 @@ describe('已审repoRules和build预检的实际运行输入闭包',()=>{
 it('新Skills完整模式即使删除版本标记也不能省略真实提示词输入',async()=>{
  const r=await collect('recorded',s=>{addReviewedRuntimeInputs(s);delete s[ruleInputMarker];delete s[P+'prompts/repo-rules/skills.md'];});expect(r.gaps.length).toBeGreaterThan(0);
 });
+it('未知运行输入协议及未审rules_prompt路径均拒绝',async()=>{
+ for(const patch of [s=>{s[ruleInputMarker]='export const EXISTING_OPS_REPO_RULES_INPUT_SCHEMA=2;';},s=>{
+  const config=JSON.parse(s[P+'repos.json']);config.repos.at(-1).rules_prompt='../arbitrary.md';s[P+'repos.json']=JSON.stringify(config);
+ }]){
+  const r=await collect('recorded',s=>{addReviewedRuntimeInputs(s);patch(s);});expect(r.gaps).toContainEqual({code:'native_stage_execution_unproven'});
+ }
+});
