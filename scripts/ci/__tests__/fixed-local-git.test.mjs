@@ -58,3 +58,10 @@ test('formal Pilot CLI accepts a historical tracked Skill without a central lock
  const result=spawnSync(process.execPath,[new URL('../pilot-release-verification.mjs',import.meta.url).pathname,'--repo-root',f.root,'--snapshot',input,'--output-dir',output,'--event','push','--ref','refs/heads/main'],{encoding:'utf8',timeout:15000});
  assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(readFileSync(join(output,'receipt.json'))).verdict,'PASS');
 });
+test('local shared clone remains available while network clone is rejected before Git',async t=>{
+ const f=fixture(t),{fixedLocalGit}=await import('../fixed-local-git.mjs'),target=join(f.root,'../fixed-local-clone-'+f.revision);
+ t.after(()=>rmSync(target,{recursive:true,force:true}));
+ fixedLocalGit(f.root,['clone','--shared','--no-checkout','--quiet',f.root,target],{localClone:true});
+ assert.equal(fixedLocalGit(target,['rev-parse','HEAD'],{encoding:'utf8'}).trim(),f.revision);
+ assert.throws(()=>fixedLocalGit(f.root,['clone','https://example.invalid/repo',target],{localClone:true}),/INVALID_LOCAL_CLONE/);
+});
