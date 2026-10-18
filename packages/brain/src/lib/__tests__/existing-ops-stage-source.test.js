@@ -185,7 +185,7 @@ const independentSkillsMode=()=>Object.fromEntries(Object.entries(skillsModeFixt
 describe('中央Skills独立固定模式的可信判卷器先行兼容',()=>{
  it('完整固定三文件经真实阶段消费者证明，旧模式不受影响',async()=>{
   expect(skillsModeFixture.source_commit).toBe('2a537e0f563fb8374f777218ac2fd2b6609a1462');
-  const r=await collect('recorded',s=>Object.assign(s,independentSkillsMode()));expect(r.gaps).toEqual([]);
+  const r=await collect('recorded',addReviewedRuntimeInputs);expect(r.gaps).toEqual([]);
   expect(r.bindings).toContain(P+'repos.json');expect(r.bindings).toContain(P+'lib/repo-profile.mjs');
   expect((await collect('recorded')).gaps).toEqual([]);
  });
@@ -233,4 +233,8 @@ describe('已审repoRules和build预检的实际运行输入闭包',()=>{
    for(const key of ['cecelia','zenithjoy','skills'])s[P+'prompts/repo-rules/'+key+'.md']='# ignored historical extra';
   });expect(extra).toEqual(original);
  });
+});
+
+it('新Skills完整模式即使删除版本标记也不能省略真实提示词输入',async()=>{
+ const r=await collect('recorded',s=>{addReviewedRuntimeInputs(s);delete s[ruleInputMarker];delete s[P+'prompts/repo-rules/skills.md'];});expect(r.gaps.length).toBeGreaterThan(0);
 });
