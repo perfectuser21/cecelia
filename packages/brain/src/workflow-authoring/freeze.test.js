@@ -56,3 +56,72 @@ describe('显式 authoring 冻结来源协议',()=>{
     await expect(prepareDefinitionFreeze(d,{readFile})).rejects.toThrow(/摘要/);
   });
 });
+
+describe('共享中央 Skill 与来源读取总预算回归',()=>{
+  it('共享中央 Skill 保留双来源身份且不读取业务树已迁出的文件',async()=>{
+    const {validateFixedImplementationBindings}=await import('./fixed-git-source.js');
+    const {definitionDigest}=await import('./contracts.js');
+    const d=definition(),path='.claude/skills/demo/SKILL.md',central='perfectuser21/zenithjoy-skills';
+    const centralRevision='b'.repeat(40),centralPath='business-skills/zenithjoy/demo/SKILL.md';
+    const content='---\nname: demo\nversion: 1\n---\ncentral shared skill\n';
+    const contract={key:'original',name:'共享活动',implementation:{kind:'skill',repo,path,revision:'contract'}};
+    const files=new Map([
+      ['shared.json',JSON.stringify({activities:[contract]})],
+      ['.skills-source.json',JSON.stringify({version:1,repository:central,revision:centralRevision,profile:'zenithjoy',loader_sha256:'c'.repeat(64)})],
+      ['distribution/catalog.json',JSON.stringify({version:1,profiles:{zenithjoy:{files:[{path,source:centralPath,sha256:createHash('sha256').update(content).digest('hex')}]}}})],
+      [centralPath,content],
+    ]);
+    const readFile=vi.fn(async source=>{
+      if(source.path===d.source.ref)return document(d);
+      if(!files.has(source.path))throw Error('业务树文件不存在：'+source.path);
+      return files.get(source.path);
+    });
+    const bindings=await validateFixedImplementationBindings(contract,{repo,commit:revision},{readFile});
+    const version={id:'shared-version',activity_id:'shared-activity',source_repo:repo,source_path:'shared.json',source_commit:revision,
+      contract_sha256:definitionDigest(contract),payload:{activity_id:'shared-activity',contract,steps:[],implementation_bindings:bindings}};
+    d.activities=[{key:'read',reuse_activity_id:version.activity_id,reuse_activity_definition_version_id:version.id,reuse_contract_sha256:version.contract_sha256}];
+    readFile.mockClear();
+    const proof=await prepareDefinitionFreeze(d,{readFile,sharedVersions:[version]});
+    expect(proof.bindings.get('read')).toEqual(bindings);
+    expect(proof.bindings.get('read')[0].resolved_source).toEqual({repo:central,path:centralPath,revision:centralRevision});
+    expect(readFile.mock.calls.some(([s])=>s.path==='.skills-source.json')).toBe(true);
+    expect(readFile.mock.calls.some(([s])=>s.repo===central&&s.path===centralPath)).toBe(true);
+    expect(readFile.mock.calls.some(([s])=>s.repo===repo&&s.path===path)).toBe(false);
+  });
+
+  it('耗时读取后所有业务 Git 请求仍共用六十秒总 deadline',async()=>{
+    const d=definition(),tree='b'.repeat(40),rows=new Map();
+    for(const [path,text] of [[d.source.ref,document(d)],['src/read.js','export const read=true;']]){
+      const bytes=Buffer.from(text),sha=createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`),bytes])).digest('hex');
+      rows.set(path,{bytes,sha});
+    }
+    let now=0,definitionRead=false;const requests=[];
+    const clock=vi.spyOn(Date,'now').mockImplementation(()=>now);
+    try{
+      const fetchFn=async url=>{
+        requests.push({url,at:now});
+        if(url.includes('/commits/'))return {ok:true,json:async()=>({sha:revision,tree:{sha:tree}})};
+        if(url.includes('/trees/')){
+          if(definitionRead)now=61000;
+          return {ok:true,json:async()=>({sha:tree,truncated:false,tree:[...rows].map(([path,r])=>({path,type:'blob',mode:'100644',sha:r.sha}))})};
+        }
+        const row=[...rows.values()].find(r=>url.endsWith(r.sha));
+        if(!definitionRead){now=50000;definitionRead=true;}
+        return {ok:true,json:async()=>({sha:row.sha,size:row.bytes.length,encoding:'base64',content:row.bytes.toString('base64')})};
+      };
+      await expect(prepareDefinitionFreeze(d,{fetchFn,resolveToken:async()=> 'fixture'})).rejects.toThrow();
+      expect(requests.filter(r=>r.at>=60000)).toEqual([]);
+      expect(requests.filter(r=>r.url.includes('/blobs/'))).toHaveLength(1);
+    }finally{clock.mockRestore();}
+  });
+
+  it('最后一个实现读取结束时取消也不能生成冻结证明',async()=>{
+    const d=definition(),controller=new AbortController();
+    const readFile=vi.fn(async source=>{
+      if(source.path===d.source.ref)return document(d);
+      controller.abort();return 'export const read=true;';
+    });
+    await expect(prepareDefinitionFreeze(d,{readFile,signal:controller.signal})).rejects.toThrow();
+    expect(readFile).toHaveBeenCalledTimes(2);
+  });
+});
