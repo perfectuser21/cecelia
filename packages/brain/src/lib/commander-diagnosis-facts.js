@@ -1,3 +1,5 @@
+import {Buffer} from 'node:buffer';
+
 /** 只读研究无需网络即可看到原失败事实；严格选字段，不复制业务输入或整份payload。 */
 export function diagnosisFacts(control, failure, sources) {
   let truncated = false;
