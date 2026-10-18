@@ -13,3 +13,8 @@ it('URL凭据和私钥被清理，超大Unicode事实保持可解析且有界',(
  expect(Buffer.byteLength(value)).toBeLessThanOrEqual(24000);
  expect(JSON.parse(value).truncated).toBe(true);
 });
+it('认证与Cookie头整体清理，不能保留Basic载荷或后续会话Cookie',()=>{
+ const facts=diagnosisFacts({...control,delivery:{failure:{message:'Authorization: Basic ZmFrZTpzZWNyZXQ=\nCookie: session=fake-session; refresh=fake-refresh\nSet-Cookie: auth=fake-auth; token=fake-cookie'}}},{reason:'failure'},[]);
+ const value=JSON.stringify(facts);
+ expect(value).not.toMatch(/ZmFrZTpzZWNyZXQ=|fake-session|fake-refresh|fake-auth|fake-cookie/);
+});
