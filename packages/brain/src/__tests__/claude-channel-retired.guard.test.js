@@ -18,6 +18,18 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parse } from 'acorn';
+/** 模式常量只能留在已审解析闭包；每种突变均应使纯数据资格失败。 */
+function mutateStageMode(kind,sources,root){
+ const file=path.join(root,'existing-ops-stage-modes.js'),other=path.join(root,'../unreviewed-mode-consumer.js');
+ if(kind==='mode eval')sources.set(file,sources.get(file)+'\neval(REVIEWED_STAGE_MODES[0]["lib/repo-profile.mjs"]);');
+ if(kind==='mode raw export')sources.set(file,sources.get(file)+'\nexport const raw=STAGE_ENVELOPES.recorded.spec;');
+ if(kind==='mode process')sources.set(file,sources.get(file)+"\nimport {spawn as launch} from 'node:child_process';launch('claude',['-p']);");
+ if(kind==='third mode')sources.set(other,"import {REVIEWED_STAGE_MODES} from './lib/existing-ops-stage-modes.js';eval(REVIEWED_STAGE_MODES[0]['lib/repo-profile.mjs']);");
+ if(kind==='escaped mode')sources.set(other,"const m=await import('./lib/existing-ops-stage-\\u006dodes.js');eval(m.REVIEWED_STAGE_MODES[0]['lib/repo-profile.mjs']);");
+ if(kind==='concat mode')sources.set(other,"const m=await import('./lib/existing-ops-stage-'+'modes.js');Function(m.REVIEWED_STAGE_MODES[0]['lib/repo-profile.mjs'])();");
+ if(kind==='changed mode path'){sources.set(path.join(root,'other-stage-modes.js'),sources.get(file));sources.delete(file);}
+}
+
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, lstatSync } from 'node:fs';
 import path from 'node:path';
@@ -115,11 +127,13 @@ const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
 // caller 只将投影交回旧 Acorn/matcher。未知消费者不能继承此资格。
 const STAGE_HELPER=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-source.js');
 const STAGE_DATA=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
+const STAGE_MODES=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-modes.js');
 const PROVENANCE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-envelope.js');
 const NATIVE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
 const NATIVE_DATA = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
 const PROVENANCE_READER_HASHES = new Map([
-  ['existing-ops-stage-source.js','0526cc902914d083cbef0cc58cbc48b8d63ade62bbdd782cb22b27322248cd3a'],
+  ['existing-ops-stage-source.js','549aae515174fc9963ed48220abb10886c76b364e2066969e4e66d1f79bbb745'],
+  ['existing-ops-stage-modes.js','8266c7b1f74b11a0161684f83e3deb189ee101e2a0b64578cacffaaff1711752'],
   ['existing-ops-stage-envelopes.js','1fda2fc1f3bf3ef7684930e46ac8dc0364bd1af1f8f27e97c7eb197fe23a6d8f'],
   ['existing-ops-provenance-envelope.js','27c87c40b07ef90e87d642042afbdeb6a770a71ec74582da312599ec6fae5d5e'],
   ['existing-ops-provenance-core-envelope.js','c3e8769e7f053fc63d52074235b521df5134e65c31d34f151bb6a9400fa4ab93'],
@@ -129,7 +143,7 @@ const PROVENANCE_READER_HASHES = new Map([
   ['existing-ops-native-evidence-source.js','db5308fd90094044e2e4942dc704c90a41e6a225fd5bf04d0f5b876959175eb0'],
   ['existing-ops-native-evidence-envelopes.js','ed0b4b01fb98b9ee5c852736286ae22ad7ce28252936840df257666778949c57'],
 ].map(([name,hash])=>[path.join(BRAIN_ROOT,'src/lib',name),hash]));
-const PROVENANCE_CALLER_SHA256 = '689b9d5ed49e6d76a8f16b2a8cf8f4fea87f510cb33697a4ff3b2cb92770118e';
+const PROVENANCE_CALLER_SHA256 = 'ac312d50ee66676fc27d1574d126cdf86f36e25d01facad5ecd2d0f3b77a7bb0';
 // 仅静态折叠有界字面量拼接；不求值标识符、调用或运行时表达式。
 function constantReferenceString(node,depth=0) {
   if(!node||depth>32)return null;
@@ -161,7 +175,7 @@ function provenanceReaderClosure(sources) {
     for(const [consumer,text] of sources) {
       if(!decoded.get(consumer).some(value=>value.includes(path.basename(file))))continue;
       const callers=file===NATIVE_DATA?[NATIVE_HELPER]:file===NATIVE_HELPER?[ENVELOPE_CONSUMER,STAGE_HELPER,PROVENANCE_HELPER]
-        :file===STAGE_DATA?[STAGE_HELPER]:file===STAGE_HELPER||file===PROVENANCE_HELPER?[ENVELOPE_CONSUMER]:[PROVENANCE_HELPER];
+        :file===STAGE_DATA?[STAGE_HELPER,STAGE_MODES]:file===STAGE_MODES?[STAGE_HELPER]:file===STAGE_HELPER?[ENVELOPE_CONSUMER,STAGE_HELPER]:file===PROVENANCE_HELPER?[ENVELOPE_CONSUMER]:[PROVENANCE_HELPER];
       if(callers.includes(consumer))continue;
       if(provenFingerprintReader(consumer,text))continue;
       return false;
@@ -257,13 +271,11 @@ function scanOffenders() {
   }
   return offenders;
 }
-
 describe('Claude 无头通道防复活守卫：源码扫描', () => {
   it('packages/brain 与 packages/workflows 非测试源码中不存在任何拉起 claude CLI 的写法', () => {
     const offenders = scanOffenders();
     expect(offenders, `发现 claude 无头调用路径：\n${offenders.join('\n')}`).toEqual([]);
   });
-
   it('白名单生效而非守卫失灵：coding-workflow 的 claude 启动写法能被判据识别，但不进 offenders', () => {
     const src = readFileSync(CODING_WORKFLOW_CLAUDE, 'utf8');
     expect(findClaudeInvocations(src).length).toBeGreaterThan(0);
@@ -272,7 +284,6 @@ describe('Claude 无头通道防复活守卫：源码扫描', () => {
     expect(isWhitelisted(path.join(BRAIN_ROOT, 'src/executor.js'))).toBe(false);
     expect(scanOffenders().filter((o) => o.includes('scripts/coding-workflow/'))).toEqual([]);
   });
-
   it('单一来源常量模块存在且声明通道已退役', async () => {
     const mod = await import('../lib/claude-channel.js');
     expect(mod.CLAUDE_CHANNEL_RETIRED).toBe(true);
@@ -291,7 +302,6 @@ describe('Claude 无头通道防复活守卫：源码扫描', () => {
     expect(mod.isClaudeCommand(undefined)).toBe(false);
   });
 });
-
 describe('守卫自证：每条判据都会报警', () => {
   it.each([
     ['R1', "const p = spawn('claude', ['-p', prompt]);"],
@@ -310,7 +320,6 @@ describe('守卫自证：每条判据都会报警', () => {
   ])('%s 命中：%s', (rule, line) => {
     expect(findClaudeInvocations(line).map((h) => h.rule)).toContain(rule);
   });
-
   it.each([
     ["execSync(\"ps -eo pid,ppid,args | grep 'claude -p' | grep -v grep\")"],
     ["if (!bin.endsWith('/claude') && bin !== 'claude') continue;"],
@@ -324,8 +333,6 @@ describe('守卫自证：每条判据都会报警', () => {
     expect(findClaudeInvocations(line)).toEqual([]);
   });
 });
-
-
 describe('只读来源封套数据与实际执行代码分离',()=>{
  const dataFile=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-envelopes.js');
  const consumer=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-source.js');
@@ -361,13 +368,13 @@ describe('只读来源封套数据与实际执行代码分离',()=>{
   });expect(result.some(hit=>hit.rule==='E1')).toBe(true);
  });
 });
-
 describe('新增阶段封套不允许执行或额外消费者',()=>{
  const helper=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-source.js'),data=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
- const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys(),helper,data].map(file=>[file,readFileSync(file,'utf8')])]);
+ const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys(),helper,data,STAGE_MODES].map(file=>[file,readFileSync(file,'utf8')])]);
  it('实际只读阶段数据合同继续经过完整闭包资格',()=>{const sources=base();expect(findClaudeInvocations(sources.get(data),{file:data,sources})).toEqual([]);});
- it.each(['helper side effect','data side effect','third helper','third data','escaped data'])('%s使阶段及原封套资格失败',kind=>{
+ it.each(['helper side effect','data side effect','third helper','third data','escaped data','mode eval','mode raw export','mode process','third mode','escaped mode','concat mode','changed mode path'])('%s使阶段及原封套资格失败',kind=>{
   const sources=base();
+  mutateStageMode(kind,sources,path.join(BRAIN_ROOT,'src/lib'));
   if(kind==='helper side effect')sources.set(helper,sources.get(helper)+'\neval(REVIEWED.recorded.spec);');
   if(kind==='data side effect')sources.set(data,sources.get(data)+'\neval(STAGE_ENVELOPES.recorded.spec);');
   if(kind==='third helper')sources.set(path.join(BRAIN_ROOT,'src/extra.js'),"import {stageSourceVersion} from './lib/existing-ops-stage-source.js';stageSourceVersion(candidate,eval);");
@@ -377,7 +384,6 @@ describe('新增阶段封套不允许执行或额外消费者',()=>{
   expect(findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources}).some(hit=>hit.rule==='E1')).toBe(true);
  });
 });
-
 describe('isolation 新封套仍只允许已审 Acorn 消费闭包',()=>{
  const core=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-core-envelope.js');
  const local=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-local-envelopes.js');
@@ -409,7 +415,6 @@ describe('isolation 新封套仍只允许已审 Acorn 消费闭包',()=>{
   expect(hits.some(h=>h.rule==='E1')).toBe(true);expect(hits.some(h=>h.rule==='R1')).toBe(true);
  });
 });
-
 describe('固定runtime字节指纹不执行来源模板',()=>{
  const runtime=path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
  const source=readFileSync(runtime,'utf8');
@@ -445,7 +450,6 @@ describe('固定runtime字节指纹不执行来源模板',()=>{
   expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
  });
 });
-
 describe('merge 读取封套不增加 Claude 原文执行出口',()=>{
  const local=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-local-envelopes.js');
  const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readFileSync(file,'utf8')])]);
@@ -458,7 +462,6 @@ describe('merge 读取封套不增加 Claude 原文执行出口',()=>{
   expect(findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources}).some(h=>h.rule==='E1')).toBe(true);
  });
 });
-
 describe('原生QA完整封套只作为有界解码后的Acorn输入',()=>{
  const helper=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
  const data=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
