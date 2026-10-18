@@ -174,3 +174,26 @@ describe('merge 后 evaluate 严格读链与 identity 文件消费',()=>{
  for(const p of identityInputs)it('缺身份读取文件 '+p+' 不能完整认领',async()=>{const r=await collect('source_merge',s=>{delete s[p];},/\/__tests__\/evaluate\.test\.mjs$/);expect(r.gaps.length).toBeGreaterThan(0);});
  for(const [name,mutate] of cases)it(name+' 不可认领来源',async()=>{const r=await collect('source_merge',mutate);expect(r.gaps.length).toBeGreaterThan(0);for(const p of [...entries,...mergeReaderPaths])expect(r.bindings).not.toContain(p);});
 });
+
+describe('中央Skills runner配置是独立受审模式，不让合法新增仓库打断工厂来源证明',()=>{
+ const modes=['repos.json','lib/repo-profile.mjs','runner/lib/repos.mjs'];
+ it('现行完整Skills配置真实进入阶段消费证明',async()=>{
+  const {readFileSync}=await import('node:fs');
+  const files=Object.fromEntries(modes.map(name=>[P+name,readFileSync(new URL('../../../scripts/coding-workflow/'+name,import.meta.url),'utf8')]));
+  const r=await collect('recorded',s=>Object.assign(s,files));expect(r.gaps).toEqual([]);
+  expect(r.bindings).toContain(P+'repos.json');expect(r.bindings).toContain(P+'lib/repo-profile.mjs');
+ });
+ for(const change of ['旧配置混配','关闭裁判模式','篡改Skills来源','自动合并','任意新增仓库'])it(change+'拒绝认领',async()=>{
+  const {readFileSync}=await import('node:fs');
+  const files=Object.fromEntries(modes.map(name=>[P+name,readFileSync(new URL('../../../scripts/coding-workflow/'+name,import.meta.url),'utf8')]));
+  const r=await collect('recorded',s=>{
+   Object.assign(s,files);const p=P+'repos.json',config=JSON.parse(s[p]),skills=config.repos.find(x=>x.key==='zenithjoy-skills');
+   if(change==='旧配置混配')s[P+'lib/repo-profile.mjs']=STAGE.mode['lib/repo-profile.mjs'];
+   else {if(change==='关闭裁判模式')config.repos.find(x=>x.default).preview.type='local';
+    if(change==='篡改Skills来源')skills.origin='https://github.com/other/skills.git';
+    if(change==='自动合并')skills.automerge=true;
+    if(change==='任意新增仓库')config.repos.push({...skills,key:'unreviewed'});
+    s[p]=JSON.stringify(config);}
+  });expect(r.gaps).toContainEqual({code:'native_stage_execution_unproven'});
+ });
+});
