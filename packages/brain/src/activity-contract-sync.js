@@ -38,7 +38,15 @@ const fetchFile = (path, sha, d) => ghText(`contents/${path}?ref=${sha}`, 'appli
 
 export async function readActivityBinding(binding,d) {
   if(binding.kind!=='skill')return ghText(`contents/${binding.path}?ref=${binding.revision}`,'application/vnd.github.raw',d,binding.repo);
-  const result=await readFixedImplementationBinding(binding,{fetchFn:d.fetchFn,resolveToken:async()=>d.token});
+  // 普通外仓保留原固定声明读取；只有已登记业务profile才能映射中央Skill。
+  if(!['perfectuser21/cecelia',CONTRACT_REPO].includes(binding.repo)){
+    if(binding.repo==='perfectuser21/zenithjoy-skills'||!/^[\w.-]+\/[\w.-]+$/.test(binding.repo||'')||binding.repo.split('/').some(v=>v==='.'||v==='..')
+      ||!/^[a-f0-9]{40}$/.test(binding.revision||'')||typeof binding.path!=='string'||!binding.path
+      ||binding.path.startsWith('/')||binding.path.split('/').some(v=>!v||v==='.'||v==='..')||/[\\?#]/.test(binding.path)||[...binding.path].some(c=>c.charCodeAt(0)<32)
+      ||binding.resolved_source!==undefined)throw Object.assign(Error('外仓固定Skill声明无效'),{code:'definition_source_invalid',status:422});
+    return ghText(`contents/${binding.path}?ref=${binding.revision}`,'application/vnd.github.raw',d,binding.repo);
+  }
+  const result=await readFixedImplementationBinding(binding,{fetchFn:d.fetchFn,resolveToken:async()=>d.token,cache:d.cache,deadline:d.deadline,signal:d.signal});
   if(result.resolved_source)binding.resolved_source=result.resolved_source;
   return result.content;
 }
@@ -49,7 +57,7 @@ export async function readActivityBinding(binding,d) {
  * @returns {{head_sha, updated:string[], inserted:string[], deprecated:string[], unmapped:string[]}}
  * GitHub 任一请求失败直接抛错（调用方记滞后），此前不写库。
  */
-export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, resolveToken = resolveGitHubToken, readBinding, expectedRevision, beforeCommit, synchronizeSteps = false } = {}) {
+export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, resolveToken = resolveGitHubToken, readBinding, expectedRevision, beforeCommit, synchronizeSteps = false, signal, deadline } = {}) {
   // 在网络取HEAD之前固定数据库版本，避免慢请求拿旧HEAD覆盖先完成的新同步。
   const registrations = (await pool.query(REGISTRATIONS_SQL,[CONTRACT_REPO])).rows;
   const d = { fetchFn, token: await resolveToken() };
@@ -58,6 +66,8 @@ export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, 
   const digest = JSON.parse(await fetchFile(CONTRACTS_DIGEST_PATH, head, d));
   const consumers = registrations.filter(w=>w.status !== 'retired');
   const plans = await loadActivityContracts(consumers,digest,path=>fetchFile(path,head,d),registrations);
+  // One fixed-source parsing budget/cache per sync, never renewed per Skill binding.
+  d.cache=new Map();d.signal=signal;d.deadline=Math.min(deadline??Infinity,Date.now()+60000);
   const checked=new Map();
   for(const plan of plans) for(const item of plan.activities) {
     const key=`${item.activity.from}.${item.activity.key}`;

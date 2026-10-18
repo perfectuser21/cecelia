@@ -307,3 +307,54 @@ describe('runBackboneContractJob', () => {
     for (const gone of ['pushBackboneActivities', 'BACKBONE_DB_PROPS', 'buildBackboneActivityProps', 'syncBackboneBodies', 'buildBackboneActivityBody']) expect(mod).not.toHaveProperty(gone);
   });
 });
+
+describe('一轮固定Skill解析预算与缓存',()=>{
+  function context(){
+    const repo=CONTRACT_REPO,central='perfectuser21/zenithjoy-skills',revision='a'.repeat(40),cr='b'.repeat(40),tree1='c'.repeat(40),tree2='d'.repeat(40);
+    const paths=['.claude/skills/one/SKILL.md','.claude/skills/two/SKILL.md'];
+    const data=new Map([
+      [repo,new Map([['.skills-source.json',JSON.stringify({version:1,repository:central,revision:cr,profile:'zenithjoy',loader_sha256:'e'.repeat(64)})]])],
+      [central,new Map([['distribution/catalog.json',JSON.stringify({version:1,profiles:{zenithjoy:{files:paths.map((path,i)=>({path,source:`skills/${i}.md`,sha256:createHash('sha256').update(`body${i}`).digest('hex')}))}}})],['skills/0.md','body0'],['skills/1.md','body1']])],
+    ]);
+    const blobs=new Map(),calls=[];
+    const fetchFn=async url=>{
+      calls.push(url);const r=url.includes(`/repos/${central}/`)?central:repo,files=data.get(r),rev=r===repo?revision:cr,tree=r===repo?tree1:tree2;
+      const rows=[...files].map(([path,text])=>{const bytes=Buffer.from(text),sha=createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`),bytes])).digest('hex');blobs.set(sha,{sha,size:bytes.length,encoding:'base64',content:bytes.toString('base64')});return {path,sha,type:'blob',mode:'100644',size:bytes.length};});
+      return {ok:true,json:async()=>url.includes('/commits/')?{sha:rev,tree:{sha:tree}}:url.includes('/trees/')?{sha:tree,tree:rows}:blobs.get(url.split('/').at(-1))};
+    };
+    return {d:{fetchFn,token:'fixture',cache:new Map(),deadline:Date.now()+60000},calls,bindings:paths.map(path=>({kind:'skill',repo,revision,path}))};
+  }
+  it('同轮多个绑定复用固定锁/catalog内容，派生身份仍逐绑定核对',async()=>{
+    const {d,calls,bindings}=context();
+    expect(await readActivityBinding(bindings[0],d)).toBe('body0');
+    expect(await readActivityBinding(bindings[1],d)).toBe('body1');
+    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(4); // lock/catalog + two bodies
+    await expect(readActivityBinding({...bindings[0],resolved_source:{repo:'evil/repo',revision:bindings[0].revision,path:'evil'}},d)).rejects.toThrow();
+    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(4);
+  });
+  it('后续绑定不得重置总deadline，取消后即便命中缓存仍拒绝',async()=>{
+    const {d,calls,bindings}=context();await readActivityBinding(bindings[0],d);const count=calls.length;
+    d.deadline=Date.now()-1;await expect(readActivityBinding(bindings[1],d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(calls).toHaveLength(count);
+    d.deadline=Date.now()+60000;const controller=new AbortController();controller.abort();d.signal=controller.signal;
+    await expect(readActivityBinding(bindings[0],d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(calls).toHaveLength(count);
+  });
+});
+
+describe('同步既有外仓tracked Skill不继承中央来源资格',()=>{
+ const binding=()=>({kind:'skill',repo:'org/repo',path:'skills/check/SKILL.md',revision:'c'.repeat(40)});
+ it.each(['---\nname: check\nversion: 1.0.0\n---\n# 原文\n','---\r\nname: check\r\nversion: 1.0.0\r\n---\r\n# 原文\r\n'])('外仓固定原文逐字保留且不探中央锁',async body=>{
+  const calls=[],b=binding(),content=await readActivityBinding(b,{token:'fixture',fetchFn:async url=>{calls.push(url);return {ok:true,text:async()=>body};}});
+  expect(content).toBe(body);expect(calls).toEqual([`https://api.github.com/repos/org/repo/contents/skills/check/SKILL.md?ref=${b.revision}`]);expect(b).not.toHaveProperty('resolved_source');
+ });
+ it('外仓缺原件拒绝，不回退到中央仓',async()=>{
+  const calls=[];await expect(readActivityBinding(binding(),{token:'fixture',fetchFn:async url=>{calls.push(url);return {ok:false,status:404};}})).rejects.toThrow();expect(calls).toHaveLength(1);
+ });
+ it.each([b=>b.revision='main',b=>b.repo='../repo',b=>b.path='../SKILL.md',b=>b.path='skills/'+String.fromCharCode(0)+'/SKILL.md',b=>b.path='skills/'+String.fromCharCode(31)+'/SKILL.md',b=>b.resolved_source={repo:'perfectuser21/zenithjoy-skills',revision:'d'.repeat(40),path:'secret/SKILL.md'}])('外仓非法声明或伪造中央来源在网络前拒绝',async mutate=>{
+  const b=binding();mutate(b);let calls=0;await expect(readActivityBinding(b,{token:'fixture',fetchFn:async()=>{calls++;return {ok:true,text:async()=>'body'};}})).rejects.toThrow();expect(calls).toBe(0);
+ });
+});
+
+it('中央仓直接声明不得借普通外仓tracked兼容分支绕过业务锁',async()=>{
+ let reads=0;await expect(readActivityBinding({kind:'skill',repo:'perfectuser21/zenithjoy-skills',path:'qualification/SKILL.md',revision:'c'.repeat(40)},
+  {token:'fixture',fetchFn:async()=>{reads++;return {ok:true,text:async()=>'---\nname: central\nversion: 1\n---\nbody'};}})).rejects.toThrow();expect(reads).toBe(0);
+});

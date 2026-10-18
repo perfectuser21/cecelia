@@ -65,3 +65,22 @@ test('local shared clone remains available while network clone is rejected befor
  assert.equal(fixedLocalGit(target,['rev-parse','HEAD'],{encoding:'utf8'}).trim(),f.revision);
  assert.throws(()=>fixedLocalGit(f.root,['clone','https://example.invalid/repo',target],{localClone:true}),/INVALID_LOCAL_CLONE/);
 });
+
+test('merge keeps both caller timeoutMs and shared deadline without accepting expired or invalid budgets',async t=>{
+ const f=fixture(t),{fixedLocalGit}=await import('../fixed-local-git.mjs');
+ assert.equal(fixedLocalGit(f.root,['rev-parse','HEAD'],{encoding:'utf8',deadline:Date.now()+10000,timeoutMs:10000}).trim(),f.revision);
+ for(const budget of [{deadline:Date.now()-1},{timeoutMs:0},{timeoutMs:NaN},{deadline:NaN}])assert.throws(()=>fixedLocalGit(f.root,['rev-parse','HEAD'],budget),/FIXED_GIT_READ_TIMEOUT/);
+ const bin=join(f.root,'slow-git');mkdirSync(bin);writeFileSync(join(bin,'git'),'#!/bin/sh\nsleep 2\n',{mode:0o700});
+ const before=process.env.PATH;process.env.PATH=bin+':'+before;
+ try{for(const budget of [{deadline:Date.now()+10000,timeoutMs:20},{deadline:Date.now()+20,timeoutMs:10000}]){const start=Date.now();assert.throws(()=>fixedLocalGit(f.root,['rev-parse','HEAD'],budget));assert.ok(Date.now()-start<1000,'must apply the tighter caller budget');}}finally{process.env.PATH=before;}
+});
+
+test('merge uses authorized external central cache but rejects cache or git-directory symlinks',async t=>{
+ const f=fixture(t),{createFixedLocalSourceReader}=await import('../fixed-local-git.mjs'),{symlinkSync}=await import('node:fs');
+ const repo='perfectuser21/zenithjoy-workspace',central='perfectuser21/zenithjoy-skills';
+ const make=cache=>{const read=createFixedLocalSourceReader(f.root,repo,{centralSourceDir:cache,readBusinessFile:()=>Buffer.from(JSON.stringify({version:1,repository:central,revision:f.revision}))});read({repo,revision:f.revision,path:'.skills-source.json'});return read;};
+ const location={repo:central,revision:f.revision,path:'contract.json'};
+ assert.equal(make(f.root)(location).toString(),'original fixed bytes');
+ const link=join(f.root,'cache-link');symlinkSync(f.root,link,'dir');assert.throws(()=>make(link)(location),/FIXED_LOCAL_CACHE_SYMLINK/);
+ const bad=join(f.root,'cache-git-link');mkdirSync(bad);symlinkSync(join(f.root,'.git'),join(bad,'.git'),'dir');assert.throws(()=>make(bad)(location),/FIXED_LOCAL_CACHE_SYMLINK/);
+});

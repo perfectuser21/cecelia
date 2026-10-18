@@ -1,5 +1,6 @@
 import {it,expect} from 'vitest';
 import {readFileSync,existsSync} from 'node:fs';
+import {removeConsumedReleaseRelations} from '../../../../../scripts/ci/implementation-auxiliary-evidence.mjs';
 import {REVIEWED_STAGE_MODES} from '../existing-ops-stage-modes.js';
 it('新增模式保留旧仓完整QA与合并策略，只新增独立Skills配置',()=>{
  const [legacy,extended]=REVIEWED_STAGE_MODES.map(mode=>JSON.parse(mode['repos.json']).repos);
@@ -23,3 +24,17 @@ it('测试保留明确辅助归属，release碎片只允许完整待消费或真
   expect(readFileSync(new URL('../../../../../DEFINITION.md',import.meta.url),'utf8').split(/\r?\n/)).toContain(note);
  }
 });
+
+const releasePath='changes/cp-10182235-stage-proof-bootstrap.md';
+const release={owner_path:'packages/brain/src/lib/existing-ops-stage-source.js',path:releasePath,role:'release'};
+const assertReleaseLifecycle=(relations,present)=>expect(relations.filter(row=>row.path===releasePath)).toEqual(present?[release]:[]);
+it('原严格消费器只删除已消费release行，消费前后两态都核验并保其它归属',()=>{
+ const verification={owner_path:'packages/brain/src/lib/existing-ops-stage-modes.js',path:'packages/brain/src/lib/__tests__/existing-ops-stage-modes.test.js',role:'verification'};
+ const before=JSON.stringify({schema_version:1,repo:'perfectuser21/cecelia',relations:[verification,release]});
+ assertReleaseLifecycle(JSON.parse(before).relations,true);
+ const after=JSON.parse(removeConsumedReleaseRelations(before,[releasePath]));
+ assertReleaseLifecycle(after.relations,false);expect(after.relations).toEqual([verification]);
+});
+it('碎片仍在但登记缺失时拒绝',()=>{expect(()=>assertReleaseLifecycle([],true)).toThrow();});
+it('碎片仍在但owner错误时拒绝',()=>{expect(()=>assertReleaseLifecycle([{...release,owner_path:'packages/brain/src/lib/existing-ops-stage-modes.js'}],true)).toThrow();});
+it('碎片已消费却留孤立登记时拒绝',()=>{expect(()=>assertReleaseLifecycle([release],false)).toThrow();});
