@@ -121,7 +121,7 @@ const MODERN_SKILL_INITIALIZER='scripts/ci/implementation-skill-source.mjs';
 const MODERN_SKILL_INPUTS=[...FIXED_SKILL_INPUTS,'packages/brain/src/lib/device-patrol-admission.js'];
 const MODERN_SHELL_HASHES={
  'pilot-release-verification':'445cbd1ae6c86b9f09f2cde08350537949b2aef85618f499e7c659ed09ea6265',
- 'implementation-impact':'16468c00285de7ccb9ca43c31f4697918d8353abf92000fa8e8db1d159701539',
+ 'implementation-impact':'0c63a85850a5c2f0b78206b08737ff1b459c14bfbcdb7f9485aa854920287d36',
 };
 const MODERN_ENV_HASHES={'pilot-release-verification':'aac70fc23f69f37ef637d97953ee0a5e5ab0c2478615c57dbcb5d9277d537037','implementation-impact':'62da3e800763d1fc7a5c84146bd4a0022700c56394ed0aba7465ecf17fffc57d'};
 const NATIVE_PR_ENV="${{ github.repository == 'perfectuser21/cecelia' && github.event_name == 'pull_request' && !inputs.source_repo && !inputs.tooling_revision && !inputs.scope && !inputs.head_revision && !inputs.base_revision && !inputs.mode && !inputs.admission_scopes }}";
