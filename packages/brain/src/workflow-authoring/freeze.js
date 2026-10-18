@@ -1,6 +1,5 @@
 import { definitionDigest } from './contracts.js';
-import { readFixedGitFile, validateGitSource } from './fixed-git-source.js';
-import { validateImplementationBindings } from '../lib/implementation-bindings.js';
+import { readFixedGitFile, validateGitSource, validateFixedImplementationBindings } from './fixed-git-source.js';
 import { snapshotDefinitions } from '../lib/definition-versions.js';
 import { assertStepsHaveReadback } from '../lib/contract-steps.js';
 import { prepareSharedFreeze } from './shared-freeze.js';
@@ -15,17 +14,18 @@ const fail=(message,code='definition_freeze_proof_invalid')=>{throw Object.assig
 export async function prepareDefinitionFreeze(definition, options={}) {
   const source={repo:definition.source?.repo,path:definition.source?.ref,revision:definition.source?.revision};
   validateGitSource(source);
-  const readFile=options.readFile||((s)=>readFixedGitFile(s,options)),cache=new Map(),deadline=Math.min(options.deadline??Infinity,Date.now()+60000);
-  let totalBytes=0;
+  const deadline=Math.min(options.deadline??Infinity,Date.now()+60000);
+  const readFile=options.readFile||((s)=>readFixedGitFile(s,{...options,deadline})),cache=new Map();
+  let totalBytes=0,bindingFiles=0;
   const read=async s=>{
     if(options.signal?.aborted||Date.now()>=deadline)fail('readiness_deadline_exceeded');
     validateGitSource(s);const key=JSON.stringify([s.repo,s.path,s.revision]);
     if(!cache.has(key)){
-      if(cache.size>=200||Date.now()>deadline)fail('来源核验超过文件数量或总时限');
+      if(cache.size+bindingFiles>=200||Date.now()>=deadline)fail('来源核验超过文件数量或总时限');
       const content=await readFile(s);
       if(options.signal?.aborted||Date.now()>=deadline)fail('readiness_deadline_exceeded');
       if(typeof content!=='string'||Buffer.byteLength(content)>1024*1024)fail('来源文件不是有界文本');
-      totalBytes+=Buffer.byteLength(content);if(totalBytes>8*1024*1024||Date.now()>deadline)fail('来源核验超过总字节或时限');
+      totalBytes+=Buffer.byteLength(content);if(totalBytes>8*1024*1024||cache.size+bindingFiles>=200||Date.now()>=deadline)fail('来源核验超过文件数量、总字节或时限');
       cache.set(key,content);
     }
     return cache.get(key);
@@ -35,16 +35,22 @@ export async function prepareDefinitionFreeze(definition, options={}) {
   const {source:_source,...expected}=definition;
   if(definitionDigest(document)!==definitionDigest(expected))fail('冻结来源内容与已验收完整定义不一致','definition_source_invalid');
   assertStepsHaveReadback(definition.activities);
-  const bindings=new Map(),shared=new Map(),fixed={repo:source.repo,path:source.path,commit:source.revision};
+  const bindings=new Map(),shared=new Map(),bindingCache=new Map(),fixed={repo:source.repo,path:source.path,commit:source.revision};
+  const verifyBindings=(activity,activitySource)=>validateFixedImplementationBindings(activity,activitySource,{...options,deadline,cache:bindingCache,readFile:options.readFile,readBusinessFile:options.readBusinessFile||((s,readOptions)=>readFixedGitFile(s,{...options,...readOptions,deadline})),onReadBytes:bytes=>{
+    bindingFiles++;totalBytes+=bytes;
+    if(bindingFiles+cache.size>200||totalBytes>8*1024*1024||Date.now()>=deadline)fail('来源核验超过文件数量、总字节或时限');
+  }});
   for(const activity of definition.activities){
     if(activity.reuse_activity_id){
-      const pin=await prepareSharedFreeze(activity,options.sharedVersions,read);
+      const pin=await prepareSharedFreeze(activity,options.sharedVersions,read,verifyBindings);
       shared.set(activity.key,pin.version);bindings.set(activity.key,pin.bindings);continue;
     }
-    const verified=await validateImplementationBindings(activity,read,fixed);
+    const verified=await verifyBindings(activity,fixed);
     if(!verified.length||verified.some(b=>b.status!=='verified'))fail(`活动实现无法完整核验：${activity.key}`);
     bindings.set(activity.key,verified);
   }
+  if(cache.size+bindingFiles>200||totalBytes>8*1024*1024)fail('来源核验超过文件数量或总字节');
+  if(options.signal?.aborted||Date.now()>=deadline)fail('固定来源读取已取消或超时','readiness_deadline_exceeded');
   const proof={source:fixed,bindings,shared,definition_sha256:definitionDigest(definition)};
   prepared.set(proof,definitionDigest({source:fixed,bindings:[...bindings],shared:[...shared],definition_sha256:proof.definition_sha256}));
   return proof;

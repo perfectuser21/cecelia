@@ -417,6 +417,7 @@ release-evidence-smoke.sh
 capability-system-smoke.sh
 capability-kr-regression-smoke.sh
 pilot-release-verification-smoke.sh
+central-skill-fixed-source-smoke.sh
 phone-runner-infra-smoke.sh
 dead-man-switch-usvps-smoke.sh
 alarm-ledger-smoke.sh

@@ -95,6 +95,7 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // 技能工厂推进器 / 自动裁判（任务 a5f42455 / 2231ecc0）：经 actions.createTask 建 factory_dispatch 执行单 / run-verify 核验单 / 阶段工单。
   { module: 'lib/workflow-assembly-reconcile-tasks.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'lib/commander-v2-control.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'lib/commander-improvement.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'lib/factory-cycle.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   // factory-judge 本身不直连写入口：createTask 由 factory-cycle 注入（actions.js 边界），故不单独算可执行建单边界。
   { module: 'lib/factory-judge.js', source: 'scheduler', creates_executable_task: false, migration_status: 'routed' },

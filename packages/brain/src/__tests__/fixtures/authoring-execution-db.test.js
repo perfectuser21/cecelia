@@ -8,6 +8,15 @@ import {it,expect} from 'vitest';
 import {requireCandidateEnvironment} from '../../workflow-authoring/assembly-orchestration.js';
 import {createIntakeTestDatabase} from './task-intake-db.js';
 import {randomUUID} from 'node:crypto';
+export function authoringFixtureReader(definition,content){
+ return async(s,options={})=>{
+   if(s.repo!==definition.source.repo||s.revision!==definition.source.revision)throw Error('fixture_source_unknown');
+   if(s.path===definition.source.ref)return JSON.stringify(Object.fromEntries(Object.entries(definition).filter(([k])=>k!=='source')));
+   if(s.path==='skills/pure/SKILL.md')return content;
+   if(s.path==='.skills-source.json'&&options.allowMissing===true)return null;
+   throw Error('fixture_file_missing');
+  };
+}
 /** 全部对象和执行账均为scratch私有schema，生产结构只读复制，结束完整删除。 */
 export async function authoringExecutionDatabase(){
  const f=await createIntakeTestDatabase();
@@ -31,7 +40,7 @@ export async function authoringExecutionDatabase(){
     input_schema:schema,output_schema:schema,
     implementation:{kind:'skill',skill_id:skill,ref:'skills/pure/SKILL.md',path:'skills/pure/SKILL.md',version:'1.0.0',repo:'perfectuser21/cecelia',revision:'contract'}}]};
   const content='---\nname: authoring-pure\nversion: 1.0.0\n---\n仅把输入text转成大写，输出text字段。禁止工具、文件、消息及其它副作用。';
-  const reader=async s=>s.path===definition.source.ref?JSON.stringify(Object.fromEntries(Object.entries(definition).filter(([k])=>k!=='source'))):content;
+  const reader=authoringFixtureReader(definition,content);
   return {...f,definition,reader,content,skill};
  }catch(error){await f.close();throw error;}
 }
@@ -65,3 +74,17 @@ export async function settleInvocation(f,taskId,actualOutput){
  await finalizeTask(f.pool,taskId,'completed',{relay:false});
  return runId;
 }
+
+it('历史无锁fixture只在显式allowMissing时证明锁缺失，纯reader不连接数据库',async()=>{
+ expect(typeof authoringFixtureReader).toBe('function');
+ const definition={source:{repo:'perfectuser21/cecelia',revision:'a'.repeat(40),ref:'contracts/pure.json'}};
+ const content='---\nname: authoring-pure\nversion: 1.0.0\n---\n固定正文';
+ const reader=authoringFixtureReader(definition,content);
+ const source={repo:definition.source.repo,revision:definition.source.revision,path:'.skills-source.json'};
+ expect(await reader(source,{allowMissing:true})).toBeNull();
+ await expect(reader(source)).rejects.toThrow('fixture_file_missing');
+ await expect(reader({...source,path:'unknown/SKILL.md'})).rejects.toThrow('fixture_file_missing');
+ expect(await reader({...source,path:'skills/pure/SKILL.md'})).toBe(content);
+ await expect(reader({...source,repo:'unknown/repo'},{allowMissing:true})).rejects.toThrow('fixture_source_unknown');
+ await expect(reader({...source,revision:'b'.repeat(40)},{allowMissing:true})).rejects.toThrow('fixture_source_unknown');
+});

@@ -6,6 +6,7 @@
  * ④30min 自 gate ⑤同步连续失败超 2h 才告警且只告一次 ⑥Notion 属性只读标记 + 链回正本。
  */
 import { describe, it, expect, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import yaml from 'js-yaml';
 import { hash } from './fixtures/shared-activity-contracts.js';
 
@@ -18,6 +19,7 @@ import {
   CONTRACT_REPO,
   CHECK_INTERVAL_MS,
   DRIFT_ALERT_MS,
+  readActivityBinding,
 } from '../activity-contract-sync.js';
 
 const HEAD = 'a'.repeat(40);
@@ -161,6 +163,22 @@ const seeded = () => [
 const deps = (gh) => ({ fetchFn: gh.fetchFn, resolveToken: async () => 'tok' });
 
 describe('syncActivityContracts', () => {
+  it('正式同步默认读取器按业务锁取中央 Skill 并保存双来源',async()=>{
+    const path='.claude/skills/demo/SKILL.md',central='perfectuser21/zenithjoy-skills',revision='b'.repeat(40),source='business-skills/zenithjoy/demo/SKILL.md';
+    const skill='---\nname: demo\nversion: 1\n---\ncentral\n';
+    const blob=bytes=>{const content=Buffer.from(bytes),sha=createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${content.length}\0`),content])).digest('hex');return {sha,size:content.length,encoding:'base64',content:content.toString('base64')};};
+    const lock=JSON.stringify({version:1,repository:central,revision,profile:'zenithjoy',loader_sha256:'a'.repeat(64)});
+    const catalog=JSON.stringify({version:1,profiles:{zenithjoy:{files:[{path,source,sha256:createHash('sha256').update(skill).digest('hex')}]}}});
+    const files={[`${CONTRACT_REPO}/.skills-source.json`]:lock,[`${central}/distribution/catalog.json`]:catalog,[`${central}/${source}`]:skill};
+    const trees=new Map(),blobs=new Map();
+    for(const [key,value] of Object.entries(files)){const [owner,...parts]=key.split('/');const repoName=key.startsWith(CONTRACT_REPO)?CONTRACT_REPO:central;const file=key.slice(repoName.length+1);const record=blob(value);blobs.set(record.sha,record);const rows=trees.get(repoName)||[];rows.push({path:file,sha:record.sha,type:'blob',mode:'100644',size:record.size});trees.set(repoName,rows);}
+    const fetchFn=async url=>{const m=url.match(/\/repos\/(perfectuser21\/(?:zenithjoy-workspace|zenithjoy-skills))\/git\/(commits|trees|blobs)\/([a-f0-9]{40})/);expect(m).toBeTruthy();const [,owner,kind,hash]=m;
+      const value=kind==='commits'?{sha:hash,tree:{sha:'c'.repeat(40)}}:kind==='trees'?{sha:hash,truncated:false,tree:trees.get(owner)}:blobs.get(hash);
+      return new Response(JSON.stringify(value),{status:200});};
+    const binding={kind:'skill',repo:CONTRACT_REPO,revision:HEAD,path};
+    expect(await readActivityBinding(binding,{fetchFn,token:'fixture'})).toBe(skill);
+    expect(binding.resolved_source).toEqual({repo:central,path:source,revision});
+  });
   it('哈希变了 → 拉 YAML，按 activity_key 写契约+仓库哈希+正本链接（钉在 commit）', async () => {
     const gh = fakeGithub({ digest: digestOf({ preflight: 'p1', discovery: 'd1' }) });
     const pool = fakePool(seeded());

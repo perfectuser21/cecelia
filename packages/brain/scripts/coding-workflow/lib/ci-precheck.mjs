@@ -58,7 +58,27 @@ function zenithjoyChecks() {
   ];
 }
 
-const CHECK_SETS = { cecelia: defaultChecks, zenithjoy: zenithjoyChecks };
+/** Skills CI is Python/bash only; every declared check must exist and actually run. */
+function skillsChecks() {
+  const python = [
+    ['skill-distribution', 'distribution/test_skills_source.py'],
+    ['lint-skills-fixtures', '.github/workflows/scripts/test/test_lint_skills.py'],
+    ['gp-contract-fixtures', '.github/workflows/scripts/test/test_lint_gp_contract_layer.py'],
+    ['archived-source-fixtures', '.github/workflows/scripts/test/test_archived_skill_source.py'],
+    ['gp-contract', '.github/workflows/scripts/lint-gp-contract-layer.py'],
+    ['douyin-cleanup-regression', '.github/workflows/scripts/test/test_douyin_read_cleanup_order.py'],
+    ['lint-skills', '.github/workflows/scripts/lint-skills.py'],
+    ['learning-placeholder-fixtures', '.github/workflows/scripts/test/test_lint_learning_placeholders.py'],
+    ['learning-placeholders', '.github/workflows/scripts/lint-learning-placeholders.py'],
+    ['session-start-regression', 'hooks/__tests__/test_session_start.py'],
+  ].map(([name, script]) => ({ name, cmd: ['python3', script], required: true }));
+  return [...python,
+    { name: 'brain-contract', cmd: ['bash', '.github/workflows/scripts/check-brain-contract.sh'], required: true },
+    { name: 'post-pr-create-regression', cmd: ['bash', 'hooks/__tests__/post-pr-create-rewrite.test.sh'], required: true },
+  ];
+}
+
+const CHECK_SETS = { cecelia: defaultChecks, zenithjoy: zenithjoyChecks, skills: skillsChecks };
 
 /** 按仓库挑预检清单（repos.json prechecks，C6）；没传 profile = 默认仓；清单名不认识 → 抛错（配置错不能静默不检）。 */
 export function checksFor(profile, opts) {
@@ -88,7 +108,7 @@ function smokeRegistration(worktree) {
 }
 
 const TEST_FILE_RE = /\.(?:test|spec)\.(?:ts|tsx|js)$/;
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage']);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '.skills-source', '.skills-runtime']);
 const REGISTRY = 'test-registry.yaml';
 
 /** worktree 里全部测试文件（同 CI 的 find：*.test|spec.ts|tsx|js，跳过 node_modules / .git / dist / build / coverage）。 */
@@ -164,9 +184,9 @@ export async function runPrechecks(worktree, { checks, env = {} }) {
     }
     const [cmd, ...args] = check.cmd;
     // 被跑的脚本 = 参数里第一个脚本文件（`node --test <文件>` 也算；`bash -c` 内联命令不算）；仓库里没有就跳过
-    const script = ['bash', 'node'].includes(cmd) ? (args.find((a) => /\.(?:sh|js|mjs|cjs)$/.test(a)) ?? null) : null;
+    const script = ['bash', 'node', 'python3', 'python'].includes(cmd) ? (args.find((a) => /\.(?:sh|js|mjs|cjs|py)$/.test(a)) ?? null) : null;
     if (script && !fs.existsSync(path.join(worktree, script))) {
-      results.push({ name: check.name, ok: true, skipped: true, output_tail: `${script} 不存在，跳过` });
+      results.push({ name: check.name, ok: check.required !== true, skipped: check.required !== true, output_tail: `${script} 不存在${check.required ? '，必需检查失败' : '，跳过'}` });
       continue;
     }
     const r = await exec(cmd, args, { cwd: worktree, env: { ...childEnv(), ...env, ...(check.env ?? {}) } });

@@ -73,6 +73,34 @@ it('验证了其他合同文件不能冒充本请求，零版本与零workflow�
   await expect(submit({mismatch:true})).rejects.toMatchObject({code:'definition_source_invalid'});
   expect((await db.query('SELECT count(*)::int n FROM workflows')).rows[0].n).toBe(0);
 });
+it.each([false,true])('已迁移 Skill 固定中央来源冻结；摘要错误=%s 时零新版本',async corrupt=>{
+  const path='.claude/skills/demo/SKILL.md',central='perfectuser21/zenithjoy-skills',revision='b'.repeat(40);
+  const content='---\nname: demo\nversion: 1\n---\ncentral\n';
+  const skillId=(await db.query("SELECT id FROM skill_registry WHERE name='workflow-commander' LIMIT 1")).rows[0].id;
+  definition.activities[0].implementation={kind:'skill',skill_id:skillId,repo:'perfectuser21/zenithjoy-workspace',ref:path,path,revision:'contract',name:'demo',version:'1'};
+  state.outputs.compose={definition,definition_sha256:registrationDigest(definition)};
+  await db.query('UPDATE tasks SET result=$2 WHERE id=$1',[taskId,JSON.stringify({workflow_authoring:state})]);
+  const lock=JSON.stringify({version:1,repository:central,revision,profile:'zenithjoy',loader_sha256:'a'.repeat(64)});
+  const digest=corrupt?'0'.repeat(64):createHash('sha256').update(content).digest('hex');
+  const catalog=JSON.stringify({version:1,profiles:{zenithjoy:{files:[{path,source:'business-skills/zenithjoy/demo/SKILL.md',sha256:digest}]}}});
+  const {source,...document}=definition;
+  const attempt=submitAuthoring(db,taskId,{stage:'register',revision:5,submission_id:'central-register',output:{}},{
+    validateDefinition,validateReferences,registerWorkflow,freezeOptions:{readFile:async s=>{
+      expect(inTransaction).toBe(false);
+      if(s.path===source.ref)return JSON.stringify(document);
+      if(s.path==='.skills-source.json')return lock;
+      if(s.path==='distribution/catalog.json')return catalog;
+      if(s.repo===central)return content;
+      throw Error('deleted business skill must never be read');
+    }},
+  });
+  if(corrupt){await expect(attempt).rejects.toThrow(/摘要/);expect((await db.query('SELECT count(*)::int n FROM workflow_definition_versions')).rows[0].n).toBe(0);return;}
+  const result=await attempt;
+  expect(result.receipt.output.current_definition_version_id).toBeTruthy();
+  // 工作流版本引用活动版本，来源证明中必须同时保留声明和解析身份。
+  const binding=(await db.query('SELECT payload FROM activity_definition_versions LIMIT 1')).rows[0].payload.implementation_bindings[0];
+  expect(binding).toMatchObject({repo:'perfectuser21/zenithjoy-workspace',path,resolved_source:{repo:central,revision,path:'business-skills/zenithjoy/demo/SKILL.md'}});
+});
 it('正式HTTP register返回冻结版本；相同提交幂等返回，后续不再重复读Git',async()=>{
   let reads=0;const {source,...document}=definition;
   const app=express();app.use(express.json());app.use('/authoring',createWorkflowAuthoringRouter({db,freezeOptions:{readFile:async s=>{

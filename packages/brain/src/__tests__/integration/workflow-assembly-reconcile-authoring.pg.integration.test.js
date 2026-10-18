@@ -1,4 +1,5 @@
 import {it,expect} from 'vitest';
+import {readFixedLocalGitBlob} from '../../../../../scripts/ci/fixed-local-git.mjs';
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -18,7 +19,10 @@ it('默认scheduler真实复验链：固定Git候选破坏后自动修复并生�
   writeFileSync(join(dir,'skills/pure/SKILL.md'),f.content);
   writeFileSync(join(dir,'contracts/pure.json'),JSON.stringify(Object.fromEntries(Object.entries(f.definition).filter(([key])=>key!=='source'))));
   git(['init','-b','cp-reconcile-fixture']);git(['config','user.name','Reconcile fixture']);git(['config','user.email','fixture@example.invalid']);git(['add','.']);git(['commit','-m','test: fixed source for automatic revalidation']);
-  f.definition.source.revision=git(['rev-parse','HEAD']);f.reader=source=>git(['show',`${source.revision}:${source.path}`]);
+  f.definition.source.revision=git(['rev-parse','HEAD']);f.reader=(source,options)=>{
+    const bytes=readFixedLocalGitBlob(dir,source,options);
+    return bytes===null?null:bytes.toString('utf8');
+  };
   const run=await startPureAuthoring(f),adapters={readFile:f.reader,probeRuntime:async()=>({ready:true})};
   const job=JOBS.find(j=>j.name==='workflow-assembly-reconcile');expect(job).toBeTruthy();
   // 仅固定Git/资源适配来自隔离fixture，真实driver/readiness/路由/证明函数均不注入。

@@ -243,9 +243,9 @@ describe('relay-baton：handoff 编码子单改投 coding_workflow', () => {
 });
 
 describe('仓库支持判定单一来源', () => {
-  it('repos.json 是唯一来源：已启用的 cecelia、zenithjoy（C7 开闸）及其别名支持，未登记的不支持', async () => {
+  it('repos.json 是唯一来源：已启用的 cecelia、zenithjoy、Skills 及其别名支持，未登记的不支持', async () => {
     const { enabledRepos } = await import('../../scripts/coding-workflow/runner/lib/repos.mjs');
-    expect(enabledRepos({}).map((r) => r.key)).toEqual(['cecelia', 'zenithjoy-workspace']);
+    expect(enabledRepos({}).map((r) => r.key)).toEqual(['cecelia', 'zenithjoy-workspace', 'zenithjoy-skills']);
     expect(runnerRepoOf('cecelia')).toBe('cecelia');
     expect(runnerRepoOf('perfectuser21/cecelia')).toBe('cecelia');
     expect(runnerRepoOf('https://github.com/perfectuser21/cecelia.git')).toBe('cecelia');

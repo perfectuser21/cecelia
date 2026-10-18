@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { buildLeadgenLaunch, buildLeadgenProbe, buildLeadgenAdbPreflight } from './leadgen-controller.js';
 let home, remoteHome, inherited;
 const task='31fe79ae-b9ee-4187-8d90-d9c41a140a95';
@@ -52,4 +52,37 @@ describe('leadgen controller real local subprocess fixture',()=>{
  it('clears inherited execution overrides while preserving normal HOME PATH and Brain credentials mechanism',async()=>{inherited={LEADGEN_SEND:'1',LEADGEN_SOURCE_RUN:'commentbenchbad',LEADGEN_COMMENT_LIMIT:'50',LEADGEN_SORT:'most_commented',WF_DEPLOYMENT_MANIFEST:'/evil',WFR_HOME:'/evil',QUEUED_VIDEO_COLLECTION_SECONDS:'999',BRAIN_URL:'http://127.0.0.1:15221'};const p=plan();launch(p);await finished(p);const e=JSON.parse(readFileSync(join(home,'observed-env.json'),'utf8'));for(const k of ['LEADGEN_SEND','LEADGEN_COMMENT_LIMIT','LEADGEN_SORT','WF_DEPLOYMENT_MANIFEST','WFR_HOME','QUEUED_VIDEO_COLLECTION_SECONDS'])expect(e[k]).toBeNull();expect(e.LEADGEN_SOURCE_RUN).toBe('real102');expect(e.WF_RELEASE_ID).toBe(p.release_id);expect(e.BRAIN_URL).toBe(inherited.BRAIN_URL);expect(e.HOME).toBe(home);expect(e.PATH).toContain('test-bin');});
  it('passes an explicit102 collection budget to the real child while rejecting out-of-scope budgets',async()=>{sshFixture();adbFixture();const p=m4Plan({workflow_key:'douyin_video_processing',workflow_id:'b1000000-0000-4000-8000-000000000102'});p.business_run_id=p.workflow_key+'-'+p.business_tag+'__a1';p.env.QUEUED_VIDEO_COLLECTION_SECONDS='1500';launch(p);await finished(p);expect(JSON.parse(readFileSync(join(remoteHome,'observed-env.json'),'utf8')).QUEUED_VIDEO_COLLECTION_SECONDS).toBe('1500');for(const bad of ['1921','0','-1','1500.5'])expect(()=>buildLeadgenLaunch({...p,env:{...p.env,QUEUED_VIDEO_COLLECTION_SECONDS:bad}})).toThrow();expect(()=>buildLeadgenLaunch({...p,env:{...p.env,QUEUED_VIDEO_COLLECTION_SECONDS:'1920'}})).not.toThrow();expect(()=>buildLeadgenLaunch(plan({env:{...plan().env,QUEUED_VIDEO_COLLECTION_SECONDS:'1500'}}))).toThrow();expect(()=>buildLeadgenLaunch(m4Plan({env:{...m4Plan().env,QUEUED_VIDEO_COLLECTION_SECONDS:'1500'}}))).toThrow();});
  it('blocks arbitrary executable/env routing and identity drift',()=>{expect(()=>buildLeadgenLaunch(plan({machine:'other'}))).toThrow();expect(()=>buildLeadgenLaunch(plan({env:{PATH:'/evil'}}))).toThrow();expect(()=>buildLeadgenLaunch(plan({business_tag:'evil;touch'}))).toThrow();expect(()=>buildLeadgenLaunch(plan({business_run_id:'wfd-forged'}))).toThrow();expect(()=>buildLeadgenLaunch(plan({workflow_key:'douyin_video_discovery'}))).toThrow();});
+});
+
+it('physical ADB smoke在ready创建后尚为空时仍只接收完整原子端口',()=>{
+ const python=execFileSync('python3',['-c','import sys; print(sys.executable)'],{encoding:'utf8'}).trim();
+ const bin=join(home,'slow-python'),marker=join(home,'ready-write-window');mkdirSync(bin);
+ const shim=`#!${python}
+import os,pathlib,runpy,sys,time
+if len(sys.argv)>1 and pathlib.Path(sys.argv[1]).name=='adb-server.py':
+ original=pathlib.Path.write_text
+ def delayed(self,data,*args,**kwargs):
+  if self.name in ('ready','ready.tmp'):
+   with self.open('w') as stream:
+    original(pathlib.Path(${JSON.stringify(marker)}),self.name)
+    time.sleep(.25)
+    return stream.write(data)
+  return original(self,data,*args,**kwargs)
+ pathlib.Path.write_text=delayed
+ runpy.run_path(sys.argv[1],run_name='__main__')
+else:
+ os.execv(${JSON.stringify(python)},[${JSON.stringify(python)}]+sys.argv[1:])
+`;
+ writeFileSync(join(bin,'python3'),shim,{mode:0o700});
+ const result=spawnSync('bash',[new URL('../../scripts/smoke/leadgen-physical-adb-routing-smoke.sh',import.meta.url).pathname,'--case','legacy'],{
+  cwd:new URL('../../../../',import.meta.url).pathname,encoding:'utf8',timeout:15000,env:{...process.env,PATH:bin+':'+process.env.PATH,SMOKE_ALLOW_WRITE:'1'},
+ });
+ expect(existsSync(marker),'必须实际创建空文件窗口，不能只依赖时序碰运气').toBe(true);
+ expect(result.status,result.stderr).toBe(0);
+ const observed=JSON.parse(result.stdout.trim().split('\n').find(line=>line.startsWith('{"case":')));
+ expect(observed.case).toBe('legacy');expect(observed.plans).toBe(2);
+ for(const flow of ['douyin_video_discovery','douyin_video_processing']){
+  const row=observed[flow];expect(row.fixture_port).toBeGreaterThan(1024);expect(row.fixture_port).toBeLessThanOrEqual(65535);
+  expect([5037,5041,5042]).not.toContain(row.fixture_port);expect(row.preflight_checks).toBe(2);expect(row.calls).toBe(1);expect(row.execution_started).toBe(true);
+ }
 });
