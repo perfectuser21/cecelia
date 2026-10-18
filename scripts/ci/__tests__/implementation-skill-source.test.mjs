@@ -129,10 +129,10 @@ test('CI缓存拒绝损坏锁、跨profile、非固定SHA及未知版本，不�
   assert.throws(()=>sourceApi.prepareImplementationSkillCache(f.business,'perfectuser21/zenithjoy-workspace',['0'.repeat(40)]));
  }finally{if(prior===undefined)delete process.env.SKILLS_SOURCE_SSH_KEY;else process.env.SKILLS_SOURCE_SSH_KEY=prior;f.cleanup();}
 });
-test('Impact自举只接受精确821本仓原生PR，其余缺prepare或身份不符绝不假绿',()=>{
+for(const legacy of ['821dac5ae926cd5120d7b94fcd8012dd1f09bc23','b977d068919ff699318581214ddb07c314629e56'])test(`Impact自举只接受精确${legacy}本仓原生PR，其余缺prepare或身份不符绝不假绿`,()=>{
  const w=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
  const step=w.jobs.gate.steps.find(s=>s.name==='准备固定中央Skill对象缓存');assert.ok(step);
- const root=mkdtempSync(join(tmpdir(),'cache-workflow-step-')),bin=join(root,'bin'),legacy='821dac5ae926cd5120d7b94fcd8012dd1f09bc23';mkdirSync(bin);
+ const root=mkdtempSync(join(tmpdir(),'cache-workflow-step-')),bin=join(root,'bin');mkdirSync(bin);
  try{
   writeFileSync(join(bin,'git'),'#!/bin/sh\nprintf "%s\\n" "$ACTUAL_TOOLING"\n',{mode:0o700});
   writeFileSync(join(bin,'node'),'#!/bin/sh\nexit 0\n',{mode:0o700}); // old helper missing prepare mode: exit0+empty stdout must reject
@@ -278,10 +278,11 @@ test('唯一旧兼容升级为821真实可信reader冷启动，而非185空缓�
  assert.match(step.run,/821dac5ae926cd5120d7b94fcd8012dd1f09bc23/);
  assert.match(step.run,/b8985542133fb7dcf87a2adf9151de43d0694185/,'精确已发布同字节main必须可冷启动');
  assert.match(step.run,/a72ff8372d4eb2100e1b9b7572d88a22969bef2f/,'实际新发布同reader与锁的main必须可冷启动');
+ assert.match(step.run,/b977d068919ff699318581214ddb07c314629e56/,'正式cleanup main同helper/锁也必须精确冷启动');
  assert.match(step.run,/readImplementationSource/);assert.match(step.run,/packages\/engine\/skills\/dev\/SKILL\.md/);
  assert.doesNotMatch(step.run,/18552f8eeafdb2d404294bd6601bc74d00a1d422/);
 });
-for(const legacy of ['b8985542133fb7dcf87a2adf9151de43d0694185','a72ff8372d4eb2100e1b9b7572d88a22969bef2f'])test(`已发布同字节版本${legacy}实际执行可信reader冷fetch，锁漂移/既存cache拒绝且不运行candidate loader`,()=>{
+for(const legacy of ['b8985542133fb7dcf87a2adf9151de43d0694185','a72ff8372d4eb2100e1b9b7572d88a22969bef2f','b977d068919ff699318581214ddb07c314629e56'])test(`已发布同字节版本${legacy}实际执行可信reader冷fetch，锁漂移/既存cache拒绝且不运行candidate loader`,()=>{
  const f=fixture(),workspace=dirname(f.business),tooling=join(workspace,'tooling'),bin=join(workspace,'bin');
  try{
   symlinkSync(f.business,join(workspace,'source'));mkdirSync(tooling);git(tooling,'init','-q');git(tooling,'config','core.hooksPath','/dev/null');mkdirSync(bin);
