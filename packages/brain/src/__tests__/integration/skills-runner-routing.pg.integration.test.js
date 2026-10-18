@@ -1,14 +1,16 @@
 import {it,expect} from 'vitest';
-import pg from 'pg';
+import {privateFixtureDatabase} from '../fixtures/private-fixture-db.js';
 import {createRoutedTask,loadRepositoryFacts} from '../../work-routing-store.js';
 import {pickCandidates} from '../../../scripts/coding-workflow/runner/lib/plan.mjs';
 import {seedActiveF1,ensureRouteValidationFixtureSchema} from '../fixtures/work-routing-fixture.js';
-const {Pool}=pg;
 const ROUTING_EVIDENCE={branch:'cp-skills-routing-fixture',base_sha:'a'.repeat(40)};
 
 it('Skills source_repo aliases persist canonical coding tasks that the runner can claim',async()=>{
- const url=process.env.DATABASE_URL??'postgresql://localhost/cecelia_test';expect(new URL(url).pathname).toMatch(/(?:_test|_scratch)$/);
- const pool=new Pool({connectionString:url}),client=await pool.connect();
+ const fixture=await privateFixtureDatabase('skillsrouting',async db=>{
+  for(const table of ['tasks','initiative_runs','cecelia_events','work_routing_receipts','map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','decisions'])
+   await db.query(`CREATE TABLE ${table}(LIKE public.${table} INCLUDING ALL)`);
+ });
+ const client=fixture.client;
  try{
   await client.query('BEGIN');await ensureRouteValidationFixtureSchema(client);
   await client.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('skills-runner-test','zenithjoy-skills','skills-v1',$1) ON CONFLICT(repo) DO UPDATE SET scope_key=EXCLUDED.scope_key,adapter_config=EXCLUDED.adapter_config",[JSON.stringify({source_repo:'perfectuser21/zenithjoy-skills'})]);
@@ -20,5 +22,5 @@ it('Skills source_repo aliases persist canonical coding tasks that the runner ca
    expect(task.task_type).toBe('coding_workflow');expect(task.payload.repo).toBe('zenithjoy-skills');
    expect(pickCandidates([task])[0]?.repoKey).toBe('zenithjoy-skills');expect(pickCandidates([task],{enabled:['cecelia']})).toEqual([]);
   }
- }finally{await client.query('ROLLBACK');client.release();await pool.end();}
+ }finally{await fixture.close();}
 });
