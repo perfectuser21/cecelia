@@ -121,7 +121,8 @@ const PROVENANCE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-
 const NATIVE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
 const NATIVE_DATA = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
 const PROVENANCE_READER_HASHES = new Map([
-  ['existing-ops-stage-source.js','0526cc902914d083cbef0cc58cbc48b8d63ade62bbdd782cb22b27322248cd3a'],
+  ['existing-ops-stage-source.js','317bd323a8a6acacd581eeecef4a327adbf588c6540e16544f1fb0a4394e639e'],
+  ['existing-ops-stage-modes.js','8266c7b1f74b11a0161684f83e3deb189ee101e2a0b64578cacffaaff1711752'],
   ['existing-ops-stage-envelopes.js','1fda2fc1f3bf3ef7684930e46ac8dc0364bd1af1f8f27e97c7eb197fe23a6d8f'],
   ['existing-ops-provenance-envelope.js','27c87c40b07ef90e87d642042afbdeb6a770a71ec74582da312599ec6fae5d5e'],
   ['existing-ops-provenance-core-envelope.js','c3e8769e7f053fc63d52074235b521df5134e65c31d34f151bb6a9400fa4ab93'],
@@ -163,7 +164,7 @@ function provenanceReaderClosure(sources) {
     for(const [consumer,text] of sources) {
       if(!decoded.get(consumer).some(value=>value.includes(path.basename(file))))continue;
       const callers=file===NATIVE_DATA?[NATIVE_HELPER]:file===NATIVE_HELPER?[ENVELOPE_CONSUMER,STAGE_HELPER,PROVENANCE_HELPER]
-        :file===STAGE_DATA?[STAGE_HELPER]:file===STAGE_HELPER||file===PROVENANCE_HELPER?[ENVELOPE_CONSUMER]:[PROVENANCE_HELPER];
+        :file===STAGE_DATA?[STAGE_HELPER,STAGE_MODES]:file===STAGE_MODES?[STAGE_HELPER]:file===STAGE_HELPER||file===PROVENANCE_HELPER?[ENVELOPE_CONSUMER]:[PROVENANCE_HELPER];
       if(callers.includes(consumer))continue;
       if(provenFingerprintReader(consumer,text))continue;
       return false;
