@@ -40,7 +40,7 @@ export async function prepareDefinitionFreeze(definition, options={}) {
       const pin=await prepareSharedFreeze(activity,options.sharedVersions,read);
       shared.set(activity.key,pin.version);bindings.set(activity.key,pin.bindings);continue;
     }
-    const verified=await validateFixedImplementationBindings(activity,fixed,{...options,deadline,cache:bindingCache,readFile:options.readFile,onReadBytes:bytes=>{
+    const verified=await validateFixedImplementationBindings(activity,fixed,{...options,deadline,cache:bindingCache,readFile:options.readFile,readBusinessFile:options.readBusinessFile||((s,readOptions)=>readFixedGitFile(s,{...options,...readOptions})),onReadBytes:bytes=>{
       bindingFiles++;totalBytes+=bytes;
       if(bindingFiles+cache.size>200||totalBytes>8*1024*1024||Date.now()>deadline)fail('来源核验超过文件数量、总字节或时限');
     }});

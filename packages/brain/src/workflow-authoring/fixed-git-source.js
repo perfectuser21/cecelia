@@ -15,7 +15,7 @@ export function validateGitSource({ repo, path, revision } = {}, { central = fal
 }
 
 /** token 只发往固定 GitHub API；commit/tree/blob 身份均回读，禁止重定向。 */
-async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=async()=>(await import('../harness-credentials.js')).resolveGitHubToken(),signal,deadline=Date.now()+60000 } = {}, central=false) {
+async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=async()=>(await import('../harness-credentials.js')).resolveGitHubToken(),signal,deadline=Date.now()+60000,allowMissing=false } = {}, central=false) {
   validateGitSource(source,{central});
   const check=()=>{if(signal?.aborted||Date.now()>=deadline)throw Object.assign(Error('固定来源读取已取消或超时'),{code:'readiness_deadline_exceeded',status:503});};
   check();
@@ -44,6 +44,7 @@ async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=asyn
   const tree=await get('trees',commit.tree.sha);
   if(tree.sha!==commit.tree.sha||tree.truncated||!Array.isArray(tree.tree))fail('tree不完整');
   const entries=tree.tree.filter(entry=>entry.path===path);
+  if(entries.length===0&&allowMissing)return null;
   if(entries.length!==1||entries[0].type!=='blob'||!['100644','100755'].includes(entries[0].mode))fail('文件缺失或不是常规文件');
   if(entries[0].size>MAX_FILE)fail('文件超过上限');
   const blob=await get('blobs',entries[0].sha);
@@ -55,20 +56,32 @@ async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=asyn
 }
 
 export async function readFixedGitFile(source, options={}) {
-  return (await readGitFile(source,options)).toString('utf8');
+  const bytes=await readGitFile(source,options);
+  return bytes===null?null:bytes.toString('utf8');
 }
 
 /** 声明身份留在绑定中，解析身份仅来自业务固定提交的锁和中央固定提交的目录。 */
 export async function readFixedImplementationBinding(binding, options={}) {
-  const read=async (location,central=false)=>{
+  const result=(bytes,resolved)=>{
+    if(binding.resolved_source!==undefined&&(!resolved||Object.keys(binding.resolved_source??{}).length!==3
+      ||!['repo','path','revision'].every(key=>binding.resolved_source?.[key]===resolved[key])))fail('声明的派生来源与固定Git不符');
+    return {content:bytes.toString('utf8'),bytes,...(resolved?{resolved_source:resolved}:{})};
+  };
+  const read=async (location,central=false,allowMissing=false)=>{
     if(options.signal?.aborted||Date.now()>=(options.deadline??Infinity))throw Object.assign(Error('固定来源读取已取消或超时'),{code:'readiness_deadline_exceeded',status:503});
     validateGitSource(location,{central});
     const key=JSON.stringify([location.repo,location.revision,location.path]);
-    if(options.cache?.has(key))return options.cache.get(key);
+    if(options.cache?.has(key)){
+      const cached=options.cache.get(key);
+      if(cached===null&&!allowMissing)fail('固定来源文件不存在');
+      return cached;
+    }
     let bytes;
     if(options.readFile || (!central && options.readBusinessFile)){
-      try{bytes=await (options.readFile||options.readBusinessFile)(location);}catch{fail('固定来源文件不可读');}
-    }else bytes=await readGitFile(location,options,central);
+      const reader=options.readFile||options.readBusinessFile;
+      try{bytes=await (allowMissing?reader(location,{allowMissing:true}):reader(location));}catch{fail('固定来源文件不可读');}
+    }else bytes=await readGitFile(location,{...options,allowMissing},central);
+    if(bytes===null&&allowMissing){options.cache?.set(key,null);return null;}
     if(!Buffer.isBuffer(bytes)&&typeof bytes!=='string')fail('固定来源不是文本');
     const value=Buffer.from(bytes);
     if(!value.length||value.length>MAX_FILE)fail('固定来源文件大小非法');
@@ -79,11 +92,12 @@ export async function readFixedImplementationBinding(binding, options={}) {
     const declared={repo:binding.repo,path:binding.path,revision:binding.revision};
     validateGitSource(declared);
     if(binding.kind!=='skill'||binding.repo!== 'perfectuser21/zenithjoy-workspace'){
-      const bytes=await read(declared);return {content:bytes.toString('utf8'),bytes};
+      return result(await read(declared));
     }
     const lockSource={repo:binding.repo,path:'.skills-source.json',revision:binding.revision};
     let lock,catalog;
-    const lockBytes=await read(lockSource);
+    const lockBytes=await read(lockSource,false,true);
+    if(lockBytes===null)return result(await read(declared));
     try{lock=JSON.parse(lockBytes.toString('utf8'));}catch{fail('Skill来源锁非法');}
     if(lock?.version!==1||lock.repository!==CENTRAL_REPO||!SHA.test(lock.revision||'')
       ||!DIGEST.test(lock.loader_sha256||'')||typeof lock.profile!=='string'
@@ -98,19 +112,19 @@ export async function readFixedImplementationBinding(binding, options={}) {
     const resolved={repo:CENTRAL_REPO,path:entries[0].source,revision:lock.revision};
     const bytes=await read(resolved,true);
     if(createHash('sha256').update(bytes).digest('hex')!==entries[0].sha256)fail('中央Skill摘要不匹配');
-    return {content:bytes.toString('utf8'),bytes,resolved_source:resolved};
+    return result(bytes,resolved);
 }
 
 export async function validateFixedImplementationBindings(contract, source, options={}) {
   const resolutions=new Map();
   const readBinding=async binding=>{
     const result=await readFixedImplementationBinding(binding,options);
-    if(result.resolved_source)resolutions.set(JSON.stringify([binding.repo,binding.revision,binding.path]),result.resolved_source);
+    if(result.resolved_source)resolutions.set(JSON.stringify([binding.kind,binding.repo,binding.revision,binding.path]),result.resolved_source);
     return result.content;
   };
   const verified=await validateImplementationBindings(contract,readBinding,source);
   return verified.map(binding=>{
-    const resolved=resolutions.get(JSON.stringify([binding.repo,binding.revision,binding.path]));
+    const resolved=resolutions.get(JSON.stringify([binding.kind,binding.repo,binding.revision,binding.path]));
     return resolved?{...binding,resolved_source:resolved}:binding;
   });
 }

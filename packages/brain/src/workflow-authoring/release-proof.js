@@ -30,7 +30,7 @@ export async function prepareAuthoringReleaseProof(snapshot,options={}){
  if(definitionDigest(snapshot)!==snapshotDigest)fail();
  const sources=snapshot.definitions.activities.flatMap(a=>(a.payload.implementation_bindings||[]).map(b=>({
   activity_id:a.activity_id,activity_definition_version_id:a.id,
-  ...Object.fromEntries(['kind','repo','path','revision','digest','scope','step_key','field','index'].filter(k=>b[k]!==undefined).map(k=>[k,b[k]])),
+  ...Object.fromEntries(['kind','repo','path','revision','digest','scope','step_key','field','index','resolved_source'].filter(k=>b[k]!==undefined).map(k=>[k,b[k]])),
  })));
  sources.sort((a,b)=>definitionDigest(a).localeCompare(definitionDigest(b)));
  const proof={snapshot_sha256,implementation_source_set:sources};
