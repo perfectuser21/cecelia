@@ -18,6 +18,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parse } from 'acorn';
+import { mutateStageMode } from './fixtures/claude-stage-mode-mutations.js';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, lstatSync } from 'node:fs';
 import path from 'node:path';
@@ -115,6 +116,7 @@ const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
 // caller 只将投影交回旧 Acorn/matcher。未知消费者不能继承此资格。
 const STAGE_HELPER=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-source.js');
 const STAGE_DATA=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
+const STAGE_MODES=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-modes.js');
 const PROVENANCE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-envelope.js');
 const NATIVE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
 const NATIVE_DATA = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
@@ -325,7 +327,6 @@ describe('守卫自证：每条判据都会报警', () => {
   });
 });
 
-
 describe('只读来源封套数据与实际执行代码分离',()=>{
  const dataFile=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-envelopes.js');
  const consumer=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-source.js');
@@ -364,10 +365,11 @@ describe('只读来源封套数据与实际执行代码分离',()=>{
 
 describe('新增阶段封套不允许执行或额外消费者',()=>{
  const helper=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-source.js'),data=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
- const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys(),helper,data].map(file=>[file,readFileSync(file,'utf8')])]);
+ const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys(),helper,data,STAGE_MODES].map(file=>[file,readFileSync(file,'utf8')])]);
  it('实际只读阶段数据合同继续经过完整闭包资格',()=>{const sources=base();expect(findClaudeInvocations(sources.get(data),{file:data,sources})).toEqual([]);});
- it.each(['helper side effect','data side effect','third helper','third data','escaped data'])('%s使阶段及原封套资格失败',kind=>{
+ it.each(['helper side effect','data side effect','third helper','third data','escaped data','mode eval','mode raw export','mode process','third mode','escaped mode','concat mode','changed mode path'])('%s使阶段及原封套资格失败',kind=>{
   const sources=base();
+  mutateStageMode(kind,sources,path.join(BRAIN_ROOT,'src/lib'));
   if(kind==='helper side effect')sources.set(helper,sources.get(helper)+'\neval(REVIEWED.recorded.spec);');
   if(kind==='data side effect')sources.set(data,sources.get(data)+'\neval(STAGE_ENVELOPES.recorded.spec);');
   if(kind==='third helper')sources.set(path.join(BRAIN_ROOT,'src/extra.js'),"import {stageSourceVersion} from './lib/existing-ops-stage-source.js';stageSourceVersion(candidate,eval);");
