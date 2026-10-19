@@ -9,7 +9,8 @@
  * 不靠数下标（列清单以后再加列，下标断言会静默漂）。
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createRoutedTask } from '../work-routing-store.js';
+import { createRoutedTask, loadRepositoryFacts } from '../work-routing-store.js';
+import { resolveRepo, routeWork } from '../work-router.js';
 
 function makePool() {
   const query = vi.fn(async (sql) => {
@@ -45,6 +46,59 @@ const nonCoding = (over = {}) => ({
   metadata: {},
   task: { priority: 'P2' },
   ...over,
+});
+
+// 2026-10-19 生产完整8行只读快照；不含凭据，不在测试中读取生产。
+const REGISTERED_REPOSITORIES = [
+  { scope_key: 'cecelia', repo: 'cecelia', adapter_config: { aliases: ['perfectuser21/cecelia', 'https://github.com/perfectuser21/cecelia'], ledger_partition: 'cecelia' } },
+  { scope_key: 'cecelia-device-patrol-definitions', repo: 'patrol-definitions-workspace', adapter_config: { source_repo: 'perfectuser21/zenithjoy-workspace', workflow_keys: ['single-phone-account-patrol', 'phone-account-patrol-batch', 'phone-account-patrol-maintenance'], definition_protocol: 'definition-freeze-v1' } },
+  { scope_key: 'cecelia-factory', repo: 'cecelia-factory-source', adapter_config: { source_repo: 'perfectuser21/cecelia' } },
+  { scope_key: 'cecelia-kr', repo: 'cecelia-kr-source', adapter_config: { source_repo: 'perfectuser21/cecelia' } },
+  { scope_key: 'commander-generic', repo: 'commander-generic-workspace', adapter_config: { source_repo: 'perfectuser21/zenithjoy-workspace', workflow_keys: ['workflow_report.internal', 'workflow_commander.internal'], definition_protocol: 'definition-freeze-v1' } },
+  { scope_key: 'zenithjoy', repo: 'zenithjoy-pilot-source', adapter_config: { source_repo: 'perfectuser21/zenithjoy-workspace' } },
+  { scope_key: 'zenithjoy-skills', repo: 'zenithjoy-skills', adapter_config: { source_repo: 'perfectuser21/zenithjoy-skills' } },
+  { scope_key: 'zenithjoy-workspace', repo: 'zenithjoy-workspace', adapter_config: { aliases: ['perfectuser21/zenithjoy-workspace'], ledger_partition: 'zenithjoy' } },
+];
+const PHYSICAL_HINTS = ['cecelia', 'zenithjoy-workspace', 'zenithjoy-skills'].flatMap(repo => [
+  repo, `perfectuser21/${repo}`, `https://github.com/perfectuser21/${repo}`,
+  `https://github.com/perfectuser21/${repo}.git`, `git@github.com:perfectuser21/${repo}.git`,
+].map(hint => ({ repo, hint })));
+const factsFrom = rows => loadRepositoryFacts({ query: vi.fn(async () => ({ rows })) });
+
+describe('物理仓库别名与authoring scope投影隔离', () => {
+  it.each(PHYSICAL_HINTS)('$hint只路由到物理仓$repo', async ({ repo, hint }) => {
+    const facts = await factsFrom(REGISTERED_REPOSITORIES);
+    expect(facts).toHaveLength(8);
+    expect(facts.map(f => [f.scope_key, f.repo])).toEqual(REGISTERED_REPOSITORIES.map(r => [r.scope_key, r.repo]));
+    expect(resolveRepo({ repo_hint: hint }, facts)).toBe(repo);
+    const decision = routeWork({ source: 'child', source_id: 'commander-repair:fixture', title: '冻结源码缺陷修补',
+      mutation_intent: 'write', declared_change_kind: 'bugfix', repo_hint: hint, map_scope_hint: ['F1'] }, facts);
+    expect(decision).toMatchObject({ repo, canonical_task_type: 'coding_workflow', map_scope: ['F1'] });
+  });
+
+  it('投影仍按原登记身份可读，显式别名和path不被过滤', async () => {
+    const rows = structuredClone(REGISTERED_REPOSITORIES);
+    rows[2].adapter_config.aliases = ['explicit-factory']; rows[2].adapter_config.path = '/registered/factory';
+    const facts = await factsFrom(rows);
+    for (const row of rows) expect(resolveRepo({ repo_hint: row.repo }, facts)).toBe(row.repo);
+    for (const hint of ['explicit-factory', '/registered/factory']) expect(resolveRepo({ repo_hint: hint }, facts)).toBe('cecelia-factory-source');
+  });
+
+  it('物理仓以完整slug登记时仍派生原规范别名', async () => {
+    const repo = 'perfectuser21/zenithjoy-skills';
+    const facts = await factsFrom([{ scope_key: 'skills', repo, adapter_config: { source_repo: repo } }]);
+    expect(resolveRepo({ repo_hint: 'zenithjoy-skills' }, facts)).toBe(repo);
+  });
+
+  it('不同物理仓显式占用同一别名仍拒绝，不取首行', async () => {
+    const rows = structuredClone(REGISTERED_REPOSITORIES);
+    rows[0].adapter_config.aliases.push('ambiguous'); rows[7].adapter_config.aliases.push('ambiguous');
+    for (const ordered of [rows, [...rows].reverse()]) {
+      const facts = await factsFrom(ordered);
+      expect(() => resolveRepo({ repo_hint: 'ambiguous' }, facts)).toThrow('repo_unknown');
+    }
+    expect(() => resolveRepo({ repo_hint: 'unregistered' }, [])).toThrow('repo_unknown');
+  });
 });
 
 describe('createRoutedTask 写 tasks.kind', () => {
