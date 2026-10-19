@@ -14,11 +14,30 @@ describe('EventBus', () => {
 
   describe('ensureEventsTable', () => {
     it('creates table and index', async () => {
-      pool.query.mockResolvedValue({ rows: [] });
+      pool.query.mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ ready: true }] });
       await ensureEventsTable();
-      expect(pool.query).toHaveBeenCalledTimes(2);
-      expect(pool.query.mock.calls[0][0]).toContain('CREATE TABLE IF NOT EXISTS cecelia_events');
-      expect(pool.query.mock.calls[1][0]).toContain('CREATE INDEX IF NOT EXISTS');
+      expect(pool.query).toHaveBeenCalledTimes(4);
+      expect(pool.query.mock.calls[0][0]).toContain('pg_index');
+      expect(pool.query.mock.calls[1][0]).toContain('CREATE TABLE IF NOT EXISTS cecelia_events');
+      expect(pool.query.mock.calls[2][0]).toContain('CREATE INDEX IF NOT EXISTS');
+      expect(pool.query.mock.calls[3][0]).toContain('pg_index');
+    });
+
+    it('已就绪时只读catalog，不排队任何DDL', async () => {
+      pool.query.mockResolvedValue({ rows: [{ ready: true }] });
+      await ensureEventsTable();
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query.mock.calls[0][0]).toContain('pg_index');
+    });
+
+    it('DDL后仍无有效目标索引则拒绝，catalog失败原样传播', async () => {
+      pool.query.mockResolvedValue({ rows: [] });
+      await expect(ensureEventsTable()).rejects.toThrow('EVENTS_SCHEMA_NOT_READY');
+      const error = new Error('catalog unavailable');
+      pool.query.mockRejectedValue(error);
+      await expect(ensureEventsTable()).rejects.toBe(error);
     });
   });
 
