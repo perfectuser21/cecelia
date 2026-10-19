@@ -78,13 +78,11 @@ managed=home/'Library/Application Support/ZenithJoy/phone-runtime-20261011'
 (managed/'locks').mkdir(parents=True);serial='ANGYVB4402004137'
 guard=managed/'locks'/(serial+'.guard');guard.write_bytes(b'')
 alias.symlink_to(managed, target_is_directory=True)
-class FixturePath(type(RealPath())):
- def __new__(cls,*args,**kwargs):
-  if args and str(args[0]).startswith('/private/tmp/openclaw-phone'):
-   args=(str(alias)+str(args[0])[len('/private/tmp/openclaw-phone'):],*args[1:])
-  return super().__new__(cls,*args,**kwargs)
- @classmethod
- def home(cls):return cls(home)
+def FixturePath(*args,**kwargs):
+ if args and str(args[0]).startswith('/private/tmp/openclaw-phone'):
+  args=(str(alias)+str(args[0])[len('/private/tmp/openclaw-phone'):],*args[1:])
+ return RealPath(*args,**kwargs)
+FixturePath.home=lambda:home
 p.Path=FixturePath
 p.pwd=types.SimpleNamespace(getpwuid=lambda uid:types.SimpleNamespace(pw_dir=str(home)))
 data={'host':'xian-m4','profile':'legacy','serial':serial}
