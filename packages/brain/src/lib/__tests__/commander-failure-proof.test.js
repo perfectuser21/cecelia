@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { validateFailureProof } from '../commander-failure-proof.js';
 import { failureFixture } from './fixtures/commander-failure-fixture.js';
 describe('无delivery的原过期尝试只能由主动证据失败收口',()=>{
- it('接受真实原失败/预算内cleanup/独立签收，保unknown且不造delivery',()=>{const f=failureFixture();const p=validateFailureProof(f.task,f.verifier,f.observation,f.now);expect(p.effects).toBe('unknown');expect(p.retry_safe).toBe(false);expect(p).not.toHaveProperty('delivery');});
+ it('接受真实原失败/预算内cleanup/独立签收，保unknown且不造delivery',()=>{const f=failureFixture();const p=validateFailureProof(f.task,f.verifier,f.observation,f.now);expect(p.effects).toBe('unknown');expect(p.retry_safe).toBe(false);expect(p.runtime_files).toEqual(f.observation.runtime_files);expect(p).not.toHaveProperty('delivery');});
  const cases={
+  'runtime闭包缺项':f=>{f.observation.runtime_files={};},
+  'runtime闭包字节被篡改':f=>{f.observation.runtime_files['wf-v2.py']='f'.repeat(64);},
   '原input文件与冻结信封不符':f=>f.observation.original_input={title:'changed'},
   '原contract文件与冻结信封不符':f=>f.observation.original_contract={different:true},
   '原child不符':f=>f.observation.terminal.output.details.runs[0].runId='other',

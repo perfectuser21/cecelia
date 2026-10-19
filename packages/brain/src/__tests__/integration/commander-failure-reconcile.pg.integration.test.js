@@ -39,6 +39,9 @@ it('旧症状：官方status=false无delivery正常reconcile不能关闭；新�
  expect((await task()).status).toBe('in_progress');expect((await task()).result.workflow_control).not.toHaveProperty('delivery');
  const r=await reconcileFailedCommander(f.db,x.task.id,input,deps());expect(r.status).toBe('failed');
  const t=await task();expect(t.status).toBe('failed');expect(t.result.workflow_control).toMatchObject({phase:'final',verdict:'FAIL',retry_safe:false,effects:'unknown'});expect(t.result.workflow_control).not.toHaveProperty('delivery');
+ expect(t.result.workflow_control.failed_reconciliation.runtime_files).toEqual(x.observation.runtime_files);
+ const {sha256,...record}=t.result.workflow_control.failed_reconciliation;expect(digest(record)).toBe(sha256);
+ record.runtime_files={};expect(digest(record)).not.toBe(sha256);
  expect(t.result.workflow_control.envelope).toEqual(x.task.result.workflow_control.envelope);
  expect((await f.db.query('SELECT status,ended_at FROM task_runs')).rows[0]).toMatchObject({status:'failed',ended_at:expect.any(Date)});
  expect((await f.db.query('SELECT COUNT(*)::int AS n FROM task_runs')).rows[0].n).toBe(1);expect(sessions.release).toHaveBeenCalledWith(true);
