@@ -7,7 +7,7 @@
  *  4. afterTerminalTransition：completed_no_pr 也接棒；接棒抛错吞成 warn 不冒泡
  */
 import { describe, it, expect, vi } from 'vitest';
-import { buildTerminalUpdate, finalizeTask, afterTerminalTransition, isRelayTerminalStatus } from '../task-terminal.js';
+import { buildTerminalUpdate, finalizeTask, afterTerminalTransition, isRelayTerminalStatus, applyDecisionTaskTransition } from '../task-terminal.js';
 
 const ID = '44444444-4444-4444-8444-444444444444';
 
@@ -128,5 +128,31 @@ describe('afterTerminalTransition', () => {
     expect(out).toEqual({ relayed: false, reason: 'relay_error', error: 'relay boom' });
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+
+describe('applyDecisionTaskTransition', () => {
+  it.each([0, 1])('retry逐字保留Commander过滤与实际rowCount结果：%s', async (rowCount) => {
+    const db = { query: vi.fn(async () => ({ rowCount })) };
+    const result = await applyDecisionTaskTransition(db, { type: 'retry', target_id: ID });
+    expect(db.query).toHaveBeenCalledWith(
+      "UPDATE tasks SET status = $1 WHERE id = $2 AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'",
+      ['queued', ID]
+    );
+    expect(result).toEqual(rowCount === 0
+      ? { success: false, action: 'not_requeued', reason: 'task_missing_or_commander_control_owned' }
+      : { success: true, action: 'reset_to_queued' });
+  });
+  it('skip保原cancelled写入和返回，不引入新终态策略', async () => {
+    const db = { query: vi.fn(async () => ({ rowCount: 1 })) };
+    await expect(applyDecisionTaskTransition(db, { type: 'skip', target_id: ID }))
+      .resolves.toEqual({ success: true, action: 'cancelled' });
+    expect(db.query).toHaveBeenCalledWith('UPDATE tasks SET status = $1 WHERE id = $2', ['cancelled', ID]);
+  });
+  it('未知action零写拒绝', async () => {
+    const db = { query: vi.fn() };
+    await expect(applyDecisionTaskTransition(db, { type: 'publish', target_id: ID })).rejects.toThrow('Unsupported decision task transition');
+    expect(db.query).not.toHaveBeenCalled();
   });
 });
