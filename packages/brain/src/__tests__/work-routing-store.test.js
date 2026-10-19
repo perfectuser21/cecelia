@@ -9,8 +9,18 @@
  * 不靠数下标（列清单以后再加列，下标断言会静默漂）。
  */
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createRoutedTask, loadRepositoryFacts } from '../work-routing-store.js';
 import { resolveRepo, routeWork } from '../work-router.js';
+
+it('真实仓库路由回归登记为生产store的精确辅助验证来源', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../../../../.implementation-source-relations.json', import.meta.url), 'utf8'));
+  expect(manifest.relations).toContainEqual({
+    owner_path: 'packages/brain/src/work-routing-store.js',
+    path: 'packages/brain/src/__tests__/work-routing-store.test.js',
+    role: 'verification',
+  });
+});
 
 function makePool() {
   const query = vi.fn(async (sql) => {
