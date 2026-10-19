@@ -86,6 +86,7 @@ class FixturePath(type(RealPath())):
  @classmethod
  def home(cls):return cls(home)
 p.Path=FixturePath
+p.pwd=types.SimpleNamespace(getpwuid=lambda uid:types.SimpleNamespace(pw_dir=str(home)))
 data={'host':'xian-m4','profile':'legacy','serial':serial}
 `;
 const controllerRun = body => run(controllerFixture + body);
@@ -148,6 +149,23 @@ p.lock=changing_lock
 rejected=False
 try:p.controller(data)
 except (ValueError,FileNotFoundError):rejected=True
+print(json.dumps({'rejected':rejected}))
+`).rejected).toBe(true);
+});
+
+it('受管authority来自实际uid账户，不跟随HOME/Path.home污染',()=>{
+ expect(controllerRun(`
+os.environ['HOME']=str(base/'env-home')
+p.Path.home=classmethod(lambda cls:cls(base/'env-home'))
+print(json.dumps(p.controller(data)))
+`).guard_exclusive).toBe(true);
+});
+it('即使解析到同一managed根，非冻结原文relative link也拒绝',()=>{
+ expect(controllerRun(`
+alias.unlink();alias.symlink_to(os.path.relpath(managed,alias.parent))
+rejected=False
+try:p.controller(data)
+except ValueError:rejected=True
 print(json.dumps({'rejected':rejected}))
 `).rejected).toBe(true);
 });
