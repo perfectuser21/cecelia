@@ -7110,3 +7110,5 @@ CRM Notion HTTP 适配器从固定 `https://api.notion.com` 创建 URL，仅将�
 本次与已合并18552f8e阶段来源集成时，将其真实静态导入existing-ops-stage-modes.js纳入原消费者逐文件固定身份及隔离启动夹具，不改变阶段模式实现、选择或门禁。
 
 固定来源同步：单轮按完整仓库/commit/路径复用成功Code文本；Git commit/tree仅在请求私有会话复用已验证不可变副本。保留逐binding摘要核验及60秒总预算、15秒HTTP预算，缓存驻留有界且满后继续原读取。
+
+仓库路由：只有以物理仓短名或完整slug登记的行自动派生source_repo别名；authoring来源投影不占用物理仓调用身份。显式别名、路径及scope授权保持，跨物理仓的真实别名歧义仍拒绝。
