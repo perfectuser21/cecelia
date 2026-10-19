@@ -68,3 +68,86 @@ with tempfile.TemporaryDirectory() as d:
  print(json.dumps({'valid':ok,'rawhash':o['files'][0]['sha256'],'rejected':rejected}))
 `);expect(value.valid).toBe(true);expect(value.rawhash).toMatch(/^[a-f0-9]{64}$/);expect(value.rejected).toEqual(['agent-completion.json','execution-failure.json','agent-terminal.json','child-stop-readback.json','delivery.json','agent-delivery.json','runtime']);
 });
+
+
+const controllerFixture = `
+import shutil,atexit
+RealPath=pathlib.Path
+base=RealPath(tempfile.mkdtemp());atexit.register(shutil.rmtree,base);home=base/'user';alias=base/'openclaw-phone'
+managed=home/'Library/Application Support/ZenithJoy/phone-runtime-20261011'
+(managed/'locks').mkdir(parents=True);serial='ANGYVB4402004137'
+guard=managed/'locks'/(serial+'.guard');guard.write_bytes(b'')
+alias.symlink_to(managed, target_is_directory=True)
+class FixturePath(type(RealPath())):
+ def __new__(cls,*args,**kwargs):
+  if args and str(args[0]).startswith('/private/tmp/openclaw-phone'):
+   args=(str(alias)+str(args[0])[len('/private/tmp/openclaw-phone'):],*args[1:])
+  return super().__new__(cls,*args,**kwargs)
+ @classmethod
+ def home(cls):return cls(home)
+p.Path=FixturePath
+data={'host':'xian-m4','profile':'legacy','serial':serial}
+`;
+const controllerRun = body => run(controllerFixture + body);
+it('真实官方兼容alias指向精确受管根，锁同一正规guard并原身份复核', () => {
+ const r=controllerRun(`
+first=p.controller(data);second=p.controller(data,True)
+print(json.dumps({'first':first,'same':first==second,'original_inode':guard.stat().st_ino,'held_inode':os.fstat(p.fds[-1]).st_ino}))
+`);expect(r.first).toEqual({host:'xian-m4',serial:'ANGYVB4402004137',profile:'legacy',owner:'free',guard_exclusive:true});expect(r.same).toBe(true);expect(r.held_inode).toBe(r.original_inode);
+});
+it('原regular legacy根保持，无需兼容例外', () => {
+ expect(controllerRun(`
+alias.unlink();(managed/'locks').rename(base/'locks-save');alias.mkdir();(base/'locks-save').rename(alias/'locks')
+print(json.dumps(p.controller(data)))
+`).guard_exclusive).toBe(true);
+});
+for (const field of ['host','profile','serial']) it(`受管alias例外不跨冻结身份：${field}`,()=>{
+ expect(controllerRun(`
+data[${JSON.stringify(field)}]=${JSON.stringify(field==='host'?'xian-m1':field==='profile'?'other':'OTHER123')}
+rejected=False
+try:p.controller(data)
+except (ValueError,FileNotFoundError):rejected=True
+print(json.dumps({'rejected':rejected}))
+`).rejected).toBe(true);
+});
+for (const [name, mutation] of Object.entries({
+ '任意目标':"other=base/'other';other.mkdir();alias.unlink();alias.symlink_to(other)",
+ 'canonical根含symlink':"managed.rename(base/'real-managed');managed.symlink_to(base/'real-managed')",
+ 'guard忙':"busy=os.open(guard,os.O_RDONLY);fcntl.flock(busy,fcntl.LOCK_EX|fcntl.LOCK_NB)",
+ 'owner锁symlink':"(managed/'locks'/(serial+'.lock')).symlink_to(base/'missing-owner')",
+})) it(`初始拒绝不可信controller：${name}`,()=>{
+ expect(controllerRun(mutation+`
+rejected=False
+try:p.controller(data)
+except (ValueError,FileNotFoundError,BlockingIOError):rejected=True
+print(json.dumps({'rejected':rejected}))
+`).rejected).toBe(true);
+});
+for (const [name, mutation] of Object.entries({
+ '同目标换alias inode':"alias.rename(base/'old-alias');alias.symlink_to(managed)",
+ '换root inode':"managed.rename(base/'old-root');(managed/'locks').mkdir(parents=True);(managed/'locks'/(serial+'.guard')).write_bytes(b'')",
+ '换locks inode':"(managed/'locks').rename(managed/'old-locks');(managed/'locks').mkdir();(managed/'locks'/(serial+'.guard')).write_bytes(b'')",
+ '换guard inode':"guard.rename(guard.with_name('old-guard'));guard.write_bytes(b'')",
+ '改alias目标':"other=base/'other';(other/'locks').mkdir(parents=True);(other/'locks'/(serial+'.guard')).write_bytes(b'');alias.unlink();alias.symlink_to(other)",
+})) it(`已持guard后身份漂移拒绝：${name}`,()=>{
+ expect(controllerRun(`
+p.controller(data)
+`+mutation+`
+rejected=False
+try:p.controller(data,True)
+except (ValueError,FileNotFoundError):rejected=True
+print(json.dumps({'rejected':rejected}))
+`).rejected).toBe(true);
+});
+it('初始flock期间alias被替换，即使目标相同也拒绝',()=>{
+ expect(controllerRun(`
+original_lock=p.lock
+def changing_lock(path):
+ original_lock(path);alias.rename(base/'old-alias');alias.symlink_to(managed)
+p.lock=changing_lock
+rejected=False
+try:p.controller(data)
+except (ValueError,FileNotFoundError):rejected=True
+print(json.dumps({'rejected':rejected}))
+`).rejected).toBe(true);
+});
