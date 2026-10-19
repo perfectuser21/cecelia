@@ -140,11 +140,19 @@ except (ValueError,FileNotFoundError):rejected=True
 print(json.dumps({'rejected':rejected}))
 `).rejected).toBe(true);
 });
-it('初始flock期间alias被替换，即使目标相同也拒绝',()=>{
+for (const moment of ['before','after']) for (const [name,mutation] of Object.entries({
+ '同目标alias':"alias.rename(base/'old-alias');alias.symlink_to(managed)",
+ 'root':"managed.rename(base/'old-root');(managed/'locks').mkdir(parents=True);(managed/'locks'/(serial+'.guard')).write_bytes(b'')",
+ 'locks':"(managed/'locks').rename(managed/'old-locks');(managed/'locks').mkdir();(managed/'locks'/(serial+'.guard')).write_bytes(b'')",
+ 'guard':"guard.rename(guard.with_name('old-guard'));guard.write_bytes(b'')",
+})) it(`初始flock ${moment}换${name}，不可持旧锁查新目录`,()=>{
  expect(controllerRun(`
 original_lock=p.lock
 def changing_lock(path):
- original_lock(path);alias.rename(base/'old-alias');alias.symlink_to(managed)
+ ${moment==='before'?mutation:'pass'}
+ fd=original_lock(path)
+ ${moment==='after'?mutation:'pass'}
+ return fd
 p.lock=changing_lock
 rejected=False
 try:p.controller(data)
@@ -152,7 +160,6 @@ except (ValueError,FileNotFoundError):rejected=True
 print(json.dumps({'rejected':rejected}))
 `).rejected).toBe(true);
 });
-
 it('受管authority来自实际uid账户，不跟随HOME/Path.home污染',()=>{
  expect(controllerRun(`
 os.environ['HOME']=str(base/'env-home')

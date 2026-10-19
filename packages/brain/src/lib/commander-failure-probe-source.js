@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import select
@@ -173,7 +174,7 @@ def controller_paths(data):
     a = alias.lstat()
     target = None
     if stat.S_ISLNK(a.st_mode):
-        trusted = Path.home() / 'Library/Application Support/ZenithJoy/phone-runtime-20261011'
+        trusted = Path(pwd.getpwuid(os.getuid()).pw_dir) / 'Library/Application Support/ZenithJoy/phone-runtime-20261011'
         target = os.readlink(alias)
         if (data['host'], data['profile'], data['serial']) != ('xian-m4', 'legacy', 'ANGYVB4402004137') or target != str(trusted):
             raise ValueError('untrusted controller alias identity or target')
