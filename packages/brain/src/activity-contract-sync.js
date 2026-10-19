@@ -14,7 +14,7 @@ import { loadActivityContracts } from './lib/activity-contract-loader.js';
 import { storeActivityContracts, REGISTRATIONS_SQL } from './lib/activity-contract-store.js';
 import { raise } from './alerting.js';
 import { resolveGitHubToken } from './harness-credentials.js';
-import { readFixedImplementationBinding } from './workflow-authoring/fixed-git-source.js';
+import { readFixedImplementationBinding,createFixedGitReadSession } from './workflow-authoring/fixed-git-source.js';
 
 export const CONTRACT_REPO = 'perfectuser21/zenithjoy-workspace';
 export const CONTRACTS_DIGEST_PATH = 'product-map/generated/contracts.json';
@@ -22,22 +22,35 @@ export const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 export const DRIFT_ALERT_MS = 2 * 60 * 60 * 1000;
 const STATE_KEY = 'activity_contract_sync';
 const HTTP_TIMEOUT_MS = 15_000;
+const requests=new WeakMap();
+function request(d){let state=requests.get(d);if(!state){state={code:new Map(),bytes:0,gitSession:createFixedGitReadSession()};requests.set(d,state);}return state;}
+function checkBudget(d){if(d.signal?.aborted||Date.now()>=(d.deadline??Infinity))throw Object.assign(Error('固定来源读取已取消或超时'),{code:'readiness_deadline_exceeded',status:503});}
 
 // ─── GitHub（只读）──────────────────────────────────────────────────────────
 
-async function ghText(path, accept, { fetchFn, token }, repo = CONTRACT_REPO) {
-  const res = await fetchFn(`https://api.github.com/repos/${repo}/${path}`, {
-    headers: { Accept: accept, Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' },
-    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+async function ghText(path, accept, d, repo = CONTRACT_REPO) {
+  checkBudget(d);
+  const res = await d.fetchFn(`https://api.github.com/repos/${repo}/${path}`, {
+    headers: { Accept: accept, Authorization: `Bearer ${d.token}`, 'X-GitHub-Api-Version': '2022-11-28' },
+    signal: AbortSignal.any([...(d.signal?[d.signal]:[]),AbortSignal.timeout(Math.max(1,Math.min(HTTP_TIMEOUT_MS,(d.deadline??Infinity)-Date.now())))]),
   });
+  checkBudget(d);
   if (!res?.ok) throw new Error(`github_${path.split('?')[0]}_http_${res?.status ?? 'unknown'}`);
-  return res.text();
+  const text=await res.text();checkBudget(d);return text;
 }
 const fetchHead = async (d) => (await ghText('commits/main', 'application/vnd.github.sha', d)).trim();
 const fetchFile = (path, sha, d) => ghText(`contents/${path}?ref=${sha}`, 'application/vnd.github.raw', d);
 
 export async function readActivityBinding(binding,d) {
-  if(binding.kind!=='skill')return ghText(`contents/${binding.path}?ref=${binding.revision}`,'application/vnd.github.raw',d,binding.repo);
+  checkBudget(d);
+  if(binding.kind!=='skill'){
+    const state=request(d),cache=state.code,key=JSON.stringify([binding.kind,binding.repo,binding.revision,binding.path]);
+    if(cache.has(key)){const text=cache.get(key);checkBudget(d);return text;}
+    const text=await ghText(`contents/${binding.path}?ref=${binding.revision}`,'application/vnd.github.raw',d,binding.repo);checkBudget(d);
+    const size=typeof text==='string'?Buffer.byteLength(text):0;
+    if(size&&text.trim()&&size<=1024*1024&&cache.size<200&&state.bytes+size<=8*1024*1024){cache.set(key,text);state.bytes+=size;}
+    return text;
+  }
   // 普通外仓保留原固定声明读取；只有已登记业务profile才能映射中央Skill。
   if(!['perfectuser21/cecelia',CONTRACT_REPO].includes(binding.repo)){
     if(binding.repo==='perfectuser21/zenithjoy-skills'||!/^[\w.-]+\/[\w.-]+$/.test(binding.repo||'')||binding.repo.split('/').some(v=>v==='.'||v==='..')
@@ -46,7 +59,7 @@ export async function readActivityBinding(binding,d) {
       ||binding.resolved_source!==undefined)throw Object.assign(Error('外仓固定Skill声明无效'),{code:'definition_source_invalid',status:422});
     return ghText(`contents/${binding.path}?ref=${binding.revision}`,'application/vnd.github.raw',d,binding.repo);
   }
-  const result=await readFixedImplementationBinding(binding,{fetchFn:d.fetchFn,resolveToken:async()=>d.token,cache:d.cache,deadline:d.deadline,signal:d.signal});
+  const result=await readFixedImplementationBinding(binding,{fetchFn:d.fetchFn,resolveToken:async()=>d.token,cache:d.cache,deadline:d.deadline,signal:d.signal,gitSession:request(d).gitSession});
   if(result.resolved_source)binding.resolved_source=result.resolved_source;
   return result.content;
 }

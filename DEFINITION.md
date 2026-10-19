@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.31
+**Brain 版本**: 1.445.32
 
 地图激活 HTTP 入口可携带期望的 active 版本与摘要，沿既有事务内 CAS 防止 CI 续版覆盖期间发生的人工修改；固定 Skill 的 CI 校验先准备只读历史对象与 HEAD 生成数据。
 
@@ -7108,3 +7108,5 @@ CRM Notion HTTP 适配器从固定 `https://api.notion.com` 创建 URL，仅将�
 业务固定提交的来源锁与中央固定catalog共同决定Skill原件；同步/authoring保留声明和派生身份，使用同轮有界缓存。Pilot可信工具先准备当前与历史固定Git对象，拒绝缺凭据、坏锁、未知对象或来源漂移；不执行候选loader/Skill，不改变数据合同、鉴权或既有Source。
 
 本次与已合并18552f8e阶段来源集成时，将其真实静态导入existing-ops-stage-modes.js纳入原消费者逐文件固定身份及隔离启动夹具，不改变阶段模式实现、选择或门禁。
+
+固定来源同步：单轮按完整仓库/commit/路径复用成功Code文本；Git commit/tree仅在请求私有会话复用已验证不可变副本。保留逐binding摘要核验及60秒总预算、15秒HTTP预算，缓存驻留有界且满后继续原读取。

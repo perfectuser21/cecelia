@@ -328,9 +328,9 @@ describe('一轮固定Skill解析预算与缓存',()=>{
     const {d,calls,bindings}=context();
     expect(await readActivityBinding(bindings[0],d)).toBe('body0');
     expect(await readActivityBinding(bindings[1],d)).toBe('body1');
-    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(4); // lock/catalog + two bodies
+    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(2); // one business commit and one central commit
     await expect(readActivityBinding({...bindings[0],resolved_source:{repo:'evil/repo',revision:bindings[0].revision,path:'evil'}},d)).rejects.toThrow();
-    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(4);
+    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(2);
   });
   it('后续绑定不得重置总deadline，取消后即便命中缓存仍拒绝',async()=>{
     const {d,calls,bindings}=context();await readActivityBinding(bindings[0],d);const count=calls.length;
@@ -378,4 +378,19 @@ describe('同一同步请求的Code读取复用',()=>{
   d.fetchFn=async url=>{calls.push(url);return {ok:false,status:403};};const missing={...binding,path:'missing.js'};await expect(readActivityBinding(missing,d)).rejects.toThrow();d.fetchFn=async url=>{calls.push(url);return {ok:true,text:async()=>body};};await readActivityBinding(missing,d);expect(calls).toHaveLength(6);
   d.deadline=Date.now()-1;await expect(readActivityBinding(binding,d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});d.deadline=Date.now()+60000;const control=new AbortController();control.abort();d.signal=control.signal;await expect(readActivityBinding(binding,d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(calls).toHaveLength(6);
  });
+});
+
+it('Code驻留8MiB或200项满后只不memo，仍返回固定原文',async()=>{
+ for(const [count,body] of [[201,'code'],[9,'x'.repeat(1024*1024)]]){
+  let reads=0;const d={token:'fixture',fetchFn:async()=>{reads++;return {ok:true,text:async()=>body};}};
+  const binding=i=>({kind:'code',repo:CONTRACT_REPO,revision:'a'.repeat(40),path:`src/${i}.js`});
+  for(let i=0;i<count;i++)expect(await readActivityBinding(binding(i),d)).toBe(body);
+  expect(await readActivityBinding(binding(count-1),d)).toBe(body);expect(reads).toBe(count+1);
+  await readActivityBinding(binding(0),d);expect(reads).toBe(count+1);
+ }
+});
+it('Code的await后预算超限不缓存，Skill不能命中同名Code',async()=>{
+ let reads=0;const d={deadline:Date.now()+60000,token:'fixture',fetchFn:async()=>{reads++;return {ok:true,text:async()=>{d.deadline=Date.now()-1;return 'code';}};}},b={kind:'code',repo:'org/repo',revision:'a'.repeat(40),path:'same/SKILL.md'};
+ await expect(readActivityBinding(b,d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});
+ d.deadline=Date.now()+60000;d.fetchFn=async()=>{reads++;return {ok:true,text:async()=> 'code'};};await readActivityBinding(b,d);await readActivityBinding({...b,kind:'skill'},d);expect(reads).toBe(3);
 });
