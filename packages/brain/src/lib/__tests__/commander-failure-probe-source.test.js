@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory() as d:
 const controllerFixture = `
 import shutil,atexit
 RealPath=pathlib.Path
-base=RealPath(tempfile.mkdtemp());atexit.register(shutil.rmtree,base);home=base/'user';alias=base/'openclaw-phone'
+base=RealPath(tempfile.mkdtemp()).resolve();atexit.register(shutil.rmtree,base);home=base/'user';alias=base/'openclaw-phone'
 managed=home/'Library/Application Support/ZenithJoy/phone-runtime-20261011'
 (managed/'locks').mkdir(parents=True);serial='ANGYVB4402004137'
 guard=managed/'locks'/(serial+'.guard');guard.write_bytes(b'')
