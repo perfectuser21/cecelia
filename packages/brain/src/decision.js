@@ -6,6 +6,7 @@
  */
 
 import pool from './db.js';
+import { applyDecisionTaskTransition } from './lib/task-terminal.js';
 
 // Configuration
 const STALE_THRESHOLD_HOURS = 24;
@@ -403,24 +404,9 @@ export async function executeDecision(decisionId) {
           result = { success: true, action: 'escalated' };
           break;
 
-        case 'retry': {
-          // Reset task to queued for retry
-          const retryUpdate = await pool.query(
-            "UPDATE tasks SET status = $1 WHERE id = $2 AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'",
-            ['queued', action.target_id]
-          );
-          result = retryUpdate.rowCount === 0
-            ? { success: false, action: 'not_requeued', reason: 'task_missing_or_commander_control_owned' }
-            : { success: true, action: 'reset_to_queued' };
-          break;
-        }
-
+        case 'retry':
         case 'skip':
-          await pool.query(
-            'UPDATE tasks SET status = $1 WHERE id = $2',
-            ['cancelled', action.target_id]
-          );
-          result = { success: true, action: 'cancelled' };
+          result = await applyDecisionTaskTransition(pool, action);
           break;
 
         default:

@@ -218,3 +218,22 @@ export async function finalizeTask(db, taskId, status, opts = {}) {
   out.relay = out.relays[0] ?? null;
   return out;
 }
+
+
+/** 原 decision 的 retry/skip 等待态写入；保持策略及结果，不经终态接棒。 */
+export async function applyDecisionTaskTransition(db, action) {
+  if (action.type === 'retry') {
+    const retryUpdate = await db.query(
+      "UPDATE tasks SET status = $1 WHERE id = $2 AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'",
+      ['queued', action.target_id]
+    );
+    return retryUpdate.rowCount === 0
+      ? { success: false, action: 'not_requeued', reason: 'task_missing_or_commander_control_owned' }
+      : { success: true, action: 'reset_to_queued' };
+  }
+  if (action.type === 'skip') {
+    await db.query('UPDATE tasks SET status = $1 WHERE id = $2', ['cancelled', action.target_id]);
+    return { success: true, action: 'cancelled' };
+  }
+  throw new Error('Unsupported decision task transition');
+}
