@@ -403,7 +403,7 @@ export async function executeDecision(decisionId) {
           result = { success: true, action: 'escalated' };
           break;
 
-        case 'retry':
+        case 'retry': {
           // Reset task to queued for retry
           const retryUpdate = await pool.query(
             "UPDATE tasks SET status = $1 WHERE id = $2 AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'",
@@ -413,6 +413,7 @@ export async function executeDecision(decisionId) {
             ? { success: false, action: 'not_requeued', reason: 'task_missing_or_commander_control_owned' }
             : { success: true, action: 'reset_to_queued' };
           break;
+        }
 
         case 'skip':
           await pool.query(
