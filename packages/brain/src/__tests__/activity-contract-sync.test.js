@@ -358,3 +358,24 @@ it('中央仓直接声明不得借普通外仓tracked兼容分支绕过业务锁
  let reads=0;await expect(readActivityBinding({kind:'skill',repo:'perfectuser21/zenithjoy-skills',path:'qualification/SKILL.md',revision:'c'.repeat(40)},
   {token:'fixture',fetchFn:async()=>{reads++;return {ok:true,text:async()=>'---\nname: central\nversion: 1\n---\nbody'};}})).rejects.toThrow();expect(reads).toBe(0);
 });
+
+import {validateImplementationBindings} from '../lib/implementation-bindings.js';
+describe('同一同步请求的Code读取复用',()=>{
+ const source={repo:CONTRACT_REPO,revision:'a'.repeat(40)},body='fixed code\n';
+ function fixture(){const calls=[];return {calls,d:{token:'fixture',deadline:Date.now()+60000,cache:new Map(),fetchFn:async url=>{calls.push(url);return {ok:true,text:async()=>body};}}};}
+ it('38活动304绑定只GET46文件，完整摘要逐个等价且新请求不共享',async()=>{
+  const {d,calls}=fixture(),verified=[];
+  for(let i=0;i<38;i++){
+   const contract={implementation_bindings:Array.from({length:8},(_,j)=>({kind:'code',...source,path:`src/file${(i*8+j)%46}.js`}))};
+   const actual=await validateImplementationBindings(contract,b=>readActivityBinding(b,d),{});expect(actual).toEqual(await validateImplementationBindings(contract,async()=>body,{}));verified.push(...actual);
+  }
+  expect(verified).toHaveLength(304);expect(calls).toHaveLength(46);await readActivityBinding({kind:'code',...source,path:'src/file0.js'},{...d});expect(calls).toHaveLength(47);
+  await expect(validateImplementationBindings({implementation_bindings:[{kind:'code',...source,path:'src/file0.js',digest:'sha256:'+'0'.repeat(64)}]},b=>readActivityBinding(b,d),{})).rejects.toThrow(/digest/);expect(calls).toHaveLength(47);
+ });
+ it('repo/revision/path隔离、失败不缓存且命中检查deadline/取消',async()=>{
+  const {d,calls}=fixture(),binding={kind:'code',...source,path:'same/SKILL.md'};
+  for(const b of [binding,{...binding,repo:'org/repo'},{...binding,revision:'b'.repeat(40)},{...binding,path:'other.js'}])await readActivityBinding(b,d);expect(calls).toHaveLength(4);
+  d.fetchFn=async url=>{calls.push(url);return {ok:false,status:403};};const missing={...binding,path:'missing.js'};await expect(readActivityBinding(missing,d)).rejects.toThrow();d.fetchFn=async url=>{calls.push(url);return {ok:true,text:async()=>body};};await readActivityBinding(missing,d);expect(calls).toHaveLength(6);
+  d.deadline=Date.now()-1;await expect(readActivityBinding(binding,d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});d.deadline=Date.now()+60000;const control=new AbortController();control.abort();d.signal=control.signal;await expect(readActivityBinding(binding,d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(calls).toHaveLength(6);
+ });
+});
