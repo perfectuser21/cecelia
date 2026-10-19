@@ -923,6 +923,8 @@
     {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-evidence-source.test.js","role":"verification"},
     
     {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-evidence-envelopes.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/work-routing-store.js","path":"packages/brain/src/__tests__/work-routing-store.test.js","role":"verification"}
+    {"owner_path":"packages/brain/src/work-routing-store.js","path":"packages/brain/src/__tests__/work-routing-store.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/event-bus.js","path":"packages/brain/src/__tests__/event-bus.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/event-bus.js","path":"packages/brain/src/__tests__/integration/event-bus-startup-lock.pg.integration.test.js","role":"verification"}
   ]
 }

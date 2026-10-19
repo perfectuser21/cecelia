@@ -11,6 +11,19 @@ import pool from './db.js';
  * Ensure cecelia_events table exists
  */
 async function ensureEventsTable() {
+  // IF NOT EXISTS仍申请DDL锁；已部署的完整索引先只读核实，避免维护事务阻塞启动及后续写入。
+  const ready = async () => {
+    const { rows } = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_index
+        WHERE indexrelid = pg_catalog.to_regclass('idx_cecelia_events_type_time')
+          AND indrelid = pg_catalog.to_regclass('cecelia_events')
+          AND indisvalid AND indisready
+      ) AS ready
+    `);
+    return rows[0]?.ready === true;
+  };
+  if (await ready()) return;
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cecelia_events (
       id SERIAL PRIMARY KEY,
@@ -25,6 +38,7 @@ async function ensureEventsTable() {
     CREATE INDEX IF NOT EXISTS idx_cecelia_events_type_time
     ON cecelia_events (event_type, created_at DESC)
   `);
+  if (!await ready()) throw Object.assign(new Error('EVENTS_SCHEMA_NOT_READY'), { code: 'EVENTS_SCHEMA_NOT_READY' });
 }
 
 /**
