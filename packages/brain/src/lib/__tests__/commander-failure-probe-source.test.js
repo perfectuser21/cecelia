@@ -90,6 +90,10 @@ p.pwd=types.SimpleNamespace(getpwuid=lambda uid:types.SimpleNamespace(pw_dir=str
 data={'host':'xian-m4','profile':'legacy','serial':serial}
 `;
 const controllerRun = body => run(controllerFixture + body);
+it('controller fixture构造与join只使用自身隔离目录，兼容不同Python pathlib构造协议',()=>{
+ const r=controllerRun("print(json.dumps({'root':str(p.Path('/private/tmp/openclaw-phone')),'guard':str(p.Path('/private/tmp/openclaw-phone')/'locks'/(serial+'.guard')),'expected_root':str(alias),'expected_guard':str(alias/'locks'/(serial+'.guard'))}))");
+ expect(r.root).toBe(r.expected_root);expect(r.guard).toBe(r.expected_guard);
+});
 it('真实官方兼容alias指向精确受管根，锁同一正规guard并原身份复核', () => {
  const r=controllerRun(`
 first=p.controller(data);second=p.controller(data,True)
