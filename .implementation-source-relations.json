@@ -922,6 +922,7 @@
     {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"docs/learnings/cp-10171426-native-evidence-source.md","role":"documentation"},
     {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-evidence-source.test.js","role":"verification"},
     
-    {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-evidence-envelopes.test.js","role":"verification"}
+    {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-evidence-envelopes.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/work-routing-store.js","path":"packages/brain/src/__tests__/work-routing-store.test.js","role":"verification"}
   ]
 }

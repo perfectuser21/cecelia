@@ -128,6 +128,8 @@ export async function loadRepositoryFacts(client) {
     path: row.adapter_config?.path ?? null,
     aliases: [...new Set([...(Array.isArray(row.adapter_config?.aliases) ? row.adapter_config.aliases : []),
       ...(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(row.adapter_config?.source_repo || '')
+        // 来源投影只引用物理仓；不能自动占用物理仓的调用别名。
+        && [row.adapter_config.source_repo, row.adapter_config.source_repo.split('/')[1]].includes(row.repo)
         ? [row.adapter_config.source_repo, row.adapter_config.source_repo.split('/')[1], `https://github.com/${row.adapter_config.source_repo}.git`, `git@github.com:${row.adapter_config.source_repo}.git`] : []),
     ])],
   }));
