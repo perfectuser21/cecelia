@@ -10,7 +10,7 @@ export function validateFailureProof(task,verifier,o,now=Date.now()){
  check(task.task_type==='workflow_dispatch'&&task.payload?.commander_protocol==='commander-v2'&&e?.protocol==='commander-v2'&&e.task_id===task.id,'原任务协议');
  check(now>=time(e.cleanup_deadline_at)&&time(e.deadline_at)<=time(e.cleanup_deadline_at),'原预算未终结');
  check(!c.delivery&&c.phase!=='final'&&task.status==='in_progress','非无delivery在途尝试');
- check(digest(e.input)===e.input_sha256&&same(o.envelope,e),'冻结信封');
+ check(digest(e.input)===e.input_sha256&&same(o.envelope,e)&&same(o.original_input,e.input)&&same(o.original_contract,e.contract),'冻结信封');
  const identity=failureIdentity(e),auth=verifier?.result?.commander_failure_verification_authorization;
  const fixed=auth;
  check(verifier?.parent_task_id===task.id&&verifier.task_type==='research'&&verifier.status==='completed'&&verifier.payload?.publication_allowed===false&&verifier.payload.verified_task_id===task.id&&verifier.payload.verified_run_id===e.run_id&&verifier.payload.verified_attempt===e.attempt&&auth?.purpose==='commander_failed_reconciliation_cleanup'&&Object.entries(identity).every(([k,v])=>fixed[k]===v),'独审任务授权');

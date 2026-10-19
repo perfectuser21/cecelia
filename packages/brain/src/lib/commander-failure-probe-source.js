@@ -80,6 +80,9 @@ def worker(data, held=False):
     envelope, binding, request = (read(root / name) for name in ('envelope.json', 'agent-binding.json', 'agent-request.json'))
     if envelope != e or binding['task_id'] != e['task_id'] or binding['run_id'] != run:
         raise ValueError('frozen run identity changed')
+    original_input, original_contract = read(root / 'input.json'), read(root / 'contract.json')
+    if original_input != e['input'] or original_contract != e['contract']:
+        raise ValueError('original input or contract changed')
     closed = read(root / 'handoff-closed.json')
     if (isinstance(closed.get('at'), bool) or not isinstance(closed.get('at'), (int, float))
             or not 0 < closed['at'] <= time.time()):
@@ -95,7 +98,7 @@ def worker(data, held=False):
     preflight_state = read(root / 'shell-preflight.json')
     cleanup_state = read(root / 'shell-cleanup.json')
     runtime_root = Path.home() / '.openclaw/commander'
-    if (runtime_root / '.deploying').exists():
+    if (runtime_root / '.deploying').exists() or (runtime_root / '.deploying').is_symlink():
         raise ValueError('runtime deployment in progress')
     manifest = read(runtime_root / 'runtime-manifest.json')
     names = manifest.get('files')
@@ -139,10 +142,11 @@ def worker(data, held=False):
     s = matches[0]
     session = {key: s.get(key) for key in ('key', 'hasActiveRun', 'activeRunIds', 'hasActiveSubagentRun')}
     # Before response all original identities re-read; no caller-supplied state flags.
-    for name, value in [('envelope.json', envelope), ('agent-binding.json', binding), ('agent-request.json', request), ('cleanup.json', cleanup)]:
+    for name, value in [('envelope.json', envelope), ('agent-binding.json', binding), ('agent-request.json', request), ('input.json', original_input), ('contract.json', original_contract), ('cleanup.json', cleanup)]:
         if read(root / name) != value:
             raise ValueError('original evidence changed during probe')
-    return {'run_directory': str(root), 'envelope': envelope, 'binding': binding, 'request': request,
+    return {'run_directory': str(root), 'envelope': envelope, 'original_input': original_input,
+            'original_contract': original_contract, 'binding': binding, 'request': request,
             'worker_exclusive': True, 'nonce_closed': True, 'cleanup': cleanup,
             'legacy_branches_absent': True, 'preflight': preflight, 'preflight_state': preflight_state,
             'cleanup_state': cleanup_state, 'runtime_manifest': manifest, 'runtime_files': runtime_files,

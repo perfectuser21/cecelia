@@ -41,8 +41,8 @@ from unittest.mock import patch
 with tempfile.TemporaryDirectory() as d:
  home=pathlib.Path(d).resolve(); rid='wfd-aaaaaaaa-1111-2222-3333-444444444444';root=home/'wf-agent-runs'/rid;root.mkdir(parents=True)
  (root/'evidence').mkdir();(home/'.openclaw/commander').mkdir(parents=True)
- e={'run_id':rid,'task_id':'task'};b={'run_id':rid,'task_id':'task','nonce':'actualnonce','child_run_id':'child','child_session_key':'agent:skill-factory:subagent:session','parent_session_key':'parent'}
- values={'envelope.json':e,'agent-binding.json':b,'agent-request.json':dict(b),'handoff-closed.json':{'at':1792398259.758255},'spawn-claimed.json':{'nonce':'actualnonce'},'cleanup-root-start.json':{},'cleanup-root-end.json':{},'root-identity.json':{},'preflight.json':{},'shell-preflight.json':{},'shell-cleanup.json':{}}
+ e={'run_id':rid,'task_id':'task','input':{'title':'原输入'},'contract':{'resources':{}}};b={'run_id':rid,'task_id':'task','nonce':'actualnonce','child_run_id':'child','child_session_key':'agent:skill-factory:subagent:session','parent_session_key':'parent'}
+ values={'envelope.json':e,'input.json':e['input'],'contract.json':e['contract'],'agent-binding.json':b,'agent-request.json':dict(b),'handoff-closed.json':{'at':1792398259.758255},'spawn-claimed.json':{'nonce':'actualnonce'},'cleanup-root-start.json':{},'cleanup-root-end.json':{},'root-identity.json':{},'preflight.json':{},'shell-preflight.json':{},'shell-cleanup.json':{}}
  runtime=home/'.openclaw/commander';raw=b'fixture runtime rehashed, never executed'
  (runtime/'wf-v2.py').write_bytes(raw)
  files={'wf-v2.py':p.hashlib.sha256(raw).hexdigest()};(runtime/'runtime-manifest.json').write_text(json.dumps({'files':files}))
