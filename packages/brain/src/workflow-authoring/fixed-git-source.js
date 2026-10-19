@@ -8,6 +8,10 @@ const MAX_FILE = 1024 * 1024;
 const CENTRAL_REPO = 'perfectuser21/zenithjoy-skills';
 const DIGEST = /^[a-f0-9]{64}$/;
 const fail = message => { throw Object.assign(new Error(`冻结来源：${message}`), { code:'definition_source_invalid',status:422 }); };
+const gitSessions=new WeakMap();
+export function createFixedGitReadSession(){
+  const token=Object.freeze({});gitSessions.set(token,{objects:new Map(),bytes:0});return token;
+}
 
 export function validateGitSource({ repo, path, revision } = {}, { central = false } = {}) {
   if (!(REPOS.has(repo) || (central && repo === CENTRAL_REPO)) || !SHA.test(revision || '') || typeof path !== 'string'
@@ -16,11 +20,14 @@ export function validateGitSource({ repo, path, revision } = {}, { central = fal
 }
 
 /** token 只发往固定 GitHub API；commit/tree/blob 身份均回读，禁止重定向。 */
-async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=async()=>(await import('../harness-credentials.js')).resolveGitHubToken(),signal,deadline=Date.now()+60000,allowMissing=false } = {}, central=false) {
+async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=async()=>(await import('../harness-credentials.js')).resolveGitHubToken(),signal,deadline=Date.now()+60000,allowMissing=false,gitSession } = {}, central=false) {
   validateGitSource(source,{central});
   const check=()=>{if(signal?.aborted||Date.now()>=deadline)throw Object.assign(Error('固定来源读取已取消或超时'),{code:'readiness_deadline_exceeded',status:503});};
   check();
+  const memo=gitSession===undefined?null:gitSessions.get(gitSession);
+  if(gitSession!==undefined&&!memo)fail('Git读取会话不合法');
   const {repo,path,revision}=source,token=await resolveToken();
+  check();
   async function get(kind,sha) {
     check();
     if (!SHA.test(sha || '')) fail('Git对象身份不合法');
@@ -40,12 +47,26 @@ async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=asyn
     }
     const document=await response.json();check();return document;
   }
-  const commit=await get('commits',revision);
-  if(commit.sha!==revision||!SHA.test(commit.tree?.sha||''))fail('commit不匹配');
-  const tree=await get('trees',commit.tree.sha);
-  if(tree.sha!==commit.tree.sha||tree.truncated||!Array.isArray(tree.tree))fail('tree不完整');
+  async function metadata(kind,sha,normalize){
+    check();const key=JSON.stringify([repo,revision,kind,sha]);
+    if(memo?.objects.has(key)){const value=memo.objects.get(key);check();return value;}
+    const value=normalize(await get(kind,sha));check();
+    // Metadata has a separate retention cap; reaching it only disables memoization.
+    const size=Buffer.byteLength(JSON.stringify(value));
+    if(memo&&memo.objects.size<64&&memo.bytes+size<=16*MAX_FILE){memo.objects.set(key,value);memo.bytes+=size;}
+    return value;
+  }
+  const commit=await metadata('commits',revision,value=>{
+    if(value.sha!==revision||!SHA.test(value.tree?.sha||''))fail('commit不匹配');
+    return Object.freeze({sha:value.sha,tree:Object.freeze({sha:value.tree.sha})});
+  });
+  const tree=await metadata('trees',commit.tree.sha,value=>{
+    if(value.sha!==commit.tree.sha||value.truncated||!Array.isArray(value.tree)||value.tree.some(entry=>!entry||typeof entry!=='object'||Array.isArray(entry)))fail('tree不完整');
+    const scalar=value=>typeof value==='string'||typeof value==='number'?value:undefined;
+    return Object.freeze({sha:value.sha,tree:Object.freeze(value.tree.map(entry=>Object.freeze(Object.fromEntries(['path','sha','type','mode','size'].map(key=>[key,scalar(entry?.[key])])))))});
+  });
   const entries=tree.tree.filter(entry=>entry.path===path);
-  if(entries.length===0&&allowMissing)return null;
+  if(entries.length===0&&allowMissing){check();return null;}
   if(entries.length!==1||entries[0].type!=='blob'||!['100644','100755'].includes(entries[0].mode))fail('文件缺失或不是常规文件');
   if(entries[0].size>MAX_FILE)fail('文件超过上限');
   const blob=await get('blobs',entries[0].sha);
@@ -53,6 +74,7 @@ async function readGitFile(source, { fetchFn=globalThis.fetch, resolveToken=asyn
     ||typeof blob.content!=='string'||blob.content.length>2*MAX_FILE)fail('blob格式或大小非法');
   const bytes=Buffer.from(blob.content,'base64');
   if(bytes.length!==blob.size||createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`),bytes])).digest('hex')!==blob.sha)fail('文件字节hash不匹配');
+  check();
   return bytes;
 }
 
@@ -63,6 +85,7 @@ export async function readFixedGitFile(source, options={}) {
 
 /** 声明身份留在绑定中，解析身份仅来自业务固定提交的锁和中央固定提交的目录。 */
 export async function readFixedImplementationBinding(binding, options={}) {
+  options={...options,gitSession:options.gitSession??createFixedGitReadSession()};
   const check=()=>{
     if(options.signal?.aborted||Date.now()>=(options.deadline??Infinity))throw Object.assign(Error('固定来源读取已取消或超时'),{code:'readiness_deadline_exceeded',status:503});
   };
@@ -77,8 +100,9 @@ export async function readFixedImplementationBinding(binding, options={}) {
     const key=JSON.stringify([location.repo,location.revision,location.path]);
     if(options.cache?.has(key)){
       const cached=options.cache.get(key);
+      check();
       if(cached===null&&!allowMissing)fail('固定来源文件不存在');
-      return cached;
+      return cached===null?null:Buffer.from(cached);
     }
     let bytes;
     if(options.readFile || (!central && options.readBusinessFile)){
@@ -91,7 +115,7 @@ export async function readFixedImplementationBinding(binding, options={}) {
     const value=Buffer.from(bytes);
     if(!value.length||value.length>MAX_FILE)fail('固定来源文件大小非法');
     options.onReadBytes?.(value.length);
-    options.cache?.set(key,value);
+    options.cache?.set(key,Buffer.from(value));
     return value;
   };
     const declared={repo:binding.repo,path:binding.path,revision:binding.revision};
@@ -121,6 +145,7 @@ export async function readFixedImplementationBinding(binding, options={}) {
 }
 
 export async function validateFixedImplementationBindings(contract, source, options={}) {
+  options={...options,gitSession:options.gitSession??createFixedGitReadSession()};
   const resolutions=new Map();
   const readBinding=async binding=>{
     const result=await readFixedImplementationBinding(binding,options);

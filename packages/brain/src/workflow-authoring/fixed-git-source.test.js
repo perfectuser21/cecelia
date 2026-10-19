@@ -191,3 +191,57 @@ describe('两业务仓中央Skill profile必须按仓库显式匹配',()=>{
   await expect(readFixedImplementationBinding(binding,{readFile:forbidden})).rejects.toThrow();expect(forbidden).toHaveBeenCalledOnce();
  });
 });
+
+import * as fixedSources from './fixed-git-source.js';
+describe('请求内已验证Git对象复用',()=>{
+ function fixture(){
+  const tree='d'.repeat(40),blobs=new Map(),entries=['one','two'].map(path=>{const b=Buffer.from('fixed '+path),sha=createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${b.length}\0`),b])).digest('hex');blobs.set(sha,{sha,size:b.length,encoding:'base64',content:b.toString('base64')});return {path,sha,type:'blob',mode:'100644',size:b.length};});
+  const documents={commit:{sha:revision,tree:{sha:tree}},tree:{sha:tree,tree:entries}},fetchFn=vi.fn(async url=>({ok:true,json:async()=>url.includes('/commits/')?documents.commit:url.includes('/trees/')?documents.tree:blobs.get(url.split('/').at(-1))}));
+  return {documents,blobs,fetchFn,options:{fetchFn,resolveToken:async()=> 'fixture',gitSession:fixedSources.createFixedGitReadSession?.()??{}}};
+ }
+ const read=(f,path='one',extra={})=>readFixedGitFile({repo,revision,path},{...f.options,...extra});
+ it('同commit不同blob只验证一次commit/tree，blob仍逐文件取证',async()=>{
+  const f=fixture();expect(await read(f)).toBe('fixed one');expect(await read(f,'two')).toBe('fixed two');
+  for(const kind of ['commits','trees'])expect(f.fetchFn.mock.calls.filter(([u])=>u.includes('/'+kind+'/'))).toHaveLength(1);
+  expect(f.fetchFn.mock.calls.filter(([u])=>u.includes('/blobs/'))).toHaveLength(2);
+ });
+ it('tree复制而不冻结调用方对象，返回正文也不能污染会话',async()=>{
+  const f=fixture();await read(f);expect(Object.isFrozen(f.documents.tree)).toBe(false);f.documents.tree.tree[1].mode='120000';f.documents.commit.tree.sha='e'.repeat(40);
+  expect(await read(f,'two')).toBe('fixed two');
+  const b={kind:'code',repo,revision,path:'one'},options={...f.options,cache:new Map()},first=await readFixedImplementationBinding(b,options);first.bytes.fill(0);expect((await readFixedImplementationBinding(b,options)).content).toBe('fixed one');
+ });
+ it('失败对象不缓存，已验证commit保留而坏tree/blob重试',async()=>{
+  const f=fixture();f.documents.commit.sha='0'.repeat(40);await expect(read(f)).rejects.toThrow();f.documents.commit.sha=revision;f.documents.tree.truncated=true;await expect(read(f)).rejects.toThrow();f.documents.tree.truncated=false;await read(f);
+  for(const kind of ['commits','trees'])expect(f.fetchFn.mock.calls.filter(([u])=>u.includes('/'+kind+'/'))).toHaveLength(2);
+  const blob=[...f.blobs.values()][1],content=blob.content;blob.content=Buffer.from('bad').toString('base64');await expect(read(f,'two')).rejects.toThrow();blob.content=content;expect(await read(f,'two')).toBe('fixed two');
+ });
+ it('cache命中、慢token及blob后仍遵守同一deadline/abort',async()=>{
+  const f=fixture();await read(f);const count=f.fetchFn.mock.calls.length,controller=new AbortController();controller.abort();
+  await expect(read(f,'two',{signal:controller.signal})).rejects.toMatchObject({code:'readiness_deadline_exceeded'});await expect(read(f,'two',{deadline:Date.now()-1})).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(f.fetchFn).toHaveBeenCalledTimes(count);
+  const live=new AbortController();await expect(read(f,'two',{resolveToken:async()=>{live.abort();return 'fixture';},signal:live.signal})).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(f.fetchFn).toHaveBeenCalledTimes(count);
+ });
+ it('拒绝伪造metadata会话，repo/revision及新请求独立',async()=>{
+  const f=fixture();await expect(read(f,'one',{gitSession:new Map()})).rejects.toThrow();expect(f.fetchFn).not.toHaveBeenCalled();await read(f);
+  await expect(readFixedGitFile({repo:'perfectuser21/cecelia',revision:'e'.repeat(40),path:'one'},f.options)).rejects.toThrow();expect(f.fetchFn.mock.calls.filter(([u])=>u.includes('/commits/'))).toHaveLength(2);
+  await read(f,'one',{gitSession:fixedSources.createFixedGitReadSession?.()??{}});expect(f.fetchFn.mock.calls.filter(([u])=>u.includes('/commits/'))).toHaveLength(3);
+ });
+});
+
+it('metadata保留最多64对象，满后仍读取并验证而不memo',async()=>{
+ const bytes=Buffer.from('body'),blob=createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`),bytes])).digest('hex'),tree='f'.repeat(40),counts={commits:0,trees:0,blobs:0};
+ const options={gitSession:fixedSources.createFixedGitReadSession(),resolveToken:async()=> 'fixture',fetchFn:async url=>{const match=url.match(/git\/(commits|trees|blobs)\/([a-f0-9]{40})/),kind=match[1];counts[kind]++;return {ok:true,json:async()=>kind==='commits'?{sha:match[2],tree:{sha:tree}}:kind==='trees'?{sha:tree,tree:[{path:'file',sha:blob,type:'blob',mode:'100644'}]}:{sha:blob,size:bytes.length,encoding:'base64',content:bytes.toString('base64')}};}};
+ const read=revision=>readFixedGitFile({repo,revision,path:'file'},options),versions=Array.from({length:33},(_,i)=>(i+1).toString(16).padStart(40,'0'));
+ for(const sha of versions)expect(await read(sha)).toBe('body');
+ await read(versions[32]);expect(counts.commits).toBe(34);expect(counts.trees).toBe(34);
+ await read(versions[0]);expect(counts.commits).toBe(34);expect(counts.trees).toBe(34);
+ await readFixedGitFile({repo:'perfectuser21/cecelia',revision:versions[0],path:'file'},options);expect(counts.commits).toBe(35);expect(counts.trees).toBe(35);
+});
+it('原响应16MiB流上限保持且超限数据不进入metadata缓存',async()=>{
+ const cancel=vi.fn(async()=>{}),options={gitSession:fixedSources.createFixedGitReadSession(),resolveToken:async()=> 'fixture',fetchFn:async()=>({ok:true,body:{getReader:()=>({read:async()=>({done:false,value:new Uint8Array(16*1024*1024+1)}),cancel})}})};
+ await expect(readFixedGitFile({repo,revision,path:'file'},options)).rejects.toThrow(/上限/);expect(cancel).toHaveBeenCalledOnce();
+});
+it('tree内null坏项仍拒绝，不因metadata规范化变成静默忽略',async()=>{
+ const tree='e'.repeat(40),calls=[],options={gitSession:fixedSources.createFixedGitReadSession(),resolveToken:async()=> 'fixture',fetchFn:async url=>{calls.push(url);return {ok:true,json:async()=>url.includes('/commits/')?{sha:revision,tree:{sha:tree}}:{sha:tree,tree:[null]}};}};
+ for(let i=0;i<2;i++)await expect(readFixedGitFile({repo,revision,path:'file'},options)).rejects.toThrow();
+ expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(1);expect(calls.filter(u=>u.includes('/trees/'))).toHaveLength(2);expect(calls.some(u=>u.includes('/blobs/'))).toBe(false);
+});

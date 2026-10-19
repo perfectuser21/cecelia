@@ -109,7 +109,7 @@ describe('共享中央 Skill 与来源读取总预算回归',()=>{
         if(!definitionRead){now=50000;definitionRead=true;}
         return {ok:true,json:async()=>({sha:row.sha,size:row.bytes.length,encoding:'base64',content:row.bytes.toString('base64')})};
       };
-      await expect(prepareDefinitionFreeze(d,{fetchFn,resolveToken:async()=> 'fixture'})).rejects.toThrow();
+      await expect(prepareDefinitionFreeze(d,{fetchFn,resolveToken:async()=>{if(definitionRead)now=61000;return 'fixture';}})).rejects.toThrow();
       expect(requests.filter(r=>r.at>=60000)).toEqual([]);
       expect(requests.filter(r=>r.url.includes('/blobs/'))).toHaveLength(1);
     }finally{clock.mockRestore();}

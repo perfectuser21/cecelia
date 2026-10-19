@@ -1,5 +1,5 @@
 import { definitionDigest } from './contracts.js';
-import { readFixedGitFile, validateGitSource, validateFixedImplementationBindings } from './fixed-git-source.js';
+import { readFixedGitFile, validateGitSource, validateFixedImplementationBindings,createFixedGitReadSession } from './fixed-git-source.js';
 import { snapshotDefinitions } from '../lib/definition-versions.js';
 import { assertStepsHaveReadback } from '../lib/contract-steps.js';
 import { prepareSharedFreeze } from './shared-freeze.js';
@@ -14,6 +14,7 @@ const fail=(message,code='definition_freeze_proof_invalid')=>{throw Object.assig
 export async function prepareDefinitionFreeze(definition, options={}) {
   const source={repo:definition.source?.repo,path:definition.source?.ref,revision:definition.source?.revision};
   validateGitSource(source);
+  options={...options,gitSession:createFixedGitReadSession()};
   const deadline=Math.min(options.deadline??Infinity,Date.now()+60000);
   const readFile=options.readFile||((s)=>readFixedGitFile(s,{...options,deadline})),cache=new Map();
   let totalBytes=0,bindingFiles=0;

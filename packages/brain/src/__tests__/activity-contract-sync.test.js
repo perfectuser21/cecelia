@@ -328,9 +328,9 @@ describe('一轮固定Skill解析预算与缓存',()=>{
     const {d,calls,bindings}=context();
     expect(await readActivityBinding(bindings[0],d)).toBe('body0');
     expect(await readActivityBinding(bindings[1],d)).toBe('body1');
-    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(4); // lock/catalog + two bodies
+    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(2); // one business commit and one central commit
     await expect(readActivityBinding({...bindings[0],resolved_source:{repo:'evil/repo',revision:bindings[0].revision,path:'evil'}},d)).rejects.toThrow();
-    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(4);
+    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(2);
   });
   it('后续绑定不得重置总deadline，取消后即便命中缓存仍拒绝',async()=>{
     const {d,calls,bindings}=context();await readActivityBinding(bindings[0],d);const count=calls.length;
@@ -357,4 +357,40 @@ describe('同步既有外仓tracked Skill不继承中央来源资格',()=>{
 it('中央仓直接声明不得借普通外仓tracked兼容分支绕过业务锁',async()=>{
  let reads=0;await expect(readActivityBinding({kind:'skill',repo:'perfectuser21/zenithjoy-skills',path:'qualification/SKILL.md',revision:'c'.repeat(40)},
   {token:'fixture',fetchFn:async()=>{reads++;return {ok:true,text:async()=>'---\nname: central\nversion: 1\n---\nbody'};}})).rejects.toThrow();expect(reads).toBe(0);
+});
+
+import {validateImplementationBindings} from '../lib/implementation-bindings.js';
+describe('同一同步请求的Code读取复用',()=>{
+ const source={repo:CONTRACT_REPO,revision:'a'.repeat(40)},body='fixed code\n';
+ function fixture(){const calls=[];return {calls,d:{token:'fixture',deadline:Date.now()+60000,cache:new Map(),fetchFn:async url=>{calls.push(url);return {ok:true,text:async()=>body};}}};}
+ it('38活动304绑定只GET46文件，完整摘要逐个等价且新请求不共享',async()=>{
+  const {d,calls}=fixture(),verified=[];
+  for(let i=0;i<38;i++){
+   const contract={implementation_bindings:Array.from({length:8},(_,j)=>({kind:'code',...source,path:`src/file${(i*8+j)%46}.js`}))};
+   const actual=await validateImplementationBindings(contract,b=>readActivityBinding(b,d),{});expect(actual).toEqual(await validateImplementationBindings(contract,async()=>body,{}));verified.push(...actual);
+  }
+  expect(verified).toHaveLength(304);expect(calls).toHaveLength(46);await readActivityBinding({kind:'code',...source,path:'src/file0.js'},{...d});expect(calls).toHaveLength(47);
+  await expect(validateImplementationBindings({implementation_bindings:[{kind:'code',...source,path:'src/file0.js',digest:'sha256:'+'0'.repeat(64)}]},b=>readActivityBinding(b,d),{})).rejects.toThrow(/digest/);expect(calls).toHaveLength(47);
+ });
+ it('repo/revision/path隔离、失败不缓存且命中检查deadline/取消',async()=>{
+  const {d,calls}=fixture(),binding={kind:'code',...source,path:'same/SKILL.md'};
+  for(const b of [binding,{...binding,repo:'org/repo'},{...binding,revision:'b'.repeat(40)},{...binding,path:'other.js'}])await readActivityBinding(b,d);expect(calls).toHaveLength(4);
+  d.fetchFn=async url=>{calls.push(url);return {ok:false,status:403};};const missing={...binding,path:'missing.js'};await expect(readActivityBinding(missing,d)).rejects.toThrow();d.fetchFn=async url=>{calls.push(url);return {ok:true,text:async()=>body};};await readActivityBinding(missing,d);expect(calls).toHaveLength(6);
+  d.deadline=Date.now()-1;await expect(readActivityBinding(binding,d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});d.deadline=Date.now()+60000;const control=new AbortController();control.abort();d.signal=control.signal;await expect(readActivityBinding(binding,d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(calls).toHaveLength(6);
+ });
+});
+
+it('Code驻留8MiB或200项满后只不memo，仍返回固定原文',async()=>{
+ for(const [count,body] of [[201,'code'],[9,'x'.repeat(1024*1024)]]){
+  let reads=0;const d={token:'fixture',fetchFn:async()=>{reads++;return {ok:true,text:async()=>body};}};
+  const binding=i=>({kind:'code',repo:CONTRACT_REPO,revision:'a'.repeat(40),path:`src/${i}.js`});
+  for(let i=0;i<count;i++)expect(await readActivityBinding(binding(i),d)).toBe(body);
+  expect(await readActivityBinding(binding(count-1),d)).toBe(body);expect(reads).toBe(count+1);
+  await readActivityBinding(binding(0),d);expect(reads).toBe(count+1);
+ }
+});
+it('Code的await后预算超限不缓存，Skill不能命中同名Code',async()=>{
+ let reads=0;const d={deadline:Date.now()+60000,token:'fixture',fetchFn:async()=>{reads++;return {ok:true,text:async()=>{d.deadline=Date.now()-1;return 'code';}};}},b={kind:'code',repo:'org/repo',revision:'a'.repeat(40),path:'same/SKILL.md'};
+ await expect(readActivityBinding(b,d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});
+ d.deadline=Date.now()+60000;d.fetchFn=async()=>{reads++;return {ok:true,text:async()=> 'code'};};await readActivityBinding(b,d);await readActivityBinding({...b,kind:'skill'},d);expect(reads).toBe(3);
 });
