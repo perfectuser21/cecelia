@@ -167,7 +167,16 @@ export function buildTerminalUpdate(taskId, status, opts = {}) {
   }
 
   // v2只能由持久控制器的最终核验判定进入成功终态，旧失败入口不得抢收。
-  where.push("(payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' OR (result->'workflow_control'->>'phase' = 'final' AND result->'workflow_control'->>'verdict' = 'PASS' AND " + (isRelayTerminalStatus(status) ? 'TRUE' : 'FALSE') + "))");
+  const failedProof = opts.commanderFailureReconciliation;
+  let failedGate = '';
+  if (status === 'failed' && /^[a-f0-9]{64}$/.test(failedProof?.sha256 ?? '') && /^wfd-[a-f0-9-]{36}$/.test(failedProof?.runId ?? '')) {
+    failedGate = ` OR (result->'workflow_control'->>'phase'='final' AND result->'workflow_control'->>'verdict'='FAIL'
+      AND result->'workflow_control'->'failed_reconciliation'->>'sha256'=$${push(failedProof.sha256)}
+      AND result->'workflow_control'->'envelope'->>'run_id'=$${push(failedProof.runId)}
+      AND result->'workflow_control'->'failed_reconciliation'->>'effects'='unknown'
+      AND result->'workflow_control'->'failed_reconciliation'->>'retry_safe'='false')`;
+  }
+  where.push("(payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' OR (result->'workflow_control'->>'phase' = 'final' AND result->'workflow_control'->>'verdict' = 'PASS' AND " + (isRelayTerminalStatus(status) ? 'TRUE' : 'FALSE') + ")" + failedGate + ")");
   const returning = ['id', 'status', ...toList(opts.returning).filter((c) => c !== 'id' && c !== 'status')];
   const sql = `UPDATE tasks SET ${sets.join(', ')} WHERE ${where.join(' AND ')} RETURNING ${returning.join(', ')}`;
   return { sql, params };

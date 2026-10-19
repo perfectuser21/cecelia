@@ -272,6 +272,7 @@ export async function generateDecision(context = {}) {
     SELECT id, title, goal_id
     FROM tasks
     WHERE status = 'failed'
+      AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'
       AND (retry_count IS NULL OR retry_count < $1)
     ORDER BY created_at DESC
     LIMIT 5
@@ -404,11 +405,13 @@ export async function executeDecision(decisionId) {
 
         case 'retry':
           // Reset task to queued for retry
-          await pool.query(
-            'UPDATE tasks SET status = $1 WHERE id = $2',
+          const retryUpdate = await pool.query(
+            "UPDATE tasks SET status = $1 WHERE id = $2 AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'",
             ['queued', action.target_id]
           );
-          result = { success: true, action: 'reset_to_queued' };
+          result = retryUpdate.rowCount === 0
+            ? { success: false, action: 'not_requeued', reason: 'task_missing_or_commander_control_owned' }
+            : { success: true, action: 'reset_to_queued' };
           break;
 
         case 'skip':

@@ -925,6 +925,11 @@
     {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-evidence-envelopes.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/work-routing-store.js","path":"packages/brain/src/__tests__/work-routing-store.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/event-bus.js","path":"packages/brain/src/__tests__/event-bus.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/event-bus.js","path":"packages/brain/src/__tests__/integration/event-bus-startup-lock.pg.integration.test.js","role":"verification"}
+    {"owner_path":"packages/brain/src/event-bus.js","path":"packages/brain/src/__tests__/integration/event-bus-startup-lock.pg.integration.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/commander-failure-proof.js","path":"packages/brain/src/lib/__tests__/commander-failure-proof.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/commander-failure-proof.js","path":"packages/brain/src/lib/__tests__/commander-legacy-037.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/commander-failure-reconcile.js","path":"packages/brain/src/__tests__/integration/commander-failure-reconcile.pg.integration.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/commander-failure-probe-source.js","path":"packages/brain/src/lib/__tests__/commander-failure-probe.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/commander-failure-reader.js","path":"packages/brain/src/lib/__tests__/commander-failure-reader.test.js","role":"verification"}
   ]
 }

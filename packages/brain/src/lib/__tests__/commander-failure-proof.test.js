@@ -1,20 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateFailureProof } from '../commander-failure-proof.js';
-import { digest } from '../commander-v2-contract.js';
-const root='/Users/worker/wf-agent-runs/wfd-aaaaaaaa-1111-2222-3333-444444444444';
-export function failureFixture(){
- const e={protocol:'commander-v2',task_id:'aaaaaaaa-1111-2222-3333-444444444444',run_id:root.split('/').at(-1),attempt:1,owner_epoch:'epoch',input:{title:'固定中文'},definition:{snapshot_sha256:'b'.repeat(64)},deadline_at:'2026-01-01T00:01:00Z',cleanup_deadline_at:'2026-01-01T00:06:00Z',contract:{resources:{device_serial:'SERIAL1',profile:'legacy',machine:'xian-m4'},recovery:{max_attempts:1,retry_safe:false}}};e.input_sha256=digest(e.input);
- const roots={run:{realpath:root,st_dev:1,st_ino:2},evidence:{realpath:root+'/evidence',st_dev:1,st_ino:3},commander:{realpath:'/Users/worker/.openclaw/commander',st_dev:1,st_ino:4}};
- const files=[{path:root+'/root-identity.json',sha256:'1'.repeat(64)},{path:root+'/cleanup-desktop.log',sha256:'2'.repeat(64)}];
- const cleanup={completed:true,failure:null,lock_status:'free',evidence:[files[1].path],_shell:{run_id:e.run_id,activity_key:'cleanup',attempt:1,started_at:'2026-01-01T00:02:00Z',ended_at:'2026-01-01T00:03:00Z',files}};
- const binding={task_id:e.task_id,run_id:e.run_id,nonce:'nonce',parent_session_key:'agent:work-commander:'+e.run_id,child_run_id:'11111111-2222-3333-4444-555555555555',child_session_key:'agent:skill-factory:subagent:22222222-3333-4444-5555-666666666666'};
- const task={id:e.task_id,status:'in_progress',task_type:'workflow_dispatch',payload:{commander_protocol:e.protocol},result:{workflow_control:{phase:'blocked',envelope:e}}};
- const identity={task_id:e.task_id,run_id:e.run_id,attempt:e.attempt,owner_epoch:e.owner_epoch,input_sha256:e.input_sha256,definition_sha256:e.definition.snapshot_sha256};
- const attestation={...identity,verdict:'PASS',scope:'cleanup_only',effects:'unknown',retry_safe:false,cleanup_sha256:'3'.repeat(64),files,review_actor:'codex:independent-review',reviewed_at:'2026-01-01T00:10:00Z',evidence:['actual:desktop-independent-review']};
- const verifier={id:'33333333-4444-5555-6666-777777777777',parent_task_id:e.task_id,status:'completed',claimed_by:attestation.review_actor,payload:{purpose:'commander_failed_reconciliation_cleanup',commander_failure_verification_of:identity},result:{commander_failure_verification:attestation}};
- const observation={run_directory:root,envelope:e,binding,request:{...binding,protocol:e.protocol,expires_at:Date.parse(e.deadline_at)/1000},worker_exclusive:true,nonce_closed:true,cleanup,cleanup_sha256:attestation.cleanup_sha256,files,roots,root_start:{matches:true,roots,observed_at:cleanup._shell.started_at},root_end:{matches:true,roots,observed_at:cleanup._shell.ended_at},current_roots:roots,terminal:{ok:true,toolName:'subagents',source:'core',output:{details:{status:'ok',action:'wait',reason:'completed',completed:[binding.child_run_id],attention:[],runs:[{runId:binding.child_run_id,sessionKey:binding.child_session_key,status:'terminal',startedAt:Date.parse('2026-01-01T00:00:00Z'),endedAt:Date.parse('2026-01-01T00:00:50Z'),outcome:{status:'error'}}]}}},session:{key:binding.child_session_key,hasActiveRun:false,activeRunIds:[],hasActiveSubagentRun:false},controller:{serial:'SERIAL1',profile:'legacy',host:'xian-m4',owner:'free',guard_exclusive:true}};
- return {task,verifier,observation,now:Date.parse('2026-01-01T00:12:00Z')};
-}
+import { failureFixture } from './fixtures/commander-failure-fixture.js';
 describe('无delivery的原过期尝试只能由主动证据失败收口',()=>{
  it('接受真实原失败/预算内cleanup/独立签收，保unknown且不造delivery',()=>{const f=failureFixture();const p=validateFailureProof(f.task,f.verifier,f.observation,f.now);expect(p.effects).toBe('unknown');expect(p.retry_safe).toBe(false);expect(p).not.toHaveProperty('delivery');});
  const cases={
@@ -40,4 +26,10 @@ describe('无delivery的原过期尝试只能由主动证据失败收口',()=>{
   '过预算之前禁止运维收口':f=>f.now=Date.parse('2026-01-01T00:05:00Z'),
  };
  for(const [name,mutate] of Object.entries(cases))it(name,()=>{const f=structuredClone(failureFixture());mutate(f);expect(()=>validateFailureProof(f.task,f.verifier,f.observation,f.now)).toThrow();});
+});
+it('提前失败清理可在execution截止前完成，仍只在原总清理预算结束后对账',()=>{
+ const f=failureFixture(),s=f.observation.cleanup._shell;
+ s.started_at='2026-01-01T00:00:51Z';s.ended_at='2026-01-01T00:00:59Z';
+ f.observation.root_start.observed_at=s.started_at;f.observation.root_end.observed_at=s.ended_at;
+ expect(validateFailureProof(f.task,f.verifier,f.observation,f.now).verdict).toBe('FAIL');
 });

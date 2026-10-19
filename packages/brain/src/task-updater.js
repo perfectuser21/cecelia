@@ -98,6 +98,8 @@ export async function updateTaskStatus(taskId, status, additionalFields = {}) {
         UPDATE tasks
         SET ${updates.join(', ')}, updated_at = NOW()
         WHERE id = $1
+          AND NOT COALESCE(payload->>'commander_protocol'='commander-v2'
+            AND result->'workflow_control' ? 'failed_reconciliation',false)
         RETURNING *
       `;
 
