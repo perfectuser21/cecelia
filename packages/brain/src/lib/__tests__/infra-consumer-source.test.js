@@ -37,3 +37,13 @@ it('实际加载infra采集器必须逐字匹配固定来源，坏字节不能�
  await expect(assertInfraConsumerRuntime(read)).resolves.toBeUndefined();
  await expect(assertInfraConsumerRuntime(async path=>(await read(path))+'// drift')).rejects.toThrow('INFRA_SOURCE_RUNTIME_MISMATCH');
 });
+
+it.each([
+ ['echo-source',0,t=>"echo '"+t+"'\n"],
+ ['dead-source',0,t=>'if false; then\n'+t+'\nfi\n'],
+ ['early-exit',0,t=>'exit 0\n'+t],
+ ['echo-reader',2,t=>'JANITOR="$(dirname "$0")/../../janitor.sh"\necho "$JANITOR"\n'],
+ ['dead-reader',3,t=>'if false; then\n'+t+'\nfi\n'],
+])('拒绝%s伪造固定消费关系',async(_name,index,mutate)=>{
+ await expect(buildInfraConsumerSources({...input,readSource:async p=>{const text=await input.readSource(p);return p===paths[index]?mutate(text):text;}})).rejects.toThrow();
+});
