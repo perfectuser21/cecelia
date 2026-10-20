@@ -70,6 +70,17 @@ def rpc(method, params):
     return json.loads(result.stdout)
 
 
+def runtime_root_for(envelope):
+    location = envelope.get('execution_location')
+    if location is None:
+        return Path.home() / '.openclaw/commander'
+    root = location.get('runtime_root') if isinstance(location, dict) else None
+    if not isinstance(root, str) or (root != '~/.openclaw/commander' and
+            not re.fullmatch(r'~/\.local/share/zenithjoy/phone-candidates/[a-f0-9]{40}/runtime/commander', root)):
+        raise ValueError('invalid frozen runtime root')
+    return Path.home() / root[2:]
+
+
 def worker(data, held=False):
     e = data['envelope']
     run = e['run_id']
@@ -100,7 +111,7 @@ def worker(data, held=False):
     preflight = read(root / 'preflight.json')
     preflight_state = read(root / 'shell-preflight.json')
     cleanup_state = read(root / 'shell-cleanup.json')
-    runtime_root = Path.home() / '.openclaw/commander'
+    runtime_root = runtime_root_for(e)
     if (runtime_root / '.deploying').exists() or (runtime_root / '.deploying').is_symlink():
         raise ValueError('runtime deployment in progress')
     manifest = read(runtime_root / 'runtime-manifest.json')
@@ -129,7 +140,7 @@ def worker(data, held=False):
         actual.append({'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest()})
     roots = read(root / 'root-identity.json')
     current = {}
-    for name, path in [('run', root), ('evidence', root / 'evidence'), ('commander', Path.home() / '.openclaw/commander')]:
+    for name, path in [('run', root), ('evidence', root / 'evidence'), ('commander', runtime_root)]:
         if path.resolve(strict=True) != path or not path.is_dir():
             raise ValueError('root moved or symlinked')
         s = path.stat()

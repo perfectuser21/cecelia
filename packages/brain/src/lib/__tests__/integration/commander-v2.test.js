@@ -21,6 +21,7 @@ beforeEach(async context => {
  await f.db.query('CREATE TABLE IF NOT EXISTS device_locks(locked_by text,expires_at timestamptz)');
  await f.db.query('DROP TABLE spans CASCADE');
  for(const file of ['495_vs_model_spans.sql','514_span_occurrences.sql','516_span_definition_provenance.sql'])await withLegacyNames(f.db,()=>f.db.query(readFileSync(new URL(`../../../../migrations/${file}`,import.meta.url),'utf8')));
+ f.releaseInput.environment='production';f.observationInput.environment='production';
  const release=(await createRelease(f.db,f.releaseInput)).release;
  const observation=(await recordReleaseObservation(f.db,release.id,f.observationInput,{trustedCollector:'fixture-collector'})).observation;
  definition=f.runInput(release,observation);delete definition.source_kind;delete definition.external_origin;

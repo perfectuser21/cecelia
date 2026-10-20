@@ -35,15 +35,16 @@ with tempfile.TemporaryDirectory() as d:
  print(json.dumps({'raw':p.regular(root/'real').decode(),'rejected':rejected}))
 `)).toEqual({raw:'raw',rejected:['link','fifo','real']});
 });
-it('原037 epoch closed及完整原件可读回；源码不执行status/手机/原件写入',()=>{
+for (const candidate of [false, true]) it(`原037 epoch closed及完整原件可读回（candidate=${candidate}）；源码不执行status/手机/原件写入`,()=>{
  const value=run(`
 from unittest.mock import patch
 with tempfile.TemporaryDirectory() as d:
  home=pathlib.Path(d).resolve(); rid='wfd-aaaaaaaa-1111-2222-3333-444444444444';root=home/'wf-agent-runs'/rid;root.mkdir(parents=True)
- (root/'evidence').mkdir();(home/'.openclaw/commander').mkdir(parents=True)
+ (root/'evidence').mkdir();runtime=home/${candidate ? JSON.stringify('.local/share/zenithjoy/phone-candidates/'+'a'.repeat(40)+'/runtime/commander') : JSON.stringify('.openclaw/commander')};runtime.mkdir(parents=True)
  e={'run_id':rid,'task_id':'task','input':{'title':'原输入'},'contract':{'resources':{}}};b={'run_id':rid,'task_id':'task','nonce':'actualnonce','child_run_id':'child','child_session_key':'agent:skill-factory:subagent:session','parent_session_key':'parent'}
+ ${candidate ? "e['execution_location']={'runtime_root':'~/.local/share/zenithjoy/phone-candidates/"+'a'.repeat(40)+"/runtime/commander'}" : ''}
  values={'envelope.json':e,'input.json':e['input'],'contract.json':e['contract'],'agent-binding.json':b,'agent-request.json':dict(b),'handoff-closed.json':{'at':1792398259.758255},'spawn-claimed.json':{'nonce':'actualnonce'},'cleanup-root-start.json':{},'cleanup-root-end.json':{},'root-identity.json':{},'preflight.json':{},'shell-preflight.json':{},'shell-cleanup.json':{}}
- runtime=home/'.openclaw/commander';raw=b'fixture runtime rehashed, never executed'
+ raw=b'fixture runtime rehashed, never executed'
  (runtime/'wf-v2.py').write_bytes(raw)
  files={'wf-v2.py':p.hashlib.sha256(raw).hexdigest()};(runtime/'runtime-manifest.json').write_text(json.dumps({'files':files}))
  for name,value in values.items():(root/name).write_text(json.dumps(value))
