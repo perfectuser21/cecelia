@@ -27,7 +27,8 @@ it('冻结release决定candidate runtime，ready/launch/status/verification同�
  await launchCommander(f.pool,id,f.deps);
  const sent=JSON.parse(f.deps.sshDispatch.mock.calls.at(-1)[1]);expect(sent.execution_location.runtime_root).toBe(root);
  const sshProbe=vi.fn(async()=>JSON.stringify({execution_stopped:true}));
- await statusCommander(sent,{target:'worker',sshProbe});
+ await statusCommander(sent,{target:'changed-worker',sshProbe});
+ expect(sshProbe.mock.calls[0][0].at(-2)).toBe('worker');
  expect(sshProbe.mock.calls[0][0].at(-1)).toBe(`${root}/wf-status.sh ${sent.run_id}`);
  const spec=verificationRequest({id},{...control,delivery:{outputs:{},evidence:[],effects:[],cleanup:{}}});
  expect(spec.metadata.workflow_verification.execution_location.runtime_root).toBe(root);
@@ -63,4 +64,10 @@ it('恢复复用冻结候选，控制器位置与信封漂移时不能生成核�
  const recovered=await prepareCommander(f.pool,id,f.deps);
  expect(recovered.envelope.attempt).toBe(2);expect(recovered.envelope.execution_location.runtime_root).toBe(root);
  expect(()=>verificationRequest({id},{...c,execution_location:{...c.execution_location,runtime_root:'~/.openclaw/commander'},delivery:{outputs:{}}})).toThrow();
+});
+
+it('发布独立核验固定同SHA Skill包且不回落全局链接',async()=>{
+ const f=fixture();const c=await prepareCommander(f.pool,id,f.deps);c.envelope.workflow_key='douyin_video_publish.android';
+ const spec=verificationRequest({id},{...c,delivery:{outputs:{}}});
+ expect(spec.metadata.workflow_verification.runtime_helpers.publish_skill).toBe(`~/.local/share/zenithjoy/publish-releases/${sha}/.agents/skills/multi-platform-publish/SKILL.md`);
 });
