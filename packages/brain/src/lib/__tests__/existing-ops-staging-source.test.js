@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'acorn';
 import { buildExistingOpsSources } from '../existing-ops-source.js';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
@@ -17,6 +18,12 @@ const read = path => {
   if (!cache.has(path)) cache.set(path, git('show', `${revision}:${path}`));
   return cache.get(path);
 };
+function wrapRoute(text, wrap) {
+  const entry = parse(text, { ecmaVersion: 'latest', sourceType: 'module' }).body.find(n => n.type === 'ExpressionStatement'
+    && n.expression?.callee?.object?.name === 'router' && n.expression.callee.property?.name === 'post' && n.expression.arguments[0]?.value === '/deploy');
+  if (!entry) throw Error('actual route fixture missing');
+  return text.slice(0, entry.start) + wrap(text.slice(entry.start, entry.end)) + text.slice(entry.end);
+}
 async function build({ patch = {}, marker = 1, missing } = {}) {
   const result = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths,
     readSource: async path => {
@@ -60,6 +67,11 @@ describe('staging 正式调用链的固定来源，不声明部署成功', () =>
     ['route 关闭 staging', route, text => text.replace("staging === true || mode === 'staging'", 'false')],
     ['route 超时改动', route, text => text.replace('timeout: 600_000, shell: true', 'timeout: 60_000, shell: true')],
     ['route 重复', route, text => text + "\nrouter.post('/deploy', (req, res) => res.end('other'));\n"],
+    ['route 未调用函数', route, text => wrapRoute(text, call => 'function neverRegistered() {\n' + call + '\n}')],
+    ['route if 单句死分支', route, text => wrapRoute(text, call => 'if (false) ' + call)],
+    ['route if 块死分支', route, text => wrapRoute(text, call => 'if (false) {\n' + call + '\n}')],
+    ['route false 短路', route, text => wrapRoute(text, call => 'false && ' + call)],
+    ['route 顺序表达式', route, text => wrapRoute(text, call => '(0, ' + call.replace(/;$/, '') + ');')],
     ['source 错根', script, text => text.replace('BRAIN_DIR="$ROOT_DIR/packages/brain"', 'BRAIN_DIR="/other/brain"')],
     ['source echo', script, text => text.replace('source "$SCRIPT_DIR/lib/internal-auth-token.sh"', 'echo source "$SCRIPT_DIR/lib/internal-auth-token.sh"')],
     ['source 死分支', script, text => text.replace('source "$SCRIPT_DIR/lib/internal-auth-token.sh"', 'if false; then source "$SCRIPT_DIR/lib/internal-auth-token.sh"; fi')],
