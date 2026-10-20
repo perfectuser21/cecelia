@@ -9,6 +9,7 @@ import {randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {versionsDatabase} from '../fixtures/definition-versions-db.js';
 import {minimumMapSchema} from '../fixtures/minimum-map-schema.js';
+import {readFixedInfraTestSource} from '../fixtures/infra-consumer-fixed-source.js';
 import * as registration from '../../lib/existing-ops-registration.js';
 import {exportImplementationSnapshot,validateImplementationSnapshot,refreshImplementationSnapshot} from '../../lib/implementation-ci-snapshot.js';
 import {stepSha256} from '../../../scripts/sync-steps-from-workspace.mjs';
@@ -39,7 +40,7 @@ beforeEach(async()=>{
  await f.db.query("INSERT INTO activities(id,name,status,workflow_id) VALUES($1,'孤儿进程来源片段','planned',$2)",[activity,I.workflow_id]);
  await f.db.query('INSERT INTO workflow_activity_refs(id,workflow_id,activity_id,slot_key,sequence_no,source_ref) VALUES($1,$2,$3,$4,1,$5)',[ref,I.workflow_id,activity,slot,I.skill_id]);
  dir=mkdtempSync(join(tmpdir(),'infra-source-'));git(dir,'init','-q','-b','fixture');git(dir,'remote','add','origin','https://github.com/perfectuser21/cecelia.git');
- for(const path of sourcePaths){mkdirSync(dirname(join(dir,path)),{recursive:true});writeFileSync(join(dir,path),git(sourceRoot,'show',`65205751baba232fa6402065460b3c8f68b21a37:${path}`)+'\n');}
+ for(const path of sourcePaths){mkdirSync(dirname(join(dir,path)),{recursive:true});writeFileSync(join(dir,path),readFixedInfraTestSource(path));}
  for(const path of runtimePaths){mkdirSync(dirname(join(dir,path)),{recursive:true});writeFileSync(join(dir,path),readFileSync(join(sourceRoot,path)));}
  mkdirSync(join(dir,'scripts/smoke'),{recursive:true});writeFileSync(join(dir,'scripts/smoke/infra-consumer-fixture.sh'),'#!/bin/bash\nset -e\nif [[ -x /opt/homebrew/bin/timeout ]]; then export PATH=/opt/homebrew/bin:$PATH; fi\nbash scripts/ops/__tests__/janitor/janitor_resident_service_exempt.test.sh\n');
  git(dir,'add','.');base=git(dir,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',git(dir,'write-tree'),'-m','base');git(dir,'update-ref','HEAD',base);
