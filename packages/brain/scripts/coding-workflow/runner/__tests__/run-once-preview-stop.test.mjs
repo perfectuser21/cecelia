@@ -35,11 +35,22 @@ describe('预览停止必须核实业务回执', () => {
       expect(pending()).toBeUndefined();
       expect(E.brain.learnings).toHaveLength(0);
       expect(E.ghCalls().filter((a) => a[1] === 'merge')).toHaveLength(0);
-      const finalTask = structuredClone(E.brain.tasks[0]);
-      await E.closeBrain();
-      r = await E.go(outsideWindow, { tasks: [finalTask] });
+    });
+    it(`${state} 已确认停止后的独立重放不再停止或产生业务副作用`, async () => {
+      const pr = terminal(state);
+      // 上例真实读回验证这两个持久化结果；本例从已确认状态独立开始，不共享前例现场。
+      const confirmed = { passed: true, rounds: [], preview_stopped: true,
+        ...(state === 'MERGED' ? { merged: { head: E.head } } : {}) };
+      E.seedState(confirmed);
+      const savedTask = { ...task(), result: { qa_state: structuredClone(confirmed) } };
+      const outsideWindow = { prs: [], mergedPrs: [], closedPrs: [], prDetails: { 77: pr } };
+      const r = await E.go(outsideWindow, { tasks: [savedTask] });
       expect(r.exitCode, r.stderr).toBe(0);
-      expect(stops()).toHaveLength(2);
+      expect(stops()).toHaveLength(0);
+      expect(E.state().preview_stopped).toBe(true);
+      expect(E.brain.tasks[0].result.qa_state.preview_stopped).toBe(true);
+      expect(E.brain.learnings).toHaveLength(0);
+      expect(E.ghCalls().filter((a) => a[1] === 'merge')).toHaveLength(0);
     });
   }
 

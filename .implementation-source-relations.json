@@ -2,6 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-staging-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/commander-runtime-location.js","path":"packages/brain/src/lib/__tests__/commander-runtime-location.test.js","role":"verification"},
     {"owner_path":"scripts/ci/implementation-source-ready.mjs","path":"scripts/ci/__tests__/implementation-source-ready.test.mjs","role":"verification"},
     {"owner_path":"packages/brain/src/lib/native-consumer-source-selection.js","path":"packages/brain/src/__tests__/integration/native-consumer-source-selection.pg.integration.test.js","role":"verification"},

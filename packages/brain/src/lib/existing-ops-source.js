@@ -19,6 +19,7 @@ export const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_AGGREGATE_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_GOLDSET_SELECTOR_SCHEMA = 1;
+export const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_IDENTITIES = Object.freeze([
   { workflow_id: '7743d66a-d3e0-4ebf-b82d-3f5d2d769fb1', workflow_key: 'factory_f2_ops', capability_id: '2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6', activity_id: '0ab79a73-1ec3-4ddc-bb88-1433568ae2e2', reference_id: 'a83b69b9-f426-4958-8cef-7560659ef6f8', slot_key: 'step_1', sequence_no: 1,
     unverified_reference_ids: ['3584783c-b847-4eb7-8920-76834cafba38', '5d963288-2dde-4b08-9f8c-5cd7d391a76f', 'c9a31a17-0751-4cad-a982-99325461fdf3'] },
@@ -179,6 +180,27 @@ function deployRouteProven(text) {
     && spawn.arguments[0]?.type === 'MemberExpression' && spawn.arguments[0].object?.name === 'args' && literal(spawn.arguments[0].property, 0)
     && call(spawn.arguments[1], 'args', 'slice') && literal(spawn.arguments[1].arguments[0], 1);
 }
+// 已审 main auto-staging 的完整请求入口和 /deploy 注册调用；未知控制流不猜消费边。
+const STAGING_WORKFLOW_SHA = 'b2c144bf52ac63e57578fae06eee53dd4b98d1f4ca8b7094f173c59187412599';
+const STAGING_ROUTE_AST_SHA = '5550255ec26208d228aabe0a57d72a179f4ed67a63ddd5aa979894def466b1f3';
+const STAGING_PREFIX_SHA = 'd3480aafdf688ddf2fa0c554ef4778a3ee367b00b296dbd4c664fb27213a9f19';
+function stagingRouteProven(text) {
+  const program = ast(text), isDeploy = n => call(n, 'router', 'post') && literal(n.arguments[0], '/deploy');
+  const matches = program.body.filter(n => n.type === 'ExpressionStatement').map(n => n.expression).filter(isDeploy);
+  return matches.length === 1 && nodes(program).filter(isDeploy).length === 1
+    && hash(JSON.stringify(matches[0], (key, value) => ['start', 'end', 'raw'].includes(key) ? undefined : value)) === STAGING_ROUTE_AST_SHA;
+}
+async function collectStagingSources({ read, requireProof, relations, revision, route }) {
+  const workflowPath = '.github/workflows/auto-staging-deploy.yml', scriptPath = 'scripts/staging-deploy.sh';
+  const workflow = await read(workflowPath), script = await read(scriptPath);
+  requireProof(workflow && hash(workflow) === STAGING_WORKFLOW_SHA, 'staging_request_unproven');
+  requireProof(route && stagingRouteProven(route), 'staging_route_unproven');
+  // 字节0起包含目录推导和完整顶层 source 行；仅证明实际导入，不宣称后缀业务成功。
+  requireProof(script && hash(Buffer.from(script, 'utf8').subarray(0, 1182)) === STAGING_PREFIX_SHA, 'staging_auth_source_unproven');
+  relations.push({ consumer_path: workflowPath, input_path: 'packages/brain/src/routes/ops.js', kind: 'reviewed_staging_deploy_request', revision },
+    { consumer_path: 'packages/brain/src/routes/ops.js', input_path: scriptPath, kind: 'reviewed_staging_script_exec', revision },
+    { consumer_path: scriptPath, input_path: 'scripts/lib/internal-auth-token.sh', kind: 'bash_source_call', revision });
+}
 function workflowRuns(text) {
   const doc = yaml.load(text), runs = [];
   if (!doc?.jobs || typeof doc.jobs !== 'object') return runs;
@@ -335,6 +357,10 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     requireProof(deploy && shellLines(deploy).some(line => /\bnode src\/migrate\.js(?:\)|\s|$)/.test(line) && !line.startsWith('echo ')), 'migration_execution_unproven');
     requireProof(auth && deploy && shellLines(deploy).includes('source "$SCRIPT_DIR/lib/internal-auth-token.sh"') && shellLines(deploy).some(line=>/^ensure_cecelia_internal_token "\$CECELIA_INTERNAL_ENV_FILE" \|\| exit 1$/.test(line)), 'deployment_auth_helper_unproven');
     if(auth)relations.push({consumer_path:'scripts/brain-deploy.sh',input_path:'scripts/lib/internal-auth-token.sh',kind:'bash_source_call',revision});
+    const schemaPath = 'packages/brain/src/lib/existing-ops-source.js';
+    const schema = tree.has(schemaPath) ? await readSource(schemaPath, revision) : '';
+    if (schema && ciEntrySelectorEnabled(schema, ast, 'EXISTING_OPS_STAGING_SELECTOR_SCHEMA'))
+      await collectStagingSources({ read, requireProof, relations, revision, route });
     const inputProven = migrationInputProven(migrate);
     if (requireProof(inputProven, 'migration_input_unproven')) for (const path of paths.filter(path => /^packages\/brain\/migrations\/[^/]+\.sql$/.test(path))) {
       if (await read(path)) relations.push({ consumer_path: 'packages/brain/src/migrate.js', input_path: path, kind: 'migration_sql', selector: 'top_level_sql_sorted', revision });
