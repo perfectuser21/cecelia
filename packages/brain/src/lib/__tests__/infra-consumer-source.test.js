@@ -47,3 +47,8 @@ it.each([
 ])('拒绝%s伪造固定消费关系',async(_name,index,mutate)=>{
  await expect(buildInfraConsumerSources({...input,readSource:async p=>{const text=await input.readSource(p);return p===paths[index]?mutate(text):text;}})).rejects.toThrow();
 });
+
+it('受审启动前缀不冻结后续Janitor函数且始终不宣称业务执行成功',async()=>{
+ const proof=await buildInfraConsumerSources({...input,readSource:async p=>(await input.readSource(p))+(p===paths[0]?'\n# later function change\n':'')});
+ expect(proof.status).toBe('verified');expect(proof).not.toHaveProperty('execution_status');
+});

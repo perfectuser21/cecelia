@@ -52,12 +52,13 @@ export async function buildInfraConsumerSources(options){
   texts.set(path,text);const hash=createHash('sha256').update(text).digest('hex');
   bindings.push({kind:'code',repo,path,revision,digest:`sha256:${hash}`,content_sha256:hash,scope:'activity',validation_scope:'consumer_source',status:'verified'});
  }
- const shell=texts.get(INFRA_CONSUMER_PATHS[0]).split('\n').filter(l=>!l.trim().startsWith('#')).join('\n');
- if(!shell.includes('source "$(dirname "$SCRIPT_PATH")/janitor-effects.sh" || exit 1'))throw fail('INFRA_SOURCE_DEPENDENCY_UNPROVEN');
- for(const path of INFRA_CONSUMER_PATHS.slice(2)){
-  const text=texts.get(path).split('\n').filter(l=>!l.trim().startsWith('#')).join('\n');
-  if(!text.includes('JANITOR="$(dirname "$0")/../../janitor.sh"')||!text.includes('"$JANITOR"'))throw fail('INFRA_VERIFICATION_CONSUMER_UNPROVEN');
- }
+ // 精确已审652消费封套；未知Shell结构拒绝，不将文字匹配当执行边。
+ const rawHash=text=>createHash('sha256').update(text).digest('hex');
+ const sourceLine='source "$(dirname "$SCRIPT_PATH")/janitor-effects.sh" || exit 1\n';
+ const shell=texts.get(INFRA_CONSUMER_PATHS[0]),end=shell.indexOf(sourceLine)+sourceLine.length;
+ if(end<sourceLine.length||shell.indexOf(sourceLine,end)!==-1||rawHash(shell.slice(0,end))!=='e577b0bc161ebfd1694993ef288d7d35d2e50e12513526fb757b69f9a11e6849')throw fail('INFRA_SOURCE_DEPENDENCY_UNPROVEN');
+ const readers=['03a884cfe5231e027d22be84c1d0d42937dac4b52278b84025f0b16c36d0bc5c','37d19a73fb01a16cbc33e71726a4ffa25e5adfbccbce8a0ad4e78e9f36471997'];
+ for(const [index,path] of INFRA_CONSUMER_PATHS.slice(2).entries())if(rawHash(texts.get(path))!==readers[index])throw fail('INFRA_VERIFICATION_CONSUMER_UNPROVEN');
  return {scope:options.scope,repo,revision,status:'verified',definition_scope:'consumer_evidence',bindings:bindings.sort((a,b)=>a.path.localeCompare(b.path)),
   input_relations:[{src_path:INFRA_CONSUMER_PATHS[0],dst_path:INFRA_CONSUMER_PATHS[1],relation:'shell_source'},...INFRA_CONSUMER_PATHS.slice(2).map(path=>({src_path:path,dst_path:INFRA_CONSUMER_PATHS[0],relation:'verification_input'}))]};
 }
