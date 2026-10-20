@@ -25,7 +25,8 @@ it('冻结release决定candidate runtime，ready/launch/status/verification同�
  expect(control.envelope.execution_location).toEqual(control.execution_location);
  expect(control.execution_location).toMatchObject({runtime_root:root,ssh_target:'worker',run_directory:`~/wf-agent-runs/${control.envelope.run_id}`});
  await launchCommander(f.pool,id,f.deps);
- const sent=JSON.parse(f.deps.sshDispatch.mock.calls.at(-1)[1]);expect(sent.execution_location.runtime_root).toBe(root);
+ const message=f.deps.sshDispatch.mock.calls.at(-1)[1];
+ const sent=JSON.parse(message.includes('\n原始信封JSON：\n')?message.split('\n原始信封JSON：\n')[1]:message);expect(sent.execution_location.runtime_root).toBe(root);
  const sshProbe=vi.fn(async()=>JSON.stringify({execution_stopped:true}));
  await statusCommander(sent,{target:'changed-worker',sshProbe});
  expect(sshProbe.mock.calls[0][0].at(-2)).toBe('worker');
@@ -70,4 +71,13 @@ it('发布独立核验固定同SHA Skill包且不回落全局链接',async()=>{
  const f=fixture();const c=await prepareCommander(f.pool,id,f.deps);c.envelope.workflow_key='douyin_video_publish.android';
  const spec=verificationRequest({id},{...c,delivery:{outputs:{}}});
  expect(spec.metadata.workflow_verification.runtime_helpers.publish_skill).toBe(`~/.local/share/zenithjoy/publish-releases/${sha}/.agents/skills/multi-platform-publish/SKILL.md`);
+});
+
+it('正式candidate派发显式覆盖旧Skill生产入口且携带完整未改写信封',async()=>{
+ const f=fixture();const c=await prepareCommander(f.pool,id,f.deps);await launchCommander(f.pool,id,f.deps);
+ const message=f.deps.sshDispatch.mock.calls.at(-1)[1];
+ for(const file of ['wf-launch.sh','wf-v2.py','wf-agent-handoff.py','wf-status.sh','wf-report.py']) expect(message).toContain(`${root}/${file}`);
+ for(const action of ['--ready','--envelope','claim-spawn','bind','await','event','replay']) expect(message).toContain(action);
+ expect(message).toContain('execution_location');expect(message).toContain('禁止回落');
+ expect(JSON.parse(message.split('\n原始信封JSON：\n')[1])).toEqual(c.envelope);
 });
