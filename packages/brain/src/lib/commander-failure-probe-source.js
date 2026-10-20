@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import select
@@ -18,6 +19,7 @@ LIMIT = 16 * 1024 * 1024
 TOTAL = 32 * 1024 * 1024
 used = 0
 fds = []
+controller_state = None
 
 
 def regular(path, limit=LIMIT):
@@ -55,6 +57,7 @@ def lock(path):
         raise ValueError('lock is not the named regular file')
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     fds.append(fd)
+    return fd
 
 
 def rpc(method, params):
@@ -155,17 +158,64 @@ def worker(data, held=False):
             'root_end': read(root / 'cleanup-root-end.json'), 'terminal': terminal, 'session': session}
 
 
+def directory_identity(path):
+    for ancestor in [*reversed(path.parents), path]:
+        if stat.S_ISLNK(ancestor.lstat().st_mode):
+            raise ValueError('symlink controller root refused')
+    s = path.stat()
+    if not stat.S_ISDIR(s.st_mode):
+        raise ValueError('controller root is not a directory')
+    return {'path': str(path), 'device': s.st_dev, 'inode': s.st_ino}
+
+
+def controller_paths(data):
+    alias = Path('/private/tmp/openclaw-phone')
+    directory_identity(alias.parent)
+    a = alias.lstat()
+    target = None
+    if stat.S_ISLNK(a.st_mode):
+        trusted = Path(pwd.getpwuid(os.getuid()).pw_dir) / 'Library/Application Support/ZenithJoy/phone-runtime-20261011'
+        target = os.readlink(alias)
+        if (data['host'], data['profile'], data['serial']) != ('xian-m4', 'legacy', 'ANGYVB4402004137') or target != str(trusted):
+            raise ValueError('untrusted controller alias identity or target')
+        root = trusted
+    else:
+        root = alias
+    locks = root / 'locks'
+    root_id, locks_id = directory_identity(root), directory_identity(locks)
+    guard = locks / (data['serial'] + '.guard')
+    regular(guard, 4096)
+    g = guard.lstat()
+    if not stat.S_ISREG(g.st_mode):
+        raise ValueError('controller guard is not a regular file')
+    return {'alias': {'path': str(alias), 'device': a.st_dev, 'inode': a.st_ino,
+                      'ctime_ns': a.st_ctime_ns, 'target': target},
+            'root': root_id, 'locks': locks_id,
+            'guard': {'path': str(guard), 'device': g.st_dev, 'inode': g.st_ino}}
+
+
 def controller(data, held=False):
+    global controller_state
     serial, profile, host = (data[k] for k in ('serial', 'profile', 'host'))
     if not re.fullmatch('[A-Za-z0-9]+', serial) or not re.fullmatch('[-A-Za-z0-9_.]+', profile) or host not in ('xian-m4', 'xian-m1'):
         raise ValueError('unregistered controller resource')
-    root = Path('/private/tmp/openclaw-phone/locks')
+    before = controller_paths(data)
     if not held:
-        lock(root / (serial + '.guard'))
-    directory = root / (serial + '.lock')
+        fd = lock(Path(before['guard']['path']))
+        if controller_paths(data) != before:
+            raise ValueError('controller root changed while acquiring guard')
+        controller_state = {'identity': before, 'fd': fd}
+    if controller_state is None or controller_state['identity'] != before:
+        raise ValueError('controller root or guard identity changed')
+    observed = os.fstat(controller_state['fd'])
+    if not stat.S_ISREG(observed.st_mode) or (observed.st_dev, observed.st_ino) != (before['guard']['device'], before['guard']['inode']):
+        raise ValueError('controller guard is not held at original inode')
+    directory = Path(before['locks']['path']) / (serial + '.lock')
     # A leftover empty/unknown lock directory is not free. No TTL expiry inference.
     if directory.exists() or directory.is_symlink():
         raise ValueError('controller owner lock is not free')
+    if controller_paths(data) != before:
+        raise ValueError('controller root changed during owner readback')
     return {'host': host, 'serial': serial, 'profile': profile, 'owner': 'free', 'guard_exclusive': True}
 
 
