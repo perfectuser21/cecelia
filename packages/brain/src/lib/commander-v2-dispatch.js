@@ -6,7 +6,7 @@ import { resolvePrimaryWorkerId, sshTargetFor } from '../machine-registry.js';
 import { buildRemoteCommand } from '../openclaw-agent-executor.js';
 import { startRun } from './task-run.js';
 import { getRelease } from './release-index.js';
-import { runtimeRootFromRelease, commanderRuntimeRoot, validateExecutionLocation } from './commander-runtime-location.js';
+import { runtimeRootFromRelease, commanderRuntimeRoot, validateExecutionLocation, commanderLaunchMessage } from './commander-runtime-location.js';
 import { checkDeviceLockForManualDispatch } from './manual-dispatch-device-gate.js';
 import { setBrainLease } from './task-lease.js';
 import { transaction, frozenContract, frozenActivityBindings, writeControl, event } from './commander-v2-store.js';
@@ -82,7 +82,7 @@ export async function launchCommander(pool, taskId, deps = {}) {
         timeoutSec: Math.max(1, Math.floor((Date.parse(e.deadline_at) - Date.now()) / 1000)) });
       // 原executor的pid检查不是原子操作；v2用不可复用的运行目录抢一次起跑权。
       const command = `mkdir -p ~/brain-runs; if mkdir ~/brain-runs/${e.run_id}.dispatch 2>/dev/null; then ${launch}; else cat >/dev/null; echo ALREADY; fi`;
-      const raw = await (deps.sshDispatch ?? send)([...SSH_BASE_ARGS, executionTarget(e, deps), command], JSON.stringify(e));
+      const raw = await (deps.sshDispatch ?? send)([...SSH_BASE_ARGS, executionTarget(e, deps), command], commanderLaunchMessage(e));
       requireCommander(/DISPATCHED|ALREADY/.test(raw), '起跑回执未知', 409);
     } catch (err) {
       c.phase = 'blocked'; c.resume_condition = 'official_child_wait_or_delivery'; c.failure = { reason: 'launch_unknown', message: err.message };
