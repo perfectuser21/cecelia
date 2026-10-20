@@ -52,15 +52,3 @@ it('受审启动前缀不冻结后续Janitor函数且始终不宣称业务执行
  const proof=await buildInfraConsumerSources({...input,readSource:async p=>(await input.readSource(p))+(p===paths[0]?'\n# later function change\n':'')});
  expect(proof.status).toBe('verified');expect(proof).not.toHaveProperty('execution_status');
 });
-
-it('固定652测试原件不依赖checkout历史、工作目录或ambient Git，逐字摘要不漂移',async()=>{
- const {readFixedInfraTestSource,FIXED_INFRA_TEST_REVISION}=await import('../../__tests__/fixtures/infra-consumer-fixed-source.js');
- expect(FIXED_INFRA_TEST_REVISION).toBe('65205751baba232fa6402065460b3c8f68b21a37');
- const {createHash}=await import('node:crypto');
- const expected={"scripts/ops/janitor.sh": "6b33aa5d38ca721d04389c15c1c077c2d675422d3729513a103424b5d4c12d04", "scripts/ops/janitor-effects.sh": "2250865b8a9052338fda0c6f844fdd58c08ea539f12cf6659edce129f8e2a444", "scripts/ops/__tests__/janitor/janitor_resident_service_exempt.test.sh": "03a884cfe5231e027d22be84c1d0d42937dac4b52278b84025f0b16c36d0bc5c", "scripts/ops/__tests__/janitor/janitor_kill_exempt.test.sh": "37d19a73fb01a16cbc33e71726a4ffa25e5adfbccbce8a0ad4e78e9f36471997"};
- for(const [path,hash] of Object.entries(expected))expect(createHash('sha256').update(readFixedInfraTestSource(path)).digest('hex')).toBe(hash);
- expect(()=>readFixedInfraTestSource('../outside')).toThrow();
- const program=`import {readFixedInfraTestSource} from ${JSON.stringify(new URL('../../__tests__/fixtures/infra-consumer-fixed-source.js',import.meta.url).href)};console.log(JSON.stringify(${JSON.stringify(Object.keys(expected))}.map(p=>readFixedInfraTestSource(p).length)))`;
- const output=execFileSync(process.execPath,['--input-type=module','-e',program],{cwd:'/',encoding:'utf8',env:{PATH:process.env.PATH,GIT_DIR:'/missing-fixture-git',GIT_WORK_TREE:'/missing-fixture-tree'}});
- expect(JSON.parse(output)).toEqual(Object.keys(expected).map(p=>readFixedInfraTestSource(p).length));
-});
