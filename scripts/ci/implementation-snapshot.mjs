@@ -1,3 +1,4 @@
+import {INFRA_CONSUMER_SCOPE,buildInfraConsumerSources,registerInfraConsumerSources,readInfraConsumerRegistry,prepareInfraManifestAdvance} from '../../packages/brain/src/lib/infra-consumer-source.js';
 /** 仅scratch：复用中央身份和正式投影器，固定git产生两侧不可变图。 */
 import pg from 'pg';
 import { registerCompanyKrWorkflow,activityContract } from '../../packages/brain/src/lib/company-kr-registration.js';
@@ -28,7 +29,7 @@ import {preparePilotManifestAdvance,advancePilotManifest} from '../../packages/b
 // journeys 只给旧迁移 511 重放用（它按旧形状读 journeys）；读者读的是 value_streams / capabilities
 const TABLES=['areas','schema_version','journeys','value_streams','capabilities','workflows','activities','steps','spans',
   'map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','map_projection_edges',
-  'graph_edges','graph_snapshot_versions','graph_edge_snapshots','fact_snapshot_headers','activity_cells'];
+  'skill_registry','graph_edges','graph_snapshot_versions','graph_edge_snapshots','fact_snapshot_headers','activity_cells'];
 export async function createImplementationScratch(){
   if(!isImplementationScratchDatabase(DB_DEFAULTS.database))throw ciFailure('SCRATCH_REQUIRED','只允许本机scratch或GitHub Actions隔离test库');
   const client=new pg.Client(DB_DEFAULTS);await client.connect();
@@ -67,9 +68,10 @@ export async function importImplementationSnapshot(db,input){
   if(s.status!=='verified'||s.gaps.length)throw ciFailure('SNAPSHOT_UNKNOWN',JSON.stringify(s.gaps));
   await db.query('BEGIN');
   try{
+    if(s.scope===INFRA_CONSUMER_SCOPE)for(const row of s.consumer_registry.skills)await insertRow(db,'skill_registry',row);
     for(const row of s.canonical.areas)await insertRow(db,'areas',row);
     for(const row of s.canonical.journeys)await insertRow(db,row.parent_journey_id==null?'value_streams':'capabilities',row);
-    for(const row of s.canonical.workflows)await insertRow(db,'workflows',{...row,current_definition_version_id:null},{preserve:s.scope===EXISTING_OPS_SCOPE?['current_definition_version_id']:[]});
+    for(const row of s.canonical.workflows)await insertRow(db,'workflows',{...row,current_definition_version_id:null},{preserve:[EXISTING_OPS_SCOPE,INFRA_CONSUMER_SCOPE].includes(s.scope)?['current_definition_version_id']:[]});
     for(const row of implementationSourceOwners(s).filter(w=>!s.canonical.workflows.some(c=>c.id===w.id))){
       // 隔离库可保留base历史版本，但退役取源owner不得保留current执行入口。
       const previous=(await db.query('SELECT * FROM workflows WHERE id=$1',[row.id])).rows[0];
@@ -78,12 +80,12 @@ export async function importImplementationSnapshot(db,input){
       await insertRow(db,'workflows',{...row,current_definition_version_id:null});
       await db.query('UPDATE workflow_activity_refs SET active=false WHERE workflow_id=$1 AND active',[row.id]);
     }
-    for(const row of s.canonical.activities)await insertRow(db,'activities',{...row,current_definition_version_id:null},{preserve:s.scope===EXISTING_OPS_SCOPE?['current_definition_version_id']:[]});
+    for(const row of s.canonical.activities)await insertRow(db,'activities',{...row,current_definition_version_id:null},{preserve:[EXISTING_OPS_SCOPE,INFRA_CONSUMER_SCOPE].includes(s.scope)?['current_definition_version_id']:[]});
     for(const row of s.canonical.steps)await insertRow(db,'steps',row);
     for(const row of s.definitions.activities)await insertRow(db,'activity_definition_versions',row,{immutable:true});
     for(const row of s.definitions.workflows)await insertRow(db,'workflow_definition_versions',row,{immutable:true});
     // 活跃关系是当前登记；固定版本查询始终走WV.payload，不用此表改写历史。
-    for(const row of s.canonical.references)await insertRow(db,'workflow_activity_refs',{...row,activity_definition_version_id:null},{preserve:s.scope===EXISTING_OPS_SCOPE?['activity_definition_version_id']:[]});
+    for(const row of s.canonical.references)await insertRow(db,'workflow_activity_refs',{...row,activity_definition_version_id:null},{preserve:[EXISTING_OPS_SCOPE,INFRA_CONSUMER_SCOPE].includes(s.scope)?['activity_definition_version_id']:[]});
     for(const row of s.definitions.workflows)if(row.payload.definition_scope!=='consumer_evidence')await db.query('UPDATE workflows SET current_definition_version_id=$2 WHERE id=$1',[row.workflow_id,row.id]);
     for(const row of s.definitions.activities)if(row.payload.definition_scope!=='consumer_evidence')await db.query('UPDATE activities SET current_definition_version_id=$2 WHERE id=$1',[row.activity_id,row.id]);
     for(const row of s.map.repositories)await insertRow(db,'map_scope_repositories',row);
@@ -124,6 +126,13 @@ export function definitionEdges(s){
 }
 export async function verifySnapshotSource(s,repoRoot,{db}={}){
   if(db)await validateImplementationSnapshotForDatabase(db,s);else validateImplementationSnapshot(s);
+  if(s.scope===INFRA_CONSUMER_SCOPE){
+    const paths=fixedLocalGit(repoRoot,['ls-tree','-rz','--name-only',s.revision],{encoding:'utf8'}).split('\0').filter(Boolean);
+    const proof=await buildInfraConsumerSources({...s,paths,readSource:async path=>readFixedLocalGitBlob(repoRoot,{revision:s.revision,path}).toString('utf8')});
+    const activity=s.definitions.activities[0];
+    if(stepSha256(activity?.payload.implementation_bindings)!==stepSha256(proof.bindings)||stepSha256(activity?.payload.input_relations)!==stepSha256(proof.input_relations))throw ciFailure('CONSUMER_SOURCE_MISMATCH');
+    return s;
+  }
   if(s.scope===EXISTING_OPS_SCOPE&&s.repo==='perfectuser21/zenithjoy-workspace'){
     const proof=await scratchWorkspaceProof(db,s.revision,repoRoot,s.registry_source);
     const nativeRoot=fileURLToPath(new URL('../../',import.meta.url)),anchor=s.registry_source;
@@ -216,7 +225,7 @@ export async function advanceExistingOpsScratchManifest(db,query){
     if(!isImplementationScratchDatabase(name))throw ciFailure('SCRATCH_REQUIRED');
   };
   await checkScratch();
-  const plan=await prepareExistingOpsManifestAdvance(db,query);
+  const plan=await (query.scope===INFRA_CONSUMER_SCOPE?prepareInfraManifestAdvance:prepareExistingOpsManifestAdvance)(db,query);
   if(!plan)return;
   if(!validateMapManifest(plan.manifest).valid)throw ciFailure('SCRATCH_MANIFEST_INVALID');
   const client=await db.connect(),digest=digestMapManifest(plan.manifest);
@@ -258,6 +267,13 @@ export async function buildPrImplementationSnapshot(db,registry,revision,repoRoo
     await registerExistingOpsSources(db,{scope:registry.scope,repo:anchor.repo,revision:anchor.revision,paths,readSource:nativeRead,workspaceConsumerProof,mode:'scratch_candidate',
       expectedRegistrySha256:before.registry_sha256,actor:'implementation-ci-scratch-candidate'});
     await advanceExistingOpsScratchManifest(db,{scope:registry.scope,repo:anchor.repo,revision:anchor.revision});
+    return exportImplementationSnapshot(db,{scope:registry.scope,repo:registry.repo,revision});
+  }
+  if(registry.scope===INFRA_CONSUMER_SCOPE){
+    const paths=fixedLocalGit(repoRoot,['ls-tree','-rz','--name-only',revision],{encoding:'utf8'}).split('\0').filter(Boolean);
+    const before=await readInfraConsumerRegistry(db);
+    await registerInfraConsumerSources(db,{scope:registry.scope,repo:registry.repo,revision,paths,readSource:async path=>readFixedLocalGitBlob(repoRoot,{revision,path}).toString('utf8'),mode:'scratch_candidate',expectedRegistrySha256:before.registry_sha256,actor:'implementation-ci-scratch-candidate'});
+    await advanceExistingOpsScratchManifest(db,{scope:registry.scope,repo:registry.repo,revision});
     return exportImplementationSnapshot(db,{scope:registry.scope,repo:registry.repo,revision});
   }
   if(registry.repo==='perfectuser21/cecelia'){

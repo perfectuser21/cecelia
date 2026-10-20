@@ -931,6 +931,11 @@
     {"owner_path":"packages/brain/src/lib/commander-failure-reconcile.js","path":"packages/brain/src/__tests__/integration/commander-failure-reconcile.pg.integration.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/commander-failure-reconcile.js","path":"packages/brain/src/lib/__tests__/commander-failure-reconcile.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/commander-failure-probe-source.js","path":"packages/brain/src/lib/__tests__/commander-failure-probe-source.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/commander-failure-reader.js","path":"packages/brain/src/lib/__tests__/commander-failure-reader.test.js","role":"verification"}
+    {"owner_path":"packages/brain/src/lib/commander-failure-reader.js","path":"packages/brain/src/lib/__tests__/commander-failure-reader.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/infra-consumer-source.js","path":"packages/brain/src/lib/__tests__/infra-consumer-source.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/infra-consumer-snapshot.js","path":"packages/brain/src/lib/__tests__/infra-consumer-snapshot.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/consumer-evidence-store.js","path":"packages/brain/src/lib/__tests__/consumer-evidence-store.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/infra-consumer-source.js","path":"packages/brain/src/__tests__/integration/infra-consumer-source.pg.integration.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/infra-consumer-source.js","path":"packages/brain/scripts/smoke/infra-consumer-source-smoke.sh","role":"verification"}
   ]
 }

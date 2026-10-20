@@ -1,3 +1,5 @@
+import {INFRA_CONSUMER_SCOPE} from './infra-consumer-source.js';
+import {readInfraSnapshot,validateInfraSnapshot,refreshInfraSnapshot} from './infra-consumer-snapshot.js';
 import {prepareNativeConsumerSelection,selectNativeConsumerDefinition} from './native-consumer-source-selection.js';
 import {isNativeMaintenanceObservationDefinition} from './native-maintenance-snapshot.js';
 import {assertNativeConsumerRuntime} from './native-consumer-runtime.js';
@@ -181,6 +183,7 @@ function extractAdmissionSnapshots(snapshot,scopes,admissionScope){
   return scopes.map(scope=>scope===snapshot.scope?snapshot:child);
 }
 function validateSnapshot(snapshot,admissionScope={allowScratch:false}){
+  if(snapshot?.scope===INFRA_CONSUMER_SCOPE)return validateInfraSnapshot(snapshot);
   if(snapshot?.schema_version!==1)throw ciFailure('SNAPSHOT_INVALID');
   validateSnapshotQuery(snapshot);
   const {snapshot_sha256,...body}=snapshot;
@@ -227,6 +230,7 @@ function validateSnapshot(snapshot,admissionScope={allowScratch:false}){
 export function validateImplementationSnapshot(snapshot){return validateSnapshot(snapshot);}
 export async function validateImplementationSnapshotForDatabase(db,snapshot){return validateSnapshot(snapshot,await consumerSourceAdmissionScope(db));}
 export async function readImplementationSnapshotInTransaction(db,q,nativeProof){
+  if(q.scope===INFRA_CONSUMER_SCOPE)return readInfraSnapshot(db,q);
   const factory=q.scope===EXISTING_OPS_SCOPE;
   const gaps=[],gap=(code,details={})=>gaps.push({code,...details});
   if(factory&&![EXISTING_OPS_REPO,CONTRACT_REPO].includes(q.repo))gap('factory_source_repo_mismatch');
@@ -420,6 +424,7 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
     if(after.snapshot_sha256!==snapshot.snapshot_sha256)throw ciFailure('AUTHORING_SNAPSHOT_CHANGED','来源核验期间登记或地图变化',409);
     return after;
   }
+  if(q.scope===INFRA_CONSUMER_SCOPE)return refreshInfraSnapshot(pool,q,{fetchFn,token,checkMain,readFile:async path=>{const response=await fetchFn(implementationGitHubUrl(q.repo,{path,revision:q.revision}),{redirect:'error',headers:{Accept:'application/vnd.github.raw',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});if(!response.ok)throw ciFailure('SOURCE_UNAVAILABLE');return response.text();}});
   const pilotPlan=q.scope===EXISTING_OPS_SCOPE ? await prepareExistingOpsManifestAdvance(pool,q) : await preparePilotManifestAdvance(pool,q);
   if(q.repo===CONTRACT_REPO){
     try{await syncActivityContracts(pool,{fetchFn,resolveToken:async()=>token,expectedRevision:q.revision,beforeCommit:checkMain,synchronizeSteps:true,readBinding});}
