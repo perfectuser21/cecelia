@@ -56,7 +56,8 @@ export async function readInfraSnapshot(db,q){
  const manifest=manifests.length===1?manifests[0]:null;
  if(manifest&&(manifest.manifest.capabilities?.length!==1||manifest.manifest.capabilities[0].brain_binding?.entity_id!==I.capability_id||manifest.manifest.value_streams?.length!==1||manifest.manifest.value_streams[0].brain_binding?.entity_id!==I.root))gap('workflow_capability_unmapped');
  const journeys=(await db.query(`SELECT * FROM ${TREE_NODES_SQL} n WHERE id=ANY($1::uuid[]) ORDER BY id`,[[I.root,I.capability_id]])).rows;
- const areas=(await db.query('SELECT * FROM areas WHERE id=ANY($1::uuid[]) ORDER BY id',[[...new Set(journeys.map(j=>j.area_id).filter(Boolean))]])).rows;
+ const areaIds=[...new Set(journeys.map(j=>j.area_id).filter(Boolean))];
+ const areas=(await db.query('SELECT * FROM areas WHERE id=ANY($1::uuid[]) ORDER BY id',[areaIds])).rows;
  const assertions=(await db.query('SELECT * FROM activity_cells WHERE journey_id=$1 AND step_id=ANY($2::uuid[]) ORDER BY id',[I.capability_id,registry.activities.map(a=>a.id)])).rows;
  const body=json({schema_version:1,...q,status:gaps.length?'unknown':'verified',gaps,snapshot_scope:'consumer_evidence',execution_status:'unknown',consumer_registry:registry,unverified_reference_ids:identity?.unverified_reference_ids||[],canonical:{areas,journeys,workflows:registry.workflows,activities:registry.activities,steps:registry.steps,references:registry.references},definitions:{workflows,activities},map:{manifest,repositories,source_basis:manifest?'historical_projection':'unknown'},assertion_source:'current_registration',assertions});
  const result={...body,snapshot_sha256:digest(body)};validateInfraSnapshot(result);return result;
