@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.44
+**Brain 版本**: 1.445.45
 
 Commander 候选运行仅从冻结 staging:SHA release 与同仓同SHA组件推导隔离runtime，握手、派发、状态、失败探针及独立核验绑定同根和同宿主；错误来源或路径漂移拒绝，不回落生产。
 
