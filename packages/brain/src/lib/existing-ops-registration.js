@@ -1,3 +1,5 @@
+import {appendConsumerEvidence as append,withConsumerEvidenceTransaction} from './consumer-evidence-store.js';
+export {readInfraConsumerRegistry,registerInfraConsumerSources} from './infra-consumer-source.js';
 /** 既有工厂消费者只追加来源历史，不改任何执行登记或 current。 */
 import { buildExistingOpsSources, EXISTING_OPS_IDENTITIES, EXISTING_OPS_REPO, EXISTING_OPS_SCOPE } from './existing-ops-source.js';
 import { freezeFactoryWorkspaceConsumerPayload, freezeScratchFactoryWorkspaceConsumerPayload } from './consumer-source-set.js';
@@ -49,16 +51,6 @@ export async function prepareExistingOpsManifestAdvance(db, query) {
   }
   return changed ? { manifest, expectedActive: { id: row.id, digest: row.digest } } : null;
 }
-async function append(db, kind, id, payload, source) {
-  const table = kind === 'workflow' ? 'workflow_definition_versions' : 'activity_definition_versions';
-  const column = `${kind}_id`, hash = stepSha256({ source, payload });
-  await db.query(`INSERT INTO ${table}(${column},payload,payload_sha256,source_repo,source_path,source_commit,contract_sha256)
-    VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(${column},source_repo,source_path,payload_sha256) DO NOTHING`,
-  [id, payload, hash, source.repo, source.path, source.commit, stepSha256(payload.contract)]);
-  const row = (await db.query(`SELECT * FROM ${table} WHERE ${column}=$1 AND payload_sha256=$2 AND source_repo=$3 AND source_path=$4`, [id, hash, source.repo, source.path])).rows[0];
-  if (!row) throw fail('OPS_HISTORY_APPEND_FAILED');
-  return row;
-}
 /** checkMain由已有认证的固定main refresh提供；不能把候选当中央当前来源。 */
 export async function registerExistingOpsSources(pool, options) {
   const mode=options?.mode||'trusted_main';
@@ -72,10 +64,7 @@ export async function registerExistingOpsSources(pool, options) {
   await checkSource();
   const proof = await buildExistingOpsSources(options);
   if (proof.consumers.some(c => c.status !== 'verified')) throw fail('OPS_SOURCE_UNKNOWN');
-  const db = await pool.connect();
-  try {
-    await db.query('BEGIN');
-    await db.query("SELECT pg_advisory_xact_lock(hashtext('existing-factory-consumer-evidence'))");
+  return withConsumerEvidenceTransaction(pool,'existing-factory-consumer-evidence',async db=>{
     await db.query('SELECT id FROM workflows WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
     await db.query('SELECT id FROM workflow_activity_refs WHERE workflow_id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
     await db.query('SELECT id FROM activities WHERE id IN (SELECT activity_id FROM workflow_activity_refs WHERE workflow_id=ANY($1::uuid[])) ORDER BY id FOR UPDATE', [ids]);
@@ -111,9 +100,8 @@ export async function registerExistingOpsSources(pool, options) {
     }
     if ((await readExistingOpsRegistry(db)).registry_sha256 !== before.registry_sha256) throw fail('OPS_REGISTRY_CONFLICT');
     await checkSource();
-    await db.query('COMMIT');
     return { scope: EXISTING_OPS_SCOPE, repo: options.repo, revision: options.revision, actor: options.actor,
       registration_scope: 'consumer_evidence', source_basis:mode, registry_sha256: before.registry_sha256, source_sha256: stepSha256(proof),
       definitions, executable: false, remaining_unknown_reference_ids: EXISTING_OPS_IDENTITIES.flatMap(i => i.unverified_reference_ids) };
-  } catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
+  });
 }

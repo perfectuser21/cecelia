@@ -1,3 +1,4 @@
+import {INFRA_CONSUMER_SCOPE,INFRA_CONSUMER_IDENTITY,INFRA_CONSUMER_REPO} from './infra-consumer-source.js';
 import { EXISTING_OPS_SCOPE,EXISTING_OPS_IDENTITIES } from './existing-ops-source.js';
 /** 两个精确源码版本各自反查依赖和冻结定义，再合并使用位置；缺证据绝不借latest。 */
 import { createHash } from 'node:crypto';
@@ -53,7 +54,9 @@ async function graphSnapshot(db,repo,revision,gaps) {
   return {snapshot:{...snapshot,id:`${repo}@${revision}`,digest:digest(edges)},edges};
 }
 export function selectScopedDefinitionVersions(rows,scope) {
-  return rows.filter(w=>scope===EXISTING_OPS_SCOPE?
+  return rows.filter(w=>scope===INFRA_CONSUMER_SCOPE?
+    w.source_repo===INFRA_CONSUMER_REPO&&w.workflow_id===INFRA_CONSUMER_IDENTITY.workflow_id&&w.payload.capability_id===INFRA_CONSUMER_IDENTITY.capability_id&&w.payload.key===INFRA_CONSUMER_IDENTITY.workflow_key&&w.payload.definition_scope==='consumer_evidence'&&w.payload.source_scope===INFRA_CONSUMER_SCOPE&&w.payload.contract?.executable===false:
+    scope===EXISTING_OPS_SCOPE?
     w.payload.definition_scope==='consumer_evidence'&&w.payload.source_scope===EXISTING_OPS_SCOPE&&EXISTING_OPS_IDENTITIES.some(i=>i.workflow_id===w.workflow_id):
     !['consumer_evidence','device_workflow_admission'].includes(w.payload.definition_scope));
 }

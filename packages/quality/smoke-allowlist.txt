@@ -468,3 +468,5 @@ workflow-assembly-registration-smoke.sh
 workflow-assembly-reconcile-smoke.sh
 
 workflow-assembly-native-smoke.sh
+
+infra-consumer-source-smoke.sh
