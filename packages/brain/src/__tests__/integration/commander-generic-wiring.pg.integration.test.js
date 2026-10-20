@@ -41,8 +41,8 @@ it('正式server挂载的HTTP回调鉴权后写真实运行事件，重放不重
   fixture = await releaseEvidenceDatabase(); const db = fixture.db;
   await db.query('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS result jsonb,ADD COLUMN IF NOT EXISTS task_type text,ADD COLUMN IF NOT EXISTS claimed_by text,ADD COLUMN IF NOT EXISTS claimed_at timestamptz,ADD COLUMN IF NOT EXISTS executor_kind text');
   await db.query(readFileSync(new URL('../../../migrations/268_task_events.sql', import.meta.url), 'utf8'));
-  const release = (await createRelease(db, fixture.releaseInput)).release;
-  const observation = (await recordReleaseObservation(db, release.id, fixture.observationInput, { trustedCollector: 'fixture-collector' })).observation;
+  const release = (await createRelease(db, { ...fixture.releaseInput, environment: 'production' })).release;
+  const observation = (await recordReleaseObservation(db, release.id, { ...fixture.observationInput, environment: 'production' }, { trustedCollector: 'fixture-collector' })).observation;
   const definition = fixture.runInput(release, observation); delete definition.source_kind; delete definition.external_origin;
   const contract = { key: 'report', input_schema: { type: 'object' }, resources: {}, recovery: { max_attempts: 1, total_timeout_sec: 1200, cleanup_timeout_sec: 60, retry_safe: false } };
   const id = randomUUID();

@@ -4,6 +4,7 @@ import { FAILURE_PROBE_SOURCE as source } from './commander-failure-probe-source
 import { SSH_BASE_ARGS } from './ssh-args.js';
 import { sshTargetFor, resolvePrimaryWorkerId } from '../machine-registry.js';
 import { requireCommander } from './commander-v2-contract.js';
+import { validateExecutionLocation } from './commander-runtime-location.js';
 const command='env -i HOME="$HOME" PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" python3 -I -u -c '+"'import base64;exec(compile(base64.b64decode(\""+Buffer.from(source).toString('base64')+"\"),\"brain-failure-probe\",\"exec\"))'";
 const quote=value=>"'"+value.replaceAll("'","'\"'\"'")+"'";
 export async function openFailureProbe(target,input,spawnFn=spawn,via=null){
@@ -31,6 +32,7 @@ export async function openFailureProbe(target,input,spawnFn=spawn,via=null){
  }catch(error){child.stdin.end('abort\n');await closed;throw Object.assign(Error('failure_probe_failed'),{cause:error});}
 }
 export async function failureProbeSessions(control){
+ validateExecutionLocation(control);
  const e=control.envelope,r=e.contract.resources,workerTarget=sshTargetFor(resolvePrimaryWorkerId());
  requireCommander(control.execution_location?.ssh_target===workerTarget&&control.execution_location.run_directory===`~/wf-agent-runs/${e.run_id}`,'冻结执行位置不符');
  requireCommander(['xian-m1','xian-m4'].includes(r?.machine)&&/^[A-Za-z0-9]+$/.test(r?.device_serial??'')&&/^[-a-zA-Z0-9_.]+$/.test(r?.profile??''),'仅已登记手机资源');
