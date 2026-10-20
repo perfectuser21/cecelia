@@ -694,6 +694,11 @@
       "role": "verification"
     },
     {
+      "owner_path": "packages/brain/src/lib/commander-v2-dispatch.js",
+      "path": "packages/brain/src/lib/__tests__/integration/commander-v2.test.js",
+      "role": "verification"
+    },
+    {
       "owner_path": "packages/brain/src/lib/pilot-release-verification.js",
       "path": "packages/brain/src/lib/__tests__/pilot-release-verification.test.js",
       "role": "verification"
