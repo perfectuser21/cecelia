@@ -1,6 +1,7 @@
 /** Commander 独立核验的受限运输合同；不改变普通research或qiumi任务。 */
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
+import { commanderRuntimeHelpers, validateExecutionLocation } from './commander-runtime-location.js';
 export const VERIFICATION_TRANSPORT = 'openclaw-agent-v1';
 export const VERIFICATION_MODEL = 'openai/gpt-6.1-sol';
 export const isCommanderVerification = task => task?.task_type === 'research' && task.payload?.verification_transport === VERIFICATION_TRANSPORT;
@@ -29,6 +30,8 @@ export async function verificationLaunch(pool, task, now = Date.now()) {
   for (const key of ['input', 'definition', 'contract']) requireVerification(isDeepStrictEqual(fixed[key], e[key]), `固定${key}不符`);
   for (const key of ['outputs', 'evidence', 'cleanup', 'effects']) requireVerification(isDeepStrictEqual(fixed[key], c.delivery?.[key]), `固定${key}不符`);
   requireVerification(isDeepStrictEqual(fixed.execution_location, c.execution_location) && fixed.execution_status === c.delivery?.status, '固定执行身份不符');
+  validateExecutionLocation(c);
+  if (e.execution_location) requireVerification(isDeepStrictEqual(fixed.runtime_helpers, commanderRuntimeHelpers(e)), '固定runtime helpers不符');
   return { runId: p.run_id, department: 'skill-factory', model: VERIFICATION_MODEL, timeoutSec: remaining };
 }
 export function verificationPrompt(task) {

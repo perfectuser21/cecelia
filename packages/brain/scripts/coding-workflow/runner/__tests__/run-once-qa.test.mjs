@@ -223,23 +223,21 @@ describe('runner QA 门（evaluator AI QA）', () => {
     expectSessionOnlyInFile(r.stderr, sb.logDir, { tag: 'qa-fix', kind: 'qa-fix', pr: 77, cost: 0.5 });
   });
 
-  it('必需检查还没出结果 / 有失败 / 已 passed / 同一 head 已验过 FAIL：不跑 QA', async () => {
-    for (const [gh, seed] of [
-      [green({ required: { 77: [{ name: 'ci-passed', bucket: 'pending' }] } }), null],
-      [green({ required: { 77: [{ name: 'ci-passed', bucket: 'fail' }] } }), null],
-      // 4ac5fa39 首跑实证：ci-passed 还没登记出来时只有 Harness 门是绿的，不能当成「必需检查全绿」
-      [green({ required: { 77: [{ name: 'Harness V5 Gate Passed', bucket: 'pass' }] }, requiredContexts: ['ci-passed', 'Harness V5 Gate Passed'] }), null],
-      [green({ rulesetContexts: ['Smoke Glob Runner Passed'] }), null],
-      [green({ requiredContextsFail: true }), null],
-      [green(), { passed: true, rounds: [] }],
-      [green(), { rounds: [{ round: 1, head, verdict: 'FAIL', fails: 1, fix: 'no_commit' }] }],
-    ]) {
-      if (seed) seedState(seed); else fs.rmSync(statePath(), { force: true });
-      const r = await go(gh, { extra: { CODING_WF_CIFIX: '0' } });
-      expect(r.exitCode, r.stderr).toBe(0);
-      expect(qaCalls()).toEqual([]);
-      await E.closeBrain();
-    }
+  // 每个门禁场景拥有自己的假Brain和30秒预算，避免一例超时后的异步清理污染下一例。
+  it.each([
+    ['必需检查pending', () => [green({ required: { 77: [{ name: 'ci-passed', bucket: 'pending' }] } }), null]],
+    ['必需检查fail', () => [green({ required: { 77: [{ name: 'ci-passed', bucket: 'fail' }] } }), null]],
+    ['ci-passed尚未登记', () => [green({ required: { 77: [{ name: 'Harness V5 Gate Passed', bucket: 'pass' }] }, requiredContexts: ['ci-passed', 'Harness V5 Gate Passed'] }), null]],
+    ['ruleset检查尚未登记', () => [green({ rulesetContexts: ['Smoke Glob Runner Passed'] }), null]],
+    ['必需检查读取失败', () => [green({ requiredContextsFail: true }), null]],
+    ['已经passed', () => [green(), { passed: true, rounds: [] }]],
+    ['同一head已验过FAIL', () => [green(), { rounds: [{ round: 1, head, verdict: 'FAIL', fails: 1, fix: 'no_commit' }] }]],
+  ])('%s：不跑QA', async (_label, scenario) => {
+    const [gh, seed] = scenario();
+    if (seed) seedState(seed); else fs.rmSync(statePath(), { force: true });
+    const r = await go(gh, { extra: { CODING_WF_CIFIX: '0' } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(qaCalls()).toEqual([]);
   });
 
   // 审计 P0 #2：QA 验的必须正是待合并 head 的构建

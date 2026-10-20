@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.43
+**Brain 版本**: 1.445.44
+
+Commander 候选运行仅从冻结 staging:SHA release 与同仓同SHA组件推导隔离runtime，握手、派发、状态、失败探针及独立核验绑定同根和同宿主；错误来源或路径漂移拒绝，不回落生产。
 
 地图激活 HTTP 入口可携带期望的 active 版本与摘要，沿既有事务内 CAS 防止 CI 续版覆盖期间发生的人工修改；固定 Skill 的 CI 校验先准备只读历史对象与 HEAD 生成数据。
 

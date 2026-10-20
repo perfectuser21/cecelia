@@ -2,6 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/src/lib/commander-runtime-location.js","path":"packages/brain/src/lib/__tests__/commander-runtime-location.test.js","role":"verification"},
     {"owner_path":"scripts/ci/implementation-source-ready.mjs","path":"scripts/ci/__tests__/implementation-source-ready.test.mjs","role":"verification"},
     {"owner_path":"packages/brain/src/lib/native-consumer-source-selection.js","path":"packages/brain/src/__tests__/integration/native-consumer-source-selection.pg.integration.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/workflow-authoring/fixed-git-source.js","path":"docs/learnings/cp-10182306-central-skill-source-backport.md","role":"documentation"},
@@ -690,6 +691,11 @@
     {
       "owner_path": "packages/brain/src/lib/commander-v2-dispatch.js",
       "path": "packages/brain/src/lib/__tests__/commander-v2.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-v2-dispatch.js",
+      "path": "packages/brain/src/lib/__tests__/integration/commander-v2.test.js",
       "role": "verification"
     },
     {
