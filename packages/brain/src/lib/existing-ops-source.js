@@ -185,8 +185,10 @@ const STAGING_WORKFLOW_SHA = 'b2c144bf52ac63e57578fae06eee53dd4b98d1f4ca8b7094f1
 const STAGING_ROUTE_AST_SHA = '5550255ec26208d228aabe0a57d72a179f4ed67a63ddd5aa979894def466b1f3';
 const STAGING_PREFIX_SHA = 'd3480aafdf688ddf2fa0c554ef4778a3ee367b00b296dbd4c664fb27213a9f19';
 function stagingRouteProven(text) {
-  const matches = nodes(ast(text)).filter(n => call(n, 'router', 'post') && literal(n.arguments[0], '/deploy'));
-  return matches.length === 1 && hash(JSON.stringify(matches[0], (key, value) => ['start', 'end', 'raw'].includes(key) ? undefined : value)) === STAGING_ROUTE_AST_SHA;
+  const program = ast(text), isDeploy = n => call(n, 'router', 'post') && literal(n.arguments[0], '/deploy');
+  const matches = program.body.filter(n => n.type === 'ExpressionStatement').map(n => n.expression).filter(isDeploy);
+  return matches.length === 1 && nodes(program).filter(isDeploy).length === 1
+    && hash(JSON.stringify(matches[0], (key, value) => ['start', 'end', 'raw'].includes(key) ? undefined : value)) === STAGING_ROUTE_AST_SHA;
 }
 async function collectStagingSources({ read, requireProof, relations, revision, route }) {
   const workflowPath = '.github/workflows/auto-staging-deploy.yml', scriptPath = 'scripts/staging-deploy.sh';
