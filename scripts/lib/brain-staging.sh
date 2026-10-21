@@ -68,7 +68,7 @@ stage_candidate() (
         "$postgres_image" >/dev/null
     local ready=false n
     for n in $(seq 1 60); do
-        if docker exec "$db" pg_isready -U cecelia -d cecelia_staging >/dev/null 2>&1; then ready=true; break; fi
+        if docker exec "$db" pg_isready -h 127.0.0.1 -U cecelia -d cecelia_staging >/dev/null 2>&1; then ready=true; break; fi
         sleep 2
     done
     [[ "$ready" == true ]] || { echo '隔离数据库未就绪' >&2; return 1; }
@@ -93,7 +93,7 @@ stage_candidate() (
         --exclude-table-data=memory_stream --exclude-table-data=cecelia_events \
         --exclude-table-data=alertness_metrics --exclude-table-data=checkpoint_writes \
         --exclude-table-data=checkpoint_blobs --exclude-table-data=checkpoints --exclude-table-data=captures
-    ' | docker exec -i "$db" pg_restore --exit-on-error --no-owner --no-acl -U cecelia -d cecelia_staging
+    ' | docker exec -i "$db" pg_restore -h 127.0.0.1 --exit-on-error --no-owner --no-acl -U cecelia -d cecelia_staging
     local env_args=(-e DB_HOST=stage-db -e DB_PORT=5432 -e DB_USER=cecelia -e DB_PASSWORD= \
         -e DB_NAME=cecelia_staging -e NODE_ENV=production -e BRAIN_PREVIEW=1 \
         -e CECELIA_TICK_ENABLED=false -e CECELIA_TICK_HARD_OFF=1 -e SKIP_MIGRATIONS=true \
