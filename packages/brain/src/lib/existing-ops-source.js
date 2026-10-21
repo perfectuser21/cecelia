@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
 import { runtimeSelectorEnabled, collectRuntimeSources, ciEntrySelectorEnabled, collectCiEntrySources } from './existing-ops-runtime-source.js';
+import {stagingSelectorVersion,collectIsolatedStagingSources} from './existing-ops-staging-source.js';
 import { buildSelectorEnabled, collectBuildSources } from './existing-ops-build-source.js';
 let parse;
 async function requireParser() {
@@ -19,7 +20,7 @@ export const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_AGGREGATE_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_GOLDSET_SELECTOR_SCHEMA = 1;
-export const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = 1;
+export const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = 2;
 export const EXISTING_OPS_IDENTITIES = Object.freeze([
   { workflow_id: '7743d66a-d3e0-4ebf-b82d-3f5d2d769fb1', workflow_key: 'factory_f2_ops', capability_id: '2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6', activity_id: '0ab79a73-1ec3-4ddc-bb88-1433568ae2e2', reference_id: 'a83b69b9-f426-4958-8cef-7560659ef6f8', slot_key: 'step_1', sequence_no: 1,
     unverified_reference_ids: ['3584783c-b847-4eb7-8920-76834cafba38', '5d963288-2dde-4b08-9f8c-5cd7d391a76f', 'c9a31a17-0751-4cad-a982-99325461fdf3'] },
@@ -359,8 +360,9 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     if(auth)relations.push({consumer_path:'scripts/brain-deploy.sh',input_path:'scripts/lib/internal-auth-token.sh',kind:'bash_source_call',revision});
     const schemaPath = 'packages/brain/src/lib/existing-ops-source.js';
     const schema = tree.has(schemaPath) ? await readSource(schemaPath, revision) : '';
-    if (schema && ciEntrySelectorEnabled(schema, ast, 'EXISTING_OPS_STAGING_SELECTOR_SCHEMA'))
-      await collectStagingSources({ read, requireProof, relations, revision, route });
+    const stagingVersion=schema?stagingSelectorVersion(schema,ast):0;
+    if(stagingVersion===1)await collectStagingSources({read,requireProof,relations,revision,route});
+    if(stagingVersion===2)await collectIsolatedStagingSources({read,requireProof,relations,revision,route,parse:ast});
     const inputProven = migrationInputProven(migrate);
     if (requireProof(inputProven, 'migration_input_unproven')) for (const path of paths.filter(path => /^packages\/brain\/migrations\/[^/]+\.sql$/.test(path))) {
       if (await read(path)) relations.push({ consumer_path: 'packages/brain/src/migrate.js', input_path: path, kind: 'migration_sql', selector: 'top_level_sql_sorted', revision });
