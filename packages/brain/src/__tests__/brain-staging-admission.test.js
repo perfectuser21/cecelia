@@ -64,10 +64,10 @@ case "$1" in
    printf '{"status":"healthy","git_sha":"%s","version":"1.445.48","runtime":{"isolated":%s,"background_automation":false}}' "$actual" "$isolated"; exit 0
   fi
   if [[ "$*" == *tick/status* ]]; then echo '{"enabled":false}'; exit 0; fi
-  if [[ "$*" == *tasks* ]]; then if [[ "$MODE" == bad-tasks ]]; then echo '{"error":"database unavailable"}'; elif [[ "$MODE" == bad-task-row ]]; then echo '[{"error":"no task"}]'; else echo '[]'; fi; exit 0; fi
   if [[ "$*" == *current_database* ]]; then
    database=cecelia_staging; [[ "$MODE" != production-db ]] || database=cecelia
    printf '{"database":"%s","host":"stage-db","tasks_table":true}' "$database"; exit 0; fi
+  if [[ "$*" == *tasks* ]]; then if [[ "$MODE" == bad-tasks ]]; then echo '{"error":"database unavailable"}'; elif [[ "$MODE" == bad-task-row ]]; then echo '[{"error":"no task"}]'; else echo '[]'; fi; exit 0; fi
   exit 0;;
 esac
 exit 0

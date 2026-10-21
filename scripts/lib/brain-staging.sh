@@ -31,21 +31,24 @@ stage_remove_network() {
 
 stage_receipt() {
     local status="$1"
-    STAGE_STATUS="$status" SHA="$sha" IMAGE="$image" VERSION="$version" STAGE_REQUEST="$request_id" node -e '
+    STAGE_STATUS="$status" SHA="$sha" IMAGE="$image" VERSION="$version" STAGE_REQUEST="$request_id" STAGE_PHASE="${phase:-preflight}" STAGE_EXIT="${exit_status:-0}" VERIFY_FILE="$verification_file" node -e '
       const fs=require("fs"),p=process.argv[1],e=process.env;
-      fs.writeFileSync(p+".new",JSON.stringify({status:e.STAGE_STATUS,request_id:e.STAGE_REQUEST,sha:e.SHA,image_id:e.IMAGE,version:e.VERSION,isolated:e.STAGE_STATUS==="success",verified_at:new Date().toISOString()}));fs.renameSync(p+".new",p);
+      fs.writeFileSync(p+".new",JSON.stringify({status:e.STAGE_STATUS,request_id:e.STAGE_REQUEST,sha:e.SHA,image_id:e.IMAGE,version:e.VERSION,phase:e.STAGE_PHASE,exit_code:Number(e.STAGE_EXIT),isolated:e.STAGE_STATUS==="success",database:fs.existsSync(e.VERIFY_FILE)?JSON.parse(fs.readFileSync(e.VERIFY_FILE,"utf8")):null,verified_at:new Date().toISOString()}));fs.renameSync(p+".new",p);
     ' "$ROOT_DIR/logs/brain-staging-receipt.json"
 }
 
 stage_candidate() (
+    set -euo pipefail
     local sha="$1" image="$2" version="$3"
     [[ "$sha" =~ ^[a-f0-9]{40}$ && "$image" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
     local network=cecelia-admission db=cecelia-admission-db app=cecelia-admission-brain
     local postgres_image=pgvector/pgvector:pg17
     local request_id="${STAGING_REQUEST_ID:-$(node -e 'process.stdout.write(require("crypto").randomUUID())')}"
     [[ "$request_id" =~ ^[a-f0-9-]{36}$ ]] || return 1
+    local phase=preflight exit_status=0
+    local verification_file="$ROOT_DIR/logs/brain-staging-$request_id.database.json"
     stage_receipt running
-    trap 'status=$?; if [[ "$status" != 0 ]]; then stage_remove_container "$app" "$request_id" || true; stage_remove_container "$db" "$request_id" || true; stage_remove_network "$request_id" || true; stage_receipt failed || true; fi; exit "$status"' EXIT
+    trap 'exit_status=$?; if [[ "$exit_status" != 0 ]]; then stage_remove_container "$app" "$request_id" || true; stage_remove_container "$db" "$request_id" || true; stage_remove_network "$request_id" || true; stage_receipt failed || true; fi; exit "$exit_status"' EXIT
     local actual_sha
     actual_sha=$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" | sed -n 's/^GIT_SHA=//p')
     [[ "$actual_sha" == "$sha" ]] || { echo '候选镜像 SHA 不符' >&2; return 1; }
@@ -57,6 +60,7 @@ stage_candidate() (
     local root_free
     root_free=$(df -Pk "$ROOT_DIR" | awk 'NR==2 {print $4}')
     [[ "$root_free" =~ ^[0-9]+$ && "$root_free" -ge 524288 ]] || { echo '根盘空间不足，禁止候选克隆' >&2; return 1; }
+    phase=database-start
     docker network create --internal --label cecelia.staging=admission-v1 --label "cecelia.staging.request=$request_id" "$network" >/dev/null
     # 内部网络不发布数据库端口，trust 仅在本次独立容器内；不创建/改动生产角色。
     docker run -d --name "$db" --label cecelia.staging=admission-v1 --label "cecelia.staging.request=$request_id" --log-opt max-size=10m --log-opt max-file=2 --network "$network" --network-alias stage-db \
@@ -68,6 +72,7 @@ stage_candidate() (
         sleep 2
     done
     [[ "$ready" == true ]] || { echo '隔离数据库未就绪' >&2; return 1; }
+    phase=disk-budget
     local estimated available
     estimated=$(docker exec cecelia-node-brain node --input-type=module -e '
       const {default:pg}=await import("pg");const {DB_DEFAULTS}=await import("./src/db-config.js");
@@ -80,6 +85,7 @@ stage_candidate() (
     echo "[staging] thin_bytes=$estimated available_kib=$available"
     echo '[staging] 只读瘦快照 → 独立数据库；任一导出/恢复错误拒绝准入'
     # 与 preview 瘦克隆相同的历史大表排除；schema 和业务事实仍取生产快照。
+    phase=snapshot-restore
     docker exec cecelia-node-brain sh -ec '
       test "$DB_NAME" = cecelia
       export PGPASSWORD="$DB_PASSWORD"
@@ -93,7 +99,9 @@ stage_candidate() (
         -e CECELIA_TICK_ENABLED=false -e CECELIA_TICK_HARD_OFF=1 -e SKIP_MIGRATIONS=true \
         -e BRAIN_PORT=5222 -e HOME=/tmp)
     echo '[staging] 候选镜像迁移隔离数据库'
+    phase=candidate-migration
     docker run --rm --network "$network" "${env_args[@]}" "$image" node src/migrate.js
+    phase=candidate-start
     docker run -d --name "$app" --label cecelia.staging=admission-v1 --label "cecelia.staging.request=$request_id" --log-opt max-size=10m --log-opt max-file=2 --network "$network" --read-only --tmpfs /tmp:rw,size=256m \
         -p 127.0.0.1:5222:5222 "${env_args[@]}" \
         --health-cmd 'curl -fsS http://localhost:5222/api/brain/tick/status' \
@@ -110,7 +118,14 @@ stage_candidate() (
     [[ "$healthy" == true ]] || { echo '健康检查超时' >&2; return 1; }
     [[ "$(docker inspect "$app" --format '{{.Image}}')" == "$image" ]] || return 1
     # staging-verify.sh 通过容器自身 API 核验，不把宿主端口误当容器 localhost。
-    STAGING_CONTAINER="$app" EXPECTED_SHA="$sha" EXPECTED_VERSION="$version" bash "$SCRIPT_DIR/staging-verify.sh"
+    phase=candidate-readback
+    STAGING_VERIFY_OUTPUT="$verification_file" STAGING_CONTAINER="$app" EXPECTED_SHA="$sha" EXPECTED_VERSION="$version" bash "$SCRIPT_DIR/staging-verify.sh"
+    phase=verified
     stage_receipt success
+    # 同一发布锁内释放本次隔离快照；持久回执保留独立读回，不保留大体积运行资源。
+    phase=cleanup
+    stage_remove_container "$app" "$request_id"
+    stage_remove_container "$db" "$request_id"
+    stage_remove_network "$request_id"
     echo "STAGING_VERIFIED sha=$sha image=$image request=$request_id"
 )
