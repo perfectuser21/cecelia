@@ -2,6 +2,10 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"scripts/brain-build.sh","path":"packages/engine/tests/integration/brain-build-isolation.test.sh","role":"verification"},
+    {"owner_path":"scripts/brain-build.sh","path":"scripts/__tests__/brain-deploy-build-same-version.test.sh","role":"verification"},
+    {"owner_path":"scripts/ci/gate3-wait-deploy.sh","path":"scripts/ci/__tests__/gate3-wait-deploy.test.sh","role":"verification"},
+    {"owner_path":"scripts/lib/internal-auth-token.sh","path":"scripts/__tests__/internal-auth-deployment.test.sh","role":"verification"},
     {"owner_path":"scripts/brain-image-retention/ledger.mjs","path":"packages/brain/src/__tests__/deploy-settlement.test.js","role":"verification"},
     {"owner_path":"scripts/ci/gate3-wait-deploy.sh","path":"packages/brain/src/__tests__/deployment-time-budget.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-staging-bootstrap.test.js","role":"verification"},
