@@ -14,6 +14,8 @@ import { join } from 'node:path';
 import express from 'express';
 import request from 'supertest';
 
+const { settlementMock, retentionRuntimeMock } = vi.hoisted(() => ({ settlementMock: vi.fn(), retentionRuntimeMock: vi.fn() }));
+vi.mock('../../../../scripts/brain-image-retention/runtime.mjs', () => ({ createRuntime: retentionRuntimeMock }));
 let capturedSpawnArgs = null;
 let spawnCloseHandler = null;
 
@@ -77,6 +79,8 @@ describe('deploy webhook 回执接线（T4）', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    retentionRuntimeMock.mockResolvedValue({ledger:{settlement:settlementMock}});
+    settlementMock.mockResolvedValue({outcome:"success",git_sha:"a".repeat(40),image_id:"sha256:"+"b".repeat(64)});
     recordActionReceipt.mockResolvedValue('r-dep');
     resolveActionReceipt.mockResolvedValue(true);
     execSyncMock.mockReturnValue(Buffer.from('ok'));
@@ -109,6 +113,22 @@ describe('deploy webhook 回执接线（T4）', () => {
       process.env.REPO_ROOT = ORIG_REPO_ROOT;
     }
     try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
+  });
+
+  it('idle只在实际结算证明存在时明确幂等成功',async()=>{
+    const res=await request(app).get('/api/brain/deploy/status');
+    expect(res.body.settled).toBe(true);expect(res.body.settlement.outcome).toBe('success');
+    expect(settlementMock).toHaveBeenCalled();
+  });
+  it.each(['running','rolling_back','failed','rollback_failed'])('状态%s不能被历史ledger覆盖',async status=>{
+    const {deployState}=await import('../routes/ops.js');deployState.status=status;
+    const res=await request(app).get('/api/brain/deploy/status');
+    expect(res.body.status).toBe(status);expect(res.body.settled).toBe(false);expect(settlementMock).not.toHaveBeenCalled();
+  });
+  it.each(['IMAGE_RETENTION_BUSY','DOCKER_TIMEOUT'])('只读结算%s保持unsettled',async code=>{
+    settlementMock.mockRejectedValue(Object.assign(Error(code),{code}));
+    const res=await request(app).get('/api/brain/deploy/status');
+    expect(res.status).toBe(200);expect(res.body.settled).toBe(false);expect(res.body.settlement).toBeNull();
   });
 
   it.each([42, {path:'a'}, ['ok',null], ['line\nbreak'], ['x'.repeat(1025)], Array(2001).fill('a')])('invalid changed_paths rejects before spawn %#',async changed_paths=>{
