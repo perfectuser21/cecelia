@@ -27,8 +27,10 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
     if (canonicalJson(current)!==canonicalJson(registrations)) throw Object.assign(new Error('同步快照已变化，拒绝写入旧契约'),{
       code:'ACTIVITY_CONTRACT_SNAPSHOT_CHANGED',status:409,
     });
+    // 只锁已核实登记归属的能力；全表锁会与异仓逐行 UPSERT 构成反向锁环。
+    const ownedCaps = [...new Set(registrations.map(w=>w.source_capability).filter(Boolean))];
     const rows = (await client.query(`SELECT id,capability_key,activity_key,contract_sha256,status FROM activities
-      WHERE capability_key IS NOT NULL AND activity_key IS NOT NULL FOR UPDATE`)).rows;
+      WHERE capability_key=ANY($1::text[]) AND activity_key IS NOT NULL ORDER BY id FOR UPDATE`,[ownedCaps])).rows;
     const definitions = new Map();
     for (const plan of plans) for (const item of plan.activities) {
       const { activity:a,sha256 } = item, key = `${a.from}.${a.key}`;
@@ -76,7 +78,6 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
         [w.id,a.key,definitions.get(`${a.from}.${a.key}`),a.order,source_ref,repo,w.source_path,head]);
       }
     }
-    const ownedCaps = registrations.map(w=>w.source_capability);
     for (const row of rows) {
       const key = `${row.capability_key}.${row.activity_key}`;
       if (ownedCaps.includes(row.capability_key) && !definitions.has(key) && row.status !== 'deprecated') {
