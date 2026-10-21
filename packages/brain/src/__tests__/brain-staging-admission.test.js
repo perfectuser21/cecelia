@@ -64,8 +64,10 @@ case "$1" in
    printf '{"status":"healthy","git_sha":"%s","version":"1.445.48","runtime":{"isolated":%s,"background_automation":false}}' "$actual" "$isolated"; exit 0
   fi
   if [[ "$*" == *tick/status* ]]; then echo '{"enabled":false}'; exit 0; fi
-  if [[ "$*" == *tasks* ]]; then echo '[]'; exit 0; fi
-  if [[ "$*" == *current_database* ]]; then echo cece-staging; exit 0; fi
+  if [[ "$*" == *tasks* ]]; then if [[ "$MODE" == bad-tasks ]]; then echo '{"error":"database unavailable"}'; elif [[ "$MODE" == bad-task-row ]]; then echo '[{"error":"no task"}]'; else echo '[]'; fi; exit 0; fi
+  if [[ "$*" == *current_database* ]]; then
+   database=cecelia_staging; [[ "$MODE" != production-db ]] || database=cecelia
+   printf '{"database":"%s","host":"stage-db","tasks_table":true}' "$database"; exit 0; fi
   exit 0;;
 esac
 exit 0
@@ -78,13 +80,14 @@ exit 0
  const result=spawnSync('bash',[join(dir,'scripts/brain-deploy.sh')],{env,encoding:'utf8',timeout:10000});
  return {...result,events:existsSync(env.EVENTS)?readFileSync(env.EVENTS,'utf8'): '',commands:existsSync(env.COMMANDS)?readFileSync(env.COMMANDS,'utf8'):'',remaining:readdirSync(env.STATE),receipt:existsSync(join(dir,'logs/brain-staging-receipt.json'))?JSON.parse(readFileSync(join(dir,'logs/brain-staging-receipt.json'),'utf8')):null};
 }
-it.each(['migration-failure','restore-failure','wrong-sha','not-isolated','wrong-digest','missing-image','disk-full'])('候选%s阻断生产迁移与切换',mode=>{
+it.each(['migration-failure','restore-failure','wrong-sha','not-isolated','wrong-digest','missing-image','disk-full','bad-tasks','bad-task-row','production-db'])('候选%s阻断生产迁移与切换',mode=>{
  const result=run(mode);expect(result.events,result.stderr+result.stdout).not.toContain('production-migrate');
  expect(result.status).not.toBe(0);expect(result.remaining).toEqual([]);if(mode!=='missing-image')expect(result.receipt.status).toBe('failed');expect(result.commands).not.toMatch(/stop cecelia-node-brain(?:\n|$)/);
 });
 it('同一镜像通过隔离候选验收后才开始生产迁移',()=>{
  const result=run('success');expect(result.status,result.stderr+result.stdout).toBe(88);
  expect(result.events.split('\n').filter(Boolean)).toEqual(['build','staging-migrate','staging-health','production-migrate']);
+ expect(result.remaining).toEqual([]);expect(result.receipt.database).toEqual({database:'cecelia_staging',host:'stage-db',tasks_table:true});
  expect(result.commands).toContain('--internal');expect(result.commands).toContain('BRAIN_PREVIEW=1');
  expect(result.commands).toContain(digest);expect(result.commands).not.toContain('--env-file '+join(dir,'.env.staging'));
 });
