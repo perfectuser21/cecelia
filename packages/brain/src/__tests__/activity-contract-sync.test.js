@@ -136,7 +136,7 @@ function fakePool(stepRows = [], memory = {}) {
         return { rows: v ? [{ value_json: v }] : [] };
       }
       if (/INSERT INTO working_memory/.test(text)) { memory[params[0]] = JSON.parse(params[1]); return { rows: [] }; }
-      if (/FROM activities/.test(text) && /capability_key IS NOT NULL/.test(text)) return { rows: rows.map((r) => ({ ...r })) };
+      if (/FROM activities/.test(text) && /capability_key=ANY/.test(text)) return { rows: rows.filter(r=>params[0].includes(r.capability_key)).sort((a,b)=>a.id.localeCompare(b.id)).map((r) => ({ ...r })) };
       if (/^\s*UPDATE activities SET name/.test(text)) {
         const r = rows.find((x) => x.id === params[0]);
         Object.assign(r, { name: params[1], contract: JSON.parse(params[2]), contract_sha256: params[3], contract_source: params[4] });
