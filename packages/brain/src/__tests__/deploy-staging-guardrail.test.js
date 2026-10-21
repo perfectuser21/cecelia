@@ -7,7 +7,7 @@
  *  1. ops.js POST /deploy（staging 分支）状态机
  *     - staging 脚本失败（exit 非 0）→ stagingDeployState.status='failed'
  *       且 production deployState 保持 idle（证明"生产实例未被触碰"）
- *     - STAGING_SKIP_REASON=no_docker → skipped_no_docker（环境未配置不阻断 production）
+ *     - STAGING_SKIP_REASON=no_docker → failed（未验证不能放行）
  *     - staging 干净成功 → success
  *  2. 脚本契约：staging-deploy.sh 必须接入 staging-verify.sh
  *     （历史问题：staging-verify.sh 只在注释里，从未被执行 → verification 级失败漏判）
@@ -28,6 +28,7 @@ let stagingExecImpl = () => '';
 vi.mock('child_process', () => ({
   exec: vi.fn(),
   execSync: (...args) => stagingExecImpl(...args),
+  execFile: (_file,args,_opts,cb) => {Promise.resolve().then(()=>stagingExecImpl(args)).then(out=>cb(null,out),cb);},
   spawn: () => ({ unref: vi.fn(), on: vi.fn() }),
 }));
 
@@ -114,7 +115,7 @@ describe('deploy-staging-guardrail（蓝绿部署 staging 验证护栏）', () =
     expect(mod.deployState.started_at).toBeNull();
   });
 
-  it('STAGING_SKIP_REASON=no_docker → skipped_no_docker（环境未配置不阻断 production）', async () => {
+  it('STAGING_SKIP_REASON=no_docker → failed（未验证不能放行）', async () => {
     stagingExecImpl = () =>
       '=== Staging Deploy SKIPPED (no docker) ===\nSTAGING_SKIP_REASON=no_docker\n';
 
@@ -125,14 +126,14 @@ describe('deploy-staging-guardrail（蓝绿部署 staging 验证护栏）', () =
 
     await waitStagingSettled(mod.stagingDeployState);
 
-    expect(mod.stagingDeployState.status).toBe('skipped_no_docker');
-    expect(mod.stagingDeployState.skip_reason).toBe('no_docker');
+    expect(mod.stagingDeployState.status).toBe('failed');
+    expect(mod.stagingDeployState.error).toMatch(/未完成候选验证/);
     expect(mod.deployState.status).toBe('idle');
   });
 
   it('staging 干净成功（无 skip 标记）→ status=success', async () => {
     stagingExecImpl = () =>
-      '=== Staging Deploy SUCCESS: cecelia-brain 在端口 5222 健康 ===\n';
+      `STAGING_VERIFIED sha=${'a'.repeat(40)} image=sha256:${'b'.repeat(64)}\n`;
 
     await request(app)
       .post('/api/brain/deploy')
@@ -146,7 +147,7 @@ describe('deploy-staging-guardrail（蓝绿部署 staging 验证护栏）', () =
   });
 
   it('契约：staging-deploy.sh 必须接入 staging-verify.sh（防止验证环节再次被绕过）', () => {
-    const script = readFileSync(join(REPO_ROOT, 'scripts/staging-deploy.sh'), 'utf-8');
+    const script = readFileSync(join(REPO_ROOT, 'scripts/lib/brain-staging.sh'), 'utf-8');
     expect(script).toMatch(/staging-verify\.sh/);
   });
 });
