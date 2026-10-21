@@ -1,3 +1,4 @@
+import handoff from './fixtures/task-release-handoff.json';
 import {beforeEach,expect,it,vi} from 'vitest';
 const {request}=vi.hoisted(()=>({request:vi.fn()}));
 vi.mock('../recurring-notion-sync.js',()=>({notionReq:request,getToken:()=> 'token'}));
@@ -44,4 +45,31 @@ it('Project已在Brain移除时清空原机器关联；从未关联时不动人�
 it('机器进度不作为新排单回灌',async()=>{
  const result=await ingestDelegatedPage({query},'token',{id:'page-one',properties:{Name:{title:[{text:{content:'修复'}}]},Description:{rich_text:[{text:{content:'dev · brain:task-one'}}]}}});
  expect(result.kind).toBe('skipped');expect(request).not.toHaveBeenCalled();
+});
+
+it('现行发布交接完整投影已完成、未完成、范围、证据与下一棒，敏感无关字段不显示',async()=>{
+ const t=task();t.result={handoff,heartbeat_count:25,secret:'NEVER_PROJECT'};
+ await pushTasksForTest({query},'token',[t]);const content=JSON.stringify(blocks);
+ for(const value of [...handoff.done,...handoff.not_done,handoff.scope,...handoff.artifacts.pr_urls,...handoff.artifacts.run_urls,...handoff.next_steps.map(s=>s.task_id)])expect(content).toContain(value);
+ expect(content).not.toContain('NEVER_PROJECT');expect(content).not.toContain('heartbeat_count');
+});
+it('创建成功但Brain保存页身份失败，按brain标记找回同页并补正文',async()=>{
+ const t={...task(),notion_id:null,notion_props:null};let created=null,failed=false;
+ const normal=request.getMockImplementation();
+ request.mockImplementation(async(...args)=>{
+  if(args[1].startsWith('/databases/'))return {results:created?[created]:[],has_more:false};
+  if(args[1]==='/pages'&&args[2]==='POST'){created={id:'page-one',properties:args[3].properties};return created;}
+  return normal(...args);
+ });
+ query.mockImplementation(async sql=>{if(sql.includes('UPDATE tasks')&&!failed){failed=true;throw Error('数据库写回丢失');}return {rows:[]};});
+ await pushTasksForTest({query},'token',[t]);await pushTasksForTest({query},'token',[t]);
+ expect(request.mock.calls.filter(([,path,method])=>path==='/pages'&&method==='POST')).toHaveLength(1);
+ expect(blocks.filter(b=>b.type==='toggle')).toHaveLength(1);
+ expect(query.mock.calls.some(([sql])=>sql.includes('notion_synced_at'))).toBe(true);
+});
+it('正文400不是错库，不清除已确定的任务页身份',async()=>{
+ const normal=request.getMockImplementation();request.mockImplementation(async(...args)=>{
+  if(args[1].includes('/children'))throw Error('Notion 400: body invalid');return normal(...args);
+ });
+ await pushTasksForTest({query},'token',[task()]);expect(query.mock.calls.filter(([sql])=>sql.includes('UPDATE tasks'))).toHaveLength(0);
 });

@@ -1,3 +1,5 @@
+// 本文件覆盖属性投影；真实受管正文与故障重试由 notion-task-progress.test.js 覆盖。
+vi.mock('../projection/task-progress.js',async importOriginal=>({...await importOriginal(),syncTaskProgress:vi.fn(async()=>false),findCreatedTaskPage:vi.fn(async()=>null)}));
 /**
  * pushTasks 投影 Project / Blocked by（链 bf5088a3 棒5·PR B，任务 3fad28e0，决策 105a5868）。
  *
@@ -26,6 +28,7 @@ const task = (over = {}) => ({
 
 beforeEach(() => {
   mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
   mockNotionReq.mockReset();
   mockQuery.mockResolvedValue({ rows: [] });
 });
@@ -74,7 +77,7 @@ describe('pushTasksForTest 行为', () => {
     const create = mockNotionReq.mock.calls.find((c) => c[1] === '/pages' && c[2] === 'POST');
     expect(create[3].properties['Blocked by']).toEqual({ relation: [{ id: 'b1' }] });
     expect(create[3].properties.Project).toEqual({ relation: [{ id: 'proj-1' }] });
-    const upd = mockQuery.mock.calls.find((c) => /UPDATE tasks/.test(c[0]));
+    const upd = mockQuery.mock.calls.find((c) => /UPDATE tasks/.test(c[0]) && /notion_synced_at/.test(c[0]));
     expect(upd[1]).toEqual(expect.arrayContaining(['t-1', 'queued', 'proj-1', 'b1']));
   });
 
@@ -84,7 +87,7 @@ describe('pushTasksForTest 行为', () => {
     await pushTasksForTest({ query: mockQuery }, 'tok', [task({ blocker_notion_ids: ['b1'] })], { blockedBy: false });
     const create = mockNotionReq.mock.calls.find((c) => c[1] === '/pages' && c[2] === 'POST');
     expect('Blocked by' in create[3].properties).toBe(false);
-    const upd = mockQuery.mock.calls.find((c) => /UPDATE tasks/.test(c[0]));
+    const upd = mockQuery.mock.calls.find((c) => /UPDATE tasks/.test(c[0]) && /notion_synced_at/.test(c[0]));
     expect(upd[0]).not.toMatch(/pushed_blockers/);
   });
 

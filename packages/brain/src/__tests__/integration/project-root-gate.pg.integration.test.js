@@ -57,6 +57,7 @@ const insertTask = async ({ title, type = 'research', status = 'queued', parent 
      VALUES ($1, $2, $3, 'P2', $4, $5, $6::jsonb) RETURNING id`,
     [title, type, status, parent, notionId, notionProps ? JSON.stringify(notionProps) : null],
   );
+  await pool.query("UPDATE tasks SET notion_props=COALESCE(notion_props,'{}'::jsonb)||jsonb_build_object('pushed_content',md5(jsonb_build_array(title,description,'{}'::jsonb,priority,status)::text)) WHERE id=$1",[rows[0].id]);
   return rows[0].id;
 };
 
