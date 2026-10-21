@@ -74,3 +74,12 @@ it('generic实际poll可接受本次SHA终态，failed不能被覆盖',()=>{
  expect(run(step('Poll deploy status'),fixture(),{MAX_POLLS:'4',POLL_INTERVAL_S:'0'}).status).toBe(0);
  expect(run(step('Poll deploy status'),fixture({readyAt:10000,status:'failed'}),{MAX_POLLS:'4',POLL_INTERVAL_S:'0'}).status).toBe(1);
 });
+
+it.each(['running','rolling_back'])('generic不以%s同SHA冒充发布结束',status=>{
+ const f=fixture();f.env.VALID=JSON.stringify({...valid,status});
+ expect(run(step('Poll deploy status'),f,{MAX_POLLS:'4',POLL_INTERVAL_S:'0'}).status).toBe(1);
+});
+it('generic即使同SHA success也需要真实结算收据',()=>{
+ const f=fixture();f.env.VALID=JSON.stringify({...valid,settled:false});
+ expect(run(step('Poll deploy status'),f,{MAX_POLLS:'4',POLL_INTERVAL_S:'0'}).status).toBe(1);
+});
