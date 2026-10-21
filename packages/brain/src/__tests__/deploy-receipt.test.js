@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, unlinkSync, rmSync } from 'fs';
+import { mkdtempSync, unlinkSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
@@ -17,10 +17,11 @@ import request from 'supertest';
 let capturedSpawnArgs = null;
 let spawnCloseHandler = null;
 
-const { recordActionReceipt, resolveActionReceipt, execSyncMock } = vi.hoisted(() => ({
+const { recordActionReceipt, resolveActionReceipt, execSyncMock, execFileMock } = vi.hoisted(() => ({
   recordActionReceipt: vi.fn().mockResolvedValue('r-dep'),
   resolveActionReceipt: vi.fn().mockResolvedValue(true),
   execSyncMock: vi.fn().mockReturnValue(Buffer.from('ok')),
+  execFileMock: vi.fn(),
 }));
 vi.mock('../receipt-collector.js', () => ({ recordActionReceipt, resolveActionReceipt }));
 
@@ -66,6 +67,7 @@ vi.mock('child_process', () => ({
     };
   },
   execSync: execSyncMock,
+  execFile: execFileMock,
 }));
 
 describe('deploy webhook 回执接线（T4）', () => {
@@ -84,6 +86,8 @@ describe('deploy webhook 回执接线（T4）', () => {
     // 用临时目录做 REPO_ROOT，避免 production 分支在真实仓库里落 log 文件
     tmpRepoRoot = mkdtempSync(join(tmpdir(), 'deploy-receipt-test-'));
     process.env.REPO_ROOT = tmpRepoRoot;
+    mkdirSync(join(tmpRepoRoot,'scripts'));writeFileSync(join(tmpRepoRoot,'scripts/staging-deploy.sh'),'fixture');
+    execFileMock.mockImplementation((_bin,_args,opts,cb)=>cb(null,`STAGING_VERIFIED sha=${'a'.repeat(40)} image=sha256:${'b'.repeat(64)} request=${opts.env.STAGING_REQUEST_ID}\n`));
     // 清掉残留状态文件，否则模块启动读到 running → 409
     try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
     vi.resetModules();
@@ -158,8 +162,8 @@ describe('deploy webhook 回执接线（T4）', () => {
     expect(resolveActionReceipt).toHaveBeenCalledWith('r-dep', 'confirmed', expect.anything());
   });
 
-  it('staging execSync 抛错 → 核销 failed（含 error）', async () => {
-    execSyncMock.mockImplementation(() => { throw new Error('boom'); });
+  it('staging execFile 回调错误 → 核销 failed（含 error）', async () => {
+    execFileMock.mockImplementation((_bin,_args,_opts,cb)=>cb(new Error('boom')));
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
@@ -173,15 +177,15 @@ describe('deploy webhook 回执接线（T4）', () => {
     );
   });
 
-  it('staging 输出 STAGING_SKIP_REASON=no_docker → confirmed 且 evidence 含 skip_reason', async () => {
-    execSyncMock.mockReturnValue(Buffer.from('STAGING_SKIP_REASON=no_docker\n'));
+  it('staging 输出 STAGING_SKIP_REASON=no_docker → failed 且保留错误回执', async () => {
+    execFileMock.mockImplementation((_bin,_args,_opts,cb)=>cb(null,'STAGING_SKIP_REASON=no_docker\n'));
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
       .send({ mode: 'staging' });
     await new Promise((r) => setTimeout(r, 50));
     expect(resolveActionReceipt).toHaveBeenCalledWith(
-      'r-dep', 'confirmed', expect.objectContaining({ skip_reason: 'no_docker' })
+      'r-dep', 'failed', expect.objectContaining({ error: expect.stringContaining('未完成候选验证') })
     );
   });
 });
