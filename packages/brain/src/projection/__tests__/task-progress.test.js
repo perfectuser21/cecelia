@@ -90,9 +90,10 @@ const handoff={
   "created_at": "2026-10-20T18:23:09.011769+00:00"
 };
 import {beforeEach,expect,it,vi} from 'vitest';
+import {TASK_PROGRESS_MARKER} from '../task-progress.js';
 const {request}=vi.hoisted(()=>({request:vi.fn()}));
-vi.mock('../recurring-notion-sync.js',()=>({notionReq:request,getToken:()=> 'token'}));
-import {pushTasksForTest,buildTaskNotionProperties,ingestDelegatedPage} from '../notion-push-sync.js';
+vi.mock('../../recurring-notion-sync.js',()=>({notionReq:request,getToken:()=> 'token'}));
+import {pushTasksForTest,buildTaskNotionProperties,ingestDelegatedPage} from '../../notion-push-sync.js';
 
 let blocks,sequence,query;
 const task=()=>({id:'task-one',title:'修复发布门禁',description:'最初目标不能遗忘',status:'in_progress',priority:'P1',task_type:'dev',
@@ -117,6 +118,7 @@ it('投影真实目标、事实、PR与交接，保留人工正文；重复同�
  const body=JSON.stringify(blocks);
  for(const text of ['最初目标不能遗忘','采集已读回','https://github.com/owner/repo/pull/12','实际部署核验','人写的备注必须保留'])expect(body).toContain(text);
  expect(blocks.filter(b=>b.type==='toggle')).toHaveLength(1);
+ expect(JSON.stringify(blocks)).toContain(TASK_PROGRESS_MARKER);
  expect(query.mock.calls.some(([sql,args])=>sql.includes('UPDATE tasks')&&args.includes('hash-one'))).toBe(true);
 });
 it('正文写入或读回失败，不推进任务同步指纹；恢复重试只留一份机器正文',async()=>{

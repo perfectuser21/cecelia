@@ -1,4 +1,4 @@
-// 本文件覆盖属性投影；真实受管正文与故障重试由 notion-task-progress.test.js 覆盖。
+// 本文件覆盖属性投影；真实受管正文与故障重试由 projection/__tests__/task-progress.test.js 覆盖。
 vi.mock('../projection/task-progress.js',async importOriginal=>({...await importOriginal(),syncTaskProgress:vi.fn(async()=>false),findCreatedTaskPage:vi.fn(async()=>null)}));
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 

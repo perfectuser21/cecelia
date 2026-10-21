@@ -1,4 +1,4 @@
-// 本文件覆盖属性投影；真实受管正文与故障重试由 notion-task-progress.test.js 覆盖。
+// 本文件覆盖属性投影；真实受管正文与故障重试由 projection/__tests__/task-progress.test.js 覆盖。
 vi.mock('../projection/task-progress.js',async importOriginal=>({...await importOriginal(),syncTaskProgress:vi.fn(async()=>false),findCreatedTaskPage:vi.fn(async()=>null)}));
 /**
  * pushTasks 投影 Project / Blocked by（链 bf5088a3 棒5·PR B，任务 3fad28e0，决策 105a5868）。

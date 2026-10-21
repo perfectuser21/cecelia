@@ -111,6 +111,27 @@ describe('deploy webhook 回执接线（T4）', () => {
     try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
   });
 
+  it.each([42, {path:'a'}, ['ok',null], ['line\nbreak'], ['x'.repeat(1025)], Array(2001).fill('a')])('invalid changed_paths rejects before spawn %#',async changed_paths=>{
+    const res=await request(app).post('/api/brain/deploy').set('Authorization','Bearer tok').send({changed_paths});
+    expect(res.status).toBe(400);expect(capturedSpawnArgs).toBeNull();expect(recordActionReceipt).not.toHaveBeenCalled();
+  });
+
+  it('production binds the requested SHA to a fixed executable and literal argv',async()=>{
+    const sha='a'.repeat(40),changed_paths=['packages/brain/src/$(touch SHOULD_NOT_EXIST).js'];
+    const res=await request(app).post('/api/brain/deploy').set('Authorization','Bearer tok').send({sha,changed_paths});
+    expect(res.status).toBe(202);await new Promise(r=>setTimeout(r,30));
+    expect(capturedSpawnArgs[0]).toBe('bash');
+    expect(capturedSpawnArgs[1]).toEqual([join(tmpRepoRoot,'scripts/deploy-local.sh'),`--changed=${changed_paths[0]}`,'main']);
+    expect(capturedSpawnArgs[2].shell).not.toBe(true);
+    expect(capturedSpawnArgs[2].env.EXPECTED_SHA).toBe(sha);
+  });
+
+  it('deployment mutation route bounds request rate before side effects',async()=>{
+    for(let i=0;i<30;i++)expect((await request(app).post('/api/brain/deploy').send({})).status).toBe(401);
+    const limited=await request(app).post('/api/brain/deploy').send({});
+    expect(limited.status).toBe(429);expect(capturedSpawnArgs).toBeNull();expect(recordActionReceipt).not.toHaveBeenCalled();
+  });
+
   it('production deploy → 写 pending(kind=deploy/target=production)，close(0) 核销 confirmed', async () => {
     const res = await request(app)
       .post('/api/brain/deploy')
