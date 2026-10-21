@@ -1,3 +1,4 @@
+import {syncTaskProgress,findCreatedTaskPage,TASK_PROGRESS_FIELDS} from './projection/task-progress.js';
 import {syncManagedBodyBlock} from './projection/workflow-body.js';
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { createRoutedTask } from './work-routing-store.js';
@@ -278,11 +279,16 @@ async function pushIssues(pool, token) {
  * 手机的活在 Notion 上走**每机每天一条汇总**的独立通道（独立 push 函数 + 独立
  * 日配额），逐单明细只留在工作机页；这里一条都不推。
  */
+const TASK_RESULT_SQL = `(SELECT COALESCE(jsonb_object_agg(key,value),'{}'::jsonb) FROM jsonb_each(CASE WHEN jsonb_typeof(t.result)='object' THEN t.result WHEN jsonb_typeof(t.result)='string' THEN jsonb_build_object('summary',t.result) ELSE '{}'::jsonb END) WHERE key=ANY(ARRAY[${TASK_PROGRESS_FIELDS.map(key=>`'${key}'`).join(',')}]::text[]))`;
+const TASK_CONTENT_HASH_SQL = `md5(jsonb_build_array(t.title,t.description,${TASK_RESULT_SQL},t.priority,t.status)::text)`;
+const TASK_PROJECT_SQL = "COALESCE(NULLIF(project.notion_props->>'notion_id',''),proj.notion_id)";
 export const PUSH_TASKS_QUERY = `
     SELECT t.id, t.title, t.status, t.priority, t.task_type, t.kind, t.notion_id, t.notion_props,
-           proj.notion_id AS project_notion_id,
+           ${TASK_PROJECT_SQL} AS project_notion_id,
+           t.description,t.result,${TASK_CONTENT_HASH_SQL} AS content_hash,
            blk.ids AS blocker_notion_ids
       FROM tasks t
+      LEFT JOIN projects project ON project.id=t.project_id
       LEFT JOIN tasks proj ON proj.id = t.parent_task_id AND proj.task_type = 'project'
       -- Blocked by：hard 依赖里「已投影且带本系统指纹」的前置任务（旧时代遗产 notion_id 指向别处，不能当 relation 目标）
       LEFT JOIN LATERAL (
@@ -298,7 +304,8 @@ export const PUSH_TASKS_QUERY = `
      WHERE (
              (t.notion_props->>'pushed_status') IS DISTINCT FROM t.status
              -- 根后建页 / 依赖后加：status 没变也要重推（$1=Blocked by 投影未被 flag-off 时才看依赖指纹）
-             OR (proj.notion_id IS NOT NULL AND (t.notion_props->>'pushed_project') IS DISTINCT FROM proj.notion_id)
+             OR COALESCE(t.notion_props->>'pushed_project','') IS DISTINCT FROM COALESCE(${TASK_PROJECT_SQL},'')
+             OR (t.notion_props->>'pushed_content') IS DISTINCT FROM ${TASK_CONTENT_HASH_SQL}
              OR ($1::boolean AND COALESCE(t.notion_props->>'pushed_blockers', '') IS DISTINCT FROM array_to_string(blk.ids, ','))
            )
        AND NOT (t.task_type = ANY(ARRAY[${PUSH_EXCLUDED_TASK_TYPES.map((t) => `'${t}'`).join(',')}]::text[]))
@@ -372,7 +379,7 @@ export function buildTaskNotionProperties(t, { blockedBy = false } = {}) {
     // `brain:<id>` 标记位置不变，各 ingest 用 includes('brain:') 判定不受影响。
     Description: { rich_text: buildRichText(`${t.task_type || 'task'}${t.kind ? ` · ${t.kind}` : ''} · brain:${t.id}`) },
     // 接力棒：子任务挂回 Projects 里的根页（根由 notion-relay-projection 推）
-    ...(t.project_notion_id ? { Project: { relation: [{ id: t.project_notion_id }] } } : {}),
+    ...((t.project_notion_id || t.notion_props?.pushed_project) ? { Project: { relation: t.project_notion_id ? [{ id: t.project_notion_id }] : [] } } : {}),
     // 依赖：Blocked by 自关联（task_dependencies hard 边，前置必须已投影）
     ...(blockedBy && (blockers.length > 0 || hadBlockers)
       ? { 'Blocked by': { relation: blockers.map((id) => ({ id })) } }
@@ -382,30 +389,41 @@ export function buildTaskNotionProperties(t, { blockedBy = false } = {}) {
 
 async function pushTaskRows(pool, token, rows, { blockedBy = false } = {}) {
   for (const t of rows) {
+    let propertiesComplete=false;
     try {
       const properties = buildTaskNotionProperties(t, { blockedBy });
       // 指纹：status 之外再记 Project 根 / 前置任务集合，根后建页、依赖后加才会重推。
       // blockedBy 关闭时不碰 pushed_blockers，等列恢复后条件 SQL 会自然把它们重新选出来。
       const fpProject = t.project_notion_id || '';
       const fpBlockers = (Array.isArray(t.blocker_notion_ids) ? t.blocker_notion_ids : []).join(',');
-      const fpSql = blockedBy
+      let fpSql = blockedBy
         ? `jsonb_build_object('pushed_status', $2::text, 'pushed_project', $3::text, 'pushed_blockers', $4::text)`
         : `jsonb_build_object('pushed_status', $2::text, 'pushed_project', $3::text)`;
       const fpParams = blockedBy ? [t.status, fpProject, fpBlockers] : [t.status, fpProject];
+      fpParams.push(t.content_hash || null);
+      fpSql += ` || jsonb_build_object('pushed_content', $${fpParams.length+1}::text)`;
       const managed = t.notion_props && t.notion_props.pushed_status && t.notion_id;
       if (managed) {
         await notionReq(token, `/pages/${t.notion_id}`, 'PATCH', { properties });
+        propertiesComplete=true;
+        await syncTaskProgress(token,t.notion_id,t,notionReq);
         await pool.query(
           `UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb) || ${fpSql}, notion_synced_at=NOW() WHERE id=$1`,
           [t.id, ...fpParams],
         );
       } else {
-        const page = await notionReq(token, '/pages', 'POST', {
+        const recovered=await findCreatedTaskPage(token,NOTION_TASKS_DB,t.id,notionReq);
+        const page = recovered || await notionReq(token, '/pages', 'POST', {
           parent: { database_id: NOTION_TASKS_DB },
           properties,
         });
+        if(recovered)await notionReq(token,`/pages/${page.id}`,'PATCH',{properties});
+        propertiesComplete=true;
+        // 页身份先保存，正文失败重试复用同页，不重复建页。
+        await pool.query(`UPDATE tasks SET notion_id=$2,notion_props=COALESCE(notion_props,'{}'::jsonb)||jsonb_build_object('pushed_status','pending_body') WHERE id=$1`,[t.id,page.id]);
+        await syncTaskProgress(token,page.id,t,notionReq);
         // 页 id 是 $2，指纹参数顺延一位
-        const createFpSql = fpSql.replace(/\$([234])::text/g, (_m, n) => `$${Number(n) + 1}::text`);
+        const createFpSql = fpSql.replace(/\$(\d+)::text/g, (_m, n) => `$${Number(n) + 1}::text`);
         await pool.query(
           `UPDATE tasks SET notion_id=$2, notion_props = COALESCE(notion_props,'{}'::jsonb) || ${createFpSql}, notion_synced_at=NOW() WHERE id=$1`,
           [t.id, page.id, ...fpParams],
@@ -422,7 +440,7 @@ async function pushTaskRows(pool, token, rows, { blockedBy = false } = {}) {
       }
       // 我方页面被人在 Notion 删除(404)、页/库进回收站(400 archived ancestor)，
       // 或 legacy id 绑到错库(400 schema 不符) → 清指纹与 id，下轮 create 重建到正确的库
-      if ((isPageGoneError(err) && t.notion_props?.pushed_status) || isWrongDatabaseError(err)) {
+      if (!propertiesComplete && ((isPageGoneError(err) && t.notion_props?.pushed_status) || isWrongDatabaseError(err))) {
         await pool.query(
           `UPDATE tasks SET notion_id=NULL, notion_props = notion_props - 'pushed_status' WHERE id=$1`,
           [t.id],

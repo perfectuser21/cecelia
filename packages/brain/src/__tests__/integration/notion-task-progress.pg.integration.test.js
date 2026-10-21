@@ -20,6 +20,7 @@ it('Project真身关联与原始目标/结果入投影；状态不变的进度�
  expect(first.content_hash).toMatch(/^[0-9a-f]{32}$/);
  await fixture.client.query("UPDATE tasks SET notion_props=jsonb_build_object('pushed_status',status,'pushed_project','project-page','pushed_content',$2::text) WHERE id=$1",[id,first.content_hash]);
  expect(await read()).toHaveLength(0);
+ await fixture.client.query("UPDATE tasks SET result=result||'{\"heartbeat_count\":5}' WHERE id=$1",[id]);expect(await read()).toHaveLength(0);
  await fixture.client.query("UPDATE tasks SET result='{\"phase\":\"读回完成\"}' WHERE id=$1",[id]);
  expect((await read())[0].result.phase).toBe('读回完成');
  await fixture.client.query('UPDATE tasks SET project_id=NULL WHERE id=$1',[id]);expect((await read())[0].project_notion_id).toBeNull();
