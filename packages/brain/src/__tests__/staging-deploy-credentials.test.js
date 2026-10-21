@@ -11,6 +11,7 @@ const helper = readFileSync(join(root, 'scripts/lib/brain-staging.sh'), 'utf8');
 const fixtureToken = 'synthetic_fixture_token_' + 'a'.repeat(40);
 const legacyDefault = '/Users/administrator/.credentials/cecelia-internal.env';
 const fixtures = [];
+const sidecarQuery = 'ps --filter name=^/cecelia-bluegreen-sidecar$ --filter status=running --format {{.Names}}';
 afterEach(() => { for (const path of fixtures.splice(0)) rmSync(path, { recursive: true, force: true }); });
 function fixture({ docker = true, stagingEnv = true } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'staging-credentials-')); fixtures.push(dir);
@@ -31,7 +32,7 @@ function fixture({ docker = true, stagingEnv = true } = {}) {
   executable('git',`case "$*" in *rev-parse*) printf "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n";; *show*) printf '{"version":"9.9.9"}\\n';; *) exit 98;; esac\n`);
   executable('openssl', 'printf called > "$OPENSSL_TRACE"\nexit 97\n');
   executable('psql', 'printf forbidden-db >> "$DOCKER_TRACE"\nexit 98\n');
-  if (docker) executable('docker', 'printf "%s\\n" "$*" >> "$DOCKER_TRACE"\nprintf "%s\\n" "$CECELIA_INTERNAL_ENV_FILE" > "$SELECTED_PATH"\n[ "$CECELIA_INTERNAL_TOKEN" = "$EXPECTED_FIXTURE_TOKEN" ] || exit 68\nexit 73\n');
+  if (docker) executable('docker', `printf '%s\\n' "$*" >> "$DOCKER_TRACE"\n[ "$*" = '${sidecarQuery}' ] && exit 0\nprintf '%s\\n' "$CECELIA_INTERNAL_ENV_FILE" > "$SELECTED_PATH"\n[ "$CECELIA_INTERNAL_TOKEN" = "$EXPECTED_FIXTURE_TOKEN" ] || exit 68\nexit 73\n`);
   return f;
 }
 function cache(path, content = `CECELIA_INTERNAL_TOKEN=${fixtureToken}\n`, mode = 0o600) {
@@ -51,7 +52,7 @@ function run(f, { home = f.linuxHome, override, dry = false, noDocker = false } 
 }
 function expectBuildWithoutCredentials(f, result) {
   expect(result.status,result.stderr).toBe(37);expect(result.stdout).toContain('build-reached');
-  expect(result.dockerCalls).toEqual([]);expect(result.selected).toBe(null);expect(existsSync(f.openssl)).toBe(false);
+  expect(result.dockerCalls).toEqual([sidecarQuery]);expect(result.selected).toBe(null);expect(existsSync(f.openssl)).toBe(false);
 }
 function expectRejected(f, result) {
   expect(result.status).not.toBe(0);expect(result.stdout).not.toContain('build-reached');
