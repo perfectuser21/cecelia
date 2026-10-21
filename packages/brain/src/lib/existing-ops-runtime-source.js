@@ -346,7 +346,7 @@ const AUTO_VERSION_FILES={
   ".github/workflows/auto-version.yml": "c4dd4558b9d3c72583bd2fa8ad2391ca5ecbc11fec7c7ba2271cc66374fc16b0",
   "packages/brain/scripts/auto-version-decision.mjs": "2264d26f91cb4ab6662abfc1eb6eb487fcb884ddb6f582781484c3df0d20c045",
   "packages/brain/scripts/auto-version-apply.mjs": "a8560b338a8fa6e20f985e24a7d6dbf673790ecd11b7c67979f8b0cd535f8b8b",
-  "scripts/ci/implementation-auxiliary-evidence.mjs": "c8d676ed8b5ec3f0d9f6c753c1ec34ad1558a273b510daabfbe3e827a9bda653",
+  "scripts/ci/implementation-auxiliary-evidence.mjs": "f5d052b9965825c1facb602084f18fa5063c687f8825f6f7711299c419bb09d0",
   "packages/brain/src/lib/gp-assertion-command.js": "d47bbd492971ad5ed5ec9d4c6915b85bb318c990bc998f84c808ad24aa3f3fe0",
   "packages/brain/src/lib/step-probe-spec.js": "c9c3e710368c0e57e7926b8a6c4a352efbb769210c45e00d13cb47729786f025"
 };
