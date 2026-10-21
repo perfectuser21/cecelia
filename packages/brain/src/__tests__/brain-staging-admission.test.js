@@ -76,7 +76,7 @@ exit 0
  writeFileSync(join(dir,'bin/sleep'),'#!/bin/sh\nexit 0\n',{mode:0o755});
  writeFileSync(join(dir,'bin/flock'),'#!/bin/sh\nexit 0\n',{mode:0o755});
  const env={...process.env,PATH:`${dir}/bin:${process.env.PATH}`,EXPECTED_SHA:sha,SHA:sha,DIGEST:digest,MODE:mode,
-  EVENTS:join(dir,'events'),COMMANDS:join(dir,'commands'),STATE:join(dir,'state'),CECELIA_INTERNAL_ENV_FILE:join(dir,'internal.env')};
+  EVENTS:join(dir,'events'),COMMANDS:join(dir,'commands'),STATE:join(dir,'state'),CECELIA_INTERNAL_TOKEN:'synthetic_production_token',CECELIA_INTERNAL_ENV_FILE:join(dir,'internal.env')};
  const result=spawnSync('bash',[join(dir,'scripts/brain-deploy.sh')],{env,encoding:'utf8',timeout:10000});
  return {...result,events:existsSync(env.EVENTS)?readFileSync(env.EVENTS,'utf8'): '',commands:existsSync(env.COMMANDS)?readFileSync(env.COMMANDS,'utf8'):'',remaining:readdirSync(env.STATE),receipt:existsSync(join(dir,'logs/brain-staging-receipt.json'))?JSON.parse(readFileSync(join(dir,'logs/brain-staging-receipt.json'),'utf8')):null};
 }
@@ -89,5 +89,7 @@ it('同一镜像通过隔离候选验收后才开始生产迁移',()=>{
  expect(result.events.split('\n').filter(Boolean)).toEqual(['build','staging-migrate','staging-health','production-migrate']);
  expect(result.remaining).toEqual([]);expect(result.receipt.database).toEqual({database:'cecelia_staging',host:'stage-db',tasks_table:true});
  expect(result.commands).toContain('--internal');expect(result.commands).toContain('BRAIN_PREVIEW=1');
+ const candidates=result.commands.split('\n').filter(line=>line.startsWith('run ')&&!line.includes('.env.docker'));
+ expect(candidates.length).toBe(3);for(const command of candidates){expect(command).not.toMatch(/--env-file|CECELIA_INTERNAL_TOKEN|CECELIA_INTERNAL_ENV_FILE|synthetic_production_token|\.credentials|--network host/);}
  expect(result.commands).toContain(digest);expect(result.commands).not.toContain('--env-file '+join(dir,'.env.staging'));
 });
