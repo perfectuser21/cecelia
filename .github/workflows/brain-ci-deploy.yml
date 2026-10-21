@@ -206,7 +206,7 @@ jobs:
           fi
 
           if [ "$PROD_SHA" == "$HEAD_SHA" ]; then
-            echo "SHA 相同，跳过部署（C-02 幂等）"
+            echo "SHA 相同，无需重复触发；继续核验已结算部署与真实健康（C-02 幂等）"
             echo "deploy_needed=false" >> $GITHUB_OUTPUT
           else
             echo "SHA 不等（PROD=$PROD_SHA HEAD=$HEAD_SHA）→ 触发部署（C-01）"
@@ -247,7 +247,6 @@ jobs:
           fi
 
       - name: 等待 Deploy 完成
-        if: steps.sha_check.outputs.deploy_needed == 'true' && steps.trigger.outputs.skipped != 'true'
         # 2026-09-28/29 实证（#5635/#5654）：旧逻辑 idle>30s 即「视为成功」，而本次请求因前一次
         # 部署在跑没有真正执行，生产 git_sha 仍是旧提交。现改为按 deploy/status.git_sha 判定：
         # 终态时部署 sha == 本次或为其后代才算成功；running 旧 sha 只等待；不含本次则重触发（≤2 次），
@@ -255,6 +254,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci/gate3-wait-deploy.sh "${BRAIN_URL}" "${{ github.sha }}"
+
+      - name: Smoke — Brain 部署效果确认（固定身份与健康）
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          EXPECTED_VERSION=$(node -p 'JSON.parse(require("fs").readFileSync("packages/brain/package.json", "utf8")).version')
+          curl -fsS --connect-timeout 15 --max-time 30 "$BRAIN_URL/api/brain/health" -o /tmp/smoke_response.txt
+          jq -e --arg sha "$GITHUB_SHA" --arg version "$EXPECTED_VERSION" '.status == "healthy" and .git_sha == $sha and .version == $version' /tmp/smoke_response.txt
+          echo "✅ 本次 SHA、版本与真实健康状态均匹配"
 
       - name: Smoke — Brain 部署效果确认（版本 + 真重启）
         if: steps.sha_check.outputs.deploy_needed == 'true' && steps.trigger.outputs.skipped != 'true'
@@ -287,7 +297,6 @@ jobs:
           fi
 
       - name: Smoke — Brain 内部鉴权效果确认
-        if: steps.sha_check.outputs.deploy_needed == 'true' && steps.trigger.outputs.skipped != 'true'
         run: |
           VERDICT=$(bash scripts/ci/assert-internal-auth-ready.sh "${BRAIN_URL}")
           echo "$VERDICT"
