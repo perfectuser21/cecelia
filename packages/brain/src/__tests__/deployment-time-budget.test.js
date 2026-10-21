@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -20,7 +20,7 @@ function fixture({readyAt=0,status='running',health={status:'healthy',git_sha:sh
 n=$(cat "$FIXTURE/polls"); echo $((n+1)) > "$FIXTURE/polls"
 clock=$(cat "$FIXTURE/clock"); echo $((clock + \${HTTP_SECONDS:-0})) > "$FIXTURE/clock"
 body="$PENDING"; (( n >= READY_AT )) && body="$VALID"
-for arg in "$@"; do [[ "$arg" == */health ]] && body="$HEALTH"; done
+for arg in "$@"; do [[ "$arg" == */health ]] && body="$HEALTH"; [[ "$arg" == POST ]] && echo POST >> "$FIXTURE/posts"; done
 out=''; http=0
 while (($#)); do case "$1" in -o) out="$2"; shift;; -w) http=1; shift;; esac; shift; done
 if [[ -n "$out" ]]; then printf '%s' "$body" > "$out"; else printf '%s' "$body"; fi
@@ -110,3 +110,27 @@ it('默认状态请求至多90秒且最后一次请求不超过剩余预算',()=
  const args=readFileSync(join(f.dir,'curlargs'),'utf8').trim().split('\n');expect(args[args.indexOf('--max-time')+1]).toBe('25');
  expect(Number(readFileSync(join(f.dir,'clock'),'utf8'))).toBe(5700);
 },60000);
+
+function executeSameShaGate3(f){
+ symlinkSync(join(root,'scripts'),join(f.dir,'scripts'),'dir');const output=join(f.dir,'output');writeFileSync(output,'');
+ const env={...f.env,GITHUB_OUTPUT:output,MAX_POLLS:'3',POLL_INTERVAL_S:'0'};
+ const steps=workflow('brain-ci-deploy.yml').jobs.deploy.steps;
+ const execute=s=>spawnSync('bash',['-c',s.run.replaceAll('${{ github.sha }}',sha)],{cwd:f.dir,env,encoding:'utf8',timeout:5000});
+ const check=execute(steps.find(s=>s.id==='sha_check'));expect(check.status,check.stderr).toBe(0);
+ expect(readFileSync(output,'utf8')).toContain('deploy_needed=false');
+ for(const s of steps.filter(s=>s.name==='触发 Brain HTTP Deploy'||s.name==='等待 Deploy 完成'||s.name?.startsWith('Smoke — Brain 部署效果确认'))){
+  if(s.if){expect(s.if).toContain("steps.sha_check.outputs.deploy_needed == 'true'");continue;}
+  const result=execute(s);if(result.status!==0)return result.status;
+ }
+ expect(existsSync(join(f.dir,'posts'))).toBe(false);return 0;
+}
+it('Gate3实际YAML同SHA但running不能整job假绿，也不重复POST',()=>{
+ const f=fixture();f.env.VALID=JSON.stringify({...valid,status:'running'});expect(executeSameShaGate3(f)).toBe(1);
+});
+it('Gate3实际YAML同SHA但unhealthy不能整job假绿',()=>{
+ expect(executeSameShaGate3(fixture({health:{status:'unhealthy',git_sha:sha,version:'1.2.3'}}))).toBe(1);
+});
+it('Gate3实际YAML同SHA已结算且健康可幂等通过，无POST或uptime要求',()=>{
+ expect(executeSameShaGate3(fixture())).toBe(0);
+ const auth=workflow('brain-ci-deploy.yml').jobs.deploy.steps.find(s=>s.name==='Smoke — Brain 内部鉴权效果确认');expect(auth.if).toBeUndefined();
+});
