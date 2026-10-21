@@ -168,18 +168,20 @@ function integrationConfigInputs(text) {
   return declaration.init.elements.map(n=>`packages/brain/${n.value}`).filter(sourcePath);
 }
 function deployRouteProven(text) {
-  const handler = nodes(ast(text)).find(n => call(n, 'router', 'post') && literal(n.arguments[0], '/deploy'))?.arguments[1];
+  const handler = nodes(ast(text)).find(n => call(n, 'router', 'post') && literal(n.arguments[0], '/deploy'))?.arguments.at(-1);
   if (!handler?.body || !['FunctionExpression', 'ArrowFunctionExpression'].includes(handler.type)) return false;
   const declarations = handler.body.body.filter(n => n.type === 'VariableDeclaration').flatMap(n => n.declarations);
   const script = declarations.find(n => n.id?.name === 'scriptDir')?.init;
   const args = declarations.find(n => n.id?.name === 'args')?.init;
   const spawn = declarations.find(n => n.id?.name === 'child')?.init;
+  const legacyArgs=args?.type==='ArrayExpression'&&literal(args.elements[0],'bash')&&args.elements[1]?.name==='scriptDir'
+    &&spawn?.arguments[0]?.type==='MemberExpression'&&spawn.arguments[0].object?.name==='args'&&literal(spawn.arguments[0].property,0)
+    &&call(spawn.arguments[1],'args','slice')&&literal(spawn.arguments[1].arguments[0],1);
+  const literalExecutable=args?.type==='ArrayExpression'&&args.elements.length===1&&args.elements[0]?.name==='scriptDir'
+    &&literal(spawn?.arguments[0],'bash')&&spawn.arguments[1]?.name==='args';
   return script?.type === 'TemplateLiteral' && script.expressions.length === 1 && script.expressions[0]?.name === 'repoRoot'
     && script.quasis[0].value.cooked === '' && script.quasis[1].value.cooked === '/scripts/deploy-local.sh'
-    && args?.type === 'ArrayExpression' && literal(args.elements[0], 'bash') && args.elements[1]?.name === 'scriptDir'
-    && spawn?.type === 'CallExpression' && spawn.callee?.name === 'spawn'
-    && spawn.arguments[0]?.type === 'MemberExpression' && spawn.arguments[0].object?.name === 'args' && literal(spawn.arguments[0].property, 0)
-    && call(spawn.arguments[1], 'args', 'slice') && literal(spawn.arguments[1].arguments[0], 1);
+    && spawn?.type === 'CallExpression' && spawn.callee?.name === 'spawn' && (legacyArgs||literalExecutable);
 }
 // 已审 main auto-staging 的完整请求入口和 /deploy 注册调用；未知控制流不猜消费边。
 const STAGING_WORKFLOW_SHA = 'b2c144bf52ac63e57578fae06eee53dd4b98d1f4ca8b7094f173c59187412599';

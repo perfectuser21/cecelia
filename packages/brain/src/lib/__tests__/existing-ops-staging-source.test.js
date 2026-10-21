@@ -78,6 +78,8 @@ describe('staging 正式调用链的固定来源，不声明部署成功', () =>
     ['route 无执行', route, text => text.replace("execFile('bash',[stagingScript],{","neverExec('bash',[stagingScript],{")],
     ['route 错路径', route, text => text.replace('/scripts/staging-deploy.sh`', '/scripts/other-deploy.sh`')],
     ['route 关闭 staging', route, text => text.replace("staging === true || mode === 'staging'", 'false')],
+    ['route 关闭限流', route, text => text.replace('limit:30','limit:30000')],
+    ['route 请求SHA未传生产', route, text => text.replace('env:{...process.env,...(sha?{EXPECTED_SHA:sha}:{})}', 'env:process.env')],
     ['route 超时改动', route, text => text.replace('timeout:1_200_000','timeout:60_000')],
     ['route 重复', route, text => text + "\nrouter.post('/deploy', (req, res) => res.end('other'));\n"],
     ['route 未调用函数', route, text => wrapRoute(text, call => 'function neverRegistered() {\n' + call + '\n}')],

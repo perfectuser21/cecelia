@@ -1,4 +1,4 @@
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,describe,expect,it} from 'vitest';
 import {mkdtempSync,mkdirSync,copyFileSync,writeFileSync,readFileSync,rmSync,existsSync,readdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {resolve,join} from 'node:path';
@@ -80,6 +80,7 @@ exit 0
  const result=spawnSync('bash',[join(dir,'scripts/brain-deploy.sh')],{env,encoding:'utf8',timeout:10000});
  return {...result,events:existsSync(env.EVENTS)?readFileSync(env.EVENTS,'utf8'): '',commands:existsSync(env.COMMANDS)?readFileSync(env.COMMANDS,'utf8'):'',remaining:readdirSync(env.STATE),receipt:existsSync(join(dir,'logs/brain-staging-receipt.json'))?JSON.parse(readFileSync(join(dir,'logs/brain-staging-receipt.json'),'utf8')):null};
 }
+describe('brain-staging-admission 实际脚本准入',()=>{
 it.each(['migration-failure','restore-failure','wrong-sha','not-isolated','wrong-digest','missing-image','disk-full','bad-tasks','bad-task-row','production-db'])('候选%s阻断生产迁移与切换',mode=>{
  const result=run(mode);expect(result.events,result.stderr+result.stdout).not.toContain('production-migrate');
  expect(result.status).not.toBe(0);expect(result.remaining).toEqual([]);if(mode!=='missing-image')expect(result.receipt.status).toBe('failed');expect(result.commands).not.toMatch(/stop cecelia-node-brain(?:\n|$)/);
@@ -92,4 +93,6 @@ it('同一镜像通过隔离候选验收后才开始生产迁移',()=>{
  const candidates=result.commands.split('\n').filter(line=>line.startsWith('run ')&&!line.includes('.env.docker'));
  expect(candidates.length).toBe(3);for(const command of candidates){expect(command).not.toMatch(/--env-file|CECELIA_INTERNAL_TOKEN|CECELIA_INTERNAL_ENV_FILE|synthetic_production_token|\.credentials|--network host/);}
  expect(result.commands).toContain(digest);expect(result.commands).not.toContain('--env-file '+join(dir,'.env.staging'));
+});
+
 });

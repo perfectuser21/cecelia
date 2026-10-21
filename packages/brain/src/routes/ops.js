@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {rateLimit} from 'express-rate-limit';
 import express, { Router } from 'express';
 import pool from '../db.js';
 import { recordActionReceipt, resolveActionReceipt } from '../receipt-collector.js';
@@ -2726,7 +2727,7 @@ router.get('/deploy/status', (req, res) => {
 
 // POST /api/brain/deploy — GitHub Actions 合并后触发本地部署
 // 支持 mode='staging' 或 staging=true 走 Safe Lane staging 分支（端口 5222）
-router.post('/deploy', async (req, res) => {
+router.post('/deploy', rateLimit({windowMs:60_000,limit:30,standardHeaders:'draft-7',legacyHeaders:false}), async (req, res) => {
   const token = (req.headers.authorization || '').replace('Bearer ', '');
   const expectedToken = process.env.DEPLOY_TOKEN;
 
@@ -2738,7 +2739,8 @@ router.post('/deploy', async (req, res) => {
   }
 
   const { changed_paths, staging, mode, sha } = req.body || {};
-  if(sha!==undefined&&!/^[a-f0-9]{40}$/.test(sha))return res.status(400).json({error:'invalid deploy sha'});
+  if(changed_paths!==undefined&&(!Array.isArray(changed_paths)||changed_paths.length>2000||changed_paths.some(p=>typeof p!=='string'||!p.length||p.length>1024||/[\0\r\n]/.test(p))))return res.status(400).json({error:'invalid changed paths'});
+  if(sha!==undefined&&(typeof sha!=='string'||!/^[a-f0-9]{40}$/.test(sha)))return res.status(400).json({error:'invalid deploy sha'});
   const isStagingDeploy = staging === true || mode === 'staging';
 
   // ── Staging 分支（Safe Lane）──────────────────────────────────────────────
@@ -2820,11 +2822,8 @@ router.post('/deploy', async (req, res) => {
   const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
   const scriptDir = `${repoRoot}/scripts/deploy-local.sh`;
 
-  const args = ['bash', scriptDir];
-  if (changed_paths && changed_paths.length > 0) {
-    const escaped = changed_paths.join(' ').replace(/"/g, '\\"');
-    args.push(`--changed=${escaped}`);
-  }
+  const args = [scriptDir];
+  if (changed_paths?.length) args.push(`--changed=${changed_paths.join(' ')}`);
   args.push('main');
 
   // 部署日志写到宿主机挂载目录（repoRoot/logs/），容器死亡后日志不丢失。
@@ -2837,7 +2836,7 @@ router.post('/deploy', async (req, res) => {
   try {
     logFd = openSync(logFile, 'a');
     writeSync(logFd, `[deploy-webhook] starting at ${new Date().toISOString()}\n`);
-    writeSync(logFd, `[deploy-webhook] cmd: bash ${scriptDir} ${args.slice(2).join(' ')}\n`);
+    writeSync(logFd, `[deploy-webhook] cmd: bash ${scriptDir} ${args.slice(1).join(' ')}\n`);
     writeSync(logFd, `[deploy-webhook] cwd: ${repoRoot}\n\n`);
   } catch (err) {
     console.error(`[deploy-webhook] 创建 log 文件失败 ${logFile}: ${err.message}，回退 stdio:'ignore'`);
@@ -2860,7 +2859,8 @@ router.post('/deploy', async (req, res) => {
   const stdioOption = logFd === 'ignore'
     ? 'ignore'
     : ['ignore', logFd, logFd];
-  const child = spawn(args[0], args.slice(1), {
+  const child = spawn('bash', args, {
+    env:{...process.env,...(sha?{EXPECTED_SHA:sha}:{})},
     detached: true,
     stdio: stdioOption,
     cwd: repoRoot,
