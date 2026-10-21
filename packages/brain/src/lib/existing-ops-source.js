@@ -2,8 +2,7 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
-import { runtimeSelectorEnabled, collectRuntimeSources, ciEntrySelectorEnabled, collectCiEntrySources } from './existing-ops-runtime-source.js';
-import {stagingSelectorVersion,collectIsolatedStagingSources} from './existing-ops-staging-source.js';
+import { runtimeSelectorEnabled, collectRuntimeSources, ciEntrySelectorEnabled, collectCiEntrySources, stagingSelectorVersion, collectIsolatedStagingSources } from './existing-ops-runtime-source.js';
 import { buildSelectorEnabled, collectBuildSources } from './existing-ops-build-source.js';
 let parse;
 async function requireParser() {

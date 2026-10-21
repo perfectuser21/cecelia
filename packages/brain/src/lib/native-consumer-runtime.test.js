@@ -9,9 +9,9 @@ import {readNativeConsumerRuntime,assertNativeConsumerRuntime} from './native-co
 const read=path=>readFileSync(new URL(basename(path),import.meta.url),'utf8');
 const stagePaths=['source','envelopes','modes'].map(n=>`packages/brain/src/lib/existing-ops-stage-${n}.js`);
 const provenancePaths=['envelope','core-envelope','entry-envelopes','local-envelopes']
- .map(name=>`packages/brain/src/lib/existing-ops-provenance-${name}.js`).concat(stagePaths,'packages/brain/src/lib/workspace-ci-source-bundle.js','packages/brain/src/lib/existing-ops-staging-source.js').sort();
+ .map(name=>`packages/brain/src/lib/existing-ops-provenance-${name}.js`).concat(stagePaths,'packages/brain/src/lib/workspace-ci-source-bundle.js','packages/brain/src/lib/existing-ops-runtime-source.js').sort();
 it('实际身份包含隔离staging与全部既有收集器依赖，逐文件记录加载字节',()=>{
- const runtime=readNativeConsumerRuntime();expect(runtime.files).toHaveLength(16);
+ const runtime=readNativeConsumerRuntime();expect(runtime.files).toHaveLength(15);
  for(const path of provenancePaths)expect(runtime.files).toContainEqual({path,sha256:createHash('sha256').update(read(path)).digest('hex')});
 });
 it.each(provenancePaths)('%s 缺失、错误字节或非普通固定 blob 都拒绝',async path=>{
@@ -74,7 +74,7 @@ it('native evidence collector真实静态import闭包不能漏运行身份文件
    queue.push(posix.normalize(posix.join(posix.dirname(path),node.source.value)));
  }
  expect(runtime.files.map(file=>file.path).sort()).toEqual([...seen].sort());
- expect(runtime.files).toHaveLength(16);
+ expect(runtime.files).toHaveLength(15);
 });
 it.each(nativeEvidencePaths)('native evidence %s实际加载hash与固定tree blob同时受核验',async path=>{
  const runtime=readNativeConsumerRuntime();

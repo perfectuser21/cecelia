@@ -13,7 +13,6 @@ const PRIOR_PATHS=[...LEGACY_PATHS,...['envelope','core-envelope','entry-envelop
 const PRIOR_STAGE_PATHS=[...PRIOR_PATHS,...['source','envelopes'].map(name=>`packages/brain/src/lib/existing-ops-stage-${name}.js`)].sort();
 const PRIOR_NATIVE_PATHS=[...PRIOR_STAGE_PATHS,...['source','envelopes'].map(name=>`packages/brain/src/lib/existing-ops-native-evidence-${name}.js`)].sort();
 const PRIOR_MODE_PATHS=[...PRIOR_NATIVE_PATHS,...['modes'].map(name=>`packages/brain/src/lib/existing-ops-stage-${name}.js`)].sort();
-const PRIOR_WORKSPACE_PATHS=[...PRIOR_MODE_PATHS,'packages/brain/src/lib/workspace-ci-source-bundle.js'].sort();
 const fail=code=>Object.assign(Error(code),{code});
 const keys=(value,expected)=>value&&typeof value==='object'&&!Array.isArray(value)
  &&JSON.stringify(Object.keys(value).sort())===JSON.stringify([...expected].sort());
@@ -28,7 +27,7 @@ function validateResponse(body,expected){
  if(!keys(body,['schema_version','repo','git_sha','files'])||body.schema_version!==1||body.repo!==REPO
   ||!(body.git_sha===null||typeof body.git_sha==='string'&&SHA.test(body.git_sha))
   ||!Array.isArray(body.files))throw fail('SOURCE_READY_RESPONSE_INVALID');
- const prior=[LEGACY_PATHS,PRIOR_PATHS,PRIOR_STAGE_PATHS,PRIOR_NATIVE_PATHS,PRIOR_MODE_PATHS,PRIOR_WORKSPACE_PATHS].find(paths=>paths.length===body.files.length);
+ const prior=[LEGACY_PATHS,PRIOR_PATHS,PRIOR_STAGE_PATHS,PRIOR_NATIVE_PATHS,PRIOR_MODE_PATHS].find(paths=>paths.length===body.files.length);
  const paths=prior??expected.files.map(file=>file.path);
  if(body.files.length!==paths.length)throw fail('SOURCE_READY_RESPONSE_INVALID');
  for(const [i,file] of body.files.entries())if(!keys(file,['path','sha256'])||file.path!==paths[i]||typeof file.sha256!=='string'||!HASH.test(file.sha256))throw fail('SOURCE_READY_RESPONSE_INVALID');

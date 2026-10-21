@@ -119,7 +119,7 @@ function provenReaderClosure(consumer) {
 // 仅此路径且整个模块 AST 相等时认可该消费者；任何语义改动都须重新审查。
 // 这不把 runtime 加入文件白名单，模块原 R1–R7/进程别名扫描照常执行。
 const HASH_RUNTIME_FILE = path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
-const HASH_RUNTIME_SHA256 = '6c692fb20d6b1698c089159f69738ec85f5d75e3d3c0548b4fc35cb956aca7d8';
+const HASH_RUNTIME_SHA256 = '9d673dcb89bf218ed3941b84b3d6fb9e9751bd7eb8059ba11f89e7c757f4bad8';
 const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
   &&createHash('sha256').update(astShape(parseModule(text))).digest('hex')===HASH_RUNTIME_SHA256;
 
