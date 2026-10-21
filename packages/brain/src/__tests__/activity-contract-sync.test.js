@@ -6,6 +6,7 @@
  * ④30min 自 gate ⑤同步连续失败超 2h 才告警且只告一次 ⑥Notion 属性只读标记 + 链回正本。
  */
 import { describe, it, expect, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import yaml from 'js-yaml';
 import { hash } from './fixtures/shared-activity-contracts.js';
 
@@ -18,6 +19,7 @@ import {
   CONTRACT_REPO,
   CHECK_INTERVAL_MS,
   DRIFT_ALERT_MS,
+  readActivityBinding,
 } from '../activity-contract-sync.js';
 
 const HEAD = 'a'.repeat(40);
@@ -134,7 +136,7 @@ function fakePool(stepRows = [], memory = {}) {
         return { rows: v ? [{ value_json: v }] : [] };
       }
       if (/INSERT INTO working_memory/.test(text)) { memory[params[0]] = JSON.parse(params[1]); return { rows: [] }; }
-      if (/FROM activities/.test(text) && /capability_key IS NOT NULL/.test(text)) return { rows: rows.map((r) => ({ ...r })) };
+      if (/FROM activities/.test(text) && /capability_key=ANY/.test(text)) return { rows: rows.filter(r=>params[0].includes(r.capability_key)).sort((a,b)=>a.id.localeCompare(b.id)).map((r) => ({ ...r })) };
       if (/^\s*UPDATE activities SET name/.test(text)) {
         const r = rows.find((x) => x.id === params[0]);
         Object.assign(r, { name: params[1], contract: JSON.parse(params[2]), contract_sha256: params[3], contract_source: params[4] });
@@ -161,6 +163,22 @@ const seeded = () => [
 const deps = (gh) => ({ fetchFn: gh.fetchFn, resolveToken: async () => 'tok' });
 
 describe('syncActivityContracts', () => {
+  it('正式同步默认读取器按业务锁取中央 Skill 并保存双来源',async()=>{
+    const path='.claude/skills/demo/SKILL.md',central='perfectuser21/zenithjoy-skills',revision='b'.repeat(40),source='business-skills/zenithjoy/demo/SKILL.md';
+    const skill='---\nname: demo\nversion: 1\n---\ncentral\n';
+    const blob=bytes=>{const content=Buffer.from(bytes),sha=createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${content.length}\0`),content])).digest('hex');return {sha,size:content.length,encoding:'base64',content:content.toString('base64')};};
+    const lock=JSON.stringify({version:1,repository:central,revision,profile:'zenithjoy',loader_sha256:'a'.repeat(64)});
+    const catalog=JSON.stringify({version:1,profiles:{zenithjoy:{files:[{path,source,sha256:createHash('sha256').update(skill).digest('hex')}]}}});
+    const files={[`${CONTRACT_REPO}/.skills-source.json`]:lock,[`${central}/distribution/catalog.json`]:catalog,[`${central}/${source}`]:skill};
+    const trees=new Map(),blobs=new Map();
+    for(const [key,value] of Object.entries(files)){const [owner,...parts]=key.split('/');const repoName=key.startsWith(CONTRACT_REPO)?CONTRACT_REPO:central;const file=key.slice(repoName.length+1);const record=blob(value);blobs.set(record.sha,record);const rows=trees.get(repoName)||[];rows.push({path:file,sha:record.sha,type:'blob',mode:'100644',size:record.size});trees.set(repoName,rows);}
+    const fetchFn=async url=>{const m=url.match(/\/repos\/(perfectuser21\/(?:zenithjoy-workspace|zenithjoy-skills))\/git\/(commits|trees|blobs)\/([a-f0-9]{40})/);expect(m).toBeTruthy();const [,owner,kind,hash]=m;
+      const value=kind==='commits'?{sha:hash,tree:{sha:'c'.repeat(40)}}:kind==='trees'?{sha:hash,truncated:false,tree:trees.get(owner)}:blobs.get(hash);
+      return new Response(JSON.stringify(value),{status:200});};
+    const binding={kind:'skill',repo:CONTRACT_REPO,revision:HEAD,path};
+    expect(await readActivityBinding(binding,{fetchFn,token:'fixture'})).toBe(skill);
+    expect(binding.resolved_source).toEqual({repo:central,path:source,revision});
+  });
   it('哈希变了 → 拉 YAML，按 activity_key 写契约+仓库哈希+正本链接（钉在 commit）', async () => {
     const gh = fakeGithub({ digest: digestOf({ preflight: 'p1', discovery: 'd1' }) });
     const pool = fakePool(seeded());
@@ -288,4 +306,91 @@ describe('runBackboneContractJob', () => {
     const mod = await import('../activity-contract-sync.js');
     for (const gone of ['pushBackboneActivities', 'BACKBONE_DB_PROPS', 'buildBackboneActivityProps', 'syncBackboneBodies', 'buildBackboneActivityBody']) expect(mod).not.toHaveProperty(gone);
   });
+});
+
+describe('一轮固定Skill解析预算与缓存',()=>{
+  function context(){
+    const repo=CONTRACT_REPO,central='perfectuser21/zenithjoy-skills',revision='a'.repeat(40),cr='b'.repeat(40),tree1='c'.repeat(40),tree2='d'.repeat(40);
+    const paths=['.claude/skills/one/SKILL.md','.claude/skills/two/SKILL.md'];
+    const data=new Map([
+      [repo,new Map([['.skills-source.json',JSON.stringify({version:1,repository:central,revision:cr,profile:'zenithjoy',loader_sha256:'e'.repeat(64)})]])],
+      [central,new Map([['distribution/catalog.json',JSON.stringify({version:1,profiles:{zenithjoy:{files:paths.map((path,i)=>({path,source:`skills/${i}.md`,sha256:createHash('sha256').update(`body${i}`).digest('hex')}))}}})],['skills/0.md','body0'],['skills/1.md','body1']])],
+    ]);
+    const blobs=new Map(),calls=[];
+    const fetchFn=async url=>{
+      calls.push(url);const r=url.includes(`/repos/${central}/`)?central:repo,files=data.get(r),rev=r===repo?revision:cr,tree=r===repo?tree1:tree2;
+      const rows=[...files].map(([path,text])=>{const bytes=Buffer.from(text),sha=createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`),bytes])).digest('hex');blobs.set(sha,{sha,size:bytes.length,encoding:'base64',content:bytes.toString('base64')});return {path,sha,type:'blob',mode:'100644',size:bytes.length};});
+      return {ok:true,json:async()=>url.includes('/commits/')?{sha:rev,tree:{sha:tree}}:url.includes('/trees/')?{sha:tree,tree:rows}:blobs.get(url.split('/').at(-1))};
+    };
+    return {d:{fetchFn,token:'fixture',cache:new Map(),deadline:Date.now()+60000},calls,bindings:paths.map(path=>({kind:'skill',repo,revision,path}))};
+  }
+  it('同轮多个绑定复用固定锁/catalog内容，派生身份仍逐绑定核对',async()=>{
+    const {d,calls,bindings}=context();
+    expect(await readActivityBinding(bindings[0],d)).toBe('body0');
+    expect(await readActivityBinding(bindings[1],d)).toBe('body1');
+    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(2); // one business commit and one central commit
+    await expect(readActivityBinding({...bindings[0],resolved_source:{repo:'evil/repo',revision:bindings[0].revision,path:'evil'}},d)).rejects.toThrow();
+    expect(calls.filter(u=>u.includes('/commits/'))).toHaveLength(2);
+  });
+  it('后续绑定不得重置总deadline，取消后即便命中缓存仍拒绝',async()=>{
+    const {d,calls,bindings}=context();await readActivityBinding(bindings[0],d);const count=calls.length;
+    d.deadline=Date.now()-1;await expect(readActivityBinding(bindings[1],d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(calls).toHaveLength(count);
+    d.deadline=Date.now()+60000;const controller=new AbortController();controller.abort();d.signal=controller.signal;
+    await expect(readActivityBinding(bindings[0],d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(calls).toHaveLength(count);
+  });
+});
+
+describe('同步既有外仓tracked Skill不继承中央来源资格',()=>{
+ const binding=()=>({kind:'skill',repo:'org/repo',path:'skills/check/SKILL.md',revision:'c'.repeat(40)});
+ it.each(['---\nname: check\nversion: 1.0.0\n---\n# 原文\n','---\r\nname: check\r\nversion: 1.0.0\r\n---\r\n# 原文\r\n'])('外仓固定原文逐字保留且不探中央锁',async body=>{
+  const calls=[],b=binding(),content=await readActivityBinding(b,{token:'fixture',fetchFn:async url=>{calls.push(url);return {ok:true,text:async()=>body};}});
+  expect(content).toBe(body);expect(calls).toEqual([`https://api.github.com/repos/org/repo/contents/skills/check/SKILL.md?ref=${b.revision}`]);expect(b).not.toHaveProperty('resolved_source');
+ });
+ it('外仓缺原件拒绝，不回退到中央仓',async()=>{
+  const calls=[];await expect(readActivityBinding(binding(),{token:'fixture',fetchFn:async url=>{calls.push(url);return {ok:false,status:404};}})).rejects.toThrow();expect(calls).toHaveLength(1);
+ });
+ it.each([b=>b.revision='main',b=>b.repo='../repo',b=>b.path='../SKILL.md',b=>b.path='skills/'+String.fromCharCode(0)+'/SKILL.md',b=>b.path='skills/'+String.fromCharCode(31)+'/SKILL.md',b=>b.resolved_source={repo:'perfectuser21/zenithjoy-skills',revision:'d'.repeat(40),path:'secret/SKILL.md'}])('外仓非法声明或伪造中央来源在网络前拒绝',async mutate=>{
+  const b=binding();mutate(b);let calls=0;await expect(readActivityBinding(b,{token:'fixture',fetchFn:async()=>{calls++;return {ok:true,text:async()=>'body'};}})).rejects.toThrow();expect(calls).toBe(0);
+ });
+});
+
+it('中央仓直接声明不得借普通外仓tracked兼容分支绕过业务锁',async()=>{
+ let reads=0;await expect(readActivityBinding({kind:'skill',repo:'perfectuser21/zenithjoy-skills',path:'qualification/SKILL.md',revision:'c'.repeat(40)},
+  {token:'fixture',fetchFn:async()=>{reads++;return {ok:true,text:async()=>'---\nname: central\nversion: 1\n---\nbody'};}})).rejects.toThrow();expect(reads).toBe(0);
+});
+
+import {validateImplementationBindings} from '../lib/implementation-bindings.js';
+describe('同一同步请求的Code读取复用',()=>{
+ const source={repo:CONTRACT_REPO,revision:'a'.repeat(40)},body='fixed code\n';
+ function fixture(){const calls=[];return {calls,d:{token:'fixture',deadline:Date.now()+60000,cache:new Map(),fetchFn:async url=>{calls.push(url);return {ok:true,text:async()=>body};}}};}
+ it('38活动304绑定只GET46文件，完整摘要逐个等价且新请求不共享',async()=>{
+  const {d,calls}=fixture(),verified=[];
+  for(let i=0;i<38;i++){
+   const contract={implementation_bindings:Array.from({length:8},(_,j)=>({kind:'code',...source,path:`src/file${(i*8+j)%46}.js`}))};
+   const actual=await validateImplementationBindings(contract,b=>readActivityBinding(b,d),{});expect(actual).toEqual(await validateImplementationBindings(contract,async()=>body,{}));verified.push(...actual);
+  }
+  expect(verified).toHaveLength(304);expect(calls).toHaveLength(46);await readActivityBinding({kind:'code',...source,path:'src/file0.js'},{...d});expect(calls).toHaveLength(47);
+  await expect(validateImplementationBindings({implementation_bindings:[{kind:'code',...source,path:'src/file0.js',digest:'sha256:'+'0'.repeat(64)}]},b=>readActivityBinding(b,d),{})).rejects.toThrow(/digest/);expect(calls).toHaveLength(47);
+ });
+ it('repo/revision/path隔离、失败不缓存且命中检查deadline/取消',async()=>{
+  const {d,calls}=fixture(),binding={kind:'code',...source,path:'same/SKILL.md'};
+  for(const b of [binding,{...binding,repo:'org/repo'},{...binding,revision:'b'.repeat(40)},{...binding,path:'other.js'}])await readActivityBinding(b,d);expect(calls).toHaveLength(4);
+  d.fetchFn=async url=>{calls.push(url);return {ok:false,status:403};};const missing={...binding,path:'missing.js'};await expect(readActivityBinding(missing,d)).rejects.toThrow();d.fetchFn=async url=>{calls.push(url);return {ok:true,text:async()=>body};};await readActivityBinding(missing,d);expect(calls).toHaveLength(6);
+  d.deadline=Date.now()-1;await expect(readActivityBinding(binding,d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});d.deadline=Date.now()+60000;const control=new AbortController();control.abort();d.signal=control.signal;await expect(readActivityBinding(binding,d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});expect(calls).toHaveLength(6);
+ });
+});
+
+it('Code驻留8MiB或200项满后只不memo，仍返回固定原文',async()=>{
+ for(const [count,body] of [[201,'code'],[9,'x'.repeat(1024*1024)]]){
+  let reads=0;const d={token:'fixture',fetchFn:async()=>{reads++;return {ok:true,text:async()=>body};}};
+  const binding=i=>({kind:'code',repo:CONTRACT_REPO,revision:'a'.repeat(40),path:`src/${i}.js`});
+  for(let i=0;i<count;i++)expect(await readActivityBinding(binding(i),d)).toBe(body);
+  expect(await readActivityBinding(binding(count-1),d)).toBe(body);expect(reads).toBe(count+1);
+  await readActivityBinding(binding(0),d);expect(reads).toBe(count+1);
+ }
+});
+it('Code的await后预算超限不缓存，Skill不能命中同名Code',async()=>{
+ let reads=0;const d={deadline:Date.now()+60000,token:'fixture',fetchFn:async()=>{reads++;return {ok:true,text:async()=>{d.deadline=Date.now()-1;return 'code';}};}},b={kind:'code',repo:'org/repo',revision:'a'.repeat(40),path:'same/SKILL.md'};
+ await expect(readActivityBinding(b,d)).rejects.toMatchObject({code:'readiness_deadline_exceeded'});
+ d.deadline=Date.now()+60000;d.fetchFn=async()=>{reads++;return {ok:true,text:async()=> 'code'};};await readActivityBinding(b,d);await readActivityBinding({...b,kind:'skill'},d);expect(reads).toBe(3);
 });

@@ -3,7 +3,7 @@
 // 输入固定（静态截图金标集），断言形式 = 通过率 ≥ 阈值（阈值棘轮只许升，登记在
 // scripts/ratchet-registry.json 指标 goldset_eval_threshold）。
 // 外部服务(toapis)不可用 = 诚实红（failure-without-reason 反面），不 skip。
-// 用法: TOAPIS_API_KEY=... TOAPIS_BASE_URL=... node goldset-eval.mjs [--model gpt-5.5]
+// 用法: TOAPIS_API_KEY=... TOAPIS_BASE_URL=... node goldset-eval.mjs [--model gpt-5.6-sol-official]
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,7 @@ const THRESHOLD_PATH = path.join(__dirname, '../eval-threshold.json');
 
 const MODEL = process.argv.includes('--model')
   ? process.argv[process.argv.indexOf('--model') + 1]
-  : (process.env.GOLDSET_EVAL_MODEL || 'gpt-5.5');
+  : (process.env.GOLDSET_EVAL_MODEL || 'gpt-5.6-sol-official');
 
 const BASE_URL = process.env.TOAPIS_BASE_URL;
 const API_KEY = process.env.TOAPIS_API_KEY;
@@ -91,7 +91,7 @@ for (const s of manifest.samples) {
     imgPath,
     params: manifest.params,
   });
-  const correct = verdict.ok === s.expected;
+  const correct = verdict.parse_failed !== true && verdict.ok === s.expected;
   if (correct) pass++;
   results.push({ file: s.file, label: s.label, expected: s.expected, got: verdict.ok, correct, why: verdict.why });
   console.log(`  ${correct ? '✅' : '❌'} ${s.label} expected=${s.expected} got=${verdict.ok}${verdict.why ? ` (${verdict.why.slice(0, 60)})` : ''}`);

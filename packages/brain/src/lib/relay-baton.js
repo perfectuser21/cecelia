@@ -18,6 +18,7 @@
  * 幂等：子任务 source_id = handoff:<task>:<idx>（work_routing_receipts 唯一），
  *       待拍板决策按 (source_ref, topic) 去重，pending_resume 按 handoff.created_at 去重。
  */
+import { improvementRepair,readCommanderDiagnosis } from './commander-improvement.js';
 import { createRoutedTask } from '../work-routing-store.js';
 import { buildHandoff, saveHandoff } from '../handoff.js';
 import { RELAY_TERMINAL_STATUSES } from './task-status-transitions.js';
@@ -90,6 +91,7 @@ export function classifyNextSteps(list, { headed = false } = {}) {
       if (obj.change_kind) step.change_kind = String(obj.change_kind);
       if (obj.domain) step.domain = String(obj.domain);
       if (obj.priority) step.priority = String(obj.priority);
+      for(const key of ['repo_hint','map_scope_hint','base_sha','diagnosis'])if(Object.hasOwn(obj,key))step[key]=obj[key];
     }
     steps.push(step);
     if (reason) feedback.push({ index: idx, title, given_kind: given, kind, reason });
@@ -128,6 +130,11 @@ export function prepareHandoffForWrite(task, handoff) {
 export async function ensureHandoffOnComplete(pool, task, { sessionId = null } = {}) {
   const existing = task?.result?.handoff;
   if (existing && typeof existing === 'object' && existing.schema_version) return { handoff: existing, synthesized: false };
+  const diagnosis=readCommanderDiagnosis(task);
+  if(diagnosis){
+    const handoff=buildHandoff({task_id:task.id,title:task.title,verdict:'PASS',done:['完成只读诊断'],next_steps:diagnosis.next_steps});
+    await saveHandoff({pool},handoff);return {handoff,synthesized:false};
+  }
   const summary = task?.result?.summary || task?.summary || null;
   const handoff = buildHandoff({
     task_id: task.id,
@@ -182,20 +189,28 @@ export async function materializeNextSteps(pool, task, handoff, deps = {}) {
     if (step.kind === 'dispatch_headless') {
       const coding = Boolean(step.change_kind);
       try {
+        if(coding){
+          if(step.repo_hint!==undefined&&(typeof step.repo_hint!=='string'||!step.repo_hint.trim()))throw Object.assign(Error('invalid_relay_repository'),{code:'invalid_relay_repository'});
+          if(step.map_scope_hint!==undefined&&(!Array.isArray(step.map_scope_hint)||!step.map_scope_hint.length||step.map_scope_hint.some(v=>typeof v!=='string'||!v.trim())))throw Object.assign(Error('invalid_relay_scope'),{code:'invalid_relay_scope'});
+          if(step.base_sha!==undefined&&!/^[a-f0-9]{40}$/.test(step.base_sha))throw Object.assign(Error('invalid_relay_base_sha'),{code:'invalid_relay_base_sha'});
+        }
+        const repair=improvementRepair(task,step);
+        if(repair&&!coding)throw Object.assign(Error('commander_improvement_coding_required'),{code:'commander_improvement_coding_required'});
         const routed = await create(pool, {
           source: 'child',
-          source_id: `handoff:${task.id}:${i}`,
+          source_id: repair?.source_id||`handoff:${task.id}:${i}`,
           title: step.title,
-          description: step.detail || `来自上一棒「${task.title || task.id}」的 handoff.next_steps[${i}]`,
+          description: repair?.description||step.detail || `来自上一棒「${task.title || task.id}」的 handoff.next_steps[${i}]`,
           // 编码步默认 coding_workflow（A2）：路由按 mutation_intent=write 改投 runner；非 runner 仓库抛 runner_repo_unsupported 进 skipped
           requested_task_type: step.task_type || (coding ? 'coding_workflow' : 'data'),
           declared_domain: step.domain || (coding ? 'coding' : 'operations'),
           mutation_intent: coding ? 'write' : 'none',
           declared_change_kind: coding ? step.change_kind : null,
-          repo_hint: coding ? (parentPayload.repo || parentPayload.base_repo || null) : null,
-          map_scope_hint: coding ? (Array.isArray(parentPayload.map_scope) ? parentPayload.map_scope : []) : [],
+          repo_hint: coding ? (step.repo_hint??parentPayload.repo??parentPayload.base_repo??null) : null,
+          map_scope_hint: coding ? (step.map_scope_hint??(Array.isArray(parentPayload.map_scope) ? parentPayload.map_scope : [])) : [],
+          ...(coding&&step.base_sha?{base_sha:step.base_sha}:{}),
           parent_task_id: rootId,
-          metadata: { lane: 'AI', from_handoff: task.id, relay_step_index: i },
+          metadata: { lane: 'AI', from_handoff: task.id, relay_step_index: i,...(repair?.metadata||{}) },
           task: {
             status: 'queued',
             priority: step.priority || task.priority || 'P2',

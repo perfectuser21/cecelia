@@ -251,7 +251,7 @@ describe('pickCandidates 多仓库口径', () => {
 describe('loadConfig 多仓库', () => {
   it('默认启用 cecelia + zenithjoy（C7 开闸）：cfg 自身仍是默认仓 cecelia 视图（状态命名空间为空）', () => {
     const c = loadConfig({ HOME: '/h' });
-    expect(c.repos.map((r) => r.key)).toEqual(['cecelia', 'zenithjoy-workspace']);
+    expect(c.repos.map((r) => r.key)).toEqual(['cecelia', 'zenithjoy-workspace', 'zenithjoy-skills']);
     expect(c.repos[1]).toMatchObject({ clone: '/h/perfect21/zenithjoy-cw-runner', worktreeBase: '/h/worktrees/zenithjoy-cw', stateNs: 'zenithjoy-workspace', automerge: false });
     expect(c.repos[0]).toMatchObject({ clone: '/h/perfect21/cecelia-cw-runner', worktreeBase: '/h/worktrees/cecelia-cw', stateNs: '' });
     expect(c).toMatchObject({ repoKey: 'cecelia', repoSlug: 'perfectuser21/cecelia', stateNs: '' });

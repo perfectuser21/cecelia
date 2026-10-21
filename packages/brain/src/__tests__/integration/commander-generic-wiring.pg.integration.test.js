@@ -10,6 +10,7 @@ import request from 'supertest';
 import yaml from 'js-yaml';
 import serverSource from '../../../server.js?raw';
 import releaseWorkflowSource from '../../../../../.github/workflows/pilot-release-verification.yml?raw';
+import { createReleasesRouter } from '../../routes/releases.js';
 import { createWorkflowCommanderRouter } from '../../routes/workflow-commander.js';
 import { TASK_CREATION_INVENTORY } from '../../task-creation-inventory.js';
 import { prepareCommander } from '../../lib/commander-v2-dispatch.js';
@@ -41,8 +42,8 @@ it('正式server挂载的HTTP回调鉴权后写真实运行事件，重放不重
   fixture = await releaseEvidenceDatabase(); const db = fixture.db;
   await db.query('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS result jsonb,ADD COLUMN IF NOT EXISTS task_type text,ADD COLUMN IF NOT EXISTS claimed_by text,ADD COLUMN IF NOT EXISTS claimed_at timestamptz,ADD COLUMN IF NOT EXISTS executor_kind text');
   await db.query(readFileSync(new URL('../../../migrations/268_task_events.sql', import.meta.url), 'utf8'));
-  const release = (await createRelease(db, fixture.releaseInput)).release;
-  const observation = (await recordReleaseObservation(db, release.id, fixture.observationInput, { trustedCollector: 'fixture-collector' })).observation;
+  const release = (await createRelease(db, { ...fixture.releaseInput, environment: 'production' })).release;
+  const observation = (await recordReleaseObservation(db, release.id, { ...fixture.observationInput, environment: 'production' }, { trustedCollector: 'fixture-collector' })).observation;
   const definition = fixture.runInput(release, observation); delete definition.source_kind; delete definition.external_origin;
   const contract = { key: 'report', input_schema: { type: 'object' }, resources: {}, recovery: { max_attempts: 1, total_timeout_sec: 1200, cleanup_timeout_sec: 60, retry_safe: false } };
   const id = randomUUID();
@@ -78,4 +79,14 @@ it('实际发布workflow前置脚本接受登记scope，拒绝跨仓、未知sco
   const run = extra => spawnSync('bash', ['-c', job.steps[0].run], { env: { PATH: `${root}:/usr/bin:/bin`, SOURCE_REPO: repo, CALLER_REPO: repo, HEAD: sha, CALLER_SHA: sha, MAP_SCOPE: 'commander-generic', FIXTURE_MAIN: sha, ...extra }, encoding: 'utf8' });
   expect(run({}).status).toBe(0);
   for (const extra of [{ MAP_SCOPE: 'unregistered' }, { CALLER_REPO: 'elsewhere/repo' }, { CALLER_SHA: 'b'.repeat(40) }, { FIXTURE_MAIN: 'b'.repeat(40) }]) expect(run(extra).status).not.toBe(0);
+});
+
+it('正式release HTTP入口与真实Postgres接受按完整SHA隔离的staging环境',async()=>{
+ fixture=await releaseEvidenceDatabase();const environment=`staging:${'a'.repeat(40)}`;
+ process.env.CECELIA_INTERNAL_TOKEN='fixture-http-only';
+ const app=express();app.use(express.json());app.use('/releases',createReleasesRouter({pool:fixture.db}));
+ const response=await request(app).post('/releases').set('X-Internal-Token','fixture-http-only').send({...fixture.releaseInput,environment});
+ expect(response.status).toBe(201);expect(response.body.release.environment).toBe(environment);
+ const readback=(await fixture.db.query('SELECT environment FROM release_versions WHERE id=$1',[response.body.release.id])).rows[0];
+ expect(readback.environment).toBe(environment);
 });

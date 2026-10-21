@@ -10,6 +10,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/lib/__tests__/version-identity-preflight.test.js',
   'src/lib/__tests__/integration/task-run-workflow.test.js',
   'src/__tests__/integration/commander-generic-wiring.pg.integration.test.js',
+  'src/__tests__/integration/commander-improvement-relay.pg.integration.test.js',
   'src/__tests__/integration/workflow-authoring-source-isolation.pg.integration.test.js',
   'src/__tests__/integration/workflow-authoring-freeze.pg.integration.test.js',
   'src/lib/__tests__/integration/commander-v2.test.js',

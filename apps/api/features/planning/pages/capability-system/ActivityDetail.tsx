@@ -53,7 +53,7 @@ export default function ActivityDetail({
           ? usage.activity_definition_version_id || "unknown"
           : activity.current_definition_version_id || "unknown"}
       </p>
-      <InvocationPanel target={{ kind: "activity", id: activity.id, definition_version_id: usage ? usage.activity_definition_version_id : activity.current_definition_version_id }} />
+      <InvocationPanel schedulerOnly={activity.consumers.some(c => registry.workflows.some(w => w.id === c.workflow_id && w.key === 'workflow_assembly_reconcile.internal'))} target={{ kind: "activity", id: activity.id, definition_version_id: usage ? usage.activity_definition_version_id : activity.current_definition_version_id, slot_key: usage?.slot_key }} />
       <h3 className="mb-2 mt-5 font-semibold">
         被谁引用 · {activity.consumers?.length || 0}
       </h3>

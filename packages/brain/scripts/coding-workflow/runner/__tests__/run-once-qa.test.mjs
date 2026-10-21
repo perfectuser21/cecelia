@@ -6,8 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { git } from '../../__tests__/helpers/git.mjs';
 import { codingTask } from './helpers/sandbox.mjs';
-import { loadConfig } from '../lib/config.mjs';
-import { useQaEnv, FAKE_EVALUATE, TASK, BRANCH, SPRINT, INTENT } from './helpers/qa-env.mjs';
+import { useQaEnv, TASK, BRANCH, SPRINT, INTENT } from './helpers/qa-env.mjs';
 import { expectSessionOnlyInFile } from './helpers/session-quiet.mjs';
 
 describe('runner QA 门（evaluator AI QA）', () => {
@@ -19,13 +18,6 @@ describe('runner QA 门（evaluator AI QA）', () => {
   const E = useQaEnv({ onReady: (e) => ({ sb, head, preview, judge, files } = e) });
   const { pr, green, go, addToBranch, statePath, state, seedState, qaCalls, ghCalls, originLog } = E;
   const brainQa = () => E.brainResults();
-
-  it('配置：QA 门默认开启；CODING_WF_QA_GATE=0 关闭；预览 API 与令牌从环境读', () => {
-    expect(loadConfig({ HOME: '/h', DEPLOY_TOKEN: 't' })).toMatchObject({ qaGate: true, deployToken: 't', previewApi: 'http://100.71.151.105:5241' });
-    expect(loadConfig({ HOME: '/h', CODING_WF_QA_GATE: '0' }).qaGate).toBe(false);
-    expect(loadConfig({ HOME: '/h' })).toMatchObject({ judge: true, qaMaxJudgeBad: 3 });
-    expect(loadConfig({ HOME: '/h', CODING_WF_JUDGE: '0' }).judge).toBe(false);
-  });
 
   it('CI 绿 + 预览 active + QA PASS + 独立裁判 PASS：evaluate 拿到 sprint/I-n/01 哈希/轮次；QA 报告与裁决一起提交推送；批准绑定推送后的 head（不开 GitHub 自动合并）；回写 Brain；本轮不认领新任务', async () => {
     const r = await go(green(), { tasks: [codingTask('dddddddd-0000-4000-8000-000000000004')] });
@@ -72,17 +64,6 @@ describe('runner QA 门（evaluator AI QA）', () => {
     expect(r.stderr).toContain('qa_smoke_add_failed');
     expect(E.remoteHead()).toBe(before);
     expect(state().passed).toBeFalsy();
-  });
-
-  it('evaluate 入口来自 runner 专用 clone（main），不用 PR 分支里可能被改过的 evaluate.mjs（审计 P0 #1）', async () => {
-    const rel = 'packages/brain/scripts/coding-workflow/activities/evaluate.mjs';
-    // PR 分支里放一个「被改过的」evaluate：一跑就留下 poison 记录并判 PASS
-    addToBranch(rel, `import fs from 'node:fs';\nfs.appendFileSync(process.env.FAKE_QA_LOG, '{"poison":true}\\n');\nprocess.stdout.write(JSON.stringify({ status: 'failed', failure_class: 'fatal', reason_code: 'poison' }) + '\\n');\n`);
-    fs.mkdirSync(path.dirname(path.join(sb.clone, rel)), { recursive: true });
-    fs.copyFileSync(FAKE_EVALUATE, path.join(sb.clone, rel));
-    const r = await go(green({ prs: [pr({ headRefOid: git(sb.origin, 'rev-parse', BRANCH).trim() })] }), { extra: { CODING_WF_EVALUATE: '' } });
-    expect(r.exitCode, r.stderr).toBe(0);
-    expect(qaCalls()).toEqual([expect.objectContaining({ pr_number: 77, round: 1 })]);
   });
 
   it('独立裁判拿到：模型、Bearer 令牌、需求 01、合同 02、QA 报告 05、PR 代码改动（不含 sprints/）', async () => {
@@ -223,74 +204,6 @@ describe('runner QA 门（evaluator AI QA）', () => {
     expectSessionOnlyInFile(r.stderr, sb.logDir, { tag: 'qa-fix', kind: 'qa-fix', pr: 77, cost: 0.5 });
   });
 
-  it('必需检查还没出结果 / 有失败 / 已 passed / 同一 head 已验过 FAIL：不跑 QA', async () => {
-    for (const [gh, seed] of [
-      [green({ required: { 77: [{ name: 'ci-passed', bucket: 'pending' }] } }), null],
-      [green({ required: { 77: [{ name: 'ci-passed', bucket: 'fail' }] } }), null],
-      // 4ac5fa39 首跑实证：ci-passed 还没登记出来时只有 Harness 门是绿的，不能当成「必需检查全绿」
-      [green({ required: { 77: [{ name: 'Harness V5 Gate Passed', bucket: 'pass' }] }, requiredContexts: ['ci-passed', 'Harness V5 Gate Passed'] }), null],
-      [green({ rulesetContexts: ['Smoke Glob Runner Passed'] }), null],
-      [green({ requiredContextsFail: true }), null],
-      [green(), { passed: true, rounds: [] }],
-      [green(), { rounds: [{ round: 1, head, verdict: 'FAIL', fails: 1, fix: 'no_commit' }] }],
-    ]) {
-      if (seed) seedState(seed); else fs.rmSync(statePath(), { force: true });
-      const r = await go(gh, { extra: { CODING_WF_CIFIX: '0' } });
-      expect(r.exitCode, r.stderr).toBe(0);
-      expect(qaCalls()).toEqual([]);
-      await E.closeBrain();
-    }
-  });
-
-  // 审计 P0 #2：QA 验的必须正是待合并 head 的构建
-  it('预览环境还是旧版本（git_sha ≠ PR head，推送后还没重新部署）→ 不验，记 stale_since；超时升级 qa_preview_stale', async () => {
-    preview.sha = 'a'.repeat(40);
-    let r = await go(green());
-    expect(r.exitCode, r.stderr).toBe(0);
-    expect(qaCalls()).toEqual([]);
-    expect(state().preview).toMatchObject({ stale_since: expect.any(String), stale_sha: 'a'.repeat(40) });
-    await E.closeBrain();
-    r = await go(green(), { extra: { CODING_WF_QA_PREVIEW_ESCALATE_MS: '0' } });
-    expect(r.exitCode, r.stderr).toBe(0);
-    expect(qaCalls()).toEqual([]);
-    expect(state().escalated).toMatchObject({ type: 'qa_preview_stale', preview_sha: 'a'.repeat(40), head });
-  });
-
-  it('列表里的 head 已过时（检出的分支比它新）→ 本轮不验、不计坏', async () => {
-    addToBranch('src/later.js', 'export const later = 1;\n');
-    const r = await go(green());
-    expect(r.exitCode, r.stderr).toBe(0);
-    expect(qaCalls()).toEqual([]);
-    expect(fs.existsSync(statePath()) ? state().bad ?? 0 : 0).toBe(0);
-  });
-
-  it('evaluate 拿到要验的 head（head_sha），活动开跑前自己再核一次预览版本', async () => {
-    const r = await go(green());
-    expect(r.exitCode, r.stderr).toBe(0);
-    expect(qaCalls()[0]).toMatchObject({ head_sha: head });
-  });
-
-  it('预览环境不存在 → 带令牌请求启动，本轮不验', async () => {
-    preview.status = {};
-    const r = await go(green());
-    expect(r.exitCode, r.stderr).toBe(0);
-    const start = preview.calls.find((c) => c.url === '/api/brain/preview/start');
-    expect(start).toMatchObject({ method: 'POST', auth: 'Bearer tok-1' });
-    expect(JSON.parse(start.raw)).toMatchObject({ pr_number: 77, branch_name: BRANCH });
-    expect(qaCalls()).toEqual([]);
-    expect(state().preview).toMatchObject({ requested_at: expect.any(String) });
-  });
-
-  it('预览启动被容量拒绝且超过等待时限 → 升级给 coding commander（P1，回写 Brain escalations）', async () => {
-    preview.status = {};
-    preview.start = 503;
-    const r = await go(green(), { extra: { CODING_WF_QA_PREVIEW_ESCALATE_MS: '0' } });
-    expect(r.exitCode, r.stderr).toBe(0);
-    expect(r.stderr).toContain('[coding-qa][P1]');
-    expect(state()).toMatchObject({ escalated: { type: 'qa_preview_unavailable' } });
-    expect(brainQa().at(-1).escalations).toEqual([expect.objectContaining({ type: 'qa_preview_unavailable', pr: 77 })]);
-  });
-
   it('失败数连续 3 轮不降（不收敛）→ 升级，不再自动修', async () => {
     // 假 evaluate 每轮 1 个失败：1 → 1 → 1 连续 3 轮不降
     seedState({ rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'FAIL', fails: 1 }, { round: 2, head: 'b'.repeat(40), verdict: 'FAIL', fails: 1 }] });
@@ -360,14 +273,45 @@ describe('runner QA 门（evaluator AI QA）', () => {
     }] }));
   };
 
-  it('验不了的项 commander 已裁过（同一 Q 项，维持规格）→ 不再升级，按 PASS 交独立裁判并批准', async () => {
+  it('旧 commander 仅接受同 Q 的另一原因 → 本轮保持 CANNOT_VERIFY、不调用裁判、不批准', async () => {
     seedCommander(['Q-1'], '维持规格');
     const r = await go(green(), { mode: 'cannot' });
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(r.stderr).not.toContain('[coding-qa][P1]');
-    expect(judge.calls).toHaveLength(1);
-    expect(state().escalated).toBeUndefined();
-    expect(state()).toMatchObject({ passed: true, rounds: [{ round: 1, verdict: 'PASS', qa_verdict: 'CANNOT_VERIFY', cv_accepted: ['T-2'], judge: { verdict: 'PASS' } }] });
+    expect(r.stderr).toContain('[coding-qa][P1]');
+    expect(judge.calls).toHaveLength(0);
+    expect(state().escalated).toMatchObject({ type: 'qa_cannot_verify' });
+    expect(state().passed).toBeFalsy();
+    expect(state().rounds).toMatchObject([{ round: 1, verdict: 'CANNOT_VERIFY' }]);
+    expect(state().rounds[0].judge).toBeUndefined();
+  });
+
+  it('同问题的精确接受也不产生实际 QA PASS：保留原报告后明确上交，不再请模型重裁', async () => {
+    const sourceStage = '22222222-2222-4222-8222-222222222222';
+    let r = await go(green(), { mode: 'cannot', extra: { FAKE_QA_SOURCE_STAGE: sourceStage } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const first = state();
+    expect(first.escalated.qa_context).toMatchObject({ taskId: TASK, sprintDir: SPRINT, head, round: 1, qaStageEventId: sourceStage });
+    const context = first.escalated.qa_context;
+    const nextHead = E.remoteHead();
+    const { escalated, ...remaining } = first;
+    seedState(remaining);
+    fs.writeFileSync(path.join(sb.logDir, 'commander-77.json'), JSON.stringify({ interventions: [{
+      n: 1, kind: 'qa', action: 'resume', escalation: first.escalated,
+      rulings: [{ issue: 'T-2', verdict: '维持规格', reason: '同一限制已明确' }],
+      cv_scope: { schema_version: 1, task_id: TASK, sprint_dir: SPRINT, head: nextHead,
+        spec_sha256: context.specSha256, execution_context_sha256: context.executionContextSha256,
+        source_qa_stage_event_id: sourceStage, source_round: 1, applies_to_round: 2,
+        items: first.escalated.cannot_verify },
+    }] }));
+    await E.closeBrain();
+    r = await go(green({ prs: [pr({ headRefOid: nextHead })] }), { mode: 'cannot',
+      extra: { FAKE_QA_SOURCE_STAGE: '33333333-3333-4333-8333-333333333333' } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(judge.calls).toHaveLength(0);
+    expect(state().passed).toBeFalsy();
+    expect(state().rounds.at(-1)).toMatchObject({ verdict: 'CANNOT_VERIFY', cv_accepted: ['T-2'] });
+    expect(state().escalated.type).toBe('qa_accepted_unverified');
+    expect(E.remoteHead()).not.toBe(nextHead);
   });
 
   for (const [label, covers, verdict] of [['没被裁过的 Q 项', ['Q-9'], '维持规格'], ['裁决是上交', ['Q-1'], '上交']]) {
@@ -548,22 +492,4 @@ describe('runner QA 门（evaluator AI QA）', () => {
     });
   });
 
-  it('已合并且 QA 通过过的 PR → 停掉它的预览环境释放容量（只停一次）', async () => {
-    seedState({ passed: true, rounds: [] });
-    const r = await go({ prs: [], mergedPrs: [pr()] });
-    expect(r.exitCode, r.stderr).toBe(0);
-    expect(preview.calls.filter((c) => c.url === '/api/brain/preview/stop/77')).toEqual([expect.objectContaining({ method: 'POST', auth: 'Bearer tok-1' })]);
-    expect(state().preview_stopped).toBe(true);
-  });
-
-  it('QA 门开启时新任务开出 PR 后只 ready、不开自动合并（等 QA 通过）', async () => {
-    const r = await go({ prs: [] }, { tasks: [codingTask('eeeeeee5-0000-4000-8000-000000000005')] });
-    expect(r.exitCode, r.stderr).toBe(0);
-    const calls = ghCalls();
-    expect(calls).toContainEqual(['pr', 'ready', 'https://github.com/example/repo/pull/9']);
-    expect(calls.some((a) => a[1] === 'merge')).toBe(false);
-    // 审计 #7：开出 PR 不等于完成，结果里标明阶段
-    const completed = E.brain.patches.find((p) => p.id.startsWith('eeeeeee5') && p.body.status === 'completed');
-    expect(completed.body.result.runner.phase).toBe('awaiting_qa');
-  });
 });

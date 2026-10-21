@@ -66,8 +66,8 @@ describe('resolveRepo：别名归一', () => {
 });
 
 describe('enabledRepos：CODING_WF_REPOS 开关', () => {
-  it('默认 = repos.json 里 enabled=true 的（C7 开闸后：cecelia + zenithjoy-workspace，按表顺序）', () => {
-    expect(enabledRepos({}, repos).map((r) => r.key)).toEqual(['cecelia', 'zenithjoy-workspace']);
+  it('默认按表顺序启用 Cecelia、业务仓和 Skills 仓', () => {
+    expect(enabledRepos({}, repos).map((r) => r.key)).toEqual(['cecelia', 'zenithjoy-workspace', 'zenithjoy-skills']);
   });
 
   it('CODING_WF_REPOS 只列 cecelia = 紧急关 zenithjoy 的开关（不用改表）', () => {

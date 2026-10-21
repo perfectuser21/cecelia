@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { git } from '../../__tests__/helpers/git.mjs';
 import { useQaEnv, TASK, BRANCH, SPRINT } from './helpers/qa-env.mjs';
 import { expectSessionOnlyInFile } from './helpers/session-quiet.mjs';
@@ -33,6 +34,21 @@ describe('coding commander（升级后自动裁决）', () => {
   const qaEscalated = (type, extra = {}) => seedState({ rounds: [{ round: 1, head: 'a'.repeat(40), verdict: 'PASS', fails: 1, judge: { verdict: 'FAIL', failure_class: 'contract_gap', file: '06-judge-r1.md' } }],
     escalated: { type, pr: 77, at: '2026-10-11T00:00:00.000Z', ...extra } });
 
+  it('Commander仅授权本次ruling独享目录，不授整个QA合并状态目录，控制器另存canonical裁决', async () => {
+    qaEscalated('judge_contract_gap');
+    const argsFile = path.join(sb.root, 'commander-args.json');
+    const r = await go(green(), { extra: { FAKE_CIFIX_ARGS: argsFile } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
+    const dirs = args.flatMap((v, i) => v === '--add-dir' ? [args[i + 1]] : []);
+    expect(dirs).toHaveLength(1);expect(dirs).not.toContain(sb.logDir);
+    expect(path.dirname(dirs[0])).toBe(sb.logDir);
+    const prompt = fs.readFileSync(files.prompt, 'utf8');
+    const ruling = /^RULING_PATH: (.+)$/m.exec(prompt)[1].trim();expect(path.dirname(ruling)).toBe(dirs[0]);
+    expect(JSON.parse(fs.readFileSync(path.join(sb.logDir, 'commander-77-1-ruling.json'), 'utf8')).action).toBe('resume');
+    expect(cmdState().interventions).toHaveLength(1);
+  });
+
   it('QA 门升级 judge_contract_gap + commander 维持规格并追加裁决节 → 规格追加、07 裁决记录提交推送；解除升级；Brain 记 commander_overrides；上报 commander span', async () => {
     qaEscalated('judge_contract_gap', { issues: ['J-1'], file: `${SPRINT}/06-judge-r1.md` });
     const r = await go(green(), { mode: 'cmd-amend' });
@@ -47,6 +63,29 @@ describe('coding commander（升级后自动裁决）', () => {
     expect(overrides()).toEqual([expect.objectContaining({ by: 'coding-commander', escalation: expect.objectContaining({ type: 'judge_contract_gap' }) })]);
     expect(E.brain.spans).toContainEqual(expect.objectContaining({ occurrence_key: 'commander:77:c1', outcome: 'pass' }));
     expect(bark.calls).toEqual([]);
+  });
+
+  it('接受无法验证问题只登记精确下一轮 scope，实际 QA 仍未通过', async () => {
+    const stage = '22222222-2222-4222-8222-222222222222';
+    const limitation = { id: 'T-2', covers: ['Q-1'], reason: '预览缺少 ffprobe' };
+    const originalSpec = git(sb.origin, 'show', `${BRANCH}:${SPRINT}/02-spec.md`);
+    const context = { taskId: TASK, sprintDir: SPRINT, head: remoteHead(), round: 1,
+      qaStageEventId: stage, specSha256: crypto.createHash('sha256').update(originalSpec).digest('hex'),
+      executionContextSha256: 'c'.repeat(64) };
+    seedState({ rounds: [{ round: 1, head: context.head, verdict: 'CANNOT_VERIFY', fails: 0,
+      source_stage_event_id: stage }], escalated: { type: 'qa_cannot_verify', round: 1,
+      pr: 77, at: '2026-10-11T00:00:00.000Z', cannot_verify: [limitation], qa_context: context } });
+    const ruling = { action: 'resume', rulings: [{ issue: 'T-2', verdict: '维持规格', reason: '限制已明确' }], summary: '记录限制，仍须实际验证' };
+    const r = await go(green(), { mode: 'cmd-resume', extra: { FAKE_CMD_RULING: JSON.stringify(ruling) } });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const expectedSpec = git(sb.origin, 'show', `${BRANCH}:${SPRINT}/02-spec.md`);
+    expect(cmdState().interventions[0].cv_scope).toMatchObject({ schema_version: 1,
+      task_id: TASK, sprint_dir: SPRINT, head: remoteHead(),
+      spec_sha256: crypto.createHash('sha256').update(expectedSpec).digest('hex'),
+      execution_context_sha256: context.executionContextSha256,
+      source_qa_stage_event_id: stage, source_round: 1, applies_to_round: 2, items: [limitation] });
+    expect(state().passed).toBeFalsy();
+    expect(state().rounds[0].verdict).toBe('CANNOT_VERIFY');
   });
 
   it('Cecelia commander 独立07提交同时登记来源，真实裸仓回读无孤立记录', async () => {
@@ -71,14 +110,15 @@ describe('coding commander（升级后自动裁决）', () => {
   });
 
   // 真实 Opus 演练（金丝雀 5 r2 重放）：裁决文件在 logDir（worktree 外），Write 工具被 permission_denials 拒，会话碰巧改用 Bash 写成
-  it('commander 会话授权写日志目录（--add-dir <logDir>），裁决文件在那里', async () => {
+  it('commander会话只授权本轮裁决子目录，裁决路径位于该精确目录', async () => {
     qaEscalated('judge_contract_gap', { issues: ['J-1'] });
     const argsFile = path.join(sb.root, 'claude-args.json');
     const r = await go(green(), { mode: 'cmd-resume', extra: { FAKE_CIFIX_ARGS: argsFile } });
     expect(r.exitCode, r.stderr).toBe(0);
     const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
-    expect(args[args.indexOf('--add-dir') + 1]).toBe(sb.logDir);
-    expect(fs.readFileSync(files.prompt, 'utf8')).toContain(`RULING_PATH: ${sb.logDir}/`);
+    const granted = args[args.indexOf('--add-dir') + 1];
+    expect(path.dirname(granted)).toBe(sb.logDir);expect(granted).not.toBe(sb.logDir);
+    expect(fs.readFileSync(files.prompt, 'utf8')).toContain(`RULING_PATH: ${granted}/ruling.json`);
   });
 
   it('commander 会话输出只落 commander-<pr>-<n>.log，主日志只一行摘要', async () => {

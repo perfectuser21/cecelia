@@ -128,3 +128,7 @@ curl localhost:5221/api/brain/alertness
 ### AI 自我检测
 23. 当输出中出现"手动/您可以/暂时禁用/等待用户/绕过/临时/跳过/忽略/先不管/稍后"这类推诿性措辞时，必须停下重新分析并自动解决问题，不能把困难推给用户。
 <!-- HARD_RULES:END -->
+
+## 技能维护源
+
+技能正文与参考资料只在 `perfectuser21/zenithjoy-skills` 维护。本仓 `.skills-source.json` 固定版本；首次使用运行 `bash scripts/ensure-skills-source.sh`（还原并验证），原路径为生成文件。修改技能应改中心仓后更新本仓版本引用，禁止把正文重新提交到本仓。运行实现仍在本仓。

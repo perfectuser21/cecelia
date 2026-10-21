@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runActivityProcess } from './helpers/run-activity.mjs';
 import { git, gitPlain } from './helpers/git.mjs';
+import { withRecordProvenance, controllerIdentity, captureNativeExecution, sealStageEvidence } from '../lib/record-provenance.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = path.join(HERE, '../activities/publish.mjs');
@@ -18,6 +19,7 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
   let origin;
   let worktree;
   let ghLog;
+  let activityEntry;
 
   beforeAll(() => {
     fs.chmodSync(FAKE_GH, 0o755);
@@ -27,6 +29,7 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     origin = path.join(root, 'origin.git');
     worktree = path.join(root, 'wt');
     ghLog = path.join(root, 'gh.log');
+    activityEntry = ENTRY;
     gitPlain('init', '--bare', '-b', 'main', origin);
     gitPlain('clone', origin, worktree);
     git(worktree, 'config', 'user.name', 'Test');
@@ -53,7 +56,7 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     ...patch,
   });
   const run = (mode, patch, extraEnv = {}) =>
-    runActivityProcess(ENTRY, input(patch), {
+    runActivityProcess(activityEntry, input(patch), {
       CODING_WF_GH_BIN: FAKE_GH,
       FAKE_GH_MODE: mode,
       FAKE_GH_LOG: ghLog,
@@ -100,7 +103,24 @@ describe('publish 活动（临时裸仓 + 假 gh）', () => {
     fs.mkdirSync(path.join(worktree, sprint));
     fs.writeFileSync(path.join(worktree, sprint, '01-intent.md'), `---\ntask_id: ${TASK_ID}\nstep: intent\nupstream: []\n---\n# fixture\n`);
     const names = ['01-intent.md','01-invariants.md','02-spec.md','02-review.md','02-review-r1.md','02-review-r2.md','02-review-r3.md','02-response-r1.md','02-response-r2.md','03-build.md','04-evidence.md'];
-    for (const name of names.filter(name => name !== '01-intent.md')) fs.writeFileSync(path.join(worktree, sprint, name), `# fixture ${name}\n`);
+    const context = { root: path.join(root, 'protected'), worktree, taskId: TASK_ID, sprintDir: sprint,
+      controller: controllerIdentity(pathToFileURL(ENTRY)) };
+    for (const name of names) {
+      const stage = name.startsWith('01-') ? 'intent' : name === '02-spec.md' ? 'spec'
+        : name.startsWith('02-') ? 'spec_review' : name.startsWith('03-') ? 'build' : 'verify';
+      const round = Number(/-r(\d+)/.exec(name)?.[1] ?? 0);
+      if (name !== '01-intent.md') fs.writeFileSync(path.join(worktree, sprint, name),
+        name === '01-invariants.md' || name.startsWith('02-response-') ? `# fixture ${name}\n`
+          : `---\ntask_id: ${TASK_ID}\nstep: ${stage}\nupstream: []\n---\n# fixture ${name}\n`);
+      withRecordProvenance({ ...context, stage, round }, () => {
+        if (stage !== 'intent') captureNativeExecution({ provider: 'codex', code: 0, stdout:
+          '{"type":"thread.started","thread_id":"fixture"}\n{"type":"turn.completed"}\n' });
+        sealStageEvidence({ files: [`${sprint}/${name}`], producer: stage === 'intent' ? 'controller' : 'model', result: { status: 'completed' } });
+      });
+    }
+    // 仅测试启动器注入显式隔离根；生产活动不接受任务 JSON / 环境变量覆盖。
+    activityEntry = path.join(root, 'publish-with-fixture-root.mjs');
+    fs.writeFileSync(activityEntry, `import { withRecordProvenance } from ${JSON.stringify(new URL('../lib/record-provenance.mjs', import.meta.url).href)};\nawait withRecordProvenance(${JSON.stringify({ ...context, stage: 'publish' })}, () => import(${JSON.stringify(pathToFileURL(ENTRY).href)}));\n`);
     const r = await run('new', { sprint_dir: sprint });
     expect(r.exitCode, r.stderr).toBe(0);
     const manifest = JSON.parse(git(origin, 'show', `${branch}:.implementation-source-relations.json`));

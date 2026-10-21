@@ -136,10 +136,10 @@ export function useQaEnv({ onReady } = {}) {
   };
   E.pr = (extra = {}) => ({ number: 77, headRefName: BRANCH, headRefOid: E.head, url: 'https://github.com/x/y/pull/77', isDraft: false, ...extra });
   E.green = (extra = {}) => ({ prs: [E.pr()], required: { 77: [{ name: 'ci-passed', bucket: 'pass' }] }, checks: { 77: [] }, ...extra });
-  E.go = async (ghState, { mode = 'pass', extra = {}, tasks = [], brainOptions = {} } = {}) => {
+  E.go = async (ghState, { mode = 'pass', extra = {}, tasks = [], brainOptions = {}, processRunner = runOnceProcess } = {}) => {
     fs.writeFileSync(E.files.gh, JSON.stringify(ghState));
     E.brain = await startFakeBrain({ tasks, ...brainOptions });
-    return runOnceProcess(runnerEnv(E.sb, E.brain.url, {
+    return processRunner(runnerEnv(E.sb, E.brain.url, {
       CODING_WF_QA_GATE: '1',
       CODING_WF_GH_BIN: FAKE_GH_CI,
       FAKE_GH_CI: E.files.gh,

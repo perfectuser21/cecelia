@@ -1,5 +1,6 @@
 # Smoke PASS 基线（allowlist）
 # 列表内脚本失败 → CI 红（棘轮闸）
+authoring-execution-smoke.sh
 # 新增脚本默认须加入此文件或 smoke-denylist.txt（新债不许欠）
 task-intake-smoke.sh
 agent-model-change-smoke.sh
@@ -56,6 +57,9 @@ conversation-capture-multitool-smoke.sh
 conversation-capture-smoke.sh
 conversation-ttl-archiver-smoke.sh
 conversations-smoke.sh
+crm-canonical-smoke.sh
+crm-contact-resolve-smoke.sh
+crm-friend-onboard-smoke.sh
 credential-freshness-smoke.sh
 crontab-ledger-smoke.sh
 crystal-coding-evidence-smoke.sh
@@ -413,6 +417,7 @@ release-evidence-smoke.sh
 capability-system-smoke.sh
 capability-kr-regression-smoke.sh
 pilot-release-verification-smoke.sh
+central-skill-fixed-source-smoke.sh
 phone-runner-infra-smoke.sh
 dead-man-switch-usvps-smoke.sh
 alarm-ledger-smoke.sh
@@ -430,6 +435,7 @@ resource-health-smoke.sh
 release-line-smoke.sh
 qiumi-status-map-smoke.sh
 leadgen-notion-registry-smoke.sh
+leadgen-physical-adb-routing-smoke.sh
 coding-workflow-spans-smoke.sh
 skill-factory-board-smoke.sh
 strategic-decisions-category-smoke.sh
@@ -459,3 +465,8 @@ workflow-assembly-plan-smoke.sh
 directory-title-sync-smoke.sh
 tree-legacy-layout.sh
 workflow-assembly-registration-smoke.sh
+workflow-assembly-reconcile-smoke.sh
+
+workflow-assembly-native-smoke.sh
+
+infra-consumer-source-smoke.sh

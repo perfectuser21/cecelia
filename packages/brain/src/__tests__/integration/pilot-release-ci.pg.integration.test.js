@@ -2,7 +2,7 @@ import {it,expect} from 'vitest';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawnSync} from 'node:child_process';
 import express from 'express';
 import request from 'supertest';
 import {releaseEvidenceDatabase} from '../fixtures/release-evidence-db.js';
@@ -10,6 +10,13 @@ import {registerCapabilityRegression} from '../../lib/capability-regressions.js'
 import {exportImplementationSnapshot} from '../../lib/implementation-ci-snapshot.js';
 import {createReleasesRouter} from '../../routes/releases.js';
 import {runPilotReleaseVerification} from '../../../../../scripts/ci/pilot-release-verification.mjs';
+it('已迁移 Skill 在双 checkout 的 Pilot CLI 中验中央固定字节及失败 gap',()=>{
+ const root=new URL('../../../../../',import.meta.url).pathname;
+ const script=join(root,'packages/brain/scripts/smoke/central-skill-fixed-source-smoke.sh');
+ const result=spawnSync('bash',[script,'--scenario','invalid'],{cwd:root,encoding:'utf8',env:{...process.env,SMOKE_ALLOW_WRITE:'1'}});
+ expect(result.status,result.stderr).toBe(0);
+ expect(result.stdout).toContain('invalid: PASS (9 CLI runs)');
+});
 it.each([false,true])('真实Git固定M→中央导出→全计划Bash→HTTP发布；含规范raw描述=%s',async(rawImplementationDescriptions)=>{
  const root=mkdtempSync(join(tmpdir(),'pilot-release-http-'));let f;
  try{

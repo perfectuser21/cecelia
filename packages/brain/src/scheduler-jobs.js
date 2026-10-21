@@ -1,3 +1,4 @@
+import {runNativeReconcile} from './lib/workflow-assembly-native.js';
 import { runImageRetentionJanitor } from './image-retention-scheduler.js';
 import { startCompletionJobsLoop, stopCompletionJobsLoop } from './scheduler-completion-loop.js';
 import { runPhoneRpaDispatch } from './lib/phone-rpa-dispatch.js';
@@ -70,6 +71,7 @@ import { runOpsNotionPush } from './notion-push-sync.js';
 import { runOpsNotionIngest } from './ops-notion-ingest.js';
 import { runNotionInletIngest } from './notion-inlet-ingest.js';
 import { gtdSyncJobHandler } from './notion-gtd-sync.js';
+import { runCrmSyncJobs } from './crm/notion-sync.js';
 import { defaultExec } from './host-exec.js';
 import { maybeRunCrystalJudge } from './crystal-judge.js';
 import { reapOpenclawAgentRuns } from './openclaw-agent-executor.js';
@@ -178,13 +180,14 @@ export const JOBS = [
   { name: 'notion-directory', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runDirectoryJob(pool), description: '六层目录：先导入人工组织树，再按固定身份分批投影机器关系；锁与游标防重入，未知留缺口，读回后收据' },
   { name: 'notion-inlet-ingest', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runNotionInletIngest(pool), description: '✍️入口血管（三面模型PR②b，决策297ffee5）：遍历注册表 face=inlet&active 的库，「决策」库→decisions、员工Skill库zip→/api/skill-eval/upload；收据表幂等，人改了再收并留痕，机器不写入口库；自gate 5min' },
   { name: 'notion-gtd-sync', cadence: { everySec: 30 }, needsPool: true, timeoutMs: 30_000, livenessIntervalSec: 30, handler: (pool) => gtdSyncJobHandler(pool), description: '秋米中文GTD表↔英文Tasks库双向同步+入账+急停+回写（QIUMI_SYNC_ENABLED 门，handler 只确保 30s 自循环在跑并回报上次结果；活性按 handler 自报 liveness_at 算，09-24 卡死案；决策 b8abd28c，task b7efdbff）' },
+  { name: 'crm-notion-sync', cadence: { everySec: 300 }, needsPool: true, timeoutMs: 150_000, handler: runCrmSyncJobs, description: 'CRM登记源回读和Brain结果投影；CRM_SYNC_ENABLED显式启用，默认关闭' },
   { name: 'ops-notion-ingest', cadence: { everySec: 60 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionIngest(pool, { execFn: defaultExec }), description: '运行舱人工列回读（Notion→Brain，last_edited_time增量）。含停用意图落实——主理人拍板直接生效真停n8n，故幂等+留痕+失败落enable_error显红' },
   // 顺序要紧：先把编码线格子成败搬进判官口粮，再让判官判——反过来判的是上一轮的旧账
   { name: 'crystal-coding-evidence', cadence: { everySec: 600 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => syncCodingEvidence({ dbPool: pool }), description: '编码线九格证据同步（10min自gate，harness_attempts+sequencer_ledger→crystal_run_evidence，只补账不代判，判官口粮第二铲）' },
   { name: 'crystal-judge', cadence: { cron: '0 5 * * *', tz: BJ_TZ }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => maybeRunCrystalJudge(pool), description: '每日结晶判官（北京05:00窗口+当日去重，OpenClaw 八格六指标聚合→三态判决→每日结晶报告落库，Crystal 第4件）' },
   { name: 'openclaw-agent-reaper', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, completionCadenceMs: 60_000, handler: (pool) => reapOpenclawAgentRuns(pool), description: '秋米 openclaw-agent 收割（60s，读 MMV ~/brain-runs/<run_id>.exit → completed_no_pr/failed，PR3）' },
   { name: 'task-lease-reaper', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reapExpiredLeases(pool), description: '统一领单租约回收（派发总闸 G，任务 c5f6e683）：60s 收 task_leases 过期行——领单租约按任务类型现有语义回队（合同 onStale=requeue/release-claim-and-alert，到 max_retries 判 failed）或判 lost（外部执行体）；Brain 租约（openclaw-agent 自派，超时+15min）先探活 alive 续 15min、dead 宽限 10min 留专属收割、unknown 判 lost；回队/判 lost 同时释放该任务持有的设备锁' },
-  { name: 'workflow-commander-dispatch', cadence: { everySec: 60 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => runWorkflowCommanderDispatch(pool), description: 'Brain 主动派 workflow 给 work-commander（任务 f38e7cc2，决策 23cc0951/3c98fb36）：60s 一轮先收后派；queued 的 workflow_dispatch 按 config/factory-workflows.json commander 登记解析调度单（缺项 failed 不猜）→ 发布时段内 CAS 认领 → 领 Brain 设备锁（被占只等不接管）→ ssh MMV 起 openclaw agent --agent work-commander（调度单经 stdin）→ 收割读 ~/brain-runs/<run_id>.exit + COMMANDER_RESULT → completed/failed + 放锁' },
+  { name: 'workflow-commander-dispatch', cadence: { everySec: 60 }, completionCadenceMs: 60_000, livenessIntervalSec: 60, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => runWorkflowCommanderDispatch(pool), description: 'Brain 主动派 workflow 给 work-commander（任务 f38e7cc2，决策 23cc0951/3c98fb36）：60s 一轮先收后派；queued 的 workflow_dispatch 按 config/factory-workflows.json commander 登记解析调度单（缺项 failed 不猜）→ 发布时段内 CAS 认领 → 领 Brain 设备锁（被占只等不接管）→ ssh MMV 起 openclaw agent --agent work-commander（调度单经 stdin）→ 收割读 ~/brain-runs/<run_id>.exit + COMMANDER_RESULT → completed/failed + 放锁' },
   { name: 'script-reaper', cadence: { everySec: 10 }, needsPool: true, timeoutMs: 70_000, livenessIntervalSec: 10, handler: (pool) => reapLegacyScriptRuns(pool), description: 'SSH脚本独立10秒收割；每轮10项、4并发、稳定游标轮转，未知不结算' },
   { name: 'managed-script-reaper', cadence: { everySec: 10 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, livenessIntervalSec: 10, handler: (pool) => reapManagedScriptRuns(pool), description: '受管脚本独立收尾；真实回执、精确清理和原预约合同保持' },
   { name: 'node-onboarding', cadence: { everySec: 10 }, needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, livenessIntervalSec: 10, handler: (pool) => runNodeOnboardingJob(pool), description: '节点observer接入验收对账与受信 SSH 健康采样调度；不等待Linux外部phase' },
@@ -205,6 +208,7 @@ export const JOBS = [
   // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——
   // 本模块已 import ops-collector/notion-push-sync，反向 import 会成环（routes/sentinel.js 同款避坑）。
   // scheduler 行推 Notion 滞后一轮 60s，设计 §3.2 接受。
+  { name: 'workflow-assembly-reconcile', cadence: { everySec: 30 }, completionCadenceMs: 30_000, livenessIntervalSec: 30, needsPool: true, timeoutMs: 30_000, handler: pool => runNativeReconcile(pool), description: '原生维护流程：同一有界对账入口，固定版本runs及真实Activity span；业务修复仍仅scratch候选，不授正式发布资格' },
   { name: 'backbone-contract-sync', cadence: { everySec: 1800 }, needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runBackboneContractJob(pool), description: '主干活动契约 git→Brain→Notion（决策 0834e2fb / 92f6226b，任务 2fdd5f12）：真身 zenithjoy-workspace product-map/contracts/*.yaml，30min 自 gate 只读 GitHub API 比 contracts.json 活动哈希，变了才拉 YAML 写 journey_steps 只读副本（钉 commit 的正本链接），仓库删掉的活动标 deprecated；每轮把变更行推 Notion「Backbone Activities」镜子；同步连续失败超 2h 告 P1 一次' },
   { name: 'phone-registry-sync', cadence: { everySec: 1800 }, needsPool: true, timeoutMs: 180_000, livenessIntervalSec: 60, handler: pool => runPhoneRegistrySync(pool), description: '手机人写台账入口（任务cda0e3e8）：30min内容基线回灌；经MMV同代下发；每日持锁核验空闲设备账号，错号只提醒' },
   { name: 'notion-mirror-labels', cadence: { everySec: 72000 }, needsPool: true, timeoutMs: 120_000, handler: (pool) => runMirrorLabelJob(pool), description: '镜子库只读说明由注册表生成（任务 a7a6b8b4，交接单第5步）：notion_projection_map 里 active 推送镜子的库描述开头写「🔒 只读镜子：由 Brain <表> 经 <血管> 推送…」，已是同样说明零写，两面库/无 Brain 表的跳过；进程内 20h 自 gate' },
@@ -225,7 +229,7 @@ const PROJECTION_JOB_NAME_SET = new Set([
 export const PROJECTION_JOBS = JOBS.filter(job => PROJECTION_JOB_NAME_SET.has(job.name));
 // GTD幂等初始化、窄授权手机派发和收尾共用独立循环，避免重启入口排在慢job后。
 // recurring-tasks 也在这里：定时到点建单不能排在串行慢轮后面（轮长 3-9 分钟 = 定时误差，任务 942491c2）。
-const COMPLETION_JOB_NAMES = new Set(['script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding', 'phone-rpa-dispatch', 'openclaw-agent-reaper', 'notion-gtd-sync', 'recurring-tasks']);
+const COMPLETION_JOB_NAMES = new Set(['script-reaper', 'managed-script-reaper', 'node-onboarding', 'node-execution-onboarding', 'phone-rpa-dispatch', 'openclaw-agent-reaper', 'notion-gtd-sync', 'recurring-tasks', 'workflow-assembly-reconcile', 'workflow-commander-dispatch']);
 export const COMPLETION_JOBS = JOBS.filter(job => COMPLETION_JOB_NAMES.has(job.name));
 export const SERIAL_JOBS = JOBS.filter(job => !PROJECTION_JOB_NAME_SET.has(job.name) && !COMPLETION_JOB_NAMES.has(job.name));
 
@@ -266,6 +270,8 @@ function writeSentinel(pool, jobName, record) {
 
 /** 真干活的一轮写 runs（决策 ff2019e2）；自 gate 跳过的不记，写失败只告警。 */
 async function writeRun(pool, jobName, startedAt, record, result) {
+  // 此维护流程在原runner会话锁内拥有canonical runs；外层观察超时不能补第二条或抢终态。
+  if(jobName==='workflow-assembly-reconcile')return;
   if (record.ok && isSelfSkipped(result)) return;
   try {
     await recordSchedulerRun(pool, {

@@ -95,6 +95,81 @@ function directNodeCommands(source){
  }
  return found;
 }
+const FIXED_SKILL_INITIALIZER='scripts/ci/prepare-fixed-skill-cache.mjs';
+const FIXED_SKILL_INPUTS=['scripts/ci/fixed-local-git.mjs','packages/brain/src/lib/implementation-ci-snapshot.js'];
+function fixedSkillInitializer(yaml,spec,job,step,source){
+ const reject=()=>fail('CALLEE_SKILL_INITIALIZER_UNPROVEN',{path:spec.name});
+ const steps=job.steps||[],at=steps.indexOf(step),mentions=steps.filter(s=>String(s.run||'').includes('tooling/'+FIXED_SKILL_INITIALIZER));
+ const secret=yaml.on?.workflow_call?.secrets?.SKILLS_SOURCE_SSH_KEY;
+ if(spec.name!=='pilot-release-verification'||mentions.length!==1||step.if!==undefined||step['continue-on-error']
+  ||step['working-directory']!==undefined||step.shell!==undefined||job.defaults?.run!==undefined||yaml.defaults?.run!==undefined
+  ||Object.keys(step.env||{}).join(',')!=='SKILLS_SOURCE_SSH_KEY'||step.env.SKILLS_SOURCE_SSH_KEY!=="${{ secrets.SKILLS_SOURCE_SSH_KEY }}"
+  ||!secret||Object.keys(secret).sort().join(',')!=='required'||secret.required!==false
+  ||sha(Buffer.from(source))!=='9da884935817c764464ebfe3e08a0ee5511a972c489927123c1060f6c9ba68da')reject();
+ const checkouts=steps.filter(s=>s.uses?.startsWith('actions/checkout@')&&s.with?.path==='source');
+ const downloads=steps.filter(s=>s.uses?.startsWith('actions/download-artifact@')&&s.with?.path==='snapshot');
+ const checkout=checkouts[0],download=downloads[0];
+ if(checkouts.length!==1||downloads.length!==1||steps.indexOf(checkout)>=at||steps.indexOf(download)>=at
+  ||checkout.if!==undefined||checkout['continue-on-error']||download.if!==undefined||download['continue-on-error']
+  ||checkout.with.repository!=="${{ inputs.source_repo || github.repository }}"||checkout.with.ref!=="${{ inputs.head_revision || github.sha }}"
+  ||checkout.with['fetch-depth']!==0||checkout.with['persist-credentials']!==false
+  ||download.with.name!=="pilot-release-snapshot-${{ inputs.scope || 'cecelia-kr' }}-${{ inputs.head_revision || github.sha }}"
+  ||!steps.slice(at+1).some(s=>directNodeCommands(String(s.run||'')).some(m=>m[1]===spec.runner)))reject();
+ return [FIXED_SKILL_INITIALIZER,...FIXED_SKILL_INPUTS].map(path=>({path,selector:'jobs.verify.steps.fixed_skill_initializer_exact_contract'}));
+}
+const MODERN_SKILL_INITIALIZER='scripts/ci/implementation-skill-source.mjs';
+const MODERN_SKILL_INPUTS=[...FIXED_SKILL_INPUTS,'packages/brain/src/lib/device-patrol-admission.js'];
+const MODERN_SHELL_HASHES={
+ 'pilot-release-verification':'445cbd1ae6c86b9f09f2cde08350537949b2aef85618f499e7c659ed09ea6265',
+ 'implementation-impact':'0c63a85850a5c2f0b78206b08737ff1b459c14bfbcdb7f9485aa854920287d36',
+};
+const MODERN_ENV_HASHES={'pilot-release-verification':'aac70fc23f69f37ef637d97953ee0a5e5ab0c2478615c57dbcb5d9277d537037','implementation-impact':'62da3e800763d1fc7a5c84146bd4a0022700c56394ed0aba7465ecf17fffc57d'};
+const NATIVE_PR_ENV="${{ github.repository == 'perfectuser21/cecelia' && github.event_name == 'pull_request' && !inputs.source_repo && !inputs.tooling_revision && !inputs.scope && !inputs.head_revision && !inputs.base_revision && !inputs.mode && !inputs.admission_scopes }}";
+function modernSkillInitializer(yaml,spec,job,step,source){
+ const reject=()=>fail('CALLEE_SKILL_INITIALIZER_UNPROVEN',{path:spec.name});
+ const steps=job.steps||[],at=steps.indexOf(step),impact=spec.name==='implementation-impact';
+ const secret=yaml.on?.workflow_call?.secrets?.SKILLS_SOURCE_SSH_KEY;
+ const initEnv=impact?{SKILLS_SOURCE_SSH_KEY:"${{ secrets.SKILLS_SOURCE_SSH_KEY }}",NATIVE_PR:NATIVE_PR_ENV}:{SKILLS_SOURCE_SSH_KEY:"${{ secrets.SKILLS_SOURCE_SSH_KEY }}"};
+ if(step.if!==undefined||step['continue-on-error']||step['working-directory']!==undefined||step.shell!==undefined||job.defaults?.run!==undefined||yaml.defaults?.run!==undefined
+  ||!secret||Object.keys(secret).join(',')!=='required'||secret.required!==false||sha(Buffer.from(source))!==MODERN_SHELL_HASHES[spec.name]
+  ||Object.keys(step.env||{}).sort().join(',')!==Object.keys(initEnv).sort().join(',')||Object.entries(initEnv).some(([key,value])=>step.env[key]!==value)
+  ||yaml.env!==undefined||sha(Buffer.from(JSON.stringify(Object.fromEntries(Object.entries(job.env||{}).sort()))))!==MODERN_ENV_HASHES[spec.name]
+  ||job.env?.SOURCE_REPO!=="${{ inputs.source_repo || github.repository }}"
+  ||job.env?.HEAD!==(impact?"${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}":"${{ inputs.head_revision || github.sha }}"))reject();
+ const tools=steps.filter(s=>s.uses?.startsWith('actions/checkout@')&&s.with?.path==='tooling'),checkouts=steps.filter(s=>s.uses?.startsWith('actions/checkout@')&&s.with?.path==='source');
+ const checkout=checkouts[0],tool=tools[0];
+ if(tools.length!==1||checkouts.length!==1||steps.indexOf(tool)>=at||steps.indexOf(checkout)>=at||tool.if!==undefined||tool['continue-on-error']||tool.with?.repository!==BRAIN||tool.with?.['persist-credentials']!==false
+  ||checkout.if!==undefined||checkout['continue-on-error']||checkout.with.repository!=="${{ inputs.source_repo || github.repository }}"
+  ||checkout.with.ref!==job.env.HEAD||checkout.with['fetch-depth']!==0||checkout.with['persist-credentials']!==false)reject();
+ const runners=steps.filter(s=>directNodeCommands(String(s.run||'')).some(m=>m[1]===spec.runner)||impact&&sha(Buffer.from(String(s.run||'')))==='8e54cd03b82a18c8c94eaf0a438744193e093d680aa133f416e33ba4ca3ae21d');
+ if(runners.length!==1||steps.indexOf(runners[0])<=at)reject();
+ for(const other of steps.filter(s=>s!==step)){
+  const key=other.env?.SKILLS_SOURCE_SSH_KEY;
+  if((key!==undefined||JSON.stringify(other).includes('secrets.SKILLS_SOURCE_SSH_KEY'))&&!(impact&&other===runners[0]&&Object.entries(other.env||{}).every(([k,v])=>!String(v).includes('secrets.SKILLS_SOURCE_SSH_KEY')||k==='SKILLS_SOURCE_SSH_KEY')&&!String(other.run||'').includes('secrets.SKILLS_SOURCE_SSH_KEY')&&key==="${{ steps.skill-cache.outputs.legacy_821 == 'true' && secrets.SKILLS_SOURCE_SSH_KEY || '' }}"))reject();
+ }
+ if(impact){
+  if(step.id!=='skill-cache'||job.env.BASE!=="${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}"
+   ||job.env.MODE!=="${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}"||job.env.TOOLING_REVISION!==tool.with.ref
+   ||job.env.MAP_SCOPE!=="${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}"||!ADMISSION_SCOPE_ENV.has(job.env.ADMISSION_SCOPES))reject();
+  // callerProof fixes the workspace source_repo input: NATIVE_PR cannot select the historical native-only branch.
+  const downloads=steps.filter(s=>String(s.run||'').includes('implementation-baseline-$HEAD'));
+  if(downloads.length!==1||steps.indexOf(downloads[0])>=at||downloads[0].if!=="env.MAP_SCOPE != 'cecelia-device-patrol'"||downloads[0]['continue-on-error']||downloads[0].shell!==undefined||downloads[0]['working-directory']!==undefined
+   ||sha(Buffer.from(downloads[0].run))!=='51c728cdec33a877e94b11bfbd88eecb472ba24221ccf23d1b0d2c90a1fc2ca7'
+   ||Object.keys(downloads[0].env||{}).sort().join(',')!=='GH_TOKEN,RUN_ID'||downloads[0].env.GH_TOKEN!=="${{ github.token }}"||downloads[0].env.RUN_ID!=="${{ github.run_id }}")reject();
+ }else{
+  const downloads=steps.filter(s=>s.uses?.startsWith('actions/download-artifact@')&&s.with?.path==='snapshot'),download=downloads[0];
+  if(downloads.length!==1||steps.indexOf(download)>=at||download.if!==undefined||download['continue-on-error']||download.with.name!=="pilot-release-snapshot-${{ inputs.scope || 'cecelia-kr' }}-${{ inputs.head_revision || github.sha }}")reject();
+ }
+ return [MODERN_SKILL_INITIALIZER,...MODERN_SKILL_INPUTS].map(path=>({path,selector:`jobs.${spec.calleeJob}.steps.fixed_skill_cache_exact_contract`,reviewedCache:path===MODERN_SKILL_INITIALIZER}));
+}
+function reviewedSkillCache(source){
+ // Reviewed AST envelope includes all budget, historical snapshots and HEAD-only data materialization logic.
+ // A changed program must be reviewed again; binding a different digest alone cannot assert this capability.
+ if(sha(source)!=='b1f25afef715d230f573068a8cf1c54a65345e3583edebb91ab9bd8785df6ebd')fail('CALLEE_SKILL_CACHE_SOURCE_UNPROVEN',{path:MODERN_SKILL_INITIALIZER});
+ let ast;try{ast=parse(source.toString(),{ecmaVersion:'latest',sourceType:'module'});}catch{fail('CALLEE_SKILL_CACHE_SOURCE_UNPROVEN',{path:MODERN_SKILL_INITIALIZER});}
+ const imports=ast.body.filter(n=>n.type==='ImportDeclaration'&&n.source.value.startsWith('.')).map(n=>posix.normalize(posix.join(posix.dirname(MODERN_SKILL_INITIALIZER),n.source.value))).sort();
+ if(imports.join(',')!==[...MODERN_SKILL_INPUTS].sort().join(','))fail('CALLEE_SKILL_CACHE_SOURCE_UNPROVEN',{path:MODERN_SKILL_INITIALIZER});
+}
 function calleeProof(yaml,spec,admissionScopesRequested=false){
  const inputs=yaml?.on?.workflow_call?.inputs;
  const optional=inputs?.admission_scopes;
@@ -106,9 +181,15 @@ function calleeProof(yaml,spec,admissionScopesRequested=false){
  if(!job||job.if!==undefined&&!knownGateGuard||job['continue-on-error'])fail('CALLEE_REQUIRED_JOB_MISSING',{path:spec.name});
  const checkout=(job.steps||[]).find(s=>s.uses?.startsWith('actions/checkout@')&&s.with?.repository===BRAIN&&s.with?.path==='tooling');
  if(!checkout||!/^\$\{\{ inputs\.tooling_revision(?: \|\| github\.[a-z_.]+)* \}\}$/.test(checkout.with.ref))fail('CALLEE_TOOLING_SOURCE_UNPROVEN',{path:spec.name});
- const runners=[];
+ const runners=[],steps=job.steps||[];
+ const initializers=steps.filter(s=>[FIXED_SKILL_INITIALIZER,MODERN_SKILL_INITIALIZER].some(p=>String(s.run||'').includes('tooling/'+p)));
+ if((yaml.on?.workflow_call?.secrets?.SKILLS_SOURCE_SSH_KEY||initializers.length)&&initializers.length!==1)fail('CALLEE_SKILL_INITIALIZER_UNPROVEN',{path:spec.name});
  for(const step of job.steps||[]){
   const source=String(step.run||'');let commands=directNodeCommands(source),conditional=false;
+  if(source.includes('tooling/'+MODERN_SKILL_INITIALIZER)){runners.push(...modernSkillInitializer(yaml,spec,job,step,source));continue;}
+  if(source.includes('tooling/'+FIXED_SKILL_INITIALIZER)){
+   runners.push(...fixedSkillInitializer(yaml,spec,job,step,source));continue;
+  }
   // callerProof 固定既有 scope=zenithjoy；这个精确预读只在独立巡查 scope 执行。
   // 它不能替代 required runner，也不能把未执行的 helper 冒记为既有消费者。
   if(source.includes('tooling/scripts/ci/implementation-patrol-baseline.mjs')){
@@ -164,7 +245,7 @@ export async function extractWorkspaceCiSourceBundle({workspace,brain,readSource
    const calleeSide={repo:BRAIN,revision:callerEvidence.brainRevision};
    const callee=await yaml(calleeSide,path),runners=calleeProof(callee.value,spec,callerEvidence.admissionScopesRequested);
    relations.push({consumer:caller.source,input:callee.source,kind:'fixed_reusable_workflow',selector:`jobs.${spec.callerJob}.uses+tooling_revision`});
-   for(const runner of runners){const code=await read(calleeSide,runner.path);relations.push({consumer:callee.source,input:code,kind:'fixed_job_node_source',selector:runner.selector});}
+   for(const runner of runners){const code=await read(calleeSide,runner.path);if(runner.reviewedCache){const bytes=await readSource({...calleeSide,path:runner.path});if(sha(bytes)!==code.content_sha256)fail('SOURCE_CHANGED_DURING_READ',{repo:calleeSide.repo,path:runner.path});reviewedSkillCache(bytes);}relations.push({consumer:callee.source,input:code,kind:'fixed_job_node_source',selector:runner.selector});}
   }
   if(brainRevisions.some(revision=>!bindings.some(b=>b.repo===BRAIN&&b.revision===revision)))fail('SOURCE_IDENTITY_UNUSED');
  }catch(e){gaps.push({code:e.code||'SOURCE_PROTOCOL_INVALID',...(e.details||{})});}

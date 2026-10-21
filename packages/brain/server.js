@@ -1,4 +1,5 @@
 import { createWorkflowCommanderRouter } from './src/routes/workflow-commander.js';
+import { createCrmRouter } from './src/crm/router.js';
 import {createExecutionBaselineRouter} from './src/routes/execution-baseline.js';
 import {createAppServerRouter} from './src/routes/app-server.js';
 import { startExecutionDirectory } from './src/execution-directory/store.js';
@@ -339,6 +340,7 @@ app.use('/api/brain/graph', graphRoutes);
 // POST 原样写 -、GET 转 _ 读，写进去的键永远读不到。
 app.use('/api/brain/janitor', janitorRoutes);
 app.use('/api/brain/internal/app-server', createAppServerRouter({pool}));
+app.use('/api/brain/internal/crm', createCrmRouter({ pool }));
 app.use('/api/brain/internal/execution-directory',createExecutionBaselineRouter({pool}));
 app.use('/api/brain/profile/facts', profileFactsRoutes);
 

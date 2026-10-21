@@ -190,9 +190,16 @@ export function cleanTestEnv(base = process.env, opts) {
 
 /** runner 环境：全部外部依赖指向沙箱与假件。 */
 export function runnerEnv(sb, brainUrl, extra = {}) {
+  // 通用fixture真身是本地x/y；self来源门用例显式提供Cecelia配置。
+  const reposPath = path.join(sb.root, 'fixture-repos.json');
+  const repos = JSON.parse(fs.readFileSync(path.join(HERE, '../../../repos.json'), 'utf8'));
+  const primary = repos.repos.find(r => r.default);
+  primary.slug = 'x/y'; primary.origin = 'https://github.com/x/y.git';
+  fs.writeFileSync(reposPath, JSON.stringify(repos));
   return {
     ...cleanTestEnv(process.env, { stripClaude: true }),
     BRAIN_URL: brainUrl,
+    CODING_WF_REPOS_FILE: reposPath,
     CODING_WF_REPO: sb.clone,
     CODING_WF_WORKTREE_BASE: sb.worktreeBase,
     CODING_WF_LOG_DIR: sb.logDir,

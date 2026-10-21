@@ -1,4 +1,4 @@
-export interface InvocationTarget { kind: 'activity' | 'workflow'; id: string; definition_version_id?: string }
+export interface InvocationTarget { kind: 'activity' | 'workflow'; id: string; definition_version_id?: string; slot_key?: string }
 export interface InputSchema { type?: string; title?: string; description?: string; enum?: Array<string | number>; default?: unknown; properties?: Record<string, InputSchema>; required?: string[]; items?: InputSchema }
 export interface InvocationGap { code: string; message?: string; field?: string }
 const gapMessages: Record<string,string> = {

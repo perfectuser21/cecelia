@@ -1,16 +1,26 @@
 /** MMV既有DB连接/原生证据验证器的只读调用；不传输凭据和评论原文。 */
-export function verifyBatchRows(plan,rows,snapshot,validateEvidence,hash,route) {
+export function verifyBatchRows(plan,rows,snapshot,validateEvidence,hash,route,companyBinding) {
   if(snapshot?.company_id!==plan.company_id||snapshot.config_status!=='enabled'||snapshot.runtime_config?.routing?.line_key!==route.key)throw Error('COMPANY_SOURCE_MISMATCH');
-  if(plan.machine!=='mmv'){
+  if(plan.workflow_key!=='douyin_comment_scoring'){
     const accounts=snapshot.runtime_config?.platform_accounts||[];
+    if(plan.machine==='mmv'){
+      const matches=accounts.filter(a=>a?.profile===plan.profile&&a.enabled!==false),a=matches[0],profiles=snapshot.runtime_config?.routing?.profiles;
+      if(matches.length!==1||!Array.isArray(profiles)||profiles.filter(p=>p===plan.profile).length!==1
+        ||a.enabled!==true||a.verification_status!=='verified'||a.device_serial!==plan.serial
+        ||a.platform!=='douyin'||a.company_id!==snapshot.company_id||!snapshot.tenant_id||a.tenant_id!==snapshot.tenant_id
+        ||typeof a.douyin_id!=='string'||!a.douyin_id||a.douyin_id.trim()!==a.douyin_id
+        ||a.device_id!==plan.device_instance_id||a.source?.device_instance_id!==plan.device_instance_id||a.source?.device_host!=='mmv')throw Error('COMPANY_ACCOUNT_MISMATCH');
+    }
     if(!accounts.some(a=>a.enabled&&a.verification_status==='verified'&&a.profile===plan.profile&&a.device_serial===plan.serial))throw Error('COMPANY_ACCOUNT_MISMATCH');
   }
   if(plan.workflow_key!=='douyin_comment_scoring')return {company_id:plan.company_id,line_key:route.key,eligible:1};
   if(!plan.env.LEADGEN_SOURCE_RUN)throw Error('SOURCE_REQUIRED');
   for(const row of rows){
     if(row.harvest_batch!==plan.env.LEADGEN_SOURCE_RUN||row.line_key!==route.key||!row.douyin_id||!/^https:\/\/(www\.)?douyin\.com\/user\/[^/?#]+$/.test(row.profile_url||''))throw Error('NATIVE_IDENTITY_REQUIRED');
+    const bound=!!row.recipient_evidence?.company_binding;
+    if(bound&&(!companyBinding||companyBinding.company_id!==snapshot.company_id||companyBinding.tenant_id!==snapshot.tenant_id||companyBinding.run_id!==plan.env.LEADGEN_SOURCE_RUN||companyBinding.line_key!==route.key))throw Error('COMPANY_COLLECTION_BINDING_INVALID');
     validateEvidence(row.recipient_evidence,{line_key:route.key,run:plan.env.LEADGEN_SOURCE_RUN,douyin_id:row.douyin_id,nickname:row.nickname,
-      comment_body_sha256:hash(row.comment_body),comment_body:row.comment_body,video_url:row.source_video_url});
+      comment_body_sha256:hash(row.comment_body),comment_body:row.comment_body,video_url:row.source_video_url},...(bound?[{companyBinding}]:[]));
   }
   return {company_id:plan.company_id,line_key:route.key,source_run:plan.env.LEADGEN_SOURCE_RUN,eligible:rows.length};
 }
@@ -27,7 +37,12 @@ const verify=${verifyBatchRows.toString()};const plan=${JSON.stringify(plan)};
  if(source)snapshot=(await c.query('SELECT snapshot FROM zenithjoy.company_config_runs WHERE company_id=$1 AND run_id=$2',[plan.company_id,source])).rows[0]?.snapshot;
  else snapshot=(await c.query('SELECT v.snapshot FROM zenithjoy.tenant_company_profiles p JOIN zenithjoy.company_config_versions v ON v.company_id=p.company_id AND v.version=p.config_version AND v.tenant_id=p.tenant_id WHERE p.company_id=$1 AND p.config_status=$2',[plan.company_id,'enabled'])).rows[0]?.snapshot;
  const rows=plan.workflow_key==='douyin_comment_scoring'?(await c.query("SELECT * FROM zenithjoy.leadgen_comments WHERE line_key=$1 AND harvest_batch=$2 AND process_status='待分拣' AND relevance IS NULL ORDER BY collected_at LIMIT $3",[route.key,source,Number(plan.env.LEADGEN_LIMIT)])).rows:[];
- const result=verify(plan,rows,snapshot,validateEvidence,hash,route);await c.query('ROLLBACK');console.log(JSON.stringify(result));
+ let companyBinding;
+ if(rows.some(row=>row.recipient_evidence?.company_binding)){
+   const {readCollectionAccountBinding}=require(path.join(root,'company-config-lib.js'));
+   companyBinding=await readCollectionAccountBinding(c,{lineKey:route.key,run:source});
+ }
+ const result=verify(plan,rows,snapshot,validateEvidence,hash,route,companyBinding);await c.query('ROLLBACK');console.log(JSON.stringify(result));
  }catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();await pool.end();}})().catch(()=>{console.error('LEADGEN_COMPANY_OR_BATCH_PROOF_REJECTED');process.exitCode=1;});`;
   return {remote:'bash -lc \'set -a; source "$HOME/.credentials/zenithjoy-db.env"; set +a; export NODE_PATH="$HOME/.openclaw/leadgen-scripts/node_modules:$HOME/.openclaw/node_modules"; node -\'',input};
 }

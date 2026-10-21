@@ -199,4 +199,23 @@ describe('POST /api/brain/map/manifests/:id/activate', () => {
     expect(response.body).toEqual({ manifest_version: active, activated: true });
     expect(activate).toHaveBeenCalledWith(pool, draft.id, { projector });
   });
+
+  it('把严格expected_active透传到既有事务CAS，不在HTTP层另查active', async () => {
+    const activate=vi.fn(async()=>({activated:true})),projector=vi.fn();
+    const {app,pool}=createApp({services:{activate},projector});
+    const expected={id:draft.id,digest:'b'.repeat(64)};
+    await request(app).post(`/api/brain/map/manifests/${draft.id}/activate`).send({expected_active:expected}).expect(200);
+    expect(activate).toHaveBeenCalledWith(pool,draft.id,{projector,expectedActive:expected});
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('CAS字段缺失、类型或摘要错误拒绝422且不调用store', async () => {
+    const activate=vi.fn(async()=>({activated:true})),{app,pool}=createApp({services:{activate}});
+    for(const expected of [null,[],{}, {id:draft.id},{digest:'b'.repeat(64)},{id:'invalid',digest:'b'.repeat(64)},{id:draft.id,digest:'B'.repeat(64)},{id:draft.id,digest:'b'.repeat(63)},{id:draft.id,digest:'b'.repeat(64),extra:true}]){
+      const result=await request(app).post(`/api/brain/map/manifests/${draft.id}/activate`).send({expected_active:expected}).expect(422);
+      expect(result.body.error.code).toBe('MAP_MANIFEST_EXPECTED_ACTIVE_INVALID');
+    }
+    await request(app).post(`/api/brain/map/manifests/${draft.id}/activate`).send({expectedActive:{id:draft.id,digest:'b'.repeat(64)}}).expect(422);
+    expect(activate).not.toHaveBeenCalled();expect(pool.connect).not.toHaveBeenCalled();
+  });
 });

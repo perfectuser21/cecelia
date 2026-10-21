@@ -3,6 +3,7 @@ import { createRoutedTask } from '../work-routing-store.js';
 import { resolveInvocation } from './resolve.js';
 import { definitionDigest,requireCondition,uuid } from '../workflow-authoring/contracts.js';
 import { validateSkillReceipt } from '../orchestrator/skill-activity-adapter.js';
+import { canonicalInvocationTarget } from './candidate-target.js';
 const KEY=/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 export const publicResolution=({envelope:_envelope,plan:_plan,...result})=>result;
 function tenantOf(task){return task.payload?.invocation?.tenant_id;}
@@ -37,8 +38,7 @@ export async function invocationReadback(db,identity){
 }
 export async function invoke(db,body,tenantId='default',options={}){
   requireCondition(KEY.test(body.request_key??''),'request_key 格式错误');
-  const canonicalTarget=body.mode==='candidate'&&!body.target?.definition_version_id
-    ? {...body.target,definition_version_id:`candidate:${body.compose_sha256}`} : body.target;
+  const canonicalTarget=await canonicalInvocationTarget(db,body,tenantId);
   const requestHash=definitionDigest({target:canonicalTarget,input:body.input,mode:body.mode,authoring_task_id:body.authoring_task_id??null,compose_sha256:body.compose_sha256??null});
   const client=await db.connect();
   try{

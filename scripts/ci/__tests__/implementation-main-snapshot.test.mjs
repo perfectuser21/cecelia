@@ -1,9 +1,15 @@
+import './fixed-local-source.test.mjs';
+import './fixed-local-git.test.mjs';
+import './implementation-source-ready.test.mjs';
 import './factory-workflow-config-source.test.mjs';
 import {test} from 'node:test';
+import {publishMainSnapshots} from '../implementation-main-snapshot.mjs';
+import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {spawn,execFileSync} from 'node:child_process';
-import {mkdtempSync,writeFileSync,readFileSync,existsSync,mkdirSync,symlinkSync,rmSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {mkdtempSync,writeFileSync,readFileSync,existsSync,mkdirSync,symlinkSync,rmSync,unlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -12,6 +18,12 @@ import {stepSha256} from '../../../packages/brain/scripts/sync-steps-from-worksp
 import {EXISTING_OPS_IDENTITIES as identities} from '../../../packages/brain/src/lib/existing-ops-source.js';
 import {validateImplementationSnapshot,extractImplementationAdmissionSnapshots} from '../../../packages/brain/src/lib/implementation-ci-snapshot.js';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
+test('双业务 SHA 的正式 Pilot CLI 各按固定中央 SHA 验证',()=>{
+ const script=join(root,'packages/brain/scripts/smoke/central-skill-fixed-source-smoke.sh');
+ const result=spawnSync('bash',[script,'--scenario','two-revisions'],{cwd:root,encoding:'utf8',env:{...process.env,SMOKE_ALLOW_WRITE:'1'}});
+ assert.equal(result.status,0,result.stderr);
+ assert.match(result.stdout,/two-revisions: PASS \(2 CLI runs\)/);
+});
 const repo='perfectuser21/cecelia',head='a'.repeat(40),base='b'.repeat(40);
 const seal=(body,key='snapshot_sha256')=>({...body,[key]:stepSha256(body)});
 function bundle(revision,{parentMissing=false,childMissing=false,parentGaps=null,parentManifest=null}={}){
@@ -287,3 +299,98 @@ test('补偿POST失败或仍UNKNOWN不可再重试',async t=>{
   assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
  }
 });
+
+// 捕捉 publisher 吞掉 transport/readMain 原因而无法判定 POST 是否完成的回归。
+for(const scenario of ['fetch-rejection','body-interruption','read-main'])test(`脱敏诊断：${scenario}保留真实阶段且不重试或发布`,async t=>{
+ const output=mkdtempSync(join(tmpdir(),'publisher-diagnostics-'));t.after(()=>rmSync(output,{recursive:true,force:true}));
+ const secret='sk-private-token-123456789\nhttps://private.invalid/path?token=hidden';
+ const error=Object.assign(new TypeError(secret),{code:secret,cause:Object.assign(new Error(secret),{code:'ECONNRESET'})});
+ const calls=[];
+ await assert.rejects(publishMainSnapshots({brainUrl:'https://private.invalid',token:secret,scope:'cecelia-kr',repo,base:head,head,output},{
+  readMain:()=>{if(scenario==='read-main')throw error;return head;},
+  fetchFn:async(url,options)=>{
+   calls.push(options.method);
+   if(options.method==='GET')return new Response(JSON.stringify(bundle(head,{childMissing:true})));
+   if(scenario==='fetch-rejection')throw error;
+   return {status:200,ok:true,text:async()=>{throw error;}};
+  }
+ }),e=>e===error);
+ const failure=JSON.parse(readFileSync(join(output,'diagnostics/failure.json')));
+ assert.ok(failure.operation,'失败文件必须保留可信执行阶段');
+ assert.equal(failure.operation.stage,scenario==='read-main'?'read_main':scenario==='fetch-rejection'?'request_fetch':'request_body');
+ assert.equal(failure.exception.name,'TypeError');assert.equal(failure.exception.code,null);
+ assert.equal(failure.exception.cause.code,'ECONNRESET');
+ assert.equal(failure.exception.message_sha256,createHash('sha256').update(secret).digest('hex'));
+ assert.equal(failure.exception.message_length,secret.length);
+ assert.ok(Number.isFinite(Date.parse(failure.operation.started_at)));assert.ok(Number.isFinite(Date.parse(failure.operation.finished_at)));
+ assert.equal(failure.code,'IMPLEMENTATION_CI_PUBLISH_FAILED');
+ assert.equal(existsSync(join(output,'base.json')),false);assert.equal(existsSync(join(output,'head.json')),false);
+ if(scenario==='read-main')assert.deepEqual(calls,[]);
+ else{
+  assert.deepEqual(calls,['GET','POST']);assert.equal(failure.operation.method,'POST');
+  assert.equal(failure.operation.scope,'cecelia-factory');assert.equal(failure.operation.revision,head);
+  assert.equal(failure.operation.fetch_invoked,true);assert.equal(failure.operation.post_outcome,'UNKNOWN');
+  assert.equal(failure.operation.response_received,scenario==='body-interruption');
+  assert.equal(failure.operation.http_status,scenario==='body-interruption'?200:null);
+  assert.equal(failure.operation.body_read_completed,false);
+  const attempt=JSON.parse(readFileSync(join(output,'diagnostics/request-2.json')));
+  assert.deepEqual(attempt,failure.operation);
+ }
+ const raw=readFileSync(join(output,'diagnostics/failure.json'),'utf8');
+ for(const fragment of [secret,'sk-private','private.invalid','hidden','stack','headers'])assert.equal(raw.includes(fragment),false,fragment);
+ assert.ok(raw.length<5000);
+});
+
+test('验证失败诊断明确标记快照校验，完整响应不等于正式发布',async t=>{
+ const output=mkdtempSync(join(tmpdir(),'publisher-validation-'));t.after(()=>rmSync(output,{recursive:true,force:true}));
+ await assert.rejects(publishMainSnapshots({brainUrl:'https://example.invalid',token:'test-token',scope:'cecelia-kr',repo,base:head,head,output},{readMain:()=>head,fetchFn:async()=>new Response(JSON.stringify({snapshot:{}}))}));
+ const failure=JSON.parse(readFileSync(join(output,'diagnostics/failure.json')));
+ assert.equal(failure.operation.stage,'validate_snapshot');assert.equal(failure.operation.revision,head);assert.equal(failure.operation.scope,'cecelia-kr');
+ assert.equal(existsSync(join(output,'head.json')),false);
+});
+
+for(const hostile of ['changing-name','throwing-message'])test(`审查R1：${hostile}不能泄密或覆盖原异常`,async t=>{
+ const output=mkdtempSync(join(tmpdir(),'publisher-getter-'));t.after(()=>rmSync(output,{recursive:true,force:true}));
+ const secret='SYNTHETIC_PRIVATE_SECRET';const original=new Error('original');let reads=0;
+ if(hostile==='changing-name')Object.defineProperty(original,'name',{get:()=>++reads===1?'TypeError':secret});
+ else Object.defineProperty(original,'message',{get:()=>{throw new Error(secret);}});
+ await assert.rejects(publishMainSnapshots({brainUrl:'https://example.invalid',token:'test',scope:'cecelia-kr',repo,base:head,head,output},{readMain:()=>{throw original;},fetchFn:async()=>assert.fail('不应调用fetch')}),e=>e===original);
+ assert.ok(existsSync(join(output,'diagnostics/failure.json')));
+ const raw=readFileSync(join(output,'diagnostics/failure.json'),'utf8');assert.equal(raw.includes(secret),false);
+ if(hostile==='changing-name')assert.equal(reads,1);
+});
+test('审查R2：finally诊断IO失败不能替换transport原异常',async t=>{
+ const output=mkdtempSync(join(tmpdir(),'publisher-io-'));t.after(()=>rmSync(output,{recursive:true,force:true}));const original=new TypeError('fetch failed');
+ await assert.rejects(publishMainSnapshots({brainUrl:'https://example.invalid',token:'test',scope:'cecelia-kr',repo,base:head,head,output},{readMain:()=>head,fetchFn:async()=>{
+  const path=join(output,'diagnostics/request-1.json');unlinkSync(path);mkdirSync(path);throw original;
+ }}),e=>e===original);
+ const failure=JSON.parse(readFileSync(join(output,'diagnostics/failure.json')));assert.equal(failure.exception.name,'TypeError');
+});
+test('审查R3：请求options构造失败时fetch未调用且不发布',async t=>{
+ const output=mkdtempSync(join(tmpdir(),'publisher-options-'));t.after(()=>rmSync(output,{recursive:true,force:true}));
+ const original=new Error('options failure'),timeout=AbortSignal.timeout;let calls=0;
+ try{
+  AbortSignal.timeout=()=>{throw original;};
+  await assert.rejects(publishMainSnapshots({brainUrl:'https://example.invalid',token:'test',scope:'cecelia-kr',repo,base:head,head,output},{readMain:()=>head,fetchFn:async()=>{calls++;}}),e=>e===original);
+ }finally{AbortSignal.timeout=timeout;}
+ const failure=JSON.parse(readFileSync(join(output,'diagnostics/failure.json')));assert.equal(calls,0);assert.equal(failure.operation.fetch_invoked,false);assert.equal(existsSync(join(output,'head.json')),false);
+});
+for(const code of ['IMPLEMENTATION_CI_SNAPSHOT_DIGEST_MISMATCH','OPS_SOURCE_UNKNOWN'])test(`审查R4：保留已知固定码${code}`,async t=>{
+ const output=mkdtempSync(join(tmpdir(),'publisher-code-'));t.after(()=>rmSync(output,{recursive:true,force:true}));
+ await assert.rejects(publishMainSnapshots({brainUrl:'https://example.invalid',token:'test',scope:'cecelia-kr',repo,base:head,head,output},{readMain:()=>head,fetchFn:async()=>{
+  if(code==='OPS_SOURCE_UNKNOWN')return new Response(JSON.stringify({error:{code}}),{status:422});
+  const body=bundle(head);body.snapshot.snapshot_sha256='0'.repeat(64);return new Response(JSON.stringify(body));
+ }}));
+ const failure=JSON.parse(readFileSync(join(output,'diagnostics/failure.json')));assert.equal(failure.code,code);
+ if(code==='OPS_SOURCE_UNKNOWN')assert.equal(failure.provider_code,code);
+});
+
+test('审查R2：非Error拒绝值也不能被诊断IO覆盖',async t=>{
+ const output=mkdtempSync(join(tmpdir(),'publisher-undefined-'));t.after(()=>rmSync(output,{recursive:true,force:true}));let caught=false;
+ try{await publishMainSnapshots({brainUrl:'https://example.invalid',token:'test',scope:'cecelia-kr',repo,base:head,head,output},{readMain:()=>head,fetchFn:async()=>{
+  const path=join(output,'diagnostics/request-1.json');unlinkSync(path);mkdirSync(path);throw undefined;
+ }});}catch(error){caught=true;assert.equal(error,undefined);}
+ assert.equal(caught,true);
+});
+
+import './prepare-fixed-skill-cache.test.mjs';

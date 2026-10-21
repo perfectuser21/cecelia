@@ -59,4 +59,4 @@ await runActivity(async (input) => {
     metrics: { intent_count: items.length },
     evidence: [`${INTENT_FILE}: ${items.length} 条验收`],
   };
-});
+}, { stage: 'intent', entry: import.meta.url });

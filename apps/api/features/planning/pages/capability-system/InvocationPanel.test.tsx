@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import InvocationPanel from './InvocationPanel';
+import ActivityDetail from './ActivityDetail';
 const target = { kind: 'activity' as const, id: 'a1', definition_version_id: 'v1' };
 const ready = { target, readiness: 'ready', gaps: [], input_schema: { type: 'object', properties: { topic: { type: 'string', title: '主题' } }, required: ['topic'] } };
 function response(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status }); }
@@ -112,4 +113,28 @@ describe('现有目录调用', () => {
     expect(screen.getByRole('button',{name:'启动调用'})).toBeDisabled();
   });
 
+  it.each(['first', 'second'])('同一活动的%s使用位置只在候选请求携带明确slot，正式版本不混入slot', async slot => {
+    const requests: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)); requests.push(body);
+      return response({ ...ready, target: body.target, readiness: 'blocked', gaps: [{code:'input_schema_invalid'}] });
+    }));
+    const usages = ['first', 'second'].map((key, index) => ({workflow_id:'owned-workflow', reference_id:`ref-${key}`, slot_key:key, sequence_no:index+1, activity_definition_version_id:'v1'}));
+    const activity = {id:'actual-activity', name:'共享活动', current_definition_version_id:'v1', consumers:usages};
+    const registry = {generated_at:'fixture',counts:{},areas:[],journeys:[],workflows:[],activities:[activity],steps:[],enablers:[],gaps:[],source_repos:[]};
+    render(<ActivityDetail selection={{activity,usage:usages.find(u=>u.slot_key===slot)!}} registry={registry} />);
+    await screen.findByText('调用受阻');
+    expect(requests[0].target).toEqual({kind:'activity',id:'actual-activity',definition_version_id:'v1'});
+    fireEvent.change(screen.getByLabelText('调用用途'), {target:{value:'candidate'}});
+    fireEvent.change(screen.getByLabelText('编写任务'), {target:{value:'owner-task'}});
+    fireEvent.change(screen.getByLabelText('候选摘要'), {target:{value:'d'.repeat(64)}});
+    await waitFor(() => expect(requests).toContainEqual(expect.objectContaining({mode:'candidate',authoring_task_id:'owner-task',compose_sha256:'d'.repeat(64),target:{kind:'activity',id:'actual-activity',slot_key:slot}})));
+  });
+
+});
+
+it('原生维护只显示系统入口，不解析Skill资格或开放浏览器启动', () => {
+  render(<InvocationPanel target={{kind:'workflow',id:'native'}} schedulerOnly />);
+  expect(screen.getByRole('button', {name:'由系统调度或内部管理员触发'})).toBeDisabled();
+  expect(screen.getByText(/每30秒执行一个有界轮次/)).toBeTruthy();
 });

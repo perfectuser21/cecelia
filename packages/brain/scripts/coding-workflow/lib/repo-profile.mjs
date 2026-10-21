@@ -8,7 +8,7 @@ import { loadRepos, reposFile } from '../runner/lib/repos.mjs';
 
 const WORKFLOW_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 // lib/ci-precheck.mjs 认得的预检清单名（repos.json prechecks）
-export const PRECHECK_SETS = ['cecelia', 'zenithjoy'];
+export const PRECHECK_SETS = ['cecelia', 'zenithjoy', 'skills'];
 
 let cachedDefault = null;
 /** 默认仓的 repos.json 条目（CODING_WF_REPOS_FILE 覆盖配置表时读覆盖的那份）。 */

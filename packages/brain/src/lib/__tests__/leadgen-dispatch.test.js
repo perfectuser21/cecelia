@@ -26,10 +26,35 @@ describe('正常任务到真实适配入口及收割',()=>{
  const db={query:async()=>({rows:[workflow]})};
  it('103正式身份预检不查询phone_registry',async()=>{const query=vi.fn(db.query);expect((await prepareLeadgenPlan({query},{...t,payload:{...t.payload,workflow_definition:explicit}},preflight())).machine).toBe('mmv');expect(query.mock.calls.some(c=>c[0].includes('phone_registry'))).toBe(false);});
  it.each([{environment:'staging'},{target:'xian-m4'}])('拒绝错误部署 %j',async override=>{await expect(prepareLeadgenPlan(db,{...t,payload:{...t.payload,workflow_definition:explicit}},preflight(override))).rejects.toThrow('真实部署');});
+ it('声明推进不替代当前实际部署的显式固定版本',async()=>{
+  const advanced={...workflow,current_definition_version_id:'66666666-6666-4666-8666-666666666666'};
+  const got=await prepareLeadgenPlan({query:async()=>({rows:[advanced]})},{...t,payload:{...t.payload,workflow_definition:explicit}},preflight());
+  expect(got.workflow_definition_version_id).toBe(fixed.id);expect(got.snapshot_sha256).toBe(fixed.payload_sha256);expect(got.source_commit).toBe(fixed.source_commit);
+ });
+ it.each([{workflow_definition_version_id:'66666666-6666-4666-8666-666666666666'},{snapshot_sha256:'c'.repeat(64)}])('显式固定版本错误仍拒绝 %j',async wrong=>{
+  await expect(prepareLeadgenPlan(db,{...t,payload:{...t.payload,workflow_definition:{...explicit,...wrong}}},preflight())).rejects.toThrow('完整固定版本');
+ });
+ it('实际新部署已替代旧release时，声明仍指旧版也拒绝',async()=>{
+  const {evaluateReleaseObservation}=await import('../release-index.js');
+  const release=await preflight().getRelease();release.payload.components=[];release.payload.verification={status:'verified'};
+  const d=preflight();d.getReleaseGate=async()=>({...evaluateReleaseObservation(release,{release_id:'77777777-7777-4777-8777-777777777777',collector:'fixture',evidence_ref:'fixture',payload:{environment:'production',target:'mmv',components:[]}}),current_observation_id:explicit.observation_id});
+  await expect(prepareLeadgenPlan(db,{...t,payload:{...t.payload,workflow_definition:explicit}},d)).rejects.toThrow('真实部署');
+ });
+ it.each([{deployed:false},{actual_matches:false},{gaps:[{code:'drift'}]},{current_observation_id:'77777777-7777-4777-8777-777777777777'}])('实际部署gate仍严格拒绝 %j',async wrong=>{
+  const d=preflight(),original=d.getReleaseGate;d.getReleaseGate=async()=>({...await original(),...wrong});
+  await expect(prepareLeadgenPlan(db,{...t,payload:{...t.payload,workflow_definition:explicit}},d)).rejects.toThrow('真实部署');
+ });
+ it('保留workflow身份与active/paused控制',async()=>{
+  const task={...t,payload:{...t.payload,workflow_definition:explicit}};
+  const run=status=>prepareLeadgenPlan({query:async()=>({rows:[{...workflow,status}]})},task,preflight());
+  expect(await run('paused')).toEqual({waiting:true,reason:'workflow_paused'});await expect(run('archived')).rejects.toThrow('未激活');
+  await expect(prepareLeadgenPlan({query:async()=>({rows:[{...workflow,key:'wrong'}]})},task,preflight())).rejects.toThrow('Workflow不匹配');
+ });
  it('同flow旧源102绑定不通过',async()=>{const d=preflight();d.getBinding=async()=>({binding:{source_kind:'external'},workflow:{workflow_id:'b1000000-0000-4000-8000-000000000102',source_commit:'c'.repeat(40)}});await expect(prepareLeadgenPlan(db,{...t,payload:{...t.payload,workflow_definition:explicit}},d)).rejects.toThrow('同源');});
 });
 
 describe('跨网前记账故障不执行业务',()=>{
+ it('实体 ADB 未在线在领取和设备锁前拒绝',async()=>{const t=task('douyin_video_discovery',{profile:'physical',serial:'realserial',source_run:undefined,source_binding_run_id:undefined,adb_port:5042});const p={...resolveLeadgenInput(t),release_id:'33333333-3333-4333-8333-333333333333',observation_id:'44444444-4444-4444-8444-444444444444',workflow_definition_version_id:'55555555-5555-4555-8555-555555555555',snapshot_sha256:'a'.repeat(64),source_commit:'b'.repeat(40)};for(const result of ['offline','wrong']){const query=vi.fn(),lockGate=vi.fn(),launch=vi.fn(),finalizeTask=vi.fn();const out=await dispatchLeadgenTask({query},t,{prepareLeadgenPlan:async()=>p,batchProof:async()=>({company_id:p.company_id,eligible:1}),adbPreflight:async()=>JSON.stringify({state:result,serial:p.serial,port:5042}),lockGate,launch,finalizeTask});expect(out).toBe('failed');expect(query).not.toHaveBeenCalled();expect(lockGate).not.toHaveBeenCalled();expect(launch).not.toHaveBeenCalled();expect(finalizeTask).toHaveBeenCalledTimes(1);}});
  const t=task();const p={...resolveLeadgenInput(t),release_id:'33333333-3333-4333-8333-333333333333',observation_id:'44444444-4444-4444-8444-444444444444',workflow_definition_version_id:'55555555-5555-4555-8555-555555555555',snapshot_sha256:'a'.repeat(64),source_commit:'b'.repeat(40)};
  it('startRun fail-open null必须失败且不SSH',async()=>{const launch=vi.fn(),finalizeTask=vi.fn();const pool={query:async()=>({rows:[{id:t.id}]})};const out=await dispatchLeadgenTask(pool,t,{prepareLeadgenPlan:async()=>p,batchProof:async()=>({company_id:p.company_id,eligible:1}),setLease:async()=>{},startRun:async()=>null,launch,finalizeTask});expect(out).toBe('failed');expect(launch).not.toHaveBeenCalled();expect(finalizeTask).toHaveBeenCalled();});
  it('104公司proof失败先于领取与外发',async()=>{const query=vi.fn(),launch=vi.fn(),finalizeTask=vi.fn();await dispatchLeadgenTask({query},t,{prepareLeadgenPlan:async()=>p,batchProof:async()=>{throw Error('COMPANY_SOURCE_MISMATCH')},launch,finalizeTask});expect(query).not.toHaveBeenCalled();expect(launch).not.toHaveBeenCalled();expect(finalizeTask.mock.calls[0][3].where.sql).toBe('claimed_by IS NULL');});

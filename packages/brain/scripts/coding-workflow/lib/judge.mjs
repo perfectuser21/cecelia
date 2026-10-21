@@ -9,7 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadPrompt } from './claude.mjs';
 import { BLOCKING } from './review.mjs';
-import { callCodexJudge } from './codex-judge.mjs';
+import { callCodexJudge, inspectJudgeInput } from './codex-judge.mjs';
+import { sealJudgeInput } from './record-provenance.mjs';
 
 // 与 Brain 现役裁判（src/harness-judge.js）同一默认：裁判不能比被审的角色弱
 export const DEFAULT_JUDGE_MODEL = 'gpt-5.6-sol';
@@ -20,31 +21,16 @@ const SEVERITIES = new Set(['阻断', '重要', '建议']);
 const TYPE_CLASS = [['product', 'product_failure'], ['qa_gap', 'qa_insufficient'], ['contract_gap', 'contract_gap']];
 const REVERSES_RE = /^r\d+:J-\d+$/;
 const TYPES = new Set(TYPE_CLASS.map(([t]) => t));
-// 裁判必须看到完整改动（审计 #43）：超过 JUDGE_DIFF_LIMIT 由调用方升级（runner/lib/judge-gate.mjs），这里的截断只是兜底
+// 超过diff限制由调用方明确升级；所有材料保留原文，最终受控stdin另按UTF8字节预算检查。
 export const JUDGE_DIFF_LIMIT = 150000;
-const CAPS = { intent: 20000, spec: 40000, qaReport: 40000, diff: JUDGE_DIFF_LIMIT, ruling: 12000, rulings: 30000 };
 const I_RE = /^I-\d+$/;
 
 export const judgeFileName = (round) => `06-judge-r${round}.md`;
 
-const cap = (text, n) => {
-  const s = String(text ?? '');
-  return s.length > n ? `${s.slice(0, n)}\n…（已截断，原文 ${s.length} 字符）` : s;
-};
-
-/** 前几轮裁决原文：从最近的往前收，单份与总量封顶；更早的注明略去。 */
+/** 只收前轮正式06原文；不回读旧完整prompt/native，避免递归扩入来源事实。 */
 function priorRulingsText(rulings = []) {
-  const kept = [];
-  let total = 0;
-  for (const r of [...rulings].sort((a, b) => b.round - a.round)) {
-    const text = cap(r.text, CAPS.ruling);
-    if (kept.length > 0 && total + text.length > CAPS.rulings) break;
-    kept.unshift(`### 第 ${r.round} 轮\n${text}`);
-    total += text.length;
-  }
-  if (kept.length === 0) return '（无，本轮是首次裁决）';
-  const dropped = rulings.length - kept.length;
-  return `${dropped > 0 ? `（更早的 ${dropped} 轮裁决略）\n\n` : ''}${kept.join('\n\n')}`;
+  return [...rulings].sort((a, b) => a.round - b.round)
+    .map(r => `### 第 ${r.round} 轮\n${String(r.text ?? '')}`).join('\n\n') || '（无，本轮是首次裁决）';
 }
 
 /** → { system, user }；priorRulings：[{ round, text }] 前几轮裁决原文。 */
@@ -55,11 +41,11 @@ export function buildJudgePrompt({ intent, spec, qaReport, qaReportFile = '05-qa
       ROUND: String(round),
       INTENT_IDS: intentIds.join(','),
       QA_REPORT_FILE: qaReportFile,
-      INTENT: cap(intent, CAPS.intent),
-      SPEC: cap(spec, CAPS.spec),
-      QA_REPORT: cap(qaReport, CAPS.qaReport),
+      INTENT: String(intent ?? ''),
+      SPEC: String(spec ?? ''),
+      QA_REPORT: String(qaReport ?? ''),
       PRIOR_RULINGS: priorRulingsText(priorRulings),
-      DIFF: cap(diff, CAPS.diff) || '（无代码改动）',
+      DIFF: String(diff ?? '') || '（无代码改动）',
     }),
   };
 }
@@ -174,7 +160,10 @@ export function resolveJudgeConfig(env = process.env) {
 
 /** OpenAI 兼容 chat/completions → { content, usage }；失败抛 Error(judge_*)。 */
 export async function callJudge({ system, user }, config) {
-  if (config.provider === 'codex') return callCodexJudge({ system, user }, config);
+  // 调用方已追加全部来源事实；先检查最终stdin，再封存，任一步失败均不得spawn/发请求。
+  inspectJudgeInput({ system, user }, config.maxInputBytes);
+  const judgeInputReceipt = sealJudgeInput({ system, user });
+  if (config.provider === 'codex') return callCodexJudge({ system, user }, { ...config, judgeInputReceipt });
   if (config.provider && config.provider !== 'api') throw new Error('judge_provider_unsupported');
   const { api, key, model, timeoutMs = DEFAULT_TIMEOUT_MS, fetchFn = fetch } = config;
   if (!key) throw new Error('judge_key_missing');

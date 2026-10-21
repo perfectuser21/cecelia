@@ -5,6 +5,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { fileURLToPath } from 'node:url';
+
+export const FAKE_EVALUATE = fileURLToPath(import.meta.url);
+
+if (process.argv[1] && path.resolve(process.argv[1]) === FAKE_EVALUATE) {
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 if (process.env.FAKE_QA_LOG) fs.appendFileSync(process.env.FAKE_QA_LOG, `${JSON.stringify(input)}\n`);
 const mode = process.env.FAKE_QA_MODE || 'pass';
@@ -43,5 +48,6 @@ const cannot = mode === 'cannot' ? [{ id: 'T-2', covers: ['Q-1'], reason: 'å·¥å…
 const failed = mode === 'fail' ? [{ id: 'T-1', covers: ['Q-1'], command: 'curl x', output_tail: '500' }] : [];
 out({
   status: 'completed', failure_class: null,
-  outputs: { qa_report_file: file, qa: { verdict: mode === 'fail' ? 'FAIL' : mode === 'cannot' ? 'CANNOT_VERIFY' : 'PASS', cannot_verify: cannot, round: input.round, env: { kind: 'preview', url: URL }, failed, blocking: [], cost_usd: 0.5 } },
+  outputs: { qa_report_file: file, ...(process.env.FAKE_QA_SOURCE_STAGE ? { source_stage_event_id: process.env.FAKE_QA_SOURCE_STAGE } : {}), qa: { verdict: mode === 'fail' ? 'FAIL' : mode === 'cannot' ? 'CANNOT_VERIFY' : 'PASS', cannot_verify: cannot, round: input.round, env: { kind: 'preview', url: URL }, failed, blocking: [], cost_usd: 0.5 } },
 });
+}

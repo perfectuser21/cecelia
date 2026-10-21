@@ -194,3 +194,43 @@ describe('relayOnComplete', () => {
     expect(out.brief).toBeNull();
   });
 });
+
+
+describe('自动改进诊断接棒',()=>{
+ const origin='11111111-1111-4111-8111-111111111111',self='33333333-3333-4333-8333-333333333333';
+ const repo='perfectuser21/cecelia',revision='a'.repeat(40);
+ const chain={protocol:'commander-improvement-v1',phase:'diagnosis',chain_key:'b'.repeat(64),deadline_at:new Date(Date.now()+3600000).toISOString(),max_repairs:1,effects_safe:true,frozen_sources:[{repo,revision}]};
+ const task={id:self,parent_task_id:origin,title:'诊断',status:'completed',task_type:'research',payload:{commander_improvement:chain}};
+ const step={kind:'dispatch_headless',title:'修补',change_kind:'bugfix',repo_hint:repo,map_scope_hint:['F1'],base_sha:revision,
+  diagnosis:{category:'source_defect',fixed_source:{repo,revision,path:'packages/brain/src/helper.js'},evidence:['readback:fixture'],reproduction:'固定输入复现错误',acceptance:['错误被修复且正常场景无退步'],effects_status:'none'}};
+ const pool={query:vi.fn(async()=>({rows:[]}))};
+ it('研究任务显式保留仓库范围与固定SHA，跨仓不猜父任务repo',async()=>{
+  const create=vi.fn(async(_db,spec)=>({task:{id:'repair',title:spec.title}}));
+  const result=await materializeNextSteps(pool,task,{next_steps:[step]},{createRoutedTask:create});
+  expect(result.tasks).toHaveLength(1);
+  expect(create.mock.calls[0][1]).toMatchObject({requested_task_type:'coding_workflow',repo_hint:repo,map_scope_hint:['F1'],base_sha:revision,
+   source_id:'commander-repair:'+chain.chain_key,metadata:{commander_improvement:{phase:'repair',max_repairs:1}}});
+ });
+ it.each(['external_environment','platform_risk_permission','verifier_defect','insufficient_evidence'])('非源码缺陷不得自动编码：%s',async category=>{
+  const create=vi.fn();const result=await materializeNextSteps(pool,task,{next_steps:[{...step,diagnosis:{...step.diagnosis,category}}]},{createRoutedTask:create});
+  expect(create).not.toHaveBeenCalled();expect(result.skipped).toHaveLength(1);
+ });
+ it.each(['missing-source','unknown-effects','expired','repair-budget','missing-scope'])('来源/副作用/预算不足拒绝编码：%s',async reason=>{
+  const current=structuredClone(task),next=structuredClone(step);
+  if(reason==='missing-source')next.diagnosis.fixed_source.revision='c'.repeat(40);
+  if(reason==='unknown-effects')current.payload.commander_improvement.effects_safe=false;
+  if(reason==='expired')current.payload.commander_improvement.deadline_at='2000-01-01T00:00:00.000Z';
+  if(reason==='repair-budget')current.payload.commander_improvement.phase='repair';
+  if(reason==='missing-scope')delete next.map_scope_hint;
+  const create=vi.fn();const result=await materializeNextSteps(pool,current,{next_steps:[next]},{createRoutedTask:create});
+  expect(create).not.toHaveBeenCalled();expect(result.skipped).toHaveLength(1);
+ });
+ it('普通结构化编码handoff保留显式目标且无效显式字段不回退到父仓',async()=>{
+  const create=vi.fn(async(_db,spec)=>({task:{id:'repair',title:spec.title}}));
+  const ordinary={...task,payload:{repo:'other',map_scope:['wrong']}};
+  await materializeNextSteps(pool,ordinary,{next_steps:[step]},{createRoutedTask:create});
+  expect(create.mock.calls[0][1]).toMatchObject({repo_hint:repo,map_scope_hint:['F1'],base_sha:revision});
+  create.mockClear();await materializeNextSteps(pool,ordinary,{next_steps:[{...step,map_scope_hint:'F1'}]},{createRoutedTask:create});
+  expect(create).not.toHaveBeenCalled();
+ });
+});

@@ -13,6 +13,9 @@ const VERDICT_RE = /^verdict\s*[:：]\s*(\S*)\s*$/;
 const REASON_RE = /^原因\s*[:：]\s*(.*?)\s*$/;
 const DEFAULT_VERDICTS = ['PASS', 'FAIL'];
 const LIST_MARK_RE = /^\s*(?:[-*]\s+)?/;
+// QA机器身份及语义值保持原文；只移除字段标签上的Markdown强调。
+const qaField = line => line.replace(LIST_MARK_RE, '').trim().replace(/^(\*\*|__)(.*?)\1(?=\s*[:：])/, '$2');
+const enumText = value => value.replace(/^(\*\*|__)(.*?)\1$/, '$2');
 
 /** 尾部摘要：超过 OUTPUT_SUMMARY_MAX 时保留末尾并以 … 开头。 */
 function tail(text) {
@@ -25,12 +28,13 @@ function closes(f, fence) {
 }
 
 /** 按行切出 `### E-n` 段；代码块内的标题行不算结构。返回 [{ id, lines }]。 */
-function sections(lines, ITEM_RE) {
+function sections(lines, ITEM_RE, outsideLine = null) {
   const out = [];
   let current = null;
   let fence = null;
   for (const line of lines) {
     if (fence === null) {
+      if (!FENCE_RE.test(line)) outsideLine?.(line);
       const item = ITEM_RE.exec(line);
       if (item) {
         current = { id: item[1], lines: [] };
@@ -52,13 +56,14 @@ function sections(lines, ITEM_RE) {
 }
 
 /** 解析一段：字段行在代码块外，command/output 取第一个同名代码块。 */
-function parseSection({ id, lines }, coversRe, verdicts) {
+function parseSection({ id, lines }, coversRe, verdicts, qaNative) {
   const errors = [];
   const blocks = {};
   let covers = null;
   let verdict = null;
   let reason = '';
   let open = null;
+  const native = {};
   for (const line of lines) {
     if (open) {
       const f = FENCE_RE.exec(line);
@@ -81,8 +86,19 @@ function parseSection({ id, lines }, coversRe, verdicts) {
     if (c && covers === null) covers = c[1].split(/[,，、\s]+/).filter(Boolean);
     const v = VERDICT_RE.exec(field);
     if (v && verdict === null) verdict = v[1].toUpperCase();
-    const r = REASON_RE.exec(field);
+    const semanticField = qaNative ? qaField(line) : field;
+    const r = REASON_RE.exec(semanticField);
     if (r && !reason) reason = r[1];
+    if (qaNative) {
+      for (const key of ['native_item_id', 'native_occurrence', 'exit_code', 'command_encoding', 'output_encoding']) {
+        const m = new RegExp(`^${key}\\s*[:：]\\s*(.*)$`).exec(semanticField);if (m) native[key] = ['exit_code', 'native_occurrence'].includes(key) ? Number(m[1]) : m[1];
+      }
+      for (const [key, label] of [['severity', '严重度'], ['scene', '场景']]) {
+        const m = new RegExp(`^${label}\\s*[:：]\\s*(.*)$`).exec(semanticField);
+        if (m && !native[key]) native[key] = key === 'severity' ? enumText(m[1]) : m[1];
+      }
+      const source = /^证据来源\s*[:：]\s*(.*)$/.exec(semanticField);if (source) native.evidence_source = source[1];
+    }
   }
   // 文末仍开着的代码块按闭合到文末处理（真实 claude 会漏写最后的闭合 ```，2c34f677）。
   // 文中未闭合的块会吞掉后面的 E-n，那些 I-n 照样判未覆盖，不因此放宽。
@@ -93,10 +109,24 @@ function parseSection({ id, lines }, coversRe, verdicts) {
   if (verdict === null) errors.push(`${id}:verdict_missing`);
   else if (!verdicts.includes(verdict)) errors.push(`${id}:verdict_invalid`);
   for (const lang of ['command', 'output']) {
-    if (!(lang in blocks)) errors.push(`${id}:${lang}_missing`);
-    else if (blocks[lang].trim() === '') errors.push(`${id}:${lang}_empty`);
+    if (!(lang in blocks)) { if (!(qaNative && lang === 'output' && native.evidence_source === 'controller_native')) errors.push(`${id}:${lang}_missing`); }
+    else if (blocks[lang].trim() === '' && !(qaNative && lang === 'output')) errors.push(`${id}:${lang}_empty`);
+    if (qaNative && native[`${lang}_encoding`] === 'json') {
+      try { const value = JSON.parse(blocks[lang]);if (typeof value !== 'string') throw Error();blocks[lang] = value; } catch { errors.push(`${id}:${lang}_encoding_invalid`); }
+    }
   }
-  return { item: { id, covers: covers ?? [], verdict, ...(reason ? { reason } : {}), command: blocks.command ?? '', output: blocks.output ?? '' }, errors };
+  if (qaNative) native.output_present = Object.hasOwn(blocks, 'output');
+  return { item: { id, covers: covers ?? [], verdict, ...(reason ? { reason } : {}), command: blocks.command ?? '', output: blocks.output ?? '', ...native }, errors };
+}
+
+/** Only declarations outside code fences are report semantics, including those outside T/X sections. */
+export function qaScreenshotDeclarations(text) {
+  const declarations = [];
+  sections((parseFrontmatter(text)?.body ?? text).split(/\r?\n/), /$^/, line => {
+    const field = qaField(line);
+    if (/^截图\s*[:：]\s*.+$/.test(field)) declarations.push(field);
+  });
+  return declarations;
 }
 
 /**
@@ -104,7 +134,7 @@ function parseSection({ id, lines }, coversRe, verdicts) {
  * 缺省按 04-evidence.md（E-n 对应 I-n）；QA 报告传 { prefix: 'T', coversRe: /^Q-\d+$/ } 等。
  * verdicts：允许的结论，缺省 PASS/FAIL；QA 报告另允许 CANNOT_VERIFY（验不了，配 `原因:` 字段，记在 item.reason）。
  */
-export function parseEvidence(text, { prefix = 'E', coversRe = INTENT_ID_RE, verdicts = DEFAULT_VERDICTS } = {}) {
+export function parseEvidence(text, { prefix = 'E', coversRe = INTENT_ID_RE, verdicts = DEFAULT_VERDICTS, qaNative = false } = {}) {
   if (typeof text !== 'string') return { items: [], errors: ['evidence_not_text'] };
   const body = parseFrontmatter(text)?.body ?? text;
   const items = [];
@@ -116,7 +146,7 @@ export function parseEvidence(text, { prefix = 'E', coversRe = INTENT_ID_RE, ver
       continue;
     }
     seen.add(section.id);
-    const parsed = parseSection(section, coversRe, verdicts);
+    const parsed = parseSection(section, coversRe, verdicts, qaNative);
     items.push(parsed.item);
     errors.push(...parsed.errors);
   }

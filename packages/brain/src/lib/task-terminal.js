@@ -31,7 +31,6 @@ export const TASK_STATUS_WRITER_REGISTRY = Object.freeze([
   { module: 'actions.js', may_write_terminal: true, reason: 'update_task / bulk 动作可写任意状态；终态后调 afterTerminalTransition' },
   { module: 'orchestrator/kernel-run-store.js', may_write_terminal: true, reason: 'Kernel run 权威终态化事务内写 taskOutcome（completed/failed）；COMMIT 后调 afterTerminalTransition' },
   { module: 'script-managed-executor.js', may_write_terminal: false, reason: '准入结果只写 blocked/queued；终态委托 script-settlement → finalizeTask' },
-  { module: 'decision.js', may_write_terminal: false, reason: 'retry → queued / skip → cancelled（等待态），不写终态' },
   { module: 'proposal.js', may_write_terminal: false, reason: '快照回滚恢复原状态，是撤销不是迁移，不接棒' },
   { module: 'dep-cascade.js', may_write_terminal: false, reason: 'dep_failed 恢复回 queued / 原非终态' },
   { module: 'quarantine.js', may_write_terminal: false, reason: 'release → queued / cancelled（等待态）' },
@@ -167,7 +166,16 @@ export function buildTerminalUpdate(taskId, status, opts = {}) {
   }
 
   // v2只能由持久控制器的最终核验判定进入成功终态，旧失败入口不得抢收。
-  where.push("(payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' OR (result->'workflow_control'->>'phase' = 'final' AND result->'workflow_control'->>'verdict' = 'PASS' AND " + (isRelayTerminalStatus(status) ? 'TRUE' : 'FALSE') + "))");
+  const failedProof = opts.commanderFailureReconciliation;
+  let failedGate = '';
+  if (status === 'failed' && /^[a-f0-9]{64}$/.test(failedProof?.sha256 ?? '') && /^wfd-[a-f0-9-]{36}$/.test(failedProof?.runId ?? '')) {
+    failedGate = ` OR (result->'workflow_control'->>'phase'='final' AND result->'workflow_control'->>'verdict'='FAIL'
+      AND result->'workflow_control'->'failed_reconciliation'->>'sha256'=$${push(failedProof.sha256)}
+      AND result->'workflow_control'->'envelope'->>'run_id'=$${push(failedProof.runId)}
+      AND result->'workflow_control'->'failed_reconciliation'->>'effects'='unknown'
+      AND result->'workflow_control'->'failed_reconciliation'->>'retry_safe'='false')`;
+  }
+  where.push("(payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2' OR (result->'workflow_control'->>'phase' = 'final' AND result->'workflow_control'->>'verdict' = 'PASS' AND " + (isRelayTerminalStatus(status) ? 'TRUE' : 'FALSE') + ")" + failedGate + ")");
   const returning = ['id', 'status', ...toList(opts.returning).filter((c) => c !== 'id' && c !== 'status')];
   const sql = `UPDATE tasks SET ${sets.join(', ')} WHERE ${where.join(' AND ')} RETURNING ${returning.join(', ')}`;
   return { sql, params };
@@ -208,4 +216,23 @@ export async function finalizeTask(db, taskId, status, opts = {}) {
   }
   out.relay = out.relays[0] ?? null;
   return out;
+}
+
+
+/** 原 decision 的 retry/skip 等待态写入；保持策略及结果，不经终态接棒。 */
+export async function applyDecisionTaskTransition(db, action) {
+  if (action.type === 'retry') {
+    const retryUpdate = await db.query(
+      "UPDATE tasks SET status = $1 WHERE id = $2 AND payload->>'commander_protocol' IS DISTINCT FROM 'commander-v2'",
+      ['queued', action.target_id]
+    );
+    return retryUpdate.rowCount === 0
+      ? { success: false, action: 'not_requeued', reason: 'task_missing_or_commander_control_owned' }
+      : { success: true, action: 'reset_to_queued' };
+  }
+  if (action.type === 'skip') {
+    await db.query('UPDATE tasks SET status = $1 WHERE id = $2', ['cancelled', action.target_id]);
+    return { success: true, action: 'cancelled' };
+  }
+  throw new Error('Unsupported decision task transition');
 }

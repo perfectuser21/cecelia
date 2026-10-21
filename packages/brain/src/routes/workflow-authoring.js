@@ -6,8 +6,9 @@ import { loadCatalog } from '../workflow-authoring/catalog.js';
 import { validateDefinition, validateReferences, registerWorkflow } from '../workflow-authoring/registration.js';
 import { registerWorkflowSource } from '../lib/workflow-source-registration.js';
 import { resolveAuthoringAssembly } from '../workflow-authoring/assembly-resolver.js';
+import {advanceAuthoringAssembly} from '../workflow-authoring/assembly-driver.js';
 
-export function createWorkflowAuthoringRouter({ db = pool, sourceOptions, freezeOptions } = {}) {
+export function createWorkflowAuthoringRouter({ db = pool, sourceOptions, freezeOptions,invocationOptions } = {}) {
   const router = Router();
   router.use(internalAuthOrLoopback);
   const handle = action => async (req, res) => {
@@ -23,8 +24,13 @@ export function createWorkflowAuthoringRouter({ db = pool, sourceOptions, freeze
   router.get('/runs/:id', handle(req => getAuthoring(db, req.params.id)));
   router.get('/runs/:id/assembly-plan', handle(req => resolveAuthoringAssembly(db, req.params.id,
     String(req.get('x-tenant-id') ?? 'default').trim())));
-  router.post('/runs/:id/submit', handle(req => submitAuthoring(db, req.params.id, req.body,
-    { loadCatalog, validateDefinition, validateReferences, registerWorkflow, freezeOptions })));
+  const advance=req=>advanceAuthoringAssembly(db,req.params.id,{tenantId:String(req.get('x-tenant-id')??'default'),freezeOptions,invocationOptions});
+  router.post('/runs/:id/advance',handle(advance));
+  router.post('/runs/:id/submit', handle(async req => {
+    const submitted=await submitAuthoring(db,req.params.id,req.body,{loadCatalog,validateDefinition,validateReferences,registerWorkflow,freezeOptions});
+    if(req.body.stage==='compose'&&submitted.state.request.execution_protocol==='workflow-authoring-execution-v1')return {...submitted,automatic:await advance(req)};
+    return submitted;
+  }));
   return router;
 }
 

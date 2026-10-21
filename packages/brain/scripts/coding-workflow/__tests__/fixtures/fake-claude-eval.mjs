@@ -9,8 +9,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
+import { fileURLToPath } from 'node:url';
+
+export const FAKE_CLAUDE_EVAL = fileURLToPath(import.meta.url);
+
+if (process.argv[1] && path.resolve(process.argv[1]) === FAKE_CLAUDE_EVAL) {
 const argv = process.argv.slice(2);
 const prompt = argv.includes('-p') ? argv[argv.indexOf('-p') + 1] : fs.readFileSync(0, 'utf8');
+if (process.env.FAKE_EVAL_PROMPT_CAPTURE_PATH) fs.writeFileSync(process.env.FAKE_EVAL_PROMPT_CAPTURE_PATH, prompt);
 const field = (name) => (prompt.match(new RegExp(`^${name}: (.*)$`, 'm')) || [])[1] ?? '';
 const mode = process.env.FAKE_EVAL_MODE || 'pass';
 const sprint = field('SPRINT_DIR');
@@ -74,3 +80,4 @@ if (mode === 'outside') fs.writeFileSync('stray.txt', 'x\n');
 console.log(JSON.stringify(process.env.FAKE_EVAL_NATIVE === 'codex'
   ? { type: 'turn.completed', usage: { input_tokens: 100, output_tokens: 20 } }
   : { type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.7 }));
+}

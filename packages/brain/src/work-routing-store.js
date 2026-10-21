@@ -5,6 +5,7 @@ import { assertJanitorAuthority } from './janitor-authority.js';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
+import {loadRepos,reposFile,resolveRepo as resolveRunnerRepo,resolveEntry} from '../scripts/coding-workflow/runner/lib/repos.mjs';
 import { routeWork } from './work-router.js';
 import { runCapabilityGate } from './capability-gate.js';
 import { isCanonicalTaskBranch } from './orchestrator/workspace-spec.js';
@@ -72,6 +73,10 @@ function repositoryRoot(repo, repositoryFacts) {
   if (repo === 'zenithjoy-workspace' && process.env.REPO_ROOT_ZENITHJOY) {
     return process.env.REPO_ROOT_ZENITHJOY;
   }
+  const repos=loadRepos(reposFile());
+  if (resolveRunnerRepo(repo,repos)==='zenithjoy-skills') {
+    return process.env.REPO_ROOT_ZENITHJOY_SKILLS || fact?.path || resolveEntry(repos.find(entry=>entry.key==='zenithjoy-skills')).clone;
+  }
   return fact?.path || process.cwd();
 }
 
@@ -121,7 +126,12 @@ export async function loadRepositoryFacts(client) {
     scope_key: row.scope_key,
     repo: row.repo,
     path: row.adapter_config?.path ?? null,
-    aliases: Array.isArray(row.adapter_config?.aliases) ? row.adapter_config.aliases : [],
+    aliases: [...new Set([...(Array.isArray(row.adapter_config?.aliases) ? row.adapter_config.aliases : []),
+      ...(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(row.adapter_config?.source_repo || '')
+        // 来源投影只引用物理仓；不能自动占用物理仓的调用别名。
+        && [row.adapter_config.source_repo, row.adapter_config.source_repo.split('/')[1]].includes(row.repo)
+        ? [row.adapter_config.source_repo, row.adapter_config.source_repo.split('/')[1], `https://github.com/${row.adapter_config.source_repo}.git`, `git@github.com:${row.adapter_config.source_repo}.git`] : []),
+    ])],
   }));
 }
 
@@ -338,7 +348,8 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         conflict.code = 'work_route_idempotency_conflict';
         throw conflict;
       }
-      assertRouteSnapshotLaunchAuthority({
+      // 只读任务没有地图写入锚；仅编码重放需要该权威校验。
+      if (persisted.work_kind === 'coding_mutation') assertRouteSnapshotLaunchAuthority({
         taskStatus: existing.rows[0].status,
         validationVersion: legacyDirectSeed
           ? null

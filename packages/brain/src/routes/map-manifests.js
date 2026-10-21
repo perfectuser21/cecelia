@@ -10,6 +10,19 @@ import {
 } from '../lib/map-manifest-store.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
+function activationOptions(body, projector) {
+  const invalid = () => { throw new MapManifestError('MAP_MANIFEST_EXPECTED_ACTIVE_INVALID', 'Expected active manifest must contain exactly a UUID id and lowercase SHA-256 digest', 422); };
+  if (body === undefined) return { projector };
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => key !== 'expected_active')) invalid();
+  if (!Object.hasOwn(body, 'expected_active')) return { projector };
+  const expected = body.expected_active;
+  if (!expected || typeof expected !== 'object' || Array.isArray(expected)
+      || Object.keys(expected).sort().join(',') !== 'digest,id'
+      || typeof expected.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(expected.id)
+      || typeof expected.digest !== 'string' || !/^[0-9a-f]{64}$/.test(expected.digest)) invalid();
+  return { projector, expectedActive: { id: expected.id.toLowerCase(), digest: expected.digest } };
+}
+
 function sendError(res, error) {
   if (error instanceof MapManifestError || error instanceof MapBrainBindingError) {
     const body = {
@@ -59,7 +72,7 @@ export function createMapManifestRouter({ pool, projector, services } = {}) {
 
   router.post('/:id/activate', async (req, res) => {
     try {
-      const result = await activate(pool, req.params.id, { projector });
+      const result = await activate(pool, req.params.id, activationOptions(req.body, projector));
       return res.json(result);
     } catch (error) {
       return sendError(res, error);

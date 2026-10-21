@@ -1,11 +1,12 @@
 /** Brain正常任务 → 已安装冻结CLI → 真实终态与中央Span收割。 */
+import {isLeadgenPhoneFlow,leadgenDeviceLocks} from './leadgen-resources.js';
 import { execFile, spawn } from 'node:child_process';
 import { sshWithStdin,sshRun } from './ssh-exec.js';
 import { SSH_BASE_ARGS } from './ssh-args.js';
 import { resolvePrimaryWorkerId,sshTargetFor } from '../machine-registry.js';
 import { prepareLeadgenPlan } from './leadgen-dispatch-contract.js';
 import { buildLeadgenBatchProbe } from './leadgen-batch-proof.js';
-import { buildLeadgenLaunch,buildLeadgenProbe } from './leadgen-controller.js';
+import { buildLeadgenLaunch,buildLeadgenProbe,buildLeadgenAdbPreflight } from './leadgen-controller.js';
 import { checkDeviceLockForManualDispatch } from './manual-dispatch-device-gate.js';
 import { releaseDeviceLocksHeldBy } from '../device-lock-helpers.js';
 import { setBrainLease,BRAIN_LEASE_MARGIN_SECONDS } from './task-lease.js';
@@ -37,13 +38,19 @@ export async function dispatchLeadgenTask(pool,task,deps={}) {
     const proof=await (deps.batchProof??(async p=>parse(await dispatch(buildLeadgenBatchProbe(p)))))(plan);
     if(!Number.isSafeInteger(proof?.eligible)||proof.eligible<0||proof.company_id!==plan.company_id)throw Error('公司/批次读回无效');
     if(!proof.eligible)return 'waiting';
+    if(plan.machine==='xian-m4'&&isLeadgenPhoneFlow(plan.workflow_key)){
+      const ready=parse(await (deps.adbPreflight??(p=>dispatch(buildLeadgenAdbPreflight(p))))(plan));
+      if(ready.state!=='device'||ready.serial!==plan.serial||ready.port!==(plan.env.DOUYIN_ADB_PORT===undefined?5037:Number(plan.env.DOUYIN_ADB_PORT)))throw Error(`ADB预检失败: ${ready.reason??'身份不符'}`);
+    }
   }catch(error){await terminal(pool,task,'failed',error.message,{phase:'preflight'},deps);return 'failed';}
   const claimed=await pool.query("UPDATE tasks SET claimed_by=$2,claimed_at=NOW() WHERE id=$1 AND status='queued' AND claimed_by IS NULL RETURNING id",[task.id,CLAIMER]);
   if(!claimed.rows?.length)return 'skipped';
   try {
-  if(plan.machine!=='mmv'){
-    const gate=await (deps.lockGate??(t=>checkDeviceLockForManualDispatch(t,CLAIMER)))({...task,payload:{...task.payload,device_serial:plan.serial,device_ttl_minutes:Math.ceil(plan.timeout_sec/60)+20}});
+  for(const deviceSerial of leadgenDeviceLocks(plan)){
+    const gate=await (deps.lockGate??(t=>checkDeviceLockForManualDispatch(t,CLAIMER)))({...task,payload:{...task.payload,device_serial:deviceSerial,device_ttl_minutes:Math.ceil(plan.timeout_sec/60)+20}});
     if(!gate.pass){
+      //尚未启动业务；回收本任务已领取的其它别名，不触及foreign owner。
+      await (deps.releaseLock??releaseDeviceLocksHeldBy)(task.id,pool);
       await pool.query("UPDATE tasks SET claimed_by=NULL,claimed_at=NULL WHERE id=$1 AND claimed_by=$2 AND status='queued'",[task.id,CLAIMER]);
       return 'waiting';
     }
@@ -55,7 +62,7 @@ export async function dispatchLeadgenTask(pool,task,deps={}) {
   const started=await (deps.startRun??startRun)({taskId:task.id,runId:plan.controller_run_id,source:'leadgen-dispatch',context:{workflow_key:plan.workflow_key,external_business_run_id:plan.business_run_id,source_binding_run_id:plan.source_binding_run_id??null}},{pool});
   if(!started?.id||started.run_id!==plan.controller_run_id)throw Error('控制器task_run未持久化');
   } catch(error) {
-    if(plan.machine!=='mmv')await (deps.releaseLock??releaseDeviceLocksHeldBy)(task.id,pool);
+    if(isLeadgenPhoneFlow(plan.workflow_key))await (deps.releaseLock??releaseDeviceLocksHeldBy)(task.id,pool);
     await terminal(pool,task,'failed',error.message,{phase:'before_launch'},deps);
     return 'failed';
   }
@@ -75,7 +82,7 @@ export async function validateLeadgenTerminal(pool,plan,response,deps={}) {
   if(!Number.isInteger(response.exit_code))throw Error('缺真实进程终态');
   if(response.exit_code!==0){
     const clean=response.receipt?.split_result?.results?.find(r=>r.activity==='cleanup');
-    if(plan.machine!=='mmv'&&response.execution_started!==false&&!(clean?.status==='completed'&&clean.verification?.verified===true))throw Error('失败后的手机清场未核实');
+    if(isLeadgenPhoneFlow(plan.workflow_key)&&response.execution_started!==false&&!(clean?.status==='completed'&&clean.verification?.verified===true))throw Error('失败后的手机清场未核实');
     return {status:'failed',reason:`leadgen_cli_exit_${response.exit_code}`,receipt:response.receipt??null};
   }
   const receipt=response.receipt;
@@ -107,7 +114,7 @@ export async function reapLeadgenTask(pool,task,deps={}){
   }
   if(!outcome)return null;
   await terminal(pool,task,outcome.status,outcome.reason??null,outcome,deps);
-  if(plan.machine!=='mmv')await (deps.releaseLock??releaseDeviceLocksHeldBy)(task.id,pool);
+  if(isLeadgenPhoneFlow(plan.workflow_key))await (deps.releaseLock??releaseDeviceLocksHeldBy)(task.id,pool);
   const facts=Object.fromEntries(['business_outcome','outward_sent','actual_send_acceptance','scored_count','scoring_outcome','actual_scoring_acceptance'].filter(k=>outcome[k]!==undefined).map(k=>[k,outcome[k]]));
   await (deps.finishRun??finishRun)({runId:plan.controller_run_id,status:outcome.status,exitCode:response.exit_code,result:{external_business_run_id:plan.business_run_id,reconciliation:outcome.reconciliation??null,...facts}},{pool});
   return outcome.status;

@@ -1,3 +1,5 @@
+// 本文件覆盖属性投影；真实受管正文与故障重试由 projection/__tests__/task-progress.test.js 覆盖。
+vi.mock('../projection/task-progress.js',async importOriginal=>({...await importOriginal(),syncTaskProgress:vi.fn(async()=>false),findCreatedTaskPage:vi.fn(async()=>null)}));
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const JOURNEY_DB  = '358c40c2-ba63-8148-bde7-e313d789931a';
@@ -24,6 +26,7 @@ vi.mock('../work-routing-store.js', () => ({
 describe('runNotionPushSync', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
     mockNotionReq.mockReset();
   });
 
@@ -150,6 +153,7 @@ describe('runNotionPushSync', () => {
 describe('runNotionPushSync — new push functions', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
     mockNotionReq.mockReset();
     // default: no unsync'd rows
     mockQuery.mockResolvedValue({ rows: [] });
@@ -219,6 +223,7 @@ describe('runNotionPushSync — new push functions', () => {
 describe('runNotionPushSync — step_link Order 属性降级回归 [ARTIFACT R4]', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
     mockNotionReq.mockReset();
     mockQuery.mockResolvedValue({ rows: [] });
   });
@@ -257,6 +262,7 @@ describe('runNotionPushSync — step_link Order 属性降级回归 [ARTIFACT R4]
 describe('runNotionPushSync — feature Status 属性类型回归', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
     mockNotionReq.mockReset();
     mockQuery.mockResolvedValue({ rows: [] });
   });
@@ -311,6 +317,7 @@ describe('runNotionPushSync — feature Status 属性类型回归', () => {
 describe('runNotionPushSync — pushAdvancementItems', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
     mockNotionReq.mockReset();
   });
 
@@ -445,6 +452,7 @@ describe('pushTasks — Brain tasks → Notion Tasks 库', () => {
 
   beforeEach(() => {
     mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
     mockNotionReq.mockReset();
   });
 
@@ -545,6 +553,7 @@ describe('pushTasks — Brain tasks → Notion Tasks 库', () => {
 describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
     mockNotionReq.mockReset();
     mockCreateRoutedTask.mockReset();
   });
@@ -661,6 +670,7 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
 
   beforeEach(() => {
     mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
     mockNotionReq.mockReset();
     mockCreateRoutedTask.mockReset();
     vi.unstubAllGlobals();
@@ -1268,6 +1278,7 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
 describe('pushTasks — 错库孤儿链接解绑（400 schema 不符）', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
     mockNotionReq.mockReset();
   });
   it('PATCH 400 property 不存在 → 解绑 notion_id+清指纹（下轮重建），不无限重试', async () => {
@@ -1307,6 +1318,7 @@ describe('Notion 排单正文 → 任务 prompt', () => {
 
   beforeEach(() => {
     mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
     mockNotionReq.mockReset();
     mockCreateRoutedTask.mockReset();
     vi.unstubAllGlobals();
@@ -1508,6 +1520,7 @@ describe('Notion 排单正文 → 任务 prompt', () => {
 describe('任务投影读 kind', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    mockQuery.mockResolvedValue({rows:[]});
     mockNotionReq.mockReset();
     mockQuery.mockResolvedValue({ rows: [] });
     mockNotionReq.mockResolvedValue({ id: 'kind-page' });

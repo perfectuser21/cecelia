@@ -343,3 +343,67 @@ describe('snapshotChanges / outOfScopeChanges', () => {
     }
   });
 });
+
+// 精确调度边界：child完成先被观察，pending Writable回调随后报错。
+// 真实Node Writable产生end callback/error；仅替换OS spawn和kill，避免对真实进程发信号。
+describe('stdin收尾后的迟到写入错误', () => {
+  it('finish已返回后，迟到EPIPE不得再安排进程组信号或留下timer', async () => {
+    const { EventEmitter } = await import('node:events');
+    const { Writable, PassThrough } = await import('node:stream');
+    const child = new EventEmitter(); child.pid = 987654321;
+    child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    let completeWrite;
+    child.stdin = new Writable({ write(_chunk, _encoding, callback) { completeWrite = callback; } });
+    vi.doMock('node:child_process', async importOriginal => ({ ...await importOriginal(), spawn: () => child }));
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-late-stdin-'));
+    vi.useFakeTimers();
+    try {
+      const isolated = await import('../lib/claude.mjs?late-stdin-lifecycle');
+      const running = isolated.runClaude({ provider: 'codex', args: ['-p', 'x'.repeat(900000)], cwd: tmp,
+        timeoutMs: 60000, tag: 'late-stdin', codexEnv: { CODING_WF_CODEX_HOME: tmp, CODING_WF_CODEX_MODEL: 'local-stub', CODING_WF_CODEX_BIN: '/local/stub' } });
+      expect(completeWrite).toBeTypeOf('function');
+      child.emit('close', 0);
+      const result = await running;
+      expect(result).toMatchObject({ code: 0, stdin_finished: false, stdin_error: { code: 'STDIN_INCOMPLETE' } });
+      const cleanupSignals = kill.mock.calls.length;
+      expect(cleanupSignals).toBe(1); // finish自己的必要SIGKILL，不禁止正常清理。
+      expect(vi.getTimerCount()).toBe(0);
+      completeWrite(Object.assign(new Error('late pipe closure'), { code: 'EPIPE' }));
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(kill.mock.calls).toHaveLength(cleanupSignals);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers(); kill.mockRestore(); vi.doUnmock('node:child_process');
+      child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('原生管道输入哈希', () => {
+  it('run.stdin_sha256必须匹配真实CLI读取的UTF8字节，与JSON材料哈希分开', async () => {
+    const { createHash } = await import('node:crypto');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-native-stdin-hash-'));
+    const bin = path.join(dir, 'codex'), captured = path.join(dir, 'actual-stdin');
+    const input = '头部\r\n' + '汉😀'.repeat(50000) + '\n尾部-no-newline';
+    fs.writeFileSync(bin, `#!/usr/bin/env node\nconst fs=require('node:fs');const bytes=fs.readFileSync(0);fs.writeFileSync(${JSON.stringify(captured)},bytes);console.log(JSON.stringify({type:'thread.started',thread_id:'local-hash-fixture'}));console.log(JSON.stringify({type:'turn.completed'}));\n`); fs.chmodSync(bin, 0o755);
+    const sha = b => createHash('sha256').update(b).digest('hex');
+    try {
+      const result = await runClaude({ provider: 'codex', args: ['-p', input], cwd: dir,
+        timeoutMs: 5000, tag: 'stdin-hash', transcriptPath: path.join(dir, 'native.jsonl'),
+        codexEnv: { CODING_WF_CODEX_HOME: dir, CODING_WF_CODEX_MODEL: 'local-stub', CODING_WF_CODEX_BIN: bin } });
+      expect(result).toMatchObject({ code: 0, stdin_finished: true, stdin_error: null });
+      const actual = fs.readFileSync(captured);
+      expect(actual).toEqual(Buffer.from(input, 'utf8')); // 真实prepareCodexSession不修改prompt。
+      expect(sha(actual)).not.toBe(sha(JSON.stringify({ prompt: input })));
+      if (process.env.CW_JUDGE_TEST_ARTIFACT_DIR) {
+        const target = path.join(process.env.CW_JUDGE_TEST_ARTIFACT_DIR, 'native-stdin-hash'); fs.mkdirSync(target, { recursive: true });
+        fs.copyFileSync(captured, path.join(target, 'actual-stdin'));
+        fs.writeFileSync(path.join(target, 'run-result.json'), JSON.stringify({ ...result, observed_cli_stdin_sha256: sha(actual) }));
+      }
+      expect(result.stdin_sha256).toBe(sha(actual));
+      expect(result.stdin_bytes).toBe(actual.byteLength);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});

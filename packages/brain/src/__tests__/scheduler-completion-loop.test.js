@@ -34,6 +34,51 @@ describe('脚本收尾独立周期', () => {
     return item;
   }
 
+  it('workflow Commander独立60秒调度，慢串行轮不延迟首轮或后续派发', async () => {
+    const commander = job('workflow-commander-dispatch');
+    expect(COMPLETION_JOBS).toContain(commander);
+    expect(SERIAL_JOBS).not.toContain(commander);
+    expect(commander.completionCadenceMs).toBe(60_000);
+    expect(commander.livenessIntervalSec).toBe(60);
+    hang(job('machine-vitals'));
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(commander.handler).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(commander.handler).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(commander.handler).toHaveBeenCalledTimes(2);
+    expect(job('machine-vitals').handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('workflow Commander观察超时/stop-start不能重发尚未结束的真实执行', async () => {
+    const commander = job('workflow-commander-dispatch');
+    commander.timeoutMs = 100;
+    const first = hang(commander);
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(commander.handler).toHaveBeenCalledTimes(1);
+    expect(pool.query.mock.calls.some(([, args]) => args?.[0] === 'scheduler_job_last_run:workflow-commander-dispatch'
+      && JSON.parse(args[1]).timedOut === true)).toBe(true);
+    stopSchedulerJobsLoop();
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(commander.handler).toHaveBeenCalledTimes(1);
+    first.resolve({});
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(commander.handler).toHaveBeenCalledTimes(2);
+  });
+
+  it('装配对账不排在慢串行轮后；观察超时不解除实际handler锁',async()=>{
+    const assembly=job('workflow-assembly-reconcile');
+    expect(COMPLETION_JOBS).toContain(assembly);expect(SERIAL_JOBS).not.toContain(assembly);
+    expect(assembly.completionCadenceMs).toBe(30000);expect(assembly.livenessIntervalSec).toBe(30);
+    hang(job('machine-vitals'));const first=hang(assembly);assembly.timeoutMs=100;
+    startSchedulerJobsLoop(pool);await vi.advanceTimersByTimeAsync(10000);expect(assembly.handler).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60000);expect(assembly.handler).toHaveBeenCalledTimes(1);
+    first.resolve({});await vi.advanceTimersByTimeAsync(10000);expect(assembly.handler).toHaveBeenCalledTimes(2);
+  });
+
   it('无关串行 job 真挂起时，90秒鲜度预算内仍触发收割与observer对账', async () => {
     hang(job('machine-vitals'));
     startSchedulerJobsLoop(pool);
