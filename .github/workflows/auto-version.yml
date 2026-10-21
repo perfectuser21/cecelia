@@ -7,7 +7,7 @@ on:
       - 'packages/brain/**'
       - 'changes/**'
 
-# 串行化:每次 run 基于本次固定 push SHA 生成版本 PR(见 supersede 步)
+# 串行化:两个 feature 快速连合时,后一次 run 会基于最新 main 生成超越版 PR(见 supersede 步)
 concurrency:
   group: auto-version
   cancel-in-progress: false
@@ -24,15 +24,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
-          ref: ${{ github.sha }}
           # 用 PAT 而非 GITHUB_TOKEN:GITHUB_TOKEN 推的分支/开的 PR 不触发任何
           # pull_request workflow(GitHub 防递归),bot PR 会永远 0 CI 挂死(09-06 #5190 案)
           token: ${{ secrets.GH_PAT_BOT || github.token }}
 
-      - name: Check fixed commit and existing version bump
+      - name: Check if commit is auto-version
         id: check
         run: |
-          node packages/brain/scripts/auto-version-decision.mjs --sha "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          MSG=$(git log -1 --pretty=%s)
+          if echo "$MSG" | grep -q "chore(brain): auto-version"; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Determine bump type from commit message
         if: steps.check.outputs.skip == 'false'
@@ -77,7 +81,7 @@ jobs:
           NEW_VERSION=$(node -e "process.stdout.write(require('./packages/brain/package.json').version)")
           BRANCH_NAME="auto-version-bump-${NEW_VERSION}"
 
-          # 超越式接管:按本次固定 push SHA 的碎片结果关闭不同版本的旧 bot PR,防双写
+          # 超越式接管:本 run 基于最新 main 重算了全部碎片,旧的未合并 bot PR 已过时,先关掉防双写
           for OLD in $(gh pr list --state open --json headRefName -q '.[].headRefName' | grep '^auto-version-bump-' || true); do
             if [ "$OLD" != "$BRANCH_NAME" ]; then
               gh pr close "$OLD" --comment "superseded by ${BRANCH_NAME}" --delete-branch || true
