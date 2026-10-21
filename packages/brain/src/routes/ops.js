@@ -2780,7 +2780,7 @@ router.post('/deploy', rateLimit({windowMs:60_000,limit:30,standardHeaders:'draf
     const startTime = Date.now();
     let stagingReceiptId = null;
     try {
-      stagingReceiptId = await recordActionReceipt({kind:'deploy',target:'staging',evidence:{changed_paths:changed_paths||[],sha:sha||null}});
+      stagingReceiptId = await recordActionReceipt({kind:'deploy',target: 'staging',evidence:{changed_paths:changed_paths||[],sha:sha||null}});
       const stagingScript=`${repoRoot}/scripts/staging-deploy.sh`;
       const {existsSync}=await import('fs');
       if(!existsSync(stagingScript))throw Error('缺少隔离 staging 部署脚本');
