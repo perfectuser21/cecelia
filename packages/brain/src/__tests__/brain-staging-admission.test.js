@@ -23,6 +23,10 @@ set -e
 echo "$*" >> "$COMMANDS"
 case "$1" in
  info) exit 0;;
+ ps)
+  [[ "$MODE" != sidecar-query-failure ]] || exit 42
+  [[ "$MODE" != sidecar-running ]] || echo cecelia-bluegreen-sidecar
+  exit 0;;
  image) [[ "$MODE" != missing-image ]] || exit 1; if [[ "$*" == *Config.Env* ]]; then echo "GIT_SHA=$SHA"; else echo "$DIGEST"; fi; exit 0;;
  network)
   if [[ "$2" == inspect ]]; then
@@ -89,7 +93,7 @@ exit 0
 `;
  writeFileSync(join(dir,'bin/docker'),docker,{mode:0o755});
  writeFileSync(join(dir,'bin/sleep'),'#!/bin/sh\nexit 0\n',{mode:0o755});
- writeFileSync(join(dir,'bin/flock'),'#!/bin/sh\nexit 0\n',{mode:0o755});
+ writeFileSync(join(dir,'bin/flock'),'#!/bin/sh\necho lock-acquired >> "$COMMANDS"\nexit 0\n',{mode:0o755});
  const env={...process.env,PATH:`${dir}/bin:${process.env.PATH}`,EXPECTED_SHA:sha,SHA:sha,DIGEST:digest,MODE:mode,
   EVENTS:join(dir,'events'),COMMANDS:join(dir,'commands'),STATE:join(dir,'state'),CECELIA_INTERNAL_TOKEN:'synthetic_production_token',CECELIA_INTERNAL_ENV_FILE:join(dir,'internal.env')};
  const result=spawnSync('bash',[join(dir,'scripts/brain-deploy.sh')],{env,encoding:'utf8',timeout:10000});
@@ -99,6 +103,17 @@ describe('brain-staging-admission 实际脚本准入',()=>{
 it.each(['migration-failure','restore-failure','wrong-sha','not-isolated','wrong-digest','missing-image','disk-full','bad-tasks','bad-task-row','production-db'])('候选%s阻断生产迁移与切换',mode=>{
  const result=run(mode);expect(result.events,result.stderr+result.stdout).not.toContain('production-migrate');
  expect(result.status).not.toBe(0);expect(result.remaining).toEqual([]);if(mode!=='missing-image')expect(result.receipt.status).toBe('failed');expect(result.commands).not.toMatch(/stop cecelia-node-brain(?:\n|$)/);
+});
+it.each(['sidecar-running','sidecar-query-failure'])('共同锁之后%s必须拒绝候选与生产动作',mode=>{
+ const result=run(mode);expect(result.status).not.toBe(0);
+ expect(result.events).not.toContain('build');expect(result.events).not.toContain('production-migrate');
+ expect(result.commands).not.toContain('run ');expect(result.commands).not.toMatch(/(?:stop|rm).*sidecar/);
+ expect(result.receipt).toBeNull();expect(result.remaining).toEqual([]);
+ expect(result.commands.indexOf('lock-acquired')).toBeLessThan(result.commands.indexOf('ps '));
+});
+it('固定sidecar已退出不阻塞正常候选路径',()=>{
+ const result=run('sidecar-exited');expect(result.status,result.stderr+result.stdout).toBe(88);
+ expect(result.events).toContain('production-migrate');expect(result.receipt.status).toBe('success');
 });
 it('初始化只有socket服务时继续等待，正式TCP就绪后才恢复与迁移',()=>{
  const result=run('socket-bootstrap');expect(result.status,result.stderr+result.stdout).toBe(88);
