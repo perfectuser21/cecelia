@@ -2716,13 +2716,24 @@ export const stagingDeployState = {
 };
 
 // GET /api/brain/deploy/status — 查询最近一次部署状态（文件优先，防止 Brain 重启后状态丢失）
-router.get('/deploy/status', (req, res) => {
+router.get('/deploy/status', async (req, res) => {
   const fileStatus = readDeployStatusFile();
   if (fileStatus && fileStatus.status !== deployState.status) {
     Object.assign(deployState, fileStatus);
   }
   // FR-02/Gate3 SHA 对账：deploy status 附带当前运行实例的 git_sha（构建期烙入）
-  res.json({ ...deployState, git_sha: process.env.GIT_SHA || 'unknown' });
+  const gitSha = process.env.GIT_SHA || 'unknown';
+  let settlement = null;
+  // running/rollback/failed 不能被上一份成功收据覆盖；锁忙或核验未知保持未结算。
+  if (['idle', 'success', 'succeeded'].includes(deployState.status)) {
+    try {
+      const { createRuntime } = await import('../../../../scripts/brain-image-retention/runtime.mjs');
+      const runtime = await createRuntime();
+      if (runtime) settlement = await runtime.ledger.settlement(gitSha);
+    } catch { /* 只读失败不放行，也不新建或修复部署账。 */ }
+  }
+  if (!['idle', 'success', 'succeeded'].includes(deployState.status)) settlement = null;
+  res.json({ ...deployState, git_sha: gitSha, settled: settlement !== null, settlement });
 });
 
 // POST /api/brain/deploy — GitHub Actions 合并后触发本地部署
@@ -2775,7 +2786,7 @@ router.post('/deploy', rateLimit({windowMs:60_000,limit:30,standardHeaders:'draf
       if(!existsSync(stagingScript))throw Error('缺少隔离 staging 部署脚本');
       // 长时复制和迁移不阻塞生产 Brain 事件循环；不将调用方字符串拼入 shell。
       const output=await new Promise((resolve,reject)=>execFile('bash',[stagingScript],{
-        cwd:repoRoot,timeout:1_200_000,maxBuffer:16*1024*1024,env:{...process.env,STAGING_REQUEST_ID:requestId,...(sha?{EXPECTED_SHA:sha}:{})},
+        cwd:repoRoot,timeout:5_400_000,maxBuffer:16*1024*1024,env:{...process.env,STAGING_REQUEST_ID:requestId,...(sha?{EXPECTED_SHA:sha}:{})},
       },(error,stdout)=>error?reject(error):resolve(String(stdout))));
       const verified=output.match(/^STAGING_VERIFIED sha=([a-f0-9]{40}) image=(sha256:[a-f0-9]{64}) request=([a-f0-9-]{36})$/m);
       if(!verified||verified[3]!==requestId||/STAGING_SKIP_REASON=/.test(output)||(sha&&verified[1]!==sha))throw Error('未完成候选验证，拒绝 staging success');

@@ -6,6 +6,15 @@
 set -uo pipefail
 
 BRAIN_URL="${1:?用法: gate3-trigger-deploy.sh <brain_url>}"
+TARGET_SHA="${2:-${GITHUB_SHA:-}}"
+PAYLOAD='{}'
+if [[ -n "$TARGET_SHA" ]]; then
+  [[ "$TARGET_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "非法 target_sha" >&2; exit 1; }
+  PAYLOAD=$(jq -nc --arg sha "$TARGET_SHA" '{sha:$sha}')
+fi
+REQUEST_BUDGET="${3:-60}"
+[[ "$REQUEST_BUDGET" =~ ^[0-9]+$ ]] && [ "$REQUEST_BUDGET" -gt 0 ] && [ "$REQUEST_BUDGET" -le 60 ] || exit 1
+CONNECT_BUDGET=30; [ "$REQUEST_BUDGET" -ge 30 ] || CONNECT_BUDGET="$REQUEST_BUDGET"
 RESP_FILE="$(mktemp)"
 trap 'rm -f "$RESP_FILE"' EXIT
 
@@ -13,8 +22,8 @@ HTTP_CODE=$(curl -s -o "$RESP_FILE" -w "%{http_code}" \
   -X POST "${BRAIN_URL}/api/brain/deploy" \
   -H "Authorization: Bearer ${DEPLOY_TOKEN:-}" \
   -H "Content-Type: application/json" \
-  -d '{}' \
-  --connect-timeout 30 --max-time 60 2>/dev/null) || HTTP_CODE="000"
+  -d "$PAYLOAD" \
+  --connect-timeout "$CONNECT_BUDGET" --max-time "$REQUEST_BUDGET" 2>/dev/null) || HTTP_CODE="000"
 
 cat "$RESP_FILE" >&2 2>/dev/null || true
 echo "" >&2

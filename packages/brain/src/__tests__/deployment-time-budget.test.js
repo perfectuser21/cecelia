@@ -99,3 +99,14 @@ it('重触发HTTP预算接受本次剩余秒数，原默认仍有限',()=>{
  expect(r.status).toBe(0);const args=readFileSync(join(f.dir,'curlargs'),'utf8').trim().split('\n');
  expect(args[args.indexOf('--max-time')+1]).toBe('7');expect(JSON.parse(args[args.indexOf('-d')+1]).sha).toBe(sha);
 });
+
+it('generic实际触发固定本次SHA而非main漂移',()=>{
+ const f=fixture();const script=step('Call Brain deploy webhook').replaceAll('${{ needs.changes.outputs.risk_level }}','low');
+ const r=run(script,f,{DEPLOY_TOKEN:'fixture',CHANGED_PATHS:'packages/brain/src/routes/ops.js'});expect(r.status,r.stderr).toBe(0);
+ const args=readFileSync(join(f.dir,'curlargs'),'utf8').trim().split('\n');expect(JSON.parse(args[args.indexOf('-d')+1])).toEqual({sha,changed_paths:['packages/brain/src/routes/ops.js']});
+});
+it('默认状态请求至多90秒且最后一次请求不超过剩余预算',()=>{
+ const f=fixture({readyAt:10000});expect(run(`bash scripts/ci/gate3-wait-deploy.sh "$BRAIN_URL" "$GITHUB_SHA"`,f,{STATUS_CMD:'',HTTP_SECONDS:'15'}).status).toBe(1);
+ const args=readFileSync(join(f.dir,'curlargs'),'utf8').trim().split('\n');expect(args[args.indexOf('--max-time')+1]).toBe('25');
+ expect(Number(readFileSync(join(f.dir,'clock'),'utf8'))).toBe(5700);
+},60000);

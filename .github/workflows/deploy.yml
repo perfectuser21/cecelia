@@ -166,17 +166,23 @@ jobs:
     needs: [changes, nightly_gate]
     if: needs.changes.outputs.risk_level == 'high'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 110
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - name: Connect to Tailscale
         uses: tailscale/github-action@v2
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
       - name: 触发 Staging 部署
         env:
+          CHANGED_PATHS: ${{ needs.changes.outputs.changed_paths }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
+          set -euo pipefail
           echo "🔴 Safe Lane — 先部署到 staging（端口 5222）验证"
           echo ""
 
@@ -185,7 +191,7 @@ jobs:
             exit 1
           fi
 
-          CHANGED_PATHS='${{ needs.changes.outputs.changed_paths }}'
+
           JSON_PATHS=$(echo "$CHANGED_PATHS" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -sc .)
 
           echo "Triggering staging deploy webhook..."
@@ -256,17 +262,23 @@ jobs:
         (needs.changes.outputs.risk_level == 'high' && needs.staging_deploy.result == 'success')
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 110
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - name: Connect to Tailscale
         uses: tailscale/github-action@v2
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
       - name: Call Brain deploy webhook
         env:
+          CHANGED_PATHS: ${{ needs.changes.outputs.changed_paths }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
+          set -euo pipefail
           RISK="${{ needs.changes.outputs.risk_level }}"
           if [ "$RISK" = "high" ]; then
             echo "🔴 Safe Lane → staging 验证通过 → 提升到 production"
@@ -281,7 +293,7 @@ jobs:
             exit 1
           fi
 
-          CHANGED_PATHS='${{ needs.changes.outputs.changed_paths }}'
+
 
           # Convert space-separated paths to JSON array
           JSON_PATHS=$(echo "$CHANGED_PATHS" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -sc .)
@@ -294,7 +306,7 @@ jobs:
             -X POST "${BRAIN_URL}/api/brain/deploy" \
             -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"changed_paths\": ${JSON_PATHS}}" \
+            -d "$(jq -nc --argjson paths "$JSON_PATHS" --arg sha "$GITHUB_SHA" '{changed_paths:$paths,sha:$sha}')" \
             --connect-timeout 30 \
             --max-time 60)
 
@@ -312,59 +324,20 @@ jobs:
       - name: Poll deploy status
         env:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
-        run: |
-          echo "Polling /api/brain/deploy/status (max 300s)..."
-          MAX_WAIT=300
-          INTERVAL=10
-          ELAPSED=0
-
-          while [ $ELAPSED -lt $MAX_WAIT ]; do
-            STATUS_JSON=$(curl -s --connect-timeout 10 --max-time 15 \
-              "${BRAIN_URL}/api/brain/deploy/status" 2>/dev/null || echo '{"status":"unknown"}')
-            STATUS=$(echo "$STATUS_JSON" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
-
-            echo "  [${ELAPSED}s] status=${STATUS}"
-
-            if [ "$STATUS" = "success" ]; then
-              ELAPSED_MS=$(echo "$STATUS_JSON" | jq -r '.elapsed_ms // "?"' 2>/dev/null || echo "?")
-              echo "✅ Deploy confirmed success (${ELAPSED_MS}ms)"
-              exit 0
-            elif [ "$STATUS" = "failed" ]; then
-              ERR=$(echo "$STATUS_JSON" | jq -r '.error // "unknown error"' 2>/dev/null || echo "unknown error")
-              echo "::error::Deploy failed: $ERR"
-              exit 1
-            elif [ "$STATUS" = "idle" ] && [ $ELAPSED -gt 30 ]; then
-              echo "::warning::Deploy status is idle after ${ELAPSED}s — deploy may have been skipped (no relevant changes)"
-              exit 0
-            fi
-
-            sleep $INTERVAL
-            ELAPSED=$((ELAPSED + INTERVAL))
-          done
-
-          echo "::warning::Deploy status poll timed out after ${MAX_WAIT}s — webhook accepted but result unknown"
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/gate3-wait-deploy.sh "$BRAIN_URL" "$GITHUB_SHA"
 
       - name: Smoke Test — 验证 Brain 健康
         env:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
-          echo "运行烟雾测试..."
-          sleep 5
-
-          HTTP_CODE=$(curl -s -o /tmp/smoke_response.txt -w "%{http_code}" \
-            "${BRAIN_URL}/api/brain/health" \
-            --connect-timeout 15 --max-time 30 2>/dev/null || echo "000")
-
-          echo "Health check HTTP: $HTTP_CODE"
-          if [ -f /tmp/smoke_response.txt ]; then cat /tmp/smoke_response.txt; fi
-          echo ""
-
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "✅ 烟雾测试通过 — Brain /health 响应正常"
-          else
-            echo "::error::烟雾测试失败 (HTTP $HTTP_CODE) — 部署成功但 Brain 不健康"
-            exit 1
-          fi
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          EXPECTED_VERSION=$(node -p 'JSON.parse(require("fs").readFileSync("packages/brain/package.json", "utf8")).version')
+          curl -fsS --connect-timeout 15 --max-time 30 "$BRAIN_URL/api/brain/health" -o /tmp/smoke_response.txt
+          jq -e --arg sha "$GITHUB_SHA" --arg version "$EXPECTED_VERSION" '.status == "healthy" and .git_sha == $sha and .version == $version' /tmp/smoke_response.txt
+          echo "✅ 本次 SHA、版本与真实健康状态均匹配"
 
       - name: 部署失败 — 触发回滚
         if: failure()

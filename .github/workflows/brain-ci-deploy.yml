@@ -156,8 +156,8 @@ jobs:
     name: Deploy Brain (Gate 3)
     if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
-    # 45min：等待步最多 25min（含至多 2 次重触发）+ 效果断言 10min
-    timeout-minutes: 45
+    # 110min：95min 有限部署等待（最多 2 次重触发）+ 效果断言与连接准备
+    timeout-minutes: 110
     env:
       BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
       DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}

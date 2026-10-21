@@ -11,7 +11,7 @@ jobs:
   staging_deploy_and_smoke:
     name: Verify isolated staging candidate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 110
     permissions:
       contents: read
     steps:

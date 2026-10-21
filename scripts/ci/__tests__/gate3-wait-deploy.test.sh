@@ -43,7 +43,7 @@ echo "$n" > "$ST/triggers"
 echo "${FAKE_TRIGGER_CODE:-202}"
 SH
 
-js() { printf '{"status":"%s","git_sha":"%s"}\n' "$1" "$2"; }
+js() { printf '{"status":"%s","git_sha":"%s","settled":true,"settlement":{"outcome":"success","git_sha":"%s","image_id":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","deployment_id":"11111111-1111-4111-8111-111111111111","confirmed_at":"2026-10-21T00:00:00Z"}}\n' "$1" "$2" "$2"; }
 
 # new_state <初始 JSON>：重置假状态目录
 new_state() {
@@ -117,9 +117,12 @@ new_state ''
 { echo ''; js idle "$A"; } > "$ST/queue"
 run_sut "不可达→恢复后成功" 0 "包含本次提交" 0
 
-# T11 running 但部署 sha 已是本次后代（更新的部署在跑，本次代码已在线）→ 成功，不白等
+# T11 running 即使实例为后代也不是已收尾；必须等终态与结算证明
 new_state "$(js running "$B")"
-run_sut "running+后代sha→成功" 0 "包含本次提交" 0
+MAX_POLLS=3 run_sut "running+后代sha→仍等待后超时失败" 1 "::error::" 0
+new_state "$(js running "$B")"
+{ js running "$B"; js success "$B"; } > "$ST/queue"
+run_sut "running+后代sha→真实终态后成功" 0 "包含本次提交" 0
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then echo "✅ gate3-wait-deploy 全部通过"; else echo "❌ gate3-wait-deploy 有失败"; exit 1; fi
