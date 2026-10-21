@@ -4,6 +4,11 @@ brain_release_lock() {
     mkdir -p "$ROOT_DIR/logs"
     exec 9>"$ROOT_DIR/logs/brain-release.lock"
     flock -x 9
+    # 旧Brain自杀会释放FD9；固定sidecar仍运行时，切换事务尚未收尾。
+    # 只读状态；查询失败也拒绝候选，不停止或接管sidecar。
+    local active_sidecar
+    active_sidecar=$(docker ps --filter 'name=^/cecelia-bluegreen-sidecar$' --filter status=running --format '{{.Names}}') || return 1
+    [[ -z "$active_sidecar" ]] || { echo '蓝绿sidecar仍在切换，拒绝候选准入' >&2; return 1; }
 }
 
 stage_remove_container() {
