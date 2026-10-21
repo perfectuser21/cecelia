@@ -120,6 +120,12 @@ describe('deploy webhook 回执接线（T4）', () => {
     expect(res.body.settled).toBe(true);expect(res.body.settlement.outcome).toBe('success');
     expect(settlementMock).toHaveBeenCalled();
   });
+  it('长时只读期间新发布进入running，旧settlement不得随响应放行',async()=>{
+    const {deployState}=await import('../routes/ops.js');
+    settlementMock.mockImplementation(async()=>{deployState.status='running';return {outcome:'success'};});
+    const res=await request(app).get('/api/brain/deploy/status');
+    expect(res.body.status).toBe('running');expect(res.body.settled).toBe(false);
+  });
   it.each(['running','rolling_back','failed','rollback_failed'])('状态%s不能被历史ledger覆盖',async status=>{
     const {deployState}=await import('../routes/ops.js');deployState.status=status;
     const res=await request(app).get('/api/brain/deploy/status');
