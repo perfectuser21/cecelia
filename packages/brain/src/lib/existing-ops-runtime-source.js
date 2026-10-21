@@ -337,3 +337,43 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
   ['scripts/staging-verify.sh','packages/brain/src/db-config.js','candidate_database_readback'],
  ])relations.push({consumer_path,input_path,kind,revision});
 }
+
+// 仅证明真实nightly回归消费链；不声称生产版本发布已经运行。
+const AUTO_VERSION_TEST='packages/brain/src/__tests__/auto-version-decision.test.js';
+const AUTO_VERSION_WORKFLOW='.github/workflows/auto-version.yml';
+const AUTO_VERSION_FILES={
+  "packages/brain/src/__tests__/auto-version-decision.test.js": "2a242093e5c91a35e243bf100e46ddfd26478210478094a7bca8d0186b09c25f",
+  ".github/workflows/auto-version.yml": "c4dd4558b9d3c72583bd2fa8ad2391ca5ecbc11fec7c7ba2271cc66374fc16b0",
+  "packages/brain/scripts/auto-version-decision.mjs": "2264d26f91cb4ab6662abfc1eb6eb487fcb884ddb6f582781484c3df0d20c045",
+  "packages/brain/scripts/auto-version-apply.mjs": "a8560b338a8fa6e20f985e24a7d6dbf673790ecd11b7c67979f8b0cd535f8b8b",
+  "scripts/ci/implementation-auxiliary-evidence.mjs": "c8d676ed8b5ec3f0d9f6c753c1ec34ad1558a273b510daabfbe3e827a9bda653",
+  "packages/brain/src/lib/gp-assertion-command.js": "d47bbd492971ad5ed5ec9d4c6915b85bb318c990bc998f84c808ad24aa3f3fe0",
+  "packages/brain/src/lib/step-probe-spec.js": "c9c3e710368c0e57e7926b8a6c4a352efbb769210c45e00d13cb47729786f025"
+};
+export async function collectAutoVersionTestSources({read,requireProof,relations,revision,parse,selectors}) {
+  requireProof(Boolean(selectors&&selectors.include.some(pattern=>pattern.test(AUTO_VERSION_TEST))&&!selectors.exclude.some(pattern=>pattern.test(AUTO_VERSION_TEST))),'auto_version_test_selector_unproven');
+  const texts=new Map();
+  for(const[path,expected]of Object.entries(AUTO_VERSION_FILES)) {
+    const text=await read(path);texts.set(path,text);
+    requireProof(text&&createHash('sha256').update(text).digest('hex')===expected,'auto_version_test_source_unproven');
+  }
+  const relation=(consumer_path,input_path,kind)=>relations.push({consumer_path,input_path,kind,revision});
+  relation('packages/brain/vitest.config.js',AUTO_VERSION_TEST,'literal_vitest_verification_selector');
+  relation(AUTO_VERSION_TEST,AUTO_VERSION_WORKFLOW,'verified_test_yaml_read');
+  for(const input of ['packages/brain/scripts/auto-version-decision.mjs','packages/brain/scripts/auto-version-apply.mjs']) {
+    relation(AUTO_VERSION_TEST,input,'verified_test_workflow_bash_script');
+    relation(AUTO_VERSION_WORKFLOW,input,'fixed_node_script_verification_input');
+  }
+  // 从实际冻结语法读取本仓import，不靠出现在traversal里猜直接绑定。
+  for(const[path,text]of texts) {
+    if(!/\.[cm]?js$/.test(path)||!text)continue;
+    for(const node of parse(text).body.filter(node=>node.type==='ImportDeclaration')) {
+      const input=node.source.value;if(!input.startsWith('.'))continue;
+      const segments=path.split('/').slice(0,-1);
+      for(const part of input.split('/')){if(part==='..')segments.pop();else if(part!=='.')segments.push(part);}
+      const resolved=segments.join('/');
+      requireProof(Object.hasOwn(AUTO_VERSION_FILES,resolved),'auto_version_test_dependency_unproven');
+      if(Object.hasOwn(AUTO_VERSION_FILES,resolved))relation(path,resolved,'fixed_relative_verification_import');
+    }
+  }
+}
