@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import yaml from 'js-yaml';
 const root=resolve(import.meta.dirname,'../../../..');
 const sha='a'.repeat(40), old='b'.repeat(40), request='11111111-1111-4111-8111-111111111111';
-const valid={status:'success',sha,git_sha:sha,request_id:request,isolated:true,image_id:`sha256:${'c'.repeat(64)}`};
+const valid={settled:true,settlement:{outcome:'success',git_sha:sha,image_id:`sha256:${'c'.repeat(64)}`,deployment_id:request,confirmed_at:'2026-10-21T00:00:00Z'},status:'success',sha,git_sha:sha,request_id:request,isolated:true,image_id:`sha256:${'c'.repeat(64)}`};
 const dirs=[];
 afterEach(()=>{for(const dir of dirs.splice(0))rmSync(dir,{recursive:true,force:true});});
 function fixture({readyAt=0,status='running',health={status:'healthy',git_sha:sha,version:'1.2.3'}}={}){
@@ -15,8 +15,9 @@ function fixture({readyAt=0,status='running',health={status:'healthy',git_sha:sh
  writeFileSync(join(dir,'clock'),'0');writeFileSync(join(dir,'polls'),'0');
  bin('date','cat "$FIXTURE/clock"');
  bin('sleep','n=$(cat "$FIXTURE/clock"); echo $((n + ${1%.*})) > "$FIXTURE/clock"');
- bin('git','exit 1');
- bin('curl',`n=$(cat "$FIXTURE/polls"); echo $((n+1)) > "$FIXTURE/polls"
+ bin('git','if [[ -n "$GIT_DELAY_SECONDS" ]]; then n=$(cat "$FIXTURE/clock"); echo $((n+GIT_DELAY_SECONDS)) > "$FIXTURE/clock"; exit 0; fi; exit 1');
+ bin('curl',`printf '%s\\n' \"$@\" > \"$FIXTURE/curlargs\"
+n=$(cat "$FIXTURE/polls"); echo $((n+1)) > "$FIXTURE/polls"
 clock=$(cat "$FIXTURE/clock"); echo $((clock + \${HTTP_SECONDS:-0})) > "$FIXTURE/clock"
 body="$PENDING"; (( n >= READY_AT )) && body="$VALID"
 for arg in "$@"; do [[ "$arg" == */health ]] && body="$HEALTH"; done
@@ -82,4 +83,19 @@ it.each(['running','rolling_back'])('generic不以%s同SHA冒充发布结束',st
 it('generic即使同SHA success也需要真实结算收据',()=>{
  const f=fixture();f.env.VALID=JSON.stringify({...valid,settled:false});
  expect(run(step('Poll deploy status'),f,{MAX_POLLS:'4',POLL_INTERVAL_S:'0'}).status).toBe(1);
+});
+
+it.each(['gate3','staging'])('%s HTTP返回成功但超过总截止时间仍失败',kind=>{
+ const f=fixture();const script=kind==='gate3'?`bash scripts/ci/gate3-wait-deploy.sh "$BRAIN_URL" "$GITHUB_SHA"`:'bash scripts/wait-for-staging.sh';
+ expect(run(script,f,{HTTP_SECONDS:'5701'}).status).toBe(1);
+});
+
+it('祖先查询跨总截止时间不得返回成功',()=>{
+ const f=fixture();f.env.VALID=JSON.stringify({...valid,git_sha:old,settlement:{...valid.settlement,git_sha:old}});
+ expect(run(`bash scripts/ci/gate3-wait-deploy.sh "$BRAIN_URL" "$GITHUB_SHA"`,f,{GIT_DELAY_SECONDS:'5701'}).status).toBe(1);
+});
+it('重触发HTTP预算接受本次剩余秒数，原默认仍有限',()=>{
+ const f=fixture();const r=run(`bash scripts/ci/gate3-trigger-deploy.sh "$BRAIN_URL" "$GITHUB_SHA" 7`,f);
+ expect(r.status).toBe(0);const args=readFileSync(join(f.dir,'curlargs'),'utf8').trim().split('\n');
+ expect(args[args.indexOf('--max-time')+1]).toBe('7');expect(JSON.parse(args[args.indexOf('-d')+1]).sha).toBe(sha);
 });

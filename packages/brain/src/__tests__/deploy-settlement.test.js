@@ -21,7 +21,7 @@ it('真实锁内只读最后成功收据、当前镜像及健康，幂等且不�
  expect(result).toMatchObject({outcome:'success',git_sha:sha,image_id:image,container_id:id,deployment_id:x.request.deployment_id});
  expect(await x.store.read('ledger.json')).toEqual(before);
 });
-it.each(['pending','wrong-sha','wrong-image','unhealthy','container-drift','recovered'])('settled拒绝%s并保持账本不变',async kind=>{
+it.each(['pending','wrong-sha','wrong-image','unhealthy','container-drift','recovered','wrong-request-id','wrong-target-image'])('settled拒绝%s并保持账本不变',async kind=>{
  const x=await fixture();
  if(kind==='pending')await x.ledger.begin({...x.request,deployment_id:randomUUID()});
  if(kind==='wrong-sha')x.state.sha='e'.repeat(40);
@@ -29,6 +29,7 @@ it.each(['pending','wrong-sha','wrong-image','unhealthy','container-drift','reco
  if(kind==='unhealthy')x.state.healthy=false;
  if(kind==='container-drift')x.state.drift=true;
  if(kind==='recovered')await x.store.withLock(async lease=>{const l=await x.store.read('ledger.json');l.successes[0].outcome='recovered';await x.store.save('ledger.json',l,lease);});
+ if(kind==='wrong-request-id'||kind==='wrong-target-image')await x.store.withLock(async lease=>{const name=`deployment-${x.request.deployment_id}.json`;const row=await x.store.read(name);if(kind==='wrong-request-id')row.request.deployment_id=randomUUID();else row.target_image_id='sha256:'+'e'.repeat(64);await x.store.save(name,row,lease);});
  const before=await x.store.read('ledger.json');await expect(x.ledger.settlement(sha)).rejects.toThrow();expect(await x.store.read('ledger.json')).toEqual(before);
 });
 it('operation.lock忙直接拒绝，不伪造lease也不触碰Docker',async()=>{
