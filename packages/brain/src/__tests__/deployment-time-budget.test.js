@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -35,6 +35,7 @@ function run(script,f,extra={}) {return spawnSync('bash',['-c',script],{cwd:root
 const workflow=file=>yaml.load(readFileSync(join(root,'.github/workflows',file),'utf8'));
 const production=()=>workflow('deploy.yml').jobs.deploy;
 const step=name=>production().steps.find(s=>s.name===name).run.replaceAll('${{ github.sha }}',sha);
+describe('deployment-time-budget：正式发布入口的有限预算与状态判定',()=>{
 it.each(['gate3','staging'])('%s 默认预算允许35分钟冷构建后同SHA成功',kind=>{
  const f=fixture({readyAt:211});const script=kind==='gate3'?`bash scripts/ci/gate3-wait-deploy.sh "$BRAIN_URL" "$GITHUB_SHA"`:'bash scripts/wait-for-staging.sh';
  const result=run(script,f);expect(result.status,result.stdout+result.stderr).toBe(0);
@@ -133,4 +134,6 @@ it('Gate3实际YAML同SHA但unhealthy不能整job假绿',()=>{
 it('Gate3实际YAML同SHA已结算且健康可幂等通过，无POST或uptime要求',()=>{
  expect(executeSameShaGate3(fixture())).toBe(0);
  const auth=workflow('brain-ci-deploy.yml').jobs.deploy.steps.find(s=>s.name==='Smoke — Brain 内部鉴权效果确认');expect(auth.if).toBeUndefined();
+});
+
 });

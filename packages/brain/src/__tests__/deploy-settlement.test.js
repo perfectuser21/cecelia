@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +16,7 @@ async function fixture(){
  await ledger.begin(request);await ledger.finish(request.deployment_id,'success');state.snapshots=0;
  return {store,state,ledger,request};
 }
+describe('deploy-settlement：真实 ledger 锁、收据与当前容器结算',()=>{
 it('真实锁内只读最后成功收据、当前镜像及健康，幂等且不写ledger',async()=>{
  const x=await fixture(),before=await x.store.read('ledger.json');const result=await x.ledger.settlement(sha);
  expect(result).toMatchObject({outcome:'success',git_sha:sha,image_id:image,container_id:id,deployment_id:x.request.deployment_id});
@@ -34,4 +35,6 @@ it.each(['pending','wrong-sha','wrong-image','unhealthy','container-drift','reco
 });
 it('operation.lock忙直接拒绝，不伪造lease也不触碰Docker',async()=>{
  const x=await fixture();await x.store.withLock(async()=>{await expect(x.ledger.settlement(sha)).rejects.toThrow(/BUSY/);});expect(x.state.snapshots).toBe(0);
+});
+
 });
