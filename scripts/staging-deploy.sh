@@ -32,8 +32,6 @@ STAGING_DB="cecelia_staging"
 
 VERSION=$(node -e "console.log(require('$BRAIN_DIR/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
-CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:-/Users/administrator/.credentials/cecelia-internal.env}"
-export CECELIA_INTERNAL_ENV_FILE
 
 DRY_RUN=false
 for arg in "$@"; do
@@ -85,6 +83,20 @@ if [[ ! -f "$ROOT_DIR/.env.staging" ]]; then
         exit 0
     fi
 fi
+
+if [[ -z "${CECELIA_INTERNAL_ENV_FILE:-}" ]]; then
+    if [[ "${HOME:-}" != /* ]]; then
+        echo "[FAIL] 默认凭据路径要求非空绝对 HOME" >&2
+        exit 1
+    fi
+    CECELIA_INTERNAL_ENV_FILE="$HOME/.credentials/cecelia-internal.env"
+fi
+export CECELIA_INTERNAL_ENV_FILE
+if [[ ! -f "$CECELIA_INTERNAL_ENV_FILE" || ! -r "$CECELIA_INTERNAL_ENV_FILE" ]]; then
+    echo "[FAIL] 既有内部凭据文件不可读: $CECELIA_INTERNAL_ENV_FILE" >&2
+    exit 1
+fi
+load_cecelia_internal_token "$CECELIA_INTERNAL_ENV_FILE" || exit 1
 
 if [[ "$DRY_RUN" == true ]]; then
     echo "[dry-run] ensure_cecelia_internal_token $CECELIA_INTERNAL_ENV_FILE"
