@@ -171,6 +171,13 @@ describe('deploy webhook 回执接线（T4）', () => {
     expect(recordActionReceipt).not.toHaveBeenCalled();
   });
 
+  it('staging 冷构建与隔离恢复允许90分钟执行但保持有限超时', async () => {
+    await request(app).post('/api/brain/deploy').set('Authorization', 'Bearer tok')
+      .send({ staging: true, sha: 'a'.repeat(40) });
+    expect(execFileMock).toHaveBeenCalled();
+    expect(execFileMock.mock.calls[0][2].timeout).toBe(90 * 60 * 1000);
+  });
+
   it('staging deploy 成功 → record(deploy/staging) + confirmed', async () => {
     await request(app)
       .post('/api/brain/deploy')
