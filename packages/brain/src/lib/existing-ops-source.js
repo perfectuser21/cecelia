@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
-import { runtimeSelectorEnabled, collectRuntimeSources, ciEntrySelectorEnabled, collectCiEntrySources } from './existing-ops-runtime-source.js';
+import { runtimeSelectorEnabled, collectRuntimeSources, ciEntrySelectorEnabled, collectCiEntrySources, stagingSelectorVersion, collectIsolatedStagingSources } from './existing-ops-runtime-source.js';
 import { buildSelectorEnabled, collectBuildSources } from './existing-ops-build-source.js';
 let parse;
 async function requireParser() {
@@ -167,18 +167,20 @@ function integrationConfigInputs(text) {
   return declaration.init.elements.map(n=>`packages/brain/${n.value}`).filter(sourcePath);
 }
 function deployRouteProven(text) {
-  const handler = nodes(ast(text)).find(n => call(n, 'router', 'post') && literal(n.arguments[0], '/deploy'))?.arguments[1];
+  const handler = nodes(ast(text)).find(n => call(n, 'router', 'post') && literal(n.arguments[0], '/deploy'))?.arguments.at(-1);
   if (!handler?.body || !['FunctionExpression', 'ArrowFunctionExpression'].includes(handler.type)) return false;
   const declarations = handler.body.body.filter(n => n.type === 'VariableDeclaration').flatMap(n => n.declarations);
   const script = declarations.find(n => n.id?.name === 'scriptDir')?.init;
   const args = declarations.find(n => n.id?.name === 'args')?.init;
   const spawn = declarations.find(n => n.id?.name === 'child')?.init;
+  const legacyArgs=args?.type==='ArrayExpression'&&literal(args.elements[0],'bash')&&args.elements[1]?.name==='scriptDir'
+    &&spawn?.arguments[0]?.type==='MemberExpression'&&spawn.arguments[0].object?.name==='args'&&literal(spawn.arguments[0].property,0)
+    &&call(spawn.arguments[1],'args','slice')&&literal(spawn.arguments[1].arguments[0],1);
+  const literalExecutable=args?.type==='ArrayExpression'&&args.elements.length===1&&args.elements[0]?.name==='scriptDir'
+    &&literal(spawn?.arguments[0],'bash')&&spawn.arguments[1]?.name==='args';
   return script?.type === 'TemplateLiteral' && script.expressions.length === 1 && script.expressions[0]?.name === 'repoRoot'
     && script.quasis[0].value.cooked === '' && script.quasis[1].value.cooked === '/scripts/deploy-local.sh'
-    && args?.type === 'ArrayExpression' && literal(args.elements[0], 'bash') && args.elements[1]?.name === 'scriptDir'
-    && spawn?.type === 'CallExpression' && spawn.callee?.name === 'spawn'
-    && spawn.arguments[0]?.type === 'MemberExpression' && spawn.arguments[0].object?.name === 'args' && literal(spawn.arguments[0].property, 0)
-    && call(spawn.arguments[1], 'args', 'slice') && literal(spawn.arguments[1].arguments[0], 1);
+    && spawn?.type === 'CallExpression' && spawn.callee?.name === 'spawn' && (legacyArgs||literalExecutable);
 }
 // 已审 main auto-staging 的完整请求入口和 /deploy 注册调用；未知控制流不猜消费边。
 const STAGING_WORKFLOW_SHA = 'b2c144bf52ac63e57578fae06eee53dd4b98d1f4ca8b7094f173c59187412599';
@@ -359,8 +361,9 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
     if(auth)relations.push({consumer_path:'scripts/brain-deploy.sh',input_path:'scripts/lib/internal-auth-token.sh',kind:'bash_source_call',revision});
     const schemaPath = 'packages/brain/src/lib/existing-ops-source.js';
     const schema = tree.has(schemaPath) ? await readSource(schemaPath, revision) : '';
-    if (schema && ciEntrySelectorEnabled(schema, ast, 'EXISTING_OPS_STAGING_SELECTOR_SCHEMA'))
-      await collectStagingSources({ read, requireProof, relations, revision, route });
+    const stagingVersion=schema?stagingSelectorVersion(schema,ast):0;
+    if(stagingVersion===1)await collectStagingSources({read,requireProof,relations,revision,route});
+    if(stagingVersion===2)await collectIsolatedStagingSources({read,requireProof,relations,revision,route,parse:ast});
     const inputProven = migrationInputProven(migrate);
     if (requireProof(inputProven, 'migration_input_unproven')) for (const path of paths.filter(path => /^packages\/brain\/migrations\/[^/]+\.sql$/.test(path))) {
       if (await read(path)) relations.push({ consumer_path: 'packages/brain/src/migrate.js', input_path: path, kind: 'migration_sql', selector: 'top_level_sql_sorted', revision });
