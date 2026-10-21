@@ -251,6 +251,30 @@ const REVIEWED_FILES={
   "scripts/brain-deploy.sh": "b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428"
 };
 const ROUTE_AST_SHA='7190b4987ffa5adbab19d5fcf17d341586db536bba7dfeb97c205aab63c910c4';
+const BUDGET_STAGING_FILES={
+  ".github/workflows/auto-staging-deploy.yml": "d9ef17f05464a0bee54bc78a9caae30439dbafda499f5a48d8832bb8ce2ffb6e",
+  "scripts/staging-deploy.sh": "e8c35ccbe3eb599619c2f94d87d80c309f9694eacdd920ece6afffb3c3484a34",
+  "scripts/lib/brain-staging.sh": "66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170",
+  "scripts/staging-verify.sh": "7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925",
+  "scripts/wait-for-staging.sh": "6ca3e437f2583ce77e0ac916958a726ad0c884637d032e7b76003700a69b2467",
+  "scripts/brain-deploy.sh": "b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428"
+};
+const BUDGET_FILES={
+  ".github/workflows/deploy.yml": "a557a4e6353cd3b61a00c95988f6811a35fc7f5e41547aa0ef7d964bdd338d82",
+  ".github/workflows/brain-ci-deploy.yml": "b2be4da284dc1dc47ce77ec290aa7d6af67087488d4dc5d4a928d3ea71c96f14",
+  "scripts/ci/gate3-wait-deploy.sh": "a5319d76fde94c0cebf52f3ca9ae314a63da466406337adb7c4587b96484e79e",
+  "scripts/ci/gate3-trigger-deploy.sh": "709b03c67e1267b5077220e59dd4147530580c41c01531554ea89574621d1248",
+  "scripts/brain-image-retention/runtime.mjs": "3a0fdb99126cf52ea966c4abecbc516f7a9ea194f77e1af0579468e548dbf31c",
+  "scripts/brain-image-retention/storage.mjs": "06724e1e96fa9ac59597510fdbfa2351dd0f91edbecca9c588b00163f200c18c",
+  "scripts/brain-image-retention/docker.mjs": "a341fdbd0611a4c70a6667b2d85d3d08bac07c8d059e192d8c42ed48897212c2",
+  "scripts/brain-image-retention/ledger.mjs": "27dd451fdfae702441c9cdbe6e4d6aea1b88b5116d9f7f152b6ef8fba3b1d0cd",
+  "scripts/brain-image-retention/engine.mjs": "ad23bcfc0abf07bb10ae52b1531939958d6bb2716d4212b374040b875c3c3d7f",
+  "scripts/brain-image-retention/policy.mjs": "3fc3fcdfab42e8e82f298baaa1dcf5cd96e23ba59253a2609e692aa739f66794",
+  "scripts/brain-image-retention/process.mjs": "5e7a77267d55d6df019bd7db44e300ba84cda8680fc01c411555af4a9384a586",
+  "scripts/brain-image-retention/process-supervisor.mjs": "0a0f8fb46b9b58ed0298969194d12a5397d4f0a305f9bc40578c0fbabbb7d244"
+};
+const BUDGET_POST_AST='ec1643b6242d05b819e5d37509fff22948d1961ed3278f93b6431b859a275960';
+const BUDGET_GET_AST='c30f1194c9e137b7d2b3307bd0356d484748aa951b0c648e6d15d5dc37f501f9';
 export function stagingSelectorVersion(text,parse){
  const declaration=parse(text).body.find(n=>n.type==='ExportNamedDeclaration'&&n.declaration?.type==='VariableDeclaration'&&n.declaration.declarations.some(d=>d.id?.name==='EXISTING_OPS_STAGING_SELECTOR_SCHEMA'))?.declaration;
  if(!declaration)return 0;
@@ -259,17 +283,47 @@ export function stagingSelectorVersion(text,parse){
  return value.value;
 }
 
-function routeProven(text,parse){
- const program=parse(text),match=n=>n.type==='CallExpression'&&n.callee?.type==='MemberExpression'&&!n.callee.computed&&n.callee.object?.name==='router'&&n.callee.property?.name==='post'&&n.arguments[0]?.value==='/deploy';
+function routeDigest(text,parse,method='post',path='/deploy'){
+ const program=parse(text),match=n=>n.type==='CallExpression'&&n.callee?.type==='MemberExpression'&&!n.callee.computed&&n.callee.object?.name==='router'&&n.callee.property?.name===method&&n.arguments[0]?.value===path;
  const entries=program.body.filter(n=>n.type==='ExpressionStatement').map(n=>n.expression).filter(match);
- return entries.length===1&&nodes(program).filter(match).length===1&&stagingHash(JSON.stringify(entries[0],(k,v)=>['start','end','raw'].includes(k)?undefined:v))===ROUTE_AST_SHA;
+ return entries.length===1&&nodes(program).filter(match).length===1?stagingHash(JSON.stringify(entries[0],(k,v)=>['start','end','raw'].includes(k)?undefined:v)):null;
+}
+async function collectSettlementSources({read,requireProof,relations,revision,route,parse}){
+ requireProof(routeDigest(route,parse,'get','/deploy/status')===BUDGET_GET_AST,'settlement_status_route_unproven');
+ const texts=new Map();
+ for(const[path,digest]of Object.entries(BUDGET_FILES)){
+  const text=await read(path);texts.set(path,text);
+  requireProof(text&&stagingHash(text)===digest,'settlement_source_unproven');
+ }
+ // 从已冻结AST递归列出真实静态依赖及受管子进程入口，不以目录猜测闭包。
+ const base='scripts/brain-image-retention/';
+ for(const[path,text]of texts){
+  if(!path.startsWith(base)||!text)continue;
+  const program=parse(text);
+  const imports=program.body.filter(n=>n.type==='ImportDeclaration').map(n=>n.source.value);
+  const children=nodes(program).filter(n=>n.type==='NewExpression'&&n.callee?.name==='URL'&&n.arguments[0]?.type==='Literal').map(n=>n.arguments[0].value);
+  for(const source of [...imports,...children]){
+   if(source.startsWith('node:'))continue;
+   const valid=/^\.\/[a-z-]+\.mjs$/.test(source),input_path=base+source.slice(2);
+   if(requireProof(valid&&Object.hasOwn(BUDGET_FILES,input_path),'settlement_dependency_unproven'))relations.push({consumer_path:path,input_path,kind:imports.includes(source)?'fixed_relative_import':'fixed_child_process_entry',revision});
+  }
+ }
+ for(const[consumer_path,input_path,kind]of[
+  ['.github/workflows/deploy.yml','scripts/ci/gate3-wait-deploy.sh','reviewed_production_settlement_wait'],
+  ['.github/workflows/brain-ci-deploy.yml','scripts/ci/gate3-wait-deploy.sh','reviewed_production_settlement_wait'],
+  ['scripts/ci/gate3-wait-deploy.sh','scripts/ci/gate3-trigger-deploy.sh','reviewed_fixed_sha_retrigger'],
+  ['scripts/ci/gate3-wait-deploy.sh','packages/brain/src/routes/ops.js','reviewed_settlement_status_request'],
+  ['packages/brain/src/routes/ops.js',base+'runtime.mjs','literal_dynamic_import'],
+ ])relations.push({consumer_path,input_path,kind,revision});
 }
 export async function collectIsolatedStagingSources({read,requireProof,relations,revision,route,parse}){
  // 这些完整shell/workflow已通过真实脚本正反例；任何控制流变化均需重新审查，不能按关键词认领。
- for(const[path,digest]of Object.entries(REVIEWED_FILES)){
+ const routeHash=route&&routeDigest(route,parse),budget=routeHash===BUDGET_POST_AST;
+ for(const[path,digest]of Object.entries(budget?BUDGET_STAGING_FILES:REVIEWED_FILES)){
   const source=await read(path);requireProof(source&&(Array.isArray(digest)?digest:[digest]).includes(stagingHash(source)),'isolated_staging_source_unproven');
  }
- requireProof(route&&routeProven(route,parse),'isolated_staging_route_unproven');
+ requireProof(routeHash===ROUTE_AST_SHA||budget,'isolated_staging_route_unproven');
+ if(budget)await collectSettlementSources({read,requireProof,relations,revision,route,parse});
  for(const path of ['scripts/brain-build.sh','packages/brain/src/db-config.js'])await read(path);
  for(const[consumer_path,input_path,kind]of [
   ['.github/workflows/auto-staging-deploy.yml','packages/brain/src/routes/ops.js','reviewed_staging_deploy_request'],
@@ -282,4 +336,44 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
   ['scripts/lib/brain-staging.sh','packages/brain/src/migrate.js','isolated_candidate_migration'],
   ['scripts/staging-verify.sh','packages/brain/src/db-config.js','candidate_database_readback'],
  ])relations.push({consumer_path,input_path,kind,revision});
+}
+
+// 仅证明真实nightly回归消费链；不声称生产版本发布已经运行。
+const AUTO_VERSION_TEST='packages/brain/src/__tests__/auto-version-decision.test.js';
+const AUTO_VERSION_WORKFLOW='.github/workflows/auto-version.yml';
+const AUTO_VERSION_FILES={
+  "packages/brain/src/__tests__/auto-version-decision.test.js": "2a242093e5c91a35e243bf100e46ddfd26478210478094a7bca8d0186b09c25f",
+  ".github/workflows/auto-version.yml": "c4dd4558b9d3c72583bd2fa8ad2391ca5ecbc11fec7c7ba2271cc66374fc16b0",
+  "packages/brain/scripts/auto-version-decision.mjs": "2264d26f91cb4ab6662abfc1eb6eb487fcb884ddb6f582781484c3df0d20c045",
+  "packages/brain/scripts/auto-version-apply.mjs": "a8560b338a8fa6e20f985e24a7d6dbf673790ecd11b7c67979f8b0cd535f8b8b",
+  "scripts/ci/implementation-auxiliary-evidence.mjs": "f5d052b9965825c1facb602084f18fa5063c687f8825f6f7711299c419bb09d0",
+  "packages/brain/src/lib/gp-assertion-command.js": "d47bbd492971ad5ed5ec9d4c6915b85bb318c990bc998f84c808ad24aa3f3fe0",
+  "packages/brain/src/lib/step-probe-spec.js": "c9c3e710368c0e57e7926b8a6c4a352efbb769210c45e00d13cb47729786f025"
+};
+export async function collectAutoVersionTestSources({read,requireProof,relations,revision,parse,selectors}) {
+  requireProof(Boolean(selectors&&selectors.include.some(pattern=>pattern.test(AUTO_VERSION_TEST))&&!selectors.exclude.some(pattern=>pattern.test(AUTO_VERSION_TEST))),'auto_version_test_selector_unproven');
+  const texts=new Map();
+  for(const[path,expected]of Object.entries(AUTO_VERSION_FILES)) {
+    const text=await read(path);texts.set(path,text);
+    requireProof(text&&createHash('sha256').update(text).digest('hex')===expected,'auto_version_test_source_unproven');
+  }
+  const relation=(consumer_path,input_path,kind)=>relations.push({consumer_path,input_path,kind,revision});
+  relation('packages/brain/vitest.config.js',AUTO_VERSION_TEST,'literal_vitest_verification_selector');
+  relation(AUTO_VERSION_TEST,AUTO_VERSION_WORKFLOW,'verified_test_yaml_read');
+  for(const input of ['packages/brain/scripts/auto-version-decision.mjs','packages/brain/scripts/auto-version-apply.mjs']) {
+    relation(AUTO_VERSION_TEST,input,'verified_test_workflow_bash_script');
+    relation(AUTO_VERSION_WORKFLOW,input,'fixed_node_script_verification_input');
+  }
+  // 从实际冻结语法读取本仓import，不靠出现在traversal里猜直接绑定。
+  for(const[path,text]of texts) {
+    if(!/\.[cm]?js$/.test(path)||!text)continue;
+    for(const node of parse(text).body.filter(node=>node.type==='ImportDeclaration')) {
+      const input=node.source.value;if(!input.startsWith('.'))continue;
+      const segments=path.split('/').slice(0,-1);
+      for(const part of input.split('/')){if(part==='..')segments.pop();else if(part!=='.')segments.push(part);}
+      const resolved=segments.join('/');
+      requireProof(Object.hasOwn(AUTO_VERSION_FILES,resolved),'auto_version_test_dependency_unproven');
+      if(Object.hasOwn(AUTO_VERSION_FILES,resolved))relation(path,resolved,'fixed_relative_verification_import');
+    }
+  }
 }
