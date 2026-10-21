@@ -1,7 +1,7 @@
 /** 固定、受信进程的实际 collector 字节；不以部署 SHA 代替模块身份。 */
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-const names=['existing-ops-source.js','existing-ops-runtime-source.js','existing-ops-build-source.js','existing-ops-build-envelopes.js','existing-ops-workspace-source.js',
+const names=['existing-ops-source.js','existing-ops-staging-source.js','existing-ops-runtime-source.js','existing-ops-build-source.js','existing-ops-build-envelopes.js','existing-ops-workspace-source.js',
  'existing-ops-provenance-envelope.js','existing-ops-provenance-core-envelope.js','existing-ops-provenance-entry-envelopes.js','existing-ops-provenance-local-envelopes.js','existing-ops-stage-source.js','existing-ops-stage-envelopes.js','existing-ops-stage-modes.js',
  'existing-ops-native-evidence-source.js','existing-ops-native-evidence-envelopes.js','workspace-ci-source-bundle.js'];
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
