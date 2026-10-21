@@ -260,6 +260,14 @@ const BUDGET_STAGING_FILES={
   "scripts/brain-deploy.sh": "b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428"
 };
 const BUDGET_FILES={
+  "scripts/lib/bluegreen.sh": "ca287873ef216a990fd57e588284e401218969294df17ab48592653262ed74d6",
+  "scripts/lib/bluegreen-sidecar.sh": "f2670302e7a348c5a7e0e4d8eaf655c8c933449cd86155d529b89e09baf0c75b",
+  "docker-compose.yml": "5d3b9715a6bd704a30afb78aac4c6b22a8b4a83d2e01a5f359ca4be804a985d9",
+  "docker-compose.us-vps.yml": "f76efcb09d62b3fd83752feae9f40accc13d577c4cba17aa40bf43a16f5f0444",
+  "scripts/lib/url-encode.sh": "3a55d14ad60dac2b484a858903f4857b252713697b7c2a9aaa7c4d6d4ff1999f",
+  "scripts/lib/brain-image-retention.sh": "992fd516c22dee5873c891729a4e37ca9bc5e68b9f27852fa51217ee5d2b469b",
+  "scripts/brain-image-retention/cli.mjs": "6e9d87db73822676825f91cc74d35c55ac0f61ed57227cbd0903c2b6cb3e5b78",
+  "docker-compose.image-retention.yml": "ad30a562f645c1fc4549a95de553cb362c2e6d97d02bd2e6840daf187f764190",
   ".github/workflows/deploy.yml": "a557a4e6353cd3b61a00c95988f6811a35fc7f5e41547aa0ef7d964bdd338d82",
   ".github/workflows/brain-ci-deploy.yml": "b2be4da284dc1dc47ce77ec290aa7d6af67087488d4dc5d4a928d3ea71c96f14",
   "scripts/ci/gate3-wait-deploy.sh": "a5319d76fde94c0cebf52f3ca9ae314a63da466406337adb7c4587b96484e79e",
@@ -314,6 +322,21 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
   ['scripts/ci/gate3-wait-deploy.sh','scripts/ci/gate3-trigger-deploy.sh','reviewed_fixed_sha_retrigger'],
   ['scripts/ci/gate3-wait-deploy.sh','packages/brain/src/routes/ops.js','reviewed_settlement_status_request'],
   ['packages/brain/src/routes/ops.js',base+'runtime.mjs','literal_dynamic_import'],
+  // 完整已审字节证明这些实际 source/子进程/region 分支；缺任一输入整体关闭。
+  ["scripts/brain-deploy.sh","scripts/lib/bluegreen.sh","reviewed_bash_source_call"],
+  ["scripts/brain-deploy.sh","scripts/lib/brain-image-retention.sh","reviewed_bash_source_call"],
+  ["scripts/lib/bluegreen.sh","scripts/lib/url-encode.sh","reviewed_bash_source_call"],
+  ["scripts/lib/bluegreen.sh","scripts/lib/bluegreen-sidecar.sh","reviewed_fixed_sidecar_bash_entry"],
+  ["scripts/lib/bluegreen-sidecar.sh","scripts/lib/brain-image-retention.sh","reviewed_bash_source_call"],
+  ["scripts/lib/bluegreen-sidecar.sh","scripts/lib/url-encode.sh","reviewed_bash_source_call"],
+  ["scripts/lib/brain-image-retention.sh","scripts/brain-image-retention/cli.mjs","reviewed_retention_node_entry"],
+  ["scripts/lib/bluegreen-sidecar.sh","scripts/brain-image-retention/cli.mjs","reviewed_retention_node_entry"],
+  ["scripts/lib/bluegreen-sidecar.sh","scripts/brain-image-retention/policy.mjs","reviewed_sidecar_policy_import"],
+  ["scripts/lib/brain-image-retention.sh","docker-compose.image-retention.yml","reviewed_retention_compose_overlay"],
+  ["scripts/brain-deploy.sh","docker-compose.yml","reviewed_region_compose_selection"],
+  ["scripts/brain-deploy.sh","docker-compose.us-vps.yml","reviewed_region_compose_selection"],
+  ["scripts/lib/bluegreen-sidecar.sh","docker-compose.yml","reviewed_region_compose_selection"],
+  ["scripts/lib/bluegreen-sidecar.sh","docker-compose.us-vps.yml","reviewed_region_compose_selection"],
  ])relations.push({consumer_path,input_path,kind,revision});
 }
 export async function collectIsolatedStagingSources({read,requireProof,relations,revision,route,parse}){

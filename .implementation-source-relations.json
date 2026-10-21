@@ -2,6 +2,13 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/src/lib/activity-contract-store.js","path":"packages/brain/src/__tests__/integration/activity-contract-locks.pg.integration.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/projection/__tests__/task-progress.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/__tests__/integration/notion-task-progress.pg.integration.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/__tests__/notion-push-sync.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/__tests__/notion-tasks-projection.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/__tests__/integration/project-root-gate.pg.integration.test.js","role":"verification"},
+
     {"owner_path":"scripts/ci/implementation-auxiliary-evidence.mjs","path":"packages/brain/scripts/ci/__tests__/implementation-shell-verification.test.mjs","role":"verification"},
     {"owner_path":"scripts/brain-build.sh","path":"packages/engine/tests/integration/brain-build-isolation.test.sh","role":"verification"},
     {"owner_path":"scripts/brain-build.sh","path":"scripts/__tests__/brain-deploy-build-same-version.test.sh","role":"verification"},
