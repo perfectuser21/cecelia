@@ -52,7 +52,7 @@ test('已知旧5模块持续存在只能有界等待，不能凭旧指纹放行'
   await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/);assert.equal(requests.length,10);
  });
 });
-for(const path of [...provenancePaths,...stagePaths,stageModePath,workspaceCollectorPath])test(`新增依赖 ${path} 指纹错误不能宣布ready`,async()=>{
+for(const path of [...provenancePaths,...stagePaths,stageModePath,workspaceCollectorPath,'packages/brain/src/lib/existing-ops-runtime-source.js'])test(`新增依赖 ${path} 指纹错误不能宣布ready`,async()=>{
  const body=runtime();body.files.find(f=>f.path===path).sha256='0'.repeat(64);
  await fixture([{body}],async url=>await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/));
 });

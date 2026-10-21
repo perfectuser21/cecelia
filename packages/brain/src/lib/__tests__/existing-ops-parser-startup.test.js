@@ -26,7 +26,7 @@ function withoutParser(script) {
 
 describe('consumer adapter startup without optional production parser', () => {
   it('runtime身份仅读取F3字节而不静态加载其Acorn依赖',()=>{
-    const child=withoutParser("const m=await import('./native-consumer-runtime.js');if(m.readNativeConsumerRuntime().files.length!==16)process.exit(2);");
+    const child=withoutParser("const m=await import('./native-consumer-runtime.js');if(m.readNativeConsumerRuntime().files.length!==15)process.exit(2);");
     expect(child.stderr).toBe('');expect(child.status).toBe(0);
   });
   it('imports source identity for normal service startup without loading Acorn', () => {
