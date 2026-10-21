@@ -45,7 +45,7 @@ it('固定 Git 中真实执行的 .test.sh 可以作为 verification，未认领
     base: { revision: f.source.base_revision, file_coverage: [{ ...file }] },
     head: { revision: f.source.head_revision, file_coverage: [{ ...file }] },
     gaps: [{ code: 'changed_file_unclaimed', path: test }],
-    unclaimed_paths: [{ path: test }], mapping_status: 'unknown',
+    unclaimed_paths: [{ path: test }], mapping_status: 'unknown', affected_usages: [],
   };
   applyAuxiliarySourceEvidence(report, evidence, { base: [], head: [] });
   expect(report.unclaimed_paths).toEqual([{ path: test }]);
