@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import express, { Router } from 'express';
 import pool from '../db.js';
 import { recordActionReceipt, resolveActionReceipt } from '../receipt-collector.js';
@@ -2736,7 +2737,8 @@ router.post('/deploy', async (req, res) => {
     return res.status(401).json({ error: 'Invalid or missing deploy token' });
   }
 
-  const { changed_paths, staging, mode } = req.body || {};
+  const { changed_paths, staging, mode, sha } = req.body || {};
+  if(sha!==undefined&&!/^[a-f0-9]{40}$/.test(sha))return res.status(400).json({error:'invalid deploy sha'});
   const isStagingDeploy = staging === true || mode === 'staging';
 
   // ── Staging 分支（Safe Lane）──────────────────────────────────────────────
@@ -2749,6 +2751,8 @@ router.post('/deploy', async (req, res) => {
       });
     }
 
+    const requestId=randomUUID();
+    Object.assign(stagingDeployState,{request_id:requestId,sha:null,image_id:null,isolated:false});
     stagingDeployState.status = 'running';
     stagingDeployState.started_at = new Date().toISOString();
     stagingDeployState.finished_at = null;
@@ -2756,67 +2760,26 @@ router.post('/deploy', async (req, res) => {
     stagingDeployState.error = null;
     stagingDeployState.skip_reason = null;
 
-    res.status(202).json({ status: 'accepted', message: 'Staging deploy triggered', mode: 'staging' });
+    res.status(202).json({ status: 'accepted', message: 'Staging deploy triggered', mode: 'staging',request_id:requestId });
 
-    const { execSync } = await import('child_process');
+    const { execFile } = await import('child_process');
     const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
     const startTime = Date.now();
     let stagingReceiptId = null;
-
     try {
-      stagingReceiptId = await recordActionReceipt({
-        kind: 'deploy',
-        target: 'staging',
-        evidence: { changed_paths: changed_paths || [] },
-      });
-      const stagingScript = `${repoRoot}/scripts/staging-deploy.sh`;
-      const { existsSync } = await import('fs');
-      let cmd;
-
-      if (existsSync(stagingScript)) {
-        let args = '';
-        if (changed_paths && changed_paths.length > 0) {
-          args = ` --changed="${changed_paths.join(' ').replace(/"/g, '\\"')}"`;
-        }
-        cmd = `bash "${stagingScript}"${args}`;
-      } else {
-        // 降级：用 PM2 在端口 5222 启动 staging 实例
-        cmd = [
-          'BRAIN_PORT=5222',
-          'NODE_ENV=staging',
-          'pm2 start packages/brain/src/server.js',
-          '--name brain-staging',
-          '--env staging',
-          '-- --port 5222',
-          '2>/dev/null || pm2 restart brain-staging 2>/dev/null || true',
-        ].join(' ');
-      }
-
-      console.log(`[staging-deploy] 开始 staging 部署: ${cmd}`);
-      // 捕获输出以检测 STAGING_SKIP_REASON（脚本 exit 0 时正常完成，但可能是跳过）
-      const output = execSync(cmd, { cwd: repoRoot, timeout: 600_000, shell: true }).toString();
-      console.log(output);
-
-      const elapsed = Date.now() - startTime;
-
-      // 解析脚本输出中的 STAGING_SKIP_REASON，区分"跳过"和"真正成功"
-      const skipMatch = output.match(/STAGING_SKIP_REASON=(\S+)/);
-      if (skipMatch) {
-        const skipReason = skipMatch[1]; // 'no_docker' | 'no_env'
-        const skippedStatus = `skipped_${skipReason}`; // 'skipped_no_docker' | 'skipped_no_env'
-        stagingDeployState.status = skippedStatus;
-        stagingDeployState.finished_at = new Date().toISOString();
-        stagingDeployState.elapsed_ms = elapsed;
-        stagingDeployState.skip_reason = skipReason;
-        await resolveActionReceipt(stagingReceiptId, 'confirmed', { elapsed_ms: elapsed, skip_reason: skipReason });
-        console.log(`[staging-deploy] ⚠️ Staging 部署已跳过 (${skipReason}): production 部署不受阻断 (${(elapsed / 1000).toFixed(1)}s)`);
-      } else {
-        stagingDeployState.status = 'success';
-        stagingDeployState.finished_at = new Date().toISOString();
-        stagingDeployState.elapsed_ms = elapsed;
-        await resolveActionReceipt(stagingReceiptId, 'confirmed', { elapsed_ms: elapsed });
-        console.log(`[staging-deploy] ✅ Staging 部署成功 (${(elapsed / 1000).toFixed(1)}s)`);
-      }
+      stagingReceiptId = await recordActionReceipt({kind:'deploy',target:'staging',evidence:{changed_paths:changed_paths||[],sha:sha||null}});
+      const stagingScript=`${repoRoot}/scripts/staging-deploy.sh`;
+      const {existsSync}=await import('fs');
+      if(!existsSync(stagingScript))throw Error('缺少隔离 staging 部署脚本');
+      // 长时复制和迁移不阻塞生产 Brain 事件循环；不将调用方字符串拼入 shell。
+      const output=await new Promise((resolve,reject)=>execFile('bash',[stagingScript],{
+        cwd:repoRoot,timeout:1_200_000,maxBuffer:16*1024*1024,env:{...process.env,STAGING_REQUEST_ID:requestId,...(sha?{EXPECTED_SHA:sha}:{})},
+      },(error,stdout)=>error?reject(error):resolve(String(stdout))));
+      const verified=output.match(/^STAGING_VERIFIED sha=([a-f0-9]{40}) image=(sha256:[a-f0-9]{64}) request=([a-f0-9-]{36})$/m);
+      if(!verified||verified[3]!==requestId||/STAGING_SKIP_REASON=/.test(output)||(sha&&verified[1]!==sha))throw Error('未完成候选验证，拒绝 staging success');
+      const elapsed=Date.now()-startTime;
+      Object.assign(stagingDeployState,{status:'success',finished_at:new Date().toISOString(),elapsed_ms:elapsed,sha:verified[1],image_id:verified[2],isolated:true});
+      await resolveActionReceipt(stagingReceiptId,'confirmed',{elapsed_ms:elapsed,sha:verified[1],image_id:verified[2],isolated:true});
     } catch (err) {
       const elapsed = Date.now() - startTime;
       stagingDeployState.status = 'failed';
@@ -2950,15 +2913,10 @@ router.post('/deploy/staging/cleanup', async (req, res) => {
   res.status(202).json({ status: 'accepted', message: 'Staging cleanup triggered' });
 
   try {
-    const { execSync } = await import('child_process');
-    const repoRoot = process.env.REPO_ROOT || new URL('../../../..', import.meta.url).pathname;
-
-    console.log('[staging-cleanup] 清理 staging 环境...');
-    execSync(
-      'pm2 delete brain-staging 2>/dev/null || true',
-      { cwd: repoRoot, timeout: 30_000, stdio: 'inherit', shell: true }
-    );
-
+    const {execFile}=await import('child_process');
+    const repoRoot=process.env.REPO_ROOT||new URL('../../../..',import.meta.url).pathname;
+    await new Promise((resolve,reject)=>execFile('bash',[`${repoRoot}/scripts/staging-deploy.sh`,'--cleanup'],
+      {cwd:repoRoot,timeout:1_200_000},error=>error?reject(error):resolve()));
     stagingDeployState.status = 'idle';
     stagingDeployState.started_at = null;
     stagingDeployState.finished_at = null;

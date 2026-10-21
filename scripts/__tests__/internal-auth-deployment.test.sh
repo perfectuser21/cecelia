@@ -44,7 +44,7 @@ else
 fi
 
 if grep -q 'ensure_cecelia_internal_token.*CECELIA_INTERNAL_ENV_FILE' "$REPO_ROOT/scripts/brain-deploy.sh" \
-  && grep -q -- '-e CECELIA_INTERNAL_TOKEN' "$REPO_ROOT/scripts/brain-deploy.sh"; then
+  && grep -q 'bluegreen_green_run_args cecelia-node-brain' "$REPO_ROOT/scripts/brain-deploy.sh"; then
   pass "生产部署在蓝绿启动前确保并显式传递 token"
 else
   fail "生产蓝绿部署没有闭环内部 token"
@@ -63,10 +63,11 @@ else
   fail "蓝绿 sidecar 无法读取宿主凭据 SSOT，Compose 会静默丢失 token"
 fi
 
-if grep -q 'ensure_cecelia_internal_token.*CECELIA_INTERNAL_ENV_FILE' "$REPO_ROOT/scripts/staging-deploy.sh"; then
-  pass "staging 部署确保共享 SSOT token"
+if ! grep -qE '\-\-env-file|\.credentials|CECELIA_INTERNAL_TOKEN' "$REPO_ROOT/scripts/lib/brain-staging.sh" \
+  && grep -q 'BRAIN_PREVIEW=1' "$REPO_ROOT/scripts/lib/brain-staging.sh"; then
+  pass "隔离 staging 不继承生产凭据，内部验收由容器 loopback 执行"
 else
-  fail "staging 部署没有闭环内部 token"
+  fail "隔离 staging 不应挂载生产凭据"
 fi
 
 if grep -q 'cecelia-internal.env' "$REPO_ROOT/docker-compose.yml" \

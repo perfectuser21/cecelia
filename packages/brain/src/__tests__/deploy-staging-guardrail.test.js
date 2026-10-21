@@ -28,7 +28,7 @@ let stagingExecImpl = () => '';
 vi.mock('child_process', () => ({
   exec: vi.fn(),
   execSync: (...args) => stagingExecImpl(...args),
-  execFile: (_file,args,_opts,cb) => {Promise.resolve().then(()=>stagingExecImpl(args)).then(out=>cb(null,out),cb);},
+  execFile: (_file,args,_opts,cb) => {Promise.resolve().then(()=>stagingExecImpl(args,_opts)).then(out=>cb(null,out),cb);},
   spawn: () => ({ unref: vi.fn(), on: vi.fn() }),
 }));
 
@@ -132,8 +132,8 @@ describe('deploy-staging-guardrail（蓝绿部署 staging 验证护栏）', () =
   });
 
   it('staging 干净成功（无 skip 标记）→ status=success', async () => {
-    stagingExecImpl = () =>
-      `STAGING_VERIFIED sha=${'a'.repeat(40)} image=sha256:${'b'.repeat(64)}\n`;
+    stagingExecImpl = (_args,opts) =>
+      `STAGING_VERIFIED sha=${'a'.repeat(40)} image=sha256:${'b'.repeat(64)} request=${opts.env.STAGING_REQUEST_ID}\n`;
 
     await request(app)
       .post('/api/brain/deploy')

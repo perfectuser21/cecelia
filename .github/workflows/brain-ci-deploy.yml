@@ -20,6 +20,12 @@ on:
       - ".skills-source.json"
       - 'packages/brain/**'
       - 'scripts/brain-deploy.sh'
+      - 'scripts/brain-build.sh'
+      - 'scripts/lib/brain-staging.sh'
+      - 'scripts/staging-deploy.sh'
+      - 'scripts/staging-verify.sh'
+      - 'scripts/lib/bluegreen*.sh'
+      - 'docker-compose*.yml'
   # PR 触发：skill 快照 / CI 防线脚本变更时跑「CI 防线三件套」守卫（不触发部署）
   # 同时：packages/brain/src/** 新增文件时触发 island-gate 孤岛检测
   pull_request:

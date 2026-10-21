@@ -8,7 +8,7 @@ name: cecelia
 
 services:
   node-brain:
-    image: cecelia-brain:${BRAIN_VERSION:-latest}
+    image: ${CECELIA_RELEASE_IMAGE:-cecelia-brain:${BRAIN_VERSION:-latest}}
     container_name: cecelia-node-brain
     # macOS/OrbStack: network_mode:host 不支持，用 bridge + port forward
     ports:
