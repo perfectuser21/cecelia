@@ -2,6 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"scripts/ops/janitor.sh","path":"scripts/ops/__tests__/janitor/janitor_system_domain_service_exempt.test.sh","role":"verification"},
     {"owner_path":"packages/brain/src/lib/activity-contract-store.js","path":"packages/brain/src/__tests__/integration/activity-contract-locks.pg.integration.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/projection/__tests__/task-progress.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/__tests__/integration/notion-task-progress.pg.integration.test.js","role":"verification"},
