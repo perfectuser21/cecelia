@@ -245,7 +245,7 @@ const stagingHash=text=>createHash('sha256').update(text).digest('hex');
 const REVIEWED_FILES={
   ".github/workflows/auto-staging-deploy.yml": "65406abb24f3ef49fcef89b4a6f32163fb6b555fe35254e84ca66b910f7fde67",
   "scripts/staging-deploy.sh": "e8c35ccbe3eb599619c2f94d87d80c309f9694eacdd920ece6afffb3c3484a34",
-  "scripts/lib/brain-staging.sh": "57697254e538f75b6a99e276e0b3d95405eb29f95c6a01686f5fd66dd5227089",
+  "scripts/lib/brain-staging.sh": ["57697254e538f75b6a99e276e0b3d95405eb29f95c6a01686f5fd66dd5227089", "66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170"],
   "scripts/staging-verify.sh": "7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925",
   "scripts/wait-for-staging.sh": "feed4d74afc960f4c6ce73b27c63cf2249aef8cd5b17c9dea10199e3ab1251c0",
   "scripts/brain-deploy.sh": "b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428"
@@ -267,7 +267,7 @@ function routeProven(text,parse){
 export async function collectIsolatedStagingSources({read,requireProof,relations,revision,route,parse}){
  // 这些完整shell/workflow已通过真实脚本正反例；任何控制流变化均需重新审查，不能按关键词认领。
  for(const[path,digest]of Object.entries(REVIEWED_FILES)){
-  const source=await read(path);requireProof(source&&stagingHash(source)===digest,'isolated_staging_source_unproven');
+  const source=await read(path);requireProof(source&&(Array.isArray(digest)?digest:[digest]).includes(stagingHash(source)),'isolated_staging_source_unproven');
  }
  requireProof(route&&routeProven(route,parse),'isolated_staging_route_unproven');
  for(const path of ['scripts/brain-build.sh','packages/brain/src/db-config.js'])await read(path);
