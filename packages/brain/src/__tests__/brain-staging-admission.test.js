@@ -55,8 +55,23 @@ case "$1" in
   if [[ "$*" == *pg_total_relation_size* ]]; then echo 100000000; exit 0; fi
   if [[ "$*" == *'df -Pk'* ]]; then if [[ "$MODE" == disk-full ]]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 1000 950 50 95%% /\n'; exit; fi; printf "Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 30000000 5000000 25000000 10%% /\n"; exit 0; fi
   if [[ "$*" == *pg_dump* ]]; then echo dump; exit 0; fi
-  if [[ "$*" == *pg_restore* ]]; then cat >/dev/null; [[ "$MODE" != restore-failure ]]; exit; fi
-  if [[ "$*" == *pg_isready* ]]; then exit 0; fi
+  if [[ "$*" == *pg_restore* ]]; then
+   cat >/dev/null
+   if [[ "$MODE" == socket-bootstrap || "$MODE" == tcp-never-ready ]]; then
+    [[ "$*" == *'-h 127.0.0.1'* && -f "$EVENTS.tcp-ready" ]] || { echo restore-before-stable >> "$EVENTS"; exit 57; }
+    echo staging-restore >> "$EVENTS"
+   fi
+   [[ "$MODE" != restore-failure ]]; exit
+  fi
+  if [[ "$*" == *pg_isready* ]]; then
+   if [[ "$MODE" == socket-bootstrap || "$MODE" == tcp-never-ready ]]; then
+    if [[ "$*" != *'-h 127.0.0.1'* ]]; then echo temporary-socket-ready >> "$EVENTS"; exit 0; fi
+    if [[ ! -f "$EVENTS.tcp-wait" ]]; then touch "$EVENTS.tcp-wait"; echo temporary-socket-rejected >> "$EVENTS"; exit 2; fi
+    [[ "$MODE" != tcp-never-ready ]] || exit 2
+    touch "$EVENTS.tcp-ready"; echo database-tcp-ready >> "$EVENTS"
+   fi
+   exit 0
+  fi
   if [[ "$*" == *health* ]]; then
    echo staging-health >> "$EVENTS"
    actual="$SHA"; [[ "$MODE" != wrong-sha ]] || actual=cccccccccccccccccccccccccccccccccccccccc
@@ -84,6 +99,17 @@ describe('brain-staging-admission 实际脚本准入',()=>{
 it.each(['migration-failure','restore-failure','wrong-sha','not-isolated','wrong-digest','missing-image','disk-full','bad-tasks','bad-task-row','production-db'])('候选%s阻断生产迁移与切换',mode=>{
  const result=run(mode);expect(result.events,result.stderr+result.stdout).not.toContain('production-migrate');
  expect(result.status).not.toBe(0);expect(result.remaining).toEqual([]);if(mode!=='missing-image')expect(result.receipt.status).toBe('failed');expect(result.commands).not.toMatch(/stop cecelia-node-brain(?:\n|$)/);
+});
+it('初始化只有socket服务时继续等待，正式TCP就绪后才恢复与迁移',()=>{
+ const result=run('socket-bootstrap');expect(result.status,result.stderr+result.stdout).toBe(88);
+ expect(result.events.split('\n').filter(Boolean)).toEqual(['build','temporary-socket-rejected','database-tcp-ready','staging-restore','staging-migrate','staging-health','production-migrate']);
+ expect(result.receipt.status).toBe('success');expect(result.remaining).toEqual([]);
+});
+it('只有临时socket、正式TCP一直未启动时拒绝导出和生产迁移',()=>{
+ const result=run('tcp-never-ready');expect(result.status).not.toBe(0);
+ expect(result.commands).not.toContain('pg_dump');expect(result.commands).not.toContain('pg_restore');
+ expect(result.events).not.toContain('production-migrate');expect(result.receipt.phase).toBe('database-start');
+ expect(result.receipt.status).toBe('failed');expect(result.remaining).toEqual([]);
 });
 it('同一镜像通过隔离候选验收后才开始生产迁移',()=>{
  const result=run('success');expect(result.status,result.stderr+result.stdout).toBe(88);
