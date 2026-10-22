@@ -1,8 +1,13 @@
+import {runRegisteredAssertions} from '../implementation-gate.mjs';
+import './brain-source-only-deploy.test.mjs';
 import './fixed-local-source.test.mjs';
 import './fixed-local-git.test.mjs';
 import './implementation-source-ready.test.mjs';
 import './factory-workflow-config-source.test.mjs';
 import {test} from 'node:test';
+import {runImplementationMainGate} from '../implementation-main-gate.mjs';
+import {readNativeConsumerRuntime} from '../../../packages/brain/src/lib/native-consumer-runtime.js';
+import {sealRecoveryBundle,publishRecoveryBaseline,recoveryRuntimeAt} from '../implementation-source-recovery.mjs';
 import {publishMainSnapshots} from '../implementation-main-snapshot.mjs';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -51,7 +56,7 @@ function bundle(revision,{parentMissing=false,childMissing=false,parentGaps=null
  return {snapshot:seal({schema_version:1,scope:'cecelia-kr',repo,revision,status:parentMissing?'unknown':'verified',gaps:parentMissing?(parentGaps??[{code:'definition_snapshot_missing'}]):[],map:{manifest:parentManifest},canonical:{workflows:[],journeys:[]},definitions:{workflows:[],activities:[]},admission_companion:companion})};
 }
 const workflow=()=>yaml.load(readFileSync(join(root,'.github/workflows/implementation-impact.yml'),'utf8'));
-async function executeProvider(t,{initial={},refresh={},after={},moved=false,getError=false,mutateFinal=null,baseUnknown=false,artifact={},baseEqualsHead=false,movedAfterPost=false,moveOnPostNumber=0}={}){
+async function executeProvider(t,{initial={},refresh={},after={},moved=false,getError=false,mutateFinal=null,baseUnknown=false,artifact={},baseEqualsHead=false,movedAfterPost=false,moveOnPostNumber=0,sourceRecovery=false}={}){
  const dir=mkdtempSync(join(tmpdir(),'implementation-publish-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  mkdirSync(join(dir,'bin'));symlinkSync(root,join(dir,'tooling'),'dir');
  const history=artifact.errorBody?{error:{code:'MAP_MANIFEST_ACTIVE_CONFLICT'}}:bundle(base,{childMissing:true});
@@ -89,7 +94,7 @@ else process.exit(9);
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
  const step=workflow().jobs['snapshot-main'].steps.find(s=>s.name==='固定main中央定义导出');
- const env={...process.env,PATH:join(dir,'bin')+':'+process.env.PATH,BRAIN_URL:`http://127.0.0.1:${server.address().port}`,CECELIA_INTERNAL_TOKEN:'isolated-test-not-secret',SOURCE_REPO:repo,MAP_SCOPE:'cecelia-kr',BASE:baseEqualsHead?head:base,HEAD:head};
+ const env={...process.env,SOURCE_BASELINE_RECOVERY:sourceRecovery?'true':'false',PATH:join(dir,'bin')+':'+process.env.PATH,BRAIN_URL:`http://127.0.0.1:${server.address().port}`,CECELIA_INTERNAL_TOKEN:'isolated-test-not-secret',SOURCE_REPO:repo,MAP_SCOPE:'cecelia-kr',BASE:baseEqualsHead?head:base,HEAD:head};
  const result=await new Promise(resolve=>{const child=spawn('bash',['-c',step.run],{cwd:dir,env});let stdout='',stderr='';child.stdout.on('data',c=>stdout+=c);child.stderr.on('data',c=>stderr+=c);child.on('close',code=>resolve({code,stdout,stderr}));});
  return {dir,calls,...result};
 }
@@ -177,7 +182,7 @@ else if(a.includes('--jq'))console.log('push .github/workflows/implementation-im
 else process.stdout.write(fs.readFileSync('${dir}/run.json'));
 `,{mode:0o700});
  const runStep=workflow().jobs.gate.steps.find(s=>s.name==='下载固定SHA中央bundle（PR无中央写凭据）');
- const env={...process.env,PATH:join(dir,'bin')+':'+process.env.PATH,RUNNER_TEMP:dir,GITHUB_REPOSITORY:repo,MODE:'pr',MAP_SCOPE:'cecelia-kr',BASE:base,HEAD:head,ADMISSION_SCOPES:JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-factory']})};
+ const env={...process.env,SOURCE_BASELINE_RECOVERY:'false',PATH:join(dir,'bin')+':'+process.env.PATH,RUNNER_TEMP:dir,GITHUB_REPOSITORY:repo,MODE:'pr',MAP_SCOPE:'cecelia-kr',BASE:base,HEAD:head,ADMISSION_SCOPES:JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-factory']})};
  const result=await new Promise(resolve=>{const child=spawn('bash',['-c',runStep.run],{cwd:dir,env});let stderr='';child.stderr.on('data',c=>stderr+=c);child.on('close',code=>resolve({code,stderr}));});return {...result,dir};
 }
 test('真实consumer shell：provider job成功即可，不要求整个main gate成功',async t=>{
@@ -394,3 +399,57 @@ test('审查R2：非Error拒绝值也不能被诊断IO覆盖',async t=>{
 });
 
 import './prepare-fixed-skill-cache.test.mjs';
+import './implementation-source-recovery.test.mjs';
+
+test('恢复CLI没有正式base时拒绝且绝不回落中央refresh',async t=>{
+ const r=await executeProvider(t,{sourceRecovery:true,artifact:{missing:true},initial:{parentMissing:true,childMissing:true}});
+ assert.notEqual(r.code,0);assert.match(r.stderr,/IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING/);
+ assert.equal(r.calls.length,0);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+});
+for(const [eventName,enabled,ref] of [['push','true','refs/heads/main'],['workflow_dispatch','false','refs/heads/main'],['workflow_call','true','refs/heads/main'],['workflow_dispatch','true','refs/heads/not-main']])test(`实际main入口拒绝${eventName}/${enabled}/${ref}降级`,async t=>{
+ const dir=mkdtempSync(join(tmpdir(),'source-only-main-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('config','core.hooksPath','/dev/null');git('remote','add','origin',`https://github.com/${repo}.git`);
+ writeFileSync(join(dir,'tracked'),'base');git('add','.');git('commit','-qm','base');const fixedBase=git('rev-parse','HEAD');
+ writeFileSync(join(dir,'tracked'),'head');git('commit','-qam','head');const fixedHead=git('rev-parse','HEAD');
+ writeFileSync(join(dir,'base.json'),JSON.stringify(bundle(fixedBase)));
+ writeFileSync(join(dir,'head.json'),JSON.stringify({snapshot:sealRecoveryBundle(bundle(fixedHead).snapshot,{base_revision:fixedBase,head_revision:fixedHead})}));
+ writeFileSync(join(dir,'event.json'),JSON.stringify({inputs:{source_baseline_recovery:enabled}}));
+ const overrides={GITHUB_EVENT_NAME:eventName,GITHUB_REF:ref,GITHUB_RUN_ID:'12',GITHUB_EVENT_PATH:join(dir,'event.json')},old={};
+ for(const [k,v]of Object.entries(overrides)){old[k]=process.env[k];process.env[k]=v;}
+ try{
+  await assert.rejects(runImplementationMainGate({repoRoot:dir,scope:'cecelia-kr',base:fixedBase,head:fixedHead,mode:'main',snapshotBase:join(dir,'base.json'),snapshotHead:join(dir,'head.json'),outputDir:join(dir,'out'),mainScopes:JSON.stringify({schema_version:1,scopes:['cecelia-kr','cecelia-factory']})}),/SOURCE_RECOVERY_DISPATCH_REQUIRED/);
+  assert.equal(existsSync(join(dir,'out/receipt.json')),false);
+ }finally{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;}
+});
+
+for(const fault of ['fullgate','runtime_drift','central_drift'])test(`真实publisher编译成功但${fault}失败时不发布正式head`,async t=>{
+ const dir=mkdtempSync(join(tmpdir(),'recovery-publish-order-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const source=join(dir,'source');mkdirSync(source);
+ const git=(...args)=>execFileSync('git',args,{cwd:source,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('config','core.hooksPath','/dev/null');git('remote','add','origin',`https://github.com/${repo}.git`);
+ for(const {path}of readNativeConsumerRuntime().files){mkdirSync(join(source,path,'..'),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));}
+ git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');writeFileSync(join(source,'reviewed-test'),'fixed');git('add','.');git('commit','-qm','head');const head=git('rev-parse','HEAD');
+ const baseline=bundle(base),identity={...recoveryRuntimeAt(source,base),git_sha:base},readiness={status:'source_only',runtime_status:'not_deployed',base_revision:base,revision:head,runtime:identity};
+ let compiled=false,executed=false,reads=0,observations=0;
+ await assert.rejects(publishRecoveryBaseline({repoRoot:source,base,head,brainUrl:'http://fixture.invalid',token:'fixture',output:join(dir,'output'),baseline,readiness},{
+  github:async()=>({sha:head}),verifyAuthority:async()=>({repo,base_revision:base,direct_base_revision:base,head_revision:head}),
+  inspectRuntime:async()=>{observations++;return {...readiness,runtime:fault==='runtime_drift'&&observations===2?{...identity,git_sha:'f'.repeat(40)}:identity};},
+  fetchFn:async()=>{reads++;const value=structuredClone(baseline);if(fault==='central_drift'&&reads===2){const {snapshot_sha256,...body}=value.snapshot;body.map={manifest:null,observed_drift:true};value.snapshot=seal(body);}return new Response(JSON.stringify(value));},
+  compile:async()=>{compiled=true;return bundle(head).snapshot;},
+  runGate:async options=>{executed=true;mkdirSync(options.outputDir,{recursive:true});writeFileSync(join(options.outputDir,'receipt.json'),JSON.stringify({verdict:fault==='fullgate'?'FAIL':'PASS'}));return {receipt:{verdict:fault==='fullgate'?'FAIL':'PASS'}};},
+ }),{code:{fullgate:'SOURCE_RECOVERY_FULL_GATE_FAILED',runtime_drift:'SOURCE_RECOVERY_RUNTIME_CHANGED',central_drift:'SOURCE_RECOVERY_CENTRAL_CHANGED'}[fault]});
+ assert.equal(compiled,true);assert.equal(executed,true);assert.equal(existsSync(join(dir,'output/head.json')),false);assert.equal(existsSync(join(dir,'output/base.json')),false);assert.equal(existsSync(join(dir,'output/diagnostics/source-only-verification/receipt.json')),true);
+});
+
+test('上传前回归的真实子进程不继承中央或部署凭据',async t=>{
+ const dir=mkdtempSync(join(tmpdir(),'recovery-env-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('config','core.hooksPath','/dev/null');git('remote','add','origin',`https://github.com/${repo}.git`);
+ const keys=['CECELIA_INTERNAL_TOKEN','GH_TOKEN','GITHUB_TOKEN','DEPLOY_TOKEN','TS_AUTHKEY','SKILLS_SOURCE_SSH_KEY'],path='tests/smoke/credentials.sh';
+ mkdirSync(join(dir,'tests/smoke'),{recursive:true});writeFileSync(join(dir,path),'#!/bin/bash\nset -euo pipefail\n'+keys.map(key=>'test -z "${'+key+'-}"').join('\n')+'\n');
+ git('add','.');git('commit','-qm','fixture');const head=git('rev-parse','HEAD'),old={};
+ for(const key of keys){old[key]=process.env[key];process.env[key]='fixture-secret';}
+ try{const results=await runRegisteredAssertions({repoRoot:dir,source:{repo,head_revision:head},required_assertions:[{assertion_ref:`manual:bash ${path}`,source_repo:repo,source_bindings:[{path}]}]});assert.equal(results.length,1);assert.equal(results[0].exit_code,0);assert.equal(results[0].error,null);}
+ finally{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;}
+});

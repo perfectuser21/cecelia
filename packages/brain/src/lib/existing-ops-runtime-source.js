@@ -248,16 +248,16 @@ const REVIEWED_FILES={
   "scripts/lib/brain-staging.sh": ["57697254e538f75b6a99e276e0b3d95405eb29f95c6a01686f5fd66dd5227089", "66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170"],
   "scripts/staging-verify.sh": "7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925",
   "scripts/wait-for-staging.sh": "feed4d74afc960f4c6ce73b27c63cf2249aef8cd5b17c9dea10199e3ab1251c0",
-  "scripts/brain-deploy.sh": "b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428"
+  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e"]
 };
 const ROUTE_AST_SHA='7190b4987ffa5adbab19d5fcf17d341586db536bba7dfeb97c205aab63c910c4';
 const BUDGET_STAGING_FILES={
   ".github/workflows/auto-staging-deploy.yml": "d9ef17f05464a0bee54bc78a9caae30439dbafda499f5a48d8832bb8ce2ffb6e",
   "scripts/staging-deploy.sh": "e8c35ccbe3eb599619c2f94d87d80c309f9694eacdd920ece6afffb3c3484a34",
-  "scripts/lib/brain-staging.sh": "66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170",
+  "scripts/lib/brain-staging.sh": ["66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170", "0adad6c3b8f8e3f398fb7621af31876a60f31a9303346d14fac55e5401f01b00"],
   "scripts/staging-verify.sh": "7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925",
   "scripts/wait-for-staging.sh": "6ca3e437f2583ce77e0ac916958a726ad0c884637d032e7b76003700a69b2467",
-  "scripts/brain-deploy.sh": "b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428"
+  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e"]
 };
 const BUDGET_FILES={
   "scripts/lib/bluegreen.sh": "ca287873ef216a990fd57e588284e401218969294df17ab48592653262ed74d6",

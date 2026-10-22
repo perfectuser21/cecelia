@@ -22,7 +22,7 @@ const root=mkdtempSync(join(tmpdir(),'source-ready-'));
 const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
 git('init','-q');mkdirSync(join(root,'empty-hooks'));git('config','core.hooksPath',join(root,'empty-hooks'));git('config','user.email','test@example.invalid');git('config','user.name','Fixture');
 for(const path of paths){mkdirSync(dirname(join(root,path)),{recursive:true});writeFileSync(join(root,path),`// fixed fixture ${path}\n`);}
-git('add','.');git('commit','-qm','fixture');const revision=git('rev-parse','HEAD');
+writeFileSync(join(root,'packages/brain/package.json'),'{}');git('add','.');git('commit','-qm','fixture');const revision=git('rev-parse','HEAD');
 const expected={schema_version:1,repo:'perfectuser21/cecelia',files:paths.map(path=>({path,sha256:createHash('sha256').update(readFileSync(join(root,path))).digest('hex')}))};
 const runtime=()=>({...structuredClone(expected),git_sha:'a'.repeat(40)});
 test.after(()=>rmSync(root,{recursive:true,force:true}));
@@ -125,12 +125,12 @@ test('拒绝超60分钟预算及非固定HEAD',async()=>{
  assert.throws(()=>expectedSourceRuntime({repoRoot:root,revision:'a'.repeat(40)}),/SOURCE_READY_CHECKOUT_MISMATCH/);
 });
 
-test('真实workflow保持原snapshot谓词与15/40分钟，独立只读就绪60分钟',()=>{
+test('真实workflow保持原谓词与正常15/40分钟，来源恢复45分钟及只读就绪60分钟',()=>{
  const workflow=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
  const ready=workflow.jobs['source-runtime-ready'],snapshot=workflow.jobs['snapshot-main'];
  const old="inputs.export_device_patrol_source_identity != true && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'";
  assert.equal(ready.if,old);assert.equal(snapshot.if,old);assert.deepEqual(snapshot.needs,['source-runtime-ready']);
- assert.equal(ready['timeout-minutes'],60);assert.equal(snapshot['timeout-minutes'],15);assert.equal(workflow.jobs.gate['timeout-minutes'],40);
+ assert.equal(ready['timeout-minutes'],60);assert.equal(snapshot['timeout-minutes'],"${{ inputs.source_baseline_recovery == true && 45 || 15 }}");assert.equal(workflow.jobs.gate['timeout-minutes'],40);
  const scopeStep=ready.steps.find(s=>s.id==='scope');assert.match(scopeStep.run,/echo "applicable=\$REQUIRED"/);
  const evaluate=(expression,context)=>Function('github','inputs','vars',`return (${expression.replace(/^\$\{\{ | \}\}$/g,'')})`)(context.github,context.inputs,context.vars);
  const context={github:{repository:'perfectuser21/cecelia',ref:'refs/heads/main',event_name:'push',sha:revision},inputs:{},vars:{}};
@@ -167,7 +167,7 @@ const futureRoot=mkdtempSync(join(tmpdir(),'source-ready-native-'));
 const futureGit=(...args)=>execFileSync('git',args,{cwd:futureRoot,encoding:'utf8'}).trim();
 futureGit('init','-q');mkdirSync(join(futureRoot,'no-hooks'));futureGit('config','core.hooksPath',join(futureRoot,'no-hooks'));futureGit('config','user.email','test@example.invalid');futureGit('config','user.name','Fixture');
 for(const path of completePaths){mkdirSync(dirname(join(futureRoot,path)),{recursive:true});writeFileSync(join(futureRoot,path),`// independent native fixture ${path}\n`);}
-futureGit('add','.');futureGit('commit','-qm','native 15 fixed fixture');
+writeFileSync(join(futureRoot,'packages/brain/package.json'),'{}');futureGit('add','.');futureGit('commit','-qm','native 15 fixed fixture');
 const futureRevision=futureGit('rev-parse','HEAD');
 const futureExpected={schema_version:1,repo:'perfectuser21/cecelia',files:completePaths.map(path=>({path,sha256:createHash('sha256').update(readFileSync(join(futureRoot,path))).digest('hex')}))};
 const futureRuntime=()=>({...structuredClone(futureExpected),git_sha:'a'.repeat(40)});
@@ -264,4 +264,16 @@ for(const [name,mutate] of [
 ])test(`已发布15的${name}立即拒绝`,async()=>{
  const body=published15();body.files=mutate(body.files);
  await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
+});
+
+test('source-only普通就绪入口快速失败：零HTTP、零主干查询、零等待',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'source-only-ready-'));
+ try{
+  execFileSync('git',['clone','-q',root,dir]);const g=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
+  g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+  writeFileSync(join(dir,'packages/brain/package.json'),JSON.stringify({cecelia_source_only:false}));g('commit','-qam','source-only');
+  let calls=0;const forbidden=async()=>{calls++;throw Error('must not wait');};
+  await assert.rejects(waitForSourceRuntime({...options('http://fixture.invalid'),repoRoot:dir,revision:g('rev-parse','HEAD')},{fetchFn:forbidden,readMain:forbidden,sleep:forbidden}),/SOURCE_ONLY_REQUIRES_EXPLICIT_RECOVERY/);
+  assert.equal(calls,0);
+ }finally{rmSync(dir,{recursive:true,force:true});}
 });
