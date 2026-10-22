@@ -12,8 +12,10 @@ const SH = readFileSync(resolve(REPO_ROOT, 'scripts/brain-deploy.sh'), 'utf8');
 
 describe('post-deploy 5221 自检 + Bark', () => {
   it('顶层 source bluegreen.sh（send_bark/bluegreen_swap 两模式都可用）', () => {
-    // 顶层（VERSION 定义之前）已 source，保证 launchd 模式也有 send_bark
-    const head = SH.slice(0, SH.indexOf('VERSION='));
+    // 来源拒绝闸先读取 VERSION；正常模式配置前仍必须顶层导入告警工具。
+    const boundary = SH.indexOf('ENV_REGION=');
+    expect(boundary).toBeGreaterThan(0);
+    const head = SH.slice(0, boundary);
     expect(head).toMatch(/source\s+["']?\$\{?SCRIPT_DIR\}?\/lib\/bluegreen\.sh/);
   });
 

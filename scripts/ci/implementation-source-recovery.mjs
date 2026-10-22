@@ -14,6 +14,7 @@ export const RECOVERY_BRIDGE=Object.freeze({baseline:'f63efa7d82a8f9f9f0084b85a7
 const REVIEWED_DEPLOY='a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e';
 const COLLECTORS=readNativeConsumerRuntime().files.map(f=>f.path);
 const ALLOWED=new Set([...COLLECTORS,'.implementation-source-relations.json','scripts/brain-deploy.sh',
+ 'tests/packages/brain/post-deploy-selfcheck-contract.test.js',
  '.github/workflows/implementation-impact.yml','.github/workflows/ci.yml',
  'scripts/ci/implementation-source-ready.mjs','scripts/ci/implementation-main-snapshot.mjs',
  'scripts/ci/implementation-source-recovery.mjs','scripts/ci/implementation-main-gate.mjs',
