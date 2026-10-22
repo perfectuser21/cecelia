@@ -51,6 +51,5 @@
   "version": "1.445.56",
   "overrides": {
     "fast-uri": "^3.1.6"
-  },
-  "cecelia_source_only": true
+  }
 }
