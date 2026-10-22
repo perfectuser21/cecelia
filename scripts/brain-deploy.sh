@@ -7,6 +7,24 @@ VERSIONS_FILE="$ROOT_DIR/.brain-versions"
 BRAIN_DIR="$ROOT_DIR/packages/brain"
 DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"
 
+# 来源自举只产准入基线；存在标记即拒绝，早于 helper、凭据、构建和生产操作。
+VERSION=$(node -e '
+  const fs = require("node:fs");
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    if (!pkg || typeof pkg !== "object" || Array.isArray(pkg)) throw Error();
+  } catch {
+    process.stderr.write("BRAIN_RELEASE_PACKAGE_INVALID\n");
+    process.exit(1);
+  }
+  if (Object.prototype.hasOwnProperty.call(pkg, "cecelia_source_only")) {
+    process.stderr.write("SOURCE_ONLY_PRODUCTION_FORBIDDEN\n");
+    process.exit(1);
+  }
+  process.stdout.write(String(pkg.version));
+' "$BRAIN_DIR/package.json")
+
 # 蓝绿切换 + Bark 告警工具（顶层 source，保证 Docker/launchd 两模式都有 send_bark/bluegreen_swap）
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/bluegreen.sh"
@@ -15,7 +33,6 @@ source "$SCRIPT_DIR/lib/internal-auth-token.sh"
 source "$SCRIPT_DIR/lib/brain-image-retention.sh"
 source "$SCRIPT_DIR/lib/brain-staging.sh"
 
-VERSION=$(node -e "console.log(require('$BRAIN_DIR/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
 # 默认凭据路径跟着 HOST_HOME 走（macOS/us-vps 两份 compose 都在容器 env 里显式设了
 # HOST_HOME=/Users/administrator 或 /root），不再硬编码 macOS 路径。

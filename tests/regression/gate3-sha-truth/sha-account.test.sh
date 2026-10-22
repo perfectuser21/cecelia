@@ -254,6 +254,21 @@ run_s6_sha_mismatch_rollback() {
     return 1
   fi
 
+  # 运行原部署脚本和原 helper；正常发布 fixture 不继承源码自举标记。
+  local DEPLOY_ROOT="$TMP/sha-deploy"
+  mkdir -p "$DEPLOY_ROOT/scripts/lib" "$DEPLOY_ROOT/packages/brain" \
+    || { fail "创建部署 fixture 失败"; return 1; }
+  cp "$DEPLOY" "$DEPLOY_ROOT/scripts/brain-deploy.sh" \
+    || { fail "复制原部署脚本失败"; return 1; }
+  local helper
+  for helper in bluegreen.sh url-encode.sh internal-auth-token.sh brain-image-retention.sh brain-staging.sh; do
+    cp "$ROOT_DIR/scripts/lib/$helper" "$DEPLOY_ROOT/scripts/lib/$helper" \
+      || { fail "复制原 helper 失败：$helper"; return 1; }
+  done
+  printf '{"name":"@cecelia/brain","version":"9.9.9"}\n' > "$DEPLOY_ROOT/packages/brain/package.json" \
+    || { fail "写入正常发布 fixture 失败"; return 1; }
+  DEPLOY="$DEPLOY_ROOT/scripts/brain-deploy.sh"
+
   # 检查 brain-deploy.sh 是否含 S6 SHA 断言逻辑
   if grep -qE "EXPECTED_SHA|git_sha.*EXPECTED|SHA.*不匹配|sha.*mismatch" "$DEPLOY"; then
     pass "[BEHAVIOR-04] brain-deploy.sh 含 SHA 回读断言逻辑（源码层验证）"
@@ -268,15 +283,36 @@ run_s6_sha_mismatch_rollback() {
 
     # 尝试运行 --dry-run --sha-check-only（如果支持）
     local EXIT_CODE=0
-    HEALTH_JSON_OVERRIDE="$FIXTURE" \
+    CECELIA_IMAGE_DEPLOYMENT_ID= HEALTH_JSON_OVERRIDE="$FIXTURE" \
     EXPECTED_SHA="$EXPECTED_SHA" \
-    bash "$DEPLOY" --dry-run --sha-check-only 2>/tmp/s6_out.txt; EXIT_CODE=$?
+    bash "$DEPLOY" --dry-run --sha-check-only >"$TMP/s6_out.txt" 2>&1; EXIT_CODE=$?
 
-    if [[ $EXIT_CODE -ne 0 ]]; then
-      pass "[BEHAVIOR-04] SHA 不匹配 → exit ${EXIT_CODE}（ROLLBACK 触发）"
+    if [[ $EXIT_CODE -eq 1 ]] && grep -Fq "SHA 不匹配：EXPECTED=${EXPECTED_SHA} ACTUAL=deadbeef00000000deadbeef00000000deadbeef" "$TMP/s6_out.txt"; then
+      pass "[BEHAVIOR-04] 真实 SHA 不匹配 → exit 1（回读原因已核对）"
     else
-      fail "[BEHAVIOR-04] SHA 不匹配时 exit 0（应 exit 1，ROLLBACK 未触发）"
-      cat /tmp/s6_out.txt | head -10 | sed 's/^/    /'
+      fail "[BEHAVIOR-04] 未抵达真实 SHA 不匹配断言（exit=${EXIT_CODE}）"
+      cat "$TMP/s6_out.txt" | head -10 | sed 's/^/    /'
+    fi
+    # 正例必须真正读到相同 SHA，不能把任意提前退出当成错 SHA 验证成功。
+    FIXTURE=$(make_health_fixture "$EXPECTED_SHA" "1.0.0" "5")
+    EXIT_CODE=0
+    CECELIA_IMAGE_DEPLOYMENT_ID= HEALTH_JSON_OVERRIDE="$FIXTURE" EXPECTED_SHA="$EXPECTED_SHA" \
+      bash "$DEPLOY" --dry-run --sha-check-only >"$TMP/s6_match.txt" 2>&1 || EXIT_CODE=$?
+    if [[ "$EXIT_CODE" -eq 0 ]] && grep -Fq "[SHA-CHECK] ✅ SHA 一致：${EXPECTED_SHA}" "$TMP/s6_match.txt"; then
+      pass "[BEHAVIOR-04] 正常 fixture 同 SHA 真实读回通过"
+    else
+      fail "[BEHAVIOR-04] 正常 fixture 同 SHA 未通过真实读回"
+    fi
+
+    printf '{"version":"9.9.9","cecelia_source_only":false}\n' > "$DEPLOY_ROOT/packages/brain/package.json" \
+      || { fail "写入 source-only fixture 失败"; return 1; }
+    EXIT_CODE=0
+    CECELIA_IMAGE_DEPLOYMENT_ID= HEALTH_JSON_OVERRIDE="$FIXTURE" EXPECTED_SHA="$EXPECTED_SHA" \
+      bash "$DEPLOY" --dry-run --sha-check-only >"$TMP/s6_marked.txt" 2>&1 || EXIT_CODE=$?
+    if [[ "$EXIT_CODE" -eq 1 ]] && [[ "$(cat "$TMP/s6_marked.txt")" == 'SOURCE_ONLY_PRODUCTION_FORBIDDEN' ]]; then
+      pass "[BEHAVIOR-04] source-only fixture 即使同 SHA 也在回读前拒绝"
+    else
+      fail "[BEHAVIOR-04] source-only fixture 被同 SHA 绕过或拒绝原因错误"
     fi
   else
     xfail "[BEHAVIOR-04] brain-deploy.sh 尚未实现 SHA 回读断言——修复后本行 PASS"

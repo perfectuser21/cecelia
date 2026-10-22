@@ -6,6 +6,7 @@ import {canonicalRepoIdentity} from '../../packages/brain/src/lib/gp-assertion-c
 import {extractImplementationAdmissionSnapshots} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import {collectImplementationPrEvidence} from './implementation-pr-gate.mjs';
 import {resolveScopedImplementationReports,runScopedImplementationGate} from './implementation-multi-scope.mjs';
+import {verifyRecoveryGateProof} from './implementation-source-recovery.mjs';
 const scopes=['cecelia-kr','cecelia-factory'];
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const save=(root,name,value)=>writeFileSync(join(root,name),JSON.stringify(value,null,2)+'\n');
@@ -26,17 +27,24 @@ export async function runImplementationMainGate(options){
    inputs[side]=extractImplementationAdmissionSnapshots(data.snapshot||data,scopes);
    if(inputs[side].some(s=>s.repo!==repo||s.revision!==revision))fail('IMPLEMENTATION_MAIN_SNAPSHOT_SOURCE_MISMATCH');
   }
+  const sourceOnly=inputs.head.some(s=>s.source_baseline);
+  if(sourceOnly){
+   if(!inputs.head.every(s=>s.source_baseline))fail('SOURCE_RECOVERY_PROVENANCE_INVALID');
+   const context={eventName:process.env.GITHUB_EVENT_NAME,ref:process.env.GITHUB_REF,runId:process.env.GITHUB_RUN_ID,event:process.env.GITHUB_EVENT_PATH?JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8')):null};
+   verifyRecoveryGateProof({repoRoot,base,head,inputs,context});
+  }
   const reports=[];
   for(const [index,target] of scopes.entries()){
    const dir=join(outputDir,target);mkdirSync(dir,{recursive:true});
    save(dir,'base.json',inputs.base[index]);save(dir,'head.json',inputs.head[index]);
-   const {report}=await collectImplementationPrEvidence({repoRoot,scope:target,base,head,mode:'main',snapshotBase:join(dir,'base.json'),snapshotHead:join(dir,'head.json'),outputDir:dir});
+   const {report}=await collectImplementationPrEvidence({repoRoot,scope:target,base,head,mode:sourceOnly?'pr':'main',snapshotBase:join(dir,'base.json'),snapshotHead:join(dir,'head.json'),outputDir:dir});
    reports.push(report);
   }
   const changed_files=execFileSync('git',['diff','--no-renames','--name-only','-z',base,head,'--'],{cwd:repoRoot,encoding:'utf8'}).split('\0').filter(Boolean).map(path=>({path}));
-  const resolution=resolveScopedImplementationReports({source:{repo,base_revision:base,head_revision:head,changed_files},expectedScopes:scopes,reports,purpose:'main_verification'});
+  const resolution=resolveScopedImplementationReports({source:{repo,base_revision:base,head_revision:head,changed_files},expectedScopes:scopes,reports,purpose:sourceOnly?'admission_only':'main_verification'});
   save(outputDir,'report.json',resolution);
   const receipt=await runScopedImplementationGate({repoRoot,evidence:resolution.evidence});
+  if(sourceOnly){receipt.source_baseline='source_only';receipt.runtime_status='not_deployed';}
   receipt.resolution_sha256=resolution.resolution_sha256;save(outputDir,'receipt.json',receipt);
   if(receipt.verdict!=='PASS')fail('IMPLEMENTATION_MAIN_REGRESSION_FAILED');
   return {report:resolution,receipt};

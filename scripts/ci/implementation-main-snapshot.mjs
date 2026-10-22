@@ -1,10 +1,11 @@
 /** 可信 main 的中央快照发布器；HTTP 错误只作诊断，完整验证后才发布正式文件。 */
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {mkdirSync,writeFileSync,renameSync,existsSync,realpathSync,mkdtempSync,rmSync} from 'node:fs';
+import {mkdirSync,writeFileSync,renameSync,existsSync,realpathSync,mkdtempSync,rmSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {validateImplementationSnapshot,extractImplementationAdmissionSnapshots} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
+import {publishRecoveryBaseline} from './implementation-source-recovery.mjs';
 const SHA=/^[a-f0-9]{40}$/;
 const REFRESHABLE=new Set(['definition_snapshot_missing','scope_manifest_missing','manifest_source_mismatch']);
 const CAS_CODES=new Set(['MAP_MANIFEST_ACTIVE_CONFLICT']);
@@ -232,6 +233,14 @@ export async function publishMainSnapshots({brainUrl,token,scope,repo,base,head,
  }
 }
 if(process.argv[1]&&realpathSync(process.argv[1])===realpathSync(fileURLToPath(import.meta.url))){
- publishMainSnapshots({brainUrl:process.env.BRAIN_URL,token:process.env.CECELIA_INTERNAL_TOKEN,scope:process.env.MAP_SCOPE,repo:process.env.SOURCE_REPO,base:process.env.BASE,head:process.env.HEAD})
+ const options={brainUrl:process.env.BRAIN_URL,token:process.env.CECELIA_INTERNAL_TOKEN,scope:process.env.MAP_SCOPE,repo:process.env.SOURCE_REPO,base:process.env.BASE,head:process.env.HEAD};
+ const run=async()=>{
+  if(process.env.SOURCE_BASELINE_RECOVERY!=='true')return publishMainSnapshots(options);
+  if(options.repo!=='perfectuser21/cecelia'||options.scope!=='cecelia-kr')throw fail('IMPLEMENTATION_CI_REPOSITORY_INPUT_INVALID');
+  const output='evidence',diagnostics=join(output,'diagnostics');mkdirSync(diagnostics,{recursive:true});
+  const baseline=readHistoricalArtifact({repo:options.repo,revision:options.base,diagnostics});
+  return publishRecoveryBaseline({...options,repoRoot:'tooling',output,baseline,readiness:JSON.parse(readFileSync('evidence/source-readiness/receipt.json','utf8'))});
+ };
+ run()
   .then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write(`${safeCode(readProperty(error,'code'))??'IMPLEMENTATION_CI_PUBLISH_FAILED'}\n`);process.exitCode=1;});
 }
