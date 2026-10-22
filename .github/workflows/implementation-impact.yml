@@ -159,6 +159,7 @@ jobs:
           authkey: ${{ secrets.TS_AUTHKEY }}
       - name: 固定main中央定义导出
         env:
+          IMPLEMENTATION_SKILLS_SOURCE_DIR: ${{ github.workspace }}/tooling/.skills-source
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
           CECELIA_INTERNAL_TOKEN: ${{ secrets.CECELIA_INTERNAL_TOKEN }}
           GH_TOKEN: ${{ secrets.CECELIA_ACTIONS_READ_TOKEN || github.token }}

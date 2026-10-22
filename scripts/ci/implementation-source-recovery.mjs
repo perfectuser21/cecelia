@@ -8,7 +8,7 @@ import yaml from 'js-yaml';
 import {fixedLocalGit,readFixedLocalGitBlob} from './fixed-local-git.mjs';
 import {readNativeConsumerRuntime} from '../../packages/brain/src/lib/native-consumer-runtime.js';
 import {stepSha256} from '../../packages/brain/scripts/sync-steps-from-workspace.mjs';
-import {extractImplementationAdmissionSnapshots,validateImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
+import {extractImplementationAdmissionSnapshots,validateImplementationSnapshot,exportImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 const REPO='perfectuser21/cecelia',SHA=/^[0-9a-f]{40}$/;
 export const RECOVERY_BRIDGE=Object.freeze({baseline:'f63efa7d82a8f9f9f0084b85a70e562f0a499c7e',directBase:'706f2e834afef562f4690a44e7fd1e3c80f25c83',pr:6591,prHead:'f99b83a656d73a1378dcaaa83b3865280f9a9652'});
 const REVIEWED_DEPLOY='a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e';
@@ -47,7 +47,7 @@ export function validateSourceDelta(repoRoot,base,head){
   if(JSON.stringify(before)!==JSON.stringify(after))fail('SOURCE_RECOVERY_CI_CHANGE_INVALID');
  }
  const path='.github/workflows/implementation-impact.yml';
- if(changed.includes(path)&&digest(blob(repoRoot,head,path))!=='3dbe27b2cfc753d74a05eb2ee24b422060184cc18a3125cd47bf7ffd02ab151b')fail('SOURCE_RECOVERY_WORKFLOW_UNREVIEWED');
+ if(changed.includes(path)&&digest(blob(repoRoot,head,path))!=='274f10136dfcda82e08d2c85fe65d6b4521d0cc34b544bb7640cfbe5be406b65')fail('SOURCE_RECOVERY_WORKFLOW_UNREVIEWED');
  const before=yaml.load(blob(repoRoot,base,path).toString()),after=yaml.load(blob(repoRoot,head,path).toString());
  if(JSON.stringify(before.jobs.gate)!==JSON.stringify(after.jobs.gate))fail('SOURCE_RECOVERY_PR_GATE_CHANGED');
  return changed;
@@ -180,9 +180,13 @@ export async function compileRecoveryCandidate({repoRoot,head,baseline}){
   for(const input of inputs)await importImplementationSnapshot(scratch.db,input);
   // 与正式PR入口相同：固定基线的来源、图和manifest必须先在scratch完整投影。
   for(const input of inputs)await projectImplementationSnapshot(scratch.db,input,checkout);
-  // Factory 先重建；最终导出KR时同时封装同SHA、同事务的Factory companion。
-  await buildPrImplementationSnapshot(scratch.db,inputs[1],head,repoRoot);
-  candidate=await buildPrImplementationSnapshot(scratch.db,inputs[0],head,repoRoot);
+  // 使用同一固定clone切至候选；来源定义、图和manifest全部对齐后重新导出。
+  fixedLocalGit(checkout,['checkout','--quiet','--detach',head]);
+  for(const input of [inputs[1],inputs[0]]){
+   const built=await buildPrImplementationSnapshot(scratch.db,input,head,checkout);
+   await projectImplementationSnapshot(scratch.db,built,checkout);
+  }
+  candidate=await exportImplementationSnapshot(scratch.db,{scope:inputs[0].scope,repo:inputs[0].repo,revision:head});
   extractImplementationAdmissionSnapshots(candidate,['cecelia-kr','cecelia-factory']);
  }finally{try{await scratch?.close();}finally{rmSync(checkout,{recursive:true,force:true});}}
  return candidate;

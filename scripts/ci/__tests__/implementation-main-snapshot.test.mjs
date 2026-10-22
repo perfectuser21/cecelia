@@ -455,26 +455,27 @@ test('上传前回归的真实子进程不继承中央或部署凭据',async t=>
 });
 
 // 编译入口回归：DB边界模拟空manifest；Git基线 checkout、入口顺序和清场均真实执行。
-for(const fault of ['', 'projection', 'close'])test(`来源compiler必须投影双scope固定base且清场:${fault||'success'}`,t=>{
+for(const fault of ['', 'projection', 'head_projection', 'close'])test(`来源compiler必须投影双scope固定base且清场:${fault||'success'}`,t=>{
  const dir=mkdtempSync(join(tmpdir(),'recovery-compile-test-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('config','core.hooksPath','/dev/null');
  writeFileSync(join(dir,'fixed-source'),'baseline');git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
  writeFileSync(join(dir,'fixed-source'),'candidate');git('commit','-qam','candidate');const head=git('rev-parse','HEAD');
- writeFileSync(join(dir,'base.json'),JSON.stringify(bundle(base)));writeFileSync(join(dir,'candidate.json'),JSON.stringify(bundle(head).snapshot));
+ writeFileSync(join(dir,'base.json'),JSON.stringify(bundle(base)));writeFileSync(join(dir,'candidate.json'),JSON.stringify(bundle(head,{parentMissing:true,parentGaps:[{code:'manifest_source_mismatch'}]}).snapshot));writeFileSync(join(dir,'final.json'),JSON.stringify(bundle(head).snapshot));
  const mocked=`import assert from 'node:assert/strict';import{readFileSync,writeFileSync}from'node:fs';import{execFileSync}from'node:child_process';
  const dir=${JSON.stringify(dir)},base=${JSON.stringify(base)},fault=${JSON.stringify(fault)},imports=new Set(),projected=new Set();let checkout;
  export async function createImplementationScratch(){return{db:{},close:async()=>{writeFileSync(dir+'/closed',String(checkout));if(fault==='close')throw Error('CLOSE_FAILED');}};}
  export async function importImplementationSnapshot(db,s){imports.add(s.scope);}
  export async function projectImplementationSnapshot(db,s,root){
-  checkout=root;writeFileSync(dir+'/checkout',root);assert.equal(imports.size,2);assert.equal(s.revision,base);
-  assert.equal(execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),base);assert.equal(readFileSync(root+'/fixed-source','utf8'),'baseline');
-  if(fault==='projection')throw Error('PROJECTION_FAILED');projected.add(s.scope);
+  checkout=root;writeFileSync(dir+'/checkout',root);assert.equal(imports.size,2);const expected=s.revision;assert.ok([base,${JSON.stringify(head)}].includes(expected));
+  assert.equal(execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),expected);assert.equal(readFileSync(root+'/fixed-source','utf8'),expected===base?'baseline':'candidate');
+  if(fault==='projection'||fault==='head_projection'&&expected!==base)throw Error('PROJECTION_FAILED');projected.add(expected+s.scope);if(expected!==base)writeFileSync(dir+'/projected-'+s.scope,'true');
  }
- export async function buildPrImplementationSnapshot(db,s){if(projected.size!==2)throw Error('OPS_MANIFEST_IDENTITY_INVALID');writeFileSync(dir+'/built',s.scope);return JSON.parse(readFileSync(dir+'/candidate.json'));}`;
+ export async function buildPrImplementationSnapshot(db,s){if(!['cecelia-kr','cecelia-factory'].every(scope=>projected.has(base+scope)))throw Error('OPS_MANIFEST_IDENTITY_INVALID');writeFileSync(dir+'/built',s.scope);const value=JSON.parse(readFileSync(dir+'/candidate.json'));return s.scope==='cecelia-factory'?value.admission_companion.snapshot:value;}`;
  writeFileSync(join(dir,'snapshot-mock.mjs'),mocked);
- const target=new URL('../implementation-snapshot.mjs',import.meta.url).href;
- writeFileSync(join(dir,'loader.mjs'),`export async function resolve(s,c,next){const r=await next(s,c);return r.url===${JSON.stringify(target)}?{url:new URL('./snapshot-mock.mjs',import.meta.url).href,shortCircuit:true}:r;}`);
+ const target=new URL('../implementation-snapshot.mjs',import.meta.url).href,apiTarget=new URL('../../../packages/brain/src/lib/implementation-ci-snapshot.js',import.meta.url).href;
+ writeFileSync(join(dir,'api-mock.mjs'),`export * from ${JSON.stringify(apiTarget+'?original')};import{readFileSync,existsSync}from'node:fs';import assert from'node:assert/strict';export async function exportImplementationSnapshot(){const dir=${JSON.stringify(dir)};for(const scope of ['cecelia-kr','cecelia-factory'])assert.equal(existsSync(dir+'/projected-'+scope),true);return JSON.parse(readFileSync(dir+'/final.json'));}`);
+ writeFileSync(join(dir,'loader.mjs'),`export async function resolve(s,c,next){const r=await next(s,c);return r.url===${JSON.stringify(target)}?{url:new URL('./snapshot-mock.mjs',import.meta.url).href,shortCircuit:true}:r.url===${JSON.stringify(apiTarget)}?{url:new URL('./api-mock.mjs',import.meta.url).href,shortCircuit:true}:r;}`);
  writeFileSync(join(dir,'register.mjs'),"import{register}from'node:module';register('./loader.mjs',import.meta.url);");
  const runner=`import{readFileSync,existsSync}from'node:fs';import assert from'node:assert/strict';import{compileRecoveryCandidate}from${JSON.stringify(new URL('../implementation-source-recovery.mjs',import.meta.url).href)};
  const dir=${JSON.stringify(dir)},fault=${JSON.stringify(fault)};
@@ -485,3 +486,5 @@ for(const fault of ['', 'projection', 'close'])test(`来源compiler必须投影�
  const result=spawnSync(process.execPath,['--import',join(dir,'register.mjs'),'--input-type=module','-e',runner],{cwd:root,encoding:'utf8'});
  assert.equal(result.status,0,result.stderr);
 });
+
+test('恢复publisher使用已准备且固定SHA的Skill缓存',()=>{const config=workflow();const step=config.jobs['snapshot-main'].steps.find(s=>s.name==='固定main中央定义导出');assert.equal(step.env.IMPLEMENTATION_SKILLS_SOURCE_DIR,'${{ github.workspace }}/tooling/.skills-source');});
