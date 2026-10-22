@@ -31,7 +31,7 @@ import { finalizeTask } from './lib/task-terminal.js';
 import { setBrainLease, BRAIN_LEASE_MARGIN_SECONDS } from './lib/task-lease.js';
 import { rpaExploreFailure } from './lib/rpa-explore-receipt.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
-import { splitExecParamsBlock } from './routing/exec-params.js';
+import { splitExecParamsBlock, requestedAiAccount } from './routing/exec-params.js';
 import { consumeCompanyAnalysis, markCompanyAnalysis, assertCompanyAnalysisDispatch, companyAnalysisPrompt } from './lib/company-kr-analysis.js';
 import {
   parseDeviceBusyMarker, planDeviceBusy, requeueForDeviceBusy, DEVICE_BUSY_EXPIRED_REASON, DUE_AT_SELECT_SQL,
@@ -205,6 +205,12 @@ function promptOf(task) {
 export async function triggerOpenclawAgent(task, deps = {}) {
   const spawnFn = deps.spawnFn ?? nodeSpawn;
   const pool = deps.pool ?? (await import('./db.js')).default;
+  // OpenClaw 2026.9.8 的 agent CLI 无 profile 参数；显式 --model 路径还可能清掉
+  // session authProfileOverride。没有禁用跨账号 fallback 的可核验合同前，不得启动。
+  if (requestedAiAccount(task.payload?.qiumi_source?.body)) {
+    return { success: false, taskId: task.id, reason: 'openclaw_profile_binding_unavailable',
+      error: 'OpenClaw 2026.9.8 无可证明的本次会话账号绑定与禁止 fallback 接口' };
+  }
   let verification;
   if (isCommanderVerification(task)) {
     try { verification = await verificationLaunch(pool, task); }

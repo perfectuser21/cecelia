@@ -167,6 +167,15 @@ describe('远端命令在本机 sh 下真跑（反「字符串断言假绿」）
 });
 
 describe('triggerOpenclawAgent', () => {
+  it('正文指定 AI 账号而会话绑定不可证明时，启动前失败关闭', async () => {
+    const spawnFn = spawnMock();
+    const requested = { ...task, payload: { ...task.payload, qiumi_source: buildQiumiSource({
+      title: '账号任务', body: '【执行设置——启动前落实】\nAI账号：openai-plus3\n【执行参数】\n执行Agent：dev\n模型：openai/gpt-6.1-sol\n【执行要求】\n只读检查',
+    }) } };
+    const result = await triggerOpenclawAgent(requested, { spawnFn, pool: { query: vi.fn() } });
+    expect(result).toMatchObject({ success: false, reason: 'openclaw_profile_binding_unavailable' });
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
   it('工厂探路收到Brain原执行号，锁和证据不另造身份', async () => {
     const spawnFn = spawnMock();
     const factory = { ...task, payload: { ...task.payload, qiumi_department: 'skill-factory' } };

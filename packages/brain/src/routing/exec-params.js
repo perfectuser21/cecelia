@@ -117,11 +117,27 @@ export function splitExecParamsBlock(body) {
   return { present: true, rest: text.replace(BLOCK_RE, '\n').replace(/\n{3,}/g, '\n\n').trim() };
 }
 
+/** 显式账号只能在启动前落实；当前 gateway 不能证明独立会话绑定及禁止回退。 */
+export function requestedAiAccount(body) {
+  const text = String(body ?? '');
+  const settings = text.match(/【执行设置——启动前落实】([\s\S]*?)(?=【[^】]+】|$)/)?.[1] ?? '';
+  const accounts = [...settings.matchAll(/^\s*AI账号\s*[：:]\s*([^\r\n]*)/gim)].map((m) => m[1].trim());
+  return accounts.length ? accounts : null;
+}
+
 export function parseExecParams(body, env = {}) {
   const out = {
     present: false, agent: null, model: null, modelRaw: null, timeoutSec: null,
     acceptance: null, device: null, thinking: null, errors: [],
   };
+  const accounts = requestedAiAccount(body);
+  if (accounts) {
+    if (accounts.length !== 1 || !accounts[0] || accounts[0].length > 256 || !/^[A-Za-z0-9._@:-]+$/.test(accounts[0])) {
+      out.errors.push('bad_ai_account');
+    } else {
+      out.errors.push('openclaw_profile_binding_unavailable');
+    }
+  }
   const m = String(body ?? '').match(BLOCK_RE);
   if (!m) return out;
   out.present = true;
