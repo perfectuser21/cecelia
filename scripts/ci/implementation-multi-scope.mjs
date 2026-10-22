@@ -10,6 +10,7 @@ import {assertImplementationReport,assertJointNoOwnedImplementationReport} from 
 import {validateImplementationImpact} from '../../packages/brain/src/lib/implementation-impact.js';
 const sha=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fail=code=>{throw Object.assign(Error(code),{code});};
+const supportedCeceliaScopes=scopes=>['["cecelia-kr","cecelia-factory"]','["cecelia-kr","cecelia-factory","cecelia-infra"]'].includes(JSON.stringify(scopes));
 const key=change=>JSON.stringify([change.path,change.old_path??null]);
 /** Joint validation preserves each native owner graph; foreign usages never enter a scope report. */
 function auxiliaryScopeContext(source,expectedScopes,reports){
@@ -74,7 +75,7 @@ function assertScopedAuxiliaryReport(report,context){
 }
 export function aggregateScopedImplementationEvidence({source,expectedScopes,reports,auxiliary_scope_context,no_owned_changes_context,purpose='admission_only'}){
   if(!['admission_only','main_verification'].includes(purpose))fail('IMPACT_MULTISCOPE_PURPOSE_INVALID');
-  if(purpose==='main_verification'&&(source?.repo!=='perfectuser21/cecelia'||JSON.stringify(expectedScopes)!=='["cecelia-kr","cecelia-factory"]'))fail('IMPACT_MULTISCOPE_MAIN_SOURCE_INVALID');
+  if(purpose==='main_verification'&&(source?.repo!=='perfectuser21/cecelia'||!supportedCeceliaScopes(expectedScopes)))fail('IMPACT_MULTISCOPE_MAIN_SOURCE_INVALID');
   if(!Array.isArray(expectedScopes)||!expectedScopes.length||new Set(expectedScopes).size!==expectedScopes.length||
     !Array.isArray(reports)||reports.length!==expectedScopes.length)fail('IMPACT_MULTISCOPE_SCOPES_REQUIRED');
   const normalized=validateImplementationImpact({scope:expectedScopes[0],repo:source?.repo,base_revision:source?.base_revision,head_revision:source?.head_revision,changed_files:source?.changed_files});
@@ -189,7 +190,7 @@ export function resolveScopedImplementationReports({source,expectedScopes,report
 
 
 function assertNoOwnedBoundary(source,scopes,purpose){
-  if(source?.repo!=='perfectuser21/cecelia'||JSON.stringify(scopes)!=='["cecelia-kr","cecelia-factory"]'||
+  if(source?.repo!=='perfectuser21/cecelia'||!supportedCeceliaScopes(scopes)||
     !['admission_only','main_verification'].includes(purpose))fail('IMPACT_MULTISCOPE_NO_OWNED_SOURCE_INVALID');
 }
 function assertNoOwnedRawReports(source,scopes,reports,context,purpose){

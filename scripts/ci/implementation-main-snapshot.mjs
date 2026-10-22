@@ -99,12 +99,13 @@ export function validatePublishedSnapshot(body,{scope,repo,revision,complete=fal
  return s;
 }
 /** 中央只保留当前 active manifest；旧 SHA 只能回退到同 SHA 的正式 provider 产物。 */
-function readHistoricalArtifact({repo,revision,diagnostics}){
+export function readPublishedArtifact({repo,revision,diagnostics,scope}){
  const gh=(endpoint,binary=false)=>execFileSync('gh',['api',endpoint],{encoding:binary?undefined:'utf8',timeout:60000,maxBuffer:16*1024*1024,stdio:['ignore','pipe','pipe']});
  const json=endpoint=>JSON.parse(gh(endpoint));
- const name=`implementation-snapshot-${revision}`,prefix=`repos/${repo}/actions`;
+ const infra=scope==='cecelia-infra',job=infra?'snapshot-infra':'snapshot-main';
+ const name=`implementation-${infra?'infra-':''}snapshot-${revision}`,prefix=`repos/${repo}/actions`;
  const collection=json(`${prefix}/artifacts?name=${name}&per_page=100`);
- if(!Array.isArray(collection.artifacts)||collection.total_count>100)throw fail('IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING');
+ if(!Array.isArray(collection.artifacts)||!Number.isInteger(collection.total_count)||collection.total_count<0||collection.total_count>100||collection.total_count!==collection.artifacts.length)throw fail('IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING');
  const valid=item=>Number.isSafeInteger(item?.id)&&item.id>0&&item.name===name&&item.expired===false
   &&typeof item.created_at==='string'&&item.created_at.trim()!==''&&Number.isFinite(Date.parse(item.created_at))
   &&item.workflow_run?.head_sha===revision&&item.workflow_run.head_branch==='main'
@@ -118,13 +119,13 @@ function readHistoricalArtifact({repo,revision,diagnostics}){
  if(run.id!==runId||run.head_sha!==revision||run.head_branch!=='main'||!['push','workflow_dispatch'].includes(run.event)
   ||run.path!=='.github/workflows/implementation-impact.yml'||run.repository?.full_name!==repo||run.head_repository?.full_name!==repo)throw fail('IMPLEMENTATION_CI_ARTIFACT_ORIGIN_INVALID');
  const jobs=json(`${prefix}/runs/${runId}/jobs?per_page=100`);
- if(!Number.isInteger(jobs.total_count)||jobs.total_count>100||!Array.isArray(jobs.jobs)
-  ||!jobs.jobs.some(j=>j.name==='snapshot-main'&&j.status==='completed'&&j.conclusion==='success'))throw fail('IMPLEMENTATION_CI_SNAPSHOT_PROVIDER_FAILED');
+ if(!Number.isInteger(jobs.total_count)||jobs.total_count<0||jobs.total_count>100||!Array.isArray(jobs.jobs)||jobs.total_count!==jobs.jobs.length
+  ||!jobs.jobs.some(j=>j.name===job&&j.status==='completed'&&j.conclusion==='success'))throw fail('IMPLEMENTATION_CI_SNAPSHOT_PROVIDER_FAILED');
  const temporary=mkdtempSync(join(diagnostics,'historical-artifact-'));
  try{
   const archive=join(temporary,'snapshot.zip');writeFileSync(archive,gh(`${prefix}/artifacts/${artifact.id}/zip`,true));
   const body=JSON.parse(execFileSync('unzip',['-p',archive,'head.json'],{encoding:'utf8',timeout:30000,maxBuffer:16*1024*1024,stdio:['ignore','pipe','pipe']}));
-  writeFileSync(join(diagnostics,'historical-base-source.json'),JSON.stringify({repo,revision,artifact_id:artifact.id,run_id:runId,provider_job:'snapshot-main',provider_status:'success'})+'\n');
+  writeFileSync(join(diagnostics,infra?`historical-infra-${revision}-source.json`:'historical-base-source.json'),JSON.stringify({repo,revision,artifact_id:artifact.id,run_id:runId,provider_job:job,provider_status:'success'})+'\n');
   return body;
  }finally{rmSync(temporary,{recursive:true,force:true});}
 }
@@ -185,7 +186,7 @@ export async function publishMainSnapshots({brainUrl,token,scope,repo,base,head,
    let bs=validate(baseline,{scope,repo,revision:base});
    if(bs.status!=='verified'){
     operation={stage:'historical_artifact',revision:base,started_at:new Date().toISOString()};
-    baseline=readHistoricalArtifact({repo,revision:base,diagnostics});baseSource='official_exact_revision_artifact';
+    baseline=readPublishedArtifact({repo,revision:base,diagnostics,scope});baseSource='official_exact_revision_artifact';
     bs=validate(baseline,{scope,repo,revision:base});
    }
    if(bs.status!=='verified')throw fail('IMPLEMENTATION_CI_BASE_SNAPSHOT_UNKNOWN');

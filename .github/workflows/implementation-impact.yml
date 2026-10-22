@@ -10,6 +10,11 @@ on:
         description: '固定基线40位SHA（须已有中央历史定义）'
         required: true
         type: string
+      export_infra_baseline:
+        description: '可信main首次导出独立infra基线；不启用业务或替代原双scope'
+        required: false
+        type: boolean
+        default: false
       export_device_patrol_source_identity:
         description: '仅可信main导出已登记巡查来源身份；不执行候选源码'
         required: false
@@ -145,9 +150,53 @@ jobs:
           path: evidence/diagnostics/
           retention-days: 90
           if-no-files-found: warn
+  snapshot-infra:
+    needs: [source-runtime-ready]
+    if: inputs.export_device_patrol_source_identity != true && github.repository == 'perfectuser21/cecelia' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.export_infra_baseline == true || vars.IMPLEMENTATION_INFRA_ADMISSION == 'true') && (!inputs.source_repo || inputs.source_repo == github.repository) && (!inputs.head_revision || inputs.head_revision == github.sha) && (!inputs.tooling_revision || inputs.tooling_revision == github.sha)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+        working-directory: tooling
+      - uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+      - name: 固定main独立infra来源导出
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
+          CECELIA_INTERNAL_TOKEN: ${{ secrets.CECELIA_INTERNAL_TOKEN }}
+          GH_TOKEN: ${{ secrets.CECELIA_ACTIONS_READ_TOKEN || github.token }}
+          MAP_SCOPE: cecelia-infra
+          SOURCE_REPO: perfectuser21/cecelia
+          BASE: ${{ github.sha }}
+          HEAD: ${{ github.sha }}
+        run: node tooling/scripts/ci/implementation-main-snapshot.mjs
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: implementation-infra-snapshot-${{ github.sha }}
+          path: evidence/head.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: implementation-infra-diagnostics-${{ github.sha }}
+          path: evidence/diagnostics/
+          retention-days: 90
+          if-no-files-found: warn
   gate:
     name: Implementation impact gate
-    needs: [snapshot-main]
+    needs: [snapshot-main, snapshot-infra]
     if: always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -168,6 +217,7 @@ jobs:
       DB_PASSWORD: isolated-ci
       SOURCE_REPO: ${{ inputs.source_repo || github.repository }}
       MAP_SCOPE: ${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}
+      INFRA_ADMISSION: ${{ vars.IMPLEMENTATION_INFRA_ADMISSION == 'true' && github.repository == 'perfectuser21/cecelia' && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' && 'true' || 'false' }}
       ADMISSION_SCOPES: ${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || (github.event_name == 'pull_request' && github.repository == 'perfectuser21/cecelia' && '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' || '') }}
       BASE: ${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}
       HEAD: ${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}
@@ -200,6 +250,10 @@ jobs:
         working-directory: source
       - name: scratch正式迁移
         run: node tooling/packages/brain/src/migrate.js
+      - name: 三来源联合门真实PG与回归退出码守卫
+        if: github.repository == 'perfectuser21/cecelia' && (!inputs.source_repo || inputs.source_repo == github.repository)
+        working-directory: source
+        run: node --test scripts/ci/__tests__/implementation-infra-joint.pg.test.mjs
       - name: 巡查独立可信工具main身份baseline
         if: env.MAP_SCOPE == 'cecelia-device-patrol'
         env:
@@ -268,6 +322,14 @@ jobs:
                 --side head --output-dir "$RUNNER_TEMP/implementation-input/head"
             fi
           fi
+      - name: 独立infra固定来源加入联合输入
+        if: env.INFRA_ADMISSION == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node tooling/scripts/ci/implementation-infra-inputs.mjs "$RUNNER_TEMP/implementation-input"
+          printf 'IMPLEMENTATION_INFRA_INPUT_DIR=%s\n' "$RUNNER_TEMP/implementation-input" >> "$GITHUB_ENV"
       - name: 准备固定中央Skill对象缓存
         id: skill-cache
         env:
@@ -304,7 +366,7 @@ jobs:
               printf '%s\n' "$scoped" > "$RUNNER_TEMP/implementation-input/cache-scopes.json"
               if [[ "$MODE" == main ]]; then
                 for side in base head; do
-                  IMPLEMENTATION_MAIN_SCOPES= node tooling/scripts/ci/implementation-pr-gate.mjs --extract-scopes --snapshot-file "$RUNNER_TEMP/implementation-input/$side/$side.json" --scopes-file "$RUNNER_TEMP/implementation-input/cache-scopes.json" --side "$side" --output-dir "$RUNNER_TEMP/implementation-input/$side"
+                  IMPLEMENTATION_MAIN_SCOPES='' node tooling/scripts/ci/implementation-pr-gate.mjs --extract-scopes --snapshot-file "$RUNNER_TEMP/implementation-input/$side/$side.json" --scopes-file "$RUNNER_TEMP/implementation-input/cache-scopes.json" --side "$side" --output-dir "$RUNNER_TEMP/implementation-input/$side"
                 done
               fi
               while IFS= read -r scope; do
@@ -316,10 +378,19 @@ jobs:
                 args+=(--snapshot "$RUNNER_TEMP/implementation-input/$side/canonical.json")
               done
             fi
+            if [[ "$INFRA_ADMISSION" == true ]]; then
+              args+=(--snapshot "$RUNNER_TEMP/implementation-input/base/base-cecelia-infra.json" --snapshot "$RUNNER_TEMP/implementation-input/head/head-cecelia-infra.json")
+            fi
             cache="$(node tooling/scripts/ci/implementation-skill-source.mjs "${args[@]}")"
             case "$cache" in "$RUNNER_TEMP"/implementation-skills-ci-*/objects) test -d "$cache" ;; *) echo 'invalid fixed Skill cache' >&2; exit 1 ;; esac
             printf 'IMPLEMENTATION_SKILLS_SOURCE_DIR=%s\n' "$cache" >> "$GITHUB_ENV"
           fi
+      - name: 完整联合scope清单加入infra
+        if: env.INFRA_ADMISSION == 'true' && env.MODE == 'pr'
+        run: |
+          set -euo pipefail
+          scopes=$(jq -ce 'select(.schema_version == 1 and .scopes == ["cecelia-kr","cecelia-factory"]) | .scopes += ["cecelia-infra"]' <<< "$ADMISSION_SCOPES")
+          printf 'ADMISSION_SCOPES=%s\n' "$scopes" >> "$GITHUB_ENV"
       - name: 实际变更影响与固定回归
         env:
           SKILLS_SOURCE_SSH_KEY: ${{ steps.skill-cache.outputs.legacy_821 == 'true' && secrets.SKILLS_SOURCE_SSH_KEY || '' }}
