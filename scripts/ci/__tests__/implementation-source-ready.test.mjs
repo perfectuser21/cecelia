@@ -16,6 +16,7 @@ const priorStagePaths=[...priorPaths,...stagePaths].sort();
 const newCollectorPaths=['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-native-evidence-${n}.js`).sort();
 const stageModePath='packages/brain/src/lib/existing-ops-stage-modes.js';
 const workspaceCollectorPath='packages/brain/src/lib/workspace-ci-source-bundle.js';
+const stagingCollectorPath='packages/brain/src/lib/existing-ops-staging-source.js';
 const paths=[...priorStagePaths,...newCollectorPaths,stageModePath,workspaceCollectorPath].sort();
 const root=mkdtempSync(join(tmpdir(),'source-ready-'));
 const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
@@ -51,7 +52,7 @@ test('已知旧5模块持续存在只能有界等待，不能凭旧指纹放行'
   await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/);assert.equal(requests.length,10);
  });
 });
-for(const path of [...provenancePaths,...stagePaths,stageModePath,workspaceCollectorPath])test(`新增依赖 ${path} 指纹错误不能宣布ready`,async()=>{
+for(const path of [...provenancePaths,...stagePaths,stageModePath,workspaceCollectorPath,'packages/brain/src/lib/existing-ops-runtime-source.js'])test(`新增依赖 ${path} 指纹错误不能宣布ready`,async()=>{
  const body=runtime();body.files.find(f=>f.path===path).sha256='0'.repeat(64);
  await fixture([{body}],async url=>await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/));
 });
@@ -243,5 +244,24 @@ for(const [name,mutate] of [
  ['未知12子集',files=>files.slice(2)],
 ])test(`已发布14的${name}立即拒绝`,async()=>{
  const body=published14();body.files=mutate(body.files);
+ await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
+});
+
+// 文件集合相同也必须比较实际字节，旧15文件collector不能冒充新隔离staging实现。
+const published15Paths=[...published14Paths,workspaceCollectorPath].sort();
+const published15=()=>{const body=runtime();body.files=body.files.filter(file=>published15Paths.includes(file.path));assert.deepEqual(body.files.map(file=>file.path),published15Paths);body.files.find(file=>file.path==='packages/brain/src/lib/existing-ops-runtime-source.js').sha256='0'.repeat(64);return body;};
+test('旧15文件隔离collector字节不同仅等待，同15文件新指纹匹配才ready',async()=>{
+ await fixture([{body:published15()},{body:runtime()}],async(url,requests)=>{const r=await waitForSourceRuntime(options(url),deps());assert.equal(r.attempts,2);assert.equal(r.files.length,15);assert.deepEqual(r.files,expected.files);assert.ok(requests.every(req=>req.method==='GET'));});
+});
+test('旧15文件collector字节持续不匹配到deadline不得ready',async()=>{
+ await fixture([{body:published15()}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/);assert.equal(requests.length,10);});
+});
+for(const [name,mutate] of [
+ ['乱序',files=>files.reverse()],['重复',files=>{files[0]=files[1];return files;}],
+ ['非法hash',files=>{files[0].sha256='bad';return files;}],
+ ['混入staging',files=>{files[0].path=stagingCollectorPath;return files;}],
+ ['未知14子集',files=>files.slice(1)],
+])test(`已发布15的${name}立即拒绝`,async()=>{
+ const body=published15();body.files=mutate(body.files);
  await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
 });

@@ -190,7 +190,7 @@ bluegreen_swap() {
   local run_err=""
   # shellcheck disable=SC2086
   if ! run_err=$(docker run -d --name "$green" ${port_args} ${net_args} \
-        -e BRAIN_DEPLOY_CANARY=1 ${GREEN_RUN_ARGS:-} ${green_port_env} "cecelia-brain:${version}" 2>&1 >/dev/null); then
+        -e BRAIN_DEPLOY_CANARY=1 ${GREEN_RUN_ARGS:-} ${green_port_env} "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${version}}" 2>&1 >/dev/null); then
     echo "[bluegreen] green 起容器失败，保留 blue：${run_err}"
     docker rm -f "$green" >/dev/null 2>&1 || true
     send_bark "green 镜像 v${version} 启动失败，已保留旧版(5221不受影响)"
@@ -288,7 +288,7 @@ bluegreen_swap() {
       return 1
     fi
     # docker run -d 只确认sidecar创建；目标SHA错误必须在blue仍存活时拦截。
-    if ! timeout -k 2 8 docker image inspect --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "GIT_SHA"}}{{.}}{{end}}{{end}}' "cecelia-brain:${version}" \
+    if ! timeout -k 2 8 docker image inspect --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "GIT_SHA"}}{{.}}{{end}}{{end}}' "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${version}}" \
       | node -e 'let s="";process.stdin.on("data",x=>{s+=x;if(s.length>128)process.exit(1)});process.stdin.on("end",()=>{if(s.trim()!=="GIT_SHA="+process.argv[1])process.exit(1)})' "$expected_sha"; then
       echo "[bluegreen] ❌ 目标镜像 SHA 未确认，终止切换（blue 保留）"
       return 1
@@ -332,12 +332,13 @@ bluegreen_swap() {
         -v "${CECELIA_INTERNAL_ENV_FILE}:${CECELIA_INTERNAL_ENV_FILE}:ro" \
         -w "${root_dir}" \
         -e "BRAIN_VERSION=${version}" \
+        -e "CECELIA_RELEASE_IMAGE=${CECELIA_RELEASE_IMAGE:-}" \
         -e "EXPECTED_SHA=${expected_sha}" \
         -e "ENV_REGION=${env_region}" \
         -e "DEPLOY_ROOT=${root_dir}" \
         -e "CECELIA_INTERNAL_ENV_FILE=${CECELIA_INTERNAL_ENV_FILE}" \
         -e "BARK_TOKEN=${bark_token}" \
-        "cecelia-brain:${version}" \
+        "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${version}}" \
         bash "${root_dir}/scripts/lib/bluegreen-sidecar.sh" >/dev/null 2>&1; then
       echo "[bluegreen] ✅ sidecar 已启动，将在 blue 删除后完成 compose up（失败自动回退 blue-fallback）"
     else

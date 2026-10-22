@@ -13,6 +13,7 @@ source "$SCRIPT_DIR/lib/bluegreen.sh"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/internal-auth-token.sh"
 source "$SCRIPT_DIR/lib/brain-image-retention.sh"
+source "$SCRIPT_DIR/lib/brain-staging.sh"
 
 VERSION=$(node -e "console.log(require('$BRAIN_DIR/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
@@ -327,6 +328,13 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         retention_begin "$VERSION" "${EXPECTED_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}" || exit 1
     fi
 
+    if [[ "$DRY_RUN" == false ]]; then
+        brain_release_lock
+        EXPECTED_SHA="${EXPECTED_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
+        [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+        export EXPECTED_SHA
+    fi
+
     # 1. Build image
     echo "[1/7] Building image..."
     if [[ "$DRY_RUN" == true ]]; then
@@ -336,6 +344,15 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     fi
     echo ""
 
+    # 候选准入必须在任何生产迁移/排空/切换之前完成。
+    if [[ "$DRY_RUN" == false ]]; then
+        CECELIA_RELEASE_IMAGE=$(docker image inspect --format '{{.Id}}' "cecelia-brain:${VERSION}")
+        export CECELIA_RELEASE_IMAGE
+        stage_candidate "$EXPECTED_SHA" "$CECELIA_RELEASE_IMAGE" "$VERSION"
+    else
+        echo "[dry-run] staging 同 SHA/镜像/隔离验证先于生产迁移"
+    fi
+
     # 2. Run migrations in a temporary container
     echo "[2/7] Running migrations..."
     if [[ "$DRY_RUN" == true ]]; then
@@ -344,7 +361,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         docker run --rm --network host \
           --env-file "$ROOT_DIR/.env.docker" \
           -e "ENV_REGION=${ENV_REGION}" \
-          "cecelia-brain:${VERSION}" \
+          "${CECELIA_RELEASE_IMAGE}" \
           node src/migrate.js
     fi
     echo ""
@@ -357,7 +374,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         docker run --rm --network host \
           --env-file "$ROOT_DIR/.env.docker" \
           -e "ENV_REGION=${ENV_REGION}" \
-          "cecelia-brain:${VERSION}" \
+          "${CECELIA_RELEASE_IMAGE}" \
           node src/selfcheck.js
     fi
     echo ""
@@ -412,7 +429,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
 
     # 幂等检查：容器已在目标 image SHA 则跳过 recreate（避免 SIGTERM 中断长跑 Initiative）
     CURRENT_IMG=$(docker inspect cecelia-node-brain --format '{{.Image}}' 2>/dev/null || echo "")
-    TARGET_IMG=$(docker inspect "cecelia-brain:${VERSION}" --format '{{.Id}}' 2>/dev/null || echo "")
+    TARGET_IMG=$(docker inspect "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${VERSION}}" --format '{{.Id}}' 2>/dev/null || echo "")
     if [[ "$DRY_RUN" == false && -n "$CURRENT_IMG" && -n "$TARGET_IMG" && "$CURRENT_IMG" == "$TARGET_IMG" ]]; then
         echo "  [skip] 容器已在 v${VERSION}（image SHA 一致），跳过 recreate"
         activate_cecelia_map_manifest
@@ -478,7 +495,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         if [ -f "$VERSIONS_FILE" ] && [ "$(wc -l < "$VERSIONS_FILE")" -ge 2 ]; then
             PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
             echo "  Rolling back to v${PREV_VERSION}..."
-            BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
+            CECELIA_RELEASE_IMAGE= BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
               docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
                 -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain || true
             echo "  Rolled back to v${PREV_VERSION}"
@@ -748,7 +765,7 @@ else
     if [ -f "$VERSIONS_FILE" ] && [ "$(wc -l < "$VERSIONS_FILE")" -ge 2 ]; then
         PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
         echo "  Rolling back to v${PREV_VERSION}..."
-        BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
+        CECELIA_RELEASE_IMAGE= BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
           docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
             -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain
         echo "  Rolled back to v${PREV_VERSION}"
