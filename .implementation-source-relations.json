@@ -2,6 +2,9 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"scripts/brain-deploy.sh","path":"packages/brain/scripts/smoke/factory-f2-deploy-smoke.sh","role":"verification"},
+    {"owner_path":"scripts/brain-deploy.sh","path":"tests/regression/gate3-sha-truth/sha-account.test.sh","role":"verification"},
+    {"owner_path":"scripts/brain-deploy.sh","path":"scripts/smoke/gate3-brain-deploy-smoke.sh","role":"verification"},
     {"owner_path":"scripts/brain-deploy.sh","path":"tests/packages/brain/post-deploy-selfcheck-contract.test.js","role":"verification"},
     {"owner_path":"scripts/brain-deploy.sh","path":"scripts/ci/__tests__/brain-source-only-deploy.test.mjs","role":"verification"},
     {"owner_path":"scripts/ci/implementation-source-recovery.mjs","path":"scripts/ci/__tests__/implementation-source-recovery.test.mjs","role":"verification"},
