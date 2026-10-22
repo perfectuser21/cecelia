@@ -14,6 +14,7 @@ import { readImplementationImpact } from '../../packages/brain/src/lib/implement
 import * as snapshotApi from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import {runImplementationMultiPrGate,parseImplementationMultiArgs} from './implementation-multi-pr-gate.mjs';
 import {runImplementationMainGate} from './implementation-main-gate.mjs';
+import {assertRecoveryPurpose} from './implementation-source-recovery.mjs';
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024}).trim();
 const read=path=>{const data=JSON.parse(readFileSync(path,'utf8'));return data.snapshot||data;};
 const save=(dir,name,data)=>writeFileSync(join(dir,name),JSON.stringify(data,null,2)+'\n');
@@ -30,6 +31,7 @@ async function implementationPrEvidence({repoRoot,scope,base,head,mode,snapshotB
     if(git(repoRoot,'rev-parse','HEAD')!==head||git(repoRoot,'status','--porcelain=v1','--untracked-files=no'))throw ciFailure('SOURCE_MISMATCH');
     git(repoRoot,'merge-base','--is-ancestor',base,head);
     const b=validateImplementationSnapshot(read(snapshotBase));let h=validateImplementationSnapshot(read(snapshotHead));
+    assertRecoveryPurpose(b,'pr');assertRecoveryPurpose(h,mode);
     if(b.scope!==scope||h.scope!==scope||b.repo!==repo||h.repo!==repo||b.revision!==base||mode==='main'&&h.revision!==head)
       throw ciFailure('SNAPSHOT_SOURCE_MISMATCH','snapshot必须匹配实际repo/base/head');
     // 输入与固定来源已通过才进入真实scratch路径；Brain-only的无效入口不依赖根扫描器。

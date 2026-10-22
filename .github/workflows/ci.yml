@@ -794,6 +794,8 @@ jobs:
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Self-test (auto-merge decision cases)
         run: bash .github/workflows/scripts/__tests__/should-auto-merge.test.sh
       - name: Self-test (aggregate gate result cases)

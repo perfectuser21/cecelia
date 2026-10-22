@@ -40,6 +40,9 @@ export async function waitForSourceRuntime({brainUrl,token,repoRoot,revision,tim
  let origin;try{origin=new URL(brainUrl);}catch{throw fail('SOURCE_READY_INPUT_INVALID');}
  if(!['http:','https:'].includes(origin.protocol)||origin.username||origin.password||origin.search||origin.hash||origin.pathname!=='/')throw fail('SOURCE_READY_INPUT_INVALID');
  const deadline=now()+timeoutMs,expected=expectedSourceRuntime({repoRoot,revision});
+ let manifest;try{manifest=JSON.parse(execFileSync('git',['show',`${revision}:packages/brain/package.json`],{cwd:repoRoot,encoding:'utf8',timeout:30000}));}catch{throw fail('SOURCE_READY_PACKAGE_INVALID');}
+ if(!manifest||typeof manifest!=='object'||Array.isArray(manifest))throw fail('SOURCE_READY_PACKAGE_INVALID');
+ if(Object.hasOwn(manifest,'cecelia_source_only'))throw fail('SOURCE_ONLY_REQUIRES_EXPLICIT_RECOVERY');
  const checkDeadline=()=>{if(now()>=deadline)throw fail('SOURCE_READY_TIMEOUT');};
  const main=async()=>{checkDeadline();let actual;try{actual=await readMain();}catch{throw fail('SOURCE_READY_MAIN_UNAVAILABLE');}checkDeadline();if(actual!==revision)throw fail('SOURCE_READY_MAIN_MOVED');};
  let attempts=0;
@@ -62,7 +65,10 @@ export async function waitForSourceRuntime({brainUrl,token,repoRoot,revision,tim
 }
 if(process.argv[1]&&realpathSync(process.argv[1])===realpathSync(fileURLToPath(import.meta.url))){
  const output='evidence/source-readiness';mkdirSync(output,{recursive:true});
- waitForSourceRuntime({brainUrl:process.env.BRAIN_URL,token:process.env.CECELIA_INTERNAL_TOKEN,repoRoot:process.env.TOOLING_ROOT||'tooling',revision:process.env.HEAD})
-  .then(result=>{writeFileSync(join(output,'receipt.json'),JSON.stringify(result,null,2)+'\n');process.stdout.write('SOURCE_RUNTIME_READY\n');})
-  .catch(error=>{const code=error.code?.startsWith('SOURCE_READY_')?error.code:'SOURCE_READY_FAILED';writeFileSync(join(output,'failure.json'),JSON.stringify({status:'failed',code})+'\n');process.stderr.write(code+'\n');process.exitCode=1;});
+ const options={brainUrl:process.env.BRAIN_URL,token:process.env.CECELIA_INTERNAL_TOKEN,repoRoot:process.env.TOOLING_ROOT||'tooling',revision:process.env.HEAD,head:process.env.HEAD,base:process.env.BASE};
+ const run=process.env.SOURCE_BASELINE_RECOVERY==='true'
+  ? import('./implementation-source-recovery.mjs').then(async({verifyRecoveryAuthority,inspectRecoveryRuntime})=>{await verifyRecoveryAuthority(options);return inspectRecoveryRuntime(options);})
+  : waitForSourceRuntime(options);
+ run.then(result=>{writeFileSync(join(output,'receipt.json'),JSON.stringify(result,null,2)+'\n');process.stdout.write(result.status==='ready'?'SOURCE_RUNTIME_READY\n':'SOURCE_ONLY_RUNTIME_NOT_DEPLOYED\n');})
+  .catch(error=>{const code=(error.code?.startsWith('SOURCE_READY_')||error.code==='SOURCE_ONLY_REQUIRES_EXPLICIT_RECOVERY')?error.code:'SOURCE_READY_FAILED';writeFileSync(join(output,'failure.json'),JSON.stringify({status:'failed',code})+'\n');process.stderr.write(code+'\n');process.exitCode=1;});
 }
