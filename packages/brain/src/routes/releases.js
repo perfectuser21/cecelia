@@ -10,7 +10,17 @@ export function sendReleaseError(res,error){
 export function createReleasesRouter({pool=defaultPool,trustedCollectors}={}){
   const router=Router();router.use(internalAuthOrLoopback);
   const collectors=()=>trustedCollectors??(process.env.CECELIA_RELEASE_COLLECTORS||'').split(',').map(x=>x.trim()).filter(Boolean);
-  router.post('/',async(req,res)=>{try{const result=await createRelease(pool,req.body);res.status(result.created?201:200).json(result);}catch(error){sendReleaseError(res,error);}});
+  router.post('/',async(req,res)=>{
+    const controller=new AbortController();
+    const abort=()=>controller.abort();
+    const close=()=>{if(!res.writableFinished)abort();};
+    req.once('aborted',abort);res.once('close',close);
+    try{
+      const result=await createRelease(pool,req.body,{signal:controller.signal});
+      if(!res.destroyed)res.status(result.created?201:200).json(result);
+    }catch(error){if(!res.destroyed)sendReleaseError(res,error);}
+    finally{req.off('aborted',abort);res.off('close',close);}
+  });
   router.post('/:id/observations',async(req,res)=>{try{
     requireEvidence(collectors().length,'collector_unconfigured','COLLECTOR_UNCONFIGURED',503);
     requireEvidence(collectors().includes(req.body?.collector),'collector未登记','COLLECTOR_UNTRUSTED',403);
