@@ -158,3 +158,14 @@ it.each([
 ])('infra跨仓精确形态%s保持unknown',async(_name,mutateImpact)=>{
  const p=await modernBundle(()=>{},null,{mutateImpact});expect(p.status).toBe('unknown');expect(p.executable).toBe(false);
 });
+
+it('保留原双scope单needs与旧cache完整封套',async()=>{
+ const p=await modernBundle(()=>{},null,{mutateImpact:y=>{
+  delete y.jobs['snapshot-infra'];delete y.on.workflow_dispatch.inputs.export_infra_baseline;
+  y.jobs.gate.needs=['snapshot-main'];delete y.jobs.gate.env.INFRA_ADMISSION;
+  y.jobs.gate.steps=y.jobs.gate.steps.filter(s=>!['三来源联合门真实PG与回归退出码守卫','独立infra固定来源加入联合输入','完整联合scope清单加入infra'].includes(s.name));
+  const init=modernStep(y,'gate');
+  init.run=init.run.replace("IMPLEMENTATION_MAIN_SCOPES='' node",'IMPLEMENTATION_MAIN_SCOPES= node').replace('  if [[ "$INFRA_ADMISSION" == true ]]; then\n    args+=(--snapshot "$RUNNER_TEMP/implementation-input/base/base-cecelia-infra.json" --snapshot "$RUNNER_TEMP/implementation-input/head/head-cecelia-infra.json")\n  fi\n','');
+  expect(createHash('sha256').update(init.run).digest('hex')).toBe('0c63a85850a5c2f0b78206b08737ff1b459c14bfbcdb7f9485aa854920287d36');
+ }});expect(p.status,JSON.stringify(p.gaps)).toBe('verified');expect(p.executable).toBe(false);
+});

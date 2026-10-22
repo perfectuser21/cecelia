@@ -125,15 +125,31 @@ const MODERN_SHELL_HASHES={
 };
 const MODERN_ENV_HASHES={'pilot-release-verification':'aac70fc23f69f37ef637d97953ee0a5e5ab0c2478615c57dbcb5d9277d537037','implementation-impact':'62da3e800763d1fc7a5c84146bd4a0022700c56394ed0aba7465ecf17fffc57d'};
 const NATIVE_PR_ENV="${{ github.repository == 'perfectuser21/cecelia' && github.event_name == 'pull_request' && !inputs.source_repo && !inputs.tooling_revision && !inputs.scope && !inputs.head_revision && !inputs.base_revision && !inputs.mode && !inputs.admission_scopes }}";
-function modernSkillInitializer(yaml,spec,job,step,source){
+// root独审6a9f1f64的完整gate/provider封套；只认可既有workspace caller下不可激活的infra分支。
+// callerProof已固定scope=zenithjoy和source_repo=workspace；GitHub reusable保留caller repository。
+// 不认可任意第二needs、任意新增shell或按运行时源码自算批准摘要。旧封套及旧pin保持。
+const INACTIVE_INFRA_GATE='dced05241a5744233200da410d1f85505b0af04a0bcfcfc679f1da4dcd5640f8';
+const INACTIVE_INFRA_PROVIDER='ecf6c4e260c0a5b934247355f3b3422b40c1a6e578e237b6c4bf9d6e17516d23';
+const INACTIVE_INFRA_SHELL='a7da97011e907914f0260d915ec31e4869fdf0285fc21f605dea5f0b39d89e9d';
+const INACTIVE_INFRA_ENV='0f53269325d2791c4c5ee4008bbf1675ea7949b004aadddcda033ebfa290b1bd';
+const INACTIVE_INFRA_STEPS=new Set(['三来源联合门真实PG与回归退出码守卫','独立infra固定来源加入联合输入','完整联合scope清单加入infra']);
+function canonicalConfig(value){
+ if(Array.isArray(value))return value.map(canonicalConfig);
+ return value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonicalConfig(value[key])])):value;
+}
+function reviewedInactiveInfra(yaml){
+ return sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.gate))))===INACTIVE_INFRA_GATE
+  &&sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.['snapshot-infra']))))===INACTIVE_INFRA_PROVIDER;
+}
+function modernSkillInitializer(yaml,spec,job,step,source,inactiveInfra=false){
  const reject=()=>fail('CALLEE_SKILL_INITIALIZER_UNPROVEN',{path:spec.name});
  const steps=job.steps||[],at=steps.indexOf(step),impact=spec.name==='implementation-impact';
  const secret=yaml.on?.workflow_call?.secrets?.SKILLS_SOURCE_SSH_KEY;
  const initEnv=impact?{SKILLS_SOURCE_SSH_KEY:"${{ secrets.SKILLS_SOURCE_SSH_KEY }}",NATIVE_PR:NATIVE_PR_ENV}:{SKILLS_SOURCE_SSH_KEY:"${{ secrets.SKILLS_SOURCE_SSH_KEY }}"};
  if(step.if!==undefined||step['continue-on-error']||step['working-directory']!==undefined||step.shell!==undefined||job.defaults?.run!==undefined||yaml.defaults?.run!==undefined
-  ||!secret||Object.keys(secret).join(',')!=='required'||secret.required!==false||sha(Buffer.from(source))!==MODERN_SHELL_HASHES[spec.name]
+  ||!secret||Object.keys(secret).join(',')!=='required'||secret.required!==false||sha(Buffer.from(source))!==(inactiveInfra?INACTIVE_INFRA_SHELL:MODERN_SHELL_HASHES[spec.name])
   ||Object.keys(step.env||{}).sort().join(',')!==Object.keys(initEnv).sort().join(',')||Object.entries(initEnv).some(([key,value])=>step.env[key]!==value)
-  ||yaml.env!==undefined||sha(Buffer.from(JSON.stringify(Object.fromEntries(Object.entries(job.env||{}).sort()))))!==MODERN_ENV_HASHES[spec.name]
+  ||yaml.env!==undefined||sha(Buffer.from(JSON.stringify(Object.fromEntries(Object.entries(job.env||{}).sort()))))!==(inactiveInfra?INACTIVE_INFRA_ENV:MODERN_ENV_HASHES[spec.name])
   ||job.env?.SOURCE_REPO!=="${{ inputs.source_repo || github.repository }}"
   ||job.env?.HEAD!==(impact?"${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}":"${{ inputs.head_revision || github.sha }}"))reject();
  const tools=steps.filter(s=>s.uses?.startsWith('actions/checkout@')&&s.with?.path==='tooling'),checkouts=steps.filter(s=>s.uses?.startsWith('actions/checkout@')&&s.with?.path==='source');
@@ -177,7 +193,10 @@ function calleeProof(yaml,spec,admissionScopesRequested=false){
  if(optional&&(spec.name!=='implementation-impact'||Object.keys(optional).sort().join(',')!=='default,required,type'||optional.required!==false||optional.type!=='string'||optional.default!==''))fail('CALLEE_INTERFACE_MISMATCH',{path:spec.name});
  if(!inputs||admissionScopesRequested&&!optional||Object.keys(inputs).sort().join(',')!==expectedInputs.join(',')||spec.inputs.some(k=>inputs[k].required!==true||inputs[k].type!=='string'))fail('CALLEE_INTERFACE_MISMATCH',{path:spec.name});
  const job=yaml.jobs?.[spec.calleeJob];
- const knownGateGuard=spec.calleeJob==='gate'&&job?.if==="always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')"&&Array.isArray(job.needs)&&job.needs.length===1&&job.needs[0]==='snapshot-main';
+ const inactiveInfra=spec.name==='implementation-impact'&&reviewedInactiveInfra(yaml);
+ const hasInfra=spec.name==='implementation-impact'&&(yaml.jobs?.['snapshot-infra']!==undefined||job?.env?.INFRA_ADMISSION!==undefined);
+ if(hasInfra&&!inactiveInfra)fail('CALLEE_INACTIVE_INFRA_UNPROVEN',{path:spec.name});
+ const knownGateGuard=spec.calleeJob==='gate'&&job?.if==="always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')"&&Array.isArray(job.needs)&&(inactiveInfra||job.needs.length===1&&job.needs[0]==='snapshot-main');
  if(!job||job.if!==undefined&&!knownGateGuard||job['continue-on-error'])fail('CALLEE_REQUIRED_JOB_MISSING',{path:spec.name});
  const checkout=(job.steps||[]).find(s=>s.uses?.startsWith('actions/checkout@')&&s.with?.repository===BRAIN&&s.with?.path==='tooling');
  if(!checkout||!/^\$\{\{ inputs\.tooling_revision(?: \|\| github\.[a-z_.]+)* \}\}$/.test(checkout.with.ref))fail('CALLEE_TOOLING_SOURCE_UNPROVEN',{path:spec.name});
@@ -186,7 +205,8 @@ function calleeProof(yaml,spec,admissionScopesRequested=false){
  if((yaml.on?.workflow_call?.secrets?.SKILLS_SOURCE_SSH_KEY||initializers.length)&&initializers.length!==1)fail('CALLEE_SKILL_INITIALIZER_UNPROVEN',{path:spec.name});
  for(const step of job.steps||[]){
   const source=String(step.run||'');let commands=directNodeCommands(source),conditional=false;
-  if(source.includes('tooling/'+MODERN_SKILL_INITIALIZER)){runners.push(...modernSkillInitializer(yaml,spec,job,step,source));continue;}
+  if(inactiveInfra&&INACTIVE_INFRA_STEPS.has(step.name))continue; // 完整封套证明这些步骤对workspace不可达。
+  if(source.includes('tooling/'+MODERN_SKILL_INITIALIZER)){runners.push(...modernSkillInitializer(yaml,spec,job,step,source,inactiveInfra));continue;}
   if(source.includes('tooling/'+FIXED_SKILL_INITIALIZER)){
    runners.push(...fixedSkillInitializer(yaml,spec,job,step,source));continue;
   }
