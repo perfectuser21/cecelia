@@ -144,8 +144,8 @@ while IFS= read -r src; do
       break
     fi
     # 不能 100% 是 skip — 至少 1 个非 skip 的 it/test
-    NONSKIP=$(grep -cE "(^|[^a-zA-Z\.])(it|test)\s*\(" "$cand" 2>/dev/null || echo 0)
-    SKIPS=$(grep -cE "(it|test|describe)\.skip\s*\(" "$cand" 2>/dev/null || echo 0)
+    NONSKIP=$(grep -cE "(^|[^a-zA-Z\.])(it|test)\s*\(" "$cand" 2>/dev/null || true)
+    SKIPS=$(grep -cE "(it|test|describe)\.skip\s*\(" "$cand" 2>/dev/null || true)
     if [ "$NONSKIP" -gt 0 ] && [ "$SKIPS" -ge "$NONSKIP" ]; then
       SKIPPED_ONLY+=("$cand")
     fi
