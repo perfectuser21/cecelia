@@ -1,4 +1,6 @@
-import {afterEach,beforeEach,expect,it} from 'vitest';
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+import * as fixedGit from '../../../workflow-authoring/fixed-git-source.js';
+import {prepareAuthoringReleaseProof} from '../../../workflow-authoring/release-proof.js';
 import {existsSync} from 'node:fs';
 import {createHash,randomUUID} from 'node:crypto';
 import {migrationTable} from '../../../__tests__/fixtures/minimum-definition-schema.js';
@@ -125,7 +127,7 @@ it.each([
 });
 }
 
-async function twoScopeRelease(){
+async function twoScopeRelease({sourceProof=false}={}){
  await cover();const legacy=evidence(await plan()),repo=f.releaseInput.components[0].repo,skill=randomUUID();
  await f.db.query(migrationTable('283_skill_registry_and_journey_step_links.sql','skill_registry'));
  await f.db.query("INSERT INTO skill_registry(id,name,location,status) VALUES($1,'workflow-commander','/skills/commander','active')",[skill]);
@@ -134,7 +136,8 @@ async function twoScopeRelease(){
   activities:[{key:'report',name:'生成报告',executor_kind:'code',acceptance:['报告可回读'],implementation:{kind:'code',ref:'src/controller.js',version:'1.0.0',repo,path:'src/controller.js',revision:'contract'},
    steps:[{key:'read',name:'读回',dod:{mode:'checkpoint',readback:{type:'json',path:'report.json'}}}]}]};
  const {source,...document}=definition;
- const freezeProof=await prepareDefinitionFreeze(definition,{readFile:async s=>s.path===source.ref?JSON.stringify(document):'export const controller=true;\n'});
+ const readFile=async s=>s.path===source.ref?JSON.stringify(document):'export const controller=true;\n';
+ const freezeProof=await prepareDefinitionFreeze(definition,{readFile});
  const db=await f.db.connect();try{await db.query('BEGIN');await registerWorkflow(db,definition,{definitionSha256:registrationDigest(definition),registrationProtocol:'definition-freeze-v1',freezeProof});await db.query('COMMIT');}catch(e){await db.query('ROLLBACK');throw e;}finally{db.release();}
  await f.db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('commander-generic','commander-source','legacy-ledger-v1',$1)",[{source_repo:repo,definition_protocol:'definition-freeze-v1',workflow_keys:[definition.key]}]);
  await f.map(RELEASE_HEAD,[definition.capability_id],'commander-generic','commander-source');
@@ -142,8 +145,11 @@ async function twoScopeRelease(){
  expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');
  const a=snapshot.definitions.activities[0];for(const step_id of [null,...a.payload.steps.map(s=>s.step_id)])await registerCapabilityRegression(f.db,{capability_id:definition.capability_id,activity_id:a.activity_id,step_id,assertion_ref:'scripts/smoke/report.sh'});
  snapshot=await exportImplementationSnapshot(f.db,query);
- const authoring=evidence(service.buildPilotReleasePlan({...query,definitions:snapshot.definitions,assertions:snapshot.assertions}));
- return {...structuredClone(f.releaseInput),workflows:[...f.releaseInput.workflows,...snapshot.definitions.workflows.map(w=>({workflow_definition_version_id:w.id,payload_sha256:w.payload_sha256}))],ci_evidence:[legacy,authoring]};
+ const proof=sourceProof?await prepareAuthoringReleaseProof(snapshot,{readFile}):null;
+ const authoring=evidence(service.buildPilotReleasePlan({...query,definitions:snapshot.definitions,assertions:snapshot.assertions,...(proof?{authoringSnapshot:snapshot,authoringProof:proof}:{})}));
+ if(proof){authoring.report.snapshot_sha256=snapshot.snapshot_sha256;authoring.receipt.snapshot_sha256=snapshot.snapshot_sha256;authoring.receipt.report_sha256=hash(authoring.report);}
+ const input={...structuredClone(f.releaseInput),workflows:[...f.releaseInput.workflows,...snapshot.definitions.workflows.map(w=>({workflow_definition_version_id:w.id,payload_sha256:w.payload_sha256}))],ci_evidence:[legacy,authoring]};
+ return sourceProof?{input,readFile}:input;
 }
 it('真实PG同repo两scope完整证据联合覆盖同release，逐份仍冻结完整断言计划',async()=>{
  const input=await twoScopeRelease(),{release}=await createRelease(f.db,input);
@@ -170,4 +176,47 @@ it('真实PG联合证据缺一、错版本或篡改不能按相同repo冒作全�
   if(index<2)expect(release.payload.verification.gaps.some(g=>g.code==='ci_definition_evidence_missing'&&g.kind==='workflows')).toBe(true);
   else expect(release.payload.verification.gaps.some(g=>g.code==='pilot_release_unverified')).toBe(true);
  }
+});
+
+// 真实PG与正式来源读取接缝：外部Git等待不可持有登记表锁。
+async function pendingSource(){
+ const {input,readFile}=await twoScopeRelease({sourceProof:true});
+ let entered,unblock;const started=new Promise(r=>{entered=r;}),pending=new Promise(r=>{unblock=r;});
+ const spy=vi.spyOn(fixedGit,'readFixedGitFile').mockImplementation(async(source,options)=>{
+  entered(options);await pending;return readFile(source);
+ });
+ return {input,started,unblock,restore:()=>spy.mockRestore()};
+}
+const outcome=p=>p.then(value=>({value}),error=>({error}));
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+it('真实PG来源pending不阻塞无关登记writer，完成后仍为同一verified发布',async()=>{
+ const x=await pendingSource(),running=outcome(createRelease(f.db,x.input));
+ let writer;try{
+  await x.started;writer=await f.db.connect();await writer.query("SET statement_timeout='300ms'");
+  await writer.query('UPDATE warehouse_items SET name=name WHERE id=$1',[f.enabler]);
+  x.unblock();const result=await running;
+  expect(result.error).toBeUndefined();expect(result.value.release.payload.verification.status).toBe('verified');
+ }finally{x.unblock();await running;if(writer){await writer.query('RESET statement_timeout');writer.release();}x.restore();}
+});
+it.each(['map_scope_repositories','activity_cells'])('真实PG在线核验后%s漂移拒绝写入，不能沿用先前proof',async table=>{
+ const x=await pendingSource(),running=outcome(createRelease(f.db,x.input));
+ try{
+  await x.started;
+  if(table==='map_scope_repositories')await f.db.query("UPDATE map_scope_repositories SET adapter_config=adapter_config||$1::jsonb WHERE scope_key='commander-generic'",[{source_repo:"perfectuser21/cecelia"}]);
+  else await f.db.query("UPDATE activity_cells SET assertion_ref='scripts/smoke/changed.sh'");
+  x.unblock();expect((await running).error).toMatchObject({code:'RELEASE_REGISTRATION_CHANGED'});
+  expect((await f.db.query('SELECT count(*)::int n FROM release_versions')).rows[0].n).toBe(0);
+ }finally{x.unblock();await running;x.restore();}
+});
+it.each(['deadline','cancel'])('真实PG来源%s有整体边界，取消后不落部分release',async mode=>{
+ const x=await pendingSource(),controller=new AbortController();
+ const running=outcome(createRelease(f.db,x.input,{signal:controller.signal,timeoutMs:mode==='deadline'?200:2000}));
+ try{
+  await x.started;if(mode==='cancel')controller.abort();
+  const result=await Promise.race([running,wait(600).then(()=>({stillPending:true}))]);
+  expect(result.stillPending).toBeUndefined();
+  expect(result.error).toMatchObject({code:mode==='deadline'?'RELEASE_VALIDATION_TIMEOUT':'RELEASE_REQUEST_ABORTED'});
+  x.unblock();await running;
+  expect((await f.db.query('SELECT count(*)::int n FROM release_versions')).rows[0].n).toBe(0);
+ }finally{x.unblock();await running;x.restore();}
 });
