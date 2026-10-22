@@ -226,8 +226,9 @@ function impactRunnerProven(text){
     ||![LEGACY_ADMISSION_SCOPES,SELF_PR_ADMISSION_SCOPES].includes(job.env?.ADMISSION_SCOPES))return false;
   return job.steps?.some(step=>step.if===undefined&&typeof step.run==='string'&&hash(step.run)===IMPACT_GATE_SHA256);
 }
-// 新 dormant-main 兼容分支仅认可正式 2eb4 的完整 CLI AST（含入口与初始化）；未知修改需重审。
-const LEGACY_MAIN_CLI_SHA256='b9fd6f6cf551afd2b560135a1cf633fbd615d0e44ab218b02b5d3bbe25505149';
+// dormant-main 只认可已审完整 CLI AST：原版及增加来源用途双输入拒绝闸的版本。
+const LEGACY_MAIN_CLI_SHA256=new Set(['b9fd6f6cf551afd2b560135a1cf633fbd615d0e44ab218b02b5d3bbe25505149',
+ '9847eaeea6b216c50d283fdcea7ee5b919581404a8ca745286e960d9f237ee51']);
 function legacyImpactRunnerProven(text,prText,gateText){
  const doc=yaml.load(text),job=doc?.jobs?.gate;
  if(!doc?.on?.pull_request||job?.if!=="always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')"
@@ -240,7 +241,7 @@ function legacyImpactRunnerProven(text,prText,gateText){
  if([doc.env,job.env,...job.steps.map(s=>s.env)].some(env=>env&&Object.hasOwn(env,'IMPLEMENTATION_MAIN_SCOPES')))return false;
  const mainBranch=ast('function branch(options){if(options.mainScopes!==undefined)return runImplementationMainGate(options);}').body[0].body.body[0];
  const shape=n=>JSON.stringify(n,(key,value)=>['start','end','raw'].includes(key)?undefined:value);
- const dormantMain=n=>shape(n)===shape(mainBranch)&&hash(shape(pr))===LEGACY_MAIN_CLI_SHA256;
+ const dormantMain=n=>shape(n)===shape(mainBranch)&&LEGACY_MAIN_CLI_SHA256.has(hash(shape(pr)));
  if(delegated&&fn.body.body.slice(0,-1).some(n=>!dormantMain(n)&&(n.type!=='IfStatement'||n.test?.type!=='MemberExpression'||n.test.object?.name!=='options'||!['multi','extractScopes'].includes(n.test.property?.name))))return false;
  const caller=delegated?pr.body.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='implementationPrEvidence'):fn;
  const statements=caller?.body.body.find(n=>n.type==='TryStatement')?.block.body;

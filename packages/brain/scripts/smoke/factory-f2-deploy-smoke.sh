@@ -112,12 +112,26 @@ grep -q 'docker-compose.us-vps.yml' scripts/brain-deploy.sh \
   && ok "[结构] brain-deploy.sh 引用 docker-compose.us-vps.yml" || fail "brain-deploy.sh 未引用 docker-compose.us-vps.yml"
 
 # [运行时] --dry-run 配合 COMPOSE_FILE 覆盖，验证选择逻辑真的生效（而不只是字符串存在于脚本里）
-DRY_OUT_LINUX=$(cd "$(git rev-parse --show-toplevel)" && COMPOSE_FILE=docker-compose.us-vps.yml bash scripts/brain-deploy.sh --dry-run 2>&1) || true
+DEPLOY_FIXTURE="$(mktemp -d -t factory-f2-deploy.XXXXXX)"
+trap 'rm -rf "$DEPLOY_FIXTURE"' EXIT
+mkdir -p "$DEPLOY_FIXTURE/scripts/lib" "$DEPLOY_FIXTURE/packages/brain" "$DEPLOY_FIXTURE/home"
+cp scripts/brain-deploy.sh "$DEPLOY_FIXTURE/scripts/brain-deploy.sh"
+for helper in bluegreen.sh url-encode.sh internal-auth-token.sh brain-image-retention.sh brain-staging.sh; do
+  cp "scripts/lib/$helper" "$DEPLOY_FIXTURE/scripts/lib/$helper"
+done
+printf '{"name":"@cecelia/brain","version":"9.9.9"}\n' > "$DEPLOY_FIXTURE/packages/brain/package.json"
+run_fixture_deploy() {
+  env -u COMPOSE_FILE -u HOST_HOME -u CECELIA_INTERNAL_ENV_FILE -u CECELIA_IMAGE_DEPLOYMENT_ID \
+    HOME="$DEPLOY_FIXTURE/home" DOCKER_CONTEXT= DOCKER_HOST="unix://$DEPLOY_FIXTURE/no-docker.sock" \
+    "$@" bash "$DEPLOY_FIXTURE/scripts/brain-deploy.sh" --dry-run
+}
+DRY_OUT_LINUX=$(run_fixture_deploy COMPOSE_FILE=docker-compose.us-vps.yml 2>&1) \
+  || fail "正常 fixture 的 Linux compose dry-run 执行失败"
 echo "$DRY_OUT_LINUX" | grep -q "docker-compose.us-vps.yml" \
   && ok "[运行时] COMPOSE_FILE=docker-compose.us-vps.yml 覆盖后 dry-run 引用该文件" \
   || fail "COMPOSE_FILE 覆盖未生效于 dry-run 输出"
 
-DRY_OUT_DEFAULT=$(cd "$(git rev-parse --show-toplevel)" && bash scripts/brain-deploy.sh --dry-run 2>&1) || true
+DRY_OUT_DEFAULT=$(run_fixture_deploy 2>&1) || fail "正常 fixture 的默认 compose dry-run 执行失败"
 # 期望值随当前 uname -s 走，跟 brain-deploy.sh 的探测逻辑保持同一份真相：
 # 本机是 Linux（CI runner 全 ubuntu-latest）→ 默认应该选 docker-compose.us-vps.yml；
 # 本机是 Darwin（mmv 等）→ 默认应该选 docker-compose.yml，不能默认切到 Linux 文件。
@@ -126,9 +140,9 @@ if [ "$(uname -s)" = "Linux" ]; then
     && ok "[运行时] 本机是 Linux，未覆盖 COMPOSE_FILE 时 dry-run 默认选中 docker-compose.us-vps.yml" \
     || fail "本机是 Linux，但未覆盖 COMPOSE_FILE 时 dry-run 没有默认选中 docker-compose.us-vps.yml"
 else
-  echo "$DRY_OUT_DEFAULT" | grep -q "docker-compose.us-vps.yml" \
-    && fail "本机是 ${OSTYPE:-非Linux}，未覆盖 COMPOSE_FILE 时 dry-run 却默认引用了 Linux compose 文件（回归）" \
-    || ok "[运行时] 本机非 Linux，未覆盖 COMPOSE_FILE 时 dry-run 默认行为不变（不引用 docker-compose.us-vps.yml）"
+  echo "$DRY_OUT_DEFAULT" | grep -Fq '[dry-run] COMPOSE_FILE=docker-compose.yml' \
+    && ok "[运行时] 本机非 Linux，dry-run 明确选中默认 docker-compose.yml" \
+    || fail "[运行时] 本机非 Linux，但 dry-run 未选中默认 docker-compose.yml"
 fi
 
 # [结构] CECELIA_INTERNAL_ENV_FILE 默认值不能硬编码 macOS 路径（跟 REPO_ROOT 同类坑：
@@ -139,10 +153,21 @@ grep -q '/Users/administrator/\.credentials/cecelia-internal\.env' scripts/brain
   || ok "[结构] brain-deploy.sh 不再硬编码 macOS 凭据路径"
 
 # [运行时] HOST_HOME 切到 /root（模拟 us-vps）时，凭据文件默认路径应该跟着变
-DRY_OUT_HOSTHOME_ROOT=$(cd "$(git rev-parse --show-toplevel)" && HOST_HOME=/root bash scripts/brain-deploy.sh --dry-run 2>&1) || true
+DRY_OUT_HOSTHOME_ROOT=$(run_fixture_deploy HOST_HOME=/root 2>&1) \
+  || fail "正常 fixture 的 HOST_HOME dry-run 执行失败"
 echo "$DRY_OUT_HOSTHOME_ROOT" | grep -q '/root/\.credentials/cecelia-internal\.env' \
   && ok "[运行时] HOST_HOME=/root 时凭据文件默认路径跟着变成 /root/.credentials/cecelia-internal.env" \
   || fail "HOST_HOME=/root 时 dry-run 输出未见 /root/.credentials/cecelia-internal.env"
+
+# 同一完整脚本副本：来源标记即使为 false，也必须早于任何 dry-run 部署步骤拒绝。
+printf '{"version":"9.9.9","cecelia_source_only":false}\n' > "$DEPLOY_FIXTURE/packages/brain/package.json"
+MARKED_EXIT=0
+MARKED_OUT=$(run_fixture_deploy 2>&1) || MARKED_EXIT=$?
+if [[ "$MARKED_EXIT" -eq 1 ]] && [[ "$MARKED_OUT" == 'SOURCE_ONLY_PRODUCTION_FORBIDDEN' ]]; then
+  ok "[运行时] source-only fixture 在部署步骤前拒绝（false 也不能放行）"
+else
+  fail "source-only fixture 未由原生产拒绝闸精确阻断"
+fi
 
 # [结构] harness-worktree.js 的 DEFAULT_BASE_REPO 不能永远硬编码 macOS 路径——
 # us-vps 生产实测：golden_path_proposal 任务在 loadSkillBundle 成功后，下一步建
