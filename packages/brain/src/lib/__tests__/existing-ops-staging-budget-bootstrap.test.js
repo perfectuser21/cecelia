@@ -128,3 +128,16 @@ it('source-only部署拒绝闸仅认可独立审查的固定字节',async()=>{
  expect(result.bindings).toContainEqual(expect.objectContaining({path,revision,digest:`sha256:${digest}`}));
  const bad=await build({patch:{[path]:reviewedSourceOnlyDeploy+'\n# unreviewed\n'}});expect(bad.status).toBe('unknown');expect(bad.bindings).toEqual([]);
 });
+it('已审source-only拒绝闸真实读取package JSON，固定输入必须归属部署入口',async()=>{
+ const path='packages/brain/package.json',text='{"version":"1.445.55","cecelia_source_only":true}';
+ const result=await build({patch:{'scripts/brain-deploy.sh':reviewedSourceOnlyDeploy,[path]:text}});
+ expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+ expect(result.bindings).toContainEqual(expect.objectContaining({path,revision,digest:`sha256:${createHash('sha256').update(text).digest('hex')}`}));
+ expect(result.input_relations).toContainEqual({consumer_path:'scripts/brain-deploy.sh',input_path:path,kind:'reviewed_source_only_package_read',revision});
+ const old=await build();expect(old.input_relations.some(r=>r.kind==='reviewed_source_only_package_read')).toBe(false);
+});
+it.each([undefined,'{','[]'])('已审部署入口的package缺失或非法%s拒绝且清空绑定',async text=>{
+ const path='packages/brain/package.json',patch={'scripts/brain-deploy.sh':reviewedSourceOnlyDeploy};if(text!==undefined)patch[path]=text;
+ const result=await build({patch,...(text===undefined?{missing:path}:{})});
+ expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+});

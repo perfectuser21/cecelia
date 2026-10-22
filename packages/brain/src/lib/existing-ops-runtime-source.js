@@ -341,9 +341,16 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
 }
 export async function collectIsolatedStagingSources({read,requireProof,relations,revision,route,parse}){
  // 这些完整shell/workflow已通过真实脚本正反例；任何控制流变化均需重新审查，不能按关键词认领。
- const routeHash=route&&routeDigest(route,parse),budget=routeHash===BUDGET_POST_AST;
+ const routeHash=route&&routeDigest(route,parse),budget=routeHash===BUDGET_POST_AST;let sourceOnlyDeploy=false;
  for(const[path,digest]of Object.entries(budget?BUDGET_STAGING_FILES:REVIEWED_FILES)){
   const source=await read(path);requireProof(source&&(Array.isArray(digest)?digest:[digest]).includes(stagingHash(source)),'isolated_staging_source_unproven');
+  if(path==='scripts/brain-deploy.sh'&&source&&stagingHash(source)==='a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e')sourceOnlyDeploy=true;
+ }
+ if(sourceOnlyDeploy){
+  const input_path='packages/brain/package.json',text=await read(input_path);let value;
+  try{value=JSON.parse(text);}catch{value=null;}
+  if(requireProof(value!==null&&typeof value==='object'&&!Array.isArray(value),'source_only_package_unproven'))
+   relations.push({consumer_path:'scripts/brain-deploy.sh',input_path,kind:'reviewed_source_only_package_read',revision});
  }
  requireProof(routeHash===ROUTE_AST_SHA||budget,'isolated_staging_route_unproven');
  if(budget)await collectSettlementSources({read,requireProof,relations,revision,route,parse});
