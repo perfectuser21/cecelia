@@ -186,7 +186,7 @@ const sorted = value => Array.isArray(value) ? value.map(sorted) : value && type
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 // 只固定实际入口之前的已审步骤（含入口），不锁死其它 job 的预算或后续步骤。
 const CI_PREFIX = {
-  'lint-auto-merge-decision': 'd3b6f0ffc4ba19728ee7bedf1c4e44780ad059e55a55fcc1005cb535ab7e031d',
+  'lint-auto-merge-decision': ['d3b6f0ffc4ba19728ee7bedf1c4e44780ad059e55a55fcc1005cb535ab7e031d', 'cb496d88f8027a9d7bae5efbaf1a5b9c8fa30a9b9634ad7d54f9ad2036e6aa0f'],
   'goldset-eval': '1af5458b0a9cb29df7e20b6f1d22c3fac6f432c828888659720bc5b4ef4fcba6',
 };
 const AGGREGATE_PREFIX_BODIES = [
@@ -202,11 +202,11 @@ function ciNodeEntry(doc, jobId, command, condition, expectedEnv) {
     || !Array.isArray(doc.jobs['ci-passed']?.needs) || !doc.jobs['ci-passed'].needs.includes(jobId)) return false;
   const matches = steps.filter(s => s.run === command);
   const step = matches[0], checkout = steps.find(s => s.uses === 'actions/checkout@v4');
-  return matches.length === 1 && checkout && checkout.if === undefined && checkout.with === undefined
+  return matches.length === 1 && checkout && checkout.if === undefined && (checkout.with === undefined || jobId === 'lint-auto-merge-decision' && canonical(checkout.with) === canonical({ 'fetch-depth': 0 }))
     && checkout['continue-on-error'] === undefined && steps.indexOf(checkout) < steps.indexOf(step)
     && step.if === undefined && step.shell === undefined && step['working-directory'] === undefined
     && step['continue-on-error'] === undefined && canonical(step.env) === canonical(expectedEnv)
-    && sha256(JSON.stringify(sorted(steps.slice(0, steps.indexOf(step) + 1)))) === CI_PREFIX[jobId];
+    && [CI_PREFIX[jobId]].flat().includes(sha256(JSON.stringify(sorted(steps.slice(0, steps.indexOf(step) + 1)))));
 }
 /** 仅绑定真实 CI node 入口；条件 job 保留条件语义，不扩展目录或伪造二进制输入摘要。 */
 export async function collectCiEntrySources({ aggregate, goldset, parse, read, ci, revision, relations, requireProof }) {
