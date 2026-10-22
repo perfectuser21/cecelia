@@ -13,7 +13,7 @@ name: cecelia
 
 services:
   node-brain:
-    image: cecelia-brain:${BRAIN_VERSION:-latest}
+    image: ${CECELIA_RELEASE_IMAGE:-cecelia-brain:${BRAIN_VERSION:-latest}}
     container_name: cecelia-node-brain
     # us-vps 上 Postgres 只监听 127.0.0.1（未对外开放到 docker 网桥），且现役容器一直是这样
     # 跑的（docker inspect 实测 NetworkMode=host）——沿用 host 网络模式，不走 bridge+端口映射。

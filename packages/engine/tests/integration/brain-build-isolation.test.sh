@@ -13,12 +13,52 @@ fail() { echo "❌ $1"; FAIL=$((FAIL+1)); }
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 SCRIPT="$REPO_ROOT/scripts/brain-build.sh"
 
-# Test 1: brain-build.sh 用 git archive FETCH_HEAD（v1.2.0），不再单纯 HEAD
-if grep -qE 'git -C .* archive --format=tar FETCH_HEAD' "$SCRIPT"; then
-    pass "brain-build.sh 用 git archive FETCH_HEAD 作 docker build context (v1.2.0)"
-else
-    fail "brain-build.sh 没找到 git archive FETCH_HEAD"
+# Test 1: 执行真实构建入口；固定 SHA、默认 main、脏树都不允许漂移。
+FIXTURE=$(mktemp -d)
+trap 'rm -rf "$FIXTURE"' EXIT
+mkdir -p "$FIXTURE/repo/scripts" "$FIXTURE/repo/packages/brain" "$FIXTURE/bin"
+cp "$SCRIPT" "$FIXTURE/repo/scripts/brain-build.sh"
+printf '{"version":"1.0.0"}\n' > "$FIXTURE/repo/packages/brain/package.json"
+printf 'FROM scratch\n' > "$FIXTURE/repo/packages/brain/Dockerfile"
+printf 'candidate-A\n' > "$FIXTURE/repo/source.txt"
+git init -q -b main "$FIXTURE/repo"
+git -C "$FIXTURE/repo" config core.hooksPath /dev/null
+# 仅隔离测试私有仓库不继承宿主 hook；被测真实仓库门禁不变。
+git -C "$FIXTURE/repo" add .
+git -C "$FIXTURE/repo" -c user.email=t@t -c user.name=t commit -qm candidate
+PINNED=$(git -C "$FIXTURE/repo" rev-parse HEAD)
+printf 'new-main-B\n' > "$FIXTURE/repo/source.txt"
+git -C "$FIXTURE/repo" add .
+git -C "$FIXTURE/repo" -c user.email=t@t -c user.name=t commit -qm main
+LATEST=$(git -C "$FIXTURE/repo" rev-parse HEAD)
+git init -q --bare "$FIXTURE/remote"
+git -C "$FIXTURE/repo" remote add origin "$FIXTURE/remote"
+git -C "$FIXTURE/repo" push -q origin main
+git -C "$FIXTURE/repo" checkout -qb cp-unrelated
+printf 'other-branch-C\n' > "$FIXTURE/repo/source.txt"
+git -C "$FIXTURE/repo" add .
+git -C "$FIXTURE/repo" -c user.email=t@t -c user.name=t commit -qm unrelated
+printf 'dirty-D\n' > "$FIXTURE/repo/source.txt"
+printf 'secret\n' > "$FIXTURE/repo/UNTRACKED_SECRET"
+cat > "$FIXTURE/bin/docker" <<'DOCKER'
+#!/usr/bin/env bash
+if [[ "$1" == build ]]; then
+  context="${!#}"
+  cat "$context/source.txt" > "$CAPTURE.source"
+  printf '%s\n' "$*" > "$CAPTURE.args"
+  printf '%s\n' "$context" > "$CAPTURE.context"
+  [[ ! -e "$context/UNTRACKED_SECRET" ]] || exit 31
+elif [[ "$1" == image && "$2" == inspect ]]; then exit 1
 fi
+DOCKER
+chmod +x "$FIXTURE/bin/docker"
+for selector in pinned default; do
+  expected="$PINNED"; content=candidate-A
+  [[ "$selector" == pinned ]] || { expected="$LATEST"; content=new-main-B; }
+  if PATH="$FIXTURE/bin:$PATH" CAPTURE="$FIXTURE/$selector" EXPECTED_SHA="$([[ "$selector" == pinned ]] && echo "$PINNED" || true)" bash "$FIXTURE/repo/scripts/brain-build.sh" > "$FIXTURE/$selector.log" 2>&1       && [[ "$(cat "$FIXTURE/$selector.source")" == "$content" ]]       && grep -q "GIT_SHA=$expected" "$FIXTURE/$selector.args"       && [[ ! -e "$(cat "$FIXTURE/$selector.context")" ]]; then
+    pass "真实构建 ${selector}：源码和戳同 SHA，隔离 cp 分支、脏树、未跟踪文件并清理上下文"
+  else fail "真实构建 $selector 隔离失败：$(tail -2 "$FIXTURE/$selector.log")"; fi
+done
 
 # Test 2: 用 mktemp -d 隔离 build dir
 if grep -qE 'TEMP_BUILD=\$\(mktemp -d' "$SCRIPT"; then
@@ -45,7 +85,7 @@ fi
 
 # Test 5: 真实行为 — git archive HEAD 真的能隔离脏工作树
 TMP=$(mktemp -d)
-( cd "$TMP" && git init -q -b main )
+( cd "$TMP" && git init -q -b main && git config core.hooksPath /dev/null )
 echo "CLEAN-FROM-COMMIT" > "$TMP/test.txt"
 ( cd "$TMP" && git add test.txt && git -c user.email=t@t -c user.name=t commit -q -m "init" )
 # 故意污染工作树
@@ -62,7 +102,7 @@ fi
 
 # Test 6: untracked 文件也被隔离
 TMP2=$(mktemp -d)
-( cd "$TMP2" && git init -q -b main )
+( cd "$TMP2" && git init -q -b main && git config core.hooksPath /dev/null )
 echo "tracked" > "$TMP2/tracked.txt"
 ( cd "$TMP2" && git add tracked.txt && git -c user.email=t@t -c user.name=t commit -q -m "init" )
 echo "untracked" > "$TMP2/SECRET-NEVER-COMMIT.txt"
@@ -78,7 +118,7 @@ fi
 
 # Test 7 (v1.2.0): cwd 在 cp-* 分支时，git archive FETCH_HEAD 仍取 origin/main 而非 HEAD
 TMP3=$(mktemp -d)
-( cd "$TMP3" && git init -q -b main )
+( cd "$TMP3" && git init -q -b main && git config core.hooksPath /dev/null )
 echo "main-content" > "$TMP3/file.txt"
 ( cd "$TMP3" && git add file.txt && git -c user.email=t@t -c user.name=t commit -q -m "main" )
 # 模拟 origin remote

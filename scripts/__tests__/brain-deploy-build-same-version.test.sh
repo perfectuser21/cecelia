@@ -190,5 +190,20 @@ got=$(tags_of "$S4" "$NEW_ID")
 [[ "$got" == "cecelia-brain:1.0.0 cecelia-brain:latest" ]] && pass "T4 新镜像只带版本与 latest" || fail "T4 新镜像 tags=[$got]"
 
 echo ""
+# 固定候选A后main推进到B，构建仍必须读A的源码/版本/镜像戳。
+R5="$TMPD/r5"; S5="$TMPD/s5"
+make_repo 1.2.0 "$R5"
+PINNED_SHA=$(git -C "$R5" rev-parse HEAD)
+printf '{"name":"x","version":"1.3.0"}\n' > "$R5/packages/brain/package.json"
+git -C "$R5" add packages/brain/package.json
+git -C "$R5" -c core.hooksPath=/dev/null -c user.email=t@t -c user.name=t commit -qm newer
+git -C "$R5" -c core.hooksPath=/dev/null push -q origin main
+seed "$S5"
+if EXPECTED_SHA="$PINNED_SHA" run_build "$R5" "$S5"; then pass "T5 固定候选构建成功"; else fail "T5 固定候选构建失败"; fi
+NEW_ID=$(cat "$S5/built_id" 2>/dev/null)
+got=$(tags_of "$S5" "$NEW_ID")
+[[ "$got" == "cecelia-brain:1.2.0 cecelia-brain:latest" ]] && pass "T5 版本取固定源码A" || fail "T5 版本漂移到mainB"
+grep -q "GIT_SHA=$PINNED_SHA" "$S5/env/$(key "$NEW_ID")" && pass "T5 镜像戳同固定源码A" || fail "T5 镜像戳不匹配"
+
 echo "=== brain-deploy-build-same-version: $PASS PASS / $ERRORS FAIL ==="
 [[ $ERRORS -eq 0 ]]

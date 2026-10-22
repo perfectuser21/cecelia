@@ -19,7 +19,7 @@ export const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_BUILD_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_AGGREGATE_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_GOLDSET_SELECTOR_SCHEMA = 1;
-export const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = 1;
+export const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = 2;
 export const EXISTING_OPS_AUTO_VERSION_SELECTOR_SCHEMA = 1;
 export const EXISTING_OPS_IDENTITIES = Object.freeze([
   { workflow_id: '7743d66a-d3e0-4ebf-b82d-3f5d2d769fb1', workflow_key: 'factory_f2_ops', capability_id: '2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6', activity_id: '0ab79a73-1ec3-4ddc-bb88-1433568ae2e2', reference_id: 'a83b69b9-f426-4958-8cef-7560659ef6f8', slot_key: 'step_1', sequence_no: 1,
