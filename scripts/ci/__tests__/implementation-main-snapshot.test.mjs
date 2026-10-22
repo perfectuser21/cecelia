@@ -453,3 +453,35 @@ test('上传前回归的真实子进程不继承中央或部署凭据',async t=>
  try{const results=await runRegisteredAssertions({repoRoot:dir,source:{repo,head_revision:head},required_assertions:[{assertion_ref:`manual:bash ${path}`,source_repo:repo,source_bindings:[{path}]}]});assert.equal(results.length,1);assert.equal(results[0].exit_code,0);assert.equal(results[0].error,null);}
  finally{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;}
 });
+
+// 编译入口回归：DB边界模拟空manifest；Git基线 checkout、入口顺序和清场均真实执行。
+for(const fault of ['', 'projection', 'close'])test(`来源compiler必须投影双scope固定base且清场:${fault||'success'}`,t=>{
+ const dir=mkdtempSync(join(tmpdir(),'recovery-compile-test-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('config','core.hooksPath','/dev/null');
+ writeFileSync(join(dir,'fixed-source'),'baseline');git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
+ writeFileSync(join(dir,'fixed-source'),'candidate');git('commit','-qam','candidate');const head=git('rev-parse','HEAD');
+ writeFileSync(join(dir,'base.json'),JSON.stringify(bundle(base)));writeFileSync(join(dir,'candidate.json'),JSON.stringify(bundle(head).snapshot));
+ const mocked=`import assert from 'node:assert/strict';import{readFileSync,writeFileSync}from'node:fs';import{execFileSync}from'node:child_process';
+ const dir=${JSON.stringify(dir)},base=${JSON.stringify(base)},fault=${JSON.stringify(fault)},imports=new Set(),projected=new Set();let checkout;
+ export async function createImplementationScratch(){return{db:{},close:async()=>{writeFileSync(dir+'/closed',String(checkout));if(fault==='close')throw Error('CLOSE_FAILED');}};}
+ export async function importImplementationSnapshot(db,s){imports.add(s.scope);}
+ export async function projectImplementationSnapshot(db,s,root){
+  checkout=root;writeFileSync(dir+'/checkout',root);assert.equal(imports.size,2);assert.equal(s.revision,base);
+  assert.equal(execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),base);assert.equal(readFileSync(root+'/fixed-source','utf8'),'baseline');
+  if(fault==='projection')throw Error('PROJECTION_FAILED');projected.add(s.scope);
+ }
+ export async function buildPrImplementationSnapshot(db,s){if(projected.size!==2)throw Error('OPS_MANIFEST_IDENTITY_INVALID');writeFileSync(dir+'/built',s.scope);return JSON.parse(readFileSync(dir+'/candidate.json'));}`;
+ writeFileSync(join(dir,'snapshot-mock.mjs'),mocked);
+ const target=new URL('../implementation-snapshot.mjs',import.meta.url).href;
+ writeFileSync(join(dir,'loader.mjs'),`export async function resolve(s,c,next){const r=await next(s,c);return r.url===${JSON.stringify(target)}?{url:new URL('./snapshot-mock.mjs',import.meta.url).href,shortCircuit:true}:r;}`);
+ writeFileSync(join(dir,'register.mjs'),"import{register}from'node:module';register('./loader.mjs',import.meta.url);");
+ const runner=`import{readFileSync,existsSync}from'node:fs';import assert from'node:assert/strict';import{compileRecoveryCandidate}from${JSON.stringify(new URL('../implementation-source-recovery.mjs',import.meta.url).href)};
+ const dir=${JSON.stringify(dir)},fault=${JSON.stringify(fault)};
+ const run=()=>compileRecoveryCandidate({repoRoot:dir,head:${JSON.stringify(head)},baseline:JSON.parse(readFileSync(dir+'/base.json'))});
+ if(fault)await assert.rejects(run(),new RegExp(fault==='close'?'CLOSE_FAILED':'PROJECTION_FAILED'));else await run();
+ assert.equal(existsSync(dir+'/closed'),true);assert.equal(existsSync(readFileSync(dir+'/checkout','utf8')),false);
+ if(fault==='projection')assert.equal(existsSync(dir+'/built'),false);`;
+ const result=spawnSync(process.execPath,['--import',join(dir,'register.mjs'),'--input-type=module','-e',runner],{cwd:root,encoding:'utf8'});
+ assert.equal(result.status,0,result.stderr);
+});

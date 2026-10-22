@@ -169,15 +169,22 @@ export function verifyRecoveryGateProof({repoRoot,base,head,inputs,context}){
 }
 export async function compileRecoveryCandidate({repoRoot,head,baseline}){
  const inputs=extractImplementationAdmissionSnapshots(baseline.snapshot||baseline,['cecelia-kr','cecelia-factory']);
- const {createImplementationScratch,importImplementationSnapshot,buildPrImplementationSnapshot}=await import('./implementation-snapshot.mjs');
- const scratch=await createImplementationScratch();let candidate;
+ const {createImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot,buildPrImplementationSnapshot}=await import('./implementation-snapshot.mjs');
+ const base=inputs[0].revision;
+ if(!SHA.test(base)||inputs.some(input=>input.revision!==base))fail('SOURCE_RECOVERY_BASE_INVALID');
+ const checkout=mkdtempSync(join(tmpdir(),'source-recovery-base-'));let scratch,candidate;
  try{
+  fixedLocalGit(repoRoot,['clone','--shared','--no-checkout','--quiet',repoRoot,checkout],{localClone:true});
+  fixedLocalGit(checkout,['checkout','--quiet','--detach',base]);
+  scratch=await createImplementationScratch();
   for(const input of inputs)await importImplementationSnapshot(scratch.db,input);
+  // 与正式PR入口相同：固定基线的来源、图和manifest必须先在scratch完整投影。
+  for(const input of inputs)await projectImplementationSnapshot(scratch.db,input,checkout);
   // Factory 先重建；最终导出KR时同时封装同SHA、同事务的Factory companion。
   await buildPrImplementationSnapshot(scratch.db,inputs[1],head,repoRoot);
   candidate=await buildPrImplementationSnapshot(scratch.db,inputs[0],head,repoRoot);
   extractImplementationAdmissionSnapshots(candidate,['cecelia-kr','cecelia-factory']);
- }finally{await scratch.close();}
+ }finally{try{await scratch?.close();}finally{rmSync(checkout,{recursive:true,force:true});}}
  return candidate;
 }
 export async function publishRecoveryBaseline({repoRoot,base,head,brainUrl,token,output,baseline,readiness},{github:api=github,verifyAuthority=verifyRecoveryAuthority,inspectRuntime=inspectRecoveryRuntime,fetchFn=globalThis.fetch,compile=compileRecoveryCandidate,runGate=async options=>(await import('./implementation-main-gate.mjs')).runImplementationMainGate(options)}={}){
