@@ -27,7 +27,7 @@ it('连接池迟到连接被销毁，不开启事务或调用写入回调',async
   vi.useFakeTimers();let connect;const client={release:vi.fn(),query:vi.fn()};
   const pool={connect:vi.fn(()=>new Promise(resolve=>{connect=resolve;}))},fn=vi.fn();
   const pending=expect(releaseValidationTransaction(pool,budget({timeoutMs:20}),fn)).rejects.toMatchObject({code:'VALIDATION_TIMEOUT'});
-  await vi.advanceTimersByTimeAsync(20);await pending;connect(client);await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(20);await pending;connect(client);await vi.advanceTimersByTimeAsync(0);
   expect(client.release.mock.calls).toEqual([[true]]);expect(client.query).not.toHaveBeenCalled();expect(fn).not.toHaveBeenCalled();
 });
 
