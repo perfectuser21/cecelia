@@ -132,3 +132,29 @@ it.each([
  ['HEAD materialize',s=>s.replace('materializeImplementationSkills(realpathSync(root),revisions.at(-1)','materializeImplementationSkills(realpathSync(root),revisions[0]')],
  ['extra import',s=>s+"\nimport './unreviewed.mjs';\n"],
 ])('现代helper%s漂移不能冒已审源码封套',async(_name,change)=>{const p=await modernBundle(()=>{},null,{changeSource:(bytes,path)=>path===MODERN?Buffer.from(change(bytes.toString())):bytes});expect(p.status).toBe('unknown');});
+
+const infraStep=(y,name)=>y.jobs.gate.steps.find(s=>s.name===name);
+it('infra默认关闭的真实跨仓callee完整提取，第三来源不冒执行或main信任',async()=>{
+ const p=await modernBundle();expect(p.status,JSON.stringify(p.gaps)).toBe('verified');
+ expect(p.consumer.status).toBe('verified');expect(p.executable).toBe(false);expect(p.admission.status).toBe('unknown');
+ expect(p.consumer.bindings.some(b=>b.path==='scripts/ci/implementation-infra-inputs.mjs')).toBe(false);
+});
+it.each([
+ ['missing dependency',y=>y.jobs.gate.needs=['snapshot-main']],
+ ['unknown dependency',y=>y.jobs.gate.needs=['snapshot-main','foreign']],
+ ['third dependency',y=>y.jobs.gate.needs.push('foreign')],
+ ['missing provider',y=>delete y.jobs['snapshot-infra']],
+ ['wrong provider repo',y=>y.jobs['snapshot-infra'].steps.find(s=>s.uses==='actions/checkout@v4').with.repository='foreign/repo'],
+ ['unrestricted provider',y=>y.jobs['snapshot-infra'].if='always()'],
+ ['forced switch',y=>y.jobs.gate.env.INFRA_ADMISSION='true'],
+ ['missing switch',y=>delete y.jobs.gate.env.INFRA_ADMISSION],
+ ['wrong switch repo',y=>y.jobs.gate.env.INFRA_ADMISSION=y.jobs.gate.env.INFRA_ADMISSION.replace('perfectuser21/cecelia','perfectuser21/zenithjoy-workspace')],
+ ['cache mutation',y=>modernStep(y,'gate').run+='echo changed\n'],
+ ['unconditional input',y=>delete infraStep(y,'独立infra固定来源加入联合输入').if],
+ ['changed input',y=>infraStep(y,'独立infra固定来源加入联合输入').run+='echo changed\n'],
+ ['missing joint guard',y=>y.jobs.gate.steps.splice(y.jobs.gate.steps.indexOf(infraStep(y,'三来源联合门真实PG与回归退出码守卫')),1)],
+ ['unconditional joint guard',y=>delete infraStep(y,'三来源联合门真实PG与回归退出码守卫').if],
+ ['scope override',y=>infraStep(y,'完整联合scope清单加入infra').run+='echo changed\n'],
+])('infra跨仓精确形态%s保持unknown',async(_name,mutateImpact)=>{
+ const p=await modernBundle(()=>{},null,{mutateImpact});expect(p.status).toBe('unknown');expect(p.executable).toBe(false);
+});
