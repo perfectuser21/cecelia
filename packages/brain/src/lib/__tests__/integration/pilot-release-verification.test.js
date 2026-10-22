@@ -291,3 +291,21 @@ it('真实PG连接池等待也受整体预算约束，迟到连接归还且无re
  await wait(30);expect(f.db.waitingCount).toBe(0);expect(f.db.idleCount).toBe(f.db.totalCount);
  expect((await f.db.query('SELECT count(*)::int n FROM release_versions')).rows[0].n).toBe(0);
 });
+
+it.each(['cancel','write-error'])('真实PG INSERT后提交前%s必须回滚整条release',async mode=>{
+ const controller=new AbortController();let inserted=false;
+ const pool={connect:async()=>{
+  const client=await f.db.connect();
+  return {release:destroy=>client.release(destroy),on:(...args)=>client.on(...args),off:(...args)=>client.off(...args),query:async(sql,args)=>{
+   const result=await client.query(sql,args);
+   if(sql.startsWith('INSERT INTO release_versions')){
+    inserted=true;if(mode==='cancel')controller.abort();else throw Error('injected-after-real-insert');
+   }
+   return result;
+  }};
+ }};
+ const result=await outcome(createRelease(pool,f.releaseInput,{signal:controller.signal}));
+ expect(inserted).toBe(true);expect(result.error).toBeTruthy();
+ if(mode==='cancel')expect(result.error.code).toBe('RELEASE_REQUEST_ABORTED');else expect(result.error.message).toBe('injected-after-real-insert');
+ await wait(30);expect((await f.db.query('SELECT count(*)::int n FROM release_versions')).rows[0].n).toBe(0);
+});
