@@ -2,165 +2,751 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
-    {"owner_path":"scripts/ops/janitor.sh","path":"scripts/ops/__tests__/janitor/janitor_system_domain_service_exempt.test.sh","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/activity-contract-store.js","path":"packages/brain/src/__tests__/integration/activity-contract-locks.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/projection/__tests__/task-progress.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/__tests__/integration/notion-task-progress.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/__tests__/notion-push-sync.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/__tests__/notion-tasks-projection.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/notion-push-sync.js","path":"packages/brain/src/__tests__/integration/project-root-gate.pg.integration.test.js","role":"verification"},
-
-    {"owner_path":"scripts/ci/implementation-auxiliary-evidence.mjs","path":"packages/brain/scripts/ci/__tests__/implementation-shell-verification.test.mjs","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-staging-budget-bootstrap.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-auto-version-bootstrap.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-staging-bootstrap.test.js","role":"verification"},
-    {"owner_path":"scripts/staging-deploy.sh","path":"packages/brain/src/__tests__/staging-deploy-credentials.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-staging-source.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/commander-runtime-location.js","path":"packages/brain/src/lib/__tests__/commander-runtime-location.test.js","role":"verification"},
-    {"owner_path":"scripts/ci/implementation-source-ready.mjs","path":"scripts/ci/__tests__/implementation-source-ready.test.mjs","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/native-consumer-source-selection.js","path":"packages/brain/src/__tests__/integration/native-consumer-source-selection.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/fixed-git-source.js","path":"docs/learnings/cp-10182306-central-skill-source-backport.md","role":"documentation"},
-    {"owner_path":"scripts/ci/implementation-skill-source.mjs","path":"scripts/ci/__tests__/implementation-skill-source.test.mjs","role":"verification"},
-    
-    {"owner_path":"scripts/ci/implementation-skill-source.mjs","path":"docs/learnings/cp-10190200-ci-snapshot-source.md","role":"documentation"},
-    {"owner_path":"packages/brain/src/routes/map-manifests.js","path":"packages/brain/src/routes/__tests__/map-manifests.test.js","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/workflow-authoring/fixed-git-source.js","path":"packages/brain/scripts/smoke/central-skill-fixed-source-smoke.sh","role":"verification"},
-    {"owner_path":"packages/brain/src/activity-contract-sync.js","path":"packages/brain/src/__tests__/activity-contract-sync.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/commander-diagnosis-facts.js","path":"packages/brain/src/lib/__tests__/commander-diagnosis-facts.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/commander-improvement.js","path":"packages/brain/src/lib/__tests__/commander-improvement.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/relay-baton.js","path":"packages/brain/src/lib/__tests__/relay-baton.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-stage-modes.js","path":"packages/brain/src/lib/__tests__/existing-ops-stage-modes.test.js","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/scheduler-jobs.js","path":"docs/learnings/cp-10171451-workflow-cadence.md","role":"documentation"},
-    
-    
-    {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"packages/brain/scripts/smoke/leadgen-physical-adb-routing-smoke.sh","role":"verification"},
-    
-    
-    {"owner_path":"packages/quality/skill-distillation/scripts/goldset-eval.mjs","path":"docs/learnings/cp-10170325-ci-budget-headroom.md","role":"documentation"},
-    {"owner_path":"packages/quality/skill-distillation/scripts/goldset-eval.mjs","path":"packages/quality/__tests__/goldset-eval-cli.test.js","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"docs/learnings/cp-10170352-ci-consumer-source.md","role":"documentation"},
-    
-    {"owner_path":"scripts/ci/implementation-main-snapshot.mjs","path":"docs/learnings/cp-10162312-source-diagnostics.md","role":"documentation"},
-
-    
-    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"docs/learnings/cp-10161920-cw-source-merge.md","role":"documentation"},
-    
-    {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"docs/learnings/cp-10161933-cw-merge-envelope.md","role":"documentation"},
-
-    
-    {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"docs/learnings/cp-10161723-leadgen-cloud-binding.md","role":"documentation"},
-    
-    {"owner_path":"packages/brain/src/lib/leadgen-resources.js","path":"packages/brain/src/lib/__tests__/leadgen-resources.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/routes/phone-registry.js","path":"packages/brain/src/routes/phone-registry.test.js","role":"verification"},
-
-    {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"docs/learnings/cp-10161513-cw-isolation-source.md","role":"documentation"},
-    {"owner_path":"packages/brain/src/crm/onboard-common.js","path":"packages/brain/src/crm/onboard-common.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/onboard-notion.js","path":"packages/brain/src/crm/onboard-notion.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/onboard-page-store.js","path":"packages/brain/src/crm/onboard-page-store.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/onboard-store.js","path":"packages/brain/src/crm/onboard-store.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/notion-sync.js","path":"packages/brain/src/crm/notion-request.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/onboard-store.js","path":"packages/brain/scripts/smoke/crm-friend-onboard-smoke.sh","role":"verification"},
-    
-
-    {"owner_path":"packages/brain/src/crm/contact-resolve.js","path":"packages/brain/src/crm/contact-resolve.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/router.js","path":"packages/brain/src/crm/router.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/notion-sync.js","path":"packages/brain/src/crm/notion-sync.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/notion-mapping.js","path":"packages/brain/src/crm/notion-mapping.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/notion-content.js","path":"packages/brain/src/crm/notion-content.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/notion-children.js","path":"packages/brain/src/crm/notion-children.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/markdown.js","path":"packages/brain/src/crm/markdown.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/store.js","path":"packages/brain/src/crm/__tests__/store.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/router.js","path":"packages/brain/scripts/smoke/crm-canonical-smoke.sh","role":"verification"},
-    {"owner_path":"packages/brain/src/crm/contact-resolve.js","path":"packages/brain/scripts/smoke/crm-contact-resolve-smoke.sh","role":"verification"},
-    
-
-    
-    {"owner_path":"packages/brain/scripts/coding-workflow/lib/record-provenance.mjs","path":"docs/learnings/cp-10160605-cw-source-proof.md","role":"documentation"},
-    {"owner_path":"packages/brain/scripts/coding-workflow/lib/record-provenance.mjs","path":"docs/learnings/cp-10171320-qa-native-evidence.md","role":"documentation"},
-    
-    {"owner_path":"packages/brain/scripts/coding-workflow/lib/record-provenance.mjs","path":"docs/learnings/cp-10171805-fixture-direct.md","role":"documentation"},
-    {"owner_path":"packages/brain/vitest.config.js","path":"packages/brain/src/__tests__/vitest.real-env-smoke.config.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-stage-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-stage-source.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-stage-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-stage-envelopes.test.js","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/lib/existing-ops-stage-source.js","path":"docs/learnings/cp-10160816-cw-stage-source.md","role":"documentation"},
-
-    {"owner_path":"packages/brain/src/lib/existing-ops-provenance-envelope.js","path":"packages/brain/src/lib/__tests__/existing-ops-provenance-envelope.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-provenance-core-envelope.js","path":"packages/brain/src/lib/__tests__/existing-ops-provenance-core-envelope.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-provenance-entry-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-provenance-entry-envelopes.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-provenance-local-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-provenance-local-envelopes.test.js","role":"verification"},
-
-    
-    {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"docs/learnings/cp-10160648-cw-source-envelope.md","role":"documentation"},
-    {"owner_path":"packages/brain/src/lib/native-consumer-runtime.js","path":"packages/brain/src/lib/native-consumer-runtime.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/native-consumer-source-selection.js","path":"packages/brain/src/lib/native-consumer-source-selection.test.js","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/lib/implementation-ci-snapshot.js","path":"docs/learnings/cp-10160115-cw-source-compat.md","role":"documentation"},
-    {"owner_path":"packages/brain/src/workflow-authoring/execution-ledger.js","path":"packages/brain/src/workflow-authoring/execution-ledger.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/execution-proof.js","path":"packages/brain/src/workflow-authoring/execution-proof.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/assembly-driver.js","path":"packages/brain/src/workflow-authoring/assembly-driver.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/assembly-orchestration.js","path":"packages/brain/src/workflow-authoring/assembly-orchestration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/query-budget.js","path":"packages/brain/src/workflow-authoring/query-budget.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/readiness-admission.js","path":"packages/brain/src/workflow-authoring/readiness-admission.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/revalidation.js","path":"packages/brain/src/workflow-authoring/revalidation.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/invocations/candidate-target.js","path":"packages/brain/src/invocations/candidate-target.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/assembly-driver.js","path":"packages/brain/src/__tests__/fixtures/authoring-execution-db.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/assembly-orchestration.js","path":"packages/brain/src/__tests__/integration/authoring-candidate.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/assembly-driver.js","path":"packages/brain/src/__tests__/integration/workflow-authoring-execution.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/assembly-driver.js","path":"packages/brain/src/__tests__/integration/authoring-browser-preview.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/assembly-driver.js","path":"packages/brain/scripts/smoke/authoring-execution-smoke.sh","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/invocations/runtime.js","path":"packages/brain/src/invocations/runtime.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/invocations/resolve.js","path":"packages/brain/src/invocations/resolve.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/invocations/store.js","path":"packages/brain/src/invocations/store.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/orchestrator/skill-activity-adapter.js","path":"tests/gp/f1/step4-fixed-skill-invocation-receipt.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/routes/execution.js","path":"tests/integration/execution-callback-await.test.js","role":"verification"},
-    {"owner_path":"packages/brain/scripts/codex-bridge/codex-bridge.cjs","path":"packages/brain/src/__tests__/codex-bridge-legacy-contract.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/routes/invocations.js","path":"packages/brain/src/__tests__/integration/invocation-browser-preview.test.js","role":"verification"},
-    {"owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs", "path": "cp-10151810-build-intent-boundary.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs", "path": "docs/learnings/cp-10151810-build-intent-boundary.md", "role": "documentation"},
-    
-    {"owner_path":"packages/brain/src/routes/invocations.js","path":"packages/brain/src/routes/invocations.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/orchestrator/invocation-plan.js","path":"packages/brain/src/orchestrator/invocation-plan.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/orchestrator/skill-activity-adapter.js","path":"packages/brain/src/orchestrator/skill-activity-adapter.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/invocations/store.js","path":"packages/brain/src/__tests__/integration/invocations.pg.integration.test.js","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/routes/invocations.js","path":"packages/brain/scripts/smoke/invocations-smoke.sh","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/projection/directory-source.js","path":"packages/brain/src/projection/__tests__/directory-source.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/projection/directory-projector.js","path":"packages/brain/src/projection/__tests__/directory-projector.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/projection/directory-projector.js","path":"packages/brain/src/projection/__tests__/directory-runtime.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/projection/directory-projector.js","path":"packages/brain/scripts/smoke/directory-title-sync-smoke.sh","role":"verification"},
-    {"owner_path":"scripts/ci/implementation-multi-scope.mjs","path":"cp-10152055-scope-no-owned.prd.md","role":"documentation"},
-    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/prep-prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "sprints/10151330-cw-terminal-sync/contract-draft.md", "role": "documentation"},
-    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "docs/learnings/cp-10151330-cw-terminal-sync.md", "role": "documentation"},
-    
-    {"owner_path":"packages/brain/src/routes/workflow-authoring.js","path":"packages/brain/scripts/smoke/workflow-assembly-plan-smoke.sh","role":"verification"},
-    {"owner_path":"packages/brain/src/routes/workflow-authoring.js","path":"packages/brain/src/routes/workflow-assembly-plan.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/assembly-plan.js","path":"packages/brain/src/workflow-authoring/assembly-plan.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/assembly-resolver.js","path":"packages/brain/src/workflow-authoring/assembly-resolver.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/scheduler-jobs.js","path":"packages/brain/src/__tests__/scheduler-jobs.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/scheduler-jobs.js","path":"packages/brain/src/__tests__/scheduler-completion-loop.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-reconcile.js","path":"packages/brain/src/lib/workflow-assembly-reconcile.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-reconcile-runner.js","path":"packages/brain/src/lib/workflow-assembly-reconcile-runner.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-reconcile-derived.js","path":"packages/brain/src/lib/workflow-assembly-reconcile-derived.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-reconcile-tasks.js","path":"packages/brain/src/lib/workflow-assembly-reconcile-tasks.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-reconcile-runner.js","path":"packages/brain/src/__tests__/integration/workflow-assembly-reconcile.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-reconcile-runner.js","path":"packages/brain/src/__tests__/integration/workflow-assembly-reconcile-authoring.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-reconcile-runner.js","path":"packages/brain/scripts/smoke/workflow-assembly-reconcile-smoke.sh","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-store.js","path":"packages/brain/src/lib/workflow-assembly-store.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-readback.js","path":"packages/brain/src/lib/workflow-assembly-readback.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/shared-freeze.js","path":"packages/brain/src/workflow-authoring/shared-freeze.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/contracts.js","path":"packages/brain/src/workflow-authoring/contracts.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/registration.js","path":"packages/brain/src/__tests__/integration/workflow-assembly.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/workflow-authoring/freeze.js","path":"packages/brain/scripts/smoke/workflow-assembly-registration-smoke.sh","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/lib/release-line.js","path":"packages/brain/src/lib/__tests__/release-line.test.js","role":"verification"},
+    {
+      "owner_path": "scripts/ops/janitor.sh",
+      "path": "scripts/ops/__tests__/janitor/janitor_system_domain_service_exempt.test.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/release-validation-budget.js",
+      "path": "packages/brain/src/lib/__tests__/release-validation-budget.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/infra-bootstrap-source.js",
+      "path": "packages/brain/src/lib/__tests__/infra-bootstrap-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/infra-registry-bootstrap.js",
+      "path": "packages/brain/src/lib/__tests__/infra-registry-bootstrap.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-pr-baseline.mjs",
+      "path": "scripts/ci/__tests__/implementation-pr-baseline.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/lib/brain-staging.sh",
+      "path": "packages/brain/src/__tests__/integration/staging-snapshot.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-deploy.sh",
+      "path": "packages/brain/scripts/smoke/factory-f2-deploy-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-deploy.sh",
+      "path": "tests/regression/gate3-sha-truth/sha-account.test.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-deploy.sh",
+      "path": "scripts/smoke/gate3-brain-deploy-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-deploy.sh",
+      "path": "tests/packages/brain/post-deploy-selfcheck-contract.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-deploy.sh",
+      "path": "scripts/ci/__tests__/brain-source-only-deploy.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-source-recovery.mjs",
+      "path": "scripts/ci/__tests__/implementation-source-recovery.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/activity-contract-store.js",
+      "path": "packages/brain/src/__tests__/integration/activity-contract-locks.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-push-sync.js",
+      "path": "packages/brain/src/projection/__tests__/task-progress.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-push-sync.js",
+      "path": "packages/brain/src/__tests__/integration/notion-task-progress.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-push-sync.js",
+      "path": "packages/brain/src/__tests__/notion-push-sync.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-push-sync.js",
+      "path": "packages/brain/src/__tests__/notion-tasks-projection.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/notion-push-sync.js",
+      "path": "packages/brain/src/__tests__/integration/project-root-gate.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-auxiliary-evidence.mjs",
+      "path": "packages/brain/scripts/ci/__tests__/implementation-shell-verification.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-build.sh",
+      "path": "packages/engine/tests/integration/brain-build-isolation.test.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-build.sh",
+      "path": "scripts/__tests__/brain-deploy-build-same-version.test.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/gate3-wait-deploy.sh",
+      "path": "scripts/ci/__tests__/gate3-wait-deploy.test.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/lib/internal-auth-token.sh",
+      "path": "scripts/__tests__/internal-auth-deployment.test.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-image-retention/ledger.mjs",
+      "path": "packages/brain/src/__tests__/deploy-settlement.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/gate3-wait-deploy.sh",
+      "path": "packages/brain/src/__tests__/deployment-time-budget.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-runtime-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-staging-budget-bootstrap.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-runtime-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-auto-version-bootstrap.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-staging-bootstrap.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/staging-deploy.sh",
+      "path": "packages/brain/src/__tests__/staging-deploy-credentials.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/staging-verify.sh",
+      "path": "packages/brain/src/__tests__/staging-verify-host.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/ops.js",
+      "path": "packages/brain/src/__tests__/deploy-receipt.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-deploy.sh",
+      "path": "packages/brain/src/__tests__/brain-staging-admission.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/brain-deploy.sh",
+      "path": "packages/brain/scripts/smoke/auto-staging-deploy-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/wait-for-staging.sh",
+      "path": "packages/brain/src/__tests__/staging-request-receipt.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/ops.js",
+      "path": "packages/brain/src/__tests__/deploy-staging-guardrail.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/lib/brain-staging.sh",
+      "path": "packages/brain/src/__tests__/staging-deploy-docker-health.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/lib/brain-staging.sh",
+      "path": "packages/brain/src/__tests__/staging-deploy-health-window.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-staging-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-runtime-location.js",
+      "path": "packages/brain/src/lib/__tests__/commander-runtime-location.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-source-ready.mjs",
+      "path": "scripts/ci/__tests__/implementation-source-ready.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/native-consumer-source-selection.js",
+      "path": "packages/brain/src/__tests__/integration/native-consumer-source-selection.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/fixed-git-source.js",
+      "path": "docs/learnings/cp-10182306-central-skill-source-backport.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-skill-source.mjs",
+      "path": "scripts/ci/__tests__/implementation-skill-source.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-skill-source.mjs",
+      "path": "docs/learnings/cp-10190200-ci-snapshot-source.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/map-manifests.js",
+      "path": "packages/brain/src/routes/__tests__/map-manifests.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/fixed-git-source.js",
+      "path": "packages/brain/scripts/smoke/central-skill-fixed-source-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/activity-contract-sync.js",
+      "path": "packages/brain/src/__tests__/activity-contract-sync.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-diagnosis-facts.js",
+      "path": "packages/brain/src/lib/__tests__/commander-diagnosis-facts.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-improvement.js",
+      "path": "packages/brain/src/lib/__tests__/commander-improvement.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/relay-baton.js",
+      "path": "packages/brain/src/lib/__tests__/relay-baton.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-stage-modes.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-stage-modes.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/scheduler-jobs.js",
+      "path": "docs/learnings/cp-10171451-workflow-cadence.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/leadgen-dispatch.js",
+      "path": "packages/brain/scripts/smoke/leadgen-physical-adb-routing-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/quality/skill-distillation/scripts/goldset-eval.mjs",
+      "path": "docs/learnings/cp-10170325-ci-budget-headroom.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/quality/skill-distillation/scripts/goldset-eval.mjs",
+      "path": "packages/quality/__tests__/goldset-eval-cli.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-runtime-source.js",
+      "path": "docs/learnings/cp-10170352-ci-consumer-source.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-main-snapshot.mjs",
+      "path": "docs/learnings/cp-10162312-source-diagnostics.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
+      "path": "docs/learnings/cp-10161920-cw-source-merge.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "docs/learnings/cp-10161933-cw-merge-envelope.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/leadgen-dispatch.js",
+      "path": "docs/learnings/cp-10161723-leadgen-cloud-binding.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/leadgen-resources.js",
+      "path": "packages/brain/src/lib/__tests__/leadgen-resources.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/phone-registry.js",
+      "path": "packages/brain/src/routes/phone-registry.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "docs/learnings/cp-10161513-cw-isolation-source.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/onboard-common.js",
+      "path": "packages/brain/src/crm/onboard-common.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/onboard-notion.js",
+      "path": "packages/brain/src/crm/onboard-notion.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/onboard-page-store.js",
+      "path": "packages/brain/src/crm/onboard-page-store.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/onboard-store.js",
+      "path": "packages/brain/src/crm/onboard-store.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/notion-sync.js",
+      "path": "packages/brain/src/crm/notion-request.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/onboard-store.js",
+      "path": "packages/brain/scripts/smoke/crm-friend-onboard-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/contact-resolve.js",
+      "path": "packages/brain/src/crm/contact-resolve.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/router.js",
+      "path": "packages/brain/src/crm/router.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/notion-sync.js",
+      "path": "packages/brain/src/crm/notion-sync.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/notion-mapping.js",
+      "path": "packages/brain/src/crm/notion-mapping.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/notion-content.js",
+      "path": "packages/brain/src/crm/notion-content.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/notion-children.js",
+      "path": "packages/brain/src/crm/notion-children.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/markdown.js",
+      "path": "packages/brain/src/crm/markdown.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/store.js",
+      "path": "packages/brain/src/crm/__tests__/store.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/router.js",
+      "path": "packages/brain/scripts/smoke/crm-canonical-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/crm/contact-resolve.js",
+      "path": "packages/brain/scripts/smoke/crm-contact-resolve-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/lib/record-provenance.mjs",
+      "path": "docs/learnings/cp-10160605-cw-source-proof.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/lib/record-provenance.mjs",
+      "path": "docs/learnings/cp-10171320-qa-native-evidence.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/lib/record-provenance.mjs",
+      "path": "docs/learnings/cp-10171805-fixture-direct.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/vitest.config.js",
+      "path": "packages/brain/src/__tests__/vitest.real-env-smoke.config.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-stage-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-stage-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-stage-envelopes.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-stage-envelopes.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-stage-source.js",
+      "path": "docs/learnings/cp-10160816-cw-stage-source.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-provenance-envelope.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-provenance-envelope.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-provenance-core-envelope.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-provenance-core-envelope.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-provenance-entry-envelopes.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-provenance-entry-envelopes.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-provenance-local-envelopes.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-provenance-local-envelopes.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "docs/learnings/cp-10160648-cw-source-envelope.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/native-consumer-runtime.js",
+      "path": "packages/brain/src/lib/native-consumer-runtime.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/native-consumer-source-selection.js",
+      "path": "packages/brain/src/lib/native-consumer-source-selection.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/implementation-ci-snapshot.js",
+      "path": "docs/learnings/cp-10160115-cw-source-compat.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/execution-ledger.js",
+      "path": "packages/brain/src/workflow-authoring/execution-ledger.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/execution-proof.js",
+      "path": "packages/brain/src/workflow-authoring/execution-proof.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/assembly-driver.js",
+      "path": "packages/brain/src/workflow-authoring/assembly-driver.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/assembly-orchestration.js",
+      "path": "packages/brain/src/workflow-authoring/assembly-orchestration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/query-budget.js",
+      "path": "packages/brain/src/workflow-authoring/query-budget.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/readiness-admission.js",
+      "path": "packages/brain/src/workflow-authoring/readiness-admission.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/revalidation.js",
+      "path": "packages/brain/src/workflow-authoring/revalidation.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/invocations/candidate-target.js",
+      "path": "packages/brain/src/invocations/candidate-target.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/assembly-driver.js",
+      "path": "packages/brain/src/__tests__/fixtures/authoring-execution-db.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/assembly-orchestration.js",
+      "path": "packages/brain/src/__tests__/integration/authoring-candidate.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/assembly-driver.js",
+      "path": "packages/brain/src/__tests__/integration/workflow-authoring-execution.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/assembly-driver.js",
+      "path": "packages/brain/src/__tests__/integration/authoring-browser-preview.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/assembly-driver.js",
+      "path": "packages/brain/scripts/smoke/authoring-execution-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/invocations/runtime.js",
+      "path": "packages/brain/src/invocations/runtime.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/invocations/resolve.js",
+      "path": "packages/brain/src/invocations/resolve.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/invocations/store.js",
+      "path": "packages/brain/src/invocations/store.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/orchestrator/skill-activity-adapter.js",
+      "path": "tests/gp/f1/step4-fixed-skill-invocation-receipt.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/execution.js",
+      "path": "tests/integration/execution-callback-await.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/scripts/codex-bridge/codex-bridge.cjs",
+      "path": "packages/brain/src/__tests__/codex-bridge-legacy-contract.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/invocations.js",
+      "path": "packages/brain/src/__tests__/integration/invocation-browser-preview.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs",
+      "path": "cp-10151810-build-intent-boundary.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/activities/build.mjs",
+      "path": "docs/learnings/cp-10151810-build-intent-boundary.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/invocations.js",
+      "path": "packages/brain/src/routes/invocations.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/orchestrator/invocation-plan.js",
+      "path": "packages/brain/src/orchestrator/invocation-plan.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/orchestrator/skill-activity-adapter.js",
+      "path": "packages/brain/src/orchestrator/skill-activity-adapter.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/invocations/store.js",
+      "path": "packages/brain/src/__tests__/integration/invocations.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/invocations.js",
+      "path": "packages/brain/scripts/smoke/invocations-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/directory-source.js",
+      "path": "packages/brain/src/projection/__tests__/directory-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/directory-projector.js",
+      "path": "packages/brain/src/projection/__tests__/directory-projector.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/directory-projector.js",
+      "path": "packages/brain/src/projection/__tests__/directory-runtime.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/projection/directory-projector.js",
+      "path": "packages/brain/scripts/smoke/directory-title-sync-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-multi-scope.mjs",
+      "path": "cp-10152055-scope-no-owned.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
+      "path": "sprints/10151330-cw-terminal-sync/prep-prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
+      "path": "sprints/10151330-cw-terminal-sync/contract-draft.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
+      "path": "docs/learnings/cp-10151330-cw-terminal-sync.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/workflow-authoring.js",
+      "path": "packages/brain/scripts/smoke/workflow-assembly-plan-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/workflow-authoring.js",
+      "path": "packages/brain/src/routes/workflow-assembly-plan.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/assembly-plan.js",
+      "path": "packages/brain/src/workflow-authoring/assembly-plan.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/assembly-resolver.js",
+      "path": "packages/brain/src/workflow-authoring/assembly-resolver.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/scheduler-jobs.js",
+      "path": "packages/brain/src/__tests__/scheduler-jobs.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/scheduler-jobs.js",
+      "path": "packages/brain/src/__tests__/scheduler-completion-loop.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-reconcile.js",
+      "path": "packages/brain/src/lib/workflow-assembly-reconcile.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-reconcile-runner.js",
+      "path": "packages/brain/src/lib/workflow-assembly-reconcile-runner.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-reconcile-derived.js",
+      "path": "packages/brain/src/lib/workflow-assembly-reconcile-derived.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-reconcile-tasks.js",
+      "path": "packages/brain/src/lib/workflow-assembly-reconcile-tasks.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-reconcile-runner.js",
+      "path": "packages/brain/src/__tests__/integration/workflow-assembly-reconcile.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-reconcile-runner.js",
+      "path": "packages/brain/src/__tests__/integration/workflow-assembly-reconcile-authoring.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-reconcile-runner.js",
+      "path": "packages/brain/scripts/smoke/workflow-assembly-reconcile-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-store.js",
+      "path": "packages/brain/src/lib/workflow-assembly-store.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-readback.js",
+      "path": "packages/brain/src/lib/workflow-assembly-readback.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/shared-freeze.js",
+      "path": "packages/brain/src/workflow-authoring/shared-freeze.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/contracts.js",
+      "path": "packages/brain/src/workflow-authoring/contracts.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/registration.js",
+      "path": "packages/brain/src/__tests__/integration/workflow-assembly.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/freeze.js",
+      "path": "packages/brain/scripts/smoke/workflow-assembly-registration-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/release-line.js",
+      "path": "packages/brain/src/lib/__tests__/release-line.test.js",
+      "role": "verification"
+    },
     {
       "owner_path": "packages/brain/src/projection/workflow-body.js",
       "path": "cp-1013222800-notion-span-readback.prd.md",
@@ -171,7 +757,6 @@
       "path": "cp-1013222800-notion-span-readback.dod.md",
       "role": "documentation"
     },
-    
     {
       "owner_path": "packages/brain/src/skill-registry-projection.js",
       "path": "packages/brain/src/__tests__/skill-registry-projection.test.js",
@@ -507,39 +1092,121 @@
       "path": "packages/brain/src/__tests__/scheduler-jobs-recurring-independent-loop.test.js",
       "role": "verification"
     },
-    
-    {"owner_path":"packages/brain/src/lib/native-maintenance-snapshot.js","path":"packages/brain/src/lib/native-maintenance-snapshot.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/native-maintenance-snapshot.js","path":"packages/brain/src/__tests__/integration/native-maintenance-snapshot.pg.integration.test.js","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-native.js","path":"packages/brain/src/lib/workflow-assembly-native.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-native-source.js","path":"packages/brain/src/lib/workflow-assembly-native-source.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-native-registration.js","path":"packages/brain/src/lib/workflow-assembly-native-registration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-native-ledger.js","path":"packages/brain/src/lib/workflow-assembly-native-ledger.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/routes/workflow-assembly-native.js","path":"packages/brain/src/routes/workflow-assembly-native.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-native.js","path":"packages/brain/src/__tests__/integration/workflow-assembly-native.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-native.js","path":"packages/brain/src/__tests__/integration/workflow-assembly-native-browser.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-native.js","path":"packages/brain/src/__tests__/fixtures/workflow-assembly-native-db.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/workflow-assembly-native.js","path":"packages/brain/scripts/smoke/workflow-assembly-native-smoke.sh","role":"verification"},
-    {"owner_path":"apps/api/features/planning/pages/capability-system/EvidenceView.tsx","path":"apps/api/features/planning/pages/capability-system/EvidenceView.test.tsx","role":"verification"},
-    {"owner_path":"packages/engine/skills/dev/scripts/worktree-manage.sh","path":"packages/engine/tests/skills/worktree-cleanup-set-e.test.ts","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/lib/existing-ops-workspace-source.js","path":"packages/brain/src/__tests__/integration/engine-worktree-source.pg.integration.test.js","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/lib/existing-ops-workspace-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-workspace-source.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-workspace-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-workspace-graph.test.js","role":"verification"},
-    {"owner_path": "packages/brain/src/lib/existing-ops-build-source.js", "path": "packages/brain/src/lib/__tests__/existing-ops-build-source.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/existing-ops-build-source.js", "path": "packages/brain/src/__tests__/claude-channel-retired.guard.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/existing-ops-build-envelopes.js", "path": "packages/brain/src/lib/__tests__/existing-ops-build-envelopes.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/existing-ops-source.js", "path": "cp-10151820-build-source-bootstrap.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/existing-ops-source.js", "path": "docs/learnings/cp-10151820-build-source-bootstrap.md", "role": "documentation"},
-    
     {
-      "owner_path": "scripts/ci/implementation-main-gate.mjs", "path": "cp-10152320-main-scopes.prd.md", "role": "documentation"
+      "owner_path": "packages/brain/src/lib/native-maintenance-snapshot.js",
+      "path": "packages/brain/src/lib/native-maintenance-snapshot.test.js",
+      "role": "verification"
     },
     {
-      "owner_path": "scripts/ci/implementation-main-gate.mjs", "path": "docs/learnings/cp-10152320-main-scopes.md", "role": "documentation"
+      "owner_path": "packages/brain/src/lib/native-maintenance-snapshot.js",
+      "path": "packages/brain/src/__tests__/integration/native-maintenance-snapshot.pg.integration.test.js",
+      "role": "verification"
     },
-    
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-native.js",
+      "path": "packages/brain/src/lib/workflow-assembly-native.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-native-source.js",
+      "path": "packages/brain/src/lib/workflow-assembly-native-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-native-registration.js",
+      "path": "packages/brain/src/lib/workflow-assembly-native-registration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-native-ledger.js",
+      "path": "packages/brain/src/lib/workflow-assembly-native-ledger.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/workflow-assembly-native.js",
+      "path": "packages/brain/src/routes/workflow-assembly-native.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-native.js",
+      "path": "packages/brain/src/__tests__/integration/workflow-assembly-native.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-native.js",
+      "path": "packages/brain/src/__tests__/integration/workflow-assembly-native-browser.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-native.js",
+      "path": "packages/brain/src/__tests__/fixtures/workflow-assembly-native-db.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-assembly-native.js",
+      "path": "packages/brain/scripts/smoke/workflow-assembly-native-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "apps/api/features/planning/pages/capability-system/EvidenceView.tsx",
+      "path": "apps/api/features/planning/pages/capability-system/EvidenceView.test.tsx",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/engine/skills/dev/scripts/worktree-manage.sh",
+      "path": "packages/engine/tests/skills/worktree-cleanup-set-e.test.ts",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-workspace-source.js",
+      "path": "packages/brain/src/__tests__/integration/engine-worktree-source.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-workspace-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-workspace-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-workspace-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-workspace-graph.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-build-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "packages/brain/src/__tests__/claude-channel-retired.guard.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-envelopes.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-build-envelopes.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "cp-10151820-build-source-bootstrap.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "docs/learnings/cp-10151820-build-source-bootstrap.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-main-gate.mjs",
+      "path": "cp-10152320-main-scopes.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-main-gate.mjs",
+      "path": "docs/learnings/cp-10152320-main-scopes.md",
+      "role": "documentation"
+    },
     {
       "owner_path": "packages/brain/src/lib/implementation-ci-pilot-manifest.js",
       "path": "packages/brain/src/lib/__tests__/integration/implementation-ci-pilot-manifest.test.js",
@@ -550,8 +1217,16 @@
       "path": "packages/brain/src/lib/__tests__/integration/implementation-ci-pilots.test.js",
       "role": "verification"
     },
-    {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "cp-10152210-snapshot-recovery.prd.md", "role": "documentation"},
-    {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "docs/learnings/cp-10152210-snapshot-recovery.md", "role": "documentation"},
+    {
+      "owner_path": "scripts/ci/implementation-main-snapshot.mjs",
+      "path": "cp-10152210-snapshot-recovery.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-main-snapshot.mjs",
+      "path": "docs/learnings/cp-10152210-snapshot-recovery.md",
+      "role": "documentation"
+    },
     {
       "owner_path": "scripts/map/register-capability-pilots.mjs",
       "path": "packages/brain/src/lib/__tests__/implementation-ci-pilots.test.js",
@@ -797,8 +1472,16 @@
       "path": "packages/brain/src/__tests__/golden-path-proposal-wiring.test.js",
       "role": "verification"
     },
-    {"owner_path":"packages/brain/scripts/coding-workflow/runner/runtime-install.mjs","path":"packages/brain/scripts/coding-workflow/runner/__tests__/runtime-install.test.mjs","role":"verification"},
-    {"owner_path":"packages/brain/src/startup-port-guard.js","path":"packages/brain/src/__tests__/startup-port-guard.test.js","role":"verification"},
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/runner/runtime-install.mjs",
+      "path": "packages/brain/scripts/coding-workflow/runner/__tests__/runtime-install.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/startup-port-guard.js",
+      "path": "packages/brain/src/__tests__/startup-port-guard.test.js",
+      "role": "verification"
+    },
     {
       "owner_path": "packages/brain/src/lib/task-type-registry.js",
       "path": "packages/brain/src/__tests__/task-type-registry.guard.test.js",
@@ -869,7 +1552,6 @@
       "path": "packages/brain/scripts/smoke/ops-notion-schema-smoke.sh",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/src/projection/workflow-body.js",
       "path": "cp-1013205500-workflow-notion-readback-fix.prd.md",
@@ -880,82 +1562,340 @@
       "path": "cp-1013205500-workflow-notion-readback-fix.dod.md",
       "role": "documentation"
     },
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/src/lib/__tests__/version-identity-preflight.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "packages/brain/scripts/smoke/version-identity-preflight-smoke.sh", "role": "verification"},
-    
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "cp-10131845-version-identity-preflight.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/version-identity-preflight.js", "path": "cp-10131845-version-identity-preflight.dod.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/routes/strategic-decisions.js", "path": "packages/brain/scripts/smoke/cw-bd2b1556-qa-smoke.sh", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/runtime-identities.js", "path": "packages/brain/src/lib/__tests__/runtime-identities.test.js", "role": "verification"},
-    
-    {"owner_path": "packages/brain/src/lib/runtime-identities.js", "path": "cp-10131905-agent-skill-identities.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/runtime-identities.js", "path": "cp-10131905-agent-skill-identities.dod.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/skill-git-provenance.js", "path": "packages/brain/src/lib/__tests__/skill-git-provenance.test.js", "role": "verification"},
-    
-    {"owner_path": "packages/brain/src/lib/skill-git-provenance.js", "path": "cp-10131958-skill-git-provenance.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/skill-git-provenance.js", "path": "cp-10131958-skill-git-provenance.dod.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "packages/brain/src/lib/__tests__/runtime-version-graph.test.js", "role": "verification"},
-    
-    {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "cp-10132012-runtime-version-graph.prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/runtime-version-graph.js", "path": "cp-10132012-runtime-version-graph.dod.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/workflow-failure.js", "path": "packages/brain/src/lib/__tests__/workflow-failure.test.js", "role": "verification"},
-    
-    {"owner_path": "packages/brain/src/lib/notion-projection-engine.js", "path": "packages/brain/src/lib/__tests__/notion-projection-engine.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/script-run-definition.js", "path": "packages/brain/src/lib/__tests__/script-run-definition.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/workflow-authoring/release-proof.js", "path": "packages/brain/src/workflow-authoring/release-proof.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/existing-ops-source.js", "path": "sprints/10151430-ci-source-bootstrap/prep-prd.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/existing-ops-source.js", "path": "docs/learnings/cp-10151430-ci-source-bootstrap.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/existing-ops-runtime-source.js", "path": "packages/brain/src/lib/__tests__/existing-ops-runtime-source.test.js", "role": "verification"},
-    
-    {"owner_path": "packages/brain/src/lib/existing-ops-source.js", "path": "sprints/10151430-ci-source-bootstrap/contract-draft.md", "role": "documentation"},
-    {"owner_path": "packages/brain/src/lib/leadgen-dispatch.js", "path": ".prd.md", "role": "documentation"},
-    {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "docs/learnings/cp-10151400-ci-snapshot.md", "role": "documentation"},
-    {"owner_path": "scripts/ci/implementation-main-snapshot.mjs", "path": "scripts/ci/__tests__/implementation-main-snapshot.test.mjs", "role": "verification"},
-    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "packages/brain/scripts/coding-workflow/runner/README.md", "role": "documentation"},
-    {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"docs/current/brain-leadgen-dispatch.md","role":"documentation"},
-    {"owner_path":"packages/brain/src/lib/leadgen-dispatch.js","path":"packages/brain/src/lib/__tests__/leadgen-dispatch.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/leadgen-dispatch-contract.js","path":"packages/brain/src/lib/__tests__/leadgen-dispatch-contract.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/leadgen-batch-proof.js","path":"packages/brain/src/lib/__tests__/leadgen-batch-proof.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/leadgen-empty-terminal.js","path":"packages/brain/src/lib/__tests__/leadgen-empty-terminal.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/leadgen-runtime-status.js","path":"packages/brain/src/lib/__tests__/leadgen-runtime-status.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/task-lease.js","path":"packages/brain/src/lib/__tests__/task-lease.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/factory-workflow-config.js","path":"packages/brain/src/lib/__tests__/factory-workflow-config.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/leadgen-controller.js","path":"packages/brain/src/lib/leadgen-controller.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/routes/workflows.js","path":"packages/brain/src/routes/workflows.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/factory-workflow-config.js","path":"scripts/ci/__tests__/factory-workflow-config-source.test.mjs","role":"verification"},
-    
-    {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/brain/scripts/smoke/tree-legacy-layout.sh", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/brain/src/lib/__tests__/tree-legacy-layout.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/brain/src/__tests__/integration/tree-legacy-layout.pg.integration.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/brain/src/__tests__/integration/tree-legacy-layout-http.pg.integration.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/routes/tree-legacy-layout.js", "path": "packages/brain/src/routes/__tests__/tree-legacy-layout.test.js", "role": "verification"},
-    {"owner_path": "packages/brain/src/lib/tree-legacy-layout.js", "path": "packages/quality/smoke-write-targets.txt", "role": "verification"},
-    {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/api/features/planning/pages/capability-system/InvocationPanel.test.tsx", "role": "verification"},
-    {"owner_path": "apps/api/features/planning/pages/capability-system/CapabilitySystem.tsx", "path": "apps/api/features/planning/pages/capability-system/CapabilitySystem.test.tsx", "role": "verification"},
-    {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/invocation-preview-server.test.mjs", "role": "verification"},
-    {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/smoke/invocation-smoke.sh", "role": "verification"},
-    
-    {"owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx", "path": "apps/dashboard/e2e/invocation-browser-check.spec.mjs", "role": "verification"},
-    {"owner_path":"apps/api/features/planning/pages/capability-system/BusinessInputs.tsx","path":"apps/api/features/planning/pages/capability-system/BusinessInputs.test.tsx","role":"verification"},
-    
-    {"owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs", "path": "docs/learnings/cp-10161456-cw-isolation-proof.md", "role": "documentation"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"docs/learnings/cp-10171426-native-evidence-source.md","role":"documentation"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-evidence-source.test.js","role":"verification"},
-    
-    {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-evidence-envelopes.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/work-routing-store.js","path":"packages/brain/src/__tests__/work-routing-store.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/event-bus.js","path":"packages/brain/src/__tests__/event-bus.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/event-bus.js","path":"packages/brain/src/__tests__/integration/event-bus-startup-lock.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/commander-failure-proof.js","path":"packages/brain/src/lib/__tests__/commander-failure-proof.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/commander-failure-proof.js","path":"packages/brain/src/lib/__tests__/commander-legacy-037.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/commander-failure-reconcile.js","path":"packages/brain/src/__tests__/integration/commander-failure-reconcile.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/commander-failure-reconcile.js","path":"packages/brain/src/lib/__tests__/commander-failure-reconcile.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/commander-failure-probe-source.js","path":"packages/brain/src/lib/__tests__/commander-failure-probe-source.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/commander-failure-reader.js","path":"packages/brain/src/lib/__tests__/commander-failure-reader.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/infra-consumer-source.js","path":"packages/brain/src/lib/__tests__/infra-consumer-source.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/infra-consumer-snapshot.js","path":"packages/brain/src/lib/__tests__/infra-consumer-snapshot.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/consumer-evidence-store.js","path":"packages/brain/src/lib/__tests__/consumer-evidence-store.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/infra-consumer-source.js","path":"packages/brain/src/__tests__/integration/infra-consumer-source.pg.integration.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/infra-consumer-source.js","path":"packages/brain/scripts/smoke/infra-consumer-source-smoke.sh","role":"verification"}
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "packages/brain/src/lib/__tests__/version-identity-preflight.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "packages/brain/scripts/smoke/version-identity-preflight-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "cp-10131845-version-identity-preflight.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/version-identity-preflight.js",
+      "path": "cp-10131845-version-identity-preflight.dod.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/strategic-decisions.js",
+      "path": "packages/brain/scripts/smoke/cw-bd2b1556-qa-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-identities.js",
+      "path": "packages/brain/src/lib/__tests__/runtime-identities.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-identities.js",
+      "path": "cp-10131905-agent-skill-identities.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-identities.js",
+      "path": "cp-10131905-agent-skill-identities.dod.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-git-provenance.js",
+      "path": "packages/brain/src/lib/__tests__/skill-git-provenance.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-git-provenance.js",
+      "path": "cp-10131958-skill-git-provenance.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/skill-git-provenance.js",
+      "path": "cp-10131958-skill-git-provenance.dod.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-version-graph.js",
+      "path": "packages/brain/src/lib/__tests__/runtime-version-graph.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-version-graph.js",
+      "path": "cp-10132012-runtime-version-graph.prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/runtime-version-graph.js",
+      "path": "cp-10132012-runtime-version-graph.dod.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/workflow-failure.js",
+      "path": "packages/brain/src/lib/__tests__/workflow-failure.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/notion-projection-engine.js",
+      "path": "packages/brain/src/lib/__tests__/notion-projection-engine.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/script-run-definition.js",
+      "path": "packages/brain/src/lib/__tests__/script-run-definition.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/workflow-authoring/release-proof.js",
+      "path": "packages/brain/src/workflow-authoring/release-proof.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "sprints/10151430-ci-source-bootstrap/prep-prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "docs/learnings/cp-10151430-ci-source-bootstrap.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-runtime-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-runtime-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "sprints/10151430-ci-source-bootstrap/contract-draft.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/leadgen-dispatch.js",
+      "path": ".prd.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-main-snapshot.mjs",
+      "path": "docs/learnings/cp-10151400-ci-snapshot.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "scripts/ci/implementation-main-snapshot.mjs",
+      "path": "scripts/ci/__tests__/implementation-main-snapshot.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
+      "path": "packages/brain/scripts/coding-workflow/runner/README.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/leadgen-dispatch.js",
+      "path": "docs/current/brain-leadgen-dispatch.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/leadgen-dispatch.js",
+      "path": "packages/brain/src/lib/__tests__/leadgen-dispatch.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/leadgen-dispatch-contract.js",
+      "path": "packages/brain/src/lib/__tests__/leadgen-dispatch-contract.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/leadgen-batch-proof.js",
+      "path": "packages/brain/src/lib/__tests__/leadgen-batch-proof.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/leadgen-empty-terminal.js",
+      "path": "packages/brain/src/lib/__tests__/leadgen-empty-terminal.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/leadgen-runtime-status.js",
+      "path": "packages/brain/src/lib/__tests__/leadgen-runtime-status.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/task-lease.js",
+      "path": "packages/brain/src/lib/__tests__/task-lease.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/factory-workflow-config.js",
+      "path": "packages/brain/src/lib/__tests__/factory-workflow-config.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/leadgen-controller.js",
+      "path": "packages/brain/src/lib/leadgen-controller.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/workflows.js",
+      "path": "packages/brain/src/routes/workflows.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/factory-workflow-config.js",
+      "path": "scripts/ci/__tests__/factory-workflow-config-source.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/tree-legacy-layout.js",
+      "path": "packages/brain/scripts/smoke/tree-legacy-layout.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/tree-legacy-layout.js",
+      "path": "packages/brain/src/lib/__tests__/tree-legacy-layout.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/tree-legacy-layout.js",
+      "path": "packages/brain/src/__tests__/integration/tree-legacy-layout.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/tree-legacy-layout.js",
+      "path": "packages/brain/src/__tests__/integration/tree-legacy-layout-http.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/routes/tree-legacy-layout.js",
+      "path": "packages/brain/src/routes/__tests__/tree-legacy-layout.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/tree-legacy-layout.js",
+      "path": "packages/quality/smoke-write-targets.txt",
+      "role": "verification"
+    },
+    {
+      "owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx",
+      "path": "apps/api/features/planning/pages/capability-system/InvocationPanel.test.tsx",
+      "role": "verification"
+    },
+    {
+      "owner_path": "apps/api/features/planning/pages/capability-system/CapabilitySystem.tsx",
+      "path": "apps/api/features/planning/pages/capability-system/CapabilitySystem.test.tsx",
+      "role": "verification"
+    },
+    {
+      "owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx",
+      "path": "apps/dashboard/e2e/invocation-preview-server.test.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx",
+      "path": "apps/dashboard/e2e/smoke/invocation-smoke.sh",
+      "role": "verification"
+    },
+    {
+      "owner_path": "apps/api/features/planning/pages/capability-system/InvocationPanel.tsx",
+      "path": "apps/dashboard/e2e/invocation-browser-check.spec.mjs",
+      "role": "verification"
+    },
+    {
+      "owner_path": "apps/api/features/planning/pages/capability-system/BusinessInputs.tsx",
+      "path": "apps/api/features/planning/pages/capability-system/BusinessInputs.test.tsx",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
+      "path": "docs/learnings/cp-10161456-cw-isolation-proof.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-source.js",
+      "path": "docs/learnings/cp-10171426-native-evidence-source.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-native-evidence-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-native-evidence-envelopes.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-native-evidence-envelopes.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/work-routing-store.js",
+      "path": "packages/brain/src/__tests__/work-routing-store.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/event-bus.js",
+      "path": "packages/brain/src/__tests__/event-bus.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/event-bus.js",
+      "path": "packages/brain/src/__tests__/integration/event-bus-startup-lock.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-failure-proof.js",
+      "path": "packages/brain/src/lib/__tests__/commander-failure-proof.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-failure-proof.js",
+      "path": "packages/brain/src/lib/__tests__/commander-legacy-037.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-failure-reconcile.js",
+      "path": "packages/brain/src/__tests__/integration/commander-failure-reconcile.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-failure-reconcile.js",
+      "path": "packages/brain/src/lib/__tests__/commander-failure-reconcile.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-failure-probe-source.js",
+      "path": "packages/brain/src/lib/__tests__/commander-failure-probe-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/commander-failure-reader.js",
+      "path": "packages/brain/src/lib/__tests__/commander-failure-reader.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/infra-consumer-source.js",
+      "path": "packages/brain/src/lib/__tests__/infra-consumer-source.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/infra-consumer-snapshot.js",
+      "path": "packages/brain/src/lib/__tests__/infra-consumer-snapshot.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/consumer-evidence-store.js",
+      "path": "packages/brain/src/lib/__tests__/consumer-evidence-store.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/infra-consumer-source.js",
+      "path": "packages/brain/src/__tests__/integration/infra-consumer-source.pg.integration.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/infra-consumer-source.js",
+      "path": "packages/brain/scripts/smoke/infra-consumer-source-smoke.sh",
+      "role": "verification"
+    }
   ]
 }

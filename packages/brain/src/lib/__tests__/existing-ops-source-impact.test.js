@@ -122,13 +122,28 @@ it('被声明的入口源字节缺失仍UNKNOWN，不保留成功绑定',async()
  const f3=await build({[entry]:''});expect(f3.status).toBe('unknown');expect(f3.bindings).toEqual([]);
 });
 
-it('旧YAML真实单scope在已安装联合CLI时仍有来源，未运行的联合分支不冒Factory消费者',async()=>{
+it.each(['current','706f2e834afef562f4690a44e7fd1e3c80f25c83'])('旧YAML真实单scope在已审%s联合CLI时仍有来源，未运行的联合分支不冒Factory消费者',async cli=>{
  const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;
  const overrides=new Map([[workflow,yaml.dump(doc)],...['scripts/ci/implementation-pr-gate.mjs',entry,multi].map(path=>[path,readFileSync(new URL(path,new URL('../../../../../',import.meta.url)),'utf8')])]);
+ if(cli!=='current')overrides.set('scripts/ci/implementation-pr-gate.mjs',execFileSync('git',['show',`${cli}:scripts/ci/implementation-pr-gate.mjs`],{cwd:root,encoding:'utf8'}));
  const f3=(await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths:[...new Set([...paths,entry,multi])],readSource:async path=>overrides.get(path)??read(path)})).consumers[1];
  expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
  expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:'scripts/ci/implementation-pr-gate.mjs',kind:'direct_admission_runner'}));
  expect(f3.input_relations.some(r=>r.kind==='conditional_pr_admission_runner')).toBe(false);
+});
+
+it.each(['base_guard','head_guard','mode','import'])('旧单scope拒绝来源用途闸%s被改动的未知CLI',async kind=>{
+ const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;
+ const path='scripts/ci/implementation-pr-gate.mjs';
+ const original=readFileSync(new URL(path,new URL('../../../../../',import.meta.url)),'utf8');
+ const changed=kind==='base_guard'?original.replace("assertRecoveryPurpose(b,'pr');",'')
+  :kind==='head_guard'?original.replace('assertRecoveryPurpose(h,mode);','')
+  :kind==='mode'?original.replace('assertRecoveryPurpose(h,mode);',"assertRecoveryPurpose(h,'pr');")
+  :original.replace("import {assertRecoveryPurpose} from './implementation-source-recovery.mjs';",'');
+ expect(changed).not.toBe(original);
+ const f3=(await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,
+  readSource:async p=>p===workflow?yaml.dump(doc):p===path?changed:read(p)})).consumers[1];
+ expect(f3.status).toBe('unknown');expect(f3.bindings).toEqual([]);
 });
 
 it.each(['condition','callee','argument','else','side_effect','workflow_env','job_env','step_env','null_env','step_injection','forced_parse','undefined_shadow','forced_option','object_assign','computed_option','alias_option','entry_options','module_env','prototype_option'])('旧单scope不得把 %s 的main分支误证为未运行',async kind=>{

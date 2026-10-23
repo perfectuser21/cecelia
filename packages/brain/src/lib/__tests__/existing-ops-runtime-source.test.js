@@ -233,3 +233,14 @@ describe('CI入口聚合依赖必须精确匹配job ID', () => {
       expect(f3.bindings).toEqual([]); expect(f3.input_relations).toEqual([]);
     }, 120000);
 });
+
+describe('aggregate来源恢复所需固定完整历史checkout',()=>{
+ it('仅已审fetch-depth:0前缀仍证明真实aggregate入口',async()=>{
+  const f3=aggregateF3(await aggregateProof({mutateCi:doc=>{doc.jobs['lint-auto-merge-decision'].steps[0].with={'fetch-depth':0};}}));
+  expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
+ });
+ for(const [name,options]of [['其它深度',{'fetch-depth':2}],['改repo',{'fetch-depth':0,repository:'attacker/fork'}],['改ref',{'fetch-depth':0,ref:'unreviewed'}]])it(`${name}仍未知`,async()=>{
+  const f3=aggregateF3(await aggregateProof({mutateCi:doc=>{doc.jobs['lint-auto-merge-decision'].steps[0].with=options;}}));
+  expect(f3.status).toBe('unknown');expect(f3.gaps).toContainEqual({code:'aggregate_reader_ci_unproven'});
+ });
+});

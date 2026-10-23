@@ -8,19 +8,22 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, unlinkSync, rmSync } from 'fs';
+import { mkdtempSync, unlinkSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
 import request from 'supertest';
 
+const { settlementMock, retentionRuntimeMock } = vi.hoisted(() => ({ settlementMock: vi.fn(), retentionRuntimeMock: vi.fn() }));
+vi.mock('../../../../scripts/brain-image-retention/runtime.mjs', () => ({ createRuntime: retentionRuntimeMock }));
 let capturedSpawnArgs = null;
 let spawnCloseHandler = null;
 
-const { recordActionReceipt, resolveActionReceipt, execSyncMock } = vi.hoisted(() => ({
+const { recordActionReceipt, resolveActionReceipt, execSyncMock, execFileMock } = vi.hoisted(() => ({
   recordActionReceipt: vi.fn().mockResolvedValue('r-dep'),
   resolveActionReceipt: vi.fn().mockResolvedValue(true),
   execSyncMock: vi.fn().mockReturnValue(Buffer.from('ok')),
+  execFileMock: vi.fn(),
 }));
 vi.mock('../receipt-collector.js', () => ({ recordActionReceipt, resolveActionReceipt }));
 
@@ -66,6 +69,7 @@ vi.mock('child_process', () => ({
     };
   },
   execSync: execSyncMock,
+  execFile: execFileMock,
 }));
 
 describe('deploy webhook 回执接线（T4）', () => {
@@ -75,6 +79,8 @@ describe('deploy webhook 回执接线（T4）', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    retentionRuntimeMock.mockResolvedValue({ledger:{settlement:settlementMock}});
+    settlementMock.mockResolvedValue({outcome:"success",git_sha:"a".repeat(40),image_id:"sha256:"+"b".repeat(64)});
     recordActionReceipt.mockResolvedValue('r-dep');
     resolveActionReceipt.mockResolvedValue(true);
     execSyncMock.mockReturnValue(Buffer.from('ok'));
@@ -84,6 +90,8 @@ describe('deploy webhook 回执接线（T4）', () => {
     // 用临时目录做 REPO_ROOT，避免 production 分支在真实仓库里落 log 文件
     tmpRepoRoot = mkdtempSync(join(tmpdir(), 'deploy-receipt-test-'));
     process.env.REPO_ROOT = tmpRepoRoot;
+    mkdirSync(join(tmpRepoRoot,'scripts'));writeFileSync(join(tmpRepoRoot,'scripts/staging-deploy.sh'),'fixture');
+    execFileMock.mockImplementation((_bin,_args,opts,cb)=>cb(null,`STAGING_VERIFIED sha=${'a'.repeat(40)} image=sha256:${'b'.repeat(64)} request=${opts.env.STAGING_REQUEST_ID}\n`));
     // 清掉残留状态文件，否则模块启动读到 running → 409
     try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
     vi.resetModules();
@@ -105,6 +113,49 @@ describe('deploy webhook 回执接线（T4）', () => {
       process.env.REPO_ROOT = ORIG_REPO_ROOT;
     }
     try { unlinkSync('/tmp/cecelia-deploy-status.json'); } catch { /* noop */ }
+  });
+
+  it('idle只在实际结算证明存在时明确幂等成功',async()=>{
+    const res=await request(app).get('/api/brain/deploy/status');
+    expect(res.body.settled).toBe(true);expect(res.body.settlement.outcome).toBe('success');
+    expect(settlementMock).toHaveBeenCalled();
+  });
+  it('长时只读期间新发布进入running，旧settlement不得随响应放行',async()=>{
+    const {deployState}=await import('../routes/ops.js');
+    settlementMock.mockImplementation(async()=>{deployState.status='running';return {outcome:'success'};});
+    const res=await request(app).get('/api/brain/deploy/status');
+    expect(res.body.status).toBe('running');expect(res.body.settled).toBe(false);
+  });
+  it.each(['running','rolling_back','failed','rollback_failed'])('状态%s不能被历史ledger覆盖',async status=>{
+    const {deployState}=await import('../routes/ops.js');deployState.status=status;
+    const res=await request(app).get('/api/brain/deploy/status');
+    expect(res.body.status).toBe(status);expect(res.body.settled).toBe(false);expect(settlementMock).not.toHaveBeenCalled();
+  });
+  it.each(['IMAGE_RETENTION_BUSY','DOCKER_TIMEOUT'])('只读结算%s保持unsettled',async code=>{
+    settlementMock.mockRejectedValue(Object.assign(Error(code),{code}));
+    const res=await request(app).get('/api/brain/deploy/status');
+    expect(res.status).toBe(200);expect(res.body.settled).toBe(false);expect(res.body.settlement).toBeNull();
+  });
+
+  it.each([42, {path:'a'}, ['ok',null], ['line\nbreak'], ['x'.repeat(1025)], Array(2001).fill('a')])('invalid changed_paths rejects before spawn %#',async changed_paths=>{
+    const res=await request(app).post('/api/brain/deploy').set('Authorization','Bearer tok').send({changed_paths});
+    expect(res.status).toBe(400);expect(capturedSpawnArgs).toBeNull();expect(recordActionReceipt).not.toHaveBeenCalled();
+  });
+
+  it('production binds the requested SHA to a fixed executable and literal argv',async()=>{
+    const sha='a'.repeat(40),changed_paths=['packages/brain/src/$(touch SHOULD_NOT_EXIST).js'];
+    const res=await request(app).post('/api/brain/deploy').set('Authorization','Bearer tok').send({sha,changed_paths});
+    expect(res.status).toBe(202);await new Promise(r=>setTimeout(r,30));
+    expect(capturedSpawnArgs[0]).toBe('bash');
+    expect(capturedSpawnArgs[1]).toEqual([join(tmpRepoRoot,'scripts/deploy-local.sh'),`--changed=${changed_paths[0]}`,'main']);
+    expect(capturedSpawnArgs[2].shell).not.toBe(true);
+    expect(capturedSpawnArgs[2].env.EXPECTED_SHA).toBe(sha);
+  });
+
+  it('deployment mutation route bounds request rate before side effects',async()=>{
+    for(let i=0;i<30;i++)expect((await request(app).post('/api/brain/deploy').send({})).status).toBe(401);
+    const limited=await request(app).post('/api/brain/deploy').send({});
+    expect(limited.status).toBe(429);expect(capturedSpawnArgs).toBeNull();expect(recordActionReceipt).not.toHaveBeenCalled();
   });
 
   it('production deploy → 写 pending(kind=deploy/target=production)，close(0) 核销 confirmed', async () => {
@@ -146,6 +197,13 @@ describe('deploy webhook 回执接线（T4）', () => {
     expect(recordActionReceipt).not.toHaveBeenCalled();
   });
 
+  it('staging 冷构建与隔离恢复允许90分钟执行但保持有限超时', async () => {
+    await request(app).post('/api/brain/deploy').set('Authorization', 'Bearer tok')
+      .send({ staging: true, sha: 'a'.repeat(40) });
+    expect(execFileMock).toHaveBeenCalled();
+    expect(execFileMock.mock.calls[0][2].timeout).toBe(90 * 60 * 1000);
+  });
+
   it('staging deploy 成功 → record(deploy/staging) + confirmed', async () => {
     await request(app)
       .post('/api/brain/deploy')
@@ -158,8 +216,8 @@ describe('deploy webhook 回执接线（T4）', () => {
     expect(resolveActionReceipt).toHaveBeenCalledWith('r-dep', 'confirmed', expect.anything());
   });
 
-  it('staging execSync 抛错 → 核销 failed（含 error）', async () => {
-    execSyncMock.mockImplementation(() => { throw new Error('boom'); });
+  it('staging execFile 回调错误 → 核销 failed（含 error）', async () => {
+    execFileMock.mockImplementation((_bin,_args,_opts,cb)=>cb(new Error('boom')));
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
@@ -173,15 +231,15 @@ describe('deploy webhook 回执接线（T4）', () => {
     );
   });
 
-  it('staging 输出 STAGING_SKIP_REASON=no_docker → confirmed 且 evidence 含 skip_reason', async () => {
-    execSyncMock.mockReturnValue(Buffer.from('STAGING_SKIP_REASON=no_docker\n'));
+  it('staging 输出 STAGING_SKIP_REASON=no_docker → failed 且保留错误回执', async () => {
+    execFileMock.mockImplementation((_bin,_args,_opts,cb)=>cb(null,'STAGING_SKIP_REASON=no_docker\n'));
     await request(app)
       .post('/api/brain/deploy')
       .set('Authorization', 'Bearer tok')
       .send({ mode: 'staging' });
     await new Promise((r) => setTimeout(r, 50));
     expect(resolveActionReceipt).toHaveBeenCalledWith(
-      'r-dep', 'confirmed', expect.objectContaining({ skip_reason: 'no_docker' })
+      'r-dep', 'failed', expect.objectContaining({ error: expect.stringContaining('未完成候选验证') })
     );
   });
 });

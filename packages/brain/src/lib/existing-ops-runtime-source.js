@@ -186,7 +186,7 @@ const sorted = value => Array.isArray(value) ? value.map(sorted) : value && type
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 // 只固定实际入口之前的已审步骤（含入口），不锁死其它 job 的预算或后续步骤。
 const CI_PREFIX = {
-  'lint-auto-merge-decision': 'd3b6f0ffc4ba19728ee7bedf1c4e44780ad059e55a55fcc1005cb535ab7e031d',
+  'lint-auto-merge-decision': ['d3b6f0ffc4ba19728ee7bedf1c4e44780ad059e55a55fcc1005cb535ab7e031d', 'cb496d88f8027a9d7bae5efbaf1a5b9c8fa30a9b9634ad7d54f9ad2036e6aa0f'],
   'goldset-eval': '1af5458b0a9cb29df7e20b6f1d22c3fac6f432c828888659720bc5b4ef4fcba6',
 };
 const AGGREGATE_PREFIX_BODIES = [
@@ -202,11 +202,11 @@ function ciNodeEntry(doc, jobId, command, condition, expectedEnv) {
     || !Array.isArray(doc.jobs['ci-passed']?.needs) || !doc.jobs['ci-passed'].needs.includes(jobId)) return false;
   const matches = steps.filter(s => s.run === command);
   const step = matches[0], checkout = steps.find(s => s.uses === 'actions/checkout@v4');
-  return matches.length === 1 && checkout && checkout.if === undefined && checkout.with === undefined
+  return matches.length === 1 && checkout && checkout.if === undefined && (checkout.with === undefined || jobId === 'lint-auto-merge-decision' && canonical(checkout.with) === canonical({ 'fetch-depth': 0 }))
     && checkout['continue-on-error'] === undefined && steps.indexOf(checkout) < steps.indexOf(step)
     && step.if === undefined && step.shell === undefined && step['working-directory'] === undefined
     && step['continue-on-error'] === undefined && canonical(step.env) === canonical(expectedEnv)
-    && sha256(JSON.stringify(sorted(steps.slice(0, steps.indexOf(step) + 1)))) === CI_PREFIX[jobId];
+    && [CI_PREFIX[jobId]].flat().includes(sha256(JSON.stringify(sorted(steps.slice(0, steps.indexOf(step) + 1)))));
 }
 /** 仅绑定真实 CI node 入口；条件 job 保留条件语义，不扩展目录或伪造二进制输入摘要。 */
 export async function collectCiEntrySources({ aggregate, goldset, parse, read, ci, revision, relations, requireProof }) {
@@ -248,16 +248,16 @@ const REVIEWED_FILES={
   "scripts/lib/brain-staging.sh": ["57697254e538f75b6a99e276e0b3d95405eb29f95c6a01686f5fd66dd5227089", "66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170"],
   "scripts/staging-verify.sh": "7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925",
   "scripts/wait-for-staging.sh": "feed4d74afc960f4c6ce73b27c63cf2249aef8cd5b17c9dea10199e3ab1251c0",
-  "scripts/brain-deploy.sh": "b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428"
+  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e"]
 };
 const ROUTE_AST_SHA='7190b4987ffa5adbab19d5fcf17d341586db536bba7dfeb97c205aab63c910c4';
 const BUDGET_STAGING_FILES={
   ".github/workflows/auto-staging-deploy.yml": "d9ef17f05464a0bee54bc78a9caae30439dbafda499f5a48d8832bb8ce2ffb6e",
   "scripts/staging-deploy.sh": "e8c35ccbe3eb599619c2f94d87d80c309f9694eacdd920ece6afffb3c3484a34",
-  "scripts/lib/brain-staging.sh": "66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170",
+  "scripts/lib/brain-staging.sh": ["66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170", "0adad6c3b8f8e3f398fb7621af31876a60f31a9303346d14fac55e5401f01b00"],
   "scripts/staging-verify.sh": "7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925",
   "scripts/wait-for-staging.sh": "6ca3e437f2583ce77e0ac916958a726ad0c884637d032e7b76003700a69b2467",
-  "scripts/brain-deploy.sh": "b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428"
+  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e"]
 };
 const BUDGET_FILES={
   "scripts/lib/bluegreen.sh": "ca287873ef216a990fd57e588284e401218969294df17ab48592653262ed74d6",
@@ -341,9 +341,16 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
 }
 export async function collectIsolatedStagingSources({read,requireProof,relations,revision,route,parse}){
  // 这些完整shell/workflow已通过真实脚本正反例；任何控制流变化均需重新审查，不能按关键词认领。
- const routeHash=route&&routeDigest(route,parse),budget=routeHash===BUDGET_POST_AST;
+ const routeHash=route&&routeDigest(route,parse),budget=routeHash===BUDGET_POST_AST;let sourceOnlyDeploy=false;
  for(const[path,digest]of Object.entries(budget?BUDGET_STAGING_FILES:REVIEWED_FILES)){
   const source=await read(path);requireProof(source&&(Array.isArray(digest)?digest:[digest]).includes(stagingHash(source)),'isolated_staging_source_unproven');
+  if(path==='scripts/brain-deploy.sh'&&source&&stagingHash(source)==='a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e')sourceOnlyDeploy=true;
+ }
+ if(sourceOnlyDeploy){
+  const input_path='packages/brain/package.json',text=await read(input_path);let value;
+  try{value=JSON.parse(text);}catch{value=null;}
+  if(requireProof(value!==null&&typeof value==='object'&&!Array.isArray(value),'source_only_package_unproven'))
+   relations.push({consumer_path:'scripts/brain-deploy.sh',input_path,kind:'reviewed_source_only_package_read',revision});
  }
  requireProof(routeHash===ROUTE_AST_SHA||budget,'isolated_staging_route_unproven');
  if(budget)await collectSettlementSources({read,requireProof,relations,revision,route,parse});

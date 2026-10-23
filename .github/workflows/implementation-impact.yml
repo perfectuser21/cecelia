@@ -10,6 +10,15 @@ on:
         description: '固定基线40位SHA（须已有中央历史定义）'
         required: true
         type: string
+      source_baseline_recovery:
+        description: '仅已独立准入并合并的来源bootstrap：隔离编译来源基线，不声明部署就绪'
+        required: false
+        type: boolean
+        default: false
+      source_reviewed_head:
+        description: '仅来源恢复：已独立审查的最终main SHA，必须等于本次运行SHA'
+        required: false
+        type: string
       export_device_patrol_source_identity:
         description: '仅可信main导出已登记巡查来源身份；不执行候选源码'
         required: false
@@ -33,6 +42,8 @@ on:
 permissions:
   contents: read
   actions: read
+  checks: read
+  pull-requests: read
 concurrency:
   group: implementation-impact-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -71,6 +82,10 @@ jobs:
         if: steps.scope.outputs.applicable == 'true'
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
+      - name: 已合并来源恢复工具依赖
+        if: steps.scope.outputs.applicable == 'true' && github.event_name == 'workflow_dispatch' && inputs.source_baseline_recovery == true
+        working-directory: tooling
+        run: npm ci --ignore-scripts
       - name: 只读等待实际来源收集器就绪
         if: steps.scope.outputs.applicable == 'true'
         env:
@@ -78,6 +93,8 @@ jobs:
           CECELIA_INTERNAL_TOKEN: ${{ secrets.CECELIA_INTERNAL_TOKEN }}
           GH_TOKEN: ${{ secrets.CECELIA_ACTIONS_READ_TOKEN || github.token }}
           HEAD: ${{ github.sha }}
+          BASE: ${{ inputs.base_revision || github.event.before }}
+          SOURCE_BASELINE_RECOVERY: ${{ github.event_name == 'workflow_dispatch' && inputs.source_baseline_recovery == true }}
         run: node tooling/scripts/ci/implementation-source-ready.mjs
       - uses: actions/upload-artifact@v4
         if: always() && steps.scope.outputs.applicable == 'true'
@@ -90,7 +107,16 @@ jobs:
     needs: [source-runtime-ready]
     if: inputs.export_device_patrol_source_identity != true && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: ${{ inputs.source_baseline_recovery == true && 45 || 15 }}
+    services:
+      postgres:
+        image: ${{ inputs.source_baseline_recovery == true && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: isolated-ci
+          POSTGRES_DB: cecelia_scratch
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -109,11 +135,31 @@ jobs:
           node-version: '22'
       - run: npm ci --ignore-scripts
         working-directory: tooling
+      - name: 下载本次真实来源身份观察
+        if: github.event_name == 'workflow_dispatch' && inputs.source_baseline_recovery == true
+        uses: actions/download-artifact@v4
+        with:
+          name: implementation-source-readiness-${{ github.sha }}
+          path: evidence/source-readiness
+      - name: 来源恢复隔离scratch及固定Skill准备
+        if: github.event_name == 'workflow_dispatch' && inputs.source_baseline_recovery == true
+        env:
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_scratch
+          DB_USER: ci
+          DB_PASSWORD: isolated-ci
+          SKILLS_SOURCE_SSH_KEY: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          node tooling/packages/brain/src/migrate.js
+          bash tooling/scripts/ensure-skills-source.sh "$GITHUB_WORKSPACE/tooling"
       - uses: tailscale/github-action@v2
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
       - name: 固定main中央定义导出
         env:
+          IMPLEMENTATION_SKILLS_SOURCE_DIR: ${{ github.workspace }}/tooling/.skills-source
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
           CECELIA_INTERNAL_TOKEN: ${{ secrets.CECELIA_INTERNAL_TOKEN }}
           GH_TOKEN: ${{ secrets.CECELIA_ACTIONS_READ_TOKEN || github.token }}
@@ -121,6 +167,12 @@ jobs:
           SOURCE_REPO: ${{ inputs.source_repo || github.repository }}
           BASE: ${{ inputs.base_revision || github.event.before }}
           HEAD: ${{ inputs.head_revision || github.sha }}
+          SOURCE_BASELINE_RECOVERY: ${{ github.event_name == 'workflow_dispatch' && inputs.source_baseline_recovery == true }}
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_scratch
+          DB_USER: ci
+          DB_PASSWORD: isolated-ci
         run: |
           set -euo pipefail
           node tooling/scripts/ci/implementation-main-snapshot.mjs
@@ -213,6 +265,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
+          NATIVE_PR_BASELINE: ${{ github.repository == 'perfectuser21/cecelia' && github.event_name == 'pull_request' && !inputs.source_repo && !inputs.tooling_revision && !inputs.scope && !inputs.head_revision && !inputs.base_revision && !inputs.mode && !inputs.admission_scopes }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/implementation-input" "$RUNNER_TEMP/implementation-output"
@@ -232,6 +285,16 @@ jobs:
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-snapshot-$HEAD" -D "$RUNNER_TEMP/implementation-input/head"
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-baseline-$HEAD" -D "$RUNNER_TEMP/implementation-input/base"
           else
+            if [[ "${NATIVE_PR_BASELINE:-false}" == true ]]; then
+              # 原PRbase只固定可信工具；有效基线可沿第一父链恢复，仍跑全部累积差分。
+              test "$MAP_SCOPE" = cecelia-kr
+              test "$ADMISSION_SCOPES" = '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}'
+              BASE="$(node source/scripts/ci/implementation-pr-baseline.mjs \
+                --repo-root "$GITHUB_WORKSPACE/source" --tooling-root "$GITHUB_WORKSPACE/tooling" \
+                --input-dir "$RUNNER_TEMP/implementation-input" --output-dir "$RUNNER_TEMP/implementation-output")"
+              [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
+              printf 'BASE=%s\n' "$BASE" >> "$GITHUB_ENV"
+            else
             artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=implementation-snapshot-$BASE" | jq -r --arg base "$BASE" '.artifacts | map(select(.expired == false and .workflow_run.head_branch == "main" and .workflow_run.head_sha == $base and .workflow_run.repository_id == .workflow_run.head_repository_id)) | sort_by(.created_at, .id) | reverse | first | .id // empty')
             if [[ -z "$artifact" ]]; then
               gap_code=IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING
@@ -254,6 +317,7 @@ jobs:
             jq -e 'type == "object" and .error == null and (.snapshot | type == "object")' "$RUNNER_TEMP/implementation-input/base/base.json" >/dev/null
             mkdir -p "$RUNNER_TEMP/implementation-input/head"
             cp "$RUNNER_TEMP/implementation-input/base/base.json" "$RUNNER_TEMP/implementation-input/head/head.json"
+            fi
             if [[ -n "${ADMISSION_SCOPES:-}" ]]; then
               jq -e 'type == "object" and keys == ["schema_version", "scopes"] and .schema_version == 1 and (.scopes | type == "array" and length > 0 and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and length == (unique | length))' <<< "$ADMISSION_SCOPES" >/dev/null
               gap_code=IMPLEMENTATION_CI_SCOPE_COMPANION_INVALID
