@@ -365,5 +365,5 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 - [x] [BEHAVIOR] crmnotionorigin Notion HTTP固定origin，调用方只可提供严格白名单pathname；绝对/协议相对/反斜杠/编码/CRLF/query/hash及非字符串路径在HTTP前拒绝，合法请求无queryhash且禁止重定向，创建429不重试。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/crm/notion-request.test.js --maxWorkers=1 --minWorkers=1"
 
-- [ ] [BEHAVIOR] settlementcontainerlayout 同一生产GET处理器在仓库与打包容器布局均加载结算模块；模块缺失、ledger失败及非成功部署状态保持未结算，精确AST新旧合同与恶意变体拒绝闭包。
+- [x] [BEHAVIOR] settlementcontainerlayout 复用main已验证的双布局加载器，补原Docker打包合同、真实容器ledger失败及running/failed/rollback不得被成功收据放行的永久回归。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/deploy-settlement-layout.test.js src/__tests__/deploy-receipt.test.js src/__tests__/deploy-settlement.test.js src/lib/__tests__/existing-ops-staging-budget-bootstrap.test.js --maxWorkers=1 --minWorkers=1"

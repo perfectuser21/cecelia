@@ -2,8 +2,6 @@ import { it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
-import { parse } from 'acorn';
 import { buildExistingOpsSources } from '../existing-ops-source.js';
 import { readNativeConsumerRuntime } from '../native-consumer-runtime.js';
 const candidate={
