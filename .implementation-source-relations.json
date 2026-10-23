@@ -3,6 +3,13 @@
   "repo": "perfectuser21/cecelia",
   "relations": [
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"changes/cp-1023-runtime-layout-source-proof.md","role":"release"},
+    {"owner_path":"packages/brain/src/lib/deploy-retention-runtime.js","path":"packages/brain/src/lib/__tests__/deploy-retention-runtime.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/openclaw-agent-executor.js","path":"docs/runbooks/qiumi-exec-params-template.md","role":"documentation"},
+    {"owner_path":"packages/brain/src/openclaw-agent-executor.js","path":"changes/cp-1023-qiumi-binding-repair.md","role":"release"},
+    {"owner_path":"packages/brain/src/lib/openclaw-session-binding.js","path":"packages/brain/src/lib/__tests__/openclaw-session-binding.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/routing/env.js","path":"packages/brain/src/routing/__tests__/env.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/routing/exec-params.js","path":"packages/brain/src/routing/__tests__/exec-params.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/routing/qiumi-router.js","path":"packages/brain/src/routing/__tests__/qiumi-router.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/release-validation-budget.js","path":"packages/brain/src/lib/__tests__/release-validation-budget.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/infra-bootstrap-source.js","path":"packages/brain/src/lib/__tests__/infra-bootstrap-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/infra-registry-bootstrap.js","path":"packages/brain/src/lib/__tests__/infra-registry-bootstrap.test.js","role":"verification"},

@@ -3,7 +3,7 @@
  * 只认固定字段名，解析不出就报错——不回落到任何正则猜测。
  */
 import { describe, it, expect } from 'vitest';
-import { parseExecParams, MODEL_ALIASES, splitExecParamsBlock } from '../exec-params.js';
+import { parseExecParams, requestedAiAccount, MODEL_ALIASES, splitExecParamsBlock } from '../exec-params.js';
 
 const env = {
   modelAllowlist: [
@@ -231,4 +231,36 @@ describe('splitExecParamsBlock', () => {
     expect(splitExecParamsBlock(body)).toEqual({ present: false, rest: body });
     expect(splitExecParamsBlock(null)).toEqual({ present: false, rest: '' });
   });
+});
+
+describe('秋米显式 AI 账号失败关闭合同', () => {
+  const body = (account) => `【执行设置——启动前落实】\nAI账号：${account}\n【执行参数】\n执行Agent：dev\n模型：openai/gpt-6.1-sol\n【执行要求】\n只读检查`;
+
+  it.each(['openai-plus3', 'openai:xuxiao21xx@icloud.com'])('识别 %s 并传递给会话绑定', (account) => {
+    expect(requestedAiAccount(body(account))).toEqual([account]);
+    const result = parseExecParams(body(account), { modelAllowlist: ['openai/gpt-6.1-sol'] });
+    expect(result.errors).toEqual([]);
+    expect(result.aiAccount).toBe(account);
+  });
+
+  it('空账号、冲突账号和 shell 字符不会被静默忽略', () => {
+    for (const value of ['', 'openai-plus3\nAI账号：other', 'openai-plus3;id']) {
+      expect(parseExecParams(body(value)).errors).toContain('bad_ai_account');
+    }
+  });
+});
+
+ describe('真实云手机模板回归', () => {
+  it('缺结束标记时保留 skill、输入、回填和执行要求', () => {
+    const body = '【执行参数】\n执行Agent：skill-factory\n模型：openai/gpt-6.1-sol\n调用 skill：热点采集\n输入：只读采集三条\n业务结果回填：客户热点表\n【执行要求】\n完成后释放设备锁';
+    const rest = splitExecParamsBlock(body).rest;
+    for (const text of ['调用 skill：热点采集', '输入：只读采集三条', '业务结果回填：客户热点表', '【执行要求】', '完成后释放设备锁']) expect(rest).toContain(text);
+    expect(rest).not.toContain('模型：');
+  });
+});
+
+it('账号别名只按显式映射解析，缺映射拒绝，不猜同邮箱', () => {
+ const body = '【执行设置——启动前落实】\nAI账号：Codex team2\n【执行参数】\n模型：6.1sol';
+ expect(parseExecParams(body, { modelAllowlist: ['openai/gpt-6.1-sol'] }).errors).toContain('bad_ai_account');
+ expect(parseExecParams(body, { modelAllowlist: ['openai/gpt-6.1-sol'], aiAccountMap: { 'Codex team2': 'openai:xuxiao21xx@icloud.com' } })).toMatchObject({ model: 'openai/gpt-6.1-sol', aiAccount: 'openai:xuxiao21xx@icloud.com', errors: [] });
 });

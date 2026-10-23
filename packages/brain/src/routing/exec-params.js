@@ -82,7 +82,8 @@ function latestInFamily(family, allowlist) {
  * 显示名里的空格按连字符处理：「GPT-6 Sol」=gpt-6-sol，「Opus 4.8」=claude-opus-4-8。
  */
 function resolveModel(raw, allowlist) {
-  const t = raw.trim().toLowerCase().replace(/\s+/g, '-');
+  const input = raw.trim().toLowerCase().replace(/\s+/g, '-');
+  const t = input.replace(/^(\d+(?:\.\d+)?)sol$/, 'gpt-$1-sol');
   const family = MODEL_ALIASES[t] ?? (MODEL_FAMILIES[t] ? t : null);
   if (family) return latestInFamily(family, allowlist);
   const candidates = [t, t.startsWith('claude-') ? null : `claude-${t}`]
@@ -114,7 +115,33 @@ function parseTimeout(raw) {
 export function splitExecParamsBlock(body) {
   const text = String(body ?? '');
   if (!BLOCK_RE.test(text)) return { present: false, rest: text };
-  return { present: true, rest: text.replace(BLOCK_RE, '\n').replace(/\n{3,}/g, '\n\n').trim() };
+  const rest = text.replace(BLOCK_RE, (_block, contents) => {
+    let businessSection = false;
+    return '\n' + contents.split('\n').filter((line) => {
+      if (/^\s*【/.test(line)) businessSection = true;
+      const sep = line.search(/[：:]/);
+      return businessSection || sep < 0 || !FIELD_KEYS[normKey(line.slice(0, sep))];
+    }).join('\n') + '\n';
+  });
+  return { present: true, rest: rest.replace(/\n{3,}/g, '\n\n').trim() };
+}
+
+/** 从执行设置中读取原始账号标识；启动前转换为独立会话绑定。 */
+export function requestedAiAccount(body) {
+  const text = String(body ?? '');
+  const settings = text.match(/【执行设置——启动前落实】([\s\S]*?)(?=【[^】]+】|$)/)?.[1] ?? '';
+  const accounts = [...settings.matchAll(/^\s*AI账号\s*[：:]\s*([^\r\n]*)/gim)].map((m) => m[1].trim());
+  return accounts.length ? accounts : null;
+}
+
+export function resolveRequestedAiAccount(body, accountMap = {}) {
+  const accounts = requestedAiAccount(body);
+  if (!accounts) return { profileId: null };
+  if (accounts.length !== 1 || !accounts[0] || accounts[0].length > 256) return { error: 'bad_ai_account' };
+  const raw = accounts[0];
+  const mapped = accountMap && Object.hasOwn(accountMap, raw) ? accountMap[raw] : raw;
+  if (typeof mapped !== 'string' || !mapped || mapped.length > 256 || !/^[A-Za-z0-9._@:-]+$/.test(mapped) || mapped.includes('..')) return { error: 'bad_ai_account' };
+  return { profileId: mapped };
 }
 
 export function parseExecParams(body, env = {}) {
@@ -122,12 +149,16 @@ export function parseExecParams(body, env = {}) {
     present: false, agent: null, model: null, modelRaw: null, timeoutSec: null,
     acceptance: null, device: null, thinking: null, errors: [],
   };
+  const selection = resolveRequestedAiAccount(body, env.aiAccountMap);
+  if (selection.error) out.errors.push(selection.error);
+  else if (selection.profileId) out.aiAccount = selection.profileId;
   const m = String(body ?? '').match(BLOCK_RE);
   if (!m) return out;
   out.present = true;
   const allowlist = env.modelAllowlist ?? [];
 
   for (const line of m[1].split('\n')) {
+    if (/^\s*【/.test(line)) break;
     const sep = line.search(/[：:]/);
     if (sep < 0) continue;
     const field = FIELD_KEYS[normKey(line.slice(0, sep))];
