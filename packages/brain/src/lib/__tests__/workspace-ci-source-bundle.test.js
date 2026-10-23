@@ -138,7 +138,7 @@ it('旧精确下载封套仍可证明外部调用，原生祖先恢复不改变w
  const proof=await modernBundle(()=>{},null,{mutateImpact:y=>{
   const step=baselineDownload(y),start=step.run.indexOf('  if [[ "${NATIVE_PR_BASELINE:-false}" == true ]]; then\n'),end=step.run.indexOf('  else\n',start);
   expect(start).toBeGreaterThan(0);expect(end).toBeGreaterThan(start);
-  step.run=step.run.slice(0,start)+step.run.slice(end+9);
+  step.run=step.run.slice(0,start)+step.run.slice(end+7);
   step.run=step.run.replace('  fi\n  if [[ -n "${ADMISSION_SCOPES:-}" ]]','  if [[ -n "${ADMISSION_SCOPES:-}" ]]');
   expect(createHash('sha256').update(step.run).digest('hex')).toBe('51c728cdec33a877e94b11bfbd88eecb472ba24221ccf23d1b0d2c90a1fc2ca7');
   delete step.env.NATIVE_PR_BASELINE;
