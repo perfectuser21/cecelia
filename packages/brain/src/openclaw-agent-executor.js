@@ -31,7 +31,8 @@ import { finalizeTask } from './lib/task-terminal.js';
 import { setBrainLease, BRAIN_LEASE_MARGIN_SECONDS } from './lib/task-lease.js';
 import { rpaExploreFailure } from './lib/rpa-explore-receipt.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
-import { splitExecParamsBlock } from './routing/exec-params.js';
+import { sessionBindingCommand } from './lib/openclaw-session-binding.js';
+import { splitExecParamsBlock, resolveRequestedAiAccount } from './routing/exec-params.js';
 import { consumeCompanyAnalysis, markCompanyAnalysis, assertCompanyAnalysisDispatch, companyAnalysisPrompt } from './lib/company-kr-analysis.js';
 import {
   parseDeviceBusyMarker, planDeviceBusy, requeueForDeviceBusy, DEVICE_BUSY_EXPIRED_REASON, DUE_AT_SELECT_SQL,
@@ -79,7 +80,7 @@ export function isSafeRunId(runId) {
  * `$!` 拿到的是 `sh -c` 包装进程的 pid，不是 openclaw 自己的：包装进程要等 openclaw 退出、
  * 写完 .exit 才结束，所以它在整个 agent 运行期间都活着，PR1 probe 的 `kill -0 <pid>` 判活成立。
  */
-export function buildRemoteCommand({ runId, department, model = null, taskId, timeoutSec = AGENT_TIMEOUT_SEC, thinking = null, binPath = OPENCLAW_BIN }) {
+export function buildRemoteCommand({ runId, department, model = null, taskId, timeoutSec = AGENT_TIMEOUT_SEC, thinking = null, binPath = OPENCLAW_BIN, profileId = null }) {
   assertSafe('runId', runId, SAFE_ID);
   assertSafe('department', department, SAFE_ID);
   assertSafe('taskId', taskId, SAFE_ID);
@@ -88,12 +89,17 @@ export function buildRemoteCommand({ runId, department, model = null, taskId, ti
   if (thinking && !THINKING_LEVELS.has(String(thinking))) throw new Error('invalid thinking');
   assertSafe('binPath', binPath, SAFE_MODEL);
   const timeout = effectiveTimeoutSec(timeoutSec);
-  const modelArg = model ? ` --model ${model}` : '';
+  if (profileId) {
+    assertSafe('profileId', profileId, /^[A-Za-z0-9._@:-]+$/);
+    if (!model || !model.includes('/')) throw new Error('account binding requires explicit model');
+  }
+  const modelArg = model && !profileId ? ` --model ${model}` : '';
   const thinkingArg = thinking ? ` --thinking ${thinking}` : '';
   const log = `~/brain-runs/${runId}.log`;
   const exit = `~/brain-runs/${runId}.exit`;
   const pid = `~/brain-runs/${runId}.pid`;
-  const inner = `${binPath} agent --agent ${department}${modelArg} --session-key agent:${department}:${runId} --message "$M" --timeout ${timeout}${thinkingArg} --json > ${log} 2>&1; echo $? > ${exit}`;
+  const binding = profileId ? `${sessionBindingCommand({ binPath, key: `agent:${department}:${runId}`, agentId: department, model, profileId })} > ~/brain-runs/${runId}.binding.json 2> ${log}; B=$?; if [ $B -ne 0 ]; then echo $B > ${exit}; exit $B; fi; ` : '';
+  const inner = `${binding}${binPath} agent --agent ${department}${modelArg} --session-key agent:${department}:${runId} --message "$M" --timeout ${timeout}${thinkingArg} --json > ${log} 2>&1; echo $? > ${exit}`;
   // 幂等探针：.pid（已起）或 .exit（已跑完）在就回 ALREADY，绝不再起第二个 agent。
   // 派发侧失败会重试一次，而「ssh 超时」不等于「远端没起来」——没有这道探针，重试就会让
   // 同一个 session-key 的 agent 把同一件活跑第二遍。
@@ -205,6 +211,11 @@ function promptOf(task) {
 export async function triggerOpenclawAgent(task, deps = {}) {
   const spawnFn = deps.spawnFn ?? nodeSpawn;
   const pool = deps.pool ?? (await import('./db.js')).default;
+  const selection = resolveRequestedAiAccount(task.payload?.qiumi_source?.body, qiumiEnv().aiAccountMap);
+  if (selection.error || (task.payload?.ai_account_profile && task.payload.ai_account_profile !== selection.profileId)) {
+    return { success: false, taskId: task.id, reason: 'bad_ai_account', error: 'invalid, conflicting or changed AI account' };
+  }
+  const profileId = selection.profileId;
   let verification;
   if (isCommanderVerification(task)) {
     try { verification = await verificationLaunch(pool, task); }
@@ -235,7 +246,7 @@ export async function triggerOpenclawAgent(task, deps = {}) {
   let machine;
   try {
     remote = buildRemoteCommand({
-      runId, department, model, taskId: task.id,
+      runId, department, model, taskId: task.id, profileId,
       timeoutSec: verification?.timeoutSec ?? task.payload?.timeout_sec ?? AGENT_TIMEOUT_SEC,
       thinking: task.payload?.thinking ?? null,
     });
@@ -296,7 +307,7 @@ export async function triggerOpenclawAgent(task, deps = {}) {
     console.warn(`[openclaw-agent] 落 Brain 租约失败（不影响派发） task=${task.id}: ${err.message}`);
   }
   await recordTaskEventSafe(pool, task.id, 'openclaw_agent_spawned', {
-    run_id: runId, department, model, machine, already_running: spawnOutcome === 'already',
+    run_id: runId, department, model, machine, ai_account_profile: profileId, account_binding_receipt: profileId ? `~/brain-runs/${runId}.binding.json` : null, already_running: spawnOutcome === 'already',
   });
 
   // 一次执行 = 一行 task_runs（run 原语，fail-open）：ssh 已把 agent 起到执行机，此刻起算开始。
@@ -304,7 +315,7 @@ export async function triggerOpenclawAgent(task, deps = {}) {
     taskId: task.id,
     runId,
     source: 'openclaw-agent',
-    context: { department, model, machine, already_running: spawnOutcome === 'already' },
+    context: { department, model, machine, ai_account_profile: profileId, account_binding_receipt: profileId ? `~/brain-runs/${runId}.binding.json` : null, already_running: spawnOutcome === 'already' },
   }, { pool });
   return { success: true, taskId: task.id, runId, executor: 'openclaw-agent' };
 }

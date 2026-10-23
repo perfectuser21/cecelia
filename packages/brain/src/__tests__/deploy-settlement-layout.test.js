@@ -16,6 +16,7 @@ const call = tree.body.find(n => n.type === 'ExpressionStatement'
   && n.expression.callee?.property?.name === 'get'
   && n.expression.arguments[0]?.value === '/deploy/status').expression;
 const handler = source.slice(call.arguments[1].start, call.arguments[1].end);
+const runtimeLoader = await readFile(new URL('../lib/deploy-retention-runtime.js', import.meta.url), 'utf8');
 const sha = 'a'.repeat(40);
 
 // Execute the unchanged production callback from its real module location.
@@ -25,6 +26,10 @@ async function invoke(layout, { present = true, outcome = 'success', status = 'i
   const app = join(root, 'app');
   const route = join(app, layout === 'container' ? 'src/routes/ops.mjs' : 'packages/brain/src/routes/ops.mjs');
   await mkdir(dirname(route), { recursive: true });
+  const loader = join(dirname(route), '../lib/deploy-retention-runtime.js');
+  await mkdir(dirname(loader), { recursive: true });
+  await writeFile(loader, runtimeLoader);
+  await writeFile(join(app, 'package.json'), '{"type":"module"}');
   if (present) {
     const runtime = join(app, 'scripts/brain-image-retention/runtime.mjs');
     await mkdir(dirname(runtime), { recursive: true });
@@ -35,7 +40,7 @@ async function invoke(layout, { present = true, outcome = 'success', status = 'i
       } } };
     }`);
   }
-  await writeFile(route, `import {existsSync} from 'node:fs';
+  await writeFile(route, `import {loadDeploymentRetentionRuntime} from '../lib/deploy-retention-runtime.js';
     const deployState = {status:${JSON.stringify(status)}};
     const readDeployStatusFile = () => null;
     export const handler = ${handler};`);

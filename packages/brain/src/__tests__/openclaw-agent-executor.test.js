@@ -41,6 +41,29 @@ vi.mock('../machine-registry.js', () => ({
   sshTargetFor: vi.fn((id) => (id === 'fake-primary' ? 'administrator@10.0.0.9' : `WRONG:${String(id)}`)),
 }));
 import { recordTaskEventSafe } from '../lib/task-event-log.js';
+const cloudphoneTasks = [
+  {
+    "id": "5dea1494-37ab-4a57-af99-29a07f99ad89",
+    "title": "在阿里云云手机上验证 热点采集 skill-v2",
+    "body": "【执行设置——启动前落实】\nAI账号：openai-plus3\n账号策略：固定使用，不能切换其他账号；不可用则 blocked\n【执行参数】\n执行Agent：skill-factory\n调用 skill：热点采集skill\n设备：已注册的阿里云云手机\n模型：openai/gpt-6.1-sol\n思考强度：high\n业务账号：抖音账号\n输入：以实际采集当天为基准，运行一次每日热点抓取测试。启动前确认时间范围、目标平台、行业关键词、候选数量及排除词，不擅自补设未确认的参数。\n业务结果回填：写入位置为 新媒体数据库中创建一个热点采集的数据库中\n运行结果回填：本任务，附热点候选池、执行记录、产出链接与证据；并记录实际 AI账号、实际模型及人工验收状态。无法获取的数据如实标注，不得编造。\n验收：完成一次热点抓取、去重、业务相关性判断与优先级排序，形成可交给内容规划筛选的热点候选池；每条候选保留可访问的原始来源、采集时间、热度依据、业务关联、内容建议及风险提示。核对来源真实性、去重结果、业务相关性与排序，附可检查的结果及证据；不得编造数据，不得将高风险热点直接送入内容创作。完成回填后进入人工验收，不自动视为验收通过。\n超时：30分钟\n【执行要求】\n沿用现有手机预检、设备锁和收尾机制。\n完成后展示结果并回填，进入人工验收。\n退回后按意见修改、重跑；通过后继续注册流程。"
+  },
+  {
+    "id": "d636ff4f-3ff9-4cdd-b571-3e92f1e9ae87",
+    "title": "在阿里云云手机上验证 选题skill",
+    "body": "【执行设置——启动前落实】\nAI账号：openai:xuxiao21xx@icloud.com\n账号策略：固定使用，不能切换其他账号；不可用则 blocked\n【执行参数】\n执行Agent：skill-factory\n调用 Skill：选题skill\n设备：已注册的阿里云云手机\n模型：openai/gpt-6.1-sol\n思考强度：high\n输入：从 话题细分库 选取一个目标话题，按选题 Skill 生成 10 个候选，完成评分、去重与10选3。\n业务结果回填：全部候选写入现有的 选题数据库，填写评分与来源，仅勾选合格 Top 3 的十选三复选框。\n运行结果回填：本任务，附结果摘要、记录链接与证据，记录实际 AI账号、模型及人工验收状态。\n验收：10 个候选已去重、评分、风险审查并写入，Top 3 勾选正确，来源可追溯。合格数量不足时如实说明，不凑数；完成后进入人工验收。\n超时：30分钟\n【执行要求】\n沿用现有手机预检、设备锁和收尾机制。\n完成后展示结果并回填，进入人工验收。\n退回后按意见修改、重跑；通过后继续注册流程。"
+  },
+  {
+    "id": "27836d0b-7269-4574-b069-f4693adb47f9",
+    "title": "在阿里云云手机上验证 话题规划skill",
+    "body": "【执行设置——启动前落实】\nAI账号：openai:xuxiao21xx@icloud.com\n账号策略：固定使用，不能切换其他账号；不可用则 blocked\n【执行参数】\n执行Agent：skill-factory\n调用 Skill：：话题规划skill\n设备：已注册的阿里云云手机\n模型：openai/gpt-6.1-sol\n思考强度：high\n输入：以实际执行当天的单个自然工作日为本次规划周期，运行一次话题规划工作流验证。读取业务定位、最近一个完整自然周的正式周报及话题细分库中的已有话题和历史测试记录，完成固定话题更新、测试话题规划、去重与写回。测试话题沿用 Skill 的每周共 2 个口径，先核对本周已有记录，不因按日执行重复新增；无正式周报时注明“无周报依据，待验证”，不得编造表现数据。\n业务结果回填：写入现有的 话题细分库，更新固定系列页面并新增或更新对应测试话题记录，保留历史记录与人工内容\n运行结果回填：本任务，附当日规划结果、输入来源、执行记录、写入记录链接与证据；并记录实际 AI账号、实际模型及人工验收状态。无法获取的数据如实标注，不得编造。\n验收：完成业务定位读取、周报复盘、固定话题更新、测试话题规划、去重与话题细分库写回。固定话题与业务定位一致，话题来源可追溯；测试话题含假设、主要变量、验证指标、判断标准和回验安排，无可比基准时将判断标准标为待确认。核对写入结果，不重复创建本周测试，不覆盖历史记录或人工内容。只负责话题规划及汇总，不生成完整脚本或文案，不安排发布排期，不执行发布，不自行建立定时任务。完成回填后进入人工验收，不将规划完成视为内容已发布或测试已通过。\n超时：30分钟\n【执行要求】\n沿用现有手机预检、设备锁和收尾机制。\n完成后展示结果并回填，进入人工验收。\n退回后按意见修改、重跑；通过后继续注册流程。"
+  },
+  {
+    "id": "49b781a1-a5f7-44d7-8da5-4eacc8d812ac",
+    "title": "在阿里云云手机上验证 热点采集 skill，指定 Codex team2",
+    "body": "【执行设置——启动前落实】\nAI账号：Codex team2\n账号策略：固定使用 team2，禁止自动切换其他账号\n不可用时：标记 blocked，回填原因，不启动手机操作\n启动回执：记录实际使用的 Codex 账号与模型\n【执行参数】\n阶段：验证\nSkill：热点采集 skill\n设备：已注册的阿里云云手机\n模型：6.1sol\n业务账号：抖音账号\n输入：以实际采集当天为基准，运行一次每日热点抓取测试。启动前确认时间范围、目标平台、行业关键词、候选数量及排除词，不擅自补设未确认的参数。\n业务结果回填：写入位置为 新媒体数据库中创建一个热点采集的数据库中\n运行结果回填：本任务，附热点候选池、执行记录、产出链接与证据；并记录实际 Codex 账号、实际模型及人工验收状态。无法获取的数据如实标注，不得编造。\n验收：完成一次热点抓取、去重、业务相关性判断与优先级排序，形成可交给内容规划筛选的热点候选池；每条候选保留可访问的原始来源、采集时间、热度依据、业务关联、内容建议及风险提示。核对来源真实性、去重结果、业务相关性与排序，附可检查的结果及证据；不得编造数据，不得将高风险热点直接送入内容创作。完成回填后进入人工验收，不自动视为验收通过。\n超时：30分钟\n【执行要求】\n沿用现有手机预检、设备锁和收尾机制。\n完成后展示结果并回填，进入人工验收。\n退回后按意见修改、重跑；通过后继续注册流程。"
+  }
+];
+import { parseExecParams } from '../routing/exec-params.js';
 import { buildQiumiSource } from '../lib/qiumi-source.js';
 import { buildRemoteCommand, triggerOpenclawAgent, reapOpenclawAgentRuns } from '../openclaw-agent-executor.js';
 
@@ -167,6 +190,18 @@ describe('远端命令在本机 sh 下真跑（反「字符串断言假绿」）
 });
 
 describe('triggerOpenclawAgent', () => {
+  it('正文指定 AI 账号时，远端先绑定该会话再启动', async () => {
+    const spawnFn = spawnMock();
+    const requested = { ...task, payload: { ...task.payload, qiumi_source: buildQiumiSource({
+      title: '账号任务', body: '【执行设置——启动前落实】\nAI账号：openai-plus3\n【执行参数】\n执行Agent：dev\n模型：openai/gpt-6.1-sol\n【执行要求】\n只读检查',
+    }) } };
+    const result = await triggerOpenclawAgent(requested, { spawnFn, pool: { query: vi.fn() } });
+    expect(result.success).toBe(true);
+    const remote = spawnFn.mock.calls[0][1].at(-1);
+    expect(remote).toContain('.binding.json');
+    expect(remote).toContain('node -e');
+    expect(remote).not.toContain('agent --agent dev --model');
+  });
   it('工厂探路收到Brain原执行号，锁和证据不另造身份', async () => {
     const spawnFn = spawnMock();
     const factory = { ...task, payload: { ...task.payload, qiumi_department: 'skill-factory' } };
@@ -784,4 +819,19 @@ it('固定核验命令在真实sh中完整传参，重复只起一次且不执�
   expect(spawnSync('sh',['-c',command],{input,encoding:'utf8'}).stdout).toContain('ALREADY');
   expect(readFileSync(join(directory,'brain-runs',`${runId}.log`),'utf8')).toBe(log);
  }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
+describe('原云手机任务解析到 worker 的合同', () => {
+ it.each(cloudphoneTasks.filter(t => !t.body.includes('AI账号：Codex team2')))('$title 保留原业务正文与账号', async (original) => {
+  const params = parseExecParams(original.body, { modelAllowlist: ['openai/gpt-6.1-sol'] });
+  expect(params.errors).toEqual([]);
+  const spawnFn = spawnMock();
+  const payload = { ...task.payload, model: params.model, qiumi_department: params.agent, ai_account_profile: params.aiAccount, acceptance: params.acceptance, qiumi_source: buildQiumiSource({ title: original.title, body: original.body }) };
+  const result = await triggerOpenclawAgent({ ...task, id: original.id, payload }, { spawnFn, pool: { query: vi.fn() } });
+  expect(result.success).toBe(true);
+  const prompt = String(spawnFn.child.stdin.end.mock.calls[0][0]);
+  for (const line of original.body.split('\n').filter(l => /^(调用 [Ss]kill|输入|业务结果回填|运行结果回填|完成后|退回后)/.test(l))) expect(prompt).toContain(line);
+  expect(prompt).toContain('本次模型 openai/gpt-6.1-sol');
+  expect(spawnFn.mock.calls[0][1].at(-1)).toContain('.binding.json');
+ });
 });

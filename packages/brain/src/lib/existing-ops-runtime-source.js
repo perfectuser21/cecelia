@@ -283,7 +283,6 @@ const BUDGET_FILES={
 };
 const BUDGET_POST_AST='ec1643b6242d05b819e5d37509fff22948d1961ed3278f93b6431b859a275960';
 const BUDGET_GET_AST='c30f1194c9e137b7d2b3307bd0356d484748aa951b0c648e6d15d5dc37f501f9';
-const PACKAGED_BUDGET_GET_AST='72edfbd3a4ef0c2a88548cc63ff199d4abba116b98bc427340c648e82f185796';
 export function stagingSelectorVersion(text,parse){
  const declaration=parse(text).body.find(n=>n.type==='ExportNamedDeclaration'&&n.declaration?.type==='VariableDeclaration'&&n.declaration.declarations.some(d=>d.id?.name==='EXISTING_OPS_STAGING_SELECTOR_SCHEMA'))?.declaration;
  if(!declaration)return 0;
@@ -298,8 +297,18 @@ function routeDigest(text,parse,method='post',path='/deploy'){
  return entries.length===1&&nodes(program).filter(match).length===1?stagingHash(JSON.stringify(entries[0],(k,v)=>['start','end','raw'].includes(k)?undefined:v)):null;
 }
 async function collectSettlementSources({read,requireProof,relations,revision,route,parse}){
- const statusRouteDigest=routeDigest(route,parse,'get','/deploy/status');
- requireProof([BUDGET_GET_AST,PACKAGED_BUDGET_GET_AST].includes(statusRouteDigest),'settlement_status_route_unproven');
+ const statusDigest=routeDigest(route,parse,'get','/deploy/status');
+ const layout=statusDigest==='806efc04723f35ffab9c7b0c9acefe7801cce7090f04b71a2d96597a5188433f';
+ requireProof(statusDigest===BUDGET_GET_AST||layout,'settlement_status_route_unproven');
+ if(layout){
+  const loaderPath='packages/brain/src/lib/deploy-retention-runtime.js';
+  const loader=await read(loaderPath);
+  const imports=parse(route).body.filter(n=>n.type==='ImportDeclaration'&&n.source.value==='../lib/deploy-retention-runtime.js');
+  const binding=imports.length===1&&imports[0].specifiers.length===1&&imports[0].specifiers[0].type==='ImportSpecifier'&&imports[0].specifiers[0].imported.name==='loadDeploymentRetentionRuntime'&&imports[0].specifiers[0].local.name==='loadDeploymentRetentionRuntime';
+  requireProof(binding&&loader&&stagingHash(loader)==='04eb71b7d6d2e4b0bbfd6ee61241bbc7282ab00dc3ff0af3653ed6c5dcb80ef2','settlement_layout_loader_unproven');
+  relations.push({consumer_path:'packages/brain/src/routes/ops.js',input_path:loaderPath,kind:'reviewed_runtime_layout_loader',revision});
+  relations.push({consumer_path:loaderPath,input_path:'scripts/brain-image-retention/runtime.mjs',kind:'reviewed_runtime_layout_import',revision});
+ }
  const texts=new Map();
  for(const[path,digest]of Object.entries(BUDGET_FILES)){
   const text=await read(path);texts.set(path,text);
@@ -323,7 +332,7 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
   ['.github/workflows/brain-ci-deploy.yml','scripts/ci/gate3-wait-deploy.sh','reviewed_production_settlement_wait'],
   ['scripts/ci/gate3-wait-deploy.sh','scripts/ci/gate3-trigger-deploy.sh','reviewed_fixed_sha_retrigger'],
   ['scripts/ci/gate3-wait-deploy.sh','packages/brain/src/routes/ops.js','reviewed_settlement_status_request'],
-  ['packages/brain/src/routes/ops.js',base+'runtime.mjs',statusRouteDigest===PACKAGED_BUDGET_GET_AST?'reviewed_packaged_runtime_import':'literal_dynamic_import'],
+  ...(!layout?[["packages/brain/src/routes/ops.js",base+'runtime.mjs','literal_dynamic_import']]:[]),
   // 完整已审字节证明这些实际 source/子进程/region 分支；缺任一输入整体关闭。
   ["scripts/brain-deploy.sh","scripts/lib/bluegreen.sh","reviewed_bash_source_call"],
   ["scripts/brain-deploy.sh","scripts/lib/brain-image-retention.sh","reviewed_bash_source_call"],
