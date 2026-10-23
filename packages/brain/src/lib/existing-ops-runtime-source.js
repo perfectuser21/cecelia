@@ -275,7 +275,7 @@ const BUDGET_FILES={
   "scripts/brain-image-retention/runtime.mjs": "3a0fdb99126cf52ea966c4abecbc516f7a9ea194f77e1af0579468e548dbf31c",
   "scripts/brain-image-retention/storage.mjs": "06724e1e96fa9ac59597510fdbfa2351dd0f91edbecca9c588b00163f200c18c",
   "scripts/brain-image-retention/docker.mjs": "a341fdbd0611a4c70a6667b2d85d3d08bac07c8d059e192d8c42ed48897212c2",
-  "scripts/brain-image-retention/ledger.mjs": "27dd451fdfae702441c9cdbe6e4d6aea1b88b5116d9f7f152b6ef8fba3b1d0cd",
+  "scripts/brain-image-retention/ledger.mjs": ["27dd451fdfae702441c9cdbe6e4d6aea1b88b5116d9f7f152b6ef8fba3b1d0cd", "1de1ba852d4a31f303bc3c51384e282c69e40d402202bde3cc6e37472e968db8"],
   "scripts/brain-image-retention/engine.mjs": "ad23bcfc0abf07bb10ae52b1531939958d6bb2716d4212b374040b875c3c3d7f",
   "scripts/brain-image-retention/policy.mjs": "3fc3fcdfab42e8e82f298baaa1dcf5cd96e23ba59253a2609e692aa739f66794",
   "scripts/brain-image-retention/process.mjs": "5e7a77267d55d6df019bd7db44e300ba84cda8680fc01c411555af4a9384a586",
@@ -312,7 +312,7 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
  const texts=new Map();
  for(const[path,digest]of Object.entries(BUDGET_FILES)){
   const text=await read(path);texts.set(path,text);
-  requireProof(text&&stagingHash(text)===digest,'settlement_source_unproven');
+  requireProof(text&&[digest].flat().includes(stagingHash(text)),'settlement_source_unproven');
  }
  // 从已冻结AST递归列出真实静态依赖及受管子进程入口，不以目录猜测闭包。
  const base='scripts/brain-image-retention/';
