@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
-    {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"changes/cp-1023-runtime-layout-source-proof.md","role":"release"},
+    
     {"owner_path":"packages/brain/src/lib/release-validation-budget.js","path":"packages/brain/src/lib/__tests__/release-validation-budget.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/infra-bootstrap-source.js","path":"packages/brain/src/lib/__tests__/infra-bootstrap-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/infra-registry-bootstrap.js","path":"packages/brain/src/lib/__tests__/infra-registry-bootstrap.test.js","role":"verification"},
