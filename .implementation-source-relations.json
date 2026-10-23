@@ -2,6 +2,11 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/src/lib/release-validation-budget.js","path":"packages/brain/src/lib/__tests__/release-validation-budget.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/infra-bootstrap-source.js","path":"packages/brain/src/lib/__tests__/infra-bootstrap-source.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/infra-registry-bootstrap.js","path":"packages/brain/src/lib/__tests__/infra-registry-bootstrap.test.js","role":"verification"},
+    {"owner_path":"scripts/ci/implementation-pr-baseline.mjs","path":"scripts/ci/__tests__/implementation-pr-baseline.test.mjs","role":"verification"},
+    {"owner_path":"scripts/lib/brain-staging.sh","path":"packages/brain/src/__tests__/integration/staging-snapshot.pg.integration.test.js","role":"verification"},
     {"owner_path":"scripts/brain-deploy.sh","path":"packages/brain/scripts/smoke/factory-f2-deploy-smoke.sh","role":"verification"},
     {"owner_path":"scripts/brain-deploy.sh","path":"tests/regression/gate3-sha-truth/sha-account.test.sh","role":"verification"},
     {"owner_path":"scripts/brain-deploy.sh","path":"scripts/smoke/gate3-brain-deploy-smoke.sh","role":"verification"},

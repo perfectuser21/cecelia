@@ -61,7 +61,7 @@ stage_candidate() (
     stage_remove_container "$app"
     stage_remove_container "$db"
     stage_remove_network
-    # 根盘仅保留少量日志；克隆流不落根盘。Docker数据盘保留5GiB及两倍实际薄快照预算。
+    # 根盘仅保留少量日志；克隆流不落根盘。Docker数据盘保留5GiB及两倍实际完整快照预算。
     local root_free
     root_free=$(df -Pk "$ROOT_DIR" | awk 'NR==2 {print $4}')
     [[ "$root_free" =~ ^[0-9]+$ && "$root_free" -ge 524288 ]] || { echo '根盘空间不足，禁止候选克隆' >&2; return 1; }
@@ -82,22 +82,19 @@ stage_candidate() (
     estimated=$(docker exec cecelia-node-brain node --input-type=module -e '
       const {default:pg}=await import("pg");const {DB_DEFAULTS}=await import("./src/db-config.js");
       const c=new pg.Client(DB_DEFAULTS);await c.connect();
-      try { const r=await c.query("SELECT COALESCE(sum(pg_total_relation_size(c.oid)),0)::text AS bytes FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind=ANY($2) AND NOT(c.relname=ANY($3))",["public",["r","m"],["memory_stream","cecelia_events","alertness_metrics","checkpoint_writes","checkpoint_blobs","checkpoints","captures"]]);process.stdout.write(r.rows[0].bytes); }finally{await c.end();}
+      try { const r=await c.query("SELECT COALESCE(sum(pg_total_relation_size(c.oid)),0)::text AS bytes FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname !~ $1 AND n.nspname<>$2 AND c.relkind=ANY($3)",["^pg_","information_schema",["r","m"]]);process.stdout.write(r.rows[0].bytes); }finally{await c.end();}
     ')
     available=$(docker exec "$db" df -Pk /var/lib/postgresql/data | awk 'NR==2 {print $4}')
     [[ "$estimated" =~ ^[0-9]+$ && "$available" =~ ^[0-9]+$ ]] || return 1
     (( available * 1024 > estimated * 2 + 5368709120 )) || { echo 'Docker盘不足以安全恢复候选快照' >&2; return 1; }
-    echo "[staging] thin_bytes=$estimated available_kib=$available"
-    echo '[staging] 只读瘦快照 → 独立数据库；任一导出/恢复错误拒绝准入'
-    # 与 preview 瘦克隆相同的历史大表排除；schema 和业务事实仍取生产快照。
+    echo "[staging] snapshot_bytes=$estimated available_kib=$available"
+    echo '[staging] 只读完整快照 → 独立数据库；任一导出/恢复错误拒绝准入'
+    # 保留完整数据与外键关系；单表排除会使保留子表失去父行，严格恢复必须拒绝。
     phase=snapshot-restore
     docker exec cecelia-node-brain sh -ec '
       test "$DB_NAME" = cecelia
       export PGPASSWORD="$DB_PASSWORD"
-      exec pg_dump -h "$DB_HOST" -p "${DB_PORT:-5432}" -U "$DB_USER" -d "$DB_NAME" -Fc --no-owner --no-acl \
-        --exclude-table-data=memory_stream --exclude-table-data=cecelia_events \
-        --exclude-table-data=alertness_metrics --exclude-table-data=checkpoint_writes \
-        --exclude-table-data=checkpoint_blobs --exclude-table-data=checkpoints --exclude-table-data=captures
+      exec pg_dump -h "$DB_HOST" -p "${DB_PORT:-5432}" -U "$DB_USER" -d "$DB_NAME" -Fc --no-owner --no-acl
     ' | docker exec -i "$db" pg_restore -h 127.0.0.1 --exit-on-error --no-owner --no-acl -U cecelia -d cecelia_staging
     local env_args=(-e DB_HOST=stage-db -e DB_PORT=5432 -e DB_USER=cecelia -e DB_PASSWORD= \
         -e DB_NAME=cecelia_staging -e NODE_ENV=production -e BRAIN_PREVIEW=1 \

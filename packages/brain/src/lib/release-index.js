@@ -1,5 +1,7 @@
 import {resolveEnablerSource} from './enabler-definition-sources.js';
-import {validatePilotReleaseEvidence} from './pilot-release-verification.js';
+import {validatePilotReleaseEvidence,assertPilotReleaseReport,preparePilotReleaseValidation} from './pilot-release-verification.js';
+import {readImplementationSnapshotInTransaction} from './implementation-ci-snapshot.js';
+import {createReleaseValidationBudget,releaseValidationTransaction} from './release-validation-budget.js';
 /** 发布版本、实测记录只追加；green仅由冻结定义、CI证据和实际组件共同派生。 */
 import { createHash } from 'node:crypto';
 import defaultPool from '../db.js';
@@ -109,7 +111,7 @@ function governanceChecksMatch(expected,observed){
   if(new Set(expected.map(key)).size!==expected.length||new Set(observed.map(key)).size!==observed.length)return false;
   return expected.every(c=>observed.some(r=>r&&r.exit_code===0&&!r.error&&key(r)===key(c)));
 }
-async function validateCiEvidence(db, items, definitions, components) {
+async function validateCiEvidence(db, items, definitions, components,prepared=[]) {
   const valid = [], gaps = [], assertionPlans = [];
   const covered = {workflows:new Set(),activities:new Set()};
   const recordCoverage = subset => { for(const kind of ['workflows','activities'])for(const row of subset[kind])covered[kind].add(row.id); };
@@ -122,10 +124,13 @@ async function validateCiEvidence(db, items, definitions, components) {
         const workflows=definitions.workflows.filter(w=>ids.has(w.id));
         const dependencies=new Set(workflows.flatMap(w=>w.payload.activities.map(r=>r.activity_version_id)));
         const subset={workflows,activities:definitions.activities.filter(a=>dependencies.has(a.id))};
-        const plan=await validatePilotReleaseEvidence(db,report,receipt,subset);
+        const plan=await validatePilotReleaseEvidence(db,report,receipt,subset,prepared[index]);
         assertionPlans.push(plan);valid.push(repo);recordCoverage(subset);
       }
-      catch(error){ gaps.push({code:'pilot_release_unverified',index,reason:error.code}); }
+      catch(error){
+        if(error.code==='RELEASE_REGISTRATION_CHANGED')throw new ReleaseEvidenceError('REGISTRATION_CHANGED','来源核验期间登记发生变化',409);
+        gaps.push({code:'pilot_release_unverified',index,reason:error.code});
+      }
       continue;
     }
     if(receipt?.purpose==='admission_only'||report?.ci_context?.purpose==='admission_only'){gaps.push({code:'ci_admission_only',index});continue;}
@@ -154,27 +159,55 @@ async function validateCiEvidence(db, items, definitions, components) {
   for(const kind of ['workflows','activities'])for(const row of definitions[kind])if(!covered[kind].has(row.id))gaps.push({code:'ci_definition_evidence_missing',kind,definition_version_id:row.id});
   return { status: gaps.length ? 'unknown' : 'verified', gaps, assertionPlans };
 }
-export async function createRelease(pool, input) {
-  validateRelease(input); const requestHash = evidenceHash(input);
-  return evidenceTransaction(pool, `release:${input.release_key}`, async db => {
+export async function createRelease(pool, input,options={}) {
+  input=structuredClone(input);validateRelease(input);const requestHash=evidenceHash(input);
+  pool ||= defaultPool;
+  const budget=createReleaseValidationBudget(options,(...args)=>new ReleaseEvidenceError(...args));
+  const existingRelease=async db=>{
     const existing = (await db.query('SELECT * FROM release_versions WHERE release_key=$1', [input.release_key])).rows[0];
     if (existing) { requireEvidence(existing.request_sha256 === requestHash, 'release_key已绑定其他内容', 'CONFLICT', 409); return { release: existing, created: false }; }
-    await db.query('LOCK TABLE activities,steps,warehouse_items,enabler_calls IN SHARE MODE');
-    const definitions = await readDefinitions(db, input);
-    const allowed_enabler_calls = await readEnablerCalls(db, definitions.activities, input.components);
-    const ci = await validateCiEvidence(db, input.ci_evidence, definitions, input.components);
-    const stepGaps = definitions.activities.flatMap(a => (a.payload.steps || []).filter(s => !s.step_id || !UUID.test(s.step_id) || s.locator?.activity_id !== a.activity_id).map(s => ({code:'step_identity_missing',activity_definition_version_id:a.id,step_key:s.locator?.step_key || null})));
-    // 发布线把关（RELEASE_LINE_ENFORCE_RELEASE 默认 off → 零查询、返回 []；打开也只查受保护的生产版，出错放行）
-    const releaseLineGaps = await releaseLineGapsForRelease(db, input.environment, definitions.activities);
-    const gaps = [...stepGaps, ...releaseLineGaps, ...ci.gaps, ...allowed_enabler_calls.filter(c => c.source_status !== 'verified').map(c => ({ code: 'enabler_source_unknown', enabler_call_id: c.id }))];
-    const payload = { schema_version: 1, ...definitions, components: input.components, ci_evidence: input.ci_evidence, allowed_enabler_calls,
-      ...(ci.assertionPlans.length ? {assertion_plans:ci.assertionPlans} : {}),
-      verification: { definition_status: stepGaps.length ? 'unknown' : 'verified', step_coverage_status: stepGaps.length ? 'unknown' : 'verified', ci_status: ci.status, status: gaps.length ? 'unknown' : 'verified', gaps } };
-    const manifestHash = evidenceHash({ environment: input.environment, target: input.target, payload });
-    const release = (await db.query(`INSERT INTO release_versions(release_key,manifest_sha256,request_sha256,environment,target,actor,payload)
-      VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [input.release_key, manifestHash, requestHash, input.environment, input.target, input.actor, payload])).rows[0];
-    return { release, created: true };
-  });
+  };
+  try{
+    // 一致只读快照取得后立即归还连接；不把Git/凭据/外部请求放在事务里。
+    const before=await releaseValidationTransaction(pool,budget,async db=>{
+      const existing=await existingRelease(db);if(existing)return {existing};
+      const definitions=await readDefinitions(db,input);
+      const enablers=await readEnablerCalls(db,definitions.activities,input.components),snapshots=[];
+      for(const {report} of input.ci_evidence){
+        if(report?.protocol!=='pilot_release_verification_v1'){snapshots.push(null);continue;}
+        try{assertPilotReleaseReport(report);}catch{snapshots.push(null);continue;}
+        snapshots.push(await readImplementationSnapshotInTransaction(db,{scope:report.scope,repo:report.source.repo,revision:report.source.head_revision}));
+      }
+      return {definitions,enablers,snapshots};
+    },{readOnly:true});
+    if(before.existing)return before.existing;
+    const prepared=[];
+    for(const [index,snapshot] of before.snapshots.entries()){
+      budget.check();
+      prepared.push(snapshot?await budget.wait(preparePilotReleaseValidation(snapshot,input.ci_evidence[index].report,{signal:budget.signal,deadline:budget.deadline})):undefined);
+    }
+    return await releaseValidationTransaction(pool,budget,async db=>{
+      const existing=await existingRelease(db);if(existing)return existing;
+      // 锁定实际快照的可变输入；锁只覆盖本地重读和原子落库，阻止核验后的TOCTOU。
+      await db.query('LOCK TABLE activities,activity_cells,activity_definition_versions,areas,capabilities,enabler_calls,map_manifest_versions,map_projection_runs,map_scope_repositories,steps,value_streams,warehouse_items,workflow_activity_refs,workflow_definition_versions,workflows IN SHARE MODE');
+      const definitions = await readDefinitions(db, input);
+      const allowed_enabler_calls = await readEnablerCalls(db, definitions.activities, input.components);
+      requireEvidence(same(definitions,before.definitions)&&same(allowed_enabler_calls,before.enablers),'来源核验期间定义或实现登记发生变化','REGISTRATION_CHANGED',409);
+      const ci = await validateCiEvidence(db, input.ci_evidence, definitions, input.components,prepared);
+      budget.check();
+      const stepGaps = definitions.activities.flatMap(a => (a.payload.steps || []).filter(s => !s.step_id || !UUID.test(s.step_id) || s.locator?.activity_id !== a.activity_id).map(s => ({code:'step_identity_missing',activity_definition_version_id:a.id,step_key:s.locator?.step_key || null})));
+      // 发布线把关（RELEASE_LINE_ENFORCE_RELEASE 默认 off → 零查询、返回 []；打开也只查受保护的生产版，出错放行）
+      const releaseLineGaps = await releaseLineGapsForRelease(db, input.environment, definitions.activities);
+      const gaps = [...stepGaps, ...releaseLineGaps, ...ci.gaps, ...allowed_enabler_calls.filter(c => c.source_status !== 'verified').map(c => ({ code: 'enabler_source_unknown', enabler_call_id: c.id }))];
+      const payload = { schema_version: 1, ...definitions, components: input.components, ci_evidence: input.ci_evidence, allowed_enabler_calls,
+        ...(ci.assertionPlans.length ? {assertion_plans:ci.assertionPlans} : {}),
+        verification: { definition_status: stepGaps.length ? 'unknown' : 'verified', step_coverage_status: stepGaps.length ? 'unknown' : 'verified', ci_status: ci.status, status: gaps.length ? 'unknown' : 'verified', gaps } };
+      const manifestHash = evidenceHash({ environment: input.environment, target: input.target, payload });
+      const release = (await db.query(`INSERT INTO release_versions(release_key,manifest_sha256,request_sha256,environment,target,actor,payload)
+        VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [input.release_key, manifestHash, requestHash, input.environment, input.target, input.actor, payload])).rows[0];
+      return { release, created: true };
+    },{key:`release:${input.release_key}`});
+  }finally{budget.close();}
 }
 export async function getRelease(db, id) {
   evidenceText(id, 'release_id', UUID);
