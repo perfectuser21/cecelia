@@ -7142,3 +7142,5 @@ EventBus启动先只读核对固定名称索引的valid、ready及目标表；�
 ### 1.445.59 独立infra来源联合准入（默认关闭）
 
 保留原KR/factory bundle，增加可信main同SHA独立infra产物及三scope联合验证。仅在真实bootstrap、固定main来源与官方独立artifact核验后启用已有开关；workspace跨仓分支只接受完整固定且不可激活的infra封套，不放宽selector或任意Shell。
+
+既有infra bootstrap按固定历史路由的真实kernel-harness-v2/harness/harness_initiative合同鉴权；固定Task/receipt/parent及CAS不变，不改历史路由或执行调度。
