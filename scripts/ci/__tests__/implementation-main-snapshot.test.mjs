@@ -1,3 +1,4 @@
+import './implementation-pr-baseline.test.mjs';
 import {runRegisteredAssertions} from '../implementation-gate.mjs';
 import './brain-source-only-deploy.test.mjs';
 import './fixed-local-source.test.mjs';

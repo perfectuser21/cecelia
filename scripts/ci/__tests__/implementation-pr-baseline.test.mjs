@@ -1,11 +1,16 @@
 import {test} from 'node:test';
+import {fileURLToPath} from 'node:url';
+import {readFileSync} from 'node:fs';
+import yaml from 'js-yaml';
+import {stepSha256} from '../../../packages/brain/scripts/sync-steps-from-workspace.mjs';
+import {EXISTING_OPS_IDENTITIES as identities} from '../../../packages/brain/src/lib/existing-ops-source.js';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-const {resolvePrBaseline}=await import('../implementation-pr-baseline.mjs');
+const {resolvePrBaseline,unpackOfficialBaselineArchive}=await import('../implementation-pr-baseline.mjs');
 const repo='perfectuser21/cecelia',hash=b=>createHash('sha256').update(b).digest('hex');
 function fixture(t){
  const root=mkdtempSync(join(tmpdir(),'pr-baseline-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
@@ -29,7 +34,7 @@ function fixture(t){
  const wrapped=async path=>{const r=await api(path);if(/\/artifacts\/\d+$/.test(path))lastArtifact=r.id;return r;};
  const deps={api:wrapped,download:async path=>[...official.values()].find(v=>v.artifact.id===Number(path.split('/').at(-2))).bytes,
   unpack:bytes=>JSON.parse(bytes),validateBundle:body=>{assert.deepEqual(body.scopes,['cecelia-kr','cecelia-factory']);return {snapshot_sha256:'a'.repeat(64),scope_hashes:{'cecelia-kr':'b'.repeat(64),'cecelia-factory':'c'.repeat(64)},revision:body.revision};},
-  git:(path,...args)=>path==='tooling'?base:git(...args)};
+  git:(path,...args)=>path==='tooling'?(args[0]==='status'?'':base):git(...args)};
  const options={repoRoot:root,toolingRoot:'tooling',repository:repo,eventName:'pull_request',event,toolingRevision:base};
  return {root,git,first,middle,base,head,event,official,add,calls,deps,options,run:()=>resolvePrBaseline(options,deps)};
 }
@@ -53,4 +58,81 @@ for(const mode of ['event','tooling','head','api-head','depth'])test('冻结事�
  if(mode==='api-head'){const api=f.deps.api;f.deps.api=async p=>p.endsWith('/pulls/42')?{...f.event.pull_request,head:{sha:f.first,repo:{full_name:repo}}}:api(p);}
  if(mode==='depth')f.options.maxDepth=1;
  await assert.rejects(f.run());
+});
+
+test('过期精确artifact属于缺失，可沿链寻找官方祖先',async t=>{const f=fixture(t);f.add(f.first);f.add(f.base).expired=true;const r=await f.run();assert.equal(r.resolution.effective_base_revision,f.first);assert.equal(r.resolution.chain[0].status,'missing');});
+test('第二父分支虽为祖先也不能用作基线',async t=>{
+ const f=fixture(t);f.git('checkout','-qb','side',f.first);writeFileSync(join(f.root,'D'),'side');f.git('add','D');f.git('-c','core.hooksPath=/dev/null','commit','-qm','side');const side=f.git('rev-parse','HEAD');
+ f.git('checkout','-q','-B','main',f.base);f.git('-c','core.hooksPath=/dev/null','merge','--no-ff','-qm','merge','side');const base=f.git('rev-parse','HEAD');
+ writeFileSync(join(f.root,'E'),'candidate');f.git('add','E');f.git('-c','core.hooksPath=/dev/null','commit','-qm','candidate');const head=f.git('rev-parse','HEAD');
+ f.event.pull_request.base.sha=base;f.event.pull_request.head.sha=head;f.options.toolingRevision=base;f.deps.git=(path,...args)=>path==='tooling'?(args[0]==='status'?'':base):f.git(...args);
+ f.add(side);await assert.rejects(f.run(),{code:'PR_BASELINE_ANCESTOR_NOT_FOUND'});assert.equal(f.calls.some(p=>p.includes('implementation-snapshot-'+side)),false);
+});
+for(const mode of ['normal','duplicate','traversal','symlink'])test('官方ZIP成员严格核验：'+mode,()=>{
+ const bytes=execFileSync('python3',['-I','-c',`import io,zipfile,sys
+b=io.BytesIO()
+with zipfile.ZipFile(b,'w') as z:
+ z.writestr('head.json','{"fixture":true}')
+ if sys.argv[1]=='duplicate': z.writestr('head.json','{}')
+ if sys.argv[1]=='traversal': z.writestr('../outside','x')
+ if sys.argv[1]=='symlink':
+  i=zipfile.ZipInfo('link');i.external_attr=0o120777<<16;z.writestr(i,'target')
+sys.stdout.buffer.write(b.getvalue())`,mode],{stdio:['ignore','pipe','pipe']});
+ if(mode==='normal')assert.deepEqual(unpackOfficialBaselineArchive(bytes),{fixture:true});else assert.throws(()=>unpackOfficialBaselineArchive(bytes),{code:'PR_BASELINE_ARCHIVE_INVALID'});
+});
+
+// 与正式snapshot schema同形的双scope夹具；下列resolver测试不替换解包或校验函数。
+const seal=(body,key='snapshot_sha256')=>({...body,[key]:stepSha256(body)});
+function bundle(revision,{parentMissing=false,childMissing=false,parentGaps=null,parentManifest=null}={}){
+ const registry={workflows:[],references:[],activities:[],steps:[],capabilities:[],value_streams:[{id:'aaaaaaaa-f0f0-4000-8000-000000000001'}]};
+ const definitions={workflows:[],activities:[]};
+ for(const i of identities){
+  registry.workflows.push({id:i.workflow_id,key:i.workflow_key,capability_id:i.capability_id});
+  registry.capabilities.push({id:i.capability_id,parent_journey_id:registry.value_streams[0].id});
+  for(const [n,id] of [i.reference_id,...i.unverified_reference_ids].entries()){
+   const activity_id=n===0?i.activity_id:id;
+   registry.references.push({id,workflow_id:i.workflow_id,activity_id,slot_key:`step_${n+1}`,sequence_no:n+1,active:true});registry.activities.push({id:activity_id});
+  }
+ }
+ const frozen=seal(registry,'registry_sha256');
+ for(const i of identities){
+  const common={definition_scope:'consumer_evidence',source_scope:'cecelia-factory',registration_sha256:frozen.registry_sha256,contract:{key:i.workflow_key,executable:false,definition_scope:'consumer_evidence',source_basis:'fixed_git_tree'}};
+  const source={repo,path:'fixed-fixture.json',commit:revision};
+  const activity={id:i.activity_id,activity_id:i.activity_id,source_repo:repo,source_path:source.path,source_commit:revision,payload:{...common,implementation_bindings:[]}};
+  activity.payload_sha256=stepSha256({source,payload:activity.payload});definitions.activities.push(activity);
+  const workflow={id:i.workflow_id,workflow_id:i.workflow_id,source_repo:repo,source_path:source.path,source_commit:revision,payload:{...common,capability_id:i.capability_id,coverage:{status:'unknown',verified_reference_ids:[i.reference_id],unverified_reference_ids:i.unverified_reference_ids},activities:[{reference_id:i.reference_id,activity_id:i.activity_id,activity_version_id:activity.id}]}};
+  workflow.payload_sha256=stepSha256({source,payload:workflow.payload});definitions.workflows.push(workflow);
+ }
+ const child=seal({schema_version:1,scope:'cecelia-factory',repo,revision,status:childMissing?'unknown':'verified',gaps:childMissing?[{code:'definition_snapshot_missing'},{code:'scope_manifest_missing'}]:[],snapshot_scope:'consumer_evidence',execution_status:'unknown',consumer_registry:frozen,unverified_reference_ids:identities.flatMap(i=>i.unverified_reference_ids),canonical:{...registry,journeys:[]},definitions:childMissing?{workflows:[],activities:[]}:definitions,map:{},assertions:[]});
+ const companion=seal({schema_version:1,purpose:'admission_only',scope:child.scope,repo,revision,snapshot:child},'companion_sha256');
+ return {snapshot:seal({schema_version:1,scope:'cecelia-kr',repo,revision,status:parentMissing?'unknown':'verified',gaps:parentMissing?(parentGaps??[{code:'definition_snapshot_missing'}]):[],map:{manifest:parentManifest},canonical:{workflows:[],journeys:[]},definitions:{workflows:[],activities:[]},admission_companion:companion})};
+}
+
+for(const mode of ['complete','missing-companion','bad-digest','duplicate','traversal'])test('正式resolver真实ZIP及可信校验路径：'+mode,async t=>{
+ const f=fixture(t),artifact=f.add(f.base),entry=f.official.get(f.base);const body=bundle(f.base);
+ if(mode==='missing-companion'){const {admission_companion,snapshot_sha256,...rest}=body.snapshot;body.snapshot=seal(rest);}
+ entry.bytes=execFileSync('python3',['-I','-c',`import io,zipfile,sys
+b=io.BytesIO()
+with zipfile.ZipFile(b,'w') as z:
+ z.writestr('head.json',sys.stdin.buffer.read())
+ if sys.argv[1]=='duplicate':z.writestr('head.json','{}')
+ if sys.argv[1]=='traversal':z.writestr('../outside','x')
+sys.stdout.buffer.write(b.getvalue())`,mode],{input:JSON.stringify(body),stdio:['pipe','pipe','pipe']});
+ artifact.size_in_bytes=entry.bytes.length;artifact.digest='sha256:'+(mode==='bad-digest'?'0'.repeat(64):hash(entry.bytes));
+ delete f.deps.unpack;delete f.deps.validateBundle;
+ const tooling=fileURLToPath(new URL('../../../',import.meta.url));f.options.toolingRoot=tooling;
+ f.deps.git=(path,...args)=>path===tooling?(args[0]==='status'?'':f.base):f.git(...args);
+ if(mode==='complete'){const r=await f.run();assert.equal(r.resolution.effective_base_revision,f.base);assert.deepEqual(Object.keys(r.resolution.scope_hashes),['cecelia-kr','cecelia-factory']);}
+ else await assert.rejects(f.run(),{code:mode==='missing-companion'?'PR_BASELINE_SNAPSHOT_INVALID':mode==='bad-digest'?'PR_BASELINE_DIGEST_MISMATCH':'PR_BASELINE_ARCHIVE_INVALID'});
+});
+
+test('正式PR入口执行selector且原双scope/固定工具/Skill缓存保留，永久CI加载本测试',()=>{
+ const root=fileURLToPath(new URL('../../../',import.meta.url)),text=readFileSync(join(root,'.github/workflows/implementation-impact.yml'),'utf8');
+ const workflow=yaml.load(text),steps=workflow.jobs.gate.steps,download=steps.find(s=>s.name==='下载固定SHA中央bundle（PR无中央写凭据）');
+ assert.match(download.env.NATIVE_PR_BASELINE,/github.event_name == 'pull_request'/);assert.match(download.env.NATIVE_PR_BASELINE,/!inputs.base_revision/);assert.match(download.env.NATIVE_PR_BASELINE,/!inputs.tooling_revision/);
+ assert.match(download.run,/node source\/scripts\/ci\/implementation-pr-baseline.mjs/);assert.match(download.run,/BASE=%s/);assert.doesNotMatch(download.run,/TOOLING_REVISION=/);
+ const gate=steps.find(s=>s.name==='实际变更影响与固定回归');assert.match(gate.run,/node tooling\/scripts\/ci\/implementation-multi-pr-gate.mjs/);assert.match(gate.run,/--base "\$BASE" --head "\$HEAD"/);
+ assert.match(steps.find(s=>s.id==='skill-cache').run,/--prepare-ci-cache "\$GITHUB_WORKSPACE\/source" "\$SOURCE_REPO" "\$BASE" "\$HEAD"/);
+ assert.match(readFileSync(join(root,'scripts/ci/__tests__/implementation-main-snapshot.test.mjs'),'utf8'),/import '\.\/implementation-pr-baseline.test.mjs'/);
+ const ci=yaml.load(readFileSync(join(root,'.github/workflows/ci.yml'),'utf8'));assert.ok(Object.values(ci.jobs).some(job=>job.steps?.some(s=>s.run?.includes('node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs'))));
 });

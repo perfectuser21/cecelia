@@ -265,6 +265,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
+          NATIVE_PR_BASELINE: ${{ github.repository == 'perfectuser21/cecelia' && github.event_name == 'pull_request' && !inputs.source_repo && !inputs.tooling_revision && !inputs.scope && !inputs.head_revision && !inputs.base_revision && !inputs.mode && !inputs.admission_scopes }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/implementation-input" "$RUNNER_TEMP/implementation-output"
@@ -284,6 +285,16 @@ jobs:
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-snapshot-$HEAD" -D "$RUNNER_TEMP/implementation-input/head"
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-baseline-$HEAD" -D "$RUNNER_TEMP/implementation-input/base"
           else
+            if [[ "${NATIVE_PR_BASELINE:-false}" == true ]]; then
+              # 原PRbase只固定可信工具；有效基线可沿第一父链恢复，仍跑全部累积差分。
+              test "$MAP_SCOPE" = cecelia-kr
+              test "$ADMISSION_SCOPES" = '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}'
+              BASE="$(node source/scripts/ci/implementation-pr-baseline.mjs \
+                --repo-root "$GITHUB_WORKSPACE/source" --tooling-root "$GITHUB_WORKSPACE/tooling" \
+                --input-dir "$RUNNER_TEMP/implementation-input" --output-dir "$RUNNER_TEMP/implementation-output")"
+              [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
+              printf 'BASE=%s\n' "$BASE" >> "$GITHUB_ENV"
+            else
             artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=implementation-snapshot-$BASE" | jq -r --arg base "$BASE" '.artifacts | map(select(.expired == false and .workflow_run.head_branch == "main" and .workflow_run.head_sha == $base and .workflow_run.repository_id == .workflow_run.head_repository_id)) | sort_by(.created_at, .id) | reverse | first | .id // empty')
             if [[ -z "$artifact" ]]; then
               gap_code=IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING
@@ -306,6 +317,7 @@ jobs:
             jq -e 'type == "object" and .error == null and (.snapshot | type == "object")' "$RUNNER_TEMP/implementation-input/base/base.json" >/dev/null
             mkdir -p "$RUNNER_TEMP/implementation-input/head"
             cp "$RUNNER_TEMP/implementation-input/base/base.json" "$RUNNER_TEMP/implementation-input/head/head.json"
+            fi
             if [[ -n "${ADMISSION_SCOPES:-}" ]]; then
               jq -e 'type == "object" and keys == ["schema_version", "scopes"] and .schema_version == 1 and (.scopes | type == "array" and length > 0 and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")) and length == (unique | length))' <<< "$ADMISSION_SCOPES" >/dev/null
               gap_code=IMPLEMENTATION_CI_SCOPE_COMPANION_INVALID
