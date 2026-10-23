@@ -275,7 +275,7 @@ const BUDGET_FILES={
   "scripts/brain-image-retention/runtime.mjs": "3a0fdb99126cf52ea966c4abecbc516f7a9ea194f77e1af0579468e548dbf31c",
   "scripts/brain-image-retention/storage.mjs": "06724e1e96fa9ac59597510fdbfa2351dd0f91edbecca9c588b00163f200c18c",
   "scripts/brain-image-retention/docker.mjs": "a341fdbd0611a4c70a6667b2d85d3d08bac07c8d059e192d8c42ed48897212c2",
-  "scripts/brain-image-retention/ledger.mjs": "27dd451fdfae702441c9cdbe6e4d6aea1b88b5116d9f7f152b6ef8fba3b1d0cd",
+  "scripts/brain-image-retention/ledger.mjs": ["27dd451fdfae702441c9cdbe6e4d6aea1b88b5116d9f7f152b6ef8fba3b1d0cd", "1de1ba852d4a31f303bc3c51384e282c69e40d402202bde3cc6e37472e968db8"],
   "scripts/brain-image-retention/engine.mjs": "ad23bcfc0abf07bb10ae52b1531939958d6bb2716d4212b374040b875c3c3d7f",
   "scripts/brain-image-retention/policy.mjs": "3fc3fcdfab42e8e82f298baaa1dcf5cd96e23ba59253a2609e692aa739f66794",
   "scripts/brain-image-retention/process.mjs": "5e7a77267d55d6df019bd7db44e300ba84cda8680fc01c411555af4a9384a586",
@@ -297,11 +297,22 @@ function routeDigest(text,parse,method='post',path='/deploy'){
  return entries.length===1&&nodes(program).filter(match).length===1?stagingHash(JSON.stringify(entries[0],(k,v)=>['start','end','raw'].includes(k)?undefined:v)):null;
 }
 async function collectSettlementSources({read,requireProof,relations,revision,route,parse}){
- requireProof(routeDigest(route,parse,'get','/deploy/status')===BUDGET_GET_AST,'settlement_status_route_unproven');
+ const statusDigest=routeDigest(route,parse,'get','/deploy/status');
+ const layout=statusDigest==='806efc04723f35ffab9c7b0c9acefe7801cce7090f04b71a2d96597a5188433f';
+ requireProof(statusDigest===BUDGET_GET_AST||layout,'settlement_status_route_unproven');
+ if(layout){
+  const loaderPath='packages/brain/src/lib/deploy-retention-runtime.js';
+  const loader=await read(loaderPath);
+  const imports=parse(route).body.filter(n=>n.type==='ImportDeclaration'&&n.source.value==='../lib/deploy-retention-runtime.js');
+  const binding=imports.length===1&&imports[0].specifiers.length===1&&imports[0].specifiers[0].type==='ImportSpecifier'&&imports[0].specifiers[0].imported.name==='loadDeploymentRetentionRuntime'&&imports[0].specifiers[0].local.name==='loadDeploymentRetentionRuntime';
+  requireProof(binding&&loader&&stagingHash(loader)==='04eb71b7d6d2e4b0bbfd6ee61241bbc7282ab00dc3ff0af3653ed6c5dcb80ef2','settlement_layout_loader_unproven');
+  relations.push({consumer_path:'packages/brain/src/routes/ops.js',input_path:loaderPath,kind:'reviewed_runtime_layout_loader',revision});
+  relations.push({consumer_path:loaderPath,input_path:'scripts/brain-image-retention/runtime.mjs',kind:'reviewed_runtime_layout_import',revision});
+ }
  const texts=new Map();
  for(const[path,digest]of Object.entries(BUDGET_FILES)){
   const text=await read(path);texts.set(path,text);
-  requireProof(text&&stagingHash(text)===digest,'settlement_source_unproven');
+  requireProof(text&&[digest].flat().includes(stagingHash(text)),'settlement_source_unproven');
  }
  // 从已冻结AST递归列出真实静态依赖及受管子进程入口，不以目录猜测闭包。
  const base='scripts/brain-image-retention/';
@@ -321,7 +332,7 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
   ['.github/workflows/brain-ci-deploy.yml','scripts/ci/gate3-wait-deploy.sh','reviewed_production_settlement_wait'],
   ['scripts/ci/gate3-wait-deploy.sh','scripts/ci/gate3-trigger-deploy.sh','reviewed_fixed_sha_retrigger'],
   ['scripts/ci/gate3-wait-deploy.sh','packages/brain/src/routes/ops.js','reviewed_settlement_status_request'],
-  ['packages/brain/src/routes/ops.js',base+'runtime.mjs','literal_dynamic_import'],
+  ...(!layout?[["packages/brain/src/routes/ops.js",base+'runtime.mjs','literal_dynamic_import']]:[]),
   // 完整已审字节证明这些实际 source/子进程/region 分支；缺任一输入整体关闭。
   ["scripts/brain-deploy.sh","scripts/lib/bluegreen.sh","reviewed_bash_source_call"],
   ["scripts/brain-deploy.sh","scripts/lib/brain-image-retention.sh","reviewed_bash_source_call"],

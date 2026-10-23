@@ -1,4 +1,5 @@
 import { it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -68,7 +69,7 @@ const candidate={
 const root=fileURLToPath(new URL('../../../../../',import.meta.url));
 const git=(...args)=>execFileSync('git',['--no-replace-objects',...args],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024});
 const revision=git('rev-parse','HEAD').trim();
-const paths=[...new Set([...git('ls-tree','-rz','--name-only',revision).replace(/\0$/,'').split('\0'),...Object.keys(candidate.blobs)])];
+const paths=[...new Set([...git('ls-tree','-rz','--name-only',revision).replace(/\0$/,'').split('\0'),...Object.keys(candidate.blobs),'packages/brain/src/lib/deploy-retention-runtime.js'])];
 const sourcePath='packages/brain/src/lib/existing-ops-source.js';
 const cache=new Map();
 const read=path=>{if(!cache.has(path))cache.set(path,candidate.blobs[path]??git('show',`${revision}:${path}`));return cache.get(path);};
@@ -139,5 +140,64 @@ it('已审source-only拒绝闸真实读取package JSON，固定输入必须归�
 it.each([undefined,'{','[]'])('已审部署入口的package缺失或非法%s拒绝且清空绑定',async text=>{
  const path='packages/brain/package.json',patch={'scripts/brain-deploy.sh':reviewedSourceOnlyDeploy};if(text!==undefined)patch[path]=text;
  const result=await build({patch,...(text===undefined?{missing:path}:{})});
+ expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+});
+
+const layoutRoutePath='packages/brain/src/routes/ops.js';
+const layoutLoaderPath='packages/brain/src/lib/deploy-retention-runtime.js';
+const reviewedLayoutLoader="/** Load the same approved retention runtime in repository and flattened image layouts. */\nexport async function loadDeploymentRetentionRuntime() {\n  const repositoryRuntime = new URL('../../../../scripts/brain-image-retention/runtime.mjs', import.meta.url);\n  try {\n    return await import(repositoryRuntime.href);\n  } catch (error) {\n    // A broken dependency inside an existing module must remain a failure.\n    if (error.code !== 'ERR_MODULE_NOT_FOUND' || error.url !== repositoryRuntime.href) throw error;\n    return import(new URL('../../scripts/brain-image-retention/runtime.mjs', import.meta.url).href);\n  }\n}\n";
+const layoutPatch=()=>({[layoutRoutePath]:"import { loadDeploymentRetentionRuntime } from '../lib/deploy-retention-runtime.js';\n"+read(layoutRoutePath).replace("await import('../../../../scripts/brain-image-retention/runtime.mjs')",'await loadDeploymentRetentionRuntime()'),[layoutLoaderPath]:reviewedLayoutLoader});
+it('精确布局加载器变体证明真实依赖并保留结算核验',async()=>{
+ const result=await build({patch:layoutPatch()});
+ expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+ expect(result.input_relations).toContainEqual({consumer_path:layoutRoutePath,input_path:layoutLoaderPath,kind:'reviewed_runtime_layout_loader',revision});
+ expect(result.input_relations).toContainEqual({consumer_path:layoutLoaderPath,input_path:'scripts/brain-image-retention/runtime.mjs',kind:'reviewed_runtime_layout_import',revision});
+});
+it.each(['missing','mutated','import','route'])('布局加载器%s无法证明时整体拒绝',async mode=>{
+ const patch=layoutPatch();
+ if(mode==='mutated')patch[layoutLoaderPath]+='\n// unreviewed\n';
+ if(mode==='import')patch[layoutRoutePath]=patch[layoutRoutePath].replace("from '../lib/deploy-retention-runtime.js'","from '../lib/other-runtime.js'");
+ if(mode==='route')patch[layoutRoutePath]=patch[layoutRoutePath].replace('await runtime.ledger.settlement(gitSha)','({outcome:"success"})');
+ const result=await build({patch,...(mode==='missing'?{missing:layoutLoaderPath}:{})});
+ expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+});
+
+// 精确已审previous恢复变体只用于来源证明；不执行或替换实际ledger。
+const recoveryLedgerPath='scripts/brain-image-retention/ledger.mjs';
+function reviewedPreviousLedger(){
+ const original=candidate.blobs[recoveryLedgerPath];
+ expect(createHash('sha256').update(original).digest('hex')).toBe('27dd451fdfae702441c9cdbe6e4d6aea1b88b5116d9f7f152b6ef8fba3b1d0cd');
+ let text=original;
+ const replacements=[["}\nexport function createDeploymentLedger({ store, docker, health, now = Date.now, expectedContainerId }) {\n","}\n// 恢复只认可begin封存的previous身份及官方构建的精确保留标签。\nfunction previousVersion(tags, version, gitSha) {\n  return tags.includes(`cecelia-brain:${version}`) || tags.includes(`cecelia-brain:prev-${version}-${gitSha.slice(0, 12)}`);\n}\nexport function createDeploymentLedger({ store, docker, health, now = Date.now, expectedContainerId }) {\n"],["      if (!target || target.git_sha !== request.git_sha || !target.tags.includes(`cecelia-brain:${request.version}`)) throw fail('ROLLBACK_TARGET_MISMATCH');\n","      const canonicalTarget = target?.tags.includes(`cecelia-brain:${request.version}`);\n      const previousTarget = ledger.pending && ledger.pending.previous.id === image_id && ledger.pending.previous.git_sha === request.git_sha\n        && target && previousVersion(target.tags, request.version, request.git_sha);\n      if (!target || target.git_sha !== request.git_sha || (!canonicalTarget && !previousTarget)) throw fail('ROLLBACK_TARGET_MISMATCH');\n"],["      if (!pending.recovering && pending.target_image_id === image_id\n","      if (canonicalTarget && !pending.recovering && pending.target_image_id === image_id\n"],["          || !pending.previous.tags.includes(`cecelia-brain:${request.version}`)) throw fail('ROLLBACK_TARGET_MISMATCH');\n","          || !previousVersion(pending.previous.tags, request.version, request.git_sha)) throw fail('ROLLBACK_TARGET_MISMATCH');\n"],["            || !(outcome === 'recovered' ? row.previous.tags ?? [] : after.tags).includes(`cecelia-brain:${observed.version}`)\n","            || !(outcome === 'recovered' ? previousVersion(row.previous.tags ?? [], observed.version, expectedSha) : after.tags.includes(`cecelia-brain:${observed.version}`))\n"]];
+ for(const [before,after]of replacements){
+  expect(text.split(before)).toHaveLength(2);
+  text=text.replace(before,after);
+ }
+ expect(createHash('sha256').update(text).digest('hex')).toBe('1de1ba852d4a31f303bc3c51384e282c69e40d402202bde3cc6e37472e968db8');
+ return text;
+}
+it('来源清单接受精确previous恢复ledger且保留旧已发布字节',async()=>{
+ const text=reviewedPreviousLedger();
+ const result=await build({patch:{[recoveryLedgerPath]:text}});
+ expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+ expect(result.bindings).toContainEqual(expect.objectContaining({path:recoveryLedgerPath,digest:'sha256:1de1ba852d4a31f303bc3c51384e282c69e40d402202bde3cc6e37472e968db8'}));
+ expect((await build()).status).toBe('verified');
+});
+it('previous恢复ledger未知附加字节仍拒绝并清空绑定',async()=>{
+ const result=await build({patch:{[recoveryLedgerPath]:reviewedPreviousLedger()+'\n// unreviewed\n'}});
+ expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+});
+
+// pending恢复的已审ledger变体与原已发布字节并存；额外字节仍UNKNOWN。
+it('精确prev-only恢复ledger来源可认领，旧已发布ledger仍兼容',async()=>{
+ const text=readFileSync(new URL('../../../../../scripts/brain-image-retention/ledger.mjs',import.meta.url),'utf8');
+ const result=await build({patch:{[recoveryLedgerPath]:text}});
+ expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+ expect(result.bindings).toContainEqual(expect.objectContaining({path:recoveryLedgerPath,digest:`sha256:${createHash('sha256').update(text).digest('hex')}`}));
+ expect((await build()).status).toBe('verified');
+});
+it('prev恢复ledger未知字节仍拒绝且清空绑定',async()=>{
+ const text=readFileSync(new URL('../../../../../scripts/brain-image-retention/ledger.mjs',import.meta.url),'utf8');
+ const result=await build({patch:{[recoveryLedgerPath]:text+'\n// unreviewed\n'}});
  expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
 });

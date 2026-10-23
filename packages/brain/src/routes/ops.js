@@ -1,3 +1,4 @@
+import { loadDeploymentRetentionRuntime } from '../lib/deploy-retention-runtime.js';
 import {randomUUID} from 'node:crypto';
 import {rateLimit} from 'express-rate-limit';
 import express, { Router } from 'express';
@@ -2727,7 +2728,7 @@ router.get('/deploy/status', async (req, res) => {
   // running/rollback/failed 不能被上一份成功收据覆盖；锁忙或核验未知保持未结算。
   if (['idle', 'success', 'succeeded'].includes(deployState.status)) {
     try {
-      const { createRuntime } = await import('../../../../scripts/brain-image-retention/runtime.mjs');
+      const { createRuntime } = await loadDeploymentRetentionRuntime();
       const runtime = await createRuntime();
       if (runtime) settlement = await runtime.ledger.settlement(gitSha);
     } catch { /* 只读失败不放行，也不新建或修复部署账。 */ }

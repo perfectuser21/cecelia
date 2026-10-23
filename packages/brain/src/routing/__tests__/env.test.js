@@ -71,3 +71,8 @@ describe('QIUMI_MODEL_ALLOWLIST + resolveModelRef', () => {
     expect(resolveModelRef('XAI/GROK-4.7', env)).toBe('xai/grok-4.7');
   });
 });
+
+it('账号别名映射由部署配置提供', () => {
+ expect(qiumiEnv({ QIUMI_AI_ACCOUNT_MAP: '{"Codex team2":"openai:team2"}' }).aiAccountMap).toEqual({ 'Codex team2': 'openai:team2' });
+ expect(qiumiEnv({ QIUMI_AI_ACCOUNT_MAP: '[]' }).aiAccountMap).toEqual({});
+});

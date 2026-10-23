@@ -160,3 +160,60 @@ test('reconcile：pending处于恢复中（rollback在途）→ 拒绝且不改�
  await assert.rejects(x.ledger.reconcile(),/DEPLOYMENT_RECOVERING/);
  assert.ok((await x.store.read('ledger.json')).pending.recovering);
 });
+
+// B3/B4接缝：官方build只保prev-v-sha12，恢复必须绑定原pending的完整镜像身份。
+async function previousTagSetup(t,{tag='cecelia-brain:prev-1.0.1-111111111111',ageMs=3600000}={}){
+ const root=await realpath(await mkdtemp(join(tmpdir(),'previous-tag-ledger-')));t.after(()=>rm(root,{recursive:true,force:true}));
+ const store=createStore(root),state={tags:[tag],version:'1.0.1',git_sha:sha(1),id:image(1),container:'a'.repeat(64)};
+ let clock=Date.parse('2026-10-23T10:00:00Z');
+ const docker={snapshot:async()=>({containers:[{id:state.container,name:'/cecelia-node-brain',running:true,image_id:state.id}],
+  images:[{id:image(1),tags:state.tags,git_sha:sha(1)},{id:image(2),tags:['cecelia-brain:1.0.2'],git_sha:sha(2)}]})};
+ const health=async()=>({status:'healthy',version:state.version,git_sha:state.git_sha});
+ const ledger=createDeploymentLedger({store,docker,health,now:()=>clock}),request={deployment_id:randomUUID(),version:'1.0.2',git_sha:sha(2)};
+ await ledger.begin(request);clock+=ageMs;
+ return {store,state,docker,health,ledger,request};
+}
+test('官方prev-only标签：陈旧pending正常reconcile→recovered，不增成功史',async t=>{
+ const x=await previousTagSetup(t),receipt=await x.ledger.reconcile();
+ assert.equal(receipt.outcome,'recovered');assert.equal(receipt.image_id,image(1));assert.equal(receipt.git_sha,sha(1));
+ const state=await x.store.read('ledger.json');assert.equal(state.pending,null);assert.deepEqual(state.successes,[]);
+});
+test('官方prev-only标签：完整pending rollback入口和finish均接受原精确身份',async t=>{
+ const x=await previousTagSetup(t);
+ const result=await x.ledger.rollback({deployment_id:randomUUID(),version:'1.0.1',git_sha:sha(1),image_id:image(1)});
+ assert.equal(result.deployment_id,x.request.deployment_id);assert.equal(result.outcome,'recovered');
+ const receipt=await x.ledger.finish(result.deployment_id,result.outcome);assert.equal(receipt.outcome,'recovered');
+ const state=await x.store.read('ledger.json');assert.equal(state.pending,null);assert.deepEqual(state.successes,[]);
+});
+for(const tag of ['cecelia-brain:prev-1.0.3-111111111111','cecelia-brain:prev-1.0.1-222222222222','cecelia-brain:prev-1.0.1-111111111111-extra','cecelia-brain:latest','other:prev-1.0.1-111111111111']){
+ test(`prev恢复拒绝非精确官方tag ${tag}`,async t=>{
+  const x=await previousTagSetup(t,{tag}),before=await x.store.read('ledger.json');
+  await assert.rejects(x.ledger.reconcile(),/DEPLOY_HEALTH_MISMATCH/);
+  await assert.rejects(x.ledger.rollback({deployment_id:randomUUID(),version:'1.0.1',git_sha:sha(1),image_id:image(1)}),/ROLLBACK_TARGET_MISMATCH/);
+  assert.deepEqual(await x.store.read('ledger.json'),before);
+ });
+}
+test('prev-only不得放宽无pending的新rollback',async t=>{
+ const x=await previousTagSetup(t);const before=await x.store.read('ledger.json');await x.store.withLock(lease=>x.store.save('ledger.json',{...before,pending:null},lease));
+ await assert.rejects(x.ledger.rollback({deployment_id:randomUUID(),version:'1.0.1',git_sha:sha(1),image_id:image(1)}),/ROLLBACK_TARGET_MISMATCH/);
+ assert.deepEqual((await x.store.read('ledger.json')).successes,[]);
+});
+test('prev-only不得绕过新鲜pending或错误健康SHA/version',async t=>{
+ const fresh=await previousTagSetup(t,{ageMs:1000}),before=await fresh.store.read('ledger.json');
+ await assert.rejects(fresh.ledger.reconcile(),/DEPLOYMENT_PENDING_FRESH/);assert.deepEqual(await fresh.store.read('ledger.json'),before);
+ for(const change of [{git_sha:sha(2)},{version:'1.0.3'}]){
+  const x=await previousTagSetup(t);Object.assign(x.state,change);const old=await x.store.read('ledger.json');
+  await assert.rejects(x.ledger.reconcile(),/DEPLOY_HEALTH_MISMATCH/);assert.deepEqual(await x.store.read('ledger.json'),old);
+ }
+});
+test('prev-only恢复仍拒绝运行镜像改变和核验中容器替换',async t=>{
+ const x=await previousTagSetup(t);x.state.id=image(2);const old=await x.store.read('ledger.json');
+ await assert.rejects(x.ledger.reconcile(),/DEPLOY_IMAGE_MISMATCH|DEPLOY_HEALTH_MISMATCH/);assert.deepEqual(await x.store.read('ledger.json'),old);
+ const y=await previousTagSetup(t);const ledger=createDeploymentLedger({store:y.store,docker:y.docker,health:async()=>{y.state.container='b'.repeat(64);return y.health();}});
+ await assert.rejects(ledger.finish(y.request.deployment_id,'recovered'),/DEPLOY_CONTAINER_MISMATCH/);assert.ok((await y.store.read('ledger.json')).pending);
+});
+test('pending rollback拒绝错误fullSHA/version，即使官方prev-only tag存在',async t=>{
+ const x=await previousTagSetup(t),before=await x.store.read('ledger.json');
+ for(const change of [{git_sha:sha(2)},{version:'1.0.3'},{image_id:image(2)}])await assert.rejects(x.ledger.rollback({deployment_id:randomUUID(),version:'1.0.1',git_sha:sha(1),image_id:image(1),...change}),/ROLLBACK_TARGET_MISMATCH/);
+ assert.deepEqual(await x.store.read('ledger.json'),before);
+});

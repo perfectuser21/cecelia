@@ -162,17 +162,20 @@ for(const [name,expression,mode,valid] of [
  assert.equal(r.admission.status,'unknown');assert.equal(r.executable,false);
 });
 
-function addActualPatrolPrelude(f, mutate=()=>{}) {
+function addActualPatrolPrelude(f, mutate=()=>{}, mutateDocument=()=>{}) {
  const project=fileURLToPath(new URL('../../../',import.meta.url));
- const actual=load(git(project,'show','HEAD:.github/workflows/implementation-impact.yml')).jobs.gate;
- const step=actual.steps.find(s=>s.if==="env.MAP_SCOPE == 'cecelia-device-patrol'");
+ const path='.github/workflows/implementation-impact.yml';
+ const actual=load(git(project,'show',`HEAD:${path}`));
+ const step=actual.jobs.gate.steps.find(s=>s.if==="env.MAP_SCOPE == 'cecelia-device-patrol'");
  assert.ok(step,'实际Git中巡查身份预读step必须存在');
  fixedNewBrain(f,bf=>{
-  const path='.github/workflows/implementation-impact.yml',doc=load(bf[path]);
-  doc.jobs.gate.env={...actual.env};
-  doc.jobs.gate.env.TOOLING_REVISION=doc.jobs.gate.steps.find(s=>s.with?.path==='tooling').with.ref;
-  doc.jobs.gate.steps.unshift(structuredClone(step));
-  mutate(doc.jobs.gate);bf[path]=dump(doc,{lineWidth:-1});
+  // 固定来源必须是一整套实际callee，不能把现代env嫁接到旧的半套gate。
+  for(const source of ['scripts/ci/implementation-pr-gate.mjs','scripts/ci/implementation-multi-pr-gate.mjs',
+   'scripts/ci/implementation-skill-source.mjs','scripts/ci/fixed-local-git.mjs',
+   'packages/brain/src/lib/implementation-ci-snapshot.js','packages/brain/src/lib/device-patrol-admission.js',
+   'packages/brain/src/migrate.js'])
+   bf[source]=execFileSync('git',['show',`HEAD:${source}`],{cwd:project,encoding:'utf8'});
+  mutate(actual.jobs.gate);mutateDocument(actual);bf[path]=dump(actual,{lineWidth:-1});
  });
 }
 test('固定Git巡查预读仅在专用scope执行：既有zenithjoy mandatory runner消费原样',async t=>{
@@ -180,12 +183,24 @@ test('固定Git巡查预读仅在专用scope执行：既有zenithjoy mandatory r
  assert.equal(r.status,'verified',JSON.stringify(r.gaps));
  assert.ok(r.consumer.bindings.some(b=>b.path==='scripts/ci/implementation-pr-gate.mjs'));
  assert.equal(r.consumer.bindings.some(b=>b.path==='scripts/ci/implementation-patrol-baseline.mjs'),false);
+ assert.equal(r.admission.status,'unknown');assert.equal(r.executable,false);
+});
+test('完整infra封套缺provider仍拒绝',async t=>{
+ const f=fixture(t);addActualPatrolPrelude(f,()=>{},doc=>delete doc.jobs['snapshot-infra']);
+ const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.equal(r.executable,false);
+});
+test('完整封套不允许外部caller改为陌生scope',async t=>{
+ const f=fixture(t);addActualPatrolPrelude(f);
+ const path='.github/workflows/implementation-impact.yml';f.wf[path]=f.wf[path].replace('scope: zenithjoy','scope: unfamiliar');
+ f.options.workspace={repo:WR,revision:tree(f.workspaceRoot,f.wf)};
+ const r=await extractWorkspaceCiSourceBundle(f.options);assert.equal(r.status,'unknown');assert.equal(r.executable,false);
 });
 for(const [name,mutate]of[
- ['误在legacy scope启用',job=>job.steps[0].if="env.MAP_SCOPE == 'zenithjoy'"],
- ['scope环境覆盖',job=>job.steps[0].env.MAP_SCOPE='cecelia-device-patrol'],
+ ['误在legacy scope启用',job=>job.steps.find(s=>s.if==="env.MAP_SCOPE == 'cecelia-device-patrol'").if="env.MAP_SCOPE == 'zenithjoy'"],
+ ['scope环境覆盖',job=>job.steps.find(s=>s.if==="env.MAP_SCOPE == 'cecelia-device-patrol'").env.MAP_SCOPE='cecelia-device-patrol'],
  ['不固定scope来源',job=>job.env.MAP_SCOPE='cecelia-device-patrol'],
- ['预读shell字节变动',job=>job.steps[0].run+='\nexit 0'],
+ ['预读shell字节变动',job=>job.steps.find(s=>s.if==="env.MAP_SCOPE == 'cecelia-device-patrol'").run+='\nexit 0'],
+ ['外部caller强开infra',job=>job.env.INFRA_ADMISSION='${{ true }}'],
 ])test(`scope预读不得放宽核心合同：${name}`,async t=>{
  const f=fixture(t);addActualPatrolPrelude(f,mutate);const r=await extractWorkspaceCiSourceBundle(f.options);
  assert.equal(r.status,'unknown');

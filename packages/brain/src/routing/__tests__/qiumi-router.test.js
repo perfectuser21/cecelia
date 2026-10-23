@@ -790,3 +790,9 @@ describe('手机台账模式：resolvePhone 定案 / 定不下退回', () => {
     expect(params[2]).toBe(d.note);
   });
 });
+
+it('显式 AI 账号不能经设备委派绕过会话绑定', async () => {
+  const fetchFn = jevOk();
+  const d = await routeQiumiTask(task('【执行设置——启动前落实】\nAI账号：openai:missing\n【执行参数】\n设备：ANGYVB4227006983\n【执行参数结束】\n去点赞'), { pool, env, fetchFn, callLLMFn: vi.fn() });
+  expect(d).toMatchObject({ outcome: 'fail', reason: 'ai_account_device_delegation_unsupported' });
+});

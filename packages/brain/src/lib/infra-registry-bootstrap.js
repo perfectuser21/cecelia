@@ -15,7 +15,7 @@ async function authorize(db,lock=false){
  if(!task||task.status!=='in_progress'||task.claimed_by!==CLAIM||task.parent_task_id!==PARENT||p?.repo!=='cecelia'||p.routing_receipt_id!==ROUTE||stepSha256(p.map_scope)!==stepSha256(['F2']))fail('INFRA_BOOTSTRAP_TASK_FORBIDDEN',403);
  const parent=(await db.query(`SELECT status FROM tasks WHERE id=$1${lock?' FOR SHARE':''}`,[PARENT])).rows[0];
  const route=(await db.query('SELECT * FROM work_routing_receipts WHERE id=$1 AND task_id=$2',[ROUTE,TASK])).rows[0];
- if(parent?.status!=='in_progress'||!route||route.repo!=='cecelia'||route.work_kind!=='coding_mutation'||route.change_kind!=='bugfix'||route.orchestrator!=='skill-relay'||route.impact_contract_required!==true||stepSha256(route.map_scope)!==stepSha256(['F2']))fail('INFRA_BOOTSTRAP_TASK_FORBIDDEN',403);
+ if(parent?.status!=='in_progress'||!route||route.repo!=='cecelia'||route.work_kind!=='coding_mutation'||route.change_kind!=='bugfix'||route.orchestrator!=='kernel-harness-v2'||route.pipeline!=='harness'||route.canonical_task_type!=='harness_initiative'||route.impact_contract_required!==true||stepSha256(route.map_scope)!==stepSha256(['F2']))fail('INFRA_BOOTSTRAP_TASK_FORBIDDEN',403);
  return task;
 }
 function identity(r){

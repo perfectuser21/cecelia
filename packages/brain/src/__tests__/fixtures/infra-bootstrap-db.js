@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 export const TASK='a6aa895d-f91e-4eb4-bdc6-242119ca46ce',PARENT='3362c876-447a-49ef-a2df-b0773d880d88',ROUTE='0c0eb3b2-7361-406a-ad9f-11e1b59e3fb1';
 export const CLAIM='interactive-dev-skill:infra-bootstrap-20261022';
 const root=fileURLToPath(new URL('../../../../../',import.meta.url));
-export async function infraBootstrapDatabase({receipt=true}={}){
+export async function infraBootstrapDatabase({receipt=true,route={}}={}){
  const f=await versionsDatabase();let temp;
  try{
   await f.migrate();
@@ -17,7 +17,7 @@ export async function infraBootstrapDatabase({receipt=true}={}){
    CREATE TABLE skill_registry(id uuid PRIMARY KEY,name text,status text,location text);`);
   await f.db.query(migrationSql('413_work_routing_receipts.sql'));
   await f.db.query(`INSERT INTO tasks(id,title,status,parent_task_id,payload,claimed_by) VALUES($1,'parent','in_progress',NULL,'{}','parent'),($2,'bootstrap','in_progress',$1,$3,$4)`,[PARENT,TASK,{repo:'cecelia',map_scope:['F2'],routing_receipt_id:ROUTE},CLAIM]);
-  if(receipt)await f.db.query(`INSERT INTO work_routing_receipts(id,task_id,source,source_id,work_kind,change_kind,pipeline,canonical_task_type,default_execution_profile,repo,map_scope,impact_contract_required,orchestrator,router_version,route_reason) VALUES($1,$2,'manual','fixture','coding_mutation','bugfix','kernel-v1','harness_initiative','hotfix-v1','cecelia','["F2"]',true,'skill-relay','fixture','fixture')`,[ROUTE,TASK]);
+  if(receipt)await f.db.query(`INSERT INTO work_routing_receipts(id,task_id,source,source_id,work_kind,change_kind,pipeline,canonical_task_type,default_execution_profile,repo,map_scope,impact_contract_required,orchestrator,router_version,route_reason) VALUES($1,$2,'manual','fixture','coding_mutation','bugfix',$3,$4,'hotfix-v1','cecelia','["F2"]',true,$5,'fixture','fixture')`,[ROUTE,TASK,route.pipeline??'harness',route.canonical_task_type??'harness_initiative',route.orchestrator??'kernel-harness-v2']);
   await f.db.query('INSERT INTO value_streams(id,name) VALUES($1,$2)',[I.root,'系统看护']);
   await f.db.query('INSERT INTO capabilities(id,name,parent_journey_id) VALUES($1,$2,$3)',[I.capability_id,'系统看护 · 清理与容量',I.root]);
   await f.db.query(`INSERT INTO workflows(id,capability_id,key,name,channel,form) VALUES($1,$2,$3,'清理与容量 · 定时作业','internal','scheduled')`,[I.workflow_id,I.capability_id,I.workflow_key]);
