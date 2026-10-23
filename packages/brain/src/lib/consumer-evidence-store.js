@@ -16,11 +16,14 @@ export async function assertConsumerScratch(db){
  if(name!=='cecelia_scratch'&&!(name==='cecelia_test'&&process.env.CI==='true'&&process.env.GITHUB_ACTIONS==='true'))throw consumerFailure('OPS_SCRATCH_REQUIRED');
 }
 /** 两种受信来源登记共用事务/CAS临界区；回调仍须锁并比对真实registry。 */
-export async function withConsumerEvidenceTransaction(pool,lockName,work){
+export async function withConsumerEvidenceTransaction(pool,lockName,work,{lockTimeoutMs}={}){
  if(!['existing-factory-consumer-evidence','infra-consumer-evidence'].includes(lockName)||typeof work!=='function')throw consumerFailure('OPS_TRANSACTION_INPUT_INVALID');
+ if(lockTimeoutMs!==undefined&&(!Number.isSafeInteger(lockTimeoutMs)||lockTimeoutMs<1||lockTimeoutMs>10000))throw consumerFailure('OPS_TRANSACTION_INPUT_INVALID');
  const db=await pool.connect();
  try{
-  await db.query('BEGIN');await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',[lockName]);
+  await db.query('BEGIN');
+  if(lockTimeoutMs!==undefined)await db.query("SELECT set_config('lock_timeout',$1,true)",[lockTimeoutMs+'ms']);
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',[lockName]);
   const result=await work(db);await db.query('COMMIT');return result;
  }catch(error){await db.query('ROLLBACK');throw error;}finally{db.release();}
 }

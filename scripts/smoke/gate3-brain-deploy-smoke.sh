@@ -150,6 +150,14 @@ BRAIN_DEPLOY="$ROOT_DIR/scripts/brain-deploy.sh"
 if [[ ! -f "$BRAIN_DEPLOY" ]]; then
   fail "brain-deploy.sh 不存在：$BRAIN_DEPLOY"
 else
+  # SHA 对账在独立的普通发布包中执行；保留原脚本及 helper 的完整字节。
+  # 当前源码可能是禁止部署的来源恢复包，不能借其 manifest 冒充普通发布。
+  SHA_ROOT="$TMP/sha-release"
+  mkdir -p "$SHA_ROOT/scripts" "$SHA_ROOT/packages/brain"
+  cp "$BRAIN_DEPLOY" "$SHA_ROOT/scripts/brain-deploy.sh"
+  cp -R "$ROOT_DIR/scripts/lib" "$SHA_ROOT/scripts/lib"
+  printf '{"name":"@cecelia/brain","version":"9.9.9"}\n' > "$SHA_ROOT/packages/brain/package.json"
+  BRAIN_DEPLOY="$SHA_ROOT/scripts/brain-deploy.sh"
   # E1: SHA 不匹配 → 应 exit 1（ROLLBACK）
   EXPECTED_SHA="abc1234abc1234abc1234abc1234abc1234abc12"
   WRONG_SHA="deadbeef00000000deadbeef00000000deadbeef"
@@ -161,7 +169,7 @@ else
   E1_OUT=$(HEALTH_JSON_OVERRIDE="$FIXTURE_E1" EXPECTED_SHA="$EXPECTED_SHA" \
     bash "$BRAIN_DEPLOY" --dry-run --sha-check-only 2>&1) || E1_EXIT=$?
 
-  if [[ $E1_EXIT -ne 0 ]]; then
+  if [[ $E1_EXIT -eq 1 ]] && [[ "$E1_OUT" == *"SHA 不匹配：EXPECTED=$EXPECTED_SHA ACTUAL=$WRONG_SHA"* ]] && [[ "$E1_OUT" != *"SOURCE_ONLY_PRODUCTION_FORBIDDEN"* ]]; then
     pass "[E1] SHA 不匹配 → exit ${E1_EXIT}（ROLLBACK 触发）"
   else
     fail "[E1] SHA 不匹配时 exit 0（应 exit 1，ROLLBACK 未触发）"
@@ -177,11 +185,23 @@ else
   E2_OUT=$(HEALTH_JSON_OVERRIDE="$FIXTURE_E2" EXPECTED_SHA="$EXPECTED_SHA" \
     bash "$BRAIN_DEPLOY" --dry-run --sha-check-only 2>&1) || E2_EXIT=$?
 
-  if [[ $E2_EXIT -eq 0 ]]; then
+  if [[ $E2_EXIT -eq 0 ]] && [[ "$E2_OUT" == *"SHA 一致：$EXPECTED_SHA"* ]]; then
     pass "[E2] SHA 一致 → exit 0（部署视为正确）"
   else
     fail "[E2] SHA 一致时 exit ${E2_EXIT}（应 exit 0）"
     echo "$E2_OUT" | sed 's/^/    /' | head -10
+  fi
+
+  # E3: 同一脚本、同一匹配 SHA，但包上存在来源恢复标记 → 必须拒绝。
+  printf '{"name":"@cecelia/brain","version":"9.9.9","cecelia_source_only":true}\n' > "$SHA_ROOT/packages/brain/package.json"
+  E3_EXIT=0
+  E3_OUT=$(HEALTH_JSON_OVERRIDE="$FIXTURE_E2" EXPECTED_SHA="$EXPECTED_SHA" \
+    bash "$BRAIN_DEPLOY" --dry-run --sha-check-only 2>&1) || E3_EXIT=$?
+  if [[ $E3_EXIT -ne 0 ]] && [[ "$E3_OUT" == *"SOURCE_ONLY_PRODUCTION_FORBIDDEN"* ]] && [[ "$E3_OUT" != *"[SHA-CHECK]"* ]]; then
+    pass "[E3] 来源恢复包即使 SHA 一致也在对账前拒绝"
+  else
+    fail "[E3] 来源恢复包未在对账前明确拒绝"
+    echo "$E3_OUT" | sed 's/^/    /' | head -10
   fi
 fi
 echo ""

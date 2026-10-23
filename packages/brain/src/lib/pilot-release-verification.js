@@ -13,6 +13,17 @@ const uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}
 const sha=v=>typeof v==='string'&&/^[0-9a-f]{40}$/.test(v);
 const hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
 const isRegressionRegistration=row=>row?.cell_kind==='scenario'&&typeof row.cell_key==='string'&&row.cell_key.startsWith('regression:');
+const preparedValidations=new WeakMap();
+/** 快照已在短只读事务取得；在线核验时调用方不得持有数据库事务/连接。 */
+export async function preparePilotReleaseValidation(snapshot,report,options={}){
+ const state={snapshot_sha256:snapshot.snapshot_sha256,report_sha256:pilotPlanHash(report)};
+ try{
+  state.authoring=report.implementation_source_set&&isAuthoringReleaseSnapshot(snapshot)
+   ?{authoringSnapshot:snapshot,authoringProof:await prepareAuthoringReleaseProof(snapshot,options)}:{};
+ }catch(error){state.error=error;}
+ options.signal?.throwIfAborted();
+ const token=Object.freeze({});preparedValidations.set(token,state);return token;
+}
 export function pilotPlanBody(report){
  return Object.fromEntries(['scope','source','definition_versions','expected_usages','required_assertions','assertion_source',...(report.implementation_source_set?['implementation_source_set']:[])].map(k=>[k,report[k]]));
 }
@@ -91,11 +102,15 @@ export function assertPilotDefinitionSubset(full,subset){
  for(const r of refs)if(!subset.activities.some(a=>a.id===r.activity_version_id&&a.activity_id===r.activity_id&&a.payload?.activity_id===r.activity_id))fail();
  return true;
 }
-export async function validatePilotReleaseEvidence(db,report,receipt,definitions){
+export async function validatePilotReleaseEvidence(db,report,receipt,definitions,prepared){
  assertPilotReleaseReport(report);
  const snapshot=await readImplementationSnapshotInTransaction(db,{scope:report.scope,repo:report.source.repo,revision:report.source.head_revision});
+ const state=prepared===undefined?null:preparedValidations.get(prepared);
+ if(prepared!==undefined&&(!state||state.report_sha256!==pilotPlanHash(report)))throw Object.assign(Error('发布预检证明无效'),{code:'AUTHORING_RELEASE_PROOF_INVALID'});
+ if(state&&state.snapshot_sha256!==snapshot.snapshot_sha256)throw Object.assign(Error('来源核验期间登记发生变化'),{code:'RELEASE_REGISTRATION_CHANGED'});
+ if(state?.error)throw state.error;
  // 旧同HEAD报告保持原计划；跨版本必须携带可重建的完整来源集合，不能沿旧格式豁免。
- const authoring=report.implementation_source_set&&isAuthoringReleaseSnapshot(snapshot)
+ const authoring=state?state.authoring:report.implementation_source_set&&isAuthoringReleaseSnapshot(snapshot)
   ?{authoringSnapshot:snapshot,authoringProof:await prepareAuthoringReleaseProof(snapshot)}:{};
  const expected=buildPilotReleasePlan({scope:report.scope,repo:report.source.repo,revision:report.source.head_revision,definitions:snapshot.definitions,assertions:snapshot.assertions,...authoring});
  const fail=()=>{throw Object.assign(Error('固定完整计划与当前登记或执行收据不符'),{code:'PILOT_RELEASE_PLAN_MISMATCH'});};

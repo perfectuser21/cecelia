@@ -15,7 +15,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 
 # Read version from origin/main brain/package.json — 不读 cwd 工作树
-VERSION=$(git -C "$ROOT_DIR" show "origin/$DEPLOY_BRANCH:packages/brain/package.json" 2>/dev/null \
+VERSION=$(git -C "$ROOT_DIR" show "${EXPECTED_SHA:-origin/$DEPLOY_BRANCH}:packages/brain/package.json" 2>/dev/null \
   | node -e "let s=''; process.stdin.on('data',c=>s+=c); process.stdin.on('end',()=>console.log(JSON.parse(s).version))" \
   || node -e "console.log(require('$ROOT_DIR/packages/brain/package.json').version)")
 
@@ -35,14 +35,19 @@ echo "  Fetch origin/${DEPLOY_BRANCH}..."
 git -C "$ROOT_DIR" fetch origin "$DEPLOY_BRANCH" 2>&1 | tail -3
 
 echo "  导出 origin/${DEPLOY_BRANCH} (FETCH_HEAD) 到临时 build context: $TEMP_BUILD"
-git -C "$ROOT_DIR" archive --format=tar FETCH_HEAD | tar -x -C "$TEMP_BUILD"
+BUILD_REF="${EXPECTED_SHA:-FETCH_HEAD}"
+BUILD_SHA=$(git -C "$ROOT_DIR" rev-parse "$BUILD_REF^{commit}")
+[[ "$BUILD_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+if [[ -n "${EXPECTED_SHA:-}" && "$BUILD_SHA" != "$EXPECTED_SHA" ]]; then exit 1; fi
+git -C "$ROOT_DIR" archive --format=tar "$BUILD_SHA" | tar -x -C "$TEMP_BUILD"
+VERSION=$(node -p "require('$TEMP_BUILD/packages/brain/package.json').version")
 if [[ -f "$TEMP_BUILD/.skills-source.json" ]]; then
     bash "$TEMP_BUILD/scripts/ensure-skills-source.sh" "$TEMP_BUILD"
 fi
 
 # FR-01: 传 GIT_SHA build-arg（Gate3 SHA 对账）
 # 使用 FETCH_HEAD（origin/main 最新）作为构建期 SHA
-BUILD_SHA=$(git -C "$ROOT_DIR" rev-parse FETCH_HEAD 2>/dev/null || git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "unknown")
+# BUILD_SHA 已在导出前冻结，源码/版本/镜像戳来自同一 commit。
 echo "  GIT_SHA=${BUILD_SHA}"
 
 # v1.3.0 (2026-10-12, B4 / e2fc7076 / a80485b3): 同版本号不同 SHA 重建保护。

@@ -169,3 +169,24 @@ it('保留原双scope单needs与旧cache完整封套',async()=>{
   expect(createHash('sha256').update(init.run).digest('hex')).toBe('0c63a85850a5c2f0b78206b08737ff1b459c14bfbcdb7f9485aa854920287d36');
  }});expect(p.status,JSON.stringify(p.gaps)).toBe('verified');expect(p.executable).toBe(false);
 });
+
+const baselineDownload=y=>y.jobs.gate.steps.find(s=>String(s.run||'').includes('implementation-baseline-$HEAD'));
+it('旧精确下载封套仍可证明外部调用，原生祖先恢复不改变workspace分支',async()=>{
+ const proof=await modernBundle(()=>{},null,{mutateImpact:y=>{
+  const step=baselineDownload(y),start=step.run.indexOf('  if [[ "${NATIVE_PR_BASELINE:-false}" == true ]]; then\n'),end=step.run.indexOf('  else\n',start);
+  expect(start).toBeGreaterThan(0);expect(end).toBeGreaterThan(start);
+  step.run=step.run.slice(0,start)+step.run.slice(end+7);
+  step.run=step.run.replace('  fi\n  if [[ -n "${ADMISSION_SCOPES:-}" ]]','  if [[ -n "${ADMISSION_SCOPES:-}" ]]');
+  expect(createHash('sha256').update(step.run).digest('hex')).toBe('51c728cdec33a877e94b11bfbd88eecb472ba24221ccf23d1b0d2c90a1fc2ca7');
+  delete step.env.NATIVE_PR_BASELINE;
+ }});
+ expect(proof.status,JSON.stringify(proof.gaps)).toBe('verified');expect(proof.executable).toBe(false);
+});
+it.each([
+ ['强开原生分支',y=>baselineDownload(y).env.NATIVE_PR_BASELINE='true'],
+ ['缺原生边界',y=>delete baselineDownload(y).env.NATIVE_PR_BASELINE],
+ ['放宽来源输入',y=>baselineDownload(y).env.NATIVE_PR_BASELINE=baselineDownload(y).env.NATIVE_PR_BASELINE.replace(' && !inputs.source_repo','')],
+ ['替换祖先选择器',y=>baselineDownload(y).run=baselineDownload(y).run.replace('node source/scripts/ci/implementation-pr-baseline.mjs','node source/foreign.mjs')],
+])('原生基线封套%s必须保持unknown',async(_name,mutateImpact)=>{
+ const proof=await modernBundle(()=>{},null,{mutateImpact});expect(proof.status).toBe('unknown');expect(proof.executable).toBe(false);
+});

@@ -196,7 +196,7 @@ cancel_drain_after_up() {
   fi
 }
 
-PRIMARY_METADATA=$(_sidecar_image "cecelia-brain:${BRAIN_VERSION}") || exit 1
+PRIMARY_METADATA=$(_sidecar_image "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${BRAIN_VERSION}}") || exit 1
 IFS='|' read -r PRIMARY_IMAGE PRIMARY_TAGS PRIMARY_SHA <<< "$PRIMARY_METADATA"
 if [[ "$PRIMARY_SHA" != "GIT_SHA=$EXPECTED_SHA" || ! "$PRIMARY_IMAGE" =~ ^sha256:[a-f0-9]{64}$ ]]; then
   _sidecar_log "[completion-fail] requested_image_sha_mismatch brain_version=${BRAIN_VERSION}"
@@ -235,7 +235,7 @@ echo "[sidecar] ❌ compose up 失败 exit=${PRIMARY_EXIT}，尝试 blue-fallbac
 # ── 恢复路径：用 blue-fallback 镜像重启（bluegreen_swap 在起 sidecar 前已 tag）──
 # blue-fallback = 删 blue 前由 bluegreen_swap 打的 docker tag，是最后一次健康 blue 的快照。
 # 退出码语义：fallback 成功 → exit 0（5221 已恢复）；fallback 也失败 → exit 1（5221 宕机）
-if BRAIN_VERSION=blue-fallback ENV_REGION="$ENV_REGION" \
+if CECELIA_RELEASE_IMAGE= BRAIN_VERSION=blue-fallback ENV_REGION="$ENV_REGION" \
     docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$DEPLOY_ROOT/.env.docker" \
       -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
   echo "[sidecar] ✅ blue-fallback 恢复成功，5221 已恢复旧版本"

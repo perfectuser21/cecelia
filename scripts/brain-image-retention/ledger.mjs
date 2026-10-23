@@ -113,5 +113,30 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
     if (!atTarget && !atPrevious) throw fail('DEPLOYMENT_RECONCILE_UNKNOWN');
     return finish(pending.deployment_id, atTarget ? 'success' : 'recovered');
   }
-  return Object.freeze({ begin, rollback, finish, reconcile });
+  // 只读已完成部署：证明当前实例仍对应最近成功收据，不代表最近请求已成功。
+  async function settlement(runtimeSha) {
+    if (!/^[a-f0-9]{40}$/.test(runtimeSha ?? '')) throw fail('DEPLOY_RUNTIME_UNKNOWN');
+    return store.withLock(async lease => {
+      const before = await state(), receipt = before.successes[0];
+      if (before.pending !== null || !receipt || receipt.outcome !== 'success'
+          || !UUID.test(receipt.deployment_id ?? '') || !IMAGE.test(receipt.image_id ?? '')
+          || receipt.git_sha !== runtimeSha || !VERSION.test(receipt.version ?? '')
+          || !Number.isFinite(Date.parse(receipt.confirmed_at))) throw fail('DEPLOY_UNSETTLED');
+      const row = await store.read(name(receipt.deployment_id));
+      if (!row || digest(row.receipt) !== digest(receipt) || row.request.deployment_id !== receipt.deployment_id || row.request.git_sha !== runtimeSha
+          || row.request.version !== receipt.version || (row.target_image_id && row.target_image_id !== receipt.image_id)) throw fail('DEPLOY_RECEIPT_MISMATCH');
+      const first = current(await docker.snapshot(lease));
+      const observed = await docker.containerHealth(first.container_id, lease);
+      const last = current(await docker.snapshot(lease));
+      if (first.container_id !== last.container_id || first.id !== last.id || last.id !== receipt.image_id
+          || first.git_sha !== runtimeSha || last.git_sha !== runtimeSha
+          || observed.status !== 'healthy' || observed.git_sha !== runtimeSha || observed.version !== receipt.version)
+        throw fail('DEPLOY_CURRENT_MISMATCH');
+      const after = await state();
+      if (digest(before) !== digest(after)) throw fail('DEPLOY_HISTORY_CHANGED');
+      return { ...receipt, container_id: last.container_id };
+    });
+  }
+  return Object.freeze({ begin, rollback, finish, reconcile, settlement });
+
 }

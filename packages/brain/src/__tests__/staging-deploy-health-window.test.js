@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(__dirname, '../../../../scripts/staging-deploy.sh');
+const SCRIPT = path.resolve(__dirname, '../../../../scripts/lib/brain-staging.sh');
 
 describe('staging-deploy.sh 健康检查窗口', () => {
   const src = readFileSync(SCRIPT, 'utf8');
