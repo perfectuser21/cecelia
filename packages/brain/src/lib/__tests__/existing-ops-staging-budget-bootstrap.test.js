@@ -2,6 +2,8 @@ import { it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
+import { parse } from 'acorn';
 import { buildExistingOpsSources } from '../existing-ops-source.js';
 import { readNativeConsumerRuntime } from '../native-consumer-runtime.js';
 const candidate={
@@ -79,6 +81,29 @@ async function build({patch={},missing}={}){
   return text;
  }});return result.consumers.find(c=>c.workflow_key==='factory_f2_ops');
 }
+function settlementRoute(text) {
+ const tree=parse(text,{ecmaVersion:'latest',sourceType:'module'});
+ const node=tree.body.find(n=>n.type==='ExpressionStatement'&&n.expression.callee?.object?.name==='router'
+  &&n.expression.callee?.property?.name==='get'&&n.expression.arguments[0]?.value==='/deploy/status');
+ return text.slice(node.start,node.end);
+}
+it('精确容器布局结算入口保留固定依赖闭包及原settlement核验',async()=>{
+ const path='packages/brain/src/routes/ops.js';
+ const current=readFileSync(new URL('../../routes/ops.js',import.meta.url),'utf8');
+ const text=read(path).replace(settlementRoute(read(path)),settlementRoute(current));
+ const result=await build({patch:{[path]:text}});
+ expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+ expect(result.input_relations).toContainEqual({consumer_path:path,input_path:'scripts/brain-image-retention/runtime.mjs',kind:'reviewed_packaged_runtime_import',revision});
+ for(const mutate of [
+  s=>s.replace('../../scripts/brain-image-retention/runtime.mjs','../../scripts/unreviewed/runtime.mjs'),
+  s=>s.replace('await runtime.ledger.settlement(gitSha)','({outcome:"success"})'),
+  s=>s.replace('existsSync(packagedRuntime)','true'),
+ ]) {
+  const changed=mutate(text);expect(changed).not.toBe(text);
+  const rejected=await build({patch:{[path]:changed}});
+  expect(rejected.status).toBe('unknown');expect(rejected.bindings).toEqual([]);
+ }
+});
 it('启用精确95分钟结算来源，旧marker1与15文件runtime继续兼容',async()=>{
  expect(git('show',`${revision}:${sourcePath}`)).toContain('EXISTING_OPS_STAGING_SELECTOR_SCHEMA = 2;');
  expect(readNativeConsumerRuntime().files).toHaveLength(15);
