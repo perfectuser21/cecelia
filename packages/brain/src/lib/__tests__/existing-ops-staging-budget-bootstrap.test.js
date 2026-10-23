@@ -160,3 +160,29 @@ it.each(['missing','mutated','import','route'])('布局加载器%s无法证明�
  const result=await build({patch,...(mode==='missing'?{missing:layoutLoaderPath}:{})});
  expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
 });
+
+// 精确已审previous恢复变体只用于来源证明；不执行或替换实际ledger。
+const recoveryLedgerPath='scripts/brain-image-retention/ledger.mjs';
+function reviewedPreviousLedger(){
+ const original=candidate.blobs[recoveryLedgerPath];
+ expect(createHash('sha256').update(original).digest('hex')).toBe('27dd451fdfae702441c9cdbe6e4d6aea1b88b5116d9f7f152b6ef8fba3b1d0cd');
+ let text=original;
+ const replacements=[["}\nexport function createDeploymentLedger({ store, docker, health, now = Date.now, expectedContainerId }) {\n","}\n// 恢复只认可begin封存的previous身份及官方构建的精确保留标签。\nfunction previousVersion(tags, version, gitSha) {\n  return tags.includes(`cecelia-brain:${version}`) || tags.includes(`cecelia-brain:prev-${version}-${gitSha.slice(0, 12)}`);\n}\nexport function createDeploymentLedger({ store, docker, health, now = Date.now, expectedContainerId }) {\n"],["      if (!target || target.git_sha !== request.git_sha || !target.tags.includes(`cecelia-brain:${request.version}`)) throw fail('ROLLBACK_TARGET_MISMATCH');\n","      const canonicalTarget = target?.tags.includes(`cecelia-brain:${request.version}`);\n      const previousTarget = ledger.pending && ledger.pending.previous.id === image_id && ledger.pending.previous.git_sha === request.git_sha\n        && target && previousVersion(target.tags, request.version, request.git_sha);\n      if (!target || target.git_sha !== request.git_sha || (!canonicalTarget && !previousTarget)) throw fail('ROLLBACK_TARGET_MISMATCH');\n"],["      if (!pending.recovering && pending.target_image_id === image_id\n","      if (canonicalTarget && !pending.recovering && pending.target_image_id === image_id\n"],["          || !pending.previous.tags.includes(`cecelia-brain:${request.version}`)) throw fail('ROLLBACK_TARGET_MISMATCH');\n","          || !previousVersion(pending.previous.tags, request.version, request.git_sha)) throw fail('ROLLBACK_TARGET_MISMATCH');\n"],["            || !(outcome === 'recovered' ? row.previous.tags ?? [] : after.tags).includes(`cecelia-brain:${observed.version}`)\n","            || !(outcome === 'recovered' ? previousVersion(row.previous.tags ?? [], observed.version, expectedSha) : after.tags.includes(`cecelia-brain:${observed.version}`))\n"]];
+ for(const [before,after]of replacements){
+  expect(text.split(before)).toHaveLength(2);
+  text=text.replace(before,after);
+ }
+ expect(createHash('sha256').update(text).digest('hex')).toBe('1de1ba852d4a31f303bc3c51384e282c69e40d402202bde3cc6e37472e968db8');
+ return text;
+}
+it('来源清单接受精确previous恢复ledger且保留旧已发布字节',async()=>{
+ const text=reviewedPreviousLedger();
+ const result=await build({patch:{[recoveryLedgerPath]:text}});
+ expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+ expect(result.bindings).toContainEqual(expect.objectContaining({path:recoveryLedgerPath,digest:'sha256:1de1ba852d4a31f303bc3c51384e282c69e40d402202bde3cc6e37472e968db8'}));
+ expect((await build()).status).toBe('verified');
+});
+it('previous恢复ledger未知附加字节仍拒绝并清空绑定',async()=>{
+ const result=await build({patch:{[recoveryLedgerPath]:reviewedPreviousLedger()+'\n// unreviewed\n'}});
+ expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+});
