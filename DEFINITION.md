@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.58
+**Brain 版本**: 1.445.60
 
 隔离候选执行预算90分钟，收据与生产等待95分钟、外层作业110分钟；等待计入网络耗时且超时失败。生产放行要求既有镜像账的已结算成功收据、当前容器与健康SHA/版本一致，running、回滚、失败和未知均不放行；读取结算不新增写账，已完成同SHA可幂等确认。
 
@@ -192,6 +192,21 @@ integration任务预算20→30分钟，Smoke Glob Runner30→45分钟；所有�
 - 只物化 HEAD 的已校验目录数据；限制快照、版本、文件及时间预算，拒来源漂移、摘要不符、路径逃逸和 tracked 文件覆盖。
 - 为精确已发布 821 工具保留原生 PR 冷启动兼容，锁必须与可信 base 字节一致，其他调用不降级。
 - 地图激活 HTTP 入口可选透传严格 expected_active 到原事务 CAS，防止发布续版覆盖并发修改；旧空请求保持兼容。
+
+---
+type: fix
+scope: brain
+---
+
+Recognize only the reviewed deployment status runtime layout loader, preserving legacy settlement source proofs and fail-closed dependency checks.
+
+## Brain 1.445.59 — 秋米任务保留业务正文并固定会话账号
+
+- 执行参数混写业务内容或缺结束标记时，只摘除识别出的执行字段，保留 Skill、输入、回填与执行要求。
+- 显式 AI 账号通过 Gateway session user pin 绑定并读回核对后启动，失败不进入 Agent；回执记录 profile、模型与 session，不修改全局账号顺序。
+- 支持部署配置的账号别名映射及允许清单内的 6.1sol 写法；保留四张真实云手机模板回归。
+
+- 部署状态回执兼容源码目录与实际扁平镜像目录，缺文件或内部依赖损坏仍拒绝准入；保留原镜像/健康/部署账本校验。
 
 ## Brain 1.445.48：Staging 凭据路径跨宿主兼容
 
