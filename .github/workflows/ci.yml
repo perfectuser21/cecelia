@@ -1123,6 +1123,18 @@ jobs:
           cache: 'npm'
       # Fixed-revision CLI tests also import the root graph scanner dependencies.
       - run: npm ci
+      - name: Install PostgreSQL 15 snapshot clients
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc > /dev/null
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-15
+          echo /usr/lib/postgresql/15/bin >> "$GITHUB_PATH"
+          /usr/lib/postgresql/15/bin/pg_dump --version
+          /usr/lib/postgresql/15/bin/pg_restore --version
       - name: Run Migrations
         env:
           DB_HOST: localhost
