@@ -41,6 +41,8 @@ vi.mock('../machine-registry.js', () => ({
   sshTargetFor: vi.fn((id) => (id === 'fake-primary' ? 'administrator@10.0.0.9' : `WRONG:${String(id)}`)),
 }));
 import { recordTaskEventSafe } from '../lib/task-event-log.js';
+import cloudphoneTasks from './fixtures/qiumi-cloudphone-tasks.json';
+import { parseExecParams } from '../routing/exec-params.js';
 import { buildQiumiSource } from '../lib/qiumi-source.js';
 import { buildRemoteCommand, triggerOpenclawAgent, reapOpenclawAgentRuns } from '../openclaw-agent-executor.js';
 
@@ -167,14 +169,17 @@ describe('远端命令在本机 sh 下真跑（反「字符串断言假绿」）
 });
 
 describe('triggerOpenclawAgent', () => {
-  it('正文指定 AI 账号而会话绑定不可证明时，启动前失败关闭', async () => {
+  it('正文指定 AI 账号时，远端先绑定该会话再启动', async () => {
     const spawnFn = spawnMock();
     const requested = { ...task, payload: { ...task.payload, qiumi_source: buildQiumiSource({
       title: '账号任务', body: '【执行设置——启动前落实】\nAI账号：openai-plus3\n【执行参数】\n执行Agent：dev\n模型：openai/gpt-6.1-sol\n【执行要求】\n只读检查',
     }) } };
     const result = await triggerOpenclawAgent(requested, { spawnFn, pool: { query: vi.fn() } });
-    expect(result).toMatchObject({ success: false, reason: 'openclaw_profile_binding_unavailable' });
-    expect(spawnFn).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    const remote = spawnFn.mock.calls[0][1].at(-1);
+    expect(remote).toContain('.binding.json');
+    expect(remote).toContain('node -e');
+    expect(remote).not.toContain('agent --agent dev --model');
   });
   it('工厂探路收到Brain原执行号，锁和证据不另造身份', async () => {
     const spawnFn = spawnMock();
@@ -793,4 +798,19 @@ it('固定核验命令在真实sh中完整传参，重复只起一次且不执�
   expect(spawnSync('sh',['-c',command],{input,encoding:'utf8'}).stdout).toContain('ALREADY');
   expect(readFileSync(join(directory,'brain-runs',`${runId}.log`),'utf8')).toBe(log);
  }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
+describe('原云手机任务解析到 worker 的合同', () => {
+ it.each(cloudphoneTasks.filter(t => !t.body.includes('AI账号：Codex team2')))('$title 保留原业务正文与账号', async (original) => {
+  const params = parseExecParams(original.body, { modelAllowlist: ['openai/gpt-6.1-sol'] });
+  expect(params.errors).toEqual([]);
+  const spawnFn = spawnMock();
+  const payload = { ...task.payload, model: params.model, qiumi_department: params.agent, ai_account_profile: params.aiAccount, acceptance: params.acceptance, qiumi_source: buildQiumiSource({ title: original.title, body: original.body }) };
+  const result = await triggerOpenclawAgent({ ...task, id: original.id, payload }, { spawnFn, pool: { query: vi.fn() } });
+  expect(result.success).toBe(true);
+  const prompt = String(spawnFn.child.stdin.end.mock.calls[0][0]);
+  for (const line of original.body.split('\n').filter(l => /^(调用 [Ss]kill|输入|业务结果回填|运行结果回填|完成后|退回后)/.test(l))) expect(prompt).toContain(line);
+  expect(prompt).toContain('本次模型 openai/gpt-6.1-sol');
+  expect(spawnFn.mock.calls[0][1].at(-1)).toContain('.binding.json');
+ });
 });

@@ -8,6 +8,7 @@
  *  QIUMI_DISPATCH_ENABLED 'true' 才允许 tick 派发 qiumi_task（PR2 入账不再写 headed_manual）
  *  QIUMI_DEPARTMENTS      JSON 数组，Jev department 选项（= openclaw agents 部门清单）
  *  QIUMI_MODEL_MAP        JSON，engine → `openclaw agent --model` 值
+ *  QIUMI_AI_ACCOUNT_MAP  JSON，任务账号别名 → 已核对身份的 OpenClaw profile ID
  *  QIUMI_MODEL_ALLOWLIST  JSON 数组，OpenClaw agents.defaults.modelPolicy.allow 原样；正文「用 <型号>」只认清单内
  *  QIUMI_DEVICE_KEYWORDS  JSON 数组，便宜闸设备关键词
  *  QIUMI_DEVICE_DELEGATION_ENABLED 'true' 才把手机活派生成 device_job 交西安领单器；默认关＝手机活也派给 openclaw agent（主理人 0923 拍板）
@@ -38,6 +39,7 @@ export function qiumiEnv(env = process.env) {
     mmvConcurrency: Number.isFinite(conc) && conc > 0 ? conc : 2,
     dispatchEnabled: env.QIUMI_DISPATCH_ENABLED === 'true',
     departments: parseJson(env.QIUMI_DEPARTMENTS, DEFAULT_DEPARTMENTS),
+    aiAccountMap: (() => { const v = parseJson(env.QIUMI_AI_ACCOUNT_MAP, {}); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; })(),
     modelMap: { ...DEFAULT_MODEL_MAP, ...parseJson(env.QIUMI_MODEL_MAP, {}) },
     deviceKeywords: parseJson(env.QIUMI_DEVICE_KEYWORDS, DEFAULT_DEVICE_KEYWORDS),
     modelAllowlist: (() => { const v = parseJson(env.QIUMI_MODEL_ALLOWLIST, []); return Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && x.includes('/')))] : []; })(),

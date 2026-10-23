@@ -173,6 +173,8 @@ export async function routeQiumiTask(task, deps) {
   };
 
   const device = async (serial, source, answers) => {
+    // device_job 不运行 Gateway 会话，不能落实显式 AI 账号合同。
+    if (params.aiAccount) return fail('ai_account_device_delegation_unsupported', { profile: params.aiAccount });
     // 工作流：便宜闸命中的优先；没命中就采纳 Jev 的池内答案（便宜闸直接定案那条路没问过 Jev，answers 为 null）
     const defaulted = [];
     const workflowRef = cheap.workflowRef ?? (answers ? jevWorkflowRef(answers, registry, defaulted) : null);
@@ -232,6 +234,7 @@ export async function routeQiumiTask(task, deps) {
       workflow_ref: workflowRef,
       timeout_sec: params.timeoutSec ?? null,
       thinking: params.thinking ?? null,
+      ai_account_profile: params.aiAccount ?? null,
       acceptance: params.acceptance ?? null,
     };
     await recordTaskEventSafe(pool, task.id, 'qiumi_route_decided', {
