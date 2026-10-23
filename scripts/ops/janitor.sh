@@ -91,7 +91,23 @@ launchd_managed_pids() {
     return 0
   fi
   if [ -z "$_LAUNCHD_PIDS_CACHE" ]; then
-    _LAUNCHD_PIDS_CACHE=$(launchctl list 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {print $1}')
+    # list只覆盖当前用户域；system LaunchDaemon另读服务表。
+    # 任一域查询失败时，未知归属不能等同于“没有托管服务”。
+    local user_services system_services
+    if ! user_services=$(launchctl list 2>/dev/null) ||
+       ! system_services=$(launchctl print system 2>/dev/null); then
+      printf '%s\n' '[janitor] 无法确认launchd托管PID，保留本轮未知归属进程' >&2
+      return 1
+    fi
+    # 只输出services表内的正PID，不把domain元数据/端点编号误当服务。
+    _LAUNCHD_PIDS_CACHE=$({
+      printf '%s\n' "$user_services" | awk '$1 ~ /^[1-9][0-9]*$/ {print $1}'
+      printf '%s\n' "$system_services" | awk '
+        /^[[:space:]]*services = \{/ { inside=1; next }
+        inside && /^[[:space:]]*\}/ { inside=0 }
+        inside && NF==3 && $1 ~ /^[1-9][0-9]*$/ { print $1 }
+      '
+    } | sort -un)
   fi
   printf '%s\n' "$_LAUNCHD_PIDS_CACHE"
 }
@@ -120,7 +136,11 @@ is_exempt_resident_service() {
   # B. launchd 托管一律豁免（自维护：以后新增常驻服务不必再改本名单）
   #    grep -x 精确整行匹配，防 1203 被 12037 子串命中
   [ -z "$pid" ] && return 1
-  if launchd_managed_pids | grep -qx -- "$pid"; then
+  local managed_pids
+  if ! managed_pids=$(launchd_managed_pids); then
+    return 0
+  fi
+  if printf '%s\n' "$managed_pids" | grep -qx -- "$pid"; then
     return 0
   fi
 
@@ -132,7 +152,7 @@ is_exempt_resident_service() {
   while [ "$depth" -lt 8 ]; do
     cur=$(_ppid_of "$cur")
     { [ -z "$cur" ] || [ "$cur" = "0" ] || [ "$cur" = "1" ]; } && break
-    if launchd_managed_pids | grep -qx -- "$cur"; then
+    if printf '%s\n' "$managed_pids" | grep -qx -- "$cur"; then
       return 0
     fi
     depth=$((depth + 1))

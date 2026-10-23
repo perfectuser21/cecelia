@@ -791,7 +791,7 @@ jobs:
   # 普通 fix/feat PR 正常合并。防止未来改动误删跳过逻辑或误伤手动 /dev 流程。
   lint-auto-merge-decision:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:

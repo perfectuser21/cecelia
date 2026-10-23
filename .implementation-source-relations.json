@@ -2,6 +2,8 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"scripts/ops/janitor.sh","path":"scripts/ci/__tests__/janitor-infra-regression.test.mjs","role":"verification"},
+    {"owner_path":"scripts/ops/janitor.sh","path":"scripts/ops/__tests__/janitor/janitor_system_domain_service_exempt.test.sh","role":"verification"},
     {"owner_path":"scripts/ci/implementation-multi-scope.mjs","path":"scripts/ci/__tests__/implementation-infra-joint.pg.test.mjs","role":"verification"},
     {"owner_path":"packages/brain/src/routes/ops.js","path":"packages/brain/src/__tests__/deploy-settlement-layout.test.js","role":"verification"},
 
