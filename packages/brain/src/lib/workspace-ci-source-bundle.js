@@ -153,9 +153,15 @@ function modernSkillInitializer(yaml,spec,job,step,source){
    ||job.env.MAP_SCOPE!=="${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}"||!ADMISSION_SCOPE_ENV.has(job.env.ADMISSION_SCOPES))reject();
   // callerProof fixes the workspace source_repo input: NATIVE_PR cannot select the historical native-only branch.
   const downloads=steps.filter(s=>String(s.run||'').includes('implementation-baseline-$HEAD'));
-  if(downloads.length!==1||steps.indexOf(downloads[0])>=at||downloads[0].if!=="env.MAP_SCOPE != 'cecelia-device-patrol'"||downloads[0]['continue-on-error']||downloads[0].shell!==undefined||downloads[0]['working-directory']!==undefined
-   ||sha(Buffer.from(downloads[0].run))!=='51c728cdec33a877e94b11bfbd88eecb472ba24221ccf23d1b0d2c90a1fc2ca7'
-   ||Object.keys(downloads[0].env||{}).sort().join(',')!=='GH_TOKEN,RUN_ID'||downloads[0].env.GH_TOKEN!=="${{ github.token }}"||downloads[0].env.RUN_ID!=="${{ github.run_id }}")reject();
+  if(downloads.length!==1)reject();
+  const download=downloads[0],digest=sha(Buffer.from(String(download.run||''))),envKeys=Object.keys(download.env||{}).sort().join(',');
+  const legacyDownload=digest==='51c728cdec33a877e94b11bfbd88eecb472ba24221ccf23d1b0d2c90a1fc2ca7'&&envKeys==='GH_TOKEN,RUN_ID';
+  // 外部调用固定source_repo，故此精确原生条件在该调用面恒为假。
+  // 同时固定已审shell字节和完整条件；不接受任意选择器。
+  const nativeDownload=digest==='4bb58d602deb0f52ab0d02f21a319888688dd5a13d279fef8b87d09abb0172b1'
+   &&envKeys==='GH_TOKEN,NATIVE_PR_BASELINE,RUN_ID'&&download.env.NATIVE_PR_BASELINE===NATIVE_PR_ENV;
+  if(steps.indexOf(download)>=at||download.if!=="env.MAP_SCOPE != 'cecelia-device-patrol'"||download['continue-on-error']||download.shell!==undefined||download['working-directory']!==undefined
+   ||(!legacyDownload&&!nativeDownload)||download.env.GH_TOKEN!=="${{ github.token }}"||download.env.RUN_ID!=="${{ github.run_id }}")reject();
  }else{
   const downloads=steps.filter(s=>s.uses?.startsWith('actions/download-artifact@')&&s.with?.path==='snapshot'),download=downloads[0];
   if(downloads.length!==1||steps.indexOf(download)>=at||download.if!==undefined||download['continue-on-error']||download.with.name!=="pilot-release-snapshot-${{ inputs.scope || 'cecelia-kr' }}-${{ inputs.head_revision || github.sha }}")reject();
