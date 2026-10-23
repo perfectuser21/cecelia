@@ -68,7 +68,7 @@ const candidate={
 const root=fileURLToPath(new URL('../../../../../',import.meta.url));
 const git=(...args)=>execFileSync('git',['--no-replace-objects',...args],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024});
 const revision=git('rev-parse','HEAD').trim();
-const paths=[...new Set([...git('ls-tree','-rz','--name-only',revision).replace(/\0$/,'').split('\0'),...Object.keys(candidate.blobs)])];
+const paths=[...new Set([...git('ls-tree','-rz','--name-only',revision).replace(/\0$/,'').split('\0'),...Object.keys(candidate.blobs),'packages/brain/src/lib/deploy-retention-runtime.js'])];
 const sourcePath='packages/brain/src/lib/existing-ops-source.js';
 const cache=new Map();
 const read=path=>{if(!cache.has(path))cache.set(path,candidate.blobs[path]??git('show',`${revision}:${path}`));return cache.get(path);};
@@ -139,5 +139,24 @@ it('已审source-only拒绝闸真实读取package JSON，固定输入必须归�
 it.each([undefined,'{','[]'])('已审部署入口的package缺失或非法%s拒绝且清空绑定',async text=>{
  const path='packages/brain/package.json',patch={'scripts/brain-deploy.sh':reviewedSourceOnlyDeploy};if(text!==undefined)patch[path]=text;
  const result=await build({patch,...(text===undefined?{missing:path}:{})});
+ expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+});
+
+const layoutRoutePath='packages/brain/src/routes/ops.js';
+const layoutLoaderPath='packages/brain/src/lib/deploy-retention-runtime.js';
+const reviewedLayoutLoader="/** Load the same approved retention runtime in repository and flattened image layouts. */\nexport async function loadDeploymentRetentionRuntime() {\n  const repositoryRuntime = new URL('../../../../scripts/brain-image-retention/runtime.mjs', import.meta.url);\n  try {\n    return await import(repositoryRuntime.href);\n  } catch (error) {\n    // A broken dependency inside an existing module must remain a failure.\n    if (error.code !== 'ERR_MODULE_NOT_FOUND' || error.url !== repositoryRuntime.href) throw error;\n    return import(new URL('../../scripts/brain-image-retention/runtime.mjs', import.meta.url).href);\n  }\n}\n";
+const layoutPatch=()=>({[layoutRoutePath]:"import { loadDeploymentRetentionRuntime } from '../lib/deploy-retention-runtime.js';\n"+read(layoutRoutePath).replace("await import('../../../../scripts/brain-image-retention/runtime.mjs')",'await loadDeploymentRetentionRuntime()'),[layoutLoaderPath]:reviewedLayoutLoader});
+it('精确布局加载器变体证明真实依赖并保留结算核验',async()=>{
+ const result=await build({patch:layoutPatch()});
+ expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+ expect(result.input_relations).toContainEqual({consumer_path:layoutRoutePath,input_path:layoutLoaderPath,kind:'reviewed_runtime_layout_loader',revision});
+ expect(result.input_relations).toContainEqual({consumer_path:layoutLoaderPath,input_path:'scripts/brain-image-retention/runtime.mjs',kind:'reviewed_runtime_layout_import',revision});
+});
+it.each(['missing','mutated','import','route'])('布局加载器%s无法证明时整体拒绝',async mode=>{
+ const patch=layoutPatch();
+ if(mode==='mutated')patch[layoutLoaderPath]+='\n// unreviewed\n';
+ if(mode==='import')patch[layoutRoutePath]=patch[layoutRoutePath].replace("from '../lib/deploy-retention-runtime.js'","from '../lib/other-runtime.js'");
+ if(mode==='route')patch[layoutRoutePath]=patch[layoutRoutePath].replace('await runtime.ledger.settlement(gitSha)','({outcome:"success"})');
+ const result=await build({patch,...(mode==='missing'?{missing:layoutLoaderPath}:{})});
  expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
 });
