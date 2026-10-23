@@ -37,10 +37,13 @@ run_domain_case() (
   eval "$EXTRACT"
   _LAUNCHD_PIDS_CACHE=""
   JANITOR_LAUNCHD_PIDS=""
+  local discovery_mode="${2:-healthy}"
   JANITOR_PPID_MAP='55007:1 55008:55007 55009:55008 88001:1 5500:1 99991:1'
   launchctl() {
     case "$*" in
-      list) printf 'PID\tStatus\tLabel\n12345\t0\tai.user.service\n-\t0\tai.idle.service\n' ;;
+      list)
+        printf 'PID\tStatus\tLabel\n12345\t0\tai.user.service\n-\t0\tai.idle.service\n'
+        [ "$discovery_mode" != user_failure ] || return 1 ;;
       'print system') cat <<'SYSTEM'
 system = {
     other_metadata = {
@@ -56,6 +59,7 @@ system = {
     }
 }
 SYSTEM
+        [ "$discovery_mode" != system_failure ] || return 1
       ;;
       *) return 1 ;;
     esac
@@ -69,6 +73,20 @@ assert EXEMPT "$(run_domain_case 12345)" "user域服务保持兼容"
 assert KILLABLE "$(run_domain_case 88001)" "system域表外PID不能误豁免，真正孤儿仍可回收"
 assert KILLABLE "$(run_domain_case 99991)" "metadata数值不能当托管服务PID"
 assert KILLABLE "$(run_domain_case 5500)" "system域PID保持精确匹配"
+
+# 域查询失败不是“没有托管服务”。部分输出也不能掩盖命令失败。
+# 保守保护未知归属进程，并把不确定性写到stderr；成功时真孤儿仍由上面的负例拒绝。
+for mode in user_failure system_failure; do
+  err=$(mktemp)
+  got=$(run_domain_case 88001 "$mode" 2>"$err")
+  assert EXEMPT "$got" "$mode 时不把未知进程当成可杀孤儿"
+  if grep -q '无法确认launchd托管PID' "$err"; then
+    ok "$mode 产生明确保护诊断"
+  else
+    fail "$mode 缺少保护诊断"
+  fi
+  rm -f "$err"
+done
 
 echo "--- 测试结果：PASS=$PASS FAIL=$FAIL ---"
 [ "$FAIL" -eq 0 ]
