@@ -297,7 +297,18 @@ function routeDigest(text,parse,method='post',path='/deploy'){
  return entries.length===1&&nodes(program).filter(match).length===1?stagingHash(JSON.stringify(entries[0],(k,v)=>['start','end','raw'].includes(k)?undefined:v)):null;
 }
 async function collectSettlementSources({read,requireProof,relations,revision,route,parse}){
- requireProof(routeDigest(route,parse,'get','/deploy/status')===BUDGET_GET_AST,'settlement_status_route_unproven');
+ const statusDigest=routeDigest(route,parse,'get','/deploy/status');
+ const layout=statusDigest==='806efc04723f35ffab9c7b0c9acefe7801cce7090f04b71a2d96597a5188433f';
+ requireProof(statusDigest===BUDGET_GET_AST||layout,'settlement_status_route_unproven');
+ if(layout){
+  const loaderPath='packages/brain/src/lib/deploy-retention-runtime.js';
+  const loader=await read(loaderPath);
+  const imports=parse(route).body.filter(n=>n.type==='ImportDeclaration'&&n.source.value==='../lib/deploy-retention-runtime.js');
+  const binding=imports.length===1&&imports[0].specifiers.length===1&&imports[0].specifiers[0].type==='ImportSpecifier'&&imports[0].specifiers[0].imported.name==='loadDeploymentRetentionRuntime'&&imports[0].specifiers[0].local.name==='loadDeploymentRetentionRuntime';
+  requireProof(binding&&loader&&stagingHash(loader)==='04eb71b7d6d2e4b0bbfd6ee61241bbc7282ab00dc3ff0af3653ed6c5dcb80ef2','settlement_layout_loader_unproven');
+  relations.push({consumer_path:'packages/brain/src/routes/ops.js',input_path:loaderPath,kind:'reviewed_runtime_layout_loader',revision});
+  relations.push({consumer_path:loaderPath,input_path:'scripts/brain-image-retention/runtime.mjs',kind:'reviewed_runtime_layout_import',revision});
+ }
  const texts=new Map();
  for(const[path,digest]of Object.entries(BUDGET_FILES)){
   const text=await read(path);texts.set(path,text);
@@ -321,7 +332,7 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
   ['.github/workflows/brain-ci-deploy.yml','scripts/ci/gate3-wait-deploy.sh','reviewed_production_settlement_wait'],
   ['scripts/ci/gate3-wait-deploy.sh','scripts/ci/gate3-trigger-deploy.sh','reviewed_fixed_sha_retrigger'],
   ['scripts/ci/gate3-wait-deploy.sh','packages/brain/src/routes/ops.js','reviewed_settlement_status_request'],
-  ['packages/brain/src/routes/ops.js',base+'runtime.mjs','literal_dynamic_import'],
+  ...(!layout?[["packages/brain/src/routes/ops.js",base+'runtime.mjs','literal_dynamic_import']]:[]),
   // 完整已审字节证明这些实际 source/子进程/region 分支；缺任一输入整体关闭。
   ["scripts/brain-deploy.sh","scripts/lib/bluegreen.sh","reviewed_bash_source_call"],
   ["scripts/brain-deploy.sh","scripts/lib/brain-image-retention.sh","reviewed_bash_source_call"],
