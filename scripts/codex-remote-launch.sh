@@ -38,11 +38,17 @@ ALLOWED_TEAMS_STR="$(IFS='|'; echo "${ALLOWED_TEAMS[*]}")"
 REMOTE_HOST="${CODEX_REMOTE_HOST:-xian-m4}"
 REMOTE_CODEX_BIN="${CODEX_REMOTE_BIN:-/opt/homebrew/bin/codex}"
 REMOTE_PATH_PREFIX="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_EXIT_GUARD="${CODEX_EXIT_GUARD:-${SCRIPT_DIR}/codex-us-exit-guard.sh}"
 
 TEAM=""
 BRIEF=""
 COLLECT=0
 DRY_RUN=0
+REMOTE_GUARD=""
+REMOTE_GUARD_STATE=""
+REMOTE_GUARD_PREPARED=0
+REMOTE_GUARD_HANDED_OFF=0
 
 usage() {
   cat <<EOF
@@ -167,6 +173,51 @@ chmod_local_auth() {
   chmod 600 "$path"
 }
 
+prepare_remote_us_exit() {
+  local team="$1" ts
+  ts="$(date +%Y%m%d%H%M%S)-$$"
+  REMOTE_GUARD="/tmp/codex-us-exit-guard-${team}-${ts}.sh"
+  REMOTE_GUARD_STATE="/tmp/codex-us-exit-guard-${team}-${ts}.state"
+
+  [[ -x "$LOCAL_EXIT_GUARD" ]] || die "本机出口守卫不可执行: ${LOCAL_EXIT_GUARD}"
+  log "西安美国出口预检: ${REMOTE_HOST}（M4 优先，SF 兜底）"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log "[dry-run] 上传出口守卫并在 token 传输前执行 prepare"
+    return 0
+  fi
+
+  scp -o BatchMode=yes -o ConnectTimeout=30 \
+    "$LOCAL_EXIT_GUARD" "${REMOTE_HOST}:${REMOTE_GUARD}"
+  ssh_cmd "chmod 700 ${REMOTE_GUARD}"
+  if ! ssh_cmd "${REMOTE_GUARD} prepare ${REMOTE_GUARD_STATE}"; then
+    ssh_cmd "rm -f ${REMOTE_GUARD} ${REMOTE_GUARD_STATE}" >/dev/null 2>&1 || true
+    die "西安美国出口门禁失败，未传输 ${team} token"
+  fi
+  REMOTE_GUARD_PREPARED=1
+}
+
+restore_remote_us_exit() {
+  [[ "$REMOTE_GUARD_PREPARED" == "1" ]] || return 0
+  if ! ssh_cmd "${REMOTE_GUARD} restore ${REMOTE_GUARD_STATE}"; then
+    log "ERROR: 西安 Tailscale exit node 恢复失败，请立即人工检查 ${REMOTE_HOST}"
+    return 1
+  fi
+  ssh_cmd "rm -f ${REMOTE_GUARD} ${REMOTE_GUARD_STATE}" >/dev/null 2>&1 || true
+  REMOTE_GUARD_PREPARED=0
+}
+
+cleanup_remote_guard_on_exit() {
+  local original_rc=$? restore_rc=0
+  trap - EXIT
+  if [[ "$REMOTE_GUARD_PREPARED" == "1" && "$REMOTE_GUARD_HANDED_OFF" == "0" ]]; then
+    restore_remote_us_exit || restore_rc=$?
+  fi
+  if [[ "$original_rc" -ne 0 ]]; then
+    exit "$original_rc"
+  fi
+  exit "$restore_rc"
+}
+
 push_token() {
   local team="$1"
   local local_auth remote_auth remote_dir
@@ -227,7 +278,21 @@ start_remote_session() {
 set -euo pipefail
 export PATH=${REMOTE_PATH_PREFIX}
 export CODEX_HOME=${remote_home_expr}
-exec ${REMOTE_CODEX_BIN} --dangerously-bypass-approvals-and-sandbox \"\$(cat ${remote_brief_path})\"
+GUARD=${REMOTE_GUARD}
+STATE=${REMOTE_GUARD_STATE}
+cleanup() {
+  original_rc=\$?
+  trap - EXIT
+  restore_rc=0
+  \"\$GUARD\" restore \"\$STATE\" || restore_rc=\$?
+  rm -f \"\$GUARD\" \"\$STATE\" ${remote_brief_path} ${remote_launcher}
+  if [[ \"\$original_rc\" -ne 0 ]]; then exit \"\$original_rc\"; fi
+  exit \"\$restore_rc\"
+}
+trap cleanup EXIT
+${REMOTE_CODEX_BIN} --dangerously-bypass-approvals-and-sandbox \"\$(cat ${remote_brief_path})\"
+CODEX_RC=\$?
+exit \"\$CODEX_RC\"
 EOS
 chmod 700 ${remote_launcher}"
   else
@@ -236,7 +301,21 @@ chmod 700 ${remote_launcher}"
 set -euo pipefail
 export PATH=${REMOTE_PATH_PREFIX}
 export CODEX_HOME=${remote_home_expr}
-exec ${REMOTE_CODEX_BIN} --dangerously-bypass-approvals-and-sandbox
+GUARD=${REMOTE_GUARD}
+STATE=${REMOTE_GUARD_STATE}
+cleanup() {
+  original_rc=\$?
+  trap - EXIT
+  restore_rc=0
+  \"\$GUARD\" restore \"\$STATE\" || restore_rc=\$?
+  rm -f \"\$GUARD\" \"\$STATE\" ${remote_launcher}
+  if [[ \"\$original_rc\" -ne 0 ]]; then exit \"\$original_rc\"; fi
+  exit \"\$restore_rc\"
+}
+trap cleanup EXIT
+${REMOTE_CODEX_BIN} --dangerously-bypass-approvals-and-sandbox
+CODEX_RC=\$?
+exit \"\$CODEX_RC\"
 EOS
 chmod 700 ${remote_launcher}"
   fi
@@ -313,6 +392,10 @@ fi
 is_allowed_team "$TEAM" || die "非法 team: ${TEAM}（允许: ${ALLOWED_TEAMS_STR}）"
 
 assert_ssh
+trap cleanup_remote_guard_on_exit EXIT
+prepare_remote_us_exit "$TEAM"
 push_token "$TEAM"
 start_remote_session "$TEAM" "$BRIEF"
+REMOTE_GUARD_HANDED_OFF=1
+trap - EXIT
 log "完成 team=${TEAM} host=${REMOTE_HOST}"
