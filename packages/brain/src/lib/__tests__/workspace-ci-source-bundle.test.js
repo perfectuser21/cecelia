@@ -133,6 +133,43 @@ it.each([
  ['extra import',s=>s+"\nimport './unreviewed.mjs';\n"],
 ])('现代helper%s漂移不能冒已审源码封套',async(_name,change)=>{const p=await modernBundle(()=>{},null,{changeSource:(bytes,path)=>path===MODERN?Buffer.from(change(bytes.toString())):bytes});expect(p.status).toBe('unknown');});
 
+const infraStep=(y,name)=>y.jobs.gate.steps.find(s=>s.name===name);
+it('infra默认关闭的真实跨仓callee完整提取，第三来源不冒执行或main信任',async()=>{
+ const p=await modernBundle();expect(p.status,JSON.stringify(p.gaps)).toBe('verified');
+ expect(p.consumer.status).toBe('verified');expect(p.executable).toBe(false);expect(p.admission.status).toBe('unknown');
+ expect(p.consumer.bindings.some(b=>b.path==='scripts/ci/implementation-infra-inputs.mjs')).toBe(false);
+});
+it.each([
+ ['missing dependency',y=>y.jobs.gate.needs=['snapshot-main']],
+ ['unknown dependency',y=>y.jobs.gate.needs=['snapshot-main','foreign']],
+ ['third dependency',y=>y.jobs.gate.needs.push('foreign')],
+ ['missing provider',y=>delete y.jobs['snapshot-infra']],
+ ['wrong provider repo',y=>y.jobs['snapshot-infra'].steps.find(s=>s.uses==='actions/checkout@v4').with.repository='foreign/repo'],
+ ['unrestricted provider',y=>y.jobs['snapshot-infra'].if='always()'],
+ ['forced switch',y=>y.jobs.gate.env.INFRA_ADMISSION='true'],
+ ['missing switch',y=>delete y.jobs.gate.env.INFRA_ADMISSION],
+ ['wrong switch repo',y=>y.jobs.gate.env.INFRA_ADMISSION=y.jobs.gate.env.INFRA_ADMISSION.replace('perfectuser21/cecelia','perfectuser21/zenithjoy-workspace')],
+ ['cache mutation',y=>modernStep(y,'gate').run+='echo changed\n'],
+ ['unconditional input',y=>delete infraStep(y,'独立infra固定来源加入联合输入').if],
+ ['changed input',y=>infraStep(y,'独立infra固定来源加入联合输入').run+='echo changed\n'],
+ ['missing joint guard',y=>y.jobs.gate.steps.splice(y.jobs.gate.steps.indexOf(infraStep(y,'三来源联合门真实PG与回归退出码守卫')),1)],
+ ['unconditional joint guard',y=>delete infraStep(y,'三来源联合门真实PG与回归退出码守卫').if],
+ ['scope override',y=>infraStep(y,'完整联合scope清单加入infra').run+='echo changed\n'],
+])('infra跨仓精确形态%s保持unknown',async(_name,mutateImpact)=>{
+ const p=await modernBundle(()=>{},null,{mutateImpact});expect(p.status).toBe('unknown');expect(p.executable).toBe(false);
+});
+
+it('保留原双scope单needs与旧cache完整封套',async()=>{
+ const p=await modernBundle(()=>{},null,{mutateImpact:y=>{
+  delete y.jobs['snapshot-infra'];delete y.on.workflow_dispatch.inputs.export_infra_baseline;
+  y.jobs.gate.needs=['snapshot-main'];delete y.jobs.gate.env.INFRA_ADMISSION;
+  y.jobs.gate.steps=y.jobs.gate.steps.filter(s=>!['三来源联合门真实PG与回归退出码守卫','独立infra固定来源加入联合输入','完整联合scope清单加入infra'].includes(s.name));
+  const init=modernStep(y,'gate');
+  init.run=init.run.replace("IMPLEMENTATION_MAIN_SCOPES='' node",'IMPLEMENTATION_MAIN_SCOPES= node').replace('  if [[ "$INFRA_ADMISSION" == true ]]; then\n    args+=(--snapshot "$RUNNER_TEMP/implementation-input/base/base-cecelia-infra.json" --snapshot "$RUNNER_TEMP/implementation-input/head/head-cecelia-infra.json")\n  fi\n','');
+  expect(createHash('sha256').update(init.run).digest('hex')).toBe('0c63a85850a5c2f0b78206b08737ff1b459c14bfbcdb7f9485aa854920287d36');
+ }});expect(p.status,JSON.stringify(p.gaps)).toBe('verified');expect(p.executable).toBe(false);
+});
+
 const baselineDownload=y=>y.jobs.gate.steps.find(s=>String(s.run||'').includes('implementation-baseline-$HEAD'));
 it('旧精确下载封套仍可证明外部调用，原生祖先恢复不改变workspace分支',async()=>{
  const proof=await modernBundle(()=>{},null,{mutateImpact:y=>{

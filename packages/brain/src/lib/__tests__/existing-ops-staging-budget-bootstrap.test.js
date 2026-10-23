@@ -1,4 +1,5 @@
 import { it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -184,5 +185,19 @@ it('来源清单接受精确previous恢复ledger且保留旧已发布字节',asy
 });
 it('previous恢复ledger未知附加字节仍拒绝并清空绑定',async()=>{
  const result=await build({patch:{[recoveryLedgerPath]:reviewedPreviousLedger()+'\n// unreviewed\n'}});
+ expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+});
+
+// pending恢复的已审ledger变体与原已发布字节并存；额外字节仍UNKNOWN。
+it('精确prev-only恢复ledger来源可认领，旧已发布ledger仍兼容',async()=>{
+ const text=readFileSync(new URL('../../../../../scripts/brain-image-retention/ledger.mjs',import.meta.url),'utf8');
+ const result=await build({patch:{[recoveryLedgerPath]:text}});
+ expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+ expect(result.bindings).toContainEqual(expect.objectContaining({path:recoveryLedgerPath,digest:`sha256:${createHash('sha256').update(text).digest('hex')}`}));
+ expect((await build()).status).toBe('verified');
+});
+it('prev恢复ledger未知字节仍拒绝且清空绑定',async()=>{
+ const text=readFileSync(new URL('../../../../../scripts/brain-image-retention/ledger.mjs',import.meta.url),'utf8');
+ const result=await build({patch:{[recoveryLedgerPath]:text+'\n// unreviewed\n'}});
  expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
 });

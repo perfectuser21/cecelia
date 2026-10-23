@@ -14,6 +14,12 @@ it('既有infra缺失Activity/ref可经真实HTTP受控初始化且不授执行�
  expect((await f.db.query('SELECT * FROM workflow_definition_versions')).rows).toHaveLength(0);
 });
 
+for(const route of [{orchestrator:'skill-relay'},{orchestrator:'foreign'},{pipeline:'kernel-v1'},{canonical_task_type:'dev'}])it('固定原路由合同漂移不授登记权：'+JSON.stringify(route),async()=>{
+ f=await infraBootstrapDatabase({route});const input=await f.input();
+ const response=await request(app(f.options)).post('/ci/infra/bootstrap').send(input);
+ expect(response.status).toBe(403);expect((await f.db.query('SELECT * FROM activities')).rows).toHaveLength(0);
+ expect((await f.db.query('SELECT * FROM workflow_activity_refs')).rows).toHaveLength(0);
+});
 it('真实并发同键初始化只建一组，丢ACK后的同输入重放不重写receipt',async()=>{
  f=await infraBootstrapDatabase();const input=await f.input(),a=app(f.options);
  const replies=await Promise.all([1,2].map(()=>request(a).post('/ci/infra/bootstrap').send(input)));

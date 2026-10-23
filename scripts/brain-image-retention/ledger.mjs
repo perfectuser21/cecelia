@@ -8,6 +8,10 @@ function current(snapshot, expectedContainerId) {
   if (!image || !IMAGE.test(image.id) || !/^[a-f0-9]{40}$/.test(image.git_sha ?? '')) throw fail('CURRENT_IMAGE_UNKNOWN');
   return { ...image, container_id: matches[0].id };
 }
+// 恢复只认可begin封存的previous身份及官方构建的精确保留标签。
+function previousVersion(tags, version, gitSha) {
+  return tags.includes(`cecelia-brain:${version}`) || tags.includes(`cecelia-brain:prev-${version}-${gitSha.slice(0, 12)}`);
+}
 export function createDeploymentLedger({ store, docker, health, now = Date.now, expectedContainerId }) {
   if (expectedContainerId !== undefined && !/^[a-f0-9]{64}$/.test(expectedContainerId)) throw fail('INVALID_CONTAINER_ID');
   const name = id => { if (!UUID.test(id)) throw fail('INVALID_DEPLOYMENT'); return `deployment-${id}.json`; };
@@ -41,14 +45,17 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
     return store.withLock(async lease => {
       const ledger = await state();
       const snapshot = await docker.snapshot(lease), target = snapshot.images.find(x => x.id === image_id);
-      if (!target || target.git_sha !== request.git_sha || !target.tags.includes(`cecelia-brain:${request.version}`)) throw fail('ROLLBACK_TARGET_MISMATCH');
+      const canonicalTarget = target?.tags.includes(`cecelia-brain:${request.version}`);
+      const previousTarget = ledger.pending && ledger.pending.previous.id === image_id && ledger.pending.previous.git_sha === request.git_sha
+        && target && previousVersion(target.tags, request.version, request.git_sha);
+      if (!target || target.git_sha !== request.git_sha || (!canonicalTarget && !previousTarget)) throw fail('ROLLBACK_TARGET_MISMATCH');
       if (!ledger.pending) {
         const row = await beginLocked(request, lease, image_id);
         if (row.receipt) throw fail('DEPLOYMENT_ALREADY_FINISHED');
         return { deployment_id: request.deployment_id, outcome: 'success', image_id };
       }
       const pending = ledger.pending;
-      if (!pending.recovering && pending.target_image_id === image_id
+      if (canonicalTarget && !pending.recovering && pending.target_image_id === image_id
           && pending.request.git_sha === request.git_sha && pending.request.version === request.version) {
         const row = await store.read(name(pending.deployment_id));
         if (row?.receipt || (row && (digest(row.request) !== digest(pending.request) || row.target_image_id !== image_id))) throw fail('DEPLOYMENT_CONFLICT');
@@ -56,7 +63,7 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
         return { deployment_id: pending.deployment_id, outcome: 'success', image_id };
       }
       if (pending.previous.id !== image_id || pending.previous.git_sha !== request.git_sha
-          || !pending.previous.tags.includes(`cecelia-brain:${request.version}`)) throw fail('ROLLBACK_TARGET_MISMATCH');
+          || !previousVersion(pending.previous.tags, request.version, request.git_sha)) throw fail('ROLLBACK_TARGET_MISMATCH');
       const row = await store.read(name(pending.deployment_id));
       if (row?.receipt || (row && digest(row.request) !== digest(pending.request))) throw fail('DEPLOYMENT_CONFLICT');
       if (!row) await store.save(name(pending.deployment_id), { request: pending.request, previous: pending.previous, receipt: null }, lease);
@@ -84,7 +91,7 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now, 
         if (before.id !== after.id || (outcome === 'success' && row.target_image_id && after.id !== row.target_image_id) || after.git_sha !== expectedSha || (outcome === 'recovered' && after.id !== row.previous.id)
             || (outcome === 'success' && !after.tags.includes(`cecelia-brain:${row.request.version}`))) throw fail('DEPLOY_IMAGE_MISMATCH');
         if (observed?.status !== 'healthy' || observed.git_sha !== expectedSha || !VERSION.test(observed.version ?? '')
-            || !(outcome === 'recovered' ? row.previous.tags ?? [] : after.tags).includes(`cecelia-brain:${observed.version}`)
+            || !(outcome === 'recovered' ? previousVersion(row.previous.tags ?? [], observed.version, expectedSha) : after.tags.includes(`cecelia-brain:${observed.version}`))
             || (outcome === 'success' && observed.version !== row.request.version)) throw fail('DEPLOY_HEALTH_MISMATCH');
         receipt = { deployment_id: id, outcome, image_id: after.id, version: observed.version, git_sha: expectedSha,
           confirmed_at: new Date(now()).toISOString(), actor: 'brain-deploy:us-vps' };

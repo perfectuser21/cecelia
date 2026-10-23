@@ -1,0 +1,20 @@
+import {stepSha256 as sha} from '../../../../packages/brain/scripts/sync-steps-from-workspace.mjs';
+import {digestMapManifest} from '../../../../packages/brain/src/lib/map-manifest-schema.js';
+export const repo='perfectuser21/cecelia',scope='cecelia-infra';
+export function infraSnapshot(revision,{unknown=false}={}){
+ const I={workflow_id:'f03b16c6-b3b8-4a43-8bf0-4da878660c38',workflow_key:'infra_cleanup_capacity_ops',capability_id:'55cb3b8d-200c-445f-9467-616498b40521',root:'2d22d890-dbab-441b-a602-2727de668aaf',skill_id:'03770894-5ac3-4eb7-ae44-5a3e15951d99'};
+ const activity='11111111-1111-4111-8111-111111111111',reference='22222222-2222-4222-8222-222222222222',slot='janitor_frequent_orphan_reconciliation';
+ const registry={workflows:[{id:I.workflow_id,key:I.workflow_key,capability_id:I.capability_id}],references:[{id:reference,workflow_id:I.workflow_id,activity_id:activity,slot_key:slot,sequence_no:1,source_ref:I.skill_id,active:true}],activities:[{id:activity,workflow_id:I.workflow_id}],steps:[],capabilities:[{id:I.capability_id,parent_journey_id:I.root}],value_streams:[{id:I.root,parent_journey_id:null}],skills:[{id:I.skill_id,name:'janitor',status:'active',location:'/Users/administrator/perfect21/cecelia-deploy-main/scripts/ops/janitor.sh'}]};
+ const frozen={...registry,registry_sha256:sha(registry)};
+ const contract={key:I.workflow_key,definition_scope:'consumer_evidence',executable:false,source_basis:'fixed_git_tree'};
+ const paths=['scripts/ops/janitor.sh','scripts/ops/janitor-effects.sh','scripts/ops/__tests__/janitor/janitor_resident_service_exempt.test.sh','scripts/ops/__tests__/janitor/janitor_kill_exempt.test.sh'];
+ const source={repo,path:paths[0],commit:revision},common={definition_scope:'consumer_evidence',source_scope:scope,registration_sha256:frozen.registry_sha256,contract};
+ const a={id:'33333333-3333-4333-8333-333333333333',activity_id:activity,source_repo:repo,source_path:paths[0],source_commit:revision,contract_sha256:sha(contract),payload:{...common,implementation_bindings:paths.map(path=>({kind:'code',repo,path,revision,status:'verified',content_sha256:'1'.repeat(64),digest:'sha256:'+'1'.repeat(64)}))}};
+ a.payload_sha256=sha({source,payload:a.payload});
+ const w={id:'44444444-4444-4444-8444-444444444444',workflow_id:I.workflow_id,source_repo:repo,source_path:paths[0],source_commit:revision,contract_sha256:sha(contract),payload:{...common,key:I.workflow_key,capability_id:I.capability_id,coverage:{status:'unknown',verified_reference_ids:[reference],unverified_reference_ids:[]},activities:[{reference_id:reference,activity_id:activity,activity_version_id:a.id,slot_key:slot,sequence_no:1,source_ref:I.skill_id}]}};
+ w.payload_sha256=sha({source,payload:w.payload});
+ const binding=(entity_type,entity_id)=>({entity_type,entity_id,source_repo:repo,source_revision:revision});
+ const manifest={schema_version:1,scope_key:scope,source_decision_id:'55555555-5555-4555-8555-555555555555',boundaries:[],crosscut_pool:[],shared_prerequisites:{applicable:false,items:[],reason:'来源归属'},value_streams:[{key:'infra',name:'基础设施',perceiver:'主理人',order:1,brain_binding:binding('value_stream',I.root)}],capabilities:[{key:'cleanup',name:'清理',order:1,value_stream_key:'infra',brain_binding:binding('capability',I.capability_id)}]};
+ const body={schema_version:1,scope,repo,revision,status:unknown?'unknown':'verified',gaps:unknown?[{code:'definition_snapshot_missing'}]:[],snapshot_scope:'consumer_evidence',execution_status:'unknown',consumer_registry:frozen,unverified_reference_ids:[],canonical:{areas:[],journeys:[...registry.value_streams,...registry.capabilities].sort((x,y)=>x.id.localeCompare(y.id)),workflows:registry.workflows,activities:registry.activities,steps:[],references:registry.references},definitions:{workflows:[w],activities:[a]},map:{manifest:{scope_key:scope,manifest,digest:digestMapManifest(manifest)},repositories:[{scope_key:scope,repo:'cecelia-infra',adapter_key:'legacy-ledger-v1',adapter_config:{source_repo:repo}}]},assertions:[]};
+ return {snapshot:{...body,snapshot_sha256:sha(body)}};
+}

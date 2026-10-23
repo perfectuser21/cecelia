@@ -3,7 +3,7 @@ import {execFileSync} from 'node:child_process';
 import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {canonicalRepoIdentity} from '../../packages/brain/src/lib/gp-assertion-command.js';
-import {extractImplementationAdmissionSnapshots} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
+import {extractImplementationAdmissionSnapshots,validateImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import {collectImplementationPrEvidence} from './implementation-pr-gate.mjs';
 import {resolveScopedImplementationReports,runScopedImplementationGate} from './implementation-multi-scope.mjs';
 import {verifyRecoveryGateProof} from './implementation-source-recovery.mjs';
@@ -12,6 +12,7 @@ const fail=code=>{throw Object.assign(Error(code),{code});};
 const save=(root,name,value)=>writeFileSync(join(root,name),JSON.stringify(value,null,2)+'\n');
 export async function runImplementationMainGate(options){
  const {repoRoot,scope,base,head,mode,snapshotBase,snapshotHead,outputDir,mainScopes}=options;
+ const infraInputDir=options.infraInputDir??process.env.IMPLEMENTATION_INFRA_INPUT_DIR;
  mkdirSync(outputDir,{recursive:true});
  try{
   let request;try{request=JSON.parse(mainScopes);}catch{fail('IMPLEMENTATION_MAIN_SCOPES_INVALID');}
@@ -27,6 +28,12 @@ export async function runImplementationMainGate(options){
    inputs[side]=extractImplementationAdmissionSnapshots(data.snapshot||data,scopes);
    if(inputs[side].some(s=>s.repo!==repo||s.revision!==revision))fail('IMPLEMENTATION_MAIN_SNAPSHOT_SOURCE_MISMATCH');
   }
+  const targets=infraInputDir?[...scopes,'cecelia-infra']:scopes;
+  if(infraInputDir)for(const [side,revision] of [['base',base],['head',head]]){
+   const s=validateImplementationSnapshot(JSON.parse(readFileSync(join(infraInputDir,side,`${side}-cecelia-infra.json`),'utf8')));
+   if(s.scope!=='cecelia-infra'||s.repo!==repo||s.revision!==revision||s.status!=='verified'||s.gaps.length)fail('IMPLEMENTATION_MAIN_INFRA_SOURCE_MISMATCH');
+   inputs[side].push(s);
+  }
   const sourceOnly=inputs.head.some(s=>s.source_baseline);
   if(sourceOnly){
    if(!inputs.head.every(s=>s.source_baseline))fail('SOURCE_RECOVERY_PROVENANCE_INVALID');
@@ -34,14 +41,14 @@ export async function runImplementationMainGate(options){
    verifyRecoveryGateProof({repoRoot,base,head,inputs,context});
   }
   const reports=[];
-  for(const [index,target] of scopes.entries()){
+  for(const [index,target] of targets.entries()){
    const dir=join(outputDir,target);mkdirSync(dir,{recursive:true});
    save(dir,'base.json',inputs.base[index]);save(dir,'head.json',inputs.head[index]);
    const {report}=await collectImplementationPrEvidence({repoRoot,scope:target,base,head,mode:sourceOnly?'pr':'main',snapshotBase:join(dir,'base.json'),snapshotHead:join(dir,'head.json'),outputDir:dir});
    reports.push(report);
   }
   const changed_files=execFileSync('git',['diff','--no-renames','--name-only','-z',base,head,'--'],{cwd:repoRoot,encoding:'utf8'}).split('\0').filter(Boolean).map(path=>({path}));
-  const resolution=resolveScopedImplementationReports({source:{repo,base_revision:base,head_revision:head,changed_files},expectedScopes:scopes,reports,purpose:sourceOnly?'admission_only':'main_verification'});
+  const resolution=resolveScopedImplementationReports({source:{repo,base_revision:base,head_revision:head,changed_files},expectedScopes:targets,reports,purpose:sourceOnly?'admission_only':'main_verification'});
   save(outputDir,'report.json',resolution);
   const receipt=await runScopedImplementationGate({repoRoot,evidence:resolution.evidence});
   if(sourceOnly){receipt.source_baseline='source_only';receipt.runtime_status='not_deployed';}

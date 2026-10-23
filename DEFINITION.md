@@ -1,8 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.61
+**Brain 版本**: 1.445.62
 
-本次为来源清单独立准入：仅接受原已发布ledger及已审previous恢复变体的两个精确摘要，未知字节继续拒绝；实际ledger保持原字节。source-only候选在构建和容器操作前拒绝生产部署，不表示业务修复已上线。
+精确ledger双摘要已独立准入可信main；本业务候选沿原生PR来源选择器使用最近完整官方9f基线，验证到当前HEAD的全部累计差分。独立来源清单不替代业务发布：候选仍须同SHA完整CI与隔离staging通过，真实业务结果另行验收。
 
 隔离候选执行预算90分钟，收据与生产等待95分钟、外层作业110分钟；等待计入网络耗时且超时失败。生产放行要求既有镜像账的已结算成功收据、当前容器与健康SHA/版本一致，running、回滚、失败和未知均不放行；读取结算不新增写账，已完成同SHA可幂等确认。
 
@@ -7155,3 +7155,15 @@ EventBus启动先只读核对固定名称索引的valid、ready及目标表；�
 外部workspace来源封套兼容旧下载器及已审原生祖先恢复下载器：新分支必须绑定精确shell摘要、完整原生条件和恰好三个环境变量，外部调用固定source_repo保证原生分支不可达；未知shell、强开或弱化条件仍拒绝。
 
 发布登记先在锁外核验固定来源，再用有界短事务重读依赖；请求、Git与池连接预算明确，迟到连接释放，插入后取消回滚，不允许在线核验长期持数据库锁。
+
+### 1.445.61 独立infra来源联合准入（默认关闭）
+
+保留原KR/factory bundle，增加可信main同SHA独立infra产物及三scope联合验证。仅在真实bootstrap、固定main来源与官方独立artifact核验后启用已有开关；workspace跨仓分支只接受完整固定且不可激活的infra封套，不放宽selector或任意Shell。
+
+既有infra bootstrap按固定历史路由的真实kernel-harness-v2/harness/harness_initiative合同鉴权；固定Task/receipt/parent及CAS不变，不改历史路由或执行调度。
+
+#### 同一1.445.61 — 失败发布的官方previous标签恢复收账
+
+- 仅原pending.previous完整镜像ID与完整SHA匹配时，恢复接受官方 `prev-<健康版本>-<SHA前12位>` 标签及历史canonical标签；reconcile与pending rollback复用同一严格规则。
+- recovered只清原pending，不添加成功史；新鲜pending、未知镜像、健康身份变化、非精确标签继续拒绝。无pending的新rollback与正式success仍要求canonical标签。
+- 固定来源只新增独审过的ledger精确摘要并保留旧摘要；未知字节仍不准入。永久回归已纳入既有image-retention CI测试入口。
