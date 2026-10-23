@@ -128,7 +128,7 @@ const NATIVE_PR_ENV="${{ github.repository == 'perfectuser21/cecelia' && github.
 // root独审6a9f1f64的完整gate/provider封套；只认可既有workspace caller下不可激活的infra分支。
 // callerProof已固定scope=zenithjoy和source_repo=workspace；GitHub reusable保留caller repository。
 // 不认可任意第二needs、任意新增shell或按运行时源码自算批准摘要。旧封套及旧pin保持。
-const INACTIVE_INFRA_GATE='dced05241a5744233200da410d1f85505b0af04a0bcfcfc679f1da4dcd5640f8';
+const INACTIVE_INFRA_GATES=new Set(['dced05241a5744233200da410d1f85505b0af04a0bcfcfc679f1da4dcd5640f8','a1fa4a50a7a7931140697c8d8a64e1e65a921f5c0949ce71f47ffeb4fb79cc10']);
 const INACTIVE_INFRA_PROVIDER='ecf6c4e260c0a5b934247355f3b3422b40c1a6e578e237b6c4bf9d6e17516d23';
 const INACTIVE_INFRA_SHELL='a7da97011e907914f0260d915ec31e4869fdf0285fc21f605dea5f0b39d89e9d';
 const INACTIVE_INFRA_ENV='0f53269325d2791c4c5ee4008bbf1675ea7949b004aadddcda033ebfa290b1bd';
@@ -138,7 +138,7 @@ function canonicalConfig(value){
  return value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonicalConfig(value[key])])):value;
 }
 function reviewedInactiveInfra(yaml){
- return sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.gate))))===INACTIVE_INFRA_GATE
+ return INACTIVE_INFRA_GATES.has(sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.gate)))))
   &&sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.['snapshot-infra']))))===INACTIVE_INFRA_PROVIDER;
 }
 function modernSkillInitializer(yaml,spec,job,step,source,inactiveInfra=false){

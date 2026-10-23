@@ -239,7 +239,7 @@ if(process.argv[1]&&realpathSync(process.argv[1])===realpathSync(fileURLToPath(i
   if(process.env.SOURCE_BASELINE_RECOVERY!=='true')return publishMainSnapshots(options);
   if(options.repo!=='perfectuser21/cecelia'||options.scope!=='cecelia-kr')throw fail('IMPLEMENTATION_CI_REPOSITORY_INPUT_INVALID');
   const output='evidence',diagnostics=join(output,'diagnostics');mkdirSync(diagnostics,{recursive:true});
-  const baseline=readHistoricalArtifact({repo:options.repo,revision:options.base,diagnostics});
+  const baseline=readPublishedArtifact({repo:options.repo,revision:options.base,scope:options.scope,diagnostics});
   return publishRecoveryBaseline({...options,repoRoot:'tooling',output,baseline,readiness:JSON.parse(readFileSync('evidence/source-readiness/receipt.json','utf8'))});
  };
  run()
