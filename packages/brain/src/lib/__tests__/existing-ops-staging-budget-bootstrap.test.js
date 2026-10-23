@@ -1,4 +1,5 @@
 import { it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -158,5 +159,20 @@ it.each(['missing','mutated','import','route'])('布局加载器%s无法证明�
  if(mode==='import')patch[layoutRoutePath]=patch[layoutRoutePath].replace("from '../lib/deploy-retention-runtime.js'","from '../lib/other-runtime.js'");
  if(mode==='route')patch[layoutRoutePath]=patch[layoutRoutePath].replace('await runtime.ledger.settlement(gitSha)','({outcome:"success"})');
  const result=await build({patch,...(mode==='missing'?{missing:layoutLoaderPath}:{})});
+ expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
+});
+
+// pending恢复的已审ledger变体与原已发布字节并存；额外字节仍UNKNOWN。
+const recoveryLedgerPath='scripts/brain-image-retention/ledger.mjs';
+it('精确prev-only恢复ledger来源可认领，旧已发布ledger仍兼容',async()=>{
+ const text=readFileSync(new URL('../../../../../scripts/brain-image-retention/ledger.mjs',import.meta.url),'utf8');
+ const result=await build({patch:{[recoveryLedgerPath]:text}});
+ expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
+ expect(result.bindings).toContainEqual(expect.objectContaining({path:recoveryLedgerPath,digest:`sha256:${createHash('sha256').update(text).digest('hex')}`}));
+ expect((await build()).status).toBe('verified');
+});
+it('prev恢复ledger未知字节仍拒绝且清空绑定',async()=>{
+ const text=readFileSync(new URL('../../../../../scripts/brain-image-retention/ledger.mjs',import.meta.url),'utf8');
+ const result=await build({patch:{[recoveryLedgerPath]:text+'\n// unreviewed\n'}});
  expect(result.status).toBe('unknown');expect(result.bindings).toEqual([]);
 });
