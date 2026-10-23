@@ -36,7 +36,6 @@
     {"owner_path":"scripts/lib/internal-auth-token.sh","path":"scripts/__tests__/internal-auth-deployment.test.sh","role":"verification"},
     {"owner_path":"scripts/brain-image-retention/ledger.mjs","path":"packages/brain/src/__tests__/deploy-settlement.test.js","role":"verification"},
     {"owner_path":"scripts/brain-image-retention/ledger.mjs","path":"scripts/brain-image-retention-ledger.test.mjs","role":"verification"},
-    {"owner_path":"scripts/brain-image-retention/ledger.mjs","path":"changes/cp-10231845-ledger-prev-recovery.md","role":"release"},
     {"owner_path":"scripts/ci/gate3-wait-deploy.sh","path":"packages/brain/src/__tests__/deployment-time-budget.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-staging-budget-bootstrap.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-auto-version-bootstrap.test.js","role":"verification"},
