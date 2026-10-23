@@ -2727,7 +2727,10 @@ router.get('/deploy/status', async (req, res) => {
   // running/rollback/failed 不能被上一份成功收据覆盖；锁忙或核验未知保持未结算。
   if (['idle', 'success', 'succeeded'].includes(deployState.status)) {
     try {
-      const { createRuntime } = await import('../../../../scripts/brain-image-retention/runtime.mjs');
+      const { existsSync } = await import('node:fs');
+      const packagedRuntime = new URL('../../scripts/brain-image-retention/runtime.mjs', import.meta.url);
+      const runtimeUrl = existsSync(packagedRuntime) ? packagedRuntime : new URL('../../../../scripts/brain-image-retention/runtime.mjs', import.meta.url);
+      const { createRuntime } = await import(runtimeUrl.href);
       const runtime = await createRuntime();
       if (runtime) settlement = await runtime.ledger.settlement(gitSha);
     } catch { /* 只读失败不放行，也不新建或修复部署账。 */ }
