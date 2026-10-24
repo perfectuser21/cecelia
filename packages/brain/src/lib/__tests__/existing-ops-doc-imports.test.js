@@ -66,7 +66,7 @@ describe('固定revision opt-in 文档静态import输入闭包（不执行候选
     expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified'); expect(edges(f3).filter(e => e.consumer_path === helper && e.input_path === doc)).toHaveLength(1);
   });
   for (const [name, options] of [
-    ['未支持的reexport模块依赖', { overrides: { [helper]: 'export { x } from \"./missing.mjs\";' } }],
+    ['未支持的reexport模块依赖', { overrides: { [helper]: 'export { x } from "./missing.mjs";' } }],
     ['动态import', { overrides: { [helper]: 'export const x = import("./missing.mjs");' } }],
     ['不安全路径', { overrides: { [helper]: 'import x from "../../../../../../outside.mjs";' } }],
     ['非canonical路径', { overrides: { [helper]: 'import x from "./dir/../qa-doc-assertion.mjs";' } }],
