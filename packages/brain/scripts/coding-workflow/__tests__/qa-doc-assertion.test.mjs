@@ -218,6 +218,7 @@ describe('qa-doc-assertion 相关条件不能伪造依赖', () => {
     prefix + 'const a=fs.readFileSync("a.md","utf8");const b=fs.readFileSync("a.md","utf8");if(a!==b)throw Error("same file");' + marker,
     prefix + 'const a=JSON.parse(fs.readFileSync("a.json","utf8"));if(a.x===1&&a.x!==1)throw Error("contradiction");' + marker,
     prefix + 'const a=fs.readFileSync("a.md","utf8");if(!a.includes("x")&&a.includes("xx"))throw Error("substring");' + marker,
+    prefix + 'const t=fs.readFileSync("a.json","utf8");const a=JSON.parse(t);const b=JSON.parse(t.split("not-in-file")[0]);if(a.x===1&&b.x!==1)throw Error("same data");' + marker,
   ])('同源/互补/包含关系不能获得豁免：%s', (code) => {
     expect(reject(node(code))).toEqual(['Q1']);
   });
