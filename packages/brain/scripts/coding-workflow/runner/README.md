@@ -48,6 +48,23 @@ tail -n 100 "${CODING_WF_USER_HOME:-/Users/${CODING_WF_RUN_USER:-administrator}}
 
 若 plist 路径与变量推导不同，以 plist 的 `StandardOutPath` 读日志。分别判读服务状态、任务回执和主日志；日志或 dry-run 单独都不能证明运行正常。日志可能含任务现场信息，不复制令牌或账号文件内容。
 
+## 运行回执如何判读
+
+在仓库根目录用运行用户只读查询回执；两个参数可以组合，省略 `--log-dir` 时使用 `CODING_WF_LOG_DIR`，未设置时使用该用户 `HOME/.cecelia/coding-workflow-runner`：
+
+```bash
+node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir <回执目录>
+node packages/brain/scripts/coding-workflow/runner/status.mjs --log-dir <回执目录> --json
+```
+
+结果按各 JSON 文件的修改时间（mtime）倒序排列，不是按任务完成时间排序。目录不存在、没有可扫描的回执，或当前账号无权读取目录时，文本模式都会输出“没有运行记录（目录）”，JSON 模式都会输出 `[]`；这只说明 CLI 未列出记录，既不能断定目录实际为空，也不能证明服务健康。只读核对实际目录路径、运行账号和目录读取权限；必要时由有权账号重查。单个文件不可读或不是有效回执时，见下面的 `unreadable`，不要据此清理现场。
+
+`status.mjs` 扫描目录内所有扩展名为 `.json` 的普通文件，只排除名称匹配 `cifix-<数字>.json` 的文件。带 `last_event` 的对象显示 `running`；终态回执显示 `completed`、`partial` 或 `failed`。对未完成的回执，`failed_activity` 是第一个既未完成也未跳过的活动，`reason_code` 优先取该活动末次尝试的原因，再回退到活动、回执或状态默认原因。无法解析或不符合回执形状的 JSON 显示 `unreadable`，写入中的文件也可能暂时如此，可在写入稳定后只读重查。合法的 qa/commander 状态 JSON 和终态回写待办 `pr-sync-pending.json` 也可能被扫描成 `unreadable`；这不证明文件损坏，更不能据此删除待办或其它现场文件。
+
+`completed` 只表示本地回执的状态。即使缺少 `outputs.pr_url`，JSON 中仍是 `status=completed`，同时有 `pr_url=null`、`reason_code=pr_url_missing`；文本的 completed 行默认不打印这个原因。因此不能从文本表格的 completed 推断已有有效 PR，须查看 `--json` 并核实非空 `pr_url`。只有 `pr_url` 能解析出 `/pull/<编号>`，且同目录的 `cifix-<编号>.json` 确有尝试记录时，JSON 才有 `ci_fix` 摘要（`attempts` 次数和末次 `last_result`），文本行才附上次数及末次结果；否则 JSON 为 `ci_fix:null`，文本不显示摘要。
+
+确认最终结果时，先从 `--json` 取得非空 `pr_url`，再只读查询 GitHub 对应 PR，核对其最终 head 和 merged 事实；随后按任务 ID 向**该任务实际所属的 Brain** 只读查询 `GET /api/brain/tasks/<task_id>`，核实 `runner.phase=merged`、`merge.merged=true` 和 `qa_state` 的 QA 终态。PR 已建立也不等于已合并；任一证据缺失、冲突、仍待处理或查询失败、超时，都只能记为尚不能确认最终成功，可稍后只读重查。预览地址只供当前 PR/head 获授权的 QA 会话使用，预览关闭后不能作为最终成功诊断目标。诊断时不手工改批准或 FAIL 记录。
+
 ## 故障时保留现场
 
 `runner.sh` 经 `runtime-launch.mjs` 先健康检查，再安全更新专用 clone，最后调用 `runtime-run.sh`。账号失效或缺目录等返回 `runtime_codex_*` 错码时，先停止并排查指定订阅账号；不改用 API key、其他账号或 Claude，也不直接重启。
