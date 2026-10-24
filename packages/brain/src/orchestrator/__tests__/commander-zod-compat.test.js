@@ -21,15 +21,22 @@ describe('Commander Zod compatibility', () => {
     }
   });
 
-  it('imports the Commander contract with the repository Zod 3 runtime', async () => {
-    const zodEntryUrl = pathToFileURL(rootRequire.resolve('zod')).href;
+  it('imports the Commander contract with an explicit development-only Zod 3 fixture', async () => {
+    const zodEntryUrl = pathToFileURL(rootRequire.resolve('zod-v3-compat')).href;
     const source = (await readFile(commanderContractUrl, 'utf8'))
       .replace("from 'zod'", `from '${zodEntryUrl}'`);
     const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 
-    expect(rootRequire('zod/package.json').version).toMatch(/^3\./);
+    expect(rootRequire('zod-v3-compat/package.json').version).toMatch(/^3\./);
     await expect(import(moduleUrl)).resolves.toMatchObject({
       parseCommanderMode: expect.any(Function),
     });
+  });
+  it('validates Commander modes with the production Zod 4 install', async () => {
+    const productionRequire = createRequire(commanderContractUrl);
+    expect(productionRequire('zod/package.json').version).toMatch(/^4\./);
+    const { parseCommanderMode } = await import(commanderContractUrl.href);
+    expect(parseCommanderMode('hybrid')).toBe('hybrid');
+    expect(() => parseCommanderMode('invalid-mode')).toThrow();
   });
 });
