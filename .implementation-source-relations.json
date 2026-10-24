@@ -2,6 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path": "packages/brain/scripts/coding-workflow/activities/spec-review.mjs", "path": "packages/brain/scripts/coding-workflow/prompts/spec-revise.md", "role": "documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/activities/spec.mjs", "path": "changes/cp-10241735-spec-phase-boundaries.md", "role": "release"},
     {"owner_path":"packages/brain/scripts/coding-workflow/lib/shell-command.mjs","path":"changes/cp-10241215-native-command-roundtrip.md","role":"release"},
     {"owner_path":"packages/brain/scripts/coding-workflow/lib/shell-command.mjs","path":"docs/learnings/cp-10241215-native-command-roundtrip.md","role":"documentation"},
