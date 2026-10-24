@@ -195,7 +195,30 @@ describe('qa-doc-assertion 多文件数据来源证明', () => {
     j.replace('JSON.parse(b)', 'JSON.parse(b||"{}")'),
     s.replace('const fs=', '/* --dry-run */const fs='),
     s + ';process.exit(0)',
+    s.replace('if(!s.includes(x))', 'if(false&&!s.includes(x))'),
+    s.replace('if(!s.includes(x))', 'if(true||!s.includes(x))'),
+    s.replace('if(!n.includes(x))', 'if(n===n)'),
+    s.replace('if(!s.includes(x))', 'if(!s.includes("--dry-run"))'),
+    s.replace('if(!s.includes(x))', 'if(!n.includes(x))'),
+    s.replace('if(!n.includes(x))', 'if(!n.includes(x)||n.includes(x))'),
+    j.replace('j[x]', 'j["constructor"]'),
+    j.replace('.repeat(3)', '.repeat(1000000)'),
+    j.replace('String.fromCharCode(96)', 'String.fromCharCode(99999)'),
   ])('未知/执行/装饰读取/常量假断言不获豁免：%s', (code) => {
+    expect(reject(node(code))).toEqual(['Q1']);
+  });
+});
+
+
+// 静态内容里恒假的条件不能为一个读取制造“可失败”凭证。
+describe('qa-doc-assertion 相关条件不能伪造依赖', () => {
+  const prefix = 'const fs=require("fs");';
+  const marker = 'const s=fs.readFileSync("b.md","utf8");for(const x of ["--dry-run"])if(!s.includes(x))throw Error(x);';
+  it.each([
+    prefix + 'const a=fs.readFileSync("a.md","utf8");const b=fs.readFileSync("a.md","utf8");if(a!==b)throw Error("same file");' + marker,
+    prefix + 'const a=JSON.parse(fs.readFileSync("a.json","utf8"));if(a.x===1&&a.x!==1)throw Error("contradiction");' + marker,
+    prefix + 'const a=fs.readFileSync("a.md","utf8");if(!a.includes("x")&&a.includes("xx"))throw Error("substring");' + marker,
+  ])('同源/互补/包含关系不能获得豁免：%s', (code) => {
     expect(reject(node(code))).toEqual(['Q1']);
   });
 });
