@@ -134,6 +134,7 @@ const NATIVE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence
 const NATIVE_DATA = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
 const PROVENANCE_READER_TUPLES = provenanceReaderTuples(path.join(BRAIN_ROOT,'src/lib'));
 const PROVENANCE_READER_HASHES = PROVENANCE_READER_TUPLES[0];
+const DOC_RUNTIME_FILE = path.join(BRAIN_ROOT,'src/lib/existing-ops-runtime-source.js');
 // 仅静态折叠有界字面量拼接；不求值标识符、调用或运行时表达式。
 function constantReferenceString(node,depth=0) {
   if(!node||depth>32)return null;
@@ -168,6 +169,7 @@ function provenanceReaderClosure(sources) {
         :file===STAGE_DATA?[STAGE_HELPER,STAGE_MODES]:file===STAGE_MODES?[STAGE_HELPER]:file===STAGE_HELPER?[ENVELOPE_CONSUMER,STAGE_HELPER]:file===PROVENANCE_HELPER?[ENVELOPE_CONSUMER]:[PROVENANCE_HELPER];
       if(callers.includes(consumer))continue;
       if(provenFingerprintReader(consumer,text))continue;
+      if(file===PROVENANCE_HELPER&&consumer===DOC_RUNTIME_FILE&&matchesProvenanceReaderTuple(sources,[PROVENANCE_READER_TUPLES[2]],value=>createHash('sha256').update(astShape(parseModule(value))).digest('hex')))continue;
       return false;
     }
   }

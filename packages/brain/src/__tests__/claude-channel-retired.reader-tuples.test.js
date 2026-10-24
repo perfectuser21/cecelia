@@ -50,7 +50,10 @@ export function provenanceReaderTuples(root) {
   const next = new Map(old);
   next.set(path.join(root, 'existing-ops-native-evidence-source.js'), 'ccb6cc8fbe31d00212d1f564053902a2000461d408b65131cfbe6e44195f5662');
   next.set(path.join(root, 'existing-ops-native-evidence-envelopes.js'), '0eb9a1ed9e0dc12ad04f4e2fd50c5253cd75e53386237847c85c0d436ba03e19');
-  return [old, next];
+  // 新consumer仅在当前已审九成员与完整runtime同时命中时取得资格。
+  const doc = new Map(next);
+  doc.set(path.join(root, 'existing-ops-runtime-source.js'), '116a965527c5aa69b174746299eabceee7fc398e1a49bce55cd6e06bd2625832');
+  return [old, next, doc];
 }
 export function matchesProvenanceReaderTuple(sources, tuples, hashSource) {
   try {
@@ -94,6 +97,37 @@ describe('claude-channel-retired.reader-tuples 防复活守卫完整九reader组
 });
 
 export function registerReaderTupleGuardTests({ BRAIN_ROOT, ENVELOPE_FILE, ENVELOPE_CONSUMER, NATIVE_HELPER, NATIVE_DATA, PROVENANCE_READER_HASHES, findClaudeInvocations }) {
+describe('doc reader完整组合资格',()=>{
+ const runtime=path.join(BRAIN_ROOT,'src/lib/existing-ops-runtime-source.js');
+ const stage=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
+ const base=()=>new Map([ENVELOPE_FILE,ENVELOPE_CONSUMER,...PROVENANCE_READER_HASHES.keys(),runtime].map(file=>[file,readFileSync(file,'utf8')]));
+ const scan=(sources,file=NATIVE_DATA)=>findClaudeInvocations(sources.get(file),{file,sources});
+ it.each([ENVELOPE_FILE,NATIVE_DATA,stage])('完整十成员使%s取得只读资格',file=>{
+  expect(scan(base(),file)).toEqual([]);
+ });
+ it('旧九成员加新runtime是未经审查的混搭',()=>{
+  const sources=base();for(const file of [NATIVE_HELPER,NATIVE_DATA])restoreOldNativeReader(sources,file);
+  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
+ });
+ it.each([
+  ['unknown',s=>s+'\nexport const unreviewedReader = true;'],
+  ['eval callback',s=>s.replace('provenanceSourceVersion(support, parse)','provenanceSourceVersion(support, eval)')],
+  ['raw export',s=>s+"\nimport { ENVELOPES } from './existing-ops-build-envelopes.js';export const raw = ENVELOPES;"],
+  ['template execution',s=>s+"\nimport { ENVELOPES } from './existing-ops-build-envelopes.js';eval(ENVELOPES.spawnParameters);"],
+ ])('runtime %s不继承资格',(_name,edit)=>{
+  const sources=base();sources.set(runtime,edit(sources.get(runtime)));
+  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
+ });
+ it('第三消费者不继承资格',()=>{
+  const sources=base();sources.set(path.join(BRAIN_ROOT,'src/lib/unknown-doc-reader.js'),"import { provenanceSourceVersion } from './existing-ops-provenance-envelope.js';provenanceSourceVersion(candidate,eval);");
+  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
+ });
+ it('runtime进程调用仍同时触发E1和R1',()=>{
+  const sources=base();sources.set(runtime,sources.get(runtime)+"\nimport { spawn } from 'node:child_process';spawn('claude',['-p','probe']);");
+  expect(scan(sources).some(hit=>hit.rule==='E1')).toBe(true);
+  expect(scan(sources,runtime).some(hit=>hit.rule==='R1')).toBe(true);
+ });
+});
 describe('完整九模块来源reader组合不能按成员混搭',()=>{
  const root=path.join(BRAIN_ROOT,'src/lib'), names=[...PROVENANCE_READER_HASHES.keys()];
  const base=()=>new Map([ENVELOPE_FILE,ENVELOPE_CONSUMER,...names].map(file=>[file,readFileSync(file,'utf8')]));
