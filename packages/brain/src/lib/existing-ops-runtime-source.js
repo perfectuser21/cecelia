@@ -149,8 +149,9 @@ async function collectDocImports({ selected, paths, parse, read, readSource, rev
         // qaReport 的其它成员已由整体封套覆盖；这里只补原封套未声明的 qa-doc 输入。
         if (path === report && spec !== './qa-doc-assertion.mjs') continue;
         if (!spec.startsWith('.')) {
-          const packageName = spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
-          if (!builtinModules.includes(spec.replace(/^node:/, '')) && !Object.hasOwn(dependencies, packageName)) throw Error('doc_import_external');
+          // 不猜 package exports/deep imports，也不允许 createRequire 所在模块加载能力。
+          if (['module', 'node:module'].includes(spec) || !builtinModules.includes(spec.replace(/^node:/, ''))
+            && !Object.hasOwn(dependencies, spec)) throw Error('doc_import_external');
           continue;
         }
         const target = posix.normalize(posix.join(posix.dirname(path), spec));
