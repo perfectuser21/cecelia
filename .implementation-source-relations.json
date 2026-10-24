@@ -2,6 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/scripts/coding-workflow/lib/qa-doc-assertion.mjs","path":"docs/learnings/cp-10242159-qa-doc-data-proof.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/lib/qa-doc-assertion.mjs","path":"changes/cp-10242159-qa-doc-data-proof.md","role":"release"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10241840-cw-6d966473/05-qa-report-r1.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10241840-cw-6d966473/06-judge-r1.md","role":"documentation"},
