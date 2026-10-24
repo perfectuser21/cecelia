@@ -82,15 +82,24 @@ export async function prepareWorktree(cfg, task, names, ctx, signal) {
 
 const DEFAULT_INSTALL = ['npm', 'ci', '--legacy-peer-deps', '--ignore-scripts'];
 
-/** 在 worktree 根目录装依赖（该仓库 repos.json 的 install，缺省 cecelia 的 npm ci；cfg.skipNpmCi 时跳过）。失败抛 Error：runner_terminated / npm_ci_failed。 */
+/** 准备依赖及锁定技能，与 CI 的 Restore pinned skill sources 保持一致。 */
 export async function installDeps(cfg, worktree, signal) {
-  if (cfg.skipNpmCi) return;
   if (signal?.aborted) throw fail('runner_terminated');
-  // npm workspaces：只能在 worktree 根目录跑，单包目录里跑会清掉其他包的依赖
-  const [bin, ...args] = Array.isArray(cfg.install) && cfg.install.length > 0 ? cfg.install : DEFAULT_INSTALL;
-  const ci = await run(bin, args, { cwd: worktree, timeoutMs: NPM_CI_TIMEOUT_MS, signal });
-  if (signal?.aborted) throw fail('runner_terminated');
-  if (ci.code !== 0) throw fail('npm_ci_failed');
+  if (!cfg.skipNpmCi) {
+    // npm workspaces：只能在 worktree 根目录跑，单包目录里跑会清掉其他包的依赖
+    const [bin, ...args] = Array.isArray(cfg.install) && cfg.install.length > 0 ? cfg.install : DEFAULT_INSTALL;
+    const ci = await run(bin, args, { cwd: worktree, timeoutMs: NPM_CI_TIMEOUT_MS, signal });
+    if (signal?.aborted) throw fail('runner_terminated');
+    if (ci.code !== 0) throw fail('npm_ci_failed');
+  }
+  // 技能正文是固定来源依赖；缺失/校验失败不能交给模型改 registry 来绕过。
+  if (fs.existsSync(path.join(worktree, '.skills-source.json'))) {
+    const skills = await run('bash', ['scripts/ensure-skills-source.sh', worktree], {
+      cwd: worktree, timeoutMs: FETCH_TIMEOUT_MS, signal,
+    });
+    if (signal?.aborted) throw fail('runner_terminated');
+    if (skills.code !== 0) throw fail('skill_source_restore_failed');
+  }
 }
 
 /** 删除 worktree 与本地分支（分支已推到远端）；返回是否删除成功。 */

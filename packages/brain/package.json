@@ -33,7 +33,7 @@
     "js-yaml": "^4.1.1",
     "multer": "^2.2.0",
     "natural": "^7.0.7",
-    "openai": "^4.77.3",
+    "openai": "^6.49.0",
     "pg": "^8.12.0",
     "unzipper": "^0.12.5",
     "uuid": "^9.0.0",
@@ -46,7 +46,8 @@
     "eslint": "^9.39.2",
     "globals": "^15.15.0",
     "supertest": "^7.2.2",
-    "vitest": "^1.6.1"
+    "vitest": "^1.6.1",
+    "zod-v3-compat": "npm:zod@3.25.76"
   },
   "version": "1.445.62",
   "overrides": {
