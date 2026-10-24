@@ -286,6 +286,7 @@ describe('qa-doc-assertion 有限 Markdown capture 数据', () => {
   it.each([
     read + observed + proof,
     read + observed + 'const parsed=JSON.parse(cap[1]);' + proof,
+    read + 'const one=s.match(' + regex + ');const j=JSON.parse(one[1]);if(j.x!==1)throw Error("x");const two=s.match(' + regex + ');const unused=JSON.parse(two[1]);if(j.y!==2)throw Error("y");' + proof,
     replaceRegex(B2_T1.script, '/.*/'),
     replaceRegex(B2_T1.script, regex + 'g'),
     replaceRegex(B2_T1.script, '/(?=x)(.*)/'),
