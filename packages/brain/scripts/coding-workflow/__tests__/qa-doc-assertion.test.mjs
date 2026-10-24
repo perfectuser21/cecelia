@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { B2_T3, B3_T1 } from './fixtures/qa-doc-data-commands.mjs';
+import { B1_T1, B2_T1, B2_T3, B3_T1 } from './fixtures/qa-doc-data-commands.mjs';
 import { parse } from 'acorn';
 import { trivialAssertions } from '../lib/qa-report.mjs';
 
@@ -100,22 +100,31 @@ describe('只读文档中的 dry-run 字面量', () => {
 
 // 两个真实坏尝试：分类器误把静态文档数据识别成 dry-run 执行。
 const fixtureFiles = (source) => {
-  const words = {};
-  for (const n of parse(source, { ecmaVersion: 2022 }).body) {
+  const words = {}, paths = {}, literals = {};
+  const ast = parse(source, { ecmaVersion: 2022 });
+  for (const n of ast.body.filter(n => n.type === 'VariableDeclaration')) {
+    for (const d of n.declarations) {
+      if (d.init?.type === 'Literal') literals[d.id.name] = d.init.value;
+      const c = d.init;
+      if (c?.type === 'CallExpression' && c.callee.property?.name === 'readFileSync') {
+        paths[d.id.name] = c.arguments[0].value ?? literals[c.arguments[0].name];
+      }
+    }
+  }
+  for (const n of ast.body) {
     const call = n.type === 'ForOfStatement' && n.body?.test?.argument;
     if (call?.callee?.property?.name !== 'includes') continue;
-    const key = call.callee.object.name;
-    words[key] = [...(words[key] || []), ...n.right.elements.map(x => x.value)];
+    const file = paths[call.callee.object.name];
+    words[file] = [...(words[file] || []), ...n.right.elements.map(x => x.value)];
   }
   const plan = { title: '文档', change_kind: 'capability_change', map_scope_hint: ['F1'],
     acceptance: ['可核实'], repo: 'cecelia', gp_anchor: 'none(docs)' };
-  return {
-    'packages/brain/scripts/coding-workflow/runner/README.md':
-      '### 单任务示例\n```json\n' + JSON.stringify(plan) + '\n```\n'
-      + (words.s || []).join('\n') + '\n### 两任务批次示例\n',
-    'packages/brain/scripts/coding-workflow/new-task.mjs': (words.n || []).join('\n'),
-    'packages/brain/scripts/coding-workflow/runner/lib/repos.mjs': (words.r || []).join('\n'),
-  };
+  const files = Object.fromEntries(Object.values(paths).map(file => [file, (words[file] || []).join('\n')]));
+  const doc = Object.values(paths).find(file => file.endsWith('.md'));
+  const title = source.match(/### [\p{L}\p{N} _-]+/u)?.[0] ?? '### Example';
+  files[doc] = title + '\n```json\n' + JSON.stringify(plan) + '\n```\n'
+    + (words[doc] || []).join('\n') + '\n### 两任务批次示例\n';
+  return files;
 };
 const sandbox = (source, check) => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-doc-data-'));
@@ -131,7 +140,7 @@ const sandbox = (source, check) => {
 };
 const renamed = (source) => {
   const names = { fs: 'io', p: 'docPath', s: 'manual', n: 'sourceText', r: 'reposText',
-    x: 'token', j: 'plan', b: 'block', cut: 'section' };
+    x: 'token', j: 'plan', b: 'block', cut: 'section', cli: 'cliText', repos: 'repoRules', block: 'capture', m: 'match', plan: 'taskData' };
   const edits = [];
   const visit = (n, parent, key) => {
     if (!n || typeof n !== 'object') return;
@@ -220,6 +229,73 @@ describe('qa-doc-assertion 相关条件不能伪造依赖', () => {
     prefix + 'const a=fs.readFileSync("a.md","utf8");if(!a.includes("x")&&a.includes("xx"))throw Error("substring");' + marker,
     prefix + 'const t=fs.readFileSync("a.json","utf8");const a=JSON.parse(t);const b=JSON.parse(t.split("not-in-file")[0]);if(a.x===1&&b.x!==1)throw Error("same data");' + marker,
   ])('同源/互补/包含关系不能获得豁免：%s', (code) => {
+    expect(reject(node(code))).toEqual(['Q1']);
+  });
+});
+
+
+const matchFixtures = [['真实match/optional T1', B1_T1], ['真实match T1', B2_T1]];
+const pathAndTitleVariant = (source) => source
+  .replaceAll('packages/brain/scripts/coding-workflow/runner/README.md', 'docs/guide.md')
+  .replaceAll('packages/brain/scripts/coding-workflow/new-task.mjs', 'src/entry.mjs')
+  .replaceAll('packages/brain/scripts/coding-workflow/runner/lib/repos.mjs', 'src/repos.mjs')
+  .replaceAll('### 单任务示例', '### Example plan');
+const replaceRegex = (source, replacement) => {
+  let found;
+  const visit = n => {
+    if (!n || typeof n !== 'object') return;
+    if (n.type === 'Literal' && n.regex) found = n;
+    for (const v of Object.values(n)) {
+      if (Array.isArray(v)) v.forEach(visit);
+      else if (v && typeof v === 'object') visit(v);
+    }
+  };
+  visit(parse(source, { ecmaVersion: 2022 }));
+  return source.slice(0, found.start) + replacement + source.slice(found.end);
+};
+describe('qa-doc-assertion 有限 Markdown capture 数据', () => {
+  it.each(matchFixtures)('%s 与变名/合法路径/标题变体能获数据分类', (_, fixture) => {
+    for (const code of [fixture.script, renamed(fixture.script), pathAndTitleVariant(fixture.script)]) {
+      expect(reject(node(code))).toEqual([]);
+    }
+  });
+  it.each(matchFixtures)('%s 真实临时围栏/JSON/字段/源码词缺陷必须失败', (_, fixture) => {
+    for (const code of [fixture.script, renamed(fixture.script), pathAndTitleVariant(fixture.script)]) {
+      sandbox(code, ({ cwd, files, run }) => {
+        expect(run().status).toBe(0);
+        const doc = Object.keys(files).find(file => file.endsWith('.md'));
+        for (const text of [files[doc].replace('```json', 'not-a-fence'),
+          files[doc].replace(/\{"title".*?\}/, '{broken'),
+          files[doc].replace('"repo":"cecelia"', '"repo":"wrong"')]) {
+          fs.writeFileSync(path.join(cwd, doc), text);
+          expect(run().status).not.toBe(0);
+        }
+        fs.writeFileSync(path.join(cwd, doc), files[doc]);
+        for (const file of Object.keys(files).filter(file => file !== doc)) {
+          fs.writeFileSync(path.join(cwd, file), 'missing required source words');
+          expect(run().status).not.toBe(0);
+          fs.writeFileSync(path.join(cwd, file), files[file]);
+        }
+      });
+    }
+  });
+  const regex = '/```json\\n([\\s\\S]*?)\\n```/';
+  const observed = 'const cap=s.match(' + regex + ');if(!cap)throw Error("missing");';
+  const read = 'const fs=require("fs");const s=fs.readFileSync("a.md","utf8");';
+  const proof = 'for(const x of ["--dry-run"])if(!s.includes(x))throw Error(x);const t=fs.readFileSync("b.mjs","utf8");if(!t.includes("source"))throw Error("source");';
+  it.each([
+    read + observed + proof,
+    read + observed + 'const parsed=JSON.parse(cap[1]);' + proof,
+    replaceRegex(B2_T1.script, '/.*/'),
+    replaceRegex(B2_T1.script, regex + 'g'),
+    replaceRegex(B2_T1.script, '/(?=x)(.*)/'),
+    B2_T1.script.replace('JSON.parse(m[1])', 'JSON.parse(m[0])'),
+    B2_T1.script.replace('JSON.parse(m[1])', 'JSON.parse(m?.[1]||"{}")'),
+    B2_T1.script.replace('s.match(', 's?.match('),
+    B2_T1.script.replace('s.match(', 's.test('),
+    B2_T1.script.replace('s.match(', 'new RegExp('),
+    'const fs=require("fs");const a=fs.readFileSync("a.md","utf8");if(a.split("x")[0].includes("x"))throw Error("never");const s=fs.readFileSync("b.md","utf8");for(const x of ["--dry-run"])if(!s.includes(x))throw Error(x);',
+  ])('未知regex/unused capture/片段恒假不能获豁免：%s', code => {
     expect(reject(node(code))).toEqual(['Q1']);
   });
 });
