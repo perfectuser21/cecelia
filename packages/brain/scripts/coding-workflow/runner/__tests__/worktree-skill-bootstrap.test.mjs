@@ -18,7 +18,7 @@ const dependencyInstall = { install: [process.execPath, '-e', "require('node:fs'
 
 describe('新工作区的固定技能准备', () => {
   it('依赖安装后恢复技能，后续检查可读到技能正文', async () => {
-    const root = workspace('set -eu\ntest "$1" = "$PWD"\ntest -f dependency-ready\nmkdir -p packages/engine/skills/dev\nprintf "pinned skill" > packages/engine/skills/dev/SKILL.md\n');
+    const root = workspace('set -eu\ntest -f dependency-ready\nmkdir -p "$1/packages/engine/skills/dev"\nprintf "pinned skill" > "$1/packages/engine/skills/dev/SKILL.md"\n');
     await installDeps(dependencyInstall, root);
     expect(fs.readFileSync(path.join(root, 'packages/engine/skills/dev/SKILL.md'), 'utf8')).toBe('pinned skill');
   });
