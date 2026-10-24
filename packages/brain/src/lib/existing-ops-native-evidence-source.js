@@ -1,5 +1,5 @@
 // 只解析完整已审源码；静态依赖与选中evaluate的可达调用分别登记。
-import { NATIVE_EVIDENCE_ENVELOPES as REVIEWED } from './existing-ops-native-evidence-envelopes.js';
+import { NATIVE_EVIDENCE_ENVELOPES as REVIEWED, NATIVE_REPORT_ROUNDTRIP_ENVELOPES as ROUNDTRIP } from './existing-ops-native-evidence-envelopes.js';
 
 const P = 'packages/brain/scripts/coding-workflow/';
 export const NATIVE_PROVENANCE_PATHS = Object.freeze(Object.fromEntries(Object.entries({
@@ -51,15 +51,19 @@ function nativeLinks(trees, parse) {
 /** 全体模块必须是同一已审组合，不能各自命中不同历史版本。 */
 export function nativeEvidenceForwarding(sources, parse) {
   try {
-    const trees = {};
-    for (const [key, text] of Object.entries(REVIEWED.support)) {
-      // build/CLI只在实际消费者证明时读取；publish不能借此声称执行CLI。
-      if (['test', 'helper', 'activity', 'cli', 'protocol'].includes(key)) continue;
-      if (typeof sources[key] !== 'string') return null;
-      trees[key] = parse(sources[key]);
-      if (!same(trees[key], parse(text))) return null;
+    for (const bundle of [REVIEWED, ROUNDTRIP]) {
+      const trees = {};
+      let complete = true;
+      for (const [key, text] of Object.entries(bundle.support)) {
+        // build/CLI共享同一冻结原文，只在实际消费者证明时读取。
+        if (['test', 'helper', 'activity', 'cli', 'protocol'].includes(key)) continue;
+        if (typeof sources[key] !== 'string') { complete = false; break; }
+        trees[key] = parse(sources[key]);
+        if (!same(trees[key], parse(text))) { complete = false; break; }
+      }
+      if (complete && nativeLinks(trees, parse)) return { trees, version: 'native_evidence' };
     }
-    return nativeLinks(trees, parse) ? { trees, version: 'native_evidence' } : null;
+    return null;
   } catch { return null; }
 }
 export function nativeBuildSources(sources, parse) {
