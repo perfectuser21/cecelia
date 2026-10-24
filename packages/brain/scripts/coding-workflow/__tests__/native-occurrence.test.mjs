@@ -9,6 +9,38 @@ const run = (item_id, exit_code = 0) => ({ item_id, command, output: 'identical\
 const item = (id, occurrence, verdict = 'PASS', extra = '') => `### ${id}\n对应: Q-1\nverdict: ${verdict}\nnative_occurrence: ${occurrence}\n${extra}${F}command\n${command}\n${F}\n${F}output\nidentical\n${F}\n`;
 
 describe('重复命令的native_occurrence明确绑定协议', () => {
+  it.each([
+    ['PASS', 0, ''],
+    ['FAIL', 7, ''],
+    ['CANNOT_VERIFY', 1, '原因: 实际诊断返回失败，目标条件无法验证\n'],
+  ])('完整 shell 原生命令编译往返保留 %s 和真实身份', (verdict, exit_code, reason) => {
+    const raw = "/bin/zsh -lc 'cat proof.txt'";
+    const commands = [{ ...run('shell-command', exit_code), command: raw }];
+    const draft = fm + item('T-1', '1', verdict, reason);
+    const parsed = parseQaReport(draft, { draft: true, executions: commands });
+    expect(parsed.errors).toEqual([]);
+    const compiled = compileQaReport(draft, parsed, commands, { task_id: 'fixture', round: 1 });
+    const reread = parseQaReport(compiled);
+    expect(reread.errors).toEqual([]);
+    expect(reread.tests[0]).toMatchObject({ command: raw, output: 'identical\n', native_item_id: 'shell-command', exit_code, verdict });
+    expect(compiledLedger(compiled).ledger.commands).toEqual(commands);
+  });
+
+  it.each([
+    "/bin/bash -lc 'cat proof.txt'",
+    "/bin/zsh -lc 'cat proof.txt'; true",
+    "/bin/zsh -lc 'cat proof.txt' extra",
+    '/bin/zsh -lc "cat $DYNAMIC"',
+  ])('编译报告不能用另一封套或附加动作冒认原生命令：%s', reported => {
+    const raw = "/bin/zsh -lc 'cat proof.txt'";
+    const commands = [{ ...run('shell-command'), command: raw }];
+    const draft = fm + item('T-1', '1');
+    const parsed = parseQaReport(draft, { draft: true, executions: commands });
+    const compiled = compileQaReport(draft, parsed, commands, { task_id: 'fixture', round: 1 });
+    const altered = compiled.replace(JSON.stringify(raw), JSON.stringify(reported));
+    expect(parseQaReport(altered).errors).toContain('T-1:native_unverified');
+  });
+
   it('按同命令completed账的1基序号绑定1/2，保留失败和完整有序ledger', () => {
     const commands = [run('first-failed', 1), run('second-success', 0), { item_id: 'unreferenced', command: 'cat absent.txt', output: 'missing\n', exit_code: 1 }];
     const draft = fm + item('T-1', '1', 'FAIL') + item('T-2', '2');
