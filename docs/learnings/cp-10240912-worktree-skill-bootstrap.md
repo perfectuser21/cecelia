@@ -12,3 +12,7 @@
 ## 验证
 
 测试先3 RED/1 PASS，修后4 PASS；相关runner/deps/lease共41 PASS。独立修复工作树真实调用runner准备：registry原25 FAIL，经固定来源install+verify后0 FAIL，原登记YAML字节未改。正常正式CI及后续两条新任务实跑分别验收；本修复不代表样本已通过。
+
+## 本轮CI依赖阻塞
+
+原基线锁文件被实时审计检出body-parser/multer/zod高危，固定更新而非豁免；OpenAI旧SDK的Zod3可选peer限制导致残留，用支持Zod4的6.49和两份同步锁文件解决。实际新依赖安装后，SDK与应用真实执行、只替换HTTP传输，验证POST参数、float向量和429 quota错误；真实网络调用0。新增33项相关回归通过（含前述4项重叠），原运行审计脚本通过，现有白名单未改。
