@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseQaReport } from '../lib/qa-report.mjs';
+import { parseQaReport, trivialAssertions } from '../lib/qa-report.mjs';
 import { compileQaReport, compiledLedger } from '../lib/native-evidence.mjs';
 
 // 协议unit：原生执行账是明确的fixture，不声称实际执行过命令。
@@ -9,6 +9,19 @@ const run = (item_id, exit_code = 0) => ({ item_id, command, output: 'identical\
 const item = (id, occurrence, verdict = 'PASS', extra = '') => `### ${id}\n对应: Q-1\nverdict: ${verdict}\nnative_occurrence: ${occurrence}\n${extra}${F}command\n${command}\n${F}\n${F}output\nidentical\n${F}\n`;
 
 describe('重复命令的native_occurrence明确绑定协议', () => {
+  it.each(['echo PASS', 'printf PASS', 'printf PASS; false || true', 'printf PASS; false; exit 0'])('完整原生封套不豁免原有恒真断言拒绝：%s', script => {
+    const raw = `/bin/zsh -lc '${script}'`;
+    const commands = [{ item_id: 'wrapped-trivial', command: raw, output: 'PASS\n', exit_code: 0 }];
+    const draft = fm + `### T-1\n对应: Q-1\nverdict: PASS\n${F}command\n${script}\n${F}\n${F}output\nPASS\n${F}\n`;
+    const parsed = parseQaReport(draft, { draft: true, executions: commands });
+    expect(parsed.errors).toEqual([]);
+    expect(trivialAssertions(parsed.tests)).toEqual(['T-1']);
+    const compiled = compileQaReport(draft, parsed, commands, { task_id: 'fixture', round: 1 });
+    const reread = parseQaReport(compiled);
+    expect(reread.errors).toEqual([]);
+    expect(trivialAssertions(reread.tests)).toEqual(['T-1']);
+  });
+
   it.each([
     ['PASS', 0, ''],
     ['FAIL', 7, ''],
