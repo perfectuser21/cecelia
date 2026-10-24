@@ -73,7 +73,7 @@ const tuples = provenanceReaderTuples(root);
 const base = () => new Map([...tuples[0].keys()].map(file => [file, readFileSync(file, 'utf8')]));
 const helper = path.join(root, 'existing-ops-native-evidence-source.js');
 const data = path.join(root, 'existing-ops-native-evidence-envelopes.js');
-describe('防复活守卫完整九reader组合', () => {
+describe('claude-channel-retired.reader-tuples 防复活守卫完整九reader组合', () => {
   it.each(['old', 'new'])('%s完整组合取得资格，且旧原件逐字保全', version => {
     const sources = base();
     if (version === 'old') {
