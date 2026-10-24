@@ -3,6 +3,8 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { B2_T3, B3_T1 } from './fixtures/qa-doc-data-commands.mjs';
+import { parse } from 'acorn';
 import { trivialAssertions } from '../lib/qa-report.mjs';
 
 // 原 canary 3a27ca36 / 02-spec.md Q1：保留完整原命令，不拆 --dry-run 绕过门禁。
@@ -92,5 +94,108 @@ describe('只读文档中的 dry-run 字面量', () => {
     node(script.replace('throw Error(x);', 'throw Error(x);process.exit(0);')),
   ])('未知或危险命令仍拒绝：%s', (cmd) => {
     expect(reject(cmd)).toEqual(['Q1']);
+  });
+});
+
+
+// 两个真实坏尝试：分类器误把静态文档数据识别成 dry-run 执行。
+const fixtureFiles = (source) => {
+  const words = {};
+  for (const n of parse(source, { ecmaVersion: 2022 }).body) {
+    const call = n.type === 'ForOfStatement' && n.body?.test?.argument;
+    if (call?.callee?.property?.name !== 'includes') continue;
+    const key = call.callee.object.name;
+    words[key] = [...(words[key] || []), ...n.right.elements.map(x => x.value)];
+  }
+  const plan = { title: '文档', change_kind: 'capability_change', map_scope_hint: ['F1'],
+    acceptance: ['可核实'], repo: 'cecelia', gp_anchor: 'none(docs)' };
+  return {
+    'packages/brain/scripts/coding-workflow/runner/README.md':
+      '### 单任务示例\n```json\n' + JSON.stringify(plan) + '\n```\n'
+      + (words.s || []).join('\n') + '\n### 两任务批次示例\n',
+    'packages/brain/scripts/coding-workflow/new-task.mjs': (words.n || []).join('\n'),
+    'packages/brain/scripts/coding-workflow/runner/lib/repos.mjs': (words.r || []).join('\n'),
+  };
+};
+const sandbox = (source, check) => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-doc-data-'));
+  const files = fixtureFiles(source);
+  try {
+    for (const [name, content] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(cwd, name)), { recursive: true });
+      fs.writeFileSync(path.join(cwd, name), content);
+    }
+    const run = (code = source) => spawnSync(process.execPath, ['-e', code], { cwd, encoding: 'utf8' });
+    check({ cwd, files, run });
+  } finally { fs.rmSync(cwd, { recursive: true, force: true }); }
+};
+const renamed = (source) => {
+  const names = { fs: 'io', p: 'docPath', s: 'manual', n: 'sourceText', r: 'reposText',
+    x: 'token', j: 'plan', b: 'block', cut: 'section' };
+  const edits = [];
+  const visit = (n, parent, key) => {
+    if (!n || typeof n !== 'object') return;
+    if (n.type === 'Identifier' && names[n.name]
+      && !(parent?.type === 'MemberExpression' && key === 'property' && !parent.computed)) {
+      edits.push([n.start, n.end, names[n.name]]);
+    }
+    for (const [k, v] of Object.entries(n)) {
+      if (Array.isArray(v)) v.forEach(child => visit(child, n, k));
+      else if (v && typeof v === 'object') visit(v, n, k);
+    }
+  };
+  visit(parse(source, { ecmaVersion: 2022 }));
+  for (const [start, end, text] of edits.sort((a, b) => b[0] - a[0])) {
+    source = source.slice(0, start) + text + source.slice(end);
+  }
+  return source;
+};
+
+describe('qa-doc-assertion 多文件数据来源证明', () => {
+  it.each([['真实T3', B2_T3], ['真实split/JSON T1', B3_T1]])('%s 不把数据marker当执行参数', (_, fixture) => {
+    expect(reject(fixture.command)).toEqual([]);
+    expect(reject(node(renamed(fixture.script)))).toEqual([]);
+  });
+  it.each([['真实T3', B2_T3], ['真实split/JSON T1', B3_T1]])('%s 在真实临时内容缺词/缺文件时必须失败', (_, fixture) => {
+    sandbox(fixture.script, ({ cwd, files, run }) => {
+      expect(run().status).toBe(0);
+      expect(run(renamed(fixture.script)).status).toBe(0);
+      for (const [file, text] of Object.entries(files).filter(([, text]) => text)) {
+        fs.writeFileSync(path.join(cwd, file), '缺少所需内容');
+        expect(run().status).not.toBe(0);
+        fs.writeFileSync(path.join(cwd, file), text);
+        fs.unlinkSync(path.join(cwd, file));
+        expect(run().status).not.toBe(0);
+        fs.writeFileSync(path.join(cwd, file), text);
+      }
+      if (fixture === B3_T1) {
+        const file = Object.keys(files)[0];
+        fs.writeFileSync(path.join(cwd, file), files[file].replace(/\{"title".*?\}/, '{broken'));
+        expect(run().status).not.toBe(0);
+      }
+    });
+  });
+  const s = B2_T3.script;
+  const j = B3_T1.script;
+  it.each([
+    s + ';require("child_process").execSync("true")',
+    s + ';require("child_process").spawnSync("node",["tool.mjs","--dry-run"])',
+    s.replace('const n=fs.readFileSync(', 'const n=unknown('),
+    s.replace('if(!n.includes(x))throw Error(x)', 'if(!s.includes(x))throw Error(x)'),
+    s.replace('if(!s.includes(x))throw Error(x)', 'if(false)throw Error(x)'),
+    s.replace('throw Error(x)', 'console.log(x)'),
+    s.replace('"utf8"', 'process.env.ENCODING'),
+    s.replace('runner/README.md', '../README.md'),
+    s + ';if(false)eval("--dry-run")',
+    s + ';console.log("--dry-run")',
+    j.replace('JSON.parse(b)', 'JSON.parse("{}")'),
+    j.replace('j[x]', 'j[process.env.KEY]'),
+    j.replace('String.fromCharCode(96)', 'String.fromCharCode(process.env.CODE)'),
+    j.replace('.split("### 单任务示例")', '.split("")'),
+    j.replace('JSON.parse(b)', 'JSON.parse(b||"{}")'),
+    s.replace('const fs=', '/* --dry-run */const fs='),
+    s + ';process.exit(0)',
+  ])('未知/执行/装饰读取/常量假断言不获豁免：%s', (code) => {
+    expect(reject(node(code))).toEqual(['Q1']);
   });
 });
