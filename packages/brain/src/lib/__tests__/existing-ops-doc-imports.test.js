@@ -67,6 +67,10 @@ describe('固定revision opt-in 文档静态import输入闭包（不执行候选
   });
   for (const [name, options] of [
     ['未支持的reexport模块依赖', { overrides: { [helper]: 'export { x } from "./missing.mjs";' } }],
+    ['bare未解析deep路径', { overrides: { [helper]: 'import x from "acorn/nonexistent-private-subpath.mjs";' } }],
+    ['bare路径穿越', { overrides: { [helper]: 'import x from "acorn/../../unclaimed-extra.mjs";' } }],
+    ['node模块createRequire别名加载', { overrides: { [helper]: "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); load('./unclaimed-extra.mjs');" } }],
+    ['bare模块createRequire别名加载', { overrides: { [helper]: "import { createRequire } from 'module'; const load = createRequire(import.meta.url); load('./unclaimed-extra.mjs');" } }],
     ['动态import', { overrides: { [helper]: 'export const x = import("./missing.mjs");' } }],
     ['不安全路径', { overrides: { [helper]: 'import x from "../../../../../../outside.mjs";' } }],
     ['非canonical路径', { overrides: { [helper]: 'import x from "./dir/../qa-doc-assertion.mjs";' } }],
