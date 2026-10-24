@@ -3,7 +3,7 @@
   "repo": "perfectuser21/cecelia",
   "relations": [
     {"owner_path":"packages/brain/src/orchestrator/commander-contract.js","path":"packages/brain/src/orchestrator/__tests__/commander-zod-compat.test.js","role":"verification"},
-    {"owner_path":"packages/brain/scripts/coding-workflow/runner/lib/worktree.mjs","path":"changes/cp-10240912-worktree-skill-bootstrap.md","role":"release"},
+    
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/lib/worktree.mjs","path":"docs/learnings/cp-10240912-worktree-skill-bootstrap.md","role":"documentation"},
     {"owner_path":"scripts/ops/janitor.sh","path":"scripts/ci/__tests__/janitor-infra-regression.test.mjs","role":"verification"},
     {"owner_path":"scripts/ops/janitor.sh","path":"scripts/ops/__tests__/janitor/janitor_system_domain_service_exempt.test.sh","role":"verification"},

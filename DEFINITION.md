@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.62
+**Brain 版本**: 1.445.63
 
 精确ledger双摘要已独立准入可信main；本业务候选沿原生PR来源选择器使用最近完整官方9f基线，验证到当前HEAD的全部累计差分。独立来源清单不替代业务发布：候选仍须同SHA完整CI与隔离staging通过，真实业务结果另行验收。
 
@@ -201,6 +201,13 @@ scope: brain
 ---
 
 Recognize only the reviewed deployment status runtime layout loader, preserving legacy settlement source proofs and fail-closed dependency checks.
+
+## Brain 1.445.63 — 新工作区固定技能来源准备
+
+- runner在依赖安装后执行既有固定Skill来源恢复与校验，再启动模型和本地CI预检。
+- 恢复失败停止准备；skipNpmCi仅跳过npm，不跳技能；无固定来源声明的仓库保持原行为。
+- 修复正式CI发现的既有运行依赖审计阻塞，更新body-parser/multer/zod及兼容Zod4的OpenAI SDK，不改审计白名单。
+- Commander兼容测试显式使用开发用Zod3别名，保留原断言并覆盖生产Zod4；旧测试依赖不进入生产omitdev安装。
 
 ## Brain 1.445.59 — 秋米任务保留业务正文并固定会话账号
 
