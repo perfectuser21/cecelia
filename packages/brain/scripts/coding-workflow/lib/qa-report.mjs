@@ -106,10 +106,11 @@ const ECHO_ONLY_RE = /^\s*(?:echo|printf|true|:)(?:\s|$)/;
 /** 判 PASS 却用恒真命令的条目 id（FAIL 条目不管：它已经在报问题）。 */
 export function trivialAssertions(items) {
   return items.filter((i) => i.verdict === 'PASS').filter((i) => {
-    const lines = String(i.command ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+    const command = unwrapShellCommand(i.command ?? '') ?? String(i.command ?? '');
+    const lines = command.split('\n').map((l) => l.trim()).filter(Boolean);
     if (lines.length === 0) return false;
     return lines.some((l) => SWALLOW_RE.test(l)) || lines.every((l) => ECHO_ONLY_RE.test(l))
-      || (DRY_RUN_RE.test(i.command) && !isReadonlyDocAssertion(i.command));
+      || (DRY_RUN_RE.test(command) && !isReadonlyDocAssertion(command));
   }).map((i) => i.id);
 }
 

@@ -13,6 +13,8 @@
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10241101-cw-934e5375/02-spec.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10241101-cw-934e5375/03-build.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10241101-cw-934e5375/04-evidence.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/lib/shell-command.mjs","path":"changes/cp-10241215-native-command-roundtrip.md","role":"release"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/lib/shell-command.mjs","path":"docs/learnings/cp-10241215-native-command-roundtrip.md","role":"documentation"},
     {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"packages/brain/src/__tests__/claude-channel-retired.reader-tuples.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-report-compat.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-source.js","path":"changes/cp-10241235-native-source-compat.md","role":"release"},
