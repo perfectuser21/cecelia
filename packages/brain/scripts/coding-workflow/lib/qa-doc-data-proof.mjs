@@ -17,11 +17,31 @@ const value = (type, sig, origins = new Set(), markers = new Set(), constant) =>
 const predicate = (sig, origins, markers, refs) =>
   ({ ...value('boolean', sig, origins, markers), refs, jsonOnly: true });
 
+// 只识别 JSON 围栏的一个非贪婪 capture；不运行正则，不开放一般 regexp 能力。
+function markdownPattern(n) {
+  if (n?.type !== 'Literal' || !n.regex || n.regex.flags || /--dry-run\b/.test(n.regex.pattern)) fail();
+  const pattern = n.regex.pattern.replaceAll('\\`', '`'), capture = '([\\s\\S]*?)';
+  const at = pattern.indexOf(capture);
+  if (at < 0 || pattern.indexOf(capture, at + capture.length) >= 0) fail();
+  let before = pattern.slice(0, at);
+  const after = pattern.slice(at + capture.length), whitespace = ['\\n', '\\s*', '\\s+'];
+  if (!whitespace.some(w => after === w + '```')) fail();
+  const ending = whitespace.find(w => before.endsWith('```json' + w));
+  if (!ending) fail();
+  before = before.slice(0, -('```json' + ending).length);
+  if (before) {
+    const gap = ['\\s+', '\\n'].find(w => before.endsWith(w));
+    if (!gap || !/^#{1,6} [\p{L}\p{N} _-]{1,80}$/u.test(before.slice(0, -gap.length))) fail();
+  }
+  return pattern;
+}
+
 function inspect(tree, markers) {
   const reads = new Map(), checkedReads = new Set(), checkedMarkers = new Set();
   const fields = new Map();
+  const matches = new Set(), checkedMatches = new Set();
   const bindings = new Map();
-  let nextRead = 0, assertions = 0;
+  let nextRead = 0, nextJson = 0, assertions = 0;
   const fresh = (n, scope) => {
     if (n?.type !== 'Identifier' || RESERVED.has(n.name) || scope.has(n.name)) fail();
     return n.name;
@@ -38,10 +58,26 @@ function inspect(tree, markers) {
     return value(typeof n.value, `literal:${JSON.stringify(n.value)}`, new Set(),
       markers.has(n) ? new Set([n]) : new Set(), n.value);
   };
+  function match(n, scope) {
+    if (n.arguments.length !== 1 || n.optional) fail();
+    const input = infer(n.callee.object, scope), pattern = markdownPattern(n.arguments[0]);
+    if (input.type !== 'string' || !input.origins.size) fail();
+    const captureId = matches.size + 1;matches.add(captureId);
+    return { ...value('match', `match:${input.sig}:${pattern}`, input.origins), captureId };
+  }
   function infer(n, scope) {
     if (!n) return fail();
     if (n.type === 'Literal') return constant(n);
     if (n.type === 'Identifier') return scope.get(n.name) ?? fail();
+    if (n.type === 'ChainExpression') {
+      const call = n.expression, member = call?.callee, part = member?.object;
+      if (call.type !== 'CallExpression' || member?.type !== 'MemberExpression' || member.computed
+        || !member.optional || !id(member.property, 'match') || part?.type !== 'MemberExpression'
+        || !part.computed || part.optional || part.property.type !== 'Literal'
+        || !Number.isSafeInteger(part.property.value) || part.property.value < 0 || part.property.value > 100
+        || part.object.type !== 'CallExpression' || key(part.object.callee) !== 'split') fail();
+      return match(call, scope);
+    }
     if (n.type === 'MemberExpression' && !n.optional) {
       const object = infer(n.object, scope);
       const field = n.computed ? infer(n.property, scope) : value('string', '', new Set(), new Set(), n.property.name);
@@ -49,11 +85,19 @@ function inspect(tree, markers) {
       if (!(typeof k === 'string' && k.length && !BAD_KEYS.has(k)
         || Number.isSafeInteger(k) && k >= 0 && k <= 100)) fail();
       if (object.type === 'parts' && Number.isSafeInteger(k)) {
-        return value('string', `${object.sig}[${k}]`, object.origins);
+        return { ...value('string', `${object.sig}[${k}]`, object.origins), fragment: true };
+      }
+      if (object.type === 'match' && n.computed && k === 1) {
+        return { ...value('capture-string', `${object.sig}[1]`, object.origins), captureId: object.captureId };
       }
       if (object.type === 'json') {
         const v = value('json', `${object.sig}[${JSON.stringify(k)}]`, object.origins);
-        fields.set(v.sig, fields.get(object.sig));
+        // sig 描述 canonical 数据身份；refs 单独绑定实际 parse/capture 实例，不能互相记功。
+        v.refs = new Set([...object.refs].map(ref => `${ref}[${JSON.stringify(k)}]`));
+        for (const ref of object.refs) {
+          const field = fields.get(ref);
+          fields.set(`${ref}[${JSON.stringify(k)}]`, { ...field, depth: field.depth + 1, semantic: v.sig });
+        }
         return v;
       }
       return fail();
@@ -88,7 +132,7 @@ function inspect(tree, markers) {
           const lengthField = infer(empty.argument.object, scope);
           if (field.type !== 'json' || field.sig !== arrayField.sig || field.sig !== lengthField.sig) fail();
           return predicate(`missingOrEmpty:${field.sig}`, union(field.origins, arrayField.origins, lengthField.origins),
-            new Set(), field.refs);
+            new Set(), union(field.refs, arrayField.refs, lengthField.refs));
         }
       }
       const a = bool(infer(n.left, scope)), b = bool(infer(n.right, scope));
@@ -96,9 +140,10 @@ function inspect(tree, markers) {
       if (a.constant !== undefined || b.constant !== undefined
         || a.sig === `!${b.sig}` || b.sig === `!${a.sig}`) fail();
       if (!a.jsonOnly || !b.jsonOnly || [...a.refs].some(x => [...b.refs].some(y => {
-        if (x === y || x.startsWith(y + '[') || y.startsWith(x + '[')) return true;
         const left = fields.get(x), right = fields.get(y);
         if (!left || !right) return true;
+        if (left.semantic === right.semantic || left.semantic.startsWith(right.semantic + '[')
+          || right.semantic.startsWith(left.semantic + '[')) return true;
         // 同一个文件的不同提取根不一定独立；不猜 split/parse 的语义等价。
         return left.root !== right.root && [...left.files].some(p => right.files.has(p));
       }))) fail();
@@ -107,6 +152,7 @@ function inspect(tree, markers) {
     }
     if (n.type !== 'CallExpression' || n.optional || n.arguments.some(a => a.type === 'SpreadElement')) fail();
     const args = n.arguments, callee = n.callee, method = key(callee);
+    if (method === 'match') return match(n, scope);
     if (id(callee, 'require') && args.length === 1 && args[0].type === 'Literal' && args[0].value === 'fs') {
       return value('fs', 'fs');
     }
@@ -136,9 +182,11 @@ function inspect(tree, markers) {
     if (method === 'parse' && id(callee.object, 'JSON')) {
       if (args.length !== 1) fail();
       const v = infer(args[0], scope);
-      if (v.type !== 'string' || !v.origins.size) fail();
+      if (!['string', 'capture-string'].includes(v.type) || !v.origins.size) fail();
       const result = value('json', `json:${v.sig}`, v.origins);
-      fields.set(result.sig, { root: result.sig, files: new Set([...v.origins].map(o => reads.get(o))) });
+      const instance = `json-instance:${++nextJson}`;result.refs = new Set([instance]);
+      fields.set(instance, { root: result.sig, semantic: result.sig, files: new Set([...v.origins].map(o => reads.get(o))),
+        depth: 0, captures: new Set(v.captureId ? [v.captureId] : []) });
       return result;
     }
     if (method === 'repeat') {
@@ -158,7 +206,7 @@ function inspect(tree, markers) {
     if (method === 'includes') {
       if (args.length !== 1) fail();
       const v = infer(callee.object, scope), word = infer(args[0], scope);
-      if (v.type !== 'string' || !v.origins.size || !staticString(word) || !word.constant.length) fail();
+      if (v.type !== 'string' || v.fragment || !v.origins.size || !staticString(word) || !word.constant.length) fail();
       return value('boolean', `includes:${v.sig}:${word.constant}`, v.origins, word.markers);
     }
     fail();
@@ -184,11 +232,23 @@ function inspect(tree, markers) {
       return;
     }
     if (n.type === 'IfStatement' && !n.alternate && n.consequent.type === 'ThrowStatement') {
+      // 缺 match 保护不算有效内容断言；capture 后续必须实际进入 JSON 字段断言。
+      if (n.test.type === 'UnaryExpression' && n.test.operator === '!' && n.test.argument.type === 'Identifier'
+        && scope.get(n.test.argument.name)?.type === 'match') {
+        const e = n.consequent.argument;
+        if (e?.type !== 'CallExpression' || e.optional || !id(e.callee, 'Error') || e.arguments.length !== 1
+          || !staticString(infer(e.arguments[0], scope))) fail();
+        return;
+      }
       const v = bool(infer(n.test, scope)), error = n.consequent.argument;
       if (v.constant !== undefined || !v.origins.size || error?.type !== 'CallExpression'
         || !id(error.callee, 'Error') || error.optional || error.arguments.length !== 1
         || !staticString(infer(error.arguments[0], scope))) fail();
       v.origins.forEach(o => checkedReads.add(o));v.markers.forEach(m => checkedMarkers.add(m));assertions++;
+      for (const ref of v.refs) {
+        const field = fields.get(ref);
+        if (field?.depth > 0) field.captures.forEach(c => checkedMatches.add(c));
+      }
       return;
     }
     if (n.type === 'ExpressionStatement' && n.expression.type === 'CallExpression') {
@@ -201,6 +261,7 @@ function inspect(tree, markers) {
   tree.body.forEach(n => statement(n, bindings));
   return new Set(reads.values()).size >= 2 && assertions > 0
     && [...reads.keys()].every(r => checkedReads.has(r))
+    && [...matches].every(m => checkedMatches.has(m))
     && markers.size > 0 && [...markers].every(m => checkedMarkers.has(m));
 }
 
