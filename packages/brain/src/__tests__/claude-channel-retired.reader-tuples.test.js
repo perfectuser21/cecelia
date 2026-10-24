@@ -50,7 +50,10 @@ export function provenanceReaderTuples(root) {
   const next = new Map(old);
   next.set(path.join(root, 'existing-ops-native-evidence-source.js'), 'ccb6cc8fbe31d00212d1f564053902a2000461d408b65131cfbe6e44195f5662');
   next.set(path.join(root, 'existing-ops-native-evidence-envelopes.js'), '0eb9a1ed9e0dc12ad04f4e2fd50c5253cd75e53386237847c85c0d436ba03e19');
-  return [old, next];
+  // 新consumer仅在当前已审九成员与完整runtime同时命中时取得资格。
+  const doc = new Map(next);
+  doc.set(path.join(root, 'existing-ops-runtime-source.js'), '116a965527c5aa69b174746299eabceee7fc398e1a49bce55cd6e06bd2625832');
+  return [old, next, doc];
 }
 export function matchesProvenanceReaderTuple(sources, tuples, hashSource) {
   try {
