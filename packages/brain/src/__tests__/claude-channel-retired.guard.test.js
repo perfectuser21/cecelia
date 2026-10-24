@@ -18,6 +18,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parse } from 'acorn';
+import { provenanceReaderTuples, matchesProvenanceReaderTuple, registerReaderTupleGuardTests, PROVENANCE_CALLER_SHA256 } from './claude-channel-retired.reader-tuples.test.js';
 /** 模式常量只能留在已审解析闭包；每种突变均应使纯数据资格失败。 */
 function mutateStageMode(kind,sources,root){
  const file=path.join(root,'existing-ops-stage-modes.js'),other=path.join(root,'../unreviewed-mode-consumer.js');
@@ -131,19 +132,8 @@ const STAGE_MODES=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-modes.js');
 const PROVENANCE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-envelope.js');
 const NATIVE_HELPER = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
 const NATIVE_DATA = path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
-const PROVENANCE_READER_HASHES = new Map([
-  ['existing-ops-stage-source.js','549aae515174fc9963ed48220abb10886c76b364e2066969e4e66d1f79bbb745'],
-  ['existing-ops-stage-modes.js','8266c7b1f74b11a0161684f83e3deb189ee101e2a0b64578cacffaaff1711752'],
-  ['existing-ops-stage-envelopes.js','1fda2fc1f3bf3ef7684930e46ac8dc0364bd1af1f8f27e97c7eb197fe23a6d8f'],
-  ['existing-ops-provenance-envelope.js','27c87c40b07ef90e87d642042afbdeb6a770a71ec74582da312599ec6fae5d5e'],
-  ['existing-ops-provenance-core-envelope.js','c3e8769e7f053fc63d52074235b521df5134e65c31d34f151bb6a9400fa4ab93'],
-  ['existing-ops-provenance-entry-envelopes.js','126a93b9db9856fe06894a394ecb9e0afd099860b9fb54e8927c56c8b96a15bb'],
-  ['existing-ops-provenance-local-envelopes.js','ef359ef987229815f3d258ff78535fb55dc909bb64eae88d67ce63d0ea55c7f4'],
-  // 新完整模块仅作有界Brotli→JSON数据与Acorn比较；整个AST及所有真实消费者均固定。
-  ['existing-ops-native-evidence-source.js','db5308fd90094044e2e4942dc704c90a41e6a225fd5bf04d0f5b876959175eb0'],
-  ['existing-ops-native-evidence-envelopes.js','ed0b4b01fb98b9ee5c852736286ae22ad7ce28252936840df257666778949c57'],
-].map(([name,hash])=>[path.join(BRAIN_ROOT,'src/lib',name),hash]));
-const PROVENANCE_CALLER_SHA256 = 'ac312d50ee66676fc27d1574d126cdf86f36e25d01facad5ecd2d0f3b77a7bb0';
+const PROVENANCE_READER_TUPLES = provenanceReaderTuples(path.join(BRAIN_ROOT,'src/lib'));
+const PROVENANCE_READER_HASHES = PROVENANCE_READER_TUPLES[0];
 // 仅静态折叠有界字面量拼接；不求值标识符、调用或运行时表达式。
 function constantReferenceString(node,depth=0) {
   if(!node||depth>32)return null;
@@ -169,9 +159,9 @@ function decodedReferenceTexts(text) {
 }
 function provenanceReaderClosure(sources) {
   if(createHash('sha256').update(astShape(parseModule(sources.get(ENVELOPE_CONSUMER)||''))).digest('hex')!==PROVENANCE_CALLER_SHA256)return false;
+  if(!matchesProvenanceReaderTuple(sources,PROVENANCE_READER_TUPLES,text=>createHash('sha256').update(astShape(parseModule(text))).digest('hex')))return false;
   const decoded=new Map([...sources].map(([file,text])=>[file,decodedReferenceTexts(text)]));
-  for(const [file,hash] of PROVENANCE_READER_HASHES) {
-    if(createHash('sha256').update(astShape(parseModule(sources.get(file)||''))).digest('hex')!==hash)return false;
+  for(const file of PROVENANCE_READER_HASHES.keys()) {
     for(const [consumer,text] of sources) {
       if(!decoded.get(consumer).some(value=>value.includes(path.basename(file))))continue;
       const callers=file===NATIVE_DATA?[NATIVE_HELPER]:file===NATIVE_HELPER?[ENVELOPE_CONSUMER,STAGE_HELPER,PROVENANCE_HELPER]
@@ -498,3 +488,4 @@ describe('原生QA完整封套只作为有界解码后的Acorn输入',()=>{
   const hits=scan(sources);expect(hits.some(hit=>hit.rule==='E1')).toBe(true);expect(hits.some(hit=>hit.rule==='R1')).toBe(true);
  });
 });
+registerReaderTupleGuardTests({ BRAIN_ROOT, ENVELOPE_FILE, ENVELOPE_CONSUMER, NATIVE_HELPER, NATIVE_DATA, PROVENANCE_READER_HASHES, findClaudeInvocations });
