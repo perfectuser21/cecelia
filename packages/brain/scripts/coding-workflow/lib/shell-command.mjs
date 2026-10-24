@@ -49,6 +49,7 @@ export function unwrapShellCommand(command) {
  * 原始 command 保持不变，动态参数、额外命令/参数和更多尾字符均不走例外。
  */
 export function matchesShellEvidence(command, reported) {
+  if (command === reported) return true;
   const decoded = unwrapShellCommand(command);
   if (decoded === reported) return true;
   if (decoded !== reported + '\n') return false;
