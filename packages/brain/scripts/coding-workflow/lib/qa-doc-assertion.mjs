@@ -1,3 +1,4 @@
+import { provesMultiFileDocData } from './qa-doc-data-proof.mjs';
 // 有限文档断言语言，不是 JS 安全分析器。未知语法保守拒绝；不执行、不删字符串。
 // 固定绑定 fs/p/s/x：require fs → 读相对 Markdown → 逐词 includes，否则 throw → 打印静态消息。
 
@@ -43,7 +44,7 @@ function tokens(source) {
 }
 
 /** 只有整个命令匹配且包含 --dry-run 数据断言时，才提供这一条豁免。 */
-export function isReadonlyDocAssertion(command) {
+function legacyDocAssertion(command) {
   if (typeof command !== 'string') return false;
   const source = scriptArgument(command);
   if (source === null) return false;
@@ -76,4 +77,9 @@ export function isReadonlyDocAssertion(command) {
   if (string() === null || !take(')')) return false;
   if (input[pos] === ';') pos++;
   return pos === input.length;
+}
+
+// 返回值仅用于 dry-run 数据分类，不授予整个命令通用只读执行权限。
+export function isReadonlyDocAssertion(command) {
+  return legacyDocAssertion(command) || provesMultiFileDocData(command);
 }
