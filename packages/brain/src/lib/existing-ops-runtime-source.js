@@ -5,6 +5,7 @@ import { posix } from 'node:path';
 import { builtinModules } from 'node:module';
 import { PROVENANCE_SOURCE_PATHS, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
 export const EXISTING_OPS_DOC_IMPORT_SCHEMA = 1;
+export const EXISTING_OPS_ROOT_NPM_INPUT_SCHEMA = 1;
 const TEST = 'packages/brain/scripts/coding-workflow/runner/__tests__/run-once.test.mjs';
 const SANDBOX = 'packages/brain/scripts/coding-workflow/runner/__tests__/helpers/sandbox.mjs';
 const RUNNER = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs';
@@ -197,11 +198,34 @@ export async function collectRuntimeSources({ parse, paths, selectors, read, rea
       && job.if === "inputs.export_device_patrol_source_identity != true && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'";
     if (requireProof(source && testRun && testJob.if === undefined && rootRun(ciDoc,testJob,testRun,undefined) && ciDoc.jobs['ci-passed']?.needs?.includes('lint-auto-merge-decision'),'native_provider_execution_unproven')) {
       await read(PROVIDER); await read(PROVIDER_TEST);
+      await collectRootNpm({parse,paths,read,readSource,revision,relations,requireProof,ci});
       relation(WORKFLOW,PROVIDER,'trusted_main_snapshot_node_entry'); relation('.github/workflows/ci.yml',PROVIDER_TEST,'required_node_test');
     }
   }
 }
-
+// 仅证明已选CI的根npm输入与发布器静态直接声明，不声称安装或执行成功。
+async function collectRootNpm({parse,paths,read,readSource,revision,relations,requireProof,ci}) {
+  const own='packages/brain/src/lib/existing-ops-runtime-source.js', manifest='package.json';
+  if (!paths.includes(own) || !ciEntrySelectorEnabled(await readSource(own,revision),parse,'EXISTING_OPS_ROOT_NPM_INPUT_SCHEMA')) return;
+  try {
+    const text=await readSource(manifest,revision), pkg=JSON.parse(text), provider=parse(await readSource(PROVIDER,revision));
+    const test=parse(await readSource(PROVIDER_TEST,revision)), job=yaml.load(ci).jobs['lint-auto-merge-decision'];
+    const install=job.steps.findIndex(s=>s.run==='npm ci --ignore-scripts');
+    const entry=job.steps.findIndex(s=>s.run===`node --test ${PROVIDER_TEST}`);
+    const object=value=>value!==null && typeof value==='object' && !Array.isArray(value);
+    const external=provider.body.filter(n=>n.type==='ImportDeclaration').map(n=>n.source.value)
+      .filter(spec=>!spec.startsWith('.') && !builtinModules.includes(spec.replace(/^node:/,'')));
+    const proven=sha256(ci)==='91eb26e207d3f15cf810fe1dec4e9137d0f31d1c8004f7938ded7cb7112335e2' && install>=0 && install<entry
+      && imported(test,'../implementation-main-snapshot.mjs','publishMainSnapshots') && object(pkg)
+      && ['dependencies','devDependencies'].every(key=>pkg[key]===undefined || object(pkg[key]))
+      && !nodes(provider).some(n=>n.type==='ImportExpression' || n.type==='CallExpression' && n.callee?.name==='require')
+      && external.every(spec=>/^(?:@[a-z0-9_.-]+\/)?[a-z0-9_.-]+$/.test(spec) && ['dependencies','devDependencies'].some(key=>Object.hasOwn(pkg[key]||{},spec) && typeof pkg[key][spec]==='string' && pkg[key][spec].trim()));
+    if (!requireProof(proven && paths.includes(manifest),'root_npm_input_unproven')) return;
+    if (!requireProof(await read(manifest)===text,'root_npm_input_changed')) return;
+    relations.push({consumer_path:'.github/workflows/ci.yml',input_path:manifest,kind:'root_npm_ci_manifest_input',revision});
+    if(external.length)relations.push({consumer_path:PROVIDER,input_path:manifest,kind:'declared_bare_dependency',revision});
+  } catch { requireProof(false,'root_npm_input_unproven'); }
+}
 
 // 两个协议由目标 Git 自己声明；旧冻结修订缺省关闭，不因当前进程升级改变其绑定。
 export function ciEntrySelectorEnabled(text, parse, name) {

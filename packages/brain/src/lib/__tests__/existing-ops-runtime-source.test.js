@@ -244,3 +244,64 @@ describe('aggregate来源恢复所需固定完整历史checkout',()=>{
   expect(f3.status).toBe('unknown');expect(f3.gaps).toContainEqual({code:'aggregate_reader_ci_unproven'});
  });
 });
+
+// 实际88be全Git输入；只在固定读边界声明未来opt-in，不执行候选workflow/npm/publisher。
+const npmRevision = '88be2549bed2a8d8a3b5a6324bf5ea6267dda0da';
+const npmRuntime = 'packages/brain/src/lib/existing-ops-runtime-source.js';
+const npmProvider = 'scripts/ci/implementation-main-snapshot.mjs';
+const npmTest = 'scripts/ci/__tests__/implementation-main-snapshot.test.mjs';
+const npmMarker = 'export const EXISTING_OPS_ROOT_NPM_INPUT_SCHEMA = 1;';
+async function npmProof({ marker = npmMarker, overrides = {}, missing = [] } = {}) {
+  return buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision: npmRevision,
+    paths: gitPaths(npmRevision).filter(p => !missing.includes(p)), readSource: async path => {
+      if (Object.hasOwn(overrides, path)) return overrides[path];
+      return fixedGit(npmRevision, path) + (path === npmRuntime ? '\n' + marker : '');
+    } });
+}
+const npmPackage = fixedGit(npmRevision, 'package.json');
+const npmImport = "import { Agent } from 'undici';\n";
+const npmDeclared = JSON.stringify({ ...JSON.parse(npmPackage), devDependencies: { ...JSON.parse(npmPackage).devDependencies, undici: '6.29.1' } });
+const npmOverrides = { [npmProvider]: npmImport + fixedGit(npmRevision, npmProvider), 'package.json': npmDeclared };
+const npmCiChange = mutate => { const doc = yaml.load(fixedGit(npmRevision, aggregateCi)); mutate(doc.jobs['lint-auto-merge-decision'], doc); return yaml.dump(doc); };
+describe('root npm ci固定manifest输入', () => {
+  it('真实core-only旧publisher的root npmci仍读取完整根manifest，不伪认Brain的js-yaml为根依赖', async () => {
+    const f3 = aggregateF3(await npmProof()); expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
+    expect(f3.bindings.find(b => b.path === 'package.json')?.content_sha256).toBe(createHash('sha256').update(npmPackage).digest('hex'));
+    expect(f3.input_relations).toContainEqual({ consumer_path: aggregateCi, input_path: 'package.json', kind: 'root_npm_ci_manifest_input', revision: npmRevision });
+    expect(f3.input_relations.some(r => r.consumer_path === npmProvider && r.input_path === 'package.json')).toBe(false);
+  }, 120000);
+  it('实际发布器新增bare undici只在根直接声明后增加精确dependency关系', async () => {
+    const f3 = aggregateF3(await npmProof({ overrides: npmOverrides })); expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
+    expect(f3.bindings.find(b => b.path === 'package.json')?.content_sha256).toBe(createHash('sha256').update(npmDeclared).digest('hex'));
+    expect(f3.input_relations).toContainEqual({ consumer_path: npmProvider, input_path: 'package.json', kind: 'declared_bare_dependency', revision: npmRevision });
+  }, 120000);
+  it('无marker与显式0保留原88be完整JSON与序列化bytes，不回填根输入', async () => {
+    const a = await npmProof({ marker: '' }), b = await npmProof({ marker: 'export const EXISTING_OPS_ROOT_NPM_INPUT_SCHEMA=0;' });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b)); expect(aggregateF3(a).bindings.some(b => b.path === 'package.json')).toBe(false);
+  }, 120000);
+  for (const [label, options] of [
+    ['缺rootinstall', { overrides: { [aggregateCi]: npmCiChange(j => { j.steps = j.steps.filter(s => s.run !== 'npm ci --ignore-scripts'); }) } }],
+    ['错cwd', { overrides: { [aggregateCi]: npmCiChange(j => { j.steps.find(s => s.run === 'npm ci --ignore-scripts')['working-directory'] = 'packages/brain'; }) } }],
+    ['install晚于consumer', { overrides: { [aggregateCi]: npmCiChange(j => { const i = j.steps.findIndex(s => s.run === 'npm ci --ignore-scripts'); j.steps.push(...j.steps.splice(i, 1)); }) } }],
+    ['未选测试', { overrides: { [aggregateCi]: npmCiChange(j => { j.steps.find(s => s.run === 'node --test ' + npmTest).if = 'false'; }) } }],
+    ['新不明run', { overrides: { [aggregateCi]: npmCiChange(j => { j.steps.splice(1, 0, { run: 'echo unknown' }); }) } }],
+    ['浮动checkout', { overrides: { [aggregateCi]: npmCiChange(j => { j.steps[0].with.ref = 'other'; }) } }],
+    ['静态publisher引用被注释', { overrides: { [npmTest]: fixedGit(npmRevision, npmTest).replace("import {publishMainSnapshots} from '../implementation-main-snapshot.mjs';", "// removed publisher import") } }],
+    ['根JSON非法', { overrides: { 'package.json': '{broken' } }],
+    ['依赖map为null', { overrides: { 'package.json': '{"dependencies":null}' } }],
+    ['依赖map为array', { overrides: { 'package.json': '{"devDependencies":[]}' } }],
+    ['undici没有直接声明', { overrides: { [npmProvider]: npmOverrides[npmProvider] } }],
+    ['undici key不是精确根名', { overrides: { [npmProvider]: npmOverrides[npmProvider], 'package.json': '{"devDependencies":{"undici-extra":"6.29.1"}}' } }],
+    ['undici声明非string', { overrides: { [npmProvider]: npmOverrides[npmProvider], 'package.json': '{"devDependencies":{"undici":false}}' } }],
+    ['deep import不假认根包', { overrides: { [npmProvider]: npmOverrides[npmProvider].replace("from 'undici'", "from 'undici/private'") } }],
+    ['伪nodebuiltin不豁免', { overrides: { [npmProvider]: npmOverrides[npmProvider].replace("from 'undici'", "from 'node:undici'") } }],
+    ['dynamicimport不猜执行', { overrides: { [npmProvider]: fixedGit(npmRevision, npmProvider) + "\nconst unknown=()=>import('undici');" } }],
+    ['缺根文件', { missing: ['package.json'] }],
+    ['schema未知', { marker: 'export const EXISTING_OPS_ROOT_NPM_INPUT_SCHEMA=2;' }],
+    ['schema动态', { marker: 'export const EXISTING_OPS_ROOT_NPM_INPUT_SCHEMA=process.env.V;' }],
+    ['schema重复', { marker: npmMarker + '\n' + npmMarker }],
+  ]) it(`${label}闭口且无部分新增认领`, async () => {
+    const f3 = aggregateF3(await npmProof(options)); expect(f3.status).toBe('unknown');
+    expect(f3.bindings).toEqual([]); expect(f3.input_relations).toEqual([]);
+  }, 120000);
+});

@@ -1,6 +1,7 @@
 // 固定已审九成员必须整组命中；仅供防复活守卫取得只读数据资格，不执行封套源码。
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'acorn';
@@ -53,7 +54,9 @@ export function provenanceReaderTuples(root) {
   // 新consumer仅在当前已审九成员与完整runtime同时命中时取得资格。
   const doc = new Map(next);
   doc.set(path.join(root, 'existing-ops-runtime-source.js'), '116a965527c5aa69b174746299eabceee7fc398e1a49bce55cd6e06bd2625832');
-  return [old, next, doc];
+  const rootNpm = new Map(doc);
+  rootNpm.set(path.join(root, 'existing-ops-runtime-source.js'), 'cfa08d753497e7bdcde34bfe9dcba4a44a32392b03fc8abdf746d0c4449fe6ab');
+  return [old, next, doc, rootNpm];
 }
 export function matchesProvenanceReaderTuple(sources, tuples, hashSource) {
   try {
@@ -104,6 +107,11 @@ describe('doc reader完整组合资格',()=>{
  const scan=(sources,file=NATIVE_DATA)=>findClaudeInvocations(sources.get(file),{file,sources});
  it.each([ENVELOPE_FILE,NATIVE_DATA,stage])('完整十成员使%s取得只读资格',file=>{
   expect(scan(base(),file)).toEqual([]);
+ });
+ it('root npm新十成员整组取得资格且旧doc十成员仍可重放',()=>{
+  expect(scan(base())).toEqual([]);
+  const old=base();old.set(runtime,execFileSync('git',['show','88be2549bed2a8d8a3b5a6324bf5ea6267dda0da:packages/brain/src/lib/existing-ops-runtime-source.js'],{cwd:BRAIN_ROOT,encoding:'utf8',maxBuffer:1024*1024}));
+  expect(scan(old)).toEqual([]);
  });
  it('旧九成员加新runtime是未经审查的混搭',()=>{
   const sources=base();for(const file of [NATIVE_HELPER,NATIVE_DATA])restoreOldNativeReader(sources,file);
