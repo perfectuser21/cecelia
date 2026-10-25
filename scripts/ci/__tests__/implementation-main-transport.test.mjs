@@ -9,13 +9,13 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {bundle} from './fixtures/admission-bundle.mjs';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
 const head='a'.repeat(40),repo='perfectuser21/cecelia';
-async function transportRun(t,{phase='headers',delay=2000,cleanupFailure=false,cleanupOnly=false,primaryUndefined=false,lateBody=false}={}){
+async function transportRun(t,{phase='headers',delay=2000,cleanupFailure=false,cleanupOnly=false,primaryUndefined=false,lateBody=false,nativeSignalDetached=false,firstSignalEarly=false,abortDestroyFailure=false}={}){
  const dir=mkdtempSync(join(tmpdir(),'publisher-transport-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  const calls=[];let missing=true;
  const server=createServer(async(req,res)=>{
   let raw='';for await(const chunk of req)raw+=chunk;
   const q=req.method==='POST'?JSON.parse(raw):Object.fromEntries(new URL(req.url,'http://fixture').searchParams);
-  calls.push({method:req.method,...q,received_at:Date.now()});
+  const call={method:req.method,...q,received_at:Date.now()};calls.push(call);res.once('close',()=>{call.closed_at=Date.now();});
   const value=req.method==='POST'?{snapshot:bundle(head).snapshot.admission_companion.snapshot}:bundle(head,{childMissing:missing});
   const text=JSON.stringify(value);
   if(req.method!=='POST'){res.writeHead(200,{'content-type':'application/json'});res.end(text);return;}
@@ -35,12 +35,12 @@ async function transportRun(t,{phase='headers',delay=2000,cleanupFailure=false,c
  const legacy=new Agent({headersTimeout:100,bodyTimeout:100});setGlobalDispatcher(legacy);
  const timeout=AbortSignal.timeout.bind(AbortSignal);let timerSequence=0;
  const timerEvent=(id,kind)=>appendFileSync(${JSON.stringify(join(dir,'timers.jsonl'))},JSON.stringify({id,kind,at:Date.now()})+'\\n');
- AbortSignal.timeout=ms=>{const signal=timeout(ms===600000?10000:ms),id=++timerSequence;timerEvent(id,'armed');signal.addEventListener('abort',()=>timerEvent(id,'abort'),{once:true});return signal;};
+ AbortSignal.timeout=ms=>{const id=++timerSequence,signal=timeout(ms===600000?(${firstSignalEarly}&&id===1?1000:10000):ms);timerEvent(id,'armed');signal.addEventListener('abort',()=>timerEvent(id,'abort'),{once:true});return signal;};
  const close=Agent.prototype.close,destroy=Agent.prototype.destroy;
  const record=value=>appendFileSync(${JSON.stringify(join(dir,'cleanup.jsonl'))},JSON.stringify(value)+'\\n');
  Agent.prototype.close=function(...args){if(this===legacy||args.length)return close.apply(this,args);record('close');return ${cleanupFailure||cleanupOnly||primaryUndefined}?Promise.reject(new Error('cleanup-only')):close.call(this);};
- Agent.prototype.destroy=function(...args){if(this===legacy||args.length)return destroy.apply(this,args);record('destroy');return destroy.apply(this,args).then(()=>{if(${cleanupFailure||cleanupOnly||primaryUndefined})throw new Error('cleanup-only');});};
- try{await publishMainSnapshots(${JSON.stringify(options)},{readMain:()=>${JSON.stringify(head)},...(${primaryUndefined}?{fetchFn:async()=>{throw undefined;}}:${lateBody}?{fetchFn:async(url,options)=>{const response=await fetch(url,options);if(options.method!=='POST')return response;return {status:response.status,ok:response.ok,text:async()=>{const text=await response.text();timerEvent(2,'body-read');const keepAlive=setTimeout(()=>{},15000);try{if(!options.signal.aborted)await new Promise(resolve=>options.signal.addEventListener('abort',resolve,{once:true}));}finally{clearTimeout(keepAlive);}return text;}};}}:{})});console.log('PUBLISHED');}
+ Agent.prototype.destroy=function(...args){if(this===legacy||args.length>1||typeof args[0]==='function')return destroy.apply(this,args);record('destroy');return destroy.apply(this,args).then(()=>{if(${cleanupFailure||cleanupOnly||primaryUndefined||abortDestroyFailure})throw new Error('cleanup-only');});};
+ try{await publishMainSnapshots(${JSON.stringify(options)},{readMain:()=>${JSON.stringify(head)},...(${primaryUndefined}?{fetchFn:async()=>{throw undefined;}}:${lateBody}?{fetchFn:async(url,options)=>{const response=await fetch(url,options);if(options.method!=='POST')return response;return {status:response.status,ok:response.ok,text:async()=>{const text=await response.text();timerEvent(2,'body-read');const keepAlive=setTimeout(()=>{},15000);try{if(!options.signal.aborted)await new Promise(resolve=>options.signal.addEventListener('abort',resolve,{once:true}));}finally{clearTimeout(keepAlive);}return text;}};}}:${nativeSignalDetached}?{fetchFn:(url,options)=>fetch(url,{...options,signal:undefined})}:{})});console.log('PUBLISHED');}
  catch(e){console.error(JSON.stringify({name:e?.name,code:e?.code,cause:e?.cause?.code,is_undefined:e===undefined}));process.exitCode=1;}
  finally{await close.call(legacy);}
  `;
@@ -55,7 +55,7 @@ async function transportRun(t,{phase='headers',delay=2000,cleanupFailure=false,c
  const timers=existsSync(join(dir,'timers.jsonl'))?readFileSync(join(dir,'timers.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(x=>JSON.parse(x)):[];
  const failurePath=join(dir,'evidence/diagnostics/failure.json');
  const failure=existsSync(failurePath)?JSON.parse(readFileSync(failurePath)):null;
- t.diagnostic(JSON.stringify({phase,delay,code:result.code,calls:calls.map(c=>({method:c.method,scope:c.scope})),cleanup,timers,operation:failure?.operation,exception:failure?.exception}));
+ t.diagnostic(JSON.stringify({phase,delay,code:result.code,calls:calls.map(c=>({method:c.method,scope:c.scope,received_at:c.received_at,closed_at:c.closed_at})),cleanup,timers,operation:failure?.operation,exception:failure?.exception}));
  return {...result,dir,calls,cleanup,timers};
 }
 for(const phase of ['headers','body'])test(`真实运输${phase}慢于旧期限但早于总deadline仍发布一次`,async t=>{
@@ -102,4 +102,21 @@ test('完整读体后才报告超时须保留body完成事实但UNKNOWN不发布
  const failure=JSON.parse(readFileSync(join(r.dir,'evidence/diagnostics/failure.json')));
  assert.equal(failure.operation.body_read_completed,true);assert.equal(failure.operation.post_outcome,'UNKNOWN');
  assert.equal(existsSync(join(r.dir,'evidence/base.json')),false);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+});
+
+test('本次signal必须主动中断不观察native signal的真实HTTP body',async t=>{
+ const r=await transportRun(t,{phase:'body',delay:14000,nativeSignalDetached:true,abortDestroyFailure:true});assert.notEqual(r.code,0);
+ const post=r.calls.filter(c=>c.method==='POST');assert.equal(post.length,1);
+ const aborted=r.timers.find(e=>e.id===2&&e.kind==='abort');assert.ok(aborted);
+ const failure=JSON.parse(readFileSync(join(r.dir,'evidence/diagnostics/failure.json')));
+ assert.equal(failure.operation.body_read_completed,false);assert.equal(failure.operation.post_outcome,'UNKNOWN');
+ assert.ok(Number.isFinite(post[0].closed_at));assert.ok(post[0].closed_at-aborted.at<2000,'signal后2秒内实际关闭socket');
+ assert.ok(Date.parse(failure.operation.finished_at)-aborted.at<2000,'signal后2秒内实际结束request');
+ assert.equal(failure.exception.name,'TimeoutError');assert.deepEqual(r.cleanup,['destroy']);assert.doesNotMatch(r.stderr,/cleanup-only|unhandled/i);
+ assert.equal(existsSync(join(r.dir,'evidence/base.json')),false);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+});
+test('已完成GET的旧signal不得销毁之后仍在预算内的POST',async t=>{
+ const r=await transportRun(t,{phase:'body',delay:2000,firstSignalEarly:true});assert.equal(r.code,0,r.stderr);
+ assert.ok(r.timers.some(e=>e.id===1&&e.kind==='abort'));assert.equal(r.calls.filter(c=>c.method==='POST').length,1);
+ assert.equal(r.cleanup[0],'close');assert.ok(existsSync(join(r.dir,'evidence/head.json')));
 });
