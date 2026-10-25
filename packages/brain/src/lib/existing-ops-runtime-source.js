@@ -1,6 +1,10 @@
 /** 额外协议的窄执行关系证明；只解析固定 Git 字节，不执行候选代码。 */
 import yaml from 'js-yaml';
 import { createHash } from 'node:crypto';
+import { posix } from 'node:path';
+import { builtinModules } from 'node:module';
+import { PROVENANCE_SOURCE_PATHS, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
+export const EXISTING_OPS_DOC_IMPORT_SCHEMA = 1;
 const TEST = 'packages/brain/scripts/coding-workflow/runner/__tests__/run-once.test.mjs';
 const SANDBOX = 'packages/brain/scripts/coding-workflow/runner/__tests__/helpers/sandbox.mjs';
 const RUNNER = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs';
@@ -114,6 +118,57 @@ function sandboxRunsRunner(text, parse) {
   if (program.body.some(n => !['ImportDeclaration','VariableDeclaration','FunctionDeclaration','ExportNamedDeclaration'].includes(n.type))) return false;
   return template.body.every(expected => program.body.some(actual => canonical(actual) === canonical(expected)));
 }
+// 仅证明所选测试的固定字节静态输入，不声称函数调用或 CLI/模型执行。
+async function collectDocImports({ selected, paths, parse, read, readSource, revision, relations, requireProof }) {
+  const own = 'packages/brain/src/lib/existing-ops-runtime-source.js', prefix = 'packages/brain/scripts/coding-workflow/';
+  if (!paths.includes(own)) return;
+  const program = parse(await readSource(own, revision)), name = 'EXISTING_OPS_DOC_IMPORT_SCHEMA';
+  const marks = program.body.flatMap(n => (declaration(n)?.declarations || []).filter(d => d.id?.name === name).map(d => ({ n, d })));
+  if (!marks.length) return;
+  if (!requireProof(marks.length === 1 && marks[0].n.type === 'ExportNamedDeclaration' && declaration(marks[0].n).kind === 'const'
+    && marks[0].d.init?.type === 'Literal' && marks[0].d.init.value === 1, 'doc_import_schema_unknown')) return;
+  const test = prefix + '__tests__/qa-doc-assertion.test.mjs', report = prefix + 'lib/qa-report.mjs';
+  if (!selected.includes(test)) return;
+  const staged = new Map(), edges = new Map(); let bytes = 0;
+  try {
+    const support = {};
+    for (const [key, path] of Object.entries(PROVENANCE_SOURCE_PATHS)) support[key] = await readSource(path, revision);
+    if (provenanceSourceVersion(support, parse) !== 'native_evidence') throw Error('whole_qa_report_unproven');
+    const manifest = 'packages/brain/package.json', pkgText = await readSource(manifest, revision), pkg = JSON.parse(pkgText);
+    const dependencies = { ...pkg.dependencies, ...pkg.devDependencies }, seen = new Set();
+    async function visit(path, depth = 0) {
+      if (seen.has(path)) return;
+      if (depth > 16 || seen.size >= 64 || !paths.includes(path)) throw Error('doc_import_bounds');
+      seen.add(path); const text = await readSource(path, revision);
+      if (typeof text !== 'string' || !text.trim() || (bytes += Buffer.byteLength(text)) > 2 * 1024 * 1024) throw Error('doc_import_bytes');
+      staged.set(path, text); const tree = parse(text);
+      if (nodes(tree).some(n => n.type === 'ImportExpression' || ['ExportNamedDeclaration', 'ExportAllDeclaration'].includes(n.type) && n.source || n.type === 'CallExpression' && n.callee?.name === 'require')) throw Error('doc_import_dynamic');
+      for (const statement of tree.body.filter(n => n.type === 'ImportDeclaration')) {
+        const spec = statement.source.value;
+        if (typeof spec !== 'string') throw Error('doc_import_literal');
+        // qaReport 的其它成员已由整体封套覆盖；这里只补原封套未声明的 qa-doc 输入。
+        if (path === report && spec !== './qa-doc-assertion.mjs') continue;
+        if (!spec.startsWith('.')) {
+          // 不猜 package exports/deep imports，也不允许 createRequire 所在模块加载能力。
+          if (['module', 'node:module'].includes(spec) || !builtinModules.includes(spec.replace(/^node:/, ''))
+            && !Object.hasOwn(dependencies, spec)) throw Error('doc_import_external');
+          continue;
+        }
+        const target = posix.normalize(posix.join(posix.dirname(path), spec));
+        const relative = posix.relative(posix.dirname(path), target), canonicalSpec = relative.startsWith('.') ? relative : './' + relative;
+        if (spec !== canonicalSpec || !target.startsWith(prefix) || !/\.m?js$/.test(target)
+          || target.split('/').some(p => p.startsWith('.')) || /[\\%?#\0]/.test(spec)) throw Error('doc_import_path');
+        edges.set(path + '\0' + target, { consumer_path: path, input_path: target, kind: 'static_import_dependency', revision });
+        await visit(target, depth + 1);
+      }
+    }
+    await visit(test);
+    // 完整闭包验证成功后才写入来源绑定；失败不提交部分新增关系。
+    for (const [path, text] of staged) if (await read(path) !== text) throw Error('doc_import_read_changed');
+    if (await read(manifest) !== pkgText) throw Error('doc_import_manifest_changed');
+    relations.push(...edges.values());
+  } catch { requireProof(false, 'doc_static_import_unproven'); }
+}
 export async function collectRuntimeSources({ parse, paths, selectors, read, readSource, revision, relations, requireProof, ci }) {
   const selected = paths.filter(path => /^packages\/brain\/scripts\/coding-workflow\/.+\.(?:test|spec)\.(?:m?js)$/.test(path) && !path.split('/').some(p => p.startsWith('.'))
     && selectors.include.some(p => p.test(path)) && !selectors.exclude.some(p => p.test(path)));
@@ -122,6 +177,7 @@ export async function collectRuntimeSources({ parse, paths, selectors, read, rea
     const text = await read(path);
     if (text) { parse(text); relation('packages/brain/vitest.config.js',path,'literal_vitest_native_script_selector'); }
   }
+  await collectDocImports({ selected, paths, parse, read, readSource, revision, relations, requireProof });
   if (selected.includes(TEST)) {
     const test = await readSource(TEST,revision), sandbox = await read(SANDBOX);
     if (requireProof(testCallsRunner(test,parse) && sandbox && sandboxRunsRunner(sandbox,parse),'native_runner_execution_unproven')) {
