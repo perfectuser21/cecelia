@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { run, git } from './proc.mjs';
+import { removePrCheckout } from './pr-checkout.mjs';
 
 const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
 const NPM_CI_TIMEOUT_MS = 20 * 60 * 1000;
@@ -104,8 +105,10 @@ export async function installDeps(cfg, worktree, signal) {
 
 /** 删除 worktree 与本地分支（分支已推到远端）；返回是否删除成功。 */
 export async function removeWorktree(cfg, worktree, branch) {
+  const checkout = removePrCheckout(cfg, worktree, branch);
+  if (checkout !== null) return checkout;
   const removed = await git(cfg.repo, ['worktree', 'remove', '--force', worktree]);
-  if (branch) await git(cfg.repo, ['branch', '-D', branch]);
+  if (removed.code === 0 && branch) await git(cfg.repo, ['branch', '-D', branch]);
   return removed.code === 0;
 }
 

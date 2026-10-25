@@ -59,7 +59,6 @@ export async function refitSmoke(ctx, target, d, signal) {
   const worktree = path.join(cfg.worktreeBase, `smoke-refit-${pr.number}`);
   fs.mkdirSync(cfg.worktreeBase, { recursive: true });
   if (fs.existsSync(worktree)) await removeWorktree(cfg, worktree, null);
-  fs.rmSync(worktree, { recursive: true, force: true });
   const startedAt = Date.now();
   try {
     const r = await rewrite(cfg, pr, worktree, d, signal);
@@ -103,6 +102,5 @@ export async function refitSmoke(ctx, target, d, signal) {
     return { escalate: reason === 'qa_smoke_fail_unlocated' ? reason : `qa_smoke_refit_failed:${reason}` };
   } finally {
     await removeWorktree(cfg, worktree, pr.headRefName);
-    fs.rmSync(worktree, { recursive: true, force: true });
   }
 }

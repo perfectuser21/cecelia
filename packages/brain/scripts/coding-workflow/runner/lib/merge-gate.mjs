@@ -31,6 +31,36 @@ async function changedSinceApproval(cfg, branch, approvedHead) {
   return [...new Set(log.stdout.split('\n').filter(Boolean))];
 }
 
+/** 草稿只在批准/检查/来源均通过后解除；ready 无 head CAS，前后读回并保留 merge 的 GitHub CAS。 */
+async function readyApprovedDraft(ctx, pr, s) {
+  if (!pr.isDraft) return true;
+  const current = async () => {
+    const r = await gh(ctx.cfg, ['pr', 'view', String(pr.number), '--json', 'headRefOid,isDraft,state'], { timeoutMs: GH_TIMEOUT_MS });
+    if (r.code !== 0) return null;
+    try {
+      const info = JSON.parse(r.stdout);
+      return info.state === 'OPEN' && info.headRefOid === s.approved.head && typeof info.isDraft === 'boolean' ? info : null;
+    } catch { return null; }
+  };
+  const before = await current();
+  if (!before) {
+    ctx.log(`合并门 PR #${pr.number}：解除草稿前无法确认批准 head，本轮不操作`);
+    return false;
+  }
+  if (!before.isDraft) return true;
+  const ready = await gh(ctx.cfg, ['pr', 'ready', String(pr.number)], { timeoutMs: GH_TIMEOUT_MS });
+  if (ready.code !== 0) {
+    await mergeFailed(ctx, pr, s, `ready failed: ${ready.stderr.trim().split('\n').pop() || String(ready.code)}`);
+    return false;
+  }
+  const after = await current();
+  if (!after || after.isDraft) {
+    ctx.log(`合并门 PR #${pr.number}：解除草稿后 head/状态未确认，本轮不合并`);
+    return false;
+  }
+  return true;
+}
+
 /** 处理一个已批准的 PR；撤销了批准返回 true。 */
 async function gate(ctx, pr, s) {
   const { cfg } = ctx;
@@ -62,6 +92,7 @@ async function gate(ctx, pr, s) {
     return escalate(ctx, pr, s, taskId, { type: 'source_provenance_missing', reason: error.message, head: pr.headRefOid });
   }
   if (cfg.repoAutomerge === false) return awaitHuman(ctx, pr, s, taskId);
+  if (!await readyApprovedDraft(ctx, pr, s)) return false;
   const startedAt = Date.now();
   // 在外部动作前留下精确批准 head；崩溃后只凭 GitHub MERGED + 同 head 恢复收账，不重新合并。
   rememberPr(ctx, { ...pr, state: 'OPEN' }, { merge_intent: { head: s.approved.head, at: new Date().toISOString() } });

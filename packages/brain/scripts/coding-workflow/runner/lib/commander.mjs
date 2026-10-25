@@ -142,7 +142,6 @@ async function intervene(ctx, pr, esc, cs, signal) {
   const worktree = path.join(cfg.worktreeBase, `commander-${pr.number}-${n}`);
   fs.mkdirSync(cfg.worktreeBase, { recursive: true });
   if (fs.existsSync(worktree)) await removeWorktree(cfg, worktree, null);
-  fs.rmSync(worktree, { recursive: true, force: true });
   const startedAt = Date.now();
   let taskId = null;
   let costUsd;
@@ -239,7 +238,6 @@ async function intervene(ctx, pr, esc, cs, signal) {
   } finally {
     if (rulingDir) fs.rmSync(rulingDir, { recursive: true, force: true });
     await removeWorktree(cfg, worktree, pr.headRefName);
-    fs.rmSync(worktree, { recursive: true, force: true });
   }
 }
 
