@@ -144,3 +144,31 @@ RUNTIME_MODULES="$RUNTIME_MODULES" node -e 'const {createRequire}=require("modul
 前置任务的 `completed` 只是 `deps.mjs` 检查的必要输入。源码对无 PR URL 或 `task.result.merged===true` 有直接就绪分支；有 PR URL 且无此捷径时才查询 GitHub：`MERGED` 就绪，`OPEN` 或未知状态等待，`CLOSED` 拒绝。这是领单判断分支，不是前置已真正合并的独立证据；核账仍须读实际 PR 与 head。
 
 交叉提示：`node packages/brain/scripts/coding-workflow/new-task.mjs <plan.json> --dry-run` 只校验本地计划，不创建任务；预检 `base_sha` 只核 40 位小写 hex 格式，不核提交是否存在。预检退出 0 也不是建单或运行成功。
+
+## QA准备失败、保留现场与升级如何判读
+
+以下只用于只读核账。先按本轮 PR、任务、精确 HEAD 和原生记录对齐身份；原始错误、失败尝试、GAN FORCED 与历史失败均须保留。后续正常恢复不能抹掉旧失败；不补写或追认旧样本。
+
+### 同名分支占用与现场归属
+
+`preparePrWorktree` 先从 `origin` 抓取 PR 分支到 `refs/remotes/origin/<branch>`。`addPrCheckout` 检查 `git worktree list --porcelain -z`：同名本地分支未被占用时，普通 linked worktree 从 `origin/<branch>` 检出；若原失败工作树仍占用同名分支，则先用 `rev-parse --verify refs/remotes/origin/<branch>^{commit}` 取得实际抓取的 40 位 SHA，并读取原仓的 origin fetch URL 和 pushURL。随后以 `git clone --shared --no-checkout --no-hardlinks` 建独立仓，设置其 origin fetch URL 与 pushURL，再从该 SHA `checkout -B` 为同名真实分支。`--shared` 共享对象，独立 refs/index；原失败工作树及其分支不会被此检出覆盖。
+
+独立仓的 `.git/coding-workflow-pr-checkout.json` marker 记录 schema、原仓实路径、worktree 实路径和分支。`removePrCheckout` 只有在 marker 是合格文件、schema 与 repo/worktree 实路径及分支归属均吻合时，才清理该独立仓；未知 marker、路径或归属返回 false。普通 linked worktree 返回 null，才由 `removeWorktree` 走原 `git worktree remove` 路径，并仅在该命令成功后处理其本地分支。清理返回 false 或现场归属不明时，只读保留现场并升级排查；不能以删除原目录、原分支或改状态代替归属核验。
+
+### bad、轮次、裁判与升级
+
+`qa-<pr>.json` 的 `bad` 记录准备或 evaluate 异常连续计数；`rounds` 记录已经形成并提交的 QA 轮次。`verdict=FAIL` 是 QA 的语义结论，`judge` 是独立裁判结论，`escalated` 是交 coding commander 的升级记录；Commander HUMAN 必须另核实际 Commander 终态。`bad`、升级记录、QA FAIL/PASS 与 HUMAN 不能互相推导。
+
+**示例数据、不是现场运行结果**：`{"bad":1,"rounds":[]}` 表示已有一次计入的异常、尚无已完成 QA 轮；它既不证明 QA FAIL，也不证明 QA PASS。另一个阈值示例是 `{"bad":"达到配置 qaMaxBadStreak","rounds":[],"escalated":{"type":"qa_evaluator_broken"}}`，只表示按配置阈值升级待裁，不表示产品失败、通过或 Commander HUMAN。实际阈值来自 `CODING_WF_QA_MAX_BAD_STREAK` 经 `config.mjs` 解析的 `qaMaxBadStreak`，不能把示例数值当现场常量。
+
+`inPrWorktree` 的受保护 try/catch 内，准备或后续回调异常才进入其 `bad` 计数路径；达到 `qaMaxBadStreak` 时走既有 `qa_evaluator_broken` 升级。evaluate 未形成 QA 结果也有自己的计数与升级分支，致命或需人工的失败类别可提前升级。不能承诺任意 OS 异常都被该 try/catch 覆盖。重复异常可能保留 bad、日志与失败现场；是否再次处理由既有控制器状态决定，不从本节推断应手动重试或设为 ready。
+
+### 分开核账与本轮证据边界
+
+`report` 将 QA 摘要投递给 Brain；Brain patch 返回非成功时记录 HTTP 失败日志。report 投递失败、本地 QA 状态、Brain task 状态和产品判定须分别读原始账，投递故障本身不是 QA 或任务终态，也不能改写产品结论。清理返回 false 时同样保留原错误与现场；不通过强删、手改状态或生产操作来制造成功回执。
+
+发布前只读范围核验以固定 initial base `0bbee7b45e4ce79ed2752785fbdb0fd805357879` 对照完整 DAG、HEAD 差异、暂存区、工作区和全仓未跟踪文件；先列全仓未跟踪项，再按本任务真实 sprint 记录路径归属。此时产品只允许 README 追加，基线 README 的字节、模式和顺序保留，manifest 对该基线无差异。发布后仍用同一 initial base 对当前精确 HEAD 重查完整 DAG、每个提交的逐父边路径与 blob/mode、全量终态差异及全仓未跟踪项；不能只看最后一次 diff 或用最终差异减去 main。可信控制器新增的本任务报告与来源行，须按实际登记归属；模型不编辑 `.implementation-source-relations.json`。
+
+声称 main 同步时，只有可信 source gate 核实原 registration→stage→native 关联、实际 main 前后采样、精确两父与共同基线、受保护 merge 凭证及完整 Git tree 的逐 blob/mode 归属，才能单列为上游。上游触及本任务 README 或报告、来源投影缺失或身份不符，都不能归属为合法同步。受保护 merge 事件仅证明本地控制器合并；推前远端观察、push、正式 CI 和 GitHub 合并仍各自核实。每个新 HEAD 都重新真实 QA、独立裁判、预览与正式 CI。
+
+QA 会话内只依据本轮可信控制器给出的 `03-build.md`、`04-evidence.md` 临时隐藏事实解释当前可见工作区，明确记录“完整恢复尚未发生”；不读取保护凭证根，也不自行重建隐藏报告。会话结束后由控制器按原字节及 mode 恢复，独立裁判再核当前 task、round、测试 HEAD、原生会话与恢复凭证；缺证、第三文件缺失或字节/mode 变化均不能通过。本轮每次原生命令、完整输出、退出码（含失败、修正、重复和零字节输出）由可信控制器按序进入最终 05 全账；模型原始草稿和 FAIL/CANNOT_VERIFY 语义保留。实际合并、Brain 终态、Learning 全文回读及下一实际 tick 停预览和清 pending 由外层在发生后核验。A13 与 B13 各自完整闭环，才能计入本轮 2/2。
