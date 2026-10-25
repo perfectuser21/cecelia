@@ -13,6 +13,8 @@
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10242049-cw-f2980a63/02-spec.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10242049-cw-f2980a63/03-build.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10242049-cw-f2980a63/04-evidence.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/lib/qa-doc-assertion.mjs","path":"docs/learnings/cp-10242159-qa-doc-data-proof.md","role":"documentation"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/lib/qa-doc-assertion.mjs","path":"changes/cp-10242159-qa-doc-data-proof.md","role":"release"},
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"docs/learnings/cp-10242220-doc-assertion-source.md","role":"documentation"},
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"changes/cp-10242220-doc-assertion-source.md","role":"release"},
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-doc-imports.test.js","role":"verification"},
