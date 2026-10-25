@@ -169,7 +169,7 @@ function provenanceReaderClosure(sources) {
         :file===STAGE_DATA?[STAGE_HELPER,STAGE_MODES]:file===STAGE_MODES?[STAGE_HELPER]:file===STAGE_HELPER?[ENVELOPE_CONSUMER,STAGE_HELPER]:file===PROVENANCE_HELPER?[ENVELOPE_CONSUMER]:[PROVENANCE_HELPER];
       if(callers.includes(consumer))continue;
       if(provenFingerprintReader(consumer,text))continue;
-      if(file===PROVENANCE_HELPER&&consumer===DOC_RUNTIME_FILE&&matchesProvenanceReaderTuple(sources,[PROVENANCE_READER_TUPLES[2]],value=>createHash('sha256').update(astShape(parseModule(value))).digest('hex')))continue;
+      if(file===PROVENANCE_HELPER&&consumer===DOC_RUNTIME_FILE&&matchesProvenanceReaderTuple(sources,[PROVENANCE_READER_TUPLES[2],PROVENANCE_READER_TUPLES[3]],value=>createHash('sha256').update(astShape(parseModule(value))).digest('hex')))continue;
       return false;
     }
   }
