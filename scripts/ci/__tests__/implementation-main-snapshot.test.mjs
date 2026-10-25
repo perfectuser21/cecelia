@@ -1,3 +1,4 @@
+import './implementation-main-transport.test.mjs';
 import {bundle} from './fixtures/admission-bundle.mjs';
 import './implementation-pr-baseline.test.mjs';
 import {runRegisteredAssertions} from '../implementation-gate.mjs';
