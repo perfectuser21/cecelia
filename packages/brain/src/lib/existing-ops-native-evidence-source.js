@@ -1,7 +1,8 @@
 // 只解析完整已审源码；静态依赖与选中evaluate的可达调用分别登记。
-import { NATIVE_EVIDENCE_ENVELOPES as REVIEWED, NATIVE_REPORT_ROUNDTRIP_ENVELOPES as ROUNDTRIP } from './existing-ops-native-evidence-envelopes.js';
+import { NATIVE_EVIDENCE_ENVELOPES as REVIEWED, NATIVE_REPORT_ROUNDTRIP_ENVELOPES as ROUNDTRIP, NATIVE_HISTORY_PROJECTION_ENVELOPES as HISTORY } from './existing-ops-native-evidence-envelopes.js';
 
 const P = 'packages/brain/scripts/coding-workflow/';
+export const NATIVE_HISTORY_PATH = P + 'lib/record-provenance-history.mjs';
 export const NATIVE_PROVENANCE_PATHS = Object.freeze(Object.fromEntries(Object.entries({
   recordInputs: 'record-provenance-inputs', recordQa: 'record-provenance-qa', nativeEvidence: 'native-evidence',
   qaReport: 'qa-report', evidence: 'evidence', transcript: 'transcript',
@@ -48,10 +49,23 @@ function nativeLinks(trees, parse) {
   return true;
 }
 
+function historyLinks(trees, parse) {
+  const core = trees.recordProvenance, helper = trees.recordHistory, reader = trees.sourceProvenance;
+  if (!named(core, './record-provenance-history.mjs', 'historicalExecutionProjection')
+    || !exported(core, 'verifiedHistoricalExecutions') || !exported(helper, 'historicalExecutionProjection')
+    || !named(reader, '../../lib/record-provenance.mjs', 'verifiedHistoricalExecutions')) return false;
+  const verify = fn(core, 'verifiedHistoricalExecutions'), judge = fn(reader, 'judgeSourceFacts');
+  return oneCall(verify, 'historicalExecutionProjection(proof, selected, all)', 'historicalExecutionProjection', parse)
+    && oneCall(verify, 'verifyRecordProvenance(c)', 'verifyRecordProvenance', parse)
+    && oneCall(verify, 'registrationFor(c, record, c.head, all)', 'registrationFor', parse)
+    && oneCall(judge, 'verifiedHistoricalExecutions({ worktree, taskId: intent.taskId, sprintDir: intent.sprintDir, head })', 'verifiedHistoricalExecutions', parse)
+    && same(judge.body.body.at(-1), parse('function f(){return { committed: provenanceProjection(committed), current_qa: provenanceProjection(pending), historical_execution: historical, sync };}').body[0].body.body[0]);
+}
+
 /** 全体模块必须是同一已审组合，不能各自命中不同历史版本。 */
 export function nativeEvidenceForwarding(sources, parse) {
   try {
-    for (const bundle of [REVIEWED, ROUNDTRIP]) {
+    for (const bundle of [REVIEWED, ROUNDTRIP, HISTORY]) {
       const trees = {};
       let complete = true;
       for (const [key, text] of Object.entries(bundle.support)) {
@@ -61,7 +75,7 @@ export function nativeEvidenceForwarding(sources, parse) {
         trees[key] = parse(sources[key]);
         if (!same(trees[key], parse(text))) { complete = false; break; }
       }
-      if (complete && nativeLinks(trees, parse)) return { trees, version: 'native_evidence' };
+      if (complete && nativeLinks(trees, parse) && (bundle !== HISTORY || historyLinks(trees, parse))) return { trees, version: 'native_evidence', historical: bundle === HISTORY };
     }
     return null;
   } catch { return null; }
@@ -91,7 +105,8 @@ export const nativeStageTest = name => REVIEWED.tests[name];
 // 仅由已完成完整AST+真实调用证明的normalizer使用，不改变未识别代码。
 export const nativeCompatibleCli = () => REVIEWED.legacyCli;
 
-export const nativeStaticEdges = () => [
+export const nativeStaticEdges = (historical = false) => [
+  ...(historical ? [['record-provenance', 'record-provenance-history'], ['record-provenance-history', 'record-provenance-store']] : []),
   ['record-provenance', 'record-provenance-inputs'], ['record-provenance', 'record-provenance-qa'],
   ['record-provenance', 'native-evidence'], ['record-provenance-qa', 'record-provenance-inputs'],
   ['record-provenance-qa', 'native-evidence'], ['record-provenance-qa', 'qa-report'],

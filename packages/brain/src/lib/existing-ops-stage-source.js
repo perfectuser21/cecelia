@@ -1,6 +1,6 @@
 /** 仅证明已审真实测试消费阶段入口；不改变业务执行、不声明实际模型或业务验收成功。 */
 import {STAGE_ENVELOPES as REVIEWED, ISOLATION_STAGE_ENVELOPES, MERGE_STAGE_ENVELOPES} from './existing-ops-stage-envelopes.js';
-import {nativeEvidenceStages,nativeStageTest,NATIVE_PROVENANCE_PATHS,nativeStaticEdges,nativeEvaluateEdges} from './existing-ops-native-evidence-source.js';
+import {nativeEvidenceStages,nativeStageTest,NATIVE_PROVENANCE_PATHS,NATIVE_HISTORY_PATH,nativeStaticEdges,nativeEvaluateEdges} from './existing-ops-native-evidence-source.js';
 import {REVIEWED_STAGE_MODES} from './existing-ops-stage-modes.js';
 export const EXISTING_OPS_REPO_RULES_INPUT_SCHEMA=1;
 const PREFIX='packages/brain/scripts/coding-workflow/';
@@ -116,7 +116,7 @@ function mergeReadEdges(edges,entry){
 }
 
 /** supportProven/supportVersion来自唯一可信collector实际调用proveBuildSources，绝非候选声明。 */
-export async function collectStageSources({parse,paths,selectors,read,readSource,revision,relations,requireProof,supportProven,supportVersion}){
+export async function collectStageSources({parse,paths,selectors,read,readSource,revision,relations,requireProof,supportProven,supportVersion,supportHistory=false}){
  const selected=STAGES.filter(s=>{const p=PREFIX+`__tests__/${s}.test.mjs`;return paths.includes(p)&&selectors.include.some(r=>r.test(p))&&!selectors.exclude.some(r=>r.test(p));});
  const buildTest=PREFIX+'__tests__/build.test.mjs',buildSelected=paths.includes(buildTest)&&selectors.include.some(r=>r.test(buildTest))&&!selectors.exclude.some(r=>r.test(buildTest));
  if(!selected.length&&!buildSelected)return;
@@ -173,7 +173,8 @@ export async function collectStageSources({parse,paths,selectors,read,readSource
   [PREFIX+'lib/qa-isolation.mjs',PREFIX+'lib/record-provenance-store.mjs','provenance_static_import_dependency']);
  if(version==='native_evidence'){
   for(const path of Object.values(NATIVE_PROVENANCE_PATHS))await read(path);
-  edges.push(...nativeStaticEdges());
+  if(supportHistory)await read(NATIVE_HISTORY_PATH);
+  edges.push(...nativeStaticEdges(supportHistory));
  }
  if(selected.some(s=>s!=='intent'))edges.push([PREFIX+'lib/claude.mjs',PREFIX+'lib/record-provenance.mjs','native_pipe_provenance_capture']);
  }
