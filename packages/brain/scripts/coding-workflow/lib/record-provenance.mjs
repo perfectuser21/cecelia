@@ -11,10 +11,11 @@ import { identity, recordType, inspectRecord, workingRecord, branchIdentity, lis
 import { writeJudgeInput, validateJudgeStageInput, judgeInputRequired } from './record-provenance-inputs.mjs';
 import { assembleCurrentQa, validateQaAssembly, compiledQaRequired } from './record-provenance-qa.mjs';
 import { QA_NATIVE_POLICY } from './native-evidence.mjs';
+import { historicalExecutionProjection } from './record-provenance-history.mjs';
 
 const storage = new AsyncLocalStorage(), transactions = new WeakMap();
 const STAGES = new Set(['intent', 'spec', 'spec_review', 'build', 'verify', 'evaluate', 'judge', 'commander']);
-const ownUrls = [import.meta.url, new URL('./record-provenance-store.mjs', import.meta.url), new URL('./record-provenance-records.mjs', import.meta.url), new URL('./provenance-path.mjs', import.meta.url), new URL('./qa-isolation.mjs', import.meta.url), new URL('./record-provenance-inputs.mjs', import.meta.url), new URL('./record-provenance-qa.mjs', import.meta.url)];
+const ownUrls = [import.meta.url, new URL('./record-provenance-store.mjs', import.meta.url), new URL('./record-provenance-records.mjs', import.meta.url), new URL('./provenance-path.mjs', import.meta.url), new URL('./qa-isolation.mjs', import.meta.url), new URL('./record-provenance-inputs.mjs', import.meta.url), new URL('./record-provenance-qa.mjs', import.meta.url), new URL('./record-provenance-history.mjs', import.meta.url)];
 const ownBytes = new Map(ownUrls.map(url => { const file = fileURLToPath(url);noLinks(file);return [file, hash(fs.readFileSync(file))]; }));
 const clone = value => JSON.parse(JSON.stringify(value));
 function controllerValid(c) {
@@ -312,4 +313,21 @@ export function provenanceProjection(result) {
   const records = result.records.map(r => Object.fromEntries(['path', 'mode', 'sha256', 'stage', 'round', 'producer', 'stage_event_id', 'stage_input_head', 'registration_event_id', 'commit'].filter(k => r[k] !== undefined).map(k => [k, r[k]])));
   return { ...baseResult({ taskId: result.task_id, sprintDir: result.sprint_dir }, result.head, result.status, records),
     ...(result.isolation ? { isolation: isolationProjection(result.isolation, result) } : {}) };
+}
+
+/** Judge-only access to original registered build/verify command captures, never model-provided history. */
+export function verifiedHistoricalExecutions(options) {
+  const active = storage.getStore();
+  if (!active || active.stage !== 'judge') fail('history_judge_context');
+  if ((options.root !== undefined && options.root !== active.root) || options.taskId !== active.taskId
+    || options.sprintDir !== active.sprintDir || fs.realpathSync(options.worktree) !== active.worktree
+    || options.head !== active.startedHead || gitText(active.worktree, 'rev-parse', 'HEAD') !== active.startedHead) fail('history_context_binding');
+  const c = config({ ...options, root: active.root }), proof = verifyRecordProvenance(c), all = events(c.root, c.taskId);
+  const selected = ['03-build.md', '04-evidence.md'].map(name => {
+    const record = proof.records.find(r => r.path === `${c.sprintDir}/${name}`);
+    if (!record) fail('history_record_missing');
+    const checked = registrationFor(c, record, c.head, all);
+    return { record, stage: checked.stage, registration: checked.event };
+  });
+  return historicalExecutionProjection(proof, selected, all);
 }

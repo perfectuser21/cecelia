@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { verifySourceChain } from './source-merge-proof.mjs';
 import { childEnv } from '../../lib/protocol.mjs';
-import { verifyPendingStageEvidence, verifyRegisteredQaEvidence, provenanceProjection } from '../../lib/record-provenance.mjs';
+import { verifyPendingStageEvidence, verifyRegisteredQaEvidence, provenanceProjection, verifiedHistoricalExecutions } from '../../lib/record-provenance.mjs';
 
 export const needsSourceProvenance = cfg => cfg.repoSlug === 'perfectuser21/cecelia';
 export function sourceContext(cfg, worktree, intent, stage, round, controller) {
@@ -30,7 +30,8 @@ export function judgeSourceFacts(cfg, worktree, intent, head, reportRel, options
   const selected = { worktree, taskId: intent.taskId, sprintDir: intent.sprintDir, head, stageEventId, testedHead, round };
   if (mode === 'pending' && testedHead !== head) throw Error('record_provenance_qa_tested_head');
   const pending = mode === 'registered' ? verifyRegisteredQaEvidence(selected, reportRel) : verifyPendingStageEvidence(selected, [reportRel]);
-  return { committed: provenanceProjection(committed), current_qa: provenanceProjection(pending), sync };
+  const historical = verifiedHistoricalExecutions({ worktree, taskId: intent.taskId, sprintDir: intent.sprintDir, head });
+  return { committed: provenanceProjection(committed), current_qa: provenanceProjection(pending), historical_execution: historical, sync };
 }
 // merge门不检出候选：从精确Git对象读唯一任务身份，core再核完整树/提交链。
 export function verifyMergeSource(cfg, pr, requiredQaRound) {

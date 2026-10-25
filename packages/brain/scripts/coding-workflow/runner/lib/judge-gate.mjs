@@ -57,7 +57,7 @@ async function runJudgeObserved(cfg, worktree, intent, { round, reportRel, log, 
     // 前几轮裁决（金丝雀 4 翻转）：裁判知道开发方已经照哪些结论改过
     const priorRulings = priorJudgeFiles(worktree, intent.sprintDir, round).map((f) => ({ round: f.round, text: read(f.rel) }));
     const prompt = buildJudgePrompt({ ...texts, diff, qaReportFile: path.basename(reportRel), intentIds: intent.intentIds, round, priorRulings });
-    if (facts) prompt.user = `受信控制器来源事实（阶段接收/登记及current_qa.isolation所列本轮控制器临时隐藏与原样恢复；仅解释精确03/04工作区暂移，不证明Git历史保密、不豁免产品范围或命令语义；sealed_not_registered不是已登记）：\n${JSON.stringify(facts)}\n\n${prompt.user}`;
+    if (facts) prompt.user = `受信控制器来源事实（阶段接收/登记及current_qa.isolation所列本轮控制器临时隐藏与原样恢复；仅解释精确03/04工作区暂移，不证明Git历史保密、不豁免产品范围或命令语义；sealed_not_registered不是已登记；historical_execution仅为已登记build/verify阶段当时原生执行，按其stage_input_head与来源身份核验，不是本轮QA执行或产品PASS。失败会话/非零退出/空输出均保留，历史不能替代本轮验证）：\n${JSON.stringify(facts)}\n\n${prompt.user}`;
     const transcriptPath = path.join(cfg.logDir, `judge-${intent.taskId || path.basename(intent.sprintDir)}-r${round}-${Date.now()}.jsonl`);
     reply = await callJudge(prompt, { ...cfg.judgeConn, timeoutMs: cfg.judgeTimeoutMs, transcriptPath });
   } catch (error) {
