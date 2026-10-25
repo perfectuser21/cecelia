@@ -9,7 +9,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {bundle} from './fixtures/admission-bundle.mjs';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
 const head='a'.repeat(40),repo='perfectuser21/cecelia';
-async function transportRun(t,{phase='headers',delay=2000,cleanupFailure=false,cleanupOnly=false,primaryUndefined=false}={}){
+async function transportRun(t,{phase='headers',delay=2000,cleanupFailure=false,cleanupOnly=false,primaryUndefined=false,lateBody=false}={}){
  const dir=mkdtempSync(join(tmpdir(),'publisher-transport-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  const calls=[];let missing=true;
  const server=createServer(async(req,res)=>{
@@ -33,12 +33,14 @@ async function transportRun(t,{phase='headers',delay=2000,cleanupFailure=false,c
  import {Agent,setGlobalDispatcher} from ${JSON.stringify(pathToFileURL(join(root,'node_modules/undici/index.js')).href)};
  import {publishMainSnapshots} from ${JSON.stringify(pathToFileURL(join(root,'scripts/ci/implementation-main-snapshot.mjs')).href)};
  const legacy=new Agent({headersTimeout:100,bodyTimeout:100});setGlobalDispatcher(legacy);
- const timeout=AbortSignal.timeout.bind(AbortSignal);AbortSignal.timeout=ms=>timeout(ms===600000?10000:ms);
+ const timeout=AbortSignal.timeout.bind(AbortSignal);let timerSequence=0;
+ const timerEvent=(id,kind)=>appendFileSync(${JSON.stringify(join(dir,'timers.jsonl'))},JSON.stringify({id,kind,at:Date.now()})+'\\n');
+ AbortSignal.timeout=ms=>{const signal=timeout(ms===600000?10000:ms),id=++timerSequence;timerEvent(id,'armed');signal.addEventListener('abort',()=>timerEvent(id,'abort'),{once:true});return signal;};
  const close=Agent.prototype.close,destroy=Agent.prototype.destroy;
  const record=value=>appendFileSync(${JSON.stringify(join(dir,'cleanup.jsonl'))},JSON.stringify(value)+'\\n');
  Agent.prototype.close=function(...args){if(this===legacy||args.length)return close.apply(this,args);record('close');return ${cleanupFailure||cleanupOnly||primaryUndefined}?Promise.reject(new Error('cleanup-only')):close.call(this);};
  Agent.prototype.destroy=function(...args){if(this===legacy||args.length)return destroy.apply(this,args);record('destroy');return destroy.apply(this,args).then(()=>{if(${cleanupFailure||cleanupOnly||primaryUndefined})throw new Error('cleanup-only');});};
- try{await publishMainSnapshots(${JSON.stringify(options)},{readMain:()=>${JSON.stringify(head)},...(${primaryUndefined}?{fetchFn:async()=>{throw undefined;}}:{})});console.log('PUBLISHED');}
+ try{await publishMainSnapshots(${JSON.stringify(options)},{readMain:()=>${JSON.stringify(head)},...(${primaryUndefined}?{fetchFn:async()=>{throw undefined;}}:${lateBody}?{fetchFn:async(url,options)=>{const response=await fetch(url,options);if(options.method!=='POST')return response;return {status:response.status,ok:response.ok,text:async()=>{const text=await response.text();timerEvent(2,'body-read');const keepAlive=setTimeout(()=>{},15000);try{if(!options.signal.aborted)await new Promise(resolve=>options.signal.addEventListener('abort',resolve,{once:true}));}finally{clearTimeout(keepAlive);}return text;}};}}:{})});console.log('PUBLISHED');}
  catch(e){console.error(JSON.stringify({name:e?.name,code:e?.code,cause:e?.cause?.code,is_undefined:e===undefined}));process.exitCode=1;}
  finally{await close.call(legacy);}
  `;
@@ -50,7 +52,11 @@ async function transportRun(t,{phase='headers',delay=2000,cleanupFailure=false,c
   child.once('close',code=>{clearTimeout(timer);resolve({code,stdout,stderr});});
  });
  const cleanup=existsSync(join(dir,'cleanup.jsonl'))?readFileSync(join(dir,'cleanup.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(x=>JSON.parse(x)):[];
- return {...result,dir,calls,cleanup};
+ const timers=existsSync(join(dir,'timers.jsonl'))?readFileSync(join(dir,'timers.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(x=>JSON.parse(x)):[];
+ const failurePath=join(dir,'evidence/diagnostics/failure.json');
+ const failure=existsSync(failurePath)?JSON.parse(readFileSync(failurePath)):null;
+ t.diagnostic(JSON.stringify({phase,delay,code:result.code,calls:calls.map(c=>({method:c.method,scope:c.scope})),cleanup,timers,operation:failure?.operation,exception:failure?.exception}));
+ return {...result,dir,calls,cleanup,timers};
 }
 for(const phase of ['headers','body'])test(`真实运输${phase}慢于旧期限但早于总deadline仍发布一次`,async t=>{
  const r=await transportRun(t,{phase});assert.equal(r.code,0,r.stderr);
@@ -66,6 +72,7 @@ for(const phase of ['headers','body'])test(`真实运输${phase}超过总deadlin
  const failure=JSON.parse(readFileSync(join(r.dir,'evidence/diagnostics/failure.json')));
  assert.equal(failure.operation.post_outcome,'UNKNOWN');
  assert.equal(failure.operation.body_read_completed,false);assert.deepEqual(r.cleanup,['destroy']);
+ assert.ok(r.timers.some(e=>e.id===2&&e.kind==='abort'),'本POST的真实总deadline须触发');
  assert.ok(['TimeoutError','AbortError'].includes(failure.exception.name),JSON.stringify(failure));
  assert.equal(existsSync(join(r.dir,'evidence/base.json')),false);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
 });
@@ -86,4 +93,13 @@ test('primary throw undefined仍原样保留，destroy失败不替换它',async 
  const r=await transportRun(t,{primaryUndefined:true});assert.notEqual(r.code,0);
  assert.match(r.stderr,/"is_undefined":true/);assert.deepEqual(r.cleanup,['destroy']);assert.deepEqual(r.calls,[]);
  assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
+});
+
+test('完整读体后才报告超时须保留body完成事实但UNKNOWN不发布',async t=>{
+ const r=await transportRun(t,{lateBody:true,delay:0});assert.notEqual(r.code,0);
+ assert.equal(r.calls.filter(c=>c.method==='POST').length,1);
+ assert.ok(r.timers.some(e=>e.id===2&&e.kind==='body-read'));assert.ok(r.timers.some(e=>e.id===2&&e.kind==='abort'));
+ const failure=JSON.parse(readFileSync(join(r.dir,'evidence/diagnostics/failure.json')));
+ assert.equal(failure.operation.body_read_completed,true);assert.equal(failure.operation.post_outcome,'UNKNOWN');
+ assert.equal(existsSync(join(r.dir,'evidence/base.json')),false);assert.equal(existsSync(join(r.dir,'evidence/head.json')),false);
 });
