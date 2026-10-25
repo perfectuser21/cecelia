@@ -333,7 +333,7 @@ it.each(['verified', 'missing-receipt', 'tampered-receipt'])('actual evaluate ch
   expect(facts.sync).toHaveLength(1);expect(facts.sync[0]).toMatchObject({ event_id: merged.eventId, before, main, base, commit: merged.commit, parents: [before, main] });
   expect(native.prompt).not.toContain('FORGED_CALLER_FACTS');expect(native.prompt).not.toContain('holder_path');
   expect(native.argv).toContain('exec');expect(native.argv).toContain('--json');
-  const factsForJudge = judgeSourceFacts(cfg, sb.seed, context, merged.commit, rel('05-qa-report-r1.md'), { mode: 'pending', round: 1, testedHead: merged.commit, stageEventId: output.outputs.source_stage_event_id });
+  const factsForJudge = withRecordProvenance({ ...context, worktree: sb.seed, stage: 'judge', round: 1 }, () => judgeSourceFacts(cfg, sb.seed, context, merged.commit, rel('05-qa-report-r1.md'), { mode: 'pending', round: 1, testedHead: merged.commit, stageEventId: output.outputs.source_stage_event_id }));
   expect(factsForJudge.sync).toEqual(facts.sync);expect(factsForJudge.current_qa.isolation.status).toBe('restored');
   const nativeEvent = protectedEvents.find(e => e.kind === 'native' && e.stage === 'evaluate');expect(nativeEvent.stdout).toContain('actual-evaluate-sync-child');
   expect(nativeEvent.stdout).toContain('actual product and hidden reports verified');
