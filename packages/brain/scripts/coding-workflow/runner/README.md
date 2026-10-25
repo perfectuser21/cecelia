@@ -48,6 +48,67 @@ tail -n 100 "${CODING_WF_USER_HOME:-/Users/${CODING_WF_RUN_USER:-administrator}}
 
 若 plist 路径与变量推导不同，以 plist 的 `StandardOutPath` 读日志。分别判读服务状态、任务回执和主日志；日志或 dry-run 单独都不能证明运行正常。日志可能含任务现场信息，不复制令牌或账号文件内容。
 
+## 提交编码任务
+
+在 Cecelia 仓库根目录准备计划文件。下面的 `F1` 只是现有 Cecelia 地图节点示例，提交前须核对任务的真实范围；纯文档任务的 `gp_anchor` 可明确写 `none(docs)`。`change_kind` 与非空 `map_scope_hint` 必填，不要编造地图 ID。单任务示例（保存为 `<plan.json>`）：
+
+### 单任务示例
+
+```json
+{
+  "title": "补全编码任务提交手册",
+  "change_kind": "capability_change",
+  "map_scope_hint": ["F1"],
+  "acceptance": ["README 中有可解析的建单示例及失败处理说明"],
+  "repo": "cecelia",
+  "gp_anchor": "none(docs)"
+}
+```
+
+```bash
+node packages/brain/scripts/coding-workflow/new-task.mjs <plan.json> --repo cecelia --dry-run
+```
+
+`--dry-run` 只校验计划字段和已登记的仓库名，并输出任务预览；它不 POST Brain、不创建任务，退出码 0 也不证明真实提交成功。若给 `base_sha`，此处只用正则检查 40 位小写十六进制格式，不验证该 SHA 存在；目标仓的真实 commit 必须另行只读核实。仓库选择优先级是条目 repo → 计划顶层 repo → 命令行 --repo → 默认 cecelia；别名按 `repos.json` 归一，未登记仓库拒绝。ZenithJoy 即使列在配置里，也未开放到本常驻示例；本节只提交 `cecelia`，不跨仓套用。
+
+文件读不了或 JSON 解析失败时显示 `读不了计划文件`，退出码 2；JSON 可解析但空必填字段、非法 `base_sha`、未知仓库等校验失败时显示 `计划不合格`，退出码 2。非法或超长到无法读取的 JSON 不会创建任务；按提示修正后可重试 dry-run。dry-run 对字段与仓库做静态校验，不代表目标仓提交存在或后续 Brain 接受建单。
+
+同批依赖须先定义前置 `key`，后项的 `depends_on` 用前置 key 数组；有依赖时必须在计划顶层给已有 `project_id` 或新建 `project`，且只能选一种：
+
+### 两任务批次示例
+
+```json
+{
+  "repo": "cecelia",
+  "change_kind": "capability_change",
+  "map_scope_hint": ["F1"],
+  "project": {"name": "手册分段完善"},
+  "tasks": [
+    {
+      "key": "a",
+      "title": "写提交示例",
+      "acceptance": ["单任务示例可解析"],
+      "gp_anchor": "none(docs)"
+    },
+    {
+      "key": "b",
+      "title": "写依赖说明",
+      "acceptance": ["依赖分支与源码一致"],
+      "gp_anchor": "none(docs)",
+      "depends_on": ["a"]
+    }
+  ]
+}
+```
+
+整批先校验、再按顺序提交；同批前置 key 在提交时按已建任务 ID 替换。前向或未知依赖报 `depends_on_unknown`，重复 key 报 `key_duplicate`，缺项目报 `project_required`，`project_id` 与 `project` 同给报 `project_conflict`；这些静态冲突显示 `计划不合格`、退出码 2，未建任务，修正后可重试。当前校验可能放过字符串 `depends_on: "a"`：字符串会逐字符遍历，真实提交在 `body()` 调用 `.map()` 时抛异常，可能已有前项建成，却没有 `已建` 数组。请只用数组，异常后按下文查账；不推断并发或跨批自动去重。
+
+runner 检查前置时，先要求 `status=completed`；前置失败状态不会自动放行。若能定位真实 PR URL 且没有 `result.merged=true` 捷径，GitHub 返回 `MERGED` 才就绪，`OPEN` 或状态未知继续等待下一轮，`CLOSED` 判失败、不自动放行。源码在无 PR URL 或 `result.merged=true` 时直接判就绪；这只是当前实现分支，不等于单有 `completed` 就证明 GitHub 已合并。正常 coding 任务应保留真实 PR URL 供外部核验；未就绪时 runner 本轮不认领。
+
+确认计划后去掉 `--dry-run` 才是真实提交。若选 `project`，脚本先以 `content-type: application/json` 向 `POST /api/brain/projects` 发送 `name`、`description`；随后逐项向 `POST /api/brain/tasks` 发送 `task_type: coding_workflow`、`mutation_intent: write`、`change_kind`、`repo_hint`、`map_scope_hint`、`title`、`description`、`priority`、`trigger_source: manual` 与 `payload`。`payload` 包含 `coding_workflow`、`repo`、`gp_anchor`、`acceptance`，有依赖时含已建 ID 数组 `depends_on`；还可能有 `project_id`、`base_sha`。脚本只设置 JSON content-type，不附鉴权 header；连接与鉴权取决于实际运行环境和 Brain 端，不能据此认为匿名接口可用。本次手册核验只读源码与文档，不执行真实建单、不访问生产。
+
+全部建成才输出 `[{key,id,title}]`。POST 失败或 `task_route_mismatch` 路由回显不符会退出码 1；失败消息里的 `已建` 数组可能只是部分结果，失败对象自身也可能含 `id`，尤其 `task_route_mismatch`。同时收集失败对象 ID 和已建数组中每个 ID，逐一只读核对 Brain 实账及状态；已建任务不会自动撤销。命令异常退出、没有返回 ID 或没有 `已建` 数组时，也按项目名称、任务标题等已知信息只读核对 Brain，确认实际已建范围后再处理。网络响应未知、重复或并发提交也可能重复建单；任何中途失败都不要整批盲重跑。
+
 ## 运行回执如何判读
 
 在仓库根目录只读查看回执：
