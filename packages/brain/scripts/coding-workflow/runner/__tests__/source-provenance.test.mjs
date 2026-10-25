@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { git } from '../../__tests__/helpers/git.mjs';
 import { beginEvaluateIsolation, withRecordProvenance, captureNativeExecution, sealStageEvidence, controllerIdentity, beginRecordRegistration, observeRecordRegistration, finalizeRecordRegistration } from '../../lib/record-provenance.mjs';
 import { registerRecordSources, RECORD_SOURCE_OWNER, RECORD_SOURCE_MANIFEST } from '../../lib/record-sources.mjs';
-import { verifySourceHead, verifyMergeSource, judgeSourceFacts, sourceContext } from '../lib/source-provenance.mjs';
+import { verifySourceHead, verifyMergeSource, judgeSourceFacts, sourceContext, sourceFacts } from '../lib/source-provenance.mjs';
 import { stageQaRecords } from '../lib/qa-records.mjs';
 import { runJudge } from '../lib/judge-gate.mjs';
 
@@ -17,11 +17,11 @@ const rel = name => `${sprintDir}/${name}`;
 const fm = (stage, body = 'actual report') => `---\ntask_id: ${taskId}\nstep: ${stage}\nupstream: []\n---\n${body}\n`;
 const head = () => git(worktree, 'rev-parse', 'HEAD').trim();
 const commit = () => { git(worktree, 'add', '.');git(worktree, 'commit', '-qm', 'fixture actual commit');return head(); };
-const native = () => captureNativeExecution({ provider: 'codex', code: 0, stdout: '{"type":"thread.started","thread_id":"fixture-controller-capture"}\n{"type":"turn.completed"}\n' });
+const native = (stage) => captureNativeExecution({ provider: 'codex', code: 0, stdout: [JSON.stringify({ type: 'thread.started', thread_id: 'fixture-controller-capture' }), ...(stage === 'verify' ? [JSON.stringify({ type: 'item.started', item: { id: 'history-1', type: 'command_execution', command: 'git status --porcelain=history-marker', status: 'in_progress' } }), JSON.stringify({ type: 'item.completed', item: { id: 'history-1', type: 'command_execution', command: 'git status --porcelain=history-marker', aggregated_output: 'original-history-output-marker\n', exit_code: 1, status: 'failed' } })] : []), JSON.stringify({ type: 'turn.completed' })].join('\n') + '\n' });
 function seal(stage, files, round = 0) {
   const sealed = withRecordProvenance({ ...options, stage, round }, () => {
     const isolated = stage === 'evaluate' ? beginEvaluateIsolation() : null;
-    if (stage !== 'intent') native();
+    if (stage !== 'intent') native(stage);
     if (isolated) expect(isolated.restore()).toBe(true);
     return sealStageEvidence({ files, result: { status: 'completed', ...(stage === 'evaluate' ? { outputs: { qa: { verdict: 'PASS', round } } } : {}) }, producer: stage === 'intent' ? 'controller' : 'model' });
   });
@@ -62,6 +62,8 @@ it('裁判只见已登记事实与当前05封存，不泄露03正文；05篡改�
   const exact = publish(), report = rel('05-qa-report-r1.md');put(report, fm('evaluate'));seal('evaluate', [report], 1);
   withRecordProvenance({ ...options, stage: 'judge', round: 1 }, () => {
     const facts = judgeSourceFacts(cfg, worktree, options, exact, report, { mode: 'pending', stageEventId: lastQaStageId, testedHead: exact, round: 1 });
+    expect(JSON.stringify(facts.historical_execution)).toContain('original-history-output-marker');
+    expect(JSON.stringify(sourceFacts(worktree, options, exact))).not.toContain('original-history-output-marker');
     expect(facts.committed.status).toBe('verified');expect(facts.current_qa.status).toBe('sealed_not_registered');expect(JSON.stringify(facts)).not.toContain('PRIVATE DEVELOPMENT BODY');
     put(report, fm('evaluate', 'forged'));expect(() => judgeSourceFacts(cfg, worktree, options, exact, report, { mode: 'pending', stageEventId: lastQaStageId, testedHead: exact, round: 1 })).toThrow(/stage_missing/);
   });
@@ -96,7 +98,7 @@ it('真实Codex裁判子进程接收隔离事实，06封存后与05同次真实�
   await withRecordProvenance({ ...options, stage: 'judge', round: 1 }, async () => {
     const result = await runJudge(testCfg, worktree, { ...options, intentIds: ['I-1'] }, { round: 1, reportRel: report, qaStageEventId: lastQaStageId, sourceMode: 'pending', testedHead: head() });
     expect(result.error).toBeUndefined();expect(result.verdict).toBe('PASS');
-    const sent = fs.readFileSync(prompt, 'utf8');expect(sent).toContain('sealed_not_registered');expect(sent).toContain('controller_registration_and_stage_capture');expect(sent).not.toContain('PRIVATE DEVELOPMENT BODY');
+    const sent = fs.readFileSync(prompt, 'utf8');expect(sent).toContain('git status --porcelain=history-marker');expect(sent).toContain('original-history-output-marker');expect(sent).toContain('historical_execution');expect(sent).toContain('sealed_not_registered');expect(sent).toContain('controller_registration_and_stage_capture');expect(sent).not.toContain('PRIVATE DEVELOPMENT BODY');
     const staged = await stageQaRecords(worktree, { taskId, sprintDir, round: 1 }, [report, rel(result.file)], { ...options, stage: 'qa', round: 1, qaStageEventId: lastQaStageId });
     git(worktree, 'commit', '-qm', 'real QA judge registration');finalizeRecordRegistration(staged.registration);
     const proof = verifySourceHead(cfg, worktree, options, head());
@@ -132,8 +134,9 @@ it('registered judge retry uses original stage in a fresh worktree; product drif
   const token = beginRecordRegistration({ ...options, stage: 'qa', round: 1, qaStageEventId: qa.id }, [report]);
   observeRecordRegistration(token, registerRecordSources(worktree, { taskId, sprintDir, stage: 'qa', round: 1 }, [report]));
   const registered = commit();finalizeRecordRegistration(token);
-  const retryTree = path.join(temp, 'qa-retry');git(worktree, 'worktree', 'add', '-q', '--detach', retryTree, registered);
-  withRecordProvenance({ ...options, stage: 'judge', round: 1 }, () => {
+  const retryTree = path.join(temp, 'qa-retry');git(worktree, 'clone', '-q', '--no-checkout', worktree, retryTree);
+  git(retryTree, 'remote', 'set-url', 'origin', 'https://github.com/perfectuser21/cecelia.git');git(retryTree, 'checkout', '-q', branch);
+  withRecordProvenance({ ...options, worktree: retryTree, stage: 'judge', round: 1 }, () => {
     const selector = { mode: 'registered', stageEventId: qa.id, testedHead: tested, round: 1 };
     const facts = judgeSourceFacts(cfg, retryTree, options, registered, report, selector);
     expect(facts.current_qa.status).toBe('verified');expect(facts.current_qa.isolation.qa_stage_event_id).toBe(qa.id);
