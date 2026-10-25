@@ -3,7 +3,7 @@ import yaml from 'js-yaml';
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { builtinModules } from 'node:module';
-import { PROVENANCE_SOURCE_PATHS, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
+import { readProvenanceSources, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
 export const EXISTING_OPS_DOC_IMPORT_SCHEMA = 1;
 export const EXISTING_OPS_ROOT_NPM_INPUT_SCHEMA = 1;
 const TEST = 'packages/brain/scripts/coding-workflow/runner/__tests__/run-once.test.mjs';
@@ -132,8 +132,8 @@ async function collectDocImports({ selected, paths, parse, read, readSource, rev
   if (!selected.includes(test)) return;
   const staged = new Map(), edges = new Map(); let bytes = 0;
   try {
-    const support = {};
-    for (const [key, path] of Object.entries(PROVENANCE_SOURCE_PATHS)) support[key] = await readSource(path, revision);
+    const support = await readProvenanceSources(paths, readSource, revision);
+    // 完整新tuple才接受可选history；旧mandatory与原版本证明不变。
     if (provenanceSourceVersion(support, parse) !== 'native_evidence') throw Error('whole_qa_report_unproven');
     const manifest = 'packages/brain/package.json', pkgText = await readSource(manifest, revision), pkg = JSON.parse(pkgText);
     const dependencies = { ...pkg.dependencies, ...pkg.devDependencies }, seen = new Set();

@@ -3,7 +3,7 @@ import { ENVELOPES } from './existing-ops-build-envelopes.js';
 import { REVIEWED as CORE, ISOLATION_REVIEWED as ISOLATION_CORE } from './existing-ops-provenance-core-envelope.js';
 import { REVIEWED as LOCAL, ISOLATION_REVIEWED as ISOLATION_LOCAL, MERGE_REVIEWED as MERGE_LOCAL } from './existing-ops-provenance-local-envelopes.js';
 import { REVIEWED as ENTRY } from './existing-ops-provenance-entry-envelopes.js';
-import { NATIVE_PROVENANCE_PATHS, nativeEvidenceForwarding, nativeBuildSources, nativeCompatibleCli } from './existing-ops-native-evidence-source.js';
+import { NATIVE_PROVENANCE_PATHS, NATIVE_HISTORY_PATH, nativeEvidenceForwarding, nativeBuildSources, nativeCompatibleCli } from './existing-ops-native-evidence-source.js';
 
 const PREFIX = 'packages/brain/scripts/coding-workflow/lib/';
 export const PROVENANCE_SOURCE_PATHS = Object.freeze({
@@ -17,6 +17,13 @@ export const PROVENANCE_SOURCE_PATHS = Object.freeze({
   sourceMergeProof: 'packages/brain/scripts/coding-workflow/runner/lib/source-merge-proof.mjs',
   ...NATIVE_PROVENANCE_PATHS,
 });
+// 旧mandatory集合不变；可选history源码只从实际固定树读取，完整tuple仍独立校验。
+export async function readProvenanceSources(paths, readSource, revision) {
+  const sources = Object.fromEntries(await Promise.all(Object.entries(PROVENANCE_SOURCE_PATHS)
+    .filter(([, path]) => paths.includes(path)).map(async ([key, path]) => [key, await readSource(path, revision)])));
+  if (paths.includes(NATIVE_HISTORY_PATH)) sources.recordHistory = await readSource(NATIVE_HISTORY_PATH, revision);
+  return sources;
+}
 const canonical = value => JSON.stringify(value, (key, item) => ['start', 'end', 'raw'].includes(key) ? undefined : item);
 const same = (a, b) => canonical(a) === canonical(b);
 const declaration = node => node?.type === 'ExportNamedDeclaration' ? node.declaration : node;

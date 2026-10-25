@@ -18,7 +18,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parse } from 'acorn';
-import { provenanceReaderTuples, matchesProvenanceReaderTuple, registerReaderTupleGuardTests, PROVENANCE_CALLER_SHA256 } from './claude-channel-retired.reader-tuples.test.js';
+import { provenanceReaderTuples, matchesProvenanceReaderTuple, registerReaderTupleGuardTests, readHistoricalReader, PROVENANCE_CALLER_SHA256 } from './claude-channel-retired.reader-tuples.test.js';
 /** 模式常量只能留在已审解析闭包；每种突变均应使纯数据资格失败。 */
 function mutateStageMode(kind,sources,root){
  const file=path.join(root,'existing-ops-stage-modes.js'),other=path.join(root,'../unreviewed-mode-consumer.js');
@@ -159,8 +159,7 @@ function decodedReferenceTexts(text) {
   catch{return [text];} // 非 JS 文件仍保留原文本检查。
 }
 function provenanceReaderClosure(sources) {
-  if(createHash('sha256').update(astShape(parseModule(sources.get(ENVELOPE_CONSUMER)||''))).digest('hex')!==PROVENANCE_CALLER_SHA256)return false;
-  if(!matchesProvenanceReaderTuple(sources,PROVENANCE_READER_TUPLES,text=>createHash('sha256').update(astShape(parseModule(text))).digest('hex')))return false;
+  if(!matchesProvenanceReaderTuple(sources,PROVENANCE_READER_TUPLES.map(tuple=>new Map([[ENVELOPE_CONSUMER,PROVENANCE_CALLER_SHA256],...tuple])),text=>createHash('sha256').update(astShape(parseModule(text))).digest('hex')))return false;
   const decoded=new Map([...sources].map(([file,text])=>[file,decodedReferenceTexts(text)]));
   for(const file of PROVENANCE_READER_HASHES.keys()) {
     for(const [consumer,text] of sources) {
@@ -169,7 +168,7 @@ function provenanceReaderClosure(sources) {
         :file===STAGE_DATA?[STAGE_HELPER,STAGE_MODES]:file===STAGE_MODES?[STAGE_HELPER]:file===STAGE_HELPER?[ENVELOPE_CONSUMER,STAGE_HELPER]:file===PROVENANCE_HELPER?[ENVELOPE_CONSUMER]:[PROVENANCE_HELPER];
       if(callers.includes(consumer))continue;
       if(provenFingerprintReader(consumer,text))continue;
-      if(file===PROVENANCE_HELPER&&consumer===DOC_RUNTIME_FILE&&matchesProvenanceReaderTuple(sources,[PROVENANCE_READER_TUPLES[2],PROVENANCE_READER_TUPLES[3]],value=>createHash('sha256').update(astShape(parseModule(value))).digest('hex')))continue;
+      if(file===PROVENANCE_HELPER&&consumer===DOC_RUNTIME_FILE&&matchesProvenanceReaderTuple(sources,PROVENANCE_READER_TUPLES.slice(2),value=>createHash('sha256').update(astShape(parseModule(value))).digest('hex')))continue;
       return false;
     }
   }
@@ -328,7 +327,7 @@ describe('守卫自证：每条判据都会报警', () => {
 describe('只读来源封套数据与实际执行代码分离',()=>{
  const dataFile=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-envelopes.js');
  const consumer=path.join(BRAIN_ROOT,'src/lib/existing-ops-build-source.js');
- const baseSources=()=>new Map([[dataFile,readFileSync(dataFile,'utf8')],[consumer,readFileSync(consumer,'utf8')],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readFileSync(file,'utf8')])]);
+ const baseSources=()=>new Map([[dataFile,readHistoricalReader(dataFile)],[consumer,readHistoricalReader(consumer)],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readHistoricalReader(file)])]);
  const scan=(edit=()=>{},suffix='')=>{const sources=baseSources();edit(sources);return findClaudeInvocations(sources.get(dataFile)+suffix,{file:dataFile,sources});};
  it('真实无插值ENVELOPES仅供Acorn解析，原R3文本不是进程执行',()=>expect(scan()).toEqual([]));
  it.each(['spawn','alias','interpolation','consume','consumer_alias','extra_consumer','parser_shadow','parser_reassign','ast_escape','helper_side_effect','top_side_effect','dynamic_module'])('封套 %s 不得被纯数据豁免遮住',kind=>{
@@ -362,7 +361,7 @@ describe('只读来源封套数据与实际执行代码分离',()=>{
 });
 describe('新增阶段封套不允许执行或额外消费者',()=>{
  const helper=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-source.js'),data=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
- const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys(),helper,data,STAGE_MODES].map(file=>[file,readFileSync(file,'utf8')])]);
+ const base=()=>new Map([[ENVELOPE_FILE,readHistoricalReader(ENVELOPE_FILE)],[ENVELOPE_CONSUMER,readHistoricalReader(ENVELOPE_CONSUMER)],...[...PROVENANCE_READER_HASHES.keys(),helper,data,STAGE_MODES].map(file=>[file,readHistoricalReader(file)])]);
  it('实际只读阶段数据合同继续经过完整闭包资格',()=>{const sources=base();expect(findClaudeInvocations(sources.get(data),{file:data,sources})).toEqual([]);});
  it.each(['helper side effect','data side effect','third helper','third data','escaped data','mode eval','mode raw export','mode process','third mode','escaped mode','concat mode','changed mode path'])('%s使阶段及原封套资格失败',kind=>{
   const sources=base();
@@ -379,7 +378,7 @@ describe('新增阶段封套不允许执行或额外消费者',()=>{
 describe('isolation 新封套仍只允许已审 Acorn 消费闭包',()=>{
  const core=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-core-envelope.js');
  const local=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-local-envelopes.js');
- const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readFileSync(file,'utf8')])]);
+ const base=()=>new Map([[ENVELOPE_FILE,readHistoricalReader(ENVELOPE_FILE)],[ENVELOPE_CONSUMER,readHistoricalReader(ENVELOPE_CONSUMER)],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readHistoricalReader(file)])]);
  const scan=sources=>[ENVELOPE_FILE,STAGE_DATA].map(file=>findClaudeInvocations(sources.get(file),{file,sources}));
  it('完整新版本取得只读资格，原执行规则仍扫描剩余代码',()=>{
   const sources=base();
@@ -409,8 +408,8 @@ describe('isolation 新封套仍只允许已审 Acorn 消费闭包',()=>{
 });
 describe('固定runtime字节指纹不执行来源模板',()=>{
  const runtime=path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
- const source=readFileSync(runtime,'utf8');
- const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],[runtime,source],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readFileSync(file,'utf8')])]);
+ const source=readHistoricalReader(runtime);
+ const base=()=>new Map([[ENVELOPE_FILE,readHistoricalReader(ENVELOPE_FILE)],[ENVELOPE_CONSUMER,readHistoricalReader(ENVELOPE_CONSUMER)],[runtime,source],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readHistoricalReader(file)])]);
  const scan=sources=>findClaudeInvocations(sources.get(ENVELOPE_FILE),{file:ENVELOPE_FILE,sources});
  it('真实固定模块仅fs读取后hash/比较，允许模板数据且模块本身仍经过R1-R7',()=>{
   expect(scan(base())).toEqual([]);
@@ -444,7 +443,7 @@ describe('固定runtime字节指纹不执行来源模板',()=>{
 });
 describe('merge 读取封套不增加 Claude 原文执行出口',()=>{
  const local=path.join(BRAIN_ROOT,'src/lib/existing-ops-provenance-local-envelopes.js');
- const base=()=>new Map([[ENVELOPE_FILE,readFileSync(ENVELOPE_FILE,'utf8')],[ENVELOPE_CONSUMER,readFileSync(ENVELOPE_CONSUMER,'utf8')],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readFileSync(file,'utf8')])]);
+ const base=()=>new Map([[ENVELOPE_FILE,readHistoricalReader(ENVELOPE_FILE)],[ENVELOPE_CONSUMER,readHistoricalReader(ENVELOPE_CONSUMER)],...[...PROVENANCE_READER_HASHES.keys()].map(file=>[file,readHistoricalReader(file)])]);
  it('新实际五模块仅在完整固定 reader 闭包内取得纯数据资格',()=>{const sources=base();for(const file of [local,STAGE_DATA,ENVELOPE_FILE])expect(findClaudeInvocations(sources.get(file),{file,sources})).toEqual([]);});
  it.each(['local eval','escaped consumer','stage execution'])('%s 仍使原封套 E1 拒绝',kind=>{
   const sources=base();
@@ -457,7 +456,7 @@ describe('merge 读取封套不增加 Claude 原文执行出口',()=>{
 describe('原生QA完整封套只作为有界解码后的Acorn输入',()=>{
  const helper=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-source.js');
  const data=path.join(BRAIN_ROOT,'src/lib/existing-ops-native-evidence-envelopes.js');
- const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,HASH_RUNTIME_FILE,helper,data,...PROVENANCE_READER_HASHES.keys()])].map(file=>[file,readFileSync(file,'utf8')]));
+ const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,HASH_RUNTIME_FILE,helper,data,...PROVENANCE_READER_HASHES.keys()])].map(file=>[file,readHistoricalReader(file)]));
  const scan=sources=>findClaudeInvocations(sources.get(data),{file:data,sources});
  it('完整已审新旧闭包及十五文件只读指纹不恢复任何Claude执行路径',()=>{
   const sources=base();
