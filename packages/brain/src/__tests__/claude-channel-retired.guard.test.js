@@ -159,8 +159,7 @@ function decodedReferenceTexts(text) {
   catch{return [text];} // 非 JS 文件仍保留原文本检查。
 }
 function provenanceReaderClosure(sources) {
-  if(createHash('sha256').update(astShape(parseModule(sources.get(ENVELOPE_CONSUMER)||''))).digest('hex')!==PROVENANCE_CALLER_SHA256)return false;
-  if(!matchesProvenanceReaderTuple(sources,PROVENANCE_READER_TUPLES,text=>createHash('sha256').update(astShape(parseModule(text))).digest('hex')))return false;
+  if(!matchesProvenanceReaderTuple(sources,PROVENANCE_READER_TUPLES.map(tuple=>new Map([[ENVELOPE_CONSUMER,PROVENANCE_CALLER_SHA256],...tuple])),text=>createHash('sha256').update(astShape(parseModule(text))).digest('hex')))return false;
   const decoded=new Map([...sources].map(([file,text])=>[file,decodedReferenceTexts(text)]));
   for(const file of PROVENANCE_READER_HASHES.keys()) {
     for(const [consumer,text] of sources) {
@@ -169,7 +168,7 @@ function provenanceReaderClosure(sources) {
         :file===STAGE_DATA?[STAGE_HELPER,STAGE_MODES]:file===STAGE_MODES?[STAGE_HELPER]:file===STAGE_HELPER?[ENVELOPE_CONSUMER,STAGE_HELPER]:file===PROVENANCE_HELPER?[ENVELOPE_CONSUMER]:[PROVENANCE_HELPER];
       if(callers.includes(consumer))continue;
       if(provenFingerprintReader(consumer,text))continue;
-      if(file===PROVENANCE_HELPER&&consumer===DOC_RUNTIME_FILE&&matchesProvenanceReaderTuple(sources,[PROVENANCE_READER_TUPLES[2],PROVENANCE_READER_TUPLES[3]],value=>createHash('sha256').update(astShape(parseModule(value))).digest('hex')))continue;
+      if(file===PROVENANCE_HELPER&&consumer===DOC_RUNTIME_FILE&&matchesProvenanceReaderTuple(sources,PROVENANCE_READER_TUPLES.slice(2),value=>createHash('sha256').update(astShape(parseModule(value))).digest('hex')))continue;
       return false;
     }
   }

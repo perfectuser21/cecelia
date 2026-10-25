@@ -56,7 +56,17 @@ export function provenanceReaderTuples(root) {
   doc.set(path.join(root, 'existing-ops-runtime-source.js'), '116a965527c5aa69b174746299eabceee7fc398e1a49bce55cd6e06bd2625832');
   const rootNpm = new Map(doc);
   rootNpm.set(path.join(root, 'existing-ops-runtime-source.js'), 'cfa08d753497e7bdcde34bfe9dcba4a44a32392b03fc8abdf746d0c4449fe6ab');
-  return [old, next, doc, rootNpm];
+  // 已审SOURCEPREP必须连同实际build caller与runtime整组匹配；旧四组不变。
+  const history = new Map(rootNpm);
+  for (const [name, hash] of [
+    ['build-source', '0ab51a41fd56b8bbb8be840b3caf8f8bd025dceeefdd6cd24e039f3ead903435'],
+    ['stage-source', '4efb563d9e3a8c7fa08523c81c730ba1efefa82cbd0de4811c6facb2794bf5ea'],
+    ['provenance-envelope', 'ade6df8d35b187ce0495ebd163fa0489379f37114fe2111b4677a4b622933a95'],
+    ['native-evidence-source', '675be567f871855220a89301f1dbf50dbcc0a900e02c2ed3303ec39d3a647b3c'],
+    ['native-evidence-envelopes', '44abae0d93238048356f5573765320b92ad54e481ba78f5925a3c558a8b86013'],
+    ['runtime-source', '48f919b399f133feadcfb0678ef67c95550d199e3d97fb213ccb9276d93abbf7'],
+  ]) history.set(path.join(root, 'existing-ops-' + name + '.js'), hash);
+  return [old, next, doc, rootNpm, history];
 }
 export function matchesProvenanceReaderTuple(sources, tuples, hashSource) {
   try {
