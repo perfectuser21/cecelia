@@ -144,3 +144,23 @@ RUNTIME_MODULES="$RUNTIME_MODULES" node -e 'const {createRequire}=require("modul
 前置任务的 `completed` 只是 `deps.mjs` 检查的必要输入。源码对无 PR URL 或 `task.result.merged===true` 有直接就绪分支；有 PR URL 且无此捷径时才查询 GitHub：`MERGED` 就绪，`OPEN` 或未知状态等待，`CLOSED` 拒绝。这是领单判断分支，不是前置已真正合并的独立证据；核账仍须读实际 PR 与 head。
 
 交叉提示：`node packages/brain/scripts/coding-workflow/new-task.mjs <plan.json> --dry-run` 只校验本地计划，不创建任务；预检 `base_sha` 只核 40 位小写 hex 格式，不核提交是否存在。预检退出 0 也不是建单或运行成功。
+
+## 历史执行证据与本轮 QA 的责任边界
+
+### 来源投影与历史执行
+
+`sourceFacts` 只返回当前已验证的公共来源投影与可信 main 同步信息，不含 `historical_execution`。`judgeSourceFacts` 仅在真实 judge 上下文调用 `verifiedHistoricalExecutions`，才在已提交记录、本轮 QA 来源和同步投影之外增加 `historical_execution`。该读取绑定同一个 task、sprint、真实 worktree 和固定的当前 HEAD；HEAD 在读取期间变化就拒绝。03-build.md、04-evidence.md 必须先经 `registrationFor` 和 `validateStage`，核对原 Git 字节、mode、提交、manifest 增量、受保护阶段事件及其原生 ID，才能交出历史原生记录。相同 SHA、登记哈希、当前 HEAD 或模型自述都不能推出过去曾执行；缺失、伪造或重复登记不能靠重试变成既成历史。来源读取失败是拒绝证明，不是空账或产品 PASS。
+
+### 原生账的含义
+
+每个 build/verify stage 的 `native_ids` 按原顺序逐项投影到 `natives`，保留以 `turn.failed` 结束的失败会话、非零退出、重复命令和零字节 `aggregated_output`，不会只挑最后一次成功。每项保留原生 `code`、`timed_out`、`terminated`、`success`、`terminal_event`、`stdout_sha256`、`stdout_bytes`、`error_event_seen`；已完成命令保留原字符串 `command`、聚合 `output` 和整数 `exit_code`。哈希和字节数针对该 native 捕获的 JSONL stdout。`execution_complete` 只在终止事件为 `turn.completed`、没有 error 事件、进程退出 0、未超时或终止，且 stdin 状态满足条件时为真，并须与 `native.success` 一致；它不判产品 PASS。即使某条命令 exit0，也不能越级认定产品通过。缺 native、未知 JSONL 事件、未结束会话、缺失命令结果、身份错配或当前 native 失败均失败关闭，不能把缺账吞成空账。投影不包含 `reasoning`；`aggregated_output` 仅是原生捕获的聚合输出，不宣称任意子进程 stdout/stderr 的完整分流。
+
+### 当前 QA 与后续裁判
+
+本轮 QA 只读 `01-intent.md`、`02-spec.md`、固定源码、当前精确测试 HEAD 的 Git 事实和可信控制器给出的有限来源投影，并以真正可失败的静态断言及内存反例验收当前 README 和源码。QA 期间，03/04 由控制器暂隐藏；可信隔离投影仅允许将绑定本 task、round、测试 HEAD 的这两条删除识别为本轮隔离状态，不代表会话后已经恢复，也不豁免其他工作区差异。QA 不读 03/04 正文或保护根，不重造发布前 index/worktree/untracked，不手工补投或追认旧失败。`historical_execution` 是后续 judge-only 历史材料，不是当前 QA 命令，更不是产品 PASS。旧 build/verify 是否真实执行，仅由当时受保护原生事件、合法登记、后续独立 judge 和外层门核定；draft 的 FAIL/CANNOT_VERIFY 不编译为 PASS。过去的 PASS、登记 SHA、当前干净工作区、空输出、失败或非零会话都不能代替历史现场。来源不齐、隔离未恢复或反例可误判时应标 FAIL/CANNOT_VERIFY，不能补写来源或重跑过去现场。
+
+### 发布前与发布后的核验时点
+
+发布前 verify 当场以固定 initial base `8174a7d6f40ecdaf21c0fd8ad4e82606e5ea913d` 到当时 HEAD 检查完整 DAG 的每条父边、全 diff、index、worktree 与全仓 untracked；实际执行 `git rev-list --parents`、逐父 `git diff-tree --raw`、`git diff --cached --raw`、`git diff --raw` 和 `git ls-files --others --exclude-standard`，由当时原生命令的完整输出与退出码承担证据。此时 README 原 bytes/mode 应为固定基线的精确前缀加文末新增节，manifest 相对该 base 应为零差异。发布后 QA 重新核当前精确测试 HEAD 的完整 DAG、每条父边的 raw 路径/blob/mode，以及当前全仓 index/worktree/untracked；不能拿当前干净状态补证明发布前现场。QA 只把可信本轮隔离投影中准确绑定 task/round/HEAD、HEAD blob/mode 和实际暂缺的 03/04 视作预期暂隐藏，其他差异仍逐项验来源和范围，未匹配或越界就失败关闭。
+
+发布后 manifest 可含可信控制器对本 task 合法 Markdown 的准确前插登记：`owner` 为 `packages/brain/scripts/coding-workflow/runner/run-once.mjs`，`role` 为 `documentation`，旧 raw 历史及顺序原样保留；不能把发布前 manifest 零差异要求重施于登记后的 HEAD。若有 main 同步，必须有独立可信链、准确双父、真实 main ref、全树与 source gate 证明，不能简单扣除 main 或改用浮动 base。03/04 原 bytes/mode 的会话后恢复、正式 source/CI/preview、精确批准 HEAD、真实 MERGED、Brain/Learning 回读和下次 tick 回收，均由后续控制器及终态门在实际发生后按冻结 C01-C12 核验；未发生的不报 PASS。新产品或源码 HEAD 必须重新经过真实 QA、judge、CI 和 preview。合同若允许仅本轮 05/06 纯登记提交，受保护来源链须证明仅有准确本轮记录、产品和旧历史未改，并把 `approved.head` 绑定实际登记 HEAD；不伪称模型测过该新记录 HEAD，也不因此陷入无限重验登记循环。
