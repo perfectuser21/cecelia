@@ -71,12 +71,19 @@ export function restoreOldNativeReader(sources, file) {
     ? OLD_NATIVE_HELPER : Buffer.from(sources.get(file)).subarray(0, 88688).toString('utf8');
   sources.set(file, value);
 }
+// Main ancestor fixture: original tests keep exercising their original whole combinations.
+export function readHistoricalReader(file) {
+  if (path.basename(file).startsWith('existing-ops-') && path.extname(file) === '.js') {
+    return execFileSync('git', ['show', '0bbee7b45e4ce79ed2752785fbdb0fd805357879:packages/brain/src/lib/' + path.basename(file)], { cwd: path.dirname(file), encoding: 'utf8', maxBuffer: 1024 * 1024 });
+  }
+  return readFileSync(file, 'utf8');
+}
 const sha = value => createHash('sha256').update(value).digest('hex');
 const hashSource = text => sha(JSON.stringify(parse(text, { ecmaVersion: 'latest', sourceType: 'module' }),
   (key, value) => ['start', 'end', 'raw'].includes(key) ? undefined : value));
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../lib');
 const tuples = provenanceReaderTuples(root);
-const base = () => new Map([...tuples[0].keys()].map(file => [file, readFileSync(file, 'utf8')]));
+const base = () => new Map([...tuples[0].keys()].map(file => [file, readHistoricalReader(file)]));
 const helper = path.join(root, 'existing-ops-native-evidence-source.js');
 const data = path.join(root, 'existing-ops-native-evidence-envelopes.js');
 describe('claude-channel-retired.reader-tuples 防复活守卫完整九reader组合', () => {
@@ -100,10 +107,40 @@ describe('claude-channel-retired.reader-tuples 防复活守卫完整九reader组
 });
 
 export function registerReaderTupleGuardTests({ BRAIN_ROOT, ENVELOPE_FILE, ENVELOPE_CONSUMER, NATIVE_HELPER, NATIVE_DATA, PROVENANCE_READER_HASHES, findClaudeInvocations }) {
+describe('sourceprep history reader完整新组合',()=>{
+ const root=path.join(BRAIN_ROOT,'src/lib');
+ const six=['build-source','stage-source','provenance-envelope','native-evidence-source','native-evidence-envelopes','runtime-source'].map(n=>path.join(root,'existing-ops-'+n+'.js'));
+ const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,...PROVENANCE_READER_HASHES.keys(),...six])].map(f=>[f,readFileSync(f,'utf8')]));
+ const scan=(s,f=NATIVE_DATA)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
+ it.each([ENVELOPE_FILE,NATIVE_DATA,path.join(root,'existing-ops-stage-envelopes.js')])('新完整caller/runtime/reader使%s取得资格',f=>expect(scan(base(),f)).toEqual([]));
+ it.each(six)('新组合混入旧%s拒绝',f=>{
+  const s=base();s.set(f,readHistoricalReader(f));expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
+ });
+ it.each(six)('新组合未知%s拒绝',f=>{
+  const s=base();s.set(f,s.get(f)+'\nexport const unknownHistoryReader=true;');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
+ });
+ it('仅新caller配完整旧reader拒绝',()=>{
+  const s=base();for(const f of [...PROVENANCE_READER_HASHES.keys(),six.at(-1)])s.set(f,readHistoricalReader(f));
+  expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
+ });
+ it.each(['noop','eval','raw export','claude'])('新runtime %s不能继承资格',kind=>{
+  const s=base(),f=six.at(-1),old=s.get(f);
+  if(kind==='noop')s.set(f,old.replace('const support = await readProvenanceSources(paths, readSource, revision);','const support = {};'));
+  if(kind==='eval')s.set(f,old+'\neval(candidate);');
+  if(kind==='raw export')s.set(f,old+"\nimport { ENVELOPES } from './existing-ops-build-envelopes.js';export const raw=ENVELOPES;");
+  if(kind==='claude')s.set(f,old+"\nimport { spawn } from 'node:child_process';spawn('claude',['-p','probe']);");
+  expect(s.get(f)).not.toBe(old);expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
+  if(kind==='claude')expect(scan(s,f).some(h=>h.rule==='R1')).toBe(true);
+ });
+ it('新增第三消费者仍拒绝',()=>{
+  const s=base();s.set(path.join(root,'unknown-history-reader.js'),"import { nativeEvidenceForwarding } from './existing-ops-native-evidence-source.js';nativeEvidenceForwarding(candidate,eval);");
+  expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
+ });
+});
 describe('doc reader完整组合资格',()=>{
  const runtime=path.join(BRAIN_ROOT,'src/lib/existing-ops-runtime-source.js');
  const stage=path.join(BRAIN_ROOT,'src/lib/existing-ops-stage-envelopes.js');
- const base=()=>new Map([ENVELOPE_FILE,ENVELOPE_CONSUMER,...PROVENANCE_READER_HASHES.keys(),runtime].map(file=>[file,readFileSync(file,'utf8')]));
+ const base=()=>new Map([ENVELOPE_FILE,ENVELOPE_CONSUMER,...PROVENANCE_READER_HASHES.keys(),runtime].map(file=>[file,readHistoricalReader(file)]));
  const scan=(sources,file=NATIVE_DATA)=>findClaudeInvocations(sources.get(file),{file,sources});
  it.each([ENVELOPE_FILE,NATIVE_DATA,stage])('完整十成员使%s取得只读资格',file=>{
   expect(scan(base(),file)).toEqual([]);
@@ -138,7 +175,7 @@ describe('doc reader完整组合资格',()=>{
 });
 describe('完整九模块来源reader组合不能按成员混搭',()=>{
  const root=path.join(BRAIN_ROOT,'src/lib'), names=[...PROVENANCE_READER_HASHES.keys()];
- const base=()=>new Map([ENVELOPE_FILE,ENVELOPE_CONSUMER,...names].map(file=>[file,readFileSync(file,'utf8')]));
+ const base=()=>new Map([ENVELOPE_FILE,ENVELOPE_CONSUMER,...names].map(file=>[file,readHistoricalReader(file)]));
  const old=restoreOldNativeReader;
  const scan=sources=>findClaudeInvocations(sources.get(NATIVE_DATA),{file:NATIVE_DATA,sources});
  it.each(['old','new'])('%s完整固定组合取得只读资格',version=>{
