@@ -317,7 +317,6 @@ async function inPrWorktree(ctx, pr, s, name, signal, fn) {
   const worktree = path.join(cfg.worktreeBase, name);
   fs.mkdirSync(cfg.worktreeBase, { recursive: true });
   if (fs.existsSync(worktree)) await removeWorktree(cfg, worktree, null);
-  fs.rmSync(worktree, { recursive: true, force: true });
   try {
     await preparePrWorktree(cfg, pr, worktree, signal);
     const intent = intentOf(worktree, pr.headRefName);
@@ -330,11 +329,11 @@ async function inPrWorktree(ctx, pr, s, name, signal, fn) {
     }
     s.bad = (s.bad ?? 0) + 1;
     ctx.log(`QA 门 PR #${pr.number} 出错：${error?.message || error}`);
+    if (s.bad >= cfg.qaMaxBadStreak) return await escalate(ctx, pr, s, null, { type: 'qa_evaluator_broken', reason_code: error?.message || String(error) });
     writeState(cfg, pr.number, s);
     return undefined;
   } finally {
     await removeWorktree(cfg, worktree, pr.headRefName);
-    fs.rmSync(worktree, { recursive: true, force: true });
   }
 }
 

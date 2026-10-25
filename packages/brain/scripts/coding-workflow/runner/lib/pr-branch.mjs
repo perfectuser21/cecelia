@@ -7,6 +7,7 @@ import { writeDevFiles, ensureIgnored, installDeps } from './worktree.mjs';
 import { consumeSourceMerge } from './source-merge.mjs';
 import { QA_SMOKE_DIR } from '../../lib/qa-smoke.mjs';
 import { qaSmokeOf } from '../../lib/repo-profile.mjs';
+import { addPrCheckout } from './pr-checkout.mjs';
 
 const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
 const PUSH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -90,8 +91,7 @@ export async function preparePrWorktree(cfg, pr, worktree, signal) {
   const branch = pr.headRefName;
   const fetch = await git(cfg.repo, ['fetch', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeoutMs: FETCH_TIMEOUT_MS });
   if (fetch.code !== 0) throw stop('git_fetch_failed');
-  const add = await git(cfg.repo, ['worktree', 'add', '-B', branch, worktree, `origin/${branch}`]);
-  if (add.code !== 0) throw stop('worktree_add_failed');
+  await addPrCheckout(cfg, branch, worktree);
   writeDevFiles(worktree, branch, { id: taskIdOf(worktree, branch) ?? 'unknown', payload: {} }, cfg.repoKey ?? 'cecelia');
   await ensureIgnored(worktree, branch);
   await installDeps(cfg, worktree, signal);

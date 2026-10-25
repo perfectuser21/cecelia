@@ -225,7 +225,6 @@ export async function runCiFix(ctx, signal) {
   const worktree = path.join(cfg.worktreeBase, `cifix-${pr.number}-${attemptNo}`);
   fs.mkdirSync(cfg.worktreeBase, { recursive: true });
   if (fs.existsSync(worktree)) await removeWorktree(cfg, worktree, null);
-  fs.rmSync(worktree, { recursive: true, force: true });
 
   const startedAt = Date.now();
   const entry = { pr: pr.number, head: pr.headRefOid, at: new Date().toISOString(), failed_checks: target.failedRequired, ...(target.kind ? { kind: target.kind } : {}), ...(target.source_sync_trigger ? { source_sync_trigger: target.source_sync_trigger } : {}) };
@@ -240,7 +239,6 @@ export async function runCiFix(ctx, signal) {
   if (entry.result === 'pr_closed') {
     ctx.log(`CI 修复 PR #${pr.number} 已关闭，修复不推送，交给关闭收尾`);
     await removeWorktree(cfg, worktree, pr.headRefName);
-    fs.rmSync(worktree, { recursive: true, force: true });
     return true;
   }
   await record(ctx, pr, taskId, entry);
@@ -252,6 +250,5 @@ export async function runCiFix(ctx, signal) {
     })]);
   }
   await removeWorktree(cfg, worktree, pr.headRefName);
-  fs.rmSync(worktree, { recursive: true, force: true });
   return true;
 }

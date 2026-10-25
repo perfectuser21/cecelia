@@ -31,7 +31,6 @@ async function cleanWorktrees(cfg, cutoff) {
     const head = await git(worktree, ['rev-parse', '--abbrev-ref', 'HEAD']);
     const branch = head.code === 0 && BRANCH_RE.test(head.stdout.trim()) ? head.stdout.trim() : null;
     await removeWorktree(cfg, worktree, branch);
-    if (fs.existsSync(worktree)) fs.rmSync(worktree, { recursive: true, force: true });
   }
 }
 
