@@ -4,6 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {mkdirSync,writeFileSync,renameSync,existsSync,realpathSync,mkdtempSync,rmSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {Agent} from 'undici';
 import {validateImplementationSnapshot,extractImplementationAdmissionSnapshots} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import {publishRecoveryBaseline} from './implementation-source-recovery.mjs';
 const SHA=/^[a-f0-9]{40}$/;
@@ -161,25 +162,30 @@ export async function publishMainSnapshots({brainUrl,token,scope,repo,base,head,
    post_outcome:method==='POST'?'UNKNOWN':null};
   const observation=operation;
   const save=()=>writeFileSync(join(diagnostics,`request-${attempt}.json`),JSON.stringify(observation,null,2)+'\n');
-  let failed=false;
+  let failed=false,signal,onAbort;
   try{
   save();
-  const options={method,redirect:'error',headers:{'X-Internal-Token':token,...(method==='POST'?{'Content-Type':'application/json'}:{})},...(method==='POST'?{body:JSON.stringify(query)}:{}),signal:AbortSignal.timeout(600000)};
+  signal=AbortSignal.timeout(600000);onAbort=()=>{void destroyDispatcher(signal.reason);};
+  signal.addEventListener('abort',onAbort,{once:true});if(signal.aborted)onAbort();
+  const options={method,redirect:'error',headers:{'X-Internal-Token':token,...(method==='POST'?{'Content-Type':'application/json'}:{})},...(method==='POST'?{body:JSON.stringify(query)}:{}),signal,dispatcher};
   observation.fetch_invoked=true;
   const response=await fetchFn(url,options);
   observation.response_received=true;observation.http_status=Number.isInteger(response.status)?response.status:null;
   observation.stage='request_body';save();
-  const text=await response.text();observation.body_read_completed=true;
+  const text=await response.text();observation.body_read_completed=true;options.signal.throwIfAborted();
   observation.post_outcome=method==='POST'?'RESPONSE_RECEIVED':null;
   let body;try{body=JSON.parse(text);}catch{body=null;}
   writeFileSync(join(diagnostics,`${attempt}-${route}.json`),JSON.stringify({method,...query,http_status:response.status,body:body??text},null,2)+'\n');
   if(!response.ok)throw fail(body?.error?.code??'IMPLEMENTATION_CI_HTTP_ERROR',{status:response.status,provider_code:body?.error?.code??null});
   if(!body)throw fail('IMPLEMENTATION_CI_SNAPSHOT_INVALID');return body;
-  }catch(error){failed=true;throw error;}
-  finally{observation.finished_at=new Date().toISOString();try{save();}catch(error){if(!failed)throw error;}}
+  }catch(error){failed=true;throw signal?.aborted?signal.reason:error;}
+  finally{if(onAbort)signal.removeEventListener('abort',onAbort);observation.finished_at=new Date().toISOString();try{save();}catch(error){if(!failed)throw error;}}
  };
  const readParent=async()=>{const b=await request('GET',scope,head);validate(b,{scope,repo,revision:head});return b;};
  const stageSnapshot=(body,target)=>target===scope?body.snapshot:body.snapshot.admission_companion?.snapshot;
+ // 运输层不得早于原600秒总deadline；本次发布独占，不改全局dispatcher。
+ const dispatcher=new Agent({headersTimeout:600000,bodyTimeout:600000});let dispatcherClosed=false,dispatcherShutdown;
+ const destroyDispatcher=reason=>dispatcherShutdown??=Promise.resolve().then(()=>dispatcher.destroy(reason)).catch(()=>{});
  try{
   let baseline=null,baseSource=base===head?'validated_current_head':'central_exact_revision';
   if(base!==head){
@@ -220,6 +226,8 @@ export async function publishMainSnapshots({brainUrl,token,scope,repo,base,head,
    await main();current=await readParent();await main();
   }
   validate(current,{scope,repo,revision:head,complete:true});await main();
+  // 所有body已读完才graceful close；close失败仍在正式文件落盘前闭口。
+  await dispatcher.close();dispatcherClosed=true;
   if(base===head)baseline=current; // 当前 SHA 不是历史：只复用刚完成双 scope 验证的同一 bundle。
   // 两份都完成验证后再落盘；upload 只在整个 step 成功时允许执行。
   for(const [name,value] of [['base',baseline],['head',current]]){
@@ -231,6 +239,9 @@ export async function publishMainSnapshots({brainUrl,token,scope,repo,base,head,
   const exception=exceptionDiagnostic(error),status=readProperty(error,'status'),providerCode=readProperty(error,'provider_code');
   try{writeFileSync(join(diagnostics,'failure.json'),JSON.stringify({status:'failed',code:exception.code??'IMPLEMENTATION_CI_PUBLISH_FAILED',http_status:Number.isInteger(status)?status:null,provider_code:safeCode(providerCode),scope,repo,base_revision:base,head_revision:head,operation:{...operation,finished_at:operation.finished_at??new Date().toISOString()},exception},null,2)+'\n');}catch{} // 诊断失败不能替换原始操作异常。
   throw error;
+ }finally{
+  // 失败/abort直接销毁，不等待graceful close；保留任意primary，包括undefined。
+  if(!dispatcherClosed)await destroyDispatcher();
  }
 }
 if(process.argv[1]&&realpathSync(process.argv[1])===realpathSync(fileURLToPath(import.meta.url))){
