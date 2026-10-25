@@ -104,3 +104,43 @@ RUNTIME_MODULES="$RUNTIME_MODULES" node -e 'const {createRequire}=require("modul
 ```
 
 运行健康检查缺少 Acorn 时返回 `runtime_acorn_unavailable`，版本不是 8.16.0 或解析接口不符时返回 `runtime_acorn_version_mismatch`；停止运行并修复可信依赖，不能用旧版健康结果替代。若浏览器依赖或二进制缺失，helper 报 `preview_browser_unavailable` 或启动失败，停止浏览器验收，不从脏主仓的 `node_modules` 猜测成功。ZenithJoy 在 `repos.json` 为 `automerge=false`；PR #2132 待人工处理，合并和业务生产仍须人工放行。本手册金丝雀只核对文档与实现，不代表重新完成浏览器或生产业务验收。
+
+## 回执常见误读与核账示例
+
+以下均为**示例数据、不是现场运行结果**。只读查看时，在仓库根目录用 `node packages/brain/scripts/coding-workflow/runner/status.mjs [--log-dir <dir>] [--json]`（执行时去掉方括号）。`--log-dir` 指定实际回执目录，省略时取 `loadConfig().logDir`；`--json` 输出 JSON 数组，省略时输出文本。结果按文件 mtime 倒序，本次读取并非并发更新期间的稳定快照。
+
+### 误读一：空列表等于健康
+
+目录不存在或没有可列回执时，示例 JSON 是 `[]`，文本是“没有运行记录（<实际目录>）”，退出码为 0。这只说明本次没有读到记录；先核实目录、服务状态与主日志，不能把空列表当作健康证明。下面的状态样例也只演示如何读字段。
+
+### 误读二：所有 JSON 都是终态回执
+
+含 `last_event` 的进度快照显示 `running`，不是终态；终态回执可显示 `completed`、`partial` 或 `failed`。例如下列独立样例可在内存中解析：
+
+```json
+{"last_event":"build","status":"completed"}
+```
+
+```json
+{"status":"partial","activities":[{"key":"intent","status":"completed"},{"key":"review","status":"skipped"},{"key":"build","status":"failed","reason_code":"activity_reason","attempts":[{"reason_code":"old_reason"},{"reason_code":"last_attempt_reason"}]}],"reason_code":"receipt_reason"}
+```
+
+第一例因有 `last_event` 显示 `running`。第二例显示 `partial`、`failed_activity=build`、`reason_code=last_attempt_reason`；若其 `status` 改为 `failed`，显示 `failed`，失败活动和原因规则相同。失败活动取首个非 `completed`/`skipped` 活动；原因依次取该活动最后一次 attempt、活动级、回执级，最后才用 `run_<status>`。不要从文本摘要跳过原回执。
+
+`completed` 即使缺 `outputs.pr_url` 仍是 `completed`。示例回执 `{"status":"completed","outputs":{}}` 对应的状态 JSON 摘要为：
+
+```json
+{"status":"completed","failed_activity":null,"reason_code":"pr_url_missing","pr_url":null,"ci_fix":null}
+```
+
+同一状态的文本 completed 行形如 `任务ID  completed  <mtime>`，不会打印 `pr_url_missing`；须看 JSON 并核 PR。有效 PR URL 对应的 `cifix-数字.json` 有修复尝试时，`ci_fix.attempts` 是次数，`ci_fix.last_result` 是最后一次结果，例如 `{"ci_fix":{"attempts":2,"last_result":"failed"}}`；无尝试则 `ci_fix:null`。修复次数与结果均不证明 PR 已合并。
+
+扫描会读取目录内非 `cifix-数字.json` 的普通 `.json` 文件。非法 JSON，或合法但不是回执的 `qa`、`commander`、`pr-sync-pending` 等 JSON，可能显示 `unreadable`；它不是文件损坏证明，更不是删除待办、状态文件或清理现场的依据。先只读核文件用途与原文，再按需重读。
+
+### 误读三：回执 completed 或前置 completed 等于全链成功
+
+`terminal.mjs` 发布后先把 Brain task `status` 写为 `completed`，同时把 `result.runner.phase` 写为 `awaiting_qa`；QA 门关闭时写 `awaiting_manual_merge`。这一步没有证明 PR 已合并。只读核对应 GitHub PR、最终 head 的真实合并事实，及 Brain `result.runner.phase=merged`、`result.merge.merged=true` 和该 merge 的 head、`qa_state` 终态；字段缺失或身份不一致就记为未证实。Learning 确认需单独回读；预览回收和 pending 清理需等下一次实际 tick 单独核验。一个 completed、一个 PR URL 或一个哈希都不能越级证明这些事实；不要手工改批准、FAIL 记录或状态来补齐结果。
+
+前置任务的 `completed` 只是 `deps.mjs` 检查的必要输入。源码对无 PR URL 或 `task.result.merged===true` 有直接就绪分支；有 PR URL 且无此捷径时才查询 GitHub：`MERGED` 就绪，`OPEN` 或未知状态等待，`CLOSED` 拒绝。这是领单判断分支，不是前置已真正合并的独立证据；核账仍须读实际 PR 与 head。
+
+交叉提示：`node packages/brain/scripts/coding-workflow/new-task.mjs <plan.json> --dry-run` 只校验本地计划，不创建任务；预检 `base_sha` 只核 40 位小写 hex 格式，不核提交是否存在。预检退出 0 也不是建单或运行成功。
