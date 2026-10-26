@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { git } from '../../__tests__/helpers/git.mjs';
+import { createOwnedRegistry, installOwnedPgrep, cleanupOwnedProcesses } from './helpers/owned-processes.mjs';
 import { expectGone } from '../../__tests__/helpers/procs.mjs';
 import {
   FAKE_EXECUTOR,
@@ -412,21 +413,29 @@ describe('coding workflow runner run-once', () => {
   it('执行器超时 → 按进程树杀掉执行器及独立进程组的全部后代（忽略 SIGTERM 的也不留），PATCH failed executor_timeout', async () => {
     brain = await startFakeBrain({ tasks: [codingTask(T1)] });
     const treePids = path.join(sb.root, 'tree.pids');
-    const started = Date.now();
-    const r = await runOnceProcess(runnerEnv(sb, brain.url, {
-      FAKE_EXEC_MODE: 'hang-tree',
-      FAKE_EXEC_TREE_PIDS: treePids,
-      CODING_WF_RUN_TIMEOUT_MS: '1500',
-      CODING_WF_KILL_GRACE_MS: '300',
-    }));
-    expect(r.exitCode, r.stderr).toBe(1);
-    expect(Date.now() - started).toBeLessThan(20000);
-    const last = brain.patches.at(-1).body;
-    expect(last.status).toBe('failed');
-    expect(last.result.coding_workflow_runner.reason_code).toBe('executor_timeout');
-    const pids = fs.readFileSync(treePids, 'utf8').trim().split('\n').map(Number);
-    expect(pids).toHaveLength(2);
-    for (const pid of pids) await expectGone(pid, `后代进程 ${pid}`);
+    const owned = createOwnedRegistry(sb.root);
+    const mode = process.env.CODING_WF_TEST_PROCESS_ENUM;
+    if (mode !== undefined && mode !== 'owned') throw Error('test_process_enum_invalid');
+    const enumeration = mode === 'owned' ? installOwnedPgrep(sb.root, owned) : {};
+    try {
+      const started = Date.now();
+      const r = await runOnceProcess(runnerEnv(sb, brain.url, {
+        ...owned, ...enumeration,
+        CW_TEST_PROCESS_MODULE: new URL('./helpers/owned-processes.mjs', import.meta.url).href,
+        FAKE_EXEC_MODE: 'hang-tree',
+        FAKE_EXEC_TREE_PIDS: treePids,
+        CODING_WF_RUN_TIMEOUT_MS: '1500',
+        CODING_WF_KILL_GRACE_MS: '300',
+      }));
+      expect(r.exitCode, r.stderr).toBe(1);
+      expect(Date.now() - started).toBeLessThan(20000);
+      const last = brain.patches.at(-1).body;
+      expect(last.status).toBe('failed');
+      expect(last.result.coding_workflow_runner.reason_code).toBe('executor_timeout');
+      const pids = fs.readFileSync(treePids, 'utf8').trim().split('\n').map(Number);
+      expect(pids).toHaveLength(2);
+      for (const pid of pids) await expectGone(pid, `后代进程 ${pid}`, { cleanup: false });
+    } finally { await cleanupOwnedProcesses(owned); }
   }, 30000);
 
   it('执行器不存在 → PATCH failed，不留 in_progress 孤儿', async () => {

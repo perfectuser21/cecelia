@@ -9,7 +9,9 @@ async function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'owned-process-test-'));
   const env = m.createOwnedRegistry(root);
   const child = spawn(process.execPath, ['--input-type=module', '-e', `import {registerOwnedProcess} from ${JSON.stringify(moduleUrl.href)};registerOwnedProcess();process.on('SIGTERM',()=>{});setInterval(()=>{},1000);`], {env:{...process.env,...env},stdio:['ignore','pipe','pipe'],detached:true});
-  await new Promise((resolve,reject)=>{const limit=setTimeout(()=>reject(Error('register timeout')),2000);const timer=setInterval(()=>{if(fs.existsSync(path.join(env.CW_TEST_PROCESS_DIR,child.pid+'.json'))){clearInterval(timer);clearTimeout(limit);resolve();}},10);});
+  try {
+    await new Promise((resolve,reject)=>{const limit=setTimeout(()=>{clearInterval(timer);reject(Error('register timeout'));},2000);const timer=setInterval(()=>{if(fs.existsSync(path.join(env.CW_TEST_PROCESS_DIR,child.pid+'.json'))){clearInterval(timer);clearTimeout(limit);resolve();}},10);});
+  } catch(error) { child.kill('SIGKILL'); fs.rmSync(root,{recursive:true,force:true}); throw error; }
   return {m,root,env,child,async clean(){await m.cleanupOwnedProcesses(env);fs.rmSync(root,{recursive:true,force:true});}};
 }
 it('真实PID/PPID登记可枚举并清理忽略TERM的独立进程组',async()=>{
@@ -36,4 +38,27 @@ it('活PID若无法证明随机实例身份必须拒绝，不能向它发清理�
     await expect(f.m.cleanupOwnedProcesses(f.env)).rejects.toThrow(/record|identity/);
     expect(()=>process.kill(f.child.pid,0)).not.toThrow();fs.writeFileSync(file,text);
   }finally{await f.clean();}
+});
+it('即使登记签名有效，复用到无响应活PID也拒绝发信号',async()=>{
+  const m=await import(moduleUrl.href);const {createHmac}=await import('node:crypto');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'owned-reuse-'));const env=m.createOwnedRegistry(root);
+  try{
+    const row={pid:process.pid,ppid:1,instance:'e'.repeat(64)};
+    const proof=createHmac('sha256',env.CW_TEST_PROCESS_KEY).update(JSON.stringify(row)).digest('hex');
+    fs.writeFileSync(path.join(env.CW_TEST_PROCESS_DIR,process.pid+'.json'),JSON.stringify({...row,proof}));
+    expect(()=>m.ownedChildren(1,env)).toThrow(/owned_identity_unverified/);
+    await expect(m.cleanupOwnedProcesses(env)).rejects.toThrow(/owned_identity_unverified/);
+    expect(()=>process.kill(process.pid,0)).not.toThrow();
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+it('测试pgrep仅支持-P，未知父节点退出3且不查询宿主',async()=>{
+  const m=await import(moduleUrl.href);const {spawnSync}=await import('node:child_process');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'owned-pgrep-'));const env=m.createOwnedRegistry(root);
+  try{
+    const installed=m.installOwnedPgrep(root,env);
+    for(const args of [[],['-f','node'],['-P','1']]){
+      const r=spawnSync('pgrep',args,{env:{...process.env,...env,...installed},encoding:'utf8'});
+      expect(r.status,r.stderr).toBe(3);expect(r.stdout).toBe('');expect(r.stderr).toMatch(/owned_pgrep_arguments|owned_parent_unknown/);
+    }
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });

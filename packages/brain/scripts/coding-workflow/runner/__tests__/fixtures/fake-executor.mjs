@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { registerOwnedProcess } from '../helpers/owned-processes.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name) => {
@@ -49,18 +50,22 @@ function finish(result, code) {
 }
 
 // 独立进程组、忽略 SIGTERM 的常驻进程；depth>0 时再拉起下一层。
-const SLEEPER = `process.on('SIGTERM', () => {});
+const SLEEPER = `(async () => {
+process.on('SIGTERM', () => {});
+if (process.env.CW_TEST_PROCESS_DIR) { const m = await import(process.env.CW_TEST_PROCESS_MODULE); m.registerOwnedProcess(); }
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 fs.appendFileSync(process.env.FAKE_EXEC_TREE_PIDS, process.pid + '\\n');
 if (Number(process.argv[1]) > 0) {
   spawn(process.execPath, ['-e', process.env.FAKE_SLEEPER, String(Number(process.argv[1]) - 1)], { detached: true, stdio: 'ignore', env: process.env }).unref();
 }
-setInterval(() => {}, 1000);`;
+setInterval(() => {}, 1000);
+})().catch(e=>{console.error(e);process.exit(1);});`;
 
 if (mode === 'hang') {
   setInterval(() => {}, 1000);
 } else if (mode === 'hang-tree') {
+  registerOwnedProcess();
   spawn(process.execPath, ['-e', SLEEPER, '1'], {
     detached: true,
     stdio: 'ignore',
