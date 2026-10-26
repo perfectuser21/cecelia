@@ -46,3 +46,14 @@ describe('从受保护01读取固定原文', () => {
     } finally { f.clean(); }
   });
 });
+
+it('legacy背景示例ref_id不误判；受管01丢input标记仍失败', async () => {
+  const {loadBaselineContext}=await import('../lib/baseline-context.mjs');
+  const f=managedSpecFixture();
+  try {
+    const input={...f.input};delete input.authority;delete input.authority_required;
+    expect(()=>loadBaselineContext(input)).toThrow('baseline_binding_missing');
+    fs.writeFileSync(path.join(f.sprint,'01-intent.md'),`---\ntask_id: ${input.task_id}\nstep: intent\nupstream: []\n---\n## 背景\n示例\n  ref_id: example\n### I-1\n保持行为\n`);
+    expect(loadBaselineContext(input).status).toBe('unconfigured');
+  }finally{f.clean();}
+});

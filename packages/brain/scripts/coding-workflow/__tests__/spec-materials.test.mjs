@@ -36,3 +36,15 @@ describe('旧规则与材料计划确定性检查', () => {
     } finally { f.clean(); }
   });
 });
+
+it('单条规则批准不能授权废弃整个规则文件或额外文件', () => {
+  const f = managedSpecFixture();
+  try {
+    const row = f.plan.materials.find(r=>r.ref_id==='rule');
+    row.rule_id='cw-safe'; row.action='retire'; row.approval_refs=['I-1'];
+    const approved={...baseline,approvals:[{ref_id:'rule',rule_id:'cw-safe',action:'retire',intent_id:'I-1'}]};
+    expect(check(f.plan,approved)).toContain('approval_missing:rule');
+    row.action='keep';row.additional_changes=[{path:'extra.md',action:'retire',reason:'清理',verification:'核验'}];
+    expect(check(f.plan,approved)).toContain('approval_missing:rule');
+  } finally {f.clean();}
+});
