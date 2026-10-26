@@ -29,6 +29,8 @@ import { settleClosedPrs } from './lib/pr-closure.mjs';
 import { readyCandidates } from './lib/deps.mjs';
 import { repoViews, taskView } from './lib/repos.mjs';
 import { startLeaseHeartbeat } from './lib/lease.mjs';
+import { commitAvailable, sameAuthority, validateAuthority } from '../lib/authority-refs.mjs';
+import { git } from './lib/proc.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_REL = 'packages/brain/scripts/coding-workflow';
@@ -97,8 +99,34 @@ async function claimFirst(ctx, candidates) {
 async function execute(ctx, task, job, signal) {
   const { cfg } = ctx;
   const names = taskNames(task.id);
+  fs.mkdirSync(cfg.logDir, { recursive: true });
+  const freezeFile = path.join(cfg.logDir, `${task.id}.initial-base.sha`);
+  if (task.payload?.authority_required === true && task.payload?.base_sha === undefined && !fs.existsSync(freezeFile)) {
+    const fetched = await git(cfg.repo, ['fetch', 'origin', 'main']);
+    if (fetched.code !== 0) throw new Error('git_fetch_failed');
+    const base = await git(cfg.repo, ['rev-parse', '--verify', 'origin/main^{commit}']);
+    if (base.code !== 0 || !commitAvailable(cfg.repo, base.stdout.trim())) throw new Error('initial_base_unavailable');
+    fs.writeFileSync(freezeFile, `${base.stdout.trim()}\n`, { flag: 'wx' });
+  }
+  if (task.payload?.base_sha === undefined && fs.existsSync(freezeFile)) {
+    const frozen = fs.readFileSync(freezeFile, 'utf8').trim();
+    if (!commitAvailable(cfg.repo, frozen)) throw new Error('initial_base_unavailable');
+    task = { ...task, payload: { ...task.payload, base_sha: frozen } };
+  }
   // worktree 来自任务所在仓库的 clone（cfg.repo）、建在它的 worktree 根
   const worktree = await prepareWorktree(cfg, task, names, job, signal);
+  const head = await git(worktree, ['rev-parse', 'HEAD']);
+  if (head.code !== 0) throw new Error('initial_base_unavailable');
+  const initialBase = task.payload?.base_sha ?? head.stdout.trim();
+  if (head.stdout.trim() !== initialBase) throw new Error('initial_base_mismatch');
+  if (!commitAvailable(worktree, initialBase)) throw new Error('initial_base_unavailable');
+  if (fs.existsSync(freezeFile) && fs.readFileSync(freezeFile, 'utf8').trim() !== initialBase) throw new Error('initial_base_mismatch');
+  if (!fs.existsSync(freezeFile)) fs.writeFileSync(freezeFile, `${initialBase}\n`, { flag: 'wx' });
+  if (task.payload?.authority_required === true) {
+    for (const ref of task.payload.authority.refs) {
+      if (!commitAvailable(worktree, ref.revision)) throw new Error('authority_revision_unavailable');
+    }
+  }
   // 判卷代码（契约、执行器、各活动）一律来自默认仓 runner 专用 clone（每轮自更新到 main），不来自任务 worktree / 任务仓库：
   // build 改过的 verify/chain_check 不能拿来判它自己（审计 P0 #1，对应旧 harness「judge 不在被评 worktree 跑」）
   const judgeRepo = cfg.trustedRepo ?? cfg.repo;
@@ -108,6 +136,8 @@ async function execute(ctx, task, job, signal) {
     contract,
     input: {
       run_tag: names.runTag, task_id: task.id, worktree, sprint_dir: names.sprintDir, brain_url: cfg.brainUrl,
+      ...(task.payload?.authority_required === true ? { authority: task.payload.authority, authority_required: true } : {}),
+      initial_base_sha: initialBase,
       // 只透传任务登记值；不采用 .dev-mode 为兼容旧任务生成的豁免缺省。
       ...(task.payload?.gp_anchor !== undefined ? { gp_anchor: task.payload.gp_anchor } : {}),
       // 活动层按仓库参数化（C6）：版本碎片、CI 预检清单、本仓规矩提示词、QA 模式随任务所在仓库的 repos.json 条目走
@@ -211,6 +241,25 @@ export async function runOnce(cfg, signal) {
     log(`任务 ${task.id} ${detail}，不跑链`);
     return failTask(tctx, task, job, { status: 'failed', failed_activity: null, reason_code: 'executor_kind_mismatch', pr_url: null, detail });
   }
+  const read = await ctx.brain.getTask(task.id);
+  const current = read.body;
+  if (!read.ok || current?.id !== task.id) {
+    return failTask(tctx, task, job, { status: 'failed', failed_activity: 'intent',
+      reason_code: 'task_receipt_unavailable', pr_url: null, detail: `无法核实任务 ${task.id} 的领单回执` });
+  }
+  const managed = task.payload?.authority_required === true || task.payload?.authority !== undefined
+    || current.payload?.authority_required === true || current.payload?.authority !== undefined;
+  if (managed) {
+    if (current?.payload?.authority_required !== true
+      || validateAuthority(current?.payload?.authority).length > 0
+      || !sameAuthority(current.payload.authority, task.payload?.authority)
+      || task.payload?.authority_required !== true || current.payload.repo !== task.repoKey) {
+      return failTask(tctx, task, job, { status: 'failed', failed_activity: 'intent',
+        reason_code: 'authority_receipt_mismatch', pr_url: null,
+        detail: `受管声明或仓库路由回执不一致：task_id=${task.id}` });
+    }
+  }
+  task = { ...current, repoKey: task.repoKey, claimed_kind: task.claimed_kind };
   let summary;
   // 统一领单租约：执行期间心跳续约；409 lease_lost → 中止执行器，Brain 已按租约语义处置，不再回写终态
   const leaseAbort = new AbortController();
