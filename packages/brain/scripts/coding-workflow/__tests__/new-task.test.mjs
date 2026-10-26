@@ -15,8 +15,8 @@ const SCRIPT = path.join(HERE, '../new-task.mjs');
 const PROJECT_ID = 'p0000000-0000-4000-8000-000000000001';
 const ROOT_ID = '11111111-1111-4111-8111-111111111111';
 
-function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false, wrongBaseSha = false, missingBaseSha = false } = {}) {
-  const state = { posts: [], projectPosts: [], order: [] };
+function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false, wrongBaseSha = false, missingBaseSha = false, dropAuthority = false } = {}) {
+  const state = { posts: [], projectPosts: [], order: [], gets: [], claims: [], patches: [], rows: new Map() };
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (d) => { raw += d; });
@@ -30,18 +30,23 @@ function startBrain({ failAt = null, projectFail = false, wrongRoute = false, ma
         res.statusCode = 201;
         return res.end(JSON.stringify({ id: PROJECT_ID, ...body }));
       }
+      if (req.method === 'GET' && req.url.startsWith('/api/brain/tasks/')) { state.gets.push(req.url); return res.end(JSON.stringify(state.rows.get(req.url.split('/').at(-1)))); }
+      if (req.method === 'POST' && req.url.endsWith('/claim')) { state.claims.push(req.url); return res.end(JSON.stringify({ ok: true })); }
+      if (req.method === 'PATCH' && req.url.startsWith('/api/brain/tasks/')) { const patch = JSON.parse(raw); state.patches.push(patch); const id = req.url.split('/').at(-1); const row = { ...state.rows.get(id), ...patch }; state.rows.set(id, row); return res.end(JSON.stringify(row)); }
       if (req.method !== 'POST' || req.url !== '/api/brain/tasks') { res.statusCode = 404; return res.end('{}'); }
       const body = JSON.parse(raw);
       state.posts.push(body);
       state.order.push('task');
       if (failAt === state.posts.length) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'change_kind_required' })); }
       res.statusCode = 201;
-      return res.end(JSON.stringify({ id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, change_kind: body.change_kind, base_sha: missingBaseSha ? undefined : wrongBaseSha ? 'f'.repeat(40) : body.base_sha, map_scope: malformedScope ? {} : body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } }));
+      const row = { id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, authority: dropAuthority ? undefined : body.payload.authority, change_kind: body.change_kind, base_sha: missingBaseSha ? undefined : wrongBaseSha ? 'f'.repeat(40) : body.base_sha, map_scope: malformedScope ? {} : body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } };
+      state.rows.set(row.id, row);
+      return res.end(JSON.stringify(row));
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
     state.url = `http://127.0.0.1:${server.address().port}`;
-    state.close = () => new Promise((r) => server.close(r));
+    state.close = () => new Promise((r) => { server.closeAllConnections(); server.close(r); });
     resolve(state);
   }));
 }
@@ -71,6 +76,28 @@ describe('new-task.mjs', () => {
     if (brain) await brain.close();
     brain = null;
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('受管声明丢失时 GET 核对并安全收账', async () => {
+    brain = await startBrain({ dropAuthority: true });
+    const authority = { object_id: 'coding-workflow', refs: [{ ref_id: 'rule', kind: 'rule', path: 'rule.md', revision: 'a'.repeat(40), digest: 'b'.repeat(64), required: true }] };
+    const r = await runScript([plan({ title: '受管', acceptance: ['x'], authority })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('authority_receipt_mismatch');
+    expect(r.stderr).toContain('00000000-0000-4000-8000-000000000001');
+    expect(brain.posts[0].payload).toMatchObject({ authority_required: true, authority });
+    expect(brain.gets).toHaveLength(2);
+    expect(brain.claims).toHaveLength(1);
+    expect(brain.patches.at(-1).status).toBe('failed');
+  });
+
+  it('重复 ref_id 整批拒绝，不发 POST', async () => {
+    brain = await startBrain();
+    const ref = { ref_id: 'rule', kind: 'rule', path: 'rule.md', revision: 'a'.repeat(40), digest: 'b'.repeat(64), required: true };
+    const r = await runScript([plan({ title: '坏声明', acceptance: ['x'], authority: { object_id: 'coding-workflow', refs: [ref, ref] } })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('authority_ref_duplicate');
+    expect(brain.posts).toEqual([]);
   });
 
   it('单条：建成独立类型 coding_workflow 任务（coding_workflow / repo / acceptance，不再借 data + headed_manual），输出 id', async () => {
