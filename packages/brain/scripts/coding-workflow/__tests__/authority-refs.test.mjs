@@ -44,6 +44,31 @@ describe('固定 Git 权威引用', () => {
       expect(resolveAuthority(root, [{ ...refs[1], revision: contentSha, digest: sha('forged body') }], { trustedSha: bound })[0].reason).toBe('authority_revision_untrusted');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
+  it('Git replace 不能替换固定提交的索引或正文', async () => {
+    const { loadAuthorityIndex, resolveAuthority } = await import('../lib/authority-refs.mjs');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-authority-replace-'));
+    try {
+      initCommittableRepo(root, path.join(root, '.hooks'));
+      const refs = ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({ ref_id: kind, kind, path: 'rule.md', required: true }));
+      const indexPath = path.join(root, 'docs/registry/coding-workflow-authority.json');
+      fs.mkdirSync(path.dirname(indexPath), { recursive: true });
+      fs.writeFileSync(indexPath, JSON.stringify({ object_id: 'coding-workflow', refs }));
+      fs.writeFileSync(path.join(root, 'rule.md'), 'original');
+      git(root, 'add', '.'); git(root, 'commit', '-qm', 'original');
+      const original = git(root, 'rev-parse', 'HEAD').trim();
+      git(root, 'update-ref', 'refs/remotes/origin/main', original);
+      fs.writeFileSync(indexPath, JSON.stringify({ object_id: 'coding-workflow', refs: refs.map((r) => ({ ...r, path: 'package.json' })) }));
+      fs.writeFileSync(path.join(root, 'rule.md'), 'substituted');
+      git(root, 'commit', '-qam', 'substituted');
+      const substitute = git(root, 'rev-parse', 'HEAD').trim();
+      git(root, 'replace', original, substitute);
+      expect(git(root, 'show', `${original}:rule.md`)).toBe('substituted');
+      expect(loadAuthorityIndex(root, original).refs).toEqual(refs);
+      expect(resolveAuthority(root, [{ ...refs[0], revision: original, digest: sha('original') }], { trustedSha: original })[0].status).toBe('found');
+      expect(resolveAuthority(root, [{ ...refs[0], revision: original, digest: sha('substituted') }], { trustedSha: original })[0].reason).toBe('authority_digest_mismatch');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('同路径两个 commit 读取各自原字节，拒绝坏摘要和 symlink', async () => {
     const { resolveAuthority } = await import('../lib/authority-refs.mjs');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-authority-'));
