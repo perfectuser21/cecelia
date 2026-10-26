@@ -11,9 +11,9 @@
 // 先整体校验再逐条创建；中途失败退出 1 并列出已建的任务。输出 [{key,id,title}]。
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { loadRepos, resolveRepo, reposFile } from './runner/lib/repos.mjs';
+import { loadRepos, resolveRepo, reposFile, resolveEntry } from './runner/lib/repos.mjs';
 import { normalizeChangeKind } from '../../src/impact-contract/change-kind.js';
-import { validateAuthority, sameAuthority } from './lib/authority-refs.mjs';
+import { validateAuthority, sameAuthority, loadAuthorityIndex, trustedHead, resolveAuthority } from './lib/authority-refs.mjs';
 
 const nonEmpty = (s) => typeof s === 'string' && s.trim() !== '';
 
@@ -40,7 +40,13 @@ export function validatePlan(plan, { repo = null, repos = loadRepos(reposFile())
     if (!Array.isArray(scope) || scope.length === 0) errors.push(`#${i + 1}:map_scope_required`);
     else if (!scope.every(nonEmpty)) errors.push(`#${i + 1}:invalid_map_scope`);
     const mapScope = Array.isArray(scope) && scope.every(nonEmpty) ? [...new Set(scope.map((v) => v.trim()))] : [];
-    const authority = inherit('authority');
+    const declaredObject = inherit('object_id');
+    const declaredRefs = inherit('authority_refs');
+    const nested = inherit('authority');
+    const authority = nested ?? (declaredObject !== undefined || declaredRefs !== undefined
+      ? { object_id: declaredObject, refs: declaredRefs } : undefined);
+    if (nested !== undefined && (declaredObject !== undefined || declaredRefs !== undefined)
+      && !sameAuthority(nested, { object_id: declaredObject, refs: declaredRefs })) errors.push(`#${i + 1}:authority_declaration_conflict`);
     if (authority !== undefined) errors.push(...validateAuthority(authority).map((error) => `#${i + 1}:${error}`));
     return { ...t, repoKey, changeKind, mapScope, baseSha, authority };
   });
@@ -78,6 +84,8 @@ function body(t, batch, ids, projectId) {
   if (t.authority !== undefined) {
     payload.authority_required = true;
     payload.authority = t.authority;
+    payload.object_id = t.authority.object_id;
+    payload.authority_refs = t.authority.refs;
   }
   const req = {
     // 独立类型（派发总闸 F，任务 0a70684f）：tick 按类型排除，不再借 data + headed_manual
@@ -119,6 +127,8 @@ async function receipt(url, method = 'GET', data) {
 function managedMatches(row, t) {
   return row?.task_type === 'coding_workflow' && row?.payload?.authority_required === true
     && sameAuthority(row.payload.authority, t.authority) && row.payload.repo === t.repoKey
+    && row.payload.object_id === t.authority.object_id
+    && sameAuthority(row.payload.authority_refs, t.authority.refs)
     && row.payload.change_kind === t.changeKind
     && row.payload.work_kind === 'coding_mutation'
     && row.payload.orchestrator === 'coding-workflow-runner'
@@ -180,6 +190,22 @@ async function main(argv, env) {
   const checked = validatePlan(plan, { repo: args.repo, repos });
   const { tasks, batch, project, errors } = checked;
   let { projectId } = checked;
+  if (tasks.some((t) => t.authority !== undefined)) {
+    const clone = env.CODING_WF_TRUSTED_REPO || resolveEntry(repos.find((r) => r.default), env).clone;
+    const fixed = trustedHead(clone);
+    let index;
+    try { index = fixed ? loadAuthorityIndex(clone, fixed) : null; }
+    catch (error) { errors.push(error.message); }
+    if (!index) errors.push('authority_index_binding_missing');
+    else tasks.forEach((t, i) => {
+      if (t.authority === undefined) return;
+      errors.push(...validateAuthority(t.authority, index).map((error) => `#${i + 1}:${error}`));
+      if (validateAuthority(t.authority, index).length === 0) {
+        const failed = resolveAuthority(clone, t.authority.refs, { trustedSha: fixed }).find((r) => r.required && r.status !== 'found');
+        if (failed) errors.push(`#${i + 1}:${failed.reason}`);
+      }
+    });
+  }
   if (errors.length > 0) {
     console.error(`计划不合格：${errors.join(' ')}`);
     return 2;

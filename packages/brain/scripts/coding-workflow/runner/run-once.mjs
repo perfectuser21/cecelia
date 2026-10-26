@@ -29,7 +29,7 @@ import { settleClosedPrs } from './lib/pr-closure.mjs';
 import { readyCandidates } from './lib/deps.mjs';
 import { repoViews, taskView } from './lib/repos.mjs';
 import { startLeaseHeartbeat } from './lib/lease.mjs';
-import { commitAvailable, sameAuthority, validateAuthority } from '../lib/authority-refs.mjs';
+import { commitAvailable, sameAuthority, validateAuthority, loadAuthorityIndex, trustedHead, authorityFromPayload } from '../lib/authority-refs.mjs';
 import { git } from './lib/proc.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -101,6 +101,24 @@ async function execute(ctx, task, job, signal) {
   const names = taskNames(task.id);
   fs.mkdirSync(cfg.logDir, { recursive: true });
   const freezeFile = path.join(cfg.logDir, `${task.id}.initial-base.sha`);
+  const judgeRepo = cfg.trustedRepo ?? cfg.repo;
+  let authorityIndexSha = null;
+  if (task.payload?.authority_required === true) {
+    const binding = path.join(cfg.logDir, `${task.id}.authority-index.sha`);
+    if (fs.existsSync(binding)) {
+      authorityIndexSha = fs.readFileSync(binding, 'utf8').trim();
+    } else {
+      if (fs.existsSync(freezeFile) || fs.existsSync(job.receiptPath)) throw new Error('authority_index_binding_missing');
+      authorityIndexSha = trustedHead(judgeRepo);
+      if (!authorityIndexSha) throw new Error('authority_index_binding_missing');
+      // 首次绑定必须由独立更新的可信 clone 提供；未入 origin/main 的索引不能建成受管任务。
+      loadAuthorityIndex(judgeRepo, authorityIndexSha);
+      fs.writeFileSync(binding, `${authorityIndexSha}\n`, { flag: 'wx' });
+    }
+    const index = loadAuthorityIndex(judgeRepo, authorityIndexSha);
+    const errors = validateAuthority(authorityFromPayload(task.payload), index);
+    if (errors.length) throw new Error(errors[0]);
+  }
   if (task.payload?.authority_required === true && task.payload?.base_sha === undefined && !fs.existsSync(freezeFile)) {
     const fetched = await git(cfg.repo, ['fetch', 'origin', 'main']);
     if (fetched.code !== 0) throw new Error('git_fetch_failed');
@@ -122,21 +140,16 @@ async function execute(ctx, task, job, signal) {
   if (!commitAvailable(worktree, initialBase)) throw new Error('initial_base_unavailable');
   if (fs.existsSync(freezeFile) && fs.readFileSync(freezeFile, 'utf8').trim() !== initialBase) throw new Error('initial_base_mismatch');
   if (!fs.existsSync(freezeFile)) fs.writeFileSync(freezeFile, `${initialBase}\n`, { flag: 'wx' });
-  if (task.payload?.authority_required === true) {
-    for (const ref of task.payload.authority.refs) {
-      if (!commitAvailable(worktree, ref.revision)) throw new Error('authority_revision_unavailable');
-    }
-  }
   // 判卷代码（契约、执行器、各活动）一律来自默认仓 runner 专用 clone（每轮自更新到 main），不来自任务 worktree / 任务仓库：
   // build 改过的 verify/chain_check 不能拿来判它自己（审计 P0 #1，对应旧 harness「judge 不在被评 worktree 跑」）
-  const judgeRepo = cfg.trustedRepo ?? cfg.repo;
   const trusted = path.join(judgeRepo, WORKFLOW_REL);
   const contract = readContract(path.join(trusted, 'contract.json'));
   const envelope = {
     contract,
     input: {
       run_tag: names.runTag, task_id: task.id, worktree, sprint_dir: names.sprintDir, brain_url: cfg.brainUrl,
-      ...(task.payload?.authority_required === true ? { authority: task.payload.authority, authority_required: true } : {}),
+      ...(task.payload?.authority_required === true ? { authority: authorityFromPayload(task.payload), authority_required: true } : {}),
+      ...(authorityIndexSha ? { authority_index_sha: authorityIndexSha, trusted_repo: judgeRepo } : {}),
       initial_base_sha: initialBase,
       // 只透传任务登记值；不采用 .dev-mode 为兼容旧任务生成的豁免缺省。
       ...(task.payload?.gp_anchor !== undefined ? { gp_anchor: task.payload.gp_anchor } : {}),
@@ -248,11 +261,13 @@ export async function runOnce(cfg, signal) {
       reason_code: 'task_receipt_unavailable', pr_url: null, detail: `无法核实任务 ${task.id} 的领单回执` });
   }
   const managed = task.payload?.authority_required === true || task.payload?.authority !== undefined
-    || current.payload?.authority_required === true || current.payload?.authority !== undefined;
+    || task.payload?.object_id !== undefined || task.payload?.authority_refs !== undefined
+    || current.payload?.authority_required === true || current.payload?.authority !== undefined
+    || current.payload?.object_id !== undefined || current.payload?.authority_refs !== undefined;
   if (managed) {
     if (current?.payload?.authority_required !== true
-      || validateAuthority(current?.payload?.authority).length > 0
-      || !sameAuthority(current.payload.authority, task.payload?.authority)
+      || validateAuthority(authorityFromPayload(current?.payload)).length > 0
+      || !sameAuthority(authorityFromPayload(current.payload), authorityFromPayload(task.payload))
       || task.payload?.authority_required !== true || current.payload.repo !== task.repoKey) {
       return failTask(tctx, task, job, { status: 'failed', failed_activity: 'intent',
         reason_code: 'authority_receipt_mismatch', pr_url: null,

@@ -6,7 +6,7 @@ import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
 import { extractAcceptance, renderIntent } from '../lib/intent.mjs';
 import { sha256File } from '../lib/guards.mjs';
 import { renderInvariants, INVARIANTS_FILE } from '../lib/invariants.mjs';
-import { validateAuthority, resolveAuthority, sameAuthority, commitAvailable } from '../lib/authority-refs.mjs';
+import { validateAuthority, resolveAuthority, sameAuthority, commitAvailable, loadAuthorityIndex, authorityFromPayload } from '../lib/authority-refs.mjs';
 import { execFileSync } from 'node:child_process';
 import { resolveRepo } from '../runner/lib/repos.mjs';
 
@@ -38,14 +38,21 @@ await runActivity(async (input) => {
   }
 
   const managed = task?.payload?.authority_required === true || task?.payload?.authority !== undefined
+    || task?.payload?.object_id !== undefined || task?.payload?.authority_refs !== undefined
     || input.authority_required === true || input.authority !== undefined;
   let authorityFacts = null;
   if (managed) {
-    const authority = task?.payload?.authority;
+    const authority = authorityFromPayload(task?.payload);
     if (task?.payload?.authority_required !== true || input.authority_required !== true
-      || validateAuthority(authority).length > 0 || !sameAuthority(authority, input.authority)) {
+      || !sameAuthority(authority, input.authority)) {
       return fail('fatal', 'authority_receipt_mismatch');
     }
+    if (!input.trusted_repo || !input.authority_index_sha) return fail('needs_human', 'authority_index_binding_missing');
+    let index;
+    try { index = loadAuthorityIndex(input.trusted_repo, input.authority_index_sha); }
+    catch (error) { return fail('needs_human', error.message); }
+    const authorityErrors = validateAuthority(authority, index);
+    if (authorityErrors.length) return fail('fatal', authorityErrors[0]);
     const fixed = task?.payload?.base_sha;
     const initialBase = input.initial_base_sha;
     if (typeof initialBase !== 'string' || !commitAvailable(input.worktree, initialBase)
@@ -54,7 +61,8 @@ await runActivity(async (input) => {
     try { origin = execFileSync('git', ['-C', input.worktree, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).trim(); }
     catch { origin = null; }
     if (!origin || resolveRepo(origin) !== task.payload.repo) return fail('fatal', 'authority_repo_mismatch');
-    authorityFacts = resolveAuthority(input.worktree, authority.refs).map((fact) => ({ ...fact, object_id: authority.object_id }));
+    authorityFacts = resolveAuthority(input.trusted_repo, authority.refs, { trustedSha: input.authority_index_sha })
+      .map((fact) => ({ ...fact, object_id: authority.object_id }));
     const blocked = authorityFacts.find((fact) => fact.required && fact.status !== 'found');
     if (blocked) return fail('fatal', blocked.reason, { evidence: [{ ref_id: blocked.ref_id, path: blocked.path }] });
   }

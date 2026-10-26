@@ -6,7 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
 import { validatePlan as validateRawPlan } from '../new-task.mjs';
+import { initCommittableRepo, git } from './helpers/git.mjs';
 const routing = { change_kind: 'bugfix', map_scope_hint: ['F1'] };
 const validatePlan = (plan, opts) => validateRawPlan({ ...routing, ...plan }, opts);
 
@@ -14,6 +16,22 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, '../new-task.mjs');
 const PROJECT_ID = 'p0000000-0000-4000-8000-000000000001';
 const ROOT_ID = '11111111-1111-4111-8111-111111111111';
+
+function managedFixture(root) {
+  const clone = path.join(root, 'trusted');
+  fs.mkdirSync(clone);
+  initCommittableRepo(clone, path.join(root, 'hooks'));
+  const kinds = ['spec', 'rule', 'sample', 'implementation'];
+  const index = { object_id: 'coding-workflow', refs: kinds.map((kind) => ({ ref_id: kind, kind, path: 'rule.md', required: true })) };
+  fs.mkdirSync(path.join(clone, 'docs/registry'), { recursive: true });
+  fs.writeFileSync(path.join(clone, 'docs/registry/coding-workflow-authority.json'), JSON.stringify(index));
+  fs.writeFileSync(path.join(clone, 'rule.md'), 'trusted rule');
+  git(clone, 'add', '.'); git(clone, 'commit', '-qm', 'trusted sources');
+  const revision = git(clone, 'rev-parse', 'HEAD').trim();
+  git(clone, 'update-ref', 'refs/remotes/origin/main', revision);
+  const digest = crypto.createHash('sha256').update('trusted rule').digest('hex');
+  return { clone, authority: { object_id: 'coding-workflow', refs: kinds.map((kind) => ({ ref_id: kind, kind, path: 'rule.md', revision, digest, required: true })) } };
+}
 
 function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false, wrongBaseSha = false, missingBaseSha = false, dropAuthority = false, deduplicated = false } = {}) {
   const state = { posts: [], projectPosts: [], order: [], gets: [], claims: [], patches: [], rows: new Map() };
@@ -79,10 +97,40 @@ describe('new-task.mjs', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('计划按批次继承 object_id 与 authority_refs，拒绝混用声明', () => {
+    const refs = ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({
+      ref_id: kind, kind, path: `${kind}.md`, revision: 'a'.repeat(40), digest: 'b'.repeat(64), required: true,
+    }));
+    const checked = validatePlan({ object_id: 'coding-workflow', authority_refs: refs,
+      tasks: [{ title: '一', acceptance: ['A'] }, { title: '二', acceptance: ['B'] }] });
+    expect(checked.errors).toEqual([]);
+    expect(checked.tasks.map((t) => t.authority)).toEqual([{
+      object_id: 'coding-workflow', refs,
+    }, { object_id: 'coding-workflow', refs }]);
+    const conflict = validatePlan({ object_id: 'coding-workflow', authority_refs: refs,
+      authority: { object_id: 'coding-workflow', refs: [] }, title: '坏', acceptance: ['A'] });
+    expect(conflict.errors).toContain('#1:authority_declaration_conflict');
+  });
+
+  it('真实 CLI 在建单前按可信清单拒绝 package.json 路径替换', async () => {
+    const { clone, authority } = managedFixture(dir);
+    fs.writeFileSync(path.join(clone, 'package.json'), '{}');
+    git(clone, 'add', 'package.json'); git(clone, 'commit', '-qm', 'trusted package');
+    const revision = git(clone, 'rev-parse', 'HEAD').trim();
+    git(clone, 'update-ref', 'refs/remotes/origin/main', revision);
+    const digest = crypto.createHash('sha256').update('{}').digest('hex');
+    const replaced = { ...authority, refs: authority.refs.map((ref) => ({ ...ref, path: 'package.json', revision, digest })) };
+    const r = await runScript([plan({ title: '路径替换', acceptance: ['A'], object_id: replaced.object_id,
+      authority_refs: replaced.refs }), '--dry-run'], { CODING_WF_TRUSTED_REPO: clone });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('authority_path_mismatch');
+    expect(r.stdout).toBe('');
+  });
+
   it('受管声明丢失时 GET 核对并安全收账', async () => {
     brain = await startBrain({ dropAuthority: true });
-    const authority = { object_id: 'coding-workflow', refs: ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({ ref_id: kind, kind, path: 'rule.md', revision: 'a'.repeat(40), digest: 'b'.repeat(64), required: true })) };
-    const r = await runScript([plan({ title: '受管', acceptance: ['x'], authority })], { BRAIN_URL: brain.url });
+    const { clone, authority } = managedFixture(dir);
+    const r = await runScript([plan({ title: '受管', acceptance: ['x'], authority })], { BRAIN_URL: brain.url, CODING_WF_TRUSTED_REPO: clone });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('authority_receipt_mismatch');
     expect(r.stderr).toContain('00000000-0000-4000-8000-000000000001');
@@ -94,8 +142,8 @@ describe('new-task.mjs', () => {
 
   it('复用任务 ID 时只报冲突，不 claim 或写 failed', async () => {
     brain = await startBrain({ deduplicated: true });
-    const authority = { object_id: 'coding-workflow', refs: ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({ ref_id: kind, kind, path: 'rule.md', revision: 'a'.repeat(40), digest: 'b'.repeat(64), required: true })) };
-    const r = await runScript([plan({ title: '复用', acceptance: ['x'], authority })], { BRAIN_URL: brain.url });
+    const { clone, authority } = managedFixture(dir);
+    const r = await runScript([plan({ title: '复用', acceptance: ['x'], authority })], { BRAIN_URL: brain.url, CODING_WF_TRUSTED_REPO: clone });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('authority_dedup_conflict');
     expect(r.stderr).toContain('00000000-0000-4000-8000-000000000001');

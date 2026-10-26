@@ -119,7 +119,7 @@ describe('coding workflow runner run-once', () => {
       payload: { coding_workflow: true, repo: 'cecelia', authority_required: true, authority } })] });
     const r = await runOnceProcess(runnerEnv(sb, brain.url));
     expect(r.exitCode).toBe(1);
-    expect(brain.patches.at(-1).body.result.coding_workflow_runner.reason_code).toBe('authority_revision_unavailable');
+    expect(brain.patches.at(-1).body.result.coding_workflow_runner.reason_code).toMatch(/authority_index_(binding_missing|missing)/);
     expect(readJsonLines(sb.execLog)).toEqual([]);
   }, 30000);
 

@@ -1,13 +1,12 @@
 // 权威正文仅从任务仓库的固定 Git commit 读取；绝不执行正文。
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
 
 const SHA = /^[a-f0-9]{40}$/;
 const DIGEST = /^[a-f0-9]{64}$/;
 const ID = /^[a-z][a-z0-9_-]{0,63}$/;
 const KINDS = new Set(['spec', 'rule', 'sample', 'implementation']);
-const INDEX = JSON.parse(fs.readFileSync(new URL('../../../../../docs/registry/coding-workflow-authority.json', import.meta.url), 'utf8'));
+export const INDEX_PATH = 'docs/registry/coding-workflow-authority.json';
 const external = (s) => typeof s === 'string' && /^[a-z][a-z0-9+.-]*:\/\//i.test(s);
 const validPath = (s) => typeof s === 'string' && s.length > 0 && s.length <= 512
   && !s.startsWith('/') && !s.includes('\\') && !s.includes('\0')
@@ -15,10 +14,34 @@ const validPath = (s) => typeof s === 'string' && s.length > 0 && s.length <= 51
   && !/^[a-z]:/i.test(s);
 const git = (repo, args, encoding = 'utf8') => execFileSync('git', ['-C', repo, ...args], {
   encoding, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 8 * 1024 * 1024,
-  env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'].includes(key))),
+  env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'].includes(key))), GIT_NO_REPLACE_OBJECTS: '1' },
 });
 
-export function validateAuthority(authority) {
+export function trustedHead(repo) {
+  try {
+    const sha = git(repo, ['rev-parse', '--verify', 'refs/remotes/origin/main^{commit}']).trim();
+    return SHA.test(sha) ? sha : null;
+  } catch { return null; }
+}
+
+export function loadAuthorityIndex(repo, revision) {
+  if (!commitAvailable(repo, revision)) throw new Error('authority_index_revision_unavailable');
+  const head = trustedHead(repo);
+  if (!head || !isAncestor(repo, revision, head)) throw new Error('authority_index_untrusted');
+  let index;
+  try { index = JSON.parse(git(repo, ['show', `${revision}:${INDEX_PATH}`])); }
+  catch { throw new Error('authority_index_missing'); }
+  if (!index || !ID.test(index.object_id ?? '') || !Array.isArray(index.refs)
+    || index.refs.length !== 4 || new Set(index.refs.map((r) => r?.kind)).size !== 4
+    || index.refs.some((r) => !ID.test(r?.ref_id ?? '') || !KINDS.has(r?.kind)
+      || !validPath(r?.path) || r?.required !== true)
+    || new Set(index.refs.map((r) => r.ref_id)).size !== index.refs.length) {
+    throw new Error('authority_index_invalid');
+  }
+  return index;
+}
+
+export function validateAuthority(authority, index = null) {
   if (!authority || typeof authority !== 'object' || Array.isArray(authority)
     || !ID.test(authority.object_id ?? '')) return ['authority_object_invalid'];
   if (!Array.isArray(authority.refs) || authority.refs.length < 1 || authority.refs.length > 32) return ['authority_refs_invalid'];
@@ -36,14 +59,15 @@ export function validateAuthority(authority) {
     if (!DIGEST.test(ref.digest ?? '')) errors.push('authority_digest_invalid');
     if (typeof ref.required !== 'boolean') errors.push('authority_required_invalid');
   }
-  if (authority.object_id !== INDEX.object_id) errors.push('authority_object_unsupported');
-  else {
-    for (const known of INDEX.refs) {
+  if (index && authority.object_id !== index.object_id) errors.push('authority_object_unsupported');
+  else if (index) {
+    for (const known of index.refs) {
       const ref = authority.refs.find((item) => item?.ref_id === known.ref_id);
       if (known.required && (!ref || ref.required !== true)) errors.push('authority_required_missing');
       if (ref && ref.kind !== known.kind) errors.push('authority_kind_mismatch');
+      if (ref && ref.path !== known.path) errors.push('authority_path_mismatch');
     }
-    if (authority.refs.some((ref) => !INDEX.refs.some((known) => known.ref_id === ref?.ref_id))) errors.push('authority_ref_unknown');
+    if (authority.refs.some((ref) => !index.refs.some((known) => known.ref_id === ref?.ref_id))) errors.push('authority_ref_unknown');
   }
   return [...new Set(errors)];
 }
@@ -56,18 +80,29 @@ function canonical(value) {
 
 export function sameAuthority(a, b) { return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b)); }
 
+export function authorityFromPayload(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const flat = payload.object_id !== undefined || payload.authority_refs !== undefined
+    ? { object_id: payload.object_id, refs: payload.authority_refs } : null;
+  if (payload.authority !== undefined && flat && !sameAuthority(payload.authority, flat)) return null;
+  return flat ?? payload.authority ?? null;
+}
+
 export function commitAvailable(repo, revision) {
   if (!SHA.test(revision ?? '')) return false;
   try { return git(repo, ['rev-parse', '--verify', `${revision}^{commit}`]).trim() === revision; }
   catch { return false; }
 }
 
-export function resolveAuthority(repo, refs) {
+export function resolveAuthority(repo, refs, { trustedSha = null } = {}) {
   return refs.map((ref) => {
     const fact = { ...ref, status: 'missing', reason: null };
     if (external(ref.path)) { fact.reason = 'authority_source_unsupported'; return fact; }
     if (!validPath(ref.path)) { fact.reason = 'authority_path_invalid'; return fact; }
     if (!commitAvailable(repo, ref.revision)) { fact.reason = 'authority_revision_unavailable'; return fact; }
+    if (trustedSha && !isAncestor(repo, ref.revision, trustedSha)) {
+      fact.reason = 'authority_revision_untrusted'; return fact;
+    }
     const parts = ref.path.split('/');
     for (let n = 1; n < parts.length; n += 1) {
       const prefix = parts.slice(0, n).join('/');
@@ -94,4 +129,10 @@ export function resolveAuthority(repo, refs) {
       return fact;
     } catch { fact.reason = 'authority_file_unreadable'; return fact; }
   });
+}
+
+export function isAncestor(repo, ancestor, descendant) {
+  if (!commitAvailable(repo, ancestor) || !commitAvailable(repo, descendant)) return false;
+  try { git(repo, ['merge-base', '--is-ancestor', ancestor, descendant]); return true; }
+  catch { return false; }
 }

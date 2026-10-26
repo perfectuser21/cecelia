@@ -209,6 +209,6 @@ RUNTIME_MODULES="$RUNTIME_MODULES" node -e 'const {createRequire}=require("modul
 
 ## 固定旧资料引用（一期 A）
 
-受管任务在 plan 的单条或批次顶层声明 `authority: {"object_id":"coding-workflow","refs":[{"ref_id":"spec|rule|sample|implementation","kind":"spec|rule|sample|implementation","path":"仓库相对路径","revision":"40 位 commit SHA","digest":"Git blob 原字节 SHA-256","required":true}]}`。四个必需引用的身份和现有文件入口见 `docs/registry/coding-workflow-authority.json`；该索引只列引用，不保存正文，也不为任务补字段。`new-task.mjs` 先校验整批，再在受管任务 payload 中写 `authority_required=true` 与原声明；POST 后独立 GET 对账。确认本次新建但回执不一致时，CLI 尝试 claim、转 failed 并再次 GET；复用 ID 只报 `authority_dedup_conflict`，不改变旧任务。
+受管任务在 plan 的单条或批次顶层声明 `object_id: "coding-workflow"` 与 `authority_refs`；每项须有 `ref_id`、`kind`、`path`、40 位 Git `revision`、正文原字节 SHA-256 `digest` 和 `required: true`。旧的 `authority: {object_id, refs}` 形状仍接受，若两种形状同时出现必须一致。四个必需引用的身份和路径见 `docs/registry/coding-workflow-authority.json`；该索引只列引用，不保存正文。`new-task.mjs` 从运行环境配置的可信 clone 的 `origin/main` 提交读取清单，整批预检并在 payload 写入声明；索引尚未进入可信基线时拒单。POST 后独立 GET 对账；确认本次新建但回执不一致时尝试 claim、转 failed 并再次 GET；复用 ID 只报 `authority_dedup_conflict`，不改变旧任务。
 
-runner 在建 worktree 前核已认领任务的受管标记、声明与仓库；建成后冻结初始 HEAD（或使用显式 `base_sha`），按任务 ID 保留固定 SHA 供重试。intent 只从登记仓库固定 commit 的 tree/blob 读取资料，程序计算摘要，在 `01-intent.md` 写引用事实；required 缺失或不符时停止后继。未声明的旧任务在 01 明示 `legacy/unconfigured`，不代表不存在历史要求。外部 URL、Notion 等权威来源本批未支持，返回 `authority_source_unsupported`；不要把旧 sprint 或工作区文件代作来源。
+runner 在建 worktree 前核已认领任务的受管标记、声明与仓库，并首次绑定独立可信 clone 的 `origin/main` 索引 SHA；重试只读该绑定，丢失则阻断。初始代码基线 SHA 另行固定，不充当索引授权。intent 按绑定 SHA 从可信 Git 提交读取清单，并只从该提交祖先中的指定版本读取正文 tree/blob、计算摘要，在 `01-intent.md` 写引用事实；路径或 required 不符时停止后继。未声明的旧任务在 01 明示 `legacy/unconfigured`，不代表不存在历史要求。外部 URL、Notion 等权威来源本批未支持，返回 `authority_source_unsupported`；不要把旧 sprint 或工作区文件代作来源。

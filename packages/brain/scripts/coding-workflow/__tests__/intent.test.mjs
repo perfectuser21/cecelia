@@ -153,12 +153,20 @@ describe('intent 活动（子进程 + 假 Brain）', () => {
     initCommittableRepo(worktree, path.join(worktree, '.hooks'));
     git(worktree, 'remote', 'add', 'origin', 'https://www.github.com/perfectuser21/cecelia.git');
     fs.writeFileSync(path.join(worktree, 'rule.md'), '原规则\n');
-    git(worktree, 'add', 'rule.md'); git(worktree, 'commit', '-qm', 'rule');
+    fs.mkdirSync(path.join(worktree, 'docs/registry'), { recursive: true });
+    fs.writeFileSync(path.join(worktree, 'docs/registry/coding-workflow-authority.json'), JSON.stringify({
+      object_id: 'coding-workflow', refs: ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({ ref_id: kind, kind, path: 'rule.md', required: true })),
+    }));
+    git(worktree, 'add', '.'); git(worktree, 'commit', '-qm', 'rule');
     const revision = git(worktree, 'rev-parse', 'HEAD').trim();
+    const trusted = fs.mkdtempSync(path.join(os.tmpdir(), 'intent-trusted-'));
+    git(worktree, 'clone', '-q', worktree, trusted);
+    git(trusted, 'update-ref', 'refs/remotes/origin/main', revision);
     const authority = { object_id: 'coding-workflow', refs: ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({ ref_id: kind, kind, path: 'rule.md', revision,
       digest: crypto.createHash('sha256').update('原规则\n').digest('hex'), required: true })) };
     reply.body = { id: TASK_ID, title: '受管', description: '背景', payload: { acceptance: ['A'], authority_required: true, authority, base_sha: revision, repo: 'cecelia' } };
-    const r = await runActivityProcess(ENTRY, input({ authority, authority_required: true, initial_base_sha: revision }));
+    const r = await runActivityProcess(ENTRY, input({ authority, authority_required: true, initial_base_sha: revision,
+      trusted_repo: trusted, authority_index_sha: revision }));
     expect(r.exitCode, r.stderr).toBe(0);
     const md = fs.readFileSync(intentFile(), 'utf8');
     expect(md).toContain('## 旧资料引用事实');
@@ -166,6 +174,22 @@ describe('intent 活动（子进程 + 假 Brain）', () => {
     expect(md).toContain('status: found');
     expect(md).toContain('### I-1\nA');
     expect(r.result.outputs.intent_sha256).toBe(crypto.createHash('sha256').update(md).digest('hex'));
+    fs.rmSync(trusted, { recursive: true, force: true });
+  });
+
+  it('受管任务缺少 runner 固定的可信索引 SHA 时拒绝来源', async () => {
+    initCommittableRepo(worktree, path.join(worktree, '.hooks'));
+    git(worktree, 'remote', 'add', 'origin', 'https://www.github.com/perfectuser21/cecelia.git');
+    fs.writeFileSync(path.join(worktree, 'rule.md'), '正文');
+    git(worktree, 'add', 'rule.md'); git(worktree, 'commit', '-qm', 'source');
+    const revision = git(worktree, 'rev-parse', 'HEAD').trim();
+    const authority = { object_id: 'coding-workflow', refs: ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({
+      ref_id: kind, kind, path: 'rule.md', revision, digest: crypto.createHash('sha256').update('正文').digest('hex'), required: true,
+    })) };
+    reply.body = { id: TASK_ID, payload: { acceptance: ['A'], authority_required: true, authority, base_sha: revision, repo: 'cecelia' } };
+    const r = await runActivityProcess(ENTRY, input({ authority, authority_required: true, initial_base_sha: revision }));
+    expect(r.exitCode).toBe(2);
+    expect(r.result.reason_code).toBe('authority_index_binding_missing');
   });
 
   it('受管标记在但声明丢失时失败，不写 legacy 成功文件', async () => {
