@@ -164,3 +164,17 @@ RUNTIME_MODULES="$RUNTIME_MODULES" node -e 'const {createRequire}=require("modul
 发布前 verify 当场以固定 initial base `8174a7d6f40ecdaf21c0fd8ad4e82606e5ea913d` 到当时 HEAD 检查完整 DAG 的每条父边、全 diff、index、worktree 与全仓 untracked；实际执行 `git rev-list --parents`、逐父 `git diff-tree --raw`、`git diff --cached --raw`、`git diff --raw` 和 `git ls-files --others --exclude-standard`，由当时原生命令的完整输出与退出码承担证据。此时 README 原 bytes/mode 应为固定基线的精确前缀加文末新增节，manifest 相对该 base 应为零差异。发布后 QA 重新核当前精确测试 HEAD 的完整 DAG、每条父边的 raw 路径/blob/mode，以及当前全仓 index/worktree/untracked；不能拿当前干净状态补证明发布前现场。QA 只把可信本轮隔离投影中准确绑定 task/round/HEAD、HEAD blob/mode 和实际暂缺的 03/04 视作预期暂隐藏，其他差异仍逐项验来源和范围，未匹配或越界就失败关闭。
 
 发布后 manifest 可含可信控制器对本 task 合法 Markdown 的准确前插登记：`owner` 为 `packages/brain/scripts/coding-workflow/runner/run-once.mjs`，`role` 为 `documentation`，旧 raw 历史及顺序原样保留；不能把发布前 manifest 零差异要求重施于登记后的 HEAD。若有 main 同步，必须有独立可信链、准确双父、真实 main ref、全树与 source gate 证明，不能简单扣除 main 或改用浮动 base。03/04 原 bytes/mode 的会话后恢复、正式 source/CI/preview、精确批准 HEAD、真实 MERGED、Brain/Learning 回读和下次 tick 回收，均由后续控制器及终态门在实际发生后按冻结 C01-C12 核验；未发生的不报 PASS。新产品或源码 HEAD 必须重新经过真实 QA、judge、CI 和 preview。合同若允许仅本轮 05/06 纯登记提交，受保护来源链须证明仅有准确本轮记录、产品和旧历史未改，并把 `approved.head` 绑定实际登记 HEAD；不伪称模型测过该新记录 HEAD，也不因此陷入无限重验登记循环。
+
+## QA 修复的文件合同与验证方式
+
+`runner/lib/qa-gate.mjs` 的 `qaFix` 用 `loadPrompt('qa-fix', ...)` 加载 `prompts/qa-fix.md`，再经历史命名的 `runClaude` 交现行 provider 适配器执行。函数名不要求 Claude 账号；Codex 通道由现行 `CODING_WF_PROVIDER` 配置选择。修复者先读 `INTENT_PATH` 与 `SPEC_PATH`，两者共同限定允许修改的文件与操作；通用修复和验证规则不增加授权。本节仅说明既有行为，不授权修改 `qa-gate.mjs`、`lib/claude.mjs`、`prompts/qa-fix.md` 或其他文件；本轮只在固定基线 README 文末追加本节，不运行产品 CLI。
+
+文档及限定文件任务只用原合同许可的可失败只读内容断言和内存破坏对抗：build 在修复前运行同一断言得 RED，修复后运行得 GREEN，并保留原生命令、完整捕获输出、整数退出码及失败、修正、重复、零输出；不能打印 `PASS` 代替断言。内存反例须使缺失新节、关键语义反转及夹带扩大文件或操作授权的文本都失败。不得为通用 TDD 新增合同禁止的仓库测试、程序或配置；本文档任务不新增仓库测试，也不运行产品 CLI。不得先提交越界文件再删除以掩盖逐父历史。断言非零或证据缺失即未通过；合法修复后重新验证。非法、超长、重复或并发输入不能扩大合同；逐父范围或来源不明时失败关闭。
+
+代码 bug 仍须在原 intent/spec 允许的文件与操作范围内先写失败测试，再修复并永久保留回归；文档分档不能免除代码回归。若本次 QA 问题与原 intent/spec、前轮裁决冲突，或在许可范围内做不成，修复者不提交改动，最后独立一行输出 `RULING_CONFLICT: <本次条目> 与 <需求/规格条款或前轮条目> 矛盾：<各自要求>`，由既有控制器识别并升级；不自动放宽合同或裁决，不声称新增机械 allowlist，受保护路径与削弱测试检查保持。本节不实现新的控制器语义；重复或并发修复也逐条受原合同约束。
+
+当前 QA 只在精确测试 HEAD 上做可失败静态断言、只读内容断言和内存对抗；只读 `01-intent.md`、`02-spec.md`、固定源码、该 HEAD 的 Git 事实和可信控制器给出的有限来源投影，不读 03/04 正文或保护根，也不重造发布前 index/worktree/untracked。控制器临时隐藏 03/04，只能凭绑定本 task/round/HEAD 的可信隔离投影识别，不代表已经恢复。当前干净状态、hash、metadata、旧 PASS 或登记 hash 均不能追认旧现场。
+
+固定 initial base `5f514a8523ef3f40fb671ff8f3a90947597d0628` 必须是当前 HEAD 祖先；从该 base 到当前 HEAD，核完整 DAG 每条父边的递归文件级 raw 路径/blob/mode、全 diff，以及当前 index、worktree、全仓 untracked。只允许本任务准确 Markdown 和可信控制器对合法 Markdown 的精确 manifest 增量：`owner=packages/brain/scripts/coding-workflow/runner/run-once.mjs`、`role=documentation`，旧 raw 历史及顺序保留。可信 main 同步还须完整可信链、准确双父、实际 main ref、全 tree/source gate 证明；不能浮动 base 或简单减去 main 差异。发布前 verify 当场核固定 base 至当时 HEAD、index/worktree/untracked、README 原 bytes/mode 前缀及 manifest 相对 base 零差异；过去非 Git 现场只能由当时原生命令完整输出、整数退出码和独立外层门证明，不能用当前现场补证。
+
+仅独立 judge 可用已登记 build/verify 的 `historical_execution`：须绑定真实 stage/head/native、03/04 原 bytes/mode 的真实完整恢复和受保护来源门，保留失败、修正、重复、零输出及 draft FAIL/CANNOT_VERIFY；`aggregated_output` 是聚合捕获，不宣称任意子进程 stdout/stderr 完整分流。缺证记 UNKNOWN。后续恢复、精确批准 HEAD、正式 source/CI/preview、真实 MERGED、Brain/Learning 读回及下次 tick 回收，仍须在实际发生后按冻结 C01-C12 分阶段核验；未发生不得 PASS。代码、产品或可信 main 同步产生新 HEAD，须重新真实 QA、judge、CI、preview。若原合同允许本轮仅 05/06 准确记录的纯登记提交，受保护来源链须证明未改产品和旧历史，并把 `approved.head` 合法绑定实际记录 HEAD；不得声称模型测过新记录 HEAD，也不制造无限重验循环。身份漂移、非法或超长来源字段、重复登记、并发 HEAD 漂移或缺证时，只能按对应阶段失败或记 UNKNOWN，再从可信事实核验。
