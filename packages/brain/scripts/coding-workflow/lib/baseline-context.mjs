@@ -79,7 +79,8 @@ export function loadBaselineContext(input) {
       intent = fs.readFileSync(file, 'utf8');
     }
   }
-  const managed = input.authority_required === true || input.authority !== undefined || /^  ref_id: /m.test(intent);
+  const factSection = intent.split(/^## 旧资料引用事实\r?\n/m)[1]?.split(/^#{1,3} /m)[0] || '';
+  const managed = input.authority_required === true || input.authority !== undefined || /^- object_id: .+\r?\n  ref_id: /m.test(factSection);
   if (!managed) return unconfigured();
   if (input.authority_required !== true || !input.authority || !input.trusted_repo || !input.authority_index_sha) reject('baseline_binding_missing');
   if (!intent || !/^[a-f0-9]{64}$/.test(input.intent_sha256 || '') || hash(intent) !== input.intent_sha256) reject('baseline_intent_hash_mismatch');

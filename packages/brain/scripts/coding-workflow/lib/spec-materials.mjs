@@ -43,8 +43,8 @@ export function materialPlanErrors(source, { baseline, intentIds = [], specIds =
     if (!Array.isArray(row.approval_refs)) errors.push(`approval_refs_invalid:${key}`);
     else for (const id of row.approval_refs) if (!intentIds.includes(id)) errors.push(`approval_unknown:${id}`);
   }
-  function approved(row, key, action) {
-    if (!baseline.approvals?.some(a => a.ref_id === row.ref_id && a.rule_id === row.rule_id && a.action === action && row.approval_refs?.includes(a.intent_id))) errors.push(`approval_missing:${key}`);
+  function approved(row, key, action, ruleId = undefined) {
+    if (!baseline.approvals?.some(a => a.ref_id === row.ref_id && a.rule_id === ruleId && a.action === action && row.approval_refs?.includes(a.intent_id))) errors.push(`approval_missing:${key}`);
   }
   for (const row of plan.rules) {
     if (!object(row)) { errors.push('rule_invalid'); continue; }
@@ -54,12 +54,13 @@ export function materialPlanErrors(source, { baseline, intentIds = [], specIds =
     links(row, key);
     if (!['keep', 'modify', 'retire', 'conflict', 'not_applicable'].includes(row.action)) errors.push(`rule_action_invalid:${key}`);
     if (row.action === 'conflict') errors.push(`rule_conflict:${key}`);
-    if (['modify', 'retire'].includes(row.action)) approved(row, key, row.action);
+    if (['modify', 'retire'].includes(row.action)) approved(row, key, row.action, row.rule_id);
   }
   for (const key of rules) if (!seenRules.has(key)) errors.push(`rule_missing:${key}`);
   for (const row of plan.materials) {
     if (!object(row)) { errors.push('material_invalid'); continue; }
     const key = row.ref_id, ref = refs.get(key);
+    if (Object.hasOwn(row, 'rule_id')) errors.push(`material_rule_id_forbidden:${key}`);
     if (!ref) errors.push(`material_unknown:${key}`);
     if (seenMaterials.has(key)) errors.push(`material_duplicate:${key}`); seenMaterials.add(key);
     if (!materialPath(row.path) || row.path !== ref?.path) errors.push(`material_path_mismatch:${key}`);
