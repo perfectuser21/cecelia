@@ -178,3 +178,31 @@ RUNTIME_MODULES="$RUNTIME_MODULES" node -e 'const {createRequire}=require("modul
 固定 initial base `5f514a8523ef3f40fb671ff8f3a90947597d0628` 必须是当前 HEAD 祖先；从该 base 到当前 HEAD，核完整 DAG 每条父边的递归文件级 raw 路径/blob/mode、全 diff，以及当前 index、worktree、全仓 untracked。只允许本任务准确 Markdown 和可信控制器对合法 Markdown 的精确 manifest 增量：`owner=packages/brain/scripts/coding-workflow/runner/run-once.mjs`、`role=documentation`，旧 raw 历史及顺序保留。可信 main 同步还须完整可信链、准确双父、实际 main ref、全 tree/source gate 证明；不能浮动 base 或简单减去 main 差异。发布前 verify 当场核固定 base 至当时 HEAD、index/worktree/untracked、README 原 bytes/mode 前缀及 manifest 相对 base 零差异；过去非 Git 现场只能由当时原生命令完整输出、整数退出码和独立外层门证明，不能用当前现场补证。
 
 仅独立 judge 可用已登记 build/verify 的 `historical_execution`：须绑定真实 stage/head/native、03/04 原 bytes/mode 的真实完整恢复和受保护来源门，保留失败、修正、重复、零输出及 draft FAIL/CANNOT_VERIFY；`aggregated_output` 是聚合捕获，不宣称任意子进程 stdout/stderr 完整分流。缺证记 UNKNOWN。后续恢复、精确批准 HEAD、正式 source/CI/preview、真实 MERGED、Brain/Learning 读回及下次 tick 回收，仍须在实际发生后按冻结 C01-C12 分阶段核验；未发生不得 PASS。代码、产品或可信 main 同步产生新 HEAD，须重新真实 QA、judge、CI、preview。若原合同允许本轮仅 05/06 准确记录的纯登记提交，受保护来源链须证明未改产品和旧历史，并把 `approved.head` 合法绑定实际记录 HEAD；不得声称模型测过新记录 HEAD，也不制造无限重验循环。身份漂移、非法或超长来源字段、重复登记、并发 HEAD 漂移或缺证时，只能按对应阶段失败或记 UNKNOWN，再从可信事实核验。
+
+## QA 修复后的批准、合并和收账边界
+
+### 两次 ready 与合并权
+
+`lib/terminal.mjs` 的 `finishSuccess` 先确认 Brain 正常写回 `completed`；仅在成功且 `cfg.automerge` 允许后，才以 `gh pr ready <PR URL>` 提前解除草稿。QA 开启时 runner 仍是 `awaiting_qa`，QA 关闭时是 `awaiting_manual_merge`、交人工处理；这次 ready 是非批准、非合并，`completed` 也不表示已合并。ready 失败只留下失败结果，不能升级成批准。`lib/merge-gate.mjs` 的后续门必须先在精确 head 上取得 QA+独立 judge 批准，再核该 head 的 required 检查全绿和可信 source；仓库 `automerge=false` 时进入 `awaiting_human`，不调用自动合并。
+
+仓库允许自动合并且 PR 仍为草稿时，合并门才再次执行 `gh pr ready <编号>`。它在 ready 前后都用 `gh pr view <编号> --json headRefOid,isDraft,state` 读回，要求 `OPEN`、精确 `approved.head` 和有效草稿状态；ready 后还须确认不再是草稿。ready 自身没有 head CAS，只有最终 `gh pr merge <编号> --squash --delete-branch --match-head-commit <approved.head>` 由 GitHub 校验精确 head。前后 GET 失败或身份变化、非法或漂移 head、ready 失败及重复或并发动作，都不得写成已批准或已合并；保留待核或按既有门失败，不能跳过 CAS 或凭本文档获得重试权限。
+
+### 四种 SHA 与来源范围
+
+`tested_head` 是 QA 实际测试的分支提交；`approved.head` 是精确批准所绑定的提交，合同允许纯本轮记录提交时可经受保护来源链合法改绑；合并前实际 PR `headRefOid` 必须再次核对；GitHub squash 生成的 `mergeCommit.oid` 是合并提交。前三种身份可能处于不同时间点，squash SHA 既不是 QA 测试的分支 HEAD，也不是执行证据。代码、产品改动或可信 main 同步产生新 HEAD 重新真实 QA、judge、CI、preview，不能沿用旧 HEAD 信用。唯一窄例外是合同允许的本轮 05/06 准确记录提交：受保护来源链须证明仅含本轮记录、产品与旧历史未改，才可将 `approved.head` 绑定实际记录 HEAD；不能声称模型测过记录 HEAD，也不能制造无限“QA 再登记”循环。
+
+范围始终锚定固定 initial base `7724d4f246453d6a90b5c451e63d80fbb586628d`，审完整 initial base→当前 HEAD 的每个提交及所有父边，用 `git diff-tree -r --raw --no-abbrev <parent> <child>` 核文件级路径、blob、mode，另核全差异、index、worktree、全仓 untracked。仅准确本任务 Markdown 和可信控制器的 manifest documentation 增量可归本任务；旧 raw 历史及顺序保留。main 同步必须有完整可信来源链、准确双父、实际 main ref、全 tree/source gate 证明，不能改用浮动 main 简单减差。现行 `changedSinceApproval` 排除 main 提交、仅余记录时尝试 `verifyMergeSource` 后改绑，这是实现行为，不是新 HEAD 的 QA/judge/preview 结果；`source-merge-proof.mjs` 对 QA 后同步以 `qa_before_sync` 拒绝旧 QA 轮次。同步后控制器必须取得新 HEAD 的真实 QA、judge、CI、preview 并按新轮次批准，终态逐项核同一 HEAD。HEAD 漂移、伪造或重复登记、非法或超长来源字段、并发变更、来源缺失均不能靠旧信用通过；当前验收失败关闭，历史缺证记 UNKNOWN。
+
+### 合并后的收账
+
+实际 GitHub `MERGED` 后，`recordMerged` 经 `pr-sync.mjs` 的 `syncTask GET` 取得原结果，再 PATCH Brain 的 `merge.merged=true`、精确合并 head、`runner.phase=merged` 与 `handoff`。目前 PATCH 返回 `ok` 即清 `receipt_pending=false`；PATCH 前的 GET 与 PATCH 响应都不是 PATCH 后独立 GET。后续终态门须另行读回精确合并回执，不能凭这个 false 值推断收账完成。Brain `status=completed` 或单个 `runner.phase=merged` 都不等于完整闭环；合并用的是 PR head，另须区分 GitHub `mergeCommit.oid`。
+
+`merge-learning.mjs` 仅在 Learning 返回的每个 Learning ID 和原文全文 SHA-256 经独立 GET 读回后，才清 `learning_pending`；未知或部分成功不自动重发不幂等的 Learning。`pr-closure.mjs` 的 preview stop 只在响应 `stopped=true` 后记确认。Brain 回写或读回失败、重复收账、并发状态变化时保留 pending 或 UNKNOWN；未确认的 preview stop、Learning 和收账待办由下次实际 tick 复核。历史 FAIL/HUMAN、修复失败、错误恢复和未确认待办须继续留痕，不得抹除或改写成 PASS。
+
+### 本轮阶段和历史证据
+
+本轮 build 在追加文档前对新增小节运行可失败只读断言取得真实 RED，追加后以同一断言取得真实 GREEN；原生账保留失败、修正、重复、零输出、完整捕获输出及整数退出码，打印 PASS 不能替代断言。发布前 verify 当场以固定 initial base 核完整 DAG 的每条父边文件级 raw 路径/blob/mode、全 diff/index/worktree/untracked、README 原 bytes/mode 前缀及 manifest 相对固定 base 零差异。发布后现况不能补证发布前非 Git 现场。
+
+当前 QA 只读 01/02、固定源码、精确测试 HEAD 的 Git 事实及可信有限来源投影，用可失败静态断言和内存破坏对抗验新节，重新审完整逐父 DAG、当前 index/worktree/untracked。仅可信投影精确绑定本轮 task/round/HEAD 的 03/04 暂隐藏可解释，不能读 03/04 正文或保护根，也不能由此断言会话后已恢复。只对本轮可信固定 `env_url` 检查字面主机为 `localhost` 或 `127.0.0.1` 且同源，只读 GET `/api/brain/health` 核精确 preview HEAD 和隔离身份；不跟跨源重定向、不请求其他 API、外网或 POST、不伪造 header、不读凭据、不扫端口、不执行产品 CLI。该身份 GET 不是产品 smoke 或 PASS 证据。
+
+独立 judge 才消费 `judge-only historical_execution`，按已登记 build/verify 的 stage/head/native 绑定原生命令、完整捕获输出、整数退出码，并核 03/04 原 bytes/mode 在会话后的真实完整恢复。`aggregated_output` 只是原生聚合捕获，不声称任意 child stdout/stderr 的完整分流；draft FAIL/CANNOT 不编译成 PASS，缺证记 UNKNOWN，不重跑旧阶段伪造历史。后续控制器和终态门仅在实际发生后按冻结 C01-C12 核恢复、正式 source/CI/preview、精确批准 HEAD、真实 MERGED、Brain/Learning 的 ID 与全文哈希读回、preview stop 及下次 tick 回收。未发生的步骤不报 PASS，不能用旧 A 信用替代本轮 B，也不能用来源证明或 required 检查代替新 HEAD 的 QA/judge/preview。
