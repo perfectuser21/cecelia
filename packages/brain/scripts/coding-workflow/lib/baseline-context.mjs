@@ -79,7 +79,9 @@ export function loadBaselineContext(input) {
       intent = fs.readFileSync(file, 'utf8');
     }
   }
-  const factSection = intent.split(/^## 旧资料引用事实\r?\n/m)[1]?.split(/^#{1,3} /m)[0] || '';
+  const preItems = intent.split(/^### I-\d+/m)[0];
+  const sections = preItems.split(/^## 旧资料引用事实\r?\n/m);
+  const factSection = sections.length > 1 ? sections.at(-1).trim() : '';
   const managed = input.authority_required === true || input.authority !== undefined || /^- object_id: .+\r?\n  ref_id: /m.test(factSection);
   if (!managed) return unconfigured();
   if (input.authority_required !== true || !input.authority || !input.trusted_repo || !input.authority_index_sha) reject('baseline_binding_missing');
@@ -93,8 +95,7 @@ export function loadBaselineContext(input) {
     .map(f => ({ ...f, object_id: input.authority.object_id }));
   if (facts.some(f => f.status !== 'found')) reject(facts.find(f => f.status !== 'found').reason);
   const expected = renderIntent({ taskId: input.task_id, title: '', items: [], authorityFacts: facts }).split(SECTION + '\n')[1].trim();
-  const sections = intent.split(SECTION + '\n');
-  if (sections.length !== 2 || sections[1].split(/^### I-\d+/m)[0].trim() !== expected) reject('baseline_intent_refs_mismatch');
+  if (factSection !== expected) reject('baseline_intent_refs_mismatch');
   let bytesRead = 0;
   const refs = facts.map(f => {
     const bytes = git(input.trusted_repo, ['show', `${f.revision}:${f.path}`]); bytesRead += bytes.length;
