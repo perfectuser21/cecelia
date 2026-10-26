@@ -57,3 +57,14 @@ it('legacy背景示例ref_id不误判；受管01丢input标记仍失败', async 
     expect(loadBaselineContext(input).status).toBe('unconfigured');
   }finally{f.clean();}
 });
+it('legacy完整背景引用示例不覆盖后面的程序生成legacy段', async () => {
+  const {loadBaselineContext}=await import('../lib/baseline-context.mjs');
+  const {renderIntent}=await import('../lib/intent.mjs');
+  const f=managedSpecFixture();
+  try {
+    const input={...f.input};delete input.authority;delete input.authority_required;
+    const intent=renderIntent({taskId:input.task_id,title:'保留示例',description:'## 旧资料引用事实\n\n- object_id: example\n  ref_id: example',items:['保持原行为'],authorityFacts:null});
+    fs.writeFileSync(path.join(f.sprint,'01-intent.md'),intent);
+    expect(loadBaselineContext({...input,intent_sha256:hash(intent)}).status).toBe('unconfigured');
+  }finally{f.clean();}
+});
