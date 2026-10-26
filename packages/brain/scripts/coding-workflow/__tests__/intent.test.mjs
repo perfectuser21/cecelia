@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { extractAcceptance, renderIntent, intentIdsError, INTENT_ID_RE } from '../lib/intent.mjs';
 import { parseFrontmatter, extractAnchors } from '../lib/md-chain.mjs';
 import { runActivityProcess } from './helpers/run-activity.mjs';
+import { initCommittableRepo, git } from './helpers/git.mjs';
 
 const ENTRY = path.join(path.dirname(fileURLToPath(import.meta.url)), '../activities/intent.mjs');
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
@@ -57,6 +58,11 @@ describe('extractAcceptance', () => {
 });
 
 describe('renderIntent', () => {
+  it('未声明旧任务显式标 legacy/unconfigured，仍保留 I-n', () => {
+    const md = renderIntent({ taskId: TASK_ID, title: '旧任务', items: ['A'], authorityFacts: null });
+    expect(md).toContain('legacy/unconfigured');
+    expect(extractAnchors(parseFrontmatter(md).body)).toEqual(['I-1']);
+  });
   it('frontmatter 与锚点符合 md 链格式', () => {
     const md = renderIntent({ taskId: TASK_ID, title: '标题', items: ['A', 'B'] });
     const fm = parseFrontmatter(md);
@@ -143,6 +149,33 @@ describe('intent 活动（子进程 + 假 Brain）', () => {
   });
   const intentFile = () => path.join(worktree, 'sprints/s1/01-intent.md');
 
+  it('受管任务按固定 Git commit 写引用事实与文件摘要', async () => {
+    initCommittableRepo(worktree, path.join(worktree, '.hooks'));
+    git(worktree, 'remote', 'add', 'origin', 'https://www.github.com/perfectuser21/cecelia.git');
+    fs.writeFileSync(path.join(worktree, 'rule.md'), '原规则\n');
+    git(worktree, 'add', 'rule.md'); git(worktree, 'commit', '-qm', 'rule');
+    const revision = git(worktree, 'rev-parse', 'HEAD').trim();
+    const authority = { object_id: 'coding-workflow', refs: ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({ ref_id: kind, kind, path: 'rule.md', revision,
+      digest: crypto.createHash('sha256').update('原规则\n').digest('hex'), required: true })) };
+    reply.body = { id: TASK_ID, title: '受管', description: '背景', payload: { acceptance: ['A'], authority_required: true, authority, base_sha: revision, repo: 'cecelia' } };
+    const r = await runActivityProcess(ENTRY, input({ authority, authority_required: true, initial_base_sha: revision }));
+    expect(r.exitCode, r.stderr).toBe(0);
+    const md = fs.readFileSync(intentFile(), 'utf8');
+    expect(md).toContain('## 旧资料引用事实');
+    expect(md).toContain(`revision: ${revision}`);
+    expect(md).toContain('status: found');
+    expect(md).toContain('### I-1\nA');
+    expect(r.result.outputs.intent_sha256).toBe(crypto.createHash('sha256').update(md).digest('hex'));
+  });
+
+  it('受管标记在但声明丢失时失败，不写 legacy 成功文件', async () => {
+    reply.body = { id: TASK_ID, title: '受管', payload: { acceptance: ['A'], authority_required: true } };
+    const r = await runActivityProcess(ENTRY, input({ authority_required: true }));
+    expect(r.exitCode).toBe(2);
+    expect(r.result.reason_code).toBe('authority_receipt_mismatch');
+    expect(fs.existsSync(intentFile())).toBe(false);
+  });
+
   it('payload.acceptance 优先：只写 payload 的条目', async () => {
     reply.body = {
       id: TASK_ID,
@@ -165,7 +198,8 @@ describe('intent 活动（子进程 + 假 Brain）', () => {
     expect(md).toContain('### I-2\n条目二');
     expect(md).not.toContain('### I-3');
     // description 原文进背景小节，X/Y/Z 不成为 I-n 条目
-    expect(md).toContain('## 背景\n\n验收：①X ②Y ③Z\n\n### I-1');
+    expect(md).toContain('## 背景\n\n验收：①X ②Y ③Z');
+    expect(md).toContain('legacy/unconfigured');
     expect(extractAnchors(parseFrontmatter(md).body)).toEqual(['I-1', 'I-2']);
     expect(parseFrontmatter(md).data.task_id).toBe(TASK_ID);
   });

@@ -15,7 +15,7 @@ const SCRIPT = path.join(HERE, '../new-task.mjs');
 const PROJECT_ID = 'p0000000-0000-4000-8000-000000000001';
 const ROOT_ID = '11111111-1111-4111-8111-111111111111';
 
-function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false, wrongBaseSha = false, missingBaseSha = false, dropAuthority = false } = {}) {
+function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false, wrongBaseSha = false, missingBaseSha = false, dropAuthority = false, deduplicated = false } = {}) {
   const state = { posts: [], projectPosts: [], order: [], gets: [], claims: [], patches: [], rows: new Map() };
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -38,8 +38,9 @@ function startBrain({ failAt = null, projectFail = false, wrongRoute = false, ma
       state.posts.push(body);
       state.order.push('task');
       if (failAt === state.posts.length) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'change_kind_required' })); }
-      res.statusCode = 201;
+      res.statusCode = deduplicated ? 200 : 201;
       const row = { id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, authority: dropAuthority ? undefined : body.payload.authority, change_kind: body.change_kind, base_sha: missingBaseSha ? undefined : wrongBaseSha ? 'f'.repeat(40) : body.base_sha, map_scope: malformedScope ? {} : body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } };
+      if (deduplicated) row.deduplicated = true;
       state.rows.set(row.id, row);
       return res.end(JSON.stringify(row));
     });
@@ -80,7 +81,7 @@ describe('new-task.mjs', () => {
 
   it('受管声明丢失时 GET 核对并安全收账', async () => {
     brain = await startBrain({ dropAuthority: true });
-    const authority = { object_id: 'coding-workflow', refs: [{ ref_id: 'rule', kind: 'rule', path: 'rule.md', revision: 'a'.repeat(40), digest: 'b'.repeat(64), required: true }] };
+    const authority = { object_id: 'coding-workflow', refs: ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({ ref_id: kind, kind, path: 'rule.md', revision: 'a'.repeat(40), digest: 'b'.repeat(64), required: true })) };
     const r = await runScript([plan({ title: '受管', acceptance: ['x'], authority })], { BRAIN_URL: brain.url });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('authority_receipt_mismatch');
@@ -89,6 +90,17 @@ describe('new-task.mjs', () => {
     expect(brain.gets).toHaveLength(2);
     expect(brain.claims).toHaveLength(1);
     expect(brain.patches.at(-1).status).toBe('failed');
+  });
+
+  it('复用任务 ID 时只报冲突，不 claim 或写 failed', async () => {
+    brain = await startBrain({ deduplicated: true });
+    const authority = { object_id: 'coding-workflow', refs: ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({ ref_id: kind, kind, path: 'rule.md', revision: 'a'.repeat(40), digest: 'b'.repeat(64), required: true })) };
+    const r = await runScript([plan({ title: '复用', acceptance: ['x'], authority })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('authority_dedup_conflict');
+    expect(r.stderr).toContain('00000000-0000-4000-8000-000000000001');
+    expect(brain.claims).toEqual([]);
+    expect(brain.patches).toEqual([]);
   });
 
   it('重复 ref_id 整批拒绝，不发 POST', async () => {

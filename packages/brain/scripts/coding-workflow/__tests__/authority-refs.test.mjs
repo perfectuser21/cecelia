@@ -26,6 +26,9 @@ describe('固定 Git 权威引用', () => {
       fs.symlinkSync('../outside', path.join(root, 'link.md'));
       git(root, 'add', 'link.md'); git(root, 'commit', '-qm', 'link');
       expect(resolveAuthority(root, [{ ...ref(git(root, 'rev-parse', 'HEAD').trim(), '0'.repeat(64)), path: 'link.md' }])[0].reason).toBe('authority_non_regular_file');
+      fs.symlinkSync('../outside', path.join(root, 'jump'));
+      git(root, 'add', 'jump'); git(root, 'commit', '-qm', 'parent-link');
+      expect(resolveAuthority(root, [{ ...ref(git(root, 'rev-parse', 'HEAD').trim(), '0'.repeat(64)), path: 'jump/secret.md' }])[0].reason).toBe('authority_non_regular_file');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 

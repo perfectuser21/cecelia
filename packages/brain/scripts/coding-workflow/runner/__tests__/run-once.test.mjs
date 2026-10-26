@@ -101,6 +101,28 @@ describe('coding workflow runner run-once', () => {
     expect(claims.map((c) => c.path)).toEqual([`/api/brain/tasks/${T1}/claim`]);
   }, 30000);
 
+  it('受管标记存在而 authority 丢失：在建 worktree 前失败', async () => {
+    brain = await startFakeBrain({ tasks: [codingTask(T1, { task_type: 'coding_workflow',
+      payload: { coding_workflow: true, repo: 'cecelia', authority_required: true } })] });
+    const r = await runOnceProcess(runnerEnv(sb, brain.url));
+    expect(r.exitCode).toBe(1);
+    expect(brain.patches.at(-1).body.result.coding_workflow_runner.reason_code).toBe('authority_receipt_mismatch');
+    expect(readJsonLines(sb.execLog)).toEqual([]);
+    expect(fs.existsSync(path.join(sb.worktreeBase, 'cw-aaaaaaa1'))).toBe(false);
+  }, 30000);
+
+  it('受管引用的 commit 不在登记仓库时不启动执行器', async () => {
+    const authority = { object_id: 'coding-workflow', refs: ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({
+      ref_id: kind, kind, path: 'rule.md', revision: 'f'.repeat(40), digest: '0'.repeat(64), required: true,
+    })) };
+    brain = await startFakeBrain({ tasks: [codingTask(T1, { task_type: 'coding_workflow',
+      payload: { coding_workflow: true, repo: 'cecelia', authority_required: true, authority } })] });
+    const r = await runOnceProcess(runnerEnv(sb, brain.url));
+    expect(r.exitCode).toBe(1);
+    expect(brain.patches.at(-1).body.result.coding_workflow_runner.reason_code).toBe('authority_revision_unavailable');
+    expect(readJsonLines(sb.execLog)).toEqual([]);
+  }, 30000);
+
   it('已被认领 / 未登记仓库的任务不参与；多条候选取最早创建的', async () => {
     brain = await startFakeBrain({
       tasks: [
