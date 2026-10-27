@@ -2,8 +2,13 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+<<<<<<< HEAD
+    {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"changes/cp-10271855-c-source.md","role":"release"},
     {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"docs/learnings/cp-10271855-c-source.md","role":"documentation"},
     {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-c-compat.test.js","role":"verification"},
+=======
+    {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"changes/cp-10271820-b-source.md","role":"release"},
+>>>>>>> a7bf7b7ec (fix: register B source release note owner)
     {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"docs/learnings/cp-10271820-b-source.md","role":"documentation"},
     {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-b-compat.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"changes/cp-10271625-openclaw-compose-source.md","role":"release"},
