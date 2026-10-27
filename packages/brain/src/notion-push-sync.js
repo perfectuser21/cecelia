@@ -5,8 +5,7 @@ import { createRoutedTask } from './work-routing-store.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { execFileSync as nodeExecFileSync } from 'child_process';
 import { sshTargetFor } from './machine-registry.js';
-import { readFileSync } from 'node:fs';
-import { join as joinPath } from 'node:path';
+import { readDispatchTemplate } from './lib/openclaw-dispatch-template.js';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId, isPageGoneError, isWrongDatabaseError } from './lib/notion-projection-engine.js';
@@ -776,7 +775,7 @@ async function writeStatusReceipt(token, page, desc, status) {
 }
 
 function defaultReadTemplate(dir, file) {
-  return JSON.parse(readFileSync(joinPath(dir, file), 'utf8'));
+  return readDispatchTemplate(dir, file);
 }
 
 /**
@@ -916,7 +915,7 @@ async function dispatchOpenClawFromNotion({
   if (!webhookUrl) return failReceipt(`no_webhook_url：给 ops_workflows(${wf.wf_id}).dispatch 配 webhook_url`);
   const template = agent?.dispatch?.template || wf.dispatch?.default_template || null;
   if (!template) return failReceipt('no_template：给所选 Agent 的 ops_agents.dispatch 配 template（或 workflow 配 default_template）');
-  const dispatchDir = env.OPENCLAW_DISPATCH_DIR || '/opt/openclaw/dispatch';
+  const dispatchDir = env.OPENCLAW_DISPATCH_DIR || null;
   let payload;
   try {
     payload = readTemplateFn(dispatchDir, template);

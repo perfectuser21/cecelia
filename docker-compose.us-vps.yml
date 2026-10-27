@@ -40,8 +40,7 @@ services:
       # Brain 无法 dispatch relay。us-vps 上需要这两个仓库分别 clone 到 /root/ 下。
       - /root/zenithjoy-skills:/root/zenithjoy-skills:ro
       - /root/zenithjoy-skills-dist:/root/zenithjoy-skills-dist:ro
-      # OpenClaw 排单模板（Notion 执行方分流 → n8n V4 获客画布，2026-09-14）
-      - /opt/openclaw/dispatch:/opt/openclaw/dispatch:ro
+      # 派发默认模板随 Brain 发布，凭据由现有只读 ~/.credentials 挂载注入。
       # openclaw-guards（决策 95477a66 收编）：守卫 job 需要读写网关配置/路由 conf/agent 教义
       - /opt/openclaw/state:/opt/openclaw/state
       - /opt/openclaw/workspaces-root:/opt/openclaw/workspaces-root
