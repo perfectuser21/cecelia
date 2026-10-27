@@ -5,7 +5,7 @@ const { rawBuilder } = vi.hoisted(() => ({ rawBuilder: vi.fn() }));
 vi.mock('../existing-ops-source.js', () => ({ buildExistingOpsSources: rawBuilder }));
 import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 
-beforeEach(() => rawBuilder.mockReset());
+beforeEach(() => { rawBuilder.mockReset(); });
 
 async function observeNativeCallback(options) {
   let observed = false;
