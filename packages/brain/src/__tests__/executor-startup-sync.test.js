@@ -369,3 +369,22 @@ it('coding workflow runner（执行机认领的 data 任务）启动同步不打
   expect(result.external_skipped).toBe(1);
   expect(mockQuery.mock.calls.some(([sql]) => /UPDATE tasks/.test(sql))).toBe(false);
 });
+
+// 生产353作者任务形状：有真实外部认领，但Brain本机没有run进程。
+describe('startup保留已认领的外部有头执行权', () => {
+  it('headed-session带持久化owner且无runId时不得作为inline孤儿回队', async () => {
+    vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValueOnce({rows:[{
+      id:'bb9e7996-caab-4db7-8651-6a0ef251bf9f', title:'固定来源注册',
+      task_type:'research', executor_kind:'headed-session',
+      claimed_by:'ci:authoring-main-source', payload:{workflow_authoring:true},
+      started_at:new Date().toISOString(), error_message:null,
+    }]});
+    mockQuery.mockResolvedValue({rows:[],rowCount:1});
+    const {syncOrphanTasksOnStartup}=await import('../executor.js');
+    const result=await syncOrphanTasksOnStartup();
+    expect(result.requeued).toBe(0);
+    expect(mockQuery.mock.calls.filter(([sql])=>/UPDATE\s+tasks/i.test(sql))).toHaveLength(0);
+  });
+});
