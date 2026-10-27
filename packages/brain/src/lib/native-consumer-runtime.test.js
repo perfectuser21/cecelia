@@ -11,7 +11,7 @@ const stagePaths=['source','envelopes','modes'].map(n=>`packages/brain/src/lib/e
 const provenancePaths=['envelope','core-envelope','entry-envelopes','local-envelopes']
  .map(name=>`packages/brain/src/lib/existing-ops-provenance-${name}.js`).concat(stagePaths,'packages/brain/src/lib/workspace-ci-source-bundle.js','packages/brain/src/lib/existing-ops-runtime-source.js').sort();
 it('实际身份包含隔离staging与全部既有收集器依赖，逐文件记录加载字节',()=>{
- const runtime=readNativeConsumerRuntime();expect(runtime.files).toHaveLength(17);
+ const runtime=readNativeConsumerRuntime();expect(runtime.files).toHaveLength(15);
  for(const path of provenancePaths)expect(runtime.files).toContainEqual({path,sha256:createHash('sha256').update(read(path)).digest('hex')});
 });
 it.each(provenancePaths)('%s 缺失、错误字节或非普通固定 blob 都拒绝',async path=>{
@@ -65,7 +65,7 @@ it('固定blob封印和普通文件模式必须同时正确，不能用symlink�
 });
 
 // 新collector实际静态依赖也必须进入启动时加载身份，不能只冻旧11个根。
-const nativeEvidencePaths=['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-native-evidence-${n}.js`).concat(['compat','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-a-${n}.js`)).sort();
+const nativeEvidencePaths=['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-native-evidence-${n}.js`).concat(['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-build-${n}.js`)).sort();
 it('native evidence collector真实静态import闭包不能漏运行身份文件',()=>{
  const runtime=readNativeConsumerRuntime(),queue=['existing-ops-source.js','existing-ops-workspace-source.js','workspace-ci-source-bundle.js'].map(name=>`packages/brain/src/lib/${name}`),seen=new Set();
  while(queue.length){const path=queue.shift();if(seen.has(path))continue;seen.add(path);
@@ -74,7 +74,7 @@ it('native evidence collector真实静态import闭包不能漏运行身份文件
    queue.push(posix.normalize(posix.join(posix.dirname(path),node.source.value)));
  }
  expect(runtime.files.map(file=>file.path).sort()).toEqual([...seen].sort());
- expect(runtime.files).toHaveLength(17);
+ expect(runtime.files).toHaveLength(15);
 });
 it.each(nativeEvidencePaths)('native evidence %s实际加载hash与固定tree blob同时受核验',async path=>{
  const runtime=readNativeConsumerRuntime();

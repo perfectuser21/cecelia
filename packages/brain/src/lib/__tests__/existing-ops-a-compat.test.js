@@ -54,8 +54,8 @@ it('正式基线Git与独立字节合同重建A模型，真实collector绑定原
 }, 120000);
 
 import { parse as acorn } from 'acorn';
-import { reviewedAContext } from '../existing-ops-a-compat.js';
-import { A_ENVELOPES } from '../existing-ops-a-envelopes.js';
+import { reviewedAContext } from '../existing-ops-build-source.js';
+import { A_ENVELOPES } from '../existing-ops-build-envelopes.js';
 const parse = text => acorn(text, { ecmaVersion: 'latest', sourceType: 'module' });
 const context = (overrides = {}, missing = []) => reviewedAContext({ parse, revision,
   paths: paths.filter(p => !missing.includes(p)),
