@@ -18,7 +18,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parse } from 'acorn';
-import { provenanceReaderTuples, matchesProvenanceReaderTuple, registerReaderTupleGuardTests, readHistoricalReader, PROVENANCE_CALLER_SHA256 } from './claude-channel-retired.reader-tuples.test.js';
+import { provenanceReaderTuples, matchesProvenanceReaderTuple, registerReaderTupleGuardTests, readHistoricalReader, PROVENANCE_CALLER_SHA256, registerReviewedAGuardTests, reviewedADataRanges } from './claude-channel-retired.reader-tuples.test.js';
 /** 模式常量只能留在已审解析闭包；每种突变均应使纯数据资格失败。 */
 function mutateStageMode(kind,sources,root){
  const file=path.join(root,'existing-ops-stage-modes.js'),other=path.join(root,'../unreviewed-mode-consumer.js');
@@ -495,6 +495,4 @@ describe('原生QA完整封套只作为有界解码后的Acorn输入',()=>{
 });
 registerReaderTupleGuardTests({ BRAIN_ROOT, ENVELOPE_FILE, ENVELOPE_CONSUMER, NATIVE_HELPER, NATIVE_DATA, PROVENANCE_READER_HASHES, findClaudeInvocations });
 
-import { registerReviewedAGuardTests } from './helpers/claude-reviewed-a-tests.mjs';
 registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations });
-import { reviewedADataRanges } from './helpers/claude-reviewed-a-closure.mjs';
