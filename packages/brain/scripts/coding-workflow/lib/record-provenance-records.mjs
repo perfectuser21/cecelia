@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { parseFrontmatter } from './md-chain.mjs';
 import { fail, safeRelative, hash, git, gitText, UUID, workingBytes, workingMode } from './record-provenance-store.mjs';
+export const isQaExecutionArtifact = file => /^sprints\/\d{8}-cw-[0-9a-f]{8}\/qa-r[1-9]\d*\/qa-playwright\.cjs$/.test(file);
 export function identity({ taskId, sprintDir }) {
   if (!UUID.test(taskId ?? '') || !/^sprints\/\d{8}-cw-[0-9a-f]{8}$/.test(sprintDir ?? '') || !sprintDir.endsWith(`-cw-${taskId.slice(0, 8)}`)) fail('identity_invalid');
 }

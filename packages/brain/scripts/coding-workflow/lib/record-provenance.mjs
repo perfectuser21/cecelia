@@ -7,7 +7,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { provenanceRoot, assertProvenanceSeparation } from './provenance-path.mjs';
 import { REPO, MANIFEST, OWNER, UUID, SHA, hash, fail, git, gitText, fixedHead, ancestor, noLinks, workingBytes, workingMode, gitBytes, gitMode, sourceManifest, writeEvent, events } from './record-provenance-store.mjs';
 import { startQaIsolation, verifyQaIsolation, isolationProjection } from './qa-isolation.mjs';
-import { identity, recordType, inspectRecord, workingRecord, branchIdentity, listRecords } from './record-provenance-records.mjs';
+import { isQaExecutionArtifact, identity, recordType, inspectRecord, workingRecord, branchIdentity, listRecords } from './record-provenance-records.mjs';
 import { writeJudgeInput, validateJudgeStageInput, judgeInputRequired } from './record-provenance-inputs.mjs';
 import { assembleCurrentQa, validateQaAssembly, compiledQaRequired } from './record-provenance-qa.mjs';
 import { QA_NATIVE_POLICY } from './native-evidence.mjs';
@@ -152,9 +152,10 @@ function findStage(c, record, head, all, stageEventId, qaStageEventId) {
 function manifestDelta(beforeBytes, afterBytes, records) {
   const before = sourceManifest(beforeBytes), after = sourceManifest(afterBytes), old = new Map(before.relations.map(r => [r.path, r]));
   for (const [p, r] of old) if (JSON.stringify(after.relations.find(x => x.path === p)) !== JSON.stringify(r)) fail('manifest_history_changed');
-  const allowed = new Set(records.filter(r => r.markdown).map(r => r.path));
-  for (const r of after.relations) if (!old.has(r.path) && (!allowed.has(r.path) || r.owner_path !== OWNER || r.role !== 'documentation' || Object.keys(r).length !== 3)) fail('manifest_delta_invalid');
-  for (const p of allowed) { const r = after.relations.find(x => x.path === p);if (!r || r.owner_path !== OWNER || r.role !== 'documentation' || Object.keys(r).length !== 3) fail('relation_missing'); }
+  // 旧登记没有执行产物关系仍按原协议验证；新增关系必须对应真实封存记录。
+  const allowed = new Map(records.filter(r => r.markdown || (isQaExecutionArtifact(r.path) && after.relations.some(x => x.path === r.path))).map(r => [r.path, r.markdown ? 'documentation' : 'verification']));
+  for (const r of after.relations) if (!old.has(r.path) && (!allowed.has(r.path) || r.owner_path !== OWNER || r.role !== allowed.get(r.path) || Object.keys(r).length !== 3)) fail('manifest_delta_invalid');
+  for (const [p, role] of allowed) { const r = after.relations.find(x => x.path === p);if (!r || r.owner_path !== OWNER || r.role !== role || Object.keys(r).length !== 3) fail('relation_missing'); }
   return after.relations.filter(r => !old.has(r.path));
 }
 function registrationFor(c, record, head, all) {
@@ -193,6 +194,16 @@ export function beginRecordRegistration(options, files) {
   if (!workingBytes(c.worktree, MANIFEST).equals(before)) fail('manifest_uncommitted');
   const token = Object.freeze({ id: randomUUID() });
   transactions.set(token, { c, head, before, records, observed: false });return token;
+}
+/** 来源写入只能消费刚验证过真实阶段的同一事务，不能用结构相似的对象冒充。 */
+export function assertRecordSourceRegistration(token, worktree, identity, files) {
+  const t = transactions.get(token);
+  if (!t || t.observed || fs.realpathSync(worktree) !== t.c.worktree ||
+    ['taskId', 'sprintDir', 'stage', 'round'].some(key => identity[key] !== t.c[key]) || t.c.stage !== 'qa' ||
+    gitText(t.c.worktree, 'rev-parse', 'HEAD') !== t.head) fail('registration_token');
+  const expected = t.records.filter(r => r.markdown || isQaExecutionArtifact(r.path)).map(r => r.path).sort();
+  if (JSON.stringify([...new Set(files)].sort()) !== JSON.stringify(expected)) fail('registration_files');
+  for (const r of t.records) if (hash(workingBytes(t.c.worktree, r.path)) !== r.sha256 || workingMode(t.c.worktree, r.path) !== r.mode) fail('record_changed');
 }
 export function observeRecordRegistration(token, returnedSourcePaths) {
   const t = transactions.get(token);if (!t || t.observed || !Array.isArray(returnedSourcePaths) || returnedSourcePaths.some(p => p !== MANIFEST) || returnedSourcePaths.length > 1) fail('registration_token');
