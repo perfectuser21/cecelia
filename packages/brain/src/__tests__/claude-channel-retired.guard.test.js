@@ -226,6 +226,9 @@ function aliasedProcessCalls(src) {
 
 export function findClaudeInvocations(src, {file,sources}={}) {
   const original=src;
+  const reviewedRanges=reviewedADataRanges(src,{file,sources,root:path.join(BRAIN_ROOT,'src/lib'),parse:parseModule,shape:astShape,rows:astRows,decoded:decodedReferenceTexts,provenFingerprintReader});
+  if(reviewedRanges){for(const [start,end] of reviewedRanges.reverse())src=src.slice(0,start)+src.slice(start,end).replace(/[^\n]/g,' ')+src.slice(end);}
+  else {
   if(file===NATIVE_DATA){
     let readonly=false;try{readonly=src===sources.get(file)&&provenanceReaderClosure(sources);}catch{}
     // 压缩并不隐藏可执行语句：整个数据模块不匹配或任何新消费者出现都明确E1，原R1-R7继续扫描。
@@ -240,6 +243,7 @@ export function findClaudeInvocations(src, {file,sources}={}) {
     let ranges;try{ranges=envelopeRanges(src,sources);}catch{ranges=null;}
     if(!ranges)return [{rule:"E1",line:1,text:"来源模板不是已证明的只读 Acorn 输入"},...findClaudeInvocations(src)];
     for(const [start,end] of [...ranges].reverse())src=src.slice(0,start)+src.slice(start,end).replace(/[^\n]/g," ")+src.slice(end);
+  }
   }
   const hits = [];
   stripComments(src).forEach((line, i) => {
@@ -493,3 +497,4 @@ registerReaderTupleGuardTests({ BRAIN_ROOT, ENVELOPE_FILE, ENVELOPE_CONSUMER, NA
 
 import { registerReviewedAGuardTests } from './helpers/claude-reviewed-a-tests.mjs';
 registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations });
+import { reviewedADataRanges } from './helpers/claude-reviewed-a-closure.mjs';

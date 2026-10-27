@@ -119,7 +119,7 @@ describe('claude-channel-retired.reader-tuples 防复活守卫完整九reader组
 export function registerReaderTupleGuardTests({ BRAIN_ROOT, ENVELOPE_FILE, ENVELOPE_CONSUMER, NATIVE_HELPER, NATIVE_DATA, PROVENANCE_READER_HASHES, findClaudeInvocations }) {
 describe('sourceprep history reader完整新组合',()=>{
  const root=path.join(BRAIN_ROOT,'src/lib');
- const six=['build-source','stage-source','provenance-envelope','native-evidence-source','native-evidence-envelopes','runtime-source'].map(n=>path.join(root,'existing-ops-'+n+'.js'));
+ const six=['source','build-source','stage-source','provenance-envelope','native-evidence-source','native-evidence-envelopes','runtime-source'].map(n=>path.join(root,'existing-ops-'+n+'.js'));
  const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,...PROVENANCE_READER_HASHES.keys(),...six])].map(f=>[f,readFileSync(f,'utf8')]));
  const scan=(s,f=NATIVE_DATA)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  it.each([ENVELOPE_FILE,NATIVE_DATA,path.join(root,'existing-ops-stage-envelopes.js')])('新完整caller/runtime/reader使%s取得资格',f=>expect(scan(base(),f)).toEqual([]));
