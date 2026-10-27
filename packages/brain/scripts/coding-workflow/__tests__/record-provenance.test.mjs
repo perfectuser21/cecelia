@@ -219,6 +219,8 @@ it('真实evaluate封存的执行产物随QA报告登记为verification，且原
   const staged = await stageQaRecords(worktree, { taskId, sprintDir, round: 1 }, [report, file('qa-r1')], { ...options, stage: 'qa', round: 1, qaStageEventId: lastQaStageId });
   const row = JSON.parse(fs.readFileSync(path.join(worktree, M))).relations.find(r => r.path === artifact);
   expect(row).toEqual({ owner_path: owner, path: artifact, role: 'verification' });
+  const { isRecordSourceDelta } = await import('../lib/record-sources.mjs');
+  expect(isRecordSourceDelta(worktree, { from: 'HEAD', to: ':', branch: 'cp-10121524-cw-088c3431' })).toBe(true);
   git('commit', '-qm', 'real QA registration');finalizeRecordRegistration(staged.registration);
   expect(verifyRecordProvenance({ ...options, head: git('rev-parse', 'HEAD') }).status).toBe('verified');
 });
