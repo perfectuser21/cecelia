@@ -227,6 +227,7 @@ const B_HASHES = {...US_HASHES,
  "existing-ops-build-envelopes.js":"6aaea83ad1d73236fc2393a621cc1e059f55a622c29af0d77e7806f571df2c17"
 };
 const C_HASHES = {...US_HASHES,...{"existing-ops-build-source.js":"512317755a22aa943c501be12cf72e441254c3e30bfc496645d66913d3e5626f","existing-ops-build-envelopes.js":"64e460f1fc56f0e9422ac73e1082ea40f1b3835aa2bfc3d474ea998623962cc5"}};
+const D_HASHES = {...US_HASHES,...{"existing-ops-build-source.js":"6e810bfd01af6cb663f044ce7c12f37903f6a6057dd7778377aaebeb344ddd06","existing-ops-build-envelopes.js":"ee035046220a4063c254953ef72b99db74c7a51046cbc85d4ed545994ef6e44c"}};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -239,7 +240,8 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const runtime=sources.get(path.join(root,'existing-ops-runtime-source.js'));
   if(typeof runtime!=='string')return null;
   const build=sources.get(path.join(root,'existing-ops-build-source.js'));
-  const selected=typeof build==='string'&&hash(build,parse,shape)===C_HASHES['existing-ops-build-source.js']?C_HASHES
+  const selected=typeof build==='string'&&hash(build,parse,shape)===D_HASHES['existing-ops-build-source.js']?D_HASHES
+   :typeof build==='string'&&hash(build,parse,shape)===C_HASHES['existing-ops-build-source.js']?C_HASHES
    :typeof build==='string'&&hash(build,parse,shape)===B_HASHES['existing-ops-build-source.js']?B_HASHES
    :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));

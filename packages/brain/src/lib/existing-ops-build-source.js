@@ -6,7 +6,7 @@ import {collectStageSources} from './existing-ops-stage-source.js';
 // build main 至首次 runClaude 的前缀、spawnClaude 至真正 spawn 的前缀。
 // 不冻结整个 build main；额外模板字段仅接受已审 INTENT_PATH。未知结构变化失败关闭，需显式重审。
 import { createRequire } from 'node:module';
-import { ENVELOPES, A_ENVELOPES, B_ENVELOPES, C_ENVELOPES } from './existing-ops-build-envelopes.js';
+import { ENVELOPES, A_ENVELOPES, B_ENVELOPES, C_ENVELOPES, D_ENVELOPES } from './existing-ops-build-envelopes.js';
 import { posix } from 'node:path';
 import { PROVENANCE_SOURCE_PATHS, readProvenanceSources, normalizeProvenanceBuild, normalizeProvenancePublish, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
 import { NATIVE_PROVENANCE_PATHS, NATIVE_HISTORY_PATH, nativeEvidenceForwarding, nativeStaticEdges } from './existing-ops-native-evidence-source.js';
@@ -313,9 +313,10 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
   let indexBytes;
   const bMarked = Object.keys(B_ENVELOPES.reviewed).some(path => !Object.hasOwn(B_ENVELOPES.legacy, path) && paths.includes(path));
   const cMarked = Object.keys(C_ENVELOPES.reviewed).some(path => !Object.hasOwn(C_ENVELOPES.legacy, path) && paths.includes(path));
-  if (cMarked && !bMarked) return null;
-  const expected = {...A_ENVELOPES.reviewed, ...(bMarked ? B_ENVELOPES.reviewed : {}), ...(cMarked ? C_ENVELOPES.reviewed : {})};
-  const bOriginals = new Map(), cOriginals = new Map();
+  const dMarked = Object.keys(D_ENVELOPES.reviewed).some(path => !Object.hasOwn(D_ENVELOPES.legacy, path) && paths.includes(path));
+  if (cMarked && !bMarked || dMarked && !cMarked) return null;
+  const expected = {...A_ENVELOPES.reviewed, ...(bMarked ? B_ENVELOPES.reviewed : {}), ...(cMarked ? C_ENVELOPES.reviewed : {}), ...(dMarked ? D_ENVELOPES.reviewed : {})};
+  const bOriginals = new Map(), cOriginals = new Map(), dOriginals = new Map();
   try {
     // 不识别旧版本时不追加输入，历史来源摘要不变。新旧混配不能获得适配。
     for (const path of Object.keys(A_ENVELOPES.legacy)) {
@@ -342,18 +343,26 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
       if (path.endsWith('.mjs') ? !reviewedASame(text, expected[path], parse) : text !== expected[path]) return null;
       cOriginals.set(path, text);
     }
+    if (dMarked) for (const path of Object.keys(D_ENVELOPES.reviewed)) {
+      if (!paths.includes(path)) return null;
+      const text = await readSource(path, revision);
+      if (path.endsWith('.mjs') ? !reviewedASame(text, expected[path], parse) : text !== expected[path]) return null;
+      dOriginals.set(path, text);
+    }
     // 只有整组读取器成立后才读取它固定的 Git 数据输入；不执行索引正文。
     if (!paths.includes(A_INDEX_PATH)) return null;
     indexBytes = await readSource(A_INDEX_PATH, revision);
-    if (typeof indexBytes !== 'string' || !reviewedAIndex(indexBytes)) return null;
+    if (typeof indexBytes !== 'string' || !(dMarked ? indexBytes === D_ENVELOPES.reviewed[A_INDEX_PATH] : reviewedAIndex(indexBytes))) return null;
   } catch { return null; }
   for (const [path, text] of bOriginals) originals.set(path, text);
   for (const [path, text] of cOriginals) originals.set(path, text);
+  for (const [path, text] of dOriginals) originals.set(path, text);
   const edges = [], bExternalEdges = [];
   for (const [path, text] of originals) for (const statement of (path.endsWith('.mjs') ? parse(text).body : [])) {
     if (statement.type !== 'ImportDeclaration' || !statement.source.value.startsWith('.')) continue;
     const target = posix.normalize(posix.join(posix.dirname(path), statement.source.value));
     if (originals.has(target)) edges.push([path, target, 'reviewed_a_static_import']);
+    else if (dOriginals.has(path)) bExternalEdges.push([path, target, 'reviewed_d_static_import']);
     else if (cOriginals.has(path)) bExternalEdges.push([path, target, 'reviewed_c_static_import']);
     else if (bOriginals.has(path)) bExternalEdges.push([path, target, 'reviewed_b_static_import']);
   }
@@ -367,6 +376,7 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
   ]) bExternalEdges.push([PREFIX + '__tests__/managed-spec-activity.test.mjs', PREFIX + target, kind]);
   if (cMarked) for (const [consumer, input] of [["activities/build.mjs", "prompts/build.md"], ["activities/build.mjs", "prompts/ci-precheck-fix.md"], ["__tests__/build-materials.test.mjs", "activities/build.mjs"], ["__tests__/build-materials.test.mjs", "activities/chain-check.mjs"], ["__tests__/build-materials.test.mjs", "__tests__/fixtures/fake-claude.mjs"], ["__tests__/chain-materials.test.mjs", "activities/chain-check.mjs"], ["__tests__/report-materials.test.mjs", "activities/report.mjs"], ["__tests__/report.test.mjs", "activities/report.mjs"], ["__tests__/e2e-contract.test.mjs", "../activity-contract-run.js"], ["__tests__/e2e-contract.test.mjs", "contract.json"], ["__tests__/e2e-contract.test.mjs", "__tests__/fixtures/fake-claude.mjs"], ["__tests__/e2e-contract.test.mjs", "__tests__/fixtures/fake-gh.mjs"], ["__tests__/e2e-contract.test.mjs", "runner/__tests__/fixtures/executor-ipc-preload.mjs"]]) bExternalEdges.push([PREFIX + consumer, posix.normalize(PREFIX + input), 'reviewed_c_fixed_consumption']);
   if (cMarked) for (const entry of JSON.parse(C_ENVELOPES.reviewed[PREFIX + 'contract.json']).activities) bExternalEdges.push([PREFIX + '__tests__/e2e-contract.test.mjs', posix.normalize(PREFIX + entry.runtime.entry), 'reviewed_c_contract_activity']);
+  if (dMarked) for (const [consumer, input] of [["__tests__/authority-inheritance.test.mjs", "new-task.mjs"], ["__tests__/authority-inheritance.test.mjs", "contract.json"], ["__tests__/authority-inheritance.test.mjs", "repos.json"], ["__tests__/authority-inheritance.test.mjs", "activities/intent.mjs"], ["__tests__/authority-inheritance.test.mjs", "activities/spec.mjs"], ["__tests__/authority-inheritance.test.mjs", "activities/build.mjs"], ["__tests__/authority-inheritance.test.mjs", "activities/chain-check.mjs"], ["__tests__/authority-inheritance.test.mjs", "activities/report.mjs"], ["runner/__tests__/fixtures/fake-executor.mjs", "activities/intent.mjs"], ["runner/__tests__/fixtures/fake-executor.mjs", "runner/__tests__/fixtures/inheritance-materials.mjs"], ["runner/__tests__/fixtures/inheritance-materials.mjs", "runner/__tests__/fixtures/inheritance-model.mjs"], ["runner/__tests__/fixtures/inheritance-materials.mjs", "activities/spec.mjs"], ["runner/__tests__/fixtures/inheritance-materials.mjs", "activities/build.mjs"], ["runner/__tests__/fixtures/inheritance-materials.mjs", "activities/chain-check.mjs"], ["runner/__tests__/fixtures/inheritance-materials.mjs", "activities/report.mjs"]]) (originals.has(PREFIX + consumer) && originals.has(PREFIX + input) ? edges : bExternalEdges).push([PREFIX + consumer, PREFIX + input, 'reviewed_d_fixed_consumption']);
   originals.set(A_INDEX_PATH, indexBytes);
   edges.push([PREFIX + 'lib/authority-refs.mjs', A_INDEX_PATH, 'reviewed_a_fixed_git_index_read']);
   return {
@@ -375,19 +385,22 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
       if (originals.has(path) && originals.get(path) !== text) throw Error('reviewed_a_source_changed');
       if (Object.hasOwn(A_ENVELOPES.legacy, path)) return A_ENVELOPES.legacy[path];
       if (bMarked && Object.hasOwn(B_ENVELOPES.legacy, path)) return B_ENVELOPES.legacy[path];
-      return cMarked && Object.hasOwn(C_ENVELOPES.legacy, path) ? C_ENVELOPES.legacy[path] : text;
+      if (cMarked && Object.hasOwn(C_ENVELOPES.legacy, path)) return C_ENVELOPES.legacy[path];
+      return dMarked && Object.hasOwn(D_ENVELOPES.legacy, path) ? D_ENVELOPES.legacy[path] : text;
     },
     async record({ read, relations, buildInputs = true }) {
       const runtimeInput = path => path === A_INDEX_PATH || path.startsWith(PREFIX + 'runner/') || [
         '__tests__/helpers/brain-transport.mjs', '__tests__/fixtures/brain-fetch-preload.mjs',
         '__tests__/helpers/procs.mjs', '__tests__/helpers/git.mjs', 'lib/authority-refs.mjs',
       ].some(rel => path === PREFIX + rel);
-      const active = new Set([...originals.keys()].filter(path => buildInputs || runtimeInput(path)));
+      const dRuntimeModules = ['lib/baseline-context.mjs', 'lib/spec-materials.mjs', 'lib/intent.mjs', 'lib/md-chain.mjs'].map(p => PREFIX + p);
+      const active = new Set([...originals.keys()].filter(path => buildInputs || runtimeInput(path) || dMarked && dRuntimeModules.includes(path)));
       for (const [path, bytes] of originals) {
         if (!active.has(path)) continue;
         if (await read(path) !== bytes) throw Error('reviewed_a_source_changed');
       }
-      if (buildInputs) for (const [consumer_path, input_path, kind] of bExternalEdges) {
+      for (const [consumer_path, input_path, kind] of bExternalEdges) {
+        if (!buildInputs && !(dMarked && dRuntimeModules.includes(consumer_path) && kind.endsWith('_static_import'))) continue;
         if (!paths.includes(input_path) || typeof await read(input_path) !== 'string') throw Error('reviewed_b_dependency_missing');
         if (!relations.some(r => r.consumer_path === consumer_path && r.input_path === input_path && r.kind === kind))
           relations.push({ consumer_path, input_path, kind, revision });
