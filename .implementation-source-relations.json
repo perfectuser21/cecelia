@@ -13,6 +13,11 @@
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10270754-cw-5f8029c7/02-spec.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10270754-cw-5f8029c7/03-build.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10270754-cw-5f8029c7/04-evidence.md","role":"documentation"},
+    {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"changes/cp-10271530-a-index-source.md","role":"release"},
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"packages/brain/scripts/smoke/coding-workflow-runner-smoke.sh","role":"verification"},
+    {"owner_path":"packages/brain/src/feishu-task-ledger.js","path":"packages/brain/src/__tests__/feishu-task-ledger.remote.test.js","role":"verification"},
+    
+
     {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"packages/brain/scripts/smoke/coding-source-compat-smoke.sh","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-a-compat.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/task-type-registry.js","path":"packages/brain/src/__tests__/task-type-registry.lexical.test.js","role":"verification"},

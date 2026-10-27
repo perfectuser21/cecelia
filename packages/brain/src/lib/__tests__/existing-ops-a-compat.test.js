@@ -31,9 +31,12 @@ const EXPECTED_A_SHA256 = {
   "packages/brain/scripts/coding-workflow/runner/lib/repos.mjs": "6a30662a1cc1d852ddba041aac2d01809f73d5ced269a50b69f570260b31aa27",
   "packages/brain/scripts/coding-workflow/runner/run-once.mjs": "b33bd82dc5681ca1c0f69b14e18f6336efd2e0aaa33f5b1a49a3f9e6133ea04f"
 };
-const paths = [...new Set([...execFileSync('git', ['ls-tree', '-rz', '--full-tree', '--name-only', baseRevision], { encoding: 'utf8', maxBuffer: 32000000 }).split('\0').filter(Boolean), ...Object.keys(EXPECTED_A_SHA256)])];
+const indexPath = "docs/registry/coding-workflow-authority.json";
+const indexBytes = "{\n  \"object_id\": \"coding-workflow\",\n  \"refs\": [\n    { \"ref_id\": \"spec\", \"kind\": \"spec\", \"path\": \"packages/brain/scripts/coding-workflow/runner/README.md\", \"required\": true },\n    { \"ref_id\": \"rule\", \"kind\": \"rule\", \"path\": \"packages/brain/scripts/coding-workflow/prompts/repo-rules/cecelia.md\", \"required\": true },\n    { \"ref_id\": \"sample\", \"kind\": \"sample\", \"path\": \"packages/brain/scripts/coding-workflow/__tests__/fixtures/activity-fixture.mjs\", \"required\": true },\n    { \"ref_id\": \"implementation\", \"kind\": \"implementation\", \"path\": \"packages/brain/scripts/coding-workflow/activities/intent.mjs\", \"required\": true }\n  ]\n}\n";
+const paths = [...new Set([indexPath, ...execFileSync('git', ['ls-tree', '-rz', '--full-tree', '--name-only', baseRevision], { encoding: 'utf8', maxBuffer: 32000000 }).split('\0').filter(Boolean), ...Object.keys(EXPECTED_A_SHA256)])];
 const cache = new Map();
 const readSource = path => {
+  if (path === indexPath) return indexBytes;
   if (Object.hasOwn(EXPECTED_A_SHA256, path)) {
     const text = A_ENVELOPES.reviewed[path];
     expect(createHash('sha256').update(text).digest('hex')).toBe(EXPECTED_A_SHA256[path]);
@@ -119,4 +122,36 @@ it('关闭build selector仍精确证明新runtime，不借兼容认领build/stag
   expect(f3.input_relations.some(r => r.kind === 'native_build_activity_spawn')).toBe(false);
   expect(f3.bindings.some(b => b.path === prefix + 'activities/build.mjs')).toBe(false);
   expect(f3.bindings.some(b => b.path === prefix + 'activities/intent.mjs')).toBe(false);
+}, 120000);
+
+it('已审A真实固定索引读边绑定原始数据字节，非只认领读取器', async () => {
+  expect(createHash('sha256').update(indexBytes).digest('hex')).toBe('496b85000cd4310c4086731d76d13fe4134fbced626d18d18f6812a87e561469');
+  const out = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths, readSource });
+  const f3 = out.consumers.find(c => c.workflow_key === 'factory_f3_ops');
+  expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
+  expect(f3.bindings.find(b => b.path === indexPath)?.content_sha256).toBe('496b85000cd4310c4086731d76d13fe4134fbced626d18d18f6812a87e561469');
+  expect(f3.input_relations).toContainEqual({ consumer_path: prefix + 'lib/authority-refs.mjs', input_path: indexPath, kind: 'reviewed_a_fixed_git_index_read', revision });
+}, 120000);
+it('缺索引、坏JSON、未审语义、重定向读取器均拒绝', async () => {
+  expect(await context({}, [indexPath])).toBeNull();
+  for (const text of ['{', indexBytes.replace('"coding-workflow"', '"other"'), indexBytes.replace('runner/README.md', 'package.json'), indexBytes.replace('"required": true', '"required": false')])
+    expect(await context({ [indexPath]: text })).toBeNull();
+  const reader = prefix + 'lib/authority-refs.mjs';
+  expect(await context({ [reader]: readSource(reader).replace(indexPath, 'docs/other.json') })).toBeNull();
+});
+it('索引仅格式变化仍绑定原字节，证明后字节变化拒绝', async () => {
+  const bytes = JSON.stringify(JSON.parse(indexBytes));
+  const ctx = await context({ [indexPath]: bytes });
+  expect(ctx).not.toBeNull();
+  const seen = [], relations = [];
+  await ctx.record({ read: p => { seen.push(p); return p === indexPath ? bytes : readSource(p); }, relations, buildInputs: false });
+  expect(seen).toContain(indexPath);
+  expect(relations).toContainEqual({ consumer_path: prefix + 'lib/authority-refs.mjs', input_path: indexPath, kind: 'reviewed_a_fixed_git_index_read', revision });
+  await expect(ctx.record({ read: readSource, relations: [] })).rejects.toThrow('reviewed_a_source_changed');
+});
+it('真实collector遇到未审索引不留部分成功来源', async () => {
+  const out = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision, paths,
+    readSource: p => p === indexPath ? indexBytes.replace('runner/README.md', 'package.json') : readSource(p) });
+  const f3 = out.consumers.find(c => c.workflow_key === 'factory_f3_ops');
+  expect(f3.status).toBe('unknown'); expect(f3.bindings).toEqual([]); expect(f3.input_relations).toEqual([]);
 }, 120000);
