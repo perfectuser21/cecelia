@@ -205,7 +205,7 @@ describe('完整九模块来源reader组合不能按成员混搭',()=>{
 // source.js 是 normalize() 投影的真实调用方，也必须固定；所有原进程检测仍执行。
 const HASHES = {
   "existing-ops-source.js": "48a2f74d85054807992323d41f64097d6b88791a66c5ede39aae5584b20ec2f7",
-  "existing-ops-build-source.js": "679289bfaa20b407b9c9d87c6bf9632928247e3bd86e664f3f12393c5a1c8206",
+  "existing-ops-build-source.js": ["679289bfaa20b407b9c9d87c6bf9632928247e3bd86e664f3f12393c5a1c8206", "f291969a4ce05b9597018188d71415162584266cb84ad392f1c0846dc7d3ced8"],
   "existing-ops-build-envelopes.js": "9d3165752c1a80a6891f5b1f24d1d8579a94b1d6f37692a8a065202388a7b403",
   "existing-ops-runtime-source.js": "48f919b399f133feadcfb0678ef67c95550d199e3d97fb213ccb9276d93abbf7",
   "existing-ops-stage-source.js": "4efb563d9e3a8c7fa08523c81c730ba1efefa82cbd0de4811c6facb2794bf5ea",
@@ -230,7 +230,7 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const closure=new Set(Object.keys(HASHES).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(HASHES)){
    const text=sources.get(path.join(root,name));
-   if(typeof text!=='string'||hash(text,parse,shape)!==digest)return null;
+   if(typeof text!=='string'||![].concat(digest).includes(hash(text,parse,shape)))return null;
   }
   // 准确固定所有内部消费者；外部不得取得原文或传入 eval 解析器。
   // source.js 仅向注册器返回摘要/关系，允许正常调用；其完整 AST 已在上面绑定。
@@ -253,6 +253,12 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
  const base=()=>new Map(files.map(f=>[f,readFileSync(f,'utf8')]));
  const scan=(s,f=data)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  describe('A封套精确只读闭包及执行防复活',()=>{
+  it('已发布旧collector闭包保留，旧版追加执行仍拒绝',()=>{
+   const s=base(), file=path.join(root,'existing-ops-build-source.js');
+   const old=execFileSync('git',['show','65e7ffffe65debcd8e32039da5de50d5c99f00fb:packages/brain/src/lib/existing-ops-build-source.js'],{cwd:BRAIN_ROOT,encoding:'utf8'});
+   s.set(file,old);expect(scan(s)).toEqual([]);
+   s.set(file,old+'\neval(A_ENVELOPES.reviewed.any);');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
+  });
   it.each(['build','stage','native-evidence'])('%s完整已审组合无误报',name=>{const f=path.join(root,`existing-ops-${name}-envelopes.js`);expect(scan(base(),f)).toEqual([]);});
   it.each(files)('任何闭包成员突变或缺失必须拒绝：%s',f=>{const s=base();s.set(f,s.get(f)+'\nexport const unknownClosure=true;');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);const missing=base();missing.delete(f);expect(findClaudeInvocations(base().get(data),{file:data,sources:missing}).some(h=>h.rule==='E1')).toBe(true);});
   it.each(['eval','raw','spawn','alias','interpolation','escaped','concat','dynamic','caller'])('%s不能继承只读资格',kind=>{
