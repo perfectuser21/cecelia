@@ -8,6 +8,7 @@
  */
 import { execFileSync } from 'child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync } from 'fs';
+import { defaultExecAsync, buildHostCmd } from './host-exec.js';
 
 export const DOCTRINE_MARK = '## 跑场下放铁律';
 // docker top 的 ps args 必须含 pid，否则 daemon 报 "Couldn't find PID field in ps output"
@@ -265,10 +266,33 @@ const defaultIO = {
 let lastRunAt = 0;
 const INTERVAL_MS = parseInt(process.env.OPENCLAW_GUARDS_INTERVAL_MS || String(5 * 60 * 1000), 10);
 
+/** US 退役本地网关职责，只保留独立触达观测；不读取旧state密钥或写工作区。 */
+async function runRemoteOutreach(opts) {
+  const out = { local: { status: 'retired', reason: 'gateway_moved_to_macstudio' } };
+  try {
+    const command = "ssh -o BatchMode=yes -o ConnectTimeout=20 mmv "
+      + "\"ssh -o BatchMode=yes -o ConnectTimeout=8 jinnuoshengyuan@100.86.57.69 'tail -12 ~/outreach.log'\"";
+    const tail = await (opts.remoteExecFn ?? defaultExecAsync)(
+      buildHostCmd(command, opts.inContainer ?? existsSync('/.dockerenv')), { timeoutMs: 30_000 });
+    out.outreach = parseOutreachHealth(tail);
+  } catch {
+    out.outreach = { verdict: 'unknown', error: 'outreach_evidence_unavailable' };
+  }
+  if (out.outreach.verdict === 'stalled' && opts.raiseFn) {
+    await opts.raiseFn('P1', 'outreach_stalled',
+      `触达线空转 ${out.outreach.stalledTicks} 轮：${out.outreach.reason}。检查飞书话术表「启用状态」。`,
+      { debounce: { windowMin: 180, threshold: 1 } });
+  }
+  return out;
+}
+
 export async function runOpenclawGuards(_pool, opts = {}) {
+  const mode = (opts.env ?? process.env).OPENCLAW_GUARD_MODE ?? 'local';
+  if (!['local', 'remote'].includes(mode)) throw new Error('invalid_openclaw_guard_mode');
   const now = opts.nowMs ?? Date.now();
   if (now - lastRunAt < INTERVAL_MS) return { skipped: true };
   lastRunAt = now;
+  if (mode === 'remote') return runRemoteOutreach(opts);
   const io = { ...defaultIO, ...(opts.io || {}) };
   const out = {};
 
