@@ -2,6 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-us-compose.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/feishu-task-ledger.js","path":"packages/brain/src/__tests__/feishu-task-ledger.remote.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/feishu-task-ledger.js","path":"changes/cp-10271529-openclaw-remote-facts.md","role":"release"},
 

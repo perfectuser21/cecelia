@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { builtinModules } from 'node:module';
 import { readProvenanceSources, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
+import { proveReviewedUsCompose } from './existing-ops-us-compose-source.js';
 export const EXISTING_OPS_DOC_IMPORT_SCHEMA = 1;
 export const EXISTING_OPS_ROOT_NPM_INPUT_SCHEMA = 1;
 const TEST = 'packages/brain/scripts/coding-workflow/runner/__tests__/run-once.test.mjs';
@@ -226,7 +227,6 @@ async function collectRootNpm({parse,paths,read,readSource,revision,relations,re
     if(external.length)relations.push({consumer_path:PROVIDER,input_path:manifest,kind:'declared_bare_dependency',revision});
   } catch { requireProof(false,'root_npm_input_unproven'); }
 }
-
 // 两个协议由目标 Git 自己声明；旧冻结修订缺省关闭，不因当前进程升级改变其绑定。
 export function ciEntrySelectorEnabled(text, parse, name) {
   const list = parse(text).body.filter(n => n.type === 'ExportNamedDeclaration').map(declaration)
@@ -392,7 +392,7 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
  const texts=new Map();
  for(const[path,digest]of Object.entries(BUDGET_FILES)){
   const text=await read(path);texts.set(path,text);
-  requireProof(text&&[digest].flat().includes(stagingHash(text)),'settlement_source_unproven');
+  requireProof(text&&([digest].flat().includes(stagingHash(text)) || path==='docker-compose.us-vps.yml'&&await proveReviewedUsCompose({text,read,relations,revision})),'settlement_source_unproven');
  }
  // 从已冻结AST递归列出真实静态依赖及受管子进程入口，不以目录猜测闭包。
  const base='scripts/brain-image-retention/';

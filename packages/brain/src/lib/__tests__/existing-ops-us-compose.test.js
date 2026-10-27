@@ -52,8 +52,38 @@ for(const stage of ['remote','template','combined','final'])it('已审US '+stage
  const f2=await build(stage);expect(f2.status,JSON.stringify(f2.gaps)).toBe('verified');
  expect(f2.bindings.find(b=>b.path==='docker-compose.us-vps.yml')?.content_sha256).toBe(composeHashes[stage]);
  expect(f2.input_relations.some(r=>r.consumer_path==='docker-compose.us-vps.yml'&&r.kind==='reviewed_us_openclaw_prerequisite')).toBe(true);
+ if(stage==='final')expect(f2.input_relations.some(r=>r.consumer_path==='packages/brain/src/openclaw-run-ingest.js'&&r.input_path==='packages/brain/src/host-exec.js'&&r.kind==='reviewed_us_openclaw_static_import')).toBe(true);
 },120000);
 it('final卸挂载不能搭配旧本地读取器，失败清空绑定',async()=>{
  const f2=await build('final',{'packages/brain/src/feishu-task-ledger.js':'export const localState="/opt/openclaw/state";'});
  expect(f2.status).toBe('unknown');expect(f2.bindings).toEqual([]);expect(f2.input_relations).toEqual([]);
 },120000);
+
+import { proveReviewedUsCompose } from '../existing-ops-us-compose-source.js';
+for(const missing of Object.keys(samples))it('final每个真实前置缺失/变化拒绝且不留关系 '+missing,async()=>{
+ for(const invalid of [null, samples[missing]+'\n// unreviewed']){
+  const relations=[];
+  expect(await proveReviewedUsCompose({text:compositions.final,read:p=>p===missing?invalid:samples[p],relations,revision})).toBe(false);
+  expect(relations).toEqual([]);
+ }
+});
+it('非审定compose不能借相同关键字或任意组合获得证明',async()=>{
+ for(const text of [compositions.final+'\n# unknown',compositions.remote.replace('OPENCLAW_GUARD_MODE=remote','OPENCLAW_GUARD_MODE=local'),compositions.template.replace('      - /opt/openclaw/state:/opt/openclaw/state\n','')]){
+  const seen=[],relations=[];
+  expect(await proveReviewedUsCompose({text,read:p=>{seen.push(p);return samples[p];},relations,revision})).toBe(false);
+  expect(seen).toEqual([]);expect(relations).toEqual([]);
+ }
+});
+it('remote/template阶段仅绑定各自真实前置，不提前认领另一阶段',async()=>{
+ for(const [stage,expected]of [['remote',['openclaw-guards.js','host-exec.js']],['template',['notion-push-sync.js','lib/openclaw-dispatch-template.js','lib/openclaw-dispatch-defaults.js']]]){
+  const seen=[],relations=[];
+  expect(await proveReviewedUsCompose({text:compositions[stage],read:p=>{seen.push(p);return samples[p];},relations,revision})).toBe(true);
+  expect(seen.sort()).toEqual(expected.map(p=>'packages/brain/src/'+p).sort());
+  expect(relations.every(r=>r.revision===revision)).toBe(true);
+ }
+});
+it('读取失败向上报告，不能生成成功关系',async()=>{
+ const relations=[];
+ await expect(proveReviewedUsCompose({text:compositions.final,read:()=>{throw Error('missing');},relations,revision})).rejects.toThrow('missing');
+ expect(relations).toEqual([]);
+});
