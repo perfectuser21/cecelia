@@ -388,3 +388,40 @@ describe('startup保留已认领的外部有头执行权', () => {
     expect(mockQuery.mock.calls.filter(([sql])=>/UPDATE\s+tasks/i.test(sql))).toHaveLength(0);
   });
 });
+
+describe('startup恢复遵守部署角色', () => {
+  it('canary=1在访问共享数据库之前返回零计数', async () => {
+    vi.stubEnv('BRAIN_DEPLOY_CANARY', '1');
+    mockQuery.mockReset();
+    try {
+      const { syncOrphanTasksOnStartup } = await import('../executor.js');
+      expect(await syncOrphanTasksOnStartup()).toEqual({
+        orphans_found: 0, orphans_fixed: 0, requeued: 0,
+        rebuilt: 0, external_skipped: 0,
+      });
+      expect(mockQuery).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('primary canary=0仍恢复本地无runId孤儿', async () => {
+    vi.stubEnv('BRAIN_DEPLOY_CANARY', '0');
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValueOnce({ rows: [{
+      id: 'primary-local-orphan', title: '本地孤儿',
+      executor_kind: 'brain-local', claimed_by: 'brain:primary',
+      payload: {}, started_at: new Date().toISOString(), error_message: null,
+    }] });
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+    try {
+      const { syncOrphanTasksOnStartup } = await import('../executor.js');
+      const result = await syncOrphanTasksOnStartup();
+      expect(result.requeued).toBe(1);
+      expect(mockQuery.mock.calls.some(([sql]) => /UPDATE\s+tasks/i.test(sql)
+        && /status = 'queued'/.test(sql))).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
