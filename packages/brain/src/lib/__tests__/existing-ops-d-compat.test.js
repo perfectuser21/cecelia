@@ -23,8 +23,6 @@ const D = {
 const base='95d3d6b9647a4accc748a4988f6bcf151d82c55f',revision='46f6878c5e2379f78a180b701bc23e9dcd7cbd82';
 const git=(...a)=>execFileSync('git',a,{encoding:'utf8',maxBuffer:32e6});
 const prefix='packages/brain/scripts/coding-workflow/';
-const indexPath='docs/registry/coding-workflow-authority.json';
-const index=JSON.stringify({object_id:'coding-workflow',refs:[['spec','runner/README.md'],['rule','prompts/repo-rules/cecelia.md'],['sample','__tests__/fixtures/activity-fixture.mjs'],['implementation','activities/intent.mjs']].map(([kind,path])=>({ref_id:kind,kind,path:prefix+path,required:true}))});
 const fixture={...A_ENVELOPES.reviewed,...B_ENVELOPES.reviewed,...C_ENVELOPES.reviewed,...D};
 const paths=[...new Set([...git('ls-tree','-rz','--full-tree','--name-only',base).split('\0').filter(Boolean),...Object.keys(fixture)])];const cache=new Map();
 const read=p=>{if(Object.hasOwn(fixture,p))return fixture[p];if(!cache.has(p))cache.set(p,git('show',base+':'+p));return cache.get(p)};
