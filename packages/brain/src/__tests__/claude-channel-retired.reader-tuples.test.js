@@ -120,7 +120,7 @@ export function registerReaderTupleGuardTests({ BRAIN_ROOT, ENVELOPE_FILE, ENVEL
 describe('sourceprep history reader完整新组合',()=>{
  const root=path.join(BRAIN_ROOT,'src/lib');
  const six=['source','build-source','stage-source','provenance-envelope','native-evidence-source','native-evidence-envelopes','runtime-source'].map(n=>path.join(root,'existing-ops-'+n+'.js'));
- const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,...PROVENANCE_READER_HASHES.keys(),...six])].map(f=>[f,readFileSync(f,'utf8')]));
+ const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,...PROVENANCE_READER_HASHES.keys(),...six,path.join(root,'existing-ops-us-compose-source.js')])].map(f=>[f,readFileSync(f,'utf8')]));
  const scan=(s,f=NATIVE_DATA)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  it.each([ENVELOPE_FILE,NATIVE_DATA,path.join(root,'existing-ops-stage-envelopes.js')])('新完整caller/runtime/reader使%s取得资格',f=>expect(scan(base(),f)).toEqual([]));
  it.each(six)('新组合混入旧%s拒绝',f=>{
@@ -205,7 +205,7 @@ describe('完整九模块来源reader组合不能按成员混搭',()=>{
 // source.js 是 normalize() 投影的真实调用方，也必须固定；所有原进程检测仍执行。
 const HASHES = {
   "existing-ops-source.js": "48a2f74d85054807992323d41f64097d6b88791a66c5ede39aae5584b20ec2f7",
-  "existing-ops-build-source.js": "679289bfaa20b407b9c9d87c6bf9632928247e3bd86e664f3f12393c5a1c8206",
+  "existing-ops-build-source.js": ["679289bfaa20b407b9c9d87c6bf9632928247e3bd86e664f3f12393c5a1c8206", "f291969a4ce05b9597018188d71415162584266cb84ad392f1c0846dc7d3ced8"],
   "existing-ops-build-envelopes.js": "9d3165752c1a80a6891f5b1f24d1d8579a94b1d6f37692a8a065202388a7b403",
   "existing-ops-runtime-source.js": "48f919b399f133feadcfb0678ef67c95550d199e3d97fb213ccb9276d93abbf7",
   "existing-ops-stage-source.js": "4efb563d9e3a8c7fa08523c81c730ba1efefa82cbd0de4811c6facb2794bf5ea",
@@ -218,6 +218,10 @@ const HASHES = {
   "existing-ops-native-evidence-source.js": "675be567f871855220a89301f1dbf50dbcc0a900e02c2ed3303ec39d3a647b3c",
   "existing-ops-native-evidence-envelopes.js": "44abae0d93238048356f5573765320b92ad54e481ba78f5925a3c558a8b86013"
 };
+const US_HASHES = {...HASHES,
+ 'existing-ops-runtime-source.js':'c6157fb97abf1131f80a8df747a68b0d0c4a86f8cc0c6fb8d112a111991821ba',
+ 'existing-ops-us-compose-source.js':'d8d3371783b3afbd085bd143e41be91a65d4ed865ff4c1ecb12648f4ae542235',
+};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -227,14 +231,17 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
  const data=['build-envelopes','stage-envelopes','native-evidence-envelopes'].map(n=>path.join(root,`existing-ops-${n}.js`));
  if(!data.includes(file)||src!==sources?.get(file))return null;
  try{
-  const closure=new Set(Object.keys(HASHES).map(name=>path.join(root,name)));
-  for(const [name,digest] of Object.entries(HASHES)){
+  const runtime=sources.get(path.join(root,'existing-ops-runtime-source.js'));
+  if(typeof runtime!=='string')return null;
+  const selected=hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
+  const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
+  for(const [name,digest] of Object.entries(selected)){
    const text=sources.get(path.join(root,name));
-   if(typeof text!=='string'||hash(text,parse,shape)!==digest)return null;
+   if(typeof text!=='string'||![].concat(digest).includes(hash(text,parse,shape)))return null;
   }
   // 准确固定所有内部消费者；外部不得取得原文或传入 eval 解析器。
   // source.js 仅向注册器返回摘要/关系，允许正常调用；其完整 AST 已在上面绑定。
-  const protectedNames=Object.keys(HASHES).filter(n=>n!=='existing-ops-source.js');
+  const protectedNames=Object.keys(selected).filter(n=>n!=='existing-ops-source.js');
   for(const [consumer,text] of sources){
    if(closure.has(consumer)||provenFingerprintReader(consumer,text))continue;
    if(!referenceCache.has(text))referenceCache.set(text,decoded(text));
@@ -247,12 +254,24 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
 
 export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations }) {
  const root=path.join(BRAIN_ROOT,'src/lib');
- const names=['source','build-source','build-envelopes','runtime-source','stage-source','stage-envelopes','stage-modes','provenance-envelope','provenance-core-envelope','provenance-entry-envelopes','provenance-local-envelopes','native-evidence-source','native-evidence-envelopes'];
+ const names=['source','build-source','build-envelopes','runtime-source','us-compose-source','stage-source','stage-envelopes','stage-modes','provenance-envelope','provenance-core-envelope','provenance-entry-envelopes','provenance-local-envelopes','native-evidence-source','native-evidence-envelopes'];
  const files=names.map(n=>path.join(root,`existing-ops-${n}.js`));
  const data=path.join(root,'existing-ops-build-envelopes.js');
  const base=()=>new Map(files.map(f=>[f,readFileSync(f,'utf8')]));
  const scan=(s,f=data)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  describe('A封套精确只读闭包及执行防复活',()=>{
+  it('旧main完整13成员仍可审，新runtime缺新增前置不能借旧闭包',()=>{
+   const s=base(),runtime=path.join(root,'existing-ops-runtime-source.js'),helper=path.join(root,'existing-ops-us-compose-source.js');
+   s.set(runtime,execFileSync('git',['show','f4bf6aceb7f28e9d39944bf9bd0fb70a340f3439:packages/brain/src/lib/existing-ops-runtime-source.js'],{encoding:'utf8'}));s.delete(helper);
+   expect(scan(s)).toEqual([]);
+   s.set(runtime,base().get(runtime));expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
+  });
+  it('已发布旧collector闭包保留，旧版追加执行仍拒绝',()=>{
+   const s=base(), file=path.join(root,'existing-ops-build-source.js');
+   const old=execFileSync('git',['show','65e7ffffe65debcd8e32039da5de50d5c99f00fb:packages/brain/src/lib/existing-ops-build-source.js'],{cwd:BRAIN_ROOT,encoding:'utf8'});
+   s.set(file,old);expect(scan(s)).toEqual([]);
+   s.set(file,old+'\neval(A_ENVELOPES.reviewed.any);');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
+  });
   it.each(['build','stage','native-evidence'])('%s完整已审组合无误报',name=>{const f=path.join(root,`existing-ops-${name}-envelopes.js`);expect(scan(base(),f)).toEqual([]);});
   it.each(files)('任何闭包成员突变或缺失必须拒绝：%s',f=>{const s=base();s.set(f,s.get(f)+'\nexport const unknownClosure=true;');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);const missing=base();missing.delete(f);expect(findClaudeInvocations(base().get(data),{file:data,sources:missing}).some(h=>h.rule==='E1')).toBe(true);});
   it.each(['eval','raw','spawn','alias','interpolation','escaped','concat','dynamic','caller'])('%s不能继承只读资格',kind=>{

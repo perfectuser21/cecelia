@@ -72,10 +72,10 @@ async function build({ patch = {}, marker = 2, missing } = {}) {
 }
 
 describe('staging 正式调用链的固定来源，不声明部署成功', () => {
-  it('激活schema2后仍保留15文件runtime闭包',()=>{
+  it('激活schema2后完整保留当前16文件runtime闭包',()=>{
     for(const [path,text]of Object.entries(candidate.blobs))expect(createHash('sha256').update(text).digest('hex')).toBe(candidate.blob_sha256[path]);
     expect(git('show',`${revision}:${sourcePath}`)).toContain('export const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = 2;');
-    expect(readNativeConsumerRuntime().files).toHaveLength(15);
+    expect(readNativeConsumerRuntime().files).toHaveLength(16);
   });
   it('固定TCP启动修复仍以完整helper字节绑定，不接受近似脚本',async()=>{
     expect(createHash('sha256').update(tcpCandidate.blob).digest('hex')).toBe(tcpCandidate.sha256);

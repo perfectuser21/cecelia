@@ -116,13 +116,13 @@ function provenReaderClosure(consumer) {
     ||node.type==='Identifier'&&node.name==='parseEnvelope'&&parent?.type==='CallExpression'&&parent.callee===node&&!readerOf(node));
 }
 
-// 已独审的完整 runtime 指纹闭包：固定十五文件只读→SHA摘要/比较；没有模板执行或原文出口。
+// 已独审的完整 runtime 指纹闭包：固定十五/十六文件只读→SHA摘要/比较；没有模板执行或原文出口。
 // 仅此路径且整个模块 AST 相等时认可该消费者；任何语义改动都须重新审查。
 // 这不把 runtime 加入文件白名单，模块原 R1–R7/进程别名扫描照常执行。
 const HASH_RUNTIME_FILE = path.join(BRAIN_ROOT,'src/lib/native-consumer-runtime.js');
-const HASH_RUNTIME_SHA256 = '9d673dcb89bf218ed3941b84b3d6fb9e9751bd7eb8059ba11f89e7c757f4bad8';
+const HASH_RUNTIME_SHA256 = ['9d673dcb89bf218ed3941b84b3d6fb9e9751bd7eb8059ba11f89e7c757f4bad8','3a5ef89274fc1338793b241fc52cf65574b1bd02a3db2bc4da6cdaaa55571395'];
 const provenFingerprintReader = (file,text) => file===HASH_RUNTIME_FILE
-  &&createHash('sha256').update(astShape(parseModule(text))).digest('hex')===HASH_RUNTIME_SHA256;
+  &&HASH_RUNTIME_SHA256.includes(createHash('sha256').update(astShape(parseModule(text))).digest('hex'));
 
 // V2 normalize 返回代码字符串投影；安全边界是完整已审 helper + 唯一已审 caller，
 // caller 只将投影交回旧 Acorn/matcher。未知消费者不能继承此资格。

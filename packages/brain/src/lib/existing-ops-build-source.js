@@ -281,6 +281,21 @@ async function collectPublishSources({parse,paths,selectors,read,readSource,revi
 
 /** 有限 A 版本适配：整组已审 AST 成立后复用旧调用证明，证据始终是实际源字节。 */
 const aExpected = new Map();
+const A_INDEX_PATH = 'docs/registry/coding-workflow-authority.json';
+const A_INDEX_REFS = [
+  ['spec', 'runner/README.md'], ['rule', 'prompts/repo-rules/cecelia.md'],
+  ['sample', '__tests__/fixtures/activity-fixture.mjs'], ['implementation', 'activities/intent.mjs'],
+];
+function reviewedAIndex(text) {
+  const index = JSON.parse(text);
+  return index && Object.keys(index).sort().join(',') === 'object_id,refs'
+    && index.object_id === 'coding-workflow' && Array.isArray(index.refs)
+    && index.refs.length === A_INDEX_REFS.length && index.refs.every((ref, i) => {
+      const [kind, path] = A_INDEX_REFS[i];
+      return ref && Object.keys(ref).sort().join(',') === 'kind,path,ref_id,required'
+        && ref.ref_id === kind && ref.kind === kind && ref.path === PREFIX + path && ref.required === true;
+    });
+}
 function reviewedASame(text, reference, parse) {
   if (!aExpected.has(reference)) aExpected.set(reference, canonical(parse(reference)));
   return canonical(parse(text)) === aExpected.get(reference);
@@ -295,6 +310,7 @@ const FIXED_EDGES = [
 ];
 export async function reviewedAContext({ parse, paths, readSource, revision }) {
   const originals = new Map();
+  let indexBytes;
   try {
     // 不识别旧版本时不追加输入，历史来源摘要不变。新旧混配不能获得适配。
     for (const path of Object.keys(A_ENVELOPES.legacy)) {
@@ -309,6 +325,10 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
       if (!reviewedASame(text, reference, parse)) return null;
       originals.set(path, text);
     }
+    // 只有整组读取器成立后才读取它固定的 Git 数据输入；不执行索引正文。
+    if (!paths.includes(A_INDEX_PATH)) return null;
+    indexBytes = await readSource(A_INDEX_PATH, revision);
+    if (typeof indexBytes !== 'string' || !reviewedAIndex(indexBytes)) return null;
   } catch { return null; }
   const edges = [];
   for (const [path, text] of originals) for (const statement of parse(text).body) {
@@ -317,6 +337,8 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
     if (originals.has(target)) edges.push([path, target, 'reviewed_a_static_import']);
   }
   edges.push(...FIXED_EDGES.map(([a, b, kind]) => [PREFIX + a, PREFIX + b, kind]));
+  originals.set(A_INDEX_PATH, indexBytes);
+  edges.push([PREFIX + 'lib/authority-refs.mjs', A_INDEX_PATH, 'reviewed_a_fixed_git_index_read']);
   return {
     // 只影响已审四文件的证明输入，不影响真实 read() 所登记的绑定摘要。
     normalize(path, text) {
@@ -324,7 +346,7 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
       return Object.hasOwn(A_ENVELOPES.legacy, path) ? A_ENVELOPES.legacy[path] : text;
     },
     async record({ read, relations, buildInputs = true }) {
-      const runtimeInput = path => path.startsWith(PREFIX + 'runner/') || [
+      const runtimeInput = path => path === A_INDEX_PATH || path.startsWith(PREFIX + 'runner/') || [
         '__tests__/helpers/brain-transport.mjs', '__tests__/fixtures/brain-fetch-preload.mjs',
         '__tests__/helpers/procs.mjs', '__tests__/helpers/git.mjs', 'lib/authority-refs.mjs',
       ].some(rel => path === PREFIX + rel);
