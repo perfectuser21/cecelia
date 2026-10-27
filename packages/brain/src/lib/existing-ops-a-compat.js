@@ -46,11 +46,18 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
       if (originals.has(path) && originals.get(path) !== text) throw Error('reviewed_a_source_changed');
       return Object.hasOwn(A_ENVELOPES.legacy, path) ? A_ENVELOPES.legacy[path] : text;
     },
-    async record({ read, relations }) {
+    async record({ read, relations, buildInputs = true }) {
+      const runtimeInput = path => path.startsWith(PREFIX + 'runner/') || [
+        '__tests__/helpers/brain-transport.mjs', '__tests__/fixtures/brain-fetch-preload.mjs',
+        '__tests__/helpers/procs.mjs', 'lib/authority-refs.mjs',
+      ].some(rel => path === PREFIX + rel);
+      const active = new Set([...originals.keys()].filter(path => buildInputs || runtimeInput(path)));
       for (const [path, bytes] of originals) {
+        if (!active.has(path)) continue;
         if (await read(path) !== bytes) throw Error('reviewed_a_source_changed');
       }
       for (const [consumer_path, input_path, kind] of edges) {
+        if (!active.has(consumer_path) || !active.has(input_path)) continue;
         if (!relations.some(r => r.consumer_path === consumer_path && r.input_path === input_path && r.kind === kind))
           relations.push({ consumer_path, input_path, kind, revision });
       }
