@@ -2,6 +2,8 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/src/feishu-task-ledger.js","path":"packages/brain/src/__tests__/feishu-task-ledger.remote.test.js","role":"verification"},
+
     {"owner_path":"packages/brain/src/lib/openclaw-dispatch-defaults.js","path":"packages/brain/src/lib/__tests__/openclaw-dispatch-defaults.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/openclaw-dispatch-template.js","path":"packages/brain/src/lib/__tests__/openclaw-dispatch-template.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/notion-push-sync.js","path":"changes/cp-10271543-dispatch-template-secrets.md","role":"release"},

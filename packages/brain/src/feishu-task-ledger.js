@@ -14,7 +14,9 @@
  *   ③ 重发去重（实测同一任务因无响应被重发 3 次）
  * 全部纯函数内核 + 注入式 IO，可单测。
  */
-import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { defaultExecAsync, buildHostCmd } from './host-exec.js';
+import { buildMmvCmd, parseSqliteJson } from './openclaw-run-ingest.js';
 
 import { createRoutedTask as defaultCreateRoutedTask } from './work-routing-store.js';
 
@@ -186,7 +188,6 @@ export async function fetchGroupMessages({ fetchFn, token, chatId, startTimeSec 
   return out;
 }
 
-const OPENCLAW_DB = process.env.OPENCLAW_DB_PATH || '/opt/openclaw/state/state/openclaw.sqlite';
 const EXEC_WINDOW_MS = 10 * 60 * 1000;
 
 /** 解析 sqlite3 -json 输出；任何异常一律返回空数组（第三方库出问题不能拖垮守卫） */
@@ -204,26 +205,23 @@ export function parseRunRows(raw) {
   }
 }
 
-/**
- * 读 OpenClaw 的执行流水（只读！这是第三方状态库，写它=污染别人）。
- * 容器内无 node:sqlite（Node 20，22.5+ 才内置），用镜像自带的 sqlite3 CLI。
- * created_at 是毫秒时间戳，不是 datetime 字符串——用日期函数比较恒返回 0 行。
- */
-export function loadAgentRuns({ execFileFn, agentId, sinceMs, dbPath = OPENCLAW_DB }) {
+/** 远端只读事实：复用现行 MMV 通道，查询全部 runtime；读取失败不是“无执行”。 */
+export async function loadAgentRuns({ agentId, sinceMs, execFn = defaultExecAsync,
+  inContainer = existsSync('/.dockerenv') }) {
+  if (typeof agentId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(agentId)
+      || !Number.isSafeInteger(sinceMs) || sinceMs < 0) throw new Error('invalid_evidence_query');
   const sql = `SELECT created_at, COALESCE(task_kind,'') AS task_kind, runtime
-               FROM task_runs
-               WHERE agent_id='${agentId}' AND created_at > ${Math.floor(sinceMs)}
+               FROM task_runs WHERE agent_id='${agentId}' AND created_at > ${sinceMs}
                ORDER BY created_at`;
   try {
-    const out = execFileFn('sqlite3', ['-readonly', '-json', dbPath, sql], {
-      encoding: 'utf8',
-      timeout: 30_000,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    return parseRunRows(out);
-  } catch (err) {
-    console.warn(`[feishu-task-ledger] 读 OpenClaw run 失败（降级为无 run）: ${err.message}`);
-    return [];
+    const out = await execFn(buildHostCmd(buildMmvCmd(sql), inContainer), { timeoutMs: 30_000 });
+    const rows = parseSqliteJson(out);
+    if (rows.some(row => !row || !Number.isSafeInteger(row.created_at) || row.created_at <= sinceMs
+        || typeof row.task_kind !== 'string' || typeof row.runtime !== 'string')) throw new Error('invalid_rows');
+    return rows;
+  } catch {
+    // 不传播 SSH stderr（可能含主机私有信息）；由调用方记 unknown，绝不回退 US 旧库。
+    throw new Error('openclaw_evidence_unavailable');
   }
 }
 
@@ -394,7 +392,7 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
       fetchFn, token, chatId, startTimeSec,
     }));
   const loadRuns = deps.loadAgentRunsFn
-    ?? ((args) => loadAgentRuns({ execFileFn: execFileSync, ...args }));
+    ?? ((args) => loadAgentRuns({ ...args, execFn: deps.execFn, inContainer: deps.inContainer }));
   const createTask = deps.createRoutedTaskFn ?? defaultCreateRoutedTask;
   const sinceSec = deps.sinceSec ?? Math.floor(Date.now() / 1000) - LOOKBACK_SEC;
 
@@ -404,6 +402,7 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
   let created = 0;
   const stats = { done: 0, fault: 0, waiting: 0, answer: 0, silent: 0, unknown: 0 };
   const errors = [];
+  const evidence_errors = [];
 
   for (const group of GROUPS) {
     try {
@@ -413,7 +412,15 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
       const deduped = dedupeResends(candidates);
       if (deduped.length === 0) continue;
 
-      const runs = loadRuns({ agentId: group.agentId, sinceMs: sinceSec * 1000 });
+      let runs;
+      try {
+        runs = await loadRuns({ agentId: group.agentId, sinceMs: sinceSec * 1000 });
+      } catch {
+        stats.unknown += deduped.length;
+        errors.push(group.chatId);
+        evidence_errors.push({ chat_id: group.chatId, reason: 'openclaw_evidence_unavailable' });
+        continue;
+      }
       const evidenceFloorMs = resolveEvidenceFloor(runs, sinceSec * 1000);
 
       for (const c of deduped) {
@@ -445,7 +452,7 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
   console.log(`[feishu-task-ledger] scanned=${scanned} created=${created} `
     + `done=${stats.done} fault=${stats.fault} waiting=${stats.waiting} `
     + `answer=${stats.answer} silent=${stats.silent} unknown=${stats.unknown}`);
-  return { scanned, created, stats, errors };
+  return { scanned, created, stats, errors, evidence_errors };
 }
 
 const GATE_INTERVAL_MS = 60 * 60 * 1000;
