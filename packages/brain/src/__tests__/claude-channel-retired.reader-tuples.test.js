@@ -226,6 +226,14 @@ const B_HASHES = {...US_HASHES,
  "existing-ops-build-source.js":"237a57e9cd4d5d2545c0721effd1a3f67358b5dc8d0153ed26ea3ba18719e08c",
  "existing-ops-build-envelopes.js":"6aaea83ad1d73236fc2393a621cc1e059f55a622c29af0d77e7806f571df2c17"
 };
+const QA_HASHES = {...US_HASHES,
+ 'existing-ops-runtime-source.js':'21c3009b1b1ae0e2a114ad8d702487f2b7a3dde80ffc24b8a6d42c143b2c6947',
+ 'existing-ops-native-evidence-source.js':'04632ac4b6c0c25e141938d3ff68a7c3eda079056f6e82a35ebfede5f35050de',
+};
+const B_QA_HASHES = {...QA_HASHES,
+ 'existing-ops-build-source.js':B_HASHES['existing-ops-build-source.js'],
+ 'existing-ops-build-envelopes.js':B_HASHES['existing-ops-build-envelopes.js'],
+};
 const C_HASHES = {...US_HASHES,...{"existing-ops-build-source.js":"512317755a22aa943c501be12cf72e441254c3e30bfc496645d66913d3e5626f","existing-ops-build-envelopes.js":"64e460f1fc56f0e9422ac73e1082ea40f1b3835aa2bfc3d474ea998623962cc5"}};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
@@ -239,8 +247,10 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const runtime=sources.get(path.join(root,'existing-ops-runtime-source.js'));
   if(typeof runtime!=='string')return null;
   const build=sources.get(path.join(root,'existing-ops-build-source.js'));
-  const selected=typeof build==='string'&&hash(build,parse,shape)===C_HASHES['existing-ops-build-source.js']?C_HASHES
-   :typeof build==='string'&&hash(build,parse,shape)===B_HASHES['existing-ops-build-source.js']?B_HASHES
+  const isB=typeof build==='string'&&hash(build,parse,shape)===B_HASHES['existing-ops-build-source.js'];
+  const isQa=hash(runtime,parse,shape)===QA_HASHES['existing-ops-runtime-source.js'];
+  const isC=typeof build==='string'&&hash(build,parse,shape)===C_HASHES['existing-ops-build-source.js'];
+  const selected=isC?C_HASHES:isB?(isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
    :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(selected)){
@@ -266,19 +276,18 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
  const files=names.map(n=>path.join(root,`existing-ops-${n}.js`));
  const data=path.join(root,'existing-ops-build-envelopes.js');
  const base=()=>new Map(files.map(f=>[f,readFileSync(f,'utf8')]));
+ const legacyBase=()=>new Map(files.map(f=>[f,execFileSync('git',['show','6e9076aab2002e301304256b4936e2790f9de8e7:packages/brain/src/lib/'+path.basename(f)],{cwd:BRAIN_ROOT,encoding:'utf8'})]));
  const scan=(s,f=data)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  describe('A封套精确只读闭包及执行防复活',()=>{
   it('旧main完整13成员仍可审，新runtime缺新增前置不能借旧闭包',()=>{
-   const s=base(),runtime=path.join(root,'existing-ops-runtime-source.js'),helper=path.join(root,'existing-ops-us-compose-source.js');
-   for(const name of ['build-source','build-envelopes'])s.set(path.join(root,`existing-ops-${name}.js`),execFileSync('git',['show',`5dd82456a80b77dda054f5994d1561e1106317eb:packages/brain/src/lib/existing-ops-${name}.js`],{encoding:'utf8'}));
+   const s=legacyBase(),runtime=path.join(root,'existing-ops-runtime-source.js'),helper=path.join(root,'existing-ops-us-compose-source.js');
    s.set(runtime,execFileSync('git',['show','f4bf6aceb7f28e9d39944bf9bd0fb70a340f3439:packages/brain/src/lib/existing-ops-runtime-source.js'],{encoding:'utf8'}));s.delete(helper);
    expect(scan(s)).toEqual([]);
    s.set(runtime,base().get(runtime));expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
   });
   it('已发布旧collector闭包保留，旧版追加执行仍拒绝',()=>{
-   const s=base(), file=path.join(root,'existing-ops-build-source.js');
+   const s=legacyBase(), file=path.join(root,'existing-ops-build-source.js');
    const old=execFileSync('git',['show','65e7ffffe65debcd8e32039da5de50d5c99f00fb:packages/brain/src/lib/existing-ops-build-source.js'],{cwd:BRAIN_ROOT,encoding:'utf8'});
-   s.set(data,execFileSync('git',['show','5dd82456a80b77dda054f5994d1561e1106317eb:packages/brain/src/lib/existing-ops-build-envelopes.js'],{encoding:'utf8'}));
    s.set(file,old);expect(scan(s)).toEqual([]);
    s.set(file,old+'\neval(A_ENVELOPES.reviewed.any);');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
   });

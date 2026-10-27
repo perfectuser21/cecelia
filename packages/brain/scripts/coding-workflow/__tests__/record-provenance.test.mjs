@@ -209,3 +209,62 @@ it('同head同正文的两次QA与裁判按明确QA阶段选择，第二次可�
   expect(records.find(r => r.path === report).stage_event_id).toBe(attempts[1].qa.id);
   expect(records.find(r => r.path === judged).stage_event_id).toBe(attempts[1].judge.id);
 }, 15000);
+
+it('真实evaluate封存的执行产物随QA报告登记为verification，且原字节可补登记', async () => {
+  const { stageQaRecords } = await import('../runner/lib/qa-records.mjs');
+  prepareQa();git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const report = file('05-qa-report-r1.md'), artifact = file('qa-r1/qa-playwright.cjs');
+  put(report, fm('evaluate'));put(artifact, 'console.log("observed preview");\n');
+  seal('evaluate', [report, artifact], { round: 1 });
+  const staged = await stageQaRecords(worktree, { taskId, sprintDir, round: 1 }, [report, file('qa-r1')], { ...options, stage: 'qa', round: 1, qaStageEventId: lastQaStageId });
+  const row = JSON.parse(fs.readFileSync(path.join(worktree, M))).relations.find(r => r.path === artifact);
+  expect(row).toEqual({ owner_path: owner, path: artifact, role: 'verification' });
+  const { isRecordSourceDelta } = await import('../lib/record-sources.mjs');
+  expect(isRecordSourceDelta(worktree, { from: 'HEAD', to: ':', branch: 'cp-10121524-cw-088c3431' })).toBe(true);
+  git('commit', '-qm', 'real QA registration');finalizeRecordRegistration(staged.registration);
+  expect(verifyRecordProvenance({ ...options, head: git('rev-parse', 'HEAD') }).status).toBe('verified');
+});
+
+it('旧QA已提交执行产物补登记保留原stage和字节，新增真实registration而非补造阶段', async () => {
+  const { stageQaRecords } = await import('../runner/lib/qa-records.mjs');
+  const { registerRecordSources } = await import('../lib/record-sources.mjs');
+  prepareQa();git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const report=file('05-qa-report-r1.md'), artifact=file('qa-r1/qa-playwright.cjs');
+  put(report,fm('evaluate','CANNOT_VERIFY remains'));put(artifact,'console.log("original execution");\n');seal('evaluate',[report,artifact],{round:1});
+  const qa={...options,stage:'qa',round:1,qaStageEventId:lastQaStageId};
+  const legacy=beginRecordRegistration(qa,[report,artifact]);
+  registerRecordSources(worktree,{taskId,sprintDir,stage:'qa',round:1},[report]);observeRecordRegistration(legacy,[M]);commit();
+  const old=finalizeRecordRegistration(legacy),oldHead=git('rev-parse','HEAD'),oldBytes=git('show',`${oldHead}:${artifact}`);
+  expect(verifyRecordProvenance({...options,head:oldHead}).status).toBe('verified');
+  const recovery=await stageQaRecords(worktree,{taskId,sprintDir,round:1},[report,file('qa-r1')],qa);
+  git('commit','-qm','supplement original QA source registration');const current=finalizeRecordRegistration(recovery.registration);
+  expect(current.id).not.toBe(old.id);expect(current.head_before).toBe(oldHead);
+  expect(current.records.find(r=>r.path===artifact).stage_event_id).toBe(lastQaStageId);
+  expect(git('show',`HEAD:${artifact}`)).toBe(oldBytes);expect(git('show',`HEAD:${report}`)).toContain('CANNOT_VERIFY remains');
+  expect(verifyRecordProvenance({...options,head:git('rev-parse','HEAD')}).status).toBe('verified');
+});
+
+it.each(['bytes','mode','round','task','subset','other-file','forged-token'])('执行产物来源登记拒绝跨凭证或封存后漂移：%s',async kind=>{
+  const { registerRecordSources }=await import('../lib/record-sources.mjs');
+  prepareQa();git('update-ref','refs/remotes/origin/main','HEAD');
+  const report=file('05-qa-report-r1.md'),artifact=file('qa-r1/qa-playwright.cjs');
+  put(report,fm('evaluate'));put(artifact,'// original\n');seal('evaluate',[report,artifact],{round:1});
+  const token=beginRecordRegistration({...options,stage:'qa',round:1,qaStageEventId:lastQaStageId},[report,artifact]);
+  const args={taskId,sprintDir,stage:'qa',round:1,registration:token};let files=[report,artifact];
+  if(kind==='bytes')put(artifact,'// changed\n');if(kind==='mode')fs.chmodSync(path.join(worktree,artifact),0o755);
+  if(kind==='round')args.round=2;if(kind==='task')args.taskId='aaaaaaaa-0000-0000-0000-000000000000';
+  if(kind==='subset')files=[artifact];if(kind==='other-file'){const other=file('qa-r1/other.cjs');put(other,'// other');files=[report,other];}
+  if(kind==='forged-token')args.registration={id:token.id};
+  const before=fs.readFileSync(path.join(worktree,M),'utf8');
+  expect(()=>registerRecordSources(worktree,args,files)).toThrow();expect(fs.readFileSync(path.join(worktree,M),'utf8')).toBe(before);
+});
+
+it('报告有真实evaluate但执行产物不在该stage封存中，登记仍拒绝且索引不变', async () => {
+  const { stageQaRecords } = await import('../runner/lib/qa-records.mjs');
+  prepareQa();git('update-ref','refs/remotes/origin/main','HEAD');
+  const report=file('05-qa-report-r1.md'),artifact=file('qa-r1/qa-playwright.cjs');
+  put(report,fm('evaluate'));seal('evaluate',[report],{round:1});put(artifact,'// never sealed\n');
+  const before=fs.readFileSync(path.join(worktree,M),'utf8');
+  await expect(stageQaRecords(worktree,{taskId,sprintDir,round:1},[report,file('qa-r1')],{...options,stage:'qa',round:1,qaStageEventId:lastQaStageId})).rejects.toThrow(/stage_missing/);
+  expect(fs.readFileSync(path.join(worktree,M),'utf8')).toBe(before);expect(git('diff','--cached','--name-only')).toBe('');
+});
