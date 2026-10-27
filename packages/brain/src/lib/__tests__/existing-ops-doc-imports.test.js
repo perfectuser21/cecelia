@@ -30,6 +30,7 @@ async function proof({ schema = marker, overrides = {}, missing = [], enabled = 
     paths: [...new Set([...paths, ...Object.keys(texts)])].filter(p => !missing.includes(p)),
     readSource: async path => path === selector ? git(path) + (enabled ? schema : '') : Object.hasOwn(texts, path) ? texts[path] : git(path),
   });
+  await new Promise(resolve => nativeSetImmediate(resolve));
   return result.consumers.find(c => c.workflow_key === 'factory_f3_ops');
 }
 const edges = f3 => f3.input_relations.filter(e => e.kind === 'static_import_dependency');
