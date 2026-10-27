@@ -121,3 +121,13 @@ upstream: ["01-intent.md#I-1", "01-intent.md#I-2", "01-intent.md#I-3", "01-inten
 ### T-15（Q-6）：采纳验收责任修正
 
 原 Q-6 额外要求控制器在预览之外再准备两项任务和一次真实 runner 执行，却没有在本轮交付 ID、执行前后事实或次数；第 1 轮 QA 无法自行制造受控 runner 现场。01 的 I-7 已明确将“已有结果不再认领/执行、verify 失败保留 failed 和原因”的软件行为交给**本轮 verify 的受控任务服务与真实 runner 子进程测试**，生产旧失败任务则由监督端独立读回；I-9 的 Native 进程行为同样由 verify 核。补充 S-11：本节对 QA 职责的修正优先于前文 S-6、Q-6 和“未覆盖真实链路”中要求额外预览 runner 场景的句子。Q-6 在 QA 阶段仅核固定 HEAD 的预览可达和本轮 Q-1 至 Q-4 场景中实际可见的任务状态，不再以额外两项预览 runner 场景的任务 ID 或认领次数作为 QA PASS 前提；Q-6 不能仅凭 404、历史生产任务或单测源码宣称 I-7/I-9 通过。独立 judge 仍必须读取本轮固定 HEAD 的 S-5 原生命令、完整输出和退出码、`run-once-recovery.test.mjs` 的已有结果不重跑断言、`run-once.test.mjs` 的失败终态断言，以及监督端对生产旧失败任务的独立读回；任何一项缺证，I-7 不能通过。此修正只移除重复且未交付的 QA 环境前提，不改变 I-7、I-9 或 S-5 至 S-8 的验收强度。
+
+## commander 裁决（第 2 次）
+
+### T-1 至 T-4（Q-1 至 Q-4）：维持规格，补足资源交付入口
+
+第 1 轮缺的是控制器提供的场景资源，不是 I-1 至 I-4、I-6 的真实产品验收可以取消。第 1 次裁决只写 `formal-resource-index.json` 文件名；QA 的固定 evaluate 输入没有携带 `qa_state.operator_resource_handoff`，在候选工作树根和 sprint 目录也找不到该文件，故不能要求 QA 猜测相对路径。补充 S-12：本任务场景资源的稳定发现入口为只读绝对路径 `/Users/administrator/research/coding-A-qa-b3d6f213/formal-resource-index.json`。控制器必须在最终发布 HEAD（包含本次规格提交及其后由控制器生成的第 2 次裁决记录提交）形成后、正式 QA 开始前，按最终 HEAD 重建或刷新该入口指向的索引、manifest、13 个场景 plan、唯一 nonce、允许的 Node `--import` 客户端入口、精确任务 allowlist、控制器结果和新 01 归属读取位置，并使预览实际部署同一 HEAD。旧索引当前绑定 `bc069edf721580623eae15052255ef25f84cfbc9`，仅证明曾准备资源，不能用于新 HEAD 的 PASS。正式 QA 从上述绝对路径读取索引，独立核索引与 manifest 摘要、任务 ID、nonce、场景路径和预览 `/api/brain/health.git_sha` 均与当轮固定 HEAD 一致，然后按 Q-1 至 Q-4 实际建单、等待控制器真实执行 intent、读取原生结果及新 01 原字节并复算摘要。索引、传输入口或控制器结果不可读、未刷新、身份不一致时，逐项记 CANNOT_VERIFY；不以准备记录或旧场景代替执行证据。QA 不修改控制器资源、Git 或来源文件。
+
+### T-15（Q-6）：维持第 1 次裁决
+
+补充 S-11 已将额外两项预览 runner 任务及认领次数从 QA 前提移出，I-7、I-9 仍须由本轮独立 verify、监督端生产旧失败任务读回和 judge 按原生证据核验。第 1 轮缺这两项场景 ID 不能用 404 或历史任务补成 QA PASS，也不能借此降低 I-7、I-9 的验收；QA 对 Q-6 按 S-11 检查本轮可见状态和固定 HEAD。
