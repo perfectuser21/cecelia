@@ -178,9 +178,7 @@ describe('版本化原生 runner 消费链，固定真实 Git 来源', () => {
     expect(f3.status).toBe('verified');
     expect(f3.bindings.map(b => b.path)).not.toContain(runner);
   });
-  it('只接受活跃 it 的真实具名 helper 调用，不接受 skip、死支路、假字符串或遮蔽', async () => {
-    const prefix = "import {describe,it} from 'vitest'; import {runOnceProcess} from './helpers/sandbox.mjs'; ";
-    for (const code of [
+  it.each([
       "describe('x',()=>{it.skip('x',async()=>{await runOnceProcess({})})})",
       "describe.skip('x',()=>{it('x',async()=>{await runOnceProcess({})})})",
       "describe('x',()=>{it('x',async()=>{if(false) await runOnceProcess({})})})",
@@ -197,14 +195,13 @@ describe('版本化原生 runner 消费链，固定真实 Git 来源', () => {
       "describe('x',()=>{it('x',async()=>{globalThis['Function']('process.execPath=42')(); await runOnceProcess({})})})",
       "const unused=async()=>runOnceProcess({});",
       "const text='await runOnceProcess({})'; // await runOnceProcess({})"
-    ]) {
-      const f3 = (await collect({ [testPath]: prefix+code })).consumers[1];
-      expect(f3.status, code).toBe('unknown');
-      expect(f3.bindings).toEqual([]);
-    }
+    ].map((code, index) => ({ case: index + 1, code })))("只接受活跃 it 的真实具名 helper 调用，不接受 skip、死支路、假字符串或遮蔽 [输入 $case]", async ({ code }) => {
+    const prefix = "import {describe,it} from 'vitest'; import {runOnceProcess} from './helpers/sandbox.mjs'; ";
+    const f3 = (await collect({ [testPath]: prefix+code })).consumers[1];
+    expect(f3.status, code).toBe('unknown');
+    expect(f3.bindings).toEqual([]);
   });
-  it('固定 sandbox AST 拒绝参数漂移、路径逃逸、赋值和绑定遮蔽', async () => {
-    for (const mutate of [
+  it.each([
       t => t.replace('[RUN_ONCE]', "[RUN_ONCE, '--eval']"),
       t => t.replace('[RUN_ONCE]', '[...RUN_ONCE]'),
       t => t.replace("'../../run-once.mjs'", "'../../../../../../../../outside.mjs'"),
@@ -227,13 +224,12 @@ describe('版本化原生 runner 消费链，固定真实 Git 来源', () => {
       t => t.replace('export function makeSandbox() {', 'export function makeSandbox() { let alias; alias=process;'),
       t => t.replace('return new Promise', 'return; new Promise'),
       t => t.replace('const child = spawn(process.execPath, [RUN_ONCE],', 'const child = fake(process.execPath, [RUN_ONCE],')
-    ]) {
-      const f3 = (await collect({ [sandbox]: mutate(fixed(sandbox)) })).consumers[1];
-      expect(f3.status).toBe('unknown');
-      expect(f3.bindings).toEqual([]);
-    }
+    ].map((mutate, index) => ({ case: index + 1, mutate })))("固定 sandbox AST 拒绝参数漂移、路径逃逸、赋值和绑定遮蔽 [输入 $case]", async ({ mutate }) => {
+    const f3 = (await collect({ [sandbox]: mutate(fixed(sandbox)) })).consumers[1];
+    expect(f3.status).toBe('unknown');
+    expect(f3.bindings).toEqual([]);
   });
-  it('真实 provider 工作流及 required CI 测试逐项登记，注释或条件假调用拒绝', async () => {
+  function providerFixture() {
     const workflow = '.github/workflows/implementation-impact.yml', ci = '.github/workflows/ci.yml';
     const helper = 'scripts/ci/implementation-main-snapshot.mjs', test = 'scripts/ci/__tests__/implementation-main-snapshot.test.mjs';
     // 自包含候选工作流 fixture；生产字节另用固定 Git 独审，不依赖未合并兄弟分支对象。
@@ -248,11 +244,11 @@ describe('版本化原生 runner 消费链，固定真实 Git 来源', () => {
     const overrides = {[workflow]:yaml.dump(providerDoc),[ci]:yaml.dump(ciDoc),[helper]:'export const fixture = true;', [test]:"import {test} from 'node:test'; test('fixture',()=>{});"};
     const run = edits => buildExistingOpsSources({ scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision:sha,
       paths:[...fixedPaths,helper,test],readSource:async path => edits?.[path] ?? overrides[path] ?? (path===schema?fixed(path)+'\nexport const EXISTING_OPS_RUNTIME_SELECTOR_SCHEMA = 1;':fixed(path)) });
-    const f3 = (await run()).consumers[1];
-    expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
-    expect(f3.bindings.map(b=>b.path)).toContain(helper);
-    expect(f3.bindings.map(b=>b.path)).toContain(test);
-    for (const mutation of [
+    return { workflow, ci, helper, test, overrides, run };
+  }
+  const providerMutations = (() => {
+    const { workflow, ci, overrides } = providerFixture();
+    return [
       {[workflow]:overrides[workflow].replace('node tooling/scripts/ci/implementation-main-snapshot.mjs','# node tooling/scripts/ci/implementation-main-snapshot.mjs')},
       {[workflow]:overrides[workflow].replace('node tooling/scripts/ci/implementation-main-snapshot.mjs','if false; then node tooling/scripts/ci/implementation-main-snapshot.mjs; fi')},
       {[ci]:overrides[ci].replace('node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs','echo node --test scripts/ci/__tests__/implementation-main-snapshot.test.mjs')}
@@ -266,10 +262,19 @@ describe('版本化原生 runner 消费链，固定真实 Git 来源', () => {
         doc => {doc.jobs['lint-auto-merge-decision'].defaults={run:{'working-directory':'elsewhere'}};},
         doc => {doc.jobs['lint-auto-merge-decision'].steps.at(-1)['continue-on-error']=true;}
       ].map(mutate=>{const doc=yaml.load(overrides[ci]);mutate(doc);return {[ci]:yaml.dump(doc)};})
-    ]) {
-      const failed=(await run(mutation)).consumers[1];
-      expect(failed.status).toBe('unknown'); expect(failed.bindings).toEqual([]);
-    }
+    ];
+  })();
+  it("真实 provider 工作流及 required CI 测试逐项登记，注释或条件假调用拒绝：真实正例", async () => {
+    const { run, helper, test } = providerFixture();
+    const f3 = (await run()).consumers[1];
+    expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
+    expect(f3.bindings.map(b=>b.path)).toContain(helper);
+    expect(f3.bindings.map(b=>b.path)).toContain(test);
+  });
+  it.each(providerMutations.map((mutation, index) => ({ case: index + 1, mutation })))("真实 provider 工作流及 required CI 测试逐项登记，注释或条件假调用拒绝 [输入 $case]", async ({ mutation }) => {
+    const { run } = providerFixture();
+    const failed=(await run(mutation)).consumers[1];
+    expect(failed.status).toBe('unknown'); expect(failed.bindings).toEqual([]);
   });
 
 });
