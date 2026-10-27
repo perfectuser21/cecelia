@@ -1,10 +1,9 @@
 /** 已有工厂活动的只读消费者证据；不执行源码，也不声明完整流程可运行。 */
 import { createHash } from 'node:crypto';
-import { reviewedAContext } from './existing-ops-a-compat.js';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
 import { runtimeSelectorEnabled, collectRuntimeSources, ciEntrySelectorEnabled, collectCiEntrySources, stagingSelectorVersion, collectIsolatedStagingSources, collectAutoVersionTestSources } from './existing-ops-runtime-source.js';
-import { buildSelectorEnabled, collectBuildSources } from './existing-ops-build-source.js';
+import { buildSelectorEnabled, collectBuildSources, reviewedAContext } from './existing-ops-build-source.js';
 let parse;
 async function requireParser() {
   if (parse) return;
