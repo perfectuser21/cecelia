@@ -2,6 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10272102-cw-b3d6f213/05-qa-report-r2.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10272102-cw-b3d6f213/07-commander-r3.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10272102-cw-b3d6f213/qa-r1/qa-playwright.cjs","role":"verification"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10272102-cw-b3d6f213/07-commander-r2.md","role":"documentation"},
