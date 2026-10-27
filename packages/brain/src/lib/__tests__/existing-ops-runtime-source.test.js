@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 import { buildExistingOpsSources } from '../existing-ops-source.js';
-import { runtimeSelectorEnabled } from '../existing-ops-runtime-source.js';
+import fs from 'node:fs';
+import { collectAutoVersionTestSources, runtimeSelectorEnabled } from '../existing-ops-runtime-source.js';
 const parse = text => acorn(text, { ecmaVersion: 'latest', sourceType: 'module' });
 
 describe('existing-ops-runtime-source 显式固定来源协议', () => {
@@ -304,4 +305,27 @@ describe('root npm ci固定manifest输入', () => {
     const f3 = aggregateF3(await npmProof(options)); expect(f3.status).toBe('unknown');
     expect(f3.bindings).toEqual([]); expect(f3.input_relations).toEqual([]);
   }, 120000);
+});
+
+
+describe('QA执行产物兼容的auto-version固定来源', () => {
+  const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const target = 'scripts/ci/implementation-auxiliary-evidence.mjs';
+  async function collect(mode) {
+    const gaps = [], relations = [];
+    await collectAutoVersionTestSources({ revision: 'a'.repeat(40), parse, relations,
+      selectors: { include: [/auto-version-decision/], exclude: [] },
+      requireProof: (ok, code) => { if (!ok) gaps.push(code); return ok; },
+      read: async p => p === target && ['old', 'future'].includes(mode)
+        ? execFileSync('git', ['show', (mode === 'future' ? '0a7eda551e0e127c3ebd90f9fce3f29b3f8df3e9' : '6e9076aab2002e301304256b4936e2790f9de8e7') + ':' + p], { cwd: root, encoding: 'utf8' })
+        : fs.readFileSync(root + p, 'utf8') + (p === target && mode === 'mutated' ? '\n// unknown bytes\n' : '') });
+    return { gaps, relations };
+  }
+  it('旧固定来源和完整已审QA兼容来源均保留，未开放新相对依赖', async () => {
+    for (const mode of ['old', 'current', 'future']) {
+      const result = await collect(mode);expect(result.gaps).toEqual([]);
+      expect(result.relations.some(r => r.consumer_path === target && r.input_path.includes('record-provenance'))).toBe(false);
+    }
+  });
+  it('同路径未知新字节仍拒绝', async () => { expect((await collect('mutated')).gaps).toContain('auto_version_test_source_unproven'); });
 });

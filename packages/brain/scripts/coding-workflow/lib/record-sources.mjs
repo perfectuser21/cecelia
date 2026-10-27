@@ -5,6 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { childEnv } from './protocol.mjs';
 import { parseFrontmatter } from './md-chain.mjs';
+import { assertRecordSourceRegistration } from './record-provenance.mjs';
+import { isQaExecutionArtifact } from './record-provenance-records.mjs';
+export { isQaExecutionArtifact };
+const sourceRole = file => isQaExecutionArtifact(file) ? 'verification' : 'documentation';
 
 export const RECORD_SOURCE_MANIFEST = '.implementation-source-relations.json';
 export const RECORD_SOURCE_OWNER = 'packages/brain/scripts/coding-workflow/runner/run-once.mjs';
@@ -58,7 +62,7 @@ function allowed(file, sprintDir, stage, round) {
   const name = file.slice(sprintDir.length + 1);
   if (stage === 'publish') return publishName.test(name);
   if (!Number.isSafeInteger(round) || round < 1) return false;
-  return stage === 'qa' ? [`05-qa-report-r${round}.md`, `06-judge-r${round}.md`].includes(name)
+  return stage === 'qa' ? ([`05-qa-report-r${round}.md`, `06-judge-r${round}.md`].includes(name) || (name === `qa-r${round}/qa-playwright.cjs` && isQaExecutionArtifact(file)))
     : stage === 'commander' && name === `07-commander-r${round}.md`;
 }
 function append(text, files, sort = true) {
@@ -67,7 +71,7 @@ function append(text, files, sort = true) {
   const paths = [...new Set(files)];
   if (sort) paths.sort();
   for (const file of paths) {
-    const row = { owner_path: RECORD_SOURCE_OWNER, path: file, role: 'documentation' }, previous = existing.get(file);
+    const row = { owner_path: RECORD_SOURCE_OWNER, path: file, role: sourceRole(file) }, previous = existing.get(file);
     if (previous && (previous.owner_path !== row.owner_path || previous.role !== row.role || Object.keys(previous).length !== 3)) fail('relation_conflict');
     if (!previous) additions.push(row);
   }
@@ -80,7 +84,7 @@ function append(text, files, sort = true) {
 }
 
 /** 校验整组后仅原子写索引；调用者必须把返回路径与记录在同一个 Git commit 提交。 */
-export function registerRecordSources(worktree, { taskId, sprintDir, stage, round }, files) {
+export function registerRecordSources(worktree, { taskId, sprintDir, stage, round, registration }, files) {
   if (!originEnabled(worktree)) {
     if (fs.existsSync(path.join(worktree, RECORD_SOURCE_MANIFEST))) {
       const data = JSON.parse(fs.readFileSync(path.join(worktree, RECORD_SOURCE_MANIFEST), 'utf8'));
@@ -93,6 +97,7 @@ export function registerRecordSources(worktree, { taskId, sprintDir, stage, roun
   regular(root, RECORD_SOURCE_OWNER, true);
   if (!Array.isArray(files) || !files.length || files.some(file => !allowed(file, sprintDir, stage, round))) fail('file_unsupported');
   for (const file of files) regular(root, file);
+  if (files.some(isQaExecutionArtifact)) assertRecordSourceRegistration(registration, root, { taskId, sprintDir, stage, round }, files);
   const base = git(root, 'merge-base', 'origin/main', 'HEAD').trim();
   const before = readGit(root, 'HEAD', RECORD_SOURCE_MANIFEST);
   if (readGit(root, base, RECORD_SOURCE_MANIFEST) !== before && !isRecordSourceDelta(root, { from: base, to: 'HEAD', branch })) fail('committed_manifest_modified');
@@ -121,10 +126,10 @@ export function isRecordSourceDelta(worktree, { from, to, branch }) {
     const before = read(from, RECORD_SOURCE_MANIFEST), after = read(to, RECORD_SOURCE_MANIFEST);
     const old = manifest(before), next = manifest(after), oldPaths = new Set(old.relations.map(r => r.path));
     const added = next.relations.filter(r => !oldPaths.has(r.path));
-    if (!added.length || added.some(r => r.owner_path !== RECORD_SOURCE_OWNER || r.role !== 'documentation')) return false;
+    if (!added.length || added.some(r => r.owner_path !== RECORD_SOURCE_OWNER || r.role !== sourceRole(r.path))) return false;
     for (const row of added) {
-      const match = /^(sprints\/\d{8}-cw-[0-9a-f]{8})\/([^/]+)$/.exec(row.path);
-      if (!match || !(publishName.test(match[2]) || recordName.test(match[2]))) return false;
+      const match = /^(sprints\/\d{8}-cw-[0-9a-f]{8})\/(.+)$/.exec(row.path);
+      if (!match || !(publishName.test(match[2]) || recordName.test(match[2]) || isQaExecutionArtifact(row.path))) return false;
       const intent = read(to, `${match[1]}/01-intent.md`), taskId = parseFrontmatter(intent)?.data.task_id;
       identity(branch, match[1], taskId, intent);
       // 引用的记录与身份文件都必须在这个精确视图中是普通文件。
