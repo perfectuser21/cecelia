@@ -400,11 +400,11 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
       if (await read(path)) relations.push({ consumer_path: 'packages/brain/vitest.config.js', input_path: path,
         kind: 'literal_vitest_regression_selector', selector: 'native_nightly_include_minus_exclude', revision });
     }
-    const reviewedA = runtime && buildInputs && selectors
+    const reviewedA = runtime && selectors
       ? await reviewedAContext({ parse: ast, paths, readSource, revision }) : null;
     const proofRead = reviewedA ? async path => reviewedA.normalize(path, await read(path)) : read;
     const proofSource = reviewedA ? async (path, rev) => reviewedA.normalize(path, await readSource(path, rev)) : readSource;
-    if (reviewedA) await reviewedA.record({ read, relations });
+    if (reviewedA) await reviewedA.record({ read, relations, buildInputs });
     if (runtime && selectors) await collectRuntimeSources({ parse: ast, paths, selectors, read: proofRead, readSource: proofSource, revision, relations, requireProof, ci });
     if (buildInputs) {
       if (requireProof(Boolean(runtime && selectors), 'build_selector_parent_unproven'))
