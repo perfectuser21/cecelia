@@ -326,7 +326,7 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
     async record({ read, relations, buildInputs = true }) {
       const runtimeInput = path => path.startsWith(PREFIX + 'runner/') || [
         '__tests__/helpers/brain-transport.mjs', '__tests__/fixtures/brain-fetch-preload.mjs',
-        '__tests__/helpers/procs.mjs', 'lib/authority-refs.mjs',
+        '__tests__/helpers/procs.mjs', '__tests__/helpers/git.mjs', 'lib/authority-refs.mjs',
       ].some(rel => path === PREFIX + rel);
       const active = new Set([...originals.keys()].filter(path => buildInputs || runtimeInput(path)));
       for (const [path, bytes] of originals) {
