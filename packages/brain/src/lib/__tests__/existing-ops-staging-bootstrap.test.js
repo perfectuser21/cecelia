@@ -69,6 +69,7 @@ async function build({ patch = {}, marker = 2, missing } = {}) {
       }
       return text;
     } });
+  await new Promise(resolve => nativeSetImmediate(resolve));
   return result.consumers.find(c => c.workflow_key === 'factory_f2_ops');
 }
 
