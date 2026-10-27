@@ -55,11 +55,21 @@ function escapeAnchors(text) {
 }
 
 /** 渲染 01-intent.md：frontmatter + 标题 + 可选 `## 背景`（task.description）+ 每条 `### I-n`。 */
-export function renderIntent({ taskId, title, items, description }) {
+export function renderIntent({ taskId, title, items, description, authorityFacts = undefined }) {
   const heading = squash(title ?? '') || String(taskId);
   const lines = ['---', `task_id: ${taskId}`, 'step: intent', 'upstream: []', '---', `# ${heading}`, ''];
   const background = typeof description === 'string' ? description.trim() : '';
   if (background) lines.push('## 背景', '', escapeAnchors(background), '');
+  if (authorityFacts === null) lines.push('## 旧资料引用事实', '', 'legacy/unconfigured：旧任务未声明权威资料，保留原有要求的未知状态。', '');
+  else if (authorityFacts !== undefined) {
+    lines.push('## 旧资料引用事实', '');
+    for (const fact of authorityFacts) {
+      lines.push(`- object_id: ${fact.object_id}`, `  ref_id: ${fact.ref_id}`, `  kind: ${fact.kind}`,
+        `  path: ${fact.path}`, `  revision: ${fact.revision}`, `  digest: ${fact.actual_digest ?? fact.digest}`,
+        `  required: ${fact.required}`, `  status: ${fact.status}`, `  reason: ${fact.reason ?? ''}`);
+    }
+    lines.push('');
+  }
   items.forEach((item, i) => {
     lines.push(`### I-${i + 1}`, item, '');
   });
