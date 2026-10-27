@@ -2,8 +2,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { setImmediate as nativeSetImmediate } from 'node:timers';
 
 const { rawBuilder } = vi.hoisted(() => ({ rawBuilder: vi.fn() }));
-vi.mock('../existing-ops-source.js', () => ({ buildExistingOpsSources: rawBuilder }));
-import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
+vi.mock('../../packages/brain/src/lib/existing-ops-source.js', () => ({ buildExistingOpsSources: rawBuilder }));
+import { buildExistingOpsSources } from '../../packages/brain/src/lib/__tests__/helpers/existing-ops-proof-builder.js';
 
 beforeEach(() => { rawBuilder.mockReset(); });
 
