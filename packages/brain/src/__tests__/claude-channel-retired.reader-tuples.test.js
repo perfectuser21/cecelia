@@ -120,7 +120,7 @@ export function registerReaderTupleGuardTests({ BRAIN_ROOT, ENVELOPE_FILE, ENVEL
 describe('sourceprep history reader完整新组合',()=>{
  const root=path.join(BRAIN_ROOT,'src/lib');
  const six=['source','build-source','stage-source','provenance-envelope','native-evidence-source','native-evidence-envelopes','runtime-source'].map(n=>path.join(root,'existing-ops-'+n+'.js'));
- const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,...PROVENANCE_READER_HASHES.keys(),...six,path.join(root,'existing-ops-us-compose-source.js'),path.join(root,'existing-ops-qa-artifact-envelopes.js')])].map(f=>[f,readFileSync(f,'utf8')]));
+ const base=()=>new Map([...new Set([ENVELOPE_FILE,ENVELOPE_CONSUMER,...PROVENANCE_READER_HASHES.keys(),...six,path.join(root,'existing-ops-us-compose-source.js')])].map(f=>[f,readFileSync(f,'utf8')]));
  const scan=(s,f=NATIVE_DATA)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  it.each([ENVELOPE_FILE,NATIVE_DATA,path.join(root,'existing-ops-stage-envelopes.js')])('新完整caller/runtime/reader使%s取得资格',f=>expect(scan(base(),f)).toEqual([]));
  it.each(six)('新组合混入旧%s拒绝',f=>{
@@ -224,8 +224,7 @@ const US_HASHES = {...HASHES,
 };
 const QA_HASHES = {...US_HASHES,
  'existing-ops-runtime-source.js':'21c3009b1b1ae0e2a114ad8d702487f2b7a3dde80ffc24b8a6d42c143b2c6947',
- 'existing-ops-native-evidence-source.js':'bd318ff574fb64218827925962b46df53c66cff85989d5a114c9b2871d75b71f',
- 'existing-ops-qa-artifact-envelopes.js':'7699e70e5338b76e1bd350940a6c1c05f41b211d76cf9e68d6af3311f0dc44c7',
+ 'existing-ops-native-evidence-source.js':'04632ac4b6c0c25e141938d3ff68a7c3eda079056f6e82a35ebfede5f35050de',
 };
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
@@ -260,11 +259,11 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
 
 export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations }) {
  const root=path.join(BRAIN_ROOT,'src/lib');
- const names=['qa-artifact-envelopes','source','build-source','build-envelopes','runtime-source','us-compose-source','stage-source','stage-envelopes','stage-modes','provenance-envelope','provenance-core-envelope','provenance-entry-envelopes','provenance-local-envelopes','native-evidence-source','native-evidence-envelopes'];
+ const names=['source','build-source','build-envelopes','runtime-source','us-compose-source','stage-source','stage-envelopes','stage-modes','provenance-envelope','provenance-core-envelope','provenance-entry-envelopes','provenance-local-envelopes','native-evidence-source','native-evidence-envelopes'];
  const files=names.map(n=>path.join(root,`existing-ops-${n}.js`));
  const data=path.join(root,'existing-ops-build-envelopes.js');
  const base=()=>new Map(files.map(f=>[f,readFileSync(f,'utf8')]));
- const legacyBase=()=>new Map(files.filter(f=>!f.endsWith('existing-ops-qa-artifact-envelopes.js')).map(f=>[f,execFileSync('git',['show','6e9076aab2002e301304256b4936e2790f9de8e7:packages/brain/src/lib/'+path.basename(f)],{cwd:BRAIN_ROOT,encoding:'utf8'})]));
+ const legacyBase=()=>new Map(files.map(f=>[f,execFileSync('git',['show','6e9076aab2002e301304256b4936e2790f9de8e7:packages/brain/src/lib/'+path.basename(f)],{cwd:BRAIN_ROOT,encoding:'utf8'})]));
  const scan=(s,f=data)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  describe('A封套精确只读闭包及执行防复活',()=>{
   it('旧main完整13成员仍可审，新runtime缺新增前置不能借旧闭包',()=>{
