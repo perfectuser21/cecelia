@@ -373,9 +373,9 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] ciunitexitred 实际旧YAML函数永久复现异常被判成功，RED已独立验证。
   Test: manual:node --test scripts/ci/__tests__/brain-unit-exit-contract.test.mjs
-- [ ] [BEHAVIOR] ciunitexitfailure 部分通过/RPC/worker异常及混合NoTests错误保持非零，tee失败不被掩盖。
+- [x] [BEHAVIOR] ciunitexitfailure 部分通过/RPC/worker异常及混合NoTests错误保持非零，tee失败不被掩盖。
   Test: manual:node --test scripts/ci/__tests__/brain-unit-exit-contract.test.mjs
-- [ ] [BEHAVIOR] ciunitexitsuccess 完整成功与原生合法空集合成功，调用者errexit不变。
+- [x] [BEHAVIOR] ciunitexitsuccess 完整成功与原生合法空集合成功，调用者errexit不变。
   Test: manual:node --test scripts/ci/__tests__/brain-unit-exit-contract.test.mjs
-- [ ] [BEHAVIOR] ciunitexitgate 实际合并门禁阻断守卫失败/取消/跳过/空结果，守卫job执行永久测试并传播失败。
+- [x] [BEHAVIOR] ciunitexitgate 实际合并门禁阻断守卫失败/取消/跳过/空结果，守卫job执行永久测试并传播失败。
   Test: manual:node --test scripts/ci/__tests__/brain-unit-exit-contract.test.mjs
