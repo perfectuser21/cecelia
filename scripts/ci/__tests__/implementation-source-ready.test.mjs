@@ -17,8 +17,9 @@ const newCollectorPaths=['source','envelopes'].map(n=>`packages/brain/src/lib/ex
 const stageModePath='packages/brain/src/lib/existing-ops-stage-modes.js';
 const workspaceCollectorPath='packages/brain/src/lib/workspace-ci-source-bundle.js';
 const usComposeCollectorPath='packages/brain/src/lib/existing-ops-us-compose-source.js';
+const qaArtifactCollectorPath='packages/brain/src/lib/existing-ops-qa-artifact-envelopes.js';
 const stagingCollectorPath='packages/brain/src/lib/existing-ops-staging-source.js';
-const paths=[...priorStagePaths,...newCollectorPaths,stageModePath,workspaceCollectorPath,usComposeCollectorPath].sort();
+const paths=[...priorStagePaths,...newCollectorPaths,stageModePath,workspaceCollectorPath,usComposeCollectorPath,qaArtifactCollectorPath].sort();
 const root=mkdtempSync(join(tmpdir(),'source-ready-'));
 const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
 git('init','-q');mkdirSync(join(root,'empty-hooks'));git('config','core.hooksPath',join(root,'empty-hooks'));git('config','user.email','test@example.invalid');git('config','user.name','Fixture');
@@ -36,14 +37,14 @@ async function fixture(responses,run){
 }
 function options(brainUrl){return {brainUrl,token:'test-only',repoRoot:root,revision,timeoutMs:100,intervalMs:10};}
 function deps(extra={}){let time=0;return {readMain:async()=>revision,now:()=>time,sleep:async ms=>{time+=ms;},...extra};}
-test('固定单提交Git读取十六文件；工作区未提交字节不作为可信指纹',()=>{
+test('固定单提交Git读取十七文件；工作区未提交字节不作为可信指纹',()=>{
  const actual=expectedSourceRuntime({repoRoot:root,revision});assert.deepEqual(actual,expected);
  writeFileSync(join(root,paths[0]),'dirty bytes');assert.deepEqual(expectedSourceRuntime({repoRoot:root,revision}),expected);git('checkout','--',paths[0]);
 });
-test('已知旧5模块只能等待，新16模块匹配才真实HTTP就绪',async()=>{
+test('已知旧5模块只能等待，新17模块匹配才真实HTTP就绪',async()=>{
  const old=runtime();old.files=old.files.filter(f=>legacyPaths.includes(f.path));
  await fixture([{body:old},{body:runtime()}],async(url,requests)=>{
-  const result=await waitForSourceRuntime(options(url),deps());assert.equal(result.attempts,2);assert.equal(result.files.length,16);
+  const result=await waitForSourceRuntime(options(url),deps());assert.equal(result.attempts,2);assert.equal(result.files.length,17);
   assert.ok(requests.every(r=>r.method==='GET'));
  });
 });
@@ -157,13 +158,13 @@ test('固定Git输入可在真实depth1浅克隆运行',()=>{
  assert.deepEqual(expectedSourceRuntime({repoRoot:clone,revision}),expected);
 });
 
-test('精确历史9模块只等待，16完整匹配才ready',async()=>{const old=runtime();old.files=old.files.filter(f=>priorPaths.includes(f.path));await fixture([{body:old},{body:runtime()}],async(url,requests)=>{const r=await waitForSourceRuntime(options(url),deps());assert.equal(r.attempts,2);assert.equal(r.files.length,16);assert.ok(requests.every(x=>x.method==='GET'));});});
+test('精确历史9模块只等待，16完整匹配才ready',async()=>{const old=runtime();old.files=old.files.filter(f=>priorPaths.includes(f.path));await fixture([{body:old},{body:runtime()}],async(url,requests)=>{const r=await waitForSourceRuntime(options(url),deps());assert.equal(r.attempts,2);assert.equal(r.files.length,17);assert.ok(requests.every(x=>x.method==='GET'));});});
 test('精确历史9持续存在到硬截止不能ready',async()=>{const old=runtime();old.files=old.files.filter(f=>priorPaths.includes(f.path));await fixture([{body:old}],async url=>assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/));});
 for(const mutate of [f=>f.reverse(),f=>{f[0]=f[1];return f;},f=>f.slice(1),f=>{f[0].sha256='bad';return f;},f=>{f[0].path=stagePaths[0];return f;}])test('未知历史9变体立即拒绝',async()=>{const b=runtime();b.files=mutate(b.files.filter(x=>priorPaths.includes(x.path)));await fixture([{body:b}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});});
 
-// 独立16文件固定Git fixture，不借当前实现的身份数组生成期望。
+// 独立17文件固定Git fixture，不借当前实现的身份数组生成期望。
 const nativeEvidencePaths=['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-native-evidence-${n}.js`).sort();
-const completePaths=[...priorStagePaths,...nativeEvidencePaths,stageModePath,workspaceCollectorPath,usComposeCollectorPath].sort();
+const completePaths=[...priorStagePaths,...nativeEvidencePaths,stageModePath,workspaceCollectorPath,usComposeCollectorPath,qaArtifactCollectorPath].sort();
 const futureRoot=mkdtempSync(join(tmpdir(),'source-ready-native-'));
 const futureGit=(...args)=>execFileSync('git',args,{cwd:futureRoot,encoding:'utf8'}).trim();
 futureGit('init','-q');mkdirSync(join(futureRoot,'no-hooks'));futureGit('config','core.hooksPath',join(futureRoot,'no-hooks'));futureGit('config','user.email','test@example.invalid');futureGit('config','user.name','Fixture');
@@ -175,15 +176,15 @@ const futureRuntime=()=>({...structuredClone(futureExpected),git_sha:'a'.repeat(
 const futureOptions=url=>({...options(url),repoRoot:futureRoot,revision:futureRevision});
 const futureDeps=()=>deps({readMain:async()=>futureRevision});
 test.after(()=>rmSync(futureRoot,{recursive:true,force:true}));
-test('native evidence固定Git完整16路径及实际hash，dirty工作区不能冒指纹',()=>{
+test('native evidence固定Git完整17路径及实际hash，dirty工作区不能冒指纹',()=>{
  assert.deepEqual(expectedSourceRuntime({repoRoot:futureRoot,revision:futureRevision}),futureExpected);
  writeFileSync(join(futureRoot,nativeEvidencePaths[0]),'dirty actual module');
  try{assert.deepEqual(expectedSourceRuntime({repoRoot:futureRoot,revision:futureRevision}),futureExpected);}finally{futureGit('checkout','--',nativeEvidencePaths[0]);}
 });
-test('native evidence精确历史11只能pending，实际新16全部匹配才ready',async()=>{
+test('native evidence精确历史11只能pending，实际新17全部匹配才ready',async()=>{
  const old=futureRuntime();old.files=old.files.filter(f=>priorStagePaths.includes(f.path));
  await fixture([{body:old},{body:futureRuntime()}],async(url,requests)=>{
-  const r=await waitForSourceRuntime(futureOptions(url),futureDeps());assert.equal(r.attempts,2);assert.equal(r.files.length,16);assert.deepEqual(r.files,futureExpected.files);assert.ok(requests.every(q=>q.method==='GET'));
+  const r=await waitForSourceRuntime(futureOptions(url),futureDeps());assert.equal(r.attempts,2);assert.equal(r.files.length,17);assert.deepEqual(r.files,futureExpected.files);assert.ok(requests.every(q=>q.method==='GET'));
  });
 });
 test('native evidence精确历史11持续存在到硬截止只能超时不能ready',async()=>{
@@ -211,10 +212,10 @@ const published13Paths=[
  'existing-ops-stage-source.js','existing-ops-stage-envelopes.js','existing-ops-native-evidence-source.js','existing-ops-native-evidence-envelopes.js',
 ].map(name=>`packages/brain/src/lib/${name}`).sort();
 const published13=()=>{const body=runtime();body.files=body.files.filter(file=>published13Paths.includes(file.path));assert.deepEqual(body.files.map(file=>file.path),published13Paths);return body;};
-test('已发布精确13模块只pending，真实HTTP升级16后才ready',async()=>{
+test('已发布精确13模块只pending，真实HTTP升级17后才ready',async()=>{
  const old=published13();old.files[0].sha256='0'.repeat(64);
  await fixture([{body:old},{body:runtime()}],async(url,requests)=>{
-  const result=await waitForSourceRuntime(options(url),deps());assert.equal(result.attempts,2);assert.deepEqual(result.files,expected.files);assert.equal(result.files.length,16);assert.ok(requests.every(req=>req.method==='GET'));
+  const result=await waitForSourceRuntime(options(url),deps());assert.equal(result.attempts,2);assert.deepEqual(result.files,expected.files);assert.equal(result.files.length,17);assert.ok(requests.every(req=>req.method==='GET'));
  });
 });
 test('已发布精确13模块持续到硬截止不能ready',async()=>{
@@ -232,8 +233,8 @@ for(const [name,mutate] of [
 
 const published14Paths=[...published13Paths,stageModePath].sort();
 const published14=()=>{const body=runtime();body.files=body.files.filter(file=>published14Paths.includes(file.path));assert.deepEqual(body.files.map(file=>file.path),published14Paths);return body;};
-test('精确已发布14只能等待，真实HTTP升级16必须含匹配的F3 collector摘要',async()=>{
- await fixture([{body:published14()},{body:runtime()}],async(url,requests)=>{const result=await waitForSourceRuntime(options(url),deps());assert.equal(result.attempts,2);assert.equal(result.files.length,16);assert.deepEqual(result.files,expected.files);assert.ok(requests.every(req=>req.method==='GET'));});
+test('精确已发布14只能等待，真实HTTP升级17必须含匹配的F3 collector摘要',async()=>{
+ await fixture([{body:published14()},{body:runtime()}],async(url,requests)=>{const result=await waitForSourceRuntime(options(url),deps());assert.equal(result.attempts,2);assert.equal(result.files.length,17);assert.deepEqual(result.files,expected.files);assert.ok(requests.every(req=>req.method==='GET'));});
 });
 test('精确已发布14持续到deadline绝不ready',async()=>{
  await fixture([{body:published14()}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/);assert.equal(requests.length,10);});
@@ -248,11 +249,11 @@ for(const [name,mutate] of [
  await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);assert.equal(requests.length,1);});
 });
 
-// 旧15文件只能等待；新16文件仍必须逐项比较实际字节。
+// 旧15文件只能等待；新17文件仍必须逐项比较实际字节。
 const published15Paths=[...published14Paths,workspaceCollectorPath].sort();
 const published15=()=>{const body=runtime();body.files=body.files.filter(file=>published15Paths.includes(file.path));assert.deepEqual(body.files.map(file=>file.path),published15Paths);body.files.find(file=>file.path==='packages/brain/src/lib/existing-ops-runtime-source.js').sha256='0'.repeat(64);return body;};
-test('旧15文件隔离collector字节不同仅等待，完整16文件新指纹匹配才ready',async()=>{
- await fixture([{body:published15()},{body:runtime()}],async(url,requests)=>{const r=await waitForSourceRuntime(options(url),deps());assert.equal(r.attempts,2);assert.equal(r.files.length,16);assert.deepEqual(r.files,expected.files);assert.ok(requests.every(req=>req.method==='GET'));});
+test('旧15文件隔离collector字节不同仅等待，完整17文件新指纹匹配才ready',async()=>{
+ await fixture([{body:published15()},{body:runtime()}],async(url,requests)=>{const r=await waitForSourceRuntime(options(url),deps());assert.equal(r.attempts,2);assert.equal(r.files.length,17);assert.deepEqual(r.files,expected.files);assert.ok(requests.every(req=>req.method==='GET'));});
 });
 test('旧15文件collector字节持续不匹配到deadline不得ready',async()=>{
  await fixture([{body:published15()}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/);assert.equal(requests.length,10);});
@@ -279,8 +280,16 @@ test('source-only普通就绪入口快速失败：零HTTP、零主干查询、�
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
-test('旧15共享摘要即便全部匹配也只能pending，不能冒充完整16',async()=>{
+test('旧15共享摘要即便全部匹配也只能pending，不能冒充完整17',async()=>{
  const body=runtime();body.files=body.files.filter(f=>published15Paths.includes(f.path));
  assert.equal(body.files.length,15);
  await fixture([{body}],async(url,requests)=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/);assert.equal(requests.length,10);});
 });
+
+const published16Paths=[...published15Paths,usComposeCollectorPath].sort();
+const published16=()=>{const body=runtime();body.files=body.files.filter(f=>published16Paths.includes(f.path));assert.equal(body.files.length,16);return body;};
+test('旧精确16即使共享字节匹配也只能pending，真实17全部匹配才ready',async()=>{
+ await fixture([{body:published16()},{body:runtime()}],async(url,requests)=>{const r=await waitForSourceRuntime(options(url),deps());assert.equal(r.attempts,2);assert.equal(r.files.length,17);assert.ok(requests.every(q=>q.method==='GET'));});
+});
+test('旧精确16持续返回不能ready',async()=>{await fixture([{body:published16()}],async url=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_TIMEOUT/);});});
+test('未知16混入QA成员不得借历史pending资格',async()=>{const body=published16();body.files[0].path=qaArtifactCollectorPath;await fixture([{body}],async url=>{await assert.rejects(waitForSourceRuntime(options(url),deps()),/SOURCE_READY_RESPONSE_INVALID/);});});
