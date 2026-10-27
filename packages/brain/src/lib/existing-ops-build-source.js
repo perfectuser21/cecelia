@@ -6,7 +6,7 @@ import {collectStageSources} from './existing-ops-stage-source.js';
 // build main 至首次 runClaude 的前缀、spawnClaude 至真正 spawn 的前缀。
 // 不冻结整个 build main；额外模板字段仅接受已审 INTENT_PATH。未知结构变化失败关闭，需显式重审。
 import { createRequire } from 'node:module';
-import { ENVELOPES, A_ENVELOPES } from './existing-ops-build-envelopes.js';
+import { ENVELOPES, A_ENVELOPES, B_ENVELOPES } from './existing-ops-build-envelopes.js';
 import { posix } from 'node:path';
 import { PROVENANCE_SOURCE_PATHS, readProvenanceSources, normalizeProvenanceBuild, normalizeProvenancePublish, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
 import { NATIVE_PROVENANCE_PATHS, NATIVE_HISTORY_PATH, nativeEvidenceForwarding, nativeStaticEdges } from './existing-ops-native-evidence-source.js';
@@ -311,6 +311,8 @@ const FIXED_EDGES = [
 export async function reviewedAContext({ parse, paths, readSource, revision }) {
   const originals = new Map();
   let indexBytes;
+  const bMarked = Object.keys(B_ENVELOPES.reviewed).some(path => !Object.hasOwn(B_ENVELOPES.legacy, path) && paths.includes(path));
+  const bOriginals = new Map();
   try {
     // 不识别旧版本时不追加输入，历史来源摘要不变。新旧混配不能获得适配。
     for (const path of Object.keys(A_ENVELOPES.legacy)) {
@@ -325,24 +327,36 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
       if (!reviewedASame(text, reference, parse)) return null;
       originals.set(path, text);
     }
+    if (bMarked) for (const [path, reference] of Object.entries(B_ENVELOPES.reviewed)) {
+      if (!paths.includes(path)) return null;
+      const text = await readSource(path, revision);
+      if (path.endsWith('.mjs') ? !reviewedASame(text, reference, parse) : text !== reference) return null;
+      bOriginals.set(path, text);
+    }
     // 只有整组读取器成立后才读取它固定的 Git 数据输入；不执行索引正文。
     if (!paths.includes(A_INDEX_PATH)) return null;
     indexBytes = await readSource(A_INDEX_PATH, revision);
     if (typeof indexBytes !== 'string' || !reviewedAIndex(indexBytes)) return null;
   } catch { return null; }
-  const edges = [];
-  for (const [path, text] of originals) for (const statement of parse(text).body) {
+  for (const [path, text] of bOriginals) originals.set(path, text);
+  const edges = [], bExternalEdges = [];
+  for (const [path, text] of originals) for (const statement of (path.endsWith('.mjs') ? parse(text).body : [])) {
     if (statement.type !== 'ImportDeclaration' || !statement.source.value.startsWith('.')) continue;
     const target = posix.normalize(posix.join(posix.dirname(path), statement.source.value));
     if (originals.has(target)) edges.push([path, target, 'reviewed_a_static_import']);
+    else if (bOriginals.has(path)) bExternalEdges.push([path, target, 'reviewed_b_static_import']);
   }
   edges.push(...FIXED_EDGES.map(([a, b, kind]) => [PREFIX + a, PREFIX + b, kind]));
+  if (bMarked) for (const entry of ['spec', 'spec-review']) {
+    edges.push([PREFIX + 'activities/' + entry + '.mjs', PREFIX + 'prompts/baseline-policy.md', 'reviewed_b_fixed_policy_read']);
+  }
   originals.set(A_INDEX_PATH, indexBytes);
   edges.push([PREFIX + 'lib/authority-refs.mjs', A_INDEX_PATH, 'reviewed_a_fixed_git_index_read']);
   return {
     // 只影响已审四文件的证明输入，不影响真实 read() 所登记的绑定摘要。
     normalize(path, text) {
       if (originals.has(path) && originals.get(path) !== text) throw Error('reviewed_a_source_changed');
+      if (bMarked && Object.hasOwn(B_ENVELOPES.legacy, path)) return B_ENVELOPES.legacy[path];
       return Object.hasOwn(A_ENVELOPES.legacy, path) ? A_ENVELOPES.legacy[path] : text;
     },
     async record({ read, relations, buildInputs = true }) {
@@ -354,6 +368,11 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
       for (const [path, bytes] of originals) {
         if (!active.has(path)) continue;
         if (await read(path) !== bytes) throw Error('reviewed_a_source_changed');
+      }
+      if (buildInputs) for (const [consumer_path, input_path, kind] of bExternalEdges) {
+        if (!paths.includes(input_path) || typeof await read(input_path) !== 'string') throw Error('reviewed_b_dependency_missing');
+        if (!relations.some(r => r.consumer_path === consumer_path && r.input_path === input_path && r.kind === kind))
+          relations.push({ consumer_path, input_path, kind, revision });
       }
       for (const [consumer_path, input_path, kind] of edges) {
         if (!active.has(consumer_path) || !active.has(input_path)) continue;

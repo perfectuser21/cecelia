@@ -222,6 +222,10 @@ const US_HASHES = {...HASHES,
  'existing-ops-runtime-source.js':'c6157fb97abf1131f80a8df747a68b0d0c4a86f8cc0c6fb8d112a111991821ba',
  'existing-ops-us-compose-source.js':'d8d3371783b3afbd085bd143e41be91a65d4ed865ff4c1ecb12648f4ae542235',
 };
+const B_HASHES = {...US_HASHES,
+ "existing-ops-build-source.js":"000ddb9086f35de1d780ecf75d889176950cf6e477b65d9b6bbe00e12cc269aa",
+ "existing-ops-build-envelopes.js":"6aaea83ad1d73236fc2393a621cc1e059f55a622c29af0d77e7806f571df2c17"
+};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -233,7 +237,9 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
  try{
   const runtime=sources.get(path.join(root,'existing-ops-runtime-source.js'));
   if(typeof runtime!=='string')return null;
-  const selected=hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
+  const build=sources.get(path.join(root,'existing-ops-build-source.js'));
+  const selected=typeof build==='string'&&hash(build,parse,shape)===B_HASHES['existing-ops-build-source.js']?B_HASHES
+   :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(selected)){
    const text=sources.get(path.join(root,name));
@@ -262,6 +268,7 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
  describe('A封套精确只读闭包及执行防复活',()=>{
   it('旧main完整13成员仍可审，新runtime缺新增前置不能借旧闭包',()=>{
    const s=base(),runtime=path.join(root,'existing-ops-runtime-source.js'),helper=path.join(root,'existing-ops-us-compose-source.js');
+   for(const name of ['build-source','build-envelopes'])s.set(path.join(root,`existing-ops-${name}.js`),execFileSync('git',['show',`5dd82456a80b77dda054f5994d1561e1106317eb:packages/brain/src/lib/existing-ops-${name}.js`],{encoding:'utf8'}));
    s.set(runtime,execFileSync('git',['show','f4bf6aceb7f28e9d39944bf9bd0fb70a340f3439:packages/brain/src/lib/existing-ops-runtime-source.js'],{encoding:'utf8'}));s.delete(helper);
    expect(scan(s)).toEqual([]);
    s.set(runtime,base().get(runtime));expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
@@ -269,9 +276,11 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
   it('已发布旧collector闭包保留，旧版追加执行仍拒绝',()=>{
    const s=base(), file=path.join(root,'existing-ops-build-source.js');
    const old=execFileSync('git',['show','65e7ffffe65debcd8e32039da5de50d5c99f00fb:packages/brain/src/lib/existing-ops-build-source.js'],{cwd:BRAIN_ROOT,encoding:'utf8'});
+   s.set(data,execFileSync('git',['show','5dd82456a80b77dda054f5994d1561e1106317eb:packages/brain/src/lib/existing-ops-build-envelopes.js'],{encoding:'utf8'}));
    s.set(file,old);expect(scan(s)).toEqual([]);
    s.set(file,old+'\neval(A_ENVELOPES.reviewed.any);');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
   });
+  it.each(['build-source','build-envelopes'])('B只读闭包禁止A/B混配 %s',name=>{const s=base();s.set(path.join(root,`existing-ops-${name}.js`),execFileSync('git',['show',`5dd82456a80b77dda054f5994d1561e1106317eb:packages/brain/src/lib/existing-ops-${name}.js`],{encoding:'utf8'}));expect(scan(s).some(h=>h.rule==='E1')).toBe(true)});
   it.each(['build','stage','native-evidence'])('%s完整已审组合无误报',name=>{const f=path.join(root,`existing-ops-${name}-envelopes.js`);expect(scan(base(),f)).toEqual([]);});
   it.each(files)('任何闭包成员突变或缺失必须拒绝：%s',f=>{const s=base();s.set(f,s.get(f)+'\nexport const unknownClosure=true;');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);const missing=base();missing.delete(f);expect(findClaudeInvocations(base().get(data),{file:data,sources:missing}).some(h=>h.rule==='E1')).toBe(true);});
   it.each(['eval','raw','spawn','alias','interpolation','escaped','concat','dynamic','caller'])('%s不能继承只读资格',kind=>{
