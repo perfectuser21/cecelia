@@ -6,3 +6,5 @@ GP-Anchor: none(infra)
 Brain启动仅能判断本机进程，不能将有持久化headed-session与非空claimer的外部任务当作inline孤儿回队。部署canary只在该startup函数直接返回零计数，不读取或更改共享任务；正常primary仍执行恢复。本次仅保护startup接缝，不改全局外部类型、不改schema/lease回收、不修改353业务源码。
 
 永久回归验证：真实syncOrphan函数保护有主外部任务；真实scratch全行/lease不变，普通brain-local与无owner行为保持，过期claim仍由原lease reaper失效。历史409与调用实例未知保留，未宣称102/103业务通过。
+
+同因测试夹具收口（子Task 8e70cf48-9e49-4a63-8b06-b45dd8b15897）：正式4ae的两已修来源测试完整通过，但第三doc-imports仍发生RPC未完成，被旧CI包装器错误放行，整体未通过且不得晋级。本次一次覆盖枚举到的13个真实顶层buildExistingOpsSources来源proof测试入口，提取专用test-only helper在真实builder成功或异常后finally让原生事件循环处理回调，保持输入、返回及错误对象不变。parser-startup的特殊子进程缺parser合同、固定fixture字符串、生产collector、全局Vitest设置和timeout原样保留；三套真实warm行为回归永久保留，新helper须真实3scope/完整差分认领与全family实跑。
