@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { setImmediate as nativeSetImmediate } from 'node:timers';
 import { fileURLToPath } from 'node:url';
-import { buildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const revision = '16a9032b8aed2ab8dfa65cc80b32f0321a76e9bd';
 const prefix = 'packages/brain/scripts/coding-workflow/';
@@ -30,7 +30,6 @@ async function proof({ schema = marker, overrides = {}, missing = [], enabled = 
     paths: [...new Set([...paths, ...Object.keys(texts)])].filter(p => !missing.includes(p)),
     readSource: async path => path === selector ? git(path) + (enabled ? schema : '') : Object.hasOwn(texts, path) ? texts[path] : git(path),
   });
-  await new Promise(resolve => nativeSetImmediate(resolve));
   return result.consumers.find(c => c.workflow_key === 'factory_f3_ops');
 }
 const edges = f3 => f3.input_relations.filter(e => e.kind === 'static_import_dependency');

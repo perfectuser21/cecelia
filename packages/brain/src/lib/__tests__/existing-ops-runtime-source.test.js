@@ -5,15 +5,10 @@ import { setImmediate as nativeSetImmediate } from 'node:timers';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
-import { buildExistingOpsSources as rawBuildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 import fs from 'node:fs';
 import { collectAutoVersionTestSources, runtimeSelectorEnabled } from '../existing-ops-runtime-source.js';
 const parse = text => acorn(text, { ecmaVersion: 'latest', sourceType: 'module' });
-async function buildExistingOpsSources(options) {
-  const result = await rawBuildExistingOpsSources(options);
-  await new Promise(resolve => nativeSetImmediate(resolve));
-  return result;
-}
 
 describe('existing-ops-runtime-source 显式固定来源协议', () => {
   it('缺省、私有或注释标记不启用，合法 export const 1 才启用', () => {
