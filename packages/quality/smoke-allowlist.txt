@@ -47,6 +47,7 @@ codex-grok-launcher-supervisor-smoke.sh
 codex-headed-dispatch-smoke.sh
 codex-test-gen-smoke.sh
 coding-workflow-runner-smoke.sh
+coding-source-compat-smoke.sh
 company-key-results-smoke.sh
 compute-ssh-reachability-smoke.sh
 contract-seal-smoke.sh
