@@ -481,3 +481,14 @@ it('写入门禁分类表登记真实固定Git验证来源，任意其他txt仍�
  f.git('add','.');f.git('commit','-qm','unrecognized catalogue');f.source.head_revision=f.git('rev-parse','HEAD');
  expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow('AUXILIARY_ROLE_INVALID');
 });
+it.each(['valid','other-name','other-owner','outside','zero-round'])('QA执行来源仅认固定路径/owner；静态证据不声明真实阶段 %s',kind=>{
+ const f=fixture([]),owner='packages/brain/scripts/coding-workflow/runner/run-once.mjs';
+ let p='sprints/10121524-cw-088c3431/qa-r1/qa-playwright.cjs';
+ if(kind==='other-name')p=p.replace('qa-playwright','other');if(kind==='outside')p='scripts/qa-playwright.cjs';if(kind==='zero-round')p=p.replace('qa-r1','qa-r0');
+ for(const name of [owner,p]){mkdirSync(join(f.root,name,'..'),{recursive:true});writeFileSync(join(f.root,name),'// actual bytes\n');}
+ const row={owner_path:kind==='other-owner'?'src/controller.js':owner,path:p,role:'verification'};
+ writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify({schema_version:1,repo:f.source.repo,relations:[row]}));
+ f.git('add','.');f.git('commit','-qm','QA executable relation');f.source.head_revision=f.git('rev-parse','HEAD');
+ if(kind!=='valid')expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow('AUXILIARY_ROLE_INVALID');
+ else {const result=gate.collectAuxiliarySourceEvidence(f.root,f.source);expect(result.head.relations[0]).toMatchObject(row);expect(result.head.relations[0].sha256).toMatch(/^[a-f0-9]{64}$/);}
+});

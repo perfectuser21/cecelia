@@ -2,7 +2,7 @@
 // 只有当前任务/轮次的记录可 force-add；不改变仓库忽略规则或 Git 配置。
 import fs from 'node:fs';
 import path from 'node:path';
-import { registerRecordSources } from '../../lib/record-sources.mjs';
+import { registerRecordSources, isQaExecutionArtifact } from '../../lib/record-sources.mjs';
 import { git } from './proc.mjs';
 import { beginRecordRegistration, observeRecordRegistration } from '../../lib/record-provenance.mjs';
 
@@ -46,8 +46,8 @@ export async function stageQaRecords(worktree, { sprintDir, taskId, round }, rec
   if (files.length === 0) throw new Error('qa_records_empty');
   if ((await git(worktree, ['diff', '--cached', '--quiet'])).code !== 0) throw new Error('qa_records_index_not_empty');
   const registration = provenance ? beginRecordRegistration(provenance, files) : null;
-  const markdown = files.filter(file => reports.includes(file));
-  const sourceFiles = markdown.length ? registerRecordSources(worktree, { taskId, sprintDir, stage: 'qa', round }, markdown) : [];
+  const markdown = files.filter(file => reports.includes(file) || isQaExecutionArtifact(file));
+  const sourceFiles = markdown.length ? registerRecordSources(worktree, { taskId, sprintDir, stage: 'qa', round, registration }, markdown) : [];
   if (registration) observeRecordRegistration(registration, sourceFiles);
   if ((await git(worktree, ['--literal-pathspecs', 'add', '-f', '--', ...new Set([...files, ...sourceFiles])])).code !== 0) throw new Error('qa_report_add_failed');
   return { files, registration };
