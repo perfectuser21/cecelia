@@ -65,7 +65,7 @@ it('固定blob封印和普通文件模式必须同时正确，不能用symlink�
 });
 
 // 新collector实际静态依赖也必须进入启动时加载身份，不能只冻旧11个根。
-const nativeEvidencePaths=['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-native-evidence-${n}.js`).sort();
+const nativeEvidencePaths=['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-native-evidence-${n}.js`).concat(['source','envelopes'].map(n=>`packages/brain/src/lib/existing-ops-build-${n}.js`)).sort();
 it('native evidence collector真实静态import闭包不能漏运行身份文件',()=>{
  const runtime=readNativeConsumerRuntime(),queue=['existing-ops-source.js','existing-ops-workspace-source.js','workspace-ci-source-bundle.js'].map(name=>`packages/brain/src/lib/${name}`),seen=new Set();
  while(queue.length){const path=queue.shift();if(seen.has(path))continue;seen.add(path);

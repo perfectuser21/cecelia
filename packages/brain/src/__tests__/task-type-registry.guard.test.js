@@ -1,10 +1,9 @@
 /**
  * 任务类型注册表机械守卫（铁律 76cb816c：枚举常量只允许一份）。
  *
- * 纯函数实现（stripComments/scanFile/walk 及扫描细节：规则 A/B/C 判定逻辑、
- * 阈值理由、位置无关扫描的启发式、已知盲区）全部在
- * `helpers/task-type-registry.guard.lib.js` 的文件头注释里，本文件只留
- * describe/it 和豁免清单——改规则请先读那份注释。
+ * 主守卫使用 lexical.test.js 中经正反回归的词法扫描器。
+ * 原阈值与历史边界说明仍在 helpers/task-type-registry.guard.lib.js；
+ * 该 helper 保留审计提取 API，主守卫仅使用其中 walk/relPath。
  *
  * ── 三轮修复摘要 ──────────────────────────────────────────────────────
  * 第一轮：守卫从"硬编码 19/27 个已知消费方常量名"改成语义识别（规则 A 数组/Set
@@ -36,7 +35,8 @@ import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { scanFile, walk, relPath } from './helpers/task-type-registry.guard.lib.js';
+import { walk, relPath } from './helpers/task-type-registry.guard.lib.js';
+import { scanFile } from './task-type-registry.lexical.test.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, '..');

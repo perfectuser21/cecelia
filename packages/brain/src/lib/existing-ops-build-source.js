@@ -6,7 +6,8 @@ import {collectStageSources} from './existing-ops-stage-source.js';
 // build main 至首次 runClaude 的前缀、spawnClaude 至真正 spawn 的前缀。
 // 不冻结整个 build main；额外模板字段仅接受已审 INTENT_PATH。未知结构变化失败关闭，需显式重审。
 import { createRequire } from 'node:module';
-import { ENVELOPES } from './existing-ops-build-envelopes.js';
+import { ENVELOPES, A_ENVELOPES } from './existing-ops-build-envelopes.js';
+import { posix } from 'node:path';
 import { PROVENANCE_SOURCE_PATHS, readProvenanceSources, normalizeProvenanceBuild, normalizeProvenancePublish, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
 import { NATIVE_PROVENANCE_PATHS, NATIVE_HISTORY_PATH, nativeEvidenceForwarding, nativeStaticEdges } from './existing-ops-native-evidence-source.js';
 export { buildSelectorEnabled } from './existing-ops-build-envelopes.js';
@@ -276,4 +277,67 @@ async function collectPublishSources({parse,paths,selectors,read,readSource,revi
   relations.push({consumer_path:PUBLISH_TEST,input_path:BUILD_SOURCE_PATHS.helper,kind:'active_publish_test_helper',revision},
     {consumer_path:BUILD_SOURCE_PATHS.helper,input_path:PUBLISH_ENTRY,kind:'native_publish_activity_spawn',revision});
   if(normalizeProvenancePublish(test,parse,sources))await collectProvenanceInputs({read,relations,revision,build:false,version:provenanceSourceVersion(sources,parse),historical:Boolean(nativeEvidenceForwarding(sources,parse)?.historical)});
+}
+
+/** 有限 A 版本适配：整组已审 AST 成立后复用旧调用证明，证据始终是实际源字节。 */
+const aExpected = new Map();
+function reviewedASame(text, reference, parse) {
+  if (!aExpected.has(reference)) aExpected.set(reference, canonical(parse(reference)));
+  return canonical(parse(text)) === aExpected.get(reference);
+}
+// 这些非 import 的输入由完整已审源码中的 URL / 常量 / spawn 参数实际指定。
+const FIXED_EDGES = [
+  ['__tests__/helpers/brain-transport.mjs', '__tests__/fixtures/brain-fetch-preload.mjs', 'reviewed_test_fetch_preload'],
+  ['runner/__tests__/helpers/sandbox.mjs', 'runner/__tests__/fixtures/executor-ipc-preload.mjs', 'reviewed_test_executor_relay'],
+  ['runner/__tests__/helpers/sandbox.mjs', 'runner/__tests__/fixtures/fake-executor.mjs', 'reviewed_test_executor_path'],
+  ['runner/__tests__/fixtures/executor-ipc-preload.mjs', '__tests__/fixtures/brain-fetch-preload.mjs', 'reviewed_test_relay_fetch_preload'],
+  ['runner/__tests__/fixtures/fake-executor.mjs', 'runner/__tests__/helpers/owned-processes.mjs', 'reviewed_test_owned_process_module'],
+];
+export async function reviewedAContext({ parse, paths, readSource, revision }) {
+  const originals = new Map();
+  try {
+    // 不识别旧版本时不追加输入，历史来源摘要不变。新旧混配不能获得适配。
+    for (const path of Object.keys(A_ENVELOPES.legacy)) {
+      if (!paths.includes(path)) return null;
+      const text = await readSource(path, revision);
+      if (!reviewedASame(text, A_ENVELOPES.reviewed[path], parse)) return null;
+      originals.set(path, text);
+    }
+    for (const [path, reference] of Object.entries(A_ENVELOPES.reviewed)) {
+      if (!paths.includes(path)) return null;
+      const text = originals.get(path) ?? await readSource(path, revision);
+      if (!reviewedASame(text, reference, parse)) return null;
+      originals.set(path, text);
+    }
+  } catch { return null; }
+  const edges = [];
+  for (const [path, text] of originals) for (const statement of parse(text).body) {
+    if (statement.type !== 'ImportDeclaration' || !statement.source.value.startsWith('.')) continue;
+    const target = posix.normalize(posix.join(posix.dirname(path), statement.source.value));
+    if (originals.has(target)) edges.push([path, target, 'reviewed_a_static_import']);
+  }
+  edges.push(...FIXED_EDGES.map(([a, b, kind]) => [PREFIX + a, PREFIX + b, kind]));
+  return {
+    // 只影响已审四文件的证明输入，不影响真实 read() 所登记的绑定摘要。
+    normalize(path, text) {
+      if (originals.has(path) && originals.get(path) !== text) throw Error('reviewed_a_source_changed');
+      return Object.hasOwn(A_ENVELOPES.legacy, path) ? A_ENVELOPES.legacy[path] : text;
+    },
+    async record({ read, relations, buildInputs = true }) {
+      const runtimeInput = path => path.startsWith(PREFIX + 'runner/') || [
+        '__tests__/helpers/brain-transport.mjs', '__tests__/fixtures/brain-fetch-preload.mjs',
+        '__tests__/helpers/procs.mjs', '__tests__/helpers/git.mjs', 'lib/authority-refs.mjs',
+      ].some(rel => path === PREFIX + rel);
+      const active = new Set([...originals.keys()].filter(path => buildInputs || runtimeInput(path)));
+      for (const [path, bytes] of originals) {
+        if (!active.has(path)) continue;
+        if (await read(path) !== bytes) throw Error('reviewed_a_source_changed');
+      }
+      for (const [consumer_path, input_path, kind] of edges) {
+        if (!active.has(consumer_path) || !active.has(input_path)) continue;
+        if (!relations.some(r => r.consumer_path === consumer_path && r.input_path === input_path && r.kind === kind))
+          relations.push({ consumer_path, input_path, kind, revision });
+      }
+    },
+  };
 }
