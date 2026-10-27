@@ -1,6 +1,5 @@
 // new-task.mjs：按计划 JSON 建一条或一批带开关的 coding 任务（Commander 与 /dev 小改动入口）。
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { validatePlan as validateRawPlan } from '../new-task.mjs';
 import { initCommittableRepo, git } from './helpers/git.mjs';
+import { startTestBrain } from './helpers/brain-transport.mjs';
 const routing = { change_kind: 'bugfix', map_scope_hint: ['F1'] };
 const validatePlan = (plan, opts) => validateRawPlan({ ...routing, ...plan }, opts);
 
@@ -33,46 +33,39 @@ function managedFixture(root) {
   return { clone, authority: { object_id: 'coding-workflow', refs: kinds.map((kind) => ({ ref_id: kind, kind, path: 'rule.md', revision, digest, required: true })) } };
 }
 
-function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false, wrongBaseSha = false, missingBaseSha = false, dropAuthority = false, deduplicated = false } = {}) {
+async function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false, wrongBaseSha = false, missingBaseSha = false, dropAuthority = false, deduplicated = false } = {}) {
   const state = { posts: [], projectPosts: [], order: [], gets: [], claims: [], patches: [], rows: new Map() };
-  const server = http.createServer((req, res) => {
-    let raw = '';
-    req.on('data', (d) => { raw += d; });
-    req.on('end', () => {
-      res.setHeader('content-type', 'application/json');
-      if (req.method === 'POST' && req.url === '/api/brain/projects') {
-        const body = JSON.parse(raw);
-        state.projectPosts.push(body);
-        state.order.push('project');
-        if (projectFail) { res.statusCode = 500; return res.end(JSON.stringify({ error: 'db_down' })); }
-        res.statusCode = 201;
-        return res.end(JSON.stringify({ id: PROJECT_ID, ...body }));
-      }
-      if (req.method === 'GET' && req.url.startsWith('/api/brain/tasks/')) { state.gets.push(req.url); return res.end(JSON.stringify(state.rows.get(req.url.split('/').at(-1)))); }
-      if (req.method === 'POST' && req.url.endsWith('/claim')) { state.claims.push(req.url); return res.end(JSON.stringify({ ok: true })); }
-      if (req.method === 'PATCH' && req.url.startsWith('/api/brain/tasks/')) { const patch = JSON.parse(raw); state.patches.push(patch); const id = req.url.split('/').at(-1); const row = { ...state.rows.get(id), ...patch }; state.rows.set(id, row); return res.end(JSON.stringify(row)); }
-      if (req.method !== 'POST' || req.url !== '/api/brain/tasks') { res.statusCode = 404; return res.end('{}'); }
+  const transport = await startTestBrain((req) => {
+    const raw = req.body;
+    const response = (body, status = 200) => ({ status, body: JSON.stringify(body) });
+    if (req.method === 'POST' && req.url === '/api/brain/projects') {
       const body = JSON.parse(raw);
-      state.posts.push(body);
-      state.order.push('task');
-      if (failAt === state.posts.length) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'change_kind_required' })); }
-      res.statusCode = deduplicated ? 200 : 201;
-      const row = { id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, authority: dropAuthority ? undefined : body.payload.authority, change_kind: body.change_kind, base_sha: missingBaseSha ? undefined : wrongBaseSha ? 'f'.repeat(40) : body.base_sha, map_scope: malformedScope ? {} : body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } };
-      if (deduplicated) row.deduplicated = true;
-      state.rows.set(row.id, row);
-      return res.end(JSON.stringify(row));
-    });
+      state.projectPosts.push(body);
+      state.order.push('project');
+      if (projectFail) return response({ error: 'db_down' }, 500);
+      return response({ id: PROJECT_ID, ...body }, 201);
+    }
+    if (req.method === 'GET' && req.url.startsWith('/api/brain/tasks/')) { state.gets.push(req.url); return response(state.rows.get(req.url.split('/').at(-1))); }
+    if (req.method === 'POST' && req.url.endsWith('/claim')) { state.claims.push(req.url); return response({ ok: true }); }
+    if (req.method === 'PATCH' && req.url.startsWith('/api/brain/tasks/')) { const patch = JSON.parse(raw); state.patches.push(patch); const id = req.url.split('/').at(-1); const row = { ...state.rows.get(id), ...patch }; state.rows.set(id, row); return response(row); }
+    if (req.method !== 'POST' || req.url !== '/api/brain/tasks') return response({}, 404);
+    const body = JSON.parse(raw);
+    state.posts.push(body);
+    state.order.push('task');
+    if (failAt === state.posts.length) return response({ error: 'change_kind_required' }, 400);
+    const row = { id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, authority: dropAuthority ? undefined : body.payload.authority, change_kind: body.change_kind, base_sha: missingBaseSha ? undefined : wrongBaseSha ? 'f'.repeat(40) : body.base_sha, map_scope: malformedScope ? {} : body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } };
+    if (deduplicated) row.deduplicated = true;
+    state.rows.set(row.id, row);
+    return response(row, deduplicated ? 200 : 201);
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
-    state.url = `http://127.0.0.1:${server.address().port}`;
-    state.close = () => new Promise((r) => { server.closeAllConnections(); server.close(r); });
-    resolve(state);
-  }));
+  return Object.assign(state, transport);
 }
 
-function runScript(args, env = {}) {
+function runScriptWithTransport(args, env = {}, transport = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [SCRIPT, ...args], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [...(transport.args || []), SCRIPT, ...args], { env: { ...process.env, ...env }, stdio: transport.stdio || ['ignore', 'pipe', 'pipe'] });
+    transport.attach?.(child);
+    child.stdin?.end();
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => { stdout += d; });
@@ -84,6 +77,7 @@ function runScript(args, env = {}) {
 describe('new-task.mjs', () => {
   let dir;
   let brain;
+  const runScript = (args, env) => runScriptWithTransport(args, env, brain?.spawnOptions());
   const plan = (obj) => {
     const file = path.join(dir, 'plan.json');
     fs.writeFileSync(file, JSON.stringify({ ...routing, ...obj }));

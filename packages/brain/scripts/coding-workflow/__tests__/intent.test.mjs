@@ -1,14 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import crypto from 'node:crypto';
-import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractAcceptance, renderIntent, intentIdsError, INTENT_ID_RE } from '../lib/intent.mjs';
 import { parseFrontmatter, extractAnchors } from '../lib/md-chain.mjs';
-import { runActivityProcess } from './helpers/run-activity.mjs';
+import { runActivityProcess as runRawActivityProcess } from './helpers/run-activity.mjs';
 import { initCommittableRepo, git } from './helpers/git.mjs';
+
+import { startTestBrain } from './helpers/brain-transport.mjs';
 
 const ENTRY = path.join(path.dirname(fileURLToPath(import.meta.url)), '../activities/intent.mjs');
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
@@ -104,6 +105,7 @@ describe('renderIntent', () => {
 
 describe('intent 活动（子进程 + 假 Brain）', () => {
   let server;
+  const runActivityProcess = (entry, input, env) => runRawActivityProcess(entry, input, env, server.spawnOptions());
   let brainUrl;
   let hits;
   let reply;
@@ -118,25 +120,23 @@ describe('intent 活动（子进程 + 假 Brain）', () => {
     // 铁律清单（GET /api/brain/decisions?category=invariant…）单独回放，默认没有铁律
     invReply = { status: 200, body: [] };
     invUrls = [];
-    server = http.createServer((req, res) => {
+    server = await startTestBrain((req) => {
       hits += 1;
-      res.setHeader('content-type', 'application/json');
+      if (req.method !== 'GET') return { status: 405, body: '{}' };
       if (req.url.startsWith('/api/brain/decisions')) {
         invUrls.push(req.url);
-        res.statusCode = invReply.status;
-        return res.end(JSON.stringify(invReply.body));
+        return { status: invReply.status, body: JSON.stringify(invReply.body) };
       }
-      res.statusCode = reply.status;
-      res.end(JSON.stringify(reply.body));
+      if (!req.url.startsWith('/api/brain/tasks/')) return { status: 404, body: '{}' };
+      return { status: reply.status, body: JSON.stringify(reply.body) };
     });
-    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-    brainUrl = `http://127.0.0.1:${server.address().port}`;
+    brainUrl = server.url;
     worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'intent-test-'));
   });
 
   afterEach(async () => {
-    await new Promise((resolve) => server.close(resolve));
-    fs.rmSync(worktree, { recursive: true, force: true });
+    await server?.close();
+    if (worktree) fs.rmSync(worktree, { recursive: true, force: true });
   });
 
   const input = (patch = {}) => ({
@@ -325,7 +325,7 @@ describe('intent 活动（子进程 + 假 Brain）', () => {
     expect(hits).toBe(0);
   });
 
-  it('网络错误（连接被拒）-> retryable brain_unavailable', async () => {
+  it('传输错误（HTTP连接拒绝或IPC未知来源）-> retryable brain_unavailable', async () => {
     const r = await runActivityProcess(ENTRY, input({ brain_url: 'http://127.0.0.1:1' }));
     expect(r.exitCode).toBe(2);
     expect(r.result.failure_class).toBe('retryable');
