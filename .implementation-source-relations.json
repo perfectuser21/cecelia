@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
-    {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-qa-artifact-source.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-qa-artifact-envelopes.test.js","role":"verification"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"changes/cp-10272240-qa-artifact-source.md","role":"release"},
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"changes/cp-10271625-openclaw-compose-source.md","role":"release"},
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-us-compose-source.test.js","role":"verification"},
