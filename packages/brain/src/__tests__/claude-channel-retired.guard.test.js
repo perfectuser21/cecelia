@@ -490,3 +490,6 @@ describe('原生QA完整封套只作为有界解码后的Acorn输入',()=>{
  });
 });
 registerReaderTupleGuardTests({ BRAIN_ROOT, ENVELOPE_FILE, ENVELOPE_CONSUMER, NATIVE_HELPER, NATIVE_DATA, PROVENANCE_READER_HASHES, findClaudeInvocations });
+
+import { registerReviewedAGuardTests } from './helpers/claude-reviewed-a-tests.mjs';
+registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations });
