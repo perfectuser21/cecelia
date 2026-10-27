@@ -13,6 +13,10 @@
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10270754-cw-5f8029c7/02-spec.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10270754-cw-5f8029c7/03-build.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10270754-cw-5f8029c7/04-evidence.md","role":"documentation"},
+    {"owner_path":"packages/brain/src/lib/existing-ops-source.js","path":"packages/brain/scripts/smoke/coding-source-compat-smoke.sh","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-a-compat.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/lib/task-type-registry.js","path":"packages/brain/src/__tests__/task-type-registry.lexical.test.js","role":"verification"},
+
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10261236-cw-8b129e0c/05-qa-report-r2.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10261236-cw-8b129e0c/06-judge-r2.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10261236-cw-8b129e0c/05-qa-report-r1.md","role":"documentation"},
@@ -56,9 +60,9 @@
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10260208-cw-cdb32573/02-spec.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10260208-cw-cdb32573/03-build.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10260208-cw-cdb32573/04-evidence.md","role":"documentation"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"changes/cp-10252302-native-history-source-prep.md","role":"release"},
+    
     {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-history-source.test.js","role":"verification"},
-    {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"changes/cp-10251942-qa-worktree-recovery.md","role":"release"},
+    
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"docs/learnings/cp-10251942-qa-worktree-recovery.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10251520-cw-3a15fcff/05-qa-report-r1.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10251520-cw-3a15fcff/06-judge-r1.md","role":"documentation"},
@@ -74,14 +78,14 @@
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10251520-cw-3a15fcff/03-build.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10251520-cw-3a15fcff/04-evidence.md","role":"documentation"},
     {"owner_path":"scripts/ci/implementation-main-snapshot.mjs","path":"scripts/ci/__tests__/implementation-main-transport.test.mjs","role":"verification"},
-    {"owner_path":"scripts/ci/implementation-main-snapshot.mjs","path":"changes/cp-10251200-publisher-transport.md","role":"release"},
+    
     {"owner_path":"scripts/ci/implementation-main-snapshot.mjs","path":"docs/learnings/cp-10251200-publisher-transport.md","role":"documentation"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"changes/cp-10251310-root-npm-source.md","role":"release"},
+    
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"docs/learnings/cp-10251310-root-npm-source.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/lib/qa-doc-assertion.mjs","path":"docs/learnings/cp-10242159-qa-doc-data-proof.md","role":"documentation"},
-    {"owner_path":"packages/brain/scripts/coding-workflow/lib/qa-doc-assertion.mjs","path":"changes/cp-10242159-qa-doc-data-proof.md","role":"release"},
+    
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"docs/learnings/cp-10242220-doc-assertion-source.md","role":"documentation"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"changes/cp-10242220-doc-assertion-source.md","role":"release"},
+    
     {"owner_path":"packages/brain/src/lib/existing-ops-runtime-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-doc-imports.test.js","role":"verification"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10241840-cw-6d966473/05-qa-report-r1.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10241840-cw-6d966473/06-judge-r1.md","role":"documentation"},
@@ -93,15 +97,14 @@
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10241840-cw-6d966473/03-build.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"sprints/10241840-cw-6d966473/04-evidence.md","role":"documentation"},
     {"owner_path": "packages/brain/scripts/coding-workflow/activities/spec-review.mjs", "path": "packages/brain/scripts/coding-workflow/prompts/spec-revise.md", "role": "documentation"},
-    {"owner_path": "packages/brain/scripts/coding-workflow/activities/spec.mjs", "path": "changes/cp-10241735-spec-phase-boundaries.md", "role": "release"},
-    {"owner_path":"packages/brain/scripts/coding-workflow/lib/shell-command.mjs","path":"changes/cp-10241215-native-command-roundtrip.md","role":"release"},
+    
     {"owner_path":"packages/brain/scripts/coding-workflow/lib/shell-command.mjs","path":"docs/learnings/cp-10241215-native-command-roundtrip.md","role":"documentation"},
     {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"packages/brain/src/__tests__/claude-channel-retired.reader-tuples.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-native-report-compat.test.js","role":"verification"},
-    {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-source.js","path":"changes/cp-10241235-native-source-compat.md","role":"release"},
+    
     {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-source.js","path":"docs/learnings/cp-10241235-native-source-compat.md","role":"documentation"},
     {"owner_path":"packages/brain/src/orchestrator/commander-contract.js","path":"packages/brain/src/orchestrator/__tests__/commander-zod-compat.test.js","role":"verification"},
-    {"owner_path":"packages/brain/scripts/coding-workflow/runner/lib/worktree.mjs","path":"changes/cp-10240912-worktree-skill-bootstrap.md","role":"release"},
+    
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/lib/worktree.mjs","path":"docs/learnings/cp-10240912-worktree-skill-bootstrap.md","role":"documentation"},
     {"owner_path":"scripts/ops/janitor.sh","path":"scripts/ci/__tests__/janitor-infra-regression.test.mjs","role":"verification"},
     {"owner_path":"scripts/ops/janitor.sh","path":"scripts/ops/__tests__/janitor/janitor_system_domain_service_exempt.test.sh","role":"verification"},
@@ -221,7 +224,7 @@
     
     {"owner_path":"packages/brain/scripts/coding-workflow/lib/record-provenance.mjs","path":"docs/learnings/cp-10171805-fixture-direct.md","role":"documentation"},
     {"owner_path":"packages/brain/scripts/coding-workflow/lib/record-provenance.mjs","path":"packages/brain/scripts/coding-workflow/__tests__/record-provenance-history.test.mjs","role":"verification"},
-    {"owner_path":"packages/brain/scripts/coding-workflow/lib/record-provenance.mjs","path":"changes/cp-10252318-history-delivery.md","role":"release"},
+    
     {"owner_path":"packages/brain/vitest.config.js","path":"packages/brain/src/__tests__/vitest.real-env-smoke.config.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-stage-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-stage-source.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-stage-envelopes.js","path":"packages/brain/src/lib/__tests__/existing-ops-stage-envelopes.test.js","role":"verification"},
