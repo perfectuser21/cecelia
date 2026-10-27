@@ -34,7 +34,7 @@ const composeHashes = {
 };
 const git = args => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 const revision = git(['rev-parse', 'HEAD']).trim();
-const paths = [...new Set([...git(['ls-tree', '-rz', '--name-only', revision]).split('\0').filter(Boolean), ...Object.keys(samples)])];
+const paths = [...new Set([...git(['ls-tree', '-rz', '--full-tree', '--name-only', revision]).split('\0').filter(Boolean), ...Object.keys(samples)])];
 const cache = new Map();
 const original = p => { if (!cache.has(p)) cache.set(p, git(['show', revision + ':' + p])); return cache.get(p); };
 const hash = text => createHash('sha256').update(text).digest('hex');
