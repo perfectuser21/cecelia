@@ -39,9 +39,12 @@ const server = http.createServer((req, res) => {
   req.on('data', (d) => { raw += d; });
   req.on('end', () => {
     res.setHeader('content-type', 'application/json');
+    const task = { id: TASK, status: patches.at(-1)?.status ?? 'queued', task_type: 'data',
+      claimed_by: patches.length ? 'coding-workflow-runner' : null, created_at: new Date().toISOString(),
+      payload: { coding_workflow: true, headed_manual: 'true' } };
+    if (req.method === 'GET' && req.url === `/api/brain/tasks/${TASK}`) return res.end(JSON.stringify(task));
     if (req.method === 'GET') return res.end(JSON.stringify(req.url.includes('status=queued') && !patches.length
-      ? [{ id: TASK, status: 'queued', task_type: 'data', claimed_by: null, created_at: new Date().toISOString(),
-        payload: { coding_workflow: true, headed_manual: 'true' } }] : []));
+      ? [task] : []));
     if (req.method === 'PATCH') patches.push(JSON.parse(raw));
     res.end(JSON.stringify({ id: TASK, executor_kind: 'coding-workflow-runner' }));
   });

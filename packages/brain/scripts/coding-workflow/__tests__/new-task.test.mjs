@@ -1,12 +1,14 @@
 // new-task.mjs：按计划 JSON 建一条或一批带开关的 coding 任务（Commander 与 /dev 小改动入口）。
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
 import { validatePlan as validateRawPlan } from '../new-task.mjs';
+import { initCommittableRepo, git } from './helpers/git.mjs';
+import { startTestBrain } from './helpers/brain-transport.mjs';
 const routing = { change_kind: 'bugfix', map_scope_hint: ['F1'] };
 const validatePlan = (plan, opts) => validateRawPlan({ ...routing, ...plan }, opts);
 
@@ -15,40 +17,55 @@ const SCRIPT = path.join(HERE, '../new-task.mjs');
 const PROJECT_ID = 'p0000000-0000-4000-8000-000000000001';
 const ROOT_ID = '11111111-1111-4111-8111-111111111111';
 
-function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false, wrongBaseSha = false, missingBaseSha = false } = {}) {
-  const state = { posts: [], projectPosts: [], order: [] };
-  const server = http.createServer((req, res) => {
-    let raw = '';
-    req.on('data', (d) => { raw += d; });
-    req.on('end', () => {
-      res.setHeader('content-type', 'application/json');
-      if (req.method === 'POST' && req.url === '/api/brain/projects') {
-        const body = JSON.parse(raw);
-        state.projectPosts.push(body);
-        state.order.push('project');
-        if (projectFail) { res.statusCode = 500; return res.end(JSON.stringify({ error: 'db_down' })); }
-        res.statusCode = 201;
-        return res.end(JSON.stringify({ id: PROJECT_ID, ...body }));
-      }
-      if (req.method !== 'POST' || req.url !== '/api/brain/tasks') { res.statusCode = 404; return res.end('{}'); }
-      const body = JSON.parse(raw);
-      state.posts.push(body);
-      state.order.push('task');
-      if (failAt === state.posts.length) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'change_kind_required' })); }
-      res.statusCode = 201;
-      return res.end(JSON.stringify({ id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, change_kind: body.change_kind, base_sha: missingBaseSha ? undefined : wrongBaseSha ? 'f'.repeat(40) : body.base_sha, map_scope: malformedScope ? {} : body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } }));
-    });
-  });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
-    state.url = `http://127.0.0.1:${server.address().port}`;
-    state.close = () => new Promise((r) => server.close(r));
-    resolve(state);
-  }));
+function managedFixture(root) {
+  const clone = path.join(root, 'trusted');
+  fs.mkdirSync(clone);
+  initCommittableRepo(clone, path.join(root, 'hooks'));
+  const kinds = ['spec', 'rule', 'sample', 'implementation'];
+  const index = { object_id: 'coding-workflow', refs: kinds.map((kind) => ({ ref_id: kind, kind, path: 'rule.md', required: true })) };
+  fs.mkdirSync(path.join(clone, 'docs/registry'), { recursive: true });
+  fs.writeFileSync(path.join(clone, 'docs/registry/coding-workflow-authority.json'), JSON.stringify(index));
+  fs.writeFileSync(path.join(clone, 'rule.md'), 'trusted rule');
+  git(clone, 'add', '.'); git(clone, 'commit', '-qm', 'trusted sources');
+  const revision = git(clone, 'rev-parse', 'HEAD').trim();
+  git(clone, 'update-ref', 'refs/remotes/origin/main', revision);
+  const digest = crypto.createHash('sha256').update('trusted rule').digest('hex');
+  return { clone, authority: { object_id: 'coding-workflow', refs: kinds.map((kind) => ({ ref_id: kind, kind, path: 'rule.md', revision, digest, required: true })) } };
 }
 
-function runScript(args, env = {}) {
+async function startBrain({ failAt = null, projectFail = false, wrongRoute = false, malformedScope = false, wrongBaseSha = false, missingBaseSha = false, dropAuthority = false, deduplicated = false } = {}) {
+  const state = { posts: [], projectPosts: [], order: [], gets: [], claims: [], patches: [], rows: new Map() };
+  const transport = await startTestBrain((req) => {
+    const raw = req.body;
+    const response = (body, status = 200) => ({ status, body: JSON.stringify(body) });
+    if (req.method === 'POST' && req.url === '/api/brain/projects') {
+      const body = JSON.parse(raw);
+      state.projectPosts.push(body);
+      state.order.push('project');
+      if (projectFail) return response({ error: 'db_down' }, 500);
+      return response({ id: PROJECT_ID, ...body }, 201);
+    }
+    if (req.method === 'GET' && req.url.startsWith('/api/brain/tasks/')) { state.gets.push(req.url); return response(state.rows.get(req.url.split('/').at(-1))); }
+    if (req.method === 'POST' && req.url.endsWith('/claim')) { state.claims.push(req.url); return response({ ok: true }); }
+    if (req.method === 'PATCH' && req.url.startsWith('/api/brain/tasks/')) { const patch = JSON.parse(raw); state.patches.push(patch); const id = req.url.split('/').at(-1); const row = { ...state.rows.get(id), ...patch }; state.rows.set(id, row); return response(row); }
+    if (req.method !== 'POST' || req.url !== '/api/brain/tasks') return response({}, 404);
+    const body = JSON.parse(raw);
+    state.posts.push(body);
+    state.order.push('task');
+    if (failAt === state.posts.length) return response({ error: 'change_kind_required' }, 400);
+    const row = { id: `00000000-0000-4000-8000-00000000000${state.posts.length}`, ...body, payload: { ...body.payload, authority: dropAuthority ? undefined : body.payload.authority, change_kind: body.change_kind, base_sha: missingBaseSha ? undefined : wrongBaseSha ? 'f'.repeat(40) : body.base_sha, map_scope: malformedScope ? {} : body.map_scope_hint, work_kind: wrongRoute ? 'coding_review' : 'coding_mutation', repo: wrongRoute ? null : body.payload.repo, orchestrator: 'coding-workflow-runner' } };
+    if (deduplicated) row.deduplicated = true;
+    state.rows.set(row.id, row);
+    return response(row, deduplicated ? 200 : 201);
+  });
+  return Object.assign(state, transport);
+}
+
+function runScriptWithTransport(args, env = {}, transport = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [SCRIPT, ...args], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [...(transport.args || []), SCRIPT, ...args], { env: { ...process.env, ...env }, stdio: transport.stdio || ['ignore', 'pipe', 'pipe'] });
+    transport.attach?.(child);
+    child.stdin?.end();
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => { stdout += d; });
@@ -60,6 +77,7 @@ function runScript(args, env = {}) {
 describe('new-task.mjs', () => {
   let dir;
   let brain;
+  const runScript = (args, env) => runScriptWithTransport(args, env, brain?.spawnOptions());
   const plan = (obj) => {
     const file = path.join(dir, 'plan.json');
     fs.writeFileSync(file, JSON.stringify({ ...routing, ...obj }));
@@ -71,6 +89,69 @@ describe('new-task.mjs', () => {
     if (brain) await brain.close();
     brain = null;
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('计划按批次继承 object_id 与 authority_refs，拒绝混用声明', () => {
+    const refs = ['spec', 'rule', 'sample', 'implementation'].map((kind) => ({
+      ref_id: kind, kind, path: `${kind}.md`, revision: 'a'.repeat(40), digest: 'b'.repeat(64), required: true,
+    }));
+    const checked = validatePlan({ object_id: 'coding-workflow', authority_refs: refs,
+      tasks: [{ title: '一', acceptance: ['A'] }, { title: '二', acceptance: ['B'] }] });
+    expect(checked.errors).toEqual([]);
+    expect(checked.tasks.map((t) => t.authority)).toEqual([{
+      object_id: 'coding-workflow', refs,
+    }, { object_id: 'coding-workflow', refs }]);
+    const conflict = validatePlan({ object_id: 'coding-workflow', authority_refs: refs,
+      authority: { object_id: 'coding-workflow', refs: [] }, title: '坏', acceptance: ['A'] });
+    expect(conflict.errors).toContain('#1:authority_declaration_conflict');
+  });
+
+  it('真实 CLI 在建单前按可信清单拒绝 package.json 路径替换', async () => {
+    const { clone, authority } = managedFixture(dir);
+    fs.writeFileSync(path.join(clone, 'package.json'), '{}');
+    git(clone, 'add', 'package.json'); git(clone, 'commit', '-qm', 'trusted package');
+    const revision = git(clone, 'rev-parse', 'HEAD').trim();
+    git(clone, 'update-ref', 'refs/remotes/origin/main', revision);
+    const digest = crypto.createHash('sha256').update('{}').digest('hex');
+    const replaced = { ...authority, refs: authority.refs.map((ref) => ({ ...ref, path: 'package.json', revision, digest })) };
+    const r = await runScript([plan({ title: '路径替换', acceptance: ['A'], object_id: replaced.object_id,
+      authority_refs: replaced.refs }), '--dry-run'], { CODING_WF_TRUSTED_REPO: clone });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('authority_path_mismatch');
+    expect(r.stdout).toBe('');
+  });
+
+  it('受管声明丢失时 GET 核对并安全收账', async () => {
+    brain = await startBrain({ dropAuthority: true });
+    const { clone, authority } = managedFixture(dir);
+    const r = await runScript([plan({ title: '受管', acceptance: ['x'], authority })], { BRAIN_URL: brain.url, CODING_WF_TRUSTED_REPO: clone });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('authority_receipt_mismatch');
+    expect(r.stderr).toContain('00000000-0000-4000-8000-000000000001');
+    expect(brain.posts[0].payload).toMatchObject({ authority_required: true, authority });
+    expect(brain.gets).toHaveLength(2);
+    expect(brain.claims).toHaveLength(1);
+    expect(brain.patches.at(-1).status).toBe('failed');
+  });
+
+  it('复用任务 ID 时只报冲突，不 claim 或写 failed', async () => {
+    brain = await startBrain({ deduplicated: true });
+    const { clone, authority } = managedFixture(dir);
+    const r = await runScript([plan({ title: '复用', acceptance: ['x'], authority })], { BRAIN_URL: brain.url, CODING_WF_TRUSTED_REPO: clone });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('authority_dedup_conflict');
+    expect(r.stderr).toContain('00000000-0000-4000-8000-000000000001');
+    expect(brain.claims).toEqual([]);
+    expect(brain.patches).toEqual([]);
+  });
+
+  it('重复 ref_id 整批拒绝，不发 POST', async () => {
+    brain = await startBrain();
+    const ref = { ref_id: 'rule', kind: 'rule', path: 'rule.md', revision: 'a'.repeat(40), digest: 'b'.repeat(64), required: true };
+    const r = await runScript([plan({ title: '坏声明', acceptance: ['x'], authority: { object_id: 'coding-workflow', refs: [ref, ref] } })], { BRAIN_URL: brain.url });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('authority_ref_duplicate');
+    expect(brain.posts).toEqual([]);
   });
 
   it('单条：建成独立类型 coding_workflow 任务（coding_workflow / repo / acceptance，不再借 data + headed_manual），输出 id', async () => {
