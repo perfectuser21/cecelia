@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
-    {"owner_path":"packages/brain/src/lib/existing-ops-build-source.js","path":"changes/cp-10271530-a-index-source.md","role":"release"},
+    
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"packages/brain/scripts/smoke/coding-workflow-runner-smoke.sh","role":"verification"},
     {"owner_path":"packages/brain/src/feishu-task-ledger.js","path":"packages/brain/src/__tests__/feishu-task-ledger.remote.test.js","role":"verification"},
     
