@@ -96,6 +96,8 @@ services:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
       - ENV_REGION=${ENV_REGION:-us}
+      # OpenClaw 已迁 Mac Studio：退役 US 本地控制，保留远端触达观测。
+      - OPENCLAW_GUARD_MODE=remote
       # Universal Map repo→scope 身份绑定；拒绝仅 basename 相同的跨仓证据冒用。
       - CECELIA_MAP_REPO_SCOPES=${CECELIA_MAP_REPO_SCOPES:-perfectuser21/cecelia=cecelia,cecelia=cecelia}
       # Kernel controller 固定留在 US M4；Docker hostname 不是可调度机器身份。
