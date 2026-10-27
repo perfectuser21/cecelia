@@ -10,7 +10,7 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
  const scan=(s,f=data)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  describe('A封套精确只读闭包及执行防复活',()=>{
   it.each(['build','stage','native-evidence'])('%s完整已审组合无误报',name=>{const f=path.join(root,`existing-ops-${name}-envelopes.js`);expect(scan(base(),f)).toEqual([]);});
-  it.each(files)('任何闭包成员语义突变必须拒绝：%s',f=>{const s=base();s.set(f,s.get(f)+'\nexport const unknownClosure=true;');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);});
+  it.each(files)('任何闭包成员突变或缺失必须拒绝：%s',f=>{const s=base();s.set(f,s.get(f)+'\nexport const unknownClosure=true;');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);const missing=base();missing.delete(f);expect(findClaudeInvocations(base().get(data),{file:data,sources:missing}).some(h=>h.rule==='E1')).toBe(true);});
   it.each(['eval','raw','spawn','alias','interpolation','escaped','concat','dynamic','caller'])('%s不能继承只读资格',kind=>{
    const s=base(),consumer=path.join(root,'existing-ops-build-source.js'),extra=path.join(root,'third.js');
    if(kind==='eval')s.set(consumer,s.get(consumer)+'\neval(A_ENVELOPES.reviewed.any);');
