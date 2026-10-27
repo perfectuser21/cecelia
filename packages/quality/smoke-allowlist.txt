@@ -471,3 +471,4 @@ workflow-assembly-reconcile-smoke.sh
 workflow-assembly-native-smoke.sh
 
 infra-consumer-source-smoke.sh
+cw-b3d6f213-qa-smoke.sh
