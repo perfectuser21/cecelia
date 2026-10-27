@@ -1,5 +1,6 @@
 /** 已有工厂活动的只读消费者证据；不执行源码，也不声明完整流程可运行。 */
 import { createHash } from 'node:crypto';
+import { reviewedAContext } from './existing-ops-a-compat.js';
 import { posix } from 'node:path';
 import yaml from 'js-yaml';
 import { runtimeSelectorEnabled, collectRuntimeSources, ciEntrySelectorEnabled, collectCiEntrySources, stagingSelectorVersion, collectIsolatedStagingSources, collectAutoVersionTestSources } from './existing-ops-runtime-source.js';
@@ -399,10 +400,15 @@ export async function buildExistingOpsSources({ scope, repo, revision, paths, re
       if (await read(path)) relations.push({ consumer_path: 'packages/brain/vitest.config.js', input_path: path,
         kind: 'literal_vitest_regression_selector', selector: 'native_nightly_include_minus_exclude', revision });
     }
-    if (runtime && selectors) await collectRuntimeSources({ parse: ast, paths, selectors, read, readSource, revision, relations, requireProof, ci });
+    const reviewedA = runtime && buildInputs && selectors
+      ? await reviewedAContext({ parse: ast, paths, readSource, revision }) : null;
+    const proofRead = reviewedA ? async path => reviewedA.normalize(path, await read(path)) : read;
+    const proofSource = reviewedA ? async (path, rev) => reviewedA.normalize(path, await readSource(path, rev)) : readSource;
+    if (reviewedA) await reviewedA.record({ read, relations });
+    if (runtime && selectors) await collectRuntimeSources({ parse: ast, paths, selectors, read: proofRead, readSource: proofSource, revision, relations, requireProof, ci });
     if (buildInputs) {
       if (requireProof(Boolean(runtime && selectors), 'build_selector_parent_unproven'))
-        await collectBuildSources({ parse: ast, paths, selectors, read, readSource, revision, relations, requireProof });
+        await collectBuildSources({ parse: ast, paths, selectors, read: proofRead, readSource: proofSource, revision, relations, requireProof });
     }
     const ciDoc = ci ? yaml.load(ci) : null, versionJob = 'brain-version-bump-gate', versionPath = 'scripts/ci/check-brain-version-bump.sh';
     if (expanded && ciDoc?.jobs?.[versionJob]) {

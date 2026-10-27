@@ -15,7 +15,7 @@ function withoutParser(script) {
     symlinkSync(dirname(require.resolve('js-yaml/package.json')), join(root, 'node_modules/js-yaml'));
     writeFileSync(join(root, 'existing-ops-source.js'), readFileSync(new URL('../existing-ops-source.js', import.meta.url)));
     writeFileSync(join(root, 'existing-ops-runtime-source.js'), readFileSync(new URL('../existing-ops-runtime-source.js', import.meta.url)));
-    for (const name of ['existing-ops-build-source.js','existing-ops-build-envelopes.js','existing-ops-workspace-source.js',
+    for (const name of ['existing-ops-a-compat.js','existing-ops-a-envelopes.js','existing-ops-build-source.js','existing-ops-build-envelopes.js','existing-ops-workspace-source.js',
       'existing-ops-provenance-envelope.js','existing-ops-provenance-core-envelope.js',
       'existing-ops-provenance-entry-envelopes.js','existing-ops-provenance-local-envelopes.js','existing-ops-stage-source.js','existing-ops-stage-envelopes.js','existing-ops-stage-modes.js',
       'existing-ops-native-evidence-source.js','existing-ops-native-evidence-envelopes.js','workspace-ci-source-bundle.js','native-consumer-runtime.js'])
@@ -26,7 +26,7 @@ function withoutParser(script) {
 
 describe('consumer adapter startup without optional production parser', () => {
   it('runtime身份仅读取F3字节而不静态加载其Acorn依赖',()=>{
-    const child=withoutParser("const m=await import('./native-consumer-runtime.js');if(m.readNativeConsumerRuntime().files.length!==15)process.exit(2);");
+    const child=withoutParser("const m=await import('./native-consumer-runtime.js');if(m.readNativeConsumerRuntime().files.length!==17)process.exit(2);");
     expect(child.stderr).toBe('');expect(child.status).toBe(0);
   });
   it('imports source identity for normal service startup without loading Acorn', () => {
