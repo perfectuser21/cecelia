@@ -36,7 +36,7 @@ export function readPid(file) {
  * 进程被杀后可能短暂以僵尸状态存在（等 init 回收），轮询到 ESRCH；
  * 到期仍存在则补杀防泄漏并失败。
  */
-export async function expectGone(pid, what) {
+export async function expectGone(pid, what, { cleanup = true } = {}) {
   for (let i = 0; i < 40; i += 1) {
     try {
       process.kill(pid, 0);
@@ -46,6 +46,6 @@ export async function expectGone(pid, what) {
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  try { process.kill(pid, 'SIGKILL'); } catch { /* 已退出 */ }
+  if (cleanup) { try { process.kill(pid, 'SIGKILL'); } catch { /* 已退出 */ } }
   expect.fail(`${what} (pid ${pid}) 仍然存活`);
 }

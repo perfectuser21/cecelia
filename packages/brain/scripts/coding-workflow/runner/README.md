@@ -206,3 +206,9 @@ RUNTIME_MODULES="$RUNTIME_MODULES" node -e 'const {createRequire}=require("modul
 当前 QA 只读 01/02、固定源码、精确测试 HEAD 的 Git 事实及可信有限来源投影，用可失败静态断言和内存破坏对抗验新节，重新审完整逐父 DAG、当前 index/worktree/untracked。仅可信投影精确绑定本轮 task/round/HEAD 的 03/04 暂隐藏可解释，不能读 03/04 正文或保护根，也不能由此断言会话后已恢复。只对本轮可信固定 `env_url` 检查字面主机为 `localhost` 或 `127.0.0.1` 且同源，只读 GET `/api/brain/health` 核精确 preview HEAD 和隔离身份；不跟跨源重定向、不请求其他 API、外网或 POST、不伪造 header、不读凭据、不扫端口、不执行产品 CLI。该身份 GET 不是产品 smoke 或 PASS 证据。
 
 独立 judge 才消费 `judge-only historical_execution`，按已登记 build/verify 的 stage/head/native 绑定原生命令、完整捕获输出、整数退出码，并核 03/04 原 bytes/mode 在会话后的真实完整恢复。`aggregated_output` 只是原生聚合捕获，不声称任意 child stdout/stderr 的完整分流；draft FAIL/CANNOT 不编译成 PASS，缺证记 UNKNOWN，不重跑旧阶段伪造历史。后续控制器和终态门仅在实际发生后按冻结 C01-C12 核恢复、正式 source/CI/preview、精确批准 HEAD、真实 MERGED、Brain/Learning 的 ID 与全文哈希读回、preview stop 及下次 tick 回收。未发生的步骤不报 PASS，不能用旧 A 信用替代本轮 B，也不能用来源证明或 required 检查代替新 HEAD 的 QA/judge/preview。
+
+## 固定旧资料引用（一期 A）
+
+受管任务在 plan 的单条或批次顶层声明 `object_id: "coding-workflow"` 与 `authority_refs`；每项须有 `ref_id`、`kind`、`path`、40 位 Git `revision`、正文原字节 SHA-256 `digest` 和 `required: true`。旧的 `authority: {object_id, refs}` 形状仍接受，若两种形状同时出现必须一致。四个必需引用的身份和路径见 `docs/registry/coding-workflow-authority.json`；该索引只列引用，不保存正文。`new-task.mjs` 从运行环境配置的可信 clone 的 `origin/main` 提交读取清单，整批预检并在 payload 写入声明；索引尚未进入可信基线时拒单。POST 后独立 GET 对账；确认本次新建但回执不一致时尝试 claim、转 failed 并再次 GET；复用 ID 只报 `authority_dedup_conflict`，不改变旧任务。
+
+runner 在建 worktree 前核已认领任务的受管标记、声明与仓库，并首次绑定独立可信 clone 的 `origin/main` 索引 SHA；重试只读该绑定，丢失则阻断。初始代码基线 SHA 另行固定，不充当索引授权。intent 按绑定 SHA 从可信 Git 提交读取清单，并只从该提交祖先中的指定版本读取正文 tree/blob、计算摘要，在 `01-intent.md` 写引用事实；路径或 required 不符时停止后继。未声明的旧任务在 01 明示 `legacy/unconfigured`，不代表不存在历史要求。外部 URL、Notion 等权威来源本批未支持，返回 `authority_source_unsupported`；不要把旧 sprint 或工作区文件代作来源。

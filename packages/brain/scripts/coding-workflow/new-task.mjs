@@ -11,8 +11,9 @@
 // 先整体校验再逐条创建；中途失败退出 1 并列出已建的任务。输出 [{key,id,title}]。
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { loadRepos, resolveRepo, reposFile } from './runner/lib/repos.mjs';
+import { loadRepos, resolveRepo, reposFile, resolveEntry } from './runner/lib/repos.mjs';
 import { normalizeChangeKind } from '../../src/impact-contract/change-kind.js';
+import { validateAuthority, sameAuthority, loadAuthorityIndex, trustedHead, resolveAuthority } from './lib/authority-refs.mjs';
 
 const nonEmpty = (s) => typeof s === 'string' && s.trim() !== '';
 
@@ -39,7 +40,15 @@ export function validatePlan(plan, { repo = null, repos = loadRepos(reposFile())
     if (!Array.isArray(scope) || scope.length === 0) errors.push(`#${i + 1}:map_scope_required`);
     else if (!scope.every(nonEmpty)) errors.push(`#${i + 1}:invalid_map_scope`);
     const mapScope = Array.isArray(scope) && scope.every(nonEmpty) ? [...new Set(scope.map((v) => v.trim()))] : [];
-    return { ...t, repoKey, changeKind, mapScope, baseSha };
+    const declaredObject = inherit('object_id');
+    const declaredRefs = inherit('authority_refs');
+    const nested = inherit('authority');
+    const authority = nested ?? (declaredObject !== undefined || declaredRefs !== undefined
+      ? { object_id: declaredObject, refs: declaredRefs } : undefined);
+    if (nested !== undefined && (declaredObject !== undefined || declaredRefs !== undefined)
+      && !sameAuthority(nested, { object_id: declaredObject, refs: declaredRefs })) errors.push(`#${i + 1}:authority_declaration_conflict`);
+    if (authority !== undefined) errors.push(...validateAuthority(authority).map((error) => `#${i + 1}:${error}`));
+    return { ...t, repoKey, changeKind, mapScope, baseSha, authority };
   });
   tasks.forEach((t, i) => {
     const at = `#${i + 1}`;
@@ -72,6 +81,12 @@ function body(t, batch, ids, projectId) {
   if (t.depends_on?.length) payload.depends_on = t.depends_on.map((k) => ids.get(k));
   if (batch) payload.batch = batch;
   if (t.key !== undefined) payload.plan_key = t.key;
+  if (t.authority !== undefined) {
+    payload.authority_required = true;
+    payload.authority = t.authority;
+    payload.object_id = t.authority.object_id;
+    payload.authority_refs = t.authority.refs;
+  }
   const req = {
     // 独立类型（派发总闸 F，任务 0a70684f）：tick 按类型排除，不再借 data + headed_manual
     task_type: 'coding_workflow',
@@ -95,10 +110,49 @@ async function postJson(url, data) {
   try {
     const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
     const reply = await res.json().catch(() => null);
-    return { ok: res.ok && Boolean(reply?.id), reply };
+    return { ok: res.ok && Boolean(reply?.id), status: res.status, reply };
   } catch (error) {
-    return { ok: false, reply: { error: String(error?.message || error) } };
+    return { ok: false, status: 0, reply: { error: String(error?.message || error) } };
   }
+}
+
+async function receipt(url, method = 'GET', data) {
+  try {
+    const res = await fetch(url, { method, headers: { 'content-type': 'application/json' },
+      ...(data === undefined ? {} : { body: JSON.stringify(data) }) });
+    return { ok: res.ok, status: res.status, body: await res.json().catch(() => null) };
+  } catch { return { ok: false, status: 0, body: null }; }
+}
+
+function managedMatches(row, t) {
+  return row?.task_type === 'coding_workflow' && row?.payload?.authority_required === true
+    && sameAuthority(row.payload.authority, t.authority) && row.payload.repo === t.repoKey
+    && row.payload.object_id === t.authority.object_id
+    && sameAuthority(row.payload.authority_refs, t.authority.refs)
+    && row.payload.change_kind === t.changeKind
+    && row.payload.work_kind === 'coding_mutation'
+    && row.payload.orchestrator === 'coding-workflow-runner'
+    && Array.isArray(row.payload.map_scope)
+    && JSON.stringify([...row.payload.map_scope].sort()) === JSON.stringify([...t.mapScope].sort())
+    && (t.baseSha === undefined || row.payload.base_sha === t.baseSha);
+}
+
+async function settleMismatch(base, id) {
+  const claim = await receipt(`${base}/tasks/${encodeURIComponent(id)}/claim`, 'POST', {
+    claimer: 'coding-workflow-new-task', executor_kind: 'coding-workflow-runner',
+  });
+  if (!claim.ok) return 'unresolved_claim';
+  const running = await receipt(`${base}/tasks/${encodeURIComponent(id)}`, 'PATCH', { status: 'in_progress' });
+  if (!running.ok) return 'unresolved_in_progress';
+  const failed = await receipt(`${base}/tasks/${encodeURIComponent(id)}`, 'PATCH', {
+    status: 'failed', result: { coding_workflow_runner: {
+      reason_code: 'authority_receipt_mismatch', detail: 'POST 与独立 GET 的受管引用或仓库路由不一致',
+      evidence: [{ task_id: id, actor: 'coding-workflow-new-task' }],
+    } },
+  });
+  if (!failed.ok) return 'unresolved_failed_patch';
+  const final = await receipt(`${base}/tasks/${encodeURIComponent(id)}`);
+  return final.ok && final.body?.status === 'failed' ? 'failed_confirmed' : 'unresolved_final_receipt';
 }
 
 const USAGE = '用法：node new-task.mjs <plan.json> [--dry-run] [--repo <仓库>]';
@@ -136,6 +190,22 @@ async function main(argv, env) {
   const checked = validatePlan(plan, { repo: args.repo, repos });
   const { tasks, batch, project, errors } = checked;
   let { projectId } = checked;
+  if (tasks.some((t) => t.authority !== undefined)) {
+    const clone = env.CODING_WF_TRUSTED_REPO || resolveEntry(repos.find((r) => r.default), env).clone;
+    const fixed = trustedHead(clone);
+    let index;
+    try { index = fixed ? loadAuthorityIndex(clone, fixed) : null; }
+    catch (error) { errors.push(error.message); }
+    if (!index) errors.push('authority_index_binding_missing');
+    else tasks.forEach((t, i) => {
+      if (t.authority === undefined) return;
+      errors.push(...validateAuthority(t.authority, index).map((error) => `#${i + 1}:${error}`));
+      if (validateAuthority(t.authority, index).length === 0) {
+        const failed = resolveAuthority(clone, t.authority.refs, { trustedSha: fixed }).find((r) => r.required && r.status !== 'found');
+        if (failed) errors.push(`#${i + 1}:${failed.reason}`);
+      }
+    });
+  }
   if (errors.length > 0) {
     console.error(`计划不合格：${errors.join(' ')}`);
     return 2;
@@ -159,10 +229,26 @@ async function main(argv, env) {
   const ids = new Map();
   const created = [];
   for (const t of tasks) {
-    const { ok, reply } = await postJson(`${base}/tasks`, body(t, batch, ids, projectId));
+    const { ok, status, reply } = await postJson(`${base}/tasks`, body(t, batch, ids, projectId));
     if (!ok) {
+      if (t.authority !== undefined && (status === 200 || status === 201)) {
+        console.error(`authority_dedup_conflict: id=${reply?.id ?? 'unknown'}；新建身份未确认，停止后续建单`);
+        return 1;
+      }
       console.error(`建任务「${t.title}」失败：${JSON.stringify(reply)}；已建：${JSON.stringify(created)}`);
       return 1;
+    }
+    if (t.authority !== undefined) {
+      if (status !== 201 || reply?.deduplicated === true || !/^[a-f0-9-]{36}$/i.test(reply.id)) {
+        console.error(`authority_dedup_conflict: id=${reply.id}；复用或新建身份未确认，停止后续建单`);
+        return 1;
+      }
+      const read = await receipt(`${base}/tasks/${encodeURIComponent(reply.id)}`);
+      if (!read.ok || !managedMatches(reply, t) || !managedMatches(read.body, t)) {
+        const outcome = await settleMismatch(base, reply.id);
+        console.error(`authority_receipt_mismatch: id=${reply.id} outcome=${outcome}；停止后续建单`);
+        return 1;
+      }
     }
     const actual = reply.payload;
     if (reply.task_type !== 'coding_workflow' || actual?.coding_workflow !== true

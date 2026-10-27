@@ -1,5 +1,5 @@
 // runner 测试沙箱：假 Brain HTTP、临时 bare origin + 专用 clone、以子进程运行 run-once.mjs。
-import http from 'node:http';
+import { startTestBrain } from '../../../__tests__/helpers/brain-transport.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,6 +14,7 @@ export const FAKE_EXECUTOR = path.join(HERE, '../fixtures/fake-executor.mjs');
 export const FAKE_GH = path.join(HERE, '../fixtures/fake-gh.mjs');
 const CONTRACT = path.join(HERE, '../../../contract.json');
 
+const transports = new Map();
 const TRANSITIONS = { queued: ['in_progress'], in_progress: ['completed', 'failed'] };
 
 /**
@@ -27,13 +28,10 @@ export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = 
   const state = { tasks: structuredClone(tasks), calls: [], patches: [], learnings: [], learningRows: [], spans: [], heartbeats: [] };
 
   const find = (id) => state.tasks.find((t) => t.id === id);
-  const send = (res, code, body) => { res.statusCode = code; res.end(JSON.stringify(body)); };
-  const server = http.createServer((req, res) => {
-    let raw = '';
-    req.setEncoding('utf8');
-    req.on('data', (d) => { raw += d; });
-    req.on('end', () => {
-      res.setHeader('content-type', 'application/json');
+  const send = (_res, status, body) => ({ status, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const transport = await startTestBrain((req) => {
+      const raw = req.body;
+      const res = null;
       const url = new URL(req.url, 'http://x');
       state.calls.push({ method: req.method, path: url.pathname, query: url.search, raw });
       if (req.method === 'GET' && url.pathname === '/api/brain/tasks') {
@@ -113,11 +111,10 @@ export async function startFakeBrain({ tasks = [], claim409 = [], patchStatus = 
         return send(res, 200, { id: one[1] });
       }
       return send(res, 404, {});
-    });
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  state.url = `http://127.0.0.1:${server.address().port}`;
-  state.close = () => new Promise((resolve) => server.close(resolve));
+  state.url = transport.url;
+  transports.set(state.url, transport);
+  state.close = async () => { transports.delete(state.url); await transport.close(); };
   return state;
 }
 
@@ -224,7 +221,17 @@ export function runnerEnv(sb, brainUrl, extra = {}) {
 /** 以子进程运行 run-once.mjs，返回 { exitCode, stdout, stderr }。 */
 export function runOnceProcess(env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [RUN_ONCE], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const options = transports.get(env.BRAIN_URL)?.spawnOptions() ?? { args: [], stdio: ['ignore', 'pipe', 'pipe'], attach() {} };
+    const args = [...options.args];
+    if (args.length) {
+      const relay = new URL('../fixtures/executor-ipc-preload.mjs', import.meta.url);
+      relay.searchParams.set('fetchPreload', args[1]);
+      relay.searchParams.set('executor', FAKE_EXECUTOR);
+      args.push('--import', relay.href);
+    }
+    const child = spawn(process.execPath, [...args, RUN_ONCE], { env, stdio: options.stdio });
+    options.attach(child);
+    child.stdin?.end();
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');
