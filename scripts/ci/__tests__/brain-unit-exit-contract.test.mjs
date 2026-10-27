@@ -9,7 +9,7 @@ import test from 'node:test';
 
 const root = fileURLToPath(new URL('../../..', import.meta.url));
 const yaml = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
-const guard = 'brain-unit-exit-contract';
+const guard = 'core-regression';
 const testPath = 'scripts/ci/__tests__/brain-unit-exit-contract.test.mjs';
 const wrapper = yaml.match(/^          run_vitest\(\) [({]\n[\s\S]*?^          [)}]\s*$/m)?.[0]
   .split('\n').map(line => line.slice(10)).join('\n');
@@ -123,9 +123,19 @@ for (const state of ['failure', 'cancelled', 'skipped', '']) {
   });
 }
 
-test('轻量守卫 job 真正执行本永久回归并传播失败', () => {
-  const script = runBlock(jobBlock(guard));
-  assert.ok(script, '永久回归 job 必须存在');
+test('现有必跑 job 真正执行本永久回归并传播失败', () => {
+  const block = jobBlock(guard);
+  assert.ok(block, '现有必跑 core-regression 必须存在');
+  assert.doesNotMatch(block, /^    (?:if|continue-on-error):/m, '必跑 job 不得有条件或忽略错误');
+  const steps = block.split(/^      - /m).slice(1);
+  const matches = steps.filter(step => step.includes(`run: node --test ${testPath}`));
+  assert.equal(matches.length, 1, '永久回归步骤必须唯一接入必跑 job');
+  const step = matches[0];
+  assert.doesNotMatch(step, /^        (?:if|continue-on-error):/m, '回归步骤不得有条件或忽略错误');
+  const script = step.match(/^        run: (.+)$/m)?.[1];
+  assert.equal(script, `node --test ${testPath}`);
+  assert.ok(block.indexOf('actions/setup-node@v4') < block.indexOf(script), '使用固定 Node 后才执行');
+  assert.ok(block.indexOf(script) < block.indexOf('sudo wget'), '回归在外部下载前执行');
   const dir = mkdtempSync(join(tmpdir(), 'brain-unit-job-'));
   try {
     executable(join(dir, 'node'), `#!/usr/bin/env bash
