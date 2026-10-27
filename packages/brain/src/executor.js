@@ -4179,7 +4179,7 @@ async function reAttachActiveExecutors(dbPool) {
  */
 async function syncOrphanTasksOnStartup() {
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, error_message, task_type, executor_kind
+    SELECT id, title, payload, started_at, error_message, task_type, executor_kind, claimed_by
     FROM tasks
     WHERE status = 'in_progress'
   `);
@@ -4214,7 +4214,10 @@ async function syncOrphanTasksOnStartup() {
     // → device_job 被中台 /api/schedule/claim 再领一次，同一活在真手机上重跑（0929 实证）。
     // 不回队、不动 claim、不计孤儿，交给各自收割/对账（reaper 读远端 .exit；device_job 走运行期
     // 认领新鲜度 + 超时兜底）。
-    if (isExternallyExecuted(task)) {
+    // 有头owner可能在外部宿主/CI；本机无PID不能撤销其执行权。失效交原liveness/lease回收。
+    const hasHeadedOwner = task.executor_kind === 'headed-session'
+      && typeof task.claimed_by === 'string' && task.claimed_by.trim().length > 0;
+    if (isExternallyExecuted(task) || hasHeadedOwner) {
       externalSkipped++;
       console.log(`[startup-sync] skip external executor task=${task.id} type=${task.task_type} kind=${task.executor_kind || '-'}（进程不在本机，归专属收割/对账）`);
       continue;
