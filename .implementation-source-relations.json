@@ -2,6 +2,9 @@
   "schema_version": 1,
   "repo": "perfectuser21/cecelia",
   "relations": [
+    {"owner_path":"packages/brain/src/executor.js","path":"PRD.md","role":"documentation"},
+    {"owner_path":"packages/brain/src/executor.js","path":"packages/brain/src/__tests__/executor-startup-sync.test.js","role":"verification"},
+    {"owner_path":"packages/brain/src/harness-worktree.js","path":"packages/brain/src/__tests__/harness-worktree-recovery.test.js","role":"verification"},
     {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-source.js","path":"changes/cp-10272320-qa-collector-prepare.md","role":"release"},
     {"owner_path":"packages/brain/src/lib/existing-ops-native-evidence-source.js","path":"packages/brain/src/lib/__tests__/existing-ops-qa-artifact-envelopes.test.js","role":"verification"},
     {"owner_path":"packages/brain/scripts/coding-workflow/runner/run-once.mjs","path":"changes/cp-10272240-qa-artifact-source.md","role":"release"},
