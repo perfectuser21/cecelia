@@ -209,3 +209,16 @@ it('同head同正文的两次QA与裁判按明确QA阶段选择，第二次可�
   expect(records.find(r => r.path === report).stage_event_id).toBe(attempts[1].qa.id);
   expect(records.find(r => r.path === judged).stage_event_id).toBe(attempts[1].judge.id);
 }, 15000);
+
+it('真实evaluate封存的执行产物随QA报告登记为verification，且原字节可补登记', async () => {
+  const { stageQaRecords } = await import('../runner/lib/qa-records.mjs');
+  prepareQa();git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const report = file('05-qa-report-r1.md'), artifact = file('qa-r1/qa-playwright.cjs');
+  put(report, fm('evaluate'));put(artifact, 'console.log("observed preview");\n');
+  seal('evaluate', [report, artifact], { round: 1 });
+  const staged = await stageQaRecords(worktree, { taskId, sprintDir, round: 1 }, [report, file('qa-r1')], { ...options, stage: 'qa', round: 1, qaStageEventId: lastQaStageId });
+  const row = JSON.parse(fs.readFileSync(path.join(worktree, M))).relations.find(r => r.path === artifact);
+  expect(row).toEqual({ owner_path: owner, path: artifact, role: 'verification' });
+  git('commit', '-qm', 'real QA registration');finalizeRecordRegistration(staged.registration);
+  expect(verifyRecordProvenance({ ...options, head: git('rev-parse', 'HEAD') }).status).toBe('verified');
+});
