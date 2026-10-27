@@ -258,3 +258,13 @@ it.each(['bytes','mode','round','task','subset','other-file','forged-token'])('�
   const before=fs.readFileSync(path.join(worktree,M),'utf8');
   expect(()=>registerRecordSources(worktree,args,files)).toThrow();expect(fs.readFileSync(path.join(worktree,M),'utf8')).toBe(before);
 });
+
+it('报告有真实evaluate但执行产物不在该stage封存中，登记仍拒绝且索引不变', async () => {
+  const { stageQaRecords } = await import('../runner/lib/qa-records.mjs');
+  prepareQa();git('update-ref','refs/remotes/origin/main','HEAD');
+  const report=file('05-qa-report-r1.md'),artifact=file('qa-r1/qa-playwright.cjs');
+  put(report,fm('evaluate'));seal('evaluate',[report],{round:1});put(artifact,'// never sealed\n');
+  const before=fs.readFileSync(path.join(worktree,M),'utf8');
+  await expect(stageQaRecords(worktree,{taskId,sprintDir,round:1},[report,file('qa-r1')],{...options,stage:'qa',round:1,qaStageEventId:lastQaStageId})).rejects.toThrow(/stage_missing/);
+  expect(fs.readFileSync(path.join(worktree,M),'utf8')).toBe(before);expect(git('diff','--cached','--name-only')).toBe('');
+});

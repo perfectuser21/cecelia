@@ -1,6 +1,8 @@
 // 只解析完整已审源码；静态依赖与选中evaluate的可达调用分别登记。
 import { NATIVE_EVIDENCE_ENVELOPES as REVIEWED, NATIVE_REPORT_ROUNDTRIP_ENVELOPES as ROUNDTRIP, NATIVE_HISTORY_PROJECTION_ENVELOPES as HISTORY } from './existing-ops-native-evidence-envelopes.js';
 
+import { QA_ARTIFACT_ENVELOPES } from './existing-ops-qa-artifact-envelopes.js';
+
 const P = 'packages/brain/scripts/coding-workflow/';
 export const NATIVE_HISTORY_PATH = P + 'lib/record-provenance-history.mjs';
 export const NATIVE_PROVENANCE_PATHS = Object.freeze(Object.fromEntries(Object.entries({
@@ -65,7 +67,7 @@ function historyLinks(trees, parse) {
 /** 全体模块必须是同一已审组合，不能各自命中不同历史版本。 */
 export function nativeEvidenceForwarding(sources, parse) {
   try {
-    for (const bundle of [REVIEWED, ROUNDTRIP, HISTORY]) {
+    for (const bundle of [REVIEWED, ROUNDTRIP, HISTORY, QA_ARTIFACT_ENVELOPES]) {
       const trees = {};
       let complete = true;
       for (const [key, text] of Object.entries(bundle.support)) {
@@ -75,7 +77,8 @@ export function nativeEvidenceForwarding(sources, parse) {
         trees[key] = parse(sources[key]);
         if (!same(trees[key], parse(text))) { complete = false; break; }
       }
-      if (complete && nativeLinks(trees, parse) && (bundle !== HISTORY || historyLinks(trees, parse))) return { trees, version: 'native_evidence', historical: bundle === HISTORY };
+      const historical = bundle === HISTORY || bundle === QA_ARTIFACT_ENVELOPES;
+      if (complete && nativeLinks(trees, parse) && (!historical || historyLinks(trees, parse))) return { trees, version: 'native_evidence', historical };
     }
     return null;
   } catch { return null; }

@@ -1,5 +1,4 @@
 /** 固定Git辅助来源证据；不写依赖图、不执行声明、不创建业务归属。 */
-import { isQaExecutionArtifact } from '../../packages/brain/scripts/coding-workflow/lib/record-provenance-records.mjs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -32,7 +31,7 @@ function relation(row){
   if(!workspaceConfig(row)&&(!CONFIG_INPUTS.includes(row.path)||row.owner_path!==CONFIG_READER||row.consumer_path!==CONFIG_READER||row.ci_path!==CONFIG_CI))fail('AUXILIARY_CONFIG_SCOPE_INVALID');
   return row;
  }
- const qaExecution=row.owner_path==='packages/brain/scripts/coding-workflow/runner/run-once.mjs'&&isQaExecutionArtifact(row.path);
+ const qaExecution=row.owner_path==='packages/brain/scripts/coding-workflow/runner/run-once.mjs'&&/^sprints\/\d{8}-cw-[0-9a-f]{8}\/qa-r[1-9]\d*\/qa-playwright\.cjs$/.test(row.path);
  const valid=row.role==='documentation'?/\.md$/.test(row.path):row.role==='release'?/^changes\/(?!README\.md$)[^/]+\.md$/.test(row.path):row.role==='verification'?qaExecution||/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(row.path)||/\.test\.sh$/.test(row.path)||/\/smoke\/[^/]+\.sh$/.test(row.path)||['packages/quality/smoke-allowlist.txt','packages/quality/smoke-write-targets.txt','test-registry.yaml'].includes(row.path):false;
  if(!valid)fail('AUXILIARY_ROLE_INVALID');return row;
 }
