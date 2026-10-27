@@ -80,9 +80,9 @@ async function build({patch={},missing}={}){
   return text;
  }});return result.consumers.find(c=>c.workflow_key==='factory_f2_ops');
 }
-it('启用精确95分钟结算来源，旧marker1与15文件runtime继续兼容',async()=>{
+it('启用精确95分钟结算来源，旧marker1继续兼容且当前runtime完整16文件',async()=>{
  expect(git('show',`${revision}:${sourcePath}`)).toContain('EXISTING_OPS_STAGING_SELECTOR_SCHEMA = 2;');
- expect(readNativeConsumerRuntime().files).toHaveLength(15);
+ expect(readNativeConsumerRuntime().files).toHaveLength(16);
  for(const[path,text]of Object.entries(candidate.blobs))expect(createHash('sha256').update(text).digest('hex')).toBe(candidate.blob_sha256[path]);
  const result=await build();expect(result.status,JSON.stringify(result.gaps)).toBe('verified');
  for(const path of Object.keys(candidate.blobs))expect(result.bindings).toContainEqual(expect.objectContaining({path,revision,digest:`sha256:${candidate.blob_sha256[path]}`}));
