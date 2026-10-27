@@ -6,6 +6,9 @@ import { runActivity, validateBase, fail, log } from '../lib/protocol.mjs';
 import { extractAcceptance, renderIntent } from '../lib/intent.mjs';
 import { sha256File } from '../lib/guards.mjs';
 import { renderInvariants, INVARIANTS_FILE } from '../lib/invariants.mjs';
+import { validateAuthority, resolveAuthority, sameAuthority, commitAvailable, loadAuthorityIndex, authorityFromPayload } from '../lib/authority-refs.mjs';
+import { execFileSync } from 'node:child_process';
+import { resolveRepo } from '../runner/lib/repos.mjs';
 
 const INTENT_FILE = '01-intent.md';
 const INVARIANT_LIMIT = 1000;
@@ -16,6 +19,8 @@ await runActivity(async (input) => {
   // 先校验输入，再做任何网络请求或写文件
   const { dir } = validateBase(input);
   const taskId = input.task_id;
+  // 重试失败时不能留下上一轮成功的 01，让后继误读。
+  fs.rmSync(path.join(dir, INTENT_FILE), { force: true });
 
   const base = String(input.brain_url || DEFAULT_BRAIN_URL).replace(/\/+$/, '');
   const url = `${base}/api/brain/tasks/${encodeURIComponent(taskId)}`;
@@ -30,6 +35,36 @@ await runActivity(async (input) => {
   } catch (error) {
     log(`[intent] GET ${url} 失败: ${error?.message || error}`);
     return fail('retryable', 'brain_unavailable');
+  }
+
+  const managed = task?.payload?.authority_required === true || task?.payload?.authority !== undefined
+    || task?.payload?.object_id !== undefined || task?.payload?.authority_refs !== undefined
+    || input.authority_required === true || input.authority !== undefined;
+  let authorityFacts = null;
+  if (managed) {
+    const authority = authorityFromPayload(task?.payload);
+    if (task?.payload?.authority_required !== true || input.authority_required !== true
+      || !sameAuthority(authority, input.authority)) {
+      return fail('fatal', 'authority_receipt_mismatch');
+    }
+    if (!input.trusted_repo || !input.authority_index_sha) return fail('needs_human', 'authority_index_binding_missing');
+    let index;
+    try { index = loadAuthorityIndex(input.trusted_repo, input.authority_index_sha); }
+    catch (error) { return fail('needs_human', error.message); }
+    const authorityErrors = validateAuthority(authority, index);
+    if (authorityErrors.length) return fail('fatal', authorityErrors[0]);
+    const fixed = task?.payload?.base_sha;
+    const initialBase = input.initial_base_sha;
+    if (typeof initialBase !== 'string' || !commitAvailable(input.worktree, initialBase)
+      || (fixed !== undefined && fixed !== initialBase)) return fail('fatal', 'authority_base_mismatch');
+    let origin;
+    try { origin = execFileSync('git', ['-C', input.worktree, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).trim(); }
+    catch { origin = null; }
+    if (!origin || resolveRepo(origin) !== task.payload.repo) return fail('fatal', 'authority_repo_mismatch');
+    authorityFacts = resolveAuthority(input.trusted_repo, authority.refs, { trustedSha: input.authority_index_sha })
+      .map((fact) => ({ ...fact, object_id: authority.object_id }));
+    const blocked = authorityFacts.find((fact) => fact.required && fact.status !== 'found');
+    if (blocked) return fail('fatal', blocked.reason, { evidence: [{ ref_id: blocked.ref_id, path: blocked.path }] });
   }
 
   const items = extractAcceptance(task);
@@ -49,7 +84,7 @@ await runActivity(async (input) => {
 
   fs.mkdirSync(dir, { recursive: true });
   const intentPath = path.join(dir, INTENT_FILE);
-  fs.writeFileSync(intentPath, renderIntent({ taskId, title: task?.title, items, description: task?.description }));
+  fs.writeFileSync(intentPath, renderIntent({ taskId, title: task?.title, items, description: task?.description, authorityFacts }));
   fs.writeFileSync(path.join(dir, INVARIANTS_FILE), renderInvariants(invariants));
 
   return {
