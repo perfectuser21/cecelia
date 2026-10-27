@@ -1,7 +1,6 @@
 /**
  * task-type-registry.guard.test.js 的纯函数实现（第三轮修复时按团队要求拆出，
  * 测试文件只留 describe/it + 豁免清单）。
- *
  * ── 检测范围（第三轮：不再要求声明绑定）───────────────────────────────────
  * 前两轮规则 A/C 都要求 `(?:const|let|var) NAME = [ ... ]` / `{ ... }` 的
  * **声明形态**，对任意其他位置出现的字面量完全失明——真实漏网：
@@ -13,9 +12,8 @@
  *     数组作为对象字面量的属性值，而不是被赋给一个独立声明。
  * 这三类都是"手抄的字符串数组"，只是没有被绑定到一个具名常量——旧版扫描器
  * 只找 `NAME = [`，天生看不到它们。
- *
- * 本版改成**不锚定声明**，直接在整份源码里找任意位置的数组/对象字面量
- * **起始位置**，用"前一个非空白字符/关键字"判断这是不是字面量的开头（而不是
+ * 本版不锚定声明，仅在真实词法 token 起点识别数组/对象，用前文判断
+ * 这是不是字面量的开头（而不是
  * 数组下标 `arr[0]` 或代码块 `if (x) { ... }`），逻辑见 `isArrayLiteralStart` /
  * `isObjectLiteralStart`：
  *   - 数组 `[`：前一个非空白字符是 `= ( , : [ ! & | ? ;` 之一，或紧跟在 `{`
@@ -32,7 +30,6 @@
  * 切分，规则不变——数组元素必须是整体的纯字符串字面量，对象取顶层 key），
  * 命中数/占比阈值也不变（数组 `MAJORITY_THRESHOLD=0.5`，对象
  * `OBJECT_MAJORITY_THRESHOLD=0.7`，理由见下方②③）。
- *
  * 命中后报 `行:标识符`，标识符按下列优先级取（`contextNameFor`）：
  *   1. 紧邻的声明名（`const/let/var NAME =` 或 `obj.NAME =`）——和前两轮行为
  *      完全兼容，所有第一/二轮已识别站点的标识符不变。
@@ -40,7 +37,6 @@
  *   3. 紧邻的函数调用参数上下文（`someFn([...]`，report 为 `someFn(...)`）。
  *   4. 字面量结束后紧跟的方法调用（`[...].includes(`，report 为 `.includes`）。
  *   5. 以上都没有 → `<inline>`。
- *
  * ── 规则 A/B/C 判定阈值不变 ─────────────────────────────────────────────
  * ① 规则 A（数组/Set 字面量）：顶层纯字符串元素落在 `DB_WHITELISTED_TASK_TYPES`
  *    的记为命中，命中数≥2 且命中数/候选数≥0.5 才判手抄——0.5 用来排除
@@ -88,7 +84,6 @@
  *    SQL 形态（`TASK_TYPE_BIND_RE`，与规则 B 的 `SQL_IN_RE` 不同——规则 B 认
  *    字符串字面量名单，这里反过来认"确实在绑参数"）。四条同时成立才判手抄，
  *    见 `scanLiterals` 里 `matched.length >= 1` 分支及下方 `hasBindContext`。
- *
  * ── 已知盲区（第三轮修复后仍然存在，不是"空跑=全量真相"）─────────────────
  * 这套扫描器是正则+括号深度计数的启发式，不是真正的 JS/TS 解析器，以下写法
  * 仍然扫不到：
@@ -111,7 +106,6 @@
  *     没有做穷尽的语法覆盖测试，只覆盖了本次审查给出的真实反例。
  * 因此"全库空跑 offenders 列表"只是"当前这套启发式能看到的手抄站点"，不是
  * "代码库里全部手抄站点"的证明——这一点必须写清楚，不能默认空跑结果=全量真相。
- *
  * ── 命中串是豁免清单的粒度（终审 I2）───────────────────────────────────────
  * `scanFile` 返回的 `行:标识符`（如 `2329:_TASK_ROUTES`）字符串不只是给人看的
  * 报告行，也是测试文件 `task-type-registry.guard.test.js` 里 `REMAINING_LEGACY_SITES`
@@ -124,6 +118,7 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { literalSource } from './task-type-literal-starts.js';
 import { DB_WHITELISTED_TASK_TYPES } from '../../lib/task-type-registry.js';
 
 const WHITELIST = new Set(DB_WHITELISTED_TASK_TYPES);
@@ -290,38 +285,22 @@ function contextNameFor(src, openIdx, closeIdx) {
 /**
  * 单趟左到右扫描全部数组/对象字面量（不要求声明绑定），返回
  * [{line, name, kind}]（kind: 'array' 对应规则 A，'object' 对应规则 C）。
- * 已剥注释的 src。
- *
- * 注意：处理完一个字面量后，下一次扫描从 `p + 1`（字面量起点后一个字符）
- * 继续，**不**跳到 `closeIdx + 1`（字面量结束之后）。这是故意的：像
- * `routes/execution.js` 的 `usServer = { ..., task_types: ['dev','review',
- * 'qa','audit'] }` 这种大对象，外层对象本身的顶层 key（`id`/`name`/
- * `resources`/`slots`/`task_types`...）不是 task_type，规则 C 判它不命中；
- * 如果处理完外层就跳到它的结束位置，内层真正命中的 `task_types: [...]`
- * 就永远扫不到。不跳过，让扫描线性地钻进每一层嵌套结构内部，才能同时抓到
- * 外层判空、内层命中的情况。代价是同一段字符会被"路过"多次（外层评估一次、
- * 内层评估一次），但每次评估本身是 O(该层大小)，不是重复的昂贵解析，实测
- * 全仓库（含 `routes/execution.js` 这种几千行的大文件）跑一遍在 1 秒内。
+ * 输入为未剥注释的原始源码。
+ * 候选起点由原始源码的词法 token 提供，字符串/模板文本/正则内容不作代码。
+ * 每个真实括号 token 都会独立检查，外层对象未命中也不会遮住内层数组。
+ * 词法去注释保留字符位置和换行；SQL 使用原有独立文本扫描。
  */
-function scanLiterals(src) {
+function scanLiterals(rawSource) {
+  const { source: src, starts } = literalSource(rawSource);
   const hits = [];
-  const n = src.length;
-  let pos = 0;
   // 规则 A 变体（见文件头④）：本文件是否存在"task_type 绑定为查询参数"的 SQL 形态。
   // 只算一次，供下面单元素/低命中数组的放宽判据复用。
   const hasTaskTypeBindContext = TASK_TYPE_BIND_RE.test(src);
-  while (pos < n) {
-    const nextArr = src.indexOf('[', pos);
-    const nextObj = src.indexOf('{', pos);
-    let p;
-    let isArray;
-    if (nextArr === -1 && nextObj === -1) break;
-    if (nextObj === -1 || (nextArr !== -1 && nextArr < nextObj)) { p = nextArr; isArray = true; } else { p = nextObj; isArray = false; }
-
+  for (const { index: p, isArray } of starts) {
     if (isArray) {
-      if (!isArrayLiteralStart(src, p)) { pos = p + 1; continue; }
+      if (!isArrayLiteralStart(src, p)) { continue; }
       const closeIdx = findMatchingClose(src, p, '[', ']');
-      if (closeIdx === -1) { pos = p + 1; continue; }
+      if (closeIdx === -1) { continue; }
       const body = src.slice(p + 1, closeIdx);
       const tokens = [];
       for (const el of splitTopLevel(body)) {
@@ -343,13 +322,12 @@ function scanLiterals(src) {
           }
         }
       }
-      pos = p + 1;
       continue;
     }
 
-    if (!isObjectLiteralStart(src, p)) { pos = p + 1; continue; }
+    if (!isObjectLiteralStart(src, p)) { continue; }
     const closeIdx = findMatchingClose(src, p, '{', '}');
-    if (closeIdx === -1) { pos = p + 1; continue; }
+    if (closeIdx === -1) { continue; }
     const body = src.slice(p + 1, closeIdx);
     const tokens = [];
     for (const el of splitTopLevel(body)) {
@@ -361,7 +339,6 @@ function scanLiterals(src) {
     if (matched.length >= 2 && ratio >= OBJECT_MAJORITY_THRESHOLD) {
       hits.push({ line: lineAt(src, p), name: contextNameFor(src, p, closeIdx), kind: 'object' });
     }
-    pos = p + 1;
   }
   return hits;
 }
@@ -401,9 +378,10 @@ function scanSqlHits(src) {
  * `行:SQL`（规则 B）的行内描述数组，按行号排序。
  */
 export function scanFile(absPath) {
-  const src = stripComments(readFileSync(absPath, 'utf8'));
+  const rawSource = readFileSync(absPath, 'utf8');
+  const src = stripComments(rawSource);
   const out = [];
-  for (const { line, name } of scanLiterals(src)) out.push(`${line}:${name}`);
+  for (const { line, name } of scanLiterals(rawSource)) out.push(`${line}:${name}`);
   for (const line of scanSqlHits(src)) out.push(`${line}:SQL`);
   return out.sort((a, b) => Number(a.split(':')[0]) - Number(b.split(':')[0]));
 }

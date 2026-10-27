@@ -29,5 +29,10 @@ describe('task_type 守卫词法边界', () => {
     expect(scan("const q = `SELECT * FROM tasks WHERE task_type IN ('dev','review')`; ")).toEqual(['1:SQL']);
     expect(scan("const SMALL = ['pipeline_rescue'];\nconst q = `SELECT * FROM tasks WHERE task_type = ANY($1)`;\nquery(q, [SMALL]);")).toContain('1:SMALL');
   });
+  it('正则中的斜线和数组内注释不破坏后续真实候选', () => {
+    const source = String.raw`const pattern = /https?:\/\//;
+const REAL = ['dev', /* 说明 */ 'review'];`;
+    expect(scan(source)).toEqual(['2:REAL']);
+  });
   it('词法错误不能静默当作空命中', () => { expect(() => scan("const x = 'unterminated")).toThrow(); });
 });
