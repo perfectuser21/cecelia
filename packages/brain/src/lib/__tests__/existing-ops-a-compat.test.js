@@ -113,6 +113,9 @@ it('关闭build selector仍精确证明新runtime，不借兼容认领build/stag
   const f3 = out.consumers.find(c => c.workflow_key === 'factory_f3_ops');
   expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
   expect(f3.input_relations.some(r => r.kind === 'native_node_runner_spawn')).toBe(true);
+  const gitHelper = prefix + '__tests__/helpers/git.mjs';
+  expect(f3.bindings.find(b => b.path === gitHelper)?.content_sha256).toBe(createHash('sha256').update(readSource(gitHelper)).digest('hex'));
+  expect(f3.input_relations).toContainEqual({ consumer_path: prefix + 'runner/__tests__/helpers/sandbox.mjs', input_path: gitHelper, kind: 'reviewed_a_static_import', revision });
   expect(f3.input_relations.some(r => r.kind === 'native_build_activity_spawn')).toBe(false);
   expect(f3.bindings.some(b => b.path === prefix + 'activities/build.mjs')).toBe(false);
   expect(f3.bindings.some(b => b.path === prefix + 'activities/intent.mjs')).toBe(false);
