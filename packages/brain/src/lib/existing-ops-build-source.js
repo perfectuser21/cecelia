@@ -350,6 +350,10 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
   if (bMarked) for (const entry of ['spec', 'spec-review']) {
     edges.push([PREFIX + 'activities/' + entry + '.mjs', PREFIX + 'prompts/baseline-policy.md', 'reviewed_b_fixed_policy_read']);
   }
+  if (bMarked) for (const [target, kind] of [
+    ['activities/spec.mjs', 'reviewed_b_activity_spawn'], ['activities/spec-review.mjs', 'reviewed_b_activity_spawn'],
+    ['__tests__/fixtures/fake-claude.mjs', 'reviewed_b_model_fixture'], ['__tests__/fixtures/fake-claude-gan.mjs', 'reviewed_b_model_fixture'],
+  ]) bExternalEdges.push([PREFIX + '__tests__/managed-spec-activity.test.mjs', PREFIX + target, kind]);
   originals.set(A_INDEX_PATH, indexBytes);
   edges.push([PREFIX + 'lib/authority-refs.mjs', A_INDEX_PATH, 'reviewed_a_fixed_git_index_read']);
   return {
