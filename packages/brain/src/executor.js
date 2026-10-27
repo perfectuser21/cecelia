@@ -4178,6 +4178,10 @@ async function reAttachActiveExecutors(dbPool) {
  * @returns {Object} - { orphans_found, orphans_fixed, rebuilt }
  */
 async function syncOrphanTasksOnStartup() {
+  if (process.env.BRAIN_DEPLOY_CANARY === '1') {
+    console.log('[startup-sync] Skip orphan recovery on deployment canary; task ownership belongs to primary');
+    return { orphans_found: 0, orphans_fixed: 0, requeued: 0, rebuilt: 0, external_skipped: 0 };
+  }
   const result = await pool.query(`
     SELECT id, title, payload, started_at, error_message, task_type, executor_kind, claimed_by
     FROM tasks
