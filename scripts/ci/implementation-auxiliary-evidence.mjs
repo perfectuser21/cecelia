@@ -31,7 +31,8 @@ function relation(row){
   if(!workspaceConfig(row)&&(!CONFIG_INPUTS.includes(row.path)||row.owner_path!==CONFIG_READER||row.consumer_path!==CONFIG_READER||row.ci_path!==CONFIG_CI))fail('AUXILIARY_CONFIG_SCOPE_INVALID');
   return row;
  }
- const valid=row.role==='documentation'?/\.md$/.test(row.path):row.role==='release'?/^changes\/(?!README\.md$)[^/]+\.md$/.test(row.path):row.role==='verification'?/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(row.path)||/\.test\.sh$/.test(row.path)||/\/smoke\/[^/]+\.sh$/.test(row.path)||['packages/quality/smoke-allowlist.txt','packages/quality/smoke-write-targets.txt','test-registry.yaml'].includes(row.path):false;
+ const qaExecution=row.owner_path==='packages/brain/scripts/coding-workflow/runner/run-once.mjs'&&/^sprints\/\d{8}-cw-[0-9a-f]{8}\/qa-r[1-9]\d*\/qa-playwright\.cjs$/.test(row.path);
+ const valid=row.role==='documentation'?/\.md$/.test(row.path):row.role==='release'?/^changes\/(?!README\.md$)[^/]+\.md$/.test(row.path):row.role==='verification'?qaExecution||/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(row.path)||/\.test\.sh$/.test(row.path)||/\/smoke\/[^/]+\.sh$/.test(row.path)||['packages/quality/smoke-allowlist.txt','packages/quality/smoke-write-targets.txt','test-registry.yaml'].includes(row.path):false;
  if(!valid)fail('AUXILIARY_ROLE_INVALID');return row;
 }
 const rawRelation=row=>({owner_path:row.owner_path,path:row.path,role:row.role,...(row.role==='verification_config'?{consumer_path:row.consumer_path,ci_path:row.ci_path}:{})});

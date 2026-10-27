@@ -83,3 +83,11 @@ it('模型修复提交不得修改控制器来源索引，即使已经commit也�
   put(M,original+' ');commit();git(root,'remote','remove','origin');
   await expect(checkFixCommits(root,before)).rejects.toThrow('protected_path');
 });
+
+it('QA执行产物不能凭文件名或伪造登记token取得来源', () => {
+  const artifact = `${sprintDir}/qa-r1/qa-playwright.cjs`;put(artifact, 'console.log("preview");\n');
+  for (const registration of [undefined, {}, { id: 'forged' }]) {
+    expect(() => registerRecordSources(root, { ...intent, registration }, [report, artifact])).toThrow();
+    expect(read(M)).toBe(original);
+  }
+});
