@@ -55,7 +55,7 @@ function assertGateExit(gate, overrides, expectedExit) {
 const ci = loadGate('ci.yml', 'ci-passed');
 const smoke = loadGate('ci-smoke-glob-runner.yml', 'smoke-glob-runner-passed');
 const rejectedResults = ['failure', 'cancelled', '', 'unknown'];
-const strictRequired = new Set(['core-regression', 'walking-ci-e2e']);
+const strictRequired = new Set(['core-regression', 'walking-ci-e2e', 'brain-unit-exit-contract']);
 for (const name of strictRequired) assert.ok(ci.needs.includes(name), `${name} 必须接入聚合依赖`);
 
 test('ci-passed：全部依赖成功时放行', () => {
