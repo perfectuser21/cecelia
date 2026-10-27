@@ -367,3 +367,15 @@ reader 的精确身份不授予业务归属。必须已有真实 F3 frozen consu
 
 - [x] [BEHAVIOR] settlementcontainerlayout 复用main已验证的双布局加载器，补原Docker打包合同、真实容器ledger失败及running/failed/rollback不得被成功收据放行的永久回归。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/deploy-settlement-layout.test.js src/__tests__/deploy-receipt.test.js src/__tests__/deploy-settlement.test.js src/lib/__tests__/existing-ops-staging-budget-bootstrap.test.js --maxWorkers=1 --minWorkers=1"
+
+
+# Brain CI 异常退出放行修复（任务 d0f3e1cb）
+
+- [x] [BEHAVIOR] ciunitexitred 实际旧YAML函数永久复现异常被判成功，RED已独立验证。
+  Test: manual:node --test scripts/ci/__tests__/brain-unit-exit-contract.test.mjs
+- [ ] [BEHAVIOR] ciunitexitfailure 部分通过/RPC/worker异常及混合NoTests错误保持非零，tee失败不被掩盖。
+  Test: manual:node --test scripts/ci/__tests__/brain-unit-exit-contract.test.mjs
+- [ ] [BEHAVIOR] ciunitexitsuccess 完整成功与原生合法空集合成功，调用者errexit不变。
+  Test: manual:node --test scripts/ci/__tests__/brain-unit-exit-contract.test.mjs
+- [ ] [BEHAVIOR] ciunitexitgate 实际合并门禁阻断守卫失败/取消/跳过/空结果，守卫job执行永久测试并传播失败。
+  Test: manual:node --test scripts/ci/__tests__/brain-unit-exit-contract.test.mjs
