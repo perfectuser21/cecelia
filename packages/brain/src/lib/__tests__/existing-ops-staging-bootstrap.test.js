@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {createHash} from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { setImmediate as nativeSetImmediate } from 'node:timers';
 import {readNativeConsumerRuntime} from '../native-consumer-runtime.js';
 const candidate={
   "source_revision": "b3edd15d195fc563d3f6ec85d6e721149e04f599",
@@ -72,6 +73,22 @@ async function build({ patch = {}, marker = 2, missing } = {}) {
 }
 
 describe('staging 正式调用链的固定来源，不声明部署成功', () => {
+  it('完整来源proof返回前让原生事件循环处理已排队回调', async () => {
+    const warmed = await build();
+    expect(warmed.status, JSON.stringify(warmed.gaps)).toBe('verified');
+    let observed = false;
+    const callback = new Promise(resolve => nativeSetImmediate(() => {
+      observed = true;
+      resolve();
+    }));
+    const result = await build();
+    try {
+      expect(result.status, JSON.stringify(result.gaps)).toBe('verified');
+      expect(observed).toBe(true);
+    } finally {
+      await callback;
+    }
+  });
   it('激活schema2后完整保留当前16文件runtime闭包',()=>{
     for(const [path,text]of Object.entries(candidate.blobs))expect(createHash('sha256').update(text).digest('hex')).toBe(candidate.blob_sha256[path]);
     expect(git('show',`${revision}:${sourcePath}`)).toContain('export const EXISTING_OPS_STAGING_SELECTOR_SCHEMA = 2;');
