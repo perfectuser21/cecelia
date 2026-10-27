@@ -15,7 +15,7 @@ beforeEach(async()=>{
  database.query.mockReset().mockImplementation(pool.query.bind(pool));
  database.connect.mockReset().mockImplementation(pool.connect.bind(pool));
 });
-afterEach(async()=>{if(fixture)await fixture.close();fixture=null;});
+afterEach(async()=>{vi.unstubAllEnvs();if(fixture)await fixture.close();fixture=null;});
 const taskRow=async id=>(await pool.query('SELECT to_jsonb(t) AS row FROM tasks t WHERE id=$1',[id])).rows[0].row;
 const leaseRow=async id=>(await pool.query('SELECT to_jsonb(l) AS row FROM task_leases l WHERE task_id=$1',[id])).rows[0]?.row;
 async function owned(type,owner){
@@ -56,5 +56,21 @@ describe.sequential('real startup SQL retains external headed authority',()=>{
   expect(reaped.failed).toBe(1);expect((await taskRow(id)).status).toBe('failed');
   expect((await taskRow(id)).error_message).toMatch(/^lease_expired:/);
   expect((await leaseRow(id)).release_reason).toBe('expired_lost');
+ });
+ it('deployment canary performs no orphan read/write against the shared task database',async()=>{
+  const headed=await owned('research','ci:shared-database-authoring');
+  const local=await seedTask(pool,{status:'in_progress',executor_kind:'brain-local'});
+  const before={headed:await taskRow(headed),local:await taskRow(local),lease:await leaseRow(headed)};
+  vi.stubEnv('BRAIN_DEPLOY_CANARY','1');
+  const result=await syncOrphanTasksOnStartup();
+  expect(database.query).not.toHaveBeenCalled();
+  expect({headed:await taskRow(headed),local:await taskRow(local),lease:await leaseRow(headed)}).toEqual(before);
+  expect(result).toEqual({orphans_found:0,orphans_fixed:0,requeued:0,rebuilt:0,external_skipped:0});
+ });
+ it('normal primary keeps recovering a real brain-local orphan',async()=>{
+  const id=await seedTask(pool,{status:'in_progress',executor_kind:'brain-local'});
+  vi.stubEnv('BRAIN_DEPLOY_CANARY','0');
+  expect((await syncOrphanTasksOnStartup()).requeued).toBe(1);
+  expect((await taskRow(id)).status).toBe('queued');
  });
 });
