@@ -316,13 +316,13 @@ describe('QA执行产物兼容的auto-version固定来源', () => {
     await collectAutoVersionTestSources({ revision: 'a'.repeat(40), parse, relations,
       selectors: { include: [/auto-version-decision/], exclude: [] },
       requireProof: (ok, code) => { if (!ok) gaps.push(code); return ok; },
-      read: async p => p === target && mode === 'old'
-        ? execFileSync('git', ['show', '6e9076aab2002e301304256b4936e2790f9de8e7:' + p], { cwd: root, encoding: 'utf8' })
+      read: async p => p === target && ['old', 'future'].includes(mode)
+        ? execFileSync('git', ['show', (mode === 'future' ? '0a7eda551e0e127c3ebd90f9fce3f29b3f8df3e9' : '6e9076aab2002e301304256b4936e2790f9de8e7') + ':' + p], { cwd: root, encoding: 'utf8' })
         : fs.readFileSync(root + p, 'utf8') + (p === target && mode === 'mutated' ? '\n// unknown bytes\n' : '') });
     return { gaps, relations };
   }
   it('旧固定来源和完整已审QA兼容来源均保留，未开放新相对依赖', async () => {
-    for (const mode of ['old', 'current']) {
+    for (const mode of ['old', 'current', 'future']) {
       const result = await collect(mode);expect(result.gaps).toEqual([]);
       expect(result.relations.some(r => r.consumer_path === target && r.input_path.includes('record-provenance'))).toBe(false);
     }

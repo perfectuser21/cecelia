@@ -140,7 +140,7 @@ it('HTTP GET/refresh与KR companion同一选版，重复GET只复用纯Git且不
 it('认证runtime-source只返回当前固定十六hash，客户端路径/伪proof不影响身份',async()=>{
  const source=transport(),response=await request(server(source)).get('/ci/runtime-source').query({paths:'/etc/passwd',proof:'fake'});
  expect(response.status).toBe(200);expect(Object.keys(response.body).sort()).toEqual(['files','git_sha','repo','schema_version']);
- expect(response.body.repo).toBe(query.repo);expect(response.body.files).toHaveLength(17);
+ expect(response.body.repo).toBe(query.repo);expect(response.body.files).toHaveLength(16);
  expect(response.body.files.map(file=>file.path)).toEqual(['source','runtime-source','us-compose-source','build-source','build-envelopes','workspace-source',
   'provenance-envelope','provenance-core-envelope','provenance-entry-envelopes','provenance-local-envelopes','stage-source','stage-envelopes','stage-modes','native-evidence-source','native-evidence-envelopes']
   .map(name=>`packages/brain/src/lib/existing-ops-${name}.js`).concat('packages/brain/src/lib/workspace-ci-source-bundle.js').sort());
