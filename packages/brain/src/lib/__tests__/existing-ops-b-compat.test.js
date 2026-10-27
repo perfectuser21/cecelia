@@ -1,7 +1,7 @@
 import {it,expect} from 'vitest';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {buildExistingOpsSources} from '../existing-ops-source.js';
+import {buildExistingOpsSources} from './helpers/existing-ops-proof-builder.js';
 import {A_ENVELOPES} from '../existing-ops-build-envelopes.js';
 // 独立冻结B655ef29原字节；仅构造来源模型，不代表真实模型执行或业务验收。
 const B = {
