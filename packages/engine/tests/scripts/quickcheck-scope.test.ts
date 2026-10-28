@@ -59,3 +59,4 @@ it('选择器缺失不能缩小检查', () => {
  const r = scenario(['packages/brain/src/simple.js'], '', false, '.github/workflows/scripts/list-fs-guard-tests.sh');
  expect(r.calls).toBe('run\n');
 });
+it('只有未知根路径也不能推断Brain不受影响', () => { expect(scenario(['unknown.dat']).calls).toBe('run\n'); });
