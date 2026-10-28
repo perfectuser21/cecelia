@@ -103,7 +103,7 @@ fi
 
 # 改了哪个包就跑哪个包的测试（4个包全覆盖）
 for PKG in packages/engine packages/brain apps/api apps/dashboard; do
-  if echo "$CHANGED_FILES" | grep -q "^$PKG/" || { [[ "$PKG" == packages/brain ]] && echo "$CHANGED_FILES" | grep -qE '^(package(-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|scripts/quickcheck\.sh|scripts/lib/quickcheck-|\.github/workflows/scripts/list-fs-guard-tests\.sh)'; }; then
+  if echo "$CHANGED_FILES" | grep -q "^$PKG/" || { [[ "$PKG" == packages/brain ]] && quickcheck_needs_brain "$CHANGED_FILES"; }; then
     echo -e "${BOLD}▶ $PKG${RESET}"
     PKG_NM="$REPO_ROOT/$PKG/node_modules"
     VITEST_BIN=$(resolve_package_vitest "$ROOT_NM" "$PKG_NM" || true)

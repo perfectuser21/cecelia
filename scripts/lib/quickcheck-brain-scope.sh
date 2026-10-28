@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
 # Only proven source changes may use the import graph; unknown scope stays full.
+quickcheck_needs_brain() {
+  local path
+  while IFS= read -r path; do
+    case "$path" in
+      ''|.dod.md|.prd.md|changes/*.md|docs/learnings/*.md) ;;
+      packages/engine/*|apps/api/*|apps/dashboard/*) ;;
+      *) return 0 ;;
+    esac
+  done <<< "$1"
+  return 1
+}
 quickcheck_brain_scope() {
   local base="$1" changes="$2" path statuses
   [[ -n "$base" && -n "$changes" ]] || return 1

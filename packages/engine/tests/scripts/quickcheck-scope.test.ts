@@ -60,3 +60,5 @@ it('选择器缺失不能缩小检查', () => {
  expect(r.calls).toBe('run\n');
 });
 it('只有未知根路径也不能推断Brain不受影响', () => { expect(scenario(['unknown.dat']).calls).toBe('run\n'); });
+it('已知审计文档单独修改保持不触发包测试', () => { expect(scenario(['.dod.md', 'changes/cp-example.md']).calls).toBe(''); });
+it('运行Skill类Markdown不是审计文档豁免', () => { expect(scenario(['skills/example/SKILL.md']).calls).toBe('run\n'); });
