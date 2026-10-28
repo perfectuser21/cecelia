@@ -1,5 +1,5 @@
 import { it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, cpSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, cpSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -36,6 +36,13 @@ function scenario(paths: string[], failed = '', missingBase = false, remove = ''
       if (manifest === 'missing') added.path = 'packages/brain/src/absent.test.js';
       if (manifest === 'escape') added.path = '../outside.test.js';
       if (manifest === 'owner') added.owner_path = 'packages/brain/src/missing.js';
+      if (manifest === 'symlink') {
+        symlinkSync('existing-ops-source.js', join(dir, 'packages/brain/src/link.js'));
+        added.owner_path = 'packages/brain/src/link.js';
+      }
+      if (manifest === 'duplicate') doc.relations.push({...added});
+      if (manifest === 'extra') Object.assign(added, {authority:'invented'});
+      if (manifest === 'repo') doc.repo = 'different/repo';
       writeFileSync(join(dir, '.implementation-source-relations.json'), manifest === 'bad' ? '{bad' : JSON.stringify(doc));
     }
     if (remove) rmSync(join(dir, remove));
@@ -96,6 +103,6 @@ it('实际8ef七路径的严格只增源关系仍走affected与完整守卫', ()
  const r = scenario(yieldPaths, '', false, '', 'valid');
  expect(r.status).toBe(0); expect(r.calls).toContain('--changed'); expect(r.calls).toContain('tests/shared.test.js');
 });
-for (const mutation of ['delete','modify','role','missing','escape','owner','bad']) {
+for (const mutation of ['delete','modify','role','missing','escape','owner','symlink','duplicate','extra','repo','bad']) {
  it(`源关系${mutation}不能当安全元数据`, () => { expect(scenario(yieldPaths, '', false, '', mutation).calls).toBe('run\n'); });
 }

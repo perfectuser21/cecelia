@@ -23,6 +23,7 @@ quickcheck_brain_scope() {
     case "$path" in
       packages/brain/src/*.js|packages/brain/src/*.ts|packages/brain/src/*.mjs|packages/brain/src/*.cjs) ;;
       .dod.md|.prd.md|changes/*.md|docs/learnings/*.md) ;;
+      .implementation-source-relations.json) node "$REPO_ROOT/scripts/lib/quickcheck-source-metadata.mjs" "$base" || return 1 ;;
       *) return 1 ;;
     esac
     [[ "$path" != *[[:space:]]* ]] || return 1
