@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { it as test } from 'vitest';
+import { it as test, expect } from 'vitest';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const workflow = readFileSync(path.join(root, '.github/workflows/nightly-regression.yml'), 'utf8');
@@ -43,18 +43,18 @@ function runUnit({ code = 0, stdout = 'Tests 2 passed (2)\n', stderr = '', teeCo
   }
 }
 
-test('完整成功保持成功', () => assert.equal(runUnit().status, 0));
+test('完整成功保持成功', () => expect(runUnit().status).toBe(0));
 test('RPC中断且只有部分passed时保留非零退出', () => {
   const result = runUnit({ code: 1, stdout: 'Tests 1 passed (99)\n', stderr: 'Unhandled Error: Timeout calling onTaskUpdate\n' });
-  assert.equal(result.status, 1, result.stdout + result.stderr);
+  expect(result.status, result.stdout + result.stderr).toBe(1);
 });
-test('worker异常退出137不能由passed字样放行', () => assert.equal(runUnit({ code: 137 }).status, 137));
-test('普通断言失败保留失败', () => assert.equal(runUnit({ code: 1, stdout: 'Tests 1 failed | 1 passed (2)\n' }).status, 1));
-test('错误含NoTests及部分passed仍然失败', () => assert.equal(runUnit({ code: 1, stderr: 'No test files found\nUnhandled Error\n' }).status, 1));
-test('完整夜间回归的空测试集合不能成功', () => assert.equal(runUnit({ code: 1, stdout: 'No test files found\n' }).status, 1));
-test('tee写入失败必须传播', () => assert.equal(runUnit({ teeCode: 74 }).status, 74));
+test('worker异常退出137不能由passed字样放行', () => expect(runUnit({ code: 137 }).status).toBe(137));
+test('普通断言失败保留失败', () => expect(runUnit({ code: 1, stdout: 'Tests 1 failed | 1 passed (2)\n' }).status).toBe(1));
+test('错误含NoTests及部分passed仍然失败', () => expect(runUnit({ code: 1, stderr: 'No test files found\nUnhandled Error\n' }).status).toBe(1));
+test('完整夜间回归的空测试集合不能成功', () => expect(runUnit({ code: 1, stdout: 'No test files found\n' }).status).toBe(1));
+test('tee写入失败必须传播', () => expect(runUnit({ teeCode: 74 }).status).toBe(74));
 test('夜间仍执行原全量分片而非受影响测试或允许空集合', () => {
   const step = actualUnitStep();
-  assert.match(step, /npx vitest run --shard=\$SHARD\/6/);
-  assert.doesNotMatch(step, /--changed\b|--passWithNoTests\b/);
+  expect(step).toMatch(/npx vitest run --shard=\$SHARD\/6/);
+  expect(step).not.toMatch(/--changed\b|--passWithNoTests\b/);
 });
