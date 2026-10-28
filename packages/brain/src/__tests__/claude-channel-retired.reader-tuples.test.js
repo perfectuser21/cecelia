@@ -222,9 +222,17 @@ const US_HASHES = {...HASHES,
  'existing-ops-runtime-source.js':'c6157fb97abf1131f80a8df747a68b0d0c4a86f8cc0c6fb8d112a111991821ba',
  'existing-ops-us-compose-source.js':'d8d3371783b3afbd085bd143e41be91a65d4ed865ff4c1ecb12648f4ae542235',
 };
+const B_HASHES = {...US_HASHES,
+ "existing-ops-build-source.js":"237a57e9cd4d5d2545c0721effd1a3f67358b5dc8d0153ed26ea3ba18719e08c",
+ "existing-ops-build-envelopes.js":"6aaea83ad1d73236fc2393a621cc1e059f55a622c29af0d77e7806f571df2c17"
+};
 const QA_HASHES = {...US_HASHES,
  'existing-ops-runtime-source.js':'21c3009b1b1ae0e2a114ad8d702487f2b7a3dde80ffc24b8a6d42c143b2c6947',
  'existing-ops-native-evidence-source.js':'04632ac4b6c0c25e141938d3ff68a7c3eda079056f6e82a35ebfede5f35050de',
+};
+const B_QA_HASHES = {...QA_HASHES,
+ 'existing-ops-build-source.js':B_HASHES['existing-ops-build-source.js'],
+ 'existing-ops-build-envelopes.js':B_HASHES['existing-ops-build-envelopes.js'],
 };
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
@@ -237,8 +245,11 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
  try{
   const runtime=sources.get(path.join(root,'existing-ops-runtime-source.js'));
   if(typeof runtime!=='string')return null;
-  const runtimeHash=hash(runtime,parse,shape);
-  const selected=runtimeHash===QA_HASHES['existing-ops-runtime-source.js']?QA_HASHES:runtimeHash===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
+  const build=sources.get(path.join(root,'existing-ops-build-source.js'));
+  const isB=typeof build==='string'&&hash(build,parse,shape)===B_HASHES['existing-ops-build-source.js'];
+  const isQa=hash(runtime,parse,shape)===QA_HASHES['existing-ops-runtime-source.js'];
+  const selected=isB?(isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
+   :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(selected)){
    const text=sources.get(path.join(root,name));
@@ -278,6 +289,7 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    s.set(file,old);expect(scan(s)).toEqual([]);
    s.set(file,old+'\neval(A_ENVELOPES.reviewed.any);');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
   });
+  it.each(['build-source','build-envelopes'])('B只读闭包禁止A/B混配 %s',name=>{const s=base();s.set(path.join(root,`existing-ops-${name}.js`),execFileSync('git',['show',`5dd82456a80b77dda054f5994d1561e1106317eb:packages/brain/src/lib/existing-ops-${name}.js`],{encoding:'utf8'}));expect(scan(s).some(h=>h.rule==='E1')).toBe(true)});
   it.each(['build','stage','native-evidence'])('%s完整已审组合无误报',name=>{const f=path.join(root,`existing-ops-${name}-envelopes.js`);expect(scan(base(),f)).toEqual([]);});
   it.each(files)('任何闭包成员突变或缺失必须拒绝：%s',f=>{const s=base();s.set(f,s.get(f)+'\nexport const unknownClosure=true;');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);const missing=base();missing.delete(f);expect(findClaudeInvocations(base().get(data),{file:data,sources:missing}).some(h=>h.rule==='E1')).toBe(true);});
   it.each(['eval','raw','spawn','alias','interpolation','escaped','concat','dynamic','caller'])('%s不能继承只读资格',kind=>{

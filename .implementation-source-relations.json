@@ -2535,6 +2535,21 @@
       "owner_path": "packages/brain/src/harness-worktree.js",
       "path": "packages/brain/src/__tests__/harness-worktree-recovery.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "changes/cp-10271820-b-source.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "docs/learnings/cp-10271820-b-source.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-b-compat.test.js",
+      "role": "verification"
     }
   ]
 }
