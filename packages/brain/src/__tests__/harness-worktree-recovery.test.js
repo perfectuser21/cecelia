@@ -26,7 +26,15 @@ describe('harness worktree recovery', () => {
   });
   it('redacts credential-bearing origin logs', async () => {
     const clean='https://github.com/perfectuser21/cecelia.git'; const root=await repo('https://x-access-token:secret@github.com/other/repo.git'); const logs=[];
-    await ensureHarnessWorktree({taskId:'12345678-x',baseRepo:clean,statFn:async()=>true,execFn:gitAt(root,clean),rmFn:async()=>{},tokenFn:async()=>'',logFn:x=>logs.push(x),isKernelWorkspaceActive:async()=>false}).catch(()=>{}); expect(logs.join('\n')).not.toContain('x-access-token:'); expect(logs.join('\n')).not.toContain('secret');
+    const fixtureGit=gitAt(root,clean); let cloneAttempts=0;
+    const execFn=async(cmd,args)=>{
+      if(args[0]==='clone') { cloneAttempts++; throw new Error('fixture stops before external clone'); }
+      return fixtureGit(cmd,args);
+    };
+    await ensureHarnessWorktree({taskId:'12345678-x',baseRepo:clean,statFn:async()=>true,execFn,rmFn:async()=>{},tokenFn:async()=>'',logFn:x=>logs.push(x),isKernelWorkspaceActive:async()=>false}).catch(()=>{});
+    expect(cloneAttempts).toBe(1);
+    expect(logs.some(x=>x.includes('orphan worktree')&&x.includes('rebuilding'))).toBe(true);
+    expect(logs.join('\n')).not.toContain('x-access-token:'); expect(logs.join('\n')).not.toContain('secret');
   });
   it('protects active detached Kernel workspace', async () => {
     const clean='https://github.com/perfectuser21/cecelia.git'; const root=await repo('https://github.com/other/repo.git'); await exec('git',['-C',root,'checkout','--detach','HEAD']); let removals=0;

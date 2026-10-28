@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 import { readNativeConsumerRuntime } from '../native-consumer-runtime.js';
 const candidate={
   "source_revision": "6faa8c7dd2154d78ed75504b9e88192709bc8631",

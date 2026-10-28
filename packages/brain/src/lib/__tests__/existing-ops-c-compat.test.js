@@ -2,7 +2,7 @@ import {it,expect} from 'vitest';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {parse} from 'acorn';
-import {buildExistingOpsSources} from '../existing-ops-source.js';
+import {buildExistingOpsSources} from './helpers/existing-ops-proof-builder.js';
 import {reviewedAContext} from '../existing-ops-build-source.js';
 import {A_ENVELOPES,B_ENVELOPES} from '../existing-ops-build-envelopes.js';
 // 固定真实A+B+C候选5f200f508的C独立18成员；不是业务执行结果。
