@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 const root = resolve(process.cwd(), '../..');
-function scenario(paths: string[], failed = '', missingBase = false, remove = '') {
+function scenario(paths: string[], failed = '', missingBase = false, remove = '', manifest = '') {
   const dir = mkdtempSync(join(tmpdir(), 'quickcheck-scope-'));
   const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
   try {
@@ -19,9 +19,25 @@ function scenario(paths: string[], failed = '', missingBase = false, remove = ''
     for (const p of ['packages/brain/src/__tests__/read.test.js', 'packages/brain/src/lib/__tests__/nested.test.js', 'tests/gp/f1/guard.test.js', 'tests/regression/guard.test.js', 'packages/brain/scripts/guard.test.mjs', 'packages/brain/node_modules/external/evil.test.js', 'packages/brain/tests/shared.test.js', 'tests/shared.test.js']) {
       mkdirSync(join(dir, p, '..'), { recursive: true }); writeFileSync(join(dir, p), 'readFileSync("fixture")');
     }
+    if (manifest) {
+      writeFileSync(join(dir, 'packages/brain/src/existing-ops-source.js'), 'export const original = true;');
+      writeFileSync(join(dir, '.implementation-source-relations.json'), JSON.stringify({schema_version:1, repo:'perfectuser21/cecelia', relations:[{owner_path:'packages/brain/src/existing-ops-source.js', path:'packages/brain/src/__tests__/read.test.js', role:'verification'}]}));
+    }
     cpSync(join(root, 'packages/brain/vitest.config.js'), join(dir, 'packages/brain/vitest.config.js'));
     git('add', '.'); git('commit', '-qm', 'base'); if (!missingBase) git('update-ref', 'refs/remotes/origin/main', 'HEAD');
     for (const p of paths) { mkdirSync(join(dir, p, '..'), { recursive: true }); writeFileSync(join(dir, p), 'change'); }
+    if (manifest) {
+      const prior = {owner_path:'packages/brain/src/existing-ops-source.js', path:'packages/brain/src/__tests__/read.test.js', role:'verification'};
+      const added = {owner_path:prior.owner_path, path:'packages/brain/src/lib/__tests__/helpers/existing-ops-proof-builder.test.js', role:'verification'};
+      const doc = {schema_version:1, repo:'perfectuser21/cecelia', relations:[prior, added, {owner_path:prior.owner_path,path:'changes/cp-10280802-test-native-yield.md',role:'release'}]};
+      if (manifest === 'delete') doc.relations.shift();
+      if (manifest === 'modify') prior.role = 'documentation';
+      if (manifest === 'role') added.role = 'new_role';
+      if (manifest === 'missing') added.path = 'packages/brain/src/absent.test.js';
+      if (manifest === 'escape') added.path = '../outside.test.js';
+      if (manifest === 'owner') added.owner_path = 'packages/brain/src/missing.js';
+      writeFileSync(join(dir, '.implementation-source-relations.json'), manifest === 'bad' ? '{bad' : JSON.stringify(doc));
+    }
     if (remove) rmSync(join(dir, remove));
     git('add', '-A'); git('commit', '-qm', 'change');
     mkdirSync(join(dir, 'node_modules/.bin'), { recursive: true });
@@ -69,3 +85,17 @@ it('包内tests与仓库根tests同名守卫各自保留正确路径', () => {
  expect(args).toContain('tests/shared.test.js');
  expect(args).toContain('../../tests/shared.test.js');
 });
+
+// Fixed ffa3d87ec4 actual 8ef diff paths; no live branch dependency in CI.
+const yieldPaths = ['.dod.md', '.implementation-source-relations.json', 'changes/cp-10280802-test-native-yield.md',
+ 'packages/brain/src/lib/__tests__/existing-ops-runtime-source.test.js',
+ 'packages/brain/src/lib/__tests__/existing-ops-staging-bootstrap.test.js',
+ 'packages/brain/src/lib/__tests__/existing-ops-staging-source.test.js',
+ 'packages/brain/src/lib/__tests__/helpers/existing-ops-proof-builder.test.js'];
+it('实际8ef七路径的严格只增源关系仍走affected与完整守卫', () => {
+ const r = scenario(yieldPaths, '', false, '', 'valid');
+ expect(r.status).toBe(0); expect(r.calls).toContain('--changed'); expect(r.calls).toContain('tests/shared.test.js');
+});
+for (const mutation of ['delete','modify','role','missing','escape','owner','bad']) {
+ it(`源关系${mutation}不能当安全元数据`, () => { expect(scenario(yieldPaths, '', false, '', mutation).calls).toBe('run\n'); });
+}
