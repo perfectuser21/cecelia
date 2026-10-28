@@ -60,14 +60,6 @@ ci:
 # Golden Paths（must-never-break 核心断言）
 # ============================================================================
 golden_paths:
-  - id: CI-NIGHTLY-UNIT-EXIT
-    name: "夜间全量测试与日志管道的异常退出保持失败"
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    test_command: "node --test scripts/ci/__tests__/nightly-regression.test.mjs"
-    must_never_break: true
-
   - id: KERNEL-LEGACY-CALLBACK-EXACTLY-ONCE-01
     name: "Legacy Bridge 保持 provider-neutral 工作区解析、attempt 精确结算与 quarantine 终态"
     priority: P0

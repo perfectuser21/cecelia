@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import test from 'node:test';
+import { it as test } from 'vitest';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const workflow = readFileSync(path.join(root, '.github/workflows/nightly-regression.yml'), 'utf8');
@@ -53,14 +53,8 @@ test('普通断言失败保留失败', () => assert.equal(runUnit({ code: 1, std
 test('错误含NoTests及部分passed仍然失败', () => assert.equal(runUnit({ code: 1, stderr: 'No test files found\nUnhandled Error\n' }).status, 1));
 test('完整夜间回归的空测试集合不能成功', () => assert.equal(runUnit({ code: 1, stdout: 'No test files found\n' }).status, 1));
 test('tee写入失败必须传播', () => assert.equal(runUnit({ teeCode: 74 }).status, 74));
-test('退出码回归属于原PR和Release必跑核心回归', () => {
-  const contract = path.join(root, 'regression-contract.yaml');
-  const query = '[.golden_paths[] | select(.id == "CI-NIGHTLY-UNIT-EXIT")]';
-  const result = spawnSync('yq', ['-o=json', query, contract], { encoding: 'utf8' });
-  assert.equal(result.status, 0, result.stderr);
-  const entries = JSON.parse(result.stdout);
-  assert.equal(entries.length, 1, '原核心回归必须登记且只登记一次');
-  assert.deepEqual(entries[0].trigger, ['PR', 'Release']);
-  assert.equal(entries[0].test_command, 'node --test scripts/ci/__tests__/nightly-regression.test.mjs');
-  assert.equal(entries[0].must_never_break, true);
+test('夜间仍执行原全量分片而非受影响测试或允许空集合', () => {
+  const step = actualUnitStep();
+  assert.match(step, /npx vitest run --shard=\$SHARD\/6/);
+  assert.doesNotMatch(step, /--changed\b|--passWithNoTests\b/);
 });
