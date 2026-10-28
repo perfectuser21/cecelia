@@ -75,7 +75,7 @@ export function materialPlanErrors(source, { baseline, intentIds = [], specIds =
     // 别名ref允许共享原件；额外路径不能重复登记同一目标。
     seenPaths.add(row.path); links(row, key);
     if (!text(row.verification)) errors.push(`material_verification_missing:${key}`);
-    if (!['keep', 'update'].includes(row.action)) errors.push(`material_action_invalid:${key}`);
+    if (!['keep', 'update', 'retire', 'conflict', 'not_applicable'].includes(row.action)) errors.push(`material_action_invalid:${key}`);
     if (row.action === 'conflict') errors.push(`material_conflict:${key}`);
     if (row.action === 'retire' || ref?.kind === 'sample' && row.action === 'update') approved(row, key, row.action);
     if (row.additional_changes !== undefined && !Array.isArray(row.additional_changes)) errors.push(`material_extra_invalid:${key}`);

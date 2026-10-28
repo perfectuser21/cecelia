@@ -60,11 +60,11 @@ it('空冻结规则集、超长和异常嵌套计划不能当作有效覆盖', (
   } finally { f.clean(); }
 });
 
-it('材料更新表仅允许保留或更新', () => {
+it('材料废弃未取得冻结批准时拒绝', () => {
   const f = managedSpecFixture();
   try {
     f.plan.materials[0].action = 'retire';
-    expect(check(f.plan)).toContain('material_action_invalid:spec');
+    expect(check(f.plan)).toContain('approval_missing:spec');
   } finally { f.clean(); }
 });
 
