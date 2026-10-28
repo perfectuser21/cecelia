@@ -74,17 +74,13 @@ jobs:
             --exclude='src/__tests__/integration/**' \
             --reporter=verbose \
             2>&1 | tee /tmp/vitest-nightly-$SHARD.txt
-          EXIT=${PIPESTATUS[0]}
-          if [ $EXIT -ne 0 ]; then
-            if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-nightly-$SHARD.txt && \
-               ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-nightly-$SHARD.txt; then
-              echo "[nightly shard $SHARD/6] OOM worker exit, all tests passed — OK"
-              exit 0
-            fi
+          UNIT_PIPE_STATUS=("${PIPESTATUS[@]}")
+          if [ "${UNIT_PIPE_STATUS[0]}" -ne 0 ]; then
             echo "::error::[nightly shard $SHARD/6] 测试失败"
             cat /tmp/vitest-nightly-$SHARD.txt | grep -E "FAIL|×|✗" | tail -30 || true
-            exit $EXIT
+            exit "${UNIT_PIPE_STATUS[0]}"
           fi
+          exit "${UNIT_PIPE_STATUS[1]}"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Job 2: Brain Integration Tests（真 DB，全量集成测试）
