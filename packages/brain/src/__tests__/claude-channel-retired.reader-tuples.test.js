@@ -234,6 +234,10 @@ const B_QA_HASHES = {...QA_HASHES,
  'existing-ops-build-source.js':B_HASHES['existing-ops-build-source.js'],
  'existing-ops-build-envelopes.js':B_HASHES['existing-ops-build-envelopes.js'],
 };
+const B_RECOVERY_QA_HASHES = {...B_QA_HASHES,
+ 'existing-ops-build-source.js':'210f644726dbf3d0049b7c90ced280fc8fcf65d04e1ae30c2775c2234ed0331a',
+ 'existing-ops-build-envelopes.js':'e68813c0304ade2b9f11c4c93ec731e1cb77414aca17d488d8f203c93559888f',
+};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -248,7 +252,9 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const build=sources.get(path.join(root,'existing-ops-build-source.js'));
   const isB=typeof build==='string'&&hash(build,parse,shape)===B_HASHES['existing-ops-build-source.js'];
   const isQa=hash(runtime,parse,shape)===QA_HASHES['existing-ops-runtime-source.js'];
-  const selected=isB?(isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
+  const isRecovery=typeof build==='string'&&hash(build,parse,shape)===B_RECOVERY_QA_HASHES['existing-ops-build-source.js'];
+  if(isRecovery&&!isQa)return null;
+  const selected=isRecovery?B_RECOVERY_QA_HASHES:isB?(isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
    :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(selected)){
@@ -290,6 +296,12 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
    s.set(file,old+'\neval(A_ENVELOPES.reviewed.any);');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);
   });
   it.each(['build-source','build-envelopes'])('B只读闭包禁止A/B混配 %s',name=>{const s=base();s.set(path.join(root,`existing-ops-${name}.js`),execFileSync('git',['show',`5dd82456a80b77dda054f5994d1561e1106317eb:packages/brain/src/lib/existing-ops-${name}.js`],{encoding:'utf8'}));expect(scan(s).some(h=>h.rule==='E1')).toBe(true)});
+  it('旧B完整组合继续接受，新旧两成员混配均拒绝',()=>{
+   const old=base(), names=['build-source','build-envelopes'];
+   for(const name of names){const f=path.join(root,`existing-ops-${name}.js`);old.set(f,execFileSync('git',['show',`c58724ba85b932d6d7ca2408d57a5b0c2baef15e:packages/brain/src/lib/existing-ops-${name}.js`],{cwd:BRAIN_ROOT,encoding:'utf8'}));}
+   expect(scan(old)).toEqual([]);
+   for(const name of names){const f=path.join(root,`existing-ops-${name}.js`);const mixed=base();mixed.set(f,old.get(f));expect(scan(mixed).some(h=>h.rule==='E1')).toBe(true);}
+  });
   it.each(['build','stage','native-evidence'])('%s完整已审组合无误报',name=>{const f=path.join(root,`existing-ops-${name}-envelopes.js`);expect(scan(base(),f)).toEqual([]);});
   it.each(files)('任何闭包成员突变或缺失必须拒绝：%s',f=>{const s=base();s.set(f,s.get(f)+'\nexport const unknownClosure=true;');expect(scan(s).some(h=>h.rule==='E1')).toBe(true);const missing=base();missing.delete(f);expect(findClaudeInvocations(base().get(data),{file:data,sources:missing}).some(h=>h.rule==='E1')).toBe(true);});
   it.each(['eval','raw','spawn','alias','interpolation','escaped','concat','dynamic','caller'])('%s不能继承只读资格',kind=>{

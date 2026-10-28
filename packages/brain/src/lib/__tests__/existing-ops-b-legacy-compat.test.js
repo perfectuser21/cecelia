@@ -20,7 +20,7 @@ const indexPath='docs/registry/coding-workflow-authority.json';
 const index=git('show',base+':'+indexPath);
 const old={...A_ENVELOPES.reviewed,...B_ENVELOPES.reviewed,[indexPath]:index};
 const fixture={...old,...repaired};
-const paths=[...new Set([...git('ls-tree','-rz','--name-only',base).split('\0').filter(Boolean),...Object.keys(fixture)])];
+const paths=[...new Set([...git('ls-tree','-rz','--full-tree','--name-only',base).split('\0').filter(Boolean),...Object.keys(fixture)])];
 const cache=new Map();
 const read=p=>{if(Object.hasOwn(fixture,p))return fixture[p];if(!cache.has(p))cache.set(p,git('show',base+':'+p));return cache.get(p)};
 const context=(overrides={},missing=[])=>reviewedAContext({parse:text=>parse(text,{ecmaVersion:'latest',sourceType:'module'}),revision,paths:paths.filter(p=>!missing.includes(p)),readSource:p=>Object.hasOwn(overrides,p)?overrides[p]:read(p)});

@@ -6,7 +6,7 @@ import {collectStageSources} from './existing-ops-stage-source.js';
 // build main 至首次 runClaude 的前缀、spawnClaude 至真正 spawn 的前缀。
 // 不冻结整个 build main；额外模板字段仅接受已审 INTENT_PATH。未知结构变化失败关闭，需显式重审。
 import { createRequire } from 'node:module';
-import { ENVELOPES, A_ENVELOPES, B_ENVELOPES } from './existing-ops-build-envelopes.js';
+import { ENVELOPES, A_ENVELOPES, B_ENVELOPES, B_RECOVERY_REVIEWED } from './existing-ops-build-envelopes.js';
 import { posix } from 'node:path';
 import { PROVENANCE_SOURCE_PATHS, readProvenanceSources, normalizeProvenanceBuild, normalizeProvenancePublish, provenanceSourceVersion } from './existing-ops-provenance-envelope.js';
 import { NATIVE_PROVENANCE_PATHS, NATIVE_HISTORY_PATH, nativeEvidenceForwarding, nativeStaticEdges } from './existing-ops-native-evidence-source.js';
@@ -327,11 +327,19 @@ export async function reviewedAContext({ parse, paths, readSource, revision }) {
       if (!reviewedASame(text, reference, parse)) return null;
       originals.set(path, text);
     }
-    if (bMarked) for (const [path, reference] of Object.entries(B_ENVELOPES.reviewed)) {
-      if (!paths.includes(path)) return null;
-      const text = await readSource(path, revision);
-      if (path.endsWith('.mjs') ? !reviewedASame(text, reference, parse) : text !== reference) return null;
-      bOriginals.set(path, text);
+    if (bMarked) {
+      for (const path of Object.keys(B_ENVELOPES.reviewed)) {
+        if (!paths.includes(path)) return null;
+        bOriginals.set(path, await readSource(path, revision));
+      }
+      // 只能整组选中一个已审版本；不能逐文件混用旧新成员。
+      const complete = [B_ENVELOPES.reviewed, B_RECOVERY_REVIEWED].some(group =>
+        Object.entries(group).every(([path, reference]) => {
+          const text = bOriginals.get(path);
+          return typeof text === 'string' && (path.endsWith('.mjs')
+            ? reviewedASame(text, reference, parse) : text === reference);
+        }));
+      if (!complete) return null;
     }
     // 只有整组读取器成立后才读取它固定的 Git 数据输入；不执行索引正文。
     if (!paths.includes(A_INDEX_PATH)) return null;
