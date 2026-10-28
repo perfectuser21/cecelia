@@ -1,0 +1,9 @@
+{
+  "object_id": "coding-workflow",
+  "refs": [
+    { "ref_id": "spec", "kind": "spec", "path": "packages/brain/scripts/coding-workflow/runner/README.md", "required": true },
+    { "ref_id": "rule", "kind": "rule", "path": "packages/brain/scripts/coding-workflow/prompts/repo-rules/cecelia.md", "required": true },
+    { "ref_id": "sample", "kind": "sample", "path": "packages/brain/scripts/coding-workflow/__tests__/fixtures/activity-fixture.mjs", "required": true },
+    { "ref_id": "implementation", "kind": "implementation", "path": "packages/brain/scripts/coding-workflow/activities/intent.mjs", "required": true }
+  ]
+}
