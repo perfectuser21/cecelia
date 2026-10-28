@@ -5,7 +5,7 @@ import { setImmediate as nativeSetImmediate } from 'node:timers';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
-import { buildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.test.js';
 import fs from 'node:fs';
 import { collectAutoVersionTestSources, runtimeSelectorEnabled } from '../existing-ops-runtime-source.js';
 const parse = text => acorn(text, { ecmaVersion: 'latest', sourceType: 'module' });

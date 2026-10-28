@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'acorn';
-import { buildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.test.js';
 
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const git = (...args) => execFileSync('git', ['--no-replace-objects', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
