@@ -127,19 +127,16 @@
       "path": "sprints/10272102-cw-b3d6f213/04-evidence.md",
       "role": "documentation"
     },
-    
     {
       "owner_path": "packages/brain/src/lib/existing-ops-native-evidence-source.js",
       "path": "packages/brain/src/lib/__tests__/existing-ops-qa-artifact-envelopes.test.js",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/src/lib/existing-ops-runtime-source.js",
       "path": "packages/brain/src/lib/__tests__/existing-ops-us-compose-source.test.js",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/scripts/coding-workflow/runner/run-once.mjs",
       "path": "packages/brain/scripts/smoke/coding-workflow-runner-smoke.sh",
@@ -155,7 +152,6 @@
       "path": "packages/brain/src/__tests__/openclaw-guards.remote.test.js",
       "role": "verification"
     },
-    
     {
       "owner_path": "packages/brain/src/lib/existing-ops-source.js",
       "path": "packages/brain/scripts/smoke/coding-source-compat-smoke.sh",
@@ -2546,6 +2542,21 @@
       "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
       "path": "packages/brain/src/lib/__tests__/existing-ops-b-compat.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-b-legacy-compat.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "changes/cp-10281318-b840-source.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "docs/learnings/cp-10281318-b840-source.md",
+      "role": "documentation"
     }
   ]
 }
