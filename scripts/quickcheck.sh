@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # quickcheck.sh — git push 前本地快速检查
 #
-# 逻辑：改了哪个包就跑哪个包的测试，4个包全覆盖
+# Brain 源码小改跑 changed + 完整 fs 守卫；未知范围与其他包全量。
 # 用法：bash scripts/quickcheck.sh
 # 退出码：0 = 通过，1 = 失败
 
@@ -55,8 +55,14 @@ echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━�
 
 git fetch origin main --quiet 2>/dev/null || true
 BASE_REF="origin/main"
-CHANGED_FILES=$(git diff --name-only "${BASE_REF}...HEAD" 2>/dev/null || \
+BRAIN_BASE=$(git merge-base "$BASE_REF" HEAD 2>/dev/null || true)
+source "$REPO_ROOT/scripts/lib/quickcheck-brain-scope.sh"
+CHANGED_FILES=$(git diff --name-only "${BRAIN_BASE}..HEAD" 2>/dev/null || \
                 git diff --name-only HEAD~1...HEAD 2>/dev/null || echo "")
+
+if [[ -z "$BRAIN_BASE" ]]; then
+  CHANGED_FILES=$(printf '%s\n%s\n' "$CHANGED_FILES" packages/brain/unknown-scope)
+fi
 
 if [[ -z "$CHANGED_FILES" ]]; then
   echo -e "${YELLOW}⏭  无改动文件，跳过${RESET}"
@@ -97,7 +103,7 @@ fi
 
 # 改了哪个包就跑哪个包的测试（4个包全覆盖）
 for PKG in packages/engine packages/brain apps/api apps/dashboard; do
-  if echo "$CHANGED_FILES" | grep -q "^$PKG/"; then
+  if echo "$CHANGED_FILES" | grep -q "^$PKG/" || { [[ "$PKG" == packages/brain ]] && quickcheck_needs_brain "$CHANGED_FILES"; }; then
     echo -e "${BOLD}▶ $PKG${RESET}"
     PKG_NM="$REPO_ROOT/$PKG/node_modules"
     VITEST_BIN=$(resolve_package_vitest "$ROOT_NM" "$PKG_NM" || true)
@@ -111,7 +117,15 @@ for PKG in packages/engine packages/brain apps/api apps/dashboard; do
         PASS=false
       fi
     else
-      VITEST_OUT=$(cd "$PKG" && unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE && PATH="$PKG_NM/.bin:$ROOT_NM/.bin:$PATH" NODE_OPTIONS='--max-old-space-size=2048' "$VITEST_BIN" run 2>&1)
+      VITEST_OUT=$( {
+        unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE
+        export PATH="$PKG_NM/.bin:$ROOT_NM/.bin:$PATH" NODE_OPTIONS='--max-old-space-size=2048'
+        if [[ "$PKG" == packages/brain ]]; then
+          quickcheck_brain_tests "$VITEST_BIN" "$BRAIN_BASE" "$CHANGED_FILES"
+        else
+          cd "$PKG" && "$VITEST_BIN" run
+        fi
+      } 2>&1)
       VITEST_EXIT=$?
       echo "$VITEST_OUT"
       if classify_vitest_exit "$VITEST_EXIT"; then

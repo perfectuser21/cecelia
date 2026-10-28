@@ -11,7 +11,8 @@
 #   自动检测（grep readFileSync 标记）而非手维护名单 —— 新增 fs 读取型测试自动纳入，永不遗漏。
 #
 # 用法：
-#   list-fs-guard-tests.sh [TEST_DIR]
+#   list-fs-guard-tests.sh [--repo-relative] [TEST_DIR ...]
+#   --repo-relative 保留输入目录前缀，供多根调用方消除包内/仓库根 tests 同名歧义。
 #     TEST_DIR 默认 packages/brain/src/__tests__
 #   输出：每行一个测试文件路径（相对 packages/brain，供 `cd packages/brain && npx vitest run <路径>` 直接消费）
 #
@@ -19,12 +20,15 @@
 #    .github/workflows/scripts/__tests__/list-fs-guard-tests.test.sh 共同消费（单一事实源）。
 set -euo pipefail
 
-TEST_DIR="${1:-packages/brain/src/__tests__}"
-
-if [ ! -d "$TEST_DIR" ]; then
-  echo "list-fs-guard-tests: 测试目录不存在: $TEST_DIR" >&2
-  exit 1
-fi
+REPO_RELATIVE=false
+if [[ "${1:-}" == --repo-relative ]]; then REPO_RELATIVE=true; shift; fi
+if [[ $# -eq 0 ]]; then set -- packages/brain/src/__tests__; fi
+for TEST_DIR in "$@"; do
+  if [[ ! -d "$TEST_DIR" ]]; then
+    echo "list-fs-guard-tests: 测试目录不存在: $TEST_DIR" >&2
+    exit 1
+  fi
+done
 
 # 标记：任意形式的 fs 文件读取（同步/异步/解构导入后调用）。
 #   readFileSync( | fs.readFile( | promises.readFile( | .readFileSync(
@@ -33,8 +37,8 @@ MARKER='readFileSync|readFile\('
 
 # 排除 integration（brain-unit 步骤本身也 --exclude 它）。
 # 路径统一裁成相对 packages/brain（vitest 从 packages/brain 目录运行）。
-grep -rlE "$MARKER" "$TEST_DIR" 2>/dev/null \
+grep -rlE "$MARKER" "$@" 2>/dev/null \
   | grep -E '\.(test|spec)\.(js|ts|cjs|mjs)$' \
   | grep -v '/integration/' \
-  | sed -E 's#^packages/brain/##' \
+  | { if [[ "$REPO_RELATIVE" == true ]]; then cat; else sed -E 's#^packages/brain/##'; fi; } \
   | LC_ALL=C sort -u
