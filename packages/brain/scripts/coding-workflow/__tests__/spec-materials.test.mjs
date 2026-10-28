@@ -67,3 +67,38 @@ it('材料更新表仅允许保留或更新', () => {
     expect(check(f.plan)).toContain('material_action_invalid:spec');
   } finally { f.clean(); }
 });
+
+it('已冻结整份材料废弃批准可以通过，规则级或其他材料批准不能替代', () => {
+  const f = managedSpecFixture();
+  try {
+    const row = f.plan.materials.find(r => r.ref_id === 'sample');
+    row.action = 'retire'; row.approval_refs = ['I-1'];
+    const approved = { ...baseline, approvals: [{ ref_id: 'sample', action: 'retire', intent_id: 'I-1' }] };
+    expect(check(f.plan, approved)).toEqual([]);
+    expect(check(f.plan)).toContain('approval_missing:sample');
+    expect(check(f.plan, { ...approved, approvals: [{ ...approved.approvals[0], ref_id: 'spec' }] })).toContain('approval_missing:sample');
+    expect(check(f.plan, { ...approved, approvals: [{ ...approved.approvals[0], rule_id: 'cw-safe' }] })).toContain('approval_missing:sample');
+  } finally { f.clean(); }
+});
+
+it('材料不涉及时仍须说明理由、验证方式及真实I/S/Q', () => {
+  const f = managedSpecFixture();
+  try {
+    const row = f.plan.materials[0]; row.action = 'not_applicable';
+    expect(check(f.plan)).toEqual([]);
+    row.reason = ''; expect(check(f.plan)).toContain('reason_missing:spec');
+    row.reason = '本次无相关变化'; row.verification = '';
+    expect(check(f.plan)).toContain('material_verification_missing:spec');
+    row.verification = '复核固定资料未变化'; row.spec_ids = ['S-999'];
+    expect(check(f.plan)).toContain('spec_unknown:S-999');
+  } finally { f.clean(); }
+});
+
+it('材料冲突仍阻断且未知动作不被接受', () => {
+  const f = managedSpecFixture();
+  try {
+    const row = f.plan.materials[0]; row.action = 'conflict';
+    expect(check(f.plan)).toContain('material_conflict:spec');
+    row.action = 'invented'; expect(check(f.plan)).toContain('material_action_invalid:spec');
+  } finally { f.clean(); }
+});
