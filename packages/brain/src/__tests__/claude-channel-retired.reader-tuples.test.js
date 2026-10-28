@@ -239,6 +239,11 @@ const C_QA_HASHES = {...QA_HASHES,
  'existing-ops-build-source.js':C_HASHES['existing-ops-build-source.js'],
  'existing-ops-build-envelopes.js':C_HASHES['existing-ops-build-envelopes.js'],
 };
+const D_HASHES = {...US_HASHES,...{"existing-ops-build-source.js":"6e810bfd01af6cb663f044ce7c12f37903f6a6057dd7778377aaebeb344ddd06","existing-ops-build-envelopes.js":"ee035046220a4063c254953ef72b99db74c7a51046cbc85d4ed545994ef6e44c"}};
+const D_QA_HASHES = {...QA_HASHES,
+ 'existing-ops-build-source.js':D_HASHES['existing-ops-build-source.js'],
+ 'existing-ops-build-envelopes.js':D_HASHES['existing-ops-build-envelopes.js'],
+};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -254,7 +259,8 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const isB=typeof build==='string'&&hash(build,parse,shape)===B_HASHES['existing-ops-build-source.js'];
   const isQa=hash(runtime,parse,shape)===QA_HASHES['existing-ops-runtime-source.js'];
   const isC=typeof build==='string'&&hash(build,parse,shape)===C_HASHES['existing-ops-build-source.js'];
-  const selected=isC?(isQa?C_QA_HASHES:C_HASHES):isB?(isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
+  const isD=typeof build==='string'&&hash(build,parse,shape)===D_HASHES['existing-ops-build-source.js'];
+  const selected=isD?(isQa?D_QA_HASHES:D_HASHES):isC?(isQa?C_QA_HASHES:C_HASHES):isB?(isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
    :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(selected)){

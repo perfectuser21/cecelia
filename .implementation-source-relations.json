@@ -2565,6 +2565,21 @@
       "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
       "path": "packages/brain/src/lib/__tests__/existing-ops-c-compat.test.js",
       "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "changes/cp-10271905-d-source.md",
+      "role": "release"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "docs/learnings/cp-10271905-d-source.md",
+      "role": "documentation"
+    },
+    {
+      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
+      "path": "packages/brain/src/lib/__tests__/existing-ops-d-compat.test.js",
+      "role": "verification"
     }
   ]
 }
