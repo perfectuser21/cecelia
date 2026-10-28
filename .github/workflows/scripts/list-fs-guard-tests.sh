@@ -19,12 +19,13 @@
 #    .github/workflows/scripts/__tests__/list-fs-guard-tests.test.sh 共同消费（单一事实源）。
 set -euo pipefail
 
-TEST_DIR="${1:-packages/brain/src/__tests__}"
-
-if [ ! -d "$TEST_DIR" ]; then
-  echo "list-fs-guard-tests: 测试目录不存在: $TEST_DIR" >&2
-  exit 1
-fi
+if [[ $# -eq 0 ]]; then set -- packages/brain/src/__tests__; fi
+for TEST_DIR in "$@"; do
+  if [[ ! -d "$TEST_DIR" ]]; then
+    echo "list-fs-guard-tests: 测试目录不存在: $TEST_DIR" >&2
+    exit 1
+  fi
+done
 
 # 标记：任意形式的 fs 文件读取（同步/异步/解构导入后调用）。
 #   readFileSync( | fs.readFile( | promises.readFile( | .readFileSync(
@@ -33,7 +34,7 @@ MARKER='readFileSync|readFile\('
 
 # 排除 integration（brain-unit 步骤本身也 --exclude 它）。
 # 路径统一裁成相对 packages/brain（vitest 从 packages/brain 目录运行）。
-grep -rlE "$MARKER" "$TEST_DIR" 2>/dev/null \
+grep -rlE "$MARKER" "$@" 2>/dev/null \
   | grep -E '\.(test|spec)\.(js|ts|cjs|mjs)$' \
   | grep -v '/integration/' \
   | sed -E 's#^packages/brain/##' \
