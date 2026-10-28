@@ -2548,11 +2548,7 @@
       "path": "packages/brain/src/lib/__tests__/existing-ops-b-legacy-compat.test.js",
       "role": "verification"
     },
-    {
-      "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
-      "path": "changes/cp-10281318-b840-source.md",
-      "role": "release"
-    },
+    
     {
       "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
       "path": "docs/learnings/cp-10281318-b840-source.md",
