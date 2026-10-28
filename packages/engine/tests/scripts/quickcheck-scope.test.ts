@@ -13,6 +13,8 @@ function scenario(paths: string[], failed = '', missingBase = false, remove = ''
     for (const sub of ['scripts', '.github/workflows/scripts']) {
       mkdirSync(join(dir, sub), { recursive: true });
     }
+    mkdirSync(join(dir, 'packages/engine/hooks'), { recursive: true });
+    cpSync(join(root, 'packages/engine/hooks/pre-push.sh'), join(dir, 'packages/engine/hooks/pre-push.sh'));
     cpSync(join(root, 'scripts/quickcheck.sh'), join(dir, 'scripts/quickcheck.sh'));
     cpSync(join(root, 'scripts/lib'), join(dir, 'scripts/lib'), { recursive: true });
     cpSync(join(root, '.github/workflows/scripts/list-fs-guard-tests.sh'), join(dir, '.github/workflows/scripts/list-fs-guard-tests.sh'));
@@ -49,14 +51,14 @@ function scenario(paths: string[], failed = '', missingBase = false, remove = ''
     git('add', '-A'); git('commit', '-qm', 'change');
     mkdirSync(join(dir, 'node_modules/.bin'), { recursive: true });
     writeFileSync(join(dir, 'node_modules/.bin/vitest'), `#!/bin/bash\nprintf '%s\\n' "$*" >> '${dir}/calls'\n[[ "$*" != *'${failed || '__never__'}'* ]] || exit 7\nexit 0\n`, { mode: 0o755 });
-    const r = spawnSync('bash', ['scripts/quickcheck.sh'], { cwd: dir, encoding: 'utf8', env: { ...process.env, QUICKCHECK_LOCK_WAIT_SEC: '2' } });
+    const r = spawnSync('bash', ['packages/engine/hooks/pre-push.sh', 'origin', 'https://example.invalid/repo.git'], { cwd: dir, encoding: 'utf8', env: { ...process.env, QUICKCHECK_LOCK_WAIT_SEC: '2' } });
     let calls = ''; try { calls = readFileSync(join(dir, 'calls'), 'utf8'); } catch {}
     return { status: r.status, calls, output: r.stdout + r.stderr };
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 it('Brain小改运行changed与完整嵌套fs守卫，非全包', () => {
   const r = scenario(['packages/brain/src/simple.js']);
-  expect(r.status).toBe(0); expect(r.calls).toMatch(/run --changed [a-f0-9]{40}/);
+  expect(r.status, r.output).toBe(0); expect(r.calls).toMatch(/run --changed [a-f0-9]{40}/);
   expect(r.calls).toContain('src/__tests__/read.test.js'); expect(r.calls).toContain('src/lib/__tests__/nested.test.js'); expect(r.calls).toContain('../../tests/gp/f1/guard.test.js'); expect(r.calls).toContain('../../tests/regression/guard.test.js'); expect(r.calls).toContain('scripts/guard.test.mjs'); expect(r.calls).not.toContain('evil.test.js');
   expect(r.calls.trim().split('\n')).toHaveLength(2);
 });
