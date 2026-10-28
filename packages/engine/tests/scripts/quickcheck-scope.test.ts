@@ -16,7 +16,7 @@ function scenario(paths: string[], failed = '', missingBase = false, remove = ''
     cpSync(join(root, 'scripts/quickcheck.sh'), join(dir, 'scripts/quickcheck.sh'));
     cpSync(join(root, 'scripts/lib'), join(dir, 'scripts/lib'), { recursive: true });
     cpSync(join(root, '.github/workflows/scripts/list-fs-guard-tests.sh'), join(dir, '.github/workflows/scripts/list-fs-guard-tests.sh'));
-    for (const p of ['packages/brain/src/__tests__/read.test.js', 'packages/brain/src/lib/__tests__/nested.test.js', 'tests/gp/f1/guard.test.js', 'tests/regression/guard.test.js', 'packages/brain/scripts/guard.test.mjs', 'packages/brain/node_modules/external/evil.test.js']) {
+    for (const p of ['packages/brain/src/__tests__/read.test.js', 'packages/brain/src/lib/__tests__/nested.test.js', 'tests/gp/f1/guard.test.js', 'tests/regression/guard.test.js', 'packages/brain/scripts/guard.test.mjs', 'packages/brain/node_modules/external/evil.test.js', 'packages/brain/tests/shared.test.js', 'tests/shared.test.js']) {
       mkdirSync(join(dir, p, '..'), { recursive: true }); writeFileSync(join(dir, p), 'readFileSync("fixture")');
     }
     cpSync(join(root, 'packages/brain/vitest.config.js'), join(dir, 'packages/brain/vitest.config.js'));
@@ -62,3 +62,10 @@ it('选择器缺失不能缩小检查', () => {
 it('只有未知根路径也不能推断Brain不受影响', () => { expect(scenario(['unknown.dat']).calls).toBe('run\n'); });
 it('已知审计文档单独修改保持不触发包测试', () => { expect(scenario(['.dod.md', 'changes/cp-example.md']).calls).toBe(''); });
 it('运行Skill类Markdown不是审计文档豁免', () => { expect(scenario(['skills/example/SKILL.md']).calls).toBe('run\n'); });
+
+it('包内tests与仓库根tests同名守卫各自保留正确路径', () => {
+ const r = scenario(['packages/brain/src/simple.js']);
+ const args = r.calls.split(/\s+/);
+ expect(args).toContain('tests/shared.test.js');
+ expect(args).toContain('../../tests/shared.test.js');
+});
