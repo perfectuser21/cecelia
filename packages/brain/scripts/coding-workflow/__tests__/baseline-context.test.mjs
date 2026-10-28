@@ -68,3 +68,21 @@ it('legacy完整背景引用示例不覆盖后面的程序生成legacy段', asyn
     expect(loadBaselineContext({...input,intent_sha256:hash(intent)}).status).toBe('unconfigured');
   }finally{f.clean();}
 });
+
+it('冻结的无 ID 规则逐条生成可复算锚点且不跟随工作区', async () => {
+  const { loadBaselineContext } = await import('../lib/baseline-context.mjs');
+  const original = '## 旧规则\n说明。\n- 第一条：保留数据。\n  继续核对。\n- 第二条：拒绝伪造。\n';
+  const f = managedSpecFixture({ rule: original });
+  try {
+    const first = loadBaselineContext(f.input);
+    expect(first.rules).toHaveLength(2);
+    expect(first.rules.map(r => r.text)).toEqual(['- 第一条：保留数据。\n  继续核对。', '- 第二条：拒绝伪造。']);
+    expect(new Set(first.rules.map(r => r.rule_id)).size).toBe(2);
+    for (const rule of first.rules) {
+      const digest = hash(rule.text);
+      expect(rule.rule_id).toBe(`legacy-${hash(JSON.stringify(['rule', f.input.authority.refs[1].revision, 'rule.md', rule.ordinal, digest])).slice(0, 24)}`);
+    }
+    fs.writeFileSync(path.join(f.root, 'rule.md'), '- 工作区不同内容\n');
+    expect(loadBaselineContext(f.input).rules).toEqual(first.rules);
+  } finally { f.clean(); }
+});

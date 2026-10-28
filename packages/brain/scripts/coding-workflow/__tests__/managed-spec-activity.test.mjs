@@ -2,6 +2,7 @@ import { it, expect } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { runActivityProcess } from './helpers/run-activity.mjs';
 import { managedSpecFixture } from './helpers/managed-spec.mjs';
+import { loadBaselineContext } from '../lib/baseline-context.mjs';
 
 it('真实spec活动不能接受遗漏全部旧规则的模型规格', async () => {
   const f = managedSpecFixture();
@@ -93,4 +94,18 @@ it('真实冻结I条目的批准修改可通过，审批依据保留在三阶段
     const prompt=JSON.parse(fs.readFileSync(path.join(f.tmp,'prompts.jsonl'),'utf8').trim()).prompt;
     expect(prompt).toContain('"action": "modify"');expect(prompt).toContain('"intent_id": "I-1"');
   }finally{f.clean();}
+});
+
+it('真实评审接收冻结无 ID 旧规则的逐条锚点', async () => {
+  const f = managedSpecFixture({ rule: '## 原规则\n- 第一条：保留数据。\n- 第二条：拒绝伪造。\n' });
+  try {
+    const rules = loadBaselineContext(f.input).rules;
+    expect(rules).toHaveLength(2);
+    f.plan.rules = rules.map(({ ref_id, rule_id }) => ({ ref_id, rule_id, action: 'keep', reason: '保留旧承诺', intent_ids: ['I-1'], spec_ids: ['S-1'], qa_ids: ['Q-1'], approval_refs: [] }));
+    fs.writeFileSync(path.join(f.sprint, '02-spec.md'), specText(f.plan));
+    const r = await review(f, { reviews: [{ scores: 8 }] });
+    expect(r.result.status, r.stderr).toBe('completed');
+    const prompt = JSON.parse(fs.readFileSync(path.join(f.tmp, 'prompts.jsonl'), 'utf8').trim()).prompt;
+    for (const rule of rules) { expect(prompt).toContain(rule.rule_id); expect(prompt).toContain(rule.text); }
+  } finally { f.clean(); }
 });

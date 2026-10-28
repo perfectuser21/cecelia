@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { specErrors } from '../lib/spec-check.mjs';
 import { managedSpecFixture, specText, TASK } from './helpers/managed-spec.mjs';
+import { parseMaterialPlan } from '../lib/spec-materials.mjs';
 
 const baseline = { status: 'managed', object_id: 'coding-workflow', refs: ['spec', 'rule', 'sample', 'implementation'].map(kind => ({ ref_id: kind, kind, path: kind + '.md' })), rules: [{ ref_id: 'rule', rule_id: 'cw-safe', text: '不得丢数据' }], approvals: [] };
 const check = (plan, context = baseline) => specErrors(specText(plan), TASK, ['I-1'], { baseline: context });
@@ -47,4 +48,22 @@ it('单条规则批准不能授权废弃整个规则文件或额外文件', () =
     row.action='keep';row.additional_changes=[{path:'extra.md',action:'retire',reason:'清理',verification:'核验'}];
     expect(check(f.plan,approved)).toContain('approval_missing:rule');
   } finally {f.clean();}
+});
+
+it('空冻结规则集、超长和异常嵌套计划不能当作有效覆盖', () => {
+  const f = managedSpecFixture();
+  try {
+    expect(check({ ...f.plan, rules: [] }, { ...baseline, rules: [] })).toContain('baseline_rules_unconfigured');
+    expect(() => parseMaterialPlan(specText({ ...f.plan, padding: 'x'.repeat(300000) }))).toThrow('material_plan_too_large');
+    let nested = {}; for (let i = 0; i < 20; i++) nested = { child: nested };
+    expect(() => parseMaterialPlan(specText({ ...f.plan, nested }))).toThrow('material_plan_too_deep');
+  } finally { f.clean(); }
+});
+
+it('材料更新表仅允许保留或更新', () => {
+  const f = managedSpecFixture();
+  try {
+    f.plan.materials[0].action = 'retire';
+    expect(check(f.plan)).toContain('material_action_invalid:spec');
+  } finally { f.clean(); }
 });

@@ -17,11 +17,35 @@ const git = (repo, args) => execFileSync('git', ['-C', repo, ...args], {
   env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'].includes(key))), GIT_NO_REPLACE_OBJECTS: '1' },
 });
 
-/** 稳定规则只认权威 rule 正文里独立一行的锚点；不是本次 I-n。 */
+/** 稳定规则取自冻结 rule 原文：显式锚点或无 ID 旧版的顶层项目符号。 */
 export function registeredRules(refs) {
   const out = [];
   for (const ref of refs.filter(r => r.kind === 'rule')) {
     const lines = ref.content.split(/\r?\n/); let current = null; let fence = null;
+    if (!lines.some(line => /^<!-- rule: [a-z][a-z0-9_-]{0,63} -->$/.test(line))) {
+      let start = -1; let ordinal = 0; let block = []; fence = null;
+      const finishLegacy = () => {
+        if (start < 0) return;
+        const ruleText = block.join('\n').trim();
+        if (!ruleText) reject('baseline_rule_empty');
+        ordinal++;
+        const digest = hash(Buffer.from(ruleText));
+        const ruleId = `legacy-${hash(Buffer.from(JSON.stringify([ref.ref_id, ref.revision, ref.path, ordinal, digest]))).slice(0, 24)}`;
+        out.push({ ref_id: ref.ref_id, rule_id: ruleId, text: ruleText, line: start + 1, ordinal });
+        start = -1; block = [];
+      };
+      lines.forEach((line, index) => {
+        const marker = /^\s*(`{3,}|~{3,})/.exec(line);
+        if (marker) { if (!fence) fence = marker[1][0]; else if (fence === marker[1][0]) fence = null; }
+        if (fence) { if (start >= 0) block.push(line); return; }
+        if (/^#{1,6}\s/.test(line)) { finishLegacy(); return; }
+        if (/^-\s+\S/.test(line)) { finishLegacy(); start = index; block = [line]; return; }
+        if (start >= 0) block.push(line);
+      });
+      finishLegacy();
+      if (!ordinal) reject('baseline_rules_unconfigured');
+      continue;
+    }
     const finish = () => {
       if (!current) return;
       const text = current.lines.join('\n').trim();

@@ -18,9 +18,16 @@ export function parseMaterialPlan(source) {
   if (positions.length !== 1) throw Error('material_plan_duplicate');
   const tail = lines.slice(positions[0] + 1); const end = tail.findIndex(line => /^#{1,2}\s/.test(line));
   const section = (end < 0 ? tail : tail.slice(0, end)).join('\n').trim();
+  if (Buffer.byteLength(section, 'utf8') > 256 * 1024) throw Error('material_plan_too_large');
   const match = /^```json\s*\n([\s\S]*?)\n```$/.exec(section);
   if (!match) throw Error('material_plan_format');
   let plan; try { plan = JSON.parse(match[1]); } catch { throw Error('material_plan_json'); }
+  const pending = [[plan, 0]]; let nodes = 0;
+  while (pending.length) {
+    const [value, depth] = pending.pop();
+    if (++nodes > 10000 || depth > 12) throw Error('material_plan_too_deep');
+    if (value && typeof value === 'object') for (const child of Object.values(value)) pending.push([child, depth + 1]);
+  }
   if (!object(plan) || plan.version !== 1 || !Array.isArray(plan.rules) || !Array.isArray(plan.materials)
     || plan.rules.length > 1000 || plan.materials.length > 32) throw Error('material_plan_shape');
   return plan;
@@ -28,6 +35,7 @@ export function parseMaterialPlan(source) {
 
 export function materialPlanErrors(source, { baseline, intentIds = [], specIds = [], qaIds = [] } = {}) {
   if (baseline?.status !== 'managed') return [];
+  if (!Array.isArray(baseline.rules) || !baseline.rules.length) return ['baseline_rules_unconfigured'];
   let plan; try { plan = parseMaterialPlan(source); } catch (error) { return [error.message]; }
   if (!plan) return ['material_plan_missing'];
   const errors = [], refs = new Map(baseline.refs.map(r => [r.ref_id, r]));
@@ -67,7 +75,7 @@ export function materialPlanErrors(source, { baseline, intentIds = [], specIds =
     // 别名ref允许共享原件；额外路径不能重复登记同一目标。
     seenPaths.add(row.path); links(row, key);
     if (!text(row.verification)) errors.push(`material_verification_missing:${key}`);
-    if (!['keep', 'update', 'retire', 'conflict', 'not_applicable'].includes(row.action)) errors.push(`material_action_invalid:${key}`);
+    if (!['keep', 'update'].includes(row.action)) errors.push(`material_action_invalid:${key}`);
     if (row.action === 'conflict') errors.push(`material_conflict:${key}`);
     if (row.action === 'retire' || ref?.kind === 'sample' && row.action === 'update') approved(row, key, row.action);
     if (row.additional_changes !== undefined && !Array.isArray(row.additional_changes)) errors.push(`material_extra_invalid:${key}`);
