@@ -38,9 +38,13 @@ quickcheck_brain_tests() {
     for directory in packages/brain/src packages/brain/scripts packages/brain/tests tests; do
       [[ ! -d "$directory" ]] || roots+=("$directory")
     done
-    if [[ ${#roots[@]} -gt 0 ]] && guards=$(bash "$REPO_ROOT/.github/workflows/scripts/list-fs-guard-tests.sh" "${roots[@]}") && [[ -n "$guards" ]]; then
+    if [[ ${#roots[@]} -gt 0 ]] && guards=$(bash "$REPO_ROOT/.github/workflows/scripts/list-fs-guard-tests.sh" --repo-relative "${roots[@]}") && [[ -n "$guards" ]]; then
       while IFS= read -r guard; do
-        [[ "$guard" != tests/* ]] || guard="../../$guard"
+        case "$guard" in
+          packages/brain/*) guard="${guard#packages/brain/}" ;;
+          tests/*) guard="../../$guard" ;;
+          *) (cd packages/brain && "$binary" run); return $? ;;
+        esac
         guard_args+=("$guard")
       done <<< "$guards"
       echo '[QuickCheck] Brain: affected import graph + complete fs guards'

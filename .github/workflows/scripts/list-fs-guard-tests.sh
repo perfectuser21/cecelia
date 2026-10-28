@@ -11,7 +11,8 @@
 #   自动检测（grep readFileSync 标记）而非手维护名单 —— 新增 fs 读取型测试自动纳入，永不遗漏。
 #
 # 用法：
-#   list-fs-guard-tests.sh [TEST_DIR]
+#   list-fs-guard-tests.sh [--repo-relative] [TEST_DIR ...]
+#   --repo-relative 保留输入目录前缀，供多根调用方消除包内/仓库根 tests 同名歧义。
 #     TEST_DIR 默认 packages/brain/src/__tests__
 #   输出：每行一个测试文件路径（相对 packages/brain，供 `cd packages/brain && npx vitest run <路径>` 直接消费）
 #
@@ -19,6 +20,8 @@
 #    .github/workflows/scripts/__tests__/list-fs-guard-tests.test.sh 共同消费（单一事实源）。
 set -euo pipefail
 
+REPO_RELATIVE=false
+if [[ "${1:-}" == --repo-relative ]]; then REPO_RELATIVE=true; shift; fi
 if [[ $# -eq 0 ]]; then set -- packages/brain/src/__tests__; fi
 for TEST_DIR in "$@"; do
   if [[ ! -d "$TEST_DIR" ]]; then
@@ -37,5 +40,5 @@ MARKER='readFileSync|readFile\('
 grep -rlE "$MARKER" "$@" 2>/dev/null \
   | grep -E '\.(test|spec)\.(js|ts|cjs|mjs)$' \
   | grep -v '/integration/' \
-  | sed -E 's#^packages/brain/##' \
+  | { if [[ "$REPO_RELATIVE" == true ]]; then cat; else sed -E 's#^packages/brain/##'; fi; } \
   | LC_ALL=C sort -u
