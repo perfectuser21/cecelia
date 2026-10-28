@@ -1,7 +1,7 @@
 import { it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { buildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 // 原始 dc40069 RED 已单独运行；永久回归不依赖 squash 后不可达的 PR 对象。
 const revision = 'dc40069b10cba9f2b35262db792556342720c207';
 const baseRevision = '95d3d6b9647a4accc748a4988f6bcf151d82c55f';

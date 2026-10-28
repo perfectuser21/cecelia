@@ -2,6 +2,7 @@ import { it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { cleanTestEnv } from './helpers/sandbox.mjs';
 let root, env, script, dest, state, log;
 beforeEach(() => {
@@ -99,16 +100,59 @@ it.each(['failed', 'cancelled'])('首次安装已bootstrap后%s，必须卸载�
 }, 10000);
 it('回滚子进程失去归属信息时也保留安装外锁，不假称已收尾', async () => {
   const { withProcessEnv } = await import('../../__tests__/helpers/procs.mjs');
-  const flag = path.join(root, 'rollback-ps-fail'); const count = path.join(root, 'ps-count');
+  const installed = path.join(root, 'install-failed');
+  const child = path.join(root, 'rollback-child');
+  const registered = path.join(root, 'rollback-identity-registered');
+  const observed = path.join(root, 'rollback-ps-fault-observed');
+  const launchctl = path.join(root, 'bin/launchctl');
+  const rollback = `if(args[0]==='print' && fs.existsSync(${JSON.stringify(installed)})) {
+ fs.writeFileSync(${JSON.stringify(child)},String(process.pid));
+ const deadline=Date.now()+15000;
+ while(!fs.existsSync(${JSON.stringify(observed)})) {
+  if(Date.now()>deadline)process.exit(9);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);
+ }
+ process.exit(3);
+}
+`;
+  fs.writeFileSync(launchctl, fs.readFileSync(launchctl, 'utf8').replace("if(args[0]==='print-disabled')", rollback+"if(args[0]==='print-disabled')"));
   fs.writeFileSync(path.join(root, 'bin/ps'), `#!${process.execPath}
 const fs=require('fs'),cp=require('child_process');
-if(fs.existsSync(${JSON.stringify(flag)})) {
- const file=${JSON.stringify(count)};const n=fs.existsSync(file)?Number(fs.readFileSync(file)):0;fs.writeFileSync(file,String(n+1));if(n>=2)process.exit(7);
+if(fs.existsSync(${JSON.stringify(registered)})) {
+ const identity=JSON.parse(fs.readFileSync(${JSON.stringify(registered)},'utf8'));
+ fs.writeFileSync(${JSON.stringify(observed)},JSON.stringify({pid:identity.pid,after_registration:true,exit_code:7}));
+ process.exit(7);
 }
-process.stdout.write(cp.execFileSync('/bin/ps',process.argv.slice(2)));`, { mode: 0o755 });
-  fs.writeFileSync(script, `#!/bin/bash\ntouch '${flag}'\nsleep 0.05\nexit 3\n`);
-  await withProcessEnv({ PATH: env.PATH }, async () => {
-    await expect(run()).rejects.toThrow('runtime_process_cleanup_unverified');
-  });
-  expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(true);
+const output=cp.execFileSync('/bin/ps',process.argv.slice(2),{encoding:'utf8'});
+if(fs.existsSync(${JSON.stringify(child)})) {
+ const pid=Number(fs.readFileSync(${JSON.stringify(child)},'utf8'));
+ const row=output.split('\\n').find(line=>{
+  const fields=line.trim().split(/\\s+/);return Number(fields[0])===pid&&Number(fields[1])===process.ppid;
+ });
+ if(row)fs.writeFileSync(${JSON.stringify(registered)},JSON.stringify({pid,parent:process.ppid,row}));
+}
+process.stdout.write(output);`, { mode: 0o755 });
+  fs.writeFileSync(script, `#!/bin/bash\ntouch '${installed}'\nexit 3\n`);
+  try {
+    await withProcessEnv({ PATH: env.PATH }, async () => {
+      await expect(run()).rejects.toThrow('runtime_process_cleanup_unverified');
+    });
+    const identity = JSON.parse(fs.readFileSync(registered, 'utf8'));
+    expect(identity.pid).toBe(Number(fs.readFileSync(child, 'utf8')));
+    expect(identity.parent).toBe(process.pid);
+    expect(identity.row.trim().split(/\s+/).slice(0, 2)).toEqual([String(identity.pid), String(process.pid)]);
+    expect(JSON.parse(fs.readFileSync(observed, 'utf8'))).toEqual({ pid: identity.pid, after_registration: true, exit_code: 7 });
+    expect(fs.existsSync(path.join(env.CODING_WF_LOCK_DIR, 'launcher/coding-workflow-runner.lock'))).toBe(true);
+  } finally {
+    if (fs.existsSync(child)) {
+      const pid = Number(fs.readFileSync(child, 'utf8'));
+      try {
+        const command = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
+        if (!command.includes(launchctl)) throw new Error('rollback_fixture_process_identity_changed');
+        process.kill(pid, 'SIGKILL');
+      } catch (error) {
+        if (error.code !== 'ESRCH' && error.status !== 1) throw error;
+      }
+    }
+  }
 });

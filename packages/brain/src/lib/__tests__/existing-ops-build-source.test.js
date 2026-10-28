@@ -5,7 +5,7 @@ const parse = text => acorn(text, { ecmaVersion: 'latest', sourceType: 'module' 
 // 固定正式祖先的真实源码；CI checkout fetch-depth: 0，不依赖其它未合并分支对象。
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 const buildBase = '2eb4d0557365befafed1953140c9c47e20bab495';
 const buildRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
 const buildPrefix = 'packages/brain/scripts/coding-workflow/';

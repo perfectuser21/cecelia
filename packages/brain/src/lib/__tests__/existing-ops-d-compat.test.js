@@ -2,7 +2,7 @@ import {it,expect} from 'vitest';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {parse} from 'acorn';
-import {buildExistingOpsSources} from '../existing-ops-source.js';
+import {buildExistingOpsSources} from './helpers/existing-ops-proof-builder.js';
 import {reviewedAContext} from '../existing-ops-build-source.js';
 import {A_ENVELOPES,B_ENVELOPES,C_ENVELOPES} from '../existing-ops-build-envelopes.js';
 // 独立冻结真实A+B+C+D组合46f6878c5。

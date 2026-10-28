@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
-import { buildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 import { collectWorkspaceInputEdges } from '../existing-ops-workspace-source.js';
 import { parse } from 'acorn';
 

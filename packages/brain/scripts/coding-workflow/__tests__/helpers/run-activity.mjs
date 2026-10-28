@@ -14,12 +14,13 @@ function baseEnv() {
  * 以子进程运行活动脚本：stdin 写 JSON，收集 stdout/stderr。
  * result 为 JSON.parse(stdout)；stdout 不是合法 JSON 时 result 为 null。
  */
-export function runActivityProcess(entry, input, env = {}) {
+export function runActivityProcess(entry, input, env = {}, transport = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [entry], {
+    const child = spawn(process.execPath, [...(transport.args || []), entry], {
       env: { ...baseEnv(), ...env },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: transport.stdio || ['pipe', 'pipe', 'pipe'],
     });
+    transport.attach?.(child);
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');

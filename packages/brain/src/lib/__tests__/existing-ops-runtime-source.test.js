@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { parse as acorn } from 'acorn';
 import { execFileSync } from 'node:child_process';
+import { setImmediate as nativeSetImmediate } from 'node:timers';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
-import { buildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 import fs from 'node:fs';
 import { collectAutoVersionTestSources, runtimeSelectorEnabled } from '../existing-ops-runtime-source.js';
 const parse = text => acorn(text, { ecmaVersion: 'latest', sourceType: 'module' });
@@ -67,6 +68,22 @@ const aggregateStep = doc => doc.jobs['lint-auto-merge-decision'].steps.find(s =
   s.run === `node --test ${aggregateReader}`);
 
 describe('aggregate固定Git输入协议', () => {
+  it('完整aggregate暖proof返回前处理已排队原生回调', async () => {
+    const warmed = aggregateF3(await aggregateProof());
+    expect(warmed.status, JSON.stringify(warmed.gaps)).toBe('verified');
+    let observed = false;
+    const callback = new Promise(resolve => nativeSetImmediate(() => {
+      observed = true;
+      resolve();
+    }));
+    const result = aggregateF3(await aggregateProof());
+    try {
+      expect(result.status, JSON.stringify(result.gaps)).toBe('verified');
+      expect(observed).toBe(true);
+    } finally {
+      await callback;
+    }
+  });
   it('旧正式a2冻结的两消费者bindings与input_relations逐字摘要保持不变', async () => {
     const revision = 'a2b043435339c90b40d6fa0c0df369d15b18eb49';
     const proof = await buildExistingOpsSources({ scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision,
