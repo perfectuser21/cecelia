@@ -369,3 +369,59 @@ it('coding workflow runner（执行机认领的 data 任务）启动同步不打
   expect(result.external_skipped).toBe(1);
   expect(mockQuery.mock.calls.some(([sql]) => /UPDATE tasks/.test(sql))).toBe(false);
 });
+
+// 生产353作者任务形状：有真实外部认领，但Brain本机没有run进程。
+describe('startup保留已认领的外部有头执行权', () => {
+  it('headed-session带持久化owner且无runId时不得作为inline孤儿回队', async () => {
+    vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValueOnce({rows:[{
+      id:'bb9e7996-caab-4db7-8651-6a0ef251bf9f', title:'固定来源注册',
+      task_type:'research', executor_kind:'headed-session',
+      claimed_by:'ci:authoring-main-source', payload:{workflow_authoring:true},
+      started_at:new Date().toISOString(), error_message:null,
+    }]});
+    mockQuery.mockResolvedValue({rows:[],rowCount:1});
+    const {syncOrphanTasksOnStartup}=await import('../executor.js');
+    const result=await syncOrphanTasksOnStartup();
+    expect(result.requeued).toBe(0);
+    expect(mockQuery.mock.calls.filter(([sql])=>/UPDATE\s+tasks/i.test(sql))).toHaveLength(0);
+  });
+});
+
+describe('startup恢复遵守部署角色', () => {
+  it('canary=1在访问共享数据库之前返回零计数', async () => {
+    vi.stubEnv('BRAIN_DEPLOY_CANARY', '1');
+    mockQuery.mockReset();
+    try {
+      const { syncOrphanTasksOnStartup } = await import('../executor.js');
+      expect(await syncOrphanTasksOnStartup()).toEqual({
+        orphans_found: 0, orphans_fixed: 0, requeued: 0,
+        rebuilt: 0, external_skipped: 0,
+      });
+      expect(mockQuery).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('primary canary=0仍恢复本地无runId孤儿', async () => {
+    vi.stubEnv('BRAIN_DEPLOY_CANARY', '0');
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValueOnce({ rows: [{
+      id: 'primary-local-orphan', title: '本地孤儿',
+      executor_kind: 'brain-local', claimed_by: 'brain:primary',
+      payload: {}, started_at: new Date().toISOString(), error_message: null,
+    }] });
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+    try {
+      const { syncOrphanTasksOnStartup } = await import('../executor.js');
+      const result = await syncOrphanTasksOnStartup();
+      expect(result.requeued).toBe(1);
+      expect(mockQuery.mock.calls.some(([sql]) => /UPDATE\s+tasks/i.test(sql)
+        && /status = 'queued'/.test(sql))).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});

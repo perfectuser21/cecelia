@@ -2,7 +2,7 @@ import { it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 const candidate={
   "source_revision": "ee851a5546bce56b00455e3efccf1a09fe526f0b",
   "blobs": {

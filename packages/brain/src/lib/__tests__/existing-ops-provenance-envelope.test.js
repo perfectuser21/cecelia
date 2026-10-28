@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse as acorn } from 'acorn';
 import { proveBuildSources, provePublishSources } from '../existing-ops-build-source.js';
-import { buildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 // 独立冻结 Git 样本：保留原始字节，不从被测封套常量重建。
 const fixture = {
   "revision": "dd949d881ff0d760934dbcfb309e3949b8155d1e",
