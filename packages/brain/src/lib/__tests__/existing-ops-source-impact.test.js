@@ -6,7 +6,7 @@ import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import yaml from 'js-yaml';
-import {buildExistingOpsSources} from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 const root=fileURLToPath(new URL('../../../../../',import.meta.url));
 const revision=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
 const paths=execFileSync('git',['ls-tree','-rz','--name-only',revision],{cwd:root,encoding:'utf8'}).split('\0').filter(Boolean);

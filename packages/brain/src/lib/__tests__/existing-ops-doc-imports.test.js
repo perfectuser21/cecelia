@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { setImmediate as nativeSetImmediate } from 'node:timers';
 import { fileURLToPath } from 'node:url';
-import { buildExistingOpsSources } from '../existing-ops-source.js';
+import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const revision = '16a9032b8aed2ab8dfa65cc80b32f0321a76e9bd';
 const prefix = 'packages/brain/scripts/coding-workflow/';
@@ -34,6 +35,20 @@ async function proof({ schema = marker, overrides = {}, missing = [], enabled = 
 const edges = f3 => f3.input_relations.filter(e => e.kind === 'static_import_dependency');
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 describe('固定revision opt-in 文档静态import输入闭包（不执行候选代码）', () => {
+  it('完整文档import暖proof返回前处理已排队原生回调', async () => {
+    const warm = await proof();
+    expect(warm.status, JSON.stringify(warm.gaps)).toBe('verified');
+    let observed = false;
+    const callback = new Promise(resolve => nativeSetImmediate(() => {
+      observed = true;
+      resolve();
+    }));
+    const result = await proof();
+    expect(result.status, JSON.stringify(result.gaps)).toBe('verified');
+    const observedBeforeReturn = observed;
+    await callback;
+    expect(observedBeforeReturn).toBe(true);
+  });
   it('真实selector与whole qaReport前提认领fixture和多跳生产helper并封存字节', async () => {
     const f3 = await proof(); expect(f3.status, JSON.stringify(f3.gaps)).toBe('verified');
     for (const [consumer_path, input_path] of [[test, fixture], [test, report], [report, doc], [doc, helper], [helper, prefix + 'lib/readonly-qa-command.mjs']])
