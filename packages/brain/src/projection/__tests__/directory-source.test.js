@@ -188,6 +188,64 @@ describe('六层目录源映射', () => {
     expect(text(unpinned.properties['样本验收'])).toContain('固定源码未核验');
     expect(unpinned.properties['样本验收'].rich_text[0].text.link).toBeUndefined();
   });
+  it('Activity 物化列未同步时从当前固定合同补承诺、执行者及输入输出，旧版本不得冒用', () => {
+    const data=sample(),a=data.activities[0];
+    Object.assign(a,{promise:null,executor_kind:null,inputs:null,outputs:null,current_definition_version_id:fixtureEntityId(405)});
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,
+      payload:{activity_id:a.id,contract:{promise:'按已批准规则交出真实视频链接',
+        inputs:[{type:'Keyword',fields:['word'],source:'本次任务输入'}],
+        outputs:[{type:'Video',fields:['video_id'],destination:'视频处理队列'}],
+        execution:{primary_kind:'code'}}}};
+    const current=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(current.properties['承诺（FR）'])).toBe('按已批准规则交出真实视频链接');
+    expect(current.properties['谁来执行']).toEqual({select:{name:'代码'}});
+    expect(text(current.properties['输入'])).toBe('Keyword(word)；来源：本次任务输入');
+    expect(text(current.properties['输出'])).toBe('Video(video_id)；去向：视频处理队列');
+    a.definition_version.id=fixtureEntityId(406);
+    const stale=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(stale.properties['承诺（FR）'])).toBe('');
+    expect(stale.properties['谁来执行']).toEqual({select:{name:'未写'}});
+    expect(text(stale.properties['输入'])).toBe('');
+    expect(text(stale.properties['输出'])).toBe('');
+  });
+  it('当前固定合同未列已知缺口时明确显示未列，不编造缺口', () => {
+    const data=sample(),a=data.activities[0];
+    a.current_definition_version_id=fixtureEntityId(407);
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,
+      payload:{activity_id:a.id,contract:{promise:'按批准规则交出结果',known_gaps:[]}}};
+    const row=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(row.properties['还缺什么'])).toContain('合同未列已知缺口');
+  });
+  it('101–104 隔离候选只读门禁核四流程、14 引用、12 Activity 的实际 Notion 投影字段', () => {
+    const keys=['douyin_video_discovery','douyin_video_processing','douyin_comment_scoring','douyin_lead_outreach'];
+    const slots=[[0,1,2],[2,3,4,5,6],[6,7],[8,9,10,11]],commit='a'.repeat(40);
+    const data={areas:[],journeys:[],steps:[],map_nodes:[],
+      workflows:keys.map((key,i)=>({id:fixtureEntityId(500+i),key,name:`获客${101+i}`,status:i===2?'active':'paused',
+        current_definition_version_id:fixtureEntityId(600+i),definition_version:{id:fixtureEntityId(600+i),workflow_id:fixtureEntityId(500+i),
+          payload:{workflow_id:fixtureEntityId(500+i),contract:{known_gaps:[{gap:'Runner 路由仍需核验',task:'bdd9fb75'}]}}}})),
+      activities:Array.from({length:12},(_,i)=>({id:fixtureEntityId(700+i),name:`活动${i}`,activity_key:i===10?'send_dm':`a${i}`,promise:null,executor_kind:null,inputs:null,outputs:null,
+        current_definition_version_id:fixtureEntityId(800+i),definition_version:{id:fixtureEntityId(800+i),activity_id:fixtureEntityId(700+i),
+          source_repo:'perfectuser21/zenithjoy-workspace',source_commit:commit,payload:{activity_id:fixtureEntityId(700+i),contract:{
+            version:'1.0.0',promise:'按批准条件交出可核验结果',inputs:[{type:'Input',fields:['id'],source:'上游活动'}],
+            outputs:[{type:'Output',fields:['id'],destination:'下游活动'}],execution:{primary_kind:'code'},
+            sample_candidates:{index:'services/phone-adb-controller/__tests__/fixtures/leadgen-historical-evidence-index.json',
+              workflow_keys:[keys[0]],activity_key:`a${i}`,owner_labeled:false,current_skill_verified:false},
+            known_gaps:i===10?[{gap:'真实 UI 发送结果尚未接成 send_dm 的硬性 Activity probe',task:'bdd9fb75'}]:[]}}}})),
+      refs:slots.flatMap((indexes,w)=>indexes.map((a,j)=>({workflow_id:fixtureEntityId(500+w),activity_id:fixtureEntityId(700+a),
+        activity_definition_version_id:fixtureEntityId(800+a),slot_key:`slot_${j}`,sequence_no:j+1,active:true}))),
+      ref_versions:Array.from({length:12},(_,i)=>({id:fixtureEntityId(800+i),activity_id:fixtureEntityId(700+i),contract_version:'1.0.0'}))};
+    const rows=api.buildDirectoryRows(data,{});
+    expect(() => api.assertLeadgenStagingProjection(data,rows)).not.toThrow();
+    const missing=structuredClone(data);
+    missing.refs=missing.refs.filter(r=>r.workflow_id!==fixtureEntityId(503));
+    expect(() => api.assertLeadgenStagingProjection(missing,api.buildDirectoryRows(missing,{}))).toThrow(/101–104|引用/);
+    const stale=structuredClone(data);
+    stale.activities[0].definition_version.id=fixtureEntityId(999);
+    expect(() => api.assertLeadgenStagingProjection(stale,api.buildDirectoryRows(stale,{}))).toThrow(/固定合同/);
+    const noHardProbe=structuredClone(data);
+    noHardProbe.activities[10].definition_version.payload.contract.known_gaps=[];
+    expect(() => api.assertLeadgenStagingProjection(noHardProbe,api.buildDirectoryRows(noHardProbe,{}))).toThrow(/send_dm/);
+  });
   it('Activity 当前合同的 known_gaps 显示在还缺什么，包括 104 真实发送硬 probe 缺口', () => {
     const data=sample(),a=data.activities[0];
     a.current_definition_version_id=fixtureEntityId(403);

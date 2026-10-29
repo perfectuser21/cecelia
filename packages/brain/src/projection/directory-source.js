@@ -86,6 +86,20 @@ function currentDefinition(row, kind) {
 }
 const versionEvidence = version => version ? Object.fromEntries(['id','source_repo','source_path','source_commit'].map(k => [k,version[k]])) : null;
 const contractVersion = version => /^\d+\.\d+\.\d+$/.test(version?.payload?.contract?.version ?? '') ? `v${version.payload.contract.version}` : null;
+const missingMaterialized = value => value == null || value === '' || Array.isArray(value) && !value.length || object(value) && !Object.keys(value).length;
+function activityWithPinnedFallback(activity, version) {
+  const contract = version?.payload?.contract;
+  if (!contract) return activity;
+  const primary = contract.execution?.primary_kind;
+  const executor = primary === 'skill' ? 'agent' : ['code','agent'].includes(primary) ? primary : null;
+  return {
+    ...activity,
+    promise: missingMaterialized(activity.promise) ? contract.promise : activity.promise,
+    inputs: missingMaterialized(activity.inputs) ? contract.input_schema ?? contract.inputs : activity.inputs,
+    outputs: missingMaterialized(activity.outputs) ? contract.output_schema ?? contract.outputs : activity.outputs,
+    executor_kind: missingMaterialized(activity.executor_kind) ? executor : activity.executor_kind,
+  };
+}
 const knownGapText = contract => (Array.isArray(contract?.known_gaps) ? contract.known_gaps : [])
   .filter(g => typeof g?.gap === 'string' && g.gap.trim())
   .map(g => `已知缺口：${g.gap}${g.task ? `（任务 ${g.task}）` : ''}`);
@@ -250,12 +264,14 @@ export function buildDirectoryRows(data, config = {}) {
   for (const a of data.activities) {
     const usage = refs.filter(r => r.activity_id === a.id);
     const version = currentDefinition(a, 'activity'), ctx = activityContext(a.id);
+    const cardActivity = activityWithPinnedFallback(a, version);
     const unresolved = (Array.isArray(version?.payload.steps) ? version.payload.steps : []).filter(entry =>
       !data.steps.some(step => step.activity_id === a.id && step.id === entry.step_id && currentStepDefinition(step, a)))
       .map(entry => `Step 登记对不上：${entry.locator?.step_key || entry.contract?.key || 'unknown'}`);
     const knownGaps = knownGapText(version?.payload.contract ?? a.contract);
+    if (version && !knownGaps.length) knownGaps.push('合同未列已知缺口');
     const row = make('activities', a, { '名称': title(a.name),
-      ...buildActivityCardProps(a, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id), [...unresolved,...knownGaps]),
+      ...buildActivityCardProps(cardActivity, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id), [...unresolved,...knownGaps]),
       '裁判结论': rich(judgmentText(latestJudgment.get(a.id))),
       // 发布线生产指针（activity_release_state）：v<版本号> + 是否收敛过；没有指针留空
       '生产版本': rich(releaseText(releases.get(a.id))),
@@ -289,6 +305,71 @@ export function buildDirectoryRows(data, config = {}) {
   }
   const order = Object.keys(DIRECTORY_TABLES);
   return rows.sort((a,b) => order.indexOf(a.layer)-order.indexOf(b.layer) || a.id.localeCompare(b.id));
+}
+
+/** 隔离候选只核 Brain 快照与本地投影结果，不调用 Notion。 */
+export function assertLeadgenStagingProjection(data, rows) {
+  const expected = new Map([
+    ['douyin_video_discovery', 3], ['douyin_video_processing', 5],
+    ['douyin_comment_scoring', 2], ['douyin_lead_outreach', 4],
+  ]);
+  const fail = detail => { throw new Error(`101–104 隔离合同投影未通过：${detail}`); };
+  const richValue = prop => (prop?.rich_text || []).map(part => part.text?.content || '').join('');
+  const byRow = new Map(rows.map(row => [`${row.layer}:${row.id}`, row]));
+  const workflows = (data.workflows || []).filter(w => expected.has(w.key));
+  if (workflows.length !== expected.size || new Set(workflows.map(w => w.key)).size !== expected.size) fail('四条 Workflow 登记不全');
+  const allRefs = [];
+  for (const workflow of workflows) {
+    const refs = (data.refs || []).filter(ref => ref.workflow_id === workflow.id && ref.active);
+    if (refs.length !== expected.get(workflow.key)) fail(`${workflow.key} 引用数量不符`);
+    allRefs.push(...refs);
+    const version = currentDefinition(workflow, 'workflow');
+    if (!version || !knownGapText(version.payload.contract).length) fail(`${workflow.key} 当前固定合同或已知缺口未登记`);
+    const row = byRow.get(`workflows:${workflow.id}`);
+    const status = WORKFLOW_STATUS[workflow.status] ?? '未知';
+    if (!row || row.properties['启用状态']?.select?.name !== status || !row.properties['运行情况']?.select?.name ||
+      !richValue(row.properties['还缺什么']).includes('已知缺口：')) fail(`${workflow.key} Workflow 投影不完整`);
+    const order = richValue(row.properties['Activity 顺序']);
+    if ((order.match(/合同 v\d+\.\d+\.\d+/g) || []).length !== refs.length) fail(`${workflow.key} 引用合同版本未显示`);
+  }
+  const activityIds = new Set(allRefs.map(ref => ref.activity_id));
+  if (allRefs.length !== 14 || activityIds.size !== 12) fail('14 引用 / 12 Activity 映射不符');
+  const activities = new Map((data.activities || []).map(activity => [activity.id, activity]));
+  const refVersions = new Map((data.ref_versions || []).map(version => [version.id, version]));
+  for (const ref of allRefs) {
+    const activity = activities.get(ref.activity_id), pinned = refVersions.get(ref.activity_definition_version_id);
+    if (!activity || !pinned || pinned.activity_id !== activity.id) fail('引用未钉同一 Activity 合同版本');
+  }
+  const outreach = workflows.find(workflow => workflow.key === 'douyin_lead_outreach');
+  const sendDmRef = allRefs.find(ref => ref.workflow_id === outreach.id && activities.get(ref.activity_id)?.activity_key === 'send_dm');
+  const sendDm = activities.get(sendDmRef?.activity_id);
+  const sendDmGaps = knownGapText(currentDefinition(sendDm, 'activity')?.payload.contract);
+  if (!sendDm || !sendDmGaps.some(gap => gap.includes('真实 UI 发送结果') && gap.includes('硬性 Activity probe')))
+    fail('send_dm 真实发送硬性 Activity probe 缺口未登记');
+  for (const id of activityIds) {
+    const activity = activities.get(id), version = currentDefinition(activity, 'activity');
+    const contract = version?.payload.contract, candidate = contract?.sample_candidates;
+    if (!contract || !/^\d+\.\d+\.\d+$/.test(contract.version ?? '') ||
+      typeof contract.promise !== 'string' || !contract.promise.trim() ||
+      contract.execution?.primary_kind !== 'code' ||
+      !Array.isArray(contract.inputs) || !contract.inputs.length || contract.inputs.some(input => !input.source) ||
+      !Array.isArray(contract.outputs) || !contract.outputs.length || contract.outputs.some(output => !output.destination) ||
+      !candidate?.index || candidate.owner_labeled !== false || candidate.current_skill_verified !== false ||
+      version?.source_repo !== 'perfectuser21/zenithjoy-workspace' ||
+      !/^[a-f0-9]{40}$/.test(version?.source_commit ?? '')) fail(`${activity?.activity_key ?? id} 当前固定合同字段不完整`);
+    const row = byRow.get(`activities:${id}`), props = row?.properties;
+    const sample = props?.['样本验收']?.rich_text?.[0]?.text;
+    const expectedLink = `https://github.com/${version.source_repo}/blob/${version.source_commit}/${candidate.index}`;
+    const displayedGaps = richValue(props?.['还缺什么']);
+    const expectedGaps = knownGapText(contract);
+    if (!props || richValue(props['承诺（FR）']) !== contract.promise || props['谁来执行']?.select?.name !== '代码' ||
+      !richValue(props['输入']).includes('来源：') || !richValue(props['输出']).includes('去向：') ||
+      richValue(props['合同版本']) !== `v${contract.version}` || sample?.link?.url !== expectedLink ||
+      !sample.content.includes('业务验收未知') ||
+      (expectedGaps.length ? expectedGaps.some(gap => !displayedGaps.includes(gap)) : !displayedGaps.includes('合同未列已知缺口')))
+      fail(`${activity.activity_key ?? id} Activity Notion 投影不完整`);
+  }
+  return { workflows: workflows.length, refs: allRefs.length, activities: activityIds.size };
 }
 
 /** 单条SQL使用同一数据库快照；复合身份绑定当前版本，旧行无current字段时不取历史。 */
