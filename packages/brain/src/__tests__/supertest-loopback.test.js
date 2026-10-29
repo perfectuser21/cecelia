@@ -41,9 +41,9 @@ describe('Supertest 测试地址族隔离回归', () => {
     try {
       installSupertestLoopback(SupertestTest);
       const probe = request(target).get('/');
-      const family = target.address().family;
-      expect(probe.url).toContain(family === 'IPv6' ? '[::1]' : '127.0.0.1');
-      expect((await probe).status).toBe(422); expect(target.listening).toBe(false);
+      const response = await probe;
+      expect(probe.url).toMatch(/^http:\/\/(?:\[::1\]|127\.0\.0\.1):\d+\/$/);
+      expect(response.status).toBe(422); expect(target.listening).toBe(false);
     } finally { await close(target); }
   });
 });

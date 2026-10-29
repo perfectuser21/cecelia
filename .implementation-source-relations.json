@@ -2572,11 +2572,6 @@
       "owner_path": "packages/brain/src/lib/existing-ops-build-source.js",
       "path": "docs/learnings/cp-10281318-b840-source.md",
       "role": "documentation"
-    },
-    {
-      "owner_path": "packages/brain/src/__tests__/helpers/supertest-loopback.js",
-      "path": "packages/brain/src/__tests__/helpers/supertest-loopback.test.js",
-      "role": "verification"
     }
   ]
 }
