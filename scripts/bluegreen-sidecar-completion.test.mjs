@@ -58,6 +58,7 @@ async function fixture(t, scenario = '') {
       console.log((fallback?'${previousImage}':'${image}')+'|'+JSON.stringify(['cecelia-brain:'+(fallback?'${fallbackVersion}':'${candidateVersion}')])+'|GIT_SHA='+(fallback?'${previousSha}':'${sha}'));process.exit(0);
     }
     if(args[0]==='inspect') {
+      if(scenario==='blue-stuck'&&!args.includes('--format')){console.log('${container}');process.exit(0);}
       if(!exists)process.exit(1);
       const drift=scenario==='drift' && fs.existsSync(root+'/healthy');
       console.log((drift?'${'4'.repeat(64)}':'${container}')+' '+(scenario==='wrong-image'?'${previousImage}':id)+' /cecelia-node-brain true node-brain');process.exit(0);
@@ -164,6 +165,13 @@ test('首升新容器启用 tick 失败：回退旧镜像并恢复旧 tick，发
   assert.ok(f.calls.some(x => x.some(a => a.endsWith('/tick/enable'))));
   const row = JSON.parse(await readFile(join(f.root, `ledger/deployment-${deployment}.json`), 'utf8'));
   assert.equal(row.receipt.outcome, 'recovered');
+});
+test('blue 一直存在时 sidecar 不得提前 compose 或记成功账', async t => {
+  const f = await fixture(t, 'blue-stuck');
+  assert.equal(f.code, 1, f.stdout + f.stderr);
+  assert.ok(!f.calls.some(x => x[0] === 'compose'));
+  assert.ok(f.ledger.pending);
+  assert.deepEqual(f.ledger.successes, []);
 });
 
 // 任务 502f2852：retention_finish 只试一次 → 10-09 三次 pending 卡死部署链约 7 小时。
