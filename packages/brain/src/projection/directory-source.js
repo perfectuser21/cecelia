@@ -55,6 +55,7 @@ export function durationText(ms) {
   return `${(n / 60000).toFixed(1)} 分钟`;
 }
 const STATUS = Object.freeze({ active: '在用', deprecated: '弃用' });
+const WORKFLOW_STATUS = Object.freeze({ active: '启用', paused: '暂停', deprecated: '弃用' });
 const NA = '(未归属)';
 /** 「树位置」：一行文字写全部祖先（部门树全链 + 价值流/能力/流程），不含自己；追不到部门的写「(未归属)」。 */
 const treePath = (chain, names) => rich([...(chain.length ? chain : [NA]), ...names.filter(Boolean)].join(' › '));
@@ -84,6 +85,19 @@ function currentDefinition(row, kind) {
     version[identity] === row.id && version.payload?.[identity] === row.id && object(version.payload.contract) ? version : null;
 }
 const versionEvidence = version => version ? Object.fromEntries(['id','source_repo','source_path','source_commit'].map(k => [k,version[k]])) : null;
+const contractVersion = version => /^\d+\.\d+\.\d+$/.test(version?.payload?.contract?.version ?? '') ? `v${version.payload.contract.version}` : null;
+function implementationText(version) {
+  const bindings = version?.payload?.contract?.implementation_bindings;
+  if (!Array.isArray(bindings) || !bindings.length) return '合同未绑定实现';
+  const skills = bindings.filter(b => b.kind === 'skill').map(b => `Skill ${b.name || b.path || '未命名'}${b.version ? ` ${b.version}` : ''}`);
+  const codeCount = bindings.filter(b => b.kind === 'code').length;
+  return [...skills, ...(codeCount ? [`代码 ${codeCount} 项`] : [])].join('；') || '合同未绑定实现';
+}
+function sampleText(version) {
+  const samples = version?.payload?.contract?.samples;
+  if (!Array.isArray(samples) || !samples.length) return '合同未绑定样本，验收未知';
+  return `合同登记 ${samples.length} 条样本；独立验收未知`;
+}
 function currentStepDefinition(step, activity) {
   const version = currentDefinition(activity, 'activity');
   if (!step.active || !Array.isArray(version?.payload.steps)) return null;
@@ -174,6 +188,7 @@ export function buildDirectoryRows(data, config = {}) {
     }
   }
   const activityNames = new Map(data.activities.map(a => [a.id, a.name]));
+  const refVersions = new Map((data.ref_versions || []).map(v => [v.id, v]));
   // 每个 Activity 最新一条裁判（SQL 已按 activity 取最新；这里再按 judged_at 兜底取最新，防输入乱序）
   const latestJudgment = new Map();
   for (const j of data.judgments || []) {
@@ -190,7 +205,13 @@ export function buildDirectoryRows(data, config = {}) {
     const acts = unique(usage.map(r => ref('activities', r.activity_id))).length;
     const row = make('workflows', w, { '名称': title(w.name),
       // 顺序属于流程↔Activity 引用（共用 Activity 在不同流程里位置不同），只在这里按引用顺序列名字
-      'Activity 顺序': rich(usage.map(r => `${r.sequence_no}. ${activityNames.get(r.activity_id) ?? r.activity_id}`).join('\n')),
+      'Activity 顺序': rich(usage.map(r => {
+        const bound = refVersions.get(r.activity_definition_version_id);
+        const pinned = bound?.activity_id === r.activity_id && /^\d+\.\d+\.\d+$/.test(bound.contract_version ?? '')
+          ? ` · 合同 v${bound.contract_version}` : '';
+        return `${r.sequence_no}. ${activityNames.get(r.activity_id) ?? r.activity_id}${pinned}`;
+      }).join('\n')),
+      '启用状态': select(WORKFLOW_STATUS[w.status] ?? '未知'),
       '运行方式': rich(runModeText(w.form, rt.items)), '运行情况': select(workflowUsageStatus({ ...rt, acts })),
       '最近运行': minuteDate(latest(rt.last_started, rt.last_run)), '7天次数': num(rt.runs7), '7天成功率': maybeNum(rt.success_rate),
       '平均时长': rich(durationText(rt.avg_duration_ms)), '树位置': treePath(ctx.chain, [ctx.names.vs, ctx.names.cap]) }, {
@@ -218,6 +239,9 @@ export function buildDirectoryRows(data, config = {}) {
       '裁判结论': rich(judgmentText(latestJudgment.get(a.id))),
       // 发布线生产指针（activity_release_state）：v<版本号> + 是否收敛过；没有指针留空
       '生产版本': rich(releaseText(releases.get(a.id))),
+      '合同版本': rich(contractVersion(version)),
+      '执行绑定': rich(implementationText(version)),
+      '样本验收': rich(sampleText(version)),
       '树位置': treePath(ctx.chain, [ctx.names.vs, ctx.names.cap, ctx.names.wf]) }, {
       '所属流程': unique(usage.map(r => ref('workflows', r.workflow_id))),
       'Step': data.steps.filter(s => s.activity_id === a.id && s.active).sort((a, b) => a.step_order - b.step_order).map(s => ref('steps', s.id)),
@@ -281,6 +305,9 @@ export async function loadDirectorySource(pool) {
     'uses',COALESCE((SELECT jsonb_agg(jsonb_build_object('activity_id',u.activity_id,'item_name',i.name,'role',u.role) ORDER BY i.name)
       FROM activity_uses u JOIN warehouse_items i ON i.id=u.item_id),'[]'::jsonb),
     'refs',COALESCE((SELECT jsonb_agg(to_jsonb(r)) FROM workflow_activity_refs r),'[]'::jsonb),
+    'ref_versions',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',v.id,'activity_id',v.activity_id,
+      'contract_version',v.payload->'contract'->>'version')) FROM activity_definition_versions v
+      WHERE EXISTS(SELECT 1 FROM workflow_activity_refs r WHERE r.activity_definition_version_id=v.id AND r.active)),'[]'::jsonb),
     'workflow_runtime',COALESCE((SELECT jsonb_agg(jsonb_build_object(
       'workflow_id',w.id,
       'alarms',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id),

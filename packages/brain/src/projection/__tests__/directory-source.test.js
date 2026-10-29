@@ -127,10 +127,10 @@ describe('六层目录源映射', () => {
     expect(api.acceptanceText({}, {})).toBeNull();
     expect(api.acceptanceText({}, {type:'metric',ref:'metrics.a',expect:{op:'>=',ref:'metrics.b'}})).toBe('看指标：metrics.a；结果应 >= 指标 metrics.b');
   });
-  it('Activity 只写 名称/承诺（FR）/输入/输出/谁来执行/还缺什么/树位置；不写 Key、正本、格子、9 项正文列', () => {
+  it('Activity 展示合同版本、绑定和样本状态；不写 Key、正本、格子、9 项正文列', () => {
     const data=sample();Object.assign(data.activities[0],{capability_key:'cap',activity_key:'act',contract_source:'https://github.com/x/y/blob/abc/c.yaml',promise:'承诺一句'});
     const row=api.buildDirectoryRows(data,config).find(r=>r.id===fixtureEntityId(6));
-    expect(Object.keys(row.properties).sort()).toEqual(['Brain ID','名称','承诺（FR）','输入','输出','谁来执行','还缺什么','裁判结论','生产版本','树位置'].sort());
+    expect(Object.keys(row.properties).sort()).toEqual(['Brain ID','名称','承诺（FR）','输入','输出','谁来执行','还缺什么','裁判结论','生产版本','合同版本','执行绑定','样本验收','树位置'].sort());
     expect(text(row.properties['承诺（FR）'])).toBe('承诺一句');
     expect(row.createProperties['名称'].title[0].text.content).toBe('共享活动');
     expect(row.gaps).toEqual([]);
@@ -152,6 +152,24 @@ describe('六层目录源映射', () => {
     data.releases=[{activity_id:fixtureEntityId(6),version_no:5,ever_converged:true}];
     expect(text(api.buildDirectoryRows(data,config).find(r=>r.id===fixtureEntityId(6)).properties['生产版本'])).toBe('v5 · 收敛过');
     expect(api.buildDirectoryRows(sample(),config).find(r=>r.id===fixtureEntityId(6)).properties['生产版本']).toEqual({ rich_text: [] });
+  });
+  it('Workflow 启用状态与近七日运行情况分列，Activity 展示合同版本与执行绑定，不把样本候选说成已验证', () => {
+    const data=sample(),w=data.workflows[0],a=data.activities[0],r=data.refs[0];
+    w.status='paused';data.workflow_runtime=[{workflow_id:w.id,runs7:1,ran7:0,alarms:0}];
+    a.current_definition_version_id=fixtureEntityId(401);
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,
+      payload:{activity_id:a.id,contract:{version:'4.0.0',implementation_bindings:[
+        {kind:'skill',name:'douyin-leadgen-activity-102-qualification',version:'0.2.2'},
+        {kind:'code',path:'services/leadgen.mjs'}]}}};
+    r.activity_definition_version_id=fixtureEntityId(400);
+    data.ref_versions=[{id:r.activity_definition_version_id,activity_id:a.id,contract_version:'3.3.0'}];
+    const rows=api.buildDirectoryRows(data,config),workflow=rows.find(x=>x.id===w.id),activity=rows.find(x=>x.id===a.id);
+    expect(workflow.properties['启用状态']).toEqual({select:{name:'暂停'}});
+    expect(workflow.properties['运行情况']).toEqual({select:{name:'在跑'}});
+    expect(text(workflow.properties['Activity 顺序'])).toBe('1. 共享活动 · 合同 v3.3.0');
+    expect(text(activity.properties['合同版本'])).toBe('v4.0.0');
+    expect(text(activity.properties['执行绑定'])).toContain('douyin-leadgen-activity-102-qualification 0.2.2');
+    expect(text(activity.properties['样本验收'])).toContain('未绑定');
   });
   it('跨Workflow同sequence和slot的引用输入反序仍有相同 Activity 顺序和属性hash', () => {
     const data = sample();
