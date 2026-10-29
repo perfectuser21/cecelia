@@ -198,6 +198,17 @@ describe('六层目录源映射', () => {
     expect(text(activity.properties['还缺什么'])).toContain('任务 bdd9fb75');
     expect(text(activity.properties['样本验收'])).toContain('验收未知');
   });
+  it('Workflow 当前固定合同根层 known_gaps 显示路由与 Runner 缺口，不从运行统计推断已解决', () => {
+    const data=sample(),w=data.workflows[0];
+    w.current_definition_version_id=fixtureEntityId(404);
+    w.definition_version={id:w.current_definition_version_id,workflow_id:w.id,
+      payload:{workflow_id:w.id,contract:{known_gaps:[{gap:'on_status/always_run 路由仍缺 Runner 硬验收',task:'bdd9fb75'}]}}};
+    data.workflow_runtime=[{workflow_id:w.id,runs7:3,ran7:3}];
+    const row=api.buildDirectoryRows(data,config).find(x=>x.id===w.id);
+    expect(text(row.properties['还缺什么'])).toContain('on_status/always_run 路由仍缺 Runner 硬验收');
+    expect(text(row.properties['还缺什么'])).toContain('任务 bdd9fb75');
+    expect(row.properties['运行情况']).toEqual({select:{name:'在跑'}});
+  });
   it('跨Workflow同sequence和slot的引用输入反序仍有相同 Activity 顺序和属性hash', () => {
     const data = sample();
     data.refs = [

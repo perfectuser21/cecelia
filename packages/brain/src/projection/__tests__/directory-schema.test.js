@@ -53,7 +53,7 @@ describe('六层目录字段契约', () => {
     const cols = n => Object.keys(s[n]).filter(k => !['Brain ID', '同步状态'].includes(k)).sort();
     expect(cols('value_streams')).toEqual(['名称', '说明', '所属部门', '能力', '树位置'].sort());
     expect(cols('capabilities')).toEqual(['名称', '说明', '所属价值流', '流程', '状态', '树位置'].sort());
-    expect(cols('workflows')).toEqual(['名称', '所属能力', 'Activity', 'Activity 顺序', '启用状态', '运行方式', '运行情况', '最近运行', '7天次数', '7天成功率', '平均时长', '去留（你填）', '树位置',
+    expect(cols('workflows')).toEqual(['名称', '所属能力', 'Activity', 'Activity 顺序', '还缺什么', '启用状态', '运行方式', '运行情况', '最近运行', '7天次数', '7天成功率', '平均时长', '去留（你填）', '树位置',
       '流程版本','代码版本','执行层','启动入口','7天成功','7天失败次数','7天等待','7天取消','运行中','排队任务','7天重试','任务完成率','统计口径'].sort());
     expect(cols('activities')).toEqual(['名称', '所属流程', 'Step', '承诺（FR）', '输入', '输出', '谁来执行', '还缺什么', '裁判结论', '生产版本', '合同版本', '执行绑定', '样本验收', '树位置'].sort());
     expect(cols('steps')).toEqual(['名称', '所属Activity', '顺序', '做什么', '输入', '输出', '怎么验收', '失败了怎么办', '谁来执行', '还缺什么'].sort());

@@ -86,6 +86,9 @@ function currentDefinition(row, kind) {
 }
 const versionEvidence = version => version ? Object.fromEntries(['id','source_repo','source_path','source_commit'].map(k => [k,version[k]])) : null;
 const contractVersion = version => /^\d+\.\d+\.\d+$/.test(version?.payload?.contract?.version ?? '') ? `v${version.payload.contract.version}` : null;
+const knownGapText = contract => (Array.isArray(contract?.known_gaps) ? contract.known_gaps : [])
+  .filter(g => typeof g?.gap === 'string' && g.gap.trim())
+  .map(g => `已知缺口：${g.gap}${g.task ? `（任务 ${g.task}）` : ''}`);
 function implementationText(version) {
   const contract = version?.payload?.contract;
   const primary = contract?.execution?.primary_kind;
@@ -213,6 +216,7 @@ export function buildDirectoryRows(data, config = {}) {
   for (const w of data.workflows) {
     const usage = refs.filter(r => r.workflow_id === w.id);
     const version = currentDefinition(w, 'workflow'), ctx = capabilityContext(w.capability_id);
+    const workflowGaps = knownGapText(version?.payload.contract);
     const observation = observations.get(w.id);
     const original = runtimeByWorkflow.get(w.id) || {};
     const rt = observation ? { ...original, ...observation.stats, last_started:observation.last_started } : original;
@@ -225,6 +229,7 @@ export function buildDirectoryRows(data, config = {}) {
           ? ` · 合同 v${bound.contract_version}` : '';
         return `${r.sequence_no}. ${activityNames.get(r.activity_id) ?? r.activity_id}${pinned}`;
       }).join('\n')),
+      '还缺什么': rich(workflowGaps.length ? workflowGaps.join('\n') : version ? '合同未列已知缺口' : '当前合同未核验'),
       '启用状态': select(WORKFLOW_STATUS[w.status] ?? '未知'),
       '运行方式': rich(runModeText(w.form, rt.items)), '运行情况': select(workflowUsageStatus({ ...rt, acts })),
       '最近运行': minuteDate(latest(rt.last_started, rt.last_run)), '7天次数': num(rt.runs7), '7天成功率': maybeNum(rt.success_rate),
@@ -248,9 +253,7 @@ export function buildDirectoryRows(data, config = {}) {
     const unresolved = (Array.isArray(version?.payload.steps) ? version.payload.steps : []).filter(entry =>
       !data.steps.some(step => step.activity_id === a.id && step.id === entry.step_id && currentStepDefinition(step, a)))
       .map(entry => `Step 登记对不上：${entry.locator?.step_key || entry.contract?.key || 'unknown'}`);
-    const declaredGaps = version?.payload.contract?.known_gaps ?? a.contract?.known_gaps;
-    const knownGaps = (Array.isArray(declaredGaps) ? declaredGaps : []).filter(g => typeof g?.gap === 'string' && g.gap.trim())
-      .map(g => `已知缺口：${g.gap}${g.task ? `（任务 ${g.task}）` : ''}`);
+    const knownGaps = knownGapText(version?.payload.contract ?? a.contract);
     const row = make('activities', a, { '名称': title(a.name),
       ...buildActivityCardProps(a, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id), [...unresolved,...knownGaps]),
       '裁判结论': rich(judgmentText(latestJudgment.get(a.id))),
