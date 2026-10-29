@@ -129,6 +129,26 @@ test('tick 被有意封停（决策 751f73be）的 degraded：sidecar 健康确�
   assert.ok(f.calls.some(x => x.some(a => a.endsWith('/drain-cancel'))), '健康确认后必须恢复 drain');
 });
 
+test('首升旧部署进程已消失：独立 sidecar 在新容器取消 drain 后启用 tick 并读回', async t => {
+  const f = await fixture(t, 'bootstrap-success');
+  assert.equal(f.code, 0, f.stdout + f.stderr);
+  assert.equal(f.ledger.successes.length, 1);
+  const execs = f.calls.filter(x => x[0] === 'exec');
+  const cancel = execs.findIndex(x => x.some(a => a.endsWith('/drain-cancel')));
+  const enable = execs.findIndex(x => x.some(a => a.endsWith('/tick/enable')));
+  const status = execs.findIndex((x, i) => i > enable && x.some(a => a.endsWith('/tick/status')));
+  assert.ok(cancel >= 0 && enable > cancel && status > enable, 'sidecar 必须自己取消、启用并读回');
+});
+test('首升新容器启用 tick 失败：回退旧镜像并恢复旧 tick，发布仍报失败', async t => {
+  const f = await fixture(t, 'bootstrap-enable-fail');
+  assert.equal(f.code, 1, f.stdout + f.stderr);
+  assert.deepEqual(f.ledger.successes, []);
+  assert.ok(f.calls.some(x => x[0] === 'compose' && x.includes('node-brain')));
+  assert.ok(f.calls.some(x => x.some(a => a.endsWith('/tick/enable'))));
+  const row = JSON.parse(await readFile(join(f.root, `ledger/deployment-${deployment}.json`), 'utf8'));
+  assert.equal(row.receipt.outcome, 'recovered');
+});
+
 // 任务 502f2852：retention_finish 只试一次 → 10-09 三次 pending 卡死部署链约 7 小时。
 test('finish第一次失败、第二次成功：有界重试后正常收账，失败尝试的退出码与stderr落sidecar日志，不告警',async t=>{
   const f = await fixture(t, 'finish-flaky');
