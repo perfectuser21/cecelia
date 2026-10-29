@@ -55,4 +55,14 @@ describe('drain waits for real execution and callbacks', () => {
     expect(status.remaining).toBe(1);
     expect(status.pending_callbacks).toBe(1);
   });
+
+  it('holds dispatch after drain completion until the deployment explicitly cancels', async () => {
+    await mod.drainTick({ holdForSwap: true });
+    const status = await mod.getDrainStatus();
+    expect(status).toMatchObject({ drain_completed: true, draining: true, remaining: 0 });
+    expect(mod.isDraining()).toBe(true);
+    expect((await mod.getDrainStatus()).draining).toBe(true);
+    await mod.cancelDrain();
+    expect(mod.isDraining()).toBe(false);
+  });
 });
