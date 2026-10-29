@@ -188,6 +188,16 @@ describe('六层目录源映射', () => {
     expect(text(unpinned.properties['样本验收'])).toContain('固定源码未核验');
     expect(unpinned.properties['样本验收'].rich_text[0].text.link).toBeUndefined();
   });
+  it('Activity 当前合同的 known_gaps 显示在还缺什么，包括 104 真实发送硬 probe 缺口', () => {
+    const data=sample(),a=data.activities[0];
+    a.current_definition_version_id=fixtureEntityId(403);
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,
+      payload:{activity_id:a.id,contract:{known_gaps:[{gap:'真实 UI 发送结果尚未接成 send_dm 硬性 Activity probe；不能凭 workflow pass 宣称已发送',task:'bdd9fb75'}]}}};
+    const activity=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(activity.properties['还缺什么'])).toContain('已知缺口：真实 UI 发送结果尚未接成 send_dm 硬性 Activity probe');
+    expect(text(activity.properties['还缺什么'])).toContain('任务 bdd9fb75');
+    expect(text(activity.properties['样本验收'])).toContain('验收未知');
+  });
   it('跨Workflow同sequence和slot的引用输入反序仍有相同 Activity 顺序和属性hash', () => {
     const data = sample();
     data.refs = [
