@@ -161,4 +161,27 @@ describe('one-time .84 drain bootstrap', () => {
     expect((await auditBootstrapExecution(db, async () => 'unknown', input,
       { confirmDevice, confirmBridge })).safe).toBe(false);
   });
+
+  it('limits concurrent run probes so an audit does not exhaust the production DB pool', async () => {
+    const runs = Array.from({ length: 30 }, (_, i) => ({ id: `run-${i}`, run_id: `run-${i}`,
+      task_id: `task-${i}`, task_status: 'failed', executor_kind: 'bridge', status: 'running' }));
+    const db = { query: async (sql) => {
+      if (sql.includes('current_database()')) return { rows: [{ database: 'cecelia' }] };
+      if (sql.includes('FROM decisions')) return { rows: [{ status: 'active', made_by: 'user',
+        decision: `${oldImage} ${newImage} ${oldSha} ${newSha} 1.445.84 1.445.85` }] };
+      if (sql.includes('FROM task_runs')) return { rows: runs };
+      if (sql.includes('FROM callback_queue') || sql.includes('FROM harness_attempts')) return { rows: [{ count: 0 }] };
+      return { rows: [] };
+    } };
+    let active = 0; let maxActive = 0;
+    const probe = async () => {
+      active += 1; maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      active -= 1;
+      return maxActive > 12 ? 'unknown' : 'dead';
+    };
+    const input = { approval_decision_id: decisionId, ...actual };
+    expect((await auditBootstrapExecution(db, probe, input)).safe).toBe(true);
+    expect(maxActive).toBeLessThanOrEqual(12);
+  });
 });
