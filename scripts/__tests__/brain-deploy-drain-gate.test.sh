@@ -12,7 +12,9 @@ curl() {
   case " $* " in
     *"/api/brain/tick/status"*) [[ "${STATUS_UP:-1}" == 1 ]] ;;
     *"/api/brain/tick/drain-status"*) printf '%s' "${DRAIN_STATUS:-}" ;;
-    *"/api/brain/tick/drain"*) [[ "${DRAIN_POST_OK:-1}" == 1 ]] && printf '{"draining":true,"remaining":1}' ;;
+    *"/api/brain/tick/drain"*)
+      [[ " $* " == *'"hold_for_swap":true'* ]] || return 1
+      [[ "${DRAIN_POST_OK:-1}" == 1 ]] && printf '{"draining":true,"remaining":1}' ;;
   esac
 }
 
@@ -26,6 +28,7 @@ expect_reject() {
 STATUS_UP=1 DRAIN_POST_OK=0 expect_reject 'drain activation failure'
 STATUS_UP=1 DRAIN_POST_OK=1 DRAIN_STATUS='{"draining":true,"remaining":1}' expect_reject 'timeout with live execution'
 STATUS_UP=1 DRAIN_POST_OK=1 DRAIN_STATUS='{"draining":false,"remaining":0}' expect_reject 'zero without completion proof'
+STATUS_UP=1 DRAIN_POST_OK=1 DRAIN_STATUS='{"draining":false,"drain_completed":true,"remaining":0}' expect_reject 'legacy API releases dispatch before swap'
 STATUS_UP=1 DRAIN_POST_OK=1 DRAIN_STATUS='not-json' expect_reject 'unparseable status'
 STATUS_UP=0 DRAIN_POST_OK=1 expect_reject 'existing Brain unavailable'
 
@@ -34,6 +37,6 @@ drain_before_swap false >/dev/null
 echo 'PASS: first deployment without old Brain remains allowed'
 
 STATUS_UP=1
-DRAIN_STATUS='{"draining":false,"drain_completed":true,"remaining":0}'
+DRAIN_STATUS='{"draining":true,"hold_for_swap":true,"drain_completed":true,"remaining":0}'
 drain_before_swap true >/dev/null
 echo 'PASS: confirmed drain completion allows swap'

@@ -58,6 +58,8 @@ describe('drain waits for real execution and callbacks', () => {
 
   it('holds dispatch after drain completion until the deployment explicitly cancels', async () => {
     await mod.drainTick({ holdForSwap: true });
+    const persist = mockQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO working_memory'));
+    expect(persist[1][1].hold_for_swap).toBe(true);
     const status = await mod.getDrainStatus();
     expect(status).toMatchObject({ drain_completed: true, draining: true, remaining: 0 });
     expect(mod.isDraining()).toBe(true);
