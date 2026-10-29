@@ -171,6 +171,14 @@ describe('六层目录源映射', () => {
     expect(text(activity.properties['执行绑定'])).toContain('douyin-leadgen-activity-102-qualification 0.2.2');
     expect(text(activity.properties['样本验收'])).toContain('未绑定');
   });
+  it('Activity 合同中的历史样本候选明确显示为候选，不推断当前版本已通过验收', () => {
+    const data=sample(),a=data.activities[0];
+    a.current_definition_version_id=fixtureEntityId(402);
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,
+      payload:{activity_id:a.id,contract:{version:'4.0.0',sample_candidates:[{ref:'run:old101'}]}}};
+    const activity=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(activity.properties['样本验收'])).toBe('合同登记 1 条历史样本候选；业务验收未知');
+  });
   it('跨Workflow同sequence和slot的引用输入反序仍有相同 Activity 顺序和属性hash', () => {
     const data = sample();
     data.refs = [

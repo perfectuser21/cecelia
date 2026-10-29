@@ -67,6 +67,16 @@ describe('Activity 卡片列', () => {
     expect(humanize({ budget: { heartbeat_s: 60, max_duration_s: 1800 }, locks: ['device:x', 'acct:y'] })).toBe('budget：heartbeat_s 60，max_duration_s 1800；locks：device:x、acct:y');
   });
 
+  it('Activity 输入显示来源、输出显示去向，旧合同对象仍按原格式显示', () => {
+    const p = buildActivityCardProps({ ...full,
+      inputs: [{ type: 'Video', fields: ['video_id'], source: '101 持久化视频队列' }],
+      outputs: [{ type: 'Lead', fields: ['id'], destination: '线索待审队列' }],
+    }, allGreen, uses);
+    expect(text(p['输入'])).toBe('Video(video_id)；来源：101 持久化视频队列');
+    expect(text(p['输出'])).toBe('Lead(id)；去向：线索待审队列');
+    expect(humanize({ type: 'Video', fields: ['video_id'] })).toBe('Video(video_id)');
+  });
+
   it('Step 卡片：做什么、失败了怎么办；没写不编造', () => {
     expect(text(buildStepCardProps({ action: 'adb shell', on_fail: 'retry:3' })['做什么'])).toBe('adb shell');
     expect(buildStepCardProps({})['失败了怎么办'].rich_text).toEqual([]);

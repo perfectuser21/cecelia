@@ -94,9 +94,11 @@ function implementationText(version) {
   return [...skills, ...(codeCount ? [`代码 ${codeCount} 项`] : [])].join('；') || '合同未绑定实现';
 }
 function sampleText(version) {
-  const samples = version?.payload?.contract?.samples;
-  if (!Array.isArray(samples) || !samples.length) return '合同未绑定样本，验收未知';
-  return `合同登记 ${samples.length} 条样本；独立验收未知`;
+  const contract = version?.payload?.contract;
+  const samples = contract?.samples, candidates = contract?.sample_candidates;
+  if (Array.isArray(samples) && samples.length) return `合同登记 ${samples.length} 条样本；独立验收未知`;
+  if (Array.isArray(candidates) && candidates.length) return `合同登记 ${candidates.length} 条历史样本候选；业务验收未知`;
+  return '合同未绑定样本，验收未知';
 }
 function currentStepDefinition(step, activity) {
   const version = currentDefinition(activity, 'activity');
