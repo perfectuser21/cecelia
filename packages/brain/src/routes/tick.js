@@ -68,7 +68,7 @@ router.post('/tick/disable', async (req, res) => {
  */
 router.post('/tick/drain', async (req, res) => {
   try {
-    const result = await drainTick();
+    const result = await drainTick({ holdForSwap: req.body?.hold_for_swap === true });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Failed to start drain', details: err.message });

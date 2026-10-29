@@ -11,10 +11,12 @@
  */
 
 import pool from './db.js';
+import { assessTaskLiveness } from './executor-contracts.js';
 
 // ─── 模块状态（私有）─────────────────────────────────────────────────────
 let _draining = false;
 let _drainStartedAt = null;
+let _holdForSwap = false;
 let _postDrainCooldown = false;
 let _postDrainCooldownTimer = null;
 
@@ -24,6 +26,37 @@ let _postDrainCooldownTimer = null;
 // Brain 启动时靠 restoreDrainState() 读回内存态。auto-complete / cancelDrain
 // 时同步清库，避免"已经不需要 drain 了"却在下次重启时被误恢复。）
 const DRAIN_STATE_KEY = 'tick_draining';
+
+// Task status is a work ledger, not a worker lease. Headed sessions can stay
+// in_progress for days without using the Brain process being replaced.
+async function collectDrainBlockers() {
+  const { rows } = await pool.query(`
+    SELECT t.id, t.title, t.started_at, t.updated_at, t.task_type,
+           t.executor_kind, t.payload, t.result,
+           l.lease_until, l.released_at
+      FROM tasks t
+      LEFT JOIN task_leases l ON l.task_id = t.id
+     WHERE t.status = 'in_progress'
+       AND t.executor_kind IS DISTINCT FROM 'headed-session'
+     ORDER BY t.started_at
+  `);
+  const checked = await Promise.all(rows
+    .filter((task) => task.executor_kind !== 'headed-session')
+    .map(async (task) => {
+      const liveness = await assessTaskLiveness(task, { pool });
+      const liveLease = !task.released_at && task.lease_until && new Date(task.lease_until) > new Date();
+      return { task, liveness, blocking: liveLease || liveness.verdict !== 'dead' };
+    }));
+  const tasks = checked.filter((item) => item.blocking).map(({ task, liveness }) => ({
+    id: task.id, title: task.title, started_at: task.started_at,
+    liveness: liveness.verdict,
+  }));
+  const callbacks = await pool.query(
+    'SELECT COUNT(*)::int AS pending FROM callback_queue WHERE processed_at IS NULL'
+  );
+  const pendingCallbacks = Number(callbacks.rows[0]?.pending ?? 0);
+  return { tasks, pendingCallbacks, remaining: tasks.length + pendingCallbacks };
+}
 
 // restore 时的过期上限（Issue cc28d1af 根因D，2026-08-04 一夜 4 次实证）：
 // 部署链 swap 后的无条件 drain-cancel 会在端口切换窗口 curl 静默失败，残留的
@@ -36,7 +69,7 @@ async function persistDrainState() {
     INSERT INTO working_memory (key, value_json, updated_at)
     VALUES ($1, $2, NOW())
     ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-  `, [DRAIN_STATE_KEY, { draining: true, drain_started_at: _drainStartedAt }]);
+  `, [DRAIN_STATE_KEY, { draining: true, drain_started_at: _drainStartedAt, hold_for_swap: _holdForSwap }]);
 }
 
 async function clearPersistedDrainState() {
@@ -68,6 +101,7 @@ export async function restoreDrainState() {
 
   _draining = true;
   _drainStartedAt = saved.drain_started_at;
+  _holdForSwap = saved.hold_for_swap === true;
 }
 
 // ─── Getter API（供 tick.js 等 caller 读取状态）────────────────────────
@@ -80,6 +114,7 @@ export function isDraining() {
     log(`[tick] Drain expired at runtime (started_at=${_drainStartedAt}, >${Math.round(DRAIN_RESTORE_MAX_AGE_MS / 60000)}min) — auto-cancelled, resuming dispatch`);
     _draining = false;
     _drainStartedAt = null;
+    _holdForSwap = false;
     clearPersistedDrainState().catch((err) => log(`[tick] clear stale drain state failed: ${err.message}`));
   }
   return _draining;
@@ -110,31 +145,31 @@ function log(...args) {
  * When all in_progress tasks complete (checked via getDrainStatus), enter
  * post-drain cooldown (dispatch rate → 1 for 5 minutes).
  */
-export async function drainTick() {
+export async function drainTick({ holdForSwap = false } = {}) {
   if (_draining) {
+    if (holdForSwap && !_holdForSwap) {
+      _holdForSwap = true;
+      await persistDrainState();
+    }
     return { success: true, already_draining: true, draining: true, drain_started_at: _drainStartedAt };
   }
 
   _draining = true;
   _drainStartedAt = new Date().toISOString();
+  _holdForSwap = holdForSwap === true;
   log(`[tick] Drain mode activated at ${_drainStartedAt}`);
   await persistDrainState();
 
   // Count in_progress tasks for initial status (no auto-complete on activation)
-  const inProgressResult = await pool.query(
-    "SELECT id, title, started_at FROM tasks WHERE status = 'in_progress' ORDER BY started_at"
-  );
+  const blockers = await collectDrainBlockers();
 
   return {
     success: true,
     draining: true,
     drain_started_at: _drainStartedAt,
-    in_progress_tasks: inProgressResult.rows.map((t) => ({
-      id: t.id,
-      title: t.title,
-      started_at: t.started_at,
-    })),
-    remaining: inProgressResult.rows.length,
+    in_progress_tasks: blockers.tasks,
+    pending_callbacks: blockers.pendingCallbacks,
+    remaining: blockers.remaining,
   };
 }
 
@@ -147,20 +182,29 @@ export async function getDrainStatus() {
     return { draining: false, in_progress_tasks: [], remaining: 0 };
   }
 
-  const inProgressResult = await pool.query(
-    "SELECT id, title, status, started_at FROM tasks WHERE status = 'in_progress' ORDER BY started_at"
-  );
-
-  const tasks = inProgressResult.rows;
+  const blockers = await collectDrainBlockers();
+  const tasks = blockers.tasks;
 
   // Auto-complete drain: if no in_progress tasks remain, enter post-drain cooldown
   // (NOT disableTick — that would kill the entire tick loop, causing system-wide stop)
-  if (tasks.length === 0) {
+  if (blockers.remaining === 0) {
+    if (_holdForSwap) {
+      return {
+        draining: true,
+        drain_completed: true,
+        hold_for_swap: true,
+        drain_started_at: _drainStartedAt,
+        in_progress_tasks: [],
+        pending_callbacks: 0,
+        remaining: 0,
+      };
+    }
     log('[tick] Drain complete — no in_progress tasks remain, entering post-drain cooldown (dispatch rate → 1)');
     const drainEnd = new Date().toISOString();
     const startedAt = _drainStartedAt;
     _draining = false;
     _drainStartedAt = null;
+    _holdForSwap = false;
     await clearPersistedDrainState();
 
     // Set post-drain cooldown: dispatch rate limited to 1 for 5 minutes
@@ -180,6 +224,7 @@ export async function getDrainStatus() {
       drain_started_at: startedAt,
       drain_ended_at: drainEnd,
       in_progress_tasks: [],
+      pending_callbacks: 0,
       remaining: 0,
     };
   }
@@ -187,12 +232,9 @@ export async function getDrainStatus() {
   return {
     draining: true,
     drain_started_at: _drainStartedAt,
-    in_progress_tasks: tasks.map((t) => ({
-      id: t.id,
-      title: t.title,
-      started_at: t.started_at,
-    })),
-    remaining: tasks.length,
+    in_progress_tasks: tasks,
+    pending_callbacks: blockers.pendingCallbacks,
+    remaining: blockers.remaining,
   };
 }
 
@@ -210,6 +252,7 @@ export async function cancelDrain() {
   const wasDraining = _draining;
   _draining = false;
   _drainStartedAt = null;
+  _holdForSwap = false;
   await clearPersistedDrainState();
 
   if (wasDraining) {
@@ -226,6 +269,7 @@ export function _getDrainState() {
 export function _resetDrainState() {
   _draining = false;
   _drainStartedAt = null;
+  _holdForSwap = false;
   _postDrainCooldown = false;
   if (_postDrainCooldownTimer) {
     clearTimeout(_postDrainCooldownTimer);

@@ -67,4 +67,19 @@ describe('drain waits for real execution and callbacks', () => {
     await mod.cancelDrain();
     expect(mod.isDraining()).toBe(false);
   });
+
+  it('restores the deployment hold after a Brain restart', async () => {
+    const startedAt = new Date().toISOString();
+    mockQuery.mockImplementation(async (sql) => {
+      if (sql.includes('SELECT value_json FROM working_memory')) {
+        return { rows: [{ value_json: { draining: true, drain_started_at: startedAt, hold_for_swap: true } }] };
+      }
+      if (sql.includes('FROM tasks')) return { rows: [] };
+      if (sql.includes('FROM callback_queue')) return { rows: [{ pending: 0 }] };
+      return { rows: [] };
+    });
+    await mod.restoreDrainState();
+    expect((await mod.getDrainStatus()).draining).toBe(true);
+    expect(mod.isDraining()).toBe(true);
+  });
 });

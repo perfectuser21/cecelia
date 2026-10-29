@@ -166,8 +166,7 @@ activate_cecelia_map_manifest() {
 
 # ── drain_before_swap：swap 前停派发 + 等回调收尾 ────────────────────────────
 # 调用 POST /api/brain/tick/drain → 轮询 drain-status.remaining === 0
-# 超时（DRAIN_TIMEOUT_SECS，默认 120s）→ 告警 + 继续（non-fatal，不阻止部署）
-# Brain 未在线时静默跳过（首次部署/迁移场景无需 drain）
+# 超时或状态不可确认 → 终止切换；只有确认没有旧实例才跳过。
 DRAIN_TIMEOUT_SECS="${DRAIN_TIMEOUT_SECS:-120}"
 
 # drain-cancel 带重试（Issue cc28d1af 根因D 第3/4次复发，2026-08-04）：
@@ -189,6 +188,7 @@ drain_cancel_with_retry() {
 
 drain_before_swap() {
     local brain_url="http://localhost:5221"
+    local old_instance_exists="${1:-false}"
 
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] POST ${brain_url}/api/brain/tick/drain  # 进入 drain 模式"
@@ -196,29 +196,38 @@ drain_before_swap() {
         return 0
     fi
 
-    # Brain 不在线则跳过（首次部署无旧实例）
+    # 首次部署无旧实例可跳过；已有旧实例但 API 不通时不能证明执行已排空。
     if ! curl -sf --max-time 3 "${brain_url}/api/brain/tick/status" >/dev/null 2>&1; then
-        echo "  [drain] Brain 未响应，跳过 drain（首次部署或离线场景）"
-        return 0
+        if [[ "$old_instance_exists" == false ]]; then
+            echo "  [drain] 无旧实例响应，首次部署跳过 drain"
+            return 0
+        fi
+        echo "  [drain] FAIL: 旧 Brain 存在但状态接口不可达，停止 swap" >&2
+        return 1
     fi
 
     echo "  [drain] 发送 drain 请求..."
     local drain_resp
-    drain_resp=$(curl -sf --max-time 10 -X POST "${brain_url}/api/brain/tick/drain" 2>&1) || {
-        echo "  [drain] drain 请求失败（non-fatal），继续部署"
-        return 0
+    drain_resp=$(curl -sf --max-time 25 -X POST -H 'Content-Type: application/json' \
+        -d '{"hold_for_swap":true}' "${brain_url}/api/brain/tick/drain" 2>&1) || {
+        echo "  [drain] FAIL: drain 请求失败，停止 swap" >&2
+        return 1
     }
+    if ! node -e 'const x=JSON.parse(process.argv[1]); if(x.draining!==true) process.exit(1)' "$drain_resp" 2>/dev/null; then
+        echo "  [drain] FAIL: drain 未确认激活，停止 swap" >&2
+        return 1
+    fi
     echo "  [drain] drain 已激活: $(echo "$drain_resp" | grep -o '"remaining":[0-9]*' | head -1 || echo 'ok')"
 
     # 轮询等待 in_progress 归零
     local elapsed=0 remaining=-1
     while [[ "$elapsed" -lt "$DRAIN_TIMEOUT_SECS" ]]; do
         local status_resp
-        status_resp=$(curl -sf --max-time 5 "${brain_url}/api/brain/tick/drain-status" 2>/dev/null || echo "")
+        status_resp=$(curl -sf --max-time 20 "${brain_url}/api/brain/tick/drain-status" 2>/dev/null || echo "")
         if [[ -n "$status_resp" ]]; then
-            remaining=$(echo "$status_resp" | grep -o '"remaining":[0-9]*' | grep -o '[0-9]*' | head -1 || echo "-1")
-            if [[ "$remaining" == "0" ]]; then
-                echo "  [drain] ✅ in_progress 已归零（${elapsed}s），可安全 swap"
+            remaining=$(node -e 'const x=JSON.parse(process.argv[1]); if(!Number.isSafeInteger(x.remaining)||x.remaining<0) process.exit(1); process.stdout.write(String(x.remaining))' "$status_resp" 2>/dev/null || echo "-1")
+            if [[ "$remaining" == "0" ]] && node -e 'const x=JSON.parse(process.argv[1]); if(x.drain_completed!==true||x.draining!==true||x.hold_for_swap!==true) process.exit(1)' "$status_resp" 2>/dev/null; then
+                echo "  [drain] ✅ 执行与回调已排空（${elapsed}s），可安全 swap"
                 return 0
             fi
             echo "  [drain] 等待中... remaining=${remaining} (${elapsed}s/${DRAIN_TIMEOUT_SECS}s)"
@@ -227,11 +236,10 @@ drain_before_swap() {
         elapsed=$((elapsed + 5))
     done
 
-    # 超时：告警但继续
-    local warn_msg="brain-deploy drain 超时 ${DRAIN_TIMEOUT_SECS}s，remaining=${remaining}，强制继续 swap——可能有回调丢失，请检查 in_progress 任务"
-    echo "  [drain] ⚠️  $warn_msg"
+    local warn_msg="brain-deploy drain 未确认排空（${DRAIN_TIMEOUT_SECS}s，remaining=${remaining}），停止 swap，请核验活跃执行与回调"
+    echo "  [drain] FAIL: $warn_msg" >&2
     send_bark "$warn_msg"
-    return 0  # non-fatal，继续部署
+    return 1
 }
 
 # ── 参数解析 ─────────────────────────────────────────────────────────────────
@@ -462,13 +470,16 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
         # dry-run：断言 drain → bluegreen_swap 的正确调用顺序
         echo "  [7/8] drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
-        drain_before_swap
+        drain_before_swap false
         echo ""
         echo "  [dry-run] bluegreen_swap TARGET_VERSION=${VERSION} BLUE=cecelia-node-brain GREEN=cecelia-node-brain-green PORT=5233"
     elif docker inspect cecelia-node-brain >/dev/null 2>&1; then
         # blue 在跑 → swap 前先 drain（停派发 + 等 in_progress 回调收尾）
         echo "  [7/8] drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
-        drain_before_swap
+        if ! drain_before_swap true; then
+            drain_cancel_with_retry
+            exit 1
+        fi
         echo ""
 
         # blue 是 bridge 网络（docker ps 显示 0.0.0.0:5221->5221），green 用 bridge + -p 5233:5221，
@@ -596,7 +607,10 @@ if [[ "$DEPLOY_MODE" == "launchd" ]]; then
     echo "[7/8] Restarting Brain via launchd (kickstart -k)..."
     # swap 前：drain 旧 Brain（停派发 + 等 in_progress 回调收尾）
     echo "  drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
-    drain_before_swap
+    if ! drain_before_swap false; then
+        drain_cancel_with_retry
+        exit 1
+    fi
     echo ""
 
     if [[ "$DRY_RUN" == true ]]; then
