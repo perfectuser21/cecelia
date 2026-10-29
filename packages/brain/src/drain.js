@@ -147,11 +147,8 @@ function log(...args) {
  */
 export async function drainTick({ holdForSwap = false } = {}) {
   if (_draining) {
-    if (holdForSwap && !_holdForSwap) {
-      _holdForSwap = true;
-      await persistDrainState();
-    }
-    return { success: true, already_draining: true, draining: true, drain_started_at: _drainStartedAt };
+    return { success: true, already_draining: true, draining: true,
+      hold_for_swap: _holdForSwap, drain_started_at: _drainStartedAt };
   }
 
   _draining = true;
@@ -166,6 +163,7 @@ export async function drainTick({ holdForSwap = false } = {}) {
   return {
     success: true,
     draining: true,
+    hold_for_swap: _holdForSwap,
     drain_started_at: _drainStartedAt,
     in_progress_tasks: blockers.tasks,
     pending_callbacks: blockers.pendingCallbacks,

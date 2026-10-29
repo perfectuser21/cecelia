@@ -168,6 +168,7 @@ activate_cecelia_map_manifest() {
 # 调用 POST /api/brain/tick/drain → 轮询 drain-status.remaining === 0
 # 超时或状态不可确认 → 终止切换；只有确认没有旧实例才跳过。
 DRAIN_TIMEOUT_SECS="${DRAIN_TIMEOUT_SECS:-120}"
+DRAIN_STARTED_BY_DEPLOY=false
 
 # drain-cancel 带重试（Issue cc28d1af 根因D 第3/4次复发，2026-08-04）：
 # 单发 curl -sf ||true 会在 swap 端口切换窗口静默失败 → drain 残留被新容器恢复
@@ -189,6 +190,7 @@ drain_cancel_with_retry() {
 drain_before_swap() {
     local brain_url="http://localhost:5221"
     local old_instance_exists="${1:-false}"
+    DRAIN_STARTED_BY_DEPLOY=false
 
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] POST ${brain_url}/api/brain/tick/drain  # 进入 drain 模式"
@@ -213,10 +215,11 @@ drain_before_swap() {
         echo "  [drain] FAIL: drain 请求失败，停止 swap" >&2
         return 1
     }
-    if ! node -e 'const x=JSON.parse(process.argv[1]); if(x.draining!==true) process.exit(1)' "$drain_resp" 2>/dev/null; then
+    if ! node -e 'const x=JSON.parse(process.argv[1]); if(x.draining!==true||x.hold_for_swap!==true||x.already_draining===true) process.exit(1)' "$drain_resp" 2>/dev/null; then
         echo "  [drain] FAIL: drain 未确认激活，停止 swap" >&2
         return 1
     fi
+    DRAIN_STARTED_BY_DEPLOY=true
     echo "  [drain] drain 已激活: $(echo "$drain_resp" | grep -o '"remaining":[0-9]*' | head -1 || echo 'ok')"
 
     # 轮询等待 in_progress 归零
@@ -477,7 +480,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         # blue 在跑 → swap 前先 drain（停派发 + 等 in_progress 回调收尾）
         echo "  [7/8] drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
         if ! drain_before_swap true; then
-            drain_cancel_with_retry
+            if [[ "$DRAIN_STARTED_BY_DEPLOY" == true ]]; then drain_cancel_with_retry; fi
             exit 1
         fi
         echo ""
@@ -491,7 +494,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         if ! GREEN_RUN_ARGS=$(bluegreen_green_run_args cecelia-node-brain "$GREEN_ENV_FILE"); then
             rm -f "$GREEN_ENV_FILE"
             echo "[FAIL] 读取旧 Brain 容器 env/卷失败，终止部署"
-            drain_cancel_with_retry
+            if [[ "$DRAIN_STARTED_BY_DEPLOY" == true ]]; then drain_cancel_with_retry; fi
             exit 1
         fi
         export GREEN_RUN_ARGS
@@ -504,7 +507,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
             echo "[FAIL] green canary 未通过，已保留旧生产容器(5221 不受影响)，终止部署"
             # blue 仍在运行且已进入 drain 模式 → 恢复正常派发
             echo "  [drain] green 未通过，恢复旧 Brain 派发..."
-            drain_cancel_with_retry
+            if [[ "$DRAIN_STARTED_BY_DEPLOY" == true ]]; then drain_cancel_with_retry; fi
             exit 1
         fi
         rm -f "$GREEN_ENV_FILE"
@@ -608,7 +611,7 @@ if [[ "$DEPLOY_MODE" == "launchd" ]]; then
     # swap 前：drain 旧 Brain（停派发 + 等 in_progress 回调收尾）
     echo "  drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
     if ! drain_before_swap false; then
-        drain_cancel_with_retry
+        if [[ "$DRAIN_STARTED_BY_DEPLOY" == true ]]; then drain_cancel_with_retry; fi
         exit 1
     fi
     echo ""
@@ -656,7 +659,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     # 恢复 draining → 派发永久瘫痪（0729 16:48 / 0730 10:21 两次实证，均由合并PR自动部署触发）。
     # 部署已收尾，pre-swap 的 drain 使命已结束，新实例不应继承——best-effort 取消。
     echo "  [drain] swap 成功，取消 pre-swap drain（新实例不继承排水状态）..."
-    drain_cancel_with_retry
+    if [[ "$DRAIN_STARTED_BY_DEPLOY" == true ]]; then drain_cancel_with_retry; fi
 
     # S6: FR-05 SHA 回读断言（Gate3 C-05）
     # 部署完成后读 /health.git_sha 与 EXPECTED_SHA 对比，不等则 ROLLBACK exit 1
