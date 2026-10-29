@@ -244,6 +244,12 @@ const B_STAGING_HASHES = {...B_QA_HASHES,
 const B_RECOVERY_STAGING_HASHES = {...B_RECOVERY_QA_HASHES,
  'existing-ops-runtime-source.js':B_STAGING_HASHES['existing-ops-runtime-source.js'],
 };
+const B_QA_PROJECTION_HASHES = {...B_QA_HASHES,
+ 'existing-ops-runtime-source.js':'0e752971a8ac4371e3838ba4ed3297a5fffef2f62008dd9da42f31aacbf8dc1f',
+};
+const B_RECOVERY_QA_PROJECTION_HASHES = {...B_RECOVERY_QA_HASHES,
+ 'existing-ops-runtime-source.js':B_QA_PROJECTION_HASHES['existing-ops-runtime-source.js'],
+};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -261,8 +267,9 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const isQa=runtimeHash===QA_HASHES['existing-ops-runtime-source.js'];
   const isRecovery=typeof build==='string'&&hash(build,parse,shape)===B_RECOVERY_QA_HASHES['existing-ops-build-source.js'];
   const isStaging=runtimeHash===B_STAGING_HASHES['existing-ops-runtime-source.js'];
-  if(isRecovery&&!isQa&&!isStaging)return null;
-  const selected=isRecovery?(isStaging?B_RECOVERY_STAGING_HASHES:B_RECOVERY_QA_HASHES):isB?(isStaging?B_STAGING_HASHES:isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
+  const isProjection=runtimeHash===B_QA_PROJECTION_HASHES['existing-ops-runtime-source.js'];
+  if(isRecovery&&!isQa&&!isStaging&&!isProjection)return null;
+  const selected=isRecovery?(isProjection?B_RECOVERY_QA_PROJECTION_HASHES:isStaging?B_RECOVERY_STAGING_HASHES:B_RECOVERY_QA_HASHES):isB?(isProjection?B_QA_PROJECTION_HASHES:isStaging?B_STAGING_HASHES:isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
    :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(selected)){
