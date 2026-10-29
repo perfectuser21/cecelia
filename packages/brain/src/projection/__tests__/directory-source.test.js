@@ -171,13 +171,21 @@ describe('六层目录源映射', () => {
     expect(text(activity.properties['执行绑定'])).toContain('douyin-leadgen-activity-102-qualification 0.2.2');
     expect(text(activity.properties['样本验收'])).toContain('未绑定');
   });
-  it('Activity 合同中的历史样本候选明确显示为候选，不推断当前版本已通过验收', () => {
+  it('Activity 合同中的历史样本候选显示固定提交源码链接，不推断当前版本已通过验收', () => {
     const data=sample(),a=data.activities[0];
     a.current_definition_version_id=fixtureEntityId(402);
-    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,
-      payload:{activity_id:a.id,contract:{version:'4.0.0',sample_candidates:[{ref:'run:old101'}]}}};
+    const commit='a'.repeat(40),index='services/phone-adb-controller/__tests__/fixtures/leadgen-historical-evidence-index.json';
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,source_repo:'perfectuser21/zenithjoy-workspace',source_commit:commit,
+      payload:{activity_id:a.id,contract:{version:'4.0.0',sample_candidates:{index,workflow_keys:['douyin_lead_outreach'],
+        activity_key:'send_dm',owner_labeled:false,current_skill_verified:false}}}};
     const activity=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
-    expect(text(activity.properties['样本验收'])).toBe('合同登记 1 条历史样本候选；业务验收未知');
+    expect(text(activity.properties['样本验收'])).toBe('合同登记历史样本候选；业务验收未知 · 查看固定源码索引');
+    expect(activity.properties['样本验收'].rich_text[0].text.link.url)
+      .toBe(`https://github.com/perfectuser21/zenithjoy-workspace/blob/${commit}/${index}`);
+    a.definition_version.source_commit='main';
+    const unpinned=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(unpinned.properties['样本验收'])).toContain('固定源码未核验');
+    expect(unpinned.properties['样本验收'].rich_text[0].text.link).toBeUndefined();
   });
   it('跨Workflow同sequence和slot的引用输入反序仍有相同 Activity 顺序和属性hash', () => {
     const data = sample();
