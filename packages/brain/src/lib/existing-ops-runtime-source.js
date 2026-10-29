@@ -445,7 +445,9 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
  }
  requireProof(routeHash===ROUTE_AST_SHA||budget,'isolated_staging_route_unproven');
  if(budget)await collectSettlementSources({read,requireProof,relations,revision,route,parse});
- const contractProjection=stagingHash(await read('scripts/staging-verify.sh'))==='4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba';for(const path of ['scripts/brain-build.sh','packages/brain/src/db-config.js',...(contractProjection?['packages/brain/src/projection/directory-source.js']:[])])await read(path);
+ const verifySource=await read('scripts/staging-verify.sh');
+ const contractProjection=stagingHash(verifySource)==='4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba';
+ for(const path of ['scripts/brain-build.sh','packages/brain/src/db-config.js',...(contractProjection?['packages/brain/src/projection/directory-source.js']:[])])await read(path);
  for(const[consumer_path,input_path,kind]of [
   ['.github/workflows/auto-staging-deploy.yml','packages/brain/src/routes/ops.js','reviewed_staging_deploy_request'],
   ['.github/workflows/auto-staging-deploy.yml','scripts/wait-for-staging.sh','reviewed_staging_receipt_wait'],
@@ -455,7 +457,8 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
   ['scripts/brain-deploy.sh','scripts/lib/brain-staging.sh','bash_source_call'],
   ['scripts/lib/brain-staging.sh','scripts/staging-verify.sh','isolated_candidate_verification'],
   ['scripts/lib/brain-staging.sh','packages/brain/src/migrate.js','isolated_candidate_migration'],
-  ['scripts/staging-verify.sh','packages/brain/src/db-config.js','candidate_database_readback'],...(contractProjection?[['scripts/staging-verify.sh','packages/brain/src/projection/directory-source.js','candidate_contract_projection_readback']]:[]),
+  ['scripts/staging-verify.sh','packages/brain/src/db-config.js','candidate_database_readback'],
+  ...(contractProjection?[['scripts/staging-verify.sh','packages/brain/src/projection/directory-source.js','candidate_contract_projection_readback']]:[]),
  ])relations.push({consumer_path,input_path,kind,revision});
 }
 

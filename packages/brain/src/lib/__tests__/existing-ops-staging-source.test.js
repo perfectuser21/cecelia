@@ -90,9 +90,10 @@ describe('staging 正式调用链的固定来源，不声明部署成功', () =>
   it('真实 main workflow 请求、真实 route 执行和顶层 source 都必须成为来源边', async () => {
     const result = await build();
     expect(result.status, JSON.stringify(result.gaps)).toBe('verified');
-    for (const path of [workflow, route, script, helper, verify, wait, deploy, buildScript, dbConfig]) expect(result.bindings).toContainEqual(expect.objectContaining({ path, revision, status: 'verified' }));
+    for (const path of [workflow, route, script, helper, verify, wait, deploy, buildScript, dbConfig, directorySource]) expect(result.bindings).toContainEqual(expect.objectContaining({ path, revision, status: 'verified' }));
     for (const [consumer_path, input_path, kind] of [[workflow, route, 'reviewed_staging_deploy_request'],
-      [route, script, 'reviewed_staging_script_exec'], [script, helper, 'bash_source_call'], [deploy, helper, 'bash_source_call'], [helper, verify, 'isolated_candidate_verification'], [workflow, wait, 'reviewed_staging_receipt_wait']])
+      [route, script, 'reviewed_staging_script_exec'], [script, helper, 'bash_source_call'], [deploy, helper, 'bash_source_call'], [helper, verify, 'isolated_candidate_verification'],
+      [verify, directorySource, 'candidate_contract_projection_readback'], [workflow, wait, 'reviewed_staging_receipt_wait']])
       expect(result.input_relations).toContainEqual({ consumer_path, input_path, kind, revision });
     expect(result.definition_scope).toBe('consumer_evidence');
   });
@@ -111,7 +112,7 @@ describe('staging 正式调用链的固定来源，不声明部署成功', () =>
       expect(result.bindings.some(b => b.path === script || b.path === workflow)).toBe(false);
     }
   });
-  it.each([workflow, script, helper, verify, wait, deploy, buildScript, dbConfig])('新协议固定输入 %s 不可读必须 UNKNOWN 且无部分绑定', async missing => {
+  it.each([workflow, script, helper, verify, wait, deploy, buildScript, dbConfig, directorySource])('新协议固定输入 %s 不可读必须 UNKNOWN 且无部分绑定', async missing => {
     const result = await build({ missing });
     expect(result.status).toBe('unknown');
     expect(result.bindings).toEqual([]);
@@ -135,6 +136,7 @@ describe('staging 正式调用链的固定来源，不声明部署成功', () =>
     ['source 死分支', script, text => text.replace('source "$SCRIPT_DIR/lib/brain-staging.sh"', 'if false; then source "$SCRIPT_DIR/lib/brain-staging.sh"; fi')],
     ['candidate helper 无执行', script, text => text.replace('stage_candidate "$EXPECTED_SHA"','echo stage_candidate "$EXPECTED_SHA"')],
     ['验证改为不执行', helper, text => text.replace('bash "$SCRIPT_DIR/staging-verify.sh"','echo bash "$SCRIPT_DIR/staging-verify.sh"')],
+    ['合同投影断言改为不执行', verify, text => text.replace('assertLeadgenStagingProjection(source,buildDirectoryRows(source,{}))','{workflows:4,refs:14,activities:12}')],
     ['生产在验证前迁移', deploy, text => text.replace('stage_candidate "$EXPECTED_SHA"','echo stage_candidate "$EXPECTED_SHA"')],
     ['source 之前退出', script, text => text.replace('source "$SCRIPT_DIR/lib/brain-staging.sh"', 'exit 0\nsource "$SCRIPT_DIR/lib/brain-staging.sh"')],
   ])('%s 不可冒充真实消费', async (_name, path, mutate) => {
