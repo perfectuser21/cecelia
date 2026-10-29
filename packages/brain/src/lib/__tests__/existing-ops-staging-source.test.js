@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'acorn';
 import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
@@ -18,11 +19,31 @@ const wait = 'scripts/wait-for-staging.sh';
 const deploy = 'scripts/brain-deploy.sh';
 const buildScript = 'scripts/brain-build.sh';
 const dbConfig = 'packages/brain/src/db-config.js';
+const directorySource = 'packages/brain/src/projection/directory-source.js';
+const LEADGEN_VERIFY_SHA = '4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba';
+const leadgenVerifyBlock = String.raw`projection=$(docker exec "$STAGING_CONTAINER" node --input-type=module -e '
+ import pg from "pg";
+ import {DB_DEFAULTS} from "./src/db-config.js";
+ import {loadDirectorySource,buildDirectoryRows,assertLeadgenStagingProjection} from "./src/projection/directory-source.js";
+ if(DB_DEFAULTS.host!=="stage-db"||DB_DEFAULTS.database!=="cecelia_staging")throw Error("候选目录合同查询不在隔离库");
+ const pool=new pg.Pool({...DB_DEFAULTS,query_timeout:120000});
+ try {
+   const source=await loadDirectorySource(pool);
+   process.stdout.write(JSON.stringify(assertLeadgenStagingProjection(source,buildDirectoryRows(source,{}))));
+ } finally { await pool.end(); }
+')
+printf '%s' "$projection" | node -e '
+ const d=JSON.parse(require("fs").readFileSync(0,"utf8"));
+ if(d.workflows!==4||d.refs!==14||d.activities!==12)throw Error("候选 101–104 合同投影读回数量不符");
+'
+printf 'STAGING_LEADGEN_PROJECTION_OK %s\n' "$projection"
+`;
 const cache = new Map();
 const read = path => {
   if (!cache.has(path)) cache.set(path, git('show', `${revision}:${path}`));
   return cache.get(path);
 };
+const leadgenVerify = () => read(verify).replace("echo 'STAGING_OK", `${leadgenVerifyBlock}echo 'STAGING_OK`);
 function wrapRoute(text, wrap) {
   const entry = parse(text, { ecmaVersion: 'latest', sourceType: 'module' }).body.find(n => n.type === 'ExpressionStatement'
     && n.expression?.callee?.object?.name === 'router' && n.expression.callee.property?.name === 'post' && n.expression.arguments[0]?.value === '/deploy');
@@ -44,6 +65,28 @@ async function build({ patch = {}, marker = 2, missing } = {}) {
 }
 
 describe('staging 正式调用链的固定来源，不声明部署成功', () => {
+  it('预注册的获客预发脚本完整字节与真实读边，旧脚本仍保持原来源', async () => {
+    const future = leadgenVerify();
+    expect(createHash('sha256').update(future).digest('hex')).toBe(LEADGEN_VERIFY_SHA);
+    const before = await build();
+    expect(before.status, JSON.stringify(before.gaps)).toBe('verified');
+    expect(before.bindings.some(b => b.path === directorySource)).toBe(false);
+    const after = await build({ patch: { [verify]: future } });
+    expect(after.status, JSON.stringify(after.gaps)).toBe('verified');
+    expect(after.bindings).toContainEqual(expect.objectContaining({ path: directorySource, revision, status: 'verified' }));
+    expect(after.input_relations).toContainEqual({ consumer_path: verify, input_path: directorySource,
+      kind: 'candidate_contract_projection_readback', revision });
+  });
+  it('获客新脚本缺目录来源或改变合同断言时 UNKNOWN，不保留部分绑定', async () => {
+    const future = leadgenVerify();
+    for (const result of [
+      await build({ patch: { [verify]: future }, missing: directorySource }),
+      await build({ patch: { [verify]: future.replace('assertLeadgenStagingProjection(source,buildDirectoryRows(source,{}))', '{workflows:4,refs:14,activities:12}') } }),
+    ]) {
+      expect(result.status).toBe('unknown');
+      expect(result.bindings).toEqual([]);
+    }
+  });
   it('真实 main workflow 请求、真实 route 执行和顶层 source 都必须成为来源边', async () => {
     const result = await build();
     expect(result.status, JSON.stringify(result.gaps)).toBe('verified');

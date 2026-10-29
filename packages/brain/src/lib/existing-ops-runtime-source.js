@@ -326,7 +326,7 @@ const REVIEWED_FILES={
   ".github/workflows/auto-staging-deploy.yml": "65406abb24f3ef49fcef89b4a6f32163fb6b555fe35254e84ca66b910f7fde67",
   "scripts/staging-deploy.sh": "e8c35ccbe3eb599619c2f94d87d80c309f9694eacdd920ece6afffb3c3484a34",
   "scripts/lib/brain-staging.sh": ["57697254e538f75b6a99e276e0b3d95405eb29f95c6a01686f5fd66dd5227089", "66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170"],
-  "scripts/staging-verify.sh": "7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925",
+  "scripts/staging-verify.sh": ["7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925", "4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba"],
   "scripts/wait-for-staging.sh": "feed4d74afc960f4c6ce73b27c63cf2249aef8cd5b17c9dea10199e3ab1251c0",
   "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e"]
 };
@@ -335,7 +335,7 @@ const BUDGET_STAGING_FILES={
   ".github/workflows/auto-staging-deploy.yml": "d9ef17f05464a0bee54bc78a9caae30439dbafda499f5a48d8832bb8ce2ffb6e",
   "scripts/staging-deploy.sh": "e8c35ccbe3eb599619c2f94d87d80c309f9694eacdd920ece6afffb3c3484a34",
   "scripts/lib/brain-staging.sh": ["66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170", "0adad6c3b8f8e3f398fb7621af31876a60f31a9303346d14fac55e5401f01b00"],
-  "scripts/staging-verify.sh": "7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925",
+  "scripts/staging-verify.sh": ["7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925", "4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba"],
   "scripts/wait-for-staging.sh": "6ca3e437f2583ce77e0ac916958a726ad0c884637d032e7b76003700a69b2467",
   "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e"]
 };
@@ -445,7 +445,7 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
  }
  requireProof(routeHash===ROUTE_AST_SHA||budget,'isolated_staging_route_unproven');
  if(budget)await collectSettlementSources({read,requireProof,relations,revision,route,parse});
- for(const path of ['scripts/brain-build.sh','packages/brain/src/db-config.js'])await read(path);
+ const contractProjection=stagingHash(await read('scripts/staging-verify.sh'))==='4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba';for(const path of ['scripts/brain-build.sh','packages/brain/src/db-config.js',...(contractProjection?['packages/brain/src/projection/directory-source.js']:[])])await read(path);
  for(const[consumer_path,input_path,kind]of [
   ['.github/workflows/auto-staging-deploy.yml','packages/brain/src/routes/ops.js','reviewed_staging_deploy_request'],
   ['.github/workflows/auto-staging-deploy.yml','scripts/wait-for-staging.sh','reviewed_staging_receipt_wait'],
@@ -455,7 +455,7 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
   ['scripts/brain-deploy.sh','scripts/lib/brain-staging.sh','bash_source_call'],
   ['scripts/lib/brain-staging.sh','scripts/staging-verify.sh','isolated_candidate_verification'],
   ['scripts/lib/brain-staging.sh','packages/brain/src/migrate.js','isolated_candidate_migration'],
-  ['scripts/staging-verify.sh','packages/brain/src/db-config.js','candidate_database_readback'],
+  ['scripts/staging-verify.sh','packages/brain/src/db-config.js','candidate_database_readback'],...(contractProjection?[['scripts/staging-verify.sh','packages/brain/src/projection/directory-source.js','candidate_contract_projection_readback']]:[]),
  ])relations.push({consumer_path,input_path,kind,revision});
 }
 
