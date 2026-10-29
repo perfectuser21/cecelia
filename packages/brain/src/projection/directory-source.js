@@ -93,12 +93,21 @@ function implementationText(version) {
   const codeCount = bindings.filter(b => b.kind === 'code').length;
   return [...skills, ...(codeCount ? [`代码 ${codeCount} 项`] : [])].join('；') || '合同未绑定实现';
 }
-function sampleText(version) {
+function sampleProps(version) {
   const contract = version?.payload?.contract;
   const samples = contract?.samples, candidates = contract?.sample_candidates;
-  if (Array.isArray(samples) && samples.length) return `合同登记 ${samples.length} 条样本；独立验收未知`;
-  if (Array.isArray(candidates) && candidates.length) return `合同登记 ${candidates.length} 条历史样本候选；业务验收未知`;
-  return '合同未绑定样本，验收未知';
+  if (Array.isArray(samples) && samples.length) return rich(`合同登记 ${samples.length} 条样本；独立验收未知`);
+  if (object(candidates) && typeof candidates.index === 'string') {
+    const label = '合同登记历史样本候选；业务验收未知';
+    const repo = version?.source_repo, commit = version?.source_commit, path = candidates.index;
+    const fixed = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo || '') && /^[a-f0-9]{40}$/.test(commit || '') &&
+      /^[A-Za-z0-9._/-]+$/.test(path) && path.split('/').every(part => part && part !== '.' && part !== '..');
+    if (!fixed) return rich(`${label}（固定源码未核验）`);
+    const url = `https://github.com/${repo}/blob/${commit}/${path}`;
+    return {rich_text:[{text:{content:`${label} · 查看固定源码索引`,link:{url}}}]};
+  }
+  if (Array.isArray(candidates) && candidates.length) return rich(`合同登记 ${candidates.length} 条历史样本候选；业务验收未知`);
+  return rich('合同未绑定样本，验收未知');
 }
 function currentStepDefinition(step, activity) {
   const version = currentDefinition(activity, 'activity');
@@ -243,7 +252,7 @@ export function buildDirectoryRows(data, config = {}) {
       '生产版本': rich(releaseText(releases.get(a.id))),
       '合同版本': rich(contractVersion(version)),
       '执行绑定': rich(implementationText(version)),
-      '样本验收': rich(sampleText(version)),
+      '样本验收': sampleProps(version),
       '树位置': treePath(ctx.chain, [ctx.names.vs, ctx.names.cap, ctx.names.wf]) }, {
       '所属流程': unique(usage.map(r => ref('workflows', r.workflow_id))),
       'Step': data.steps.filter(s => s.activity_id === a.id && s.active).sort((a, b) => a.step_order - b.step_order).map(s => ref('steps', s.id)),
