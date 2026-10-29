@@ -283,6 +283,12 @@ export function registerReviewedAGuardTests({ BRAIN_ROOT, findClaudeInvocations 
  const legacyBase=()=>new Map(files.map(f=>[f,execFileSync('git',['show','6e9076aab2002e301304256b4936e2790f9de8e7:packages/brain/src/lib/'+path.basename(f)],{cwd:BRAIN_ROOT,encoding:'utf8'})]));
  const scan=(s,f=data)=>findClaudeInvocations(s.get(f),{file:f,sources:s});
  describe('A封套精确只读闭包及执行防复活',()=>{
+  it('获客预发来源兼容完整只读组合通过，未知 runtime 仍拒绝',()=>{
+   const current=base(),runtime=path.join(root,'existing-ops-runtime-source.js');
+   expect(scan(current)).toEqual([]);
+   const changed=base();changed.set(runtime,changed.get(runtime)+'\nexport const unknownStagingSource=true;');
+   expect(scan(changed).some(h=>h.rule==='E1')).toBe(true);
+  });
   it('旧main完整13成员仍可审，新runtime缺新增前置不能借旧闭包',()=>{
    const s=legacyBase(),runtime=path.join(root,'existing-ops-runtime-source.js'),helper=path.join(root,'existing-ops-us-compose-source.js');
    s.set(runtime,execFileSync('git',['show','f4bf6aceb7f28e9d39944bf9bd0fb70a340f3439:packages/brain/src/lib/existing-ops-runtime-source.js'],{encoding:'utf8'}));s.delete(helper);
