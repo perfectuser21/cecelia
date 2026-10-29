@@ -8,12 +8,14 @@ eval "$(sed -n '/^drain_cancel_with_retry() {/,/^}/p' "$DEPLOY")"
 DRY_RUN=false
 DRAIN_TIMEOUT_SECS=1
 DRAIN_POST_RESP='{"draining":true,"hold_for_swap":true,"remaining":1}'
+STATUS_BODY='{"draining":false}'
+DRAIN_CANCEL_RESP='{"success":true}'
 send_bark() { :; }
 sleep() { :; }
 curl() {
   case " $* " in
-    *"/api/brain/tick/status"*) [[ "${STATUS_UP:-1}" == 1 ]] && printf '%s' "${STATUS_BODY:-{\"draining\":false}}" ;;
-    *"/api/brain/tick/drain-cancel"*) [[ "${DRAIN_CANCEL_OK:-1}" == 1 ]] && printf '%s' "${DRAIN_CANCEL_RESP:-{\"success\":true}}" ;;
+    *"/api/brain/tick/status"*) [[ "${STATUS_UP:-1}" == 1 ]] && printf '%s' "$STATUS_BODY" ;;
+    *"/api/brain/tick/drain-cancel"*) [[ "${DRAIN_CANCEL_OK:-1}" == 1 ]] && printf '%s' "$DRAIN_CANCEL_RESP" ;;
     *"/api/brain/tick/drain-status"*) printf '%s' "${DRAIN_STATUS:-}" ;;
     *"/api/brain/tick/drain"*)
       [[ " $* " == *'"hold_for_swap":true'* ]] || return 1

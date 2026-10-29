@@ -188,20 +188,26 @@ DRAIN_TIMEOUT_SECS="${DRAIN_TIMEOUT_SECS:-120}"
 DRAIN_STARTED_BY_DEPLOY=false
 
 # drain-cancel 带重试（Issue cc28d1af 根因D 第3/4次复发，2026-08-04）：
-# 单发 curl -sf ||true 会在 swap 端口切换窗口静默失败 → drain 残留被新容器恢复
-# → 派发瘫痪。重试 5 次×5s 跨过切换窗口；全败也不阻塞部署（drain.js restore
-# 过期自愈是最终兜底）。
+# 单发请求会在 swap 端口切换窗口静默失败。只有 API 确认成功且读回
+# draining=false 才算恢复；五次全败则保留失败证据，禁止宣告发布成功。
 drain_cancel_with_retry() {
-    local attempt
+    local attempt response status
     for attempt in 1 2 3 4 5; do
-        if curl -sf --max-time 5 -X POST "http://localhost:5221/api/brain/tick/drain-cancel" >/dev/null 2>&1; then
-            echo "  [drain] drain-cancel 成功（第 ${attempt} 次尝试）"
-            return 0
+        if response=$(curl -q -sf --max-time 5 --max-filesize 262144 -X POST \
+            "http://localhost:5221/api/brain/tick/drain-cancel" 2>/dev/null) \
+            && node -e 'const x=JSON.parse(process.argv[1]); if(x.success!==true) process.exit(1)' "$response" 2>/dev/null; then
+            status=$(curl -q -sf --max-time 5 --max-filesize 262144 \
+                "http://localhost:5221/api/brain/tick/status" 2>/dev/null || true)
+            if node -e 'const x=JSON.parse(process.argv[1]); if(x.draining!==false) process.exit(1)' "$status" 2>/dev/null; then
+                echo "  [drain] drain-cancel 已读回 draining=false（第 ${attempt} 次尝试）"
+                return 0
+            fi
         fi
         sleep 5
     done
-    echo "  [drain] WARN: drain-cancel 5 次均失败——依赖 Brain 启动时的过期自愈兜底（restoreDrainState 15min 上限）"
-    return 0
+    echo "  [drain] FAIL: drain-cancel 五次均未确认，旧 Brain 可能仍停派发" >&2
+    send_bark "brain-deploy drain-cancel 五次未确认，旧 Brain 可能仍停派发；发布判失败"
+    return 1
 }
 
 drain_before_swap() {
