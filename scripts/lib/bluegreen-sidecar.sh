@@ -28,6 +28,7 @@ BARK_TOKEN="${BARK_TOKEN:-}"
 source "$DEPLOY_ROOT/scripts/lib/brain-image-retention.sh"
 # 告警 URL 编码：纯 bash（sidecar 跑在 Brain 镜像里，无 jq/python3）
 source "$DEPLOY_ROOT/scripts/lib/url-encode.sh"
+source "$DEPLOY_ROOT/scripts/lib/brain-bootstrap-sidecar.sh"
 # 收尾使用既有 Docker socket 进入固定 Brain 容器；不依赖 bridge→宿主端口。
 EXPECTED_SHA="${EXPECTED_SHA:?EXPECTED_SHA 必填}"
 [[ "$BRAIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
@@ -61,6 +62,18 @@ _sidecar_docker() {
       size+=data.length;if(size>262144)process.exit(1);text+=data.toString();
     });
     process.stdin.on("end",()=>process.stdout.write(text));'
+}
+
+bootstrap_sidecar_audit() {
+  _sidecar_same_target || return 1
+  local output report
+  output=$(timeout -k 2 60 docker exec -i -e BOOTSTRAP_AUDIT_CLI=1 \
+    -e "BOOTSTRAP_ACTUAL_JSON=$BRAIN_BOOTSTRAP_BINDING_JSON" \
+    "$TARGET_CONTAINER" node --input-type=module \
+    < "$DEPLOY_ROOT/scripts/lib/brain-bootstrap-audit.mjs") || return 1
+  report=$(printf '%s' "$output" | tail -1)
+  node -e 'const x=JSON.parse(process.argv[1]); if(x.safe!==true) process.exit(1)' "$report" || return 1
+  _sidecar_same_target
 }
 
 # 镜像身份在 compose 前冻结；仅输出非敏感 GIT_SHA，不读取或打印其它环境值。
@@ -221,11 +234,13 @@ if BRAIN_VERSION="$BRAIN_VERSION" ENV_REGION="$ENV_REGION" \
     docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$DEPLOY_ROOT/.env.docker" \
       -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
   echo "[sidecar] ✅ compose up 成功 v${BRAIN_VERSION}"
-
-  cancel_drain_after_up success || exit 1
-  retention_finish success || { _retention_finish_failed success; exit 1; }
-
-  exit 0
+  if cancel_drain_after_up success && bootstrap_sidecar_restore_tick success; then
+    retention_finish success || { _retention_finish_failed success; exit 1; }
+    exit 0
+  fi
+  PRIMARY_EXIT=1
+  _sidecar_log "[bootstrap-restore-fail] primary_identity_or_tick_unconfirmed brain_version=${BRAIN_VERSION}"
+  _sidecar_bark "🚨 Brain v${BRAIN_VERSION} 首升 tick 恢复未读回，执行 blue-fallback 回退"
 else
   PRIMARY_EXIT=$?
 fi
@@ -243,9 +258,15 @@ if CECELIA_RELEASE_IMAGE= BRAIN_VERSION=blue-fallback ENV_REGION="$ENV_REGION" \
   _sidecar_log "[sidecar-partial-fail] primary_exit=${PRIMARY_EXIT} brain_version=${BRAIN_VERSION} recovered=blue-fallback"
 
   cancel_drain_after_up recovered || exit 1
+  bootstrap_sidecar_restore_tick recovered || {
+    _sidecar_log "[bootstrap-restore-fail] fallback_tick_unconfirmed brain_version=${BRAIN_VERSION}"
+    _sidecar_bark "🚨 blue-fallback 已恢复但 tick 未确认开启，请立即检查 Brain"
+    exit 1
+  }
   retention_finish recovered || { _retention_finish_failed recovered; exit 1; }
 
-  exit 0  # 5221 已恢复，sidecar 整体视为成功
+  [[ "${BRAIN_BOOTSTRAP_RESTORE_TICK:-false}" != true ]] || exit 1
+  exit 0  # 非首升路径沿用原有 fallback 成功退出语义
 else
   FALLBACK_EXIT=$?
   echo "[sidecar] ❌ blue-fallback 也失败 exit=${FALLBACK_EXIT}！5221 宕机！需人工介入！"

@@ -305,10 +305,22 @@ bluegreen_swap() {
     docker rm -f "$sidecar_name" >/dev/null 2>&1 || true  # 清理上次残留
 
     # ── 打 blue-fallback 快照（sidecar compose up 失败时回退用）──────────────
-    # 在任何 rm -f 之前完成；tag 存在即可，不阻塞部署
+    # 在任何 rm -f blue 之前完成。首升的旧 tick 被持久封停，回退
+    # 必须有精确旧镜像；普通发布沿用原 best-effort 语义。
     local blue_img
     blue_img=$(docker inspect "$blue" --format '{{.Image}}' 2>/dev/null || true)
-    if [[ -n "$blue_img" ]]; then
+    if [[ "${BOOTSTRAP_TICK_DISABLED_BY_DEPLOY:-false}" == true ]]; then
+      local fallback_img=""
+      if [[ ! "$blue_img" =~ ^sha256:[a-f0-9]{64}$ ]] \
+        || ! docker tag "$blue_img" cecelia-brain:blue-fallback \
+        || ! fallback_img=$(docker image inspect cecelia-brain:blue-fallback --format '{{.Id}}') \
+        || [[ "$fallback_img" != "$blue_img" ]]; then
+        echo '[bluegreen] FAIL: bootstrap rollback image unavailable，保留 blue'
+        bluegreen_guard_blue "$blue"
+        return 1
+      fi
+      echo "[bluegreen] blue-fallback 已固定：${blue_img:0:20}..."
+    elif [[ -n "$blue_img" ]]; then
       docker tag "$blue_img" "cecelia-brain:blue-fallback" 2>/dev/null || true
       echo "[bluegreen] blue-fallback 已 tag: ${blue_img:0:20}..."
     fi
@@ -343,6 +355,8 @@ bluegreen_swap() {
         -e "BRAIN_VERSION=${version}" \
         -e "CECELIA_RELEASE_IMAGE=${CECELIA_RELEASE_IMAGE:-}" \
         -e "EXPECTED_SHA=${expected_sha}" \
+        -e "BRAIN_BOOTSTRAP_RESTORE_TICK=${BOOTSTRAP_TICK_DISABLED_BY_DEPLOY:-false}" \
+        -e "BRAIN_BOOTSTRAP_BINDING_JSON=${BOOTSTRAP_BINDING_JSON:-}" \
         -e "ENV_REGION=${env_region}" \
         -e "DEPLOY_ROOT=${root_dir}" \
         -e "CECELIA_INTERNAL_ENV_FILE=${CECELIA_INTERNAL_ENV_FILE}" \
