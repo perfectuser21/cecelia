@@ -10,3 +10,33 @@ it('读取共享固定合同只核对依赖，不写合同列和步骤或删除�
  await syncAssemblyActivity(db,{activityId:'a',contract:{steps:[{key:'read'}]},source:{repo:'org/repo',path:'contract.json'},readOnly:true,strict:true,synchronizeSteps:true});
  expect(db.query).not.toHaveBeenCalled();
 });
+it('登记合同的承诺随合同列写入；旧合同未声明承诺时保留原值',async()=>{
+ const columns=['inputs','outputs','preconditions','invariants','nfr','failure','readback','promise','executor_kind'];
+ const writes=[];
+ const db={query:vi.fn(async(sql,params)=>{
+  if(sql.includes('information_schema.columns'))return {rows:columns.map(column_name=>({column_name}))};
+  if(sql.startsWith('UPDATE activities SET'))writes.push({sql,params});
+  return {rows:[]};
+ })};
+ const base={activityId:'a',source:{repo:'org/repo',path:'contract.yaml'}};
+ await syncAssemblyActivity(db,{...base,contract:{promise:'每条视频完成持久化并能读回'}});
+ await syncAssemblyActivity(db,{...base,contract:{}});
+ expect(writes).toHaveLength(2);
+ expect(writes[0].sql).toMatch(/promise\s*=\s*CASE WHEN/);
+ expect(writes[0].params.slice(8,10)).toEqual([true,'每条视频完成持久化并能读回']);
+ expect(writes[1].params.slice(8,10)).toEqual([false,null]);
+});
+it('正式合同主执行者写入 activities.executor_kind；旧合同未声明时保留原值',async()=>{
+ const columns=['inputs','outputs','preconditions','invariants','nfr','failure','readback','promise','executor_kind'],writes=[];
+ const db={query:vi.fn(async(sql,params)=>{
+  if(sql.includes('information_schema.columns'))return {rows:columns.map(column_name=>({column_name}))};
+  if(sql.startsWith('UPDATE activities SET'))writes.push({sql,params});
+  return {rows:[]};
+ })};
+ const base={activityId:'a',source:{repo:'org/repo',path:'contract.yaml'}};
+ for(const contract of [{execution:{primary_kind:'code'}},{execution:{primary_kind:'skill'}},{}])
+  await syncAssemblyActivity(db,{...base,contract});
+ expect(writes).toHaveLength(3);
+ expect(writes[0].sql).toMatch(/executor_kind\s*=\s*CASE WHEN/);
+ expect(writes.map(w=>w.params.slice(-2))).toEqual([[true,'code'],[true,'agent'],[false,null]]);
+});

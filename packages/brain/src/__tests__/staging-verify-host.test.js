@@ -16,6 +16,7 @@ case "$*" in
  *health*) echo '{"status":"healthy","git_sha":"${sha}","version":"fixture","runtime":{"isolated":true,"background_automation":false}}';;
  *tick/status*) echo '{"enabled":false}';;
  *tasks*) echo '[]';;
+ *assertLeadgenStagingProjection*) echo '{"workflows":4,"refs":14,"activities":12}';;
  *) exit 97;;
 esac
 `,{mode:0o755});
@@ -24,5 +25,6 @@ esac
   const calls=readFileSync(join(dir,'calls'),'utf8');
   expect(calls).toContain('exec cecelia-admission-brain curl -fsS --max-time 15 http://localhost:5222/api/brain/health');
   expect(calls).toContain('current_database()');expect(calls).not.toContain('host.docker.internal');
+  expect(calls).toContain('assertLeadgenStagingProjection');
  }finally{rmSync(dir,{recursive:true,force:true});}
 });

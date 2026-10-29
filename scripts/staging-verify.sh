@@ -25,4 +25,20 @@ printf '%s' "$database" | node -e '
  if(d.database!=="cecelia_staging"||d.host!=="stage-db"||d.tasks_table!==true)throw Error("候选数据库身份读回不符");
  if(process.env.STAGING_VERIFY_OUTPUT)fs.writeFileSync(process.env.STAGING_VERIFY_OUTPUT,JSON.stringify(d));
 '
+projection=$(docker exec "$STAGING_CONTAINER" node --input-type=module -e '
+ import pg from "pg";
+ import {DB_DEFAULTS} from "./src/db-config.js";
+ import {loadDirectorySource,buildDirectoryRows,assertLeadgenStagingProjection} from "./src/projection/directory-source.js";
+ if(DB_DEFAULTS.host!=="stage-db"||DB_DEFAULTS.database!=="cecelia_staging")throw Error("候选目录合同查询不在隔离库");
+ const pool=new pg.Pool({...DB_DEFAULTS,query_timeout:120000});
+ try {
+   const source=await loadDirectorySource(pool);
+   process.stdout.write(JSON.stringify(assertLeadgenStagingProjection(source,buildDirectoryRows(source,{}))));
+ } finally { await pool.end(); }
+')
+printf '%s' "$projection" | node -e '
+ const d=JSON.parse(require("fs").readFileSync(0,"utf8"));
+ if(d.workflows!==4||d.refs!==14||d.activities!==12)throw Error("候选 101–104 合同投影读回数量不符");
+'
+printf 'STAGING_LEADGEN_PROJECTION_OK %s\n' "$projection"
 echo 'STAGING_OK：候选同 SHA、隔离运行、关闭 tick 且任务 API 读回成功'

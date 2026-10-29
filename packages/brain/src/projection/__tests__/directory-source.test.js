@@ -127,10 +127,10 @@ describe('六层目录源映射', () => {
     expect(api.acceptanceText({}, {})).toBeNull();
     expect(api.acceptanceText({}, {type:'metric',ref:'metrics.a',expect:{op:'>=',ref:'metrics.b'}})).toBe('看指标：metrics.a；结果应 >= 指标 metrics.b');
   });
-  it('Activity 只写 名称/承诺（FR）/输入/输出/谁来执行/还缺什么/树位置；不写 Key、正本、格子、9 项正文列', () => {
+  it('Activity 展示合同版本、绑定和样本状态；不写 Key、正本、格子、9 项正文列', () => {
     const data=sample();Object.assign(data.activities[0],{capability_key:'cap',activity_key:'act',contract_source:'https://github.com/x/y/blob/abc/c.yaml',promise:'承诺一句'});
     const row=api.buildDirectoryRows(data,config).find(r=>r.id===fixtureEntityId(6));
-    expect(Object.keys(row.properties).sort()).toEqual(['Brain ID','名称','承诺（FR）','输入','输出','谁来执行','还缺什么','裁判结论','生产版本','树位置'].sort());
+    expect(Object.keys(row.properties).sort()).toEqual(['Brain ID','名称','承诺（FR）','输入','输出','谁来执行','还缺什么','裁判结论','生产版本','合同版本','执行绑定','样本验收','树位置'].sort());
     expect(text(row.properties['承诺（FR）'])).toBe('承诺一句');
     expect(row.createProperties['名称'].title[0].text.content).toBe('共享活动');
     expect(row.gaps).toEqual([]);
@@ -152,6 +152,120 @@ describe('六层目录源映射', () => {
     data.releases=[{activity_id:fixtureEntityId(6),version_no:5,ever_converged:true}];
     expect(text(api.buildDirectoryRows(data,config).find(r=>r.id===fixtureEntityId(6)).properties['生产版本'])).toBe('v5 · 收敛过');
     expect(api.buildDirectoryRows(sample(),config).find(r=>r.id===fixtureEntityId(6)).properties['生产版本']).toEqual({ rich_text: [] });
+  });
+  it('Workflow 启用状态与近七日运行情况分列，Activity 展示合同版本与执行绑定，不把样本候选说成已验证', () => {
+    const data=sample(),w=data.workflows[0],a=data.activities[0],r=data.refs[0];
+    w.status='paused';data.workflow_runtime=[{workflow_id:w.id,runs7:1,ran7:0,alarms:0}];
+    a.current_definition_version_id=fixtureEntityId(401);
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,
+      payload:{activity_id:a.id,contract:{version:'4.0.0',execution:{primary_kind:'code'},implementation_bindings:[
+        {kind:'skill',name:'douyin-leadgen-activity-102-qualification',version:'0.2.2'},
+        {kind:'code',path:'services/leadgen.mjs'}]}}};
+    r.activity_definition_version_id=fixtureEntityId(400);
+    data.ref_versions=[{id:r.activity_definition_version_id,activity_id:a.id,contract_version:'3.3.0'}];
+    const rows=api.buildDirectoryRows(data,config),workflow=rows.find(x=>x.id===w.id),activity=rows.find(x=>x.id===a.id);
+    expect(workflow.properties['启用状态']).toEqual({select:{name:'暂停'}});
+    expect(workflow.properties['运行情况']).toEqual({select:{name:'在跑'}});
+    expect(text(workflow.properties['Activity 顺序'])).toBe('1. 共享活动 · 合同 v3.3.0');
+    expect(text(activity.properties['合同版本'])).toBe('v4.0.0');
+    expect(text(activity.properties['执行绑定'])).toContain('douyin-leadgen-activity-102-qualification 0.2.2');
+    expect(text(activity.properties['执行绑定'])).toContain('代码主执行；Skill 异常接手');
+    expect(text(activity.properties['样本验收'])).toContain('未绑定');
+  });
+  it('Activity 合同中的历史样本候选显示固定提交源码链接，不推断当前版本已通过验收', () => {
+    const data=sample(),a=data.activities[0];
+    a.current_definition_version_id=fixtureEntityId(402);
+    const commit='a'.repeat(40),index='services/phone-adb-controller/__tests__/fixtures/leadgen-historical-evidence-index.json';
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,source_repo:'perfectuser21/zenithjoy-workspace',source_commit:commit,
+      payload:{activity_id:a.id,contract:{version:'4.0.0',sample_candidates:{index,workflow_keys:['douyin_lead_outreach'],
+        activity_key:'send_dm',owner_labeled:false,current_skill_verified:false}}}};
+    const activity=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(activity.properties['样本验收'])).toBe('合同登记历史样本候选；业务验收未知 · 查看固定源码索引');
+    expect(activity.properties['样本验收'].rich_text[0].text.link.url)
+      .toBe(`https://github.com/perfectuser21/zenithjoy-workspace/blob/${commit}/${index}`);
+    a.definition_version.source_commit='main';
+    const unpinned=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(unpinned.properties['样本验收'])).toContain('固定源码未核验');
+    expect(unpinned.properties['样本验收'].rich_text[0].text.link).toBeUndefined();
+  });
+  it('Activity 物化列未同步时从当前固定合同补承诺、执行者及输入输出，旧版本不得冒用', () => {
+    const data=sample(),a=data.activities[0];
+    Object.assign(a,{promise:null,executor_kind:null,inputs:null,outputs:null,current_definition_version_id:fixtureEntityId(405)});
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,
+      payload:{activity_id:a.id,contract:{promise:'按已批准规则交出真实视频链接',
+        inputs:[{type:'Keyword',fields:['word'],source:'本次任务输入'}],
+        outputs:[{type:'Video',fields:['video_id'],destination:'视频处理队列'}],
+        execution:{primary_kind:'code'}}}};
+    const current=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(current.properties['承诺（FR）'])).toBe('按已批准规则交出真实视频链接');
+    expect(current.properties['谁来执行']).toEqual({select:{name:'代码'}});
+    expect(text(current.properties['输入'])).toBe('Keyword(word)；来源：本次任务输入');
+    expect(text(current.properties['输出'])).toBe('Video(video_id)；去向：视频处理队列');
+    a.definition_version.id=fixtureEntityId(406);
+    const stale=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(stale.properties['承诺（FR）'])).toBe('');
+    expect(stale.properties['谁来执行']).toEqual({select:{name:'未写'}});
+    expect(text(stale.properties['输入'])).toBe('');
+    expect(text(stale.properties['输出'])).toBe('');
+  });
+  it('当前固定合同未列已知缺口时明确显示未列，不编造缺口', () => {
+    const data=sample(),a=data.activities[0];
+    a.current_definition_version_id=fixtureEntityId(407);
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,
+      payload:{activity_id:a.id,contract:{promise:'按批准规则交出结果',known_gaps:[]}}};
+    const row=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(row.properties['还缺什么'])).toContain('合同未列已知缺口');
+  });
+  it('101–104 隔离候选只读门禁核四流程、14 引用、12 Activity 的实际 Notion 投影字段', () => {
+    const keys=['douyin_video_discovery','douyin_video_processing','douyin_comment_scoring','douyin_lead_outreach'];
+    const slots=[[0,1,2],[2,3,4,5,6],[6,7],[8,9,10,11]],commit='a'.repeat(40);
+    const data={areas:[],journeys:[],steps:[],map_nodes:[],
+      workflows:keys.map((key,i)=>({id:fixtureEntityId(500+i),key,name:`获客${101+i}`,status:i===2?'active':'paused',
+        current_definition_version_id:fixtureEntityId(600+i),definition_version:{id:fixtureEntityId(600+i),workflow_id:fixtureEntityId(500+i),
+          payload:{workflow_id:fixtureEntityId(500+i),contract:{known_gaps:[{gap:'Runner 路由仍需核验',task:'bdd9fb75'}]}}}})),
+      activities:Array.from({length:12},(_,i)=>({id:fixtureEntityId(700+i),name:`活动${i}`,activity_key:i===10?'send_dm':`a${i}`,promise:null,executor_kind:null,inputs:null,outputs:null,
+        current_definition_version_id:fixtureEntityId(800+i),definition_version:{id:fixtureEntityId(800+i),activity_id:fixtureEntityId(700+i),
+          source_repo:'perfectuser21/zenithjoy-workspace',source_commit:commit,payload:{activity_id:fixtureEntityId(700+i),contract:{
+            version:'1.0.0',promise:'按批准条件交出可核验结果',inputs:[{type:'Input',fields:['id'],source:'上游活动'}],
+            outputs:[{type:'Output',fields:['id'],destination:'下游活动'}],execution:{primary_kind:'code'},
+            sample_candidates:{index:'services/phone-adb-controller/__tests__/fixtures/leadgen-historical-evidence-index.json',
+              workflow_keys:[keys[0]],activity_key:`a${i}`,owner_labeled:false,current_skill_verified:false},
+            known_gaps:i===10?[{gap:'真实 UI 发送结果尚未接成 send_dm 的硬性 Activity probe',task:'bdd9fb75'}]:[]}}}})),
+      refs:slots.flatMap((indexes,w)=>indexes.map((a,j)=>({workflow_id:fixtureEntityId(500+w),activity_id:fixtureEntityId(700+a),
+        activity_definition_version_id:fixtureEntityId(800+a),slot_key:`slot_${j}`,sequence_no:j+1,active:true}))),
+      ref_versions:Array.from({length:12},(_,i)=>({id:fixtureEntityId(800+i),activity_id:fixtureEntityId(700+i),contract_version:'1.0.0'}))};
+    const rows=api.buildDirectoryRows(data,{});
+    expect(() => api.assertLeadgenStagingProjection(data,rows)).not.toThrow();
+    const missing=structuredClone(data);
+    missing.refs=missing.refs.filter(r=>r.workflow_id!==fixtureEntityId(503));
+    expect(() => api.assertLeadgenStagingProjection(missing,api.buildDirectoryRows(missing,{}))).toThrow(/101–104|引用/);
+    const stale=structuredClone(data);
+    stale.activities[0].definition_version.id=fixtureEntityId(999);
+    expect(() => api.assertLeadgenStagingProjection(stale,api.buildDirectoryRows(stale,{}))).toThrow(/固定合同/);
+    const noHardProbe=structuredClone(data);
+    noHardProbe.activities[10].definition_version.payload.contract.known_gaps=[];
+    expect(() => api.assertLeadgenStagingProjection(noHardProbe,api.buildDirectoryRows(noHardProbe,{}))).toThrow(/send_dm/);
+  });
+  it('Activity 当前合同的 known_gaps 显示在还缺什么，包括 104 真实发送硬 probe 缺口', () => {
+    const data=sample(),a=data.activities[0];
+    a.current_definition_version_id=fixtureEntityId(403);
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,
+      payload:{activity_id:a.id,contract:{known_gaps:[{gap:'真实 UI 发送结果尚未接成 send_dm 硬性 Activity probe；不能凭 workflow pass 宣称已发送',task:'bdd9fb75'}]}}};
+    const activity=api.buildDirectoryRows(data,config).find(x=>x.id===a.id);
+    expect(text(activity.properties['还缺什么'])).toContain('已知缺口：真实 UI 发送结果尚未接成 send_dm 硬性 Activity probe');
+    expect(text(activity.properties['还缺什么'])).toContain('任务 bdd9fb75');
+    expect(text(activity.properties['样本验收'])).toContain('验收未知');
+  });
+  it('Workflow 当前固定合同根层 known_gaps 显示路由与 Runner 缺口，不从运行统计推断已解决', () => {
+    const data=sample(),w=data.workflows[0];
+    w.current_definition_version_id=fixtureEntityId(404);
+    w.definition_version={id:w.current_definition_version_id,workflow_id:w.id,
+      payload:{workflow_id:w.id,contract:{known_gaps:[{gap:'on_status/always_run 路由仍缺 Runner 硬验收',task:'bdd9fb75'}]}}};
+    data.workflow_runtime=[{workflow_id:w.id,runs7:3,ran7:3}];
+    const row=api.buildDirectoryRows(data,config).find(x=>x.id===w.id);
+    expect(text(row.properties['还缺什么'])).toContain('on_status/always_run 路由仍缺 Runner 硬验收');
+    expect(text(row.properties['还缺什么'])).toContain('任务 bdd9fb75');
+    expect(row.properties['运行情况']).toEqual({select:{name:'在跑'}});
   });
   it('跨Workflow同sequence和slot的引用输入反序仍有相同 Activity 顺序和属性hash', () => {
     const data = sample();

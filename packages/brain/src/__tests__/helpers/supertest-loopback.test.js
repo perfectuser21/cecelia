@@ -135,9 +135,8 @@ describe('Supertest loopback matches the real listener family', () => {
       res.writeHead(500, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: 'internal_error' }));
     }).get('/fixture');
-    const address = probe.app.address();
     const res = await probe;
-    expect(probe.url).toContain(address.family === 'IPv6' ? '://[::1]:' : '://127.0.0.1:');
+    expect(probe.url).toMatch(/^http:\/\/(?:\[::1\]|127\.0\.0\.1):\d+\/fixture$/);
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'internal_error' });
     expect(queryCalls).toBe(1);

@@ -86,6 +86,9 @@ case "$1" in
   if [[ "$*" == *current_database* ]]; then
    database=cecelia_staging; [[ "$MODE" != production-db ]] || database=cecelia
    printf '{"database":"%s","host":"stage-db","tasks_table":true}' "$database"; exit 0; fi
+  if [[ "$*" == *assertLeadgenStagingProjection* ]]; then
+   [[ "$MODE" != leadgen-projection-failure ]] || exit 91
+   echo '{"workflows":4,"refs":14,"activities":12}'; exit 0; fi
   if [[ "$*" == *tasks* ]]; then if [[ "$MODE" == bad-tasks ]]; then echo '{"error":"database unavailable"}'; elif [[ "$MODE" == bad-task-row ]]; then echo '[{"error":"no task"}]'; else echo '[]'; fi; exit 0; fi
   exit 0;;
 esac
@@ -100,7 +103,7 @@ exit 0
  return {...result,events:existsSync(env.EVENTS)?readFileSync(env.EVENTS,'utf8'): '',commands:existsSync(env.COMMANDS)?readFileSync(env.COMMANDS,'utf8'):'',remaining:readdirSync(env.STATE),receipt:existsSync(join(dir,'logs/brain-staging-receipt.json'))?JSON.parse(readFileSync(join(dir,'logs/brain-staging-receipt.json'),'utf8')):null};
 }
 describe('brain-staging-admission 实际脚本准入',()=>{
-it.each(['migration-failure','restore-failure','wrong-sha','not-isolated','wrong-digest','missing-image','disk-full','bad-tasks','bad-task-row','production-db'])('候选%s阻断生产迁移与切换',mode=>{
+it.each(['migration-failure','restore-failure','wrong-sha','not-isolated','wrong-digest','missing-image','disk-full','bad-tasks','bad-task-row','production-db','leadgen-projection-failure'])('候选%s阻断生产迁移与切换',mode=>{
  const result=run(mode);expect(result.events,result.stderr+result.stdout).not.toContain('production-migrate');
  expect(result.status).not.toBe(0);expect(result.remaining).toEqual([]);if(mode!=='missing-image')expect(result.receipt.status).toBe('failed');expect(result.commands).not.toMatch(/stop cecelia-node-brain(?:\n|$)/);
 });

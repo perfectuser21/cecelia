@@ -55,6 +55,7 @@ export function durationText(ms) {
   return `${(n / 60000).toFixed(1)} 分钟`;
 }
 const STATUS = Object.freeze({ active: '在用', deprecated: '弃用' });
+const WORKFLOW_STATUS = Object.freeze({ active: '启用', paused: '暂停', deprecated: '弃用' });
 const NA = '(未归属)';
 /** 「树位置」：一行文字写全部祖先（部门树全链 + 价值流/能力/流程），不含自己；追不到部门的写「(未归属)」。 */
 const treePath = (chain, names) => rich([...(chain.length ? chain : [NA]), ...names.filter(Boolean)].join(' › '));
@@ -84,6 +85,50 @@ function currentDefinition(row, kind) {
     version[identity] === row.id && version.payload?.[identity] === row.id && object(version.payload.contract) ? version : null;
 }
 const versionEvidence = version => version ? Object.fromEntries(['id','source_repo','source_path','source_commit'].map(k => [k,version[k]])) : null;
+const contractVersion = version => /^\d+\.\d+\.\d+$/.test(version?.payload?.contract?.version ?? '') ? `v${version.payload.contract.version}` : null;
+const missingMaterialized = value => value == null || value === '' || Array.isArray(value) && !value.length || object(value) && !Object.keys(value).length;
+function activityWithPinnedFallback(activity, version) {
+  const contract = version?.payload?.contract;
+  if (!contract) return activity;
+  const primary = contract.execution?.primary_kind;
+  const executor = primary === 'skill' ? 'agent' : ['code','agent'].includes(primary) ? primary : null;
+  return {
+    ...activity,
+    promise: missingMaterialized(activity.promise) ? contract.promise : activity.promise,
+    inputs: missingMaterialized(activity.inputs) ? contract.input_schema ?? contract.inputs : activity.inputs,
+    outputs: missingMaterialized(activity.outputs) ? contract.output_schema ?? contract.outputs : activity.outputs,
+    executor_kind: missingMaterialized(activity.executor_kind) ? executor : activity.executor_kind,
+  };
+}
+const knownGapText = contract => (Array.isArray(contract?.known_gaps) ? contract.known_gaps : [])
+  .filter(g => typeof g?.gap === 'string' && g.gap.trim())
+  .map(g => `已知缺口：${g.gap}${g.task ? `（任务 ${g.task}）` : ''}`);
+function implementationText(version) {
+  const contract = version?.payload?.contract;
+  const primary = contract?.execution?.primary_kind;
+  const leader = {code:'代码主执行',skill:'Skill 主执行',agent:'AI 主执行'}[primary];
+  const bindings = contract?.implementation_bindings;
+  if (!Array.isArray(bindings) || !bindings.length) return [leader,'合同未绑定实现'].filter(Boolean).join('；');
+  const skills = bindings.filter(b => b.kind === 'skill').map(b => `${primary === 'code' ? 'Skill 异常接手' : 'Skill'} ${b.name || b.path || '未命名'}${b.version ? ` ${b.version}` : ''}`);
+  const codeCount = bindings.filter(b => b.kind === 'code').length;
+  return [leader,...skills, ...(codeCount ? [`代码 ${codeCount} 项`] : [])].filter(Boolean).join('；') || '合同未绑定实现';
+}
+function sampleProps(version) {
+  const contract = version?.payload?.contract;
+  const samples = contract?.samples, candidates = contract?.sample_candidates;
+  if (Array.isArray(samples) && samples.length) return rich(`合同登记 ${samples.length} 条样本；独立验收未知`);
+  if (object(candidates) && typeof candidates.index === 'string') {
+    const label = '合同登记历史样本候选；业务验收未知';
+    const repo = version?.source_repo, commit = version?.source_commit, path = candidates.index;
+    const fixed = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo || '') && /^[a-f0-9]{40}$/.test(commit || '') &&
+      /^[A-Za-z0-9._/-]+$/.test(path) && path.split('/').every(part => part && part !== '.' && part !== '..');
+    if (!fixed) return rich(`${label}（固定源码未核验）`);
+    const url = `https://github.com/${repo}/blob/${commit}/${path}`;
+    return {rich_text:[{text:{content:`${label} · 查看固定源码索引`,link:{url}}}]};
+  }
+  if (Array.isArray(candidates) && candidates.length) return rich(`合同登记 ${candidates.length} 条历史样本候选；业务验收未知`);
+  return rich('合同未绑定样本，验收未知');
+}
 function currentStepDefinition(step, activity) {
   const version = currentDefinition(activity, 'activity');
   if (!step.active || !Array.isArray(version?.payload.steps)) return null;
@@ -174,6 +219,7 @@ export function buildDirectoryRows(data, config = {}) {
     }
   }
   const activityNames = new Map(data.activities.map(a => [a.id, a.name]));
+  const refVersions = new Map((data.ref_versions || []).map(v => [v.id, v]));
   // 每个 Activity 最新一条裁判（SQL 已按 activity 取最新；这里再按 judged_at 兜底取最新，防输入乱序）
   const latestJudgment = new Map();
   for (const j of data.judgments || []) {
@@ -184,13 +230,21 @@ export function buildDirectoryRows(data, config = {}) {
   for (const w of data.workflows) {
     const usage = refs.filter(r => r.workflow_id === w.id);
     const version = currentDefinition(w, 'workflow'), ctx = capabilityContext(w.capability_id);
+    const workflowGaps = knownGapText(version?.payload.contract);
     const observation = observations.get(w.id);
     const original = runtimeByWorkflow.get(w.id) || {};
     const rt = observation ? { ...original, ...observation.stats, last_started:observation.last_started } : original;
     const acts = unique(usage.map(r => ref('activities', r.activity_id))).length;
     const row = make('workflows', w, { '名称': title(w.name),
       // 顺序属于流程↔Activity 引用（共用 Activity 在不同流程里位置不同），只在这里按引用顺序列名字
-      'Activity 顺序': rich(usage.map(r => `${r.sequence_no}. ${activityNames.get(r.activity_id) ?? r.activity_id}`).join('\n')),
+      'Activity 顺序': rich(usage.map(r => {
+        const bound = refVersions.get(r.activity_definition_version_id);
+        const pinned = bound?.activity_id === r.activity_id && /^\d+\.\d+\.\d+$/.test(bound.contract_version ?? '')
+          ? ` · 合同 v${bound.contract_version}` : '';
+        return `${r.sequence_no}. ${activityNames.get(r.activity_id) ?? r.activity_id}${pinned}`;
+      }).join('\n')),
+      '还缺什么': rich(workflowGaps.length ? workflowGaps.join('\n') : version ? '合同未列已知缺口' : '当前合同未核验'),
+      '启用状态': select(WORKFLOW_STATUS[w.status] ?? '未知'),
       '运行方式': rich(runModeText(w.form, rt.items)), '运行情况': select(workflowUsageStatus({ ...rt, acts })),
       '最近运行': minuteDate(latest(rt.last_started, rt.last_run)), '7天次数': num(rt.runs7), '7天成功率': maybeNum(rt.success_rate),
       '平均时长': rich(durationText(rt.avg_duration_ms)), '树位置': treePath(ctx.chain, [ctx.names.vs, ctx.names.cap]) }, {
@@ -210,14 +264,20 @@ export function buildDirectoryRows(data, config = {}) {
   for (const a of data.activities) {
     const usage = refs.filter(r => r.activity_id === a.id);
     const version = currentDefinition(a, 'activity'), ctx = activityContext(a.id);
+    const cardActivity = activityWithPinnedFallback(a, version);
     const unresolved = (Array.isArray(version?.payload.steps) ? version.payload.steps : []).filter(entry =>
       !data.steps.some(step => step.activity_id === a.id && step.id === entry.step_id && currentStepDefinition(step, a)))
       .map(entry => `Step 登记对不上：${entry.locator?.step_key || entry.contract?.key || 'unknown'}`);
+    const knownGaps = knownGapText(version?.payload.contract ?? a.contract);
+    if (version && !knownGaps.length) knownGaps.push('合同未列已知缺口');
     const row = make('activities', a, { '名称': title(a.name),
-      ...buildActivityCardProps(a, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id), unresolved),
+      ...buildActivityCardProps(cardActivity, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id), [...unresolved,...knownGaps]),
       '裁判结论': rich(judgmentText(latestJudgment.get(a.id))),
       // 发布线生产指针（activity_release_state）：v<版本号> + 是否收敛过；没有指针留空
       '生产版本': rich(releaseText(releases.get(a.id))),
+      '合同版本': rich(contractVersion(version)),
+      '执行绑定': rich(implementationText(version)),
+      '样本验收': sampleProps(version),
       '树位置': treePath(ctx.chain, [ctx.names.vs, ctx.names.cap, ctx.names.wf]) }, {
       '所属流程': unique(usage.map(r => ref('workflows', r.workflow_id))),
       'Step': data.steps.filter(s => s.activity_id === a.id && s.active).sort((a, b) => a.step_order - b.step_order).map(s => ref('steps', s.id)),
@@ -245,6 +305,71 @@ export function buildDirectoryRows(data, config = {}) {
   }
   const order = Object.keys(DIRECTORY_TABLES);
   return rows.sort((a,b) => order.indexOf(a.layer)-order.indexOf(b.layer) || a.id.localeCompare(b.id));
+}
+
+/** 隔离候选只核 Brain 快照与本地投影结果，不调用 Notion。 */
+export function assertLeadgenStagingProjection(data, rows) {
+  const expected = new Map([
+    ['douyin_video_discovery', 3], ['douyin_video_processing', 5],
+    ['douyin_comment_scoring', 2], ['douyin_lead_outreach', 4],
+  ]);
+  const fail = detail => { throw new Error(`101–104 隔离合同投影未通过：${detail}`); };
+  const richValue = prop => (prop?.rich_text || []).map(part => part.text?.content || '').join('');
+  const byRow = new Map(rows.map(row => [`${row.layer}:${row.id}`, row]));
+  const workflows = (data.workflows || []).filter(w => expected.has(w.key));
+  if (workflows.length !== expected.size || new Set(workflows.map(w => w.key)).size !== expected.size) fail('四条 Workflow 登记不全');
+  const allRefs = [];
+  for (const workflow of workflows) {
+    const refs = (data.refs || []).filter(ref => ref.workflow_id === workflow.id && ref.active);
+    if (refs.length !== expected.get(workflow.key)) fail(`${workflow.key} 引用数量不符`);
+    allRefs.push(...refs);
+    const version = currentDefinition(workflow, 'workflow');
+    if (!version || !knownGapText(version.payload.contract).length) fail(`${workflow.key} 当前固定合同或已知缺口未登记`);
+    const row = byRow.get(`workflows:${workflow.id}`);
+    const status = WORKFLOW_STATUS[workflow.status] ?? '未知';
+    if (!row || row.properties['启用状态']?.select?.name !== status || !row.properties['运行情况']?.select?.name ||
+      !richValue(row.properties['还缺什么']).includes('已知缺口：')) fail(`${workflow.key} Workflow 投影不完整`);
+    const order = richValue(row.properties['Activity 顺序']);
+    if ((order.match(/合同 v\d+\.\d+\.\d+/g) || []).length !== refs.length) fail(`${workflow.key} 引用合同版本未显示`);
+  }
+  const activityIds = new Set(allRefs.map(ref => ref.activity_id));
+  if (allRefs.length !== 14 || activityIds.size !== 12) fail('14 引用 / 12 Activity 映射不符');
+  const activities = new Map((data.activities || []).map(activity => [activity.id, activity]));
+  const refVersions = new Map((data.ref_versions || []).map(version => [version.id, version]));
+  for (const ref of allRefs) {
+    const activity = activities.get(ref.activity_id), pinned = refVersions.get(ref.activity_definition_version_id);
+    if (!activity || !pinned || pinned.activity_id !== activity.id) fail('引用未钉同一 Activity 合同版本');
+  }
+  const outreach = workflows.find(workflow => workflow.key === 'douyin_lead_outreach');
+  const sendDmRef = allRefs.find(ref => ref.workflow_id === outreach.id && activities.get(ref.activity_id)?.activity_key === 'send_dm');
+  const sendDm = activities.get(sendDmRef?.activity_id);
+  const sendDmGaps = knownGapText(currentDefinition(sendDm, 'activity')?.payload.contract);
+  if (!sendDm || !sendDmGaps.some(gap => gap.includes('真实 UI 发送结果') && gap.includes('硬性 Activity probe')))
+    fail('send_dm 真实发送硬性 Activity probe 缺口未登记');
+  for (const id of activityIds) {
+    const activity = activities.get(id), version = currentDefinition(activity, 'activity');
+    const contract = version?.payload.contract, candidate = contract?.sample_candidates;
+    if (!contract || !/^\d+\.\d+\.\d+$/.test(contract.version ?? '') ||
+      typeof contract.promise !== 'string' || !contract.promise.trim() ||
+      contract.execution?.primary_kind !== 'code' ||
+      !Array.isArray(contract.inputs) || !contract.inputs.length || contract.inputs.some(input => !input.source) ||
+      !Array.isArray(contract.outputs) || !contract.outputs.length || contract.outputs.some(output => !output.destination) ||
+      !candidate?.index || candidate.owner_labeled !== false || candidate.current_skill_verified !== false ||
+      version?.source_repo !== 'perfectuser21/zenithjoy-workspace' ||
+      !/^[a-f0-9]{40}$/.test(version?.source_commit ?? '')) fail(`${activity?.activity_key ?? id} 当前固定合同字段不完整`);
+    const row = byRow.get(`activities:${id}`), props = row?.properties;
+    const sample = props?.['样本验收']?.rich_text?.[0]?.text;
+    const expectedLink = `https://github.com/${version.source_repo}/blob/${version.source_commit}/${candidate.index}`;
+    const displayedGaps = richValue(props?.['还缺什么']);
+    const expectedGaps = knownGapText(contract);
+    if (!props || richValue(props['承诺（FR）']) !== contract.promise || props['谁来执行']?.select?.name !== '代码' ||
+      !richValue(props['输入']).includes('来源：') || !richValue(props['输出']).includes('去向：') ||
+      richValue(props['合同版本']) !== `v${contract.version}` || sample?.link?.url !== expectedLink ||
+      !sample.content.includes('业务验收未知') ||
+      (expectedGaps.length ? expectedGaps.some(gap => !displayedGaps.includes(gap)) : !displayedGaps.includes('合同未列已知缺口')))
+      fail(`${activity.activity_key ?? id} Activity Notion 投影不完整`);
+  }
+  return { workflows: workflows.length, refs: allRefs.length, activities: activityIds.size };
 }
 
 /** 单条SQL使用同一数据库快照；复合身份绑定当前版本，旧行无current字段时不取历史。 */
@@ -281,6 +406,9 @@ export async function loadDirectorySource(pool) {
     'uses',COALESCE((SELECT jsonb_agg(jsonb_build_object('activity_id',u.activity_id,'item_name',i.name,'role',u.role) ORDER BY i.name)
       FROM activity_uses u JOIN warehouse_items i ON i.id=u.item_id),'[]'::jsonb),
     'refs',COALESCE((SELECT jsonb_agg(to_jsonb(r)) FROM workflow_activity_refs r),'[]'::jsonb),
+    'ref_versions',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',v.id,'activity_id',v.activity_id,
+      'contract_version',v.payload->'contract'->>'version')) FROM activity_definition_versions v
+      WHERE EXISTS(SELECT 1 FROM workflow_activity_refs r WHERE r.activity_definition_version_id=v.id AND r.active)),'[]'::jsonb),
     'workflow_runtime',COALESCE((SELECT jsonb_agg(jsonb_build_object(
       'workflow_id',w.id,
       'alarms',(SELECT count(*) FROM ops_schedule_entries e WHERE e.workflow_id=w.id),

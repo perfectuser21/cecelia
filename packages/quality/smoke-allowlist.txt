@@ -469,5 +469,6 @@ workflow-assembly-registration-smoke.sh
 workflow-assembly-reconcile-smoke.sh
 
 workflow-assembly-native-smoke.sh
+leadgen-notion-contract-smoke.sh
 
 infra-consumer-source-smoke.sh

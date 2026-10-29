@@ -29,7 +29,8 @@ export function humanize(value) {
   if (Array.isArray(value)) return value.map(humanize).filter(Boolean).join('\n');
   if (typeof value === 'object') {
     if (typeof value.type === 'string' && (Array.isArray(value.fields) || value.effect || value.cardinality)) {
-      return `${value.type}${value.cardinality === 'many' ? '[]' : ''}${value.effect ? ` ${value.effect}` : ''}(${(value.fields || []).join(', ')})`;
+      const summary = `${value.type}${value.cardinality === 'many' ? '[]' : ''}${value.effect ? ` ${value.effect}` : ''}(${(value.fields || []).join(', ')})`;
+      return [summary, value.source && `来源：${inline(value.source)}`, value.destination && `去向：${inline(value.destination)}`].filter(Boolean).join('；');
     }
     return Object.entries(value).filter(([, v]) => !isEmpty(v)).map(([k, v]) => `${k}：${inline(v)}`).join('；');
   }
