@@ -1248,6 +1248,16 @@
       "role": "verification"
     },
     {
+      "owner_path": "packages/brain/vitest.config.js",
+      "path": "packages/brain/src/__tests__/helpers/supertest-loopback.test.js",
+      "role": "verification"
+    },
+    {
+      "owner_path": "packages/brain/vitest.config.js",
+      "path": "packages/brain/src/__tests__/supertest-loopback.test.js",
+      "role": "verification"
+    },
+    {
       "owner_path": "packages/brain/src/projection/directory-projector.js",
       "path": "packages/brain/src/projection/__tests__/directory-projector.test.js",
       "role": "verification"
