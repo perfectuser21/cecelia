@@ -21,6 +21,7 @@ const buildScript = 'scripts/brain-build.sh';
 const dbConfig = 'packages/brain/src/db-config.js';
 const directorySource = 'packages/brain/src/projection/directory-source.js';
 const LEADGEN_VERIFY_SHA = '4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba';
+const PREAPPROVAL_REVISION = 'e3a01021ee7100b83d8ed5a0be219d0b543b5dff';
 const leadgenVerifyBlock = String.raw`projection=$(docker exec "$STAGING_CONTAINER" node --input-type=module -e '
  import pg from "pg";
  import {DB_DEFAULTS} from "./src/db-config.js";
@@ -43,7 +44,8 @@ const read = path => {
   if (!cache.has(path)) cache.set(path, git('show', `${revision}:${path}`));
   return cache.get(path);
 };
-const leadgenVerify = () => read(verify).replace("echo 'STAGING_OK", `${leadgenVerifyBlock}echo 'STAGING_OK`);
+const leadgenVerify = () => read(verify);
+const preapprovalVerify = () => git('show', `${PREAPPROVAL_REVISION}:${verify}`);
 function wrapRoute(text, wrap) {
   const entry = parse(text, { ecmaVersion: 'latest', sourceType: 'module' }).body.find(n => n.type === 'ExpressionStatement'
     && n.expression?.callee?.object?.name === 'router' && n.expression.callee.property?.name === 'post' && n.expression.arguments[0]?.value === '/deploy');
@@ -68,10 +70,11 @@ describe('staging 正式调用链的固定来源，不声明部署成功', () =>
   it('预注册的获客预发脚本完整字节与真实读边，旧脚本仍保持原来源', async () => {
     const future = leadgenVerify();
     expect(createHash('sha256').update(future).digest('hex')).toBe(LEADGEN_VERIFY_SHA);
-    const before = await build();
+    expect(preapprovalVerify().replace("echo 'STAGING_OK", `${leadgenVerifyBlock}echo 'STAGING_OK`)).toBe(future);
+    const before = await build({ patch: { [verify]: preapprovalVerify() } });
     expect(before.status, JSON.stringify(before.gaps)).toBe('verified');
     expect(before.bindings.some(b => b.path === directorySource)).toBe(false);
-    const after = await build({ patch: { [verify]: future } });
+    const after = await build();
     expect(after.status, JSON.stringify(after.gaps)).toBe('verified');
     expect(after.bindings).toContainEqual(expect.objectContaining({ path: directorySource, revision, status: 'verified' }));
     expect(after.input_relations).toContainEqual({ consumer_path: verify, input_path: directorySource,
