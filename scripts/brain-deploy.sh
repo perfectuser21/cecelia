@@ -32,6 +32,19 @@ source "$SCRIPT_DIR/lib/bluegreen.sh"
 source "$SCRIPT_DIR/lib/internal-auth-token.sh"
 source "$SCRIPT_DIR/lib/brain-image-retention.sh"
 source "$SCRIPT_DIR/lib/brain-staging.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/brain-bootstrap.sh"
+bootstrap_select_receipt
+
+bluegreen_pre_swap_check() {
+    [[ -n "${BRAIN_BOOTSTRAP_RECEIPT:-}" ]] || return 0
+    local identity status
+    identity=$(docker inspect cecelia-node-brain --format '{{.State.Running}} {{.Image}}') || return 1
+    [[ "$identity" == "true $BOOTSTRAP_OLD_IMAGE" ]] || return 1
+    status=$(curl -sf --max-time 10 http://localhost:5221/api/brain/tick/status) || return 1
+    node -e 'const x=JSON.parse(process.argv[1]); if(x.enabled!==false||x.loop_running!==false||x.tick_running!==false) process.exit(1)' "$status" || return 1
+    bootstrap_audit
+}
 
 ENV_REGION="${ENV_REGION:-us}"
 # 默认凭据路径跟着 HOST_HOME 走（macOS/us-vps 两份 compose 都在容器 env 里显式设了
@@ -57,7 +70,11 @@ _write_deploy_status() {
     fi
     if [[ "$retention_failed" == true ]]; then exit 1; fi
 }
-trap '_write_deploy_status' EXIT
+_deploy_exit() {
+    if ! bootstrap_restore_tick; then DEPLOY_SUCCESS=false; fi
+    _write_deploy_status
+}
+trap '_deploy_exit' EXIT
 
 # ── Post-deploy smoke 函数 ──────────────────────────────────────────────────
 # 部署 healthy 之后跑最近合并 PR 引入的 packages/brain/scripts/smoke/*.sh，
@@ -312,6 +329,10 @@ if ! docker info >/dev/null 2>&1 || ! docker inspect cecelia-node-brain >/dev/nu
         DEPLOY_MODE="launchd"
     fi
 fi
+if [[ -n "${BRAIN_BOOTSTRAP_RECEIPT:-}" && "$DEPLOY_MODE" != docker ]]; then
+    echo "[bootstrap] FAIL: 一次性 .84 升级只支持固定 Docker 生产容器" >&2
+    exit 1
+fi
 
 # ── Compose 文件选择：Linux(us-vps) 用专属文件，其余(macOS/mmv)用默认文件 ────
 # COMPOSE_FILE 允许环境变量显式覆盖（测试/未来手动指定用），缺省按 uname -s 自动探测。
@@ -377,6 +398,11 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         CECELIA_RELEASE_IMAGE=$(docker image inspect --format '{{.Id}}' "cecelia-brain:${VERSION}")
         export CECELIA_RELEASE_IMAGE
         stage_candidate "$EXPECTED_SHA" "$CECELIA_RELEASE_IMAGE" "$VERSION"
+        if [[ -n "${BRAIN_BOOTSTRAP_RECEIPT:-}" ]]; then
+            BOOTSTRAP_OLD_IMAGE=$(docker inspect cecelia-node-brain --format '{{.Image}}')
+            bootstrap_assert_identity "$BOOTSTRAP_OLD_IMAGE" "$CECELIA_RELEASE_IMAGE" "$EXPECTED_SHA" "$VERSION"
+            bootstrap_audit
+        fi
     else
         echo "[dry-run] staging 同 SHA/镜像/隔离验证先于生产迁移"
     fi
@@ -459,6 +485,10 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     CURRENT_IMG=$(docker inspect cecelia-node-brain --format '{{.Image}}' 2>/dev/null || echo "")
     TARGET_IMG=$(docker inspect "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${VERSION}}" --format '{{.Id}}' 2>/dev/null || echo "")
     if [[ "$DRY_RUN" == false && -n "$CURRENT_IMG" && -n "$TARGET_IMG" && "$CURRENT_IMG" == "$TARGET_IMG" ]]; then
+        if [[ -n "${BRAIN_BOOTSTRAP_RECEIPT:-}" ]]; then
+            echo "[bootstrap] FAIL: 新旧镜像相同，一次性首升回执不可用于幂等跳过" >&2
+            exit 1
+        fi
         echo "  [skip] 容器已在 v${VERSION}（image SHA 一致），跳过 recreate"
         activate_cecelia_map_manifest
         DEPLOY_SUCCESS=true
@@ -479,7 +509,17 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     elif docker inspect cecelia-node-brain >/dev/null 2>&1; then
         # blue 在跑 → swap 前先 drain（停派发 + 等 in_progress 回调收尾）
         echo "  [7/8] drain 旧 Brain（等 in_progress 归零，超时 ${DRAIN_TIMEOUT_SECS}s）..."
-        if ! drain_before_swap true; then
+        if [[ -n "${BRAIN_BOOTSTRAP_RECEIPT:-}" ]]; then
+            drain_gate=bootstrap_before_swap
+        else
+            drain_gate=drain_before_swap
+        fi
+        if [[ "$drain_gate" == bootstrap_before_swap ]]; then
+            if ! bootstrap_before_swap "$CURRENT_IMG" "$TARGET_IMG" "$EXPECTED_SHA" "$VERSION"; then
+                if [[ "$DRAIN_STARTED_BY_DEPLOY" == true ]]; then drain_cancel_with_retry; fi
+                exit 1
+            fi
+        elif ! drain_before_swap true; then
             if [[ "$DRAIN_STARTED_BY_DEPLOY" == true ]]; then drain_cancel_with_retry; fi
             exit 1
         fi
@@ -701,6 +741,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     echo ""
     echo "[S6.5] 激活 Cecelia Map manifest（Impact Gate 上线前置）..."
     activate_cecelia_map_manifest
+    bootstrap_restore_tick
     DEPLOY_SUCCESS=true
 
     # 8. Update cecelia-run on host (self-update: keeps executor in sync with repo)

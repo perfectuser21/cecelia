@@ -260,6 +260,15 @@ bluegreen_swap() {
   fi
   # ─────────────────────────────────────────────────────────────────────────
 
+  if declare -F bluegreen_pre_swap_check >/dev/null; then
+    if ! bluegreen_pre_swap_check; then
+      echo '[bluegreen] ❌ 最终执行审计未通过，保留 blue'
+      docker rm -f "$green" >/dev/null 2>&1 || true
+      bluegreen_guard_blue "$blue"
+      return 1
+    fi
+  fi
+
   echo "[bluegreen] ✅ green 健康，切换：清 canary → 启 compose sidecar → 删 blue"
   docker rm -f "$green" >/dev/null 2>&1 || true   # canary 仅验证用，切换前清掉
 
@@ -350,6 +359,14 @@ bluegreen_swap() {
     echo "[bluegreen] ℹ️ DEPLOY_ROOT_DIR 未设置，跳过 sidecar（launchd 模式下正常，compose up 由调用方负责）"
   fi
 
+  if declare -F bluegreen_pre_swap_check >/dev/null; then
+    if ! bluegreen_pre_swap_check; then
+      echo '[bluegreen] ❌ blue 删除前审计变化，停止 sidecar 并保留 blue'
+      docker rm -f "$sidecar_name" >/dev/null 2>&1 || true
+      bluegreen_guard_blue "$blue"
+      return 1
+    fi
+  fi
   docker rm -f "$blue" >/dev/null 2>&1 || true    # ← 仅在 green 通过且 sidecar 已启动后才删 blue
   # Docker 模式下本行及以下不会执行（docker rm -f 自杀），launchd 模式下正常执行。
   return 0
