@@ -234,6 +234,11 @@ if BRAIN_VERSION="$BRAIN_VERSION" ENV_REGION="$ENV_REGION" \
     docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$DEPLOY_ROOT/.env.docker" \
       -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
   echo "[sidecar] ✅ compose up 成功 v${BRAIN_VERSION}"
+  if [[ "${BRAIN_BOOTSTRAP_RESTORE_TICK:-false}" != true ]]; then
+    cancel_drain_after_up success || exit 1
+    retention_finish success || { _retention_finish_failed success; exit 1; }
+    exit 0
+  fi
   if cancel_drain_after_up success && bootstrap_sidecar_restore_tick success; then
     retention_finish success || { _retention_finish_failed success; exit 1; }
     exit 0
