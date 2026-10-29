@@ -38,7 +38,8 @@ docker() {
   case "$*" in
     'inspect cecelia-node-brain --format'*NetworkSettings*) echo bridge ;;
     'inspect cecelia-node-brain --format {{.Image}}') echo "$blue_image" ;;
-    'image inspect '*) echo "GIT_SHA=$EXPECTED_SHA" ;;
+    'image inspect '*GIT_SHA*) echo "GIT_SHA=$EXPECTED_SHA" ;;
+    'image inspect '*"--format {{.Id}}"*) echo "$new_image" ;;
     'tag '*) return 1 ;;
     'rm -f cecelia-node-brain') BLUE_REMOVED=true ;;
     *) return 0 ;;

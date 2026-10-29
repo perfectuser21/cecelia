@@ -296,12 +296,16 @@ bluegreen_swap() {
       echo "[bluegreen] ❌ 缺少部署目标 SHA，终止切换（blue 保留）"
       return 1
     fi
-    # docker run -d 只确认sidecar创建；目标SHA错误必须在blue仍存活时拦截。
+    # docker run -d 只确认 sidecar 创建；目标 SHA 和镜像身份必须在 blue 存活时冻结。
     if ! timeout -k 2 8 docker image inspect --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "GIT_SHA"}}{{.}}{{end}}{{end}}' "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${version}}" \
       | node -e 'let s="";process.stdin.on("data",x=>{s+=x;if(s.length>128)process.exit(1)});process.stdin.on("end",()=>{if(s.trim()!=="GIT_SHA="+process.argv[1])process.exit(1)})' "$expected_sha"; then
       echo "[bluegreen] ❌ 目标镜像 SHA 未确认，终止切换（blue 保留）"
       return 1
     fi
+    local sidecar_image=""
+    sidecar_image=$(timeout -k 2 8 docker image inspect --format '{{.Id}}' \
+      "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${version}}") || return 1
+    [[ "$sidecar_image" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
     docker rm -f "$sidecar_name" >/dev/null 2>&1 || true  # 清理上次残留
 
     # ── 打 blue-fallback 快照（sidecar compose up 失败时回退用）──────────────
@@ -377,6 +381,17 @@ bluegreen_swap() {
     if ! bluegreen_pre_swap_check; then
       echo '[bluegreen] ❌ blue 删除前审计变化，停止 sidecar 并保留 blue'
       docker rm -f "$sidecar_name" >/dev/null 2>&1 || true
+      bluegreen_guard_blue "$blue"
+      return 1
+    fi
+  fi
+  if [[ -n "$root_dir" ]]; then
+    local sidecar_observed=""
+    sidecar_observed=$(timeout -k 2 8 docker inspect "$sidecar_name" \
+      --format '{{.Name}} {{.Image}} {{.State.Running}}' 2>/dev/null) || true
+    if [[ "$sidecar_observed" != "/${sidecar_name} ${sidecar_image} true" ]]; then
+      echo '[bluegreen] ❌ sidecar 未保持运行或镜像身份漂移，保留 blue'
+      send_bark "⚠️ 蓝绿 sidecar 启动后未确认存活或镜像身份，v${version} 保留旧 Brain"
       bluegreen_guard_blue "$blue"
       return 1
     fi

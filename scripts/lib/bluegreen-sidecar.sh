@@ -223,10 +223,24 @@ fi
 
 # ── 等待 blue 容器消失（brain-deploy.sh 将 docker rm -f blue）───────────────
 echo "[sidecar] 等待 cecelia-node-brain 消失..."
-for i in $(seq 1 30); do
-  docker inspect cecelia-node-brain >/dev/null 2>&1 || { echo "[sidecar] blue 已消失 (${i}s)"; break; }
+blue_names=cecelia-node-brain
+for i in $(seq 1 120); do
+  blue_names=$(_sidecar_docker ps -a --filter 'name=^/cecelia-node-brain$' --format '{{.Names}}') || {
+    _sidecar_log '[pre-swap-fail] 无法确认旧 Brain 容器是否仍在'
+    exit 1
+  }
+  [[ -n "$blue_names" ]] || { echo "[sidecar] blue 已消失 (${i}s)"; break; }
+  [[ "$blue_names" == cecelia-node-brain ]] || {
+    _sidecar_log '[pre-swap-fail] 旧 Brain 容器查询结果异常'
+    exit 1
+  }
   sleep 1
 done
+if [[ -n "$blue_names" ]]; then
+  _sidecar_log '[pre-swap-fail] 120s 内旧 Brain 未消失，禁止提前 compose'
+  _sidecar_bark "🚨 蓝绿 sidecar 等待旧 Brain 删除超时，v${BRAIN_VERSION} 未切换"
+  exit 1
+fi
 
 # ── 主路径：用新版镜像 compose up ────────────────────────────────────────────
 echo "[sidecar] compose up node-brain (BRAIN_VERSION=${BRAIN_VERSION})..."

@@ -20,6 +20,7 @@ async function fixture(t, scenario = '') {
   await mkdir(join(root, 'bin'));
   await mkdir(join(root, 'ledger'), { mode: 0o700 });
   await copyFile(new URL('./lib/brain-image-retention.sh', import.meta.url), join(root, 'scripts/lib/brain-image-retention.sh'));
+  await copyFile(new URL('./lib/url-encode.sh', import.meta.url), join(root, 'scripts/lib/url-encode.sh'));
   await copyFile(new URL('./lib/brain-bootstrap-sidecar.sh', import.meta.url), join(root, 'scripts/lib/brain-bootstrap-sidecar.sh'));
   await copyFile(new URL('./lib/brain-bootstrap-audit.mjs', import.meta.url), join(root, 'scripts/lib/brain-bootstrap-audit.mjs'));
   const request = { deployment_id: deployment, version: candidateVersion, git_sha: sha };
@@ -57,8 +58,11 @@ async function fixture(t, scenario = '') {
       const fallback=args.at(-1)==='cecelia-brain:blue-fallback';
       console.log((fallback?'${previousImage}':'${image}')+'|'+JSON.stringify(['cecelia-brain:'+(fallback?'${fallbackVersion}':'${candidateVersion}')])+'|GIT_SHA='+(fallback?'${previousSha}':'${sha}'));process.exit(0);
     }
+    if(args[0]==='ps') {
+      if(scenario==='blue-stuck')console.log('cecelia-node-brain');
+      process.exit(0);
+    }
     if(args[0]==='inspect') {
-      if(scenario==='blue-stuck'&&!args.includes('--format')){console.log('${container}');process.exit(0);}
       if(!exists)process.exit(1);
       const drift=scenario==='drift' && fs.existsSync(root+'/healthy');
       console.log((drift?'${'4'.repeat(64)}':'${container}')+' '+(scenario==='wrong-image'?'${previousImage}':id)+' /cecelia-node-brain true node-brain');process.exit(0);
