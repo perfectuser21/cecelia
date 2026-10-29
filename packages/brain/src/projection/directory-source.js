@@ -248,8 +248,11 @@ export function buildDirectoryRows(data, config = {}) {
     const unresolved = (Array.isArray(version?.payload.steps) ? version.payload.steps : []).filter(entry =>
       !data.steps.some(step => step.activity_id === a.id && step.id === entry.step_id && currentStepDefinition(step, a)))
       .map(entry => `Step 登记对不上：${entry.locator?.step_key || entry.contract?.key || 'unknown'}`);
+    const declaredGaps = version?.payload.contract?.known_gaps ?? a.contract?.known_gaps;
+    const knownGaps = (Array.isArray(declaredGaps) ? declaredGaps : []).filter(g => typeof g?.gap === 'string' && g.gap.trim())
+      .map(g => `已知缺口：${g.gap}${g.task ? `（任务 ${g.task}）` : ''}`);
     const row = make('activities', a, { '名称': title(a.name),
-      ...buildActivityCardProps(a, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id), unresolved),
+      ...buildActivityCardProps(a, (data.cells || []).filter(c => c.step_id === a.id), (data.uses || []).filter(u => u.activity_id === a.id), [...unresolved,...knownGaps]),
       '裁判结论': rich(judgmentText(latestJudgment.get(a.id))),
       // 发布线生产指针（activity_release_state）：v<版本号> + 是否收敛过；没有指针留空
       '生产版本': rich(releaseText(releases.get(a.id))),
