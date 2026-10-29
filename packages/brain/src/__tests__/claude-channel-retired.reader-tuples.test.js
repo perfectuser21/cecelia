@@ -238,6 +238,12 @@ const B_RECOVERY_QA_HASHES = {...B_QA_HASHES,
  'existing-ops-build-source.js':'210f644726dbf3d0049b7c90ced280fc8fcf65d04e1ae30c2775c2234ed0331a',
  'existing-ops-build-envelopes.js':'e68813c0304ade2b9f11c4c93ec731e1cb77414aca17d488d8f203c93559888f',
 };
+const B_STAGING_HASHES = {...B_QA_HASHES,
+ 'existing-ops-runtime-source.js':'8bd4e5157b2233fdf5495f7795f1b8544a6ee766ddc4961676ee1e4175b056fe',
+};
+const B_RECOVERY_STAGING_HASHES = {...B_RECOVERY_QA_HASHES,
+ 'existing-ops-runtime-source.js':B_STAGING_HASHES['existing-ops-runtime-source.js'],
+};
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
  if(!cache.has(text))cache.set(text,createHash('sha256').update(shape(parse(text))).digest('hex'));
@@ -251,10 +257,12 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   if(typeof runtime!=='string')return null;
   const build=sources.get(path.join(root,'existing-ops-build-source.js'));
   const isB=typeof build==='string'&&hash(build,parse,shape)===B_HASHES['existing-ops-build-source.js'];
-  const isQa=hash(runtime,parse,shape)===QA_HASHES['existing-ops-runtime-source.js'];
+  const runtimeHash=hash(runtime,parse,shape);
+  const isQa=runtimeHash===QA_HASHES['existing-ops-runtime-source.js'];
   const isRecovery=typeof build==='string'&&hash(build,parse,shape)===B_RECOVERY_QA_HASHES['existing-ops-build-source.js'];
-  if(isRecovery&&!isQa)return null;
-  const selected=isRecovery?B_RECOVERY_QA_HASHES:isB?(isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
+  const isStaging=runtimeHash===B_STAGING_HASHES['existing-ops-runtime-source.js'];
+  if(isRecovery&&!isQa&&!isStaging)return null;
+  const selected=isRecovery?(isStaging?B_RECOVERY_STAGING_HASHES:B_RECOVERY_QA_HASHES):isB?(isStaging?B_STAGING_HASHES:isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
    :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(selected)){
