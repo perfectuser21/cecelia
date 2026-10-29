@@ -11,6 +11,7 @@ const actual = {
   old_version: '1.445.84', old_image_id: oldImage, old_git_sha: oldSha,
   new_version: '1.445.85', new_image_id: newImage, new_git_sha: newSha,
   old_health_version: '1.445.84', old_health_git_sha: oldSha,
+  old_container_health_version: '1.445.84', old_container_health_git_sha: oldSha,
   old_image_git_sha: oldSha, new_image_git_sha: newSha,
 };
 const receipt = {
@@ -29,6 +30,7 @@ describe('one-time .84 drain bootstrap', () => {
       expect(() => verifyBootstrapReceipt(receipt, { ...actual, [key]: 'wrong' }, now), key).toThrow();
     }
     expect(() => verifyBootstrapReceipt(receipt, { ...actual, new_image_git_sha: oldSha }, now)).toThrow();
+    expect(() => verifyBootstrapReceipt(receipt, { ...actual, old_container_health_git_sha: newSha }, now)).toThrow();
     expect(() => verifyBootstrapReceipt({ ...receipt, expires_at: '2026-10-29T23:00:00Z' }, actual, now)).toThrow();
   });
 
@@ -36,9 +38,10 @@ describe('one-time .84 drain bootstrap', () => {
     const rows = {
       tasks: [{ id: 'script-old', task_type: 'script_run', executor_kind: 'script', payload: {} }],
       leases: [{ count: 0 }], callbacks: [{ count: 0 }], attempts: [{ count: 0 }],
-      decisions: [{ status: 'active', made_by: 'user', decision: `${oldImage} ${newImage} ${oldSha} ${newSha} 1.445.84 1.445.85` }],
+      decisions: [{ status: 'active', made_by: 'user', decision: `批准 ${oldImage} ${newImage} ${oldSha} ${newSha} 1.445.84 1.445.85` }],
     };
     const db = { query: async (sql) => {
+      if (sql.includes('current_database()')) return { rows: [{ database: 'cecelia' }] };
       const table = /FROM (tasks|task_leases|callback_queue|harness_attempts|decisions)/.exec(sql)?.[1];
       const key = { task_leases: 'leases', callback_queue: 'callbacks', harness_attempts: 'attempts' }[table] ?? table;
       return { rows: rows[key] };
