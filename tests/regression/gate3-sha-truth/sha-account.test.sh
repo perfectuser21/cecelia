@@ -261,7 +261,7 @@ run_s6_sha_mismatch_rollback() {
   cp "$DEPLOY" "$DEPLOY_ROOT/scripts/brain-deploy.sh" \
     || { fail "复制原部署脚本失败"; return 1; }
   local helper
-  for helper in bluegreen.sh url-encode.sh internal-auth-token.sh brain-image-retention.sh brain-staging.sh; do
+  for helper in bluegreen.sh url-encode.sh internal-auth-token.sh brain-image-retention.sh brain-staging.sh brain-bootstrap.sh; do
     cp "$ROOT_DIR/scripts/lib/$helper" "$DEPLOY_ROOT/scripts/lib/$helper" \
       || { fail "复制原 helper 失败：$helper"; return 1; }
   done
