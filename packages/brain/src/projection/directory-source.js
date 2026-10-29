@@ -87,11 +87,14 @@ function currentDefinition(row, kind) {
 const versionEvidence = version => version ? Object.fromEntries(['id','source_repo','source_path','source_commit'].map(k => [k,version[k]])) : null;
 const contractVersion = version => /^\d+\.\d+\.\d+$/.test(version?.payload?.contract?.version ?? '') ? `v${version.payload.contract.version}` : null;
 function implementationText(version) {
-  const bindings = version?.payload?.contract?.implementation_bindings;
-  if (!Array.isArray(bindings) || !bindings.length) return '合同未绑定实现';
-  const skills = bindings.filter(b => b.kind === 'skill').map(b => `Skill ${b.name || b.path || '未命名'}${b.version ? ` ${b.version}` : ''}`);
+  const contract = version?.payload?.contract;
+  const primary = contract?.execution?.primary_kind;
+  const leader = {code:'代码主执行',skill:'Skill 主执行',agent:'AI 主执行'}[primary];
+  const bindings = contract?.implementation_bindings;
+  if (!Array.isArray(bindings) || !bindings.length) return [leader,'合同未绑定实现'].filter(Boolean).join('；');
+  const skills = bindings.filter(b => b.kind === 'skill').map(b => `${primary === 'code' ? 'Skill 异常接手' : 'Skill'} ${b.name || b.path || '未命名'}${b.version ? ` ${b.version}` : ''}`);
   const codeCount = bindings.filter(b => b.kind === 'code').length;
-  return [...skills, ...(codeCount ? [`代码 ${codeCount} 项`] : [])].join('；') || '合同未绑定实现';
+  return [leader,...skills, ...(codeCount ? [`代码 ${codeCount} 项`] : [])].filter(Boolean).join('；') || '合同未绑定实现';
 }
 function sampleProps(version) {
   const contract = version?.payload?.contract;

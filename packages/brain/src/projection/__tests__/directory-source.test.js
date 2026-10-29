@@ -158,7 +158,7 @@ describe('六层目录源映射', () => {
     w.status='paused';data.workflow_runtime=[{workflow_id:w.id,runs7:1,ran7:0,alarms:0}];
     a.current_definition_version_id=fixtureEntityId(401);
     a.definition_version={id:a.current_definition_version_id,activity_id:a.id,
-      payload:{activity_id:a.id,contract:{version:'4.0.0',implementation_bindings:[
+      payload:{activity_id:a.id,contract:{version:'4.0.0',execution:{primary_kind:'code'},implementation_bindings:[
         {kind:'skill',name:'douyin-leadgen-activity-102-qualification',version:'0.2.2'},
         {kind:'code',path:'services/leadgen.mjs'}]}}};
     r.activity_definition_version_id=fixtureEntityId(400);
@@ -169,6 +169,7 @@ describe('六层目录源映射', () => {
     expect(text(workflow.properties['Activity 顺序'])).toBe('1. 共享活动 · 合同 v3.3.0');
     expect(text(activity.properties['合同版本'])).toBe('v4.0.0');
     expect(text(activity.properties['执行绑定'])).toContain('douyin-leadgen-activity-102-qualification 0.2.2');
+    expect(text(activity.properties['执行绑定'])).toContain('代码主执行；Skill 异常接手');
     expect(text(activity.properties['样本验收'])).toContain('未绑定');
   });
   it('Activity 合同中的历史样本候选显示固定提交源码链接，不推断当前版本已通过验收', () => {

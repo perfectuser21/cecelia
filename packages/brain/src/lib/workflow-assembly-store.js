@@ -31,17 +31,24 @@ export async function ensureAssemblyWarehouse(client,definition,source){
  }
 }
 async function contractColumns(client,activityId,contract,strict){
- const columns=['inputs','outputs','preconditions','invariants','nfr','failure','readback','promise'];
+ const columns=['inputs','outputs','preconditions','invariants','nfr','failure','readback','promise','executor_kind'];
  const ready=(await client.query(`SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='activities' AND column_name=ANY($1::text[])`,[columns])).rows;
  if(ready.length!==columns.length){if(strict)fail('合同列底座未齐');return;}
  const values=[contract.input_schema??contract.inputs??null,contract.output_schema??contract.outputs??null,contract.preconditions??null,
   {idempotency:contract.idempotency??null,side_effects:contract.side_effects??null},{budget:contract.budget??null,resources:contract.resources??null},contract.failure??null,contract.postconditions??null];
  const hasPromise=Object.hasOwn(contract,'promise');
  if(hasPromise&&(typeof contract.promise!=='string'||!contract.promise.trim()))fail('Activity 承诺必须是非空字符串');
+ const hasExecutor=Object.hasOwn(contract.execution??{},'primary_kind');
+ const primary=contract.execution?.primary_kind;
+ if(hasExecutor&&!['code','skill','agent'].includes(primary))fail('Activity 主执行者必须是 code、skill 或 agent');
+ const executorKind=hasExecutor?(primary==='skill'?'agent':primary):null;
  await client.query(`UPDATE activities SET inputs=$2::jsonb,outputs=$3::jsonb,preconditions=$4::jsonb,invariants=$5::jsonb,nfr=$6::jsonb,failure=$7::jsonb,readback=$8::jsonb,
-  promise=CASE WHEN $9::boolean THEN $10::text ELSE promise END
+  promise=CASE WHEN $9::boolean THEN $10::text ELSE promise END,
+  executor_kind=CASE WHEN $11::boolean THEN $12::text ELSE executor_kind END
   WHERE id=$1 AND ((inputs,outputs,preconditions,invariants,nfr,failure,readback) IS DISTINCT FROM ($2::jsonb,$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb)
-   OR ($9::boolean AND promise IS DISTINCT FROM $10::text))`,[activityId,...values.map(v=>v===null?null:JSON.stringify(v)),hasPromise,hasPromise?contract.promise:null]);
+   OR ($9::boolean AND promise IS DISTINCT FROM $10::text)
+   OR ($11::boolean AND executor_kind IS DISTINCT FROM $12::text))`,[activityId,...values.map(v=>v===null?null:JSON.stringify(v)),hasPromise,hasPromise?contract.promise:null,
+    hasExecutor,executorKind]);
 }
 async function explicitUses(client,activityId,contract,source,{strict=false,readOnly=false}={}){
  const declarations=contract.warehouse_dependencies??[];
