@@ -35,7 +35,7 @@ beforeEach(async () => {
     CREATE TABLE activity_definition_versions(id uuid,activity_id uuid,payload jsonb,source_repo text,source_path text,source_commit text);
     CREATE TABLE activities(id uuid,name text,workflow_id uuid);
     CREATE TABLE steps(id uuid,key text,activity_id uuid,active boolean,step_order int);
-    CREATE TABLE workflow_activity_refs(workflow_id uuid,activity_id uuid,slot_key text,sequence_no int,active boolean);
+    CREATE TABLE workflow_activity_refs(workflow_id uuid,activity_id uuid,slot_key text,sequence_no int,active boolean,activity_definition_version_id uuid);
     CREATE TABLE activity_cells(step_id uuid,cell_key text,cell_status text,parent_cell_key text);
     CREATE TABLE warehouse_items(id uuid,name text);
     CREATE TABLE activity_uses(activity_id uuid,item_id uuid,role text);
