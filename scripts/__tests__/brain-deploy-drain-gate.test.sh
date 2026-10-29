@@ -6,6 +6,7 @@ eval "$(sed -n '/^drain_before_swap() {/,/^}/p' "$DEPLOY")"
 
 DRY_RUN=false
 DRAIN_TIMEOUT_SECS=1
+DRAIN_POST_RESP='{"draining":true,"hold_for_swap":true,"remaining":1}'
 send_bark() { :; }
 sleep() { :; }
 curl() {
@@ -14,7 +15,7 @@ curl() {
     *"/api/brain/tick/drain-status"*) printf '%s' "${DRAIN_STATUS:-}" ;;
     *"/api/brain/tick/drain"*)
       [[ " $* " == *'"hold_for_swap":true'* ]] || return 1
-      [[ "${DRAIN_POST_OK:-1}" == 1 ]] && printf '{"draining":true,"remaining":1}' ;;
+      [[ "${DRAIN_POST_OK:-1}" == 1 ]] && printf '%s' "$DRAIN_POST_RESP" ;;
   esac
 }
 
@@ -26,6 +27,7 @@ expect_reject() {
 }
 
 STATUS_UP=1 DRAIN_POST_OK=0 expect_reject 'drain activation failure'
+STATUS_UP=1 DRAIN_POST_OK=1 DRAIN_POST_RESP='{"draining":true,"already_draining":true,"hold_for_swap":true}' DRAIN_STATUS='{"draining":true,"hold_for_swap":true,"drain_completed":true,"remaining":0}' expect_reject 'another deployment owns drain'
 STATUS_UP=1 DRAIN_POST_OK=1 DRAIN_STATUS='{"draining":true,"remaining":1}' expect_reject 'timeout with live execution'
 STATUS_UP=1 DRAIN_POST_OK=1 DRAIN_STATUS='{"draining":false,"remaining":0}' expect_reject 'zero without completion proof'
 STATUS_UP=1 DRAIN_POST_OK=1 DRAIN_STATUS='{"draining":false,"drain_completed":true,"remaining":0}' expect_reject 'legacy API releases dispatch before swap'

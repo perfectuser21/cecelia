@@ -82,4 +82,11 @@ describe('drain waits for real execution and callbacks', () => {
     expect((await mod.getDrainStatus()).draining).toBe(true);
     expect(mod.isDraining()).toBe(true);
   });
+
+  it('does not take ownership of a drain started by another caller', async () => {
+    await mod.drainTick();
+    const duplicate = await mod.drainTick({ holdForSwap: true });
+    expect(duplicate).toMatchObject({ already_draining: true, hold_for_swap: false });
+    expect(mockQuery.mock.calls.filter(([sql]) => sql.includes('INSERT INTO working_memory'))).toHaveLength(1);
+  });
 });
