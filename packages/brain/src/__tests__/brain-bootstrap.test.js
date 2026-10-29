@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { verifyBootstrapReceipt } from '../../../../scripts/lib/brain-bootstrap-verify.mjs';
-import { auditBootstrapExecution } from '../../../../scripts/lib/brain-bootstrap-audit.mjs';
+import { auditBootstrapExecution, bridgeProcessSnapshotSafe } from '../../../../scripts/lib/brain-bootstrap-audit.mjs';
 
 const oldImage = `sha256:${'a'.repeat(64)}`;
 const newImage = `sha256:${'b'.repeat(64)}`;
@@ -183,5 +183,14 @@ describe('one-time .84 drain bootstrap', () => {
     const input = { approval_decision_id: decisionId, ...actual };
     expect((await auditBootstrapExecution(db, probe, input)).safe).toBe(true);
     expect(maxActive).toBeLessThanOrEqual(12);
+  });
+
+  it('distinguishes unrelated Codex app-server processes from old bridge exec workers', () => {
+    const started = Date.parse('2026-10-10T07:39:47Z');
+    const bridge = ' 1605 Thu Oct 29 19:41:13 2026 /opt/homebrew/bi /opt/homebrew/bin/node /repo/codex-bridge.cjs';
+    const appServer = ' 1606 Thu Oct 29 19:42:13 2026 /opt/homebrew/bi node /opt/homebrew/bin/codex app-server --listen stdio://';
+    expect(bridgeProcessSnapshotSafe(`${bridge}\n${appServer}`, started, 'run-id', 'task-id')).toBe(true);
+    const oldExec = ' 1607 Thu Oct 29 19:43:13 2026 /opt/homebrew/bi /usr/bin/codex exec --json';
+    expect(bridgeProcessSnapshotSafe(`${bridge}\n${oldExec}`, started, 'run-id', 'task-id')).toBe(false);
   });
 });
