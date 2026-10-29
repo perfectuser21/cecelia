@@ -37,7 +37,22 @@ source "$SCRIPT_DIR/lib/brain-bootstrap.sh"
 bootstrap_select_receipt
 
 bluegreen_pre_swap_check() {
-    [[ -n "${BRAIN_BOOTSTRAP_RECEIPT:-}" ]] || return 0
+    if [[ -z "${BRAIN_BOOTSTRAP_RECEIPT:-}" ]]; then
+        [[ "${DRAIN_STARTED_BY_DEPLOY:-false}" == true ]] || return 0
+        local tick_status drain_status
+        tick_status=$(curl -q -sf --max-time 20 --max-filesize 262144 \
+            http://localhost:5221/api/brain/tick/status) || return 1
+        drain_status=$(curl -q -sf --max-time 20 --max-filesize 262144 \
+            http://localhost:5221/api/brain/tick/drain-status) || return 1
+        node -e '
+          const t=JSON.parse(process.argv[1]),d=JSON.parse(process.argv[2]);
+          const age=Date.now()-Date.parse(d.drain_started_at);
+          if(t.draining!==true||d.draining!==true||d.hold_for_swap!==true
+            ||d.drain_completed!==true||d.remaining!==0
+            ||!Number.isFinite(age)||age< -30000||age>=14*60*1000) process.exit(1);
+        ' "$tick_status" "$drain_status" || return 1
+        return 0
+    fi
     local identity status
     identity=$(docker inspect cecelia-node-brain --format '{{.State.Running}} {{.Image}}') || return 1
     [[ "$identity" == "true $BOOTSTRAP_OLD_IMAGE" ]] || return 1
