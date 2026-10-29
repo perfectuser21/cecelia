@@ -91,7 +91,8 @@ describe('one-time .84 drain bootstrap', () => {
       return { rows: rows[key] };
     } };
     const input = { approval_decision_id: decisionId, ...actual };
-    const stale = await auditBootstrapExecution(db, async () => 'unknown', input, async () => true);
+    const stale = await auditBootstrapExecution(db, async () => 'unknown', input,
+      { confirmStaleScript: async () => true });
     expect(stale).toMatchObject({ safe: true, stale_terminal_runs: 1, blocking_runs: 0 });
     expect((await auditBootstrapExecution(db, async () => 'alive', input)).safe).toBe(false);
     expect((await auditBootstrapExecution(db, async () => 'unknown', input)).safe).toBe(false);
@@ -126,5 +127,38 @@ describe('one-time .84 drain bootstrap', () => {
     });
     source.controller_lease_expires_at = '2999-01-01T00:00:00Z';
     expect((await auditBootstrapExecution(db, async () => 'unknown', input)).safe).toBe(false);
+  });
+
+  it('requires fresh independent proof for only the two superseded device attempts and old bridge run', async () => {
+    const runs = [
+      { id: 'device-row', task_id: '13508736-1359-4587-b995-5e35507cd5d4',
+        run_id: 'social-keyword-leadgen-crontab-auto09270600__a0.preflight',
+        task_status: 'completed', task_type: 'device_job', executor_kind: null, status: 'running' },
+      { id: 'bridge-row', task_id: '93bb2a4e-7152-4dd6-b3b8-2f2e17d97322',
+        run_id: '91d3234a-7f50-402e-9014-e07e9ce07fd1',
+        task_status: 'completed', task_type: 'data', executor_kind: 'bridge',
+        context: { executor: 'codex-bridge' }, status: 'running',
+        started_at: '2026-10-10T07:39:47Z' },
+    ];
+    const db = { query: async (sql) => {
+      if (sql.includes('current_database()')) return { rows: [{ database: 'cecelia' }] };
+      if (sql.includes('FROM decisions')) return { rows: [{ status: 'active', made_by: 'user',
+        decision: `${oldImage} ${newImage} ${oldSha} ${newSha} 1.445.84 1.445.85` }] };
+      if (sql.includes('FROM task_runs')) return { rows: runs };
+      if (sql.includes('FROM callback_queue') || sql.includes('FROM harness_attempts')) return { rows: [{ count: 0 }] };
+      return { rows: [] };
+    } };
+    const input = { approval_decision_id: decisionId, ...actual };
+    const confirmDevice = async () => true;
+    const confirmBridge = async () => true;
+    expect(await auditBootstrapExecution(db, async () => 'unknown', input,
+      { confirmDevice, confirmBridge })).toMatchObject({ safe: true, blocking_runs: 0, stale_terminal_runs: 2 });
+    runs[0].run_id = 'other-a0.preflight';
+    expect((await auditBootstrapExecution(db, async () => 'unknown', input,
+      { confirmDevice, confirmBridge })).safe).toBe(false);
+    runs[0].run_id = 'social-keyword-leadgen-crontab-auto09270600__a0.preflight';
+    runs[1].context.executor = 'other';
+    expect((await auditBootstrapExecution(db, async () => 'unknown', input,
+      { confirmDevice, confirmBridge })).safe).toBe(false);
   });
 });
