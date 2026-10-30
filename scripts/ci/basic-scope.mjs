@@ -9,7 +9,9 @@ const ORDER = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 
 // Android 客户端自身修改必须运行 Gradle；服务端全量不重复构建未变更的移动客户端。
 const ACTIVE = ORDER.filter(component => !['frontend', 'android'].includes(component));
 const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'ops'];
-const DOCUMENT = /\.(?:md|mdx|txt|rst|png|jpe?g|gif|svg|webp|pdf)$/i;
+const DOCUMENT = /\.(?:md|txt|rst|png|jpe?g|gif|svg|webp|pdf)$/i;
+const DOCUMENT_NAME = /(?:^|\/)(?:README|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT|SECURITY|LICENSE)\.md$/i;
+const ROOT_DOCUMENT = /^(?:AGENTS|CLAUDE|DEFINITION|PRD|DoD)\.md$/i;
 const CONFIG = /(?:^|\/)(?:(?:vitest|vite|eslint)(?:\.[^/]+)*\.config(?:\.[^/]+)?|tsconfig(?:\.[^/]+)?\.json|\.eslintrc(?:\.[^/]+)?)$/;
 
 function assertPaths(paths, full) {
@@ -37,7 +39,9 @@ export function planChecks(paths, {full = false} = {}) {
   const selected = new Set(['scripts']);
   let all = full;
   for (const path of paths) {
-    if (/\.(md|mdx)$/i.test(path) || (path.startsWith('docs/') && DOCUMENT.test(path))) continue;
+    // Markdown 也可能是实际运行时提示词；只有明确的文档位置/文件名才走轻量路径。
+    if (DOCUMENT_NAME.test(path) || ROOT_DOCUMENT.test(path) ||
+      (path.startsWith('docs/') && DOCUMENT.test(path))) continue;
     if (path.startsWith('frontend/')) selected.add('frontend');
     if (path.startsWith('apps/android-agent/')) selected.add('android');
     if (CONFIG.test(path) || /^(?:\.github|scripts|config)\//.test(path) ||

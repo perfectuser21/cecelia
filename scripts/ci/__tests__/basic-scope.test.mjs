@@ -18,7 +18,18 @@ test('全量只覆盖现役组件；旧frontend自身改动仍明确验证', () 
 });
 
 test('文档改动仍运行基础 CI 回归，且不触发应用测试', () => {
-  assert.deepEqual(planChecks(['docs/guide.md', 'README.md', 'docs/diagram.svg']), [{component: 'scripts'}]);
+  assert.deepEqual(planChecks(['docs/guide.md', 'README.md', 'docs/diagram.svg', 'DoD.md', 'PRD.md', 'packages/engine/README.md']), [{component: 'scripts'}]);
+});
+
+test('运行时Markdown提示词必须执行完整所属组件，不能因扩展名免检', () => {
+  for (const path of ['packages/brain/src/prompts/attach-decision.md',
+    'packages/brain/scripts/coding-workflow/prompts/build.md']) {
+    assert.deepEqual(components(planChecks([path])), ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'ops', 'scripts'], path);
+  }
+  assert.deepEqual(components(planChecks(['apps/dashboard/src/page.mdx'])), ['dashboard', 'scripts']);
+  for (const path of ['unknown/prompt.md', 'docs/example.mdx']) {
+    assert.deepEqual(components(planChecks([path])), all, path);
+  }
 });
 
 test('Android改动必须执行真实Android单测，不能用JS测试替代', () => {

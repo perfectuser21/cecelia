@@ -36,7 +36,7 @@ authority: CURRENT_STATE
 | Android | 仅相关客户端改动选择 Gradle/JVM 测试，纳入同一个 ci-passed |
 | frontend | 路由表标记 Legacy/deploy:false；现役发布使用 apps/dashboard。旧目录自身变更仍检查构建和浏览器；未修改旧应用不阻断现役服务全量 |
 
-Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；全局脚本、依赖和配置变更保守选择现役服务全量。未知可执行路径不会被当成纯文档略过。文档改动仍运行 CI 自身回归和安全扫描。
+Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；全局脚本、依赖和配置变更保守选择现役服务全量。未知可执行路径不会被当成纯文档略过。只有明确的文档路径/文件名走轻量检查，仍运行 CI 自身回归和安全扫描；运行时 Markdown 提示词按所属组件检查，MDX 不按普通文档免检。
 
 普通源码 CI 使用一次性本机 `cecelia_scratch` 和固定测试口令；不需要生产账号、内网、模型服务或私有 Skill 仓库访问密钥。运行验收强制拒绝远端和非 scratch 数据库。
 
