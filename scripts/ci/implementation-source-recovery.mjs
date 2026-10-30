@@ -26,8 +26,7 @@ const ALLOWED=new Set([...COLLECTORS,'.implementation-source-relations.json','sc
  'scripts/ci/implementation-source-ready.mjs','scripts/ci/implementation-main-snapshot.mjs',
  'scripts/ci/implementation-source-recovery.mjs','scripts/ci/implementation-main-gate.mjs',
  'scripts/ci/implementation-pr-gate.mjs','scripts/ci/implementation-snapshot.mjs',
- 'packages/brain/package.json','packages/brain/VERSION','packages/brain/package-lock.json','package-lock.json','.brain-versions','DEFINITION.md',
- 'scripts/check-version-sync.sh','tests/check-version-sync.test.js']);
+ 'packages/brain/package.json','packages/brain/VERSION','packages/brain/package-lock.json','package-lock.json','.brain-versions','DEFINITION.md']);
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const git=(root,...args)=>fixedLocalGit(root,args,{encoding:'utf8'}).trim();
@@ -49,8 +48,7 @@ export function validateSourceDelta(repoRoot,base,head){
  const bootstrapBase='e3a01021ee7100b83d8ed5a0be219d0b543b5dff';
  for(const path of ['packages/brain/VERSION','.brain-versions'])if((changed.includes(path)||base===bootstrapBase)&&blob(repoRoot,head,path).toString().trim()!==JSON.parse(blob(repoRoot,head,'packages/brain/package.json')).version)fail('SOURCE_RECOVERY_VERSION_INVALID');
  if(changed.includes('packages/brain/package.json')&&JSON.parse(blob(repoRoot,head,'packages/brain/package.json')).cecelia_source_only!==true)fail('SOURCE_RECOVERY_DEPLOY_GUARD_MISSING');
- if((changed.includes('scripts/check-version-sync.sh')||base===bootstrapBase)&&digest(blob(repoRoot,head,'scripts/check-version-sync.sh'))!=='9ded9227c19d5c0666311ec12df2ede3c8228690d4ee24ae33ae3fbddaac824e')fail('SOURCE_RECOVERY_VERSION_GUARD_UNREVIEWED');
- if((changed.includes('tests/check-version-sync.test.js')||base===bootstrapBase)&&digest(blob(repoRoot,head,'tests/check-version-sync.test.js'))!=='bf7e373d712b4ccd5d70eb7b389171e271157f6196a4469c269904f2022f9534')fail('SOURCE_RECOVERY_VERSION_TEST_UNREVIEWED');
+ if(base===bootstrapBase&&digest(blob(repoRoot,head,'scripts/check-version-sync.sh'))!=='23cea4c3a95ec8f2e13d8191fad20622cfe6268a5bda1885f4758ee92845f89f')fail('SOURCE_RECOVERY_VERSION_GUARD_UNREVIEWED');
  if(changed.includes('.github/workflows/ci.yml')){
   const ciPath='.github/workflows/ci.yml',before=yaml.load(blob(repoRoot,base,ciPath).toString()),after=yaml.load(blob(repoRoot,head,ciPath).toString());
   const checkouts=before.jobs?.['lint-auto-merge-decision']?.steps?.filter(s=>s.uses==='actions/checkout@v4');

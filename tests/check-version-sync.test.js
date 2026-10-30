@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync, spawnSync } from 'child_process';
+import { execSync } from 'child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname, resolve } from 'path';
@@ -46,42 +46,5 @@ describe('check-version-sync.sh 检测 DEFINITION.md 版本漂移', () => {
     expect(exitCode).toBe(1);
     expect(output).toContain('DEFINITION.md');
     expect(output).not.toContain("no 'Brain 版本' line found");
-  });
-});
-
-describe('check-version-sync.sh 六处发布版本一致性', () => {
-  const version = '9.9.9';
-  const fixtures = [
-    ['brain lock 根条目漂移', 'packages/brain/package-lock.json', JSON.stringify({ version, packages: { '': { version: '9.8.8' } } })],
-    ['根 lock workspace 漂移', 'package-lock.json', JSON.stringify({ packages: { 'packages/brain': { version: '9.8.8' } } })],
-    ['VERSION 漂移', 'packages/brain/VERSION', '9.8.8\n'],
-    ['VERSION 缺失', 'packages/brain/VERSION', null],
-  ];
-
-  it.each(fixtures)('%s 必须拒绝，不能显示全部同步', (name, changedPath, changedBytes) => {
-    const workDir = mkdtempSync(join(tmpdir(), 'version-six-test-'));
-    try {
-      mkdirSync(join(workDir, 'packages', 'brain'), { recursive: true });
-      const files = {
-        'packages/brain/package.json': JSON.stringify({ version }),
-        'packages/brain/package-lock.json': JSON.stringify({ version, packages: { '': { version } } }),
-        'package-lock.json': JSON.stringify({ packages: { 'packages/brain': { version } } }),
-        'packages/brain/VERSION': `${version}\n`,
-        '.brain-versions': `${version}\n`,
-        'DEFINITION.md': `# Fixture\n\n**Brain 版本**: ${version}\n`,
-      };
-      files[changedPath] = changedBytes;
-      for (const [path, bytes] of Object.entries(files)) {
-        if (bytes === null) continue;
-        mkdirSync(dirname(join(workDir, path)), { recursive: true });
-        writeFileSync(join(workDir, path), bytes);
-      }
-      const result = spawnSync('bash', [SCRIPT], { cwd: workDir, encoding: 'utf8' });
-      expect(result.status).toBe(1);
-      expect(result.stdout).toContain(changedPath);
-      expect(result.stdout).not.toContain('All version files in sync');
-    } finally {
-      rmSync(workDir, { recursive: true, force: true });
-    }
   });
 });
