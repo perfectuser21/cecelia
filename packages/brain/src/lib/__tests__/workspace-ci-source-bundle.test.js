@@ -134,6 +134,26 @@ it.each([
 ])('现代helper%s漂移不能冒已审源码封套',async(_name,change)=>{const p=await modernBundle(()=>{},null,{changeSource:(bytes,path)=>path===MODERN?Buffer.from(change(bytes.toString())):bytes});expect(p.status).toBe('unknown');});
 
 const infraStep=(y,name)=>y.jobs.gate.steps.find(s=>s.name===name);
+const oldInfraGuard=y=>{
+ y.jobs['snapshot-infra'].if=y.jobs['snapshot-infra'].if.replace('inputs.source_baseline_recovery != true && ','');
+ y.jobs.gate.env.INFRA_ADMISSION=y.jobs.gate.env.INFRA_ADMISSION.replace('inputs.source_baseline_recovery != true && ','');
+};
+it('旧infra封套和新恢复隔离封套均有精确来源证明',async()=>{
+ const previous=await modernBundle(()=>{},null,{mutateImpact:oldInfraGuard});
+ expect(previous.status,JSON.stringify(previous.gaps)).toBe('verified');
+ expect(previous.executable).toBe(false);
+ const current=await modernBundle();
+ expect(current.status,JSON.stringify(current.gaps)).toBe('verified');
+ expect(current.executable).toBe(false);
+});
+it.each([
+ ['旧gate配新provider',y=>{y.jobs.gate.env.INFRA_ADMISSION=y.jobs.gate.env.INFRA_ADMISSION.replace('inputs.source_baseline_recovery != true && ','');}],
+ ['新gate配旧provider',y=>{y.jobs['snapshot-infra'].if=y.jobs['snapshot-infra'].if.replace('inputs.source_baseline_recovery != true && ','');}],
+])('%s不能拼接成已审infra封套',async(_name,mutateImpact)=>{
+ const proof=await modernBundle(()=>{},null,{mutateImpact});
+ expect(proof.status).toBe('unknown');
+ expect(proof.gaps).toEqual(expect.arrayContaining([expect.objectContaining({code:'CALLEE_INACTIVE_INFRA_UNPROVEN'})]));
+});
 it('infra默认关闭的真实跨仓callee完整提取，第三来源不冒执行或main信任',async()=>{
  const p=await modernBundle();expect(p.status,JSON.stringify(p.gaps)).toBe('verified');
  expect(p.consumer.status).toBe('verified');expect(p.executable).toBe(false);expect(p.admission.status).toBe('unknown');

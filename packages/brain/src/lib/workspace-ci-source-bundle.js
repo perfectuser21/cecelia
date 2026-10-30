@@ -128,18 +128,21 @@ const NATIVE_PR_ENV="${{ github.repository == 'perfectuser21/cecelia' && github.
 // root独审6a9f1f64的完整gate/provider封套；只认可既有workspace caller下不可激活的infra分支。
 // callerProof已固定scope=zenithjoy和source_repo=workspace；GitHub reusable保留caller repository。
 // 不认可任意第二needs、任意新增shell或按运行时源码自算批准摘要。旧封套及旧pin保持。
-const INACTIVE_INFRA_GATES=new Set(['dced05241a5744233200da410d1f85505b0af04a0bcfcfc679f1da4dcd5640f8','a1fa4a50a7a7931140697c8d8a64e1e65a921f5c0949ce71f47ffeb4fb79cc10']);
-const INACTIVE_INFRA_PROVIDER='ecf6c4e260c0a5b934247355f3b3422b40c1a6e578e237b6c4bf9d6e17516d23';
+const INACTIVE_INFRA_GATES=new Map([
+ ['dced05241a5744233200da410d1f85505b0af04a0bcfcfc679f1da4dcd5640f8',{provider:'ecf6c4e260c0a5b934247355f3b3422b40c1a6e578e237b6c4bf9d6e17516d23',env:'0f53269325d2791c4c5ee4008bbf1675ea7949b004aadddcda033ebfa290b1bd'}],
+ ['a1fa4a50a7a7931140697c8d8a64e1e65a921f5c0949ce71f47ffeb4fb79cc10',{provider:'ecf6c4e260c0a5b934247355f3b3422b40c1a6e578e237b6c4bf9d6e17516d23',env:'0f53269325d2791c4c5ee4008bbf1675ea7949b004aadddcda033ebfa290b1bd'}],
+ ['7cffaacb79c44c02e99cd03d0a17132a2ee8d212357bea4e17d311550d00564d',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'8a0a4006fd059bd00cb3fea4d00edc587b533a23a9e7dbfa75b5dd7b5aefab1c'}],
+ ['74026a45377e3de19af49208c601fb521c2ef7860fc594d2c1ab07662b58b52d',{provider:'7506360d6d5f1fb9b09d9c987f02963b0c69367fd7f04e8bc275bdcbe8aeccb3',env:'8a0a4006fd059bd00cb3fea4d00edc587b533a23a9e7dbfa75b5dd7b5aefab1c'}],
+]);
 const INACTIVE_INFRA_SHELL='a7da97011e907914f0260d915ec31e4869fdf0285fc21f605dea5f0b39d89e9d';
-const INACTIVE_INFRA_ENV='0f53269325d2791c4c5ee4008bbf1675ea7949b004aadddcda033ebfa290b1bd';
 const INACTIVE_INFRA_STEPS=new Set(['三来源联合门真实PG与回归退出码守卫','独立infra固定来源加入联合输入','完整联合scope清单加入infra']);
 function canonicalConfig(value){
  if(Array.isArray(value))return value.map(canonicalConfig);
  return value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonicalConfig(value[key])])):value;
 }
 function reviewedInactiveInfra(yaml){
- return INACTIVE_INFRA_GATES.has(sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.gate)))))
-  &&sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.['snapshot-infra']))))===INACTIVE_INFRA_PROVIDER;
+ const reviewed=INACTIVE_INFRA_GATES.get(sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.gate)))));
+ return reviewed&&sha(Buffer.from(JSON.stringify(canonicalConfig(yaml.jobs?.['snapshot-infra']))))===reviewed.provider?reviewed:false;
 }
 function modernSkillInitializer(yaml,spec,job,step,source,inactiveInfra=false){
  const reject=()=>fail('CALLEE_SKILL_INITIALIZER_UNPROVEN',{path:spec.name});
@@ -149,7 +152,7 @@ function modernSkillInitializer(yaml,spec,job,step,source,inactiveInfra=false){
  if(step.if!==undefined||step['continue-on-error']||step['working-directory']!==undefined||step.shell!==undefined||job.defaults?.run!==undefined||yaml.defaults?.run!==undefined
   ||!secret||Object.keys(secret).join(',')!=='required'||secret.required!==false||sha(Buffer.from(source))!==(inactiveInfra?INACTIVE_INFRA_SHELL:MODERN_SHELL_HASHES[spec.name])
   ||Object.keys(step.env||{}).sort().join(',')!==Object.keys(initEnv).sort().join(',')||Object.entries(initEnv).some(([key,value])=>step.env[key]!==value)
-  ||yaml.env!==undefined||sha(Buffer.from(JSON.stringify(Object.fromEntries(Object.entries(job.env||{}).sort()))))!==(inactiveInfra?INACTIVE_INFRA_ENV:MODERN_ENV_HASHES[spec.name])
+  ||yaml.env!==undefined||sha(Buffer.from(JSON.stringify(Object.fromEntries(Object.entries(job.env||{}).sort()))))!==(inactiveInfra?inactiveInfra.env:MODERN_ENV_HASHES[spec.name])
   ||job.env?.SOURCE_REPO!=="${{ inputs.source_repo || github.repository }}"
   ||job.env?.HEAD!==(impact?"${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}":"${{ inputs.head_revision || github.sha }}"))reject();
  const tools=steps.filter(s=>s.uses?.startsWith('actions/checkout@')&&s.with?.path==='tooling'),checkouts=steps.filter(s=>s.uses?.startsWith('actions/checkout@')&&s.with?.path==='source');
