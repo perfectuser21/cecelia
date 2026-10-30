@@ -328,7 +328,8 @@ const REVIEWED_FILES={
   "scripts/lib/brain-staging.sh": ["57697254e538f75b6a99e276e0b3d95405eb29f95c6a01686f5fd66dd5227089", "66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170"],
   "scripts/staging-verify.sh": ["7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925", "4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba"],
   "scripts/wait-for-staging.sh": "feed4d74afc960f4c6ce73b27c63cf2249aef8cd5b17c9dea10199e3ab1251c0",
-  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e"]
+  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e", "6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b"],
+  "scripts/lib/brain-bootstrap.sh": "703dfbb061e938c8b7b58426389960c3de718d20fd4772bc238928823887f714"
 };
 const ROUTE_AST_SHA='7190b4987ffa5adbab19d5fcf17d341586db536bba7dfeb97c205aab63c910c4';
 const BUDGET_STAGING_FILES={
@@ -337,11 +338,16 @@ const BUDGET_STAGING_FILES={
   "scripts/lib/brain-staging.sh": ["66b077f7f395ed77b16254219231a5308f72c1ba7d3739a4e7f2adecd59a9170", "0adad6c3b8f8e3f398fb7621af31876a60f31a9303346d14fac55e5401f01b00"],
   "scripts/staging-verify.sh": ["7174239878cb2b159e6cd8cc3ab8cb2af102ef75a7c188e1c6d73fae48932925", "4cea6715002cdf642248da1f277192cee9fe8a03a85a45315a6796063569bcba"],
   "scripts/wait-for-staging.sh": "6ca3e437f2583ce77e0ac916958a726ad0c884637d032e7b76003700a69b2467",
-  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e"]
+  "scripts/brain-deploy.sh": ["b75e43593d5d24ddbfeec4a5eb46ba20602259aeb27664268401eb3de6d7a428", "a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e", "6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b"],
+  "scripts/lib/brain-bootstrap.sh": "703dfbb061e938c8b7b58426389960c3de718d20fd4772bc238928823887f714"
 };
 const BUDGET_FILES={
-  "scripts/lib/bluegreen.sh": "ca287873ef216a990fd57e588284e401218969294df17ab48592653262ed74d6",
-  "scripts/lib/bluegreen-sidecar.sh": "f2670302e7a348c5a7e0e4d8eaf655c8c933449cd86155d529b89e09baf0c75b",
+  "scripts/lib/bluegreen.sh": ["ca287873ef216a990fd57e588284e401218969294df17ab48592653262ed74d6", "854a21df441b271f19cae0ad5266bb1d0ee2062ed945244bd8e9db48ae48b19d"],
+  "scripts/lib/bluegreen-sidecar.sh": ["f2670302e7a348c5a7e0e4d8eaf655c8c933449cd86155d529b89e09baf0c75b", "fc1a754a806fd4dcf478e4fd1811f6506db7ebb96ea24bbf3212e5b3d5edcacd"],
+  "scripts/lib/brain-bootstrap.sh": "703dfbb061e938c8b7b58426389960c3de718d20fd4772bc238928823887f714",
+  "scripts/lib/brain-bootstrap-sidecar.sh": "1ee008935e5f76b495df62d2023721cfc1a28617c035363accb8a4b4a2e3d216",
+  "scripts/lib/brain-bootstrap-audit.mjs": "13db57cf9131169924d5d1b7910a47d3e4aec537623684d10a2170eb83efba09",
+  "scripts/lib/brain-bootstrap-verify.mjs": "d926b4682a2727783fb11360d1d64947bd2fcc9447e87f9af7511d78bac17ada",
   "docker-compose.yml": "5d3b9715a6bd704a30afb78aac4c6b22a8b4a83d2e01a5f359ca4be804a985d9",
   "docker-compose.us-vps.yml": "f76efcb09d62b3fd83752feae9f40accc13d577c4cba17aa40bf43a16f5f0444",
   "scripts/lib/url-encode.sh": "3a55d14ad60dac2b484a858903f4857b252713697b7c2a9aaa7c4d6d4ff1999f",
@@ -415,11 +421,16 @@ async function collectSettlementSources({read,requireProof,relations,revision,ro
   ...(!layout?[["packages/brain/src/routes/ops.js",base+'runtime.mjs','literal_dynamic_import']]:[]),
   // 完整已审字节证明这些实际 source/子进程/region 分支；缺任一输入整体关闭。
   ["scripts/brain-deploy.sh","scripts/lib/bluegreen.sh","reviewed_bash_source_call"],
+  ["scripts/brain-deploy.sh","scripts/lib/brain-bootstrap.sh","reviewed_bash_source_call"],
+  ["scripts/lib/brain-bootstrap.sh","scripts/lib/brain-bootstrap-verify.mjs","reviewed_fixed_node_entry"],
+  ["scripts/lib/brain-bootstrap.sh","scripts/lib/brain-bootstrap-audit.mjs","reviewed_node_stdin_entry"],
   ["scripts/brain-deploy.sh","scripts/lib/brain-image-retention.sh","reviewed_bash_source_call"],
   ["scripts/lib/bluegreen.sh","scripts/lib/url-encode.sh","reviewed_bash_source_call"],
   ["scripts/lib/bluegreen.sh","scripts/lib/bluegreen-sidecar.sh","reviewed_fixed_sidecar_bash_entry"],
   ["scripts/lib/bluegreen-sidecar.sh","scripts/lib/brain-image-retention.sh","reviewed_bash_source_call"],
   ["scripts/lib/bluegreen-sidecar.sh","scripts/lib/url-encode.sh","reviewed_bash_source_call"],
+  ["scripts/lib/bluegreen-sidecar.sh","scripts/lib/brain-bootstrap-sidecar.sh","reviewed_bash_source_call"],
+  ["scripts/lib/bluegreen-sidecar.sh","scripts/lib/brain-bootstrap-audit.mjs","reviewed_node_stdin_entry"],
   ["scripts/lib/brain-image-retention.sh","scripts/brain-image-retention/cli.mjs","reviewed_retention_node_entry"],
   ["scripts/lib/bluegreen-sidecar.sh","scripts/brain-image-retention/cli.mjs","reviewed_retention_node_entry"],
   ["scripts/lib/bluegreen-sidecar.sh","scripts/brain-image-retention/policy.mjs","reviewed_sidecar_policy_import"],
@@ -435,7 +446,7 @@ export async function collectIsolatedStagingSources({read,requireProof,relations
  const routeHash=route&&routeDigest(route,parse),budget=routeHash===BUDGET_POST_AST;let sourceOnlyDeploy=false;
  for(const[path,digest]of Object.entries(budget?BUDGET_STAGING_FILES:REVIEWED_FILES)){
   const source=await read(path);requireProof(source&&(Array.isArray(digest)?digest:[digest]).includes(stagingHash(source)),'isolated_staging_source_unproven');
-  if(path==='scripts/brain-deploy.sh'&&source&&stagingHash(source)==='a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e')sourceOnlyDeploy=true;
+  if(path==='scripts/brain-deploy.sh'&&source&&['a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e','6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b'].includes(stagingHash(source)))sourceOnlyDeploy=true;
  }
  if(sourceOnlyDeploy){
   const input_path='packages/brain/package.json',text=await read(input_path);let value;

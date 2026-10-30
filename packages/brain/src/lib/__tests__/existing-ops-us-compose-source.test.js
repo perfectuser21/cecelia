@@ -54,6 +54,21 @@ for(const stage of ['remote','template','combined','final'])it('已审US '+stage
  expect(f2.input_relations.some(r=>r.consumer_path==='docker-compose.us-vps.yml'&&r.kind==='reviewed_us_openclaw_prerequisite')).toBe(true);
  if(stage==='final')expect(f2.input_relations.some(r=>r.consumer_path==='packages/brain/src/openclaw-run-ingest.js'&&r.input_path==='packages/brain/src/host-exec.js'&&r.kind==='reviewed_us_openclaw_static_import')).toBe(true);
 },120000);
+it('首升固定脚本的真实 source 与 node 入口都落入来源关系',async()=>{
+ const f2=await build('final');expect(f2.status,JSON.stringify(f2.gaps)).toBe('verified');
+ for(const [consumer_path,input_path,kind] of [
+  ['scripts/brain-deploy.sh','scripts/lib/brain-bootstrap.sh','reviewed_bash_source_call'],
+  ['scripts/lib/brain-bootstrap.sh','scripts/lib/brain-bootstrap-verify.mjs','reviewed_fixed_node_entry'],
+  ['scripts/lib/brain-bootstrap.sh','scripts/lib/brain-bootstrap-audit.mjs','reviewed_node_stdin_entry'],
+  ['scripts/lib/bluegreen-sidecar.sh','scripts/lib/brain-bootstrap-sidecar.sh','reviewed_bash_source_call'],
+  ['scripts/lib/bluegreen-sidecar.sh','scripts/lib/brain-bootstrap-audit.mjs','reviewed_node_stdin_entry'],
+ ])expect(f2.input_relations).toContainEqual(expect.objectContaining({consumer_path,input_path,kind}));
+},120000);
+for(const path of ['scripts/lib/brain-bootstrap.sh','scripts/lib/brain-bootstrap-sidecar.sh','scripts/lib/brain-bootstrap-audit.mjs','scripts/lib/brain-bootstrap-verify.mjs'])
+ it('首升固定来源任一字节变化拒绝 '+path,async()=>{
+  const f2=await build('final',{[path]:original(path)+'\n# unreviewed'});
+  expect(f2.status).toBe('unknown');expect(f2.bindings).toEqual([]);expect(f2.input_relations).toEqual([]);
+ },120000);
 it('final卸挂载不能搭配旧本地读取器，失败清空绑定',async()=>{
  const f2=await build('final',{'packages/brain/src/feishu-task-ledger.js':'export const localState="/opt/openclaw/state";'});
  expect(f2.status).toBe('unknown');expect(f2.bindings).toEqual([]);expect(f2.input_relations).toEqual([]);

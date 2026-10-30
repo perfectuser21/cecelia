@@ -9,7 +9,7 @@ afterEach(()=>{if(dir)rmSync(dir,{recursive:true,force:true});});
 function run(mode){
  dir=mkdtempSync(join(tmpdir(),'brain-admission-'));
  for(const sub of ['scripts/lib','packages/brain','bin','logs','state'])mkdirSync(join(dir,sub),{recursive:true});
- for(const file of ['brain-deploy.sh','staging-deploy.sh','lib/brain-staging.sh','staging-verify.sh']){
+ for(const file of ['brain-deploy.sh','staging-deploy.sh','lib/brain-staging.sh','lib/brain-bootstrap.sh','staging-verify.sh']){
   const from=join(repo,'scripts',file);if(existsSync(from))copyFileSync(from,join(dir,'scripts',file));
  }
  writeFileSync(join(dir,'packages/brain/package.json'),JSON.stringify({version:'1.445.48'}));

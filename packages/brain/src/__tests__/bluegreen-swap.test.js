@@ -40,6 +40,10 @@ case "$1" in
     exit 0
     ;;
   inspect)
+    if [[ "$2" == "cecelia-bluegreen-sidecar" ]]; then
+      echo "/cecelia-bluegreen-sidecar sha256:${'1'.repeat(64)} true"
+      exit 0
+    fi
     # bluegreen_guard_blue 用 --format '{{.State.Status}}'
     if echo "$@" | grep -q 'State.Status'; then
       echo "${blueState}"
@@ -49,7 +53,10 @@ case "$1" in
     fi
     exit 0
     ;;
-  image) echo "GIT_SHA=${imageSha}"; exit 0 ;;
+  image)
+    if echo "$@" | grep -q '{{.Id}}'; then echo "sha256:${'1'.repeat(64)}";
+    else echo "GIT_SHA=${imageSha}"; fi
+    exit 0 ;;
   start) exit 0 ;;
   rm|stop|compose|kill) exit 0 ;;
   *) exit 0 ;;

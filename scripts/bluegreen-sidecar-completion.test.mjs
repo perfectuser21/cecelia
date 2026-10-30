@@ -10,6 +10,9 @@ const sha = 'a'.repeat(40), previousSha = 'b'.repeat(40);
 const image = `sha256:${'1'.repeat(64)}`, previousImage = `sha256:${'2'.repeat(64)}`;
 const container = '3'.repeat(64), deployment = '11111111-1111-4111-8111-111111111111';
 async function fixture(t, scenario = '') {
+  const bootstrap = scenario.startsWith('bootstrap-');
+  const candidateVersion = bootstrap ? '1.445.85' : '1.360.5';
+  const fallbackVersion = bootstrap ? '1.445.84' : '1.360.3';
   const root = await realpath(await mkdtemp(join(tmpdir(), 'sidecar-completion-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'scripts/lib'), { recursive: true });
@@ -17,8 +20,11 @@ async function fixture(t, scenario = '') {
   await mkdir(join(root, 'bin'));
   await mkdir(join(root, 'ledger'), { mode: 0o700 });
   await copyFile(new URL('./lib/brain-image-retention.sh', import.meta.url), join(root, 'scripts/lib/brain-image-retention.sh'));
-  const request = { deployment_id: deployment, version: '1.360.5', git_sha: sha };
-  const previous = { id: previousImage, git_sha: previousSha, tags: ['cecelia-brain:1.360.3'] };
+  await copyFile(new URL('./lib/url-encode.sh', import.meta.url), join(root, 'scripts/lib/url-encode.sh'));
+  await copyFile(new URL('./lib/brain-bootstrap-sidecar.sh', import.meta.url), join(root, 'scripts/lib/brain-bootstrap-sidecar.sh'));
+  await copyFile(new URL('./lib/brain-bootstrap-audit.mjs', import.meta.url), join(root, 'scripts/lib/brain-bootstrap-audit.mjs'));
+  const request = { deployment_id: deployment, version: candidateVersion, git_sha: sha };
+  const previous = { id: previousImage, git_sha: previousSha, tags: [`cecelia-brain:${fallbackVersion}`] };
   await writeFile(join(root, 'ledger/ledger.json'), JSON.stringify({ schema_version: 1, generation: 1, pending: { deployment_id: deployment, request, previous }, successes: [] }), { mode: 0o600 });
   await writeFile(join(root, `ledger/deployment-${deployment}.json`), JSON.stringify({ request, previous, receipt: null }), { mode: 0o600 });
   // 正式 CLI/runtime/adapter/ledger/store 全链执行，只有 Docker 进程边界替身。
@@ -29,6 +35,7 @@ async function fixture(t, scenario = '') {
   await writeFile(join(root, 'bin/docker.cjs'), `
     const fs=require('node:fs');
     const args=process.argv.slice(2), root=process.env.FIXTURE_ROOT, scenario=process.env.SCENARIO;
+    const bootstrap=${bootstrap};
     fs.appendFileSync(root+'/calls',JSON.stringify(args)+'\\n');
     if(scenario==='docker-hang'){setInterval(()=>{},1000);return;}
     const exists=fs.existsSync(root+'/started'), recovered=fs.existsSync(root+'/fallback');
@@ -45,11 +52,15 @@ async function fixture(t, scenario = '') {
       console.log(JSON.stringify([{Id:fixed,Name:'/cecelia-node-brain',Image:id,State:{Running:true}}]));process.exit(0);
     }
     if(args[0]==='image' && args[1]==='inspect' && !args.includes('--format')) {
-      console.log(JSON.stringify([{Id:id,RepoTags:['cecelia-brain:'+(recovered?'1.360.3':'1.360.5')],RepoDigests:[],Config:{Env:['GIT_SHA='+s]}}]));process.exit(0);
+      console.log(JSON.stringify([{Id:id,RepoTags:['cecelia-brain:'+(recovered?'${fallbackVersion}':'${candidateVersion}')],RepoDigests:[],Config:{Env:['GIT_SHA='+s]}}]));process.exit(0);
     }
     if(args[0]==='image' && args[1]==='inspect') {
       const fallback=args.at(-1)==='cecelia-brain:blue-fallback';
-      console.log((fallback?'${previousImage}':'${image}')+'|'+JSON.stringify(['cecelia-brain:'+(fallback?'1.360.3':'1.360.5')])+'|GIT_SHA='+(fallback?'${previousSha}':'${sha}'));process.exit(0);
+      console.log((fallback?'${previousImage}':'${image}')+'|'+JSON.stringify(['cecelia-brain:'+(fallback?'${fallbackVersion}':'${candidateVersion}')])+'|GIT_SHA='+(fallback?'${previousSha}':'${sha}'));process.exit(0);
+    }
+    if(args[0]==='ps') {
+      if(scenario==='blue-stuck')console.log('cecelia-node-brain');
+      process.exit(0);
     }
     if(args[0]==='inspect') {
       if(!exists)process.exit(1);
@@ -63,9 +74,16 @@ async function fixture(t, scenario = '') {
     }
     if(args[0]==='exec') {
       if(!args.includes('${container}'))process.exit(91);
-      if(args.some(x=>x.endsWith('/healthz'))){const sealed=['sealed-degraded','sealed-open-breaker'].includes(scenario),dbDown=scenario==='unhealthy',code=(sealed||dbDown)?503:200;const body=JSON.stringify(dbDown?{status:'degraded',db:'error',tick:'dead'}:sealed?{status:'degraded',db:'connected',tick:'dead'}:{status:'ok',db:'connected',tick:'alive'});if(args.some(a=>/^-[a-zA-Z]*f/.test(a))&&code>=400)process.exit(22);process.stdout.write(body+(args.includes('-w')?'\\n'+code:''));return;}
+      if(args.includes('node')&&args.includes('--input-type=module')){console.log(JSON.stringify({safe:true}));return;}
+      if(args.some(x=>x.endsWith('/tick/enable'))){
+        const fail=scenario==='bootstrap-enable-fail'&&!recovered;
+        if(!fail)fs.writeFileSync(root+'/tick-enabled','');
+        console.log(JSON.stringify({success:!fail,enabled:!fail,loop_running:!fail}));return;
+      }
+      if(args.some(x=>x.endsWith('/tick/status'))){const enabled=fs.existsSync(root+'/tick-enabled');console.log(JSON.stringify({enabled,loop_running:enabled,draining:false}));return;}
+      if(args.some(x=>x.endsWith('/healthz'))){const sealed=['sealed-degraded','sealed-open-breaker'].includes(scenario)||(bootstrap&&!fs.existsSync(root+'/tick-enabled')),dbDown=scenario==='unhealthy',code=(sealed||dbDown)?503:200;const body=JSON.stringify(dbDown?{status:'degraded',db:'error',tick:'dead'}:sealed?{status:'degraded',db:'connected',tick:'dead'}:{status:'ok',db:'connected',tick:'alive'});if(args.some(a=>/^-[a-zA-Z]*f/.test(a))&&code>=400)process.exit(22);process.stdout.write(body+(args.includes('-w')?'\\n'+code:''));return;}
       if(args.some(x=>x.endsWith('/health'))) {
-        fs.writeFileSync(root+'/healthy','');console.log(JSON.stringify({status:['degraded','sealed-degraded','sealed-open-breaker'].includes(scenario)?'degraded':'healthy',...(scenario==='sealed-degraded'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:[]}}}:{}),...(scenario==='sealed-open-breaker'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:['cecelia-run']}}}:{}),version:recovered?'1.360.3':'1.360.5',git_sha:scenario==='wrong-sha'?'${previousSha}':s,...(scenario==='health-oversize'?{padding:'x'.repeat(300000)}:{})}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');return;
+        fs.writeFileSync(root+'/healthy','');const tickOff=bootstrap&&!fs.existsSync(root+'/tick-enabled');console.log(JSON.stringify({status:tickOff||['degraded','sealed-degraded','sealed-open-breaker'].includes(scenario)?'degraded':'healthy',...(tickOff||scenario==='sealed-degraded'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:[]}}}:{}),...(scenario==='sealed-open-breaker'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:['cecelia-run']}}}:{}),version:recovered?'${fallbackVersion}':'${candidateVersion}',git_sha:scenario==='wrong-sha'?'${previousSha}':s,...(scenario==='health-oversize'?{padding:'x'.repeat(300000)}:{})}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');return;
       }
       if(args.some(x=>x.endsWith('/drain-cancel'))) {
         if(scenario==='drain-fail')process.exit(22);
@@ -86,7 +104,11 @@ exec ${JSON.stringify(process.execPath)} "$@"
   // 缩短重试时钟；生产仍为90轮，错误路径保留多次尝试。
   await writeFile(join(root, 'bin/seq'), '#!/bin/sh\nprintf \"1\\n2\\n3\\n\"\n', { mode: 0o755 });
   await writeFile(join(root, 'bin/sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, NODE_OPTIONS: `--import=${root}/deny-http.mjs`, FIXTURE_ROOT: root, SCENARIO: scenario, BRAIN_VERSION: '1.360.5', EXPECTED_SHA: scenario === 'request-sha' ? previousSha : sha, ENV_REGION: 'us', DEPLOY_ROOT: root, CECELIA_INTERNAL_ENV_FILE: `${root}/internal.env`, CECELIA_IMAGE_DEPLOYMENT_ID: deployment, CECELIA_IMAGE_RETENTION_DIR: `${root}/ledger`, CECELIA_RETENTION_POLICY: `${root}/scripts/brain-image-retention/policy.mjs`, BARK_TOKEN: 'fixture-token' };
+  const binding = bootstrap ? JSON.stringify({ schema_version: 'brain-drain-bootstrap/v1',
+    old_version: fallbackVersion, old_image_id: previousImage, old_git_sha: previousSha,
+    new_version: candidateVersion, new_image_id: image, new_git_sha: sha,
+    approval_decision_id: deployment, expires_at: new Date(Date.now() + 600000).toISOString() }) : '';
+  const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, NODE_OPTIONS: `--import=${root}/deny-http.mjs`, FIXTURE_ROOT: root, SCENARIO: scenario, BRAIN_VERSION: candidateVersion, EXPECTED_SHA: scenario === 'request-sha' ? previousSha : sha, ENV_REGION: 'us', DEPLOY_ROOT: root, CECELIA_INTERNAL_ENV_FILE: `${root}/internal.env`, CECELIA_IMAGE_DEPLOYMENT_ID: deployment, CECELIA_IMAGE_RETENTION_DIR: `${root}/ledger`, CECELIA_RETENTION_POLICY: `${root}/scripts/brain-image-retention/policy.mjs`, BARK_TOKEN: 'fixture-token', BRAIN_BOOTSTRAP_RESTORE_TICK: bootstrap ? 'true' : 'false', BRAIN_BOOTSTRAP_BINDING_JSON: binding };
   const result = await run('bash', [new URL('./lib/bluegreen-sidecar.sh', import.meta.url).pathname], { env, timeout: 20000 }).then(x => ({ ...x, code: 0 }), e => ({ ...e, code: e.code }));
   const text = async name => readFile(join(root, name), 'utf8').catch(() => '');
   return { ...result, root, sidecarLog: await text('logs/cecelia-deploy-sidecar-failures.log'), barks: await text('curl-calls'), calls: (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(JSON.parse), ledger: JSON.parse(await readFile(join(root, 'ledger/ledger.json'), 'utf8')) };
@@ -127,6 +149,33 @@ test('tick 被有意封停（决策 751f73be）的 degraded：sidecar 健康确�
   assert.equal(f.ledger.successes.length, 1);
   assert.equal(f.ledger.successes[0].git_sha, sha);
   assert.ok(f.calls.some(x => x.some(a => a.endsWith('/drain-cancel'))), '健康确认后必须恢复 drain');
+});
+
+test('首升旧部署进程已消失：独立 sidecar 在新容器取消 drain 后启用 tick 并读回', async t => {
+  const f = await fixture(t, 'bootstrap-success');
+  assert.equal(f.code, 0, f.stdout + f.stderr);
+  assert.equal(f.ledger.successes.length, 1);
+  const execs = f.calls.filter(x => x[0] === 'exec');
+  const cancel = execs.findIndex(x => x.some(a => a.endsWith('/drain-cancel')));
+  const enable = execs.findIndex(x => x.some(a => a.endsWith('/tick/enable')));
+  const status = execs.findIndex((x, i) => i > enable && x.some(a => a.endsWith('/tick/status')));
+  assert.ok(cancel >= 0 && enable > cancel && status > enable, 'sidecar 必须自己取消、启用并读回');
+});
+test('首升新容器启用 tick 失败：回退旧镜像并恢复旧 tick，发布仍报失败', async t => {
+  const f = await fixture(t, 'bootstrap-enable-fail');
+  assert.equal(f.code, 1, f.stdout + f.stderr);
+  assert.deepEqual(f.ledger.successes, []);
+  assert.ok(f.calls.some(x => x[0] === 'compose' && x.includes('node-brain')));
+  assert.ok(f.calls.some(x => x.some(a => a.endsWith('/tick/enable'))));
+  const row = JSON.parse(await readFile(join(f.root, `ledger/deployment-${deployment}.json`), 'utf8'));
+  assert.equal(row.receipt.outcome, 'recovered');
+});
+test('blue 一直存在时 sidecar 不得提前 compose 或记成功账', async t => {
+  const f = await fixture(t, 'blue-stuck');
+  assert.equal(f.code, 1, f.stdout + f.stderr);
+  assert.ok(!f.calls.some(x => x[0] === 'compose'));
+  assert.ok(f.ledger.pending);
+  assert.deepEqual(f.ledger.successes, []);
 });
 
 // 任务 502f2852：retention_finish 只试一次 → 10-09 三次 pending 卡死部署链约 7 小时。

@@ -260,6 +260,15 @@ bluegreen_swap() {
   fi
   # ─────────────────────────────────────────────────────────────────────────
 
+  if declare -F bluegreen_pre_swap_check >/dev/null; then
+    if ! bluegreen_pre_swap_check; then
+      echo '[bluegreen] ❌ 最终执行审计未通过，保留 blue'
+      docker rm -f "$green" >/dev/null 2>&1 || true
+      bluegreen_guard_blue "$blue"
+      return 1
+    fi
+  fi
+
   echo "[bluegreen] ✅ green 健康，切换：清 canary → 启 compose sidecar → 删 blue"
   docker rm -f "$green" >/dev/null 2>&1 || true   # canary 仅验证用，切换前清掉
 
@@ -287,19 +296,35 @@ bluegreen_swap() {
       echo "[bluegreen] ❌ 缺少部署目标 SHA，终止切换（blue 保留）"
       return 1
     fi
-    # docker run -d 只确认sidecar创建；目标SHA错误必须在blue仍存活时拦截。
+    # docker run -d 只确认 sidecar 创建；目标 SHA 和镜像身份必须在 blue 存活时冻结。
     if ! timeout -k 2 8 docker image inspect --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "GIT_SHA"}}{{.}}{{end}}{{end}}' "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${version}}" \
       | node -e 'let s="";process.stdin.on("data",x=>{s+=x;if(s.length>128)process.exit(1)});process.stdin.on("end",()=>{if(s.trim()!=="GIT_SHA="+process.argv[1])process.exit(1)})' "$expected_sha"; then
       echo "[bluegreen] ❌ 目标镜像 SHA 未确认，终止切换（blue 保留）"
       return 1
     fi
+    local sidecar_image=""
+    sidecar_image=$(timeout -k 2 8 docker image inspect --format '{{.Id}}' \
+      "${CECELIA_RELEASE_IMAGE:-cecelia-brain:${version}}") || return 1
+    [[ "$sidecar_image" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
     docker rm -f "$sidecar_name" >/dev/null 2>&1 || true  # 清理上次残留
 
     # ── 打 blue-fallback 快照（sidecar compose up 失败时回退用）──────────────
-    # 在任何 rm -f 之前完成；tag 存在即可，不阻塞部署
+    # 在任何 rm -f blue 之前完成。首升的旧 tick 被持久封停，回退
+    # 必须有精确旧镜像；普通发布沿用原 best-effort 语义。
     local blue_img
     blue_img=$(docker inspect "$blue" --format '{{.Image}}' 2>/dev/null || true)
-    if [[ -n "$blue_img" ]]; then
+    if [[ "${BOOTSTRAP_TICK_DISABLED_BY_DEPLOY:-false}" == true ]]; then
+      local fallback_img=""
+      if [[ ! "$blue_img" =~ ^sha256:[a-f0-9]{64}$ ]] \
+        || ! docker tag "$blue_img" cecelia-brain:blue-fallback \
+        || ! fallback_img=$(docker image inspect cecelia-brain:blue-fallback --format '{{.Id}}') \
+        || [[ "$fallback_img" != "$blue_img" ]]; then
+        echo '[bluegreen] FAIL: bootstrap rollback image unavailable，保留 blue'
+        bluegreen_guard_blue "$blue"
+        return 1
+      fi
+      echo "[bluegreen] blue-fallback 已固定：${blue_img:0:20}..."
+    elif [[ -n "$blue_img" ]]; then
       docker tag "$blue_img" "cecelia-brain:blue-fallback" 2>/dev/null || true
       echo "[bluegreen] blue-fallback 已 tag: ${blue_img:0:20}..."
     fi
@@ -334,6 +359,8 @@ bluegreen_swap() {
         -e "BRAIN_VERSION=${version}" \
         -e "CECELIA_RELEASE_IMAGE=${CECELIA_RELEASE_IMAGE:-}" \
         -e "EXPECTED_SHA=${expected_sha}" \
+        -e "BRAIN_BOOTSTRAP_RESTORE_TICK=${BOOTSTRAP_TICK_DISABLED_BY_DEPLOY:-false}" \
+        -e "BRAIN_BOOTSTRAP_BINDING_JSON=${BOOTSTRAP_BINDING_JSON:-}" \
         -e "ENV_REGION=${env_region}" \
         -e "DEPLOY_ROOT=${root_dir}" \
         -e "CECELIA_INTERNAL_ENV_FILE=${CECELIA_INTERNAL_ENV_FILE}" \
@@ -350,6 +377,25 @@ bluegreen_swap() {
     echo "[bluegreen] ℹ️ DEPLOY_ROOT_DIR 未设置，跳过 sidecar（launchd 模式下正常，compose up 由调用方负责）"
   fi
 
+  if declare -F bluegreen_pre_swap_check >/dev/null; then
+    if ! bluegreen_pre_swap_check; then
+      echo '[bluegreen] ❌ blue 删除前审计变化，停止 sidecar 并保留 blue'
+      docker rm -f "$sidecar_name" >/dev/null 2>&1 || true
+      bluegreen_guard_blue "$blue"
+      return 1
+    fi
+  fi
+  if [[ -n "$root_dir" ]]; then
+    local sidecar_observed=""
+    sidecar_observed=$(timeout -k 2 8 docker inspect "$sidecar_name" \
+      --format '{{.Name}} {{.Image}} {{.State.Running}}' 2>/dev/null) || true
+    if [[ "$sidecar_observed" != "/${sidecar_name} ${sidecar_image} true" ]]; then
+      echo '[bluegreen] ❌ sidecar 未保持运行或镜像身份漂移，保留 blue'
+      send_bark "⚠️ 蓝绿 sidecar 启动后未确认存活或镜像身份，v${version} 保留旧 Brain"
+      bluegreen_guard_blue "$blue"
+      return 1
+    fi
+  fi
   docker rm -f "$blue" >/dev/null 2>&1 || true    # ← 仅在 green 通过且 sidecar 已启动后才删 blue
   # Docker 模式下本行及以下不会执行（docker rm -f 自杀），launchd 模式下正常执行。
   return 0
