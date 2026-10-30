@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,16 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 const require = createRequire(import.meta.url);
 const yaml = require('js-yaml');
 const workflow = yaml.load(readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+
+test('所有启用工作流都能解析，新增文件也自动检查', () => {
+  const directory = new URL('../../../.github/workflows/', import.meta.url);
+  const files = readdirSync(directory).filter(name => /\.ya?ml$/.test(name));
+  assert.ok(files.length > 0);
+  for (const file of files) {
+    const config = yaml.load(readFileSync(new URL(file, directory), 'utf8'));
+    assert.ok(config?.on && config?.jobs && Object.keys(config.jobs).length, `${file}缺少触发器或实际任务`);
+  }
+});
 
 test('每个声明的源码检查都必须抵达同一个最终结果，没有孤儿任务', () => {
   const reached = new Set();
@@ -54,4 +64,12 @@ test('每个现役矩阵项都能解析到非空真实命令', () => {
 test('最小源码CI只使用只读自动令牌，不依赖生产账号或私有Skills', () => {
   assert.deepEqual(workflow.permissions, { contents: 'read' });
   assert.doesNotMatch(JSON.stringify(workflow.jobs), /secrets\.|skills-source|GH_PAT_BOT|CECELIA_INTERNAL_TOKEN/);
+});
+
+test('来源准入的路径过滤必须覆盖当前真实定义文件', () => {
+  const impact = yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml', import.meta.url), 'utf8'));
+  const files = require('fast-glob').sync(impact.on.pull_request.paths, { cwd: root, dot: true });
+  for (const path of ['.implementation-source-relations.json', 'packages/brain/config/company-kr-workflow.json', 'packages/brain/scripts/coding-workflow/repos.json']) {
+    assert.ok(files.includes(path), `${path} 的来源定义变更不能漏掉准入`);
+  }
 });

@@ -47,7 +47,7 @@ if [ "$AUDIT_EXIT" -gt 1 ]; then
   echo "依赖审计工具异常退出：$AUDIT_EXIT" >&2
   exit 1
 fi
-printf '%s' "$JSON" | node "$(dirname "${BASH_SOURCE[0]}")/validate-npm-audit.mjs" || exit 1
+printf '%s' "$JSON" | NPM_AUDIT_STATUS="$AUDIT_EXIT" node "$(dirname "${BASH_SOURCE[0]}")/validate-npm-audit.mjs" || exit 1
 
 # 提取所有 critical advisory 的 GHSA ID（去重），过滤白名单后剩余即未豁免项
 UNWAIVED=$(echo "$JSON" | ALLOWLIST="${ALLOWLIST[*]:-}" python3 -c "

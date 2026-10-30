@@ -25,17 +25,18 @@ authority: CURRENT_STATE
 | 组件 | 保障内容 |
 |---|---|
 | Brain | 完整单测六分片；第一片还跑 lint 与全部 Fleet Shell 回归 |
-| Brain runtime | 新建专用 PG 后执行正式迁移；启动当前源码；HTTP 创建、读回、领取、防抢领和完成任务；独立 SQL 读回结果和完成时间；确认本人进程关闭 |
+| Brain runtime | 新建专用 PG 后执行正式迁移；启动当前源码；HTTP 任务生命周期与KV读写、独立SQL读回；交接文件仅进本人临时目录；真实SIGINT/SIGTERM回归确认本人进程关闭并清理目录 |
 | Brain image | 使用正式 Dockerfile 构建真实镜像 |
 | Engine | 类型检查、完整单测、unit/integration/integrity Shell 回归及构建 |
 | API | 类型检查、完整单测和编译 |
 | Dashboard | 完整单测和生产构建 |
 | Quality / MCP | 各组件单测；Quality 历史共享服务探测已改为隔离 HTTP 测试 |
+| Ops | 部署、预览、镜像保留与回退、Runner、进程清理等既有 Node/Shell 夹具；自动发现同类新增测试，关键类别为空即失败 |
 | scripts | CI 自身行为回归、事实/版本一致性、迁移同号与 Skill 所有权检查 |
 | Android | 仅相关客户端改动选择 Gradle/JVM 测试，纳入同一个 ci-passed |
 | frontend | 路由表标记 Legacy/deploy:false；现役发布使用 apps/dashboard。旧目录自身变更仍检查构建和浏览器；未修改旧应用不阻断现役服务全量 |
 
-Brain/Engine/API 的共享依赖变更会选择共享运行组；全局脚本、依赖和配置变更保守选择现役服务全量。未知可执行路径不会被当成纯文档略过。文档改动仍运行 CI 自身回归和安全扫描。
+Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；全局脚本、依赖和配置变更保守选择现役服务全量。未知可执行路径不会被当成纯文档略过。文档改动仍运行 CI 自身回归和安全扫描。
 
 普通源码 CI 使用一次性本机 `cecelia_scratch` 和固定测试口令；不需要生产账号、内网、模型服务或私有 Skill 仓库访问密钥。运行验收强制拒绝远端和非 scratch 数据库。
 
@@ -61,6 +62,7 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组；全局脚本、
 | implementation-impact.yml | 来源准入；main/按需保留原保护，PR 只在来源定义相关路径变更时运行 |
 | skill-source-ownership.yml | 所有权专项；最低 scripts 跑道也执行同一个真实检查 |
 | ci-dashboard-pwa-e2e.yml | 当前 Dashboard 的 PWA/任务台浏览器专项 |
+| skill-distillation-eval.yml | 按需运行固定截图的真实在线模型评测；沿用原阈值和凭据引用，服务或报告失败真实报红，不作为所有源码 PR 的前置条件 |
 | app-server-canary / attempt-runtime-limits / linux-resource-canary / node-onboarding / us-price-lease | 各组件按路径触发的专项回归 |
 | preview-deploy / preview-cleanup | 当前 Apps 的预览环境创建与回收；依赖更新 bot 不占预览环境 |
 | auto-staging-deploy / deploy / brain-ci-deploy / pilot-release-verification | 发布与来源资格；以 GitHub 启用状态、宿主发布脚本和实际回执为准 |

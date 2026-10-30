@@ -6,6 +6,9 @@ on:
     paths:
       - '.github/workflows/implementation-impact.yml'
       - '.skills-source.json'
+      - '.implementation-*.json'
+      - 'packages/brain/config/**'
+      - 'packages/brain/scripts/coding-workflow/repos.json'
       - 'scripts/ci/implementation-*'
       - 'scripts/ci/prepare-fixed-skill-cache.mjs'
       - 'packages/brain/src/lib/implementation-*'

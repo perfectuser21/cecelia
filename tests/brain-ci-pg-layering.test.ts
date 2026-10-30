@@ -43,6 +43,7 @@ describe('Brain PostgreSQL test layering', () => {
     expect(steps.map(step => ({command: step.command, args: step.args}))).toEqual([
       {command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs', '--validate-only']},
       {command: 'node', args: ['src/migrate.js']},
+      {command: 'node', args: ['--test', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs']},
       {command: 'node', args: ['scripts/ci/basic-runtime-smoke.mjs']},
     ]);
   });
@@ -63,7 +64,9 @@ describe('Brain PostgreSQL test layering', () => {
   });
 
   it('基础runtime真实入口在连接前拒绝生产库，不能连接现有Brain冒充测试成功', () => {
-    const smoke = commandsFor('brain-integration')[1];
+    const smoke = commandsFor('brain-integration').find(step =>
+      step.args.includes('scripts/ci/basic-runtime-smoke.mjs') && !step.args.includes('--validate-only'));
+    expect(smoke).toBeDefined();
     const result = spawnSync(process.execPath, smoke.args, {
       cwd: smoke.cwd, encoding: 'utf8',
       env: {...process.env, DATABASE_URL: 'postgresql://ci:isolated@127.0.0.1:1/cecelia'},

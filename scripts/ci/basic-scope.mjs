@@ -3,12 +3,12 @@ import {appendFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const ORDER = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 'mcp', 'api', 'dashboard', 'frontend', 'android', 'scripts'];
+const ORDER = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 'mcp', 'api', 'dashboard', 'frontend', 'android', 'ops', 'scripts'];
 // ci/routing-map.yml 将 frontend 标为 Legacy/deploy:false；现役发布入口为 apps/dashboard。
 // 保留旧目录自身变更的验证，但现役全量不隐含重新发布旧应用。
 // Android 客户端自身修改必须运行 Gradle；服务端全量不重复构建未变更的移动客户端。
 const ACTIVE = ORDER.filter(component => !['frontend', 'android'].includes(component));
-const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'engine', 'api'];
+const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'ops'];
 const DOCUMENT = /\.(?:md|mdx|txt|rst|png|jpe?g|gif|svg|webp|pdf)$/i;
 const CONFIG = /(?:^|\/)(?:(?:vitest|vite|eslint)(?:\.[^/]+)*\.config(?:\.[^/]+)?|tsconfig(?:\.[^/]+)?\.json|\.eslintrc(?:\.[^/]+)?)$/;
 
@@ -81,7 +81,7 @@ export function main(argv = process.argv.slice(2)) {
   if (!full && (!base || !head)) throw new Error('--base and --head are required without --full');
   const resolvedHead = revision(head ?? 'HEAD');
   const resolvedBase = base === undefined ? undefined : revision(base);
-  const raw = full ? '' : execFileSync('git', [
+  const raw = full && resolvedBase === undefined ? '' : execFileSync('git', [
     'diff', '--no-ext-diff', '--no-textconv', '--name-only', '--no-renames', '-z', resolvedBase, resolvedHead, '--',
   ], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024});
   const paths = raw ? raw.slice(0, -1).split('\0') : [];

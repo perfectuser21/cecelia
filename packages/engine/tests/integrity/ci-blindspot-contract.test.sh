@@ -19,7 +19,7 @@ const temp=mkdtempSync(join(tmpdir(),'ci-main-plan-'));
 try {
   const output=join(temp,'output');
   const full=spawnSync('bash',['-c',plan.run],{cwd:root,encoding:'utf8',env:{...process.env,
-    EVENT_NAME:'push',BASE_SHA:'',HEAD_SHA:'HEAD',GITHUB_OUTPUT:output}});
+    EVENT_NAME:'push',BASE_SHA:'HEAD~1',HEAD_SHA:'HEAD',GITHUB_OUTPUT:output}});
   assert.equal(full.status,0,full.stderr);
   const matrix=JSON.parse(readFileSync(output,'utf8').trim().replace(/^matrix=/,''));
   assert.deepEqual(matrix.include.filter(row=>row.component==='brain-unit').map(row=>row.shard),[1,2,3,4,5,6]);

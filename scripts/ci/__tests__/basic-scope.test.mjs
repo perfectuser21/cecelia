@@ -9,7 +9,7 @@ import {planChecks} from '../basic-scope.mjs';
 
 const cli = fileURLToPath(new URL('../basic-scope.mjs', import.meta.url));
 const components = rows => [...new Set(rows.map(row => row.component))];
-const all = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 'mcp', 'api', 'dashboard', 'scripts'];
+const all = ['brain-unit', 'brain-integration', 'image', 'engine', 'quality', 'mcp', 'api', 'dashboard', 'ops', 'scripts'];
 
 test('全量只覆盖现役组件；旧frontend自身改动仍明确验证', () => {
   assert.equal(planChecks([], {full: true}).some(row => row.component === 'frontend'), false);
@@ -29,7 +29,7 @@ test('Android改动必须执行真实Android单测，不能用JS测试替代', (
 test('Brain、Engine 与 API 共享依赖，完整运行相关组件与六个 Brain 分片', () => {
   for (const path of ['packages/brain/src/routes.js', 'packages/engine/src/index.ts', 'apps/api/src/index.ts']) {
     const rows = planChecks([path]);
-    assert.deepEqual(components(rows), ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'scripts']);
+    assert.deepEqual(components(rows), ['brain-unit', 'brain-integration', 'image', 'engine', 'api', 'ops', 'scripts']);
     assert.deepEqual(rows.filter(row => row.component === 'brain-unit').map(row => row.shard), [1, 2, 3, 4, 5, 6]);
   }
 });
@@ -92,14 +92,27 @@ test('CLI 使用真实 Git 差分及 NUL 路径，输出单行 Actions matrix', 
   assert.equal(readFileSync(output, 'utf8'), `matrix=${JSON.stringify(matrix)}\n`);
 });
 
+test('主分支全量仍读取真实差分并补上本次修改的客户端', t => {
+  const f = fixture(t);
+  const base = f.commit('README.md', 'base');
+  f.commit('frontend/src/legacy.tsx', 'export default 1;');
+  const head = f.commit('apps/android-agent/app/src/Agent.kt', 'class Agent');
+  const result = spawnSync(process.execPath, [cli, '--full', '--base', base, '--head', head], { cwd: f.root, encoding: 'utf8', env: {...process.env, GITHUB_OUTPUT: ''} });
+  assert.equal(result.status, 0, result.stderr);
+  const selected = components(JSON.parse(result.stdout).include);
+  assert.ok(selected.includes('android'));
+  assert.ok(selected.includes('frontend'));
+  for (const component of all) assert.ok(selected.includes(component));
+});
+
 test('CLI revision 不存在、差分为空、参数缺失均失败，全量模式仍验证明确传入 revision', t => {
   const f = fixture(t);
   const head = f.commit('README.md', 'base');
   for (const args of [[], ['--base', 'missing', '--head', head], ['--base', head, '--head', head], ['--base', head], ['--unknown'], ['--full', '--head', 'missing']]) {
-    const result = spawnSync(process.execPath, [cli, ...args], {cwd: f.root, encoding: 'utf8'});
+    const result = spawnSync(process.execPath, [cli, ...args], {cwd: f.root, encoding: 'utf8', env: {...process.env, GITHUB_OUTPUT: ''}});
     assert.notEqual(result.status, 0, JSON.stringify(args));
   }
-  const full = spawnSync(process.execPath, [cli, '--full'], {cwd: f.root, encoding: 'utf8'});
+  const full = spawnSync(process.execPath, [cli, '--full'], {cwd: f.root, encoding: 'utf8', env: {...process.env, GITHUB_OUTPUT: ''}});
   assert.equal(full.status, 0, full.stderr);
   assert.deepEqual(components(JSON.parse(full.stdout).include), all);
 });
@@ -110,9 +123,9 @@ test('CLI 拒绝把 Git 选项当 revision，且不丢失删除路径', t => {
   f.git('rm', 'apps/dashboard/src/removed.tsx');
   f.git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'delete');
   const head = f.git('rev-parse', 'HEAD');
-  const deleted = spawnSync(process.execPath, [cli, '--base', base, '--head', head], {cwd: f.root, encoding: 'utf8'});
+  const deleted = spawnSync(process.execPath, [cli, '--base', base, '--head', head], {cwd: f.root, encoding: 'utf8', env: {...process.env, GITHUB_OUTPUT: ''}});
   assert.equal(deleted.status, 0, deleted.stderr);
   assert.deepEqual(components(JSON.parse(deleted.stdout).include), ['dashboard', 'scripts']);
-  const invalid = spawnSync(process.execPath, [cli, '--base', '--all', '--head', head], {cwd: f.root, encoding: 'utf8'});
+  const invalid = spawnSync(process.execPath, [cli, '--base', '--all', '--head', head], {cwd: f.root, encoding: 'utf8', env: {...process.env, GITHUB_OUTPUT: ''}});
   assert.notEqual(invalid.status, 0);
 });

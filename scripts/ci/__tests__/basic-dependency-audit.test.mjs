@@ -23,7 +23,11 @@ for (const name of ['dep-audit-critical.sh', 'dep-audit-runtime-high.sh']) {
     const result = run(good);
     assert.equal(result.status, 0, result.stdout + result.stderr);
   });
-  for (const body of ['', '{', { error: { code: 'E503' } }, {}, { ...good, vulnerabilities: [] }]) {
+  for (const body of ['', '{', { error: { code: 'E503' } }, {}, { ...good, vulnerabilities: [] },
+    { ...good, metadata: { vulnerabilities: { total: 1 } } },
+    { ...good, metadata: { vulnerabilities: { total: 1 } }, vulnerabilities: { bad: { severity: 'critical', via: [{}] } } },
+    { ...good, metadata: { vulnerabilities: { total: 1 } }, vulnerabilities: { bad: { severity: 'critical', via: ['missing'] } } },
+  ]) {
     test(`${name}：缺失或异常报告拒绝`, () => {
       const result = run(body);
       assert.notEqual(result.status, 0, result.stdout + result.stderr);
@@ -31,6 +35,7 @@ for (const name of ['dep-audit-critical.sh', 'dep-audit-runtime-high.sh']) {
   }
   test(`${name}：审计工具异常退出不能冒充有效报告`, () => {
     assert.notEqual(run(good, 2).status, 0);
+    assert.notEqual(run(good, 1).status, 0);
   });
   test(`${name}：真实新 critical 漏洞仍被拒绝`, () => {
     const report = {

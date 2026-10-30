@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { opsChecks } from './ops-checks.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -24,6 +25,7 @@ export function commandsFor(component, shard) {
       return [
         step('.', 'node', 'scripts/ci/basic-runtime-smoke.mjs', '--validate-only'),
         step('packages/brain', 'node', 'src/migrate.js'),
+        step('.', 'node', '--test', 'scripts/ci/__tests__/runtime-signal.integration.test.mjs'),
         step('.', 'node', 'scripts/ci/basic-runtime-smoke.mjs'),
       ];
     case 'image':
@@ -44,6 +46,7 @@ export function commandsFor(component, shard) {
       return [step('apps/android-agent', './gradlew', ':app:testDebugUnitTest', '--no-daemon')];
     case 'quality': return [vitest('packages/quality')];
     case 'mcp': return [vitest('packages/mcp-readonly')];
+    case 'ops': return opsChecks(root);
     case 'scripts': {
       const tests = readdirSync(resolve(root, 'scripts/ci/__tests__'))
         .filter(name => /^(basic-.*|run-basic-check|brain-source-only-deploy)\.test\.mjs$/.test(name))

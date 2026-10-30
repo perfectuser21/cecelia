@@ -9,7 +9,7 @@ GP-Anchor: none(infra)
 
 错误路径：测试非零/信号退出、空执行集合、范围检测失败、审计报告缺失、准备失败、检查取消或跳过，均不能产生合并资格。迁移之前必须验证 DB_* 与 DATABASE_URL 指向同一个本机专用 scratch。测试服务只停止本人 PID，禁止复用生产账号或共享 Brain。
 
-结构：主 ci.yml 只有 plan/security/checks/ci-passed 四个顶层任务；Checks 使用显式组件矩阵。现役服务全量包括 Brain 六片、runtime、image、Engine、Quality、MCP、API、Dashboard、scripts。Android 的相关客户端改动执行 Gradle，旧 frontend 仅验证自身改动。历史 Sprint、在线 AI review、旧全池 smoke 和常驻 staging 假设退出自动通用门禁；数据库深度回归、Walking 与 Map Manifest 有独立夜间 owner。
+结构：主 ci.yml 只有 plan/security/checks/ci-passed 四个顶层任务；Checks 使用显式组件矩阵。现役服务全量包括 Brain 六片、runtime、image、Engine、Quality、MCP、API、Dashboard、Ops、scripts。Android 的相关客户端改动执行 Gradle，旧 frontend 仅验证自身改动。历史 Sprint、在线 AI review、旧全池 smoke 和常驻 staging 假设退出自动通用门禁；数据库深度回归、Walking 与 Map Manifest 有独立夜间 owner。
 
 来源准入和生产发布继续独立保护；cecelia_source_only 禁止生产发布的逻辑不变。旧源码绿灯不能沿用新资格：新检查使用新名字，切换保护时先加新要求，确认新候选成功，再替换旧检查；strict、管理员受限、禁止强推和 PR 要求保留。
 

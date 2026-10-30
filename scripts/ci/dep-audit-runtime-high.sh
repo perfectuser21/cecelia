@@ -62,7 +62,7 @@ if [ "$AUDIT_EXIT" -gt 1 ]; then
   echo "依赖审计工具异常退出：$AUDIT_EXIT" >&2
   exit 1
 fi
-printf '%s' "$JSON" | node "$(dirname "${BASH_SOURCE[0]}")/validate-npm-audit.mjs" || exit 1
+printf '%s' "$JSON" | NPM_AUDIT_STATUS="$AUDIT_EXIT" node "$(dirname "${BASH_SOURCE[0]}")/validate-npm-audit.mjs" || exit 1
 
 UNWAIVED=$(echo "$JSON" | ALLOW="${ALLOW_PKGS[*]:-}" python3 -c "
 import sys, json, os

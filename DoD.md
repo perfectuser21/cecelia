@@ -6,8 +6,12 @@
   Test: manual:node --test scripts/ci/__tests__/run-basic-check.test.mjs scripts/ci/__tests__/basic-results.test.mjs scripts/ci/__tests__/basic-workflow.test.mjs scripts/ci/__tests__/basic-npm-test.test.mjs
 - [x] [BEHAVIOR] 漏洞扫描缺少有效报告或工具异常必须失败，原安全级别和已登记例外保留。
   Test: manual:node --test scripts/ci/__tests__/basic-dependency-audit.test.mjs
-- [x] [BEHAVIOR] 正式迁移前拒绝生产/远端/不一致连接；新 scratch 的543条迁移后实际服务任务生命周期、防抢领与SQL落库验收通过，进程清理已确认。
-  Test: manual:node --test scripts/ci/__tests__/basic-runtime.test.mjs
+- [x] [BEHAVIOR] 既有 Ops、部署、Runner 和预览行为回归有真实执行入口；关键类别为空失败，实际完整集合通过。
+  Test: manual:node scripts/ci/run-basic-check.mjs ops
+- [x] [BEHAVIOR] 只读部署诊断不能写共享部署状态或结算retention；真实部署成功、失败出口保持原结算。
+  Test: manual:bash scripts/__tests__/brain-deploy-sha-readonly.test.sh
+- [x] [BEHAVIOR] 正式迁移前拒绝生产/远端/不一致连接；新 scratch 的543条迁移后实际服务任务生命周期、防抢领、KV读写与SQL落库验收通过；SIGINT/SIGTERM中断关闭本人Brain并清理交接目录。
+  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
 - [x] [BEHAVIOR] 现役 API、Dashboard、Quality、MCP、Engine及Shell和Brain正式镜像已分别执行真实验证；六片Brain发现的旧接线断言逐项迁移。
   Test: manual:node scripts/ci/run-basic-check.mjs scripts
 - [ ] [BEHAVIOR] 固定候选SHA在GitHub实际运行全部选定检查并给出「源码保底通过」。
