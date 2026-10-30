@@ -75,6 +75,23 @@ test('来源恢复容纳已审 Claude 只读 tuple 测试而不扩大生产文�
   assert.throws(()=>validateSourceDelta(scratch,base,g('rev-parse','HEAD')),/SOURCE_RECOVERY_OPERATIONAL_CHANGE/);
  }finally{rmSync(scratch,{recursive:true,force:true});}
 });
+test('workspace CI 来源封套仅接受已审的固定新字节，任意漂移拒绝',()=>{
+ const source=fileURLToPath(new URL('../../../',import.meta.url));
+ const scratch=mkdtempSync(join(tmpdir(),'recovery-workspace-source-'));
+ try{
+  execFileSync('git',['clone','-q','--shared',source,scratch]);
+  const g=(...args)=>execFileSync('git',args,{cwd:scratch,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+  const base='a68df7e48781bc38875d8581249049f57c4fe5de',path='packages/brain/src/lib/workspace-ci-source-bundle.js';
+  g('checkout','-q','--detach',base);
+  writeFileSync(join(scratch,path),readFileSync(join(source,path)));
+  g('add',path);g('commit','-qm','reviewed CI source envelope');
+  assert.doesNotThrow(()=>validateSourceDelta(scratch,base,g('rev-parse','HEAD')));
+  writeFileSync(join(scratch,path),readFileSync(join(scratch,path),'utf8')+'\n// unreviewed drift\n');
+  g('commit','-qam','unreviewed CI source envelope');
+  assert.throws(()=>validateSourceDelta(scratch,base,g('rev-parse','HEAD')),/SOURCE_RECOVERY_WORKSPACE_SOURCE_UNREVIEWED/);
+ }finally{rmSync(scratch,{recursive:true,force:true});}
+});
 test('固定来源候选仅接受已隔离infra刷新的workflow字节',()=>{
  const source=fileURLToPath(new URL('../../../',import.meta.url));
  const scratch=mkdtempSync(join(tmpdir(),'recovery-infra-workflow-'));
