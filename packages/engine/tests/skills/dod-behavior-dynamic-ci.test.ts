@@ -13,7 +13,7 @@ const runner = readFileSync(join(repoRoot, 'scripts/ci/run-basic-check.mjs'), 'u
 describe('basic CI PostgreSQL evidence gate', () => {
   it('passes the isolated PostgreSQL URL through the explicit test-only variable', () => {
     expect(dynamicJob).toContain(
-      'DATABASE_URL: postgresql://ci:isolated-ci@127.0.0.1:5432/cecelia_scratch',
+      "DATABASE_URL: ${{ matrix.component == 'brain-integration' && 'postgresql://ci:isolated-ci@127.0.0.1:5432/cecelia_scratch' || '' }}",
     );
     expect(dynamicJob).toContain("POSTGRES_INTEGRATION: ${{ matrix.component == 'brain-integration' && '1' || '0' }}");
   });

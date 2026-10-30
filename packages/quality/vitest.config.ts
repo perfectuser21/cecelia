@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import {skillSourceExcludes} from '../../scripts/ci/skill-source-tests.mjs';
 
 export default defineConfig({
   test: {
@@ -14,6 +15,7 @@ export default defineConfig({
     // - pr-gate.test.ts:           uses stat -c %a (Linux-only), incompatible with macOS
     // - branch-protect.test.ts:    uses stat -c %a (Linux-only), incompatible with macOS
     exclude: [
+      ...skillSourceExcludes('quality'),
       'tests/*.test.ts',
       'tests/api/**',
       'tests/gate/**',

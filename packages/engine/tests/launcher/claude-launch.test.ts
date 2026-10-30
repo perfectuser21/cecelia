@@ -1,20 +1,34 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, statSync, mkdirSync, realpathSync, readdirSync } from 'node:fs';
+import { execSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, statSync, mkdirSync, realpathSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const LAUNCHER = resolve(__dirname, '../../../../scripts/claude-launch.sh');
 
+// allowlist 防止宿主 token、凭据路径、dispatch 标记和 Git cwd 覆盖进入真实启动器。
+function isolatedEnv(home: string): Record<string, string> {
+  mkdirSync(home, { recursive: true });
+  return { PATH: process.env.PATH || '/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8',
+    BRAIN_URL: 'http://127.0.0.1:1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+}
+
 describe('Phase 7.1 claude-launch.sh', () => {
   let mockDir: string;
+  let workingDir: string;
 
   beforeAll(() => {
     mockDir = mkdtempSync(join(tmpdir(), 'claude-launch-test-'));
+    workingDir = join(mockDir, 'plain-cwd');
+    mkdirSync(workingDir);
     const mockClaude = join(mockDir, 'claude');
     writeFileSync(mockClaude, `#!/usr/bin/env bash
 echo "CLAUDE_SESSION_ID=$CLAUDE_SESSION_ID"
 echo "ARGS=$*"
+echo "WORKING_DIR=$PWD"
+echo "FIXTURE_HOME=$HOME"
+echo "BRAIN_URL=$BRAIN_URL"
+echo "TOKEN_PRESENT=\${CECELIA_INTERNAL_TOKEN:+yes}"
 `);
     chmodSync(mockClaude, 0o755);
   });
@@ -32,23 +46,27 @@ echo "ARGS=$*"
   it('有 env 时继承 CLAUDE_SESSION_ID 并传 --session-id', () => {
     // launcher 优先用 CLAUDE_CODE_EXECPATH，必须 unset 才能让 PATH 里 mock claude 生效
     const env: Record<string, string> = {
-      ...process.env,
+      ...isolatedEnv(join(mockDir, 'home')),
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: 'inherited-test-uuid',
       CECELIA_NO_AUTO_WORKTREE: '1',
     };
     delete env.CLAUDE_CODE_EXECPATH;
-    const out = execSync(`bash "${LAUNCHER}" --help`, { shell: '/bin/bash', env }).toString();
+    const out = execSync(`bash "${LAUNCHER}" --help`, { cwd: workingDir, shell: '/bin/bash', env }).toString();
     expect(out).toContain('CLAUDE_SESSION_ID=inherited-test-uuid');
     expect(out).toContain('--session-id inherited-test-uuid');
     expect(out).toContain('--help');
+    expect(out).toContain(`WORKING_DIR=${realpathSync(workingDir)}`);
+    expect(out).toContain(`FIXTURE_HOME=${join(mockDir, 'home')}`);
+    expect(out).toContain('BRAIN_URL=http://127.0.0.1:1');
+    expect(out).toContain('TOKEN_PRESENT=\n');
   });
 
   it('无 env 时生成符合 UUID 格式的 session_id', () => {
-    const env = { ...process.env, PATH: `${mockDir}:${process.env.PATH}`, CECELIA_NO_AUTO_WORKTREE: '1' };
+    const env = { ...isolatedEnv(join(mockDir, 'home')), PATH: `${mockDir}:${process.env.PATH}`, CECELIA_NO_AUTO_WORKTREE: '1' };
     delete env.CLAUDE_SESSION_ID;
     delete env.CLAUDE_CODE_EXECPATH;
-    const out = execSync(`bash "${LAUNCHER}" --help`, { shell: '/bin/bash', env }).toString();
+    const out = execSync(`bash "${LAUNCHER}" --help`, { cwd: workingDir, shell: '/bin/bash', env }).toString();
     const m = out.match(/CLAUDE_SESSION_ID=([a-f0-9-]+)/);
     expect(m).toBeTruthy();
     expect(m![1]).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/);
@@ -57,16 +75,42 @@ echo "ARGS=$*"
 
   it('透传额外参数给 claude', () => {
     const env: Record<string, string> = {
-      ...process.env,
+      ...isolatedEnv(join(mockDir, 'home')),
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: 'fixed',
       CECELIA_NO_AUTO_WORKTREE: '1',
     };
     delete env.CLAUDE_CODE_EXECPATH;
-    const out = execSync(`bash "${LAUNCHER}" -p test-prompt --dangerously-skip-permissions`, { shell: '/bin/bash', env }).toString();
+    const out = execSync(`bash "${LAUNCHER}" -p test-prompt --dangerously-skip-permissions`, { cwd: workingDir, shell: '/bin/bash', env }).toString();
     expect(out).toContain('-p test-prompt');
     expect(out).toContain('--dangerously-skip-permissions');
     expect(out).toContain('--session-id fixed');
+  });
+});
+
+describe('claude-launch 恢复源码只使用当前隔离Git根', () => {
+  it.each([0, 29])('存在来源lock时执行真实ensure入口，失败码%s不能放行Claude', exitCode => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'claude-launch-source-')));
+    try {
+      const env = { ...isolatedEnv(join(root, 'home')), CECELIA_NO_AUTO_WORKTREE: '1',
+        CLAUDE_SESSION_ID: 'source-fixture-session', CLAUDE_CODE_EXECPATH: join(root, 'claude') };
+      const init = spawnSync('git', ['init', '-q'], { cwd: root, env, encoding: 'utf8' });
+      expect(init.status, init.stderr).toBe(0);
+      mkdirSync(join(root, 'scripts'));
+      writeFileSync(join(root, '.skills-source.json'), '{}\n');
+      writeFileSync(join(root, 'scripts/ensure-skills-source.sh'),
+        `#!/usr/bin/env bash\nprintf '%s|%s\\n' "$PWD" "$1" > "$1/ensure-marker"\nexit ${exitCode}\n`);
+      writeFileSync(join(root, 'claude'),
+        '#!/usr/bin/env bash\ntouch "$HOME/claude-marker"\necho "SID=$CLAUDE_SESSION_ID ARGS=$*"\n');
+      chmodSync(join(root, 'claude'), 0o755);
+      const result = spawnSync('bash', [LAUNCHER, '--help'], { cwd: root, env, encoding: 'utf8', timeout: 10000 });
+      expect(result.error).toBeUndefined();
+      expect(readFileSync(join(root, 'ensure-marker'), 'utf8').trim()).toBe(`${root}|${root}`);
+      expect(result.status, result.stdout + result.stderr).toBe(exitCode);
+      expect(existsSync(join(root, 'home/claude-marker'))).toBe(exitCode === 0);
+      if (exitCode === 0) expect(result.stdout).toContain('SID=source-fixture-session ARGS=--session-id source-fixture-session --help');
+      else expect(result.stdout).toBe('');
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
 
@@ -87,7 +131,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — --dry-run 契约', () =
   });
 
   it('主仓根 + 交互模式 → dry-run 输出含 worktree 建立步骤', () => {
-    const env: Record<string, string> = { ...process.env, CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000' };
+    const env: Record<string, string> = { ...isolatedEnv(join(repoDir, '.home')), CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000' };
     delete env.CLAUDE_CODE_EXECPATH;
     delete env.CECELIA_NO_AUTO_WORKTREE;
     const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: repoDir, env }).toString();
@@ -95,7 +139,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — --dry-run 契约', () =
   });
 
   it('headless（-p）→ dry-run 输出不含 worktree 建立步骤', () => {
-    const env: Record<string, string> = { ...process.env, CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000' };
+    const env: Record<string, string> = { ...isolatedEnv(join(repoDir, '.home')), CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000' };
     delete env.CLAUDE_CODE_EXECPATH;
     delete env.CECELIA_NO_AUTO_WORKTREE;
     const out = execSync(`bash "${LAUNCHER}" --dry-run -p "hi"`, { cwd: repoDir, env }).toString();
@@ -104,7 +148,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — --dry-run 契约', () =
 
   it('CECELIA_NO_AUTO_WORKTREE=1 → dry-run 输出不含 worktree 建立步骤', () => {
     const env: Record<string, string> = {
-      ...process.env,
+      ...isolatedEnv(join(repoDir, '.home')),
       CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000',
       CECELIA_NO_AUTO_WORKTREE: '1',
     };
@@ -116,7 +160,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — --dry-run 契约', () =
   it('cwd 已在 worktree 内 → dry-run 输出不含 worktree 建立步骤', () => {
     const wtDir = join(repoDir, '..', 'precreated-wt');
     execSync(`git worktree add -q -b precreated "${wtDir}"`, { cwd: repoDir });
-    const env: Record<string, string> = { ...process.env, CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000' };
+    const env: Record<string, string> = { ...isolatedEnv(join(repoDir, '.home')), CLAUDE_SESSION_ID: 'abc12345-0000-0000-0000-000000000000' };
     delete env.CLAUDE_CODE_EXECPATH;
     delete env.CECELIA_NO_AUTO_WORKTREE;
     const out = execSync(`bash "${LAUNCHER}" --dry-run`, { cwd: wtDir, env }).toString();
@@ -164,7 +208,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
     writeMockClaude(`#!/usr/bin/env bash\npwd\nexit 0\n`);
     const sid = 'deadbeef-1111-2222-3333-444444444444';
     const env: Record<string, string> = {
-      ...process.env,
+      ...isolatedEnv(join(base, 'home')),
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: sid,
       WORKTREE_BASE: worktreeBase,
@@ -181,7 +225,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
     writeMockClaude(`#!/usr/bin/env bash\necho dirty > uncommitted.txt\nexit 0\n`);
     const sid = 'cafebabe-1111-2222-3333-444444444444';
     const env: Record<string, string> = {
-      ...process.env,
+      ...isolatedEnv(join(base, 'home')),
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: sid,
       WORKTREE_BASE: worktreeBase,
@@ -197,7 +241,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
     writeMockClaude(`#!/usr/bin/env bash\npwd\nexit 0\n`);
     const sid = 'cafebabe-1111-2222-3333-444444444444';
     const env: Record<string, string> = {
-      ...process.env,
+      ...isolatedEnv(join(base, 'home')),
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: sid,
       WORKTREE_BASE: worktreeBase,
@@ -219,7 +263,7 @@ describe('Phase 7.7 claude-launch.sh 自动 worktree — 真实建立与清理',
     writeMockClaude(`#!/usr/bin/env bash\necho dirty > seed-dirty.txt\npwd\nexit 0\n`);
     const sid = 'orphan001-1111-2222-3333-444444444444';
     const env: Record<string, string> = {
-      ...process.env,
+      ...isolatedEnv(join(base, 'home')),
       PATH: `${mockDir}:${process.env.PATH}`,
       CLAUDE_SESSION_ID: sid,
       WORKTREE_BASE: worktreeBase,
@@ -309,7 +353,7 @@ describe('单账号 — 无账号切换、无 resume 软链', () => {
 
   function makeEnv(sid: string): Record<string, string> {
     const env: Record<string, string> = {
-      ...process.env,
+      ...isolatedEnv(homeDir),
       PATH: `${mockDir}:${process.env.PATH}`,
       HOME: homeDir,
       CLAUDE_SESSION_ID: sid,

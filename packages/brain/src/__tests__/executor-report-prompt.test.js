@@ -1,20 +1,18 @@
-/**
- * Test: _prepareHarnessReportPrompt 必须 inline SKILL 内容，不能用裸 slash command
- *
- * Bug B（Bug 7 复刻）：容器内 headless `claude -p` 不展开 slash command。
- * report agent 收到字面量 `/harness-report` + 参数、零 SKILL 指令 → 空壳报告 exit 0 静默降级。
- * 其余 5 个阶段早已改成 inline loadSkillContent，只剩 report 漏网。
- *
- * 修法：和其他阶段对齐，用 loadSkillContent('harness-report') 把 SKILL 内容 inline 进 prompt。
- *
- * 注意：本测试**不 mock fs**，让 loadSkillContent 读到真实的
- * packages/workflows/skills/harness-report/SKILL.md（CI fallback 路径，仓库内已同步）。
- */
+// 验证真实 executor 的 Skill 内联与参数；外置正文由固定来源专项负责。
 
 import { describe, it, expect, vi } from 'vitest';
 
+const skillLoader = vi.hoisted(() => vi.fn((name) => {
+  if (name !== 'harness-report') throw new Error(`unexpected skill: ${name}`);
+  return 'NATIVE_REPORT_SKILL_FIXTURE_74b1';
+}));
+vi.mock('../harness-shared.js', async importOriginal => ({
+  ...await importOriginal(),
+  loadSkillContent: skillLoader,
+}));
+
 // Mock 重依赖让 executor.js 能干净 import（不连 postgres、不 spawn 进程），
-// 但**不 mock fs**，loadSkillContent 必须读到真实 SKILL.md。
+// 仅隔离外置正文加载，其余 prompt 组装保持真实。
 const mockQuery = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 
@@ -65,12 +63,17 @@ describe('_prepareHarnessReportPrompt — inline SKILL（防 slash command 静�
     // 1) 不能以裸 slash command 开头（容器 headless 不展开 → 空 SKILL 静默降级）
     expect(prompt.startsWith('/')).toBe(false);
 
-    // 2) 必须 inline 了真实 harness-report SKILL.md 的内容特征串
-    expect(prompt).toContain('Phase A: 6步交付报告');
+    // 2) 完整内联独立 loader 返回的正文，不能回落到裸 slash
+    expect(prompt).toContain('NATIVE_REPORT_SKILL_FIXTURE_74b1');
 
     // 3) 仍保留原有参数块（task_id / sprint_dir / pr_url）
     expect(prompt).toContain('report-task-1');
     expect(prompt).toContain('sprints/test-sprint');
     expect(prompt).toContain('https://github.com/x/y/pull/1');
+  });
+  it('外置正文加载失败必须传播，不能静默生成降级 prompt', async () => {
+    const { preparePrompt } = await import('../executor.js');
+    skillLoader.mockImplementationOnce(() => { throw new Error('fixture skill unavailable'); });
+    await expect(preparePrompt({ id: 'report-missing', task_type: 'harness_report', payload: { sprint_dir: 'sprints/test-sprint' } })).rejects.toThrow('fixture skill unavailable');
   });
 });

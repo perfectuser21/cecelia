@@ -1,12 +1,8 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {execFileSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
 import {prepareNativeConsumerSelection} from './native-consumer-source-selection.js';
 import {EXISTING_OPS_IDENTITIES} from './existing-ops-source.js';
-const root=fileURLToPath(new URL('../../../../',import.meta.url));
-const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:32e6});
-const revision=git('rev-parse','HEAD').trim(),tree=git('rev-parse',`${revision}^{tree}`).trim();
-const entries=git('ls-tree','-rz',revision).split('\0').filter(Boolean).map(line=>{const [meta,path]=line.split('\t'),[mode,type,sha]=meta.split(' ');return {path,mode,type,sha};});
+import {readFixedExistingOpsGitFixture} from './__tests__/helpers/fixed-existing-ops-git-fixture.js';
+const {revision,tree,entries,read}=readFixedExistingOpsGitFixture();
 const textCache=new Map(),q={scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision};
 const workflow=EXISTING_OPS_IDENTITIES[1].workflow_id;
 const pool={query:async sql=>{
@@ -30,13 +26,13 @@ function source(delay=200){
   else if(url.includes('/contents/')){
    const parsed=new URL(url),path=decodeURIComponent(parsed.pathname.split('/contents/')[1]);
    if(parsed.searchParams.get('ref')!==revision)throw Error('revision drift');
-   if(!textCache.has(path))textCache.set(path,git('show',`${revision}:${path}`));value=textCache.get(path);
+   if(!textCache.has(path))textCache.set(path,read(path));value=textCache.get(path);
   }else throw Error('unexpected source request');
   return {ok:true,json:async()=>value,text:async()=>value};
  }};
 }
 afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers();});
-it('真实固定Git全proof经历超过120秒的逐请求延迟仍在540秒预算内完成',async()=>{
+it('已知历史Git fixture全proof经历超过120秒的逐请求延迟仍在540秒预算内完成',async()=>{
  clock();const options=source(),proof=await prepareNativeConsumerSelection(pool,q,options);
  expect(Date.now()).toBeGreaterThan(120000);expect(Date.now()).toBeLessThan(540000);
  expect(proof?.revision).toBe(revision);expect(proof.proof.consumers.every(c=>c.status==='verified')).toBe(true);

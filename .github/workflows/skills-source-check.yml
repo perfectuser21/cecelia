@@ -6,10 +6,66 @@ on:
       - 'scripts/*skills-source*'
       - '.github/actions/skills-source/**'
       - '.github/workflows/skills-source-check.yml'
+      - 'scripts/ci/skill-source-tests.mjs'
+      - 'scripts/ci/run-skill-source-check.mjs'
+      - 'packages/*/vitest.skill-source.config.mjs'
+      - 'vitest.skill-source.config.mjs'
+      - 'packages/brain/**/*.skill-source.test.*'
+      - 'packages/engine/**/*.skill-source.test.*'
+      - 'packages/quality/**/*.skill-source.test.*'
+      - '**/*.skill-source.test.*'
+      - 'packages/brain/scripts/ci/__tests__/skill-contract.test.mjs'
+      - 'packages/brain/src/__tests__/unified-map-consumers.test.js'
+      - 'packages/brain/src/workflows/__tests__/*skill*.test.js'
+      - 'packages/brain/src/workflows/__tests__/b20-planner-thin-prd-subject.test.js'
+      - 'packages/brain/src/workflows/__tests__/b31-eval-cookie-isolate.test.js'
+      - 'packages/brain/src/workflows/__tests__/planner-role-branch-contract.test.js'
+      - 'packages/brain/src/orchestrator/__tests__/*-skill.test.js'
+      - 'packages/engine/tests/proxy/phase8*-points.test.ts'
+      - 'packages/engine/tests/skills/coding-workflow-entry-docs.test.ts'
+      - 'packages/engine/tests/skills/harness-*.test.ts'
+      - 'packages/engine/tests/skills/language-rule.test.ts'
+      - 'packages/engine/tests/skills/research-proxy-integration.test.ts'
+      - 'packages/quality/tests/regression/harness-android-target-environment.test.ts'
+      - 'tests/skills/harness-planner-push-noise.test.js'
+      - 'packages/brain/src/golden-path-contract-task.js'
+      - 'packages/brain/src/harness-shared.js'
+      - 'packages/brain/scripts/ci/skill-contract-check.mjs'
+      - 'docker/cecelia-runner/entrypoint.sh'
+      - 'scripts/extract-contract-e2e.cjs'
+      - 'packages/brain/src/orchestrator/__tests__/evaluator-evidence-bridge.fixture.js'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  contracts:
+    name: Fixed Skill contracts (${{ matrix.component }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [brain, engine, quality, root]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Restore pinned skill sources
+        uses: ./.github/actions/skills-source
+        with:
+          ssh-key: ${{ secrets.SKILLS_SOURCE_SSH_KEY }}
+      - name: Run actual source contracts
+        env:
+          COMPONENT: ${{ matrix.component }}
+          CI: 'true'
+          POSTGRES_INTEGRATION: '0'
+        run: node scripts/ci/run-skill-source-check.mjs "$COMPONENT"
   restore:
     strategy:
       fail-fast: false

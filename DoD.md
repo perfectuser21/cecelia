@@ -12,6 +12,8 @@
   Test: manual:bash scripts/__tests__/brain-deploy-sha-readonly.test.sh
 - [x] [BEHAVIOR] 本地准备检查实际执行对应lint/typecheck/build与CI自检，缺入口、工具、差分基线或命令异常阻断；合法pending映射可通过，互斥锁保留，完整组件测试仍由GitHub验收。
   Test: manual:bash -c 'cd packages/engine && npx --no-install vitest run tests/scripts/quickcheck-preflight.test.ts tests/devgate/quickcheck-dod-guard.test.ts tests/scripts/quickcheck-mutex.test.ts'
+- [x] [BEHAVIOR] 外置正文合同有固定来源恢复/校验/实跑入口及真实输入触发，原生混合断言留在默认CI；历史来源fixture不授予当前候选资格。
+  Test: manual:node --test scripts/ci/__tests__/basic-skill-source-coverage.test.mjs
 - [x] [BEHAVIOR] 正式迁移前拒绝生产/远端/不一致连接；新 scratch 的543条迁移后实际服务任务生命周期、防抢领、KV读写与SQL落库验收通过；SIGINT/SIGTERM中断关闭本人Brain并清理交接目录。
   Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
 - [x] [BEHAVIOR] 现役 API、Dashboard、Quality、MCP、Engine及Shell和Brain正式镜像已分别执行真实验证；六片Brain发现的旧接线断言逐项迁移。

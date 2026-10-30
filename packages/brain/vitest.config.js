@@ -1,6 +1,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { defineConfig } from 'vitest/config';
+import {skillSourceExcludes} from '../../scripts/ci/skill-source-tests.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -200,6 +201,7 @@ export default defineConfig({
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
     exclude: [
+      ...skillSourceExcludes('brain'),
       // 与 CI unit 一致：真实 PG 与建库迁移 fixture 只交集成层。
       'src/__tests__/integration/**',
       'src/__tests__/real-env/**',

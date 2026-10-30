@@ -1,21 +1,37 @@
 import {it,expect} from 'vitest';
 import {createHash} from 'node:crypto';
-import {execFileSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
 import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import yaml from 'js-yaml';
 import { buildExistingOpsSources } from './helpers/existing-ops-proof-builder.js';
-const root=fileURLToPath(new URL('../../../../../',import.meta.url));
-const revision=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
-const paths=execFileSync('git',['ls-tree','-rz','--name-only',revision],{cwd:root,encoding:'utf8'}).split('\0').filter(Boolean);
-const cache=new Map();
-const read=path=>{if(!cache.has(path))cache.set(path,execFileSync('git',['show',`${revision}:${path}`],{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024}));return cache.get(path);};
+import { fixtureGit, readFixedExistingOpsGitFixture } from './helpers/fixed-existing-ops-git-fixture.js';
+const { revision, paths, read } = readFixedExistingOpsGitFixture();
 const workflow='.github/workflows/implementation-impact.yml';
-it('巡查独立身份baseline保持当前真实Git F2/F3消费者协议',async()=>{
+it('已知历史Git fixture 保持 F2/F3 消费者来源协议',async()=>{
  const proof=await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths,readSource:async path=>read(path)});
  expect(proof.consumers.every(c=>c.status==='verified'),JSON.stringify(proof.consumers.map(c=>c.gaps))).toBe(true);
+});
+
+it('当前HEAD新CI尚未准入，不得继承历史Git fixture的消费者资格', async () => {
+ const candidate = readFixedExistingOpsGitFixture(fixtureGit('rev-parse', 'HEAD').trim());
+ expect(candidate.revision).not.toBe(revision);
+ const proof = await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',
+  revision:candidate.revision,paths:candidate.paths,readSource:candidate.read});
+ expect(proof.revision).toBe(candidate.revision);
+ for (const consumer of proof.consumers) {
+  expect(consumer.status, JSON.stringify(consumer.gaps)).toBe('unknown');
+  expect(consumer.gaps.length).toBeGreaterThan(0);
+  expect(consumer.bindings).toEqual([]);
+  expect(consumer.input_relations).toEqual([]);
+ }
+ expect(proof.consumers[0].gaps).toContainEqual({code:'isolated_staging_source_unproven'});
+ expect(proof.consumers[1].gaps).toContainEqual({code:'nightly_full_unit_unproven'});
+ for (const workflow of proof.workflows) {
+  expect(workflow.executable).toBe(false);
+  expect(workflow.coverage.status).toBe('unknown');
+  expect(workflow.coverage.verified_reference_ids).toEqual([]);
+ }
 });
 const entry='scripts/ci/implementation-multi-pr-gate.mjs',multi='scripts/ci/implementation-multi-scope.mjs';
 const approvedRun="set -euo pipefail\nif [[ \"$MODE\" == pr && -n \"$ADMISSION_SCOPES\" ]]; then\n  jq -e 'type == \"object\" and keys == [\"schema_version\", \"scopes\"] and .schema_version == 1 and (.scopes | type == \"array\" and length > 0 and all(.[]; type == \"string\" and test(\"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$\")) and length == (unique | length))' <<< \"$ADMISSION_SCOPES\" >/dev/null\n  jq --arg root \"$RUNNER_TEMP/implementation-input\" '.scopes | map({scope:.,snapshotBase:($root+\"/base/base-\"+.+\".json\"),snapshotHead:($root+\"/head/head-\"+.+\".json\")})' <<< \"$ADMISSION_SCOPES\" > \"$RUNNER_TEMP/implementation-input/scopes.json\"\n  node tooling/scripts/ci/implementation-multi-pr-gate.mjs --repo-root \"$GITHUB_WORKSPACE/source\" \\\n    --base \"$BASE\" --head \"$HEAD\" --mode \"$MODE\" --scopes-file \"$RUNNER_TEMP/implementation-input/scopes.json\" --output-dir \"$RUNNER_TEMP/implementation-output\"\nelse\n  node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root \"$GITHUB_WORKSPACE/source\" --scope \"$MAP_SCOPE\" \\\n    --base \"$BASE\" --head \"$HEAD\" --mode \"$MODE\" \\\n    --snapshot-base \"$RUNNER_TEMP/implementation-input/base/base.json\" \\\n    --snapshot-head \"$RUNNER_TEMP/implementation-input/head/head.json\" --output-dir \"$RUNNER_TEMP/implementation-output\"\nfi\n";
@@ -125,7 +141,7 @@ it('被声明的入口源字节缺失仍UNKNOWN，不保留成功绑定',async()
 it.each(['current','706f2e834afef562f4690a44e7fd1e3c80f25c83'])('旧YAML真实单scope在已审%s联合CLI时仍有来源，未运行的联合分支不冒Factory消费者',async cli=>{
  const doc=yaml.load(read(workflow));doc.jobs.gate.steps=[{run:legacyRun}];delete doc.jobs.gate.env.IMPLEMENTATION_MAIN_SCOPES;
  const overrides=new Map([[workflow,yaml.dump(doc)],...['scripts/ci/implementation-pr-gate.mjs',entry,multi].map(path=>[path,readFileSync(new URL(path,new URL('../../../../../',import.meta.url)),'utf8')])]);
- if(cli!=='current')overrides.set('scripts/ci/implementation-pr-gate.mjs',execFileSync('git',['show',`${cli}:scripts/ci/implementation-pr-gate.mjs`],{cwd:root,encoding:'utf8'}));
+ if(cli!=='current')overrides.set('scripts/ci/implementation-pr-gate.mjs',fixtureGit('show',`${cli}:scripts/ci/implementation-pr-gate.mjs`));
  const f3=(await buildExistingOpsSources({scope:'cecelia-factory',repo:'perfectuser21/cecelia',revision,paths:[...new Set([...paths,entry,multi])],readSource:async path=>overrides.get(path)??read(path)})).consumers[1];
  expect(f3.status,JSON.stringify(f3.gaps)).toBe('verified');
  expect(f3.input_relations).toContainEqual(expect.objectContaining({consumer_path:workflow,input_path:'scripts/ci/implementation-pr-gate.mjs',kind:'direct_admission_runner'}));

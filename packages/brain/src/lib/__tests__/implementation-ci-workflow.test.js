@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync,execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 describe('implementation-ci-workflow',()=>{
 it('main显式来源环境只启用官方self main push和dispatch，冻结主run与PR来源保持',()=>{
  const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
@@ -35,7 +36,13 @@ it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace
  expect(installs.at(-1).run.trim()).toMatch(/^npm ci(?: --(?:ignore-scripts|no-audit|no-fund))*$/);
  expect(steps[tests].run).toContain('scripts/ci/run-basic-check.mjs');
  const {commandsFor}=await import('../../../../../scripts/ci/run-basic-check.mjs');
- expect(commandsFor('brain-integration').map(s=>s.args)).toEqual([['scripts/ci/basic-runtime-smoke.mjs','--validate-only'],['src/migrate.js'],['scripts/ci/basic-runtime-smoke.mjs']]);
+ const root=join(fileURLToPath(new URL('../../../../../',import.meta.url)),'.');
+ expect(commandsFor('brain-integration')).toEqual([
+  {cwd:root,command:'node',args:['scripts/ci/basic-runtime-smoke.mjs','--validate-only']},
+  {cwd:join(root,'packages/brain'),command:'node',args:['src/migrate.js']},
+  {cwd:root,command:'node',args:['--test','scripts/ci/__tests__/runtime-signal.integration.test.mjs']},
+  {cwd:root,command:'node',args:['scripts/ci/basic-runtime-smoke.mjs']},
+ ]);
 });
 it('实际PR/main触发存在，中央凭据只在main快照job，回归job不持Brain token',()=>{
   const path=new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url);

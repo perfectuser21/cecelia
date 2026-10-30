@@ -1,7 +1,17 @@
 // Sprint 1 Phase B/C 全图重构 — harness-utils.js 单元测试
 // 覆盖 topologicalLayers / buildGeneratorPrompt / extractWorkstreamIndex
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+const skillLoader = vi.hoisted(() => vi.fn(name => {
+  if (name !== 'harness-generator') throw new Error(`unexpected skill: ${name}`);
+  return 'NATIVE_GENERATOR_CONTENT_FIXTURE_c47a';
+}));
+vi.mock('../harness-shared.js', async importOriginal => ({
+  ...await importOriginal(),
+  loadSkillContent: skillLoader,
+}));
+
 import { topologicalLayers, buildGeneratorPrompt, extractWorkstreamIndex } from '../harness-utils.js';
 
 describe('topologicalLayers', () => {
@@ -49,8 +59,8 @@ describe('buildGeneratorPrompt', () => {
     );
     // Bug 7 修复：第一行是 inline agent 引导，不是 slash command
     expect(p.split('\n')[0]).toBe('你是 harness-generator agent。按下面 SKILL 指令工作。');
-    // SKILL v6.1 真注入了（Step 6.5 Contract Self-Verification 关键词必有）
-    expect(p).toContain('Contract Self-Verification');
+    // 原生prompt必须完整注入loader返回的独立正文标记。
+    expect(p).toContain('NATIVE_GENERATOR_CONTENT_FIXTURE_c47a');
     // 任务数据仍嵌入
     expect(p).toContain('task_id: t1');
     expect(p).toContain('fix_mode: false');
@@ -62,8 +72,7 @@ describe('buildGeneratorPrompt', () => {
     expect(p.split('\n')[0]).toBe('你是 harness-generator agent。按下面 SKILL 指令工作。');
     expect(p).toContain('FIX mode');
     expect(p).toContain('fix_mode: true');
-    // SKILL v6.1 Step 6.5 关键词必有
-    expect(p).toContain('Contract Self-Verification');
+    expect(p).toContain('NATIVE_GENERATOR_CONTENT_FIXTURE_c47a');
   });
   it('B43: final_e2e_evaluator_feedback 注入 FINAL E2E FIX mode 提示', () => {
     const p = buildGeneratorPrompt({
@@ -79,6 +88,13 @@ describe('buildGeneratorPrompt', () => {
     // 无 final_e2e_feedback 时不含该提示
     const p2 = buildGeneratorPrompt({ id: 't2', payload: {} }, { fixMode: false });
     expect(p2).not.toContain('FINAL E2E FIX mode');
+  });
+  it('fix mode也必须传播Skill provider原始错误，不能继续生成空Skill提示词', () => {
+    const failure = new Error('fixture generator provider failed');
+    skillLoader.mockImplementationOnce(() => { throw failure; });
+    let received;
+    try { buildGeneratorPrompt({ id: 'missing-skill', payload: {} }, { fixMode: true }); } catch (error) { received = error; }
+    expect(received).toBe(failure);
   });
 });
 

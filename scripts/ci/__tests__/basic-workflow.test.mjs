@@ -66,6 +66,11 @@ test('最小源码CI只使用只读自动令牌，不依赖生产账号或私有
   assert.doesNotMatch(JSON.stringify(workflow.jobs), /secrets\.|skills-source|GH_PAT_BOT|CECELIA_INTERNAL_TOKEN/);
 });
 
+test('只给实际PG跑道设置数据库URI，不能意外启用单测文件里的真实PG describe', () => {
+  assert.equal(workflow.jobs.checks.env.DATABASE_URL,
+    "${{ matrix.component == 'brain-integration' && 'postgresql://ci:isolated-ci@127.0.0.1:5432/cecelia_scratch' || '' }}");
+});
+
 test('来源准入的路径过滤必须覆盖当前真实定义文件', () => {
   const impact = yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml', import.meta.url), 'utf8'));
   const files = require('fast-glob').sync(impact.on.pull_request.paths, { cwd: root, dot: true });

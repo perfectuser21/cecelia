@@ -92,7 +92,7 @@ jobs:
       DB_NAME: cecelia_scratch
       DB_USER: ci
       DB_PASSWORD: isolated-ci
-      DATABASE_URL: postgresql://ci:isolated-ci@127.0.0.1:5432/cecelia_scratch
+      DATABASE_URL: ${{ matrix.component == 'brain-integration' && 'postgresql://ci:isolated-ci@127.0.0.1:5432/cecelia_scratch' || '' }}
     steps:
       - uses: actions/checkout@v4
         with:

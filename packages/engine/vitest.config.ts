@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import {skillSourceExcludes} from '../../scripts/ci/skill-source-tests.mjs';
 
 // e2e 测试目录: tests/e2e/（串行运行，需要 shell 命令）
 
@@ -52,6 +53,7 @@ export default defineConfig({
           globals: true,
           environment: 'node',
           include: PARALLEL_TESTS,
+          exclude: skillSourceExcludes('engine'),
           // fileParallelism 默认为 true，无需显式设置
         },
       },
@@ -65,6 +67,7 @@ export default defineConfig({
           // 用 execFile 起子进程，属于有 shell 依赖的测试，放串行组
           include: ['tests/**/*.test.ts', 'src/**/*.test.ts', 'skills/**/__tests__/**/*.test.mjs'],
           exclude: [
+            ...skillSourceExcludes('engine'),
             '**/node_modules/**',
             '**/devgate-fake-test-detection.test.cjs',
             '**/.claude/worktrees/**',

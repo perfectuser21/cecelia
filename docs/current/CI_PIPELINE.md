@@ -24,10 +24,10 @@ authority: CURRENT_STATE
 
 | 组件 | 保障内容 |
 |---|---|
-| Brain | 完整单测六分片；第一片还跑 lint 与全部 Fleet Shell 回归 |
+| Brain | 完整原生单测六分片；第一片还跑 lint 与全部 Fleet Shell 回归 |
 | Brain runtime | 新建专用 PG 后执行正式迁移；启动当前源码；HTTP 任务生命周期与KV读写、独立SQL读回；交接文件仅进本人临时目录；真实SIGINT/SIGTERM回归确认本人进程关闭并清理目录 |
 | Brain image | 使用正式 Dockerfile 构建真实镜像 |
-| Engine | 类型检查、完整单测、unit/integration/integrity Shell 回归及构建 |
+| Engine | 类型检查、完整原生单测、unit/integration/integrity Shell 回归及构建 |
 | API | 类型检查、完整单测和编译 |
 | Dashboard | 完整单测和生产构建 |
 | Quality / MCP | 各组件单测；Quality 历史共享服务探测已改为隔离 HTTP 测试 |
@@ -39,6 +39,10 @@ authority: CURRENT_STATE
 Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；全局脚本、依赖和配置变更保守选择现役服务全量。未知可执行路径不会被当成纯文档略过。文档改动仍运行 CI 自身回归和安全扫描。
 
 普通源码 CI 使用一次性本机 `cecelia_scratch` 和固定测试口令；不需要生产账号、内网、模型服务或私有 Skill 仓库访问密钥。运行验收强制拒绝远端和非 scratch 数据库。
+
+数据库 URI 只注入实际 PG 跑道，避免单测文件里的条件集成用例被环境变量意外启用。混合文件的原生断言留在单测，其真实 PG 用例由深度配置显式执行。
+
+外置 Skill 正文合同使用独立的 `skill-source-tests.mjs` 集合和各组件专项配置，归 `Pinned Skill Sources`：恢复固定 revision、校验 46 份投影后真实执行。普通单测保留原生 loader、prompt、launcher、Runner、callback 与 Judge 机制，用隔离 provider/cwd/HOME 验证；不以本机私有正文是否存在决定这些测试是否运行。已明确停用的 Reviewer v5 合同不计入任何通过保障。
 
 完整组件测试保留各包已声明的测试范围；它不等于所有历史测试均健康。现存 exclude/skip 不因本次重整而被解释为业务正确。
 
@@ -61,6 +65,7 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 |---|---|
 | implementation-impact.yml | 来源准入；main/按需保留原保护，PR 只在来源定义相关路径变更时运行 |
 | skill-source-ownership.yml | 所有权专项；最低 scripts 跑道也执行同一个真实检查 |
+| skills-source-check.yml | 固定 Skill 来源的三系统恢复校验及 Brain/Engine/Quality/root 正文合同；测试与原生对齐输入变更都触发，独立于普通源码 CI |
 | ci-dashboard-pwa-e2e.yml | 当前 Dashboard 的 PWA/任务台浏览器专项 |
 | skill-distillation-eval.yml | 按需运行固定截图的真实在线模型评测；沿用原阈值和凭据引用，服务或报告失败真实报红，不作为所有源码 PR 的前置条件 |
 | app-server-canary / attempt-runtime-limits / linux-resource-canary / node-onboarding / us-price-lease | 各组件按路径触发的专项回归 |
@@ -70,6 +75,8 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 | archive-learnings / cleanup-merged-artifacts / auto-version | 仓库维护；不是代码正确性证明 |
 
 `cecelia_source_only` 及生产拒绝逻辑保留。来源准入失败应报告未就绪，不能通过删除来源保护来获得“全绿”。
+
+来源选择器机制测试使用不可变历史 Git 样本，保留真实字节、AST、篡改、超时和缓存验证；另验证当前候选仍不能继承该样本资格。机制测试通过不等于候选来源已准入，实际 Implementation impact 继续独立判定当前修订。
 
 ## 已退出自动通用门禁的旧入口
 
