@@ -68,4 +68,3 @@ export function runEvaluatorWriterAndBridge(result, { taskId, attemptId, command
     rmSync(tempDir, { recursive: true, force: true });
   }
 }
-
