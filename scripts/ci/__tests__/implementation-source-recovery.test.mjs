@@ -54,6 +54,22 @@ test('旧生产部署脚本保持来源恢复准入，任意漂移拒绝',()=>{
   }finally{rmSync(scratch,{recursive:true,force:true});}
  }
 });
+test('来源恢复容纳已审 Claude 只读 tuple 测试而不扩大生产文件范围',()=>{
+ const scratch=mkdtempSync(join(tmpdir(),'recovery-reader-test-'));
+ try{
+  execFileSync('git',['clone','-q',dir,scratch]);
+  const g=(...args)=>execFileSync('git',args,{cwd:scratch,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+  const path='packages/brain/src/__tests__/claude-channel-retired.reader-tuples.test.js';
+  mkdirSync(dirname(join(scratch,path)),{recursive:true});writeFileSync(join(scratch,path),'// reviewed read-only tuple guard\n');
+  g('add','.');g('commit','-qm','reviewed tuple guard');
+  assert.doesNotThrow(()=>validateSourceDelta(scratch,base,g('rev-parse','HEAD')));
+  const unreviewed='packages/brain/src/__tests__/unreviewed-executor.test.js';
+  writeFileSync(join(scratch,unreviewed),'// unrelated execution change\n');
+  g('add','.');g('commit','-qm','unreviewed execution');
+  assert.throws(()=>validateSourceDelta(scratch,base,g('rev-parse','HEAD')),/SOURCE_RECOVERY_OPERATIONAL_CHANGE/);
+ }finally{rmSync(scratch,{recursive:true,force:true});}
+});
 for(const [name,route,value] of [
  ['未合并',`pulls/9`,{merged:false}],['主干漂移','commits/main',{sha:base}],
  ['没有关联PR',`commits/${head}/pulls`,[]],

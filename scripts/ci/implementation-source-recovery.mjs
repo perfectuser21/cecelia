@@ -18,6 +18,7 @@ const REVIEWED_DEPLOYS=new Set([
 const COLLECTORS=readNativeConsumerRuntime().files.map(f=>f.path);
 const ALLOWED=new Set([...COLLECTORS,'.implementation-source-relations.json','scripts/brain-deploy.sh',
  'tests/packages/brain/post-deploy-selfcheck-contract.test.js',
+ 'packages/brain/src/__tests__/claude-channel-retired.reader-tuples.test.js',
  'scripts/smoke/gate3-brain-deploy-smoke.sh',
  'packages/brain/scripts/smoke/factory-f2-deploy-smoke.sh','tests/regression/gate3-sha-truth/sha-account.test.sh',
  '.github/workflows/implementation-impact.yml','.github/workflows/ci.yml',
