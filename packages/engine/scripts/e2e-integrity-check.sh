@@ -126,18 +126,20 @@ else
     _fail "pre-push.sh 不存在：$PRE_PUSH"
 fi
 
-# ─── 检测 9：quickcheck.sh DoD 守卫（本地拦截 DoD 未勾选）───────
-# 根因：harness-contract-lint CI 因 DoD [ ] 未勾选失败是可预防的本地错误
+# ─── 检测 9：quickcheck.sh DoD 验收映射守卫 ──────────────────
+# 未完成项允许保留[ ]，本地门禁核对正式validator实际接线，不要求伪造完成。
 QUICKCHECK="$PROJECT_ROOT/scripts/quickcheck.sh"
-if [[ -f "$QUICKCHECK" ]]; then
+DOD_MAPPING_CHECKER="$PROJECT_ROOT/packages/quality/scripts/devgate/check-dod-mapping.cjs"
+if [[ -f "$QUICKCHECK" && -f "$DOD_MAPPING_CHECKER" ]]; then
     CONTENT=$(cat "$QUICKCHECK")
-    if echo "$CONTENT" | grep -q 'DoD 未勾选'; then
-        _pass "quickcheck.sh 包含 DoD 守卫（本地拦截未勾选条目）"
+    if echo "$CONTENT" | grep -q 'packages/quality/scripts/devgate/check-dod-mapping.cjs' \
+        && echo "$CONTENT" | grep -Fq 'node "$DOD_MAPPING_CHECKER" "$dod_file"'; then
+        _pass "quickcheck.sh 接通正式 DoD Test 映射校验"
     else
-        _fail "quickcheck.sh 未包含 DoD 守卫 — harness-contract-lint CI 失败无法本地拦截"
+        _fail "quickcheck.sh 未接通正式 DoD Test 映射校验"
     fi
 else
-    _fail "quickcheck.sh 不存在：$QUICKCHECK"
+    _fail "quickcheck.sh 或正式DoD映射validator不存在"
 fi
 
 # ─── 汇总 ─────────────────────────────────────────────────────────
