@@ -30,12 +30,17 @@ function makeMocks(dir, { curlOkPattern }) {
 echo "$@" >> "${dockerLog}"
 case "$1" in
   inspect)
+    if [[ "$2" == "cecelia-bluegreen-sidecar" ]]; then
+      echo "/cecelia-bluegreen-sidecar sha256:${'1'.repeat(64)} true"; exit 0; fi
     if echo "$@" | grep -q 'IPAddress'; then echo "${GREEN_IP}"; exit 0; fi
     if echo "$@" | grep -q 'NetworkSettings.Networks'; then echo "cecelia_default "; exit 0; fi
     if echo "$@" | grep -q 'State.Status'; then echo "running"; exit 0; fi
     if echo "$@" | grep -q 'State.Health'; then echo "healthy"; exit 0; fi
     echo "sha256:fake"; exit 0 ;;
-  image) echo "GIT_SHA=${'a'.repeat(40)}"; exit 0 ;;
+  image)
+    if echo "$@" | grep -q '{{.Id}}'; then echo "sha256:${'1'.repeat(64)}";
+    else echo "GIT_SHA=${'a'.repeat(40)}"; fi
+    exit 0 ;;
   *) exit 0 ;;
 esac
 `;
