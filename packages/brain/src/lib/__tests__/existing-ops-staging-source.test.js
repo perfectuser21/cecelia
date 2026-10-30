@@ -65,6 +65,18 @@ async function build({ patch = {}, marker = 2, missing } = {}) {
 }
 
 describe('staging 正式调用链的固定来源，不声明部署成功', () => {
+  it('旧发布修订没有 bootstrap 文件时仍可核源，且不虚构新调用边', async () => {
+    const oldRevision = 'e3a01021ee7100b83d8ed5a0be219d0b543b5dff';
+    const oldPaths = git('ls-tree', '-rz', '--name-only', oldRevision).replace(/\0$/, '').split('\0');
+    const result = await buildExistingOpsSources({
+      scope: 'cecelia-factory', repo: 'perfectuser21/cecelia', revision: oldRevision, paths: oldPaths,
+      readSource: path => git('show', `${oldRevision}:${path}`),
+    });
+    const consumer = result.consumers.find(c => c.workflow_key === 'factory_f2_ops');
+    expect(consumer.status, JSON.stringify(consumer.gaps)).toBe('verified');
+    expect(consumer.bindings.some(b => b.path.startsWith('scripts/lib/brain-bootstrap'))).toBe(false);
+    expect(consumer.input_relations.some(r => r.input_path.startsWith('scripts/lib/brain-bootstrap'))).toBe(false);
+  });
   it('预注册的获客预发脚本完整字节与真实读边，旧脚本仍保持原来源', async () => {
     const future = leadgenVerify();
     expect(createHash('sha256').update(future).digest('hex')).toBe(LEADGEN_VERIFY_SHA);

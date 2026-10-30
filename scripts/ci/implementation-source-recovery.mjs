@@ -11,7 +11,10 @@ import {stepSha256} from '../../packages/brain/scripts/sync-steps-from-workspace
 import {extractImplementationAdmissionSnapshots,validateImplementationSnapshot,exportImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 const REPO='perfectuser21/cecelia',SHA=/^[0-9a-f]{40}$/;
 export const RECOVERY_BRIDGE=Object.freeze({baseline:'f63efa7d82a8f9f9f0084b85a70e562f0a499c7e',directBase:'706f2e834afef562f4690a44e7fd1e3c80f25c83',pr:6591,prHead:'f99b83a656d73a1378dcaaa83b3865280f9a9652'});
-const REVIEWED_DEPLOY='a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e';
+const REVIEWED_DEPLOYS=new Set([
+ 'a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e', // 旧生产脚本
+ '6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b', // drain P1 固定候选
+]);
 const COLLECTORS=readNativeConsumerRuntime().files.map(f=>f.path);
 const ALLOWED=new Set([...COLLECTORS,'.implementation-source-relations.json','scripts/brain-deploy.sh',
  'tests/packages/brain/post-deploy-selfcheck-contract.test.js',
@@ -34,7 +37,7 @@ export function recoveryRuntimeAt(repoRoot,revision){
 export function validateSourceDelta(repoRoot,base,head){
  const changed=git(repoRoot,'diff','--name-only',base,head,'--').split('\n').filter(Boolean);
  if(!changed.length||changed.some(p=>!ALLOWED.has(p)&&!/^scripts\/ci\/__tests__\/[a-z0-9-]+\.test\.mjs$/.test(p)&&!/^packages\/brain\/src\/(?:lib\/)?__tests__\/(?:existing-ops-|implementation-source-recovery)[a-z0-9.-]+\.test\.js$/.test(p)))fail('SOURCE_RECOVERY_OPERATIONAL_CHANGE');
- if(changed.includes('scripts/brain-deploy.sh')&&digest(blob(repoRoot,head,'scripts/brain-deploy.sh'))!==REVIEWED_DEPLOY)fail('SOURCE_RECOVERY_DEPLOY_GUARD_UNREVIEWED');
+ if(changed.includes('scripts/brain-deploy.sh')&&!REVIEWED_DEPLOYS.has(digest(blob(repoRoot,head,'scripts/brain-deploy.sh'))))fail('SOURCE_RECOVERY_DEPLOY_GUARD_UNREVIEWED');
  // 版本文件只能改版本，不能借 source-only 更换运行依赖或启动命令。
  for(const path of changed.filter(p=>p.endsWith('package.json')||p.endsWith('package-lock.json'))){
   const strip=x=>{delete x.version;if(path==='packages/brain/package.json')delete x.cecelia_source_only;for(const p of ['', 'packages/brain'])if(x.packages?.[p])delete x.packages[p].version;return x;};
@@ -122,7 +125,7 @@ export async function verifyRecoveryAuthority({repoRoot,base,head},{github:api=g
   bridge=await verifyMergedPull({revision:directBase,parent:base},{api,readArtifact});
   if(bridge.pr_number!==RECOVERY_BRIDGE.pr||bridge.pr_head!==RECOVERY_BRIDGE.prHead)fail('SOURCE_RECOVERY_BRIDGE_INVALID');
  }
-if(JSON.parse(blob(repoRoot,head,'packages/brain/package.json')).cecelia_source_only!==true||digest(blob(repoRoot,head,'scripts/brain-deploy.sh'))!==REVIEWED_DEPLOY)fail('SOURCE_RECOVERY_DEPLOY_GUARD_MISSING');
+if(JSON.parse(blob(repoRoot,head,'packages/brain/package.json')).cecelia_source_only!==true||!REVIEWED_DEPLOYS.has(digest(blob(repoRoot,head,'scripts/brain-deploy.sh'))))fail('SOURCE_RECOVERY_DEPLOY_GUARD_MISSING');
  const proof=await verifyMergedPull({revision:head,parent:directBase,allowMissingBase:bridged},{api,readArtifact});
  const changed_files=validateSourceDelta(repoRoot,directBase,head);
  return {schema_version:1,purpose:'admission_source_only',repo:REPO,base_revision:base,baseline_revision:base,direct_base_revision:directBase,head_revision:head,...proof,bridge,reviewed_head:bridged?context.event.inputs.source_reviewed_head:null,changed_files};
