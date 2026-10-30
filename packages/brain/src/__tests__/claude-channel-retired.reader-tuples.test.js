@@ -66,7 +66,9 @@ export function provenanceReaderTuples(root) {
     ['native-evidence-envelopes', '44abae0d93238048356f5573765320b92ad54e481ba78f5925a3c558a8b86013'],
     ['runtime-source', '48f919b399f133feadcfb0678ef67c95550d199e3d97fb213ccb9276d93abbf7'],
   ]) history.set(path.join(root, 'existing-ops-' + name + '.js'), hash);
-  return [old, next, doc, rootNpm, history];
+  const drainHistory = new Map(history);
+  drainHistory.set(path.join(root, 'existing-ops-runtime-source.js'), '8c3b53f61050bcf430da9d286ff5576dcb00478426dabc4ad00909514f1e531e');
+  return [old, next, doc, rootNpm, history, drainHistory];
 }
 export function matchesProvenanceReaderTuple(sources, tuples, hashSource) {
   try {
@@ -241,8 +243,14 @@ const B_RECOVERY_QA_HASHES = {...B_QA_HASHES,
 const B_STAGING_HASHES = {...B_QA_HASHES,
  'existing-ops-runtime-source.js':'8bd4e5157b2233fdf5495f7795f1b8544a6ee766ddc4961676ee1e4175b056fe',
 };
+const B_DRAIN_STAGING_HASHES = {...B_STAGING_HASHES,
+ 'existing-ops-runtime-source.js':'8c3b53f61050bcf430da9d286ff5576dcb00478426dabc4ad00909514f1e531e',
+};
 const B_RECOVERY_STAGING_HASHES = {...B_RECOVERY_QA_HASHES,
  'existing-ops-runtime-source.js':B_STAGING_HASHES['existing-ops-runtime-source.js'],
+};
+const B_RECOVERY_DRAIN_STAGING_HASHES = {...B_RECOVERY_QA_HASHES,
+ 'existing-ops-runtime-source.js':B_DRAIN_STAGING_HASHES['existing-ops-runtime-source.js'],
 };
 const cache=new Map(), referenceCache=new Map();
 function hash(text,parse,shape){
@@ -261,8 +269,9 @@ export function reviewedADataRanges(src,{file,sources,root,parse,shape,rows,deco
   const isQa=runtimeHash===QA_HASHES['existing-ops-runtime-source.js'];
   const isRecovery=typeof build==='string'&&hash(build,parse,shape)===B_RECOVERY_QA_HASHES['existing-ops-build-source.js'];
   const isStaging=runtimeHash===B_STAGING_HASHES['existing-ops-runtime-source.js'];
-  if(isRecovery&&!isQa&&!isStaging)return null;
-  const selected=isRecovery?(isStaging?B_RECOVERY_STAGING_HASHES:B_RECOVERY_QA_HASHES):isB?(isStaging?B_STAGING_HASHES:isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
+  const isDrainStaging=runtimeHash===B_DRAIN_STAGING_HASHES['existing-ops-runtime-source.js'];
+  if(isRecovery&&!isQa&&!isStaging&&!isDrainStaging)return null;
+  const selected=isRecovery?(isDrainStaging?B_RECOVERY_DRAIN_STAGING_HASHES:isStaging?B_RECOVERY_STAGING_HASHES:B_RECOVERY_QA_HASHES):isB?(isDrainStaging?B_DRAIN_STAGING_HASHES:isStaging?B_STAGING_HASHES:isQa?B_QA_HASHES:B_HASHES):isQa?QA_HASHES
    :hash(runtime,parse,shape)===US_HASHES['existing-ops-runtime-source.js']?US_HASHES:HASHES;
   const closure=new Set(Object.keys(selected).map(name=>path.join(root,name)));
   for(const [name,digest] of Object.entries(selected)){

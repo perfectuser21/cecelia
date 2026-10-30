@@ -11,10 +11,15 @@ import {stepSha256} from '../../packages/brain/scripts/sync-steps-from-workspace
 import {extractImplementationAdmissionSnapshots,validateImplementationSnapshot,exportImplementationSnapshot} from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 const REPO='perfectuser21/cecelia',SHA=/^[0-9a-f]{40}$/;
 export const RECOVERY_BRIDGE=Object.freeze({baseline:'f63efa7d82a8f9f9f0084b85a70e562f0a499c7e',directBase:'706f2e834afef562f4690a44e7fd1e3c80f25c83',pr:6591,prHead:'f99b83a656d73a1378dcaaa83b3865280f9a9652'});
-const REVIEWED_DEPLOY='a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e';
+const REVIEWED_DEPLOYS=new Set([
+ 'a77963695be92a5e55f6a5260c283d1d18ce6ce7398be8915d39ea49380e059e', // 旧生产脚本
+ '6858cc545b52fc20c15c401161cb73cec3fbbf96abf59762255507961cfe945b', // drain P1 固定候选
+]);
 const COLLECTORS=readNativeConsumerRuntime().files.map(f=>f.path);
 const ALLOWED=new Set([...COLLECTORS,'.implementation-source-relations.json','scripts/brain-deploy.sh',
  'tests/packages/brain/post-deploy-selfcheck-contract.test.js',
+ 'packages/brain/src/__tests__/claude-channel-retired.reader-tuples.test.js',
+ 'packages/brain/src/lib/__tests__/workspace-ci-source-bundle.test.js',
  'scripts/smoke/gate3-brain-deploy-smoke.sh',
  'packages/brain/scripts/smoke/factory-f2-deploy-smoke.sh','tests/regression/gate3-sha-truth/sha-account.test.sh',
  '.github/workflows/implementation-impact.yml','.github/workflows/ci.yml',
@@ -34,14 +39,16 @@ export function recoveryRuntimeAt(repoRoot,revision){
 export function validateSourceDelta(repoRoot,base,head){
  const changed=git(repoRoot,'diff','--name-only',base,head,'--').split('\n').filter(Boolean);
  if(!changed.length||changed.some(p=>!ALLOWED.has(p)&&!/^scripts\/ci\/__tests__\/[a-z0-9-]+\.test\.mjs$/.test(p)&&!/^packages\/brain\/src\/(?:lib\/)?__tests__\/(?:existing-ops-|implementation-source-recovery)[a-z0-9.-]+\.test\.js$/.test(p)))fail('SOURCE_RECOVERY_OPERATIONAL_CHANGE');
- if(changed.includes('scripts/brain-deploy.sh')&&digest(blob(repoRoot,head,'scripts/brain-deploy.sh'))!==REVIEWED_DEPLOY)fail('SOURCE_RECOVERY_DEPLOY_GUARD_UNREVIEWED');
+ if(changed.includes('scripts/brain-deploy.sh')&&!REVIEWED_DEPLOYS.has(digest(blob(repoRoot,head,'scripts/brain-deploy.sh'))))fail('SOURCE_RECOVERY_DEPLOY_GUARD_UNREVIEWED');
  // 版本文件只能改版本，不能借 source-only 更换运行依赖或启动命令。
  for(const path of changed.filter(p=>p.endsWith('package.json')||p.endsWith('package-lock.json'))){
   const strip=x=>{delete x.version;if(path==='packages/brain/package.json')delete x.cecelia_source_only;for(const p of ['', 'packages/brain'])if(x.packages?.[p])delete x.packages[p].version;return x;};
   if(JSON.stringify(strip(JSON.parse(blob(repoRoot,base,path))))!==JSON.stringify(strip(JSON.parse(blob(repoRoot,head,path)))))fail('SOURCE_RECOVERY_DEPENDENCIES_CHANGED');
  }
- for(const path of ['packages/brain/VERSION','.brain-versions'])if(changed.includes(path)&&blob(repoRoot,head,path).toString().trim()!==JSON.parse(blob(repoRoot,head,'packages/brain/package.json')).version)fail('SOURCE_RECOVERY_VERSION_INVALID');
+ const bootstrapBase='e3a01021ee7100b83d8ed5a0be219d0b543b5dff';
+ for(const path of ['packages/brain/VERSION','.brain-versions'])if((changed.includes(path)||base===bootstrapBase)&&blob(repoRoot,head,path).toString().trim()!==JSON.parse(blob(repoRoot,head,'packages/brain/package.json')).version)fail('SOURCE_RECOVERY_VERSION_INVALID');
  if(changed.includes('packages/brain/package.json')&&JSON.parse(blob(repoRoot,head,'packages/brain/package.json')).cecelia_source_only!==true)fail('SOURCE_RECOVERY_DEPLOY_GUARD_MISSING');
+ if(base===bootstrapBase&&digest(blob(repoRoot,head,'scripts/check-version-sync.sh'))!=='23cea4c3a95ec8f2e13d8191fad20622cfe6268a5bda1885f4758ee92845f89f')fail('SOURCE_RECOVERY_VERSION_GUARD_UNREVIEWED');
  if(changed.includes('.github/workflows/ci.yml')){
   const ciPath='.github/workflows/ci.yml',before=yaml.load(blob(repoRoot,base,ciPath).toString()),after=yaml.load(blob(repoRoot,head,ciPath).toString());
   const checkouts=before.jobs?.['lint-auto-merge-decision']?.steps?.filter(s=>s.uses==='actions/checkout@v4');
@@ -50,8 +57,14 @@ export function validateSourceDelta(repoRoot,base,head){
   if(JSON.stringify(before)!==JSON.stringify(after))fail('SOURCE_RECOVERY_CI_CHANGE_INVALID');
  }
  const path='.github/workflows/implementation-impact.yml';
- if(changed.includes(path)&&digest(blob(repoRoot,head,path))!=='274f10136dfcda82e08d2c85fe65d6b4521d0cc34b544bb7640cfbe5be406b65')fail('SOURCE_RECOVERY_WORKFLOW_UNREVIEWED');
+ if((changed.includes(path)||base===bootstrapBase)&&digest(blob(repoRoot,head,path))!=='231892f86050742912681feba690d1cb71891f6d15183bb65299489a943cd912')fail('SOURCE_RECOVERY_WORKFLOW_UNREVIEWED');
  const before=yaml.load(blob(repoRoot,base,path).toString()),after=yaml.load(blob(repoRoot,head,path).toString());
+ if(changed.includes(path)){
+  const original="${{ vars.IMPLEMENTATION_INFRA_ADMISSION == 'true' && github.repository == 'perfectuser21/cecelia' && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' && 'true' || 'false' }}";
+  const guarded="${{ inputs.source_baseline_recovery != true && vars.IMPLEMENTATION_INFRA_ADMISSION == 'true' && github.repository == 'perfectuser21/cecelia' && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' && 'true' || 'false' }}";
+  if(before.jobs.gate.env?.INFRA_ADMISSION!==original||after.jobs.gate.env?.INFRA_ADMISSION!==guarded)fail('SOURCE_RECOVERY_PR_GATE_CHANGED');
+  before.jobs.gate.env.INFRA_ADMISSION=guarded;
+ }
  if(JSON.stringify(before.jobs.gate)!==JSON.stringify(after.jobs.gate))fail('SOURCE_RECOVERY_PR_GATE_CHANGED');
  return changed;
 }
@@ -122,7 +135,7 @@ export async function verifyRecoveryAuthority({repoRoot,base,head},{github:api=g
   bridge=await verifyMergedPull({revision:directBase,parent:base},{api,readArtifact});
   if(bridge.pr_number!==RECOVERY_BRIDGE.pr||bridge.pr_head!==RECOVERY_BRIDGE.prHead)fail('SOURCE_RECOVERY_BRIDGE_INVALID');
  }
-if(JSON.parse(blob(repoRoot,head,'packages/brain/package.json')).cecelia_source_only!==true||digest(blob(repoRoot,head,'scripts/brain-deploy.sh'))!==REVIEWED_DEPLOY)fail('SOURCE_RECOVERY_DEPLOY_GUARD_MISSING');
+if(JSON.parse(blob(repoRoot,head,'packages/brain/package.json')).cecelia_source_only!==true||!REVIEWED_DEPLOYS.has(digest(blob(repoRoot,head,'scripts/brain-deploy.sh'))))fail('SOURCE_RECOVERY_DEPLOY_GUARD_MISSING');
  const proof=await verifyMergedPull({revision:head,parent:directBase,allowMissingBase:bridged},{api,readArtifact});
  const changed_files=validateSourceDelta(repoRoot,directBase,head);
  return {schema_version:1,purpose:'admission_source_only',repo:REPO,base_revision:base,baseline_revision:base,direct_base_revision:directBase,head_revision:head,...proof,bridge,reviewed_head:bridged?context.event.inputs.source_reviewed_head:null,changed_files};

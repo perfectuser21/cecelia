@@ -36,6 +36,81 @@ function api(overrides={}){
 test('合并main由旧base的独立PR准入成功后才准许来源编译',async()=>{
  const proof=await verifyRecoveryAuthority(opts,{github:api()});assert.equal(proof.base_revision,base);assert.equal(proof.head_revision,head);assert.equal(proof.impact_run_id,7);
 });
+test('旧生产部署脚本保持来源恢复准入，任意漂移拒绝',()=>{
+ const sourceRoot=fileURLToPath(new URL('../../../',import.meta.url));
+ const legacy=execFileSync('git',['show','e3a01021ee7100b83d8ed5a0be219d0b543b5dff:scripts/brain-deploy.sh'],{cwd:sourceRoot});
+ for(const [name,bytes] of [['legacy',legacy]]){
+  const scratch=mkdtempSync(join(tmpdir(),`recovery-deploy-${name}-`));
+  try{
+   execFileSync('git',['clone','-q',dir,scratch]);
+   const g=(...args)=>execFileSync('git',args,{cwd:scratch,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+   g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+   writeFileSync(join(scratch,'scripts/brain-deploy.sh'),bytes);
+   g('add','.');g('commit','--allow-empty','-qm',`reviewed ${name}`);
+   assert.doesNotThrow(()=>validateSourceDelta(scratch,base,g('rev-parse','HEAD')));
+   writeFileSync(join(scratch,'scripts/brain-deploy.sh'),Buffer.concat([bytes,Buffer.from('\n# unreviewed drift\n')]));
+   g('commit','-qam','unreviewed drift');
+   assert.throws(()=>validateSourceDelta(scratch,base,g('rev-parse','HEAD')),/SOURCE_RECOVERY_DEPLOY_GUARD_UNREVIEWED/);
+  }finally{rmSync(scratch,{recursive:true,force:true});}
+ }
+});
+test('来源恢复容纳已审 Claude 只读 tuple 测试而不扩大生产文件范围',()=>{
+ const scratch=mkdtempSync(join(tmpdir(),'recovery-reader-test-'));
+ try{
+  execFileSync('git',['clone','-q',dir,scratch]);
+  const g=(...args)=>execFileSync('git',args,{cwd:scratch,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+  const path='packages/brain/src/__tests__/claude-channel-retired.reader-tuples.test.js';
+  mkdirSync(dirname(join(scratch,path)),{recursive:true});writeFileSync(join(scratch,path),'// reviewed read-only tuple guard\n');
+  g('add','.');g('commit','-qm','reviewed tuple guard');
+  assert.doesNotThrow(()=>validateSourceDelta(scratch,base,g('rev-parse','HEAD')));
+  const unreviewed='packages/brain/src/__tests__/unreviewed-executor.test.js';
+  writeFileSync(join(scratch,unreviewed),'// unrelated execution change\n');
+  g('add','.');g('commit','-qm','unreviewed execution');
+  assert.throws(()=>validateSourceDelta(scratch,base,g('rev-parse','HEAD')),/SOURCE_RECOVERY_OPERATIONAL_CHANGE/);
+ }finally{rmSync(scratch,{recursive:true,force:true});}
+});
+test('固定来源候选仅接受已隔离infra刷新的workflow字节',()=>{
+ const source=fileURLToPath(new URL('../../../',import.meta.url));
+ const scratch=mkdtempSync(join(tmpdir(),'recovery-infra-workflow-'));
+ try{
+  execFileSync('git',['clone','-q','--shared',source,scratch]);
+  const g=(...args)=>execFileSync('git',args,{cwd:scratch,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+  const path='.github/workflows/implementation-impact.yml';
+  const reviewedFiles=[path,'packages/brain/VERSION'];
+  for(const file of reviewedFiles)writeFileSync(join(scratch,file),readFileSync(join(source,file)));
+  g('add','--',...reviewedFiles);g('commit','--allow-empty','-qm','source-only infra guard');
+  const reviewed=g('rev-parse','HEAD');
+  assert.doesNotThrow(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',reviewed));
+  writeFileSync(join(scratch,path),execFileSync('git',['show','6d1d7e832e45b35af76eb330529032eb35ec3a1b:'+path],{cwd:source}));
+  g('commit','-qam','restore unsafe infra workflow');
+  assert.throws(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',g('rev-parse','HEAD')),/SOURCE_RECOVERY_WORKFLOW_UNREVIEWED/);
+ }finally{rmSync(scratch,{recursive:true,force:true});}
+});
+test('VERSION 真身对齐并拒绝改动已受信版本门禁',()=>{
+ const source=fileURLToPath(new URL('../../../',import.meta.url));
+ const scratch=mkdtempSync(join(tmpdir(),'recovery-version-guard-'));
+ try{
+  execFileSync('git',['clone','-q','--shared',source,scratch]);
+  const g=(...args)=>execFileSync('git',args,{cwd:scratch,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+  const paths=['packages/brain/VERSION'];
+  for(const path of paths)writeFileSync(join(scratch,path),readFileSync(join(source,path)));
+  g('add','--',...paths);g('commit','--allow-empty','-qm','reviewed version sync');
+  const reviewed=g('rev-parse','HEAD');
+  assert.doesNotThrow(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',reviewed));
+  const versionFile='packages/brain/VERSION';
+  writeFileSync(join(scratch,versionFile),'1.445.84\n');
+  g('commit','-qam','version drift');
+  assert.throws(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',g('rev-parse','HEAD')),/SOURCE_RECOVERY_VERSION_INVALID/);
+  writeFileSync(join(scratch,versionFile),readFileSync(join(source,versionFile)));
+  const guard='scripts/check-version-sync.sh';
+  writeFileSync(join(scratch,guard),Buffer.concat([readFileSync(join(scratch,guard)),Buffer.from('\n# unreviewed drift\n')]));
+  g('commit','-qam','unreviewed version guard');
+  assert.throws(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',g('rev-parse','HEAD')),/SOURCE_RECOVERY_OPERATIONAL_CHANGE/);
+ }finally{rmSync(scratch,{recursive:true,force:true});}
+});
 for(const [name,route,value] of [
  ['未合并',`pulls/9`,{merged:false}],['主干漂移','commits/main',{sha:base}],
  ['没有关联PR',`commits/${head}/pulls`,[]],

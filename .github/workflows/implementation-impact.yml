@@ -204,7 +204,7 @@ jobs:
           if-no-files-found: warn
   snapshot-infra:
     needs: [source-runtime-ready]
-    if: inputs.export_device_patrol_source_identity != true && github.repository == 'perfectuser21/cecelia' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.export_infra_baseline == true || vars.IMPLEMENTATION_INFRA_ADMISSION == 'true') && (!inputs.source_repo || inputs.source_repo == github.repository) && (!inputs.head_revision || inputs.head_revision == github.sha) && (!inputs.tooling_revision || inputs.tooling_revision == github.sha)
+    if: inputs.source_baseline_recovery != true && inputs.export_device_patrol_source_identity != true && github.repository == 'perfectuser21/cecelia' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.export_infra_baseline == true || vars.IMPLEMENTATION_INFRA_ADMISSION == 'true') && (!inputs.source_repo || inputs.source_repo == github.repository) && (!inputs.head_revision || inputs.head_revision == github.sha) && (!inputs.tooling_revision || inputs.tooling_revision == github.sha)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -269,7 +269,7 @@ jobs:
       DB_PASSWORD: isolated-ci
       SOURCE_REPO: ${{ inputs.source_repo || github.repository }}
       MAP_SCOPE: ${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}
-      INFRA_ADMISSION: ${{ vars.IMPLEMENTATION_INFRA_ADMISSION == 'true' && github.repository == 'perfectuser21/cecelia' && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' && 'true' || 'false' }}
+      INFRA_ADMISSION: ${{ inputs.source_baseline_recovery != true && vars.IMPLEMENTATION_INFRA_ADMISSION == 'true' && github.repository == 'perfectuser21/cecelia' && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' && 'true' || 'false' }}
       ADMISSION_SCOPES: ${{ inputs.admission_scopes || vars.IMPLEMENTATION_ADMISSION_SCOPES || (github.event_name == 'pull_request' && github.repository == 'perfectuser21/cecelia' && '{"schema_version":1,"scopes":["cecelia-kr","cecelia-factory"]}' || '') }}
       BASE: ${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}
       HEAD: ${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}
