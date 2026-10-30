@@ -12,7 +12,15 @@ const SHARED_RUNTIME = ['brain-unit', 'brain-integration', 'image', 'engine', 'a
 const DOCUMENT = /\.(?:md|txt|rst|png|jpe?g|gif|svg|webp|pdf)$/i;
 const DOCUMENT_NAME = /(?:^|\/)(?:README|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT|SECURITY|LICENSE)\.md$/i;
 const ROOT_DOCUMENT = /^(?:AGENTS|CLAUDE|DEFINITION|PRD|DoD)\.md$/i;
-const CONFIG = /(?:^|\/)(?:(?:vitest|vite|eslint)(?:\.[^/]+)*\.config(?:\.[^/]+)?|tsconfig(?:\.[^/]+)?\.json|\.eslintrc(?:\.[^/]+)?)$/;
+
+// 按文件名分段，避免嵌套正则对连续点号产生指数级回溯。
+function isConfiguration(path) {
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  const parts = name.split('.');
+  return (['vitest', 'vite', 'eslint'].includes(parts[0]) && parts.slice(1).includes('config')) ||
+    (parts[0] === 'tsconfig' && parts.at(-1) === 'json') ||
+    name === '.eslintrc' || name.startsWith('.eslintrc.');
+}
 
 function assertPaths(paths, full) {
   if (!Array.isArray(paths) || (!full && paths.length === 0)) {
@@ -41,10 +49,10 @@ export function planChecks(paths, {full = false} = {}) {
   for (const path of paths) {
     // Markdown 也可能是实际运行时提示词；只有明确的文档位置/文件名才走轻量路径。
     if (DOCUMENT_NAME.test(path) || ROOT_DOCUMENT.test(path) ||
-      (path.startsWith('docs/') && DOCUMENT.test(path))) continue;
+      ((path.startsWith('docs/') || path.startsWith('sprints/')) && DOCUMENT.test(path))) continue;
     if (path.startsWith('frontend/')) selected.add('frontend');
     if (path.startsWith('apps/android-agent/')) selected.add('android');
-    if (CONFIG.test(path) || /^(?:\.github|scripts|config)\//.test(path) ||
+    if (isConfiguration(path) || /^(?:\.github|scripts|config)\//.test(path) ||
       /^(?:package(?:-lock)?\.json|npm-shrinkwrap\.json|\.npmrc|\.skills-source\.json)$/.test(path)) {
       all = true;
     } else if (path.startsWith('apps/android-agent/')) selected.add('android');

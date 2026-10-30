@@ -21,7 +21,15 @@ export function nativeWorktreeFixture() {
     LANG: 'C.UTF-8', WORKTREE_BASE: worktrees, CLAUDE_SESSION_ID: 'native-fixture-session', HEARTBEAT_INTERVAL: '0.1',
   };
   const run = (command: string, args: string[], overrides: Record<string, string> = {}) =>
-    spawnSync(command, args, { cwd: repo, env: { ...env, ...overrides }, encoding: 'utf8', timeout: 10000 });
+    spawnSync(command, args, { cwd: repo, env: { ...env, ...overrides }, shell: false, encoding: 'utf8', timeout: 10000 });
+  let scriptNumber = 0;
+  // 固定测试正文写本人脚本文件，路径/参数仅走argv；避免bash -c混合代码与数据。
+  const shell = (script: string, args: string[] = [], overrides: Record<string, string> = {}) => {
+    const file = join(base, 'tmp', `shell-${scriptNumber++}.sh`);
+    writeFileSync(file, script, { flag: 'wx', mode: 0o600 });
+    try { return run('bash', [file, ...args], overrides); }
+    finally { rmSync(file, { force: true }); }
+  };
   const git = (...args: string[]) => {
     const result = run('git', args);
     if (result.status !== 0) throw new Error(`fixture git ${args.join(' ')} failed: ${result.stderr}`);
@@ -48,5 +56,5 @@ export function nativeWorktreeFixture() {
     }
     rmSync(base, { recursive: true, force: true });
   };
-  return { base, repo, home, worktrees, bin, env, run, git, guardians, dispose };
+  return { base, repo, home, worktrees, bin, env, run, shell, git, guardians, dispose };
 }

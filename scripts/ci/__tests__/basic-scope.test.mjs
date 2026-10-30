@@ -18,7 +18,8 @@ test('全量只覆盖现役组件；旧frontend自身改动仍明确验证', () 
 });
 
 test('文档改动仍运行基础 CI 回归，且不触发应用测试', () => {
-  assert.deepEqual(planChecks(['docs/guide.md', 'README.md', 'docs/diagram.svg', 'DoD.md', 'PRD.md', 'packages/engine/README.md']), [{component: 'scripts'}]);
+  assert.deepEqual(planChecks(['docs/guide.md', 'README.md', 'docs/diagram.svg', 'DoD.md', 'PRD.md', 'packages/engine/README.md',
+    'sprints/x/prep-prd.md', 'sprints/x/contract-dod.md']), [{component: 'scripts'}]);
 });
 
 test('运行时Markdown提示词必须执行完整所属组件，不能因扩展名免检', () => {
@@ -62,8 +63,19 @@ test('共享脚本、根依赖与任意层级测试或编译配置改动都运�
   }
 });
 
+test('包含大量点号的文件名不能拖垮配置范围判断', () => {
+  const path = `unknown/vite.${'.'.repeat(60)}not-config.js`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `import {planChecks} from ${JSON.stringify(new URL('../basic-scope.mjs', import.meta.url).href)}; process.stdout.write(JSON.stringify(planChecks([process.argv[1]])));`, path],
+  {encoding: 'utf8', timeout: 3000});
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(components(JSON.parse(result.stdout)), all);
+});
+
 test('未知可执行路径、未知包和文档目录内代码都保守运行全量', () => {
-  for (const path of ['packages/new-service/main.js', 'tools/helper.py', 'docker/runner/Dockerfile', 'new-folder/data.json', 'docs/example.js']) {
+  for (const path of ['packages/new-service/main.js', 'tools/helper.py', 'docker/runner/Dockerfile', 'new-folder/data.json', 'docs/example.js',
+    'sprints/x/task-plan.json', 'sprints/x/tests/main.js', 'sprints/x/page.mdx']) {
     assert.deepEqual(components(planChecks([path])), all, path);
   }
 });

@@ -10,7 +10,7 @@ describe('tracked Worktree path migration', () => {
   beforeEach(() => { fixture = nativeWorktreeFixture(); });
   afterEach(() => { fixture.dispose(); });
   function shell(script: string, ...args: string[]) {
-    const result = fixture.run('bash', ['-c', script, 'fixture', WORKTREE_MANAGE, ...args]);
+    const result = fixture.shell(script, [WORKTREE_MANAGE, ...args]);
     expect(result.status, result.stdout + result.stderr).toBe(0);
     return result.stdout.trim();
   }
@@ -43,7 +43,7 @@ describe('tracked Worktree path migration', () => {
   });
   it('safe_rm_rf拒绝允许父目录以外的路径并保留文件', () => {
     const keep = join(fixture.base, 'keep'); mkdirSync(keep); writeFileSync(join(keep, 'sentinel'), 'keep');
-    const result = fixture.run('bash', ['-c', 'source "$1"; safe_rm_rf "$2" "$3"', 'fixture', WORKTREE_MANAGE, keep, fixture.repo]);
+    const result = fixture.shell('source "$1"; safe_rm_rf "$2" "$3"', [WORKTREE_MANAGE, keep, fixture.repo]);
     expect(result.status).toBe(1);
     expect(readFileSync(join(keep, 'sentinel'), 'utf8')).toBe('keep');
   });

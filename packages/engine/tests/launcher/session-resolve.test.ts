@@ -13,7 +13,7 @@ describe('tracked _resolve_claude_session_id', () => {
   });
   afterEach(() => { fixture.dispose(); });
   function resolve(overrides: Record<string, string>) {
-    const result = fixture.run('bash', ['-c', 'source "$1"; _resolve_claude_session_id', 'fixture', WORKTREE_MANAGE], overrides);
+    const result = fixture.shell('source "$1"; _resolve_claude_session_id', [WORKTREE_MANAGE], overrides);
     expect(result.status, result.stderr).toBe(0);
     return result.stdout.trim();
   }
@@ -24,7 +24,7 @@ describe('tracked _resolve_claude_session_id', () => {
     expect(resolve({ CLAUDE_SESSION_ID: '', FIXTURE_PARENT_ARGS: 'claude --session-id aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' })).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
   });
   it('session未设置且父链没有Claude时返回空', () => {
-    const result = fixture.run('bash', ['-c', 'unset CLAUDE_SESSION_ID; source "$1"; _resolve_claude_session_id', 'fixture', WORKTREE_MANAGE], { FIXTURE_PARENT_ARGS: 'node vitest' });
+    const result = fixture.shell('unset CLAUDE_SESSION_ID; source "$1"; _resolve_claude_session_id', [WORKTREE_MANAGE], { FIXTURE_PARENT_ARGS: 'node vitest' });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe('');
   });
