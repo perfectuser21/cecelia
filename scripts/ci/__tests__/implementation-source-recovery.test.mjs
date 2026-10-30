@@ -102,6 +102,7 @@ test('VERSION 真身对齐并拒绝改动已受信版本门禁',()=>{
   execFileSync('git',['clone','-q','--shared',source,scratch]);
   const g=(...args)=>execFileSync('git',args,{cwd:scratch,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+  g('checkout','-q','--detach','061a8a1784ffd02fdf1e3071390b2036e70d9395');
   const paths=['packages/brain/VERSION'];
   for(const path of paths)writeFileSync(join(scratch,path),readFileSync(join(source,path)));
   g('add','--',...paths);g('commit','--allow-empty','-qm','reviewed version sync');
