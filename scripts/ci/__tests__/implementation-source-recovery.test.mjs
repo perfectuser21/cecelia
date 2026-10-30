@@ -78,13 +78,32 @@ test('固定来源候选仅接受已隔离infra刷新的workflow字节',()=>{
   const g=(...args)=>execFileSync('git',args,{cwd:scratch,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
   const path='.github/workflows/implementation-impact.yml';
-  writeFileSync(join(scratch,path),readFileSync(join(source,path)));
-  g('add','--',path);g('commit','--allow-empty','-qm','source-only infra guard');
+  const reviewedFiles=[path,'packages/brain/VERSION','scripts/check-version-sync.sh','tests/check-version-sync.test.js'];
+  for(const file of reviewedFiles)writeFileSync(join(scratch,file),readFileSync(join(source,file)));
+  g('add','--',...reviewedFiles);g('commit','--allow-empty','-qm','source-only infra guard');
   const reviewed=g('rev-parse','HEAD');
   assert.doesNotThrow(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',reviewed));
   writeFileSync(join(scratch,path),execFileSync('git',['show','6d1d7e832e45b35af76eb330529032eb35ec3a1b:'+path],{cwd:source}));
   g('commit','-qam','restore unsafe infra workflow');
   assert.throws(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',g('rev-parse','HEAD')),/SOURCE_RECOVERY_WORKFLOW_UNREVIEWED/);
+ }finally{rmSync(scratch,{recursive:true,force:true});}
+});
+test('版本六件套补正只允许已审同步守卫，任意漂移拒绝来源恢复',()=>{
+ const source=fileURLToPath(new URL('../../../',import.meta.url));
+ const scratch=mkdtempSync(join(tmpdir(),'recovery-version-guard-'));
+ try{
+  execFileSync('git',['clone','-q','--shared',source,scratch]);
+  const g=(...args)=>execFileSync('git',args,{cwd:scratch,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+  const paths=['scripts/check-version-sync.sh','tests/check-version-sync.test.js','packages/brain/VERSION'];
+  for(const path of paths)writeFileSync(join(scratch,path),readFileSync(join(source,path)));
+  g('add','--',...paths);g('commit','--allow-empty','-qm','reviewed version sync');
+  const reviewed=g('rev-parse','HEAD');
+  assert.doesNotThrow(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',reviewed));
+  const guard='scripts/check-version-sync.sh';
+  writeFileSync(join(scratch,guard),Buffer.concat([readFileSync(join(scratch,guard)),Buffer.from('\n# unreviewed drift\n')]));
+  g('commit','-qam','unreviewed version guard');
+  assert.throws(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',g('rev-parse','HEAD')),/SOURCE_RECOVERY_VERSION_GUARD_UNREVIEWED/);
  }finally{rmSync(scratch,{recursive:true,force:true});}
 });
 for(const [name,route,value] of [
