@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # quickcheck.sh — git push 前本地快速检查
 #
-# 逻辑：改了哪个包就跑哪个包的测试，4个包全覆盖
+# 本地只检查准备条件；完整组件单测由 GitHub 必需检查“源码保底通过”负责。
 # 用法：bash scripts/quickcheck.sh
 # 退出码：0 = 通过，1 = 失败
 
 set -uo pipefail
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-cd "$REPO_ROOT"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 1
+cd "$REPO_ROOT" || exit 1
+command -v node >/dev/null || { echo '[QuickCheck] 缺少 node，push 被阻止' >&2; exit 1; }
 
 # ============================================================================
-# 互斥锁：同一 repo 最多一个 quickcheck 实例（防并发 vitest 抢资源）
+# 互斥锁：同一 repo 最多一个 quickcheck 实例
 # 拿不到锁时等待（上限 QUICKCHECK_LOCK_WAIT_SEC，默认 600s），超时失败——不放行
 # ============================================================================
 _GIT_DIR="$(git rev-parse --git-dir 2>/dev/null || echo "${REPO_ROOT}/.git")"
@@ -21,7 +22,7 @@ _LOCK_FILE="${_GIT_COMMON}/quickcheck.lock"
 _LOCK_DIR="${_GIT_COMMON}/quickcheck.lockdir"
 
 # shellcheck source=scripts/lib/quickcheck-lock.sh
-source "$REPO_ROOT/scripts/lib/quickcheck-lock.sh"
+source "$REPO_ROOT/scripts/lib/quickcheck-lock.sh" || exit 1
 if ! acquire_quickcheck_lock "${_LOCK_FILE}" "${_LOCK_DIR}"; then
     echo "[QuickCheck] 等待 ${QUICKCHECK_LOCK_WAIT_SEC:-600}s 仍未拿到锁 — push 被阻止，请稍后重试" >&2
     exit 1
@@ -33,10 +34,10 @@ MAIN_REPO_ROOT="$(dirname "$(cd "$REPO_ROOT" && cd "$_GIT_COMMON_DIR" && pwd)")"
 ROOT_NM="$MAIN_REPO_ROOT/node_modules"
 
 # shellcheck source=scripts/lib/worktree-node-modules.sh
-source "$REPO_ROOT/scripts/lib/worktree-node-modules.sh"
+source "$REPO_ROOT/scripts/lib/worktree-node-modules.sh" || exit 1
 
 # worktree 中 ESM 模块解析向上找 node_modules 时找不到主仓库（不同目录树）
-# 创建符号链接使 vitest config 中的 import 'vitest' 能被 Node.js 解析
+# 创建符号链接使本地检查入口能解析依赖
 if [[ "$REPO_ROOT" != "$MAIN_REPO_ROOT" ]]; then
   link_missing_node_modules "$ROOT_NM" "$REPO_ROOT/node_modules"
   for package_dir in packages/engine packages/brain apps/api apps/dashboard; do
@@ -50,17 +51,28 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET
 
 START_TIME=$(date +%s)
 echo -e "\n${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo -e "${BOLD}  🔍 QuickCheck — push 前本地预检${RESET}"
+echo -e "${BOLD}  🔍 QuickCheck — push 前本地准备检查${RESET}"
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n"
+echo '完整组件单测由 GitHub 必需检查“源码保底通过”验收。'
 
 git fetch origin main --quiet 2>/dev/null || true
 BASE_REF="origin/main"
-CHANGED_FILES=$(git diff --name-only "${BASE_REF}...HEAD" 2>/dev/null || \
-                git diff --name-only HEAD~1...HEAD 2>/dev/null || echo "")
+if ! git rev-parse --verify "${BASE_REF}^{commit}" >/dev/null 2>&1; then
+  echo '[QuickCheck] 缺少 origin/main 差异基线，push 被阻止' >&2
+  exit 1
+fi
+if ! CHANGED_FILES=$(git diff --name-only "${BASE_REF}...HEAD"); then
+  echo '[QuickCheck] 无法读取真实变更范围，push 被阻止' >&2
+  exit 1
+fi
+if ! git diff --check "${BASE_REF}...HEAD"; then
+  echo '[QuickCheck] 差异格式检查失败，push 被阻止' >&2
+  exit 1
+fi
 
 if [[ -z "$CHANGED_FILES" ]]; then
-  echo -e "${YELLOW}⏭  无改动文件，跳过${RESET}"
-  echo -e "${GREEN}${BOLD}✅ QuickCheck 通过${RESET}\n"; exit 0
+  echo -e "${YELLOW}无改动文件，准备检查无需执行包命令${RESET}"
+  echo -e "${GREEN}${BOLD}✅ 本地准备检查通过（未运行完整单测）${RESET}\n"; exit 0
 fi
 
 echo -e "📂 改动文件数：$(echo "$CHANGED_FILES" | grep -c . 2>/dev/null || echo 0)\n"
@@ -87,40 +99,39 @@ if [[ -n "$DOD_FILES" ]]; then
   done <<< "$DOD_FILES"
 fi
 
-# 改了哪个包就跑哪个包的测试（4个包全覆盖）
+# 直接使用真实命令的退出状态；缺脚本、缺工具和异常均不能放行。
+run_preflight() {
+  local directory="$1"
+  shift
+  echo -e "${BOLD}▶ ${directory}：$*${RESET}"
+  if (cd "$REPO_ROOT/$directory" && unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE && \
+      PATH="$REPO_ROOT/$directory/node_modules/.bin:$ROOT_NM/.bin:$PATH" "$@"); then
+    echo -e "  ${GREEN}✅ 准备检查通过${RESET}\n"
+  else
+    local check_exit=$?
+    echo -e "  ${RED}❌ 准备检查失败（exit=${check_exit}）${RESET}\n"
+    PASS=false
+  fi
+}
+
+# 本地按变更包运行快速准备命令，不重复 GitHub 的完整组件测试。
 for PKG in packages/engine packages/brain apps/api apps/dashboard; do
   if echo "$CHANGED_FILES" | grep -q "^$PKG/"; then
-    echo -e "${BOLD}▶ $PKG${RESET}"
-    PKG_NM="$REPO_ROOT/$PKG/node_modules"
-    VITEST_BIN=$(resolve_package_vitest "$ROOT_NM" "$PKG_NM" || true)
-    if [[ -z "$VITEST_BIN" ]]; then
-      if [[ "${QUICKCHECK_ALLOW_MISSING_VITEST:-}" == 1 ]]; then
-        echo -e "  ${YELLOW}⚠️  vitest 未安装，按 QUICKCHECK_ALLOW_MISSING_VITEST=1 跳过 — ${PKG} 本次未测试${RESET}"
-      else
-        echo -e "  ${RED}❌ vitest 未安装 — 无法验证 ${PKG}，push 被阻止${RESET}"
-        echo -e "  ${YELLOW}   修复：cd ${MAIN_REPO_ROOT}/${PKG} && npm ci --legacy-peer-deps --ignore-scripts${RESET}"
-        echo -e "  ${YELLOW}   确需跳过：QUICKCHECK_ALLOW_MISSING_VITEST=1 git push${RESET}"
-        PASS=false
-      fi
-    else
-      VITEST_OUT=$(cd "$PKG" && unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE && PATH="$PKG_NM/.bin:$ROOT_NM/.bin:$PATH" NODE_OPTIONS='--max-old-space-size=2048' "$VITEST_BIN" run 2>&1)
-      VITEST_EXIT=$?
-      echo "$VITEST_OUT"
-      if classify_vitest_exit "$VITEST_EXIT"; then
-        echo -e "  ${GREEN}✅ 通过${RESET}"
-      else
-        echo -e "  ${RED}❌ 失败（exit=${VITEST_EXIT}）— 修复后重新 push${RESET}"
-        PASS=false
-      fi
-    fi
-    echo ""
+    case "$PKG" in
+      packages/brain) run_preflight "$PKG" npm run lint ;;
+      packages/engine|apps/api) run_preflight "$PKG" npm run typecheck ;;
+      apps/dashboard) run_preflight "$PKG" npm run build ;;
+    esac
   fi
 done
+if echo "$CHANGED_FILES" | grep -Eq '(^scripts/ci/|^\.github/|^package[^/]*\.json$|^npm-shrinkwrap\.json$)'; then
+  run_preflight . node scripts/ci/run-basic-check.mjs scripts
+fi
 
 END_TIME=$(date +%s)
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 if [[ "$PASS" == true ]]; then
-  echo -e "${GREEN}${BOLD}✅ QuickCheck 通过（耗时 $((END_TIME - START_TIME))s）${RESET}"
+  echo -e "${GREEN}${BOLD}✅ 本地准备检查通过（耗时 $((END_TIME - START_TIME))s，未运行完整单测）${RESET}"
 else
   echo -e "${RED}${BOLD}❌ QuickCheck 失败 — push 被阻止${RESET}"
   echo -e "${YELLOW}   请修复错误后重新 push${RESET}"

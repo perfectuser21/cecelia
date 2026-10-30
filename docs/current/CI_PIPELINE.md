@@ -85,7 +85,7 @@ Brain/Engine/API 的共享依赖变更会选择共享运行组及 Ops 回归；�
 
 开发前仍遵循 AGENTS.md 的 DevGate 和 PR 流程。退役工作流形状断言已迁到真实范围选择、失败传播、隔离和业务行为测试，不用把旧任务名留在新 CI 中来满足历史字符串测试。
 
-本地 `quickcheck` 保留互斥锁和改动包实际单测；变更的 DoD 使用正式 Test 映射校验，允许 GitHub 实跑、合并后读回等条目如实保持未完成。
+本地 `quickcheck` 负责快速准备：Brain lint、Engine/API 类型检查、Dashboard 构建；CI 或根依赖变更还运行 scripts 检查。保留互斥锁、真实差分、格式和失败阻断；DoD 使用正式 Test 映射校验，允许后续验收如实保持未完成。本地通过只表示准备完成，完整组件测试集中由 GitHub 的统一门禁验收。
 
 ## 本地复核
 
