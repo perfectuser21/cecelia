@@ -70,6 +70,23 @@ test('来源恢复容纳已审 Claude 只读 tuple 测试而不扩大生产文�
   assert.throws(()=>validateSourceDelta(scratch,base,g('rev-parse','HEAD')),/SOURCE_RECOVERY_OPERATIONAL_CHANGE/);
  }finally{rmSync(scratch,{recursive:true,force:true});}
 });
+test('固定来源候选仅接受已隔离infra刷新的workflow字节',()=>{
+ const source=fileURLToPath(new URL('../../../',import.meta.url));
+ const scratch=mkdtempSync(join(tmpdir(),'recovery-infra-workflow-'));
+ try{
+  execFileSync('git',['clone','-q','--shared',source,scratch]);
+  const g=(...args)=>execFileSync('git',args,{cwd:scratch,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  g('config','user.name','Fixture');g('config','user.email','fixture@example.invalid');g('config','core.hooksPath','/dev/null');
+  const path='.github/workflows/implementation-impact.yml';
+  writeFileSync(join(scratch,path),readFileSync(join(source,path)));
+  g('add','--',path);g('commit','--allow-empty','-qm','source-only infra guard');
+  const reviewed=g('rev-parse','HEAD');
+  assert.doesNotThrow(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',reviewed));
+  writeFileSync(join(scratch,path),execFileSync('git',['show','6d1d7e832e45b35af76eb330529032eb35ec3a1b:'+path],{cwd:source}));
+  g('commit','-qam','restore unsafe infra workflow');
+  assert.throws(()=>validateSourceDelta(scratch,'e3a01021ee7100b83d8ed5a0be219d0b543b5dff',g('rev-parse','HEAD')),/SOURCE_RECOVERY_WORKFLOW_UNREVIEWED/);
+ }finally{rmSync(scratch,{recursive:true,force:true});}
+});
 for(const [name,route,value] of [
  ['未合并',`pulls/9`,{merged:false}],['主干漂移','commits/main',{sha:base}],
  ['没有关联PR',`commits/${head}/pulls`,[]],

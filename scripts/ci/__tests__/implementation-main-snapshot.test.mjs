@@ -403,6 +403,31 @@ for(const [eventName,enabled,ref] of [['push','true','refs/heads/main'],['workfl
  }finally{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;}
 });
 
+test('显式来源恢复成功仅向生产中央GET，既不POST也不部署',async t=>{
+ const dir=mkdtempSync(join(tmpdir(),'recovery-get-only-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const source=join(dir,'source');mkdirSync(source);
+ const git=(...args)=>execFileSync('git',args,{cwd:source,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('config','core.hooksPath','/dev/null');
+ for(const {path}of readNativeConsumerRuntime().files){mkdirSync(join(source,path,'..'),{recursive:true});writeFileSync(join(source,path),readFileSync(join(root,path)));}
+ git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
+ writeFileSync(join(source,'read-only-source'),'candidate');git('add','.');git('commit','-qm','head');const head=git('rev-parse','HEAD');
+ const baseline=bundle(base),identity={...recoveryRuntimeAt(source,base),git_sha:base};
+ const readiness={status:'source_only',runtime_status:'not_deployed',base_revision:base,revision:head,runtime:identity};
+ const requests=[];
+ const result=await publishRecoveryBaseline({repoRoot:source,base,head,brainUrl:'http://fixture.invalid',token:'fixture',output:join(dir,'output'),baseline,readiness},{
+  github:async endpoint=>{assert.equal(endpoint,`repos/${repo}/commits/main`);return {sha:head};},
+  verifyAuthority:async()=>({repo,base_revision:base,direct_base_revision:base,head_revision:head}),
+  inspectRuntime:async()=>readiness,
+  fetchFn:async(url,options)=>{requests.push({url:String(url),method:options.method});return new Response(JSON.stringify(baseline));},
+  compile:async()=>bundle(head).snapshot,
+  runGate:async options=>{assert.match(options.outputDir,/source-recovery-verification-/);return {receipt:{verdict:'PASS'}};},
+ });
+ assert.equal(result.status,'source_only');assert.equal(result.runtime_status,'not_deployed');
+ assert.equal(requests.length,2);assert.ok(requests.every(request=>request.method==='GET'&&request.url.includes('/implementation-ci/snapshot')));
+ assert.ok(requests.every(request=>!request.url.includes('/deploy')));
+ assert.equal(existsSync(join(dir,'output/head.json')),true);
+});
+
 for(const fault of ['fullgate','runtime_drift','central_drift'])test(`真实publisher编译成功但${fault}失败时不发布正式head`,async t=>{
  const dir=mkdtempSync(join(tmpdir(),'recovery-publish-order-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  const source=join(dir,'source');mkdirSync(source);

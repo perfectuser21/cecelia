@@ -54,8 +54,15 @@ export function validateSourceDelta(repoRoot,base,head){
   if(JSON.stringify(before)!==JSON.stringify(after))fail('SOURCE_RECOVERY_CI_CHANGE_INVALID');
  }
  const path='.github/workflows/implementation-impact.yml';
- if(changed.includes(path)&&digest(blob(repoRoot,head,path))!=='274f10136dfcda82e08d2c85fe65d6b4521d0cc34b544bb7640cfbe5be406b65')fail('SOURCE_RECOVERY_WORKFLOW_UNREVIEWED');
+ const bootstrapBase='e3a01021ee7100b83d8ed5a0be219d0b543b5dff';
+ if((changed.includes(path)||base===bootstrapBase)&&digest(blob(repoRoot,head,path))!=='231892f86050742912681feba690d1cb71891f6d15183bb65299489a943cd912')fail('SOURCE_RECOVERY_WORKFLOW_UNREVIEWED');
  const before=yaml.load(blob(repoRoot,base,path).toString()),after=yaml.load(blob(repoRoot,head,path).toString());
+ if(changed.includes(path)){
+  const original="${{ vars.IMPLEMENTATION_INFRA_ADMISSION == 'true' && github.repository == 'perfectuser21/cecelia' && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' && 'true' || 'false' }}";
+  const guarded="${{ inputs.source_baseline_recovery != true && vars.IMPLEMENTATION_INFRA_ADMISSION == 'true' && github.repository == 'perfectuser21/cecelia' && (inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr') == 'cecelia-kr' && 'true' || 'false' }}";
+  if(before.jobs.gate.env?.INFRA_ADMISSION!==original||after.jobs.gate.env?.INFRA_ADMISSION!==guarded)fail('SOURCE_RECOVERY_PR_GATE_CHANGED');
+  before.jobs.gate.env.INFRA_ADMISSION=guarded;
+ }
  if(JSON.stringify(before.jobs.gate)!==JSON.stringify(after.jobs.gate))fail('SOURCE_RECOVERY_PR_GATE_CHANGED');
  return changed;
 }

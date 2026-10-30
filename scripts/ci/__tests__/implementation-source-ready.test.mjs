@@ -151,6 +151,36 @@ test('真实workflow保持原谓词与正常15/40分钟，来源恢复45分钟�
  assert.equal(ready.steps.find(s=>s.uses==='actions/checkout@v4').with.ref,'${{ github.sha }}');
  assert.ok(ready.steps.some(s=>s.run==='node tooling/scripts/ci/implementation-source-ready.mjs'));
 });
+test('显式来源恢复不进入中央infra刷新，普通main仍保留原准入',()=>{
+ const workflow=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+ const infra=workflow.jobs['snapshot-infra'];
+ const active=({eventName='workflow_dispatch',recovery=false,infraAdmission='true',exportInfra=false}={})=>Function('github','inputs','vars',`return (${infra.if.replace(/^\$\{\{ | \}\}$/g,'')})`)(
+  {repository:'perfectuser21/cecelia',ref:'refs/heads/main',event_name:eventName,sha:revision},
+  {source_baseline_recovery:recovery,export_infra_baseline:exportInfra},
+  {IMPLEMENTATION_INFRA_ADMISSION:infraAdmission});
+ assert.equal(active({recovery:true}),false,'source-only 不能启动普通 infra provider 的生产 refresh');
+ assert.equal(active({recovery:true,exportInfra:true}),false,'冲突输入不能重新启动普通 infra provider');
+ assert.equal(active({recovery:false}),true,'普通显式 main 准入仍可导出 infra');
+ assert.equal(active({eventName:'push'}),true,'普通 main push 行为不变');
+ assert.equal(active({recovery:true,infraAdmission:'false'}),false);
+ assert.deepEqual(infra.needs,['source-runtime-ready']);
+ const provider=infra.steps.find(s=>s.name==='固定main独立infra来源导出');
+ assert.match(provider.run,/implementation-main-snapshot\.mjs/);
+ assert.equal(workflow.jobs['snapshot-main'].steps.find(s=>s.name==='固定main中央定义导出').env.SOURCE_BASELINE_RECOVERY,
+  "${{ github.event_name == 'workflow_dispatch' && inputs.source_baseline_recovery == true }}");
+ assert.doesNotMatch(JSON.stringify(workflow.jobs),/\/api\/brain\/deploy|scripts\/brain-deploy\.sh/);
+});
+test('显式来源恢复的联合门不索取被跳过的infra产物',()=>{
+ const workflow=yaml.load(readFileSync(new URL('../../../.github/workflows/implementation-impact.yml',import.meta.url),'utf8'));
+ const admission=workflow.jobs.gate.env.INFRA_ADMISSION;
+ const active=recovery=>Function('github','inputs','vars',`return (${admission.replace(/^\$\{\{ | \}\}$/g,'')})`)(
+  {repository:'perfectuser21/cecelia'},
+  {source_baseline_recovery:recovery},
+  {IMPLEMENTATION_INFRA_ADMISSION:'true',IMPLEMENTATION_MAP_SCOPE:'cecelia-kr'});
+ assert.equal(active(true),'false','source-only 不应下载或要求普通 infra 快照');
+ assert.equal(active(false),'true','普通准入仍保留 infra 联合门');
+ assert.equal(workflow.jobs.gate.steps.find(s=>s.name==='独立infra固定来源加入联合输入').if,"env.INFRA_ADMISSION == 'true'");
+});
 test('固定Git输入可在真实depth1浅克隆运行',()=>{
  const clone=join(root,'shallow');execFileSync('git',['clone','--quiet','--depth','1',`file://${root}`,clone]);
  assert.equal(execFileSync('git',['rev-parse','--is-shallow-repository'],{cwd:clone,encoding:'utf8'}).trim(),'true');
